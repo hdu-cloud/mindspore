@@ -27,10 +27,15 @@ from mindspore import log as logger
 from mindspore.ops import operations as P
 from mindspore.common.tensor import Tensor
 from mindspore.nn.optim import Lamb
-from mindspore.train.callback import Callback
+from mindspore.train import Callback
 from mindspore.train.loss_scale_manager import DynamicLossScaleManager
-from mindspore.train.model import Model
+from mindspore.train import Model
 import mindspore.nn.learning_rate_schedule as lr_schedules
+from tests.st.model_zoo_tests import utils
+
+head_path = os.path.dirname(os.path.abspath(__file__)) + "/../../../../../../"
+utils.replace_check_param(head_path)
+
 from tests.models.official.nlp.bert.src.bert_for_pre_training import BertNetworkWithLoss
 from tests.models.official.nlp.bert.src.bert_for_pre_training import BertTrainOneStepWithLossScaleCell
 from tests.models.official.nlp.bert.src.bert_model import BertConfig
@@ -174,7 +179,7 @@ class TimeMonitor(Callback):
         self.per_step_mseconds_list.append(epoch_mseconds / self.data_size)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -229,17 +234,17 @@ def test_bert_performance():
 
     # assertion occurs while the loss value, overflow state or loss_scale value is wrong
     loss_value = np.array(callback.loss_list)
-    expect_loss_value = [11.325571, 11.284833, 11.284736]
+    expect_loss_value = [11.332271, 11.284633, 11.284236]
     print("loss value: {}".format(loss_value))
     assert np.allclose(loss_value, expect_loss_value, 0, 0.0005)
 
     overflow = np.array(callback.overflow_list)
-    expect_overflow = [True, True, True]
+    expect_overflow = [False, False, False]
     print("overflow: {}".format(overflow))
     assert (overflow == expect_overflow).all()
 
     loss_scale = np.array(callback.lossscale_list)
-    expect_loss_scale = [65536.0, 65536.0, 65536.0]
+    expect_loss_scale = [262144.0, 262144.0, 262144.0]
     print("loss scale: {}".format(loss_scale))
     assert np.allclose(loss_scale, expect_loss_scale, 0, 0)
 

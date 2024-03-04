@@ -21,7 +21,6 @@
 #include <event2/bufferevent.h>
 #include <event2/thread.h>
 #include <event2/bufferevent_ssl.h>
-
 #include <functional>
 #include <string>
 #include <memory>
@@ -30,14 +29,13 @@
 #include <mutex>
 #include <atomic>
 #include <condition_variable>
-
 #include "ps/core/cluster_config.h"
 #include "utils/convert_utils_base.h"
 #include "ps/core/comm_util.h"
 #include "ps/core/communicator/ssl_client.h"
 #include "ps/core/communicator/ssl_wrapper.h"
-#include "ps/constants.h"
-#include "ps/ps_context.h"
+#include "include/backend/distributed/ps/constants.h"
+#include "include/backend/distributed/ps/ps_context.h"
 #include "ps/core/communicator/tcp_message_handler.h"
 #include "ps/core/file_configuration.h"
 

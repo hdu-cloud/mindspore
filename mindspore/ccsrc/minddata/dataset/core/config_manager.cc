@@ -16,16 +16,19 @@
 #include "minddata/dataset/core/config_manager.h"
 
 #include <fstream>
-#include <iostream>
 #include <limits>
 #include <string>
 #include <thread>
 #include <utility>
+#include <exception>
+#include <ostream>
 
-#include "minddata/dataset/util/log_adapter.h"
 #include "minddata/dataset/util/status.h"
-#include "minddata/dataset/util/system_pool.h"
 #include "utils/ms_utils.h"
+#include "include/dataset/constants.h"
+#include "nlohmann/json.hpp"
+#include "util/path.h"
+#include "minddata/dataset/util/log_adapter.h"
 
 namespace mindspore {
 namespace dataset {
@@ -89,10 +92,13 @@ Status ConfigManager::FromJson(const nlohmann::json &j) {
   set_op_connector_size(j.value("opConnectorSize", op_connector_size_));
   set_seed(j.value("seed", seed_));
   set_monitor_sampling_interval(j.value("monitorSamplingInterval", monitor_sampling_interval_));
+  set_fast_recovery(j.value("fast_recovery", fast_recovery_));
+  set_error_samples_mode(j.value("error_samples_mode", error_samples_mode_));
   set_cache_host(j.value("cacheHost", cache_host_));
   set_cache_port(j.value("cachePort", cache_port_));
   set_num_connections(j.value("numConnections", num_connections_));
   set_cache_prefetch_size(j.value("cachePrefetchSize", cache_prefetch_size_));
+  set_debug_mode(j.value("debug_mode_flag", debug_mode_flag_));
   return Status::OK();
 }
 
@@ -106,7 +112,7 @@ Status ConfigManager::LoadFile(const std::string &settingsFile) {
   // Some settings are mandatory, others are not (with default).  If a setting
   // is optional it will set a default value if the config is missing from the file.
   try {
-    std::ifstream in(settingsFile);
+    std::ifstream in(settingsFile, std::ios::in);
     nlohmann::json js;
     in >> js;
     rc = FromJson(js);

@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,8 @@
 #include <algorithm>
 #include "plugin/device/ascend/hal/device/ge_runtime/task/task_factory.h"
 #include "common/opskernel/ops_kernel_info_store.h"
-#include "common/opskernel/ge_task_info.h"
+#include "acl/acl.h"
+#include "acl/acl_rt.h"
 
 namespace mindspore::ge::model_runner {
 std::map<rtModel_t, std::map<uint32_t, std::vector<std::weak_ptr<HcclTask::StreamGuard>>>>
@@ -30,6 +31,7 @@ HcclTask::HcclTask(const ModelContext &model_context, const std::shared_ptr<Hccl
       task_info_(task_info),
       stream_(nullptr),
       workspace_mem_(nullptr),
+      task_id_(0),
       rt_model_handle_(nullptr),
       priority_(0),
       secondary_stream_list_() {
@@ -45,64 +47,103 @@ HcclTask::HcclTask(const ModelContext &model_context, const std::shared_ptr<Hccl
   } else {
     MS_LOG(EXCEPTION) << "Index: " << task_info_->stream_id() << " >= stream_list.size(): " << stream_list.size();
   }
+  static uint32_t task_id = 0;
+  task_id_ = task_id++;
+  SetSecondaryStream();
+
+#ifdef ENABLE_ASYNC_LINK
+  MS_LOG(INFO) << "Prepare hccl task start.";
+  InitGeTask();
+  ::ge::OpsKernelInfoStore *ops_kernel_info_store =
+    static_cast<::ge::OpsKernelInfoStore *>(task_info_->ops_kernel_store());
+  const auto result = ops_kernel_info_store->PrepareTaskAsync(ge_task_);
+  if (result != 0) {
+    MS_LOG(EXCEPTION) << "ge_task: Prepare task failed, ret: " << result;
+  }
+#endif
 }
 
-HcclTask::~HcclTask() {}
+HcclTask::~HcclTask() {
+  if (task_info_ == nullptr) {
+    return;
+  }
+  ::ge::OpsKernelInfoStore *ops_kernel_info_store =
+    static_cast<::ge::OpsKernelInfoStore *>(task_info_->ops_kernel_store());
+  if (ops_kernel_info_store != nullptr) {
+    (void)ops_kernel_info_store->UnloadTask(ge_task_);
+  }
+}
 
-void HcclTask::Distribute() {
-  // Ops kernel info store
-  // Get privateDef and opsKernelStorePtr
-  MS_LOG(INFO) << "Distribute hccl task start.";
+void HcclTask::InitGeTask() {
   MS_EXCEPTION_IF_NULL(task_info_);
   void *ops_kernel_store = task_info_->ops_kernel_store();
-  ::ge::OpsKernelInfoStore *ops_kernel_info_store = static_cast<::ge::OpsKernelInfoStore *>(ops_kernel_store);
-  MS_EXCEPTION_IF_NULL(ops_kernel_info_store);
-
   char *private_def = reinterpret_cast<char *>(const_cast<char unsigned *>(task_info_->private_def().data()));
   auto private_def_len = static_cast<uint32_t>(task_info_->private_def().size());
   MS_LOG(INFO) << "The first address of the custom info, privateDef= " << private_def;
-  SetSecondaryStream();
 
   if (task_info_->workspace_size() > 0) {
     workspace_mem_ = task_info_->workspace_addr();
   }
 
-  ::ge::GETaskInfo ge_task;
-  static uint32_t task_id = 0;
-  ge_task.id = task_id++;
-  ge_task.type = static_cast<uint16_t>(RT_MODEL_TASK_HCCL);
-  ge_task.stream = stream_;
+  ge_task_.id = task_id_;
+  ge_task_.type = static_cast<uint16_t>(RT_MODEL_TASK_HCCL);
+  ge_task_.stream = stream_;
 
-  ge_task.kernelHcclInfo = std::vector<::ge::GETaskKernelHcclInfo>(1);
-  ge_task.kernelHcclInfo[0].hccl_type = task_info_->hccl_type();
-  ge_task.kernelHcclInfo[0].inputDataAddr = task_info_->input_data_addr();
-  ge_task.kernelHcclInfo[0].outputDataAddr = task_info_->output_data_addr();
-  ge_task.kernelHcclInfo[0].workSpaceAddr = workspace_mem_;
-  ge_task.kernelHcclInfo[0].workSpaceMemSize = static_cast<uint64_t>(task_info_->workspace_size());
-  ge_task.kernelHcclInfo[0].count = task_info_->count();
-  ge_task.kernelHcclInfo[0].dataType = static_cast<int32_t>(task_info_->data_type());
-  ge_task.kernelHcclInfo[0].opType = static_cast<int32_t>(task_info_->op_type());
-  ge_task.kernelHcclInfo[0].rootId = task_info_->root_id();
+  ge_task_.kernelHcclInfo = std::vector<::ge::GETaskKernelHcclInfo>(1);
+  ge_task_.kernelHcclInfo[0].hccl_type = task_info_->hccl_type();
+  ge_task_.kernelHcclInfo[0].inputDataAddr = task_info_->input_data_addr();
+  ge_task_.kernelHcclInfo[0].outputDataAddr = task_info_->output_data_addr();
+  ge_task_.kernelHcclInfo[0].workSpaceAddr = workspace_mem_;
+  ge_task_.kernelHcclInfo[0].workSpaceMemSize = static_cast<uint64_t>(task_info_->workspace_size());
+  ge_task_.kernelHcclInfo[0].count = task_info_->count();
+  ge_task_.kernelHcclInfo[0].dataType = static_cast<int32_t>(task_info_->data_type());
+  ge_task_.kernelHcclInfo[0].opType = static_cast<int32_t>(task_info_->op_type());
+  ge_task_.kernelHcclInfo[0].rootId = task_info_->root_id();
   if (!task_info_->global_workspace_addr().empty()) {
-    ge_task.kernelHcclInfo[0].global_workspace_addr = task_info_->global_workspace_addr();
+    ge_task_.kernelHcclInfo[0].global_workspace_addr = task_info_->global_workspace_addr();
   }
 
   std::vector<rtStream_t> secondary_stream_list;
   std::transform(secondary_stream_list_.begin(), secondary_stream_list_.end(),
                  std::back_inserter(secondary_stream_list),
                  [](const std::shared_ptr<StreamGuard> &stream) -> rtStream_t { return stream->GetStream(); });
-  ge_task.kernelHcclInfo[0].hcclStreamList = secondary_stream_list;
+  ge_task_.kernelHcclInfo[0].hcclStreamList = secondary_stream_list;
 
-  ge_task.privateDef = private_def;
-  ge_task.privateDefLen = private_def_len;
-  ge_task.opsKernelStorePtr = ops_kernel_store;
+  ge_task_.privateDef = private_def;
+  ge_task_.privateDefLen = private_def_len;
+  ge_task_.opsKernelStorePtr = ops_kernel_store;
+}
 
+std::string HcclTask::DebugString() const {
+  std::ostringstream buffer;
+  buffer << "HcclTask: op_name: " << task_info_->op_name() << ", task_id: " << ge_task_.id
+         << ", hccl_type: " << task_info_->hccl_type() << ", input_data_addr: " << task_info_->input_data_addr()
+         << ", workspace_size: " << task_info_->workspace_size()
+         << ", output_data_addr: " << task_info_->output_data_addr() << ", count: " << task_info_->count()
+         << ", data_type: " << task_info_->data_type() << ", op_type: " << task_info_->op_type()
+         << ", root_id: " << task_info_->root_id();
+  return buffer.str();
+}
+
+void HcclTask::Distribute() {
+  // Ops kernel info store
+  // Get privateDef and opsKernelStorePtr
+  MS_LOG(INFO) << "Distribute hccl task start.";
+  InitGeTask();
+  void *ops_kernel_store = task_info_->ops_kernel_store();
+  ::ge::OpsKernelInfoStore *ops_kernel_info_store = static_cast<::ge::OpsKernelInfoStore *>(ops_kernel_store);
+  MS_EXCEPTION_IF_NULL(ops_kernel_info_store);
   MS_LOG(INFO) << "Begin to call function LoadTask in hccl. " << task_info_->op_name();
-  auto result = ops_kernel_info_store->LoadTask(ge_task);
+  auto result = ops_kernel_info_store->LoadTask(ge_task_);
   // tagHcclResult::HCCL_SUCCESS is 0
   if (result != 0) {
-    MS_LOG(EXCEPTION) << "davinci_model : load task fail, return ret: " << result;
+    MS_LOG(EXCEPTION) << "davinci_model : load task fail, return ret: " << result << ", the task is "
+                      << task_info_->op_name();
   }
+
+#ifndef ENABLE_SECURITY
+  kernel_dumper_.DumpHcclOutput(task_info_, stream_);
+#endif
 
   MS_LOG(INFO) << "Call function LoadTask end.";
 }
@@ -198,8 +239,8 @@ HcclTask::StreamGuard::~StreamGuard() {
     return;
   }
 
-  rt_ret = rtStreamDestroy(stream_);
-  if (rt_ret != RT_ERROR_NONE) {
+  rt_ret = aclrtDestroyStream(stream_);
+  if (rt_ret != ACL_ERROR_NONE) {
     MS_LOG(ERROR) << "Call rt api rtStreamDestroy failed, ret: " << rt_ret;
     return;
   }

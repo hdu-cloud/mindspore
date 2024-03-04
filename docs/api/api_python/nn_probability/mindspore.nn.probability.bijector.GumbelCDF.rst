@@ -10,9 +10,9 @@ mindspore.nn.probability.bijector.GumbelCDF
         Y = g(x) = \exp(-\exp(\frac{-(X - loc)}{scale}))
 
     参数：
-        - **loc** (float, list, numpy.ndarray, Tensor) - 位移因子，即上述公式中的loc。默认值：0.0。
-        - **scale** (float, list, numpy.ndarray, Tensor) - 比例因子，即上述公式中的scale。默认值：1.0。
-        - **name** (str) - Bijector名称。默认值：'GumbelCDF'。
+        - **loc** (float, list, numpy.ndarray, Tensor) - 位移因子，即上述公式中的loc。默认值： ``0.0`` 。
+        - **scale** (float, list, numpy.ndarray, Tensor) - 比例因子，即上述公式中的scale。默认值： ``1.0`` 。
+        - **name** (str) - Bijector名称。默认值： ``'GumbelCDF'`` 。
 
     .. note::
         - `scale` 中元素必须大于零。
@@ -41,7 +41,7 @@ mindspore.nn.probability.bijector.GumbelCDF
 
     .. py:method:: forward(value)
 
-        正映射，计算输入随机变量 :math:`X = value` 经过映射后的值 :math:`Y = g(value)`。
+        正映射，计算输入随机变量经过映射后的值。
 
         参数：
             - **value** (Tensor) - 输入随机变量的值。
@@ -51,7 +51,7 @@ mindspore.nn.probability.bijector.GumbelCDF
 
     .. py:method:: forward_log_jacobian(value)
 
-        计算正映射导数的对数值，即 :math:`\log(dg(x) / dx)`。
+        计算正映射导数的对数值。
 
         参数：
             - **value** (Tensor) - 输入随机变量的值。
@@ -61,7 +61,7 @@ mindspore.nn.probability.bijector.GumbelCDF
 
     .. py:method:: inverse(value)
 
-        正映射，计算输出随机变量 :math:`Y = value` 时对应的输入随机变量的值 :math:`X = g(value)`。
+        正映射，计算输出随机变量对应的输入随机变量的值。
 
         参数：
             - **value** (Tensor) - 输出随机变量的值。
@@ -71,7 +71,7 @@ mindspore.nn.probability.bijector.GumbelCDF
 
     .. py:method:: inverse_log_jacobian(value)
 
-        计算逆映射导数的对数值，即 :math:`\log(dg^{-1}(x) / dx)`。
+        计算逆映射导数的对数值。
 
         参数：
             - **value** (Tensor) - 输出随机变量的值。

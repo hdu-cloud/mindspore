@@ -6,8 +6,9 @@ from mindspore import Tensor
 from mindspore import ParameterTuple
 from mindspore.ops import operations as P
 from mindspore.common.parameter import Parameter
-from mindspore.train.model import Model
+from mindspore.train import Model
 from mindspore.nn.wrap.cell_wrapper import PipelineCell
+
 
 class DatasetLenet():
     def __init__(self, data, label, length=3):

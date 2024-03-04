@@ -112,7 +112,7 @@ void ConjugateTransposeCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> 
         MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the perm value must be in [-" << perm_size << ", "
                           << (perm_size - 1) << "], but got " << p << " .";
       }
-      axes_.emplace_back(p);
+      (void)axes_.emplace_back(p);
     }
   } else if (perm_type_ == kNumberTypeInt64) {
     auto perm_addr = static_cast<int64_t *>(inputs[1]->addr);
@@ -124,7 +124,7 @@ void ConjugateTransposeCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> 
         MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the perm value must be in [-" << perm_size << ", "
                           << (perm_size - 1) << "], but got " << p << " .";
       }
-      axes_.emplace_back(p);
+      (void)axes_.emplace_back(p);
     }
   }
 
@@ -136,6 +136,9 @@ void ConjugateTransposeCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> 
     transpose_param_.perm_[i] = SizeToInt(axes_[i]);
   }
   size_t num_axes = input_shape_.size();
+  if (num_axes == 0) {
+    MS_EXCEPTION(ValueError) << "ConjugateTranspose doesn't support input shape's size as 0.";
+  }
   transpose_param_.perm_size_ = axes_.size();
   transpose_param_.num_axes_ = SizeToInt(num_axes);
   transpose_param_.strides_[num_axes - 1] = 1;
@@ -185,7 +188,7 @@ void ConjugateTransposeCpuKernelMod::LaunchComplexKernel(const std::vector<Addre
         MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the perm value must be in [-" << perm_size << ", "
                           << (perm_size - 1) << "], but got " << p << " .";
       }
-      axes_.emplace_back(p);
+      (void)axes_.emplace_back(p);
     }
   } else if (perm_type_ == kNumberTypeInt64) {
     auto perm_addr = static_cast<int64_t *>(inputs[1]->addr);
@@ -197,7 +200,7 @@ void ConjugateTransposeCpuKernelMod::LaunchComplexKernel(const std::vector<Addre
         MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the perm value must be in [-" << perm_size << ", "
                           << (perm_size - 1) << "], but got " << p << " .";
       }
-      axes_.emplace_back(p);
+      (void)axes_.emplace_back(p);
     }
   }
 
@@ -209,6 +212,9 @@ void ConjugateTransposeCpuKernelMod::LaunchComplexKernel(const std::vector<Addre
     transpose_param_.perm_[i] = SizeToInt(axes_[i]);
   }
   size_t num_axes = input_shape_.size();
+  if (num_axes == 0) {
+    MS_EXCEPTION(ValueError) << "ConjugateTranspose doesn't support input shape's size as 0.";
+  }
   transpose_param_.perm_size_ = axes_.size();
   transpose_param_.num_axes_ = SizeToInt(num_axes);
   transpose_param_.strides_[num_axes - 1] = 1;
@@ -249,7 +255,7 @@ int ConjugateTransposeCpuKernelMod::DoTranspose(const T *in_data, T *out_data, c
   const int *perm = transpose_param->perm_;
   const int *strides = transpose_param->strides_;
   const int *out_strides = transpose_param->out_strides_;
-  int data_size = static_cast<int32_t>(transpose_param->data_num_) * static_cast<int32_t>(sizeof(T));
+  data_size = static_cast<int32_t>(transpose_param->data_num_) * static_cast<int32_t>(sizeof(T));
   int num_axes = transpose_param->num_axes_;
   bool needTranspose = false;
   for (size_t i = 1; i < static_cast<uint32_t>(num_axes); ++i) {
@@ -259,7 +265,10 @@ int ConjugateTransposeCpuKernelMod::DoTranspose(const T *in_data, T *out_data, c
     }
   }
   if (!needTranspose) {
-    (void)memcpy(out_data, in_data, data_size);
+    auto ret = memcpy_s(out_data, data_size, in_data, data_size);
+    if (ret != EOK) {
+      MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', memcpy_s failed, ret=" << ret;
+    }
     return NNACL_OK;
   }
   for (size_t i = 0; i < static_cast<uint32_t>(num_axes); ++i) {
@@ -349,8 +358,11 @@ void ConjugateTransposeCpuKernelMod::TransposeDim4(const T *in_data, T *out_data
         size_t out_stride2_k = k * out_stride2;
         size_t stride2_k = k * stride2;
         for (size_t m = 0; m < static_cast<uint32_t>(output3); ++m) {
-          out_data[out_stride0_i + out_stride1_j + out_stride2_k + m] =
-            in_data[stride0_i + stride1_j + stride2_k + m * stride3];
+          int num = SizeToLong(stride0_i + stride1_j + stride2_k + m * stride3);
+          if (num >= data_size) {
+            MS_LOG(EXCEPTION) << "For 'ConjugateTranspose', dimension of input data exceed data size." << num;
+          }
+          out_data[out_stride0_i + out_stride1_j + out_stride2_k + m] = in_data[num];
         }
       }
     }
@@ -527,10 +539,10 @@ void ConjugateTransposeCpuKernelMod::TransposeDims(const T *in_data, T *out_data
   const int *strides = transpose_param->strides_;
   const int *out_strides = transpose_param->out_strides_;
   int num_axes = transpose_param->num_axes_;
-  size_t data_size = (*out_strides) * output_shape[0];
-  size_t offset_size = UP_DIV(data_size, thread_num);
+  size_t data_size_ = (*out_strides) * output_shape[0];
+  size_t offset_size = UP_DIV(data_size_, thread_num);
   size_t task_offset = offset_size * static_cast<size_t>(task_id);
-  int count = static_cast<int32_t>(data_size) - static_cast<int32_t>(task_offset);
+  int count = static_cast<int32_t>(data_size_) - static_cast<int32_t>(task_offset);
   if (count <= 0) {
     return;
   }

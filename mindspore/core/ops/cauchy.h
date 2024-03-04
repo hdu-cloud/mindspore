@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_CAUCHY_H_
 #define MINDSPORE_CORE_OPS_CAUCHY_H_
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,15 +31,13 @@ class MIND_API Cauchy : public BaseOperator {
   MIND_API_BASE_MEMBER(Cauchy);
   void Init() const {}
 
-  void set_sigma(float);
-  float get_sigma();
-  void set_median(float);
-  float get_median();
-  void set_size(std::vector<int64_t>);
-  std::vector<int64_t> get_size();
+  void set_sigma(const float);
+  float get_sigma() const;
+  void set_median(const float);
+  float get_median() const;
+  void set_size(const std::vector<int64_t>);
+  std::vector<int64_t> get_size() const;
 };
-abstract::AbstractBasePtr CauchyInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                      const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimCauchy = std::shared_ptr<Cauchy>;
 }  // namespace ops
 }  // namespace mindspore

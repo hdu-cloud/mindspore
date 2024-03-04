@@ -18,11 +18,12 @@ from __future__ import absolute_import
 import operator
 
 from mindspore.common import dtype as mstype
-from mindspore.common import Tensor
+from mindspore.common import Tensor, mutable
 from mindspore.ops import operations as P
 from mindspore.ops import functional as F
-from mindspore.ops.primitive import constexpr
+from mindspore.ops.primitive import constexpr, _primexpr
 from mindspore.nn import Cell
+from mindspore import ops
 
 from mindspore.numpy.utils import _convert_list_tensor_to_tuple_tensor, _expand, _broadcast_to_shape, \
     _check_input_tensor, _broadcast_to, _to_tensor, _callable
@@ -33,8 +34,6 @@ from mindspore.numpy.utils_const import _check_axes_range, _check_start_normaliz
     _list_comprehensions, _check_element_int, _is_shape_empty, _type_convert, \
     _tuple_slice, _expanded_shape, _seq_prod, _tuple_setitem, _iota, \
     _raise_unimplemented_error, _cumprod, _get_device, _check_is_int
-from mindspore.ops._utils.utils import is_shape_unknown
-from ..ops.operations._inner_ops import DynamicBroadcastTo
 
 
 # According to official numpy reference, the dimension of a numpy array must be less
@@ -89,7 +88,7 @@ def squeeze(a, axis=None):
     Args:
         a (Tensor): Input tensor array.
         axis (Union[None, int, list(int), tuple(list)]): The axis(axes) to squeeze,
-            default is None.
+            default: ``None`` .
 
     Returns:
         Tensor, with all or a subset of the dimensions of length :math:`1` removed.
@@ -119,7 +118,7 @@ def transpose(a, axes=None):
     Args:
         a (Tensor): a tensor to be transposed
         axes (Union[None, tuple, list]): the axes order, if `axes` is `None`, transpose
-            the entire tensor. Default is `None`.
+            the entire tensor. Default: ``None`` .
 
     Returns:
         Tensor, the transposed tensor array.
@@ -150,7 +149,7 @@ def rollaxis(x, axis, start=0):
     Args:
         x (Tensor): A Tensor to be transposed.
         axis (int): The axis to be rolled.
-        start (int): Default: 0.
+        start (int): Default: ``0`` .
             If :math:`start <= axis`, the axis is rolled back until it lies in this position (`start`).
             If :math:`start > axis`: the axis is rolled until it lies before this position (`start`).
             If :math:`start < 0`, the start will be normalized as a non-negative number (more details
@@ -211,17 +210,17 @@ def rollaxis(x, axis, start=0):
     new_perm = None
     if start < axis:
         if axis + 1 < ndim:
-            new_perm = perm[0:start] + perm[axis:axis+1] + \
+            new_perm = perm[0:start] + perm[axis:axis + 1] + \
                 perm[start:axis] + perm[axis+1:]
         else:
-            new_perm = perm[0:start] + perm[axis:axis+1] + perm[start:axis]
+            new_perm = perm[0:start] + perm[axis:axis + 1] + perm[start:axis]
     if start > axis:
         if start < ndim:
-            new_perm = perm[0:axis] + perm[axis+1:start] + \
-                perm[axis:axis+1] + perm[start:]
+            new_perm = perm[0:axis] + perm[axis + 1:start] + \
+                perm[axis:axis + 1] + perm[start:]
         else:
             new_perm = perm[0:axis] + perm[axis+1:start] + \
-                perm[axis:axis+1]
+                perm[axis:axis + 1]
 
     return F.transpose(x, new_perm)
 
@@ -328,7 +327,7 @@ def ravel(x):
     return x.ravel()
 
 
-@constexpr
+@_primexpr
 def _move_axes_for_concatenate(arr_shape, axis):
     """
     Moves axis 0 to the desiganated position, while keeps other axes' relative
@@ -336,9 +335,9 @@ def _move_axes_for_concatenate(arr_shape, axis):
     """
 
     original_axes = tuple(range(len(arr_shape)))
-    new_axes = original_axes[1:axis+1] + (0,) + original_axes[axis+1:]
-    new_shape = arr_shape[1:axis+1] + (arr_shape[0] * arr_shape[axis+1],) + \
-        arr_shape[axis+2:]
+    new_axes = original_axes[1:axis + 1] + (0,) + original_axes[axis + 1:]
+    new_shape = arr_shape[1:axis + 1] + (arr_shape[0] * arr_shape[axis + 1],) + \
+        arr_shape[axis + 2:]
     return new_axes, new_shape
 
 
@@ -376,13 +375,13 @@ def concatenate(arrays, axis=0):
 
     Note:
         To match Numpy behaviour, :math:`axis >= 32` will not cause value error, the
-        `axis` will be treated as :class:`None` instead.
+        `axis` will be treated as ``None`` instead.
 
     Args:
         arrays (Union[Tensor, tuple(Tensor), list(Tensor)]): a tensor or a list
             of tensors to be concatenated.
         axis (Union[None, int], optional): The axis along which the tensors will be joined,
-            if `axis` is :class:`None`, tensors are flattened before use. Default is 0.
+            if `axis` is ``None``, tensors are flattened before use. Default: ``0`` .
 
     Returns:
         A tensor concatenated from a tensor or a list of tensors.
@@ -449,7 +448,7 @@ def append(arr, values, axis=None):
             the correct shape (the same shape as `arr`, excluding `axis`). If `axis` is
             not specified, `values` can be any shape and will be flattened before use.
         axis (None, int, optional): The `axis` along which values are appended. If `axis` is not
-            given, both `arr` and `values` are flattened before use, default is :class:`None`.
+            given, both `arr` and `values` are flattened before use, default is ``None``.
 
     Returns:
         Tensor, a copy of tensor with values appended to axis.
@@ -674,9 +673,9 @@ def where(condition, x=None, y=None):
 
     Args:
         condition (Tensor): where True, yield `x`, otherwise yield `y`.
-        x (Tensor): Values from which to choose. Defaults to None.
+        x (Tensor): Values from which to choose. Default: ``None`` .
         y (Tensor): Values from which to choose. `x`, `y` and `condition` need
-            to be broadcastable to some shape. Defaults to None.
+            to be broadcastable to some shape. Default: ``None`` .
 
     Returns:
         Tensor or scalar, with elements from `x` where `condition` is True, and
@@ -711,17 +710,14 @@ def where(condition, x=None, y=None):
         x = F.cast(x, dtype)
     if not _check_same_type(dtype2, dtype):
         y = F.cast(y, dtype)
-    is_bool = _check_same_type(dtype1, mstype.bool_) and _check_same_type(
-        dtype2, mstype.bool_)
+    is_bool = _check_same_type(dtype1, mstype.bool_) and _check_same_type(dtype2, mstype.bool_)
     if is_bool:
         # select does not support bool type for x or y
         x = F.cast(x, mstype.float32)
         y = F.cast(y, mstype.float32)
 
-    if not _check_same_type(F.dtype(condition), mstype.float32):
-        # tiling with bool is not supported on GPU
-        condition = F.cast(condition, mstype.float32)
-    dynamic = is_shape_unknown(F.shape(condition)) or is_shape_unknown(F.shape(x)) or is_shape_unknown(F.shape(y))
+    dynamic = F.is_sequence_value_unknown(F.shape(condition)) or F.is_sequence_value_unknown(F.shape(x))\
+              or F.is_sequence_value_unknown(F.shape(y))
     # As select op currently does not support broadcast, broadcasts input tensors
     if not dynamic:
         shape_out = _infer_out_shape(F.shape(condition),
@@ -733,10 +729,10 @@ def where(condition, x=None, y=None):
         # Get the broadcast shape through broadcast calculation
         add_x_y = x + y
         add_out = condition + F.cast(add_x_y, condition.dtype)
-        shape_out = P.TensorShape()(add_out)
-        condition = DynamicBroadcastTo()(condition, shape_out)
-        x = DynamicBroadcastTo()(x, shape_out)
-        y = DynamicBroadcastTo()(y, shape_out)
+        shape_out = P.Shape()(add_out)
+        condition = ops.broadcast_to(condition, shape_out)
+        x = ops.broadcast_to(x, shape_out)
+        y = ops.broadcast_to(y, shape_out)
 
     if not _check_same_type(F.dtype(condition), mstype.bool_):
         condition = F.cast(condition, mstype.bool_)
@@ -902,7 +898,7 @@ def stack(arrays, axis=0):
     Args:
         arrays (sequence of Tensor): Each array must have the same shape.
         axis (int, optional): The axis in the result array along which the
-            input arrays are stacked. Default: 0.
+            input arrays are stacked. Default: ``0`` .
 
     Returns:
         Tensor, The stacked array has one more dimension than the input
@@ -935,7 +931,7 @@ def stack(arrays, axis=0):
         axes = F.make_range(ndim)
         perm = axes[1:axis+1] + (0,) + axes[axis+1:]
         if _is_shape_empty(shape):
-            return _empty(mstype.float32, shape[1:axis+1] + (shape[0],) + shape[axis+1:])
+            return _empty(mstype.float32, shape[1:axis + 1] + (shape[0],) + shape[axis + 1:])
         return transpose(arrays, perm)
 
     if isinstance(arrays, (list, tuple)):
@@ -943,7 +939,7 @@ def stack(arrays, axis=0):
         ndim = len(shape)
         axis = axis % ndim
         if _is_shape_empty(shape):
-            return _empty(mstype.float32, shape[1:axis+1] + (shape[0],) + shape[axis+1:])
+            return _empty(mstype.float32, shape[1:axis + 1] + (shape[0],) + shape[axis + 1:])
         seq = ()
         for arr in arrays:
             seq += (F.expand_dims(arr, axis),)
@@ -974,7 +970,7 @@ def unique(x, return_inverse=False):
     Args:
         x (Tensor): The input tensor to be processed.
         return_inverse (bool): If `True`, also return the indices of the unique tensor.
-            Default: `False`.
+            Default: ``False`` .
 
     Returns:
         Tensor or tuple of Tensors.
@@ -1064,7 +1060,7 @@ def roll(a, shift, axis=None):
             for all given axes.
         axis (Union[int, tuple(int)], optional): Axis or axes along which elements
             are shifted. By default, the array is flattened before shifting, after
-            which the original shape is restored. Default: None.
+            which the original shape is restored. Default: ``None`` .
 
     Returns:
         Tensor, with the same shape as a.
@@ -1109,14 +1105,17 @@ def roll(a, shift, axis=None):
     return a
 
 
-@constexpr
+@_primexpr
 def _get_moved_perm(ndim, source, destination):
     """
     Helper function for moveaxis, returns permutation after moving axes
     from source to destination.
     """
     dest_sorted_idx = [i for i, _ in sorted(enumerate(destination), key=operator.itemgetter(1))]
-    axes_orig = [i for i in range(ndim) if i not in source]
+    axes_orig = mutable([], True)
+    for i in range(ndim):
+        if i not in source:
+            axes_orig = axes_orig + [i]
 
     k = 0
     m = 0
@@ -1135,7 +1134,7 @@ def _get_moved_perm(ndim, source, destination):
     return tuple(perm)
 
 
-@constexpr
+@_primexpr
 def _get_moved_shape(shape, perm):
     """
     Helper function for moveaxis, returns the permuated shape after
@@ -1245,7 +1244,7 @@ def tile(a, reps):
     return F.tile(a, reps)
 
 
-@constexpr
+@_primexpr
 def _check_can_broadcast_to(shape, target_shape):
     """Determines if shape can be broadcast to target_shape."""
     ndim = len(shape)
@@ -1284,9 +1283,11 @@ def broadcast_to(array, shape):
         [1 2 3]
         [1 2 3]]
     """
+    def _check(shape_a, shape):
+        if not _check_can_broadcast_to(shape_a, shape):
+            _raise_value_error('cannot broadcast with ', shape)
     shape_a = F.shape(array)
-    if not _check_can_broadcast_to(shape_a, shape):
-        return _raise_value_error('cannot broadcast with ', shape)
+    _check(shape_a, shape)
     return _broadcast_to_shape(array, shape)
 
 
@@ -1355,7 +1356,7 @@ def array_split(x, indices_or_sections, axis=0):
             three sub-tensors :math:`x[:2]`, :math:`x[2:3]`and :math:`x[3:]`.
             If an index exceeds the dimension of the array along axis,
             an empty sub-array is returned correspondingly.
-        axis (int): The axis along which to split. Default: 0.
+        axis (int): The axis along which to split. Default: ``0`` .
 
     Returns:
         A list of sub-tensors.
@@ -1400,7 +1401,7 @@ def split(x, indices_or_sections, axis=0):
             three sub-tensors :math:`x[:2]`, :math:`x[2:3]`and :math:`x[3:]`.
             If an index exceeds the dimension of the array along axis,
             an empty sub-array is returned correspondingly.
-        axis (int): The axis along which to split. Default: 0.
+        axis (int): The axis along which to split. Default: ``0`` .
 
     Returns:
         A tuple of sub-tensors.
@@ -1432,29 +1433,29 @@ def _split(x, indices_or_sections, opname, axis=0):
     """Splits a tensor based on ``np.split`` or ``np.array_split``."""
     _check_input_tensor(x)
     _ = _check_axis_type(axis, True, False, False)
-    axis = _canonicalize_axis(axis, x.ndim)
+    axis_new = _canonicalize_axis(axis, x.ndim)
     res = None
     arr_shape = x.shape
-    length_along_dim = arr_shape[axis]
+    length_along_dim = arr_shape[axis_new]
     if isinstance(indices_or_sections, int):
         if indices_or_sections > length_along_dim:
             _raise_value_error("empty tensor encountered.")
         if opname == "split" or length_along_dim % indices_or_sections == 0:
-            res = P.Split(axis, indices_or_sections)(x)
+            res = P.Split(axis_new, indices_or_sections)(x)
         else:
             num_long_tensor = length_along_dim % indices_or_sections
             num_short_tensor = indices_or_sections - num_long_tensor
             length1 = num_long_tensor * (length_along_dim // indices_or_sections + 1)
             length2 = length_along_dim - length1
             start1 = _list_comprehensions(F.rank(x), 0, True)
-            size1 = _tuple_setitem(arr_shape, axis, length1)
-            start2 = _tuple_setitem(start1, axis, length1)
-            size2 = _tuple_setitem(arr_shape, axis, length2)
-            res = P.Split(axis, num_long_tensor)(F.tensor_slice(x, start1, size1)) + \
-                P.Split(axis, num_short_tensor)(F.tensor_slice(x, start2, size2))
+            size1 = _tuple_setitem(arr_shape, axis_new, length1)
+            start2 = _tuple_setitem(start1, axis_new, length1)
+            size2 = _tuple_setitem(arr_shape, axis_new, length2)
+            res = P.Split(axis_new, num_long_tensor)(F.tensor_slice(x, start1, size1)) + \
+                P.Split(axis_new, num_short_tensor)(F.tensor_slice(x, start2, size2))
 
     elif isinstance(indices_or_sections, (list, tuple)) and _check_element_int(indices_or_sections):
-        res = _split_sub_tensors(x, indices_or_sections, axis)
+        res = _split_sub_tensors(x, indices_or_sections, axis_new)
     else:
         _raise_type_error("Argument `indices_or_sections` in `mindspore.numpy.split`\
             should be integer, tuple(int) or list(int), but got", indices_or_sections)
@@ -1625,17 +1626,17 @@ def dsplit(x, indices_or_sections):
     return split(x, indices_or_sections, 2)
 
 
-@constexpr
+@_primexpr
 def _get_flip_start(ndim, shape, axes):
     return tuple([shape[i] - 1 if i in axes else 0 for i in range(ndim)])
 
 
-@constexpr
+@_primexpr
 def _get_flip_end(ndim, shape, axes):
     return tuple([-shape[i] - 1 if i in axes else shape[i] + 1 for i in range(ndim)])
 
 
-@constexpr
+@_primexpr
 def _get_flip_strides(ndim, axes):
     return tuple([-1 if i in axes else 1 for i in range(ndim)])
 
@@ -1809,6 +1810,7 @@ def take_along_axis(arr, indices, axis):
                             _tuple_slice(shape_arr, None, axis), ndim)
     indices = _broadcast_to(indices, _tuple_slice(shape_arr, None, axis + 1) +
                             _tuple_slice(shape_indices, axis + 1, None), shape_arr, ndim)
+    arr = _broadcast_to(arr, shape_arr, indices.shape, ndim)
     return F.gather_d(arr, axis, indices)
 
 
@@ -1859,9 +1861,9 @@ def take(a, indices, axis=None, mode='clip'):
         a (Tensor): Source array with shape `(Ni…, M, Nk…)`.
         indices (Tensor): The indices with shape `(Nj...)` of the values to extract.
         axis (int, optional): The axis over which to select values. By default,
-            the flattened input array is used. Defaults to None.
+            the flattened input array is used. Default: ``None`` .
         mode ('raise', 'wrap', 'clip', optional): Specifies how out-of-bounds
-            indices will behave. Defaults to "clip".
+            indices will behave. Default: ``'clip'`` .
 
             'raise' – raise an error;
 
@@ -1907,7 +1909,7 @@ def repeat(a, repeats, axis=None):
         repeats (int or sequence of ints): The number of repetitions for each element.
             `repeats` is broadcasted to fit the shape of the given axis.
         axis (int, optional): The axis along which to repeat values. By default,
-            use the flattened input array, and return a flat output array. Defaults to None.
+            use the flattened input array, and return a flat output array. Default: ``None`` .
 
     Returns:
         Tensor, output array which has the same shape as `a`, except along the given
@@ -1950,9 +1952,9 @@ def rot90(a, k=1, axes=(0, 1)):
 
     Args:
         a (Tensor): Input tensor of two or more dimensions.
-        k (int): Number of times the tensor is rotated by 90 degrees. Default: 1.
+        k (int): Number of times the tensor is rotated by 90 degrees. Default: ``1`` .
         axes (Union[tuple(int), list(int)]): The tensor is rotated in the plane
-            defined by the axes. Default: `(0, 1)`.
+            defined by the axes. Default: ``(0, 1)`` .
             Axes must be different and with the shape of `(2,)`.
 
     Returns:
@@ -2030,7 +2032,7 @@ def select(condlist, choicelist, default=0):
             from which the output elements are taken. It has to be of the same length as
             `condlist`.
         default (scalar, optional): The element inserted in output when all conditions
-            evaluate to `False`. Defaults to 0.
+            evaluate to `False`. Default: ``0`` .
 
     Returns:
         Tensor, the output at position `m` is the `m-th` element of the array in
@@ -2087,7 +2089,7 @@ def select(condlist, choicelist, default=0):
     return F.reshape(default_slice, (case_size)).astype(dtype)
 
 
-@constexpr
+@_primexpr
 def _get_grid(shape):
     """Returns a grid representing all the indices for an array with the given shape."""
     grids = []
@@ -2207,7 +2209,7 @@ def size(a, axis=None):
 
     Args:
         a (Union[int, float, bool, list, tuple, Tensor]): Input data.
-        axis (int): Axis along which the elements are counted. Default: None.
+        axis (int): Axis along which the elements are counted. Default: ``None``.
             If None, give the total number of elements.
 
     Returns:
@@ -2420,7 +2422,7 @@ def unravel_index(indices, shape, order='C'):
             are indices into the flattened version of an array of dimensions shape.
         shape (tuple of integers): The shape of the array to use for unraveling indices.
         order (Union['C', 'F'], optional): Determines whether the indices should be viewed as
-            indexing in row-major (C-style) or column-major (Fortran-style) order. Defaults to "C".
+            indexing in row-major (C-style) or column-major (Fortran-style) order. Default: ``'C'`` .
 
     Returns:
         Tensor, each array in the tuple has the same shape as the indices array.
@@ -2518,4 +2520,106 @@ def apply_over_axes(func, a, axes):
         res = F.expand_dims(res, axis) if res.ndim != a.ndim else res
         if res.ndim != a.ndim:
             _raise_value_error("function is not returning a tensor of the correct shape")
+    return res
+
+
+def argwhere(a):
+    """
+    Find the indices of Tensor elements that are non-zero, grouped by element.
+
+    Args:
+        a (Union[list, tuple, Tensor]): Input tensor.
+
+    Returns:
+        Tensor. Indices of elements that are non-zero. Indices are grouped by element.
+        This Tensor will have shape :math:`(N, a.ndim)` where N is the number of non-zero items.
+
+    Raises:
+        TypeError: If input `a` is not array_like.
+        ValueError: If dim of `a` equals to 0.
+
+    Supported Platforms:
+        ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> import mindspore.numpy as np
+        >>> x = np.array([[[1, 0], [-5, 0]]])
+        >>> np.argwhere(x)
+        Tensor(shape=[2, 3], dtype=Int64, value=[[0, 0, 0], [0, 1, 0]])
+    """
+    a = _to_tensor(a)
+    return F.argwhere(a)
+
+
+def intersect1d(ar1, ar2, assume_unique=False, return_indices=False):
+    """
+    Find the intersection of two Tensors.
+    Return the sorted, unique values that are in both of the input Tensors.
+
+    Args:
+        ar1 (Union[int, float, bool, list, tuple, Tensor]): Input tensor.
+        ar2 (Union[int, float, bool, list, tuple, Tensor]): Input tensor.
+        assume_unique (bool): If `True`, the input Tensors are assumed to be unique, which can speed up the calculation.
+                              If `True` but `ar1` or `ar2` are not unique,
+                              incorrect results and out-of-bounds indices could result.
+                              Default: ``False``.
+        return_indices (bool): If `True`, the indices which correspond to the intersection of two Tensors are returned.
+                               The first instance of a value is used if there are multiple.
+                               Default: ``False``.
+
+    Returns:
+        Tensor or tuple of Tensors.
+        If `return_indices` is ``False``, return the intersection tensor, otherwise return tuple of tensors.
+
+    Raises:
+        TypeError: If input `ar1` or `ar2` is not array_like.
+        TypeError: If `assume_unique` or `return_indices` is not bool.
+
+    Supported Platforms:
+        ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> import mindspore.numpy as np
+        >>> np.intersect1d([1, 3, 4, 3], [3, 1, 2, 1])
+        Tensor(shape=[2], dtype=Int32, value=[1, 3])
+    """
+    def unique_w_ind(arr):
+        array, sort_indices = arr.ravel().sort()
+        array_type = array.dtype
+        cmp_array1 = F.cat((array, Tensor([0], dtype=array_type)))
+        cmp_array2 = F.cat((Tensor([0], dtype=array_type), array))
+        mask = cmp_array1 != cmp_array2
+        mask[0] = True
+        array = F.masked_select(array, mask[:-1])
+        ind = F.masked_select(sort_indices, mask[:-1])
+        return array, ind
+
+    if not isinstance(assume_unique, bool) or not isinstance(return_indices, bool):
+        _raise_type_error("assume_unique or return_indices is not bool type.")
+    ar1, ar2 = _to_tensor(ar1, ar2)
+    ind1 = F.fill(mstype.int32, (ar1.size,), -1)
+    ind2 = F.fill(mstype.int32, (ar2.size,), -1)
+    if not assume_unique:
+        if return_indices:
+            array1, ind1 = unique_w_ind(ar1)
+            array2, ind2 = unique_w_ind(ar2)
+        else:
+            array1 = F.unique(ar1)[0]
+            array2 = F.unique(ar2)[0]
+    else:
+        array1 = ar1.ravel()
+        array2 = ar2.ravel()
+    concat_array = concatenate((array1, array2))
+    concat_array, concat_sort_indices = concat_array.sort()
+
+    mask_res = concat_array[1:] == concat_array[:-1]
+    res = F.masked_select(concat_array[1:], mask_res)
+
+    if return_indices:
+        ar1_indices = F.masked_select(concat_sort_indices[:-1], mask_res)
+        ar2_indices = F.masked_select(concat_sort_indices[1:], mask_res) - array1.size
+        if not assume_unique:
+            ar1_indices = ind1.index_select(0, ar1_indices)
+            ar2_indices = ind2.index_select(0, ar2_indices)
+        return res, ar1_indices, ar2_indices
     return res

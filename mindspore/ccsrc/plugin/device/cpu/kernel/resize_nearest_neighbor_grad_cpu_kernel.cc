@@ -17,7 +17,7 @@
 #include "plugin/device/cpu/kernel/resize_nearest_neighbor_grad_cpu_kernel.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 #include "mindspore/core/ops/grad/resize_nearest_neighbor_grad.h"
-#include "kernel/common_utils.h"
+#include "kernel/ops_utils.h"
 
 namespace mindspore {
 namespace kernel {
@@ -73,8 +73,8 @@ int ResizeNearestNeighborGradCpuKernelMod::Resize(const BaseOperatorPtr &base_op
   channel_ = input_shape[1];
   in_height_ = input_shape[2];
   in_width_ = input_shape[3];
-  out_height_ = LongToSize(output_size[2]);
-  out_width_ = LongToSize(output_size[3]);
+  out_height_ = LongToSize(output_size[kIndex2]);
+  out_width_ = LongToSize(output_size[kIndex3]);
   height_scale_ = Scaling(out_height_, in_height_, align_corners_);
   width_scale_ = Scaling(out_width_, in_width_, align_corners_);
   return KRET_OK;

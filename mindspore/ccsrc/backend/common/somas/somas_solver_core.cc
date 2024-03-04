@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -124,6 +124,7 @@ void SomasSolverCore::BuildBlocks() {
   uint64_t tensors_block_count = 0;
   for (auto tensor : tensors_) {
     SomasSolverTensorDescPtr pTensor = tensor.second;
+    MS_EXCEPTION_IF_NULL(pTensor);
     if (pTensor->blocked_) {
       continue;
     }

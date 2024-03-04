@@ -59,7 +59,8 @@ bool ReluV2GpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, con
   MS_ERROR_IF_NULL_W_RET_VAL(y, false);
   auto mask = GetDeviceAddress<uint32_t>(outputs, 1);
   MS_ERROR_IF_NULL_W_RET_VAL(mask, false);
-  ReluV2(element_num_, x, y, mask, reinterpret_cast<cudaStream_t>(stream_ptr));
+  auto status = ReluV2(element_num_, x, y, mask, reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -80,6 +81,12 @@ std::vector<std::pair<KernelAttr, ReluV2GpuKernelMod::ReLUV2FwLaunchFunc>> ReluV
    &ReluV2GpuKernelMod::LaunchKernel<int8_t>},
   {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeUInt32),
    &ReluV2GpuKernelMod::LaunchKernel<uint8_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeUInt16).AddOutputAttr(kNumberTypeUInt16).AddOutputAttr(kNumberTypeUInt32),
+   &ReluV2GpuKernelMod::LaunchKernel<uint16_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeUInt32),
+   &ReluV2GpuKernelMod::LaunchKernel<uint32_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeUInt64).AddOutputAttr(kNumberTypeUInt64).AddOutputAttr(kNumberTypeUInt32),
+   &ReluV2GpuKernelMod::LaunchKernel<uint64_t>},
 };
 
 std::vector<KernelAttr> ReluV2GpuKernelMod::GetOpSupport() {

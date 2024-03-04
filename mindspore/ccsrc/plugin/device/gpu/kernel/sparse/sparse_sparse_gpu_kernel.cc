@@ -48,8 +48,8 @@ bool SparseSparseGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const 
   }
   kernel_func_ = func_list_[index].second;
   is_need_retrieve_output_shape_ = true;
-  indices_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kSparseSparseIndex0).first);
-  values_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kSparseSparseIndex1).first);
+  indices_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kSparseSparseIndex0).dtype);
+  values_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kSparseSparseIndex1).dtype);
   return true;
 }
 
@@ -63,7 +63,6 @@ int SparseSparseGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const
     }
   }
   ResetResource();
-  outputs_ = outputs;
   auto a_indices_shape = inputs.at(kSparseSparseIndex0)->GetShapeVector();
   auto a_values_shape = inputs.at(kSparseSparseIndex1)->GetShapeVector();
   auto dense_shape = inputs.at(kSparseSparseIndex2)->GetShapeVector();
@@ -148,27 +147,37 @@ bool SparseSparseGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &input
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(&x2_shape[0], dense_shape_ptr2, rank_ * sizeof(int64_t), cudaMemcpyDeviceToHost, cuda_stream_),
     "For SparseSparseOperators, cudaMemcpyAsync failed.");
+  if (cudaStreamQuery(cuda_stream_) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(cuda_stream_),
+                                       "For 'SparseSparseOperators', cuda Stream Sync Failed.");
+  }
   for (int64_t n = 0; n < rank_; n++) {
     if (x1_shape[n] != x2_shape[n]) {
       MS_EXCEPTION(ValueError) << "For '" << kernel_name_ << "', operands' shapes do not match.";
     }
   }
+  cudaError_t status = cudaErrorNotReady;
   if (kernel_name_ == "SparseSparseMaximum") {
-    SparseSparseMaximum(a_indices_ptr, a_values_ptr, b_indices_ptr, b_values_ptr, sum_indices_ptr, sum_values_ptr,
-                        ab_status_ptr, sum_ptr, a_indices_num_, b_indices_num_, rank_, cuda_stream_, device_id_,
-                        ab_status_ptr1, ab_status_ptr2);
+    status = SparseSparseMaximum(a_indices_ptr, a_values_ptr, b_indices_ptr, b_values_ptr, sum_indices_ptr,
+                                 sum_values_ptr, ab_status_ptr, sum_ptr, a_indices_num_, b_indices_num_, rank_,
+                                 cuda_stream_, device_id_, ab_status_ptr1, ab_status_ptr2);
   } else {
-    SparseSparseMinimum(a_indices_ptr, a_values_ptr, b_indices_ptr, b_values_ptr, sum_indices_ptr, sum_values_ptr,
-                        ab_status_ptr, sum_ptr, a_indices_num_, b_indices_num_, rank_, cuda_stream_, device_id_,
-                        ab_status_ptr1, ab_status_ptr2);
+    status = SparseSparseMinimum(a_indices_ptr, a_values_ptr, b_indices_ptr, b_values_ptr, sum_indices_ptr,
+                                 sum_values_ptr, ab_status_ptr, sum_ptr, a_indices_num_, b_indices_num_, rank_,
+                                 cuda_stream_, device_id_, ab_status_ptr1, ab_status_ptr2);
   }
+  CHECK_CUDA_STATUS(status, kernel_name_);
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(&real_output_size_, sum_ptr, sizeof(int64_t), cudaMemcpyDeviceToHost, cuda_stream_),
     "For SparseSparseOperators, failed to cudaMemset.");
+  if (cudaStreamQuery(cuda_stream_) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(cuda_stream_),
+                                       "For 'SparseSparseOperators', cuda Stream Sync Failed.");
+  }
   return true;
 }
 
-void SparseSparseGpuKernelMod::SyncData() {
+void SparseSparseGpuKernelMod::SyncOutputShape() {
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(cuda_stream_),
                                      "For SparseSparseOperators, cudaStreamSynchronize failed.");
   std::vector<int64_t> sum_indices_shape = {real_output_size_, static_cast<int64_t>(rank_)};

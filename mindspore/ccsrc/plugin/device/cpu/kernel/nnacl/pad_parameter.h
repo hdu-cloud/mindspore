@@ -13,8 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_PAD_PARAMETER_H_
-#define MINDSPORE_NNACL_PAD_PARAMETER_H_
+#ifndef NNACL_PAD_PARAMETER_H_
+#define NNACL_PAD_PARAMETER_H_
 
 #include "nnacl/op_base.h"
 
@@ -28,24 +28,11 @@ typedef struct PadQuantArg {
 } PadQuantArg;
 
 typedef struct PadParameter {
-  // Primitive parameter
   OpParameter op_parameter_;
   int paddings_[MAX_PAD_SIZE];
   int pad_mode_;
   float constant_value_;
-  // shape correlative
   int padding_length;
-  // other parameter
-  int in_strides[DEFAULT_PAD_NDIMS];
-  int out_strides[DEFAULT_PAD_NDIMS];
-  int mirror_offset_;
-  PadQuantArg pad_quant_arg_;
 } PadParameter;
 
-typedef struct MirrorPadBlock {
-  int out_offset_;
-  int out_stride_[DEFAULT_PAD_NDIMS];
-  int size_[DEFAULT_PAD_NDIMS];
-} MirrorPadBlock;
-
-#endif  // MINDSPORE_NNACL_PAD_PARAMETER_H_
+#endif  // NNACL_PAD_PARAMETER_H_

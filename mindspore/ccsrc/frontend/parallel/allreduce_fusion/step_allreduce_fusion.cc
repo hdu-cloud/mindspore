@@ -30,7 +30,6 @@ namespace mindspore {
 namespace parallel {
 bool StepAllreduceFusion(const FuncGraphPtr &root, const opt::OptimizerPtr &optimizer) {
   MS_EXCEPTION_IF_NULL(root);
-  MS_EXCEPTION_IF_NULL(optimizer);
   MS_EXCEPTION_IF_NULL(ParallelContext::GetInstance());
   bool enable_all_reduce_fusion = ParallelContext::GetInstance()->enable_all_reduce_fusion();
   bool enable_all_gather_fusion = ParallelContext::GetInstance()->enable_all_gather_fusion();
@@ -50,17 +49,27 @@ bool StepAllreduceFusion(const FuncGraphPtr &root, const opt::OptimizerPtr &opti
 #else
   struct timeval start_time {
     0
-  }, end_time{0};
+  };
+  struct timeval end_time {
+    0
+  };
   (void)gettimeofday(&start_time, nullptr);
 #endif
   MS_LOG(INFO) << "Now entering comm ops (allreduce, allgather, reducescatter) fusion by size, and fusion before will "
                   "be overlapped!";
   DumpGraph(root, std::string(ALLREDUCE_FUSION_BEGIN));
+  FuncGraphManagerPtr manager;
+  pipeline::ResourceBasePtr res;
+  if (optimizer == nullptr) {
+    manager = root->manager();
+    res = std::make_shared<pipeline::Resource>();
+    res->set_manager(manager);
+  } else {
+    res = optimizer->resource();
+    MS_EXCEPTION_IF_NULL(res);
+    manager = res->manager();
+  }
 
-  pipeline::ResourceBasePtr res = optimizer->resource();
-  MS_EXCEPTION_IF_NULL(res);
-
-  FuncGraphManagerPtr manager = res->manager();
   MS_EXCEPTION_IF_NULL(manager);
   CNodePtr ret = root->get_return();
   MS_EXCEPTION_IF_NULL(ret);

@@ -20,15 +20,15 @@
 #include <vector>
 #include <string>
 #include <tuple>
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/optimizer.h"
 #include "plugin/device/ascend/optimizer/ascend_helper.h"
 
 namespace mindspore {
 namespace opt {
 constexpr int64_t kConcatInputDivisor = 63;
 
-using OutputInfo = std::tuple<std::vector<TypeId>, std::vector<ShapeVector>, std::vector<std::vector<int64_t>>,
-                              std::vector<std::vector<int64_t>>, std::vector<std::string>, std::vector<TypeId>>;
+using OutputInfo =
+  std::tuple<std::vector<TypeId>, std::vector<ShapeVector>, std::vector<std::string>, std::vector<TypeId>>;
 
 class ConcatOutputsForAllGather : public PatternProcessPass {
  public:

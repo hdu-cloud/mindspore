@@ -23,21 +23,38 @@
 #include <memory>
 #include <utility>
 #include "runtime/graph_scheduler/actor/kernel_actor.h"
-#include "distributed/cluster/cluster_context.h"
-#include "distributed/rpc/tcp/tcp_client.h"
-#include "distributed/rpc/tcp/tcp_server.h"
+#include "include/backend/distributed/cluster/cluster_context.h"
+#include "distributed/cluster/actor_route_table_proxy.h"
+#include "include/backend/distributed/rpc/tcp/tcp_client.h"
+#include "include/backend/distributed/rpc/tcp/tcp_server.h"
+#ifdef ENABLE_RDMA
+#include "include/backend/distributed/rpc/rdma/rdma_client.h"
+#include "include/backend/distributed/rpc/rdma/rdma_server.h"
+#endif
 #include "proto/rpc.pb.h"
 #include "proto/topology.pb.h"
 
 namespace mindspore {
 namespace runtime {
+using distributed::kEnableRDMA;
+using distributed::kMaxRetryPortNum;
+using distributed::kRDMADevName;
+using distributed::kRDMAIP;
+using distributed::kRemoteFuncId;
 using distributed::cluster::ActorRouteTableProxy;
 using distributed::cluster::ActorRouteTableProxyPtr;
 using distributed::cluster::ClusterContext;
 using distributed::cluster::topology::ActorAddress;
+using distributed::rpc::RPCClientBase;
+using distributed::rpc::RPCServerBase;
 using distributed::rpc::TCPClient;
 using distributed::rpc::TCPServer;
 using mindspore::device::KernelInfo;
+#ifdef ENABLE_RDMA
+using distributed::rpc::kURPCInited;
+using distributed::rpc::RDMAClient;
+using distributed::rpc::RDMAServer;
+#endif
 
 // The inter-process edge mark between two nodes.
 constexpr char kInterProcessEdgeMark[] = "->";
@@ -72,8 +89,11 @@ class RpcActor : public KernelActor {
   // each sinked loop is done in case rpc actors visit the invalid op context.
   virtual void ResetOpcontext() {}
 
-  // Update rpc actor status, for example update ready status of mux recv actors.
+  // Update rpc actor status, for example update ready status of recv actors.
   virtual void UpdateStatus() {}
+
+  // Flush data for rpc actor, for example flush sent data for send actors.
+  virtual void FlushData() {}
 
   // Set the actor route proxy for rpc actors.
   void set_actor_route_table_proxy(const ActorRouteTableProxyPtr &proxy);
@@ -84,6 +104,9 @@ class RpcActor : public KernelActor {
   // Set some info which will be used for rpc routing.
   virtual void SetRouteInfo(uint32_t peer_rank, const std::string &peer_role, const std::string &src_node_name,
                             const std::string &dst_node_name) {}
+
+  // Clear resource of rpc actor.
+  virtual void Clear() {}
 
   /**
    * @description: Stop rpc communication to avoid dead lock after exception is thrown.

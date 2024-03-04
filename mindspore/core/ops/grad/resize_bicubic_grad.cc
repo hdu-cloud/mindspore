@@ -14,25 +14,44 @@
  * limitations under the License.
  */
 #include "ops/grad/resize_bicubic_grad.h"
-#include <string>
+
 #include <algorithm>
 #include <memory>
 #include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/image_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
-constexpr size_t index3 = 3;
-constexpr size_t num4 = 4;
+constexpr int64_t bicubic_grad_input_num = 2;
+constexpr int64_t num4 = 4;
+
 abstract::ShapePtr ResizeBicubicGradInferShape(const PrimitivePtr &primitive,
                                                const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, bicubic_grad_input_num, prim_name);
+  for (auto &item : input_args) {
+    MS_EXCEPTION_IF_NULL(item);
+  }
 
   auto grads_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
   auto original_image_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->BuildShape())[kShape];
@@ -42,21 +61,23 @@ abstract::ShapePtr ResizeBicubicGradInferShape(const PrimitivePtr &primitive,
   auto is_dynamic = std::any_of(all_shapes.begin(), all_shapes.end(), IsDynamic);
 
   if (!is_dynamic_rank) {
-    (void)CheckAndConvertUtils::CheckInteger("grads rank", grads_shape.size(), kEqual, num4, prim_name);
-    (void)CheckAndConvertUtils::CheckInteger("original image rank", original_image_shape.size(), kEqual, num4,
-                                             prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("grads rank", SizeToLong(grads_shape.size()), kEqual, num4, prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("original image rank", SizeToLong(original_image_shape.size()), kEqual,
+                                             num4, prim_name);
   }
   if (!is_dynamic) {
-    if (grads_shape[0] != original_image_shape[0]) {
-      MS_EXCEPTION(ValueError) << "For '" << primitive->name() << "', the shape of grads_shape[0] is " << grads_shape[0]
-                               << ", but the shape of original_image_shape[0] is " << original_image_shape[0]
-                               << ". The first dimension of the shape of grads_shape "
+    if (grads_shape[kInputIndex0] != original_image_shape[kInputIndex0]) {
+      MS_EXCEPTION(ValueError) << "For '" << prim_name << "', the shape of grads_shape[0] is "
+                               << grads_shape[kInputIndex0] << ", but the shape of original_image_shape[0] is "
+                               << original_image_shape[kInputIndex0]
+                               << ". The batch dimension of the shape of grads_shape "
                                << "must be equal to that of original_image_shape.";
     }
-    if (grads_shape[index3] != original_image_shape[index3]) {
-      MS_EXCEPTION(ValueError) << "For '" << primitive->name() << "', the shape of grads_shape[3] is "
-                               << grads_shape[index3] << ", but the shape of original_image_shape[3] is "
-                               << original_image_shape[index3] << ". The third dimension of the shape of grads_shape "
+    if (grads_shape[kInputIndex1] != original_image_shape[kInputIndex1]) {
+      MS_EXCEPTION(ValueError) << "For '" << prim_name << "', the shape of grads_shape[1] is "
+                               << grads_shape[kInputIndex1] << ", but the shape of original_image_shape[1] is "
+                               << original_image_shape[kInputIndex1]
+                               << ". The channel dimension of the shape of grads_shape "
                                << "must be equal to that of original_image_shape.";
     }
   }
@@ -65,18 +86,23 @@ abstract::ShapePtr ResizeBicubicGradInferShape(const PrimitivePtr &primitive,
 }
 
 TypePtr ResizeBicubicGradInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
-  if (std::any_of(input_args.begin(), input_args.end(), [](const AbstractBasePtr &arg) { return arg == nullptr; })) {
-    MS_LOG(EXCEPTION) << "nullptr";
+  MS_EXCEPTION_IF_NULL(primitive);
+  auto prim_name = primitive->name();
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, bicubic_grad_input_num, prim_name);
+  for (auto &item : input_args) {
+    MS_EXCEPTION_IF_NULL(item);
   }
-  const std::set<TypePtr> valid0_types = {kFloat32, kFloat64};
-  const std::set<TypePtr> valid1_types = {kFloat32, kFloat64};
-  (void)CheckAndConvertUtils::CheckTensorTypeValid("grads_type", input_args[0]->BuildType(), valid0_types,
-                                                   primitive->name());
-  (void)CheckAndConvertUtils::CheckTensorTypeValid("original_image_type", input_args[1]->BuildType(), valid1_types,
-                                                   primitive->name());
-  return input_args[1]->BuildType();
+
+  auto grads_type = input_args[0]->BuildType();
+  auto original_image_type = input_args[1]->BuildType();
+  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64};
+  const std::map<std::string, TypePtr> types = {{"grads_type", grads_type},
+                                                {"original_image_type", original_image_type}};
+  (void)CheckAndConvertUtils::CheckTensorTypeSame(types, valid_types, prim_name);
+  return grads_type;
 }
 }  // namespace
+
 MIND_API_OPERATOR_IMPL(ResizeBicubicGrad, BaseOperator);
 void ResizeBicubicGrad::set_align_corners(const bool align_corners) {
   (void)this->AddAttr("align_corners", api::MakeValue(align_corners));
@@ -101,14 +127,29 @@ void ResizeBicubicGrad::Init(const bool align_corners, const bool half_pixel_cen
 
 AbstractBasePtr ResizeBicubicGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                        const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  const int64_t input_num = 2;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
   auto infer_type = ResizeBicubicGradInferType(primitive, input_args);
   auto infer_shape = ResizeBicubicGradInferShape(primitive, input_args);
-  return abstract::MakeAbstract(infer_shape, infer_type);
+  return abstract::MakeAbstractTensor(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(ResizeBicubicGrad, prim::kPrimResizeBicubicGrad, ResizeBicubicGradInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGResizeBicubicGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ResizeBicubicGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ResizeBicubicGradInferType(primitive, input_args);
+  }
+
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ResizeBicubicGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ResizeBicubicGrad, prim::kPrimResizeBicubicGrad, AGResizeBicubicGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

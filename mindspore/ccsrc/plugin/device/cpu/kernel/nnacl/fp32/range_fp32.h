@@ -14,37 +14,21 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_RANGE_H_
-#define MINDSPORE_NNACL_RANGE_H_
+#ifndef NNACL_FP32_RANGE_FP32_H_
+#define NNACL_FP32_RANGE_FP32_H_
 
 #include "nnacl/op_base.h"
 
-typedef struct RangeParameter {
-  // Primitive parameter
-  OpParameter op_parameter_;
-  int dType_;
-  int start_;
-  int limit_;
-  int delta_;
-} RangeParameter;
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-inline void Range(float *output_ptr, float start, float delta, int nums) {
+void Range(float *output_ptr, float start, float delta, int nums) {
   for (int i = 0; i < nums; ++i, start += delta) {
     output_ptr[i] = start;
   }
 }
 
-inline void RangeInt(int *output_ptr, int start, int delta, int nums) {
+void RangeInt(int32_t *output_ptr, int start, int delta, int nums) {
   for (int i = 0; i < nums; ++i, start += delta) {
     output_ptr[i] = start;
   }
 }
 
-#ifdef __cplusplus
-}
-#endif
-
-#endif  // MINDSPORE_NNACL_RANGE_H_
+#endif  // NNACL_FP32_RANGE_FP32_H_

@@ -17,7 +17,7 @@ import pytest
 import mindspore.context as context
 import mindspore.nn as nn
 from mindspore import Tensor
-from mindspore.ops.operations.random_ops import RandomGammaGrad
+from mindspore.ops.operations._grad_ops import RandomGammaGrad
 
 
 class RandomGammaGradNet(nn.Cell):
@@ -29,7 +29,7 @@ class RandomGammaGradNet(nn.Cell):
         return self.random_gamma_grad(alpha, sample)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_random_gamma_grad_graph():
@@ -50,7 +50,7 @@ def test_random_gamma_grad_graph():
     assert output.shape == out_expect.shape
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_random_gamma_grad_pynative():

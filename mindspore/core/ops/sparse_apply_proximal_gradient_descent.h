@@ -22,8 +22,8 @@
 #include <string>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 #include "utils/check_convert_utils.h"
 
 namespace mindspore {
@@ -41,9 +41,8 @@ class MIND_API SparseApplyProximalGradientDescent : public BaseOperator {
   bool get_use_locking() const;
 };
 
-abstract::AbstractBasePtr SparseApplyProximalGradientDescentInfer(const abstract::AnalysisEnginePtr &,
-                                                                  const PrimitivePtr &primitive,
-                                                                  const std::vector<AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr SparseApplyProximalGradientDescentInfer(
+  const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args);
 using kPrimSparseApplyProximalGradientDescentPtr = std::shared_ptr<SparseApplyProximalGradientDescent>;
 }  // namespace ops
 }  // namespace mindspore

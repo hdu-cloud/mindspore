@@ -20,10 +20,11 @@ OUTPUT_PATH="${AKG_DIR}/output"
 usage()
 {
     echo "Usage:"
-    echo "bash build.sh [-e cpu|gpu|ascend] [-j[n]] [-t on|off] [-o] [-u]"
+    echo "bash build.sh [-e cpu|gpu|ascend|all] [-j[n]] [-t on|off] [-o] [-u]"
     echo ""
     echo "Options:"
-    echo "    -e Hardware environment: cpu, gpu or ascend"
+    echo "    -d Debug mode"
+    echo "    -e Hardware environment: cpu, gpu, ascend or all"
     echo "    -j[n] Set the threads when building (Default: -j8)"
     echo "    -t Unit test: on or off (Default: off)"
     echo "    -o Output .o file directory"
@@ -41,7 +42,7 @@ mk_new_dir()
     mkdir -pv "${create_dir}"
 }
 
-write_checksum()
+write_checksum_tar()
 {
     cd "$OUTPUT_PATH" || exit
     PACKAGE_LIST=$(ls lib*.tar.gz) || exit
@@ -58,8 +59,11 @@ check_binary_file()
   do
     file_lines=`cat "${cur_file}" | wc -l`
     if [ ${file_lines} -eq 3 ]; then
-      echo "-- Warning: ${cur_file} is not a valid binary file."
-      return 1
+        check_sha=`cat ${cur_file} | grep "oid sha256"`
+        if [ $? -eq 0 ]; then
+            echo "-- Warning: ${cur_file} is not a valid binary file."
+            return 1
+        fi
     fi
   done
   return 0
@@ -80,13 +84,15 @@ do
     case "${opt}" in
         e)
             if [[ "${OPTARG}" == "gpu" ]]; then
-                CMAKE_ARGS="${CMAKE_ARGS} -DUSE_CUDA=ON -DUSE_LLVM=ON -DUSE_RPC=ON"
+                CMAKE_ARGS="${CMAKE_ARGS} -DUSE_CUDA=ON -DUSE_LLVM=ON"
             elif [[ "${OPTARG}" == "ascend" ]]; then
-                CMAKE_ARGS="${CMAKE_ARGS} -DUSE_CCE_RT=1"
+                CMAKE_ARGS="${CMAKE_ARGS} -DENABLE_D=ON -DUSE_LLVM=ON"
             elif [[ "${OPTARG}" == "cpu" ]]; then
                 # AKG requires LLVM on CPU, the optimal version is 12.xx.xx.
                 # if not found in the environment, it will find another existing version to use.
-                CMAKE_ARGS="${CMAKE_ARGS} -DUSE_LLVM=ON -DUSE_RPC=ON"
+                CMAKE_ARGS="${CMAKE_ARGS} -DUSE_LLVM=ON"
+            elif [[ "${OPTARG}" == "all" ]]; then
+                CMAKE_ARGS="${CMAKE_ARGS} -DUSE_CUDA=ON -DENABLE_D=ON -DUSE_LLVM=ON"
             else
                 echo "Unknown parameter ${OPTARG}!"
                 usage
@@ -128,17 +134,21 @@ do
               if [ $? -ne 0 ]; then
                 echo "-- Warning: git lfs not found, you can perform the following steps:"
                 echo "            1. Install git lfs, refer https://github.com/git-lfs/git-lfs/wiki/installation"
-                echo "            2. After installing git lfs, executing the following commands:"
+                echo "            2. After installing git lfs, do not forget executing the following command:"
+                echo "               git lfs install"
+                echo "            3. Download the files tracked by git lfs, executing the following commands:"
+                echo "               cd ${AKG_DIR}"
+                echo "               git lfs pull"
+                echo "            4. Re-compile the source codes"
+                exit 1
+              else
+                echo "-- Warning: git lfs found, but lfs files are not downloaded, you can perform the following steps:"
+                echo "            1. After installing git lfs, do not forget executing the following command:"
+                echo "               git lfs install"
+                echo "            2. Download the files tracked by git lfs, executing the following commands:"
                 echo "               cd ${AKG_DIR}"
                 echo "               git lfs pull"
                 echo "            3. Re-compile the source codes"
-                exit 1
-              else
-                echo "-- Warning: git lfs found, but lfs files is not downloaded, you can perform the following steps:"
-                echo "            1. Download files tracked by git lfs, executing the following commands:"
-                echo "               cd ${AKG_DIR}"
-                echo "               git lfs pull"
-                echo "            2. Re-compile the source codes"
                 exit 1
               fi
             fi
@@ -154,8 +164,8 @@ done
 echo "CMAKE_ARGS: ${CMAKE_ARGS}"
 
 # Create directories
-mk_new_dir "${BUILD_DIR}"
-mk_new_dir "${OUTPUT_PATH}"
+mkdir -pv "${BUILD_DIR}"
+mkdir -pv "${OUTPUT_PATH}"
 
 echo "---------------- AKG: build start ----------------"
 
@@ -175,7 +185,8 @@ cp libakg.so ${OUTPUT_PATH}
 cd ${OUTPUT_PATH}
 tar czvf libakg.tar.gz libakg.so
 rm -rf libakg.so
-write_checksum
+write_checksum_tar
+bash ${AKG_DIR}/scripts/package.sh
 
 cd -
 echo "---------------- AKG: build end ----------------"

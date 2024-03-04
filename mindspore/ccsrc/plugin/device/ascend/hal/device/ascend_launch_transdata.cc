@@ -19,27 +19,15 @@
 #include <algorithm>
 #include "abstract/utils.h"
 #include "backend/common/session/single_kernel_graph.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_kernel_compile.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_json/single_tbe_json_creator.h"
+#include "acl/acl_rt.h"
+#include "ops/array_op_name.h"
+#include "plugin/device/ascend/optimizer/ascend_helper.h"
 
 namespace mindspore::device::ascend {
-namespace {
-bool TbeCheckSupported(const CNodePtr &transdata_node) {
-  MS_EXCEPTION_IF_NULL(transdata_node);
-  auto &build_manager = kernel::ascend::TbeKernelCompileManager::GetInstance();
-  auto json_creator = std::make_shared<kernel::SelectTbeJsonCreator>();
-  MS_EXCEPTION_IF_NULL(json_creator);
-  nlohmann::json kernel_json;
-  auto ret = json_creator->GenJson(transdata_node, &kernel_json);
-  if (!ret) {
-    MS_LOG(EXCEPTION) << "Gen node hash failed. [" << transdata_node->fullname_with_scope() << "]";
-  }
-  ret = build_manager.TbeOpCheckSupported(transdata_node, &kernel_json);
-  return ret;
-}
-}  // namespace
 void AscendLaunchTransData::FreeDeviceMem(void *addr) { AscendLaunchKernel::FreeDeviceMem(addr); }
 
 size_t AscendLaunchTransData::AlignSizeForLaunchKernel(size_t size) {
@@ -80,6 +68,16 @@ void AscendLaunchTransData::LaunchOpKernel() {
   kernel_inputs.push_back(input);
   // obtain kernel outputs
   auto kernel_outputs = ObtainKernelOutputs(kernel_mod_->GetOutputSizeList());
+  if (kernel_type_ == KernelType::AICPU_KERNEL) {
+    // aicpu transdata need to clear output
+    for (auto &out : kernel_outputs) {
+      auto acl_ret = aclrtMemset(out->addr, out->size, 0, out->size);
+      if (acl_ret != ACL_RT_SUCCESS) {
+        MS_LOG(EXCEPTION) << "Clear transdata's output failed, aclrtMemset size = " << out->size
+                          << ", ret = " << acl_ret;
+      }
+    }
+  }
   // obtain kernel workspaces
   auto kernel_workspace = ObtainKernelWorkspaces(kernel_mod_->GetWorkspaceSizeList());
   // launch
@@ -92,6 +90,17 @@ void AscendLaunchTransData::LaunchOpKernel() {
 void AscendLaunchTransData::FreeLaunchDeviceMem() {
   input_addr_ = nullptr;
   FreeOutputAndWorkspaceDeviceMem();
+}
+
+void AscendLaunchTransData::FreeWorkspaceDeviceMem() {
+  input_addr_ = nullptr;
+  for (size_t i = 0; i < workspaces_addr_.size(); ++i) {
+    if (workspaces_addr_[i] != nullptr) {
+      FreeDeviceMem(workspaces_addr_[i]);
+      workspaces_addr_[i] = nullptr;
+    }
+  }
+  workspaces_addr_.clear();
 }
 
 std::shared_ptr<session::KernelGraph> AscendLaunchTransData::ObtainTransDataKernelGraph() {
@@ -118,21 +127,30 @@ void AscendLaunchTransData::ConstructKernelGraphAndSetAttr() {
     // set build info
     auto builder = std::make_shared<kernel::KernelBuildInfo::KernelBuildInfoBuilder>();
     builder->SetKernelType(KernelType::TBE_KERNEL);
+    kernel_type_ = KernelType::TBE_KERNEL;
     std::vector<TypeId> device_type = {dtype_};
+    auto input_format = (src_format_ == kOpFormat_NCHW) ? kOpFormat_DEFAULT : src_format_;
+    auto output_format = (dst_format_ == kOpFormat_NCHW) ? kOpFormat_DEFAULT : dst_format_;
     builder->SetInputsDeviceType(device_type);
     builder->SetOutputsDeviceType(device_type);
-    std::vector<std::string> inputs_format = {src_format_};
-    std::vector<std::string> outputs_format = {dst_format_};
+    std::vector<std::string> inputs_format = {input_format};
+    std::vector<std::string> outputs_format = {output_format};
     builder->SetInputsFormat(inputs_format);
     builder->SetOutputsFormat(outputs_format);
-    AnfAlgo::SetSelectKernelBuildInfo(builder->Build(), transdata_node.get());
+    builder->SetProcessor(kernel::Processor::AICORE);
+    auto select_kernel_build_info = builder->Build();
+    AnfAlgo::SetSelectKernelBuildInfo(select_kernel_build_info, transdata_node.get());
     // set attr
     common::AnfAlgo::SetNodeAttr(kAttrSrcFormat, MakeValue(src_format_), transdata_node);
     common::AnfAlgo::SetNodeAttr(kAttrDstFormat, MakeValue(dst_format_), transdata_node);
     common::AnfAlgo::SetNodeAttr(kAttrGroups, MakeValue(groups_), transdata_node);
     common::AnfAlgo::SetNodeAttr(kAttrFracZGroup, MakeValue(groups_), transdata_node);
-    if (!TbeCheckSupported(transdata_node)) {
+    if (!opt::CheckAICoreSupportedSpec(transdata_node, select_kernel_build_info)) {
+      MS_LOG(DEBUG) << "Set kernel type AICPU of TransData, node: " << transdata_node->fullname_with_scope()
+                    << ", data type: " << TypeIdToString(dtype_) << ", src format: " << src_format_
+                    << ", dst_format: " << dst_format_;
       builder->SetKernelType(KernelType::AICPU_KERNEL);
+      kernel_type_ = KernelType::AICPU_KERNEL;
     }
   }
 }

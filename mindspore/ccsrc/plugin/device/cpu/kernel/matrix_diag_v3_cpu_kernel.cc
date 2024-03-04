@@ -48,7 +48,6 @@ bool MatrixDiagV3CpuKernelMod::Init(const BaseOperatorPtr &base_operator, const 
                                     const std::vector<KernelTensorPtr> &outputs) {
   MS_ERROR_IF_NULL(base_operator);
   kernel_name_ = base_operator->name();
-  MS_LOG(WARNING) << "in new init " << kernel_name_;
   auto op_prim = std::dynamic_pointer_cast<ops::MatrixDiagV3>(base_operator);
   MS_ERROR_IF_NULL(op_prim);
   auto align = op_prim->get_align();
@@ -75,7 +74,6 @@ int MatrixDiagV3CpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const
   if (ret != KRET_OK) {
     return ret;
   }
-  MS_LOG(WARNING) << "in new resize ..";
   diagonal_data_type_ = inputs[kIndex0]->GetDtype();
   auto padding_type = inputs[kIndexPaddingValue]->GetDtype();
   auto output_data_type = outputs[kIndex0]->GetDtype();
@@ -200,6 +198,12 @@ bool MatrixDiagV3CpuKernelMod::DoLaunch(const std::vector<kernel::AddressPtr> &i
   auto *output_data = static_cast<T *>(outputs[0]->addr);
   MS_EXCEPTION_IF_NULL(output_data);
   int64_t elem = 0;
+  size_t num_element = static_cast<size_t>(outputs[0]->size / sizeof(T));
+  size_t input_num_element = static_cast<size_t>(inputs[0]->size / sizeof(T));
+  if (static_cast<size_t>(num_batches_ * num_rows_ * num_cols_) > num_element) {
+    MS_LOG(ERROR) << "For MatrixDiagV3, output buffer size is smaller than expected.";
+    return false;
+  }
   for (int64_t index_array = 0; index_array < num_batches_; index_array++) {
     for (int64_t i = 0; i < num_rows_; i++) {
       for (int64_t j = 0; j < num_cols_; j++) {
@@ -212,6 +216,9 @@ bool MatrixDiagV3CpuKernelMod::DoLaunch(const std::vector<kernel::AddressPtr> &i
         if (lower_diag_index_ <= diag_index && diag_index <= upper_diag_index_) {
           size_t index =
             LongToSize(diag_batch_base_index_ + diag_index_in_input * max_diag_len_ + index_in_the_diagonal);
+          if (index >= input_num_element) {
+            MS_EXCEPTION(ValueError) << "For MatrixDiagV3, the input x shape doesn't match with k value.";
+          }
           output_data[LongToSize(elem)] = diagonal_data[index];
           elem++;
         } else {

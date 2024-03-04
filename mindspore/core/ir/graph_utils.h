@@ -21,7 +21,6 @@
 
 #include <vector>
 #include <functional>
-
 #include "utils/hash_map.h"
 #include "utils/hash_set.h"
 #include "ir/anf.h"
@@ -29,7 +28,7 @@
 #include "ir/scalar.h"
 #include "ir/tensor.h"
 #include "utils/label.h"
-#include "utils/macros.h"
+#include "mindapi/base/macros.h"
 
 namespace mindspore {
 enum IncludeType { FOLLOW, NOFOLLOW, EXCLUDE };
@@ -65,10 +64,11 @@ MS_CORE_API std::vector<AnfNodePtr> DeepScopedGraphSearchWithFilter(const AnfNod
 MS_CORE_API std::vector<AnfNodePtr> TopoSort(const AnfNodePtr &root, const SuccFunc &succ = SuccIncoming,
                                              const IncludeFunc &include = AlwaysInclude);
 
-MS_CORE_API std::vector<CNodePtr> BroadFirstSearchGraphCNodes(const CNodePtr &start);
-std::vector<FuncGraphPtr> BroadFirstSearchGraphUsed(const FuncGraphPtr &root);
+MS_CORE_API std::vector<CNodePtr> BroadFirstSearchGraphCNodes(const CNodePtr &root);
+std::vector<FuncGraphPtr> BroadFirstSearchGraphUsed(const FuncGraphPtr &root,
+                                                    const GraphFilterFunc &filter = GraphFilterFunc());
 
-MS_CORE_API CNodePtr BroadFirstSearchFirstOf(const std::vector<CNodePtr> &starts, const MatchFunc &match_predicate);
+MS_CORE_API CNodePtr BroadFirstSearchFirstOf(const std::vector<CNodePtr> &roots, const MatchFunc &match_predicate);
 
 }  // namespace mindspore
 

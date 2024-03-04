@@ -26,7 +26,6 @@
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
 #include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
 #include "plugin/device/gpu/kernel/kernel_constants.h"
-#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/relu_impl.cuh"
 
 namespace mindspore {
 namespace kernel {
@@ -74,13 +73,14 @@ class ActivationFwdGpuKernelMod : public NativeGpuKernelMod {
   ActivationFunc kernel_func_;
   ShapeVector input_shape_{};
   bool is_null_input_{true};
-  bool is_additional_dtype_{false};
   cudnnHandle_t cudnn_handle_{nullptr};
   cudnnActivationDescriptor_t activation_desc_{nullptr};
   cudnnActivationMode_t mode_{CUDNN_ACTIVATION_SIGMOID};
   cudnnTensorDescriptor_t data_descriptor_{nullptr};
   cudnnDataType_t cudnn_data_type_{CUDNN_DATA_FLOAT};
   void *cuda_stream_{nullptr};
+  TypeId dtype_;
+  size_t elements_{0};  // used only when input dtype_ is Complex<double> or Complex<float>
 };
 }  // namespace kernel
 }  // namespace mindspore

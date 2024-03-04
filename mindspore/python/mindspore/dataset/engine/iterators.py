@@ -1,4 +1,4 @@
-# Copyright 2019-2022 Huawei Technologies Co., Ltd
+# Copyright 2019-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Built-in iterators.
-"""
+"""Built-in iterators"""
 from abc import abstractmethod
+from copy import deepcopy
 import json
 import os
 import signal
@@ -22,8 +22,9 @@ import weakref
 import numpy as np
 
 import mindspore._c_dataengine as cde
-from mindspore.common.tensor import Tensor
+from mindspore.common.tensor import Tensor, np_types
 import mindspore.dataset.engine.offload as offload
+from mindspore.dataset.core.config import get_debug_mode
 
 from mindspore import log as logger
 
@@ -75,8 +76,18 @@ class Iterator:
 
         self._runtime_context = cde.PythonRuntimeContext()
         self._runtime_context.Init()
-        consumer = cde.PythonIteratorConsumer(num_epochs)
-        consumer.Init(self.ir_tree)
+        if dataset.get_init_step() == 0:
+            init_step = 0
+            dataset_size = -1
+        else:
+            init_step = dataset.get_init_step()
+            dataset_size = dataset.get_dataset_size()
+        if get_debug_mode():
+            consumer = cde.PythonPullBasedIteratorConsumer(num_epochs)
+            consumer.Init(self.ir_tree)
+        else:
+            consumer = cde.PythonIteratorConsumer(num_epochs)
+            consumer.Init(self.ir_tree, init_step, dataset_size)
         self._runtime_context.AssignConsumer(consumer)
         self._iterator = self._runtime_context.GetConsumer()
         self._output_numpy = output_numpy
@@ -169,22 +180,58 @@ class Iterator:
             self._col_names = self.__ori_dataset.get_col_names()
         return self._col_names
 
-    def _reset(self, step, epoch):
+    def _reset(self, step, dataset_size):
         """
         Reset the iterator to the given step number and epoch number.
 
         Args:
             step (int): Global step number
-            epoch (int): Global epoch number
+            dataset_size (int): The number of steps that one epoch has.
         """
-        self._iterator.Reset(step, epoch)
+        self._iterator.Reset(step, dataset_size)
+
+    def __convert_python(self, obj, to_numpy):
+        """
+        Attempts to recursively convert a python object to Numpy array(s) or tensor(s).
+
+        Args:
+            obj (any): the python object to be converted
+            to_numpy (bool): If True, convert primitive types to NumPy array. If False, convert to Tensor.
+                             (return the obj if type isn't supported)
+        """
+        if isinstance(obj, (int, float, bool, str, np.ndarray, np.str_, np.bytes_, *np_types)):
+            # error out if array is of unsupported type
+            if isinstance(obj, np.ndarray) and obj.dtype not in np_types and obj.dtype.kind not in ('U', 'S'):
+                new_line = '\n'
+                raise TypeError("A NumPy array of unsupported type detected: {}."
+                                "\nSupported types are: {}.".format(
+                                    obj.dtype, new_line.join(map(str, (*np_types, np.str_, np.bytes_)))))
+            if to_numpy:
+                return np.array(obj, copy=self._do_copy)
+            if self._do_copy:
+                return Tensor(np.asarray(obj))
+            return Tensor.from_numpy(np.asarray(obj))
+        if isinstance(obj, dict):
+            return {key: self.__convert_python(val, to_numpy) for key, val in obj.items()}
+        if isinstance(obj, tuple):
+            return tuple([self.__convert_python(item, to_numpy) for item in obj])
+        if isinstance(obj, list):
+            return [self.__convert_python(item, to_numpy) for item in obj]
+        # if we can't convert it to Tensor, return the object as is
+        if self._do_copy:
+            return deepcopy(obj)
+        return obj
 
     def _transform_md_to_output(self, t):
         if self._output_numpy:
+            if t.type().is_python():
+                return self.__convert_python(t.as_python(), True)
             return t.as_array()
         return self._transform_md_to_tensor(t)
 
     def _transform_md_to_tensor(self, t):
+        if t.type().is_python():
+            return self.__convert_python(t.as_python(), False)
         array = t.as_array()
         if self._do_copy:
             return Tensor(array)

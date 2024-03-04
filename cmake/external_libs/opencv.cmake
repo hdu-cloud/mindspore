@@ -28,7 +28,7 @@ if(ENABLE_GITEE_EULER)
     set(GIT_REPOSITORY "https://gitee.com/src-openeuler/opencv.git")
     set(GIT_TAG "openEuler-22.03-LTS")
     set(SHA256 "d8b00a5440c8e5d275aa5b141f89d69ee196d9dcd2d2032ddd8ef4b04010999a")
-    set(OPENCV_SRC "${TOP_DIR}/build/mindspore/_deps/opencv-src")
+    set(OPENCV_SRC "${CMAKE_BINARY_DIR}/_deps/opencv-src")
     __download_pkg_with_git(opencv ${GIT_REPOSITORY} ${GIT_TAG} ${SHA256})
     execute_process(COMMAND tar -xf ${OPENCV_SRC}/opencv-4.5.2.tar.gz --strip-components 1 -C ${OPENCV_SRC})
 else()
@@ -67,7 +67,10 @@ if(MSVC)
             -DBUILD_JASPER=OFF
             -DCV_TRACE=OFF    # cause memory usage increacing
             PATCHES ${TOP_DIR}/third_party/patch/opencv/libtiff/CVE-2022-0561_and_CVE-2022-0562.patch001
-            PATCHES ${TOP_DIR}/third_party/patch/opencv/libtiff/CVE-2022-0908.patch002)
+            PATCHES ${TOP_DIR}/third_party/patch/opencv/libtiff/CVE-2022-0908.patch002
+            PATCHES ${TOP_DIR}/third_party/patch/opencv/libtiff/CVE-2022-3970.patch
+            PATCHES ${TOP_DIR}/third_party/patch/opencv/libtiff/CVE-2023-3316.patch
+            PATCHES ${TOP_DIR}/third_party/patch/opencv/Fix_Binary.patch)
 elseif(WIN32)
     mindspore_add_pkg(opencv
                 VER 4.5.2
@@ -95,7 +98,10 @@ elseif(WIN32)
                 -DCV_TRACE=OFF    # cause memory usage increacing
                 -DWITH_LAPACK=OFF
                 PATCHES ${TOP_DIR}/third_party/patch/opencv/libtiff/CVE-2022-0561_and_CVE-2022-0562.patch001
-                PATCHES ${TOP_DIR}/third_party/patch/opencv/libtiff/CVE-2022-0908.patch002)
+                PATCHES ${TOP_DIR}/third_party/patch/opencv/libtiff/CVE-2022-0908.patch002
+                PATCHES ${TOP_DIR}/third_party/patch/opencv/libtiff/CVE-2022-3970.patch
+                PATCHES ${TOP_DIR}/third_party/patch/opencv/libtiff/CVE-2023-3316.patch
+                PATCHES ${TOP_DIR}/third_party/patch/opencv/Fix_Binary.patch)
 else()
     mindspore_add_pkg(opencv
                 VER 4.5.2
@@ -121,7 +127,10 @@ else()
                 -DCV_TRACE=OFF    # cause memory usage increacing
                 -DWITH_LAPACK=OFF
                 PATCHES ${TOP_DIR}/third_party/patch/opencv/libtiff/CVE-2022-0561_and_CVE-2022-0562.patch001
-                PATCHES ${TOP_DIR}/third_party/patch/opencv/libtiff/CVE-2022-0908.patch002)
+                PATCHES ${TOP_DIR}/third_party/patch/opencv/libtiff/CVE-2022-0908.patch002
+                PATCHES ${TOP_DIR}/third_party/patch/opencv/libtiff/CVE-2022-3970.patch
+                PATCHES ${TOP_DIR}/third_party/patch/opencv/libtiff/CVE-2023-3316.patch
+                PATCHES ${TOP_DIR}/third_party/patch/opencv/Fix_Binary.patch)
 endif()
 
 if(MSVC)

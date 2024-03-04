@@ -22,16 +22,14 @@
 #include <event2/http_struct.h>
 #include <event2/bufferevent.h>
 #include <event2/bufferevent_ssl.h>
-
 #include <string>
 #include <memory>
 #include <unordered_map>
-
 #include "utils/log_adapter.h"
 #include "ps/core/communicator/http_message_handler.h"
 #include "ps/core/communicator/ssl_http.h"
-#include "ps/constants.h"
-#include "ps/ps_context.h"
+#include "include/backend/distributed/ps/constants.h"
+#include "include/backend/distributed/ps/ps_context.h"
 
 namespace mindspore {
 namespace ps {

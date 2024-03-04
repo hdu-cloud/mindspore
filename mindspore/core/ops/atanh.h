@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_ATANH_H_
 #define MINDSPORE_CORE_OPS_ATANH_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -32,8 +32,8 @@ class MIND_API Atanh : public BaseOperator {
   Atanh() : BaseOperator(kNameAtanh) { InitIOName({"x"}, {"y"}); }
   void Init() const {}
 };
-abstract::AbstractBasePtr AtanhInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                     const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr AtanhInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                              const std::vector<abstract::AbstractBasePtr> &input_args);
 
 using PrimAtanhPtr = std::shared_ptr<Atanh>;
 }  // namespace ops

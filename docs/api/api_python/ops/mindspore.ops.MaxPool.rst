@@ -7,24 +7,28 @@ mindspore.ops.MaxPool
 
     在一个输入Tensor上应用2D max pooling，可被视为2D输入平面。
 
-    通常，输入的shape为 :math:`(N_{in}, C_{in}, H_{in}, W_{in})` ，MaxPool在 :math:`(H_{in}, W_{in})` 维度输出区域最大值。给定 `kernel_size` 为 :math:`(kH,kW)` 和 `stride` ，运算如下：
+    通常，输入的shape为 :math:`(N_{in}, C_{in}, H_{in}, W_{in})` ，MaxPool在 :math:`(H_{in}, W_{in})` 维度输出区域最大值。给定 `kernel_size` 为 :math:`ks = (h_{ker}, w_{ker})` 和 `stride` :math:`s = (s_0, s_1)` ，运算如下：
 
     .. math::
-        \text{output}(N_i, C_j, h, w) = \max_{m=0, \ldots, kH-1} \max_{n=0, \ldots, kW-1}
-        \text{input}(N_i, C_j, stride[0] \times h + m, stride[1] \times w + n)
+        \text{output}(N_i, C_j, h, w) = \max_{m=0, \ldots, h_{ker}-1} \max_{n=0, \ldots, w_{ker}-1}
+        \text{input}(N_i, C_j, s_0 \times h + m, s_1 \times w + n)
 
     参数：
-        - **kernel_size** (Union[int, tuple[int]]) - 指定池化核尺寸大小。由一个整数或者是两个整数组成的tuple，表示高和宽。默认值：1。
-        - **strides** (Union[int, tuple[int]]) - 池化操作的移动步长，由一个整数或者是两个整数组成的tuple，表示高和宽上的移动步长。默认值：1。
-        - **pad_mode** (str) - 指定池化填充模式，可选值是'same'或'valid'，不区分大小写。默认值：'valid'。
+        - **kernel_size** (Union[int, tuple[int]]) - 指定池化核尺寸大小。由一个整数或者是两个整数组成的tuple，表示高和宽。默认值： ``1`` 。
+        - **strides** (Union[int, tuple[int]]) - 池化操作的移动步长，由一个整数或者是两个整数组成的tuple，表示高和宽上的移动步长。默认值： ``1`` 。
+        - **pad_mode** (str，可选) - 指定填充模式，填充值为0。可选值为 ``"same"`` 或 ``"valid"``。默认值： ``"valid"`` 。
 
-          - **same** - 输出的高度和宽度分别与输入整除 `stride` 后的值相同。
-          - **valid** - 在不填充的前提下返回有效计算所得的输出。不满足计算的多余像素会被丢弃。
+          - ``"same"``：在输入的四周填充，使得当 `stride` 为 ``1`` 时，输入和输出的shape一致。待填充的量由算子内部计算，若为偶数，则均匀地填充在四周，若为奇数，多余的填充量将补充在底部/右侧。
+          - ``"valid"``：不对输入进行填充，返回输出可能的最大高度和宽度，不能构成一个完整stride的额外的像素将被丢弃。
 
-        - **data_format** (str) - 输入和输出的数据格式。可选值为'NHWC'或'NCHW'。默认值：'NCHW'。
+        - **data_format** (str) - 输入和输出的数据格式。可选值为 ``'NHWC'`` 或 ``'NCHW'`` 。默认值： ``'NCHW'`` 。
 
     输入：
         - **x** (Tensor) - shape为 :math:`(N, C_{in}, H_{in}, W_{in})` 的Tensor。
+          支持数据类型：
+
+          - CPU：float16、float32、float64。
+          - GPU/Ascend：float16、float32。
 
     输出：
         Tensor，shape为 :math:`(N, C_{out}, H_{out}, W_{out})` 。

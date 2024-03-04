@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +17,9 @@
 #include <map>
 #include <string>
 #include <vector>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/ascend_op_name.h"
+#include "ops/array_op_name.h"
 #include "include/common/utils/anfalgo.h"
-#include "frontend/parallel/ops_info/ops_utils.h"
 #include "utils/trace_base.h"
 
 namespace mindspore {
@@ -38,7 +38,9 @@ constexpr char kAttrShrinkAxisMask[] = "shrink_axis_mask";
 bool CheckValueType(const AnfNodePtr &input_node, size_t inputs_num) {
   MS_EXCEPTION_IF_NULL(input_node);
   auto value_node = input_node->cast<ValueNodePtr>();
-  MS_EXCEPTION_IF_NULL(value_node);
+  if (value_node == nullptr) {
+    return true;
+  }
   auto value = value_node->value();
   MS_EXCEPTION_IF_NULL(value);
   if (!value->isa<tensor::Tensor>()) {
@@ -71,7 +73,8 @@ static bool CheckStridedSlice(const CNodePtr &cnode) {
   // check stride[-1] != 1
   if (common::AnfAlgo::HasNodeAttr(kAttrStrides, cnode)) {
     auto strides = common::AnfAlgo::GetNodeAttr<std::vector<int64_t>>(cnode, kAttrStrides);
-    if (!strides.empty() && strides[strides.size() - 1] <= 0) {
+    bool has_negative = std::any_of(strides.begin(), strides.end(), [](int elem) -> bool { return elem <= 0; });
+    if (!strides.empty() && has_negative) {
       return false;
     }
   } else {
@@ -98,6 +101,13 @@ static bool CheckTopK(const CNodePtr &cnode) {
   MS_LOG(EXCEPTION) << "For 'TopK', it should be have attribute 'sorted'." << trace::DumpSourceLines(cnode);
 }
 
+static bool CheckScatterNd(const CNodePtr &cnode) {
+  if (common::AnfAlgo::IsDynamicShape(cnode)) {
+    return true;
+  }
+  return false;
+}
+
 static bool CheckKLDivLoss(const CNodePtr &cnode) {
   if (common::AnfAlgo::HasNodeAttr(kAttrReduction, cnode)) {
     auto reduction = common::AnfAlgo::GetNodeAttr<string>(cnode, kAttrReduction);
@@ -108,10 +118,16 @@ static bool CheckKLDivLoss(const CNodePtr &cnode) {
 
 bool TbePropertyChecker::CheckTbeProperties(const mindspore::CNodePtr &cnode) {
   MS_EXCEPTION_IF_NULL(cnode);
+  // Skip check for ACL op.
+  if (common::AnfAlgo::HasNodeAttr(kAttrMutableKernel, cnode)) {
+    return true;
+  }
   static std::map<std::string, CheckSupportFun> tbe_property_checker = {{kStridedSliceOpName, CheckStridedSlice},
+                                                                        {kStridedSliceDOpName, CheckStridedSlice},
                                                                         {kStridedSliceGradOpName, CheckStridedSlice},
                                                                         {kTopKOpName, CheckTopK},
-                                                                        {kKLDivLossOpName, CheckKLDivLoss}};
+                                                                        {kKLDivOpName, CheckKLDivLoss},
+                                                                        {kScatterNdOpName, CheckScatterNd}};
   auto cnode_type = common::AnfAlgo::GetCNodeName(cnode);
   auto find_iter = tbe_property_checker.find(cnode_type);
   if (find_iter != tbe_property_checker.end()) {

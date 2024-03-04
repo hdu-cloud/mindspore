@@ -17,17 +17,23 @@
 #ifndef MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_NN_POOLING_OPS_DECLARE_H_
 #define MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_NN_POOLING_OPS_DECLARE_H_
 
-#include "utils/hash_map.h"
+#include "mindspore/ccsrc/include/common/utils/utils.h"
+#include "inc/ops/nn_pooling_ops.h"
+#include "transform/graph_ir/custom_op_proto/cust_nn_ops.h"
 #include "transform/graph_ir/op_declare/op_declare_macro.h"
-#include "ops/nn_ops.h"
-#include "ops/nn_pooling_ops.h"
+#include "utils/hash_map.h"
 
-namespace mindspore::transform {
 DECLARE_OP_ADAPTER(MaxPoolWithArgmax)
 DECLARE_OP_USE_OUTPUT(MaxPoolWithArgmax)
 
+DECLARE_OP_ADAPTER(MaxPoolWithArgmaxV2)
+DECLARE_OP_USE_OUTPUT(MaxPoolWithArgmaxV2)
+
 DECLARE_OP_ADAPTER(MaxPoolGradWithArgmax)
 DECLARE_OP_USE_OUTPUT(MaxPoolGradWithArgmax)
+
+DECLARE_OP_ADAPTER(MaxPoolGradWithArgmaxV2)
+DECLARE_OP_USE_OUTPUT(MaxPoolGradWithArgmaxV2)
 
 DECLARE_OP_ADAPTER(MaxPoolGradGradWithArgmax)
 DECLARE_OP_USE_OUTPUT(MaxPoolGradGradWithArgmax)
@@ -44,6 +50,9 @@ DECLARE_OP_USE_OUTPUT(MaxPoolGradGrad)
 DECLARE_OP_ADAPTER(MaxPool3D)
 DECLARE_OP_USE_OUTPUT(MaxPool3D)
 
+DECLARE_OP_ADAPTER(MaxPool3DWithArgmax)
+DECLARE_OP_USE_OUTPUT(MaxPool3DWithArgmax)
+
 DECLARE_OP_ADAPTER(MaxPool3DGrad)
 DECLARE_OP_USE_OUTPUT(MaxPool3DGrad)
 
@@ -58,6 +67,9 @@ DECLARE_OP_USE_OUTPUT(AdaptiveMaxPool2d)
 
 DECLARE_OP_ADAPTER(AvgPool3D)
 DECLARE_OP_USE_OUTPUT(AvgPool3D)
+
+DECLARE_OP_ADAPTER(AvgPool3DD)
+DECLARE_OP_USE_OUTPUT(AvgPool3DD)
 
 DECLARE_OP_ADAPTER(AvgPoolGrad)
 DECLARE_OP_USE_OUTPUT(AvgPoolGrad)
@@ -76,5 +88,56 @@ DECLARE_OP_USE_OUTPUT(GlobalAveragePool)
 
 DECLARE_OP_ADAPTER(Upsample)
 DECLARE_OP_USE_OUTPUT(Upsample)
-}  // namespace mindspore::transform
+
+DECLARE_OP_ADAPTER(AvgPool3DGrad)
+DECLARE_OP_USE_OUTPUT(AvgPool3DGrad)
+
+DECLARE_OP_ADAPTER(Dilation2DBackpropFilter)
+DECLARE_OP_USE_OUTPUT(Dilation2DBackpropFilter)
+
+DECLARE_OP_ADAPTER(Dilation2DBackpropInput)
+DECLARE_OP_USE_OUTPUT(Dilation2DBackpropInput)
+
+DECLARE_CUST_OP_ADAPTER(AdaptiveAvgPool3dGrad)
+DECLARE_CUST_OP_USE_OUTPUT(AdaptiveAvgPool3dGrad)
+
+DECLARE_CUST_OP_ADAPTER(AdaptiveMaxPool2dGrad)
+DECLARE_CUST_OP_USE_OUTPUT(AdaptiveMaxPool2dGrad)
+
+// hotfix only for lite
+DECLARE_OP_ADAPTER(AdaptiveAvgPool2d)
+DECLARE_OP_USE_OUTPUT(AdaptiveAvgPool2d)
+
+DECLARE_CUST_OP_ADAPTER(AdaptiveAvgPool2D)
+DECLARE_CUST_OP_USE_OUTPUT(AdaptiveAvgPool2D)
+
+DECLARE_CUST_OP_ADAPTER(AdaptiveAvgPool3d)
+DECLARE_CUST_OP_USE_OUTPUT(AdaptiveAvgPool3d)
+
+DECLARE_CUST_OP_ADAPTER(AdaptiveAvgPool2DGrad)
+DECLARE_CUST_OP_USE_OUTPUT(AdaptiveAvgPool2DGrad)
+
+DECLARE_OP_ADAPTER(DataFormatVecPermute)
+DECLARE_OP_USE_OUTPUT(DataFormatVecPermute)
+
+DECLARE_CUST_OP_ADAPTER(MaxPool3DGradWithArgmax)
+DECLARE_CUST_OP_USE_OUTPUT(MaxPool3DGradWithArgmax)
+
+DECLARE_OP_ADAPTER(FractionalAvgPoolGrad)
+DECLARE_OP_USE_OUTPUT(FractionalAvgPoolGrad)
+
+DECLARE_OP_ADAPTER(FractionalMaxPool)
+DECLARE_OP_USE_OUTPUT(FractionalMaxPool)
+
+DECLARE_OP_ADAPTER(FractionalMaxPoolGrad)
+DECLARE_OP_USE_OUTPUT(FractionalMaxPoolGrad)
+
+DECLARE_OP_ADAPTER(FractionalAvgPool)
+DECLARE_OP_USE_OUTPUT(FractionalAvgPool)
+
+DECLARE_OP_ADAPTER(NthElement)
+DECLARE_OP_USE_OUTPUT(NthElement)
+
+DECLARE_OP_ADAPTER(AdaptiveAvgPool)
+DECLARE_OP_USE_OUTPUT(AdaptiveAvgPool)
 #endif  // MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_NN_POOLING_OPS_DECLARE_H_

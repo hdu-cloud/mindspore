@@ -15,13 +15,14 @@
  */
 #include "plugin/device/ascend/optimizer/ir_fission/splitv_fission.h"
 #include <memory>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/array_op_name.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore::opt {
 const BaseRef SplitVFission::DefinePattern() const {
   VarPtr Xs = std::make_shared<SeqVar>();
-  auto split_prim = std::make_shared<Primitive>(kSplitVOpName);
+  auto split_prim = std::make_shared<Primitive>(kSplitVDOpName);
   return VectorRef({split_prim, Xs});
 }
 

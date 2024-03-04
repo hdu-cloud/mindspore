@@ -13,21 +13,21 @@
 # limitations under the License.
 # ============================================================================
 """channel shuffle"""
-from mindspore.ops.primitive import constexpr
 from mindspore.ops import operations as P
 from mindspore.nn.cell import Cell
+from mindspore.ops.primitive import _primexpr
 
 __all__ = ['ChannelShuffle']
 
 
 class ChannelShuffle(Cell):
     r"""
-    Divide the channels in a tensor of shape :math:`(*, C , H, W)`
-    into g groups and rearrange them as :math:`(*, C \frac g, g, H, W)`,
-    while keeping the original tensor shape.
+    Divide the channels of Tensor whose shape is :math:`(*, C, H, W)` into :math:`g` groups to obtain a Tensor with
+    shape :math:`(*, C \frac g, g, H, W)`, and transpose along the corresponding axis of :math:`C`,
+    :math:`\frac{g}{}` and :math:`g` to restore Tensor to the original shape.
 
     Args:
-        groups (int): Number of groups to divide channels in. Refer to :math:`g`.
+        groups (int): Number of groups to divide channels in, must be greater than 0. Refer to :math:`g`.
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(*, C_{in}, H_{in}, W_{in})`.
@@ -45,35 +45,35 @@ class ChannelShuffle(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> channel_shuffle = nn.ChannelShuffle(2)
-        >>> x = Tensor(np.arange(16).astype(np.int32).reshape(1, 4, 2, 2))
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> channel_shuffle = ms.nn.ChannelShuffle(2)
+        >>> x = ms.Tensor(np.arange(16).astype(np.int32).reshape(1, 4, 2, 2))
         >>> print(x)
-        [[[[0 1],
-           [2 3]],
-          [[4 5],
-           [6 7]],
-          [[8 9],
-           [10 11]],
-          [[12 13],
-           [14 15]],
-         ]]
+        [[[[ 0  1]
+           [ 2  3]]
+          [[ 4  5]
+           [ 6  7]]
+          [[ 8  9]
+           [10 11]]
+          [[12 13]
+           [14 15]]]]
         >>> output = channel_shuffle(x)
         >>> print(output)
-        [[[[0 1],
-           [2 3]],
-          [[8 9],
-           [10 11]],
-          [[4 5],
-           [6 7]],
-          [[12 13],
-           [14 15]],
-         ]]
+        [[[[ 0  1]
+           [ 2  3]]
+          [[ 8  9]
+           [10 11]]
+          [[ 4  5]
+           [ 6  7]]
+          [[12 13]
+           [14 15]]]]
     """
     def __init__(self, groups):
         """Initialize ChannelShuffle."""
         super(ChannelShuffle, self).__init__()
         if not isinstance(groups, int):
-            raise TypeError("For ChannelShuffle, the param `groups` must be int, but got {}.".format(type(groups)))
+            raise TypeError(f"For ChannelShuffle, the param `groups` must be int, but got {type(groups)}.")
         if groups < 1:
             raise ValueError(f"For ChannelShuffle, the param `groups` must be larger than 0, but got {groups}.")
 
@@ -83,8 +83,9 @@ class ChannelShuffle(Cell):
         self.transpose = P.Transpose()
 
     @staticmethod
-    @constexpr
+    @_primexpr
     def _check_input_dim(shape, channels, groups, cls_name):
+        """check input dim"""
         dim = len(shape)
         if dim < 3:
             raise ValueError(f"For {cls_name}, the in_shape must have more than 2 dims, but got {dim}.")

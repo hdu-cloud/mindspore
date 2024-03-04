@@ -29,7 +29,7 @@ from mindspore.common.initializer import initializer
 from mindspore.common import Tensor
 from mindspore.common.sparse_tensor import RowTensorInner
 import mindspore.common.dtype as mstype
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore import log as logger
 from mindspore.parallel._utils import _get_global_rank, _get_device_num, _get_parallel_mode
 from mindspore.parallel._ps_context import _is_ps_mode
@@ -121,13 +121,13 @@ class Optimizer(Cell):
 
         weight_decay (Union[float, int]): An int or a floating point value for the weight decay.
             It must be equal to or greater than 0.
-            If the type of `weight_decay` input is int, it will be converted to float. Default: 0.0.
+            If the type of `weight_decay` input is int, it will be converted to float. Default: ``0.0`` .
         loss_scale (float): A floating point value for the loss scale. It must be greater than 0. If the
             type of `loss_scale` input is int, it will be converted to float. In general, use the default value. Only
             when `FixedLossScaleManager` is used for training and the `drop_overflow_update` in
-            `FixedLossScaleManager` is set to False, this value needs to be the same as the `loss_scale` in
+            `FixedLossScaleManager` is set to ``False`` , this value needs to be the same as the `loss_scale` in
             `FixedLossScaleManager`. Refer to class :class:`mindspore.amp.FixedLossScaleManager` for more details.
-            Default: 1.0.
+            Default: ``1.0`` .
 
     Raises:
         TypeError: If `learning_rate` is not one of int, float, Tensor, Iterable, LearningRateSchedule.
@@ -140,6 +140,57 @@ class Optimizer(Cell):
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> import mindspore as ms
+        >>> from mindspore import nn
+        >>> import numpy as np
+        >>> import mindspore
+        >>> from mindspore import nn, ops, Tensor
+        >>>
+        >>> class MyMomentum(nn.Optimizer):
+        ...     def __init__(self, params, learning_rate, momentum=0.9):
+        ...         super(MyMomentum, self).__init__(learning_rate, params)
+        ...         self.moments = self.parameters.clone(prefix="moments", init="zeros")
+        ...         self.momentum = momentum
+        ...         self.opt = ops.ApplyMomentum()
+        ...
+        ...     def construct(self, gradients):
+        ...         params = self.parameters
+        ...         lr = self.get_lr()
+        ...         gradients = self.flatten_gradients(gradients)
+        ...         gradients = self.decay_weight(gradients)
+        ...         gradients = self.gradients_centralization(gradients)
+        ...         gradients = self.scale_grad(gradients)
+        ...
+        ...         success = None
+        ...         for param, mom, grad in zip(params, self.moments, gradients):
+        ...             success = self.opt(param, mom, lr, grad, self.momentum)
+        ...         return success
+        >>>
+        >>> net = nn.Dense(2, 3)
+        >>> loss_fn = nn.MAELoss()
+        >>> opt = MyMomentum(net.trainable_params(), 0.01)
+        >>>
+        >>> device_target = opt.target
+        >>> opt_unique = opt.unique
+        >>> weight_decay_value = opt.get_weight_decay()
+        >>>
+        >>> def forward_fn(data, label):
+        ...     logits = net(data)
+        ...     loss = loss_fn(logits, label)
+        ...     return loss, logits
+        >>>
+        >>> grad_fn = mindspore.value_and_grad(forward_fn, None, opt.parameters, has_aux=True)
+        >>>
+        >>> def train_step(data, label):
+        ...     (loss, _), grads = grad_fn(data, label)
+        ...     opt(grads)
+        ...     return loss
+        >>>
+        >>> data = Tensor(np.random.rand(4, 10, 2), mindspore.dtype.float32)
+        >>> label = Tensor(np.random.rand(4, 10, 3), mindspore.dtype.float32)
+        >>> train_step(data, label)
     """
     _support_parallel_optimizer = False
 
@@ -148,6 +199,8 @@ class Optimizer(Cell):
         parameters = self._parameters_base_check(parameters, "parameters")
         self.param_rank = None
         self.optim_filter = None
+        if not isinstance(parameters, list):
+            raise TypeError(f"For 'Optimizer' argument 'parameters' must be 'list', but got {type(parameters)}.")
         if not all(isinstance(x, Parameter) for x in parameters) and not all(isinstance(x, dict) for x in parameters):
             raise TypeError("For 'Optimizer', all elements of the argument 'parameters' must be 'Parameter' or 'dict',"
                             " please check the 'parameters'.")
@@ -181,6 +234,7 @@ class Optimizer(Cell):
             self._init_group_params(parameters, learning_rate, weight_decay, self.grad_centralization)
 
         self._init_opt_attrs(learning_rate, parameters, weight_decay)
+        self.add_flags(skip_auto_parallel_compile=True)
 
     def _init_opt_attrs(self, learning_rate, parameters, weight_decay):
         """initialize optimizer attributions"""
@@ -230,7 +284,7 @@ class Optimizer(Cell):
         self.cache_enable = tuple(cache_filter(x) for x in self._parameters)
         self.reciprocal_scale = Tensor(1.0 / self.loss_scale, mstype.float32)
         self.need_scale = self.loss_scale != 1.0
-        self.global_step_increase_tensor = Tensor(1, mstype.int32)
+        self.global_step_increase_tensor = Tensor([1], mstype.int32)
         self.param_length = len(self._parameters)
         self.map_ = C.Map()
         self.map_reverse = C.Map(None, True)
@@ -699,8 +753,6 @@ class Optimizer(Cell):
                     lr += (current_dynamic_lr,)
             else:
                 lr = self.learning_rate(self.global_step).reshape(())
-        if self._is_dynamic_lr_or_weight_decay():
-            self.assignadd(self.global_step, self.global_step_increase_tensor)
         return lr
 
     def get_lr_parameter(self, param):
@@ -718,7 +770,9 @@ class Optimizer(Cell):
 
         Examples:
             >>> from mindspore import nn
-            >>> net = Net()
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> conv_params = list(filter(lambda x: 'conv' in x.name, net.trainable_params()))
             >>> no_conv_params = list(filter(lambda x: 'conv' not in x.name, net.trainable_params()))
             >>> group_params = [{'params': conv_params, 'lr': 0.05},
@@ -920,7 +974,7 @@ def rowtensor_deduplicate_indices_slices(grad):
     values = grad.values
 
     unique_indices, index_position = P.Unique()(indices)
-    summed_values = P.UnsortedSegmentSum()(values, index_position, P.TensorShape()(unique_indices)[0])
+    summed_values = P.UnsortedSegmentSum()(values, index_position, P.Shape()(unique_indices)[0])
 
     return RowTensorInner(unique_indices, summed_values, grad.dense_shape)
 

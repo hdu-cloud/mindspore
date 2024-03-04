@@ -14,16 +14,27 @@
  * limitations under the License.
  */
 #include "ops/gelu.h"
-#include <string>
-#include <algorithm>
+
 #include <map>
+#include <memory>
 #include <set>
+#include <string>
 #include <vector>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,11 +48,12 @@ abstract::ShapePtr GeLUInferShape(const PrimitivePtr &, const std::vector<Abstra
 }
 
 TypePtr GeLUInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
-  std::map<std::string, TypePtr> types;
   const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64};
   MS_EXCEPTION_IF_NULL(input_args[0]);
-  (void)types.emplace("x", input_args[0]->BuildType());
-  return CheckAndConvertUtils::CheckTensorTypeSame(types, valid_types, prim->name());
+  auto x_type = input_args[0]->BuildType();
+  MS_EXCEPTION_IF_NULL(prim);
+  (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_type, valid_types, prim->name());
+  return x_type;
 }
 }  // namespace
 
@@ -58,6 +70,24 @@ AbstractBasePtr GeLUInfer(const abstract::AnalysisEnginePtr &, const PrimitivePt
   auto infer_shape = GeLUInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(GeLU, prim::kPrimGeLU, GeLUInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGGeLUInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return GeLUInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return GeLUInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return GeLUInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(GeLU, prim::kPrimGeLU, AGGeLUInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -14,11 +14,14 @@
  * limitations under the License.
  */
 #include "plugin/device/gpu/optimizer/combine_cast_fusion.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -94,6 +97,7 @@ bool CastAllFusion::Run(const FuncGraphPtr &graph) {
   for (auto cast_list : deal_list) {
     // 2 create node CastAll
     auto prim = std::make_shared<Primitive>("CastAll");
+    MS_EXCEPTION_IF_NULL(prim);
     std::vector<AnfNodePtr> inputs = {NewValueNode(prim)};
     // set inputs for CastAll
     for (size_t idx = 0; idx < cast_list.size(); ++idx) {

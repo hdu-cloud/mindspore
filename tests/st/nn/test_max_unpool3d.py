@@ -26,11 +26,11 @@ class Net(nn.Cell):
         super(Net, self).__init__()
         self.max_unpool3d = nn.MaxUnpool3d(kernel_size, stride, padding)
 
-    def construct(self, x, indices, output_size=()):
+    def construct(self, x, indices, output_size=None):
         return self.max_unpool3d(x, indices, output_size)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_arm_cpu
 @pytest.mark.platform_x86_gpu_training
@@ -58,7 +58,7 @@ def test_max_unpool3d_normal(mode):
     assert np.allclose(output, expect, rtol=0.0001)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_arm_cpu
 @pytest.mark.platform_x86_gpu_training
@@ -87,7 +87,7 @@ def test_max_unpool3d_normal_output_size(mode):
     assert np.allclose(output, expect, rtol=0.0001)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_arm_cpu
 @pytest.mark.platform_x86_gpu_training

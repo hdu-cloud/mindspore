@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "debug/data_dump/e2e_dump.h"
+#include "include/backend/debug/data_dump/e2e_dump.h"
 
 #include <unistd.h>
 #include <sstream>
@@ -24,23 +24,24 @@
 #include <set>
 #include <utility>
 #include <vector>
-#include "debug/data_dump/dump_json_parser.h"
+#include "include/backend/debug/data_dump/dump_json_parser.h"
 #include "runtime/device/ms_device_shape_transfer.h"
 #include "include/common/debug/anf_dump_utils.h"
 #include "include/common/debug/common.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "utils/ms_context.h"
 #include "runtime/device/kernel_runtime_manager.h"
 #include "include/common/utils/config_manager.h"
 #include "utils/file_utils.h"
-#include "debug/data_dump/tensor_stat_dump.h"
+#include "include/backend/debug/data_dump/tensor_stat_dump.h"
+#include "include/backend/debug/common/csv_writer.h"
 #include "abstract/utils.h"
 #include "runtime/hardware/device_context_manager.h"
 #ifdef ENABLE_DEBUGGER
 #include "debug/debug_services.h"
 #include "debug/tensor_load.h"
-#include "debug/debugger/debugger.h"
+#include "include/backend/debug/debugger/debugger.h"
 #endif
 
 namespace mindspore {
@@ -74,7 +75,9 @@ bool E2eDump::IsDeviceTargetAscend() {
 }
 
 bool E2eDump::IsMindRTKernelByKernel() {
-  return IsDeviceTargetGPU() || Debugger::GetInstance()->GetAscendKernelByKernelFlag();
+  auto debugger = Debugger::GetInstance();
+  MS_EXCEPTION_IF_NULL(debugger);
+  return IsDeviceTargetGPU() || debugger->GetAscendKernelByKernelFlag();
 }
 
 /*
@@ -133,7 +136,7 @@ void E2eDump::DumpOutputImpl(const CNodePtr &node, bool trans_flag, const std::s
                              std::string *kernel_name, const Debugger *debugger) {
   MS_EXCEPTION_IF_NULL(node);
   GetFileKernelName(NOT_NULL(kernel_name));
-  auto output_size = common::AnfAlgo::GetOutputTensorNum(node);
+  auto output_size = AnfAlgo::GetOutputTensorNum(node);
   for (size_t j = 0; j < output_size; ++j) {
     if (!AnfAlgo::OutputAddrExist(node, j)) {
       continue;
@@ -177,7 +180,7 @@ void E2eDump::DumpOutputData(const CNodePtr &node, bool trans_flag, const std::s
   }
   MS_EXCEPTION_IF_NULL(node);
   GetFileKernelName(NOT_NULL(kernel_name));
-  auto output_size = common::AnfAlgo::GetOutputTensorNum(node);
+  auto output_size = AnfAlgo::GetOutputTensorNum(node);
   for (size_t j = 0; j < output_size; ++j) {
     if (!AnfAlgo::OutputAddrExist(node, j)) {
       continue;
@@ -440,7 +443,7 @@ void E2eDump::DumpParameters(const session::KernelGraph *graph, const std::strin
   // dump parameters
   const auto &parameters = graph->inputs();
   for (auto &item : parameters) {
-    DumpSingleAnfNode(item, PARAMETER_OUTPUT_INDEX, dump_path, trans_flag, debugger);
+    DumpSingleAnfNode(item, kParameterOutputIndex, dump_path, trans_flag, debugger);
   }
 }
 
@@ -469,7 +472,7 @@ void E2eDump::DumpConstantData(const session::KernelGraph *graph, const std::str
   }
   const auto value_nodes = graph->graph_value_nodes();
   for (auto &item : value_nodes) {
-    DumpSingleAnfNode(item, VALUE_NODE_OUTPUT_INDEX, cst_dump_path, false, debugger);
+    DumpSingleAnfNode(item, kValueNodeOutputIndex, cst_dump_path, false, debugger);
   }
 }
 
@@ -512,6 +515,7 @@ void E2eDump::UpdateIterOldRTDump(const session::KernelGraph *graph) {
  */
 void E2eDump::UpdateIterMindRTDump() {
   auto debugger = Debugger::GetInstance();
+  MS_EXCEPTION_IF_NULL(debugger);
   // Dataset graph is always the first graph in the list when dataset_sink_mode is true.
   auto graph_list = debugger->GetStepGraphPtrList();
   if (graph_list.empty()) {
@@ -542,6 +546,13 @@ void E2eDump::DumpRunIter(const KernelGraphPtr &graph, uint32_t rank_id) {
   if (!(json_parser.async_dump_enabled() || json_parser.e2e_dump_enabled())) {
     return;
   }
+  auto context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  std::string backend = context->backend_policy();
+  if (backend == "ge") {
+    MS_LOG(INFO) << "On 910B platform, execution_order is not support to dump.";
+    return;
+  }
   bool sink_mode =
     (ConfigManager::GetInstance().dataset_mode() == DatasetMode::DS_SINK_MODE || graph->IsDatasetGraph());
   auto iter_num = SizeToInt(LongToSize(ConfigManager::GetInstance().iter_num()));
@@ -549,7 +560,10 @@ void E2eDump::DumpRunIter(const KernelGraphPtr &graph, uint32_t rank_id) {
     MS_LOG(INFO) << "graph: " << graph->graph_id() << " is dataset graph, not creating graph history file.";
     return;
   }
-  if (!IsDeviceTargetGPU() && (graph->graph_id() != graph->root_graph_id())) {
+  auto debugger = Debugger::GetInstance();
+  MS_EXCEPTION_IF_NULL(debugger);
+  if (!debugger->GetAscendKernelByKernelFlag() && !IsDeviceTargetGPU() &&
+      (graph->graph_id() != graph->root_graph_id())) {
     // when device target is ascend, we only dump graph run iter for the root graph.
     return;
   }
@@ -569,11 +583,11 @@ void E2eDump::DumpRunIter(const KernelGraphPtr &graph, uint32_t rank_id) {
     MS_LOG(WARNING) << "Open file for saving graph global execution order failed.";
     return;
   }
-  if (sink_mode && json_parser.async_dump_enabled() && !Debugger::GetInstance()->GetAscendKernelByKernelFlag()) {
+  if (sink_mode && json_parser.async_dump_enabled() && !debugger->GetAscendKernelByKernelFlag()) {
     // for async dump when sink_mode = true, cur_dump_iter() = current_epoch
     // dump history for all iterations in the epoch
-    Debugger::GetInstance()->UpdateGraphIterMap(graph->graph_id(), iter_num);
-    auto graph_iter_map = Debugger::GetInstance()->GetGraphIterMap();
+    debugger->UpdateGraphIterMap(graph->graph_id(), iter_num);
+    auto graph_iter_map = debugger->GetGraphIterMap();
     auto step_per_epoch = IntToSize(graph_iter_map[graph->graph_id()]);
     for (size_t i = 0; i < step_per_epoch; i++) {
       auto step = (json_parser.cur_dump_iter() * step_per_epoch) + i;
@@ -658,7 +672,8 @@ bool E2eDump::DumpSingleNodeData(const CNodePtr &node, uint32_t graph_id, uint32
 void E2eDump::DumpParametersData(uint32_t rank_id, const Debugger *debugger) {
   uint32_t root_graph_id = debugger->GetCurrentRootGraphId();
   auto &dump_json_parser = DumpJsonParser::GetInstance();
-  if (dump_json_parser.async_dump_enabled() && !debugger->GetAscendKernelByKernelFlag()) {
+  if ((dump_json_parser.async_dump_enabled() && !debugger->GetAscendKernelByKernelFlag()) ||
+      (dump_json_parser.async_dump_enabled() && dump_json_parser.op_debug_mode() > 0)) {
     // Dump parameters for mindRT in async dump only for kernel by kernel mode.
     return;
   }

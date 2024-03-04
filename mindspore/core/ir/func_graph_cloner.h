@@ -30,12 +30,12 @@
 #include "ir/func_graph.h"
 #include "ir/manager.h"
 #include "utils/hashing.h"
-#include "utils/macros.h"
+#include "mindapi/base/macros.h"
 
 namespace mindspore {
 class Cloner;
 using ClonerPtr = std::shared_ptr<Cloner>;
-using NodeToNodeMap = mindspore::HashMap<AnfNodePtr, AnfNodePtr, PointerHash<AnfNodePtr>>;
+using NodeToNodeMap = mindspore::HashMap<AnfNodePtr, AnfNodePtr>;
 
 enum CloneType { kBasic = 0, kInline = 1, kLifting = 2, kDropping = 3 };
 
@@ -72,8 +72,8 @@ class MS_CORE_API Cloner {
   FuncGraphPtr operator[](const FuncGraphPtr &func_graph);
 
   // Map of replicate nodes and graphs
-  const NodeToNodeMap &cloned_nodes() const { return repl_node_; }
-  const mindspore::HashMap<FuncGraphPtr, FuncGraphPtr> &cloned_func_graphs() const { return repl_func_graph_; }
+  const NodeToNodeMap &cloned_nodes() const { return replicated_node_; }
+  const mindspore::HashMap<FuncGraphPtr, FuncGraphPtr> &cloned_func_graphs() const { return replicated_func_graph_; }
 
   // Scope of cloned graphs
   void set_scope(const ScopePtr &scope) { scope_ = scope; }
@@ -83,14 +83,25 @@ class MS_CORE_API Cloner {
   void set_update_info(const UpdateInfoPtr &update_info) { update_info_ = update_info; }
   const UpdateInfoPtr update_info() const { return update_info_; }
 
+  // set call node debug info of InlineClone.
+  void set_inline_call_node_debug_info(const NodeDebugInfoPtr &call_debug_info) {
+    inline_call_node_debug_info_ = call_debug_info;
+  }
+
+  bool preset_abstract() const { return preset_abstract_; }
+  void set_preset_abstract(bool preset_abstract) { preset_abstract_ = preset_abstract; }
+
+  GraphFilterFunc lifting_func_graph_filter() const { return lifting_func_graph_filter_; }
+  void set_lifting_func_graph_filter(GraphFilterFunc filter) { lifting_func_graph_filter_ = filter; }
+
  private:
   void CloneNodes();
-  void LinkEdges();
+  void LinkCNodeEdges();
   void SetDefaults();
   void CloneNode(const AnfNodePtr &node, const FuncGraphPtr &target);
   void CloneValueNode(const AnfNodePtr &node);
   void CloneFuncGraphValueNode(const AnfNodePtr &node, const FuncGraphPtr &target);
-  void CloneCNode(const AnfNodePtr &node, const FuncGraphPtr &target);
+  void CloneCNodeWithoutInputs(const AnfNodePtr &node, const FuncGraphPtr &target);
   void CloneParameter(const AnfNodePtr &node, const FuncGraphPtr &target, bool is_add = false);
   void CloneValueNodes(const FuncGraphPtr &func_graph);
   void AddChildGraphs(const FuncGraphPtr &func_graph);
@@ -106,12 +117,13 @@ class MS_CORE_API Cloner {
   void GenParameters(const FuncGraphPtr &func_graph);
   void CloneParameter(const ParameterPtr &param, const AnfNodePtr &node) const;
   ParameterPtr AddParameter(const FuncGraphPtr &func_graph, const AnfNodePtr &node, bool is_add = true);
+  void OrderParameters(const FuncGraphPtr &func_graph, const AnfNodePtrList &inputs, size_t arg_start_index);
+  CNodePtr SetPartialEdges(const FuncGraphPtr &func_graph, const CNodePtr &cnode, FuncGraphTransaction *tx);
+  void SetEdges(const FuncGraphPtr &func_graph, FuncGraphTransaction *tx);
+  void SetEdgesBfs(const FuncGraphPtr &root_fg, FuncGraphTransaction *tx);
   void AddParameters(const FuncGraphPtr &func_graph, const AnfNodePtrList &params, AnfNodePtrList *const lift_params,
                      AnfNodePtrList *const input_params);
   void AddInputs(const FuncGraphPtr &func_graph_user, const FuncGraphPtr &func_graph, const AnfNodePtrList &params);
-  void OrderParameters(const FuncGraphPtr &func_graph, const AnfNodePtrList &inputs, size_t arg_start_index);
-  void SetEdges(const FuncGraphPtr &func_graph, FuncGraphTransaction *tx);
-  void SetEdgesBfs(const FuncGraphPtr &root_fg, FuncGraphTransaction *tx);
   void LiftParameters(const FuncGraphPtr &func_graph_user, const FuncGraphPtr &func_graph,
                       const AnfNodePtrList &params);
   void Lift(const std::vector<FuncGraphPtr> &sorted);
@@ -121,26 +133,31 @@ class MS_CORE_API Cloner {
   bool clone_all_valuenodes_;
   bool clone_all_child_graphs_;
   bool clone_all_used_graphs_;
+  bool preset_abstract_{true};
+  GraphFilterFunc lifting_func_graph_filter_;
   TraceInfoPtr relation_;
   TraceInfoPtr target_relation_;
-  NodeToNodeMap repl_node_;
-  mindspore::HashMap<FuncGraphPtr, FuncGraphPtr> repl_func_graph_;
+  NodeToNodeMap replicated_node_;
+  mindspore::HashMap<FuncGraphPtr, FuncGraphPtr> replicated_func_graph_;
   FuncGraphManagerPtr manager_;
   FuncGraphSet graph_set_;
   ScopePtr scope_;
   UpdateInfoPtr update_info_;
+  NodeDebugInfoPtr inline_call_node_debug_info_{nullptr};
   CloneType type_;
   std::vector<CloneInfo> todo_;
   mindspore::HashMap<FuncGraphPtr, bool> status_;
-  mindspore::HashMap<FuncGraphPtr, NodeToNodeMap> repl_map_node_;
-  mindspore::HashMap<FuncGraphPtr, mindspore::HashMap<FuncGraphPtr, AnfNodePtr>> repl_map_func_graph_;
-  mindspore::HashMap<FuncGraphPtr, AnfNodePtrList> repl_func_graph_params_;
+  mindspore::HashMap<FuncGraphPtr, NodeToNodeMap> replicated_map_node_;
+  mindspore::HashMap<FuncGraphPtr, mindspore::HashMap<FuncGraphPtr, AnfNodePtr>> replicated_map_func_graph_;
+  mindspore::HashMap<FuncGraphPtr, AnfNodePtrList> replicated_func_graph_params_;
 };
 
 MS_CORE_API AnfNodePtr InlineClone(const FuncGraphPtr &func_graph, const FuncGraphPtr &target_func_graph,
-                                   const AnfNodePtrList &func_graph_args, const ScopePtr &scope = nullptr);
+                                   const AnfNodePtrList &func_graph_args, const ScopePtr &scope = nullptr,
+                                   const NodeDebugInfoPtr &call_debug_info = nullptr);
 
-MS_CORE_API FuncGraphPtr LiftingClone(const FuncGraphPtr &func_graph);
+MS_CORE_API FuncGraphPtr LiftingClone(const FuncGraphPtr &func_graph, bool preset_abstract = true,
+                                      const GraphFilterFunc &lifting_func_graph_filter = GraphFilterFunc());
 MS_CORE_API FuncGraphVector LiftingCloneMulti(const FuncGraphVector &func_graphs);
 
 MS_CORE_API ClonerPtr SpecializerClone(const FuncGraphPtr &func_graph, const TraceInfoPtr &relation);

@@ -17,19 +17,19 @@
 from __future__ import absolute_import
 from functools import partial
 import numpy as np
-from mindspore.common import jit
+from mindspore.common import jit, mutable
 from mindspore.common import Tensor
 from mindspore.common import dtype as mstype
 from mindspore.nn.cell import Cell
 from mindspore.nn.grad.cell_grad import _LinearizeInner
-from mindspore.ops.primitive import constexpr
-from mindspore.ops.function.array_func import ones, expand_dims, size, reshape, broadcast_to, transpose
+from mindspore.ops.primitive import constexpr, _primexpr
+from mindspore.ops.function.array_func import ones, expand_dims, size, reshape, broadcast_to, transpose, zeros
 from mindspore.ops.composite import _Vmap, _Grad, _TaylorOperation, GradOperation
 from mindspore.ops import operations as P
+from mindspore.ops.operations import _inner_ops as inner
 
 cast = P.Cast()
 dtype = P.DType()
-zeros = P.Zeros()
 oneslike = P.OnesLike()
 
 
@@ -86,11 +86,12 @@ def _check_grad_position(grad_position, args_num):
 
 
 @constexpr
-def _get_grad_op(get_by_list, get_by_position, has_aux, get_value=False):
-    return _Grad(get_by_list=get_by_list, get_by_position=get_by_position, has_aux=has_aux, get_value=get_value)
+def _get_grad_op(get_by_list, get_by_position, has_aux, get_value=False, return_ids=False):
+    return _Grad(get_by_list=get_by_list, get_by_position=get_by_position, has_aux=has_aux, get_value=get_value,
+                 return_ids=return_ids)
 
 
-def grad(fn, grad_position=0, weights=None, has_aux=False):
+def grad(fn, grad_position=0, weights=None, has_aux=False, return_ids=False):
     """
     A wrapper function to generate the gradient function for the input function.
 
@@ -106,18 +107,26 @@ def grad(fn, grad_position=0, weights=None, has_aux=False):
             If int, get the gradient with respect to single input.
             If tuple, get the gradients with respect to selected inputs. `grad_position` begins with 0.
             If None, none derivative of any input will be figured out, and in this case, `weights` is required.
-            Default: 0.
+            Default: ``0`` .
         weights (Union[ParameterTuple, Parameter, list[Parameter]]): The parameters of the training network that need to
             calculate the gradient. `weights` can be got through `weights = net.trainable_params()` .
-            Default: None.
-        has_aux (bool): If True, only the first output of `fn` contributes the gradient of `fn`, while the other outputs
-            will be returned straightly. It means the `fn` must return more than one outputs in this case.
-            Default: False.
+            Default: ``None`` .
+        has_aux (bool): If ``True`` , only the first output of `fn` contributes the gradient of `fn`, while the other
+            outputs will be returned straightly. It means the `fn` must return more than one outputs in this case.
+            Default: ``False`` .
+        return_ids(bool): Whether return the tuple made by gradients and the index to specify which inputs
+            to be differentiated or the name of parameters of the training network that need to calculate the gradient.
+            If ``True`` , the output gradients will be replaced by the tuples made by gradients and the index to specify
+            which inputs to be differentiated or the name of parameters of the training network.
+            Default: ``False`` .
 
     Returns:
         Function, the gradient function to calculate gradient for the input function or cell.
-        For example, as for `out1, out2 = fn(*args)`, when `has_aux` is set True, gradient function will return outputs
-        like `(gradient, out2)` and `out2` does not contribute to the differentiation, otherwise `gradient`.
+        For example, as for `out1, out2 = fn(*args)`, when `has_aux` is set ``True`` , gradient function will return
+        outputs like `(gradient, out2)` and `out2` does not contribute to the differentiation, otherwise `gradient`.
+        When return_ids is set to ``True`` , The format of the output will be the same with the output of grad when
+        return_ids is set to false, but every gradient in the output will be replaced by a tuple of position id or
+        parameter name and its gradient.
 
     Raises:
         ValueError: If both `grad_position` and `weights` are None.
@@ -129,9 +138,7 @@ def grad(fn, grad_position=0, weights=None, has_aux=False):
     Examples:
         >>> import numpy as np
         >>> import mindspore
-        >>> import mindspore.nn as nn
-        >>> from mindspore import Tensor, ops
-        >>> from mindspore import grad
+        >>> from mindspore import Tensor, ops, nn, grad
         >>>
         >>> # Cell object to be differentiated
         >>> class Net(nn.Cell):
@@ -160,7 +167,7 @@ def grad(fn, grad_position=0, weights=None, has_aux=False):
         >>> print(aux)
         (Tensor(shape=[2], dtype=Float32, value= [ 5.00000000e+00,  5.00000000e+00]),)
         >>>
-        >>> # For given network to be differentiated with both inputs and weights, there are 3 cases.
+        >>> # For given network to be differentiated with both inputs and weights, there are 4 cases.
         >>> net = nn.Dense(10, 1)
         >>> loss_fn = nn.MSELoss()
         >>> def forward(inputs, labels):
@@ -192,20 +199,39 @@ def grad(fn, grad_position=0, weights=None, has_aux=False):
         >>> inputs_gradient, params_gradient = grad_fn(inputs, labels)
         >>> print(len(weights), len(params_gradient))
         2 2
+        >>> # Case 4: return the gradient with ids.
+        >>> import numpy as np
+        >>> import mindspore
+        >>> import mindspore.nn as nn
+        >>> from mindspore import Tensor, ops
+        >>> from mindspore import grad
+        >>>
+        >>> # Cell object to be differentiated
+        >>> class Net(nn.Cell):
+        ...     def construct(self, x, y, z):
+        ...         return x * y * z
+        >>> x = Tensor([1, 2], mindspore.float32)
+        >>> y = Tensor([-2, 3], mindspore.float32)
+        >>> z = Tensor([0, 3], mindspore.float32)
+        >>> net = Net()
+        >>> output = grad(net, grad_position=(1, 2), return_ids = True)(x, y, z)
+        >>> print(output)
+        ((1, Tensor(shape=[2], dtype=Float32, value=[ 0.00000000e+00,  6.00000000e+00])),
+         (2, Tensor(shape=[2], dtype=Float32, value=[-2.00000000e+00,  6.00000000e+00])))
     """
     if grad_position is None and weights is None:
         raise ValueError("`grad_position` and `weight` can not be None at the same time.")
 
     if grad_position is None:
-        return _get_grad_op(True, False, has_aux)(fn, weights)
+        return _get_grad_op(True, False, has_aux, False, return_ids)(fn, weights)
 
     grad_position = _convert_grad_position_type(grad_position)
     if weights is None:
-        return _get_grad_op(False, True, has_aux)(fn, None, grad_position)
-    return _get_grad_op(True, True, has_aux)(fn, weights, grad_position)
+        return _get_grad_op(False, True, has_aux, False, return_ids)(fn, None, grad_position)
+    return _get_grad_op(True, True, has_aux, False, return_ids)(fn, weights, grad_position)
 
 
-def value_and_grad(fn, grad_position=0, weights=None, has_aux=False):
+def value_and_grad(fn, grad_position=0, weights=None, has_aux=False, return_ids=False):
     """
     A wrapper function to generate the function to calculate forward output and gradient for the input function.
 
@@ -221,13 +247,18 @@ def value_and_grad(fn, grad_position=0, weights=None, has_aux=False):
             If int, get the gradient with respect to single input.
             If tuple, get the gradients with respect to selected inputs. `grad_position` begins with 0.
             If None, none derivative of any input will be solved, and in this case, `weights` is required.
-            Default: 0.
+            Default: ``0`` .
         weights (Union[ParameterTuple, Parameter, list[Parameter]]): The parameters of the training network that need to
             calculate the gradient. `weights` can be got through `weights = net.trainable_params()` .
-            Default: None.
-        has_aux (bool): If True, only the first output of `fn` contributes the gradient of `fn`, while the other outputs
-            will be returned straightly. It means the `fn` must return more than one outputs in this case.
-            Default: False.
+            Default: ``None`` .
+        has_aux (bool): If ``True`` , only the first output of `fn` contributes the gradient of `fn`, while the other
+            outputs will be returned straightly. It means the `fn` must return more than one outputs in this case.
+            Default: ``False`` .
+        return_ids(bool): Whether return the tuple made by gradients and the index to specify which inputs
+            to be differentiated or the name of parameters of the training network that need to calculate the gradient.
+            If ``True`` , the output gradients will be replaced by the tuples made by gradients and the index to specify
+            which inputs to be differentiated or the name of parameters of the training network.
+            Default: ``False`` .
 
     Returns:
         Function, returns the gradient function to calculate forward output and gradient for the input function or cell.
@@ -321,12 +352,59 @@ def value_and_grad(fn, grad_position=0, weights=None, has_aux=False):
         raise ValueError("`grad_position` and `weight` can not be None at the same time.")
 
     if grad_position is None:
-        return _get_grad_op(True, False, has_aux, True)(fn, weights)
+        return _get_grad_op(True, False, has_aux, True, return_ids)(fn, weights)
 
     grad_position = _convert_grad_position_type(grad_position)
     if weights is None:
-        return _get_grad_op(False, True, has_aux, True)(fn, None, grad_position)
-    return _get_grad_op(True, True, has_aux, True)(fn, weights, grad_position)
+        return _get_grad_op(False, True, has_aux, True, return_ids)(fn, None, grad_position)
+    return _get_grad_op(True, True, has_aux, True, return_ids)(fn, weights, grad_position)
+
+
+def get_grad(gradients, identifier):
+    """
+    When `return_ids` of :func:`mindspore.grad` is set to True, use its return value as gradients. Then find
+    the specific gradient from `gradients` according to `identifier` .
+
+    As for gradient, two typical cases are included:
+
+    1. `identifier` is the position of the specific tensor to get gradient.
+    2. `identifier` is a parameter of a network.
+
+    Args:
+        gradients (Union[tuple[int, Tensor], tuple[tuple, tuple]]): The return value of :func:`mindspore.grad`
+            when `return_ids` is set to True.
+        identifier (Union[int, Parameter]): The position number of a tensor, or a parameter that is used in
+            :func:`mindspore.grad`.
+
+    Returns:
+        The gradient of the tensor on the position or in the parameter that specified by the `identifier`.
+
+    Raises:
+        RuntimeError: If gradient is not found.
+        TypeError: If type of Args does not belong to required ones.
+
+    Supported Platforms:
+        ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> from mindspore import grad, get_grad
+        >>>
+        >>>  # Cell object to be differentiated
+        >>> class Net(nn.Cell):
+        ...     def construct(self, x, y, z):
+        ...         return x * y * z
+        >>> x = Tensor([1, 2], mindspore.float32)
+        >>> y = Tensor([-2, 3], mindspore.float32)
+        >>> z = Tensor([0, 3], mindspore.float32)
+        >>> net = Net()
+        >>> out_grad = grad(net, grad_position=(1, 2), return_ids=True)(x, y, z)
+        >>> output = get_grad(out_grad, 1)
+        >>> print(output)
+        [0. 6.]
+    """
+    return inner.GetGrad()(gradients, identifier)
 
 
 def _trans_jet_inputs(primals_item, series_item):
@@ -572,11 +650,17 @@ _grad_single = GradOperation(sens_param=True)
 _grad_all = GradOperation(sens_param=True, get_all=True)
 
 
+@constexpr
+def _check_jvp_input_v_len(inputs_len, v_len):
+    if inputs_len != v_len:
+        raise ValueError(f'v has invalid length: should be {inputs_len}, but got {v_len}')
+
+
 def jvp(fn, inputs, v, has_aux=False):
     """
     Compute the jacobian-vector-product of the given network. `jvp` matches
-    `forward-mode differentiation <https://www.mindspore.cn/docs/en/r2.0.0-alpha/design/auto_gradient.html
-    #forward-mode-ad>`_.
+    `forward-mode differentiation
+    <https://www.mindspore.cn/docs/en/master/design/programming_paradigm.html#forward-mode-ad>`_.
 
     Args:
         fn (Union[Function, Cell]): The function or net that takes Tensor inputs and returns single Tensor or tuple of
@@ -584,16 +668,17 @@ def jvp(fn, inputs, v, has_aux=False):
         inputs (Union[Tensor, tuple[Tensor], list[Tensor]]): The inputs to `fn` .
         v (Union[Tensor, tuple[Tensor], list[Tensor]]): The vector in jacobian-vector-product. The shape and type of `v`
             should be the same as `inputs` .
-        has_aux (bool): If True, only the first output of `fn` contributes the gradient of `fn`, while the other outputs
-            will be returned straightly. It means the `fn` must return more than one outputs in this case.
-            Default: False.
+        has_aux (bool): If ``True`` , only the first output of `fn` contributes the gradient of `fn`, while the other
+            outputs will be returned straightly. It means the `fn` must return more than one outputs in this case.
+            Default: ``False`` .
 
     Returns:
         - **net_output** (Union[Tensor, tuple[Tensor]]) - The output of `fn(inputs)` . Specially, when `has_aux` is set
-          True, `netout` is the first output of `fn(inputs)` .
+          ``True`` , `netout` is the first output of `fn(inputs)` .
         - **jvp** (Union[Tensor, tuple[Tensor]]) - The result of jacobian-vector-product.
-        - **aux_value** (Union[Tensor, tuple[Tensor]], optional) - When `has_aux` is True, `aux_value` will be returned.
-          It means the second to last outputs of `fn(inputs)` . Specially, `aux_value` does not contribute to gradient.
+        - **aux_value** (Union[Tensor, tuple[Tensor]], optional) - When `has_aux` is ``True`` , `aux_value` will be
+          returned. It means the second to last outputs of `fn(inputs)` . Specially, `aux_value` does not contribute to
+          gradient.
 
     Raises:
         TypeError: `inputs` or `v` does not belong to required types.
@@ -662,9 +747,9 @@ def jvp(fn, inputs, v, has_aux=False):
         if isinstance(outputs, tuple):
             u = ()
             for item in outputs:
-                u = u + (oneslike(item),)
+                u = u + (mutable(oneslike(item)),)
         else:
-            u = oneslike(outputs)
+            u = mutable(oneslike(outputs))
         if len(jvp_inputs) == 1:
             second_grad_net = _grad_single(grad_single)
             gradient_outputs = second_grad_net(u, jvp_inputs, vectors)
@@ -689,6 +774,15 @@ def jvp(fn, inputs, v, has_aux=False):
 
     if not isinstance(inputs, (Tensor, tuple, list)) or not isinstance(v, (Tensor, tuple, list)):
         _raise_type_error()
+
+    inputs_len = 1
+    v_len = 1
+    if isinstance(inputs, (tuple, list)):
+        inputs_len = len(inputs)
+    if isinstance(v, (tuple, list)):
+        v_len = len(v)
+    _check_jvp_input_v_len(inputs_len, v_len)
+
     if isinstance(v, list):
         v = tuple(v)
     if isinstance(inputs, (tuple, list)):
@@ -773,19 +867,26 @@ def _check_tensor(inputs):
     return True
 
 
-def vjp(fn, *inputs, has_aux=False):
+_vjp_grad_op = _Grad(get_all=True, sens_param=True, merge_forward=True)
+_vjp_grad_op_with_weight = _Grad(get_all=True, get_by_list=True, sens_param=True, merge_forward=True)
+
+
+def vjp(fn, *inputs, weights=None, has_aux=False):
     """
     Compute the vector-jacobian-product of the given network. `vjp` matches
-    `reverse-mode differentiation <https://www.mindspore.cn/docs/en/r2.0.0-alpha/design/auto_gradient.html
-    #reverse-mode-ad>`_.
+    `reverse-mode differentiation
+    <https://www.mindspore.cn/docs/en/master/design/programming_paradigm.html#reverse-mode-ad>`_.
 
     Args:
         fn (Union[Function, Cell]): The function or net that takes Tensor inputs and returns single Tensor or tuple of
             Tensors.
         inputs (Union[Tensor, tuple[Tensor], list[Tensor]]): The inputs to `fn` .
+        weights (Union[ParameterTuple, Parameter, list[Parameter]]): The parameters of the training network that need to
+            calculate the gradient. `weights` can be got through `weights = net.trainable_params()` .
+            Default: ``None`` .
         has_aux (bool): If True, only the first output of `fn` contributes the gradient of `fn`, while the other outputs
             will be returned straightly. It means the `fn` must return more than one outputs in this case.
-            Default: False.
+            Default: ``False``.
 
     Returns:
         Forward outputs and function to calculate vjp.
@@ -858,9 +959,12 @@ def vjp(fn, *inputs, has_aux=False):
             fn_ = aux_fn
         else:
             fn_ = fn
+        sens = v
         if len(v) == 1:
-            return _grad_all(fn_)(*inputs, v[0])
-        return _grad_all(fn_)(*inputs, v)
+            sens = v[0]
+        if weights is None:
+            return _vjp_grad_op(fn_)(*inputs, sens)
+        return _vjp_grad_op_with_weight(fn_, weights)(*inputs, sens)
 
     res = fn(*inputs)
     if has_aux:
@@ -870,10 +974,13 @@ def vjp(fn, *inputs, has_aux=False):
     return res, wrap_container
 
 
-@constexpr
+@_primexpr
 def _jac_generate_target_dimension(x):
     """For given length = len(x), this method generates target dimension tuple (1, 2, 3,..., length, 0)."""
-    target_dimension = tuple(index + 1 for index, _ in enumerate(x[1:])) + (0,)
+    dim = ()
+    for index in range(len(x[1:])):
+        dim += (index + 1,)
+    target_dimension = dim + (0,)
     return target_dimension
 
 
@@ -889,15 +996,23 @@ def _jacfwd_trans_item(item, inputs_shape, grad_position):
     return output_wrt_input_all
 
 
-def _jacfwd_postprocess(x, inputs_shape, grad_position):
+def _jac_postprocess(x, shape, grad_position, mode):
     """reformat jacobian."""
+
+    if mode == 'forward':
+        func = _jacfwd_trans_item
+        args = (shape, grad_position)
+    else:
+        func = _jacrev_trans_item
+        args = (shape,)
+
     if isinstance(x, tuple):
         jacobian = ()
         for item in x:
-            jacobian += _jacfwd_trans_item(item, inputs_shape, grad_position)
+            jacobian += func(item, *args)
         res = jacobian
     else:
-        res = _jacfwd_trans_item(x, inputs_shape, grad_position)
+        res = func(x, *args)
     if len(res) == 1:
         return res[0]
     input_num = len(grad_position)
@@ -910,9 +1025,14 @@ def _jacfwd_postprocess(x, inputs_shape, grad_position):
     for i in range(output_num):
         input_grad = ()
         for j in range(input_num):
-            input_grad += (res[i * input_num + j],)
+            input_grad += (res[i * input_num + j],) if mode == 'forward' else (res[j * output_num + i],)
         jac += (input_grad,)
     return jac
+
+
+def _jacfwd_postprocess(x, inputs_shape, grad_position):
+    """reformat forward-computed Jacobian."""
+    return _jac_postprocess(x, inputs_shape, grad_position, 'forward')
 
 
 def _jacfwd_construct_v(inputs, grad_position):
@@ -927,10 +1047,9 @@ def _jacfwd_construct_v(inputs, grad_position):
     items_num = ()
     cum_num = (0,)
     for item in inputs:
-        item_num = size(item)
-        num += item_num
+        num += size(item)
         inputs_shape += ((item.shape, num),)
-        items_num += (item_num,)
+        items_num += (size(item),)
         cum_num += (num,)
     for i, element in enumerate(inputs):
         item_size = items_num[i]
@@ -953,23 +1072,23 @@ _vmap = _Vmap()
 def jacfwd(fn, grad_position=0, has_aux=False):
     """
     Compute Jacobian via forward mode, corresponding to
-    `forward-mode differentiation <https://www.mindspore.cn/docs/en/r2.0.0-alpha/design/auto_gradient.html
-    #forward-mode-ad>`_.
+    `forward-mode differentiation
+    <https://www.mindspore.cn/docs/en/master/design/programming_paradigm.html#forward-mode-ad>`_.
     When number of outputs is much greater than that of inputs, it's better to calculate Jacobian via forward mode than
     reverse mode to get better performance.
 
     Args:
         fn (Union[Cell, Function]): Function to do GradOperation.
-        grad_position (Union[int, tuple[int]]): If int, get the gradient with respect to single input.
-            If tuple, get the gradients with respect to selected inputs. 'grad_position' begins with 0. Default: 0.
-        has_aux (bool): If True, only the first output of `fn` contributes the gradient of `fn`, while the other outputs
-            will be returned straightly. It means the `fn` must return more than one outputs in this case.
-            Default: False.
+        grad_position (Union[int, tuple[int]], optional): If int, get the gradient with respect to single input.
+            If tuple, get the gradients with respect to selected inputs. 'grad_position' begins with 0. Default: ``0`` .
+        has_aux (bool, optional): If ``True`` , only the first output of `fn` contributes the gradient of `fn`,
+            while the other outputs will be returned straightly. It means the `fn` must return more than one
+            outputs in this case. Default: ``False`` .
 
     Returns:
         Function, returns the Jacobian function for the input function or cell.
-        For example, as for `out1, out2 = fn(*args)`, when `has_aux` is set True, gradient function will return outputs
-        like `(Jacobian, out2)` and `out2` does not contribute to the differentiation, otherwise `Jacobian` .
+        For example, as for `out1, out2 = fn(*args)`, when `has_aux` is set ``True`` , gradient function will return
+        outputs like `(Jacobian, out2)` and `out2` does not contribute to the differentiation, otherwise `Jacobian` .
 
     Raises:
         TypeError: `grad_position` or `has_aux` does not belong to required types.
@@ -991,14 +1110,14 @@ def jacfwd(fn, grad_position=0, has_aux=False):
         >>> net = MultipleInputsMultipleOutputsNet()
         >>> jac, aux = jacfwd(net, grad_position=0, has_aux=True)(x, y, z)
         >>> print(jac)
-        [[[[ 2.,  0.]
-           [ 0.,  0.]]
-          [[ 0.,  4.]
-           [ 0.,  0.]]]
-         [[[ 0.,  0.]
-           [ 6.,  0.]]
-          [[ 0.,  0.]
-           [ 0.,  8.]]]]
+        [[[[ 2.  0.]
+           [ 0.  0.]]
+          [[ 0.  4.]
+           [ 0.  0.]]]
+         [[[ 0.  0.]
+           [ 6.  0.]]
+          [[ 0.  0.]
+           [ 0.  8.]]]]
         >>> print(aux)
         [[ 1.  4.]
          [ 9. 16.]]
@@ -1032,9 +1151,9 @@ def jacfwd(fn, grad_position=0, has_aux=False):
             if isinstance(outputs, tuple):
                 u = ()
                 for item in outputs:
-                    u = u + (oneslike(item),)
+                    u = u + (mutable(oneslike(item)),)
             else:
-                u = oneslike(outputs)
+                u = mutable(oneslike(outputs))
             if len(jvp_inputs) == 1:
                 second_grad_net = _grad_single(grad_single)
             else:
@@ -1044,7 +1163,7 @@ def jacfwd(fn, grad_position=0, has_aux=False):
 
         def inner_aux_fn(jvp_inputs, vectors):
             outputs = aux_fn(*jvp_inputs)
-            u = oneslike(outputs)
+            u = mutable(oneslike(outputs))
             if len(jvp_inputs) == 1:
                 second_grad_net = _grad_single(grad_single)
             else:
@@ -1080,29 +1199,8 @@ def _jacrev_trans_item(item, outputs_shape):
 
 
 def _jacrev_postprocess(x, outputs_shape, grad_position):
-    """reformat jacobian."""
-    if isinstance(x, tuple):
-        jacobian = ()
-        for item in x:
-            jacobian += _jacrev_trans_item(item, outputs_shape)
-        res = jacobian
-    else:
-        res = _jacrev_trans_item(x, outputs_shape)
-    if len(res) == 1:
-        return res[0]
-    input_num = len(grad_position)
-    if len(res) % input_num != 0:
-        raise ValueError("The numbers of inputs and outputs do not match.")
-    output_num = len(res) // input_num
-    if input_num == 1 or output_num == 1:
-        return res
-    jac = ()
-    for i in range(output_num):
-        input_grad = ()
-        for j in range(input_num):
-            input_grad += (res[j * output_num + i],)
-        jac += (input_grad,)
-    return jac
+    """reformat reverse-computed jacobian."""
+    return _jac_postprocess(x, outputs_shape, grad_position, 'reverse')
 
 
 def _jacrev_construct_v(inputs, outputs, has_aux=False):
@@ -1126,7 +1224,7 @@ def _jacrev_construct_v(inputs, outputs, has_aux=False):
         outputs_shape += ((item.shape, num),)
         items_num += (item_num,)
         cum_num += (num,)
-    for i, element in enumerate(inputs):
+    for element in inputs:
         primal = broadcast_to(element, (num,) + element.shape)
         primals += (primal,)
     for i, element in enumerate(outputs):
@@ -1145,23 +1243,23 @@ _grad = _Grad(get_by_position=True, has_aux=False, sens_param=True)
 def jacrev(fn, grad_position=0, has_aux=False):
     """
     Compute Jacobian via reverse mode, corresponding to
-    `reverse-mode differentiation <https://www.mindspore.cn/docs/en/r2.0.0-alpha/design/auto_gradient.html
-    #reverse-mode-ad>`_.
+    `reverse-mode differentiation
+    <https://www.mindspore.cn/docs/en/master/design/programming_paradigm.html#reverse-mode-ad>`_.
     When number of inputs is much greater than that of outputs, it's better to calculate Jacobian via reverse mode than
     forward mode to get better performance.
 
     Args:
         fn (Union[Cell, Function]): Function to do GradOperation.
-        grad_position (Union[int, tuple[int]]): If int, get the gradient with respect to single input.
-            If tuple, get the gradients with respect to selected inputs. 'grad_position' begins with 0. Default: 0.
-        has_aux (bool): If True, only the first output of `fn` contributes the gradient of `fn`, while the other outputs
-            will be returned straightly. It means the `fn` must return more than one outputs in this case.
-            Default: False.
+        grad_position (Union[int, tuple[int]], optional): If int, get the gradient with respect to single input.
+            If tuple, get the gradients with respect to selected inputs. 'grad_position' begins with 0. Default: ``0`` .
+        has_aux (bool, optional): If ``True`` , only the first output of `fn` contributes the gradient of `fn`,
+            while the other outputs will be returned straightly. It means the `fn` must return more than
+            one outputs in this case. Default: ``False`` .
 
     Returns:
         Function, returns the Jacobian function for the input function or cell.
-        For example, as for `out1, out2 = fn(*args)`, when `has_aux` is set True, gradient function will return outputs
-        like `(Jacobian, out2)` and `out2` does not contribute to the differentiation, otherwise `Jacobian` .
+        For example, as for `out1, out2 = fn(*args)`, when `has_aux` is set ``True`` , gradient function will return
+        outputs like `(Jacobian, out2)` and `out2` does not contribute to the differentiation, otherwise `Jacobian` .
 
     Raises:
         TypeError: `grad_position` or `has_aux` does not belong to required types.
@@ -1183,14 +1281,14 @@ def jacrev(fn, grad_position=0, has_aux=False):
         >>> net = MultipleInputsMultipleOutputsNet()
         >>> jac, aux = jacrev(net, grad_position=0, has_aux=True)(x, y, z)
         >>> print(jac)
-        [[[[ 2.,  0.]
-           [ 0.,  0.]]
-          [[ 0.,  4.]
-           [ 0.,  0.]]]
-         [[[ 0.,  0.]
-           [ 6.,  0.]]
-          [[ 0.,  0.]
-           [ 0.,  8.]]]]
+        [[[[ 2.  0.]
+           [ 0.  0.]]
+          [[ 0.  4.]
+           [ 0.  0.]]]
+         [[[ 0.  0.]
+           [ 6.  0.]]
+          [[ 0.  0.]
+           [ 0.  8.]]]]
         >>> print(aux)
         [[ 1.  4.]
          [ 9. 16.]]
@@ -1238,7 +1336,7 @@ def custom_vjp(fn=None):
     Support vjp to custom bprop for function.
 
     Args:
-        fn (function): The `fn` that need to define custom bprop. Default: None.
+        fn (function): The `fn` that need to define custom bprop. Default: ``None``.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
@@ -1277,7 +1375,7 @@ def stop_gradient(value):
     StopGradient is used for eliminating the effect of a value on the gradient, such as truncating
     the gradient propagation from an output of a function.
     For more details, please refer to `Stop Gradient
-    <https://www.mindspore.cn/tutorials/en/r2.0.0-alpha/beginner/autograd.html#stop-gradient>`_.
+    <https://www.mindspore.cn/tutorials/en/master/beginner/autograd.html#stop-gradient>`_.
 
     Args:
         value (Any): The value whose effect on the gradient to be eliminated.
@@ -1319,6 +1417,7 @@ __all__ = [
     'jvp',
     'vjp',
     'linearize',
-    'stop_gradient'
+    'stop_gradient',
+    'get_grad'
 ]
 __all__.sort()

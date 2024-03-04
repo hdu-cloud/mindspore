@@ -13,13 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include "ops/cumulative_logsumexp.h"
 #include <set>
-#include "ops/op_utils.h"
-#include "utils/tensor_construct_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/utils.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
+#include "utils/tensor_construct_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,6 +36,11 @@ abstract::ShapePtr CumulativeLogsumexpInferShape(const PrimitivePtr &primitive,
   (void)CheckAndConvertUtils::CheckInteger("input x rank", SizeToLong(x_shape.size()), kGreaterEqual, min_dim,
                                            prim_name);
   auto axis_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
+
+  auto is_dynamic_rank = IsDynamicRank(x_shape) || IsDynamicRank(axis_shape);
+  if (is_dynamic_rank) {
+    return std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
+  }
   auto axis_dim = SizeToLong(axis_shape.size());
   (void)CheckAndConvertUtils::CheckInteger("axis dimension", axis_dim, kEqual, kAxisDim, prim_name);
   return std::make_shared<abstract::Shape>(x_shape);
@@ -70,7 +78,30 @@ bool CumulativeLogsumexp::get_reverse() const {
   auto value_ptr = this->GetAttr(KReverse);
   return GetValue<bool>(value_ptr);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(CumulativeLogsumexp, prim::kPrimCumulativeLogsumexp, CumulativeLogsumexpInfer, nullptr,
-                             true);
+
+int64_t CumulativeLogsumexp::get_axis() const {
+  auto value_ptr = this->GetAttr(kAxis);
+  return GetValue<int64_t>(value_ptr);
+}
+
+// AG means auto generated
+class MIND_API AGCumulativeLogsumexpInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return CumulativeLogsumexpInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return CumulativeLogsumexpInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return CumulativeLogsumexpInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(CumulativeLogsumexp, prim::kPrimCumulativeLogsumexp, AGCumulativeLogsumexpInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

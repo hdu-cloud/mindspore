@@ -18,6 +18,7 @@
 #include <thrust/execution_policy.h>
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
+#include <math.h>
 #include <algorithm>
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/sparse_softmax_impl.cuh"
 
@@ -25,7 +26,7 @@ template <typename T>
 __global__ void CalSparseSoftmaxKernel(const int64_t *indices, const T *values, T *output, int32_t *reorder,
                                        const size_t indice_dims, const size_t values_elements) {
   for (size_t pos = blockIdx.x * blockDim.x + threadIdx.x; pos < values_elements; pos += blockDim.x * gridDim.x) {
-    T out = std::exp(values[reorder[pos]]);
+    T out = exp(values[reorder[pos]]);
     T exp_sum = out;
     int64_t right_pos = pos + 1;
     int64_t left_pos = pos - 1;
@@ -53,11 +54,11 @@ __global__ void CalSparseSoftmaxKernel(const int64_t *indices, const T *values, 
         }
       }
       if (right_flag) {
-        exp_sum += std::exp(values[reorder[right_pos]]);
+        exp_sum += exp(values[reorder[right_pos]]);
         right_pos++;
       }
       if (left_flag) {
-        exp_sum += std::exp(values[reorder[left_pos]]);
+        exp_sum += exp(values[reorder[left_pos]]);
         left_pos--;
       }
     } while (right_flag || left_flag);
@@ -69,11 +70,9 @@ struct cmp_indices {
   const int64_t *indices_;
   const size_t indice_dims_;
 
-  cmp_indices(const int64_t *ptr, const size_t dims)
-    : indices_(ptr), indice_dims_(dims) {}
+  cmp_indices(const int64_t *ptr, const size_t dims) : indices_(ptr), indice_dims_(dims) {}
 
-  __host__ __device__
-  bool operator()(int64_t i, int64_t j) {
+  __host__ __device__ bool operator()(int64_t i, int64_t j) {
     for (size_t d = 0; d < indice_dims_; ++d) {
       if (indices_[i * indice_dims_ + d] < indices_[j * indice_dims_ + d]) {
         return true;
@@ -87,27 +86,25 @@ struct cmp_indices {
 };
 
 template <typename T>
-void CalSparseSoftmax(const int64_t *indices, const T *values, T *output, int32_t *reorder,
-                      int64_t *indice_to_num, const size_t indice_dims, const size_t values_elements,
-                      const uint32_t &device_id, cudaStream_t cuda_stream) {
+cudaError_t CalSparseSoftmax(const int64_t *indices, const T *values, T *output, int32_t *reorder,
+                             int64_t *indice_to_num, const size_t indice_dims, const size_t values_elements,
+                             const uint32_t &device_id, cudaStream_t cuda_stream) {
   auto policy = thrust::cuda::par.on(cuda_stream);
-  thrust::sequence(policy,
-                   thrust::device_pointer_cast(reorder),
+  thrust::sequence(policy, thrust::device_pointer_cast(reorder),
                    thrust::device_pointer_cast(reorder) + values_elements);
-  thrust::sort(policy,
-               thrust::device_pointer_cast(reorder),
-               thrust::device_pointer_cast(reorder) + values_elements,
+  thrust::sort(policy, thrust::device_pointer_cast(reorder), thrust::device_pointer_cast(reorder) + values_elements,
                cmp_indices(indices, indice_dims));
   CalSparseSoftmaxKernel<<<CUDA_BLOCKS(device_id, values_elements), CUDA_THREADS(device_id), 0, cuda_stream>>>(
     indices, values, output, reorder, indice_dims, values_elements);
+  return GetCudaStatus();
 }
 
-template CUDA_LIB_EXPORT void CalSparseSoftmax<float>(const int64_t *indices, const float *values, float *output,
-                                                      int32_t *reorder, int64_t *indice_to_num,
-                                                      const size_t indice_dims, const size_t values_elements,
-                                                      const uint32_t &device_id, cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalSparseSoftmax<float>(const int64_t *indices, const float *values, float *output,
+                                                             int32_t *reorder, int64_t *indice_to_num,
+                                                             const size_t indice_dims, const size_t values_elements,
+                                                             const uint32_t &device_id, cudaStream_t cuda_stream);
 
-template CUDA_LIB_EXPORT void CalSparseSoftmax<double>(const int64_t *indices, const double *values, double *output,
-                                                       int32_t *reorder, int64_t *indice_to_num,
-                                                       const size_t indice_dims, const size_t values_elements,
-                                                       const uint32_t &device_id, cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalSparseSoftmax<double>(const int64_t *indices, const double *values,
+                                                              double *output, int32_t *reorder, int64_t *indice_to_num,
+                                                              const size_t indice_dims, const size_t values_elements,
+                                                              const uint32_t &device_id, cudaStream_t cuda_stream);

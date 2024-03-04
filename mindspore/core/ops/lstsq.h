@@ -16,12 +16,12 @@
 
 #ifndef MINDSPORE_CORE_OPS_LSTSQ_H_
 #define MINDSPORE_CORE_OPS_LSTSQ_H_
-#include <memory>
 #include <map>
+#include <memory>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,8 +31,8 @@ class MIND_API Lstsq : public BaseOperator {
   MIND_API_BASE_MEMBER(Lstsq);
   Lstsq() : BaseOperator(kNameLstsq) { InitIOName({"matrix", "rhs"}, {"y"}); }
 };
-abstract::AbstractBasePtr LstsqInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                     const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr LstsqInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                              const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimLstsqPtr = std::shared_ptr<Lstsq>;
 }  // namespace ops
 }  // namespace mindspore

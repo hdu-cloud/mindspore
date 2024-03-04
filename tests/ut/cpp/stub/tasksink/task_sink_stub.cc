@@ -17,6 +17,10 @@
 #include "plugin/device/ascend/hal/device/tasksink/task_generator.h"
 #ifndef ENABLE_SECURITY
 #include "plugin/device/ascend/hal/device/dump/data_dumper.h"
+#include "plugin/device/ascend/hal/device/dump/kernel_dumper.h"
+#include "mindspore/ccsrc/kernel/kernel.h"
+#include "mindspore/ccsrc/kernel/kernel_get_value.h"
+#include "mindspore/ccsrc/kernel/kash/kernel_pack.h"
 #endif
 
 namespace mindspore {
@@ -38,6 +42,13 @@ void DataDumper::UnloadDumpInfo() {}
 void DataDumper::OpDebugRegister() {}
 void DataDumper::OpDebugUnregister() {}
 DataDumper::~DataDumper() {}
+std::map<std::string, std::string> KernelDumper::stream_task_graphs;
+void KernelDumper::OpLoadDumpInfo(const CNodePtr &kernel) {}
+void KernelDumper::DumpHcclOutput(const std::shared_ptr<HcclTaskInfo> &task_info, const rtStream_t &stream) {}
+void KernelDumper::Init() {}
+void KernelDumper::OpDebugRegisterForStream(const CNodePtr &kernel) {}
+void KernelDumper::OpDebugUnregisterForStream() {}
+KernelDumper::~KernelDumper() {}
 #endif
 }  // namespace ascend
 }  // namespace device

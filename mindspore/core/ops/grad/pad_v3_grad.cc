@@ -15,10 +15,12 @@
  */
 #include "ops/grad/pad_v3_grad.h"
 #include <set>
-#include "ops/op_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "utils/check_convert_utils.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -67,7 +69,11 @@ abstract::ShapePtr PadV3GradInferShape(const PrimitivePtr &primitive, const std:
     paddings_arg = CheckAndConvertUtils::CheckTensorIntValue("paddings value", paddings_value, prim_name);
   } else if (padding_type->isa<Tuple>() || padding_type->isa<List>()) {
     auto value = input_args[1]->BuildValue();
-    paddings_arg = CheckAndConvertUtils::CheckIntOrTupleInt("paddings value", value, prim_name);
+    if (IsValueKnown(value)) {
+      paddings_arg = CheckAndConvertUtils::CheckIntOrTupleInt("paddings value", value, prim_name);
+    } else {
+      return std::make_shared<abstract::Shape>(std::vector<int64_t>(x_shape.size(), abstract::Shape::kShapeDimAny));
+    }
   } else {
     return std::make_shared<abstract::Shape>(std::vector<int64_t>(x_shape.size(), abstract::Shape::kShapeDimAny));
   }
@@ -88,7 +94,6 @@ abstract::ShapePtr PadV3GradInferShape(const PrimitivePtr &primitive, const std:
       }
     }
   }
-  primitive->set_attr("padding_switched", MakeValue(paddings_val));
 
   std::vector<int64_t> out_shape;
   if (paddings_size == SizeToLong(kPaddingsSizeTwo)) {
@@ -125,10 +130,18 @@ TypePtr PadV3GradInferType(const PrimitivePtr &prim, const std::vector<AbstractB
     MS_EXCEPTION_IF_NULL(item);
   }
   std::map<std::string, TypePtr> args = {{"x", input_args[0]->BuildType()}};
-  return CheckAndConvertUtils::CheckTensorTypeSame(args,
-                                                   {kInt8, kInt16, kInt32, kInt64, kUInt8, kUInt16, kUInt32, kUInt64,
-                                                    kFloat16, kFloat32, kFloat64, kComplex64, kComplex128},
-                                                   prim->name());
+  auto mode = GetValue<string>(prim->GetAttr("mode"));
+  if (mode == kConstant) {
+    return CheckAndConvertUtils::CheckTensorTypeSame(args,
+                                                     {kInt8, kInt16, kInt32, kInt64, kUInt8, kUInt16, kUInt32, kUInt64,
+                                                      kFloat16, kFloat32, kFloat64, kComplex64, kComplex128, kBool},
+                                                     prim->name());
+  } else {
+    return CheckAndConvertUtils::CheckTensorTypeSame(args,
+                                                     {kInt8, kInt16, kInt32, kInt64, kUInt8, kUInt16, kUInt32, kUInt64,
+                                                      kFloat16, kFloat32, kFloat64, kComplex64, kComplex128},
+                                                     prim->name());
+  }
 }
 }  // namespace
 
@@ -143,12 +156,28 @@ AbstractBasePtr PadV3GradInfer(const abstract::AnalysisEnginePtr &, const Primit
 
 bool PadV3Grad::get_paddings_contiguous() const { return GetValue<bool>(GetAttr("paddings_contiguous")); }
 std::string PadV3Grad::get_mode() const { return GetValue<string>(GetAttr("mode")); }
-std::vector<int64_t> PadV3Grad::get_paddings() const {
-  return GetValue<std::vector<int64_t>>(GetAttr("padding_switched"));
-}
 
-REGISTER_HOST_DEPENDS(kNamePadV3Grad, {kInputIndex1});
 MIND_API_OPERATOR_NAME_IMPL(PadV3Grad, kNamePadV3Grad, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(PadV3Grad, prim::kPrimPadV3Grad, PadV3GradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGPadV3GradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return PadV3GradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return PadV3GradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return PadV3GradInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {kInputIndex1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(PadV3Grad, prim::kPrimPadV3Grad, AGPadV3GradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

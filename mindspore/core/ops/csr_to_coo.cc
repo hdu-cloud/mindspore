@@ -16,13 +16,22 @@
 
 #include "ops/csr_to_coo.h"
 
+#include <memory>
+
+#include "abstract/abstract_value.h"
 #include "abstract/dshape.h"
-#include "abstract/param_validator.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/param_validator.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_ops.h"
 #include "ops/op_utils.h"
-#include "utils/anf_utils.h"
-#include "utils/check_convert_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -36,10 +45,10 @@ AbstractBasePtr CSR2COOInfer(const abstract::AnalysisEnginePtr &, const Primitiv
   const std::string op_name = primitive->name();
   CheckArgsSize(op_name, input_args, kCSRArgsSize);
   auto indptr = abstract::CheckArg<AbstractTensor>(op_name, input_args, 0);
+  MS_EXCEPTION_IF_NULL(indptr);
   CheckSparseIndicesDtypeInt32(indptr->element()->BuildType(), "Indptr");
 
   auto nnz = abstract::CheckArg<AbstractScalar>(op_name, input_args, 1);
-  MS_EXCEPTION_IF_NULL(indptr);
   MS_EXCEPTION_IF_NULL(nnz);
 
   MS_EXCEPTION_IF_NULL(nnz->BuildValue());

@@ -10,7 +10,7 @@ mindspore.dataset.audio.LFilter
           维度必须与 `b_coeffs` 相同（根据需要填充0值）。
         - **b_coeffs** (Sequence[float]) - 不同维度的差分方程分子系数。低维的延迟系数在前，例如[b0, b1, b2, ...]。
           维度必须与 `a_coeffs` 相同（根据需要填充0值）。
-        - **clamp** (bool, 可选) - 如果为True，将输出信号截断在[-1, 1]范围内。默认值：True。
+        - **clamp** (bool, 可选) - 如果为True，将输出信号截断在[-1, 1]范围内。默认值： ``True`` 。
     
     异常：
         - **TypeError** - 当 `a_coeffs` 的类型不为Sequence[float]。
@@ -18,3 +18,7 @@ mindspore.dataset.audio.LFilter
         - **ValueError** - 当 `a_coeffs` 与 `b_coeffs` 维度不同。
         - **TypeError** - 当 `clamp` 的类型不为bool。
         - **RuntimeError** - 当输入音频的shape不为<..., time>。
+
+    教程样例：
+        - `音频变换样例库
+          <https://www.mindspore.cn/docs/zh-CN/master/api_python/samples/dataset/audio_gallery.html>`_

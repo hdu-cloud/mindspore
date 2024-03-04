@@ -114,13 +114,14 @@ class TopKCategoricalAccuracy(Metric):
 class Top1CategoricalAccuracy(TopKCategoricalAccuracy):
     """
     Calculates the top-1 categorical accuracy. This class is a specialized class for TopKCategoricalAccuracy.
-    Refer to :class:`TopKCategoricalAccuracy` for more details.
+    Refer to :class:`mindspore.train.TopKCategoricalAccuracy` for more details.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> import numpy as np
+        >>> import mindspore
         >>> from mindspore import Tensor
         >>> from mindspore.train import Top1CategoricalAccuracy
         >>>
@@ -141,19 +142,21 @@ class Top1CategoricalAccuracy(TopKCategoricalAccuracy):
 class Top5CategoricalAccuracy(TopKCategoricalAccuracy):
     """
     Calculates the top-5 categorical accuracy. This class is a specialized class for TopKCategoricalAccuracy.
-    Refer to :class:`TopKCategoricalAccuracy` for more details.
+    Refer to :class:`mindspore.train.TopKCategoricalAccuracy` for more details.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import nn, Tensor
+        >>> import mindspore
+        >>> from mindspore import Tensor
+        >>> from mindspore.train import Top5CategoricalAccuracy
         >>>
         >>> x = Tensor(np.array([[0.2, 0.5, 0.3, 0.6, 0.2], [0.1, 0.35, 0.5, 0.2, 0.],
         ...            [0.9, 0.6, 0.2, 0.01, 0.3]]), mindspore.float32)
         >>> y = Tensor(np.array([2, 0, 1]), mindspore.float32)
-        >>> topk = nn.Top5CategoricalAccuracy()
+        >>> topk = Top5CategoricalAccuracy()
         >>> topk.clear()
         >>> topk.update(x, y)
         >>> output = topk.eval()

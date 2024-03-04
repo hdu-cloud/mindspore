@@ -17,11 +17,12 @@
 #include <map>
 #include <string>
 
+#include "abstract/ops/primitive_infer_map.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/comparison_ops.h"
 #include "ops/less.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
-#include "abstract/ops/primitive_infer_map.h"
-#include "mindapi/src/helper.h"
 
 namespace mindspore {
 namespace ops {
@@ -39,7 +40,7 @@ TypePtr LessInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePt
   std::map<std::string, TypePtr> types;
   (void)types.emplace("x", input_args[0]->BuildType());
   (void)types.emplace("y", input_args[1]->BuildType());
-  (void)CheckAndConvertUtils::CheckTensorTypeSame(types, common_valid_types, prim->name());
+  (void)CheckAndConvertUtils::CheckTensorTypeSame(types, common_valid_types_with_bool, prim->name());
   return std::make_shared<TensorType>(kBool);
 }
 }  // namespace
@@ -51,6 +52,24 @@ AbstractBasePtr LessInfer(const abstract::AnalysisEnginePtr &, const PrimitivePt
   auto type = LessInferType(primitive, input_args);
   return abstract::MakeAbstract(shape, type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Less, prim::kPrimLess, LessInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGLessInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return LessInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return LessInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return LessInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Less, prim::kPrimLess, AGLessInfer, false);
 }  // namespace ops
 }  // namespace mindspore

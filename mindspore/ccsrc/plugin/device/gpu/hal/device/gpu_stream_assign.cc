@@ -20,6 +20,8 @@
 #include <memory>
 #include <algorithm>
 #include <utility>
+#include "ops/other_op_name.h"
+#include "ops/framework_op_name.h"
 #include "kernel/graph_kernel_info.h"
 #include "plugin/device/gpu/hal/device/gpu_common.h"
 #include "plugin/device/gpu/hal/device/kernel_info_setter.h"
@@ -46,7 +48,7 @@ void AssignGpuStream(const std::shared_ptr<session::KernelGraph> &kernel_graph) 
   const auto default_stream_id = GPUDeviceManager::GetInstance().default_stream_id();
   for (const auto &kernel_node : execution_kernels) {
     if (common::AnfAlgo::GetCNodeName(kernel_node) == kAllReduceOpName) {
-      allreduce_kernels.emplace_back(kernel_node);
+      (void)allreduce_kernels.emplace_back(kernel_node);
     } else {
       AnfAlgo::SetStreamId(default_stream_id, kernel_node.get());
     }
@@ -88,7 +90,8 @@ bool FindAllReduceStreamSwitchPos(const std::shared_ptr<session::KernelGraph> &k
   MS_EXCEPTION_IF_NULL(kernel_graph);
   MS_EXCEPTION_IF_NULL(send_recv_pairs);
   auto execution_kernels = kernel_graph->execution_order();
-  std::vector<CNodePtr>::iterator iter, iter_begin;
+  std::vector<CNodePtr>::iterator iter;
+  std::vector<CNodePtr>::iterator iter_begin;
   iter = iter_begin = execution_kernels.begin();
   std::vector<CNodePtr>::iterator iter_end = execution_kernels.end();
   for (; iter != execution_kernels.end(); ++iter) {
@@ -202,9 +205,9 @@ void InsertStreamSwitchNode(const std::shared_ptr<session::KernelGraph> &kernel_
 bool GenSendRecvCNodesForAllReduce(const std::shared_ptr<session::KernelGraph> &kernel_graph,
                                    const CNodePtr &mock_send_node, const CNodePtr &mock_recv_node, CNodePtr *send_node,
                                    CNodePtr *recv_node) {
-  *send_node = CreateStreamSwitchNode(kernel_graph, kSendOpName);
+  *send_node = CreateStreamSwitchNode(kernel_graph, kStreamSendOpName);
   MS_EXCEPTION_IF_NULL(*send_node);
-  *recv_node = CreateStreamSwitchNode(kernel_graph, kRecvOpName);
+  *recv_node = CreateStreamSwitchNode(kernel_graph, kStreamRecvOpName);
   MS_EXCEPTION_IF_NULL(*recv_node);
 
   cudaEvent_t event = nullptr;
@@ -236,6 +239,7 @@ CNodePtr CreateStreamSwitchNode(const std::shared_ptr<session::KernelGraph> &ker
   MS_EXCEPTION_IF_NULL(abstract_none);
   node->set_abstract(abstract_none);
   auto kernel_info_setter = GraphKernelInfoManager::Instance().GetGraphKernelInfo(kGPUDevice);
+  MS_EXCEPTION_IF_NULL(kernel_info_setter);
   kernel_info_setter->SetKernelInfo(node, KernelType::UNKNOWN_KERNEL_TYPE);
   return node;
 }

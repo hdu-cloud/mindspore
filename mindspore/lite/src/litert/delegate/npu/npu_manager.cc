@@ -16,17 +16,23 @@
 
 #include "src/litert/delegate/npu/npu_manager.h"
 #include <sys/system_properties.h>
+#include <regex>
 #include "include/hiai_ir_build.h"
 #include "include/HiAiModelManagerService.h"
 #include "src/common/file_utils.h"
+#include "src/common/mmap_utils.h"
 
 namespace mindspore::lite {
 constexpr int MAX_MODEL_NUM = 20;
-int NPUManager::CompareVersion(const string &version1, const string &version2) {
+constexpr int KIRIN_REGEX_MIN_SIZE = 2;
+constexpr int KIRIN_VERSION_810 = 810;
+constexpr int KIRIN_VERSION_820 = 820;
+constexpr int KIRIN_VERSION_985 = 985;
+int NPUManager::CompareVersion(const std::string &version1, const std::string &version2) {
   std::istringstream iss1(version1);
   std::istringstream iss2(version2);
-  string string1;
-  string string2;
+  std::string string1;
+  std::string string2;
   while (!iss1.eof() || !iss2.eof()) {
     getline(iss1, string1, '.');
     getline(iss2, string2, '.');
@@ -64,6 +70,10 @@ void NPUManager::Reset() {
   for (const auto &model_map : models_) {
     auto model = model_map.second;
     if (!model->is_freed_) {
+      UnmapMmapBuffer(const_cast<void *>(static_cast<const void *>(model->model_buffer_data_->data)),
+                      model->model_buffer_data_->length);
+      model->model_buffer_data_->data = nullptr;
+      model->model_buffer_data_->length = 0;
       ir_build.ReleaseModelBuff(*model->model_buffer_data_);
       model->is_freed_ = true;
     }
@@ -108,37 +118,67 @@ bool NPUManager::IsSupportNPU() {
 }
 
 bool NPUManager::IsKirinChip() {
-  std::ifstream cpu_info("/proc/cpuinfo");
-  if (!(cpu_info.good() && cpu_info.is_open())) {
+  char platform_info[PROP_VALUE_MAX] = {0};
+  if (__system_property_get("ro.hardware", platform_info) <= 0) {
+    MS_LOG(WARNING) << "Get board platform failed.";
     return false;
   }
-  std::string line;
-  while (!cpu_info.eof()) {
-    getline(cpu_info, line);
-    if (line.find("Hardware") == string::npos) {
-      continue;
-    }
-    auto index = line.find("Kirin");
-    if (index == string::npos) {
-      continue;
-    }
-    // support Kirin 990 5G\990E\9000E
-    if (line.find("990") != string::npos || line.find("9000") != string::npos) {
-      cpu_info.close();
-      return true;
-    }
-    auto kirin_number_str = line.substr(index + 5);
-    auto kirin_number = atoi(kirin_number_str.c_str());
-    if (kirin_number >= 985 || kirin_number == 810 || kirin_number == 820) {
-      cpu_info.close();
-      return true;
-    } else {
-      MS_LOG(WARNING) << "Unsupported KirinChip " << kirin_number;
-      cpu_info.close();
-      return false;
-    }
+  std::string platform_info_str = std::string(platform_info);
+  std::cmatch match_result;
+  // to match kirin985/kirin990/kirin990 5g/kirin9000/kirin9000E
+  std::regex kirin_chip("kirin([0-9]+)[A-Z]*");
+  auto ret = std::regex_match(platform_info_str.c_str(), match_result, kirin_chip);
+  if (!ret || match_result.size() < KIRIN_REGEX_MIN_SIZE || match_result[1].length() == 0) {
+    MS_LOG(WARNING) << "The board platform is not a kirin chip.";
+    return false;
   }
-  return false;
+  int kirin_number = std::stoi(match_result[1]);
+  return kirin_number >= KIRIN_VERSION_985 || kirin_number == KIRIN_VERSION_810 || kirin_number == KIRIN_VERSION_820;
+}
+
+int NPUManager::StoreCache(const std::string &cache_om_name,
+                           const std::shared_ptr<domi::ModelBufferData> &model_buffer_data) {
+  // Store .om Cache
+  if (cache_dir_.empty()) {
+    return RET_OK;
+  }
+  if (CreateDir(cache_dir_) != RET_OK) {
+    MS_LOG(ERROR) << "Create cache_file folder failed.";
+    return RET_ERROR;
+  }
+  auto real_cache_dir = RealPath(cache_dir_.c_str());
+  if (real_cache_dir.empty()) {
+    MS_LOG(ERROR) << "Invalid cache directory";
+    return RET_ERROR;
+  }
+  if (WriteToBin(real_cache_dir + "/" + cache_om_name, model_buffer_data->data, model_buffer_data->length) != RET_OK) {
+    MS_LOG(ERROR) << "Store Cache failed for model: " << cache_om_name;
+    return RET_ERROR;
+  }
+  return RET_OK;
+}
+
+std::shared_ptr<domi::ModelBufferData> NPUManager::LoadCache(const std::string &cache_om_name) {
+  // Load .om Cache
+  if (cache_dir_.empty()) {
+    return nullptr;
+  }
+  auto real_cache_dir = RealPath(cache_dir_.c_str());
+  if (real_cache_dir.empty()) {
+    MS_LOG(ERROR) << "Invalid cache directory.";
+    return nullptr;
+  }
+  auto cache_om_path = real_cache_dir + "/" + cache_om_name;
+  size_t len;
+  auto buf = ReadFileByMmap(cache_om_path, &len);
+  if (buf == nullptr) {
+    MS_LOG(WARNING) << "The Cache om model does not exist.";
+    return nullptr;
+  }
+  auto model_buffer_data = std::make_shared<domi::ModelBufferData>();
+  model_buffer_data->data = buf;
+  model_buffer_data->length = static_cast<uint32_t>(len);
+  return model_buffer_data;
 }
 
 int NPUManager::AddModel(std::shared_ptr<domi::ModelBufferData> model_buffer_data, const std::string &model_name,

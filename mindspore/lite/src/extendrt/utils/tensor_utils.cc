@@ -22,10 +22,18 @@
 
 #include "extendrt/utils/tensor_utils.h"
 #include "mindspore/ccsrc/kernel/common_utils.h"
+#include "mindspore/ccsrc/kernel/framework_utils.h"
 
 namespace mindspore {
-TensorRefData::TensorRefData(void *data, size_t bytes_size, size_t data_size, size_t ndim)
-    : data_(data), elem_count_(bytes_size), data_size_(data_size), ndim_(ndim) {}
+TensorRefData::TensorRefData(void *data, size_t bytes_size, size_t data_size, size_t ndim,
+                             const std::function<void(uint8_t *)> &deleter)
+    : data_(data), elem_count_(bytes_size), data_size_(data_size), ndim_(ndim), deleter_(deleter) {}
+
+TensorRefData::~TensorRefData() {
+  if (deleter_ && data_) {
+    deleter_(reinterpret_cast<uint8_t *>(data_));
+  }
+}
 
 ssize_t TensorRefData::size() const { return static_cast<ssize_t>(elem_count_); }
 
@@ -104,7 +112,7 @@ std::vector<mindspore::tensor::Tensor> TensorUtils::MSTensorToTensor(const std::
     auto data_type = ms_tensor.DataType();
     auto type_id = static_cast<mindspore::TypeId>(data_type);
     auto shape = ms_tensor.Shape();
-    auto data = ms_tensor.MutableData();
+    auto data = const_cast<void *>(ms_tensor.Data().get());
     auto data_size = ms_tensor.DataSize();
     auto ref_tensor_data = std::make_shared<TensorRefData>(data, ms_tensor.ElementNum(), data_size, shape.size());
     mindspore::tensor::Tensor tensor(type_id, shape, ref_tensor_data);
@@ -112,6 +120,9 @@ std::vector<mindspore::tensor::Tensor> TensorUtils::MSTensorToTensor(const std::
     if (device_address != nullptr) {
       auto lite_device_address = std::make_shared<LiteDeviceAddress>(device_address, ms_tensor.DataSize());
       tensor.set_device_address(lite_device_address);
+      // only use device_id now.
+      auto device_info = tensor::DeviceInfo("DefaultFormat", nullptr, "DefaultFormat", ms_tensor.GetDeviceId());
+      tensor.set_device_info(device_info);
     }
     tensors.emplace_back(std::move(tensor));
   }
@@ -151,5 +162,91 @@ std::vector<mindspore::tensor::Tensor> TensorUtils::TensorPtrToTensor(
   std::transform(tensor_ptrs.begin(), tensor_ptrs.end(), std::back_inserter(tensors),
                  [](mindspore::tensor::TensorPtr tensor_ptr) { return mindspore::tensor::Tensor(*tensor_ptr); });
   return tensors;
+}
+
+kernel::AddressPtr CloudTensorUtils::LiteTensorToAddressPtr(const lite::Tensor *lite_tensor) {
+  kernel::AddressPtr address_ptr = std::make_shared<kernel::Address>(lite_tensor->data(), lite_tensor->Size());
+  return address_ptr;
+}
+
+std::vector<mindspore::kernel::AddressPtr> CloudTensorUtils::LiteTensorToAddressPtrVec(
+  const std::vector<lite::Tensor *> &lite_tensors) {
+  kernel::AddressPtrList address_list;
+
+  for (auto lite_tensor : lite_tensors) {
+    kernel::AddressPtr address = LiteTensorToAddressPtr(lite_tensor);
+    address_list.push_back(address);
+  }
+
+  return address_list;
+}
+
+kernel::KernelTensorPtr CloudTensorUtils::LiteTensorToKernelTensorPtr(const lite::Tensor *lite_tensor) {
+  kernel::AddressPtr address = LiteTensorToAddressPtr(lite_tensor);
+  kernel::KernelTensorPtr kernel_tensor_ptr = std::make_shared<kernel::KernelTensor>();
+  kernel_tensor_ptr->SetData(address);
+  kernel_tensor_ptr->SetFormat(lite_tensor->format());
+
+  auto lite_shape = lite_tensor->shape();
+  std::vector<int64_t> shape;
+  for (size_t i = 0; i < lite_shape.size(); i++) {
+    shape.push_back(lite_shape[i]);
+  }
+
+  auto kernel_tensor_abstract_ptr = std::make_shared<mindspore::abstract::AbstractTensor>(
+    mindspore::TypeIdToType(lite_tensor->data_type()), std::make_shared<abstract::Shape>(shape));
+  kernel::TensorInfo info;
+  info.format = lite_tensor->format();
+  info.base_ = kernel_tensor_abstract_ptr;
+
+  kernel_tensor_ptr->SetTensorInfo(info);
+  return kernel_tensor_ptr;
+}
+
+std::vector<kernel::KernelTensorPtr> CloudTensorUtils::LiteTensorToKernelTensorPtrVec(
+  const std::vector<lite::Tensor *> &lite_tensors) {
+  std::vector<kernel::KernelTensorPtr> kernel_tensor_list;
+
+  for (auto lite_tensor : lite_tensors) {
+    if (lite_tensor == nullptr) {
+      continue;
+    }
+    auto kernel_tensor_ptr = LiteTensorToKernelTensorPtr(lite_tensor);
+    kernel_tensor_list.push_back(kernel_tensor_ptr);
+  }
+
+  return kernel_tensor_list;
+}
+
+std::vector<std::vector<int64_t>> AbstractTensorUtils::GetTensorListShapes(
+  const std::vector<infer::abstract::Tensor *> &tensors) {
+  std::vector<std::vector<int64_t>> original_dims;
+  std::transform(tensors.begin(), tensors.end(), std::back_inserter(original_dims),
+                 [](infer::abstract::Tensor *tensor) {
+                   std::vector<int64_t> shape64;
+                   if (tensor != nullptr) {
+                     auto shape32 = tensor->shape();
+                     std::transform(shape32.begin(), shape32.end(), std::back_inserter(shape64),
+                                    [](int dim) { return static_cast<int64_t>(dim); });
+                   }
+                   return shape64;
+                 });
+  return original_dims;
+}
+
+bool AbstractTensorUtils::SetTensorListShapse(const std::vector<infer::abstract::Tensor *> &tensors,
+                                              const std::vector<std::vector<int64_t>> &shapes) {
+  for (size_t i = 0; i < tensors.size(); i++) {
+    auto tensor = tensors.at(i);
+    if (tensor == nullptr) {
+      continue;
+    }
+    auto shape64 = shapes.at(i);
+    std::vector<int> shape32;
+    std::transform(shape64.begin(), shape64.end(), std::back_inserter(shape32),
+                   [](int64_t dim) { return static_cast<int>(dim); });
+    tensor->set_shape(shape32);
+  }
+  return true;
 }
 }  // namespace mindspore

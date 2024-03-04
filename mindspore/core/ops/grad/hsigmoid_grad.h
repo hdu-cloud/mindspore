@@ -21,8 +21,8 @@
 #include <string>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,8 +33,8 @@ class MIND_API HSigmoidGrad : public BaseOperator {
   HSigmoidGrad() : BaseOperator(kNameHSigmoidGrad) { InitIOName({"grads", "input_x"}, {"output"}); }
 };
 
-abstract::AbstractBasePtr HSigmoidGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                            const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr HSigmoidGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                     const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

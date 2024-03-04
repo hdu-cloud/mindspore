@@ -130,6 +130,11 @@ int SliceCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::v
                       << "', the dimension of input tensor must be in range [1D, 8D], but got " << input_shape.size()
                       << "D.";
   }
+  auto input_size = IntToLong(data_size_) * SizeToLong(SizeOf(input_shape));
+  if (input_size > INT_MAX) {
+    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the input size can not larger than " << INT_MAX
+                      << "(INT_MAX) bytes, but got " << input_size;
+  }
 
   std::vector<int64_t> begin;
   std::vector<int64_t> size;
@@ -155,11 +160,11 @@ int SliceCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::v
   return KRET_OK;
 }
 
-void SliceSimpleDim2(const int8_t *input, int8_t *output, const SliceParameter *param, int data_size, size_t row_size) {
+void SliceSimpleDim2(const int8_t *input, int8_t *output, const SliceStruct *param, int data_size, size_t row_size) {
   size_t copy_size = IntToSize(data_size * param->size_[1]);
   for (size_t i = 0; i < row_size; ++i) {
-    auto dst = output + data_size * param->size_[1] * i;
-    auto src = input + data_size * (param->shape_[1] * i + param->begin_[1]);
+    auto dst = output + data_size * param->size_[1] * SizeToInt(i);
+    auto src = input + data_size * (param->shape_[1] * SizeToInt(i) + param->begin_[1]);
     auto ret = memcpy_s(dst, copy_size, src, copy_size);
     if (ret != EOK) {
       MS_LOG(EXCEPTION) << "For '" << kKernelName << "', memcpy failed. Error no: " << ret;
@@ -198,13 +203,13 @@ bool SliceCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &inputs, co
     std::vector<int64_t> begin;
     std::vector<int64_t> size;
     if (param_dtype_ == kNumberTypeInt32) {
-      auto begin_ptr = reinterpret_cast<int32_t *>(inputs[1]->addr);
-      auto size_ptr = reinterpret_cast<int32_t *>(inputs[kSliceInputIndex2]->addr);
+      auto begin_ptr = GetDeviceAddress<int32_t>(inputs, 1);
+      auto size_ptr = GetDeviceAddress<int32_t>(inputs, kSliceInputIndex2);
       begin.assign(begin_ptr, begin_ptr + begin_shape[0]);
       size.assign(size_ptr, size_ptr + size_shape[0]);
     } else if (param_dtype_ == kNumberTypeInt64) {
-      auto begin_ptr = reinterpret_cast<int64_t *>(inputs[1]->addr);
-      auto size_ptr = reinterpret_cast<int64_t *>(inputs[kSliceInputIndex2]->addr);
+      auto begin_ptr = GetDeviceAddress<int64_t>(inputs, 1);
+      auto size_ptr = GetDeviceAddress<int64_t>(inputs, kSliceInputIndex2);
       begin.assign(begin_ptr, begin_ptr + begin_shape[0]);
       size.assign(size_ptr, size_ptr + size_shape[0]);
     } else {
@@ -228,9 +233,9 @@ bool SliceCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &inputs, co
   auto output_addr = outputs[0]->addr;
   if (origin_dim_size_ == kSliceTwoDims) {
     auto task = [this, &input_addr, &output_addr](size_t start, size_t end) {
-      auto src =
-        static_cast<int8_t *>(input_addr) + data_size_ * slice_param_.shape_[1] * (start + slice_param_.begin_[0]);
-      auto dst = static_cast<int8_t *>(output_addr) + data_size_ * slice_param_.size_[1] * start;
+      auto src = static_cast<int8_t *>(input_addr) +
+                 data_size_ * slice_param_.shape_[1] * (SizeToInt(start) + slice_param_.begin_[0]);
+      auto dst = static_cast<int8_t *>(output_addr) + data_size_ * slice_param_.size_[1] * SizeToInt(start);
       SliceSimpleDim2(src, dst, &slice_param_, data_size_, end - start);
     };
     ParallelLaunchAutoSearch(task, slice_param_.size_[0], this, &parallel_search_info_);

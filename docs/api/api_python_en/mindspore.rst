@@ -13,6 +13,7 @@ Tensor
     :template: classtemplate.rst
 
     mindspore.Tensor
+    mindspore.tensor
     mindspore.COOTensor
     mindspore.CSRTensor
     mindspore.RowTensor
@@ -62,6 +63,7 @@ DataType
     ``mindspore.float16`` ,  ``mindspore.half``      16-bit floating-point number
     ``mindspore.float32`` ,  ``mindspore.single``    32-bit floating-point number
     ``mindspore.float64`` ,  ``mindspore.double``    64-bit floating-point number
+    ``mindspore.bfloat16``                           16-bit brain-floating-point number
     ``mindspore.complex64``                          64-bit complex number
     ``mindspore.complex128``                         128-bit complex number
     ==============================================   =============================
@@ -73,7 +75,7 @@ DataType
     ============================   =================
     Type                            Description
     ============================   =================
-    ``tensor``                      MindSpore's ``tensor`` type. Data format uses NCHW. For details, see `tensor <https://www.gitee.com/mindspore/mindspore/blob/r2.0.0-alpha/mindspore/python/mindspore/common/tensor.py>`_.
+    ``tensor``                      MindSpore's ``tensor`` type. Data format uses NCHW. For details, see `tensor <https://www.gitee.com/mindspore/mindspore/blob/master/mindspore/python/mindspore/common/tensor.py>`_.
     ``bool_``                       Boolean ``True`` or ``False``.
     ``int_``                        Integer scalar.
     ``uint``                        Unsigned integer scalar.
@@ -89,50 +91,6 @@ DataType
     ``env_type``                    Used to store the gradient of the free variable of a function, where the key is the ``symbolic_key`` of the free variable's node and the value is the gradient.
     ============================   =================
 
-  * **Tree Topology**
-
-    The relationships of the above types are as follows:
-
-    .. code-block::
-
-
-        └─────── number
-            │   ├─── bool_
-            │   ├─── int_
-            │   │   ├─── int8, byte
-            │   │   ├─── int16, short
-            │   │   ├─── int32, intc
-            │   │   └─── int64, intp
-            │   ├─── uint
-            │   │   ├─── uint8, ubyte
-            │   │   ├─── uint16, ushort
-            │   │   ├─── uint32, uintc
-            │   │   └─── uint64, uintp
-            │   ├─── float_
-            │   │   ├─── float16
-            │   │   ├─── float32
-            │   │   └─── float64
-            │   └─── complex
-            │       ├─── complex64
-            │       └─── complex128
-            ├─── tensor
-            │   ├─── Array[Float32]
-            │   └─── ...
-            ├─── list_
-            │   ├─── List[Int32,Float32]
-            │   └─── ...
-            ├─── tuple_
-            │   ├─── Tuple[Int32,Float32]
-            │   └─── ...
-            ├─── function
-            │   ├─── Func
-            │   ├─── Func[(Int32, Float32), Int32]
-            │   └─── ...
-            ├─── type_type
-            ├─── type_none
-            ├─── symbolic_key
-            └─── env_type
-
 
 .. autosummary::
     :toctree: mindspore
@@ -143,6 +101,7 @@ DataType
     mindspore.dtype_to_pytype
     mindspore.pytype_to_dtype
     mindspore.get_py_obj_dtype
+    mindspore.QuantDtype
 
 Context
 --------
@@ -164,6 +123,8 @@ Context
     mindspore.set_algo_parameters
     mindspore.get_algo_parameters
     mindspore.reset_algo_parameters
+    mindspore.set_offload_context
+    mindspore.get_offload_context
 
 Seed
 ----
@@ -191,6 +152,7 @@ Serialization
     mindspore.load
     mindspore.load_checkpoint
     mindspore.load_distributed_checkpoint
+    mindspore.load_mindir
     mindspore.load_param_into_net
     mindspore.merge_pipeline_strategys
     mindspore.merge_sliced_parameter
@@ -199,6 +161,7 @@ Serialization
     mindspore.rank_list_for_transform
     mindspore.restore_group_info_list
     mindspore.save_checkpoint
+    mindspore.save_mindir
     mindspore.transform_checkpoint_by_rank
     mindspore.transform_checkpoints
 
@@ -212,6 +175,7 @@ Automatic Differentiation
 
     mindspore.grad
     mindspore.value_and_grad
+    mindspore.get_grad
     mindspore.jacfwd
     mindspore.jacrev
     mindspore.jvp
@@ -255,6 +219,8 @@ JIT
     mindspore.ms_function
     mindspore.ms_memory_recycle
     mindspore.mutable
+    mindspore.constexpr
+    mindspore.lazy_inline
 
 Tool
 -----

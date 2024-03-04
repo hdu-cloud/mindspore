@@ -19,10 +19,11 @@
 
 #include <map>
 #include <memory>
-#include <vector>
 #include <string>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/types.h"
+#include "mindspore/core/ops/random_ops.h"
+#include "ops/base_operator.h"
 namespace mindspore {
 namespace ops {
 constexpr auto kRandomGammaGrad = "RandomGammaGrad";
@@ -31,8 +32,9 @@ class MIND_API RandomGammaGrad : public BaseOperator {
   MIND_API_BASE_MEMBER(RandomGammaGrad);
   RandomGammaGrad() : BaseOperator(kRandomGammaGrad) { InitIOName({"alpha", "sample"}, {"output"}); }
 };
-abstract::AbstractBasePtr RandomGammaGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                               const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr RandomGammaGradInfer(const abstract::AnalysisEnginePtr &,
+                                                        const PrimitivePtr &primitive,
+                                                        const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

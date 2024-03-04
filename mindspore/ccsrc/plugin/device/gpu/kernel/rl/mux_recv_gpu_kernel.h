@@ -23,9 +23,9 @@
 #include <chrono>
 #include <thread>
 #include <memory>
-#include "distributed/rpc/tcp/tcp_server.h"
-#include "distributed/cluster/cluster_context.h"
-#include "distributed/cluster/topology/compute_graph_node.h"
+#include "include/backend/distributed/rpc/tcp/tcp_server.h"
+#include "include/backend/distributed/cluster/cluster_context.h"
+#include "include/backend/distributed/cluster/topology/compute_graph_node.h"
 #include "plugin/device/gpu/kernel/rl/mux_base_gpu_kernel.h"
 
 namespace mindspore {
@@ -88,7 +88,7 @@ class MuxRecvGpuKernel : public MuxBaseGpuKernel {
     nccl_data_type_ = nccl_dtype(AnfAlgo::GetOutputDeviceDataType(kernel_node, 0));
 
     total_size_ = 0;
-    size_t output_num = common::AnfAlgo::GetOutputTensorNum(kernel_node);
+    size_t output_num = AnfAlgo::GetOutputTensorNum(kernel_node);
     for (size_t i = 0; i < output_num; ++i) {
       auto shape_signed = common::AnfAlgo::GetOutputInferShape(kernel_node, i);
       if (IsDynamic(shape_signed)) {

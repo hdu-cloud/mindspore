@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,12 +25,13 @@
 #include <vector>
 #include <numeric>
 #include <optional>
+#include <unordered_map>
 #include "kernel/oplib/oplib.h"
 #include "ir/dtype.h"
 #include "kernel/kernel.h"
 #include "ir/dtype/type.h"
 #include "utils/shape_utils.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "utils/ms_utils.h"
 #include "abstract/utils.h"
@@ -39,6 +40,7 @@
 #include "utils/log_adapter.h"
 #include "include/common/utils/utils.h"
 #include "include/backend/visible.h"
+#include "mindapi/base/shape_vector.h"
 
 namespace mindspore {
 namespace trans {
@@ -106,12 +108,17 @@ class DataTypeTransfer {
     FROM_UINT8_TO_FLOAT16,
     FROM_UINT8_TO_FLOAT,
     FROM_UINT16_TO_INT32,
+    FROM_INT16_TO_INT32,
+    FROM_INT16_TO_INT64,
     FROM_INT32_TO_BOOL,
     FROM_INT32_TO_INT8,
     FROM_INT32_TO_UINT8,
+    FROM_INT32_TO_INT16,
+    FROM_INT32_TO_UINT16,
     FROM_INT32_TO_INT64,
     FROM_INT32_TO_FLOAT16,
     FROM_INT32_TO_FLOAT,
+    FROM_INT64_TO_INT16,
     FROM_INT64_TO_INT32,
     FROM_FLOAT16_TO_UINT8,
     FROM_FLOAT16_TO_INT32,
@@ -133,6 +140,8 @@ class DataTypeTransfer {
     {std::pair<TypeId, TypeId>(kNumberTypeInt32, kNumberTypeFloat16), DataTypeTransMode::FROM_INT32_TO_FLOAT16},
     {std::pair<TypeId, TypeId>(kNumberTypeInt32, kNumberTypeUInt8), DataTypeTransMode::FROM_INT32_TO_UINT8},
     {std::pair<TypeId, TypeId>(kNumberTypeInt32, kNumberTypeInt8), DataTypeTransMode::FROM_INT32_TO_INT8},
+    {std::pair<TypeId, TypeId>(kNumberTypeInt32, kNumberTypeInt16), DataTypeTransMode::FROM_INT32_TO_INT16},
+    {std::pair<TypeId, TypeId>(kNumberTypeInt32, kNumberTypeUInt16), DataTypeTransMode::FROM_INT32_TO_UINT16},
     {std::pair<TypeId, TypeId>(kNumberTypeInt32, kNumberTypeInt64), DataTypeTransMode::FROM_INT32_TO_INT64},
     {std::pair<TypeId, TypeId>(kNumberTypeInt32, kNumberTypeBool), DataTypeTransMode::FROM_INT32_TO_BOOL},
     {std::pair<TypeId, TypeId>(kNumberTypeUInt8, kNumberTypeFloat32), DataTypeTransMode::FROM_UINT8_TO_FLOAT},
@@ -141,8 +150,11 @@ class DataTypeTransfer {
     {std::pair<TypeId, TypeId>(kNumberTypeInt8, kNumberTypeFloat32), DataTypeTransMode::FROM_INT8_TO_FLOAT},
     {std::pair<TypeId, TypeId>(kNumberTypeInt8, kNumberTypeFloat16), DataTypeTransMode::FROM_INT8_TO_FLOAT16},
     {std::pair<TypeId, TypeId>(kNumberTypeInt8, kNumberTypeInt32), DataTypeTransMode::FROM_INT8_TO_INT32},
+    {std::pair<TypeId, TypeId>(kNumberTypeInt64, kNumberTypeInt16), DataTypeTransMode::FROM_INT64_TO_INT16},
     {std::pair<TypeId, TypeId>(kNumberTypeInt64, kNumberTypeInt32), DataTypeTransMode::FROM_INT64_TO_INT32},
     {std::pair<TypeId, TypeId>(kNumberTypeUInt16, kNumberTypeInt32), DataTypeTransMode::FROM_UINT16_TO_INT32},
+    {std::pair<TypeId, TypeId>(kNumberTypeInt16, kNumberTypeInt32), DataTypeTransMode::FROM_INT16_TO_INT32},
+    {std::pair<TypeId, TypeId>(kNumberTypeInt16, kNumberTypeInt64), DataTypeTransMode::FROM_INT16_TO_INT64},
     {std::pair<TypeId, TypeId>(kNumberTypeBool, kNumberTypeInt32), DataTypeTransMode::FROM_BOOL_TO_INT32},
     {std::pair<TypeId, TypeId>(kNumberTypeBool, kNumberTypeFloat), DataTypeTransMode::FROM_BOOL_TO_FLOAT},
     {std::pair<TypeId, TypeId>(kNumberTypeBool, kNumberTypeUInt8), DataTypeTransMode::FROM_BOOL_TO_UINT8},
@@ -241,7 +253,7 @@ class FormatTransfer {
   static bool NCHW_TO_C1HWNCOC0(const FormatArgs &args, void *result);
   static bool NCDHW_TO_NDC1HWC0(const FormatArgs &args, void *result);
   static bool NCDHW_TO_FRAC_Z3D(const FormatArgs &args, void *result);
-  static bool NCHW_TO_FRAC_Z_WITH_GROPUS(const FormatArgs &args, void *result, bool to_device, int64_t groups);
+  static bool NCHW_TO_FRAC_Z_WITH_GROUPS(const FormatArgs &args, void *result, bool to_device, int64_t groups);
 
   // DEVICE TO HOST
   static bool TO_NCHW(const FormatArgs &args, void *result);
@@ -329,7 +341,7 @@ BACKEND_EXPORT ShapeVector GetRuntimePaddingShape(const AnfNodePtr &node, size_t
 /**
  *  If need padding
  * */
-BACKEND_EXPORT bool IsNeedPadding(const std::string &format, size_t shape_size);
+BACKEND_EXPORT bool IsNeedPadding(const std::string &format, const ShapeVector &shape);
 
 /**
  * Padding shape to 5D by default mode
@@ -363,7 +375,7 @@ std::vector<T> PaddingShapeTo5dDefault(const std::vector<T> &shape, const AnfNod
       break;
     default:
       auto node_info = (node != nullptr) ? ". Node: " + node->fullname_with_scope() : " .";
-      MS_LOG(EXCEPTION) << "Unexpected shape :" << shape << node_info;
+      MS_LOG(INTERNAL_EXCEPTION) << "Unexpected shape :" << shape << node_info;
   }
   return shape_5d;
 }
@@ -393,7 +405,7 @@ std::vector<T> PaddingShapeTo4dDefault(const std::vector<T> &shape, const AnfNod
       return shape;
     default:
       auto node_info = (node != nullptr) ? ". Node: " + node->fullname_with_scope() : " .";
-      MS_LOG(EXCEPTION) << "Unexpected shape : " << shape << node_info;
+      MS_LOG(INTERNAL_EXCEPTION) << "Unexpected shape : " << shape << node_info;
   }
   return shape_4d;
 }
@@ -405,11 +417,11 @@ template <typename T>
 std::vector<T> PaddingShapeTo5d(const std::vector<T> &shape, const std::string &padding_str = {""}) {
   std::vector<Axis5D> padding_axis;
   StringToAxisVector5D(padding_str, &padding_axis);
-  if (padding_axis.empty() || shape.size() != padding_axis.size()) {
+  if (padding_axis.empty() || shape.size() > padding_axis.size()) {
     return PaddingShapeTo5dDefault(shape);
   }
   std::vector<T> shape_5d(kNcdhw, 1);
-  for (size_t index = 0; index < padding_axis.size(); index++) {
+  for (size_t index = 0; index < shape.size(); index++) {
     shape_5d[padding_axis[index]] = shape[index];
   }
   return shape_5d;
@@ -422,11 +434,11 @@ template <typename T>
 std::vector<T> PaddingShapeTo4d(const std::vector<T> &shape, const std::string &padding_str = {""}) {
   std::vector<Axis> padding_axis;
   StringToAxisVector4D(padding_str, &padding_axis);
-  if (padding_axis.empty() || shape.size() != padding_axis.size()) {
+  if (padding_axis.empty() || shape.size() > padding_axis.size()) {
     return PaddingShapeTo4dDefault(shape);
   }
   std::vector<T> shape_4d(kNchwDims, 1);
-  for (size_t index = 0; index < padding_axis.size(); index++) {
+  for (size_t index = 0; index < shape.size(); index++) {
     shape_4d[padding_axis[index]] = shape[index];
   }
   return shape_4d;
@@ -442,16 +454,21 @@ std::vector<T> PaddingShape(const std::vector<T> &shape, const std::string &form
     MS_LOG(DEBUG) << "Start padding shape for node: [" << node->fullname_with_scope() << "], format: " << format
                   << ", detail info: " << node->DebugString();
   }
-  std::vector<T> host_shape;
+
   if (IsOneOf3DFormat(format)) {
     if (shape.size() >= kDim5) {
       return shape;
     }
-    host_shape = PaddingShapeTo5d(shape, pad_index);
-  } else {
-    host_shape = PaddingShapeTo4d(shape, pad_index);
+    if (shape.size() == 1 && shape[0] == abstract::Shape::kShapeRankAny) {
+      return {-1, -1, -1, -1, -1};
+    }
+    return PaddingShapeTo5d(shape, pad_index);
   }
-  return host_shape;
+
+  if (shape.size() == 1 && shape[0] == abstract::Shape::kShapeRankAny) {
+    return {-1, -1, -1, -1};
+  }
+  return PaddingShapeTo4d(shape, pad_index);
 }
 
 /**
@@ -528,6 +545,28 @@ std::vector<T> TransShapeToDevice(const std::vector<T> &shape, const std::string
                        [](int64_t num) { return static_cast<T>(num); });
   return out_shape;
 }
+
+struct FormatInfo {
+  FormatInfo(std::string format, bool is_padded) : baseFormat(format), isPadded(is_padded) {}
+  std::string baseFormat = kOpFormat_ND;
+  bool isPadded = false;
+};
+
+class BACKEND_EXPORT FormatHelper {
+ public:
+  static FormatHelper &GetInstance() noexcept;
+  const std::string GetBaseFormat(const std::string &format);
+  bool IsBaseFormatType(const std::string &format);
+  bool IsPadded(const std::string &format);
+  void Clear();
+
+ private:
+  FormatHelper() { InitInfo(); }
+  ~FormatHelper() = default;
+  void InitInfo();
+
+  std::unordered_map<std::string, FormatInfo> info;
+};
 }  // namespace trans
 }  // namespace mindspore
 

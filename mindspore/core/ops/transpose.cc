@@ -15,20 +15,22 @@
  */
 
 #include "ops/transpose.h"
-#include <vector>
-#include <string>
-#include <set>
-#include <memory>
 #include <algorithm>
-#include "ops/op_utils.h"
-#include "abstract/ops/op_infer.h"
-#include "utils/check_convert_utils.h"
-#include "abstract/ops/primitive_infer_map.h"
-#include "mindapi/src/helper.h"
+#include <memory>
+#include <set>
+#include <string>
+#include <vector>
 #include "include/common/utils/utils.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
+namespace {
+constexpr int64_t kInputNum = 2;
+}  // namespace
 std::vector<int64_t> Transpose::get_perm() {
   PrimitivePtr prim = this->GetPrim();
   MS_EXCEPTION_IF_NULL(prim);
@@ -46,16 +48,28 @@ std::vector<int64_t> Transpose::get_perm() {
 
 MIND_API_OPERATOR_IMPL(Transpose, BaseOperator);
 
-ShapeVector CheckAndGetPermValue(const std::vector<AbstractBasePtr> &input_args, const PrimitivePtr &primitive) {
+ShapeVector CheckAndGetPermValue(const std::vector<AbstractBasePtr> &input_args, const PrimitivePtr &primitive,
+                                 const ShapeVector &x_shape) {
   const std::string &op_name = primitive->name();
-  const size_t input_num = 2;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputNum, op_name);
   auto input_value = input_args[kInputIndex1]->BuildValue();
   if (input_args[kInputIndex1]->isa<abstract::AbstractTuple>()) {
-    return CheckAndConvertUtils::CheckTupleInt("perm", input_value, op_name);
+    if (IsValueKnown(input_value)) {
+      auto perm_shape = CheckAndConvertUtils::CheckTupleInt("perm", input_value, op_name);
+      if (perm_shape.empty()) {
+        MS_EXCEPTION(ValueError) << op_name << " expects inputs(1) is vector of size: " << x_shape.size()
+                                 << ", but gout the size of inputs(1) is 0.";
+      }
+      return perm_shape;
+    }
   } else if (input_args[kInputIndex1]->isa<abstract::AbstractTensor>()) {
     if (input_value->isa<tensor::Tensor>()) {
-      return CheckAndConvertUtils::CheckTensorIntValue("perm", input_value, op_name);
+      auto perm_shape = CheckAndConvertUtils::CheckTensorIntValue("perm", input_value, op_name);
+      if (perm_shape.empty()) {
+        MS_EXCEPTION(ValueError) << op_name << " expects inputs(1) is vector of size: " << x_shape.size()
+                                 << ", but gout the size of inputs(1) is 0.";
+      }
+      return perm_shape;
     }
     auto perm_shape = CheckAndConvertUtils::GetTensorInputShape("perm", input_args, 1);
     if (perm_shape->shape().size() != 1) {
@@ -76,9 +90,15 @@ class TransposeInfer : public abstract::OpInferBase {
   BaseShapePtr InferShape(const PrimitivePtr &primitive,
                           const std::vector<AbstractBasePtr> &input_args) const override {
     MS_EXCEPTION_IF_NULL(primitive);
-    auto op_name = primitive->name();
+    const std::string &op_name = primitive->name();
+    CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputNum, op_name);
     auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
     (void)CheckAndConvertUtils::CheckInteger("input_x size", SizeToLong(x_shape.size()), kGreaterThan, 0, op_name);
+
+    auto for_format_change_value = primitive->GetAttr(kAttrForFormatChange);
+    if (for_format_change_value != nullptr && GetValue<bool>(for_format_change_value)) {
+      return std::make_shared<abstract::Shape>(x_shape);
+    }
     ShapeVector p_value;
     if (x_shape[0] == 0) {
       MS_EXCEPTION(ValueError) << "For 'Transpose', first dim of input_x's shape can not be 0, but got 0.";
@@ -87,15 +107,18 @@ class TransposeInfer : public abstract::OpInferBase {
       return std::make_shared<abstract::Shape>(std::vector<int64_t>{abstract::Shape::kShapeRankAny});
     }
 
-    auto p_value_raw = CheckAndGetPermValue(input_args, primitive);
+    auto p_value_raw = CheckAndGetPermValue(input_args, primitive, x_shape);
     if (p_value_raw.empty()) {
-      ShapeVector out_shape;
-      (void)out_shape.insert(out_shape.end(), x_shape.size(), abstract::Shape::kShapeDimAny);
+      ShapeVector out_shape(x_shape.size(), abstract::Shape::kShapeDimAny);
       return std::make_shared<abstract::Shape>(out_shape);
     }
 
     for (auto p : p_value_raw) {
       p = (p >= 0) ? p : (p_value_raw.size() + p);
+      if (std::abs(p) >= SizeToLong(x_shape.size())) {
+        MS_EXCEPTION(ValueError) << "Perm value can not exceed shape range, must be in [0, " << (x_shape.size() - 1)
+                                 << "], but got perm:" << p;
+      }
       p_value.emplace_back(p);
     }
     if (x_shape.size() != p_value.size()) {
@@ -123,6 +146,7 @@ class TransposeInfer : public abstract::OpInferBase {
 
   TypePtr InferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) const override {
     MS_EXCEPTION_IF_NULL(prim);
+    CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputNum, prim->name());
     return CheckAndConvertUtils::CheckSubClass("input_x", input_args[0]->BuildType(), {kTensorType}, prim->name());
   }
 

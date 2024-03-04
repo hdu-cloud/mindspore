@@ -85,7 +85,11 @@ int WeightDecoder::DecodeKMeansWeight(lite::Tensor *tensor, TypeId dst_data_type
   void *dequant_data = nullptr;
   if (dst_data_type == kNumberTypeFloat32) {
     auto dequant_data_ptr = static_cast<float *>(dequant_data);
-    DecodeKMeansData(tensor, &dequant_data_ptr);
+    auto ret = DecodeKMeansData(tensor, &dequant_data_ptr);
+    if (ret != RET_OK) {
+      MS_LOG(ERROR) << "Decode Kmeans data failed.";
+      return RET_ERROR;
+    }
     dequant_data = dequant_data_ptr;
   } else if (dst_data_type == kNumberTypeFloat16) {
 #if defined(ENABLE_ARM) && defined(ENABLE_FP16)
@@ -118,9 +122,6 @@ int WeightDecoder::DecodeHuffmanCode(const SchemaTensorWrapper &src_tensor, lite
     return RET_NO_CHANGE;
   }
   auto data = reinterpret_cast<const char *>(src_tensor.data());
-  if (data == nullptr) {
-    return RET_NO_CHANGE;
-  }
   std::string encode_str(data, src_tensor.length());
   dst_tensor->FreeData();
   dst_tensor->set_data(nullptr);

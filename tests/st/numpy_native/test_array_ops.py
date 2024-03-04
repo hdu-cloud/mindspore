@@ -20,8 +20,9 @@ import pytest
 import numpy as onp
 
 import mindspore.numpy as mnp
-from mindspore import context
+from mindspore import context, Tensor, int32
 from mindspore.nn import Cell
+from mindspore.common.api import _pynative_executor
 
 from .utils import rand_int, run_non_kw_test, check_all_results, match_array, \
     rand_bool, match_res, run_multi_test, to_tensor, match_all_arrays
@@ -1171,6 +1172,19 @@ def test_take_along_axis():
     run_multi_test(mnp_take_along_axis, onp_take_along_axis,
                    (x, indices1, indices2, indices3, indices4))
 
+    e = onp.random.randint(0, 9, (4, 10, 2))
+    neighbours = onp.random.randint(0, 9, (4, 10, 3))
+    e = e[:, :, None]
+    neighbours = neighbours[:, :, :, None]
+
+    op = onp.take_along_axis(e, neighbours, 1)
+
+    new_neighbours = Tensor(neighbours, int32)
+    new_e = Tensor(e, int32)
+    output = mnp.take_along_axis(new_e, new_neighbours, 1)
+    onp.testing.assert_almost_equal(list(op), list(output),
+                                    decimal=0)
+
 
 def mnp_take(x, indices):
     a = mnp.take(x, indices)
@@ -1372,29 +1386,32 @@ def test_tensor_flatten():
 def test_tensor_reshape():
     lst = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
     tensor_list = to_tensor(lst)
-    with pytest.raises(TypeError):
-        tensor_list = tensor_list.reshape({0, 1, 2})
-    with pytest.raises(ValueError):
-        tensor_list = tensor_list.reshape(1, 2, 3)
     assert tensor_list.reshape([-1, 4]).shape == (2, 4)
     assert tensor_list.reshape(1, -1, 4).shape == (1, 2, 4)
+    with pytest.raises(TypeError):
+        tensor_list = tensor_list.reshape({0, 1, 2})
+        _pynative_executor.sync()
+    with pytest.raises(ValueError):
+        tensor_list = tensor_list.reshape(1, 2, 3)
+        _pynative_executor.sync()
 
 
-@pytest.mark.level1
+@pytest.mark.level0
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_tensor_squeeze():
+    context.set_context(pynative_synchronize=True)
     lst = [[[1.0], [2.0], [3.0]]]
     tensor_list = to_tensor(lst)
+    assert tensor_list.squeeze().shape == (3,)
+    assert tensor_list.squeeze(axis=2).shape == (1, 3)
     with pytest.raises(TypeError):
         tensor_list = tensor_list.squeeze(1.2)
     with pytest.raises(ValueError):
         tensor_list = tensor_list.squeeze(4)
-    assert tensor_list.squeeze().shape == (3,)
-    assert tensor_list.squeeze(axis=2).shape == (1, 3)
 
 
 @pytest.mark.level1
@@ -1409,22 +1426,6 @@ def test_tensor_ravel():
     assert tensor_list.ravel().shape == (8,)
     assert tensor_list.ravel().asnumpy().tolist() == [
         1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
-
-
-@pytest.mark.level1
-@pytest.mark.platform_arm_ascend_training
-@pytest.mark.platform_x86_ascend_training
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.platform_x86_cpu
-@pytest.mark.env_onecard
-def test_tensor_swapaxes():
-    lst = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
-    tensor_list = to_tensor(lst)
-    with pytest.raises(TypeError):
-        tensor_list = tensor_list.swapaxes(0, (1,))
-    with pytest.raises(ValueError):
-        tensor_list = tensor_list.swapaxes(0, 3)
-    assert tensor_list.swapaxes(0, 1).shape == (3, 2)
 
 
 def mnp_rot90(input_tensor):
@@ -1642,6 +1643,53 @@ def test_apply_over_axes():
         for expected, actual in zip(onp_apply_over_axes(x),
                                     mnp_apply_over_axes(to_tensor(x))):
             match_array(actual.asnumpy(), expected, error=5)
+
+
+@pytest.mark.level1
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.platform_x86_cpu
+@pytest.mark.env_onecard
+def test_argwhere():
+    """
+    Feature: test argwhere.
+    Description: test argwhere.
+    Expectation: same output as numpy.
+    """
+    x = rand_int(2, 1, 4).astype(onp.int32)
+    match_res(mnp.argwhere, onp.argwhere, x)
+    with pytest.raises(ValueError):
+        res = mnp.argwhere(1)
+        print(res)
+    with pytest.raises(TypeError):
+        mnp.argwhere(None)
+
+
+@pytest.mark.level1
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.platform_x86_cpu
+@pytest.mark.env_onecard
+def test_intersect1d():
+    """
+    Feature: test intersect1d.
+    Description: test intersect1d.
+    Expectation: same as numpy.
+    """
+    x = rand_int(2, 1, 4).astype(onp.int32)
+    y = rand_int(2, 1, 4).astype(onp.int32)
+    match_res(mnp.intersect1d, onp.intersect1d, x, y, dtype=mnp.int32)
+    match_res(mnp.intersect1d, onp.intersect1d, x, y, dtype=mnp.int32, return_indices=True)
+    x = onp.unique(x)
+    y = onp.unique(y)
+    match_res(mnp.intersect1d, onp.intersect1d, x, y, dtype=mnp.int32, assume_unique=True)
+    match_res(mnp.intersect1d, onp.intersect1d, x, y, dtype=mnp.int32, assume_unique=True, return_indices=True)
+    with pytest.raises(TypeError):
+        mnp.intersect1d(None, None)
+    with pytest.raises(TypeError):
+        mnp.intersect1d(x, y, assume_unique=1, return_indices=1)
 
 
 @pytest.mark.level2

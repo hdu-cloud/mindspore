@@ -18,6 +18,9 @@
 #include <algorithm>
 #include <memory>
 #include <vector>
+#include "ops/nn_op_name.h"
+#include "ops/array_ops.h"
+#include "ops/math_ops.h"
 namespace mindspore {
 namespace opt {
 namespace {
@@ -42,13 +45,6 @@ void FreshRenormInferShape(const CNodePtr &node, ShapeVector in_shape, const Typ
     if (static_cast<int64_t>(i) != dim) {
       in_shape[i] = 1;
     }
-  }
-  if (common::AnfAlgo::IsDynamicShape(node)) {
-    auto max_shape = common::AnfAlgo::GetOutputMaxShape(node, 0);
-    auto min_shape = common::AnfAlgo::GetOutputMinShape(node, 0);
-    common::AnfAlgo::SetOutputTypeAndDetailShape(
-      {type}, {std::make_shared<abstract::Shape>(in_shape, min_shape, max_shape)}, node.get());
-    return;
   }
   common::AnfAlgo::SetOutputInferTypeAndShape({type}, {in_shape}, node.get());
 }

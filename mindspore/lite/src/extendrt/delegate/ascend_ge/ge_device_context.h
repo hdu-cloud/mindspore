@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,33 +19,42 @@
 #include <string>
 #include <memory>
 #include <map>
-#include <mutex>
 
+#include "common/config_infos.h"
 #include "include/api/context.h"
+#include "include/api/status.h"
 #include "mindspore/core/utils/ms_context.h"
 
 namespace mindspore {
 class GeDeviceContext {
  public:
+  GeDeviceContext();
+  ~GeDeviceContext();
+
   GeDeviceContext(const GeDeviceContext &) = delete;
   GeDeviceContext &operator=(const GeDeviceContext &) = delete;
 
-  static GeDeviceContext &GetInstance();
-  void Initialize();
-  void Destroy();
+  static std::shared_ptr<GeDeviceContext> InitGlobalContext(const std::shared_ptr<Context> &context,
+                                                            const ConfigInfos &config_info = {});
 
  private:
-  GeDeviceContext() = default;
-  ~GeDeviceContext() = default;
-  void InitGe(const std::shared_ptr<MsContext> &inst_context);
-  bool FinalizeGe(const std::shared_ptr<MsContext> &inst_context);
-  void GetGeOptions(const std::shared_ptr<MsContext> &inst_context, std::map<std::string, std::string> *ge_options);
-  void SetDisableReuseMemoryFlag(std::map<std::string, std::string> *ge_options) const;
+  Status Initialize(const std::shared_ptr<Context> &context, const ConfigInfos &config_info = {});
+  void Destroy();
 
-  int64_t call_num_ = 0;
-  bool is_initialized_ = false;
-  std::shared_ptr<MsContext> context_ = nullptr;
-  std::mutex mutex_;
+  Status InitGe(const std::shared_ptr<MsContext> &inst_context, const std::shared_ptr<Context> &context,
+                const ConfigInfos &config_info = {});
+  bool FinalizeGe(const std::shared_ptr<MsContext> &inst_context);
+  Status InitHccl(const std::shared_ptr<Context> &context, const ConfigInfos &config_info);
+
+  void GetGeOptions(const std::shared_ptr<MsContext> &inst_context, const std::shared_ptr<Context> &context,
+                    std::map<std::string, std::string> *ge_options, const ConfigInfos &config_info = {});
+  void SetHcclOptions(const std::shared_ptr<Context> &context, std::map<std::string, std::string> *ge_options,
+                      const ConfigInfos &config_info = {});
+  void SetDisableReuseMemoryFlag(std::map<std::string, std::string> *ge_options) const;
+  std::shared_ptr<AscendDeviceInfo> GetGeAscendDeviceInfo(const std::shared_ptr<Context> &context);
+
+  static std::weak_ptr<GeDeviceContext> global_ge_context_;
+  static std::mutex global_ge_context_mutex_;
 };
 }  // namespace mindspore
 #endif  // MINDSPORE_LITE_SRC_EXTENDRT_DELEGATE_ASCEND_GE_GE_DEVICE_CONTEXT_H_

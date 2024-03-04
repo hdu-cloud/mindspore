@@ -27,8 +27,14 @@
 
 namespace mindspore {
 struct ConverterPara;
+/// \brief Converter provides C++ API for user to integrate model conversion into user application.
+///
+/// \note Converter C++ API cannot be used in Converter main process.
+///
+/// \note Converter C++ API doesn't support calling with multi-threads in a single process.
 class MS_API Converter {
  public:
+  Converter();
   inline Converter(converter::FmkType fmk_type, const std::string &model_file, const std::string &output_file = "",
                    const std::string &weight_file = "");
   ~Converter() = default;
@@ -48,14 +54,16 @@ class MS_API Converter {
   void SetInputFormat(Format format);
   Format GetInputFormat() const;
 
+  void SetOutputFormat(Format format);
+
   void SetInputDataType(DataType data_type);
   DataType GetInputDataType();
 
   void SetOutputDataType(DataType data_type);
   DataType GetOutputDataType();
 
-  void SetExportMindIR(ModelType export_mindir);
-  ModelType GetExportMindIR() const;
+  void SetSaveType(ModelType save_type);
+  ModelType GetSaveType() const;
 
   inline void SetDecryptKey(const std::string &key);
   inline std::string GetDecryptKey() const;
@@ -78,11 +86,35 @@ class MS_API Converter {
   void SetNoFusion(bool no_fusion);
   bool GetNoFusion();
 
+  void SetOptimizeTransformer(bool optimize_transformer);
+  bool GetOptimizeTransformer();
+
   inline void SetDevice(const std::string &device);
   inline std::string GetDevice();
+  void SetDeviceId(int32_t device_id);
+  int32_t GetDeviceId();
+  void SetRankId(int32_t rank_id);
+  int32_t GetRankId();
 
+  inline void SetProvider(const std::string &provider);
+  inline std::string GetProvider();
+
+  inline void SetChipName(const std::string &device);
+  inline std::string GetChipName();
+
+  /// \brief Convert model and save .ms format model into `output_file` that passed in constructor.
   Status Convert();
+
+  /// \brief Convert model and return converted FlatBuffer model binary buffer.
+  ///
+  /// \param[in] data_size Converted FlatBuffer model's buffer size.
+  ///
+  /// \return A pointer to converted FlatBuffer model buffer.
   void *Convert(size_t *data_size);
+
+  /// \brief Convert multiple models and save .ms format models into `output_file` that passed in constructor.
+  inline Status Convert(converter::FmkType fmk_type, const std::string &model_file, const std::string &output_file = "",
+                        const std::string &weight_file = "");
 
  private:
   Converter(converter::FmkType fmk_type, const std::vector<char> &model_file, const std::vector<char> &output_file,
@@ -101,6 +133,12 @@ class MS_API Converter {
   std::vector<char> GetEncryptKeyChar() const;
   void SetDevice(const std::vector<char> &device);
   std::vector<char> GetDeviceChar();
+  void SetProvider(const std::vector<char> &provider);
+  std::vector<char> GetProviderChar();
+  void SetChipName(const std::vector<char> &chip_name);
+  std::vector<char> GetChipNameChar();
+  Status Convert(converter::FmkType fmk_type, const std::vector<char> &model_file, const std::vector<char> &output_file,
+                 const std::vector<char> &weight_file);
   std::shared_ptr<ConverterPara> data_;
 };
 
@@ -143,5 +181,18 @@ std::string Converter::GetEncryptKey() const { return CharToString(GetEncryptKey
 void Converter::SetDevice(const std::string &device) { SetDevice(StringToChar(device)); }
 
 std::string Converter::GetDevice() { return CharToString(GetDeviceChar()); }
+
+void Converter::SetProvider(const std::string &provider) { SetProvider(StringToChar(provider)); }
+
+std::string Converter::GetProvider() { return CharToString(GetProviderChar()); }
+
+void Converter::SetChipName(const std::string &chip_name) { SetChipName(StringToChar(chip_name)); }
+
+std::string Converter::GetChipName() { return CharToString(GetChipNameChar()); }
+
+Status Converter::Convert(converter::FmkType fmk_type, const std::string &model_file, const std::string &output_file,
+                          const std::string &weight_file) {
+  return Convert(fmk_type, StringToChar(model_file), StringToChar(output_file), StringToChar(weight_file));
+}
 }  // namespace mindspore
 #endif  // MINDSPORE_LITE_INCLUDE_CONVERTER_H_

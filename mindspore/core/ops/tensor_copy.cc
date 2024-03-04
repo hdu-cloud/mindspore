@@ -19,9 +19,10 @@
 #include <set>
 #include <string>
 #include "abstract/ops/primitive_infer_map.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/src/helper.h"
 
 namespace mindspore {
 namespace ops {
@@ -29,10 +30,7 @@ namespace {
 abstract::ShapePtr TensorMoveInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   auto input_shape_ptr = input_args[kInputIndex0]->BuildShape();
   MS_EXCEPTION_IF_NULL(input_shape_ptr);
-  if (input_shape_ptr->IsDynamic()) {
-    return input_args[kInputIndex0]->BuildShape()->cast<abstract::ShapePtr>();
-  }
-  return input_args[kInputIndex0]->BuildShape()->cast<abstract::ShapePtr>();
+  return input_shape_ptr->cast<abstract::ShapePtr>();
 }
 
 TypePtr TensorMoveInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
@@ -51,10 +49,28 @@ AbstractBasePtr TensorMoveInfer(const abstract::AnalysisEnginePtr &, const Primi
   MS_EXCEPTION_IF_NULL(primitive);
   const int64_t input_num = 1;
   CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterEqual, input_num, primitive->name());
-  auto infer_type = TensorMoveInferType(primitive, input_args);
-  auto infer_shape = TensorMoveInferShape(primitive, input_args);
-  return abstract::MakeAbstract(infer_shape, infer_type);
+  // Just check dtype is tensor, shape is not change.
+  (void)TensorMoveInferType(primitive, input_args);
+  return input_args[kIndex0]->Clone();
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(TensorMove, prim::kPrimTensorMove, TensorMoveInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGTensorMoveInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return TensorMoveInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return TensorMoveInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return TensorMoveInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(TensorMove, prim::kPrimTensorMove, AGTensorMoveInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "nnacl/arithmetic.h"
+#include "nnacl/arithmetic_parameter.h"
 #include "src/common/ops/populate/populate_register.h"
 #include "src/common/ops/populate/arithmetic_populate.h"
 using mindspore::schema::PrimitiveType_MulFusion;
@@ -34,7 +34,7 @@ OpParameter *PopulateMulParameter(const void *prim) {
     MS_LOG(ERROR) << "PopulateArithmeticCommonPara failed.";
     return nullptr;
   }
-  param->activation_type_ = mul_param->activation_type();
+  param->activation_type_ = static_cast<int>(mul_param->activation_type());
   return reinterpret_cast<OpParameter *>(param);
 }
 

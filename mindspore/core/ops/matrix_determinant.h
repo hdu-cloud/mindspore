@@ -19,8 +19,8 @@
 #include <memory>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,8 +31,9 @@ class MIND_API MatrixDeterminant : public BaseOperator {
   MatrixDeterminant() : BaseOperator(kNameMatrixDeterminant) { InitIOName({"x"}, {"y"}); }
 };
 
-abstract::AbstractBasePtr MatrixDeterminantInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr MatrixDeterminantInfer(const abstract::AnalysisEnginePtr &,
+                                                          const PrimitivePtr &primitive,
+                                                          const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimMatrixDeterminantPtr = std::shared_ptr<MatrixDeterminant>;
 }  // namespace ops
 }  // namespace mindspore

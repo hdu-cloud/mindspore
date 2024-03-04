@@ -14,7 +14,7 @@
 # ============================================================================
 """ test_control_flow_specialize """
 import os
-import pytest
+from tests.st.control.cases_register import case_register
 import numpy as np
 from mindspore.nn import Cell
 from mindspore.common import Tensor, dtype, Parameter
@@ -25,9 +25,8 @@ import mindspore.ops.functional as F
 context.set_context(mode=context.GRAPH_MODE)
 
 
-@pytest.mark.level0
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.env_onecard
+@case_register.level0
+@case_register.target_gpu
 def test_renormalization_after_cconv_poly_node():
     """
     Feature: control flow
@@ -69,9 +68,8 @@ def test_renormalization_after_cconv_poly_node():
     assert np.allclose(expected, output[1].asnumpy(), 0.0001)
 
 
-@pytest.mark.level0
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.env_onecard
+@case_register.level0
+@case_register.target_gpu
 def test_poly_delay_specialize():
     """
     Feature: Specialize.
@@ -141,9 +139,8 @@ def test_renormalization_cannot_find_specialized_abstract():
     assert output[1].asnumpy() == np.array([7], np.int32)
 
 
-@pytest.mark.level0
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.env_onecard
+@case_register.level0
+@case_register.target_gpu
 def test_renormalization_cannot_find_specialized_abstract_2():
     """
     Feature: control flow
@@ -173,9 +170,8 @@ def test_renormalization_cannot_find_specialized_abstract_2():
     assert output[1].asnumpy() == np.array([7], np.int32)
 
 
-@pytest.mark.level0
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.env_onecard
+@case_register.level0
+@case_register.target_gpu
 def test_renormalization_cannot_find_specialized_abstract_2nd_grad():
     """
     Feature: control flow
@@ -203,9 +199,8 @@ def test_renormalization_cannot_find_specialized_abstract_2nd_grad():
     assert output[0].asnumpy() == np.array([2], np.int32)
 
 
-@pytest.mark.level0
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.env_onecard
+@case_register.level0
+@case_register.target_gpu
 def test_renormalization_a_dead_node_in_second_grad():
     """
     Feature: control flow
@@ -246,9 +241,8 @@ def renorm_join_fail(x, y):
     return x + y
 
 
-@pytest.mark.level0
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.env_onecard
+@case_register.level0
+@case_register.target_gpu
 def test_renormalization_join_fail_in_second_grad_non_recur_eval():
     """
     Feature: control flow
@@ -263,9 +257,8 @@ def test_renormalization_join_fail_in_second_grad_non_recur_eval():
     assert output[0].asnumpy() == np.array([0], np.int32)
 
 
-@pytest.mark.level0
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.env_onecard
+@case_register.level0
+@case_register.target_gpu
 def test_renormalization_join_fail_in_second_grad_recur_eval():
     """
     Feature: control flow

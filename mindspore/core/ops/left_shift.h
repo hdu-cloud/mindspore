@@ -15,11 +15,11 @@
  */
 #ifndef MINDSPORE_CORE_OPS_LEFT_SHIFT_H_
 #define MINDSPORE_CORE_OPS_LEFT_SHIFT_H_
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -32,8 +32,8 @@ class MIND_API LeftShift : public BaseOperator {
   /// \brief Constructor.
   LeftShift() : BaseOperator(kNameLeftShift) { InitIOName({"x1", "x2"}, {"y"}); }
 };
-abstract::AbstractBasePtr LeftShiftInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                         const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr LeftShiftInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                  const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimLeftShift = std::shared_ptr<LeftShift>;
 }  // namespace ops
 }  // namespace mindspore

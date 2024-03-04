@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,15 +16,30 @@
 
 #include "ops/apply_power_sign_d.h"
 
-#include <vector>
+#include <map>
 #include <memory>
 #include <set>
-#include <map>
 #include <string>
+#include <utility>
+#include <vector>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -44,10 +59,8 @@ abstract::TupleShapePtr ApplyPowerSignDInferShape(const PrimitivePtr &primitive,
   auto lr_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->GetShapeTrack())[kShape];
   auto logbase_shape =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex3]->GetShapeTrack())[kShape];
-  auto logbase_shape_rank = SizeToLong(logbase_shape.size());
   auto sign_decay_shape =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex4]->GetShapeTrack())[kShape];
-  auto sign_decay_shape_rank = SizeToLong(sign_decay_shape.size());
   auto beta_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex5]->GetShapeTrack())[kShape];
   auto grad_shape = input_args[kInputIndex6]->BuildShape();
   int64_t batch_rank = 0;
@@ -55,32 +68,22 @@ abstract::TupleShapePtr ApplyPowerSignDInferShape(const PrimitivePtr &primitive,
     auto value_ptr = primitive->GetAttr(kBatchRank);
     batch_rank = GetValue<int64_t>(value_ptr);
   }
-
+  std::vector<std::pair<std::string, std::vector<int64_t>>> check_inputs_shape{{"lr_shape", lr_shape},
+                                                                               {"logbase_shape", logbase_shape},
+                                                                               {"sign_decay_shape", sign_decay_shape},
+                                                                               {"beta_shape", beta_shape}};
   if (batch_rank != 0) {
-    (void)CheckAndConvertUtils::CheckInteger("lr_shape size", SizeToLong(lr_shape.size()), kEqual, batch_rank,
-                                             prim_name);
-    (void)CheckAndConvertUtils::CheckInteger("logbase_shape size", logbase_shape_rank, kEqual, batch_rank, prim_name);
-    (void)CheckAndConvertUtils::CheckInteger("sign_decay_shape size", sign_decay_shape_rank, kEqual, batch_rank,
-                                             prim_name);
-    (void)CheckAndConvertUtils::CheckInteger("beta_shape size", SizeToLong(beta_shape.size()), kEqual, batch_rank,
-                                             prim_name);
+    for (auto item : check_inputs_shape) {
+      (void)CheckAndConvertUtils::CheckInteger(item.first + " rank", SizeToLong(item.second.size()), kEqual, batch_rank,
+                                               prim_name);
+    }
   } else {
-    (void)CheckAndConvertUtils::CheckInteger("lr_shape size", SizeToLong(lr_shape.size()), kLessEqual, 1, prim_name);
-    if (lr_shape.size() == 1) {
-      (void)CheckAndConvertUtils::CheckInteger("lr_shape[0] size", lr_shape[0], kEqual, 1, prim_name);
-    }
-    (void)CheckAndConvertUtils::CheckInteger("logbase_shape rank", logbase_shape_rank, kLessEqual, 1, prim_name);
-    if (logbase_shape_rank == 1) {
-      (void)CheckAndConvertUtils::CheckInteger("logbase_shape[0] size", logbase_shape[0], kEqual, 1, prim_name);
-    }
-    (void)CheckAndConvertUtils::CheckInteger("sign_decay_shape rank", sign_decay_shape_rank, kLessEqual, 1, prim_name);
-    if (sign_decay_shape_rank == 1) {
-      (void)CheckAndConvertUtils::CheckInteger("sign_decay_shape[0] size", sign_decay_shape[0], kEqual, 1, prim_name);
-    }
-    (void)CheckAndConvertUtils::CheckInteger("beta_shape size", SizeToLong(beta_shape.size()), kLessEqual, 1,
-                                             prim_name);
-    if (beta_shape.size() == 1) {
-      (void)CheckAndConvertUtils::CheckInteger("beta_shape[0] size", beta_shape[0], kEqual, 1, prim_name);
+    for (auto item : check_inputs_shape) {
+      (void)CheckAndConvertUtils::CheckInteger(item.first + " rank", SizeToLong(item.second.size()), kLessEqual, 1,
+                                               prim_name);
+      if (item.second.size() == 1 && item.second[0] > 0) {
+        (void)CheckAndConvertUtils::CheckInteger(item.first + "[0]", item.second[0], kEqual, 1, prim_name);
+      }
     }
   }
 
@@ -132,13 +135,31 @@ TuplePtr ApplyPowerSignDInferType(const PrimitivePtr &prim, const std::vector<Ab
 }  // namespace
 
 MIND_API_OPERATOR_IMPL(ApplyPowerSign, BaseOperator);
-AbstractBasePtr ApplyPowerSignDInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                     const std::vector<AbstractBasePtr> &input_args) {
+AbstractBasePtr ApplyPowerSignInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto infer_type = ApplyPowerSignDInferType(primitive, input_args);
   auto infer_shape = ApplyPowerSignDInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(ApplyPowerSign, prim::kPrimApplyPowerSignD, ApplyPowerSignDInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGApplyPowerSignInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyPowerSignDInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyPowerSignDInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyPowerSignInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ApplyPowerSign, prim::kPrimApplyPowerSign, AGApplyPowerSignInfer, false);
 }  // namespace ops
 }  // namespace mindspore

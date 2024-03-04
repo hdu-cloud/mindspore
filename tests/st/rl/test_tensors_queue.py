@@ -53,7 +53,7 @@ class SourceNet(nn.Cell):
         return out
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_tensorsqueue_gpu():
@@ -74,14 +74,14 @@ def test_tensorsqueue_gpu():
         shapes.append(i.shape)
     tq = TensorsQueueNet(dtype=mstype.float32, shapes=shapes, size=5, name="tq")
     ans, size_before, size_after = tq(grads)
-    assert np.allclose(size_before.asnumpy(), 2)
-    assert np.allclose(size_after.asnumpy(), 1)
-    assert np.allclose(ans[0].asnumpy(), 2.0)
+    assert np.allclose(size_before, 2)
+    assert np.allclose(size_after, 1)
+    assert np.allclose(ans[0], 2.0)
     assert np.allclose(ans[1].asnumpy(), [[4.0, 6.0, 8.0, 10.0]])
     assert np.allclose(ans[2].asnumpy(), [2.0])
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_tensorsqueue_cpu():
@@ -102,8 +102,8 @@ def test_tensorsqueue_cpu():
         shapes.append(i.shape)
     tq_cpu = TensorsQueueNet(dtype=mstype.float32, shapes=shapes, size=5, name="tq")
     ans, size_before, size_after = tq_cpu(grads)
-    assert np.allclose(ans[0].asnumpy(), 2.0)
+    assert np.allclose(ans[0], 2.0)
     assert np.allclose(ans[1].asnumpy(), [[4.0, 6.0, 8.0, 10.0]])
     assert np.allclose(ans[2].asnumpy(), [2.0])
-    assert np.allclose(size_before.asnumpy(), 2)
-    assert np.allclose(size_after.asnumpy(), 1)
+    assert np.allclose(size_before, 2)
+    assert np.allclose(size_after, 1)

@@ -16,14 +16,14 @@
 #ifndef MINDSPORE_CORE_OPS_RESIZE_NEAREST_NEIGHBOR_V2_GRAD_H_
 #define MINDSPORE_CORE_OPS_RESIZE_NEAREST_NEIGHBOR_V2_GRAD_H_
 
-#include <string>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "abstract/abstract_value.h"
+#include "mindapi/base/types.h"
 #include "ops/base_operator.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/base/types.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,7 +35,9 @@ class MIND_API ResizeNearestNeighborV2Grad : public BaseOperator {
   MIND_API_BASE_MEMBER(ResizeNearestNeighborV2Grad);
 
   /// \brief Constructor.
-  ResizeNearestNeighborV2Grad() : BaseOperator(kNameResizeNearestNeighborV2Grad) {}
+  ResizeNearestNeighborV2Grad() : BaseOperator(kNameResizeNearestNeighborV2Grad) {
+    InitIOName({"grads", "size"}, {"y"});
+  }
 
   bool get_align_corners() const;
   bool get_half_pixel_centers() const;

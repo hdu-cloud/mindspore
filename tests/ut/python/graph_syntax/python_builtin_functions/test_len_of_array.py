@@ -13,8 +13,8 @@
 # limitations under the License.
 # ============================================================================
 """ test len of array"""
-import pytest
 import numpy as np
+import pytest
 
 import mindspore.nn as nn
 from mindspore import Tensor

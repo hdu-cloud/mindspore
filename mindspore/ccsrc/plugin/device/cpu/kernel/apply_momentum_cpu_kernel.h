@@ -40,6 +40,12 @@ class BACKEND_EXPORT ApplyMomentumCpuKernelMod : public NativeCpuKernelMod {
               const std::vector<AddressPtr> &outputs) override;
 
   std::vector<KernelAttr> GetOpSupport() override;
+
+ private:
+  template <typename T>
+  void LaunchApplyMomentum(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &outputs);
+
+  TypeId dtype_{kTypeUnknown};
 };
 }  // namespace kernel
 }  // namespace mindspore

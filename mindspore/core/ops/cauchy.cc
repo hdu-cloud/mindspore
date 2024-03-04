@@ -14,14 +14,27 @@
  * limitations under the License.
  */
 #include "ops/cauchy.h"
+
 #include <memory>
-#include <set>
-#include <string>
 #include <vector>
+
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
-#include "ops/op_utils.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -34,10 +47,10 @@ constexpr auto kAttrSize = "size";
 abstract::ShapePtr CauchyInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
-  (void)CheckAndConvertUtils::CheckInteger("input numbers", input_args.size(), kGreaterEqual, 0, prim_name);
+  (void)CheckAndConvertUtils::CheckInteger("input numbers", SizeToLong(input_args.size()), kGreaterEqual, 0, prim_name);
   MS_EXCEPTION_IF_NULL(primitive->GetAttr(kAttrSize));
   auto size = GetValue<std::vector<int64_t>>(primitive->GetAttr(kAttrSize));
-  (void)CheckAndConvertUtils::CheckInteger("the length of 'size'", size.size(), kGreaterThan, 0, prim_name);
+  (void)CheckAndConvertUtils::CheckInteger("the length of 'size'", SizeToLong(size.size()), kGreaterThan, 0, prim_name);
   for (size_t i = 0; i < size.size(); ++i) {
     if (size[i] <= 0) {
       MS_EXCEPTION(ValueError) << "For Cauchy, each dimension of size must be greater than zero.";
@@ -46,37 +59,41 @@ abstract::ShapePtr CauchyInferShape(const PrimitivePtr &primitive, const std::ve
   return std::make_shared<abstract::Shape>(size);
 }
 
-void Cauchy::set_sigma(float sigma) { (void)this->AddAttr(kSigma, api::MakeValue(sigma)); }
+void Cauchy::set_sigma(const float sigma) { (void)this->AddAttr(kSigma, api::MakeValue(sigma)); }
 
-float Cauchy::get_sigma() {
+float Cauchy::get_sigma() const {
   auto value_ptr = this->GetAttr(kSigma);
   return GetValue<float>(value_ptr);
 }
 
-void Cauchy::set_median(float median) { (void)this->AddAttr(kMedian, api::MakeValue(median)); }
+void Cauchy::set_median(const float median) { (void)this->AddAttr(kMedian, api::MakeValue(median)); }
 
-float Cauchy::get_median() {
+float Cauchy::get_median() const {
   auto value_ptr = this->GetAttr(kMedian);
   return GetValue<float>(value_ptr);
 }
 
-void Cauchy::set_size(std::vector<int64_t> size) { (void)this->AddAttr(kAttrSize, api::MakeValue(size)); }
+void Cauchy::set_size(const std::vector<int64_t> size) { (void)this->AddAttr(kAttrSize, api::MakeValue(size)); }
 
-std::vector<int64_t> Cauchy::get_size() {
+std::vector<int64_t> Cauchy::get_size() const {
   auto value_ptr = this->GetAttr(kAttrSize);
   return GetValue<std::vector<int64_t>>(value_ptr);
 }
 
 MIND_API_OPERATOR_IMPL(Cauchy, BaseOperator);
 
-abstract::AbstractBasePtr CauchyInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                      const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
+class MIND_API CauchyInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return CauchyInferShape(primitive, input_args);
+  }
 
-  auto infer_shape = CauchyInferShape(primitive, input_args);
-  auto infer_type = std::make_shared<TensorType>(kFloat32);
-  return abstract::MakeAbstract(infer_shape, infer_type);
-}
-REGISTER_PRIMITIVE_EVAL_IMPL(Cauchy, prim::kPrimCauchy, CauchyInfer, nullptr, true);
+  TypePtr InferType(const PrimitivePtr &, const std::vector<AbstractBasePtr> &) const override {
+    return std::make_shared<TensorType>(kFloat32);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Cauchy, prim::kPrimCauchy, CauchyInfer, false);
 }  // namespace ops
 }  // namespace mindspore

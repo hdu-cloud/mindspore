@@ -15,11 +15,12 @@
  */
 
 #include "backend/common/pass/eliminate_func_data_type.h"
+#include <vector>
 #include <memory>
 #include <utility>
 #include "ir/anf.h"
-#include "backend/common/session/kernel_graph.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/kernel_graph.h"
+#include "include/backend/optimizer/helper.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore::opt {
@@ -66,6 +67,10 @@ abstract::AbstractBasePtrList EliminateFuncDataTypeForAbstractTuple(const abstra
   for (const auto &abs : elements) {
     MS_EXCEPTION_IF_NULL(abs);
     if (abs->isa<abstract::AbstractTuple>()) {
+      if (dyn_cast<abstract::AbstractTuple>(abs)->dynamic_len()) {
+        new_abs.emplace_back(abs);
+        continue;
+      }
       new_abs.emplace_back(std::make_shared<abstract::AbstractTuple>(
         EliminateFuncDataTypeForAbstractTuple(dyn_cast<abstract::AbstractTuple>(abs))));
       continue;
@@ -125,6 +130,9 @@ const AnfNodePtr EliminateFuncDataType::Process(const FuncGraphPtr &func_graph, 
   if (abs != nullptr) {
     if (abs->isa<abstract::AbstractTuple>()) {
       auto abs_tuple = dyn_cast<abstract::AbstractTuple>(abs);
+      if (abs_tuple->dynamic_len()) {
+        return nullptr;
+      }
       node->set_abstract(std::make_shared<abstract::AbstractTuple>(EliminateFuncDataTypeForAbstractTuple(abs_tuple)));
     } else if (common::AnfAlgo::GetOutputInferDataType(node, 0) == kObjectTypeFunction) {
       node->set_abstract(constant_abs_);

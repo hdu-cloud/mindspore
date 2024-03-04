@@ -17,6 +17,7 @@
 #include <memory>
 
 #include "common/common_test.h"
+#include "mindspore/core/ops/sequence_ops.h"
 #include "common/py_func_graph_fetcher.h"
 
 #include "ir/anf.h"
@@ -27,7 +28,7 @@
 #include "frontend/optimizer/anf_visitor.h"
 #include "frontend/optimizer/irpass.h"
 #include "frontend/optimizer/irpass/arithmetic_simplify.h"
-#include "pipeline/jit/action.h"
+#include "pipeline/jit/ps/action.h"
 
 #include "include/common/debug/draw.h"
 #include "frontend/operator/ops.h"
@@ -54,6 +55,29 @@ TEST_F(TestRenormalize, TestPolyDelaySpecialize) {
   pipeline::ResourcePtr res = std::make_shared<pipeline::Resource>();
   std::vector<AbstractBasePtr> args_spec;
   pipeline::Renormalize(res, test_graph, args_spec);
+  abstract::AnalysisResultCacheMgr::GetInstance().Clear();
+  abstract::AnalysisContext::ClearContext();
+}
+
+// Feature: Static analysis of control flow.
+// Description: IgnoreValue flag should not be tagged when a function called twice if the function is header of 'if'.
+// Expectation: No tuple-getitem exist in specialized graph.
+TEST_F(TestRenormalize, TestIgnoreValueTag) {
+  FuncGraphPtr test_graph = getPyFun.CallAndParseRet("test_renormalize", "test_ignore_flag_with_twice_call_if");
+  ASSERT_TRUE(nullptr != test_graph);
+  pipeline::ResourcePtr res = std::make_shared<pipeline::Resource>();
+  std::vector<AbstractBasePtr> args_spec;
+  auto specialized_fg = pipeline::Renormalize(res, test_graph, args_spec);
+  const auto all_nodes = TopoSort(specialized_fg->get_return(), SuccDeeperSimple, AlwaysInclude);
+  auto exist_tuple_getitem = std::any_of(all_nodes.cbegin(), all_nodes.cend(), [](const AnfNodePtr &node) {
+    return IsPrimitiveCNode(node, prim::kPrimTupleGetItem);
+  });
+  if (exist_tuple_getitem) {
+    DumpIR("test_ignore_flag_with_twice_call_if_error_graph.ir", specialized_fg);
+    MS_LOG(ERROR) << "Specialize graph failed, please see the wrong graph in "
+                     "'test_ignore_flag_with_twice_call_if_error_graph_0000.ir'";
+  }
+  ASSERT_EQ(exist_tuple_getitem, false);
   abstract::AnalysisResultCacheMgr::GetInstance().Clear();
   abstract::AnalysisContext::ClearContext();
 }

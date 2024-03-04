@@ -145,18 +145,18 @@ set -e
 if [[ X"$OPENMPI" == "Xon" ]]; then
     echo "installing openmpi"
     cd /tmp
-    curl -O https://download.open-mpi.org/release/open-mpi/v4.0/openmpi-4.0.3.tar.gz
-    tar xzf openmpi-4.0.3.tar.gz
-    cd openmpi-4.0.3
-    ./configure --prefix=/usr/local/openmpi-4.0.3
+    curl -O https://download.open-mpi.org/release/open-mpi/v4.1/openmpi-4.1.4.tar.gz
+    tar xzf openmpi-4.1.4.tar.gz
+    cd openmpi-4.1.4
+    ./configure --prefix=/usr/local/openmpi-4.1.4
     make
     sudo make install
-    add_env PATH /usr/local/openmpi-4.0.3/bin
-    add_env LD_LIBRARY_PATH /usr/local/openmpi-4.0.3/lib
+    add_env PATH /usr/local/openmpi-4.1.4/bin
+    add_env LD_LIBRARY_PATH /usr/local/openmpi-4.1.4/lib
 fi
 
 arch=`uname -m`
-python -m pip install https://ms-release.obs.cn-north-4.myhuaweicloud.com/${MINDSPORE_VERSION}/MindSpore/gpu/${arch}/${cuda_name}/mindspore_gpu-${version_map["$PYTHON_VERSION"]}-linux_${arch}.whl --trusted-host ms-release.obs.cn-north-4.myhuaweicloud.com -i https://pypi.tuna.tsinghua.edu.cn/simple
+python -m pip install https://ms-release.obs.cn-north-4.myhuaweicloud.com/${MINDSPORE_VERSION}/MindSpore/unified/${arch}/${cuda_name}/mindspore-${version_map["$PYTHON_VERSION"]}-linux_${arch}.whl --trusted-host ms-release.obs.cn-north-4.myhuaweicloud.com -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # check mindspore installation
 python -c "import mindspore;mindspore.run_check()"

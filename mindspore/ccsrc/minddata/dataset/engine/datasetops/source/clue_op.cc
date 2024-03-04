@@ -88,7 +88,7 @@ Status ClueOp::LoadFile(const std::string &file, int64_t start_offset, int64_t e
     LOG_AND_RETURN_STATUS_SYNTAX_ERROR(err_msg);
   }
 
-  std::ifstream handle(realpath.value());
+  std::ifstream handle(realpath.value(), std::ios::in);
   if (!handle.is_open()) {
     RETURN_STATUS_UNEXPECTED("Invalid file, failed to open " + file + ", the file is damaged or permission denied.");
   }
@@ -115,6 +115,7 @@ Status ClueOp::LoadFile(const std::string &file, int64_t start_offset, int64_t e
       js = nlohmann::json::parse(line);
     } catch (const std::exception &err) {
       // Catch any exception and convert to Status return code
+      handle.close();
       RETURN_STATUS_UNEXPECTED("Invalid json, failed to parse " + file + ", " + std::string(err.what()));
     }
     int cols_count = cols_to_keyword_.size();
@@ -125,14 +126,23 @@ Status ClueOp::LoadFile(const std::string &file, int64_t start_offset, int64_t e
     int cout = 0;
     for (auto &p : cols_to_keyword_) {
       std::shared_ptr<Tensor> tensor;
-      RETURN_IF_NOT_OK(GetValue(js, p.second, &tensor));
+      auto s = GetValue(js, p.second, &tensor);
+      if (s != Status::OK()) {
+        handle.close();
+        return s;
+      }
       t_row[cout] = std::move(tensor);
       cout++;
     }
 
     rows_total++;
-    RETURN_IF_NOT_OK(jagged_rows_connector_->Add(worker_id, std::move(t_row)));
+    auto s = jagged_rows_connector_->Add(worker_id, std::move(t_row));
+    if (s != Status::OK()) {
+      handle.close();
+      return s;
+    }
   }
+  handle.close();
 
   return Status::OK();
 }
@@ -168,7 +178,7 @@ Status ClueOp::FillIOBlockQueue(const std::vector<int64_t> &i_keys) {
     if (!i_keys.empty()) {
       for (auto it = i_keys.begin(); it != i_keys.end(); ++it) {
         {
-          if (!load_io_block_queue_) {
+          if (!GetLoadIoBlockQueue()) {
             break;
           }
         }
@@ -177,7 +187,7 @@ Status ClueOp::FillIOBlockQueue(const std::vector<int64_t> &i_keys) {
     } else {
       for (auto it = filename_index_->begin(); it != filename_index_->end(); ++it) {
         {
-          if (!load_io_block_queue_) {
+          if (!GetLoadIoBlockQueue()) {
             break;
           }
         }
@@ -186,8 +196,7 @@ Status ClueOp::FillIOBlockQueue(const std::vector<int64_t> &i_keys) {
     }
     for (auto file_info : file_index) {
       if (NeedPushFileToBlockQueue(file_info.first, &start_offset, &end_offset, pre_count)) {
-        auto ioBlock =
-          std::make_unique<FilenameBlock>(file_info.second, start_offset, end_offset, IOBlock::kDeIoBlockNone);
+        auto ioBlock = std::make_unique<FilenameBlock>(file_info.second, start_offset, end_offset, IOBlock::kFlagNone);
         RETURN_IF_NOT_OK(PushIoBlockQueue(queue_index, std::move(ioBlock)));
         queue_index = (queue_index + 1) % num_workers_;
       }
@@ -236,7 +245,7 @@ int64_t CountTotalRowsPerFile(const std::string &file) {
     return 0;
   }
 
-  std::ifstream handle(realpath.value());
+  std::ifstream handle(realpath.value(), std::ios::in);
   if (!handle.is_open()) {
     MS_LOG(ERROR) << "Invalid file, failed to open " << file << ": the file is damaged or permission denied.";
     return 0;
@@ -249,6 +258,7 @@ int64_t CountTotalRowsPerFile(const std::string &file) {
       count++;
     }
   }
+  handle.close();
 
   return count;
 }

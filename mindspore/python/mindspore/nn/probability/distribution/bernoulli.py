@@ -15,24 +15,25 @@
 """Bernoulli Distribution"""
 from mindspore.common import dtype as mstype
 from mindspore.ops import operations as P
+from mindspore.ops import functional as F
 from mindspore.ops import composite as C
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from .distribution import Distribution
 from ._utils.utils import check_prob, check_distribution_name, clamp_probs
 from ._utils.custom_ops import exp_generic, log_generic
 
 
 class Bernoulli(Distribution):
-    """
+    r"""
     Bernoulli Distribution.
-    A Bernoulli Distribution is a discrete distribution with the range {0, 1}
+    A Bernoulli Distribution is a discrete distribution with the range :math:`\{0, 1\}`
     and the probability mass function as :math:`P(X = 0) = p, P(X = 1) = 1-p`.
 
     Args:
-        probs (float, list, numpy.ndarray, Tensor): The probability of that the outcome is 1. Default: None.
-        seed (int): The seed used in sampling. The global seed is used if it is None. Default: None.
-        dtype (mindspore.dtype): The type of the event samples. Default: mstype.int32.
-        name (str): The name of the distribution. Default: 'Bernoulli'.
+        probs (float, list, numpy.ndarray, Tensor): The probability of that the outcome is 1. Default: ``None`` .
+        seed (int): The seed used in sampling. The global seed is used if it is None. Default: ``None`` .
+        dtype (mindspore.dtype): The type of the event samples. Default: ``mstype.int32`` .
+        name (str): The name of the distribution. Default: ``'Bernoulli'`` .
 
     Note:
         `probs` must be a proper probability (0 < p < 1).
@@ -151,7 +152,6 @@ class Bernoulli(Distribution):
         self.cast = P.Cast()
         self.const = P.ScalarToTensor()
         self.floor = P.Floor()
-        self.fill = P.Fill()
         self.less = P.Less()
         self.shape = P.Shape()
         self.select = P.Select()
@@ -200,8 +200,8 @@ class Bernoulli(Distribution):
             MODE(B) = 1 if probs1 > 0.5 else = 0
         """
         probs1 = self._check_param_type(probs1)
-        zeros = self.fill(self.dtype, self.shape(probs1), 0.0)
-        ones = self.fill(self.dtype, self.shape(probs1), 1.0)
+        zeros = F.fill(self.dtype, self.shape(probs1), 0.0)
+        ones = F.fill(self.dtype, self.shape(probs1), 1.0)
         comp = self.less(0.5, probs1)
         return self.select(comp, ones, zeros)
 
@@ -278,9 +278,9 @@ class Bernoulli(Distribution):
         probs0 = self.broadcast((1.0 - probs1), broadcast_shape_tensor)
         comp_zero = self.less(value, 0.0)
         comp_one = self.less(value, 1.0)
-        zeros = self.fill(self.parameter_type, self.shape(
+        zeros = F.fill(self.parameter_type, self.shape(
             broadcast_shape_tensor), 0.0)
-        ones = self.fill(self.parameter_type, self.shape(
+        ones = F.fill(self.parameter_type, self.shape(
             broadcast_shape_tensor), 1.0)
         less_than_zero = self.select(comp_zero, zeros, probs0)
         return self.select(comp_one, less_than_zero, ones)

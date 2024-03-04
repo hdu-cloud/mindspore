@@ -23,11 +23,11 @@
 #include <string>
 #include "include/errorcode.h"
 #include "nnacl/fp32/resize_fp32.h"
-#include "src/litert/kernel_exec.h"
+#include "src/executor/kernel_exec.h"
 #include "src/litert/kernel/cpu/fp32/resize_fp32.h"
 
 namespace mindspore::lite::micro::nnacl {
-class ResizeFP32Coder final : public ResizeBaseCoder {
+class ResizeFP32Coder : public ResizeBaseCoder {
  public:
   ResizeFP32Coder(const std::vector<Tensor *> &in_tensors, const std::vector<Tensor *> &out_tensors,
                   const LiteGraph::Node *node, size_t node_index, Target target)
@@ -37,12 +37,12 @@ class ResizeFP32Coder final : public ResizeBaseCoder {
   int ReSize();
   int DoCode(CoderContext *const context) override;
 
- private:
+ protected:
   int SelectCalculatorFunc();
   void CalTmpBufferLen();
   int MallocTmpBuffer();
   void FreeTmpBuffer();
-  int ResizePrepare();
+  virtual int DataTypeLen() { return sizeof(float); }
 
   ResizeCoordinate coordinate_;
   size_t x_len_{0};
@@ -52,9 +52,12 @@ class ResizeFP32Coder final : public ResizeBaseCoder {
 
   float *y_weights_{nullptr};
   float *x_weights_{nullptr};
-  float *line_buffer_{nullptr};
+  void *line_buffer_{nullptr};
   CalculateOriginalCoordinate calculate_{nullptr};
   std::string calculate_str_;
+
+ private:
+  int ResizePrepare();
 };
 }  // namespace mindspore::lite::micro::nnacl
 #endif  // MINDSPORE_LITE_TOOLS_CONVERTER_MICRO_CODER_OPCODERS_NNACL_FP32_RESIZE_FP32_CODER_H_

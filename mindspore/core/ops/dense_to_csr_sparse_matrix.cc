@@ -16,19 +16,38 @@
 
 #include "ops/dense_to_csr_sparse_matrix.h"
 
+#include <map>
+#include <memory>
+#include <set>
+
+#include "abstract/abstract_value.h"
 #include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
 #include "ops/op_utils.h"
-#include "utils/shape_utils.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::TupleShapePtr DenseToCSRSparseMatrixInferShape(const PrimitivePtr &primitive,
                                                          const std::vector<AbstractBasePtr> &input_args) {
+  CheckInputShapeEmpty(primitive->name(), input_args);
   auto dense_input_shape_ptr = input_args[kInputIndex0]->BuildShape();
   auto dense_input_shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(dense_input_shape_ptr);
   auto dense_input_shape = dense_input_shape_map[kShape];
@@ -105,7 +124,25 @@ AbstractBasePtr DenseToCSRSparseMatrixInfer(const abstract::AnalysisEnginePtr &,
   auto shapes = DenseToCSRSparseMatrixInferShape(primitive, input_args);
   return abstract::MakeAbstract(shapes, types);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(DenseToCSRSparseMatrix, prim::kPrimDenseToCSRSparseMatrix, DenseToCSRSparseMatrixInfer,
-                             nullptr, true);
+
+// AG means auto generated
+class MIND_API AGDenseToCSRSparseMatrixInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DenseToCSRSparseMatrixInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DenseToCSRSparseMatrixInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DenseToCSRSparseMatrixInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(DenseToCSRSparseMatrix, prim::kPrimDenseToCSRSparseMatrix,
+                                 AGDenseToCSRSparseMatrixInfer, false);
 }  // namespace ops
 }  // namespace mindspore

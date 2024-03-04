@@ -16,19 +16,21 @@
 #include <iostream>
 #include <memory>
 
-#include "pipeline/jit/static_analysis/prim.h"
-#include "pipeline/static_analysis/helper.h"
 #include "common/common_test.h"
+#include "ops/arithmetic_op_name.h"
 #include "common/py_func_graph_fetcher.h"
+#include "frontend/operator/ops.h"
+#include "include/common/debug/draw.h"
 #include "ir/manager.h"
 #include "ir/tensor.h"
-#include "frontend/operator/ops.h"
-#include "pipeline/jit/parse/parse.h"
-#include "pipeline/jit/parse/data_converter.h"
-#include "pipeline/jit/resource.h"
-#include "include/common/debug/draw.h"
+#include "mindspore/core/ops/arithmetic_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "pipeline/jit/ps/parse/data_converter.h"
+#include "pipeline/jit/ps/parse/parse.h"
+#include "pipeline/jit/ps/resource.h"
+#include "pipeline/jit/ps/static_analysis/prim.h"
+#include "pipeline/static_analysis/helper.h"
 #include "utils/log_adapter.h"
-#include "mindspore/core/ops/core_ops.h"
 
 namespace mindspore {
 namespace abstract {
@@ -96,7 +98,7 @@ class MetaScalarAdd : public MetaFuncGraph {
     FuncGraphPtr fg = std::make_shared<FuncGraph>();
     ParameterPtr x = fg->add_parameter();
     ParameterPtr y = fg->add_parameter();
-    auto prim_scalar_add = std::make_shared<Primitive>(prim::kScalarAdd);
+    auto prim_scalar_add = std::make_shared<Primitive>(kScalarAddOpName);
     std::vector<AnfNodePtr> inputs;
     inputs.push_back(NewValueNode(prim_scalar_add));
     inputs.push_back(x);
@@ -161,10 +163,10 @@ TEST_F(TestInfer, test_inferred_scalar_add) {
   args_spec_list.push_back(abstract_v1);
   args_spec_list.push_back(abstract_v2);
 
-  auto prim_scalar_add = std::make_shared<Primitive>(prim::kScalarAdd);
+  auto prim_scalar_add = std::make_shared<Primitive>(kScalarAddOpName);
   FuncGraphPtr func_graph = MakeFuncGraph(prim_scalar_add);
   AbstractBasePtr abs_base_got = engine_->Run(func_graph, args_spec_list).eval_result->abstract();
-  ASSERT_TRUE(abs_base_got.get() == abstract_v1.get());
+  ASSERT_TRUE(*abs_base_got->BuildValue() == *MakeValue(static_cast<int64_t>(3)));
 }
 
 class TestInferGraph : public UT::Common {
@@ -273,7 +275,7 @@ TEST_F(TestInferGraph, test_inferred) {
   args_spec_list.push_back(abstract_v1);
   args_spec_list.push_back(abstract_v2);
   abs_base_got = engine_->Run(graph_alpha_, args_spec_list).eval_result->abstract();
-  ASSERT_TRUE(abs_base_got.get() == abstract_v1.get());
+  ASSERT_TRUE(*abs_base_got->BuildValue() == *MakeValue(static_cast<int64_t>(3)));
 }
 
 TEST_F(TestInferGraph, test_context) {
@@ -352,6 +354,7 @@ void TestInferMetaGraph::TearDown() {
 TEST_F(TestInferMetaGraph, test_inferred) {
   AbstractBasePtrList args_spec_list;
   int64_t v1 = 1;
+  int64_t res = 2;
   std::cout << "Begin TestInferGraph." << std::endl;
   std::cout << func_graph_->get_return()->ToString() << std::endl;
   AbstractBasePtr abstract_v1 = FromValue(v1, false);
@@ -359,7 +362,7 @@ TEST_F(TestInferMetaGraph, test_inferred) {
   args_spec_list.push_back(abstract_v1);
   args_spec_list.push_back(abstract_v2);
   AbstractBasePtr abs_base_got = engine_->Run(func_graph_, args_spec_list).eval_result->abstract();
-  ASSERT_TRUE(abs_base_got.get() == abstract_v1.get());
+  ASSERT_TRUE(*abs_base_got->BuildValue() == *MakeValue(res));
 }
 
 class TestInferUniform : public UT::Common {
@@ -388,7 +391,7 @@ TEST_F(TestInferUniform, test_inferred_scalar_add) {
   args_spec.push_back(abstract_v1);
   args_spec.push_back(abstract_v2);
 
-  auto prim_scalar_add = std::make_shared<Primitive>(prim::kScalarAdd);
+  auto prim_scalar_add = std::make_shared<Primitive>(kScalarAddOpName);
   FuncGraphPtr func_graph = MakeFuncGraph(prim_scalar_add);
   AbstractBasePtr abs_base_got = engine_->Run(func_graph, args_spec).eval_result->abstract();
   ASSERT_TRUE(*(abs_base_got->GetTypeTrack()) == *(abstract_v1->GetTypeTrack()));
@@ -410,6 +413,10 @@ void TestEvalOnePrim::SetUp() { engine_ = SetupAnalysisEngineStub(); }
 void TestEvalOnePrim::TearDown() {
   // destroy resource
 }
+
+/// Feature: Test EvalOnePrim.
+/// Description: Test EvalOnePrim.
+/// Expectation: success.
 TEST_F(TestEvalOnePrim, test_scalar_add) {
   float x1 = 1.1;
   float x2 = 1.1;
@@ -417,7 +424,7 @@ TEST_F(TestEvalOnePrim, test_scalar_add) {
   AbstractBasePtr base1 = FromValue(x1, false);
   AbstractBasePtr base2 = FromValue(x2, false);
   AbstractBasePtrList base_list = {base1, base2};
-  auto res = EvalOnePrim(std::make_shared<Primitive>(prim::kScalarAdd), base_list)->abstract();
+  auto res = EvalOnePrim(std::make_shared<Primitive>(prim::kPrimScalarAdd->name()), base_list)->abstract();
   MS_LOG(INFO) << "result spec: " << res->ToString();
   AbstractBasePtr exp = FromValue(x3, false);
   MS_LOG(INFO) << "result exp: " << exp->ToString();

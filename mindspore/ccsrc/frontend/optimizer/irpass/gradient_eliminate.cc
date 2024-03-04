@@ -18,6 +18,7 @@
 
 #include "frontend/optimizer/irpass/gradient_eliminate.h"
 #include "pipeline/pynative/pynative_execute.h"
+#include "ir/func_graph_cloner.h"
 
 namespace mindspore {
 namespace opt {
@@ -40,7 +41,7 @@ AnfNodePtr ExpandJPrimitive(const ValueNodePtr &vnode, const pipeline::ResourceB
 
 AnfNodePtrList ExpandMultiJ(const FuncGraphVector &func_graphs, const OptimizerPtr &optimizer) {
   AnfNodePtrList expanded_nodes;
-  auto new_func_graphs = ad::GradMultiFuncGraph(func_graphs, optimizer);
+  auto new_func_graphs = ad::GradMultiFuncGraph(func_graphs, optimizer, true);
   (void)std::transform(new_func_graphs.cbegin(), new_func_graphs.cend(), std::back_inserter(expanded_nodes),
                        [](const FuncGraphPtr &new_func_graph) {
                          MS_EXCEPTION_IF_NULL(new_func_graph);
@@ -50,14 +51,36 @@ AnfNodePtrList ExpandMultiJ(const FuncGraphVector &func_graphs, const OptimizerP
 }
 }  // namespace internal
 
+void ExpandJPrim::CloneUsedPrimalGraph(const FuncGraphManagerPtr &manager, FuncGraphVector *func_graphs) const {
+  MS_EXCEPTION_IF_NULL(func_graphs);
+  size_t func_graphs_size = func_graphs->size();
+  for (size_t i = 0; i < func_graphs_size; ++i) {
+    const auto &used_total = (*func_graphs)[i]->func_graphs_used_total();
+    for (size_t j = 0; j < func_graphs_size; ++j) {
+      auto fg_j = (*func_graphs)[j];
+      if (j == i || !used_total.contains(fg_j)) {
+        continue;
+      }
+      auto new_fg = BasicClone(fg_j);
+      for (auto &j_node : prim_nodes_) {
+        auto j_node_fg = GetValueNode<FuncGraphPtr>(j_node->input(1));
+        if (j_node_fg == nullptr || j_node_fg != fg_j) {
+          continue;
+        }
+        (void)manager->Replace(j_node->input(1), NewValueNode(new_fg));
+      }
+      (*func_graphs)[j] = new_fg;
+    }
+  }
+}
+
 bool ExpandJPrim::operator()(const FuncGraphPtr &func_graph, const OptimizerPtr &optimizer) {
   // Check whether need to eliminate forward cnodes in pynative mode.
   if (MsContext::GetInstance()->get_param<int>(MS_CTX_EXECUTION_MODE) == kPynativeMode) {
-    auto pynative_exec = pynative::PyNativeExecutor::GetInstance();
-    auto grad_exec = pynative_exec->grad_executor();
-    bool eliminate_forward = grad_exec->eliminate_forward();
-    grad_exec->set_eliminate_forward(eliminate_forward && prim_nodes_.empty());
+    const auto &jit = pynative::PyNativeExecutor::GetInstance()->grad_executor()->jit();
+    jit->set_eliminate_forward(jit->eliminate_forward() && prim_nodes_.empty());
   }
+
   // Expand j nodes that don't have embed j nodes.
   bool change = false;
   auto manager = optimizer->manager();
@@ -80,11 +103,13 @@ bool ExpandJPrim::operator()(const FuncGraphPtr &func_graph, const OptimizerPtr 
       j_node_to_index_map[j_node] = index++;
     } else if (IsValueNode<Primitive>(j_node_inp1)) {
       auto expanded_j = internal::ExpandJPrimitive(j_node_inp1->cast<ValueNodePtr>(), optimizer->resource());
-      manager->Replace(j_node, expanded_j);
+      (void)manager->Replace(j_node, expanded_j);
       set_k_graph_flag(j_node->func_graph());
       change = true;
     }
   }
+  CloneUsedPrimalGraph(manager, &func_graphs);
+
   auto grad_func_graphs = internal::ExpandMultiJ(func_graphs, optimizer);
   for (const auto &j_node_index_iter : j_node_to_index_map) {
     const auto &j_node = j_node_index_iter.first;

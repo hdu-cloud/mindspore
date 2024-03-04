@@ -54,7 +54,7 @@ int CumSumGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::
   (void)std::transform(shape.begin(), shape.end(), std::back_inserter(shape_), LongToSize);
   is_null_input_ = CHECK_SHAPE_NULL(shape, kernel_name_, "input");
   if (is_null_input_) {
-    return true;
+    return KRET_OK;
   }
   auto kernel_ptr = std::make_shared<ops::CumSum>(base_operator->GetPrim());
   MS_EXCEPTION_IF_NULL(kernel_ptr);
@@ -86,37 +86,45 @@ void CumSumGpuKernelMod::Reshape() {
 
 template <typename T>
 bool CumSumGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
-                                      const std::vector<AddressPtr> &outputs, void *stream_ptr) {
+                                      const std::vector<AddressPtr> &outputs) {
   if (is_null_input_) {
     return true;
   }
   auto input_addr = GetDeviceAddress<T>(inputs, kIndex0);
   auto output_addr = GetDeviceAddress<T>(outputs, kIndex0);
   auto ws_addr = GetDeviceAddress<T>(workspace, kIndex0);
-  auto cuda_stream = reinterpret_cast<cudaStream_t>(stream_ptr);
   auto any = [](auto... args) -> bool { return ((args == nullptr) || ...); };
-  if (any(input_addr, output_addr, ws_addr, cuda_stream)) {
+  if (any(input_addr, output_addr, ws_addr, cuda_stream_)) {
     return false;
   }
   const auto &axis_addr = inputs.at(kIndex1);
   MS_EXCEPTION_IF_NULL(axis_addr);
   if (axis_addr->size == sizeof(int)) {
     int axis_tmp;
-    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemcpy(&axis_tmp, axis_addr->addr, axis_addr->size, cudaMemcpyDeviceToHost),
-                                       "For '" << kernel_name_ << "', cudaMemcpy input 'axis' device to host failed.");
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+      cudaMemcpyAsync(&axis_tmp, axis_addr->addr, axis_addr->size, cudaMemcpyDeviceToHost, cuda_stream_),
+      "For '" << kernel_name_ << "', cudaMemcpyAsync input 'axis' device to host failed.");
+    if (cudaStreamQuery(cuda_stream_) != cudaSuccess) {
+      CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(cuda_stream_), "cuda Stream Sync Failed");
+    }
     axis_ = axis_tmp;
   } else if (inputs.at(kIndex1)->size == sizeof(int64_t)) {
     int64_t axis_tmp;
-    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemcpy(&axis_tmp, axis_addr->addr, axis_addr->size, cudaMemcpyDeviceToHost),
-                                       "For '" << kernel_name_ << "', cudaMemcpy input 'axis' device to host failed.");
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+      cudaMemcpyAsync(&axis_tmp, axis_addr->addr, axis_addr->size, cudaMemcpyDeviceToHost, cuda_stream_),
+      "For '" << kernel_name_ << "', cudaMemcpyAsync input 'axis' device to host failed.");
+    if (cudaStreamQuery(cuda_stream_) != cudaSuccess) {
+      CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(cuda_stream_), "cuda Stream Sync Failed");
+    }
     axis_ = static_cast<int>(axis_tmp);
   } else {
     MS_LOG(ERROR) << "The dtype of 'axis' should be int or int64";
     return false;
   }
   Reshape();
-  CumSum(input_addr, output_addr, ws_addr, dims_[kIndex0], dims_[kIndex1], dims_[kIndex2], stride_, stride2_,
-         exclusive_, reverse_, device_id_, cuda_stream);
+  auto status = CumSum(input_addr, output_addr, ws_addr, dims_[kIndex0], dims_[kIndex1], dims_[kIndex2], stride_,
+                       stride2_, exclusive_, reverse_, device_id_, cuda_stream_);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

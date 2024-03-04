@@ -14,19 +14,18 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/optimizer/ir_fusion/unsorted_segment_sum_replace.h"
-
 #include <string>
 #include <vector>
 #include <memory>
 #include <set>
+#include "ops/array_op_name.h"
 #include "utils/hash_set.h"
-#include "backend/common/optimizer/const_input_to_attr.h"
-#include "kernel/kernel_build_info.h"
+#include "backend/common/pass/const_input_to_attr.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/session/kernel_graph.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/kernel_graph.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/kernel_info.h"
 #include "utils/ms_context.h"
 #include "plugin/device/ascend/optimizer/optimizer_factory.h"
 
@@ -67,19 +66,8 @@ const AnfNodePtr UnsortedSegmentSumReplace::Process(const FuncGraphPtr &func_gra
   MS_EXCEPTION_IF_NULL(new_cnode);
   new_cnode->set_abstract(cnode->abstract());
   new_cnode->set_scope(cnode->scope());
-  // check support
-  auto input_dtype = common::AnfAlgo::GetPrevNodeOutputInferDataType(new_cnode, 0);
-  auto segmentid_dtype = common::AnfAlgo::GetPrevNodeOutputInferDataType(new_cnode, 1);
-  auto builder = kernel::KernelBuildInfo::KernelBuildInfoBuilder();
-  std::vector<TypeId> inputs_device_type = {input_dtype, segmentid_dtype, num_segments_type->type_id()};
-  std::vector<TypeId> outputs_device_type = {input_dtype};
-  std::vector<std::string> inputs_format = {kOpFormat_DEFAULT, kOpFormat_DEFAULT, kOpFormat_DEFAULT};
-  std::vector<std::string> outputs_format = {kOpFormat_DEFAULT};
-  builder.SetInputsDeviceType(inputs_device_type);
-  builder.SetOutputsDeviceType(outputs_device_type);
-  builder.SetInputsFormat(inputs_format);
-  builder.SetOutputsFormat(outputs_format);
-  if (!CheckAICoreSupportedSpec(new_cnode, builder.Build())) {
+
+  if (!CheckAICoreSupportedAny(new_cnode)) {
     MS_LOG(INFO) << "Replace unsorted_segment_sum_d op to unsorted_segment_sum op failed.";
     return nullptr;
   }

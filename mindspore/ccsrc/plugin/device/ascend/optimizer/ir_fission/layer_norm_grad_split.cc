@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,9 +18,12 @@
 #include <memory>
 #include <vector>
 
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/sequence_ops.h"
+#include "ops/nn_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/kernel_info.h"
+#include "include/backend/optimizer/helper.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
 #include "utils/trace_base.h"
@@ -48,8 +51,8 @@ void LayerNormGradSplit::CreateOutputsOfLayerNormXBackpropV2(const FuncGraphPtr 
   MS_EXCEPTION_IF_NULL(layer_norm_x_backprop);
   layer_norm_x_backprop->set_scope(layer_norm_grad->scope());
   auto types = {common::AnfAlgo::GetOutputInferDataType(layer_norm_grad, 0), kNumberTypeFloat32};
-  auto shapes = {common::AnfAlgo::GetOutputDetailShape(layer_norm_grad, 0),
-                 common::AnfAlgo::GetPrevNodeOutputDetailShape(layer_norm_grad, 1)};
+  auto shapes = {AnfAlgo::GetOutputDetailShape(layer_norm_grad, 0),
+                 AnfAlgo::GetPrevNodeOutputDetailShape(layer_norm_grad, 1)};
   if (is_dynamic) {
     common::AnfAlgo::SetNodeAttr(kAttrInputIsDynamicShape, MakeValue(true), layer_norm_x_backprop);
     common::AnfAlgo::SetNodeAttr(kAttrOutputIsDynamicShape, MakeValue(true), layer_norm_x_backprop);
@@ -78,8 +81,8 @@ void LayerNormGradSplit::CreateOutputsOfLayerNormBetaGammaBackpropV2(
   }
   auto types = {common::AnfAlgo::GetOutputInferDataType(layer_norm_grad, kLayerNormGradOutputGammaIndex),
                 common::AnfAlgo::GetOutputInferDataType(layer_norm_grad, kLayerNormGradOutputBetaIndex)};
-  auto shapes = {common::AnfAlgo::GetOutputDetailShape(layer_norm_grad, kLayerNormGradOutputGammaIndex),
-                 common::AnfAlgo::GetOutputDetailShape(layer_norm_grad, kLayerNormGradOutputBetaIndex)};
+  auto shapes = {AnfAlgo::GetOutputDetailShape(layer_norm_grad, kLayerNormGradOutputGammaIndex),
+                 AnfAlgo::GetOutputDetailShape(layer_norm_grad, kLayerNormGradOutputBetaIndex)};
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, layer_norm_beta_gamma_backprop.get());
 
   // get device shape of LayerNormGrad's 5th Input, and convert it to attr
@@ -100,6 +103,12 @@ const AnfNodePtr LayerNormGradSplit::Process(const FuncGraphPtr &graph, const An
                                              const EquivPtr &) const {
   MS_EXCEPTION_IF_NULL(graph);
   MS_EXCEPTION_IF_NULL(node);
+  // LayerNormXBackpropV2 is not supported in acl.
+  if (graph->has_flag(kAttrMutableKernel)) {
+    MS_LOG(INFO) << "Skip LayerNormGradSplit for acl op";
+    return nullptr;
+  }
+
   auto cnode = node->cast<CNodePtr>();
   if (common::AnfAlgo::GetInputTensorNum(cnode) != kLayerNormGradInputTensorNum) {
     return nullptr;
@@ -109,7 +118,7 @@ const AnfNodePtr LayerNormGradSplit::Process(const FuncGraphPtr &graph, const An
   std::vector<AnfNodePtr> layer_norm_x_backprop_outputs;
   CreateOutputsOfLayerNormXBackpropV2(graph, cnode, &layer_norm_x_backprop_outputs, is_dynamic_shape);
   if (layer_norm_x_backprop_outputs.size() != kLayerNormXBackpropV2OutputNum) {
-    MS_LOG(EXCEPTION) << "layer_norm_grad_outputs has wrong size" << trace::DumpSourceLines(node);
+    MS_LOG(INTERNAL_EXCEPTION) << "layer_norm_grad_outputs has wrong size" << trace::DumpSourceLines(node);
   }
 
   // create layer_norm_beta_gamma_backprop
@@ -117,15 +126,12 @@ const AnfNodePtr LayerNormGradSplit::Process(const FuncGraphPtr &graph, const An
   CreateOutputsOfLayerNormBetaGammaBackpropV2(graph, cnode, layer_norm_x_backprop_outputs[1],
                                               &layer_norm_beta_gamma_backprop_outputs, is_dynamic_shape);
   if (layer_norm_beta_gamma_backprop_outputs.size() != kLayerNormBetaGammaBackpropOutputNum) {
-    MS_LOG(EXCEPTION) << "layer_norm_beta_gamma_outputs has wrong size" << trace::DumpSourceLines(node);
+    MS_LOG(INTERNAL_EXCEPTION) << "layer_norm_beta_gamma_outputs has wrong size" << trace::DumpSourceLines(node);
   }
 
-  std::vector<AnfNodePtr> make_tuple_inputs = {NewValueNode(prim::kPrimMakeTuple), layer_norm_x_backprop_outputs[0],
-                                               layer_norm_beta_gamma_backprop_outputs[0],
-                                               layer_norm_beta_gamma_backprop_outputs[1]};
-  auto make_tuple = graph->NewCNode(make_tuple_inputs);
-  MS_EXCEPTION_IF_NULL(make_tuple);
-  return make_tuple;
+  return CreateMakeTupleNode(
+    graph, std::vector<AnfNodePtr>{layer_norm_x_backprop_outputs[0], layer_norm_beta_gamma_backprop_outputs[0],
+                                   layer_norm_beta_gamma_backprop_outputs[1]});
 }
 }  // namespace opt
 }  // namespace mindspore

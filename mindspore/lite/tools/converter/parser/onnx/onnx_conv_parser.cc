@@ -26,8 +26,7 @@
 namespace mindspore::lite {
 STATUS GetConvChannel(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node, int64_t group,
                       int64_t *channel_out, int64_t *channel_in) {
-  MS_ASSERT(channel_out != nullptr);
-  MS_ASSERT(channel_in != nullptr);
+  MS_CHECK_TRUE_RET(channel_out != nullptr && channel_in != nullptr, RET_NULL_PTR);
   MS_CHECK_GE(onnx_node.input_size(), kInputSize1, RET_ERROR);
   const auto &onnx_conv_weight = onnx_node.input(kWeightIndex);
   if (onnx_node.op_type() == "Conv") {
@@ -94,9 +93,9 @@ STATUS GetConvChannel(const onnx::GraphProto &onnx_graph, const onnx::NodeProto 
 
 STATUS OnnxConvParser::ParseOnnxAttr(const onnx::NodeProto &onnx_node, int64_t *group, mindspore::Format *format,
                                      mindspore::PadMode *pad_mode) {
-  MS_ASSERT(group != nullptr);
-  MS_ASSERT(format != nullptr);
-  MS_ASSERT(pad_mode != nullptr);
+  MS_CHECK_TRUE_RET(group != nullptr, RET_NULL_PTR);
+  MS_CHECK_TRUE_RET(format != nullptr, RET_NULL_PTR);
+  MS_CHECK_TRUE_RET(pad_mode != nullptr, RET_NULL_PTR);
   for (const auto &onnx_node_attr : onnx_node.attribute()) {
     if (onnx_node_attr.name() == "group") {
       *group = onnx_node_attr.i();

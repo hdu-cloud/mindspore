@@ -16,12 +16,12 @@
 
 #ifndef MINDSPORE_CORE_OPS_MAXUNPOOL3DGRAD_H_
 #define MINDSPORE_CORE_OPS_MAXUNPOOL3DGRAD_H_
-#include <vector>
 #include <memory>
 #include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,8 +33,9 @@ class MIND_API MaxUnpool3DGrad : public BaseOperator {
   std::string get_format() const;
 };
 
-abstract::AbstractBasePtr MaxUnpool3DGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                               const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr MaxUnpool3DGradInfer(const abstract::AnalysisEnginePtr &,
+                                                        const PrimitivePtr &primitive,
+                                                        const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimMaxUnpool3DGradPtr = std::shared_ptr<MaxUnpool3DGrad>;
 }  // namespace ops
 }  // namespace mindspore

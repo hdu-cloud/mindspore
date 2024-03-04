@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -142,6 +142,38 @@ class OnnxExpParser : public OnnxNodeParser {
   PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
 };
 
+class OnnxSinParser : public OnnxNodeParser {
+ public:
+  OnnxSinParser() : OnnxNodeParser("Sin") {}
+  ~OnnxSinParser() override = default;
+
+  PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
+};
+
+class OnnxSinhParser : public OnnxNodeParser {
+ public:
+  OnnxSinhParser() : OnnxNodeParser("Sinh") {}
+  ~OnnxSinhParser() override = default;
+
+  PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
+};
+
+class OnnxAsinParser : public OnnxNodeParser {
+ public:
+  OnnxAsinParser() : OnnxNodeParser("Asin") {}
+  ~OnnxAsinParser() override = default;
+
+  PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
+};
+
+class OnnxAsinhParser : public OnnxNodeParser {
+ public:
+  OnnxAsinhParser() : OnnxNodeParser("Asinh") {}
+  ~OnnxAsinhParser() override = default;
+
+  PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
+};
+
 class OnnxCosParser : public OnnxNodeParser {
  public:
   OnnxCosParser() : OnnxNodeParser("Cos") {}
@@ -150,10 +182,50 @@ class OnnxCosParser : public OnnxNodeParser {
   PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
 };
 
-class OnnxSinParser : public OnnxNodeParser {
+class OnnxCoshParser : public OnnxNodeParser {
  public:
-  OnnxSinParser() : OnnxNodeParser("Sin") {}
-  ~OnnxSinParser() override = default;
+  OnnxCoshParser() : OnnxNodeParser("Cosh") {}
+  ~OnnxCoshParser() override = default;
+
+  PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
+};
+
+class OnnxAcosParser : public OnnxNodeParser {
+ public:
+  OnnxAcosParser() : OnnxNodeParser("Acos") {}
+  ~OnnxAcosParser() override = default;
+
+  PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
+};
+
+class OnnxAcoshParser : public OnnxNodeParser {
+ public:
+  OnnxAcoshParser() : OnnxNodeParser("Acosh") {}
+  ~OnnxAcoshParser() override = default;
+
+  PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
+};
+
+class OnnxTanParser : public OnnxNodeParser {
+ public:
+  OnnxTanParser() : OnnxNodeParser("Tan") {}
+  ~OnnxTanParser() override = default;
+
+  PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
+};
+
+class OnnxAtanParser : public OnnxNodeParser {
+ public:
+  OnnxAtanParser() : OnnxNodeParser("Atan") {}
+  ~OnnxAtanParser() override = default;
+
+  PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
+};
+
+class OnnxAtanhParser : public OnnxNodeParser {
+ public:
+  OnnxAtanhParser() : OnnxNodeParser("Atanh") {}
+  ~OnnxAtanhParser() override = default;
 
   PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
 };
@@ -182,30 +254,6 @@ class OnnxLogParser : public OnnxNodeParser {
   PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
 };
 
-class OnnxTanParser : public OnnxNodeParser {
- public:
-  OnnxTanParser() : OnnxNodeParser("Tan") {}
-  ~OnnxTanParser() override = default;
-
-  PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
-};
-
-class OnnxAtanParser : public OnnxNodeParser {
- public:
-  OnnxAtanParser() : OnnxNodeParser("Atan") {}
-  ~OnnxAtanParser() override = default;
-
-  PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
-};
-
-class OnnxAsinParser : public OnnxNodeParser {
- public:
-  OnnxAsinParser() : OnnxNodeParser("Asin") {}
-  ~OnnxAsinParser() override = default;
-
-  PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
-};
-
 class OnnxAndParser : public OnnxNodeParser {
  public:
   OnnxAndParser() : OnnxNodeParser("And") {}
@@ -218,6 +266,14 @@ class OnnxOrParser : public OnnxNodeParser {
  public:
   OnnxOrParser() : OnnxNodeParser("Or") {}
   ~OnnxOrParser() override = default;
+
+  PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
+};
+
+class OnnxXorParser : public OnnxNodeParser {
+ public:
+  OnnxXorParser() : OnnxNodeParser("Xor") {}
+  ~OnnxXorParser() override = default;
 
   PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
 };
@@ -242,6 +298,22 @@ class OnnxReciprocalParser : public OnnxNodeParser {
  public:
   OnnxReciprocalParser() : OnnxNodeParser("Reciprocal") {}
   ~OnnxReciprocalParser() override = default;
+
+  PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
+};
+
+class OnnxModParser : public OnnxNodeParser {
+ public:
+  OnnxModParser() : OnnxNodeParser("Mod") {}
+  ~OnnxModParser() override = default;
+
+  PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
+};
+
+class OnnxGreaterEqualParser : public OnnxNodeParser {
+ public:
+  OnnxGreaterEqualParser() : OnnxNodeParser("GreaterEqual") {}
+  ~OnnxGreaterEqualParser() override = default;
 
   PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
 };

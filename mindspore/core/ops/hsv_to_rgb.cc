@@ -14,30 +14,46 @@
  * limitations under the License.
  */
 #include "ops/hsv_to_rgb.h"
-#include <set>
+
 #include <memory>
+#include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/image_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
-abstract::ShapePtr HSVToRGBInferShape(const PrimitivePtr &, const std::vector<AbstractBasePtr> &input_args) {
-  auto input_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
+abstract::ShapePtr HSVToRGBInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  const auto &build_shape = input_args[0]->BuildShape();
+  if (build_shape->IsDimZero()) {
+    MS_LOG(EXCEPTION) << "For '" << primitive->name() << "', the shape of input can not be empty.";
+  }
+  auto input_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(build_shape)[kShape];
   // dynamic rank
   if (IsDynamicRank(input_shape)) {
     return std::make_shared<abstract::Shape>(ShapeVector{abstract::Shape::kShapeRankAny});
   }
   // dynamic shape
   if (IsDynamic(input_shape)) {
-    ShapeVector out_shape_dyn;
-    for (size_t i = 0; i < input_shape.size(); ++i) {
-      out_shape_dyn.push_back(abstract::Shape::kShapeDimAny);
-    }
-    return std::make_shared<abstract::Shape>(out_shape_dyn);
+    return std::make_shared<abstract::Shape>(ShapeVector(input_shape.size(), abstract::Shape::kShapeDimAny));
   }
   const int64_t kNumDims = 4;
   const int64_t kLastDim = 3;
@@ -69,6 +85,23 @@ AbstractBasePtr HSVToRGBInfer(const abstract::AnalysisEnginePtr &, const Primiti
   return abstract::MakeAbstract(shapes, types);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(HSVToRGB, prim::kPrimHSVToRGB, HSVToRGBInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGHSVToRGBInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return HSVToRGBInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return HSVToRGBInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return HSVToRGBInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(HSVToRGB, prim::kPrimHSVToRGB, AGHSVToRGBInfer, false);
 }  // namespace ops
 }  // namespace mindspore

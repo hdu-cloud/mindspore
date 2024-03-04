@@ -47,9 +47,8 @@ class DenseToDenseSetOperationCpuKernelMod : public NativeCpuKernelMod {
   }
 
  protected:
-  std::vector<KernelTensorPtr> GetOutputs() override { return outputs_; }
   std::vector<KernelAttr> GetOpSupport() override;
-  void SyncData() override;
+  void SyncOutputShape() override;
 
  private:
   template <typename T>
@@ -63,7 +62,6 @@ class DenseToDenseSetOperationCpuKernelMod : public NativeCpuKernelMod {
   void SetCompute(const std::set<T> &set1, const std::set<T> &set2, std::set<T> *result);
   SetOperation set_operation_ = A_MINUS_B;
   bool validate_indices_ = true;
-  std::vector<KernelTensorPtr> outputs_{};
   ShapeVector x1_shape_;
   ShapeVector x2_shape_;
   std::vector<ShapeVector> real_infer_shape_;
@@ -73,8 +71,6 @@ class DenseToDenseSetOperationCpuKernelMod : public NativeCpuKernelMod {
                        const std::vector<kernel::AddressPtr> &)>;
   DenseSetFunc kernel_func_;
   static std::vector<std::pair<KernelAttr, DenseSetFunc>> func_list_;
-
-  // cudaStream_t cuda_stream_;
 };
 }  // namespace kernel
 }  // namespace mindspore

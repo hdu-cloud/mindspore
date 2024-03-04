@@ -38,7 +38,7 @@ class ShardReader:
            file_name (str, list[str]): File names of MindRecord File.
            num_consumer (int): Number of worker threads which load data in parallel. Default: 4.
            columns (list[str]): List of fields which correspond data would be read.
-           operator(int): Reserved parameter for operators. Default: None.
+           operator(int): Reserved parameter for operators. Default: ``None``.
 
         Returns:
             MSRStatus, SUCCESS or FAILED.
@@ -106,3 +106,12 @@ class ShardReader:
     def close(self):
         """close MindRecord File."""
         self._reader.close()
+
+    def len(self):
+        """
+        Get the number of the samples in MindRecord.
+
+        Returns:
+            int, the number of the samples in MindRecord.
+        """
+        return self._reader.len()

@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,31 +22,38 @@
 #include <algorithm>
 #include "runtime/mem.h"
 #include "acl/acl_rt.h"
+#include "pybind_api/gil_scoped_long_running.h"
 #include "runtime/device/kernel_runtime_manager.h"
 #include "runtime/device/kernel_runtime.h"
 #include "runtime/device/memory_manager.h"
 #include "runtime/device/convert_tensor_utils.h"
-#include "plugin/device/ascend/hal/device/ascend_launch_transdata.h"
+#include "plugin/device/ascend/hal/device/ascend_event.h"
 #include "runtime/hardware/device_context_manager.h"
-#include "plugin/device/ascend/hal/hardware/ascend_device_context.h"
 #include "plugin/device/ascend/hal/device/ascend_stream_manager.h"
+#include "plugin/device/ascend/hal/device/ascend_dma_handle.h"
 #include "ir/dtype/type.h"
 #include "ir/tensor.h"
 #include "abstract/utils.h"
 #include "include/common/utils/utils.h"
 #include "runtime/device/ms_device_shape_transfer.h"
 #ifndef ENABLE_SECURITY
-#include "debug/data_dump/dump_json_parser.h"
+#include "include/backend/debug/data_dump/dump_json_parser.h"
 #endif
 #ifdef ENABLE_DEBUGGER
 #include "debug/tensor_load.h"
 #endif
 
+namespace py = pybind11;
 namespace mindspore {
 namespace device {
 namespace ascend {
-const int FLOAT_LEN = sizeof(float);
-const int FLOAT16_LEN = 2;
+const auto kFloat16Bytes = 2;
+const auto kFloatBytes = sizeof(float);
+const auto kFloat64Bytes = 8;
+
+#if defined(RT_MEMORY_P2PDMA)
+static std::mutex dma_lock;
+#endif
 
 bool IsUseTransDataTypeFormat(const std::pair<std::string, std::string> &type_format) {
   static const std::set<std::pair<std::string, std::string>> use_trans_data = {
@@ -94,6 +101,10 @@ void SyncMemory(void *dst, const void *src, uint64_t size, aclrtMemcpyKind kind)
 
   // Only apply asynchronous copy in Pynative && ACL_MEMCPY_HOST_TO_DEVICE mode
   if (execution_mode != kPynativeMode || kind != ACL_MEMCPY_HOST_TO_DEVICE) {
+    auto ret = runtime_instance->SyncStream();
+    if (!ret) {
+      MS_LOG(EXCEPTION) << "Sync stream error!";
+    }
     auto ret_rt_memcpy = aclrtMemcpy(dst, size, src, size, kind);
     if (ret_rt_memcpy != RT_ERROR_NONE) {
       MS_EXCEPTION(DeviceProcessError) << "aclrtMemcpy failed";
@@ -107,10 +118,10 @@ void SyncMemory(void *dst, const void *src, uint64_t size, aclrtMemcpyKind kind)
 }
 
 bool FloatToHalfAndSyncHostToDevice(void *dst, size_t dst_size, const void *src, size_t src_size) {
-  auto elem_num = src_size / FLOAT_LEN;
-  if (elem_num != (dst_size / FLOAT16_LEN)) {
-    MS_EXCEPTION(ArgumentError) << "FloatToHalf failed. size not match src_size[" << src_size << "], dst_size["
-                                << dst_size << "]";
+  auto elem_num = src_size / kFloatBytes;
+  if (elem_num != (dst_size / kFloat16Bytes)) {
+    MS_INTERNAL_EXCEPTION(ArgumentError) << "FloatToHalf failed. size not match src_size[" << src_size << "], dst_size["
+                                         << dst_size << "]";
   }
   std::vector<float16> half_data(elem_num);
   FloatToHalf(half_data.data(), src, elem_num);
@@ -119,8 +130,8 @@ bool FloatToHalfAndSyncHostToDevice(void *dst, size_t dst_size, const void *src,
 }
 
 bool Float64ToFloatAndSyncHostToDevice(void *dst, size_t dst_size, const void *src, size_t src_size) {
-  if (src_size / 2 != dst_size) {
-    MS_EXCEPTION(ArgumentError) << "src_size[" << src_size << "], dst_size[" << dst_size << "]";
+  if (src_size / kFloat64Bytes != dst_size / kFloatBytes) {
+    MS_INTERNAL_EXCEPTION(ArgumentError) << "src_size[" << src_size << "], dst_size[" << dst_size << "]";
   }
   size_t elem_num = dst_size / sizeof(float);
   auto host_tmp = std::vector<float>(elem_num);
@@ -130,10 +141,10 @@ bool Float64ToFloatAndSyncHostToDevice(void *dst, size_t dst_size, const void *s
 }
 
 bool SyncDeviceToHostAndHalfToFloat(void *dst, size_t dst_size, const void *src, size_t src_size) {
-  auto elem_num = src_size / FLOAT16_LEN;
-  if (elem_num != (dst_size / FLOAT_LEN)) {
-    MS_EXCEPTION(ArgumentError) << "HalfToFloat failed. size not match src_size[" << src_size << "], dst_size["
-                                << dst_size << "]";
+  auto elem_num = src_size / kFloat16Bytes;
+  if (elem_num != (dst_size / kFloatBytes)) {
+    MS_INTERNAL_EXCEPTION(ArgumentError) << "HalfToFloat failed. size not match src_size[" << src_size << "], dst_size["
+                                         << dst_size << "]";
   }
   std::vector<float16> half_data(elem_num);
   SyncMemory(half_data.data(), src, src_size, ACL_MEMCPY_DEVICE_TO_HOST);
@@ -142,8 +153,8 @@ bool SyncDeviceToHostAndHalfToFloat(void *dst, size_t dst_size, const void *src,
 }
 
 bool SyncDeviceToHostAndFloatToFloat64(void *dst, size_t dst_size, const void *src, size_t src_size) {
-  if (src_size != dst_size / 2) {
-    MS_EXCEPTION(ArgumentError) << "src_size[" << src_size << "], dst_size[" << dst_size << "]";
+  if (src_size / kFloatBytes != dst_size / kFloat64Bytes) {
+    MS_INTERNAL_EXCEPTION(ArgumentError) << "src_size[" << src_size << "], dst_size[" << dst_size << "]";
   }
   size_t elem_num = src_size / sizeof(float);
   auto host_tmp = std::vector<float>(elem_num);
@@ -163,7 +174,7 @@ void AscendDeviceAddress::BindDevice() const {
   if (!device_name_.empty()) {
     auto ascend_device_context = GetDeviceContext();
     MS_EXCEPTION_IF_NULL(ascend_device_context);
-    if (!ascend_device_context->device_res_manager_->BindDeviceToCurrentThread()) {
+    if (!ascend_device_context->device_res_manager_->BindDeviceToCurrentThread(false)) {
       MS_LOG(WARNING) << "Bind device to current thread failed.";
     }
   } else {
@@ -185,11 +196,105 @@ void AscendDeviceAddress::SyncStream() const {
   MS_LOG(DEBUG) << "SyncStream Finish!";
 }
 
+bool AscendDeviceAddress::SyncStream(size_t stream_id) const {
+  const auto stream = AscendStreamMng::GetInstance().GetStream(stream_id);
+  MS_EXCEPTION_IF_NULL(stream);
+  BindDevice();
+  if (!AscendStreamMng::GetInstance().SyncStream(stream)) {
+    MS_LOG(ERROR) << "Sync default stream failed.";
+    return false;
+  }
+  return true;
+}
+
+bool AscendDeviceAddress::CopyDeviceToHost(void *dst, const void *src, size_t size, bool async,
+                                           size_t stream_id) const {
+  return CopyBetweenHostDevice(dst, src, size, async, stream_id, false);
+}
+
+bool AscendDeviceAddress::CopyHostToDevice(void *dst, const void *src, size_t size, bool async,
+                                           size_t stream_id) const {
+  return CopyBetweenHostDevice(dst, src, size, async, stream_id, true);
+}
+
+bool AscendDeviceAddress::DeviceToFileDirectly(void *ptr, size_t size, const std::string &file_name,
+                                               size_t stream_id) const {
+  return CopyBetweenFileDeviceDirectly(ptr, file_name, size, stream_id, false);
+}
+
+bool AscendDeviceAddress::FileToDeviceDirectly(void *ptr, size_t size, const std::string &file_name,
+                                               size_t stream_id) const {
+  return CopyBetweenFileDeviceDirectly(ptr, file_name, size, stream_id, true);
+}
+
+bool AscendDeviceAddress::CopyBetweenFileDeviceDirectly(void *ptr, const std::string &file_name, size_t size,
+                                                        size_t stream_id, bool file_to_device) const {
+#if defined(RT_MEMORY_P2PDMA)
+  void *dargs = AscendDmaHandle::GetInstance().GetDargs();
+  void *buf = AscendDmaHandle::GetInstance().GetBuf();
+  if (dargs == nullptr || buf == nullptr) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(dma_lock);
+  auto open_flag = file_to_device ? (O_RDWR | O_DIRECT) : (O_RDWR | O_CREAT | O_DIRECT);
+  auto nvme_fd = open(file_name.c_str(), open_flag, S_IRUSR | S_IWUSR);
+  if (nvme_fd < 0) {
+    MS_LOG(ERROR) << "Open file failed, file name:" << file_name;
+    return false;
+  }
+  size_t buf_size = AscendDmaHandle::GetInstance().GetSize();
+  size_t count = (size + buf_size - 1) / buf_size;
+  for (size_t i = 0; i < count; i++) {
+    size_t ptr_offset = i * buf_size;
+    size_t cur_size = (i == count - 1) ? (size - ptr_offset) : buf_size;
+    if (file_to_device) {
+      size_t ret_size = read(nvme_fd, buf, cur_size);
+      if (ret_size != cur_size || !SyncStream(stream_id)) {
+        MS_LOG(ERROR) << "Read file failed, file name:" << file_name << ", size:" << size;
+        close(nvme_fd);
+        return false;
+      }
+      DeviceToDevice(static_cast<uint8_t *>(ptr) + ptr_offset, dargs, cur_size, stream_id);
+    } else {
+      DeviceToDevice(dargs, static_cast<uint8_t *>(ptr) + ptr_offset, cur_size, stream_id);
+      size_t ret_size = write(nvme_fd, buf, cur_size);
+      if (ret_size != cur_size || !SyncStream(stream_id)) {
+        MS_LOG(ERROR) << "Write file failed, file name:" << file_name << ", size:" << size;
+        close(nvme_fd);
+        return false;
+      }
+    }
+  }
+  close(nvme_fd);
+  return true;
+#else
+  return false;
+#endif
+}
+
+void AscendDeviceAddress::DeviceToDevice(void *dst, void *src, size_t size, size_t stream_id) const {
+  MS_EXCEPTION_IF_NULL(dst);
+  MS_EXCEPTION_IF_NULL(src);
+  const auto stream = AscendStreamMng::GetInstance().GetStream(stream_id);
+  MS_EXCEPTION_IF_NULL(stream);
+  BindDevice();
+  auto ret = aclrtMemcpyAsync(dst, size, src, size, ACL_MEMCPY_DEVICE_TO_DEVICE, stream);
+  if (ret != RT_ERROR_NONE) {
+    MS_LOG(EXCEPTION) << "Call aclrtMemcpyAsync device to device failed, the error num[" << ret << "].";
+  }
+  if (!AscendStreamMng::GetInstance().SyncStream(stream_id)) {
+    MS_LOG(EXCEPTION) << "Sync default failed.";
+  }
+}
+
 bool AscendDeviceAddress::SyncDeviceToHost(size_t size, void *const host_ptr) const {
   MS_EXCEPTION_IF_NULL(host_ptr);
   std::lock_guard<std::recursive_mutex> lock(ptr_mutex_);
   BindDevice();
   SyncStream();
+  if (!MoveToDevice(false)) {
+    MS_LOG(WARNING) << "Move data to device failed, check previous log for details.";
+  }
   CopyDeviceToHost(host_ptr, size);
   return true;
 }
@@ -198,6 +303,9 @@ bool AscendDeviceAddress::SyncHostToDevice(size_t size, const void *host_ptr) co
   MS_EXCEPTION_IF_NULL(host_ptr);
   std::lock_guard<std::recursive_mutex> lock(ptr_mutex_);
   BindDevice();
+  if (!MoveToDevice(false)) {
+    MS_LOG(WARNING) << "Move data to device failed, check previous log for details.";
+  }
   CopyHostToDevice(host_ptr, size);
   return true;
 }
@@ -211,6 +319,9 @@ bool AscendDeviceAddress::SyncDeviceToHost(const ShapeVector &shape, size_t size
   }
   BindDevice();
   SyncStream();
+  if (!MoveToDevice(false)) {
+    MS_LOG(WARNING) << "Move data to device failed, check previous log for details.";
+  }
   bool sync_ok = false;
   ShapeVector host_shape = shape;
   if (host_shape.empty()) {
@@ -271,19 +382,18 @@ ShapeVector AscendDeviceAddress::GetDeviceShape(ShapeVector *host_shape) const {
   return device_shape;
 }
 
-std::shared_ptr<LaunchKernel> AscendDeviceAddress::CreateLaunchTransData(const ShapeVector &host_shape,
-                                                                         const std::string &ori_format,
-                                                                         const std::string &dst_format) const {
+std::shared_ptr<LaunchTransData> AscendDeviceAddress::CreateLaunchTransData(const ShapeVector &host_shape,
+                                                                            const std::string &ori_format,
+                                                                            const std::string &dst_format) const {
   auto runtime_instance = device::KernelRuntimeManager::Instance().GetCurrentKernelRuntime();
   MS_EXCEPTION_IF_NULL(runtime_instance);
   auto stream = runtime_instance->compute_stream();
-  auto node = GetNodeIndex();
   int64_t groups = 1;
-  if (format_ == kOpFormat_FRAC_Z && node.first != nullptr) {
-    groups = common::AnfAlgo::GetAttrGroups(node.first, node.second);
+  if (format_ == kOpFormat_FRAC_Z) {
+    groups = GetGroupsWithCache();
   }
   auto launch_trans_data =
-    std::make_shared<AscendLaunchTransData>(stream, type_id_, size_, ori_format, dst_format, host_shape, groups);
+    std::make_shared<LaunchTransData>(stream, type_id_, size_, ori_format, dst_format, host_shape, groups);
   MS_EXCEPTION_IF_NULL(launch_trans_data);
   return launch_trans_data;
 }
@@ -299,13 +409,15 @@ bool AscendDeviceAddress::SyncDeviceToHostAndConvertFormatBasedOnTransData(const
   }
   std::lock_guard<std::recursive_mutex> lock(ptr_mutex_);
   // launch transdata
-  launch_transdata_->SetInputAddr(static_cast<uint8_t *>(ptr_));
+  GilReleaseWithCheck release_gil;
+  launch_transdata_->SetInputAddr(ptr_);
   launch_transdata_->LaunchOpKernel();
   SyncStream();
   auto output_addr_vec = launch_transdata_->GetKernelOutputAddr();
   if (output_addr_vec.size() != 1) {
-    launch_transdata_->FreeLaunchDeviceMem();
-    MS_LOG(EXCEPTION) << "Launch transdata outputs should have only one output";
+    launch_transdata_->FreeDeviceMem();
+    MS_LOG(EXCEPTION) << "Launch transdata outputs should have only one output, actual output size: "
+                      << output_addr_vec.size();
   }
   if (type_id_ == type) {
     SyncMemory(host_ptr, output_addr_vec[0], size, ACL_MEMCPY_DEVICE_TO_HOST);
@@ -317,11 +429,11 @@ bool AscendDeviceAddress::SyncDeviceToHostAndConvertFormatBasedOnTransData(const
     sync_ok = trans::TransDataType(type_args, host_ptr);
     if (!sync_ok) {
       MS_LOG(ERROR) << "Trans data type failed.";
-      launch_transdata_->FreeLaunchDeviceMem();
+      launch_transdata_->FreeDeviceMem();
       return false;
     }
   }
-  launch_transdata_->FreeLaunchDeviceMem();
+  launch_transdata_->FreeDeviceMem();
   return sync_ok;
 }
 
@@ -394,6 +506,9 @@ bool AscendDeviceAddress::SyncHostToDevice(const ShapeVector &shape, size_t size
     return true;
   }
   BindDevice();
+  if (!MoveToDevice(false)) {
+    MS_LOG(WARNING) << "Move data to device failed, check previous log for details.";
+  }
   bool sync_ok = false;
   ShapeVector host_shape = shape;
   if (host_shape.empty()) {
@@ -405,12 +520,7 @@ bool AscendDeviceAddress::SyncHostToDevice(const ShapeVector &shape, size_t size
       CopyHostToDevice(host_ptr, size);
       sync_ok = true;
     } else if (type_id_ == kNumberTypeFloat32 && type == kNumberTypeFloat64) {
-      if (mem_offloaded()) {
-        DoubleToFloat(offload_ptr_, host_ptr, size_ / sizeof(float));
-        sync_ok = true;
-      } else {
-        sync_ok = Float64ToFloatAndSyncHostToDevice(ptr_, size_, host_ptr, size);
-      }
+      sync_ok = Float64ToFloatAndSyncHostToDevice(ptr_, size_, host_ptr, size);
     } else {
       auto shape_size = abstract::ShapeSize(host_shape);
       const trans::TypeIdArgs type_args{host_ptr, shape_size, type, type_id_, size};
@@ -435,25 +545,6 @@ bool AscendDeviceAddress::SyncHostToDevice(const ShapeVector &shape, size_t size
     return false;
   }
   return sync_ok;
-}
-
-bool AscendDeviceAddress::SyncDeviceToDeviceWithSameFormatType(const ShapeVector &shape, size_t size, TypeId type,
-                                                               const void *src_ptr, const std::string &format) const {
-  if (type_id_ > kMonadTypeBegin && type_id_ < kMonadTypeEnd) {
-    return true;
-  }
-
-  if (size_ < size) {
-    MS_LOG(ERROR) << "src size is greater than det size, src size is: " << size << ", dst size is: " << size_;
-    return false;
-  }
-  if (format_ != format || type_id_ != type) {
-    MS_LOG(ERROR) << "format or type is different, src(format:" << format << ", type_id:" << TypeIdLabel(type)
-                  << "), dst(format:" << format_ << ", type_id:" << TypeIdLabel(type_id_);
-    return false;
-  }
-  BindDevice();
-  return AsyncDeviceToDevice(shape, size, type, src_ptr, format);
 }
 
 bool AscendDeviceAddress::SyncDeviceToDeviceWithDiffFormatType(const DeviceSync *src_device_addr) const {
@@ -492,6 +583,9 @@ bool AscendDeviceAddress::SyncDeviceToDevice(const DeviceSync *src_device_addr) 
   MS_EXCEPTION_IF_NULL(src_device_addr);
   auto src_device_address = dynamic_cast<const AscendDeviceAddress *>(src_device_addr);
   MS_EXCEPTION_IF_NULL(src_device_address);
+  if (!src_device_address->MoveToDevice(false)) {
+    MS_LOG(WARNING) << "Move data to device failed, check previous log for details.";
+  }
   if (format_ == src_device_address->format() && type_id_ == src_device_address->type_id()) {
     if (src_device_address->mem_offloaded()) {
       auto device_context = GetDeviceContext();
@@ -500,15 +594,13 @@ bool AscendDeviceAddress::SyncDeviceToDevice(const DeviceSync *src_device_addr) 
       MS_EXCEPTION_IF_NULL(temp_device_ptr);
       SyncMemory(temp_device_ptr, src_device_address->GetOffloadPtr(), src_device_address->GetSize(),
                  ACL_MEMCPY_HOST_TO_DEVICE);
-      const auto ret = SyncDeviceToDeviceWithSameFormatType(ShapeVector(), src_device_address->GetSize(),
-                                                            src_device_address->type_id(), temp_device_ptr,
-                                                            src_device_address->format());
+      const auto ret = SyncDeviceToDevice(ShapeVector(), src_device_address->GetSize(), src_device_address->type_id(),
+                                          temp_device_ptr, src_device_address->format());
       device_context->device_res_manager_->FreeMemory(temp_device_ptr);
       return ret;
     }
-    return SyncDeviceToDeviceWithSameFormatType(ShapeVector(), src_device_address->GetSize(),
-                                                src_device_address->type_id(), src_device_address->GetPtr(),
-                                                src_device_address->format());
+    return SyncDeviceToDevice(ShapeVector(), src_device_address->GetSize(), src_device_address->type_id(),
+                              src_device_address->GetPtr(), src_device_address->format());
   } else {
     MS_LOG(INFO) << "Can not copy from device to device directly, format or type is different, src(format:"
                  << src_device_address->format() << ", type_id:" << TypeIdLabel(src_device_address->type_id())
@@ -518,24 +610,43 @@ bool AscendDeviceAddress::SyncDeviceToDevice(const DeviceSync *src_device_addr) 
   }
 }
 
+bool AscendDeviceAddress::SyncDeviceToDevice(const ShapeVector &shape, size_t size, TypeId type, const void *src_ptr,
+                                             const std::string &format) const {
+  bool ret = AsyncDeviceToDevice(shape, size, type, src_ptr, format);
+  if (!ret) {
+    return ret;
+  }
+  SyncStream();
+  return true;
+}
+
 bool AscendDeviceAddress::AsyncDeviceToDevice(const ShapeVector & /* shape */, size_t size, TypeId type,
                                               const void *src_ptr, const std::string &format) const {
   MS_LOG(DEBUG) << "AsyncDeviceToDevice, dst(format:" << format_ << ", type_id:" << TypeIdLabel(type_id_)
                 << ", size:" << size_ << "), src(format:" << format << ", type_id:" << TypeIdLabel(type)
                 << ", size:" << size << ")";
+  if (ptr_ == src_ptr) {
+    MS_LOG(INFO) << "Dst addr is same with src addr, no need memcpy data.";
+    return true;
+  }
   if (type_id_ > kMonadTypeBegin && type_id_ < kMonadTypeEnd) {
     return true;
   }
-  BindDevice();
-  if (format_ != format || type_id_ != type) {
-    MS_LOG(ERROR) << "format or type is different.";
+  if (size_ < size) {
+    MS_LOG(ERROR) << "Src size is greater than det size, src size is: " << size << ", dst size is: " << size_;
     return false;
   }
-  std::lock_guard<std::recursive_mutex> lock(ptr_mutex_);
-  if (ptr_ == src_ptr) {
-    MS_LOG(INFO) << "dst addr is same with src addr, no need memcpy data.";
-    return true;
+  if (format_ != format || type_id_ != type) {
+    MS_LOG(ERROR) << "Format or type is different, src(format:" << format << ", type_id:" << TypeIdLabel(type)
+                  << "), dst(format:" << format_ << "), type_id:" << TypeIdLabel(type_id_);
+    return false;
   }
+
+  BindDevice();
+  if (!MoveToDevice(false)) {
+    MS_LOG(WARNING) << "Move data to device failed, check previous log for details.";
+  }
+  std::lock_guard<std::recursive_mutex> lock(ptr_mutex_);
   auto ms_context = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(ms_context);
   auto device_id = ms_context->get_param<uint32_t>(MS_CTX_DEVICE_ID);
@@ -556,6 +667,10 @@ bool AscendDeviceAddress::AsyncDeviceToDevice(const ShapeVector & /* shape */, s
 bool AscendDeviceAddress::AsyncHostToDevice(const ShapeVector & /* shape */, size_t size, TypeId /* type */,
                                             const void *host_ptr, size_t stream_id) const {
   MS_ERROR_IF_NULL(host_ptr);
+  BindDevice();
+  if (!MoveToDevice(false)) {
+    MS_LOG(WARNING) << "Move data to device failed, check previous log for details.";
+  }
   MS_ERROR_IF_NULL(ptr_);
   auto stream = AscendStreamMng::GetInstance().GetStream(stream_id);
   if (stream == nullptr) {
@@ -563,7 +678,6 @@ bool AscendDeviceAddress::AsyncHostToDevice(const ShapeVector & /* shape */, siz
   }
   MS_ERROR_IF_NULL(stream);
 
-  BindDevice();
   auto ret = aclrtMemcpyAsync(ptr_, size, host_ptr, size, ACL_MEMCPY_HOST_TO_DEVICE, stream);
   if (ret != RT_ERROR_NONE) {
     MS_LOG(ERROR) << "Call aclrtMemcpyAsync host to device failed, the error num[" << ret << "]";
@@ -575,11 +689,14 @@ bool AscendDeviceAddress::AsyncHostToDevice(const ShapeVector & /* shape */, siz
 bool AscendDeviceAddress::AsyncDeviceToHost(const ShapeVector & /* shape */, size_t size, TypeId /* type */,
                                             void *host_ptr, size_t stream_id) const {
   MS_ERROR_IF_NULL(host_ptr);
+  BindDevice();
+  if (!MoveToDevice(false)) {
+    MS_LOG(ERROR) << "Move data to device failed, check previous log for details.";
+    return false;
+  }
   MS_ERROR_IF_NULL(ptr_);
   const auto stream = AscendStreamMng::GetInstance().GetStream(stream_id);
   MS_ERROR_IF_NULL(stream);
-
-  BindDevice();
   auto ret = aclrtMemcpyAsync(host_ptr, size, ptr_, size, ACL_MEMCPY_DEVICE_TO_HOST, stream);
   if (ret != RT_ERROR_NONE) {
     MS_LOG(ERROR) << "Call aclrtMemcpyAsync device to host failed, the error num[" << ret << "]";
@@ -600,6 +717,7 @@ bool AscendDeviceAddress::ConvertFormatAndSyncHostToDevice(const ShapeVector &sh
   }
   auto node_index = GetNodeIndex();
   std::lock_guard<std::recursive_mutex> lock(ptr_mutex_);
+  (void)GetGroupsWithCache();
   std::vector<int64_t> device_shape;
   if (format_ == kOpFormat_FRAC_NZ) {
     device_shape = trans::TransShapeToDevice(host_shape, format_, node_index.first, node_index.second, type_id_);
@@ -640,6 +758,7 @@ bool AscendDeviceAddress::ConvertFormatAndSyncHostToDevice(const ShapeVector &sh
 
 void AscendDeviceAddress::ClearDeviceMemory() {
   std::lock_guard<std::recursive_mutex> lock(ptr_mutex_);
+  (void)Wait();
   if (offload_ptr_ != nullptr) {
     auto device_context = GetDeviceContext();
     MS_EXCEPTION_IF_NULL(device_context);
@@ -679,9 +798,37 @@ void AscendDeviceAddress::CopyHostToDevice(const void *src, uint64_t size) const
   }
 }
 
+bool AscendDeviceAddress::CopyBetweenHostDevice(void *dst, const void *src, size_t size, bool async, size_t stream_id,
+                                                bool host_to_device) const {
+  MS_EXCEPTION_IF_NULL(dst);
+  MS_EXCEPTION_IF_NULL(src);
+  auto copy_kind = host_to_device ? ACL_MEMCPY_HOST_TO_DEVICE : ACL_MEMCPY_DEVICE_TO_HOST;
+  const auto stream = AscendStreamMng::GetInstance().GetStream(stream_id);
+  MS_EXCEPTION_IF_NULL(stream);
+  BindDevice();
+  auto ret = aclrtMemcpyAsync(dst, size, src, size, copy_kind, stream);
+  if (ret != RT_ERROR_NONE) {
+    MS_LOG(ERROR) << "Call aclrtMemcpyAsync device to host failed, the error num[" << ret << "]";
+    return false;
+  }
+  if (async) {
+    auto record_event = std::make_shared<AscendEvent>();
+    record_event->set_record_stream(stream);
+    record_event->RecordEvent();
+    swap_event_.device_event_ = record_event;
+  } else {
+    if (!AscendStreamMng::GetInstance().SyncStream(stream)) {
+      MS_LOG(ERROR) << "Sync default stream failed.";
+      return false;
+    }
+  }
+  return true;
+}
+
 AscendDeviceAddress::~AscendDeviceAddress() {
   try {
     ClearDeviceMemory();
+    LoadableDeviceAddress::ReleaseResource();
   } catch (const std::exception &e) {
     MS_LOG(ERROR) << "AscendDeviceAddress destructor failed: " << e.what();
   } catch (...) {
@@ -698,6 +845,10 @@ AscendDeviceAddress::~AscendDeviceAddress() {
  */
 bool AscendDeviceAddress::DumpMemToFile(const std::string &filepath, const std::string &host_fmt,
                                         const ShapeVector &host_shape, TypeId host_type, bool trans_flag) const {
+  if (size_ == 0) {
+    MS_LOG(INFO) << "the operator in filepath: " << filepath << ", size_ = 0";
+    return true;
+  }
   bool ret = false;
   if (filepath.empty()) {
     MS_LOG(ERROR) << "Dump file path is null!";
@@ -737,6 +888,14 @@ bool AscendDeviceAddress::DumpMemToFile(const std::string &filepath, const std::
   return ret;
 }
 #endif
+
+int64_t AscendDeviceAddress::GetGroupsWithCache() const {
+  auto node = GetNodeIndex();
+  if (node.first != nullptr) {
+    groups_ = common::AnfAlgo::GetAttrGroups(node.first, node.second);
+  }
+  return groups_;
+}
 
 #ifdef ENABLE_DEBUGGER
 /*

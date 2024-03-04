@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,8 +36,9 @@ bool RandomOpGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std:
   } else {
     input_num_ = 1;
   }
-  seed_ = LongToInt(GetValue<int64_t>(base_operator->GetAttr("seed")));
-  seed2_ = LongToInt(GetValue<int64_t>(base_operator->GetAttr("seed2")));
+  uint64_t seed = static_cast<uint64_t>(GetValue<int64_t>(base_operator->GetAttr("seed")));
+  uint64_t seed2 = static_cast<uint64_t>(GetValue<int64_t>(base_operator->GetAttr("seed2")));
+  seed_ = random::GetSeed(seed, seed2);
   if (base_operator->HasAttr("use_curand")) {
     use_curand_ = GetValue<bool>(base_operator->GetAttr("use_curand"));
   }
@@ -69,7 +70,7 @@ int RandomOpGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std
   workspace_size_list_.clear();
   if (random_op_type_ != RANDOM_OP_CUDNN_UNIFORM_REAL) {
     auto output_shape = outputs[0]->GetShapeVector();
-    auto workspace_size = sizeof(curandState);
+    auto workspace_size = sizeof(curandStatePhilox4_32_10_t);
     for (size_t i = 0; i < output_shape.size(); i++) {
       workspace_size *= output_shape[i];
     }
@@ -82,11 +83,11 @@ template <typename T>
 bool RandomOpGpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs,
                                         const std::vector<kernel::AddressPtr> &workspace,
                                         const std::vector<kernel::AddressPtr> &outputs) {
-  curandState *devStates = nullptr;
+  curandStatePhilox4_32_10_t *devStates = nullptr;
   // Operator CudnnUniformReal does not need workspace memory.
   if (random_op_type_ != RANDOM_OP_CUDNN_UNIFORM_REAL) {
     void *workspace_addr = GetDeviceAddress<void *>(workspace, 0);
-    devStates = reinterpret_cast<curandState *>(workspace_addr);
+    devStates = reinterpret_cast<curandStatePhilox4_32_10_t *>(workspace_addr);
   }
   T *output_addr = GetDeviceAddress<T>(outputs, 0);
 
@@ -95,18 +96,9 @@ bool RandomOpGpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &i
       if (use_curand_) {
         float *mask_f = GetDeviceAddress<float>(outputs, 0);
         if (!states_init_) {
-          int RNG_seed = 0;
-          std::random_device rd;
-          if (seed2_ != 0) {
-            RNG_seed = seed2_;
-          } else if (seed_ != 0) {
-            RNG_seed = seed_;
-          } else {
-            RNG_seed = static_cast<int>(rd());
-          }
           CHECK_CURAND_RET_WITH_EXCEPT(curandCreateGenerator(&mask_generator_, CURAND_RNG_PSEUDO_PHILOX4_32_10),
                                        "Failed to create generator");
-          CHECK_CURAND_RET_WITH_EXCEPT(curandSetPseudoRandomGeneratorSeed(mask_generator_, RNG_seed),
+          CHECK_CURAND_RET_WITH_EXCEPT(curandSetPseudoRandomGeneratorSeed(mask_generator_, seed_),
                                        "Failed to SetPseudoRandomGeneratorSeed");
           MS_EXCEPTION_IF_NULL(mask_generator_);
           states_init_ = true;
@@ -118,26 +110,33 @@ bool RandomOpGpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &i
           curandGenerateNormal(mask_generator_, mask_f, outputs[0]->size / sizeof(float), 0.0, 1.0),
           "Failed to generate normal");
       } else {
-        StandardNormal(seed_, seed2_, devStates, output_addr, outputs[0]->size / sizeof(T),
-                       reinterpret_cast<cudaStream_t>(cuda_stream_));
+        auto status = StandardNormal(seed_, seed_offset_, devStates, output_addr, outputs[0]->size / sizeof(T),
+                                     reinterpret_cast<cudaStream_t>(cuda_stream_));
+        CHECK_CUDA_STATUS(status, kernel_name_);
+        seed_offset_ += 1;
       }
       break;
     }
     case RANDOM_OP_UNIFORM_INT: {
       T *input_addr_1 = GetDeviceAddress<T>(inputs, 1);
       T *input_addr_2 = GetDeviceAddress<T>(inputs, 2);
-      bool ret = UniformInt(seed_, seed2_, devStates, input_addr_1, inputs[1]->size / sizeof(T), input_addr_2,
-                            inputs[2]->size / sizeof(T), output_addr, outputs[0]->size / sizeof(T),
-                            reinterpret_cast<cudaStream_t>(cuda_stream_));
+      bool ret = false;
+      auto status = UniformInt(seed_, seed_offset_, devStates, input_addr_1, inputs[1]->size / sizeof(T), input_addr_2,
+                               inputs[2]->size / sizeof(T), output_addr, outputs[0]->size / sizeof(T),
+                               reinterpret_cast<cudaStream_t>(cuda_stream_), &ret);
+      CHECK_CUDA_STATUS(status, kernel_name_);
       if (!ret) {
         MS_LOG(ERROR) << "For '" << kernel_type_ << "', `minval` should be strictly less than `maxval`";
         return false;
       }
+      seed_offset_ += 1;
       break;
     }
     case RANDOM_OP_UNIFORM_REAL: {
-      UniformReal(seed_, seed2_, devStates, output_addr, outputs[0]->size / sizeof(T),
-                  reinterpret_cast<cudaStream_t>(cuda_stream_));
+      auto status = UniformReal(seed_, seed_offset_, devStates, output_addr, outputs[0]->size / sizeof(T),
+                                reinterpret_cast<cudaStream_t>(cuda_stream_));
+      CHECK_CUDA_STATUS(status, kernel_name_);
+      seed_offset_ += 1;
       break;
     }
     case RANDOM_OP_CUDNN_UNIFORM_REAL: {

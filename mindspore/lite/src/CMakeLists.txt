@@ -1,5 +1,6 @@
 add_compile_definitions(USE_ANDROID_LOG)
 
+set(LITE_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${CCSRC_DIR}/plugin/device/cpu/kernel)
 include_directories(${CORE_DIR})
 
@@ -35,11 +36,15 @@ if(APPLE OR PLATFORM_ARM32 OR PLATFORM_ARM64)
     #for performance
     if("${CMAKE_BUILD_TYPE}" STREQUAL "Release" AND NOT APPLE)
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  -fomit-frame-pointer -fstrict-aliasing -ffunction-sections \
-        -fdata-sections -ffast-math -fno-rtti -fno-exceptions")
+        -fdata-sections -ffast-math -fno-rtti")
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}  -fomit-frame-pointer -fstrict-aliasing -ffunction-sections \
-        -fdata-sections -ffast-math -fno-rtti -fno-exceptions")
+        -fdata-sections -ffast-math -fno-rtti")
         if(TARGET_HIMIX200 OR TARGET_MIX210)
             string(REPLACE "-fno-rtti " "" CMAKE_C_FLAGS ${CMAKE_C_FLAGS})
+        endif()
+        if(NOT MACHINE_LINUX_ARM64)
+            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-exceptions")
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-exceptions")
         endif()
     endif()
     if("${CMAKE_BUILD_TYPE}" STREQUAL "Release" AND APPLE)
@@ -54,6 +59,11 @@ if(APPLE OR PLATFORM_ARM32 OR PLATFORM_ARM64)
             set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-exceptions")
         endif()
     endif()
+    if("${CMAKE_BUILD_TYPE}" STREQUAL "Release" AND NOT MSLITE_ENABLE_TESTCASES AND NOT MSLITE_ENABLE_KERNEL_EXECUTOR)
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fvisibility-inlines-hidden -fvisibility=hidden")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility-inlines-hidden -fvisibility=hidden")
+        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--gc-sections")
+    endif()
 elseif(NOT MSVC)
     if("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  -fomit-frame-pointer -fstrict-aliasing -ffunction-sections \
@@ -61,6 +71,15 @@ elseif(NOT MSVC)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}  -fomit-frame-pointer -fstrict-aliasing -ffunction-sections \
         -fdata-sections -ffast-math -fno-rtti")
     endif()
+endif()
+
+if(MSLITE_ENABLE_MULTI_LAYOUT)
+    add_compile_definitions(ENABLE_MULTI_LAYOUT)
+    add_compile_definitions(ENABLE_BOLT)
+    set(BOLT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/litert/kernel/cpu/bolt/)
+    include_directories(${BOLT_DIR}/bolt/common/uni/include)
+    include_directories(${BOLT_DIR}/bolt/common/memory/include)
+    include_directories(${BOLT_DIR}/bolt/compute/tensor/include)
 endif()
 
 file(GLOB CXX_API_SRCS
@@ -77,6 +96,7 @@ if(MSLITE_ENABLE_PARALLEL_INFERENCE)
             ${CMAKE_CURRENT_SOURCE_DIR}/extendrt/cxx_api/model_pool/model_pool.cc
             ${CMAKE_CURRENT_SOURCE_DIR}/extendrt/cxx_api/model_pool/model_parallel_runner.cc
             ${CMAKE_CURRENT_SOURCE_DIR}/extendrt/cxx_api/model_pool/model_parallel_runner_impl.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/extendrt/cxx_api/model_pool/resource_manager.cc
             )
 endif()
 
@@ -86,7 +106,6 @@ file(GLOB C_API_SRCS
 set(API_SRC ${CXX_API_SRCS} ${C_API_SRCS})
 if(NOT MSLITE_ENABLE_RUNTIME_CONVERT)
     set(API_SRC ${API_SRC} ${CORE_DIR}/utils/status.cc)
-    set(LITE_SRC ${LITE_SRC} ${CMAKE_CURRENT_SOURCE_DIR}/common/config_file.cc)
 endif()
 if(MSLITE_MINDDATA_IMPLEMENT STREQUAL "full")
     file(GLOB CXX_API_TRAIN_SRCS
@@ -108,20 +127,12 @@ endif()
 set(LITE_SRC
         ${LITE_SRC}
         ${API_SRC}
-        ${CMAKE_CURRENT_SOURCE_DIR}/common/context_util.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/common/file_utils.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/common/utils.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/common/graph_util.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/common/log.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/common/prim_util.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/common/tensor_util.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/allocator.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/inner_allocator.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/runtime_allocator.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/infer_manager.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/runtime_shape_fusion_pass.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/runtime_pass.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/litert/pass/runtime_ncx_pass.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/schema_tensor_wrapper.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/tensor.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/tensorlist.cc
@@ -131,32 +142,29 @@ set(LITE_SRC
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/lite_model.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/kernel_registry.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/lite_kernel.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/litert/kernel_exec.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/executor/kernel_exec.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/kernel_exec_util.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/litert/sub_graph_kernel.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/executor/sub_graph_kernel.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/scheduler.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/lite_session.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/litert/runtime_packed_node_pass.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/model_manager.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/errorcode.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/cpu_info.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/pack_weight_manager.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/control_flow/control_flow_scheduler.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/control_flow/control_subgraph_creator.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/litert/thread_pool_reuse_manager.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/infer/primitive_type.cc
         )
+
+file(GLOB FORMAT_PASS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/litert/pass/format_pass/*.cc")
+set(LITE_SRC ${LITE_SRC} ${FORMAT_PASS_SRC})
 
 if(NOT ANDROID_NDK_TOOLCHAIN_INCLUDED)
     set(LITE_SRC
             ${LITE_SRC}
-            ${CMAKE_CURRENT_SOURCE_DIR}/common/dynamic_library_loader.cc
             ${CMAKE_CURRENT_SOURCE_DIR}/litert/kernel/ascend/plugin/ascend_kernel_plugin.cc
-            )
-endif()
-
-if(MSLITE_ENABLE_MODEL_PRE_INFERENCE)
-    set(LITE_SRC
-            ${LITE_SRC}
-            ${CMAKE_CURRENT_SOURCE_DIR}/common/thread_utils.cc
-            ${CMAKE_CURRENT_SOURCE_DIR}/common/random_data_generator.cc
             )
 endif()
 
@@ -169,13 +177,6 @@ set(LITE_SRC
         ${LITE_SRC}
         ${MODEL_LOADER_FRAMEWORK_SRC}
         )
-
-if(MSLITE_ENABLE_MODEL_ENCRYPTION)
-    set(LITE_SRC
-            ${LITE_SRC}
-            ${CMAKE_CURRENT_SOURCE_DIR}/common/decrypt.cc
-            )
-endif()
 
 if(MSLITE_ENABLE_CAPTURE_SIGNALS)
     set(LITE_SRC
@@ -214,13 +215,8 @@ if(MSLITE_ENABLE_CONTROLFLOW)
     set(LITE_SRC ${LITE_SRC} ${CONTROL_FLOW_KERNEL_SRC})
 endif()
 
-if(MSLITE_ENABLE_EXPERIMENTAL_KERNEL)
-    file(GLOB EXPERIMENT_SRC
-        ${CMAKE_CURRENT_SOURCE_DIR}/../experimental/src/exec_env_utils.cc)
-    set(LITE_SRC ${LITE_SRC} ${EXPERIMENT_SRC})
-endif()
-
 if(MSLITE_ENABLE_RUNTIME_GLOG)
+    set(USE_GLOG on)
     add_definitions(-DUSE_GLOG)
     string(REPLACE "-fno-rtti" "" CMAKE_C_FLAGS ${CMAKE_C_FLAGS})
     string(REPLACE "-fno-rtti" "" CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS})
@@ -242,25 +238,6 @@ if(MSLITE_ENABLE_RUNTIME_CONVERT)
     set(LITE_SRC ${LITE_SRC} ${RUNTIME_CONVERT_SRC})
 endif()
 
-if(MSLITE_ENABLE_STRING_KERNEL)
-    set(LITE_SRC
-        ${LITE_SRC}
-        ${CMAKE_CURRENT_SOURCE_DIR}/common/string_util.cc
-        )
-endif()
-if(ENABLE_RUNTIME_NCX_PASS)
-    file(GLOB RUNTIME_NCX_PASS_SRC
-            ${CMAKE_CURRENT_SOURCE_DIR}/litert/pass/decrease_transpose_algo.cc
-            ${CMAKE_CURRENT_SOURCE_DIR}/litert/pass/delete_isolated_kernel.cc
-            ${CMAKE_CURRENT_SOURCE_DIR}/litert/pass/infershape_pass.cc
-            ${CMAKE_CURRENT_SOURCE_DIR}/litert/pass/pass_utils.cc
-            ${CMAKE_CURRENT_SOURCE_DIR}/litert/pass/runtime_optimizer.cc
-            ${CMAKE_CURRENT_SOURCE_DIR}/litert/pass/to_nchw_format.cc
-            ${CMAKE_CURRENT_SOURCE_DIR}/litert/pass/transpose_strategy.cc
-            )
-    set(LITE_SRC ${LITE_SRC} ${RUNTIME_NCX_PASS_SRC})
-endif()
-
 if(MSLITE_ENABLE_WEIGHT_DECODE)
     set(LITE_SRC ${LITE_SRC}
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/huffman_decode.cc)
@@ -271,11 +248,20 @@ if(MSLITE_ENABLE_WEIGHT_DECODE)
     endif()
 endif()
 
+if(MSLITE_ENABLE_RUNTIME_PASS)
+    file(GLOB KERNEL_ONLINE_FUSION_SRC ${CMAKE_CURRENT_SOURCE_DIR}/litert/pass/online_fusion/*.cc)
+    set(LITE_SRC
+        ${LITE_SRC}
+        ${KERNEL_ONLINE_FUSION_SRC}
+        ${CMAKE_CURRENT_SOURCE_DIR}/litert/sub_graph_split.cc
+    )
+endif()
+
 if(MSLITE_ENABLE_AUTO_PARALLEL)
     set(LITE_SRC
-            ${LITE_SRC}
-            ${CMAKE_CURRENT_SOURCE_DIR}/litert/sub_graph_split.cc
-            )
+        ${LITE_SRC}
+        ${CMAKE_CURRENT_SOURCE_DIR}/litert/sub_graph_split.cc
+    )
 endif()
 
 if(MSLITE_ENABLE_CUSTOM_KERNEL)
@@ -287,16 +273,6 @@ set(LITE_SRC
     ${KERNEL_REG_SRC}
     ${CMAKE_CURRENT_SOURCE_DIR}/litert/weight_decoder.cc
     )
-
-if(MSLITE_GPU_BACKEND STREQUAL opencl)
-    file(GLOB_RECURSE OPENCL_RUNTIME_SRC
-            ${CMAKE_CURRENT_SOURCE_DIR}/litert/kernel/gpu/opencl/*.cc
-            )
-    set(LITE_SRC
-            ${LITE_SRC}
-            ${OPENCL_RUNTIME_SRC}
-            )
-endif()
 
 if(MSLITE_GPU_BACKEND STREQUAL cuda)
     file(GLOB CUDA_RUNTIME_SRC
@@ -314,34 +290,10 @@ if(MSLITE_MINDDATA_IMPLEMENT STREQUAL "full")
           )
 endif()
 
-
-file(GLOB CXX_API_EXPRESSION
-  ${CMAKE_CURRENT_SOURCE_DIR}/litert/cxx_api/expression/*.cc
-  )
-
-file(GLOB EXPRESSION_OPS
-  ${CMAKE_CURRENT_SOURCE_DIR}/expression/ops/*.cc
-  )
-
-set(EXPRESSION_SRC
-    ${CXX_API_EXPRESSION}
-    ${CMAKE_CURRENT_SOURCE_DIR}/expression/export.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/expression/expr.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/expression/import.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/expression/net.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/expression/node.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/expression/ops.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/expression/ops_utils.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/expression/param.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/expression/sequential.cc
-    ${EXPRESSION_OPS}
-  )
-
 set(TRAIN_SRC
         ${API_TRAIN_SRC}
         ${TRAIN_SRC_WITH_MD}
-        ${EXPRESSION_SRC}
-        ${CMAKE_CURRENT_SOURCE_DIR}/common/quant_utils.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/executor/kernel_exec.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/cxx_api/metrics/accuracy.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/cxx_api/train/model_build.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/cxx_api/train/model_build_impl.cc
@@ -360,8 +312,12 @@ set(TRAIN_SRC
         ${CMAKE_CURRENT_SOURCE_DIR}/train/classification_train_accuracy_monitor.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/train/train_export.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/train/opt_allocator.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/train/optimizer/common/fusion_utils.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/train/optimizer/fusion/gru_fusion_pass.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/train/optimizer/fusion/matmul_activation_fusion_pass.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/common/storage.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/train/optimizer/fusion/reshape_gather_reshape_fusion_pass.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/train/optimizer/fusion/matmul_matmul_add_fusion_pass.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/train/optimizer/fusion/matmul_add_fusion_pass.cc
         ${TOOLS_DIR}/converter/optimizer.cc
         ${TOOLS_DIR}/converter/legacy_optimizer/fusion/fusion_pass.cc
         ${TOOLS_DIR}/converter/legacy_optimizer/fusion/fusion_pattern.cc
@@ -373,10 +329,17 @@ set(TRAIN_SRC
         ${TOOLS_DIR}/converter/legacy_optimizer/graph/subgraph_node_pass.cc
         )
 
+if(MSLITE_ENABLE_KERNEL_EXECUTOR AND NOT MSLITE_ENABLE_CONVERTER)
+    add_subdirectory(${CORE_DIR} mindspore_core)
+endif()
+
 if(MSLITE_ENABLE_MINDRT)
-    add_subdirectory(${CORE_DIR}/mindrt mindspore_mindrt)
+    if((NOT MSLITE_ENABLE_CONVERTER) AND (NOT MSLITE_ENABLE_KERNEL_EXECUTOR))
+        add_subdirectory(${CORE_DIR}/mindrt mindspore_mindrt)
+    endif()
     set(LITE_SRC ${LITE_SRC}
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/lite_mindrt.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/litert/parallel_lite_actor.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/litert/mindrt_executor.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/control_flow/control_actor_creator.cc
         )
@@ -386,6 +349,13 @@ if(MSLITE_ENABLE_MINDRT)
                 )
         set(LITE_SRC ${LITE_SRC} ${CONTROL_FLOW_ACTOR_SRC})
     endif()
+elseif(TARGET_AOS_ARM)
+    set(LITE_SRC ${LITE_SRC}
+            ${CORE_DIR}/mindrt/src/thread/aos_worker.cc
+            ${CORE_DIR}/mindrt/src/thread/hal_adapter.cc
+            ${CORE_DIR}/mindrt/src/thread/core_affinity.cc
+            ${CORE_DIR}/mindrt/src/thread/threadpool.cc
+            )
 else()
     set(LITE_SRC ${LITE_SRC}
         ${CORE_DIR}/mindrt/src/thread/core_affinity.cc
@@ -397,6 +367,7 @@ if(MSLITE_ENABLE_GRAPH_KERNEL)
     file(GLOB_RECURSE GRAPH_KERNEL_SRC
         ${TOOLS_DIR}/graph_kernel/common/*.cc
         ${TOOLS_DIR}/graph_kernel/runtime/*.cc
+        ${CCSRC_DIR}/plugin/device/cpu/kernel/akg/akg_kernle_loader.cc
         )
     set(LITE_SRC ${LITE_SRC} ${GRAPH_KERNEL_SRC})
 endif()
@@ -407,21 +378,28 @@ if(NOT MSLITE_ENABLE_COREML)
 endif()
 
 add_subdirectory(litert/kernel/cpu)
+add_subdirectory(common)
+
+if(MSLITE_EXPORT_COMPUTE_IR)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/common/draw)
+endif()
 
 add_library(lite_src_mid OBJECT ${LITE_SRC})
-add_dependencies(lite_src_mid fbs_src)
+add_dependencies(lite_src_mid lite_src_common_mid fbs_src fbs_inner_src)
 
 if(MSLITE_ENABLE_ACL)
-    include_directories(${TOP_DIR}/graphengine/inc/external)
-    if(NOT MSLITE_ENABLE_CLOUD_FUSION_INFERENCE)
+    include_directories(${TOP_DIR}/graphengine/910/inc/external)
+    if(NOT (MSLITE_ENABLE_CLOUD_FUSION_INFERENCE OR MSLITE_ENABLE_CLOUD_INFERENCE))
         add_subdirectory(litert/kernel/ascend)
     else()
         add_compile_definitions(ENABLE_CLOUD_FUSION_INFERENCE)
+        add_compile_definitions(ENABLE_CLOUD_INFERENCE)
     endif()
     link_directories(${ASCEND_CANN_RUNTIME_PATH} ${ASCEND_TOOLKIT_RUNTIME_PATH})
 endif()
 
 add_library(mindspore-lite SHARED $<TARGET_OBJECTS:lite_src_mid>)
+target_link_libraries(mindspore-lite lite_src_common_mid)
 set_target_properties(mindspore-lite PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 
 if(APPLE)
@@ -454,9 +432,11 @@ if(APPLE)
         add_subdirectory(litert/delegate/coreml)
         target_link_libraries(mindspore-lite_static coreml_proto_mid coreml_kernel_mid)
     endif()
+    target_link_libraries(mindspore-lite_static lite_src_common_mid)
     add_dependencies(mindspore-lite_static fbs_inner_src)
 else()
     add_library(mindspore-lite_static STATIC $<TARGET_OBJECTS:lite_src_mid>)
+    target_link_libraries(mindspore-lite_static lite_src_common_mid)
 endif()
 set_target_properties(mindspore-lite_static PROPERTIES OUTPUT_NAME "mindspore-lite")
 set_target_properties(mindspore-lite_static PROPERTIES CLEAN_DIRECT_OUTPUT 1)
@@ -493,30 +473,8 @@ if(MSLITE_ENABLE_MINDRT)
     target_link_libraries(mindspore-lite_static mindrt_mid)
 endif()
 
-if(NOT MSLITE_ENABLE_CLOUD_FUSION_INFERENCE)
-    if(SUPPORT_TENSORRT)
-        add_compile_definitions(GPU_TENSORRT)
-        set(TENSORRT_PATH $ENV{TENSORRT_PATH})
-        set(CUDA_PATH $ENV{CUDA_HOME})
-        set(TENSORRT_LIB_PATH ${TENSORRT_PATH}/lib)
-        set(CUDA_LIB_PATH ${CUDA_PATH}/lib64)
-        include_directories(${TENSORRT_PATH}/include)
-        include_directories(${CUDA_PATH}/include)
-        add_subdirectory(litert/delegate/tensorrt)
-        target_link_libraries(mindspore-lite tensorrt_kernel_mid cuda_kernel_mid gpu_distribution_collective)
-        target_link_libraries(mindspore-lite_static tensorrt_kernel_mid cuda_kernel_mid gpu_distribution_collective)
-    else()
-        set(TENSORRT_STUB
-            ${CMAKE_CURRENT_SOURCE_DIR}/litert/delegate/tensorrt/distribution/distribution_base.cc
-        )
-        add_library(tensorrt_stub OBJECT ${TENSORRT_STUB})
-        target_link_libraries(mindspore-lite tensorrt_stub)
-        target_link_libraries(mindspore-lite_static tensorrt_stub)
-    endif()
-endif()
-
 if(MSLITE_GPU_BACKEND STREQUAL opencl)
-    add_subdirectory(litert/kernel/opencl)
+    add_subdirectory(litert/kernel/gpu/opencl)
     target_link_libraries(mindspore-lite opencl_kernel_mid)
     target_link_libraries(mindspore-lite_static opencl_kernel_mid)
 endif()
@@ -531,13 +489,22 @@ if(SUPPORT_NNAPI)
     add_compile_definitions(SUPPORT_NNAPI)
     add_subdirectory(litert/delegate/nnapi)
     target_link_libraries(mindspore-lite nnapi_kernel_mid)
+    target_link_libraries(mindspore-lite_static nnapi_kernel_mid)
 endif()
 
 if(PLATFORM_ARM32 OR PLATFORM_ARM64 AND NOT TARGET_HIMIX
-        AND NOT TARGET_MIX210 AND NOT TARGET_OHOS_LITE AND NOT MACHINE_LINUX_ARM64)
-    target_link_libraries(mindspore-lite log)
-    target_link_libraries(mindspore-lite_static log)
+        AND NOT TARGET_MIX210 AND NOT TARGET_OHOS_LITE AND NOT MACHINE_LINUX_ARM64 AND NOT TARGET_OHOS)
+    if(NOT TARGET_AOS_ARM)
+        target_link_libraries(mindspore-lite log)
+        target_link_libraries(mindspore-lite_static log)
+    endif()
 endif()
+
+if(TARGET_OHOS)
+    target_link_libraries(mindspore-lite hilog_ndk.z.so)
+    target_link_libraries(mindspore-lite_static hilog_ndk.z.so)
+endif()
+
 if(MSLITE_MINDDATA_IMPLEMENT STREQUAL "lite")
     target_link_libraries(mindspore-lite minddata_eager_mid minddata-lite)
     target_link_libraries(mindspore-lite_static minddata_eager_mid)
@@ -545,9 +512,10 @@ endif()
 
 if(SUPPORT_TRAIN)
   add_library(lite_train_src_mid OBJECT ${TRAIN_SRC})
-  add_dependencies(lite_train_src_mid fbs_src fbs_inner_src)
+  add_dependencies(lite_train_src_mid lite_src_train_common_mid fbs_src fbs_inner_src)
 
   add_library(mindspore-lite-train SHARED $<TARGET_OBJECTS:lite_train_src_mid>)
+  target_link_libraries(mindspore-lite-train lite_src_train_common_mid)
   set_target_properties(mindspore-lite-train PROPERTIES OUTPUT_NAME "mindspore-lite-train")
   set_target_properties(mindspore-lite-train PROPERTIES CLEAN_DIRECT_OUTPUT 1)
   if(MSLITE_MINDDATA_IMPLEMENT STREQUAL "full")
@@ -557,6 +525,7 @@ if(SUPPORT_TRAIN)
   endif()
 
   add_library(mindspore-lite-train_static STATIC $<TARGET_OBJECTS:lite_train_src_mid>)
+  target_link_libraries(mindspore-lite-train_static lite_src_train_common_mid)
   set_target_properties(mindspore-lite-train_static PROPERTIES OUTPUT_NAME "mindspore-lite-train")
   set_target_properties(mindspore-lite-train_static PROPERTIES CLEAN_DIRECT_OUTPUT 1)
   if(MSLITE_MINDDATA_IMPLEMENT STREQUAL "full")
@@ -573,8 +542,13 @@ endif()
 ########################## build optimize and float16 library #################################
 if(PLATFORM_ARM)
     if(PLATFORM_ARM64 AND NOT TARGET_HIMIX AND NOT TARGET_MIX210 AND NOT MACHINE_LINUX_ARM64)
-        target_link_libraries(mindspore-lite cpu_opt_kernel_mid nnacl_optimize_mid)
-        target_link_libraries(mindspore-lite_static cpu_opt_kernel_mid nnacl_optimize_mid)
+        if(TARGET_AOS_ARM AND TOOLCHAIN_NAME STREQUAL "gcc")
+            target_link_libraries(mindspore-lite cpu_opt_kernel_mid)
+            target_link_libraries(mindspore-lite_static cpu_opt_kernel_mid)
+        else()
+            target_link_libraries(mindspore-lite cpu_opt_kernel_mid nnacl_optimize_mid)
+            target_link_libraries(mindspore-lite_static cpu_opt_kernel_mid nnacl_optimize_mid)
+        endif()
     endif()
     if(MSLITE_ENABLE_FP16)
         target_link_libraries(mindspore-lite cpu_fp16_kernel_mid nnacl_fp16_mid)
@@ -599,7 +573,7 @@ if(MSLITE_ENABLE_RUNTIME_CONVERT)
             ccsrc_debug_common_mid_ mindir_proto_mid _mindspore_transform_express_ir_obj)
 endif()
 
-if(SUPPORT_CUDA AND NOT MSLITE_ENABLE_CLOUD_FUSION_INFERENCE)
+if(SUPPORT_CUDA AND NOT (MSLITE_ENABLE_CLOUD_FUSION_INFERENCE OR MSLITE_ENABLE_CLOUD_INFERENCE))
     set(CUDA_PATH $ENV{CUDA_HOME})
     include_directories(${CCSRC_DIR}/plugin/device/gpu/kernel)
     set(ENABLE_GPU on)
@@ -612,6 +586,11 @@ if(SUPPORT_CUDA AND NOT MSLITE_ENABLE_CLOUD_FUSION_INFERENCE)
     list(APPEND CUDA_NVCC_FLAGS -arch=sm_53 --expt-relaxed-constexpr)
     add_subdirectory(${CCSRC_DIR}/plugin/device/gpu/kernel/cuda_impl/cuda_ops cuda_ops)
     target_link_libraries(mindspore-lite cuda_lite_kernel_mid cuda_ops mindspore_core)
+endif()
+
+if(MSLITE_ENABLE_MULTI_LAYOUT)
+    target_link_libraries(mindspore-lite bolt_kernel_mid)
+    target_link_libraries(mindspore-lite_static bolt_kernel_mid)
 endif()
 
 if(MSLITE_ENABLE_RUNTIME_GLOG)
@@ -652,6 +631,11 @@ endif()
 if(MSLITE_ENABLE_MODEL_OBF)
     target_link_libraries(mindspore-lite ${OBF_LIB_DIR}/libmsdeobfuscator-lite.so)
     target_link_libraries(mindspore-lite_static ${OBF_LIB_DIR}/libmsdeobfuscator-lite.so)
+endif()
+
+if(MSLITE_ENABLE_KERNEL_EXECUTOR)
+    target_link_libraries(mindspore-lite mindspore_core)
+    target_link_libraries(mindspore-lite_static mindspore_core)
 endif()
 
 add_subdirectory(extendrt)

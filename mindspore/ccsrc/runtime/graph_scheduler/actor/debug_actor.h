@@ -18,10 +18,14 @@
 #define MINDSPORE_CCSRC_RUNTIME_FRAMEWORK_ACTOR_DEBUG_ACTOR_H_
 
 #include <vector>
+#include <set>
 #include <mutex>
 #include "runtime/graph_scheduler/actor/actor_common.h"
 #include "runtime/graph_scheduler/device_tensor_store.h"
 #include "runtime/hardware/device_context.h"
+#ifdef ENABLE_DEBUGGER
+#include "include/backend/debug/data_dump/dump_utils.h"
+#endif
 
 namespace mindspore {
 namespace runtime {
@@ -51,6 +55,7 @@ class DebugActor : public ActorBase {
 
   // The debug on step end.
   void DebugOnStepEnd(OpContext<DeviceTensor> *const op_context, const AID *from_aid);
+  static inline uint64_t current_step{0};
 
  private:
   // class members

@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,20 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_TENSOR_C_H_
-#define MINDSPORE_NNACL_TENSOR_C_H_
+#ifndef NNACL_TENSOR_C_H_
+#define NNACL_TENSOR_C_H_
 #include "nnacl/op_base.h"
 
-typedef enum TensorCFormat { NCHW, NHWC, NC4HW4, NUM_OF_FORMAT } TensorCFormat;
-
 typedef struct TensorC {
-  bool is_ready_;
+  bool shape_changed_;
   int data_type_;
   int format_;
+  int category_;
   void *data_;
   size_t shape_size_;
   int shape_[MAX_SHAPE_SIZE];
-  char *name_;
+  char *name_;  // only used in micro now.
 } TensorC;
 
-#endif  // MINDSPORE_NNACL_TENSOR_C_H_
+#endif  // NNACL_TENSOR_C_H_

@@ -22,6 +22,7 @@
 namespace mindspore {
 namespace lite {
 namespace preprocess {
+#ifdef MSLITE_DEPS_OPENCV
 int ReadImage(const std::string &image_path, cv::Mat *image) {
   if (image == nullptr) {
     MS_LOG(ERROR) << "image is nullptr.";
@@ -128,84 +129,6 @@ int CenterCrop(cv::Mat *image, int width, int height) {
   return RET_OK;
 }
 
-int PreProcess(const preprocess::DataPreProcessParam &data_pre_process_param, const std::string &input_name,
-               size_t image_index, mindspore::MSTensor *tensor) {
-  if (tensor == nullptr) {
-    MS_LOG(ERROR) << "tensor is nullptr.";
-    return RET_NULL_PTR;
-  }
-  size_t size;
-  char *data_buffer = nullptr;
-  auto ret =
-    PreProcess(data_pre_process_param, input_name, image_index, reinterpret_cast<void **>(&data_buffer), &size);
-  if (data_buffer == nullptr || size == 0) {
-    MS_LOG(ERROR) << "data_buffer is nullptr or size == 0";
-    return RET_ERROR;
-  }
-  if (ret != RET_OK) {
-    MS_LOG(ERROR) << "Preprocess failed.";
-    delete[] data_buffer;
-    return RET_ERROR;
-  }
-  auto data = tensor->MutableData();
-  if (data == nullptr) {
-    MS_LOG(ERROR) << "Get tensor MutableData return nullptr";
-    delete[] data_buffer;
-    return RET_NULL_PTR;
-  }
-  if (size != tensor->DataSize()) {
-    MS_LOG(ERROR) << "the input data is not consistent with model input, file_size: " << size
-                  << " input tensor size: " << tensor->DataSize();
-    delete[] data_buffer;
-    return RET_ERROR;
-  }
-  if (memcpy_s(data, tensor->DataSize(), data_buffer, size) != EOK) {
-    MS_LOG(ERROR) << "memcpy data failed.";
-    delete[] data_buffer;
-    return RET_ERROR;
-  }
-  delete[] data_buffer;
-  return RET_OK;
-}
-
-int PreProcess(const DataPreProcessParam &data_pre_process_param, const std::string &input_name, size_t image_index,
-               void **data, size_t *size) {
-  if (data == nullptr || size == nullptr) {
-    MS_LOG(ERROR) << "data or size is nullptr.";
-    return RET_NULL_PTR;
-  }
-
-  if (data_pre_process_param.calibrate_path_vector.find(input_name) ==
-      data_pre_process_param.calibrate_path_vector.end()) {
-    MS_LOG(ERROR) << "Cant find input:" << input_name;
-    return RET_INPUT_PARAM_INVALID;
-  }
-  auto data_path = data_pre_process_param.calibrate_path_vector.at(input_name).at(image_index);
-  if (data_pre_process_param.input_type == IMAGE) {
-    cv::Mat mat;
-    auto ret = ReadImage(data_path, &mat);
-    if (ret != RET_OK) {
-      MS_LOG(ERROR) << "Read image failed.";
-      return ret;
-    }
-    ret = ImagePreProcess(data_pre_process_param.image_pre_process, &mat, data, size);
-    if (ret != RET_OK) {
-      MS_LOG(ERROR) << "Image Preprocess failed.";
-      return ret;
-    }
-  } else if (data_pre_process_param.input_type == BIN) {
-    *data = ReadFile(data_path.c_str(), size);
-    if (*data == nullptr || *size == 0) {
-      MS_LOG(ERROR) << "ReadFile return nullptr";
-      return RET_NULL_PTR;
-    }
-  } else {
-    MS_LOG(ERROR) << "INPUT ILLEGAL: input_type must be IMAGE|BIN.";
-    return RET_ERROR;
-  }
-  return RET_OK;
-}
-
 int ImagePreProcess(const ImagePreProcessParam &image_preprocess_param, cv::Mat *image, void **data, size_t *size) {
   if (image == nullptr || data == nullptr || size == nullptr) {
     MS_LOG(ERROR) << "data or size is nullptr.";
@@ -249,6 +172,124 @@ int ImagePreProcess(const ImagePreProcessParam &image_preprocess_param, cv::Mat 
   if (ret != RET_OK) {
     MS_LOG(ERROR) << "Get mat data failed.";
     return ret;
+  }
+  return RET_OK;
+}
+#endif
+
+int PreProcess(const preprocess::DataPreProcessParam &data_pre_process_param, const std::string &input_name,
+               size_t image_index, mindspore::MSTensor *tensor) {
+  if (tensor == nullptr) {
+    MS_LOG(ERROR) << "tensor is nullptr.";
+    return RET_NULL_PTR;
+  }
+  size_t size;
+  char *data_buffer = nullptr;
+  auto ret =
+    PreProcess(data_pre_process_param, input_name, image_index, reinterpret_cast<void **>(&data_buffer), &size);
+  if (data_buffer == nullptr || size == 0) {
+    MS_LOG(ERROR) << "data_buffer is nullptr or size == 0";
+    return RET_ERROR;
+  }
+  if (ret != RET_OK) {
+    MS_LOG(ERROR) << "Preprocess failed.";
+    delete[] data_buffer;
+    return RET_ERROR;
+  }
+  auto data = tensor->MutableData();
+  if (data == nullptr) {
+    MS_LOG(ERROR) << "Get tensor MutableData return nullptr";
+    delete[] data_buffer;
+    return RET_NULL_PTR;
+  }
+  if (size != tensor->DataSize()) {
+    MS_LOG(ERROR) << "the input data is not consistent with model input, file_size: " << size
+                  << " input tensor size: " << tensor->DataSize();
+    delete[] data_buffer;
+    return RET_ERROR;
+  }
+  if (memcpy_s(data, tensor->DataSize(), data_buffer, size) != EOK) {
+    MS_LOG(ERROR) << "memcpy data failed.";
+    delete[] data_buffer;
+    return RET_ERROR;
+  }
+  delete[] data_buffer;
+  return RET_OK;
+}
+
+// preprocess input batch
+int PreProcessBatch(const preprocess::DataPreProcessParam &data_pre_process_param, const std::string &input_name,
+                    lite::Tensor *tensor) {
+  CHECK_NULL_RETURN(tensor);
+  for (int image_index = 0; image_index < data_pre_process_param.calibrate_size; image_index++) {
+    size_t size;
+    char *data_buffer = nullptr;
+    auto ret =
+      PreProcess(data_pre_process_param, input_name, image_index, reinterpret_cast<void **>(&data_buffer), &size);
+    if (data_buffer == nullptr || size == 0) {
+      MS_LOG(ERROR) << "data_buffer is nullptr or size == 0";
+      return RET_ERROR;
+    }
+    if (ret != RET_OK) {
+      MS_LOG(ERROR) << "Preprocess failed.";
+      delete[] data_buffer;
+      return RET_ERROR;
+    }
+    if (tensor->data_type() == kNumberTypeFloat32 || tensor->data_type() == kNumberTypeFloat) {
+      auto data = reinterpret_cast<float *>(tensor->MutableData());
+      CHECK_NULL_RETURN(data);
+      if (memcpy_s(data + image_index * tensor->ElementsNum(), tensor->Size(), data_buffer, size) != EOK) {
+        MS_LOG(ERROR) << "memcpy data failed.";
+        delete[] data_buffer;
+        return RET_ERROR;
+      }
+    } else {
+      MS_LOG(ERROR) << "Not supported data_type: " << tensor->data_type();
+      return RET_ERROR;
+    }
+    delete[] data_buffer;
+  }
+  return RET_OK;
+}
+
+int PreProcess(const DataPreProcessParam &data_pre_process_param, const std::string &input_name, size_t image_index,
+               void **data, size_t *size) {
+  if (data == nullptr || size == nullptr) {
+    MS_LOG(ERROR) << "data or size is nullptr.";
+    return RET_NULL_PTR;
+  }
+
+  if (data_pre_process_param.calibrate_path_vector.find(input_name) ==
+      data_pre_process_param.calibrate_path_vector.end()) {
+    MS_LOG(ERROR) << "Cant find input:" << input_name;
+    return RET_INPUT_PARAM_INVALID;
+  }
+  auto data_path = data_pre_process_param.calibrate_path_vector.at(input_name).at(image_index);
+#ifndef MSLITE_DEPS_OPENCV
+  if (data_pre_process_param.input_type == BIN) {
+#else
+  if (data_pre_process_param.input_type == IMAGE) {
+    cv::Mat mat;
+    auto ret = ReadImage(data_path, &mat);
+    if (ret != RET_OK) {
+      MS_LOG(ERROR) << "Read image failed.";
+      return ret;
+    }
+    ret = ImagePreProcess(data_pre_process_param.image_pre_process, &mat, data, size);
+    if (ret != RET_OK) {
+      MS_LOG(ERROR) << "Image Preprocess failed.";
+      return ret;
+    }
+  } else if (data_pre_process_param.input_type == BIN) {
+#endif
+    *data = ReadFile(data_path.c_str(), size);
+    if (*data == nullptr || *size == 0) {
+      MS_LOG(ERROR) << "ReadFile return nullptr";
+      return RET_NULL_PTR;
+    }
+  } else {
+    MS_LOG(ERROR) << "INPUT ILLEGAL: input_type must be IMAGE|BIN.";
+    return RET_ERROR;
   }
   return RET_OK;
 }

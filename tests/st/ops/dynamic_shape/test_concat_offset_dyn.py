@@ -43,12 +43,12 @@ def run_case(run_mode):
     if run_mode == context.GRAPH_MODE:
         assert np.allclose(expect, output.asnumpy())
     else:
-        # In PyNative, set_inputs will be ignore. Static shape for ConcatOffset
+        # In PyNative, set_inputs will be ignored. Static shape for ConcatOffset
         # infer output is not a tensor, get constant value output.
         assert np.allclose(expect, output)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.env_onecard
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training

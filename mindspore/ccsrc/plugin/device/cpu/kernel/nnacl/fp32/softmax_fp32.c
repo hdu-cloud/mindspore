@@ -70,7 +70,7 @@ int SoftmaxLastAxis(const float *src, float *dst, int batch, int channel) {
     }
 
     // get result
-    MS_CHECK_TRUE_RET(exp_sum != 0, NNACL_ERR);
+    NNACL_CHECK_TRUE_RET(exp_sum != 0, NNACL_ERR);
     exp_sum = 1.0f / exp_sum;
     index = 0;
     SIMD_RUN_NO_SCALAR(SoftmaxLastAxisGetResult, index, dst, dst, cur_batch_offset, exp_sum, channel);
@@ -82,10 +82,8 @@ int SoftmaxLastAxis(const float *src, float *dst, int batch, int channel) {
 }
 
 // output = exp(input) / reduce_sum(exp(input), axis)
-void Softmax(const float *input_ptr, float *output_ptr, float *sum_data, const SoftmaxParameter *parameter) {
-  int axis = parameter->axis_;
-  int n_dim = parameter->n_dim_;
-  const int *input_shape = parameter->input_shape_;
+void Softmax(const float *input_ptr, float *output_ptr, float *sum_data, int axis, int n_dim,
+             const int32_t *input_shape) {
   int inner_size = 1;
   int outter_size = 1;
 

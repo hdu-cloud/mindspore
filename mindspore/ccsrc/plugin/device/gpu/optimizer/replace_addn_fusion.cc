@@ -15,10 +15,13 @@
  */
 #include "plugin/device/gpu/optimizer/replace_addn_fusion.h"
 #include <vector>
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/anf_runtime_algorithm.h"
 
 namespace mindspore {
 namespace opt {
@@ -40,11 +43,21 @@ bool ReplaceAddNFusion::CheckMatchedDAG(const PatternMap &, const FuncGraphPtr &
 
 AnfNodePtr BuildAdd(const PatternMap &m, const AnfNodePtr &default_node) {
   MS_EXCEPTION_IF_NULL(default_node);
+  const auto &from_node = m.Get(m_addn);
+  MS_EXCEPTION_IF_NULL(from_node);
   std::vector<TypeId> outputs_type;
   std::vector<BaseShapePtr> outputs_shape;
   outputs_type.push_back(common::AnfAlgo::GetOutputInferDataType(m.Get(A), 0));
-  outputs_shape.push_back(common::AnfAlgo::GetOutputDetailShape(m.Get(A), 0));
+  outputs_shape.push_back(AnfAlgo::GetOutputDetailShape(m.Get(A), 0));
   common::AnfAlgo::SetOutputTypeAndDetailShape(outputs_type, outputs_shape, default_node.get());
+  AnfAlgo::SetSelectKernelBuildInfo(AnfAlgo::GetSelectKernelBuildInfo(from_node), default_node.get());
+
+  if (common::AnfAlgo::HasNodeAttr(kAttrInputIsDynamicShape, from_node->cast<CNodePtr>())) {
+    common::AnfAlgo::CopyNodeAttr(kAttrInputIsDynamicShape, from_node, default_node);
+  }
+  if (common::AnfAlgo::HasNodeAttr(kAttrOutputIsDynamicShape, from_node->cast<CNodePtr>())) {
+    common::AnfAlgo::CopyNodeAttr(kAttrOutputIsDynamicShape, from_node, default_node);
+  }
   return default_node;
 }
 

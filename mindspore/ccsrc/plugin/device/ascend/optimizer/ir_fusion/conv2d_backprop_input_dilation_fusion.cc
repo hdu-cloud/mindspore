@@ -16,8 +16,9 @@
 #include "plugin/device/ascend/optimizer/ir_fusion/conv2d_backprop_input_dilation_fusion.h"
 #include <memory>
 #include <vector>
-#include "backend/common/session/anf_runtime_algorithm.h"
-#include "backend/common/optimizer/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
+#include "include/backend/optimizer/helper.h"
 #include "include/common/utils/utils.h"
 #include "utils/trace_base.h"
 #include "plugin/device/ascend/hal/device/lic_manager.h"
@@ -76,7 +77,7 @@ AnfNodePtr Conv2dBackpropInputDilationFusion::CreateConv2DbpInput(const FuncGrap
                                                                   const AnfNodePtr &node, const AnfNodePtr &grad,
                                                                   const EquivPtr &equiv) const {
   std::vector<AnfNodePtr> inputs;
-  (void)inputs.emplace_back(NewValueNode(std::make_shared<Primitive>(prim::kPrimConv2DBackpropInput->name())));
+  (void)inputs.emplace_back(NewValueNode(std::make_shared<Primitive>(prim::kPrimConv2DBackpropInputD->name())));
   (void)inputs.emplace_back(GetAnfNodeByVar(equiv, x0_));
   (void)inputs.emplace_back(GetAnfNodeByVar(equiv, x1_));
   auto new_node = NewCNode(inputs, func_graph);

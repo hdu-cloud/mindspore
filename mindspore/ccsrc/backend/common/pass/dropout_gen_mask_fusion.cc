@@ -17,6 +17,7 @@
 
 #include <memory>
 
+#include "mindspore/core/ops/nn_ops.h"
 #include "ir/graph_utils.h"
 #include "include/common/utils/utils.h"
 #include "include/common/utils/parallel_context.h"
@@ -26,7 +27,7 @@ namespace opt {
 bool DropoutGenMaskFusion::DoFusion(const std::vector<CNodePtr> &genmasks, const std::set<int64_t> fusion_set,
                                     const FuncGraphManagerPtr &manager) const {
   // Fusion of masks with the same fusion_id
-  auto node_users_map = manager->node_users();
+  auto &node_users_map = manager->node_users();
   std::vector<CNodePtr> temp;
   for (auto &fusion : fusion_set) {
     temp.clear();
@@ -41,7 +42,7 @@ bool DropoutGenMaskFusion::DoFusion(const std::vector<CNodePtr> &genmasks, const
       auto node_users = node_users_map[temp[i]];
       for (auto user_pair : node_users) {
         auto user_node = user_pair.first->cast<CNodePtr>();
-        manager->SetEdge(user_node, kIndex2, mask_first);
+        manager->SetEdge(user_node, user_pair.second, mask_first);
       }
     }
   }
@@ -53,7 +54,8 @@ bool DropoutGenMaskFusion::Run(const FuncGraphPtr &func_graph) {
   auto parallel_context = parallel::ParallelContext::GetInstance();
   MS_EXCEPTION_IF_NULL(parallel_context);
   auto stages = parallel_context->pipeline_stage_split_num();
-  if (stages <= 1) {
+  auto grad_accu_num = parallel_context->grad_accumulation_step();
+  if (stages <= 1 && grad_accu_num <= 1) {
     return false;
   }
 

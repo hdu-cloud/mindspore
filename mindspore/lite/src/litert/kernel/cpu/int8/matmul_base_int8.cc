@@ -34,7 +34,8 @@ int MatmulBaseInt8Run(void *cdata, int task_id, float, float) {
   return RET_OK;
 }
 
-#if defined(ENABLE_ARM64) && !defined(SUPPORT_NNIE) && !defined(SUPPORT_34XX) && (!defined(MACHINE_LINUX_ARM64))
+#if defined(ENABLE_ARM64) && !defined(SUPPORT_NNIE) && !defined(SUPPORT_34XX) && (!defined(MACHINE_LINUX_ARM64)) && \
+  !defined(USE_AOS_GCC_TOOLCHAIN)
 int Arm64SdotPreRun(void *cdata, int task_id, float, float) {
   CHECK_NULL_RETURN(cdata);
   auto op = reinterpret_cast<MatmulBaseInt8CPUKernel *>(cdata);
@@ -152,6 +153,12 @@ MatmulBaseInt8CPUKernel::~MatmulBaseInt8CPUKernel() {
   FreeQuantParam();
 
   FreeTmpBuffer();
+
+  // bias_ptr_ malloc memory initially only once, not belonging to FreeTmpBuffer()
+  if (bias_ptr_ != nullptr) {
+    free(bias_ptr_);
+    bias_ptr_ = nullptr;
+  }
 }
 
 void MatmulBaseInt8CPUKernel::FreeQuantParam() {
@@ -179,18 +186,21 @@ void MatmulBaseInt8CPUKernel::FreeQuantParam() {
     free(quant_param_);
     quant_param_ = nullptr;
   }
+
+  if (save_b_const_ != nullptr) {
+    free(save_b_const_);
+    save_b_const_ = nullptr;
+  }
 }
 
 int MatmulBaseInt8CPUKernel::MallocQuantParam() {
   auto weight_tensor = in_tensors_.at(1);
   auto weight_quant_params = weight_tensor->quant_params();
-  auto w_shape = weight_tensor->shape();
-  MS_CHECK_TRUE_MSG(weight_tensor->shape().size() >= DIMENSION_2D, lite::RET_ERROR, "weight dims should >=2");
-  int col = param_->b_transpose_ ? w_shape[w_shape.size() - DIMENSION_2D] : w_shape[w_shape.size() - 1];
 
+  MS_CHECK_TRUE_MSG(weight_quant_params.size() >= 1, lite::RET_ERROR, "weight quant params size should >= 1");
   filter_per_channel_ = (weight_quant_params.size() > 1);
+  channel_num_ = weight_quant_params.size();
 
-  channel_num_ = filter_per_channel_ ? col : 1;
   const int &init_size = channel_num_;
 
   quant_param_ = reinterpret_cast<MatmulQuantParameter *>(malloc(sizeof(MatmulQuantParameter)));
@@ -348,7 +358,8 @@ void MatmulBaseInt8CPUKernel::FreeTmpBuffer() {
 }
 
 int MatmulBaseInt8CPUKernel::TransferB() {
-  auto weight_data = reinterpret_cast<int8_t *>(in_tensors_.at(1)->data());
+  auto weight_data = (save_b_const_ == nullptr) ? reinterpret_cast<int8_t *>(in_tensors_.at(1)->data())
+                                                : reinterpret_cast<int8_t *>(save_b_const_);
   CHECK_NULL_RETURN(weight_data);
   CHECK_NULL_RETURN(b_pack_func_);
   for (int i = 0; i < param_->batch; i++) {
@@ -364,6 +375,10 @@ int MatmulBaseInt8CPUKernel::TransferB() {
       CalcWeightBiasSums(current_weight, param_->deep_, param_->col_, quant_param_->input_.zp_,
                          quant_param_->filter_zp_, bias_ptr_, current_sums, RowMajor, filter_per_channel_);
     }
+  }
+  if (save_b_const_ != nullptr) {
+    free(save_b_const_);
+    save_b_const_ = nullptr;
   }
   return RET_OK;
 }
@@ -407,7 +422,7 @@ int MatmulBaseInt8CPUKernel::InitBias() {
       FreeTmpBuffer();
       return RET_MEMORY_FAILED;
     }
-    bias_ptr_ = reinterpret_cast<int *>(bias_tensor->data());
+    bias_ptr_ = reinterpret_cast<int *>(malloc(bias_tensor->ElementsNum() * sizeof(int)));
     if (bias_ptr_ == nullptr) {
       MS_LOG(ERROR) << "Memory allocation failed";
       FreeTmpBuffer();
@@ -438,7 +453,15 @@ int MatmulBaseInt8CPUKernel::Prepare() {
     FreeQuantParam();
     return ret;
   }
-
+  if (!InferShapeDone()) {
+    if (param_->b_const_) {
+      auto weight_tensor = in_tensors_.at(1);
+      CHECK_NULL_RETURN(weight_tensor);
+      CHECK_NULL_RETURN(weight_tensor->data());
+      save_b_const_ = reinterpret_cast<int8_t *>(malloc(weight_tensor->ElementsNum() * sizeof(int8_t)));
+      (void)memcpy(save_b_const_, weight_tensor->data(), weight_tensor->ElementsNum() * sizeof(int8_t));
+    }
+  }
   return RET_OK;
 }
 int MatmulBaseInt8CPUKernel::MatmulReSize() {
@@ -462,7 +485,7 @@ int MatmulBaseInt8CPUKernel::ReSize() {
     return ret;
   }
 
-  if (param_->b_const_ == true) {
+  if (param_->b_const_) {
     if (TransferB() != RET_OK) {
       MS_LOG(ERROR) << "TransferB error";
       return RET_ERROR;
@@ -471,7 +494,8 @@ int MatmulBaseInt8CPUKernel::ReSize() {
   return RET_OK;
 }
 
-#if defined(ENABLE_ARM64) && !defined(SUPPORT_NNIE) && !defined(SUPPORT_34XX) && (!defined(MACHINE_LINUX_ARM64))
+#if defined(ENABLE_ARM64) && !defined(SUPPORT_NNIE) && !defined(SUPPORT_34XX) && (!defined(MACHINE_LINUX_ARM64)) && \
+  !defined(USE_AOS_GCC_TOOLCHAIN)
 int MatmulBaseInt8CPUKernel::RunArm64Sdot() {
   int8_t *a_ptr = reinterpret_cast<int8_t *>(in_tensors_.at(0)->data());
   int8_t *b_ptr = reinterpret_cast<int8_t *>(in_tensors_.at(1)->data());
@@ -504,12 +528,13 @@ int MatmulBaseInt8CPUKernel::RunArm64Sdot() {
 #endif
 
 int MatmulBaseInt8CPUKernel::Run() {
-#if defined(ENABLE_ARM64) && !defined(SUPPORT_NNIE) && !defined(SUPPORT_34XX) && (!defined(MACHINE_LINUX_ARM64))
+#if defined(ENABLE_ARM64) && !defined(SUPPORT_NNIE) && !defined(SUPPORT_34XX) && (!defined(MACHINE_LINUX_ARM64)) && \
+  !defined(USE_AOS_GCC_TOOLCHAIN)
   if (support_sdot_) {
     return RunArm64Sdot();
   }
 #endif
-  if (param_->b_const_ == false) {
+  if (!param_->b_const_) {
     if (TransferB() != RET_OK) {
       MS_LOG(ERROR) << "TransferB error";
       return RET_ERROR;

@@ -29,7 +29,6 @@ namespace {
 constexpr int kMaskedSelectGradInputsNum = 3;
 constexpr int kMaskedSelectGradOutputsNum = 1;
 constexpr size_t kIndexInput = 0;
-constexpr size_t kIndexInputGrad = 0;
 constexpr size_t kIndexMask = 1;
 constexpr size_t kIndexOutputGrad = 2;
 }  // namespace
@@ -78,10 +77,10 @@ bool MaskedSelectGradGpuKernelMod::Init(const BaseOperatorPtr &base_operator,
     return false;
   }
 
-  is_need_retrieve_output_shape_ = true;  // MaskedSelect is a dynamic shape operator.
+  // is_need_retrieve_output_shape_ = true;  // MaskedSelect is a dynamic shape operator.
   kernel_func_ = func_list_[index].second;
-  input_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  mask_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).first);
+  input_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  mask_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).dtype);
   return true;
 }
 
@@ -109,8 +108,6 @@ int MaskedSelectGradGpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
     return ret;
   }
   ResetResource();
-  outputs_ = outputs;
-
   auto x_shape = inputs[kIndex0]->GetShapeVector();
   auto y_shape = inputs[kIndex1]->GetShapeVector();
   auto it_x = std::find_if(x_shape.begin(), x_shape.end(), [](int64_t sh) { return sh <= 0; });
@@ -129,16 +126,16 @@ int MaskedSelectGradGpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
   auto broadcast_shape = GetBroadcastShape(x_shape, y_shape);
   size_t offset_x = broadcast_shape.size() - x_shape.size();
   for (size_t i = 0; i < x_shape.size(); ++i) {
-    input_shape_[i + offset_x] = LongToSize(x_shape[i]);
+    input_shape_[i + offset_x] = x_shape[i];
   }
 
   size_t offset_y = broadcast_shape.size() - y_shape.size();
   for (size_t j = 0; j < y_shape.size(); ++j) {
-    mask_shape_[j + offset_y] = LongToSize(y_shape[j]);
+    mask_shape_[j + offset_y] = y_shape[j];
   }
 
   for (size_t k = 0; k < broadcast_shape.size(); ++k) {
-    broadcast_shape_[k] = LongToSize(broadcast_shape[k]);
+    broadcast_shape_[k] = broadcast_shape[k];
   }
 
   // size and broadcast type
@@ -220,9 +217,10 @@ bool MaskedSelectGradGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &i
   }
 
   // kernel
-  MaskedSelectGrad(input_grad_ptr, mask_ptr, index_ptr, input_shape_, mask_shape_, broadcast_shape_,
-                   input_broadcast_grad_ptr, mask_broadcast_ptr, output_grad_ptr, cuda_stream_);
-
+  auto status =
+    MaskedSelectGrad(input_grad_ptr, mask_ptr, index_ptr, input_shape_, mask_shape_, broadcast_shape_,
+                     input_broadcast_grad_ptr, mask_broadcast_ptr, output_grad_ptr, device_id_, cuda_stream_);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

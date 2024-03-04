@@ -140,7 +140,7 @@ void Convolution1x1Int8CPUKernel::CheckSupportOptimize() {
   support_optimize_ = false;
   matmul_func_ = MatMulInt8_4x16_r;
 #if defined(ENABLE_ARM64)
-#if !defined(SUPPORT_NNIE) && !defined(SUPPORT_34XX) && !defined(MACHINE_LINUX_ARM64)
+#if !defined(SUPPORT_NNIE) && !defined(SUPPORT_34XX) && !defined(MACHINE_LINUX_ARM64) && !defined(USE_AOS_GCC_TOOLCHAIN)
   if (mindspore::lite::IsSupportSDot()) {
     support_optimize_ = true;
     matmul_func_ = MatMulDpInt8_optimize_handler;
@@ -148,12 +148,12 @@ void Convolution1x1Int8CPUKernel::CheckSupportOptimize() {
 #endif
     support_optimize_ = false;
     matmul_func_ = nullptr;
-#if !defined(SUPPORT_NNIE) && !defined(SUPPORT_34XX) && !defined(MACHINE_LINUX_ARM64)
+#if !defined(SUPPORT_NNIE) && !defined(SUPPORT_34XX) && !defined(MACHINE_LINUX_ARM64) && !defined(USE_AOS_GCC_TOOLCHAIN)
   }
 #endif
 #endif
   return;
-}
+}  // namespace mindspore::kernel
 
 int Convolution1x1Int8CPUKernel::InitBiasByzp(const void *src_weight, int input_channel, int output_channel,
                                               size_t round_oc) {
@@ -161,7 +161,9 @@ int Convolution1x1Int8CPUKernel::InitBiasByzp(const void *src_weight, int input_
   CHECK_NULL_RETURN(conv_param_);
   CHECK_NULL_RETURN(src_weight);
   int32_t *bias_data = reinterpret_cast<int32_t *>(bias_data_);
+  CHECK_NULL_RETURN(bias_data);
   auto *weight = static_cast<const int8_t *>(src_weight);
+  CHECK_NULL_RETURN(weight);
   int32_t input_zp = conv_param_->conv_quant_arg_.input_quant_args_[0].zp_;
   for (int oc = 0; oc < output_channel; oc++) {
     int32_t weight_sum_value = 0;

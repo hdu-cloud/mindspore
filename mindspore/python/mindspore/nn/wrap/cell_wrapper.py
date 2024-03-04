@@ -23,11 +23,11 @@ from mindspore import log as logger
 from mindspore.parallel._utils import _get_device_num, _get_gradients_mean,\
     _get_parallel_mode, _get_enable_parallel_optimizer, _is_pynative_parallel
 from mindspore.context import ParallelMode
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore import ops, nn
 from mindspore.common import dtype as mstype
 from mindspore.common.parameter import Parameter, ParameterTuple
-from mindspore.ops.primitive import constexpr
+from mindspore.ops.primitive import _primexpr
 from mindspore.ops import composite as C
 from mindspore.ops import functional as F
 from mindspore.ops import operations as P
@@ -95,7 +95,12 @@ class WithLossCell(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> net = Net()
+        >>> import mindspore as ms
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> loss_fn = nn.SoftmaxCrossEntropyWithLogits(sparse=False)
         >>> net_with_criterion = nn.WithLossCell(net, loss_fn)
         >>>
@@ -110,8 +115,7 @@ class WithLossCell(Cell):
         super(WithLossCell, self).__init__(auto_prefix=False)
         self._backbone = backbone
         self._loss_fn = loss_fn
-        if backbone.jit_config_dict:
-            self._jit_config_dict = backbone.jit_config_dict
+        self._get_attr_from_cell(backbone)
 
     def construct(self, data, label):
         out = self._backbone(data)
@@ -124,6 +128,15 @@ class WithLossCell(Cell):
 
         Returns:
             Cell, the backbone network.
+
+        Examples:
+            >>> from mindspore import nn
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
+            >>> loss_fn = nn.SoftmaxCrossEntropyWithLogits(sparse=False)
+            >>> net_with_criterion = nn.WithLossCell(net, loss_fn)
+            >>> backbone = net_with_criterion.backbone_network
         """
         return self._backbone
 
@@ -141,13 +154,13 @@ class WithGradCell(Cell):
 
     Args:
         network (Cell): The target network to wrap. The network only supports single output.
-        loss_fn (Cell): Primitive loss function used to compute gradients. Default: None.
+        loss_fn (Cell): Primitive loss function used to compute gradients. Default: ``None`` .
         sens (Union[None, Tensor, Scalar, Tuple ...]): The sensitive for backpropagation, the type and shape
-            must be same as the `network` output. If None, we will fill one to a same type shape of
-            output value. Default: None.
+            must be same as the `network` output. If ``None`` , we will fill one to a same type shape of
+            output value. Default: ``None`` .
 
     Inputs:
-        - **(\*inputs)** (Tuple(Tensor)) - Tuple of input tensors with shape :math:`(N, \ldots)`.
+        - **\*inputs** (Tuple(Tensor)) - Tuple of input tensors with shape :math:`(N, \ldots)`.
 
     Outputs:
         list, a list of Tensors with identical shapes as trainable weights.
@@ -159,8 +172,11 @@ class WithGradCell(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> # For a defined network Net without loss function
-        >>> net = Net()
+        >>> import mindspore as ms
+        >>> from mindspore import nn
+        >>> # Defined a network without loss function, taking LeNet5 as an example.
+        >>> # Refer to https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> loss_fn = nn.SoftmaxCrossEntropyWithLogits()
         >>> grad_net = nn.WithGradCell(net, loss_fn)
         >>>
@@ -182,6 +198,7 @@ class WithGradCell(Cell):
         else:
             self.network_with_loss = WithLossCell(self.network, self.loss_fn)
         self.network_with_loss.set_train()
+        self._get_attr_from_cell(network)
 
     def construct(self, *inputs):
         weights = self.weights
@@ -200,24 +217,24 @@ class ForwardValueAndGrad(Cell):
     The backward graph will be created in the gradient function to calculating gradient.
 
     Args:
-        network (Cell): The training network.
+        network (Union[Cell, Function, MethodType]): The training network.
         weights (ParameterTuple): The parameters of the training network that need to calculate the gradient.
-            Default: None.
-        get_all (bool): If True, get all the gradients with respect to inputs. Default: False.
-        get_by_list (bool): If True, get all the gradients with respect to Parameter variables.
-            If get_all and get_by_list are both False, get the gradient with respect to first input.
-            If get_all and get_by_list are both True, get the gradients with respect to inputs and Parameter variables
-            at the same time in the form of ((gradients with respect to inputs),
-            (gradients with respect to parameters)). Default: False.
+            Default: ``None`` .
+        get_all (bool): If ``True`` , get all the gradients with respect to inputs. Default: ``False`` .
+        get_by_list (bool): If ``True`` s, get all the gradients with respect to Parameter variables.
+            If get_all and get_by_list are both ``False`` , get the gradient with respect to first input.
+            If get_all and get_by_list are both ``True`` , get the gradients with respect to inputs and Parameter
+            variables  at the same time in the form of ((gradients with respect to inputs),
+            (gradients with respect to parameters)). Default: ``False`` .
         sens_param (bool): Whether to append sensitivity (gradient with respect to output) as input.
-            If sens_param is False, a 'ones_like(outputs)' sensitivity will be attached automatically.
-            Default: False.
-            If the sens_param is True, a sensitivity (gradient with respect to output) needs to be transferred through
-            the input parameter.
+            If sens_param is ``False`` , a 'ones_like(outputs)' sensitivity will be attached automatically.
+            Default: ``False`` .
+            If the sens_param is ``True`` , a sensitivity (gradient with respect to output) needs to be transferred
+            through the input parameter.
 
     Inputs:
-        - **(\*inputs)** (Tuple(Tensor...)) - Tuple of inputs with shape :math:`(N, \ldots)`.
-        - **(sens)** - A sensitivity (gradient with respect to output) as the input of backpropagation.
+        - **\*inputs** (Tuple(Tensor...)) - Tuple of inputs with shape :math:`(N, \ldots)`.
+        - **sens** - A sensitivity (gradient with respect to output) as the input of backpropagation.
           If network has single output, the sens is a tensor.
           If network has multiple outputs, the sens is the tuple(tensor).
 
@@ -230,7 +247,8 @@ class ForwardValueAndGrad(Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, nn, common, ops, ParameterTuple, Parameter
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn, ops, ParameterTuple, Parameter
         >>>
         >>> class Net(nn.Cell):
         ...    def __init__(self):
@@ -282,6 +300,7 @@ class ForwardValueAndGrad(Cell):
         self.get_by_list = get_by_list
         self.sens_param = sens_param
         self.grad = C.GradOperation(get_all=self.get_all, get_by_list=self.get_by_list, sens_param=self.sens_param)
+        self._get_attr_from_cell(network)
 
     def construct(self, *inputs):
         grad_inputs = inputs
@@ -306,10 +325,14 @@ class TrainOneStepCell(Cell):
     Args:
         network (Cell): The training network. The network only supports single output.
         optimizer (Union[Cell]): Optimizer for updating the network parameters.
-        sens (numbers.Number): The scaling number to be filled as the input of backpropagation. Default value is 1.0.
+        sens (numbers.Number): The scaling number to be filled as the input of backpropagation. Default value is
+            ``None`` , which is ``1.0`` .
+        return_grad (bool): Whether to return gradient. If ``True``, it will return the gradient in the form of a dict
+            while returning loss. The key of the dict is the parameter name corresponding to the gradient, and value
+            is the gradient value. Default value is ``False`` .
 
     Inputs:
-        - **(\*inputs)** (Tuple(Tensor)) - Tuple of input tensors with shape :math:`(N, \ldots)`.
+        - **\*inputs** (Tuple(Tensor)) - Tuple of input tensors with shape :math:`(N, \ldots)`.
 
     Outputs:
         Tensor, a tensor means the loss value, the shape of which is usually :math:`()`.
@@ -321,7 +344,10 @@ class TrainOneStepCell(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> net = Net()
+        >>> import mindspore.nn as nn
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> loss_fn = nn.SoftmaxCrossEntropyWithLogits()
         >>> optim = nn.Momentum(net.trainable_params(), learning_rate=0.1, momentum=0.9)
         >>> #1) Using the WithLossCell provided by MindSpore
@@ -329,7 +355,7 @@ class TrainOneStepCell(Cell):
         >>> train_net = nn.TrainOneStepCell(loss_net, optim)
         >>>
         >>> #2) Using user-defined WithLossCell
-        >>> class MyWithLossCell(Cell):
+        >>> class MyWithLossCell(nn.Cell):
         ...    def __init__(self, backbone, loss_fn):
         ...        super(MyWithLossCell, self).__init__(auto_prefix=False)
         ...        self._backbone = backbone
@@ -347,16 +373,26 @@ class TrainOneStepCell(Cell):
         >>> train_net = nn.TrainOneStepCell(loss_net, optim)
     """
 
-    def __init__(self, network, optimizer, sens=1.0):
+    def __init__(self, network, optimizer, sens=None, return_grad=False):
         super(TrainOneStepCell, self).__init__(auto_prefix=False)
         self.network = network
         self.network.set_grad()
         self.optimizer = optimizer
         self.weights = self.optimizer.parameters
         self.grad = C.GradOperation(get_by_list=True, sens_param=True)
+        self.grad_no_sens = C.GradOperation(get_by_list=True)
         self.sens = sens
+        if self.sens == 0:
+            raise ValueError("The input argument of 'sens' can not be 0.")
+        self.sense_flag = True
+        if self.sens is None:
+            self.sense_flag = False
+            self.sens = 1.0
+        self.return_grad = return_grad
+        if return_grad:
+            self.weights_name = [i.name for i in self.optimizer.parameters]
         self.reducer_flag = False
-        self.grad_reducer = F.identity
+        self.grad_reducer = nn.Identity()
         self.parallel_mode = _get_parallel_mode()
         self.reducer_flag = self.parallel_mode in (ParallelMode.DATA_PARALLEL, ParallelMode.HYBRID_PARALLEL) or \
                             _is_pynative_parallel()
@@ -375,13 +411,34 @@ class TrainOneStepCell(Cell):
                 create_group(server_group_name, group_list[current_index])
                 group = server_group_name
             self.grad_reducer = DistributedGradReducer(self.weights, self.mean, self.degree, group=group)
+        self._get_attr_from_cell(network)
 
     def construct(self, *inputs):
+        if not self.sense_flag:
+            return self._no_sens_impl(*inputs)
         loss = self.network(*inputs)
         sens = F.fill(loss.dtype, loss.shape, self.sens)
         grads = self.grad(self.network, self.weights)(*inputs, sens)
         grads = self.grad_reducer(grads)
         loss = F.depend(loss, self.optimizer(grads))
+        if self.return_grad:
+            grad_with_param_name = {}
+            for index, value in enumerate(grads):
+                grad_with_param_name[self.weights_name[index]] = value
+            return loss, grad_with_param_name
+        return loss
+
+    def _no_sens_impl(self, *inputs):
+        """construct implementation when the 'sens' parameter is passed in."""
+        loss = self.network(*inputs)
+        grads = self.grad_no_sens(self.network, self.weights)(*inputs)
+        grads = self.grad_reducer(grads)
+        loss = F.depend(loss, self.optimizer(grads))
+        if self.return_grad:
+            grad_with_param_name = {}
+            for index, value in enumerate(grads):
+                grad_with_param_name[self.weights_name[index]] = value
+            return loss, grad_with_param_name
         return loss
 
 
@@ -406,7 +463,7 @@ class GetNextSingleOp(Cell):
         >>> import mindspore
         >>> from mindspore import ops, nn
         >>> from mindspore import dataset as ds
-        >>> from mindspore.common import dtype as mstype
+        >>> from mindspore import dtype as mstype
         >>>
         >>> data_path =  "/path/to/MNIST_Data/train/"
         >>> train_dataset = ds.MnistDataset(data_path, num_samples=10)
@@ -453,18 +510,20 @@ class _VirtualDatasetCell(Cell):
         super(_VirtualDatasetCell, self).__init__(auto_prefix=False)
         self._backbone = backbone
         self._virtual_dataset = _VirtualDataset()
+        self._get_attr_from_cell(backbone)
 
     def construct(self, *inputs):
         output = self._virtual_dataset(*inputs)
         return self._backbone(*output)
 
 
-@constexpr
+@_primexpr
 def _check_shape_value_on_axis_divided_by_target_value(input_shape, micro_size):
+    if F.isconstant(input_shape[0]) is False:
+        return
     if input_shape[0] % micro_size != 0:
         raise ValueError(f"For micro batch initialization, the 0th dimension shape of input({input_shape[0]}) must be "
                          f"divided by micro size({micro_size})")
-    return True
 
 
 class _MicroBatch(Cell):
@@ -486,8 +545,8 @@ class _MicroBatch(Cell):
         for each_input in inputs:
             input_shape = self.shape(each_input)
             _check_shape_value_on_axis_divided_by_target_value(input_shape, self.micro_size)
-            micro_batch_begin = i * input_shape[0] // self.micro_size
-            micro_batch_end = (i + 1) * input_shape[0] // self.micro_size
+            micro_batch_begin = (input_shape[0] // self.micro_size) * i
+            micro_batch_end = (input_shape[0] // self.micro_size) * (i + 1)
             strided_slice_begin = (micro_batch_begin,)
             strided_slice_strides = (1,)
             for _ in range(len(input_shape) - 1):
@@ -513,7 +572,7 @@ class MicroBatchInterleaved(Cell):
 
     Args:
         network (Cell): The target network to wrap.
-        interleave_num (int, optional): split num of batch size. Default: 2.
+        interleave_num (int, optional): split num of batch size. Default: ``2`` .
 
     Inputs:
         tuple[Tensor]. It's the same with the input of the `network` .
@@ -525,8 +584,11 @@ class MicroBatchInterleaved(Cell):
         ``Ascend`` ``GPU``
 
     Examples:
-        >>> net = Net()
-        >>> net = MicroBatchInterleaved(net, 2)
+        >>> import mindspore.nn as nn
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
+        >>> net = nn.MicroBatchInterleaved(net, 2)
     """
     def __init__(self, network, interleave_num=2):
         super(MicroBatchInterleaved, self).__init__(auto_prefix=False)
@@ -545,6 +607,7 @@ class MicroBatchInterleaved(Cell):
             interleave_data.strided_slice.add_prim_attr("strided_slice_flag", True)
             interleave_data.strided_slice.add_prim_attr("interleave_num", interleave_num)
             self.interleave_inputs.append(interleave_data)
+        self._get_attr_from_cell(network)
 
     def construct(self, *inputs):
         output = 0.0
@@ -569,8 +632,11 @@ class PipelineCell(Cell):
         ``Ascend`` ``GPU``
 
     Examples:
-        >>> net = Net()
-        >>> net = PipelineCell(net, 4)
+        >>> import mindspore.nn as nn
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
+        >>> net = nn.PipelineCell(net, 4)
     """
     def __init__(self, network, micro_size):
         super(PipelineCell, self).__init__(auto_prefix=False)
@@ -578,11 +644,70 @@ class PipelineCell(Cell):
         self.micro_inputs = nn.CellList()
         self.micro_size = micro_size
         self.add_list = []
+        if not isinstance(network, Cell):
+            raise TypeError("For 'PipelineCell', the argument 'network' must cell type, "
+                            "but got the type : {}.".format(type(network)))
+        if not isinstance(micro_size, int):
+            raise TypeError("For 'PipelineCell', the argument 'micro_size' must be integer, "
+                            "but got the type : {}.".format(type(micro_size)))
+        if micro_size <= 0:
+            raise ValueError("For 'PipelineCell', the argument 'micro_size' must be large than 0, "
+                             "but got {}.".format(micro_size))
         for i in range(micro_size):
             micro_input = _MicroBatch(micro_size)
             self.micro_inputs.append(micro_input)
             self.add = P.Add().add_prim_attr("pipeline_end", i)
             self.add_list.append(self.add)
+        self._get_attr_from_cell(network)
+
+    def construct(self, *inputs):
+        ret = None
+        for i in range(self.micro_size):
+            micro_input = self.micro_inputs[i](i, *inputs)
+            output = self.network(*micro_input)
+            if ret is not None:
+                ret = self.add_list[i](ret, output)
+            else:
+                ret = output
+        return ret
+
+class GradAccumulationCell(Cell):
+    """
+    Wrap the network with Micro Batch.
+
+    Args:
+        network (Cell): The target network to wrap.
+        micro_size (int): MicroBatch size.
+
+    Supported Platforms:
+        ``Ascend`` ``GPU``
+
+    Examples:
+        >>> net = Net()
+        >>> net = GradAccumulationCell(net, 4)
+    """
+    def __init__(self, network, micro_size):
+        super(GradAccumulationCell, self).__init__(auto_prefix=False)
+        self.network = network
+        self.micro_inputs = nn.CellList()
+        self.micro_size = micro_size
+        self.add_list = []
+        if not isinstance(network, Cell):
+            raise TypeError("For 'GradAccumulationCell', the argument 'network' must cell type, "
+                            "but got the type : {}.".format(type(network)))
+        if not isinstance(micro_size, int):
+            raise TypeError("For 'GradAccumulationCell', the argument 'micro_size' must be integer, "
+                            "but got the type : {}.".format(type(micro_size)))
+        if micro_size <= 0:
+            raise ValueError("For 'GradAccumulationCell', the argument 'micro_size' must be large than 0, "
+                             "but got {}.".format(micro_size))
+        for i in range(micro_size):
+            micro_input = _MicroBatch(micro_size)
+            micro_input.strided_slice.add_prim_attr("grad_accu_num", micro_size)
+            self.micro_inputs.append(micro_input)
+            self.add = P.Add().add_prim_attr("forward_end", i)
+            self.add_list.append(self.add)
+        self._get_attr_from_cell(network)
 
     def construct(self, *inputs):
         ret = None
@@ -602,21 +727,37 @@ def _pipeline_clear_grad(accu_grad, grad):
     return F.assign(accu_grad, zeros)
 
 
-class _TrainPipelineAccuStepCell(TrainOneStepCell):
+class _TrainGradAccuStepCell(TrainOneStepCell):
     """
     Wraps the network with an optimizer in pipeline mode.
     """
-    def __init__(self, network, optimizer, sens=1.0):
-        super(_TrainPipelineAccuStepCell, self).__init__(network, optimizer, sens)
+    def __init__(self, network, optimizer, sens=None):
+        super(_TrainGradAccuStepCell, self).__init__(network, optimizer, sens)
         self.accu_grads = self.weights.clone(prefix="accu_grads", init="zeros")
         self.hyper_map = ops.HyperMap()
         self.opt_shard = _get_enable_parallel_optimizer()
+        self._get_attr_from_cell(network)
 
     def construct(self, *inputs):
-        weights = self.weights
+        if not self.sense_flag:
+            return self._no_sens_impl(*inputs)
         loss = self.network(*inputs)
-        sens = ops.Fill()(ops.DType()(loss), ops.Shape()(loss), self.sens)
-        grads = self.grad(self.network, weights)(*inputs, sens)
+        sens = ops.fill(ops.DType()(loss), ops.Shape()(loss), self.sens)
+        grads = self.grad(self.network, self.weights)(*inputs, sens)
+        accu_grads = ops.depend(self.accu_grads, grads)
+        if self.opt_shard:
+            succ = self.optimizer(grads)
+        else:
+            succ = self.optimizer(accu_grads)
+        loss = ops.depend(loss, succ)
+        clear = self.hyper_map(_pipeline_clear_grad, accu_grads, grads)
+        loss = ops.depend(loss, clear)
+        return loss
+
+    def _no_sens_impl(self, *inputs):
+        """construct implementation when the 'sens' parameter is passed in."""
+        loss = self.network(*inputs)
+        grads = self.grad_no_sens(self.network, self.weights)(*inputs)
         accu_grads = ops.depend(self.accu_grads, grads)
         if self.opt_shard:
             succ = self.optimizer(grads)
@@ -644,14 +785,18 @@ class VirtualDatasetCellTriple(Cell):
         backbone (Cell): The target network to wrap.
 
     Examples:
-        >>> net = Net()
-        >>> net = VirtualDatasetCellTriple(net)
+        >>> import mindspore.nn as nn
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
+        >>> net = nn.VirtualDatasetCellTriple(net)
     """
 
     def __init__(self, backbone):
         super(VirtualDatasetCellTriple, self).__init__(auto_prefix=False)
         logger.warning("WARN_DEPRECATED: The usage of VirtualDatasetCellTriple is deprecated.")
         self._backbone = backbone
+        self._get_attr_from_cell(backbone)
 
     def construct(self, a, b, c):
         return self._backbone(a, b, c)
@@ -666,7 +811,7 @@ class WithEvalCell(Cell):
     Args:
         network (Cell): The forward network.
         loss_fn (Cell): The loss function.
-        add_cast_fp32 (bool): Whether to adjust the data type to float32. Default: False.
+        add_cast_fp32 (bool): Whether to adjust the data type to float32. Default: ``False`` .
 
     Inputs:
         - **data** (Tensor) - Tensor of shape :math:`(N, \ldots)`.
@@ -683,8 +828,10 @@ class WithEvalCell(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> # Forward network without loss function
-        >>> net = Net()
+        >>> import mindspore.nn as nn
+        >>> # Define a forward network without loss function, taking LeNet5 as an example.
+        >>> # Refer to https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> loss_fn = nn.SoftmaxCrossEntropyWithLogits()
         >>> eval_net = nn.WithEvalCell(net, loss_fn)
     """
@@ -694,6 +841,7 @@ class WithEvalCell(Cell):
         self._network = network
         self._loss_fn = loss_fn
         self.add_cast_fp32 = validator.check_value_type("add_cast_fp32", add_cast_fp32, [bool], self.cls_name)
+        self._get_attr_from_cell(network)
 
     def construct(self, data, label):
         outputs = self._network(data)
@@ -717,7 +865,7 @@ class ParameterUpdate(Cell):
         - **x** (Tensor) - A tensor whose shape and type are the same with `param`.
 
     Outputs:
-        Tensor, the input `x`.
+        Tensor, the updated value.
 
     Raises:
         KeyError: If parameter with the specified name does not exist.

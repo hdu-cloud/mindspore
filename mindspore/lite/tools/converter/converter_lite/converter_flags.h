@@ -33,14 +33,16 @@ class Flags : public virtual mindspore::lite::FlagParser {
   int InitInputOutputDataType();
   int InitFmk();
   int InitTrainModel();
-  int InitConfigParam();
   int InitInTensorShape() const;
   int InitGraphInputFormat();
+  int InitGraphOutputFormat();
   int InitEncrypt();
   int InitPreInference();
   int InitSaveFP16();
-  int InitNoFusion();
-  int InitExportMindIR();
+  int InitOptimize();
+  int InitSaveType();
+  int InitOptimizeTransformer();
+
   int Init(int argc, const char **argv);
   int PreInit(int argc, const char **argv);
 
@@ -51,14 +53,13 @@ class Flags : public virtual mindspore::lite::FlagParser {
   std::string weightFile;
   std::string saveFP16Str = "off";
   bool saveFP16 = false;
-  std::string noFusionStr = "false";
   bool disableFusion = false;
   std::string inputDataTypeStr;
   DataType inputDataType;
   std::string outputDataTypeStr;
   DataType outputDataType;
   std::string configFile;
-  std::string trainModelIn;
+  std::string trainModelIn = "false";
   bool trainModel = false;
   std::string inTensorShape;
   mutable std::map<std::string, std::vector<int64_t>> graph_input_shape_map;
@@ -66,12 +67,19 @@ class Flags : public virtual mindspore::lite::FlagParser {
   std::string dec_mode = "AES-GCM";
   std::string graphInputFormatStr;
   mindspore::Format graphInputFormat = mindspore::DEFAULT_FORMAT;
+  std::string graphOutputFormatStr;
+  mindspore::Format graphOutputFormat = mindspore::DEFAULT_FORMAT;
   std::string encKeyStr;
   std::string encMode = "AES-GCM";
   std::string inferStr;
   bool infer = false;
-  std::string exportMindIR;
-  ModelType export_mindir = kMindIR_Lite;
+  std::string saveTypeStr;
+#if defined(ENABLE_CLOUD_FUSION_INFERENCE) || defined(ENABLE_CLOUD_INFERENCE)
+  ModelType save_type = kMindIR;
+#else
+  ModelType save_type = kMindIR_Lite;
+#endif
+  std::string optimizeStr;
 #ifdef ENABLE_OPENSSL
   std::string encryptionStr = "true";
   bool encryption = true;
@@ -80,6 +88,9 @@ class Flags : public virtual mindspore::lite::FlagParser {
   bool encryption = false;
 #endif
   std::string device;
+  std::string chip_name;
+  std::string optimizeTransformerStr;
+  bool optimizeTransformer = false;
 };
 }  // namespace converter
 }  // namespace mindspore

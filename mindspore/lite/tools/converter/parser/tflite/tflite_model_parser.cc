@@ -20,6 +20,8 @@
 #include <memory>
 #include <algorithm>
 #include <utility>
+#include "mindspore/core/ops/lite_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "include/registry/node_parser_registry.h"
 #include "ops/primitive_c.h"
 #include "ir/func_graph.h"
@@ -207,7 +209,7 @@ api::FuncGraphPtr TfliteModelParser::Parse(const converter::ConverterParameters 
     ReturnCode::GetSingleReturnCode()->UpdateReturnCode(status);
     return nullptr;
   }
-  auto unify_format = std::make_shared<UnifyFormatToNHWC>(kFmkTypeTflite, false, flag.export_mindir);
+  auto unify_format = std::make_shared<UnifyFormatToNHWC>(kFmkTypeTflite, false, flag.save_type);
   MS_CHECK_TRUE_RET(unify_format != nullptr, nullptr);
   if (!unify_format->Run(func_graph)) {
     MS_LOG(ERROR) << "Run insert transpose failed.";
@@ -869,7 +871,7 @@ STATUS TfliteModelParser::ConvertOutputTensor(const std::unique_ptr<tflite::SubG
       MSLITE_CHECK_PTR(tuple_get_item_prim_c);
       auto tuple_get_item_prim = NewValueNode(tuple_get_item_prim_c);
       MSLITE_CHECK_PTR(tuple_get_item_prim);
-      auto get_item_value = NewValueNode(MakeValue<int>(op_idx));
+      auto get_item_value = NewValueNode(MakeValue<int64_t>(op_idx));
       MSLITE_CHECK_PTR(get_item_value);
       std::vector<AnfNodePtr> inputs{tuple_get_item_prim, dst_cnode, get_item_value};
       CNodePtr get_item_cnode = func_graph->NewCNode(inputs);

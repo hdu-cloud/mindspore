@@ -22,7 +22,10 @@
 #include <memory>
 #include <functional>
 #include <set>
-#include "utils/ms_utils.h"
+#ifdef PLATFORM_86
+#include <pmmintrin.h>
+#include <xmmintrin.h>
+#endif
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 #include "mindspore/core/ops/lp_norm.h"
 #include "plugin/device/cpu/kernel/nnacl/op_base.h"
@@ -93,8 +96,12 @@ int LpNormCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::
   }
   // For Scalar Tensor, input shape is empty.
   auto input_shape = LongVecToSizeVec(inputs.at(kIndex0)->GetShapeVector());
+  is_null_input_ = CHECK_SHAPE_NULL(input_shape, kernel_name_, "input shape");
+  if (is_null_input_) {
+    return KRET_OK;
+  }
   is_scalar_input_ = input_shape.empty();
-  if (is_scalar_input_ || is_p_zero_) {
+  if (is_scalar_input_) {
     return KRET_OK;
   }
   is_scalar_input_ = false;
@@ -137,28 +144,29 @@ bool LpNormCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inp
   auto template_one = static_cast<T>(1);
   auto template_zero = static_cast<T>(0);
   if (is_scalar_input_) {
-    *output = is_p_zero_ ? template_one : input[0];
-    return true;
-  }
-  // If p equal to zero, we reset output to one and sum it, which means (x)^0 == (1)^1.
-  // This is an abnormal scenario, it's performance will be a little slow, but acceptable.
-  if (is_p_zero_) {
-    auto output_size = outputs.at(kIndex0)->size;
-    auto input_size = inputs.at(kIndex0)->size;
-    auto one_sum = static_cast<T>(input_size / output_size);
-    std::fill(output, output + output_size / sizeof(T), one_sum);
+    *output = is_p_zero_ ? template_one : std::abs(input[0]);
     return true;
   }
   bool is_parallel = input_elements_ > kGrainSize;
   size_t thread_num = is_parallel ? std::min(input_elements_, pool_->GetKernelThreadNum()) : 1;
   std::vector<std::pair<size_t, T>> reduce_buffer(thread_num, {0, template_zero});
-  CTask reduce_task = [this, &input, &output, &reduce_buffer, &thread_num, &template_zero](size_t start, size_t end) {
+  CTask reduce_task = [this, &input, &output, &reduce_buffer, &thread_num, &template_zero, &template_one](size_t start,
+                                                                                                          size_t end) {
+#ifdef PLATFORM_86
+    // Small value should be reserved, or else the value scaling brought by 'pow' will cause precision loss
+    _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_OFF);
+    _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_OFF);
+#endif
     auto stride_per_thread = UP_DIV(input_elements_, thread_num);
     size_t task_id = (start / stride_per_thread);
     T acc = template_zero;
     for (size_t i = start; i < end; ++i) {
       size_t physical_index = physical_indexes_[i];
-      acc += std::pow(std::abs(input[physical_index]), p_);
+      if (!is_p_zero_) {
+        acc += std::pow(std::abs(input[physical_index]), p_);
+      } else if (input[physical_index] != template_zero) {
+        acc += template_one;
+      }
       if ((i + 1) % reduce_size_ == 0) {
         output[i / reduce_size_] = acc;
         acc = template_zero;
@@ -168,11 +176,23 @@ bool LpNormCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inp
         reduce_buffer[task_id] = {i, acc};
       }
     }
+#ifdef PLATFORM_86
+    _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
+    _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
+#endif
   };
   CTask combine_task = [this, &output](size_t start, size_t end) {
+#ifdef PLATFORM_86
+    _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_OFF);
+    _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_OFF);
+#endif
     for (size_t i = start; i < end; ++i) {
       output[i] = std::max(std::pow(output[i], 1 / p_), epsilon_);
     }
+#ifdef PLATFORM_86
+    _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
+    _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
+#endif
   };
   if (is_parallel) {
     ParallelLaunch(reduce_task, input_elements_, 0, this, pool_);
@@ -180,11 +200,15 @@ bool LpNormCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inp
       size_t output_index = buffer.first / reduce_size_;
       output[output_index] += buffer.second;
     }
-    ParallelLaunch(combine_task, input_elements_ / reduce_size_, 0, this, pool_);
+    if (!is_p_zero_) {
+      ParallelLaunch(combine_task, input_elements_ / reduce_size_, 0, this, pool_);
+    }
     return true;
   }
   reduce_task(0, input_elements_);
-  combine_task(0, input_elements_ / reduce_size_);
+  if (!is_p_zero_) {
+    combine_task(0, input_elements_ / reduce_size_);
+  }
   return true;
 }
 

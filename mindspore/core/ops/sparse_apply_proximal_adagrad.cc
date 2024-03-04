@@ -15,11 +15,14 @@
  */
 
 #include <algorithm>
+#include <map>
 #include <set>
-#include "ops/sparse_apply_proximal_adagrad.h"
+
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_name.h"
+#include "ops/sparse_apply_proximal_adagrad.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,9 +34,9 @@ void SparseApplyProximalAdagradCheckTensorShapeAndSize(const ShapeVector &var_sh
   auto is_dynamic = std::any_of(check_shapes.begin(), check_shapes.end(), IsDynamic);
   auto is_dynamic_rank = std::any_of(check_shapes.begin(), check_shapes.end(), IsDynamicRank);
   // Var dimension must be equal or greater than 1.
-  (void)CheckAndConvertUtils::CheckInteger("var dimension", var_shape.size(), kGreaterEqual, 1, prim_name);
+  (void)CheckAndConvertUtils::CheckInteger("var dimension", SizeToLong(var_shape.size()), kGreaterEqual, 1, prim_name);
   // Indices must be rank 1.
-  (void)CheckAndConvertUtils::CheckInteger("indices dimension", indices_shape.size(), kEqual, 1, prim_name);
+  (void)CheckAndConvertUtils::CheckInteger("indices dimension", SizeToLong(indices_shape.size()), kEqual, 1, prim_name);
 
   if (!is_dynamic_rank) {
     if (var_shape.size() != accum_shape.size()) {
@@ -86,10 +89,13 @@ abstract::TupleShapePtr SparseApplyProximalAdagradInferShape(const PrimitivePtr 
   SparseApplyProximalAdagradCheckTensorShapeAndSize(var_shape, accum_shape, grad_shape, indices_shape, prim_name);
 
   if (!(IsDynamic(lr_shape) || IsDynamic(l1_shape) || IsDynamic(l2_shape))) {
-    const size_t scalar_shape = 0;
-    (void)CheckAndConvertUtils::CheckInteger("lr_shape size", lr_shape.size(), kEqual, scalar_shape, prim_name);
-    (void)CheckAndConvertUtils::CheckInteger("l1_shape size", l1_shape.size(), kEqual, scalar_shape, prim_name);
-    (void)CheckAndConvertUtils::CheckInteger("l2_shape size", l2_shape.size(), kEqual, scalar_shape, prim_name);
+    const int64_t scalar_shape = 0;
+    (void)CheckAndConvertUtils::CheckInteger("lr_shape size", SizeToLong(lr_shape.size()), kEqual, scalar_shape,
+                                             prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("l1_shape size", SizeToLong(l1_shape.size()), kEqual, scalar_shape,
+                                             prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("l2_shape size", SizeToLong(l2_shape.size()), kEqual, scalar_shape,
+                                             prim_name);
   }
 
   abstract::ShapePtr var_shape_ptr = std::make_shared<abstract::Shape>(var_shape);
@@ -149,7 +155,25 @@ AbstractBasePtr SparseApplyProximalAdagradInfer(const abstract::AnalysisEnginePt
 }
 
 MIND_API_OPERATOR_IMPL(SparseApplyProximalAdagrad, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseApplyProximalAdagrad, prim::kPrimSparseApplyProximalAdagrad,
-                             SparseApplyProximalAdagradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSparseApplyProximalAdagradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseApplyProximalAdagradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseApplyProximalAdagradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseApplyProximalAdagradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseApplyProximalAdagrad, prim::kPrimSparseApplyProximalAdagrad,
+                                 AGSparseApplyProximalAdagradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

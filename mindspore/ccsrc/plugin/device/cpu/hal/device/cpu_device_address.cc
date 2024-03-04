@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,9 @@
 #include <memory>
 #include "runtime/device/convert_tensor_utils.h"
 #include "plugin/device/cpu/hal/hardware/cpu_memory_pool.h"
+#include "plugin/device/cpu/hal/device/cpu_hash_table_util.h"
 #ifndef ENABLE_SECURITY
-#include "debug/data_dump/dump_json_parser.h"
+#include "include/backend/debug/data_dump/dump_json_parser.h"
 #endif
 
 namespace mindspore {
@@ -45,10 +46,34 @@ bool CopySameTypeMem(void *dst_ptr, size_t dst_size, const void *src_ptr, size_t
     return true;
   }
 }
-}  // namespace
-CPUDeviceAddress::~CPUDeviceAddress() { DoClearDeviceMemory(); }
 
-void CPUDeviceAddress::DoClearDeviceMemory() {
+// Synchronize user data from host to device.
+bool SyncUserDataToDevice(const UserDataPtr &user_data, const void *host_ptr, size_t size) {
+  MS_EXCEPTION_IF_NULL(user_data);
+  MS_EXCEPTION_IF_NULL(host_ptr);
+  const auto &user_data_type = user_data->get<UserDataType>(kUserDataType);
+  MS_EXCEPTION_IF_NULL(user_data_type);
+
+  if (*user_data_type == UserDataType::kUserTypeHashTable) {
+    auto key_type = user_data->get<TypeId>(kHashTableKeyType);
+    auto value_type = user_data->get<TypeId>(kHashTableValueType);
+    MS_EXCEPTION_IF_NULL(key_type);
+    MS_EXCEPTION_IF_NULL(value_type);
+    const auto &iter = cpu_hash_table_funcs.find({*key_type, *value_type});
+    if (iter != cpu_hash_table_funcs.end()) {
+      // Import key, value, status tensors to CPU hash table.
+      return std::get<kImportFuncIndex>(iter->second)(user_data, host_ptr, size);
+    } else {
+      MS_LOG(EXCEPTION) << "Unsupported hash table type, key type:" << TypeIdLabel(*key_type)
+                        << ", value type:" << TypeIdLabel(*value_type);
+    }
+  }
+  return true;
+}
+}  // namespace
+CPUDeviceAddress::~CPUDeviceAddress() { ClearDeviceMemory(); }
+
+void CPUDeviceAddress::ClearDeviceMemory() {
   if (ptr_ == nullptr) {
     return;
   }
@@ -58,7 +83,28 @@ void CPUDeviceAddress::DoClearDeviceMemory() {
   }
 }
 
-void CPUDeviceAddress::ClearDeviceMemory() { DoClearDeviceMemory(); }
+void CPUDeviceAddress::ClearUserData() {
+  if (user_data_ == nullptr) {
+    return;
+  }
+  auto user_data_type = user_data_->get<UserDataType>(kUserDataType);
+  if (user_data_type == nullptr) {
+    return;
+  }
+  if (*user_data_type == UserDataType::kUserTypeHashTable) {
+    auto key_type = user_data_->get<TypeId>(kHashTableKeyType);
+    auto value_type = user_data_->get<TypeId>(kHashTableValueType);
+    MS_EXCEPTION_IF_NULL(key_type);
+    MS_EXCEPTION_IF_NULL(value_type);
+    const auto &iter = cpu_hash_table_funcs.find({*key_type, *value_type});
+    if (iter != cpu_hash_table_funcs.end()) {
+      // Clear CPU hash table.
+      return std::get<kClearFuncIndex>(iter->second)(user_data_);
+    } else {
+      MS_LOG(EXCEPTION) << "Unsupported hash table type:" << *key_type << " and:" << *value_type;
+    }
+  }
+}
 
 bool CPUDeviceAddress::DumpMemToFile(const std::string &filepath, const std::string &, const ShapeVector &host_shape,
                                      TypeId host_type, bool) const {
@@ -70,6 +116,10 @@ bool CPUDeviceAddress::DumpMemToFile(const std::string &filepath, const std::str
   }
   std::string path = filepath + '.' + format_;
   MS_LOG(DEBUG) << "E2E Dump path is " << path;
+  if (size_ == 0) {
+    MS_LOG(INFO) << "Data size is 0 for file: " << path << ", no need to dump.";
+    return true;
+  }
   ret = DumpJsonParser::DumpToFile(path, ptr_, size_, host_shape, host_type);
 #endif
   return ret;
@@ -81,10 +131,7 @@ bool CPUDeviceAddress::SyncDeviceToHost(const ShapeVector &, size_t size, TypeId
     MS_LOG(INFO) << "No need sync, host size: " << size << ", device size: " << size_;
     return true;
   }
-  if (ptr_ == nullptr) {
-    MS_LOG(ERROR) << "The pointer ptr_ is null!";
-    return false;
-  }
+  MS_EXCEPTION_IF_NULL(ptr_);
   if (host_ptr == ptr_) {
     MS_LOG(DEBUG) << "host_ptr is equal to ptr_, request ignored.";
     return true;
@@ -117,7 +164,7 @@ bool CPUDeviceAddress::SyncDeviceToHost(const ShapeVector &, size_t size, TypeId
     IntToLong(host_ptr, ptr_, size / sizeof(int64_t));
   } else {
     MS_LOG(ERROR) << "Types not match. Device type: " << TypeIdLabel(type_id_) << ", host type: " << TypeIdLabel(type)
-                  << "!";
+                  << " device_address:" << this << " !";
     return false;
   }
   return true;
@@ -125,6 +172,10 @@ bool CPUDeviceAddress::SyncDeviceToHost(const ShapeVector &, size_t size, TypeId
 
 bool CPUDeviceAddress::SyncHostToDevice(const ShapeVector &, size_t size, TypeId type, const void *host_ptr,
                                         const std::string &) const {
+  if (user_data_ != nullptr && user_data_->has(kUserDataType)) {
+    return SyncUserDataToDevice(user_data_, host_ptr, size);
+  }
+
   // The input or output may be empty.
   if ((size == 0) || (size_ == 0)) {
     MS_LOG(INFO) << "No need sync, host size: " << size << ", device size: " << size_;
@@ -147,12 +198,13 @@ bool CPUDeviceAddress::SyncHostToDevice(const ShapeVector &, size_t size, TypeId
 
     // If the value of host is a scalar type, then the host addr is a temporary address, which will be released after
     // the sync ends. Therefore, if the value is a string type or whose length is less than 16, it needs to be copied.
-#ifndef __APPLE__
     const size_t kCopySize = 16;
     if (size <= kCopySize || type == kObjectTypeString) {
       return ((memcpy_s(ptr_, size, host_ptr, size) != EOK) ? false : true);
     }
-#endif
+    if (is_view_) {
+      return CopySameTypeMem(ptr_, size, host_ptr, size, type);
+    }
 
     // Use the tensor host ptr to set the device ptr.
     if (from_mem_pool_) {
@@ -182,34 +234,48 @@ bool CPUDeviceAddress::SyncDeviceToDevice(const DeviceSync *src_device_addr) con
   MS_EXCEPTION_IF_NULL(src_device_addr);
   auto src_cpu_device = dynamic_cast<const CPUDeviceAddress *>(src_device_addr);
   MS_EXCEPTION_IF_NULL(src_cpu_device);
-  auto src_size = src_cpu_device->GetSize();
-  auto src_ptr = src_cpu_device->GetMutablePtr();
-  auto src_type = src_cpu_device->type_id();
+  return SyncDeviceToDevice(src_cpu_device->host_shape(), src_cpu_device->GetSize(), src_cpu_device->type_id(),
+                            src_cpu_device->GetPtr(), src_cpu_device->format());
+}
 
-  // The input or output may be empty.
-  if ((src_size == 0) || (size_ == 0)) {
-    MS_LOG(INFO) << "No need sync, src device size: " << src_size << ", dst device size: " << size_;
+bool CPUDeviceAddress::SyncDeviceToDevice(const ShapeVector &, size_t size, TypeId type, const void *src_ptr,
+                                          const std::string &format) const {
+  MS_LOG(DEBUG) << "SyncDeviceToDevice, dst(format:" << format_ << ", type_id:" << TypeIdLabel(type_id_)
+                << ", size:" << size_ << "), src(format:" << format << ", type_id:" << TypeIdLabel(type)
+                << ", size:" << size << ")";
+  if (ptr_ == src_ptr) {
+    MS_LOG(INFO) << "Dst addr is same with src addr, no need memcpy data.";
     return true;
   }
+  // The input or output may be empty.
+  if ((size == 0) || (size_ == 0)) {
+    MS_LOG(INFO) << "No need sync, src device size: " << size << ", dst device size: " << size_;
+    return true;
+  }
+  if (format_ != format) {
+    MS_LOG(ERROR) << "Format is different, src(format:" << format << "), dst(format:" << format_ << ").";
+    return false;
+  }
+
   MS_EXCEPTION_IF_NULL(src_ptr);
   MS_EXCEPTION_IF_NULL(ptr_);
-  if (src_type == type_id_) {
-    return CopySameTypeMem(ptr_, size_, src_ptr, src_size, src_type);
-  } else if (type_id_ == kNumberTypeFloat32 && src_type == kNumberTypeFloat16) {
-    HalfToFloat(ptr_, src_ptr, src_size >> 1);
-  } else if (type_id_ == kNumberTypeFloat16 && src_type == kNumberTypeFloat32) {
-    FloatToHalf(ptr_, src_ptr, src_size / sizeof(float));
-  } else if (type_id_ == kNumberTypeFloat32 && src_type == kNumberTypeFloat64) {
-    DoubleToFloat(ptr_, src_ptr, src_size / sizeof(double));
-  } else if (type_id_ == kNumberTypeFloat64 && src_type == kNumberTypeFloat32) {
-    FloatToDouble(ptr_, src_ptr, src_size / sizeof(float));
-  } else if (type_id_ == kNumberTypeInt64 && src_type == kNumberTypeInt32) {
-    IntToLong(ptr_, src_ptr, src_size / sizeof(int32_t));
-  } else if (type_id_ == kNumberTypeInt32 && src_type == kNumberTypeInt64) {
-    LongToInt(ptr_, src_ptr, src_size / sizeof(int64_t));
+  if (type == type_id_) {
+    return CopySameTypeMem(ptr_, size, src_ptr, size, type);
+  } else if (type_id_ == kNumberTypeFloat32 && type == kNumberTypeFloat16) {
+    HalfToFloat(ptr_, src_ptr, size >> 1);
+  } else if (type_id_ == kNumberTypeFloat16 && type == kNumberTypeFloat32) {
+    FloatToHalf(ptr_, src_ptr, size / sizeof(float));
+  } else if (type_id_ == kNumberTypeFloat32 && type == kNumberTypeFloat64) {
+    DoubleToFloat(ptr_, src_ptr, size / sizeof(double));
+  } else if (type_id_ == kNumberTypeFloat64 && type == kNumberTypeFloat32) {
+    FloatToDouble(ptr_, src_ptr, size / sizeof(float));
+  } else if (type_id_ == kNumberTypeInt64 && type == kNumberTypeInt32) {
+    IntToLong(ptr_, src_ptr, size / sizeof(int32_t));
+  } else if (type_id_ == kNumberTypeInt32 && type == kNumberTypeInt64) {
+    LongToInt(ptr_, src_ptr, size / sizeof(int64_t));
   } else {
-    MS_LOG(ERROR) << "Types not match. Device type: " << TypeIdLabel(type_id_)
-                  << ", host type: " << TypeIdLabel(src_type) << "!";
+    MS_LOG(ERROR) << "Types not match. Device type: " << TypeIdLabel(type_id_) << ", host type: " << TypeIdLabel(type)
+                  << "!";
     return false;
   }
   return true;

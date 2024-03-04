@@ -45,7 +45,7 @@ bool CholeskyInverseGpuKernelMod::Init(const BaseOperatorPtr &base_operator, con
     uplo_ = CUBLAS_FILL_MODE_UPPER;
   }
   handle_ = device::gpu::GPUDeviceManager::GetInstance().GetCusolverDnHandle();
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
 
   return true;
 }
@@ -121,11 +121,15 @@ bool CholeskyInverseGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &in
   } else {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', the data type entered must be float or double.";
   }
+  cudaError_t status = cudaErrorNotReady;
   if (upper_) {
-    CalCopyUpToLow(output_elements_, input, rank_, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+    status =
+      CalCopyUpToLow(output_elements_, input, rank_, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
   } else {
-    CalCopyLowToUp(output_elements_, input, rank_, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+    status =
+      CalCopyLowToUp(output_elements_, input, rank_, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
   }
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return True;
 }
 std::vector<std::pair<KernelAttr, CholeskyInverseGpuKernelMod::CIfunc>> CholeskyInverseGpuKernelMod::func_list_ = {
@@ -140,6 +144,5 @@ std::vector<KernelAttr> CholeskyInverseGpuKernelMod::GetOpSupport() {
                        [](const std::pair<KernelAttr, CIfunc> &pair) { return pair.first; });
   return support_list;
 }
-MS_KERNEL_FACTORY_REG(NativeGpuKernelMod, CholeskyInverse, CholeskyInverseGpuKernelMod);
 }  // namespace kernel
 }  // namespace mindspore

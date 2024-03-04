@@ -29,9 +29,9 @@
 #include <regex>
 #include <iomanip>
 #include "pybind11/stl.h"
-#ifdef ONLINE_DBG_MODE
+#ifndef OFFLINE_DBG_MODE
 #include "include/common/debug/common.h"
-#include "debug/debugger/debugger.h"
+#include "include/backend/debug/debugger/debugger.h"
 #include "include/common/debug/anf_dump_utils.h"
 #include "include/common/utils/anfalgo.h"
 #endif
@@ -39,6 +39,7 @@
 #include "nlohmann/json.hpp"
 #include "debug/debugger/tensor_summary.h"
 #include "utils/file_utils.h"
+#include "include/backend/anf_runtime_algorithm.h"
 
 namespace mindspore {
 namespace {
@@ -307,9 +308,8 @@ void DebugServices::AddWatchPointsToCheck(bool init_dbg_suspend, bool step_end, 
     // if recheck, ignore the cache results and reanalyze everything.
     // if not a recheck, check only unanalyzed tensors
     if (!recheck) {
-      wp_lock_.lock();
+      std::lock_guard<std::mutex> lg(wp_lock_);
       bool wp_cache_hit = wp_id_cache_[tensor_name].count(wp.id);
-      wp_lock_.unlock();
       if (wp_cache_hit) {
         continue;
       }
@@ -331,9 +331,8 @@ void DebugServices::AddAnalyzedTensorToCache(const bool recheck, const unsigned 
                                              const std::string &tensor_name) {
   // add analyzed tensor to cache
   if (!recheck) {
-    wp_lock_.lock();
+    std::lock_guard<std::mutex> lg(wp_lock_);
     (void)wp_id_cache_[tensor_name].insert(id);
-    wp_lock_.unlock();
   }
 }
 
@@ -415,7 +414,7 @@ void DebugServices::SetTensorToNotInUse(const std::shared_ptr<TensorData> &tenso
 }
 #endif
 
-#ifdef ONLINE_DBG_MODE
+#ifndef OFFLINE_DBG_MODE
 /*
  * Feature group: Online debugger.
  * Target device group: Ascend, GPU.
@@ -428,6 +427,7 @@ void DebugServices::SetTensorToNotInUse(const std::shared_ptr<TensorData> &tenso
  */
 bool DebugServices::CompareCurrentRootGraph(uint32_t id) const {
   auto debugger = Debugger::GetInstance();
+  MS_EXCEPTION_IF_NULL(debugger);
   auto ms_context = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(ms_context);
   std::string device_target = ms_context->get_param<std::string>(MS_CTX_DEVICE_TARGET);
@@ -450,7 +450,9 @@ bool DebugServices::CompareCurrentRootGraph(uint32_t id) const {
  */
 const void *DebugServices::PreparePrevTensor(uint64_t *prev_num_elements, const std::string &tensor_name) {
   std::shared_ptr<TensorData> prev_tensor_data;
-  if (!CompareCurrentRootGraph(Debugger::GetInstance()->GetPrevRootGraphId())) {
+  auto debugger = Debugger::GetInstance();
+  MS_EXCEPTION_IF_NULL(debugger);
+  if (!CompareCurrentRootGraph(debugger->GetPrevRootGraphId())) {
     // not supporting watchpoints that need prev tensor for multi root graph networks.
     MS_LOG(DEBUG) << "Previous root graph is different from current root graph, setting prev_tensor to nullptr.";
     prev_tensor_data = nullptr;
@@ -703,7 +705,7 @@ void DebugServices::SortWatchpointsInfo(std::vector<std::future<void>> *const te
     (*tensor_future_vec)[i].wait();
     (*tensor_future_vec)[i].get();
     for (unsigned int j = 0; j < (chunk_data->chunk_exec_orders)[i].size(); j++) {
-#ifdef ONLINE_DBG_MODE
+#ifndef OFFLINE_DBG_MODE
       // if the execution order is repeated,inserts the new one before the others with same execution order.
       std::vector<int>::iterator iter =
         std::lower_bound(exec_order->begin(), exec_order->end(), (chunk_data->chunk_exec_orders)[i][j]);
@@ -1759,11 +1761,12 @@ void DebugServices::ReadNodesTensors(const std::vector<std::string> &name, std::
     if (std::get<1>(result) == nullptr) {
       continue;
     }
-#ifdef ONLINE_DBG_MODE
+#ifndef OFFLINE_DBG_MODE
+    auto debugger = Debugger::GetInstance();
+    MS_EXCEPTION_IF_NULL(debugger);
     if (!CompareCurrentRootGraph(std::get<1>(result)->GetRootGraphId())) {
       MS_LOG(INFO) << "tensor root_graph_id: " << std::get<1>(result)->GetRootGraphId()
-                   << " is different from cur_root_graph_id: " << Debugger::GetInstance()->GetCurrentRootGraphId()
-                   << ".";
+                   << " is different from cur_root_graph_id: " << debugger->GetCurrentRootGraphId() << ".";
       MS_LOG(INFO) << "Not reading tensor: " << std::get<0>(result) << ".";
     }
 #endif
@@ -1784,7 +1787,7 @@ void DebugServices::SearchNodesTensors(const std::vector<std::string> &name,
   tensor_loader_->SearchTensors(name, result_list);
 }
 
-#ifdef ONLINE_DBG_MODE
+#ifndef OFFLINE_DBG_MODE
 bool DebugServices::IsWatchPoint(const std::string &kernel_name, const CNodePtr &kernel) const {
   bool ret = false;
   for (auto w_table_item : watchpoint_table_) {
@@ -1829,7 +1832,7 @@ std::shared_ptr<TensorData> DebugServices::GetTensor(const std::string &tensor_n
 
 void DebugServices::EmptyCurrentTensor() { tensor_loader_->EmptyCurrentTensor(); }
 
-#ifdef ONLINE_DBG_MODE
+#ifndef OFFLINE_DBG_MODE
 bool DebugServices::DumpTensorToFile(const std::string &filepath, const std::string &tensor_name, size_t slot) const {
   return tensor_loader_->DumpTensorToFile(filepath, tensor_name, slot);
 }
@@ -1883,11 +1886,11 @@ void DebugServices::ResetLoadedTensors() {
   overflow_ops_.clear();
 }
 
-#ifdef ONLINE_DBG_MODE
+#ifndef OFFLINE_DBG_MODE
 std::vector<std::shared_ptr<TensorData>> DebugServices::GetNodeTensor(const CNodePtr &kernel) {
   MS_EXCEPTION_IF_NULL(kernel);
   std::vector<std::shared_ptr<TensorData>> result;
-  auto output_size = common::AnfAlgo::GetOutputTensorNum(kernel);
+  auto output_size = AnfAlgo::GetOutputTensorNum(kernel);
   auto kernel_name = GetKernelNodeName(kernel);
   for (size_t j = 0; j < output_size; ++j) {
     auto tensor_name_with_slot = kernel_name + ":" + std::to_string(j);
@@ -1904,7 +1907,7 @@ std::string GetOnlineOpOverflowDir() {
   // only called for online debugger mode
   // get operator overflow directory for current iteration
   std::string overflow_bin_path = "";
-#ifdef ONLINE_DBG_MODE
+#ifndef OFFLINE_DBG_MODE
   if (DumpJsonParser::GetInstance().path().empty()) {
     MS_LOG(INFO) << "Dump config is not set.";
     return "";
@@ -1926,23 +1929,55 @@ std::string GetOnlineOpOverflowDir() {
   return overflow_bin_path;
 }
 
-void DebugServices::AddOpOverflowOpNames(const std::string &overflow_bin_path,
-                                         std::vector<std::string> *op_names) const {
-  MS_EXCEPTION_IF_NULL(op_names);
-  std::map<std::pair<uint64_t, uint64_t>, std::string> task_stream_to_opname;
-  std::vector<std::pair<uint64_t, uint64_t>> task_stream_hit;
+void DebugServices::GetOverflowTaskStreamId(const std::string &overflow_bin_path,
+                                            std::vector<std::pair<uint64_t, uint64_t>> *task_stream_hits) const {
+  MS_EXCEPTION_IF_NULL(task_stream_hits);
   const std::string overflow_file_prefix = "Opdebug.Node_OpDebug.";
-
-  MS_LOG(INFO) << "Processing bin file path " << overflow_bin_path;
-
+  MS_LOG(INFO) << "Processing debug_files path: " << overflow_bin_path;
   DIR *d = opendir(overflow_bin_path.c_str());
   if (d == nullptr) {
-    MS_LOG(INFO) << "OverFlow bin directory does not exist!";
+    MS_LOG(INFO) << "Overflow bin directory does not exist!";
   } else {
     struct dirent *dir = nullptr;
     while ((dir = readdir(d)) != nullptr) {
       std::string file_name = dir->d_name;
+      if (file_name.rfind(overflow_file_prefix, 0) != 0) {
+        continue;
+      }
       std::string file_path = overflow_bin_path + std::string("/") + file_name;
+      if (IsRegFile(file_path)) {
+        // detect overflow bin file
+        uint64_t task_id = 0;
+        uint64_t stream_id = 0;
+        if (!GetTaskIdStreamId(file_name, overflow_file_prefix, &task_id, &stream_id)) {
+          continue;
+        }
+        MS_LOG(INFO) << "Overflow bin file" << file_name << ", task_id " << task_id << ", stream_id " << stream_id
+                     << ".";
+        task_stream_hits->push_back(std::make_pair(task_id, stream_id));
+      }
+    }
+    (void)closedir(d);
+  }
+}
+
+void DebugServices::GetTaskStreamIdNodeMap(
+  const std::string &tensors_path, std::map<std::pair<uint64_t, uint64_t>, std::string> *task_stream_to_opnames) const {
+  MS_EXCEPTION_IF_NULL(task_stream_to_opnames);
+  MS_LOG(INFO) << "Processing debug_files path: " << tensors_path;
+  const std::string overflow_file_prefix = "Opdebug.Node_OpDebug.";
+  DIR *d = opendir(tensors_path.c_str());
+  if (d == nullptr) {
+    MS_LOG(INFO) << "Tensors directory does not exist!";
+  } else {
+    struct dirent *dir = nullptr;
+    while ((dir = readdir(d)) != nullptr) {
+      std::string file_name = dir->d_name;
+      if (file_name.rfind(overflow_file_prefix, 0) == 0) {
+        MS_LOG(INFO) << "File: " << file_name << "is not a tensor file, skip it.";
+        continue;
+      }
+      std::string file_path = tensors_path + std::string("/") + file_name;
       if (IsRegFile(file_path)) {
         // attempt to read the file
         std::ifstream infile;
@@ -1951,30 +1986,28 @@ void DebugServices::AddOpOverflowOpNames(const std::string &overflow_bin_path,
           MS_LOG(ERROR) << "Failed to open overflow bin file " << file_name << " Errno:" << errno;
           continue;
         }
-
         std::string node_name;
         uint64_t task_id = 0;
         uint64_t stream_id = 0;
-        // detect overflow bin file
-        if (file_name.rfind(overflow_file_prefix, 0) == 0) {
-          if (!GetTaskIdStreamId(file_name, overflow_file_prefix, &task_id, &stream_id)) {
-            continue;
-          }
-          MS_LOG(INFO) << "Overflow bin file " << file_name << ", task_id " << task_id << ", stream_id " << stream_id
-                       << ".";
-          task_stream_hit.push_back(std::make_pair(task_id, stream_id));
-        } else {
-          // regular bin file or npy file
-          bool success_parse = GetAttrsFromFilename(file_name, &node_name, &task_id, &stream_id);
-          if (success_parse) {
-            task_stream_to_opname[std::make_pair(task_id, stream_id)] = node_name;
-          }
+        // detect overflow bin file, regular bin file or npy file
+        bool success_parse = GetAttrsFromFilename(file_name, &node_name, &task_id, &stream_id);
+        if (success_parse) {
+          task_stream_to_opnames->insert({std::make_pair(task_id, stream_id), node_name});
         }
         infile.close();
       }
     }
     (void)closedir(d);
   }
+}
+
+void DebugServices::AddOpOverflowOpNames(const std::string &overflow_bin_path, const std::string &tensors_path,
+                                         std::vector<std::string> *op_names) const {
+  MS_EXCEPTION_IF_NULL(op_names);
+  std::map<std::pair<uint64_t, uint64_t>, std::string> task_stream_to_opname;
+  std::vector<std::pair<uint64_t, uint64_t>> task_stream_hit;
+  GetOverflowTaskStreamId(overflow_bin_path, &task_stream_hit);
+  GetTaskStreamIdNodeMap(tensors_path, &task_stream_to_opname);
 
   // find the op_names with an overflow hit
   for (auto &task_stream : task_stream_hit) {
@@ -1999,15 +2032,24 @@ bool DebugServices::CheckOpOverflow(std::string node_name_to_find, unsigned int 
     return false;
   }
   std::string overflow_bin_path = "";
-#ifdef ONLINE_DBG_MODE
+  std::string tensors_path = "";
+#ifndef OFFLINE_DBG_MODE
   overflow_bin_path = GetOnlineOpOverflowDir();
+  tensors_path = overflow_bin_path;
 #else
-  overflow_bin_path = dump_dir_ + "/rank_" + std::to_string(device_id) + "/" + net_name_ + "/" +
-                      std::to_string(root_graph_id) + "/" + IterationString(iteration) + "/";
+  overflow_bin_path =
+    dump_dir_ + "/rank_" + std::to_string(device_id) + "/debug_files/" + IterationString(iteration) + "/";
   overflow_bin_path = RealPath(overflow_bin_path);
-#endif
+  MS_LOG(INFO) << "overflow_bin_path: " << overflow_bin_path;
+  tensors_path = dump_dir_ + "/rank_" + std::to_string(device_id) + "/" + net_name_ + "/" +
+                 std::to_string(root_graph_id) + "/" + IterationString(iteration) + "/";
+  tensors_path = RealPath(tensors_path);
   if (overflow_bin_path.empty()) {
-    MS_LOG(INFO) << "Get real path failed for overflow_bin_path.";
+    overflow_bin_path = tensors_path;
+  }
+#endif
+  if (overflow_bin_path.empty() || tensors_path.empty()) {
+    MS_LOG(INFO) << "Get real path failed for overflow_bin_path or tensors path.";
     return false;
   }
   // remove kernel_graph_#
@@ -2024,19 +2066,16 @@ bool DebugServices::CheckOpOverflow(std::string node_name_to_find, unsigned int 
   std::replace(node_name_to_find.begin(), node_name_to_find.end(), '/', '_');
   std::vector<std::string> op_names;
 
-  overflow_wp_lock_.lock();
-
+  std::lock_guard<std::mutex> lg(overflow_wp_lock_);
   MS_LOG(INFO) << "Searching for overflow in node " << node_name_to_find;
   auto found_overflows = overflow_ops_.find(overflow_bin_path);
   if (found_overflows != overflow_ops_.end()) {
     MS_LOG(INFO) << "Found already computed overflows for " << overflow_bin_path;
     op_names = overflow_ops_[overflow_bin_path];
   } else {
-    AddOpOverflowOpNames(overflow_bin_path, &op_names);
+    AddOpOverflowOpNames(overflow_bin_path, tensors_path, &op_names);
     overflow_ops_[overflow_bin_path] = op_names;
   }
-
-  overflow_wp_lock_.unlock();
 
   // determine if overflow wp has been triggered for the op name with path (from bin file)
   if (find(op_names.begin(), op_names.end(), op_name_find_with_path) != op_names.end()) {

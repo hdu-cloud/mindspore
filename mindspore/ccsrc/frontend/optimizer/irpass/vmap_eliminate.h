@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "frontend/optimizer/optimizer.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "frontend/optimizer/irpass.h"
 #include "frontend/optimizer/anf_visitor.h"
 #include "utils/ms_utils.h"
@@ -42,21 +43,33 @@ class ExpandVmapPrim : public ExpandMetaFgPrim {
   virtual ~ExpandVmapPrim() = default;
   bool operator()(const FuncGraphPtr &func_graph, const OptimizerPtr &optimizer) override;
   bool CheckIfEmbedMetaFgPrim(const CNodePtr &node) const override;
+
+ private:
+  using VisitedHashSetPair = std::pair<mindspore::HashSet<FuncGraphPtr>, mindspore::HashSet<AnfNodePtr>>;
+  void ExpandVmapValueNode(const FuncGraphPtr &vmap_fg, const pipeline::ResourceBasePtr &resource,
+                           VisitedHashSetPair *visited_pair, int axis_size);
+  void ExpandVmapFreeVariable(const FuncGraphPtr &vmap_fg, const FuncGraphManagerPtr &manager,
+                              const mindspore::HashSet<AnfNodePtr> &visited_node);
+  void ExpandVmapPartialInputs(const FuncGraphPtr &vmap_fg, const FuncGraphManagerPtr &manager,
+                               const mindspore::HashSet<AnfNodePtr> &visited_node);
+  FuncGraphPtr ExpandVmapFuncGraph(const FuncGraphPtr &vmap_fg, const pipeline::ResourceBasePtr &resource,
+                                   int axis_size, VisitedHashSetPair *visited_pair);
+  // Entry to perform Vmap transformation.
+  AnfNodePtr ExpandVmap(const ValueNodePtr &vnode, const pipeline::ResourceBasePtr &resource, int axis_size);
+  AnfNodePtr BindInAxis(const CNodePtr &vmap_app, const AnfNodePtrList &partial_inputs, const ValuePtr &in_axes,
+                        size_t *u_monad_offset, size_t *io_monad_offset);
+  AnfNodePtr PostProcessVmap(const AnfNodePtr &expanded_vmap_node, const AnfNodePtrList &partial_inputs,
+                             const std::vector<size_t> &orig_fg_param_info, const ValuePtr &out_axes, int axis_size);
+
+  FuncGraphPtr top_func_graph_{nullptr};
+  // Record the stacked parameters, and the corresponding origin parameters from each cell, preserved
+  // for future feedback.
+  ParamMappingVector param_mapping_table_;
+  mindspore::HashMap<std::string, ParameterPtr> stacked_params_;
+  // The pre-lifted parameters in partial inputs.
+  AnfNodePtrList partial_inputs_;
 };
 using ExpandVmapPrimPtr = std::shared_ptr<ExpandVmapPrim>;
-namespace internal {
-constexpr int64_t kParamSizeIndex = 0;
-constexpr int64_t kUMonadOffsetIndex = 1;
-constexpr int64_t kIOMonadOffsetIndex = 2;
-using VisitedHashSetPair = std::pair<mindspore::HashSet<FuncGraphPtr>, mindspore::HashSet<AnfNodePtr>>;
-constexpr char kVmapFunctionModelName[] = "mindspore.ops._vmap";
-
-int GetAxisSizeByAbs(const AbstractBasePtr &abs, ValuePtr *const in_axes);
-
-FuncGraphPtr ExpandVmapFunctor(const FuncGraphPtr &vmap_fg, const pipeline::ResourceBasePtr &resource, int axis_size,
-                               VisitedHashSetPair *visited_pair,
-                               mindspore::HashMap<std::string, ParameterPtr> *stacked_params = nullptr);
-}  // namespace internal
 }  // namespace irpass
 }  // namespace opt
 }  // namespace mindspore

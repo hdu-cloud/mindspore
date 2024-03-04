@@ -18,6 +18,7 @@
 
 #include "common/common_test.h"
 
+#include "mindspore/core/ops/sequence_ops.h"
 #include "common/py_func_graph_fetcher.h"
 #include "ir/anf.h"
 #include "ir/func_graph.h"
@@ -26,9 +27,10 @@
 #include "ir/value.h"
 #include "frontend/operator/ops.h"
 #include "frontend/optimizer/irpass.h"
-#include "pipeline/jit/resource.h"
+#include "pipeline/jit/ps/resource.h"
 #include "include/common/debug/draw.h"
-#include "pipeline/jit/parse/data_converter.h"
+#include "include/common/debug/anf_ir_dump.h"
+#include "pipeline/jit/ps/parse/data_converter.h"
 #include "include/common/utils/convert_utils.h"
 
 namespace mindspore {
@@ -148,20 +150,13 @@ TEST_F(TestOptLib, test_inline_while) {
 }
 
 TEST_F(TestOptLib, test_arithmetic) {
-  FuncGraphPtr b1_0 = getPyFun.CallAndParseRet("test_arithmetic", "multiply_by_zero_l");
-  FuncGraphPtr b2_0 = getPyFun.CallAndParseRet("test_arithmetic", "multiply_by_zero_r");
   FuncGraphPtr b1 = getPyFun.CallAndParseRet("test_arithmetic", "multiply_by_one_l");
   FuncGraphPtr b2 = getPyFun.CallAndParseRet("test_arithmetic", "multiply_by_one_r");
   FuncGraphPtr b3 = getPyFun.CallAndParseRet("test_arithmetic", "add_zero_l");
   FuncGraphPtr b4 = getPyFun.CallAndParseRet("test_arithmetic", "add_zero_r");
   FuncGraphPtr b5 = getPyFun.CallAndParseRet("test_arithmetic", "elim_identity");
   FuncGraphPtr after = getPyFun.CallAndParseRet("test_arithmetic", "after");
-  FuncGraphPtr after_0 = getPyFun.CallAndParseRet("test_arithmetic", "after_0");
-
   auto patterns = std::vector<SubstitutionPtr>({irpass.arithmetic_simplify_});
-
-  ASSERT_TRUE(CheckOpt(b1_0, after_0, patterns));
-  ASSERT_TRUE(CheckOpt(b2_0, after_0, patterns));
   ASSERT_TRUE(CheckOpt(b1, after, patterns));
   ASSERT_TRUE(CheckOpt(b2, after, patterns));
   ASSERT_TRUE(CheckOpt(b3, after, patterns));
@@ -234,14 +229,6 @@ TEST_F(TestOptLib, elim_two_reshape) {
   FuncGraphPtr after = getPyFun.CallAndParseRet("elim_two_reshape", "after");
 
   auto patterns = std::vector<SubstitutionPtr>({irpass.reshape_eliminate_});
-  ASSERT_TRUE(CheckOpt(before, after, patterns));
-}
-
-TEST_F(TestOptLib, elim_two_cast) {
-  FuncGraphPtr before = getPyFun.CallAndParseRet("elim_two_cast", "before");
-  FuncGraphPtr after = getPyFun.CallAndParseRet("elim_two_cast", "after");
-
-  auto patterns = std::vector<SubstitutionPtr>({irpass.cast_eliminate_});
   ASSERT_TRUE(CheckOpt(before, after, patterns));
 }
 

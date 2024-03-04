@@ -22,7 +22,9 @@
 #include <set>
 #include <string>
 #include <vector>
-#include "backend/common/optimizer/optimizer.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "include/backend/optimizer/optimizer.h"
 #include "include/errorcode.h"
 #include "ir/func_graph.h"
 #include "tools/lite_exporter/anf_exporter.h"
@@ -59,7 +61,7 @@ void CloneGraphInputs(const FuncGraphPtr &origin, const FuncGraphPtr &mirror, No
 }
 
 AnfNodePtr CloneParameterAndValueNode(const CNodePtr &cnode, size_t index, const FuncGraphPtr &mirror_graph,
-                                      const std::shared_ptr<ConverterPara> &param) {
+                                      const FuncGraphManagerPtr &manager, const std::shared_ptr<ConverterPara> &param) {
   MS_ASSERT(cnode != nullptr && mirror_graph != nullptr);
   MS_CHECK_TRUE_RET(index < cnode->size(), nullptr);
   auto node = cnode->input(index);
@@ -100,7 +102,7 @@ AnfNodePtr CloneParameterAndValueNode(const CNodePtr &cnode, size_t index, const
     return nullptr;
   }
   if (opt::CheckPrimitiveType(cnode, prim::kPrimTupleGetItem) && data_info.data_.size() >= sizeof(int)) {
-    return NewValueNode(MakeValue<int>(*reinterpret_cast<int *>(data_info.data_.data())));
+    return NewValueNode(MakeValue<int64_t>(*reinterpret_cast<int *>(data_info.data_.data())));
   }
   ShapeVector shape_vec(data_info.shape_.begin(), data_info.shape_.end());
   if (data_info.data_type_ == kObjectTypeTensorType) {
@@ -126,6 +128,7 @@ AnfNodePtr CloneParameterAndValueNode(const CNodePtr &cnode, size_t index, const
       return nullptr;
     }
   }
+  tensor_info->set_quant_param(data_info.quant_params_);
   auto mirror_parameter = mirror_graph->add_parameter();
   MS_CHECK_TRUE_RET(mirror_parameter != nullptr, nullptr);
 
@@ -181,6 +184,8 @@ FuncGraphPtr CloneFuncGraph(const FuncGraphPtr &graph, const std::shared_ptr<Con
   NodesMap mirror_nodes;
   CloneGraphInputs(graph, mirror_graph, &origin_nodes, &mirror_nodes);
   auto node_list = TopoSort(graph->get_return());
+  auto manager = graph->manager();
+  MS_CHECK_TRUE_RET(manager != nullptr, nullptr);
   for (auto &node : node_list) {
     if (!utils::isa<mindspore::CNode>(node)) {
       continue;
@@ -208,7 +213,7 @@ FuncGraphPtr CloneFuncGraph(const FuncGraphPtr &graph, const std::shared_ptr<Con
           auto mirror_sub_graph = CloneFuncGraph(sub_func_graph, param, cloned_func_graph);
           mirror_input = NewValueNode(mirror_sub_graph);
         } else {
-          mirror_input = CloneParameterAndValueNode(cnode, i, mirror_graph, param);
+          mirror_input = CloneParameterAndValueNode(cnode, i, mirror_graph, manager, param);
         }
         if (mirror_input == nullptr) {
           MS_LOG(ERROR) << "node input cannot be found.";
@@ -223,6 +228,12 @@ FuncGraphPtr CloneFuncGraph(const FuncGraphPtr &graph, const std::shared_ptr<Con
       mirror_prim == nullptr ? mirror_graph->NewCNode(node_inputs) : mirror_graph->NewCNode(mirror_prim, node_inputs);
     MS_CHECK_TRUE_RET(mirror_cnode != nullptr, nullptr);
     mirror_cnode->set_fullname_with_scope(cnode->fullname_with_scope());
+    auto primitive = GetValueNode<PrimitivePtr>(cnode->input(0));
+    MS_CHECK_TRUE_RET(primitive != nullptr, nullptr);
+    auto quant_type_valueptr = primitive->GetAttr(quant::kQuantType);
+    if (quant_type_valueptr != nullptr) {
+      mirror_cnode->AddAttr(quant::kQuantType, quant_type_valueptr);
+    }
     if (cnode->abstract() != nullptr) {
       mirror_cnode->set_abstract(cnode->abstract()->Clone());
     }

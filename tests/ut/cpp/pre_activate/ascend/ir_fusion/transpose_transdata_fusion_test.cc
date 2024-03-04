@@ -16,8 +16,8 @@
 
 #include "common/backend_common_test.h"
 #include "common/py_func_graph_fetcher.h"
-#include "runtime/device/kernel_info.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/kernel_info.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "kernel/oplib/oplib.h"
 #include "utils/ms_context.h"
 #include "include/common/utils/anfalgo.h"
@@ -31,6 +31,10 @@
 
 namespace mindspore {
 namespace opt {
+namespace {
+constexpr auto kPatternElemWise = "ElemWise";
+}
+
 using KernelBuildInfoBuilder = kernel::KernelBuildInfo::KernelBuildInfoBuilder;
 class TestHWTransposeTransdataFusion : public BackendCommon {
  public:
@@ -52,7 +56,7 @@ TEST_F(TestHWTransposeTransdataFusion, test_transpose_transdata_fusion) {
   ms_context->set_param<int>(MS_CTX_EXECUTION_MODE, kGraphMode);
   FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_transpose_transdata_fusion", "before");
   std::vector<int64_t> shp{2, 4, 8, 16};
-  auto x_abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, shp);
+  auto x_abstract = std::make_shared<abstract::AbstractTensor>(kFloat16, shp);
   AbstractBasePtrList args_spec_list{x_abstract};
   auto kg = GetKernelGraph(g, args_spec_list);
 
@@ -70,8 +74,10 @@ TEST_F(TestHWTransposeTransdataFusion, test_transpose_transdata_fusion) {
   builder.SetOutputsFormat({"NC1HWC0"});
   builder.SetOutputsDeviceType({kFloat16->type_id()});
   builder.SetKernelType(KernelType::TBE_KERNEL);
-  builder.SetFusionType(kernel::FusionType::ELEMWISE);
+  builder.SetFusionType(kPatternElemWise);
   builder.SetProcessor(kernel::Processor::AICORE);
+  builder.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR});
+  builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
   auto kernel_info = std::make_shared<device::KernelInfo>();
   kernel_info->set_select_kernel_build_info(builder.Build());
   transpose->set_kernel_info(kernel_info);
@@ -95,6 +101,10 @@ TEST_F(TestHWTransposeTransdataFusion, test_transpose_transdata_fusion) {
       builder2.SetOutputsDeviceType({kFloat16->type_id()});
       builder2.SetInputsReshapeType({""});
       builder2.SetOutputsReshapeType({""});
+      builder2.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR});
+      builder2.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
+      builder2.SetKernelType(KernelType::TBE_KERNEL);
+      builder2.SetProcessor(kernel::Processor::AICORE);
       AnfAlgo::SetSelectKernelBuildInfo(builder2.Build(), node.get());
     }
   }

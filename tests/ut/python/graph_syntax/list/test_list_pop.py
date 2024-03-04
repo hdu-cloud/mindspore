@@ -1,4 +1,4 @@
-# Copyright 2022 Huawei Technologies Co., Ltd
+# Copyright 2022-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,9 +13,11 @@
 # limitations under the License.
 # ============================================================================
 """ test list pop operation """
+import os
 import pytest
 import numpy as np
-from mindspore import jit, context, Tensor
+import mindspore as ms
+from mindspore import jit, context, Tensor, nn
 
 context.set_context(mode=context.GRAPH_MODE)
 
@@ -32,9 +34,11 @@ def test_list_pop_1():
         y = x.pop()
         return x, y
 
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     res_x, res_y = list_pop()
-    assert np.all(res_x == (1, 2, 3))
+    assert np.all(res_x == [1, 2, 3])
     assert res_y == 4
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_list_pop_2():
@@ -49,9 +53,11 @@ def test_list_pop_2():
         y = x.pop(-2)
         return x, y
 
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     res_x, res_y = list_pop()
-    assert np.all(res_x == (1, 2, 4))
+    assert np.all(res_x == [1, 2, 4])
     assert res_y == 3
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_list_pop_3():
@@ -66,9 +72,11 @@ def test_list_pop_3():
         y = x.pop(1)
         return x, y
 
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     res_x, res_y = list_pop()
-    assert np.all(res_x == (1, 3, 4))
+    assert np.all(res_x == [1, 3, 4])
     assert res_y == 2
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_list_pop_4():
@@ -83,10 +91,12 @@ def test_list_pop_4():
         y = x.pop(4)
         return x, y
 
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     with pytest.raises(IndexError, match="The pop index out of range."):
         res_x, res_y = list_pop()
         print("res_x:", res_x)
         print("res_y:", res_y)
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_list_pop_5():
@@ -101,10 +111,12 @@ def test_list_pop_5():
         y = x.pop(-5)
         return x, y
 
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     with pytest.raises(IndexError, match="The pop index out of range."):
         res_x, res_y = list_insert()
         print("res_x:", res_x)
         print("res_y:", res_y)
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_list_pop_6():
@@ -119,10 +131,12 @@ def test_list_pop_6():
         y = x.pop()
         return x, y
 
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     with pytest.raises(IndexError, match="The pop index out of range."):
         res_x, res_y = list_insert()
         print("res_x:", res_x)
         print("res_y:", res_y)
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_list_pop_7():
@@ -139,10 +153,12 @@ def test_list_pop_7():
         y2 = x2.pop(2)
         return x1, x2, y1 + y2
 
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     res_x1, res_x2, res_y = list_pop()
-    assert np.all(res_x1 == (1, 3, 4))
-    assert np.all(res_x2 == (5, 6, 8))
+    assert np.all(res_x1 == [1, 3, 4])
+    assert np.all(res_x2 == [5, 6, 8])
     assert res_y == 9
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_list_pop_8():
@@ -157,9 +173,11 @@ def test_list_pop_8():
         y = x.pop(index)
         return x, y
 
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     res_x, res_y = list_pop(2)
-    assert res_x == (Tensor([1]), Tensor([2]))
+    assert res_x == [Tensor([1]), Tensor([2])]
     assert res_y == Tensor([3])
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_list_pop_9():
@@ -173,10 +191,12 @@ def test_list_pop_9():
         y = x.pop(index)
         return x, y
 
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     input_x = [Tensor([1]), Tensor([2]), Tensor([3])]
     res_x, res_y = list_pop(input_x, 2)
-    assert res_x == (Tensor([1]), Tensor([2]))
+    assert res_x == [Tensor([1]), Tensor([2])]
     assert res_y == Tensor([3])
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_list_pop_type_error():
@@ -191,7 +211,32 @@ def test_list_pop_type_error():
         x.pop(1.0)
         return x
 
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     with pytest.raises(TypeError) as error_info:
         res = list_pop()
         print("res:", res)
-    assert "Integer argument expected, but got FP32Imm type value: 1.000000" in str(error_info)
+    assert "Integer argument expected, but got FP32Imm type value: 1" in str(error_info)
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
+
+
+def test_list_pop_no_return():
+    """
+    Feature: list pop has no return.
+    Description: support list pop.
+    Expectation: No exception.
+    """
+    class Net(nn.Cell):
+        def construct(self, x):
+            shp1 = x.shape
+            shp1 = list(shp1)
+            shp1.insert(2, 3)
+            shp1.pop()
+            return shp1
+
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
+    net = Net()
+    np1 = np.random.randint(6, size=(2, 4, 3, 4, 5))
+    data1 = Tensor(np1, dtype=ms.float32)
+    out = net(data1)
+    assert out == [2, 4, 3, 3, 4]
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'

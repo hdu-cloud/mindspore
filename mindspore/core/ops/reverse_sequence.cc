@@ -14,13 +14,32 @@
  * limitations under the License.
  */
 
+#include <algorithm>
+#include <memory>
 #include <set>
 #include <vector>
-#include <memory>
-#include "ops/reverse_sequence.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "ops/reverse_sequence.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -108,6 +127,24 @@ AbstractBasePtr ReverseSequenceInfer(const abstract::AnalysisEnginePtr &, const 
   auto infer_shape = ReverseSequenceInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(ReverseSequence, prim::kPrimReverseSequence, ReverseSequenceInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGReverseSequenceInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ReverseSequenceInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ReverseSequenceInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ReverseSequenceInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ReverseSequence, prim::kPrimReverseSequence, AGReverseSequenceInfer, false);
 }  // namespace ops
 }  // namespace mindspore

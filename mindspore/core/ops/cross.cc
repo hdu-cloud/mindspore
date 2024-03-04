@@ -15,15 +15,33 @@
  */
 
 #include "ops/cross.h"
-#include <string>
-#include <algorithm>
+
 #include <memory>
 #include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -93,7 +111,7 @@ abstract::ShapePtr CrossInferShape(const PrimitivePtr &primitive, const std::vec
 
   int64_t default_dim = -65530;
   CheckAndUpdateDim(primitive, x1_shape, default_dim, &dim);
-
+  primitive->set_attr("dim", MakeValue(dim));
   int64_t dim_size = 3;
   if (x1_shape[LongToSize(dim)] != dim_size && x2_shape[LongToSize(dim)] != dim_size && dim != default_dim) {
     MS_EXCEPTION(ValueError) << "For '" << primitive->name() << "', the size of inputs dim must be 3, but got "
@@ -139,6 +157,23 @@ int64_t Cross::get_dim() const {
   return GetValue<int64_t>(value_ptr);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(Cross, prim::kPrimCross, CrossInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGCrossInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return CrossInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return CrossInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return CrossInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Cross, prim::kPrimCross, AGCrossInfer, false);
 }  // namespace ops
 }  // namespace mindspore

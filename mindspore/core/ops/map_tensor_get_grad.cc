@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,18 +14,26 @@
  * limitations under the License.
  */
 #include "ops/map_tensor_get_grad.h"
-#include <vector>
+
 #include <memory>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "ir/anf.h"
 #include "mindapi/src/helper.h"
-#include "utils/ms_utils.h"
+#include "mindspore/core/ops/sparse_tensor_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 MIND_API_OPERATOR_IMPL(MapTensorGetGrad, BaseOperator);
-AbstractBasePtr MapTensorGetGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                      const std::vector<AbstractBasePtr> &input_args) {
+
+AbstractBasePtr MapTensorGetGradInferInner(const PrimitivePtr &primitive,
+                                           const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   // Check number of arguments.
   constexpr int64_t input_num = 3;
@@ -40,6 +48,45 @@ AbstractBasePtr MapTensorGetGradInfer(const abstract::AnalysisEnginePtr &, const
   // Grad map tensor has same abstract with the input map tensor.
   return abs_map_tensor->Broaden();
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(MapTensorGetGrad, prim::kPrimMapTensorGetGrad, MapTensorGetGradInfer, nullptr, true);
+
+abstract::ShapePtr MapTensorGetGradInferShape(const PrimitivePtr &prim,
+                                              const std::vector<AbstractBasePtr> &input_args) {
+  auto abs = MapTensorGetGradInferInner(prim, input_args);
+  auto map_tensor_abs = abs->cast_ptr<abstract::AbstractMapTensor>();
+  MS_EXCEPTION_IF_NULL(map_tensor_abs);
+  return map_tensor_abs->shape();
+}
+
+TypePtr MapTensorGetGradInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  auto abs = MapTensorGetGradInferInner(prim, input_args);
+  auto map_tensor_abs = abs->cast_ptr<abstract::AbstractMapTensor>();
+  MS_EXCEPTION_IF_NULL(map_tensor_abs);
+  return map_tensor_abs->BuildType();
+}
+
+AbstractBasePtr MapTensorGetGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                      const std::vector<AbstractBasePtr> &input_args) {
+  return MapTensorGetGradInferInner(primitive, input_args);
+}
+
+// AG means auto generated
+class MIND_API AGMapTensorGetGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MapTensorGetGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MapTensorGetGradInferType(primitive, input_args);
+  }
+
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MapTensorGetGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MapTensorGetGrad, prim::kPrimMapTensorGetGrad, AGMapTensorGetGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

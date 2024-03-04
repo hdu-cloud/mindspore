@@ -24,7 +24,7 @@ import java.util.logging.Logger;
  * @since v1.0
  */
 public class Version {
-    private static final Logger LOGGER = MindsporeLite.GetLogger();
+    private static final Logger LOGGER = Logger.getLogger(Version.class.toString());
     static {
         LOGGER.info("Version init ...");
         init();
@@ -37,9 +37,8 @@ public class Version {
         LOGGER.info("Version init load ...");
         try {
             NativeLibrary.load();
-        } catch (Exception e) {
+        } catch (UnsatisfiedLinkError e) {
             LOGGER.severe("Failed to load MindSporLite native library.");
-            throw e;
         }
     }
 

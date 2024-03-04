@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2022 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -106,9 +106,11 @@ enum class DATASET_API ManualOffloadMode {
 
 /// \brief Target devices to perform map operation.
 enum class DATASET_API MapTargetDevice {
-  kCpu,       ///< CPU Device.
-  kGpu,       ///< Gpu Device.
-  kAscend310  ///< Ascend310 Device.
+  kCpu = 0,     ///< CPU Device.
+  kGpu,         ///< Gpu Device.
+  kAscend310,   ///< Ascend310 Device.
+  kAscend910B,  ///< Ascend910B Device.
+  kInvalid = 100
 };
 
 /// \brief Possible options for mel_type in MelscaleFbanks.
@@ -269,13 +271,6 @@ enum class DATASET_API SamplingStrategy {
   kEdgeWeight = 1  ///< Sampling with edge weight as probability.
 };
 
-/// \brief Possible values for output format in get all neighbors function of gnn dataset
-enum class DATASET_API OutputFormat {
-  kNormal = 0,  ///< Normal format.
-  kCoo = 1,     ///< COO format.
-  kCsr = 2      ///< CSR format.
-};
-
 /// \brief Possible options for fade shape.
 enum class DATASET_API FadeShape {
   kLinear = 0,       ///< Fade shape is linear mode.
@@ -289,6 +284,13 @@ enum class DATASET_API FadeShape {
 enum class DATASET_API ResampleMethod {
   kSincInterpolation = 0,  ///< Resample audio by sinc interpolation method
   kKaiserWindow = 1,       ///< Resample audio by Kaiser window
+};
+
+/// \brief Possible configuration methods for processing error samples.
+enum class DATASET_API ErrorSamplesMode {
+  kReturn = 0,   ///< Erroneous sample results in error raised and returned
+  kReplace = 1,  ///< Erroneous sample is replaced with an internally determined sample
+  kSkip = 2      ///< Erroneous sample is skipped
 };
 
 /// \brief Convenience function to check bitmask for a 32bit int
@@ -358,5 +360,4 @@ using row_id_type = int64_t;
 constexpr uint32_t kCfgAutoTuneInterval = 0;  // default number of steps
 }  // namespace dataset
 }  // namespace mindspore
-
 #endif  // MINDSPORE_CCSRC_MINDDATA_DATASET_INCLUDE_DATASET_CONSTANTS_H_

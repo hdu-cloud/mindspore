@@ -18,6 +18,8 @@
 #define MINDSPORE_CCSRC_FRONTEND_OPTIMIZER_IRPASS_RECOMPUTE_PREPARE_H_
 
 #include "utils/hash_set.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "frontend/optimizer/irpass.h"
 #include "frontend/optimizer/optimizer.h"
 #include "frontend/optimizer/anf_visitor.h"
@@ -30,6 +32,9 @@ namespace irpass {
 class SetCellOutputNoRecompute : public AnfVisitor {
  public:
   AnfNodePtr operator()(const OptimizerPtr &, const AnfNodePtr &node) override {
+    auto context = MsContext::GetInstance();
+    MS_EXCEPTION_IF_NULL(context);
+    const auto no_cell_reuse = context->CellReuseLevel() == CellReuseLevel::kNoCellReuse;
     if (!IsValueNode<FuncGraph>(node)) {
       return nullptr;
     }
@@ -53,7 +58,10 @@ class SetCellOutputNoRecompute : public AnfVisitor {
       }
       for (const auto &real_output : real_outputs) {
         // Set the attr of cnode in case of shared primitives.
-        real_output->AddAttr(kAttrRecompute, MakeValue(false));
+        if (no_cell_reuse) {
+          real_output->AddAttr(kAttrRecompute, MakeValue(false));
+        }
+
         if (parallel::ParallelContext::GetInstance()->parallel_mode() == parallel::kSemiAutoParallel ||
             parallel::ParallelContext::GetInstance()->parallel_mode() == parallel::kAutoParallel) {
           auto prim = GetCNodePrimitive(real_output);
@@ -63,7 +71,9 @@ class SetCellOutputNoRecompute : public AnfVisitor {
         }
       }
     }
-    fg->erase_flag(FUNC_GRAPH_OUTPUT_NO_RECOMPUTE);
+    if (no_cell_reuse) {
+      fg->erase_flag(FUNC_GRAPH_OUTPUT_NO_RECOMPUTE);
+    }
     return nullptr;
   }
 

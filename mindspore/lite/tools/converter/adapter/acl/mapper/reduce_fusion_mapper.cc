@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,10 +28,12 @@
 #include "ops/reduce_max.h"
 #include "ops/reduce_min.h"
 #include "ops/reduce_all.h"
+#include "ops/lp_norm.h"
 
 namespace mindspore {
 namespace lite {
 namespace {
+constexpr auto kNameReduceMinInputNum = 2;
 constexpr auto kNameReduceInputNum = 3;
 }  // namespace
 
@@ -61,8 +63,42 @@ STATUS ReduceFusionMapper::Mapper(const CNodePtr &cnode) {
   } else if (mode == static_cast<int64_t>(ReduceMode::Reduce_All)) {
     ops::ReduceAll reduce_all;
     dst_prim = reduce_all.GetPrim();
+  } else if (mode == static_cast<int64_t>(ReduceMode::Reduce_L2)) {
+    ops::LpNorm lp_norm_op;
+    auto axes_ptr = src_prim->GetAttr(ops::kAxes);
+    if (axes_ptr != nullptr) {
+      auto axes = GetValue<std::vector<int32_t>>(axes_ptr);
+      std::vector<int64_t> axes_vec;
+      std::transform(axes.begin(), axes.end(), std::back_inserter(axes_vec),
+                     [](int32_t x) { return static_cast<int64_t>(x); });
+      lp_norm_op.set_axis(axes_vec);
+    }
+    dst_prim = lp_norm_op.GetPrim();
+  } else if (mode == static_cast<int64_t>(ReduceMode::Reduce_L1)) {
+    ops::LpNorm lp_norm_op;
+    auto axes_ptr = src_prim->GetAttr(ops::kAxes);
+    if (axes_ptr != nullptr) {
+      auto axes = GetValue<std::vector<int32_t>>(axes_ptr);
+      std::vector<int64_t> axes_vec;
+      std::transform(axes.begin(), axes.end(), std::back_inserter(axes_vec),
+                     [](int32_t x) { return static_cast<int64_t>(x); });
+      lp_norm_op.set_axis(axes_vec);
+    }
+    auto keep_dims_ptr = src_prim->GetAttr(ops::kKeepDims);
+    if (keep_dims_ptr != nullptr) {
+      auto keep_dims = GetValue<bool>(keep_dims_ptr);
+      lp_norm_op.set_keep_dims(keep_dims);
+    }
+    lp_norm_op.set_p(1);
+    dst_prim = lp_norm_op.GetPrim();
+  } else if (mode == static_cast<int64_t>(ReduceMode::Reduce_Prod)) {
+    dst_prim = std::make_shared<acl::DynamicReduceProd>();
+  } else if (mode == static_cast<int64_t>(ReduceMode::Reduce_Log_Sum)) {
+    dst_prim = std::make_shared<acl::ReduceLogSum>();
+  } else if (mode == static_cast<int64_t>(ReduceMode::Reduce_Log_Sum_Exp)) {
+    dst_prim = std::make_shared<acl::ReduceLogSumExp>();
   } else {
-    MS_LOG(ERROR) << "Not support reuce mode " << static_cast<int64_t>(mode);
+    MS_LOG(ERROR) << "Not support reduce mode " << static_cast<int64_t>(mode);
     return RET_ERROR;
   }
   CHECK_NULL_RETURN(dst_prim);
@@ -71,18 +107,42 @@ STATUS ReduceFusionMapper::Mapper(const CNodePtr &cnode) {
   if (mode == static_cast<int64_t>(ReduceMode::Reduce_Mean)) {
     return lite::RET_OK;
   }
-  if (AdjustInput(cnode) != RET_OK) {
+  if (AdjustInput(cnode, dst_prim) != RET_OK) {
     MS_LOG(ERROR) << "Adjust reduce input failed.";
     return lite::RET_ERROR;
   }
   return RET_OK;
 }
 
-STATUS ReduceFusionMapper::AdjustInput(const CNodePtr &cnode) {
-  if (cnode->size() != kNameReduceInputNum) {
-    MS_LOG(ERROR) << "Input size of reduce must be " << kNameReduceInputNum << ", real size: " << cnode->size();
-    return lite::RET_ERROR;
+STATUS ReduceFusionMapper::AdjustInput(const CNodePtr &cnode, const PrimitivePtr &prim) {
+  MS_ASSERT(cnode != nullptr && prim != nullptr);
+  auto attr_val = prim->GetAttr(ops::kMode);
+  CHECK_NULL_RETURN(attr_val);
+  int64_t mode = GetValue<int64_t>(attr_val);
+  if (cnode->size() == kNameReduceInputNum && mode == static_cast<int64_t>(ReduceMode::Reduce_Prod)) {
+    auto axes_ptr = prim->GetAttr(ops::kAxes);
+    if (axes_ptr != nullptr) {
+      auto axes = GetValue<std::vector<int32_t>>(axes_ptr);
+      if (axes.empty()) {
+        auto new_inputs = {cnode->input(0), cnode->input(1)};
+        cnode->set_inputs(new_inputs);
+      }
+    }
   }
+  if (cnode->size() == kNameReduceMinInputNum) {
+    auto func_graph = cnode->func_graph();
+    CHECK_NULL_RETURN(func_graph);
+    auto attr_name = mode != static_cast<int64_t>(ReduceMode::Reduce_Prod) ? ops::kAxes : ops::kKeepDims;
+    auto ret = mode != static_cast<int64_t>(ReduceMode::Reduce_Prod)
+                 ? AddIntVecAttrToInput(func_graph, cnode, prim, attr_name)
+                 : AddIntAttrToInput(func_graph, cnode, prim, attr_name, true);
+    if (ret != lite::RET_OK) {
+      MS_LOG(ERROR) << "Add attr " << attr_name << " failed for cnode: " << cnode->fullname_with_scope();
+      return lite::RET_ERROR;
+    }
+    return lite::RET_OK;
+  }
+
   auto axes_input = cnode->input(kNameReduceInputNum - 1);
   CHECK_NULL_RETURN(axes_input);
   if (!utils::isa<ParameterPtr>(axes_input)) {

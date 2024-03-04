@@ -52,7 +52,7 @@ def test_hypermap_value():
             super(Net, self).__init__()
             self.max = P.Maximum()
             self.min = P.Minimum()
-            self._list = [22, 66, 88, 111]
+            self._list = (22, 66, 88, 111)
 
         def construct(self):
             return map(lambda a: a + 1, self._list)
@@ -76,7 +76,7 @@ def test_hypermap_func_const():
             return x * x
 
         def construct(self):
-            _list = [self.double, self.triple, self.square]
+            _list = (self.double, self.triple, self.square)
             return map(lambda f: f(4), _list)
 
     net = NetMap()

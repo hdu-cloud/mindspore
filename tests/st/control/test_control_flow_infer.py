@@ -16,7 +16,7 @@ from mindspore.nn import Cell
 from mindspore.common import Tensor, dtype, Parameter
 import mindspore.ops.functional as F
 import numpy as np
-import pytest
+from tests.st.control.cases_register import case_register
 
 
 class Net(Cell):
@@ -54,9 +54,8 @@ class Net(Cell):
         return x + y
 
 
-@pytest.mark.level0
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.env_onecard
+@case_register.level0
+@case_register.target_gpu
 def test_can_not_be_operator_err():
     """
     Feature: Control flow.
@@ -71,3 +70,20 @@ def test_can_not_be_operator_err():
     grad_net = F.grad(net, grad_position=(0, 1))
     fgrad = grad_net(Tensor(x), Tensor(y))
     print('ms backward: ', fgrad)
+
+@case_register.level0
+@case_register.target_gpu
+def test_analysis_fail_ir():
+    """
+    Feature: Control flow analysis fail ir.
+    Description: Analysis fail ir
+    Expectation: Catch exception.
+    """
+    x = np.array([5, 5], np.float32)
+    y = np.array([3], np.float32)
+    net = Net()
+    try:
+        out = net(Tensor(x), Tensor(y))
+        print(out)
+    except ValueError as inst:
+        print("\nexception:\n", str(inst))

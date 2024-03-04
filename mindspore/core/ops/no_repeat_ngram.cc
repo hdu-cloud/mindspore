@@ -15,16 +15,33 @@
  */
 
 #include "ops/no_repeat_ngram.h"
-#include <string>
-#include <algorithm>
+
 #include <map>
+#include <memory>
 #include <set>
+#include <string>
 #include <vector>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -44,6 +61,9 @@ abstract::ShapePtr NoRepeatNGramInferShape(const PrimitivePtr &primitive,
   constexpr int64_t kIndex0 = 0;
   constexpr int64_t kIndex1 = 1;
   constexpr int64_t kIndex2 = 2;
+  if (input_args.size() < 2) {
+    MS_LOG(EXCEPTION) << "The size of input_args is expected to be `2`, but found " << input_args.size();
+  }
   auto state_shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape());
   auto state_shape = state_shape_map[kShape];
   auto log_shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->BuildShape());
@@ -51,10 +71,18 @@ abstract::ShapePtr NoRepeatNGramInferShape(const PrimitivePtr &primitive,
   if (IsDynamicRank(log_shape)) {
     return std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeRankAny}));
   }
+
   (void)CheckAndConvertUtils::CheckInteger("rank of state_seq", SizeToLong(state_shape.size()), kEqual, kShapeSize,
                                            prim_name);
   (void)CheckAndConvertUtils::CheckInteger("rank of log_probs", SizeToLong(log_shape.size()), kEqual, kShapeSize,
                                            prim_name);
+  if (IsDynamicShape(state_shape)) {
+    std::vector<int64_t> output_shape(state_shape.size(), -1);
+    return std::make_shared<abstract::Shape>(output_shape);
+  }
+  if (IsDynamicShape(log_shape)) {
+    return std::make_shared<abstract::Shape>(log_shape);
+  }
   (void)CheckAndConvertUtils::CheckValue("state_seq shape[0]", state_shape.at(kIndex0), kEqual, "log_probs shape[0]",
                                          log_shape.at(kIndex0), prim_name);
   (void)CheckAndConvertUtils::CheckValue("state_seq shape[1]", state_shape.at(kIndex1), kEqual, "log_probs shape[1]",
@@ -69,9 +97,8 @@ abstract::ShapePtr NoRepeatNGramInferShape(const PrimitivePtr &primitive,
 }
 TypePtr NoRepeatNGramInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(prim);
-  for (const auto &item : input_args) {
-    MS_EXCEPTION_IF_NULL(item);
-  }
+  const int64_t kInputsNum = 2;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputsNum, prim->name());
   std::map<std::string, TypePtr> seq_types;
   (void)seq_types.emplace("seq_type", input_args[0]->BuildType());
   (void)CheckAndConvertUtils::CheckTensorTypeSame(seq_types, {kInt32}, prim->name());
@@ -91,13 +118,28 @@ int64_t NoRepeatNGram::get_ngram() const { return GetValue<int64_t>(GetAttr(kNgr
 MIND_API_OPERATOR_IMPL(NoRepeatNGram, BaseOperator);
 AbstractBasePtr NoRepeatNGramInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                    const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  const int64_t kInputsNum = 2;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputsNum, primitive->name());
   auto type = NoRepeatNGramInferType(primitive, input_args);
   auto shape = NoRepeatNGramInferShape(primitive, input_args);
   return abstract::MakeAbstract(shape, type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(NoRepeatNGram, prim::kPrimNoRepeatNGram, NoRepeatNGramInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGNoRepeatNGramInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return NoRepeatNGramInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return NoRepeatNGramInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return NoRepeatNGramInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(NoRepeatNGram, prim::kPrimNoRepeatNGram, AGNoRepeatNGramInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -14,16 +14,32 @@
  * limitations under the License.
  */
 
-#include <set>
-#include <vector>
-#include <memory>
-#include <map>
-#include <string>
-
 #include "ops/ormqr.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,6 +49,9 @@ abstract::ShapePtr OrmqrInferShape(const PrimitivePtr &primitive, const std::vec
   const size_t kRowIndex = 2;
   const size_t kColIndex = 1;
   const size_t kTwo = 2;
+  MS_EXCEPTION_IF_NULL(primitive);
+  const int64_t input_num = 3;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
   auto left = GetValue<bool>(primitive->GetAttr(kAttrLeft));
   auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
   auto tau_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
@@ -44,29 +63,30 @@ abstract::ShapePtr OrmqrInferShape(const PrimitivePtr &primitive, const std::vec
   auto x_rank = x_shape.size();
   auto tau_rank = tau_shape.size();
   auto other_rank = other_shape.size();
-  (void)CheckAndConvertUtils::CheckInteger("x_rank", SizeToLong(x_rank), kGreaterEqual, kTwo, primitive->name());
-  (void)CheckAndConvertUtils::CheckInteger("other_rank", SizeToLong(other_rank), kGreaterEqual, kTwo,
+  (void)CheckAndConvertUtils::CheckInteger("x_rank", SizeToLong(x_rank), kGreaterEqual, SizeToLong(kTwo),
+                                           primitive->name());
+  (void)CheckAndConvertUtils::CheckInteger("other_rank", SizeToLong(other_rank), kGreaterEqual, SizeToLong(kTwo),
                                            primitive->name());
 
   if ((x_rank - kColIndex) != tau_rank) {
     MS_EXCEPTION(ValueError) << "For Ormqr,  tau should have one dimension less than x"
-                             << ", while rank of x is" << x_shape.size() << " and "
+                             << ", while rank of x is " << x_shape.size() << " and "
                              << "rank of tau is " << tau_shape.size() << ".";
   }
   if (x_rank != other_rank) {
     MS_EXCEPTION(ValueError) << "For Ormqr,  other should have same dimension with x"
-                             << ", while rank of x is" << x_shape.size() << " and "
+                             << ", while rank of x is " << x_shape.size() << " and "
                              << "rank of other is " << other_shape.size() << ".";
   }
   if (x_shape.size() > kInputNoBatch) {
     for (size_t i = 0; i < x_rank - kRowIndex; i++) {
       if (x_shape[i] != tau_shape[i]) {
         MS_EXCEPTION(ValueError) << "For Ormqr, tau.shape[:-2] must be equal to x.shape[:-2], but x.shape[" << i
-                                 << "] is " << x_shape[i] << ",and tau.shape[" << i << "] is " << tau_shape[i] << ".";
+                                 << "] is " << x_shape[i] << ", and tau.shape[" << i << "] is " << tau_shape[i] << ".";
       }
       if (x_shape[i] != other_shape[i]) {
         MS_EXCEPTION(ValueError) << "For Ormqr, other.shape[:-2] must be equal to x.shape[:-2], but x.shape[" << i
-                                 << "] is " << x_shape[i] << ",and other.shape[" << i << "] is " << other_shape[i]
+                                 << "] is " << x_shape[i] << ", and other.shape[" << i << "] is " << other_shape[i]
                                  << ".";
       }
     }
@@ -101,6 +121,9 @@ abstract::ShapePtr OrmqrInferShape(const PrimitivePtr &primitive, const std::vec
 TypePtr OrmqrInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
   const std::set<TypePtr> valid_types = {kFloat32, kFloat64, kComplex64, kComplex128};
   std::map<std::string, TypePtr> types;
+  MS_EXCEPTION_IF_NULL(prim);
+  const int64_t input_num = 3;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, prim->name());
   auto x_type = input_args[0]->BuildType();
   auto tau_type = input_args[kInputIndex1]->BuildType();
   auto other_type = input_args[kInputIndex2]->BuildType();
@@ -127,13 +150,28 @@ bool Ormqr::get_transpose() const { return GetValue<bool>(GetAttr(kAttrTranspose
 MIND_API_OPERATOR_IMPL(Ormqr, BaseOperator);
 AbstractBasePtr OrmqrInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                            const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  const int64_t input_num = 3;
-  (void)CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
   auto infer_type = OrmqrInferType(primitive, input_args);
   auto infer_shape = OrmqrInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Ormqr, prim::kPrimOrmqr, OrmqrInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGOrmqrInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return OrmqrInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return OrmqrInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return OrmqrInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Ormqr, prim::kPrimOrmqr, AGOrmqrInfer, false);
 }  // namespace ops
 }  // namespace mindspore

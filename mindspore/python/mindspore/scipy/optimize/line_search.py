@@ -14,6 +14,7 @@
 # ============================================================================
 """line search"""
 from typing import NamedTuple
+from mindspore import ops
 from ... import nn
 from ... import numpy as mnp
 from ...common import dtype as mstype
@@ -151,7 +152,7 @@ def _zoom(fn, a_low, phi_low, dphi_low, a_high, phi_high, dphi_high, phi_0, g_0,
         state["phi_high"] = mnp.where(j_to_high, phi_j, state["phi_high"])
         state["dphi_high"] = mnp.where(j_to_high, dphi_j, state["dphi_high"])
 
-        j_to_star = mnp.logical_not(j_to_high) and mnp.abs(dphi_j) <= -c2 * dphi_0
+        j_to_star = mnp.logical_not(j_to_high) and mnp.abs(dphi_j) <= ops.negative(ops.add(c2, Tensor(0))) * dphi_0
         state["done"] = j_to_star
         state["a_star"] = mnp.where(j_to_star, a_j, state["a_star"])
         state["phi_star"] = mnp.where(j_to_star, phi_j, state["phi_star"])
@@ -315,27 +316,27 @@ def line_search(f, xk, pk, jac=None, gfk=None, old_fval=None, old_old_fval=None,
             The function can be None if you want to use automatic credits.
         xk (Tensor): initial guess.
         pk (Tensor): direction to search in. Assumes the direction is a descent direction.
-        gfk (Tensor): initial value of value_and_gradient as position. Default: None.
-        old_fval (Tensor): The same as `gfk`. Default: None.
-        old_old_fval (Tensor): unused argument, only for scipy API compliance. Default: None.
-        c1 (float): Wolfe criteria constant, see ref. Default: 1e-4.
-        c2 (float): The same as `c1`. Default: 0.9.
-        maxiter (int): maximum number of iterations to search. Default: 20.
+        gfk (Tensor): initial value of value_and_gradient as position. Default: ``None`` .
+        old_fval (Tensor): The same as `gfk`. Default: ``None`` .
+        old_old_fval (Tensor): unused argument, only for scipy API compliance. Default: ``None`` .
+        c1 (float): Wolfe criteria constant, see ref. Default: ``1e-4`` .
+        c2 (float): The same as `c1`. Default: ``0.9`` .
+        maxiter (int): maximum number of iterations to search. Default: ``20`` .
 
     Returns:
         LineSearchResults, results of line search results.
 
     Supported Platforms:
-        ``CPU`` ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
         >>> import numpy as onp
         >>> from mindspore.scipy.optimize import line_search
-        >>> from mindspore.common import Tensor
+        >>> from mindspore import Tensor
         >>> x0 = Tensor(onp.ones(2).astype(onp.float32))
         >>> p0 = Tensor(onp.array([-1, -1]).astype(onp.float32))
         >>> def func(x):
-        >>>     return x[0] ** 2 - x[1] ** 3
+        ...     return x[0] ** 2 - x[1] ** 3
         >>> res = line_search(func, x0, p0)
         >>> print(res.a_k)
         1.0

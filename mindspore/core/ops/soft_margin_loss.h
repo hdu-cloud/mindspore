@@ -16,14 +16,14 @@
 
 #ifndef MINDSPORE_CORE_OPS_SOFT_MARGIN_LOSS_H_
 #define MINDSPORE_CORE_OPS_SOFT_MARGIN_LOSS_H_
-#include <memory>
 #include <map>
-#include <vector>
+#include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -46,8 +46,9 @@ class MIND_API SoftMarginLoss : public BaseOperator {
   std::string get_reduction() const;
 };
 
-abstract::AbstractBasePtr SoftMarginLossInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                              const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr SoftMarginLossInfer(const abstract::AnalysisEnginePtr &,
+                                                       const PrimitivePtr &primitive,
+                                                       const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

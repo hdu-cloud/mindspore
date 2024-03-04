@@ -43,8 +43,8 @@ bool SspaddmmGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std:
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  unit_indices_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  unit_values_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).first);
+  unit_indices_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  unit_values_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).dtype);
   return true;
 }
 
@@ -129,6 +129,10 @@ bool SspaddmmGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, c
   CHECK_CUDA_RET_WITH_ERROR_NOTRACE(
     cudaMemcpyAsync(x2.data(), x2_indices, sizeof(S) * x2_values_num_ * kNumTwo, cudaMemcpyDeviceToHost, stream),
     "For SspaddmmGpuKernelMod cudaMemcpyAsync x2_values Fail");
+  if (cudaStreamQuery(stream) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(stream),
+                                       "For 'SspaddmmGpuKernelMod', cuda Stream Sync Failed.");
+  }
 
   // cal y_shape
   x1_host_shape[0] = static_cast<int64_t>(x1_devicetohost_shape[0]);
@@ -157,11 +161,13 @@ bool SspaddmmGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, c
     "For SspaddmmGpuKernelMod cudaMemcpyAsync x1_shape failed.");
 
   // x1 + x2 @ x3_dense
-  CalSparseAddSparse(x1_indices, x1_values, x1_values_num_, y_indices, y_values, y_values_num_, beta, device_id_,
-                     stream);
+  auto status = CalSparseAddSparse(x1_indices, x1_values, x1_values_num_, y_indices, y_values, y_values_num_, beta,
+                                   device_id_, stream);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   // the result of x2 @ x3_dense will write to output directly
-  CalSparseMulDense(x2_indices, x2_values, x2_values_num_, x3_dense, y_indices, y_values, y_values_num_, x3_dense_col_,
-                    x1_values_num_, alpha, index, device_id_, stream);
+  status = CalSparseMulDense(x2_indices, x2_values, x2_values_num_, x3_dense, y_indices, y_values, y_values_num_,
+                             x3_dense_col_, x1_values_num_, alpha, index, device_id_, stream);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

@@ -28,7 +28,6 @@
 #include <vector>
 #include <type_traits>
 #include <algorithm>
-
 #include "utils/hash_map.h"
 #include "base/base.h"
 #include "ir/named.h"
@@ -56,16 +55,21 @@ class MS_CORE_API List final : public Object {
   ~List() override {}
   MS_DECLARE_PARENT(List, Object)
 
+  TypeId generic_type_id() const override { return kObjectTypeList; }
+  TypePtr DeepCopy() const override;
+  std::string ToReprString() const override { return "list_"; }
+  std::string ToString() const override { return DumpContent(false); }
+  std::string DumpText() const override { return DumpContent(true); }
+
   /// \brief Get type of List element.
   ///
   /// \param[in] dim Define the index of List element.
   /// \return TypePtr of List element.
   const TypePtr operator[](std::size_t dim) const;
 
-  TypeId generic_type_id() const override { return kObjectTypeList; }
-  TypePtr DeepCopy() const override;
   bool operator==(const Type &other) const override;
-  size_t hash() const override;
+
+  std::size_t hash() const override;
 
   /// \brief Get the number of elements in this List.
   ///
@@ -76,9 +80,11 @@ class MS_CORE_API List final : public Object {
   ///
   /// \return The elements of List object.
   TypePtrList elements() const { return elements_; }
-  std::string ToReprString() const override { return "list_"; }
-  std::string ToString() const override { return DumpContent(false); }
-  std::string DumpText() const override { return DumpContent(true); };
+
+  /// \brief Set the elements of List object.
+  ///
+  /// \param[in] elements Define the element types to be set.
+  void set_elements(TypePtrList &&elements) { elements_ = std::move(elements); }
 
   /// \brief Determine whether the list is dynamic length.
   ///
@@ -98,7 +104,7 @@ class MS_CORE_API List final : public Object {
   /// \brief Set the element type when the list is dynamic length.
   ///
   /// \param[in] dynamic_element_type type of element for dynamic length list.
-  void set_dynamic_element_type(TypePtr dynamic_element_type);
+  void set_dynamic_element_type(const TypePtr &dynamic_element_type);
 
  private:
   /// \brief Show each element.
@@ -147,12 +153,17 @@ class MS_CORE_API Tuple final : public Object {
 
   bool operator==(const Type &other) const override;
 
-  size_t hash() const override;
+  std::size_t hash() const override;
 
   /// \brief Get the elements of the Tuple object.
   ///
   /// \return The elements of the Tuple object.
   TypePtrList elements() const { return elements_; }
+
+  /// \brief Set the elements of Tuple object.
+  ///
+  /// \param[in] elements Define the element types to be set.
+  void set_elements(TypePtrList &&elements) { elements_ = std::move(elements); }
 
   /// \brief Get the number of elements in the Tuple object.
   ///
@@ -177,7 +188,7 @@ class MS_CORE_API Tuple final : public Object {
   /// \brief Set the element type when the tuple is dynamic length.
   ///
   /// \param[in] dynamic_element_type type of element for dynamic length tuple.
-  void set_dynamic_element_type(TypePtr dynamic_element_type);
+  void set_dynamic_element_type(const TypePtr &dynamic_element_type);
 
  private:
   /// \brief Show each element.
@@ -200,7 +211,7 @@ class MS_CORE_API Dictionary final : public Object {
   /// \brief Constructor for Dictionary.
   ///
   /// \param[in] key_values The elements of Dictionary.
-  explicit Dictionary(const std::vector<std::pair<TypePtr, TypePtr>> &key_values)
+  explicit Dictionary(const std::vector<std::pair<ValuePtr, TypePtr>> &key_values)
       : Object(kObjectTypeDictionary, false), key_values_(key_values) {}
 
   /// \brief Destructor of Dictionary.
@@ -209,10 +220,15 @@ class MS_CORE_API Dictionary final : public Object {
 
   TypeId generic_type_id() const override { return kObjectTypeDictionary; }
   bool operator==(const Type &other) const override;
-  size_t hash() const override;
+  std::size_t hash() const override;
   TypePtr DeepCopy() const override;
   std::string ToString() const override { return DumpContent(false); }
   std::string DumpText() const override { return DumpContent(true); }
+
+  /// \brief Get the keys and values.
+  ///
+  /// \return A vector of pairs of ValuePtr and TypePtr.
+  const std::vector<std::pair<ValuePtr, TypePtr>> &key_values() const { return key_values_; }
 
  private:
   /// \brief Show each element.
@@ -220,7 +236,7 @@ class MS_CORE_API Dictionary final : public Object {
   /// \param[in] is_dumptext whether to show each element DumpText
   /// \return The description of the Dictionary object.
   std::string DumpContent(bool) const;
-  std::vector<std::pair<TypePtr, TypePtr>> key_values_;
+  std::vector<std::pair<ValuePtr, TypePtr>> key_values_;
 };
 using DictionaryPtr = std::shared_ptr<Dictionary>;
 }  // namespace mindspore

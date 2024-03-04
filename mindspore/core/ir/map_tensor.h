@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@
 
 #include <tuple>
 #include <memory>
+#include <vector>
 #include <string>
 #include <utility>
 #include "ir/anf.h"
@@ -26,11 +27,11 @@
 #include "ir/tensor.h"
 #include "ir/param_info.h"
 #include "ir/scalar.h"
-#include "utils/macros.h"
+#include "mindapi/base/macros.h"
 #include "utils/shape_utils.h"
+#include "include/common/utils/utils.h"
 
 namespace mindspore {
-using DataLenPair = std::pair<void *, size_t>;
 namespace tensor {
 class MapTensor;
 // Smart pointer for MapTensor.
@@ -70,12 +71,13 @@ class MS_CORE_API MapTensor final : public Tensor {
     key_shape_ = {abstract::Shape::kShapeDimAny};
     shape_ = {abstract::Shape::kShapeDimAny};
     (void)shape_.insert(shape_.cend(), value_shape.cbegin(), value_shape.cend());
+    size_ = shape_[0];
     ShapeVector key_shape = {abstract::Shape::kShapeDimAny};
     key_tensor_ = std::make_shared<Tensor>(key_dtype, key_shape);
-    value_tensor_ = std::make_shared<Tensor>(value_dtype, value_shape);
-    status_tensor_ = std::make_shared<Tensor>(kNumberTypeUInt8, key_shape);
-    permit_filter_value_ = (permit_filter_value == nullptr) ? std::make_shared<Int32Imm>(1) : permit_filter_value;
-    evict_filter_value_ = (evict_filter_value == nullptr) ? std::make_shared<Int32Imm>(SIZE_MAX) : evict_filter_value;
+    value_tensor_ = std::make_shared<Tensor>(value_dtype, shape_);
+    status_tensor_ = std::make_shared<Tensor>(kNumberTypeInt, key_shape);
+    permit_filter_value_ = (permit_filter_value == nullptr) ? std::make_shared<Int64Imm>(1) : permit_filter_value;
+    evict_filter_value_ = (evict_filter_value == nullptr) ? std::make_shared<Int64Imm>(INT64_MAX) : evict_filter_value;
   }
 
   /// \brief Create a new MapTensor.
@@ -89,17 +91,18 @@ class MS_CORE_API MapTensor final : public Tensor {
   MapTensor(const TensorPtr &key_tensor, const TensorPtr &value_tensor, const TensorPtr &status_tensor,
             const ValuePtr &default_value, const ValuePtr &permit_filter_value = nullptr,
             const ValuePtr &evict_filter_value = nullptr)
-      : default_value_(default_value) {
-    key_dtype_ = key_tensor->data_type();
+      : key_dtype_(key_tensor->data_type()), default_value_(default_value) {
     data_type_ = value_tensor->data_type();
-    value_shape_ = value_tensor->shape();
+    shape_ = value_tensor->shape();
     key_shape_ = key_tensor->shape();
-    shape_ = value_shape_;
+    value_shape_.clear();
+    (void)value_shape_.insert(value_shape_.cend(), shape_.cbegin() + 1, shape_.cend());
+    size_ = shape_.size() != 0 ? shape_[0] : (abstract::Shape::kShapeDimAny);
     key_tensor_ = key_tensor;
     value_tensor_ = value_tensor;
     status_tensor_ = status_tensor;
-    permit_filter_value_ = (permit_filter_value == nullptr) ? std::make_shared<Int32Imm>(1) : permit_filter_value;
-    evict_filter_value_ = (evict_filter_value == nullptr) ? std::make_shared<Int32Imm>(SIZE_MAX) : evict_filter_value;
+    permit_filter_value_ = (permit_filter_value == nullptr) ? std::make_shared<Int64Imm>(1) : permit_filter_value;
+    evict_filter_value_ = (evict_filter_value == nullptr) ? std::make_shared<Int64Imm>(INT64_MAX) : evict_filter_value;
   }
 
   ~MapTensor() override = default;
@@ -115,7 +118,7 @@ class MS_CORE_API MapTensor final : public Tensor {
     if (!other.isa<MapTensor>()) {
       return false;
     }
-    auto other_ = static_cast<const MapTensor &>(other);
+    auto &other_ = static_cast<const MapTensor &>(other);
     return *this == other_;
   }
 
@@ -125,7 +128,7 @@ class MS_CORE_API MapTensor final : public Tensor {
 
   TypeId value_dtype() const { return data_type_; }
 
-  size_t size() const { return size_; }
+  int64_t size() const { return size_; }
 
   const ShapeVector &value_shape() const { return value_shape_; }
 
@@ -143,24 +146,6 @@ class MS_CORE_API MapTensor final : public Tensor {
 
   std::string ToString() const override;
 
-  /// \brief Get or create values.
-  ///
-  /// \param[in] key_tensor [Tensor] The key tensor.
-  /// \param[in] insert_default_value [bool] The flag of insert default_value.
-  /// \return The value tensor according the key tensor, return default_value if key_tensor is not exist.
-  TensorPtr Get(const TensorPtr &key_tensor, bool insert_default_value);
-
-  /// \brief Put or insert key value pairs.
-  ///
-  /// \param[in] key_tensor [Tensor] The key tensor.
-  /// \param[in] value_tensor [Tensor] The value tensor.
-  void Put(const TensorPtr &key_tensor, const TensorPtr &value_tensor);
-
-  /// \brief Remove items with the given keys.
-  ///
-  /// \param[in] key_tensor [Tensor] The key tensor.
-  void Erase(const TensorPtr &key_tensor);
-
   /// \brief Update MapTensor from exported data.
   ///
   /// \param[in] data [ExportData] The data.
@@ -168,21 +153,32 @@ class MS_CORE_API MapTensor final : public Tensor {
 
   /// \brief Exported MapTensor data.
   ///
-  /// \param[in] full [bool] True for full export, false for incremental export.
+  /// \param[in] incremental [bool] False for incremental export, true for full export.
   /// \return The exported data.
-  ExportData Export(bool full = false);
+  ExportData Export(bool incremental = false) const;
+
+  /// \brief Exported slice data from MapTensor.
+  ///
+  /// \param[in] incremental [bool] False for incremental export, true for full export.
+  /// \param[out] last_slice [bool *] Point a bool variable which indicates whether the slice by export is the last
+  /// slice, that is, the export is complete and all slices are exported.
+  /// \return The exported data.
+  ExportData ExportSlice(bool incremental, bool *last_slice) const;
 
   /// \brief Exported MapTensor data from device.
   ///
-  /// \param[in] full [bool] True for full export, false for incremental export.
+  /// \param[in] device_sync [DeviceSyncPtr] The device resource synchronizer(such as DeviceAddress).
+  /// \param[in] incremental [bool] True for incremental export, false for full export.
+  /// \param[out] last_slice [bool *] Point a bool variable which indicates whether the slice by export is the last
+  /// slice, that is, the export is complete and all slices are exported. nullptr indicates that slice export is
+  /// disabled.
   /// \return The exported data.
-  ExportData ExportDataFromDevice(const DeviceSyncPtr &device_sync);
+  ExportData ExportDataFromDevice(const DeviceSyncPtr &device_sync, bool incremental, bool *last_slice = nullptr) const;
 
   /// \brief Get three tensor length from device data with tensor shape and type.
   ///
-  /// \param[in] data_size [size_t] The size of device data.
-  /// \return The length of tensor data.
-  std::tuple<DataLenPair, DataLenPair, DataLenPair> GetTensorDataLen(size_t data_size);
+  /// \param[in] export_data [HashTableExportData] The export data buffer from device side.
+  void TransExportDataToTensor(const HashTableExportData &export_data) const;
 
   /// \brief Get the key tensor of MapTensor data.
   ///
@@ -205,6 +201,8 @@ class MS_CORE_API MapTensor final : public Tensor {
 
   void set_status_tensor(const TensorPtr status_tensor) { status_tensor_ = status_tensor; }
 
+  bool CheckData() const;
+
  private:
   // Data type of the keys.
   TypeId key_dtype_;
@@ -226,7 +224,7 @@ class MS_CORE_API MapTensor final : public Tensor {
   ShapeVector value_shape_;
 
   // The size of keys, shape_ is (size_, value_shape_).
-  size_t size_;
+  int64_t size_;
 
   // Key tensor of data.
   TensorPtr key_tensor_;

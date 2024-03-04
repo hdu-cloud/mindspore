@@ -48,7 +48,7 @@ class ReduceMaxMinAxisNet(nn.Cell):
         super(ReduceMaxMinAxisNet, self).__init__()
         self.reduce_max = P.ReduceMax()
         self.reduce_min = P.ReduceMin()
-        self.tensor_shape = P.TensorShape()
+        self.tensor_shape = P.Shape()
 
     def construct(self, x, y):
         axis = self.tensor_shape(y)[0:1]
@@ -61,7 +61,7 @@ class ReduceSumMeanProdAxisNet(nn.Cell):
         self._sum = P.ReduceSum()
         self._mean = P.ReduceMean()
         self._prod = P.ReduceProd()
-        self.tensor_shape = P.TensorShape()
+        self.tensor_shape = P.Shape()
 
     def construct(self, x, y):
         axis = self.tensor_shape(y)[0:1]
@@ -123,7 +123,7 @@ def dyn_axis_case(data_type):
     np.testing.assert_allclose(prod_dyn.asnumpy(), prod_np, rtol, atol, equal_nan=True)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 @pytest.mark.parametrize("axis", [0, 1, 2])
@@ -153,4 +153,21 @@ def test_dynamic_axis_reduce(data_type):
     context.set_context(mode=context.GRAPH_MODE, device_target="CPU")
     dyn_axis_case(data_type)
     context.set_context(mode=context.PYNATIVE_MODE, device_target="CPU")
+    dyn_axis_case(data_type)
+
+
+@pytest.mark.level1
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.env_onecard
+@pytest.mark.parametrize("data_type", [np.float32])
+def test_dynamic_axis_reduce_ascend(data_type):
+    """
+    Feature: Reduce DynamicShape.
+    Description: Test case of dynamic shape for reduce operator with dynamic axis in Ascend.
+    Expectation: success.
+    """
+    context.set_context(mode=context.GRAPH_MODE, device_target="Ascend")
+    dyn_axis_case(data_type)
+    context.set_context(mode=context.PYNATIVE_MODE, device_target="Ascend")
     dyn_axis_case(data_type)

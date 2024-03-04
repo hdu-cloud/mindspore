@@ -16,12 +16,12 @@
 
 #ifndef MINDSPORE_CORE_OPS_HSV_TO_RGB_H_
 #define MINDSPORE_CORE_OPS_HSV_TO_RGB_H_
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,8 +31,8 @@ class MIND_API HSVToRGB : public BaseOperator {
   MIND_API_BASE_MEMBER(HSVToRGB);
   HSVToRGB() : BaseOperator(kNameHSVToRGB) { InitIOName({"x"}, {"y"}); }
 };
-abstract::AbstractBasePtr HSVToRGBInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                        const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr HSVToRGBInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
 using HSVToRGBPtr = std::shared_ptr<HSVToRGB>;
 }  // namespace ops
 }  // namespace mindspore

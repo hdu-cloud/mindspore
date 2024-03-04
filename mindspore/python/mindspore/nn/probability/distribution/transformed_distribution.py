@@ -14,8 +14,9 @@
 # ============================================================================
 """Transformed Distribution"""
 import numpy as np
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.ops import operations as P
+from mindspore.ops import functional as F
 from mindspore.common import dtype as mstype
 import mindspore.nn as nn
 from .distribution import Distribution
@@ -28,17 +29,17 @@ class TransformedDistribution(Distribution):
     Transformed Distribution.
     This class contains a bijector and a distribution and transforms the original distribution
     to a new distribution through the operation defined by the bijector.
-    If X is an random variable following the underying distribution,
-    and g(x) is a function represented by the bijector,
-    then Y = g(X) is a random variable following the transformed distribution.
+    If :math:`X` is an random variable following the underying distribution,
+    and :math:`g(x)` is a function represented by the bijector,
+    then :math:`Y = g(X)` is a random variable following the transformed distribution.
 
     Args:
         bijector (Bijector): The transformation to perform.
         distribution (Distribution): The original distribution. Must be a float dtype.
-        seed (int): The seed is used in sampling. The global seed is used if it is None. Default: None.
+        seed (int): The seed is used in sampling. The global seed is used if it is None. Default: ``None`` .
           If this seed is given when a TransformedDistribution object is initialized, the object's sampling function
           will use this seed; elsewise, the underlying distribution's seed will be used.
-        name (str): The name of the transformed distribution. Default: 'transformed_distribution'.
+        name (str): The name of the transformed distribution. Default: ``'transformed_distribution'`` .
 
     Note:
         The arguments used to initialize the original distribution cannot be None.
@@ -125,7 +126,6 @@ class TransformedDistribution(Distribution):
         self.cast_base = P.Cast()
         self.equal_base = P.Equal()
         self.select_base = P.Select()
-        self.fill_base = P.Fill()
 
         # broadcast bijector batch_shape and distribution batch_shape
         self._broadcast_shape = self._broadcast_bijector_dist()
@@ -176,9 +176,9 @@ class TransformedDistribution(Distribution):
         """
         if self.batch_shape is None or self.bijector.batch_shape is None:
             return None
-        bijector_shape_tensor = self.fill_base(
+        bijector_shape_tensor = F.fill(
             self.dtype, self.bijector.batch_shape, 0.0)
-        dist_shape_tensor = self.fill_base(self.dtype, self.batch_shape, 0.0)
+        dist_shape_tensor = F.fill(self.dtype, self.batch_shape, 0.0)
         return (bijector_shape_tensor + dist_shape_tensor).shape
 
     def _cdf(self, value, *args, **kwargs):

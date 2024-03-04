@@ -47,16 +47,29 @@ class MinimumGradCpuKernelMod : public NativeCpuKernelMod, public MatchKernelHel
 
  protected:
   template <typename T>
-  bool LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
+  bool LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
                     const std::vector<AddressPtr> &outputs);
 
   std::vector<KernelAttr> GetOpSupport() override { return OpSupport(); }
 
+  template <typename T>
+  void MinimumGradRecTask(const T *x, const T *y, const T *dout, T *dx, T *dy, const size_t dim, const size_t x_index,
+                          const size_t y_index, const size_t dout_index, const std::vector<size_t> &x_cargo,
+                          const std::vector<size_t> &y_cargo, const std::vector<size_t> &dout_cargo,
+                          const std::vector<size_t> &x_shape, const std::vector<size_t> &y_shape,
+                          const std::vector<size_t> &dout_shape);
+
+  template <typename T>
+  void MinimumGradRecTaskSerialized(const T *x, const T *y, const T *dout, T *dx, T *dy, const size_t dim,
+                                    const size_t x_index, const size_t y_index, const size_t dout_index,
+                                    const std::vector<size_t> &x_cargo, const std::vector<size_t> &y_cargo,
+                                    const std::vector<size_t> &dout_cargo, const std::vector<size_t> &x_shape,
+                                    const std::vector<size_t> &y_shape, const std::vector<size_t> &dout_shape,
+                                    bool paralleled);
+
   ShapeVector x_shape_;
   ShapeVector y_shape_;
-  ShapeVector dout_shape;
-  ShapeVector dx_shape;
-  ShapeVector dy_shape;
+  ShapeVector dout_shape_;
   TypeId dtype_{kTypeUnknown};
 };
 }  // namespace kernel

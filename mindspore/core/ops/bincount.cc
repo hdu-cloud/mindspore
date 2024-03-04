@@ -14,13 +14,29 @@
  * limitations under the License.
  */
 
+#include <memory>
 #include <set>
+#include <vector>
 
-#include "ops/bincount.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/dtype/number.h"
+#include "ir/named.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/bincount.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -40,10 +56,10 @@ abstract::ShapePtr BincountInferShape(const PrimitivePtr &primitive, const std::
     ShapeVector shape_out{abstract::Shape::kShapeDimAny};
     return std::make_shared<abstract::Shape>(shape_out);
   }
-  CheckAndConvertUtils::CheckInteger("size", size_shape.size(), kEqual, 0, primitive->name());
+  (void)CheckAndConvertUtils::CheckInteger("size", SizeToLong(size_shape.size()), kEqual, 0, primitive->name());
   auto size_value_ptr = input_args[kInputIndex1]->BuildValue();
   MS_EXCEPTION_IF_NULL(size_value_ptr);
-  if (!size_value_ptr->isa<AnyValue>() && !size_value_ptr->isa<None>()) {
+  if (!size_value_ptr->isa<ValueAny>() && !size_value_ptr->isa<None>()) {
     if (!size_value_ptr->isa<tensor::Tensor>()) {
       MS_EXCEPTION(ValueError) << "For primitive[" << primitive->name() << "], the input argument[size]"
                                << " must be a tensor, but got " << size_value_ptr->ToString();
@@ -79,7 +95,26 @@ AbstractBasePtr BincountInfer(const abstract::AnalysisEnginePtr &, const Primiti
 }
 
 MIND_API_OPERATOR_IMPL(Bincount, BaseOperator);
-REGISTER_HOST_DEPENDS(kNameBincount, {1});
-REGISTER_PRIMITIVE_EVAL_IMPL(Bincount, prim::kPrimBincount, BincountInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGBincountInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return BincountInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return BincountInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return BincountInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Bincount, prim::kPrimBincount, AGBincountInfer, false);
 }  // namespace ops
 }  // namespace mindspore

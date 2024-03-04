@@ -23,7 +23,7 @@ from mindspore import ParameterTuple
 
 class NetResizeBilinear(nn.Cell):
     def construct(self, inputs, size):
-        return ops.interpolate(inputs, None, None, size, "asymmetric", "bilinear")
+        return ops.ResizeBilinearV2(align_corners=False, half_pixel_centers=False)(inputs, size)
 
 
 def case():
@@ -87,7 +87,7 @@ def case_grad():
     assert np.allclose(output[0][0].asnumpy(), expect, 1e-4, 1e-4)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard

@@ -18,6 +18,8 @@
 from __future__ import absolute_import
 from mindspore.ops.composite import base
 from mindspore.ops import functional as F
+from mindspore.ops.operations import _sequence_ops as seq
+from mindspore.ops.primitive import Primitive
 
 zeros_like_leaf = base.MultitypeFuncGraph('zeros_like_leaf', True)
 """
@@ -29,7 +31,9 @@ using ".register" decorator.
 @zeros_like_leaf.register("Number")
 def _zeros_like_scalar(x):
     """Returns 0 which has the same dtype as x where x is a scalar."""
-    return 0
+    if isinstance(x, int):
+        return 0
+    return 0.
 
 
 @zeros_like_leaf.register("Bool")
@@ -37,6 +41,15 @@ def _zeros_like_bool(x):
     """Returns False if x is a bool."""
     return False
 
+@zeros_like_leaf.register("String")
+def _zeros_like_string(x):
+    """Returns False if x is a string."""
+    return 0
+
+@zeros_like_leaf.register("Tuple")
+def _zeros_like_tuple(x):
+    """Returns False if x is a tuple."""
+    return 0
 
 @zeros_like_leaf.register("Function")
 def _zeros_like_func(x):
@@ -138,6 +151,23 @@ def _zeros_like_dict(x):
     return F.make_dict(keys, new_values)
 
 
+_extract_keyword_arg = Primitive("extract_keyword_arg")
+
+
+@zeros_like_leaf.register("Keyword")
+def _zeros_like_keyword(x):
+    """
+    Handle Keyword input.
+
+    Args:
+        x (Keyword): the input
+
+    Returns:
+        zeros_like_leaf.
+    """
+    return zeros_like_leaf(_extract_keyword_arg(x))
+
+
 @zeros_like_leaf.register("UMonad")
 def _zeros_like_u_monad(x):
     """
@@ -180,6 +210,16 @@ def _zeros_like_env_type(x):
     return F.environ_create()
 
 
-# zeros_like is an object that will generate graph of zero_like operation for different type
-zeros_like = base.HyperMap(zeros_like_leaf)
-"""`zeros_like` is an object that will generate graph of `zero_like` operation for different type."""
+class _ZerosLike(base.ZerosLike_):
+    def __init__(self, name, fn_leaf):
+        """Initialize _ZerosLike."""
+        base.ZerosLike_.__init__(self, name, fn_leaf)
+        self.fn_leaf = fn_leaf
+
+    def __call__(self, x):
+        if isinstance(x, (tuple, list)) and F.is_sequence_shape_unknown(x):
+            return seq.SequenceZerosLike()(x)
+        return self.fn_leaf(x)
+
+
+zeros_like = _ZerosLike('zeros_like', zeros_like_leaf)

@@ -66,10 +66,15 @@ class PsROIPoolingFwdGpuKernelMod : public DeprecatedNativeGpuKernelMod {
 
     T *out_data = GetDeviceAddress<T>(outputs, 0);
     int *out_mapping_channel = GetDeviceAddress<int>(outputs, 1);
+    MS_EXCEPTION_IF_NULL(x);
+    MS_EXCEPTION_IF_NULL(rois);
+    MS_EXCEPTION_IF_NULL(out_data);
+    MS_EXCEPTION_IF_NULL(out_mapping_channel);
 
-    PSROIPoolForwardLauncher(x, spatial_scale_, num_rois_, height_, width_, channels_, pooled_height_, pooled_width_,
-                             rois, group_size_, out_dim_, out_data, out_mapping_channel,
-                             reinterpret_cast<cudaStream_t>(stream_ptr));
+    auto status = PSROIPoolForwardLauncher(x, spatial_scale_, num_rois_, height_, width_, channels_, pooled_height_,
+                                           pooled_width_, rois, group_size_, out_dim_, out_data, out_mapping_channel,
+                                           reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return true;
   }
 
@@ -84,7 +89,7 @@ class PsROIPoolingFwdGpuKernelMod : public DeprecatedNativeGpuKernelMod {
     }
 
     // Get the number of output args
-    size_t output_num = common::AnfAlgo::GetOutputTensorNum(kernel_node);
+    size_t output_num = AnfAlgo::GetOutputTensorNum(kernel_node);
     if (output_num != OUTPUT_NUM) {
       MS_LOG(ERROR) << "Output number is " << output_num << ", but PsROIPooling needs 2 output.";
       return false;

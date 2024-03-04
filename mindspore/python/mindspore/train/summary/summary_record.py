@@ -21,16 +21,23 @@ import re
 import threading
 import time
 from collections import defaultdict
+import numpy as np
 
 from mindspore import log as logger
 from mindspore.nn import Cell
-from mindspore._c_expression import Tensor, security
-from mindspore._checkparam import Validator
+from mindspore import context
+from mindspore._c_expression import security
+from mindspore._c_expression import Tensor as Tensor_
+from mindspore.common.tensor import Tensor
+from mindspore import _checkparam as Validator
 from mindspore.common.api import _cell_graph_executor
-from mindspore.train._utils import _check_lineage_value, _check_to_numpy, _make_directory, check_value_type
+from mindspore.train._utils import _check_lineage_value, _check_to_numpy, _make_directory, check_value_type, \
+    check_summary_param
 from mindspore.train.summary._summary_adapter import get_event_file_name, package_graph_event
 from mindspore.train.summary._writer_pool import WriterPool
 from mindspore.train.summary.enums import PluginEnum
+from mindspore.ops.operations import debug_ops
+import mindspore.ops as ops
 
 # for the moment, this lock is for caution's sake,
 # there are actually no any concurrences happening.
@@ -57,12 +64,50 @@ def _cache_summary_tensor_data(summary):
         return True
 
 
-def _get_summary_tensor_data():
+def _get_summary_tensor_data(step_index=-1):
+    """Get summary tensor data."""
     global SUMMARY_TENSOR_CACHE
+    step_end_flag = "step_end_flag_" + str(step_index) + "[:Tensor]"
     with _summary_lock:
+        if step_index >= 0:
+            for _ in range(0, 10):
+                if _summary_step_end(step_end_flag):
+                    break
+                time.sleep(0.1)
+        if SUMMARY_TENSOR_CACHE.get(step_end_flag):
+            del SUMMARY_TENSOR_CACHE[step_end_flag]
         data = SUMMARY_TENSOR_CACHE
         SUMMARY_TENSOR_CACHE = {}
         return data
+
+
+def _summary_step_end(step_end_flag):
+    for summary_item in SUMMARY_TENSOR_CACHE:
+        if summary_item == step_end_flag:
+            return True
+    return False
+
+
+def _record_summary_tensor_data():
+    """Record summary tensor data."""
+    summary_list = list()
+    for data in debug_ops.SUMMARY_TENSOR_CACHE:
+        check_summary_param(data[0], data[1], data[2])
+        if data[0] == "TensorSummary":
+            summary_op_name = data[1] + "[:Tensor]"
+        elif data[0] == "ScalarSummary":
+            summary_op_name = data[1] + "[:Scalar]"
+        elif data[0] == "ImageSummary":
+            summary_op_name = data[1] + "[:Image]"
+        elif data[0] == "HistogramSummary":
+            summary_op_name = data[1] + "[:Histogram]"
+        summary_value = {
+            "name": summary_op_name,
+            "data": data[2]
+        }
+        summary_list.append(summary_value)
+    _cache_summary_tensor_data(summary_list)
+    debug_ops.SUMMARY_TENSOR_CACHE = []
 
 
 def process_export_options(export_options):
@@ -113,22 +158,25 @@ class SummaryRecord:
 
     Args:
         log_dir (str): The log_dir is a directory location to save the summary.
-        file_prefix (str): The prefix of file. Default: "events".
-        file_suffix (str): The suffix of file. Default: "_MS".
-        network (Cell): Obtain a pipeline through network for saving graph summary. Default: None.
+        file_prefix (str): The prefix of file. Default: ``"events"`` .
+        file_suffix (str): The suffix of file. Default: ``"_MS"`` .
+        num_process (int): Number of processes saving summary data. The more processes there are, the better the
+            performance, but there may be host memory overflow issues. Default: ``32`` .
+        network (Cell): Obtain a pipeline through network for saving graph summary. Default: ``None`` .
         max_file_size (int, optional): The maximum size of each file that can be written to disk (in bytes).
             For example, to write not larger than 4GB, specify `max_file_size=4*1024**3`.
-            Default: None, which means no limit.
+            Default: ``None`` , which means no limit.
         raise_exception (bool, optional): Sets whether to throw an exception when a RuntimeError or OSError exception
-            occurs in recording data. Default: False, this means that error logs are printed and no exception is thrown.
+            occurs in recording data. Default: ``False`` , this means that error logs are printed and no exception is
+            thrown.
         export_options (Union[None, dict]): Perform custom operations on the export data.
             Note that the size of export files is not limited by the max_file_size.
             You can customize the export data with a dictionary. For example, you can set {'tensor_format': 'npy'}
-            to export tensor as npy file. The data that supports control is shown below. Default: None, it means that
-            the data is not exported.
+            to export tensor as npy file. The data that supports control is shown below. Default: ``None`` , it means
+            that the data is not exported.
 
             - tensor_format (Union[str, None]): Customize the export tensor format. Supports ["npy", None].
-              Default: None, it means that the tensor is not exported.
+              Default: ``None`` , it means that the tensor is not exported.
 
               - npy: export tensor as npy file.
 
@@ -152,7 +200,7 @@ class SummaryRecord:
 
     count = 0
 
-    def __init__(self, log_dir, file_prefix="events", file_suffix="_MS",
+    def __init__(self, log_dir, file_prefix="events", file_suffix="_MS", num_process=32,
                  network=None, max_file_size=None, raise_exception=False, export_options=None):
         self._check_count()
         with _instance_lock:
@@ -175,8 +223,11 @@ class SummaryRecord:
         self.file_suffix = file_suffix
         self.network = network
         self.max_file_size = max_file_size
+        self._num_process = num_process
         self.raise_exception = raise_exception
         self._export_options = export_options
+        self.tensor_summary = ops.TensorSummary()
+
         try:
             self._initialize()
         except (TypeError, ValueError) as err:
@@ -202,8 +253,8 @@ class SummaryRecord:
             mode (str): The mode to be set, which should be 'train' or 'eval'. When the mode is 'eval',
                 summary_record will not record the data of summary operators.
 
-                - train：the model running phase is train mode.
-                - eval：the model running phase is eval mode，When the mode is 'eval',
+                - train: the model running phase is train mode.
+                - eval: the model running phase is eval mode, When the mode is 'eval',
                   summary_record will not record the data of summary operators.
 
         Raises:
@@ -245,25 +296,25 @@ class SummaryRecord:
                 LossLandscape]): The value to store.
 
                 - The data type of value should be 'GraphProto' (see `mindspore/ccsrc/anf_ir.proto
-                  <https://gitee.com/mindspore/mindspore/blob/r2.0.0-alpha/mindspore/ccsrc/utils/anf_ir.proto>`_) object
+                  <https://gitee.com/mindspore/mindspore/blob/master/mindspore/ccsrc/utils/anf_ir.proto>`_) object
                   when the plugin is 'graph'.
                 - The data type of value should be 'Tensor' object when the plugin is 'scalar', 'image', 'tensor'
                   or 'histogram'.
                 - The data type of value should be a 'TrainLineage' object when the plugin is 'train_lineage',
                   see `mindspore/ccsrc/lineage.proto
-                  <https://gitee.com/mindspore/mindspore/blob/r2.0.0-alpha/mindspore/ccsrc/utils/lineage.proto>`_.
+                  <https://gitee.com/mindspore/mindspore/blob/master/mindspore/ccsrc/utils/lineage.proto>`_.
                 - The data type of value should be a 'EvaluationLineage' object when the plugin is 'eval_lineage',
                   see `mindspore/ccsrc/lineage.proto
-                  <https://gitee.com/mindspore/mindspore/blob/r2.0.0-alpha/mindspore/ccsrc/utils/lineage.proto>`_.
+                  <https://gitee.com/mindspore/mindspore/blob/master/mindspore/ccsrc/utils/lineage.proto>`_.
                 - The data type of value should be a 'DatasetGraph' object when the plugin is 'dataset_graph',
                   see `mindspore/ccsrc/lineage.proto
-                  <https://gitee.com/mindspore/mindspore/blob/r2.0.0-alpha/mindspore/ccsrc/utils/lineage.proto>`_.
+                  <https://gitee.com/mindspore/mindspore/blob/master/mindspore/ccsrc/utils/lineage.proto>`_.
                 - The data type of value should be a 'UserDefinedInfo' object when the plugin is 'custom_lineage_data',
                   see `mindspore/ccsrc/lineage.proto
-                  <https://gitee.com/mindspore/mindspore/blob/r2.0.0-alpha/mindspore/ccsrc/utils/lineage.proto>`_.
+                  <https://gitee.com/mindspore/mindspore/blob/master/mindspore/ccsrc/utils/lineage.proto>`_.
                 - The data type of value should be a 'LossLandscape' object when the plugin is 'LANDSCAPE',
                   see `mindspore/ccsrc/summary.proto
-                  <https://gitee.com/mindspore/mindspore/blob/r2.0.0-alpha/mindspore/ccsrc/utils/summary.proto>`_.
+                  <https://gitee.com/mindspore/mindspore/blob/master/mindspore/ccsrc/utils/summary.proto>`_.
 
         Raises:
             ValueError: `plugin` is not in the optional value.
@@ -282,7 +333,7 @@ class SummaryRecord:
             if not name or not isinstance(name, str):
                 raise ValueError(f'For "{self.__class__.__name__}", the parameter "name" type should be str, '
                                  f'but got {type(name)}.')
-            if not isinstance(value, Tensor):
+            if not isinstance(value, (Tensor, Tensor_)):
                 raise TypeError(f'For "{self.__class__.__name__}", the parameter "value" expect to be Tensor, '
                                 f'but got {type(value).__name__}')
             np_value = _check_to_numpy(plugin, value)
@@ -316,17 +367,16 @@ class SummaryRecord:
         Args:
             step (int): Represents training step number.
             train_network (Cell): The spare network for saving graph.
-                Default: None, it means just do not save the graph summary when the original network graph is None.
+                Default: ``None``, it means just do not save the graph summary when the original network graph is None.
             plugin_filter (Callable[[str], bool], optional): The filter function, \
-                which is used to filter out which plugin should be written. Default: None.
+                which is used to filter out which plugin should be written. Default: ``None``.
 
         Returns:
             bool, whether the record process is successful or not.
 
         Raises:
             TypeError: `step` is not int, or `train_network` is not `mindspore.nn.Cell
-                <https://www.mindspore.cn/docs/en/r2.0.0-alpha/
-                api_python/nn/mindspore.nn.Cell.html#mindspore-nn-cell>`_ 。
+                <https://www.mindspore.cn/docs/en/master/api_python/nn/mindspore.nn.Cell.html#mindspore-nn-cell>`_ .
 
         Examples:
             >>> import mindspore as ms
@@ -334,9 +384,6 @@ class SummaryRecord:
             ...     with ms.SummaryRecord(log_dir="./summary_dir", file_prefix="xx_", file_suffix="_yy") \
             ...             as summary_record:
             ...         result = summary_record.record(step=2)
-            ...         print(result)
-            ...
-            True
         """
         logger.debug("SummaryRecord step is %r.", step)
         Validator.check_value_type(arg_name='step', arg_value=step, valid_types=int)
@@ -352,7 +399,8 @@ class SummaryRecord:
             if graph_proto is None and train_network is not None:
                 graph_proto = _cell_graph_executor.get_optimize_graph_proto(train_network)
             if graph_proto is None:
-                logger.error("Failed to get proto for graph")
+                if not context.get_context("mode") == context.PYNATIVE_MODE:
+                    logger.error("Failed to get proto for graph.")
             else:
                 self._event_writer.write({'graph': [{'step': step, 'value': graph_proto}]})
                 self._status['has_graph'] = True
@@ -360,7 +408,9 @@ class SummaryRecord:
                     return True
 
         if self._mode == 'train':
-            self._add_summary_tensor_data()
+            step_end_flag = Tensor((np.ones([1])).astype(np.int32))
+            self.tensor_summary("step_end_flag_" + str(step), step_end_flag)
+            self._add_summary_tensor_data(step)
 
         if not plugin_filter:
             self._event_writer.write(self._consume_data_pool(step))
@@ -409,13 +459,16 @@ class SummaryRecord:
                              exporter=export_dir)
         self._event_writer = WriterPool(self.base_log_dir,
                                         self.max_file_size,
+                                        self._num_process,
                                         self.raise_exception,
                                         **filename_dict)
         _get_summary_tensor_data()
         atexit.register(self.close)
 
-    def _add_summary_tensor_data(self):
-        summary_data = _get_summary_tensor_data()
+    def _add_summary_tensor_data(self, step_index=-1):
+        """Add summary tensor data."""
+        _record_summary_tensor_data()
+        summary_data = _get_summary_tensor_data(step_index)
         if not summary_data:
             logger.debug(f'No summary data bubbled from the network.')
         for name, tensor in summary_data.items():

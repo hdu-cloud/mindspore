@@ -16,6 +16,7 @@
 import csv
 import json
 import os
+import stat
 from decimal import Decimal
 from enum import Enum
 import sys
@@ -37,11 +38,12 @@ class Integrator:
     _file_name_aicore_detail_time = 'output_op_compute_time_{}.txt'
     _file_name_aicpu_time = 'output_data_preprocess_aicpu_{}.txt'
     _file_name_framework = 'framework_raw_{}.csv'
-    _header_aicore_type = ['op_type', 'execution_time', 'execution_frequency',
-                           'percent']
-    _header_aicore_detail = ['full_op_name', 'execution_time']
-    _header_aicpu = ['serial_number', 'op_type', 'total_time', 'dispatch_time',
-                     'execution_time', 'run_start', 'run_end']
+    _header_aicore_type = ['op_type', 'total_time', 'execution_frequency', 'percent']
+    _header_aicore_detail = ['full_op_name', 'execution_time', 'execution_frequency']
+    _header_aicpu = [
+        'serial_number', 'op_type', 'total_time', 'dispatch_time',
+        'execution_time', 'run_start', 'run_end'
+    ]
 
     _file_name_aicore_type_time = 'aicore_intermediate_{}_type.csv'
     _file_name_aicore_detail_info = 'aicore_intermediate_{}_detail.csv'
@@ -141,28 +143,31 @@ class Integrator:
                 op_name_type_cache[row[3]] = row[5]
 
         op_type_time_cache = {}
-        for full_op_name, op_time in self._op_time_cache.items():
+        total_time = 0
+        for full_op_name, op_info in self._op_time_cache.items():
+            total_time += op_info[0] * op_info[1]
             op_type = op_name_type_cache.get(full_op_name)
             op_type_time = op_type_time_cache.get(op_type)
             if not op_type_time:
-                op_type_time = [op_time, 1]
+                op_type_time = [op_info[0] * op_info[1], op_info[1]]
                 op_type_time_cache[op_type] = op_type_time
             else:
-                op_type_time[0] += op_time
-                op_type_time[1] += 1
-
+                op_type_time[0] += op_info[0] * op_info[1]
+                op_type_time[1] += op_info[1]
         op_type_file_name = 'aicore_intermediate_' + self._device_id + '_type.csv'
         op_type_file_path = os.path.join(self._profiling_dir, op_type_file_name)
-        with open(op_type_file_path, 'w') as type_file:
+        with os.fdopen(os.open(op_type_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as type_file:
             csv_writer = csv.writer(type_file)
             csv_writer.writerow(self._header_aicore_type)
 
             for op_type, op_type_time_info in op_type_time_cache.items():
-                type_info = [
-                    op_type, op_type_time_info[0], op_type_time_info[1],
-                    round((op_type_time_info[0] / self._total_time) * 100, 2)
-                ]
+                if total_time != 0:
+                    type_info = [
+                        op_type, op_type_time_info[0], op_type_time_info[1],
+                        round((op_type_time_info[0] / total_time) * 100, 2)
+                    ]
                 csv_writer.writerow(type_info)
+        os.chmod(op_type_file_path, stat.S_IREAD | stat.S_IWRITE)
 
     def _parse_aicore_detail_time(self):
         """Parse the parsed AICORE operator time file."""
@@ -187,8 +192,8 @@ class Integrator:
                 _ = src_file.readline()
             else:
                 return
-
-            with open(op_detail_file_path, 'w') as detail_file:
+            with os.fdopen(os.open(op_detail_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
+                           'w') as detail_file:
                 csv_writer = csv.writer(detail_file)
                 csv_writer.writerow(self._header_aicore_detail)
 
@@ -201,8 +206,9 @@ class Integrator:
                     if op_infos[0] == 'total':
                         self._total_time = Decimal(op_infos[2])
                         continue
-                    self._op_time_cache[op_infos[0]] = Decimal(op_infos[1])
-                    csv_writer.writerow([op_infos[0], op_infos[1]])
+                    self._op_time_cache[op_infos[0]] = [Decimal(op_infos[1]), int(op_infos[3])]
+                    csv_writer.writerow([op_infos[0], op_infos[1], op_infos[3]])
+            os.chmod(op_detail_file_path, stat.S_IREAD | stat.S_IWRITE)
 
     def _parse_aicpu_time(self):
         """Parse the parsed AICPU operator time file."""
@@ -220,7 +226,7 @@ class Integrator:
             row = src_file.readline()
             if not row.startswith('serial_number'):
                 return
-            with open(save_file_path, 'w') as save_file:
+            with os.fdopen(os.open(save_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as save_file:
                 csv_writer = csv.writer(save_file)
                 csv_writer.writerow(self._header_aicpu)
 
@@ -232,6 +238,7 @@ class Integrator:
                     if infos[0] == 'AI':
                         continue
                     csv_writer.writerow(infos)
+            os.chmod(save_file_path, stat.S_IREAD | stat.S_IWRITE)
 
     def _aicore_data_load(self):
         """Load data according to the parsed AICORE operator types file."""
@@ -275,7 +282,8 @@ class Integrator:
             _ = next(csv_reader)
             for info in csv_reader:
                 framework_infos[info[3]] = [
-                    info[3], info[4], info[5], info[6], json.loads(info[7]) if info[7] else None]
+                    info[3], info[4], info[5], info[6], json.loads(info[7]) if info[7] else None
+                ]
 
         with open(op_detail_file_path, 'r') as file:
             csv_reader = csv.reader(file)
@@ -373,8 +381,10 @@ class Integrator:
         factor = 1e5  # convert time unit from 10ns to 1ms
         reduce_pid = 10000
         reduce_info = []
-        reduce_fields = [field_name for field_name in self._column
-                         if field_name.startswith('stream_') and not field_name.endswith('point')]
+        reduce_fields = [
+            field_name for field_name in self._column
+            if field_name.startswith('stream_') and not field_name.endswith('point')
+        ]
         for reduce_field in reduce_fields:
             reduce_start = row_info_dict.get(reduce_field + '_start_point')
             reduce_start = reduce_start / factor \
@@ -387,8 +397,10 @@ class Integrator:
             cur_stream_id = reduce_field.split('_', 3)[1]
             if reduce_field.split('_', 2)[1] == 'ops':
                 cur_stream_id = reduce_field.split('_', 3)[2]
-            reduce_meta = [reduce_field, int(cur_stream_id), reduce_start,
-                           reduce_duration, reduce_pid]
+            reduce_meta = [
+                reduce_field, int(cur_stream_id), reduce_start,
+                reduce_duration, reduce_pid
+            ]
             reduce_info.append(reduce_meta)
 
         return reduce_info

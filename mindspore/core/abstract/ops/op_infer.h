@@ -20,7 +20,6 @@
 #include <set>
 #include <memory>
 #include "ir/primitive.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "abstract/abstract_value.h"
 #include "ir/anf.h"
 
@@ -55,7 +54,7 @@ class OpInferBase {
   ///
   /// \return Inferred Value based on given inputs.
   virtual ValuePtr InferValue(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const {
-    return kAnyValue;
+    return kValueAny;
   }
 
   /// \brief Get the indices of infer-depend value.
@@ -70,7 +69,7 @@ class OpInferBase {
   /// \param[in] input_args Operator's inputs.
   ///
   /// \return AbstractBasePtr with inferred shape and inferred type.
-  virtual AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+  virtual AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                             const std::vector<AbstractBasePtr> &input_args) const {
     auto type = InferType(primitive, input_args);
     auto shape = InferShape(primitive, input_args);

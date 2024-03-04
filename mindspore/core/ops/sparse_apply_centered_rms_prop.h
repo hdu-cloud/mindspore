@@ -22,8 +22,8 @@
 #include <string>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 #include "utils/check_convert_utils.h"
 
 namespace mindspore {
@@ -40,12 +40,12 @@ class MIND_API SparseApplyCenteredRMSProp : public BaseOperator {
 
   void set_use_locking(bool use_locking);
 
-  bool get_use_locking();
+  bool get_use_locking() const;
 };
 
-abstract::AbstractBasePtr SparseApplyCenteredRMSPropInfer(const abstract::AnalysisEnginePtr &,
-                                                          const PrimitivePtr &primitive,
-                                                          const std::vector<AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr SparseApplyCenteredRMSPropInfer(const abstract::AnalysisEnginePtr &,
+                                                                   const PrimitivePtr &primitive,
+                                                                   const std::vector<AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

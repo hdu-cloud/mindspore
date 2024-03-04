@@ -19,7 +19,9 @@
 #include <string>
 #include <utility>
 
-#include "mindspore/core/ops/core_ops.h"
+#include "ops/sequence_ops.h"
+#include "ops/array_ops.h"
+#include "ops/framework_ops.h"
 #include "ir/param_info.h"
 #include "ir/meta_tensor.h"
 #include "include/common/utils/python_adapter.h"
@@ -101,10 +103,37 @@ std::vector<bool> ExtractInputParameterByNode(const CNodePtr &node) {
       auto input_parameter = input->cast<ParameterPtr>();
       is_parameter.push_back(ParameterRequireGrad(input_parameter));
     } else if (input->isa<CNode>() || IsValueNode<tensor::Tensor>(input) || IsValueNode<RefKey>(input)) {
+      if (IsSomePrimitiveList(node, CANDIDATE_DYNAMIC_VALUE_OPS) &&
+          (IsPrimitiveCNode(input, prim::kPrimMakeTuple) || IsPrimitiveCNode(input, prim::kPrimShape))) {
+        MS_LOG(INFO) << "may be dynamic shape, no need to get input's shape, the node is " << node->ToString();
+        continue;
+      }
       is_parameter.push_back(false);
     }
   }
   return is_parameter;
+}
+
+std::string ExtractInputParameterNameByNode(const CNodePtr &node) {
+  std::string param_name = "";
+  std::vector<AnfNodePtr> node_inputs{node->inputs()};
+  // input is a ValueList or ValueTuple, then all inputs are not parameter.
+  if ((node_inputs.size() == 2) &&
+      (IsValueNode<ValueList>(node_inputs[1]) || IsValueNode<ValueTuple>(node_inputs[1]))) {
+    node_inputs = node_inputs[1]->cast<CNodePtr>()->inputs();
+  }
+  for (size_t i = 1; i < node_inputs.size(); ++i) {
+    auto input = GetRealInput(node_inputs[i]);
+    if (HasAbstractMonad(input)) {
+      continue;
+    }
+    if (input->isa<Parameter>()) {
+      param_name = input->fullname_with_scope();
+      auto input_parameter = input->cast<ParameterPtr>();
+      MS_LOG(INFO) << "node name: " << node->fullname_with_scope() << "involved parameter: " << input_parameter->name();
+    }
+  }
+  return param_name;
 }
 
 // Given the type, return the number of bytes to represent this type
@@ -140,6 +169,8 @@ size_t GetLengthOfDataType(const TypePtr &type) {
       return sizeof(unsigned);
     case kNumberTypeFloat:
       return sizeof(float);
+    case kNumberTypeBFloat16:
+      return sizeof(float) / 2;
     default:
       MS_LOG(EXCEPTION) << "Unexpected type " << type->type_name();
   }
@@ -161,6 +192,34 @@ size_t GetInputsTypeLen(const AnfNodePtr &input) {
     MS_LOG(EXCEPTION) << "Unknown type: " << type->type_name();
   }
   return input_type_len;
+}
+
+std::vector<size_t> ExtractInputElementLength(const CNodePtr &node, std::vector<AnfNodePtr> node_inputs) {
+  std::vector<size_t> inputs_type_len;
+  // extract input element length
+  for (auto &input : node_inputs) {
+    if (HasAbstractMonad(input)) {
+      continue;
+    }
+    if (IsValueNode<RefKey>(input)) {
+      auto func_graph = node->func_graph();
+      MS_EXCEPTION_IF_NULL(func_graph);
+      std::vector<AnfNodePtr> parameters = FindParameterByRefKeyNode(input, func_graph);
+      if (parameters.size() != 1) {
+        MS_LOG(EXCEPTION) << "Find parameter by ref key node failed";
+      }
+      inputs_type_len.push_back(GetInputsTypeLen(parameters[0]));
+    } else if (input->isa<CNode>() || input->isa<Parameter>() || IsValueNode<tensor::Tensor>(input)) {
+      if (IsSomePrimitiveList(node, CANDIDATE_DYNAMIC_VALUE_OPS) &&
+          (IsPrimitiveCNode(input, prim::kPrimMakeTuple) || IsPrimitiveCNode(input, prim::kPrimShape))) {
+        MS_LOG(INFO) << "may be dynamic shape, no need to get input's shape, the node is " << node->ToString();
+        continue;
+      }
+      // extract input shape from parameter and apply node
+      inputs_type_len.push_back(GetInputsTypeLen(input));
+    }
+  }
+  return inputs_type_len;
 }
 
 std::vector<size_t> ExtractInputTypeLengthByNode(const CNodePtr &node) {
@@ -192,25 +251,7 @@ std::vector<size_t> ExtractInputTypeLengthByNode(const CNodePtr &node) {
     node_inputs = node_inputs[1]->cast<CNodePtr>()->inputs();
   }
 
-  // extract input element length
-  for (auto &input : node_inputs) {
-    if (HasAbstractMonad(input)) {
-      continue;
-    }
-    if (IsValueNode<RefKey>(input)) {
-      auto func_graph = node->func_graph();
-      MS_EXCEPTION_IF_NULL(func_graph);
-      std::vector<AnfNodePtr> parameters = FindParameterByRefKeyNode(input, func_graph);
-      if (parameters.size() != 1) {
-        MS_LOG(EXCEPTION) << "Find parameter by ref key node failed";
-      }
-      inputs_type_len.push_back(GetInputsTypeLen(parameters[0]));
-    } else if (input->isa<CNode>() || input->isa<Parameter>() || IsValueNode<tensor::Tensor>(input)) {
-      // extract input shape from parameter and apply node
-      inputs_type_len.push_back(GetInputsTypeLen(input));
-    }
-  }
-  return inputs_type_len;
+  return ExtractInputElementLength(node, node_inputs);
 }
 
 std::vector<TypePtr> ExtractOutputTypeByNode(const CNodePtr &node) {
@@ -317,9 +358,28 @@ bool FindReshape(const CNodePtr &cnode, mindspore::HashSet<std::string> *op_cach
   return false;
 }
 
+bool FindReshapePreNodeCrossParam(const AnfNodePtr &node, OperatorInfoPtr *pre_operator_info, bool *is_prev_param,
+                                  int64_t *out_index, size_t curr_depth) {
+  auto fg_map = node->func_graph()->func_graph_cnodes_index();
+  auto parameters = node->func_graph()->parameters();
+  int64_t param_index = -1;
+  for (size_t j = 0; j < parameters.size(); ++j) {
+    if (parameters[j] == node) {
+      param_index = SizeToLong(j);
+    }
+  }
+  if (fg_map.size() == 0 || param_index == -1) {
+    *is_prev_param = true;
+    return true;
+  }
+  auto temp_node = fg_map.begin()->first->first->cast<CNodePtr>();
+  auto prev_node = temp_node->input(param_index + 1);
+  return FindReshapePreNodeStraCosts(prev_node, pre_operator_info, is_prev_param, out_index, ++curr_depth);
+}
+
 // Find previous node of Reshape, then obtain its strategy_cost_ vector to get its layout vector.
-bool FindReshapePreNodeStraCosts(const AnfNodePtr &node, OperatorInfoPtr *pre_operator_info, int64_t *out_index,
-                                 size_t curr_depth) {
+bool FindReshapePreNodeStraCosts(const AnfNodePtr &node, OperatorInfoPtr *pre_operator_info, bool *is_prev_param,
+                                 int64_t *out_index, size_t curr_depth) {
   if (curr_depth > MAX_RECURSIVE_DEPTH) {
     MS_LOG(WARNING) << "When finding Reshape's previous node, exceeded the max recursive depth: "
                     << MAX_RECURSIVE_DEPTH;
@@ -327,12 +387,13 @@ bool FindReshapePreNodeStraCosts(const AnfNodePtr &node, OperatorInfoPtr *pre_op
   }
   // if previous node is a parameter, handle it in the outsize.
   if (node->isa<Parameter>()) {
-    return false;
+    return FindReshapePreNodeCrossParam(node, pre_operator_info, is_prev_param, out_index, curr_depth);
   }
   if (!node->isa<CNode>()) {
     return false;
   }
   CNodePtr cnode = node->cast<CNodePtr>();
+  FindPreNodeCrossFuncGraph(&cnode, *out_index);
   if (!IsValueNode<Primitive>(cnode->input(0))) {
     return false;
   }
@@ -344,7 +405,7 @@ bool FindReshapePreNodeStraCosts(const AnfNodePtr &node, OperatorInfoPtr *pre_op
   }
   ValueNodePtr prim_anf_node = cnode->input(0)->cast<ValueNodePtr>();
   PrimitivePtr prim = prim_anf_node->value()->cast<PrimitivePtr>();
-  if (prim->name() == prim::kTupleGetItem) {
+  if (prim->name() == prim::kPrimTupleGetItem->name()) {
     *out_index = GetTupleGetItemIndex(cnode);
     // find tuple_get_item's previous node
     auto pre_node = cnode->input(1);
@@ -352,6 +413,7 @@ bool FindReshapePreNodeStraCosts(const AnfNodePtr &node, OperatorInfoPtr *pre_op
       MS_LOG(EXCEPTION) << "tuple get item's second input is not a cnode";
     }
     CNodePtr pre_cnode = pre_node->cast<CNodePtr>();
+    FindPreNodeCrossFuncGraph(&pre_cnode, *out_index);
     auto pre_op_info = pre_cnode->user_data<OperatorInfo>();
     if (IsParallelCareNode(pre_cnode) && (pre_op_info != nullptr)) {
       *pre_operator_info = pre_op_info;
@@ -363,7 +425,8 @@ bool FindReshapePreNodeStraCosts(const AnfNodePtr &node, OperatorInfoPtr *pre_op
     if (prim->name() == DEPEND && index != 1) {
       continue;
     }
-    if (!FindReshapePreNodeStraCosts(cnode->inputs()[index], pre_operator_info, out_index, ++curr_depth)) {
+    if (!FindReshapePreNodeStraCosts(cnode->inputs()[index], pre_operator_info, is_prev_param, out_index,
+                                     ++curr_depth)) {
       continue;
     }
     return true;
@@ -389,8 +452,21 @@ void FindReshapeNextNodeStraCosts(const CNodePtr &cnode,
   AnfNodeIndexSet node_set = manager->node_users()[cnode];
   for (auto &node_pair : node_set) {
     CNodePtr use_apply = node_pair.first->cast<CNodePtr>();
-    if (use_apply == nullptr || !IsValueNode<Primitive>(use_apply->input(0))) {
+    if (use_apply == nullptr ||
+        !(IsValueNode<Primitive>(use_apply->input(0)) || IsValueNode<FuncGraph>(use_apply->input(0)))) {
       continue;
+    }
+    auto pair = node_pair;
+    if (IsValueNode<FuncGraph>(use_apply->input(0))) {
+      auto sub_graph = GetValueNode<FuncGraphPtr>(use_apply->input(0));
+      auto params = sub_graph->parameters();
+      auto sub_manager = sub_graph->manager();
+      auto sub_node_set = sub_manager->node_users()[params[node_pair.second - 1]];
+      for (auto &sub_node_pair : sub_node_set) {
+        use_apply = sub_node_pair.first->cast<CNodePtr>();
+        pair = sub_node_pair;
+        break;
+      }
     }
     if (IsPrimitiveCNode(use_apply, prim::kPrimReshape)) {
       *is_next_reshape = true;
@@ -401,14 +477,14 @@ void FindReshapeNextNodeStraCosts(const CNodePtr &cnode,
     PrimitivePtr node_prim = prim_anf_node->value()->cast<PrimitivePtr>();
     MS_EXCEPTION_IF_NULL(node_prim);
     MS_LOG(INFO) << "FindNextLayout prim " << node_prim->name();
-    if (node_prim->name() == DEPEND && node_pair.second != 1) {
+    if (node_prim->name() == DEPEND && pair.second != 1) {
       continue;
     }
     auto op_info = use_apply->user_data<OperatorInfo>();
     if (IsParallelCareNode(use_apply) && (op_info != nullptr)) {
       MS_LOG(INFO) << "FindReshapeNextNodeStraCosts success prim " << node_prim->name();
       *is_next_reshape = false;
-      next_ops_index->push_back(std::make_pair(op_info, node_pair.second - 1));
+      next_ops_index->push_back(std::make_pair(op_info, pair.second - 1));
       continue;
     }
     MS_LOG(DEBUG) << "FindReshapeNextNodeStraCosts failed prim " << node_prim->name() << "  "
@@ -432,6 +508,7 @@ void SetUserAttrs(const mindspore::HashMap<std::string, ValuePtr> &origin_prim_a
 // Convert ValueTuple/ValueList to vector
 Status TransValueSequeueToVector(const ValuePtr &input_value, std::vector<int64_t> *input) {
   MS_EXCEPTION_IF_NULL(input_value);
+  input->clear();
   if (!input_value->isa<ValueSequeue>()) {
     MS_LOG(ERROR) << "Input value must be ValueTuplePtr.";
     return FAILED;

@@ -8,7 +8,7 @@ mindspore.ops.PSROIPooling
     参数：
         - **spatial_scale** (float) - 将框坐标映射到输入坐标的比例因子。例如，如果你的框定义在224x224的图像上，并且你的输入是112x112的特征图（由原始图像的0.5倍缩放产生），此时需要将其设置为0.5。
         - **group_size** (int) - 执行池化后输出的大小（以像素为单位），以（高度，宽度）的格式输出。
-        - **output_dim** (int) -执行池化后输出的维度。
+        - **output_dim** (int) - 执行池化后输出的维度。
 
     输入：
         - **features** (Tensor) - 输入特征Tensor，其shape必须为 :math:`(N, C, H, W)` 。 各维度的值应满足： :math:`(C == output\_dim * group\_size * group\_size)` 。数据类型为float16或者float32。

@@ -15,17 +15,30 @@
  */
 
 #include "ops/list_diff.h"
-#include <algorithm>
-#include <map>
+
 #include <memory>
 #include <set>
-#include <string>
 #include <vector>
+
 #include "abstract/abstract_value.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -44,10 +57,9 @@ abstract::TupleShapePtr ListDiffInferShape(const PrimitivePtr &, const std::vect
   }
   int64_t max_size = x_shape[kInputIndex0];
   ShapeVector out_shape_dynamic = {abstract::Shape::kShapeDimAny};
-  ShapeVector out_min_shape = {0};
   ShapeVector out_max_shape = {max_size};
-  abstract::ShapePtr out_shape = std::make_shared<abstract::Shape>(out_shape_dynamic, out_min_shape, out_max_shape);
-  abstract::ShapePtr idx_shape = std::make_shared<abstract::Shape>(out_shape_dynamic, out_min_shape, out_max_shape);
+  abstract::ShapePtr out_shape = std::make_shared<abstract::Shape>(out_shape_dynamic, out_max_shape);
+  abstract::ShapePtr idx_shape = std::make_shared<abstract::Shape>(out_shape_dynamic, out_max_shape);
   return std::make_shared<abstract::TupleShape>(std::vector<abstract::BaseShapePtr>{out_shape, idx_shape});
 }
 
@@ -83,6 +95,24 @@ AbstractBasePtr ListDiffInfer(const abstract::AnalysisEnginePtr &, const Primiti
 }
 
 MIND_API_OPERATOR_IMPL(ListDiff, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(ListDiff, prim::kPrimListDiff, ListDiffInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGListDiffInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ListDiffInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ListDiffInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ListDiffInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ListDiff, prim::kPrimListDiff, AGListDiffInfer, false);
 }  // namespace ops
 }  // namespace mindspore

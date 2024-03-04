@@ -1,7 +1,7 @@
 approvers:
 - zhaizhiqiang
 - zhanghaibo5
-- zhang_xue_tong
+- zhang_xue_tong #
 - HilbertDavid
 - jpc_chenjianping
 - hangangqiang
@@ -11,8 +11,11 @@ approvers:
 reviewers:
 - yeyunpeng2020
 - xu_anyue
+- gongdaguo1
 - yangruoqi713
 - ling_qiao_min
 - greatpanc
 - gengdongjie
-- zhengyuanhua
+
+options:
+  no_parent_owners: true

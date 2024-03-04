@@ -20,16 +20,16 @@
 
 #include "utils/ms_context.h"
 #include "utils/symbolic.h"
-#include "abstract/param_validator.h"
+#include "abstract/abstract_function.h"
 
 namespace mindspore {
 namespace abstract {
 const std::map<TypeId, size_t> type_map = {
-  {kNumberTypeBool, 1},       {kNumberTypeInt, 4},     {kNumberTypeInt8, 1},    {kNumberTypeInt16, 2},
-  {kNumberTypeInt32, 4},      {kNumberTypeInt64, 8},   {kNumberTypeUInt, 4},    {kNumberTypeUInt8, 1},
-  {kNumberTypeUInt16, 2},     {kNumberTypeUInt32, 4},  {kNumberTypeUInt64, 8},  {kNumberTypeFloat, 4},
-  {kNumberTypeFloat16, 2},    {kNumberTypeFloat32, 4}, {kNumberTypeFloat64, 8}, {kNumberTypeComplex64, 8},
-  {kNumberTypeComplex128, 16}};
+  {kNumberTypeBool, 1},        {kNumberTypeInt, 4},     {kNumberTypeInt8, 1},    {kNumberTypeInt16, 2},
+  {kNumberTypeInt32, 4},       {kNumberTypeInt64, 8},   {kNumberTypeUInt, 4},    {kNumberTypeUInt8, 1},
+  {kNumberTypeUInt16, 2},      {kNumberTypeUInt32, 4},  {kNumberTypeUInt64, 8},  {kNumberTypeFloat, 4},
+  {kNumberTypeFloat16, 2},     {kNumberTypeFloat32, 4}, {kNumberTypeFloat64, 8}, {kNumberTypeComplex64, 8},
+  {kNumberTypeComplex128, 16}, {kNumberTypeBFloat16, 2}};
 
 ValuePtr ValueJoin(const ValuePtr &value1, const ValuePtr &value2) {
   MS_EXCEPTION_IF_NULL(value1);
@@ -37,7 +37,7 @@ ValuePtr ValueJoin(const ValuePtr &value1, const ValuePtr &value2) {
   if (*value1 == *value2) {
     return value1;
   }
-  return kAnyValue;
+  return kValueAny;
 }
 
 TypePtr TypeJoin(const TypePtr &type1, const TypePtr &type2) {
@@ -46,119 +46,13 @@ TypePtr TypeJoin(const TypePtr &type1, const TypePtr &type2) {
   if (*type1 == *type2) {
     return type1;
   }
-  return kAnyType;
-}
-
-inline bool IsMaxOrMinEmpty(const ShapePtr &shape1, const ShapePtr &shape2) {
-  if (shape1->max_shape().empty() || shape1->min_shape().empty() || shape2->max_shape().empty() ||
-      shape2->min_shape().empty()) {
-    return true;
-  }
-
-  return false;
-}
-
-ShapePtr CalculateDynamicShape(const ShapePtr &shape1, const ShapePtr &shape2, const ShapeVector &dims) {
-  // calculate dynamic shape
-  ShapeVector min_dims(dims.size());
-  ShapeVector max_dims(dims.size());
-  MS_EXCEPTION_IF_NULL(shape1);
-  MS_EXCEPTION_IF_NULL(shape2);
-
-  if (IsMaxOrMinEmpty(shape1, shape2)) {
-    return std::make_shared<Shape>(dims);
-  }
-
-  for (size_t i = 0; i < dims.size(); ++i) {
-    if (dims[i] != Shape::kShapeDimAny) {
-      min_dims[i] = max_dims[i] = dims[i];
-      continue;
-    }
-    if (shape1->shape()[i] != Shape::kShapeDimAny && shape2->shape()[i] != Shape::kShapeDimAny) {
-      min_dims[i] = std::min(shape1->shape()[i], shape2->shape()[i]);
-      max_dims[i] = std::max(shape1->shape()[i], shape2->shape()[i]);
-      continue;
-    }
-    if (shape1->shape()[i] == Shape::kShapeDimAny && shape2->shape()[i] != Shape::kShapeDimAny) {
-      if (shape1->min_shape().size() <= i || shape1->max_shape().size() <= i) {
-        MS_EXCEPTION(ValueError) << "Shape " << shape1->ToString()
-                                 << " has dynamic shape, but does not have min/max shape info.";
-      }
-      min_dims[i] = std::min(shape1->min_shape()[i], shape2->shape()[i]);
-      max_dims[i] = std::max(shape1->max_shape()[i], shape2->shape()[i]);
-      continue;
-    }
-    if (shape1->shape()[i] != Shape::kShapeDimAny && shape2->shape()[i] == Shape::kShapeDimAny) {
-      if (shape2->min_shape().size() <= i || shape2->max_shape().size() <= i) {
-        MS_EXCEPTION(ValueError) << "Shape " << shape1->ToString()
-                                 << " has dynamic shape, but does not have min/max shape info.";
-      }
-      min_dims[i] = std::min(shape1->shape()[i], shape2->min_shape()[i]);
-      max_dims[i] = std::max(shape1->shape()[i], shape2->max_shape()[i]);
-      continue;
-    }
-    // both shapes contains dynamic shape
-    if (shape1->min_shape().size() <= i || shape1->max_shape().size() <= i) {
-      MS_EXCEPTION(ValueError) << "Shape " << shape1->ToString()
-                               << " has dynamic shape, but does not have min/max shape info.";
-    }
-    if (shape2->min_shape().size() <= i || shape2->max_shape().size() <= i) {
-      MS_EXCEPTION(ValueError) << "Shape " << shape2->ToString()
-                               << " has dynamic shape, but does not have min/max shape info.";
-    }
-    min_dims[i] = std::min(shape1->min_shape()[i], shape2->min_shape()[i]);
-    max_dims[i] = std::max(shape1->max_shape()[i], shape2->max_shape()[i]);
-  }
-  return std::make_shared<Shape>(dims, min_dims, max_dims);
-}
-
-// Broaden all values within the input abstract. Since for AbstractScalar, calling Broaden() can not set
-// the value directly to kAnyValue, this function can not be replaced by calling abs->Broaden().
-AbstractBasePtr BroadenAllValues(const AbstractBasePtr &abs) {
-  MS_EXCEPTION_IF_NULL(abs);
-  AbstractBasePtr ret = nullptr;
-  if (abs->isa<abstract::AbstractDictionary>()) {
-    MS_EXCEPTION(TypeError) << "BroadenAllValues does not support dictionary yet";
-  }
-  if (abs->isa<abstract::AbstractScalar>()) {
-    ret = abs->Clone();
-    ret->cast<abstract::AbstractScalarPtr>()->set_is_variable(true);
-    return ret->Broaden();
-  }
-  if (abs->isa<abstract::AbstractSequence>()) {
-    auto abs_seq = abs->cast<abstract::AbstractSequencePtr>();
-    if (abs_seq->dynamic_len()) {
-      // The value of elements for dynamic length sequence should all be kAnyValue.
-      return abs->Clone();
-    }
-    AbstractBasePtrList elements = abs_seq->elements();
-    AbstractBasePtrList new_elements;
-    (void)std::transform(elements.begin(), elements.end(), std::back_inserter(new_elements), BroadenAllValues);
-    if (abs->isa<abstract::AbstractList>()) {
-      ret = std::make_shared<abstract::AbstractList>(new_elements, abs_seq->sequence_nodes());
-    } else {
-      ret = std::make_shared<abstract::AbstractTuple>(new_elements, abs_seq->sequence_nodes());
-    }
-    return ret;
-  }
-  return abs->Broaden();
+  return kTypeAny;
 }
 
 bool IsShapesDynamicRank(const std::vector<ShapeVector> &shapes) {
   return std::any_of(shapes.begin(), shapes.end(), [](const ShapeVector &shape) {
     return std::any_of(shape.begin(), shape.end(), [](int64_t dim) { return dim == Shape::kShapeRankAny; });
   });
-}
-
-bool HasSpecialShape(const std::vector<ShapePtr> &shapes) {
-  for (const auto &shape : shapes) {
-    bool shape_dyn =
-      std::any_of(shape->shape().begin(), shape->shape().end(), [](int64_t dim) { return dim == Shape::kShapeDimAny; });
-    if (shape_dyn && shape->min_shape().empty() && shape->max_shape().empty()) {
-      return true;
-    }
-  }
-  return false;
 }
 
 ShapePtr SingleElementShapeJoin(const ShapePtr &shape1, const ShapePtr &shape2) {
@@ -172,42 +66,11 @@ ShapePtr SingleElementShapeJoin(const ShapePtr &shape1, const ShapePtr &shape2) 
   return nullptr;
 }
 
-// If shape sizes are not equal, but shape1 and shape2 are all dynamic shape, return a dynamic rank.
-ShapePtr DifferentSizeDynShapeJoin(const ShapePtr &shape1, const ShapePtr &shape2) {
-  auto shape_max = shape1->shape();
-  auto shape_min = shape2->shape();
-  if (shape2->shape().size() > shape1->shape().size()) {
-    shape_max = shape2->shape();
-    shape_min = shape1->shape();
-  }
-  // (3, -1) join (3, 4, -1) = Error
-  // (3, -1) join (3, -1, -1) = (-2)
-  for (size_t i = 0; i < shape_max.size(); ++i) {
-    if (i < shape_min.size()) {
-      if (shape_min[i] != shape_max[i]) {
-        return nullptr;
-      }
-      continue;
-    }
-    if (shape_max[i] != Shape::kShapeDimAny) {
-      return nullptr;
-    }
-  }
-  return std::make_shared<Shape>(ShapeVector({Shape::kShapeRankAny}));
-}
-
 ShapeValueDType SingleShapeValueJoin(const ShapeValueDType &shape_value1, const ShapeValueDType &shape_value2) {
   if (shape_value1 == shape_value2) {
     return shape_value1;
   }
-  if (shape_value1 == Shape::kShapeDimAny) {
-    return shape_value2;
-  }
-  if (shape_value2 == Shape::kShapeDimAny) {
-    return shape_value1;
-  }
-  // shape_value1 != shape_value2
-  return Shape::kShapeError;
+  return Shape::kShapeDimAny;
 }
 
 ShapePtr ShapeJoin(const ShapePtr &shape1, const ShapePtr &shape2) {
@@ -227,11 +90,7 @@ ShapePtr ShapeJoin(const ShapePtr &shape1, const ShapePtr &shape2) {
     if (joined_shape != nullptr) {
       return joined_shape;
     }
-    joined_shape = DifferentSizeDynShapeJoin(shape1, shape2);
-    if (joined_shape != nullptr) {
-      return joined_shape;
-    }
-    return nullptr;
+    return std::make_shared<Shape>(ShapeVector({Shape::kShapeRankAny}));
   }
   ShapeVector dims(shape1->shape().size());
   for (std::size_t i = 0; i < shape1->shape().size(); i++) {
@@ -244,14 +103,14 @@ ShapePtr ShapeJoin(const ShapePtr &shape1, const ShapePtr &shape2) {
   return std::make_shared<Shape>(dims);
 }
 
-AbstractBasePtr AbstractJoin(const AbstractBasePtrList &args_spec_list) {
-  if (args_spec_list.empty()) {
-    MS_LOG(EXCEPTION) << "AbstractJoin requires at least 1 params, while the input size is " << args_spec_list.size()
-                      << ".";
+AbstractBasePtr AbstractJoin(const AbstractBasePtrList &args_abs_list) {
+  if (args_abs_list.empty()) {
+    MS_LOG(INTERNAL_EXCEPTION) << "AbstractJoin requires at least 1 params, while the input size is "
+                               << args_abs_list.size() << ".";
   }
-  AbstractBasePtr arg_spec_tmp = args_spec_list[0];
+  AbstractBasePtr arg_spec_tmp = args_abs_list[0];
   MS_EXCEPTION_IF_NULL(arg_spec_tmp);
-  for (const auto &arg_spec : args_spec_list) {
+  for (const auto &arg_spec : args_abs_list) {
     MS_EXCEPTION_IF_NULL(arg_spec);
     arg_spec_tmp = arg_spec_tmp->Join(arg_spec);
     MS_EXCEPTION_IF_NULL(arg_spec_tmp);
@@ -259,32 +118,76 @@ AbstractBasePtr AbstractJoin(const AbstractBasePtrList &args_spec_list) {
   return arg_spec_tmp;
 }
 
-AbstractBasePtrList AbstractJoin(const AbstractBasePtrList &spec1, const AbstractBasePtrList &spec2) {
-  if (spec1.size() != spec2.size()) {
-    MS_LOG(EXCEPTION) << "Join failed as list don't have the same size. spec1: " << ::mindspore::ToString(spec1)
-                      << ", spec2: " << ::mindspore::ToString(spec2);
+AbstractBasePtrList AbstractJoin(const AbstractBasePtrList &lhs, const AbstractBasePtrList &rhs) {
+  if (lhs.size() != rhs.size()) {
+    MS_LOG(EXCEPTION) << "Join failed as list don't have the same size. lhs: " << ::mindspore::ToString(lhs)
+                      << ", rhs: " << ::mindspore::ToString(rhs);
   }
   AbstractBasePtrList joined_list;
   bool changes = false;
-  for (std::size_t i = 0; i < spec1.size(); i++) {
-    MS_EXCEPTION_IF_NULL(spec1[i]);
-    auto joined_elem = spec1[i]->Join(spec2[i]);
+  for (std::size_t i = 0; i < lhs.size(); i++) {
+    MS_EXCEPTION_IF_NULL(lhs[i]);
+    auto joined_elem = lhs[i]->Join(rhs[i]);
     MS_EXCEPTION_IF_NULL(joined_elem);
-    if (joined_elem != spec1[i]) {
+    if (joined_elem != lhs[i]) {
       changes = true;
     }
     joined_list.push_back(joined_elem);
   }
   if (!changes) {
-    return spec1;
+    return lhs;
   }
   return joined_list;
+}
+
+AbstractBasePtr AbstractBroaden(const AbstractBasePtr &abs) {
+  MS_EXCEPTION_IF_NULL(abs);
+  if (abs->isa<AbstractSequence>() && !abs->isa<AbstractSparseTensor>()) {
+    auto sequence_abs = abs->cast<AbstractSequencePtr>();
+    if (sequence_abs->dynamic_len()) {
+      auto elem_abs = sequence_abs->dynamic_len_element_abs();
+      auto cloned_abs = sequence_abs->Clone()->cast<AbstractSequencePtr>();
+      cloned_abs->set_dynamic_len_element_abs(elem_abs);
+      return cloned_abs;
+    }
+    std::vector<AbstractBasePtr> new_elements;
+    new_elements.reserve(sequence_abs->elements().size());
+    (void)std::transform(sequence_abs->elements().cbegin(), sequence_abs->elements().cend(),
+                         std::back_inserter(new_elements), AbstractBroaden);
+    if (sequence_abs->isa<AbstractTuple>()) {
+      return std::make_shared<AbstractTuple>(new_elements, sequence_abs->sequence_nodes());
+    }
+    if (sequence_abs->isa<AbstractList>()) {
+      return std::make_shared<AbstractList>(new_elements, sequence_abs->sequence_nodes());
+    }
+    MS_INTERNAL_EXCEPTION(TypeError) << "Unknown AbstractSequence type:" << abs->ToString();
+  }
+  if (abs->isa<AbstractDictionary>()) {
+    auto abs_dict = abs->cast<AbstractDictionaryPtr>();
+    const auto &origin_kv = abs_dict->elements();
+    std::vector<AbstractElementPair> kv;
+    (void)std::transform(origin_kv.cbegin(), origin_kv.cend(), std::back_inserter(kv),
+                         [](const AbstractElementPair &item) {
+                           MS_EXCEPTION_IF_NULL(item.second);
+                           return std::make_pair(item.first, AbstractBroaden(item.second));
+                         });
+    return std::make_shared<AbstractDictionary>(kv);
+  }
+  if (abs->isa<AbstractScalar>()) {
+    auto arg_type = abs->BuildType();
+    MS_EXCEPTION_IF_NULL(arg_type);
+    auto abs_scalar = abs->cast<AbstractScalarPtr>();
+    if (arg_type->isa<Number>() || arg_type->isa<String>()) {
+      abs_scalar->set_is_variable(true);
+    }
+  }
+  return abs->Broaden();
 }
 
 AbstractBasePtr SensitivityTransform(const AbstractBasePtr &spec) {
   auto f_spec = dyn_cast_ptr<AbstractFunction>(spec);
   if (f_spec != nullptr) {
-    return std::make_shared<AbstractScalar>(kAnyValue, std::make_shared<EnvType>());
+    return std::make_shared<AbstractScalar>(kValueAny, std::make_shared<EnvType>());
   }
   return spec->Clone();
 }
@@ -301,7 +204,7 @@ ShapeVector BroadcastShape(ShapeVector shpx, ShapeVector shpy) {
     }
   }
   if (shpx.size() != shpy.size()) {
-    MS_LOG(EXCEPTION) << "Failure: shpx.size() != shpy.size().";
+    MS_LOG(INTERNAL_EXCEPTION) << "Failure: shpx.size() != shpy.size().";
   }
   ShapeVector shp;
   for (size_t i = 0; i < shpx.size(); i++) {
@@ -333,34 +236,19 @@ size_t TypeIdSize(const TypeId data_type) {
   return unsupported_type_error;
 }
 
-void CheckMinMaxShape(const ShapeVector &shape, ShapeVector *min_shape, ShapeVector *max_shape) {
-  *min_shape = (*min_shape).empty() ? shape : *min_shape;
-  *max_shape = (*max_shape).empty() ? shape : *max_shape;
-}
-
 AbstractBasePtr MakeAbstractTensor(const ShapePtr &shape, const TypePtr &type) {
   MS_EXCEPTION_IF_NULL(shape);
   MS_EXCEPTION_IF_NULL(type);
   AbstractBasePtr tensor = nullptr;
-  auto ret_vec = shape->shape();
-  ShapeVector min_shape_vec;
-  ShapeVector max_shape_vec;
 
-  if (!shape->min_shape().empty()) {
-    min_shape_vec = shape->min_shape();
-  }
-  if (!shape->max_shape().empty()) {
-    max_shape_vec = shape->max_shape();
-  }
-
-  auto ret_shape = std::make_shared<abstract::Shape>(ret_vec, min_shape_vec, max_shape_vec);
+  auto ret_shape = shape->Clone();
   if (type->isa<TensorType>()) {
     auto tensor_type = type->cast_ptr<TensorType>();
     MS_EXCEPTION_IF_NULL(tensor_type);
-    auto element = std::make_shared<abstract::AbstractScalar>(kAnyValue, tensor_type->element());
+    auto element = std::make_shared<abstract::AbstractScalar>(kValueAny, tensor_type->element());
     tensor = std::make_shared<abstract::AbstractTensor>(element, ret_shape);
   } else {
-    auto element = std::make_shared<abstract::AbstractScalar>(kAnyValue, type);
+    auto element = std::make_shared<abstract::AbstractScalar>(kValueAny, type);
     tensor = std::make_shared<abstract::AbstractTensor>(element, ret_shape);
   }
   return tensor;
@@ -372,7 +260,7 @@ AbstractBasePtr MakeMonadAbstract(const MonadTypePtr &type) {
   } else if (type->isa<IOMonadType>()) {
     return kIOMonad->ToAbstract();
   }
-  MS_EXCEPTION(UnknownError) << "Unsupported to convert type " << type->ToString() << " to monad abstract";
+  MS_INTERNAL_EXCEPTION(UnknownError) << "Unsupported to convert type " << type->ToString() << " to monad abstract";
 }
 
 AbstractBasePtr MakeAbstract(const BaseShapePtr &base_shape, const TypePtr &type) {
@@ -384,10 +272,12 @@ AbstractBasePtr MakeAbstract(const BaseShapePtr &base_shape, const TypePtr &type
     auto shape_vec = shape->shape();
     // if the size of shape list is empty, return an scalar abstract
     if (shape_vec.empty() && (!type->isa<TensorType>())) {
-      abstract::AbstractScalarPtr abs_scalar = std::make_shared<abstract::AbstractScalar>(kAnyValue, type);
+      abstract::AbstractScalarPtr abs_scalar = std::make_shared<abstract::AbstractScalar>(kValueAny, type);
       return abs_scalar;
     }
     return MakeAbstractTensor(shape, type);
+  } else if (base_shape->isa<NoShape>() && type->isa<Type>()) {
+    return std::make_shared<abstract::AbstractScalar>(kValueAny, type);
   } else if (base_shape->isa<TupleShape>() && type->isa<Tuple>()) {
     auto shape_tuple = base_shape->cast_ptr<TupleShape>();
     auto type_tuple = type->cast_ptr<Tuple>();
@@ -415,9 +305,96 @@ AbstractBasePtr MakeAbstract(const BaseShapePtr &base_shape, const TypePtr &type
   } else if (type->isa<Monad>()) {
     // Return monad abstract if it is monad type.
     return MakeMonadAbstract(type->cast<MonadTypePtr>());
-  } else {
-    MS_LOG(EXCEPTION) << "Evaluator return invalid shape " << base_shape->ToString() << "or type. " << type->ToString();
   }
+  MS_LOG(INTERNAL_EXCEPTION) << "Evaluator return invalid shape " << base_shape->ToString() << " or type. "
+                             << type->ToString();
+}
+
+void SetVariableFlag(const AbstractBasePtr &abs) {
+  if (!abs->isa<abstract::AbstractFunction>()) {
+    return;
+  }
+  const auto func_abs = abs->cast_ptr<abstract::AbstractFunction>();
+  MS_EXCEPTION_IF_NULL(func_abs);
+  abstract::FuncGraphAbstractClosure *closure_abs = nullptr;
+  auto partial_closure_abs = func_abs->cast_ptr<abstract::PartialAbstractClosure>();
+  if (partial_closure_abs != nullptr) {
+    closure_abs = partial_closure_abs->fn()->cast_ptr<abstract::FuncGraphAbstractClosure>();
+  } else {
+    closure_abs = func_abs->cast_ptr<abstract::FuncGraphAbstractClosure>();
+  }
+  if (closure_abs != nullptr) {
+    auto func = closure_abs->func_graph();
+    MS_EXCEPTION_IF_NULL(func);
+    func->set_is_tensor_condition_branch(true);
+    MS_LOG(DEBUG) << "Set is_tensor_condition_branch for func_graph:" << func->ToString();
+  }
+}
+
+namespace {
+FuncGraphPtr GetFuncGraphFromAbs(const abstract::AbstractBasePtr &abs, const AnfNodePtr &call_node) {
+  MS_EXCEPTION_IF_NULL(call_node);
+  if (abs == nullptr) {
+    MS_LOG(ERROR) << "Null abstract, current node: " << call_node->DebugString();
+    return nullptr;
+  }
+  if (abs->isa<abstract::FuncGraphAbstractClosure>()) {
+    auto abs_func_graph = abs->cast<abstract::FuncGraphAbstractClosurePtr>();
+    MS_EXCEPTION_IF_NULL(abs_func_graph);
+    if (!abs_func_graph->specialized()) {
+      MS_LOG(INFO) << "Unspecialized func graph abstract: " << abs_func_graph->ToString()
+                   << ", node: " << call_node->DebugString();
+    }
+    return abs_func_graph->func_graph();
+  }
+  if (abs->isa<abstract::PartialAbstractClosure>()) {
+    auto abs_partial_closure = abs->cast<abstract::PartialAbstractClosurePtr>();
+    MS_EXCEPTION_IF_NULL(abs_partial_closure);
+    auto abs_func = abs_partial_closure->fn();
+    return GetFuncGraphFromAbs(abs_func, call_node);
+  }
+  MS_LOG(ERROR) << "Unexpected abs: " << abs->ToString() << ", call node: " << call_node->DebugString();
+  return nullptr;
+}
+}  // namespace
+
+std::vector<FuncGraphPtr> GetFuncGraphsFromCallNode(const CNodePtr &call_node) {
+  MS_EXCEPTION_IF_NULL(call_node);
+  auto func_node = call_node->input(0);
+  if (IsPrimitiveCNode(func_node, prim::kPrimPartial)) {
+    func_node = func_node->cast<CNodePtr>()->input(1);
+  }
+  if (IsValueNode<FuncGraph>(func_node)) {
+    return {GetValueNode<FuncGraphPtr>(func_node)};
+  }
+  auto abs = func_node->abstract();
+  MS_EXCEPTION_IF_NULL(abs);
+  if (abs == nullptr) {
+    MS_LOG(ERROR) << "Null abstract, current call node: " << call_node->DebugString();
+    return {};
+  }
+  if (!abs->isa<abstract::AbstractFunction>()) {
+    MS_LOG(ERROR) << "Unexpected abs: " << abs->ToString() << ", call_node: " << call_node->DebugString();
+    return {};
+  }
+  auto abs_func = abs->cast<abstract::AbstractFunctionPtr>();
+  MS_EXCEPTION_IF_NULL(abs_func);
+  std::vector<FuncGraphPtr> func_graphs;
+  if (abs->isa<abstract::AbstractFuncUnion>()) {
+    auto visit_func = [&func_graphs, &call_node](const abstract::AbstractFuncAtomPtr &poss) {
+      (void)func_graphs.emplace_back(GetFuncGraphFromAbs(poss, call_node));
+    };
+    abs_func->Visit(visit_func);
+  } else {
+    (void)func_graphs.emplace_back(GetFuncGraphFromAbs(abs_func, call_node));
+  }
+  bool exist_null_fg =
+    std::any_of(func_graphs.cbegin(), func_graphs.cend(), [](const FuncGraphPtr &fg) { return fg == nullptr; });
+  if (exist_null_fg) {
+    MS_LOG(ERROR) << "Get func graphs from abstract failed!";
+    return {};
+  }
+  return func_graphs;
 }
 }  // namespace abstract
 }  // namespace mindspore

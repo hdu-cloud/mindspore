@@ -20,7 +20,6 @@
 #include "include/api/graph.h"
 #include "include/api/types.h"
 #include "include/model.h"
-#include "src/litert/cxx_api/expression/net_impl.h"
 #include "src/litert/cxx_api/graph/graph_data.h"
 #include "src/litert/cxx_api/model/model_impl.h"
 #include "src/litert/cxx_api/converters.h"
@@ -28,8 +27,6 @@
 #include "src/litert/lite_session.h"
 
 namespace mindspore {
-std::function<int(void *)> ExpressionCallback;
-
 Key::Key(const char *dec_key, size_t key_len) {
   len = 0;
   if (key_len >= max_key_len) {
@@ -116,36 +113,24 @@ Status Serialization::Load(const std::vector<char> &file, ModelType model_type, 
 
   size_t model_size;
   lite::LiteSession session;
-  auto model_buf = session.LoadModelByPath(filename, model_type, &model_size);
+  auto model_buf = session.LoadModelByPath(filename, model_type, &model_size, false);
   if (model_buf == nullptr) {
     MS_LOG(ERROR) << "Read model file failed";
     return kLiteNullptr;
   }
-  if (graph->IsExecutable()) {
-    auto model =
-      std::shared_ptr<lite::Model>(lite::ImportFromBuffer(static_cast<const char *>(model_buf), model_size, true));
-    if (model == nullptr) {
-      MS_LOG(ERROR) << "New model failed.";
-      return kLiteNullptr;
-    }
-    auto graph_data = std::shared_ptr<Graph::GraphData>(new (std::nothrow) Graph::GraphData(model));
-    if (graph_data == nullptr) {
-      MS_LOG(ERROR) << "New graph data failed.";
-      return kLiteMemoryFailed;
-    }
-    *graph = Graph(graph_data);
-    return kSuccess;
-  } else {
-    auto loader = CreateExpressionLoader();
-    if (loader == nullptr) {
-      MS_LOG(ERROR) << "Unsupported Feature.";
-      delete[] model_buf;
-      return kLiteError;
-    }
-    (void)loader(model_buf, graph);
-    delete[] model_buf;
-    return kSuccess;
+  auto model =
+    std::shared_ptr<lite::Model>(lite::ImportFromBuffer(static_cast<const char *>(model_buf), model_size, true));
+  if (model == nullptr) {
+    MS_LOG(ERROR) << "New model failed.";
+    return kLiteNullptr;
   }
+  auto graph_data = std::shared_ptr<Graph::GraphData>(new (std::nothrow) Graph::GraphData(model));
+  if (graph_data == nullptr) {
+    MS_LOG(ERROR) << "New graph data failed.";
+    return kLiteMemoryFailed;
+  }
+  *graph = Graph(graph_data);
+  return kSuccess;
 }
 
 Status Serialization::Load(const std::vector<std::vector<char>> &files, ModelType model_type,
@@ -159,12 +144,7 @@ Status Serialization::SetParameters(const std::map<std::vector<char>, Buffer> &p
   return kMEFailed;
 }
 
-Status Serialization::ExportModel(const Model &model, ModelType model_type, Buffer *model_data) {
-  MS_LOG(ERROR) << "Unsupported feature.";
-  return kMEFailed;
-}
-
-Status Serialization::ExportModel(const Model &model, ModelType model_type, const std::vector<char> &model_file,
+Status Serialization::ExportModel(const Model &model, ModelType model_type, Buffer *model_data,
                                   QuantizationType quantization_type, bool export_inference_only,
                                   const std::vector<std::vector<char>> &output_tensor_name) {
   if (model.impl_ == nullptr) {
@@ -175,6 +155,10 @@ Status Serialization::ExportModel(const Model &model, ModelType model_type, cons
     MS_LOG(ERROR) << "Model is not TrainModel.";
     return kLiteError;
   }
+  if (model_data == nullptr) {
+    MS_LOG(ERROR) << "model_data is nullptr.";
+    return kLiteParamInvalid;
+  }
   if (model_type != kMindIR && model_type != kMindIR_Lite) {
     MS_LOG(ERROR) << "Unsupported Export Format " << model_type;
     return kLiteParamInvalid;
@@ -183,9 +167,66 @@ Status Serialization::ExportModel(const Model &model, ModelType model_type, cons
     MS_LOG(ERROR) << "Model session is nullptr.";
     return kLiteError;
   }
+  auto ret = model.impl_->session_->Export(model_data, export_inference_only ? lite::MT_INFERENCE : lite::MT_TRAIN,
+                                           A2L_ConvertQT(quantization_type), lite::FT_FLATBUFFERS,
+                                           VectorCharToString(output_tensor_name));
+
+  return (ret == mindspore::lite::RET_OK) ? kSuccess : kLiteError;
+}
+
+Status Serialization::ExportModel(const Model &model, ModelType model_type, const std::vector<char> &model_file,
+                                  QuantizationType quantization_type, bool export_inference_only,
+                                  const std::vector<std::vector<char>> &output_tensor_name) {
+  if (model.impl_ == nullptr) {
+    MS_LOG(ERROR) << "Model implement is null.";
+    return kLiteUninitializedObj;
+  }
+  if (model.impl_->session_ == nullptr) {
+    MS_LOG(ERROR) << "Model hasn't been built.";
+    return kLiteError;
+  }
+  if (!model.impl_->IsTrainModel()) {
+    MS_LOG(ERROR) << "Model is not TrainModel.";
+    return kLiteError;
+  }
+  if (model_type != kMindIR && model_type != kMindIR_Lite) {
+    MS_LOG(ERROR) << "Unsupported Export Format " << model_type;
+    return kLiteParamInvalid;
+  }
   auto ret = model.impl_->session_->Export(
     CharToString(model_file), export_inference_only ? lite::MT_INFERENCE : lite::MT_TRAIN,
     A2L_ConvertQT(quantization_type), lite::FT_FLATBUFFERS, VectorCharToString(output_tensor_name));
+
+  return (ret == mindspore::lite::RET_OK) ? kSuccess : kLiteError;
+}
+
+Status Serialization::ExportWeightsCollaborateWithMicro(const Model &model, ModelType model_type,
+                                                        const std::vector<char> &weight_file, bool is_inference,
+                                                        bool enable_fp16,
+                                                        const std::vector<std::vector<char>> &changeable_weights_name) {
+  if (model.impl_ == nullptr) {
+    MS_LOG(ERROR) << "Model implement is null.";
+    return kLiteUninitializedObj;
+  }
+  if (model.impl_->session_ == nullptr) {
+    MS_LOG(ERROR) << "Model hasn't been built.";
+    return kLiteError;
+  }
+  if (!model.impl_->IsTrainModel()) {
+    MS_LOG(ERROR) << "Model is not TrainModel.";
+    return kLiteError;
+  }
+  if (model_type != kMindIR && model_type != kMindIR_Lite) {
+    MS_LOG(ERROR) << "Model type is not kMindIR or kMindIR_Lite";
+    return kLiteParamInvalid;
+  }
+  if (!is_inference) {
+    MS_LOG(ERROR) << "Currently, can only export inference-model's weights.";
+    return kLiteNotSupport;
+  }
+  auto ret = model.impl_->session_->ExportWeightsCollaborateWithMicro(CharToString(weight_file), lite::MT_INFERENCE,
+                                                                      lite::FT_FLATBUFFERS, enable_fp16,
+                                                                      VectorCharToString(changeable_weights_name));
 
   return (ret == mindspore::lite::RET_OK) ? kSuccess : kLiteError;
 }

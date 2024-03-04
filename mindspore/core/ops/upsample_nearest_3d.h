@@ -17,12 +17,12 @@
 #ifndef MINDSPORE_CORE_OPS_UPSAMPLE_NEAREST_3D_H_
 #define MINDSPORE_CORE_OPS_UPSAMPLE_NEAREST_3D_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -30,9 +30,7 @@ constexpr auto kNameUpsampleNearest3D = "UpsampleNearest3D";
 class MIND_API UpsampleNearest3D : public BaseOperator {
  public:
   MIND_API_BASE_MEMBER(UpsampleNearest3D);
-  UpsampleNearest3D() : BaseOperator(kNameUpsampleNearest3D) { InitIOName({"x"}, {"y"}); }
-  std::vector<int64_t> get_output_size_attr() const;
-  std::vector<float> get_scales_attr() const;
+  UpsampleNearest3D() : BaseOperator(kNameUpsampleNearest3D) { InitIOName({"x", "output_size", "scales"}, {"y"}); }
 };
 using PrimUpsampleNearest3D = std::shared_ptr<UpsampleNearest3D>;
 }  // namespace ops

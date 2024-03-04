@@ -19,9 +19,11 @@
 #include <utility>
 #include <complex>
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
+#include "nnacl/errorcode.h"
 #include "nnacl/gather_parameter.h"
 #include "nnacl/base/gather_base.h"
 #include "include/common/thread_pool.h"
+#include "mindspore/core/ops/gather.h"
 
 namespace mindspore {
 namespace kernel {
@@ -30,11 +32,16 @@ using complex64 = std::complex<float>;
 using complex128 = std::complex<double>;
 constexpr size_t kGatherInputsNum = 3;
 constexpr size_t kGatherOutputsNum = 1;
-constexpr size_t kGatherInputParamsMaxDim = 7;
+constexpr size_t kGatherInputParamsMaxDim = 8;
 }  // namespace
 bool GatherCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                               const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
   kernel_name_ = base_operator->name();
+  auto kernel_ptr = std::dynamic_pointer_cast<ops::Gather>(base_operator);
+  MS_EXCEPTION_IF_NULL(kernel_ptr);
+  batch_dims_ = kernel_ptr->get_batch_dims();
+
   size_t input_num = inputs.size();
   if (input_num != kGatherInputsNum) {
     MS_LOG(EXCEPTION) << "Argument number is " << input_num << ", but GatherCPUKernel needs 2.";
@@ -46,9 +53,9 @@ bool GatherCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::v
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  input_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  indices_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).first);
-  axis_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex2).first);
+  input_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  indices_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).dtype);
+  axis_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex2).dtype);
   return true;
 }
 
@@ -61,6 +68,9 @@ int GatherCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::
   output_shape_ = outputs[kIndexZero]->GetShapeVector();
   if (IsDynamic(input_shape_) || IsDynamic(indices_shape_) || IsDynamic(output_shape_)) {
     return KRET_UNKNOWN_SHAPE;
+  }
+  if (batch_dims_ < 0) {
+    batch_dims_ += SizeToLong(indices_shape_.size());
   }
   is_null_input_ = input_shape_.empty() || indices_shape_.empty() || output_shape_.empty();
   if (is_null_input_) {
@@ -94,31 +104,50 @@ bool GatherCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inp
     axis_ = axis_ + dims;
   }
 
-  size_t outer_size = 1, inner_size = 1;
-  auto axis = static_cast<size_t>(axis_);
-  for (size_t i = 0; i < axis; ++i) {
+  size_t batch_size = 1;
+  size_t outer_size = 1;
+  size_t indices_element_size = 1;
+  size_t inner_size = 1;
+  auto axis = LongToSize(axis_);
+  auto batch_dims = LongToSize(batch_dims_);
+  for (size_t i = 0; i < batch_dims; i++) {
+    batch_size *= LongToSize(input_shape_.at(i));
+  }
+  for (size_t i = batch_dims; i < axis; ++i) {
     outer_size *= LongToSize(input_shape_.at(i));
   }
   for (size_t i = axis + 1; i < input_shape_.size(); ++i) {
     inner_size *= LongToSize(input_shape_.at(i));
   }
-  size_t indices_element_size = 1;
-  for (size_t i = 0; i < indices_shape_.size(); i++) {
+  for (size_t i = batch_dims; i < indices_shape_.size(); i++) {
     indices_element_size *= LongToSize(indices_shape_.at(i));
   }
+
   auto limit = LongToSize(input_shape_.at(axis));
   size_t byte_inner_size = inner_size * sizeof(T);
   size_t byte_out_stride = indices_element_size * byte_inner_size;
-  auto task = [&](size_t start, size_t end) {
-    int count = SizeToInt(end - start);
-    const int8_t *in = input_tensor + start * limit * byte_inner_size;
-    int8_t *out = output_addr + start * byte_out_stride;
-    int ret = Gather(in, count, byte_inner_size, limit, indices_data, indices_element_size, out, byte_out_stride);
-    if (ret != 0) {
-      MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', error_code[" << ret << "]";
-    }
-  };
-  ParallelLaunchAutoSearch(task, outer_size, this, &parallel_search_info_);
+  for (size_t i = 0; i < batch_size; i++) {
+    auto output_ptr = output_addr + i * outer_size * byte_out_stride;
+    auto input_ptr = input_tensor + i * outer_size * byte_inner_size * limit;
+    auto indice_ptr = indices_data + i * indices_element_size;
+
+    auto task = [&](size_t start, size_t end) {
+      int count = SizeToInt(end - start);
+      const int8_t *in = input_ptr + start * limit * byte_inner_size;
+      int8_t *out = output_ptr + start * byte_out_stride;
+      int error_index = 0;
+      int ret =
+        Gather(in, count, byte_inner_size, limit, indice_ptr, indices_element_size, out, byte_out_stride, &error_index);
+      if (ret == NNACL_GATHER_INDICES_VALUE_INVALID) {
+        MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the 'input_indices' should be in the range [" << 0 << ", "
+                          << limit << "), but got " << error_index << ", error_code[" << ret << "]";
+      } else if (ret == NNACL_NULL_PTR) {
+        MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', error_code[" << ret << "]";
+      }
+    };
+    ParallelLaunchAutoSearch(task, outer_size, this, &parallel_search_info_);
+  }
+
   return true;
 }
 

@@ -15,19 +15,35 @@
  */
 
 #include "ops/dynamic_gru_v2.h"
+
 #include <algorithm>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
+
 #include "abstract/abstract_value.h"
-#include "ops/op_utils.h"
-#include "ops/core_ops.h"
-#include "ops/op_name.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/type_id.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -54,15 +70,15 @@ abstract::TupleShapePtr DynamicGRUV2InferShape(const PrimitivePtr &primitive,
     num_proj = GetValue<int64_t>(primitive->GetAttr(kNumProj));
   }
 
-  const size_t kNumTwo = 2;
-  const size_t kNumThree = 3;
+  const int64_t kNumTwo = 2;
+  const int64_t kNumThree = 3;
   if (!is_dynamic_rank) {
-    (void)CheckAndConvertUtils::CheckInteger("x shape rank", x_shape.size(), kEqual, kNumThree, prim_name);
-    (void)CheckAndConvertUtils::CheckInteger("weight input shape rank", winput_shape.size(), kEqual, kNumTwo,
-                                             prim_name);
-    (void)CheckAndConvertUtils::CheckInteger("weight hidden shape rank", whidden_shape.size(), kEqual, kNumTwo,
-                                             prim_name);
-    (void)CheckAndConvertUtils::CheckInteger("h shape rank", h_shape.size(), kEqual, kNumTwo, prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("x shape rank", SizeToLong(x_shape.size()), kEqual, kNumThree, prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("weight input shape rank", SizeToLong(winput_shape.size()), kEqual,
+                                             kNumTwo, prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("weight hidden shape rank", SizeToLong(whidden_shape.size()), kEqual,
+                                             kNumTwo, prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("h shape rank", SizeToLong(h_shape.size()), kEqual, kNumTwo, prim_name);
   }
 
   std::map<size_t, bool> placeholder_map = {{3, true}, {4, true}, {5, true}};
@@ -71,11 +87,11 @@ abstract::TupleShapePtr DynamicGRUV2InferShape(const PrimitivePtr &primitive,
     int64_t input_size = x_shape[kInputIndex2];
     int64_t hidden_size = whidden_shape[kInputIndex0];
 
-    (void)CheckAndConvertUtils::CheckTensorShapeSame({{"weight input shape", winput_shape_ptr}},
+    (void)CheckAndConvertUtils::CheckTensorShapeSame({{"weight input", winput_shape_ptr}},
                                                      std::vector<int64_t>{input_size, 3 * hidden_size}, prim_name);
-    (void)CheckAndConvertUtils::CheckTensorShapeSame({{"weight hidden shape", whidden_shape_ptr}},
+    (void)CheckAndConvertUtils::CheckTensorShapeSame({{"weight hidden", whidden_shape_ptr}},
                                                      std::vector<int64_t>{hidden_size, 3 * hidden_size}, prim_name);
-    (void)CheckAndConvertUtils::CheckTensorShapeSame({{"init h shape", h_shape_ptr}},
+    (void)CheckAndConvertUtils::CheckTensorShapeSame({{"init h", h_shape_ptr}},
                                                      std::vector<int64_t>{batch_size, hidden_size}, prim_name);
 
     std::vector<int64_t> valid_shape = {3 * hidden_size};
@@ -84,7 +100,7 @@ abstract::TupleShapePtr DynamicGRUV2InferShape(const PrimitivePtr &primitive,
         CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex3]->BuildShape())[kShape];
       auto binput_shape_ptr = input_args[kInputIndex3]->BuildShape();
       if (!IsDynamic(binput_shape)) {
-        (void)CheckAndConvertUtils::CheckTensorShapeSame({{"binput_shape", binput_shape_ptr}}, valid_shape, prim_name);
+        (void)CheckAndConvertUtils::CheckTensorShapeSame({{"binput", binput_shape_ptr}}, valid_shape, prim_name);
         placeholder_map[kInputIndex3] = false;
       }
     }
@@ -94,8 +110,7 @@ abstract::TupleShapePtr DynamicGRUV2InferShape(const PrimitivePtr &primitive,
         CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex4]->BuildShape())[kShape];
       auto bhidden_shape_ptr = input_args[kInputIndex4]->BuildShape();
       if (!IsDynamic(bhidden_shape)) {
-        (void)CheckAndConvertUtils::CheckTensorShapeSame({{"bhidden_shape", bhidden_shape_ptr}}, valid_shape,
-                                                         prim_name);
+        (void)CheckAndConvertUtils::CheckTensorShapeSame({{"bhidden", bhidden_shape_ptr}}, valid_shape, prim_name);
         placeholder_map[kInputIndex4] = false;
       }
     }
@@ -108,9 +123,9 @@ abstract::TupleShapePtr DynamicGRUV2InferShape(const PrimitivePtr &primitive,
   }
 
   std::vector<int64_t> placeholder{};
-  for (auto iter = placeholder_map.begin(); iter != placeholder_map.end(); iter++) {
+  for (auto iter = placeholder_map.begin(); iter != placeholder_map.end(); (void)iter++) {
     if (iter->second) {
-      placeholder.emplace_back(static_cast<int64_t>(iter->first));
+      (void)placeholder.emplace_back(static_cast<int64_t>(iter->first));
     }
   }
   (void)primitive->AddAttr("placeholder_index", MakeValue<std::vector<int64_t>>(placeholder));
@@ -147,14 +162,14 @@ TuplePtr DynamicGRUV2InferType(const PrimitivePtr &primitive, const std::vector<
 
   const std::set<TypePtr> valid_types = {kFloat16, kFloat32};
   std::map<std::string, TypePtr> check_types_h;
-  check_types_h.insert({"init_h", h_dtype});
+  (void)check_types_h.insert({"init_h", h_dtype});
   if (input_args[kInputIndex3]->BuildType()->type_id() != kMetaTypeNone) {
     auto binput_dtype = input_args[kInputIndex3]->BuildType();
-    check_types_h.insert({"bias_input", binput_dtype});
+    (void)check_types_h.insert({"bias_input", binput_dtype});
   }
   if (input_args[kInputIndex4]->BuildType()->type_id() != kMetaTypeNone) {
     auto bhidden_dtype = input_args[kInputIndex4]->BuildType();
-    check_types_h.insert({"bias_hidden", bhidden_dtype});
+    (void)check_types_h.insert({"bias_hidden", bhidden_dtype});
   }
   (void)CheckAndConvertUtils::CheckTensorTypeSame(check_types_h, valid_types, prim_name);
 
@@ -169,14 +184,32 @@ AbstractBasePtr DynamicGRUV2Infer(const abstract::AnalysisEnginePtr &, const Pri
   for (auto &input : input_args) {
     MS_EXCEPTION_IF_NULL(input);
   }
-  const size_t kInputNum = 7;
-  (void)CheckAndConvertUtils::CheckInteger("Input Num", input_args.size(), kEqual, kInputNum, prim_name);
+  const int64_t kInputNum = 7;
+  (void)CheckAndConvertUtils::CheckInteger("Input Num", SizeToLong(input_args.size()), kEqual, kInputNum, prim_name);
   auto types = DynamicGRUV2InferType(primitive, input_args);
   auto shapes = DynamicGRUV2InferShape(primitive, input_args);
   return abstract::MakeAbstract(shapes, types);
 }
 
 MIND_API_OPERATOR_IMPL(DynamicGRUV2, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(DynamicGRUV2, prim::kPrimDynamicGRUV2, DynamicGRUV2Infer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGDynamicGRUV2Infer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicGRUV2InferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicGRUV2InferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicGRUV2Infer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(DynamicGRUV2, prim::kPrimDynamicGRUV2, AGDynamicGRUV2Infer, false);
 }  // namespace ops
 }  // namespace mindspore

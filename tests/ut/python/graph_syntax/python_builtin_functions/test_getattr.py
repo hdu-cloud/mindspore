@@ -1,4 +1,4 @@
-# Copyright 2022 Huawei Technologies Co., Ltd
+# Copyright 2022-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -70,7 +70,7 @@ def test_getattr_tensor_with_wrong_attr():
         return abs_func()
 
     with pytest.raises(AttributeError) as err:
-        foo(Tensor([-1, -2, -3]))
+        foo(Tensor([-1, -2, -3]))  # Not throw error any more, should move to ST.
     assert "object has no attribute" in str(err.value)
 
 
@@ -221,7 +221,7 @@ def test_getattr_list_with_wrong_attr():
         return abs_func()
 
     with pytest.raises(AttributeError) as err:
-        foo([1, 2, 3, 4])
+        foo([1, 2, 3, 4])  # Not throw error any more, should move to ST.
     assert "object has no attribute" in str(err.value)
 
 
@@ -340,7 +340,7 @@ def test_getattr_tuple_with_wrong_attr():
         return abs_func()
 
     with pytest.raises(AttributeError) as err:
-        foo((1, 2, 3, 4))
+        foo((1, 2, 3, 4))  # Not throw error any more, should move to ST.
     assert "object has no attribute" in str(err.value)
 
 
@@ -425,7 +425,7 @@ def test_getattr_dict_with_wrong_attr():
         return abs_func()
 
     with pytest.raises(AttributeError) as err:
-        foo({"1": 1, "2": 2})
+        foo({"1": 1, "2": 2})  # Not throw error any more, should move to ST.
     assert "object has no attribute" in str(err.value)
 
 
@@ -510,22 +510,6 @@ def test_getattr_ms_class_with_concate_attr():
     assert out == 6
 
 
-def test_getattr_ms_class_with_default():
-    """
-    Feature: Syntax getattr.
-    Description: Graph syntax getattr support ms_class input.
-    Expectation: No exception.
-    """
-    ms_obj = MSClass1()
-
-    @jit
-    def foo():
-        return getattr(ms_obj, "none", 10)
-
-    out = foo()
-    assert out is None
-
-
 def test_getattr_ms_class_with_concate_attr_and_default():
     """
     Feature: Syntax getattr.
@@ -566,7 +550,6 @@ def test_getattr_ms_class_with_wrong_attr():
 
 
 class Net(nn.Cell):
-
     def __init__(self):
         super(Net, self).__init__()
         self.a0 = Tensor([0])
@@ -593,22 +576,6 @@ def test_getattr_cell_obj():
 
     out = foo()
     assert out == 0
-
-
-def test_getattr_cell_obj_2():
-    """
-    Feature: Syntax getattr.
-    Description: Graph syntax getattr support cell object input.
-    Expectation: No exception.
-    """
-    cell_obj = Net()
-
-    @jit
-    def foo():
-        return getattr(cell_obj, "none")
-
-    out = foo()
-    assert out is None
 
 
 def test_getattr_cell_obj_concate_input():
@@ -680,25 +647,39 @@ def test_getattr_numpy_array():
     @jit
     def foo():
         x = np.array([1, 2, 3, 4])
+        # Should work as: return x.shape[0]
         return getattr(x, "shape")[0]
 
-    with pytest.raises(TypeError) as err:
-        foo()
-    assert "Do not support to get attribute" in str(err.value)
+    foo()
 
 
-def test_getattr_numpy_array_2():
+def test_getattr_for_fg_object():
     """
     Feature: Syntax getattr.
-    Description: Graph syntax getattr support numpy array input.
-    Expectation: TypeError
+    Description: Graph syntax getattr support function graph object.
+    Expectation: No Exception
     """
+    @jit_class
+    class User:
+        def __init__(self):
+            self.value = 10
 
-    @jit
-    def foo():
-        x = 1
-        return getattr(x, "shape", np.array([0, 1, 2, 3, 4]))
+        @jit
+        def func(self, t):
+            return 2 * t
 
-    with pytest.raises(TypeError) as err:
-        foo()
-    assert "For 'getattr', the third input 'default' can not" in str(err.value)
+    class UserNet(nn.Cell):
+        def __init__(self):
+            super(UserNet, self).__init__()
+            self.inner_net = User()
+
+        def construct(self, x):
+            return self.inner_net.func(x), getattr(self.inner_net, "tmp", 1)
+
+    context.set_context(mode=context.PYNATIVE_MODE)
+    net = UserNet()
+    x = Tensor([1, 2, 3])
+    net(x)
+
+    context.set_context(mode=context.GRAPH_MODE)
+    net(x)

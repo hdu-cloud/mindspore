@@ -17,16 +17,16 @@
 #include "plugin/device/ascend/optimizer/ir_fusion/transpose_transdata_fusion.h"
 #include <memory>
 #include <vector>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/array_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/common/utils/utils.h"
-#include "mindspore/core/ops/core_ops.h"
 
 namespace mindspore {
 namespace opt {
 const BaseRef TransposeTransDataFusion::DefinePattern() const {
   const auto prim_transdata = std::make_shared<Primitive>(prim::kPrimTransData->name());
-  VectorRef transpose({prim::kPrimTranspose, input_varptr_});
+  VectorRef transpose({prim::kPrimTransposeD, input_varptr_});
 
   return VectorRef({prim_transdata, transpose});
 }

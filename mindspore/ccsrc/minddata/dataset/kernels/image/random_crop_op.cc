@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 #include "minddata/dataset/kernels/image/random_crop_op.h"
+
 #include <random>
-#include <tuple>
+
+#include "minddata/dataset/kernels/data/data_utils.h"
 #include "minddata/dataset/kernels/image/image_utils.h"
 #include "minddata/dataset/util/random.h"
 #include "minddata/dataset/util/status.h"
@@ -73,8 +75,8 @@ Status RandomCropOp::ImagePadding(const std::shared_ptr<Tensor> &input, std::sha
     (*pad_image)->shape().Size() >= 2,
     "RandomCrop: invalid shape of image after pad, got rank: " + std::to_string((*pad_image)->shape().Size()));
 
-  *padded_image_h = (*pad_image)->shape()[0];
-  *padded_image_w = (*pad_image)->shape()[1];
+  *padded_image_h = static_cast<int32_t>((*pad_image)->shape()[0]);
+  *padded_image_w = static_cast<int32_t>((*pad_image)->shape()[1]);
 
   if (*padded_image_h == crop_height_ && *padded_image_w == crop_width_) {
     *crop_further = false;  //  no need for further crop
@@ -96,8 +98,8 @@ Status RandomCropOp::ImagePadding(const std::shared_ptr<Tensor> &input, std::sha
       t_pad_left += ((ptrdiff_t)crop_width_ - *padded_image_w);
       t_pad_right += ((ptrdiff_t)crop_width_ - *padded_image_w);
     }
-    *padded_image_h = (*pad_image)->shape()[0];
-    *padded_image_w = (*pad_image)->shape()[1];
+    *padded_image_h = static_cast<int32_t>((*pad_image)->shape()[0]);
+    *padded_image_w = static_cast<int32_t>((*pad_image)->shape()[1]);
   }
 
   if (crop_height_ == 0 || crop_width_ == 0) {
@@ -113,21 +115,63 @@ Status RandomCropOp::ImagePadding(const std::shared_ptr<Tensor> &input, std::sha
   return Status::OK();
 }
 
-void RandomCropOp::GenRandomXY(int *x, int *y, const int32_t &padded_image_w, const int32_t &padded_image_h) {
+void RandomCropOp::GenRandomXY(int32_t *x, int32_t *y, int32_t padded_image_w, int32_t padded_image_h) {
   // GenCropPoints for cropping
   *x = std::uniform_int_distribution<int>(0, padded_image_w - crop_width_)(rnd_);
   *y = std::uniform_int_distribution<int>(0, padded_image_h - crop_height_)(rnd_);
 }
 
+Status RandomCropOp::RandomCropImg(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, int32_t *x,
+                                   int32_t *y, int32_t index) {
+  std::shared_ptr<Tensor> pad_image = nullptr;
+  int32_t t_pad_top = 0;
+  int32_t t_pad_bottom = 0;
+  int32_t t_pad_left = 0;
+  int32_t t_pad_right = 0;
+  int32_t padded_image_w = 0;
+  int32_t padded_image_h = 0;
+  bool crop_further = true;  // whether image needs further cropping based on new size & requirements
+
+  RETURN_IF_NOT_OK(  // error code sent back directly
+    ImagePadding(input, &pad_image, &t_pad_top, &t_pad_bottom, &t_pad_left, &t_pad_right, &padded_image_w,
+                 &padded_image_h, &crop_further));
+  if (!crop_further) {
+    *output = pad_image;
+    return Status::OK();
+  }
+  if (index == 0) {
+    GenRandomXY(x, y, padded_image_w, padded_image_h);
+  }
+  RETURN_IF_NOT_OK(Crop(pad_image, output, *x, *y, crop_width_, crop_height_));
+
+  return Status::OK();
+}
+
+Status RandomCropOp::ConstructShape(const TensorShape &in_shape, std::shared_ptr<TensorShape> *out_shape) const {
+  auto in_shape_vec = in_shape.AsVector();
+  const int h_index = -3;
+  const int w_index = -2;
+  in_shape_vec[in_shape_vec.size() + h_index] = crop_height_;
+  in_shape_vec[in_shape_vec.size() + w_index] = crop_width_;
+
+  *out_shape = std::make_shared<TensorShape>(in_shape_vec);
+
+  return Status::OK();
+}
+
 Status RandomCropOp::Compute(const TensorRow &input, TensorRow *output) {
   IO_CHECK_VECTOR(input, output);
+
+  for (const auto &image : input) {
+    if (image->shape().Rank() < kMinImageRank) {
+      std::string err_msg =
+        "RandomCropOp: input tensor should have at least 2 dimensions, but got: " + std::to_string(image->Rank());
+      RETURN_STATUS_UNEXPECTED(err_msg);
+    }
+  }
+
   if (input.size() > 1) {
     for (size_t i = 0; i < input.size() - 1; i++) {
-      if (input[i]->Rank() != 2 && input[i]->Rank() != 3) {
-        std::string err_msg =
-          "RandomCrop: image shape is not <H,W,C> or <H, W>, but got rank:" + std::to_string(input[i]->Rank());
-        RETURN_STATUS_UNEXPECTED(err_msg);
-      }
       if (input[i]->shape()[0] != input[i + 1]->shape()[0] || input[i]->shape()[1] != input[i + 1]->shape()[1]) {
         RETURN_STATUS_UNEXPECTED(
           "RandomCrop: Input images in different column must have the same shape, check the output shape in "
@@ -135,33 +179,42 @@ Status RandomCropOp::Compute(const TensorRow &input, TensorRow *output) {
       }
     }
   }
-  int x = 0;
-  int y = 0;
+
   const auto output_count = input.size();
   output->resize(output_count);
+  int32_t x = 0;
+  int32_t y = 0;
   for (size_t i = 0; i < input.size(); i++) {
-    RETURN_IF_NOT_OK(ValidateImageRank("RandomCrop", static_cast<int32_t>(input[i]->shape().Size())));
-    std::shared_ptr<Tensor> pad_image = nullptr;
-    int32_t t_pad_top = 0;
-    int32_t t_pad_bottom = 0;
-    int32_t t_pad_left = 0;
-    int32_t t_pad_right = 0;
-    int32_t padded_image_w = 0;
-    int32_t padded_image_h = 0;
-    bool crop_further = true;  // whether image needs further cropping based on new size & requirements
+    if (input[i]->shape().Rank() <= kDefaultImageRank) {  // keep original logic untained
+      RETURN_IF_NOT_OK(RandomCropImg(input[i], &(*output)[i], &x, &y, i));
+    } else {  // deal with videos
+      // reshape input to hwc
+      auto input_shape = input[i]->shape();
+      dsize_t num_batch = input[i]->Size() / (input_shape[-3] * input_shape[-2] * input_shape[-1]);
+      TensorShape new_shape({num_batch, input_shape[-3], input_shape[-2], input_shape[-1]});
+      RETURN_IF_NOT_OK(input[i]->Reshape(new_shape));
 
-    RETURN_IF_NOT_OK(  // error code sent back directly
-      ImagePadding(input[i], &pad_image, &t_pad_top, &t_pad_bottom, &t_pad_left, &t_pad_right, &padded_image_w,
-                   &padded_image_h, &crop_further));
-    if (!crop_further) {
-      (*output)[i] = pad_image;
-      continue;
+      // split [N, H, W, C] to N [H, W, C], and center crop N [H, W, C]
+      std::vector<std::shared_ptr<Tensor>> input_vector_hwc, output_vector_hwc;
+      RETURN_IF_NOT_OK(BatchTensorToTensorVector(input[i], &input_vector_hwc));
+
+      // perform randomCrop
+      for (int32_t idx = 0; idx < num_batch; idx++) {
+        std::shared_ptr<Tensor> random_crop;
+        RETURN_IF_NOT_OK(RandomCropImg(input_vector_hwc[idx], &random_crop, &x, &y, i));
+        output_vector_hwc.push_back(random_crop);
+      }
+
+      // integrate N [H, W, C] to [N, H, W, C], and reshape [..., H, W, C]
+      RETURN_IF_NOT_OK(TensorVectorToBatchTensor(output_vector_hwc, &(*output)[i]));
+
+      // reshape output before return, only height and width are changed
+      std::shared_ptr<TensorShape> output_shape_new;
+      RETURN_IF_NOT_OK(ConstructShape(input_shape, &output_shape_new));
+      RETURN_IF_NOT_OK((*output)[i]->Reshape(*output_shape_new));
     }
-    if (i == 0) {
-      GenRandomXY(&x, &y, padded_image_w, padded_image_h);
-    }
-    RETURN_IF_NOT_OK(Crop(pad_image, &(*output)[i], x, y, crop_width_, crop_height_));
   }
+
   return Status::OK();
 }
 
@@ -169,10 +222,14 @@ Status RandomCropOp::OutputShape(const std::vector<TensorShape> &inputs, std::ve
   RETURN_IF_NOT_OK(TensorOp::OutputShape(inputs, outputs));
   outputs.clear();
   TensorShape out = TensorShape{crop_height_, crop_width_};
-  if (inputs[0].Rank() == 2) {
+  if (inputs[0].Rank() == kMinImageRank) {
     (void)outputs.emplace_back(out);
-  } else if (inputs[0].Rank() == 3) {
-    (void)outputs.emplace_back(out.AppendDim(inputs[0][2]));
+  } else if (inputs[0].Rank() == kDefaultImageRank) {
+    (void)outputs.emplace_back(out.AppendDim(inputs[0][kChannelIndexHWC]));
+  } else if (inputs[0].Rank() > kDefaultImageRank) {
+    std::shared_ptr<TensorShape> output_shape_new;
+    RETURN_IF_NOT_OK(ConstructShape(inputs[0], &output_shape_new));
+    (void)outputs.emplace_back(*output_shape_new);
   }
   if (!outputs.empty()) {
     return Status::OK();

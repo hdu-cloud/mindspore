@@ -15,12 +15,31 @@
  */
 
 #include "ops/fractional_avg_pool.h"
-#include <algorithm>
+
+#include <cmath>
 #include <set>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/ms_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,9 +50,7 @@ abstract::TupleShapePtr FractionalAvgPoolInferShape(const PrimitivePtr &primitiv
   MS_EXCEPTION_IF_NULL(primitive);
   auto op_name = primitive->name();
   MS_EXCEPTION_IF_NULL(input_args[0]);
-  auto in_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->GetShapeTrack())[kShape];
-  const int64_t x_rank = 4;
-  (void)CheckAndConvertUtils::CheckInteger("x_rank", SizeToLong(in_shape.size()), kEqual, x_rank, op_name);
+
   auto pooling_ratio = GetValue<std::vector<float>>(primitive->GetAttr(kPoolingRatio));
   if (pooling_ratio.size() != kPoolingRatioDim) {
     MS_EXCEPTION(ValueError) << "For '" << op_name << "', the size of parameter 'pooling_ratio' must be 4, but got "
@@ -59,13 +76,29 @@ abstract::TupleShapePtr FractionalAvgPoolInferShape(const PrimitivePtr &primitiv
                              << "', the forth element of parameter 'pooling_ratio' must be 1.0, but got "
                              << std::to_string(pooling_ratio[kInputIndex3]) << ".";
   }
-  std::vector<int64_t> out_shape(x_rank);
-  for (int i = 0; i < x_rank; ++i) {
-    out_shape[IntToSize(i)] = static_cast<int64_t>(std::floor(in_shape[IntToSize(i)] / pooling_ratio[IntToSize(i)]));
+
+  auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->GetShapeTrack())[kShape];
+  const int64_t x_rank = 4;
+  if (IsDynamicRank(x_shape)) {
+    abstract::ShapePtr output_shape =
+      std::make_shared<abstract::Shape>(std::vector<int64_t>(x_rank, abstract::Shape::kShapeDimAny));
+    abstract::ShapePtr row_col_shape =
+      std::make_shared<abstract::Shape>(std::vector<int64_t>{abstract::Shape::kShapeDimAny});
+    return std::make_shared<abstract::TupleShape>(
+      std::vector<abstract::BaseShapePtr>{output_shape, row_col_shape, row_col_shape});
   }
 
-  int64_t row = out_shape[kInputIndex1] + 1;
-  int64_t col = out_shape[kInputIndex2] + 1;
+  (void)CheckAndConvertUtils::CheckInteger("x_rank", SizeToLong(x_shape.size()), kEqual, x_rank, op_name);
+  std::vector<int64_t> out_shape(x_rank);
+  for (size_t i = 0; i < x_shape.size(); ++i) {
+    out_shape[i] = x_shape[i] == abstract::Shape::kShapeDimAny
+                     ? abstract::Shape::kShapeDimAny
+                     : static_cast<int64_t>(std::floor(x_shape[i] / pooling_ratio[i]));
+  }
+  int64_t row = out_shape[kInputIndex1] != abstract::Shape::kShapeDimAny ? out_shape[kInputIndex1] + 1
+                                                                         : abstract::Shape::kShapeDimAny;
+  int64_t col = out_shape[kInputIndex2] != abstract::Shape::kShapeDimAny ? out_shape[kInputIndex2] + 1
+                                                                         : abstract::Shape::kShapeDimAny;
   std::vector<int64_t> row_dim = {row};
   std::vector<int64_t> col_dim = {col};
   abstract::ShapePtr output0_shape = std::make_shared<abstract::Shape>(out_shape);
@@ -154,6 +187,24 @@ int64_t FractionalAvgPool::get_seed2() const {
   return GetValue<int64_t>(value_ptr);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(FractionalAvgPool, prim::kPrimFractionalAvgPool, FractionalAvgPoolInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGFractionalAvgPoolInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return FractionalAvgPoolInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return FractionalAvgPoolInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return FractionalAvgPoolInfer(engine, primitive, input_args);
+  }
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(FractionalAvgPool, prim::kPrimFractionalAvgPool, AGFractionalAvgPoolInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -18,12 +18,12 @@
 #define MINDSPORE_CORE_OPS_CHOLESKYINVERSE_H_
 
 #include <map>
-#include <set>
 #include <memory>
+#include <set>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -38,8 +38,9 @@ class MIND_API CholeskyInverse : public BaseOperator {
   void set_upper(const bool upper);
   bool get_upper() const;
 };
-abstract::AbstractBasePtr CholeskyInverseInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                               const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr CholeskyInverseInfer(const abstract::AnalysisEnginePtr &,
+                                                        const PrimitivePtr &primitive,
+                                                        const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimCholeskyInversePtr = std::shared_ptr<CholeskyInverse>;
 }  // namespace ops
 }  // namespace mindspore

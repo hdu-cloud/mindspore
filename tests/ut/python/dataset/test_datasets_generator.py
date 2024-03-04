@@ -1,4 +1,4 @@
-# Copyright 2019-2022 Huawei Technologies Co., Ltd
+# Copyright 2019-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,8 +13,13 @@
 # limitations under the License.
 # ==============================================================================
 import copy
-import numpy as np
+import os
+import subprocess
+import time
+import psutil
+
 import pytest
+import numpy as np
 
 import mindspore
 import mindspore.common.dtype as mstype
@@ -561,6 +566,8 @@ def test_generator_17():
         i = i + 1
 
 
+# Run this test in separate process since this test updates shared memory config
+@pytest.mark.forked
 def test_generator_18():
     """
     Feature: GeneratorDataset
@@ -1473,6 +1480,39 @@ def test_generator_single_input_6():
     assert_generator_single_input_6(SequentialAccessDatasetInner())
 
 
+def test_generator_one_dimensional_numpy_input():
+    """
+    Feature: Test one-dimensional numpy.int32 input
+    Description: The input source data is a one-dimensional numpy array of type numpy.int32
+    Expectation: No error was reported, and the iteration succeeded
+    """
+    class SequentialAccessDataset:
+        def __init__(self):
+            self.__data = np.array([i for i in range(64)], dtype=np.int32)
+            self.__index = 0
+
+        def __next__(self):
+            if self.__index >= 64:
+                raise StopIteration
+            item = self.__data[self.__index]
+            self.__index += 1
+            return item
+
+        def __iter__(self):
+            self.__index = 0
+            return self
+
+        def __len__(self):
+            return 64
+
+    data1 = ds.GeneratorDataset(SequentialAccessDataset(), ["data"], shuffle=False)
+    i = 0
+    for item in data1.create_dict_iterator(num_epochs=1, output_numpy=True):
+        golden = np.array(i, dtype=np.int32)
+        np.testing.assert_equal(item["data"], golden)
+        i = i + 1
+
+
 def test_generator_with_seed_5489_when_dist():
     """
     Feature: With default seed (5489) when distributed
@@ -2208,6 +2248,30 @@ def test_generator_with_single_numpy_with_yield():
     assert count == 20
 
 
+@pytest.mark.skip(reason="only for testing stuck scenario")
+def test_generator_traceback():
+    """
+    Feature: GeneratorDataset
+    Description: Generator is too slow then main process will log the stack of the stuck process
+    Expectation: The stuck locality can be logged
+    """
+    class SlowDataset:
+        def __init__(self):
+            self.data = np.random.randint(0, 255, (100, 28, 28, 3), dtype=np.uint8)
+
+        def __getitem__(self, index):
+            if index % 10 == 0:
+                time.sleep(600)
+            return self.data[index]
+
+        def __len__(self):
+            return len(self.data)
+
+    dataset = ds.GeneratorDataset(SlowDataset(), column_names=["image"], num_parallel_workers=8)
+    for _ in dataset.create_dict_iterator(num_epochs=1, output_numpy=True):
+        pass
+
+
 def test_generator_split_with_yield():
     """
     Feature: GeneratorDataset
@@ -2267,6 +2331,92 @@ def test_generator_split_with_next():
     assert dataset_val.get_dataset_size() == 2
 
 
+def test_generator_with_next_and_dataset_size_when_iter():
+    """
+    Feature: GeneratorDataset
+    Description: When GeneratorDataset is __next__ and call get_dataset_size in iter
+    Expectation: The dataset is processed as expected
+    """
+
+    # Iterator as input source
+    class Iterator:
+        def __init__(self):
+            self._index = 0
+            self._data = np.random.sample((50, 2))
+            self._label = np.random.sample((50, 1))
+
+        def __next__(self):
+            if self._index >= len(self._data):
+                raise StopIteration
+
+            item = (self._data[self._index], self._label[self._index])
+            self._index += 1
+            return item
+
+        def __iter__(self):
+            self._index = 0
+            return self
+
+        def __len__(self):
+            return len(self._data)
+
+    data = Iterator()
+    dataset = ds.GeneratorDataset(source=data, column_names=["data", "label"])
+
+    count = 0
+    for _ in dataset.create_dict_iterator():
+        if count > 2:
+            print("epoch: get_dataset_size: {}".format(dataset.get_dataset_size()), flush=True)
+        count += 1
+    assert count == 50
+
+
+class FakeData:
+    def __init__(self):
+        self.input_ids = np.ones((128, 128), dtype=np.int32)
+        self.input_mask = np.ones((100, 100), dtype=np.int32)
+
+    def __getitem__(self, index):
+        return self.input_ids, self.input_mask
+
+    def __len__(self):
+        return 791
+
+
+def test_generator_multiprocessing_with_fixed_handle():
+    """
+    Feature: generator op
+    Description: generator with multiprocessing and don't leak pipe handle which is used by queue
+    Expectation: success
+    """
+
+    dataset = ds.GeneratorDataset(FakeData(), ["input_ids", "input_mask"], num_parallel_workers=2)
+    assert dataset.get_dataset_size() == 791
+
+    fds = 0
+    for i in range(5):
+        count = 0
+        for item in dataset.create_tuple_iterator(output_numpy=True, num_epochs=1):
+            print("count: {}, type: {}, shape: {}".format(count, item[0].dtype, item[0].shape))
+            assert item[0].dtype == np.int32
+            assert item[0].shape == (128, 128)
+            assert len(item) == 2
+            count += 1
+        assert count == 791
+
+        # wait for the fds handle to be released automatic
+        time.sleep(1)
+
+        i += 1
+        if i == 1:
+            fds = psutil.Process(os.getpid()).num_fds()
+            lsof = subprocess.getoutput("lsof -p " + str(os.getpid()) + " | wc -l")
+        elif i > 1:
+            assert fds >= psutil.Process(os.getpid()).num_fds()
+            new_lsof = subprocess.getoutput("lsof -p " + str(os.getpid()) + " | wc -l")
+            assert lsof >= new_lsof
+
+
 if __name__ == "__main__":
     test_generator_0()
     test_generator_1()
@@ -2288,13 +2438,13 @@ if __name__ == "__main__":
     test_generator_17()
     test_generator_18()
     test_generator_19()
+    test_generator_20()
     test_generator_error_1()
     test_generator_error_2()
-    test_generator_error_3()
     test_generator_error_4()
     test_generator_sequential_sampler()
-    test_generator_distributed_sampler()
     test_generator_random_sampler()
+    test_generator_distributed_sampler()
     test_generator_num_samples()
     test_generator_num_samples_underflow()
     test_generator_schema()
@@ -2315,11 +2465,14 @@ if __name__ == "__main__":
     test_generator_single_input_4()
     test_generator_single_input_5()
     test_generator_single_input_6()
+    test_generator_with_seed_5489_when_dist()
+    test_generator_with_set_seed_when_dist()
     test_generator_with_single_numpy()
     test_generator_with_single_numpy_with_next()
     test_generator_with_single_numpy_with_yield()
-    test_generator_with_seed_5489_when_dist()
-    test_generator_with_set_seed_when_dist()
+    test_generator_traceback()
     test_generator_split_with_yield()
     test_generator_split_with_getitem()
     test_generator_split_with_next()
+    test_generator_with_next_and_dataset_size_when_iter()
+    test_generator_multiprocessing_with_fixed_handle()

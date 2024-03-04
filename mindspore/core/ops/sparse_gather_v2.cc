@@ -16,17 +16,41 @@
 
 #include "ops/sparse_gather_v2.h"
 #include <set>
-#include <memory>
-#include <algorithm>
-#include "ops/op_utils.h"
+#include <vector>
+#include "abstract/abstract_value.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
 #include "mindapi/src/helper.h"
-#include "utils/check_convert_utils.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "ops/gather.h"
+#include "ops/gather_comm.h"
+#include "ops/primitive_c.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 MIND_API_OPERATOR_IMPL(SparseGatherV2, BaseOperator);
-REGISTER_HOST_DEPENDS(kNameSparseGatherV2, {2});
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseGatherV2, prim::kPrimSparseGatherV2, GatherInfer, nullptr, true);
+
+class SparseGatherInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return GatherInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return GatherInferType(primitive, input_args);
+  }
+
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return GatherInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {2}; }
+};
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseGatherV2, prim::kPrimSparseGatherV2, SparseGatherInfer, false);
 }  // namespace ops
 }  // namespace mindspore

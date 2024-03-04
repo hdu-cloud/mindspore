@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,17 +14,18 @@
  * limitations under the License.
  */
 
-#include <set>
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
+#include <set>
+#include <string>
+#include <vector>
 
-#include "ops/grad/conv3d_backprop_input.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
 #include "ops/grad/conv3d_backprop_filter.h"
+#include "ops/grad/conv3d_backprop_input.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/src/helper.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,6 +36,19 @@ constexpr size_t kConv3DBackpropInputSizeIndex = 2;
 constexpr int64_t kConv3DBackpropInputPadSize = 6;
 constexpr int64_t kConv3DBackpropInputStrideSize = 5;
 constexpr int64_t kConv3DBackpropInputDilationSize = 5;
+constexpr int64_t kConv3DBackpropInputArgsSizeTwo = 2;
+constexpr int64_t kConv3DBackpropInputArgsSizeThree = 3;
+
+inline void Conv3dBackpropInputInferCheck(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args,
+                                          bool infer_shape) {
+  MS_EXCEPTION_IF_NULL(primitive);
+  for (auto item : input_args) {
+    MS_EXCEPTION_IF_NULL(item);
+  }
+  const int64_t input_num = infer_shape ? kConv3DBackpropInputArgsSizeThree : kConv3DBackpropInputArgsSizeTwo;
+  (void)CheckAndConvertUtils::CheckInteger("Conv3dBackpropInput infer check", SizeToLong(input_args.size()),
+                                           kGreaterEqual, input_num, primitive->name());
+}
 }  // namespace
 
 MIND_API_OPERATOR_IMPL(Conv3DBackpropInput, BaseOperator);
@@ -182,7 +196,7 @@ class Conv3DBackpropInputInfer : public abstract::OpInferBase {
  public:
   BaseShapePtr InferShape(const PrimitivePtr &primitive,
                           const std::vector<AbstractBasePtr> &input_args) const override {
-    MS_EXCEPTION_IF_NULL(primitive);
+    Conv3dBackpropInputInferCheck(primitive, input_args, true);
     auto forward_input_shape = GetShapeValue(primitive, input_args[kConv3DBackpropInputSizeIndex]);
     auto dout_shape =
       CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kConv3DBackpropInputDoutIndex]->BuildShape())[kShape];
@@ -192,12 +206,11 @@ class Conv3DBackpropInputInfer : public abstract::OpInferBase {
       forward_input_shape = {abstract::Shape::kShapeRankAny};
       return std::make_shared<abstract::Shape>(forward_input_shape);
     }
-    SetConv3DBackpropPadList(primitive, dout_shape, forward_input_shape);
     return std::make_shared<abstract::Shape>(forward_input_shape);
   }
 
   TypePtr InferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) const override {
-    MS_EXCEPTION_IF_NULL(prim);
+    Conv3dBackpropInputInferCheck(prim, input_args, false);
     auto prim_name = prim->name();
     // check
     std::map<std::string, TypePtr> types;
@@ -205,7 +218,7 @@ class Conv3DBackpropInputInfer : public abstract::OpInferBase {
     (void)types.emplace("filter", input_args[kConv3DBackpropInputFilterIndex]->BuildType());
     (void)types.emplace("doutput", doutput_type);
     std::set<TypePtr> valid_x_type = {kFloat16, kFloat32};
-    CheckAndConvertUtils::CheckTensorTypeSame(types, valid_x_type, prim_name);
+    (void)CheckAndConvertUtils::CheckTensorTypeSame(types, valid_x_type, prim_name);
     return doutput_type;
   }
   std::set<int64_t> GetValueDependArgIndices() const override { return {kConv3DBackpropInputSizeIndex}; }

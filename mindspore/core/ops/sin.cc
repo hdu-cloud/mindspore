@@ -16,13 +16,23 @@
 #include "ops/sin.h"
 
 #include <set>
-#include <map>
-#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/primitive_c.h"
+#include "ops/op_name.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -39,9 +49,15 @@ abstract::ShapePtr SinInferShape(const PrimitivePtr &primitive, const std::vecto
 }
 
 TypePtr SinInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
-  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
   auto x_dtype = input_args[0]->BuildType();
-  (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_dtype, valid_types, prim->name());
+  auto prim_attrs = prim->attrs();
+  if (prim_attrs.find(kLiteQuantAttrName) != prim_attrs.end()) {
+    const std::set<TypePtr> valid_types_lite = {kInt8, kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
+    (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_dtype, valid_types_lite, prim->name());
+  } else {
+    const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
+    (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_dtype, valid_types, prim->name());
+  }
   return x_dtype;
 }
 }  // namespace
@@ -56,6 +72,24 @@ AbstractBasePtr SinInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr
   auto infer_shape = SinInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Sin, prim::kPrimSin, SinInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSinInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SinInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SinInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SinInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Sin, prim::kPrimSin, AGSinInfer, false);
 }  // namespace ops
 }  // namespace mindspore

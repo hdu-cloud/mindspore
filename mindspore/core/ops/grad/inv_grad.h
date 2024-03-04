@@ -16,11 +16,11 @@
 #ifndef MINDSPORE_CORE_OPS_INVGRAD_H_
 #define MINDSPORE_CORE_OPS_INVGRAD_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,8 +31,8 @@ class MIND_API InvGrad : public BaseOperator {
   InvGrad() : BaseOperator(kNameInvGrad) { InitIOName({"x", "grad"}, {"y"}); }
 };
 
-abstract::AbstractBasePtr InvGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                       const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr InvGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimInvGrad = std::shared_ptr<InvGrad>;
 }  // namespace ops
 }  // namespace mindspore

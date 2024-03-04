@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 #include "plugin/device/gpu/kernel/sparse/sparse_matrix_sparse_matmul_gpu_kernel.h"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/elementwise/eltwise_ops_impl.cuh"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/elementwise/eltwise_ops_type.cuh"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/complex.h"
-#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/unary_op_impl.cuh"
 namespace mindspore {
 namespace kernel {
 template <typename T>
@@ -82,7 +83,7 @@ bool SparseMatrixSparseMatMulGpuKernelMod::Init(const BaseOperatorPtr &base_oper
                                                             inputs.at(i)->GetDeviceShapeAdaptively().end());
 
     size_t input_elements_ = std::accumulate(input_shape.begin(), input_shape.end(), 1, std::multiplies<int64_t>());
-    size_t unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(i).first);
+    size_t unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(i).dtype);
 
     std::vector<size_t> temp{input_elements_, unit_size_};
     ele_size_vec.push_back(temp);
@@ -97,18 +98,10 @@ bool SparseMatrixSparseMatMulGpuKernelMod::Init(const BaseOperatorPtr &base_oper
     std::vector<int64_t> output_shape = std::vector<int64_t>(outputs.at(i)->GetDeviceShapeAdaptively().begin(),
                                                              outputs.at(i)->GetDeviceShapeAdaptively().end());
     size_t output_elements_ = std::accumulate(output_shape.begin(), output_shape.end(), 1, std::multiplies<int64_t>());
-    size_t unit_size_ = abstract::TypeIdSize(kernel_attr.GetOutputAttr(i).first);
+    size_t unit_size_ = abstract::TypeIdSize(kernel_attr.GetOutputAttr(i).dtype);
     output_size_list_.push_back(output_elements_ * unit_size_);
   }
   return true;
-}
-
-int SparseMatrixSparseMatMulGpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
-                                                 const std::vector<KernelTensorPtr> &inputs,
-                                                 const std::vector<KernelTensorPtr> &outputs,
-                                                 const std::map<uint32_t, tensor::TensorPtr> &) {
-  outputs_ = outputs;
-  return 0;
 }
 
 void SparseMatrixSparseMatMulGpuKernelMod::Compute(
@@ -245,10 +238,10 @@ void SparseMatrixSparseMatMulGpuKernelMod::Core(int x1_num_rows, int x1_num_cols
                                                 int *x2_row_pointers, int *x2_col_indices, T *x2_values,
                                                 int *y_row_pointers, int *y_col_indices, T *y_values, bool adjoint_a,
                                                 bool adjoint_b, bool transpose_a, bool transpose_b) {
-  int d_C_nnz, m, n, k;
-  m = x1_num_rows;
-  n = x1_num_cols;
-  k = x2_num_cols;
+  int d_C_nnz;
+  int m = x1_num_rows;
+  int n = x1_num_cols;
+  int k = x2_num_cols;
   T *x1_Val_c = nullptr;
   void *x1_Val_t = nullptr;
   int *x1_RowPtr_t = nullptr;
@@ -297,7 +290,7 @@ void SparseMatrixSparseMatMulGpuKernelMod::Core(int x1_num_rows, int x1_num_cols
     x1_Val_t = allocator.AllocTensorMem(current_x1_nnz * sizeof(T));
     x1_RowPtr_t = reinterpret_cast<int *>(allocator.AllocTensorMem((x1_num_cols + 1) * sizeof(int)));
     x1_ColInd_t = reinterpret_cast<int *>(allocator.AllocTensorMem(current_x1_nnz * sizeof(int)));
-    Conj(x1_compute_val, x1_Val_c, current_x1_nnz, stream);
+    UnaryOpsCudaFunc<ElwiseOpType::kConj, T, T>(current_x1_nnz, x1_compute_val, x1_Val_c, stream);
     MatrixTranspose<T>(x1_num_rows, x1_num_cols, current_x1_nnz, x1_Val_c, x1_compute_row, x1_compute_col, x1_Val_t,
                        x1_RowPtr_t, x1_ColInd_t);
     x1_compute_row = x1_RowPtr_t;
@@ -312,7 +305,7 @@ void SparseMatrixSparseMatMulGpuKernelMod::Core(int x1_num_rows, int x1_num_cols
     x2_Val_t = allocator.AllocTensorMem(current_x2_nnz * sizeof(T));
     x2_RowPtr_t = reinterpret_cast<int *>(allocator.AllocTensorMem((x2_num_cols + 1) * sizeof(int)));
     x2_ColInd_t = reinterpret_cast<int *>(allocator.AllocTensorMem(current_x2_nnz * sizeof(int)));
-    Conj(x2_compute_val, x2_Val_c, current_x2_nnz, stream);
+    UnaryOpsCudaFunc<ElwiseOpType::kConj, T, T>(current_x2_nnz, x2_compute_val, x2_Val_c, stream);
     MatrixTranspose<T>(x2_num_rows, x2_num_cols, current_x2_nnz, x2_Val_c, x2_compute_row, x2_compute_col, x2_Val_t,
                        x2_RowPtr_t, x2_ColInd_t);
     x2_compute_row = x2_RowPtr_t;
@@ -375,16 +368,20 @@ bool SparseMatrixSparseMatMulGpuKernelMod::LaunchKernel(const std::vector<Addres
   std::vector<int> h_x2_batch_num(batch_ele);
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(h_x1_dense_shape.data(), x1_dense_shape, sizeof(int) * rank, cudaMemcpyDeviceToHost, stream),
-    "cudaMemcpy failed.");
+    "For 'SparseMatrixSparseMatmul', cudaMemcpy failed.");
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(h_x2_dense_shape.data(), x2_dense_shape, sizeof(int) * rank, cudaMemcpyDeviceToHost, stream),
-    "cudaMemcpy failed.");
+    "For 'SparseMatrixSparseMatmul', cudaMemcpy failed.");
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(h_x1_batch_num.data(), x1_batch_pointers, sizeof(int) * batch_ele, cudaMemcpyDeviceToHost, stream),
-    "cudaMemcpy failed.");
+    "For 'SparseMatrixSparseMatmul', cudaMemcpy failed.");
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(h_x2_batch_num.data(), x2_batch_pointers, sizeof(int) * batch_ele, cudaMemcpyDeviceToHost, stream),
-    "cudaMemcpy failed.");
+    "For 'SparseMatrixSparseMatmul', cudaMemcpy failed.");
+  if (cudaStreamQuery(stream) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(stream),
+                                       "For 'SparseMatrixSparseMatmul', cuda Stream Sync Failed.");
+  }
   int idx = 0;
   int batch = 1;
   int c_rank = 3;
@@ -434,7 +431,7 @@ bool SparseMatrixSparseMatMulGpuKernelMod::LaunchKernel(const std::vector<Addres
   return true;
 }
 
-void SparseMatrixSparseMatMulGpuKernelMod::SyncData() {
+void SparseMatrixSparseMatMulGpuKernelMod::SyncOutputShape() {
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(stream),
                                      "SparseMatrixSparseMatMul cudaStreamSynchronized failed");
   std::vector<int64_t> output2_shape = {

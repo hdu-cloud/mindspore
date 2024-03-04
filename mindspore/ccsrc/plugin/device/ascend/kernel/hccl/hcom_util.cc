@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,13 @@
 
 #include "plugin/device/ascend/kernel/hccl/hcom_util.h"
 #include <memory>
-#include "kernel/common_utils.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "utils/ms_context.h"
 #include "include/common/utils/utils.h"
+#include "ops/ascend_op_name.h"
+#include "ops/framework_op_name.h"
+#include "ops/other_op_name.h"
+#include "utils/ms_context.h"
 #include "utils/trace_base.h"
 
 namespace mindspore {
@@ -39,10 +41,35 @@ bool HcomUtil::GetKernelInputShape(const AnfNodePtr &anf_node, vector<ShapeVecto
 bool HcomUtil::GetKernelOutputShape(const AnfNodePtr &anf_node, vector<ShapeVector> *hccl_kernel_output_shape_list) {
   MS_EXCEPTION_IF_NULL(anf_node);
   MS_EXCEPTION_IF_NULL(hccl_kernel_output_shape_list);
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(anf_node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(anf_node);
   for (size_t i = 0; i < output_num; ++i) {
     auto shape_i = AnfAlgo::GetOutputDeviceShape(anf_node, i);
     (void)hccl_kernel_output_shape_list->emplace_back(shape_i);
+  }
+
+  return true;
+}
+
+bool HcomUtil::GetKernelInputInferShape(const AnfNodePtr &anf_node, vector<ShapeVector> *hccl_input_infer_shape_list) {
+  MS_EXCEPTION_IF_NULL(anf_node);
+  MS_EXCEPTION_IF_NULL(hccl_input_infer_shape_list);
+  size_t input_num = common::AnfAlgo::GetInputTensorNum(anf_node);
+  for (size_t i = 0; i < input_num; ++i) {
+    auto shape_i = common::AnfAlgo::GetPrevNodeOutputInferShape(anf_node, i);
+    (void)hccl_input_infer_shape_list->emplace_back(shape_i);
+  }
+
+  return true;
+}
+
+bool HcomUtil::GetKernelOutputInferShape(const AnfNodePtr &anf_node,
+                                         vector<ShapeVector> *hccl_output_infer_shape_list) {
+  MS_EXCEPTION_IF_NULL(anf_node);
+  MS_EXCEPTION_IF_NULL(hccl_output_infer_shape_list);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(anf_node);
+  for (size_t i = 0; i < output_num; ++i) {
+    auto shape_i = common::AnfAlgo::GetOutputInferShape(anf_node, i);
+    (void)hccl_output_infer_shape_list->emplace_back(shape_i);
   }
 
   return true;
@@ -61,12 +88,12 @@ bool HcomUtil::GetHcomDataType(const AnfNodePtr &anf_node, vector<HcclDataType> 
   MS_EXCEPTION_IF_NULL(data_type_list);
   size_t tensor_num = common::AnfAlgo::GetInputTensorNum(anf_node);
   auto op_name = common::AnfAlgo::GetCNodeName(anf_node);
-  if (op_name == kReceiveOpName) {
-    tensor_num = common::AnfAlgo::GetOutputTensorNum(anf_node);
+  if (op_name == mindspore::kReceiveOpName || op_name == mindspore::kMuxReceiveOpName) {
+    tensor_num = AnfAlgo::GetOutputTensorNum(anf_node);
   }
   for (size_t i = 0; i < tensor_num; ++i) {
     TypeId type_ptr;
-    if (op_name == kReceiveOpName) {
+    if (op_name == mindspore::kReceiveOpName || op_name == mindspore::kMuxReceiveOpName) {
       type_ptr = AnfAlgo::GetOutputDeviceDataType(anf_node, i);
     } else {
       type_ptr = AnfAlgo::GetInputDeviceDataType(anf_node, i);
@@ -125,8 +152,9 @@ bool HcomUtil::GetHcomCount(const AnfNodePtr &anf_node, const vector<HcclDataTyp
   size_t size = common::AnfAlgo::GetInputTensorNum(anf_node);
   auto cnode = anf_node->cast<CNodePtr>();
   MS_EXCEPTION_IF_NULL(cnode);
-  if (common::AnfAlgo::GetCNodeName(anf_node) == kReceiveOpName) {
-    size = common::AnfAlgo::GetOutputTensorNum(anf_node);
+  if (common::AnfAlgo::GetCNodeName(anf_node) == mindspore::kReceiveOpName ||
+      common::AnfAlgo::GetCNodeName(anf_node) == mindspore::kMuxReceiveOpName) {
+    size = AnfAlgo::GetOutputTensorNum(anf_node);
   }
   for (size_t i = 0; i < size; ++i) {
     if (!GetHcomTypeSize(data_type_list[i], &type_size)) {

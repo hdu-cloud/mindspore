@@ -16,7 +16,8 @@
 
 #include "plugin/device/ascend/optimizer/format_type/trans_op_format_refine.h"
 #include <memory>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/array_op_name.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
@@ -51,6 +52,9 @@ const AnfNodePtr TransOpFormatRefine::Process(const FuncGraphPtr &func_graph, co
       AnfAlgo::SetSelectKernelBuildInfo(builder->Build(), node.get());
       common::AnfAlgo::SetNodeAttr(kAttrDstFormat, MakeValue(kOpFormat_NCDHW), node);
     }
+  }
+  if (op_name == kCastOpName) {
+    common::AnfAlgo::SetNodeAttr(kAttrDstType, TypeIdToType(AnfAlgo::GetOutputDeviceDataType(node, 0)), node);
   }
   return node;
 }

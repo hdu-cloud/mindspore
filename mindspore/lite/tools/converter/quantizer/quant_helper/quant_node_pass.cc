@@ -17,11 +17,12 @@
 #include "tools/converter/quantizer/quant_helper/quant_node_pass.h"
 #include <memory>
 #include <functional>
+#include "mindspore/core/ops/framework_ops.h"
 #include "include/errorcode.h"
 #include "tools/optimizer/common/gllo_utils.h"
 #include "tools/converter/quantizer/quantize_util.h"
 #include "tools/converter/quantizer/quant_strategy.h"
-#include "tools/converter/quantizer/fixed_bit_weight_quantization.h"
+#include "tools/converter/quantizer/fixed_bit_weight_quantization_with_holder.h"
 #include "tools/common/node_util.h"
 
 namespace mindspore::lite::quant {
@@ -36,7 +37,7 @@ int QuantNodePass::DoWeightQuant(const CNodePtr &cnode) {
     auto input = cnode->input(idx);
     ParameterPtr parameter;
     tensor::TensorPtr weight;
-    GetLiteParameter(input, &parameter, &weight);
+    GetParameterAndTensor(input, &parameter, &weight);
     if (parameter == nullptr || weight == nullptr || weight->data_type() != TypeId::kNumberTypeFloat32) {
       MS_LOG(INFO) << "This op " << cnode->fullname_with_scope() << " can not quant weight";
       continue;
@@ -101,12 +102,6 @@ int QuantNodePass::QuantFilter(const AnfNodePtr &parameter_node, const tensor::T
   return RET_OK;
 }
 
-bool QuantNodePass::IsPerchannelWeight(const std::vector<schema::QuantParamT> &quant_params,
-                                       const tensor::TensorPtr &weight, int preferred_dim) {
-  auto dims = weight->shape();
-  return (static_cast<int>(quant_params.size()) == dims[preferred_dim]);
-}
-
 int QuantNodePass::CheckNodeDType(const CNodePtr &cnode, const AnfNodePtr &input_node, size_t input_index) {
   TypeId type_id = kTypeUnknown;
   if (opt::GetDataTypeFromAnfNode(input_node, &type_id) != RET_OK) {
@@ -137,6 +132,7 @@ int QuantNodePass::CheckNodeDType(const CNodePtr &cnode, const AnfNodePtr &input
 int QuantNodePass::DoParameterNodeQuant(const CNodePtr &cnode, const ParameterPtr &input_node, size_t input_index) {
   CHECK_NULL_RETURN(cnode);
   CHECK_NULL_RETURN(input_node);
+  MS_CHECK_LT(input_index, cnode->size(), RET_ERROR);
   auto ret = CheckNodeDType(cnode, input_node, input_index);
   if (ret != RET_OK) {
     return ret;
@@ -147,13 +143,14 @@ int QuantNodePass::DoParameterNodeQuant(const CNodePtr &cnode, const ParameterPt
   CHECK_NULL_RETURN(primitive);
   auto op_name = cnode->fullname_with_scope();
   if (input_index == THIRD_INPUT + 1 && CheckNodeInSet(cnode, kHasBiasOperator)) {
-    FixedBitWeightQuantization fixed_bit_quant;
+    FixedBitWeightQuantizationWithHolder fixed_bit_quant;
     ret = fixed_bit_quant.QuantBias(input_node, primitive);
     if (ret != RET_OK) {
       MS_LOG(ERROR) << op_name << " Do bias quant failed.";
       return ret;
     }
   } else {
+    CHECK_NULL_RETURN(input_node->default_param());
     // quant weight
     auto tensor_info = input_node->default_param()->cast<tensor::TensorPtr>();
     if (tensor_info == nullptr) {
@@ -180,6 +177,7 @@ int QuantNodePass::DoParameterNodeQuant(const CNodePtr &cnode, const ParameterPt
 }
 
 int QuantNodePass::DoValueNodeQuant(const CNodePtr &cnode, const ValueNodePtr &input_node, size_t input_index) {
+  MS_CHECK_LT(input_index, cnode->size(), RET_ERROR);
   auto quant_param_holder = GetCNodeQuantHolder(cnode);
   CHECK_NULL_RETURN(quant_param_holder);
   auto ret = CheckNodeDType(cnode, input_node, input_index);
@@ -258,7 +256,7 @@ int QuantNodePass::DoFullQuant(const CNodePtr &cnode) {
       return RET_ERROR;
     }
   }
-  primitive_quant_holder->set_quant_type(schema::QuantType_QUANT_ALL);
+  primitive_quant_holder->set_quant_type(quant::QUANT_ALL);
   // do output quant
   return RET_OK;
 }
@@ -310,19 +308,19 @@ int QuantNodePass::Quant() {
     }
     auto quant_type = quant_holder->quant_type();
     auto node_name = cnode->fullname_with_scope();
-    if (quant_type == schema::QuantType_QUANT_NONE) {
+    if (quant_type == quant::QUANT_NONE) {
       if (opt::CheckPrimitiveType(cnode, prim::kPrimQuantDTypeCast)) {
         continue;
       }
       // Remove unused quant param.
       MS_LOG(INFO) << node_name << " is not quant node.";
       quant_holder->ClearQuantParams();
-    } else if (quant_type == schema::QuantType_QUANT_WEIGHT) {
+    } else if (quant_type == quant::QUANT_WEIGHT) {
       // Reference Weight Quant
       if (DoWeightQuant(cnode) != RET_OK) {
         MS_LOG(INFO) << node_name << " quant weight failed.";
       }
-    } else if (quant_type == schema::QuantType_QUANT_ALL) {
+    } else if (quant_type == quant::QUANT_ALL) {
       if (DoFullQuant(cnode) != RET_OK) {
         MS_LOG(INFO) << node_name << " full quant failed.";
       }

@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,10 +25,11 @@
 #include "plugin/device/gpu/hal/hardware/gpu_device_context.h"
 #include "plugin/device/gpu/hal/device/gpu_hash_table_util.h"
 #include "plugin/device/gpu/hal/device/gpu_common.h"
+#include "plugin/device/gpu/hal/device/gpu_event.h"
 #ifdef ENABLE_DEBUGGER
 #include "debug/debug_services.h"
 #include "debug/tensor_load.h"
-#include "debug/debugger/debugger.h"
+#include "include/backend/debug/debugger/debugger.h"
 #endif
 #ifdef ENABLE_DUMP_IR
 #include "include/common/debug/rdr/recorder_manager.h"
@@ -49,9 +50,7 @@ bool GPUDeviceAddress::SyncDeviceToHost(size_t size, void *host_ptr) const {
   }
 
   MS_EXCEPTION_IF_NULL(host_ptr);
-  auto &stream = GPUDeviceManager::GetInstance().default_stream();
-  MS_EXCEPTION_IF_NULL(stream);
-  auto ret = GPUDeviceManager::GetInstance().SyncStream(stream);
+  auto ret = GPUDeviceManager::GetInstance().SyncAllStreams();
   if (!ret) {
 #ifdef ENABLE_DUMP_IR
     mindspore::RDR::TriggerAll();
@@ -63,6 +62,7 @@ bool GPUDeviceAddress::SyncDeviceToHost(size_t size, void *host_ptr) const {
     // nccl kernel input and output device address is aligned, may lead to host size is not equal to device size
     MS_LOG(INFO) << "Sync memory size is inconsistent, host size: " << size << ", device size " << size_;
   }
+  MoveToDevice(false);
   std::lock_guard<std::recursive_mutex> lock(ptr_mutex_);
   if (mem_offloaded()) {
     MS_EXCEPTION_IF_NULL(offload_ptr_);
@@ -90,16 +90,16 @@ bool GPUDeviceAddress::SyncHostToDevice(size_t size, const void *host_ptr) const
   }
 
   // Bind device by device name and device id on the current thread.
-  if (device_name_ != "") {
-    auto device_context =
-      device::DeviceContextManager::GetInstance().GetOrCreateDeviceContext({device_name_, device_id_});
+  if (!device_name_.empty()) {
+    auto device_context = GetDeviceContext();
     auto gpu_device_context = dynamic_cast<GPUDeviceContext *>(device_context);
     MS_EXCEPTION_IF_NULL(gpu_device_context);
-    if (!gpu_device_context->device_res_manager_->BindDeviceToCurrentThread()) {
+    if (!gpu_device_context->device_res_manager_->BindDeviceToCurrentThread(false)) {
       MS_LOG(EXCEPTION) << "BindDeviceToCurrentThread failed.";
     }
   }
 
+  MoveToDevice(false);
   std::lock_guard<std::recursive_mutex> lock(ptr_mutex_);
   if (mem_offloaded()) {
     MS_EXCEPTION_IF_NULL(offload_ptr_);
@@ -149,10 +149,11 @@ bool SyncUserDataToDevice(const UserDataPtr &user_data, const void *host_ptr, si
 
 bool GPUDeviceAddress::SyncHostToDevice(const ShapeVector &, size_t size, TypeId, const void *host_ptr,
                                         const std::string &format) const {
-  if (user_data_ != nullptr) {
+  if (user_data_ != nullptr && user_data_->has(kUserDataType)) {
     return SyncUserDataToDevice(user_data_, host_ptr, size);
   }
 
+  MoveToDevice(false);
   auto ms_context = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(ms_context);
   bool execution_mode = ms_context->get_param<int>(MS_CTX_EXECUTION_MODE);
@@ -175,31 +176,55 @@ bool GPUDeviceAddress::SyncDeviceToDevice(const DeviceSync *src_device_addr) con
   MS_EXCEPTION_IF_NULL(src_device_addr);
   auto src_gpu_device = dynamic_cast<const GPUDeviceAddress *>(src_device_addr);
   MS_EXCEPTION_IF_NULL(src_gpu_device);
-  auto src_size = src_gpu_device->GetSize();
-  auto src_ptr = src_gpu_device->GetMutablePtr();
+  MS_LOG(DEBUG) << "Sync gpu device address from:" << src_device_addr << " to:" << this;
+  src_gpu_device->MoveToDevice(false);
+  if (src_gpu_device->mem_offloaded()) {
+    return SyncHostToDevice(src_gpu_device->host_shape(), src_gpu_device->GetSize(), src_gpu_device->type_id(),
+                            src_gpu_device->GetOffloadPtr(), src_gpu_device->format());
+  } else {
+    return SyncDeviceToDevice(src_gpu_device->host_shape(), src_gpu_device->GetSize(), src_gpu_device->type_id(),
+                              src_gpu_device->GetPtr(), src_gpu_device->format());
+  }
+}
 
-  // The input or output may be empty.
-  if ((src_size == 0) || (size_ == 0)) {
-    MS_LOG(INFO) << "No need sync, src device size: " << src_size << ", dst device size: " << size_;
+bool GPUDeviceAddress::SyncDeviceToDevice(const ShapeVector &, size_t size, TypeId type, const void *src_ptr,
+                                          const std::string &format) const {
+  MS_LOG(DEBUG) << "SyncDeviceToDevice, dst(address:" << ptr_ << " format:" << format_
+                << ", type_id:" << TypeIdLabel(type_id_) << ", size:" << size_ << "), src(address:" << src_ptr
+                << "format:" << format << ", type_id:" << TypeIdLabel(type) << ", size:" << size << ")";
+  if (ptr_ == src_ptr) {
+    MS_LOG(INFO) << "Dst addr is same with src addr, no need memcpy data.";
     return true;
   }
-
-  if (src_size != size_) {
-    MS_LOG(ERROR) << "The src device size is not equal of the dst device size, src device size: " << src_size
-                  << ", dst device size: " << size_;
+  if (type_id_ > kMonadTypeBegin && type_id_ < kMonadTypeEnd) {
+    return true;
+  }
+  // The input or output may be empty.
+  if ((size == 0) || (size_ == 0)) {
+    MS_LOG(INFO) << "No need sync, src device size: " << size << ", dst device size: " << size_;
+    return true;
+  }
+  if (size_ < size) {
+    MS_LOG(ERROR) << "Src size is greater than det size, src size is: " << size << ", dst size is: " << size_;
     return false;
   }
+  if (format_ != format || type_id_ != type) {
+    MS_LOG(ERROR) << "Format or type is different, src(format:" << format << ", type_id:" << TypeIdLabel(type)
+                  << "), dst(format:" << format_ << "), type_id:" << TypeIdLabel(type_id_);
+    return false;
+  }
+
+  MoveToDevice(false);
   MS_EXCEPTION_IF_NULL(src_ptr);
   MS_EXCEPTION_IF_NULL(ptr_);
-
   auto &stream = GPUDeviceManager::GetInstance().default_stream();
   MS_EXCEPTION_IF_NULL(stream);
   if (mem_offloaded()) {
-    if (!GPUDeviceManager::GetInstance().CopyDeviceMemToHostAsync(offload_ptr_, src_ptr, size_, stream)) {
+    if (!GPUDeviceManager::GetInstance().CopyDeviceMemToHostAsync(offload_ptr_, src_ptr, size, stream)) {
       MS_LOG(ERROR) << "CopyDeviceMemToDeviceAsync failed";
       return false;
     }
-  } else if (!GPUDeviceManager::GetInstance().CopyDeviceMemToDeviceAsync(ptr_, src_ptr, size_, stream)) {
+  } else if (!GPUDeviceManager::GetInstance().CopyDeviceMemToDeviceAsync(ptr_, src_ptr, size, stream)) {
     MS_LOG(ERROR) << "CopyDeviceMemToDeviceAsync failed";
     return false;
   }
@@ -209,6 +234,7 @@ bool GPUDeviceAddress::SyncDeviceToDevice(const DeviceSync *src_device_addr) con
 bool GPUDeviceAddress::AsyncHostToDevice(const ShapeVector &, size_t size, TypeId, const void *host_ptr,
                                          size_t stream_id) const {
   MS_ERROR_IF_NULL(host_ptr);
+  MoveToDevice(false);
   MS_ERROR_IF_NULL(ptr_);
   const auto stream = GPUDeviceManager::GetInstance().GetStream(stream_id);
   MS_ERROR_IF_NULL(stream);
@@ -221,6 +247,7 @@ bool GPUDeviceAddress::AsyncHostToDevice(const ShapeVector &, size_t size, TypeI
 bool GPUDeviceAddress::AsyncDeviceToHost(const ShapeVector &, size_t size, TypeId, void *host_ptr,
                                          size_t stream_id) const {
   MS_ERROR_IF_NULL(host_ptr);
+  MoveToDevice(false);
   MS_ERROR_IF_NULL(ptr_);
   const auto stream = GPUDeviceManager::GetInstance().GetStream(stream_id);
   MS_ERROR_IF_NULL(stream);
@@ -245,7 +272,7 @@ void GPUDeviceAddress::ClearDeviceMemory() {
 }
 
 void GPUDeviceAddress::ClearUserData() {
-  if (user_data_ == nullptr) {
+  if (user_data_ == nullptr || (!user_data_->has(kUserDataType))) {
     return;
   }
 
@@ -269,7 +296,42 @@ void GPUDeviceAddress::ClearUserData() {
   }
 }
 
-GPUDeviceAddress::~GPUDeviceAddress() { ClearDeviceMemory(); }
+GPUDeviceAddress::~GPUDeviceAddress() {
+  ClearDeviceMemory();
+  LoadableDeviceAddress::ReleaseResource();
+}
+
+bool GPUDeviceAddress::CopyBetweenHostDevice(void *dst, const void *src, size_t size, bool async, size_t stream_id,
+                                             bool host_to_device) const {
+  MS_ERROR_IF_NULL(dst);
+  MS_ERROR_IF_NULL(src);
+  const auto stream = GPUDeviceManager::GetInstance().GetStream(stream_id);
+  MS_ERROR_IF_NULL(stream);
+  if (host_to_device) {
+    CHECK_RET_WITH_RETURN_ERROR(CudaDriver::CopyHostMemToDeviceAsync(dst, src, size, stream),
+                                "CopyHostMemToDeviceAsync failed");
+  } else {
+    CHECK_RET_WITH_RETURN_ERROR(CudaDriver::CopyDeviceMemToHostAsync(dst, src, size, stream),
+                                "CopyDeviceMemToHostAsync failed");
+  }
+  if (async) {
+    auto record_event = std::make_shared<GpuEvent>();
+    record_event->set_record_stream(stream);
+    record_event->RecordEvent();
+    swap_event_.device_event_ = record_event;
+  } else {
+    GPUDeviceManager::GetInstance().SyncStream(stream);
+  }
+  return true;
+}
+
+bool GPUDeviceAddress::CopyDeviceToHost(void *dst, const void *src, size_t size, bool async, size_t stream_id) const {
+  return CopyBetweenHostDevice(dst, src, size, async, stream_id, false);
+}
+
+bool GPUDeviceAddress::CopyHostToDevice(void *dst, const void *src, size_t size, bool async, size_t stream_id) const {
+  return CopyBetweenHostDevice(dst, src, size, async, stream_id, true);
+}
 
 /*
  * Feature group: Dump, Online debugger.
@@ -285,9 +347,9 @@ bool GPUDeviceAddress::LoadMemToHost(const std::string &tensor_name, int executi
   if (size_ == 0) {
     return true;
   }
-
-  MS_EXCEPTION_IF_NULL(Debugger::GetInstance());
-  if (Debugger::GetInstance()->TensorExistsInCurrent(tensor_name) && !force_update) {
+  auto debugger = Debugger::GetInstance();
+  MS_EXCEPTION_IF_NULL(debugger);
+  if (debugger->TensorExistsInCurrent(tensor_name) && !force_update) {
     MS_LOG(INFO) << tensor_name << " already loaded for this step so not loading it again.";
     return true;
   }
@@ -298,6 +360,9 @@ bool GPUDeviceAddress::LoadMemToHost(const std::string &tensor_name, int executi
   }
   mindspore::tensor::TensorPtr out_tensor = std::make_shared<tensor::Tensor>(host_type, host_shape);
   size_t host_size = out_tensor->data().nbytes();
+  if (host_size == 0) {
+    MS_LOG(INFO) << "Host size is 0 for tensor: " << tensor_name << ", no need to load.";
+  }
   auto ret_rt_memcpy = SyncDeviceToHost(host_shape, host_size, host_type, out_tensor->data_c());
   if (!ret_rt_memcpy) {
     MS_LOG(ERROR) << "Copy device mem to host failed";
@@ -315,7 +380,7 @@ bool GPUDeviceAddress::LoadMemToHost(const std::string &tensor_name, int executi
   tensor_data->SetShape(out_tensor->shape());
   tensor_data->SetRootGraphId(root_graph_id);
   tensor_data->SetFormat(host_fmt);
-  ret = Debugger::GetInstance()->LoadNewTensor(tensor_data, keep_prev);
+  ret = debugger->LoadNewTensor(tensor_data, keep_prev);
   MS_LOG(INFO) << "E2E tensor name is " << tensor_name;
   return ret;
 }

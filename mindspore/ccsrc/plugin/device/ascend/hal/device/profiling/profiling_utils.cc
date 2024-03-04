@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,27 +14,48 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/hal/device/profiling/profiling_utils.h"
+#include <sys/syscall.h>
 #include <algorithm>
+#include <mutex>
 #include "kernel/kernel.h"
+#include "ops/structure_op_name.h"
 #include "plugin/device/ascend/hal/device/profiling/profiling_manager.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "utils/ms_utils.h"
 #include "include/common/utils/utils.h"
 #include "utils/ms_context.h"
 #include "nlohmann/json.hpp"
-#include "mindspore/core/ops/core_ops.h"
-#include "profiler/device/profiling.h"
+#include "include/backend/debug/profiler/profiling.h"
+#include "plugin/device/ascend/kernel/ascend_kernel_mod.h"
+#ifndef ASCEND_910B
+#include "plugin/device/ascend/hal/device/ge_runtime/model_runner.h"
+using mindspore::ge::model_runner::ModelRunner;
+#endif
 
 namespace mindspore {
 namespace device {
 namespace ascend {
+constexpr auto kPatternOpaque = "Opaque";
 constexpr char kFpStartNode[] = "fp_point";
 constexpr char kBpEndNode[] = "bp_point";
 constexpr uint64_t kProfilingFpStartLogId = 2;
 constexpr uint64_t kProfilingBpEndLogId = 3;
 constexpr uint64_t kProfilingIterEndLogId = 4;
 constexpr auto kDouble = 2;
+std::mutex ProfilingUtils::profiler_mutex;
+
+const std::unordered_map<std::string, GeProfInfoType> kNamesToProfTypes = {
+  {"ModelExecute", GeProfInfoType::kModelExecute},
+  {"ModelLoad", GeProfInfoType::kModelLoad},
+  {"InputCopy", GeProfInfoType::kInputCopy},
+  {"OutputCopy", GeProfInfoType::kOutputCopy},
+  {"InferShape", GeProfInfoType::kInferShape},
+  {"CompatibleInferShape", GeProfInfoType::kCompatibleInferShape},
+  {"Tiling", GeProfInfoType::kTiling},
+  {"CompatibleTiling", GeProfInfoType::kCompatibleTiling},
+  {"StreamSync", GeProfInfoType::kStreamSync},
+  {"step_info", GeProfInfoType::kStepInfo},
+  {"task_memory_info", GeProfInfoType::kTaskMemoryInfo}};
 
 nlohmann::json GetContextProfilingOption() {
   auto profiler_manager = profiler::ProfilerManager::GetInstance();
@@ -246,7 +267,7 @@ NotNull<CNodePtr> ProfilingUtils::CreateProfilingCNode(const ProfilingContent &p
   kernel::KernelBuildInfo::KernelBuildInfoBuilder selected_kernel_builder;
   selected_kernel_builder.SetInputsFormat({kOpFormat_DEFAULT, kOpFormat_DEFAULT});
   selected_kernel_builder.SetInputsDeviceType({TypeId::kNumberTypeInt32, TypeId::kNumberTypeInt32});
-  selected_kernel_builder.SetFusionType(kernel::FusionType::OPAQUE);
+  selected_kernel_builder.SetFusionType(kPatternOpaque);
   selected_kernel_builder.SetProcessor(kernel::Processor::AICORE);
   selected_kernel_builder.SetKernelType(KernelType::RT_KERNEL);
   abstract::AbstractBasePtr type_none_abstract = std::make_shared<abstract::AbstractNone>();
@@ -391,9 +412,40 @@ bool ProfilingUtils::ValidComputeGraph(const session::KernelGraph &kernel_graph)
 }
 
 void ProfilingUtils::ReportAllGraphProfilingData() {
-  for (auto data : report_data_) {
-    ReportProfilingData(data.task_ids_, data.stream_ids_, data.graph_id_, data.rt_model_id);
+  MS_LOG(INFO) << "report event: " << report_event_.size();
+  for (auto data : report_event_) {
+    auto ret = MsprofReportEvent(static_cast<uint32_t>(false), &data);
+    if (ret != MSPROF_ERROR_NONE) {
+      MS_LOG(ERROR) << "RecordModelLoad failed.";
+    }
   }
+  MS_LOG(INFO) << "report event: " << report_compact_info_.size();
+  for (auto data : report_compact_info_) {
+    auto compact_ret = MsprofReportCompactInfo(false, &data, sizeof(MsprofCompactInfo));
+    if (compact_ret != MSPROF_ERROR_NONE) {
+      MS_LOG(ERROR) << "MsprofReportCompactInfo failed.";
+    }
+  }
+
+  MS_LOG(INFO) << "report event: " << report_additional_info_.size();
+  for (auto data : report_additional_info_) {
+    auto addition_ret = MsprofReportAdditionalInfo(false, &data, sizeof(MsprofAdditionalInfo));
+    if (addition_ret != MSPROF_ERROR_NONE) {
+      MS_LOG(ERROR) << "MsprofReportAdditionalInfo failed.";
+    }
+  }
+
+  MS_LOG(INFO) << "report event: " << report_api_.size();
+  for (auto data : report_api_) {
+    auto api_ret = MsprofReportApi(false, &data);
+    if (api_ret != MSPROF_ERROR_NONE) {
+      MS_LOG(ERROR) << "MsprofReportAdditionalInfo failed.";
+    }
+  }
+  report_event_.clear();
+  report_compact_info_.clear();
+  report_additional_info_.clear();
+  report_api_.clear();
 }
 
 void ProfilingUtils::ReportProfilingData(const std::vector<uint32_t> &task_ids, const std::vector<uint32_t> &stream_ids,
@@ -447,6 +499,293 @@ void ProfilingUtils::ReportMindSporeFrameworkData() {
   repoter.ReportParallelStrategy();
   repoter.ReportMDTraceData();
   MS_LOG(INFO) << "Stop to report MindSpore Framework data to Ascend Profiler.";
+}
+
+uint64_t ProfilingUtils::GetMsprofHashId(const std::string &info) {
+  auto iter = msprof_hash_id_.find(info);
+  if (iter == msprof_hash_id_.end()) {
+    const char *hash_info = info.c_str();
+    uint64_t hash_id = MsprofGetHashId(hash_info, info.length());
+    auto ret = msprof_hash_id_.try_emplace(info, hash_id);
+    if (!ret.second) {
+      MS_LOG(WARNING) << "note " << info << " hash id already exist";
+    }
+    return hash_id;
+  } else {
+    return iter->second;
+  }
+}
+
+void ProfilingUtils::BuildSingleTensorInfo(const CNodePtr &node, const uint64_t opName_hash_id, const size_t index,
+                                           const uint32_t tensor_num, TensorInfoWrapper *tensor_info_wrapper) {
+  MS_EXCEPTION_IF_NULL(tensor_info_wrapper);
+  auto &tensor_info = tensor_info_wrapper->tensor_info;
+  tensor_info.type = MSPROF_REPORT_NODE_TENSOR_INFO_TYPE;
+  tensor_info.level = MSPROF_REPORT_NODE_LEVEL;
+  tensor_info_wrapper->tensor_num = tensor_num;
+  tensor_info.dataLen = kTensorInfoBytesWithCap + kTensorInfoBytes * (static_cast<uint32_t>(tensor_num) - 1U);
+  auto prof_tensor_data = reinterpret_cast<MsprofTensorInfo *>(tensor_info.data);
+  prof_tensor_data->opName = opName_hash_id;
+  prof_tensor_data->tensorNum = tensor_num;
+  for (size_t k = 0UL; k < static_cast<size_t>(tensor_num); ++k) {
+    const size_t tensor_index = (index * static_cast<size_t>(MSPROF_GE_TENSOR_DATA_NUM)) + k;
+    InitProfTensorData(node, tensor_index, k, prof_tensor_data);
+  }
+}
+
+void ProfilingUtils::InitProfTensorData(const CNodePtr &node, const size_t index, const uint64_t offset_idx,
+                                        MsprofTensorInfo *tensor_info) {
+  const auto InitTensorDesc = [&tensor_info](const MsprofGeTensorType tensor_type, const ShapeVector &shape,
+                                             const std::string &format, const uint32_t vm_data_type,
+                                             const uint64_t offset_idx) {
+    tensor_info->tensorData[offset_idx].tensorType = static_cast<uint32_t>(tensor_type);
+    // when enum Format is changed, profiling analyze needs to be synchronized
+    tensor_info->tensorData[offset_idx].format = OpFormat2Index[format] + MSPROF_DIFFERENCE;
+    // when enum DataType is changed, profiling analyze needs to be synchronized
+    tensor_info->tensorData[offset_idx].dataType = vm_data_type + MSPROF_DIFFERENCE;
+    auto shape_size = std::min(static_cast<uint64_t>(MSPROF_GE_TENSOR_DATA_SHAPE_LEN), shape.size());
+    (void)std::copy(shape.begin(), shape.begin() + shape_size, tensor_info->tensorData[offset_idx].shape);
+  };
+
+  const size_t input_size = common::AnfAlgo::GetInputTensorNum(node);
+  if (index < input_size) {
+    // when current index is smaller than input_size, build tensor by input tensor
+    auto [input_node, input_index] = common::AnfAlgo::GetPrevNodeOutput(node, index);
+    ShapeVector shape = AnfAlgo::GetOutputDeviceShape(input_node, input_index);
+    std::string data_format = AnfAlgo::GetOutputFormat(input_node, input_index);
+    uint32_t vm_data_type = static_cast<uint32_t>(AnfAlgo::GetOutputDeviceDataType(input_node, input_index));
+    InitTensorDesc(MSPROF_GE_TENSOR_TYPE_INPUT, shape, data_format, vm_data_type, offset_idx);
+  } else {
+    // when current index is bigger than input_size, build tensor by output tensor, use index - input_size as
+    // index of output tensor
+    ShapeVector shape = AnfAlgo::GetOutputDeviceShape(node, index - input_size);
+    std::string data_format = AnfAlgo::GetOutputFormat(node, index - input_size);
+    uint32_t vm_data_type = static_cast<uint32_t>(AnfAlgo::GetOutputDeviceDataType(node, index - input_size));
+    InitTensorDesc(MSPROF_GE_TENSOR_TYPE_OUTPUT, shape, data_format, vm_data_type, offset_idx);
+  }
+}
+
+void ProfilingUtils::RecordModelLoad(const rtModel_t rt_model_handle) {
+#ifndef ASCEND_910B
+  uint32_t rt_model_id = 0;
+  rtError_t rt_model_ret = rtModelGetId(rt_model_handle, &rt_model_id);
+  if (rt_model_ret != RT_ERROR_NONE) {
+    MS_LOG(ERROR) << "Call rt api rtModelGetId failed, ret: " << rt_model_ret;
+    return;
+  }
+  MS_LOG(INFO) << "RecordModelLoad model_id: " << rt_model_id;
+
+  const uint64_t prof_time = MsprofSysCycleTime();
+  MsprofEvent model_load_event_{};
+  model_load_event_.type = static_cast<uint32_t>(GeProfInfoType::kModelLoad);
+  model_load_event_.itemId = rt_model_id;
+  model_load_event_.level = MSPROF_REPORT_MODEL_LEVEL;
+  model_load_event_.timeStamp = prof_time;
+  model_load_event_.requestId = 0U;
+  auto tid = syscall(SYS_gettid);
+  model_load_event_.threadId = static_cast<uint32_t>(tid);
+  if (ProfilingManager::GetInstance().IsProfilingStart()) {
+    auto ret = MsprofReportEvent(static_cast<uint32_t>(false), &model_load_event_);
+    if (ret != MSPROF_ERROR_NONE) {
+      MS_LOG(ERROR) << "RecordModelLoad failed.";
+    }
+  } else {
+    report_event_.emplace_back(model_load_event_);
+  }
+#endif
+}
+
+void ProfilingUtils::RecordModelExecute(const KernelGraphPtr kernel_graph) {
+#ifndef ASCEND_910B
+  uint32_t rt_model_id = 0;
+  rtModel_t rt_model_handle = ModelRunner::Instance().GetModelHandle(kernel_graph->graph_id());
+  rtError_t rt_model_ret = rtModelGetId(rt_model_handle, &rt_model_id);
+  if (rt_model_ret != RT_ERROR_NONE) {
+    MS_LOG(ERROR) << "Call rt api rtModelGetId failed, ret: " << rt_model_ret;
+    return;
+  }
+  MS_LOG(INFO) << "RecordModelExecute model_id: " << rt_model_id;
+
+  auto request_id = 0;
+
+  MsprofEvent model_execute{};
+  model_execute.level = MSPROF_REPORT_MODEL_LEVEL;
+  model_execute.itemId = rt_model_id;
+  auto tid = syscall(SYS_gettid);
+  model_execute.threadId = static_cast<uint32_t>(tid);
+  model_execute.type = static_cast<uint32_t>(GeProfInfoType::kModelExecute);
+  const uint64_t prof_time = MsprofSysCycleTime();
+  model_execute.timeStamp = prof_time;
+  model_execute.requestId = static_cast<uint32_t>(request_id);
+  if (ProfilingManager::GetInstance().IsProfilingStart()) {
+    auto ret = MsprofReportEvent(static_cast<uint32_t>(false), &model_execute);
+    if (ret != MSPROF_ERROR_NONE) {
+      MS_LOG(ERROR) << "RecordModelLoad failed.";
+    }
+  } else {
+    report_event_.emplace_back(model_execute);
+  }
+#endif
+}
+
+std::string ProfilingUtils::GetFullScopeName(const std::string &op_name, const bool is_op_name) {
+  std::string full_scope_name;
+  if (!is_op_name) {
+    auto op_index = op_name.find("-op");
+    if (op_index != std::string::npos) {
+      full_scope_name = op_name.substr(0, op_name.find("_", op_index + 1));
+    }
+  } else {
+    full_scope_name = op_name;
+  }
+  return full_scope_name;
+}
+
+void ProfilingUtils::RecordLaunchTaskBegin(const std::string &op_name, const bool is_op_name) {
+  std::string full_scope_name = GetFullScopeName(op_name, is_op_name);
+  auto iter = node_addition_info_.find(full_scope_name);
+  if (iter == node_addition_info_.end()) {
+    MS_LOG(WARNING) << "Do not find op info: " << full_scope_name;
+    return;
+  }
+  ProfNodeAdditionInfo &addition_info = iter->second;
+  addition_info.api.beginTime = MsprofSysCycleTime();
+  MS_LOG(DEBUG) << "api Launch begin " << full_scope_name << ", " << addition_info.api.beginTime;
+}
+
+void ProfilingUtils::RegisterProfType() {
+  if (is_prof_type_registered_) {
+    return;
+  }
+  for (const auto &name_to_type : kNamesToProfTypes) {
+    if (name_to_type.second < GeProfInfoType::kModelLevelEnd) {
+      auto ret = MsprofRegTypeInfo(MSPROF_REPORT_MODEL_LEVEL, static_cast<uint32_t>(name_to_type.second),
+                                   name_to_type.first.c_str());
+      if (ret != MSPROF_ERROR_NONE) {
+        MS_LOG(ERROR) << "MSPROF_REPORT_MODEL_LEVEL failed.";
+      }
+    } else {
+      auto ret = MsprofRegTypeInfo(MSPROF_REPORT_NODE_LEVEL, static_cast<uint32_t>(name_to_type.second),
+                                   name_to_type.first.c_str());
+      if (ret != MSPROF_ERROR_NONE) {
+        MS_LOG(ERROR) << "MSPROF_REPORT_NODE_LEVEL failed.";
+      }
+    }
+  }
+  is_prof_type_registered_ = true;
+  return;
+}
+
+void ProfilingUtils::ReportTask(const std::string &op_name, const bool is_op_name) {
+  std::string full_scope_name = GetFullScopeName(op_name, is_op_name);
+  auto iter = node_addition_info_.find(full_scope_name);
+  if (iter == node_addition_info_.end()) {
+    MS_LOG(WARNING) << "Do not find op info: " << full_scope_name;
+    return;
+  }
+  ProfNodeAdditionInfo &addition_info = iter->second;
+  const uint64_t prof_time = MsprofSysCycleTime();
+  addition_info.node_basic_info.timeStamp = prof_time;
+  auto tid = syscall(SYS_gettid);
+  addition_info.node_basic_info.threadId = static_cast<uint32_t>(tid);
+
+  if (ProfilingManager::GetInstance().IsProfilingStart()) {
+    auto compact_ret = MsprofReportCompactInfo(false, &addition_info.node_basic_info, sizeof(MsprofCompactInfo));
+    if (compact_ret != MSPROF_ERROR_NONE) {
+      MS_LOG(ERROR) << "MsprofReportCompactInfo failed.";
+    }
+  } else {
+    report_compact_info_.emplace_back(addition_info.node_basic_info);
+  }
+  MS_LOG(DEBUG) << "MsprofReportCompactInfo：op_name: " << op_name
+                << ", tensors: " << addition_info.tensor_info_wrappers.size();
+
+  for (auto &tensor_info_wrapper : addition_info.tensor_info_wrappers) {
+    tensor_info_wrapper.tensor_info.timeStamp = prof_time;
+    tensor_info_wrapper.tensor_info.threadId = static_cast<uint32_t>(tid);
+    if (ProfilingManager::GetInstance().IsProfilingStart()) {
+      auto addition_ret =
+        MsprofReportAdditionalInfo(false, &tensor_info_wrapper.tensor_info, sizeof(MsprofAdditionalInfo));
+      if (addition_ret != MSPROF_ERROR_NONE) {
+        MS_LOG(ERROR) << "MsprofReportAdditionalInfo failed.";
+      }
+    } else {
+      report_additional_info_.emplace_back(tensor_info_wrapper.tensor_info);
+    }
+  }
+
+  addition_info.api.endTime = prof_time;
+  addition_info.api.threadId = static_cast<uint32_t>(tid);
+  if (ProfilingManager::GetInstance().IsProfilingStart()) {
+    auto api_ret = MsprofReportApi(false, &addition_info.api);
+    if (api_ret != MSPROF_ERROR_NONE) {
+      MS_LOG(ERROR) << "MsprofReportAdditionalInfo failed.";
+    }
+  } else {
+    report_api_.emplace_back(addition_info.api);
+  }
+}
+
+void ProfilingUtils::InitLaunchApi(const uint64_t name_hash, MsprofApi *api) {
+  const auto kernel_type_hash = MSPROF_REPORT_NODE_LAUNCH_TYPE;
+  api->type = kernel_type_hash;
+  api->level = MSPROF_REPORT_NODE_LEVEL;
+  api->itemId = name_hash;
+}
+
+uint32_t ProfilingUtils::GetBlockDim(const CNodePtr &node) {
+  auto kernel_mod = AnfAlgo::GetKernelMod(node);
+  auto ascend_kernel_mod = dynamic_cast<kernel::AscendKernelMod *>(kernel_mod);
+  MS_EXCEPTION_IF_NULL(ascend_kernel_mod);
+  return ascend_kernel_mod->block_dim();
+}
+
+void ProfilingUtils::InitReportNode(const CNodePtr &cnode, bool init_begin_time) {
+  std::lock_guard<std::mutex> lock(profiler_mutex);
+  MS_EXCEPTION_IF_NULL(cnode);
+  ProfNodeAdditionInfo addition_info{};
+  if (init_begin_time) {
+    addition_info.api.beginTime = MsprofSysCycleTime();
+  }
+  MsprofCompactInfo &basic_info = addition_info.node_basic_info;
+  basic_info.level = MSPROF_REPORT_NODE_LEVEL;
+  basic_info.type = MSPROF_REPORT_NODE_BASIC_INFO_TYPE;
+  auto &prof_node_basic_info = basic_info.data.nodeBasicInfo;
+  uint64_t opName_hash_id = GetMsprofHashId(cnode->fullname_with_scope());
+  prof_node_basic_info.opName = opName_hash_id;
+  std::string opType = common::AnfAlgo::GetCNodeName(cnode);
+  prof_node_basic_info.opType = GetMsprofHashId(opType);
+  prof_node_basic_info.blockDim = GetBlockDim(cnode);
+  KernelType kernel_type = AnfAlgo::GetKernelType(cnode);
+  prof_node_basic_info.taskType = static_cast<uint32_t>(KernelType2TaskTypeEnum[kernel_type]);
+
+  size_t total_size = common::AnfAlgo::GetInputTensorNum(cnode) + AnfAlgo::GetOutputTensorNum(cnode);
+  const size_t batch_size = total_size / MSPROF_GE_TENSOR_DATA_NUM;
+  for (size_t i = 0U; i < batch_size; i++) {
+    TensorInfoWrapper tensor_info_wrapper{};
+    BuildSingleTensorInfo(cnode, opName_hash_id, i, MSPROF_GE_TENSOR_DATA_NUM, &tensor_info_wrapper);
+    addition_info.tensor_info_wrappers.emplace_back(tensor_info_wrapper);
+  }
+
+  const size_t remain_index = total_size % static_cast<size_t>(MSPROF_GE_TENSOR_DATA_NUM);
+  if (remain_index != 0UL) {
+    TensorInfoWrapper tensor_info_wrapper{};
+    BuildSingleTensorInfo(cnode, opName_hash_id, batch_size, remain_index, &tensor_info_wrapper);
+    (void)addition_info.tensor_info_wrappers.emplace_back(tensor_info_wrapper);
+  }
+  InitLaunchApi(opName_hash_id, &addition_info.api);
+
+  auto ret = node_addition_info_.try_emplace(cnode->fullname_with_scope(), addition_info);
+  if (!ret.second) {
+    MS_LOG(DEBUG) << cnode->fullname_with_scope() << " node addition already exist";
+  }
+}
+
+void ProfilingUtils::GetGraphNodes(const session::KernelGraph &kernel_graph) {
+  RegisterProfType();
+  for (const auto &cnode : kernel_graph.execution_order()) {
+    InitReportNode(cnode);
+  }
 }
 }  // namespace ascend
 }  // namespace device

@@ -23,7 +23,7 @@
 #include <utility>
 #include <set>
 #include "schema/inner/model_generated.h"
-#include "src/litert/kernel_exec.h"
+#include "src/executor/kernel_exec.h"
 #include "src/litert/lite_model.h"
 #include "include/train/train_cfg.h"
 
@@ -44,23 +44,30 @@ struct tensor_info {
 class TrainExport {
  public:
   explicit TrainExport(const std::string file_name) : file_name_(file_name) {}
+  explicit TrainExport(Buffer *model_buffer) : model_buffer_(model_buffer) {}
   virtual ~TrainExport();
   int ExportNet(const std::vector<mindspore::kernel::KernelExec *> &kernels,
-                const std::vector<mindspore::lite::Tensor *> &tensors, const std::vector<std::string> &output_names,
-                const Model *model, QuantizationType quant_type, const Model *bb_model = nullptr);
+                const std::vector<mindspore::lite::Tensor *> &tensors,
+                const std::vector<mindspore::lite::Tensor *> const_folded_output,
+                const std::vector<std::string> &output_names, const Model *model, QuantizationType quant_type,
+                const Model *bb_model = nullptr);
   int ExportInit(const std::string model_name, std::string version);
   int SaveToFile();
+  int SaveToBuffer();
+  int SaveWeightsToFile(bool enable_fp16 = false, const std::vector<std::string> &changeable_weights_name = {});
   void set_connect(const std::unordered_map<size_t, size_t> &map) { connect_ = map; }
   int LoadModel(void *buf, size_t buf_size);
   int AddTransformNode();
   int TrainModelFusion();
   int TrainModelDrop();
   int SaveModel(lite::Model *model, const std::string &file_name);
+  int SaveModel(lite::Model *model, Buffer *model_buffer);
 
  protected:
   virtual std::vector<uint8_t> CreateData(const mindspore::lite::Tensor *tensor);
 
  private:
+  Buffer *model_buffer_ = nullptr;
   std::string file_name_;
   schema::MetaGraphT *meta_graph_ = nullptr;
   std::vector<size_t> out_idx_;
@@ -70,7 +77,9 @@ class TrainExport {
   int TopologicalSort();
   void PrepareRemap(int offset);
   LiteGraph::Node *FindNode(const mindspore::kernel::KernelExec *kernel, const Model *model);
-  std::unique_ptr<schema::TensorT> CreateTensor(const Tensor *tensor, schema::Tensor *scTensor, int preferred_dim,
+  std::unique_ptr<schema::TensorT> CreateTensor(const Tensor *tensor,
+                                                const std::vector<mindspore::lite::Tensor *> const_folded_output,
+                                                schema::Tensor *scTensor, int preferred_dim,
                                                 const int tensor_quant_type);
   std::unique_ptr<schema::CNodeT> CreateCNode(const mindspore::kernel::KernelExec *kernel,
                                               std::vector<uint32_t> inputIndex, std::vector<uint32_t> outputIndex,
@@ -88,6 +97,7 @@ class TrainExport {
                              size_t *target_index);
   int KeepGraphInputsInOrder(const Model *model);
   int ExportTensor(const Model *model, const std::vector<mindspore::lite::Tensor *> &tensors, int offset,
+                   const std::vector<mindspore::lite::Tensor *> const_folded_output,
                    const std::vector<std::pair<size_t, tensor_info>> &map_index,
                    const std::vector<std::string> &output_names, const std::set<size_t> &out_set);
   virtual int QuantTensorData(schema::TensorT *dest_tensor, const mindspore::lite::Tensor *src_tensor,

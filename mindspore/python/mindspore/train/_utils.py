@@ -1,4 +1,4 @@
-# Copyright 2020-2021 Huawei Technologies Co., Ltd
+# Copyright 2020-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,16 +20,18 @@ from collections.abc import Iterable
 import numpy as np
 
 from mindspore.common.tensor import Tensor
+from mindspore._c_expression import Tensor as Tensor_
 from mindspore.common.dtype import dtype_to_nptype, pytype_to_dtype
 from mindspore.common import dtype as mstype
 from mindspore import log as logger
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from mindspore.common.api import _cell_graph_executor
 from mindspore.train.mind_ir_pb2 import ModelProto as mindir_model
 from mindspore.train.checkpoint_pb2 import Checkpoint
 from mindspore.train.node_strategy_pb2 import ParallelStrategyMap as ckpt_strategy
 from mindspore.train.lineage_pb2 import DatasetGraph, TrainLineage, EvaluationLineage, UserDefinedInfo
 from mindspore.parallel._parallel_serialization import _make_dir
+from mindspore.ops.operations import debug_ops
 
 
 def _convert_type(types):
@@ -64,7 +66,11 @@ def _exec_datagraph(exec_dataset, dataset_size, phase='dataset', create_data_inf
     # transform data format
     dataset_types, dataset_shapes = _get_types_and_shapes(exec_dataset)
     send_epoch_end = bool(dataset_size == -1)
-    exec_dataset = exec_dataset.device_que(send_epoch_end=send_epoch_end, create_data_info_queue=create_data_info_queue)
+    queue_name = _cell_graph_executor.get_queue_name(phase)
+    if queue_name is None:
+        queue_name = str("")
+    exec_dataset = exec_dataset.device_que(send_epoch_end=send_epoch_end,
+                                           create_data_info_queue=create_data_info_queue, queue_name=queue_name)
     _cell_graph_executor.init_dataset(exec_dataset.queue_name,
                                       dataset_size,
                                       batch_size,
@@ -103,7 +109,7 @@ def _construct_tensor_list(types, shapes, batch_expand_num=1):
                 new_shape += (item * batch_expand_num,)
             else:
                 new_shape += (item,)
-        tensor = Tensor(np.zeros(new_shape, dtype_to_nptype(type_)))
+        tensor = Tensor(np.zeros(new_shape, dtype_to_nptype(type_)), dtype=type_)
         tensor.virtual_flag = True
         tensor_list.append(tensor)
     return tensor_list
@@ -135,27 +141,48 @@ def _construct_input_tensors(dataset_types, dataset_shapes, device_number=1):
     return tensor_list_run, tensor_list_compile
 
 
-def _check_to_numpy(plugin, tensor):
+def _check_to_numpy(plugin, tensor, prim=None):
     """Check the tensor and return a numpy.ndarray."""
     np_value = tensor.asnumpy()
     np_value = np_value.copy()
+    summary_name = plugin.capitalize() + "Summary" if prim else "SummaryRecord"
     if plugin == 'scalar':
         if np_value.size == 1:
             return np_value
-        raise ValueError('The tensor holds more than one value, but the scalar plugin expects on value.')
+        raise ValueError(
+            f'For "{summary_name}", the v rank must be less than or equal to 1, but got {len(np_value)}.')
     if plugin == 'image':
         if np_value.ndim == 4:
             return np_value
-        raise ValueError('The tensor seems not to hold a valid image.')
+        raise ValueError(f'For "{summary_name}", The tensor seems not to hold a valid image.')
     if plugin in ('tensor', 'histogram'):
         if np_value.ndim > 0:
             return np_value
-        raise ValueError('The tensor should not be empty.')
+        raise ValueError(f'For "{summary_name}", The value should not be empty.')
     return np_value
+
+
+def check_summary_param(summary_name, tag, tensor):
+    """Checks the tag is valid for summary."""
+    plugin = summary_name.split('Summary')[0].lower()
+    try:
+        if not isinstance(tag, str) or not tag:
+            raise TypeError(f'For "{summary_name}", the name must be valid string, but got "{tag}".')
+        if not isinstance(tensor, (Tensor, Tensor_)):
+            raise TypeError(f'For "{summary_name}", the parameter "value" expect to be Tensor, '
+                            f'but got {type(tensor).__name__}')
+        _check_to_numpy(plugin, tensor, prim=True)
+    except TypeError as err:
+        raise TypeError(err) from err
+    except ValueError as err:
+        raise ValueError(err) from err
+    finally:
+        debug_ops.SUMMARY_TENSOR_CACHE = []
 
 
 def _check_lineage_value(plugin, value):
     """Check the lineage value."""
+
     def raises(plugin, prototype):
         raise TypeError(f'Plugin {repr(plugin)} expects a {prototype.__name__} value.')
 
@@ -196,7 +223,7 @@ def read_proto(file_name, proto_format="MINDIR", display_data=False):
     Args:
         file_name (str): File name.
         proto_format (str): Proto format {MINDIR, CKPT, CKPT_STRATEGY}.  Default: MINDIR.
-        display_data (bool): Whether display data. Default: False.
+        display_data (bool): Whether display data. Default: ``False``.
 
     Returns:
         Object, proto object.
@@ -229,6 +256,10 @@ def read_proto(file_name, proto_format="MINDIR", display_data=False):
 
     if proto_format == "CKPT" and not display_data:
         for element in model.value:
-            element.tensor.tensor_content = b'\0'
+            if element.tensor.ByteSize() != 0:
+                element.tensor.tensor_content = b'\0'
+            else:
+                for ele in element.maptensor.tensor:
+                    ele.tensor_content = b'\0'
 
     return model

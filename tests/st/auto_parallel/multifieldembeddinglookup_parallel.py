@@ -23,8 +23,8 @@ from mindspore.nn import MultiFieldEmbeddingLookup as embedding
 from mindspore import Tensor
 from mindspore import context
 from mindspore.train import Model
-from mindspore.train.callback import CheckpointConfig
-from mindspore.train.callback import ModelCheckpoint
+from mindspore.train import CheckpointConfig
+from mindspore.train import ModelCheckpoint
 from mindspore.train.serialization import load_checkpoint
 from mindspore.train.serialization import load_param_into_net
 from mindspore.communication.management import init
@@ -260,7 +260,7 @@ class ParallelMultiHotFactory:
         return load_checkpoint(newest_ckpt_file)
 
     def mindspore_auto_parallel_impl(self, dataset, epoch, device_num):
-        context.set_auto_parallel_context(parallel_mode=ParallelMode.AUTO_PARALLEL,
+        context.set_auto_parallel_context(parallel_mode=ParallelMode.AUTO_PARALLEL, search_mode="dynamic_programming",
                                           device_num=device_num)
         parallel_mode_net = MultiHotNet(vocab_size=self.vocab_size, embedding_size=self.embedding_size,
                                         field_size=self.field_size, param_init=self.param_init, target=self.target,

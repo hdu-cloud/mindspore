@@ -34,6 +34,7 @@ using mode_t = int;
 #include <fstream>
 #include "src/common/utils.h"
 #include "src/common/log_adapter.h"
+#include "src/litert/inner_allocator.h"
 
 namespace mindspore {
 namespace lite {
@@ -49,9 +50,11 @@ std::fstream *OpenFile(const std::string &file_path, std::ios_base::openmode ope
 
 char *ReadFileSegment(const std::string &file, int64_t offset, int64_t len);
 
-char *ReadFile(const char *file, size_t *size);
+char *ReadFile(const char *file, size_t *size, std::shared_ptr<Allocator> allocator = nullptr);
 
 std::string RealPath(const char *path);
+
+int CreateDir(const std::string &file_path);
 
 int CreateOutputDir(std::string *file_path);
 
@@ -74,19 +77,20 @@ void WriteToTxt(const std::string &file_path, void *data, size_t element_size) {
   out_file.close();
 }
 
-inline int WriteToBin(const std::string &file_path, void *data, const size_t size) {
-  if (data == nullptr) {
-    MS_LOG(ERROR) << "data is nullptr.";
-    return RET_ERROR;
+inline std::string WriteStrToFile(const std::string &file_path, const std::string &file_name,
+                                  const std::string &content) {
+  std::fstream fs;
+  auto real_path = lite::RealPath(file_path.c_str());
+  auto full_path = real_path + "/" + file_name;
+  fs.open(full_path, std::ios::out);
+  if (!fs.good() || !fs.is_open()) {
+    MS_LOG(ERROR) << "Open dot file failed: " << full_path;
+    return "";
   }
-  std::ofstream out_file;
-  out_file.open(file_path.c_str(), std::ios::binary);
-  if (!out_file.good() || !out_file.is_open()) {
-    return RET_ERROR;
-  }
-  out_file.write(reinterpret_cast<char *>(data), size);
-  out_file.close();
-  return RET_OK;
+  fs.write(content.c_str(), content.size());
+  fs.flush();
+  fs.close();
+  return full_path;
 }
 
 std::string GetDirectory(const std::string &path);
@@ -101,6 +105,29 @@ static inline void ChangeFileMode(const std::string &file_name, mode_t mode) {
     MS_LOG(WARNING) << "Change file `" << file_name << "` to mode " << std::oct << mode << " fail.";
   }
 }
+
+inline int WriteToBin(const std::string &file_path, const void *data, const size_t size,
+#ifdef _MSC_VER
+                      int mode = _S_IREAD
+#else
+                      mode_t mode = S_IRUSR
+#endif
+) {
+  if (data == nullptr) {
+    MS_LOG(ERROR) << "data is nullptr.";
+    return RET_ERROR;
+  }
+  std::ofstream out_file;
+  out_file.open(file_path.c_str(), std::ios::binary);
+  if (!out_file.good() || !out_file.is_open()) {
+    return RET_ERROR;
+  }
+  out_file.write(reinterpret_cast<const char *>(data), size);
+  out_file.close();
+  ChangeFileMode(file_path, mode);
+  return RET_OK;
+}
+
 }  // namespace lite
 }  // namespace mindspore
 

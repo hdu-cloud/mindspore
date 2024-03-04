@@ -17,13 +17,13 @@
 #ifndef MINDSPORE_CORE_OPS_CONV2D_BACKPROP_INPUT_H_
 #define MINDSPORE_CORE_OPS_CONV2D_BACKPROP_INPUT_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-
-#include "ops/base_operator.h"
-#include "mindapi/base/types.h"
+#include <string>
+#include <vector>
+#include "abstract/ops/op_infer.h"
 #include "mindapi/base/format.h"
+#include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -59,8 +59,13 @@ class MIND_API Conv2DBackpropInput : public BaseOperator {
   Format get_format() const;
   std::vector<int64_t> get_pad_list() const;
 };
-abstract::AbstractBasePtr Conv2DBackpropInputInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                   const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr Conv2DBackpropInputInfer(const abstract::AnalysisEnginePtr &,
+                                                            const PrimitivePtr &primitive,
+                                                            const std::vector<abstract::AbstractBasePtr> &input_args);
+
+BaseShapePtr Conv2DBackpropInputInferShape(const PrimitivePtr &primitive,
+                                           const std::vector<AbstractBasePtr> &input_args);
+TypePtr Conv2DBackpropInputInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_CONV2D_BACKPROP_INPUT_H_

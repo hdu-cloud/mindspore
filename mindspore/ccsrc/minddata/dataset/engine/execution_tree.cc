@@ -14,17 +14,19 @@
  * limitations under the License.
  */
 #include "minddata/dataset/engine/execution_tree.h"
+
 #include <iostream>
-#include <string>
 #include <limits>
-#include "minddata/dataset/engine/datasetops/dataset_op.h"
+#include <string>
+
 #include "minddata/dataset/engine/datasetops/data_queue_op.h"
+#include "minddata/dataset/engine/datasetops/dataset_op.h"
+#include "minddata/dataset/engine/perf/info_collector.h"
+#include "minddata/dataset/util/task_manager.h"
 #ifdef WITH_BACKEND
 #include "mindspore/core/utils/numa_interface.h"
 #include "utils/ms_context.h"
 #endif
-#include "minddata/dataset/util/task_manager.h"
-#include "minddata/dataset/util/service.h"
 
 namespace mindspore {
 namespace dataset {
@@ -149,6 +151,7 @@ void ExecutionTree::PrintNode(std::ostream &out, const std::shared_ptr<DatasetOp
 
 // Start the execution of the tree
 Status ExecutionTree::Launch() {
+  RETURN_IF_NOT_OK(CollectPipelineInfoStart("Pipeline", "Launch"));
   // opencv limit too many threads
 #if !defined(_WIN32) && !defined(_WIN64) && !defined(__APPLE__) && !defined(ENABLE_ANDROID)
 #ifdef WITH_BACKEND
@@ -197,16 +200,20 @@ Status ExecutionTree::Launch() {
     // require a thread to execute.  Instead, the work of this operator is executed inlined
     // from the tree node directly above it (or in the case of a root node, it runs from within
     // the launching tree/user thread.  Do not exec any thread for an inlined op.
+    // Set the state of the Operator as running. This only matters in Leaf ops, CacheOp and TakeOp
     itr->state_ = DatasetOp::OpState::kDeOpRunning;
     itr->Launch();
     if (!itr->inlined()) {
       RETURN_IF_NOT_OK(tg_->CreateAsyncTask(itr->NameWithID(), std::ref(*itr), nullptr, itr->id()));
-      // Set the state of the Operator as running. This only matters in Leaf ops, CacheOp and TakeOp
+      // Set if this task group has data queue op
+      if (itr->Name() == kDeviceQueueOp) {
+        tg_->HasDataQueue(true);
+      }
     }
   }
 
   tree_state_ = kDeTStateExecuting;
-
+  RETURN_IF_NOT_OK(CollectPipelineInfoEnd("Pipeline", "Launch"));
   return Status::OK();
 }
 
@@ -260,7 +267,7 @@ Status ExecutionTree::LaunchWorkers(int32_t num_workers, std::function<Status(ui
 }
 
 // Walks the tree to perform modifications to the tree in post-order to get it ready for execution.
-Status ExecutionTree::Prepare() {
+Status ExecutionTree::Prepare(bool is_pull_mode) {
   if (root_ == nullptr) {
     RETURN_STATUS_UNEXPECTED("Please assign one operator as the root of this tree.");
   }
@@ -279,7 +286,11 @@ Status ExecutionTree::Prepare() {
 
   // By iterating from the end of the FIFO queue, we simulate the post-order walk.
   for (auto rit = fifo.crbegin(); rit != fifo.crend(); ++rit) {
-    RETURN_IF_NOT_OK((*rit)->PrepareOperator());
+    if (!is_pull_mode) {
+      RETURN_IF_NOT_OK((*rit)->PrepareOperator());
+    } else {
+      RETURN_IF_NOT_OK((*rit)->PrepareOperatorPullBased());
+    }
   }
 
   // The tree is prepared.

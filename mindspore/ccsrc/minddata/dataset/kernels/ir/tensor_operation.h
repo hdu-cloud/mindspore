@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,6 +50,8 @@ class TensorOperation : public std::enable_shared_from_this<TensorOperation> {
   bool IsRandomOp() const { return random_op_; }
 
   virtual Status to_json(nlohmann::json *out_json) { return Status::OK(); }
+
+  virtual MapTargetDevice Type() { return MapTargetDevice::kCpu; }
 
  protected:
   bool random_op_;

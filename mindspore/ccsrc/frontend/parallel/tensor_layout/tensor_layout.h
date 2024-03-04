@@ -64,6 +64,10 @@ class TensorLayout {
 
   Arrangement tensor_shape() const { return tensor_shape_; }
 
+  Arrangement tensor_shape_origin() const { return tensor_shape_origin_; }
+
+  Arrangement device_arrangement_origin() const { return device_arrangement_origin_; }
+
   Map origin_tensor_map() const { return tensor_map_origin_; }
 
   std::shared_ptr<TensorLayout> ExpandTensorShape(const Arrangement &expanded_shape) const;
@@ -91,6 +95,8 @@ class TensorLayout {
   std::shared_ptr<Arrangement> ComputeExpandedTensorShape(const Arrangement &expand_shape) const;
 
   Arrangement slice_shape() const;
+
+  Shape shard_strategy() const;
 
   Status UpdateTensorMap(size_t index, int64_t value);
 

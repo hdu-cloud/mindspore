@@ -34,6 +34,7 @@ using GeTensor = ::ge::Tensor;
 namespace mindspore {
 namespace transform {
 enum Status : int { SUCCESS = 0, FAILED, INVALID_ARGUMENT, ALREADY_EXISTS, NOT_FOUND };
+typedef enum { ALLOW_FP32_TO_FP16, FORCE_FP32 } AclPrecisionMode;
 
 using MeTensor = mindspore::tensor::Tensor;
 using MeTensorPtr = std::shared_ptr<MeTensor>;
@@ -52,6 +53,27 @@ using DfGraphPtr = std::shared_ptr<DfGraph>;
 using TensorMap = mindspore::HashMap<std::string, std::shared_ptr<MeTensor>>;
 using OptionMap = std::map<std::string, std::string>;
 using TensorOrderMap = std::map<std::string, std::shared_ptr<tensor::Tensor>>;
+using GeAllocatorPtr = ::ge::AllocatorPtr;
+
+static std::map<std::string, GeDataType> ge_str_dtype_map = {{"float", GeDataType::DT_FLOAT},
+                                                             {"float32", GeDataType::DT_FLOAT},
+                                                             {"float16", GeDataType::DT_FLOAT16},
+                                                             {"int8", GeDataType::DT_INT8},
+                                                             {"int16", GeDataType::DT_INT16},
+                                                             {"int32", GeDataType::DT_INT32},
+                                                             {"int64", GeDataType::DT_INT64},
+                                                             {"uint1", GeDataType::DT_UINT1},
+                                                             {"uint8", GeDataType::DT_UINT8},
+                                                             {"uint16", GeDataType::DT_UINT16},
+                                                             {"uint32", GeDataType::DT_UINT32},
+                                                             {"uint64", GeDataType::DT_UINT64},
+                                                             {"bool", GeDataType::DT_BOOL},
+                                                             {"double", GeDataType::DT_DOUBLE},
+                                                             {"dual", GeDataType::DT_DUAL},
+                                                             {"dual_sub_int8", GeDataType::DT_DUAL_SUB_INT8},
+                                                             {"dual_sub_uint8", GeDataType::DT_DUAL_SUB_UINT8},
+                                                             {"int4", GeDataType::DT_INT4},
+                                                             {"bfloat16", GeDataType::DT_BF16}};
 
 struct DfGraphWrapper {
  public:
@@ -60,9 +82,11 @@ struct DfGraphWrapper {
 
   std::string name_;
   int id_;
+  int times_{};
   DfGraphPtr graph_ptr_;
   OptionMap options_ = {};
   bool is_added_to_ge_session_ = false;
+  std::mutex mutex_;
 };
 
 using DfGraphWrapperPtr = std::shared_ptr<DfGraphWrapper>;

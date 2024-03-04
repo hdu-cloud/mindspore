@@ -24,6 +24,10 @@ namespace kernel {
 namespace {
 constexpr auto kInputNum = 3;
 constexpr auto kOutputNum = 1;
+constexpr size_t kMatrixInputIndex = 0;
+constexpr size_t kRhsInputIndex = 1;
+constexpr size_t kL2InputIndex = 2;
+constexpr size_t kOutputIndex = 0;
 constexpr int64_t kNum2 = 2;
 constexpr char kFast[] = "fast";
 constexpr bool kMatrixSolveLsComputeOk = true;
@@ -42,7 +46,7 @@ using EigenMatrix = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Major>;
 
 template <typename T>
 void MatrixSolveLsCpuKernelMod::RealCholeskySingleCompute(T *aptr, T *bptr, T *xptr, double *l2, int64_t m, int64_t k,
-                                                          int64_t n) {
+                                                          int64_t n) const {
   Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> a(m, k);
   Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> x(k, n);
   Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> b(m, n);
@@ -78,7 +82,7 @@ void MatrixSolveLsCpuKernelMod::RealCholeskySingleCompute(T *aptr, T *bptr, T *x
 template <typename T>
 void MatrixSolveLsCpuKernelMod::ComplexCholeskySingleCompute(std::complex<T> *aptr, std::complex<T> *bptr,
                                                              std::complex<T> *xptr, double *l2, int64_t m, int64_t k,
-                                                             int64_t n) {
+                                                             int64_t n) const {
   Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> A(kNum2 * m, kNum2 * k);
   Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> x(kNum2 * k, n);
   Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> b(kNum2 * m, n);
@@ -134,7 +138,7 @@ void MatrixSolveLsCpuKernelMod::ComplexCholeskySingleCompute(std::complex<T> *ap
 }
 
 template <typename T>
-void MatrixSolveLsCpuKernelMod::RealQrSingleCompute(T *aptr, T *bptr, T *xptr, int64_t m, int64_t k, int64_t n) {
+void MatrixSolveLsCpuKernelMod::RealQrSingleCompute(T *aptr, T *bptr, T *xptr, int64_t m, int64_t k, int64_t n) const {
   EigenMatrix<T, Eigen::RowMajor> a(m, k);
   EigenMatrix<T, Eigen::RowMajor> x(k, n);
   EigenMatrix<T, Eigen::RowMajor> b(m, n);
@@ -160,7 +164,7 @@ void MatrixSolveLsCpuKernelMod::RealQrSingleCompute(T *aptr, T *bptr, T *xptr, i
 
 template <typename T>
 void MatrixSolveLsCpuKernelMod::ComplexQrSingleCompute(std::complex<T> *aptr, std::complex<T> *bptr,
-                                                       std::complex<T> *xptr, int64_t m, int64_t k, int64_t n) {
+                                                       std::complex<T> *xptr, int64_t m, int64_t k, int64_t n) const {
   Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> A(kNum2 * m, kNum2 * k);
   Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> x(kNum2 * k, n);
   Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> b(kNum2 * m, n);
@@ -202,21 +206,23 @@ void MatrixSolveLsCpuKernelMod::ComplexQrSingleCompute(std::complex<T> *aptr, st
 template <typename T>
 bool MatrixSolveLsCpuKernelMod::ComplexCholesky(const std::vector<kernel::AddressPtr> &inputs,
                                                 const std::vector<kernel::AddressPtr> &outputs) {
-  auto x_shape_vector = AnfAlgo::GetInputDeviceShape(node_wpt_, 0);
-  auto dims = x_shape_vector.size();
-  auto l2 = reinterpret_cast<double *>(inputs[2]->addr);
-  auto aptr = reinterpret_cast<std::complex<T> *>(inputs[0]->addr);
-  auto bptr = reinterpret_cast<std::complex<T> *>(inputs[1]->addr);
-  auto xptr = reinterpret_cast<std::complex<T> *>(outputs[0]->addr);
-  int64_t m = x_shape_vector[dims - kNum2];
-  int64_t k = x_shape_vector[dims - 1];
+  auto dims = matrix_shape_.size();
+  auto l2 = GetDeviceAddress<double>(inputs, kIndex2);
+  auto aptr = GetDeviceAddress<std::complex<T>>(inputs, kIndex0);
+  auto bptr = GetDeviceAddress<std::complex<T>>(inputs, kIndex1);
+  auto xptr = GetDeviceAddress<std::complex<T>>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(l2);
+  MS_EXCEPTION_IF_NULL(aptr);
+  MS_EXCEPTION_IF_NULL(bptr);
+  MS_EXCEPTION_IF_NULL(xptr);
+  int64_t m = matrix_shape_[dims - kNum2];
+  int64_t k = matrix_shape_[dims - 1];
   int64_t n = 1;
-  auto b_shape_vector = AnfAlgo::GetInputDeviceShape(node_wpt_, 1);
-  if (b_shape_vector.size() > 1) {
-    n = b_shape_vector[dims - 1];
+  if (rhs_shape_.size() > 1) {
+    n = rhs_shape_[dims - 1];
   }
   int64_t data_num = 1;
-  data_num = GetNumElements(x_shape_vector.begin(), x_shape_vector.end(), data_num);
+  data_num = GetNumElements(matrix_shape_.begin(), matrix_shape_.end(), data_num);
   const int64_t mat_size = m * k;
   const int64_t rhs_size = m * n;
   const int64_t res_size = n * k;
@@ -240,20 +246,21 @@ bool MatrixSolveLsCpuKernelMod::ComplexCholesky(const std::vector<kernel::Addres
 template <typename T>
 bool MatrixSolveLsCpuKernelMod::RealQr(const std::vector<kernel::AddressPtr> &inputs,
                                        const std::vector<kernel::AddressPtr> &outputs) {
-  auto x_shape_vector = AnfAlgo::GetInputDeviceShape(node_wpt_, 0);
-  auto dims = x_shape_vector.size();
-  auto aptr = reinterpret_cast<T *>(inputs[0]->addr);
-  auto bptr = reinterpret_cast<T *>(inputs[1]->addr);
-  auto xptr = reinterpret_cast<T *>(outputs[0]->addr);
-  int64_t m = x_shape_vector[dims - kNum2];
-  int64_t k = x_shape_vector[dims - 1];
+  auto dims = matrix_shape_.size();
+  auto aptr = GetDeviceAddress<T>(inputs, kIndex0);
+  auto bptr = GetDeviceAddress<T>(inputs, kIndex1);
+  auto xptr = GetDeviceAddress<T>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(aptr);
+  MS_EXCEPTION_IF_NULL(bptr);
+  MS_EXCEPTION_IF_NULL(xptr);
+  int64_t m = matrix_shape_[dims - kNum2];
+  int64_t k = matrix_shape_[dims - 1];
   int64_t n = 1;
-  auto b_shape_vector = AnfAlgo::GetInputDeviceShape(node_wpt_, 1);
-  if (b_shape_vector.size() > 1) {
-    n = b_shape_vector[dims - 1];
+  if (rhs_shape_.size() > 1) {
+    n = rhs_shape_[dims - 1];
   }
   int64_t data_num = 1;
-  data_num = GetNumElements(x_shape_vector.begin(), x_shape_vector.end(), data_num);
+  data_num = GetNumElements(matrix_shape_.begin(), matrix_shape_.end(), data_num);
   const int64_t mat_size = m * k;
   const int64_t rhs_size = m * n;
   const int64_t res_size = n * k;
@@ -277,25 +284,26 @@ bool MatrixSolveLsCpuKernelMod::RealQr(const std::vector<kernel::AddressPtr> &in
 template <typename T>
 bool MatrixSolveLsCpuKernelMod::ComplexQr(const std::vector<kernel::AddressPtr> &inputs,
                                           const std::vector<kernel::AddressPtr> &outputs) {
-  auto x_shape_vector = AnfAlgo::GetInputDeviceShape(node_wpt_, 0);
-  auto dims = x_shape_vector.size();
-  int64_t m = x_shape_vector[dims - kNum2];
-  int64_t k = x_shape_vector[dims - 1];
+  auto dims = matrix_shape_.size();
+  int64_t m = matrix_shape_[dims - kNum2];
+  int64_t k = matrix_shape_[dims - 1];
   int64_t n = 1;
-  auto b_shape_vector = AnfAlgo::GetInputDeviceShape(node_wpt_, 1);
-  if (b_shape_vector.size() > 1) {
-    n = b_shape_vector[dims - 1];
+  if (rhs_shape_.size() > 1) {
+    n = rhs_shape_[dims - 1];
   }
   int64_t data_num = 1;
-  data_num = GetNumElements(x_shape_vector.begin(), x_shape_vector.end(), data_num);
+  data_num = GetNumElements(matrix_shape_.begin(), matrix_shape_.end(), data_num);
   const int64_t mat_size = m * k;
   const int64_t rhs_size = m * n;
   const int64_t res_size = n * k;
   const int64_t batch = data_num / mat_size;
   const int64_t kParallelDataNum = 16 * mat_size;
-  auto aptr = reinterpret_cast<std::complex<T> *>(inputs[0]->addr);
-  auto bptr = reinterpret_cast<std::complex<T> *>(inputs[1]->addr);
-  auto xptr = reinterpret_cast<std::complex<T> *>(outputs[0]->addr);
+  auto aptr = GetDeviceAddress<std::complex<T>>(inputs, kIndex0);
+  auto bptr = GetDeviceAddress<std::complex<T>>(inputs, kIndex1);
+  auto xptr = GetDeviceAddress<std::complex<T>>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(aptr);
+  MS_EXCEPTION_IF_NULL(bptr);
+  MS_EXCEPTION_IF_NULL(xptr);
   if (data_num >= kParallelDataNum) {
     auto sharder_matrix_solve_ls = [&](int64_t start, int64_t end) {
       for (int64_t i = start; i < end; i++) {
@@ -314,21 +322,23 @@ bool MatrixSolveLsCpuKernelMod::ComplexQr(const std::vector<kernel::AddressPtr> 
 template <typename T>
 bool MatrixSolveLsCpuKernelMod::RealCholesky(const std::vector<kernel::AddressPtr> &inputs,
                                              const std::vector<kernel::AddressPtr> &outputs) {
-  auto x_shape_vector = AnfAlgo::GetInputDeviceShape(node_wpt_, 0);
-  auto dims = x_shape_vector.size();
-  auto aptr = reinterpret_cast<T *>(inputs[0]->addr);
-  auto bptr = reinterpret_cast<T *>(inputs[1]->addr);
-  auto xptr = reinterpret_cast<T *>(outputs[0]->addr);
-  auto l2 = reinterpret_cast<double *>(inputs[2]->addr);
-  int64_t m = x_shape_vector[dims - kNum2];
-  int64_t k = x_shape_vector[dims - 1];
+  auto dims = matrix_shape_.size();
+  auto l2 = GetDeviceAddress<double>(inputs, kIndex2);
+  auto aptr = GetDeviceAddress<T>(inputs, kIndex0);
+  auto bptr = GetDeviceAddress<T>(inputs, kIndex1);
+  auto xptr = GetDeviceAddress<T>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(l2);
+  MS_EXCEPTION_IF_NULL(aptr);
+  MS_EXCEPTION_IF_NULL(bptr);
+  MS_EXCEPTION_IF_NULL(xptr);
+  int64_t m = matrix_shape_[dims - kNum2];
+  int64_t k = matrix_shape_[dims - 1];
   int64_t n = 1;
-  auto b_shape_vector = AnfAlgo::GetInputDeviceShape(node_wpt_, 1);
-  if (b_shape_vector.size() > 1) {
-    n = b_shape_vector[dims - 1];
+  if (rhs_shape_.size() > 1) {
+    n = rhs_shape_[dims - 1];
   }
   int64_t data_num = 1;
-  data_num = GetNumElements(x_shape_vector.begin(), x_shape_vector.end(), data_num);
+  data_num = GetNumElements(matrix_shape_.begin(), matrix_shape_.end(), data_num);
   const int64_t mat_size = m * k;
   const int64_t rhs_size = m * n;
   const int64_t res_size = n * k;
@@ -349,57 +359,78 @@ bool MatrixSolveLsCpuKernelMod::RealCholesky(const std::vector<kernel::AddressPt
   return kMatrixSolveLsComputeOk;
 }
 
-void MatrixSolveLsCpuKernelMod::InitKernel(const CNodePtr &kernel_node) {
-  node_wpt_ = kernel_node;
-  kernel_name_ = common::AnfAlgo::GetCNodeName(kernel_node);
-  if (common::AnfAlgo::HasNodeAttr(kFast, kernel_node)) {
-    qr_chole = common::AnfAlgo::GetNodeAttr<bool>(kernel_node, kFast);
+bool MatrixSolveLsCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+                                     const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
+  kernel_name_ = base_operator->name();
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kInputNum, kernel_name_);
+  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kOutputNum, kernel_name_);
+  auto prim = base_operator->GetPrim();
+  MS_EXCEPTION_IF_NULL(prim);
+
+  matrix_dtype_ = inputs[0]->GetDtype();
+  rhs_dtype_ = inputs[1]->GetDtype();
+
+  if (prim->HasAttr(kFast)) {
+    qr_chole_ = GetValue<bool>(prim->GetAttr(kFast));
   } else {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the attribute 'fast' does not exist.";
   }
-  auto kernel_attr = GetKernelAttrFromNode(kernel_node);
+
+  auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
   auto [is_match, index] = MatchKernelAttr(kernel_attr, GetOpSupport());
   if (!is_match) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << ", does not support this kernel data type: " << kernel_attr;
   }
   kernel_func_ = func_list_[index].second;
+  return true;
 }
 
-bool MatrixSolveLsCpuKernelMod::Resize(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &outputs) {
-  auto shapea = AnfAlgo::GetInputDeviceShape(node_wpt_, 0);
-  auto shapeb = AnfAlgo::GetInputDeviceShape(node_wpt_, 1);
-  auto shapel2 = AnfAlgo::GetInputDeviceShape(node_wpt_, 2);
-  auto shapex = AnfAlgo::GetOutputDeviceShape(node_wpt_, 0);
-  auto dims = shapea.size();
+int MatrixSolveLsCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+                                      const std::vector<KernelTensorPtr> &outputs,
+                                      const std::map<uint32_t, tensor::TensorPtr> &) {
+  if (auto ret = KernelMod::Resize(base_operator, inputs, outputs); ret != KRET_OK) {
+    return ret;
+  }
+  matrix_shape_ = inputs[kMatrixInputIndex]->GetShapeVector();
+  rhs_shape_ = inputs[kRhsInputIndex]->GetShapeVector();
+  l2_shape_ = inputs[kL2InputIndex]->GetShapeVector();
+  output_shape_ = outputs[kOutputIndex]->GetShapeVector();
+  return KRET_OK;
+}
 
-  if (shapeb.size() == 1) {
-    if (shapea[dims - kNum2] != shapeb[0]) {
+bool MatrixSolveLsCpuKernelMod::LaunchKernelAcessCheck(void) {
+  auto dims = matrix_shape_.size();
+  if (rhs_shape_.size() == 1) {
+    if (matrix_shape_[dims - kNum2] != rhs_shape_[0]) {
       MS_EXCEPTION(ValueError) << "For " << kernel_name_ << ", #Rows mismatch between A and rhs."
-                               << "#Rows of A = [" << shapea[dims - kNum2] << "]"
-                               << "#Rows of rhs = [" << shapeb[0] << "]";
+                               << "#Rows of A = [" << matrix_shape_[dims - kNum2] << "]"
+                               << "#Rows of rhs = [" << rhs_shape_[0] << "]";
       return kMatrixSolveLsComputeFailed;
     }
   } else {
-    if (shapea[dims - kNum2] != shapeb[dims - kNum2]) {
+    if (matrix_shape_[dims - kNum2] != rhs_shape_[dims - kNum2]) {
       MS_EXCEPTION(ValueError) << "For " << kernel_name_ << "#Rows mismatch between A and rhs."
-                               << "#Rows of A = [" << shapea[dims - kNum2] << "]"
-                               << "#Rows of rhs = [" << shapeb[dims - kNum2] << "]";
+                               << "#Rows of A = [" << matrix_shape_[dims - kNum2] << "]"
+                               << "#Rows of rhs = [" << rhs_shape_[dims - kNum2] << "]";
       return kMatrixSolveLsComputeFailed;
     }
   }
 
-  if (shapel2.size() != 0) {
+  if (l2_shape_.size() != 0) {
     MS_EXCEPTION(ValueError) << "For " << kernel_name_ << "Tensor l2 should be a scalar.";
     return kMatrixSolveLsComputeFailed;
   }
-  if (shapeb.size() == 1) {
-    if ((shapex.size() != shapeb.size()) || (shapea[dims - 1] != shapex[0]) || (shapex.back() != shapeb[0])) {
+  if (rhs_shape_.size() == 1) {
+    if ((output_shape_.size() != rhs_shape_.size()) || (matrix_shape_[dims - 1] != output_shape_[0]) ||
+        (output_shape_.back() != rhs_shape_[0])) {
       MS_EXCEPTION(ValueError) << "For " << kernel_name_ << "Tensor y shape mismatch.";
       return kMatrixSolveLsComputeFailed;
     }
   } else {
-    if ((shapex.size() != shapeb.size()) || (shapea[dims - 1] != shapex[shapex.size() - kNum2]) ||
-        (shapex.back() != shapeb.back())) {
+    if ((output_shape_.size() != rhs_shape_.size()) ||
+        (matrix_shape_[dims - 1] != output_shape_[output_shape_.size() - kNum2]) ||
+        (output_shape_.back() != rhs_shape_.back())) {
       MS_EXCEPTION(ValueError) << "For " << kernel_name_ << "Tensor y shape mismatch.";
       return kMatrixSolveLsComputeFailed;
     }
@@ -410,50 +441,36 @@ bool MatrixSolveLsCpuKernelMod::Resize(const std::vector<AddressPtr> &inputs, co
 template <typename T>
 bool MatrixSolveLsCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
                                              const std::vector<AddressPtr> &outputs) {
+  if (LaunchKernelAcessCheck() != true) {
+    return kMatrixSolveLsComputeFailed;
+  }
   CHECK_KERNEL_INPUTS_NUM(inputs.size(), kInputNum, kernel_name_);
   CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kOutputNum, kernel_name_);
 
-  auto a_data_type = AnfAlgo::GetInputDeviceDataType(node_wpt_, 0);
-  auto b_data_type = AnfAlgo::GetInputDeviceDataType(node_wpt_, 1);
-
-  if (Resize(inputs, outputs) != true) {
-    return kMatrixSolveLsComputeFailed;
-  }
-
-  if (a_data_type != b_data_type) {
-    MS_EXCEPTION(TypeError) << "For " << kernel_name_ << "Tensor data type mismatch.";
-    return kMatrixSolveLsComputeFailed;
-  }
-  if (a_data_type != kNumberTypeFloat32 && a_data_type != kNumberTypeFloat64 && a_data_type != kNumberTypeComplex64 &&
-      a_data_type != kNumberTypeComplex128) {
-    MS_EXCEPTION(TypeError) << "For " << kernel_name_ << ", unsupported data type: " << TypeIdLabel(a_data_type) << ".";
-    return kMatrixSolveLsComputeFailed;
-  }
-
-  if (qr_chole) {
-    if (a_data_type == kNumberTypeComplex64) {
+  if (qr_chole_) {
+    if (matrix_dtype_ == kNumberTypeComplex64) {
       return ComplexCholesky<float>(inputs, outputs);
     }
-    if (a_data_type == kNumberTypeComplex128) {
+    if (matrix_dtype_ == kNumberTypeComplex128) {
       return ComplexCholesky<double>(inputs, outputs);
     }
-    if (a_data_type == kNumberTypeFloat64) {
+    if (matrix_dtype_ == kNumberTypeFloat64) {
       return RealCholesky<double>(inputs, outputs);
     }
-    if (a_data_type == kNumberTypeFloat32) {
+    if (matrix_dtype_ == kNumberTypeFloat32) {
       return RealCholesky<float>(inputs, outputs);
     }
   } else {
-    if (a_data_type == kNumberTypeComplex64) {
+    if (matrix_dtype_ == kNumberTypeComplex64) {
       return ComplexQr<float>(inputs, outputs);
     }
-    if (a_data_type == kNumberTypeComplex128) {
+    if (matrix_dtype_ == kNumberTypeComplex128) {
       return ComplexQr<double>(inputs, outputs);
     }
-    if (a_data_type == kNumberTypeFloat64) {
+    if (matrix_dtype_ == kNumberTypeFloat64) {
       return RealQr<double>(inputs, outputs);
     }
-    if (a_data_type == kNumberTypeFloat32) {
+    if (matrix_dtype_ == kNumberTypeFloat32) {
       return RealQr<float>(inputs, outputs);
     }
   }

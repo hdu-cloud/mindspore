@@ -37,8 +37,8 @@ bool LowerBoundGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const st
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  unit_out_size_ = abstract::TypeIdSize(kernel_attr.GetOutputAttr(kIndex0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  unit_out_size_ = abstract::TypeIdSize(kernel_attr.GetOutputAttr(kIndex0).dtype);
   return true;
 }
 
@@ -100,8 +100,9 @@ bool LowerBoundGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
   T *sorted_x = GetDeviceAddress<T>(inputs, 0);
   T *values = GetDeviceAddress<T>(inputs, 1);
   S *output = GetDeviceAddress<S>(outputs, 0);
-  CalLowerBound(values_elements_, sorted_x_col_, values_col_, sorted_x, values, output, device_id_,
-                reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = CalLowerBound(values_elements_, sorted_x_col_, values_col_, sorted_x, values, output, device_id_,
+                              reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

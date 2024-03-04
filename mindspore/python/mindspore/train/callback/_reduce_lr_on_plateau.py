@@ -20,7 +20,8 @@ import numpy as np
 
 from mindspore.common.tensor import Tensor
 from mindspore.common.parameter import Parameter
-from mindspore._checkparam import Validator, Rel
+from mindspore.common import dtype as mstype
+from mindspore import _checkparam as Validator
 from mindspore import log as logger
 from mindspore.ops import functional as F, ReduceOp
 from mindspore import nn, ops
@@ -48,53 +49,49 @@ class ReduceLROnPlateau(Callback):
 
     Args:
         monitor (str): quantity to be monitored. If evaluation is performed on
-            the end of train epochs, the valid monitors can be "loss",
-            "eval_loss" or metric names passed when instantiate the `Model`;
-            otherwise the valid monitor is "loss".
-            When monitor is "loss", if train network has multiple outputs,
-            the first element will be returned as training loss.
-
+            the end of train epochs, the valid monitors can be ``"loss"``,
+            ``"eval_loss"`` or metric names passed when instantiate the `Model`;
+            otherwise the valid monitor is ``"loss"``.
+            When `monitor` is ``"loss"``, if train network has multiple outputs,
+            the first element will be returned as training loss. Default: ``'eval_loss'``.
         factor (float): factor by which the learning rate will be reduced.
-            `new_lr = lr * factor`. Default: 0.1.
+            `new_lr = lr * factor`. Default: ``0.1`` .
         patience (int): `monitor` value is better than history best value over
             `min_delta` is seen as improvement, `patience` is number of epochs
             with no improvement that would be waited. When the waiting
             counter `self.wait` is larger than or equal to `patience`,  the lr
-            will be reduced. Default: 10.
+            will be reduced. Default: ``10`` .
         verbose (bool): If False: quiet, if True: print related information.
-            Default: False.
+            Default: ``False`` .
         mode (str): one of `{'auto', 'min', 'max'}`. In "min" mode,
             the learning rate will be reduced when the
             quantity monitored has stopped decreasing; in "max" mode it will be
             reduced when the quantity monitored has stopped increasing; in "auto"
             mode, the direction is automatically inferred from the name of the
-            monitored quantity. Default: "auto".
+            monitored quantity. Default: ``'auto'`` .
         min_delta (float): threshold for measuring the new optimum, to only focus on
-            significant changes. Default: 1e-4.
+            significant changes. Default: ``1e-4`` .
         cooldown (int): number of epochs to wait before resuming normal operation after
-            lr has been reduced. Default: 0.
-        min_lr (float): lower bound on the learning rate. Default: 0.
+            lr has been reduced. Default: ``0`` .
+        min_lr (float): lower bound on the learning rate. Default: ``0`` .
 
     Raises:
-        ValueError: `mode` not in 'auto', 'min' or 'max'.
+        ValueError: `mode` not in ``'auto'``, ``'min'`` or ``'max'``.
         ValueError: The monitor value is not a scalar.
         ValueError: The learning rate is not a Parameter.
 
     Examples:
-        .. note::
-            Before running the following example, you need to customize the network LeNet5 and
-            dataset preparation function create_dataset. Refer to
-            `Building a Network <https://www.mindspore.cn/tutorials/en/r2.0.0-alpha/beginner/model.html>`_
-            and `Dataset <https://www.mindspore.cn/tutorials/en/r2.0.0-alpha/beginner/dataset.html>`_ .
-
         >>> from mindspore import nn
         >>> from mindspore.train import Model, ReduceLROnPlateau
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
         >>> net = LeNet5()
         >>> loss = nn.SoftmaxCrossEntropyWithLogits(sparse=True, reduction='mean')
         >>> optim = nn.Momentum(net.trainable_params(), 0.01, 0.9)
         >>> model = Model(net, loss_fn=loss, optimizer=optim, metrics={"acc"})
-        >>> data_path = './MNIST_Data'
-        >>> dataset = create_dataset(data_path)
+        >>> # Create the dataset taking MNIST as an example. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/mnist.py
+        >>> dataset = create_dataset()
         >>> cb = ReduceLROnPlateau(monitor="acc", patience=3, verbose=True)
         >>> model.fit(10, dataset, callbacks=cb)
     """
@@ -102,7 +99,7 @@ class ReduceLROnPlateau(Callback):
                  mode='auto', min_delta=1e-4, cooldown=0, min_lr=0):
         super(ReduceLROnPlateau, self).__init__()
         self.monitor = Validator.check_value_type('monitor', monitor, str)
-        self.factor = Validator.check_float_range(factor, 0.0, 1.0, Rel.INC_NEITHER)
+        self.factor = Validator.check_float_range(factor, 0.0, 1.0, Validator.INC_NEITHER)
         self.patience = Validator.check_non_negative_int(patience)
         self.verbose = Validator.check_bool(verbose)
         self.mode = Validator.check_value_type('mode', mode, str)
@@ -160,7 +157,7 @@ class ReduceLROnPlateau(Callback):
         if rank_size == 1:
             reduce_monitor_value = current_monitor_value
         else:
-            reduce_monitor_value = self._reduce(Tensor(current_monitor_value.astype(np.float32))) / rank_size
+            reduce_monitor_value = self._reduce(Tensor(current_monitor_value, mstype.float32)).asnumpy() / rank_size
 
         if reduce_monitor_value is None:
             return
@@ -226,4 +223,4 @@ class ValueReduce(nn.Cell):
         self.allreduce = ops.AllReduce(ReduceOp.SUM)
 
     def construct(self, x):
-        return self.allreduce(x).asnumpy()
+        return self.allreduce(x)

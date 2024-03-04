@@ -15,11 +15,26 @@
  */
 
 #include "ops/inplace_index_add.h"
-#include <algorithm>
-#include "ops/op_utils.h"
+
+#include <memory>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -49,19 +64,21 @@ abstract::ShapePtr InplaceIndexAddInferShape(const PrimitivePtr &primitive,
   auto indices_shape = indices_shape_ptr->shape();
   auto indices_rank = SizeToLong(indices_shape.size());
   (void)CheckAndConvertUtils::CheckInteger("indices size", indices_rank, kEqual, 1, prim_name);
-  auto axis_rank = axis;
+  size_t axis_rank = 0;
   if (axis < 0) {
-    axis_rank = axis + var_rank;
+    axis_rank = axis + LongToSize(var_rank);
+  } else {
+    axis_rank = LongToSize(axis);
   }
   if (updates_is_dynamic) {
     return var_shape_ptr;
   }
   if (!indices_is_dynamic) {
-    (void)CheckAndConvertUtils::Check("size of indices", indices_shape[0], kEqual, updates_shape[axis_rank], prim_name);
+    CheckAndConvertUtils::Check("size of indices", indices_shape[0], kEqual, updates_shape[axis_rank], prim_name);
   }
-  for (int dim = 0; dim < var_rank; dim = dim + 1) {
+  for (size_t dim = 0; dim < LongToSize(var_rank); dim = dim + 1) {
     if (dim != axis_rank) {
-      (void)CheckAndConvertUtils::Check("var dim", var_shape[dim], kEqual, updates_shape[dim], prim_name);
+      CheckAndConvertUtils::Check("var dim", var_shape[dim], kEqual, updates_shape[dim], prim_name);
     }
   }
 
@@ -69,6 +86,9 @@ abstract::ShapePtr InplaceIndexAddInferShape(const PrimitivePtr &primitive,
 }
 
 TypePtr InplaceIndexAddInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(prim);
+  const int64_t input_num = 3;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, prim->name());
   const std::set<TypePtr> valid_types = {kUInt8, kInt8, kInt16, kInt32, kFloat16, kFloat32, kFloat64};
   const std::set<TypePtr> indices_types = {kInt32};
   auto var_type = input_args[kInputIndex0]->BuildType();
@@ -85,11 +105,29 @@ AbstractBasePtr InplaceIndexAddInfer(const abstract::AnalysisEnginePtr &, const 
                                      const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   const int64_t input_num = 3;
-  (void)CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
   auto infer_type = InplaceIndexAddInferType(primitive, input_args);
   auto infer_shape = InplaceIndexAddInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(InplaceIndexAdd, prim::kPrimInplaceIndexAdd, InplaceIndexAddInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGInplaceIndexAddInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return InplaceIndexAddInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return InplaceIndexAddInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return InplaceIndexAddInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(InplaceIndexAdd, prim::kPrimInplaceIndexAdd, AGInplaceIndexAddInfer, false);
 }  // namespace ops
 }  // namespace mindspore

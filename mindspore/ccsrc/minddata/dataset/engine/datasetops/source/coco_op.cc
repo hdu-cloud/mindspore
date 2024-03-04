@@ -191,7 +191,7 @@ Status CocoOp::LoadDetectionTensorRow(row_id_type row_id, const std::string &ima
     if (pos == std::string::npos) {
       RETURN_STATUS_UNEXPECTED("Invalid image, 'image_id': " + image_id + " should be with suffix like \".jpg\"");
     }
-    std::copy(image_id.begin(), image_id.begin() + pos, std::back_inserter(img_id));
+    (void)std::copy(image_id.begin(), image_id.begin() + pos, std::back_inserter(img_id));
     std::shared_ptr<Tensor> filename;
     RETURN_IF_NOT_OK(Tensor::CreateScalar(img_id, &filename));
     trow->push_back(std::move(filename));
@@ -226,7 +226,7 @@ Status CocoOp::LoadSimpleTensorRow(row_id_type row_id, const std::string &image_
     if (pos == std::string::npos) {
       RETURN_STATUS_UNEXPECTED("Invalid image, 'image_id': " + image_id + " should be with suffix like \".jpg\"");
     }
-    std::copy(image_id.begin(), image_id.begin() + pos, std::back_inserter(img_id));
+    (void)std::copy(image_id.begin(), image_id.begin() + pos, std::back_inserter(img_id));
     std::shared_ptr<Tensor> filename;
     RETURN_IF_NOT_OK(Tensor::CreateScalar(img_id, &filename));
     trow->push_back(std::move(filename));
@@ -249,7 +249,7 @@ Status CocoOp::LoadCaptioningTensorRow(row_id_type row_id, const std::string &im
     if (pos == std::string::npos) {
       RETURN_STATUS_UNEXPECTED("Invalid image, 'image_id': " + image_id + " should be with suffix like \".jpg\".");
     }
-    std::copy(image_id.begin(), image_id.begin() + pos, std::back_inserter(img_id));
+    (void)std::copy(image_id.begin(), image_id.begin() + pos, std::back_inserter(img_id));
     std::shared_ptr<Tensor> filename;
     RETURN_IF_NOT_OK(Tensor::CreateScalar(img_id, &filename));
     trow->push_back(std::move(filename));
@@ -302,7 +302,7 @@ Status CocoOp::LoadMixTensorRow(row_id_type row_id, const std::string &image_id,
     if (pos == std::string::npos) {
       RETURN_STATUS_UNEXPECTED("Invalid image, " + image_id + " should be with suffix like \".jpg\"");
     }
-    std::copy(image_id.begin(), image_id.begin() + pos, std::back_inserter(img_id));
+    (void)std::copy(image_id.begin(), image_id.begin() + pos, std::back_inserter(img_id));
     std::shared_ptr<Tensor> filename;
     RETURN_IF_NOT_OK(Tensor::CreateScalar(img_id, &filename));
     trow->push_back(std::move(filename));
@@ -314,6 +314,7 @@ Status CocoOp::LoadMixTensorRow(row_id_type row_id, const std::string &image_id,
 
 template <typename T>
 Status CocoOp::SearchNodeInJson(const nlohmann::json &input_tree, std::string node_name, T *output_node) {
+  RETURN_UNEXPECTED_IF_NULL(output_node);
   auto node = input_tree.find(node_name);
   CHECK_FAIL_RETURN_UNEXPECTED(node != input_tree.end(), "Invalid annotation, the attribute of '" + node_name +
                                                            "' is missing in annotation file: " + annotation_path_ +
@@ -324,18 +325,20 @@ Status CocoOp::SearchNodeInJson(const nlohmann::json &input_tree, std::string no
 
 Status CocoOp::PrepareData() {
   nlohmann::json js;
-  try {
-    auto realpath = FileUtils::GetRealPath(annotation_path_.c_str());
-    if (!realpath.has_value()) {
-      std::string err_msg = "Invalid file path, Coco Dataset annotation file: " + annotation_path_ + " does not exist.";
-      LOG_AND_RETURN_STATUS_SYNTAX_ERROR(err_msg);
-    }
+  auto realpath = FileUtils::GetRealPath(annotation_path_.c_str());
+  if (!realpath.has_value()) {
+    std::string err_msg = "Invalid file path, Coco Dataset annotation file: " + annotation_path_ + " does not exist.";
+    LOG_AND_RETURN_STATUS_SYNTAX_ERROR(err_msg);
+  }
 
-    std::ifstream in(realpath.value());
-    CHECK_FAIL_RETURN_UNEXPECTED(in.is_open(), "Invalid annotation file, Coco Dataset annotation file: " +
-                                                 annotation_path_ + " open failed, permission denied!");
+  std::ifstream in(realpath.value(), std::ios::in);
+  CHECK_FAIL_RETURN_UNEXPECTED(in.is_open(), "Invalid annotation file, Coco Dataset annotation file: " +
+                                               annotation_path_ + " open failed, permission denied!");
+  try {
     in >> js;
+    in.close();
   } catch (const std::exception &err) {
+    in.close();
     RETURN_STATUS_UNEXPECTED("Invalid annotation file, Coco Dataset annotation file:" + annotation_path_ +
                              " load failed, error description: " + std::string(err.what()));
   }
@@ -408,6 +411,7 @@ Status CocoOp::PrepareData() {
 }
 
 Status CocoOp::ImageColumnLoad(const nlohmann::json &image_tree, std::vector<std::string> *image_vec) {
+  RETURN_UNEXPECTED_IF_NULL(image_vec);
   if (image_tree.empty()) {
     RETURN_STATUS_UNEXPECTED("Invalid annotation, the 'image' node is missing in annotation file: " + annotation_path_ +
                              ".");

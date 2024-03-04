@@ -28,17 +28,17 @@
 #include "utils/any.h"
 #include "utils/misc.h"
 #include "utils/shape_utils.h"
-#include "utils/macros.h"
+#include "mindapi/base/macros.h"
 
 namespace mindspore {
 namespace abstract {
-ValuePtr ValueJoin(const ValuePtr &value1, const ValuePtr &value2);
+MS_CORE_API ValuePtr ValueJoin(const ValuePtr &value1, const ValuePtr &value2);
 MS_CORE_API TypePtr TypeJoin(const TypePtr &type1, const TypePtr &type2);
-ShapePtr ShapeJoin(const ShapePtr &shape1, const ShapePtr &shape2);
-AbstractBasePtr BroadenAllValues(const AbstractBasePtr &abs);
+MS_CORE_API ShapePtr ShapeJoin(const ShapePtr &shape1, const ShapePtr &shape2);
 
-MS_CORE_API AbstractBasePtr AbstractJoin(const AbstractBasePtrList &args_spec_list);
+MS_CORE_API AbstractBasePtr AbstractJoin(const AbstractBasePtrList &args_abs_list);
 MS_CORE_API AbstractBasePtrList AbstractJoin(const AbstractBasePtrList &spec1, const AbstractBasePtrList &spec2);
+MS_CORE_API AbstractBasePtr AbstractBroaden(const AbstractBasePtr &abs);
 
 // Return an abstract value for the sensitivity of x.
 // The sensitivity of a function is an Env
@@ -53,12 +53,12 @@ T ShapeSize(const std::vector<T> &shape) {
   return std::accumulate(shape.begin(), shape.end(), static_cast<T>(1), std::multiplies<T>());
 }
 
-// Check dynamic shape routine
-void CheckMinMaxShape(const ShapeVector &shape, ShapeVector *min_shape, ShapeVector *max_shape);
-
-AbstractBasePtr MakeAbstract(const BaseShapePtr &base_shape, const TypePtr &type);
+MS_CORE_API AbstractBasePtr MakeAbstract(const BaseShapePtr &base_shape, const TypePtr &type);
 MS_CORE_API AbstractBasePtr MakeMonadAbstract(const MonadTypePtr &type);
 MS_CORE_API AbstractBasePtr MakeAbstractTensor(const ShapePtr &shape, const TypePtr &type);
+MS_CORE_API std::vector<FuncGraphPtr> GetFuncGraphsFromCallNode(const CNodePtr &call_node);
+
+MS_CORE_API void SetVariableFlag(const AbstractBasePtr &abs);
 
 class MS_CORE_API EnvSetSparseResultMgr {
  public:

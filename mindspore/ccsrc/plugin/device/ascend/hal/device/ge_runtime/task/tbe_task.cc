@@ -43,9 +43,9 @@ TbeTask::TbeTask(const ModelContext &model_context, const std::shared_ptr<TbeTas
 
 TbeTask::~TbeTask() {
   if (args_ != nullptr) {
-    rtError_t rt_ret = rtFree(args_);
-    if (rt_ret != RT_ERROR_NONE) {
-      MS_LOG(ERROR) << "Call rt api rtFree failed, ret: " << rt_ret;
+    auto rt_ret = aclrtFree(args_);
+    if (rt_ret != ACL_ERROR_NONE) {
+      MS_LOG(ERROR) << "Call rt api aclrtFree failed, ret: " << rt_ret;
     }
     args_ = nullptr;
     stub_func_ = nullptr;
@@ -53,8 +53,43 @@ TbeTask::~TbeTask() {
   }
 }
 
+std::string TbeTask::DebugString() const {
+  std::ostringstream buffer;
+  buffer << "Tbetask: task name: " << task_info_->op_name() << ", stub_func: " << task_info_->stub_func()
+         << ", mindspore stream_id: " << task_info_->stream_id() << ", stream_: " << stream_
+         << ", block_dim: " << task_info_->block_dim() << ", dump_flag: " << task_info_->dump_flag();
+  auto input_data = task_info_->input_data_addrs();
+  auto output_data = task_info_->output_data_addrs();
+  auto workspace = task_info_->workspace_addrs();
+  // args_size should be obtained from task instead of task_info
+  size_t addr_size = input_data.size() + output_data.size() + workspace.size();
+  buffer << ", args_size: " << addr_size * sizeof(void *);
+  buffer << ", input_data_addr: ";
+  for (size_t i = 0; i < input_data.size(); ++i) {
+    buffer << "[" << i << "]: " << input_data[i];
+    if (i != input_data.size() - 1) {
+      buffer << ", ";
+    }
+  }
+  buffer << ", output_data_addr: ";
+  for (size_t i = 0; i < output_data.size(); ++i) {
+    buffer << "[" << i << "]: " << output_data[i];
+    if (i != output_data.size() - 1) {
+      buffer << ", ";
+    }
+  }
+  buffer << ", workspace_addr: ";
+  for (size_t i = 0; i < workspace.size(); ++i) {
+    buffer << "[" << i << "]: " << workspace[i];
+    if (i != workspace.size() - 1) {
+      buffer << ", ";
+    }
+  }
+  return buffer.str();
+}
+
 void TbeTask::Distribute() {
-  MS_LOG(INFO) << "InitTbeTask start.";
+  MS_LOG(INFO) << "InitTbeTask and DistributeTbeTask start.";
   MS_EXCEPTION_IF_NULL(task_info_);
   MS_EXCEPTION_IF_NULL(stream_);
   // Get stub_func
@@ -66,7 +101,6 @@ void TbeTask::Distribute() {
   if (rt_ret != RT_ERROR_NONE) {
     MS_LOG(EXCEPTION) << "Call rt api rtGetFunctionByName failed, ret: " << rt_ret;
   }
-  MS_LOG(INFO) << "TbeTask: stub_func = " << task_info_->stub_func();
 
   // Get args
   std::vector<void *> tensor_device_addrs;
@@ -78,27 +112,27 @@ void TbeTask::Distribute() {
                              task_info_->workspace_addrs().cend());
   args_size_ = static_cast<uint32_t>(tensor_device_addrs.size() * sizeof(void *));
 
-  rt_ret = rtMalloc(&args_, args_size_, RT_MEMORY_HBM);
+  rt_ret = rtMalloc(&args_, args_size_, RT_MEMORY_HBM, 0);
   if (rt_ret != RT_ERROR_NONE) {
     MS_LOG(EXCEPTION) << "Call rt api rtMalloc failed, ret: " << rt_ret << " mem size " << args_size_;
   }
 
   rt_ret = aclrtMemcpy(args_, args_size_, static_cast<void *>(tensor_device_addrs.data()), args_size_,
                        ACL_MEMCPY_HOST_TO_DEVICE);
-  if (rt_ret != RT_ERROR_NONE) {
-    MS_LOG(EXCEPTION) << "Call rt api rtMemcpy failed, ret: " << rt_ret;
+  if (rt_ret != ACL_ERROR_NONE) {
+    MS_LOG(EXCEPTION) << "Call rt api aclrtMemcpy failed, ret: " << rt_ret;
   }
 
-  MS_LOG(INFO) << "DistributeTbeTask start.";
   auto dump_flag = task_info_->dump_flag() ? RT_KERNEL_DUMPFLAG : RT_KERNEL_DEFAULT;
   rtArgsEx_t args_info = {};
   args_info.args = args_;
-  args_info.argsSize = args_size_;
+  args_info.argsSize = SizeToUint(args_size_);
   rt_ret = rtKernelLaunchWithFlag(stub_func_, task_info_->block_dim(), &args_info, nullptr, stream_, dump_flag);
   if (rt_ret != RT_ERROR_NONE) {
     MS_LOG(EXCEPTION) << "Call rt api rtKernelLaunch failed, ret: " << rt_ret << " mem size " << args_size_;
   }
-  MS_LOG(INFO) << "[DataDump] task name: " << task_info_->op_name() << " dump_flag: " << dump_flag;
+  MS_LOG(INFO) << "TbeTask: stub_func = " << task_info_->stub_func()
+               << ", [DataDump] task name: " << task_info_->op_name() << " dump_flag: " << dump_flag;
 }
 
 REGISTER_TASK(TaskInfoType::TBE, TbeTask, TbeTaskInfo);

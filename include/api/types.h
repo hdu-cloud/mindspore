@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ enum ModelType : uint32_t {
   kOM = 2,                   ///< Model type is OM
   kONNX = 3,                 ///< Model type is ONNX
   kMindIR_Lite = 4,          ///< Model type is MindIR_LITE
+  kDataFlow = 5,             ///< Model type is DataFlow
   kUnknownType = 0xFFFFFFFF  ///< Unknown model type
 };
 
@@ -72,10 +73,25 @@ class MS_API MSTensor {
   /// \param[in] shape The shape of the MSTensor.
   /// \param[in] data The data pointer that points to allocated memory.
   /// \param[in] data_len The length of the memory, in bytes.
+  /// \param[in] device The tensor of device type.
+  /// \param[in] device_id The tensor of device id.
   ///
   /// \return A pointer of MSTensor.
   static inline MSTensor *CreateTensor(const std::string &name, DataType type, const std::vector<int64_t> &shape,
-                                       const void *data, size_t data_len) noexcept;
+                                       const void *data, size_t data_len, const std::string &device = "",
+                                       int device_id = -1) noexcept;
+
+  /// \brief Creates a MSTensor object, whose data need to be copied before accessed by Model, must be used in pairs
+  /// with DestroyTensorPtr.
+  ///
+  /// \param[in] name The name of the MSTensor.
+  /// \param[in] tensor The src tensor.
+  /// \param[in] device The tensor of device type.
+  /// \param[in] device_id The tensor of device id.
+  ///
+  /// \return A pointer of MSTensor.
+  static inline MSTensor *CreateTensor(const std::string &name, const MSTensor &tensor, const std::string &device = "",
+                                       int device_id = -1) noexcept;
 
   /// \brief Creates a MSTensor object, whose data can be directly accessed by Model, must be used in pairs with
   /// DestroyTensorPtr.
@@ -179,6 +195,16 @@ class MS_API MSTensor {
   ///
   /// \return The length of the data of the MSTensor, in bytes.
   size_t DataSize() const;
+
+  /// \brief Get the MSTensor device id
+  ///
+  /// \return device id of MSTensor
+  int GetDeviceId() const;
+
+  /// \brief Get the MSTensor device type
+  ///
+  /// \return device type of MSTensor
+  std::string GetDevice() const;
 
   /// \brief Get whether the MSTensor data is const data
   ///
@@ -293,7 +319,10 @@ class MS_API MSTensor {
  private:
   // api without std::string
   static MSTensor *CreateTensor(const std::vector<char> &name, enum DataType type, const std::vector<int64_t> &shape,
-                                const void *data, size_t data_len) noexcept;
+                                const void *data, size_t data_len, const std::vector<char> &device = {},
+                                int device_id = -1) noexcept;
+  static MSTensor *CreateTensor(const std::vector<char> &name, const MSTensor &tensor, const std::vector<char> &device,
+                                int device_id = -1) noexcept;
   static MSTensor *CreateRefTensor(const std::vector<char> &name, enum DataType type, const std::vector<int64_t> &shape,
                                    const void *data, size_t data_len, bool own_data) noexcept;
   static MSTensor CreateDeviceTensor(const std::vector<char> &name, enum DataType type,
@@ -333,8 +362,13 @@ class MS_API Buffer {
 };
 
 MSTensor *MSTensor::CreateTensor(const std::string &name, enum DataType type, const std::vector<int64_t> &shape,
-                                 const void *data, size_t data_len) noexcept {
-  return CreateTensor(StringToChar(name), type, shape, data, data_len);
+                                 const void *data, size_t data_len, const std::string &device, int device_id) noexcept {
+  return CreateTensor(StringToChar(name), type, shape, data, data_len, StringToChar(device), device_id);
+}
+
+MSTensor *MSTensor::CreateTensor(const std::string &name, const MSTensor &tensor, const std::string &device,
+                                 int device_id) noexcept {
+  return CreateTensor(StringToChar(name), tensor, StringToChar(device), device_id);
 }
 
 MSTensor *MSTensor::CreateRefTensor(const std::string &name, enum DataType type, const std::vector<int64_t> &shape,
@@ -368,7 +402,7 @@ std::string MSTensor::Name() const { return CharToString(CharName()); }
 
 void MSTensor::SetTensorName(const std::string &name) { SetTensorName(StringToChar(name)); }
 
-using Key = struct Key {
+using Key = struct MS_API Key {
   const size_t max_key_len = 32;
   size_t len = 0;
   unsigned char key[32] = {0};
@@ -390,7 +424,7 @@ using MSKernelCallBack =
   std::function<bool(const std::vector<MSTensor> & /* inputs */, const std::vector<MSTensor> & /* outputs */,
                      const MSCallBackParam &opInfo)>;
 
-std::vector<char> CharVersion();
+MS_API std::vector<char> CharVersion();
 inline std::string Version() { return CharToString(CharVersion()); }
 
 }  // namespace mindspore

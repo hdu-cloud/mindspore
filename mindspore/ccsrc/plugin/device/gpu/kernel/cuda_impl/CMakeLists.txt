@@ -11,11 +11,12 @@ endif()
 
 if(${CUDA_VERSION} VERSION_LESS 11.0)
     if(NOT MSVC)
-    string(REPLACE "-std=c++17" "-std=c++11" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+        string(REPLACE "-std=c++17" "-std=c++11" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
     endif()
 else()
     if(NOT MSVC)
-    string(REPLACE "-std=c++17" "-std=c++14" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+        string(REPLACE "-std=c++17" "-std=c++14" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+        set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -std=c++14 -objtemp")
     endif()
 endif()
 
@@ -33,24 +34,13 @@ if(ENABLE_GPU)
     target_compile_options(cuda_common_obj PRIVATE "/std:c++17")
     endif()
     cuda_add_library(cuda_ops SHARED ${CUDA_OPS_SRC_LIST} $<TARGET_OBJECTS:cuda_common_obj>)
-    message("add gpu lib to cuda_ops")
-    if(WIN32)
-    target_link_libraries(cuda_ops mindspore_core
-            ${CUBLAS_LIBRARY_PATH}
-            ${CUDA_PATH}/lib/x64/curand.lib
-            ${CUDNN_LIBRARY_PATH}
-            ${CUDA_PATH}/lib/x64/cudart.lib
-            ${CUDA_PATH}/lib/x64/cuda.lib
-            ${CUDA_PATH}/lib/x64/cusolver.lib
-            ${CUDA_PATH}/lib/x64/cufft.lib)
+    if(NOT BUILD_LITE)
+      set_target_properties(cuda_ops PROPERTIES SOVERSION ${CUDA_VERSION_MAJOR})
+    endif()
+    if(NOT MSVC)
+        target_link_options(cuda_ops PRIVATE "-Wl,--allow-shlib-undefined")
     else()
-    target_link_libraries(cuda_ops mindspore_core
-            ${CUBLAS_LIBRARY_PATH}
-            ${CUDA_PATH}/lib64/libcurand.so
-            ${CUDNN_LIBRARY_PATH}
-            ${CUDA_PATH}/lib64/libcudart.so
-            ${CUDA_PATH}/lib64/stubs/libcuda.so
-            ${CUDA_PATH}/lib64/libcusolver.so
-            ${CUDA_PATH}/lib64/libcufft.so)
+        target_link_options(cuda_ops PRIVATE "/FORCE:UNRESOLVED")
+        target_link_libraries(cuda_ops mindspore_core)
     endif()
 endif()

@@ -14,21 +14,18 @@
  * limitations under the License.
  */
 #include "include/common/debug/dump_proto.h"
-
 #include <algorithm>
 #include <fstream>
 #include <map>
 #include <memory>
 #include <utility>
 #include <vector>
-
 #include "google/protobuf/util/json_util.h"
-
 #include "proto/anf_ir.pb.h"
+#include "proto/mind_ir.pb.h"
 #include "ir/graph_utils.h"
 #include "utils/ms_context.h"
 #include "utils/symbolic.h"
-#include "include/common/utils/utils.h"
 #include "include/common/debug/anf_dump_utils.h"
 #include "utils/anf_utils.h"
 #include "frontend/parallel/ops_info/ops_utils.h"  // todo: use constant string now
@@ -72,35 +69,29 @@ class ProtoExporter {
   irpb::ModelProto model_;
 };
 
-static std::map<TypeId, irpb::DataType> number_data_type_map = {{kNumberTypeBool, irpb::DT_BOOL},
-                                                                {kNumberTypeInt8, irpb::DT_INT8},
-                                                                {kNumberTypeInt16, irpb::DT_INT16},
-                                                                {kNumberTypeInt32, irpb::DT_INT32},
-                                                                {kNumberTypeInt64, irpb::DT_INT64},
-                                                                {kNumberTypeUInt8, irpb::DT_UINT8},
-                                                                {kNumberTypeUInt16, irpb::DT_UINT16},
-                                                                {kNumberTypeUInt32, irpb::DT_UINT32},
-                                                                {kNumberTypeUInt64, irpb::DT_UINT64},
-                                                                {kNumberTypeFloat16, irpb::DT_FLOAT16},
-                                                                {kNumberTypeFloat32, irpb::DT_FLOAT32},
-                                                                {kNumberTypeFloat64, irpb::DT_FLOAT64},
-                                                                {kNumberTypeInt, irpb::DT_BASE_INT},
-                                                                {kNumberTypeUInt, irpb::DT_BASE_UINT},
-                                                                {kNumberTypeFloat, irpb::DT_BASE_FLOAT},
-                                                                {kNumberTypeComplex64, irpb::DT_COMPLEX64},
-                                                                {kNumberTypeComplex128, irpb::DT_COMPLEX128},
-                                                                {kObjectTypeString, irpb::DT_STRING}};
+static std::map<TypeId, irpb::DataType> number_data_type_map = {
+  {kNumberTypeBool, irpb::DT_BOOL},           {kNumberTypeInt8, irpb::DT_INT8},
+  {kNumberTypeInt16, irpb::DT_INT16},         {kNumberTypeInt32, irpb::DT_INT32},
+  {kNumberTypeInt64, irpb::DT_INT64},         {kNumberTypeUInt8, irpb::DT_UINT8},
+  {kNumberTypeUInt16, irpb::DT_UINT16},       {kNumberTypeUInt32, irpb::DT_UINT32},
+  {kNumberTypeUInt64, irpb::DT_UINT64},       {kNumberTypeFloat16, irpb::DT_FLOAT16},
+  {kNumberTypeFloat32, irpb::DT_FLOAT32},     {kNumberTypeFloat64, irpb::DT_FLOAT64},
+  {kNumberTypeBFloat16, irpb::DT_BFLOAT16},   {kNumberTypeInt, irpb::DT_BASE_INT},
+  {kNumberTypeUInt, irpb::DT_BASE_UINT},      {kNumberTypeFloat, irpb::DT_BASE_FLOAT},
+  {kNumberTypeComplex64, irpb::DT_COMPLEX64}, {kNumberTypeComplex128, irpb::DT_COMPLEX128},
+  {kObjectTypeString, irpb::DT_STRING},       {kObjectTypeTuple, irpb::DT_TUPLE}};
 
 static irpb::DataType GetNumberDataType(const TypePtr &type) {
   auto iter = number_data_type_map.find(type->type_id());
   if (iter != number_data_type_map.end()) {
     return (*iter).second;
   } else {
-    MS_LOG(EXCEPTION) << "Unexpected type " << type->type_name();
+    MS_LOG(INTERNAL_EXCEPTION) << "Unexpected type " << type->type_name();
   }
 }
 
 static inline bool IsKindOfTensorType(const TypePtr &type) {
+  MS_EXCEPTION_IF_NULL(type);
   return type->isa<TensorType>() || type->isa<RowTensorType>() || type->isa<CSRTensorType>() ||
          type->isa<COOTensorType>() || type->isa<MapTensorType>();
 }
@@ -112,10 +103,10 @@ void CheckIfValidType(const TypePtr &type) {
     return;
   }
   if (!(type->isa<Number>() || IsKindOfTensorType(type) || type->isa<Tuple>() || type->isa<TypeType>() ||
-        type->isa<List>() || type->isa<TypeAnything>() || type->isa<RefKeyType>() || type->isa<RefType>() ||
+        type->isa<List>() || type->isa<TypeAny>() || type->isa<RefKeyType>() || type->isa<RefType>() ||
         type->isa<Function>() || type->isa<TypeNone>() || type->isa<String>() || type->isa<UndeterminedType>() ||
-        type->isa<SymbolicKeyType>() || type->isa<MonadType>())) {
-    MS_LOG(EXCEPTION) << "Unknown type: " << type->type_name();
+        type->isa<SymbolicKeyType>() || type->isa<MonadType>() || type->isa<Dictionary>())) {
+    MS_LOG(INTERNAL_EXCEPTION) << "Unknown type: " << type->type_name();
   }
 }
 
@@ -161,8 +152,8 @@ void ProtoExporter::SetNodeOutputType(const TypePtr &type, const BaseShapePtr &s
     for (const auto &elem_type : list_type->elements()) {
       SetNodeOutputType(elem_type, nullptr, type_proto->mutable_sequence_type()->add_elem_types());
     }
-  } else if (type->isa<TypeAnything>()) {
-    type_proto->set_data_type(irpb::DT_ANYTHING);
+  } else if (type->isa<TypeAny>()) {
+    type_proto->set_data_type(irpb::DT_ANY);
   } else if (type->isa<RefKeyType>()) {
     type_proto->set_data_type(irpb::DT_REFKEY);
   } else if (type->isa<RefType>()) {
@@ -199,7 +190,7 @@ void ProtoExporter::SetValueToProtoBasicTypes(const ValuePtr &val, irpb::ValuePr
   } else if (val->isa<UInt>()) {
     value_proto->set_dtype(irpb::DT_TYPE);
     value_proto->mutable_type_val()->set_data_type(irpb::DT_BASE_UINT);
-  } else if (val->isa<Float>()) {
+  } else if (val->isa<Float>() || val->isa<BFloat>()) {
     value_proto->set_dtype(irpb::DT_TYPE);
     value_proto->mutable_type_val()->set_data_type(irpb::DT_BASE_FLOAT);
   }
@@ -299,7 +290,7 @@ void ProtoExporter::SetScalarToProto(const ScalarPtr &val, irpb::ValueProto *val
     value_proto->set_dtype(irpb::DT_FLOAT64);
     value_proto->set_double_val(value->value());
   } else {
-    MS_LOG(EXCEPTION) << "Unknown scalar type " << val->ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Unknown scalar type " << val->ToString();
   }
 }
 
@@ -331,8 +322,10 @@ void ProtoExporter::SetDictionaryToProto(const ValueDictionaryPtr &val, irpb::Va
   value_proto->set_dtype(irpb::DT_DICT);
   for (const auto &item : val->value()) {
     irpb::NamedValueProto *named_val = value_proto->add_dict_val();
+    MS_EXCEPTION_IF_NULL(item.first);
     if (!item.first->isa<StringImm>()) {
-      MS_LOG(EXCEPTION) << "The key of NamedValueProto should be string type, but got " << item.first->ToString();
+      MS_LOG(INTERNAL_EXCEPTION) << "The key of NamedValueProto should be string type, but got "
+                                 << item.first->ToString();
     }
     named_val->set_key(GetValue<std::string>(item.first));
     SetValueToProto(item.second, named_val->mutable_value());
@@ -349,11 +342,12 @@ void ProtoExporter::GetOpNodeTypeAndAttrs(const FuncGraphPtr & /* func_graph */,
   }
 
   if (op_node->isa<CNode>() || op_node->isa<Parameter>() || IsValueNode<FuncGraph>(op_node)) {
-    MS_LOG(EXCEPTION) << "Op node can not be CNode, Parameter or ValueNode Graph. But got " << op_node->ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Op node can not be CNode, Parameter or ValueNode Graph. But got "
+                               << op_node->ToString();
   }
 
   if (!IsValueNode<Primitive>(op_node)) {
-    MS_LOG(EXCEPTION) << "Op node is not primitive: " << op_node->ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Op node is not primitive: " << op_node->ToString();
   }
 
   const PrimitivePtr &prim = GetValueNode<PrimitivePtr>(op_node);
@@ -385,7 +379,7 @@ std::string ProtoExporter::GetOpNodeInputId(const FuncGraphPtr & /* func_graph *
   if (node->isa<CNode>()) {
     auto iter = apply_map.find(node);
     if (iter == apply_map.end()) {
-      MS_LOG(EXCEPTION) << "Can not find node '" << node->ToString() << "' in apply_map";
+      MS_LOG(INTERNAL_EXCEPTION) << "Can not find node '" << node->ToString() << "' in apply_map";
     }
     return std::to_string(iter->second);
   }
@@ -408,7 +402,7 @@ std::string ProtoExporter::GetOpNodeInputId(const FuncGraphPtr & /* func_graph *
     return GetConstNodeId((*const_map_ptr)[node]);
   }
 
-  MS_LOG(EXCEPTION) << "Unknown node type. node is '" << node->ToString() << "'";
+  MS_LOG(INTERNAL_EXCEPTION) << "Unknown node type. node is '" << node->ToString() << "'";
 }
 
 std::string ProtoExporter::GetFuncGraphProtoString(const FuncGraphPtr &func_graph) {
@@ -454,7 +448,7 @@ void ProtoExporter::ExportParameters(const FuncGraphPtr &func_graph, irpb::Graph
 
     const ParameterPtr param_ptr = dyn_cast<Parameter>(param);
     if (param_ptr == nullptr) {
-      MS_LOG(EXCEPTION) << "Parameter '" << param->ToString() << "' could not cast to parameter.";
+      MS_LOG(INTERNAL_EXCEPTION) << "Parameter '" << param->ToString() << "' could not cast to parameter.";
     }
   }
 }
@@ -494,7 +488,7 @@ void ProtoExporter::ExportCNode(const FuncGraphPtr &func_graph, const CNodePtr &
 
   auto &inputs = node->inputs();
   if (inputs.size() < 1) {
-    MS_LOG(EXCEPTION) << "Inputs of apply node is empty";
+    MS_LOG(INTERNAL_EXCEPTION) << "Inputs of CNode is empty";
   }
   AnfNodePtr op = inputs[0];
   irpb::NodeProto *node_proto = graph_proto->add_node();
@@ -532,7 +526,7 @@ void ProtoExporter::ExportFuncGraphOutput(const FuncGraphPtr &func_graph, const 
                                           const std::map<AnfNodePtr, size_t> &apply_map,
                                           std::map<AnfNodePtr, size_t> *const_map_ptr, irpb::GraphProto *graph_proto) {
   if (ret_node == nullptr || !ret_node->isa<CNode>()) {
-    MS_LOG(EXCEPTION) << "Graph return node is illegal";
+    MS_LOG(INTERNAL_EXCEPTION) << "Graph return node is illegal";
   }
   // ret node has two input 1 ret op + 1 value
   const size_t ret_input_size = 2;
@@ -541,11 +535,11 @@ void ProtoExporter::ExportFuncGraphOutput(const FuncGraphPtr &func_graph, const 
   }
   AnfNodePtr arg = ret_node->input(1);
   if (graph_proto == nullptr) {
-    MS_LOG(EXCEPTION) << "graph_proto is nullptr";
+    MS_LOG(INTERNAL_EXCEPTION) << "graph_proto is nullptr";
   }
   irpb::OutputProto *output_proto = graph_proto->add_outputs();
   if (output_proto == nullptr) {
-    MS_LOG(EXCEPTION) << "output_proto is nullptr";
+    MS_LOG(INTERNAL_EXCEPTION) << "output_proto is nullptr";
   }
   std::string id = GetOpNodeInputId(func_graph, arg, apply_map, const_map_ptr);
   output_proto->set_name(id);
@@ -565,7 +559,7 @@ void ProtoExporter::ExportValueNodes(const std::map<AnfNodePtr, size_t> &const_m
 
   for (auto &item : nodes) {
     if (graph_proto == nullptr) {
-      MS_LOG(EXCEPTION) << "graph_proto is nullptr";
+      MS_LOG(INTERNAL_EXCEPTION) << "graph_proto is nullptr";
     }
     irpb::NamedValueProto *named_value = graph_proto->add_const_vals();
     MS_EXCEPTION_IF_NULL(named_value);

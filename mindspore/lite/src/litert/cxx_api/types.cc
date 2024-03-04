@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,15 @@
 #include "include/api/status.h"
 #include "include/api/dual_abi_helper.h"
 #include "src/litert/cxx_api/tensor/tensor_impl.h"
+#include "src/litert/cxx_api/tensor_utils.h"
 #include "src/common/log_adapter.h"
+#ifdef ENABLE_CLOUD_INFERENCE
+#include <fstream>
+#include "utils/file_utils.h"
+#include "ir/dtype.h"
+#include "utils/convert_utils_base.h"
+#include "extendrt/kernel/ascend/plugin/ascend_allocator_plugin.h"
+#endif
 
 namespace mindspore {
 class Buffer::Impl {
@@ -103,7 +111,56 @@ bool MSTensor::operator==(const MSTensor &tensor) const {
 bool MSTensor::operator!=(const MSTensor &tensor) const { return !operator==(tensor); }
 
 MSTensor *MSTensor::CreateTensor(const std::vector<char> &name, enum DataType type, const std::vector<int64_t> &shape,
-                                 const void *data, size_t data_len) noexcept {
+                                 const void *data, size_t data_len, const std::vector<char> &device,
+                                 int device_id) noexcept {
+  MS_LOG(INFO) << "device id: " << device_id << ", device type: " << device;
+  auto device_type = CharToString(device);
+  if (!device_type.empty() && device_type == "ascend") {
+#ifdef ENABLE_CLOUD_INFERENCE
+    kernel::AscendAllocatorPlugin::GetInstance().Register();
+    // check device id
+    device_id = device_id == -1 ? kernel::AscendAllocatorPlugin::GetInstance().GetCurrentDeviceId() : device_id;
+    // check device data size
+    size_t element_size = CalTensorDataSize(shape, type);
+    MS_CHECK_FALSE_MSG(data_len != 0 && element_size != data_len, nullptr, "data len not equal element size.");
+    // malloc device data
+    void *device_data = kernel::AscendAllocatorPlugin::GetInstance().Malloc(element_size, device_id);
+    MS_CHECK_TRUE_MSG(device_data != nullptr, nullptr, "malloc device data failed.");
+    // create tensor
+    auto impl = LiteTensorImpl::CreateTensorImpl(CharToString(name), type, shape, nullptr, 0);
+    if (impl == nullptr) {
+      kernel::AscendAllocatorPlugin::GetInstance().Free(device_data, device_id);
+      MS_LOG(ERROR) << "Allocate tensor impl failed.";
+      return nullptr;
+    }
+    if (data != nullptr) {
+      // init device data by host data buf
+      auto status = kernel::AscendAllocatorPlugin::GetInstance().CopyHostDataToDevice(const_cast<void *>(data),
+                                                                                      device_data, element_size);
+      if (status != kSuccess) {
+        kernel::AscendAllocatorPlugin::GetInstance().Free(device_data, device_id);
+        MS_LOG(ERROR) << "copy host data to device data failed.";
+        return nullptr;
+      }
+    }
+
+    // init impl
+    impl->SetDeviceData(device_data);
+    impl->SetDeviceId(device_id);
+    impl->SetDevice(device_type);
+
+    auto ms_tensor = new (std::nothrow) MSTensor(impl);
+    if (ms_tensor == nullptr) {
+      kernel::AscendAllocatorPlugin::GetInstance().Free(device_data, device_id);
+      MS_LOG(ERROR) << "Allocate MSTensor failed.";
+      return nullptr;
+    }
+    impl->set_own_data(true);
+    return ms_tensor;
+#endif
+    MS_LOG(ERROR) << "Unsupported Feature.";
+    return nullptr;
+  }
   if (data_len > MAX_MALLOC_SIZE) {
     MS_LOG(ERROR) << "data_len is error.";
     return nullptr;
@@ -129,22 +186,85 @@ MSTensor *MSTensor::CreateTensor(const std::vector<char> &name, enum DataType ty
   auto impl = LiteTensorImpl::CreateTensorImpl(CharToString(name), type, shape, new_data, data_len);
   if (impl == nullptr) {
     MS_LOG(ERROR) << "Allocate tensor impl failed.";
-    if (new_data != nullptr) {
-      free(new_data);
-    }
+    free(new_data);
     return nullptr;
   }
 
   auto ms_tensor = new (std::nothrow) MSTensor(impl);
   if (ms_tensor == nullptr) {
     MS_LOG(ERROR) << "Allocate MSTensor failed.";
-    if (new_data != nullptr) {
-      free(new_data);
-    }
+    free(new_data);
     return nullptr;
   }
   impl->set_own_data(true);
   return ms_tensor;
+}
+
+MSTensor *MSTensor::CreateTensor(const std::vector<char> &name, const MSTensor &tensor, const std::vector<char> &device,
+                                 int device_id) noexcept {
+#ifdef ENABLE_CLOUD_INFERENCE
+  kernel::AscendAllocatorPlugin::GetInstance().Register();
+  auto dst_device_type = CharToString(device);
+  if (!dst_device_type.empty() && dst_device_type != "ascend") {
+    MS_LOG(ERROR) << "only support create ascend device tensor.";
+    return nullptr;
+  }
+
+  auto src_device_type = tensor.GetDevice();
+  if (!src_device_type.empty() && src_device_type != "ascend") {
+    MS_LOG(ERROR) << "only tensor tensor is ascend device tensor.";
+    return nullptr;
+  }
+  if (src_device_type.empty() && static_cast<MSTensor>(tensor).GetDeviceData() != nullptr) {
+    MS_LOG(ERROR) << "tensor tensor is device tensor, but device data is nullptr.";
+    return nullptr;
+  }
+
+  if (src_device_type.empty() && dst_device_type.empty()) {
+    MS_LOG(INFO) << "copy host tensor to host tensor.";
+    if (tensor.Data() != nullptr) {
+      return CreateTensor(tensor.Name(), tensor.DataType(), tensor.Shape(), static_cast<MSTensor>(tensor).MutableData(),
+                          tensor.DataSize());
+    } else {
+      return CreateTensor(tensor.Name(), tensor.DataType(), tensor.Shape(), nullptr, 0);
+    }
+  } else if (src_device_type == "ascend" && dst_device_type == "ascend") {
+    MS_LOG(INFO) << "copy device tensor to device tensor.";
+    auto new_tensor =
+      CreateTensor(tensor.Name(), tensor.DataType(), tensor.Shape(), nullptr, tensor.DataSize(), "ascend", device_id);
+    auto status = kernel::AscendAllocatorPlugin::GetInstance().CopyDeviceDataToDevice(
+      static_cast<MSTensor>(tensor).GetDeviceData(), new_tensor->GetDeviceData(), new_tensor->DataSize(),
+      tensor.DataSize(), tensor.GetDeviceId(), new_tensor->GetDeviceId());
+    if (status != kSuccess) {
+      return nullptr;
+    }
+    return new_tensor;
+  } else if (src_device_type.empty() && dst_device_type == "ascend") {
+    MS_LOG(INFO) << "copy host tensor to device tensor.";
+    return CreateTensor(tensor.Name(), tensor.DataType(), tensor.Shape(), static_cast<MSTensor>(tensor).MutableData(),
+                        tensor.DataSize(), dst_device_type, device_id);
+  } else if (src_device_type == "ascend" && dst_device_type.empty()) {
+    MS_LOG(INFO) << "copy device tensor to host tensor.";
+    auto host_form_device = malloc(tensor.DataSize());
+    MS_CHECK_FALSE_MSG(host_form_device == nullptr, nullptr, "malloc host buf failed.");
+    auto status = kernel::AscendAllocatorPlugin::GetInstance().CopyDeviceDataToHost(
+      static_cast<MSTensor>(tensor).GetDeviceData(), host_form_device, tensor.DataSize(), tensor.GetDeviceId());
+    if (status != kSuccess) {
+      free(host_form_device);
+      return nullptr;
+    }
+    auto new_tensor =
+      CreateTensor(tensor.Name(), tensor.DataType(), tensor.Shape(), host_form_device, tensor.DataSize());
+    free(host_form_device);
+    host_form_device = nullptr;
+    return new_tensor;
+  } else {
+    MS_LOG(ERROR) << "device type is wrong.";
+    return nullptr;
+  }
+#endif
+  MS_LOG(ERROR) << "Unsupported Feature.";
+  return nullptr;
 }
 
 MSTensor *MSTensor::CreateRefTensor(const std::vector<char> &name, enum DataType type,
@@ -166,14 +286,109 @@ MSTensor *MSTensor::CreateRefTensor(const std::vector<char> &name, enum DataType
 
 MSTensor MSTensor::CreateDeviceTensor(const std::vector<char> &name, enum DataType type,
                                       const std::vector<int64_t> &shape, void *data, size_t data_len) noexcept {
+#ifdef ENABLE_CLOUD_INFERENCE
+  auto impl = LiteTensorImpl::CreateTensorImpl(CharToString(name), type, shape, nullptr, 0);
+  if (impl == nullptr) {
+    MS_LOG(ERROR) << "Allocate tensor impl failed.";
+    return MSTensor(nullptr);
+  }
+  if (data_len < impl->DataSize()) {
+    MS_LOG(ERROR) << "The size " << data_len << " of data cannot be less that the memory size required by the shape "
+                  << shape << " and data type " << TypeIdToString(static_cast<enum TypeId>(type));
+    return MSTensor(nullptr);
+  }
+  impl->SetDeviceData(data);
+  return MSTensor(impl);
+#else
   MS_LOG(ERROR) << "Unsupported Feature.";
   return MSTensor(nullptr);
+#endif
 }
 
 MSTensor *MSTensor::CreateTensorFromFile(const std::vector<char> &file, enum DataType type,
                                          const std::vector<int64_t> &shape) noexcept {
+#ifdef ENABLE_CLOUD_INFERENCE
+  try {
+    std::string file_str = CharToString(file);
+
+    auto realpath = mindspore::FileUtils::GetRealPath(file_str.c_str());
+    if (!realpath.has_value()) {
+      MS_LOG(ERROR) << "Get real path failed, path=" << file_str;
+      return nullptr;
+    }
+
+    // Read image file
+    auto file_path = realpath.value();
+    if (file_path.empty()) {
+      MS_LOG(ERROR) << "Can not find any input file.";
+      return nullptr;
+    }
+
+    std::ifstream ifs(file_path, std::ios::in | std::ios::binary);
+    if (!ifs.good()) {
+      MS_LOG(ERROR) << "File: " + file_path + " does not exist.";
+      return nullptr;
+    }
+    if (!ifs.is_open()) {
+      MS_LOG(ERROR) << "File: " + file_path + " open failed.";
+      return nullptr;
+    }
+
+    auto &io_seekg1 = ifs.seekg(0, std::ios::end);
+    if (!io_seekg1.good() || io_seekg1.fail() || io_seekg1.bad()) {
+      ifs.close();
+      MS_LOG(ERROR) << "Failed to seekg file: " + file_path;
+      return nullptr;
+    }
+
+    size_t size = static_cast<size_t>(ifs.tellg());
+    std::vector<int64_t> tensor_shape;
+    tensor_shape = shape.empty() ? std::vector<int64_t>{static_cast<int64_t>(size)} : shape;
+    MSTensor *ret = new (std::nothrow) MSTensor(file_path, type, tensor_shape, nullptr, size);
+    if (ret == nullptr) {
+      ifs.close();
+      MS_LOG(ERROR) << "Malloc memory failed.";
+      return nullptr;
+    }
+    auto &io_seekg2 = ifs.seekg(0, std::ios::beg);
+    if (!io_seekg2.good() || io_seekg2.fail() || io_seekg2.bad()) {
+      ifs.close();
+      MS_LOG(ERROR) << "Failed to seekg file: " + file_path;
+      return nullptr;
+    }
+
+    std::map<enum DataType, size_t> TypeByte = {
+      {DataType::kTypeUnknown, 0},       {DataType::kObjectTypeString, 0},  {DataType::kNumberTypeBool, 1},
+      {DataType::kNumberTypeInt8, 1},    {DataType::kNumberTypeInt16, 2},   {DataType::kNumberTypeInt32, 4},
+      {DataType::kNumberTypeInt64, 8},   {DataType::kNumberTypeUInt8, 1},   {DataType::kNumberTypeUInt16, 2},
+      {DataType::kNumberTypeUInt32, 4},  {DataType::kNumberTypeUInt64, 8},  {DataType::kNumberTypeFloat16, 2},
+      {DataType::kNumberTypeFloat32, 4}, {DataType::kNumberTypeFloat64, 8},
+    };
+
+    if (LongToSize(ret->ElementNum()) * TypeByte[type] != size) {
+      ifs.close();
+      MS_LOG(ERROR) << "Tensor data size: " << LongToSize(ret->ElementNum()) * TypeByte[type]
+                    << " not match input data length: " << size;
+      return nullptr;
+    }
+
+    auto &io_read = ifs.read(reinterpret_cast<char *>(ret->MutableData()), static_cast<std::streamsize>(size));
+    if (!io_read.good() || io_read.fail() || io_read.bad()) {
+      ifs.close();
+      MS_LOG(ERROR) << "Failed to read file: " + file_path;
+      return nullptr;
+    }
+    ifs.close();
+
+    return ret;
+  } catch (...) {
+    MS_LOG(ERROR) << "Unknown error occurred.";
+    return nullptr;
+  }
+#else
   MS_LOG(ERROR) << "Unsupported Feature.";
   return nullptr;
+#endif
 }
 
 MSTensor *MSTensor::CharStringsToTensor(const std::vector<char> &name, const std::vector<std::vector<char>> &inputs) {
@@ -273,7 +488,7 @@ int64_t MSTensor::ElementNum() const {
     MS_LOG(ERROR) << "Invalid tensor implement.";
     return -1;
   }
-  return std::static_pointer_cast<LiteTensorImpl>(impl_)->ElementNum();
+  return std::static_pointer_cast<MutableTensorImpl>(impl_)->ElementNum();
 }
 
 enum DataType MSTensor::DataType() const {
@@ -341,9 +556,28 @@ size_t MSTensor::DataSize() const {
   return impl_->DataSize();
 }
 
+std::string MSTensor::GetDevice() const {
+  if (impl_ == nullptr) {
+    MS_LOG(ERROR) << "Invalid tensor implement.";
+    return "";
+  }
+  return std::static_pointer_cast<MutableTensorImpl>(impl_)->GetDevice();
+}
+
+int MSTensor::GetDeviceId() const {
+  if (impl_ == nullptr) {
+    MS_LOG(ERROR) << "Invalid tensor implement.";
+    return -1;
+  }
+  return std::static_pointer_cast<MutableTensorImpl>(impl_)->GetDeviceId();
+}
+
 bool MSTensor::IsDevice() const {
-  MS_LOG(ERROR) << "Unsupported feature.";
-  return false;
+  if (impl_ == nullptr) {
+    MS_LOG(ERROR) << "Invalid tensor implement.";
+    return false;
+  }
+  return impl_->IsDevice();
 }
 
 void MSTensor::DestroyTensorPtr(MSTensor *tensor) noexcept {

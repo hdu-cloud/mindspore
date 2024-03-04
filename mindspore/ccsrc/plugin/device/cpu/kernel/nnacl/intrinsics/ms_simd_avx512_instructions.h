@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_AVX512_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
-#define MINDSPORE_NNACL_AVX512_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
+#ifndef NNACL_AVX512_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
+#define NNACL_AVX512_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
 #include <float.h>
 #include <math.h>
 
@@ -231,6 +231,17 @@ static inline MS_FLOAT32X16 MS512_LOG_F32(MS_FLOAT32X16 src) {
   MS_FLOAT32X16 tmp1 = MS_MUL512_F32(square, MS_ADD512_F32(MS_MUL512_F32(square, tmp), data4));
   MS_FLOAT32X16 res =
     MS_ADD512_F32(MS_MUL512_F32(ln2, expsPD), MS_MUL512_F32(MS_MUL512_F32(div, MS_ADD512_F32(tmp1, data5)), data6));
+  // if (src == 0) res = -inf;
+  MS_MASK512_TYPE mask = MS_CMP512_F32(src, MS_MOV512_F32(0.0f), _CMP_EQ_OQ);
+  res = MS_BLEND512_F32(res, MS_MOV512_F32(-INFINITY), mask);
+  // if (src == inf) res = inf;
+  mask = MS_CMP512_F32(src, MS_MOV512_F32(INFINITY), _CMP_EQ_OQ);
+  res = MS_BLEND512_F32(res, MS_MOV512_F32(INFINITY), mask);
+  // if (src < 0 || src == nan) res = nan;
+  mask = MS_CMPLT512_F32(src, MS_MOV512_F32(0.0f));
+  res = MS_BLEND512_F32(res, MS_MOV512_F32(NAN), mask);
+  mask = MS_CMP512_F32(src, MS_MOV512_F32(0.0f), _CMP_UNORD_Q);
+  res = MS_BLEND512_F32(res, MS_MOV512_F32(NAN), mask);
   return res;
 }
 
@@ -268,10 +279,14 @@ static inline MS_FLOAT32X16 MS512_LOG_F32(MS_FLOAT32X16 src) {
 #define MS512_INT64_TO_INT32(src) _mm512_cvtepi64_epi32(src)
 
 static inline MS_FLOAT32X16 simd_exp512_f32(MS_FLOAT32X16 input) {
-  static MS_FLOAT32X16 maxv = {88.0f, 88.0f, 88.0f, 88.0f, 88.0f, 88.0f, 88.0f, 88.0f,
-                               88.0f, 88.0f, 88.0f, 88.0f, 88.0f, 88.0f, 88.0f, 88.0f};
-  static MS_FLOAT32X16 minv = {-88.0f, -88.0f, -88.0f, -88.0f, -88.0f, -88.0f, -88.0f, -88.0f,
-                               -88.0f, -88.0f, -88.0f, -88.0f, -88.0f, -88.0f, -88.0f, -88.0f};
+  static MS_FLOAT32X16 maxv = {88.72283935546875f, 88.72283935546875f, 88.72283935546875f, 88.72283935546875f,
+                               88.72283935546875f, 88.72283935546875f, 88.72283935546875f, 88.72283935546875f,
+                               88.72283935546875f, 88.72283935546875f, 88.72283935546875f, 88.72283935546875f,
+                               88.72283935546875f, 88.72283935546875f, 88.72283935546875f, 88.72283935546875f};
+  static MS_FLOAT32X16 minv = {-87.3365478515625f, -87.3365478515625f, -87.3365478515625f, -87.3365478515625f,
+                               -87.3365478515625f, -87.3365478515625f, -87.3365478515625f, -87.3365478515625f,
+                               -87.3365478515625f, -87.3365478515625f, -87.3365478515625f, -87.3365478515625f,
+                               -87.3365478515625f, -87.3365478515625f, -87.3365478515625f, -87.3365478515625f};
   static MS_FLOAT32X16 param[] = {
     {0.693147f, 0.693147f, 0.693147f, 0.693147f, 0.693147f, 0.693147f, 0.693147f, 0.693147f, 0.693147f, 0.693147f,
      0.693147f, 0.693147f, 0.693147f, 0.693147f, 0.693147f, 0.693147f},
@@ -282,15 +297,21 @@ static inline MS_FLOAT32X16 simd_exp512_f32(MS_FLOAT32X16 input) {
     {1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6,
      1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6},
     {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f},
-    {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f}};
+    {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+    {1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f,
+     1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f,
+     1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f,
+     1.44269504088896341f},
+    {2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f}};
+
   input = MS_MAX512_F32(minv, MS_MIN512_F32(input, maxv));
-  MS_INT32X16 integer = MS_CVT512PS_EPI32(MS_DIV512_F32(input, param[0]));
+  MS_INT32X16 integer = MS_CVT512PS_EPI32(MS_FLOOR512_F32(MS_FMADD512_F32(input, param[6], param[4])));
   MS_FLOAT32X16 decimal = MS_SUB512_F32(input, MS_MUL512_F32(MS_CVT512EPI32_PS(integer), param[0]));
-  MS_INT32X16 int_exp = MS_SLLI512_EPI32(MS_ADD512_EPI32(integer, MS_MOV512_EPI32(127)), 23);
+  MS_INT32X16 int_exp = MS_SLLI512_EPI32(MS_ADD512_EPI32(integer, MS_MOV512_EPI32(126)), 23);
   MS_FLOAT32X16 tmp = MS_FMADD512_F32(decimal, MS_FMADD512_F32(decimal, param[1], param[2]), param[3]);
   tmp = MS_FMADD512_F32(decimal, MS_FMADD512_F32(decimal, tmp, param[4]), param[5]);
   MS_FLOAT32X16 decimal_exp = MS_FMADD512_F32(decimal, tmp, param[5]);
-  return MS_MUL512_F32(decimal_exp, MS_CAST512_F32_S32(int_exp));
+  return MS_MUL512_F32(param[7], MS_MUL512_F32(decimal_exp, MS_CAST512_F32_S32(int_exp)));
 }
 
 static inline MS_FLOAT32X16 simd_hexp512_f32(MS_FLOAT32X16 src) {
@@ -418,4 +439,4 @@ static inline MS_FLOAT32X16 MS512_ERF_F32(MS_FLOAT32X16 src) {
 
 #pragma GCC pop_options
 
-#endif  // MINDSPORE_NNACL_AVX512_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
+#endif  // NNACL_AVX512_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_

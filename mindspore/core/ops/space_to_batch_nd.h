@@ -18,12 +18,12 @@
 #define MINDSPORE_CORE_OPS_SPACE_TO_BATCH_ND_H_
 
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -50,8 +50,9 @@ class MIND_API SpaceToBatchND : public BaseOperator {
   /// \return paddings.
   std::vector<std::vector<int64_t>> get_paddings() const;
 };
-abstract::AbstractBasePtr SpaceToBatchNDInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                              const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr SpaceToBatchNDInfer(const abstract::AnalysisEnginePtr &,
+                                                       const PrimitivePtr &primitive,
+                                                       const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

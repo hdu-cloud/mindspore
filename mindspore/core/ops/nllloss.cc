@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,15 +15,34 @@
  */
 
 #include "ops/nllloss.h"
+
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
-#include <map>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
-#include "mindapi/src/helper.h"
-#include "utils/check_convert_utils.h"
+#include "base/base.h"
 #include "include/common/utils/utils.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -32,20 +51,28 @@ class NLLLossInfer : public abstract::OpInferBase {
  public:
   BaseShapePtr InferShape(const PrimitivePtr &primitive,
                           const std::vector<AbstractBasePtr> &input_args) const override {
+    MS_EXCEPTION_IF_NULL(primitive);
     const auto prim_name = primitive->name();
+    const int64_t input_num = 3;
+    (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_num,
+                                             prim_name);
+    MS_EXCEPTION_IF_NULL(input_args[kInputIndex0]);
     auto logits_shape_ptr = input_args[kInputIndex0]->BuildShape();
     auto logits_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(logits_shape_ptr)[kShape];
+    MS_EXCEPTION_IF_NULL(input_args[kInputIndex1]);
     auto target_shape_ptr = input_args[kInputIndex1]->BuildShape();
     auto target_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(target_shape_ptr)[kShape];
+    MS_EXCEPTION_IF_NULL(input_args[kInputIndex2]);
     auto weight_shape_ptr = input_args[kInputIndex2]->BuildShape();
     auto weight_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(weight_shape_ptr)[kShape];
 
     (void)CheckAndConvertUtils::CheckInteger("rank of target", SizeToLong(target_shape.size()), kEqual, 1, prim_name);
     (void)CheckAndConvertUtils::CheckInteger("rank of weight", SizeToLong(weight_shape.size()), kEqual, 1, prim_name);
-    CheckAndConvertUtils::CheckInRange("rank of logits", SizeToLong(logits_shape.size()), kIncludeBoth, {1, 2},
-                                       prim_name);
 
     if (!logits_shape_ptr->IsDynamic()) {
+      const int64_t dims_2D = 2;
+      (void)CheckAndConvertUtils::CheckInteger("rank of logits", SizeToLong(logits_shape.size()), kEqual, dims_2D,
+                                               prim_name);
       if (!target_shape_ptr->IsDynamic() && logits_shape[kInputIndex0] != target_shape[kInputIndex0]) {
         MS_EXCEPTION(ValueError) << "For '" << prim_name
                                  << "', the 'logits_dim0' and the shape of 'target' should be equal, but got "
@@ -71,7 +98,11 @@ class NLLLossInfer : public abstract::OpInferBase {
       reduction_is_none = reduction == Reduction::NONE;
     }
     if (reduction_is_none) {
-      loss_shape.push_back(logits_shape[kInputIndex0]);
+      if (IsDynamicRank(logits_shape)) {
+        loss_shape.push_back(abstract::Shape::kShapeDimAny);
+      } else {
+        loss_shape.push_back(logits_shape[kInputIndex0]);
+      }
     }
     abstract::ShapePtr loss_shape_ptr = std::make_shared<abstract::Shape>(loss_shape);
     abstract::ShapePtr total_weight_shape_ptr = std::make_shared<abstract::Shape>(total_weight_shape);
@@ -81,18 +112,26 @@ class NLLLossInfer : public abstract::OpInferBase {
   }
 
   TypePtr InferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) const override {
-    const std::set valid_types = {kFloat16, kFloat32};
+    const std::set<TypePtr> valid_types = {kFloat16, kFloat32};
+    MS_EXCEPTION_IF_NULL(prim);
+    auto prim_name = prim->name();
+    const int64_t input_num = 3;
+    (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_num,
+                                             prim_name);
     auto logits_data_type = input_args[kIndex0]->BuildType();
     auto target_type = input_args[kIndex1]->BuildType();
     auto weight_data_type = input_args[kIndex2]->BuildType();
-    (void)CheckAndConvertUtils::CheckTensorTypeValid("target", target_type, {kInt32}, prim->name());
+    (void)CheckAndConvertUtils::CheckTensorTypeValid("target", target_type, {kInt32, kInt64}, prim->name());
     (void)CheckAndConvertUtils::CheckTensorTypeValid("logits", logits_data_type, valid_types, prim->name());
     (void)CheckAndConvertUtils::CheckTensorTypeValid("weight", weight_data_type, valid_types, prim->name());
     return std::make_shared<Tuple>(std::vector<TypePtr>{logits_data_type, weight_data_type});
   }
 };
 
-void NLLLoss::Init(const Reduction &reduction) { this->set_reduction(reduction); }
+void NLLLoss::Init(const Reduction &reduction, const int64_t ignore_index) {
+  this->set_reduction(reduction);
+  this->set_ignore_index(ignore_index);
+}
 
 void NLLLoss::set_reduction(const Reduction &reduction) {
   std::string reduce;
@@ -112,6 +151,12 @@ Reduction NLLLoss::get_reduction() const {
   CheckAndConvertUtils::GetReductionEnumValue(value_ptr, &reduction);
   return Reduction(reduction);
 }
+
+void NLLLoss::set_ignore_index(const int64_t ignore_index) {
+  (void)this->AddAttr(kIgnoreIndex, api::MakeValue(ignore_index));
+}
+
+int64_t NLLLoss::get_ignore_index() const { return GetValue<int64_t>(GetAttr(kIgnoreIndex)); }
 REGISTER_PRIMITIVE_OP_INFER_IMPL(NLLLoss, prim::kPrimNLLLoss, NLLLossInfer, false);
 }  // namespace ops
 }  // namespace mindspore

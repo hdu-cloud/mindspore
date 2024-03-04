@@ -13,14 +13,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <algorithm>
+#include <map>
 #include <set>
 #include <string>
-#include "ops/grad/mvlgamma_grad.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
-#include "ops/op_utils.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/grad/mvlgamma_grad.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -62,6 +75,24 @@ AbstractBasePtr MvlgammaGradInfer(const abstract::AnalysisEnginePtr &, const Pri
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 MIND_API_OPERATOR_IMPL(MvlgammaGrad, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(MvlgammaGrad, prim::kPrimMvlgammaGrad, MvlgammaGradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMvlgammaGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MvlgammaGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MvlgammaGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MvlgammaGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MvlgammaGrad, prim::kPrimMvlgammaGrad, AGMvlgammaGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

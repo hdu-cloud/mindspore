@@ -15,10 +15,26 @@
  */
 
 #include "ops/grad/asinh_grad.h"
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
+
+#include <map>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "ops/grad/elewise_grad_infer_shape.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -28,6 +44,7 @@ abstract::ShapePtr AsinhGradInferShape(const PrimitivePtr &primitive, const std:
 }
 
 TypePtr AsinhGradInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
   std::map<std::string, TypePtr> types;
@@ -50,6 +67,23 @@ AbstractBasePtr AsinhGradInfer(const abstract::AnalysisEnginePtr &, const Primit
   return abstract::MakeAbstract(shapes, types);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(AsinhGrad, prim::kPrimAsinhGrad, AsinhGradInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGAsinhGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return AsinhGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return AsinhGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return AsinhGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(AsinhGrad, prim::kPrimAsinhGrad, AGAsinhGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

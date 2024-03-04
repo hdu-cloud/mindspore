@@ -22,6 +22,7 @@
 #include <deque>
 #include <map>
 #include <set>
+#include "tools/optimizer/graph/redundant_op_remove_pass.h"
 #include "tools/lite_exporter/fetch_content.h"
 #include "base/base.h"
 #include "tools/converter/quantizer/quantize_util.h"
@@ -34,11 +35,12 @@
 #include "tools/converter/quantizer/cle_strategy.h"
 #include "tools/optimizer/common/pass_manager_extends.h"
 #include "tools/optimizer/fusion/quant_dtype_cast_fusion.h"
-#include "backend/common/optimizer/graph_optimizer.h"
+#include "include/backend/optimizer/graph_optimizer.h"
 #include "tools/optimizer/graph/infershape_pass.h"
+#include "tools/converter/quantizer/split_shared_bias.h"
 
 namespace mindspore::lite::quant {
-int DoFullQuant(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param) {
+int QuantizationOptimizer::DoFullQuant(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param) {
   auto quantizer = std::make_unique<FullQuantQuantizer>(param);
   if (quantizer == nullptr) {
     MS_LOG(ERROR) << "New FullQuantQuantizer failed";
@@ -52,7 +54,7 @@ int DoFullQuant(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPa
   return RET_OK;
 }
 
-int DoWeightQuant(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param) {
+int QuantizationOptimizer::DoWeightQuant(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param) {
   double init_scale = param->mixedBitWeightQuantParam.init_scale;
   if (param->commonQuantParam.bit_num == 0 && param->mixedBitWeightQuantParam.auto_tune) {
     ParameterOptimizer optimizer;
@@ -100,11 +102,17 @@ int DoDynamicQuant(const FuncGraphPtr &old_graph, const std::shared_ptr<Converte
   return RET_OK;
 }
 
-lite::LiteModel *ParseLiteModel(const FuncGraphPtr &func_graph, const std::shared_ptr<ConverterPara> &param) {
-  auto meta_graph = Export(func_graph, true, true);
+std::shared_ptr<lite::Model> ParseLiteModel(const FuncGraphPtr &func_graph,
+                                            const std::shared_ptr<ConverterPara> &param) {
+  FuncGraphPtr func_graph_clone;
+  if (CloneFuncGraph(func_graph, param, &func_graph_clone) != RET_OK) {
+    MS_LOG(ERROR) << "Clone func_graph failed";
+    return nullptr;
+  }
+  auto meta_graph = Export(func_graph_clone, true, true);
   if (meta_graph == nullptr) {
     MS_LOG(ERROR) << "Export to meta_graph failed";
-    return static_cast<lite::LiteModel *>(nullptr);
+    return nullptr;
   }
 
   // transform
@@ -114,7 +122,7 @@ lite::LiteModel *ParseLiteModel(const FuncGraphPtr &func_graph, const std::share
   if (status != RET_OK) {
     MS_LOG(ERROR) << "FBTransform model failed";
     delete meta_graph;
-    return static_cast<LiteModel *>(nullptr);
+    return nullptr;
   }
   meta_graph->version = Version();
 
@@ -126,14 +134,16 @@ lite::LiteModel *ParseLiteModel(const FuncGraphPtr &func_graph, const std::share
   auto content = reinterpret_cast<const char *>(builder.GetBufferPointer());
   if (content == nullptr) {
     MS_LOG(ERROR) << "GetBufferPointer nullptr";
-    return static_cast<LiteModel *>(nullptr);
+    delete meta_graph;
+    return nullptr;
   }
-  return static_cast<LiteModel *>(LiteModel::Import(content, size));
+  delete meta_graph;
+  return std::shared_ptr<lite::Model>(LiteModel::Import(content, size));
 }
 
 int DoQuantDebug(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param,
                  const std::shared_ptr<mindspore::Model> &origin_model,
-                 const mindspore::lite::LiteModel *origin_lite_model) {
+                 const std::shared_ptr<lite::Model> &origin_lite_model) {
   auto quant_model = std::make_shared<mindspore::Model>();
   CHECK_NULL_RETURN(quant_model);
   size_t size = 0;
@@ -159,8 +169,9 @@ int DoQuantDebug(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterP
     MS_LOG(ERROR) << "Origin lite model nullptr.";
     return RET_ERROR;
   }
-  ret = manager.CompareOriginWithQuant(origin_model, quant_model, op_parameters, param, *origin_lite_model,
-                                       *quant_lite_model);
+
+  ret = manager.CompareOriginWithQuant(origin_model, quant_model, op_parameters, param, origin_lite_model,
+                                       quant_lite_model);
   auto free_buffer = [&] {
     for (auto parameter : op_parameters) {
       if (parameter.second != nullptr) {
@@ -179,116 +190,141 @@ int DoQuantDebug(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterP
   return RET_OK;
 }
 
-int ConvertFp16ToFp32(const FuncGraphPtr &old_graph) {
-  auto cnodes = old_graph->GetOrderedCnodes();
+int ConvertValueNodeToParameter(const FuncGraphPtr &func_graph) {
+  auto cnodes = func_graph->GetOrderedCnodes();
   for (auto &cnode : cnodes) {
     for (size_t i = kPrimOffset; i < cnode->size(); ++i) {
       auto input = cnode->input(i);
-      if (!input->isa<Parameter>() || !input->cast<ParameterPtr>()->has_default()) {
+      if (!input->isa<ValueNode>()) {
         continue;
       }
-      ParameterPtr param_node;
-      tensor::TensorPtr tensor_info;
-      GetLiteParameter(input, &param_node, &tensor_info);
-      CHECK_NULL_RETURN(tensor_info);
-      CHECK_NULL_RETURN(param_node);
-      if (tensor_info->data_type() == kNumberTypeFloat16) {
-        MS_LOG(INFO) << "convert " << input->fullname_with_scope() << " from fp16 to fp32.";
-        auto data = static_cast<float16 *>(tensor_info->data_c());
-        std::vector<float> fp32_data(tensor_info->DataSize());
-        for (size_t j = 0; j < tensor_info->DataSize(); j++) {
-          fp32_data[j] = mindspore::Float16::ToFloat32(data[j]);
-        }
-        mindspore::tensor::TensorPtr tensor_ptr = std::make_shared<mindspore::tensor::Tensor>(
-          kNumberTypeFloat32, tensor_info->shape_c(), fp32_data.data(), fp32_data.size() * sizeof(float));
-        param_node->set_default_param(tensor_ptr);
-        param_node->set_abstract(tensor_ptr->ToAbstract());
+      auto tensor_info = input->cast<ValueNodePtr>()->value()->cast<tensor::TensorPtr>();
+      if (tensor_info == nullptr) {
+        MS_LOG(INFO) << cnode->fullname_with_scope() << " input index: " << i << " cast tensor nullptr.";
+        continue;
       }
+      auto parameter = func_graph->add_parameter();
+      auto status = InitParameterFromTensorInfo(parameter, tensor_info);
+      if (status != RET_OK) {
+        MS_LOG(ERROR) << "Init parameter From tensor failed, tenor: " << tensor_info->name();
+        return status;
+      }
+      parameter->set_name(input->fullname_with_scope());
+      auto manage = Manage(func_graph);
+      manage->Replace(input, parameter);
     }
   }
   return RET_OK;
 }
 
-int DoSingleGraphQuantize(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param) {
-  CHECK_NULL_RETURN(param);
-  if (param->commonQuantParam.quant_type == schema::QuantType_QUANT_NONE) {
-    return RET_OK;
-  }
-  int status;
-
-  status = ConvertFp16ToFp32(old_graph);
-  if (status != RET_OK) {
-    MS_LOG(ERROR) << "Convert fp16 To fp32 failed.";
-    return status;
-  }
-
-  bool per_layer = param->commonQuantParam.quant_type == schema::QuantType_QUANT_ALL &&
-                   !param->fullQuantParam.per_channel && param->fullQuantParam.target_device != DSP;
-  if (per_layer) {
-    CLEStrategy cle_strategy(old_graph);
-    status = cle_strategy.Run();
+int QuantizationOptimizer::PrepareQuantize(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param) {
+  if (!param->train_model && param->save_type == kMindIR) {
+    auto status = ConvertValueNodeToParameter(old_graph);
     if (status != RET_OK) {
-      MS_LOG(ERROR) << "do pre process failed!";
+      MS_LOG(ERROR) << "Convert value node To parameter failed.";
       return status;
     }
   }
 
+  auto convert_pm = std::make_shared<opt::LitePassManager>("anf graph convert pass manager", true);
+  convert_pm->AddPass(std::make_shared<opt::RemoveRedundantOpPass>(param->train_model));
+  auto optimizer = std::make_shared<opt::GraphOptimizer>();
+  optimizer->AddPassManager(convert_pm);
+  if (optimizer->Optimize(old_graph) == nullptr) {
+    MS_LOG(ERROR) << "run graph pass failed";
+    return RET_ERROR;
+  }
+
+  bool per_layer = param->commonQuantParam.quant_type == quant::QUANT_ALL && !param->fullQuantParam.per_channel &&
+                   param->fullQuantParam.target_device != DSP;
+  if (per_layer) {
+    CLEStrategy cle_strategy(old_graph);
+    auto status = cle_strategy.Run();
+    if (status != RET_OK) {
+      MS_LOG(ERROR) << "do cle_strategy failed!";
+      return status;
+    }
+  }
+
+  if (param->commonQuantParam.quant_type == quant::QUANT_ALL && param->fullQuantParam.bias_correction) {
+    SplitSharedBias split_shared_bias(old_graph, param);
+    if (split_shared_bias.Run() != RET_OK) {
+      MS_LOG(ERROR) << "split shared bias node failed!";
+      return RET_ERROR;
+    }
+  }
+  return RET_OK;
+}
+
+int QuantizationOptimizer::DoSingleGraphQuantize(const FuncGraphPtr &func_graph,
+                                                 const std::shared_ptr<ConverterPara> &param) {
+  CHECK_NULL_RETURN(param);
+  int status = PrepareQuantize(func_graph, param);
+  if (status != RET_OK) {
+    MS_LOG(ERROR) << "PrepareQuantize failed.";
+    return status;
+  }
+
   std::shared_ptr<mindspore::Model> origin;
-  lite::LiteModel *origin_lite_model = nullptr;
+  std::shared_ptr<lite::Model> origin_lite_model;
   if (param->commonQuantParam.is_debug) {  // Bak fp32 model for debug
     auto quant_type = param->commonQuantParam.quant_type;
-    param->commonQuantParam.quant_type = schema::QuantType_QUANT_NONE;
+    param->commonQuantParam.quant_type = quant::QUANT_NONE;
     origin = std::make_shared<mindspore::Model>();
     CHECK_NULL_RETURN(origin);
     size_t size = 0;
-    auto ret = BuildModelByFuncGraph(origin, old_graph, param, &size);
+    auto ret = BuildModelByFuncGraph(origin, func_graph, param, &size);
     param->commonQuantParam.quant_type = quant_type;
     if (ret != kSuccess) {
       MS_LOG(ERROR) << "Build model failed";
       return RET_ERROR;
     }
-    origin_lite_model = ParseLiteModel(old_graph, param);
+    origin_lite_model = ParseLiteModel(func_graph, param);
     if (origin_lite_model == nullptr) {
       MS_LOG(ERROR) << "Parse lite model failed.";
       return RET_ERROR;
     }
   }
-  if (param->commonQuantParam.quant_type == schema::QuantType_QUANT_ALL) {  // Full Quantization
-    status = DoFullQuant(old_graph, param);
+  if (param->commonQuantParam.quant_type == quant::QUANT_ALL) {  // Full Quantization
+    status = ConvertFp16ToFp32(func_graph);
+    if (status != RET_OK) {
+      MS_LOG(ERROR) << "Converter fp16 to fp32 failed.";
+      return status;
+    }
+    status = DoFullQuant(func_graph, param);
     if (status != RET_OK) {
       MS_LOG(ERROR) << "Do full quant failed.";
       return status;
     }
-  } else if (param->commonQuantParam.quant_type == schema::QuantType_QUANT_WEIGHT) {  // Weight Quantization
-    status = DoWeightQuant(old_graph, param);
+  } else if (param->commonQuantParam.quant_type == quant::QUANT_WEIGHT) {  // Weight Quantization
+    status = DoWeightQuant(func_graph, param);
     if (status != RET_OK) {
       MS_LOG(ERROR) << "Do weight quant failed.";
       return status;
     }
-  } else if (param->commonQuantParam.quant_type == schema::QuantType_QUANT_DYNAMIC) {  // Dynamic Quantization
-    status = DoDynamicQuant(old_graph, param);
+  } else if (param->commonQuantParam.quant_type == quant::QUANT_DYNAMIC) {  // Dynamic Quantization
+    status = DoDynamicQuant(func_graph, param);
     if (status != RET_OK) {
       MS_LOG(ERROR) << "Do dynamic quant failed.";
       return status;
     }
   }
 
-  {
+  if (param->fullQuantParam.target_device != ASCEND) {
     auto optimizer = std::make_shared<opt::GraphOptimizer>();
     CHECK_NULL_RETURN(optimizer);
     auto fusion_pm = std::make_shared<opt::LitePassManager>("fusion pass manager after quant", false);
     CHECK_NULL_RETURN(fusion_pm);
     fusion_pm->AddPass(std::make_shared<opt::QuantDtypeCastFusion>());
-    fusion_pm->AddPass(std::make_shared<opt::InferShapePass>(param->fmk_type, param->train_model));
     optimizer->AddPassManager(fusion_pm);
-    if (optimizer->Optimize(old_graph) == nullptr) {
+    if (optimizer->Optimize(func_graph) == nullptr) {
       MS_LOG(ERROR) << "run cast node fusion failed.";
       return RET_ERROR;
     }
   }
 
   if (param->commonQuantParam.is_debug) {
-    status = DoQuantDebug(old_graph, param, origin, origin_lite_model);
+    status = DoQuantDebug(func_graph, param, origin, origin_lite_model);
     if (status != RET_OK) {
       MS_LOG(ERROR) << "Do quant debug failed.";
       return status;
@@ -298,6 +334,19 @@ int DoSingleGraphQuantize(const FuncGraphPtr &old_graph, const std::shared_ptr<C
 }
 
 int QuantizationOptimizer::Run(const mindspore::FuncGraphPtr &func_graph) {
+  if (param_->commonQuantParam.quant_type == quant::QUANT_NONE || param_->fullQuantParam.target_device == ASCEND) {
+    return RET_OK;
+  }
+  // set manager
+  if (func_graph->manager() == nullptr) {
+    auto root_func_manager = Manage(func_graph);
+    std::set<FuncGraphPtr> all_func_graphs = {};
+    lite::GetAllFuncGraph(func_graph, &all_func_graphs);
+    for (auto graph : all_func_graphs) {
+      graph->set_manager(root_func_manager);
+    }
+  }
+
   std::set<FuncGraphPtr> all_func_graphs{};
   quant::GetFuncGraphs(func_graph, &all_func_graphs);
   // Support for multi-subgraph models
@@ -306,6 +355,18 @@ int QuantizationOptimizer::Run(const mindspore::FuncGraphPtr &func_graph) {
     if (status != RET_OK) {
       MS_LOG(ERROR) << "Do Quantize failed.";
       return status;
+    }
+  }
+  if (param_->fullQuantParam.target_device != ASCEND) {
+    auto optimizer = std::make_shared<opt::GraphOptimizer>();
+    CHECK_NULL_RETURN(optimizer);
+    auto fusion_pm = std::make_shared<opt::LitePassManager>("fusion pass manager after quant", false);
+    CHECK_NULL_RETURN(fusion_pm);
+    fusion_pm->AddPass(std::make_shared<opt::InferShapePass>(param_->fmk_type, param_->train_model));
+    optimizer->AddPassManager(fusion_pm);
+    if (optimizer->Optimize(func_graph) == nullptr) {
+      MS_LOG(ERROR) << "run infershape failed.";
+      return RET_ERROR;
     }
   }
   return RET_OK;

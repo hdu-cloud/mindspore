@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(MS_COMPILE_OHOS)
 #include <sys/auxv.h>
 #include <asm/hwcap.h>
 #endif
@@ -33,7 +33,8 @@ namespace lite {
 uint64_t GetTimeUs() {
 #ifdef _MSC_VER
   const int sec_to_us = 1000000;
-  LARGE_INTEGER cur_time, frequency;
+  LARGE_INTEGER cur_time;
+  LARGE_INTEGER frequency;
   QueryPerformanceCounter(&cur_time);
   QueryPerformanceFrequency(&frequency);
   uint64_t sec = cur_time.QuadPart / frequency.QuadPart;
@@ -78,25 +79,101 @@ std::string RemoveSubStr(const std::string &from, const std::string &sub_str, Re
   return result;
 }
 
-std::vector<std::string> StrSplit(const std::string &str, const std::string &pattern) {
+std::vector<std::string> StrSplit(const std::string &str, const std::string &delim) {
   if (str.empty()) {
-    MS_LOG(ERROR) << "string is empty";
     return {};
   }
-  std::string::size_type pos;
-  std::vector<std::string> result;
-  std::string tmpStr(str + pattern);
-  std::string::size_type size = tmpStr.size();
+  auto start = 0U;
+  auto end = str.find(delim);
+  std::vector<std::string> substrs;
+  while (end != std::string::npos) {
+    substrs.push_back(str.substr(start, end - start));
+    start = end + delim.length();
+    end = str.find(delim, start);
+  }
+  substrs.push_back(str.substr(start, end));
+  return substrs;
+}
 
-  for (std::string::size_type i = 0; i < size; i++) {
-    pos = tmpStr.find(pattern, i);
-    if (pos < size) {
-      std::string s = tmpStr.substr(i, pos - i);
-      result.push_back(s);
-      i = pos + pattern.size() - 1;
+bool ParseShapeStr(const std::string &shape_str, std::vector<int64_t> *shape_ptr) {
+  if (shape_ptr == nullptr) {
+    MS_LOG_ERROR << "Input argument shape_ptr is nullptr";
+    return false;
+  }
+  auto str_dims = lite::StrSplit(shape_str, ",");
+  if (str_dims.empty()) {
+    MS_LOG_ERROR << "Invalid input shape dim, dims number cannot be 0";
+    return false;
+  }
+  auto &shape = *shape_ptr;
+  shape.resize(str_dims.size());
+  for (size_t i = 0; i != str_dims.size(); ++i) {
+    int32_t dim = 0;
+    if (!ConvertStrToInt(str_dims[i], &dim)) {
+      MS_LOG_ERROR << "Invalid input shape dim, dim value range or format is invalid: " << shape_str;
+      return false;
+    }
+    if (dim <= 0 && dim != -1) {
+      MS_LOG_ERROR << "Invalid input shape dim, dim can only be -1 when dim < 0： " << shape_str;
+      return false;
+    }
+    shape[i] = dim;
+  }
+  return true;
+}
+
+bool ParseShapeStr(const std::string &shape_str, std::vector<ShapeDim> *shape_ptr) {
+  if (shape_ptr == nullptr) {
+    return false;
+  }
+  auto str_dims = lite::StrSplit(shape_str, ",");
+  if (str_dims.empty()) {
+    MS_LOG_ERROR << "Invalid input shape dim, dims number cannot be 0: " << shape_str;
+    return false;
+  }
+  auto &shape = *shape_ptr;
+  shape.resize(str_dims.size());
+  constexpr size_t range_value_size = 1;
+  constexpr size_t range_min_max_size = 2;
+  for (size_t i = 0; i != str_dims.size(); ++i) {
+    auto dim_range = lite::StrSplit(str_dims[i], "~");
+    if (dim_range.size() == range_value_size) {
+      int32_t dim = 0;
+      if (!ConvertStrToInt(str_dims[i], &dim)) {
+        MS_LOG_ERROR << "Invalid input shape dim, dim value range or format is invalid: " << shape_str;
+        return false;
+      }
+      if (dim <= 0 && dim != -1) {
+        MS_LOG_ERROR << "Invalid input shape dim, dim can only be -1 when dim < 0： " << shape_str;
+        return false;
+      }
+      shape[i].dim = dim;
+      shape[i].min = dim;
+      shape[i].max = dim;
+    } else if (dim_range.size() == range_min_max_size) {
+      int32_t left = 0;
+      if (!ConvertStrToInt(dim_range[0], &left)) {
+        MS_LOG_ERROR << "Invalid input shape dim range, dim value range or format is invalid: " << shape_str;
+        return false;
+      }
+      int32_t right = 0;
+      if (!ConvertStrToInt(dim_range[1], &right)) {
+        MS_LOG_ERROR << "Invalid input shape dim range, dim value range or format is invalid: " << shape_str;
+        return false;
+      }
+      if (left < 1 || right < 1 || left > right) {
+        MS_LOG_ERROR << "Invalid input shape dim range, dim value range or format is invalid: " << shape_str;
+        return false;
+      }
+      shape[i].dim = -1;
+      shape[i].min = left;
+      shape[i].max = right;
+    } else {
+      MS_LOG_ERROR << "Invalid input shape dim range, dim value range or format is invalid: " << shape_str;
+      return false;
     }
   }
-  return result;
+  return true;
 }
 
 bool ConvertStrToInt(const std::string &str, int *value) {
@@ -104,10 +181,43 @@ bool ConvertStrToInt(const std::string &str, int *value) {
     MS_LOG(ERROR) << "Value is nullptr";
     return false;
   }
+  if (str.empty()) {
+    return false;
+  }
   char *ptr = nullptr;
   constexpr int kBase = 10;
-  *value = static_cast<int32_t>(strtol(str.c_str(), &ptr, kBase));
-  return ptr == (str.c_str() + str.size());
+  auto int_val = std::strtol(str.c_str(), &ptr, kBase);
+  if (ptr != (str.c_str() + str.size())) {
+    return false;
+  }
+  if (int_val > INT32_MAX || int_val < INT32_MIN || errno == ERANGE) {
+    MS_LOG(WARNING) << "The range of value is beyond the range of int32";
+    return false;
+  }
+  *value = static_cast<int32_t>(int_val);
+  return true;
+}
+
+bool ConvertStrToInt(const std::string &str, int64_t *value) {
+  if (value == nullptr) {
+    MS_LOG(ERROR) << "Value is nullptr";
+    return false;
+  }
+  if (str.empty()) {
+    return false;
+  }
+  char *ptr = nullptr;
+  constexpr int kBase = 10;
+  auto int_val = std::strtol(str.c_str(), &ptr, kBase);
+  if (ptr != (str.c_str() + str.size())) {
+    return false;
+  }
+  if (errno == ERANGE) {
+    MS_LOG(WARNING) << "The range of value is beyond the range of int64";
+    return false;
+  }
+  *value = int_val;
+  return true;
 }
 
 std::vector<std::string> Tokenize(const std::string &src, const std::string &delimiters,
@@ -141,7 +251,7 @@ std::vector<std::string> Tokenize(const std::string &src, const std::string &del
   return tokens;
 }
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(MS_COMPILE_OHOS)
 uint32_t getHwCap(int hwcap_type) {
   uint32_t ret = getauxval(hwcap_type);
   return ret;
@@ -151,7 +261,7 @@ uint32_t getHwCap(int hwcap_type) {
 bool IsSupportSDot() {
   bool status = false;
 #ifdef ENABLE_ARM64
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(MS_COMPILE_OHOS)
   int hwcap_type = 16;
   uint32_t hwcap = getHwCap(hwcap_type);
   if (hwcap & HWCAP_ASIMDDP) {

@@ -206,7 +206,7 @@ class Module(ModuleBase):
             The ProfileResult reports `repeat` time costs in seconds.
         """
         try:
-            feval = _RPCTimeEvaluator(
+            feval = _TimeEvaluator(
                 self, func_name, ctx.device_type, ctx.device_id, number, repeat, min_repeat_ms,
                 cooldown_interval_ms, repeats_to_cooldown, preproc_name)
 
@@ -268,7 +268,6 @@ def load(path, fmt=""):
     cc.create_shared if the path is in format .o or .tar
     """
     # High level handling for .o and .tar file.
-    # We support this to be consistent with RPC module load.
     if path.endswith(".o"):
         _cc.create_shared(path + ".so", path)
         path += ".so"

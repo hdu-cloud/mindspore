@@ -23,7 +23,7 @@
 #include "pybind11/pybind11.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/backend/data_queue/blocking_queue.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/kernel_info.h"
 
 namespace py = pybind11;
 
@@ -277,10 +277,12 @@ void UpdateGetNextWithDataQueueItems(const AnfNodePtr &data_kernel, const std::v
 void RetryPeakItemFromDataQueue(const AnfNodePtr &data_kernel, const std::shared_ptr<BlockingQueue> &data_queue,
                                 std::vector<device::DataQueueItem> *data) {
   auto front_ret = DataQueueStatus::TIMEOUT;
-  int trys = MAX_POP_TIMES;
-  while (front_ret == DataQueueStatus::TIMEOUT && trys > 0) {
+  auto ms_context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context);
+  uint32_t op_timeout = ms_context->get_param<uint32_t>(MS_CTX_OP_TIMEOUT);
+  time_t start_time = time(nullptr);
+  while (front_ret == DataQueueStatus::TIMEOUT && ((time(nullptr) - start_time) < op_timeout || op_timeout == 0)) {
     front_ret = data_queue->FrontAsync(data);
-    trys--;
   }
   if (front_ret != DataQueueStatus::SUCCESS) {
     if (front_ret == DataQueueStatus::TIMEOUT) {

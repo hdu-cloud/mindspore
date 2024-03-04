@@ -52,9 +52,9 @@ bool SparseAddGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std
   }
   is_need_retrieve_output_shape_ = true;  // SparseAdd is a dynamic shape operator.
   kernel_func_ = func_list_[index].second;
-  indices_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kSparseAddIndex0).first);
-  values_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kSparseAddIndex1).first);
-  threshold_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kSparseAddIndex6).first);
+  indices_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kSparseAddIndex0).dtype);
+  values_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kSparseAddIndex1).dtype);
+  threshold_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kSparseAddIndex6).dtype);
   return true;
 }
 
@@ -97,12 +97,12 @@ int SparseAddGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const st
                                   const std::vector<KernelTensorPtr> &outputs,
                                   const std::map<uint32_t, tensor::TensorPtr> &) {
   ResetResource();
-  outputs_ = outputs;
   auto a_indices_shape = inputs.at(kSparseAddIndex0)->GetShapeVector();
   auto a_values_shape = inputs.at(kSparseAddIndex1)->GetShapeVector();
   auto dense_shape = inputs.at(kSparseAddIndex2)->GetShapeVector();
   auto b_indices_shape = inputs.at(kSparseAddIndex3)->GetShapeVector();
   auto b_values_shape = inputs.at(kSparseAddIndex4)->GetShapeVector();
+  indices_column_ = inputs.at(0)->GetShapeVector()[1];
   if (a_indices_shape.size() >= kDim2 && a_indices_shape.at(1) >= 0) {
     rank_ = LongToSize(a_indices_shape.at(1));
   }
@@ -221,10 +221,11 @@ bool SparseAddGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(cuda_stream_),
                                      "For SparseAdd, cudaStreamSynchronize failed.");
 
-  SparseAdd(a_indices_ptr, a_values_ptr, b_indices_ptr, b_values_ptr, sum_indices_ptr, sum_values_ptr,
-            a_value_index_ptr, b_value_index_ptr, is_from_a_ptr, whole_values_ptr, place_holder_index_ptr, indices_ptr,
-            threshold_valid_ptr, a_indices_num, b_indices_num, res_store_mem_ptr, sum_count_ptr, threshold_ptr,
-            device_id_, cuda_stream_);
+  auto status = SparseAdd(a_indices_ptr, a_values_ptr, b_indices_ptr, b_values_ptr, sum_indices_ptr, sum_values_ptr,
+                          a_value_index_ptr, b_value_index_ptr, is_from_a_ptr, whole_values_ptr, place_holder_index_ptr,
+                          indices_ptr, threshold_valid_ptr, a_indices_num, b_indices_num, res_store_mem_ptr,
+                          sum_count_ptr, threshold_ptr, indices_column_, device_id_, cuda_stream_);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   // Get dynamic shape
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(&real_output_size_, sum_count_ptr, sizeof(int64_t), cudaMemcpyDeviceToHost, cuda_stream_),
@@ -232,6 +233,10 @@ bool SparseAddGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemcpyAsync(sum_shape_ptr, dense_shape_ptr, dense_shape_size_ * indices_size_,
                                                      cudaMemcpyDeviceToDevice, cuda_stream_),
                                      "For SparseAdd, cudaMemcpyAsync failed.");
+  if (cudaStreamQuery(cuda_stream_) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(cuda_stream_),
+                                       "For 'SparseAdd', cuda Stream Sync Failed.");
+  }
   return true;
 }
 
@@ -251,7 +256,7 @@ bool SparseAddGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
       &SparseAddGpuKernelMod::LaunchKernel<index_type, value_type, thr_type>                                        \
   }
 
-void SparseAddGpuKernelMod::SyncData() {
+void SparseAddGpuKernelMod::SyncOutputShape() {
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(cuda_stream_),
                                      "For SparseAdd cudaStreamSynchronized failed.");
   std::vector<int64_t> sum_indices_shape = {real_output_size_, static_cast<int32_t>(rank_)};

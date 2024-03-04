@@ -35,10 +35,10 @@ bool SparseSoftmaxGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  indices_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  values_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).first);
-  shape_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex2).first);
-  output_unit_size_ = abstract::TypeIdSize(kernel_attr.GetOutputAttr(kIndex0).first);
+  indices_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  values_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).dtype);
+  shape_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex2).dtype);
+  output_unit_size_ = abstract::TypeIdSize(kernel_attr.GetOutputAttr(kIndex0).dtype);
   return true;
 }
 
@@ -106,8 +106,9 @@ bool SparseSoftmaxGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inpu
   T *output = GetDeviceAddress<T>(outputs, kIndex0);
   int32_t *reorder_device = GetDeviceAddress<int32_t>(workspace, kIndex0);
   int64_t *indice_to_num_device = GetDeviceAddress<int64_t>(workspace, kIndex1);
-  CalSparseSoftmax(indices, values, output, reorder_device, indice_to_num_device, indice_dims_, values_elements_,
-                   device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = CalSparseSoftmax(indices, values, output, reorder_device, indice_to_num_device, indice_dims_,
+                                 values_elements_, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

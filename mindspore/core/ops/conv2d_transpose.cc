@@ -14,17 +14,25 @@
  * limitations under the License.
  */
 
-#include <map>
-#include <vector>
-#include <string>
-#include <memory>
 #include <set>
+#include <vector>
 
-#include "ops/conv2d_transpose.h"
-#include "ops/op_utils.h"
-#include "ops/grad/conv2d_backprop_input.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/conv2d_transpose.h"
+#include "ops/grad/conv2d_backprop_input.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -173,6 +181,26 @@ std::vector<int64_t> Conv2DTranspose::get_pad_list() const {
   auto value_ptr = GetAttr(kPadList);
   return GetValue<std::vector<int64_t>>(value_ptr);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Conv2DTranspose, prim::kPrimConv2DTranspose, Conv2DBackpropInputInfer, nullptr, true);
+
+class MIND_API Conv2DTransposeInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return Conv2DBackpropInputInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return Conv2DBackpropInputInferType(primitive, input_args);
+  }
+
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return Conv2DBackpropInputInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Conv2DTranspose, prim::kPrimConv2DTranspose, Conv2DTransposeInfer, false);
 }  // namespace ops
 }  // namespace mindspore

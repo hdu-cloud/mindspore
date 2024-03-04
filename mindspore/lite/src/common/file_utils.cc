@@ -149,7 +149,7 @@ char *ReadFileSegment(const std::string &file, int64_t offset, int64_t len) {
   return buf;
 }
 
-char *ReadFile(const char *file, size_t *size) {
+char *ReadFile(const char *file, size_t *size, std::shared_ptr<Allocator> allocator) {
   if (file == nullptr) {
     MS_LOG(ERROR) << "File path is nullptr";
     return nullptr;
@@ -185,8 +185,15 @@ char *ReadFile(const char *file, size_t *size) {
     return nullptr;
   }
   *size = static_cast<size_t>(goffset);
-  auto buf = new (std::nothrow) char[*size];
-  if (buf == nullptr) {
+  char *model_buf = nullptr;
+  if (allocator != nullptr) {
+    MS_LOG(INFO) << "read ms model buf in numa 0.";
+    auto buf = allocator->Malloc(*size);
+    model_buf = static_cast<char *>(buf);
+  } else {
+    model_buf = new (std::nothrow) char[*size];
+  }
+  if (model_buf == nullptr) {
     MS_LOG(ERROR) << "malloc buf failed, file: " << file;
     ifs->close();
     delete ifs;
@@ -194,10 +201,10 @@ char *ReadFile(const char *file, size_t *size) {
   }
 
   ifs->seekg(0, std::ios::beg);
-  (void)ifs->read(buf, static_cast<std::streamsize>(*size));
+  ifs->read(model_buf, *size);
   ifs->close();
   delete ifs;
-  return buf;
+  return model_buf;
 }
 
 std::string RealPath(const char *path) {
@@ -227,35 +234,43 @@ std::string RealPath(const char *path) {
   return res;
 }
 
-int CreateOutputDir(std::string *file_path) {
-  if (file_path->empty()) {
+int CreateDir(const std::string &file_path) {
+  if (file_path.empty()) {
     MS_LOG(ERROR) << "input file path is empty.";
     return RET_ERROR;
-  } else if (file_path->size() >= PATH_MAX) {
+  } else if (file_path.size() >= PATH_MAX) {
     MS_LOG(ERROR) << "input file path is too long";
     return RET_ERROR;
   }
 
-  for (size_t i = 0; i < file_path->size(); i++) {
-    if ((*file_path).at(i) == '\\' || (*file_path).at(i) == '/') {
-      if (AccessFile(file_path->substr(0, i + 1), F_OK) != 0) {
-        int ret = Mkdir(file_path->substr(0, i + 1));
+  for (size_t i = 0; i < file_path.size(); i++) {
+    if (file_path.at(i) == '\\' || file_path.at(i) == '/') {
+      if (AccessFile(file_path.substr(0, i + 1), F_OK) != 0) {
+        int ret = Mkdir(file_path.substr(0, i + 1));
         if (ret != RET_OK) {
-          MS_LOG(ERROR) << "mkdir failed. " << file_path->substr(0, i + 1);
+          MS_LOG(ERROR) << "mkdir failed. " << file_path.substr(0, i + 1);
           return RET_ERROR;
         }
       }
     }
   }
 
-  if (file_path->back() != '\\' && file_path->back() != '/') {
-    if (AccessFile(*file_path, F_OK) != 0) {
-      int ret = Mkdir(*file_path);
+  if (file_path.back() != '\\' && file_path.back() != '/') {
+    if (AccessFile(file_path, F_OK) != 0) {
+      int ret = Mkdir(file_path);
       if (ret != RET_OK) {
         MS_LOG(ERROR) << "mkdir failed. " << file_path;
         return RET_ERROR;
       }
     }
+  }
+  return RET_OK;
+}
+
+int CreateOutputDir(std::string *file_path) {
+  if (CreateDir(*file_path) != RET_OK) {
+    MS_LOG(ERROR) << "Create file dir failed";
+    return RET_ERROR;
   }
 
   int count = 0;

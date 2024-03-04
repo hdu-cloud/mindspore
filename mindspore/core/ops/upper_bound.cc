@@ -15,10 +15,27 @@
  */
 
 #include "ops/upper_bound.h"
-#include "ops/op_utils.h"
+
+#include <map>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -57,9 +74,10 @@ TypePtr UpperBoundInferType(const PrimitivePtr &primitive, const std::vector<Abs
   (void)input_types.emplace("values", values_type);
   (void)CheckAndConvertUtils::CheckTensorTypeSame(input_types, input_valid_types, primitive->name());
   auto dtype_attr = primitive->GetAttr("out_type");
+  MS_EXCEPTION_IF_NULL(dtype_attr);
   auto out_type = dtype_attr->cast<TypePtr>();
-  auto out_type_id = out_type->type_id();
   MS_EXCEPTION_IF_NULL(out_type);
+  auto out_type_id = out_type->type_id();
   if (out_type_id != kInt32->type_id() && out_type_id != kInt64->type_id()) {
     MS_EXCEPTION(TypeError) << "For '" << primitive->name() << "', 'out_type' must be int32 or int64.";
   }
@@ -78,6 +96,23 @@ AbstractBasePtr UpperBoundInfer(const abstract::AnalysisEnginePtr &, const Primi
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(UpperBound, prim::kPrimUpperBound, UpperBoundInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGUpperBoundInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return UpperBoundInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return UpperBoundInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return UpperBoundInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(UpperBound, prim::kPrimUpperBound, AGUpperBoundInfer, false);
 }  // namespace ops
 }  // namespace mindspore

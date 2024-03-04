@@ -15,6 +15,7 @@
  */
 #include <memory>
 #include "tools/optimizer/graph/eliminate_redundant_cast_pass.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "tools/optimizer/graph/infershape_pass.h"
 
 namespace mindspore::opt {
@@ -22,7 +23,8 @@ int EliminateRedundantCastPass::RemoveCastOp(const AnfNodePtr &anf_node, const F
   const int expected_cast_input_count = 3;
   auto cast_cnode = anf_node->cast<CNodePtr>();
   MS_CHECK_TRUE_RET(cast_cnode->inputs().size() == expected_cast_input_count, lite::RET_NO_CHANGE);
-  TypeId first_type, second_type;
+  TypeId first_type;
+  TypeId second_type;
   if (opt::GetDataTypeFromAnfNode(cast_cnode->input(1), &first_type) != RET_OK) {
     MS_LOG(ERROR) << "Failed to get " << anf_node->fullname_with_scope() << " output tensor data type.";
     return lite::RET_NO_CHANGE;
@@ -37,7 +39,7 @@ int EliminateRedundantCastPass::RemoveCastOp(const AnfNodePtr &anf_node, const F
   second_type = static_cast<TypeId>(static_cast<int *>(tensor_info->data_c())[0]);
   if (first_type == second_type) {
     MS_LOG(DEBUG) << "Cast node " << anf_node->fullname_with_scope() << " is eliminated.";
-    this->remove_cnode_.insert(anf_node);
+    (void)this->remove_cnode_.insert(anf_node);
     return manager->Replace(anf_node, cast_cnode->input(1)) ? RET_OK : RET_ERROR;
   }
   return lite::RET_NO_CHANGE;
@@ -45,7 +47,7 @@ int EliminateRedundantCastPass::RemoveCastOp(const AnfNodePtr &anf_node, const F
 
 bool EliminateRedundantCastPass::Run(const FuncGraphPtr &func_graph) {
   MS_ASSERT(func_graph != nullptr);
-  auto infer_shape_pass = std::make_shared<InferShapePass>(this->fmk_type_, this->train_flag_, true);
+  auto infer_shape_pass = std::make_shared<InferShapePass>(this->fmk_type_, this->train_flag_);
   if (!infer_shape_pass->Run(func_graph)) {
     return true;
   }

@@ -18,6 +18,7 @@
 #ifdef _MSC_VER
 #include "nnacl/infer/activation_grad_infer.h"
 #include "nnacl/infer/adam_infer.h"
+#include "nnacl/infer/adam_weight_decay_infer.h"
 #include "nnacl/infer/add_sub_grad_infer.h"
 #include "nnacl/infer/addn_infer.h"
 #include "nnacl/infer/affine_infer.h"
@@ -31,6 +32,7 @@
 #include "nnacl/infer/assign_add_infer.h"
 #include "nnacl/infer/assign_infer.h"
 #include "nnacl/infer/attention_infer.h"
+#include "nnacl/infer/encoder_layer_infer.h"
 #include "nnacl/infer/audio_spectrogram_infer.h"
 #include "nnacl/infer/batch_to_space_infer.h"
 #include "nnacl/infer/bias_grad_infer.h"
@@ -41,6 +43,8 @@
 #include "nnacl/infer/common_infer.h"
 #include "nnacl/infer/concat_infer.h"
 #include "nnacl/infer/constant_of_shape_infer.h"
+#include "nnacl/infer/decoder_layer_infer.h"
+
 #ifdef MSLITE_ENABLE_CONTROLFLOW
 #include "nnacl/infer/control/tensor_array_infer.h"
 #include "nnacl/infer/control/tensor_array_read_infer.h"
@@ -69,6 +73,7 @@
 #include "nnacl/infer/fft_imag_infer.h"
 #include "nnacl/infer/fft_real_infer.h"
 #include "nnacl/infer/fill_infer.h"
+#include "nnacl/infer/fillv2_infer.h"
 #include "nnacl/infer/flatten_grad_infer.h"
 #include "nnacl/infer/flatten_infer.h"
 #include "nnacl/infer/full_connection_infer.h"
@@ -90,14 +95,12 @@
 #include "nnacl/infer/lstm_infer.h"
 #include "nnacl/infer/matmul_infer.h"
 #include "nnacl/infer/max_min_grad_infer.h"
-#include "nnacl/infer/mean_infer.h"
 #include "nnacl/infer/mfcc_infer.h"
 #include "nnacl/infer/nllloss_grad_infer.h"
 #include "nnacl/infer/nllloss_infer.h"
 #include "nnacl/infer/non_max_suppression_infer.h"
 #include "nnacl/infer/one_hot_infer.h"
 #include "nnacl/infer/pad_infer.h"
-#include "nnacl/infer/partial_infer.h"
 #include "nnacl/infer/pooling_grad_infer.h"
 #include "nnacl/infer/pooling_infer.h"
 #include "nnacl/infer/power_infer.h"
@@ -119,7 +122,8 @@
 #include "nnacl/infer/scatter_nd_update_infer.h"
 #include "nnacl/infer/select_infer.h"
 #include "nnacl/infer/sgd_infer.h"
-#ifdef MSLITE_ENABLE_RUNTIME_PASS
+#include "nnacl/infer/invalid_infer.h"
+#ifndef RUNTIME_PASS_CLIP
 #include "nnacl/infer/shape_fusion_infer.h"
 #endif
 #include "nnacl/infer/shape_infer.h"
@@ -157,6 +161,8 @@
 #include "nnacl/infer/unstack_infer.h"
 #include "nnacl/infer/where_infer.h"
 #include "nnacl/infer/isfinite_infer.h"
+#include "nnacl/infer/fse_decoder_infer.h"
+#include "nnacl/infer/custom_gru_infer.h"
 
 InferShape g_infer_func[PrimType_MAX] = {0};
 InferShape g_inner_op_infer_func[PrimType_InnerOpMax - PrimType_InnerOpMin] = {0};
@@ -167,6 +173,7 @@ void RegAllInferFunc1() {
   g_infer_func[PrimType_Activation] = CommonInferShape;
   g_infer_func[PrimType_ActivationGrad] = ActivationGradInferShape;
   g_infer_func[PrimType_Adam] = AdamInferShape;
+  g_infer_func[PrimType_AdamWeightDecay] = AdamWeightDecayInferShape;
   g_infer_func[PrimType_AdderFusion] = Conv2dInferShape;
   g_infer_func[PrimType_AddFusion] = ArithmeticInferShape;
   g_infer_func[PrimType_AddGrad] = AddSubGradInferShape;
@@ -193,7 +200,7 @@ void RegAllInferFunc1() {
   g_infer_func[PrimType_BinaryCrossEntropy] = BinaryCrossEntropyInferShape;
   g_infer_func[PrimType_BinaryCrossEntropyGrad] = CommonInferShape;
   g_infer_func[PrimType_BroadcastTo] = BroadcastToInferShape;
-  g_infer_func[PrimType_Call] = NULL;
+  g_infer_func[PrimType_Call] = InvalidInferShape;
   g_infer_func[PrimType_Cast] = CastInferShape;
   g_infer_func[PrimType_Ceil] = CommonInferShape;
   g_infer_func[PrimType_Clip] = CommonInferShape;
@@ -239,6 +246,7 @@ void RegAllInferFunc2() {
   g_infer_func[PrimType_FftImag] = FftImagInferShape;
   g_infer_func[PrimType_FftReal] = FftRealInferShape;
   g_infer_func[PrimType_Fill] = FillInferShape;
+  g_infer_func[PrimType_FillV2] = FillInferShape;
   g_infer_func[PrimType_Flatten] = FlattenInferShape;
   g_infer_func[PrimType_FlattenGrad] = FlattenGradInferShape;
   g_infer_func[PrimType_Floor] = CommonInferShapeWithOneInput;
@@ -289,7 +297,7 @@ void RegAllInferFunc3() {
   g_infer_func[PrimType_MaximumGrad] = MaxMinGradInferShape;
   g_infer_func[PrimType_MaxPoolFusion] = PoolingInferShape;
   g_infer_func[PrimType_MaxPoolGrad] = PoolingGradInferShape;
-  g_infer_func[PrimType_Merge] = NULL;
+  g_infer_func[PrimType_SwitchLayer] = InvalidInferShape;
   g_infer_func[PrimType_Mfcc] = MfccInferShape;
   g_infer_func[PrimType_MIN] = NULL;
   g_infer_func[PrimType_Minimum] = ArithmeticInferShape;
@@ -307,7 +315,7 @@ void RegAllInferFunc3() {
   g_infer_func[PrimType_OneHot] = OneHotInferShape;
   g_infer_func[PrimType_OnesLike] = NULL;
   g_infer_func[PrimType_PadFusion] = PadInferShape;
-  g_infer_func[PrimType_PartialFusion] = PartialInferShape;
+  g_infer_func[PrimType_PartialFusion] = InvalidInferShape;
   g_infer_func[PrimType_PowerGrad] = CommonGradInferShape;
   g_infer_func[PrimType_PowFusion] = PowerInferShape;
   g_infer_func[PrimType_PReLUFusion] = CommonInferShape;
@@ -375,7 +383,7 @@ void RegAllInferFunc4() {
 }
 
 void RegAllInferFunc5() {
-  g_infer_func[PrimType_Switch] = NULL;
+  g_infer_func[PrimType_Switch] = InvalidInferShape;
 #ifdef MSLITE_ENABLE_CONTROLFLOW
   g_infer_func[PrimType_TensorArray] = TensorArrayInferShape;
   g_infer_func[PrimType_TensorArrayRead] = TensorArrayReadInferShape;
@@ -400,9 +408,13 @@ void RegAllInferFunc5() {
   // fused operators.
   g_inner_op_infer_func[PrimType_Inner_GltextureToOpencl - PrimType_InnerOpMin] = NULL;
   g_inner_op_infer_func[PrimType_Inner_Identity - PrimType_InnerOpMin] = NULL;
-#ifdef MSLITE_ENABLE_RUNTIME_PASS
+#ifndef RUNTIME_PASS_CLIP
   g_inner_op_infer_func[PrimType_Inner_ShapeFusion - PrimType_InnerOpMin] = ShapeFusionInferShape;
+  g_inner_op_infer_func[PrimType_Inner_EncoderLayer - PrimType_InnerOpMin] = EncoderLayerInferShape;
+  g_inner_op_infer_func[PrimType_Inner_DecoderLayer - PrimType_InnerOpMin] = DecoderLayerInferShape;
+  g_inner_op_infer_func[PrimType_Inner_FseDecode - PrimType_InnerOpMin] = FseDecoderInferShape;
 #endif
+  g_inner_op_infer_func[PrimType_Inner_CustomGru - PrimType_InnerOpMin] = CustomGruInferShape;
   g_inner_op_infer_func[PrimType_Inner_ToFormat - PrimType_InnerOpMin] = NULL;
 }
 

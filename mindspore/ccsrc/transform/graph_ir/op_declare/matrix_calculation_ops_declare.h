@@ -17,11 +17,12 @@
 #ifndef MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_MATRIX_CALCULATION_OPS_DECLARE_H_
 #define MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_MATRIX_CALCULATION_OPS_DECLARE_H_
 
-#include "utils/hash_map.h"
+#include "mindspore/ccsrc/include/common/utils/utils.h"
+#include "inc/ops/matrix_calculation_ops.h"
+#include "transform/graph_ir/custom_op_proto/cust_math_ops.h"
 #include "transform/graph_ir/op_declare/op_declare_macro.h"
-#include "ops/matrix_calculation_ops.h"
+#include "utils/hash_map.h"
 
-namespace mindspore::transform {
 DECLARE_OP_ADAPTER(TensorScatterUpdate)
 DECLARE_OP_USE_OUTPUT(TensorScatterUpdate)
 
@@ -30,6 +31,12 @@ DECLARE_OP_USE_OUTPUT(ScatterUpdate)
 
 DECLARE_OP_ADAPTER(ScatterNdUpdate)
 DECLARE_OP_USE_OUTPUT(ScatterNdUpdate)
+
+DECLARE_OP_ADAPTER(ScatterNdMax)
+DECLARE_OP_USE_OUTPUT(ScatterNdMax)
+
+DECLARE_OP_ADAPTER(ScatterNdMin)
+DECLARE_OP_USE_OUTPUT(ScatterNdMin)
 
 DECLARE_OP_ADAPTER(ScatterMax)
 DECLARE_OP_USE_OUTPUT(ScatterMax)
@@ -67,17 +74,23 @@ DECLARE_OP_USE_OUTPUT(MatMul)
 DECLARE_OP_ADAPTER(MatMulV2)
 DECLARE_OP_USE_OUTPUT(MatMulV2)
 
-DECLARE_OP_ADAPTER(MatrixDiag)
-DECLARE_OP_USE_OUTPUT(MatrixDiag)
+DECLARE_OP_ADAPTER(MatrixDiagD)
+DECLARE_OP_USE_OUTPUT(MatrixDiagD)
 
 DECLARE_OP_ADAPTER(MatrixDiagPartD)
 DECLARE_OP_USE_OUTPUT(MatrixDiagPartD)
+
+DECLARE_OP_ADAPTER(MatrixDiagPartV3)
+DECLARE_OP_USE_OUTPUT(MatrixDiagPartV3)
 
 DECLARE_OP_ADAPTER(MatrixSetDiagD)
 DECLARE_OP_USE_OUTPUT(MatrixSetDiagD)
 
 DECLARE_OP_ADAPTER(DiagPart)
 DECLARE_OP_USE_OUTPUT(DiagPart)
+
+DECLARE_OP_ADAPTER(DiagPartD)
+DECLARE_OP_USE_OUTPUT(DiagPartD)
 
 DECLARE_OP_ADAPTER(L2Loss)
 DECLARE_OP_USE_OUTPUT(L2Loss)
@@ -90,5 +103,34 @@ DECLARE_OP_USE_OUTPUT(FullyConnection)
 
 DECLARE_OP_ADAPTER(IndexAdd)
 DECLARE_OP_USE_OUTPUT(IndexAdd)
-}  // namespace mindspore::transform
+
+DECLARE_OP_ADAPTER(ConfusionMatrix)
+DECLARE_OP_USE_OUTPUT(ConfusionMatrix)
+
+DECLARE_OP_ADAPTER(MatrixSetDiagV3)
+DECLARE_OP_USE_OUTPUT(MatrixSetDiagV3)
+
+DECLARE_OP_ADAPTER(TensorScatterAdd)
+DECLARE_OP_USE_OUTPUT(TensorScatterAdd)
+
+DECLARE_OP_ADAPTER(Triu)
+DECLARE_OP_USE_OUTPUT(Triu)
+
+DECLARE_OP_ADAPTER(MatrixDiagV3)
+DECLARE_OP_USE_OUTPUT(MatrixDiagV3)
+
+DECLARE_OP_ADAPTER(Tril)
+DECLARE_OP_USE_OUTPUT(Tril)
+
+DECLARE_OP_ADAPTER(Eye)
+DECLARE_OP_USE_OUTPUT(Eye)
+
+DECLARE_OP_ADAPTER(FillDiagonal)
+DECLARE_OP_USE_OUTPUT(FillDiagonal)
+
+DECLARE_OP_ADAPTER(Trace)
+DECLARE_OP_USE_OUTPUT(Trace)
+
+DECLARE_CUST_OP_ADAPTER(TraceGrad)
+DECLARE_CUST_OP_USE_OUTPUT(TraceGrad)
 #endif  // MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_MATRIX_CALCULATION_OPS_DECLARE_H_

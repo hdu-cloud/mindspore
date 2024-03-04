@@ -150,7 +150,7 @@ class MS_CORE_API BaseRef : public Base {
   /// \param[in] other Define another instance of BaseRef.
   ///
   /// \return The instance of BaseRef.
-  virtual BaseRef &operator=(const BaseRef &other);
+  BaseRef &operator=(const BaseRef &other);
 
   /// \brief The move assignment operator of BaseRef.
   ///
@@ -261,7 +261,7 @@ template <typename T, typename U = typename std::enable_if<is_shared_ptr<T>::val
                                   int64_t>::type = static_cast<int64_t>(0)>
 T cast(const BaseRef &handle) {
   if (!handle.m_ptr) {
-    MS_LOG(EXCEPTION) << "Can not cast to " << typeid(T).name() << ", pointer is null";
+    MS_LOG(INTERNAL_EXCEPTION) << "Can not cast to " << typeid(T).name() << ", pointer is null";
   }
 
   auto m = handle.m_ptr->cast<T>();
@@ -282,7 +282,7 @@ class MS_CORE_API VectorRef : public BaseRef {
 
   // left reference
   VectorRef(const VectorRef &other);
-  virtual VectorRef &operator=(const VectorRef &other);
+  VectorRef &operator=(const VectorRef &other);
 
   ~VectorRef() override = default;
 
@@ -295,14 +295,14 @@ class MS_CORE_API VectorRef : public BaseRef {
 
   const BaseRef &operator[](const std::size_t &dim) const {
     if (dim >= size()) {
-      MS_LOG(EXCEPTION) << "Out of the size of the tuple.";
+      MS_LOG(INTERNAL_EXCEPTION) << "Out of the size of the tuple.";
     }
     return elements_[dim];
   }
 
   BaseRef &operator[](const std::size_t &dim) {
     if (dim >= size()) {
-      MS_LOG(EXCEPTION) << "Out of the size of the tuple.";
+      MS_LOG(INTERNAL_EXCEPTION) << "Out of the size of the tuple.";
     }
     return elements_[dim];
   }
@@ -376,7 +376,7 @@ class MS_CORE_API SetRef : public BaseRef {
 
   // left reference
   SetRef(const SetRef &other);
-  virtual SetRef &operator=(const SetRef &other);
+  SetRef &operator=(const SetRef &other);
 
   bool operator==(const BaseRef &other) const override;
   bool operator==(const SetRef &other) const;

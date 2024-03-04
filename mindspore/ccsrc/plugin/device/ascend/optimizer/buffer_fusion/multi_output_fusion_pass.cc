@@ -15,12 +15,12 @@
  */
 #include "plugin/device/ascend/optimizer/buffer_fusion/multi_output_fusion_pass.h"
 #include <vector>
+#include "mindspore/core/ops/framework_ops.h"
 #include "kernel/kernel_fusion.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "utils/ms_context.h"
-#include "backend/common/optimizer/fusion_id_allocator.h"
+#include "plugin/device/ascend/optimizer/fusion_id_allocator.h"
 
 namespace mindspore {
 namespace opt {
@@ -39,7 +39,7 @@ void MultiOutputFusionPass::MatchMultiOutputEltwise(const CNodePtr &cnode, const
   } else {
     return;
   }
-  while (CheckEltWiseNode(kernel_graph, eltwise_input)) {
+  while (CheckSingleInEltWiseNode(kernel_graph, eltwise_input)) {
     (void)record.insert(eltwise_input);
     if (record.size() == MULTI_ELTWISE_SIZE) {
       break;
@@ -67,8 +67,8 @@ void MultiOutputFusionPass::MatchSingleFusionPattern(const session::KernelGraph 
     }
     auto cnode = node->cast<CNodePtr>();
     MS_EXCEPTION_IF_NULL(cnode);
-    if (AnfAlgo::GetKernelType(cnode) == KernelType::TBE_KERNEL &&
-        AnfAlgo::GetFusionType(cnode) == kernel::FusionType::ELEMWISE && cnode->inputs().size() == ELTWISE_INPUT_SIZE) {
+    if (AnfAlgo::GetKernelType(cnode) == KernelType::TBE_KERNEL && AnfAlgo::GetFusionType(cnode) == kPatternElemWise &&
+        cnode->inputs().size() == ELTWISE_INPUT_SIZE) {
       MatchMultiOutputEltwise(cnode, kernel_graph, candidate_fusion);
     }
   }

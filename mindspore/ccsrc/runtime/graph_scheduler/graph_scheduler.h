@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,8 @@
 #include "utils/hash_map.h"
 #include "utils/hash_set.h"
 #include "runtime/graph_scheduler/control_node_scheduler.h"
-#include "runtime/graph_scheduler/memory_swap_node_scheduler.h"
+#include "runtime/graph_scheduler/any_type_graph_scheduler.h"
+#include "runtime/graph_scheduler/mem_swap_scheduler.h"
 #include "runtime/graph_scheduler/actor/actor_set.h"
 #include "runtime/graph_scheduler/graph_compiler.h"
 #include "runtime/graph_scheduler/actor/actor_dump.h"
@@ -174,7 +175,8 @@ class BACKEND_EXPORT GraphScheduler {
   void LinkControlArrowByAutoMonad(
     AbstractActor *to_actor, const AnfNodePtr &from_node, const KernelGraphPtr &graph,
     const ControlNodeParserPtr &parser = nullptr,
-    const mindspore::HashMap<AnfNodePtr, std::set<AnfNodePtr>> &cnode_to_monad_inputs = {});
+    const mindspore::HashMap<AnfNodePtr, std::set<AnfNodePtr>> &cnode_to_monad_inputs = {},
+    std::set<AnfNodePtr> *checked_nodes = nullptr);
   // The skipped node doesn't run, so need link the control arrow between the inputs and user of skipped node.
   void LinkControlArrowBySkippedNode(AbstractActor *to_actor, const AnfNodePtr &skipped_node,
                                      const KernelGraphPtr &graph) const;
@@ -185,8 +187,10 @@ class BACKEND_EXPORT GraphScheduler {
   void LinkGlobalControlArrow(ActorSet *const actor_set, const GroupNameToCommuNodes &communication_node_groups,
                               const std::vector<AbstractActor *> &auto_monad_actors,
                               const GraphCompilerInfo &graph_compiler_info);
-  void LinkDataArrowForCustomActor(const ActorSet *actor_set, const GraphCompilerInfo &graph_compiler_info) const;
+  void LinkDataArrowForCustomActor(const ActorSet *actor_set, const GraphCompilerInfo &graph_compiler_info);
   void LinkControlArrowForCustomActor(const ActorSet *actor_set, const GraphCompilerInfo &graph_compiler_info);
+  void LinkControlArrowForCustomActorByAutoMonad(const ActorSet *actor_set,
+                                                 const GraphCompilerInfo &graph_compiler_info);
   void LinkControlArrowByExecutionOrder(const KernelGraphPtr &graph,
                                         const GraphCompilerInfo &graph_compiler_info) const;
   // Link the control arrows by the communication nodes in the kernel graph to ensure communication nodes running order.
@@ -205,6 +209,11 @@ class BACKEND_EXPORT GraphScheduler {
 
   // Persist device tensors of graph's some nodes(such as weights and value nodes).
   void PersistDeviceTensor(const GraphCompilerInfo &graph_compiler_info) const;
+  void PersistDeviceTensorForValueNode(const AnfNodePtr &value_node, const KernelGraphPtr &graph,
+                                       const DeviceContext *device_context) const;
+  void PersistDeviceTensorForParameter(const AnfNodePtr &parameter, const KernelGraphPtr &graph,
+                                       const GraphCompilerInfo &graph_compiler_info,
+                                       const DeviceContext *device_context) const;
   // When the parameters of root graph are not in backend kernel graphs, need persist device tensor by this function.
   void PersistDeviceTensorForRootGraphControlNode(const GraphCompilerInfo &graph_compiler_info) const;
 
@@ -227,9 +236,11 @@ class BACKEND_EXPORT GraphScheduler {
 
   // In the control flow, used to build and link control actor.
   ControlNodeScheduler control_node_scheduler_;
+  // If there is an any type input in graph, it will be used to transform it.
+  AnyTypeGraphScheduler any_type_graph_scheduler_;
 
   // Build and link swap actor when memory offload is enabled.
-  MemorySwapNodeScheduler swap_node_scheduler_;
+  MemSwapScheduler swap_node_scheduler_;
 
 #ifdef ENABLE_RPC_ACTOR
   // Return whether the actor set has rpc actors.

@@ -19,6 +19,11 @@
 #include <utility>
 #include <string>
 #include <functional>
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/lite_ops.h"
+#include "mindspore/core/ops/arithmetic_ops.h"
 #include "include/common/thread_pool.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 #include "nnacl/fp32_grad/activation_grad_fp32.h"
@@ -499,7 +504,7 @@ void EltWiseGradCpuTypeFunc<T>::InitFunc(const BaseOperatorPtr &base_operator, c
   if constexpr (std::is_same_v<T, float>) {
     static const std::map<std::string,
                           std::function<void(EltWiseGradCpuTypeFunc *, const T *, const T *, T *, size_t, size_t)>>
-      elt_map{{prim::kPrimRelu6Grad->name(), &EltWiseGradCpuTypeFunc<T>::ReLU6Grad},
+      elt_map{{prim::kPrimReLU6Grad->name(), &EltWiseGradCpuTypeFunc<T>::ReLU6Grad},
               {prim::kPrimSigmoidGrad->name(), &EltWiseGradCpuTypeFunc<T>::SigmoidGrad},
               {prim::kPrimAbsGrad->name(), &EltWiseGradCpuTypeFunc<T>::AbsGrad},
               {prim::kPrimTanhGrad->name(), &EltWiseGradCpuTypeFunc<T>::TanhGrad},
@@ -670,6 +675,13 @@ static std::map<std::string, std::vector<std::pair<KernelAttr, FuncCreator>>> ke
        .AddInputAttr(kNumberTypeFloat32)
        .AddOutputAttr(kNumberTypeFloat32),
      &SpecializeEltWiseGradFunc<float>}}},
+  {kGeLUGrad,
+   {{KernelAttr()
+       .AddInputAttr(kNumberTypeFloat64)
+       .AddInputAttr(kNumberTypeFloat64)
+       .AddInputAttr(kNumberTypeFloat64)
+       .AddOutputAttr(kNumberTypeFloat64),
+     &SpecializeEltWiseGradFunc<double>}}},
   {kAsinGrad,
    {{KernelAttr().AddInputAttr(kNumberTypeFloat32).AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
      &SpecializeEltWiseGradFunc<float>},
@@ -865,7 +877,7 @@ std::vector<KernelAttr> EltWiseGradCpuKernelMod::GetOpSupport() {
 MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeCpuKernelMod, ReluGrad,
                                  []() { return std::make_shared<EltWiseGradCpuKernelMod>(kReluGrad); });
 MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeCpuKernelMod, ReLU6Grad, []() {
-  return std::make_shared<EltWiseGradCpuKernelMod>(prim::kPrimRelu6Grad->name());
+  return std::make_shared<EltWiseGradCpuKernelMod>(prim::kPrimReLU6Grad->name());
 });
 MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeCpuKernelMod, AbsGrad,
                                  []() { return std::make_shared<EltWiseGradCpuKernelMod>(kAbsGrad); });

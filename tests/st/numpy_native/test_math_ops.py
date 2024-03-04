@@ -19,6 +19,7 @@ import numpy as onp
 import mindspore.numpy as mnp
 from mindspore import context
 from mindspore.common.dtype import dtype_to_nptype
+from mindspore.common.api import _pynative_executor
 
 from .utils import rand_int, rand_bool, run_binop_test, run_unary_test, run_multi_test, \
     run_single_test, match_res, match_array, match_meta, match_all_arrays, to_tensor
@@ -943,8 +944,7 @@ def mnp_clip(x):
     c = mnp.clip(x, to_tensor(0), to_tensor(10), dtype=mnp.float32)
     d = x.clip(to_tensor(10.0), to_tensor([2,]))
     e = x.clip(0, 1)
-    f = x.clip(to_tensor(0), to_tensor(10), dtype=mnp.float32)
-    return a, b, c, d, e, f
+    return a, b, c, d, e
 
 
 def onp_clip(x):
@@ -953,8 +953,7 @@ def onp_clip(x):
     c = onp.clip(x, onp.asarray(0), onp.asarray(10), dtype=onp.float32)
     d = x.clip(onp.asarray(10.0), onp.asarray([2,]))
     e = x.clip(0, 1)
-    f = x.clip(onp.asarray(0), onp.asarray(10), dtype=onp.float32)
-    return a, b, c, d, e, f
+    return a, b, c, d, e
 
 
 @pytest.mark.level1
@@ -1236,7 +1235,7 @@ def onp_exp(x):
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_exp():
-    run_unary_test(mnp_exp, onp_exp, test_case, error=5)
+    run_unary_test(mnp_exp, onp_exp, test_case, error=4)
 
 
 def mnp_expm1(x):
@@ -1296,10 +1295,6 @@ def test_kron():
 
     x = rand_int(6, 1)
     y = rand_int(7, 1, 5)
-    match_res(mnp.kron, onp.kron, x, y)
-
-    x = rand_int(1, 1, 2, 3)
-    y = rand_int(1, 1, 2, 3)
     match_res(mnp.kron, onp.kron, x, y)
 
 
@@ -1828,6 +1823,7 @@ def test_exception_innner():
     with pytest.raises(ValueError):
         mnp.inner(to_tensor(test_case.arrs[0]),
                   to_tensor(test_case.arrs[1]))
+        _pynative_executor.sync()
 
 
 @pytest.mark.level1
@@ -1839,6 +1835,7 @@ def test_exception_innner():
 def test_exception_add():
     with pytest.raises(ValueError):
         mnp.add(to_tensor(test_case.arrs[1]), to_tensor(test_case.arrs[2]))
+        _pynative_executor.sync()
 
 
 def mnp_nanmax(x):

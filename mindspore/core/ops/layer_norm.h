@@ -16,12 +16,12 @@
 
 #ifndef MINDSPORE_CORE_OPS_LAYER_NORM_H_
 #define MINDSPORE_CORE_OPS_LAYER_NORM_H_
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -56,8 +56,6 @@ class MIND_API LayerNorm : public BaseOperator {
   float get_epsilon() const;
 };
 
-abstract::AbstractBasePtr LayerNormInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                         const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimLayerNormPtr = std::shared_ptr<LayerNorm>;
 }  // namespace ops
 }  // namespace mindspore

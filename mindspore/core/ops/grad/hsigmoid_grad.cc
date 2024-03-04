@@ -16,32 +16,34 @@
 
 #include "ops/grad/hsigmoid_grad.h"
 
-#include <algorithm>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/lite_ops.h"
+#include "ops/grad/elewise_grad_infer_shape.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::ShapePtr HSigmoidGradInferShape(const PrimitivePtr &primitive,
                                           const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  const int64_t input_num = 2;
-  (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_num,
-                                           primitive->name());
-  for (const auto &item : input_args) {
-    MS_EXCEPTION_IF_NULL(item);
-  }
-  auto input_x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->BuildShape())[kShape];
-  return std::make_shared<abstract::Shape>(input_x_shape);
+  return mindspore::ElewiseGradInferShape(primitive, input_args);
 }
 
 TypePtr HSigmoidGradInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
@@ -64,6 +66,24 @@ AbstractBasePtr HSigmoidGradInfer(const abstract::AnalysisEnginePtr &, const Pri
   MS_EXCEPTION_IF_NULL(infer_shape);
   return std::make_shared<abstract::AbstractTensor>(infer_type, infer_shape->shape());
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(HSigmoidGrad, prim::kPrimHSigmoidGrad, HSigmoidGradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGHSigmoidGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return HSigmoidGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return HSigmoidGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return HSigmoidGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(HSigmoidGrad, prim::kPrimHSigmoidGrad, AGHSigmoidGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

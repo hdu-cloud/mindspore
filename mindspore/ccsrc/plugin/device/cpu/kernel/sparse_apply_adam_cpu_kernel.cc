@@ -20,7 +20,6 @@
 #include <utility>
 #include "kernel/common_utils.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
-#include "utils/ms_utils.h"
 #include "ops/fused_sparse_adam.h"
 
 namespace mindspore {
@@ -164,14 +163,14 @@ int SparseApplyAdamCpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
   }
   if (!IsSameShape(var_shape, m_shape)) {
     MS_LOG(ERROR) << "For '" << kernel_name_
-                  << "', the shape of 'm' must be the same as the shape of 'var', but got the shape of 'm': "
-                  << Vector2Str(m_shape) << " and the shape of 'var': " << Vector2Str(var_shape);
+                  << "', the shape of 'm' must be the same as the shape of 'var', but got the shape of 'm': " << m_shape
+                  << " and the shape of 'var': " << var_shape;
     return KRET_RESIZE_FAILED;
   }
   if (!IsSameShape(var_shape, v_shape)) {
     MS_LOG(ERROR) << "For '" << kernel_name_
-                  << "', the shape of 'v' must be the same as the shape of 'var', but got the shape of 'v': "
-                  << Vector2Str(v_shape) << " and the shape of 'var': " << Vector2Str(var_shape);
+                  << "', the shape of 'v' must be the same as the shape of 'var', but got the shape of 'v': " << v_shape
+                  << " and the shape of 'var': " << var_shape;
     return KRET_RESIZE_FAILED;
   }
   if (var_shape.size() != grad_shape.size()) {

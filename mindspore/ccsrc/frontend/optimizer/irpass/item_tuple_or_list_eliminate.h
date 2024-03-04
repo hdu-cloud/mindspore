@@ -24,6 +24,9 @@
 #include <map>
 
 #include "frontend/optimizer/optimizer_caller.h"
+#include "mindspore/core/ops/structure_ops.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "frontend/optimizer/anf_visitor.h"
 #include "frontend/operator/ops.h"
 #include "frontend/optimizer/irpass.h"
@@ -55,7 +58,8 @@ class TupleListConvertItemIndexToPositive : public AnfVisitor {
     FuncGraphPtr fg = node->func_graph();
     if (is_match_ && fg != nullptr) {
       auto inputs = node->cast<CNodePtr>()->inputs();
-      inputs[2] = NewValueNode(id_);
+      constexpr auto index_input = 2;
+      inputs[index_input] = NewValueNode(id_);
       return fg->NewCNode(inputs);
     }
     return nullptr;
@@ -76,7 +80,7 @@ class TupleListConvertItemIndexToPositive : public AnfVisitor {
       auto idx = GetValue<int64_t>(vnode->value());
       if (idx < 0) {
         auto sequeue_abstract = sequeue_->abstract()->cast<abstract::AbstractSequencePtr>();
-        if (sequeue_abstract == nullptr) {
+        if (sequeue_abstract == nullptr || sequeue_abstract->dynamic_len()) {
           return;
         }
         id_ = idx + SizeToLong(sequeue_abstract->size());
@@ -202,26 +206,26 @@ class TupleListGetitemConstEliminator : public AnfVisitor {
     AnfVisitor::Match(prim::kPrimListGetItem, {IsVNode, IsVNode})(node);
 
     if (is_match_) {
-      auto out = NewValueNode((*tuple_)[id_]);
+      auto out = NewValueNode((*seq_)[id_]);
       out->set_has_new_value(has_new_value_);
-      out->set_abstract((*tuple_)[id_]->ToAbstract());
+      out->set_abstract((*seq_)[id_]->ToAbstract());
       return out;
     }
     return nullptr;
   }
 
   void Visit(const ValueNodePtr &vnode) override {
-    if (IsValueNode<ValueTuple>(vnode)) {
-      tuple_ = GetValueNode<ValueTuplePtr>(vnode);
+    if (IsValueNode<ValueSequence>(vnode)) {
+      seq_ = GetValueNode<ValueSequencePtr>(vnode);
       has_new_value_ = vnode->has_new_value();
     }
-    if (tuple_ != nullptr && IsValueNode<Int64Imm>(vnode)) {
+    if (seq_ != nullptr && IsValueNode<Int64Imm>(vnode)) {
       auto idx = GetValue<int64_t>(vnode->value());
       if (idx < 0) {
-        idx = idx + SizeToLong(tuple_->size());
+        idx = idx + SizeToLong(seq_->size());
       }
       id_ = LongToSize(idx);
-      if (id_ < tuple_->size()) {
+      if (id_ < seq_->size()) {
         is_match_ = true;
       }
     }
@@ -229,14 +233,14 @@ class TupleListGetitemConstEliminator : public AnfVisitor {
 
   void Reset() {
     id_ = 0;
-    tuple_ = nullptr;
+    seq_ = nullptr;
     is_match_ = false;
   }
 
  private:
   bool is_match_{false};
   size_t id_{0};
-  ValueTuplePtr tuple_{nullptr};
+  ValueSequencePtr seq_{nullptr};
   bool has_new_value_{false};
 };
 
@@ -287,8 +291,13 @@ class TupleListSetitemEliminator : public AnfVisitor {
   }
 
   void Visit(const CNodePtr &cnode) override {
-    if (IsPrimitiveCNode(cnode, prim::kPrimMakeTuple) || IsPrimitiveCNode(cnode, prim::kPrimMakeList)) {
-      auto &inputs = cnode->inputs();
+    CNodePtr real_node = cnode;
+    while (IsPrimitiveCNode(real_node, prim::kPrimDepend)) {
+      auto depend = real_node->cast<CNodePtr>();
+      real_node = depend->input(1)->cast<CNodePtr>();
+    }
+    if (IsPrimitiveCNode(real_node, prim::kPrimMakeTuple) || IsPrimitiveCNode(real_node, prim::kPrimMakeList)) {
+      auto &inputs = real_node->inputs();
       (void)std::copy(inputs.begin(), inputs.end(), std::back_inserter(args_));
     }
   }
@@ -297,21 +306,21 @@ class TupleListSetitemEliminator : public AnfVisitor {
     if (args_.empty() && IsValueNode<ValueTuple>(vnode)) {
       auto tuple = GetValueNode<ValueTuplePtr>(vnode);
       if (tuple != nullptr) {
-        args_.emplace_back(NewValueNode(prim::kPrimMakeTuple));
+        (void)args_.emplace_back(NewValueNode(prim::kPrimMakeTuple));
         for (auto &val : tuple->value()) {
           auto val_node = std::make_shared<ValueNode>(val);
           val_node->set_abstract(val->ToAbstract());
-          args_.emplace_back(val_node);
+          (void)args_.emplace_back(val_node);
         }
       }
     } else if (args_.empty() && IsValueNode<ValueList>(vnode)) {
       auto list = GetValueNode<ValueListPtr>(vnode);
       if (list != nullptr) {
-        args_.emplace_back(NewValueNode(prim::kPrimMakeList));
+        (void)args_.emplace_back(NewValueNode(prim::kPrimMakeList));
         for (auto &val : list->value()) {
           auto val_node = std::make_shared<ValueNode>(val);
           val_node->set_abstract(val->ToAbstract());
-          args_.emplace_back(val_node);
+          (void)args_.emplace_back(val_node);
         }
       }
     } else if (!args_.empty() && IsValueNode<Int64Imm>(vnode)) {
@@ -401,11 +410,21 @@ class TupleListGetSetitemEliminator : public AnfVisitor {
     if (vnode == nullptr) {
       return -1;
     }
-    auto index = GetValue<int64_t>(vnode->value());
+    auto value = vnode->value();
+    MS_EXCEPTION_IF_NULL(value);
+    auto int64_imm_value = value->cast_ptr<Int64Imm>();
+    // If index is AnyValue or other not int64 type value, should not optimize the tuple_getitem.
+    if (int64_imm_value == nullptr) {
+      return -1;
+    }
+    auto index = int64_imm_value->value();
     if (index < 0) {
       MS_EXCEPTION_IF_NULL(set_item_tuple_->abstract());
       auto sequence_abstract = set_item_tuple_->abstract()->cast<abstract::AbstractSequencePtr>();
       MS_EXCEPTION_IF_NULL(sequence_abstract);
+      if (sequence_abstract->dynamic_len()) {
+        return -1;
+      }
       index = index + SizeToLong(sequence_abstract->size());
     }
     if (index < 0) {
@@ -488,7 +507,8 @@ class TupleListGetitemDependReorder : public AnfVisitor {
 
   void Visit(const CNodePtr &cnode) override {
     // {prim::kPrimDepend, X, Y}
-    if (IsPrimitiveCNode(cnode, prim::kPrimDepend) && cnode->size() == 3) {
+    constexpr auto depend_input_size = 3;
+    if (IsPrimitiveCNode(cnode, prim::kPrimDepend) && cnode->size() == depend_input_size) {
       x_ = cnode->input(1);
       y_ = cnode->input(2);
     }

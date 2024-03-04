@@ -104,6 +104,14 @@ def names():
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> import mindspore as ms
+        >>> ms.train.names()
+        ['F1', 'acc', 'accuracy', 'auc', 'bleu_score', 'confusion_matrix', 'confusion_matrix_metric',
+        'cosine_similarity', 'dice', 'hausdorff_distance', 'loss', 'mae', 'mean_surface_distance', 'mse',
+        'occlusion_sensitivity', 'perplexity', 'precision', 'recall', 'roc', 'root_mean_square_distance',
+        'top_1_accuracy', 'top_5_accuracy', 'topk']
     """
     return sorted(__factory__.keys())
 
@@ -113,7 +121,7 @@ def get_metric_fn(name, *args, **kwargs):
     Gets the metric method based on the input name.
 
     Args:
-        name (str): The name of metric method. Names can be obtained by `mindspore.train.names` .
+        name (str): The name of metric method. Names can be obtained by :func:`mindspore.train.names` .
             object for the currently supported metrics.
         args: Arguments for the metric function.
         kwargs: Keyword arguments for the metric function.
@@ -125,8 +133,8 @@ def get_metric_fn(name, *args, **kwargs):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> from mindspore import nn
-        >>> metric = nn.get_metric_fn('precision', eval_type='classification')
+        >>> from mindspore.train import get_metric_fn
+        >>> metric = get_metric_fn('precision', eval_type='classification')
     """
     if name not in __factory__:
         raise KeyError(f"For 'get_metric_fn', unsupported metric {name}, please refer to official website "

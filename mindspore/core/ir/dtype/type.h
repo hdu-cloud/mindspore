@@ -30,7 +30,6 @@
 #include <vector>
 #include <type_traits>
 #include <algorithm>
-
 #include "utils/hash_map.h"
 #include "base/base.h"
 #include "ir/named.h"
@@ -42,6 +41,7 @@ namespace mindspore {
 TypeId IntBitsToTypeId(const int nbits);
 TypeId UIntBitsToTypeId(const int nbits);
 TypeId FloatBitsToTypeId(const int nbits);
+TypeId BFloatBitsToTypeId(const int nbits);
 TypeId ComplexBitsToTypeId(const int nbits);
 
 /// \brief Get label of the input TypeId.

@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@
 #include <fstream>
 #include <string>
 #include <random>
+#include "ops/ascend_op_name.h"
 #include "utils/system/env.h"
 #include "utils/system/file_system.h"
 #include "utils/log_adapter.h"
@@ -38,6 +39,17 @@ bool Common::NeedMapping(const std::string &origin_name) {
   }
 #endif
   return false;
+}
+
+std::string Common::GetRandomStr(size_t str_len) {
+  std::random_device rd;
+  std::mt19937 generator(rd());
+  std::uniform_int_distribution<int> distribution{'a', 'z'};
+
+  std::string rand_str(str_len, '\0');
+  std::generate(rand_str.begin(), rand_str.end(), [&distribution, &generator]() { return distribution(generator); });
+
+  return rand_str;
 }
 
 std::string Common::GetRandomStr() {
@@ -304,7 +316,7 @@ bool Common::SaveStringToFile(const std::string filename, const std::string stri
     MS_LOG(ERROR) << "File path " << filename << " is too long.";
     return false;
   }
-  auto real_path = CreatePrefixPath(filename);
+  auto real_path = CreatePrefixPath(filename, true);
   if (!real_path.has_value()) {
     MS_LOG(ERROR) << "Get real path failed. path=" << filename;
     return false;
@@ -337,15 +349,17 @@ std::string Common::GetUserDefineCachePath() {
   if (config_path != "") {
     return config_path;
   }
-  const char *value = ::getenv(kCOMPILER_CACHE_PATH);
-  if (value == nullptr) {
+  config_path = MsContext::GetInstance()->get_param<std::string>(MS_CTX_COMPILE_CACHE_PATH);
+  if (config_path.empty()) {
+    config_path = common::GetEnv(kCompilerCachePath);
+  }
+  if (config_path.empty()) {
     config_path = "./";
   } else {
-    config_path = std::string(value);
-    (void)FileUtils::CreateNotExistDirs(config_path);
-    if (config_path[config_path.length() - 1] != '/') {
-      config_path += "/";
-    }
+    (void)FileUtils::CreateNotExistDirs(config_path, true);
+  }
+  if (config_path[config_path.length() - 1] != '/') {
+    config_path += "/";
   }
   return config_path;
 }
@@ -369,7 +383,7 @@ std::string Common::GetKernelMetaTempDir() {
     rank_id_str = "0";
   }
   auto kernel_meta_temp_dir = cache_path + +"rank_" + rank_id_str + "/kernel_meta_temp_dir/";
-  (void)FileUtils::CreateNotExistDirs(kernel_meta_temp_dir);
+  (void)FileUtils::CreateNotExistDirs(kernel_meta_temp_dir, true);
   return kernel_meta_temp_dir;
 }
 
@@ -398,17 +412,18 @@ struct GlogLogDirRegister {
       if (logtostderr_str != "0") {
         return;
       }
-#ifndef BUILD_LITE
       const char *rank_id = std::getenv("RANK_ID");
       const char *gpu_rank_id = std::getenv("OMPI_COMM_WORLD_RANK");
+      const char *ms_node_id = std::getenv("MS_NODE_ID");
       std::string rank = "0";
       if (rank_id != nullptr) {
         rank = std::string(rank_id);
       } else if (gpu_rank_id != nullptr) {
         rank = std::string(gpu_rank_id);
+      } else if (ms_node_id != nullptr) {
+        rank = std::string(ms_node_id);
       }
       log_dir_str += "/rank_" + rank + "/logs/";
-#endif
       auto real_log_dir_str = Common::CreatePrefixPath(log_dir_str, true);
       // While 'GLOG_logtostderr' = 0, logs output to files. 'GLOG_log_dir' must be specified as the path of log files.
       // Here can not throw exception and use python to catch, because the PYBIND11_MODULE is not yet been initialed.
@@ -416,13 +431,11 @@ struct GlogLogDirRegister {
         MS_LOG(ERROR) << "The path of log files, which set by 'GLOG_log_dir', is invalid.";
         exit(EXIT_FAILURE);
       }
-#ifndef BUILD_LITE
       if (rank_id != nullptr && gpu_rank_id != nullptr && std::string(rank_id) != std::string(gpu_rank_id)) {
         MS_LOG(WARNING) << "Environment variables RANK_ID and OMPI_COMM_WORLD_RANK set by different values: RANK_ID="
                         << std::string(rank_id) << ", OMPI_COMM_WORLD_RANK=" << std::string(gpu_rank_id)
                         << ". We will use RANK_ID to get rank id by default.";
       }
-#endif
     }
   }
 } _glog_log_dir_register;

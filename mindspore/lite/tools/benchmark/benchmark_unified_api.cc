@@ -26,6 +26,7 @@
 #include "src/common/common.h"
 #include "src/tensor.h"
 #include "tools/common/string_util.h"
+#include "nnacl/nnacl_common.h"
 #ifdef ENABLE_ARM64
 #include <linux/perf_event.h>
 #include <sys/ioctl.h>
@@ -42,6 +43,7 @@
 #include <thread>
 #include "src/common/config_file.h"
 #endif
+
 namespace mindspore {
 constexpr size_t kDataToStringMaxNum = 40;
 constexpr int kPrintDataNum = 20;
@@ -297,8 +299,8 @@ void BenchmarkUnifiedApi::UpdateConfigInfo() {
     return;
   }
   if (env[0] == WIPE_DEEP_CONFIG_ENV) {
-    ms_model_.UpdateConfig(kMSCache, std::make_pair(kMSCacheVocabSize, WIPE_DEEP_CONFIG_VOCAB_SIZE));
-    ms_model_.UpdateConfig(kMSCache, std::make_pair(kMSCacheDeviceSize, WIPE_DEEP_CONFIG_DEVICE_CACHE_SIZE));
+    ms_model_.UpdateConfig(kMSCacheSection, std::make_pair(kMSCacheVocabSizeKey, WIPE_DEEP_CONFIG_VOCAB_SIZE));
+    ms_model_.UpdateConfig(kMSCacheSection, std::make_pair(kMSCacheDeviceSizeKey, WIPE_DEEP_CONFIG_DEVICE_CACHE_SIZE));
   }
   return;
 }
@@ -382,7 +384,7 @@ int BenchmarkUnifiedApi::GetDataTypeByTensorName(const std::string &tensor_name)
       return static_cast<int>(tensor.DataType());
     }
   }
-  MS_LOG(ERROR) << "not find tensor name in model output.";
+  MS_LOG(ERROR) << "not find tensor name : " << tensor_name << " in model output.";
   return static_cast<int>(DataType::kTypeUnknown);
 #endif
   return static_cast<int>(ms_model_.GetOutputByTensorName(tensor_name).DataType());
@@ -428,71 +430,100 @@ void BenchmarkUnifiedApi::UpdateDistributionName(const std::shared_ptr<mindspore
   return;
 }
 
+void BenchmarkUnifiedApi::InitMSContextForGPU(const std::shared_ptr<mindspore::Context> &context,
+                                              std::vector<std::shared_ptr<DeviceInfoContext>> *device_list) {
+  std::shared_ptr<GPUDeviceInfo> gpu_device_info = std::make_shared<GPUDeviceInfo>();
+  gpu_device_info->SetEnableFP16(flags_->enable_fp16_);
+  uint32_t device_id = 0;
+  auto device_id_env = std::getenv("GPU_DEVICE_ID");
+  if (device_id_env != nullptr) {
+    try {
+      device_id = static_cast<uint32_t>(std::stoul(device_id_env));
+    } catch (std::invalid_argument &e) {
+      MS_LOG(WARNING) << "Invalid device id env:" << device_id_env << ". Set default device id 0.";
+    }
+    MS_LOG(INFO) << "GPU device_id = " << device_id;
+  }
+  gpu_device_info->SetDeviceID(device_id);
+  if (flags_->device_id_ >= 0) {
+    gpu_device_info->SetDeviceID(flags_->device_id_);
+    MS_LOG(INFO) << "GPU device_id = " << flags_->device_id_;
+  }
+  if (flags_->enable_gl_texture_) {
+    gpu_device_info->SetEnableGLTexture(flags_->enable_gl_texture_);
+
+    auto gl_context = eglGetCurrentContext();
+    gpu_device_info->SetGLContext(gl_context);
+
+    auto gl_display = eglGetCurrentDisplay();
+    gpu_device_info->SetGLDisplay(gl_display);
+  } else {
+    gpu_device_info->SetProvider("tensorrt");
+    gpu_device_info->SetAllocator(nullptr);
+  }
+  device_list->push_back(gpu_device_info);
+}
+
+void BenchmarkUnifiedApi::InitMSContextForAscend(const std::shared_ptr<mindspore::Context> &context,
+                                                 std::vector<std::shared_ptr<DeviceInfoContext>> *device_list) {
+  uint32_t device_id = 0;
+  auto device_id_env = std::getenv("ASCEND_DEVICE_ID");
+  if (device_id_env != nullptr) {
+    try {
+      device_id = static_cast<uint32_t>(std::stoul(device_id_env));
+    } catch (std::invalid_argument &e) {
+      MS_LOG(WARNING) << "Invalid device id env:" << device_id_env << ". Set default device id 0.";
+    }
+    MS_LOG(INFO) << "Ascend device_id = " << device_id;
+  }
+  std::shared_ptr<AscendDeviceInfo> ascend_device_info = std::make_shared<AscendDeviceInfo>();
+  ascend_device_info->SetDeviceID(device_id);
+  ascend_device_info->SetProvider(flags_->provider_);
+  auto back_policy_env = std::getenv("ASCEND_BACK_POLICY");
+  if (back_policy_env != nullptr) {
+    ascend_device_info->SetProvider(back_policy_env);
+  }
+#ifdef ENABLE_CLOUD_FUSION_INFERENCE
+  if (flags_->device_id_ >= 0 && flags_->rank_id_ >= 0) {
+    ascend_device_info->SetDeviceID(flags_->device_id_);
+    ascend_device_info->SetRankID(flags_->rank_id_);
+    ascend_device_info->SetProvider("ge");
+  }
+#endif
+  device_list->push_back(ascend_device_info);
+}
+
 int BenchmarkUnifiedApi::InitMSContext(const std::shared_ptr<mindspore::Context> &context) {
   context->SetThreadNum(flags_->num_threads_);
-  context->SetEnableParallel(flags_->enable_parallel_);
+  context->SetGroupInfoFile(flags_->group_info_file_);
   context->SetThreadAffinity(flags_->cpu_bind_mode_);
   context->SetInterOpParallelNum(flags_->inter_op_parallel_num_);
   if (!flags_->core_list_.empty()) {
     context->SetThreadAffinity(flags_->core_list_);
   }
+#ifndef ENABLE_CLOUD_FUSION_INFERENCE
+  if (flags_->delegate_mode_ == "CoreML") {
+    context->SetBuiltInDelegate(kCoreML);
+  } else if (flags_->delegate_mode_ == "NNAPI") {
+    context->SetBuiltInDelegate(kNNAPI);
+  }
+  context->SetEnableParallel(flags_->enable_parallel_);
+#endif
 
   auto &device_list = context->MutableDeviceInfo();
-
-  if (flags_->device_ == "GPU") {
-    std::shared_ptr<GPUDeviceInfo> gpu_device_info = std::make_shared<GPUDeviceInfo>();
-    gpu_device_info->SetEnableFP16(flags_->enable_fp16_);
-    uint32_t device_id = 0;
-    auto device_id_env = std::getenv("GPU_DEVICE_ID");
-    if (device_id_env != nullptr) {
-      try {
-        device_id = static_cast<uint32_t>(std::stoul(device_id_env));
-      } catch (std::invalid_argument &e) {
-        MS_LOG(WARNING) << "Invalid device id env:" << device_id_env << ". Set default device id 0.";
-      }
-      MS_LOG(INFO) << "GPU device_id = " << device_id;
-    }
-    gpu_device_info->SetDeviceID(device_id);
-    if (flags_->enable_gl_texture_) {
-      gpu_device_info->SetEnableGLTexture(flags_->enable_gl_texture_);
-
-      auto gl_context = eglGetCurrentContext();
-      gpu_device_info->SetGLContext(gl_context);
-
-      auto gl_display = eglGetCurrentDisplay();
-      gpu_device_info->SetGLDisplay(gl_display);
-    } else {
-      gpu_device_info->SetProvider("tensorrt");
-      gpu_device_info->SetAllocator(nullptr);
-    }
-    device_list.push_back(gpu_device_info);
+  if (flags_->device_ == "GPU" || flags_->device_ == "Auto") {
+    InitMSContextForGPU(context, &device_list);
   }
 
-  if (flags_->device_ == "NPU") {
+  if (flags_->device_ == "NPU" || flags_->device_ == "Auto") {
     std::shared_ptr<KirinNPUDeviceInfo> npu_device_info = std::make_shared<KirinNPUDeviceInfo>();
     npu_device_info->SetEnableFP16(flags_->enable_fp16_);
     npu_device_info->SetFrequency(kFrequencyDefault);
     device_list.push_back(npu_device_info);
   }
 
-  if (flags_->device_ == "Ascend310" || flags_->device_ == "Ascend310P") {
-    uint32_t device_id = 0;
-    auto device_id_env = std::getenv("ASCEND_DEVICE_ID");
-    if (device_id_env != nullptr) {
-      try {
-        device_id = static_cast<uint32_t>(std::stoul(device_id_env));
-      } catch (std::invalid_argument &e) {
-        MS_LOG(WARNING) << "Invalid device id env:" << device_id_env << ". Set default device id 0.";
-      }
-      MS_LOG(INFO) << "Ascend device_id = " << device_id;
-    }
-    std::shared_ptr<AscendDeviceInfo> ascend_device_info = std::make_shared<AscendDeviceInfo>();
-    ascend_device_info->SetDeviceID(device_id);
-    auto back_policy_env = std::getenv("ASCEND_BACK_POLICY");
-    if (back_policy_env != nullptr) {
-      ascend_device_info->SetProvider(back_policy_env);
-    }
-    device_list.push_back(ascend_device_info);
+  if (flags_->device_ == "Ascend" || flags_->device_ == "Auto") {
+    InitMSContextForAscend(context, &device_list);
   }
 
   // CPU priority is behind GPU and NPU
@@ -520,7 +551,10 @@ int BenchmarkUnifiedApi::CompareOutputForModelPool(std::vector<mindspore::MSTens
       MS_LOG(ERROR) << "Get tensor failed, tensor name: " << tensor_name;
       return RET_ERROR;
     }
-    int ret = CompareDataGetTotalBiasAndSize(tensor_name, &tensor, &total_bias, &total_size);
+    constexpr float kParallelRelative = 1e-7;
+    constexpr float kParallelAbsolute = 1e-10;
+    int ret = CompareDataGetTotalBiasAndSize(tensor_name, &tensor, &total_bias, &total_size, kParallelRelative,
+                                             kParallelAbsolute);
     if (ret != RET_OK) {
       MS_LOG(ERROR) << "Error in CompareData";
       std::cerr << "Error in CompareData" << std::endl;
@@ -568,12 +602,27 @@ void Convert2Float32(float *__restrict out, const uint16_t in) {
   *(out) = static_cast<float>(t1);
 }
 
+namespace {
+template <typename T>
+bool VectorValueCompare(const std::vector<T> &vec1, const std::vector<T> &vec2) {
+  if (vec1.size() != vec2.size()) {
+    return false;
+  }
+  for (auto &ele : vec1) {
+    if (!IsContain(vec2, ele)) {
+      return false;
+    }
+  }
+  return true;
+}
+}  // namespace
+
 int BenchmarkUnifiedApi::CompareOutput() {
   std::cout << "================ Comparing Output data ================" << std::endl;
   float total_bias = 0;
   int total_size = 0;
   // check the output tensor name.
-  if (this->benchmark_tensor_names_ != ms_model_.GetOutputTensorNames()) {
+  if (!VectorValueCompare(this->benchmark_tensor_names_, ms_model_.GetOutputTensorNames())) {
     MS_LOG(ERROR) << "The output tensor name is wrong.";
     return RET_ERROR;
   }
@@ -694,7 +743,8 @@ int BenchmarkUnifiedApi::CompareOutputByCosineDistance(float cosine_distance_thr
 }
 
 int BenchmarkUnifiedApi::CompareDataGetTotalBiasAndSize(const std::string &name, mindspore::MSTensor *tensor,
-                                                        float *total_bias, int *total_size) {
+                                                        float *total_bias, int *total_size, float relative_tolerance,
+                                                        float absolute_tolerance) {
   float bias = 0;
   auto mutableData = tensor->MutableData();
   if (mutableData == nullptr) {
@@ -704,27 +754,47 @@ int BenchmarkUnifiedApi::CompareDataGetTotalBiasAndSize(const std::string &name,
   switch (static_cast<int>(tensor->DataType())) {
     case TypeId::kNumberTypeFloat:
     case TypeId::kNumberTypeFloat32: {
-      bias = CompareData<float, int64_t>(name, tensor->Shape(), mutableData);
+      bias = CompareData<float, int64_t>(name, tensor->Shape(), mutableData, relative_tolerance, absolute_tolerance);
       break;
     }
     case TypeId::kNumberTypeInt8: {
-      bias = CompareData<int8_t, int64_t>(name, tensor->Shape(), mutableData);
+      bias = CompareData<int8_t, int64_t>(name, tensor->Shape(), mutableData, relative_tolerance, absolute_tolerance);
       break;
     }
     case TypeId::kNumberTypeUInt8: {
-      bias = CompareData<uint8_t, int64_t>(name, tensor->Shape(), mutableData);
+      bias = CompareData<uint8_t, int64_t>(name, tensor->Shape(), mutableData, relative_tolerance, absolute_tolerance);
       break;
     }
     case TypeId::kNumberTypeInt32: {
-      bias = CompareData<int32_t, int64_t>(name, tensor->Shape(), mutableData);
+      bias = CompareData<int32_t, int64_t>(name, tensor->Shape(), mutableData, relative_tolerance, absolute_tolerance);
       break;
     }
     case TypeId::kNumberTypeInt16: {
-      bias = CompareData<int16_t, int64_t>(name, tensor->Shape(), mutableData);
+      bias = CompareData<int16_t, int64_t>(name, tensor->Shape(), mutableData, relative_tolerance, absolute_tolerance);
       break;
     }
     case TypeId::kNumberTypeBool: {
-      bias = CompareData<bool, int64_t>(name, tensor->Shape(), mutableData);
+      bias = CompareData<bool, int64_t>(name, tensor->Shape(), mutableData, relative_tolerance, absolute_tolerance);
+      break;
+    }
+    case TypeId::kNumberTypeFloat16: {
+      size_t shapeSize = 1;
+      for (int64_t dim : tensor->Shape()) {
+        if (dim <= 0) {
+          MS_LOG(ERROR) << "The shape of output " << name << " should be great than 0 after inference, got "
+                        << tensor->Shape();
+          return RET_ERROR;
+        }
+        MS_CHECK_FALSE_MSG(SIZE_MUL_OVERFLOW(shapeSize, static_cast<size_t>(dim)), RET_ERROR, "mul overflow");
+        shapeSize *= static_cast<size_t>(dim);
+      }
+      auto *floatArr = new float[shapeSize];
+      for (size_t i = 0; i < shapeSize; ++i) {
+        uint16_t tmpInt = reinterpret_cast<uint16_t *>(mutableData)[i];
+        floatArr[i] = ShortToFloat32(tmpInt);
+      }
+      bias = CompareData<float, int64_t>(name, tensor->Shape(), floatArr);
+      delete[] floatArr;
       break;
     }
     default:
@@ -835,7 +905,7 @@ int BenchmarkUnifiedApi::MarkPerformance() {
 
   MS_LOG(INFO) << "Running benchmark loops...";
   std::cout << "Running benchmark loops..." << std::endl;
-  uint64_t time_min = 1000000;
+  uint64_t time_min = UINT64_MAX;
   uint64_t time_max = 0;
   uint64_t time_avg = 0;
 
@@ -1070,6 +1140,19 @@ int BenchmarkUnifiedApi::AddConfigInfo(const std::shared_ptr<RunnerConfig> &runn
   if (!flags_->config_file_.empty()) {
     runner_config->SetConfigPath(flags_->config_file_);
   }
+  std::map<std::string, std::string> config;
+  if (flags_->enable_shared_thread_pool_) {
+    config[kEnableSharedThreadPoolKey] = "true";
+    if (!flags_->thread_num_limit_per_worker_.empty()) {
+      config[kThreadNumLimitPerWorkerKey] = flags_->thread_num_limit_per_worker_;
+    }
+    if (!flags_->thread_num_remaining_per_worker_.empty()) {
+      config[kThreadNumRemainingPerWorkerKey] = flags_->thread_num_remaining_per_worker_;
+    }
+  } else {
+    config[kEnableSharedThreadPoolKey] = "false";
+  }
+  runner_config->SetConfigInfo(kSharedThreadPoolSection, config);
   return RET_OK;
 }
 
@@ -1556,9 +1639,10 @@ std::string GenerateOutputFileName(mindspore::MSTensor *tensor, const std::strin
   auto tensor_format = tensor->format();
   if (kTensorFormatMap.find(tensor_format) != kTensorFormatMap.end()) {
     file_name += "_" + kTensorFormatMap.at(tensor_format) + ".bin";
+  } else {
+    file_name += +".bin";
   }
 
-  file_name += +".bin";
   return file_name;
 }
 #endif
@@ -1641,6 +1725,9 @@ int BenchmarkUnifiedApi::InitDumpTensorDataCallbackParameter() {
 
 BenchmarkUnifiedApi::~BenchmarkUnifiedApi() {
 #ifdef PARALLEL_INFERENCE
+  if (!flags_->enable_parallel_predict_) {
+    return;
+  }
   for (auto tensor : ms_inputs_for_api_) {
     auto data = tensor.MutableData();
     if (data != nullptr) {

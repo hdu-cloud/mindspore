@@ -25,13 +25,12 @@
 #include "tools/converter/legacy_optimizer/graph/isolated_node_remove_pass.h"
 #include "tools/converter/legacy_optimizer/graph/dropout_node_remove_pass.h"
 #include "tools/converter/legacy_optimizer/graph/topological_sort_pass.h"
-#include "tools/converter/legacy_optimizer/graph/tensor_quant_pass.h"
 #include "tools/converter/legacy_optimizer/graph/tensor_name_pass.h"
-#include "tools/converter/legacy_optimizer/graph/infer_quant_param_pass.h"
 #include "tools/converter/legacy_optimizer/graph/set_unused_quant_param_to_default_pass.h"
 #include "tools/converter/legacy_optimizer/graph/convert_fp32_to_fp16_pass.h"
 #include "tools/converter/legacy_optimizer/graph/subgraph_node_pass.h"
 #include "tools/converter/legacy_optimizer/graph/subgraph_tensor_pass.h"
+#include "tools/converter/legacy_optimizer/graph/const_node_reorder_pass.h"
 
 using std::string;
 namespace mindspore::lite {
@@ -53,8 +52,8 @@ std::vector<schema::CNodeT *> GetGraphNodes(const schema::MetaGraphT &graph_defT
 int QuantTransform(const std::shared_ptr<ConverterPara> &param, schema::MetaGraphT *graph_defT) {
   MS_ASSERT(param != nullptr && graph_defT != nullptr);
   // quantization
-  if (param->commonQuantParam.quant_type == schema::QuantType_QUANT_NONE ||
-      param->commonQuantParam.quant_type == schema::QuantType_QUANT_WEIGHT) {
+  if (param->commonQuantParam.quant_type == quant::QUANT_NONE ||
+      param->commonQuantParam.quant_type == quant::QUANT_WEIGHT) {
     {
       // quantization
       // init old node indices
@@ -112,8 +111,8 @@ int GraphDefTransform::Transform(const std::shared_ptr<ConverterPara> &param) {
     }
   }
 
-  auto ret = QuantTransform(param, graph_defT_);
-  if (ret != RET_OK && status != RET_NO_CHANGE) {
+  status = QuantTransform(param, graph_defT_);
+  if (status != RET_OK && status != RET_NO_CHANGE) {
     return status;
   }
 
@@ -125,6 +124,7 @@ int GraphDefTransform::Transform(const std::shared_ptr<ConverterPara> &param) {
     nested_loop_optimizer.AddPass(new (std::nothrow) SubgraphTensorPass());
     nested_loop_optimizer.AddPass(new (std::nothrow) SubgraphNodePass(old_nodes));
     nested_loop_optimizer.AddPass(new (std::nothrow) TopologicalSortPass());
+    nested_loop_optimizer.AddPass(new (std::nothrow) ConstNodeReorderPass());
     status = nested_loop_optimizer.Run(graph_defT_);
     if (status != RET_OK && status != RET_NO_CHANGE) {
       MS_LOG(ERROR) << "Run nested_loop_optimizer graphPasses Failed";

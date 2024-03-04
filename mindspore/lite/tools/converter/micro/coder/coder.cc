@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,9 +24,11 @@
 #include "src/common/file_utils.h"
 #include "src/common/utils.h"
 #include "tools/converter/micro/coder/config.h"
+#include "tools/converter/micro/coder/opcoders/parallel.h"
 
 namespace mindspore::lite::micro {
 namespace {
+static int kModelIndex = 0;
 std::shared_ptr<CoderSession> CreateCoderSession() {
   std::shared_ptr<CoderSession> session;
   auto code_mode = Configurator::GetInstance()->code_mode();
@@ -41,24 +43,25 @@ std::shared_ptr<CoderSession> CreateCoderSession() {
   return session;
 }
 }  // namespace
-int Coder::Run(const void *model_buff, size_t size) {
+int Coder::Run(const void *model_buff, size_t size, const std::string &model_name, bool end_flag, bool enable_fp16) {
   session_ = CreateCoderSession();
   if (session_ == nullptr) {
     MS_LOG(ERROR) << "new session failed while running!";
     return RET_ERROR;
   }
-  STATUS status = session_->Init(model_buff, size);
+  STATUS status = session_->Init(model_buff, size, kModelIndex, end_flag, enable_fp16);
   if (status != RET_OK) {
     MS_LOG(ERROR) << "Init session failed!";
     return RET_ERROR;
   }
+  kModelIndex++;
 
   status = session_->Build();
   if (status != RET_OK) {
     MS_LOG(ERROR) << "Compile graph failed!";
     return status;
   }
-  status = session_->Run();
+  status = session_->Run(model_name);
   if (status != RET_OK) {
     MS_LOG(ERROR) << "Generate Code Files error!" << status;
     return status;
@@ -67,6 +70,8 @@ int Coder::Run(const void *model_buff, size_t size) {
   if (status != RET_OK) {
     MS_LOG(ERROR) << "Generate Code Files error!" << status;
   }
+  FreeGlobalVariable();
+  FreeThread();
   return status;
 }
 
@@ -105,25 +110,57 @@ bool Coder::InitPath(const std::string &output_path) {
 }
 
 int Coder::MicroSourceCodeGeneration(const schema::MetaGraphT &graph, const std::string &output_path,
-                                     const std::string &codegen_mode, const std::string &device, bool support_parallel,
-                                     bool debug_mode) {
+                                     const MicroParam &param, bool enable_fp16) {
   flatbuffers::FlatBufferBuilder builder(kFlatbuffersBuilderInitSize);
   auto offset = schema::MetaGraph::Pack(builder, &graph);
   builder.Finish(offset);
   schema::FinishMetaGraphBuffer(builder, offset);
   size_t size = builder.GetSize();
+  if (ExecuteMicroGeneration(builder.GetBufferPointer(), size, output_path, param, enable_fp16) != RET_OK) {
+    MS_LOG(ERROR) << "Execute Micro failed.";
+    return RET_ERROR;
+  }
+  return RET_OK;
+}
+
+int Coder::MicroSourceCodeGeneration(const std::string &model_file, const std::string &output_path,
+                                     const MicroParam &param, bool enable_fp16) {
+  size_t buffer_size;
+  auto model_buf = lite::ReadFile(model_file.c_str(), &buffer_size);
+  if (model_buf == nullptr) {
+    MS_LOG(ERROR) << "Read model-file failed.";
+    return RET_NULL_PTR;
+  }
+  auto ret = ExecuteMicroGeneration(model_buf, buffer_size, output_path, param, enable_fp16);
+  if (ret != RET_OK) {
+    MS_LOG(ERROR) << "Execute Micro failed.";
+  }
+  delete[] model_buf;
+  return ret;
+}
+
+int Coder::ExecuteMicroGeneration(const void *model_buf, size_t size, const std::string &output_path,
+                                  const MicroParam &param, bool enable_fp16) {
   micro::Coder code_gen;
   if (!code_gen.InitPath(output_path)) {
     MS_LOG(ERROR) << "Init path failed";
     return RET_ERROR;
   }
+  if (!(DirectoryGenerator::GetInstance()->CreateStaticDir(code_gen.save_path_, code_gen.model_name_))) {
+    MS_LOG(ERROR) << "Create static directories failed";
+    return RET_ERROR;
+  }
+  if (!(DirectoryGenerator::GetInstance()->CreateDynamicDir(kModelIndex))) {
+    MS_LOG(ERROR) << "Create dynamic directories failed";
+    return RET_ERROR;
+  }
   // codegeneration for micro
-  STATUS status = code_gen.Init(codegen_mode, device, support_parallel, debug_mode);
+  STATUS status = code_gen.Init(param);
   if (status != RET_OK) {
     MS_LOG(ERROR) << "Codegen init Error";
     return RET_ERROR;
   }
-  status = code_gen.Run(builder.GetBufferPointer(), size);
+  status = code_gen.Run(model_buf, size, code_gen.model_name_, param.is_last_model, enable_fp16);
   if (status != RET_OK) {
     MS_LOG(ERROR) << "Codegen Run Error";
     return RET_ERROR;
@@ -132,17 +169,17 @@ int Coder::MicroSourceCodeGeneration(const schema::MetaGraphT &graph, const std:
   return RET_OK;
 }
 
-int Coder::Init(const std::string &code_mode, const std::string &target, bool support_parallel, bool debug_mode) const {
+int Coder::Init(const MicroParam &param) const {
   static const std::map<std::string, Target> kTargetMap = {
     {"x86", kX86}, {"Cortex-M", kCortex_M}, {"ARM32", kARM32}, {"ARM64", kARM64}, {"All", kAllTargets}};
   static const std::map<std::string, CodeMode> kCodeModeMap = {{"Inference", Inference}, {"Train", Train}};
   Configurator *config = Configurator::GetInstance();
 
-  auto target_item = kTargetMap.find(target);
+  auto target_item = kTargetMap.find(param.target);
   MS_CHECK_TRUE_MSG(target_item != kTargetMap.end(), RET_ERROR, "unsupported target: " + target);
   config->set_target(target_item->second);
 
-  auto code_item = kCodeModeMap.find(code_mode);
+  auto code_item = kCodeModeMap.find(param.codegen_mode);
   MS_CHECK_TRUE_MSG(code_item != kCodeModeMap.end(), RET_ERROR, "unsupported code mode: " + code_mode);
   config->set_code_mode(code_item->second);
   if (code_item->second == CodeMode::Train && config->target() == kCortex_M) {
@@ -150,32 +187,18 @@ int Coder::Init(const std::string &code_mode, const std::string &target, bool su
     return RET_ERROR;
   }
 
-  if (support_parallel && config->target() == kCortex_M) {
+  if (param.support_parallel && config->target() == kCortex_M) {
     MS_LOG(ERROR) << "Cortex-M cannot support parallel.";
     return RET_ERROR;
   }
-  config->set_support_parallel(support_parallel);
-  config->set_debug_mode(debug_mode);
+  config->set_support_parallel(param.support_parallel);
+  config->set_debug_mode(param.debug_mode);
 
-  config->set_proj_dir(model_name_);
-
-  const std::string slash = std::string(kSlash);
-  if (!save_path_.empty() && !DirExists(save_path_)) {
-    MS_LOG(ERROR) << "code_gen code path " << save_path_ << " is not valid";
-    return RET_ERROR;
-  }
-
-  if (save_path_.substr(save_path_.size() - 1, 1) != slash) {
-    std::string path = save_path_ + slash + model_name_;
-    config->set_code_path(path);
-  } else {
-    std::string path = save_path_ + model_name_;
-    config->set_code_path(path);
-  }
-
-  if (InitProjDirs(save_path_, model_name_) != RET_OK) {
-    return RET_ERROR;
-  }
+  config->set_proj_dir(DirectoryGenerator::GetInstance()->project_name());
+  config->set_code_path(DirectoryGenerator::GetInstance()->work_dir() +
+                        DirectoryGenerator::GetInstance()->project_name());
+  config->set_keep_original_weight(param.keep_original_weight);
+  config->set_changeable_weights_name(param.changeable_weights_name);
 
   auto print_parameter = [](auto name, auto value) {
     MS_LOG(INFO) << std::setw(20) << std::left << name << "= " << value;

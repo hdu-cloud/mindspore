@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+
 import platform
 import numpy as np
 import pytest
@@ -64,7 +65,7 @@ def func_with_dtype(ms_dtype, np_dtype):
     assert np.allclose(x.asnumpy(), expect.asnumpy())
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_pyfunc_single_output():
@@ -81,7 +82,7 @@ def test_pyfunc_single_output():
     func_with_dtype(ms.int64, np.int64)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_pyfunc_multi_output():
@@ -115,7 +116,7 @@ class PyFuncGraph(nn.Cell):
         return self.func(x1, x2)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_pyfunc_no_output():
@@ -141,7 +142,7 @@ def test_pyfunc_no_output():
     assert np.allclose(net_output, expect)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_pyfunc_scalar():
@@ -163,7 +164,7 @@ def test_pyfunc_scalar():
     assert np.allclose(x.asnumpy(), expect)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_pyfunc_pynative():
@@ -173,7 +174,7 @@ def test_pyfunc_pynative():
     Expectation: the result match with numpy result
     """
     sys = platform.system()
-    if sys == 'Windows':
+    if sys != 'Linux':
         pass
     else:
         context.set_context(mode=context.PYNATIVE_MODE, device_target='CPU')

@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,7 +27,6 @@
 
 namespace mindspore {
 namespace dataset {
-
 constexpr size_t kExpectedImageShapeSize = 4;
 constexpr size_t kMaxLabelShapeSize = 3;
 constexpr size_t kMinLabelShapeSize = 2;
@@ -65,7 +64,8 @@ Status MixUpBatchOp::ComputeLabels(const std::shared_ptr<Tensor> &label, std::sh
         std::vector<int64_t> second_index = label_shape.size() == kMaxLabelShapeSize
                                               ? std::vector{(*rand_indx)[static_cast<size_t>(i)], j, k}
                                               : std::vector{(*rand_indx)[static_cast<size_t>(i)], k};
-        float first_value, second_value;
+        float first_value;
+        float second_value;
         RETURN_IF_NOT_OK(float_label->GetItemAt(&first_value, first_index));
         RETURN_IF_NOT_OK(float_label->GetItemAt(&second_value, second_index));
         RETURN_IF_NOT_OK((*out_labels)->SetItemAt(first_index, lam * first_value + (1 - lam) * second_value));
@@ -76,7 +76,8 @@ Status MixUpBatchOp::ComputeLabels(const std::shared_ptr<Tensor> &label, std::sh
 }
 
 Status MixUpBatchOp::Compute(const TensorRow &input, TensorRow *output) {
-  if (input.size() < 2) {
+  constexpr int64_t input_size = 2;
+  if (input.size() < input_size) {
     RETURN_STATUS_UNEXPECTED("MixUpBatch: size of input data should be 2 (including images or labels), but got: " +
                              std::to_string(input.size()) + ", check 'input_columns' when call this operator.");
   }

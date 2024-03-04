@@ -15,19 +15,21 @@
  */
 
 #include <algorithm>
+#include <memory>
+#include <set>
 #include <string>
 #include <vector>
-#include <set>
-#include <memory>
 
-#include "frontend/parallel/pynative_shard/pynative_shard.h"
 #include "frontend/parallel/graph_util/graph_info.h"
-#include "frontend/parallel/step_parallel_utils.h"
-#include "include/common/utils/parallel_context.h"
-#include "frontend/parallel/step_parallel.h"
-#include "utils/ms_context.h"
-#include "include/common/utils/comm_manager.h"
 #include "frontend/parallel/ops_info/ops_utils.h"
+#include "frontend/parallel/pynative_shard/pynative_shard.h"
+#include "frontend/parallel/step_parallel.h"
+#include "frontend/parallel/step_parallel_utils.h"
+#include "include/common/utils/comm_manager.h"
+#include "include/common/utils/parallel_context.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "utils/ms_context.h"
 
 namespace mindspore {
 namespace parallel {
@@ -41,9 +43,10 @@ static void GenerateDefaultStrategy(const ValueNodePtr &axes, const std::vector<
   for (auto &strategy : strategies) {
     auto node = nodes[i];
     if (strategy->isa<None>()) {
-      auto node_size = common::AnfAlgo::GetOutputInferShape(node, 0).size();
+      auto node_shape = common::AnfAlgo::GetOutputInferShape(node, 0);
+      auto node_size = node_shape.size();
       std::vector<int64_t> current_d_strategy(node_size, 1);
-      if (!current_d_strategy.empty()) {
+      if (!node_shape.empty() && device_num > 0 && node_shape[0] % device_num == 0) {
         current_d_strategy[0] = SizeToLong(device_num);
       }
       (void)default_strategy->emplace_back(std::move(current_d_strategy));
@@ -247,7 +250,7 @@ void SetInputLayout(const FuncGraphPtr &func_graph, const AnfNodePtr &in_strateg
       auto tuple_get_item_cnode_abstract = tuple_get_item_cnode->abstract();
       MS_EXCEPTION_IF_NULL(tuple_get_item_cnode_abstract);
       identity_cnode->set_abstract(tuple_get_item_cnode_abstract->Clone());
-      manager->Replace(tuple_get_item_cnode, identity_cnode);
+      (void)manager->Replace(tuple_get_item_cnode, identity_cnode);
 
       // Get corresponding param_layout
       auto tuple_index = tuple_get_item_cnode->input(2);
@@ -287,7 +290,7 @@ void SetParameterLayout(const FuncGraphPtr &root, const FuncGraphPtr &func_graph
       auto load_cnode_abstract = load_cnode->abstract();
       MS_EXCEPTION_IF_NULL(load_cnode_abstract);
       identity_cnode->set_abstract(load_cnode_abstract->Clone());
-      manager->Replace(load_cnode, identity_cnode);
+      (void)manager->Replace(load_cnode, identity_cnode);
       Shapes current_strategies = {param_strategy};
       SetStrategyToCNode(identity_cnode, current_strategies);
       MS_LOG(DEBUG) << "The layout of \"" << param_name << "\" has been set to "

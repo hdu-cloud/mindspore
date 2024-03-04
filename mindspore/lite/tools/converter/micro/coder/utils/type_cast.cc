@@ -90,6 +90,8 @@ std::string GetTensorDataType(TypeId type) {
     case kNumberTypeFloat:
     case kNumberTypeFloat32:
       return "float ";
+    case kNumberTypeFloat16:
+      return "float16_t ";
     case kNumberTypeInt8:
       return "int8_t ";
     case kNumberTypeInt16:
@@ -152,7 +154,6 @@ std::string EnumMicroTensorDataType(TypeId type) {
     case kNumberTypeUInt16:
       return "DataType_DT_UINT16";
     case kNumberTypeFloat16:
-      MS_LOG(WARNING) << "unsupported data type: kNumberTypeFloat16";
       return "DataType_DT_FLOAT16";
     default:
       MS_LOG(WARNING) << "unsupported data type: " << type << ", reference: " << kNumberTypeInt;

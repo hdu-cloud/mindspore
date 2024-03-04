@@ -19,11 +19,13 @@
 #include <vector>
 #include <string>
 #include <algorithm>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "plugin/device/gpu/hal/device/kernel_info_setter.h"
 
 namespace mindspore {
@@ -130,7 +132,7 @@ CNodePtr InsertTransposeOp(const FuncGraphPtr &graph, const AnfNodePtr &node, co
   MS_EXCEPTION_IF_NULL(transpose_op);
   // 3.Set the output info of transpose.
   auto transpose_type = {common::AnfAlgo::GetPrevNodeOutputInferDataType(used_node, used_node_index)};
-  auto base_shape = common::AnfAlgo::GetPrevNodeOutputDetailShape(used_node, used_node_index);
+  auto base_shape = AnfAlgo::GetPrevNodeOutputDetailShape(used_node, used_node_index);
   common::AnfAlgo::SetOutputTypeAndDetailShape(transpose_type, {base_shape}, transpose_op.get());
 
   // 4. Set the new edge of transpose op.

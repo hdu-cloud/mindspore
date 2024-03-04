@@ -17,7 +17,6 @@
 #include "plugin/device/ascend/hal/device/ge_runtime/model_runner.h"
 #include "plugin/device/ascend/hal/device/ge_runtime/runtime_model.h"
 #include "plugin/device/ascend/hal/device/ge_runtime/davinci_model.h"
-#include "mindspore/core/utils/log_adapter.h"
 #include "utils/log_adapter.h"
 
 namespace mindspore::ge::model_runner {
@@ -119,6 +118,7 @@ void ModelRunner::UnloadModel(uint32_t model_id) {
   if (iter != runtime_models_.cend()) {
     (void)runtime_models_.erase(iter);
   }
+  model_status_[model_id] = ModelStatus::UNLOADED;
 }
 
 void ModelRunner::RunModel(uint32_t model_id) {

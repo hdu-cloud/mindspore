@@ -17,11 +17,10 @@
 #ifndef MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_NN_TRAINING_OPS_DECLARE_H_
 #define MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_NN_TRAINING_OPS_DECLARE_H_
 
-#include "utils/hash_map.h"
+#include "inc/ops/nn_training_ops.h"
 #include "transform/graph_ir/op_declare/op_declare_macro.h"
-#include "ops/nn_training_ops.h"
+#include "utils/hash_map.h"
 
-namespace mindspore::transform {
 DECLARE_OP_ADAPTER(ApplyAdam)
 DECLARE_OP_USE_OUTPUT(ApplyAdam)
 
@@ -79,6 +78,9 @@ DECLARE_OP_USE_OUTPUT(LarsV2Update)
 DECLARE_OP_ADAPTER(ApplyFtrl)
 DECLARE_OP_USE_OUTPUT(ApplyFtrl)
 
+DECLARE_OP_ADAPTER(SparseApplyFtrlD)
+DECLARE_OP_USE_OUTPUT(SparseApplyFtrlD)
+
 DECLARE_OP_ADAPTER(SparseApplyFtrl)
 DECLARE_OP_USE_OUTPUT(SparseApplyFtrl)
 
@@ -94,5 +96,40 @@ DECLARE_OP_USE_OUTPUT(ApplyCenteredRMSProp)
 
 DECLARE_OP_ADAPTER(SparseApplyRMSProp)
 DECLARE_OP_USE_OUTPUT(SparseApplyRMSProp)
-}  // namespace mindspore::transform
+
+DECLARE_OP_ADAPTER(SparseApplyRMSPropD)
+DECLARE_OP_USE_OUTPUT(SparseApplyRMSPropD)
+
+DECLARE_OP_ADAPTER(SparseApplyAdagrad)
+DECLARE_OP_USE_OUTPUT(SparseApplyAdagrad)
+
+DECLARE_OP_ADAPTER(ApplyKerasMomentumD)
+DECLARE_OP_USE_OUTPUT(ApplyKerasMomentumD)
+
+DECLARE_OP_ADAPTER(ApplyAdamWithAmsgradV2)
+DECLARE_OP_USE_OUTPUT(ApplyAdamWithAmsgradV2)
+
+DECLARE_OP_ADAPTER(ApplyAdamWithAmsgradD)
+DECLARE_OP_USE_OUTPUT(ApplyAdamWithAmsgradD)
+
+DECLARE_OP_ADAPTER(ApplyAdagrad)
+DECLARE_OP_USE_OUTPUT(ApplyAdagrad)
+
+DECLARE_OP_ADAPTER(ApplyAdagradDA)
+DECLARE_OP_USE_OUTPUT(ApplyAdagradDA)
+
+DECLARE_OP_ADAPTER(ApplyRMSProp)
+DECLARE_OP_USE_OUTPUT(ApplyRMSProp)
+
+DECLARE_OP_ADAPTER(ApplyProximalAdagrad)
+DECLARE_OP_USE_OUTPUT(ApplyProximalAdagrad)
+
+DECLARE_OP_ADAPTER(SparseApplyProximalAdagrad)
+DECLARE_OP_USE_OUTPUT(SparseApplyProximalAdagrad)
+
+DECLARE_OP_ADAPTER(ApplyAdadelta)
+DECLARE_OP_USE_OUTPUT(ApplyAdadelta)
+
+DECLARE_OP_ADAPTER(SparseApplyAdadelta)
+DECLARE_OP_USE_OUTPUT(SparseApplyAdadelta)
 #endif  // MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_NN_TRAINING_OPS_DECLARE_H_

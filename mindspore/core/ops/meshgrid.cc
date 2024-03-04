@@ -14,16 +14,17 @@
  * limitations under the License.
  */
 
-#include <set>
-#include <string>
-#include <vector>
+#include "ops/meshgrid.h"
 #include <map>
 #include <memory>
+#include <set>
+#include <string>
 #include <utility>
-#include "ops/meshgrid.h"
+#include <vector>
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/src/helper.h"
 
 namespace mindspore {
 namespace ops {
@@ -42,7 +43,7 @@ namespace {
 abstract::TupleShapePtr MeshgridInferShape(const PrimitivePtr &primitive,
                                            const std::vector<AbstractBasePtr> &input_args) {
   auto elements = input_args[0]->cast<abstract::AbstractTuplePtr>()->elements();
-  (void)CheckAndConvertUtils::CheckInteger("Meshgrid input num", SizeToLong(elements.size()), kGreaterThan, 1,
+  (void)CheckAndConvertUtils::CheckInteger("number of input tensors", SizeToLong(elements.size()), kGreaterThan, 1,
                                            primitive->name());
   ShapeVector output_shape;
   for (size_t i = 0; i < elements.size(); ++i) {
@@ -70,7 +71,7 @@ abstract::TupleShapePtr MeshgridInferShape(const PrimitivePtr &primitive,
 
 TuplePtr MeshgridInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
   auto elements = input_args[0]->cast<abstract::AbstractTuplePtr>()->elements();
-  (void)CheckAndConvertUtils::CheckInteger("Meshgrid input num", SizeToLong(elements.size()), kGreaterThan, 1,
+  (void)CheckAndConvertUtils::CheckInteger("number of input tensors", SizeToLong(elements.size()), kGreaterThan, 1,
                                            prim->name());
   std::map<std::string, TypePtr> types;
   for (size_t i = 0; i < elements.size(); ++i) {
@@ -86,16 +87,37 @@ AbstractBasePtr MeshgridInfer(const abstract::AnalysisEnginePtr &, const Primiti
                               const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
+  (void)CheckAndConvertUtils::CheckInteger("input_args tuple size", SizeToLong(input_args.size()), kEqual, 1,
+                                           prim_name);
+  MS_EXCEPTION_IF_NULL(input_args[0]);
   if (!input_args[0]->isa<abstract::AbstractTuple>()) {
     MS_EXCEPTION(TypeError) << "For '" << prim_name << "', the input must be tuple of tensors.";
   }
-  // todo check input numberi
-  const int64_t kInputNum = 1;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterEqual, kInputNum, prim_name);
+  auto elements = input_args[0]->cast<abstract::AbstractTuplePtr>()->elements();
+  (void)CheckAndConvertUtils::CheckInteger("number of input tensors", SizeToLong(elements.size()), kGreaterThan, 1,
+                                           prim_name);
   auto infer_type = MeshgridInferType(primitive, input_args);
   auto infer_shape = MeshgridInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Meshgrid, prim::kPrimMeshgrid, MeshgridInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMeshgridInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MeshgridInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MeshgridInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MeshgridInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Meshgrid, prim::kPrimMeshgrid, AGMeshgridInfer, false);
 }  // namespace ops
 }  // namespace mindspore

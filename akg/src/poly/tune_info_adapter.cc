@@ -28,26 +28,24 @@ constexpr int GPU_MMA_K = 64;
 
 Var GetAxisDescId(TileAxis *a) {
   std::string var_name = std::to_string(a->index) + "_";
-  var_name += a->axis_type_.empty() ? std::to_string(a->dim_axis) : a->axis_type_;
+  var_name += std::to_string(a->dim_axis);
   return Var(var_name);
 }
 
 TuneAxisInfo AxisInfoAdapter(TileAxis *a, TileSizes dims) {
   auto axis_info = make_node<TuneAxisInfoNode>();
   axis_info->index = a->index;
-  if (a->axis_type_.empty()) {
-    axis_info->dim_axis = std::to_string(a->dim_axis);
-  } else {
-    axis_info->dim_axis = a->axis_type_;
-  }
+  axis_info->dim_axis = std::to_string(a->dim_axis);
   axis_info->range_min = a->range_min;
-  axis_info->range_extent = a->range_extent;
-  axis_info->c1_constraints.tile_mod_ = a->c1_constraints.tile_mod_;
-  axis_info->c1_constraints.tile_min_ = a->c1_constraints.tile_min_;
-  axis_info->c1_constraints.tile_extent_ = a->c1_constraints.tile_extent_;
-  axis_info->c0_constraints.tile_mod_ = a->c0_constraints.tile_mod_;
-  axis_info->c0_constraints.tile_min_ = a->c0_constraints.tile_min_;
-  axis_info->c0_constraints.tile_extent_ = a->c0_constraints.tile_extent_;
+  // when a axis has shifted-loops, the tile_extent_ could be larger than extent
+  axis_info->range_extent =
+    std::max(a->range_extent.as<IntImm>()->value, a->c1_constraints.tile_extent_.as<IntImm>()->value);
+  axis_info->c1_constraints.tile_mod_ = int(a->c1_constraints.tile_mod_.as<IntImm>()->value);
+  axis_info->c1_constraints.tile_min_ = int(a->c1_constraints.tile_min_.as<IntImm>()->value);
+  axis_info->c1_constraints.tile_extent_ = int(a->c1_constraints.tile_extent_.as<IntImm>()->value);
+  axis_info->c0_constraints.tile_mod_ = int(a->c0_constraints.tile_mod_.as<IntImm>()->value);
+  axis_info->c0_constraints.tile_min_ = int(a->c0_constraints.tile_min_.as<IntImm>()->value);
+  axis_info->c0_constraints.tile_extent_ = int(a->c0_constraints.tile_extent_.as<IntImm>()->value);
   axis_info->forbid_iso = a->forbid_iso;
   axis_info->is_inner = a->is_inner;
   axis_info->mc_sup = a->mc_sup;
@@ -62,7 +60,7 @@ TuneAxisInfo AxisInfoAdapter(TileAxis *a, TileSizes dims) {
   if (axis_info->dims.empty()) {
     axis_info->dims.push_back(MIN_TILE);
   }
-  for (const auto attr : a->attrs) {
+  for (const auto &attr : a->attrs) {
     if (axis_info->attrs.find(attr.attr_key) != axis_info->attrs.end()) {
       axis_info->attrs[attr.attr_key].push_back(attr.attr_value);
     } else {
@@ -128,7 +126,7 @@ std::unique_ptr<TuneInfo> AdaptTuneInfo(const TilingAnalyzer &analyzer, ScopInfo
       auto t = scop_info->analysis_result_.ShowOpTemplate();
       tune_info->analysis.Set("op_template", StringImm::make(t));
       auto axis_info = make_node<TuneAxisInfoNode>();
-      for (const auto attr : a->attrs) {
+      for (const auto &attr : a->attrs) {
         if (axis_info->attrs.find(attr.attr_key) != axis_info->attrs.end()) {
           axis_info->attrs[attr.attr_key].push_back(attr.attr_value);
         } else {

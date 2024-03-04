@@ -40,7 +40,7 @@ def test_dropout():
     utils.run_testcase('pass_dropout')
 
 
-@pytest.mark.level1
+@pytest.mark.skip(reason="DT_RESOURCE not support")
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -76,7 +76,7 @@ def test_convert_attr_to_input():
     utils.run_testcase('pass_convert_attr_to_input')
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -86,3 +86,14 @@ def test_convert_resize_nearest_neighbor_x_dtype():
     Expectation: success
     """
     utils.run_testcase('pass_convert_resize_nearest_neighbor_x_dtype')
+
+@pytest.mark.level1
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.env_onecard
+def test_adaptive_max_pool2d_x_dtype():
+    """
+    Description: test AdaptiveMaxPool2DGeFusion dytpe
+    Expectation: success
+    """
+    utils.run_testcase('pass_adaptive_max_pool2d')

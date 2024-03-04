@@ -20,7 +20,7 @@ CPU_TRAIN_MAPPING_OUTPUT_FILE=${CROPPER_OUTPUT_DIR}/cropper_mapping_cpu_train.cf
 [ -n "${CPU_TRAIN_MAPPING_OUTPUT_FILE}" ] && rm -f ${CPU_TRAIN_MAPPING_OUTPUT_FILE}
 
 ops_list=()
-DEFINE_STR="-DENABLE_ANDROID -DENABLE_ARM -DENABLE_ARM64 -DENABLE_NEON -DNO_DLIB -DUSE_ANDROID_LOG -DANDROID -DENABLE_FP16 -DMSLITE_ENABLE_EXPERIMENTAL_KERNEL -DENABLE_MINDRT -DBUILD_CORE_RUNTIME"
+DEFINE_STR="-DENABLE_ANDROID -DENABLE_ARM -DENABLE_ARM64 -DENABLE_NEON -DNO_DLIB -DUSE_ANDROID_LOG -DANDROID -DENABLE_FP16 -DENABLE_MINDRT -DUSE_GLOG"
 # get the flatbuffers path
 if [ ${MSLIBS_CACHE_PATH} ]; then
   FLATBUFFERS_LIST=()
@@ -42,6 +42,17 @@ else
   echo "NLOHMANN path is ${NLOHMANN}"
 fi
 
+# get the glog path
+if [ ${MSLIBS_CACHE_PATH} ]; then
+  GLOG_LIST=()
+  while IFS='' read -r line; do GLOG_LIST+=("$line"); done < <(ls -d ${MSLIBS_CACHE_PATH}/glog_*/include)
+  GLOG=${GLOG_LIST[0]}
+  echo "GLOG path is ${GLOG}"
+else
+  GLOG=$(ls -d mindspore/lite/build/.mslib/glog_*/include)
+  echo "GLOG path is ${GLOG}"
+fi
+
 HEADER_LOCATION="-I${MINDSPORE_HOME}
 -I${MINDSPORE_HOME}/mindspore/core
 -I${MINDSPORE_HOME}/mindspore/core/ir
@@ -57,6 +68,7 @@ HEADER_LOCATION="-I${MINDSPORE_HOME}
 -I${MINDSPORE_HOME}/cmake/../third_party/securec/include
 -I${FLATBUFFERS}
 -I${NLOHMANN}
+-I${GLOG}
 -I${MINDSPORE_HOME}/mindspore/lite/build/schema
 -I${MINDSPORE_HOME}/mindspore/lite/build/schema/inner
 -I${MINDSPORE_HOME}/mindspore/lite/build/src
@@ -66,9 +78,12 @@ HEADER_LOCATION="-I${MINDSPORE_HOME}
 REMOVE_LISTS_STR=""
 getDeep() {
   map_files=$(gcc -MM ${2} ${DEFINE_STR} ${HEADER_LOCATION})
+  if [[ ${map_files} == "" ]]; then
+    echo "failed to get deep any file from file: ${2}, compile terminated unexpectedly"
+  fi
   # first is *.o second is *.cc
   array_deep=()
-  while IFS='' read -r line; do array_deep+=("$line"); done < <(echo ${map_files} | awk -F '\' '{for(i=3;i<=NF;i++){print $i}}' | egrep -v 'flatbuffers|build|third_party|type_id.h|core/utils' | egrep -v ${REMOVE_LISTS_STR})
+  while IFS='' read -r line; do array_deep+=("$line"); done < <(echo ${map_files} | awk -F '\' '{for(i=3;i<=NF;i++){print $i}}' | egrep -v 'flatbuffers|build|third_party|type_id.h|core/utils|glog' | egrep -v ${REMOVE_LISTS_STR})
   # shellcheck disable=SC2068
   for array_deep_file in ${array_deep[@]}; do
     # only add existing files
@@ -89,6 +104,49 @@ getDeep() {
   done
 }
 
+getNnaclKernelFile() {
+  echo "start get operator mapping nnacl kernel $3"
+  # shellcheck disable=SC2068
+  for type in ${ops_list[@]}; do
+    # get mapping
+    ret=$(egrep -r -l "$1${type}, $4," $2)
+    array=("${ret}")
+    # shellcheck disable=SC2068
+    for file in ${array[@]}; do
+      # delete \n
+      out_file=$(echo ${file} | awk -F '/' '{print $NF}')
+      # concat schemaType + fileType + fileName append to files
+      echo "${type},${3},${out_file}.o" >>${MAPPING_OUTPUT_FILE_NAME_TMP}
+      echo "${type},${3},${out_file}.o" >>${MAPPING_OUTPUT_FILE_NAME_TRAIN_TMP}
+      map_files=$(gcc -MM ${file} ${DEFINE_STR} ${HEADER_LOCATION})
+      if [[ ${map_files} == "" ]]; then
+        echo "failed to get operator mapping any file from file: ${file}, compile terminated unexpectedly"
+      fi
+      # first is *.o second is *.cc
+      array_file=()
+      while IFS='' read -r line; do array_file+=("$line"); done < <(echo ${map_files} | awk -F '\' '{for(i=3;i<=NF;i++){print $i}}' | egrep -v 'flatbuffers|build|third_party|type_id.h|core/utils|glog' | egrep -v ${REMOVE_LISTS_STR})
+      # shellcheck disable=SC2068
+      for array_file in ${array_file[@]}; do
+        # only add existing files
+        if [[ -e ${array_file%h*}cc ]]; then
+          getDeep ${type} ${array_file%h*}cc ${3} &
+          getDeep ${type} ${array_file} ${3} &
+          array_file_split=$(echo ${array_file} | awk -F '/' '{print $NF}')
+          echo "${type},${3},${array_file_split%h*}cc.o" >>${MAPPING_OUTPUT_FILE_NAME_TMP}
+          echo "${type},${3},${array_file_split%h*}cc.o" >>${MAPPING_OUTPUT_FILE_NAME_TRAIN_TMP}
+        fi
+        if [[ -e ${array_file%h*}c ]]; then
+          getDeep ${type} ${array_file%h*}c ${3} &
+          getDeep ${type} ${array_file} ${3} &
+          array_file_split=$(echo ${array_file} | awk -F '/' '{print $NF}')
+          echo "${type},${3},${array_file_split%h*}c.o" >>${MAPPING_OUTPUT_FILE_NAME_TMP}
+          echo "${type},${3},${array_file_split%h*}c.o" >>${MAPPING_OUTPUT_FILE_NAME_TRAIN_TMP}
+        fi
+      done
+    done
+  done
+}
+
 getOpsFile() {
   echo "start get operator mapping file $3"
   # shellcheck disable=SC2068
@@ -104,9 +162,12 @@ getOpsFile() {
       echo "${type},${3},${out_file}.o" >>${MAPPING_OUTPUT_FILE_NAME_TMP}
       echo "${type},${3},${out_file}.o" >>${MAPPING_OUTPUT_FILE_NAME_TRAIN_TMP}
       map_files=$(gcc -MM ${file} ${DEFINE_STR} ${HEADER_LOCATION})
+      if [[ ${map_files} == "" ]]; then
+        echo "failed to get operator mapping any file from file: ${file}, compile terminated unexpectedly"
+      fi
       # first is *.o second is *.cc
       array_file=()
-      while IFS='' read -r line; do array_file+=("$line"); done < <(echo ${map_files} | awk -F '\' '{for(i=3;i<=NF;i++){print $i}}' | egrep -v 'flatbuffers|build|third_party|type_id.h|core/utils' | egrep -v ${REMOVE_LISTS_STR})
+      while IFS='' read -r line; do array_file+=("$line"); done < <(echo ${map_files} | awk -F '\' '{for(i=3;i<=NF;i++){print $i}}' | egrep -v 'flatbuffers|build|third_party|type_id.h|core/utils|glog' | egrep -v ${REMOVE_LISTS_STR})
       # shellcheck disable=SC2068
       for array_file in ${array_file[@]}; do
         # only add existing files
@@ -136,9 +197,12 @@ getFilesFromArr() {
   # shellcheck disable=SC2068
   for file in ${arr_files[*]}; do
     map_files=$(gcc -MM ${file} ${DEFINE_STR} ${HEADER_LOCATION})
+    if [[ ${map_files} == "" ]]; then
+      echo "failed to get any file from arr_file: ${file}, compile terminated unexpectedly"
+    fi
     # first is *.o second is *.cc
     # shellcheck disable=SC2207
-    array_runtime=($(echo ${map_files} | awk -F '\' '{for(i=3;i<=NF;i++){print $i}}' | egrep -v 'flatbuffers|build|third_party|type_id.h' | egrep -v ${REMOVE_LISTS_STR}))
+    array_runtime=($(echo ${map_files} | awk -F '\' '{for(i=3;i<=NF;i++){print $i}}' | egrep -v 'flatbuffers|build|third_party|type_id.h|glog' | egrep -v ${REMOVE_LISTS_STR}))
     # only add existing files
     for array_runtime_file in "${array_runtime[@]}"; do
       if [[ -e ${array_runtime_file%h*}cc && ! ${all_files[*]} =~ ${array_runtime_file%h*}cc ]]; then
@@ -165,6 +229,13 @@ getCommonFile() {
   while IFS='' read -r line; do common_files_h+=("$line"); done < <(ls mindspore/lite/src/common/*.h)
   runtime_files_h=()
   while IFS='' read -r line; do runtime_files_h+=("$line"); done < <(ls mindspore/lite/src/litert/*.h)
+  while IFS='' read -r line; do runtime_files_h+=("$line"); done < <(ls mindspore/lite/src/control_flow/*.h)
+  while IFS='' read -r line; do runtime_files_h+=("$line"); done < <(ls mindspore/lite/src/extendrt/mindir_loader/*.h)
+  nnacl_files_h=(
+    mindspore/lite/src/litert/kernel/cpu/nnacl/cxx_utils.h
+    mindspore/lite/src/litert/kernel/cpu/nnacl/nnacl_kernel.h
+    mindspore/lite/src/litert/kernel/cpu/nnacl/nnacl_manager.h
+  )
   mindrt_files_h=()
   while IFS='' read -r line; do mindrt_files_h+=("$line"); done < <(ls mindspore/core/mindrt/src/actor/*.h)
   while IFS='' read -r line; do mindrt_files_h+=("$line"); done < <(ls mindspore/core/mindrt/src/thread/*.h)
@@ -180,20 +251,20 @@ getCommonFile() {
     mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/intrinsics/ms_simd_instructions.h
     mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/intrinsics/ms_simd_instructions_fp16.h
     mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/infer/infer.h
+    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/infer/common_infer.h
     mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/tensor_c.h
     mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/errorcode.h
     mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/common_func.h
-    mindspore/lite/experimental/src/exec_env_utils.h
     mindspore/lite/src/expression/ops_utils.h
     mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/tensor_c_utils.h
+    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/tensorlist_c.h
     mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/tensorlist_c_utils.h
-    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/experimental/ms_core.h
     mindspore/core/utils/log_adapter.h
     mindspore/core/ir/api_tensor_impl.h
     mindspore/lite/src/litert/cxx_api/tensor/tensor_impl.h
   )
   all_files_h=("${include_h[@]}" "${regist_include_h[@]}" "${src_files_h[@]}" "${common_files_h[@]}"
-               "${runtime_files_h[@]}" "${others_files_h[@]}" "${mindrt_files_h[@]}"
+               "${runtime_files_h[@]}" "${nnacl_files_h[@]}" "${others_files_h[@]}" "${mindrt_files_h[@]}"
   )
 
   # concat regx
@@ -222,33 +293,42 @@ getCommonFile() {
   while IFS='' read -r line; do common_files+=("$line"); done < <(ls mindspore/lite/src/common/*.cc)
   runtime_files_cc=()
   while IFS='' read -r line; do runtime_files_cc+=("$line"); done < <(ls mindspore/lite/src/litert/*.cc)
+  while IFS='' read -r line; do runtime_files_cc+=("$line"); done < <(ls mindspore/lite/src/control_flow/*.cc)
+  while IFS='' read -r line; do runtime_files_cc+=("$line"); done < <(ls mindspore/lite/src/extendrt/mindir_loader/*.cc)
+  nnacl_files_cc=(
+    mindspore/lite/src/litert/kernel/cpu/nnacl/cxx_utils.cc
+    mindspore/lite/src/litert/kernel/cpu/nnacl/nnacl_kernel.cc
+    mindspore/lite/src/litert/kernel/cpu/nnacl/nnacl_manager.cc
+  )
   # sava all assembly files
   assembly_files=()
   while IFS='' read -r line; do assembly_files+=("$line"); done < <(ls mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/assembly/*/*.S)
   others_files_c=(
     mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/nnacl_utils.c
+    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/errorcode.c
     mindspore/lite/src/litert/infer_manager.cc
     mindspore/lite/src/common/ops/populate/populate_register.cc
     mindspore/lite/src/common/ops/populate/custom_populate.cc
     mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/infer/infer_register.c
     mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/infer/shape_fusion_infer.c
+    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/infer/common_infer.c
     mindspore/lite/src/litert/kernel/cpu/fp32/shape_fusion_fp32.cc
     mindspore/core/utils/status.cc
     mindspore/core/utils/log_adapter.cc
-    mindspore/lite/experimental/src/exec_env_utils.cc
     mindspore/lite/src/expression/ops_utils.cc
+    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/kernel.c
     mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/tensor_c_utils.c
     mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/tensorlist_c_utils.c
-    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/experimental/ms_core_x86.c
-    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/experimental/ms_core_sse.c
-    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/experimental/ms_core_avx.c
-    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/experimental/ms_core_avx512.c
-    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/experimental/ms_core_arm64_fp32.c
-    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/experimental/ms_core_arm64_fp16.c
-    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/experimental/ms_core_arm32.c
+    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/base/format_transpose.c
+    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/base/cast_base.c
+    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/fp32/transpose_fp32.c
+    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/fp32/pack_fp32.c
+    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/fp16/pack_fp16.c
+    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/fp32/pack_fp32_opt.c
+    mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/nnacl_common.c
   )
   all_files=("${src_files[@]}" "${regist_files[@]}" "${common_files[@]}" "${runtime_files_cc[@]}"
-    "${others_files_c[@]}" "${assembly_files[@]}" "${mindrt_files[@]}"
+    "${others_files_c[@]}" "${assembly_files[@]}" "${nnacl_files_cc[@]}" "${mindrt_files[@]}"
     "${cxx_api_files[@]}"
   )
   getFilesFromArr "${all_files[*]}" &
@@ -346,6 +426,18 @@ getOpsFile "REG_KERNEL\(.*?, kNumberTypeFloat16, PrimitiveType_" "mindspore/lite
 getOpsFile "REG_KERNEL\(.*?, kNumberTypeInt8, PrimitiveType_" "mindspore/lite/src/litert/kernel/cpu" "kNumberTypeInt8" &
 getOpsFile "REG_KERNEL\(.*?, kNumberTypeInt32, PrimitiveType_" "mindspore/lite/src/litert/kernel/cpu" "kNumberTypeInt32" &
 getOpsFile "REG_KERNEL\(.*?, kNumberTypeBool, PrimitiveType_" "mindspore/lite/src/litert/kernel/cpu" "kNumberTypeInt32" &
+#support for nnacl kernel
+getNnaclKernelFile "REG_KERNEL_CREATOR\(PrimType_" "mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/kernel" "kNumberTypeFloat32" "kNumberTypeFloat32" &
+getNnaclKernelFile "REG_KERNEL_CREATOR\(PrimType_" "mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/kernel" "kNumberTypeFloat16" "kNumberTypeFloat16" &
+getNnaclKernelFile "REG_KERNEL_CREATOR\(PrimType_" "mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/kernel" "kNumberTypeInt8" "kNumberTypeInt8" &
+getNnaclKernelFile "REG_KERNEL_CREATOR\(PrimType_" "mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/kernel" "kNumberTypeInt32" "kNumberTypeInt32" &
+getNnaclKernelFile "REG_KERNEL_CREATOR\(PrimType_" "mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/kernel" "kNumberTypeInt32" "kNumberTypeBool" &
+getNnaclKernelFile "NNACL_KERNEL\(PrimitiveType_" "mindspore/lite/src/litert/kernel/cpu/nnacl" "kNumberTypeFloat32" "kNumberTypeFloat32" &
+getNnaclKernelFile "NNACL_KERNEL\(PrimitiveType_" "mindspore/lite/src/litert/kernel/cpu/nnacl" "kNumberTypeFloat16" "kNumberTypeFloat16" &
+getNnaclKernelFile "NNACL_KERNEL\(PrimitiveType_" "mindspore/lite/src/litert/kernel/cpu/nnacl" "kNumberTypeInt8" "kNumberTypeInt8" &
+getNnaclKernelFile "NNACL_KERNEL\(PrimitiveType_" "mindspore/lite/src/litert/kernel/cpu/nnacl" "kNumberTypeInt32" "kNumberTypeInt32" &
+getNnaclKernelFile "NNACL_KERNEL\(PrimitiveType_" "mindspore/lite/src/litert/kernel/cpu/nnacl" "kNumberTypeInt32" "kNumberTypeBool" &
+
 wait
 sleep 0.5
 # remove duplicate files
@@ -388,6 +480,13 @@ while IFS='' read -r line; do npu_files+=("$line"); done < <(ls mindspore/lite/s
 while IFS='' read -r line; do npu_files+=("$line"); done < <(ls mindspore/lite/src/litert/delegate/npu/pass/*.cc)
 npu_others_files=("mindspore/lite/src/litert/delegate/delegate_utils.cc")
 npu_files=("${npu_files[@]}" "${npu_others_files[@]}")
+
+# support for nnapi
+while IFS='' read -r line; do npu_files+=("$line"); done < <(ls mindspore/lite/src/litert/delegate/nnapi/*.cc)
+while IFS='' read -r line; do npu_files+=("$line"); done < <(ls mindspore/lite/src/litert/delegate/nnapi/op/*.cc)
+nnapi_others_files=("mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/fp32/transpose_fp32.c")
+npu_files=("${npu_files[@]}" "${nnapi_others_files[@]}")
+
 # shellcheck disable=SC2068
 for file in ${npu_files[@]}; do
   file=$(echo ${file} | awk -F '/' '{print $NF}')

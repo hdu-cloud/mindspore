@@ -15,16 +15,25 @@
  */
 
 #include "ops/sparse_matrix_ordering_amd.h"
+
+#include <memory>
+#include <set>
+
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::ShapePtr SparseMatrixOrderingAMDInferShape(const PrimitivePtr &primitive,
                                                      const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
+  constexpr int inputs_num = 5;
   auto prim_name = primitive->name();
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, inputs_num, prim_name);
   auto d_shape_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
   auto b_ptrs_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
   auto r_ptrs_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->BuildShape())[kShape];
@@ -61,6 +70,10 @@ abstract::ShapePtr SparseMatrixOrderingAMDInferShape(const PrimitivePtr &primiti
 }
 
 TypePtr SparseMatrixOrderingAMDInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(prim);
+  constexpr int inputs_num = 5;
+  auto prim_name = prim->name();
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, inputs_num, prim_name);
   const std::set<TypePtr> dense_shape_valid_types = {kInt64};
   const std::set<TypePtr> indices_pointer_valid_types = {kInt32};
   const std::set<TypePtr> values_valid_types = {kFloat32, kFloat64, kComplex64, kComplex128};
@@ -94,7 +107,25 @@ AbstractBasePtr SparseMatrixOrderingAMDInfer(const abstract::AnalysisEnginePtr &
 }
 
 MIND_API_OPERATOR_IMPL(SparseMatrixOrderingAMD, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseMatrixOrderingAMD, prim::kPrimSparseMatrixOrderingAMD, SparseMatrixOrderingAMDInfer,
-                             nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSparseMatrixOrderingAMDInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixOrderingAMDInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixOrderingAMDInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixOrderingAMDInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseMatrixOrderingAMD, prim::kPrimSparseMatrixOrderingAMD,
+                                 AGSparseMatrixOrderingAMDInfer, false);
 }  // namespace ops
 }  // namespace mindspore

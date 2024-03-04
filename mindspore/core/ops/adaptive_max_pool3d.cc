@@ -15,10 +15,30 @@
  */
 
 #include "ops/adaptive_max_pool3d.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include <algorithm>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/named.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -40,8 +60,15 @@ abstract::TupleShapePtr AdaptiveMaxPool3DInferShape(const PrimitivePtr &primitiv
   }
   auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(x_shape_ptr)[kShape];
   auto output_size_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->BuildShape())[kShape];
+  if (IsDynamic(output_size_shape)) {
+    auto out_shape = x_shape;
+    for (size_t i = LongToSize(SizeToLong(out_shape.size()) - kOutputSizeNumElem); i < out_shape.size(); ++i) {
+      out_shape[i] = abstract::Shape::kShapeDimAny;
+    }
+    out_shape_ptr = std::make_shared<abstract::Shape>(out_shape);
+    return std::make_shared<abstract::TupleShape>(std::vector<abstract::BaseShapePtr>{out_shape_ptr, out_shape_ptr});
+  }
   const int64_t input_num_dims = SizeToLong(x_shape.size());
-
   const int64_t output_size_dim = SizeToLong(output_size_shape.size());
   CheckAndConvertUtils::CheckInRange("rank of x", input_num_dims, kIncludeBoth, {kInputDims4, kInputDims5}, prim_name);
   (void)CheckAndConvertUtils::CheckInteger("rank of output_size", output_size_dim, kEqual, 1, prim_name);
@@ -51,28 +78,26 @@ abstract::TupleShapePtr AdaptiveMaxPool3DInferShape(const PrimitivePtr &primitiv
   auto output_size_value = input_args[1]->BuildValue();
   MS_EXCEPTION_IF_NULL(output_size_value);
   if (input_args[1]->isa<abstract::AbstractTensor>() && !output_size_value->isa<None>() &&
-      !output_size_value->isa<AnyValue>()) {
+      !output_size_value->isa<ValueAny>()) {
     auto output_size = CheckAndConvertUtils::CheckTensorIntValue("output_size", output_size_value, prim_name);
 
     ShapeVector out_shape = x_shape;
     for (int64_t i = 1; i <= kOutputSizeNumElem; ++i) {
-      if (output_size[kOutputSizeNumElem - i] <= 0) {
+      if (output_size[LongToSize(kOutputSizeNumElem - i)] <= 0) {
         MS_EXCEPTION(ValueError) << "For '" << prim_name
                                  << "', 'output_size' should be a vector with all positive item, but got "
                                  << ShapeVectorToStr(output_size) << ".";
       }
-      out_shape[input_num_dims - i] = output_size[kOutputSizeNumElem - i];
+      out_shape[LongToSize(input_num_dims - i)] = output_size[LongToSize(kOutputSizeNumElem - i)];
     }
     out_shape_ptr = std::make_shared<abstract::Shape>(out_shape);
   } else {
     const size_t kDHWDims = 3;
     std::vector<int64_t> out_shape = x_shape;
-    std::vector<int64_t> infer_shape_min = x_shape;
-    std::vector<int64_t> infer_shape_max = x_shape;
     for (int64_t i = out_shape.size() - kDHWDims; i < SizeToLong(out_shape.size()); ++i) {
-      out_shape[i] = abstract::Shape::kShapeDimAny;
+      out_shape[LongToSize(i)] = abstract::Shape::kShapeDimAny;
     }
-    out_shape_ptr = std::make_shared<abstract::Shape>(out_shape, infer_shape_min, infer_shape_max);
+    out_shape_ptr = std::make_shared<abstract::Shape>(out_shape);
   }
 
   return std::make_shared<abstract::TupleShape>(std::vector<abstract::BaseShapePtr>{out_shape_ptr, out_shape_ptr});
@@ -102,7 +127,26 @@ AbstractBasePtr AdaptiveMaxPool3DInfer(const abstract::AnalysisEnginePtr &, cons
   auto shapes = AdaptiveMaxPool3DInferShape(primitive, input_args);
   return abstract::MakeAbstract(shapes, types);
 }
-REGISTER_HOST_DEPENDS(kNameAdaptiveMaxPool3D, {1});
-REGISTER_PRIMITIVE_EVAL_IMPL(AdaptiveMaxPool3D, prim::kPrimAdaptiveMaxPool3D, AdaptiveMaxPool3DInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGAdaptiveMaxPool3DInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return AdaptiveMaxPool3DInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return AdaptiveMaxPool3DInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return AdaptiveMaxPool3DInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(AdaptiveMaxPool3D, prim::kPrimAdaptiveMaxPool3D, AGAdaptiveMaxPool3DInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,19 +14,22 @@
  * limitations under the License.
  */
 #include "plugin/device/gpu/hal/device/gpu_kernel_build.h"
-#include <string>
+#include <map>
 #include <memory>
+#include <string>
 #include "kernel/kernel.h"
-#ifndef _MSC_VER
+#include "mindspore/core/ops/framework_ops.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#ifdef ENABLE_AKG
 #include "plugin/device/gpu/kernel/akg/akg_gpu_kernel_build.h"
 #endif
-#include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
-#include "kernel/common_utils.h"
-#include "frontend/operator/ops.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
-#include "include/common/utils/anfalgo.h"
 #include "backend/common/session/kernel_build_client.h"
+#include "frontend/operator/ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
+#include "include/common/utils/anfalgo.h"
+#include "kernel/framework_utils.h"
 #include "plugin/device/gpu/hal/device/cuda_env_checker.h"
+#include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
 namespace mindspore {
 namespace device {
 namespace gpu {
@@ -57,11 +60,6 @@ void SetGpuRefMapToKernelInfo(const CNodePtr &apply_kernel, const std::vector<ke
 }
 }  // namespace
 
-bool IsInBlackList(const std::string &kernel_name) {
-  return kernel_name == prim::kPrimTupleGetItem->name() || kernel_name == prim::kPrimMakeTuple->name() ||
-         kernel_name == prim::kPrimDepend->name() || kernel_name == prim::kPrimStateSetItem->name();
-}
-
 void CreateGPUKernel(const std::vector<CNodePtr> &kernels) {
   kernel::KernelMeta *bin_map = kernel::KernelMeta::GetInstance();
   MS_EXCEPTION_IF_NULL(bin_map);
@@ -69,8 +67,13 @@ void CreateGPUKernel(const std::vector<CNodePtr> &kernels) {
   std::vector<AnfNodePtr> akg_nodes;
   for (const auto &kernel : kernels) {
     MS_EXCEPTION_IF_NULL(kernel);
-    std::string kernel_name = common::AnfAlgo::GetCNodeName(kernel);
-    if (IsInBlackList(kernel_name)) {
+    // Need backoff to create CPU kernel.
+    if (AnfAlgo::IsKernelSelectBackoffOp(kernel)) {
+      continue;
+    }
+    const mindspore::HashSet<PrimitivePtr, PrimitiveHasher, PrimitiveEqual> virtual_prims = {
+      prim::kPrimTupleGetItem, prim::kPrimMakeTuple, prim::kPrimDepend, prim::kPrimStateSetItem};
+    if (IsOneOfPrimitiveCNode(kernel, virtual_prims)) {
       continue;
     }
 
@@ -82,15 +85,16 @@ void CreateGPUKernel(const std::vector<CNodePtr> &kernels) {
         already_check_nvcc = true;
         if (!CudaEnvChecker::GetInstance().CheckNvccInPath()) {
           MS_LOG(EXCEPTION)
-            << "Failed to find nvcc compiler, please add nvcc position to the PATH environment variable, run "
-               "the command: export PATH=${CUDA_PATH}/bin:${PATH}, CUDA_PATH is the installation path of the "
+            << "#umsg#Failed to find nvcc compiler:#umsg#Please add nvcc position to the PATH environment variable, "
+               "run the command: export PATH=${CUDA_PATH}/bin:${PATH}, CUDA_PATH is the installation path of the "
                "cuda library(eg. /usr/local/cuda).";
         }
       }
       akg_nodes.push_back(kernel);
-    } else if (!common::AnfAlgo::IsControlOpExecInBackend(kernel)) {
+    } else if (!common::AnfAlgo::IsBpropCutOpExecInBackend(kernel)) {
       std::shared_ptr<kernel::NativeGpuKernelMod> gpu_kernel_mod = nullptr;
       bool new_factory = true;
+      const auto &kernel_name = common::AnfAlgo::GetCNodeName(kernel);
       if (kernel::Factory<kernel::NativeGpuKernelMod>::Instance().IsRegistered(kernel_name)) {
         gpu_kernel_mod = kernel::Factory<kernel::NativeGpuKernelMod>::Instance().Create(kernel_name);
       } else {
@@ -100,12 +104,13 @@ void CreateGPUKernel(const std::vector<CNodePtr> &kernels) {
         new_factory = false;
       }
       if (!gpu_kernel_mod) {
-        MS_LOG(EXCEPTION) << "Build gpu kernel op[" << kernel->fullname_with_scope() << "] failed";
+        MS_LOG(INTERNAL_EXCEPTION) << "#dmsg#Kernel build failed:#dmsg#Build gpu kernel op["
+                                   << kernel->fullname_with_scope() << "] failed";
       }
       MS_EXCEPTION_IF_NULL(kernel);
 
       auto old_gpu_kernel_mod = std::dynamic_pointer_cast<kernel::DeprecatedNativeGpuKernelMod>(gpu_kernel_mod);
-      auto args = kernel::AbstractArgsFromCNode(kernel, old_gpu_kernel_mod != nullptr);
+      auto args = kernel::AbstractArgsFromCNode(kernel);
       // inputs_tensor_map is ops's valueDepend input. if this input is const_value tensor,
       // we will put this tensor in args.inputs.host_data_.
       auto inputs_tensor_map = std::map<uint32_t, tensor::TensorPtr>();
@@ -117,7 +122,8 @@ void CreateGPUKernel(const std::vector<CNodePtr> &kernels) {
           old_gpu_kernel_mod->SetGpuRefMapToKernelInfo(kernel);
         }
         if (!old_gpu_kernel_mod->Init(kernel)) {
-          MS_LOG(EXCEPTION) << "Initialize gpu kernel op[" << kernel->fullname_with_scope() << "] failed.";
+          MS_LOG(INTERNAL_EXCEPTION) << "#dmsg#Kernel build failed:#dmsg#Initialize gpu kernel op["
+                                     << kernel->fullname_with_scope() << "] failed.";
         }
         session::AnfRuntimeAlgorithm::SetKernelMod(old_gpu_kernel_mod, kernel.get());
       } else {
@@ -129,22 +135,24 @@ void CreateGPUKernel(const std::vector<CNodePtr> &kernels) {
         MS_EXCEPTION_IF_NULL(ms_context);
         auto device_id = ms_context->get_param<uint32_t>(MS_CTX_DEVICE_ID);
         gpu_kernel_mod->SetDevicedId(device_id);
-        if (!gpu_kernel_mod->Init(args.op, args.inputs, args.outputs)) {
-          MS_LOG(EXCEPTION) << "Initialize gpu kernel op[" << kernel->fullname_with_scope() << "] failed.";
+        auto op = kernel::CreateOperatorByCNode(kernel);
+        if (!gpu_kernel_mod->Init_(op, args.inputs, args.outputs)) {
+          MS_LOG(EXCEPTION) << "#dmsg#Kernel build failed:#dmsg#Initialize gpu kernel op["
+                            << kernel->fullname_with_scope() << "] failed.";
         }
         if (!kernel::IfNeedSkipResize(kernel)) {
-          if (gpu_kernel_mod->Resize(args.op, args.inputs, args.outputs, inputs_tensor_map) ==
-              kernel::KRET_RESIZE_FAILED) {
-            MS_LOG(EXCEPTION) << "gpu kernel op[" << kernel->fullname_with_scope() << "] Resize failed.";
+          if (gpu_kernel_mod->Resize(args.inputs, args.outputs, inputs_tensor_map) == kernel::KRET_RESIZE_FAILED) {
+            MS_LOG(EXCEPTION) << "#dmsg#Kernel build failed:#dmsg#Gpu kernel op[" << kernel->fullname_with_scope()
+                              << "] Resize failed.";
           }
         }
         session::AnfRuntimeAlgorithm::SetKernelMod(gpu_kernel_mod, kernel.get());
       }
     }
   }
-#ifndef _MSC_VER
+#ifdef ENABLE_AKG
   kernel::AkgGpuKernelBuilder akg_gpu_kernel_builder;
-  (void)akg_gpu_kernel_builder.AkgKernelParallelBuild(akg_nodes);
+  (void)akg_gpu_kernel_builder.SingleOpParallelBuild(akg_nodes);
 #endif
 }
 }  // namespace gpu

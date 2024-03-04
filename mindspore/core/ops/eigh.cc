@@ -16,10 +16,30 @@
 
 #include "ops/eigh.h"
 
+#include <algorithm>
+#include <memory>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
-#include "ops/op_utils.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -82,7 +102,7 @@ AbstractBasePtr EighInfer(const abstract::AnalysisEnginePtr &, const PrimitivePt
   MS_EXCEPTION_IF_NULL(primitive);
   auto op_name = primitive->name();
   const int64_t input_num = 1;
-  (void)CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, op_name);
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, op_name);
   auto infer_type = EighInferType(primitive, input_args);
   auto infer_shape = EighInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
@@ -98,6 +118,23 @@ bool Eigh::get_lower() const {
   return GetValue<bool>(value_ptr);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(Eigh, prim::kPrimEigh, EighInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGEighInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return EighInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return EighInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return EighInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Eigh, prim::kPrimEigh, AGEighInfer, false);
 }  // namespace ops
 }  // namespace mindspore

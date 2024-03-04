@@ -17,7 +17,7 @@
 #include "debug/data_dump/cpu_e2e_dump.h"
 #include <map>
 #include <fstream>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/common/debug/anf_dump_utils.h"
 #include "include/common/debug/common.h"
@@ -90,7 +90,19 @@ void CPUE2eDump::DumpInputImpl(const CNodePtr &node, const std::string &dump_pat
   MS_EXCEPTION_IF_NULL(node);
   GetFileKernelName(NOT_NULL(kernel_name));
   auto input_size = common::AnfAlgo::GetInputTensorNum(node);
+  auto kernel_mod = AnfAlgo::GetKernelMod(node);
+  std::vector<size_t> ignored_address;
+  if (kernel_mod != nullptr) {
+    ignored_address = kernel_mod->GetLaunchIgnoredInputAddressIdx();
+  }
+
   for (size_t j = 0; j < input_size; ++j) {
+    // Ignore the input address that is not used in the kernel launch.
+    if (std::find(ignored_address.begin(), ignored_address.end(), j) != ignored_address.end()) {
+      MS_LOG(INFO) << "Ignore dump input data for kernel:" << node->fullname_with_scope() << " with input index:" << j;
+      continue;
+    }
+
     auto kernel_with_index = common::AnfAlgo::GetPrevNodeOutput(node, j);
     auto input = kernel_with_index.first;
     auto index = kernel_with_index.second;
@@ -116,7 +128,7 @@ void CPUE2eDump::DumpInputImpl(const CNodePtr &node, const std::string &dump_pat
 void CPUE2eDump::DumpOutputImpl(const CNodePtr &node, const std::string &dump_path, std::string *kernel_name) {
   MS_EXCEPTION_IF_NULL(node);
   GetFileKernelName(NOT_NULL(kernel_name));
-  auto output_size = common::AnfAlgo::GetOutputTensorNum(node);
+  auto output_size = AnfAlgo::GetOutputTensorNum(node);
   for (size_t j = 0; j < output_size; ++j) {
     if (!AnfAlgo::OutputAddrExist(node, j)) {
       continue;
@@ -194,7 +206,7 @@ void CPUE2eDump::DumpParameters(const session::KernelGraph *graph, uint32_t grap
   // dump parameters
   const auto &parameters = graph->inputs();
   for (auto &item : parameters) {
-    DumpSingleAnfNode(item, PARAMETER_OUTPUT_INDEX, dump_path);
+    DumpSingleAnfNode(item, kParameterOutputIndex, dump_path);
   }
 }
 
@@ -221,7 +233,7 @@ void CPUE2eDump::DumpConstants(const session::KernelGraph *graph, uint32_t graph
   // dump constants
   const auto value_nodes = graph->graph_value_nodes();
   for (auto &item : value_nodes) {
-    DumpSingleAnfNode(item, VALUE_NODE_OUTPUT_INDEX, dump_path);
+    DumpSingleAnfNode(item, kValueNodeOutputIndex, dump_path);
   }
 }
 

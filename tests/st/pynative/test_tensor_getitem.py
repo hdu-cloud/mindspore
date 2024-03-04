@@ -127,11 +127,6 @@ def test_reduce_dimension():
     assert np.all(output4.asnumpy() == input_np[1] + np.ones([8, 10]))
 
 
-@pytest.mark.level0
-@pytest.mark.platform_arm_ascend_training
-@pytest.mark.platform_x86_ascend_training
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.env_onecard
 class NetWorkSliceStep(Cell):
     def __init__(self):
         super(NetWorkSliceStep, self).__init__()
@@ -380,11 +375,6 @@ def test_setitem_by_mixed_tensors_0():
     assert np.all(out.asnumpy() == (input_np + const))
 
 
-@pytest.mark.level0
-@pytest.mark.platform_arm_ascend_training
-@pytest.mark.platform_x86_ascend_training
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.env_onecard
 class TensorSetItemByMixedTensors_1(Cell):
     def __init__(self, value):
         super(TensorSetItemByMixedTensors_1, self).__init__()
@@ -420,11 +410,6 @@ def test_setitem_by_mixed_tensors_1():
     assert np.all(out.asnumpy() == (input_np + const))
 
 
-@pytest.mark.level0
-@pytest.mark.platform_arm_ascend_training
-@pytest.mark.platform_x86_ascend_training
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.env_onecard
 class TensorSetItemByMixedTensors_2(Cell):
     def __init__(self, value):
         super(TensorSetItemByMixedTensors_2, self).__init__()
@@ -476,7 +461,7 @@ def test_getitem_by_mixed_tensor_exception():
     index_0 = Tensor(np.random.randint(3, size=(3, 4, 5)), mstype.int32)
     index_1 = Tensor(np.random.randint(4, size=(3, 4, 5)), mstype.int32)
     net1 = TensorGetItemByMixedTensorsIndexError()
-    with pytest.raises(IndexError):
+    with pytest.raises(ValueError):
         net1(input_ms, index_0, index_1)
 
 
@@ -622,7 +607,6 @@ class TensorSetItemByTensorsWithNumber(Cell):
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
-@pytest.mark.level0
 def test_setitem_by_tensors_with_number():
     value = 0.0
     net = TensorSetItemByTensorsWithNumber(value)
@@ -956,17 +940,6 @@ def test_tensor_assign_exception():
     # with pytest.raises(ValueError):
     #     net_e2(t, 2)
 
-    # Error for A[Slice] = U, U is a Tensor
-    # 1. A[Slice] = U,  u.size is error
-    with pytest.raises(ValueError):
-        net2(t, Tb, tck)
-    # 2. A[Slice] = U, U is empty
-    with pytest.raises(ValueError):
-        net2(t, Tc, tck)
-    # 3. A[Slice] = U, U.size error
-    with pytest.raises(ValueError):
-        net2(t, Tb, tck)
-
     # Error for A[Tuple(Slice...)] = Tensor
     # 1. A[Tuple(Slice...)] = U, U is empty
     with pytest.raises(ValueError):
@@ -977,6 +950,17 @@ def test_tensor_assign_exception():
     # 3. A[Tuple(Slice...)] = U,  Slice error
     # with pytest.raises(IndexError):
     #     net_e1(Ta, b)
+
+    # Error for A[Slice] = U, U is a Tensor
+    # 1. A[Slice] = U,  u.size is error
+    with pytest.raises(ValueError):
+        net2(t, Tb, tck)
+    # 2. A[Slice] = U, U is empty
+    with pytest.raises(ValueError):
+        net2(t, Tc, tck)
+    # 3. A[Slice] = U, U.size error
+    with pytest.raises(ValueError):
+        net2(t, Tb, tck)
 
     # Error for A[Tuple(Slice...)] = Number
     # 1. A[Tuple(Slice...)] = Number,  Slice error
@@ -1005,6 +989,25 @@ def test_tensor_assign_exception():
     with pytest.raises(IndexError):
         net(Ta4d, b, Ta4d_ck)
 
+
+@pytest.mark.level1
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.env_onecard
+def test_tensor_assign_exception_2():
+    """
+    Feature: Test TensorAssignWithEllipsis and TensorAssignWithTupleEllipsis
+    Description: Test error cases for TensorAssignWithEllipsis and TensorAssignWithTupleEllipsis
+    Expectation: ValueError is as expected
+    """
+    a = np.arange(60).reshape(3, 4, 5)
+    b = Tensor([1], dtype=mstype.float32)
+    Ta = Tensor(a, dtype=mstype.float32)
+    Ta4d = Tensor(a.reshape(1, 3, 4, 5), dtype=mstype.float32)
+    Tb = Tensor([1, 3], dtype=mstype.float32)
+    Tc = Tensor([], dtype=mstype.float32)
+
     # Error for  A[...] = U or A[1:, ...] = u
     # 1. A[...] = scalar/tensor
     net = TensorAssignWithEllipsis()
@@ -1018,6 +1021,15 @@ def test_tensor_assign_exception():
     net(Ta, b)
     with pytest.raises(ValueError):
         net(Ta, Tb)
+    net = TensorAssignWithMultiEllipsis()
+    with pytest.raises(IndexError):
+        net(Ta)
+
+
+class TensorAssignWithMultiEllipsis(Cell):
+    def construct(self, a):
+        a[0:, ..., ...] = 1
+        return a
 
 
 class TensorAssignWithTupleEllipsis2(Cell):
@@ -1174,14 +1186,14 @@ def test_tensor_assign_bool_index_exception():
     with pytest.raises(ValueError):
         net2(Ta, u_tensor_error)
     net3 = TensorAssignWithBoolTensorIndexError()
-    with pytest.raises(IndexError):
+    with pytest.raises(ValueError):
         net3(Ta, Tb, Tc, u_tensor)
-    with pytest.raises(IndexError):
+    with pytest.raises(ValueError):
         net3(Ta, Tb, Tc, u_scalar)
     net4 = TensorAssignWithBoolTensorIndex2Error()
-    with pytest.raises(IndexError):
+    with pytest.raises(ValueError):
         net4(Ta, u_tensor)
-    with pytest.raises(IndexError):
+    with pytest.raises(ValueError):
         net4(Ta, u_scalar)
 
 
@@ -1204,8 +1216,7 @@ def test_tensor_slice_reduce_out_of_bounds_neg():
     net = NetWork()
     with pytest.raises(IndexError) as ex:
         net(input_tensor)
-    assert "'begin[0]' must be in [-6, 6) when 'shrink_axis_mask' is greater than 0, " \
-           "but got 'shrink_axis_mask': 7, 'strides[0]': 1, 'begin[0]': -7." in str(ex.value)
+    assert "index -7 is out of bounds for dimension with size 6" in str(ex.value)
 
 
 @pytest.mark.level1
@@ -1227,8 +1238,7 @@ def test_tensor_slice_reduce_out_of_bounds_positive():
     net = NetWork()
     with pytest.raises(IndexError) as ex:
         net(input_tensor)
-    assert "'begin[0]' must be in [-6, 6) when 'shrink_axis_mask' is greater than 0, " \
-           "but got 'shrink_axis_mask': 7, 'strides[0]': 1, 'begin[0]': 6." in str(ex.value)
+    assert "index 6 is out of bounds for dimension with size 6" in str(ex.value)
 
 
 @pytest.mark.level1

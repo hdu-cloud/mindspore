@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,6 +49,18 @@ class EpochCtrlOp : public RepeatOp {
   Status EoeReceived(int32_t worker_id) override;
 
   int64_t GetTreeRepeatCount() override;
+
+  /// \brief In pull mode, gets the next row
+  /// \param row[out] - Fetched TensorRow
+  /// \return Status The status code returned
+  Status GetNextRowPullMode(TensorRow *const row) override;
+
+  int32_t NumEpochs() const { return num_repeats_; }
+
+ protected:
+  /// \brief Gets the implementation status for operator in pull mode
+  /// \return implementation status
+  ImplementedPullMode PullModeImplementationStatus() const override { return ImplementedPullMode::Implemented; }
 };
 }  // namespace dataset
 }  // namespace mindspore

@@ -15,14 +15,30 @@
  */
 #include "ops/nan_to_num.h"
 
+#include <limits>
 #include <set>
-#include <map>
 #include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/float16.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/base/type_id.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -44,30 +60,6 @@ TypePtr NanToNumInferType(const PrimitivePtr &prim, const std::vector<AbstractBa
   MS_EXCEPTION_IF_NULL(x_dtype);
   const std::set<TypePtr> x_valid_types = {kFloat16, kFloat32};
   (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_dtype, x_valid_types, op_name);
-  auto dtype = x_dtype->cast<TensorTypePtr>();
-  TypeId dtype_id = dtype->element()->type_id();
-
-  auto nan_none = prim->GetAttr("nan_none");
-  if (nan_none != nullptr && GetValue<bool>(nan_none)) {
-    prim->set_attr("nan", MakeValue(static_cast<float>(0.0)));
-  }
-  auto posinf_none = prim->GetAttr("posinf_none");
-  if (posinf_none != nullptr && GetValue<bool>(posinf_none)) {
-    if (dtype_id == kNumberTypeFloat32) {
-      prim->set_attr("posinf", MakeValue(std::numeric_limits<float>::max()));
-    } else if (dtype_id == kNumberTypeFloat16) {
-      prim->set_attr("posinf", MakeValue(static_cast<float>(std::numeric_limits<float16>::max())));
-    }
-  }
-  auto neginf_none = prim->GetAttr("neginf_none");
-  if (neginf_none != nullptr && GetValue<bool>(neginf_none)) {
-    if (dtype_id == kNumberTypeFloat32) {
-      prim->set_attr("neginf", MakeValue(std::numeric_limits<float>::lowest()));
-    } else if (dtype_id == kNumberTypeFloat16) {
-      prim->set_attr("neginf", MakeValue(static_cast<float>(std::numeric_limits<float16>::lowest())));
-    }
-  }
-
   return x_dtype;
 }
 }  // namespace
@@ -101,6 +93,24 @@ void NanToNum::set_neginf_value(float neginf_value) { (void)this->AddAttr(kNegin
 float NanToNum::get_neginf_value() const { return GetValue<float>(GetAttr(kNeginf)); }
 
 MIND_API_OPERATOR_IMPL(NanToNum, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(NanToNum, prim::kPrimNanToNum, NanToNumInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGNanToNumInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return NanToNumInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return NanToNumInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return NanToNumInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(NanToNum, prim::kPrimNanToNum, AGNanToNumInfer, false);
 }  // namespace ops
 }  // namespace mindspore

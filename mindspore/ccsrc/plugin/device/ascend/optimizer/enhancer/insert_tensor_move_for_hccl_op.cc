@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,11 @@
 #include <vector>
 #include <set>
 #include <string>
+#include "ops/ascend_op_name.h"
+#include "ops/structure_op_name.h"
+#include "ops/framework_ops.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "frontend/optimizer/opt.h"
 #include "plugin/device/ascend/optimizer/ascend_helper.h"
@@ -38,7 +41,7 @@ bool IsNodeOutPutUsedByOtherRealKernel(const FuncGraphPtr &graph, const AnfNodeP
   auto &node_users = manager->node_users();
   auto iter = node_users.find(input);
   if (iter == node_users.end()) {
-    MS_LOG(EXCEPTION) << "node has no output in manager." << trace::DumpSourceLines(input);
+    MS_LOG(INTERNAL_EXCEPTION) << "node has no output in manager." << trace::DumpSourceLines(input);
   }
   auto user_items = iter->second;
   if (user_items.size() == 1) {
@@ -82,6 +85,11 @@ bool InsertTensorMoveForHcclOp::NeedInsertTensorMoveForSpecialCase(const AnfNode
   if (kNeedInsertTensorMoveOpSet.find(common::AnfAlgo::GetCNodeName(real_input)) != kNeedInsertTensorMoveOpSet.end()) {
     return true;
   }
+  // when input is communication node
+  if (common::AnfAlgo::IsCommunicationOp(real_input)) {
+    return true;
+  }
+
   return false;
 }
 
@@ -101,6 +109,32 @@ bool InsertTensorMoveForHcclOp::NeedInsertTensorMove(const FuncGraphPtr &graph, 
   return false;
 }
 
+void AdjustDependToTensorMove(const AnfNodePtr &input, const AnfNodePtr &tensor_move) {
+  auto func_graph = input->func_graph();
+  if (func_graph == nullptr) {
+    return;
+  }
+  auto manager = func_graph->manager();
+  if (manager == nullptr) {
+    return;
+  }
+  const auto &node_users = manager->node_users();
+  if (node_users.find(input) == node_users.end()) {
+    return;
+  }
+  const auto &input_users = node_users.at(input);
+  for (const auto &input_user : input_users) {
+    if (!IsPrimitiveCNode(input_user.first, prim::kPrimDepend)) {
+      continue;
+    }
+    auto depend_cnode = input_user.first->cast<CNodePtr>();
+    if (!depend_cnode->HasAttr(kAttrCommInputDepend)) {
+      continue;
+    }
+    manager->SetEdge(depend_cnode, input_user.second, tensor_move);
+  }
+}
+
 void InsertTensorMoveForHcclOp::InsertTensorMove(const FuncGraphPtr &graph, const CNodePtr &hccl_node) const {
   MS_EXCEPTION_IF_NULL(graph);
   MS_EXCEPTION_IF_NULL(hccl_node);
@@ -108,6 +142,11 @@ void InsertTensorMoveForHcclOp::InsertTensorMove(const FuncGraphPtr &graph, cons
   std::vector<AnfNodePtr> new_inputs = {hccl_node->input(0)};
   for (size_t i = 1; i < hccl_node->size(); ++i) {
     auto input = hccl_node->input(i);
+    if (HasAbstractMonad(input)) {
+      MS_LOG(DEBUG) << "Do not insert TensorMove for Monad. For node " << input->DebugString() << ", in input " << i;
+      new_inputs.push_back(input);
+      continue;
+    }
     if (NeedInsertTensorMoveForSpecialCase(input, hccl_node) || NeedInsertTensorMove(graph, input, i, hccl_node)) {
       auto tensor_move = CreateTensorMoveOp(graph, input);
       if (tensor_move == nullptr) {
@@ -116,6 +155,7 @@ void InsertTensorMoveForHcclOp::InsertTensorMove(const FuncGraphPtr &graph, cons
       if (input->isa<CNode>() && common::AnfAlgo::IsDynamicShape(input)) {
         MS_LOG(DEBUG) << "The tenser move op has dynamic shape attr.";
       }
+      AdjustDependToTensorMove(input, tensor_move);
       new_inputs.push_back(tensor_move);
       need_tensor_move_async = true;
     } else {
@@ -125,6 +165,7 @@ void InsertTensorMoveForHcclOp::InsertTensorMove(const FuncGraphPtr &graph, cons
 
   if (need_tensor_move_async) {
     CNodePtr new_hccl_node = std::make_shared<CNode>(*hccl_node);
+    new_hccl_node->CloneUserData(hccl_node);
     new_hccl_node->set_inputs(new_inputs);
     auto manager = graph->manager();
     MS_EXCEPTION_IF_NULL(manager);

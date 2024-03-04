@@ -19,10 +19,10 @@
 #include "ir/manager.h"
 #include "include/common/debug/anf_ir_dump.h"
 #include "common/py_func_graph_fetcher.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
-#include "backend/common/optimizer/optimizer.h"
-#include "backend/common/optimizer/pass_manager.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/anf_runtime_algorithm.h"
+#include "include/backend/optimizer/optimizer.h"
+#include "include/backend/optimizer/pass_manager.h"
+#include "include/backend/kernel_info.h"
 #include "plugin/device/ascend/optimizer/format_type/insert_cast.h"
 #include "kernel/kernel_build_info.h"
 #include "include/common/utils/utils.h"
@@ -30,6 +30,10 @@
 
 namespace mindspore {
 namespace opt {
+namespace {
+constexpr auto kPatternElemWise = "ElemWise";
+}
+
 class TestHWInsertCast : public BackendCommon {
  public:
   TestHWInsertCast() : getPyFun_("gtest_input.pre_activate.mixed_precision_test", true) {}
@@ -58,17 +62,21 @@ TEST_F(TestHWInsertCast, test_insert_cast_op_for_single_output) {
   builder.SetOutputsFormat({"NC1HWC0"});
   builder.SetInputsDeviceType({kFloat16->type_id(), kFloat16->type_id()});
   builder.SetOutputsDeviceType({kFloat16->type_id()});
-  builder.SetFusionType(kernel::FusionType::ELEMWISE);
+  builder.SetFusionType(kPatternElemWise);
   builder.SetProcessor(kernel::Processor::AICORE);
   builder.SetKernelType(KernelType::AKG_KERNEL);
+  builder.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR, kernel::KernelObjectType::TENSOR});
+  builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
   kernel::KernelBuildInfo::KernelBuildInfoBuilder builder1;
   builder1.SetInputsFormat({"NC1HWC0"});
   builder1.SetInputsDeviceType({kFloat32->type_id()});
   builder1.SetOutputsFormat({"NC1HWC0"});
   builder1.SetOutputsDeviceType({kFloat32->type_id()});
-  builder1.SetFusionType(kernel::FusionType::ELEMWISE);
+  builder1.SetFusionType(kPatternElemWise);
   builder1.SetProcessor(kernel::Processor::AICORE);
   builder1.SetKernelType(KernelType::AKG_KERNEL);
+  builder1.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR});
+  builder1.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
   auto node_list = TopoSort(func_graph->get_return());
   for (auto &node : node_list) {
     if (node == nullptr) {
@@ -115,14 +123,18 @@ TEST_F(TestHWInsertCast, test_insert_cast_op_for_multiple_output) {
   builder.SetOutputsFormat({"NC1HWC0", "NC1HWC0"});
   builder.SetInputsDeviceType({kFloat16->type_id()});
   builder.SetOutputsDeviceType({kFloat16->type_id(), kFloat16->type_id()});
+  builder.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR});
+  builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR, kernel::KernelObjectType::TENSOR});
   kernel::KernelBuildInfo::KernelBuildInfoBuilder builder1;
   builder1.SetInputsFormat({"NC1HWC0"});
   builder1.SetInputsDeviceType({kFloat32->type_id()});
   builder1.SetOutputsFormat({"DefaultFormat"});
   builder1.SetOutputsDeviceType({kFloat32->type_id()});
-  builder1.SetFusionType(kernel::FusionType::ELEMWISE);
+  builder1.SetFusionType(kPatternElemWise);
   builder1.SetProcessor(kernel::Processor::AICORE);
   builder1.SetKernelType(KernelType::AKG_KERNEL);
+  builder1.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR});
+  builder1.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
   auto node_list = TopoSort(func_graph->get_return());
   for (auto &node : node_list) {
     if (node == nullptr) {

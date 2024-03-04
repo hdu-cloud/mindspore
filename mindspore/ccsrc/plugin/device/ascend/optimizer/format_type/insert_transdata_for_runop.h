@@ -20,12 +20,11 @@
 #include <string>
 #include <utility>
 #include <memory>
-
-#include "backend/common/optimizer/pass.h"
+#include "include/backend/optimizer/pass.h"
 #include "ir/func_graph.h"
 #include "ir/anf.h"
-#include "backend/common/optimizer/helper.h"
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/optimizer/optimizer.h"
 #include "plugin/device/ascend/optimizer/ascend_helper.h"
 
 namespace mindspore {
@@ -41,7 +40,7 @@ class RunOpInsertTransData : public Pass {
   bool ConvertNodeFormat(const FuncGraphPtr &graph, const AnfNodePtr &node, const std::string &format,
                          size_t insert_index, size_t input_index, bool is_insert) const;
   KernelSelectPtr kernel_select_;
-  size_t input_size_{0};
+  ShapeVector input_shape_;
 };
 }  // namespace opt
 }  // namespace mindspore

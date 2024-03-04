@@ -1,5 +1,5 @@
 /**
-* Copyright 2022 Huawei Technologies Co., Ltd
+* Copyright 2022-2023 Huawei Technologies Co., Ltd
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,12 +13,18 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 */
-#ifndef MINDSPORE_CCSRC_MINDDATA_DATASET_KERNELS_IMAGE_DVPP_UTILS_ACL_PLUGIN_H
-#define MINDSPORE_CCSRC_MINDDATA_DATASET_KERNELS_IMAGE_DVPP_UTILS_ACL_PLUGIN_H
+#ifndef MINDSPORE_CCSRC_MINDDATA_DATASET_KERNELS_IMAGE_DVPP_UTILS_ACL_PLUGIN_H_
+#define MINDSPORE_CCSRC_MINDDATA_DATASET_KERNELS_IMAGE_DVPP_UTILS_ACL_PLUGIN_H_
 
 #include <memory>
+#include <string>
+
 #include "minddata/dataset/core/device_tensor.h"
+#if !defined(BUILD_LITE) && defined(ENABLE_D)
+#include "minddata/dataset/core/device_tensor_ascend910b.h"
+#endif
 #include "minddata/dataset/core/tensor.h"
+#include "minddata/dataset/include/dataset/constants.h"
 #include "minddata/dataset/kernels/image/dvpp/utils/resouce_info.h"
 #include "utils/dlopen_macro.h"
 
@@ -73,4 +79,36 @@ ORIGIN_METHOD(aclrtMallocHost, int, void **, size_t);
 PLUGIN_METHOD(aclrtMemcpy, int, void *, size_t, const void *, size_t, int);
 ORIGIN_METHOD(aclrtFreeHost, int, void *);
 
-#endif  // MINDSPORE_CCSRC_MINDDATA_DATASET_KERNELS_IMAGE_DVPP_UTILS_ACL_PLUGIN_H
+#if !defined(BUILD_LITE) && defined(ENABLE_D)
+// Ascend910B
+PLUGIN_METHOD(DvppResize, int, const std::shared_ptr<mindspore::dataset::DeviceTensorAscend910B> &,
+              std::shared_ptr<mindspore::dataset::DeviceTensorAscend910B> *, int32_t, int32_t, double, double,
+              mindspore::dataset::InterpolationMode);
+
+PLUGIN_METHOD(DvppDecode, int, const std::shared_ptr<mindspore::dataset::DeviceTensorAscend910B> &,
+              std::shared_ptr<mindspore::dataset::DeviceTensorAscend910B> *);
+
+PLUGIN_METHOD(DvppNormalize, int, const std::shared_ptr<mindspore::dataset::DeviceTensorAscend910B> &,
+              std::shared_ptr<mindspore::dataset::DeviceTensorAscend910B> *, std::vector<float>, std::vector<float>,
+              bool);
+
+PLUGIN_METHOD(DvppAdjustBrightness, int, const std::shared_ptr<mindspore::dataset::DeviceTensorAscend910B> &,
+              std::shared_ptr<mindspore::dataset::DeviceTensorAscend910B> *, float);
+
+PLUGIN_METHOD(DvppAdjustContrast, int, const std::shared_ptr<mindspore::dataset::DeviceTensorAscend910B> &,
+              std::shared_ptr<mindspore::dataset::DeviceTensorAscend910B> *, float);
+
+PLUGIN_METHOD(DvppAdjustHue, int, const std::shared_ptr<mindspore::dataset::DeviceTensorAscend910B> &,
+              std::shared_ptr<mindspore::dataset::DeviceTensorAscend910B> *, float);
+
+PLUGIN_METHOD(DvppAdjustSaturation, int, const std::shared_ptr<mindspore::dataset::DeviceTensorAscend910B> &,
+              std::shared_ptr<mindspore::dataset::DeviceTensorAscend910B> *, float);
+
+// acl
+PLUGIN_METHOD(GetSocName, int, std::string *);
+
+PLUGIN_METHOD(CreateAclTensor, int, const int64_t *, uint64_t, mindspore::TypeId, const int64_t *, int64_t,
+              const int64_t *, uint64_t, void *, bool, void **);
+#endif
+
+#endif  // MINDSPORE_CCSRC_MINDDATA_DATASET_KERNELS_IMAGE_DVPP_UTILS_ACL_PLUGIN_H_

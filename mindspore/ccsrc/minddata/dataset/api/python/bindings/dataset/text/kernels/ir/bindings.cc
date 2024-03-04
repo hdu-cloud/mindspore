@@ -23,6 +23,16 @@
 
 namespace mindspore {
 namespace dataset {
+PYBIND_REGISTER(AddTokenOperation, 1, ([](const py::module *m) {
+                  (void)py::class_<text::AddTokenOperation, TensorOperation, std::shared_ptr<text::AddTokenOperation>>(
+                    *m, "AddTokenOperation")
+                    .def(py::init([](const std::string &token, bool begin) {
+                      auto add_token = std::make_shared<text::AddTokenOperation>(token, begin);
+                      THROW_IF_ERROR(add_token->ValidateParams());
+                      return add_token;
+                    }));
+                }));
+
 #ifdef ENABLE_ICU4C
 
 PYBIND_REGISTER(
@@ -230,6 +240,16 @@ PYBIND_REGISTER(
           return to_vectors;
         }));
   }));
+
+PYBIND_REGISTER(TruncateOperation, 1, ([](const py::module *m) {
+                  (void)py::class_<text::TruncateOperation, TensorOperation, std::shared_ptr<text::TruncateOperation>>(
+                    *m, "TruncateOperation")
+                    .def(py::init([](int32_t max_seq_len) {
+                      auto truncate = std::make_shared<text::TruncateOperation>(max_seq_len);
+                      THROW_IF_ERROR(truncate->ValidateParams());
+                      return truncate;
+                    }));
+                }));
 
 PYBIND_REGISTER(TruncateSequencePairOperation, 1, ([](const py::module *m) {
                   (void)py::class_<text::TruncateSequencePairOperation, TensorOperation,

@@ -24,7 +24,6 @@
 #include <memory>
 #include <vector>
 #include <algorithm>
-
 #include "ir/dtype.h"
 #include "ir/anf.h"
 #include "ir/func_graph.h"
@@ -48,23 +47,24 @@ class MS_CORE_API MetaFuncGraph : public FuncGraphBase {
   MS_DECLARE_PARENT(MetaFuncGraph, FuncGraphBase);
   // Return normalized versions of the arguments.
   // By default, this returns args unchanged.
-  virtual abstract::AbstractBasePtrList NormalizeArgs(const abstract::AbstractBasePtrList &args_spec_list) const {
-    return args_spec_list;
+  virtual abstract::AbstractBasePtrList NormalizeArgs(const abstract::AbstractBasePtrList &args_abs_list) const {
+    return args_abs_list;
   }
   abstract::AbstractBasePtr ToAbstract() override;
   const std::vector<Signature> &signatures() const { return signatures_; }
   void set_signatures(const std::vector<Signature> &signatures) { signatures_ = signatures; }
   // Generate a Graph for the given abstract arguments.
-  virtual FuncGraphPtr GenerateFuncGraph(const abstract::AbstractBasePtrList &args_spec_list);
+  virtual FuncGraphPtr GenerateFuncGraph(const abstract::AbstractBasePtrList &args_abs_list);
 
   // Generate a Graph for this type signature.
   virtual FuncGraphPtr GenerateFromTypes(const TypePtrList &) {
-    MS_LOG(EXCEPTION) << "Undefined the method of generating graph from types.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Undefined the method of generating graph from types. func_name:" << name();
   }
 
   std::string name() { return name_; }
   std::string ToString() const override {
     std::ostringstream buffer;
+    buffer << "MetaFuncGraph-";
     buffer << name_;
     buffer << "." << debug_info_->get_id();
     return buffer.str();
@@ -82,6 +82,11 @@ class MS_CORE_API MetaFuncGraph : public FuncGraphBase {
 
   void DoBreakLoop() override { cache_.clear(); }
 
+  void set_node_expr_src(const std::string &node_expr_src) { node_expr_src_ = node_expr_src; }
+
+  void set_scope_name(const std::string &scope_name) { scope_name_ = scope_name; }
+  std::string scope_name() { return scope_name_; }
+
  protected:
   template <typename Derived>
   std::shared_ptr<Derived> shared_from_base() {
@@ -91,6 +96,8 @@ class MS_CORE_API MetaFuncGraph : public FuncGraphBase {
   std::string name_;
   std::vector<Signature> signatures_;
   TypeListMap<FuncGraphPtr> cache_;
+  std::string node_expr_src_ = "";
+  std::string scope_name_ = "";
 
  private:
   DebugInfoPtr debug_info_{nullptr};

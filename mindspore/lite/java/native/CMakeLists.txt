@@ -41,17 +41,50 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
 
 if(DEFINED ENV{MSLITE_ENABLE_RUNTIME_GLOG})
-    set(USE_GLOG on)
+    set(MSLITE_ENABLE_RUNTIME_GLOG $ENV{MSLITE_ENABLE_RUNTIME_GLOG})
 endif()
 
 if(DEFINED ENV{MSLITE_ENABLE_SERVER_INFERENCE})
-    set(MSLITE_ENABLE_PARALLEL_INFERENCE on)
-    set(USE_GLOG on)
+    set(MSLITE_ENABLE_SERVER_INFERENCE $ENV{MSLITE_ENABLE_SERVER_INFERENCE})
 endif()
 
 if(DEFINED ENV{MSLITE_ENABLE_PARALLEL_INFERENCE})
     set(MSLITE_ENABLE_PARALLEL_INFERENCE $ENV{MSLITE_ENABLE_PARALLEL_INFERENCE})
+endif()
+
+if(DEFINED ENV{MSLITE_ENABLE_CLOUD_INFERENCE})
+    set(MSLITE_ENABLE_CLOUD_INFERENCE $ENV{MSLITE_ENABLE_CLOUD_INFERENCE})
+endif()
+
+if(DEFINED ENV{MSLITE_ENABLE_CLOUD_FUSION_INFERENCE})
+    set(MSLITE_ENABLE_CLOUD_FUSION_INFERENCE $ENV{MSLITE_ENABLE_CLOUD_FUSION_INFERENCE})
+endif()
+
+if(DEFINED ENV{ENABLE_GLIBCXX})
+    set(ENABLE_GLIBCXX $ENV{ENABLE_GLIBCXX})
+endif()
+
+if(MSLITE_ENABLE_RUNTIME_GLOG)
     set(USE_GLOG on)
+endif()
+
+if(MSLITE_ENABLE_SERVER_INFERENCE)
+    set(MSLITE_ENABLE_PARALLEL_INFERENCE on)
+    set(USE_GLOG on)
+endif()
+
+if(MSLITE_ENABLE_PARALLEL_INFERENCE)
+    set(USE_GLOG on)
+endif()
+
+if(MSLITE_ENABLE_CLOUD_FUSION_INFERENCE OR MSLITE_ENABLE_CLOUD_INFERENCE)
+    set(MSLITE_ENABLE_PARALLEL_INFERENCE on)
+endif()
+
+if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+    if(NOT ENABLE_GLIBCXX)
+        add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0)
+    endif()
 endif()
 
 if(ENABLE_VERBOSE)
@@ -75,6 +108,7 @@ include_directories(${LITE_DIR}) ## lite include
 include_directories(${TOP_DIR}) ## api include
 include_directories(${TOP_DIR}/mindspore/core/) ## core include
 include_directories(${LITE_DIR}/build) ## flatbuffers
+include_directories(${TOP_DIR}/mindspore/ccsrc/plugin/device/cpu/kernel)
 
 if(PLATFORM_ARM64 OR PLATFORM_ARM32)
     set(PLATFORM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs/${ANDROID_ABI}/)
@@ -99,6 +133,10 @@ set(JNI_SRC
         ${NEW_NATIVE_DIR}/version.cpp
         )
 
+set(CCSRC
+        ${TOP_DIR}/mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/nnacl_common.c
+        )
+
 if(MSLITE_ENABLE_PARALLEL_INFERENCE)
     set(JNI_SRC
             ${JNI_SRC}
@@ -113,7 +151,7 @@ if(USE_GLOG)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../../../third_party/securec/include)
     include_directories(${CMAKE_BINARY_DIR}/jni_include)
     add_definitions(-DUSE_GLOG)
-
+    set_property(SOURCE ${JNI_SRC} PROPERTY COMPILE_DEFINITIONS SUBMODULE_ID=mindspore::SubModuleId::SM_LITE)
     set(JNI_SRC
             ${JNI_SRC}
             ${TOP_DIR}/mindspore/core/utils/log_adapter.cc
@@ -166,6 +204,7 @@ if(SUPPORT_TRAIN)
                 ${JNI_TRAIN_SRC}
                 ${TOP_DIR}/mindspore/core/utils/log_adapter.cc
                 )
+        set_property(SOURCE ${JNI_TRAIN_SRC} PROPERTY COMPILE_DEFINITIONS SUBMODULE_ID=mindspore::SubModuleId::SM_LITE)
     else()
         set(JNI_TRAIN_SRC
                 ${JNI_TRAIN_SRC}

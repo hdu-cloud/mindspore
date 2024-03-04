@@ -14,16 +14,29 @@
  * limitations under the License.
  */
 #include "ops/all_reduce.h"
-#include <string>
-#include <algorithm>
-#include <vector>
+
+#include <memory>
 #include <set>
-#include "abstract/param_validator.h"
-#include "utils/check_convert_utils.h"
+#include <string>
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
-#include "utils/ms_context.h"
+#include "mindspore/core/ops/other_ops.h"
 #include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/ms_context.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,10 +46,6 @@ class AllReduceInfer : public abstract::OpInferBase {
   BaseShapePtr InferShape(const PrimitivePtr &primitive,
                           const std::vector<AbstractBasePtr> &input_args) const override {
     MS_EXCEPTION_IF_NULL(primitive);
-    auto prim_name = primitive->name();
-    const int64_t input_num = 1;
-    (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_num,
-                                             prim_name);
     for (const auto &item : input_args) {
       MS_EXCEPTION_IF_NULL(item);
     }
@@ -71,6 +80,17 @@ class AllReduceInfer : public abstract::OpInferBase {
     }
 
     return x_type;
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    MS_EXCEPTION_IF_NULL(primitive);
+    auto prim_name = primitive->name();
+    const int64_t input_num = 1;
+    (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_num,
+                                             prim_name);
+    auto type = InferType(primitive, input_args);
+    auto shape = InferShape(primitive, input_args);
+    return abstract::MakeAbstract(shape, type);
   }
 };
 REGISTER_PRIMITIVE_OP_INFER_IMPL(AllReduce, prim::kPrimAllReduce, AllReduceInfer, false);

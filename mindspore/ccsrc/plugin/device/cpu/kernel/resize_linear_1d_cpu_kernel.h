@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CCSRC_PLUGIN_DEVICE_CPU_KERNEL_RESIZE_LINEAR_1D_CPU_KERNEL_H_
 #define MINDSPORE_CCSRC_PLUGIN_DEVICE_CPU_KERNEL_RESIZE_LINEAR_1D_CPU_KERNEL_H_
 
+#include <map>
 #include <memory>
 #include <string>
-#include <vector>
-#include <map>
 #include <utility>
+#include <vector>
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
 #include "plugin/factory/ms_factory.h"
 
@@ -58,7 +58,7 @@ class ResizeLinear1DCpuKernelMod : public NativeCpuKernelMod, public MatchKernel
   bool LaunchKernel(const std::vector<kernel::AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
                     const std::vector<kernel::AddressPtr> &outputs);
 
-  enum CoordinateTransformationMode { ALIGN_CORNERS = 0, HALF_PIXEL = 1, ASYMMETRIC = 2, INVALID_MODE = 255 };
+  enum CoordinateTransformationMode { ALIGN_CORNERS_ = 0, HALF_PIXEL = 1, INVALID_MODE = 255 };
   template <typename T>
   using CoordinateTransformationFunc = std::function<T(const T &new_x, const int &old_length, const int &new_length)>;
 
@@ -72,11 +72,12 @@ class ResizeLinear1DCpuKernelMod : public NativeCpuKernelMod, public MatchKernel
                                   size_t *interp_upper, T *interp_lerp);
 
   std::string kernel_type_{kUnknown};
+  TypeId x_type_{kTypeUnknown};
   size_t batch_{0};
   size_t channel_{0};
   size_t in_width_{0};
   size_t out_width_{0};
-  CoordinateTransformationMode coordinate_transformation_mode_{ALIGN_CORNERS};
+  CoordinateTransformationMode coordinate_transformation_mode_{ALIGN_CORNERS_};
 };
 }  // namespace mindspore::kernel
 

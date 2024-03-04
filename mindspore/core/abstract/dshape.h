@@ -110,42 +110,40 @@ class MS_CORE_API NoShape final : public BaseShape {
 
 GVAR_DEF(std::shared_ptr<NoShape>, kNoShape, std::make_shared<NoShape>());
 
-/// \brief Shape defines dimensions of tensor.
-class MS_CORE_API Shape final : public BaseShape {
+/// \brief TensorShape defines dimensions of tensor.
+class MS_CORE_API TensorShape final : public BaseShape {
  public:
   static constexpr ShapeValueDType kShapeDimAny = -1;
   static constexpr ShapeValueDType kShapeRankAny = -2;
   static constexpr ShapeValueDType kShapeError = -3;
   static constexpr size_t kDynamicRankLen = 1;
 
-  /// \brief Constructor of Shape.
-  Shape() : shape_() {}
+  /// \brief Constructor of TensorShape.
+  TensorShape() : shape_() {}
 
-  /// \brief Constructor of Shape.
+  /// \brief Constructor of TensorShape.
   ///
   /// \param[in] list Initial shape dimensions.
-  Shape(const std::initializer_list<ShapeValueDType> &list) : shape_(list) {}
+  TensorShape(const std::initializer_list<ShapeValueDType> &list) : shape_(list) {}
 
-  /// \brief Constructor of Shape.
+  /// \brief Constructor of TensorShape.
   ///
   /// \param[in] list Initial shape dimensions.
-  explicit Shape(const ShapeVector &list) : shape_(list) {}
+  explicit TensorShape(const ShapeVector &list) : shape_(list) {}
 
-  /// \brief Constructor of Shape.
+  /// \brief Constructor of TensorShape.
   ///
   /// \param[in] list Initial shape dimensions.
-  /// \param[in] min_shape Minimum shape dimensions of dynamic shape.
   /// \param[in] max_shape Maximum shape dimensions of dynamic shape.
-  Shape(const ShapeVector &list, const ShapeVector &min_shape, const ShapeVector &max_shape)
-      : shape_(list), min_shape_(min_shape), max_shape_(max_shape) {}
+  TensorShape(const ShapeVector &list, const ShapeVector &max_shape) : shape_(list), max_shape_(max_shape) {}
 
-  /// \brief Destructor of Shape.
-  ~Shape() override = default;
-  MS_DECLARE_PARENT(Shape, BaseShape)
+  /// \brief Destructor of TensorShape.
+  ~TensorShape() override = default;
+  MS_DECLARE_PARENT(TensorShape, BaseShape)
 
-  /// \brief Calculate the hash value for Shape.
+  /// \brief Calculate the hash value for TensorShape.
   ///
-  /// \return The hash value of Shape.
+  /// \return The hash value of TensorShape.
   std::size_t hash() const override {
     auto hash_code = static_cast<std::size_t>(tid());
     for (auto dim : shape_) {
@@ -154,36 +152,31 @@ class MS_CORE_API Shape final : public BaseShape {
     return hash_code;
   }
 
-  /// \brief Get the description string about the Shape object.
+  /// \brief Get the description string about the TensorShape object.
   ///
-  /// \return The description string about the Shape object.
+  /// \return The description string about the TensorShape object.
   std::string ToString() const override;
 
-  /// \brief Get the debug information about the Shape object.
+  /// \brief Get the debug information about the TensorShape object.
   ///
-  /// \return The debug information about the Shape object.
+  /// \return The debug information about the TensorShape object.
   std::string DumpText() const override;
 
   bool operator==(const BaseShape &other) const override;
 
-  BaseShapePtr Clone() const override { return std::make_shared<Shape>(shape_, min_shape_, max_shape_); }
+  BaseShapePtr Clone() const override { return std::make_shared<TensorShape>(shape_, max_shape_); }
 
   void Broaden() override;
 
-  /// \brief Set shape dimensions of Shape object.
+  /// \brief Set shape dimensions of TensorShape object.
   ///
   /// \param[in] shape Dimensions of shape.
   void set_shape(const ShapeVector &shape) { shape_ = shape; }
 
   /// \brief Get shape dimensions.
   ///
-  /// \return Shape dimensions.
+  /// \return TensorShape dimensions.
   const ShapeVector &shape() const { return shape_; }
-
-  /// \brief Get minimum shape dimensions.
-  ///
-  /// \return Minimum shape dimensions.
-  const ShapeVector &min_shape() const { return min_shape_; }
 
   /// \brief Get maximum shape dimensions.
   ///
@@ -200,17 +193,23 @@ class MS_CORE_API Shape final : public BaseShape {
 
  private:
   ShapeVector shape_;      // use kShapeDimAny to implement the any shape in python
-  ShapeVector min_shape_;  // record minimum length for each dynamic dimension
   ShapeVector max_shape_;  // record maximum length for each dynamic dimension
 };
-using ShapePtr = std::shared_ptr<Shape>;
-using ShapePtrList = std::vector<ShapePtr>;
+using TensorShapePtr = std::shared_ptr<TensorShape>;
+using TensorShapePtrList = std::vector<TensorShapePtr>;
+// `Shape` is deprecated, which will be removed in the future, please use `TensorShape` instead.
+using Shape = TensorShape;
+using ShapePtr = TensorShapePtr;
+using ShapePtrList = TensorShapePtrList;
 
 /// \brief DynamicSequenceShape defines shape of dynamic sequence.
 class MS_CORE_API DynamicSequenceShape : public BaseShape {
  public:
   /// \brief Constructor of DynamicSequenceShape.
-  DynamicSequenceShape() {}
+  DynamicSequenceShape() = default;
+
+  /// \brief Constructor of DynamicSequenceShape.
+  explicit DynamicSequenceShape(const BaseShapePtr &element_shape) : element_shape_(element_shape) {}
 
   /// \brief Destructor of DynamicSequenceShape.
   ~DynamicSequenceShape() override = default;
@@ -221,14 +220,37 @@ class MS_CORE_API DynamicSequenceShape : public BaseShape {
   /// \return The description string about the DynamicSequenceShape object.
   std::string ToString() const override { return type_name(); }
 
-  bool IsDynamic() const override { return true; }
+  /// \brief Check whether any element shape of DynamicSequenceShape is dynamic shape or dynamic rank.
+  ///
+  /// \return True if any element shape of DynamicSequenceShape is dynamic shape or dynamic rank, otherwise false.
+  bool IsDynamic() const override;
 
-  bool IsDimZero() const override { return false; };
+  /// \brief Check whether all elements shape of DynamicSequenceShape are empty shape.
+  ///
+  /// \return True if all elements shape of DynamicSequenceShape are empty shape.
+  bool IsDimZero() const override;
 
-  bool IsDimUnknown() const override { return true; }
+  /// \brief Check whether any element shape of DynamicSequenceShape is dynamic shape.
+  ///
+  /// \return True if any element shape of DynamicSequenceShape is dynamic shape.
+  bool IsDimUnknown() const override;
 
-  BaseShapePtr Clone() const override { return std::make_shared<DynamicSequenceShape>(); }
+  BaseShapePtr Clone() const override { return std::make_shared<DynamicSequenceShape>(element_shape_->Clone()); }
+
+  bool operator==(const BaseShape &other) const override;
+
+  /// \brief Calculate the hash value for DynamicSequenceShape.
+  ///
+  /// \return The hash value of Shape.
+  std::size_t hash() const override;
+
+  BaseShapePtr element_shape() { return element_shape_; }
+
+ private:
+  // element's shape
+  BaseShapePtr element_shape_{nullptr};
 };
+using DynamicSequenceShapePtr = std::shared_ptr<DynamicSequenceShape>;
 GVAR_DEF(std::shared_ptr<DynamicSequenceShape>, kDynamicSequenceShape, std::make_shared<DynamicSequenceShape>());
 
 /// \brief SequequeShape defines base class of multiple-shape classes.
@@ -265,7 +287,7 @@ class MS_CORE_API SequenceShape : public BaseShape {
     if (tid() != other.tid()) {
       return false;
     }
-    auto other_shapes = static_cast<const T &>(other).p_shapes_;
+    auto &other_shapes = static_cast<const T &>(other).p_shapes_;
     if (other_shapes.size() != p_shapes_.size()) {
       return false;
     }
@@ -293,16 +315,25 @@ class MS_CORE_API SequenceShape : public BaseShape {
   ///
   /// \param[in] dim The index of element shape.
   /// \return The element shape got by index.
-  const BaseShapePtr operator[](std::size_t dim) const { return p_shapes_[dim]; }
+  const BaseShapePtr &operator[](std::size_t dim) const { return p_shapes_[dim]; }
 
+  /// \brief Check whether any element shape of DynamicSequenceShape is dynamic shape or dynamic rank.
+  ///
+  /// \return True if any element shape of DynamicSequenceShape is dynamic shape or dynamic rank, otherwise false.
   bool IsDynamic() const override {
     return std::any_of(p_shapes_.begin(), p_shapes_.end(), [](const BaseShapePtr &bs) { return bs->IsDynamic(); });
   }
 
+  /// \brief Check whether all elements shape of DynamicSequenceShape are empty shape.
+  ///
+  /// \return True if all elements shape of DynamicSequenceShape are empty shape.
   bool IsDimZero() const override {
     return std::all_of(p_shapes_.begin(), p_shapes_.end(), [](const BaseShapePtr &bs) { return bs->IsDimZero(); });
   };
 
+  /// \brief Check whether any element shape of DynamicSequenceShape is dynamic shape.
+  ///
+  /// \return True if any element shape of DynamicSequenceShape is dynamic shape.
   bool IsDimUnknown() const override {
     return std::any_of(p_shapes_.begin(), p_shapes_.end(), [](const BaseShapePtr &bs) { return bs->IsDimUnknown(); });
   }

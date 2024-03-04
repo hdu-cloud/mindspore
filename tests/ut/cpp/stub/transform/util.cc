@@ -55,15 +55,6 @@ mindspore::HashMap<std::string, OpAdapterDescPtr> adpt_map_ = {
   {kNameCustomOp, std::make_shared<OpAdapterDesc>(std::make_shared<OpAdapter<Operator>>())}};
 }  // namespace
 
-size_t TransformUtil::GetDataTypeSize(const MeDataType &type) {
-  if (datatype_size_map.find(type) != datatype_size_map.end()) {
-    return datatype_size_map[type];
-  } else {
-    MS_LOG(ERROR) << "Illegal tensor data type!";
-    return kErrorSize;
-  }
-}
-
 AnfGraphPtr GetAnfGraph(uint32_t graph_id) { return nullptr; }
 MeTensorPtr ConvertGeTensor(const GeTensorPtr ge_tensor, const ShapeVector &request_dims) { return nullptr; }
 MeTensorPtr ConvertGeTensor(const GeTensorPtr &ge_tensor) { return nullptr; }
@@ -77,12 +68,16 @@ int OpAdapterImpl::setAttr(const OperatorPtr &op, const AnfNodePtr &node) { retu
 int OpAdapterImpl::setInput(const OperatorPtr &op, int index, const OutHandler &handle) { return 0; }
 int OpAdapterImpl::setInput(const OperatorPtr &op, int index, const OperatorPtr &input) { return 0; }
 int OpAdapterImpl::setInput(const OperatorPtr &op, int index,
-                            const std::shared_ptr<std::vector<OutHandler>> &handler_vec) {
+                            const std::shared_ptr<std::vector<OutHandler>> &handler_vec, bool use_create_byindex_func,
+                            size_t dyn_index) {
   return 0;
 }
 void OpAdapterImpl::updateOutputDesc(const OperatorPtr &op, const abstract::BaseShapePtr &shp, const TypePtr &type,
                                      const AnfNodePtr &node) {}
-std::map<std::string, ValuePtr> OpAdapterImpl::GetNormalOpAttrList(const AnfNodePtr &node) const { return {}; }
+std::map<std::string, ValuePtr> OpAdapterImpl::GetNormalOpAttrList(const OperatorPtr &op,
+                                                                   const AnfNodePtr &node) const {
+  return {};
+}
 OutHandler OpAdapterImpl::getOutput(const OperatorPtr &op, int index) {
   OutHandler handler;
   return handler;
@@ -99,7 +94,15 @@ Status OpAdapterImpl::SetOpSubgraphFunc(const OperatorPtr &op, const std::shared
   return SUCCESS;
 }
 
+std::string OpAdapterImpl::GetCustomOpType(const PrimitivePtr &prim) const { return ""; }
+std::map<std::string, ValuePtr> OpAdapterImpl::GetOpAttrList(const OperatorPtr &) const { return {}; }
+int OpAdapterImpl::setAttr(const OperatorPtr &, const uint32_t &, const ValuePtr &) { return 0; }
+int OpAdapterImpl::getAttr(const OperatorPtr &, const std::string &, ValuePtr *) { return 0; }
+int OpAdapterImpl::getAttr(const OperatorPtr &, uint32_t, ValuePtr *) { return 0; }
+
 bool IsCustomCNode(const mindspore::AnfNodePtr &node) { return true; }
 std::string TransformUtil::NormOpName(const std::string &anf_name) { return ""; }
+GeDataType TransformUtil::ConvertDataType(const MeDataType &type) { return GeDataType::DT_UNDEFINED; }
+bool ConvertCheck(const AnfNodePtr &node) { return true; }
 }  // namespace transform
 }  // namespace mindspore

@@ -27,7 +27,7 @@
 #include <ctime>
 #include <thread>
 #include <sstream>
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 #include "plugin/device/gpu/hal/profiler/cupti_interface.h"
 #include "plugin/device/gpu/hal/profiler/gpu_data_saver.h"
 #include "include/common/pybind_api/api_register.h"
@@ -38,6 +38,7 @@
 
 #ifdef _MSC_VER
 namespace {
+static constexpr size_t kGPUProfMaxMallocSize = 2 * 1024 * 1024;
 static int check_align(size_t align) {
   constexpr int step = 2;
   for (size_t i = sizeof(void *); i != 0; i *= step) {
@@ -49,6 +50,10 @@ static int check_align(size_t align) {
 }
 
 int posix_memalign(void **ptr, size_t align, size_t size) {
+  if (size > kGPUProfMaxMallocSize || size == 0) {
+    MS_LOG(ERROR) << "Malloc size is failed.";
+    return EINVAL;
+  }
   if (check_align(align)) {
     return EINVAL;
   }
@@ -242,7 +247,7 @@ void CUPTICallBackFunc(void *user_data, CUpti_CallbackDomain domain, CUpti_Callb
   }
   auto gpu_profiler_inst = GPUProfiler::GetInstance();
   PROFILER_ERROR_IF_NULLPTR(gpu_profiler_inst);
-  if (!gpu_profiler_inst->GetEnableFlag()) {
+  if (!gpu_profiler_inst->GetEnableFlag() || !gpu_profiler_inst->GetOpTimeFlag()) {
     return;
   }
 
@@ -419,6 +424,7 @@ void GPUProfiler::OpsParser() {
 
 void GPUProfiler::EventHandleProcess(CUpti_CallbackId cbid, const CUpti_CallbackData *cbdata,
                                      const std::string &typestring, uint64_t startTimestamp, uint64_t endTimestamp) {
+  std::lock_guard<std::mutex> lock(event_lock_);
   Event event;
   uint32_t device_id = -1;
   CuptiGetDeviceId(cbdata->context, &device_id);
@@ -615,6 +621,7 @@ void GPUProfiler::ClearInst() {
   is_init_ = false;
   enable_flag_ = false;
   sync_enable_flag_ = true;
+  data_process_enable_ = false;
   init_flag_ = false;
   enable_flag_ = false;
   has_find_ = false;

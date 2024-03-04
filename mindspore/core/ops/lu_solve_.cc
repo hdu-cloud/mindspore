@@ -14,10 +14,28 @@
  * limitations under the License.
  */
 #include "ops/lu_solve_.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include <map>
+#include <ostream>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 #define LuSolve_for(shape)    \
   do {                        \
@@ -51,6 +69,7 @@ namespace {
 void CheckInputsShape(const ShapeVector &x_shape, const ShapeVector &lu_data_shape, const ShapeVector &lu_pivots_shape,
                       const std::string &op_name) {
   const int64_t kDimNum = 2;
+  const int64_t minPivotsShape = 1;
   if (lu_data_shape.size() < kDimNum) {
     MS_EXCEPTION(ValueError) << "For '" << op_name
                              << "', lu_data's dimension must be greater than or equal to 2, but got: "
@@ -61,7 +80,7 @@ void CheckInputsShape(const ShapeVector &x_shape, const ShapeVector &lu_data_sha
                              << "', x's dimension must be greater than or equal to 2, but got: " << x_shape.size()
                              << ".";
   }
-  if (lu_pivots_shape.size() < 1) {
+  if (lu_pivots_shape.size() < minPivotsShape) {
     MS_EXCEPTION(ValueError) << "For '" << op_name
                              << "', lu_pivots's dimension must be greater than or equal to 1, but got: "
                              << lu_pivots_shape.size() << ".";
@@ -81,6 +100,8 @@ void CheckInputsShape(const ShapeVector &x_shape, const ShapeVector &lu_data_sha
 abstract::ShapePtr LuSolveInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto op_name = primitive->name();
+  const int64_t input_num = 3;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, op_name);
   const int64_t kDimNum = 2;
   std::ostringstream buffer;
   auto x_shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape());
@@ -94,8 +115,9 @@ abstract::ShapePtr LuSolveInferShape(const PrimitivePtr &primitive, const std::v
     return std::make_shared<abstract::Shape>(std::vector<int64_t>{abstract::Shape::kShapeRankAny});
   }
 
+  CheckInputsShape(x_shape, lu_data_shape, lu_pivots_shape, op_name);
+
   if (!IsDynamicShape(x_shape) && !IsDynamicShape(lu_data_shape) && !IsDynamic(lu_pivots_shape)) {
-    CheckInputsShape(x_shape, lu_data_shape, lu_pivots_shape, op_name);
     if (x_shape.size() == lu_data_shape.size()) {
       for (size_t i = 0; i <= x_shape.size() - kDimNum; i++) {
         if (x_shape[i] != lu_data_shape[i]) {
@@ -151,10 +173,10 @@ abstract::ShapePtr LuSolveInferShape(const PrimitivePtr &primitive, const std::v
 }
 
 TypePtr LuSolveInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(prim);
   const int64_t kDimNum = 2;
-  for (const auto &item : input_args) {
-    MS_EXCEPTION_IF_NULL(item);
-  }
+  const int64_t input_num = 3;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, prim->name());
   std::map<std::string, TypePtr> type;
   (void)type.emplace("x", input_args[0]->BuildType());
   (void)type.emplace("lu_data", input_args[1]->BuildType());
@@ -172,14 +194,28 @@ TypePtr LuSolveInferType(const PrimitivePtr &prim, const std::vector<AbstractBas
 MIND_API_OPERATOR_IMPL(LuSolve, BaseOperator);
 AbstractBasePtr LuSolveInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                              const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  const int64_t input_num = 3;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
   auto infer_type = LuSolveInferType(primitive, input_args);
   auto infer_shape = LuSolveInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(LuSolve, prim::kPrimLuSolve, LuSolveInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGLuSolveInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return LuSolveInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return LuSolveInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return LuSolveInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(LuSolve, prim::kPrimLuSolve, AGLuSolveInfer, false);
 }  // namespace ops
 }  // namespace mindspore

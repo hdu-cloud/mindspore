@@ -17,18 +17,63 @@
 #include "ops/sync_batch_norm.h"
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
+#include <type_traits>
 #include <utility>
 
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
-#include "ops/op_utils.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
+constexpr int64_t kSyncBatchNormInputNum = 5;
+
+void CheckSyncBatchNormInputNum(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(prim);
+  auto prim_name = prim->name();
+  if (input_args.empty()) {
+    CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kSyncBatchNormInputNum, prim_name);
+    return;
+  }
+
+  // the inputs has not U
+  if (!input_args.back()->isa<abstract::AbstractMonad>()) {
+    CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kSyncBatchNormInputNum, prim_name);
+    return;
+  }
+
+  // the inputs has U
+  (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size() - 1), kEqual,
+                                           kSyncBatchNormInputNum, prim_name);
+  for (size_t index = 0; index < input_args.size(); index++) {
+    if (input_args[index] == nullptr) {
+      MS_EXCEPTION(ValueError) << "The " << index << "'s input of " << prim_name << " is nullptr.";
+    }
+  }
+}
+
 TuplePtr SyncBatchNormInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  CheckSyncBatchNormInputNum(prim, input_args);
   MS_EXCEPTION_IF_NULL(prim);
   auto prim_name = prim->name();
   const std::set<TypePtr> valid_types = {kFloat16, kFloat32};
@@ -53,6 +98,7 @@ TuplePtr SyncBatchNormInferType(const PrimitivePtr &prim, const std::vector<Abst
 
 abstract::TupleShapePtr SyncBatchNormInferShape(const PrimitivePtr &primitive,
                                                 const std::vector<AbstractBasePtr> &input_args) {
+  CheckSyncBatchNormInputNum(primitive, input_args);
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   auto x_shape_ptr = input_args[0]->BuildShape();
@@ -74,8 +120,7 @@ abstract::TupleShapePtr SyncBatchNormInferShape(const PrimitivePtr &primitive,
   const int64_t input_num1 = 1;
   (void)CheckAndConvertUtils::CheckInteger("scale rank", SizeToLong(scale_shape.size()), kEqual, input_num1, prim_name);
   // scale first dimension must be equal to x second dimension
-  (void)CheckAndConvertUtils::CheckInteger("scale_shape shape[0]", SizeToLong(scale_shape[0]), kEqual,
-                                           SizeToLong(x_shape[1]), prim_name);
+  (void)CheckAndConvertUtils::CheckInteger("scale_shape shape[0]", scale_shape[0], kEqual, x_shape[1], prim_name);
   // Shape of scale、bias、mean and variance must be same
   std::map<std::string, ShapeVector> same_shape_args_map;
   (void)same_shape_args_map.insert(std::make_pair("shape of bias ", bias_shape));
@@ -122,6 +167,23 @@ void SyncBatchNorm::set_device_num(const int64_t device_num) {
   (void)this->AddAttr(kDeviceNum, api::MakeValue(device_num));
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(SyncBatchNorm, prim::kPrimSyncBatchNorm, SyncBatchNormInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGSyncBatchNormInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SyncBatchNormInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SyncBatchNormInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SyncBatchNormInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SyncBatchNorm, prim::kPrimSyncBatchNorm, AGSyncBatchNormInfer, false);
 }  // namespace ops
 }  // namespace mindspore

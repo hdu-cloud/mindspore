@@ -3,11 +3,18 @@ mindspore.ops.primitive
 
 operators that can be used for constructor function of Cell
 
+For more information about dynamic shape support status, please refer to `Dynamic Shape Support Status of primitive Interface <https://mindspore.cn/docs/en/master/note/dynamic_shape_primitive.html>`_ .
+
+For the details about the usage constraints of each operator in the operator parallel process,
+refer to `Usage Constraints During Operator Parallel <https://www.mindspore.cn/docs/en/master/note/operator_list_parallel.html>`_ .
+
+The module import method is as follows:
+
 .. code-block::
 
     import mindspore.ops as ops
 
-Compared with the previous version, the added, deleted and supported platforms change information of `mindspore.ops.primitive` operators in MindSpore, please refer to the link `API Updates <https://gitee.com/mindspore/docs/blob/r2.0.0-alpha/resource/api_updates/ops_api_updates.md>`_ .
+Compared with the previous version, the added, deleted and supported platforms change information of `mindspore.ops.primitive` operators in MindSpore, please refer to the link `mindspore.ops.primitive API Interface Change <https://gitee.com/mindspore/docs/blob/master/resource/api_updates/ops_api_updates_en.md>`_ .
 
 Operator Primitives
 -------------------
@@ -21,27 +28,13 @@ Operator Primitives
     mindspore.ops.PrimitiveWithCheck
     mindspore.ops.PrimitiveWithInfer
 
-Decorators
-----------
-
-.. autosummary::
-    :toctree: ops
-    :nosignatures:
-    :template: classtemplate.rst
-
-    mindspore.ops.constexpr
-    mindspore.ops.custom_info_register
-    mindspore.ops.kernel
-    mindspore.ops.op_info_register
-    mindspore.ops.prim_attr_register
-
 Neural Network Layer Operators
 ------------------------------
 
 Neural Network
 ^^^^^^^^^^^^^^
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
@@ -54,15 +47,16 @@ Neural Network
     mindspore.ops.Conv3D
     mindspore.ops.Conv3DTranspose
     mindspore.ops.CTCGreedyDecoder
-    mindspore.ops.DataFormatVecPermute
+    mindspore.ops.Dense
     mindspore.ops.Dropout
     mindspore.ops.Dropout2D
     mindspore.ops.Dropout3D
     mindspore.ops.DynamicGRUV2
     mindspore.ops.DynamicRNN
     mindspore.ops.Flatten
-    mindspore.ops.FractionalAvgPool
-    mindspore.ops.FractionalMaxPool
+    mindspore.ops.FractionalMaxPool3DWithFixedKsize
+    mindspore.ops.GridSampler2D
+    mindspore.ops.GridSampler3D
     mindspore.ops.LayerNorm
     mindspore.ops.LRN
     mindspore.ops.LSTM
@@ -70,20 +64,21 @@ Neural Network
     mindspore.ops.MaxPool3D
     mindspore.ops.MaxPool3DWithArgmax
     mindspore.ops.MaxPoolWithArgmax
+    mindspore.ops.MaxPoolWithArgmaxV2
     mindspore.ops.MaxUnpool2D
+    mindspore.ops.MaxUnpool3D
     mindspore.ops.MirrorPad
     mindspore.ops.Pad
     mindspore.ops.EmbeddingLookup
     mindspore.ops.Padding
+    mindspore.ops.ResizeBicubic
     mindspore.ops.ResizeBilinear
     mindspore.ops.ResizeNearestNeighbor
-    mindspore.ops.UpsampleNearest3D
-    mindspore.ops.UpsampleTrilinear3D
 
 Loss Function
 ^^^^^^^^^^^^^
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
@@ -91,9 +86,11 @@ Loss Function
     mindspore.ops.BCEWithLogitsLoss
     mindspore.ops.BinaryCrossEntropy
     mindspore.ops.CTCLoss
+    mindspore.ops.CTCLossV2
     mindspore.ops.KLDivLoss
     mindspore.ops.L2Loss
     mindspore.ops.MultilabelMarginLoss
+    mindspore.ops.MultiMarginLoss
     mindspore.ops.NLLLoss
     mindspore.ops.RNNTLoss
     mindspore.ops.SigmoidCrossEntropyWithLogits
@@ -101,18 +98,21 @@ Loss Function
     mindspore.ops.SoftMarginLoss
     mindspore.ops.SoftmaxCrossEntropyWithLogits
     mindspore.ops.SparseSoftmaxCrossEntropyWithLogits
+    mindspore.ops.TripletMarginLoss
 
 Activation Function
 ^^^^^^^^^^^^^^^^^^^
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
 
+    mindspore.ops.CeLU
     mindspore.ops.Elu
     mindspore.ops.FastGeLU
     mindspore.ops.GeLU
+    mindspore.ops.GLU
     mindspore.ops.HShrink
     mindspore.ops.HSigmoid
     mindspore.ops.HSwish
@@ -132,7 +132,7 @@ Activation Function
 Optimizer
 ^^^^^^^^^
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
@@ -140,12 +140,13 @@ Optimizer
     mindspore.ops.Adam
     mindspore.ops.AdamWeightDecay
     mindspore.ops.AdaptiveAvgPool2D
-    mindspore.ops.AdaptiveMaxPool3D
+    mindspore.ops.AdaptiveAvgPool3D
     mindspore.ops.ApplyAdadelta
     mindspore.ops.ApplyAdagrad
     mindspore.ops.ApplyAdagradDA
     mindspore.ops.ApplyAdagradV2
     mindspore.ops.ApplyAdaMax
+    mindspore.ops.ApplyAdamWithAmsgradV2
     mindspore.ops.ApplyAddSign
     mindspore.ops.ApplyCenteredRMSProp
     mindspore.ops.ApplyFtrl
@@ -165,7 +166,7 @@ Optimizer
 Distance Function
 ^^^^^^^^^^^^^^^^^
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
@@ -173,11 +174,12 @@ Distance Function
     mindspore.ops.Cdist
     mindspore.ops.EditDistance
     mindspore.ops.LpNorm
-    
+    mindspore.ops.Pdist
+
 Sampling Operator
 ^^^^^^^^^^^^^^^^^
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
@@ -189,32 +191,28 @@ Sampling Operator
 Image Processing
 ^^^^^^^^^^^^^^^^
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
     
-    mindspore.ops.AdjustHue
     mindspore.ops.BoundingBoxDecode
     mindspore.ops.BoundingBoxEncode
     mindspore.ops.CheckValid
-    mindspore.ops.CombinedNonMaxSuppression
     mindspore.ops.CropAndResize
-    mindspore.ops.ExtractGlimpse
     mindspore.ops.ExtractVolumePatches
-    mindspore.ops.HSVToRGB
     mindspore.ops.IOU
     mindspore.ops.L2Normalize
     mindspore.ops.NMSWithMask
-    mindspore.ops.RGBToHSV
+    mindspore.ops.ResizeBilinearV2
     mindspore.ops.ROIAlign
-    mindspore.ops.SampleDistortedBoundingBoxV2
-    mindspore.ops.ScaleAndTranslate
+    mindspore.ops.UpsampleNearest3D
+    mindspore.ops.UpsampleTrilinear3D
 
 Text Processing
 ^^^^^^^^^^^^^^^
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
@@ -224,30 +222,23 @@ Text Processing
 Mathematical Operators
 ------------------------
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
 
-    mindspore.ops.BesselJ0
-    mindspore.ops.BesselJ1
-    mindspore.ops.BesselK0
-    mindspore.ops.BesselK0e
-    mindspore.ops.BesselK1
-    mindspore.ops.BesselK1e
-    mindspore.ops.BesselY0
-    mindspore.ops.BesselY1
-    mindspore.ops.Betainc
     mindspore.ops.Bincount
-    mindspore.ops.Bucketize
-    mindspore.ops.CompareAndBitpack
+    mindspore.ops.Cholesky
     mindspore.ops.Complex
+    mindspore.ops.ComplexAbs
+    mindspore.ops.Cross
+    mindspore.ops.FFTWithSize
     mindspore.ops.Gcd
 
 Element-wise Operator
 ^^^^^^^^^^^^^^^^^^^^^
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
@@ -260,13 +251,24 @@ Element-wise Operator
     mindspore.ops.Addcdiv
     mindspore.ops.Addcmul
     mindspore.ops.AddN
+    mindspore.ops.Angle
     mindspore.ops.Asin
     mindspore.ops.Asinh
     mindspore.ops.Atan
     mindspore.ops.Atan2
     mindspore.ops.Atanh
+    mindspore.ops.BesselI0
     mindspore.ops.BesselI0e
+    mindspore.ops.BesselI1
     mindspore.ops.BesselI1e
+    mindspore.ops.BesselJ0
+    mindspore.ops.BesselJ1
+    mindspore.ops.BesselK0
+    mindspore.ops.BesselK0e
+    mindspore.ops.BesselK1
+    mindspore.ops.BesselK1e
+    mindspore.ops.BesselY0
+    mindspore.ops.BesselY1
     mindspore.ops.BitwiseAnd
     mindspore.ops.BitwiseOr
     mindspore.ops.BitwiseXor
@@ -274,6 +276,7 @@ Element-wise Operator
     mindspore.ops.Conj
     mindspore.ops.Cos
     mindspore.ops.Cosh
+    mindspore.ops.Digamma
     mindspore.ops.Div
     mindspore.ops.DivNoNan
     mindspore.ops.Einsum
@@ -285,6 +288,7 @@ Element-wise Operator
     mindspore.ops.Floor
     mindspore.ops.FloorDiv
     mindspore.ops.FloorMod
+    mindspore.ops.Geqrf
     mindspore.ops.Imag
     mindspore.ops.Inv
     mindspore.ops.Invert
@@ -294,12 +298,16 @@ Element-wise Operator
     mindspore.ops.LogicalAnd
     mindspore.ops.LogicalNot
     mindspore.ops.LogicalOr
+    mindspore.ops.LogicalXor
+    mindspore.ops.Logit
     mindspore.ops.Mod
     mindspore.ops.Mul
     mindspore.ops.MulNoNan
     mindspore.ops.Neg
     mindspore.ops.NextAfter
     mindspore.ops.Pow
+    mindspore.ops.Polar
+    mindspore.ops.Polygamma
     mindspore.ops.Real
     mindspore.ops.RealDiv
     mindspore.ops.Reciprocal
@@ -308,6 +316,7 @@ Element-wise Operator
     mindspore.ops.Rsqrt
     mindspore.ops.Sign
     mindspore.ops.Sin
+    mindspore.ops.Sinc
     mindspore.ops.Sinh
     mindspore.ops.Sqrt
     mindspore.ops.Square
@@ -320,12 +329,13 @@ Element-wise Operator
     mindspore.ops.TruncateMod
     mindspore.ops.Xdivy
     mindspore.ops.Xlogy
-    
+    mindspore.ops.Zeta
+
 
 Reduction Operator
 ^^^^^^^^^^^^^^^^^^
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
@@ -334,20 +344,19 @@ Reduction Operator
     mindspore.ops.ArgMaxWithValue
     mindspore.ops.Argmin
     mindspore.ops.ArgMinWithValue
-    mindspore.ops.EuclideanNorm
+    mindspore.ops.Median
     mindspore.ops.ReduceAll
     mindspore.ops.ReduceAny
     mindspore.ops.ReduceMax
     mindspore.ops.ReduceMean
     mindspore.ops.ReduceMin
     mindspore.ops.ReduceProd
-    mindspore.ops.ReduceStd
     mindspore.ops.ReduceSum
 
 Comparison Operator
 ^^^^^^^^^^^^^^^^^^^
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
@@ -371,7 +380,7 @@ Comparison Operator
 Linear Algebraic Operator
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
@@ -381,6 +390,9 @@ Linear Algebraic Operator
     mindspore.ops.Ger
     mindspore.ops.MatMul
     mindspore.ops.MatrixInverse
+    mindspore.ops.Ormqr
+    mindspore.ops.Orgqr
+    mindspore.ops.Svd
 
 Tensor Operation Operator
 --------------------------
@@ -388,7 +400,7 @@ Tensor Operation Operator
 Tensor Construction
 ^^^^^^^^^^^^^^^^^^^
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
@@ -406,16 +418,21 @@ Tensor Construction
 Random Generation Operator
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
 
+    mindspore.ops.Bernoulli
     mindspore.ops.Gamma
     mindspore.ops.Multinomial
+    mindspore.ops.MultinomialWithReplacement
     mindspore.ops.RandomCategorical
     mindspore.ops.RandomChoiceWithMask
+    mindspore.ops.RandomGamma
+    mindspore.ops.RandomPoisson
     mindspore.ops.Randperm
+    mindspore.ops.RandpermV2
     mindspore.ops.StandardLaplace
     mindspore.ops.StandardNormal
     mindspore.ops.UniformInt
@@ -424,65 +441,85 @@ Random Generation Operator
 Array Operation
 ^^^^^^^^^^^^^^^
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
 
+    mindspore.ops.AffineGrid
     mindspore.ops.BatchToSpace
     mindspore.ops.BatchToSpaceND
     mindspore.ops.BroadcastTo
     mindspore.ops.Cast
+    mindspore.ops.ChannelShuffle
+    mindspore.ops.Col2Im
     mindspore.ops.Concat
+    mindspore.ops.Cummax
+    mindspore.ops.Cummin
     mindspore.ops.CumProd
     mindspore.ops.CumSum
     mindspore.ops.DataFormatDimMap
     mindspore.ops.DepthToSpace
+    mindspore.ops.Diag
     mindspore.ops.DType
-    mindspore.ops.Eig
-    mindspore.ops.Expand
     mindspore.ops.ExpandDims
-    mindspore.ops.FloatStatus
     mindspore.ops.FillDiagonal
+    mindspore.ops.FillV2
+    mindspore.ops.FloatStatus
+    mindspore.ops.Fmax
     mindspore.ops.Gather
     mindspore.ops.GatherD
     mindspore.ops.GatherNd
     mindspore.ops.HammingWindow
-    mindspore.ops.Histogram
+    mindspore.ops.Heaviside
     mindspore.ops.HistogramFixedWidth
+    mindspore.ops.Hypot
     mindspore.ops.Identity
+    mindspore.ops.Igamma
+    mindspore.ops.Igammac
+    mindspore.ops.Im2Col
     mindspore.ops.IndexAdd
+    mindspore.ops.IndexFill
+    mindspore.ops.IndexPut
     mindspore.ops.InplaceAdd
+    mindspore.ops.InplaceIndexAdd
     mindspore.ops.InplaceSub
     mindspore.ops.InplaceUpdate
+    mindspore.ops.InplaceUpdateV2
     mindspore.ops.InvertPermutation
+    mindspore.ops.IsClose
     mindspore.ops.Lcm
     mindspore.ops.LeftShift
-    mindspore.ops.ListDiff
+    mindspore.ops.LogSpace
+    mindspore.ops.LuUnpack
+    mindspore.ops.MaskedFill
+    mindspore.ops.MaskedScatter
+    mindspore.ops.MaskedSelect
+    mindspore.ops.MatrixBandPart
     mindspore.ops.MatrixDiagPartV3
     mindspore.ops.MatrixDiagV3
-    mindspore.ops.LogSpace
-    mindspore.ops.Lstsq
-    mindspore.ops.MaskedFill
-    mindspore.ops.MaskedSelect
-    mindspore.ops.MatrixExp
-    mindspore.ops.MatrixPower
+    mindspore.ops.MatrixSetDiagV3
+    mindspore.ops.MatrixSolve
     mindspore.ops.Meshgrid
+    mindspore.ops.Mvlgamma
+    mindspore.ops.NanToNum
+    mindspore.ops.NonZero
     mindspore.ops.ParallelConcat
     mindspore.ops.PopulationCount
+    mindspore.ops.RandomShuffle
     mindspore.ops.Range
     mindspore.ops.Rank
+    mindspore.ops.Renorm
     mindspore.ops.Reshape
-    mindspore.ops.ResizeNearestNeighborV2
     mindspore.ops.ReverseSequence
     mindspore.ops.ReverseV2
     mindspore.ops.RightShift
-    mindspore.ops.Roll
-    mindspore.ops.ScatterAddWithAxis
     mindspore.ops.ScatterNd
     mindspore.ops.ScatterNdDiv
     mindspore.ops.ScatterNdMax
+    mindspore.ops.ScatterNdMin
     mindspore.ops.ScatterNdMul
+    mindspore.ops.SearchSorted
     mindspore.ops.Select
     mindspore.ops.Shape
     mindspore.ops.Size
@@ -494,7 +531,6 @@ Array Operation
     mindspore.ops.Split
     mindspore.ops.Squeeze
     mindspore.ops.Stack
-    mindspore.ops.STFT
     mindspore.ops.StridedSlice
     mindspore.ops.TensorScatterAdd
     mindspore.ops.TensorScatterDiv
@@ -507,7 +543,12 @@ Array Operation
     mindspore.ops.Tile
     mindspore.ops.Trace
     mindspore.ops.Transpose
+    mindspore.ops.Tril
+    mindspore.ops.TrilIndices
+    mindspore.ops.Triu
+    mindspore.ops.TriuIndices
     mindspore.ops.Unique
+    mindspore.ops.UniqueConsecutive
     mindspore.ops.UniqueWithPad
     mindspore.ops.UnsortedSegmentMax
     mindspore.ops.UnsortedSegmentMin
@@ -518,7 +559,7 @@ Array Operation
 Type Conversion
 ^^^^^^^^^^^^^^^
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
@@ -530,7 +571,7 @@ Type Conversion
 Parameter Operation Operator
 ----------------------------
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
@@ -553,7 +594,7 @@ Parameter Operation Operator
 Data Operation Operator
 -----------------------
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
@@ -563,13 +604,17 @@ Data Operation Operator
 Communication Operator
 ----------------------
 
-Note that the APIs in the following list need to preset communication environment variables. For
-the Ascend devices, users need to prepare the rank table, set rank_id and device_id. Please see the `Ascend tutorial \
-<https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_ascend.html#configuring-distributed-environment-variables>`_ for more details.
-For the GPU device, users need to prepare the host file and mpi, please see the `GPU tutorial \
-<https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_gpu.html#preparation>`_.
+Distributed training involves communication operations for data transfer. For more details, refer to `Distributed Set Communication Primitives <https://www.mindspore.cn/docs/en/master/api_python/samples/ops/communicate_ops.html>`_ .
 
-.. msplatformautosummary::
+Note that the APIs in the following list need to preset communication environment variables. For
+the Ascend devices, users need to prepare the rank table, set rank_id and device_id. Please see the `rank table Startup \
+<https://www.mindspore.cn/tutorials/experts/en/master/parallel/rank_table.html>`_ for more details.
+For the GPU device, users need to prepare the host file and mpi, please see the `mpirun Startup \
+<https://www.mindspore.cn/tutorials/experts/en/master/parallel/mpirun.html>`_.
+For the CPU device, users need to write a dynamic cluster startup script, please see the `Dynamic Cluster Startup \
+<https://www.mindspore.cn/tutorials/experts/en/master/parallel/dynamic_cluster.html>`_ .
+
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
@@ -585,12 +630,11 @@ For the GPU device, users need to prepare the host file and mpi, please see the 
 Debugging Operator
 ------------------
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
 
-    mindspore.ops.Assert
     mindspore.ops.HistogramSummary
     mindspore.ops.ImageSummary
     mindspore.ops.ScalarSummary
@@ -603,18 +647,18 @@ Debugging Operator
 Sparse Operator
 ---------------
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
-    
+
     mindspore.ops.SparseTensorDenseMatmul
     mindspore.ops.SparseToDense
 
 Frame Operators
 ---------------
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
@@ -627,7 +671,6 @@ Frame Operators
     mindspore.ops.Map
     mindspore.ops.MultitypeFuncGraph
     mindspore.ops.Partial
-    mindspore.ops.StopGradient
 
 Operator Information Registration
 ---------------------------------
@@ -646,17 +689,19 @@ Operator Information Registration
 Customizing Operator
 --------------------
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst
 
     mindspore.ops.Custom
+    mindspore.ops.custom_info_register
+    mindspore.ops.kernel
 
 Spectral Operator
 -----------------
 
-.. msplatformautosummary::
+.. msplatwarnautosummary::
     :toctree: ops
     :nosignatures:
     :template: classtemplate.rst

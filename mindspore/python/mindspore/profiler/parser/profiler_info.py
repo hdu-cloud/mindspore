@@ -17,6 +17,7 @@ import json
 import os
 import stat
 
+from mindspore.version import __version__ as ms_version
 from mindspore.profiler.common.validator.validate_path import validate_and_normalize_path
 
 
@@ -34,18 +35,17 @@ class ProfilerInfo:
     @staticmethod
     def init_info(context_mode, rank_id):
         """Profiler info initialization must include context_mode, rank_id and output_path."""
-        ProfilerInfo._profiler_info_dict = dict()
         ProfilerInfo._profiler_info_dict["context_mode"] = context_mode
         ProfilerInfo._profiler_info_dict["rank_id"] = rank_id
+        ProfilerInfo._profiler_info_dict["ms_version"] = ms_version
         ProfilerInfo._file_name = ProfilerInfo._file_name.format(rank_id)
 
     @staticmethod
-    def set_parallel_info(parallel_mode="", pipeline_stage_num=1, pipeline_stage_id=0):
+    def set_parallel_info(parallel_mode="", stage_num=1):
         """Set parallel info include parallel_mode, pipeline_stage_num and pipeline_stage_id."""
         info = dict()
         info["parallel_mode"] = parallel_mode
-        info["pipeline_stage_num"] = pipeline_stage_num
-        info["pipeline_stage_id"] = pipeline_stage_id
+        info["stage_num"] = stage_num
         ProfilerInfo._profiler_info_dict.update(info)
 
     @staticmethod
@@ -101,7 +101,7 @@ class ProfilerInfo:
         """Save the profiler info to file."""
         ProfilerInfo._file_path = os.path.join(output_path, ProfilerInfo._file_name)
         ProfilerInfo._file_path = validate_and_normalize_path(ProfilerInfo._file_path)
-        with os.fdopen(os.open(ProfilerInfo._file_path,
-                               os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o660), 'w') as json_file:
+        with os.fdopen(os.open(ProfilerInfo._file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
+                       'w') as json_file:
             json.dump(ProfilerInfo._profiler_info_dict, json_file)
         os.chmod(ProfilerInfo._file_path, stat.S_IREAD | stat.S_IWRITE)

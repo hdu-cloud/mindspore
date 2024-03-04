@@ -52,7 +52,7 @@ int LayerNormOpenCLKernel::CheckSpecs() {
     normalized_axis_ += input->shape().size();
   }
   if (normalized_axis_ != DIMENSION_3D) {
-    MS_LOG(WARNING) << "UnSupported normalized_axis_ : " << param->normalized_dims_;
+    MS_LOG(WARNING) << "UnSupported normalized_axis_ : " << normalized_axis_;
     return RET_ERROR;
   }
   return RET_OK;
@@ -60,7 +60,8 @@ int LayerNormOpenCLKernel::CheckSpecs() {
 
 int LayerNormGetWorkGroup(const std::vector<size_t> &global, std::vector<size_t> *local, int max_size) {
   const int max_divider = 8;
-  const int max_x = 4, max_y = 8;
+  const int max_x = 4;
+  const int max_y = 8;
   int x = std::min(GetMaxDivisorStrategy1(global[0], max_divider), max_x);
   CHECK_EQUAL_RETURN(x, 0);
   int yz = max_size / x;

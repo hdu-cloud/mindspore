@@ -16,7 +16,7 @@
 from typing import Optional
 
 from mindspore import log as logger
-from ..._checkparam import Validator
+from mindspore import _checkparam as Validator
 from .symbol_tree import SymbolTree
 from .node import Node
 from .node_type import NodeType
@@ -28,6 +28,9 @@ class TreeNodeHelper:
     `TreeNodeHelper` is used to break circle reference while getting symbol_tree from a `Tree` type `Node`.
 
     `TreeNodeHelper` provides a staticmethod `get_sub_tree` for getting symbol_tree from a `Tree` type `Node`.
+
+    .. warning::
+        This is a set of experimental APIs that is subject to change or deletion.
     """
 
     @staticmethod

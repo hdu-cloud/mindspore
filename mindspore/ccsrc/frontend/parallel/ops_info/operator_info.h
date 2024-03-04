@@ -23,7 +23,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
 #include "utils/hash_map.h"
 #include "utils/ms_utils.h"
 #include "base/base.h"
@@ -36,7 +35,6 @@
 #include "frontend/parallel/strategy.h"
 #include "frontend/parallel/tensor_layout/tensor_info.h"
 #include "utils/log_adapter.h"
-#include "mindspore/core/ops/core_ops.h"
 
 namespace mindspore {
 namespace parallel {
@@ -83,6 +81,8 @@ class OperatorInfo {
 
   virtual ~OperatorInfo() = default;
 
+  void set_involved_param_name(std::string name) { involved_param_name_ = name; }
+  std::string get_involved_param_name() { return involved_param_name_; }
   Status set_is_parameter(const std::vector<bool> &is_parameter);
   Status SetInputAndOutputTypeLength(const std::vector<size_t> &input_lengths,
                                      const std::vector<size_t> &output_lengths);
@@ -108,6 +108,8 @@ class OperatorInfo {
   virtual void ReComputeBatchSplitFlagList();
   std::shared_ptr<Strategies> GenerateBatchStrategiesWithCheck();
   void ComputeBatchSplitFlagList();
+  Shapes inputs_shape() const { return inputs_shape_; }
+  Shapes outputs_shape() const { return outputs_shape_; }
 
   double GetForwardMemoryCostFromCNode();
   // This is a common method for setting operator cost for a given strategy, in which the validity of this strategy
@@ -189,6 +191,7 @@ class OperatorInfo {
     cnodes_.push_back(cnode);
   }
   std::vector<CNodePtr> cnodes();
+  CNodePtr cnode() const { return cnode_; }
   bool is_alive() const { return is_alive_; }
   void SetNotAlive() { is_alive_ = false; }
   StrategyPtr strategy() const { return strategy_; }
@@ -217,6 +220,9 @@ class OperatorInfo {
   Status CreateGroupForOptShard(TensorLayout *tensor_layout, std::vector<Group> *groups);
   virtual void ReplaceNodeInputOrAttrs() {}
   void set_auto_parallel(bool is_auto_parallel) { is_auto_parallel_ = is_auto_parallel; }
+  void set_assigned_parallel(bool is_assigned_parallel) { is_assigned_parallel_ = is_assigned_parallel; }
+  bool repeated_num_in_dev_matrix_right() const { return repeated_num_in_dev_matrix_right_; }
+  void set_repeated_num_in_dev_matrix_right(bool is_right) { repeated_num_in_dev_matrix_right_ = is_right; }
 
   // Key for user data.
   constexpr static char key[] = "OpInfo";
@@ -227,6 +233,8 @@ class OperatorInfo {
   bool is_last_node_ = false;
   virtual Status CheckStrategy(const StrategyPtr &strategy) = 0;
   virtual Status InferTensorMap() = 0;
+  virtual Status InferOutputTensorMap() { return SUCCESS; }
+  virtual Status CheckLayoutConfig() { return SUCCESS; }
   virtual Status InferForwardCommunication() = 0;
   virtual Status GetAttrs() = 0;
   virtual Status InferDevMatrixShape() = 0;
@@ -250,8 +258,6 @@ class OperatorInfo {
   // The tensor map of Outputs[0] is used by default. If there are multiple outputs, need to identify which output
   // is used for grad and overload the function. If the output is a scalar, need to override the function too.
   virtual Status InferAsLossDivisor();
-  Status InferSliceShape(const Strategies &inputs_strategy, const Strategies &outputs_strategy,
-                         Shapes *inputs_slice_shape, Shapes *outputs_slice_shape);
   void BreakingTiesForPreferringDataParallel(const StrategyPtr &stra, const CostPtr &cost) const;
   int64_t GetIntAttr(const std::string &attr_name);
   bool GetBoolAttr(const std::string &attr_name);
@@ -294,12 +300,16 @@ class OperatorInfo {
   RankList stage_device_list_;  // the device list in this stage
   int64_t stage_device_size_ = 0;
   bool infer_attrs_completed_ = false;
+  bool is_layout_config_ = false;
+  Shapes strategy_from_layout_;
 
-  bool is_auto_parallel_ = false;  // false: semi_auto_parallel; true: auto_parallel
+  bool is_auto_parallel_ = false;      // false: semi_auto_parallel; true: auto_parallel
+  bool is_assigned_parallel_ = false;  // false: origin parallel; true: dynamic_shape parallel
   // 'corrected_input_indices_' used to store the indices of input that have ALREADY been corrected.
   std::vector<size_t> corrected_input_indices_;
   // Given a parallelization strategy, there is a cost.
   std::vector<std::shared_ptr<StrategyWithCost>> strategy_cost_;
+  std::string involved_param_name_;
   // For each input in 'inputs_', there is a bool variable indicating whether that the corresponding input is parameter
   std::vector<bool> is_parameter_;
   // For each input in 'inputs_', a bool variable is true if the corresponding one is a parameter or a output of
@@ -339,6 +349,8 @@ class OperatorInfo {
   OperatorCostPtr operator_cost_;
   std::vector<TypePtr> outputs_type_;
   int64_t swc_index_ = -1;
+  Status GetLayoutConfig();
+  Status CheckLayoutConfigBase();
 };
 
 Shape GetSliceShape(const Shape &tensor_shape, const Dimensions &strategy);
@@ -349,10 +361,8 @@ Operator CreateReduceScatterOp(const std::string &reduce_op, const std::string &
 Operator CreateAllGatherOp(const std::string &group);
 Operator CreateCastOp(TypePtr type);
 Operator CreateDivOp(float scale);
-Operator CreateMiniStepAllGatherOp(const std::string &group);
+void AddCNodePrimAttr(const CNodePtr &comm_node, const std::string &attr_name, const ValuePtr &attr_val);
 int32_t AddCommOpFusionType(const CNodePtr &comm_node, const AnfNodePtr &param_node);
-void AddCommOpMirrorFlag(const CNodePtr &comm_node, bool do_mirror);
-void AddCommOpAddAccuFlag(const CNodePtr &comm_node, bool add_accu);
 Operator CreateMicroStepAllGatherOp(const std::string &group);
 void AddCommOpMeanFlag(const CNodePtr &comm_node);
 void AddCommOpParamFlag(const CNodePtr &comm_node);
@@ -362,7 +372,6 @@ int64_t ComputeRepeatDeviceNumByTensorMap(const Shape &dev_matrix_shape, const S
 std::shared_ptr<Strategies> GenerateBatchStrategiesBySplitFlag(const Shapes &shapes,
                                                                const std::vector<bool> &split_flag_list);
 std::string StrategyToString(const Strategies &strategy);
-void PrintStrategy(const StrategyPtr &strategy);
 Status GenerateStrategiesForIndependentInputsBase(int64_t stage_id, size_t dev_num, const Shapes &inputs_shape,
                                                   const Shapes &splittable_inputs, std::vector<StrategyPtr> *sp_vector);
 // generate strategies for that all inputs' dimensions are independent, such as: ([a, b, c, d])
@@ -386,6 +395,7 @@ AnfNodePtr CreateTensorTupleAnfNodePtr(const tensor::TensorPtrList &tensor_tuple
 
 ForwardOp CreateReduceMeanForwardOp(const std::vector<Group> &forward_group, const TypePtr &dtype);
 Operator CreateDivOpWithType(float divisor, const TypePtr &dtype);
+std::vector<int64_t> GetTensorValue(const ValuePtr &ori_value);
 }  // namespace parallel
 }  // namespace mindspore
 

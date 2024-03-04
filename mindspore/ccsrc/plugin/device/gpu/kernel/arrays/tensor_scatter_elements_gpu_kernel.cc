@@ -100,8 +100,8 @@ bool TensorScatterElementsGpuKernelMod::Init(const BaseOperatorPtr &base_operato
     return false;
   }
   kernel_func_ = func_list_[pair.second].second;
-  indices_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).first);
-  data_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  indices_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).dtype);
+  data_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
 
   return true;
 }
@@ -224,9 +224,10 @@ bool TensorScatterElementsGpuKernelMod::LaunchKernel(const std::vector<AddressPt
                                                      reinterpret_cast<cudaStream_t>(stream_ptr)),
                                      "cudaMemcpy output failed");
 
-  TensorScatterElements(type_, input_dims_, indices_byte_size_ / indices_unit_size_, indices, updates, output, axis_,
-                        input_axis_size_, d_indices_stride_, d_output_stride_, device_id_,
-                        reinterpret_cast<cudaStream_t>(stream_ptr));
+  auto status = TensorScatterElements(type_, input_dims_, indices_byte_size_ / indices_unit_size_, indices, updates,
+                                      output, axis_, input_axis_size_, d_indices_stride_, d_output_stride_, device_id_,
+                                      reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

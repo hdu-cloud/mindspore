@@ -25,7 +25,9 @@
 #include <limits>
 #include <cmath>
 #include <chrono>
-#include "utils/macros.h"
+#include <algorithm>
+#include <cctype>
+#include "mindapi/base/macros.h"
 namespace mindspore {
 class MSLogTime {
  public:
@@ -60,8 +62,6 @@ class MSLogTime {
 
 namespace mindspore {
 namespace common {
-// TODO(lzlang): delete
-constexpr auto kEnableAscendKernelByKernel = false;
 inline const char *SafeCStr(const std::string &str) { return str.c_str(); }
 MS_CORE_API const char *SafeCStr(const std::string &&str);
 
@@ -116,14 +116,18 @@ static inline bool UseMPI() {
   std::string ompi_command_env = GetEnv("OMPI_COMMAND");
   std::string pmix_rank_env = GetEnv("PMIX_RANK");
   if (!ompi_command_env.empty() && !pmix_rank_env.empty()) {
+    if (!GetEnv("MS_ROLE").empty()) {
+      return false;
+    }
     return true;
   }
   return false;
 }
 
 static inline bool UseDynamicCluster() {
-  // If environment variable 'MS_ROLE' is set, we consider this process is participating in cluster building.
-  return !common::GetEnv("MS_ROLE").empty();
+  // If environment variable 'MS_ROLE' or 'MS_SCHED_HOST' is set, we consider this process is participating in cluster
+  // building.
+  return !common::GetEnv("MS_ROLE").empty() || !common::GetEnv("MS_SCHED_HOST").empty();
 }
 
 // UseDynamicCluster or UseMPI. If false, means use rank table file.
@@ -175,6 +179,24 @@ inline bool IsFloatEqual(const float &a, const float &b) {
 inline bool IsDoubleEqual(const double &a, const double &b) {
   return (std::fabs(a - b) <= std::numeric_limits<double>::epsilon());
 }
+
+inline bool IsStrNumeric(const std::string &str) {
+  return std::all_of(str.begin(), str.end(), [](char c) { return std::isdigit(c); });
+}
+
+inline bool IsNeedMemoryStatistic() {
+  static const char kMemoryStatistic[] = "MS_MEMORY_STATISTIC";
+  static const auto need_statistic = GetEnv(kMemoryStatistic);
+  return need_statistic == "1";
+}
+
+inline bool IsNeedProfileMemory() {
+  static const char kLaunchSkippedEnv[] = "MS_KERNEL_LAUNCH_SKIP";
+  static const auto launch_skipped = GetEnv(kLaunchSkippedEnv);
+  static bool skip_launch = (launch_skipped == "all" || launch_skipped == "ALL");
+  return skip_launch && IsNeedMemoryStatistic();
+}
+
 }  // namespace common
 }  // namespace mindspore
 

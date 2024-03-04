@@ -14,18 +14,19 @@
  * limitations under the License.
  */
 
-#include "ops/inplace_add.h"
-#include "ops/inplace_sub.h"
-#include "ops/inplace_update.h"
-#include <string>
 #include <algorithm>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/inplace_add.h"
+#include "ops/inplace_sub.h"
+#include "ops/inplace_update.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 namespace mindspore {
 namespace ops {
 namespace {
@@ -120,6 +121,7 @@ std::vector<int64_t> InplaceSub::get_indices() const {
 
 std::vector<int64_t> InplaceUpdate::get_indices() const {
   auto value_ptr = GetAttr(kIndices);
+  MS_EXCEPTION_IF_NULL(value_ptr);
   if (value_ptr->isa<mindspore::api::ValueSequence>()) {
     return GetValue<std::vector<int64_t>>(value_ptr);
   } else {
@@ -138,8 +140,26 @@ AbstractBasePtr InplaceOpInfer(const abstract::AnalysisEnginePtr &, const Primit
   auto shape = InplaceOpInferShape(primitive, input_args);
   return abstract::MakeAbstract(shape, dtype);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(InplaceAdd, prim::kPrimInplaceAdd, InplaceOpInfer, nullptr, true);
-REGISTER_PRIMITIVE_EVAL_IMPL(InplaceSub, prim::kPrimInplaceSub, InplaceOpInfer, nullptr, true);
-REGISTER_PRIMITIVE_EVAL_IMPL(InplaceUpdate, prim::kPrimInplaceUpdate, InplaceOpInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGInplaceOpInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return InplaceOpInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return InplaceOpInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return InplaceOpInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(InplaceAdd, prim::kPrimInplaceAdd, AGInplaceOpInfer, false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(InplaceSub, prim::kPrimInplaceSub, AGInplaceOpInfer, false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(InplaceUpdate, prim::kPrimInplaceUpdate, AGInplaceOpInfer, false);
 }  // namespace ops
 }  // namespace mindspore

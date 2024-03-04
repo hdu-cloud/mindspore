@@ -74,6 +74,13 @@ int ComplexCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std:
   image_shape_ = inputs[1]->GetShapeVector();
   out_shape_ = outputs[0]->GetShapeVector();
 
+  is_null_input_ = CHECK_SHAPE_NULL(real_shape_, kernel_name_, "real") ||
+                   CHECK_SHAPE_NULL(image_shape_, kernel_name_, "image") ||
+                   CHECK_SHAPE_NULL(out_shape_, kernel_name_, "output");
+  if (is_null_input_) {
+    return KRET_OK;
+  }
+
   real_bcast_.clear();
   image_bcast_.clear();
   auto real_offset = out_shape_.size() - real_shape_.size();
@@ -92,11 +99,20 @@ int ComplexCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std:
     }
   }
 
+  if (real_bcast_ != image_bcast_) {
+    MS_LOG(ERROR) << "the broadcast shape of real and image is different";
+    return KRET_RESIZE_FAILED;
+  }
+
   return KRET_OK;
 }
 
 template <typename T>
 bool ComplexCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &outputs) {
+  if (is_null_input_) {
+    return true;
+  }
+
   auto real_need_broadcast = NeedBroadcast(real_bcast_);
   auto image_need_broadcast = NeedBroadcast(image_bcast_);
   if (!real_need_broadcast && !image_need_broadcast) {

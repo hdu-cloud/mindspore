@@ -23,21 +23,21 @@
 #include <unordered_map>
 #include <set>
 #include <memory>
-#include "src/litert/kernel_exec.h"
+#include "src/executor/kernel_exec.h"
 #include "src/litert/executor.h"
 #include "src/common/log_adapter.h"
 #include "src/common/version_manager.h"
 #include "src/litert/cpu_info.h"
-#include "src/litert/sub_graph_kernel.h"
+#include "src/executor/sub_graph_kernel.h"
 
 namespace mindspore::kernel {
 class ExitSubGraphKernel : public SubGraphKernel {
  public:
-  explicit ExitSubGraphKernel(Kernel *kernel) : SubGraphKernel({}, {}, {}, kernel) { subgraph_type_ = kExitSubGraph; }
+  explicit ExitSubGraphKernel(MSKernel *kernel) : SubGraphKernel({}, {}, {}, kernel) { subgraph_type_ = kExitSubGraph; }
 
   ~ExitSubGraphKernel() override = default;
 
-  static SubGraphKernel *Create(Kernel *kernel);
+  static SubGraphKernel *Create(MSKernel *kernel);
 
   int Prepare() override { return RET_OK; };
 

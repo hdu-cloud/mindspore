@@ -26,8 +26,8 @@ project(akg C CXX)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 7.3.0)
         message(FATAL_ERROR "GCC version must be 7.3.0 and above, but found ${CMAKE_CXX_COMPILER_VERSION}")
-    elseif(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 9.4.0)
-        message(WARNING "GCC version ${CMAKE_CXX_COMPILER_VERSION} is greater than 9.4.0, may cause unknown problems.")
+    elseif(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 11.1.0)
+        message(WARNING "GCC version ${CMAKE_CXX_COMPILER_VERSION} is greater than 11.1.0, may cause unknown problems.")
     endif()
 endif()
 
@@ -38,33 +38,14 @@ get_property(COMPILE_DEFS DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY COMPILE
 list(REMOVE_ITEM COMPILE_DEFS "_GLIBCXX_USE_CXX11_ABI=0")
 list(REMOVE_ITEM COMPILE_DEFS "_GLIBCXX_USE_CXX11_ABI=1")
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY COMPILE_DEFINITIONS ${COMPILE_DEFS})
-if(NOT CMAKE_SYSTEM_NAME MATCHES "Windows" AND NOT USE_KC_AIR AND NOT USE_LLVM)
-  add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0)
-  set(AKG_GLIBCXX_USE_CXX11_ABI OFF)
-endif()
 
 include(cmake/RT.cmake)
 include(cmake/utils.cmake)
 include(cmake/external_libs/isl.cmake)
 
-if(USE_CCE_RT)
-  set(AKG_RPATH ${AKG_RPATH}:/usr/local/Ascend/latest/lib64)
-  set(AKG_RPATH ${AKG_RPATH}:/usr/local/Ascend/nnae/latest/lib64/plugin/opskernel)
-  set(AKG_RPATH ${AKG_RPATH}:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel)
-  set(AKG_RPATH ${AKG_RPATH}:/usr/local/Ascend/lib64/plugin/opskernel)
-  set(AKG_RPATH ${AKG_RPATH}:/usr/local/Ascend/add-ons)
-  set(AKG_RPATH ${AKG_RPATH}:/usr/local/Ascend/opp/op_impl/built-in/ai_core/tbe/op_tiling)
-  set(AKG_RPATH ${AKG_RPATH}:/usr/local/Ascend/nnae/latest/opp/op_impl/built-in/ai_core/tbe/op_tiling)
-  set(AKG_RPATH ${AKG_RPATH}:/usr/local/Ascend/ascend-toolkit/latest/opp/op_impl/built-in/ai_core/tbe/op_tiling)
-  set(AKG_RPATH ${AKG_RPATH}:/usr/local/Ascend/latest/opp/op_impl/built-in/ai_core/tbe/op_tiling)
-elseif(USE_CUDA)
-  set(AKG_RPATH ${AKG_RPATH}:/usr/local/cuda/lib64)
-endif()
-link_directories(${AKG_RPATH})
-
 # Search AKG_EXTEND by order
 set(AKG_EXTEND )
-if(NOT USE_CUDA AND NOT USE_LLVM)
+if(ENABLE_D)
   set(AKG_EXTEND_FILE )
   set(LIB_PATH1 ${AKG_SOURCE_DIR}/libakg_ext.a)
   set(LIB_PATH2 ${CMAKE_CURRENT_BINARY_DIR}/libakg_ext.a)
@@ -98,9 +79,9 @@ if(NOT USE_CUDA AND NOT USE_LLVM)
   endif()
 
   if(NOT AKG_EXTEND)
-    message("-- Warning: Build AKG without Ascend back-end support")
+    message(WARNING "The .o files under ${AKG_SOURCE_DIR}/prebuild are not downloaded, AKG Ascend backend will be not support!")
   else()
-    message("-- Build AKG with Ascend back-end support")
+    message(STATUS "Build AKG with Ascend backend support")
   endif()
 endif()
 
@@ -179,16 +160,16 @@ if(NATIVE_BUILD AND ENABLE_NATIVE_BUILD)
 endif()
 
 set(CMAKE_SKIP_RPATH TRUE)
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pipe -Wall -fPIC -fstack-protector-all")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pipe -Wall -fPIC -fstack-protector-all -Wno-uninitialized -Wno-parentheses")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wl,-z,relro,-z,now,-z,noexecstack")
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -pipe -Wall -fPIC -fstack-protector-all")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -pipe -Wall -fPIC -fstack-protector-all -Wno-uninitialized -Wno-parentheses")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wl,-z,relro,-z,now,-z,noexecstack")
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
   message("-- Build in Debug mode")
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0 -g -rdynamic")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -g -rdynamic")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0 -g -rdynamic -ftrapv")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -g -rdynamic -ftrapv")
 else()
   message("-- Build in Release mode")
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -D_FORTIFY_SOURCE=2 -Werror")
@@ -261,8 +242,7 @@ file(
   ${AKG_SOURCE_DIR}/src/composite/lower_tree/*.cc
   ${AKG_SOURCE_DIR}/src/composite/utils/*.cc
   ${AKG_SOURCE_DIR}/src/composite/optimize/*.cc
-  ${AKG_SOURCE_DIR}/src/common/*.cc
-  ${AKG_SOURCE_DIR}/src/runtime/stub/*.cc)
+  ${AKG_SOURCE_DIR}/src/common/*.cc)
 
 # Check if auto tune lib exists and remove stub if exists
 if (USE_AUTO_TUNE)
@@ -285,11 +265,6 @@ if (USE_AUTO_TUNE)
   endif()
 endif()
 
-file(GLOB RUNTIME_STUB_SRC ${AKG_SOURCE_DIR}/src/runtime/stub/*.cc)
-if(USE_CCE_RT OR USE_KC_AIR)
-  list(REMOVE_ITEM COMPILER_SRCS ${RUNTIME_STUB_SRC})
-endif()
-
 if(USE_CCE_PROFILING)
   file (
     GLOB
@@ -299,7 +274,7 @@ if(USE_CCE_PROFILING)
   include_directories(AFTER "${AKG_SOURCE_DIR}/src/profiler/ascend")
 endif()
 
-if (USE_CCE_RT)
+if (ENABLE_D)
   file(
     GLOB
     ASCEND_RUNTIME_SRCS
@@ -327,16 +302,20 @@ file(
   ${TVM_DIR}/src/runtime/vm/*.cc
   ${TVM_DIR}/src/runtime/stackvm/*.cc)
 
+
 if(USE_CUDA)
   include(${TVM_DIR}/cmake/util/FindCUDA.cmake)
   include(${TVM_DIR}/cmake/modules/CUDA.cmake)
-  include(${TVM_DIR}/cmake/util/FindLLVM.cmake)
   file(GLOB PROFILER_SRCS ${AKG_SOURCE_DIR}/src/profiler/gpu/*.cc)
   list(APPEND COMPILER_SRCS ${PROFILER_SRCS})
+endif()
+
+if(USE_CUDA OR ENABLE_D)
+  include(${TVM_DIR}/cmake/util/FindLLVM.cmake)
   if(USE_LLVM)
     find_llvm_macro(${USE_LLVM})
     if(NOT LLVM_FOUND)
-      message(WARNING "Not found LLVM, CPU backend will be not support!")
+      message(WARNING "Not found LLVM, AKG CPU backend will be not support!")
       set(USE_LLVM OFF)
     endif()
   endif()
@@ -355,11 +334,9 @@ if(USE_OPENMP)
   include(${TVM_DIR}/cmake/modules/OpenMP.cmake)
 endif()
 
-if(USE_RPC)
-  message(STATUS "Build with RPC support...")
-  file(GLOB RUNTIME_RPC_SRCS ${TVM_DIR}/src/runtime/rpc/*.cc)
-  list(APPEND RUNTIME_SRCS ${RUNTIME_RPC_SRCS})
-endif(USE_RPC)
+message(STATUS "Build with Profiling support...")
+file(GLOB RUNTIME_PROF_SRCS ${TVM_DIR}/src/runtime/profiling/*.cc)
+list(APPEND RUNTIME_SRCS ${RUNTIME_PROF_SRCS})
 
 file(GLOB COMPILER_OFF_SRC ${TVM_DIR}/src/codegen/opt/build_*_off.cc)
 list(APPEND COMPILER_SRCS ${COMPILER_OFF_SRC})
@@ -373,10 +350,17 @@ add_library(akg SHARED ${COMPILER_SRCS} ${RUNTIME_SRCS} ${TOPI_SRCS} ${AKG_EXTEN
 add_dependencies(akg akg::isl_fixed)
 include(cmake/polytops.cmake)
 
-if (EXISTS ${AUTO_TUNE_LIB})
-  target_link_libraries(akg ${TVM_LINKER_LIBS} ${TVM_RUNTIME_LINKER_LIBS} akg::isl_fixed pthread ${AUTO_TUNE_LIB})
+string(FIND "${TVM_LINKER_LIBS}" "-ltinfo" TINFO)
+if (NOT ${TINFO} MATCHES "-1")
+  string(REPLACE "-ltinfo" "" TVM_LINKER_LIBS "${TVM_LINKER_LIBS}")
+  include(cmake/external_libs/ncurses.cmake)
+  target_link_libraries(akg akg::isl_fixed ${TVM_LINKER_LIBS} ${TVM_RUNTIME_LINKER_LIBS} akg::ncurses pthread -s)
 else()
-  target_link_libraries(akg ${TVM_LINKER_LIBS} ${TVM_RUNTIME_LINKER_LIBS} akg::isl_fixed pthread)
+  target_link_libraries(akg akg::isl_fixed ${TVM_LINKER_LIBS} ${TVM_RUNTIME_LINKER_LIBS} pthread -s)
+endif()
+
+if (EXISTS ${AUTO_TUNE_LIB})
+  target_link_libraries(akg ${AUTO_TUNE_LIB})
 endif()
 
 if(USE_CCE_PROFILING)

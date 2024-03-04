@@ -26,6 +26,7 @@ import importlib
 import platform
 import subprocess
 import numpy as np
+import mindspore as ms
 from mindspore._c_expression import Oplib, typing
 from mindspore import context
 from mindspore.common import Tensor
@@ -77,11 +78,7 @@ def _compile_aot(file):
         cache_path = os.path.join(cache_path, "rank_" + str(get_rank()), "")
         os.makedirs(cache_path, exist_ok=True)
 
-    search_res = importlib.util.find_spec("mindspore")
-    if search_res is None:
-        raise RuntimeError("Cannot find mindspore module!")
-
-    res_path = search_res.origin
+    res_path = importlib.util.find_spec("mindspore").origin
     find_pos = res_path.find("__init__.py")
     if find_pos == -1:
         raise RuntimeError(
@@ -89,9 +86,8 @@ def _compile_aot(file):
     include_file = "-I{}include/api/".format(res_path[:find_pos])
 
     file_name = file.split('/')[-1]
-    file_folder = file[:file.rindex('/')]
     func_path = cache_path + file_name + ".so"
-    include_file = "{} -I{}".format(include_file, file_folder)
+    include_file = "{} -I{}".format(include_file, file[:file.rindex('/')])
 
     if func_path not in Custom.compiled_bin:
         Custom.compiled_bin.append(func_path)
@@ -111,12 +107,20 @@ def _compile_aot(file):
                 output = raw_output.split()
                 release_idx = output.index("release") + 1
                 release = output[release_idx].split(".")
-                version_major = release[0]
+                version_idx = release_idx + 1
+                version = output[version_idx].split(".")
+                version_middle = version[1] if len(version) > 1 else 0
+                version_minor = version[2] if len(version) > 2 else 0
 
-                return int(version_major)
+                return int(release[0]), int(version_middle), int(version_minor)
 
-            if _get_cuda_bare_metal_version() >= 11:
+            v_major, v_mid, v_minor = _get_cuda_bare_metal_version()
+            if v_major >= 11:
                 cmd += ["-gencode", "arch=compute_80,code=sm_80", "--expt-extended-lambda"]
+            elif v_major == 10 and not (v_mid >= 1 and v_minor >= 168):
+                logger.warning("The current version of nvcc, V{}.{}.{},  might have unfixed issues with std string, "
+                               "which will lead to errors in aot custom op with attrs."
+                               "The version higher than V10.1.168 is recommended".format(v_major, v_mid, v_minor))
             cmd += [include_file, "-o", func_path, file]
         else:
             raise ValueError("The source file must be a cc/cpp/cu file, but get: {}".format(file))
@@ -142,10 +146,10 @@ class Custom(ops.PrimitiveWithInfer):
     function if needed. Then these `Custom` objects can be directly used in neural networks.
     Detailed description and introduction of user-defined operators, including correct writing of parameters,
     please refer to `Custom Operators Tutorial
-    <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/operation/op_custom.html>`_ .
+    <https://www.mindspore.cn/tutorials/experts/en/master/operation/op_custom.html>`_ .
 
     .. warning::
-        This is an experimental prototype that is subject to change.
+        - This is an experimental API that is subject to change.
 
     .. note::
         The supported platforms are determined by the input `func_type`. The supported platforms are as follows:
@@ -157,6 +161,12 @@ class Custom(ops.PrimitiveWithInfer):
         - "pyfunc": supports ["CPU"].
         - "julia": supports ["CPU"].
         - "aicpu": supports ["Ascend"].
+
+        If run on ge backend, use `CustomRegOp` to generate the registration information of "aicpu" and "tbe" operator,
+        use `custom_info_register` to bind the registration information to the `func` of the "tbe" operator,
+        then save the registration information of "aicpu" operator and the `func` implementation of "tbe" operator to
+        a file or separate files, keep these files in a separate directory, and set the absolute path of this directory
+        to environment variable "MS_DEV_CUSTOM_OPP_PATH" before running the network.
 
     Args:
         func (Union[function, str]):
@@ -248,7 +258,7 @@ class Custom(ops.PrimitiveWithInfer):
                        (ex. Custom(func="./add.jl:Add:add", out_shape=[1], out_dtype=mstype.float32, "julia"))
 
         out_shape (Union[function, list, tuple]): The output shape infer function or the value of output shape of
-            `func`. Default: None.
+            `func`. Default: ``None`` .
 
             If func has single output, then the value of output shape is a list or tuple of int.
 
@@ -259,7 +269,7 @@ class Custom(ops.PrimitiveWithInfer):
             shape mechanic will be enabled.
 
         out_dtype (Union[function, :class:`mindspore.dtype`, tuple[:class:`mindspore.dtype`]]): The output data type
-            infer function or the value of output data type of `func`. Default: None.
+            infer function or the value of output data type of `func`. Default: ``None`` .
 
             If func has single output, then the value of output shape is a `mindspore.dtype`.
 
@@ -271,23 +281,23 @@ class Custom(ops.PrimitiveWithInfer):
 
         func_type (str): The implementation type of `func`, should be one of
 
-            ["hybrid", "akg", "tbe", "aot", "pyfunc", "julia", "aicpu"].
+            [ ``"hybrid"`` , ``"akg"`` , ``"tbe"`` , ``"aot"`` , ``"pyfunc"`` , ``"julia"`` , ``"aicpu"`` ].
 
-            Each `func_type` only supports specific platforms(targets). Default: "hybrid".
+            Each `func_type` only supports specific platforms(targets). Default: ``"hybrid"`` .
             The supported platforms of `func_type`:
 
-            - "hybrid": supports ["Ascend", "GPU", "CPU"].
-            - "akg": supports ["Ascend", "GPU", "CPU"].
-            - "tbe": supports ["Ascend"].
-            - "aot": supports ["GPU", "CPU"].
-            - "pyfunc": supports ["CPU"].
-            - "julia": supports ["CPU"].
-            - "aicpu": supports ["Ascend"].
+            - ``"hybrid"``: supports ["Ascend", "GPU", "CPU"].
+            - ``"akg"``: supports ["Ascend", "GPU", "CPU"].
+            - ``"tbe"``: supports ["Ascend"].
+            - ``"aot"``: supports ["GPU", "CPU"].
+            - ``"pyfunc"``: supports ["CPU"].
+            - ``"julia"``: supports ["CPU"].
+            - ``"aicpu"``: supports ["Ascend"].
 
-        bprop (function): The back propagation function of `func`. Default: None.
+        bprop (function): The back propagation function of `func`. Default: ``None`` .
         reg_info (Union[str, dict, list, tuple]): Represents the registration information(reg info) of `func` with
             json format of type str or dict. The reg info specifies supported data types and formats of inputs and
-            outputs, attributes and target of `func`. Default: None.
+            outputs, attributes and target of `func`. Default: ``None`` .
 
             If reg info is a list or tuple, then each item should be with json format of type str or dict, which
             represents the registration information of `func` in a specific target. You need to invoke `CustomRegOp`
@@ -437,9 +447,13 @@ class Custom(ops.PrimitiveWithInfer):
     registered_func = {}
     attr_dict = {}  # Save input_names and attr_names for func.
     compiled_bin = []  # Save names for compiled bin.
+    tbe_path_checked = []  # Save paths for tbe functions which is safe to be imported as module.
+    tbe_path_failed = []  # Save paths for tbe functions which fail to be imported as module.
+    op_path_in_cache = []  # Save paths for op functions created in the cached.
+    custom_aot_warning = True  # Flag to enable warnings about custom aot path white list
 
     def __init__(self, func, out_shape=None, out_dtype=None, func_type="hybrid", bprop=None, reg_info=None):
-        ops.PrimitiveWithInfer.__init__(self, "Custom")
+        super().__init__("Custom")
 
         self.supported_targets = ["Ascend", "GPU", "CPU"]
         self.supported_func_type = ["hybrid", "akg", "tbe", "aicpu", "aot", "pyfunc", "julia"]
@@ -453,6 +467,7 @@ class Custom(ops.PrimitiveWithInfer):
         self._func_compile_attrs = {}
         self._is_ms_kernel = False
 
+        self._check_platform()
         self._check_func()
         self._update_func_info(reg_info)
         self.add_prim_attr("func_name", self.func_name)
@@ -467,6 +482,8 @@ class Custom(ops.PrimitiveWithInfer):
             self.add_prim_attr("fn_id", func_id)
 
         self.out_shape = out_shape
+        if self.out_shape is None and self.func_type == "aot":
+            self.add_prim_attr("cpp_infer_shape", True)
         self.out_dtype = out_dtype
         self.bprop = bprop
         self.fake_output = False
@@ -482,14 +499,7 @@ class Custom(ops.PrimitiveWithInfer):
         self._register_info(reg_info)
 
         if func_type == "akg":
-            self.add_prim_attr('func_source_str', self.func_source_str)
-            if "ir_builder" in self.func_source_str:
-                self.func_type = "ir_builder"
-            elif "compute" in self.func_source_str:
-                self.func_type = "tvm_compute"
-            else:
-                self.func_type = "hybrid"
-                self._hybrid_func_analyser()
+            self._set_akg_kernel_type()
 
         if not self.bprop and self.func_type == "hybrid":
             self._hybrid_autodiff(func_type)
@@ -534,7 +544,12 @@ class Custom(ops.PrimitiveWithInfer):
                 logger.warning("{}, 'out_dtype' is an empty tuple. Add a placeholder instead. "
                                "Not recommend to use it as it could be any uninitialized data.".format(self.log_prefix))
                 infer_dtype = mstype.int32
-
+        if self.func_type == "aot":
+            if infer_shape is None:
+                logger.warning("{}, 'out_shape' is None. Add a placeholder instead. "
+                               "A CPP version of infer shape function is required "
+                               "in this case.".format(self.log_prefix))
+                infer_shape = (1,)
         # after all automatic infer information fulfillment, throw error if infer_shape/infer_dtype is still None
         if not isinstance(infer_shape, (tuple, list)):
             raise TypeError("{}, 'out_shape' must be one of [tuple, list, function], but got {}"
@@ -554,6 +569,16 @@ class Custom(ops.PrimitiveWithInfer):
     def get_bprop(self):
         return self.bprop
 
+    def _set_akg_kernel_type(self):
+        self.add_prim_attr('func_source_str', self.func_source_str)
+        if "ir_builder" in self.func_source_str:
+            self.func_type = "ir_builder"
+        elif "compute" in self.func_source_str:
+            self.func_type = "tvm_compute"
+        else:
+            self.func_type = "hybrid"
+            self._hybrid_func_analyser()
+
     def _check_julia_func(self):
         """Check the validity of julia func"""
         if not isinstance(self.func, str):
@@ -570,6 +595,10 @@ class Custom(ops.PrimitiveWithInfer):
                 raise Exception("{}, function {} is not found in source file {}!"
                                 .format(self.log_prefix, func, source_file))
 
+    def _check_platform(self):
+        if platform.system() != 'Linux':
+            raise Exception("Custom op only supported on Linux platform currently.")
+
     def _check_func(self):
         """Check the validity of func_type and type of func"""
         if self.func_type not in self.supported_func_type:
@@ -585,7 +614,19 @@ class Custom(ops.PrimitiveWithInfer):
                     "{}, 'func' should be like 'file_name:func_name', but got {}".format(
                         self.log_prefix, self.func))
             file_path = os.path.abspath(file_name_list[0])
-            if not file_path.endswith("so"):
+            if os.environ.get('MS_CUSTOM_AOT_WHITE_LIST') is None:
+                if Custom.custom_aot_warning:
+                    logger.warning("{}, no white list is set and it might cause problems. "
+                                   "Set the legal path of the file in MS_CUSTOM_AOT_WHITE_LIST"
+                                   .format(self.log_prefix))
+                    Custom.custom_aot_warning = False
+            else:
+                legal_path = os.path.abspath(os.environ.get('MS_CUSTOM_AOT_WHITE_LIST'))
+                if legal_path not in file_path:
+                    raise TypeError(
+                        "{}, the legal path for the file is {}, but the file is {}".format(
+                            self.log_prefix, legal_path, file_path))
+            if file_path.endswith(("cu", "cpp", "cc")):
                 file_path = _compile_aot(file_path)
                 self.func = file_path + ":" + file_name_list[1]
 
@@ -607,10 +648,67 @@ class Custom(ops.PrimitiveWithInfer):
                                "The kernel will be executed as a native python function, which might lead to "
                                "low efficiency. To accelerate the kernel, set the 'func_type' to be \"hybrid\""
                                .format(self.log_prefix))
-        else:
+        elif self.func_type == "tbe":
             if not callable(self.func):
                 raise TypeError("{}, 'func' must be of type function, but got {}"
                                 .format(self.log_prefix, type(self.func)))
+
+    def _update_func_imply_path(self):
+        """Update op_imply_path of func"""
+        file_path = os.path.realpath(inspect.getfile(self.func))
+
+        if not self.func_type == "tbe":
+            # Custom ops with type other than tbe doesn't need to import from the path
+            # use the file path directly
+            return file_path
+        # For the custom op of type tbe, the kernel compiler will import the module from file path.
+        # we will try import in the initialization,
+        if file_path in Custom.tbe_path_checked:
+            logger.info("The file of {} has already been checked good to be imported.".format(self.func_name))
+            return file_path
+
+        if file_path not in Custom.tbe_path_failed:
+            # As a single file might include multiply functions
+            # we will not try the file path which already failed in previous trials
+            try:
+                mod_spec = importlib.util.spec_from_file_location(
+                    self.func_name, file_path)
+                custom_mod = importlib.util.module_from_spec(mod_spec)
+                mod_spec.loader.exec_module(custom_mod)
+            except (ImportError, RecursionError):
+                Custom.tbe_path_failed.append(file_path)
+            else:
+                Custom.tbe_path_checked.append(file_path)
+                return file_path
+
+        # Create a new file for each tbe function
+        op_imply_path = os.path.realpath(_get_cache_path() + self.func_name + ".py")
+        if op_imply_path in Custom.op_path_in_cache:
+            logger.info("The new file of {} has already been created.".format(self.func_name))
+            return op_imply_path
+
+        logger.warning("Fail to import the original source file. Create a new source file for {}. "
+                       "The new file will not include the dependency for the op function. "
+                       "Check the definition of the function {} "
+                       "in the file: {}".format(self.func_name, self.func_name, op_imply_path))
+
+        Custom.op_path_in_cache.append(op_imply_path)
+
+        if os.path.exists(op_imply_path):
+            try:
+                os.remove(op_imply_path)
+            except FileNotFoundError:
+                logger.warning("Fail to remove the existing file. Check the definition of the function {} "
+                               "in the file: {}".format(self.func_name, op_imply_path))
+
+        with open(op_imply_path, 'at') as file:
+            if platform.system() != "Windows":
+                fcntl.flock(file.fileno(), fcntl.LOCK_EX)
+            file.seek(0, 2)
+            if file.tell() == 0:
+                file.write(self.func_source_str)
+        os.chmod(op_imply_path, stat.S_IRUSR | stat.S_IWUSR)
+        return op_imply_path
 
     def _update_func_info(self, reg_info):
         """Update information of func"""
@@ -627,19 +725,8 @@ class Custom(ops.PrimitiveWithInfer):
             if index != -1:
                 self.func_source_str = self.func_source_str[index:]
 
-            op_imply_path = os.path.realpath(_get_cache_path() + self.func_name + ".py")
-            if os.path.exists(op_imply_path):
-                os.remove(op_imply_path)
-            with open(op_imply_path, 'at') as file:
-                if platform.system() != "Windows":
-                    fcntl.flock(file.fileno(), fcntl.LOCK_EX)
-                file.seek(0, 2)
-                if file.tell() == 0:
-                    file.write(self.func_source_str)
-            os.chmod(op_imply_path, stat.S_IRUSR | stat.S_IWUSR)
-
-            # path of func
-            self.imply_path = op_imply_path
+            # update path of func for TBE type of custom op
+            self.imply_path = self._update_func_imply_path()
             if self._is_ms_kernel:
                 # static check for the Hybrid DSL in hybrid
                 root = ast.parse(self.func_source_str)
@@ -670,7 +757,7 @@ class Custom(ops.PrimitiveWithInfer):
                     continue
                 if isinstance(reg_info_item, str):
                     reg_info_item = json.loads(reg_info_item)
-                prefix = prefix + "_" + reg_info_item.get("op_name", "")
+                prefix = "_".join([prefix, reg_info_item.get("op_name", "")])
             self.uniq_name = prefix + "_" + self.func_name
         else:
             raise TypeError("For '{}', 'func' must be of type function or str, but got {}"
@@ -678,16 +765,21 @@ class Custom(ops.PrimitiveWithInfer):
 
     def _update_reg_attrs(self, reg_info):
         """Update op attrs in reg_info."""
+        output_name_list = []
         for _, item in enumerate(reg_info.get("outputs", [])):
-            output_name_list = []
             if isinstance(item, dict) and item.get("name"):
                 output_name_list.append(item.get("name"))
+        if output_name_list:
             self.add_prim_attr("output_names", output_name_list)
 
         if isinstance(reg_info.get("op_name"), str):
             self.add_prim_attr("reg_op_name", reg_info.get("op_name"))
 
-        if self.func_type == "aot":
+        if self.func_type == "aicpu":
+            self.uniq_name = reg_info["op_name"]
+            self.add_prim_attr("uniq_name", self.uniq_name)
+
+        if self.func_type in ["aot", "aicpu"]:
             if reg_info.get("attr") is not None and isinstance(reg_info["attr"], list):
                 for item in reg_info["attr"]:
                     if isinstance(item, dict) and item.get("value") is not None:
@@ -774,12 +866,6 @@ class Custom(ops.PrimitiveWithInfer):
             else:
                 Custom.registered_func[func_name] = [target]
 
-    def _get_op_name(self, reg_info):
-        if self.func_type == "aicpu":
-            self.uniq_name = reg_info["op_name"]
-            self.add_prim_attr("uniq_name", self.uniq_name)
-        return self.uniq_name
-
     def _reformat_reg_info(self, reg_info, target):
         """Reformat registration information."""
         if not isinstance(reg_info, dict):
@@ -787,7 +873,7 @@ class Custom(ops.PrimitiveWithInfer):
                             "'CustomRegOp' to generate the registration information, then pass it to 'reg_info' or "
                             "use 'custom_info_register' to bind it to 'func' if 'func' is a function."
                             .format(self.log_prefix, reg_info, type(reg_info)))
-        reg_info["op_name"] = self._get_op_name(reg_info)
+        reg_info["op_name"] = self.uniq_name
         reg_info["imply_type"] = self._get_imply_type(reg_info, target)
         if not isinstance(reg_info.get("fusion_type"), str) or not reg_info["fusion_type"].strip():
             reg_info["fusion_type"] = "OPAQUE"
@@ -798,16 +884,15 @@ class Custom(ops.PrimitiveWithInfer):
                     if isinstance(item, dict) and item.get("value") is None:
                         reg_info["attr"][i]["value"] = "all"
             reg_info["async_flag"] = reg_info.get("async_flag", False)
-            reg_info["binfile_name"] = "%s.so" % self.func_name
+            reg_info["binfile"] = "%s.so" % self.func_name
             reg_info["compute_cost"] = reg_info.get("compute_cost", 10)
-            reg_info["kernel_name"] = self.func_name
+            reg_info["kernel"] = self.func_name
             reg_info["partial_flag"] = reg_info.get("partial_flag", True)
-            reg_info["need_check_supported"] = reg_info.get("need_check_supported", False)
+            reg_info["needCheckSupport"] = reg_info.get("need_check_supported", False)
         # Supplement necessary info for AKG if these information is missing in reg_info
         if reg_info["imply_type"] == "AKG":
             target_to_processor = {"Ascend": "AiCore", "GPU": "CUDA", "CPU": "CPU"}
             reg_info["processor"] = reg_info.get("processor", target_to_processor.get(target))
-
         return reg_info
 
     def _get_target(self, reg_info):
@@ -841,32 +926,45 @@ class Custom(ops.PrimitiveWithInfer):
                 reg_info["imply_type"].strip():
             return reg_info["imply_type"]
         # Infer imply_type from func_type
-        func_type_to_imply_type = {"hybrid": "AKG", "akg": "AKG", "tbe": "TBE", "aicpu": "AiCPU", "aot": target,
-                                   "pyfunc": target, "julia": target}
+        func_type_to_imply_type = {"hybrid": "AKG", "akg": "AKG", "tbe": "TBE", "aicpu": "AiCPU", "pyfunc": target,
+                                   "julia": target, "aot": "BiSheng" if target == "Ascend" else target}
         return func_type_to_imply_type.get(self.func_type, "AKG")
 
     def _save_attr(self, reg_info):
         """Save input_names and attr_names of current func."""
         if not isinstance(reg_info, dict):
             return
-        tensor_inputs = reg_info.get("inputs", [])
-        attr = reg_info.get("attr", [])
-        if not isinstance(tensor_inputs, (list, tuple)):
-            tensor_inputs = [tensor_inputs]
-        if not isinstance(attr, (list, tuple)):
-            attr = [attr]
-        # input_names include tensor input names and attr input names
-        input_names = []
-        # attr_names only includes attr input names
+
+        def _get_value_list(key):
+            value = reg_info.get(key, [])
+            if not isinstance(value, (list, tuple)):
+                value = [value]
+            return value
+
+        tensor_inputs = _get_value_list("inputs")
+        attr = _get_value_list("attr")
+        input_names = []  # include tensor input names and attr input names
         attr_names = []
+        pure_input_names = []
         for item in tensor_inputs:
             if isinstance(item, dict) and item.get("name") is not None:
                 input_names.append(item["name"])
+                pure_input_names.append(item["name"])
+        # attr is converted from inputs only when graph mode or when inputs name is also in reg info
+        attr_to_input_safe = bool(input_names) or context.get_context("mode") == ms.GRAPH_MODE
         for item in attr:
             if isinstance(item, dict) and item.get("name") is not None:
-                input_names.append(item["name"])
+                # for custom op with function tbe, we always add attrs to inputs as we don't
+                # deal with attr value here and leave them to the backend process to fit the
+                # usual process of tbe op compiling in mindspore
+                # for the rest cases, namely aot and aicpu, if we find values for attrs, we
+                # have already add them as prim attr of the op in the fun _update_reg_attrs
+                # add attr name to input name only when the value of attr is None in reg info
+                # as we need to get values of attrs from inputs
+                if attr_to_input_safe and (self.func_type == "tbe" or item.get("value", None) is None):
+                    input_names.append(item["name"])
                 attr_names.append(item["name"])
-        cur_attr = {"input_names": input_names, "attr_names": attr_names}
+        cur_attr = {"input_names": input_names, "attr_names": attr_names, "pure_input_names": pure_input_names}
         # If func does not have attr, save current attr.
         # Else, check if current attr is same as previous saved one.
         prev_attr_names = attr_names
@@ -915,7 +1013,12 @@ class Custom(ops.PrimitiveWithInfer):
 
     def _update_attr(self):
         """Add input_names, attr_names, primitive_target to primitive's attr."""
-        # add input_names, attr_names
+
+        def _add_prim_attr(key):
+            value = func_attr.get(key)
+            if value:
+                self.add_prim_attr(key, value)
+
         func_attr = {}
         if callable(self.func):
             inputs_num = len(inspect.signature(self.func).parameters)
@@ -924,12 +1027,9 @@ class Custom(ops.PrimitiveWithInfer):
         elif isinstance(self.func, str):
             func_attr = Custom.attr_dict.get(self.func)
         if isinstance(func_attr, dict):
-            input_names = func_attr.get("input_names")
-            attr_names = func_attr.get("attr_names")
-            if input_names:
-                self.add_prim_attr("input_names", input_names)
-            if attr_names:
-                self.add_prim_attr("attr_names", attr_names)
+            _add_prim_attr("input_names")
+            _add_prim_attr("attr_names")
+            _add_prim_attr("pure_input_names")
         self._add_prim_target()
         if callable(self.func) and callable(self.out_shape):
             if hasattr(self.out_shape, "type") and getattr(self.out_shape, "type") == "autodiff":
@@ -986,7 +1086,7 @@ class Custom(ops.PrimitiveWithInfer):
                 arg_dtype = arg["dtype"]
                 # if any value is missing from input, disable infer value
                 enable_infer_value = False
-                if isinstance(arg_dtype, mstype.tensor_type):
+                if isinstance(arg_dtype, mstype.TensorType):
                     arg_dtype = arg_dtype.element_type()
                 fake_arg = np.zeros(arg["shape"]).astype(
                     mstype.dtype_to_nptype(arg_dtype))
@@ -996,7 +1096,7 @@ class Custom(ops.PrimitiveWithInfer):
 
         if hasattr(fake_output, 'shape'):
             infer_shape = fake_output.shape
-            infer_dtype = mstype.tensor_type(mstype.pytype_to_dtype(fake_output.dtype))
+            infer_dtype = mstype.TensorType(mstype.pytype_to_dtype(fake_output.dtype))
         else:
             infer_shape = (1,)
             infer_dtype = mstype.pytype_to_dtype(fake_output.dtype)

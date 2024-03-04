@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "distributed/collective/collective_manager.h"
+#include "include/backend/distributed/collective/collective_manager.h"
 #include <algorithm>
 #include <string>
 #include <numeric>
@@ -23,7 +23,8 @@
 #include <csignal>
 #include <memory>
 #include "utils/ms_context.h"
-#include "distributed/recovery/recovery_context.h"
+#include "include/backend/distributed/recovery/recovery_context.h"
+#include "distributed/persistent/storage/json_utils.h"
 
 namespace mindspore {
 namespace distributed {
@@ -33,6 +34,7 @@ using recovery::RecoveryContext;
 CollectiveManager::CollectiveManager()
     : inited_(false),
       finalized_(true),
+      need_init_(false),
       need_reinit_(false),
       host_ctx_(nullptr),
       device_ctx_(nullptr),
@@ -103,7 +105,7 @@ bool ExecuteFuncInThread(const std::function<bool()> &func, const int64_t timeou
   if (!execute_success && !execute_fail) {
     std::string node_id = common::GetEnv("MS_NODE_ID");
 #if !defined(_WIN32) && !defined(_WIN64)
-    MS_LOG(ERROR) << "Execute function asynchronously timeout, node id: " << node_id << " exit process";
+    MS_LOG(WARNING) << "Execute function asynchronously timeout, node id: " << node_id << " exit process";
     (void)kill(getpid(), SIGTERM);
 #endif
   }
@@ -140,18 +142,19 @@ bool CheckUniqueIDLatest(const std::string &group_name, size_t root_info_size, c
 }  // namespace
 
 bool CollectiveManager::Initialize() {
+  need_init_ = true;
   if (inited_ && !need_reinit_) {
     return true;
   }
   need_host_collective_ = common::UseHostCollective();
-  device_type_ = MsContext::GetInstance()->get_param<std::string>(MS_CTX_DEVICE_TARGET);
+  std::string device_type = MsContext::GetInstance()->get_param<std::string>(MS_CTX_DEVICE_TARGET);
   // need_host_collective_ means using rank_table to initialize collective communication, which is only supported by
   // Ascend. On other types of devices, exception should be thrown.
-  if (device_type_ != kAscendDevice && !need_host_collective_) {
+  if (device_type != kAscendDevice && !need_host_collective_) {
     MS_LOG(EXCEPTION) << kDetailedFailureReason;
   }
 
-  MS_LOG(INFO) << "Start initializing collective communication for backend: " << device_type_ << "...";
+  MS_LOG(INFO) << "Start initializing collective communication for backend: " << device_type << "...";
 
   if (!need_host_collective_) {
     RETURN_IF_FALSE_WITH_LOG(InitDeviceCommLib(), "Failed to initialize device communication library.");
@@ -162,7 +165,8 @@ bool CollectiveManager::Initialize() {
     comm_lib_instance_ = host_comm_lib_instance_;
 
     // Step 2, 3 and 4 are for device communication library. So if the training job is only launched on CPU, they will
-    // not be necessary. Step 2: Assign local rank id(device id) for this process.
+    // not be necessary.
+    // Step 2: Assign local rank id(device id) for this process.
     RETURN_IF_FALSE_WITH_LOG(AssignLocalRank(), "Failed to assign local rank id.");
 
     // Step 3: Initialize device side collective communication.
@@ -175,7 +179,7 @@ bool CollectiveManager::Initialize() {
                              "Failed to create group " + group_name);
   }
 
-  MS_LOG(INFO) << "End initializing collective communication for backend: " << device_type_;
+  MS_LOG(INFO) << "End initializing collective communication for backend: " << device_type;
   inited_ = true;
   finalized_ = false;
   need_reinit_ = false;
@@ -213,6 +217,12 @@ bool CollectiveManager::GetLocalGroupRankAndSize(const std::vector<uint32_t> &gr
 
 bool CollectiveManager::CreateCommunicationGroup(const std::string &group_name,
                                                  const std::vector<uint32_t> &group_ranks) {
+  MS_LOG(WARNING) << "Start to create communication group: " << group_name << " " << group_ranks;
+  if (std::find(group_ranks.begin(), group_ranks.end(), global_rank_id_) == group_ranks.end()) {
+    MS_LOG(WARNING) << "This rank: " << global_rank_id_ << " is not in the group ranks: " << group_ranks
+                    << ". This may cause some exception when initializing the group.";
+  }
+
   MS_EXCEPTION_IF_NULL(device_comm_lib_instance_);
   if (!need_host_collective_) {
     RETURN_IF_FALSE_WITH_LOG(device_comm_lib_instance_->CreateDeviceCommunicationGroup(group_name, group_ranks),
@@ -265,14 +275,16 @@ bool CollectiveManager::CreateCommunicationGroup(const std::string &group_name,
     device_ctx_->Initialize();
     return group->Initialize(root_info);
   };
-  MS_LOG(INFO) << "Begin initialize communication group on the device side.";
+  MS_LOG(WARNING) << "Begin initialize communication group on the device side: " << group_name;
 
   // Timeout limit 600 seconds to wait finish initializing device communication group.
   const int64_t kTimeToWait = 600;
   // Initialize communication group on the device side in thread with timeout limit.
-  MS_EXCEPTION_IF_CHECK_FAIL(ExecuteFuncInThread(init_device_comm_group_func, kTimeToWait),
-                             "Create group" + group_name + "failed.");
-  MS_LOG(INFO) << "End initialize communication group on the device side.";
+  ret = ExecuteFuncInThread(init_device_comm_group_func, kTimeToWait);
+  if (!ret) {
+    MS_LOG(ERROR) << "Failed to create comm group on device side for " << group_name;
+  }
+  MS_LOG(WARNING) << "End initialize communication group on the device side: " << group_name;
   return ret;
 }
 
@@ -327,6 +339,14 @@ uint32_t CollectiveManager::GetGroupRankFromWorldRank(uint32_t global_rank, cons
   return comm_lib_instance_->GetGroupRankFromWorldRank(global_rank, group_name);
 }
 
+std::vector<uint32_t> CollectiveManager::GetGroupRanks(const std::string &group_name) {
+  const auto &group = comm_lib_instance_->GetGroup(group_name);
+  if (group == nullptr) {
+    MS_LOG(EXCEPTION) << "Group " << group_name << " doesn't include this rank " << global_rank_id_ << " process.";
+  }
+  return group->group_ranks();
+}
+
 bool CollectiveManager::Finalize() {
   if (!inited_.load() || finalized_.load()) {
     return true;
@@ -335,25 +355,31 @@ bool CollectiveManager::Finalize() {
   std::function<bool()> finalize_func = [&, this]() {
     if (need_host_collective_) {
       MS_EXCEPTION_IF_NULL(host_comm_lib_instance_);
+      MS_LOG(INFO) << "Start finalizing host communication lib.";
       if (!host_comm_lib_instance_->Finalize()) {
         MS_LOG(WARNING) << "Failed to finalize device communication library.";
       }
+      MS_LOG(INFO) << "End finalizing host communication lib.";
     }
 
     MS_EXCEPTION_IF_NULL(device_comm_lib_instance_);
+
+    MS_LOG(INFO) << "Start finalizing device communication lib.";
     if (!device_comm_lib_instance_->Finalize()) {
       MS_LOG(WARNING) << "Failed to finalize device communication library.";
     }
+    MS_LOG(INFO) << "End finalizing device communication lib.";
 
     inited_ = false;
     finalized_ = true;
+    need_init_ = false;
     return true;
   };
 
   MS_LOG(INFO) << "Begin finalize collective manager.";
 
-  // Timeout limit 5 seconds to wait to finish finalizing device communication group.
-  const int64_t kTimeToWait = 5;
+  // Timeout limit 30 seconds to wait to finish finalizing device communication group.
+  const int64_t kTimeToWait = 30;
   // Finalize collective manager in thread with timeout limit.
   bool ret = ExecuteFuncInThread(finalize_func, kTimeToWait);
 
@@ -407,11 +433,12 @@ bool CollectiveManager::InitHostCommlib() {
 }
 
 bool CollectiveManager::InitDeviceCommLib() {
+  std::string device_type = MsContext::GetInstance()->get_param<std::string>(MS_CTX_DEVICE_TARGET);
   // If library on device side is not supported, replace it with host library.
   if (!device_lib_supported_) {
-    device_type_ = kCPUDevice;
+    device_type = kCPUDevice;
   }
-  device::DeviceContextKey device_key = {device_type_, local_rank_id_};
+  device::DeviceContextKey device_key = {device_type, local_rank_id_};
   device_ctx_ = device::DeviceContextManager::GetInstance().GetOrCreateDeviceContext(device_key);
   MS_EXCEPTION_IF_NULL(device_ctx_);
   // We can initialize device context now because device id(local_rank_id_) is already assigned.
@@ -472,7 +499,7 @@ bool CollectiveManager::AssignLocalRank() {
   host_comm_lib_instance_->SetLocalGroupSize(host_comm_lib_instance_->global_group_name(), local_group_size);
   // No need to reset device_id if library on device side is not supported, e.g., ascend.
   if (device_lib_supported_) {
-    MsContext::GetInstance()->set_param<uint32_t>(MS_CTX_DEVICE_ID, local_rank_id_);
+    MsContext::GetInstance()->set_param_inner<uint32_t>(MS_CTX_DEVICE_ID, local_rank_id_);
     MS_LOG(INFO) << "The local rank id assigned for this process is " << local_rank_id_
                  << ". device_id of ms_context is set.";
     common::SetEnv("RANK_ID", std::to_string(global_rank_id_).c_str());

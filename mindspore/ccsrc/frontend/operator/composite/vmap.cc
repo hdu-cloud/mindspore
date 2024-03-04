@@ -18,16 +18,16 @@
 
 #include <memory>
 #include <string>
+#include "mindspore/core/ops/sequence_ops.h"
 #include "pybind11/pybind11.h"
 #include "ir/anf.h"
 #include "ir/func_graph.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "abstract/abstract_value.h"
 #include "abstract/abstract_function.h"
-#include "pipeline/jit/parse/parse_base.h"
-#include "pipeline/jit/parse/parse.h"
-#include "pipeline/jit/parse/resolve.h"
-#include "pipeline/jit/pipeline.h"
+#include "pipeline/jit/ps/parse/parse_base.h"
+#include "pipeline/jit/ps/parse/parse.h"
+#include "pipeline/jit/ps/parse/resolve.h"
+#include "pipeline/jit/ps/pipeline.h"
 #include "include/common/utils/python_adapter.h"
 #include "include/common/pybind_api/api_register.h"
 
@@ -194,7 +194,7 @@ CNodePtr VmapMatchOutAxis::GenerateFuncGraphInnerAllTuple(const AnfNodePtr &inpu
     auto each_inputs_abstract_elements = each_input_abstract_tuple->elements();
     auto each_inputs_abstract_elements_size = each_inputs_abstract_elements.size();
     if (each_inputs_abstract_elements_size == 0) {
-      MS_LOG(EXCEPTION) << "each_inputs_abstract_elements_size is empty";
+      MS_LOG(INTERNAL_EXCEPTION) << "Each_inputs_abstract_elements_size is empty";
     }
     auto each_inputs_abstract_elements_begin = each_inputs_abstract_elements[0];
     if (each_inputs_abstract_elements_begin->isa<abstract::AbstractTuple>()) {
@@ -216,7 +216,7 @@ CNodePtr VmapMatchOutAxis::GenerateFuncGraphInnerAllTuple(const AnfNodePtr &inpu
     } else {
       // current each input: (z, z_axis).
       if (each_inputs_abstract_elements_size != kEachInputsSize) {
-        MS_LOG(EXCEPTION) << "each input with no tuple should have only two elements.";
+        MS_LOG(EXCEPTION) << "Each input with no tuple should have only two elements.";
       }
       auto val_cnode =
         fg_->NewCNode({NewValueNode(prim::kPrimTupleGetItem), each_input_cnode, NewValueNode(static_cast<int64_t>(0))});
@@ -245,15 +245,15 @@ CNodePtr VmapMatchOutAxis::GenerateFuncGraphInnerAllTuple(const AnfNodePtr &inpu
   return fg_->NewCNode(vals_out_tuple_cnode_inputs);
 }
 
-FuncGraphPtr VmapMatchOutAxis::GenerateFuncGraph(const AbstractBasePtrList &args_spec_list) {
-  auto args_spec_list_size = args_spec_list.size();
+FuncGraphPtr VmapMatchOutAxis::GenerateFuncGraph(const AbstractBasePtrList &args_abs_list) {
+  auto args_abs_list_size = args_abs_list.size();
   constexpr size_t kMetaFGInputSize = 3;
-  if (args_spec_list_size != kMetaFGInputSize) {
-    MS_LOG(EXCEPTION) << "The number of inputs to VmapMatchOutAxis should be 3, but got " << args_spec_list_size << ".";
+  if (args_abs_list_size != kMetaFGInputSize) {
+    MS_LOG(EXCEPTION) << "The number of inputs to VmapMatchOutAxis should be 3, but got " << args_abs_list_size << ".";
   }
-  auto inputs_abstract = args_spec_list[kIndex0];
-  auto out_axes_abstract = args_spec_list[kIndex1];
-  auto axis_size_abstract = args_spec_list[kIndex2];
+  auto inputs_abstract = args_abs_list[kIndex0];
+  auto out_axes_abstract = args_abs_list[kIndex1];
+  auto axis_size_abstract = args_abs_list[kIndex2];
   MS_EXCEPTION_IF_NULL(inputs_abstract);
   MS_EXCEPTION_IF_NULL(out_axes_abstract);
   MS_EXCEPTION_IF_NULL(axis_size_abstract);
@@ -263,7 +263,7 @@ FuncGraphPtr VmapMatchOutAxis::GenerateFuncGraph(const AbstractBasePtrList &args
                       << inputs_abstract->ToString() << ".";
   }
   auto out_axes_abstract_value = out_axes_abstract->BuildValue();
-  if (out_axes_abstract_value == nullptr || out_axes_abstract_value == kAnyValue) {
+  if (out_axes_abstract_value == nullptr || out_axes_abstract_value == kValueAny) {
     MS_LOG(EXCEPTION) << "The second input to VmapMatchOutAxis is out_axes and should be a constant value.";
   }
   auto axis_size_value = axis_size_abstract->BuildValue();
@@ -308,10 +308,10 @@ FuncGraphPtr VmapMatchOutAxis::GenerateFuncGraph(const AbstractBasePtrList &args
   return fg_;
 }
 
-FuncGraphPtr VmapGeneralPreprocess::GenerateFuncGraph(const AbstractBasePtrList &args_spec_list) {
+FuncGraphPtr VmapGeneralPreprocess::GenerateFuncGraph(const AbstractBasePtrList &args_abs_list) {
   FuncGraphPtr fg = std::make_shared<FuncGraph>();
   auto prim = fg->add_parameter();
-  auto args_size = args_spec_list.size();
+  auto args_size = args_abs_list.size();
   if (args_size <= 1) {
     MS_LOG(EXCEPTION) << "The length of input to VmapGeneralPreprocess must be greater than 1";
   }
@@ -319,9 +319,9 @@ FuncGraphPtr VmapGeneralPreprocess::GenerateFuncGraph(const AbstractBasePtrList 
   int64_t inputs_size = SizeToLong(args_size - 1);
   uint32_t offset = 1;
   auto get_tuple_elements = [args_size, &wrapped_tuple, &inputs_size,
-                             &offset](const AbstractBasePtrList &args_spec_list) -> const AbstractBasePtrList & {
+                             &offset](const AbstractBasePtrList &args_abs_list) -> const AbstractBasePtrList & {
     if (args_size == 2) {
-      auto arg = args_spec_list[1];
+      auto arg = args_abs_list[1];
       if (!arg->isa<abstract::AbstractSequence>()) {
         MS_LOG(EXCEPTION) << "The second input to VmapGeneralPreprocess should be AbstractSequence but got: "
                           << arg->ToString() << ".";
@@ -339,9 +339,9 @@ FuncGraphPtr VmapGeneralPreprocess::GenerateFuncGraph(const AbstractBasePtrList 
         return arg_tuple_elements;
       }
     }
-    return args_spec_list;
+    return args_abs_list;
   };
-  auto tuple_elements = get_tuple_elements(args_spec_list);
+  auto tuple_elements = get_tuple_elements(args_abs_list);
   bool is_all_none = true;
   constexpr size_t kCurTupleSize = 2;
   for (int64_t i = 0; i < inputs_size; ++i) {
@@ -432,15 +432,15 @@ CNodeInpusList VmapGeneralRule::ConstructMapInput(const InputsAbstractList &tupl
 // 2、 Operators with indefinite inputs length, such as `AddN`, whose inputs is wrapped into a tuple.
 // In other words, we do not support any tuple wrapped variables except for the special cases
 //   listed above.
-FuncGraphPtr VmapGeneralRule::GenerateFuncGraph(const AbstractBasePtrList &args_spec_list) {
+FuncGraphPtr VmapGeneralRule::GenerateFuncGraph(const AbstractBasePtrList &args_abs_list) {
   fg_ = std::make_shared<FuncGraph>();
-  int64_t args_size = static_cast<int64_t>(args_spec_list.size());
+  int64_t args_size = static_cast<int64_t>(args_abs_list.size());
 
   bool wrapped_tuple = false;
   auto get_tuple_elements = [&wrapped_tuple,
-                             &args_size](const AbstractBasePtrList &args_spec_list) -> const AbstractBasePtrList & {
+                             &args_size](const AbstractBasePtrList &args_abs_list) -> const AbstractBasePtrList & {
     if (args_size == 1) {
-      auto arg = args_spec_list[0];
+      auto arg = args_abs_list[0];
       if (!arg->isa<abstract::AbstractTuple>()) {
         MS_LOG(EXCEPTION) << "The second input to VmapGeneralPreprocess should be AbstractTuple but got: "
                           << arg->ToString() << ".";
@@ -457,9 +457,9 @@ FuncGraphPtr VmapGeneralRule::GenerateFuncGraph(const AbstractBasePtrList &args_
         return arg_tuple_elements;
       }
     }
-    return args_spec_list;
+    return args_abs_list;
   };
-  auto tuple_elements = get_tuple_elements(args_spec_list);
+  auto tuple_elements = get_tuple_elements(args_abs_list);
 
   bool is_all_none = true;
   constexpr size_t kCurTupleSize = 2;

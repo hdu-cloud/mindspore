@@ -23,29 +23,29 @@
 #include "extendrt/kernel/ascend/options/acl_model_options.h"
 #include "kernel/kernel.h"
 #include "include/api/types.h"
+#include "acl/acl.h"
+#include "acl/acl_mdl.h"
+#include "acl/acl_rt.h"
 
 namespace mindspore::kernel {
 namespace acl {
 class DynShapeProcess {
  public:
-  explicit DynShapeProcess(const AclModelOptionsPtr &options, size_t input_data_idx)
-      : acl_options_(options), input_data_idx_(input_data_idx), batch_size_ptr_(nullptr), image_size_ptr_(nullptr) {}
-
-  int ProcDynamicInput(std::vector<KernelTensorPtr> *const original_datas, std::vector<KernelTensorPtr> *const inputs);
-  void DestroyDynamicInput(std::vector<KernelTensorPtr> *const inputs);
+  bool Init(const AclDynamicShapeOptions &options);
+  bool CheckAndGetBatchSize(const std::vector<ShapeVector> &new_shapes, int32_t *batch_size);
+  bool CheckAndGetDynamicDims(const std::vector<ShapeVector> &new_shapes, aclmdlIODims *dynamic_dims);
+  bool CheckAndGetImageSize(const std::vector<ShapeVector> &new_shapes, int32_t *height, int32_t *width);
 
  private:
-  int CheckBatchSize(std::vector<KernelTensorPtr> *const original_datas, std::vector<KernelTensorPtr> *const inputs);
-  int CheckImageSize(std::vector<KernelTensorPtr> *const original_datas, std::vector<KernelTensorPtr> *const inputs);
-  int AddBatchSizeInput(std::vector<KernelTensorPtr> *const original_datas, std::vector<KernelTensorPtr> *const inputs);
-  int AddImageSizeInput(std::vector<KernelTensorPtr> *const original_datas, std::vector<KernelTensorPtr> *const inputs);
-  int GetRealBatchSize(std::vector<KernelTensorPtr> *const inputs, int32_t *batch_size);
-  int GetRealImageSize(std::vector<KernelTensorPtr> *const inputs, int32_t *image_size, int32_t num);
+  bool CheckBatchSize(const std::vector<ShapeVector> &new_shapes);
+  bool CheckDynamicDims(const std::vector<ShapeVector> &new_shapes);
+  bool CheckImageSize(const std::vector<ShapeVector> &new_shapes);
+  bool GetRealBatchSize(const std::vector<ShapeVector> &new_shapes, int32_t *batch_size);
+  bool GetRealDynamicDims(const std::vector<ShapeVector> &new_shapes, aclmdlIODims *dynamic_dims);
+  bool GetRealImageSize(const std::vector<ShapeVector> &new_shapes, int32_t *height, int32_t *width);
 
-  AclModelOptionsPtr acl_options_;
-  size_t input_data_idx_;
-  AddressPtr batch_size_ptr_;
-  AddressPtr image_size_ptr_;
+  AclDynamicShapeOptions acl_options_;
+  size_t input_data_idx_ = 0;
 };
 
 using DynShapeProcPtr = std::shared_ptr<DynShapeProcess>;

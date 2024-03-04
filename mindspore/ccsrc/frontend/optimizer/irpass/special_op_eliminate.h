@@ -24,6 +24,11 @@
 #include <string>
 
 #include "frontend/optimizer/optimizer_caller.h"
+#include "mindspore/core/ops/structure_ops.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/other_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "ir/pattern_matcher.h"
 #include "frontend/optimizer/anf_visitor.h"
 #include "frontend/operator/ops.h"
@@ -33,7 +38,7 @@
 #include "include/common/utils/comm_manager.h"
 #include "include/common/utils/parallel_context.h"
 #include "frontend/parallel/step_parallel_utils.h"
-#include "pipeline/jit/parse/resolve.h"
+#include "pipeline/jit/ps/parse/resolve.h"
 #include "frontend/parallel/step_parallel.h"
 #include "utils/tensor_construct_utils.h"
 
@@ -195,7 +200,9 @@ class MiniStepAllGatherPass : public AnfVisitor {
     std::string group = attrs[parallel::GROUP]->ToString();
     auto fusion = attrs[parallel::FUSION];
     bool contain_recompute = prim->HasAttr(parallel::RECOMPUTE);
+    bool contain_segment = prim->HasAttr(parallel::SEGMENT);
     bool recompute = contain_recompute && GetValue<bool>(attrs[parallel::RECOMPUTE]);
+    ValuePtr segment = contain_segment ? attrs[parallel::SEGMENT] : nullptr;
     parallel::Operator op = parallel::CreateAllGatherOp(group);
     std::vector<AnfNodePtr> node_input =
       parallel::CreateInput(op, inputs[1], parallel::PARALLEL_OPTIMIZER_ALLGATHER_NOT_COMPUTE);
@@ -207,9 +214,16 @@ class MiniStepAllGatherPass : public AnfVisitor {
     if (contain_recompute) {
       attrs[parallel::RECOMPUTE] = MakeValue(recompute);
     }
+    if (contain_segment) {
+      attrs[parallel::SEGMENT] = segment;
+    }
     (void)prim->SetAttrs(attrs);
     auto func_graph = inputs[1]->func_graph();
+    MS_EXCEPTION_IF_NULL(func_graph);
     CNodePtr new_node = func_graph->NewCNode(node_input);
+    if (node->cast<CNodePtr>()->HasPrimalAttr(kAttrSegment)) {
+      new_node->AddPrimalAttr(kAttrSegment, node->cast<CNodePtr>()->GetPrimalAttr(kAttrSegment));
+    }
     return new_node;
   }
 };
@@ -230,9 +244,14 @@ class MicroStepAllGatherPass : public AnfVisitor {
     MS_EXCEPTION_IF_NULL(prim);
     auto attrs = prim->attrs();
     std::string group = attrs[parallel::GROUP]->ToString();
+    if (group.empty()) {
+      return inputs[1];
+    }
     auto fusion = attrs[parallel::FUSION];
     bool contain_recompute = prim->HasAttr(parallel::RECOMPUTE);
+    bool contain_segment = prim->HasAttr(parallel::SEGMENT);
     bool recompute = contain_recompute && GetValue<bool>(attrs[parallel::RECOMPUTE]);
+    ValuePtr segment = contain_segment ? attrs[parallel::SEGMENT] : nullptr;
     parallel::Operator op = parallel::CreateAllGatherOp(group);
     std::vector<AnfNodePtr> node_input =
       parallel::CreateInput(op, inputs[1], parallel::PARALLEL_OPTIMIZER_ALLGATHER_NOT_COMPUTE);
@@ -244,8 +263,12 @@ class MicroStepAllGatherPass : public AnfVisitor {
     if (contain_recompute) {
       attrs[parallel::RECOMPUTE] = MakeValue(recompute);
     }
+    if (contain_segment) {
+      attrs[parallel::SEGMENT] = segment;
+    }
     (void)prim->SetAttrs(attrs);
     auto func_graph = inputs[1]->func_graph();
+    MS_EXCEPTION_IF_NULL(func_graph);
     CNodePtr new_node = func_graph->NewCNode(node_input);
     return new_node;
   }
@@ -258,6 +281,14 @@ class ResetDeferInline : public AnfVisitor {
     if (IsValueNode<FuncGraph>(node)) {
       auto fg = GetValueNode<FuncGraphPtr>(node);
       fg->set_flag(FUNC_GRAPH_FLAG_DEFER_INLINE, false);
+      auto context = MsContext::GetInstance();
+      MS_EXCEPTION_IF_NULL(context);
+      const auto cell_reuse = context->CellReuseLevel() != CellReuseLevel::kNoCellReuse;
+      if (cell_reuse) {
+        fg->erase_flag(FUNC_GRAPH_RECOMPUTE_K_GRAPH);
+        fg->erase_flag(FUNC_GRAPH_NOT_RECOMPUTE_K_GRAPH);
+        fg->erase_flag(FUNC_GRAPH_OUTPUT_NO_RECOMPUTE);
+      }
     }
     return nullptr;
   }
@@ -269,7 +300,7 @@ class ZeroLikeFillZero : public AnfVisitor {
  public:
   ZeroLikeFillZero() {
     py::gil_scoped_acquire gil;
-    PrimFill_ = prim::GetPythonOps("fill_", "mindspore.ops.functional")->cast<PrimitivePtr>();
+    PrimFill_ = prim::GetPythonOps("fill", "mindspore.ops.functional")->cast<PrimitivePtr>();
     PrimShape_ = prim::GetPythonOps("shape_", "mindspore.ops.functional")->cast<PrimitivePtr>();
     PrimDType_ = prim::GetPythonOps("dtype", "mindspore.ops.functional")->cast<PrimitivePtr>();
   }
@@ -301,7 +332,7 @@ class ZeroLikeFillZero : public AnfVisitor {
     }
 
     tensor::TensorPtr new_tensor_ptr = std::make_shared<tensor::Tensor>(tensor_type_ptr->type_id(), tensor_shape);
-    size_t mem_size = GetTypeByte(tensor_type_ptr) * IntToSize(new_tensor_ptr->ElementsNum());
+    size_t mem_size = GetTypeByte(tensor_type_ptr) * LongToSize(new_tensor_ptr->ElementsNum());
     char *data = reinterpret_cast<char *>(new_tensor_ptr->data_c());
     if (memset_s(data, mem_size, 0, mem_size) != EOK) {
       MS_LOG(ERROR) << "Failed to init data memory.";
@@ -326,7 +357,9 @@ class ZeroLikeFillZero : public AnfVisitor {
 class DependValueElim : public OptimizerCaller {
  public:
   AnfNodePtr operator()(const OptimizerPtr &, const AnfNodePtr &node) override {
-    PatternNode<AnfNodePtr> x, cond, x_user;
+    PatternNode<AnfNodePtr> x;
+    PatternNode cond;
+    PatternNode x_user;
     MATCH_REPLACE_IF(node, PPrimitive(prim::kPrimDepend, x, cond), x, IsVNode(cond.GetNode(node)));
     MATCH_REPLACE_IF(node, PPrimitive(prim::kPrimDepend, x_user, x), x_user,
                      IsUsedByOther(x.GetNode(node), x_user.GetNode(node)));
@@ -413,7 +446,7 @@ class PynativeEliminater : public OptimizerCaller {
       out = std::make_shared<ValueTuple>(value_list);
     }
     if (out == nullptr) {
-      MS_LOG(EXCEPTION) << "FillZero failed:" << value->ToString();
+      MS_LOG(INTERNAL_EXCEPTION) << "FillZero failed:" << value->ToString();
     }
     MS_LOG(DEBUG) << "Result: " << out->ToString();
     return out;
@@ -449,7 +482,8 @@ class PynativeEliminater : public OptimizerCaller {
   }
 
   void OperatorHandle3(const std::vector<PatternNode<AnfNodePtr>> &args, const AnfNodePtr &node) const {
-    for (size_t i = 0; i < 2; i++) {
+    constexpr size_t args_size = 2;
+    for (size_t i = 0; i < args_size; i++) {
       auto rep = (args[i]).GetNode(node);
       if (rep != nullptr && rep->isa<ValueNode>()) {
         auto value_node = rep->cast<ValueNodePtr>();
@@ -573,7 +607,7 @@ class AllReduceConstElim : public OptimizerCaller {
         uint32_t num_of_devices;
         // Get number of devices
         if (!CommManager::GetInstance().GetRankSize(group, &num_of_devices)) {
-          MS_LOG(EXCEPTION) << "Failed to get num of devices for group [" + group + "]";
+          MS_LOG(INTERNAL_EXCEPTION) << "Failed to get num of devices for group [" + group + "]";
         }
         // Multiply constant by number of devices then return
         std::vector<AnfNodePtr> mul_inputs;
@@ -617,7 +651,8 @@ class FloatDependGCall : public AnfVisitor {
     // as IsCNodeDup had checked the size of inputs must be greater or equal than 1, so no check here.
     if (IsPrimitiveCNode(inputs[0], prim::kPrimDepend)) {
       auto &depend_inputs = inputs[0]->cast<CNodePtr>()->inputs();
-      if (depend_inputs.size() != 3) {
+      constexpr auto number_three = 3;
+      if (depend_inputs.size() != number_three) {
         return nullptr;
       }
       // put {Y, Xs} to new_inputs;
@@ -631,40 +666,6 @@ class FloatDependGCall : public AnfVisitor {
       return new_node;
     }
     return nullptr;
-  }
-};
-
-// {prim::kprimBiasAddGrad, Xs}->{prim::kPrimStopGradient, {prim::kPrimBiasAddGrad, Xs}}
-class StopGradientSpecialOp : public AnfVisitor {
- public:
-  AnfNodePtr operator()(const OptimizerPtr &, const AnfNodePtr &node) override {
-    if (!node->isa<CNode>() || node->func_graph() == nullptr) {
-      return nullptr;
-    }
-
-    // If already insert stop_gradient before biasaddgrad, then don't do it again.
-    // Otherwise it will be infinite loop.
-    auto manager = node->func_graph()->manager();
-    MS_EXCEPTION_IF_NULL(manager);
-    auto &users_map = manager->node_users();
-    auto it = users_map.find(node);
-    if (it != users_map.end()) {
-      auto users = it->second;
-      if (users.size() == 1) {
-        for (auto &user_pair : users) {
-          auto user_node = user_pair.first;
-          if (IsPrimitiveCNode(user_node, prim::kPrimStopGradient)) {
-            return nullptr;
-          }
-        }
-      }
-    }
-    std::vector<AnfNodePtr> new_inputs({NewValueNode(prim::kPrimStopGradient), node});
-    TraceGuard guard(std::make_shared<TraceCopy>(node->debug_info()));
-    ScopePtr scope = node->scope();
-    ScopeGuard scope_guard(scope);
-    auto new_node = node->func_graph()->NewCNode(new_inputs);
-    return new_node;
   }
 };
 }  // namespace irpass

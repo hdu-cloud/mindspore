@@ -14,6 +14,7 @@
 # ============================================================================
 """Defines vmap function."""
 from mindspore.ops.composite import _Vmap
+from mindspore._c_expression import VmapGeneralPreprocess_, VmapGeneralRulePyAdapter_
 
 __all__ = ['vmap']
 vmap_instance = _Vmap()
@@ -25,18 +26,19 @@ def vmap(fn, in_axes=0, out_axes=0):
 
     Vmap is pioneered by Jax and it removes the restriction of batch dimension on the operator, and provides a
     more convenient and unified operator expression. Moreover, it allows users to composite with other functional
-    modules such as :func:`mindspore.grad`, to improve the development efficiency. In addition, the vectorizing
-    map does not execute loops outside the function, but sinks loops into the primitive operations of the function
-    for better performance. When combined with `Graph Kernel Fusion`, operational efficiency would be further improved.
+    modules such as :func:`mindspore.grad`, to improve the development efficiency, please refer to the
+    `Automatic Vectorization (Vmap) <https://www.mindspore.cn/tutorials/experts/en/master/vmap/vmap.html>`_ tutorial
+    for more detail. In addition, the vectorizing map does not execute loops outside the function, but sinks loops
+    into the primitive operations of the function for better performance. When combined with `Graph Kernel Fusion`,
+    operational efficiency would be further improved.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or delete.
+        This is an experimental API that is subject to change or deletion.
 
     Note:
         1. The power of vmap comes from the implementation of VmapRules of primitives. Although we have designed a
         generalized rule for user custom operators, we can not guarantee that it works well for all operators,
-        please be aware the risk of use. If you want to achieve a better performance, please refer to the tutorial to
-        implement the specific VmapRule for the custom operator, which won't take too much time.
+        unknown exceptions may occur, please be aware the risk of use.
         2. When calling the random number generation methods within the scope of vmap, the same random number is
         generated among vector functions each time. If you expect each vector branch to use different random numbers,
         you need to generate batch random numbers externally in advance and then transfer them to vmap.
@@ -53,14 +55,14 @@ def vmap(fn, in_axes=0, out_axes=0):
             Note that, axis integers must be in range :math:`[-ndim, ndim)` for each argument, where `ndim` is the
             number of dimensions of the corresponding argument.  None means not mapping along any axis. Also the
             mapping axis index of the `in_axes` must have at least one positional parameter not None. The sizes of
-            the mapped axes (`axis_size`) for all arguments must be equal. Default: 0.
+            the mapped axes (`axis_size`) for all arguments must be equal. Default: ``0`` .
         out_axes (Union[int, list, tuple]): Specifies where the mapped dimensions (axes) should appear in the
             outputs. If `out_axes` is an integer, all outputs of `fn` are specified according to this axis. If
             `out_axes` is a tuple or list, which only composed of integers or Nones. And its length also should be equal
             to the number of outputs of `fn`. Note that, axis integers must be in range :math:`[-ndim, ndim)` for each
             output, where `ndim` is the dimension of the output of the `vmap`-mapped function. All outputs with a
             non-None mapped axis must specify a non-None `out_axes`, and if outputs with None mapped axis specifies
-            a non-None `out_axes`, the result broadcasts across the mapped axis. Default: 0.
+            a non-None `out_axes`, the result broadcasts across the mapped axis. Default: ``0`` .
 
     Returns:
         Function, returns the Vectorized/Batched version function of `fn`. The arguments and outputs of this function
@@ -92,3 +94,22 @@ def vmap(fn, in_axes=0, out_axes=0):
          [ 8  9 10]]
     """
     return vmap_instance(fn, in_axes, out_axes)
+
+
+class _VmapGeneralPreprocess(VmapGeneralPreprocess_):
+    """
+    General preprocessing of VmapRules. If the source axes of all inputs are `None`,
+    means that vectorization is not performed, taking out the original input and call
+    the primitive directly.
+    """
+    def __init__(self):
+        VmapGeneralPreprocess_.__init__(self, "VmapGeneralPreprocess")
+
+
+class _VmapGeneralRule(VmapGeneralRulePyAdapter_):
+    """
+    General rule python adapter is a adapter for general rule in c++. Some operators can
+    implement loop-stack method in their vmaprule by calling this adapter.
+    """
+    def __init__(self, prim, axis_size):
+        VmapGeneralRulePyAdapter_.__init__(self, 'vmapgeneralrule', prim, axis_size)

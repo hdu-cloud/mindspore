@@ -14,16 +14,30 @@
  * limitations under the License.
  */
 #include "ops/coalesce.h"
-#include <string>
+
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
-#include "utils/tensor_construct_utils.h"
+
+#include "abstract/abstract_value.h"
 #include "abstract/dshape.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -86,10 +100,8 @@ abstract::TupleShapePtr CoalesceInferShape(const PrimitivePtr &primitive,
     }
   }
   ShapeVector y_indices_shape = {x_indices_shape[0], -1};
-  ShapeVector y_indices_min_shape = {x_indices_shape[0], 1};
   ShapeVector y_indices_max_shape = {x_indices_shape[0], x_indices_shape[1]};
   ShapeVector y_values_shape = {-1};
-  ShapeVector y_values_min_shape = {1};
   ShapeVector y_values_max_shape = {x_indices_shape[1]};
   if (x_indices_shape_ptr->IsDynamic()) {
     y_indices_max_shape = {1, 1};
@@ -99,10 +111,8 @@ abstract::TupleShapePtr CoalesceInferShape(const PrimitivePtr &primitive,
   MS_EXCEPTION_IF_NULL(y_shape);
   abstract::ShapePtr y_shape_shape_list = y_shape->cast<abstract::ShapePtr>();
   MS_EXCEPTION_IF_NULL(y_shape_shape_list);
-  abstract::ShapePtr y_indices_shape_list =
-    std::make_shared<abstract::Shape>(y_indices_shape, y_indices_min_shape, y_indices_max_shape);
-  abstract::ShapePtr y_values_shape_list =
-    std::make_shared<abstract::Shape>(y_values_shape, y_values_min_shape, y_values_max_shape);
+  abstract::ShapePtr y_indices_shape_list = std::make_shared<abstract::Shape>(y_indices_shape, y_indices_max_shape);
+  abstract::ShapePtr y_values_shape_list = std::make_shared<abstract::Shape>(y_values_shape, y_values_max_shape);
   return std::make_shared<abstract::TupleShape>(
     std::vector<abstract::BaseShapePtr>{y_indices_shape_list, y_values_shape_list, y_shape_shape_list});
 }
@@ -112,11 +122,29 @@ MIND_API_OPERATOR_IMPL(Coalesce, BaseOperator);
 AbstractBasePtr CoalesceInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                               const std::vector<AbstractBasePtr> &input_args) {
   const int64_t input_num = 3;
-  (void)CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
   auto infer_type = CoalesceInferType(primitive, input_args);
   auto infer_shape = CoalesceInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Coalesce, prim::kPrimCoalesce, CoalesceInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGCoalesceInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return CoalesceInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return CoalesceInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return CoalesceInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Coalesce, prim::kPrimCoalesce, AGCoalesceInfer, false);
 }  // namespace ops
 }  // namespace mindspore

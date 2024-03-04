@@ -181,7 +181,7 @@ class FlopsParser:
         sum_flops_utilization = 0.0
         # calculate the every step FLOPS utilization and the average values.
         utilization_save_filename = os.path.join(self._output_dir, self._flops_utilization_step_filename)
-        with open(utilization_save_filename, 'w') as f:
+        with os.fdopen(os.open(utilization_save_filename, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as f:
             f.write("steps, FLOPS_Utilization %\n")
             for i, x in enumerate(op_all_step_comp):
                 current_utilization = x[0] / x[1] * 1e9 / peak_flops * 100
@@ -190,6 +190,8 @@ class FlopsParser:
                 f.write(",")
                 f.write(str(current_utilization))
                 f.write("\n")
+        os.chmod(utilization_save_filename, stat.S_IREAD | stat.S_IWRITE)
+
         if len(op_all_step_comp) >= 1:
             self._flops_summary['FLOPS_Utilization'] = sum_flops_utilization / len(op_all_step_comp)
         else:
@@ -222,7 +224,7 @@ class FlopsParser:
                 all_log_struct = aicore_file.read(self.AICORE_LOG_SIZE * read_count)
         except (IOError, OSError) as err:
             logger.critical(f'Error occurred when read {aicore_file_path} file: {err}')
-            raise ProfilerIOException()
+            raise ProfilerIOException() from err
 
         return read_count, all_log_struct
 
@@ -246,7 +248,7 @@ class FlopsParser:
                 peak_flops = device_frequency * 1e6 * ai_core_num * 4096 * 2
         except (IOError, OSError, json.JSONDecodeError) as err:
             logger.critical(f'Error occurred when read {info_json_file_path} file: {err}')
-            raise ProfilerIOException()
+            raise ProfilerIOException() from err
 
         return peak_flops
 
@@ -304,7 +306,7 @@ class FlopsParser:
                     op_avg_time_dict[op_name] = avg_time
         except (IOError, OSError) as err:
             logger.critical(f'Error occurred when read {optime_file_path} file: {err}')
-            raise ProfilerIOException()
+            raise ProfilerIOException() from err
 
         return op_avg_time_dict
 
@@ -317,7 +319,7 @@ class FlopsParser:
         For op_name like "Default/network", the "network" will be renamed as "network(Default)".
         For op_name like "recompute_Default/network", "network" --> "network(recompute_Default)".
         For op_name like "Gradients/network", "network" --> "network(Gradients)".
-        For op_name like "Gradients/recompute_Default/network"，"network" --> "network(recompute_Gradients)".
+        For op_name like "Gradients/recompute_Default/network", "network" --> "network(recompute_Gradients)".
         """
         # Only extracts the scope name, remove the operator name.
         scope_list = op_name.split('/')[:-1]
@@ -387,7 +389,7 @@ class FlopsParser:
         output_flops_scope_file_path = join_file_path(self._flops_scope_filename)
 
         try:
-            with open(output_file_path, 'w') as f:
+            with os.fdopen(os.open(output_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as f:
                 header = "op_full_name, MFLOPs(10^6), GFLOPS(10^9), FLOPS utilization(%) \n"
                 f.writelines(header)
                 for op_flops in op_flops_list:
@@ -396,25 +398,27 @@ class FlopsParser:
             os.chmod(output_file_path, stat.S_IREAD | stat.S_IWRITE)
         except (IOError, OSError) as err:
             logger.critical(f'Error occurred when writing {output_file_path} file: {err}')
-            raise ProfilerIOException()
+            raise ProfilerIOException() from err
 
         for key in self._flops_summary:
             self._flops_summary[key] = round(self._flops_summary[key], 3)
         try:
-            with open(output_summary_file_path, 'w') as json_file:
+            with os.fdopen(os.open(output_summary_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
+                           'w') as json_file:
                 json.dump(self._flops_summary, json_file)
             os.chmod(output_summary_file_path, stat.S_IREAD | stat.S_IWRITE)
         except (IOError, OSError) as err:
             logger.critical(f'Error occurred when write {output_summary_file_path} file: {err}')
-            raise ProfilerIOException()
+            raise ProfilerIOException() from err
 
         try:
-            with open(output_flops_scope_file_path, 'w') as json_file:
+            with os.fdopen(os.open(output_flops_scope_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
+                           'w') as json_file:
                 json.dump(self._flops_sankey_diagram, json_file)
             os.chmod(output_flops_scope_file_path, stat.S_IREAD | stat.S_IWRITE)
         except (IOError, OSError) as err:
             logger.critical(f'Error occurred when write {output_flops_scope_file_path} file: {err}')
-            raise ProfilerIOException()
+            raise ProfilerIOException() from err
 
     def _get_aicore_files(self, profiler_dir):
         """Get aicore files."""

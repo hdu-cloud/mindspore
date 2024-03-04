@@ -15,6 +15,7 @@
  */
 #include "plugin/device/ascend/optimizer/ir_fission/transdata_split.h"
 #include <set>
+#include "ops/array_ops.h"
 #include "include/common/debug/anf_ir_dump.h"
 
 namespace mindspore {
@@ -32,9 +33,9 @@ bool IsDepthwiseCase(const CNodePtr &node, const std::string &input_format, cons
   MS_EXCEPTION_IF_NULL(node);
   abstract::BaseShapePtr base_shape;
   if (input_format == kOpFormat_FRAC_Z && output_format == kOpFormat_DEFAULT) {
-    base_shape = common::AnfAlgo::GetPrevNodeOutputDetailShape(node, 0);
+    base_shape = AnfAlgo::GetPrevNodeOutputDetailShape(node, 0);
   } else if (input_format == kOpFormat_DEFAULT && output_format == kOpFormat_FRAC_Z) {
-    base_shape = common::AnfAlgo::GetOutputDetailShape(node, 0);
+    base_shape = AnfAlgo::GetOutputDetailShape(node, 0);
   } else {
     return false;
   }
@@ -98,11 +99,11 @@ CNodePtr TransDataSplit::DoSplit(const FuncGraphPtr &func_graph, const AnfNodePt
     // trans input_format to hwcn
     new_transdata_node = NewTransOpNode(func_graph, common::AnfAlgo::GetInputNode(node->cast<CNodePtr>(), 0), node,
                                         kernel_select_, false, prim::kPrimTransData->name());
-    RefreshKernelBuildInfo(input_format, kOpFormat_HWCN, new_transdata_node, padding_axis);
+    RefreshKernelBuildInfo(kernel_select_, input_format, kOpFormat_HWCN, new_transdata_node, padding_axis);
     // trans hwcn to default_format
     new_transpose_node = NewTransOpNode(func_graph, new_transdata_node, node, kernel_select_, false,
                                         prim::kPrimTranspose->name(), std::vector<int64_t>{3, 2, 0, 1});
-    RefreshKernelBuildInfo(kOpFormat_HWCN, output_format, new_transpose_node);
+    RefreshKernelBuildInfo(kernel_select_, kOpFormat_HWCN, output_format, new_transpose_node);
     new_replace_node = new_transpose_node;
   } else {
     // trans default to hwcn
@@ -112,12 +113,12 @@ CNodePtr TransDataSplit::DoSplit(const FuncGraphPtr &func_graph, const AnfNodePt
     if (output_format == kOpFormat_FRACTAL_ZN_LSTM) {
       common::AnfAlgo::SetNodeAttr(kAttrNopOp, MakeValue(true), new_transpose_node);
     }
-    RefreshKernelBuildInfo(input_format, kOpFormat_HWCN, new_transpose_node);
+    RefreshKernelBuildInfo(kernel_select_, input_format, kOpFormat_HWCN, new_transpose_node);
 
     // trans hwcn to output_format
     new_transdata_node =
       NewTransOpNode(func_graph, new_transpose_node, node, kernel_select_, false, prim::kPrimTransData->name());
-    RefreshKernelBuildInfo(kOpFormat_HWCN, output_format, new_transdata_node, padding_axis);
+    RefreshKernelBuildInfo(kernel_select_, kOpFormat_HWCN, output_format, new_transdata_node, padding_axis);
     new_transdata_node->set_abstract(node->abstract());
     new_replace_node = new_transdata_node;
   }

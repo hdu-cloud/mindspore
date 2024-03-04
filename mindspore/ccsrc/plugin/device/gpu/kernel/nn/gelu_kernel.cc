@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include "mindspore/core/ops/nn_optimizer_ops.h"
 #include "mindspore/core/ops/gelu.h"
 
 namespace mindspore {
@@ -34,8 +35,9 @@ bool GeLUGpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &input
   T *input_addr = GetDeviceAddress<T>(inputs, 0);
   T *output_addr = GetDeviceAddress<T>(outputs, 0);
 
-  Gelu(static_cast<size_t>(input_elements_), input_addr, output_addr, reinterpret_cast<cudaStream_t>(cuda_stream_),
-       GET_CTX_DEVICE_ID);
+  auto status = Gelu(static_cast<size_t>(input_elements_), input_addr, output_addr,
+                     reinterpret_cast<cudaStream_t>(cuda_stream_), GET_CTX_DEVICE_ID);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -74,7 +76,7 @@ bool GeLUGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vec
   }
 
   kernel_func_ = func_list_[pair.second].second;
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   return true;
 }
 

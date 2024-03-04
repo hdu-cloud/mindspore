@@ -15,19 +15,21 @@
  */
 
 #include "ops/sparse_matrix_sparse_mat_mul.h"
+
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "abstract/ops/primitive_infer_map.h"
+
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
-const int MAX_LENGTH = 100000;
+const int MAX_LENGTH = 200000000;
 
 void SparseMatrixSparseMatMulCheckInteger(const PrimitivePtr &primitive,
                                           const std::vector<AbstractBasePtr> &input_args) {
@@ -121,12 +123,12 @@ abstract::TupleShapePtr SparseMatrixSparseMatMulInferShape(const PrimitivePtr &p
 
   ShapeVector col_shape = {abstract::Shape::kShapeDimAny};
   ShapeVector values_shape = {abstract::Shape::kShapeDimAny};
-  ShapeVector infer_shape_min = {1};
-  ShapeVector infer_shape_max = {MAX_LENGTH};
-  y_col_shape = std::make_shared<abstract::Shape>(col_shape, infer_shape_min, infer_shape_max);
-  y_values_shape = std::make_shared<abstract::Shape>(values_shape, infer_shape_min, infer_shape_max);
+  int64_t max_length = MAX_LENGTH;
+  ShapeVector infer_shape_max = {max_length};
+  y_col_shape = std::make_shared<abstract::Shape>(col_shape, infer_shape_max);
+  y_values_shape = std::make_shared<abstract::Shape>(values_shape, infer_shape_max);
 
-  if (input_args[0]->isa<abstract::AbstractTensor>() && !input_args[0]->BuildValue()->isa<AnyValue>() &&
+  if (input_args[0]->isa<abstract::AbstractTensor>() && !input_args[0]->BuildValue()->isa<ValueAny>() &&
       !input_args[0]->BuildValue()->isa<None>()) {
     auto dense_shape_value = input_args[0]->cast<abstract::AbstractTensorPtr>();
     MS_EXCEPTION_IF_NULL(dense_shape_value);
@@ -162,7 +164,7 @@ abstract::TupleShapePtr SparseMatrixSparseMatMulInferShape(const PrimitivePtr &p
       std::vector<abstract::BaseShapePtr>{y_dense_shape, y_batch_shape, y_row_shape, y_col_shape, y_values_shape});
   } else {
     ShapeVector row_shape = {-1};
-    y_row_shape = std::make_shared<abstract::Shape>(row_shape, infer_shape_min, infer_shape_max);
+    y_row_shape = std::make_shared<abstract::Shape>(row_shape);
     return std::make_shared<abstract::TupleShape>(
       std::vector<abstract::BaseShapePtr>{y_dense_shape, y_batch_shape, y_row_shape, y_col_shape, y_values_shape});
   }
@@ -213,8 +215,26 @@ AbstractBasePtr SparseMatrixSparseMatMulInfer(const abstract::AnalysisEnginePtr 
   auto infer_shape = SparseMatrixSparseMatMulInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseMatrixSparseMatMul, prim::kPrimSparseMatrixSparseMatMul,
-                             SparseMatrixSparseMatMulInfer, nullptr, true);
-REGISTER_HOST_DEPENDS(kNameSparseMatrixSparseMatMul, {0});
+// AG means auto generated
+class MIND_API AGSparseMatrixSparseMatMulInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixSparseMatMulInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixSparseMatMulInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixSparseMatMulInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseMatrixSparseMatMul, prim::kPrimSparseMatrixSparseMatMul,
+                                 AGSparseMatrixSparseMatMulInfer, false);
 }  // namespace ops
 }  // namespace mindspore

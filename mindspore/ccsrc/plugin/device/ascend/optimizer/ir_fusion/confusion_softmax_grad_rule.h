@@ -17,7 +17,8 @@
 #define MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_IR_FUSION_CONFUSION_SOFTMAX_GRAD_RULE_H_
 
 #include <memory>
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/optimizer.h"
+#include "mindspore/core/ops/lite_ops.h"
 
 namespace mindspore {
 namespace opt {
@@ -27,7 +28,7 @@ class ConfusionSoftmaxGradRule : public PatternProcessPass {
       : PatternProcessPass("confusion_softmax_grad_rule", multigraph) {
     input0_ = std::make_shared<Var>();
     input1_ = std::make_shared<Var>();
-    reduce_sum_ = std::make_shared<Var>(std::make_shared<Primitive>(prim::kPrimReduceSum->name()));
+    reduce_sum_ = std::make_shared<Var>(std::make_shared<Primitive>(prim::kPrimReduceSumD->name()));
   }
   ~ConfusionSoftmaxGradRule() override = default;
   const BaseRef DefinePattern() const override;

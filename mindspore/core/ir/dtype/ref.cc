@@ -15,7 +15,6 @@
  */
 
 #include "ir/dtype/ref.h"
-#include "utils/log_adapter.h"
 #include "ir/dtype/tensor_type.h"
 
 namespace mindspore {
@@ -28,7 +27,16 @@ TypePtr RefType::DeepCopy() const {
   }
 }
 
-std::string RefType::ToString() const { return DumpText(); }
+std::string RefType::ToString() const {
+  std::ostringstream buffer;
+  if (IsGeneric()) {
+    buffer << "Ref";
+  } else {
+    buffer << "Ref[";
+    buffer << TensorType::ToString() << "]";
+  }
+  return buffer.str();
+}
 
 std::string RefType::DumpText() const {
   std::ostringstream buffer;

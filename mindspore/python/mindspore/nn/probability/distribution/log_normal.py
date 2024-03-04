@@ -15,6 +15,7 @@
 """LogNormal Distribution"""
 import numpy as np
 from mindspore.ops import operations as P
+from mindspore.ops import functional as F
 from mindspore.common import dtype as mstype
 import mindspore.nn.probability.bijector as msb
 import mindspore.nn.probability.distribution as msd
@@ -37,12 +38,13 @@ class LogNormal(msd.TransformedDistribution):
     It is constructed as the exponential transformation of a Normal distribution.
 
     Args:
-        loc (int, float, list, numpy.ndarray, Tensor): The mean of the underlying Normal distribution. Default: None.
+        loc (int, float, list, numpy.ndarray, Tensor): The mean of the underlying Normal distribution.
+          Default: ``None`` .
         scale (int, float, list, numpy.ndarray, Tensor): The standard deviation of the underlying
-          Normal distribution. Default: None.
-        seed (int): the seed used in sampling. The global seed is used if it is None. Default: 0.
-        dtype (mindspore.dtype): type of the distribution. Default: mstype.float32.
-        name (str): the name of the distribution. Default: 'LogNormal'.
+          Normal distribution. Default: ``None`` .
+        seed (int): the seed used in sampling. The global seed is used if it is None. Default: ``0`` .
+        dtype (mindspore.dtype): type of the distribution. Default: ``mstype.float32`` .
+        name (str): the name of the distribution. Default: ``'LogNormal'`` .
 
     Note:
         `scale` must be greater than zero.
@@ -100,7 +102,6 @@ class LogNormal(msd.TransformedDistribution):
         self.expm1 = P.Expm1()
         self.log = log_generic
         self.erf = P.Erf()
-        self.fill = P.Fill()
         self.greater = P.Greater()
         self.select = P.Select()
         self.shape = P.Shape()
@@ -201,7 +202,7 @@ class LogNormal(msd.TransformedDistribution):
         cdf = self.distribution("cdf", inverse_value, mean, sd)
 
         # to increase numerical stability, set cdf = 0 when value <= 0
-        zeros = self.fill(self.dtypeop(cdf), self.shape(cdf), 0.0)
+        zeros = F.fill(self.dtypeop(cdf), self.shape(cdf), 0.0)
 
         return self.select(self.greater(value, 0.), cdf, zeros)
 
@@ -229,8 +230,8 @@ class LogNormal(msd.TransformedDistribution):
             dist (str): The type of the distributions. Should be "LogNormal" in this case.
             loc_b (Tensor): The loc of distribution b.
             scale_b (Tensor): The scale of distribution b.
-            loc_a (Tensor): The loc of distribution a. Default: None.
-            scale_a (Tensor): The scale of distribution a. Default: None.
+            loc_a (Tensor): The loc of distribution a. Default: ``None``.
+            scale_a (Tensor): The scale of distribution a. Default: ``None``.
         """
         check_distribution_name(dist, 'LogNormal')
         return self._entropy(loc_a, scale_a) + self._kl_loss(dist, loc_b, scale_b, loc_a, scale_a)
@@ -243,8 +244,8 @@ class LogNormal(msd.TransformedDistribution):
             dist (str): The type of the distributions. Should be "LogNormal" in this case.
             loc_b (Tensor): The loc of distribution b.
             scale_b (Tensor): The scale of distribution b.
-            loc_a (Tensor): The loc of distribution a. Default: None.
-            scale_a (Tensor): The scale of distribution a. Default: None.
+            loc_a (Tensor): The loc of distribution a. Default: ``None``.
+            scale_a (Tensor): The scale of distribution a. Default: ``None``.
 
         .. math::
             KL(a||b) = 0.5 * (\fract{MEAN(a)}{STD(b)} - \fract{MEAN(b)}{STD(b)}) ^ 2 +

@@ -17,12 +17,12 @@
 #ifndef MINDSPORE_CORE_OPS_FRACTIONAL_MAX_POOL_H_
 #define MINDSPORE_CORE_OPS_FRACTIONAL_MAX_POOL_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -73,8 +73,9 @@ class MIND_API FractionalMaxPool : public BaseOperator {
   ///
   /// \return pooling seed2 attributes.
 };
-abstract::AbstractBasePtr FractionalMaxPoolInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr FractionalMaxPoolInfer(const abstract::AnalysisEnginePtr &,
+                                                          const PrimitivePtr &primitive,
+                                                          const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimFractionalMaxPool = std::shared_ptr<FractionalMaxPool>;
 }  // namespace ops
 }  // namespace mindspore

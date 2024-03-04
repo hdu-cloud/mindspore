@@ -17,6 +17,7 @@
 #ifndef MINDSPORE_CCSRC_DISTRIBUTED_RPC_TCP_TCP_COMM_H_
 #define MINDSPORE_CCSRC_DISTRIBUTED_RPC_TCP_TCP_COMM_H_
 
+#include <map>
 #include <string>
 #include <memory>
 #include <mutex>
@@ -52,10 +53,10 @@ class TCPComm {
 
   // Create the server socket represented by url.
   // allocate_cb is the method used to allocate memory when server receiving message from the remote.
-  bool StartServerSocket(const std::string &url, const MemAllocateCallback &allocate_cb);
+  int StartServerSocket(const std::string &url, const MemAllocateCallback &allocate_cb);
 
   // Create the server socket with local IP and random port.
-  bool StartServerSocket(const MemAllocateCallback &allocate_cb);
+  int StartServerSocket(const MemAllocateCallback &allocate_cb);
 
   // Connection operation for a specified destination.
   bool Connect(const std::string &dst_url, const MemFreeCallback &free_cb);
@@ -74,6 +75,8 @@ class TCPComm {
 
   // Get the file descriptor of server socket.
   int GetServerFd() const;
+
+  const std::string &GetClientSrcIP(const std::string &dst_url) { return dst_url_to_src_ip_[dst_url]; }
 
   /**
    * @description: Returns the allocating callback.
@@ -130,6 +133,9 @@ class TCPComm {
   friend void OnAccept(int server, uint32_t events, void *arg);
   friend int DoConnect(const std::string &to, Connection *conn, ConnectionCallBack event_callback,
                        ConnectionCallBack write_callback, ConnectionCallBack read_callback);
+
+  // The map from dst_url to src_ip which this tcp client uses.
+  std::map<std::string, std::string> dst_url_to_src_ip_;
 };
 }  // namespace rpc
 }  // namespace distributed

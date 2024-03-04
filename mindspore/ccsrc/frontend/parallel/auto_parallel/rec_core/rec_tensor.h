@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +29,13 @@ struct Shape4D {
   int64_t shape_c = 1;
   int64_t shape_h = 1;
   int64_t shape_w = 1;
+
+  bool operator==(const Shape4D sh) const {
+    if (shape_n == sh.shape_n && shape_c == sh.shape_c && shape_h == sh.shape_h && shape_w == sh.shape_w) {
+      return true;
+    }
+    return false;
+  }
 };
 
 struct TensorParam {

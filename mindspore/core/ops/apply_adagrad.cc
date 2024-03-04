@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,15 +16,31 @@
 
 #include "ops/apply_adagrad.h"
 
-#include <algorithm>
+#include <map>
 #include <set>
 #include <utility>
 
-#include "ops/op_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "utils/tensor_construct_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -87,7 +103,7 @@ class ApplyAdagradInfer : public abstract::OpInferBase {
     auto accum_type = input_args[kInputIndex1]->BuildType();
     auto lr_type = input_args[kInputIndex2]->BuildType();
     auto grad_type = input_args[kInputIndex3]->BuildType();
-    const std::set<TypePtr> valid_types = {kFloat16, kFloat32};
+    const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
     // var, accum and grad must have the same type
     std::map<std::string, TypePtr> args;
     (void)args.insert(std::make_pair("var", var_type));
@@ -108,6 +124,16 @@ bool ApplyAdagrad::get_update_slots() const {
 void ApplyAdagrad::set_update_slots(const bool update_slots) {
   (void)this->AddAttr(kUpdateSlots, api::MakeValue(update_slots));
 }
+
+abstract::AbstractBasePtr ApplyAdagradInferFunc(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                const std::vector<abstract::AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
+  ApplyAdagradInfer apply_ada_grad;
+  auto type = apply_ada_grad.InferType(primitive, input_args);
+  auto shape = apply_ada_grad.InferShape(primitive, input_args);
+  return abstract::MakeAbstract(shape, type);
+}
+
 REGISTER_PRIMITIVE_OP_INFER_IMPL(ApplyAdagrad, prim::kPrimApplyAdagrad, ApplyAdagradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

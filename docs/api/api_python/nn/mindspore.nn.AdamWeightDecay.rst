@@ -35,7 +35,7 @@ mindspore.nn.AdamWeightDecay
             &\hline \\[-1.ex]
         \end{array}
 
-    :math:`m` 代表第一个动量矩阵 `moment1` ，:math:`v` 代表第二个动量矩阵 `moment2` ，:math:`g` 代表 `gradients` ，:math:`\gamma` 代表 `learning_rate` ，:math:`\beta_1, \beta_2` 代表 `beta1` 和 `beta2` ， :math:`t` 代表当前step，:math:`w` 代表 `params` ，:math:`\gamma` 代表 `weight_decay` 。
+    :math:`m` 代表第一个动量矩阵 `moment1` ，:math:`v` 代表第二个动量矩阵 `moment2` ，:math:`g` 代表 `gradients` ，:math:`\gamma` 代表 `learning_rate` ，:math:`\beta_1, \beta_2` 代表 `beta1` 和 `beta2` ， :math:`t` 代表当前step，:math:`w` 代表 `params` ，:math:`\lambda` 代表 `weight_decay` 。
 
     .. note::
         .. include:: mindspore.nn.optim_note_loss_scale.rst
@@ -52,14 +52,14 @@ mindspore.nn.AdamWeightDecay
 
           .. include:: mindspore.nn.optim_group_order.rst
 
-        - **learning_rate** (Union[float, int, Tensor, Iterable, LearningRateSchedule]) - 默认值：1e-3。
+        - **learning_rate** (Union[float, int, Tensor, Iterable, LearningRateSchedule]) - 默认值： ``1e-3`` 。
 
           .. include:: mindspore.nn.optim_arg_dynamic_lr.rst
 
-        - **beta1** (float) - `moment1` 的指数衰减率。参数范围（0.0,1.0）。默认值：0.9。
-        - **beta2** (float) - `moment2` 的指数衰减率。参数范围（0.0,1.0）。默认值：0.999。
-        - **eps** (float) - 将添加到分母中，以提高数值稳定性。必须大于0。默认值：1e-6。
-        - **weight_decay** (Union[float, int, Cell]) - 权重衰减（L2 penalty）。默认值：0.0。
+        - **beta1** (float) - `moment1` 的指数衰减率。参数范围（0.0,1.0）。默认值： ``0.9`` 。
+        - **beta2** (float) - `moment2` 的指数衰减率。参数范围（0.0,1.0）。默认值： ``0.999`` 。
+        - **eps** (float) - 将添加到分母中，以提高数值稳定性。必须大于0。默认值： ``1e-6`` 。
+        - **weight_decay** (Union[float, int, Cell]) - 权重衰减（L2 penalty）。默认值： ``0.0`` 。
 
           .. include:: mindspore.nn.optim_arg_dynamic_wd.rst
 

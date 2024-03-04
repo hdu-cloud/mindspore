@@ -16,10 +16,12 @@
 
 #include "plugin/device/gpu/hal/profiler/gpu_profiling_utils.h"
 #include "kernel/kernel.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "utils/ms_utils.h"
 #include "utils/ms_context.h"
+#include "ops/other_op_name.h"
+#include "ops/structure_op_name.h"
 #include "include/common/utils/utils.h"
 
 namespace mindspore {

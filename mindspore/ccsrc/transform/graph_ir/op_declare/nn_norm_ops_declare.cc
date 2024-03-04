@@ -15,8 +15,10 @@
  */
 
 #include "transform/graph_ir/op_declare/nn_norm_ops_declare.h"
-#include <vector>
 #include <string>
+#include <vector>
+#include "ops/math_ops.h"
+#include "ops/nn_ops.h"
 
 namespace mindspore::transform {
 // SoftmaxV2
@@ -25,20 +27,14 @@ ATTR_MAP(SoftmaxV2) = {
   {"axis", ATTR_DESC(axes, AnyTraits<std::vector<int64_t>>(), AnyTraits<std::vector<int64_t>>())},
 };
 OUTPUT_MAP(SoftmaxV2) = {{0, OUTPUT_DESC(y)}};
-REG_ADPT_DESC(SoftmaxV2, kNameSoftmax, ADPT_DESC(SoftmaxV2))
+REG_ADPT_DESC(Softmax, kNameSoftmax, ADPT_DESC(SoftmaxV2))
+REG_ADPT_DESC(SoftmaxV2, kSoftmaxV2OpName, ADPT_DESC(SoftmaxV2))
 
 // SoftmaxGrad
 INPUT_MAP(SoftmaxGrad) = {{1, INPUT_DESC(softmax)}, {2, INPUT_DESC(grad_softmax)}};
 OUTPUT_MAP(SoftmaxGrad) = {{0, OUTPUT_DESC(grad_x)}};
 ATTR_MAP(SoftmaxGrad) = EMPTY_ATTR_MAP;
 REG_ADPT_DESC(SoftmaxGrad, kNameSoftmaxGrad, ADPT_DESC(SoftmaxGrad))
-
-// SoftmaxGradExt
-INPUT_MAP(SoftmaxGradExt) = {{1, INPUT_DESC(grad)}, {2, INPUT_DESC(x1)}, {3, INPUT_DESC(x2)}};
-OUTPUT_MAP(SoftmaxGradExt) = {{0, OUTPUT_DESC(y)}};
-ATTR_MAP(SoftmaxGradExt) = {{"axis", ATTR_DESC(axes, AnyTraits<int64_t>(), AnyTraits<int64_t>())},
-                            {"keep_dims", ATTR_DESC(keep_dims, AnyTraits<bool>(), AnyTraits<bool>())}};
-REG_ADPT_DESC(SoftmaxGradExt, kSoftmaxGradExtOpName, ADPT_DESC(SoftmaxGradExt))
 
 // SoftmaxCrossEntropyWithLogits
 INPUT_MAP(SoftmaxCrossEntropyWithLogits) = {{1, INPUT_DESC(features)}, {2, INPUT_DESC(labels)}};
@@ -48,16 +44,20 @@ REG_ADPT_DESC(SoftmaxCrossEntropyWithLogits, prim::kPrimSoftmaxCrossEntropyWithL
               ADPT_DESC(SoftmaxCrossEntropyWithLogits))
 
 // SmoothL1Loss
-INPUT_MAP(SmoothL1Loss) = {{1, INPUT_DESC(predict)}, {2, INPUT_DESC(label)}};
-ATTR_MAP(SmoothL1Loss) = {{"beta", ATTR_DESC(sigma, AnyTraits<float>())}};
-OUTPUT_MAP(SmoothL1Loss) = {{0, OUTPUT_DESC(loss)}};
-REG_ADPT_DESC(SmoothL1Loss, kNameSmoothL1Loss, ADPT_DESC(SmoothL1Loss))
+INPUT_MAP(SmoothL1LossV2) = {{1, INPUT_DESC(predict)}, {2, INPUT_DESC(label)}};
+ATTR_MAP(SmoothL1LossV2) = {{"beta", ATTR_DESC(sigma, AnyTraits<float>())},
+                            {"reduction", ATTR_DESC(reduction, AnyTraits<std::string>())}};
+OUTPUT_MAP(SmoothL1LossV2) = {{0, OUTPUT_DESC(loss)}};
+REG_ADPT_DESC(SmoothL1Loss, kNameSmoothL1Loss, ADPT_DESC(SmoothL1LossV2))
+REG_ADPT_DESC(SmoothL1LossV2, prim::kPrimSmoothL1LossV2->name(), ADPT_DESC(SmoothL1LossV2))
 
 // SmoothL1LossGrad
-INPUT_MAP(SmoothL1LossGrad) = {{1, INPUT_DESC(predict)}, {2, INPUT_DESC(label)}, {3, INPUT_DESC(dout)}};
-ATTR_MAP(SmoothL1LossGrad) = {{"beta", ATTR_DESC(sigma, AnyTraits<float>())}};
-OUTPUT_MAP(SmoothL1LossGrad) = {{0, OUTPUT_DESC(gradient)}};
-REG_ADPT_DESC(SmoothL1LossGrad, kNameSmoothL1LossGrad, ADPT_DESC(SmoothL1LossGrad))
+INPUT_MAP(SmoothL1LossGradV2) = {{1, INPUT_DESC(predict)}, {2, INPUT_DESC(label)}, {3, INPUT_DESC(dout)}};
+ATTR_MAP(SmoothL1LossGradV2) = {{"beta", ATTR_DESC(sigma, AnyTraits<float>())},
+                                {"reduction", ATTR_DESC(reduction, AnyTraits<std::string>())}};
+OUTPUT_MAP(SmoothL1LossGradV2) = {{0, OUTPUT_DESC(gradient)}};
+REG_ADPT_DESC(SmoothL1LossGrad, kNameSmoothL1LossGrad, ADPT_DESC(SmoothL1LossGradV2))
+REG_ADPT_DESC(SmoothL1LossGradV2, prim::kPrimSmoothL1LossGradV2->name(), ADPT_DESC(SmoothL1LossGradV2))
 
 // SigmoidCrossEntropyWithLogits
 INPUT_MAP(SigmoidCrossEntropyWithLogits) = {{1, INPUT_DESC(predict)}, {2, INPUT_DESC(target)}};
@@ -79,7 +79,8 @@ INPUT_MAP(SigmoidCrossEntropyWithLogitsV2) = {
   {1, INPUT_DESC(predict)}, {2, INPUT_DESC(target)}, {3, INPUT_DESC(weight)}, {4, INPUT_DESC(pos_weight)}};
 ATTR_MAP(SigmoidCrossEntropyWithLogitsV2) = {{"reduction", ATTR_DESC(reduction, AnyTraits<std::string>())}};
 OUTPUT_MAP(SigmoidCrossEntropyWithLogitsV2) = {{0, OUTPUT_DESC(loss)}};
-REG_ADPT_DESC(SigmoidCrossEntropyWithLogitsV2, kNameSigmoidCrossEntropyWithLogitsV2,
+REG_ADPT_DESC(BCEWithLogitsLoss, kNameSigmoidCrossEntropyWithLogitsV2, ADPT_DESC(SigmoidCrossEntropyWithLogitsV2))
+REG_ADPT_DESC(SigmoidCrossEntropyWithLogitsV2, kSigmoidCrossEntropyWithLogitsV2OpName,
               ADPT_DESC(SigmoidCrossEntropyWithLogitsV2))
 
 // LogSoftmaxGrad
@@ -94,7 +95,8 @@ INPUT_MAP(LogSoftmaxV2) = {{1, INPUT_DESC(logits)}};
 ATTR_MAP(LogSoftmaxV2) = {
   {"axis", ATTR_DESC(axes, AnyTraits<std::vector<int64_t>>(), AnyTraits<std::vector<int64_t>>())}};
 OUTPUT_MAP(LogSoftmaxV2) = {{0, OUTPUT_DESC(logsoftmax)}};
-REG_ADPT_DESC(LogSoftmaxV2, prim::kPrimLogSoftmax->name(), ADPT_DESC(LogSoftmaxV2))
+REG_ADPT_DESC(LogSoftmax, prim::kPrimLogSoftmax->name(), ADPT_DESC(LogSoftmaxV2))
+REG_ADPT_DESC(LogSoftmaxV2, kLogSoftmaxV2OpName, ADPT_DESC(LogSoftmaxV2))
 
 // LayerNorm
 INPUT_MAP(LayerNorm) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(gamma)}, {3, INPUT_DESC(beta)}};
@@ -110,6 +112,20 @@ INPUT_MAP(LayerNormGrad) = {
 ATTR_MAP(LayerNormGrad) = EMPTY_ATTR_MAP;
 OUTPUT_MAP(LayerNormGrad) = {{0, OUTPUT_DESC(pd_x)}, {1, OUTPUT_DESC(pd_gamma)}, {2, OUTPUT_DESC(pd_beta)}};
 REG_ADPT_DESC(LayerNormGrad, prim::kPrimLayerNormGrad->name(), ADPT_DESC(LayerNormGrad))
+
+// LayerNormBetaGammaBackpropV2
+INPUT_MAP(LayerNormBetaGammaBackpropV2) = {{1, INPUT_DESC(dy)}, {2, INPUT_DESC(res_for_gamma)}};
+ATTR_MAP(LayerNormBetaGammaBackpropV2) = {{"shape_gamma", ATTR_DESC(shape_gamma, AnyTraits<std::vector<int64_t>>())}};
+OUTPUT_MAP(LayerNormBetaGammaBackpropV2) = {{0, OUTPUT_DESC(pd_gamma)}, {1, OUTPUT_DESC(pd_beta)}};
+REG_ADPT_DESC(LayerNormBetaGammaBackpropV2, kLayerNormBetaGammaBackpropV2OpName,
+              ADPT_DESC(LayerNormBetaGammaBackpropV2))
+
+// LayerNormXBackpropV2
+INPUT_MAP(LayerNormXBackpropV2) = {
+  {1, INPUT_DESC(dy)}, {2, INPUT_DESC(x)}, {3, INPUT_DESC(variance)}, {4, INPUT_DESC(mean)}, {5, INPUT_DESC(gamma)}};
+ATTR_MAP(LayerNormXBackpropV2) = EMPTY_ATTR_MAP;
+OUTPUT_MAP(LayerNormXBackpropV2) = {{0, OUTPUT_DESC(pd_x)}, {1, OUTPUT_DESC(res_for_gamma)}};
+REG_ADPT_DESC(LayerNormXBackpropV2, kLayerNormXBackpropV2OpName, ADPT_DESC(LayerNormXBackpropV2))
 
 // LRN
 INPUT_MAP(LRN) = {{1, INPUT_DESC(x)}};
@@ -130,11 +146,31 @@ ATTR_MAP(LRNGrad) = {{"depth_radius", ATTR_DESC(depth_radius, AnyTraits<int64_t>
 OUTPUT_MAP(LRNGrad) = {{0, OUTPUT_DESC(z)}};
 REG_ADPT_DESC(LRNGrad, kNameLRNGrad, ADPT_DESC(LRNGrad))
 
+// DropoutGrad
+INPUT_MAP(LNDropoutGrad) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(dy)}};
+ATTR_MAP(LNDropoutGrad) = {{"keep_prob", ATTR_DESC(keep_prob, AnyTraits<float>())}};
+OUTPUT_MAP(LNDropoutGrad) = {{0, OUTPUT_DESC(pd_x)}};
+REG_ADPT_DESC(LNDropoutGrad, kDropoutGradOpName, ADPT_DESC(LNDropoutGrad))
+
 // DropoutDoMask
 INPUT_MAP(DropOutDoMask) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(mask)}, {3, INPUT_DESC(keep_prob)}};
 ATTR_MAP(DropOutDoMask) = EMPTY_ATTR_MAP;
 OUTPUT_MAP(DropOutDoMask) = {{0, OUTPUT_DESC(y)}};
-REG_ADPT_DESC(DropOutDoMask, kNameDropoutDoMask, ADPT_DESC(DropOutDoMask))
+REG_ADPT_DESC(DropOutDoMask, kDropOutDoMaskOpName, ADPT_DESC(DropOutDoMask))
+REG_ADPT_DESC(DropoutDoMask, kDropoutDoMaskOpName, ADPT_DESC(DropOutDoMask))
+
+// DropOutDoMaskV3
+INPUT_MAP(DropOutDoMaskV3) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(mask)}, {3, INPUT_DESC(keep_prob)}};
+ATTR_MAP(DropOutDoMaskV3) = EMPTY_ATTR_MAP;
+OUTPUT_MAP(DropOutDoMaskV3) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(DropOutDoMaskV3, kNameDropOutDoMaskV3, ADPT_DESC(DropOutDoMaskV3))
+
+// DropOutDoMaskV3D
+INPUT_MAP(DropOutDoMaskV3D) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(mask)}};
+INPUT_ATTR_MAP(DropOutDoMaskV3D) = {{3, ATTR_DESC(keep_prob, AnyTraits<float>())}};
+ATTR_MAP(DropOutDoMaskV3D) = EMPTY_ATTR_MAP;
+OUTPUT_MAP(DropOutDoMaskV3D) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(DropOutDoMaskV3D, kNameDropOutDoMaskV3D, ADPT_DESC(DropOutDoMaskV3D))
 
 // BinaryCrossEntropy
 INPUT_MAP(BinaryCrossEntropy) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(y)}, {3, INPUT_DESC(weight)}};
@@ -151,7 +187,9 @@ REG_ADPT_DESC(BinaryCrossEntropyGrad, kNameBinaryCrossEntropyGrad, ADPT_DESC(Bin
 
 // Centralization
 INPUT_MAP(Centralization) = {{1, INPUT_DESC(x)}};
-ATTR_MAP(Centralization) = {{"axes", ATTR_DESC(axes, AnyTraits<std::vector<int64_t>>())}};
+INPUT_ATTR_MAP(Centralization) = {
+  {2, ATTR_DESC(axes, AnyTraits<std::vector<int64_t>>(), AnyTraits<std::vector<int64_t>>())}};
+ATTR_MAP(Centralization) = EMPTY_ATTR_MAP;
 OUTPUT_MAP(Centralization) = {{0, OUTPUT_DESC(y)}};
 REG_ADPT_DESC(Centralization, kNameCentralization, ADPT_DESC(Centralization))
 
@@ -186,13 +224,59 @@ REG_ADPT_DESC(MultilabelMarginLoss, prim::kPrimMultilabelMarginLoss->name(), ADP
 
 // Roll
 INPUT_MAP(Roll) = {{1, INPUT_DESC(x)}};
-ATTR_MAP(Roll) = {{"shift", ATTR_DESC(shifts, AnyTraits<int64_t>(), AnyTraits<std::vector<int64_t>>())}};
+ATTR_MAP(Roll) = {{"shift", ATTR_DESC(shifts, AnyTraits<int64_t>(), AnyTraits<std::vector<int64_t>>())},
+                  {"axis", ATTR_DESC(dims, AnyTraits<int64_t>(), AnyTraits<std::vector<int64_t>>())}};
 OUTPUT_MAP(Roll) = {{0, OUTPUT_DESC(y)}};
-REG_ADPT_DESC(Roll, prim::kRoll, ADPT_DESC(Roll))
+REG_ADPT_DESC(Roll, mindspore::kRollOpName, ADPT_DESC(Roll))
+
+// Renorm
+INPUT_MAP(Renorm) = {{1, INPUT_DESC(x)}};
+ATTR_MAP(Renorm) = {{"p", ATTR_DESC(p, AnyTraits<float>())},
+                    {"dim", ATTR_DESC(dim, AnyTraits<int64_t>())},
+                    {"maxnorm", ATTR_DESC(maxnorm, AnyTraits<float>())}};
+OUTPUT_MAP(Renorm) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(Renorm, prim::kPrimRenorm->name(), ADPT_DESC(Renorm))
+
+// SoftMarginLoss
+INPUT_MAP(SoftMarginLoss) = {{1, INPUT_DESC(input_x)}, {2, INPUT_DESC(input_y)}};
+ATTR_MAP(SoftMarginLoss) = {{"reduction", ATTR_DESC(reduction, AnyTraits<std::string>())}};
+OUTPUT_MAP(SoftMarginLoss) = {{0, OUTPUT_DESC(output_z)}};
+REG_ADPT_DESC(SoftMarginLoss, prim::kPrimSoftMarginLoss->name(), ADPT_DESC(SoftMarginLoss))
 
 // ConfusionSoftmaxGrad
 INPUT_MAP(ConfusionSoftmaxGrad) = {{1, INPUT_DESC(grad)}, {2, INPUT_DESC(x)}};
 ATTR_MAP(ConfusionSoftmaxGrad) = EMPTY_ATTR_MAP;
 OUTPUT_MAP(ConfusionSoftmaxGrad) = {{0, OUTPUT_DESC(y)}};
 REG_ADPT_DESC(ConfusionSoftmaxGrad, "ConfusionSoftmaxGrad", ADPT_DESC(ConfusionSoftmaxGrad))
+
+// SoftmaxGradExt
+INPUT_MAP(SoftmaxGradExt) = {{1, INPUT_DESC(grad)}, {2, INPUT_DESC(x1)}, {3, INPUT_DESC(x2)}};
+OUTPUT_MAP(SoftmaxGradExt) = {{0, OUTPUT_DESC(y)}};
+ATTR_MAP(SoftmaxGradExt) = {{"axis", ATTR_DESC(axes, AnyTraits<int64_t>(), AnyTraits<int64_t>())},
+                            {"keep_dims", ATTR_DESC(keep_dims, AnyTraits<bool>(), AnyTraits<bool>())}};
+REG_ADPT_DESC(SoftmaxGradExt, kSoftmaxGradExtOpName, ADPT_DESC(SoftmaxGradExt))
+
+// MVNV2
+INPUT_MAP(MVNV2) = {{1, INPUT_DESC(x)}};
+ATTR_MAP(MVNV2) = {{"eps", ATTR_DESC(eps, AnyTraits<float>())},
+                   {"axes", ATTR_DESC(axes, AnyTraits<std::vector<int64_t>>(), AnyTraits<std::vector<int64_t>>())}};
+OUTPUT_MAP(MVNV2) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(MVNV2, kNameMVNV2, ADPT_DESC(MVNV2))
+
+// MultiMarginLossGrad
+CUST_INPUT_MAP(MultiMarginLossGrad) = {
+  {1, INPUT_DESC(y_grad)}, {2, INPUT_DESC(x)}, {3, INPUT_DESC(target)}, {4, INPUT_DESC(weight)}};
+CUST_ATTR_MAP(MultiMarginLossGrad) = {{"p", ATTR_DESC(p, AnyTraits<int64_t>())},
+                                      {"margin", ATTR_DESC(margin, AnyTraits<float>())},
+                                      {"reduction", ATTR_DESC(reduction, AnyTraits<std::string>())}};
+CUST_OUTPUT_MAP(MultiMarginLossGrad) = {{0, OUTPUT_DESC(x_grad)}};
+REG_ADPT_DESC(MultiMarginLossGrad, prim::kPrimMultiMarginLossGrad->name(), CUST_ADPT_DESC(MultiMarginLossGrad));
+
+// MultiMarginLoss
+CUST_INPUT_MAP(MultiMarginLoss) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(target)}, {3, INPUT_DESC(weight)}};
+CUST_ATTR_MAP(MultiMarginLoss) = {{"p", ATTR_DESC(p, AnyTraits<int64_t>())},
+                                  {"margin", ATTR_DESC(margin, AnyTraits<float>())},
+                                  {"reduction", ATTR_DESC(reduction, AnyTraits<std::string>())}};
+CUST_OUTPUT_MAP(MultiMarginLoss) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(MultiMarginLoss, prim::kPrimMultiMarginLoss->name(), CUST_ADPT_DESC(MultiMarginLoss));
 }  // namespace mindspore::transform

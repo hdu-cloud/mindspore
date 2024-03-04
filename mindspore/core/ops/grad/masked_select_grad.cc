@@ -14,16 +14,27 @@
  * limitations under the License.
  */
 #include "ops/grad/masked_select_grad.h"
+
+#include <memory>
 #include <string>
-#include <algorithm>
-#include <map>
-#include <set>
 #include <vector>
-#include "abstract/param_validator.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -70,6 +81,24 @@ AbstractBasePtr MaskedSelectGradInfer(const abstract::AnalysisEnginePtr &, const
   auto shape = MaskedSelectGradInferShape(primitive, input_args);
   return abstract::MakeAbstract(shape, type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(MaskedSelectGrad, prim::kPrimMaskedSelectGrad, MaskedSelectGradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMaskedSelectGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaskedSelectGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaskedSelectGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaskedSelectGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MaskedSelectGrad, prim::kPrimMaskedSelectGrad, AGMaskedSelectGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

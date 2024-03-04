@@ -29,7 +29,8 @@ file(GLOB_RECURSE TEST_UT_SRC
         ${TEST_DIR}/ut/src/runtime/kernel/arm/fp32/*.cc
         ${TEST_DIR}/ut/src/runtime/kernel/arm/string/*.cc
         ${TEST_DIR}/ut/src/api/context_c_test.cc
-        ${TEST_DIR}/ut/src/api/tensor_c_test.cc
+        ${TEST_DIR}/ut/src/api/model_c_test.cc
+        ${TEST_DIR}/ut/src/api/tensor_c_test.cc`
         )
 if(MSLITE_ENABLE_SERVER_INFERENCE)
     list(APPEND TEST_UT_SRC ${TEST_DIR}/ut/src/api/model_parallel_runner_test.cc)
@@ -92,11 +93,6 @@ if(MSLITE_ENABLE_INT8)
 endif()
 
 if(MSLITE_ENABLE_FP16)
-    file(GLOB_RECURSE TEST_FP16_UT_SRC
-            ${TEST_DIR}/ut/src/runtime/kernel/arm/fp16/*.cc
-            )
-    list(APPEND TEST_UT_SRC ${TEST_FP16_UT_SRC})
-
     if(SUPPORT_TRAIN)
         file(GLOB_RECURSE TEST_TRAIN_FP16_SRC
                 ${TEST_DIR}/ut/src/runtime/kernel/arm/fp16_grad/*.cc)
@@ -121,12 +117,14 @@ if(MSLITE_ENABLE_CONVERTER)
             ${TEST_DIR}/ut/tools/converter/decomposer/svd_test.cc
             ${TEST_DIR}/ut/tools/converter/registry/*.cc
             ${TEST_DIR}/ut/tools/converter/parser/tflite/*.cc
+            ${TEST_DIR}/ut/tools/converter/api/*.cc
             ${TEST_DIR}/st/converter_test.cc
             ${TEST_DIR}/st/delegate_test.cc
             ${TEST_DIR}/st/mindrt_parallel_test.cc
             ${TEST_DIR}/st/sub_graph_test.cc
             ${TEST_DIR}/ut/src/dynamic_library_loader_test.cc
             ${TEST_DIR}/ut/tools/optimizer/fusion/*.cc
+            ${TEST_DIR}/ut/tools/optimizer/graph/*.cc
             )
     if(MSLITE_ENABLE_SERVER_INFERENCE)
         list(REMOVE_ITEM TEST_CONVERTER_UT_SRC ${TEST_DIR}/st/mindrt_parallel_test.cc)
@@ -137,6 +135,7 @@ if(MSLITE_ENABLE_CONVERTER)
     set(TEST_CONVERTER_UT_SRC
         ${TEST_CONVERTER_UT_SRC}
         ${TEST_DIR}/main.cc
+        ${TEST_DIR}/ut/utils/build_func_graph.cc
         ${TEST_DIR}/common/common_test.cc
         ${TEST_DIR}/common/import_from_meta_graphT.cc
         )
@@ -145,6 +144,8 @@ endif()
 if(MSLITE_ENABLE_KERNEL_EXECUTOR)
     list(APPEND TEST_UT_SRC ${TEST_DIR}/ut/src/runtime/kernel_executor_tests.cc)
 endif()
+
+set(TEST_LITE_SRC ${TEST_LITE_SRC} ${LITE_DIR}/src/litert/cxx_api/kernel.cc)
 
 set(TEST_SRC
         ${TEST_UT_SRC}

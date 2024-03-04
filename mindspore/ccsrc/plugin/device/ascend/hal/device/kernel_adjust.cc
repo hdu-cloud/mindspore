@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,13 @@
 #include <queue>
 #include <set>
 
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/ascend_op_name.h"
+#include "ops/structure_op_name.h"
+#include "ops/other_op_name.h"
+#include "ops/nn_optimizer_op_name.h"
+#include "ops/framework_op_name.h"
+#include "ops/sequence_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "utils/ms_context.h"
 #include "runtime/device/ms_device_shape_transfer.h"
@@ -37,12 +43,14 @@
 #include "plugin/device/ascend/hal/device/ascend_stream_manager.h"
 #include "plugin/device/ascend/hal/device/ascend_device_address.h"
 #include "utils/shape_utils.h"
+#include "include/backend/debug/profiler/profiling.h"
 #ifndef ENABLE_SECURITY
-#include "debug/data_dump/dump_json_parser.h"
+#include "include/backend/debug/data_dump/dump_json_parser.h"
 #endif
 
 namespace {
 constexpr auto kGradients = "Gradients";
+constexpr auto kPatternOpaque = "Opaque";
 constexpr auto kSpecifyParameter = "accu_status";
 constexpr auto kSplitOverFlow = "split_overflow";
 constexpr auto kLayerOverFlow = "layer_overflow";
@@ -90,6 +98,7 @@ CNodePtr CreateEventApplyKernel(const std::shared_ptr<session::KernelGraph> &gra
   AnfAlgo::SetSelectKernelBuildInfo(selected_kernel_builder.Build(), event_node_ptr.get());
   common::AnfAlgo::SetNodeAttr(kAttrEventId, MakeValue(event_id), event_node_ptr);
   auto abstract_none = std::make_shared<abstract::AbstractNone>();
+  MS_EXCEPTION_IF_NULL(abstract_none);
   event_node_ptr->set_abstract(abstract_none);
   return event_node_ptr;
 }
@@ -97,7 +106,7 @@ CNodePtr CreateEventApplyKernel(const std::shared_ptr<session::KernelGraph> &gra
 CNodePtr KernelAdjust::CreateSendApplyKernel(const std::shared_ptr<session::KernelGraph> &graph_ptr,
                                              uint32_t event_id) const {
   MS_EXCEPTION_IF_NULL(graph_ptr);
-  auto send_op = std::make_shared<Primitive>(kSendOpName);
+  auto send_op = std::make_shared<Primitive>(kStreamSendOpName);
   MS_EXCEPTION_IF_NULL(send_op);
   auto send_apply = std::make_shared<ValueNode>(send_op);
   MS_EXCEPTION_IF_NULL(send_apply);
@@ -107,7 +116,7 @@ CNodePtr KernelAdjust::CreateSendApplyKernel(const std::shared_ptr<session::Kern
 CNodePtr KernelAdjust::CreateRecvApplyKernel(const std::shared_ptr<session::KernelGraph> &graph_ptr,
                                              uint32_t event_id) const {
   MS_EXCEPTION_IF_NULL(graph_ptr);
-  auto recv_op = std::make_shared<Primitive>(kRecvOpName);
+  auto recv_op = std::make_shared<Primitive>(kStreamRecvOpName);
   MS_EXCEPTION_IF_NULL(recv_op);
   auto recv_apply = std::make_shared<ValueNode>(recv_op);
   MS_EXCEPTION_IF_NULL(recv_apply);
@@ -219,7 +228,7 @@ void KernelAdjust::CopyMemcpyList(const std::shared_ptr<session::KernelGraph> &k
     if (common::AnfAlgo::HasNodeAttr(kAttrLabelForInsertStreamActive, cur_cnode)) {
       auto pre_node = orders[idx - 1];
       auto pre_kernel_name = common::AnfAlgo::GetCNodeName(pre_node);
-      if (pre_kernel_name == kAtomicAddrCleanOpName) {
+      if (pre_kernel_name == kMemSetOpName) {
         (*other_list).pop_back();
         (*memcpy_list).push_back(pre_node);
       }
@@ -437,6 +446,7 @@ void KernelAdjust::ProcessLoopSink(const std::shared_ptr<session::KernelGraph> &
     InsertEndGraphTaskSink(kernel_graph_ptr);
     return;
   }
+  profiler::CollectHostInfo("Ascend", "PreprocessBeforeRun", "AscendPreprocess_ProcessLoopSink", 0, 0, 0);
   if (kernel_graph_ptr->is_dynamic_shape()) {
     MS_LOG(INFO) << "KernelGraph:" << kernel_graph_ptr->graph_id() << " is dynamic shape, skip ProcessLoopSink";
     return;
@@ -452,7 +462,8 @@ void KernelAdjust::ProcessLoopSink(const std::shared_ptr<session::KernelGraph> &
 
   const std::vector<CNodePtr> &orders = kernel_graph_ptr->execution_order();
   if (orders.empty()) {
-    MS_LOG(EXCEPTION) << "graph " << kernel_graph_ptr->graph_id() << " execution order is empty";
+    MS_LOG(WARNING) << "graph " << kernel_graph_ptr->graph_id() << " execution order is empty";
+    return;
   }
 
   std::vector<CNodePtr> exec_order;
@@ -524,6 +535,7 @@ void KernelAdjust::ProcessLoopSink(const std::shared_ptr<session::KernelGraph> &
   fpbp_active_streams.push_back(fpbp_switch_stream_id);
   InsertFpBpAndEosLoopStreamActive(kernel_graph_ptr, &exec_order, fpbp_active_streams);
   kernel_graph_ptr->set_execution_order(exec_order);
+  profiler::CollectHostInfo("Ascend", "PreprocessBeforeRun", "AscendPreprocess_ProcessLoopSink", 0, 0, 1);
 }
 
 kernel::KernelBuildInfo::KernelBuildInfoBuilder KernelAdjust::CreateMngKernelBuilder(
@@ -532,7 +544,7 @@ kernel::KernelBuildInfo::KernelBuildInfoBuilder KernelAdjust::CreateMngKernelBui
   selected_kernel_builder.SetInputsFormat(formats);
   selected_kernel_builder.SetInputsDeviceType(type_ids);
 
-  selected_kernel_builder.SetFusionType(kernel::FusionType::OPAQUE);
+  selected_kernel_builder.SetFusionType(kPatternOpaque);
   selected_kernel_builder.SetProcessor(kernel::Processor::AICORE);
   selected_kernel_builder.SetKernelType(KernelType::RT_KERNEL);
   return selected_kernel_builder;
@@ -542,7 +554,7 @@ CNodePtr KernelAdjust::CreateStreamSwitchOp(const std::shared_ptr<session::Kerne
                                             const std::map<std::string, mindspore::ParameterPtr> &switch_loop_input,
                                             StreamSwitchKind kind) const {
   kernel::KernelBuildInfo::KernelBuildInfoBuilder selected_kernel_builder = CreateMngKernelBuilder(
-    {kOpFormat_DEFAULT, kOpFormat_DEFAULT}, {TypeId::kNumberTypeInt32, TypeId::kNumberTypeInt32});
+    {kOpFormat_DEFAULT, kOpFormat_DEFAULT}, {TypeId::kNumberTypeInt64, TypeId::kNumberTypeInt64});
   auto typeNone_abstract = std::make_shared<abstract::AbstractNone>();
   auto stream_switch = std::make_shared<Primitive>(kStreamSwitchOpName);
   std::vector<AnfNodePtr> inputs;
@@ -626,7 +638,7 @@ CNodePtr KernelAdjust::CreateEndOfSequenceOP(const std::shared_ptr<session::Kern
   selected_kernel_builder.SetInputsFormat({kOpFormat_DEFAULT});
   selected_kernel_builder.SetInputsDeviceType({kNumberTypeUInt8});
 
-  selected_kernel_builder.SetFusionType(kernel::FusionType::OPAQUE);
+  selected_kernel_builder.SetFusionType(kPatternOpaque);
   selected_kernel_builder.SetProcessor(kernel::Processor::AICPU);
   selected_kernel_builder.SetKernelType(KernelType::AICPU_KERNEL);
 
@@ -657,9 +669,9 @@ CNodePtr KernelAdjust::CreateStreamAssignAddnOP(const std::shared_ptr<session::K
                                                 bool cur_loop) const {
   MS_EXCEPTION_IF_NULL(kernel_graph_ptr);
   kernel::KernelBuildInfo::KernelBuildInfoBuilder selected_kernel_builder = CreateMngKernelBuilder(
-    {kOpFormat_DEFAULT, kOpFormat_DEFAULT}, {TypeId::kNumberTypeInt32, TypeId::kNumberTypeInt32});
+    {kOpFormat_DEFAULT, kOpFormat_DEFAULT}, {TypeId::kNumberTypeInt64, TypeId::kNumberTypeInt64});
   selected_kernel_builder.SetOutputsFormat({kOpFormat_DEFAULT});
-  selected_kernel_builder.SetOutputsDeviceType({kNumberTypeInt32});
+  selected_kernel_builder.SetOutputsDeviceType({kNumberTypeInt64});
   // AssignAdd
   auto assign_add = std::make_shared<Primitive>(kAssignAddOpName);
   std::vector<AnfNodePtr> inputs;
@@ -734,72 +746,54 @@ void KernelAdjust::InsertProfilingKernel(const ProfilingTraceInfo &profiling_tra
 }
 #endif
 
-CNodePtr KernelAdjust::CreateNPUGetFloatStatus(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
-                                               const CNodePtr &npu_alloc_cnode) const {
+CNodePtr KernelAdjust::CreateNPUGetFloatStatusV2(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
+                                                 const AnfNodePtr &status_value_node) const {
   MS_EXCEPTION_IF_NULL(kernel_graph_ptr);
-  MS_EXCEPTION_IF_NULL(npu_alloc_cnode);
-  auto npu_get_primitive = std::make_shared<Primitive>(kNPUGetFloatStatusOpName);
-  std::vector<AnfNodePtr> npu_get_inputs = {NewValueNode(npu_get_primitive), npu_alloc_cnode};
+  MS_EXCEPTION_IF_NULL(status_value_node);
+  auto npu_get_primitive = std::make_shared<Primitive>(kNPUGetFloatStatusV2OpName);
+  std::vector<AnfNodePtr> npu_get_inputs = {NewValueNode(npu_get_primitive), status_value_node};
   auto npu_get_cnode = kernel_graph_ptr->NewCNode(npu_get_inputs);
   MS_EXCEPTION_IF_NULL(npu_get_cnode);
-  npu_alloc_cnode->set_scope(kDefaultScope);
-  npu_get_cnode->set_abstract(npu_alloc_cnode->abstract());
+  status_value_node->set_scope(kDefaultScope);
+  ShapeVector npu_output_shape = {kNPUShape};
+  common::AnfAlgo::SetOutputInferTypeAndShape({kNumberTypeInt32}, {npu_output_shape}, npu_get_cnode.get());
 
   kernel::KernelBuildInfo::KernelBuildInfoBuilder selected_kernel_builder;
   selected_kernel_builder.SetInputsFormat({kOpFormat_DEFAULT});
-  selected_kernel_builder.SetInputsDeviceType({kNumberTypeFloat32});
-  selected_kernel_builder.SetFusionType(kernel::FusionType::OPAQUE);
+  selected_kernel_builder.SetInputsDeviceType({kNumberTypeInt32});
+  selected_kernel_builder.SetFusionType(kPatternOpaque);
   selected_kernel_builder.SetProcessor(kernel::Processor::AICORE);
   selected_kernel_builder.SetKernelType(KernelType::TBE_KERNEL);
   selected_kernel_builder.SetOutputsFormat({kOpFormat_DEFAULT});
-  selected_kernel_builder.SetOutputsDeviceType({kNumberTypeFloat32});
+  selected_kernel_builder.SetOutputsDeviceType({kNumberTypeInt32});
   AnfAlgo::SetSelectKernelBuildInfo(selected_kernel_builder.Build(), npu_get_cnode.get());
   return npu_get_cnode;
 }
 
-CNodePtr KernelAdjust::CreateNPUClearStatus(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
-                                            const CNodePtr &npu_alloc_cnode) const {
+CNodePtr KernelAdjust::CreateNPUClearStatusV2(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
+                                              const AnfNodePtr &status_value_node) const {
   MS_EXCEPTION_IF_NULL(kernel_graph_ptr);
-  MS_EXCEPTION_IF_NULL(npu_alloc_cnode);
-  auto npu_clear_primitive = std::make_shared<Primitive>(kNPUClearFloatStatusOpName);
-  std::vector<AnfNodePtr> npu_clear_inputs = {NewValueNode(npu_clear_primitive), npu_alloc_cnode};
+  MS_EXCEPTION_IF_NULL(status_value_node);
+  auto npu_clear_primitive = std::make_shared<Primitive>(kNPUClearFloatStatusV2OpName);
+  std::vector<AnfNodePtr> npu_clear_inputs = {NewValueNode(npu_clear_primitive), status_value_node};
   auto npu_clear_cnode = kernel_graph_ptr->NewCNode(npu_clear_inputs);
   MS_EXCEPTION_IF_NULL(npu_clear_cnode);
-  npu_alloc_cnode->set_scope(kDefaultScope);
-  npu_clear_cnode->set_abstract(npu_alloc_cnode->abstract());
+  status_value_node->set_scope(kDefaultScope);
+  npu_clear_cnode->set_abstract(status_value_node->abstract());
+  ShapeVector npu_output_shape = {kNPUShape};
+  common::AnfAlgo::SetOutputInferTypeAndShape({kNumberTypeInt32}, {npu_output_shape}, npu_clear_cnode.get());
 
   kernel::KernelBuildInfo::KernelBuildInfoBuilder selected_kernel_builder;
   selected_kernel_builder.SetInputsFormat({kOpFormat_DEFAULT});
-  selected_kernel_builder.SetInputsDeviceType({kNumberTypeFloat32});
-  selected_kernel_builder.SetFusionType(kernel::FusionType::OPAQUE);
+  selected_kernel_builder.SetInputsDeviceType({kNumberTypeInt32});
+  selected_kernel_builder.SetFusionType(kPatternOpaque);
   selected_kernel_builder.SetProcessor(kernel::Processor::AICORE);
   selected_kernel_builder.SetKernelType(KernelType::TBE_KERNEL);
   selected_kernel_builder.SetOutputsFormat({kOpFormat_DEFAULT});
-  selected_kernel_builder.SetOutputsDeviceType({kNumberTypeFloat32});
+  selected_kernel_builder.SetOutputsDeviceType({kNumberTypeInt32});
   AnfAlgo::SetSelectKernelBuildInfo(selected_kernel_builder.Build(), npu_clear_cnode.get());
 
   return npu_clear_cnode;
-}
-
-CNodePtr KernelAdjust::CreateNPUAllocStatus(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr) const {
-  MS_EXCEPTION_IF_NULL(kernel_graph_ptr);
-  // create npu_alloc_cnode
-  auto npu_alloc_primitive = std::make_shared<Primitive>(kNPUAllocFloatStatusOpName);
-  std::vector<AnfNodePtr> npu_alloc_inputs = {NewValueNode(npu_alloc_primitive)};
-  auto npu_alloc_cnode = kernel_graph_ptr->NewCNode(npu_alloc_inputs);
-  MS_EXCEPTION_IF_NULL(npu_alloc_cnode);
-  npu_alloc_cnode->set_scope(kDefaultScope);
-  ShapeVector npu_output_shape = {kNPUShape};
-  common::AnfAlgo::SetOutputInferTypeAndShape({kNumberTypeFloat32}, {npu_output_shape}, npu_alloc_cnode.get());
-
-  kernel::KernelBuildInfo::KernelBuildInfoBuilder selected_kernel_builder;
-  selected_kernel_builder.SetFusionType(kernel::FusionType::OPAQUE);
-  selected_kernel_builder.SetProcessor(kernel::Processor::AICORE);
-  selected_kernel_builder.SetKernelType(KernelType::TBE_KERNEL);
-  selected_kernel_builder.SetOutputsFormat({kOpFormat_DEFAULT});
-  selected_kernel_builder.SetOutputsDeviceType({kNumberTypeFloat32});
-  AnfAlgo::SetSelectKernelBuildInfo(selected_kernel_builder.Build(), npu_alloc_cnode.get());
-  return npu_alloc_cnode;
 }
 
 CNodePtr KernelAdjust::CreateAssignAdd(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
@@ -835,39 +829,41 @@ CNodePtr KernelAdjust::CreateAssignAdd(const std::shared_ptr<session::KernelGrap
   return assign_add_cnode;
 }
 
-CNodePtr KernelAdjust::CreateAssign(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
-                                    const AnfNodePtr &specify_para) const {
-  MS_EXCEPTION_IF_NULL(kernel_graph_ptr);
-  MS_EXCEPTION_IF_NULL(specify_para);
-
-  std::vector<float> reset(kNPUShape, 0.0);
-  ShapeVector reset_shape({kNPUShape});
-  auto shp_buf_size = sizeof(float) * reset.size();
-  auto reset_tensor = std::make_shared<tensor::Tensor>(kNumberTypeFloat32, reset_shape, reset.data(), shp_buf_size);
-  auto reset_value_node = std::make_shared<ValueNode>(reset_tensor);
-  MS_EXCEPTION_IF_NULL(reset_value_node);
-  reset_value_node->set_abstract(specify_para->abstract());
-  kernel_graph_ptr->AddValueNodeToGraph(reset_value_node);
+AnfNodePtr KernelAdjust::CreateZerosValueNode(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr) const {
+  std::vector<int32_t> zeros(kNPUShape, 0);
+  ShapeVector zeros_shape({kNPUShape});
+  auto shp_buf_size = sizeof(float) * zeros.size();
+  auto zeros_tensor = std::make_shared<tensor::Tensor>(kNumberTypeInt32, zeros_shape, zeros.data(), shp_buf_size);
+  auto zeros_value_node = std::make_shared<ValueNode>(zeros_tensor);
+  MS_EXCEPTION_IF_NULL(zeros_value_node);
+  kernel_graph_ptr->AddValueNodeToGraph(zeros_value_node);
 
   auto kernel_info = std::make_shared<device::KernelInfo>();
   MS_EXCEPTION_IF_NULL(kernel_info);
-  reset_value_node->set_kernel_info(kernel_info);
+  zeros_value_node->set_kernel_info(kernel_info);
   kernel::KernelBuildInfo::KernelBuildInfoBuilder builder1;
   builder1.SetOutputsFormat({kOpFormat_DEFAULT});
-  builder1.SetOutputsDeviceType({kNumberTypeFloat32});
-  AnfAlgo::SetSelectKernelBuildInfo(builder1.Build(), reset_value_node.get());
+  builder1.SetOutputsDeviceType({kNumberTypeInt32});
+  AnfAlgo::SetSelectKernelBuildInfo(builder1.Build(), zeros_value_node.get());
+  return zeros_value_node;
+}
+
+CNodePtr KernelAdjust::CreateAssign(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
+                                    const AnfNodePtr &specify_para, const AnfNodePtr &data) const {
+  MS_EXCEPTION_IF_NULL(kernel_graph_ptr);
+  MS_EXCEPTION_IF_NULL(specify_para);
 
   auto assign_primitive = std::make_shared<Primitive>(kAssignOpName);
-  std::vector<AnfNodePtr> assign_inputs = {NewValueNode(assign_primitive), specify_para, reset_value_node};
+  std::vector<AnfNodePtr> assign_inputs = {NewValueNode(assign_primitive), specify_para, data};
   auto assign_cnode = kernel_graph_ptr->NewCNode(assign_inputs);
   MS_EXCEPTION_IF_NULL(assign_cnode);
   assign_cnode->set_scope(kDefaultScope);
   assign_cnode->set_abstract(specify_para->abstract());
 
   kernel::KernelBuildInfo::KernelBuildInfoBuilder selected_kernel_builder = CreateMngKernelBuilder(
-    {kOpFormat_DEFAULT, kOpFormat_DEFAULT}, {TypeId::kNumberTypeFloat32, TypeId::kNumberTypeFloat32});
+    {kOpFormat_DEFAULT, kOpFormat_DEFAULT}, {TypeId::kNumberTypeInt32, TypeId::kNumberTypeInt32});
   selected_kernel_builder.SetOutputsFormat({kOpFormat_DEFAULT});
-  selected_kernel_builder.SetOutputsDeviceType({kNumberTypeFloat32});
+  selected_kernel_builder.SetOutputsDeviceType({kNumberTypeInt32});
 
   AnfAlgo::SetSelectKernelBuildInfo(selected_kernel_builder.Build(), assign_cnode.get());
   std::vector<std::string> input_names = {"ref", "value"};
@@ -943,7 +939,8 @@ void KernelAdjust::InsertGradientOverflowCheckOperations(
   MS_EXCEPTION_IF_NULL(kernel_graph_ptr);
 
   bool first_grad_op = true;
-  CNodePtr npu_alloc_cnode;
+  auto status_value_node = CreateZerosValueNode(kernel_graph_ptr);
+  auto reset_value_node = CreateZerosValueNode(kernel_graph_ptr);
   std::vector<CNodePtr> new_execution_order;
   auto execution_order = kernel_graph_ptr->execution_order();
   for (size_t i = 0; i < execution_order.size() - 1; i++) {
@@ -955,39 +952,37 @@ void KernelAdjust::InsertGradientOverflowCheckOperations(
 
     if (cur_full_name.find(kGradients) == std::string::npos && next_full_name.find(kGradients) != std::string::npos) {
       if (first_grad_op) {
-        npu_alloc_cnode = CreateNPUAllocStatus(kernel_graph_ptr);
-        auto npu_clear_cnode = CreateNPUClearStatus(kernel_graph_ptr, npu_alloc_cnode);
-        auto assign_cnode = CreateAssign(kernel_graph_ptr, specify_para);
-        AnfAlgo::SetStreamId(next_stream_id, npu_alloc_cnode.get());
+        auto npu_clear_cnode = CreateNPUClearStatusV2(kernel_graph_ptr, status_value_node);
+        auto assign_cnode = CreateAssign(kernel_graph_ptr, specify_para, reset_value_node);
+        AnfAlgo::SetStreamId(next_stream_id, status_value_node.get());
         AnfAlgo::SetStreamId(next_stream_id, npu_clear_cnode.get());
         AnfAlgo::SetStreamId(next_stream_id, assign_cnode.get());
-        new_execution_order.push_back(npu_alloc_cnode);
         new_execution_order.push_back(npu_clear_cnode);
         new_execution_order.push_back(assign_cnode);
         first_grad_op = false;
       } else {
-        auto npu_clear_cnode = CreateNPUClearStatus(kernel_graph_ptr, npu_alloc_cnode);
+        auto npu_clear_cnode = CreateNPUClearStatusV2(kernel_graph_ptr, status_value_node);
         AnfAlgo::SetStreamId(next_stream_id, npu_clear_cnode.get());
         new_execution_order.push_back(npu_clear_cnode);
       }
     }
     if (cur_full_name.find(kGradients) != std::string::npos && next_full_name.find(kGradients) == std::string::npos) {
-      auto npu_get_cnode = CreateNPUGetFloatStatus(kernel_graph_ptr, npu_alloc_cnode);
-      auto assign_add_cnode = CreateAssignAdd(kernel_graph_ptr, npu_alloc_cnode, specify_para);
+      auto npu_get_cnode = CreateNPUGetFloatStatusV2(kernel_graph_ptr, status_value_node);
+      auto assign_status_node = CreateAssign(kernel_graph_ptr, specify_para, npu_get_cnode);
       AnfAlgo::SetStreamId(cur_stream_id, npu_get_cnode.get());
-      AnfAlgo::SetStreamId(cur_stream_id, assign_add_cnode.get());
+      AnfAlgo::SetStreamId(cur_stream_id, npu_get_cnode.get());
       new_execution_order.push_back(npu_get_cnode);
-      new_execution_order.push_back(assign_add_cnode);
+      new_execution_order.push_back(assign_status_node);
     }
     if (i == execution_order.size() - kLastHandleDiff) {
       new_execution_order.push_back(execution_order[i + 1]);
       if (next_full_name.find(kGradients) != std::string::npos) {
-        auto npu_get_cnode = CreateNPUGetFloatStatus(kernel_graph_ptr, npu_alloc_cnode);
-        auto assign_add_cnode = CreateAssignAdd(kernel_graph_ptr, npu_alloc_cnode, specify_para);
+        auto npu_get_cnode = CreateNPUGetFloatStatusV2(kernel_graph_ptr, status_value_node);
+        auto assign_status_node = CreateAssign(kernel_graph_ptr, specify_para, npu_get_cnode);
         AnfAlgo::SetStreamId(cur_stream_id, npu_get_cnode.get());
-        AnfAlgo::SetStreamId(cur_stream_id, assign_add_cnode.get());
+        AnfAlgo::SetStreamId(cur_stream_id, assign_status_node.get());
         new_execution_order.push_back(npu_get_cnode);
-        new_execution_order.push_back(assign_add_cnode);
+        new_execution_order.push_back(assign_status_node);
       }
     }
   }
@@ -1029,18 +1024,16 @@ void KernelAdjust::InsertDynamicLossScaleCheckOperations(const std::shared_ptr<s
   bool first_layer_op = true;
   std::vector<CNodePtr> new_execution_order;
   int64_t cur_param = static_cast<int64_t>(dynamic_loss_scale_param_list->size()) - 1;
-  CNodePtr npu_alloc_cnode;
+  auto status_value_node = CreateZerosValueNode(kernel_graph_ptr);
+  auto reset_value_node = CreateZerosValueNode(kernel_graph_ptr);
   std::set<int64_t> viewed_id;
   for (size_t i = 0; i < execution_order.size(); ++i) {
     auto cur_node = execution_order[i];
     auto cur_stream_id = AnfAlgo::GetStreamId(cur_node);
     if (common::AnfAlgo::HasNodeAttr(kSplitOverFlow, cur_node) || (i == end_gradient_index)) {
       if (first_layer_op) {
-        npu_alloc_cnode = CreateNPUAllocStatus(kernel_graph_ptr);
-        AnfAlgo::SetStreamId(cur_stream_id, npu_alloc_cnode.get());
-        (void)new_execution_order.emplace_back(npu_alloc_cnode);
         for (const auto &param : *dynamic_loss_scale_param_list) {
-          auto assign_cnode = CreateAssign(kernel_graph_ptr, param);
+          auto assign_cnode = CreateAssign(kernel_graph_ptr, param, reset_value_node);
           AnfAlgo::SetStreamId(cur_stream_id, assign_cnode.get());
           (void)new_execution_order.emplace_back(assign_cnode);
         }
@@ -1054,22 +1047,19 @@ void KernelAdjust::InsertDynamicLossScaleCheckOperations(const std::shared_ptr<s
           (void)new_execution_order.emplace_back(cur_node);
           continue;
         }
-        if (viewed_id.count(cur_param) != 0) {
-          auto assign_cnode = CreateAssign(kernel_graph_ptr, dynamic_loss_scale_param_list->at(cur_param));
-          AnfAlgo::SetStreamId(cur_stream_id, assign_cnode.get());
-          (void)new_execution_order.emplace_back(assign_cnode);
-        }
-        auto npu_get_cnode = CreateNPUGetFloatStatus(kernel_graph_ptr, npu_alloc_cnode);
+
+        auto npu_get_cnode = CreateNPUGetFloatStatusV2(kernel_graph_ptr, status_value_node);
         AnfAlgo::SetStreamId(cur_stream_id, npu_get_cnode.get());
         (void)new_execution_order.emplace_back(npu_get_cnode);
-        auto assign_add_cnode =
-          CreateAssignAdd(kernel_graph_ptr, npu_alloc_cnode, dynamic_loss_scale_param_list->at(cur_param));
-        AnfAlgo::SetStreamId(cur_stream_id, assign_add_cnode.get());
-        (void)new_execution_order.emplace_back(assign_add_cnode);
+
+        auto assign_status_node =
+          CreateAssign(kernel_graph_ptr, dynamic_loss_scale_param_list->at(cur_param), npu_get_cnode);
+        AnfAlgo::SetStreamId(cur_stream_id, assign_status_node.get());
+        (void)new_execution_order.emplace_back(assign_status_node);
         (void)viewed_id.insert(cur_param);
         cur_param--;
       }
-      auto npu_clear_cnode = CreateNPUClearStatus(kernel_graph_ptr, npu_alloc_cnode);
+      auto npu_clear_cnode = CreateNPUClearStatusV2(kernel_graph_ptr, status_value_node);
       AnfAlgo::SetStreamId(cur_stream_id, npu_clear_cnode.get());
       (void)new_execution_order.emplace_back(npu_clear_cnode);
     }
@@ -1080,11 +1070,11 @@ void KernelAdjust::InsertDynamicLossScaleCheckOperations(const std::shared_ptr<s
 }
 
 // device loop control
-std::shared_ptr<Tensor> KernelAdjust::CreateTensor(int32_t initial_value) const {
+std::shared_ptr<Tensor> KernelAdjust::CreateTensor(int64_t initial_value) const {
   ShapeVector shp = {1};
-  tensor::TensorPtr tensor = std::make_shared<tensor::Tensor>(kInt32->type_id(), shp);
+  tensor::TensorPtr tensor = std::make_shared<tensor::Tensor>(kInt64->type_id(), shp);
   MS_EXCEPTION_IF_NULL(tensor);
-  auto val = static_cast<int32_t *>(tensor->data_c());
+  auto val = static_cast<int64_t *>(tensor->data_c());
   MS_EXCEPTION_IF_NULL(val);
   *val = initial_value;
   return tensor;
@@ -1093,7 +1083,7 @@ std::shared_ptr<Tensor> KernelAdjust::CreateTensor(int32_t initial_value) const 
 std::shared_ptr<Parameter> KernelAdjust::CreateParameter(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
                                                          const string parameter_name) const {
   ShapeVector shp = {1};
-  tensor::TensorPtr tensor_ptr = std::make_shared<tensor::Tensor>(kInt32->type_id(), shp);
+  tensor::TensorPtr tensor_ptr = std::make_shared<tensor::Tensor>(kInt64->type_id(), shp);
   MS_EXCEPTION_IF_NULL(tensor_ptr);
   mindspore::abstract::AbstractBasePtr parameter_abstract_ptr = tensor_ptr->ToAbstract();
   if (parameter_abstract_ptr == nullptr) {
@@ -1130,7 +1120,7 @@ void KernelAdjust::InsertDeviceLoopCtrl(const std::shared_ptr<session::KernelGra
   device_loop_ctrl_params[kConstOneName] = CreateParameter(kernel_graph_ptr, kConstOneName);
 
   // constant loop num in epoch tensor
-  int32_t initial_value = 0;
+  int64_t initial_value = 0;
   if (NeedLoopSink()) {
     // iter_num minus one because the device side counts from 0
     initial_value = SizeToInt(LongToSize(ConfigManager::GetInstance().iter_num() - 1));
@@ -1147,7 +1137,7 @@ void KernelAdjust::InsertDeviceLoopCtrl(const std::shared_ptr<session::KernelGra
 }
 
 void KernelAdjust::AssignLoopCtrlTensorMem(const session::KernelGraph &kernel_graph, KernelRuntime *runtime_instance,
-                                           const string name) const {
+                                           const string &name) const {
   MS_EXCEPTION_IF_NULL(runtime_instance);
   auto device_loop_control_params = kernel_graph.device_loop_control_params();
   if (device_loop_control_params.count(name) == 0) {
@@ -1211,7 +1201,7 @@ void KernelAdjust::AssignLoopCtrlMemory(const session::KernelGraph &kernel_graph
 }
 
 void KernelAdjust::SetDeviceLoopCtrlTensor(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
-                                           const std::string name, int32_t value) const {
+                                           const std::string &name, int64_t value) const {
   MS_EXCEPTION_IF_NULL(kernel_graph_ptr);
   auto device_loop_control_tensors = kernel_graph_ptr->device_loop_control_tensors();
   if (device_loop_control_tensors.count(name) == 0) {
@@ -1220,7 +1210,7 @@ void KernelAdjust::SetDeviceLoopCtrlTensor(const std::shared_ptr<session::Kernel
   }
   auto tensor = device_loop_control_tensors.at(name);
   MS_EXCEPTION_IF_NULL(tensor);
-  auto *cur_val = static_cast<int32_t *>(tensor->data_c());
+  auto *cur_val = static_cast<int64_t *>(tensor->data_c());
   MS_EXCEPTION_IF_NULL(cur_val);
   *cur_val = value;
   tensor->set_sync_status(kNeedSyncHostToDevice);

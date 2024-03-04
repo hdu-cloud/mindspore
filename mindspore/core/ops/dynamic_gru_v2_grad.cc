@@ -20,14 +20,27 @@
 #include <set>
 #include <string>
 #include <vector>
+
 #include "abstract/abstract_value.h"
-#include "ops/op_utils.h"
-#include "ops/dynamic_gru_v2_grad.h"
-#include "ops/core_ops.h"
-#include "ops/op_name.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/type_id.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/dynamic_gru_v2_grad.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -82,13 +95,13 @@ void DynamicGRUV2GradCheckShapeValue(const PrimitivePtr &primitive, const std::v
                                                    std::vector<int64_t>{batch_size, hidden_size}, prim_name);
 
   std::vector<int64_t> valid_y_shape;
-  valid_y_shape.emplace_back(num_step);
-  valid_y_shape.emplace_back(batch_size);
+  (void)valid_y_shape.emplace_back(num_step);
+  (void)valid_y_shape.emplace_back(batch_size);
   const int64_t kNumZero = 0;
   if (num_proj > kNumZero) {
-    valid_y_shape.emplace_back(std::min(hidden_size, num_proj));
+    (void)valid_y_shape.emplace_back(std::min(hidden_size, num_proj));
   } else {
-    valid_y_shape.emplace_back(hidden_size);
+    (void)valid_y_shape.emplace_back(hidden_size);
   }
   (void)CheckAndConvertUtils::CheckTensorShapeSame({{"y shape", y_shape_ptr}}, valid_y_shape, prim_name);
 
@@ -125,15 +138,15 @@ abstract::TupleShapePtr DynamicGRUV2GradInferShape(const PrimitivePtr &primitive
   std::vector<ShapeVector> check_shapes = {x_shape, winput_shape, whidden_shape, y_shape};
   auto is_dynamic_rank = std::any_of(check_shapes.begin(), check_shapes.end(), IsDynamicRank);
 
-  const size_t kNumTwo = 2;
-  const size_t kNumThree = 3;
+  const int64_t kNumTwo = 2;
+  const int64_t kNumThree = 3;
   if (!is_dynamic_rank) {
-    (void)CheckAndConvertUtils::CheckInteger("x shape rank", x_shape.size(), kEqual, kNumThree, prim_name);
-    (void)CheckAndConvertUtils::CheckInteger("weight input shape rank", winput_shape.size(), kEqual, kNumTwo,
-                                             prim_name);
-    (void)CheckAndConvertUtils::CheckInteger("weight hidden shape rank", whidden_shape.size(), kEqual, kNumTwo,
-                                             prim_name);
-    (void)CheckAndConvertUtils::CheckInteger("y shape rank", y_shape.size(), kEqual, kNumThree, prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("x shape rank", SizeToLong(x_shape.size()), kEqual, kNumThree, prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("weight input shape rank", SizeToLong(winput_shape.size()), kEqual,
+                                             kNumTwo, prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("weight hidden shape rank", SizeToLong(whidden_shape.size()), kEqual,
+                                             kNumTwo, prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("y shape rank", SizeToLong(y_shape.size()), kEqual, kNumThree, prim_name);
   }
   DynamicGRUV2GradCheckShapeValue(primitive, input_args, num_proj);
 
@@ -200,7 +213,8 @@ TuplePtr DynamicGRUV2GradInferType(const PrimitivePtr &primitive, const std::vec
     (void)CheckAndConvertUtils::CheckTensorTypeValid("mask_dtype", mask_dtype, valid_types, prim_name);
   }
 
-  return std::make_shared<Tuple>(std::vector<TypePtr>{x_dtype, x_dtype, x_dtype, x_dtype, x_dtype, x_dtype});
+  return std::make_shared<Tuple>(
+    std::vector<TypePtr>{winput_dtype, whidden_dtype, init_h_dtype, init_h_dtype, x_dtype, init_h_dtype});
 }
 }  // namespace
 
@@ -209,13 +223,31 @@ AbstractBasePtr DynamicGRUV2GradInfer(const abstract::AnalysisEnginePtr &, const
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   const int64_t MinInputNum = 12;
-  (void)CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterEqual, MinInputNum, prim_name);
+  CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterEqual, MinInputNum, prim_name);
   auto types = DynamicGRUV2GradInferType(primitive, input_args);
   auto shapes = DynamicGRUV2GradInferShape(primitive, input_args);
   return abstract::MakeAbstract(shapes, types);
 }
 
 MIND_API_OPERATOR_IMPL(DynamicGRUV2Grad, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(DynamicGRUV2Grad, prim::kPrimDynamicGRUV2Grad, DynamicGRUV2GradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGDynamicGRUV2GradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicGRUV2GradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicGRUV2GradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicGRUV2GradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(DynamicGRUV2Grad, prim::kPrimDynamicGRUV2Grad, AGDynamicGRUV2GradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@
 #include <string>
 #include <utility>
 #include <limits>
+#include "mindspore/core/ops/array_ops.h"
 #include "include/common/thread_pool.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 #include "kernel/common_utils.h"
@@ -31,7 +32,7 @@ namespace {
 constexpr size_t kMinIndiceRank = 2;
 template <typename T>
 inline T RealDiv(const T &a, const T &b) {
-  constexpr T zero = T(0);
+  T zero = static_cast<T>(0);
   if (b == zero) {
     if (a == zero) {
       return std::numeric_limits<T>::quiet_NaN();
@@ -63,9 +64,22 @@ int ScatterNdArithmeticCpuKernelMod::Resize(const BaseOperatorPtr &base_operator
   }
   input_shape_.clear();
   auto input_shape = inputs.at(kIndex0)->GetShapeVector();
-  (void)std::transform(input_shape.begin(), input_shape.end(), std::back_inserter(input_shape_), LongToSize);
   auto indices_shape = inputs.at(kIndex1)->GetShapeVector();
   auto updates_shape = inputs.at(kIndex2)->GetShapeVector();
+  auto input_shape_null = CheckNullInput(input_shape);
+  auto indices_shape_null = CheckNullInput(indices_shape);
+  auto updates_shape_null = CheckNullInput(updates_shape);
+  has_null_input_ = (input_shape_null || indices_shape_null || updates_shape_null);
+  if (has_null_input_) {
+    input_size_list_[kIndex0] = input_shape_null ? 0 : input_size_list_[kIndex0];
+    input_size_list_[kIndex1] = indices_shape_null ? 0 : input_size_list_[kIndex1];
+    input_size_list_[kIndex2] = updates_shape_null ? 0 : input_size_list_[kIndex2];
+    output_size_list_.clear();
+    output_size_list_.push_back(input_size_list_[kIndex0]);
+    return KRET_OK;
+  }
+  (void)std::transform(input_shape.begin(), input_shape.end(), std::back_inserter(input_shape_), LongToSize);
+
   const auto indices_rank = indices_shape.size();
   const auto last_indices_value = LongToSize(indices_shape.back());
   const auto update_rank = updates_shape.size();
@@ -137,6 +151,9 @@ template <typename T, typename S>
 bool ScatterNdArithmeticCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs,
                                                    const std::vector<kernel::AddressPtr> &,
                                                    const std::vector<kernel::AddressPtr> &) {
+  if (has_null_input_) {
+    return true;
+  }
   auto init_compute_func_result = InitComputeFunc<T>();
   if (!init_compute_func_result.first) {
     return false;
@@ -158,11 +175,11 @@ bool ScatterNdArithmeticCpuKernelMod::LaunchKernel(const std::vector<kernel::Add
         size_t index_idx = batch_idx * slice_size_;
         for (size_t i = 0; i < slice_size_; i++) {
           auto index = indices[index_idx + i];
-          out_idx += batch_strides_[i] * LongToSize(index) * inner_size_;
           if (index < 0 || index >= static_cast<S>(input_shape_[i])) {
             invalid_index_pos = SizeToLong(index_idx);
             break;
           }
+          out_idx += batch_strides_[i] * LongToSize(index) * inner_size_;
         }
         if (invalid_index_pos != -1) {
           break;
@@ -174,7 +191,7 @@ bool ScatterNdArithmeticCpuKernelMod::LaunchKernel(const std::vector<kernel::Add
   };
 
   auto element_size = batch_size_ * inner_size_;
-  ParallelLaunch(task, element_size, 0, this, pool_);
+  ParallelLaunch(task, element_size, block_size_, this, pool_);
   if (invalid_index_pos != -1) {
     std::stringstream indices_ss;
     std::stringstream input_shape_ss;
@@ -205,6 +222,8 @@ const ScatterNdArithmeticCpuKernelMod::ScatterNdSupportListType &ScatterNdArithm
                                         double, int64_t)},
     {SCATTER_ND_ARITHMETIC_CPU_REGISTER(kNumberTypeFloat32, kNumberTypeInt64, kNumberTypeFloat32, kNumberTypeFloat32,
                                         float, int64_t)},
+    {SCATTER_ND_ARITHMETIC_CPU_REGISTER(kNumberTypeFloat16, kNumberTypeInt64, kNumberTypeFloat16, kNumberTypeFloat16,
+                                        float16, int64_t)},
     {SCATTER_ND_ARITHMETIC_CPU_REGISTER(kNumberTypeInt64, kNumberTypeInt64, kNumberTypeInt64, kNumberTypeInt64, int64_t,
                                         int64_t)},
     {SCATTER_ND_ARITHMETIC_CPU_REGISTER(kNumberTypeInt32, kNumberTypeInt64, kNumberTypeInt32, kNumberTypeInt32, int32_t,
@@ -225,6 +244,8 @@ const ScatterNdArithmeticCpuKernelMod::ScatterNdSupportListType &ScatterNdArithm
                                         double, int32_t)},
     {SCATTER_ND_ARITHMETIC_CPU_REGISTER(kNumberTypeFloat32, kNumberTypeInt32, kNumberTypeFloat32, kNumberTypeFloat32,
                                         float, int32_t)},
+    {SCATTER_ND_ARITHMETIC_CPU_REGISTER(kNumberTypeFloat16, kNumberTypeInt32, kNumberTypeFloat16, kNumberTypeFloat16,
+                                        float16, int32_t)},
     {SCATTER_ND_ARITHMETIC_CPU_REGISTER(kNumberTypeInt64, kNumberTypeInt32, kNumberTypeInt64, kNumberTypeInt64, int64_t,
                                         int32_t)},
     {SCATTER_ND_ARITHMETIC_CPU_REGISTER(kNumberTypeInt32, kNumberTypeInt32, kNumberTypeInt32, kNumberTypeInt32, int32_t,

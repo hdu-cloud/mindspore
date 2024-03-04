@@ -14,15 +14,20 @@ set(REG_SRC ${CONVERT_REG_SRC}
         ${KERNEL_REG_DIR}/../common/utils.cc
         ${KERNEL_REG_DIR}/../extendrt/delegate/tensorrt/distribution/distribution_base.cc
         ${KERNEL_REG_DIR}/../extendrt/delegate/plugin/tensorrt_executor_plugin.cc
-        ${CORE_DIR}/utils/log_adapter.cc
-        ${CORE_DIR}/utils/status.cc
+        ${KERNEL_REG_DIR}/../extendrt/kernel/ascend/plugin/ascend_allocator_plugin.cc
         ${CONVERTER_DIR}/converter_context.cc
+        ${TOP_DIR}/mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/tensor_c_utils.c
+        ${TOP_DIR}/mindspore/lite/src/common/file_utils.cc
         )
 set_property(SOURCE ${REG_SRC} PROPERTY COMPILE_DEFINITIONS SUBMODULE_ID=mindspore::SubModuleId::SM_LITE)
 add_library(mslite_converter_plugin SHARED ${REG_SRC})
 target_link_libraries(mslite_converter_plugin mindspore::glog)
 add_dependencies(mslite_converter_plugin fbs_src)
 add_dependencies(mslite_converter_plugin fbs_inner_src)
+
+if(CMAKE_SYSTEM_NAME MATCHES "Windows" OR MSLITE_ENABLE_CLOUD_FUSION_INFERENCE OR MSLITE_ENABLE_CLOUD_INFERENCE)
+    target_link_libraries(mslite_converter_plugin mindspore_core)
+endif()
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Release" AND (NOT WIN32))
     add_custom_command(TARGET mslite_converter_plugin POST_BUILD COMMAND strip

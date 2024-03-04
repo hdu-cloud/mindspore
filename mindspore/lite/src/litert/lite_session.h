@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@
 #include <unordered_map>
 #include <map>
 #include <atomic>
-#include "src/litert/kernel_exec.h"
+#include "src/executor/kernel_exec.h"
 #include "src/litert/lite_model.h"
 #include "src/litert/inner_context.h"
 #include "src/litert/runtime_allocator.h"
@@ -37,6 +37,7 @@
 #include "src/litert/kernel/gpu/opencl/opencl_runtime.h"
 #endif
 #include "src/litert/scheduler_cb.h"
+#include "src/executor/sub_graph_kernel.h"
 
 #ifdef ENABLE_LITE_HELPER
 #include "src/common/helper/infer_helpers.h"
@@ -44,7 +45,7 @@
 
 namespace mindspore {
 namespace lite {
-class LiteSession {
+class MS_API LiteSession {
  public:
   LiteSession();
   virtual ~LiteSession();
@@ -59,7 +60,7 @@ class LiteSession {
   int LoadModelAndCompileByPath(const std::string &model_path, mindspore::ModelType model_type);
   mindspore::ModelType LoadModelByBuff(const char *model_buf, const size_t &buf_size, char **lite_buf, size_t *size,
                                        mindspore::ModelType model_type);
-  const char *LoadModelByPath(const std::string &file, mindspore::ModelType model_type, size_t *size);
+  const char *LoadModelByPath(const std::string &file, mindspore::ModelType model_type, size_t *size, bool use_mmap);
   virtual int Init(const std::shared_ptr<InnerContext> &context);
   virtual void BindThread(bool if_bind);
   virtual int CompileGraph(Model *model);
@@ -101,10 +102,24 @@ class LiteSession {
                      std::vector<std::string> out_put_tensor_name = {}) {
     return mindspore::lite::RET_ERROR;
   }
-  virtual int UpdateWeights(std::vector<lite::Tensor *> new_weights) { return mindspore::lite::RET_ERROR; }
+  virtual int Export(Buffer *model_buffer, lite::ModelType model_type = lite::MT_TRAIN,
+                     lite::QuantizationType quant_type = lite::QT_DEFAULT, lite::FormatType = lite::FT_FLATBUFFERS,
+                     std::vector<std::string> out_put_tensor_name = {}) {
+    return mindspore::lite::RET_ERROR;
+  }
+  virtual int ExportWeightsCollaborateWithMicro(const std::string &file_name,
+                                                lite::ModelType model_type = lite::MT_TRAIN,
+                                                lite::FormatType = lite::FT_FLATBUFFERS, bool enable_fp16 = false,
+                                                const std::vector<std::string> &changeable_weights_name = {}) {
+    return mindspore::lite::RET_ERROR;
+  }
   virtual std::vector<lite::Tensor *> GetFeatureMaps() const {
     std::vector<lite::Tensor *> features;
     return features;
+  }
+  virtual std::vector<lite::Tensor *> GetTrainableParams() const {
+    std::vector<lite::Tensor *> train_params;
+    return train_params;
   }
   virtual int UpdateFeatureMaps(const std::vector<lite::Tensor *> &features) { return mindspore::lite::RET_ERROR; }
   virtual std::vector<lite::Tensor *> GetGradients() const {
@@ -122,7 +137,8 @@ class LiteSession {
 
   void SetKeepModelBuf(bool keep_model_buf) { keep_model_buf_ = keep_model_buf; }
 
-  void SetModelId(std::string id) { id_ = id; }
+  void SetModelId(std::string id) { model_id_ = id; }
+  int UpdateWeights(std::vector<lite::Tensor *> modify_tensors);
 
  protected:
   static void ConvertTensorsQuantParam(const schema::Tensor *src_tensor, lite::Tensor *dst_tensor);
@@ -141,13 +157,17 @@ class LiteSession {
   int ResizeInputs(const std::vector<mindspore::lite::Tensor *> &inputs, const std::vector<std::vector<int>> &dims);
   int SetAllocatorForDelegateKernels(const kernel::KernelExec *kernel);
   int PrepareKernels(const Model *model);
+  static int DrawGraph(kernel::SubGraphKernel *graph);
   int SetTensorInitRefCount();
   int SetNonTaiCallSubgraphOutputInitRefCount();
+  void SetInitRefCountOfPartialSubgraphInputs(const Model *model);
   static int ReSizeKernels(
     const std::vector<kernel::KernelExec *> &kernels,
     const std::unordered_map<Tensor *, Tensor *> &isolate_input_map = std::unordered_map<Tensor *, Tensor *>());
   static void FreePackOpWeight(const std::vector<kernel::KernelExec *> &kernels);
+  static void MarkSharedWeight(const std::vector<kernel::KernelExec *> &kernels);
   std::string ParseWeightPath();
+  bool IsMmapEnable();
 
  private:
   int PreCheck(Model *model);
@@ -160,6 +180,8 @@ class LiteSession {
   int CreateCoreMLDelegate();
   int DelegateInit();
   int InitGPURuntime();
+  int InitSharedThreadPool();
+  int ReshapeWeightTensor(lite::Tensor *orig_tensor, lite::Tensor *new_tensor);
 
  private:
   int IsolateOutputTensor();
@@ -212,6 +234,14 @@ class LiteSession {
 #if GPU_OPENCL
   opencl::OpenCLRuntimeInnerWrapper *opencl_runtime_wrapper_{nullptr};
 #endif
+
+  // In the dynamic shape scene, the flag is to indicate when to do shape-infer for kernel. If true, the shape-infer
+  // will not be called when calling 'Resize', but be done along with running. And we will decide whether to call
+  // shape-infer by judging whether existing input has changed. If false, the shape-infer will be pre-called when
+  // calling 'Resize'. And we will judge the outputs to decide whether to call shape-infer when running. Currently, the
+  // value is true only in the pure CPU scenario, at the meantime, both of 'is_control_flow_' and 'is_train_session_'
+  // are false and 'runtime_allocator_' is a nullptr.
+  bool infer_along_running_{true};
   int is_infershape_{RET_ERROR};
   bool is_control_flow_ = false;
   bool keep_model_buf_ = false;
@@ -221,8 +251,11 @@ class LiteSession {
   std::map<std::string, TypeId> *execution_plan_ = nullptr;
   const std::map<std::string, std::map<std::string, std::string>> *config_info_ = nullptr;
   std::vector<kernel::KernelExec *> non_tail_call_kernels_;
-  std::string id_;
+  std::string model_id_;
+  std::string runner_id_;
+  int worker_id_;
   bool is_shared_weight_ = false;
+  bool model_buff_changed_ = false;
 };
 }  // namespace lite
 }  // namespace mindspore

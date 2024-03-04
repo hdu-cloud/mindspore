@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,14 +22,10 @@
 #endif
 #include <map>
 #include <iomanip>
+#include <regex>
 #include <thread>
 #include <vector>
 #include "utils/convert_utils_base.h"
-#ifdef ENABLE_ARM
-#if defined(__ANDROID__) || defined(ANDROID)
-#include <android/log.h>
-#endif
-#endif
 
 // namespace to support utils module definition
 namespace mindspore {
@@ -37,9 +33,6 @@ constexpr int kNameMaxLength = 18;
 constexpr size_t kStep = 2;
 constexpr auto kSplitLine = "\n----------------------------------------------------\n";
 constexpr auto kFrameworkErrorTitle = "Framework Error Message:";
-#if defined(__ANDROID__) || defined(ANDROID)
-constexpr const char *ANDROID_LOG_TAG = "MS_LITE";
-#endif
 // set default log level to WARNING for all sub modules
 int g_ms_submodule_log_levels[NUM_SUBMODUES] = {MsLogLevel::kWarning};
 #if defined(_WIN32) || defined(_WIN64)
@@ -53,7 +46,7 @@ thread_local enum MsLogLevel this_thread_max_log_level = MsLogLevel::kException;
 static std::string GetProcName() {
 #if defined(__APPLE__) || defined(__FreeBSD__)
   const std::string appname = getprogname();
-#elif defined(_GNU_SOURCE)
+#elif defined(_GNU_SOURCE) && !defined(ANDROID)
   const std::string appname = program_invocation_name;
 #else
   const std::string appname = "?";
@@ -110,38 +103,6 @@ static int GetThresholdLevel(const std::string &threshold) {
   }
 }
 #undef google
-#elif defined(BUILD_CORE_RUNTIME)
-const char *EnumStrForMsLogLevel(MsLogLevel level) {
-  if (level == MsLogLevel::kDebug) {
-    return "DEBUG";
-  } else if (level == MsLogLevel::kInfo) {
-    return "INFO";
-  } else if (level == MsLogLevel::kWarning) {
-    return "WARNING";
-  } else if (level == MsLogLevel::kError) {
-    return "ERROR";
-  } else {
-    return "NO_LEVEL";
-  }
-}
-#ifdef ENABLE_ARM
-#if defined(__ANDROID__) || defined(ANDROID)
-static int GetAndroidLogLevel(MsLogLevel level) {
-  switch (level) {
-    case MsLogLevel::kDebug:
-      return ANDROID_LOG_DEBUG;
-    case MsLogLevel::kInfo:
-      return ANDROID_LOG_INFO;
-    case MsLogLevel::kWarning:
-      return ANDROID_LOG_WARN;
-    case MsLogLevel::kError:
-    default:
-      return ANDROID_LOG_ERROR;
-  }
-}
-#endif
-#endif
-
 #else
 
 #undef Dlog
@@ -172,6 +133,11 @@ LogWriter::ExceptionHandler &LogWriter::exception_handler() {
   return g_exception_handler;
 }
 
+LogWriter::MessageHandler &LogWriter::message_handler() {
+  static LogWriter::MessageHandler g_message_handler = nullptr;
+  return g_message_handler;
+}
+
 LogWriter::TraceProvider &LogWriter::trace_provider() {
   static LogWriter::TraceProvider g_trace_provider = nullptr;
   return g_trace_provider;
@@ -185,6 +151,12 @@ const LogWriter::ExceptionHandler &LogWriter::GetExceptionHandler() {
 void LogWriter::SetExceptionHandler(const LogWriter::ExceptionHandler &new_exception_handler) {
   auto &exception_handler_tmp = exception_handler();
   exception_handler_tmp = new_exception_handler;
+}
+
+const LogWriter::MessageHandler &LogWriter::GetMessageHandler() { return message_handler(); }
+
+void LogWriter::SetMessageHandler(const LogWriter::MessageHandler &new_message_handler) {
+  message_handler() = new_message_handler;
 }
 
 const LogWriter::TraceProvider &LogWriter::GetTraceProvider() {
@@ -216,30 +188,26 @@ static inline std::string GetEnv(const std::string &envvar) {
 // then will only print message in exception stack.
 static MsLogLevel GetGlobalLogLevel();
 void LogWriter::RemoveLabelBeforeOutputLog(const std::ostringstream &msg) const {
-  auto logLevel = GetGlobalLogLevel();
-  if (logLevel <= MsLogLevel::kInfo || GetEnv("GLOG_logtostderr") == "0") {
+  auto log_level = GetGlobalLogLevel();
+  if (log_level <= MsLogLevel::kInfo || GetEnv("GLOG_logtostderr") == "0") {
     std::string str = msg.str();
-    auto replace = [&](const std::string &orgStr, const std::string &newStr) {
-      std::string::size_type pos;
-      while ((pos = str.find(orgStr)) != std::string::npos) {
-        (void)str.replace(pos, orgStr.length(), newStr);
-      }
-      return str;
-    };
-    // remove label "#dmsg#" and "#umsg#"
-    str = replace("#dmsg#", "");
-    str = replace("#umsg#", "");
+    // replace any titles enclosed in "#dmsg#" or "#umsg#", as well as its formatted couterparts with "\n"
+    std::regex title_re{R"(\#[d|u]msg\#.+?\#[d|u]msg\#|)" + std::string(kSplitLine) + R"(- .+?)" +
+                        std::string(kSplitLine)};
+    auto replaced = std::regex_replace(str, title_re, "\n");
+    if (!replaced.empty() && replaced[0] == '\n') {
+      (void)replaced.erase(0, 1);
+    }
     std::ostringstream replaced_msg;
-    replaced_msg << str;
+    replaced_msg << replaced;
     OutputLog(replaced_msg);
   }
 }
 
 // Function to split string based on character delimiter
 void SplitString(const std::string &message, const std::string &delimiter, std::vector<std::string> *output) {
-  size_t pos1, pos2;
-  pos1 = 0;
-  pos2 = message.find(delimiter);
+  size_t pos1 = 0;
+  size_t pos2 = message.find(delimiter);
   MS_EXCEPTION_IF_NULL(output);
 
   while (pos2 != std::string::npos) {
@@ -372,14 +340,6 @@ void LogWriter::OutputLog(const std::ostringstream &msg) const {
     << std::this_thread::get_id() << std::dec << "," << GetProcName() << "):" << GetTimeString() << " "
     << "[" << location_.file_ << ":" << location_.line_ << "] " << location_.func_ << "] " << msg.str() << std::endl;
 #undef google
-#elif defined(BUILD_CORE_RUNTIME)
-#if defined(ENABLE_ARM) && (defined(__ANDROID__) || defined(ANDROID))
-  __android_log_print(GetAndroidLogLevel(log_level_), ANDROID_LOG_TAG, "[%s:%d] %s] %s", location_.file_,
-                      location_.line_, location_.func_, msg.str().c_str());
-#else
-  printf("%s [%s:%d] %s] %s\n", EnumStrForMsLogLevel(log_level_), location_.file_, location_.line_, location_.func_,
-         msg.str().c_str());
-#endif
 #else
   auto str_msg = msg.str();
   auto slog_module_id = (submodule_ == SM_MD ? MD : ME);
@@ -393,23 +353,33 @@ void LogWriter::operator<(const LogStream &stream) const noexcept {
   msg << stream.sstream_->rdbuf();
   OutputLog(msg);
 }
-#if !defined(BUILD_LITE_INFERENCE) || defined(BUILD_CORE_RUNTIME)
 void LogWriter::operator^(const LogStream &stream) const {
   std::ostringstream msg;
   msg << stream.sstream_->rdbuf();
+
+  const auto &message_handler = GetMessageHandler();
+  if (message_handler != nullptr) {
+    message_handler(&msg);
+  }
+
+  if (is_internal_exception_) {
+    msg << "#umsg#Framework Unexpected Exception Raised:#umsg#This exception is caused by framework's unexpected "
+           "error. Please create an issue at https://gitee.com/mindspore/mindspore/issues to get help.";
+  }
+
   std::ostringstream oss;
   std::vector<std::string> dmsg;
   std::vector<std::string> umsg;
 
   ParseExceptionMessage(msg.str(), oss, &dmsg, &umsg);
   DisplayUserExceptionMessage(oss, umsg);
-
   thread_local bool running = false;
   if (!running) {
     running = true;
     if (this_thread_max_log_level >= MsLogLevel::kException) {
       RemoveLabelBeforeOutputLog(msg);
     }
+    DisplayDevExceptionMessage(oss, dmsg, location_);
     const auto &trace_provider = GetTraceProvider();
     if (trace_provider != nullptr) {
       trace_provider(oss, true);
@@ -417,15 +387,16 @@ void LogWriter::operator^(const LogStream &stream) const {
     running = false;
   }
 
-  DisplayDevExceptionMessage(oss, dmsg, location_);
-
   const auto &exception_handler = GetExceptionHandler();
   if (exception_handler != nullptr) {
     exception_handler(exception_type_, oss.str());
+  } else {
+    MS_LOG(ERROR) << "Runtime error for null exception handler.";
+    throw std::runtime_error(oss.str());
   }
+  MS_LOG(ERROR) << "Runtime error for unknown exception type:" << exception_type_ << ".";
   throw std::runtime_error(oss.str());
 }
-#endif
 
 enum class LogConfigToken : size_t {
   INVALID,      // indicate invalid token
@@ -771,29 +742,25 @@ MS_CORE_API void common_log_init(void) {
   FLAGS_logtostderr = true;
   if (logtostderr == "0") {
     if (mindspore::GetEnv("GLOG_log_dir").empty()) {
-#ifndef BUILD_LITE
       MS_LOG(ERROR) << "`GLOG_log_dir` is empty, it must be set while 'logtostderr' equals to 0.";
       // Here can not throw exception and use python to catch, because the PYBIND11_MODULE is not yet been initialed.
       exit(EXIT_FAILURE);
-#else
-      MS_LOG(WARNING) << "`GLOG_log_dir` is empty, log will be printed to stderr.";
-#endif
     } else {
       FLAGS_logtostderr = false;
       // Set log dir from GLOG_log_dir with RANK_ID or OMPI_COMM_WORLD_RANK.
-#ifndef BUILD_LITE
+
       const std::string rank_id = mindspore::GetEnv("RANK_ID");
       const std::string gpu_rank_id = mindspore::GetEnv("OMPI_COMM_WORLD_RANK");
+      const std::string ms_node_id = mindspore::GetEnv("MS_NODE_ID");
       std::string rank = "0";
       if (!rank_id.empty()) {
         rank = rank_id;
       } else if (!gpu_rank_id.empty()) {
         rank = gpu_rank_id;
+      } else if (!ms_node_id.empty()) {
+        rank = ms_node_id;
       }
       FLAGS_log_dir = mindspore::GetEnv("GLOG_log_dir") + "/rank_" + rank + "/logs";
-#else
-      FLAGS_log_dir = mindspore::GetEnv("GLOG_log_dir");
-#endif
     }
   }
 
@@ -807,10 +774,10 @@ MS_CORE_API void common_log_init(void) {
 
 // shared lib init hook
 #if defined(_WIN32) || defined(_WIN64) || defined(__APPLE__)
-#if defined(_MSC_VER) || defined(BUILD_LITE)
+#if defined(_MSC_VER)
 MS_CORE_API void mindspore_log_init(void) {
 #else
-__attribute__((constructor)) void mindspore_log_init(void) {
+__attribute__((constructor)) MS_CORE_API void mindspore_log_init(void) {
 #endif
 #else
 MS_CORE_API void mindspore_log_init(void) {

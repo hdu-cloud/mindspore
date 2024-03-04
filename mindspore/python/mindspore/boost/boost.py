@@ -56,7 +56,7 @@ class AutoBoost:
     Provide auto accelerating for network.
 
     Args:
-        level (str): Boost config level. Default: "O0".
+        level (str): Boost config level. Default: ``"O0"`` .
         boost_config_dict (dict): User config hyperparameter dict, recommended config format:
 
             .. code-block::
@@ -85,9 +85,6 @@ class AutoBoost:
                         "freeze_p": 0.7,
                         "total_steps": 65536
                     }
-                    "grad_accumulation": {
-                        "grad_accumulation_step": 1
-                    },
                     "dim_reduce": {
                         "rho": 0.55,
                         "gamma": 0.9,
@@ -100,46 +97,44 @@ class AutoBoost:
                     }
                 }
 
+            Default: ``""`` .
+
             - boost:
 
               - mode (str): How to set the boost. Supports ["auto", "manual", "enable_all", "disable_all"].
-                Default: "auto".
+                Default: ``"auto"`` .
 
                 - auto: Depend on the argument "boost_level" in class Model.
                 - manual: Depend on "boost_config_dict".
                 - enable_all: Set all boost functions true.
                 - disable_all: Set all boost functions false.
 
-              - less_bn (bool): Whether to apply less_bn function. Default: False.
-              - grad_freeze: (bool): Whether to apply grad_freeze function. Default: False.
-              - adasum (bool): Whether to apply adasum function. Default: False.
-              - grad_accumulation (bool): Whether to apply grad_accumulation function. Default: False.
-              - dim_reduce (bool): Whether to apply dim_reduce function. Default: False.
-              - loss_scale_group (bool): Whether to apply loss_scale_group function. Default: False.
+              - less_bn (bool): Whether to apply less_bn function. Default: ``False`` .
+              - grad_freeze: (bool): Whether to apply grad_freeze function. Default: ``False`` .
+              - adasum (bool): Whether to apply adasum function. Default: ``False`` .
+              - grad_accumulation (bool): Whether to apply grad_accumulation function. Default: ``False`` .
+              - dim_reduce (bool): Whether to apply dim_reduce function. Default: ``False`` .
+              - loss_scale_group (bool): Whether to apply loss_scale_group function. Default: ``False`` .
 
               If set dim_reduce true, other functions will be false.
               If set grad_freeze true and dim_reduce false, other functions will be false.
 
             - common:
 
-              - gradient_split_groups (list): The gradient split point of this network. Default: [50, 100].
-              - device_number (int): Device number. Default: 8.
+              - gradient_split_groups (list): The gradient split point of this network. Default: ``[50, 100]`` .
+              - device_number (int): Device number. Default: ``8`` .
 
             - less_bn:
 
-              - fn_flag (bool): Whether changing fc to fn. Default: True.
-              - gc_flag (bool): Whether to apply gc. Default: True.
+              - fn_flag (bool): Whether changing fc to fn. Default: ``True`` .
+              - gc_flag (bool): Whether to apply gc. Default: ``True`` .
 
             - grad_freeze:
 
-              - param_groups (int): The number of parameter groups. Default: 10.
-              - freeze_type (int): Gradient freeze grouping strategy, select from [0, 1]. Default: 1.
-              - freeze_p (float): Gradient freezing probability. Default: 0.7.
-              - total_steps (int): Total training steps. Default: 65536.
-
-            - grad_accumulation:
-
-              - grad_accumulation_step (int): Steps to accumulate gradients. Default: 1.
+              - param_groups (int): The number of parameter groups. Default: ``10`` .
+              - freeze_type (int): Gradient freeze grouping strategy, select from [0, 1]. Default: ``1`` .
+              - freeze_p (float): Gradient freezing probability. Default: ``0.7`` .
+              - total_steps (int): Total training steps. Default: ``65536`` .
 
             - dim_reduce:
 
@@ -156,8 +151,8 @@ class AutoBoost:
 
               Here:
 
-              - pca_mat (array): Shape (k*n), k is part of n_components, n is the size of weight.
-              - bk (array): Shape (k*k), is the symmetric positive definite matrix in Quasi-Newton method.
+              - pca_mat (array): Shape :math:`(k*n)`, k is part of n_components, n is the size of weight.
+              - bk (array): Shape :math:`(k*k)`, is the symmetric positive definite matrix in Quasi-Newton method.
 
               we need to find the m satisfy:
 
@@ -174,14 +169,14 @@ class AutoBoost:
                   delta\_grad &= alpha \cdot new\_grad\_momentum - pca\_mat.T \cdot sk
                   \end{align}
 
-              - rho (float): Generally, it does not need to be modified. Default: 0.55.
-              - gamma (float): Generally, it does not need to be modified. Default: 0.9.
-              - alpha (float): Generally, it does not need to be modified. Default: 0.001.
-              - sigma (float): Generally, it does not need to be modified. Default: 0.4.
-              - n_components (int): PCA component. Default: 32.
-              - pca_mat_path (str): The path to load pca mat. Default: None.
-              - weight_load_dir (str): The directory to load weight files saved as ckpt. Default: None.
-              - timeout (int): Waiting time to load local pca mat. Default: 1800 (second).
+              - rho (float): Generally, it does not need to be modified. Default: ``0.55`` .
+              - gamma (float): Generally, it does not need to be modified. Default: ``0.9`` .
+              - alpha (float): Generally, it does not need to be modified. Default: ``0.001`` .
+              - sigma (float): Generally, it does not need to be modified. Default: ``0.4`` .
+              - n_components (int): PCA component. Default: ``32`` .
+              - pca_mat_path (str): The path to load pca mat. Default: ``None`` .
+              - weight_load_dir (str): The directory to load weight files saved as ckpt. Default: ``None`` .
+              - timeout (int): Waiting time to load local pca mat. Default: ``1800 (second)`` .
 
             User can load the config through the JSON file or use the dictionary directly.
             The unconfigured parameters will adopt the default values.
@@ -202,7 +197,7 @@ class AutoBoost:
         >>> import json
         >>> boost_json = "/path/boost_config.json"
         >>> with open(boost_json, 'r') as fp:
-        >>>     boost_config_dict = json.load(fp)
+        ...     boost_config_dict = json.load(fp)
         >>> boost = AutoBoost("O1", boost_config_dict)
     """
     _instance_lock = threading.Lock()

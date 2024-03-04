@@ -14,20 +14,19 @@
  * limitations under the License.
  */
 
-#include <set>
 #include <map>
+#include <memory>
+#include <set>
 #include <string>
 #include <vector>
-#include <memory>
-#include <algorithm>
 
-#include "ops/sparse_segment_sqrt_n_with_num_segments.h"
 #include "abstract/dshape.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "ops/sparse_segment_sqrt_n_with_num_segments.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -42,9 +41,10 @@ abstract::ShapePtr SparseSegmentSqrtNWithNumSegmentsInferShape(const PrimitivePt
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->BuildShape())[kShape];
   auto num_segments_shape =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex3]->BuildShape())[kShape];
-  (void)CheckAndConvertUtils::CheckInteger("indices_shape", indices_shape.size(), kEqual, kInputIndex1, prim->name());
-  (void)CheckAndConvertUtils::CheckInteger("segment_ids_shape", segment_ids_shape.size(), kEqual, kInputIndex1,
-                                           prim->name());
+  (void)CheckAndConvertUtils::CheckInteger("indices_shape", SizeToLong(indices_shape.size()), kEqual,
+                                           SizeToLong(kInputIndex1), prim->name());
+  (void)CheckAndConvertUtils::CheckInteger("segment_ids_shape", SizeToLong(segment_ids_shape.size()), kEqual,
+                                           SizeToLong(kInputIndex1), prim->name());
   if (x_shape.size() < kInputIndex1) {
     MS_EXCEPTION(ValueError) << "For '" << prim_name << "', "
                              << "x's rank must be greater than 1, but got [" << x_shape.size() << "].";
@@ -62,10 +62,10 @@ abstract::ShapePtr SparseSegmentSqrtNWithNumSegmentsInferShape(const PrimitivePt
   if (IsDynamicRank(x_shape)) {
     return std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
   }
-  if (!input_args[kInputIndex3]->BuildValue()->isa<AnyValue>() &&
+  if (!input_args[kInputIndex3]->BuildValue()->isa<ValueAny>() &&
       !input_args[kInputIndex3]->BuildValue()->isa<None>()) {
     if (!IsDynamic(num_segments_shape) && num_segments_shape.size() == kInputIndex1) {
-      if (num_segments_shape[kInputIndex0] != kInputIndex1) {
+      if (LongToSize(num_segments_shape[kInputIndex0]) != kInputIndex1) {
         MS_EXCEPTION(ValueError) << "For " << prim_name << ", the num element of num_segments should be 1, but got ["
                                  << num_segments_shape[kInputIndex0] << "].";
       }
@@ -123,8 +123,27 @@ AbstractBasePtr SparseSegmentSqrtNWithNumSegmentsInfer(const abstract::AnalysisE
   auto shapes = SparseSegmentSqrtNWithNumSegmentsInferShape(prim, input_args);
   return abstract::MakeAbstract(shapes, types);
 }
-REGISTER_HOST_DEPENDS(kNameSparseSegmentSqrtNWithNumSegments, {3});
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseSegmentSqrtNWithNumSegments, prim::kPrimSparseSegmentSqrtNWithNumSegments,
-                             SparseSegmentSqrtNWithNumSegmentsInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSparseSegmentSqrtNWithNumSegmentsInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentSqrtNWithNumSegmentsInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentSqrtNWithNumSegmentsInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentSqrtNWithNumSegmentsInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {3}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseSegmentSqrtNWithNumSegments, prim::kPrimSparseSegmentSqrtNWithNumSegments,
+                                 AGSparseSegmentSqrtNWithNumSegmentsInfer, false);
 }  // namespace ops
 }  // namespace mindspore

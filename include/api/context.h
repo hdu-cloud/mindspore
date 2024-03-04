@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,6 +37,8 @@ enum DeviceType {
   kAscend,
   kAscend910,
   kAscend310,
+  kCustomDevice,
+  kAllDevice,
   // add new type here
   kInvalidDeviceType = 100,
 };
@@ -52,6 +54,7 @@ class MS_API Context {
   struct Data;
   Context();
   ~Context() = default;
+  Context(const Context &rhs) : data_(rhs.data_) {}
 
   /// \brief Set the number of threads at runtime.
   ///
@@ -62,6 +65,16 @@ class MS_API Context {
   ///
   /// \return The current thread number setting.
   int32_t GetThreadNum() const;
+
+  /// \brief Set the communication group info file path.
+  ///
+  /// \param[in] group_info_file communication group info file for distributed inference.
+  void SetGroupInfoFile(std::string group_info_file);
+
+  /// \brief Get the communication group info file path.
+  ///
+  /// \return The communication group info file path setting.
+  std::string GetGroupInfoFile() const;
 
   /// \brief Set the parallel number of operators at runtime.
   ///
@@ -182,16 +195,17 @@ class MS_API DeviceInfoContext : public std::enable_shared_from_this<DeviceInfoC
   ///
   /// \return provider's name.
   inline std::string GetProvider() const;
+
   /// \brief set provider's name.
   ///
   /// \param[in] provider define the provider's name.
-
   inline void SetProvider(const std::string &provider);
+
   /// \brief obtain provider's device type.
   ///
   /// \return provider's device type.
-
   inline std::string GetProviderDevice() const;
+
   /// \brief set provider's device type.
   ///
   /// \param[in] device define the provider's device type.EG: CPU.
@@ -220,6 +234,16 @@ std::string DeviceInfoContext::GetProvider() const { return CharToString(GetProv
 void DeviceInfoContext::SetProvider(const std::string &provider) { SetProvider(StringToChar(provider)); }
 std::string DeviceInfoContext::GetProviderDevice() const { return CharToString(GetProviderDeviceChar()); }
 void DeviceInfoContext::SetProviderDevice(const std::string &device) { SetProviderDevice(StringToChar(device)); }
+
+/// \brief Derived from DeviceInfoContext, The configuration of the model running auto on the Host Devices, include
+/// CPU/GPU/NPU/Ascend310/Ascend910. This option is only valid for MindSpore Lite.
+class MS_API AutoDeviceInfo : public DeviceInfoContext {
+ public:
+  /// \brief Get the type of this DeviceInfoContext.
+  ///
+  /// \return Type of this DeviceInfoContext.
+  enum DeviceType GetDeviceType() const override { return DeviceType::kAllDevice; };
+};
 
 /// \brief Derived from DeviceInfoContext, The configuration of the model running on the CPU. This option is only valid
 /// for MindSpore Lite.
@@ -379,6 +403,16 @@ class MS_API AscendDeviceInfo : public DeviceInfoContext {
   /// \return The device id.
   uint32_t GetDeviceID() const;
 
+  /// \brief Set the distribution rank id.
+  ///
+  /// \param[in] rank_id The rank id.
+  void SetRankID(uint32_t rank_id);
+
+  /// \brief Get the distribution rank id.
+  ///
+  /// \return The rank id.
+  uint32_t GetRankID() const;
+
   /// \brief Set AIPP configuration file path.
   ///
   /// \param[in] cfg_path AIPP configuration file path.
@@ -391,7 +425,7 @@ class MS_API AscendDeviceInfo : public DeviceInfoContext {
 
   /// \brief Set format of model inputs.
   ///
-  /// \param[in] format Optional "NCHW", "NHWC", etc.
+  /// \param[in] format Optional "NCHW", "NHWC", and "ND".
   inline void SetInputFormat(const std::string &format);
 
   /// \brief Get format of model inputs.
@@ -401,7 +435,7 @@ class MS_API AscendDeviceInfo : public DeviceInfoContext {
 
   /// \brief Set shape of model inputs.
   ///
-  /// \param[in] shape e.g. "input_op_name1: 1,2,3,4;input_op_name2: 4,3,2,1".
+  /// \param[in] shape e.g. "input_op_name1:1,2,3,4;input_op_name2:4,3,2,1".
   inline void SetInputShape(const std::string &shape);
 
   /// \brief Get shape of model inputs.
@@ -411,7 +445,7 @@ class MS_API AscendDeviceInfo : public DeviceInfoContext {
 
   /// \brief Set shape of model inputs.
   ///
-  /// \param[in] shape e.g. {{1, {1,2,3,4}}, {2, {4,3,2,1}}} means the first input shape 1,2,3,4 and the second input
+  /// \param[in] shape e.g. {{0, {1,2,3,4}}, {1, {4,3,2,1}}} means the first input shape 1,2,3,4 and the second input
   /// shape 4,3,2,1.
   void SetInputShapeMap(const std::map<int, std::vector<int>> &shape);
 
@@ -420,7 +454,14 @@ class MS_API AscendDeviceInfo : public DeviceInfoContext {
   /// \return The shape of model inputs.
   std::map<int, std::vector<int>> GetInputShapeMap() const;
 
+  /// \brief Set dynamic batch sizes of model inputs. Ranges from 2 to 100.
+  ///
+  /// \param[in] dynamic_batch_size e.g. {1, 2} means batch size 1 and 2 are configured.
   void SetDynamicBatchSize(const std::vector<size_t> &dynamic_batch_size);
+
+  /// \brief Get dynamic batch sizes of model inputs.
+  ///
+  /// \return The dynamic batch sizes of model inputs in string format.
   inline std::string GetDynamicBatchSize() const;
 
   /// \brief Set the dynamic image size of model inputs.
@@ -435,7 +476,7 @@ class MS_API AscendDeviceInfo : public DeviceInfoContext {
 
   /// \brief Set type of model outputs.
   ///
-  /// \param[in] output_type FP32, UINT8 or FP16, default as FP32.
+  /// \param[in] output_type FP32, UINT8 or FP16.
   void SetOutputType(enum DataType output_type);
 
   /// \brief Get type of model outputs.
@@ -445,8 +486,8 @@ class MS_API AscendDeviceInfo : public DeviceInfoContext {
 
   /// \brief Set precision mode of model.
   ///
-  /// \param[in] precision_mode Optional "force_fp16", "allow_fp32_to_fp16", "must_keep_origin_dtype" and
-  /// "allow_mix_precision", "force_fp16" is set as default
+  /// \param[in] precision_mode Optional "enforce_fp16", "preferred_fp32", "enforce_origin", "enforce_fp32" and
+  /// "preferred_optimal", "enforce_fp16" is set as default
   inline void SetPrecisionMode(const std::string &precision_mode);
 
   /// \brief Get precision mode of model.
@@ -465,11 +506,25 @@ class MS_API AscendDeviceInfo : public DeviceInfoContext {
   /// \return The set op select implementation mode.
   inline std::string GetOpSelectImplMode() const;
 
+  /// \brief Set fusion switch config file path. Controls which fusion passes to be turned off.
+  ///
+  /// \param[in] cfg_path fusion switch config file path.
   inline void SetFusionSwitchConfigPath(const std::string &cfg_path);
+
+  /// \brief Get fusion switch config file path.
+  ///
+  /// \return The fusion switch config file path.
   inline std::string GetFusionSwitchConfigPath() const;
 
-  // Optional "l1_optimize", "l2_optimize", "off_optimize" or "l1_and_l2_optimize", default as "l2_optimize"
+  /// \brief Set buffer optimize mode.
+  ///
+  /// \param[in] buffer_optimize_mode Optional "l1_optimize", "l2_optimize", "off_optimize" or "l1_and_l2_optimize",
+  /// default as "l2_optimize".
   inline void SetBufferOptimizeMode(const std::string &buffer_optimize_mode);
+
+  /// \brief Get buffer optimize mode.
+  ///
+  /// \return The buffer optimize mode.
   inline std::string GetBufferOptimizeMode() const;
 
  private:

@@ -33,7 +33,9 @@ bool KLDivLossGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
   T *input_y = GetDeviceAddress<T>(inputs, 1);
   T *loss = GetDeviceAddress<T>(outputs, 0);
   T *tmp_loss = GetDeviceAddress<T>(workspace, 0);
-  KLDivLoss(input_size_, reduction_, input_x, input_y, loss, tmp_loss, reinterpret_cast<cudaStream_t>(stream_ptr));
+  auto status =
+    KLDivLoss(input_size_, reduction_, input_x, input_y, loss, tmp_loss, reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -50,7 +52,7 @@ bool KLDivLossGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(0).first);
+  type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(0).dtype);
   return true;
 }
 

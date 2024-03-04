@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/hal/profiler/parallel_strategy_profiling.h"
+#include <fstream>
 #include "sys/stat.h"
 #include "include/common/debug/dump_proto.h"
 #include "include/common/utils/parallel_context.h"
@@ -24,10 +25,10 @@
 #include "google/protobuf/util/json_util.h"
 #include "nlohmann/json.hpp"
 #include "proto/profiling_parallel.pb.h"
-
+#include "ops/ascend_op_name.h"
 #ifdef WITH_BACKEND
-#include "ps/ps_context.h"
-#include "ps/util.h"
+#include "include/backend/distributed/ps/ps_context.h"
+#include "include/backend/distributed/ps/util.h"
 #endif
 
 namespace mindspore {
@@ -40,7 +41,7 @@ std::shared_ptr<ParallelStrategy> &ParallelStrategy::GetInstance() {
   return parallel_strategy_inst_;
 }
 
-bool ParallelStrategy::IsProfilingParallelStrategyEnabled() {
+bool ParallelStrategy::IsProfilingParallelStrategyEnabled() const {
   auto ascend_profiler = Profiler::GetInstance(kAscendDevice);
   MS_EXCEPTION_IF_NULL(ascend_profiler);
   if (!ascend_profiler->IsInitialized() || !ascend_profiler->GetParallelStrategyEnableFlag()) {
@@ -66,7 +67,7 @@ bool ParallelStrategy::IsProfilingParallelStrategyEnabled() {
   return false;
 }
 
-bool ParallelStrategy::StringToInt(std::string *str, int32_t *value) {
+bool ParallelStrategy::StringToInt(std::string *str, int32_t *value) const {
   try {
     *value = stoi(*str);
   } catch (std::invalid_argument &) {

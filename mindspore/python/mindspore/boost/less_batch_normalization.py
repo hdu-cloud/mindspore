@@ -45,7 +45,7 @@ class CommonHeadLastFN(Cell):
             is same as input x. The values of str refer to the function `initializer`. Default: 'normal'.
         bias_init (Union[Tensor, str, Initializer, numbers.Number]): The trainable bias_init parameter. The dtype is
             same as input x. The values of str refer to the function `initializer`. Default: 'zeros'.
-        has_bias (bool): Specifies whether the layer uses a bias vector. Default: True.
+        has_bias (bool): Specifies whether the layer uses a bias vector. Default: ``True``.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
@@ -91,10 +91,35 @@ class LessBN(Cell):
 
     Args:
         network (Cell): Network to be modified.
-        fn_flag (bool): Replace FC with FN. default: False.
+        fn_flag (bool): Replace FC with FN. Default: ``False`` .
 
     Examples:
-        >>> network = boost.LessBN(network)
+        >>> import numpy as np
+        >>> from mindspore import Tensor, Parameter, nn
+        >>> import mindspore.ops as ops
+        >>> from mindspore.nn import WithLossCell
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import boost
+        >>>
+        >>> class Net(nn.Cell):
+        ...    def __init__(self, in_features, out_features):
+        ...        super(Net, self).__init__()
+        ...        self.weight = Parameter(Tensor(np.ones([in_features, out_features]).astype(np.float32)),
+        ...                                name='weight')
+        ...        self.matmul = ops.MatMul()
+        ...
+        ...    def construct(self, x):
+        ...        output = self.matmul(x, self.weight)
+        ...        return output
+        >>> size, in_features, out_features = 16, 16, 10
+        >>> net = Net(in_features, out_features)
+        >>> loss = nn.MSELoss()
+        >>> optimizer = nn.Momentum(net.trainable_params(), learning_rate=0.1, momentum=0.9)
+        >>> net_with_loss = WithLossCell(net, loss)
+        >>> inputs = Tensor(np.ones([size, in_features]).astype(np.float32))
+        >>> label = Tensor(np.zeros([size, out_features]).astype(np.float32))
+        >>> train_network = boost.LessBN(net_with_loss)
+        >>> output = train_network(inputs, label)
     """
 
     def __init__(self, network, fn_flag=False):

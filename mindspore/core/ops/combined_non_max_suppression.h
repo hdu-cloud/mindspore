@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_COMBINED_NON_MAX_SUPPRESSION_H_
 #define MINDSPORE_CORE_OPS_COMBINED_NON_MAX_SUPPRESSION_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -36,10 +36,12 @@ class MIND_API CombinedNonMaxSuppression : public BaseOperator {
     InitIOName({"boxes", "scores", "max_output_size_per_class", "max_total_size", "iou_threshold", "score_threshold"},
                {"nmsed_box", "nmsed_scores", "nmsed_classes", "valid_detections"});
   }
+  bool get_pad_per_class() const;
+  bool get_clip_boxes() const;
 };
-abstract::AbstractBasePtr CombinedNonMaxSuppressionInfer(const abstract::AnalysisEnginePtr &,
-                                                         const PrimitivePtr &primitive,
-                                                         const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr CombinedNonMaxSuppressionInfer(
+  const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+  const std::vector<abstract::AbstractBasePtr> &input_args);
 
 using kPrimCombinedNonMaxSuppressionPtr = std::shared_ptr<CombinedNonMaxSuppression>;
 }  // namespace ops

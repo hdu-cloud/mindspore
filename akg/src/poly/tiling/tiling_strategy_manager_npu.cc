@@ -170,7 +170,7 @@ void DmaAlignStrategy::AddNpuConstraint() {
   }
 
   for (auto axis : analyzer_->GetAxesOfAttr(AT_BROADCAST_INNERMOST_AXIS)) {
-    for (const auto attr : axis->attrs) {
+    for (const auto &attr : axis->attrs) {
       if (attr.attr_key != AT_BROADCAST_INNERMOST_AXIS) {
         continue;
       }
@@ -347,7 +347,7 @@ void GemmStrategy::AddNpuConstraint() {
       } else if (attr.attr_value == kDsabo || attr.attr_value == kDsabi) {
         axis->TileRestrainToSingleValue(CastIntToExpr(MIN_TILE), CACHE1);
         axis->TileRestrainToSingleValue(CastIntToExpr(MIN_TILE), CACHE0);
-      } else if (attr.attr_value == kDsamo || attr.attr_value == kDsano) {
+      } else if (attr.attr_value == kDsamo || attr.attr_value == kDsano|| attr.attr_value == kDsako) {
         axis->forbid_iso = true;
       }
     }

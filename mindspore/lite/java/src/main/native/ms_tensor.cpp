@@ -18,6 +18,7 @@
 #include <cstring>
 #include "common/log_adapter.h"
 #include "include/api/types.h"
+#include "common/jni_utils.h"
 
 extern "C" JNIEXPORT jintArray JNICALL Java_com_mindspore_MSTensor_getShape(JNIEnv *env, jobject thiz,
                                                                             jlong tensor_ptr) {
@@ -30,6 +31,10 @@ extern "C" JNIEXPORT jintArray JNICALL Java_com_mindspore_MSTensor_getShape(JNIE
   auto local_shape = ms_tensor_ptr->Shape();
   auto shape_size = local_shape.size();
   jintArray shape = env->NewIntArray(shape_size);
+  if (shape == nullptr) {
+    MS_LOG(ERROR) << "new intArray failed.";
+    return env->NewIntArray(0);
+  }
   auto *tmp = new jint[shape_size];
   for (size_t i = 0; i < shape_size; i++) {
     tmp[i] = static_cast<int>(local_shape.at(i));
@@ -57,10 +62,13 @@ extern "C" JNIEXPORT jbyteArray JNICALL Java_com_mindspore_MSTensor_getByteData(
     return env->NewByteArray(0);
   }
   auto *ms_tensor_ptr = static_cast<mindspore::MSTensor *>(pointer);
-  auto *local_data = static_cast<jbyte *>(ms_tensor_ptr->MutableData());
+  auto *local_data = static_cast<jbyte *>(const_cast<void *>(ms_tensor_ptr->Data().get()));
   if (local_data == nullptr) {
-    MS_LOG(DEBUG) << "Tensor has no data";
-    return env->NewByteArray(0);
+      MS_LOG(DEBUG) << "Tensor has no data";
+      if (ms_tensor_ptr->DataSize()) {
+          MS_LOG(WARNING) << "Tensor data size is not 0";
+      }
+      return env->NewByteArray(0);
   }
 
   auto local_size = ms_tensor_ptr->DataSize();
@@ -69,6 +77,10 @@ extern "C" JNIEXPORT jbyteArray JNICALL Java_com_mindspore_MSTensor_getByteData(
     return env->NewByteArray(0);
   }
   auto ret = env->NewByteArray(local_size);
+  if (ret == nullptr) {
+    MS_LOG(ERROR) << "malloc failed.";
+    return env->NewByteArray(0);
+  }
   env->SetByteArrayRegion(ret, 0, local_size, local_data);
   return ret;
 }
@@ -82,10 +94,12 @@ extern "C" JNIEXPORT jlongArray JNICALL Java_com_mindspore_MSTensor_getLongData(
   }
 
   auto *ms_tensor_ptr = static_cast<mindspore::MSTensor *>(pointer);
-
-  auto *local_data = static_cast<jlong *>(ms_tensor_ptr->MutableData());
+  auto *local_data = static_cast<jlong *>(const_cast<void *>(ms_tensor_ptr->Data().get()));
   if (local_data == nullptr) {
     MS_LOG(DEBUG) << "Tensor has no data";
+    if (ms_tensor_ptr->DataSize()) {
+        MS_LOG(WARNING) << "Tensor data size is not 0";
+    }
     return env->NewLongArray(0);
   }
 
@@ -99,6 +113,10 @@ extern "C" JNIEXPORT jlongArray JNICALL Java_com_mindspore_MSTensor_getLongData(
     return env->NewLongArray(0);
   }
   auto ret = env->NewLongArray(local_element_num);
+  if (ret == nullptr) {
+    MS_LOG(ERROR) << "malloc failed.";
+    return env->NewLongArray(0);
+  }
   env->SetLongArrayRegion(ret, 0, local_element_num, local_data);
   return ret;
 }
@@ -113,12 +131,14 @@ extern "C" JNIEXPORT jintArray JNICALL Java_com_mindspore_MSTensor_getIntData(JN
 
   auto *ms_tensor_ptr = static_cast<mindspore::MSTensor *>(pointer);
 
-  auto *local_data = static_cast<jint *>(ms_tensor_ptr->MutableData());
+  auto *local_data = static_cast<jint *>(const_cast<void *>(ms_tensor_ptr->Data().get()));
   if (local_data == nullptr) {
-    MS_LOG(DEBUG) << "Tensor has no data";
-    return env->NewIntArray(0);
+      MS_LOG(DEBUG) << "Tensor has no data";
+      if (ms_tensor_ptr->DataSize()) {
+          MS_LOG(WARNING) << "Tensor data size is not 0";
+      }
+      return env->NewIntArray(0);
   }
-
   if (ms_tensor_ptr->DataType() != mindspore::DataType::kNumberTypeInt32) {
     MS_LOG(ERROR) << "data type is error : " << static_cast<int>(ms_tensor_ptr->DataType());
     return env->NewIntArray(0);
@@ -129,6 +149,10 @@ extern "C" JNIEXPORT jintArray JNICALL Java_com_mindspore_MSTensor_getIntData(JN
     return env->NewIntArray(0);
   }
   auto ret = env->NewIntArray(local_element_num);
+  if (ret == nullptr) {
+    MS_LOG(ERROR) << "malloc failed.";
+    return env->NewIntArray(0);
+  }
   env->SetIntArrayRegion(ret, 0, local_element_num, local_data);
   return ret;
 }
@@ -142,11 +166,13 @@ extern "C" JNIEXPORT jfloatArray JNICALL Java_com_mindspore_MSTensor_getFloatDat
   }
 
   auto *ms_tensor_ptr = static_cast<mindspore::MSTensor *>(pointer);
-
-  auto *local_data = static_cast<jfloat *>(ms_tensor_ptr->MutableData());
+  auto *local_data = static_cast<jfloat *>(const_cast<void *>(ms_tensor_ptr->Data().get()));
   if (local_data == nullptr) {
-    MS_LOG(DEBUG) << "Tensor has no data";
-    return env->NewFloatArray(0);
+      MS_LOG(DEBUG) << "Tensor has no data";
+      if (ms_tensor_ptr->DataSize()) {
+          MS_LOG(WARNING) << "Tensor data size is not 0";
+      }
+      return env->NewFloatArray(0);
   }
 
   if (ms_tensor_ptr->DataType() != mindspore::DataType::kNumberTypeFloat32) {
@@ -159,7 +185,58 @@ extern "C" JNIEXPORT jfloatArray JNICALL Java_com_mindspore_MSTensor_getFloatDat
     return env->NewFloatArray(0);
   }
   auto ret = env->NewFloatArray(local_element_num);
+  if (ret == nullptr) {
+    MS_LOG(ERROR) << "malloc failed.";
+    return env->NewFloatArray(0);
+  }
   env->SetFloatArrayRegion(ret, 0, local_element_num, local_data);
+  return ret;
+}
+
+extern "C" JNIEXPORT jfloatArray JNICALL Java_com_mindspore_MSTensor_getFloat16Data(JNIEnv *env, jobject thiz,
+                                                                                    jlong tensor_ptr) {
+  auto *pointer = reinterpret_cast<void *>(tensor_ptr);
+  if (pointer == nullptr) {
+    MS_LOG(ERROR) << "Tensor pointer from java is nullptr";
+    return env->NewFloatArray(0);
+  }
+
+  auto *ms_tensor_ptr = static_cast<mindspore::MSTensor *>(pointer);
+
+  auto *local_data_cpp = reinterpret_cast<uint16_t *>(ms_tensor_ptr->MutableData());
+  if (local_data_cpp == nullptr) {
+    MS_LOG(DEBUG) << "Tensor has no data";
+    return env->NewFloatArray(0);
+  }
+
+  if (ms_tensor_ptr->DataType() != mindspore::DataType::kNumberTypeFloat16) {
+    MS_LOG(ERROR) << "data type is error : " << static_cast<int>(ms_tensor_ptr->DataType());
+    return env->NewFloatArray(0);
+  }
+
+  auto local_element_num = ms_tensor_ptr->ElementNum();
+  if (local_element_num <= 0) {
+    MS_LOG(ERROR) << "ElementsNum of tensor is negative: " << static_cast<int>(local_element_num);
+    return env->NewFloatArray(0);
+  }
+  auto ret = env->NewFloatArray(local_element_num);
+  if (ret == nullptr) {
+    MS_LOG(ERROR) << "malloc failed.";
+    return env->NewFloatArray(0);
+  }
+
+  float *local_data_float = new float[local_element_num];
+  if (local_data_float == nullptr) {
+    MS_LOG(ERROR) << "malloc failed.";
+    return env->NewFloatArray(0);
+  }
+  for (int i = 0; i < ms_tensor_ptr->ElementNum(); i++) {
+    uint16_t tmpInt = local_data_cpp[i];
+    local_data_float[i] = ShortToFloat32(tmpInt);
+  }
+
+  env->SetFloatArrayRegion(ret, 0, local_element_num, local_data_float);
+  delete[] local_data_float;
   return ret;
 }
 
@@ -177,8 +254,18 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_mindspore_MSTensor_setByteData(JN
     return static_cast<jboolean>(false);
   }
   jboolean is_copy = false;
+
+  if (data == nullptr) {
+    MS_LOG(ERROR) << "data from java is nullptr.";
+    return static_cast<jboolean>(false);
+  }
   auto *data_arr = env->GetByteArrayElements(data, &is_copy);
   auto *local_data = ms_tensor_ptr->MutableData();
+  if (data_arr == nullptr || local_data == nullptr) {
+    MS_LOG(ERROR) << "data_arr or local_data is nullptr.";
+    env->ReleaseByteArrayElements(data, data_arr, JNI_ABORT);
+    return static_cast<jboolean>(false);
+  }
   memcpy(local_data, data_arr, data_len);
   env->ReleaseByteArrayElements(data, data_arr, JNI_ABORT);
   return static_cast<jboolean>(true);
@@ -206,6 +293,10 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_mindspore_MSTensor_setFloatData(J
   auto *local_data = reinterpret_cast<jfloat *>(ms_tensor_ptr->MutableData());
   if (local_data == nullptr) {
     MS_LOG(ERROR) << "malloc memory failed.";
+    return static_cast<jboolean>(false);
+  }
+  if (data == nullptr) {
+    MS_LOG(ERROR) << "data from java is nullptr";
     return static_cast<jboolean>(false);
   }
   env->GetFloatArrayRegion(data, 0, static_cast<jsize>(data_len), local_data);
@@ -236,6 +327,10 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_mindspore_MSTensor_setIntData(JNI
     MS_LOG(ERROR) << "malloc memory failed.";
     return static_cast<jboolean>(false);
   }
+  if (data == nullptr) {
+    MS_LOG(ERROR) << "data from java is nullptr";
+    return static_cast<jboolean>(false);
+  }
   env->GetIntArrayRegion(data, 0, static_cast<jsize>(data_len), local_data);
   return static_cast<jboolean>(true);
 }
@@ -260,6 +355,10 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_mindspore_MSTensor_setLongData(JN
   auto *local_data = reinterpret_cast<jlong *>(ms_tensor_ptr->MutableData());
   if (local_data == nullptr) {
     MS_LOG(ERROR) << "malloc memory failed.";
+    return static_cast<jboolean>(false);
+  }
+  if (data == nullptr) {
+    MS_LOG(ERROR) << "data from java is nullptr";
     return static_cast<jboolean>(false);
   }
   env->GetLongArrayRegion(data, 0, static_cast<jsize>(data_len), local_data);
@@ -287,6 +386,10 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_mindspore_MSTensor_setByteBufferD
     return static_cast<jboolean>(false);
   }
   auto *local_data = ms_tensor_ptr->MutableData();
+  if (local_data == nullptr) {
+    MS_LOG(ERROR) << "get MutableData nullptr.";
+    return static_cast<jboolean>(false);
+  }
   memcpy(local_data, p_data, data_len);
   return static_cast<jboolean>(true);
 }
@@ -304,8 +407,8 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_mindspore_MSTensor_size(JNIEnv *env,
 extern "C" JNIEXPORT jboolean JNICALL Java_com_mindspore_MSTensor_setShape(JNIEnv *env, jobject thiz, jlong tensor_ptr,
                                                                            jintArray tensor_shape) {
   auto *pointer = reinterpret_cast<void *>(tensor_ptr);
-  if (pointer == nullptr) {
-    MS_LOG(ERROR) << "Tensor pointer from java is nullptr";
+  if (pointer == nullptr || tensor_shape == nullptr) {
+    MS_LOG(ERROR) << "input params from java is nullptr";
     return static_cast<jboolean>(false);
   }
 
@@ -313,6 +416,10 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_mindspore_MSTensor_setShape(JNIEn
   auto size = static_cast<int>(env->GetArrayLength(tensor_shape));
   std::vector<int64_t> c_shape(size);
   jint *shape_pointer = env->GetIntArrayElements(tensor_shape, nullptr);
+  if (shape_pointer == nullptr) {
+    MS_LOG(ERROR) << "shape_pointer is nullptr.";
+    return static_cast<jboolean>(false);
+  }
   for (int i = 0; i < size; i++) {
     c_shape[i] = static_cast<int64_t>(shape_pointer[i]);
   }
@@ -334,7 +441,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_mindspore_MSTensor_elementsNum(JNIEnv
 extern "C" JNIEXPORT void JNICALL Java_com_mindspore_MSTensor_free(JNIEnv *env, jobject thiz, jlong tensor_ptr) {
   auto *pointer = reinterpret_cast<void *>(tensor_ptr);
   if (pointer == nullptr) {
-    MS_LOG(ERROR) << "Tensor pointer from java is nullptr";
+    MS_LOG(INFO) << "Tensor pointer from java is nullptr";
     return;
   }
   auto *ms_tensor_ptr = static_cast<mindspore::MSTensor *>(pointer);
@@ -345,7 +452,7 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_mindspore_MSTensor_tensorName(JNIE
                                                                             jlong tensor_ptr) {
   auto *pointer = reinterpret_cast<void *>(tensor_ptr);
   if (pointer == nullptr) {
-    MS_LOG(ERROR) << "Tensor pointer from java is nullptr";
+    MS_LOG(INFO) << "Tensor pointer from java is nullptr";
     return nullptr;
   }
   auto *ms_tensor_ptr = static_cast<mindspore::MSTensor *>(pointer);
@@ -354,14 +461,19 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_mindspore_MSTensor_tensorName(JNIE
 }
 
 extern "C" JNIEXPORT jlong JNICALL Java_com_mindspore_MSTensor_createTensorByNative(JNIEnv *env, jobject thiz,
-                                                                                    jstring tensor_name, jint data_type,
-                                                                                    jintArray tensor_shape,
+jstring tensor_name, jint data_type,
+jintArray tensor_shape,
                                                                                     jobject buffer) {
+  // check inputs
+  if (buffer == nullptr || tensor_name == nullptr || tensor_shape == nullptr) {
+    MS_LOG(ERROR) << "input param from java is nullptr";
+    return 0;
+  }
   auto *p_data = reinterpret_cast<jbyte *>(env->GetDirectBufferAddress(buffer));
   jlong data_len = env->GetDirectBufferCapacity(buffer);
   if (p_data == nullptr) {
     MS_LOG(ERROR) << "GetDirectBufferAddress return null";
-    return false;
+    return 0;
   }
 
   auto size = static_cast<int>(env->GetArrayLength(tensor_shape));
@@ -370,11 +482,11 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_mindspore_MSTensor_createTensorByNat
   for (int i = 0; i < size; i++) {
     c_shape[i] = static_cast<int64_t>(shape_pointer[i]);
   }
-  env->ReleaseIntArrayElements(tensor_shape, shape_pointer, JNI_ABORT);
   const char *c_tensor_name = env->GetStringUTFChars(tensor_name, nullptr);
   std::string str_tensor_name(c_tensor_name, env->GetStringLength(tensor_name));
   auto tensor = mindspore::MSTensor::CreateTensor(str_tensor_name, static_cast<mindspore::DataType>(data_type), c_shape,
                                                   p_data, data_len);
+  env->ReleaseIntArrayElements(tensor_shape, shape_pointer, JNI_ABORT);
   env->ReleaseStringUTFChars(tensor_name, c_tensor_name);
   return jlong(tensor);
 }
@@ -487,4 +599,3 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_mindspore_MSTensor_createTensorByObj
   }
   return jlong(tensor);
 }
-

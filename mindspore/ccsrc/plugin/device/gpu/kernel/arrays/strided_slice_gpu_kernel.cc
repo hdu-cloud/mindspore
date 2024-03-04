@@ -17,6 +17,7 @@
 #include "plugin/device/gpu/kernel/arrays/strided_slice_gpu_kernel.h"
 #include <bitset>
 #include <algorithm>
+#include "kernel/kernel_get_value.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/complex.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/slice_impl.cuh"
 
@@ -28,10 +29,14 @@ using Complex = mindspore::utils::Complex<T>;
 template <typename T, typename S = int64_t>
 bool StridedSliceGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
                                             const std::vector<AddressPtr> &outputs, void *stream_ptr) {
+  if (IsEmptyInput(inputs[0]->size)) {
+    return true;
+  }
   T *input = GetDeviceAddress<T>(inputs, 0);
   T *output = GetDeviceAddress<T>(outputs, 0);
-  StridedSlice(input_shape_, begin_, strides_, output_shape_, input, output,
-               reinterpret_cast<cudaStream_t>(stream_ptr));
+  auto status = StridedSlice(input_shape_, begin_, strides_, output_shape_, input, output,
+                             reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -58,10 +63,6 @@ int StridedSliceGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const
 
   auto shape_signed = inputs[0]->GetShapeVector();
   input_shape_ = Convert2SizeTClipNeg(shape_signed);
-  null_output_ = CHECK_SHAPE_NULL(input_shape_, kernel_name_, "input");
-  if (null_output_) {
-    return true;
-  }
   if (input_shape_.size() > MAX_DIMS) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the dimension of input cannot be greater than " << MAX_DIMS
                       << ", but got " << input_shape_.size();

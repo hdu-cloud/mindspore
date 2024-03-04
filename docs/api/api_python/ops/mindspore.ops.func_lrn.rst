@@ -5,6 +5,9 @@ mindspore.ops.lrn
 
     局部响应归一化操作LRN(Local Response Normalization)。
 
+    .. warning::
+        lrn在Ascend平台已废弃，存在潜在精度问题。建议使用其他归一化方法，如 :class:`mindspore.ops.batch_norm` 代替LRN。
+
     .. math::
         b_{c} = a_{c}\left(k + \frac{\alpha}{n}
         \sum_{c'=\max(0, c-n/2)}^{\min(N-1,c+n/2)}a_{c'}^2\right)^{-\beta}
@@ -15,11 +18,11 @@ mindspore.ops.lrn
 
     参数：
         - **x** (Tensor) - 数据类型为float16或float32的四维Tensor。
-        - **depth_radius** (int) - 一维归一化窗口的半宽。默认值：5。
-        - **bias** (float) - 偏移量（通常为正以避免除零问题）。默认值：1.0。
-        - **alpha** (float) - 比例系数，通常为正。默认值：1.0。
-        - **beta** (float) - 指数。默认值：0.5。
-        - **norm_region** (str) - 指定归一化区域。可选值："ACROSS_CHANNELS"。默认值："ACROSS_CHANNELS"。
+        - **depth_radius** (int) - 一维归一化窗口的半宽。默认值： ``5`` 。
+        - **bias** (float) - 偏移量（通常为正以避免除零问题）。默认值： ``1.0`` 。
+        - **alpha** (float) - 比例系数，通常为正。默认值： ``1.0`` 。
+        - **beta** (float) - 指数。默认值： ``0.5`` 。
+        - **norm_region** (str) - 指定归一化区域。可选值： ``"ACROSS_CHANNELS"`` 。默认值： ``"ACROSS_CHANNELS"`` 。
 
     返回：
         Tensor，与 `x` 的shape和数据类型相同。

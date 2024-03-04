@@ -50,7 +50,7 @@ class MedianGradCpuKernelMod : public NativeCpuKernelMod, public MatchKernelHelp
   std::vector<KernelAttr> GetOpSupport() override { return OpSupport(); }
 
   template <typename T1, typename T2>
-  bool LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
+  bool LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
                     const std::vector<AddressPtr> &outputs);
 
  private:
@@ -66,6 +66,7 @@ class MedianGradCpuKernelMod : public NativeCpuKernelMod, public MatchKernelHelp
   size_t input2_dim_;
   size_t input0_num_elements_;
   size_t input1_num_elements_;
+  bool is_null_input_;
   template <typename T1, typename T2>
   bool GlobalMedianGradCompute(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &outputs) const;
   template <typename T1, typename T2>

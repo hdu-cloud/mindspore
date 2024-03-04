@@ -16,12 +16,31 @@
 
 #include "ops/csr_sparse_matrix_to_dense.h"
 
+#include <algorithm>
+#include <map>
+#include <memory>
+#include <set>
+
+#include "abstract/abstract_value.h"
 #include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/named.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
 #include "ops/op_utils.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "utils/log_adapter.h"
 #include "utils/shape_utils.h"
 
 namespace mindspore {
@@ -29,11 +48,11 @@ namespace ops {
 namespace {
 abstract::ShapePtr CSRSparseMatrixToDenseInferShape(const PrimitivePtr &primitive,
                                                     const std::vector<AbstractBasePtr> &input_args) {
-  const int64_t kMinusOne = -1;
   const int64_t kZero = 0;
   const int64_t kOne = 1;
-  const int64_t kDefalutRank = 2;
+  const int64_t kDefaultRank = 2;
   const int64_t kBatchRank = 3;
+  CheckInputShapeEmpty(primitive->name(), input_args);
   auto d_shape_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
   auto b_ptrs_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
   auto r_ptrs_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->BuildShape())[kShape];
@@ -50,29 +69,32 @@ abstract::ShapePtr CSRSparseMatrixToDenseInferShape(const PrimitivePtr &primitiv
                              << ", 'x_col_indices' rank " << c_ind_shape.size() << ", 'x_values' rank "
                              << values_shape.size() << ".";
   }
-  // Dynamic Rank
-  if (IsDynamicRank(d_shape_shape) || IsDynamicRank(b_ptrs_shape) || IsDynamicRank(r_ptrs_shape) ||
-      IsDynamicRank(c_ind_shape) || IsDynamicRank(values_shape)) {
+  // Dynamic
+  if (IsDynamic(d_shape_shape)) {
     ShapeVector dense_shape = {-2};
     return std::make_shared<abstract::Shape>(dense_shape);
   }
-  if (rank != kDefalutRank && rank != kBatchRank) {
+
+  bool rankExcept = rank != kDefaultRank && rank != kBatchRank;
+  if (rankExcept) {
     MS_EXCEPTION(ValueError) << "For '" << primitive->name() << "', dense form of the input "
                              << "should have rank 2 or 3, but got " << d_shape_shape[kZero] << ".";
   }
-  // Dynamic Shape
-  if (input_args[kInputIndex0]->isa<abstract::AbstractTensor>() &&
-      (input_args[kInputIndex0]->BuildValue()->isa<AnyValue>() ||
-       input_args[kInputIndex0]->BuildValue()->isa<None>())) {
+
+  bool shape_valid =
+    input_args[kInputIndex0]->isa<abstract::AbstractTensor>() &&
+    (input_args[kInputIndex0]->BuildValue()->isa<ValueAny>() || input_args[kInputIndex0]->BuildValue()->isa<None>());
+  if (shape_valid) {
     ShapeVector dense_shape;
     auto shape_size = d_shape_shape[kZero];
-    dense_shape.resize(static_cast<size_t>(shape_size), kMinusOne);
+    dense_shape.resize(static_cast<size_t>(shape_size), -1);
     return std::make_shared<abstract::Shape>(dense_shape);
   }
   // Static Shape
-  if (values_shape[kZero] != c_ind_shape[kZero]) {
-    MS_EXCEPTION(ValueError) << "For '" << primitive->name() << "', 'col_indices' and 'values' "
-                             << "should have the same length.";
+  bool static_shape = !IsDynamic(values_shape) && !IsDynamic(c_ind_shape) && values_shape[kZero] != c_ind_shape[kZero];
+  if (static_shape) {
+    (MS_EXCEPTION(ValueError) << "For '" + primitive->name() + "', 'col_indices' and 'values' " +
+                                   "should have the same length.");
   }
   auto shape_abs_ptr = input_args[kInputIndex0];
   MS_EXCEPTION_IF_NULL(shape_abs_ptr);
@@ -95,7 +117,9 @@ abstract::ShapePtr CSRSparseMatrixToDenseInferShape(const PrimitivePtr &primitiv
   if (rank == kBatchRank) {
     batch_size = d_shape_value_ptr_tensor[kZero], row_num = d_shape_value_ptr_tensor[kOne];
   }
-  if (b_ptrs_shape[kZero] != (batch_size + kOne) || r_ptrs_shape[kZero] != batch_size * (row_num + kOne)) {
+  bool rowExcept = !IsDynamic(b_ptrs_shape) && !IsDynamic(r_ptrs_shape) &&
+                   (b_ptrs_shape[kZero] != (batch_size + kOne) || r_ptrs_shape[kZero] != batch_size * (row_num + kOne));
+  if (rowExcept) {
     MS_EXCEPTION(ValueError) << "For '" << primitive->name() << "', batch size of the input is " << batch_size
                              << ", row numbers of the input is " << row_num << ", so shape of 'x_batch_pointers' "
                              << "should be (" << batch_size + kOne << "), but got (" << b_ptrs_shape[kZero] << ")"
@@ -130,8 +154,27 @@ AbstractBasePtr CSRSparseMatrixToDenseInfer(const abstract::AnalysisEnginePtr &,
   auto shapes = CSRSparseMatrixToDenseInferShape(primitive, input_args);
   return abstract::MakeAbstract(shapes, types);
 }
-REGISTER_HOST_DEPENDS(kNameCSRSparseMatrixToDense, {0});
-REGISTER_PRIMITIVE_EVAL_IMPL(CSRSparseMatrixToDense, prim::kPrimCSRSparseMatrixToDense, CSRSparseMatrixToDenseInfer,
-                             nullptr, true);
+
+// AG means auto generated
+class MIND_API AGCSRSparseMatrixToDenseInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return CSRSparseMatrixToDenseInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return CSRSparseMatrixToDenseInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return CSRSparseMatrixToDenseInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(CSRSparseMatrixToDense, prim::kPrimCSRSparseMatrixToDense,
+                                 AGCSRSparseMatrixToDenseInfer, false);
 }  // namespace ops
 }  // namespace mindspore

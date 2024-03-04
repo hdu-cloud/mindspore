@@ -8,9 +8,14 @@ mindspore.nn.LogSigmoid
     Log Sigmoid定义为：
 
     .. math::
-        \text{logsigmoid}(x_{i}) = log(\frac{1}{1 + \exp(-x_i)}),
+        \text{logsigmoid}(x_{i}) = \log(\frac{1}{1 + \exp(-x_i)}),
 
-    其中，:math:`x_i` 是输入Tensor的一个元素。
+    其中，:math:`x_{i}` 是输入Tensor的一个元素。
+
+    LogSigmoid函数图：
+
+    .. image:: images/LogSigmoid.png
+        :align: center
 
     输入：
         - **x** (Tensor) - Log Sigmoid的输入，数据类型为float16或float32。shape为 :math:`(N,*)` ，其中 :math:`*` 表示任意的附加维度。

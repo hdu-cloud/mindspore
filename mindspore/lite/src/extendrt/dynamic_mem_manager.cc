@@ -27,8 +27,8 @@ namespace {
 // Alloc memory aligned according to 64 bytes.
 static constexpr size_t kMemAlginSize = 64;
 
-// The default unit size (512M) of memory block used for dynamic extend.
-static constexpr size_t kAllocUnitSize = 512 * 1024 * 1024;
+// The default unit size (256M) of memory block used for dynamic extend.
+static constexpr size_t kAllocUnitSize = 256 * 1024 * 1024;
 // The minimum unit size (64M) of memory block used for dynamic extend.
 static constexpr size_t kMinimumAllocUnitSize = 64 * 1024 * 1024;
 // 16G
@@ -98,7 +98,7 @@ Block *MemOperator::GetBlock() {
     if (block_count_ >= blocks_.size()) {
       blocks_.resize(blocks_.size() + kBlockSize);
     }
-    blocks_[block_count_].index_ = block_count_;
+    blocks_[block_count_].index_ = static_cast<int64_t>(block_count_);
     block = &blocks_[block_count_++];
   }
   block->used_ = false;
@@ -115,7 +115,7 @@ void MemOperator::AddGarbageBlock(const int64_t index) {
 
 // malloc memory for data storage
 void *MemOperator::Malloc(size_t size) {
-  auto rounded_size = Rounded(size);
+  auto rounded_size = size == 0 ? 1 : Rounded(size);
   std::lock_guard<std::mutex> locker(mutex_);
   auto iter = free_blocks_.lower_bound(rounded_size);
   if (iter != free_blocks_.end()) {
@@ -281,7 +281,7 @@ int MemOperator::IncRefCount(void *ptr, int ref_count) {
   if (iter != datas_.end()) {
     auto index = iter->second;
     blocks_[index].ref_count_ += ref_count;
-    return blocks_[index].ref_count_;
+    return static_cast<int>(blocks_[index].ref_count_);
   }
   return kInvalidRefCount;
 }
@@ -292,7 +292,7 @@ int MemOperator::DecRefCount(void *ptr, int ref_count) {
   if (iter != datas_.end()) {
     auto index = iter->second;
     blocks_[index].ref_count_ -= ref_count;
-    return blocks_[index].ref_count_;
+    return static_cast<int>(blocks_[index].ref_count_);
   }
   return kInvalidRefCount;
 }
@@ -301,7 +301,7 @@ int MemOperator::RefCount(void *ptr) {
   std::lock_guard<std::mutex> locker(mutex_);
   auto iter = datas_.find(ptr);
   if (iter != datas_.end()) {
-    return blocks_[iter->second].ref_count_;
+    return static_cast<int>(blocks_[iter->second].ref_count_);
   }
   return kInvalidRefCount;
 }

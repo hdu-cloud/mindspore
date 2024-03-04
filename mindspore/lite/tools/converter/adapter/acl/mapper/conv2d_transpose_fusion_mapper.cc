@@ -23,6 +23,8 @@
 #include "tools/converter/adapter/acl/mapper/tbe_op_def.h"
 #include "nnacl/op_base.h"
 #include "ops/op_utils.h"
+#include "tools/optimizer/common/gllo_utils.h"
+#include "src/common/log_util.h"
 
 namespace mindspore {
 namespace lite {
@@ -44,7 +46,7 @@ STATUS Conv2dTransposeMapper::Mapper(const CNodePtr &cnode) {
   if (fmk_type == converter::kFmkTypeCaffe) {
     dst_prim = std::make_shared<acl::Deconvolution>();
   } else {
-    dst_prim = std::make_shared<acl::Conv2DTransposeD>();
+    dst_prim = std::make_shared<acl::Conv2DTransposeV2>();
   }
   MS_CHECK_TRUE_MSG(dst_prim != nullptr, RET_ERROR, "dst_prim is nullptr.");
   dst_prim->SetAttrs(src_prim->attrs());
@@ -52,6 +54,29 @@ STATUS Conv2dTransposeMapper::Mapper(const CNodePtr &cnode) {
     if (AdjustGeAttr(cnode, dst_prim) != RET_OK) {
       MS_LOG(ERROR) << "Adjust ge attr failed.";
       return RET_ERROR;
+    }
+
+    // Construction input input_size
+    auto func_graph = cnode->func_graph();
+    CHECK_NULL_RETURN(func_graph);
+    ParameterPtr value_param = nullptr;
+    std::vector<int32_t> values = {0, 0, 0, 0};
+    value_param = opt::BuildIntVecParameterNode(func_graph, values, cnode->fullname_with_scope() + "_values");
+    MS_CHECK_TRUE_MSG(value_param != nullptr, RET_ERROR, "Build parameter node failed.");
+
+    // Add input input_size
+    auto inputs = cnode->inputs();
+    inputs.insert(inputs.begin() + 1, value_param);
+
+    auto f_graph = cnode->func_graph();
+    MS_CHECK_TRUE_MSG(f_graph != nullptr, RET_ERROR, "func_graph is nullptr.");
+
+    auto manager = Manage(f_graph, true);
+    MS_CHECK_TRUE_MSG(manager != nullptr, RET_ERROR, "manager is nullptr.");
+
+    manager->AddEdge(cnode, value_param);
+    for (size_t i = 0; i < inputs.size(); i++) {
+      manager->SetEdge(cnode, i, inputs[i]);
     }
   }
   auto status = AttrAdjust(dst_prim, ops::kDilation);
@@ -65,8 +90,6 @@ STATUS Conv2dTransposeMapper::Mapper(const CNodePtr &cnode) {
 
 STATUS Conv2dTransposeMapper::AdjustGeAttr(const CNodePtr &cnode, const PrimitivePtr &dst_prim) {
   MS_CHECK_TRUE_MSG(dst_prim != nullptr, RET_ERROR, "dst_prim is nullptr.");
-  std::vector<int64_t> shape = {0, 0, 0, 0};
-  dst_prim->AddAttr("input_size", MakeValue(shape));
 
   if (AttrAdjust(dst_prim, ops::kStride) != lite::RET_OK) {
     MS_LOG(ERROR) << "Adjust strides failed.";
@@ -80,6 +103,10 @@ STATUS Conv2dTransposeMapper::AdjustGeAttr(const CNodePtr &cnode, const Primitiv
     MS_LOG(ERROR) << "Adjust output padding failed.";
     return RET_ERROR;
   }
+
+  // Add attr offset
+  int64_t offset = 0;
+  dst_prim->AddAttr(ops::kOffset, MakeValue(offset));
   return RET_OK;
 }
 

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "plugin/device/gpu/kernel/nn/sparse_apply_r_m_s_prop_gpu_kernel.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
 #include "kernel/common_utils.h"
 #include "mindspore/core/ops/sparse_apply_r_m_s_prop.h"
 
@@ -24,24 +25,6 @@ constexpr size_t kSparseApplyRMSPropInputsNum = 6;
 constexpr size_t kSparseApplyRMSPropOutputsNum = 3;
 constexpr size_t kIndicesDim = 1;
 using KernelRunFunc = SparseApplyRMSPropGpuKernelMod::KernelRunFunc;
-#define ADD_INPUT_ATTR(var_type, indices_type) \
-  .AddInputAttr(var_type)                      \
-    .AddInputAttr(var_type)                    \
-    .AddInputAttr(var_type)                    \
-    .AddInputAttr(var_type)                    \
-    .AddInputAttr(var_type)                    \
-    .AddInputAttr(indices_type)
-
-#define ADDOI_SAME_INDEX(ind1, ind2, ind3) .AddOutInRef(ind1, ind1).AddOutInRef(ind2, ind2).AddOutInRef(ind3, ind3)
-
-#define GPU_FUNLIST_KERNEL_REGISTER(var_type, lanch_type, indices_type, index_type) \
-  {                                                                                 \
-    KernelAttr() ADD_INPUT_ATTR(var_type, indices_type)                             \
-      .AddOutputAttr(var_type)                                                      \
-      .AddOutputAttr(var_type)                                                      \
-      .AddOutputAttr(var_type) ADDOI_SAME_INDEX(0, 1, 2),                           \
-      &SparseApplyRMSPropGpuKernelMod::LaunchKernel<lanch_type, index_type>         \
-  }
 }  // namespace
 
 bool SparseApplyRMSPropGpuKernelMod::ResizedInputSize(const std::vector<KernelTensorPtr> &inputs) {
@@ -58,7 +41,7 @@ bool SparseApplyRMSPropGpuKernelMod::ResizedInputSize(const std::vector<KernelTe
     MS_EXCEPTION(ValueError) << "For '" << kernel_name_
                              << "', the shape of 'ms' must be the same as the shape of 'var', "
                                 "but got the shape of 'ms': "
-                             << Vector2Str(ms_shape) << " and the shape of 'var': " << Vector2Str(var_shape_);
+                             << ms_shape << " and the shape of 'var': " << var_shape_;
     return false;
   }
   auto mom_shape = inputs.at(kIndex2)->GetShapeVector();
@@ -66,7 +49,7 @@ bool SparseApplyRMSPropGpuKernelMod::ResizedInputSize(const std::vector<KernelTe
     MS_EXCEPTION(ValueError) << "For '" << kernel_name_
                              << "', the shape of 'mom' must be the same as the shape of 'var', "
                                 "but got the shape of 'mom': "
-                             << Vector2Str(mom_shape) << " and the shape of 'var': " << Vector2Str(var_shape_);
+                             << mom_shape << " and the shape of 'var': " << var_shape_;
     return false;
   }
   // scalar
@@ -74,8 +57,7 @@ bool SparseApplyRMSPropGpuKernelMod::ResizedInputSize(const std::vector<KernelTe
   if (!lr_shape.empty()) {
     MS_EXCEPTION(ValueError)
       << "For '" << kernel_name_
-      << "', 'lr' must be a scalar; thus, its dimension must be 0, but got the dimension of 'lr': "
-      << Vector2Str(lr_shape);
+      << "', 'lr' must be a scalar; thus, its dimension must be 0, but got the dimension of 'lr': " << lr_shape;
     return false;
   }
   auto grad_shape = inputs.at(kIndex4)->GetShapeVector();
@@ -93,13 +75,13 @@ bool SparseApplyRMSPropGpuKernelMod::ResizedInputSize(const std::vector<KernelTe
     MS_EXCEPTION(ValueError) << "For '" << kernel_name_
                              << "', the shape of 'grad' must be the same as the shape of 'var', "
                                 "but got the shape of 'grad': "
-                             << Vector2Str(mom_shape) << " and the shape of 'var': " << Vector2Str(var_shape_);
+                             << mom_shape << " and the shape of 'var': " << var_shape_;
     return false;
   }
   auto indices_shape = inputs.at(kIndex5)->GetShapeVector();
   if (indices_shape.size() != kIndicesDim) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_
-                      << "', the 'indices' must be a 1-D Tensor, but got shape: " << Vector2Str(indices_shape);
+                      << "', the 'indices' must be a 1-D Tensor, but got shape: " << indices_shape;
     return false;
   }
   if (indices_shape[kDim0] != var_shape_[kDim0]) {
@@ -108,7 +90,6 @@ bool SparseApplyRMSPropGpuKernelMod::ResizedInputSize(const std::vector<KernelTe
                              << var_shape_[kDim0] << " and 'indices_shape[0]': " << indices_shape[kDim0];
     return false;
   }
-  // indices_size_ = indices_shape[kDim0];
   return true;
 }
 bool SparseApplyRMSPropGpuKernelMod::ResizedOutputSize(const std::vector<KernelTensorPtr> &outputs) {
@@ -117,8 +98,7 @@ bool SparseApplyRMSPropGpuKernelMod::ResizedOutputSize(const std::vector<KernelT
     MS_EXCEPTION(ValueError) << "For '" << kernel_name_
                              << "', the shape of output 'var' must be the same as the shape of input 'var', but got "
                                 "the shape of output 'var': "
-                             << Vector2Str(output_var_shape)
-                             << ", and the shape of input 'var': " << Vector2Str(var_shape_);
+                             << output_var_shape << ", and the shape of input 'var': " << var_shape_;
     return false;
   }
   auto output_ms_shape = outputs[kIndex1]->GetShapeVector();
@@ -126,8 +106,7 @@ bool SparseApplyRMSPropGpuKernelMod::ResizedOutputSize(const std::vector<KernelT
     MS_EXCEPTION(ValueError) << "For '" << kernel_name_
                              << "', the shape of output 'ms' must be the same as the shape of input 'ms', "
                                 "but got the shape of output 'ms': "
-                             << Vector2Str(output_ms_shape)
-                             << " and the shape of input 'ms': " << Vector2Str(var_shape_);
+                             << output_ms_shape << " and the shape of input 'ms': " << var_shape_;
     return false;
   }
   auto output_mom_shape = outputs[kIndex2]->GetShapeVector();
@@ -135,8 +114,7 @@ bool SparseApplyRMSPropGpuKernelMod::ResizedOutputSize(const std::vector<KernelT
     MS_EXCEPTION(ValueError) << "For '" << kernel_name_
                              << "', the shape of output 'mom' must be the same as the shape of output 'mom', "
                                 "but got the shape of output 'mom': "
-                             << Vector2Str(output_mom_shape)
-                             << " and the shape of output 'mom': " << Vector2Str(var_shape_);
+                             << output_mom_shape << " and the shape of output 'mom': " << var_shape_;
     return false;
   }
   return true;
@@ -174,7 +152,6 @@ bool SparseApplyRMSPropGpuKernelMod::Init(const BaseOperatorPtr &base_operator,
                              << epsilon_;
     return false;
   }
-  // unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
   return MatchKernelFunc(base_operator, inputs, outputs);
 }
 
@@ -218,17 +195,71 @@ bool SparseApplyRMSPropGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> 
   const float epsilon = this->epsilon_;
   size_t var_first_dim_size = this->var_first_dim_size_;
   size_t var_outer_dim_size = this->var_outer_dim_size_;
-  CalSparseApplyRMSProp(var_first_dim_size * var_outer_dim_size, var_outer_dim_size, rho, momentum, epsilon, lr, grad,
-                        indices, var, ms, mom, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status =
+    CalSparseApplyRMSProp(var_first_dim_size * var_outer_dim_size, var_outer_dim_size, rho, momentum, epsilon, lr, grad,
+                          indices, var, ms, mom, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
 const std::vector<std::pair<KernelAttr, KernelRunFunc>> &SparseApplyRMSPropGpuKernelMod::GetFuncList() const {
   static const std::vector<std::pair<KernelAttr, KernelRunFunc>> func_list = {
-    GPU_FUNLIST_KERNEL_REGISTER(kNumberTypeFloat32, float, kNumberTypeInt32, int),
-    GPU_FUNLIST_KERNEL_REGISTER(kNumberTypeFloat32, float, kNumberTypeInt64, int64_t),
-    GPU_FUNLIST_KERNEL_REGISTER(kNumberTypeFloat16, half, kNumberTypeInt32, int),
-    GPU_FUNLIST_KERNEL_REGISTER(kNumberTypeFloat16, half, kNumberTypeInt64, int64_t)};
+    {KernelAttr()
+       .AddInputAttr(kNumberTypeFloat32)
+       .AddInputAttr(kNumberTypeFloat32)
+       .AddInputAttr(kNumberTypeFloat32)
+       .AddInputAttr(kNumberTypeFloat32)
+       .AddInputAttr(kNumberTypeFloat32)
+       .AddInputAttr(kNumberTypeInt32)
+       .AddOutputAttr(kNumberTypeFloat32)
+       .AddOutputAttr(kNumberTypeFloat32)
+       .AddOutputAttr(kNumberTypeFloat32)
+       .AddOutInRef(0, 0)
+       .AddOutInRef(1, 1)
+       .AddOutInRef(2, 2),
+     &SparseApplyRMSPropGpuKernelMod::LaunchKernel<float, int>},
+    {KernelAttr()
+       .AddInputAttr(kNumberTypeFloat32)
+       .AddInputAttr(kNumberTypeFloat32)
+       .AddInputAttr(kNumberTypeFloat32)
+       .AddInputAttr(kNumberTypeFloat32)
+       .AddInputAttr(kNumberTypeFloat32)
+       .AddInputAttr(kNumberTypeInt64)
+       .AddOutputAttr(kNumberTypeFloat32)
+       .AddOutputAttr(kNumberTypeFloat32)
+       .AddOutputAttr(kNumberTypeFloat32)
+       .AddOutInRef(0, 0)
+       .AddOutInRef(1, 1)
+       .AddOutInRef(2, 2),
+     &SparseApplyRMSPropGpuKernelMod::LaunchKernel<float, int64_t>},
+    {KernelAttr()
+       .AddInputAttr(kNumberTypeFloat16)
+       .AddInputAttr(kNumberTypeFloat16)
+       .AddInputAttr(kNumberTypeFloat16)
+       .AddInputAttr(kNumberTypeFloat16)
+       .AddInputAttr(kNumberTypeFloat16)
+       .AddInputAttr(kNumberTypeInt32)
+       .AddOutputAttr(kNumberTypeFloat16)
+       .AddOutputAttr(kNumberTypeFloat16)
+       .AddOutputAttr(kNumberTypeFloat16)
+       .AddOutInRef(0, 0)
+       .AddOutInRef(1, 1)
+       .AddOutInRef(2, 2),
+     &SparseApplyRMSPropGpuKernelMod::LaunchKernel<half, int>},
+    {KernelAttr()
+       .AddInputAttr(kNumberTypeFloat16)
+       .AddInputAttr(kNumberTypeFloat16)
+       .AddInputAttr(kNumberTypeFloat16)
+       .AddInputAttr(kNumberTypeFloat16)
+       .AddInputAttr(kNumberTypeFloat16)
+       .AddInputAttr(kNumberTypeInt64)
+       .AddOutputAttr(kNumberTypeFloat16)
+       .AddOutputAttr(kNumberTypeFloat16)
+       .AddOutputAttr(kNumberTypeFloat16)
+       .AddOutInRef(0, 0)
+       .AddOutInRef(1, 1)
+       .AddOutInRef(2, 2),
+     &SparseApplyRMSPropGpuKernelMod::LaunchKernel<half, int64_t>}};
   return func_list;
 }
 

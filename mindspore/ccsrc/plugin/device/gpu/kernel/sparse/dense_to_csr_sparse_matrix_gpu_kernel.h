@@ -19,14 +19,14 @@
 
 #include <cuda_runtime_api.h>
 #include <cusparse.h>
-#include <vector>
 #include <map>
 #include <utility>
+#include <vector>
 #include "include/common/utils/anfalgo.h"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/dense_to_csr_sparse_matrix_gpu_kernel.cuh"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/gathernd.cuh"
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
 #include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
-#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/gathernd.cuh"
-#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/dense_to_csr_sparse_matrix_gpu_kernel.cuh"
 
 namespace mindspore {
 namespace kernel {
@@ -38,7 +38,6 @@ class DenseToCSRSparseMatrixKernelMod : public NativeGpuKernelMod {
   bool Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
             const std::vector<KernelTensorPtr> &outputs) override {
     auto kernel_name = base_operator->GetPrim()->name();
-    memcpy_flag_ = false;
     auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
     auto [is_match, index] = MatchKernelAttr(kernel_attr, GetOpSupport());
     if (!is_match) {
@@ -72,7 +71,6 @@ class DenseToCSRSparseMatrixKernelMod : public NativeGpuKernelMod {
   size_t dim_indices_last_;
 
   bool is_batch_csr_{false};
-  bool memcpy_flag_{false};
   int nnz_;
   int m_;
   int rank_;
@@ -88,14 +86,14 @@ class DenseToCSRSparseMatrixKernelMod : public NativeGpuKernelMod {
     for (size_t i = dim_indices_last; i < input_shapes_.size(); i++) {
       dim_after_indices *= input_shapes_[i];
     }
-    dims_.emplace_back(dim_of_indices);
-    dims_.emplace_back(dim_after_indices);
-    dims_.emplace_back(dim_indices_last);
+    dims_ = {dim_of_indices, dim_after_indices, dim_indices_last};
   }
 
   template <typename T, typename S>
   bool LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
                     const std::vector<AddressPtr> &outputs, void *stream_ptr);
+  template <typename S>
+  void ProcessBeforeLaunch(S *dev_nd_strides, S *dev_nd_indices, S *dense_shape_addr, void *stream_ptr);
   using LaunchFunc = std::function<bool(DenseToCSRSparseMatrixKernelMod *, const std::vector<AddressPtr> &,
                                         const std::vector<AddressPtr> &, const std::vector<AddressPtr> &, void *)>;
   static std::vector<std::pair<KernelAttr, LaunchFunc>> func_list_;

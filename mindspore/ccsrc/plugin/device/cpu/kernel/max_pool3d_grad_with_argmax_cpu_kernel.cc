@@ -89,7 +89,9 @@ void MaxPool3DGradWithArgmaxCpuKernelMod::MaxPool3DGradWithArgmaxSingleCompute(
   INDICES_T *argmax = input_argmax;
 
   /* calculate max points */
-  size_t ti, i, j;
+  size_t ti;
+  size_t i;
+  size_t j;
   for (ti = 0; ti < oD; ti++) {
     for (i = 0; i < oH; i++) {
       for (j = 0; j < oW; j++) {
@@ -141,17 +143,6 @@ void MaxPool3DGradWithArgmaxCpuKernelMod::CheckPadsValue(size_t k_width, size_t 
       << ", pads should be smaller than or equal to half of kernel size, but the depth, height, width of pads is ["
       << p_depth << ", " << p_height << ", " << p_width << "], the depth, height, width of kernel is [" << k_depth
       << ", " << k_height << ", " << k_width << "].";
-  }
-}
-
-void MaxPool3DGradWithArgmaxCpuKernelMod::CheckDilationValue(size_t d_width, size_t in_width, size_t d_height,
-                                                             size_t in_height, size_t d_depth, size_t in_depth) const {
-  if (d_width >= in_width && d_height >= in_height && d_depth >= in_depth) {
-    MS_EXCEPTION(ValueError)
-      << "for " << kernel_name_
-      << ", dilation should be smaller than or equal to input, but the depth, height, width of dilation is [" << d_depth
-      << ", " << d_height << ", " << d_width << "], while the depth,height,width of input is [" << in_depth << ", "
-      << in_height << ", " << in_width << "].";
   }
 }
 
@@ -233,9 +224,8 @@ bool MaxPool3DGradWithArgmaxCpuKernelMod::LaunchKernel(const std::vector<Address
   const size_t d_width = static_cast<size_t>(dilation_temp_list[kTwo]);
   const size_t d_height = static_cast<size_t>(dilation_temp_list[kOne]);
   const size_t d_depth = static_cast<size_t>(dilation_temp_list[kZero]);
-  const size_t length = batch * out_stride;
+  const size_t length = batch * in_stride;
   (void)CheckPadsValue(k_width, p_width, k_height, p_height, k_depth, p_depth);
-  (void)CheckDilationValue(d_width, in_width, d_height, in_height, d_depth, in_depth);
   (void)CheckIfLessOne(strides_temp_list);
   (void)CheckIfLessOne(dilation_temp_list);
   (void)CheckIfLessOne(ksize_temp_list);

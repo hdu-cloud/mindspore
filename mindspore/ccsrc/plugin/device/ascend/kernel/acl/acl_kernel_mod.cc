@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,118 +14,200 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/kernel/acl/acl_kernel_mod.h"
-
+#include <algorithm>
 #include <vector>
 #include <map>
-#include "runtime/rt.h"
+#include <set>
+#include <functional>
 #include "ir/tensor.h"
-#include "include/common/utils/anfalgo.h"
-#include "kernel/common_utils.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "runtime/stream.h"
 #include "runtime/device/kernel_runtime.h"
+#include "plugin/device/ascend/optimizer/ascend_helper.h"
+#include "transform/acl_ir/acl_helper.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "pybind_api/gil_scoped_long_running.h"
 
 namespace mindspore {
 namespace kernel {
 namespace {
-const char kNAttrName[] = "N";
-}
-int AclKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
-                         const std::vector<KernelTensorPtr> &outputs,
-                         const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost) {
-  auto node = anf_node_.lock();
-  MS_EXCEPTION_IF_NULL(node);
-  auto cnode = node->cast<CNodePtr>();
-  MS_EXCEPTION_IF_NULL(cnode);
-
-  size_t input_num = common::AnfAlgo::GetInputTensorNum(cnode);
-  std::vector<size_t> useless_input_lists;
-  // Update input size list
-  for (size_t i = 0; i < input_num; ++i) {
-    auto index = AnfAlgo::GetInputGraphIdxByKernelIdx(node, i);
-    if (index >= input_size_list_.size()) {
-      MS_LOG(EXCEPTION) << "Error real index:" << index;
-    }
-    auto [input, idx] = common::AnfAlgo::GetPrevNodeOutput(node, index);
-    auto type_id = AnfAlgo::GetOutputDeviceDataType(input, idx);
-    auto type_size = GetTypeByte(TypeIdToType(type_id));
-    auto shape = AnfAlgo::GetOutputDeviceShape(input, idx);
-    if (IsDynamic(shape)) {
-      MS_LOG(ERROR) << "Please check infer op shape before resize, error input index is:" << i;
-      return 1;
-    }
-    input_size_list_[i] = type_size * SizeOf(shape);
-    if (input_size_list_[i] == 0) {
-      if (type_size == 0) {
-        input_size_list_[i] = SIZE_MAX;
-        MS_LOG(INFO) << "Useless optional input" << i << " with node " << node->DebugString();
-      } else {
-        MS_LOG(INFO) << "Useless dynamic zero input" << i << " with node " << node->DebugString();
-      }
-      (void)useless_input_lists.emplace_back(i);
-    }
-  }
-
-  auto acl_input_size = GeOpConvertor::GetAclInputSize(cnode);
-  if (acl_input_size > input_num) {
-    for (size_t i = input_num; i < acl_input_size; i++) {
-      input_size_list_[i] = SIZE_MAX;
-    }
-  }
-  common::AnfAlgo::SetNodeAttr(kAttrUselessInput, MakeValue(useless_input_lists), node);
-
-  // Update output size list
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(cnode);
-  AscendKernelMod::UpdateOutputSizeList();
-  auto acl_output_size = GeOpConvertor::GetAclOutputSize(cnode);
-  if (acl_output_size > output_num) {
-    for (size_t i = output_num; i < acl_output_size; i++) {
-      output_size_list_[i] = SIZE_MAX;
-    }
-  }
-
-  if (!AclUtils::UpdateTensorDesc(node, &input_desc_list_, &output_desc_list_)) {
-    MS_LOG(EXCEPTION) << "Fail to update op desc: " << node->fullname_with_scope();
-  }
-  return 0;
+std::string MsTensorDescString(const TensorParams &param) {
+  std::stringstream ss;
+  ss << "[TensorDesc] ";
+  ss << "DataType = " << TypeIdToString(param.data_type);
+  ss << ", Origin Format = " << param.ori_format;
+  ss << ", Origin Shape = " << VectorToString(param.ori_shape);
+  ss << ", Device Format = " << param.dev_format;
+  ss << ", Device Shape = " << VectorToString(param.dev_shape);
+  return ss.str();
 }
 
-bool AclKernelMod::SkipUnRunNode(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &outputs,
-                                 void *stream_ptr, const size_t input_size) {
+tensor::TensorPtr GetDependValueTensor(const AddressPtr &address, const TypeId type, const ShapeVector &shape,
+                                       void *stream_ptr) {
   MS_EXCEPTION_IF_NULL(stream_ptr);
-  for (auto &[attr_name, value] : attr_list_) {
-    // Special process of dynamic input number.
-    if (value == nullptr) {
-      continue;
+  if (address != nullptr && address->addr != nullptr) {
+    auto tensor = std::make_shared<tensor::Tensor>(type, shape);
+    MS_EXCEPTION_IF_NULL(tensor);
+    auto status = aclrtMemcpyAsync(tensor->data_c(), tensor->Size(), address->addr, address->size,
+                                   ACL_MEMCPY_DEVICE_TO_HOST, stream_ptr);
+    if (status != ACL_ERROR_NONE) {
+      MS_LOG(EXCEPTION) << "aclrtMemcpyAsync depend tensor failed! tensor size is " << tensor->Size()
+                        << " and address size is " << address->size;
     }
-    if (attr_name == kNAttrName && value->isa<Int64Imm>()) {
-      auto long_input_size = SizeToLong(input_size);
-      if (GetValue<int64_t>(value) != long_input_size) {
-        value = MakeValue(long_input_size);
-      }
-      if (input_size <= 1 && op_type_ == kConcatDOpName) {
-        // cppcheck-suppress unreadVariable
-        auto lock = device::KernelRuntime::LockRuntime(stream_ptr);
-        auto iter = std::find_if(input_size_list_.begin(), input_size_list_.end(),
-                                 [](const size_t size) { return size != 0 && size != SIZE_MAX; });
-        if (iter == input_size_list_.end()) {
-          return true;
-        }
-        size_t index = iter - input_size_list_.begin();
-        if (index >= inputs.size()) {
-          return true;
-        }
-        auto status = aclrtMemcpyAsync(outputs[0]->addr, outputs[0]->size, inputs[index]->addr, inputs[index]->size,
-                                       ACL_MEMCPY_DEVICE_TO_DEVICE, stream_ptr);
-        if (status != ACL_SUCCESS) {
-          MS_LOG(EXCEPTION) << "AclrtMemcpyAsync failed for " << anf_node_.lock()->fullname_with_scope();
-        }
-
-        MS_LOG(INFO) << "Execute node:" << anf_node_.lock()->fullname_with_scope() << " success.";
-        return true;
-      }
+    auto sync_status = aclrtSynchronizeStreamWithTimeout(stream_ptr, -1);
+    if (sync_status != ACL_ERROR_NONE) {
+      MS_LOG(EXCEPTION) << "aclrtSynchronizeStreamWithTimeout depend tensor failed! tensor size is " << tensor->Size()
+                        << " and address size is " << address->size;
     }
+    return tensor;
   }
-  return false;
+  return nullptr;
+}
+}  // namespace
+
+void AclKernelMod::PackageInput(const size_t idx, const std::string &format, ShapeVector *shape) {
+  MS_EXCEPTION_IF_NULL(shape);
+  auto &params = input_params_[idx];
+  if (!format.empty()) {
+    params.ori_format = format;
+  } else {
+    params.ori_format = transform::AclHelper::ConvertOriginShapeAndFormat(kernel_name_, idx, params.dev_format, shape);
+  }
+
+  params.ori_shape = *shape;
+  if (!params.is_default) {
+    auto groups = transform::AclHelper::GetFracZGroupFromAttr(primitive_ptr_);
+    params.dev_shape = trans::TransShapeToDevice(*shape, params.dev_format, params.data_type, groups);
+  } else {
+    params.dev_shape = *shape;
+  }
+}
+
+void AclKernelMod::PackageOutput(const size_t idx, const ShapeVector &shape) {
+  auto &params = output_params_[idx];
+  size_t type_size = params.type_size;
+  size_t tensor_size = 0;
+  params.ori_format = shape.size() == kDim4 ? kOpFormat_NCHW : kOpFormat_DEFAULT;
+  ShapeVector dev_shape;
+  if (!params.is_default) {
+    auto groups = transform::AclHelper::GetFracZGroupFromAttr(primitive_ptr_);
+    dev_shape = trans::TransShapeToDevice(shape, params.dev_format, params.data_type, groups);
+  } else {
+    dev_shape = shape;
+  }
+  tensor_size = dev_shape.empty()
+                  ? type_size
+                  : std::accumulate(dev_shape.begin(), dev_shape.end(), type_size, std::multiplies<size_t>());
+  tensor_size = std::max(tensor_size, type_size);
+  params.ori_shape = shape;
+  params.dev_shape = dev_shape;
+  output_size_list_[idx] = tensor_size;
+}
+
+void AclKernelMod::SetPrimitive(const PrimitivePtr &primitive) {
+  MS_EXCEPTION_IF_NULL(primitive);
+  primitive_ptr_ = primitive;
+  kernel_name_ = primitive_ptr_->name();
+}
+
+void AclKernelMod::GetInputInfo(const std::vector<KernelTensorPtr> &inputs) {
+  if (input_params_.size() != inputs.size()) {
+    MS_LOG(INTERNAL_EXCEPTION) << "Acl kernel's input size is not equal with acl param's size:" << input_params_.size()
+                               << " - input's size:" << inputs.size();
+  }
+
+  std::string format = transform::AclHelper::GetFormatFromAttr(primitive_ptr_);
+
+  for (size_t i = 0; i < input_params_.size(); i++) {
+    auto &input = inputs[i];
+    MS_EXCEPTION_IF_NULL(input);
+    auto shape = input->GetShapeVector();
+    if (!IsValidShape(shape)) {
+      // early stop if any input shape contains -1/-2, which means input shape is dynamic
+      MS_LOG(INTERNAL_EXCEPTION) << "In Resize function, input shape must be valid!";
+    }
+    PackageInput(i, format, &shape);
+  }
+}
+
+int AclKernelMod::GetOutputInfo(const std::vector<KernelTensorPtr> &outputs) {
+  int ret = KRET_OK;
+  if (output_params_.size() != outputs.size()) {
+    MS_LOG(INTERNAL_EXCEPTION) << "Acl kernel's output size is not equal with output param's size:"
+                               << output_params_.size() << " - output's size:" << outputs.size();
+  }
+
+  for (size_t i = 0; i < output_params_.size(); i++) {
+    auto &output = outputs[i];
+    MS_EXCEPTION_IF_NULL(output);
+    auto shape = output->GetShapeVector();
+    if (!IsValidShape(shape)) {
+      shape = output->GetMaxShape();
+      if (shape.empty()) {
+        MS_LOG(EXCEPTION) << "For " << kernel_name_ << ", the max_shape should not be empty when input shape is known.";
+      }
+      ret = KRET_UNKNOWN_OUT_SHAPE;
+    }
+    PackageOutput(i, shape);
+  }
+  return ret;
+}
+
+void AclKernelMod::CreateAclConverter() {
+  MS_EXCEPTION_IF_NULL(converter_);
+  converter_->Reset();
+  converter_->ConvertToAclOpType(kernel_name_);
+  converter_->ResizeAclOpInputs(primitive_ptr_);
+  converter_->ConvertAttrToAclInput(primitive_ptr_->attrs(), kernel_name_, &input_to_host_array_);
+  if (!input_to_host_array_.empty()) {
+    converter_->ConvertInputToAclAttr(input_to_host_array_, kernel_name_);
+  }
+  if (transform::AclHelper::IsPrintDebugString()) {
+    ms_attr_str_.clear();
+    converter_->ConvertToAclAttr(primitive_ptr_->attrs(), kernel_name_, &ms_attr_str_);
+  } else {
+    converter_->ConvertToAclAttr(primitive_ptr_->attrs(), kernel_name_, nullptr);
+  }
+  converter_->ProcessRunnerSpecialInfo(kernel_name_, output_params_);
+}
+
+int AclKernelMod::Resize(const std::vector<KernelTensorPtr> &inputs, const std::vector<KernelTensorPtr> &outputs,
+                         const std::map<uint32_t, tensor::TensorPtr> &inputs_on_host) {
+  int ret = KRET_OK;
+  primitive_ptr_ = op_->GetPrim();
+  MS_ERROR_IF_NULL(primitive_ptr_);
+  kernel_name_ = primitive_ptr_->name();
+
+  this->inputs_ = inputs;
+  this->outputs_ = outputs;
+
+  GetInputInfo(inputs);
+  ret = GetOutputInfo(outputs);
+  input_to_host_array_.build(inputs_on_host);
+  CreateAclConverter();
+
+  return ret;
+}
+
+std::string AclKernelMod::DebugString() const {
+  if (!transform::AclHelper::IsPrintDebugString()) {
+    return "";
+  }
+  std::stringstream ss;
+  ss << "[MsLaunchInfo]OpType:" << kernel_name_ << std::endl;
+  for (size_t i = 0; i < input_params_.size(); ++i) {
+    auto param = input_params_[i];
+    ss << "InputDesc[" << i << "]:";
+    ss << MsTensorDescString(param) << std::endl;
+  }
+  for (size_t i = 0; i < ms_attr_str_.size(); ++i) {
+    ss << "Attr[" << i << "] " << ms_attr_str_[i] << std::endl;
+  }
+  for (size_t i = 0; i < output_params_.size(); ++i) {
+    auto param = output_params_[i];
+    ss << "OutputDesc[" << i << "]:";
+    ss << MsTensorDescString(param) << std::endl;
+  }
+  return ss.str();
 }
 
 bool AclKernelMod::Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
@@ -134,57 +216,106 @@ bool AclKernelMod::Launch(const std::vector<AddressPtr> &inputs, const std::vect
     MS_LOG(ERROR) << "stream_ptr should not be nullptr.";
     return false;
   }
-  auto op_desc_ptr = std::make_unique<AclOpDesc>(op_type_);
-  MS_EXCEPTION_IF_NULL(op_desc_ptr);
-  op_desc_ptr->AddTensorDesc(input_desc_list_, output_desc_list_);
-  op_desc_ptr->AddDataBuf(inputs, input_size_list_, outputs, output_size_list_);
-  if (SkipUnRunNode(inputs, outputs, stream_ptr, op_desc_ptr->input_tensor_desc().size())) {
-    return true;
+
+  if (need_convert_host_tensor_) {
+    auto anf_node = anf_node_.lock();
+    MS_EXCEPTION_IF_NULL(anf_node);
+    auto cnode = anf_node->cast<CNodePtr>();
+    MS_EXCEPTION_IF_NULL(cnode);
+    std::set<int64_t> depend_list = abstract::GetValueDependArgIndices(cnode);
+    input_to_host_array_.clear();
+    for (size_t i = 0; i < inputs.size(); ++i) {
+      if (depend_list.find(i) != depend_list.end()) {
+        auto input_param = input_params_.at(i);
+        auto depended_value = GetDependValueTensor(inputs[i], input_param.data_type, input_param.ori_shape, stream_ptr);
+        if (depended_value == nullptr) {
+          continue;
+        }
+        input_to_host_array_.emplace(i, depended_value);
+      }
+    }
+    need_convert_host_tensor_ = false;
+    // need recreate converter when first launch in static shape.
+    CreateAclConverter();
   }
-  for (auto &[attr_name, value] : attr_list_) {
-    op_desc_ptr->ProcessAclAttrs(attr_name, value, SET_ACL_ATTR);
-  }
-  op_desc_ptr->AddConstInputTensor(anf_node_.lock());
+
+  MS_EXCEPTION_IF_NULL(converter_);
+  converter_->ConvertToAclInput(primitive_ptr_, input_to_host_array_, inputs, input_params_);
+  converter_->ConvertToAclOutput(kernel_name_, outputs, output_params_);
+  converter_->SetRunnerSpecialInfo();
   // cppcheck-suppress unreadVariable
   auto lock = device::KernelRuntime::LockRuntime(stream_ptr);
-  // Current enable binary->fuzz->stable mode.
-  auto set_compile_flag = ACL_SUCCESS;
-  if (is_dynamic_) {
-    set_compile_flag = aclopSetCompileFlag(ACL_OP_COMPILE_FUZZ);
-  } else {
-    set_compile_flag = aclopSetCompileFlag(ACL_OP_COMPILE_DEFAULT);
-  }
-  if (set_compile_flag != ACL_SUCCESS) {
-    MS_LOG(ERROR) << "Acl set compile mode failed! op_name is " << op_type_ << " and error flag is "
-                  << set_compile_flag;
+  MS_LOG(DEBUG) << this->DebugString();
+  MS_LOG(DEBUG) << converter_->DebugString();
+  // release gil before run
+  GilReleaseWithCheck release_gil;
+  try {
+    converter_->Run(stream_ptr);
+  } catch (const std::exception &e) {
+    MS_LOG(ERROR) << "Kernel launch failed, msg: " << e.what();
     return false;
   }
-
-  MS_LOG(INFO) << "Start aclopCompileAndExecute of node: " << op_type_;
-  bool ret = aclopCompileAndExecute(const_cast<char *>(op_type_.c_str()), op_desc_ptr->input_tensor_desc().size(),
-                                    op_desc_ptr->input_tensor_desc().data(), op_desc_ptr->input_tensor_data().data(),
-                                    op_desc_ptr->output_tensor_desc().size(), op_desc_ptr->output_tensor_desc().data(),
-                                    op_desc_ptr->output_tensor_data().data(), op_desc_ptr->acl_attr(), ACL_ENGINE_SYS,
-                                    ACL_COMPILE_SYS, nullptr, stream_ptr);
-  if (ret != ACL_SUCCESS) {
-    MS_LOG(ERROR) << "Acl compile and execute failed! op_name is " << op_type_ << " and op info is "
-                  << anf_node_.lock()->DebugString();
-    return false;
-  }
-
-  if (rtStreamSynchronize(stream_ptr) != RT_ERROR_NONE) {
-    MS_LOG(EXCEPTION) << "aclopCompileAndExecute sync failed";
-  }
-
-  MS_LOG(INFO) << "Success launch of node: " << op_type_;
   return true;
+}
+
+void AclKernelMod::SetDeviceInfo(const std::vector<std::string> &input_device_formats,
+                                 const std::vector<std::string> &output_device_formats,
+                                 const std::vector<TypeId> &input_device_types,
+                                 const std::vector<TypeId> &output_device_types) {
+  if (input_device_formats.size() != input_device_types.size()) {
+    MS_LOG(INTERNAL_EXCEPTION) << "Acl kernel's input size is not equal with format's size:"
+                               << input_device_formats.size() << " and type's size:" << input_device_types.size();
+  }
+  if (output_device_formats.size() != output_device_types.size()) {
+    MS_LOG(INTERNAL_EXCEPTION) << "Acl kernel's output size is not equal with format's size:"
+                               << output_device_formats.size() << " and type's size:" << output_device_types.size();
+  }
+
+  if (primitive_ptr_ == nullptr && op_ != nullptr) {
+    primitive_ptr_ = op_->GetPrim();
+  }
+  auto in_def_flag =
+    primitive_ptr_ == nullptr ? true : transform::AclHelper::GetDefaultFormatFlagFromAttr(primitive_ptr_, true);
+  input_params_.resize(input_device_formats.size());
+  for (size_t i = 0; i < input_device_formats.size(); i++) {
+    input_params_[i].data_type = input_device_types[i];
+    input_params_[i].dev_format = input_device_formats[i];
+    input_params_[i].is_default =
+      in_def_flag && transform::AclHelper::CheckDefaultSupportFormat(input_device_formats[i]);
+    input_params_[i].type_size = GetTypeByte(TypeIdToType(input_params_[i].data_type));
+  }
+  input_size_list_.resize(input_device_formats.size(), 0);
+
+  auto out_def_flag =
+    primitive_ptr_ == nullptr ? true : transform::AclHelper::GetDefaultFormatFlagFromAttr(primitive_ptr_, false);
+  output_params_.resize(output_device_formats.size());
+  for (size_t i = 0; i < output_device_formats.size(); i++) {
+    output_params_[i].data_type = output_device_types[i];
+    output_params_[i].dev_format = output_device_formats[i];
+    output_params_[i].is_default =
+      out_def_flag && transform::AclHelper::CheckDefaultSupportFormat(output_device_formats[i]);
+    output_params_[i].type_size = GetTypeByte(TypeIdToType(output_params_[i].data_type));
+  }
+  output_size_list_.resize(output_device_formats.size(), 0);
 }
 
 std::vector<TaskInfoPtr> AclKernelMod::GenTask(const std::vector<AddressPtr> &, const std::vector<AddressPtr> &,
                                                const std::vector<AddressPtr> &, uint32_t) {
+  MS_LOG(EXCEPTION) << "Acl kernels do not support task sink mode.";
   return {};
 }
 
-void AclKernelMod::SyncData() {}
+void AclKernelMod::SyncOutputShape() {
+  MS_EXCEPTION_IF_NULL(converter_);
+  std::vector<std::vector<int64_t>> output_shape = converter_->SyncData();
+  for (size_t i = 0; i < output_shape.size(); ++i) {
+    outputs_[i]->SetShapeVector(output_shape[i]);
+  }
+}
+
+bool AclKernelMod::IsNeedRetrieveOutputShape() {
+  MS_EXCEPTION_IF_NULL(converter_);
+  return converter_->is_need_retrieve_output_shape();
+}
 }  // namespace kernel
 }  // namespace mindspore

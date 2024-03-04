@@ -18,16 +18,17 @@
 #include <map>
 #include <set>
 #include <string>
-#include "ops/scatter_add.h"
-#include "ops/scatter_update.h"
-#include "ops/scatter_min.h"
-#include "ops/scatter_max.h"
-#include "ops/scatter_div.h"
-#include "ops/scatter_mul.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_utils.h"
+#include "ops/scatter_add.h"
+#include "ops/scatter_div.h"
+#include "ops/scatter_max.h"
+#include "ops/scatter_min.h"
+#include "ops/scatter_mul.h"
+#include "ops/scatter_update.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -51,8 +52,7 @@ abstract::ShapePtr ScatterArithmeticInferShape(const PrimitivePtr &primitive,
   for (size_t i = 1; i < input_x_shape.size(); ++i) {
     check_update_shape.push_back(input_x_shape[i]);
   }
-  if ((indices_shape != std::vector<int64_t>{-1}) && (!updates_shape.empty()) &&
-      (updates_shape != check_update_shape)) {
+  if (updates_shape != check_update_shape) {
     MS_EXCEPTION(ValueError) << "For " << primitive->name() << ", "
                              << "updates_shape = indices_shape + input_x_shape[1:], but got input_x_shape: "
                              << input_x_shape_ptr->ToString() << ", indices_shape: " << indices_shape_ptr->ToString()
@@ -88,24 +88,42 @@ AbstractBasePtr ScatterArithmeticInfer(const abstract::AnalysisEnginePtr &, cons
   CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterEqual, input_num, primitive->name());
   auto infer_type = ScatterArithmeticInferType(primitive, input_args);
   auto infer_shape = ScatterArithmeticInferShape(primitive, input_args);
-  return abstract::MakeAbstract(infer_shape, infer_type);
+  return abstract::MakeAbstractTensor(infer_shape, infer_type);
 }
 
 MIND_API_OPERATOR_IMPL(ScatterAdd, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(ScatterAdd, prim::kPrimScatterAdd, ScatterArithmeticInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGScatterArithmeticInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScatterArithmeticInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScatterArithmeticInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScatterArithmeticInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScatterAdd, prim::kPrimScatterAdd, AGScatterArithmeticInfer, false);
 MIND_API_OPERATOR_IMPL(ScatterUpdate, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(ScatterUpdate, prim::kPrimScatterUpdate, ScatterArithmeticInfer, nullptr, true);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScatterUpdate, prim::kPrimScatterUpdate, AGScatterArithmeticInfer, false);
 
 MIND_API_OPERATOR_IMPL(ScatterMin, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(ScatterMin, prim::kPrimScatterMin, ScatterArithmeticInfer, nullptr, true);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScatterMin, prim::kPrimScatterMin, AGScatterArithmeticInfer, false);
 
 MIND_API_OPERATOR_IMPL(ScatterMax, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(ScatterMax, prim::kPrimScatterMax, ScatterArithmeticInfer, nullptr, true);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScatterMax, prim::kPrimScatterMax, AGScatterArithmeticInfer, false);
 
 MIND_API_OPERATOR_IMPL(ScatterDiv, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(ScatterDiv, prim::kPrimScatterDiv, ScatterArithmeticInfer, nullptr, true);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScatterDiv, prim::kPrimScatterDiv, AGScatterArithmeticInfer, false);
 
 MIND_API_OPERATOR_IMPL(ScatterMul, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(ScatterMul, prim::kPrimScatterMul, ScatterArithmeticInfer, nullptr, true);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScatterMul, prim::kPrimScatterMul, AGScatterArithmeticInfer, false);
 }  // namespace ops
 }  // namespace mindspore

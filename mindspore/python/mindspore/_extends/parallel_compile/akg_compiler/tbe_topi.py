@@ -19,6 +19,8 @@ from enum import Enum
 
 
 class OpPattern(Enum):
+    """Pattern of operator."""
+
     ELEMWISE = "ELEMWISE"
     BROADCAST = "BROADCAST"
     REDUCE = "REDUCE"
@@ -58,24 +60,24 @@ def get_op_reg_info(op_name, key, strict=True):
 
 def _broadcast(lhs, rhs):
     """Broadcast inputs."""
-    from te import tvm
-    from te.utils import shape_util
-    import te.lang.cce as tbe
-    if isinstance(lhs, tvm.tensor.Tensor) and isinstance(rhs, tvm.expr.ConstExpr):
-        return lhs, tbe.broadcast(rhs, lhs.shape)
-    if isinstance(lhs, tvm.expr.ConstExpr) and isinstance(rhs, tvm.tensor.Tensor):
-        return tbe.broadcast(lhs, rhs.shape), rhs
+    import tbe
+    from tbe import tvm
+    from tbe.common.utils import shape_to_list, broadcast_shapes
+    if isinstance(lhs, tvm.Tensor) and isinstance(rhs, tvm.expr.ConstExpr):
+        return lhs, tbe.dsl.broadcast(rhs, lhs.shape)
+    if isinstance(lhs, tvm.expr.ConstExpr) and isinstance(rhs, tvm.Tensor):
+        return tbe.dsl.broadcast(lhs, rhs.shape), rhs
     if isinstance(lhs, tvm.expr.ConstExpr) and isinstance(rhs, tvm.expr.ConstExpr):
         shape = [1]
-        return tbe.broadcast(lhs, shape), tbe.broadcast(rhs, shape)
-    if isinstance(lhs, tvm.tensor.Tensor) and isinstance(rhs, tvm.tensor.Tensor):
-        shape1 = shape_util.shape_to_list(lhs.shape)
-        shape2 = shape_util.shape_to_list(rhs.shape)
+        return tbe.dsl.broadcast(lhs, shape), tbe.dsl.broadcast(rhs, shape)
+    if isinstance(lhs, tvm.Tensor) and isinstance(rhs, tvm.Tensor):
+        shape1 = shape_to_list(lhs.shape)
+        shape2 = shape_to_list(rhs.shape)
         if shape1 != shape2:
-            _, _, shape = shape_util.broadcast_shapes(shape1, shape2, param_name_input1="lhs", param_name_input2="rhs")
-            return tbe.broadcast(lhs, shape), tbe.broadcast(rhs, shape)
+            _, _, shape = broadcast_shapes(shape1, shape2, param_name_input1="lhs", param_name_input2="rhs")
+            return tbe.dsl.broadcast(lhs, shape), tbe.dsl.broadcast(rhs, shape)
         return lhs, rhs
-    raise TypeError("Broadcast only supports tvm.tensor.Tensor or tvm.expr.ConstExpr, but got {}, {}"
+    raise TypeError("Broadcast only supports tvm.Tensor or tvm.expr.ConstExpr, but got {}, {}"
                     .format(type(lhs), type(rhs)))
 
 
@@ -103,13 +105,13 @@ def _acosh(x, attrs=None):
 @reg_op("Add", pattern=OpPattern.ELEMWISE)
 def _add(x0, x1, attrs=None):
     """Add"""
-    from te import tvm
-    import te.lang.cce as tbe
+    import tbe
+    from tbe import tvm
     is_float = x0.dtype in ["float16", "float32"]
-    if is_float and isinstance(x0, tvm.tensor.Tensor) and isinstance(x1, tvm.expr.ConstExpr):
-        return tbe.vadds(x0, x1)
-    if is_float and isinstance(x0, tvm.expr.ConstExpr) and isinstance(x1, tvm.tensor.Tensor):
-        return tbe.vadds(x1, x0)
+    if is_float and isinstance(x0, tvm.Tensor) and isinstance(x1, tvm.expr.ConstExpr):
+        return tbe.dsl.vadds(x0, x1)
+    if is_float and isinstance(x0, tvm.expr.ConstExpr) and isinstance(x1, tvm.Tensor):
+        return tbe.dsl.vadds(x1, x0)
     x0, x1 = _broadcast(x0, x1)
     from impl.add import add_compute
     return add_compute(x0, x1, None, kernel_name=attrs["fusion_op_name"])
@@ -149,7 +151,7 @@ def _cast(x, attrs=None):
     src_type = x.dtype
     dst_type = attrs["dst_type"]
     if src_type == "int64":
-        from te import tvm
+        from tbe import tvm
         from impl.cast import _kernel_ir
         res = tvm.extern([x.shape], [x], lambda ins, outs: _kernel_ir(outs, ins, dst_type, "int64"), name="res",
                          dtype=dst_type)
@@ -308,7 +310,8 @@ def _log(x, attrs=None):
     if base <= 0 and not math.isclose(base, -1.0, rel_tol=1e-8, abs_tol=0.0):
         raise ValueError("base must be strictly positive or -1, but got {}".format(base))
     from impl.log import log_compute
-    return log_compute(x, None, base, scale, shift, kernel_name=attrs["fusion_op_name"])
+    output_desc = {"dtype": x.dtype, "shape": x.shape}
+    return log_compute(x, output_desc, base, scale, shift, kernel_name=attrs["fusion_op_name"])
 
 
 @reg_op("Maximum", pattern=OpPattern.ELEMWISE)
@@ -338,16 +341,17 @@ def _mod(x0, x1, attrs=None):
 @reg_op("Mul", pattern=OpPattern.ELEMWISE)
 def _mul(x0, x1, attrs=None):
     """Mul"""
-    from te import tvm
-    import te.lang.cce as tbe
+    import tbe
+    from tbe import tvm
     is_float = x0.dtype in ["float16", "float32"]
-    if is_float and isinstance(x0, tvm.tensor.Tensor) and isinstance(x1, tvm.expr.ConstExpr):
-        return tbe.vmuls(x0, x1)
-    if is_float and isinstance(x0, tvm.expr.ConstExpr) and isinstance(x1, tvm.tensor.Tensor):
-        return tbe.vmuls(x1, x0)
+    if is_float and isinstance(x0, tvm.Tensor) and isinstance(x1, tvm.expr.ConstExpr):
+        return tbe.dsl.vmuls(x0, x1)
+    if is_float and isinstance(x0, tvm.expr.ConstExpr) and isinstance(x1, tvm.Tensor):
+        return tbe.dsl.vmuls(x1, x0)
     x0, x1 = _broadcast(x0, x1)
     from impl.mul import mul_compute
-    return mul_compute(x0, x1, None, kernel_name=attrs["fusion_op_name"])
+    output_desc = {"dtype": x0.dtype, "shape": x0.shape}
+    return mul_compute(x0, x1, output_desc, kernel_name=attrs["fusion_op_name"])
 
 
 @reg_op("Neg", pattern=OpPattern.ELEMWISE)
@@ -376,10 +380,10 @@ def _pow(x0, x1, attrs=None):
 @reg_op("RealDiv", "real_div", OpPattern.ELEMWISE)
 def _realdiv(x0, x1, attrs=None):
     """RealDiv"""
-    from te import tvm
-    import te.lang.cce as tbe
-    if x0.dtype in ["float16", "float32"] and isinstance(x0, tvm.tensor.Tensor) and isinstance(x1, tvm.expr.ConstExpr):
-        return tbe.vmuls(x0, tvm.const(1.0 / x1.value, x0.dtype))
+    import tbe
+    from tbe import tvm
+    if x0.dtype in ["float16", "float32"] and isinstance(x0, tvm.Tensor) and isinstance(x1, tvm.expr.ConstExpr):
+        return tbe.dsl.vmuls(x0, tvm.const(1.0 / x1.value, x0.dtype))
     x0, x1 = _broadcast(x0, x1)
     from impl.real_div import real_div_compute
     return real_div_compute(x0, x1, None, kernel_name=attrs["fusion_op_name"])
@@ -437,14 +441,14 @@ def _square(x, attrs=None):
 @reg_op("Sub", pattern=OpPattern.ELEMWISE)
 def _sub(x0, x1, attrs=None):
     """Sub"""
-    from te import tvm
-    import te.lang.cce as tbe
+    import tbe
+    from tbe import tvm
     is_float = x0.dtype in ["float16", "float32"]
-    if is_float and isinstance(x0, tvm.tensor.Tensor) and isinstance(x1, tvm.expr.ConstExpr):
-        return tbe.vadds(x0, tvm.const(-1.0 * x1.value, x0.dtype))
-    if is_float and isinstance(x0, tvm.expr.ConstExpr) and isinstance(x1, tvm.tensor.Tensor):
-        tmp = tbe.vmuls(x1, tvm.const(-1, x1.dtype))
-        return tbe.vadds(tmp, tvm.const(x0.value, x0.dtype))
+    if is_float and isinstance(x0, tvm.Tensor) and isinstance(x1, tvm.expr.ConstExpr):
+        return tbe.dsl.vadds(x0, tvm.const(-1.0 * x1.value, x0.dtype))
+    if is_float and isinstance(x0, tvm.expr.ConstExpr) and isinstance(x1, tvm.Tensor):
+        tmp = tbe.dsl.vmuls(x1, tvm.const(-1, x1.dtype))
+        return tbe.dsl.vadds(tmp, tvm.const(x0.value, x0.dtype))
     x0, x1 = _broadcast(x0, x1)
     from impl.sub import sub_compute
     return sub_compute(x0, x1, None, kernel_name=attrs["fusion_op_name"])
@@ -460,26 +464,26 @@ def _tanh(x, attrs=None):
 @reg_op("BroadcastTo", "broadcast", OpPattern.BROADCAST)
 def _broadcast_to(x, attrs=None):
     """BroadcastTo"""
-    from te import tvm
-    import te.lang.cce as tbe
+    import tbe
+    from tbe import tvm
     shape = attrs["shape"]
-    if isinstance(x, tvm.tensor.Tensor):
+    if isinstance(x, tvm.Tensor):
         from impl.broadcast_to_d import broadcast_to_compute
         return broadcast_to_compute(x, None, shape, kernel_name=attrs["fusion_op_name"])
-    return tbe.broadcast(x, shape, x.dtype)
+    return tbe.dsl.broadcast(x, shape, x.dtype)
 
 
 @reg_op("ReduceSum", "reduce_sum", OpPattern.REDUCE)
 def _reduce_sum(x, attrs=None):
     """ReduceSum"""
-    from te.utils import shape_util
+    from tbe.common.utils import axis_check
     axis = attrs["axis"]
     keep_dims = attrs["keep_dims"]
     if not axis:
         axis = [i for i in range(len(x.shape))]
     if not isinstance(axis, list):
         axis = [axis]
-    axis = shape_util.axis_check(len(x.shape), axis)
+    axis = axis_check(len(x.shape), axis)
     from impl.reduce_sum_d import reduce_sum_d_compute
     return reduce_sum_d_compute(x, None, axis, keep_dims, kernel_name=attrs["fusion_op_name"])
 
@@ -487,14 +491,14 @@ def _reduce_sum(x, attrs=None):
 @reg_op("ReduceMax", "reduce_max", OpPattern.REDUCE)
 def _reduce_max(x, attrs=None):
     """ReduceMax"""
-    from te.utils import shape_util
+    from tbe.common.utils import axis_check
     axis = attrs["axis"]
     keep_dims = attrs["keep_dims"]
     if not axis:
         axis = [i for i in range(len(x.shape))]
     if not isinstance(axis, list):
         axis = [axis]
-    axis = shape_util.axis_check(len(x.shape), axis)
+    axis = axis_check(len(x.shape), axis)
     from impl.reduce_max_d import reduce_max_d_compute
     return reduce_max_d_compute(x, None, axis, keep_dims, kernel_name=attrs["fusion_op_name"])
 
@@ -502,14 +506,14 @@ def _reduce_max(x, attrs=None):
 @reg_op("ReduceMin", "reduce_min", OpPattern.REDUCE)
 def _reduce_min(x, attrs=None):
     """ReduceMin"""
-    from te.utils import shape_util
+    from tbe.common.utils import axis_check
     axis = attrs["axis"]
     keep_dims = attrs["keep_dims"]
     if not axis:
         axis = [i for i in range(len(x.shape))]
     if not isinstance(axis, list):
         axis = [axis]
-    axis = shape_util.axis_check(len(x.shape), axis)
+    axis = axis_check(len(x.shape), axis)
     from impl.reduce_min_d import reduce_min_d_compute
     return reduce_min_d_compute(x, None, axis, keep_dims, kernel_name=attrs["fusion_op_name"])
 

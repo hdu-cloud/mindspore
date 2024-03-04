@@ -21,8 +21,10 @@ from mindspore.common.initializer import initializer
 from mindspore.common.parameter import Parameter, ParameterTuple
 from mindspore.ops import composite as C
 from mindspore.ops import operations as P
+
 context.set_context(mode=context.GRAPH_MODE)
 grad_by_list = C.GradOperation(get_by_list=True)
+
 
 class Net(nn.Cell):
     def __init__(self, channel=1, w=0.25, strategy1=None, strategy2=None):
@@ -35,6 +37,7 @@ class Net(nn.Cell):
         x = self.norm(data)
         x = self.prelu(x, self.w)
         return x
+
 
 class NetWithLoss(nn.Cell):
     def __init__(self, network, types, shapes, output_num, strategy3=None, strategy4=None, axis=-1):
@@ -64,7 +67,9 @@ class GradWrap(nn.Cell):
 
 
 def compile_net(net):
+    net.set_train()
     _cell_graph_executor.compile(net)
+
 
 def test_get_next_single():
     """
@@ -74,6 +79,7 @@ def test_get_next_single():
     """
     net = GradWrap(NetWithLoss(Net(), [ms.float32, ms.int32], [[32, 64], [32]], 2))
     _cell_graph_executor.compile(net)
+
 
 def test_get_next_semi_auto_parallel():
     """
@@ -116,7 +122,7 @@ def test_get_next_auto_parallel():
     Expectation: compile well done.
     """
     context.set_auto_parallel_context(device_num=4, global_rank=0)
-    context.set_auto_parallel_context(parallel_mode="auto_parallel")
+    context.set_auto_parallel_context(parallel_mode="auto_parallel", search_mode="dynamic_programming")
     network = Net()
     net_with_loss = NetWithLoss(network, [ms.float32, ms.int32], [[32, 64], [32]], 2)
     net = GradWrap(net_with_loss)
@@ -129,6 +135,7 @@ def test_only_one_get_next():
     Description: semi-auto parallel, only getnext.
     Expectation: compile well done.
     """
+
     class Net1(nn.Cell):
         def __init__(self):
             super().__init__()

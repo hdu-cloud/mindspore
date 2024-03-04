@@ -16,13 +16,13 @@
 
 #ifndef MINDSPORE_CORE_OPS_LARS_V2_UPDATE_H_
 #define MINDSPORE_CORE_OPS_LARS_V2_UPDATE_H_
-#include <vector>
-#include <memory>
-#include <string>
-#include <set>
 #include <map>
-#include "ops/base_operator.h"
+#include <memory>
+#include <set>
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -32,8 +32,8 @@ class MIND_API LARSUpdate : public BaseOperator {
   MIND_API_BASE_MEMBER(LARSUpdate);
   explicit LARSUpdate(const std::string &name = kNameLARSUpdate) : BaseOperator(name) {}
 };
-abstract::AbstractBasePtr LARSUpdateInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                          const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr LARSUpdateInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                   const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimLARSUpdatePtr = std::shared_ptr<LARSUpdate>;
 }  // namespace ops
 }  // namespace mindspore

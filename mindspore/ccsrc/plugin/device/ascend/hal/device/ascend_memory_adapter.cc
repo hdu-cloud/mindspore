@@ -17,24 +17,27 @@
 #include "plugin/device/ascend/hal/device/ascend_memory_adapter.h"
 
 #include <algorithm>
+#include <set>
 #include "ir/func_graph.h"
 #include "runtime/mem.h"
+#include "acl/acl_rt.h"
 #include "utils/ms_context.h"
 #include "utils/convert_utils_base.h"
-#include "graphengine/inc/external/runtime/rt_error_codes.h"
+#include "plugin/device/ascend/hal/common/ascend_utils.h"
+#include "plugin/device/ascend/hal/device/ascend_gmem_adapter.h"
 
 namespace mindspore {
 namespace device {
 namespace ascend {
+
 constexpr uint64_t kAscendMemAlignSize = 512;
 constexpr double kMSMemoryRatio = 0.9375;           // 15/16
 constexpr double kReservedMemoryRatio = 0.0625;     // 1/16
 constexpr size_t kPerHugePageMemorySize = 2097152;  // 2mb
 constexpr size_t kExtraReservedMemory = 10485760;   // 10mb
 constexpr double kHalfRatio = 0.5;
-// The Ascend max available device memory is 32GB.
-constexpr float kAscendMaxDeviceMemory = 32;
 constexpr uint64_t kOverflowAddrSize = 512;
+constexpr char kGlobalOverflowWorkspace[] = "GLOBAL_OVERFLOW_WORKSPACE";
 
 size_t AscendMemAdapter::GetRoundDownAlignSize(size_t input_size) {
   return (input_size / kAscendMemAlignSize) * kAscendMemAlignSize;
@@ -44,13 +47,22 @@ size_t AscendMemAdapter::GetRoundUpAlignSize(size_t input_size) {
   return ((input_size + kAscendMemAlignSize - 1) / kAscendMemAlignSize) * kAscendMemAlignSize;
 }
 
+bool AscendMemAdapter::IsMemoryPoolRecycle() {
+  static const char kMemoryPoolRecycle[] = "MS_MEMORY_POOL_RECYCLE";
+  static const auto memory_pool_recycle = common::GetEnv(kMemoryPoolRecycle);
+  auto context_ptr = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context_ptr);
+  auto runtime_num_threads = static_cast<size_t>(context_ptr->get_param<uint32_t>(MS_CTX_RUNTIME_NUM_THREADS));
+  return memory_pool_recycle == "1" && runtime_num_threads == 1 && IsEnableRefMode();
+}
+
 bool AscendMemAdapter::Initialize() {
   if (initialized_) {
     return true;
   }
 
-  rtError_t ret = rtMemGetInfoEx(RT_MEMORYINFO_HBM, &device_hbm_free_size_, &device_hbm_total_size_);
-  if (ret != RT_ERROR_NONE || device_hbm_total_size_ == 0) {
+  auto ret = aclrtGetMemInfo(ACL_HBM_MEM, &device_hbm_free_size_, &device_hbm_total_size_);
+  if (ret != ACL_ERROR_NONE || device_hbm_total_size_ == 0) {
     MS_LOG(EXCEPTION) << "Internal Error: Get Device HBM memory size failed, ret = " << ret
                       << ", total HBM size :" << device_hbm_total_size_;
   }
@@ -71,10 +83,10 @@ bool AscendMemAdapter::Initialize() {
   auto recommend_mem_size_for_others = LongToSize(DoubleToLong(device_hbm_free_size_ * kReservedMemoryRatio));
   size_t reserved_mem_size_for_others;
   if (user_define_ms_size == 0) {
-    ms_used_hbm_size_ = LongToSize(DoubleToLong(device_hbm_free_size_ * kMSMemoryRatio));
+    ms_used_hbm_size_ = DoubleToLong(device_hbm_free_size_ * kMSMemoryRatio);
     // sub the extra reserved 10mb after rounding down the 2mb
     ms_used_hbm_size_ = (ms_used_hbm_size_ / kPerHugePageMemorySize) * kPerHugePageMemorySize - kExtraReservedMemory;
-    reserved_mem_size_for_others = device_hbm_free_size_ - ms_used_hbm_size_;
+    reserved_mem_size_for_others = device_hbm_free_size_ - SizeToLong(ms_used_hbm_size_);
   } else {
     if (user_define_ms_size >= device_hbm_free_size_) {
       MS_LOG(EXCEPTION)
@@ -85,9 +97,9 @@ bool AscendMemAdapter::Initialize() {
         << (SizeToFloat(user_define_ms_size) / kMBToByte)
         << "MB, please set the context key 'variable_memory_max_size'/'max_device_memory' in valid range.";
     }
-    ms_used_hbm_size_ = user_define_ms_size;
+    ms_used_hbm_size_ = SizeToLong(user_define_ms_size);
 
-    reserved_mem_size_for_others = device_hbm_total_size_ - ms_used_hbm_size_;
+    reserved_mem_size_for_others = device_hbm_total_size_ - LongToSize(ms_used_hbm_size_);
     if (reserved_mem_size_for_others < recommend_mem_size_for_others) {
       MS_LOG(WARNING) << "Reserved memory size for other components(" << reserved_mem_size_for_others
                       << ") is less than recommend size(" << recommend_mem_size_for_others
@@ -96,7 +108,12 @@ bool AscendMemAdapter::Initialize() {
     }
   }
 
-  ms_used_hbm_size_ = GetRoundDownAlignSize(ms_used_hbm_size_);
+  if (AscendGmemAdapter::GetInstance().is_eager_free_enabled()) {
+    ms_used_hbm_size_ = SizeToLong(AscendGmemAdapter::GetInstance().GetRoundDownAlignSize(ms_used_hbm_size_));
+  } else {
+    ms_used_hbm_size_ = SizeToLong(GetRoundDownAlignSize(ms_used_hbm_size_));
+  }
+  max_available_ms_hbm_size_ = ms_used_hbm_size_;
   MS_LOG(INFO) << "Device HBM Size:" << device_hbm_total_size_ / kMBToByte
                << "M, Device free HBM Size:" << device_hbm_free_size_ / kMBToByte
                << "M, Reserved HBM size for Other Components(HCCL/rts/etc.):"
@@ -109,6 +126,7 @@ bool AscendMemAdapter::Initialize() {
   static_mem_offset_ = ms_used_hbm_size_;
   cur_dynamic_mem_offset_ = 0;
   max_dynamic_mem_offset_ = 0;
+  history_max_dynamic_mem_offset_ = 0;
   MS_LOG(INFO) << "Ascend Memory Adapter initialize success, Memory Statistics:" << DevMemStatistics();
   initialized_ = true;
   return true;
@@ -120,8 +138,12 @@ bool AscendMemAdapter::DeInitialize() {
     return false;
   }
 
-  auto ret = FreeToRts(device_mem_base_addr_);
+  auto ret = FreeToRts(device_mem_base_addr_, ms_used_hbm_size_);
   if (ret) {
+    MS_LOG(INFO) << " Ascend Memory Adapter deinitialize success, statistics:" << DevMemStatistics();
+    if (common::IsNeedProfileMemory() || common::IsNeedMemoryStatistic()) {
+      MS_LOG(WARNING) << " Ascend Memory Adapter deinitialize success, statistics:" << DevMemStatistics();
+    }
     device_hbm_total_size_ = 0;
     device_hbm_free_size_ = 0;
     max_available_ms_hbm_size_ = 0;
@@ -130,12 +152,12 @@ bool AscendMemAdapter::DeInitialize() {
 
     cur_dynamic_mem_offset_ = 0;
     max_dynamic_mem_offset_ = 0;
+    history_max_dynamic_mem_offset_ = 0;
     dynamic_memory_block_list_.clear();
 
     static_mem_offset_ = 0;
     static_memory_block_list_.clear();
 
-    MS_LOG(INFO) << " Ascend Memory Adapter initialize success, statistics:" << DevMemStatistics();
     initialized_ = false;
   }
 
@@ -145,15 +167,15 @@ bool AscendMemAdapter::DeInitialize() {
 uint8_t *AscendMemAdapter::MallocStaticDevMem(size_t size, const std::string &tag) {
   std::lock_guard<std::mutex> locker(mutex_);
   size = GetRoundUpAlignSize(size);
-  auto new_static_offset = static_mem_offset_ - size;
-  if (new_static_offset < max_dynamic_mem_offset_) {
+  if (!common::IsNeedProfileMemory() && (static_mem_offset_ < static_cast<int64_t>(size) ||
+                                         (static_mem_offset_ - static_cast<int64_t>(size)) < max_dynamic_mem_offset_)) {
     MS_LOG(INFO) << DevMemDetailInfo();
     MS_LOG(EXCEPTION) << "#umsg#Framework Error Message:#umsg#Out of Memory!!! Request memory size: " << size
-                      << ", Memory Statistic:" << DevMemStatistics()
+                      << "B, Memory Statistic:" << DevMemStatistics()
                       << "\nPlease try to reduce 'batch_size' or check whether exists extra large shape. For more "
                          "details, please refer to 'Out of Memory' at https://www.mindspore.cn .";
   }
-
+  int64_t new_static_offset = static_mem_offset_ - static_cast<int64_t>(size);
   auto memory_block_ptr = device_mem_base_addr_ + new_static_offset;
   static_mem_offset_ = new_static_offset;
   static_memory_block_list_.push_back(std::make_shared<MemoryBlock>(memory_block_ptr, size, tag));
@@ -163,11 +185,11 @@ uint8_t *AscendMemAdapter::MallocStaticDevMem(size_t size, const std::string &ta
 uint8_t *AscendMemAdapter::MallocDynamicDevMem(size_t size, const std::string &tag) {
   std::lock_guard<std::mutex> locker(mutex_);
   size = GetRoundUpAlignSize(size);
-  auto new_dynamic_offset = cur_dynamic_mem_offset_ + size;
-  if (new_dynamic_offset > static_mem_offset_) {
+  int64_t new_dynamic_offset = cur_dynamic_mem_offset_ + static_cast<int64_t>(size);
+  if (!common::IsNeedProfileMemory() && new_dynamic_offset > static_mem_offset_) {
     MS_LOG(INFO) << DevMemDetailInfo();
     MS_LOG(EXCEPTION) << "#umsg#Framework Error Message:#umsg#Out of Memory!!! Request memory size: " << size
-                      << ", Memory Statistic:" << DevMemStatistics()
+                      << "B, Memory Statistic:" << DevMemStatistics()
                       << "\nPlease try to reduce 'batch_size' or check whether exists extra large shape. For more "
                          "details, please refer to 'Out of Memory' at https://www.mindspore.cn .";
   }
@@ -175,26 +197,23 @@ uint8_t *AscendMemAdapter::MallocDynamicDevMem(size_t size, const std::string &t
   auto memory_block_ptr = device_mem_base_addr_ + cur_dynamic_mem_offset_;
   cur_dynamic_mem_offset_ = new_dynamic_offset;
   max_dynamic_mem_offset_ = std::max(cur_dynamic_mem_offset_, max_dynamic_mem_offset_);
+  history_max_dynamic_mem_offset_ = std::max(max_dynamic_mem_offset_, history_max_dynamic_mem_offset_);
   dynamic_memory_block_list_.push_back(std::make_shared<MemoryBlock>(memory_block_ptr, size, tag));
 
   return memory_block_ptr;
 }
 
-uint8_t *AscendMemAdapter::MallocOverflowMem(const CNodePtr &kernel) {
-  std::lock_guard<std::mutex> locker(overflow_mutex_);
-  auto funcGraph = kernel->func_graph();
-  MS_EXCEPTION_IF_NULL(funcGraph);
-  if (overflow_memory_info_map_.find(funcGraph->ToString()) != overflow_memory_info_map_.cend()) {
-    return overflow_memory_info_map_.find(funcGraph->ToString())->second;
-  } else {
-    auto overflow_memory_ptr = MallocStaticDevMem(kOverflowAddrSize, "overflow memory ptr");
-    MS_EXCEPTION_IF_NULL(overflow_memory_ptr);
-    (void)overflow_memory_info_map_.emplace(funcGraph->ToString(), overflow_memory_ptr);
-    return overflow_memory_ptr;
+uint8_t *AscendMemAdapter::GetBaseAddr() const { return device_mem_base_addr_; }
+
+void AscendMemAdapter::ResetDynamicMemory() {
+  cur_dynamic_mem_offset_ = 0;
+  if (IsMemoryPoolRecycle()) {
+    max_dynamic_mem_offset_ = 0;
+  }
+  if (AscendGmemAdapter::GetInstance().is_eager_free_enabled()) {
+    AscendGmemAdapter::GetInstance().EagerFreeDeviceMem(device_mem_base_addr_, ms_used_hbm_size_);
   }
 }
-
-void AscendMemAdapter::ResetDynamicMemory() { cur_dynamic_mem_offset_ = 0; }
 
 std::string AscendMemAdapter::DevMemStatistics() const {
   std::ostringstream oss;
@@ -202,7 +221,10 @@ std::string AscendMemAdapter::DevMemStatistics() const {
   oss << "\nMindSpore Used memory size: " << ms_used_hbm_size_ / kMBToByte << "M";
   oss << "\nMindSpore memory base address: " << reinterpret_cast<void *>(device_mem_base_addr_);
   oss << "\nTotal Static Memory size: " << (ms_used_hbm_size_ - static_mem_offset_) / kMBToByte << "M";
-  oss << "\nTotal Dynamic memory size: " << max_dynamic_mem_offset_ / kMBToByte << "M";
+  oss << "\nTotal Dynamic memory size: " << history_max_dynamic_mem_offset_ / kMBToByte << "M";
+  if (IsMemoryPoolRecycle()) {
+    oss << "\nActual peak memory usage: " << actual_peak_memory_ / kMBToByte << "M";
+  }
   oss << "\nDynamic memory size of this graph: " << cur_dynamic_mem_offset_ / kMBToByte << "M";
   oss << std::endl;
   return oss.str();
@@ -226,10 +248,14 @@ std::string AscendMemAdapter::DevMemDetailInfo() const {
 }
 
 size_t AscendMemAdapter::GetDeviceMemSizeFromContext() const {
+  static const std::set<std::string> kAscend910BVersions = {"Ascend910B1", "Ascend910B2", "Ascend910B3", "Ascend910B4"};
   auto context = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(context);
   size_t size_from_context;
   auto max_device_memory = context->get_param<float>(MS_CTX_MAX_DEVICE_MEMORY);
+  auto soc_version = device::ascend::GetSocVersion();
+  const float kAscendMaxDeviceMemory =
+    kAscend910BVersions.find(soc_version) != kAscend910BVersions.end() ? 64.0f : 32.0f;
   if (max_device_memory <= kAscendMaxDeviceMemory) {
     MS_LOG(INFO) << "context max_device_memory:" << max_device_memory;
     size_from_context = FloatToSize(max_device_memory * kGBToByte);
@@ -254,7 +280,11 @@ size_t AscendMemAdapter::GetDeviceMemSizeFromContext() const {
 
 uint8_t *AscendMemAdapter::MallocFromRts(size_t size) const {
   uint8_t *ptr = nullptr;
-  auto ret = rtMalloc(reinterpret_cast<void **>(&ptr), size, RT_MEMORY_HBM);
+  if (AscendGmemAdapter::GetInstance().is_eager_free_enabled()) {
+    return AscendGmemAdapter::GetInstance().MmapMemory(size, reinterpret_cast<void *>(ptr));
+  }
+
+  auto ret = rtMalloc(reinterpret_cast<void **>(&ptr), size, RT_MEMORY_HBM, 0);
   if (ret != ACL_RT_SUCCESS) {
     if (ret == ACL_ERROR_RT_MEMORY_ALLOCATION) {
       auto context_ptr = MsContext::GetInstance();
@@ -262,7 +292,7 @@ uint8_t *AscendMemAdapter::MallocFromRts(size_t size) const {
       unsigned int device_id = context_ptr->get_param<uint32_t>(MS_CTX_DEVICE_ID);
       size_t free = 0;
       size_t total = 0;
-      (void)rtMemGetInfoEx(RT_MEMORYINFO_HBM, &free, &total);
+      (void)aclrtGetMemInfo(ACL_HBM_MEM, &free, &total);
       MS_LOG(EXCEPTION) << "#umsg#Framework Error Message:#umsg#Malloc device memory failed, size[" << size << "], ret["
                         << ret << "], "
                         << "Device " << device_id << " Available HBM size:" << total << " free size:" << free
@@ -278,11 +308,14 @@ uint8_t *AscendMemAdapter::MallocFromRts(size_t size) const {
   return ptr;
 }
 
-bool AscendMemAdapter::FreeToRts(void *devPtr) const {
+bool AscendMemAdapter::FreeToRts(void *devPtr, const size_t size) const {
   if (devPtr != nullptr) {
-    auto ret = rtFree(devPtr);
+    if (AscendGmemAdapter::GetInstance().is_eager_free_enabled()) {
+      return AscendGmemAdapter::GetInstance().MunmapMemory(devPtr, size);
+    }
+    auto ret = aclrtFree(devPtr);
     if (ret != RT_ERROR_NONE) {
-      MS_LOG(ERROR) << "rtFree mem [" << devPtr << "] fail, ret[" << ret << "]";
+      MS_LOG(ERROR) << "aclrtFree mem [" << devPtr << "] fail, ret[" << ret << "]";
       return false;
     }
   }

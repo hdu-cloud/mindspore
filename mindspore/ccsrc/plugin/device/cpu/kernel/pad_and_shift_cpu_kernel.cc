@@ -65,14 +65,14 @@ void PadAndShiftCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs
   T shift_idx = *reinterpret_cast<T *>(inputs[2]->addr);
   T *output = reinterpret_cast<T *>(outputs[0]->addr);
 
-  if (shift_idx >= static_cast<T>(cum_sum_size_)) {
+  if (shift_idx < 0 || shift_idx >= static_cast<T>(cum_sum_size_)) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_
-                      << "', shift index must be less than cumsum size, but got shift index: " << shift_idx
-                      << " and cumsum size: " << cum_sum_size_;
+                      << "', shift index must be large than 0 and less than cumsum size, but got shift index: "
+                      << shift_idx << " and cumsum size: " << cum_sum_size_;
   }
   size_t output_size = static_cast<size_t>(cum_sum_arr[cum_sum_size_ - 1]);
   size_t shift_size = static_cast<size_t>(cum_sum_arr[shift_idx]);
-  size_t valid_size = static_cast<size_t>(cum_sum_arr[shift_idx + 1] - shift_size);
+  size_t valid_size = static_cast<size_t>(cum_sum_arr[shift_idx + 1]) - shift_size;
   int ret = memset_s(output, outputs[0]->size, -1, type_size_ * output_size);
   if (ret != EOK) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', memset_s error. Error no: " << ret;
@@ -87,7 +87,7 @@ void PadAndShiftCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs
   if (!node_) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', node_wpt_(kernel_node) is expired. Error no: " << node_;
   }
-  auto output_nums = common::AnfAlgo::GetOutputTensorNum(node_);
+  auto output_nums = AnfAlgo::GetOutputTensorNum(node_);
   std::vector<TypeId> dtypes(output_nums);
   for (size_t i = 0; i < output_nums; i++) {
     dtypes[i] = AnfAlgo::GetOutputDeviceDataType(node_, i);

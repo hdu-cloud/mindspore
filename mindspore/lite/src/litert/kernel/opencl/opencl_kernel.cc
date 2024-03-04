@@ -24,6 +24,38 @@ using mindspore::lite::RET_OK;
 using mindspore::lite::opencl::ImageSize;
 
 namespace mindspore::kernel {
+int CpuAxis2GpuAxis(size_t ndim, int cpu_axis, int *gpu_axis) {
+  static const std::vector<std::vector<int>> kCpuAxis2GpuAxisMapTable = {
+    // For 1D tensor, map the cpu axis [0] to gpu axis [kNHWC_C].
+    {kNHWC_C},
+    // For 2D tensor, map the cpu axis [0, 1] to gpu axis [kNHWC_N, kNHWC_C].
+    {kNHWC_N, kNHWC_C},
+    // For 3D tensor, map the cpu axis [0, 1, 2] to gpu axis [kNHWC_N, kNHWC_W, kNHWC_C].
+    {kNHWC_N, kNHWC_W, kNHWC_C},
+    // For 4D tensor, map the cpu axis [0, 1, 2, 3] to gpu axis [kNHWC_N, kNHWC_H, kNHWC_W, kNHWC_C].
+    {kNHWC_N, kNHWC_H, kNHWC_W, kNHWC_C},
+    // For 5D tensor, map the cpu axis [0, 1, 2, 3, 4] to gpu axis [kNDHWC_N, kNDHWC_D, kNDHWC_H, kNDHWC_W, kNDHWC_C].
+    {kNDHWC_N, kNDHWC_D, kNDHWC_H, kNDHWC_W, kNDHWC_C},
+  };
+  if (gpu_axis == nullptr) {
+    MS_LOG(WARNING) << "Input parameter gpu axis is null";
+    return RET_ERROR;
+  }
+
+  if ((ndim == 0) || (ndim > kCpuAxis2GpuAxisMapTable.size())) {
+    MS_LOG(WARNING) << "Only support ndim of 1D...5D, bad input ndim: " << ndim;
+    return RET_ERROR;
+  }
+
+  const auto &axis_map = kCpuAxis2GpuAxisMapTable[ndim - 1];
+  if ((cpu_axis < 0) || (static_cast<size_t>(cpu_axis) >= axis_map.size())) {
+    MS_LOG(WARNING) << "Input cpu axis: " << cpu_axis << " is out of range [0," << axis_map.size() << "]";
+    return RET_ERROR;
+  }
+  *gpu_axis = axis_map[cpu_axis];
+  return RET_OK;
+}
+
 void OpenCLKernel::AlignGlobalLocal(const std::vector<size_t> &global, const std::vector<size_t> &local) {
   std::vector<size_t> internal_global_ws = global;
   for (size_t i = 0; i < local.size(); ++i) {
@@ -160,7 +192,56 @@ void OpenCLKernel::PrintOutput(int print_num, const std::string &out_file) {
   }
 }
 
+std::string OpenCLKernel::OpenCLKernelHeader() {
+  std::stringstream header;
+  header << "#pragma OPENCL EXTENSION cl_khr_fp16 : enable\n"
+            "__constant sampler_t smp_none = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;\n"
+            "__constant sampler_t smp_zero = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP | CLK_FILTER_NEAREST;\n";
+  if (this->registry_data_type_ == kNumberTypeFloat32) {
+    header << "#define DTYPE float\n"
+              "#define DTYPE4 float4\n"
+              "#define WRITE_IMAGE write_imagef\n"
+              "#define READ_IMAGE read_imagef\n";
+  } else if (this->registry_data_type_ == kNumberTypeFloat16) {
+    header << "#define DTYPE half\n"
+              "#define DTYPE4 half4\n"
+              "#define WRITE_IMAGE write_imageh\n"
+              "#define READ_IMAGE read_imageh\n";
+  } else if (this->registry_data_type_ == kNumberTypeInt32) {
+    header << "#define DTYPE int\n"
+              "#define DTYPE4 int4\n"
+              "#define WRITE_IMAGE write_imagei\n"
+              "#define READ_IMAGE read_imagei\n";
+  } else {
+    MS_LOG(ERROR) << "Unsupported data type: " << this->registry_data_type_;
+    return "";
+  }
+  return header.str();
+}
+
+bool OpenCLKernel::MallocDataDone() {
+  for (auto &out_tensor : out_tensors_) {
+    if (out_tensor->data() == nullptr) {
+      return false;
+    }
+    auto allocator = out_tensor->allocator();
+    if (allocator == nullptr) {
+      return false;
+    }
+    lite::opencl::MemType memType;
+    auto buffer = reinterpret_cast<mindspore::lite::opencl::OpenCLAllocator *>(allocator.get())
+                    ->GetOpenclMemPtr(out_tensor->data(), &memType);
+    if ((buffer == nullptr) || (memType != lite::opencl::MemType::IMG)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 int OpenCLKernel::PreProcess() {
+  if (MallocDataDone()) {
+    return RET_OK;
+  }
   int ret = ReSize();
   if (ret != RET_OK) {
     return ret;
@@ -192,6 +273,7 @@ int OpenCLKernel::PreProcess() {
     }
     output->ResetRefCount();
   }
+  is_oversize_kernel_ = ocl_runtime_->GetAllocator()->IsOverSize();
   return RET_OK;
 }
 

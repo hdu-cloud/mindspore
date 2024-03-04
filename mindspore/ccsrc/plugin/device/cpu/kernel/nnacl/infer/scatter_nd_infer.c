@@ -16,6 +16,7 @@
 
 #include "nnacl/infer/scatter_nd_infer.h"
 #include "nnacl/infer/infer_register.h"
+#include "nnacl/tensor_c_utils.h"
 
 int ScatterNdInferShape(const TensorC *const *inputs, size_t inputs_size, TensorC **outputs, size_t outputs_size,
                         OpParameter *parameter) {
@@ -28,7 +29,7 @@ int ScatterNdInferShape(const TensorC *const *inputs, size_t inputs_size, Tensor
   if (shape->data_ == NULL) {
     return NNACL_INFER_INVALID;
   }
-  const TensorC *update = inputs[FIRST_INPUT];
+  const TensorC *update = inputs[SECOND_INPUT];
   TensorC *output = outputs[0];
 
   SetDataTypeFormat(output, update);
@@ -36,7 +37,7 @@ int ScatterNdInferShape(const TensorC *const *inputs, size_t inputs_size, Tensor
     return NNACL_INFER_INVALID;
   }
   int *shape_data = (int *)(shape->data_);
-  MS_CHECK_TRUE_RET(GetElementNum(shape) <= MAX_SHAPE_SIZE, NNACL_ERR);
+  NNACL_CHECK_TRUE_RET(GetElementNum(shape) <= MAX_SHAPE_SIZE, NNACL_ERR);
   SetShapeArray(output, shape_data, (size_t)GetElementNum(shape));
   return NNACL_OK;
 }

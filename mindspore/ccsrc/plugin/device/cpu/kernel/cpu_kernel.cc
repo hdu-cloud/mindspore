@@ -114,7 +114,7 @@ void DeprecatedNativeCpuKernelMod::InitInputOutputSize(const CNodePtr &kernel_no
     tensor_size = std::max(tensor_size, type_size);
     (void)input_size_list_.emplace_back(tensor_size);
   }
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(kernel_node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(kernel_node);
   for (size_t output_index = 0; output_index < output_num; ++output_index) {
     size_t tensor_size = AnfAlgo::GetOutputTensorMemSize(kernel_node, output_index);
     (void)output_size_list_.emplace_back(tensor_size);
@@ -144,7 +144,7 @@ std::vector<TypeId> DeprecatedNativeCpuKernelMod::GetInputDtypes(const CNodePtr 
 
 std::vector<TypeId> DeprecatedNativeCpuKernelMod::GetOutputDtypes(const CNodePtr &kernel_node) const {
   std::vector<TypeId> output_types;
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(kernel_node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(kernel_node);
   for (size_t output_index = 0; output_index < output_num; ++output_index) {
     auto dtype = common::AnfAlgo::GetOutputInferDataType(kernel_node, output_index);
     (void)output_types.emplace_back(dtype);
@@ -283,7 +283,7 @@ void ParallelLaunch(const CTask &task, size_t count, float block_size, Content c
     task_num += 1;
   }
   auto func = [&](void *, int task_id, float, float) {
-    size_t start = task_id * once_compute_size;
+    size_t start = IntToSize(task_id) * once_compute_size;
     size_t end = (start + once_compute_size) > count ? count : (start + once_compute_size);
     task(start, end);
     return common::SUCCESS;
@@ -309,7 +309,7 @@ void ParallelLaunch(const std::vector<common::Task> &tasks, Content content, Thr
     task_num += 1;
   }
   auto func = [&](void *, int task_id, float, float) {
-    size_t start = task_id * once_compute_size;
+    size_t start = IntToSize(task_id) * once_compute_size;
     size_t end = (start + once_compute_size) > count ? count : (start + once_compute_size);
     for (size_t i = start; i < end; ++i) {
       (void)tasks[i]();
@@ -658,6 +658,12 @@ void GetBroadCastIndex(const std::vector<size_t> &unaligned_input_shape, const s
                         << " and output shape is " << output_shape;
     }
   }
+
+  // while input address is null, whose shape like (4, 0, 5), then the output size is zero
+  if (output_size < 1) {
+    return;
+  }
+
   // Get the flatten input indices according to "logical_shape" and "physical_shape".
   size_t offset = 1;
   size_t stride = 1;
@@ -665,7 +671,7 @@ void GetBroadCastIndex(const std::vector<size_t> &unaligned_input_shape, const s
   (*index_list)[0] = 0;  // First element is set to 0.
   for (size_t i = 0; i < size; ++i) {
     size_t increment = (logical_shape[i] == physical_shape[i] ? stride : 0);
-    for (size_t j = 0; j < (physical_shape[i] - 1) * offset; ++j) {
+    for (size_t j = 0; j + offset < physical_shape[i] * offset; ++j) {
       (*index_list)[offset + j] = (*index_list)[j] + increment;
     }
     offset *= physical_shape[i];

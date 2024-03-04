@@ -20,6 +20,8 @@
 #include <unordered_set>
 #include <numeric>
 #include <functional>
+#include <iomanip>
+#include <algorithm>
 #include "src/extendrt/delegate/tensorrt/op/cast_plugin.h"
 #include "src/extendrt/delegate/tensorrt/distribution/distribution_collective.h"
 
@@ -176,6 +178,7 @@ nvinfer1::DataType ConvertDataType(DataType type_id) {
     {DataType::kNumberTypeInt32, nvinfer1::DataType::kINT32},
     {DataType::kNumberTypeFloat32, nvinfer1::DataType::kFLOAT},
     {DataType::kNumberTypeFloat16, nvinfer1::DataType::kHALF},
+    {DataType::kNumberTypeInt64, nvinfer1::DataType::kINT32},
   };
   auto iter = data_type_map.find(type_id);
   nvinfer1::DataType data_type;
@@ -183,7 +186,7 @@ nvinfer1::DataType ConvertDataType(DataType type_id) {
     data_type = iter->second;
   } else {
     data_type = nvinfer1::DataType::kFLOAT;
-    MS_LOG(WARNING) << "invalid data_type for TensorRT, need check: " << static_cast<int>(type_id);
+    MS_LOG(INFO) << "invalid data_type for TensorRT, need check: " << static_cast<int>(type_id);
   }
   return data_type;
 }
@@ -293,18 +296,58 @@ std::experimental::optional<ActivationParams> TryConvertActivationType(Activatio
     {ActivationType::ELU, ActivationParams{nvinfer1::ActivationType::kELU, true, 0, false, 0}},
     {ActivationType::SELU, ActivationParams{nvinfer1::ActivationType::kSELU, true, 0, true, 0}},
     {ActivationType::SOFTSIGN, ActivationParams{nvinfer1::ActivationType::kSOFTSIGN, false, 0, false, 0}},
-    {ActivationType::SOFTPLUS, ActivationParams{nvinfer1::ActivationType::kSOFTPLUS, true, 0, true, 0}},
+    {ActivationType::SOFTPLUS, ActivationParams{nvinfer1::ActivationType::kSOFTPLUS, false, 0, false, 0}},
     {ActivationType::THRESHOLDRELU, ActivationParams{nvinfer1::ActivationType::kTHRESHOLDED_RELU, true, 0, false, 0}},
     {ActivationType::RELU6, ActivationParams{nvinfer1::ActivationType::kCLIP, true, 0, true, 6}},
     {ActivationType::RELU1, ActivationParams{nvinfer1::ActivationType::kCLIP, true, 0, true, 1}},
     {ActivationType::HARD_TANH, ActivationParams{nvinfer1::ActivationType::kCLIP, true, -1, true, 1}},
-    {ActivationType::HSIGMOID, ActivationParams{nvinfer1::ActivationType::kHARD_SIGMOID, true, 0.2f, true, 0.5f}},
+    {ActivationType::HSIGMOID, ActivationParams{nvinfer1::ActivationType::kHARD_SIGMOID, true, 1.f / 6, true, 0.5f}},
     // using plugin
     {ActivationType::GELU, ActivationParams{nvinfer1::ActivationType::kTHRESHOLDED_RELU, false, 0, false, 0}},
     {ActivationType::SWISH, ActivationParams{nvinfer1::ActivationType::kSIGMOID, false, 0, false, 0}}};
   return action_map.find(activation_type) != action_map.end()
            ? std::experimental::optional<ActivationParams>(action_map[activation_type])
            : std::experimental::nullopt;
+}
+
+bool IsComfortableAlign(std::vector<int64_t> *in_shape_ptr, const std::vector<int64_t> &out_shape, int index) {
+  if (in_shape_ptr->size() > out_shape.size()) {
+    return false;
+  }
+  int out_index = index;
+  int in_index = in_shape_ptr->size() - 1;
+  while (in_index >= 0 && (in_shape_ptr->at(in_index) == out_shape[out_index] || in_shape_ptr->at(in_index) == 1)) {
+    in_index--;
+    out_index--;
+  }
+  return in_index < 0;
+}
+
+void BackComfortableAlign(std::vector<int64_t> *in_shape_ptr, const std::vector<int64_t> &out_shape) {
+  if (in_shape_ptr->size() >= out_shape.size()) {
+    return;
+  }
+  int out_index = out_shape.size() - 1;
+  bool is_comfortable = false;
+  while (out_index >= static_cast<int>(in_shape_ptr->size()) - 1) {
+    if (IsComfortableAlign(in_shape_ptr, out_shape, out_index)) {
+      is_comfortable = true;
+      break;
+    }
+    out_index--;
+  }
+  if (is_comfortable == false) {
+    MS_LOG(INFO) << "failed to align constant tensor";
+    return;
+  }
+  while (static_cast<int>(in_shape_ptr->size()) - 1 < out_index) {
+    in_shape_ptr->insert(in_shape_ptr->begin(), 1);
+  }
+  while (in_shape_ptr->size() < out_shape.size()) {
+    in_shape_ptr->insert(in_shape_ptr->end(), 1);
+  }
+  DebugDims("constant : ", ConvertCudaDims(*in_shape_ptr));
+  return;
 }
 
 void AlignShapeRank(std::vector<int64_t> *in_shape_ptr, const std::vector<int64_t> &out_shape) {
@@ -335,24 +378,13 @@ nvinfer1::ITensor *ConvertTensorWithExpandDims(TensorRTContext *ctx, const Tenso
   }
   auto origin_shape = ms_tensor.Shape();
   std::vector<int64_t> convert_shape(expect_shape);
-  AlignShapeRank(&origin_shape, convert_shape);
-  size_t origin_index = 0;
-  for (size_t i = 0; i < convert_shape.size(); ++i) {
-    if (origin_index >= origin_shape.size()) {
-      convert_shape[i] = 1;
-      continue;
-    }
-    if (origin_shape[origin_index] != convert_shape[i]) {
-      convert_shape[i] = origin_shape[origin_index];
-    }
-    origin_index++;
-  }
+  BackComfortableAlign(&origin_shape, convert_shape);
   if (ms_tensor.ElementNum() !=
-      std::accumulate(convert_shape.begin(), convert_shape.end(), 1, std::multiplies<int64_t>())) {
+      std::accumulate(origin_shape.begin(), origin_shape.end(), 1, std::multiplies<int64_t>())) {
     MS_LOG(ERROR) << "ExpandDims failed for " << op_name;
     return nullptr;
   }
-  nvinfer1::Dims dims = ConvertCudaDims(convert_shape);
+  nvinfer1::Dims dims = ConvertCudaDims(origin_shape);
   if (dims.nbDims == -1) {
     MS_LOG(ERROR) << "ConvertCudaDims failed for " << op_name;
     return nullptr;
@@ -483,7 +515,7 @@ nvinfer1::ITensor *TRTTensorCast(TensorRTContext *ctx, nvinfer1::ITensor *trt_te
 #if TRT_VERSION_GE(7, 2)
   data_type = data_type == nvinfer1::DataType::kBOOL ? nvinfer1::DataType::kINT32 : data_type;
   if (data_type == nvinfer1::DataType::kINT32 && trt_tensor->getType() == nvinfer1::DataType::kFLOAT) {
-    auto plugin = std::make_shared<CastPlugin>(name, trt_tensor->getType(), data_type);
+    auto plugin = std::make_shared<CastPlugin>(name, data_type);
     nvinfer1::ITensor *inputTensors[] = {trt_tensor};
     nvinfer1::IPluginV2Layer *cast_layer = ctx->network()->addPluginV2(inputTensors, 1, *plugin);
     cast_layer->setName(name.c_str());
@@ -493,7 +525,7 @@ nvinfer1::ITensor *TRTTensorCast(TensorRTContext *ctx, nvinfer1::ITensor *trt_te
   }
   auto cast_layer = ctx->network()->addIdentity(*trt_tensor);
 #else
-  auto plugin = std::make_shared<CastPlugin>(name, trt_tensor->getType(), data_type);
+  auto plugin = std::make_shared<CastPlugin>(name, data_type);
   nvinfer1::ITensor *inputTensors[] = {trt_tensor};
   nvinfer1::IPluginV2Layer *cast_layer = ctx->network()->addPluginV2(inputTensors, 1, *plugin);
 #endif
@@ -895,4 +927,66 @@ nvinfer1::DataType GetNvinferDataType<int>() {
 
 template nvinfer1::DataType GetNvinferDataType<float>();
 template nvinfer1::DataType GetNvinferDataType<int>();
+
+#ifdef PROFILER_
+void SimpleProfiler::reportLayerTime(const char *layerName, float ms) noexcept {
+  mProfile_[layerName].count++;
+  mProfile_[layerName].time += ms;
+  if (std::find(mLayerNames_.begin(), mLayerNames_.end(), layerName) == mLayerNames_.end()) {
+    mLayerNames_.push_back(layerName);
+  }
+}
+
+SimpleProfiler::SimpleProfiler(const char *name, const std::vector<SimpleProfiler> &srcProfilers) : mName_(name) {
+  for (const auto &srcProfiler : srcProfilers) {
+    for (const auto &rec : srcProfiler.mProfile_) {
+      auto it = mProfile_.find(rec.first);
+      if (it == mProfile_.end()) {
+        mProfile_.insert(rec);
+      } else {
+        it->second.time += rec.second.time;
+        it->second.count += rec.second.count;
+      }
+    }
+  }
+}
+
+std::ostream &operator<<(std::ostream &out, const SimpleProfiler &value) {
+  out << "========== " << value.mName_ << " profile ==========" << std::endl;
+  float totalTime = 0;
+  std::string layerNameStr = "TensorRT layer name";
+  int maxLayerNameLength = std::max(static_cast<int>(layerNameStr.size()), 70);
+  for (const auto &elem : value.mProfile_) {
+    totalTime += elem.second.time;
+    maxLayerNameLength = std::max(maxLayerNameLength, static_cast<int>(elem.first.size()));
+  }
+
+  auto old_settings = out.flags();
+  auto old_precision = out.precision();
+  // Output header
+  {
+    out << std::setw(maxLayerNameLength) << layerNameStr << " ";
+    out << std::setw(C12NUM) << "Runtime, "
+        << "%"
+        << " ";
+    out << std::setw(C12NUM) << "Invocations"
+        << " ";
+    out << std::setw(C12NUM) << "Runtime, ms" << std::endl;
+  }
+  for (size_t i = 0; i < value.mLayerNames_.size(); i++) {
+    const std::string layerName = value.mLayerNames_[i];
+    auto elem = value.mProfile_.at(layerName);
+    out << std::setw(maxLayerNameLength) << layerName << " ";
+    out << std::setw(C12NUM) << std::fixed << std::setprecision(1) << (elem.time * 100.0F / totalTime) << "%"
+        << " ";
+    out << std::setw(C12NUM) << elem.count << " ";
+    out << std::setw(C12NUM) << std::fixed << std::setprecision(C2NUM) << elem.time << std::endl;
+  }
+  out.flags(old_settings);
+  out.precision(old_precision);
+  out << "========== " << value.mName_ << " total runtime = " << totalTime << " ms ==========" << std::endl;
+
+  return out;
+}
+#endif  // PROFILER_
 }  // namespace mindspore::lite

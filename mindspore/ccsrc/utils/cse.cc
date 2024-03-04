@@ -21,8 +21,8 @@
 #include <vector>
 #include <set>
 
+#include "mindspore/core/ops/framework_ops.h"
 #include "ir/anf.h"
-#include "ir/scalar.h"
 #include "utils/hash_map.h"
 #include "abstract/abstract_function.h"
 #include "utils/flags.h"
@@ -50,6 +50,14 @@ bool IsSetRecomputed(const CNodePtr &a, const CNodePtr &b) {
          (WithRecomputedScope(b) && !b->HasAttr(kAttrNeedCseAfterRecompute));
 }
 
+bool IsHiddenSideEffectNode(const AnfNodePtr &node) {
+  auto prim = GetCNodePrimitive(node);
+  if (prim == nullptr) {
+    return false;
+  }
+  return prim->HasAttr(GRAPH_FLAG_SIDE_EFFECT_HIDDEN);
+}
+
 void UpdateDebugInfoAndDumpFlag(const AnfNodePtr &main, const AnfNodePtr &node) {
   if (main == nullptr || !main->isa<CNode>()) {
     return;
@@ -66,7 +74,7 @@ BasePtr AbsOf(const AnfNodePtr &node, bool ignore_fg_abs_tracking_id) {
   auto node_abs = node->abstract();
   // In testcase: TestOptOpt.CSE, node->abstract() is null.
   if (node_abs == nullptr) {
-    return kAnyValue;
+    return kValueAny;
   }
   if (node_abs->isa<abstract::PrimitiveAbstractClosure>()) {
     // Ignore the tracking_id and prim pointer hash.
@@ -79,21 +87,28 @@ BasePtr AbsOf(const AnfNodePtr &node, bool ignore_fg_abs_tracking_id) {
   return node_abs;
 }
 
-bool CSE::BuildOrderGroupAndDoReplaceForOneGraph(const FuncGraphPtr &fg, const FuncGraphManagerPtr &manager) const {
+bool CSE::BuildOrderGroupForOneGraph(const FuncGraphPtr &fg) {
   MS_EXCEPTION_IF_NULL(fg);
   std::vector<std::size_t> order_group;
   mindspore::HashMap<std::size_t, std::vector<AnfNodePtr>> groups;
   mindspore::HashMap<AnfNodePtr, std::size_t> hashes;
 
   std::vector<AnfNodePtr> toposet = TopoSort(fg->get_return());
-  for (auto node : toposet) {
+  for (const auto &node : toposet) {
     MS_EXCEPTION_IF_NULL(node);
     if (hashes.find(node) != hashes.end()) {
       continue;
     }
-
+    if (IsHiddenSideEffectNode(node) && node->func_graph() != nullptr) {
+      MS_LOG(DEBUG) << "Add hidden func graph:" << node->func_graph()->ToString();
+      (void)hidden_side_effect_func_graphs_.insert(node->func_graph());
+    }
     std::size_t h = 0;
     if (node->isa<ValueNode>()) {
+      auto prim = GetValueNode<PrimitivePtr>(node);
+      if (IsPrimitiveEquals(prim, prim::kPrimUpdateState)) {
+        continue;
+      }
       ValueNodePtr value_node = node->cast<ValueNodePtr>();
       auto value = value_node->value();
       MS_EXCEPTION_IF_NULL(value);
@@ -120,26 +135,90 @@ bool CSE::BuildOrderGroupAndDoReplaceForOneGraph(const FuncGraphPtr &fg, const F
       groups[h].push_back(node);
     }
   }
-  return DoReplace(manager, order_group, &groups);
+  return CalReplaceNodes(order_group, &groups);
 }
 
-bool CSE::BuildOrderGroupAndDoReplace(const FuncGraphManagerPtr manager) const {
-  bool changed = false;
-  for (FuncGraphPtr fg : manager->func_graphs()) {
-    changed = BuildOrderGroupAndDoReplaceForOneGraph(fg, manager) || changed;
+void CSE::DoReplace(const FuncGraphManagerPtr &manager) {
+  // if A is a hidden_side_effect node, then A's user B can't be replaced by main, then B's user C can't be replaced by
+  // main.
+  HashSet<AnfNodePtr> cannot_replace_nodes;
+  for (const auto &[node, main] : replicated_nodes_) {
+    bool main_input_cannot_replace = false;
+    if (main->isa<CNode>()) {
+      auto c_main = main->cast<CNodePtr>();
+      const auto &c_main_inputs = c_main->inputs();
+      auto input_can_not_replace = [&cannot_replace_nodes](const AnfNodePtr &node) {
+        return cannot_replace_nodes.find(node) != cannot_replace_nodes.cend();
+      };
+      main_input_cannot_replace = std::any_of(c_main_inputs.cbegin(), c_main_inputs.cend(), input_can_not_replace);
+    }
+    if (HasHiddenSideEffect(main) || main_input_cannot_replace) {
+      (void)cannot_replace_nodes.insert(main);
+      continue;
+    }
+    // We don't merge primitive cnodes with random effect.
+    MS_LOG(DEBUG) << "CSE replace, node:" << node->DebugString() << ", main:" << main->DebugString();
+    (void)manager->Replace(node, main);
   }
+}
+
+bool CSE::BuildOrderGroupAndDoReplace(const FuncGraphManagerPtr manager) {
+  bool changed = false;
+  for (const auto &fg : manager->func_graphs()) {
+    changed = BuildOrderGroupForOneGraph(fg) || changed;
+  }
+  DoReplace(manager);
   return changed;
 }
 
-bool CSE::HasHiddenSideEffect(const AnfNodePtr &node) {
-  auto prim = GetCNodePrimitive(node);
-  if (prim == nullptr) {
+// Check whether is a func graph call node and func graph has hidden side effect node.
+bool CSE::IsHiddenSideEffectCall(const AnfNodePtr &node) {
+  if (!node->isa<CNode>()) {
     return false;
   }
-  return prim->HasAttr(GRAPH_FLAG_SIDE_EFFECT_HIDDEN);
+  auto cnode = node->cast<CNodePtr>();
+  // Check weather it is a func graph call.
+  if (IsValueNode<Primitive>(cnode->input(kAnfPrimitiveIndex))) {
+    return false;
+  }
+  // If it is a func graph call node, get all graphs  from abstract.
+  auto func_graphs = abstract::GetFuncGraphsFromCallNode(cnode);
+  auto is_hidden_side_effect_graph = [this](const FuncGraphPtr &fg) -> bool {
+    return hidden_side_effect_func_graphs_.find(fg) != hidden_side_effect_func_graphs_.end();
+  };
+  return std::any_of(func_graphs.cbegin(), func_graphs.cend(), is_hidden_side_effect_graph);
 }
 
-bool CSE::CheckReplace(const AnfNodePtr &main, const AnfNodePtr &node) const {
+bool CSE::HasHiddenSideEffect(const AnfNodePtr &node) {
+  if (IsHiddenSideEffectNode(node)) {
+    return true;
+  }
+  if (IsHiddenSideEffectCall(node)) {
+    return true;
+  }
+  return false;
+}
+
+AnfNodePtr CSE::GetReplicatedNode(const AnfNodePtr &node) const {
+  MS_EXCEPTION_IF_NULL(node);
+  auto it = replicated_nodes_.find(node);
+  if (it != replicated_nodes_.cend()) {
+    return it->second;
+  }
+  return node;
+}
+
+void CSE::AddReplicatedNode(const AnfNodePtr &node, const AnfNodePtr &main) {
+  MS_EXCEPTION_IF_NULL(node);
+  MS_EXCEPTION_IF_NULL(main);
+  if (node == main) {
+    MS_LOG(WARNING) << "Can't replace node by itself, node:" << node->DebugString();
+    return;
+  }
+  (void)replicated_nodes_.emplace(node, main);
+}
+
+bool CSE::CheckReplace(const AnfNodePtr &main, const AnfNodePtr &node) {
   MS_EXCEPTION_IF_NULL(main);
   MS_EXCEPTION_IF_NULL(node);
   if (main->isa<ValueNode>() && node->isa<ValueNode>()) {
@@ -153,6 +232,13 @@ bool CSE::CheckReplace(const AnfNodePtr &main, const AnfNodePtr &node) const {
     if (IsSetRecomputed(c_main, c_node)) {
       return false;
     }
+    // Can not merge J because the J user size should be 1.
+    if (IsPrimitiveCNode(c_main, prim::kPrimJ)) {
+      return false;
+    }
+    if (IsPrimitiveCNode(node, prim::kPrimPyExecute)) {
+      return false;
+    }
     const auto &inputs1 = c_main->inputs();
     const auto &inputs2 = c_node->inputs();
     if (inputs1.size() != inputs2.size()) {
@@ -160,8 +246,8 @@ bool CSE::CheckReplace(const AnfNodePtr &main, const AnfNodePtr &node) const {
     }
     // Check inputs, all inputs should equal.
     for (size_t i = 0; i < inputs1.size(); i++) {
-      auto &input1 = inputs1[i];
-      auto &input2 = inputs2[i];
+      auto input1 = GetReplicatedNode(inputs1[i]);
+      auto input2 = GetReplicatedNode(inputs2[i]);
       MS_EXCEPTION_IF_NULL(input1);
       MS_EXCEPTION_IF_NULL(input2);
       if ((input1 == input2) || (*input1 == *input2)) {
@@ -177,15 +263,14 @@ bool CSE::CheckReplace(const AnfNodePtr &main, const AnfNodePtr &node) const {
       }
       return false;
     }
-    // We don't merge primitive cnodes with random effect.
-    return !HasHiddenSideEffect(c_main);
+    return true;
   }
   // a parameter node.
   return false;
 }
 
-bool CSE::DoReplace(const FuncGraphManagerPtr manager, const std::vector<std::size_t> &order_group,
-                    mindspore::HashMap<std::size_t, std::vector<AnfNodePtr>> *groups) const {
+bool CSE::CalReplaceNodes(const std::vector<std::size_t> &order_group,
+                          mindspore::HashMap<std::size_t, std::vector<AnfNodePtr>> *groups) {
   bool changes = false;
   std::set<size_t> clear_set;
   for (auto &h : order_group) {
@@ -221,7 +306,8 @@ bool CSE::DoReplace(const FuncGraphManagerPtr manager, const std::vector<std::si
           if (CheckReplace(node, main)) {
             changes = true;
             UpdateDebugInfoAndDumpFlag(main, node);
-            (void)manager->Replace(node, main);
+            MS_LOG(DEBUG) << "Add replicated_nodes_, node:" << node->DebugString() << ", main:" << main->DebugString();
+            AddReplicatedNode(node, main);
             (void)clear_set.insert(i);
           }
         }
@@ -229,12 +315,17 @@ bool CSE::DoReplace(const FuncGraphManagerPtr manager, const std::vector<std::si
       clear_set.clear();
     }
   }
-
   return changes;
 }
 
-bool CSE::Cse(const FuncGraphPtr root, const FuncGraphManagerPtr manager) const {
+void CSE::Init() {
+  hidden_side_effect_func_graphs_.clear();
+  replicated_nodes_.clear();
+}
+
+bool CSE::Cse(const FuncGraphPtr root, const FuncGraphManagerPtr manager) {
   MS_EXCEPTION_IF_NULL(manager);
+  Init();
   manager->AddFuncGraph(root);
   return BuildOrderGroupAndDoReplace(manager);
 }

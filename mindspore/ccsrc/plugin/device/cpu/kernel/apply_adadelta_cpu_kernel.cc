@@ -61,8 +61,8 @@ int ApplyAdadeltaCpuKernelMod::CheckInputShape(const std::vector<KernelTensorPtr
                   << "', the shape of 'var', 'accum', 'accum_update', 'grad' "
                      "must be the same, "
                      "but got the shapes 'var': "
-                  << Vector2Str(var_shape) << ", 'accum': " << Vector2Str(accum_shape)
-                  << ", 'accum_update': " << Vector2Str(accum_update_shape) << ", 'grad': " << Vector2Str(grad_shape);
+                  << var_shape << ", 'accum': " << accum_shape << ", 'accum_update': " << accum_update_shape
+                  << ", 'grad': " << grad_shape;
     return KRET_RESIZE_FAILED;
   }
 
@@ -70,8 +70,7 @@ int ApplyAdadeltaCpuKernelMod::CheckInputShape(const std::vector<KernelTensorPtr
     MS_LOG(ERROR) << "For '" << kernel_name_
                   << "', the shape of 'lr', 'rho' and 'epsilon' must be the same, "
                      "but got the shapes 'lr': "
-                  << Vector2Str(lr_shape) << ", 'rho': " << Vector2Str(rho_shape)
-                  << ", 'epsilon': " << Vector2Str(epsilon_shape);
+                  << lr_shape << ", 'rho': " << rho_shape << ", 'epsilon': " << epsilon_shape;
 
     return KRET_RESIZE_FAILED;
   }
@@ -84,7 +83,7 @@ int ApplyAdadeltaCpuKernelMod::CheckShapeSize(std::vector<int64_t> var_shape, st
       MS_LOG(ERROR) << "For '" << kernel_name_
                     << "', the shape size of 'var' must be greater than "
                        "'lr_shape', but got the shape of 'var': "
-                    << Vector2Str(var_shape) << " and 'lr_shape': " << Vector2Str(lr_shape);
+                    << var_shape << " and 'lr_shape': " << lr_shape;
       return KRET_RESIZE_FAILED;
     }
     std::vector<int64_t> var_batch_shape(var_shape.begin(), var_shape.begin() + batch_rank_);
@@ -93,7 +92,7 @@ int ApplyAdadeltaCpuKernelMod::CheckShapeSize(std::vector<int64_t> var_shape, st
                     << "', the batch shape of 'var' must be the same as the "
                        "shape of 'lr', "
                        "but got the batch shape of 'var': "
-                    << Vector2Str(var_batch_shape) << " and the shape of 'lr': " << Vector2Str(lr_shape);
+                    << var_batch_shape << " and the shape of 'lr': " << lr_shape;
       return KRET_RESIZE_FAILED;
     }
   }
@@ -146,17 +145,17 @@ bool ApplyAdadeltaCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &in
   auto rho = reinterpret_cast<float *>(inputs[kRhoIndex]->addr);
   auto epsilon = reinterpret_cast<float *>(inputs[kEpsilonIndex]->addr);
   auto grad = reinterpret_cast<float *>(inputs[kGradIndex]->addr);
-  float update;
 
   for (int64_t b = 0; b < batch_size_; b++) {
-    size_t i = 0;
-
-    for (; i < input_elements_; ++i) {
-      accum[i] = rho[b] * accum[i] + (1.0 - rho[b]) * (grad[i] * grad[i]);
-      update = sqrt(accum_update[i] + epsilon[b]) * (grad[i] / sqrt(accum[i] + epsilon[b]));
-      accum_update[i] = rho[b] * accum_update[i] + (1.0 - rho[b]) * (update * update);
-      var[i] -= lr[b] * update;
-    }
+    auto task = [&](size_t start, size_t end) {
+      for (size_t i = start; i < end; ++i) {
+        accum[i] = rho[b] * accum[i] + (1.0 - rho[b]) * (grad[i] * grad[i]);
+        float update = sqrt(accum_update[i] + epsilon[b]) * (grad[i] / sqrt(accum[i] + epsilon[b]));
+        accum_update[i] = rho[b] * accum_update[i] + (1.0 - rho[b]) * (update * update);
+        var[i] -= lr[b] * update;
+      }
+    };
+    ParallelLaunchAutoSearch(task, input_elements_, this, &parallel_search_info_);
 
     var = var + input_elements_;
     accum = accum + input_elements_;

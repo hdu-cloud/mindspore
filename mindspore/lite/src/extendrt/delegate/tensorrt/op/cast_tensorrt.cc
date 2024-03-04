@@ -25,10 +25,6 @@
 namespace mindspore::lite {
 int CastTensorRT::IsSupport(const BaseOperatorPtr &base_operator, const std::vector<TensorInfo> &in_tensors,
                             const std::vector<TensorInfo> &out_tensors) {
-  if (!IsShapeKnown()) {
-    MS_LOG(ERROR) << "Unsupported input tensor unknown shape: " << op_name_;
-    return RET_ERROR;
-  }
   if (in_tensors.size() != INPUT_SIZE2) {
     MS_LOG(ERROR) << "invalid input tensor size: " << in_tensors.size();
     return RET_ERROR;
@@ -61,7 +57,7 @@ int CastTensorRT::AddInnerOp(TensorRTContext *ctx) {
   dest_datatype = (dest_datatype == nvinfer1::DataType::kBOOL ? nvinfer1::DataType::kINT32 : dest_datatype);
   auto cast_layer = ctx->network()->addIdentity(*trt_tensor);
 #else
-  auto plugin = std::make_shared<CastPlugin>(op_name_, trt_tensor->getType(), dest_datatype);
+  auto plugin = std::make_shared<CastPlugin>(op_name_, dest_datatype);
   nvinfer1::ITensor *inputTensors[] = {trt_tensor};
   nvinfer1::IPluginV2Layer *cast_layer = ctx->network()->addPluginV2(inputTensors, 1, *plugin);
 #endif

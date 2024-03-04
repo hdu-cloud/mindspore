@@ -16,19 +16,19 @@
 #ifndef MINDSPORE_CORE_OPS_RELUGRAD_H_
 #define MINDSPORE_CORE_OPS_RELUGRAD_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
-#include "mindspore/core/ops/core_ops.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
 class MIND_API ReluGrad : public BaseOperator {
  public:
   MIND_API_BASE_MEMBER(ReluGrad);
-  ReluGrad() : BaseOperator(prim::kReLUGrad) { InitIOName({"x"}, {"output"}); }
+  ReluGrad() : BaseOperator(kReLUGradOpName) { InitIOName({"x"}, {"output"}); }
   void Init() const {}
 };
 }  // namespace ops

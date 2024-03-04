@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,12 @@
 #include "plugin/device/ascend/optimizer/format_type/insert_transpose_for_dyanmic_gru_v2.h"
 #include <memory>
 #include <vector>
+#include "ops/array_ops.h"
 #include "include/common/utils/utils.h"
 #include "plugin/device/ascend/optimizer/ascend_helper.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/kernel_info.h"
 #include "kernel/oplib/oplib.h"
 #include "utils/ms_context.h"
 
@@ -62,12 +63,12 @@ CNodePtr Insert(const FuncGraphPtr &func_graph, const CNodePtr &cnode) {
       MS_EXCEPTION_IF_NULL(new_transpose_node);
       // This Transpose operator is only to change the shape, but does not expect to change the data arrangement!
       common::AnfAlgo::SetNodeAttr(kAttrNopOp, MakeValue(true), new_transpose_node);
-      RefreshKernelBuildInfo(input_format, kOpFormat_HWCN, new_transpose_node);
+      RefreshKernelBuildInfo(kernel_select, input_format, kOpFormat_HWCN, new_transpose_node);
       // trans hwcn to output_format
       new_transdata_node =
         NewTransOpNode(func_graph, new_transpose_node, cnode, kernel_select, false, prim::kPrimTransData->name());
       MS_EXCEPTION_IF_NULL(new_transdata_node);
-      RefreshKernelBuildInfo(kOpFormat_HWCN, output_format, new_transdata_node, padding_axis);
+      RefreshKernelBuildInfo(kernel_select, kOpFormat_HWCN, output_format, new_transdata_node, padding_axis);
       new_transdata_node->set_abstract(transdata_node->abstract());
       new_node = new_transdata_node;
 
@@ -75,7 +76,7 @@ CNodePtr Insert(const FuncGraphPtr &func_graph, const CNodePtr &cnode) {
       MS_EXCEPTION_IF_NULL(manager);
       manager->AddFuncGraph(func_graph);
       if (!manager->Replace(transdata_node, new_node)) {
-        MS_LOG(EXCEPTION) << "For DynamicGRUV2, manager replace node failed";
+        MS_LOG(INTERNAL_EXCEPTION) << "For DynamicGRUV2, manager replace node failed";
       }
     }
   }

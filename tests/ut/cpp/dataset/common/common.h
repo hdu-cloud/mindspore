@@ -89,6 +89,8 @@ using mindspore::StatusCode;
     MS_LOG(_loglevel) << _msg << *_de_tensor;                      \
   } while (false)
 
+Status GetSessionFromEnv(uint32_t *session_id);
+
 namespace UT {
 class Common : public testing::Test {
  public:
@@ -135,6 +137,8 @@ MSTensorVec Predicate1(MSTensorVec in);
 MSTensorVec Predicate2(MSTensorVec in);
 
 MSTensorVec Predicate3(MSTensorVec in);
+
+cv::Mat BGRToRGB(const cv::Mat &img);
 }  // namespace dataset
 }  // namespace mindspore
 #endif  // TESTS_UT_CPP_DATASET_COMMON_COMMON_H_

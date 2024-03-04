@@ -32,12 +32,14 @@ constexpr size_t kBitpack = 8;
 bool CompareAndBitpackGpuKernelMod::Init(const BaseOperatorPtr &base_operator,
                                          const std::vector<KernelTensorPtr> &inputs,
                                          const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
   kernel_name_ = base_operator->name();
   if (inputs.empty() || outputs.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', it got empty inputs or outputs, which is invalid.";
     return false;
   }
   kernel_ptr_ = std::make_shared<ops::CompareAndBitpack>(base_operator->GetPrim());
+  MS_EXCEPTION_IF_NULL(kernel_ptr_);
   auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
   auto [is_match, index] = MatchKernelAttr(kernel_attr, GetOpSupport());
   if (!is_match) {
@@ -46,8 +48,8 @@ bool CompareAndBitpackGpuKernelMod::Init(const BaseOperatorPtr &base_operator,
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  x_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  threshold_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).first);
+  x_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  threshold_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).dtype);
   cudnn_handle_ = device::gpu::GPUDeviceManager::GetInstance().GetCudnnHandle();
   return true;
 }
@@ -57,11 +59,8 @@ int CompareAndBitpackGpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
                                           const std::vector<KernelTensorPtr> &outputs,
                                           const std::map<uint32_t, tensor::TensorPtr> &) {
   ResetResource();
-  for (const auto &input : inputs) {
-    auto input_shape = input->GetShapeVector();
-    if (!IsValidShape(input_shape)) {
-      return KRET_UNKNOWN_SHAPE;
-    }
+  if (auto ret = KernelMod::Resize(base_operator, inputs, outputs); ret != KRET_OK) {
+    return ret;
   }
   auto x_long_shape = inputs.at(kIndex0)->GetShapeVector();
   std::vector<size_t> x_shape;
@@ -96,7 +95,9 @@ bool CompareAndBitpackGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &
   T *x = GetDeviceAddress<T>(inputs, kIndex0);
   T *threshold = GetDeviceAddress<T>(inputs, kIndex1);
   uint8_t *y = GetDeviceAddress<uint8_t>(outputs, kIndex0);
-  CalCompareAndBitpack(x, threshold, y, y_count_, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status =
+    CalCompareAndBitpack(x, threshold, y, y_count_, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -125,6 +126,5 @@ std::vector<KernelAttr> CompareAndBitpackGpuKernelMod::GetOpSupport() {
                        [](const std::pair<KernelAttr, CompareAndBitpackFunc> &pair) { return pair.first; });
   return support_list;
 }
-MS_KERNEL_FACTORY_REG(NativeGpuKernelMod, CompareAndBitpack, CompareAndBitpackGpuKernelMod);
 }  // namespace kernel
 }  // namespace mindspore

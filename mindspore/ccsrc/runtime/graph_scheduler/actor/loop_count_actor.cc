@@ -25,8 +25,8 @@
 #include "mindrt/include/async/async.h"
 #include "utils/log_adapter.h"
 #include "runtime/device/stream_synchronizer.h"
-#include "distributed/recovery/recovery_context.h"
-#include "distributed/collective/collective_manager.h"
+#include "include/backend/distributed/recovery/recovery_context.h"
+#include "include/backend/distributed/collective/collective_manager.h"
 #if defined(__linux__) && defined(WITH_BACKEND)
 #include "runtime/graph_scheduler/rpc_node_scheduler.h"
 #endif
@@ -63,7 +63,8 @@ void LoopCountActor::IncreaseLoopCount(OpContext<DeviceTensor> *const context) {
   }
 
   // Sync device stream.
-  if (strategy_ == GraphExecutionStrategy::kPipeline) {
+  if ((strategy_ == GraphExecutionStrategy::kPipeline) && is_need_sync_stream_) {
+    ProfilerRecorder profiler(ProfilerModule::kKernel, ProfilerEvent::kStreamSync, GetAID().Name());
     std::set<const DeviceContext *> sync_stream_device_contexts;
     for (auto &device_context : device_contexts_) {
       MS_EXCEPTION_IF_NULL(device_context);
@@ -90,6 +91,11 @@ void LoopCountActor::SendDebugReq(OpContext<DeviceTensor> *const context) {
 }
 
 void LoopCountActor::SendOutput(OpContext<DeviceTensor> *const context) {
+  // Only the multi thread execution can profile the ProfilerEvent::kSendOutput.
+  if (ActorDispatcher::is_multi_thread_execution()) {
+    ProfilerRecorder profiler(ProfilerModule::kRuntime, ProfilerEvent::kSendOutput, GetAID().Name());
+  }
+
   // Send recorder info.
   if (recorder_aid_ != nullptr) {
     ActorDispatcher::Send(*recorder_aid_, &RecorderActor::RecordOnStepEnd, context);
@@ -108,8 +114,8 @@ void LoopCountActor::SendOutput(OpContext<DeviceTensor> *const context) {
   }
 
 #if defined(__linux__) && defined(WITH_BACKEND)
-  // Update rpc actors' status.
-  RpcActorStatusUpdater::GetInstance().UpdateRpcActorStatus();
+  // Flush sent data after each step is done.
+  RpcActorStatusUpdater::GetInstance().FlushRpcData(graph_name_);
 #endif
 
   // The LoopCountActor exits.

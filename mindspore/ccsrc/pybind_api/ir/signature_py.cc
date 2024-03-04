@@ -17,7 +17,7 @@
 #include "ir/signature.h"
 #include "pybind11/operators.h"
 #include "include/common/pybind_api/api_register.h"
-#include "pipeline/jit/parse/data_converter.h"
+#include "pipeline/jit/ps/parse/data_converter.h"
 
 namespace py = pybind11;
 
@@ -30,7 +30,7 @@ static ValuePtr PyArgToValue(const py::object &arg) {
   return parse::data_converter::PyDataToValue(arg);
 }
 // Bind SignatureEnumRW as a python class.
-void RegSignatureEnumRW(py::module *m) {
+void RegSignatureEnumRW(const py::module *m) {
   (void)py::class_<Signature>(*m, "Signature")
     .def(py::init([](const std::string &name, SignatureEnumRW rw, SignatureEnumKind kind, const py::object arg_default,
                      SignatureEnumDType dtype) {

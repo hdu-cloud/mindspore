@@ -16,14 +16,27 @@
 
 #include "ops/data_format_dim_map.h"
 
-#include <algorithm>
+#include <map>
 #include <set>
 
-#include "ops/op_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "utils/tensor_construct_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -83,6 +96,23 @@ std::string DataFormatDimMap::get_dst_format() const {
   return GetValue<std::string>(value_ptr);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(DataFormatDimMap, prim::kPrimDataFormatDimMap, DataFormatDimMapInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGDataFormatDimMapInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DataFormatDimMapInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DataFormatDimMapInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DataFormatDimMapInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(DataFormatDimMap, prim::kPrimDataFormatDimMap, AGDataFormatDimMapInfer, false);
 }  // namespace ops
 }  // namespace mindspore

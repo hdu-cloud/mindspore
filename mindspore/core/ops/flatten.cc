@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-#include <set>
 #include "ops/flatten.h"
-#include "utils/check_convert_utils.h"
-#include "ops/primitive_c.h"
-#include "ops/op_utils.h"
+#include <set>
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,7 +36,11 @@ abstract::ShapePtr FlattenInferShape(const PrimitivePtr &primitive, const std::v
   auto prim_name = primitive->name();
   (void)CheckAndConvertUtils::CheckInteger("input args size", SizeToLong(input_args.size()), kGreaterEqual, 1,
                                            prim_name);
-  auto shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape());
+  const auto &shape = input_args[0]->BuildShape();
+  if (shape->IsDimZero()) {
+    MS_LOG(EXCEPTION) << "Unsupported input shape dimension. The shape should not be empty.";
+  }
+  auto shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(shape);
   auto x_shape = shape_map[kShape];
   if (IsDynamicRank(x_shape)) {
     return std::make_shared<abstract::Shape>(
@@ -75,6 +80,24 @@ AbstractBasePtr FlattenInfer(const abstract::AnalysisEnginePtr &, const Primitiv
   auto infer_shape = FlattenInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Flatten, prim::kPrimFlatten, FlattenInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGFlattenInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return FlattenInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return FlattenInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return FlattenInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Flatten, prim::kPrimFlatten, AGFlattenInfer, false);
 }  // namespace ops
 }  // namespace mindspore

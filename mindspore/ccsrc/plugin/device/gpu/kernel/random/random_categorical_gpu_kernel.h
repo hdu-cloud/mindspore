@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,16 +23,19 @@
 #include <map>
 #include <string>
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
+#include "mindspore/core/ops/random_ops.h"
 #include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/random_categorical.cuh"
 #include "mindspore/core/ops/random_categorical.h"
+#include "kernel/kernel_get_value.h"
+#include "kernel/philox_random.h"
 
 namespace mindspore {
 namespace kernel {
 template <typename T, typename G, typename S>
 class RandomCategoricalGpuKernelMod : public NativeGpuKernelMod {
  public:
-  RandomCategoricalGpuKernelMod() : is_null_input_(false), batch_size_(0), num_classes_(0), num_samples_(0), seed_(0) {}
+  RandomCategoricalGpuKernelMod() : is_null_input_(false), batch_size_(0), num_classes_(0), num_samples_(0) {}
   ~RandomCategoricalGpuKernelMod() override = default;
 
   bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspaces,
@@ -42,33 +45,34 @@ class RandomCategoricalGpuKernelMod : public NativeGpuKernelMod {
     }
     T *logits_addr = GetDeviceAddress<T>(inputs, 0);
     S *output_addr = GetDeviceAddress<S>(outputs, 0);
+    MS_EXCEPTION_IF_NULL(logits_addr);
+    MS_EXCEPTION_IF_NULL(output_addr);
 
     std::unique_ptr<double *[]> host_cdf;
+    std::unique_ptr<double *[]> host_rand;
     host_cdf = std::make_unique<double *[]>(batch_size_);
+    host_rand = std::make_unique<double *[]>(batch_size_);
     for (size_t i = 0; i < batch_size_; i++) {
       host_cdf[i] = GetDeviceAddress<double>(workspaces, i);
     }
+    for (size_t i = 0; i < batch_size_; i++) {
+      host_rand[i] = GetDeviceAddress<double>(workspaces, batch_size_ + 1 + i);
+    }
+
     double **dev_cdf = GetDeviceAddress<double *>(workspaces, batch_size_);
+    double **dev_rand = GetDeviceAddress<double *>(workspaces, batch_size_ * 2 + 1);
     CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
       cudaMemcpyAsync(dev_cdf,  // NOLINT
                       host_cdf.get(), sizeof(double *) * batch_size_, cudaMemcpyHostToDevice,
                       reinterpret_cast<cudaStream_t>(stream_ptr)),
       "Random_categorica cudaMemcpyAsync dev_cdf failed");
-    std::unique_ptr<double *[]> host_rand;
-    host_rand = std::make_unique<double *[]>(batch_size_);
-    for (size_t i = 0; i < batch_size_; i++) {
-      host_rand[i] = GetDeviceAddress<double>(workspaces, batch_size_ + 1 + i);
-    }
+    std::uniform_real_distribution<> dist(0, 1);
+    std::unique_ptr<double[]> host_1d_rand;
+    host_1d_rand = std::make_unique<double[]>(num_samples_);
 
-    double **dev_rand = GetDeviceAddress<double *>(workspaces, batch_size_ * 2 + 1);
     for (size_t i = 0; i < batch_size_; i++) {
-      std::unique_ptr<double[]> host_1d_rand;
-      host_1d_rand = std::make_unique<double[]>(num_samples_);
-
-      std::default_random_engine rng(static_cast<G>(seed_));
-      std::uniform_real_distribution<> dist(0, 1);
       for (size_t j = 0; j < num_samples_; j++) {
-        host_1d_rand[j] = dist(rng);
+        host_1d_rand[j] = dist(rng_);
       }
       CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
         cudaMemcpyAsync(host_rand[i],  // NOLINT
@@ -82,9 +86,12 @@ class RandomCategoricalGpuKernelMod : public NativeGpuKernelMod {
                       reinterpret_cast<cudaStream_t>(stream_ptr)),
       "Random_categorica cudaMemcpyAsync dev_rand failed");
 
-    GetCdfKernel(logits_addr, dev_cdf, batch_size_, num_classes_, reinterpret_cast<cudaStream_t>(stream_ptr));
-    RandomCategoricalKernel(num_samples_, dev_rand, dev_cdf, batch_size_, num_classes_, output_addr,
-                            reinterpret_cast<cudaStream_t>(stream_ptr));
+    auto status =
+      GetCdfKernel(logits_addr, dev_cdf, batch_size_, num_classes_, reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
+    status = RandomCategoricalKernel(num_samples_, dev_rand, dev_cdf, batch_size_, num_classes_, output_addr,
+                                     reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
 
     return true;
   }
@@ -100,18 +107,36 @@ class RandomCategoricalGpuKernelMod : public NativeGpuKernelMod {
     MS_EXCEPTION_IF_NULL(kernel_ptr);
 
     size_t input_num = inputs.size();
-    if (input_num != 3) {
+    const size_t kRandomCategoricalInputSize = 3;
+    if (input_num != kRandomCategoricalInputSize) {
       MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the number of inputs should be 3, but got " << input_num;
     }
     size_t output_num = outputs.size();
     if (output_num != 1) {
       MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the number of outputs should be 1, but got " << output_num;
     }
-    num_samples_ = kernel_ptr->get_num_sample();
-    seed_ = kernel_ptr->get_seed();
 
+    int64_t num_samples;
+    if (!TryGetIntValue(inputs, kIndex1, kernel_name_, &num_samples)) {
+      MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', can't get num_samples value from input.";
+    }
+    num_samples_ = LongToSize(num_samples);
+
+    int64_t input_seed;
+    if (!TryGetIntValue(inputs, kIndex2, kernel_name_, &input_seed)) {
+      MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', can't get seed value from input.";
+    }
+    if (init_state_ || input_seed != init_seed_) {
+      if (init_state_) {
+        init_state_ = false;
+      }
+      init_seed_ = input_seed;
+      uint64_t seed = random::GetSeed(0, static_cast<uint64_t>(input_seed));
+      rng_.seed(seed);
+    }
     auto logits_shape = inputs[0]->GetShapeVector();
-    if (logits_shape.size() != 2) {
+    const size_t kLogitsShapeSize = 2;
+    if (logits_shape.size() != kLogitsShapeSize) {
       MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the dimension of logits should be 2, but got "
                         << logits_shape.size();
     }
@@ -123,6 +148,7 @@ class RandomCategoricalGpuKernelMod : public NativeGpuKernelMod {
 
   bool Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
             const std::vector<KernelTensorPtr> &outputs) override {
+    MS_EXCEPTION_IF_NULL(base_operator);
     kernel_name_ = base_operator->name();
     if (kernel_name_ != prim::kPrimRandomCategorical->name()) {
       MS_LOG(ERROR) << "For 'RandomCategorical', the kernel name must be 'RandomCategorical', but got " << kernel_name_;
@@ -150,7 +176,9 @@ class RandomCategoricalGpuKernelMod : public NativeGpuKernelMod {
   size_t batch_size_;
   size_t num_classes_;
   size_t num_samples_;
-  int64_t seed_;
+  bool init_state_{true};
+  int64_t init_seed_{0};
+  std::default_random_engine rng_;
 };
 }  // namespace kernel
 }  // namespace mindspore

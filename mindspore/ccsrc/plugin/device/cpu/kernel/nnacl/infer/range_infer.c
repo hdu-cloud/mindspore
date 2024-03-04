@@ -17,6 +17,8 @@
 #include "nnacl/infer/range_infer.h"
 #include <math.h>
 #include "nnacl/infer/infer_register.h"
+#include "nnacl/range_parameter.h"
+#include "nnacl/tensor_c_utils.h"
 
 int RangeInferShape(const TensorC *const *inputs, size_t inputs_size, TensorC **outputs, size_t outputs_size,
                     OpParameter *parameter) {
@@ -37,9 +39,9 @@ int RangeInferShape(const TensorC *const *inputs, size_t inputs_size, TensorC **
   }
   int shape_size = 0;
   if (inputs_size == C3NUM) {
-    MS_CHECK_FALSE(inputs[FIRST_INPUT]->data_ == NULL, NNACL_INFER_INVALID);
-    MS_CHECK_FALSE(inputs[SECOND_INPUT]->data_ == NULL, NNACL_INFER_INVALID);
-    MS_CHECK_FALSE(inputs[THIRD_INPUT]->data_ == NULL, NNACL_INFER_INVALID);
+    NNACL_CHECK_FALSE(inputs[FIRST_INPUT]->data_ == NULL, NNACL_INFER_INVALID);
+    NNACL_CHECK_FALSE(inputs[SECOND_INPUT]->data_ == NULL, NNACL_INFER_INVALID);
+    NNACL_CHECK_FALSE(inputs[THIRD_INPUT]->data_ == NULL, NNACL_INFER_INVALID);
     if ((inputs[FIRST_INPUT]->data_type_ != inputs[SECOND_INPUT]->data_type_) ||
         (inputs[FIRST_INPUT]->data_type_ != inputs[THIRD_INPUT]->data_type_)) {
       return NNACL_INFER_INVALID;
@@ -63,7 +65,7 @@ int RangeInferShape(const TensorC *const *inputs, size_t inputs_size, TensorC **
         float start = *(float *)(inputs[0]->data_);
         float limit = *(float *)(inputs[1]->data_);
         float delta = *(float *)(inputs[2]->data_);
-        if (fabsf(delta) < EPSILON) {
+        if (fabsf(delta) < EPSILON_VALUE) {
           return NNACL_ERR;
         }
         shape_size = imax((int)(ceil((float)(limit - start) / delta)), 0);

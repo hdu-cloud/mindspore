@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_CHOLESKYGRAD_H
 #define MINDSPORE_CORE_OPS_CHOLESKYGRAD_H
 
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 /// \brief Computes the reverse mode backpropgated gradient of the Cholesky algorithm.
@@ -36,8 +36,8 @@ class MIND_API CholeskyGrad : public BaseOperator {
   CholeskyGrad() : BaseOperator(kNameCholeskyGrad) { InitIOName({"x", "grad"}, {"y"}); }
 };
 
-abstract::AbstractBasePtr CholeskyGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                            const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr CholeskyGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                     const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_CHOLESKYGRAD_H

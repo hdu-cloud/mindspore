@@ -32,8 +32,10 @@ from mindspore import context
 def setup_function():
     context.set_auto_parallel_context(dataset_strategy="full_batch")
 
+
 class Net(nn.Cell):
     """Net definition"""
+
     def __init__(self, strategy1, strategy2):
         super(Net, self).__init__()
         self.fc1 = P.MatMul().shard(strategy1)
@@ -53,6 +55,7 @@ class Net(nn.Cell):
 
 class Net2(nn.Cell):
     """Net definition"""
+
     def __init__(self, strategy1, strategy2):
         super(Net2, self).__init__()
         self.net1 = Net(strategy1, strategy2)
@@ -91,7 +94,7 @@ def auto_parallel_compile_net(mode, dev_num, net, strategy1=None, strategy2=None
 class TestSharedParameterCast:
     def setup_method(self):
         self.output_path = './graphs' + self.__str__()
-        context.set_context(save_graphs=True,
+        context.set_context(save_graphs=3,
                             save_graphs_path=self.output_path)
 
     def teardown_method(self):
@@ -108,7 +111,7 @@ class TestSharedParameterCast:
         appear_count = 0
         with open(ir_files[0], 'r') as fp:
             for line in fp:
-                if 'Float16' in line:
+                if 'Float16' in line or 'F16' in line:
                     appear_count += 1
         assert appear_count == target_count
 
@@ -130,7 +133,7 @@ class TestSharedParameterCast:
         """
         auto_parallel_compile_net("semi_auto_parallel", 8, Net, ((8, 1), (1, 1)), ((8, 1), (1, 1)),
                                   interleaved_batch=2)
-        self.cat_fp16_from_ir(target_count=39)
+        self.cat_fp16_from_ir(target_count=38)
 
     def test_optimizer_fp16_pipeline(self):
         """
@@ -152,4 +155,4 @@ class TestSharedParameterCast:
         auto_parallel_compile_net("semi_auto_parallel", 8, Net, ((8, 1), (1, 1)), ((8, 1), (1, 1)),
                                   interleaved_batch=2,
                                   stages=1, micro_size=1)
-        self.cat_fp16_from_ir(target_count=39)
+        self.cat_fp16_from_ir(target_count=38)

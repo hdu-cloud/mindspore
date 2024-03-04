@@ -23,17 +23,25 @@
 #include <utility>
 #include <memory>
 #include "mindapi/base/format.h"
+#include "acl/acl_mdl.h"
 
 namespace mindspore::kernel {
 namespace acl {
 struct AclModelOptions {
   int32_t device_id;
-  std::string dump_cfg_path;
+  std::string dump_path;
+  std::string profiling_path;
+  bool multi_model_sharing_mem_prepare = false;
+  bool multi_model_sharing_mem = false;
+  AclModelOptions() : device_id(0) {}
+};
+
+struct AclDynamicShapeOptions {
   std::set<uint64_t> batch_size;
   std::set<std::pair<uint64_t, uint64_t>> image_size;
+  std::pair<aclmdlIODims *, size_t> dynamic_dims;
   std::vector<Format> input_format;
-
-  AclModelOptions() : device_id(0) {}
+  std::vector<std::vector<int64_t>> input_shapes;
 };
 
 using AclModelOptionsPtr = std::shared_ptr<AclModelOptions>;

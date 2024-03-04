@@ -52,11 +52,22 @@ class SkipOp : public PipelineOp {
 
   void SetOnceOnly(bool once_only) { once_only_ = once_only; }
 
+  /// \brief Gets the next row
+  /// \param row[out] - Fetched TensorRow
+  /// \return Status The status code returned
+  Status GetNextRowPullMode(TensorRow *const row) override;
+
+ protected:
+  /// \brief Gets the implementation status for operator in pull mode
+  /// \return implementation status
+  ImplementedPullMode PullModeImplementationStatus() const override { return ImplementedPullMode::Implemented; }
+
  private:
   int32_t max_skips_;   // The number of skips that the user requested
   int32_t skip_count_;  // A counter for the current number of executed skips
 
-  bool once_only_ = false;  // skip for skip_count_ steps only once
+  bool once_only_ = false;     // skip for skip_count_ steps only once
+  int64_t data_produced_ = 0;  // The number of data has been pushed to the next op
 
   std::unique_ptr<ChildIterator> child_iterator_;  // An iterator for fetching.
 };

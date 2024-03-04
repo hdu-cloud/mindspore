@@ -16,14 +16,14 @@
 
 #ifndef MINDSPORE_CORE_OPS_CDIST_H_
 #define MINDSPORE_CORE_OPS_CDIST_H_
-#include <memory>
-#include <vector>
 #include <algorithm>
-#include <set>
 #include <map>
+#include <memory>
+#include <set>
 #include <string>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -44,8 +44,8 @@ class MIND_API Cdist : public BaseOperator {
   float get_p() const;
 };
 
-abstract::AbstractBasePtr CdistInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                     const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr CdistInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                              const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

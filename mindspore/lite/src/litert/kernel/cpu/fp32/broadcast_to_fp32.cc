@@ -59,14 +59,14 @@ int BroadcastToCPUKernel::Run() {
   switch (data_type) {
     case kNumberTypeFloat32:
       return BroadcastToSize32(input_data, &shape_info_, output_data);
-#ifdef ENABLE_FP16
     case kNumberTypeFloat16:
       return BroadcastToSize16(input_data, &shape_info_, output_data);
-#endif
     case kNumberTypeInt32:
     case kNumberTypeInt:
       return BroadcastToSize32(input_data, &shape_info_, output_data);
     case kNumberTypeBool:
+      return BroadcastToSize8(input_data, &shape_info_, output_data);
+    case kNumberTypeUInt8:
       return BroadcastToSize8(input_data, &shape_info_, output_data);
     default:
       MS_LOG(ERROR) << "UnSupported data type: " << data_type;
@@ -77,7 +77,6 @@ int BroadcastToCPUKernel::Run() {
 REG_KERNEL(kCPU, kNumberTypeInt32, PrimitiveType_BroadcastTo, LiteKernelCreator<BroadcastToCPUKernel>)
 REG_KERNEL(kCPU, kNumberTypeFloat32, PrimitiveType_BroadcastTo, LiteKernelCreator<BroadcastToCPUKernel>)
 REG_KERNEL(kCPU, kNumberTypeBool, PrimitiveType_BroadcastTo, LiteKernelCreator<BroadcastToCPUKernel>)
-#ifdef ENABLE_FP16
 REG_KERNEL(kCPU, kNumberTypeFloat16, PrimitiveType_BroadcastTo, LiteKernelCreator<BroadcastToCPUKernel>)
-#endif
+REG_KERNEL(kCPU, kNumberTypeUInt8, PrimitiveType_BroadcastTo, LiteKernelCreator<BroadcastToCPUKernel>)
 }  // namespace mindspore::kernel

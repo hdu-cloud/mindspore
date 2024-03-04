@@ -26,11 +26,12 @@
 #include "frontend/parallel/strategy.h"
 #include "frontend/parallel/graph_util/generate_graph.h"
 #include "frontend/parallel/tensor_layout/tensor_redistribution.h"
-#include "pipeline/jit/resource.h"
+#include "pipeline/jit/ps/resource.h"
 
 namespace mindspore {
 namespace parallel {
 Status SliceInfo::GetInput(const ValuePtr &input_value, std::vector<int64_t> *input) {
+  input->clear();
   MS_EXCEPTION_IF_NULL(input_value);
   ValueTuplePtr value_tuple = input_value->cast<ValueTuplePtr>();
   if (value_tuple == nullptr) {
@@ -141,7 +142,9 @@ Status SliceInfo::InferMirrorOps() {
     return SUCCESS;
   }
 
-  OperatorVector input_op, begin_op, end_op;
+  OperatorVector input_op;
+  OperatorVector begin_op;
+  OperatorVector end_op;
   input_op = CreateMirrorOps(group[0].name(), group[0].GetDevNum());
   mirror_ops_.push_back(input_op);
   mirror_ops_.push_back(begin_op);
@@ -151,7 +154,14 @@ Status SliceInfo::InferMirrorOps() {
 
 // Note: if the batch dimension is not fully fetched, the batch strategy may not work.
 std::shared_ptr<Strategies> SliceInfo::GenerateBatchStrategies() {
+  if (GetAttrs() != SUCCESS) {
+    MS_LOG(EXCEPTION) << name_ << "generate batch parallel strategies failed.";
+  }
   split_flag_list_ = {true};
+  bool no_fully_fetch = ((begin_[0] != 0) || (size_[0] < inputs_shape_[0][0]));
+  if (no_fully_fetch) {
+    split_flag_list_ = {false};
+  }
   return GenerateBatchStrategiesBySplitFlag(inputs_shape_, split_flag_list_);
 }
 

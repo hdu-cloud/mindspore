@@ -23,8 +23,7 @@ from mindspore.ops import composite as C
 from mindspore.ops import functional as F
 from mindspore.common.parameter import Parameter
 from mindspore.common.tensor import Tensor
-from mindspore._checkparam import Validator as validator
-from mindspore._checkparam import Rel
+from mindspore import _checkparam as validator
 from mindspore.nn.optim.optimizer import Optimizer
 from mindspore.nn.optim.optimizer import opt_init_args_register
 from mindspore.nn.optim._dist_optimizer_registry import _register_dist_optimizer
@@ -82,6 +81,46 @@ def _run_opt_with_sparse_dist(opt, sparse_opt, push, pull, use_locking, use_nest
         success = F.depend(success, scatter_add(params, indices, - lr_t * param_update))
         success = F.depend(success, scatter_update(m, indices, next_m))
         success = F.depend(success, scatter_update(v, indices, next_v))
+
+    return success
+
+
+@_lazy_adam_opt.register("Function", "Function", "Function", "Function", "Bool", "Bool", "Bool", "Tensor", "Tensor",
+                         "Tensor", "Tensor", "Tensor", "Tensor", "MapTensor", "MapTensor", "MapTensor", "MapTensor",
+                         "Bool", "Bool", "Function", "Bool", "Function", "Bool")
+def _run_map_tensor_opt_with_sparse_dist(opt, sparse_opt, push, pull, use_locking, use_nesterov, target, beta1_power,
+                                         beta2_power, beta1, beta2, eps, lr, gradient, params, m, v,
+                                         ps_parameter, cache_enable, distributed_opt, use_flag, distributed_sparse_opt,
+                                         use_sparse_flag):
+    """Apply sparse lazy adam optimizer to the weight parameter when the gradient is sparse."""
+    success = True
+    indices, values = gradient.get_data()
+    if use_sparse_flag:
+        # PS Mode.
+        success = F.depend(success, distributed_sparse_opt(params, m, v, beta1_power, beta2_power, lr, beta1, beta2,
+                                                           eps, values, indices))
+    else:
+        # PS Cache mode.
+        op_sqrt = P.Sqrt()
+
+        m_slice = m.get(indices)
+        v_slice = v.get(indices)
+
+        next_m = m_slice * beta1 + values * (1 - beta1)
+        next_v = v_slice * beta2 + values * values * (1 - beta2)
+
+        lr_t = lr * op_sqrt(1 - beta2_power) / (1 - beta1_power)
+
+        if use_nesterov:
+            m_temp = beta1 * next_m + values * (1 - beta1)
+            param_update = m_temp / (op_sqrt(next_v) + eps)
+        else:
+            param_update = next_m / (op_sqrt(next_v) + eps)
+
+        params_need_update = params.get(indices)
+        params.put(indices, params_need_update - lr_t * param_update)
+        m.put(indices, next_m)
+        v.put(indices, next_v)
 
     return success
 
@@ -212,8 +251,8 @@ def _check_param_value(beta1, beta2, eps, weight_decay, prim_name):
     validator.check_value_type("beta2", beta2, [float], prim_name)
     validator.check_value_type("eps", eps, [float], prim_name)
     validator.check_value_type("weight_dacay", weight_decay, [float], prim_name)
-    validator.check_float_range(beta1, 0.0, 1.0, Rel.INC_NEITHER, "beta1", prim_name)
-    validator.check_float_range(beta2, 0.0, 1.0, Rel.INC_NEITHER, "beta2", prim_name)
+    validator.check_float_range(beta1, 0.0, 1.0, validator.INC_NEITHER, "beta1", prim_name)
+    validator.check_float_range(beta2, 0.0, 1.0, validator.INC_NEITHER, "beta2", prim_name)
     validator.check_positive_float(eps, "eps", prim_name)
     validator.check_non_negative_float(weight_decay, "weight_decay", prim_name)
 
@@ -231,14 +270,15 @@ class LazyAdam(Optimizer):
         \begin{array}{ll} \\
             m_{t+1} = \beta_1 * m_{t} + (1 - \beta_1) * g \\
             v_{t+1} = \beta_2 * v_{t} + (1 - \beta_2) * g * g \\
-            l = \alpha * \frac{\sqrt{1-\beta_2^t}}{1-\beta_1^t} \\
-            w_{t+1} = w_{t} - l * \frac{m_{t+1}}{\sqrt{v_{t+1}} + \epsilon}
+            \widehat{m_{t+1}} = \frac{m_{t+1}}{1-\beta_1^t} \\
+            \widehat{v_{t+1}} = \frac{v_{t+1}}{1-\beta_2^t} \\
+            w_{t+1} = w_{t} - \gamma * \frac{\widehat{m_{t+1}}}{\sqrt{\widehat{v_{t+1}}} + \epsilon}
         \end{array}
 
     :math:`m` represents the 1st moment vector `moment1`, :math:`v` represents the 2nd moment vector `moment2`,
-    :math:`g` represents `gradients`, :math:`l` represents scaling factor, :math:`\beta_1, \beta_2` represent
+    :math:`g` represents `gradients`, :math:`\gamma` represents `learning_rate`, :math:`\beta_1, \beta_2` represent
     `beta1` and `beta2`, :math:`t` represents the current step while :math:`beta_1^t` and :math:`beta_2^t` represent
-    `beta1_power` and `beta2_power`, :math:`\alpha` represents `learning_rate`, :math:`w` represents `params`,
+    `beta1_power` and `beta2_power`, :math:`w` represents `params`,
     :math:`\epsilon` represents `eps`.
 
     Note:
@@ -281,7 +321,7 @@ class LazyAdam(Optimizer):
               If `order_params` in the keys, other keys will be ignored and the element of 'order_params' must be in
               one group of `params`.
 
-        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: 1e-3.
+        learning_rate (Union[float, int, Tensor, Iterable, :class:`~.train.LearningRateScheduler`]): Default: ``1e-3`` .
 
             - float: The fixed learning rate value. Must be equal to or greater than 0.
 
@@ -296,19 +336,19 @@ class LazyAdam(Optimizer):
               LearningRateSchedule with step as the input to get the learning rate of current step.
 
         beta1 (float): The exponential decay rate for the 1st moment estimations. Should be in range (0.0, 1.0).
-                       Default: 0.9.
+                       Default: ``0.9`` .
         beta2 (float): The exponential decay rate for the 2nd moment estimations. Should be in range (0.0, 1.0).
-                       Default: 0.999.
-        eps (float): Term added to the denominator to improve numerical stability. Should be greater than 0. Default:
-                     1e-8.
+                       Default: ``0.999`` .
+        eps (float): Term added to the denominator to improve numerical stability. Should be greater than 0.
+                     Default: ``1e-8`` .
         use_locking (bool): Whether to enable a lock to protect the updating process of variable tensors.
-            If true, updates of the `w`, `m`, and `v` tensors will be protected by a lock.
-            If false, the result is unpredictable. Default: False.
+            If ``true`` , updates of the `w`, `m`, and `v` tensors will be protected by a lock.
+            If ``false`` , the result is unpredictable. Default: ``False`` .
         use_nesterov (bool): Whether to use Nesterov Accelerated Gradient (NAG) algorithm to update the gradients.
-            If true, update the gradients using NAG.
-            If false, update the gradients without using NAG. Default: False.
+            If ``true`` , update the gradients using NAG.
+            If ``false`` , update the gradients without using NAG. Default: ``False`` .
 
-        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: 0.0.
+        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: ``0.0`` .
 
             - float: The fixed weight decay value. Must be equal to or greater than 0.
 
@@ -319,18 +359,19 @@ class LazyAdam(Optimizer):
 
         loss_scale (float): A floating point value for the loss scale. Should be equal to or greater than 1. In general,
             use the default value. Only when `FixedLossScaleManager` is used for training and the `drop_overflow_update`
-            in `FixedLossScaleManager` is set to False, then this value needs to be the same as the `loss_scale` in
+            in `FixedLossScaleManager` is set to ``False`` , then this value needs to be the same as the `loss_scale` in
             `FixedLossScaleManager`. Refer to class :class:`mindspore.amp.FixedLossScaleManager` for more details.
-            Default: 1.0.
+            Default: ``1.0`` .
 
     Inputs:
         - **gradients** (tuple[Tensor]) - The gradients of `params`, the shape is the same as `params`.
 
     Outputs:
-        Tensor[bool], the value is True.
+        Tensor[bool], the value is ``True`` .
 
     Raises:
-        TypeError: If `learning_rate` is not one of int, float, Tensor, Iterable, LearningRateSchedule.
+        TypeError: If `learning_rate` is not one of int, float, Tensor, Iterable,
+            :class:`~.train.LearningRateScheduler`.
         TypeError: If element of `parameters` is neither Parameter nor dict.
         TypeError: If `beta1`, `beta2`, `eps` or `loss_scale` is not a float.
         TypeError: If `weight_decay` is neither float nor int.
@@ -346,7 +387,9 @@ class LazyAdam(Optimizer):
         >>> import mindspore as ms
         >>> from mindspore import nn
         >>>
-        >>> net = Net()
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> #1) All parameters use the same learning rate and weight decay
         >>> optim = nn.LazyAdam(params=net.trainable_params())
         >>>
@@ -364,7 +407,7 @@ class LazyAdam(Optimizer):
         >>> # The final parameters order in which the optimizer will be followed is the value of 'order_params'.
         >>>
         >>> loss = nn.SoftmaxCrossEntropyWithLogits()
-        >>> model = ms.Model(net, loss_fn=loss, optimizer=optim)
+        >>> model = ms.train.Model(net, loss_fn=loss, optimizer=optim)
     """
 
     @deprecated("2.0", "Adam", False)
@@ -403,6 +446,7 @@ class LazyAdam(Optimizer):
         gradients = self.scale_grad(gradients)
         gradients = self._grad_sparse_indices_deduplicate(gradients)
         lr = self.get_lr()
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
 
         beta1_power = self.beta1_power * self.beta1
         self.beta1_power = beta1_power

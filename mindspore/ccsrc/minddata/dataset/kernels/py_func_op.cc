@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@
 namespace mindspore {
 namespace dataset {
 Status ConvertNumpyToTensor(const py::object &py_obj, TensorRow *output) {
+  RETURN_UNEXPECTED_IF_NULL(output);
   std::shared_ptr<Tensor> out;
   // Python object like bool, int, float, list or tuple can also be converted
   // to a NumPy array by the following cast, but the data type will be unknown
@@ -36,26 +37,43 @@ Status ConvertNumpyToTensor(const py::object &py_obj, TensorRow *output) {
   return Status::OK();
 }
 
+Status ConvertPythonToTensor(const py::object &py_obj, TensorRow *output) {
+  RETURN_UNEXPECTED_IF_NULL(output);
+  // Python objects such as dictionary are converted to a tensor
+  // Note that the tensor will hold a reference to the python object while
+  // the python object will be kept alive in Python layer.
+  std::shared_ptr<Tensor> out;
+  RETURN_IF_NOT_OK(Tensor::CreateFromPythonObject(py_obj, &out));
+  output->push_back(out);
+  return Status::OK();
+}
+
 Status PyFuncOp::Compute(const TensorRow &input, TensorRow *output) {
   IO_CHECK_VECTOR(input, output);
-  Status ret = Status(StatusCode::kSuccess, "PyFunc Call Succeed");
   {
+    RETURN_IF_NOT_OK(CollectOpInfoStart(this->Name(), "AcquireGIL"));
     // Acquire Python GIL
     py::gil_scoped_acquire gil_acquire;
+    RETURN_IF_NOT_OK(CollectOpInfoEnd(this->Name(), "AcquireGIL"));
     if (Py_IsInitialized() == 0) {
-      ret = Status(StatusCode::kMDPythonInterpreterFailure, "Python Interpreter is finalized");
-      goto ComputeReturn;
+      return Status(StatusCode::kMDPythonInterpreterFailure, "Python Interpreter is finalized");
     }
     try {
       // Transform input tensor vector into numpy array vector
-      py::tuple input_args(input.size());
       py::object ret_py_obj;
       if (input.size() > 0) {
+        py::tuple input_args(input.size());
         for (size_t i = 0; i < input.size(); i++) {
-          py::array new_data;
-          RETURN_IF_NOT_OK(input.at(i)->GetDataAsNumpy(&new_data));
-          // possible memcpy here
-          input_args[i] = new_data;
+          if (input.at(i)->type().IsPython()) {
+            py::dict new_data;
+            RETURN_IF_NOT_OK(input.at(i)->GetDataAsPythonObject(&new_data));
+            input_args[i] = new_data;
+          } else {
+            py::array new_data;
+            RETURN_IF_NOT_OK(input.at(i)->GetDataAsNumpy(&new_data));
+            // possible memcpy here
+            input_args[i] = new_data;
+          }
         }
         // Invoke python function
         ret_py_obj = this->py_func_ptr_(*input_args);
@@ -65,7 +83,15 @@ Status PyFuncOp::Compute(const TensorRow &input, TensorRow *output) {
       if (output_type_ != DataType::DE_UNKNOWN) {
         RETURN_IF_NOT_OK(CastOutput(ret_py_obj, output));
       } else {
-        if (py::isinstance<py::tuple>(ret_py_obj)) {
+        // scenario 1: map multi-processing, subprocess stop first and will get none
+        // scenario 2: thread mode, user pyfunc return none
+        if (ret_py_obj.is_none()) {
+          std::string error_msg =
+            "The subprocess of dataset may exit unexpected or be killed, "
+            "main process will exit. If this is not an artificial operation, you can use "
+            "mindspore.dataset.config.set_enable_watchdog(False) to block this error.";
+          RETURN_STATUS_UNEXPECTED("Got None from Python object. " + error_msg);
+        } else if (py::isinstance<py::tuple>(ret_py_obj)) {
           // In case of a n-m mapping, the return value will be a tuple of numpy arrays
           auto ret_py_tuple = ret_py_obj.cast<py::tuple>();
           // Iterate over two containers simultaneously for memory copy
@@ -73,33 +99,36 @@ Status PyFuncOp::Compute(const TensorRow &input, TensorRow *output) {
             py::object ret_py_ele = ret_py_tuple[i];
             // Object is none if pyfunc timeout
             if (ret_py_ele.is_none()) {
-              MS_LOG(INFO) << "Expected that PyFunc should return numpy array, got None. If python_multiprocessing is "
-                              "True, PyFunc may execute time out.";
-              goto TimeoutError;
+              MS_LOG(INFO) << "Expected pyfunc to return NumPy array(s) or Python dict(s), but got None. "
+                              "If python_multiprocessing is True, it may be due to pyfunc execution timeout.";
+              return STATUS_ERROR(StatusCode::kMDTimeOut,
+                                  "Expect pyfunc to return numpy array(s), but got None. If python_multiprocessing is "
+                                  "True, it maybe due to pyfunc execution timeout.");
+            } else if (py::isinstance<py::dict>(ret_py_ele)) {
+              RETURN_IF_NOT_OK(ConvertPythonToTensor(ret_py_ele, output));
+            } else {
+              RETURN_IF_NOT_OK(ConvertNumpyToTensor(ret_py_ele, output));
             }
-            RETURN_IF_NOT_OK(ConvertNumpyToTensor(ret_py_ele, output));
           }
         } else {
-          // In case of a n-1 mapping, the return value will be a numpy array
-          RETURN_IF_NOT_OK(ConvertNumpyToTensor(ret_py_obj, output));
+          // In case of a n-1 mapping, the return value will be a numpy array or a python object
+          // Note that for Python dictionaries, only a reference will be stored in tensor.
+          if (py::isinstance<py::dict>(ret_py_obj)) {
+            RETURN_IF_NOT_OK(ConvertPythonToTensor(ret_py_obj, output));
+          } else {
+            RETURN_IF_NOT_OK(ConvertNumpyToTensor(ret_py_obj, output));
+          }
         }
       }
     } catch (const py::error_already_set &e) {
-      ret = Status(StatusCode::kMDPyFuncException, e.what());
+      return Status(StatusCode::kMDPyFuncException, e.what());
     }
   }
-
-ComputeReturn:
-  return ret;
-
-TimeoutError:
-  ret = STATUS_ERROR(StatusCode::kMDTimeOut,
-                     "Expected that PyFunc should return numpy array, got None. If \'python_multiprocessing\' is True, "
-                     "PyFunc may execute time out.");
-  goto ComputeReturn;
+  return Status::OK();
 }
 
 Status PyFuncOp::CastOutput(const py::object &ret_py_obj, TensorRow *output) {
+  RETURN_UNEXPECTED_IF_NULL(output);
   try {
     std::shared_ptr<Tensor> out;
     switch (output_type_) {
@@ -115,12 +144,13 @@ Status PyFuncOp::CastOutput(const py::object &ret_py_obj, TensorRow *output) {
     }
     output->push_back(out);
   } catch (const std::exception &e) {
-    return Status(StatusCode::kMDUnexpectedError, e.what());
+    RETURN_STATUS_UNEXPECTED(e.what());
   }
   return Status::OK();
 }
 
 Status PyFuncOp::to_json(nlohmann::json *out_json) {
+  RETURN_UNEXPECTED_IF_NULL(out_json);
   nlohmann::json args;
   {
     py::gil_scoped_acquire gil_acquire;
@@ -133,6 +163,7 @@ Status PyFuncOp::to_json(nlohmann::json *out_json) {
 }
 
 Status PyFuncOp::from_json(nlohmann::json json_obj, std::vector<std::shared_ptr<TensorOperation>> *result) {
+  RETURN_UNEXPECTED_IF_NULL(result);
   std::vector<std::shared_ptr<TensorOperation>> output;
   RETURN_IF_NOT_OK(ValidateParamInJson(json_obj, "tensor_op_name", kPyFuncOp));
   RETURN_IF_NOT_OK(ValidateParamInJson(json_obj, "tensor_op_params", kPyFuncOp));
@@ -151,7 +182,7 @@ Status PyFuncOp::from_json(nlohmann::json json_obj, std::vector<std::shared_ptr<
 bool PyFuncOp::IsRandom() {
   bool random = true;
   if (py::hasattr(py_func_ptr_, "random") &&
-      static_cast<bool>(py::reinterpret_borrow<py::bool_>(py_func_ptr_.attr("random"))) == false) {
+      !static_cast<bool>(py::reinterpret_borrow<py::bool_>(py_func_ptr_.attr("random")))) {
     random = false;
   }
   return random;

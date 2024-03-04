@@ -28,7 +28,7 @@
 #include "src/common/log_adapter.h"
 #include "src/common/version_manager.h"
 #include "src/litert/cpu_info.h"
-#include "src/litert/sub_graph_kernel.h"
+#include "src/executor/sub_graph_kernel.h"
 
 namespace mindspore::kernel {
 // Identity kernel is used to update a reference to a tensor. This is useful in control flow model.
@@ -41,10 +41,12 @@ class IdentityKernel : public LiteKernel {
     lite::CpuInfo cpu_info;
     support_fp16_ = cpu_info.ArmIsSupportFp16();
 #endif
+    need_resize_.resize(inputs.size());
   }
   ~IdentityKernel() override = default;
   int PreProcess() override;
   int PostProcess() override;
+  int InferShape() override;
   int ReSize() override;
   int Run() override;
   static KernelExec *Create(std::vector<lite::Tensor *> in_tensors, std::vector<lite::Tensor *> out_tensors,
@@ -52,6 +54,7 @@ class IdentityKernel : public LiteKernel {
 
  protected:
   int schema_version_ = lite::SCHEMA_VERSION::SCHEMA_CUR;
+  std::vector<bool> need_resize_{};
   bool support_fp16_ = false;
 };
 }  // namespace mindspore::kernel

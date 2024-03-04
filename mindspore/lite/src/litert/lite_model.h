@@ -39,7 +39,7 @@
 
 namespace mindspore {
 namespace lite {
-class LiteModel : public Model {
+class MS_API LiteModel : public Model {
  public:
   explicit LiteModel(std::string model_path = "") : model_path_(std::move(model_path)) {}
 
@@ -332,6 +332,7 @@ class LiteModel : public Model {
 
  public:
   std::vector<void *> node_bufs_;
+  bool model_buf_by_mmap_ = false;
 
  protected:
   std::vector<char *> attr_tensor_bufs_;

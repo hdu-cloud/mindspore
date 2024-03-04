@@ -19,7 +19,7 @@
 #include <vector>
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
 #include "plugin/factory/ms_factory.h"
-#include "mindspore/ccsrc/backend/common/session/anf_runtime_algorithm.h"
+#include "mindspore/ccsrc/include/backend/anf_runtime_algorithm.h"
 
 namespace mindspore {
 namespace kernel {
@@ -39,7 +39,7 @@ class TridiagonalMatMulCpuKernelMod : public NativeCpuKernelMod {
   std::vector<KernelAttr> GetOpSupport() override;
 
  private:
-  CNodeWeakPtr node_wpt_;
+  ShapeVector rhs_shape_;
   TypeId dtype_{kTypeUnknown};
   template <typename T>
   void LaunchTridiagonalMatMul(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &outputs);

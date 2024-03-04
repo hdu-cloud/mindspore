@@ -98,6 +98,7 @@ FFTVariety GetFFTVariety(const bool &is_inverse, const bool &is_real) {
 
 bool FFTWithSizeGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                    const std::vector<KernelTensorPtr> &outputs) {
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), N_INPUTS, kernel_name_);
   // Get attribute
   auto kernel_ptr = std::dynamic_pointer_cast<ops::FFTWithSize>(base_operator);
   MS_ERROR_IF_NULL_W_RET_VAL(kernel_ptr, false);
@@ -174,6 +175,7 @@ bool FFTWithSizeGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const s
       MS_LOG(ERROR) << "For '" << kernel_name_ << "', it does not support this kernel type: " << kernel_attr;
       return false;
   }
+  MS_EXCEPTION_IF_NULL(inputs[0]);
   data_type_bytes_ = GetTypeByte(TypeIdToType(inputs[0]->GetDtype()));
   return true;
 }
@@ -337,6 +339,7 @@ int FFTWithSizeGpuKernelMod::ResizeRFFT(const BaseOperatorPtr &base_operator,
     workspace_size_list_ = {};
   } else {
     // cast float(input) to complex(workspace), and C2C transform
+    MS_EXCEPTION_IF_CHECK_FAIL(!output_size_list_.empty(), "output_size_list_ must be not empty!");
     workspace_size_list_ = {output_size_list_[0]};
   }
   if (!MakeCufftPlan(inputs, outputs)) {
@@ -372,6 +375,7 @@ int FFTWithSizeGpuKernelMod::ResizeIRFFT(const BaseOperatorPtr &base_operator,
   // We copy input buffer to avoid cufft overwriting, while complex-to-real.
   // onesided: false
   // C2C transform, and cast complex(workspace) to float(output).
+  MS_EXCEPTION_IF_CHECK_FAIL(!input_size_list_.empty(), "input_size_list_ must be not empty!");
   workspace_size_list_ = {input_size_list_[0]};
   if (!MakeCufftPlan(inputs, outputs)) {
     return KRET_RESIZE_FAILED;
@@ -394,7 +398,9 @@ bool FFTWithSizeGpuKernelMod::LaunchFFT(const std::vector<AddressPtr> &inputs, c
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', the address of output or input is nullptr.";
     return false;
   }
-  CalculateFFT(x_ptr, y_ptr, scale_factor_, y_elements_, cufft_plan_, scale_plan_, device_id_, cuda_stream);
+  auto status =
+    CalculateFFT(x_ptr, y_ptr, scale_factor_, y_elements_, cufft_plan_, scale_plan_, device_id_, cuda_stream);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   CHECK_CUDA_RET_WITH_RETURN_ERROR_NOTRACE(cudaGetLastError(),
                                            "For '" << kernel_name_ << "', it failed to CalculateFFT.");
   return true;
@@ -416,7 +422,9 @@ bool FFTWithSizeGpuKernelMod::LaunchIFFT(const std::vector<AddressPtr> &inputs,
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', the address of output or input is nullptr.";
     return false;
   }
-  CalculateIFFT(x_ptr, y_ptr, scale_factor_, y_elements_, cufft_plan_, scale_plan_, device_id_, cuda_stream);
+  auto status =
+    CalculateIFFT(x_ptr, y_ptr, scale_factor_, y_elements_, cufft_plan_, scale_plan_, device_id_, cuda_stream);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   CHECK_CUDA_RET_WITH_RETURN_ERROR_NOTRACE(cudaGetLastError(),
                                            "For '" << kernel_name_ << "', it failed to CalculateIFFT.");
   return true;
@@ -446,8 +454,9 @@ bool FFTWithSizeGpuKernelMod::LaunchRFFT(const std::vector<AddressPtr> &inputs,
       return false;
     }
   }
-  CalculateRFFT(x_ptr, w_ptr, y_ptr, is_onesided_, scale_factor_, x_elements_, y_elements_, cufft_plan_, scale_plan_,
-                device_id_, cuda_stream);
+  auto status = CalculateRFFT(x_ptr, w_ptr, y_ptr, is_onesided_, scale_factor_, x_elements_, y_elements_, cufft_plan_,
+                              scale_plan_, device_id_, cuda_stream);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   CHECK_CUDA_RET_WITH_RETURN_ERROR_NOTRACE(cudaGetLastError(),
                                            "For '" << kernel_name_ << "', it failed to CalculateRFFT.");
   return true;
@@ -469,8 +478,9 @@ bool FFTWithSizeGpuKernelMod::LaunchIRFFT(const std::vector<AddressPtr> &inputs,
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', the address of output or input is nullptr.";
     return false;
   }
-  CalculateIRFFT(x_ptr, w_ptr, y_ptr, is_onesided_, scale_factor_, x_elements_, y_elements_, cufft_plan_, scale_plan_,
-                 device_id_, cuda_stream);
+  auto status = CalculateIRFFT(x_ptr, w_ptr, y_ptr, is_onesided_, scale_factor_, x_elements_, y_elements_, cufft_plan_,
+                               scale_plan_, device_id_, cuda_stream);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   CHECK_CUDA_RET_WITH_RETURN_ERROR_NOTRACE(cudaGetLastError(),
                                            "For '" << kernel_name_ << "', it failed to CalculateIRFFT.");
   return true;

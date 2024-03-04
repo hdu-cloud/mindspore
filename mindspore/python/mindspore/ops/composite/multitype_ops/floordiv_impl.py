@@ -25,6 +25,7 @@ floordiv = base.MultitypeFuncGraph("floordiv", True)
 `floordiv` is a metafuncgraph object which will compute the floordiv of two objects
 using ".register" decorator.
 """
+floordiv.set_need_raise()
 
 
 @floordiv.register("Number", "Number")

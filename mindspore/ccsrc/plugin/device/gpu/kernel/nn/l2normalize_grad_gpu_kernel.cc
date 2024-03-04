@@ -15,6 +15,7 @@
  */
 
 #include "plugin/device/gpu/kernel/nn/l2normalize_grad_gpu_kernel.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "mindspore/core/ops/grad/l2_normalize_grad.h"
 
 namespace mindspore {
@@ -71,7 +72,7 @@ int L2NormalizeGradGpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
   }
 
   ShapeVector output_reduce_shape = output_shape;
-  if ((size_t)axis_ >= output_shape.size()) {
+  if (static_cast<size_t>(axis_) >= output_shape.size()) {
     MS_LOG(ERROR) << "For 'L2NormalizeGradGpuKernelMod', axis_ must be less than the rank of output "
                   << "but got axis_: " << axis_ << ", rank of output: " << output_shape.size();
     return KRET_RESIZE_FAILED;
@@ -83,9 +84,9 @@ int L2NormalizeGradGpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
   output_shape_.resize(MAX_DIMS, 1);
   all_match_ = true;
   for (size_t i = 0; i < output_shape.size(); i++) {
-    output_shape_[i] = LongToSizeClipNeg(output_shape[i]);
-    lhs_shape_[i] = LongToSizeClipNeg(output_shape[i]);
-    rhs_shape_[i] = LongToSizeClipNeg(output_reduce_shape[i]);
+    output_shape_[i] = output_shape[i];
+    lhs_shape_[i] = output_shape[i];
+    rhs_shape_[i] = output_reduce_shape[i];
     if (lhs_shape_[i] != rhs_shape_[i]) {
       all_match_ = false;
     }
@@ -110,8 +111,8 @@ bool L2NormalizeGradGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &in
   T *workspace_addr = GetPossiblyNullDeviceAddress<T>(workspace, kIndex2);
   T *workspace_y_dy_addr = GetPossiblyNullDeviceAddress<T>(workspace, kIndex3);
 
-  const float alpha = 1;
-  const float beta = 0;
+  T alpha = static_cast<T>(1.0f);
+  T beta = static_cast<T>(0.0f);
 
   if (all_match_) {
     CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
@@ -119,35 +120,73 @@ bool L2NormalizeGradGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &in
                       reinterpret_cast<cudaStream_t>(stream_ptr)),
       kernel_name_ + " cudaMemcpyAsync failed in L2Normalize::Launch.");
   } else {
-    CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
-      cudnnReduceTensor(cudnn_handle_, reduce_tensor_descriptor_, nullptr, 0, workspace_addr,
-                        workspace_size_list_[kIndex2], &alpha, inputA_descriptor_, x_addr, &beta, outputC_descriptor_,
-                        reduce_workspace_addr),
-      kernel_name_ + " cudnnReduceTensor failed.");
+    if (data_type_ == CUDNN_DATA_DOUBLE) {
+      CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
+        cudnnReduceTensor(cudnn_handle_, reduce_tensor_descriptor_, nullptr, 0, workspace_addr,
+                          workspace_size_list_[kIndex2], &alpha, inputA_descriptor_, x_addr, &beta, outputC_descriptor_,
+                          reduce_workspace_addr),
+        kernel_name_ + " cudnnReduceTensor failed.");
+    } else {
+      const float alphaf = static_cast<float>(alpha);
+      const float betaf = static_cast<float>(beta);
+      CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
+        cudnnReduceTensor(cudnn_handle_, reduce_tensor_descriptor_, nullptr, 0, workspace_addr,
+                          workspace_size_list_[kIndex2], &alphaf, inputA_descriptor_, x_addr, &betaf,
+                          outputC_descriptor_, reduce_workspace_addr),
+        kernel_name_ + " cudnnReduceTensor failed.");
+    }
   }
   GetMaxWithEpsAndValue(workspace_size_list_[0] / sizeof(T), epsilon_, reduce_workspace_addr,
                         reinterpret_cast<cudaStream_t>(stream_ptr));
-  BroadcastArith(output_shape_, output_shape_, output_shape_, BROADCAST_TYPE_MUL, y_addr, dy_addr, dx_addr,
-                 reinterpret_cast<cudaStream_t>(stream_ptr));
+  std::vector<int64_t> simplified_in0_shape;
+  std::vector<int64_t> simplified_in1_shape;
+  std::vector<int64_t> simplified_out_shape;
+  SimplifyBinaryBroadcastShape(output_shape_, output_shape_, output_shape_, &simplified_in0_shape,
+                               &simplified_in1_shape, &simplified_out_shape);
+  BinaryOpWithBroadcastCudaFunc<BinaryOpType::kMul, T, T, T>(false, simplified_in0_shape, simplified_in1_shape,
+                                                             simplified_out_shape, y_addr, dy_addr, dx_addr, device_id_,
+                                                             reinterpret_cast<cudaStream_t>(stream_ptr));
+
   if (all_match_) {
     CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
       cudaMemcpyAsync(reduce_y_dy_workspace_addr, dx_addr, output_size_list_[0], cudaMemcpyDeviceToDevice,
                       reinterpret_cast<cudaStream_t>(stream_ptr)),
       kernel_name_ + " cudaMemcpyAsync failed in L2Normalize::Launch.");
   } else {
-    CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
-      cudnnReduceTensor(cudnn_handle_, reduce_sum_tensor_descriptor_, nullptr, 0, workspace_y_dy_addr,
-                        workspace_size_list_[kIndex3], &alpha, inputA_descriptor_, dx_addr, &beta, outputC_descriptor_,
-                        reduce_y_dy_workspace_addr),
-      kernel_name_ + " cudnnReduceTensor failed.");
+    if (data_type_ == CUDNN_DATA_DOUBLE) {
+      CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
+        cudnnReduceTensor(cudnn_handle_, reduce_sum_tensor_descriptor_, nullptr, 0, workspace_y_dy_addr,
+                          workspace_size_list_[kIndex3], &alpha, inputA_descriptor_, dx_addr, &beta,
+                          outputC_descriptor_, reduce_y_dy_workspace_addr),
+        kernel_name_ + " cudnnReduceTensor failed.");
+    } else {
+      const float alphaf = static_cast<float>(alpha);
+      const float betaf = static_cast<float>(beta);
+      CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
+        cudnnReduceTensor(cudnn_handle_, reduce_sum_tensor_descriptor_, nullptr, 0, workspace_y_dy_addr,
+                          workspace_size_list_[kIndex3], &alphaf, inputA_descriptor_, dx_addr, &betaf,
+                          outputC_descriptor_, reduce_y_dy_workspace_addr),
+        kernel_name_ + " cudnnReduceTensor failed.");
+    }
   }
-  BroadcastArith(rhs_shape_, lhs_shape_, output_shape_, BROADCAST_TYPE_MUL, reduce_y_dy_workspace_addr, y_addr, dx_addr,
-                 reinterpret_cast<cudaStream_t>(stream_ptr));
-  BroadcastArith(output_shape_, output_shape_, output_shape_, BROADCAST_TYPE_SUB, dy_addr, dx_addr, dx_addr,
-                 reinterpret_cast<cudaStream_t>(stream_ptr));
-  BroadcastArith(output_shape_, rhs_shape_, output_shape_, BROADCAST_TYPE_REALDIV, dx_addr, reduce_workspace_addr,
-                 dx_addr, reinterpret_cast<cudaStream_t>(stream_ptr));
 
+  SimplifyBinaryBroadcastShape(rhs_shape_, lhs_shape_, output_shape_, &simplified_in0_shape, &simplified_in1_shape,
+                               &simplified_out_shape);
+  bool is_broadcast = IsBinaryBroadcast(simplified_in0_shape, simplified_in1_shape);
+  BinaryOpWithBroadcastCudaFunc<BinaryOpType::kMul, T, T, T>(
+    is_broadcast, simplified_in0_shape, simplified_in1_shape, simplified_out_shape, reduce_y_dy_workspace_addr, y_addr,
+    dx_addr, device_id_, reinterpret_cast<cudaStream_t>(stream_ptr));
+  SimplifyBinaryBroadcastShape(output_shape_, output_shape_, output_shape_, &simplified_in0_shape,
+                               &simplified_in1_shape, &simplified_out_shape);
+  BinaryOpWithBroadcastCudaFunc<BinaryOpType::kSub, T, T, T>(false, simplified_in0_shape, simplified_in1_shape,
+                                                             simplified_out_shape, dy_addr, dx_addr, dx_addr,
+                                                             device_id_, reinterpret_cast<cudaStream_t>(stream_ptr));
+  SimplifyBinaryBroadcastShape(output_shape_, rhs_shape_, output_shape_, &simplified_in0_shape, &simplified_in1_shape,
+                               &simplified_out_shape);
+  is_broadcast = IsBinaryBroadcast(simplified_in0_shape, simplified_in1_shape);
+  BinaryOpWithBroadcastCudaFunc<BinaryOpType::kRealDiv, T, T, T>(
+    is_broadcast, simplified_in0_shape, simplified_in1_shape, simplified_out_shape, dx_addr, reduce_workspace_addr,
+    dx_addr, device_id_, reinterpret_cast<cudaStream_t>(stream_ptr));
   return true;
 }
 
@@ -164,6 +203,12 @@ std::vector<std::pair<KernelAttr, L2NormalizeGradGpuKernelMod::L2NormalizeGradGp
                                                 .AddInputAttr(kNumberTypeFloat32)
                                                 .AddOutputAttr(kNumberTypeFloat32),
                                               &L2NormalizeGradGpuKernelMod::LaunchKernel<float>},
+                                             {KernelAttr()
+                                                .AddInputAttr(kNumberTypeFloat64)
+                                                .AddInputAttr(kNumberTypeFloat64)
+                                                .AddInputAttr(kNumberTypeFloat64)
+                                                .AddOutputAttr(kNumberTypeFloat64),
+                                              &L2NormalizeGradGpuKernelMod::LaunchKernel<double>},
                                              {KernelAttr()
                                                 .AddInputAttr(kNumberTypeInt32)
                                                 .AddInputAttr(kNumberTypeInt32)

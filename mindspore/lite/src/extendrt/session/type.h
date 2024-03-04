@@ -20,6 +20,14 @@
 #include <vector>
 
 namespace mindspore {
-enum SessionType { kDefaultSession = 0, kSingleOpSession, kLiteInferSession, kDelegateSession, kNoneSession };
+enum SessionType {
+  kDefaultSession = 0,
+  kSingleOpSession,
+  kLiteInferSession,
+  kDelegateSession,
+  kAscendNativeSession,
+  kMemoryOffloadSession,
+  kNoneSession
+};
 }  // namespace mindspore
 #endif  // MINDSPORE_LITE_EXTENDRT_SESSION_TYPE_H_

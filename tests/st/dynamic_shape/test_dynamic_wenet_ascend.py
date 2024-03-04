@@ -27,6 +27,7 @@ from mindspore.ops import operations as P
 from mindspore.ops import functional as F
 from mindspore.ops import composite as C
 
+from mindspore.common.api import jit
 import mindspore.common.dtype as mstype
 from mindspore.common.tensor import Tensor
 from mindspore.common.sparse_tensor import RowTensorInner
@@ -36,13 +37,10 @@ from mindspore.common.initializer import initializer, _calculate_correct_fan, On
 import mindspore.nn as nn
 from mindspore.nn.learning_rate_schedule import LearningRateSchedule
 from mindspore.nn.wrap.loss_scale import DynamicLossScaleUpdateCell
-from mindspore.nn.wrap.grad_reducer import DistributedGradReducer
 from mindspore.nn.optim import Adam
 
-from mindspore.train import Model
-from mindspore.train.callback._callback import Callback
+from mindspore.train import Model, Callback
 from mindspore import context, ParameterTuple, set_seed
-from mindspore.context import ParallelMode
 from mindspore.communication.management import get_group_size
 import mindspore.dataset.engine as de
 
@@ -132,7 +130,7 @@ def _clip_grad(clip_type, clip_value, grad):
     return new_grad
 
 
-class TrainAccumulationAllReduceEachWithLossScaleCell(nn.Cell):
+class TrainAccumulationAllReduceEachWithLossScaleCell(nn.TrainOneStepWithLossScaleCell):
     """
     Encapsulation class of network training.
 
@@ -152,13 +150,8 @@ class TrainAccumulationAllReduceEachWithLossScaleCell(nn.Cell):
                                   batch_size * accumulation_steps. Default: 1.
     """
 
-    def __init__(self, network, optimizer, scale_update_cell=None, accumulation_steps=1, enable_global_norm=False):
-        super(TrainAccumulationAllReduceEachWithLossScaleCell,
-              self).__init__(auto_prefix=False)
-        self.network = network
-        self.network.set_grad()
-        self.weights = optimizer.parameters
-        self.optimizer = optimizer
+    def __init__(self, network, optimizer, scale_update_cell, accumulation_steps=1, enable_global_norm=False):
+        super(TrainAccumulationAllReduceEachWithLossScaleCell, self).__init__(network, optimizer, scale_update_cell)
         self.accumulation_steps = accumulation_steps
         self.enable_global_norm = enable_global_norm
         self.one = Tensor([1], mstype.int32)
@@ -169,42 +162,21 @@ class TrainAccumulationAllReduceEachWithLossScaleCell(nn.Cell):
         self.accu_loss = Parameter(initializer(0, [1], mstype.float32))
 
         self.grad = C.GradOperation(get_by_list=True, sens_param=True)
-        self.reducer_flag = False
-        self.parallel_mode = context.get_auto_parallel_context("parallel_mode")
-        if self.parallel_mode in [ParallelMode.DATA_PARALLEL, ParallelMode.HYBRID_PARALLEL]:
-            self.reducer_flag = True
-        self.grad_reducer = F.identity
         self.degree = 1
         if self.reducer_flag:
             self.degree = get_group_size()
-            self.grad_reducer = DistributedGradReducer(
-                optimizer.parameters, False, self.degree)
-        self.is_distributed = self.parallel_mode != ParallelMode.STAND_ALONE
-        self.allreduce = P.AllReduce()
         self.cast = P.Cast()
-        self.alloc_status = P.NPUAllocFloatStatus()
-        self.get_status = P.NPUGetFloatStatus()
-        self.clear_before_grad = P.NPUClearFloatStatus()
-        self.reduce_sum = P.ReduceSum(keep_dims=False)
-        self.base = Tensor(1, mstype.float32)
-        self.less_equal = P.LessEqual()
         self.logical_or = P.LogicalOr()
         self.not_equal = P.NotEqual()
         self.select = P.Select()
         self.reshape = P.Reshape()
-        self.hyper_map = C.HyperMap()
-        self.loss_scale = None
-        self.loss_scaling_manager = scale_update_cell
-        if scale_update_cell:
-            self.loss_scale = Parameter(
-                Tensor(scale_update_cell.get_loss_scale(), dtype=mstype.float32))
+        self.loss_scale = self.scale_sense
 
     @C.add_flags(has_effect=True)
     def construct(self, *inputs):
         """Defines the computation performed."""
         weights = self.weights
         loss = self.network(*inputs)
-        loss = self.reshape(loss, (1,))
 
         scaling_sens = self.loss_scale
 
@@ -212,7 +184,8 @@ class TrainAccumulationAllReduceEachWithLossScaleCell(nn.Cell):
         is_accu_step = self.not_equal(self.local_step, self.accumulation_steps)
         self.local_step = self.select(
             is_accu_step, self.local_step + self.one, self.one)
-        self.accu_loss = self.select(is_accu_step, self.accu_loss + loss, loss)
+        loss_broadcast = self.reshape(loss, (1,))
+        self.accu_loss = self.select(is_accu_step, self.accu_loss + loss_broadcast, loss_broadcast)
         mean_loss = self.accu_loss / self.local_step
         is_accu_step = self.not_equal(self.local_step, self.accumulation_steps)
 
@@ -236,33 +209,37 @@ class TrainAccumulationAllReduceEachWithLossScaleCell(nn.Cell):
         overflow = self.reshape(overflow, (()))
 
         if is_accu_step:
-            accu_succ = self.hyper_map(
-                update_accu_grads, self.accu_grads, accu_grads)
+            accu_succ = self.update_accu_grads_(accu_grads)
         else:
             overflow = self.loss_scaling_manager(self.loss_scale, overflow)
             if not overflow:
                 if self.enable_global_norm:
                     grads = C.clip_by_global_norm(grads, 1.0, None)
                 else:
-                    grads = self.hyper_map(
-                        F.partial(clip_grad, GRADIENT_CLIP_TYPE, GRADIENT_CLIP_VALUE), grads)
+                    grads = self.clip_grads(grads)
 
                 self.optimizer(grads)
 
-            accu_succ = self.hyper_map(reset_accu_grads, self.accu_grads)
+            accu_succ = self.reset_accu_grads_()
 
         ret = (mean_loss, overflow, scaling_sens.value(), overflow)
         return F.depend(ret, accu_succ)
 
+    @jit
+    def update_accu_grads_(self, accu_grads):
+        return self.hyper_map(update_accu_grads, self.accu_grads, accu_grads)
+
+    @jit
+    def clip_grads(self, grads):
+        return self.hyper_map(
+                        F.partial(clip_grad, GRADIENT_CLIP_TYPE, GRADIENT_CLIP_VALUE), grads)
+
+    @jit
+    def reset_accu_grads_(self):
+        return self.hyper_map(reset_accu_grads, self.accu_grads)
+
     def start_overflow_check(self, pre_cond, compute_input):
         """
-        Start floating-point overflow detection. Create and clear the overflow detection state.
-
-        Specify the argument 'pre_cond' and 'compute_input' to make sure overflow status is cleared at the right time.
-        Taking this situation as an example, we need to execute state clearing after loss calculation and then detect
-        overflow in the process of gradient calculation. In this case, pre_cond should be the output of the loss
-        function, and compute_input should be the input of gradients-computing function.
-
         Args:
             pre_cond(object): A precondition for starting overflow detection. It determines the executing order of
                 overflow state clearing and prior processions. It makes sure that the function 'start_overflow' clears
@@ -296,8 +273,7 @@ class TrainAccumulationAllReduceEachWithLossScaleCell(nn.Cell):
             status(object): A status instance used to detect the overflow.
             compute_output: Overflow detection should be performed on a certain computation. Set `compute_output` as
                 the output of the computation, to ensure overflow status is acquired before executing the computation.
-
-        Returns:
+                Returns:
             bool, whether the overflow occurs or not.
         """
         status = F.depend(status, compute_output)
@@ -507,7 +483,6 @@ class ASRWarmupLR(LearningRateSchedule):
         self.learninig_rate = learninig_rate
         self.warmup_steps = Tensor(np.array([warmup_steps]).astype(np.float32))
         self.min = ops.Minimum()
-        self.scalar_summary = ops.ScalarSummary()
         self.start_steps = start_steps
 
     def construct(self, global_step):
@@ -576,42 +551,20 @@ class CustomDense(nn.Dense):
         """Initialize CustomDense."""
         super(CustomDense, self).__init__(in_channels, out_channels,
                                           weight_init, bias_init, has_bias, activation)
-        self.dyn_shape = ops.TensorShape()
         self.cast = ops.Cast()
 
     def construct(self, x):
         x_shape = self.shape_op(x)
-        if -1 in x_shape:
-            x_dyn_shape = self.dyn_shape(x)
-            x_dyn_shape = self.cast(x_dyn_shape, mstype.float32)
-            if len(x_dyn_shape) != 2:
-                new_shape = x_dyn_shape.copy()[1:]
-                new_shape[0] = x_dyn_shape[0:1] * x_dyn_shape[1:2]
-                new_shape = self.cast(new_shape, mstype.int64)
-                x = self.reshape(x, new_shape)
-            x = self.matmul(x, self.weight)
-            if self.has_bias:
-                x = self.bias_add(x, self.bias)
-            if self.activation_flag:
-                x = self.activation(x)
-            if len(x_dyn_shape) != 2:
-                out_shape = self.dyn_shape(x)
-                out_shape = self.cast(out_shape, mstype.float32)
-                x_dyn_shape[2] = out_shape[1:2]
-                x_dyn_shape = self.cast(x_dyn_shape, mstype.int64)
-                x = self.reshape(x, x_dyn_shape)
-        else:
-            check_dense_input_shape(x_shape, self.cls_name)
-            if len(x_shape) != 2:
-                x = self.reshape(x, (-1, x_shape[-1]))
-            x = self.matmul(x, self.weight)
-            if self.has_bias:
-                x = self.bias_add(x, self.bias)
-            if self.activation_flag:
-                x = self.activation(x)
-            if len(x_shape) != 2:
-                out_shape = x_shape[:-1] + (-1,)
-                x = self.reshape(x, out_shape)
+        if len(x_shape) != 2:
+            x = self.reshape(x, (-1, x_shape[-1]))
+        x = self.matmul(x, self.weight)
+        if self.has_bias:
+            x = self.bias_add(x, self.bias)
+        if self.activation_flag:
+            x = self.activation(x)
+        if len(x_shape) != 2:
+            out_shape = x_shape[:-1] + (-1,)
+            x = self.reshape(x, out_shape)
         return x
 
 
@@ -709,7 +662,7 @@ class TransformerEncoderLayer(nn.Cell):
         self.feed_forward = feed_forward
         self.norm1 = CustomLayerNorm(size, epsilon=1e-5)
         self.norm2 = CustomLayerNorm(size, epsilon=1e-5)
-        self.dropout = nn.Dropout(keep_prob=1 - dropout_rate)
+        self.dropout = nn.Dropout(p=dropout_rate)
         self.normalize_before = normalize_before
         self.concat_after = concat_after
         if self.concat_after:
@@ -980,7 +933,7 @@ class DecoderLayer(nn.Cell):
         self.norm1 = CustomLayerNorm(size, epsilon=1e-12)
         self.norm2 = CustomLayerNorm(size, epsilon=1e-12)
         self.norm3 = CustomLayerNorm(size, epsilon=1e-12)
-        self.dropout = nn.Dropout(keep_prob=1.0 - dropout_rate)
+        self.dropout = nn.Dropout(p=dropout_rate)
         self.normalize_before = normalize_before
         self.concat_after = concat_after
         if self.concat_after:
@@ -1217,7 +1170,7 @@ class PositionwiseFeedForward(nn.Cell):
         super(PositionwiseFeedForward, self).__init__()
         self.w_1 = Dense(idim, hidden_units).to_float(compute_type)
         self.activation = activation
-        self.dropout = nn.Dropout(1 - dropout_rate)
+        self.dropout = nn.Dropout(p=dropout_rate)
         self.w_2 = Dense(hidden_units, idim).to_float(compute_type)
 
     def construct(self, xs):
@@ -1319,7 +1272,7 @@ class PositionalEncoding(nn.Cell):
         super().__init__()
         self.d_model = d_model
         self.xscale = Tensor([math.sqrt(self.d_model)], dtype=mstype.float32)
-        self.dropout = nn.Dropout(1 - dropout_rate)
+        self.dropout = nn.Dropout(p=dropout_rate)
         self.max_len = max_len
 
         self.pe = np.zeros((self.max_len, self.d_model))
@@ -1331,12 +1284,9 @@ class PositionalEncoding(nn.Cell):
         self.pe[:, 1::2] = np.cos(position * div_term)
         self.pe = Tensor(np.expand_dims(self.pe, 0), mstype.float32)
         self.get_shape = ops.Shape()
-        self.dyn_shape = ops.TensorShape()
 
     def construct(self, x, offset=0) -> Tuple[mindspore.Tensor, mindspore.Tensor]:
         x_shape = self.get_shape(x)
-        if -1 in x_shape:
-            x_shape = self.dyn_shape(x)
         pos_emb = self.pe[:, offset: offset + x_shape[1]]
         x = x * self.xscale + pos_emb
         return self.dropout(x), self.dropout(pos_emb)
@@ -1364,8 +1314,6 @@ class RelPositionalEncoding(PositionalEncoding):
         """
         x = x * self.xscale
         x_shape = self.get_shape(x)
-        if -1 in x_shape:
-            x_shape = self.dyn_shape(x)
         pos_emb = self.pe[:, offset: offset + x_shape[1]]
         return self.dropout(x), self.dropout(pos_emb)
 
@@ -1400,7 +1348,7 @@ class MultiHeadedAttention(nn.Cell):
         self.linear_k = Dense(n_feat, n_feat).to_float(compute_type)
         self.linear_v = Dense(n_feat, n_feat).to_float(compute_type)
         self.linear_out = Dense(n_feat, n_feat).to_float(compute_type)
-        self.dropout = nn.Dropout(keep_prob=1 - dropout_rate)
+        self.dropout = nn.Dropout(p=dropout_rate)
         self.softmax = nn.Softmax()
 
         self.expand_dims = ops.ExpandDims()
@@ -1558,7 +1506,6 @@ class ASRModelWithAcc(nn.Cell):
         self.equal = ops.Equal()
         self.mul = ops.Mul()
         self.print = ops.Print()
-        self.scalar_summary = ops.ScalarSummary()
         self.expand_dims = ops.ExpandDims()
         self.tile = ops.Tile()
         self.topk = ops.TopK()
@@ -1614,14 +1561,6 @@ class ASRModelWithAcc(nn.Cell):
         else:
             loss = self.ctc_weight * loss_ctc + \
                 (1 - self.ctc_weight) * loss_att
-
-        self.scalar_summary("loss", loss)
-        if loss_att is not None:
-            self.scalar_summary("loss_att", loss_att)
-            self.scalar_summary("acc_att", acc_att)
-        if loss_ctc is not None:
-            self.scalar_summary("loss_ctc", loss_ctc)
-
         return loss, acc_att
 
     def _calc_att_loss(
@@ -1753,11 +1692,11 @@ def get_train_loss(train_dataset, run_mode):
     steps_size = train_dataset.get_dataset_size()
     logging.warning("Training dataset has %d steps in each epoch.", steps_size)
 
-    # define network
-    net_with_loss = init_asr_model(mb, VOCAB_SIZE)
-    weights = ParameterTuple(net_with_loss.trainable_params())
-    logging.info("Total parameter of ASR model: %s.",
-                 get_parameter_numel(net_with_loss))
+    # define wenet network
+    wenet_with_loss = init_asr_model(mb, VOCAB_SIZE)
+    weights = ParameterTuple(wenet_with_loss.trainable_params())
+    logging.info("Total parameter of WeNet-ASR model: %s.",
+                 get_parameter_numel(wenet_with_loss))
 
     lr_schedule = ASRWarmupLR(
         learninig_rate=OPTIM_LR,
@@ -1769,7 +1708,7 @@ def get_train_loss(train_dataset, run_mode):
         loss_scale_value=1024, scale_factor=2, scale_window=1000)
 
     train_net = TrainAccumulationAllReduceEachWithLossScaleCell(
-        net_with_loss, optimizer, update_cell, accumulation_steps=ACCUM_GRAD
+        wenet_with_loss, optimizer, update_cell, accumulation_steps=ACCUM_GRAD
     )
 
     callback = TimeMonitor(steps_size)
@@ -1798,7 +1737,18 @@ def get_train_loss(train_dataset, run_mode):
     return callback.loss
 
 
-@pytest.mark.level0
+def train_proccess(mode):
+    logging.info("Initializing training dataset.")
+    bs = BATCH_SIZE
+    ll = LABLE_LEN
+    mb = MEL_BINS
+    set_seed(0)
+    train_dataset = create_dataset(bs, ll, mb)
+    expect_graph_loss = get_train_loss(train_dataset, mode)
+    assert np.allclose(expect_graph_loss, 111.1163, 0.0001, 0.0001)
+
+
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -1808,12 +1758,19 @@ def test_train():
     Description:  The sequence length of inputs is dynamic.
     Expectation: Assert that the training loss of fixed data is consistent with the expected loss.
     """
-    # Set random seed
-    logging.info("Initializing training dataset.")
-    bs = BATCH_SIZE
-    ll = LABLE_LEN
-    mb = MEL_BINS
-    set_seed(0)
-    train_dataset = create_dataset(bs, ll, mb)
-    expect_graph_loss = get_train_loss(train_dataset, context.GRAPH_MODE)
-    assert np.allclose(expect_graph_loss, 111.1163, 0.0001, 0.0001)
+    train_proccess(context.GRAPH_MODE)
+
+
+@pytest.mark.level0
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.env_onecard
+def test_train_pynative():
+    """
+    Feature: Test the simplified dynamic shape WeNet-ASR network with small data.
+    Description:  The sequence length of inputs is dynamic.
+    Expectation: Assert that the training loss of fixed data is consistent with the expected loss.
+    """
+    # set pynative_synchronize=True for temp avoid
+    context.set_context(pynative_synchronize=True)
+    train_proccess(context.PYNATIVE_MODE)

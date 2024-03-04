@@ -38,6 +38,11 @@ __global__ void AddTile(T *loss, int index) {
 }
 
 template <typename T>
+__global__ void Assign(T *loss, T *loss_work) {
+  loss[0] = loss_work[0];
+}
+
+template <typename T>
 __global__ void PartialSum(T *loss, int stride) {
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < stride; i += blockDim.x * gridDim.x) {
     loss[i] += loss[i + stride];
@@ -54,7 +59,7 @@ __global__ void SoftMarginLoss(const T *prediction, const T *target, const size_
 }
 
 template <typename T>
-void Sum(T *loss, const size_t input_size, const uint32_t &device_id, cudaStream_t cuda_stream) {
+cudaError_t Sum(T *loss, const size_t input_size, const uint32_t &device_id, cudaStream_t cuda_stream) {
   if (input_size % 2 == 1 && input_size != 1) {
     AddTile<<<1, 1, 0, cuda_stream>>>(loss, input_size - 1);
   }
@@ -64,30 +69,41 @@ void Sum(T *loss, const size_t input_size, const uint32_t &device_id, cudaStream
       AddTile<<<1, 1, 0, cuda_stream>>>(loss, stride - 1);
     }
   }
+  return GetCudaStatus();
 }
 
 template <typename T>
-void CalSoftMarginLoss(const T *prediction, const T *target, const size_t input_size, const ReductionMode &reduction,
-                       T *loss, const uint32_t &device_id, cudaStream_t cuda_stream) {
-  SoftMarginLoss<<<CUDA_BLOCKS(device_id, input_size), CUDA_THREADS(device_id), 0, cuda_stream>>>(
-    prediction, target, input_size, reduction, loss);
-  if (reduction != ReductionMode::kNone) {
-    Sum(loss, input_size, device_id, cuda_stream);
-    if (reduction == ReductionMode::kMean) {
-      Divide<<<1, 1, 0, cuda_stream>>>(loss, static_cast<int>(input_size));
-    }
+cudaError_t CalSoftMarginLoss(const T *prediction, const T *target, const size_t input_size,
+                              const ReductionMode &reduction, T *loss, T *loss_work, const uint32_t &device_id,
+                              cudaStream_t cuda_stream) {
+  if (reduction == ReductionMode::kNone) {
+    SoftMarginLoss<<<CUDA_BLOCKS(device_id, input_size), CUDA_THREADS(device_id), 0, cuda_stream>>>(
+      prediction, target, input_size, reduction, loss);
+    return GetCudaStatus();
   }
-  return;
+
+  SoftMarginLoss<<<CUDA_BLOCKS(device_id, input_size), CUDA_THREADS(device_id), 0, cuda_stream>>>(
+    prediction, target, input_size, reduction, loss_work);
+
+  Sum(loss_work, input_size, device_id, cuda_stream);
+  Assign<<<1, 1, 0, cuda_stream>>>(loss, loss_work);
+  if (reduction == ReductionMode::kMean) {
+    Divide<<<1, 1, 0, cuda_stream>>>(loss, static_cast<int>(input_size));
+  }
+  return GetCudaStatus();
 }
 
-template CUDA_LIB_EXPORT void CalSoftMarginLoss(const float *prediction, const float *target, const size_t input_size,
-                                                const ReductionMode &reduction, float *loss, const uint32_t &device_id,
-                                                cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalSoftMarginLoss(const float *prediction, const float *target,
+                                                       const size_t input_size, const ReductionMode &reduction,
+                                                       float *loss, float *loss_work, const uint32_t &device_id,
+                                                       cudaStream_t cuda_stream);
 
-template CUDA_LIB_EXPORT void CalSoftMarginLoss(const half *prediction, const half *target, const size_t input_size,
-                                                const ReductionMode &reduction, half *loss, const uint32_t &device_id,
-                                                cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalSoftMarginLoss(const half *prediction, const half *target,
+                                                       const size_t input_size, const ReductionMode &reduction,
+                                                       half *loss, half *loss_work, const uint32_t &device_id,
+                                                       cudaStream_t cuda_stream);
 
-template CUDA_LIB_EXPORT void CalSoftMarginLoss(const double *prediction, const double *target, const size_t input_size,
-                                                const ReductionMode &reduction, double *loss, const uint32_t &device_id,
-                                                cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalSoftMarginLoss(const double *prediction, const double *target,
+                                                       const size_t input_size, const ReductionMode &reduction,
+                                                       double *loss, double *loss_work, const uint32_t &device_id,
+                                                       cudaStream_t cuda_stream);

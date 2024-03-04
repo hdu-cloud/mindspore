@@ -22,6 +22,7 @@ from mindspore.ops.function import csr_add
 from mindspore.ops.operations.sparse_ops import SparseMatrixAdd
 from mindspore.common import dtype as mstype
 from mindspore.ops.primitive import constexpr
+from mindspore.common.api import _pynative_executor
 
 
 @constexpr
@@ -49,7 +50,7 @@ def create_csr_tensor():
     return csra, csrb
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -81,7 +82,7 @@ def test_function_csr_add():
     assert np.allclose(c.values.asnumpy(), c_values_excpected)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -120,7 +121,7 @@ def test_graph_csr_add():
     assert np.allclose(c[4].asnumpy(), c_values_excpected)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -152,7 +153,7 @@ def test_pynative_csr_add():
     assert np.allclose(c.values.asnumpy(), c_values_excpected)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -184,7 +185,7 @@ def test_tensor_csr_add():
     assert np.allclose(c.values.asnumpy(), c_values_excpected)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_csr_add_3d():
@@ -218,7 +219,7 @@ def test_csr_add_3d():
     assert np.allclose(c[4].asnumpy(), (1, 2, 4, 5, 3, 1, 2, 4, 5, 3))
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_csr_add_abnormal():
@@ -246,3 +247,4 @@ def test_csr_add_abnormal():
         add_op(x1_dense_shape, x1_batch_pointer, x1_row_pointer, x1_col_indices, x1_value,
                x2_dense_shape, x2_batch_pointer, x2_row_pointer, x2_col_indices, x2_value,
                alpha, beta)
+        _pynative_executor.sync()

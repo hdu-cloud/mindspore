@@ -23,6 +23,10 @@ from mindspore import context
 class ConvertNetUtils:
     """
     Convert net to thor layer net, used to compute and store second-order information matrix.
+
+    Examples:
+        >>> import mindspore as ms
+        >>> convert_net_utils = ms.train.ConvertNetUtils()
     """
     def __init__(self):
         self._convert_method_map = {nn.Dense: ConvertNetUtils._convert_dense,
@@ -165,8 +169,23 @@ class ConvertNetUtils:
             ``Ascend`` ``GPU``
 
         Examples:
-            >>> ConvertNetUtils().convert_to_thor_net(net)
-
+            >>> import mindspore as ms
+            >>> from mindspore import nn
+            >>> from mindspore import Tensor
+            >>> from mindspore.nn import thor
+            >>>
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
+            >>> temp = Tensor([4e-4, 1e-4, 1e-5, 1e-5], ms.float32)
+            >>> opt = thor(net, learning_rate=temp, damping=temp, momentum=0.9, loss_scale=128, frequency=4)
+            >>> loss = nn.SoftmaxCrossEntropyWithLogits(sparse=True, reduction='mean')
+            >>> loss_scale = ms.FixedLossScaleManager(128, drop_overflow_update=False)
+            >>> model = ms.Model(net, loss_fn=loss, optimizer=opt, loss_scale_manager=loss_scale, metrics={'acc'},
+            ...               amp_level="O2", keep_batchnorm_fp32=False)
+            >>> model = ms.train.ConvertModelUtils.convert_to_thor_model(model=model, network=net, loss_fn=loss,
+            ...                                           optimizer=opt,loss_scale_manager=loss_scale, metrics={'acc'},
+            ...                                           amp_level="O2", keep_batchnorm_fp32=False)
         """
 
         net.update_cell_prefix()
@@ -187,11 +206,12 @@ class ConvertModelUtils:
         Args:
             model (Object): High-Level API for Training.
             network (Cell): A training network.
-            loss_fn (Cell): Objective function. Default: None.
-            optimizer (Cell): Optimizer used to updating the weights. Default: None.
+            loss_fn (Cell): Objective function. Default: ``None`` .
+            optimizer (Cell): Optimizer used to updating the weights. Default: ``None`` .
             metrics (Union[dict, set]): A Dictionary or a set of metrics to be evaluated by the model during
-                                        training. eg: {'accuracy', 'recall'}. Default: None.
-            amp_level (str): Level for mixed precision training. Supports ["O0", "O2", "O3", "auto"]. Default: "O0".
+                                        training. eg: {'accuracy', 'recall'}. Default: ``None`` .
+            amp_level (str): Level for mixed precision training. Supports ["O0", "O2", "O3", "auto"].
+                Default: ``"O0"`` .
 
                 - O0: Do not change.
                 - O2: Cast network to float16, keep batchnorm run in float32, using dynamic loss scale.
@@ -202,9 +222,9 @@ class ConvertModelUtils:
 
             loss_scale_manager (Union[None, LossScaleManager]): If it is None, the loss would not be scaled.
                 Otherwise, scale the loss by LossScaleManager and optimizer can not be None. It is a key argument.
-                e.g. Use `loss_scale_manager=None` to set the value.
+                e.g. Use `loss_scale_manager=None` to set the value. Default: ``None`` .
             keep_batchnorm_fp32 (bool): Keep Batchnorm running in `float32`. If True, the level setting before
-                will be overwritten. Default: False.
+                will be overwritten. Default: ``False`` .
 
         Returns:
              model (Object), High-Level API for Training.
@@ -213,30 +233,26 @@ class ConvertModelUtils:
             ``Ascend`` ``GPU``
 
         Examples:
-            .. note::
-                Before running the following example, you need to customize the network Net and
-                dataset preparation function create_dataset. Refer to
-                `Building a Network <https://www.mindspore.cn/tutorials/en/r2.0.0-alpha/beginner/model.html>`_
-                and `Dataset <https://www.mindspore.cn/tutorials/en/r2.0.0-alpha/beginner/dataset.html>`_ .
-
             >>> import mindspore as ms
             >>> from mindspore import nn
             >>> from mindspore import Tensor
             >>> from mindspore.nn import thor
             >>>
-            >>> net = Net()
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
+            >>> # Create the dataset taking MNIST as an example. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/mnist.py
             >>> dataset = create_dataset()
-            >>> temp = Tensor([4e-4, 1e-4, 1e-5, 1e-5], mstype.float32)
+            >>> temp = Tensor([4e-4, 1e-4, 1e-5, 1e-5], ms.float32)
             >>> opt = thor(net, learning_rate=temp, damping=temp, momentum=0.9, loss_scale=128, frequency=4)
             >>> loss = nn.SoftmaxCrossEntropyWithLogits(sparse=True, reduction='mean')
-            >>> loss_scale = ms.FixedLossScaleManager(128, drop_overflow_update=False)
-            >>> model = ms.Model(net, loss_fn=loss, optimizer=opt, loss_scale_manager=loss_scale, metrics={'acc'},
+            >>> loss_scale = ms.amp.FixedLossScaleManager(128, drop_overflow_update=False)
+            >>> model = ms.train.Model(net, loss_fn=loss, optimizer=opt, loss_scale_manager=loss_scale, metrics={'acc'},
             ...               amp_level="O2", keep_batchnorm_fp32=False)
-            >>> model = ConvertModelUtils.convert_to_thor_model(model=model, network=net, loss_fn=loss, optimizer=opt,
-            ...                                                 loss_scale_manager=loss_scale, metrics={'acc'},
-            ...                                                 amp_level="O2", keep_batchnorm_fp32=False)
-            >>> loss_cb = ms.LossMonitor()
-            >>> model.train(1, dataset, callbacks=loss_cb, sink_size=4, dataset_sink_mode=True)
+            >>> model = ms.train.ConvertModelUtils.convert_to_thor_model(model=model, network=net, loss_fn=loss,
+            ...                                          optimizer=opt, loss_scale_manager=loss_scale, metrics={'acc'},
+            ...                                          amp_level="O2", keep_batchnorm_fp32=False)
         """
 
         optim_name = type(optimizer).__name__

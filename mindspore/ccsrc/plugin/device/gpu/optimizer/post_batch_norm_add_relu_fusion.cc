@@ -19,11 +19,15 @@
 #include <vector>
 #include <string>
 
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/sequence_ops.h"
+#include "ops/nn_optimizer_ops.h"
+#include "ops/nn_ops.h"
+#include "ops/math_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "plugin/device/gpu/hal/device/kernel_info_setter.h"
 #include "kernel/graph_kernel_info.h"
 
@@ -80,7 +84,7 @@ const AnfNodePtr PostBatchNormAddReluFusion::Process(const FuncGraphPtr &graph, 
   MS_EXCEPTION_IF_NULL(umonad);
   MS_EXCEPTION_IF_NULL(z);
 
-  auto prim = std::make_shared<Primitive>(kBatchNormWithAddAndActivation);
+  auto prim = std::make_shared<Primitive>(kBatchNormWithAddAndActivationOpName);
   MS_EXCEPTION_IF_NULL(prim);
   std::vector<AnfNodePtr> inputs = {NewValueNode(prim), x, scale, bias, mean, var, z, umonad};
   auto fused_batch_norm_with_add_relu = graph->NewCNode(inputs);
@@ -88,17 +92,19 @@ const AnfNodePtr PostBatchNormAddReluFusion::Process(const FuncGraphPtr &graph, 
 
   std::vector<TypeId> outputs_type;
   std::vector<BaseShapePtr> outputs_shape;
-  auto output_num = common::AnfAlgo::GetOutputTensorNum(batch_norm);
+  auto output_num = AnfAlgo::GetOutputTensorNum(batch_norm);
   for (size_t i = 0; i < output_num; i++) {
     outputs_type.push_back(common::AnfAlgo::GetOutputInferDataType(batch_norm, i));
-    outputs_shape.push_back(common::AnfAlgo::GetOutputDetailShape(batch_norm, i));
+    outputs_shape.push_back(AnfAlgo::GetOutputDetailShape(batch_norm, i));
   }
   common::AnfAlgo::SetOutputTypeAndDetailShape(outputs_type, outputs_shape, fused_batch_norm_with_add_relu.get());
   common::AnfAlgo::CopyNodeAttrs(batch_norm, fused_batch_norm_with_add_relu);
 
   auto manager = graph->manager();
   MS_EXCEPTION_IF_NULL(manager);
-  manager->Replace(batch_norm, fused_batch_norm_with_add_relu);
+  if (!manager->Replace(batch_norm, fused_batch_norm_with_add_relu)) {
+    MS_LOG(EXCEPTION) << "manager replace node failed in post batchnorm add relu fusion.";
+  }
   auto kernel_info_setter = GraphKernelInfoManager::Instance().GetGraphKernelInfo(kGPUDevice);
   MS_EXCEPTION_IF_NULL(kernel_info_setter);
   kernel_info_setter->SetKernelInfo(fused_batch_norm_with_add_relu, KernelType::UNKNOWN_KERNEL_TYPE);

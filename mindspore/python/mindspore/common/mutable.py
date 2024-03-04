@@ -19,6 +19,14 @@ from mindspore.common.tensor import Tensor
 from mindspore._c_expression import Tensor as Tensor_
 
 
+class _Int(int):
+    pass
+
+
+class _Float(float):
+    pass
+
+
 class _Tuple(tuple):
     pass
 
@@ -43,7 +51,7 @@ def _check_element_type(value):
             if not _check_element_type(element):
                 return False
         return True
-    return isinstance(value, Tensor_)
+    return isinstance(value, (Tensor, Tensor_, int, float)) and not isinstance(value, bool)
 
 
 def mutable(input_data, dynamic_len=False):
@@ -68,34 +76,35 @@ def mutable(input_data, dynamic_len=False):
     the length of the tuple or list is different for each run, it does not need to be re-compiled.
 
     Args:
-        input_data (Union[int, float, Tensor, tuple, list, dict): The input data to be made mutable. If
+        input_data (Union[Tensor, tuple, list, dict]): The input data to be made mutable. If
             'input_data' is list/tuple/dict, the type of each element should also in the valid types.
         dynamic_len (bool): Whether to set the whole sequence to be dynamic length. In graph compilation, if
-            `dynamic_len` is True, the `input_data` must be list or tuple and the elements of `input_data` must have
-            the same type and shape. Default: False.
+            `dynamic_len` is ``True`` , the `input_data` must be list or tuple and the elements of `input_data` must
+            have the same type and shape. Default: ``False`` .
 
     .. warning::
-        - This is an experimental prototype that is subject to change or deletion.
-        - Currently this api only works in GRAPH mode.
+        This is an experimental API that is subject to change or deletion.
+        `dynamic_len` is an experimental argument. Currently, `dynamic_len` is not supported to be ``True`` .
+
+    Note:
+        Currently this api only works in GRAPH mode.
 
     Returns:
         The origin input data which has been set mutable.
 
     Raises:
-        TypeError: If `input_data` is not one of int, float, Tensor, tuple, list, dict or their nested structure.
-        TypeError: If `dynamic_len` is True and `input_data` is not tuple or list.
-        ValueError: If `dynamic_len` is True, `input_data` is tuple or list but the elements within `input_data` do not
-            have the same shape and type.
+        TypeError: If `input_data` is not one of Tensor, tuple, list, dict or their nested structure.
+        TypeError: If `dynamic_len` is ``True`` and `input_data` is not tuple or list.
+        ValueError: If `dynamic_len` is ``True`` , `input_data` is tuple or list but the elements within `input_data`
+        do not have the same shape and type.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> import mindspore.nn as nn
-        >>> import mindspore.ops as ops
-        >>> from mindspore.common import mutable
-        >>> from mindspore.common import dtype as mstype
-        >>> from mindspore import Tensor
+        >>> from mindspore import mutable, nn, ops, Tensor, context
+        >>> from mindspore import dtype as mstype
+        >>> context.set_context(mode=context.GRAPH_MODE)
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -122,20 +131,28 @@ def mutable(input_data, dynamic_len=False):
         >>> output = GradNetWrtX(Net())(z)
         >>> print(output)
         (Tensor(shape=[2, 3], dtype=Float32, value=
-        [[ 1.41000009e+00, 1.60000002e+00, 6.59999943e+00],
-         [ 1.41000009e+00, 1.60000002e+00, 6.59999943e+00]]), Tensor(shape=[3, 3], dtype=Float32, value=
-        [[ 1.70000005e+00, 1.70000005e+00, 1.70000005e+00],
-         [ 1.89999998e+00, 1.89999998e+00, 1.89999998e+00],
-         [ 1.50000000e+00, 1.50000000e+00, 1.50000000e+00]]))
+        [[ 1.41000009e+00,  1.60000002e+00,  6.59999943e+00],
+         [ 1.41000009e+00,  1.60000002e+00,  6.59999943e+00]]), Tensor(shape=[3, 3], dtype=Float32, value=
+        [[ 1.70000005e+00,  1.70000005e+00,  1.70000005e+00],
+         [ 1.89999998e+00,  1.89999998e+00,  1.89999998e+00],
+         [ 1.50000000e+00,  1.50000000e+00,  1.50000000e+00]]))
     """
-
-    if not dynamic_len and not _check_element_type(input_data):
+    if not _check_element_type(input_data):
         raise TypeError(
-            f"For 'mutable', the 'input_data' should be one of (Tensor, tuple[Tensor], list[Tensor], dict[Tensor]) "
+            f"For 'mutable', the 'input_data' should be one of (int, float, bool, Tensor, tuple, list, dict) "
             f"or their nested structures, but got {input_data}.")
 
+    if dynamic_len and not isinstance(input_data, (tuple, list)):
+        raise TypeError(
+            f"For mutable, when the variable_len is True, the first input should be list or tuple,"
+            f" but got {input_data}")
+
     ret = input_data
-    if isinstance(input_data, list):
+    if isinstance(input_data, int):
+        ret = _Int(input_data)
+    elif isinstance(input_data, float):
+        ret = _Float(input_data)
+    elif isinstance(input_data, list):
         ret = _List(input_data)
     elif isinstance(input_data, tuple):
         ret = _Tuple(input_data)
@@ -149,4 +166,5 @@ def mutable(input_data, dynamic_len=False):
 
     setattr(ret, "__ms_mutable__", True)
     setattr(ret, "__ms_dynamic_len__", dynamic_len)
+    setattr(ret, "__ms_origin_object__", input_data)
     return ret

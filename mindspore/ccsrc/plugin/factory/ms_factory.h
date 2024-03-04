@@ -24,20 +24,28 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "kernel/kernel_factory.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace kernel {
 template <class C>
-class Factory {
+class Factory : public FactoryBase {
   using CreatorFunc = std::function<std::shared_ptr<C>()>;
 
  public:
   Factory(const Factory &) = delete;
   void operator=(const Factory &) = delete;
 
-  static Factory &Instance() {
-    static Factory instance;
-    return instance;
+  static Factory<C> &Instance() {
+    std::string key = typeid(C).name();
+    FactoryBase *instance = FactoryBase::GetInstance(key);
+    if (instance == nullptr) {
+      FactoryBase::CreateFactory(key, std::make_unique<Factory<C>>());
+      instance = FactoryBase::GetInstance(key);
+    }
+    MS_EXCEPTION_IF_NULL(instance);
+    return *static_cast<Factory<C> *>(instance);
   }
 
   void Register(const std::string &name, CreatorFunc &&creator) {
@@ -69,9 +77,10 @@ class Factory {
     return false;
   }
 
- private:
   Factory() = default;
   ~Factory() = default;
+
+ private:
   std::map<std::string, CreatorFunc> kernel_mod_creators_;
 };
 

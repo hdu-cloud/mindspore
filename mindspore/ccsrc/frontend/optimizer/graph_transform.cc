@@ -17,6 +17,7 @@
 #include "frontend/optimizer/graph_transform.h"
 #include <vector>
 #include <algorithm>
+#include "mindspore/core/ops/sequence_ops.h"
 #include "ir/graph_utils.h"
 
 namespace mindspore {
@@ -38,6 +39,26 @@ bool IsTuple(const AnfNodePtr &param) {
   return param->abstract() != nullptr && param->abstract()->isa<abstract::AbstractTuple>();
 }
 
+bool IsSequenceExpandable(const AbstractBasePtr &abs) {
+  if (abs == nullptr) {
+    return false;
+  }
+  auto abs_seq = abs->cast<abstract::AbstractTuplePtr>();
+  if (abs_seq == nullptr) {
+    return false;
+  }
+  // Not expand SparseTensor.
+  if (common::AnfAlgo::CheckAbsSparseTensor(abs)) {
+    return false;
+  }
+  // Not expand dynamic len sequence.
+  if (abs_seq->dynamic_len()) {
+    return false;
+  }
+  // Not expand node which is arg of dynamic len parameter.
+  return !abs_seq->dyn_len_arg();
+}
+
 bool ParamContainSparseTensor(const AnfNodePtr &param) {
   // If SparseTensor, Tuple(SparseTensor,...) or Tuple(...,(..., SparseTensor)), return false and skip this pass.
   return param->abstract() != nullptr && ContainSparseTensor(param->abstract());
@@ -45,6 +66,11 @@ bool ParamContainSparseTensor(const AnfNodePtr &param) {
 
 bool FuncGraphHasTupleInput(const FuncGraphPtr &fg) {
   return std::any_of(fg->parameters().cbegin(), fg->parameters().cend(), IsTuple);
+}
+
+bool FuncGraphHasConstantTupleInput(const FuncGraphPtr &fg) {
+  return std::any_of(fg->parameters().cbegin(), fg->parameters().cend(),
+                     [](const AnfNodePtr &param) { return IsSequenceExpandable(param->abstract()); });
 }
 
 std::vector<AnfNodePtr> TransformTupleArgument(const FuncGraphPtr &fg, const AnfNodePtr &node,
@@ -57,7 +83,7 @@ std::vector<AnfNodePtr> TransformTupleArgument(const FuncGraphPtr &fg, const Anf
     idx->set_abstract(abstract_scalar);
     auto elem_node = fg->NewCNode({NewValueNode(prim::kPrimTupleGetItem), node, idx});
     elem_node->set_abstract(elements[i]);
-    if (elements[i]->isa<abstract::AbstractTuple>()) {
+    if (IsSequenceExpandable(elements[i])) {
       auto nodes = TransformTupleArgument(fg, elem_node, elements[i]->cast<abstract::AbstractTuplePtr>());
       (void)tuple_node_expanded.insert(tuple_node_expanded.cend(), nodes.cbegin(), nodes.cend());
     } else {

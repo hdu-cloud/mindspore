@@ -33,13 +33,41 @@
 #include "src/common/file_utils.h"
 #include "src/common/prim_util.h"
 #include "coder/opcoders/nnacl/dequant/de_quant.h"
+#include "coder/opcoders/parallel.h"
 
 namespace mindspore::lite::micro {
+namespace {
+bool IsBuiltInCustomNode(const void *primitive, int schema_version) {
+  if (!IsCustomNode(primitive, schema_version)) {
+    return false;
+  }
+  const auto &custom = reinterpret_cast<const schema::Primitive *>(primitive)->value_as_Custom();
+  if (custom == nullptr) {
+    return false;
+  }
+  const auto &attrs = custom->attr();
+  if (attrs == nullptr) {
+    return false;
+  }
+  for (size_t i = 0; i < attrs->size(); ++i) {
+    if (attrs->Get(i) == nullptr || attrs->Get(i)->name() == nullptr) {
+      continue;
+    }
+    if (attrs->Get(i)->name()->str() == "builtin") {
+      return true;
+    }
+  }
+  return false;
+}
+}  // namespace
+
 CoderSession::CoderSession() { allocator_ = MemoryAllocator::GetInstance(); }
 
-int CoderSession::PassArgsToContext() {
+int CoderSession::PassArgsToContext(const std::string &model_name) {
   context_->set_tensor_map(allocator_->tensors_map());
   context_->set_saved_weights(allocator_->saved_weights());
+  context_->set_origin_weights(allocator_->origin_weights());
+  context_->set_auxiliary_weights(allocator_->auxiliary_weights());
   size_t de_quant_max_workspace_size = nnacl::Dequant::GetInstance()->de_quant_max_workspace();
   size_t final_total_size = allocator_->total_buffer_size() > de_quant_max_workspace_size
                               ? allocator_->total_buffer_size()
@@ -56,13 +84,20 @@ int CoderSession::PassArgsToContext() {
     }
     context_->set_code_blocks(blocks);
   }
+  context_->set_model_name(model_name);
+  if (!context_->JudgeIsValid(Configurator::GetInstance()->keep_original_weight())) {
+    MS_LOG(ERROR) << "Current model cannot keep-original-weight, due to existing generated tensor-data, please set "
+                     "'keep_original_weight' to false.";
+    return RET_NOT_SUPPORT;
+  }
   return RET_OK;
 }
 
 int CoderSession::Preprocess() {
   // assign memory
   std::vector<lite::Tensor *> inputs = coder_graph_->input_tensors();
-  int ret = allocator_->Assign(inputs, op_coders_);
+  int ret = allocator_->Assign(inputs, coder_graph_->output_tensors(), op_coders_, coder_graph_->all_tensors(),
+                               Configurator::GetInstance()->changeable_weights_name());
   MS_CHECK_RET_CODE(ret, "assign memory failed");
 
   // prepare, init model parameters
@@ -86,7 +121,7 @@ int CoderSession::DoCode() {
   }
   return ret;
 }
-int CoderSession::Run() {
+int CoderSession::Run(const std::string &model_name) {
   MS_LOG(INFO) << "start run opcoders";
 
   int ret = Preprocess();
@@ -95,7 +130,7 @@ int CoderSession::Run() {
   ret = DoCode();
   MS_CHECK_RET_CODE(ret, "do code failed");
 
-  ret = PassArgsToContext();
+  ret = PassArgsToContext(model_name);
   MS_CHECK_RET_CODE(ret, "PassArgsToContext failed");
   MS_LOG(INFO) << "run opcoders success";
   return RET_OK;
@@ -116,12 +151,16 @@ int CoderSession::GenerateCode() {
   return ret;
 }
 
-int CoderSession::Init(const void *content, int size) {
+int CoderSession::Init(const void *content, int size, const int model_index, bool end_flag, bool enable_fp16) {
   MS_LOG(INFO) << "CoderSession::Init start";
   Model *model = lite::Model::Import(static_cast<const char *>(content), size);
   MS_CHECK_PTR(model);
   coder_graph_ = std::make_unique<CoderGraph>(model);
-  context_ = std::make_unique<CoderContext>();
+  InitGlobalVariable(model_index);
+  InitThread(model_index);
+  context_ = std::make_unique<CoderContext>(model_index);
+  context_->set_end_flag(end_flag);
+  enable_fp16_ = enable_fp16;
   MS_LOG(INFO) << "CoderSession::Init done";
   return RET_OK;
 }
@@ -265,7 +304,9 @@ int CoderSession::CreateOpCoders() {
     }
 
     OpParameter *parameter = nullptr;
-    if (IsCustomNode(node->primitive_, schema_version_)) {
+    bool is_custom_op = IsCustomNode(node->primitive_, schema_version_);
+    bool is_built_in_custom_op = IsBuiltInCustomNode(node->primitive_, schema_version_);
+    if (is_custom_op && !is_built_in_custom_op) {
       KernelRegistry::GetInstance()->RegisterKernel(schema::PrimitiveType_Custom);
     } else {
       parameter = GenParameterAndInfer(node, inputs, &outputs);  // built-in ops infer
@@ -283,6 +324,7 @@ int CoderSession::CreateOpCoders() {
                                                 .mode(code_mode)
                                                 .input_indices(input_indices)
                                                 .output_indices(output_indices)
+                                                .is_builtin_custom(is_built_in_custom_op)
                                                 .build(schema_version_);
     if (op_coder == nullptr) {
       coder_graph_->DumpUnSupportLayer(code_target);
@@ -296,7 +338,10 @@ int CoderSession::CreateOpCoders() {
 }
 
 int CoderSession::InitCodeGraph() {
-  MS_CHECK_RET_CODE(coder_graph_->ConvertTensors(), "convert tensors failed");
+  MS_CHECK_RET_CODE(coder_graph_->ConvertTensors(enable_fp16_), "convert tensors failed");
+  if (!Configurator::GetInstance()->keep_original_weight()) {
+    MS_CHECK_RET_CODE(coder_graph_->RemoveCast(), "Remove cast failed");
+  }
   MS_CHECK_RET_CODE(coder_graph_->InitGraphInOutTensors(), "init graph inputs and outputs failed");
   return RET_OK;
 }

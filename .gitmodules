@@ -7,3 +7,9 @@
 [submodule "tests/models"]
 	path = tests/models
 	url = https://gitee.com/mindspore/models.git
+[submodule "mindspore/lite/src/litert/kernel/cpu/bolt/bolt"]
+	path = mindspore/lite/src/litert/kernel/cpu/bolt/bolt
+	url = https://gitee.com/mindspore/bolt.git
+[submodule "GeeSibling"]
+	path = GeeSibling
+	url = http://116.63.219.95:3000/rd-framework/GeeSibling.git

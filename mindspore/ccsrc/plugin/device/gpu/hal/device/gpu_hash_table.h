@@ -20,7 +20,6 @@
 #include <cuda.h>
 #if CUDA_VERSION > 11000
 #include <curand_kernel.h>
-#include <cuda/std/atomic>
 
 #include <string>
 #include <vector>
@@ -28,6 +27,7 @@
 #include <atomic>
 
 #include "runtime/device/hash_table.h"
+#include "plugin/device/gpu/hal/device/gpu_hash_table_common.h"
 #include "plugin/device/gpu/hal/device/gpu_allocator.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/cuda_common.h"
 
@@ -49,10 +49,10 @@ class CudaDynamicMap;
 template <typename Key, typename Value, typename Allocator = GPUAllocator<char>>
 class GPUHashTable : public HashTable<Key, Value> {
  public:
-  using Status = typename HashTable<Key, Value>::Status;
-
-  GPUHashTable(int32_t value_dim, const std::string &initializer, const Allocator &alloc = Allocator());
-  GPUHashTable(int32_t value_dim, const Value &default_value, const Allocator &alloc = Allocator());
+  GPUHashTable(int32_t value_dim, const std::string &initializer, uint64_t permit_threshold = kMinPermitThreshold,
+               uint64_t evict_threshold = kMaxEvictThreshold, const Allocator &alloc = Allocator());
+  GPUHashTable(int32_t value_dim, const Value &default_value, uint64_t permit_threshold = kMinPermitThreshold,
+               uint64_t evict_threshold = kMaxEvictThreshold, const Allocator &alloc = Allocator());
   ~GPUHashTable();
 
   // The Allocator type used allocate gpu memory for 'Key' type.
@@ -65,11 +65,12 @@ class GPUHashTable : public HashTable<Key, Value> {
   using CharAllocatorType = typename std::allocator_traits<Allocator>::template rebind_alloc<char>;
 
   // Find elements with specific keys, if a key does not exist, initialize the value for the key based on the
-  // initialzer and insert the key-value pair into map. The initializer can be 'normal', 'zero' or 'one', and also
+  // initializer and insert the key-value pair into map. The initializer can be 'normal', 'zero' or 'one', and also
   // could be a specific 'Value' type scalar.
   bool Find(const Key *keys, size_t key_num, bool insert_default_value, Value *outputs, void *stream) override;
 
   // Insert elements with specific keys. If key exists, update the value of the key.
+  // If permission is enable, all keys for `Insert` should be contained in gpu hash table already.
   bool Insert(const Key *keys, size_t key_num, const Value *value, void *stream) override;
 
   // Erase elements with specific keys.
@@ -88,7 +89,12 @@ class GPUHashTable : public HashTable<Key, Value> {
   bool Import(const DataLenPair &input_data) override;
 
   // Export all keys, values and status to host side.
-  bool Export(const DataLenPair &keys, const DataLenPair &values, const DataLenPair &status) override;
+  // Argument `incremental` mean the flag that determine whether export hash table in incremental or full manner, true
+  // for incremental export, false for full export.
+  HashTableExportData Export(bool incremental) override;
+
+  // Export a slice from the hash table, the size is specified by the parameter 'slice_size_in_mega_bytes' in MB.
+  HashTableExportData ExportSlice(bool incremental, bool *last_slice, size_t slice_size_in_mega_bytes) override;
 
   // Get the number of elements that can be held in currently allocated storage.
   size_t capacity() const override { return capacity_; }
@@ -96,12 +102,16 @@ class GPUHashTable : public HashTable<Key, Value> {
   // Get the number of elements.
   size_t size() const override { return size_; }
 
+  // Gets whether the elements of the hash table have changed since the last export, true means that there has been a
+  // change.
+  bool is_dirty() const override { return is_dirty_; }
+
   // Clear all elements of hash table.
   bool Clear();
 
  private:
   // Find elements with specific keys, if the key does not exist, initialize the value for the key based on the
-  // initialzer and insert the key-value pair into map.The initializer can be 'normal', 'zeros' or 'ones'.
+  // initializer and insert the key-value pair into map.The initializer can be 'normal', 'zeros' or 'ones'.
   bool Find(const Key *keys, size_t key_num, bool insert_default_value, const std::string &initializer, Value *outputs,
             void *stream);
 
@@ -148,16 +158,32 @@ class GPUHashTable : public HashTable<Key, Value> {
 
   // Count the number for expired elememts in hash table.
   // If the elements in the hash table are not used or updated within the time interval indicated by the
-  // `max_time_interval_to_evict_`, these elements will be expired.
+  // `evict_threshold_`, these elements will be expired.
   bool CountExpiredElements(cudaStream_t stream, size_t *expired_num);
 
   // Find all keys and indices for expired elememts in hash table.
   // If the elements in the hash table are not used or updated within the time interval indicated by the
-  // `max_time_interval_to_evict_`, these elements will be expired.
+  // `evict_threshold_`, these elements will be expired.
   bool FindExpiredElements(Key *expired_keys, int *expired_indices, cudaStream_t stream);
 
   // Erase expired elememts in hash table.
   bool EraseElements(const Key *keys, size_t key_num, const int *indices, cudaStream_t stream);
+
+  // Export all keys, values and status of the hash table to host side.
+  HashTableExportData ExportFully(cudaStream_t stream);
+
+  // Export the keys, values and status which are modified or erased since last export the hash table to host side.
+  HashTableExportData ExportIncrementally(cudaStream_t stream);
+
+  // Count the number of elements which are modified since last export.
+  bool CountModifiedElements(cudaStream_t stream, size_t *modified_num);
+
+  // Find all keys and indices for elememts which are modified since last export.
+  bool FindModifiedElements(Key *modified_keys, int *modified_indices, cudaStream_t stream);
+
+  // Export the element which are modified or erased since last export.
+  HashTableExportData ExportModifiedAndErasedElements(size_t modified_num, const Key *device_modified_keys,
+                                                      const Value *device_modified_values, cudaStream_t stream);
 
   // Record all block memory that contain all values.
   std::vector<Value *> blocks_;
@@ -168,6 +194,11 @@ class GPUHashTable : public HashTable<Key, Value> {
   std::vector<bool *> idle_flags_;
   // Record whether every slot is occupied or not for all block, the buffer is on device memory.
   bool **idle_flags_ptr_{nullptr};
+
+  // Record the status of each element for all block.
+  std::vector<Status *> statuses_;
+  // Record the status of each element for all block, the buffer is on device memory.
+  Status **statuses_ptr_{nullptr};
 
   // Record the number of times each element is accessed for all block.
   std::vector<size_t *> lookup_cnts_;
@@ -187,11 +218,11 @@ class GPUHashTable : public HashTable<Key, Value> {
   static std::vector<size_t> lookup_counter_initializer_;
 
   // The sentinel record the latest used location in blocks.
-  cuda::atomic<std::size_t, cuda::thread_scope_device> *current_index_{nullptr};
+  CudaAtomicSize *current_index_{nullptr};
 
   // The counter record the idle slot number, if the contents of a slot are erased, the slot is marked with the idle
   // status.
-  cuda::atomic<int32_t, cuda::thread_scope_device> *erased_counter_{nullptr};
+  CudaAtomicInt *erased_counter_{nullptr};
   // The buffer keep all the idle slot position(offset index to the beginning of block).
   int32_t *erased_slot_{nullptr};
 
@@ -222,7 +253,7 @@ class GPUHashTable : public HashTable<Key, Value> {
   static constexpr size_t elements_per_block_{kInitialCapacity};
 
   // Record the number of successfully inserted keys.
-  cuda::atomic<std::size_t, cuda::thread_scope_device> *insert_success_number_{nullptr};
+  CudaAtomicSize *insert_success_number_{nullptr};
 
   // The flag record whether normal distribution random generator state is initialized.
   std::atomic_bool random_gen_init_{false};
@@ -236,15 +267,24 @@ class GPUHashTable : public HashTable<Key, Value> {
 
   // Permission threshold: When an element is accessed more than this threshold, it will be actually inserted into
   // the hash table.
-  size_t min_lookup_cnt_before_permit_{1};
+  // If permit_threshold_ is less than or equal to kMinPermitThreshold, feature permission is disable.
+  uint64_t permit_threshold_;
 
   // Element eviction time interval threshold: evict elements that are not frequently accessed automatically,
   // if the elements in the hash table are not used or updated within the time interval indicated by the threshold,
   // these elements will be removed from the hash table.
-  size_t max_time_interval_to_evict_{SIZE_MAX};
+  // If evict_threshold_ is greater than kMaxEvictThreshold, feature eviction is disable.
+  uint64_t evict_threshold_;
 
   // Global timestamp, which is currently recorded when the hash table is updated.
   size_t global_timestamp_{0};
+
+  // The flag records whether the elements of the hash table have changed since the last export, true means that there
+  // has been a change.
+  bool is_dirty_{true};
+
+  // This mutex is to guarantee the thread-safe for call `Find`, `Insert` and `Erase` functions.
+  std::mutex mutex_;
 };
 }  // namespace gpu
 }  // namespace device

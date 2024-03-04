@@ -16,13 +16,30 @@
 
 #include "ops/adaptive_avg_pool_3d.h"
 
-#include <algorithm>
+#include <memory>
 #include <set>
 #include <string>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
-#include "ops/op_utils.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
+
 namespace mindspore {
 namespace ops {
 namespace {
@@ -33,17 +50,25 @@ abstract::ShapePtr AdaptiveAvgPool3DInferShape(const PrimitivePtr &primitive,
                                                const std::vector<AbstractBasePtr> &input_args) {
   auto op_name = primitive->name();
   auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
-  const int64_t input_num_dims = SizeToLong(x_shape.size());
-  CheckAndConvertUtils::CheckInRange("the rank of x", input_num_dims, kIncludeBoth, {4, 5}, op_name);
-  for (size_t i = 0; i < x_shape.size(); i++) {
-    CheckAndConvertUtils::CheckInteger(std::to_string(i) + "th dimension of x", x_shape[i], kGreaterEqual, 1, op_name);
-  }
 
   const auto &output_size_ptr = primitive->GetAttr("output_size");
   MS_EXCEPTION_IF_NULL(output_size_ptr);
   const auto &output_size = GetValue<std::vector<int64_t>>(output_size_ptr);
   (void)CheckAndConvertUtils::CheckInteger("length of output_size", SizeToLong(output_size.size()), kEqual,
                                            kOutputSizeLen, op_name);
+
+  if (IsDynamicRank(x_shape)) {
+    return std::make_shared<abstract::Shape>(x_shape);
+  }
+
+  const int64_t input_num_dims = SizeToLong(x_shape.size());
+  CheckAndConvertUtils::CheckInRange("the rank of x", input_num_dims, kIncludeBoth, {4, 5}, op_name);
+  if (!IsDynamic(x_shape)) {
+    for (size_t i = 0; i < x_shape.size(); i++) {
+      (void)CheckAndConvertUtils::CheckInteger(std::to_string(i) + "th dimension of x", x_shape[i], kGreaterEqual, 1,
+                                               op_name);
+    }
+  }
 
   // Update the output shape by output size and input shape.
   auto input_size_iter = x_shape.rbegin();
@@ -54,6 +79,7 @@ abstract::ShapePtr AdaptiveAvgPool3DInferShape(const PrimitivePtr &primitive,
       *input_size_iter = *output_size_iter;
     }
   }
+
   return std::make_shared<abstract::Shape>(x_shape);
 }
 
@@ -66,7 +92,6 @@ TypePtr AdaptiveAvgPool3DInferType(const PrimitivePtr &primitive, const std::vec
 }
 }  // namespace
 
-MIND_API_OPERATOR_IMPL(AdaptiveAvgPool3D, BaseOperator);
 AbstractBasePtr AdaptiveAvgPool3DInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                        const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
@@ -82,6 +107,26 @@ std::vector<int64_t> AdaptiveAvgPool3D::get_output_size() const {
   return GetValue<std::vector<int64_t>>(value_ptr);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(AdaptiveAvgPool3D, prim::kPrimAdaptiveAvgPool3D, AdaptiveAvgPool3DInfer, nullptr, true);
+MIND_API_OPERATOR_IMPL(AdaptiveAvgPool3D, BaseOperator);
+// AG means auto generated
+class MIND_API AGAdaptiveAvgPool3DInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return AdaptiveAvgPool3DInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return AdaptiveAvgPool3DInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return AdaptiveAvgPool3DInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(AdaptiveAvgPool3D, prim::kPrimAdaptiveAvgPool3D, AGAdaptiveAvgPool3DInfer, false);
 }  // namespace ops
 }  // namespace mindspore

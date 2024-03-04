@@ -67,7 +67,7 @@ bool FillsGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::ve
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  auto x_type_id = tensor_attr.GetInputAttr(kIndex0).first;
+  auto x_type_id = tensor_attr.GetInputAttr(kIndex0).dtype;
   unit_size_ = abstract::TypeIdSize(x_type_id);
   x_type_str_ = TypeIdToString(x_type_id);
   return true;
@@ -118,7 +118,8 @@ bool FillsGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, cons
                   << " without overflow: " << value;
     return false;
   }
-  FillsForward(input_elements_, value_ptr, y_ptr, device_id_, cuda_stream);
+  auto status = FillsForward(input_elements_, value_ptr, y_ptr, device_id_, cuda_stream);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

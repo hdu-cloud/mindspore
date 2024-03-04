@@ -1,16 +1,15 @@
 mindspore.ops.fliplr
 =====================
 
-.. py:function:: mindspore.ops.fliplr(x)
+.. py:function:: mindspore.ops.fliplr(input)
 
-    沿左右方向翻转Tensor中每行的元素。
-    Tensor的列会被保留，但显示顺序将与以前不同。
+    将输入Tensor中每一行的元素沿左右进行翻转，但保持矩阵的列不变。
 
     参数：
-        - **x** (Tensor) - 输入tensor。
+        - **input** (Tensor) - 输入Tensor。
 
     返回：
-        Tensor。
+        每一行元素翻转后的Tensor。
 
     异常：
-        - **TypeError** - `x` 不是Tensor。
+        - **TypeError** - `input` 不是Tensor。

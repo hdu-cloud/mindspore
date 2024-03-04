@@ -15,10 +15,19 @@
  */
 
 #include "ops/sigmoid_cross_entropy_with_logits.h"
+
+#include <map>
+#include <set>
 #include <utility>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <vector>
+
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -73,7 +82,7 @@ class SigmoidCrossEntropyWithLogitsInfer : public abstract::OpInferBase {
   }
 };
 REGISTER_PRIMITIVE_OP_INFER_IMPL(SigmoidCrossEntropyWithLogits, prim::kPrimSigmoidCrossEntropyWithLogits,
-                                 SigmoidCrossEntropyWithLogitsInfer, false);
+                                 SigmoidCrossEntropyWithLogitsInfer, true);
 
 }  // namespace ops
 }  // namespace mindspore

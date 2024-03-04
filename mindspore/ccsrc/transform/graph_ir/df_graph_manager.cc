@@ -14,16 +14,48 @@
  * limitations under the License.
  */
 
-#include "transform/graph_ir/df_graph_manager.h"
-
 #include <sstream>
-
+#include <set>
+#include "transform/graph_ir/df_graph_manager.h"
+#include "transform/graph_ir/aoe_util.h"
+#include "utils/ms_context.h"
+#include "pipeline/jit/ps/base.h"
+#include "utils/phase.h"
 #ifndef ENABLE_LITE_ACL
 #include "include/common/utils/python_adapter.h"
 #endif
+#include "include/common/utils/compile_cache_context.h"
+
+namespace {
+// normalize name for ge regex check
+std::string NormalizeString(const std::string &name) {
+  std::string norm_str;
+  std::for_each(name.begin(), name.end(), [&norm_str](const auto &a) {
+    if (isalpha(a) || isalnum(a) || a == '_' || a == '-') {
+      norm_str += a;
+    }
+  });
+  const size_t limit_len = 128;
+  if (norm_str.size() > limit_len) {
+    norm_str = norm_str.substr(norm_str.size() - limit_len);
+  }
+  return norm_str;
+}
+};  // namespace
 
 namespace mindspore {
 namespace transform {
+namespace {
+bool IsTrain() {
+  const std::string &phase = PhaseManager::GetInstance().phase();
+  bool enable_training = false;
+  if (!phase.empty()) {
+    enable_training = pipeline::GetPhasePrefix(phase) == "train";
+  }
+  return enable_training;
+}
+}  // namespace
+
 DfGraphWrapper::DfGraphWrapper(const std::string &name, const int &id, const DfGraphPtr &graph_ptr,
                                const OptionMap &options)
     : name_(name), id_(id), graph_ptr_(graph_ptr), options_(options) {}
@@ -45,7 +77,7 @@ DfGraphManager::~DfGraphManager() {
 }
 
 DfGraphManager &DfGraphManager::GetInstance() {
-  static DfGraphManager instance;
+  static DfGraphManager instance{};
   return instance;
 }
 
@@ -71,9 +103,44 @@ Status DfGraphManager::AddGraph(const std::string &name, const DfGraphPtr &graph
   }
 
   int id = GenerateId();
-  DfGraphWrapperPtr wrap_ptr = std::make_shared<DfGraphWrapper>(name, id, graph_ptr, options);
+  OptionMap new_options = options;
+  auto ms_context_ptr = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context_ptr);
+  bool is_train = IsTrain();
+  auto soc_version = ms_context_ptr->ascend_soc_version();
+  if (ms_context_ptr->get_param<std::string>(MS_CTX_PRECISION_MODE) != "") {
+    (new_options)["ge.exec.precision_mode"] = ms_context_ptr->get_param<std::string>(MS_CTX_PRECISION_MODE);
+    MS_LOG(INFO) << "Set precision_mode " << ms_context_ptr->get_param<std::string>(MS_CTX_PRECISION_MODE)
+                 << " by user.";
+  } else if (is_train) {
+    if (soc_version == "ascend910b") {
+      (new_options)["ge.exec.precision_mode"] = "must_keep_origin_dtype";
+      MS_LOG(INFO) << "Set precision_mode must_keep_origin_dtype, soc_version is " << soc_version << ".";
+    } else {
+      (new_options)["ge.exec.precision_mode"] = "allow_fp32_to_fp16";
+      MS_LOG(INFO) << "Set precision_mode allow_fp32_to_fp16, soc_version is " << soc_version << ".";
+    }
+  } else {
+    if (soc_version == "ascend910b") {
+      (new_options)["ge.exec.precision_mode"] = "allow_fp32_to_fp16";
+      MS_LOG(INFO) << "Set precision_mode allow_fp32_to_fp16, soc_version is " << soc_version << ".";
+    } else {
+      (new_options)["ge.exec.precision_mode"] = "force_fp16";
+      MS_LOG(INFO) << "Set precision_mode force_fp16, soc_version is " << soc_version << ".";
+    }
+  }
+  auto &compile_cache_context = CompileCacheContext::GetInstance();
+  auto compile_cache_dep_files_hash = compile_cache_context.CompileCacheDepFilesHash();
+  if (CompileCacheEnable() && !compile_cache_dep_files_hash.empty()) {
+    auto suffix = IsEnableRefMode() ? name : std::to_string(id);
+    auto ge_graph_key = compile_cache_dep_files_hash + "_" + suffix;
+    ge_graph_key = NormalizeString(ge_graph_key);
+    new_options.insert_or_assign(kGeGraphKey, ge_graph_key);
+  }
+
+  DfGraphWrapperPtr wrap_ptr = std::make_shared<DfGraphWrapper>(name, id, graph_ptr, new_options);
   auto ret = graphs_.emplace(name, wrap_ptr);
-  if (ret.second == false) {
+  if (!ret.second) {
     MS_LOG(WARNING) << "The graph name:{ " << name << " }is already exists! The old graph will be overwritten!!";
     ret.first->second = wrap_ptr;
   }
@@ -116,6 +183,13 @@ DfGraphWrapperPtr DfGraphManager::GetGraphByName(const std::string &name) {
 
 void DfGraphManager::ClearGraph() noexcept {
   std::lock_guard<std::mutex> lg(lock_);
+  for (const auto &graph_id : graphs_) {
+    MS_LOG(INFO) << "Remove graph, graph name: " << graph_id.first << ", graph id: " << graph_id.second->id_;
+    if (sess_ptr_ != nullptr &&
+        sess_ptr_->RemoveGraph(static_cast<uint32_t>(graph_id.second->id_)) != ::ge::GRAPH_SUCCESS) {
+      MS_LOG(WARNING) << "Remove graph, graph name: " << graph_id.first << ", graph id: " << graph_id.second->id_;
+    }
+  }
   graphs_.clear();
   anf_graphs_.clear();
   MS_LOG(INFO) << "Remove all graphs in GraphManager";
@@ -142,11 +216,6 @@ AnfGraphPtr DfGraphManager::GetAnfGraph(uint32_t graph_id) {
   return iter->second;
 }
 
-void DfGraphManager::EraseAnfGraph() {
-  std::lock_guard<std::mutex> lg(lock_);
-  anf_graphs_.clear();
-}
-
 void DfGraphManager::SetGeSession(const std::shared_ptr<::ge::Session> &sess_ptr) {
   std::lock_guard<std::mutex> lg(lock_);
   if (sess_ptr == nullptr) {
@@ -171,6 +240,12 @@ void DfGraphManager::DeleteGeSession() noexcept {
   if (sess_ptr_ == nullptr) {
     MS_LOG(INFO) << "Ge Session is not exist";
   } else {
+    for (const auto &graph_id : graphs_) {
+      MS_LOG(INFO) << "Remove graph, graph name: " << graph_id.first << ", graph id: " << graph_id.second->id_;
+      if (sess_ptr_->RemoveGraph(static_cast<uint32_t>(graph_id.second->id_)) != ::ge::GRAPH_SUCCESS) {
+        MS_LOG(WARNING) << "Remove graph, graph name: " << graph_id.first << ", graph id: " << graph_id.second->id_;
+      }
+    }
     sess_ptr_ = nullptr;
     saved_graphs_.clear();
     MS_LOG(INFO) << "Delete Ge Session success";
@@ -204,6 +279,37 @@ void DfGraphManager::DeleteGraphRunner() noexcept {
     graph_runner_ptr_ = nullptr;
     MS_LOG(INFO) << "Delete GraphRunner success";
   }
+}
+
+void DfGraphManager::AoeGeGraph() {
+  std::set<string> wait_optimize_graphs_ = AoeUtil::GetInstance().GetWaitOptimizeGraph();
+  if (wait_optimize_graphs_.empty()) {
+    return;
+  }
+  MS_LOG(DEBUG) << "start optimized graph";
+  std::set<string> optimized_graph_names_;
+#ifndef ENABLE_LITE_ACL
+  py::gil_scoped_release release;
+#endif
+
+  for (auto &graph_name : wait_optimize_graphs_) {
+    auto wrapper = GetGraphByName(graph_name);
+    MS_EXCEPTION_IF_NULL(wrapper);
+    if (AoeUtil::GetInstance().IsSaveOptimizedGraph(wrapper->id_)) {
+      continue;
+    }
+    Status status = AoeUtil::GetInstance().AoeOnlineGeGraph(GetGeSession(), wrapper->graph_ptr_);
+    if (status == FAILED) {
+      MS_LOG(ERROR) << "AOE tuning failed, graph name is " << graph_name << " id :" << wrapper->id_;
+      return;
+    }
+    AoeUtil::GetInstance().SaveOptimizedGraph(wrapper->id_);
+    optimized_graph_names_.insert(graph_name);
+    MS_LOG(DEBUG) << "Optimized Graph " << graph_name << " success";
+  }
+  AoeUtil::GetInstance().RemoveWaitOptimizedGraph(optimized_graph_names_);
+  optimized_graph_names_.clear();
+  MS_LOG(DEBUG) << "optimized graph end";
 }
 }  // namespace transform
 }  // namespace mindspore

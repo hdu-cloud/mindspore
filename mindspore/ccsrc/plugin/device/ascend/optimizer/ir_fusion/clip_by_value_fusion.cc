@@ -19,11 +19,12 @@
 #include <vector>
 #include <string>
 
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/math_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -91,7 +92,7 @@ const AnfNodePtr ClipByValueFusion::Process(const FuncGraphPtr &graph, const Anf
   auto clip_by_value = NewCNode(inputs, graph);
   MS_EXCEPTION_IF_NULL(clip_by_value);
   auto types = {common::AnfAlgo::GetOutputInferDataType(node, 0)};
-  auto shapes = {common::AnfAlgo::GetOutputDetailShape(node, 0)};
+  auto shapes = {AnfAlgo::GetOutputDetailShape(node, 0)};
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, clip_by_value.get());
   clip_by_value->set_scope(node->scope());
   return clip_by_value;

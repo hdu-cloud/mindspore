@@ -32,7 +32,7 @@ if(NOT ENABLE_GLIBCXX)
     set(glog_CXXFLAGS "${glog_CXXFLAGS} -D_GLIBCXX_USE_CXX11_ABI=0")
 endif()
 
-if(ENABLE_GITEE)
+if(ENABLE_GITEE OR ENABLE_GITEE_EULER) # Channel GITEE_EULER is NOT supported now, use GITEE instead.
     set(REQ_URL "https://gitee.com/mirrors/glog/repository/archive/v0.4.0.tar.gz")
     set(SHA256 "e17cd4bb7c06951a12fc9db5130ec63a9f090b84340b8556fa0d530f73c6b634")
 else()
@@ -46,6 +46,24 @@ set(glog_option -DBUILD_TESTING=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD
 if(WIN32 AND NOT MSVC)
     if(CMAKE_SIZEOF_VOID_P EQUAL 4)
         set(glog_option ${glog_option} -DHAVE_DBGHELP=ON)
+    endif()
+endif()
+
+if(ANDROID_NDK)
+    if(PLATFORM_ARM64)
+        set(glog_option -DCMAKE_TOOLCHAIN_FILE=$ENV{ANDROID_NDK}/build/cmake/android.toolchain.cmake
+                -DANDROID_NATIVE_API_LEVEL=19
+                -DANDROID_NDK=$ENV{ANDROID_NDK}
+                -DANDROID_ABI=arm64-v8a
+                -DANDROID_TOOLCHAIN_NAME=aarch64-linux-android-clang
+                -DANDROID_STL=${ANDROID_STR} -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} ${glog_option})
+    elseif(PLATFORM_ARM32)
+        set(glog_option -DCMAKE_TOOLCHAIN_FILE=$ENV{ANDROID_NDK}/build/cmake/android.toolchain.cmake
+                -DANDROID_NATIVE_API_LEVEL=19
+                -DANDROID_NDK=$ENV{ANDROID_NDK}
+                -DANDROID_ABI=armeabi-v7a
+                -DANDROID_TOOLCHAIN_NAME=aarch64-linux-android-clang
+                -DANDROID_STL=${ANDROID_STR} -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} ${glog_option})
     endif()
 endif()
 

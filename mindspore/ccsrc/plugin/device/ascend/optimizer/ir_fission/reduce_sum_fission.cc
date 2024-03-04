@@ -18,14 +18,15 @@
 #include <algorithm>
 #include <memory>
 #include <vector>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "mindspore/core/ops/lite_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
 namespace opt {
 const BaseRef ReduceSumFission::DefinePattern() const {
   VarPtr Xs = std::make_shared<SeqVar>();
-  auto reduce_sum_prim = std::make_shared<Primitive>(prim::kPrimReduceSum->name());
+  auto reduce_sum_prim = std::make_shared<Primitive>(prim::kPrimReduceSumD->name());
   return VectorRef({reduce_sum_prim, Xs});
 }
 
@@ -35,7 +36,7 @@ CNodePtr ReduceSumFission::AddReduceSumNode(const FuncGraphPtr &func_graph, cons
   MS_EXCEPTION_IF_NULL(func_graph);
   MS_EXCEPTION_IF_NULL(input_node);
   auto input_type = common::AnfAlgo::GetOutputInferDataType(input_node, 0);
-  std::vector<AnfNodePtr> inputs = {NewValueNode(std::make_shared<Primitive>(prim::kPrimReduceSum->name())),
+  std::vector<AnfNodePtr> inputs = {NewValueNode(std::make_shared<Primitive>(prim::kPrimReduceSumD->name())),
                                     input_node};
   CNodePtr reduce_sum = NewCNode(inputs, func_graph);
   MS_EXCEPTION_IF_NULL(reduce_sum);
@@ -53,8 +54,9 @@ const AnfNodePtr ReduceSumFission::Process(const FuncGraphPtr &graph, const AnfN
   }
   auto cnode = node->cast<CNodePtr>();
   auto prim = common::AnfAlgo::GetCNodePrimitive(cnode);
+  MS_EXCEPTION_IF_NULL(prim);
   auto keep_dims = common::AnfAlgo::GetNodeAttr<bool>(cnode, kAttrKeepDims);
-  auto out_shape = common::AnfAlgo::GetOutputDetailShape(cnode, 0);
+  auto out_shape = AnfAlgo::GetOutputDetailShape(cnode, 0);
   std::vector<int64_t> inp_axis;
   auto axis_value = prim->GetAttr(kAttrAxis);
   MS_EXCEPTION_IF_NULL(axis_value);

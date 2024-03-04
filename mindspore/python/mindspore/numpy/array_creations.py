@@ -22,12 +22,14 @@ import operator
 import numpy as onp
 
 from mindspore import context
+from mindspore import ops
 from mindspore.common import Tensor
 from mindspore.common import dtype as mstype
 from mindspore.common.seed import get_seed
 from mindspore.ops import operations as P
 from mindspore.ops import functional as F
-from mindspore.ops.primitive import constexpr
+from mindspore.ops.primitive import constexpr, _primexpr
+from mindspore.ops.function.random_func import _get_seed
 from mindspore.nn.layer.basic import tril as nn_tril
 from mindspore.nn.layer.basic import triu as nn_triu
 from mindspore._c_expression import Tensor as Tensor_
@@ -65,13 +67,13 @@ def array(obj, dtype=None, copy=True, ndmin=0):
         obj (Union[int, float, bool, list, tuple]): Input data, in any form that
             can be converted to a `Tensor`. This includes Tensor, list, tuple and numbers.
         dtype (Union[:class:`mindspore.dtype`, str], optional): Designated tensor dtype, can
-            be in format of np.int32, or \'int32\'. If dtype is :class:`None`, the data type
-            of the new tensor will be inferred from obj. Default is :class:`None`.
+            be in format of np.int32, or \'int32\'. If dtype is ``None``, the data type
+            of the new tensor will be inferred from obj. Default is ``None``.
         copy (bool): If `True`, then the object is copied. Otherwise, a copy will
-            only be made if necessary. Default: `True`.
+            only be made if necessary. Default: ``True``.
         ndmin (int): Specifies the minimum number of dimensions that the resulting
             tensor should have. Ones will be pre-pended to the shape as needed to
-            meet this requirement. Default: 0
+            meet this requirement. Default: ``0`` .
 
     Returns:
         Tensor, generated tensor with the specified dtype.
@@ -152,8 +154,8 @@ def asarray(a, dtype=None):
         a (Union[int, float, bool, list, tuple, Tensor]): Input data, in any form that can
             be converted to a `Tensor`. This includes Tensor, list, tuple and numbers.
         dtype (Union[:class:`mindspore.dtype`, str], optional): Designated tensor dtype, can
-            be in format of np.int32, or \'int32\'. If dtype is :class:`None`, the data type
-            of the new tensor will be inferred from obj. Default is :class:`None`.
+            be in format of np.int32, or \'int32\'. If dtype is ``None``, the data type
+            of the new tensor will be inferred from obj. Default is ``None`` .
 
     Returns:
         Tensor, generated tensor with the specified dtype.
@@ -206,8 +208,8 @@ def asfarray(a, dtype=mstype.float32):
         a (Union[int, float, bool, list, tuple, Tensor]): Input data, in any form that can
             be converted to a `Tensor`. This includes Tensor, list, tuple and numbers.
         dtype (Union[:class:`mindspore.dtype`, str], optional): Designated tensor dtype, can
-            be in format of np.int32, or \'int32\'. If dtype is :class:`None`, the data type
-            of the new tensor will be inferred from `a`. Default is :class:`mindspore.float32`.
+            be in format of np.int32, or \'int32\'. If dtype is ``None``, the data type
+            of the new tensor will be inferred from `a`. Default is ``mstype.float32``.
 
 
     Returns:
@@ -343,8 +345,8 @@ def full(shape, fill_value, dtype=None):
         fill_value (Union[int, float, bool, list, tuple]): Scalar or array_like
             fill value.
         dtype (Union[:class:`mindspore.dtype`, str], optional): Designated tensor dtype,
-            if `dtype` is :class:`None`, the data type of the new tensor will be inferred from
-            `fill_value`. Default is :class:`None`.
+            if `dtype` is ``None``, the data type of the new tensor will be inferred from
+            `fill_value`. Default is ``None``.
 
     Returns:
         Tensor, with the designated shape and dtype, filled with `fill_value`.
@@ -383,7 +385,7 @@ def full(shape, fill_value, dtype=None):
     return _convert_64_to_32(empty_compile(dtype, shape))
 
 
-@constexpr
+@_primexpr
 def _generate_shapes(shape):
     """Generate shapes for randn and rand."""
     if not shape:
@@ -454,7 +456,8 @@ def randn(*shape, dtype=mstype.float32):
     size = _generate_shapes(shape)
     seed = get_seed()
     if seed is not None:
-        stdnormal = P.StandardNormal(seed=seed)
+        seed1, seed2 = _get_seed(seed, "StandardNormal")
+        stdnormal = P.StandardNormal(seed=seed1, seed2=seed2)
     else:
         stdnormal = P.StandardNormal()
     return stdnormal(size).astype(dtype)
@@ -494,7 +497,8 @@ def rand(*shape, dtype=mstype.float32):
     size = _generate_shapes(shape)
     seed = get_seed()
     if seed is not None:
-        uniformreal = P.UniformReal(seed=seed)
+        seed1, seed2 = _get_seed(seed, "UniformReal")
+        uniformreal = P.UniformReal(seed=seed1, seed2=seed2)
     else:
         uniformreal = P.UniformReal()
     return uniformreal(size).astype(dtype)
@@ -508,7 +512,7 @@ def randint(minval, maxval=None, shape=None, dtype=mstype.int32):
 
     Args:
         minval(Union[int]): Start value of interval. The interval includes this value. When `maxval`
-            is :class:`None`, `minval` must be greater than 0. When `maxval` is not :class:`None`,
+            is ``None``, `minval` must be greater than 0. When `maxval` is not ``None``,
             `minval` must be less than `maxval`.
         maxval(Union[int], optional): End value of interval. The interval does not include this value.
         shape (Union[int, tuple(int)]): Shape of the new tensor, e.g., :math:`(2, 3)` or :math:`2`.
@@ -563,7 +567,8 @@ def randint(minval, maxval=None, shape=None, dtype=mstype.int32):
         shape = _check_shape(shape)
     seed = get_seed()
     if seed is not None:
-        uniformint = P.UniformInt(seed=seed)
+        seed1, seed2 = _get_seed(seed, "UniformInt")
+        uniformint = P.UniformInt(seed=seed1, seed2=seed2)
     else:
         uniformint = P.UniformInt()
     t_min = _type_convert(Tensor, minval).astype(dtype)
@@ -578,7 +583,7 @@ def arange(start, stop=None, step=None, dtype=None):
     Args:
         start(Union[int, float]): Start of interval. The interval includes this value.
             When `stop` is provided as a position argument, `start` must be given, when `stop`
-            is a normal argument, `start` can be optional, and default is 0.
+            is a normal argument, `start` can be optional, and default: ``0`` .
             Please see additional examples below.
         stop(Union[int, float], optional): End of interval. The interval does not
             include this value, except in some cases where `step` is not an integer
@@ -589,7 +594,7 @@ def arange(start, stop=None, step=None, dtype=None):
             `start` must also be given.
         dtype (Union[:class:`mindspore.dtype`, str], optional): Designated tensor dtype.
             If dtype is None, the data type of the new tensor will be inferred from start,
-            stop and step. Default is None.
+            stop and step. Default: ``None`` .
 
     Returns:
         Tensor with evenly spaced values.
@@ -676,17 +681,17 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None, axis
             unless `endpoint` is set to False. In that case, the sequence consists
             of all but the last of `num + 1` evenly spaced samples, so that `stop`
             is excluded.  Note that the step size changes when `endpoint` is False.
-        num (int, optional): Number of samples to generate. Default is 50.
+        num (int, optional): Number of samples to generate. Default: ``50`` .
         endpoint (bool, optional): If True, `stop` is the last sample. Otherwise, it is
-            not included. Default is True.
+            not included. Default: ``True`` .
         retstep (bool, optional): If True, return (`samples`, `step`), where `step` is
             the spacing between samples.
         dtype (Union[:class:`mindspore.dtype`, str], optional): Designated tensor dtype,
-            If `dtype` is None, infer the data type from other input arguments. Default is None.
+            If `dtype` is None, infer the data type from other input arguments. Default: ``None`` .
         axis (int, optional): The axis in the result to store the samples. Relevant
-            only if start or stop are array-like.  By default, the samples will
+            only if start or stop are array-like. By default, the samples will
             be along a new axis inserted at the beginning. Use -1 to get an axis at the end.
-            Default is 0.
+            Default: ``0`` .
 
     Returns:
         Tensor, with `num` equally spaced samples in the closed interval
@@ -752,18 +757,18 @@ def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None, axis=0):
             the sequence, unless `endpoint` is False. In that case, ``num + 1`` values are spaced
             over the interval in log-space, of which all but the last (a sequence of length num)
             are returned.
-        num (int, optional): Number of samples to generate. Default is 50.
+        num (int, optional): Number of samples to generate. Default: ``50`` .
         endpoint (bool, optional): If True, `stop` is the last sample. Otherwise, it is
-            not included. Default is True.
+            not included. Default: ``True`` .
         base (Union[int, float], optional): The base of the log space. The step size
             between the elements in :math:`ln(samples) / ln(base)` (or :math:`log_{base}(samples)`)
-            is uniform. Default is 10.0.
+            is uniform. Default: ``10.0`` .
         dtype (Union[:class:`mindspore.dtype`, str], optional): Designated tensor dtype.
-            If `dtype` is None, infer the data type from other input arguments. Default is None.
+            If `dtype` is None, infer the data type from other input arguments. Default: ``None`` .
         axis (int, optional): The axis in the result to store the samples. Relevant
             only if start or stop is array-like.  By default, the samples will
             be along a new axis inserted at the beginning. Use -1 to get an axis at the end.
-            Default is 0.
+            Default: ``0`` .
 
     Returns:
         Tensor, equally spaced on a log scale.
@@ -801,16 +806,16 @@ def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
             unless endpoint is False. In that case, num + 1 values are spaced over the
             interval in log-space, of which all but the last (a sequence of length num) are
             returned.
-        num (int, optional): Number of samples to generate. Default is 50.
+        num (int, optional): Number of samples to generate. Default: ``50`` .
         endpoint (bool, optional): If True, `stop` is the last sample. Otherwise, it is
-            not included. Default is True.
+            not included. Default: ``True`` .
         dtype (Union[:class:`mindspore.dtype`, str], optional): Designated tensor dtype, can
             be in format of np.float32, or `float32`.If `dtype` is None, infer the data
-            type from other input arguments. Default is None.
+            type from other input arguments. Default: ``None`` .
         axis (int, optional): The axis in the result to store the samples. Relevant
-            only if start or stop is array-like.  By default (0), the samples will
+            only if start or stop is array-like. By default (0), the samples will
             be along a new axis inserted at the beginning. Use -1 to get an axis at the end.
-            Default is 0.
+            Default: ``0`` .
 
     Returns:
         Tensor, with samples equally spaced on a log scale.
@@ -822,6 +827,7 @@ def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore.numpy as np
         >>> output = np.geomspace(1, 256, num=9)
         >>> print(output)
         [  1.   2.   4.   8.  16.  32.  64. 128. 256.]
@@ -854,13 +860,13 @@ def eye(N, M=None, k=0, dtype=mstype.float32):
 
     Args:
         N (int): Number of rows in the output, must be larger than 0.
-        M (int, optional): Number of columns in the output. If is :class:`None`, defaults to `N`,
-            if defined, must be larger than 0. Default is :class:`None`.
-        k (int, optional): Index of the diagonal: 0 (the default) refers to the main
+        M (int, optional): Number of columns in the output. If is ``None``, default: ``N`` ,
+            if defined, must be larger than 0. Default: ``None``.
+        k (int, optional): Index of the diagonal: ``0`` (the default) refers to the main
             diagonal, a positive value refers to an upper diagonal, and a negative value
-            to a lower diagonal. Default is 0.
+            to a lower diagonal. Default: ``0`` .
         dtype (Union[:class:`mindspore.dtype`, str], optional): Designated tensor dtype.
-            Default is mstype.float32.
+            Default: ``mstype.float32`` .
 
     Returns:
         A tensor of shape (N, M). A tensor where all elements are equal to zero,
@@ -912,7 +918,7 @@ def identity(n, dtype=mstype.float32):
     Args:
         n (int): Number of rows and columns in the output, must be larger than 0.
         dtype (Union[:class:`mindspore.dtype`, str], optional): Designated tensor dtype,
-            default is :class:`mstype.float32`.
+            default is `mstype.float32`.
 
     Returns:
         A tensor of shape `(n, n)`, where all elements are equal to zero,
@@ -955,7 +961,7 @@ def empty(shape, dtype=mstype.float32):
         shape (Union[int, tuple(int)]): Shape of the empty array, e.g.,
             (2, 3) or 2.
         dtype (:class:`mindspore.dtype`, optional): Desired output data-type for the
-            array, e.g, mstype.int8. Default is mstype.float32.
+            array, e.g, mstype.int8. Default: ``mstype.float32`` .
 
     Returns:
         Tensor, array of uninitialized (arbitrary) data of the given
@@ -971,12 +977,10 @@ def empty(shape, dtype=mstype.float32):
         >>> import mindspore.numpy as np
         >>> output = np.empty((2, 3))
         >>> print(output)
-        Tensor(shape=[2, 3], dtype=Float32, value=
-        <uninitialized>)
+        [[0. 0. 0.]
+         [0. 0. 0.]]
     """
-    shape = _check_shape(shape)
-    dtype = _check_dtype(dtype)
-    return empty_compile(dtype, shape)
+    return ops.zeros(shape, dtype)
 
 
 def _get_shape(array_like):
@@ -1042,8 +1046,10 @@ def empty_like(prototype, dtype=None, shape=None):
         >>> a = np.ones((4,1,2))
         >>> output = np.empty_like(a)
         >>> print(output)
-        Tensor(shape=[4, 1, 2], dtype=Float32, value=
-        <uninitialized>)
+        [[[0. 0.]]
+         [[0. 0.]]
+         [[0. 0.]]
+         [[0. 0.]]]
     """
     return _x_like(prototype, dtype, shape, empty)
 
@@ -1173,9 +1179,8 @@ def tri(N, M=None, k=0, dtype=mstype.float32):
             equal to N.
         k(int, optional): The sub-diagonal at and below which the array is filled.
             :math:`k = 0` is the main diagonal, while :math:`k < 0` is below it, and :math:`k > 0` is above.
-            The default is 0.
-        dtype(:class:`mindspore.dtype`, optional): Data type of the returned array. The default
-            is mstype.float32.
+            Default: ``0`` .
+        dtype(:class:`mindspore.dtype`, optional): Data type of the returned array. Default: ``mstype.float32`` .
 
     Returns:
         Tensor with shape `(N, M)`, with its lower triangle filled with
@@ -1240,6 +1245,13 @@ def tril(m, k=0):
         m = asarray_const(m)
     dtype = m.dtype
     device_target = _device_target()
+    # check rank
+    rank = len(m.shape)
+    if rank < 1:
+        _raise_value_error("input m's rank should be larger than 0")
+    elif rank == 1:
+        mask = tri(m.shape[0], k=k, dtype=mstype.bool_)
+        return where(mask, m, zeros(1, m.dtype))
     # Only Ascend hardware will reduce accuracy
     if device_target == "Ascend":
         m = m.astype(mstype.float32)
@@ -1287,6 +1299,13 @@ def triu(m, k=0):
         m = asarray_const(m)
     dtype = m.dtype
     device_target = _device_target()
+    # check rank
+    rank = len(m.shape)
+    if rank < 1:
+        _raise_value_error("input m's rank should be larger than 0")
+    elif rank == 1:
+        mask = tri(m.shape[0], k=k - 1, dtype=mstype.bool_)
+        return where(mask, zeros(1, m.dtype), m)
     # Only Ascend hardware will reduce accuracy
     if device_target == "Ascend":
         m = m.astype(mstype.float32)
@@ -1384,7 +1403,7 @@ def trace(a, offset=0, axis1=0, axis2=1, dtype=None):
         axis2 (int, optional): Axis to be used as the second axis of the 2-D
             sub-arrays from which the diagonals should be taken. Defaults to
             second axis.
-        dtype (:class:`mindspore.dtype`, optional): Defaults to None. Overrides the dtype of the
+        dtype (:class:`mindspore.dtype`, optional): Default: ``None`` . Overrides the dtype of the
             output Tensor.
 
     Returns:
@@ -1403,14 +1422,6 @@ def trace(a, offset=0, axis1=0, axis2=1, dtype=None):
         >>> output = np.trace(np.eye(3))
         >>> print(output)
         3.0
-        >>> a = np.arange(8).reshape((2,2,2))
-        >>> output = np.trace(a)
-        >>> print(output)
-        [6 8]
-        >>> a = np.arange(24).reshape((2,2,2,3))
-        >>> output = np.trace(a).shape
-        >>> print(output)
-        (2, 3)
     """
     return a.trace(offset=offset, axis1=axis1, axis2=axis2, dtype=dtype)
 
@@ -1565,7 +1576,7 @@ class NdGrid:
         if self.sparse:
             return grids
 
-        if isinstance(grids, Tensor_):
+        if isinstance(grids, (Tensor, Tensor_)):
             return grids
         expanded = []
         for grid in grids:
@@ -1601,8 +1612,8 @@ class MGridClass(NdGrid):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> from mindspore.numpy import mgrid
-        >>> output = mgrid[0:5, 0:5]
+        >>> import mindspore.numpy as np
+        >>> output = np.mgrid[0:5, 0:5]
         >>> print(output)
         [[[0 0 0 0 0]
         [1 1 1 1 1]
@@ -1647,8 +1658,8 @@ class OGridClass(NdGrid):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> from mindspore.numpy import ogrid
-        >>> output = ogrid[0:5,0:5]
+        >>> import mindspore.numpy as np
+        >>> output = np.ogrid[0:5,0:5]
         >>> print(output)
         [Tensor(shape=[5, 1], dtype=Int32, value=
         [[0],
@@ -1946,7 +1957,7 @@ def indices(dimensions, dtype=mstype.int32, sparse=False):
     Args:
         dimensions (tuple or list of ints): The shape of the grid.
         dtype (:class:`mindspore.dtype`, optional): Data type of the result.
-        sparse (boolean, optional): Defaults to False. Return a sparse
+        sparse (boolean, optional): Default: ``False`` . Return a sparse
             representation of the grid instead of a dense representation.
 
     Returns:
@@ -2152,7 +2163,7 @@ def triu_indices(n, k=0, m=None):
 
     Args:
         n (int): The size of the arrays for which the returned indices will be valid.
-        k (int, optional): Diagonal offset, default is 0.
+        k (int, optional): Diagonal offset, default: ``0`` .
         m (int, optional): The column dimension of the arrays for which the returned
             arrays will be valid. By default `m` is taken equal to `n`.
 
@@ -2181,7 +2192,7 @@ def tril_indices(n, k=0, m=None):
 
     Args:
         n (int): The size of the arrays for which the returned indices will be valid.
-        k (int, optional): Diagonal offset, default is 0.
+        k (int, optional): Diagonal offset, default: ``0`` .
         m (int, optional): The column dimension of the arrays for which the returned
             arrays will be valid. By default `m` is taken equal to `n`.
 
@@ -2210,7 +2221,7 @@ def triu_indices_from(arr, k=0):
 
     Args:
         arr (Union[Tensor, list, tuple]): 2-dimensional array.
-        k (int, optional): Diagonal offset, default is 0.
+        k (int, optional): Diagonal offset, default: ``0`` .
 
     Returns:
         triu_indices_from, tuple of 2 tensor, shape(N)
@@ -2242,7 +2253,7 @@ def tril_indices_from(arr, k=0):
 
     Args:
         arr (Union[Tensor, list, tuple]): 2-dimensional array.
-        k (int, optional): Diagonal offset, default is 0.
+        k (int, optional): Diagonal offset, default: ``0`` .
 
     Returns:
         triu_indices_from, tuple of 2 tensor, shape(N)
@@ -2285,11 +2296,11 @@ def histogram_bin_edges(a, bins=10, range=None, weights=None):  # pylint: disabl
         range((float, float), optional): The lower and upper range of the bins. If
             not provided, `range` is simply ``(a.min(), a.max())``. Values outside
             the range are ignored. The first element of the range must be less than
-            or equal to the second. Default is None.
+            or equal to the second. Default: ``None`` .
         weights(Union[int, float, bool, list, tuple, Tensor], optional):  An array of weights,
             of the same shape as `a`. Each value in `a` only contributes its associated weight
             towards the bin count (instead of 1). This is currently not used by any of the bin
-            estimators, but may be in the future. Default is None.
+            estimators, but may be in the future. Default: ``None`` .
 
     Returns:
         Tensor, the edges to pass into `histogram`.
@@ -2564,19 +2575,18 @@ def _pad_func(arr, pad_width, func, **kwargs):
     return arr
 
 
-@constexpr
+@_primexpr
 def _make_stat_length(shape):
     """converts the stat_length values."""
     return tuple((shape[i], shape[i]) for i, _ in enumerate(shape))
 
 
-@constexpr
+@_primexpr
 def _limit_stat_length(stat_length, shape):
     """limits the stat_length to current array length along given dimension."""
     return tuple((min(stat_pair[0], shape[i]), min(stat_pair[1], shape[i])) for i, stat_pair in enumerate(stat_length))
 
 
-@constexpr
 def _convert_pad_to_nd(pad_values, ndim):
     """broadcasts the pad_values to (ndim * 2)"""
     if not isinstance(pad_values, (int, list, tuple, Tensor)):
@@ -2640,19 +2650,19 @@ def pad(arr, pad_width, mode="constant", stat_length=None, constant_values=0,
             creates unique statistic lengths for each axis. :class:`((before, after),)`
             yields same before and after statistic lengths for each axis. :class:`(stat_length,)`
             or int is a shortcut for :class:`before = after = statistic length` for all
-            axes. Default is :class:`None`, to use the entire axis.
+            axes. Default: ``None``, to use the entire axis.
         constant_values (Union[tuple, list, int], optional):
             Used in :class:`constant mode`. The values to set the padded values for each
             axis. :class:`((before_1, after_1), ... (before_N, after_N))` creates unique pad
             constants for each axis. :class:`((before, after),)` yields same before and
             after constants for each axis. :class:`(constant,)` or :class:`constant` is
-            a shortcut for :class:`before = after = constant` for all axes. Default is 0.
+            a shortcut for :class:`before = after = constant` for all axes. Default: ``0`` .
         end_values (Union[tuple, list, int], optional): Used in 'linear_ramp'.  The values
             used for the ending value of the linear_ramp and that will form the edge of
             the padded `arr`. :class:`((before_1, after_1), ... (before_N, after_N))`
             unique end values for each axis. :class:`((before, after),)` yields same before
             and after end values for each axis. :class:`(constant,)` or :class:`constant`
-            is a shortcut for :class:`before = after = constant` for all axes. Default is 0.
+            is a shortcut for :class:`before = after = constant` for all axes. Default: ``0`` .
         reflect_type(string, optional) can choose between \'even\' and \'odd\'. Used in
             \'reflect\', and \'symmetric\'. The \'even\' style is the default with an
             unaltered reflection around the edge value. For the \'odd\' style, the extended

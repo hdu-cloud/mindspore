@@ -21,8 +21,8 @@
 #include "ir/anf.h"
 #include "utils/ms_utils.h"
 #include "utils/trace_base.h"
-#include "common/graph_kernel/graph_kernel_flags.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "backend/common/graph_kernel/graph_kernel_flags.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "plugin/factory/ms_factory.h"
 #include "runtime/device/kernel_runtime.h"
@@ -32,23 +32,25 @@
 #include "plugin/device/cpu/kernel/akg/akg_cpu_kernel_build.h"
 #endif
 #include "plugin/device/cpu/hal/device/kernel_select_cpu.h"
-#include "backend/common/optimizer/optimizer.h"
-#include "backend/common/optimizer/pass_manager.h"
+#include "include/backend/optimizer/optimizer.h"
+#include "include/backend/optimizer/pass_manager.h"
 #include "plugin/device/cpu/optimizer/insert_cast_cpu.h"
+#include "plugin/device/cpu/optimizer/insert_cast_to_pyexecute.h"
 #include "plugin/device/cpu/optimizer/insert_format_transform_op.h"
-#include "common/graph_kernel/adapter/graph_kernel_optimization.h"
+#include "backend/common/graph_kernel/adapter/graph_kernel_optimization.h"
 #include "backend/common/pass/replace_node_by_proxy.h"
 #include "backend/common/pass/erase_visit_attr.h"
 #include "include/common/debug/anf_ir_dump.h"
 #include "backend/common/optimizer/common_backend_optimization.h"
 #include "include/common/debug/dump_proto.h"
 #include "kernel/graph_kernel_info.h"
+#include "kernel/framework_utils.h"
 #ifndef ENABLE_SECURITY
-#include "debug/data_dump/dump_json_parser.h"
+#include "include/backend/debug/data_dump/dump_json_parser.h"
 #endif
 #if defined(__linux__) && defined(WITH_BACKEND)
-#include "ps/util.h"
-#include "ps/ps_context.h"
+#include "include/backend/distributed/ps/util.h"
+#include "include/backend/distributed/ps/ps_context.h"
 #endif
 #ifdef ENABLE_DUMP_IR
 #include "debug/rdr/graph_recorder.h"
@@ -90,6 +92,7 @@ void CPUSession::Reorder(std::vector<CNodePtr> *node_list) const {
 }
 
 void CPUSession::Optimize(const std::shared_ptr<KernelGraph> &kernel_graph) {
+  MS_EXCEPTION_IF_NULL(kernel_graph);
   auto optimizer = std::make_shared<opt::GraphOptimizer>();
   auto pm = std::make_shared<opt::PassManager>();
 #if defined(__linux__) && defined(WITH_BACKEND)
@@ -107,20 +110,19 @@ void CPUSession::Optimize(const std::shared_ptr<KernelGraph> &kernel_graph) {
   pm->AddPass(std::make_shared<opt::InsertCastCPU>("insert_cast"));
   pm->AddPass(std::make_shared<opt::EraseVisitAttr>());
   pm->AddPass(std::make_shared<opt::PrintValueType>("print_value_type"));
+  pm->AddPass(std::make_shared<opt::InsertCastToPyExecute>("insert_cast_for_pyexecute"));
   optimizer->AddPassManager(pm);
   (void)optimizer->Optimize(kernel_graph);
   kernel_graph->SetExecOrderByDefault();
 }
 
 void CPUSession::GraphKernelOptimize(const std::shared_ptr<KernelGraph> &kernel_graph) const {
-#ifdef ENABLE_AKG
   if (!graphkernel::GraphKernelFlags::GetInstance().IsEnableGraphKernel()) {
     return;
   }
   MS_EXCEPTION_IF_NULL(kernel_graph);
   graphkernel::GraphKernelOptimize(kernel_graph);
   kernel_graph->SetExecOrderByDefault();
-#endif
 }
 
 GraphId CPUSession::CompileGraphImpl(const AnfNodePtrList &lst, const AnfNodePtrList &outputs) {
@@ -382,7 +384,7 @@ void CPUSession::BuildKernel(const KernelGraph *kernel_graph) const {
 
     // This branch would be removed When KernelMode rectification is complete
     auto discard_cpu_kernel_mod = std::dynamic_pointer_cast<kernel::DeprecatedNativeCpuKernelMod>(cpu_kernel_mod);
-    auto args = kernel::AbstractArgsFromCNode(kernel_node, discard_cpu_kernel_mod != nullptr);
+    auto args = kernel::AbstractArgsFromCNode(kernel_node);
     // inputs_tensor_map is ops's valueDepend input. if this input is const_value tensor,
     // we will put this tensor in args.inputs.data_.
     auto inputs_tensor_map = std::map<uint32_t, tensor::TensorPtr>();
@@ -401,11 +403,12 @@ void CPUSession::BuildKernel(const KernelGraph *kernel_graph) const {
     } else {
       auto kernel_attrs = cpu_kernel_mod->GetOpSupport();
       SetCpuRefMapToKernelInfo(kernel_node, kernel_attrs);
-      auto ret = cpu_kernel_mod->Init(args.op, args.inputs, args.outputs);
+      auto op = kernel::CreateOperatorByCNode(kernel_node);
+      auto ret = cpu_kernel_mod->Init_(op, args.inputs, args.outputs);
       if (!ret) {
         MS_LOG(EXCEPTION) << trace::DumpSourceLines(kernel_node);
       }
-      if (cpu_kernel_mod->Resize(args.op, args.inputs, args.outputs, inputs_tensor_map) ==
+      if (cpu_kernel_mod->Resize(args.inputs, args.outputs, inputs_tensor_map) ==
           static_cast<int>(kernel::KRET_RESIZE_FAILED)) {
         MS_LOG(EXCEPTION) << "CPU kernel op [" << kernel_node->fullname_with_scope() << "] Resize failed.";
       }
@@ -415,7 +418,7 @@ void CPUSession::BuildKernel(const KernelGraph *kernel_graph) const {
   }
 #ifdef ENABLE_AKG
   kernel::AkgCpuKernelBuilder akg_cpu_kernel_builder;
-  (void)akg_cpu_kernel_builder.AkgKernelParallelBuild(akg_nodes);
+  (void)akg_cpu_kernel_builder.SingleOpParallelBuild(akg_nodes);
 #endif
 }
 }  // namespace session

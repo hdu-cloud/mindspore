@@ -43,7 +43,7 @@ Status ActivationInfo::GetAttrs() {
     return FAILED;
   }
 
-  if ((inputs_shape_.size() != ACTIVATION_INPUTS_SIZE) || (outputs_shape_.size() != ACTIVATION_OUTPUTS_SIZE)) {
+  if ((inputs_shape_.size() != ACTIVATION_INPUTS_SIZE)) {
     MS_LOG(ERROR) << name_ << " : Inputs shape size(" << inputs_shape_.size() << ") or outputs shape size("
                   << outputs_shape_.size() << "is wrong.";
     return FAILED;
@@ -68,7 +68,7 @@ Status ActivationInfo::GetAttrs() {
 }
 
 Status ActivationOther::GetAttrs() {
-  if ((inputs_shape_.size() != ACTIVATION_INPUTS_SIZE) || (outputs_shape_.size() != ACTIVATION_OUTPUTS_SIZE)) {
+  if ((inputs_shape_.size() != ACTIVATION_INPUTS_SIZE)) {
     MS_LOG(ERROR) << name_ << " : Inputs shape size(" << inputs_shape_.size() << ") or outputs shape size("
                   << outputs_shape_.size() << "is wrong.";
     return FAILED;
@@ -78,7 +78,7 @@ Status ActivationOther::GetAttrs() {
 
 std::vector<StrategyPtr> Activation::GenerateOpStrategies(int64_t stage_id) {
   std::vector<StrategyPtr> sp_vector;
-  if ((inputs_shape_.size() != ACTIVATION_INPUTS_SIZE) || (outputs_shape_.size() != ACTIVATION_OUTPUTS_SIZE)) {
+  if ((inputs_shape_.size() != ACTIVATION_INPUTS_SIZE)) {
     MS_LOG(EXCEPTION) << name_ << " : Inputs shape size(" << inputs_shape_.size() << ") or outputs shape size("
                       << outputs_shape_.size() << "is wrong.";
   }
@@ -102,6 +102,30 @@ std::vector<StrategyPtr> DropoutInfo::GenerateOpStrategies(int64_t stage_id) {
     MS_LOG(EXCEPTION) << name_ << " : Generate strategies for independent inputs() failed.";
   }
   return sp_vector;
+}
+
+Status Softmax::CheckLayoutConfig() {
+  for (auto &element : axis_) {
+    int64_t axis_index = element;
+    if (element < 0) {
+      size_t input_dim = inputs_shape_[0].size();
+      axis_index = SizeToLong(input_dim) + element;
+    }
+
+    int64_t tensor_map = inputs_tensor_map_[0][LongToSize(axis_index)];
+    if (tensor_map == MAP_NONE) {
+      continue;
+    }
+    int64_t axis_strategy = dev_matrix_shape_[dev_matrix_shape_.size() - LongToSize(tensor_map) - 1];
+    // Dimension corresponding to axis is un-splittable
+    if (axis_strategy != MIN_SLICE_NUM) {
+      MS_LOG(ERROR) << name_ << " : The strategy corresponding to axis dimension is not 1, the axis is " << axis_
+                    << ", dev_matrix is " << dev_matrix_shape_ << ", input tensor map is " << inputs_tensor_map_;
+      return FAILED;
+    }
+  }
+
+  return SUCCESS;
 }
 
 Status Softmax::CheckStrategy(const StrategyPtr &strategy) {
@@ -163,7 +187,7 @@ Status Softmax::GetAttrs() {
     }
   }
 
-  if ((inputs_shape_.size() != ACTIVATION_INPUTS_SIZE) || (outputs_shape_.size() != ACTIVATION_OUTPUTS_SIZE)) {
+  if ((inputs_shape_.size() != ACTIVATION_INPUTS_SIZE)) {
     MS_LOG(ERROR) << name_ << " : Inputs shape size or outputs shape size is wrong.";
     return FAILED;
   }
@@ -183,7 +207,7 @@ Status Softmax::GetAttrs() {
 Status Softmax::SetCostUnderStrategy(const StrategyPtr &strategy) { return SetCostUnderStrategyBase(strategy); }
 
 std::vector<StrategyPtr> Softmax::GenerateOpStrategies(int64_t stage_id) {
-  if ((inputs_shape_.size() != ACTIVATION_INPUTS_SIZE) || (outputs_shape_.size() != ACTIVATION_OUTPUTS_SIZE)) {
+  if ((inputs_shape_.size() != ACTIVATION_INPUTS_SIZE)) {
     MS_LOG(EXCEPTION) << name_ << " : Inputs shape size or outputs shape size is wrong.";
   }
 
@@ -231,9 +255,9 @@ Status CumOpBase::GetAttrs() {
   }
 
   if (axis < 0) {
-    axis_ = LongToInt(dim + axis);
+    axis_ = dim + axis;
   } else {
-    axis_ = LongToInt(axis);
+    axis_ = axis;
   }
   MS_LOG(INFO) << name_ << ": The axis is " << axis;
   return SUCCESS;
@@ -340,6 +364,11 @@ Status ActivationBase::InferTensorMap() {
 
   inputs_tensor_map_.push_back(tensor_map_index);
   outputs_tensor_map_.push_back(tensor_map_index);
+  return SUCCESS;
+}
+
+Status ActivationBase::InferOutputTensorMap() {
+  outputs_tensor_map_.push_back(inputs_tensor_map_[0]);
   return SUCCESS;
 }
 
@@ -645,13 +674,83 @@ Status L2LossInfo::InferForwardCommunication() {
   return SUCCESS;
 }
 
+Status CummaxInfo::GetAttrs() {
+  axis_ = GetIntAttr(AXIS);
+  if (axis_ < 0) {
+    axis_ += SizeToLong(inputs_shape_[0].size());
+  }
+
+  MS_LOG(INFO) << name_ << ": The axis is " << axis_;
+  return SUCCESS;
+}
+
+Status CummaxInfo::InferMirrorOps() { return OperatorInfo::InferMirrorOps(); }
+
+Status CummaxInfo::InferTensorMap() {
+  Shape tensor_map_index;
+  size_t size = inputs_shape_.at(0).size();
+  for (size_t i = 0; i < size; ++i) {
+    tensor_map_index.push_back(static_cast<int64_t>(size - i - 1));
+  }
+
+  inputs_tensor_map_.push_back(tensor_map_index);
+  outputs_tensor_map_.push_back(tensor_map_index);
+  outputs_tensor_map_.push_back(tensor_map_index);  // cummax has two outputs
+  return SUCCESS;
+}
+
+Status CummaxInfo::InferAsLossDivisor() {
+  if (outputs_tensor_map_.empty()) {
+    MS_LOG(ERROR) << name_ << ": The size of outputs tensor map is empty";
+    return FAILED;
+  }
+  as_loss_divisor_ = ComputeRepeatDeviceNumByTensorMap(dev_matrix_shape_, outputs_tensor_map_[0]);
+  MS_LOG(INFO) << name_ << " : The dev matrix shape is " << ShapeToString(dev_matrix_shape_)
+               << ", the output[0]'s tensor map is " << ShapeToString(outputs_tensor_map_[0])
+               << ", as_loss_divisor_ is " << as_loss_divisor_;
+  return SUCCESS;
+}
+
+Status SortInfo::InferTensorMap() {
+  inputs_tensor_map_.clear();
+  outputs_tensor_map_.clear();
+
+  Shape input_tensor_map;
+  Strategies strategies = strategy_->GetInputDim();
+  size_t dim = strategies[0].size();
+  for (size_t i = 0; i < dim; ++i) {
+    input_tensor_map.push_back(dim - i - 1);
+  }
+
+  inputs_tensor_map_.push_back(input_tensor_map);   // input
+  outputs_tensor_map_.push_back(input_tensor_map);  // output
+  outputs_tensor_map_.push_back(input_tensor_map);
+  return SUCCESS;
+}
+
+Status SortInfo::InferAsLossDivisor() {
+  if (outputs_tensor_map_.empty()) {
+    MS_LOG(ERROR) << name_ << ": The size of outputs tensor map is empty";
+    return FAILED;
+  }
+  as_loss_divisor_ = ComputeRepeatDeviceNumByTensorMap(dev_matrix_shape_, outputs_tensor_map_[0]);
+  MS_LOG(INFO) << name_ << " : The dev matrix shape is " << ShapeToString(dev_matrix_shape_)
+               << ", the output[0]'s tensor map is " << ShapeToString(outputs_tensor_map_[0])
+               << ", as_loss_divisor_ is " << as_loss_divisor_;
+  return SUCCESS;
+}
+
 REGISTER(ActivationInfo);
 REGISTER(GeLUInfo);
 REGISTER(FastGeLUInfo);
 REGISTER(TanhInfo);
 REGISTER(SoftmaxInfo);
+REGISTER(SortInfo);
 REGISTER(LogSoftmaxInfo);
+REGISTER(ReverseV2Info);
 REGISTER(CumSumInfo);
+REGISTER(CummaxInfo);
+REGISTER(CumminInfo);
 REGISTER(CumProdInfo);
 REGISTER(EluInfo);
 REGISTER(ReLUInfo);

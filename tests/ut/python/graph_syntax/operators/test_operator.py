@@ -15,6 +15,7 @@
 """ test_operator """
 import numpy as np
 
+import mindspore as ms
 from mindspore import Tensor, Model, context
 from mindspore.nn import Cell
 from mindspore.nn import ReLU
@@ -202,3 +203,19 @@ def test_in_dict():
     z = Tensor(np.random.randint(low=20, high=30, size=(2, 3, 4), dtype=np.int32))
     context.set_context(mode=context.GRAPH_MODE)
     net(x, y, z)
+
+
+def test_equal_inf():
+    """
+    Feature: logical operator
+    Description: test inf equal to inf
+    Expectation: success
+    """
+    @ms.jit
+    def func(x, y):
+        return x == float("inf"), y == float("-inf"), x == y
+
+    x = float("inf")
+    y = float("-inf")
+    out = func(x, y)
+    assert out == (True, True, False)

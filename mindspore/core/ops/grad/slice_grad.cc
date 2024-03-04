@@ -16,9 +16,10 @@
 
 #include "ops/grad/slice_grad.h"
 #include <set>
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -60,6 +61,25 @@ AbstractBasePtr SliceGradInfer(const abstract::AnalysisEnginePtr &, const Primit
   return abstract::MakeAbstract(SliceGradInferShape(primitive, input_args), SliceGradInferType(primitive, input_args));
 }
 
-REGISTER_PRIMITIVE_C(kNameSliceGrad, SliceGrad);
+// AG means auto generated
+class MIND_API AGSliceGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SliceGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SliceGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SliceGradInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {2, 3}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SliceGrad, prim::kPrimSliceGrad, AGSliceGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

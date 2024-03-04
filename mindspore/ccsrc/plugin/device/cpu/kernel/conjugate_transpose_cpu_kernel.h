@@ -24,7 +24,7 @@
 #include <string>
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
 #include "plugin/factory/ms_factory.h"
-#include "nnacl/transpose.h"
+#include "nnacl/transpose_parameter.h"
 
 namespace mindspore {
 namespace kernel {
@@ -123,6 +123,7 @@ class ConjugateTransposeCpuKernelMod : public NativeCpuKernelMod {
   void TransposeDims(const T *in_data, T *out_data, const int *output_shape, const TransposeParameter *transpose_param,
                      const int task_id, const int thread_num);
 
+  int data_size = 0;
   TransposeParameter transpose_param_;
   std::vector<int64_t> input_shape_;
   std::vector<int64_t> output_shape_;

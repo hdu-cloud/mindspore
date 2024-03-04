@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,16 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
+static inline void transpose_tail(const float *from, float *to, int j_start, int j_end, int i_start, int i_end,
+                                  int j_stride, int i_stride) {
+  // write consecutively
+  for (int j = j_start; j < j_end; j++) {
+    for (int i = i_start; i < i_end; i++) {
+      to[j * j_stride + i] = from[i * i_stride + j];
+    }
+  }
+}
+void TransposeFp32(const void *src, void *dst, int batches, int channel, int plane, int start, int end);
 void PackHWCToWHC(const float *src, float *dst, int height, int width, int channel);
 void PackNHWCToNC4HW4Fp32(const void *src, void *dst, int batch, int plane, int channel);
 void PackNCHWToNC4HW4Fp32(const void *src, void *dst, int batch, int plane, int channel);
@@ -39,6 +48,9 @@ void PackNHWCXToNHWCFp32(const void *src, void *dst, int batch, int plane, int c
 void PackNC4HW4ToNHWC4Fp32(const void *src, void *dst, int batch, int plane, int channel);
 void PackNC4HW4ToNHWCFp32(const void *src, void *dst, int batch, int plane, int channel);
 void PackNC4HW4ToNCHWFp32(const void *src, void *dst, int batch, int plane, int channel);
+void PackNC8HW8ToNCHWFp32(const void *src, void *dst, int batch, int plane, int channel);
+void PackNHWCToNC8HW8Fp32(const void *src, void *dst, int batch, int plane, int channel);
+void PackNC8HW8ToNHWCFp32(const void *src, void *dst, int batch, int plane, int channel);
 void UnPackC4Uint(const void *src, void *dst, size_t plane, size_t channel);
 void PackNC8HW8AlignedToNC8HW8NotAlignedFp32(const void *src, void *dst, int batch, int plane, int channel);
 void PackNHWCToC8HWN8Fp32(const void *src, void *dst, int batch, int plane, int channel);
@@ -96,9 +108,11 @@ void Transpose8X8Fp32Arm64(const float *src_ptr, float *dst_ptr, int src_stride,
 #ifdef ENABLE_ARM32
 void Transpose8X8Fp32Arm32(const float *src_ptr, float *dst_ptr, int src_stride, int dst_stride);
 #endif
-#ifdef ENABLE_AVX
+#if defined(ENABLE_AVX) || defined(ENABLE_ARM64)
 void PackNHWCToNXHWCXFp32(int kernel_h, int kernel_w, int output_channel, int oc_block_num, int input_channel,
                           float *tmp_weight, const float *src);
+#endif
+#ifdef ENABLE_AVX
 #ifdef ENABLE_DEBUG
 void SWPackNHWCToNXHWCXFp32(int kernel_h, int kernel_w, int output_channel, int oc_block_num, int input_channel,
                             float *tmp_weight, const float *src);

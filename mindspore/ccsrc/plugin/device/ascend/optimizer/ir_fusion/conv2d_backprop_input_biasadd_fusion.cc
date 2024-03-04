@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,8 @@
 #include "plugin/device/ascend/optimizer/ir_fusion/conv2d_backprop_input_biasadd_fusion.h"
 #include <memory>
 #include <vector>
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
@@ -33,7 +35,7 @@ const AnfNodePtr Conv2dBackpropInputBiasaddFusion::Process(const FuncGraphPtr &g
 
   auto conv2d_bp_input = GetAnfNodeByVar(equiv, conv2d_bp_input_var_);
   if (conv2d_bp_input == nullptr || !conv2d_bp_input->isa<CNode>()) {
-    MS_LOG(EXCEPTION) << "Get cnode Conv2DBackpropInput failed!" << trace::DumpSourceLines(conv2d_bp_input);
+    MS_LOG(INTERNAL_EXCEPTION) << "Get cnode Conv2DBackpropInput failed!" << trace::DumpSourceLines(conv2d_bp_input);
   }
 
   // If there is a side-effect operator in the fusion, do not merge

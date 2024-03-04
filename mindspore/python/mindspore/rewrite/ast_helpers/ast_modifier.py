@@ -13,7 +13,7 @@
 # limitations under the License.
 # ============================================================================
 """Ast utils for create or update ast node."""
-from typing import Optional
+from typing import Optional, List
 import ast
 
 from ..api.scoped_value import ScopedValue, ValueType
@@ -34,20 +34,15 @@ class AstModifier(ast.NodeTransformer):
         Returns:
             A bool if to_erase-node been found and been erased.
         """
-        for body in ast_func.body:
+        return AstModifier.erase_ast_from_bodies(ast_func.body, to_erase)
+
+    @staticmethod
+    def erase_ast_from_bodies(ast_bodies: List[ast.AST], to_erase: ast.AST) -> bool:
+        """Erase ast node from ast bodies."""
+        for body in ast_bodies:
             if id(body) == id(to_erase):
-                ast_func.body.remove(body)
+                ast_bodies.remove(body)
                 return True
-            # hardcode for ast.If
-            if isinstance(body, ast.If):
-                for if_body in body.body:
-                    if id(if_body) == id(to_erase):
-                        body.body.remove(if_body)
-                        return True
-                for else_body in body.orelse:
-                    if id(else_body) == id(to_erase):
-                        body.orelse.remove(else_body)
-                        return True
         return False
 
     @staticmethod
@@ -147,13 +142,6 @@ class AstModifier(ast.NodeTransformer):
             RuntimeError: If 'index_ast' is not contained in 'ast_func'.
         """
         assign = AstModifier.create_call_assign(targets, expr, args, kwargs)
-        arguments: ast.arguments = ast_func.args
-        if arguments.args:
-            for arg in arguments.args:
-                if id(arg) == id(index_ast):
-                    ast_func.body.insert(0, assign)
-                    ast.fix_missing_locations(ast_func)
-                    return assign
         return AstModifier.insert_assign_ast_to_function(ast_func, assign, index_ast, insert_before)
 
     @staticmethod
@@ -177,49 +165,63 @@ class AstModifier(ast.NodeTransformer):
         Raises:
             RuntimeError: If 'index_ast' is not contained in 'ast_func'.
         """
-        if index_ast is None:
-            ast_func.body.append(ast_assign)
-            ast.fix_missing_locations(ast_func)
-            return ast_assign
+        # Insert ast at the frontmost position of function body when index_ast is an argument of function
         arguments: ast.arguments = ast_func.args
-        if arguments.args:
+        if index_ast and arguments.args:
             for arg in arguments.args:
                 if id(arg) == id(index_ast):
                     ast_func.body.insert(0, ast_assign)
                     ast.fix_missing_locations(ast_func)
                     return ast_assign
-        for index in range(0, len(ast_func.body)):
-            body = ast_func.body[index]
+        # Insert ast at position specified by index_ast in function body
+        ast_assign = AstModifier.insert_assign_ast_to_bodies(ast_func.body, ast_assign, index_ast, insert_before)
+        ast.fix_missing_locations(ast_assign)
+        return ast_assign
+
+    @staticmethod
+    def insert_assign_ast_to_bodies(ast_bodies: List[ast.AST], ast_assign: ast.Assign,
+                                    index_ast: Optional[ast.AST] = None, insert_before=True) -> ast.AST:
+        """Insert ast at position specified by index_ast of ast_bodies"""
+        # Append ast_assign to ast_bodies when index_ast is None
+        if index_ast is None:
+            ast_bodies.append(ast_assign)
+            return ast_assign
+        # Append ast_assign to ast_bodies
+        for index, body in enumerate(ast_bodies):
             if id(body) == id(index_ast):
-                if insert_before:
-                    ast_func.body.insert(index, ast_assign)
-                else:
-                    ast_func.body.insert(index + 1, ast_assign)
-                ast.fix_missing_locations(ast_func)
-                return ast_assign
-            # hardcode for ast.If
-            if isinstance(body, ast.If):
-                for if_index in range(0, len(body.body)):
-                    if_body = body.body[if_index]
-                    if id(if_body) != id(index_ast):
-                        continue
-                    if insert_before:
-                        body.body.insert(if_index, ast_assign)
-                    else:
-                        body.body.insert(if_index + 1, ast_assign)
-                    ast.fix_missing_locations(body)
-                    return ast_assign
-                for if_index in range(0, len(body.orelse)):
-                    else_body = body.orelse[if_index]
-                    if id(else_body) != id(index_ast):
-                        continue
-                    if insert_before:
-                        body.orelse.insert(if_index, ast_assign)
-                    else:
-                        body.orelse.insert(if_index + 1, ast_assign)
-                    ast.fix_missing_locations(body)
-                    return ast_assign
-        raise RuntimeError("insert position is not contained in ast_func")
+                if not insert_before:
+                    index += 1
+                ast_bodies.insert(index, ast_assign)
+                ast.fix_missing_locations(body)
+                break
+        else:
+            raise ValueError("insert position is not contained in ast_bodies")
+        return ast_assign
+
+    @staticmethod
+    def append_arg_to_function(ast_func: ast.FunctionDef, ast_arg: ast.arg) -> ast.AST:
+        """
+        Append an ast.arg to an ast.FunctionDef (e.g. self.construct).
+
+        Args:
+            ast_func (ast.FunctionDef): An instance of ast.FunctionDef which is "construct" function of network.
+            ast_arg (ast.arg): An instance of ast.arg to be inserted in.
+
+        Returns:
+            An instance of ast.arg which has been appended to 'ast_func'.
+
+        Raises:
+            RuntimeError: If 'ast_arg' is not an instance of ast_arg.
+        """
+        if not isinstance(ast_arg, ast.arg):
+            raise RuntimeError("ast_arg should be an instance of ast.arg.")
+        arguments: ast.arguments = ast_func.args
+        args: [ast.arg] = arguments.args
+        args.append(ast_arg)
+        defaults = arguments.defaults
+        arg_default = ast.Constant(value=None, kind=None)
+        defaults.append(arg_default)
+        return ast_arg
 
     @staticmethod
     def append_global_vars_expr_to_init(init_func: ast.FunctionDef, targets: [ScopedValue],
@@ -241,8 +243,10 @@ class AstModifier(ast.NodeTransformer):
             An instance of ast.Assign which has been appended to 'init_func'.
         """
         return AstModifier.insert_assign_to_function(init_func, targets=targets,
-                                                     args=[ScopedValue.create_variable_value(field)],
-                                                     expr=ScopedValue(ValueType.NamingValue, "global_vars", "get"))
+                                                     expr=ScopedValue(ValueType.NamingValue, "", "getattr"),
+                                                     args=[ScopedValue(ValueType.NamingValue, "obj"),
+                                                           ScopedValue.create_variable_value(field)])
+
 
     @staticmethod
     def create_call_assign(targets: [ScopedValue], expr: ScopedValue, args: [ScopedValue],
@@ -263,23 +267,30 @@ class AstModifier(ast.NodeTransformer):
             RuntimeError: If 'targets' is None.
             RuntimeError: If value_type of element of 'targets' is not ValueType.NamingValue.
 
-            RuntimeError: If length of 'targets' is not 1. Multi-targets will be support in the future.
         """
-        if targets is None or len(targets) != 1:
-            raise RuntimeError("Only support one target in insert_cell_to_init now")
-        if targets[0].type != ValueType.NamingValue:
-            raise RuntimeError("Target must be a right-value, got: ", targets[0])
-        if targets[0].scope:
-            ast_target = ast.Attribute(ast.Name(targets[0].scope, ast.Load()), targets[0].value, ast.Store())
-        else:
-            ast_target = ast.Name(targets[0].value, ast.Store())
+        if targets is None:
+            raise RuntimeError("'Targets should not be None.")
+        targets_list = []
+        for target in targets:
+            if target.type != ValueType.NamingValue:
+                raise RuntimeError("Target must be a right-value, got: ", target)
+            if target.scope:
+                ast_target = ast.Attribute(ast.Name(target.scope, ast.Load()), target.value, ast.Store())
+            else:
+                ast_target = ast.Name(target.value, ast.Store())
+            targets_list.append(ast_target)
         call = AstModifier.create_call(expr, args, kwargs)
-        result = ast.Assign(targets=[ast_target], value=call)
+
+        if len(targets) == 1:
+            result = ast.Assign(targets=[targets_list[0]], value=call)
+        elif len(targets) > 1:
+            ast_targets = ast.Tuple(elts=targets_list, ctx=ast.Store())
+            result = ast.Assign(targets=[ast_targets], value=call)
         ast.fix_missing_locations(result)
         return result
 
     @staticmethod
-    def _create_arg_by_single_value(value: ScopedValue):
+    def _create_arg_by_constant_value(value: ScopedValue):
         """
         Create an instance of ast.Constant.
 
@@ -288,17 +299,16 @@ class AstModifier(ast.NodeTransformer):
 
         Raises:
             RuntimeError: if scope of value is not empty.
-            TypeError: type of arg not in [ValueType.IntValue, ValueType.FloatValue, ValueType.StringValue]
+            TypeError: type of arg is not ValueType.ConstantValue
 
         Returns:
             ast.Constant: An instance of ast.Constant
         """
-        if value.type in (ValueType.IntValue, ValueType.FloatValue, ValueType.StringValue):
+        if value.type == ValueType.ConstantValue:
             if value.scope:
                 raise RuntimeError("For arg the scope should be empty")
             return ast.Constant(value=value.value, kind=None)
-        raise TypeError("Type of arg only support [ValueType.IntValue, ValueType.FloatValue,"
-                        f" ValueType.StringValue], but got {type(value)}")
+        raise TypeError("Type of arg only support ValueType.ConstantValue, but got {type(value)}")
 
     @staticmethod
     def _create_list_or_tuple(value: ScopedValue):
@@ -313,7 +323,7 @@ class AstModifier(ast.NodeTransformer):
         """
         elts = []
         for v in value.value:
-            elts.append(AstModifier._create_arg_by_single_value(v))
+            elts.append(AstModifier._create_arg_by_constant_value(v))
         if isinstance(value, list):
             return ast.List(elts=elts)
         return ast.Tuple(elts=elts)
@@ -329,22 +339,20 @@ class AstModifier(ast.NodeTransformer):
 
         Raises:
             RuntimeError:  if scope of value is not empty.
-            TypeError: type of arg not in [ValueType.IntValue, ValueType.FloatValue, ValueType.StringValue,
-            ValueType.ListValue, ValueType.TupleValue]
+            TypeError: type of arg is not ValueType.ConstantValue
 
         Returns:
             ast.keyword: a instance of ast.keyword.
         """
         if value.scope:
             raise RuntimeError("value.scope should be empty")
-        if value.type in (ValueType.IntValue, ValueType.FloatValue, ValueType.StringValue):
+        if value.type == ValueType.ConstantValue:
             v = ast.Constant(value=value.value, kind=None)
         elif value.type in (ValueType.ListValue, ValueType.TupleValue):
             v = AstModifier._create_list_or_tuple(value)
         else:
-            raise TypeError("Type of keyword value only support [ValueType.IntValue, ValueType.FloatValue,"
-                            "ValueType.StringValue, ValueType.ListValue, ValueType.TupleValue],"
-                            f"but got {type(value)}")
+            raise TypeError("Type of keyword value only support [ValueType.ConstantValue, ValueType.ListValue, "
+                            f"ValueType.TupleValue], but got {type(value)}")
         return ast.keyword(arg=arg, value=v)
 
     @staticmethod
@@ -369,14 +377,14 @@ class AstModifier(ast.NodeTransformer):
         for arg in args:
             if not isinstance(arg, ScopedValue):
                 raise TypeError("arg should be ScopedValue, got: ", type(arg))
-            if arg.type in (ValueType.IntValue, ValueType.FloatValue, ValueType.StringValue):
-                results.append(AstModifier._create_arg_by_single_value(arg))
+            if arg.type == ValueType.ConstantValue:
+                results.append(AstModifier._create_arg_by_constant_value(arg))
             elif arg.type == ValueType.NamingValue:
                 if arg.scope:
                     results.append(ast.Attribute(ast.Name(arg.scope, ast.Load()), arg.value, ast.Store()))
                 else:
                     results.append(ast.Name(arg.value, ast.Store()))
-            elif arg.type == ValueType.ListValue or arg.type == ValueType.TupleValue:
+            elif arg.type in (ValueType.ListValue, ValueType.TupleValue):
                 results.append(AstModifier._create_list_or_tuple(arg))
             else:
                 raise RuntimeError("Please handle custom-object first")
@@ -404,8 +412,7 @@ class AstModifier(ast.NodeTransformer):
         for arg, value in kwargs.items():
             if not isinstance(value, ScopedValue):
                 raise TypeError("value should be ScopedValue, got: ", type(value))
-            if value.type in (ValueType.IntValue, ValueType.FloatValue, ValueType.StringValue,
-                              ValueType.ListValue, ValueType.TupleValue):
+            if value.type in (ValueType.ConstantValue, ValueType.ListValue, ValueType.TupleValue):
                 results.append(AstModifier._create_keyword(arg, value))
             elif value.type == ValueType.NamingValue:
                 if value.scope:
@@ -459,12 +466,12 @@ class AstModifier(ast.NodeTransformer):
 
         Args:
             src_argument (ScopedValue): An instance of ScopedValue represents new argument.
-            dst_ast (ast.AST): Targets of ast.Assign.
+            dst_ast (ast.AST): Ast node to be updated by ScopedValue.
 
         Raises:
             TypeError: Input src_argument is not a ScopedValue
             RuntimeError: If 'dst_ast' is an instance of ast.Constant but type of 'src_argument' is not
-                ValueType.IntValue, ValueType.FloatValue or ValueType.StringValue.
+                ValueType.ConstantValue.
             RuntimeError: If 'dst_ast' is an instance of ast.Name or ast.Attribute but type of 'src_argument' is not
                 ValueType.NamingValue.
             RuntimeError: When 'dst_ast' is an instance of ast.Name, scope of 'src_argument' is not empty.
@@ -478,21 +485,14 @@ class AstModifier(ast.NodeTransformer):
         """
         if not isinstance(src_argument, ScopedValue):
             raise TypeError("src_argument should be ScopedValue, got: ", type(src_argument))
-        if isinstance(dst_ast, ast.Constant):
-            if src_argument.type not in [ValueType.IntValue, ValueType.FloatValue, ValueType.StringValue]:
-                raise RuntimeError("src_argument should be a IntValue, FloatValue or StringValue, got:",
-                                   str(src_argument.type))
-            dst_ast.value = src_argument.value
-            return
-        if isinstance(dst_ast, ast.Num):
-            if src_argument.type not in [ValueType.IntValue, ValueType.FloatValue]:
-                raise RuntimeError("src_argument should be a IntValue or FloatValue, but got:",
-                                   str(src_argument.type))
-            dst_ast.n = src_argument.value
+        if isinstance(dst_ast, (ast.Constant, ast.Num, ast.Str)):
+            AstModifier.update_arg_value_constant(src_argument, dst_ast)
             return
         if isinstance(dst_ast, ast.Name):
-            if src_argument.type not in [ValueType.NamingValue, ValueType.StringValue]:
-                raise RuntimeError("src_argument.type should be ValueType.NamingValue or ValueType.StringValue.")
+            if src_argument.type not in [ValueType.NamingValue, ValueType.ConstantValue]\
+                or not isinstance(src_argument.value, str):
+                raise RuntimeError("src_argument.type should be ValueType.NamingValue or ValueType.ConstantValue, "
+                                   "but got:", type(src_argument.value).__name__)
             if src_argument.scope:
                 raise RuntimeError("src_argument.scope should be empty")
             dst_ast.id = src_argument.value
@@ -515,3 +515,23 @@ class AstModifier(ast.NodeTransformer):
                 AstModifier.update_arg_value(src_argument.value[elt_index], elt)
             return
         raise RuntimeError("keyword value type is not supported", type(dst_ast))
+
+    @staticmethod
+    def update_arg_value_constant(src_argument: ScopedValue, dst_ast: ast.AST):
+        """Update 'arg_value' of type constant by 'input_argument'"""
+        if src_argument.type != ValueType.ConstantValue:
+            raise RuntimeError("src_argument should be a ConstantValue, got:", str(src_argument.type))
+        if isinstance(dst_ast, ast.Constant):
+            dst_ast.value = src_argument.value
+            return
+        if isinstance(dst_ast, ast.Num):
+            if not isinstance(src_argument.value, (int, float)):
+                raise RuntimeError("Type of src_argument should be int or float, but got:",
+                                   type(src_argument.value).__name__)
+            dst_ast.n = src_argument.value
+            return
+        if isinstance(dst_ast, ast.Str):
+            if not isinstance(src_argument.value, str):
+                raise RuntimeError("Type of src_argument should be str, but got:", type(src_argument.value).__name__)
+            dst_ast.s = src_argument.value
+            return

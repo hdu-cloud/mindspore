@@ -16,6 +16,8 @@
 
 #include "common/backend_common_test.h"
 #include "kernel/kernel.h"
+#include "kernel/kernel_get_value.h"
+#include "kernel/kash/kernel_pack.h"
 #include "frontend/operator/ops.h"
 #include "ir/tensor.h"
 #include "ir/manager.h"
@@ -24,12 +26,12 @@
 // #include "runtime/device/optimizer/pass/insert_trans_op.h"
 #include "plugin/device/ascend/optimizer/format_type/insert_cast.h"
 #include "backend/common/pass/eliminate_redundant_op.h"
-#include "backend/common/optimizer/optimizer.h"
-#include "backend/common/optimizer/pass_manager.h"
+#include "include/backend/optimizer/optimizer.h"
+#include "include/backend/optimizer/pass_manager.h"
 #include "include/common/utils/utils.h"
 #include "utils/ms_context.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/anf_runtime_algorithm.h"
+#include "include/backend/kernel_info.h"
 #include "utils/ms_context.h"
 
 #define private public
@@ -62,6 +64,8 @@ class MockEliminate5To4And4To5KernelSelect : public KernelSelect {
     builder.SetInputsDeviceType({kFloat16->type_id()});
     builder.SetOutputsFormat({"NC1HWC0"});
     builder.SetOutputsDeviceType({kFloat16->type_id()});
+    builder.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR});
+    builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
     AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), cnode.get());
   }
 };
@@ -106,6 +110,8 @@ TEST_F(TestHWEliminateRedundantOp, test_eliminate_5to4_4to5) {
   builder.SetOutputsDeviceType({kFloat16->type_id()});
   builder.SetInputsReshapeType({"", ""});
   builder.SetOutputsReshapeType({""});
+  builder.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR, kernel::KernelObjectType::TENSOR});
+  builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
   sub->set_kernel_info(std::make_shared<device::KernelInfo>());
   add->set_kernel_info(std::make_shared<device::KernelInfo>());
   AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), sub.get());
@@ -173,6 +179,8 @@ TEST_F(TestHWEliminateRedundantOp, test_eliminate_cast) {
   builder.SetOutputsDeviceType({kFloat16->type_id()});
   builder.SetInputsReshapeType({"", ""});
   builder.SetOutputsReshapeType({"", ""});
+  builder.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR, kernel::KernelObjectType::TENSOR});
+  builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR, kernel::KernelObjectType::TENSOR});
   sub->set_kernel_info(std::make_shared<device::KernelInfo>());
   add->set_kernel_info(std::make_shared<device::KernelInfo>());
   AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), sub.get());
@@ -250,6 +258,8 @@ TEST_F(TestHWEliminateRedundantOp, test_eliminate_cast_depend_cast) {
   builder.SetOutputsDeviceType({kFloat16->type_id()});
   builder.SetInputsReshapeType({"", ""});
   builder.SetOutputsReshapeType({""});
+  builder.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR, kernel::KernelObjectType::TENSOR});
+  builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
   sub->set_kernel_info(std::make_shared<device::KernelInfo>());
   add->set_kernel_info(std::make_shared<device::KernelInfo>());
   AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), sub.get());

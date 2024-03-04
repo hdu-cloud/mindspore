@@ -14,18 +14,19 @@
  * limitations under the License.
  */
 #include "ops/unsorted_segment_sum.h"
-#include <string>
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <set>
-#include <map>
-#include <vector>
+#include <string>
 #include <utility>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <vector>
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_utils.h"
 #include "ops/unsorted_segment_arithmetic.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -121,7 +122,25 @@ AbstractBasePtr UnsortedSegmentSumInfer(const abstract::AnalysisEnginePtr &, con
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_HOST_DEPENDS(kNameUnsortedSegmentSum, {2});
-REGISTER_PRIMITIVE_EVAL_IMPL(UnsortedSegmentSum, prim::kPrimUnsortedSegmentSum, UnsortedSegmentSumInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGUnsortedSegmentSumInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return UnsortedSegmentSumInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return UnsortedSegmentSumInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return UnsortedSegmentSumInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(UnsortedSegmentSum, prim::kPrimUnsortedSegmentSum, AGUnsortedSegmentSumInfer, false);
 }  // namespace ops
 }  // namespace mindspore

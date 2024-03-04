@@ -169,10 +169,17 @@ api::FuncGraphPtr CaffeModelParser::Parse(const converter::ConverterParameters &
     ReturnCode::GetSingleReturnCode()->UpdateReturnCode(status);
     return nullptr;
   }
-  auto unify_format = std::make_shared<UnifyFormatToNHWC>(kFmkTypeCaffe, false, flag.export_mindir);
+  auto unify_format = std::make_shared<UnifyFormatToNHWC>(kFmkTypeCaffe, false, flag.save_type);
   MS_CHECK_TRUE_RET(unify_format != nullptr, nullptr);
   if (!unify_format->Run(graph)) {
     MS_LOG(ERROR) << "Run insert transpose failed.";
+    return nullptr;
+  }
+
+  graph->set_manager(nullptr);
+  static auto root_func_manager = Manage(graph);
+  if (root_func_manager == nullptr) {
+    MS_LOG(ERROR) << "root_func_manager is nullptr.";
     return nullptr;
   }
   return res_graph_;
@@ -652,7 +659,7 @@ STATUS CaffeModelParser::ConvertTop(const caffe::LayerParameter &layer, const CN
     MSLITE_CHECK_PTR(tuple_get_item_prim_c);
     auto tuple_get_item_prim = NewValueNode(tuple_get_item_prim_c);
     MSLITE_CHECK_PTR(tuple_get_item_prim);
-    auto get_item_value = NewValueNode(MakeValue<int>(i));
+    auto get_item_value = NewValueNode(MakeValue<int64_t>(i));
     MSLITE_CHECK_PTR(get_item_value);
     std::vector<AnfNodePtr> inputs{tuple_get_item_prim, cnode, get_item_value};
     auto graph = ConvertGraph(res_graph_);

@@ -62,7 +62,7 @@ bool ApplyAdamWithAmsgradGpuKernelMod::Init(const BaseOperatorPtr &base_operator
   }
 
   kernel_func_ = func_list_[index].second;
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndexVar).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndexVar).dtype);
   return true;
 }
 
@@ -75,7 +75,10 @@ int ApplyAdamWithAmsgradGpuKernelMod::Resize(const BaseOperatorPtr &base_operato
     return ret;
   }
   input_elements_ = 0;
-
+  if (inputs.size() <= kIndexGrad) {
+    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', input size  '" << inputs.size() << " is little than "
+                      << kIndexGrad;
+  }
   std::vector<int64_t> var_shape = inputs[kIndexVar]->GetShapeVector();
   std::vector<int64_t> m_shape = inputs[kIndexM]->GetShapeVector();
   std::vector<int64_t> v_shape = inputs[kIndexV]->GetShapeVector();
@@ -94,16 +97,15 @@ int ApplyAdamWithAmsgradGpuKernelMod::Resize(const BaseOperatorPtr &base_operato
   if (!IsSameShape(var_shape, m_shape) || !IsSameShape(var_shape, v_shape) || !IsSameShape(var_shape, vhat_shape) ||
       !IsSameShape(var_shape, grad_shape)) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', the shapes of 'm/v/vhat/grad/var' must be the same, "
-                  << "but get the shapes of 'm': " << Vector2Str(m_shape) << ", 'v': " << Vector2Str(v_shape)
-                  << ", 'vhat': " << Vector2Str(vhat_shape) << ", 'grad': " << Vector2Str(grad_shape)
-                  << " and 'var': " << Vector2Str(var_shape);
+                  << "but get the shapes of 'm': " << m_shape << ", 'v': " << v_shape << ", 'vhat': " << vhat_shape
+                  << ", 'grad': " << grad_shape << " and 'var': " << var_shape;
     return KRET_RESIZE_FAILED;
   }
 
   if (!IsSameShape(beta1_power_shape, beta2_power_shape)) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', the shapes of 'beta1_power' and 'beta2_power' must be the same, "
-                  << "but get the shapes of 'beta1_power': " << Vector2Str(beta1_power_shape)
-                  << " and 'beta2_power': " << Vector2Str(beta2_power_shape);
+                  << "but get the shapes of 'beta1_power': " << beta1_power_shape
+                  << " and 'beta2_power': " << beta2_power_shape;
     return KRET_RESIZE_FAILED;
   }
 
@@ -111,7 +113,7 @@ int ApplyAdamWithAmsgradGpuKernelMod::Resize(const BaseOperatorPtr &base_operato
     MS_LOG(ERROR) << "For '" << kernel_name_
                   << "', the shape size of 'lr' must be equal to 'batch_rank', "
                      "but got the shape of 'lr': "
-                  << Vector2Str(lr_shape) << " and 'batch_rank': " << batch_rank_;
+                  << lr_shape << " and 'batch_rank': " << batch_rank_;
     return KRET_RESIZE_FAILED;
   }
 
@@ -131,7 +133,7 @@ int ApplyAdamWithAmsgradGpuKernelMod::Resize(const BaseOperatorPtr &base_operato
     if (var_shape.size() < lr_shape.size()) {
       MS_LOG(ERROR) << "For '" << kernel_name_
                     << "', the shape size of 'var' must be greater than 'lr_shape', but got the shape of 'var': "
-                    << Vector2Str(var_shape) << " and 'lr_shape': " << Vector2Str(lr_shape);
+                    << var_shape << " and 'lr_shape': " << lr_shape;
       return KRET_RESIZE_FAILED;
     }
     std::vector<int64_t> var_batch_shape(var_shape.begin(), var_shape.begin() + batch_rank_);
@@ -139,7 +141,7 @@ int ApplyAdamWithAmsgradGpuKernelMod::Resize(const BaseOperatorPtr &base_operato
       MS_LOG(ERROR) << "For '" << kernel_name_
                     << "', the batch shape of 'var' must be the same as the shape of 'lr', "
                        "but got the batch shape of 'var': "
-                    << Vector2Str(var_batch_shape) << " and the shape of 'lr': " << Vector2Str(lr_shape);
+                    << var_batch_shape << " and the shape of 'lr': " << lr_shape;
       return KRET_RESIZE_FAILED;
     }
   }
@@ -176,10 +178,10 @@ bool ApplyAdamWithAmsgradGpuKernelMod::LaunchKernel(const std::vector<AddressPtr
   auto *output_v = reinterpret_cast<T *>(outputs[kIndexV]->addr);
   auto *output_vhat = reinterpret_cast<T *>(outputs[kIndexVhat]->addr);
 
-  CalApplyAdamWithAmsgrad(input_elements_, batch_size_, var, m, v, vhat, beta1_power, beta2_power, lr, grad, beta1,
-                          beta2, epsilon, output_var, output_m, output_v, output_vhat, device_id_,
-                          reinterpret_cast<cudaStream_t>(stream_ptr));
-
+  auto status = CalApplyAdamWithAmsgrad(input_elements_, batch_size_, var, m, v, vhat, beta1_power, beta2_power, lr,
+                                        grad, beta1, beta2, epsilon, output_var, output_m, output_v, output_vhat,
+                                        device_id_, reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

@@ -16,11 +16,20 @@
 
 #include "frontend/optimizer/irpass/arithmetic_simplify.h"
 
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/other_ops.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/arithmetic_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 namespace mindspore {
 namespace opt {
 namespace irpass {
 AnfNodePtr ArithmeticSimplify::operator()(const OptimizerPtr &, const AnfNodePtr &node) {
-  PatternNode x, y, z;
+  PatternNode x;
+  PatternNode y;
+  PatternNode z;
   PConstant one_(node, false, 1);
   PConstant one_scalar_(node, false, 1, true);
   PConstant zero_(node, false, 0);
@@ -39,7 +48,7 @@ AnfNodePtr ArithmeticSimplify::operator()(const OptimizerPtr &, const AnfNodePtr
   }
   if (MsContext::GetInstance()->get_param<int>(MS_CTX_EXECUTION_MODE) != kPynativeMode) {
     auto IsAddByZeroSimplifiable = [node](const AnfNodePtr &real_x) {
-      // If real_x is Load CNode, We should not simplify it as Load is a no-op at backend, after simplication, the
+      // If real_x is Load CNode, We should not simplify it as Load is a no-op at backend, after simplification, the
       // result of the Load may be incorrect.
       if (IsPrimitiveCNode(real_x, prim::kPrimLoad)) {
         MS_LOG(DEBUG) << "Cannot simplify as real_x is CNode Load: " << real_x->ToString();
@@ -64,9 +73,6 @@ AnfNodePtr ArithmeticSimplify::operator()(const OptimizerPtr &, const AnfNodePtr
     MATCH_REPLACE(node, PBinOperation(prim::kPrimScalarAdd, x, zero_scalar_, true), x);          // Scalar Add by zero
     MATCH_REPLACE_IF(node, x * one_, any_const.WithValueOf(x), !one_.CheckFunc(IsParam, node));  // Multiply by one
     MATCH_REPLACE(node, PBinOperation(prim::kPrimScalarMul, x, one_scalar_, true), x);           // Scalar Mul by one
-
-    // Scalar Mul by zero
-    MATCH_REPLACE(node, PBinOperation(prim::kPrimScalarMul, x, zero_scalar_, true), zero_scalar_.NewValue());
   }
   // Prim Eliminate (identity)
   MATCH_REPLACE(node, PPrimitive(prim::kPrimIdentity, x), x);
@@ -103,24 +109,6 @@ AnfNodePtr ArithmeticSimplify::operator()(const OptimizerPtr &, const AnfNodePtr
   return nullptr;
 }
 
-AnfNodePtr ArithmeticSimplify2::operator()(const OptimizerPtr &, const AnfNodePtr &node) {
-  if (MsContext::GetInstance()->get_param<int>(MS_CTX_EXECUTION_MODE) == kPynativeMode) {
-    return nullptr;
-  }
-  PatternNode x, y;
-  PConstant zero_(node, false, 0);
-
-  // Multiply by zero
-  MATCH_REPLACE_IF(node, x * zero_, zero_.WithShapeAs(node),
-                   !zero_.CheckFunc(IsParam, node) && !x.CheckFunc(IsLoad, node) &&
-                     x.GetNode(node)->func_graph() == node->func_graph());
-  auto zero_prim = PPrimitive(prim::kPrimZerosLike, y);
-  MATCH_REPLACE_IF(node, x * zero_prim, zero_.WithShapeAs(node),
-                   !zero_prim.CheckFunc(IsParam, node) && x.GetNode(node)->func_graph() == node->func_graph());
-
-  return nullptr;
-}
-
 // grad = AllReduce(grad) / worker_number
 // grad = grad + weight * decy
 // ->
@@ -129,7 +117,9 @@ AnfNodePtr ArithmeticSimplify2::operator()(const OptimizerPtr &, const AnfNodePt
 // {prim::kPrimAddN, {prim::kPrimMakeTuple, {prim::kPrimMul, {prim::kPrimAllReduce, X}, Y}, Z}} ->
 // {prim::kPrimMul, {prim::kPrimAllReduce, {prim::kPrimAddN,{prim::kPrimMakeTuple, Z, X}}}, Y}
 AnfNodePtr AdjustAllReduceMulAdd::operator()(const OptimizerPtr &, const AnfNodePtr &node) {
-  PatternNode x, y, z;
+  PatternNode x;
+  PatternNode y;
+  PatternNode z;
   auto all_reduce_pat = PPrimitive(prim::kPrimAllReduce, x);
   auto mul_pat = PBinOperation(prim::kPrimMul, all_reduce_pat, y, true);
   auto admktup_pat = PBinOperation(prim::kPrimMakeTuple, mul_pat, z, true);
@@ -153,7 +143,8 @@ AnfNodePtr AdjustAllReduceMulAdd::operator()(const OptimizerPtr &, const AnfNode
     auto mul_prim = mul_cnode_->cast<CNodePtr>()->input(0);
     auto addn_maketuple = admktup_pat.GetOriginalNode();
 
-    ShapeVector x_shape, z_shape;
+    ShapeVector x_shape;
+    ShapeVector z_shape;
     if (!x_->isa<ValueNode>()) {
       if ((x_->abstract() == nullptr) || !x_->abstract()->isa<abstract::AbstractTensor>()) {
         return nullptr;

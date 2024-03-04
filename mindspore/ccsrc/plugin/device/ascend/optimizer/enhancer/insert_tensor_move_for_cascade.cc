@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,8 +15,9 @@
  */
 #include "plugin/device/ascend/optimizer/enhancer/insert_tensor_move_for_cascade.h"
 #include <vector>
+#include "mindspore/core/ops/sequence_ops.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "frontend/optimizer/opt.h"
 #include "plugin/device/ascend/optimizer/ascend_helper.h"
@@ -49,7 +50,7 @@ bool IsPartOutputsOfHcclOp(const AnfNodePtr &node, const CNodePtr &cur_hccl, con
   auto &node_users = manager->node_users();
   auto iter = node_users.find(prev_hccl_op);
   if (iter == node_users.end()) {
-    MS_LOG(EXCEPTION) << "Node has no output in manager" << trace::DumpSourceLines(cur_hccl);
+    MS_LOG(INTERNAL_EXCEPTION) << "Node has no output in manager" << trace::DumpSourceLines(cur_hccl);
   }
   for (const auto &node_index : iter->second) {
     AnfNodePtr output = node_index.first;
@@ -83,7 +84,7 @@ AnfNodePtr InsertTensorMoveForCascade::InsertTensorMove(const FuncGraphPtr &grap
     if (IsPartOutputsOfHcclOp(input, hccl_node, graph)) {
       auto tensor_move = CreateTensorMoveOp(graph, input);
       if (tensor_move == nullptr) {
-        MS_LOG(EXCEPTION) << "Create tensor_move op failed." << trace::DumpSourceLines(hccl_node);
+        MS_LOG(INTERNAL_EXCEPTION) << "Create tensor_move op failed." << trace::DumpSourceLines(hccl_node);
       }
       if (common::AnfAlgo::IsDynamicShape(input)) {
         MS_LOG(DEBUG) << "The tenser move op has dynamic shape attr.";
@@ -101,7 +102,7 @@ AnfNodePtr InsertTensorMoveForCascade::InsertTensorMove(const FuncGraphPtr &grap
 
   if (!tensor_move_list.empty()) {
     CNodePtr new_hccl_node = std::make_shared<CNode>(*hccl_node);
-    MS_EXCEPTION_IF_NULL(new_hccl_node);
+    new_hccl_node->CloneUserData(hccl_node);
     new_hccl_node->set_inputs(new_inputs);
     return new_hccl_node;
   }
@@ -131,7 +132,7 @@ void InsertTensorMoveForCascade::InsertOutputTensorMove(const FuncGraphPtr &grap
       continue;
     }
     auto cnode = output_with_index.first->cast<CNodePtr>();
-    if (cnode != hccl_node || common::AnfAlgo::GetOutputTensorNum(output_with_index.first) == kSingleOutput) {
+    if (cnode != hccl_node || AnfAlgo::GetOutputTensorNum(output_with_index.first) == kSingleOutput) {
       continue;
     }
     node = output_with_index.first;

@@ -14,23 +14,39 @@
  * limitations under the License.
  */
 
-#include "ops/sub_and_filter.h"
-#include <algorithm>
-#include <map>
 #include <memory>
 #include <set>
-#include <string>
 #include <vector>
+
 #include "abstract/abstract_value.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/macros.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/base_operator.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "ops/sub_and_filter.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::TupleShapePtr SubAndFilterInferShape(const PrimitivePtr &, const std::vector<AbstractBasePtr> &input_args) {
+  for (const auto &item : input_args) {
+    MS_EXCEPTION_IF_NULL(item);
+  }
   ShapeVector out_shape = {abstract::Shape::kShapeDimAny};
   abstract::ShapePtr out_shape_ptr = std::make_shared<abstract::Shape>(out_shape);
   return std::make_shared<abstract::TupleShape>(std::vector<abstract::BaseShapePtr>{out_shape_ptr, out_shape_ptr});
@@ -57,6 +73,24 @@ AbstractBasePtr SubAndFilterInfer(const abstract::AnalysisEnginePtr &, const Pri
 }
 
 MIND_API_OPERATOR_IMPL(SubAndFilter, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(SubAndFilter, prim::kPrimSubAndFilter, SubAndFilterInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSubAndFilterInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SubAndFilterInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SubAndFilterInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SubAndFilterInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SubAndFilter, prim::kPrimSubAndFilter, AGSubAndFilterInfer, false);
 }  // namespace ops
 }  // namespace mindspore

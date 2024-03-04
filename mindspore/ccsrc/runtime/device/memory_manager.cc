@@ -16,8 +16,7 @@
 
 #include "runtime/device/memory_manager.h"
 #include <string>
-#include "backend/common/session/anf_runtime_algorithm.h"
-#include "include/common/utils/anfalgo.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "utils/ms_context.h"
 
 namespace mindspore {
@@ -40,7 +39,6 @@ void MemoryManager::MallocSomasDynamicMem(const session::KernelGraph &graph) {
   if (!(device::CommonSomasAllocator::Assign(graph))) {
     MS_LOG(EXCEPTION) << "Somas Allocate Failed.";
   }
-
   size_t total_allocated_size = graph.somas_whole_block_size();
   MS_LOG(INFO) << "Graph " << graph.graph_id() << ": TotalSomasReuseDynamicSize [" << total_allocated_size << "]";
   if (total_allocated_size > 0) {
@@ -100,6 +98,8 @@ uint8_t *MemoryManager::MallocWorkSpaceMem(const AnfNodePtr &node, size_t index,
   return MallocDynamicMem(size, false);
 }
 
+uint8_t *MemoryManager::MallocWorkSpaceMem(size_t size) { return MallocDynamicMem(size, false); }
+
 uint8_t *MemoryManager::MallocMem(MemType type, size_t size, const DeviceAddressPtr &address, uint32_t graph_id) {
   MS_EXCEPTION_IF_NULL(address);
   uint8_t *ptr = nullptr;
@@ -131,7 +131,7 @@ bool MemoryManager::MallocMemFromMemPool(const DeviceAddressPtr &address, size_t
   return true;
 }
 
-void *MemoryManager::MallocMemFromMemPool(size_t size, bool from_persistent_mem) {
+void *MemoryManager::MallocMemFromMemPool(size_t size, bool from_persistent_mem, bool) {
   if (size == 0) {
     MS_LOG(ERROR) << "MallocMemFromMemPool size is 0.";
   }
@@ -177,7 +177,7 @@ std::vector<void *> MemoryManager::MallocContinuousMemFromMemPool(const std::vec
   }
   std::vector<void *> device_ptr_list;
   for (size_t i = 0; i < size_list.size(); ++i) {
-    device_ptr_list.emplace_back(nullptr);
+    (void)device_ptr_list.emplace_back(nullptr);
   }
   return device_ptr_list;
 }

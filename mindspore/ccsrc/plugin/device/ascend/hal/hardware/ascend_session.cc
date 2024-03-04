@@ -19,9 +19,8 @@
 #include <set>
 #include <string>
 #include <list>
-
+#include "ops/other_ops.h"
 #include "utils/hash_set.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "base/base_ref_utils.h"
 #include "ir/tensor.h"
 #include "ir/anf.h"
@@ -36,22 +35,23 @@
 #include "backend/common/optimizer/common_backend_optimization.h"
 #include "plugin/device/ascend/hal/device/kernel_adjust.h"
 #include "plugin/device/ascend/hal/device/ascend_stream_assign.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "utils/ms_utils.h"
 #include "include/common/utils/utils.h"
-#include "common/graph_kernel/graph_kernel_flags.h"
-#include "backend/common/optimizer/helper.h"
+#include "backend/common/graph_kernel/graph_kernel_flags.h"
+#include "include/backend/optimizer/helper.h"
 #include "runtime/device/kernel_runtime_manager.h"
 #include "runtime/pynative/op_runtime_info.h"
+#include "runtime/pynative/op_compiler.h"
 #include "include/common/utils/config_manager.h"
 #ifndef ENABLE_SECURITY
-#include "debug/data_dump/dump_json_parser.h"
-#include "debug/data_dump/e2e_dump.h"
+#include "include/backend/debug/data_dump/dump_json_parser.h"
+#include "include/backend/debug/data_dump/e2e_dump.h"
 #include "debug/debugger/debugger_utils.h"
 #include "plugin/device/ascend/hal/device/dump/ascend_dump.h"
 #endif
-#include "common/graph_kernel/adapter/graph_kernel_optimization.h"
+#include "backend/common/graph_kernel/adapter/graph_kernel_optimization.h"
 #include "plugin/device/ascend/hal/hardware/ascend_auto_monad.h"
 #include "include/common/debug/anf_ir_dump.h"
 #include "include/common/debug/dump_proto.h"
@@ -59,9 +59,8 @@
 #ifdef ENABLE_DEBUGGER
 #include "debug/tensor_load.h"
 #include "debug/debugger/proto_exporter.h"
-#else
-#include "debug/debugger/proto_exporter_stub.h"
 #endif
+#include "include/backend/debug/debugger/proto_exporter.h"
 #include "common/util/error_manager/error_manager.h"
 #include "toolchain/adx_datadump_callback.h"
 #include "toolchain/adx_datadump_server.h"
@@ -70,7 +69,7 @@
 #include "debug/rdr/graph_recorder.h"
 #endif
 #ifdef WITH_BACKEND
-#include "ps/util.h"
+#include "include/backend/distributed/ps/util.h"
 #endif
 #include "plugin/device/ascend/hal/device/ascend_device_address.h"
 #ifndef ENABLE_SECURITY
@@ -446,10 +445,9 @@ GraphId AscendSession::CompileGraphImpl(NotNull<FuncGraphPtr> func_graph) {
   RootGraphExecutorValidate(NOT_NULL(root_graph), all_graphs);
 #ifdef ENABLE_DUMP_IR
   // dump graph before remove nop nodes
-  auto context_ptr = MsContext::GetInstance();
-  MS_EXCEPTION_IF_NULL(context_ptr);
-  bool save_graphs = context_ptr->get_param<bool>(MS_CTX_SAVE_GRAPHS_FLAG);
-  if (save_graphs) {
+  auto context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  if (context->CanDump(kIntroductory)) {
     DumpIRProto(root_graph, "before_removeNop_" + std::to_string(graph_sum_));
   }
 #endif
@@ -570,10 +568,9 @@ void AscendSession::CompileChildGraph(const KernelGraphPtr &child_graph) const {
   opt::AscendBackendIRFusionOptimization(child_graph);
   child_graph->SetExecOrderByDefault();
 #ifdef ENABLE_DUMP_IR
-  auto context_ptr = MsContext::GetInstance();
-  MS_EXCEPTION_IF_NULL(context_ptr);
-  bool save_graphs = context_ptr->get_param<bool>(MS_CTX_SAVE_GRAPHS_FLAG);
-  if (save_graphs) {
+  auto context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  if (context->CanDump(kIntroductory)) {
     std::string file_name = "select_kernel_before_graph_" + std::to_string(child_graph->graph_id()) + ".ir";
     DumpIR(file_name, child_graph);
   }
@@ -581,7 +578,7 @@ void AscendSession::CompileChildGraph(const KernelGraphPtr &child_graph) const {
   // select kernel build info
   SelectKernel(child_graph);
 #ifdef ENABLE_DUMP_IR
-  if (save_graphs) {
+  if (context->CanDump(kIntroductory)) {
     std::string file_name = "select_kernel_after_graph_" + std::to_string(child_graph->graph_id()) + ".ir";
     DumpIR(file_name, child_graph);
   }
@@ -677,16 +674,6 @@ void AscendSession::BindAddressToTensor(
     }
     MS_EXCEPTION_IF_NULL(tensor);
     tensor->set_device_address(address);
-  }
-}
-
-void StoreCNodePrimitive(const KernelGraphPtr &graph) {
-  const auto &nodes = graph->execution_order();
-  for (auto &node : nodes) {
-    auto primitive = common::AnfAlgo::GetCNodePrimitive(node);
-    MS_EXCEPTION_IF_NULL(primitive);
-    auto new_primitive = std::make_shared<Primitive>(*primitive);
-    node->set_input(kAnfPrimitiveIndex, NewValueNode(new_primitive));
   }
 }
 
@@ -796,10 +783,9 @@ void AscendSession::BuildOpsInGraph(const GraphId &graph_id, const std::map<AnfN
     InputTensorInfo input_tensor_info;
     GetOpInputStubTensors(kernel, parameter_index, graph_inputs, op_output_info, &input_tensor_info);
     // Get OpRunInfo and GraphInfo
-    GraphInfo graph_info;
-    BackendOpRunInfoPtr op_run_info = GetSingleOpRunInfo(kernel, graph_info, input_tensor_info, nullptr);
-    GetSingleOpGraphInfo(kernel, input_tensor_info, &graph_info, op_run_info);
-    op_run_info->base_op_run_info.graph_info = graph_info;
+    BackendOpRunInfoPtr op_run_info = GetSingleOpRunInfo(kernel, input_tensor_info, nullptr);
+    const auto &graph_info =
+      pynative::OpCompiler::GetInstance().GetSingleOpGraphInfo(op_run_info->base_op_run_info, op_run_info->op_prim);
     const auto &single_op_graph_iter = run_op_graphs_.find(graph_info);
     if (single_op_graph_iter != run_op_graphs_.end()) {
       // if graph of same single op exists, the output tensor of current op should be generated
@@ -812,9 +798,8 @@ void AscendSession::BuildOpsInGraph(const GraphId &graph_id, const std::map<AnfN
     GenOpOutputStubTensor(single_op_graph, kernel, cnode_refcount, &op_output_info);
     opt::HideNopNode(single_op_graph.get());
     // The graph info could have been changed in PreBuildOp
-    GraphInfo new_graph_info;
-    GetSingleOpGraphInfo(kernel, input_tensor_info, &new_graph_info, op_run_info);
-    single_op_graphs.emplace(single_op_graph, new_graph_info);
+    single_op_graphs.emplace(single_op_graph, pynative::OpCompiler::GetInstance().GetSingleOpGraphInfo(
+                                                op_run_info->base_op_run_info, op_run_info->op_prim));
     const auto &execution_order = single_op_graph->execution_order();
     std::copy(execution_order.begin(), execution_order.end(), std::back_inserter(kernels));
   }
@@ -914,10 +899,9 @@ void AscendSession::AdjustKernel(const std::shared_ptr<KernelGraph> &kernel_grap
   device::KernelAdjust::GetInstance().InsertDeviceLoopCtrl(kernel_graph);
   device::KernelAdjust::GetInstance().ProcessLoopSink(kernel_graph);
 #ifdef ENABLE_DUMP_IR
-  auto context_ptr = MsContext::GetInstance();
-  MS_EXCEPTION_IF_NULL(context_ptr);
-  bool save_graphs = context_ptr->get_param<bool>(MS_CTX_SAVE_GRAPHS_FLAG);
-  if (save_graphs) {
+  auto context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  if (context->CanDump(kIntroductory)) {
     DumpIR("after_adjust_kernel.ir", kernel_graph);
   }
 #endif
@@ -965,11 +949,12 @@ void AscendSession::BuildKernel(const std::vector<CNodePtr> &kernels) {
 static CNodePtr GetNextLabelSet(const std::vector<CNodePtr> &kernel_nodes, uint32_t index) {
   size_t node_sizes = kernel_nodes.size();
   if (index >= node_sizes - 1) {
-    MS_LOG(EXCEPTION) << "there is no node after this node:" << kernel_nodes[index]->DebugString();
+    MS_LOG(EXCEPTION) << "There is no node after this node with node index [" << index << "] and total size ["
+                      << node_sizes << "].";
   }
   auto kernel = kernel_nodes[index + 1];
   if (common::AnfAlgo::GetCNodeName(kernel) != kLabelSetOpName) {
-    MS_LOG(EXCEPTION) << "the node is not labelset follow labelgoto/labelswitch, index" << index
+    MS_LOG(EXCEPTION) << "The node is not labelset follow labelgoto/labelswitch, index" << index
                       << ", size: " << node_sizes;
   }
   return kernel;
@@ -1385,10 +1370,9 @@ void AscendSession::RecurseSelectKernelInfo(const KernelGraphPtr &graph, std::se
   MS_LOG(INFO) << "Finish selecting kernel info in graph: " << graph->graph_id();
 
 #ifdef ENABLE_DUMP_IR
-  auto context_ptr = MsContext::GetInstance();
-  MS_EXCEPTION_IF_NULL(context_ptr);
-  bool save_graphs = context_ptr->get_param<bool>(MS_CTX_SAVE_GRAPHS_FLAG);
-  if (save_graphs) {
+  auto context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  if (context->CanDump(kIntroductory)) {
     std::string file_name = "select_kernel_after_graph_" + std::to_string(graph->graph_id()) + ".ir";
     DumpIR(file_name, graph);
   }

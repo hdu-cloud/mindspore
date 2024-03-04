@@ -172,7 +172,9 @@ bool SparseMatrixTransposeCpuKernelMod::Launch(const std::vector<kernel::Address
 
 template <typename indiceT, typename valueT>
 void SparseMatrixTransposeCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs,
-                                                     const std::vector<kernel::AddressPtr> &outputs) {
+                                                     const std::vector<kernel::AddressPtr> &outputs) const {
+  CHECK_KERNEL_OUTPUTS_NUM(inputs.size(), kInputsNum, kernel_name_);
+  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kOutputsNum, kernel_name_);
   indiceT *x_dense_shape = static_cast<indiceT *>(inputs[kInputIndex0]->addr);
   indiceT *x_batch_pointers = static_cast<indiceT *>(inputs[kInputIndex1]->addr);
   indiceT *x_row_pointers = static_cast<indiceT *>(inputs[kInputIndex2]->addr);
@@ -256,7 +258,9 @@ void SparseMatrixTransposeCpuKernelMod::LaunchKernel(const std::vector<kernel::A
 
 template <typename indiceT, typename valueT>
 void SparseMatrixTransposeCpuKernelMod::LaunchcomplexKernel(const std::vector<kernel::AddressPtr> &inputs,
-                                                            const std::vector<kernel::AddressPtr> &outputs) {
+                                                            const std::vector<kernel::AddressPtr> &outputs) const {
+  CHECK_KERNEL_OUTPUTS_NUM(inputs.size(), kInputsNum, kernel_name_);
+  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kOutputsNum, kernel_name_);
   indiceT *x_dense_shape = static_cast<indiceT *>(inputs[kInputIndex0]->addr);
   indiceT *x_batch_pointers = static_cast<indiceT *>(inputs[kInputIndex1]->addr);
   indiceT *x_row_pointers = static_cast<indiceT *>(inputs[kInputIndex2]->addr);

@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,15 +14,20 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/optimizer/buffer_fusion/matmul_eltwise_fusion_pass.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "kernel/kernel_fusion.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "mindspore/core/ops/core_ops.h"
-#include "backend/common/optimizer/fusion_id_allocator.h"
-#include "plugin/device/ascend/optimizer/platform.h"
+#include "plugin/device/ascend/optimizer/fusion_id_allocator.h"
+#include "plugin/device/ascend/hal/common/platform_info_util.h"
 
 namespace mindspore {
 namespace opt {
+namespace {
+constexpr auto kPatternBroadcast = "Broadcast";
+}
+
 void MatmulEltwiseFusionPass::MatchMatmulEltwise(const CNodePtr &cnode, const AnfNodePtr &relu_input,
                                                  FusedNodeRecord *candidate_fusion) {
   MS_EXCEPTION_IF_NULL(cnode);
@@ -48,8 +53,8 @@ void MatmulEltwiseFusionPass::MatchSingleFusionPattern(const session::KernelGrap
     auto cnode = node->cast<CNodePtr>();
     MS_EXCEPTION_IF_NULL(cnode);
     if (AnfAlgo::GetKernelType(cnode) == KernelType::TBE_KERNEL &&
-        AnfAlgo::GetFusionType(cnode) == kernel::FusionType::ELEMWISE &&
-        common::AnfAlgo::GetOutputTensorNum(cnode) == ELTWISE_SINGLE_OUTPUT_SIZE) {
+        (AnfAlgo::GetFusionType(cnode) == kPatternElemWise || AnfAlgo::GetFusionType(cnode) == kPatternBroadcast) &&
+        AnfAlgo::GetOutputTensorNum(cnode) == ELTWISE_SINGLE_OUTPUT_SIZE) {
       auto eltwise_input = cnode->input(kIndex1);
       MS_EXCEPTION_IF_NULL(eltwise_input);
       if (eltwise_input->isa<CNode>() && common::AnfAlgo::CheckPrimitiveType(eltwise_input, prim::kPrimMatMul)) {

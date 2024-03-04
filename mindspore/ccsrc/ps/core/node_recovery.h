@@ -22,12 +22,9 @@
 #include <memory>
 #include <string>
 #include <vector>
-
 #include "ps/core/recovery_base.h"
-#include "ps/constants.h"
 #include "utils/log_adapter.h"
 #include "ps/core/file_configuration.h"
-#include "ps/ps_context.h"
 #include "ps/core/abstract_node.h"
 
 namespace mindspore {

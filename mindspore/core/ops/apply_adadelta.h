@@ -16,14 +16,14 @@
 
 #ifndef MINDSPORE_CORE_OPS_APPLY_ADADELTA_H_
 #define MINDSPORE_CORE_OPS_APPLY_ADADELTA_H_
-#include <vector>
-#include <memory>
-#include <string>
-#include <set>
 #include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,8 +35,9 @@ class MIND_API ApplyAdadelta : public BaseOperator {
     InitIOName({"var", "accum", "accum_update", "lr", "rho", "epsilon", "grad"}, {"var", "accum", "accum_update"});
   }
 };
-abstract::AbstractBasePtr ApplyAdadeltaInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                             const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr ApplyAdadeltaInfer(const abstract::AnalysisEnginePtr &,
+                                                      const PrimitivePtr &primitive,
+                                                      const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimApplyAdadeltaPtr = std::shared_ptr<ApplyAdadelta>;
 }  // namespace ops
 }  // namespace mindspore

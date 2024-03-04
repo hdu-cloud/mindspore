@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 #ifndef MINDSPORE_CCSRC_MINDDATA_DATASET_INCLUDE_DATASET_DATASETS_H_
 #define MINDSPORE_CCSRC_MINDDATA_DATASET_INCLUDE_DATASET_DATASETS_H_
 
-#include <sys/stat.h>
 #include <algorithm>
 #include <functional>
 #include <map>
@@ -29,53 +28,48 @@
 #include <utility>
 #include <vector>
 
+#include "nlohmann/json_fwd.hpp"
+
 #include "include/api/dual_abi_helper.h"
 #include "include/api/types.h"
 #include "include/dataset/iterator.h"
-#include "nlohmann/json_fwd.hpp"
 #include "include/dataset/samplers.h"
 #include "include/dataset/text.h"
 
 namespace mindspore {
 namespace dataset {
+class CsvBase;
+class DatasetCache;
+class DatasetNode;
+class DSCallback;
+class Iterator;
+class PullBasedIterator;
+class SamplerObj;
+class SchemaObj;
+enum class SentencePieceModel;
+class SentencePieceVocab;
 class Tensor;
+class TensorOperation;
 class TensorShape;
 class TreeAdapter;
 class TreeAdapterLite;
 class TreeGetters;
 class Vocab;
 
-class DatasetCache;
-class DatasetNode;
-
-class Iterator;
-class PullBasedIterator;
-
-class TensorOperation;
-class SchemaObj;
-class SamplerObj;
-class CsvBase;
-
 // Dataset classes (in alphabetical order)
 class BatchDataset;
+class BucketBatchByLengthDataset;
+class ConcatDataset;
+class CSVDataset;
+class FilterDataset;
 class MapDataset;
 class ProjectDataset;
-class ShuffleDataset;
-class BucketBatchByLengthDataset;
-class FilterDataset;
-class CSVDataset;
-class TransferDataset;
-class ConcatDataset;
 class RenameDataset;
-
-class SentencePieceVocab;
-enum class SentencePieceModel;
-
-class DSCallback;
-
 class RepeatDataset;
+class ShuffleDataset;
 class SkipDataset;
 class TakeDataset;
+class TransferDataset;
 class ZipDataset;
 
 /// \class Dataset datasets.h
@@ -241,7 +235,7 @@ class DATASET_API Dataset : public std::enable_shared_from_this<Dataset> {
   ///    corresponds to the value to pad with. If a column is not specified, then that column will be padded to the
   ///    longest in the current batch, and 0 will be used as the padding value. Any unspecified dimensions will be
   ///    padded to the longest in the current batch, unless if pad_to_bucket_boundary is true. If no padding is
-  ///    wanted, set pad_info to None (default=empty dictionary).
+  ///    wanted, set pad_info to empty map (default=empty map).
   /// \param[in] pad_to_bucket_boundary If true, will pad each unspecified dimension in pad_info to the
   ///    bucket_boundary minus 1. If there are any elements that fall into the last bucket,
   ///    an error will occur (default=false).
@@ -332,7 +326,7 @@ class DATASET_API Dataset : public std::enable_shared_from_this<Dataset> {
   /// \endcode
   std::shared_ptr<ConcatDataset> Concat(const std::vector<std::shared_ptr<Dataset>> &datasets) {
     std::vector<std::shared_ptr<Dataset>> all_datasets{shared_from_this()};
-    all_datasets.insert(std::end(all_datasets), std::begin(datasets), std::end(datasets));
+    (void)all_datasets.insert(all_datasets.end(), datasets.begin(), datasets.end());
     return std::make_shared<ConcatDataset>(all_datasets);
   }
 
@@ -388,7 +382,7 @@ class DATASET_API Dataset : public std::enable_shared_from_this<Dataset> {
   /// \code
   ///     // Create objects for the tensor ops
   ///     std::shared_ptr<TensorTransform> decode_op = std::make_shared<vision::Decode>(true);
-  ///     std::shared_ptr<TensorTransform> random_color_op = std::make_shared<vision::RandomColor>(0.0, 0.0);
+  ///     std::shared_ptr<TensorTransform> resize_op = std::make_shared<vision::Resize>({224, 224});
   ///
   ///     /* 1) Simple map example */
   ///     // Apply decode_op on column "image". This column will be replaced by the outputted
@@ -401,11 +395,11 @@ class DATASET_API Dataset : public std::enable_shared_from_this<Dataset> {
   ///    /* 2) Map example with more than one operation */
   ///    // Create a dataset where the images are decoded, then randomly color jittered.
   ///    // decode_op takes column "image" as input and outputs one column. The column
-  ///    // outputted by decode_op is passed as input to random_jitter_op.
-  ///    // random_jitter_op will output one column. Column "image" will be replaced by
-  ///    // the column outputted by random_jitter_op (the very last operation). All other
+  ///    // outputted by decode_op is passed as input to resize_op.
+  ///    // resize_op will output one column. Column "image" will be replaced by
+  ///    // the column outputted by resize_op (the very last operation). All other
   ///    // columns are unchanged.
-  ///    dataset = dataset->Map({decode_op, random_jitter_op}, {"image"})
+  ///    dataset = dataset->Map({decode_op, resize_op}, {"image"})
   /// \endcode
   std::shared_ptr<MapDataset> Map(const std::vector<TensorTransform *> &operations,
                                   const std::vector<std::string> &input_columns = {},
@@ -778,7 +772,7 @@ class DATASET_API BucketBatchByLengthDataset : public Dataset {
   ///    corresponds to the value to pad with. If a column is not specified, then that column will be padded to the
   ///    longest in the current batch, and 0 will be used as the padding value. Any unspecified dimensions will be
   ///    padded to the longest in the current batch, unless if pad_to_bucket_boundary is true. If no padding is
-  ///    wanted, set pad_info to None (default=empty dictionary).
+  ///    wanted, set pad_info to empty map (default=empty map).
   /// \param[in] pad_to_bucket_boundary If true, will pad each unspecified dimension in pad_info to the
   ///    bucket_boundary minus 1. If there are any elements that fall into the last bucket,
   ///    an error will occur (default=false).
@@ -2737,6 +2731,99 @@ inline std::shared_ptr<FlickrDataset> DATASET_API Flickr(const std::string &data
                                          cache);
 }
 
+/// \class Food101Dataset
+/// \brief A source dataset for reading and parsing Food101 dataset.
+class DATASET_API Food101Dataset : public Dataset {
+ public:
+  /// \brief Constructor of Food101Dataset.
+  /// \param[in] dataset_dir Path to the root directory that contains the dataset.
+  /// \param[in] usage The type of dataset. Acceptable usages include "train", "test" or "all".
+  /// \param[in] decode Decode the images after reading.
+  /// \param[in] sampler Shared pointer to a sampler object used to choose samples from the dataset.
+  /// \param[in] cache Tensor cache to use.
+  Food101Dataset(const std::vector<char> &dataset_dir, const std::vector<char> &usage, bool decode,
+                 const std::shared_ptr<Sampler> &sampler, const std::shared_ptr<DatasetCache> &cache);
+
+  /// \brief Constructor of Food101Dataset.
+  /// \param[in] dataset_dir Path to the root directory that contains the dataset.
+  /// \param[in] usage The type of dataset. Acceptable usages include "train", "test" or "all".
+  /// \param[in] decode Decode the images after reading.
+  /// \param[in] sampler Raw pointer to a sampler object used to choose samples from the dataset.
+  /// \param[in] cache Tensor cache to use.
+  Food101Dataset(const std::vector<char> &dataset_dir, const std::vector<char> &usage, bool decode,
+                 const Sampler *sampler, const std::shared_ptr<DatasetCache> &cache);
+
+  /// \brief Constructor of Food101Dataset.
+  /// \param[in] dataset_dir Path to the root directory that contains the dataset.
+  /// \param[in] usage The type of dataset. Acceptable usages include "train", "test" or "all".
+  /// \param[in] decode Decode the images after reading.
+  /// \param[in] sampler Sampler object used to choose samples from the dataset.
+  /// \param[in] cache Tensor cache to use.
+  Food101Dataset(const std::vector<char> &dataset_dir, const std::vector<char> &usage, bool decode,
+                 const std::reference_wrapper<Sampler> &sampler, const std::shared_ptr<DatasetCache> &cache);
+
+  /// \brief Destructor of Food101Dataset.
+  ~Food101Dataset() override = default;
+};
+
+/// \brief Function to create a Food101Dataset.
+/// \note The generated dataset has two columns ["image", "label"].
+/// \param[in] dataset_dir Path to the root directory that contains the dataset.
+/// \param[in] usage The type of dataset. Acceptable usages include "train", "test" or "all". Default: "all".
+/// \param[in] decode Decode the images after reading. Default: false.
+/// \param[in] sampler Shared pointer to a sampler object used to choose samples from the dataset. If sampler is not
+///     given, a `RandomSampler` will be used to randomly iterate the entire dataset. Default: RandomSampler().
+/// \param[in] cache Tensor cache to use. Default: nullptr, which means no cache is used.
+/// \return Shared pointer to the Food101Dataset.
+/// \par Example
+/// \code
+///      /* Define dataset path and MindData object */
+///      std::string dataset_path = "/path/to/Food101_dataset_directory";
+///      std::shared_ptr<Dataset> ds = Food101(dataset_path);
+///
+///      /* Create iterator to read dataset */
+///      std::shared_ptr<Iterator> iter = ds->CreateIterator();
+///      std::unordered_map<std::string, mindspore::MSTensor> row;
+///      iter->GetNextRow(&row);
+///
+///      /* Note: In Food101 dataset, each data dictionary has keys "image" and "label" */
+///      auto image = row["image"];
+/// \endcode
+inline std::shared_ptr<Food101Dataset> DATASET_API
+Food101(const std::string &dataset_dir, const std::string &usage = "all", bool decode = false,
+        const std::shared_ptr<Sampler> &sampler = std::make_shared<RandomSampler>(),
+        const std::shared_ptr<DatasetCache> &cache = nullptr) {
+  return std::make_shared<Food101Dataset>(StringToChar(dataset_dir), StringToChar(usage), decode, sampler, cache);
+}
+
+/// \brief Function to create a Food101Dataset
+/// \note The generated dataset has two columns ["image", "label"].
+/// \param[in] dataset_dir Path to the root directory that contains the dataset.
+/// \param[in] usage The type of dataset. Acceptable usages include "train", "test" or "all" .
+/// \param[in] decode Decode the images after reading.
+/// \param[in] sampler Raw pointer to a sampler object used to choose samples from the dataset.
+/// \param[in] cache Tensor cache to use. Default: nullptr, which means no cache is used.
+/// \return Shared pointer to the Food101Dataset.
+inline std::shared_ptr<Food101Dataset> DATASET_API Food101(const std::string &dataset_dir, const std::string &usage,
+                                                           bool decode, const Sampler *sampler,
+                                                           const std::shared_ptr<DatasetCache> &cache = nullptr) {
+  return std::make_shared<Food101Dataset>(StringToChar(dataset_dir), StringToChar(usage), decode, sampler, cache);
+}
+
+/// \brief Function to create a Food101Dataset.
+/// \note The generated dataset has two columns ["image", "label"].
+/// \param[in] dataset_dir Path to the root directory that contains the dataset.
+/// \param[in] usage The type of dataset. Acceptable usages include "train", "test" or "all".
+/// \param[in] decode Decode the images after reading.
+/// \param[in] sampler Sampler object used to choose samples from the dataset.
+/// \param[in] cache Tensor cache to use. Default: nullptr, which means no cache is used.
+/// \return Shared pointer to the Food101Dataset.
+inline std::shared_ptr<Food101Dataset> DATASET_API Food101(const std::string &dataset_dir, const std::string &usage,
+                                                           bool decode, const std::reference_wrapper<Sampler> &sampler,
+                                                           const std::shared_ptr<DatasetCache> &cache = nullptr) {
+  return std::make_shared<Food101Dataset>(StringToChar(dataset_dir), StringToChar(usage), decode, sampler, cache);
+}
+
 /// \class GTZANDataset
 /// \brief A source dataset for reading and parsing GTZAN dataset.
 class DATASET_API GTZANDataset : public Dataset {
@@ -3638,8 +3725,8 @@ class DATASET_API LSUNDataset : public Dataset {
   /// \param[in] sampler Sampler object used to choose samples from the dataset.
   /// \param[in] cache Tensor cache to use.
   LSUNDataset(const std::vector<char> &dataset_dir, const std::vector<char> &usage,
-              const std::vector<std::vector<char>> &classes, bool decode, const std::reference_wrapper<Sampler> sampler,
-              const std::shared_ptr<DatasetCache> &cache);
+              const std::vector<std::vector<char>> &classes, bool decode,
+              const std::reference_wrapper<Sampler> &sampler, const std::shared_ptr<DatasetCache> &cache);
 
   /// \brief Destructor of LSUNDataset.
   ~LSUNDataset() override = default;
@@ -4789,6 +4876,99 @@ std::shared_ptr<RandomDataDataset> DATASET_API RandomData(const int32_t &total_r
   return ds;
 }
 
+/// \class RenderedSST2Dataset
+/// \brief A source dataset for reading and parsing RenderedSST2 dataset.
+class DATASET_API RenderedSST2Dataset : public Dataset {
+ public:
+  /// \brief Constructor of RenderedSST2Dataset.
+  /// \param[in] dataset_dir Path to the root directory that contains the dataset.
+  /// \param[in] usage The type of dataset. Acceptable usages include "train", "test", "val" or "all".
+  /// \param[in] decode Decode the images after reading.
+  /// \param[in] sampler Shared pointer to a sampler object used to choose samples from the dataset.
+  /// \param[in] cache Tensor cache to use.
+  RenderedSST2Dataset(const std::vector<char> &dataset_dir, const std::vector<char> &usage, bool decode,
+                      const std::shared_ptr<Sampler> &sampler, const std::shared_ptr<DatasetCache> &cache);
+
+  /// \brief Constructor of RenderedSST2Dataset.
+  /// \param[in] dataset_dir Path to the root directory that contains the dataset.
+  /// \param[in] usage The type of dataset. Acceptable usages include "train", "test", "val" or "all".
+  /// \param[in] decode Decode the images after reading.
+  /// \param[in] sampler Raw pointer to a sampler object used to choose samples from the dataset.
+  /// \param[in] cache Tensor cache to use.
+  RenderedSST2Dataset(const std::vector<char> &dataset_dir, const std::vector<char> &usage, bool decode,
+                      const Sampler *sampler, const std::shared_ptr<DatasetCache> &cache);
+
+  /// \brief Constructor of RenderedSST2Dataset.
+  /// \param[in] dataset_dir Path to the root directory that contains the dataset.
+  /// \param[in] usage The type of dataset. Acceptable usages include "train", "test", "val" or "all".
+  /// \param[in] decode Decode the images after reading.
+  /// \param[in] sampler Sampler object used to choose samples from the dataset.
+  /// \param[in] cache Tensor cache to use.
+  RenderedSST2Dataset(const std::vector<char> &dataset_dir, const std::vector<char> &usage, bool decode,
+                      const std::reference_wrapper<Sampler> &sampler, const std::shared_ptr<DatasetCache> &cache);
+
+  /// \brief Destructor of RenderedSST2Dataset.
+  ~RenderedSST2Dataset() override = default;
+};
+
+/// \brief Function to create a RenderedSST2Dataset.
+/// \note The generated dataset has two columns ["image", "label"].
+/// \param[in] dataset_dir Path to the root directory that contains the dataset.
+/// \param[in] usage The type of dataset. Acceptable usages include "train", "test", "val" or "all". Default: "all".
+/// \param[in] decode Decode the images after reading. Default: false.
+/// \param[in] sampler Shared pointer to a sampler object used to choose samples from the dataset. If sampler is not
+///     given, a `RandomSampler` will be used to randomly iterate the entire dataset. Default: RandomSampler().
+/// \param[in] cache Tensor cache to use. Default: nullptr, which means no cache is used.
+/// \return Shared pointer to the RenderedSST2Dataset.
+/// \par Example
+/// \code
+///      /* Define dataset path and MindData object */
+///      std::string dataset_path = "/path/to/RenderedSST2_dataset_directory";
+///      std::shared_ptr<Dataset> ds = RenderedSST2(dataset_path);
+///
+///      /* Create iterator to read dataset */
+///      std::shared_ptr<Iterator> iter = ds->CreateIterator();
+///      std::unordered_map<std::string, mindspore::MSTensor> row;
+///      iter->GetNextRow(&row);
+///
+///      /* Note: In RenderedSST2 dataset, each data dictionary has keys "image" and "label" */
+///      auto image = row["image"];
+/// \endcode
+inline std::shared_ptr<RenderedSST2Dataset> DATASET_API
+RenderedSST2(const std::string &dataset_dir, const std::string &usage = "all", bool decode = false,
+             const std::shared_ptr<Sampler> &sampler = std::make_shared<RandomSampler>(),
+             const std::shared_ptr<DatasetCache> &cache = nullptr) {
+  return std::make_shared<RenderedSST2Dataset>(StringToChar(dataset_dir), StringToChar(usage), decode, sampler, cache);
+}
+
+/// \brief Function to create a RenderedSST2Dataset
+/// \note The generated dataset has two columns ["image", "label"].
+/// \param[in] dataset_dir Path to the root directory that contains the dataset.
+/// \param[in] usage The type of dataset. Acceptable usages include "train", "test", "val" or "all".
+/// \param[in] decode Decode the images after reading.
+/// \param[in] sampler Raw pointer to a sampler object used to choose samples from the dataset.
+/// \param[in] cache Tensor cache to use. Default: nullptr, which means no cache is used.
+/// \return Shared pointer to the RenderedSST2Dataset.
+inline std::shared_ptr<RenderedSST2Dataset> DATASET_API
+RenderedSST2(const std::string &dataset_dir, const std::string &usage, bool decode, const Sampler *sampler,
+             const std::shared_ptr<DatasetCache> &cache = nullptr) {
+  return std::make_shared<RenderedSST2Dataset>(StringToChar(dataset_dir), StringToChar(usage), decode, sampler, cache);
+}
+
+/// \brief Function to create a RenderedSST2Dataset.
+/// \note The generated dataset has two columns ["image", "label"].
+/// \param[in] dataset_dir Path to the root directory that contains the dataset.
+/// \param[in] usage The type of dataset. Acceptable usages include "train", "test", "val" or "all".
+/// \param[in] decode Decode the images after reading.
+/// \param[in] sampler Raw pointer to a sampler object used to choose samples from the dataset.
+/// \param[in] cache Tensor cache to use. Default: nullptr, which means no cache is used.
+/// \return Shared pointer to the RenderedSST2Dataset.
+inline std::shared_ptr<RenderedSST2Dataset> DATASET_API
+RenderedSST2(const std::string &dataset_dir, const std::string &usage, bool decode,
+             const std::reference_wrapper<Sampler> &sampler, const std::shared_ptr<DatasetCache> &cache = nullptr) {
+  return std::make_shared<RenderedSST2Dataset>(StringToChar(dataset_dir), StringToChar(usage), decode, sampler, cache);
+}
+
 /// \class SBUDataset
 /// \brief A source dataset that reads and parses SBU dataset.
 class DATASET_API SBUDataset : public Dataset {
@@ -5144,6 +5324,63 @@ inline std::shared_ptr<SQuADDataset> DATASET_API SQuAD(const std::string &datase
                                         num_shards, shard_id, cache);
 }
 
+/// \class SST2Dataset
+/// \brief A source dataset for reading and parsing SST2 dataset.
+class DATASET_API SST2Dataset : public Dataset {
+ public:
+  /// \brief Constructor of SST2Dataset.
+  /// \param[in] dataset_dir Path to the root directory that contains the dataset.
+  /// \param[in] usage Part of dataset of SST2, can be "train", "test" or "dev".
+  /// \param[in] num_samples The number of samples to be included in the dataset.
+  /// \param[in] shuffle The mode for shuffling data every epoch.
+  ///     Can be any of:
+  ///     ShuffleMode.kFalse - No shuffling is performed.
+  ///     ShuffleMode.kGlobal - Shuffle the samples.
+  /// \param[in] num_shards Number of shards that the dataset should be divided into.
+  /// \param[in] shard_id The shard ID within num_shards. This argument should be
+  ///     specified only when num_shards is also specified.
+  /// \param[in] cache Tensor cache to use.
+  SST2Dataset(const std::vector<char> &dataset_dir, const std::vector<char> &usage, int64_t num_samples,
+              ShuffleMode shuffle, int32_t num_shards, int32_t shard_id, const std::shared_ptr<DatasetCache> &cache);
+
+  /// \brief Destructor of SST2.
+  ~SST2Dataset() override = default;
+};
+
+/// \brief Function to create a SST2Dataset.
+/// \param[in] dataset_dir Path to the root directory that contains the dataset.
+/// \param[in] usage Part of dataset of SST2, can be "train", "test" or "dev". Default: "train".
+/// \param[in] num_samples The number of samples to be included in the dataset.
+///     Default: 0, means all samples.
+/// \param[in] shuffle The mode for shuffling data every epoch. Default: ShuffleMode::kGlobal.
+///     Can be any of:
+///     ShuffleMode::kFalse - No shuffling is performed.
+///     ShuffleMode::kGlobal - Shuffle both the files and samples.
+/// \param[in] num_shards Number of shards that the dataset should be divided into. Default: 1.
+/// \param[in] shard_id The shard ID within num_shards. This argument should be
+///     specified only when num_shards is also specified. Default: 0.
+/// \param[in] cache Tensor cache to use. Default: nullptr, which means no cache is used.
+/// \return Shared pointer to the SST2Dataset
+/// \par Example
+/// \code
+///      /* Define dataset path and MindData object */
+///      std::string folder_path = "/path/to/sst2_dataset_directory";
+///      std::shared_ptr<Dataset> ds = SST2(folder_path, "train");
+///
+///      /* Create iterator to read dataset */
+///      std::shared_ptr<Iterator> iter = ds->CreateIterator();
+///      std::unordered_map<std::string, mindspore::MSTensor> row;
+///      iter->GetNextRow(&row);
+/// \endcode
+inline std::shared_ptr<SST2Dataset> DATASET_API SST2(const std::string &dataset_dir, const std::string &usage = "train",
+                                                     int64_t num_samples = 0,
+                                                     ShuffleMode shuffle = ShuffleMode::kGlobal, int32_t num_shards = 1,
+                                                     int32_t shard_id = 0,
+                                                     const std::shared_ptr<DatasetCache> &cache = nullptr) {
+  return std::make_shared<SST2Dataset>(StringToChar(dataset_dir), StringToChar(usage), num_samples, shuffle, num_shards,
+                                       shard_id, cache);
+}
+
 /// \class STL10Dataset
 /// \brief A source dataset that reads and parses STL10 dataset.
 class DATASET_API STL10Dataset : public Dataset {
@@ -5219,6 +5456,94 @@ inline std::shared_ptr<STL10Dataset> DATASET_API STL10(const std::string &datase
                                                        const std::reference_wrapper<Sampler> &sampler,
                                                        const std::shared_ptr<DatasetCache> &cache = nullptr) {
   return std::make_shared<STL10Dataset>(StringToChar(dataset_dir), StringToChar(usage), sampler, cache);
+}
+
+/// \class SUN397Dataset.
+/// \brief A source dataset that reads and parses SUN397 dataset.
+class DATASET_API SUN397Dataset : public Dataset {
+ public:
+  /// \brief Constructor of SUN397Dataset.
+  /// \param[in] dataset_dir Path to the root directory that contains the dataset.
+  /// \param[in] decode Decode the images after reading.
+  /// \param[in] sampler Shared pointer to a sampler object used to choose samples from the dataset. If sampler is not
+  ///     given, a `RandomSampler` will be used to randomly iterate the entire dataset.
+  /// \param[in] cache Tensor cache to use.
+  SUN397Dataset(const std::vector<char> &dataset_dir, bool decode, const std::shared_ptr<Sampler> &sampler,
+                const std::shared_ptr<DatasetCache> &cache);
+
+  /// \brief Constructor of SUN397Dataset.
+  /// \param[in] dataset_dir Path to the root directory that contains the dataset.
+  /// \param[in] decode Decode the images after reading.
+  /// \param[in] sampler Raw pointer to a sampler object used to choose samples from the dataset.
+  /// \param[in] cache Tensor cache to use.
+  SUN397Dataset(const std::vector<char> &dataset_dir, bool decode, const Sampler *sampler,
+                const std::shared_ptr<DatasetCache> &cache);
+
+  /// \brief Constructor of SUN397Dataset.
+  /// \param[in] dataset_dir Path to the root directory that contains the dataset.
+  /// \param[in] decode Decode the images after reading.
+  /// \param[in] sampler Sampler object used to choose samples from the dataset.
+  /// \param[in] cache Tensor cache to use.
+  SUN397Dataset(const std::vector<char> &dataset_dir, bool decode, const std::reference_wrapper<Sampler> &sampler,
+                const std::shared_ptr<DatasetCache> &cache);
+
+  /// \brief Destructor of SUN397Dataset.
+  ~SUN397Dataset() override = default;
+};
+
+/// \brief Function to create a SUN397Dataset.
+/// \note The generated dataset has two columns ["image", "label"].
+/// \param[in] dataset_dir Path to the root directory that contains the dataset.
+/// \param[in] decode Decode the images after reading. Default: true.
+/// \param[in] sampler Shared pointer to a sampler object used to choose samples
+///     be used to randomly iterate the entire dataset. Default: RandomSampler().
+/// \param[in] cache Tensor cache to use. Default: nullptr, which means no cache is used.
+/// \return Shared pointer to the current SUN397Dataset.
+/// \par Example
+/// \code
+///      /* Define dataset path and MindData object */
+///      std::string folder_path = "/path/to/sun397_dataset_directory";
+///      std::shared_ptr<Dataset> ds = SUN397(folder_path, false, std::make_shared<RandomSampler>(false, 5));
+///
+///      /* Create iterator to read dataset */
+///      std::shared_ptr<Iterator> iter = ds->CreateIterator();
+///      std::unordered_map<std::string, mindspore::MSTensor> row;
+///      iter->GetNextRow(&row);
+///
+///      /* Note: In SUN397 dataset dataset, each dictionary has keys "image" and "label" */
+///      auto image = row["image"];
+/// \endcode
+inline std::shared_ptr<SUN397Dataset> DATASET_API
+SUN397(const std::string &dataset_dir, bool decode = true,
+       const std::shared_ptr<Sampler> &sampler = std::make_shared<RandomSampler>(),
+       const std::shared_ptr<DatasetCache> &cache = nullptr) {
+  return std::make_shared<SUN397Dataset>(StringToChar(dataset_dir), decode, sampler, cache);
+}
+
+/// \brief Function to create a SUN397Dataset.
+/// \note The generated dataset has two columns ["image", "label"].
+/// \param[in] dataset_dir Path to the root directory that contains the dataset.
+/// \param[in] decode Decode the images after reading.
+/// \param[in] sampler Raw pointer to a sampler object used to choose samples from the dataset.
+/// \param[in] cache Tensor cache to use. Default: nullptr, which means no cache is used.
+/// \return Shared pointer to the current SUN397Dataset.
+inline std::shared_ptr<SUN397Dataset> DATASET_API SUN397(const std::string &dataset_dir, bool decode,
+                                                         const Sampler *sampler,
+                                                         const std::shared_ptr<DatasetCache> &cache = nullptr) {
+  return std::make_shared<SUN397Dataset>(StringToChar(dataset_dir), decode, sampler, cache);
+}
+
+/// \brief Function to create a SUN397Dataset.
+/// \note The generated dataset has two columns ["image", "label"].
+/// \param[in] dataset_dir Path to the root directory that contains the dataset.
+/// \param[in] decode Decode the images after reading.
+/// \param[in] sampler Sampler object used to choose samples from the dataset.
+/// \param[in] cache Tensor cache to use. Default: nullptr, which means no cache is used.
+/// \return Shared pointer to the current SUN397Dataset.
+inline std::shared_ptr<SUN397Dataset> DATASET_API SUN397(const std::string &dataset_dir, bool decode,
+                                                         const std::reference_wrapper<Sampler> &sampler,
+                                                         const std::shared_ptr<DatasetCache> &cache = nullptr) {
+  return std::make_shared<SUN397Dataset>(StringToChar(dataset_dir), decode, sampler, cache);
 }
 
 /// \class TedliumDataset
@@ -5399,11 +5724,14 @@ class DATASET_API TFRecordDataset : public Dataset {
   /// \param[in] columns_list List of columns to be read. (Default = {}, read all columns).
   /// \param[in] num_samples The number of samples to be included in the dataset.
   ///     (Default = 0 means all samples).
-  ///     If `num_samples` is 0 and numRows(parsed from schema) does not exist, read the full dataset;
-  ///     If `num_samples` is 0 and numRows(parsed from schema) is greater than 0, read numRows rows;
-  ///     If both `num_samples` and numRows(parsed from schema) are greater than 0, read `num_samples` rows.
-  ///     If `compression_type` is not None, then num_samples is a mandatory parameter and it is
-  ///     for the number of rows that is be read per shard from the compressed files.
+  ///     Processing priority for `num_samples` is as the following:
+  ///     1. If `num_samples` is greater than 0, read `num_samples` rows.
+  ///     2. Otherwise, if numRows (parsed from `schema` ) is greater than 0, read numRows rows.
+  ///     3. Otherwise, read the full dataset.
+  ///     `num_samples` or numRows (parsed from `schema` ) will be interpreted as number of rows per shard.
+  ///     It is highly recommended to provide `num_samples` or numRows (parsed from `schema` )
+  ///     when `compression_type` is "GZIP" or "ZLIB" to avoid performance degradation due to multiple
+  ///     decompressions of the same file to obtain the file size.
   /// \param[in] shuffle The mode for shuffling data every epoch. (Default = ShuffleMode::kGlobal).
   ///     Can be any of:
   ///     ShuffleMode::kFalse - No shuffling is performed.
@@ -5414,7 +5742,8 @@ class DATASET_API TFRecordDataset : public Dataset {
   ///     when num_shards is also specified. (Default = 0).
   /// \param[in] shard_equal_rows Get equal rows for all shards.
   ///     (Default = false, number of rows of each shard may be not equal).
-  ///     When `compression_type` is provided, `shard_equal_rows` will be ignored and considered as true.
+  ///     When `compression_type` is "GZIP" or "ZLIB", and `num_samples` or numRows (parsed from `schema` ) is
+  ///     provided, shard_equal_rows` will be implied as true.
   /// \param[in] cache Tensor cache to use (default=nullptr which means no cache is used).
   /// \param[in] compression_type Compression type to use.
   ///     (Default = "", which means no compression is used).
@@ -5422,8 +5751,6 @@ class DATASET_API TFRecordDataset : public Dataset {
   ///     "" - No compression is used.
   ///     "GZIP" - GZIP compression is used.
   ///     "ZLIB" - ZLIB compression is used.
-  ///     This will automatically get equal rows for all shards and thus cannot have the case
-  ///     where `num_samples` is None.
   TFRecordDataset(const std::vector<std::vector<char>> &dataset_files, const std::vector<char> &schema,
                   const std::vector<std::vector<char>> &columns_list, int64_t num_samples, ShuffleMode shuffle,
                   int32_t num_shards, int32_t shard_id, bool shard_equal_rows,
@@ -5437,11 +5764,14 @@ class DATASET_API TFRecordDataset : public Dataset {
   /// \param[in] columns_list List of columns to be read (Default = {}, read all columns).
   /// \param[in] num_samples The number of samples to be included in the dataset
   ///     (Default = 0 means all samples).
-  ///     If num_samples is 0 and numRows(parsed from schema) does not exist, read the full dataset;
-  ///     If num_samples is 0 and numRows(parsed from schema) is greater than 0, read numRows rows;
-  ///     If both num_samples and numRows(parsed from schema) are greater than 0, read num_samples rows.
-  ///     If `compression_type` is not None, then num_samples is a mandatory parameter and it is
-  ///     for the number of rows that is be read per shard from the compressed files.
+  ///     Processing priority for `num_samples` is as the following:
+  ///     1. If `num_samples` is greater than 0, read `num_samples` rows.
+  ///     2. Otherwise, if numRows (parsed from `schema` ) is greater than 0, read numRows rows.
+  ///     3. Otherwise, read the full dataset.
+  ///     `num_samples` or numRows (parsed from `schema` ) will be interpreted as number of rows per shard.
+  ///     It is highly recommended to provide `num_samples` or numRows (parsed from `schema` )
+  ///     when `compression_type` is "GZIP" or "ZLIB" to avoid performance degradation due to multiple
+  ///     decompressions of the same file to obtain the file size.
   /// \param[in] shuffle The mode for shuffling data every epoch. (Default = ShuffleMode::kGlobal).
   ///     Can be any of:
   ///     ShuffleMode::kFalse - No shuffling is performed.
@@ -5452,7 +5782,8 @@ class DATASET_API TFRecordDataset : public Dataset {
   ///     when num_shards is also specified. (Default = 0).
   /// \param[in] shard_equal_rows Get equal rows for all shards.
   ///     (Default = false, number of rows of each shard may be not equal).
-  ///     When `compression_type` is provided, `shard_equal_rows` will be ignored and considered as true.
+  ///     When `compression_type` is "GZIP" or "ZLIB", and `num_samples` or numRows (parsed from `schema` ) is
+  ///     provided, shard_equal_rows` will be implied as true.
   /// \param[in] cache Tensor cache to use (default=nullptr which means no cache is used).
   /// \param[in] compression_type Compression type to use.
   ///     (Default = "", which means no compression is used).
@@ -5460,9 +5791,6 @@ class DATASET_API TFRecordDataset : public Dataset {
   ///     "" - No compression is used.
   ///     "GZIP" - GZIP compression is used.
   ///     "ZLIB" - ZLIB compression is used.
-  ///     This will automatically get equal rows for all shards and thus cannot have the case
-  ///     where `num_samples` is None.
-
   TFRecordDataset(const std::vector<std::vector<char>> &dataset_files, const std::shared_ptr<SchemaObj> &schema,
                   const std::vector<std::vector<char>> &columns_list, int64_t num_samples, ShuffleMode shuffle,
                   int32_t num_shards, int32_t shard_id, bool shard_equal_rows,
@@ -5480,11 +5808,14 @@ class DATASET_API TFRecordDataset : public Dataset {
 /// \param[in] columns_list List of columns to be read (Default = {}, read all columns).
 /// \param[in] num_samples The number of samples to be included in the dataset
 ///     (Default = 0 means all samples).
-///     If num_samples is 0 and numRows(parsed from schema) does not exist, read the full dataset;
-///     If num_samples is 0 and numRows(parsed from schema) is greater than 0, read numRows rows;
-///     If both num_samples and numRows(parsed from schema) are greater than 0, read num_samples rows.
-///     If `compression_type` is not None, then num_samples is a mandatory parameter and it is
-///     for the number of rows that is be read per shard from the compressed files.
+///     Processing priority for `num_samples` is as the following:
+///     1. If `num_samples` is greater than 0, read `num_samples` rows.
+///     2. Otherwise, if numRows (parsed from `schema` ) is greater than 0, read numRows rows.
+///     3. Otherwise, read the full dataset.
+///     `num_samples` or numRows (parsed from `schema` ) will be interpreted as number of rows per shard.
+///     It is highly recommended to provide `num_samples` or numRows (parsed from `schema` )
+///     when `compression_type` is "GZIP" or "ZLIB" to avoid performance degradation due to multiple
+///     decompressions of the same file to obtain the file size.
 /// \param[in] shuffle The mode for shuffling data every epoch. (Default = ShuffleMode::kGlobal).
 ///     Can be any of:
 ///     ShuffleMode::kFalse - No shuffling is performed.
@@ -5495,7 +5826,8 @@ class DATASET_API TFRecordDataset : public Dataset {
 ///     when num_shards is also specified. (Default = 0).
 /// \param[in] shard_equal_rows Get equal rows for all shards.
 ///     (Default = false, number of rows of each shard may be not equal).
-///     When `compression_type` is provided, `shard_equal_rows` will be ignored and considered as true.
+///     When `compression_type` is "GZIP" or "ZLIB", and `num_samples` or numRows (parsed from `schema` ) is
+///     provided, shard_equal_rows` will be implied as true.
 /// \param[in] cache Tensor cache to use (default=nullptr which means no cache is used).
 /// \param[in] compression_type Compression type to use.
 ///     (Default = "", which means no compression is used).
@@ -5503,8 +5835,6 @@ class DATASET_API TFRecordDataset : public Dataset {
 ///     "" - No compression is used.
 ///     "GZIP" - GZIP compression is used.
 ///     "ZLIB" - ZLIB compression is used.
-///     This will automatically get equal rows for all shards and thus cannot have the case
-///     where `num_samples` is None.
 /// \return Shared pointer to the TFRecordDataset.
 /// \par Example
 /// \code
@@ -5535,15 +5865,7 @@ TFRecord(const std::vector<std::string> &dataset_files, const T &schema = nullpt
                                            VectorStringToChar(columns_list), num_samples, shuffle, num_shards, shard_id,
                                            shard_equal_rows, cache, StringToChar(compression_type));
   } else {
-    std::string schema_path = schema;
-    if (!schema_path.empty()) {
-      struct stat sb {};
-      int rc = stat(schema_path.c_str(), &sb);
-      if (rc != 0) {
-        return nullptr;
-      }
-    }
-    ds = std::make_shared<TFRecordDataset>(VectorStringToChar(dataset_files), StringToChar(schema_path),
+    ds = std::make_shared<TFRecordDataset>(VectorStringToChar(dataset_files), StringToChar(schema),
                                            VectorStringToChar(columns_list), num_samples, shuffle, num_shards, shard_id,
                                            shard_equal_rows, cache, StringToChar(compression_type));
   }

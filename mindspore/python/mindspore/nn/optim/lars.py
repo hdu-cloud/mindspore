@@ -18,7 +18,7 @@ from __future__ import absolute_import
 from mindspore.ops import operations as P
 from mindspore.ops import composite as C
 from mindspore.ops import functional as F
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.common import Tensor, Parameter, dtype as mstype
 from mindspore.common.api import jit
 from mindspore.nn.optim.optimizer import _grad_scale, Optimizer
@@ -83,14 +83,14 @@ class LARS(Optimizer):
         \end{array}
 
     :math:`w` represents the network parameters, :math:`g` represents `gradients`,
-    :math:`t` represents the current step, :math:`\delta` represents `weight_decay` in `optimizer`,
+    :math:`t` represents the current step, :math:`\lambda` represents `weight_decay` in `optimizer`,
     :math:`\gamma` represents `learning_rate` in `optimizer`, :math:`\eta` represents `coefficient`.
 
     Args:
-        optimizer (Optimizer): MindSpore optimizer for which to wrap and modify gradients.
-        epsilon (float): Term added to the denominator to improve numerical stability. Default: 1e-05.
-        coefficient (float): Trust coefficient for calculating the local learning rate. Default: 0.001.
-        use_clip (bool): Whether to use clip operation for calculating the local learning rate. Default: False.
+        optimizer (:class:`mindspore.nn.Optimizer`): MindSpore optimizer for which to wrap and modify gradients.
+        epsilon (float): Term added to the denominator to improve numerical stability. Default: ``1e-05`` .
+        coefficient (float): Trust coefficient for calculating the local learning rate. Default: ``0.001`` .
+        use_clip (bool): Whether to use clip operation for calculating the local learning rate. Default: ``False`` .
         lars_filter (Function): A function to determine which of the network parameters to use LARS algorithm. Default:
                                 lambda x: 'LayerNorm' not in x.name and 'bias' not in x.name.
 
@@ -108,11 +108,13 @@ class LARS(Optimizer):
         >>> import mindspore as ms
         >>> from mindspore import nn
         >>>
-        >>> net = Net()
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> loss = nn.SoftmaxCrossEntropyWithLogits()
         >>> opt = nn.Momentum(net.trainable_params(), 0.1, 0.9)
         >>> opt_lars = nn.LARS(opt, epsilon=1e-08, coefficient=0.02)
-        >>> model = ms.Model(net, loss_fn=loss, optimizer=opt_lars, metrics=None)
+        >>> model = ms.train.Model(net, loss_fn=loss, optimizer=opt_lars, metrics=None)
     """
 
     @opt_init_args_register

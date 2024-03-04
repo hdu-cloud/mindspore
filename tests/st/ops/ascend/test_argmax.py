@@ -17,9 +17,11 @@ import pytest
 
 import mindspore.context as context
 import mindspore.nn as nn
-from mindspore import Tensor, ops
+from mindspore import Tensor
 from mindspore.common.api import jit
 from mindspore.ops import operations as P
+from mindspore.ops import functional as F
+from mindspore.common import dtype as mstype
 
 context.set_context(device_target="Ascend")
 
@@ -42,24 +44,25 @@ def test_net():
     print(output.asnumpy())
 
 
-def adaptive_argmax_functional(nptype):
-    x = Tensor(np.array([[1, 20, 5], [67, 8, 9], [130, 24, 15]]).astype(nptype))
-    output = ops.argmax(x, axis=-1)
-    expected = np.array([1, 0, 0]).astype(np.int32)
-    np.testing.assert_array_almost_equal(output.asnumpy(), expected)
+class ArgmaxFuncNet(nn.Cell):
+    def construct(self, x):
+        return F.argmax(x, dim=-1)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
-def test_argmax_float32_functional():
+@pytest.mark.parametrize('mode', [context.GRAPH_MODE, context.PYNATIVE_MODE])
+def test_functional_argmax(mode):
     """
-    Feature: test argmax functional api.
-    Description: test float32 inputs.
+    Feature: Test argmax functional api.
+    Description: Test argmax functional api for Graph and PyNative modes.
     Expectation: the result match with expected result.
     """
-    context.set_context(mode=context.GRAPH_MODE, device_target="Ascend")
-    adaptive_argmax_functional(np.float32)
-    context.set_context(mode=context.PYNATIVE_MODE, device_target="Ascend")
-    adaptive_argmax_functional(np.float32)
+    context.set_context(mode=mode, device_target="Ascend")
+    x = Tensor([[1, 20, 5], [67, 8, 9], [130, 24, 15]], mstype.float32)
+    net = ArgmaxFuncNet()
+    output = net(x)
+    expect_output = np.array([1, 0, 0]).astype(np.int32)
+    assert np.allclose(output.asnumpy(), expect_output)

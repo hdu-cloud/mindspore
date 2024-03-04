@@ -22,7 +22,8 @@
 #include <vector>
 #include <string>
 #include <algorithm>
-#include "mindspore/core/ops/core_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "include/common/utils/utils.h"
 #include "frontend/parallel/tensor_layout/construct_operator.h"
 #include "frontend/parallel/step_parallel.h"
@@ -54,7 +55,7 @@ std::vector<parallel::Group> InferRepeatedRankList(const CNodePtr &cnode) {
   OperatorInfoPtr operator_info = cnode->user_data<parallel::OperatorInfo>();
   std::vector<parallel::TensorInfo> output_info = operator_info->outputs_tensor_info();
   if (output_info.size() != 1) {
-    MS_LOG(EXCEPTION) << "The output_info size is wrong, node is" << cnode->DebugString();
+    MS_LOG(INTERNAL_EXCEPTION) << "The output_info size is wrong, node is" << cnode->DebugString();
   }
   auto tensor_layout = output_info[0].tensor_layout();
   auto tensor_map = tensor_layout.origin_tensor_map();
@@ -93,6 +94,20 @@ void GroupingNextNodes(const CNodePtr &node, std::vector<std::pair<std::shared_p
   }
 }
 
+void CreateGroupForSliceAllGatherInMicroInterleaved(const CNodePtr &allgather_cnode, const std::string &group_name) {
+  auto micro_interleaved_index = GetValue<size_t>(allgather_cnode->GetAttr(parallel::MICRO_INTERLEAVED_TAG));
+  auto rank_ids = parallel::g_device_manager->FindRankListByHashName(group_name);
+  auto dev_list = parallel::g_device_manager->CreateDeviceListByRankList(rank_ids);
+  if (group_name.find("slice_act") != std::string::npos) {
+    return;
+  }
+  auto new_group_name = group_name + "_slice_act_" + std::to_string(micro_interleaved_index);
+  parallel::Group cur_device_list;
+  (void)parallel::g_device_manager->CreateGroup(new_group_name, dev_list, &cur_device_list);
+  auto allgather_prim = GetCNodePrimitive(allgather_cnode);
+  (void)allgather_prim->AddAttr(parallel::GROUP, MakeValue<std::string>(new_group_name));
+}
+
 void InsertSliceAllGatherNode(const std::vector<std::pair<std::shared_ptr<AnfNode>, int>> &node_users,
                               const std::pair<std::shared_ptr<AnfNode>, int> &forward_node_user,
                               const std::shared_ptr<CNode> &node, std::vector<CNodePtr> *slice_allgathers,
@@ -115,7 +130,7 @@ void InsertSliceAllGatherNode(const std::vector<std::pair<std::shared_ptr<AnfNod
   }
   auto group = groups[0];
   if (group.GetDevNum() == 0) {
-    MS_LOG(EXCEPTION) << "The dev num of group should not be 0.";
+    MS_LOG(INTERNAL_EXCEPTION) << "The dev num of group should not be 0.";
   }
   if (out_shape_element[0] % SizeToLong(group.GetDevNum()) != 0) {
     MS_LOG(WARNING) << "The output_shape first dim:" << out_shape_element[0]
@@ -145,6 +160,15 @@ void InsertSliceAllGatherNode(const std::vector<std::pair<std::shared_ptr<AnfNod
   if (node->HasPrimalAttr(parallel::MICRO)) {
     allgather_cnode->AddPrimalAttr(parallel::MICRO, node->GetPrimalAttr(parallel::MICRO));
   }
+
+  if (node->HasAttr(parallel::MICRO_INTERLEAVED_TAG)) {
+    allgather_cnode->AddAttr(parallel::MICRO_INTERLEAVED_TAG, node->GetAttr(parallel::MICRO_INTERLEAVED_TAG));
+    static const auto micro_interleaved_extra_comm_group = (common::GetEnv("interleaved_extra_group") == "1");
+    if (micro_interleaved_extra_comm_group) {
+      CreateGroupForSliceAllGatherInMicroInterleaved(allgather_cnode, group.name());
+    }
+  }
+
   (void)manager->Replace(slice_cnode, allgather_cnode);
   slice_allgathers->push_back(allgather_cnode);
 
@@ -190,6 +214,30 @@ void InsertAllGatherDepend(const FuncGraphPtr &graph, const std::vector<CNodePtr
   manager->SetEdge(last_allgather, 1, allgather_depend_node);
 }
 
+void InsertAllGatherDependWithMicroInterleaved(const FuncGraphPtr &graph,
+                                               const std::vector<CNodePtr> &slice_allgathers) {
+  if (!parallel::ParallelContext::GetInstance()->enable_micro_interleaved()) {
+    InsertAllGatherDepend(graph, slice_allgathers);
+    return;
+  }
+  std::unordered_map<size_t, std::vector<CNodePtr>> slice_allgather_micro_interleaved;
+  for (const auto &allgather_node : slice_allgathers) {
+    if (!allgather_node->HasAttr(parallel::MICRO_INTERLEAVED_TAG)) {
+      MS_LOG(WARNING) << "The slice activation nodes cannot split to multi micro interleaved part.";
+      parallel::ParallelContext::GetInstance()->set_enable_micro_interleaved(false);
+      InsertAllGatherDepend(graph, slice_allgathers);
+      break;
+    }
+    auto micro_interleaved_index = GetValue<size_t>(allgather_node->GetAttr(parallel::MICRO_INTERLEAVED_TAG));
+    slice_allgather_micro_interleaved[micro_interleaved_index].push_back(allgather_node);
+  }
+  for (const auto &micro_interleaved_allgather_pairs : slice_allgather_micro_interleaved) {
+    MS_LOG(INFO) << "Insert allgather depend for micro interleaved index " << micro_interleaved_allgather_pairs.first
+                 << ", allgather num is " << micro_interleaved_allgather_pairs.second.size();
+    InsertAllGatherDepend(graph, micro_interleaved_allgather_pairs.second);
+  }
+}
+
 void SpreadRecomputeDepend(const FuncGraphManagerPtr &manager, const std::vector<CNodePtr> &origin_nodes_topological) {
   std::vector<CNodePtr> depend_cnodes;
   for (auto &node : origin_nodes_topological) {
@@ -219,9 +267,24 @@ void SpreadRecomputeDepend(const FuncGraphManagerPtr &manager, const std::vector
 }
 }  // namespace
 
+bool IsCurrentMicro(int64_t micro, int64_t current_micro) {
+  bool tmp_flag = true;
+  if (parallel::ParallelContext::GetInstance()->enable_fold_pipeline()) {
+    tmp_flag = (micro != current_micro);
+  } else {
+    tmp_flag = (micro > current_micro);
+  }
+  return tmp_flag;
+}
 void SliceRecomputedActivationNodes(const FuncGraphPtr &graph) {
   if (parallel::ParallelContext::GetInstance()->parallel_mode() != parallel::kSemiAutoParallel &&
       parallel::ParallelContext::GetInstance()->parallel_mode() != parallel::kAutoParallel) {
+    return;
+  }
+  auto context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  const auto cell_reuse = context->CellReuseLevel() != CellReuseLevel::kNoCellReuse;
+  if (cell_reuse) {
     return;
   }
   MS_EXCEPTION_IF_NULL(graph);
@@ -257,10 +320,10 @@ void SliceRecomputedActivationNodes(const FuncGraphPtr &graph) {
         MS_LOG(EXCEPTION) << "In pipeline parallel mode, cannot find 'micro' attributes in node.";
       }
       int64_t micro = GetValue<int64_t>(slice_allgather_node->GetPrimalAttr(parallel::MICRO));
-      if (micro > current_micro) {
+      if (IsCurrentMicro(micro, current_micro)) {
         if (current_micro != -1) {
           MS_LOG(INFO) << "Insert allgather depends, micro is: " << current_micro;
-          InsertAllGatherDepend(graph, stage_slice_allgathers);
+          InsertAllGatherDependWithMicroInterleaved(graph, stage_slice_allgathers);
         }
         stage_slice_allgathers.clear();
         stage_slice_allgathers.push_back(slice_allgather_node);
@@ -272,9 +335,9 @@ void SliceRecomputedActivationNodes(const FuncGraphPtr &graph) {
       }
     }
     MS_LOG(INFO) << "Insert last stage allgather depends, micro is: " << current_micro;
-    InsertAllGatherDepend(graph, stage_slice_allgathers);
+    InsertAllGatherDependWithMicroInterleaved(graph, stage_slice_allgathers);
   } else {
-    InsertAllGatherDepend(graph, slice_allgathers);
+    InsertAllGatherDependWithMicroInterleaved(graph, slice_allgathers);
   }
 }
 }  // namespace opt

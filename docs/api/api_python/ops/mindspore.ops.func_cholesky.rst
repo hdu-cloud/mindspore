@@ -3,7 +3,7 @@ mindspore.ops.cholesky
 
 .. py:function:: mindspore.ops.cholesky(input_x, upper=False)
 
-    计算对称正定矩阵 :math:`A` 或一批对称正定矩阵的Cholesky分解。
+    计算对称正定矩阵或一批对称正定矩阵的Cholesky分解。
 
     如果 `upper` 为True，则返回的矩阵 :math:`U` 为上三角矩阵，分解形式为：
 
@@ -17,7 +17,7 @@ mindspore.ops.cholesky
 
     参数：
         - **input_x** (Tensor) - shape大小为 :math:`(*, N, N)` ，其中 :math:`*` 是零个或多个由对称正定矩阵组成的批处理维，数据类型为float32或float64。
-        - **upper** (bool) - 是否返回上三角矩阵还是下三角矩阵的标志。默认值：False。
+        - **upper** (bool) - 是否返回上三角矩阵还是下三角矩阵的标志。默认值：``False`` 。
 
     返回：
         Tensor，shape和数据类型与 `input_x` 相同。

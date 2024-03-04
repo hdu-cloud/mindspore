@@ -28,14 +28,13 @@ from mindspore.ops import functional as F
 from mindspore.ops import operations as P
 from mindspore.ops.composite.multitype_ops.zeros_like_impl import zeros_like
 from mindspore.ops.primitive import constexpr, PrimitiveWithInfer, prim_attr_register
-from mindspore.ops._grad.grad_base import bprop_getters
+from mindspore.ops._grad_experimental.grad_base import bprop_getters
 from mindspore.ops._utils.utils import generate_shape_index
 from mindspore import Tensor, context
 from mindspore.common.parameter import Parameter, ParameterTuple
 from mindspore.common.sparse_tensor import RowTensorInner
 from mindspore.common import dtype as mstype
-from mindspore._checkparam import Validator as validator
-from mindspore._checkparam import Rel
+from mindspore import _checkparam as validator
 from mindspore.nn import Optimizer
 from mindspore.nn import TrainOneStepCell, WithLossCell
 from mindspore.nn.optim import Momentum
@@ -114,13 +113,13 @@ class MySparseGatherV2(PrimitiveWithInfer):
         self.add_prim_attr('bprop_return_sparse', True)
 
     def __infer__(self, params, indices, axis):
-        validator.check_subclass("params", params['dtype'], mstype.tensor, self.name)
+        validator.check_subclass("params", params['dtype'], mstype.tensor_type, self.name)
         validator.check_tensor_dtype_valid("indices", indices['dtype'], mstype.int_type, self.name)
         validator.check_subclass("axis", axis['dtype'], mstype.int_, self.name)
         axis_v = axis['value']
         params_shp = params['shape']
         rank = len(params_shp)
-        validator.check_int_range(axis_v, -rank, rank, Rel.INC_LEFT, "axis", self.name)
+        validator.check_int_range(axis_v, -rank, rank, validator.INC_LEFT, "axis", self.name)
         if axis_v < 0:
             axis_v += rank
         out_shape = params_shp[:axis_v] + indices['shape'] + params_shp[axis_v + 1:]
@@ -211,8 +210,8 @@ def _check_param_value(beta1, beta2, eps, weight_decay, prim_name):
     validator.check_value_type("beta2", beta2, [float], prim_name)
     validator.check_value_type("eps", eps, [float], prim_name)
     validator.check_value_type("weight_dacay", weight_decay, [float], prim_name)
-    validator.check_float_range(beta1, 0.0, 1.0, Rel.INC_NEITHER, "beta1", prim_name)
-    validator.check_float_range(beta2, 0.0, 1.0, Rel.INC_NEITHER, "beta2", prim_name)
+    validator.check_float_range(beta1, 0.0, 1.0, validator.INC_NEITHER, "beta1", prim_name)
+    validator.check_float_range(beta2, 0.0, 1.0, validator.INC_NEITHER, "beta2", prim_name)
     validator.check_positive_float(eps, "eps", prim_name)
     validator.check_non_negative_float(weight_decay, "weight_decay", prim_name)
 

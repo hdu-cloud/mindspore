@@ -13,15 +13,18 @@
 # limitations under the License.
 # ============================================================================
 import os
+import sys
 import ast
 import inspect
 
 from mindspore.nn import Cell, Conv2d, BatchNorm2d, ReLU
 from mindspore.ops import Add
-from mindspore.rewrite import ScopedValue, ValueType, NodeType
+from mindspore.rewrite import ScopedValue, ValueType
 from mindspore.rewrite import Node as NodeApi
+from mindspore.rewrite import SymbolTree as SymbolTreeApi
 from mindspore.rewrite.symbol_tree import SymbolTree
 from mindspore.rewrite.node import Node
+from mindspore import nn, ops
 from .utils import get_symbol_tree_nodes_count
 
 
@@ -105,10 +108,6 @@ def test_insert_node():
     """
     stree, _, relu1, relu2 = create_symbol_tree()
     construct_ast: ast.FunctionDef = getattr(stree, "_root_ast")
-    providers = getattr(getattr(stree, "_topo_mgr"), "_target_provider")
-    consumers = getattr(getattr(stree, "_topo_mgr"), "_target_consumer")
-    providers_len = len(providers)
-    consumers_len = len(consumers)
     assert get_symbol_tree_nodes_count(stree) == 7
     assert len(construct_ast.body) == 6
     assert len(relu1.get_targets()) == 1
@@ -120,8 +119,7 @@ def test_insert_node():
                                        [ScopedValue.create_naming_value('x'),
                                         ScopedValue.create_variable_value(input1)], {},
                                        'new_conv')
-    position = stree.before(relu2)
-    node = stree.insert_node(position, node)
+    node = stree.insert_node(node, relu2, True)
     # check nodes size
     assert get_symbol_tree_nodes_count(stree) == 8
     # check args
@@ -129,20 +127,35 @@ def test_insert_node():
     assert relu1.get_targets()[0] == list(relu2.get_normalized_args().values())[0]
     assert len(node.get_normalized_args().values()) == 2
     assert list(node.get_normalized_args().values())[0] == ScopedValue.create_naming_value('x')
-    assert list(node.get_normalized_args().values())[1].type == ValueType.IntValue
-    # check provider
-    assert len(providers) == providers_len + 1
-    assert len(node.get_targets()) == 1
-    assert providers.get(node.get_targets()[0])[0] == node
-    assert providers.get(node.get_targets()[0])[1] == 0
-    # check consumer
-    assert len(consumers) == consumers_len + 1
-    assert consumers.get(list(node.get_normalized_args().values())[1]) is not None
+    assert list(node.get_normalized_args().values())[1].type == ValueType.ConstantValue
+    # check relu1 target users
+    target_users = stree.get_node("relu1").get_target_users(0)
+    assert len(target_users) == 1
+    target_user = target_users[0]
+    assert target_user[0] == stree.get_node("new_conv")
+    assert target_user[1] == 0
+    # check new_conv arg providers
+    arg_providers = stree.get_node("new_conv").get_arg_providers()
+    assert len(arg_providers) == 1
+    arg_provider = arg_providers[0]
+    assert arg_provider[0] == stree.get_node("relu1")
+    assert arg_provider[1] == 0
+    # check new_conv target users
+    target_users = stree.get_node("new_conv").get_target_users(0)
+    assert len(target_users) == 1
+    target_user = target_users[0]
+    assert target_user[0] == stree.get_node("relu2")
+    assert target_user[1] == 0
+    # check relu2 arg providers
+    arg_providers = stree.get_node("relu2").get_arg_providers()
+    assert len(arg_providers) == 1
+    arg_provider = arg_providers[0]
+    assert arg_provider[0] == stree.get_node("new_conv")
+    assert arg_provider[1] == 0
     # check inputs
     assert len(relu2.get_inputs()) == 1
-    assert relu2.get_inputs()[0] == relu1
+    assert relu2.get_inputs()[0] == node
     assert len(node.get_inputs()) == 1
-    assert node.get_inputs()[0].get_node_type() == NodeType.Input
     # check ast
     node_ast = node.get_ast()
     assert isinstance(node_ast, ast.Assign)
@@ -168,10 +181,9 @@ def test_insert_node_before_input():
                                         ScopedValue.create_variable_value(input1)], {},
                                        'new_conv')
     input_node = stree.get_inputs()[0]
-    position = stree.before(input_node)
     failed = False
     try:
-        stree.insert_node(position, node)
+        stree.insert_node(node, input_node, True)
     except RuntimeError:
         failed = True
     assert failed
@@ -186,7 +198,6 @@ def test_set_node_arg():
     stree, bn, relu1, relu2 = create_symbol_tree()
     assert get_symbol_tree_nodes_count(stree) == 7
     assert len(bn.get_targets()) == 1
-    bn_output = bn.get_targets()[0]
     # check bn topological order
     assert len(stree.get_node_users(bn)) == 1
     assert stree.get_node_users(bn)[0][0] == relu1
@@ -202,7 +213,9 @@ def test_set_node_arg():
     assert len(relu1.get_targets()) == 1
     assert len(relu2.get_normalized_args().values()) == 1
     assert relu1.get_targets()[0] == list(relu2.get_normalized_args().values())[0]
-
+    stree.set_node_target(bn, 0, 'x1')
+    bn_output = bn.get_targets()[0]
+    stree.set_node_arg(relu1, 0, bn_output)
     stree.set_node_arg(relu2, 0, bn_output)
     # check bn topological order
     assert len(stree.get_node_users(bn)) == 2
@@ -238,7 +251,6 @@ def test_set_node_arg_by_node():
     stree, bn, relu1, relu2 = create_symbol_tree()
     assert get_symbol_tree_nodes_count(stree) == 7
     assert len(bn.get_targets()) == 1
-    bn_output = bn.get_targets()[0]
     # check bn topological order
     assert len(stree.get_node_users(bn)) == 1
     assert stree.get_node_users(bn)[0][0] == relu1
@@ -255,6 +267,8 @@ def test_set_node_arg_by_node():
     assert len(relu2.get_normalized_args().values()) == 1
     assert relu1.get_targets()[0] == list(relu2.get_normalized_args().values())[0]
 
+    stree.set_node_target(bn, 0, "x1")
+    stree.set_node_arg_by_node(relu1, 0, bn)
     stree.set_node_arg_by_node(relu2, 0, bn)
     # check bn topological order
     assert len(stree.get_node_users(bn)) == 2
@@ -270,6 +284,7 @@ def test_set_node_arg_by_node():
     # check bn and relu2 edge
     assert len(relu1.get_targets()) == 1
     assert len(relu2.get_normalized_args().values()) == 1
+    bn_output = bn.get_targets()[0]
     assert bn_output == list(relu2.get_normalized_args().values())[0]
     # check ast
     node_ast = relu2.get_ast()
@@ -287,34 +302,25 @@ def test_erase_succeed():
     Description: Call erase_node to erase a node from SymbolTree.
     Expectation: Success.
     """
-    stree, bn, relu1, relu2 = create_symbol_tree()
+    stree, _, relu1, _ = create_symbol_tree()
     construct_ast: ast.FunctionDef = getattr(stree, "_root_ast")
-    providers = getattr(getattr(stree, "_topo_mgr"), "_target_provider")
-    providers_len = len(providers)
     assert get_symbol_tree_nodes_count(stree) == 7
     assert len(construct_ast.body) == 6
 
-    stree.set_node_arg_by_node(relu2, 0, bn)
     stree.erase_node(relu1)
 
     assert get_symbol_tree_nodes_count(stree) == 6
-    assert len(providers) == providers_len - 1
+    # check node bn target_users
+    bn_target_users = stree.get_node("bn").get_target_users(0)
+    assert len(bn_target_users) == 1
+    assert bn_target_users[0][0] == stree.get_node("relu2")
+    assert bn_target_users[0][1] == 0
+    #check node rulu2 arg_providers
+    relu2_arg_providers = stree.get_node("relu2").get_arg_providers()
+    assert len(relu2_arg_providers) == 1
+    assert relu2_arg_providers[0][0] == stree.get_node("bn")
+    assert relu2_arg_providers[0][1] == 0
     assert len(construct_ast.body) == 5
-
-
-def test_erase_failed():
-    """
-    Feature: Python api erase_node of SymbolTree of Rewrite.
-    Description: Call erase_node to erase a node from SymbolTree which is not isolated.
-    Expectation: Failure.
-    """
-    stree, _, relu1, _ = create_symbol_tree()
-    catched_error = False
-    try:
-        stree.erase_node(relu1)
-    except RuntimeError:
-        catched_error = True
-    assert catched_error
 
 
 def test_replace_one_to_one():
@@ -329,7 +335,7 @@ def test_replace_one_to_one():
     assert get_symbol_tree_nodes_count(stree) == 7
 
     new_conv = Conv2d(16, 16, 5)
-    new_conv_node = NodeApi.create_call_cell(new_conv, [ScopedValue.create_naming_value("new_conv")],
+    new_conv_node = NodeApi.create_call_cell(new_conv, [relu1.get_targets()[0]],
                                              bn.get_targets()).get_handler()
     new_conv_node = stree.replace(relu1, [new_conv_node])
     assert get_symbol_tree_nodes_count(stree) == 7
@@ -391,9 +397,9 @@ def test_replace_one_to_multi():
 
     new_conv_node = NodeApi.create_call_cell(Conv2d(16, 16, 5), [ScopedValue.create_naming_value("new_conv")],
                                              bn.get_targets()).get_handler()
-    new_relu_node = NodeApi.create_call_cell(ReLU(), [ScopedValue.create_naming_value("new_relu")],
+    new_relu_node = NodeApi.create_call_cell(ReLU(), [relu1.get_targets()[0]],
                                              new_conv_node.get_targets()).get_handler()
-    new_relu_node = stree.replace(relu1, [new_relu_node, new_conv_node])
+    new_relu_node = stree.replace(relu1, [new_conv_node, new_relu_node])
     new_conv_node = new_relu_node.get_inputs()[0]
 
     assert get_symbol_tree_nodes_count(stree) == 8
@@ -468,3 +474,129 @@ def test_save_network_to_file():
     assert os.path.exists("./new_network.py")
 
     os.system("rm -f new_network.py")
+
+
+def external_func(x):
+    x = ops.abs(x)
+    return x
+
+
+class SubSubNet(nn.Cell):
+    def __init__(self):
+        super().__init__()
+        self.relu = nn.ReLU()
+        self.abs = ops.Abs()
+
+    def construct(self, x):
+        x = self.relu(x)
+        x = external_func(x)
+        x = self.subsubnet_internal_func(x)
+        return x
+
+    def subsubnet_internal_func(self, x):
+        x = self.abs(x)
+        return x
+
+
+class SubNet(nn.Cell):
+    def __init__(self):
+        super().__init__()
+        self.subsubnet = SubSubNet()
+        self.abs = ops.Abs()
+        self.relu = nn.ReLU()
+
+    def construct(self, x):
+        x = self.relu(x)
+        x = external_func(x)
+        x = self.subnet_internal_func(x)
+        return x
+
+    def subnet_internal_func(self, x):
+        x = self.abs(x)
+        x = self.subsubnet(x)
+        return x
+
+
+class MyNet(nn.Cell):
+    def __init__(self):
+        super().__init__()
+        self.relu = nn.ReLU()
+        self.sub_net = SubNet()
+        self.abs = ops.Abs()
+
+    def construct(self, x):
+        x = self.relu(x)
+        x = external_func(x)
+        x = self.internal_func(x)
+        return x
+
+    def internal_func(self, x):
+        x = self.sub_net(self.abs(x))
+        return x
+
+
+def test_nodes():
+    """
+    Feature: Python api nodes of SymbolTree of Rewrite.
+    Description: Call nodes to get nodes from symbol tree.
+    Expectation: Success.
+    """
+    net = MyNet()
+    stree = SymbolTreeApi.create(net)
+    assert len(list(stree.nodes())) == 5
+    assert len(list(stree.nodes(True))) == 26
+    sub_tree = SymbolTreeApi(stree.get_node("sub_net").get_handler().symbol_tree)
+    assert len(list(sub_tree.nodes())) == 5
+    assert len(list(sub_tree.nodes(True))) == 17
+    sub_sub_tree = SymbolTreeApi(sub_tree.get_node("subsubnet").get_handler().symbol_tree)
+    assert len(list(sub_sub_tree.nodes())) == 5
+    assert len(list(sub_sub_tree.nodes(True))) == 8
+
+def test_print_node_tabulate():
+    """
+    Feature: Python api print_node_tabulate of SymbolTree of Rewrite.
+    Description: Call print_node_tabulate from symbol tree.
+    Expectation: Success.
+    """
+    class PrintRedirect:
+        content = ""
+        def write(self, string):
+            self.content += string
+        def flush(self):
+            self.content = ""
+
+    net = MyNet()
+    stree = SymbolTreeApi.create(net)
+    try:
+        from tabulate import tabulate # pylint: disable=unused-import,reportMissingModuleSource
+    except ImportError:
+        # tabulate is not installed
+        return
+
+    # tabulate is installed
+    redirecter = PrintRedirect()
+    sys_stdout = sys.stdout
+    sys.stdout = redirecter
+    stree.print_node_tabulate(False)
+    sys.stdout = sys_stdout
+    assert redirecter.content.count("NodeType.Input         input_x        x                          "
+                                    "[]                           [[0, [('relu', 0)]]]") == 1
+    assert redirecter.content.count("NodeType.CallCell      relu           x = self.relu(x)           "
+                                    "[[0, ('input_x', 0)]]        [[0, [('external_func', 0)]]]") == 1
+    assert redirecter.content.count("NodeType.CallFunction  external_func  x = external_func(x)       "
+                                    "[[0, ('relu', 0)]]           [[0, [('internal_func', 0)]]]") == 1
+    assert redirecter.content.count("NodeType.CallFunction  internal_func  x = self.internal_func(x)  "
+                                    "[[0, ('external_func', 0)]]  [[0, [('return_1', 0)]]]") == 1
+    assert redirecter.content.count("NodeType.Output        return_1       return x                   "
+                                    "[[0, ('internal_func', 0)]]  []") == 1
+    redirecter = PrintRedirect()
+    sys_stdout = sys.stdout
+    sys.stdout = redirecter
+    stree.print_node_tabulate(True)
+    sys.stdout = sys_stdout
+    assert redirecter.content.count("NodeType.CallFunction  subnet_internal_func  x = self.subnet_internal_func"
+                                    "(x)  [[0, ('external_func', 0)]]         [[0, [('return_1', 0)]]]") == 1
+    assert redirecter.content.count("NodeType.Tree           subsubnet  x = self.subsubnet(x)  [[0, ('abs', 0)]"
+                                    "]        [[0, [('return', 0)]]]") == 1
+    assert redirecter.content.count("NodeType.CallFunction  subsubnet_internal_func  x = self.subsubnet_internal_func"
+                                    "(x)  [[0, ('external_func', 0)]]            [[0, [('return_1', 0)]]]") == 1

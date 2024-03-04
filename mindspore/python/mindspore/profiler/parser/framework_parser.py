@@ -14,27 +14,28 @@
 # ============================================================================
 """The parser for parsing framework files."""
 import csv
+import glob
+import json
 import os
+import stat
 import re
 import struct
-import json
-from pathlib import Path
-from typing import List
 from collections import defaultdict
 from collections import namedtuple
-import glob
-import numpy as np
+from pathlib import Path
+from typing import List
 
+import numpy as np
 from mindspore import log as logger
-from mindspore.profiler.parser.framework_struct import TASK_DESC_STRUCT, TENSOR_DATA_STRUCT, STEP_INFO_STRUCT
-from mindspore.profiler.parser.framework_enum import VmDataType, VmFormat, FileDataType, MSPROF_DIFFERENCE
-from mindspore.profiler.parser.framework_enum import MSPROF_MIX_DATA_STRING
-from mindspore.profiler.common.struct_type import StructType
-from mindspore.profiler.common.util import combine_stream_task_id
 from mindspore.profiler.common.exceptions.exceptions import ProfilerDirNotFoundException
 from mindspore.profiler.common.exceptions.exceptions import ProfilerFileNotFoundException
 from mindspore.profiler.common.exceptions.exceptions import ProfilerParamValueErrorException
+from mindspore.profiler.common.struct_type import StructType
+from mindspore.profiler.common.util import combine_stream_task_id
 from mindspore.profiler.common.validator.validate_path import validate_and_normalize_path
+from mindspore.profiler.parser.framework_enum import MSPROF_MIX_DATA_STRING
+from mindspore.profiler.parser.framework_enum import VmDataType, VmFormat, FileDataType, MSPROF_DIFFERENCE
+from mindspore.profiler.parser.framework_struct import TASK_DESC_STRUCT, TENSOR_DATA_STRUCT, STEP_INFO_STRUCT
 from mindspore.profiler.parser.profiler_info import ProfilerInfo
 
 FILE_DATA_STRUCT_DICT = {
@@ -43,8 +44,19 @@ FILE_DATA_STRUCT_DICT = {
     FileDataType.TASK_DESC_INFO.value: TASK_DESC_STRUCT
 }
 
-COL_NAMES = ['task_id', 'stream_id', 'block_dim', 'full_op_name', 'op_name', 'op_type', 'subgraph', 'op_info',
-             'graph_id']
+TASK_TYPE_TO_KERNEL_TYPE = {
+    0: 'AI_CORE',
+    1: 'AI_CPU',
+    2: 'MSPROF_AIV',
+    10: 'MSPROF_HCCL',
+    11: 'MSPROF_RTS',
+    1000: 'MSPROF_UNKNOWN_TYPE'
+}
+
+COL_NAMES = [
+    'task_id', 'stream_id', 'block_dim', 'full_op_name', 'op_name', 'op_type', 'subgraph', 'op_info',
+    'graph_id', 'kernel_type'
+]
 OpData = namedtuple('OpData', field_names=COL_NAMES)
 
 
@@ -58,6 +70,8 @@ class FrameworkParser:
         output_path (str): The directory of the parsed file. Default: `./`.
     """
     _regex_framework = r'Framework\.(?P<data_type>.+)\.(?P<device_id>\d).+'
+    _host_regex_framework = r'Framework\.(?P<data_type>.+)\.+'
+    _match_framework_file = r'Framework*[0-9]'
     _graph_attr_name = [
         'input_format', 'input_data_type', 'input_shape', 'output_format',
         'output_data_type', 'output_shape'
@@ -211,10 +225,11 @@ class FrameworkParser:
 
     @staticmethod
     def _write_framework_to_file(all_op_data: List[OpData], output_file):
-        with open(output_file, 'w') as file_handler:
+        with os.fdopen(os.open(output_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as file_handler:
             csv_writer = csv.writer(file_handler)
             csv_writer.writerow(COL_NAMES)
             csv_writer.writerows(all_op_data)
+        os.chmod(output_file, stat.S_IREAD | stat.S_IWRITE)
 
     @staticmethod
     def _get_subgraph_name(full_op_name):
@@ -239,7 +254,7 @@ class FrameworkParser:
         Args:
             op_name (str): The operator name or operator name prefix.
             is_prefix (bool): `True` if the op_name is prefix, else `False`.
-                Default: True.
+                Default: ``True``.
 
         Returns:
             bool, `True` if the operator name does exist in framework file, else
@@ -297,17 +312,25 @@ class FrameworkParser:
             ProfilerFileNotFoundException: If the framework files are not found.
         """
         data_dir = os.path.join(profiling_path, 'data')
-        if not os.path.isdir(data_dir):
+        host_data_dir = os.path.join(profiling_path, '../host/data')
+        if not os.path.isdir(data_dir) and not os.path.isdir(host_data_dir):
             raise ProfilerDirNotFoundException(data_dir)
 
         framework_path_dict = defaultdict(list)
-        for file in Path(data_dir).glob(r'Framework*[0-9]'):
+        file_list = [f for f in Path(data_dir).glob(self._match_framework_file)]
+        if not file_list:
+            file_list = [f for f in Path(host_data_dir).glob(self._match_framework_file)]
+
+        for file in file_list:
             file_name = file.name
+
             match = re.search(self._regex_framework, file_name)
             if match is None:
-                logger.warning("Profiler does not support to analyse file(%s), this file name format is not %s, "
-                               "skip this file.", file.resolve(), self._regex_framework)
-                continue
+                match = re.search(self._host_regex_framework, file_name)
+                if match is None:
+                    logger.warning("Profiler does not support to analyse file(%s), this file name format is not %s, "
+                                   "skip this file.", file.resolve(), self._regex_framework)
+                    continue
 
             if match['data_type'] not in FileDataType.members():
                 logger.warning("Profiler does not support to analyse file(%s), this file data type is %s, "
@@ -405,8 +428,10 @@ class FrameworkParser:
                              op_type=task_desc['opType'],
                              subgraph=subgraph,
                              op_info=json.dumps(task_id_op_attr_dict.get(combined_task_id, {})),
-                             graph_id=task_desc['modelId'])
-            graph_ids.add(task_desc['modelId'])
+                             graph_id=task_desc['modelId'],
+                             kernel_type=TASK_TYPE_TO_KERNEL_TYPE.get(task_desc.get('taskType')))
+            if not task_desc['opType'].startswith("InitDataSetQueue") and not task_desc['opType'].startswith("GetNext"):
+                graph_ids.add(task_desc['modelId'])
             all_op_data.append(op_data)
         ProfilerInfo.set_graph_ids(list(graph_ids))
         return all_op_data
@@ -524,14 +549,18 @@ class GpuFrameWorkParser:
                 op_total_time = float(line_info[-4])
                 if not self.op_detail.get(op_name):
                     # line_info[4]: op_occurrences, line_info[5]: op_detail_time(us), line_info[6]: op_avg_time(us);
-                    self.op_detail[op_name] = [op_occurrences, op_total_time,
-                                               round(op_total_time / op_occurrences, 4), op_side]
+                    self.op_detail[op_name] = [
+                        op_occurrences, op_total_time,
+                        round(op_total_time / op_occurrences, 4), op_side
+                    ]
                 else:
                     self.op_detail.get(op_name)[1] += op_total_time
                     self.op_detail.get(op_name)[2] = self.op_detail.get(op_name)[1] / self.op_detail.get(op_name)[0]
-                    self.op_detail[op_name] = [self.op_detail.get(op_name)[0],
-                                               round(self.op_detail.get(op_name)[1], 4),
-                                               round(self.op_detail.get(op_name)[2], 4), op_side]
+                    self.op_detail[op_name] = [
+                        self.op_detail.get(op_name)[0],
+                        round(self.op_detail.get(op_name)[1], 4),
+                        round(self.op_detail.get(op_name)[2], 4), op_side
+                    ]
 
     def combine_performance_data(self, op_name):
         """Combine operator detail info with framework info."""
@@ -549,13 +578,15 @@ class GpuFrameWorkParser:
                 op_occurrences = int(op_detail[0])
                 op_total_time = float(op_detail[1])
                 op_avg_time = float(op_detail[2])
-                if op_shape in op_shape_dict.keys():
+                if op_shape in op_shape_dict:
                     # Classify according to the operator information of the same shape.
                     op_shape_dict.get(op_shape)[0] += op_occurrences
                     op_shape_dict.get(op_shape)[1] += op_total_time
                     op_shape_dict.get(op_shape)[2] = op_shape_dict.get(op_shape)[1] / op_shape_dict.get(op_shape)[0]
-                    op_shape_dict[op_shape] = [op_shape_dict.get(op_shape)[0], round(op_shape_dict.get(op_shape)[1], 4),
-                                               round(op_shape_dict.get(op_shape)[2], 4), op_side]
+                    op_shape_dict[op_shape] = [
+                        op_shape_dict.get(op_shape)[0], round(op_shape_dict.get(op_shape)[1], 4),
+                        round(op_shape_dict.get(op_shape)[2], 4), op_side
+                    ]
                 else:
                     op_shape_dict[op_shape] = [op_occurrences, op_total_time, op_avg_time, op_side]
 
@@ -648,8 +679,9 @@ class GpuFrameWorkParser:
             "kernel_type": kernel_type_step_time,
         }
         dynamic_shape_file_path = os.path.join(self._output_path, output_dynamic_shape_file_name)
-        with os.fdopen(os.open(dynamic_shape_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o660), 'w') as fp:
+        with os.fdopen(os.open(dynamic_shape_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as fp:
             json.dump(result, fp)
+        os.chmod(dynamic_shape_file_path, stat.S_IREAD | stat.S_IWRITE)
 
     def get_graph_ids(self):
         """Get gpu graph ids."""
@@ -661,7 +693,7 @@ class GpuFrameWorkParser:
         with open(gpu_framework_file[0], 'r') as f_obj:
             framework_info = f_obj.readlines()
         for line_info in framework_info:
-            if line_info.startswith("InitDataSetQueue"):
+            if line_info.startswith("InitDataSetQueue") or line_info.startswith("GetNext"):
                 continue
             line_info = line_info.strip(' ').strip('\n').split(';')
             if len(line_info) > 2 and line_info[2].isdigit():
@@ -681,13 +713,14 @@ class GpuFrameWorkParser:
                 "grid_dim": args.get('grid_dim')
             }
         else:
+            op_step_shape = self.op_step_shape_info.get(op_info.get('name'))
             item = {
                 "step": step,
                 "op_side": self.op_step_shape_info.get(op_info.get('name'))[0],
                 "op_type": op_info.get('name').split('-')[0],
                 "op_name": op_info.get('name'),
                 "dur": op_info.get('dur'),
-                "shape_info": self.op_step_shape_info.get(op_info.get('name'))[step],
+                "shape_info": op_step_shape[step] if len(op_step_shape) > step else [],
             }
         return item
 
@@ -702,10 +735,12 @@ class GpuFrameWorkParser:
             else:
                 self.one_step_op_time[sort_type][0] += duration
                 self.one_step_op_time[sort_type][1] += 1
-                self.one_step_op_time[sort_type] = [self.one_step_op_time[sort_type][0],
-                                                    self.one_step_op_time[sort_type][1],
-                                                    round(self.one_step_op_time[sort_type][0] /
-                                                          self.one_step_op_time[sort_type][1], 4)]
+                self.one_step_op_time[sort_type] = [
+                    self.one_step_op_time[sort_type][0],
+                    self.one_step_op_time[sort_type][1],
+                    round(self.one_step_op_time[sort_type][0] /
+                          self.one_step_op_time[sort_type][1], 4)
+                ]
         else:
             sort_type = item.get("op_name")
             op_full_name = item.get("op_full_name")
@@ -715,11 +750,13 @@ class GpuFrameWorkParser:
             else:
                 self.one_step_kernel_time[sort_type][0] += duration
                 self.one_step_kernel_time[sort_type][1] += 1
-                self.one_step_kernel_time[sort_type] = [self.one_step_kernel_time[sort_type][0],
-                                                        self.one_step_kernel_time[sort_type][1],
-                                                        round(self.one_step_kernel_time[sort_type][0] /
-                                                              self.one_step_kernel_time[sort_type][1], 4),
-                                                        op_full_name]
+                self.one_step_kernel_time[sort_type] = [
+                    self.one_step_kernel_time[sort_type][0],
+                    self.one_step_kernel_time[sort_type][1],
+                    round(self.one_step_kernel_time[sort_type][0] /
+                          self.one_step_kernel_time[sort_type][1], 4),
+                    op_full_name
+                ]
 
 
 class DynamicFrameWorkParser:
@@ -743,9 +780,9 @@ class DynamicFrameWorkParser:
         self._dynamic_shape_info = defaultdict(list)
         self._step = 0
 
-    def write_dynamic_shape_data(self):
+    def write_dynamic_shape_data(self, df_op_summary):
         """Analyze dynamic shape data and write to dynamic shape file."""
-        self._get_total_step_num()
+        self._get_total_step_num(df_op_summary)
         output_dynamic_shape_file_name = f'dynamic_shape_info_{self._rank_id}.json'
         for op_name in self._exe_time_and_shape_detail:
             if self._exe_time_and_shape_detail[op_name]['op_exe_occurrences'] == self._step:
@@ -766,41 +803,23 @@ class DynamicFrameWorkParser:
                               len(self._op_type_exe_time[op_type]), 4)).tolist()
         self._dynamic_shape_info['op_type'] = self._op_info.get("op_type")
         dynamic_shape_file_path = os.path.join(self._output_path, output_dynamic_shape_file_name)
-        with os.fdopen(os.open(dynamic_shape_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o660), 'w') as fp:
+        with os.fdopen(os.open(dynamic_shape_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as fp:
             json.dump(self._dynamic_shape_info, fp)
+        os.chmod(dynamic_shape_file_path, stat.S_IREAD | stat.S_IWRITE)
 
-    def _analyse_op_execute_time(self):
+    def _analyse_op_execute_time(self, op_summary):
         """Obtain the execution time of aicpu operator and aicore operator."""
-        timeline_origin_file_name = f'output_timeline_data_{self._rank_id}.txt'
-        aicpu_file_name = f'aicpu_intermediate_{self._rank_id}.csv'
-        timeline_origin_file_path = os.path.join(self._output_path, timeline_origin_file_name)
-        timeline_origin_file_path = validate_and_normalize_path(timeline_origin_file_path)
-        aicpu_file_path = os.path.join(self._output_path, aicpu_file_name)
+        timeline_info = defaultdict(list)
+        for row in op_summary:
+            key = row['Op Name'].split('/')[-1]
+            timeline_info[key].append(row['Task Duration'])
 
-        def read_file(file_path):
-            """Read file data."""
-            with open(file_path, 'r') as fp:
-                file_info = fp.readlines()[1:]
-                return file_info
+        self._all_op_exe_time = timeline_info
 
-        timeline_info = read_file(timeline_origin_file_path)
-        for line_info in timeline_info:
-            line_info = line_info.strip('\n').split(',')
-            op_name = line_info[0].split('/')[-1]
-            op_exe_time = float(line_info[3])
-            self._all_op_exe_time[op_name].append(op_exe_time)
-        if os.path.exists(aicpu_file_path):
-            aicpu_info = read_file(aicpu_file_path)
-            for line_info in aicpu_info:
-                line_info = line_info.strip('\n').split(',')
-                op_name = line_info[1]
-                op_exe_time = float(line_info[3])
-                self._all_op_exe_time[op_name].append(op_exe_time)
-
-    def _get_dynamic_shape_info(self):
+    def _get_dynamic_shape_info(self, op_summary):
         """Get the shape information of AICPU and aicore."""
         framework_file_name = f'framework_raw_{self._rank_id}.csv'
-        self._analyse_op_execute_time()
+        self._analyse_op_execute_time(op_summary)
         framework_file_path = os.path.join(self._output_path, framework_file_name)
         framework_file_path = validate_and_normalize_path(framework_file_path)
         with open(framework_file_path, 'r') as f_obj:
@@ -811,9 +830,9 @@ class DynamicFrameWorkParser:
                 shape_info = ','.join(line_info[7:]).replace('"', '')
                 self._op_shape_info[op_name].append(shape_info)
 
-    def _get_total_step_num(self):
+    def _get_total_step_num(self, op_summary):
         """Get the number of steps."""
-        self._get_dynamic_shape_info()
+        self._get_dynamic_shape_info(op_summary)
         all_exe_occurrences = list()
         for op_name in self._all_op_exe_time:
             op_shape = self._op_shape_info.get(op_name)

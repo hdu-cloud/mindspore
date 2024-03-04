@@ -28,6 +28,7 @@
 #include "securec/include/securec.h"
 #include "src/common/prim_util.h"
 #include "src/litert/lite_model.h"
+#include "base/float16.h"
 
 namespace mindspore::lite::micro {
 CoderGraph::~CoderGraph() {
@@ -41,11 +42,8 @@ CoderGraph::~CoderGraph() {
   }
 }
 
-int CoderGraph::ConvertTensors() {
-  if (model_ == nullptr) {
-    MS_LOG(ERROR) << "Graph model is nullptr";
-    return RET_ERROR;
-  }
+int CoderGraph::ConvertTensors(bool enable_fp16) {
+  MS_CHECK_PTR(model_);
   std::vector<Tensor *> all_tensors;
   auto clear_tensors = [&all_tensors]() {
     std::for_each(all_tensors.begin(), all_tensors.end(), [](Tensor *&t) {
@@ -83,13 +81,27 @@ int CoderGraph::ConvertTensors() {
     if (origin_tensor->nodeType() == NodeType_ValueNode && origin_tensor->data() != nullptr &&
         origin_tensor->data()->size() > 0) {
       // copy data, this is weight && bias
-      MS_CHECK_TRUE_WITH_EXE(origin_tensor->data()->size() > 0, "invalid meta_tensor data size.", delete dstTensor);
-      auto data_size = static_cast<size_t>(origin_tensor->data()->size());
-      MS_CHECK_RET_CODE_WITH_EXE(dstTensor->MallocData(), "dst tensor malloc data failed!", delete dstTensor);
-      void *dst_data = dstTensor->data();
-      MS_CHECK_RET_CODE_WITH_EXE(memcpy_s(dst_data, dstTensor->Size(), origin_tensor->data()->data(), data_size),
-                                 "memcpy_s copy data failed!", delete dstTensor);
-      dstTensor->set_data(dst_data);
+      if (enable_fp16 && origin_data_type == kNumberTypeFloat32) {
+        dstTensor->set_data_type(kNumberTypeFloat16);
+        auto data = dstTensor->MutableData();
+        MS_CHECK_PTR_WITH_EXE(data, delete dstTensor);
+        auto fp32_data = reinterpret_cast<const float *>(origin_tensor->data()->data());
+        auto fp16_data = reinterpret_cast<float16 *>(data);
+        CHECK_NULL_RETURN(fp32_data);
+        CHECK_NULL_RETURN(fp16_data);
+        for (int64_t j = 0; j < dstTensor->ElementsNum(); ++j) {
+          fp16_data[j] = float16(fp32_data[j]);
+        }
+      } else {
+        if (memcpy_s(dstTensor->MutableData(), dstTensor->Size(), origin_tensor->data()->data(),
+                     origin_tensor->data()->size()) != EOK) {
+          MS_LOG(ERROR) << "memcpy_s copy data failed!";
+          delete dstTensor;
+          return RET_ERROR;
+        }
+      }
+    } else if (enable_fp16 && origin_data_type == kNumberTypeFloat32) {
+      dstTensor->set_data_type(kNumberTypeFloat16);
     }
     if (origin_tensor->name() != nullptr) {
       dstTensor->set_tensor_name(origin_tensor->name()->str());
@@ -332,5 +344,47 @@ void CoderGraph::DumpUnSupportLayer(Target target) {
                   << ", data_type: " << EnumNameDataType(dtype) << std::endl;
       }
     });
+}
+int CoderGraph::RemoveCast() {
+  auto graph = &model_->graph_;
+  std::unordered_map<uint32_t, std::vector<size_t>> tensor_post_ops;  // a tensor in many operator's inputs
+  MS_ASSERT(graph.sub_graphs_.size() == 1);
+
+  for (size_t i = 0; i < graph->all_nodes_.size(); i++) {
+    for (auto tensor_idx : graph->all_nodes_[i]->input_indices_) {
+      tensor_post_ops[tensor_idx].emplace_back(i);
+    }
+  }
+
+  std::set<uint32_t> removed_cast_set;
+
+  for (size_t i = 0; i < graph->all_nodes_.size(); i++) {
+    auto node = graph->all_nodes_[i];
+    if (node->node_type_ == mindspore::schema::PrimitiveType_Cast) {
+      auto cast_output_tensor = node->output_indices_.front();
+      auto cast_input_tensor = node->input_indices_.front();
+      for (const auto &post_op_idx : tensor_post_ops[cast_output_tensor]) {
+        auto post_op = graph->all_nodes_[post_op_idx];
+        auto iter = std::find(post_op->input_indices_.begin(), post_op->input_indices_.end(), cast_output_tensor);
+        if (iter == post_op->input_indices_.end()) {
+          MS_LOG(ERROR) << "this op is not cast output op";
+          return RET_ERROR;
+        }
+        *iter = cast_input_tensor;
+        removed_cast_set.insert(i);
+      }
+    }
+  }
+
+  std::vector<LiteGraph::Node *> new_all_nodes;
+  for (size_t i = 0; i < graph->all_nodes_.size(); i++) {
+    if (removed_cast_set.find(i) == removed_cast_set.end()) {
+      new_all_nodes.emplace_back(graph->all_nodes_[i]);
+    }
+  }
+
+  graph->all_nodes_.swap(new_all_nodes);
+
+  return RET_OK;
 }
 }  // namespace mindspore::lite::micro

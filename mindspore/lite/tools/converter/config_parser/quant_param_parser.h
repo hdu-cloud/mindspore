@@ -28,9 +28,12 @@ class QuantParamParser {
                                       quant::MixedBitWeightQuantParam *mixed_bit_weight_quant);
   static int ParseFullQuant(const FullQuantString &full_quant_string, quant::FullQuantParam *full_quant);
   static int ParseWeightQuant(const WeightQuantString &weight_quant_string, quant::WeightQuantParam *weight_quant);
+  static int ParseTransformQuant(const TransformQuantString &transform_quant_string,
+                                 quant::TransformQuantParam *transform_quant);
+  static int ParseDynamicQuant(const DynamicQuantString &dynamic_quant_string, quant::DynamicQuantParam *dynamic_quant);
 
  private:
-  static int ParseQuantType(const std::string &quant_type_str, schema::QuantType *quant_type);
+  static int ParseQuantType(const std::string &quant_type_str, quant::QuantType *quant_type);
   static int ParseTargetDevice(const std::string &target_device_str, quant::TargetDevice *target_device);
 
   static int ParseActivationQuantizedMethod(const std::string &activation_quant_method_str,
@@ -38,6 +41,9 @@ class QuantParamParser {
   static int ParseFilter(const CommonQuantString &common_quant_string, quant::CommonQuantParam *common_quant);
   static int ParseBitNum(const CommonQuantString &common_quant_string, quant::CommonQuantParam *common_quant);
   static int ParseEnableEncode(const CommonQuantString &common_quant_string, quant::CommonQuantParam *common_quant);
+  static int ParseExportPrecisionMode(const std::string &precision_modeL_str, quant::PrecisionMode *precision_mode);
+  static int ParseDynamicQuantStrategy(const std::string &dynamic_quant_strategy_str,
+                                       quant::DynamicQuantStrategy *dynamic_strategy);
 };
 }  // namespace lite
 }  // namespace mindspore

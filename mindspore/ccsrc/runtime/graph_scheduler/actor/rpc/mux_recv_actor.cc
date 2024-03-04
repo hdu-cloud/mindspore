@@ -15,7 +15,8 @@
  */
 
 #include "runtime/graph_scheduler/actor/rpc/mux_recv_actor.h"
-#include "distributed/constants.h"
+#include "include/backend/distributed/constants.h"
+#include "include/backend/distributed/rpc/tcp/constants.h"
 
 namespace mindspore {
 namespace runtime {
@@ -29,22 +30,16 @@ void MuxRecvActor::SetMessageHandler() {
 MessageBase *MuxRecvActor::HandleMessage(MessageBase *const msg) {
   // Block the message handler if the context is invalid.
   std::unique_lock<std::mutex> lock(context_mtx_);
-  context_cv_.wait(lock, [this] { return is_context_valid_; });
-  lock.unlock();
-
-  if (finalized_) {
+  context_cv_.wait(lock, [this] { return is_context_valid_ || is_exception_thrown_ || finalized_; });
+  if (is_exception_thrown_) {
+    MS_LOG(WARNING) << "Mux recv actor stops waiting for op_context at exception.";
     return distributed::rpc::NULL_MSG;
   }
+  lock.unlock();
+  // Once recv actor is launched, lock the context so that the next step's recv will not be launched in advance.
+  ResetOpcontext();
 
-  // If use void* data, the cv has already been notified in AllocateMessage.
-  if (common::GetEnv("use_void").empty()) {
-    // The mux recv actor receives requests for the service process. Currently, the requests are processed serially.
-    std::unique_lock<std::mutex> is_ready_lock(is_ready_mtx_);
-    is_ready_cv_.wait(is_ready_lock, [this] { return is_ready_.load(); });
-    is_ready_ = false;
-  }
-
-  if (msg == nullptr || op_context_ == nullptr) {
+  if (finalized_ || msg == nullptr || op_context_ == nullptr) {
     return distributed::rpc::NULL_MSG;
   }
 
@@ -61,14 +56,9 @@ void MuxRecvActor::ParseFinalizeReqData(size_t data_len, const MessageBase *cons
 
   size_t req_data_size = 0;
   RpcDataPtr finaliz_req_data;
-  if (common::GetEnv("use_void").empty()) {
-    req_data_size = msg->body.size();
-    finaliz_req_data = const_cast<RpcDataPtr>(msg->body.c_str());
-  } else {
-    MS_EXCEPTION_IF_NULL(msg->data);
-    req_data_size = msg->size;
-    finaliz_req_data = static_cast<RpcDataPtr>(msg->data);
-  }
+  MS_EXCEPTION_IF_NULL(msg->data);
+  req_data_size = msg->size;
+  finaliz_req_data = static_cast<RpcDataPtr>(msg->data);
   if (data_len == req_data_size) {
     return;
   }
@@ -100,37 +90,28 @@ void MuxRecvActor::ParseFinalizeReqData(size_t data_len, const MessageBase *cons
   }
 }
 
-void *MuxRecvActor::AllocateMessage(size_t size) {
-  // Block the message handler if the context is invalid.
-  std::unique_lock<std::mutex> lock(context_mtx_);
-  context_cv_.wait(lock, [this] { return is_context_valid_; });
-  lock.unlock();
-
-  // The mux recv actor receives requests for the service process. Currently, the requests are processed serially.
-  if (!common::GetEnv("use_void").empty()) {
-    std::unique_lock<std::mutex> is_ready_lock(is_ready_mtx_);
-    is_ready_cv_.wait(is_ready_lock, [this] { return is_ready_.load(); });
-    is_ready_ = false;
-  }
-
-  return AllocateMemByDeviceRes(size);
-}
-
-void MuxRecvActor::UpdateStatus() {
-  std::unique_lock<std::mutex> is_ready_lock(is_ready_mtx_);
-  is_ready_ = true;
-  is_ready_cv_.notify_one();
+void MuxRecvActor::Clear() {
+  Finalize();
+  RecvActor::Clear();
 }
 
 void MuxRecvActor::Finalize() {
   std::unique_lock<std::mutex> lock(context_mtx_);
+  if (finalized_) {
+    return;
+  }
+
   finalized_ = true;
-  is_ready_ = true;
   is_context_valid_ = true;
 
   op_context_ = nullptr;
   context_cv_.notify_all();
-  is_ready_cv_.notify_all();
+}
+
+void MuxRecvActor::StopRpcAtException() {
+  std::unique_lock<std::mutex> lock(context_mtx_);
+  is_exception_thrown_ = true;
+  context_cv_.notify_all();
 }
 }  // namespace runtime
 }  // namespace mindspore

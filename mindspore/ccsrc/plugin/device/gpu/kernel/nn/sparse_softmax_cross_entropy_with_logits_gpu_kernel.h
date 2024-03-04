@@ -69,13 +69,15 @@ class SparseSoftmaxCrossEntropyWithLogitsGpuKernelMod : public NativeGpuKernelMo
                           softmax_output_descriptor_, softmax_output_logits),
       "cudnnSoftmaxForward failed.");
 
+    cudaError_t status = cudaErrorNotReady;
     if (is_grad_) {
-      CrossEntropyGradWithSparse(softmax_output_logits, labels_addr, batch_size_, channel_size_, output_addr,
-                                 reinterpret_cast<cudaStream_t>(stream_ptr));
+      status = CrossEntropyGradWithSparse(softmax_output_logits, labels_addr, batch_size_, channel_size_, output_addr,
+                                          reinterpret_cast<cudaStream_t>(stream_ptr));
     } else {
-      CrossEntropyWithSparse(softmax_output_logits, labels_addr, batch_size_, channel_size_, output_addr,
-                             reinterpret_cast<cudaStream_t>(stream_ptr));
+      status = CrossEntropyWithSparse(softmax_output_logits, labels_addr, batch_size_, channel_size_, output_addr,
+                                      reinterpret_cast<cudaStream_t>(stream_ptr));
     }
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return true;
   }
 
@@ -175,8 +177,8 @@ class SparseSoftmaxCrossEntropyWithLogitsGpuKernelMod : public NativeGpuKernelMo
     }
     if (!std::equal(labels_shape.begin(), labels_shape.end(), logits_shape.begin())) {
       MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the shape of logits and labels must be the same except "
-                        << "the last dimension, but got the shape of logits: " << CONVERT_VECTOR_TO_STRING(logits_shape)
-                        << ", the shape of labels: " << CONVERT_VECTOR_TO_STRING(labels_shape);
+                        << "the last dimension, but got the shape of logits: " << logits_shape
+                        << ", the shape of labels: " << labels_shape;
     }
   }
 

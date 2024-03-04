@@ -15,49 +15,71 @@
  */
 
 #include "ops/tridiagonal_solve.h"
-#include <set>
+
+#include <algorithm>
 #include <map>
+#include <memory>
+#include <set>
 #include <string>
-#include <utility>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
+constexpr auto kTridiagonalSolveInputNums = 2;
 namespace {
 abstract::ShapePtr TridiagonalSolveInferShape(const PrimitivePtr &primitive,
                                               const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
+  auto prim_name = primitive->name();
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kTridiagonalSolveInputNums, primitive->name());
   auto diagonals_shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape());
   auto rhs_shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->BuildShape());
   auto diagonals_shp = diagonals_shape_map[kShape];
   auto rhs_shp = rhs_shape_map[kShape];
-  int numberforthelastsecend = 2;
-  int numberofdiagonals = 3;
-  if (static_cast<int>(diagonals_shp.size()) <= 1) {
-    MS_EXCEPTION(ValueError)
-      << "For TridiagonalSolve, the dimensions of the input diagonals should be more than 1, but got "
-      << diagonals_shp.size() << ".";
+
+  std::vector<ShapeVector> all_shapes = {diagonals_shp, rhs_shp};
+  auto is_dynamic_rank = std::any_of(all_shapes.begin(), all_shapes.end(), IsDynamicRank);
+  auto is_dynamic = std::any_of(all_shapes.begin(), all_shapes.end(), IsDynamic);
+
+  const int64_t kNumOne = 1;
+  const int64_t numberofdiagonals = 3;
+  const size_t numberforthelastsecend = 2;
+  const size_t rank_diagonals = diagonals_shp.size();
+  const size_t rank_rhs = rhs_shp.size();
+
+  if (!is_dynamic_rank) {
+    (void)CheckAndConvertUtils::CheckInteger("the rank of the input diagonals", SizeToLong(rank_diagonals),
+                                             kGreaterThan, kNumOne, prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("the rank of the input diagonals and rhs", SizeToLong(rank_diagonals),
+                                             kEqual, SizeToLong(rank_rhs), prim_name);
   }
 
-  if (diagonals_shp.size() != rhs_shp.size()) {
-    MS_EXCEPTION(ValueError) << "For TridiagonalSolve, expected the rank of diagonals and rhs to be the same, but got "
-                             << diagonals_shp.size() << " and " << rhs_shp.size() << ".";
-  }
-
-  if (diagonals_shp[diagonals_shp.size() - numberforthelastsecend] != numberofdiagonals) {
-    MS_EXCEPTION(ValueError)
-      << "For TridiagonalSolve, the last second dimension of the input diagonals should be 3, but got "
-      << diagonals_shp[diagonals_shp.size() - numberforthelastsecend] << ".";
-  }
-
-  if (diagonals_shp[diagonals_shp.size() - 1] != rhs_shp[rhs_shp.size() - numberforthelastsecend]) {
-    MS_EXCEPTION(ValueError)
-      << "For TridiagonalSolve, the last dimension of the input diagonals and the last second dimension of the input "
-      << diagonals_shp[diagonals_shp.size() - 1] << " and " << rhs_shp[rhs_shp.size() - numberforthelastsecend] << ".";
+  if (!is_dynamic) {
+    (void)CheckAndConvertUtils::CheckInteger("the last second dimension of the input diagonals",
+                                             diagonals_shp[rank_diagonals - numberforthelastsecend], kEqual,
+                                             numberofdiagonals, prim_name);
+    (void)CheckAndConvertUtils::CheckInteger(
+      "the last dimension of the input diagonals and the last second dimension of the input rhs",
+      diagonals_shp[rank_diagonals - 1], kEqual, rhs_shp[rank_rhs - numberforthelastsecend], prim_name);
   }
 
   return std::make_shared<abstract::Shape>(rhs_shp);
@@ -65,27 +87,48 @@ abstract::ShapePtr TridiagonalSolveInferShape(const PrimitivePtr &primitive,
 
 TypePtr TridiagonalSolveInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(prim);
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kTridiagonalSolveInputNums, prim->name());
   const std::set<TypePtr> valid_types = {kFloat32, kFloat64, kComplex64, kComplex128};
   std::map<std::string, TypePtr> types;
-  types.insert({"diagonals", input_args[0]->BuildType()});
-  types.insert({"rhs", input_args[1]->BuildType()});
+  (void)types.insert({"diagonals", input_args[0]->BuildType()});
+  (void)types.insert({"rhs", input_args[1]->BuildType()});
   (void)CheckAndConvertUtils::CheckScalarOrTensorTypesSame(types, valid_types, prim->name());
 
   return input_args[1]->BuildType();
 }
 }  // namespace
 
-MIND_API_OPERATOR_IMPL(TridiagonalSolve, BaseOperator);
+bool TridiagonalSolve::get_partial_pivoting() const {
+  auto value_ptr = GetAttr("partial_pivoting");
+  MS_EXCEPTION_IF_NULL(value_ptr);
+  return GetValue<bool>(value_ptr);
+}
+
 AbstractBasePtr TridiagonalSolveInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                       const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  const int64_t input_num = 2;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
   auto infer_type = TridiagonalSolveInferType(primitive, input_args);
   auto infer_shape = TridiagonalSolveInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(TridiagonalSolve, prim::kPrimTridiagonalSolve, TridiagonalSolveInfer, nullptr, true);
+MIND_API_OPERATOR_IMPL(TridiagonalSolve, BaseOperator);
+// AG means auto generated
+class MIND_API AGTridiagonalSolveInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return TridiagonalSolveInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return TridiagonalSolveInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return TridiagonalSolveInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(TridiagonalSolve, prim::kPrimTridiagonalSolve, AGTridiagonalSolveInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -14,6 +14,7 @@
 # ============================================================================
 """loss"""
 from __future__ import absolute_import, division
+import math
 
 import mindspore
 import mindspore.common.dtype as mstype
@@ -25,15 +26,12 @@ from mindspore.ops import operations as P
 from mindspore.ops.operations import _inner_ops as inner
 from mindspore.ops.operations.nn_ops import MultiMarginLoss as MultiMarginLossOp
 from mindspore.ops.operations.nn_ops import MultilabelMarginLoss as MultilabelMarginLossOp
-from mindspore.ops.operations.nn_ops import TripletMarginLoss as TripletMarginLossOp
-from mindspore.ops.operations.nn_ops import CTCLossV2
 from mindspore.ops import functional as F
 from mindspore import nn
-from mindspore.ops.primitive import constexpr
+from mindspore.ops.primitive import constexpr, _primexpr
 from mindspore.nn.cell import Cell
 from mindspore.nn.layer.activation import get_activation
-from mindspore._checkparam import Validator as validator
-from mindspore._checkparam import Rel
+from mindspore import _checkparam as validator
 from mindspore import context
 
 
@@ -45,14 +43,51 @@ class LossBase(Cell):
     to apply reduction to loss values.
 
     Args:
-        reduction (str): Type of reduction to be applied to loss. The optional values are "mean", "sum", and "none".
-            Default: "mean".
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the (weighted) mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Raises:
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> import mindspore
+        >>> from mindspore import ops, Tensor, nn
+        >>> import numpy as np
+        >>>
+        >>> class Net(nn.LossBase):
+        ...     def __init__(self, reduction='mean'):
+        ...         super(Net, self).__init__(reduction)
+        ...         self.abs = ops.Abs()
+        ...
+        ...     def construct(self, logits, labels):
+        ...         x = self.abs(logits - labels)
+        ...         output = self.get_loss(x)
+        ...         axis = self.get_axis(x)
+        ...         return output, axis
+        >>> net = Net()
+        >>> # Case 1: logits.shape = labels.shape = (3,)
+        >>> logits = Tensor(np.array([1, 2, 3]), mindspore.float32)
+        >>> labels = Tensor(np.array([1, 2, 2]), mindspore.float32)
+        >>> output, axis = net(logits, labels)
+        >>> print(output)
+        0.33333334
+        >>> print(axis)
+        (0,)
+        >>> # Case 2: logits.shape = labels.shape = (3, 3)
+        >>> logits = Tensor(np.array([[1, 2, 3],[1, 2, 3],[1, 2, 3]]), mindspore.float32)
+        >>> labels = Tensor(np.array([[1, 2, 2],[1, 2, 3],[1, 2, 3]]), mindspore.float32)
+        >>> output, axis = net(logits, labels)
+        >>> print(output)
+        0.11111111
+        >>> print(axis)
+        (0, 1)
     """
 
     def __init__(self, reduction='mean'):
@@ -81,30 +116,6 @@ class LossBase(Cell):
 
         Args:
             x (Tensor): Tensor of any shape.
-
-        Examples:
-            >>> class Net(nn.LossBase):
-            ...     def __init__(self, reduction='mean'):
-            ...         super(Net, self).__init__(reduction)
-            ...         self.abs = ops.Abs()
-            ...
-            ...     def construct(self, logits, labels):
-            ...         x = self.abs(logits - labels)
-            ...         axis = self.get_axis(x)
-            ...         return axis
-            >>> net = Net()
-            >>> # Case 1: logits.shape = labels.shape = (3,)
-            >>> logits = Tensor(np.array([1, 2, 3]), mindspore.float32)
-            >>> labels = Tensor(np.array([1, 2, 3]), mindspore.float32)
-            >>> output = net(logits, labels)
-            >>> print(output)
-            (0,)
-            >>> # Case 2: logits.shape = labels.shape = (3, 3)
-            >>> logits = Tensor(np.array([[1, 2, 3],[1, 2, 3],[1, 2, 3]]), mindspore.float32)
-            >>> labels = Tensor(np.array([[1, 2, 3],[1, 2, 3],[1, 2, 3]]), mindspore.float32)
-            >>> output = net(logits, labels)
-            >>> print(output)
-            (0, 1)
         """
         shape = F.shape(x)
         length = F.tuple_len(shape)
@@ -120,34 +131,10 @@ class LossBase(Cell):
                 additional dimensions.
             weights (Union[float, Tensor]): Optional `Tensor` whose rank is either 0, or the same rank as inputs,
                 and must be broadcastable to inputs (i.e., all dimensions must be either `1`,
-                or the same as the corresponding inputs dimension). Default: 1.0.
+                or the same as the corresponding inputs dimension). Default: ``1.0`` .
 
         Returns:
             Return the weighted loss.
-
-        Examples:
-            >>> class Net(nn.LossBase):
-            ...     def __init__(self, reduction='mean'):
-            ...         super(Net, self).__init__(reduction)
-            ...         self.abs = ops.Abs()
-            ...
-            ...     def construct(self, logits, labels):
-            ...         x = self.abs(logits - labels)
-            ...         output = self.get_loss(x)
-            ...         return output
-            >>> net = Net()
-            >>> # Case 1: logits.shape = labels.shape = (3,)
-            >>> logits = Tensor(np.array([1, 2, 3]), mindspore.float32)
-            >>> labels = Tensor(np.array([1, 2, 2]), mindspore.float32)
-            >>> output = net(logits, labels)
-            >>> print(output)
-            0.33333334
-            >>> # Case 2: logits.shape = labels.shape = (3, 3)
-            >>> logits = Tensor(np.array([[1, 2, 3],[1, 2, 3],[1, 2, 3]]), mindspore.float32)
-            >>> labels = Tensor(np.array([[1, 2, 2],[1, 2, 3],[1, 2, 3]]), mindspore.float32)
-            >>> output = net(logits, labels)
-            >>> print(output)
-            0.11111111
         """
         input_dtype = x.dtype
         x = self.cast(x, mstype.float32)
@@ -182,8 +169,8 @@ class _Loss(LossBase):
 @constexpr(check=False)
 def _check_is_tensor(param_name, input_data, cls_name):
     """Internal function, used to check whether the input data is Tensor."""
-    if input_data is not None and not isinstance(F.typeof(input_data), mstype.tensor_type):
-        raise TypeError(f"For '{cls_name}', the '{param_name}' must be '{mstype.tensor_type}', "
+    if input_data is not None and not isinstance(F.typeof(input_data), mstype.TensorType):
+        raise TypeError(f"For '{cls_name}', the '{param_name}' must be '{mstype.TensorType}', "
                         f"but got '{F.typeof(input_data)}'")
 
 
@@ -197,7 +184,7 @@ class L1Loss(LossBase):
     .. math::
         \ell(x, y) = L = \{l_1,\dots,l_N\}^\top, \quad \text{with } l_n = \left| x_n - y_n \right|,
 
-    where :math:`N` is the batch size. If `reduction` is not 'none', then:
+    where :math:`N` is the batch size. If `reduction` is not ``'none'``, then:
 
     .. math::
         \ell(x, y) =
@@ -207,9 +194,12 @@ class L1Loss(LossBase):
         \end{cases}
 
     Args:
-        reduction (str): Type of reduction to be applied to loss. The optional values are "mean", "sum", and "none".
-            Default: "mean". If `reduction` is "mean" or "sum", then output a scalar Tensor, if `reduction` is "none",
-            the shape of the output Tensor is the broadcasted shape.
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **logits** (Tensor) - Predicted value, Tensor of any dimension.
@@ -221,13 +211,16 @@ class L1Loss(LossBase):
         Tensor, data type is float.
 
     Raises:
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
         ValueError: If `logits` and `labels` have different shapes and cannot be broadcasted to each other.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> # Case 1: logits.shape = labels.shape = (3,)
         >>> loss = nn.L1Loss()
         >>> logits = Tensor(np.array([1, 2, 3]), mindspore.float32)
@@ -248,13 +241,10 @@ class L1Loss(LossBase):
     def __init__(self, reduction='mean'):
         """Initialize L1Loss."""
         super(L1Loss, self).__init__(reduction)
-        self.abs = P.Abs()
+        self.reduction = reduction
 
     def construct(self, logits, labels):
-        _check_is_tensor('logits', logits, self.cls_name)
-        _check_is_tensor('labels', labels, self.cls_name)
-        x = self.abs(logits - labels)
-        return self.get_loss(x)
+        return F.l1_loss(logits, labels, self.reduction)
 
 
 class MSELoss(LossBase):
@@ -267,7 +257,7 @@ class MSELoss(LossBase):
     .. math::
         \ell(x, y) = L = \{l_1,\dots,l_N\}^\top, \quad \text{with} \quad l_n = (x_n - y_n)^2.
 
-    where :math:`N` is the batch size. If `reduction` is not 'none', then:
+    where :math:`N` is the batch size. If `reduction` is not ``'none'``, then:
 
     .. math::
         \ell(x, y) =
@@ -277,8 +267,12 @@ class MSELoss(LossBase):
         \end{cases}
 
     Args:
-        reduction (str): Type of reduction to be applied to loss. The optional values are "mean", "sum", and "none".
-            Default: "mean".
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **logits** (Tensor) - The predicted value of the input. Tensor of any dimension.
@@ -287,17 +281,20 @@ class MSELoss(LossBase):
           and they should be broadcasted to each other.
 
     Outputs:
-        Tensor, loss of type float, the shape is zero if `reduction` is 'mean' or 'sum',
+        Tensor, loss of type float, the shape is zero if `reduction` is ``'mean'`` or ``'sum'`` .,
         while the shape of output is the broadcasted shape if `reduction` is 'none'.
 
     Raises:
-        ValueError: If `reduction` is not one of 'none', 'mean' or 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'`` or ``'sum'``.
         ValueError: If `logits` and `labels` have different shapes and cannot be broadcasted.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> # Case 1: logits.shape = labels.shape = (3,)
         >>> loss = nn.MSELoss()
         >>> logits = Tensor(np.array([1, 2, 3]), mindspore.float32)
@@ -349,12 +346,15 @@ class RMSELoss(LossBase):
           and they should be broadcasted to each other.
 
     Outputs:
-        Tensor, weighted loss float tensor and its shape is ().
+        Tensor, weighted loss float tensor and its shape is :math:`()`.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> # Case 1: logits.shape = labels.shape = (3,)
         >>> loss = nn.RMSELoss()
         >>> logits = Tensor(np.array([1, 2, 3]), mindspore.float32)
@@ -400,7 +400,7 @@ class MAELoss(LossBase):
     .. math::
         \ell(x, y) = L = \{l_1,\dots,l_N\}^\top, \quad \text{with } l_n = \left| x_n - y_n \right|,
 
-    where :math:`N` is the batch size. If `reduction` is not 'none', then:
+    where :math:`N` is the batch size. If `reduction` is not ``'none'``, then:
 
     .. math::
         \ell(x, y) =
@@ -410,8 +410,12 @@ class MAELoss(LossBase):
         \end{cases}
 
     Args:
-        reduction (str): Type of reduction to be applied to loss. The optional values are "mean", "sum", and "none".
-                         Default: "mean".
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **logits** (Tensor) - Tensor of shape :math:`(M, *)` where :math:`*` means, any number of
@@ -421,16 +425,19 @@ class MAELoss(LossBase):
           and they should be broadcasted to each other.
 
     Outputs:
-        Tensor, weighted loss float tensor, the shape is zero if `reduction` is 'mean' or 'sum',
+        Tensor, weighted loss float tensor, the shape is zero if `reduction` is ``'mean'`` or ``'sum'`` .,
         while the shape of output is the broadcasted shape if `reduction` is 'none'.
 
     Raises:
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> # Case 1: logits.shape = labels.shape = (3,)
         >>> loss = nn.MAELoss()
         >>> logits = Tensor(np.array([1, 2, 3]), mindspore.float32)
@@ -464,26 +471,30 @@ class MarginRankingLoss(LossBase):
     r"""
     MarginRankingLoss creates a criterion that measures the loss.
 
-    Given two tensors :math:`x1`, :math:`x2` and a Tensor label :math:`y` with values 1 or -1,
+    Given two tensors :math:`input1`, :math:`input2` and a Tensor label :math:`target` with values 1 or -1,
     the operation is as follows:
 
     .. math::
-        \text{loss}(x1, x2, y) = \max(0, -y * (x1 - x2) + \text{margin})
+        \text{loss}(input1, input2, target) = \max(0, -target * (input1 - input2) + \text{margin})
 
     Args:
-        margin (float): Specify the adjustment factor of the operation. Default 0.0.
-        reduction (str): Specifies which reduction to be applied to the output. It must be one of
-          "none", "mean", and "sum", meaning no reduction, reduce mean and sum on output, respectively. Default "mean".
+        margin (float, optional): Specify the adjustment factor of the operation. Default: ``0.0`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **input1** (Tensor) - Tensor of shape :math:`(N, *)` where :math:`*` means, any number
           of additional dimensions.
         - **input2** (Tensor) - Tensor of shape :math:`(N, *)`, same shape and dtype as `input1`.
         - **target** (Tensor) - Contains value 1 or -1. Suppose the shape of `input1` is
-          :math:`(x_1, x_2, x_3, ..., x_R)`, then the shape of `labels` must be :math:`(x_1, x_3, x_4, ..., x_R)`.
+          :math:`(x_1, x_2, x_3, ..., x_R)`, then the shape of `target` must be :math:`(x_1, x_2, x_3, ..., x_R)`.
 
     Outputs:
-        Tensor or Scalar. if `reduction` is "none", its shape is the same as `labels`.
+        Tensor or Scalar. if `reduction` is ``"none"``, its shape is the same as `labels`.
         Otherwise, a scalar value will be returned.
 
     Raises:
@@ -493,16 +504,14 @@ class MarginRankingLoss(LossBase):
         TypeError: If the types of `input1` and `target` are inconsistent.
         ValueError: If the shape of `input1` and `input2` are inconsistent.
         ValueError: If the shape of `input1` and `target` are inconsistent.
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'`` , ``'sum'``.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> import mindspore as ms
-        >>> import mindspore.nn as nn
-        >>> import mindspore.ops as ops
-        >>> from mindspore.ops import Tensor
+        >>> from mindspore import Tensor, nn, ops
         >>> import numpy as np
         >>> loss1 = nn.MarginRankingLoss(reduction='none')
         >>> loss2 = nn.MarginRankingLoss(reduction='mean')
@@ -559,17 +568,21 @@ class SmoothL1Loss(LossBase):
         \end{cases}
 
     .. note::
-        For Ascend platform, the float64 data type of `logits` is not support now.
-        SmoothL1Loss can be regarded as modified version of L1Loss or a combination of L1Loss and L2Loss.
-        L1Loss computes the element-wise absolute difference between two input tensors while L2Loss computes the
-        squared difference between two input tensors. L2Loss often leads to faster convergence but it is less
-        robust to outliers, and the loss function has better robustness.
+        - On the Ascend platform, float64 data type will result in low operator performance.
+        - SmoothL1Loss can be regarded as modified version of L1Loss or a combination of L1Loss and L2Loss.
+        - L1Loss computes the element-wise absolute difference between two input tensors while L2Loss computes the
+        - squared difference between two input tensors. L2Loss often leads to faster convergence but it is less
+        - robust to outliers, and the loss function has better robustness.
 
     Args:
         beta (float): The loss function calculates the threshold of the transformation between L1Loss and L2Loss.
-            Default: 1.0.
-        reduction (str): Type of reduction to be applied to loss. The optional values are "mean", "sum", and "none".
-                         Default: "none".
+            Default: ``1.0`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'none'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **logits** (Tensor) - Predictive value. Tensor of any dimension. Data type must be one of float16,
@@ -577,23 +590,25 @@ class SmoothL1Loss(LossBase):
         - **labels** (Tensor) - Ground truth data, same shape and dtype as the `logits`.
 
     Outputs:
-        Tensor, if `reduction` is 'none', then output is a tensor with the same shape as `logits`.
-        Otherwise the shape of output tensor is `()`.
+        Tensor, if `reduction` is ``'none'``, then output is a tensor with the same shape as `logits`.
+        Otherwise the shape of output tensor is :math:`()`.
 
     Raises:
         TypeError: If `beta` is not a float.
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
         TypeError: If `logits` or `labels` are not Tensor.
         TypeError: If dtype of `logits` or `labels` is neither float16 not float32.
         TypeError: If dtype of `logits` is not the same as `labels`.
         ValueError: If `beta` is less than or equal to 0.
         ValueError: If shape of `logits` is not the same as `labels`.
-        TypeError: The float64 data type of `logits` is support on Ascend platform.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> loss = nn.SmoothL1Loss()
         >>> logits = Tensor(np.array([1, 2, 3]), mindspore.float32)
         >>> labels = Tensor(np.array([1, 2, 2]), mindspore.float32)
@@ -622,31 +637,39 @@ class SoftMarginLoss(LossBase):
     (containing 1 or -1).
 
     .. math::
-        \text{loss}(x, y) = \sum_i \frac{\log(1 + \exp(-y[i]*x[i]))}{\text{x.nelement}()}
+        \text{loss}(x, y) = \sum_i \frac{\log(1 + \exp(-y[i]*x[i]))}{x.nelement()}
 
     :math:`x.nelement()` represents the number of element of `x` .
 
     Args:
-        reduction (str): Apply specific reduction method to the output: 'none', 'mean', 'sum'. Default: "mean".
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **logits** (Tensor) - Predict data. Data type must be float16 or float32.
         - **labels** (Tensor) - Ground truth data, with the same type and shape as `logits`.
 
     Outputs:
-        Tensor or Scalar, if `reduction` is "none", its shape is the same as `logits`.
+        Tensor or Scalar, if `reduction` is ``"none"``, its shape is the same as `logits`.
         Otherwise, a scalar value will be returned.
 
     Raises:
         TypeError: If `logits` or `labels` is not a Tensor.
         TypeError: If dtype of `logits` or `labels` is neither float16 nor float32.
         ValueError: If shape of `logits` is not the same as `labels`.
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
 
     Supported Platforms:
         ``Ascend`` ``GPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> loss = nn.SoftMarginLoss()
         >>> logits = Tensor(np.array([[0.3, 0.7], [0.5, 0.5]]), mindspore.float32)
         >>> labels = Tensor(np.array([[-1, 1], [1, -1]]), mindspore.float32)
@@ -670,11 +693,11 @@ class SoftmaxCrossEntropyWithLogits(LossBase):
     Measures the distribution error between the probabilities of the input (computed with softmax function) and the
     labels where the classes are mutually exclusive (only one class is positive) using cross entropy loss.
 
-    Typical input into this function is unnormalized scores denoted as x whose shape is (N, C),
+    Typical input into this function is unnormalized scores denoted as x whose shape is :math:`(N, C)` ,
     and the corresponding targets.
 
     Typically, the input to this function is the fractional value of each category and the corresponding target value,
-    and the input format is (N, C).
+    and the input format is :math:`(N, C)` .
 
     For each instance :math:`x_i`, i ranges from 0 to N-1, the loss is given as:
 
@@ -690,13 +713,17 @@ class SoftmaxCrossEntropyWithLogits(LossBase):
         of entry is a valid one.
 
     Args:
-        sparse (bool): Specifies whether labels use sparse format or not. Default: False.
-        reduction (str): Type of reduction to be applied to loss. The optional values are "mean", "sum", and "none".
-            If "none", do not perform reduction. Default: "none".
+        sparse (bool, optional): Specifies whether labels use sparse format or not. Default: ``False`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'none'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
-        - **logits** (Tensor) - Tensor of shape (N, C). Data type must be float16 or float32.
-        - **labels** (Tensor) - Tensor of shape (N, ). If `sparse` is True, The type of
+        - **logits** (Tensor) - Tensor of shape :math:`(N, C)` . Data type must be float16 or float32.
+        - **labels** (Tensor) - Tensor of shape :math:`(N, )` . If `sparse` is True, The type of
           `labels` is int32 or int64. Otherwise, the type of `labels` is the same as the type of `logits`.
 
     Outputs:
@@ -706,12 +733,15 @@ class SoftmaxCrossEntropyWithLogits(LossBase):
         TypeError: If `sparse` is not a bool.
         TypeError: If `sparse` is True and dtype of `labels` is neither int32 not int64.
         TypeError: If `sparse` is False and dtype of `labels` is neither float16 not float32.
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> # case 1: sparse=True
         >>> loss = nn.SoftmaxCrossEntropyWithLogits(sparse=True)
         >>> logits = Tensor(np.array([[3, 5, 6, 9, 12, 33, 42, 12, 32, 72]]), mindspore.float32)
@@ -776,12 +806,11 @@ class DiceLoss(LossBase):
 
     Args:
         smooth (float): A term added to the denominator to improve numerical stability. Should be greater than 0.
-                        Default: 1e-5.
+                        Default: ``1e-5`` .
 
     Inputs:
-        - **logits** (Tensor) - Tensor of shape :math:`(N, *)` where :math:`*` means, any number of
-          additional dimensions. The data type must be float16 or float32.
-        - **labels** (Tensor) - Tensor of shape :math:`(N, *)`, same shape as the `logits`.
+        - **logits** (Tensor) - Input predicted value. The data type must be float16 or float32.
+        - **labels** (Tensor) - Input target value. Same shape as the `logits`.
           The data type must be float16 or float32.
 
     Outputs:
@@ -795,9 +824,12 @@ class DiceLoss(LossBase):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> loss = nn.DiceLoss(smooth=1e-5)
-        >>> logits = Tensor(np.array([[0.2, 0.5], [0.3, 0.1], [0.9, 0.6]]), mstype.float32)
-        >>> labels = Tensor(np.array([[0, 1], [1, 0], [0, 1]]), mstype.float32)
+        >>> logits = Tensor(np.array([[0.2, 0.5], [0.3, 0.1], [0.9, 0.6]]), mindspore.float32)
+        >>> labels = Tensor(np.array([[0, 1], [1, 0], [0, 1]]), mindspore.float32)
         >>> output = loss(logits, labels)
         >>> print(output)
         0.38596618
@@ -827,13 +859,13 @@ class DiceLoss(LossBase):
         return dice_loss
 
 
-@constexpr
+@_primexpr
 def _check_shape(logits_shape, label_shape, prim_name=None):
     """Internal function, used to check whether the shape of logits and labels meets the requirements."""
     validator.check('logits_shape', logits_shape, 'label_shape', label_shape, prim_name=prim_name)
 
 
-@constexpr
+@_primexpr
 def _check_ndim_multi(logits_dim, label_dim, prim_name=None):
     """Internal function, used to check whether the dimension of logits and label meets the requirements."""
     msg_prefix = f'For \'{prim_name}\', the' if prim_name else "The"
@@ -843,7 +875,7 @@ def _check_ndim_multi(logits_dim, label_dim, prim_name=None):
         raise ValueError(f"{msg_prefix} 'labels' dimension must be greater than 1, but got {label_dim}.")
 
 
-@constexpr
+@_primexpr
 def _check_weights(weight_shape, label_shape, prim_name=None):
     """Internal function, used to check whether the reduced shape meets the requirements."""
     msg_prefix = f'For \'{prim_name}\', the' if prim_name else "The"
@@ -862,11 +894,12 @@ class MultiClassDiceLoss(LossBase):
     Args:
         weights (Union[Tensor, None]): Tensor of shape :math:`(num\_classes, dim)`. The weight shape[0] should be
             equal to labels shape[1].
-            Default: None.
+            Default: ``None`` .
         ignore_indiex (Union[int, None]): Class index to ignore.
-            Default: None.
+            Default: ``None`` .
         activation (Union[str, Cell]): Activate function applied to the output of the fully connected layer, eg. 'ReLU'.
-            Default: 'softmax'. Choose from: ['softmax', 'logsoftmax', 'relu', 'relu6', 'tanh','Sigmoid']
+            Default: ``'softmax'`` . Choose from: [ ``'softmax'`` , ``'logsoftmax'`` , ``'relu'`` , ``'relu6'`` ,
+            ``'tanh'`` , ``'Sigmoid'`` ]
 
     Inputs:
         - **logits** (Tensor) - Tensor of shape :math:`(N, C, *)` where :math:`*` means, any number of additional
@@ -888,9 +921,12 @@ class MultiClassDiceLoss(LossBase):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> loss = nn.MultiClassDiceLoss(weights=None, ignore_indiex=None, activation="softmax")
-        >>> logits = Tensor(np.array([[0.2, 0.5, 0.7], [0.3, 0.1, 0.5], [0.9, 0.6, 0.3]]), mstype.float32)
-        >>> labels = Tensor(np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]]), mstype.float32)
+        >>> logits = Tensor(np.array([[0.2, 0.5, 0.7], [0.3, 0.1, 0.5], [0.9, 0.6, 0.3]]), mindspore.float32)
+        >>> labels = Tensor(np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]]), mindspore.float32)
         >>> output = loss(logits, labels)
         >>> print(output)
         0.54958105
@@ -948,15 +984,19 @@ class SampledSoftmaxLoss(LossBase):
     Args:
         num_sampled (int): The number of classes to randomly sample per batch.
         num_classes (int): The number of possible classes.
-        num_true (int): The number of labels classes per training example. Default: 1.
+        num_true (int): The number of labels classes per training example. Default: ``1`` .
         sampled_values (Union[list, tuple]):  List or tuple of (`sampled_candidates`, `true_expected_count`,
             `sampled_expected_count`) returned by a `*CandidateSampler` function.
-            Default to None, `UniformCandidateSampler` is applied.
+            Default to None, `UniformCandidateSampler` is applied. Default: ``None`` .
         remove_accidental_hits (bool): Whether to remove "accidental hits"
-            where a sampled class equals to one of the labels classes. Default: True.
+            where a sampled class equals to one of the labels classes. Default: ``True`` .
         seed (int): Random seed for candidate sampling. Default: 0
-        reduction (str): Type of reduction to be applied to loss. The optional values are "mean", "sum", and "none".
-            If "none", do not perform reduction. Default: "none".
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'none'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **weights** (Tensor) - Tensor of shape :math:`(C, dim)`.
@@ -965,13 +1005,13 @@ class SampledSoftmaxLoss(LossBase):
         - **logits** (Tensor) - Tensor of shape :math:`(N, dim)`. The forward activations of the input network.
 
     Outputs:
-        Tensor or Scalar, if `reduction` is 'none', then output is a tensor with shape :math:`(N,)`.
+        Tensor or Scalar, if `reduction` is ``'none'``, then output is a tensor with shape :math:`(N,)`.
         Otherwise, the output is a scalar.
 
     Raises:
         TypeError: If `sampled_values` is not a list or tuple.
         TypeError: If dtype of `labels` is neither int32 not int64.
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
         ValueError: If `num_sampled` or `num_true` is greater than `num_classes`.
         ValueError: If length of `sampled_values` is not equal to 3.
 
@@ -979,6 +1019,9 @@ class SampledSoftmaxLoss(LossBase):
         ``GPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> mindspore.set_seed(1)
         >>> loss = nn.SampledSoftmaxLoss(num_sampled=4, num_classes=7, num_true=1)
         >>> weights = Tensor(np.random.randint(0, 9, [7, 10]), mindspore.float32)
@@ -1070,7 +1113,7 @@ class SampledSoftmaxLoss(LossBase):
     def _softmax_cross_entropy(self, logits, targets):
         stable_exp_logits = self.exp(logits - self.reduce_max_true(logits, 1))
         pred = stable_exp_logits / self.reduce_sum_true(stable_exp_logits, 1)
-        return -self.reduce_sum(targets * self.log(pred + 1.0e-20), 1)
+        return -1 * self.reduce_sum(targets * self.log(pred + 1.0e-20), 1)
 
     def _compute_sampled_logits(self, weights,
                                 biases,
@@ -1097,7 +1140,7 @@ class SampledSoftmaxLoss(LossBase):
             sampled_values: A tuple of (`sampled_candidates`, `true_expected_count`,
                 `sampled_expected_count`) returned by a `UniformCandidateSampler` function.
             subtract_log_q: A `bool`. whether to subtract the log expected count of
-                the labels in the sample to get the logits of the true labels. Default: True.
+                the labels in the sample to get the logits of the true labels. Default: ``True`` .
         Returns:
             out_logits: `Tensor` object with shape
                 `[batch_size, num_true + num_sampled]`
@@ -1165,6 +1208,279 @@ class SampledSoftmaxLoss(LossBase):
         return out_logits, out_labels
 
 
+class TripletMarginWithDistanceLoss(LossBase):
+    r"""
+    TripletMarginWithDistanceLoss operation.
+
+    Creates a criterion that measures the triplet loss given an input
+    tensors :math:`x1`, :math:`x2`, :math:`x3` and a margin with a value greater than :math:`0`.
+    This is used for measuring a relative similarity between samples. A triplet
+    is composed by `a`, `p` and `n` (i.e., `anchor`, `positive examples` and `negative
+    examples` respectively). The shapes of all input tensors should be
+    :math:`(N, D)`.
+
+    The distance swap is described in detail in the paper `Learning shallow
+    convolutional feature descriptors with triplet losses` by
+    V. Balntas, E. Riba et al.
+
+    The loss function for each sample in the mini-batch is:
+
+    .. math::
+        L(a, p, n) = \max \{d(a_i, p_i) - d(a_i, n_i) + {\rm margin}, 0\}
+
+    where
+
+    .. math::
+        d(x_i, y_i) = \left\lVert {\bf x}_i - {\bf y}_i \right\rVert_p
+
+    Args:
+        distance_function (callable): The distance function needed to calculate the margin loss of a triplet.
+            if no distance metric is specified, the pairwise distance will be used. Default: ``None`` .
+        swap (bool): The distance swap is described in detail in the paper
+            `Learning shallow convolutional feature descriptors with triplet losses` by
+            V. Balntas, E. Riba et al. Default: ``False`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
+
+        margin (float): Make a margin between the positive pair and the negative pair. Default: ``1.0`` .
+
+    Inputs:
+        - **x** (Tensor) - A sample randomly selected from the training set. Data type must be BasicType.
+          The shape should be :math:`(N, D)`.
+        - **positive** (Tensor) - A sample belonging to the same category as x,
+          with the same type and shape as `x`.
+        - **negative** (Tensor) - A sample belonging to the different class from x,
+          with the same type and shape as `x`.
+
+    Outputs:
+        Union[Tensor, Scalar], if `reduction` is ``'none'``, its shape is :math:`(N)`.
+        Otherwise, a scalar value will be returned.
+
+    Raises:
+        TypeError: If `x` or `positive` or `negative` is not a Tensor.
+        TypeError: If `swap` is not a bool.
+        ValueError: If dimensions of input `x`, `positive` and `negative` are less than or equal to 1 at the same time.
+        ValueError: If length of shape of `margin` is not 0.
+        ValueError: If shape of `x`, `positive` and `negative` cannot broadcast.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
+
+    Supported Platforms:
+        ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> x = Tensor([[0.3, 0.7], [0.5, 0.5]])
+        >>> positive = Tensor([[0.4, 0.6], [0.4, 0.6]])
+        >>> negative = Tensor([[0.2, 0.9], [0.3, 0.7]])
+        >>> loss = nn.TripletMarginWithDistanceLoss()
+        >>> out = loss(x, positive, negative)
+        >>> print(out.asnumpy())
+        0.8881968
+    """
+
+    def __init__(self, distance_function=None, swap=False, reduction="mean", margin=1.0):
+        """Initialize TripletMarginWithDistanceLoss."""
+        super(TripletMarginWithDistanceLoss, self).__init__(reduction=reduction)
+        validator.check_is_float(margin, "margin", self.cls_name)
+        validator.check_bool(swap, "swap", self.cls_name)
+        if distance_function is None:
+            def pairwise_distance(x, y):
+                d = (x - y).abs()
+                if d.ndim == 0:
+                    raise ValueError(
+                        "For 'pairwise_distance' in 'TripletMarginWithDistanceLoss', "
+                        "'ndim' of the input must be positive, "
+                        f"but got {d.ndim}"
+                    )
+                return P.LpNorm(axis=1, p=2)(d)
+            self.distance_function = pairwise_distance
+        else:
+            self.distance_function = distance_function
+        self.swap = swap
+        self.reduction = reduction
+        self.margin = margin
+        self.minimum = P.Minimum()
+        self.maximum = P.Maximum()
+
+    def construct(self, x, positive, negative):
+        _check_is_tensor("x", x, self.cls_name)
+        _check_is_tensor("positive", positive, self.cls_name)
+        _check_is_tensor("negative", negative, self.cls_name)
+        d1 = self.distance_function(x, positive)
+        d2 = self.distance_function(x, negative)
+        if self.swap:
+            d2 = self.minimum(d2, self.distance_function(positive, negative))
+        loss = self.maximum(d1 - d2 + self.margin, 0)
+        return self.get_loss(loss)
+
+
+class PoissonNLLLoss(LossBase):
+    r"""
+    Poisson negative log likelihood loss.
+
+    The loss is:
+
+    .. math::
+        \mathcal{L}_{D} = \sum_{i = 0}^{|D|}\left( x_{i} - y_{i}\ln x_{i} + \ln{y_{i}!} \right)
+
+    where :math:`\mathcal{L}_{D}` is the loss, :math:`y_{i}` is the `target`,
+    :math:`x_{i}` is the `input`.
+
+    If `log_input` is True, use :math:`e^{x_{i}} - y_{i} x_{i}` instead of :math:`x_{i} - y_{i}\ln x_{i}`.
+    When calculating logarithms, the lower bound of `input` is set to `eps` to avoid numerical errors.
+
+    If `full` is False, the last term :math:`\ln{y_{i}!}` will be omitted,
+    otherwise the last term will be approximated using Stirling formula:
+
+    .. math::
+        n! \approx \sqrt{2\pi n}\left( \frac{n}{e} \right)^{n}
+
+    Note:
+        Calculating the logarithm of a negative number or the exponent of a large positive number under Ascend
+        will have a different range of return values and results different from those under GPU and CPU.
+
+    Args:
+        log_input (bool, optional): Whether use log input. Default: ``True`` .
+        full (bool, optional): Whether include the Stirling approximation term in the loss calculation.
+            Default: ``False`` .
+        eps (float, optional): Lower bound of `input` when calculating logarithms. Default: ``1e-08`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
+
+    Inputs:
+        - **input** (Tensor) - The input Tensor. The shape can be any number of dimensions.
+        - **target** (Tensor) - The label Tensor which has the same shape as `input`.
+
+    Outputs:
+        Tensor or Scalar, if `reduction` is ``'none'``, then output is a tensor and has the same shape as `input`.
+        Otherwise it is a scalar.
+
+    Raises:
+        TypeError: If `reduction` is not a str.
+        TypeError: If neither `input` nor `target` is a tensor.
+        TypeError: If dtype of `input` or `target` is not currently supported.
+
+    Supported Platforms:
+        ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> import mindspore as ms
+        >>> import mindspore.nn as nn
+        >>> x = ms.Tensor([[0.3, 0.7], [0.5, 0.5]])
+        >>> target = ms.Tensor([[1.0, 2.0], [3.0, 4.0]])
+        >>> loss = nn.PoissonNLLLoss()
+        >>> output = loss(x, target)
+        >>> print(output.asnumpy())
+        0.3652635
+    """
+
+    def __init__(self, log_input=True, full=False, eps=1e-08, reduction="mean"):
+        """Initialize PoissonNLLLoss."""
+        super(PoissonNLLLoss, self).__init__(reduction=reduction)
+        self.log_input = log_input
+        self.full = full
+        self.eps = eps
+        self.maximum = P.Maximum()
+        self.cast = P.Cast()
+
+    def construct(self, input, target):
+        _check_is_tensor('input', input, self.cls_name)
+        _check_is_tensor('target', target, self.cls_name)
+        if input.ndim == 0 or target.ndim == 0:
+            raise ValueError(
+                "For 'PoissonNLLLoss', the inputs must be non-scalar, but got shapes: "
+                f"input: {input.shape}, target: {target.shape}"
+            )
+        target = self.cast(target, input.dtype)
+        if self.log_input:
+            loss = input.exp() - target * input
+        else:
+            loss = input - target * ((input + self.eps).log())
+        if self.full:
+            target = self.maximum(target, self.eps)
+            stirling_term = (target > 1) * ((target + 0.5) * target.log() - target + get_half_ln_2_pi())
+            loss += F.masked_fill(stirling_term, target <= 1, 0)
+        out = self.get_loss(loss)
+        return out
+
+
+@constexpr
+def get_half_ln_2_pi():
+    return 0.5 * math.log(2 * math.pi)
+
+
+class MultiLabelSoftMarginLoss(LossBase):
+    r"""
+    Calculates the MultiLabelSoftMarginLoss.
+    The multi-label soft margin loss is a commonly used loss function in multi-label classification tasks
+    where an input sample can belong to multiple classes.
+    Given an input :math:`x` and binary labels :math:`y` of size :math:`(N,C)`, where :math:`N` denotes
+    the number of samples and :math:`C` denotes the number of classes.
+
+    .. math::
+        \mathcal{loss\left( x , y \right)} = - \frac{1}{N}\frac{1}{C}\sum_{i = 1}^{N}
+        \sum_{j = 1}^{C}\left(y_{ij}\log\frac{1}{1 + e^{- x_{ij}}} + \left( 1 - y_{ij}
+        \right)\log\frac{e^{-x_{ij}}}{1 + e^{-x_{ij}}} \right)
+
+    where :math:`x_{ij}` represents the predicted score of sample :math:`i` for class :math:`j`. :math:`y_{ij}`
+    represents the binary label of sample :math:`i` for class :math:`j`, where sample :math:`i` belongs to
+    class :math:`j` if :math:`y_{ij}=1` , and sample :math:`i` does not belong to class :math:`j` if :math:`y_{ij}=0`.
+    For a multi-label classification task, each sample may have multiple labels with a value of 1 in the binary
+    label :math:`y`. `weight` will multiply to the loss of each class if given.
+
+    Args:
+        weight (Union[Tensor, int, float]): The manual rescaling weight given to each class. Default: ``None`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the weighted mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
+
+    Inputs:
+        - **x** (Tensor) - A tensor of shape :math:`(N, C)`, where N is batch size and C is number
+          of classes.
+        - **target** (Tensor) - The label target Tensor which has the same shape as `x`.
+
+    Outputs:
+        Tensor, the data type is the same as x, if the reduction is ``'none'``, its shape is (N), otherwise it is zero.
+
+    Raises:
+        ValueError: If the rank of `x` or `target` is not 2.
+
+    Supported Platforms:
+        ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> import mindspore as ms
+        >>> import mindspore.nn as nn
+        >>> x = ms.Tensor([[0.3, 0.6, 0.6], [0.9, 0.4, 0.2]])
+        >>> target = ms.Tensor([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]])
+        >>> loss = nn.MultiLabelSoftMarginLoss(reduction='mean')
+        >>> out = loss(x, target)
+        >>> print(out.asnumpy())
+        0.84693956
+    """
+
+    def __init__(self, weight=None, reduction="mean"):
+        """Initialize MultiLabelSoftMarginLoss."""
+        super(MultiLabelSoftMarginLoss, self).__init__(reduction)
+        self.weight = weight
+        self.reduction = reduction
+
+    def construct(self, x, target):
+        return F.multilabel_soft_margin_loss(x, target, self.weight, self.reduction)
+
+
 class MultiMarginLoss(LossBase):
     r"""
     Creates a criterion that optimizes a multi-class classification hinge
@@ -1176,28 +1492,32 @@ class MultiMarginLoss(LossBase):
     output :math:`y` is:
 
     .. math::
-        \text{loss}(x, y) = \frac{\sum_i \max(0, w[y] * (\text{margin} - x[y] + x[i]))^p)}{\text{x.size}(0)}
+        \text{loss}(x, y) = \frac{\sum_i \max(0, w[y] * (\text{margin} - x[y] + x[i]))^p}{\text{x.size}(0)}
 
     where :math:`x \in \left\{0, \; \cdots , \; \text{x.size}(0) - 1\right\}`
     and :math:`i \neq y`.
 
-    Optionally, you can give non-equal weighting on the classes by passing
-    a 1D input `weight` tensor w into the constructor.
-
     Args:
-        p (int): Optional. The norm degree for pairwise distance. Should be 1 or 2. Default: 1.
-        margin (float): Optional. A parameter to change pairwise distance. Default: 1.0.
-        reduction (str): Apply specific reduction method to the output: 'none', 'mean', 'sum'. Default: "mean".
+        p (int, optional): The norm degree for pairwise distance. Should be 1 or 2. Default: ``1`` .
+        margin (float, optional): A parameter to change pairwise distance. Default: 1.0.
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the weighted mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
+
+        weight (Tensor, optional): The rescaling weight to each class with shape :math:`(C,)`. Data type only
+            support float32, float16 or float64. Default: ``None`` , all classes are weighted equally.
 
     Inputs:
         - **x** (Tensor) - Input x, with shape :math:`(N, C)`. Data type only support float32, float16 or float64.
+          x is :math:`x` in the above formula.
         - **target** (Tensor) - Ground truth labels, with shape :math:`(N,)`. Data type only support int64. The
-          value of target should be non-negative, less than C.
-        - **weight** (Tensor, optional) - The rescaling weight to each class with shape :math:`(C,)`. Data type only
-          support float32, float16 or float64. Default: None.
+          value of target should be non-negative, less than C. `target` is :math:`y` in the above formula.
 
     Outputs:
-        Tensor, When `reduction` is 'none', the shape is :math:`(N,)`.
+        Tensor, When `reduction` is ``'none'``, the shape is :math:`(N,)`.
         Otherwise, it is a scalar. Has the same data type with `x`.
 
     Raises:
@@ -1207,38 +1527,43 @@ class MultiMarginLoss(LossBase):
         TypeError: If dtype of `x` is not float16, float or float64.
         TypeError: If dtype of `weight` and `x` is not the same.
         ValueError: If 'p' is not 1 or 2.
-        ValueError: If 'reduction' is not one of {'none','sum','mean'}.
+        ValueError: If 'reduction' is not one of { ``'none'`` , ``'sum'`` , ``'mean'`` }.
         ValueError: If shape[0] of `x` is not equal to shape[0] of `target`.
         ValueError: If shape[1] of `x` is not equal to shape[0] of `weight`.
         ValueError: IF rank of `weight` is not 1.
         ValueError: If rank of `x` is not 2 or rank of 'target' is not 1.
 
     Supported Platforms:
-        ``Ascend``  ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> x = Tensor(np.ones(shape=[3, 3]), mindspore.float32)
-        >>> target = Tensor(np.array([1, 2, 1]), mindspore.int64)
+        >>> import mindspore as ms
+        >>> import mindspore.nn as nn
+        >>> import numpy as np
+        >>> x = ms.Tensor(np.ones(shape=[3, 3]), ms.float32)
+        >>> target = ms.Tensor(np.array([1, 2, 1]), ms.int64)
         >>> loss = nn.MultiMarginLoss()
         >>> output = loss(x, target)
         >>> print(output)
         0.6666667
     """
 
-    def __init__(self, p=1, margin=1.0, reduction='mean'):
+    def __init__(self, p=1, margin=1.0, reduction='mean', weight=None):
         """Initialize MultiMarginLoss."""
         super(MultiMarginLoss, self).__init__()
         self.multi_margin_loss = MultiMarginLossOp(p=p, margin=margin, reduction=reduction)
-        self.ones = P.Ones()
+        self.weight = weight
 
     def construct(self, x, target, weight=None):
         _check_is_tensor('x', x, self.cls_name)
         _check_is_tensor('target', target, self.cls_name)
+        if self.weight is not None:
+            weight = self.weight
         weight_one = weight is None
         if not weight_one:
             _check_is_tensor('weight', weight, self.cls_name)
         else:
-            weight = self.ones(x.shape[1], x.dtype)
+            weight = F.fill(x.dtype, x.astype('float32')[0].shape, 1)
         loss = self.multi_margin_loss(x, target, weight)
         return loss
 
@@ -1271,40 +1596,48 @@ class BCELoss(LossBase):
 
     Args:
         weight (Tensor, optional): A rescaling weight applied to the loss of each batch element.
-            And it must have the same shape and data type as `inputs`. Default: None
-        reduction (str): Specifies the reduction to be applied to the output.
-            Its value must be one of 'none', 'mean', 'sum'. Default: 'none'.
+            And it must have the same shape and data type as `inputs`. Default: ``None`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the weighted mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **logits** (Tensor) - The input tensor with shape :math:`(N, *)` where :math:`*` means, any number
           of additional dimensions. The data type must be float16 or float32.
-        - **labels** (Tensor) - The label tensor with shape :math:`(N, *)`, the same shape and data type as `logits`.
+        - **labels** (Tensor) - The label tensor with shape :math:`(N, *)` where :math:`*` means, any number
+          of additional dimensions. The same shape and data type as `logits`.
 
     Outputs:
-        Tensor, has the same dtype as `logits`. if `reduction` is 'none', then it has the same shape as `logits`.
+        Tensor, has the same dtype as `logits`. if `reduction` is ``'none'``, then it has the same shape as `logits`.
         Otherwise, it is a scalar Tensor.
 
     Raises:
         TypeError: If dtype of `logits`, `labels` or `weight` (if given) is neither float16 not float32.
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
         ValueError: If shape of `logits` is not the same as `labels` or `weight` (if given).
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> weight = Tensor(np.array([[1.0, 2.0, 3.0], [4.0, 3.3, 2.2]]), mindspore.float32)
+        >>> import mindspore as ms
+        >>> import mindspore.nn as nn
+        >>> import numpy as np
+        >>> weight = ms.Tensor(np.array([[1.0, 2.0, 3.0], [4.0, 3.3, 2.2]]), ms.float32)
         >>> loss = nn.BCELoss(weight=weight, reduction='mean')
-        >>> logits = Tensor(np.array([[0.1, 0.2, 0.3], [0.5, 0.7, 0.9]]), mindspore.float32)
-        >>> labels = Tensor(np.array([[0, 1, 0], [0, 0, 1]]), mindspore.float32)
+        >>> logits = ms.Tensor(np.array([[0.1, 0.2, 0.3], [0.5, 0.7, 0.9]]), ms.float32)
+        >>> labels = ms.Tensor(np.array([[0, 1, 0], [0, 0, 1]]), ms.float32)
         >>> output = loss(logits, labels)
         >>> print(output)
         1.8952923
     """
 
-    def __init__(self, weight=None, reduction='none'):
+    def __init__(self, weight=None, reduction='mean'):
         """Initialize BCELoss."""
-        super(BCELoss, self).__init__()
+        super(BCELoss, self).__init__(reduction)
         self.binary_cross_entropy = P.BinaryCrossEntropy(reduction=reduction)
         self.weight_one = weight is None
         if not self.weight_one:
@@ -1323,7 +1656,7 @@ class BCELoss(LossBase):
         return loss
 
 
-@constexpr
+@_primexpr
 def _check_reduced_shape_valid(ori_shape, reduced_shape, axis, cls_name, arg_name1, arg_name2):
     """Internal function, used to check whether the reduced shape meets the requirements."""
     validator.check_reduce_shape(ori_shape, reduced_shape, axis, cls_name, arg_name1, arg_name2)
@@ -1338,13 +1671,17 @@ class CosineEmbeddingLoss(LossBase):
     .. math::
         loss(x_1, x_2, y) = \begin{cases}
         1-cos(x_1, x_2), & \text{if } y = 1\\
-        max(0, cos(x_1, x_2)-margin), & \text{if } y = -1\\
+        \max(0, cos(x_1, x_2)-margin), & \text{if } y = -1\\
         \end{cases}
 
     Args:
-        margin (float): Should be in [-1.0, 1.0]. Default 0.0.
-        reduction (str): Specifies which reduction to be applied to the output. It must be one of
-          "none", "mean", and "sum", meaning no reduction, reduce mean and sum on output, respectively. Default "mean".
+        margin (float): Should be in [-1.0, 1.0]. Default: ``0.0`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **logits_x1** (Tensor) - Tensor of shape :math:`(N, *)` where :math:`*` means, any number
@@ -1354,21 +1691,24 @@ class CosineEmbeddingLoss(LossBase):
           :math:`(x_1, x_2, x_3, ..., x_R)`, then the shape of `labels` must be :math:`(x_1, x_3, x_4, ..., x_R)`.
 
     Outputs:
-        Tensor or Scalar, if `reduction` is "none", its shape is the same as `labels`.
+        Tensor or Scalar, if `reduction` is ``"none"``, its shape is the same as `labels`.
         Otherwise, a scalar value will be returned.
 
     Raises:
         TypeError: If `margin` is not a float.
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
         ValueError: If `margin` is not in range [-1, 1].
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> logits_x1 = Tensor(np.array([[0.3, 0.8], [0.4, 0.3]]), mindspore.float32)
-        >>> logits_x2 = Tensor(np.array([[0.4, 1.2], [-0.4, -0.9]]), mindspore.float32)
-        >>> labels = Tensor(np.array([1, -1]), mindspore.int32)
+        >>> import mindspore as ms
+        >>> import mindspore.nn as nn
+        >>> import numpy as np
+        >>> logits_x1 = ms.Tensor(np.array([[0.3, 0.8], [0.4, 0.3]]), ms.float32)
+        >>> logits_x2 = ms.Tensor(np.array([[0.4, 1.2], [-0.4, -0.9]]), ms.float32)
+        >>> labels = ms.Tensor(np.array([1, -1]), ms.int32)
         >>> cosine_embedding_loss = nn.CosineEmbeddingLoss()
         >>> output = cosine_embedding_loss(logits_x1, logits_x2, labels)
         >>> print(output)
@@ -1381,7 +1721,7 @@ class CosineEmbeddingLoss(LossBase):
         self.reduce_sum = P.ReduceSum()
         self.maximum = P.Maximum()
         validator.check_value_type("margin", margin, [float], self.cls_name)
-        self.margin = validator.check_float_range(margin, -1.0, 1.0, Rel.INC_BOTH, "margin", self.cls_name)
+        self.margin = validator.check_float_range(margin, -1.0, 1.0, validator.INC_BOTH, "margin", self.cls_name)
 
     def construct(self, logits_x1, logits_x2, labels):
         _check_is_tensor('logits_x1', logits_x1, self.cls_name)
@@ -1409,12 +1749,12 @@ class CosineEmbeddingLoss(LossBase):
 
 class MultilabelMarginLoss(LossBase):
     r"""
-    MultilabelMarginLoss operation.
+    Creates a loss criterion that minimizes the hinge loss for multi-class
+    classification tasks.
+    It takes a 2D mini-batch Tensor :math:`x` as input and a 2D
+    Tensor :math:`y` containing target class indices as output.
 
-    Creates a criterion that optimizes a multi-class multi-classification
-    hinge loss (margin-based loss) between input :math:`x` (a 2D mini-batch `Tensor`)
-    and output :math:`y` (which is a 2D `Tensor` of target class indices).
-    For each sample in the mini-batch:
+    Each sample in the mini-batch, the loss is computed as follows:
 
     .. math::
         \text{loss}(x, y) = \sum_{ij}\frac{\max(0, 1 - (x[y[j]] - x[i]))}{\text{x.size}(0)}
@@ -1422,17 +1762,22 @@ class MultilabelMarginLoss(LossBase):
     where :math:`x \in \left\{0, \; \cdots , \; \text{x.size}(0) - 1\right\}`, \
     :math:`y \in \left\{0, \; \cdots , \; \text{y.size}(0) - 1\right\}`, \
     :math:`0 \leq y[j] \leq \text{x.size}(0)-1`, \
-    and :math:`i \neq y[j]` for all :math:`i` and :math:`j`.
+    and for all :math:`i` and :math:`j`, :math:`i` does not equal to :math:`y[j]`.
 
-    :math:`y` and :math:`x` must have the same size.
+    Furthermore, both :math:`y` and :math:`x` should have identical sizes.
 
-    The criterion only considers a contiguous block of non-negative targets that
-    starts at the front.
-
-    This allows for different samples to have variable amounts of target classes.
+    Note:
+        For this operator, only a contiguous sequence of non-negative targets that starts at
+        the beginning is taken into consideration, which means that different samples can have different
+        number of target classes.
 
     Args:
-        reduction (str): Apply specific reduction method to the output: 'none', 'mean', 'sum'. Default: "mean".
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **x** (Tensor) - Predict data. Tensor of shape :math:`(C)` or :math:`(N, C)`, where :math:`N`
@@ -1441,10 +1786,8 @@ class MultilabelMarginLoss(LossBase):
           label targets padded by -1.
 
     Outputs:
-        - **y** (Union[Tensor, Scalar]) - The loss of MultilabelMarginLoss. If `reduction` is "none", its shape
+        - **y** (Union[Tensor, Scalar]) - The loss of MultilabelMarginLoss. If `reduction` is ``"none"``, its shape
           is :math:`(N)`. Otherwise, a scalar value will be returned.
-        - **is_target** (Tensor) - Output tensor for backward input, with the same shape as `target`,
-          data type must be int32.
 
     Raises:
         TypeError: If `x` or `target` is not a Tensor.
@@ -1452,19 +1795,21 @@ class MultilabelMarginLoss(LossBase):
         TypeError: If dtype of `target` is not int32.
         ValueError: If length of shape of `x` is neither 1 nor 2.
         ValueError: If shape of `x` is not the same as `target`.
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
 
     Supported Platforms:
         ``Ascend`` ``GPU``
 
     Examples:
-       >>> loss = nn.MultilabelMarginLoss()
-       >>> x = Tensor(np.array([[0.1, 0.2, 0.4, 0.8], [0.2, 0.3, 0.5, 0.7]]), mindspore.float32)
-       >>> target = Tensor(np.array([[1, 2, 0, 3], [2, 3, -1, 1]]), mindspore.int32)
-       >>> output = loss(x, target)
-       >>> print(output)
-       (Tensor(shape=[], dtype=Float32, value= 0.325), Tensor(shape=[2, 4], dtype=Int32, value=
-       [[1, 1, 1, 1], [0, 0, 1, 1]]))
+        >>> import mindspore as ms
+        >>> import mindspore.nn as nn
+        >>> import numpy as np
+        >>> loss = nn.MultilabelMarginLoss()
+        >>> x = ms.Tensor(np.array([[0.1, 0.2, 0.4, 0.8], [0.2, 0.3, 0.5, 0.7]]), ms.float32)
+        >>> target = ms.Tensor(np.array([[1, 2, 0, 3], [2, 3, -1, 1]]), ms.int32)
+        >>> output = loss(x, target)
+        >>> print(output)
+        0.325
     """
 
     def __init__(self, reduction='mean'):
@@ -1472,7 +1817,8 @@ class MultilabelMarginLoss(LossBase):
         self.multilabel_margin_loss = MultilabelMarginLossOp(reduction=reduction)
 
     def construct(self, x, target):
-        return self.multilabel_margin_loss(x, target)
+        loss, _ = self.multilabel_margin_loss(x, target)
+        return loss
 
 
 class BCEWithLogitsLoss(LossBase):
@@ -1486,7 +1832,7 @@ class BCEWithLogitsLoss(LossBase):
         p_{ij} = sigmoid(X_{ij}) = \frac{1}{1 + e^{-X_{ij}}}
 
     .. math::
-        L_{ij} = -[Y_{ij} \cdot log(p_{ij}) + (1 - Y_{ij}) \cdot log(1 - p_{ij})]
+        L_{ij} = -[Y_{ij} \cdot \log(p_{ij}) + (1 - Y_{ij}) \cdot \log(1 - p_{ij})]
 
     Then,
 
@@ -1498,22 +1844,28 @@ class BCEWithLogitsLoss(LossBase):
         \end{cases}
 
     Args:
-        reduction (str): Type of reduction to be applied to loss. The optional values are 'mean', 'sum', and 'none'.
-            If 'none', do not perform reduction. Default: 'mean'.
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the weighted mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
+
         weight (Tensor, optional): A rescaling weight applied to the loss of each batch element.
             If not None, it can be broadcast to a tensor with shape of `logits`,
-            data type must be float16 or float32. Default: None.
+            data type must be float16 or float32. Default: ``None`` .
         pos_weight (Tensor, optional): A weight of positive examples. Must be a vector with length equal to the
             number of classes. If not None, it must be broadcast to a tensor with shape of `logits`, data type
-            must be float16 or float32. Default: None.
+            must be float16 or float32. Default: ``None`` .
 
     Inputs:
         - **logits** (Tensor) - Input logits with shape :math:`(N, *)` where :math:`*` means, any number
           of additional dimensions. The data type must be float16 or float32.
-        - **labels** (Tensor) - Ground truth label with shape :math:`(N, *)`, same shape and dtype as `logits`.
+        - **labels** (Tensor) - Ground truth label with shape :math:`(N, *)` where :math:`*` means, any number
+          of additional dimensions. The same shape and data type as `logits`.
 
     Outputs:
-        Tensor or Scalar, if `reduction` is 'none', its shape is the same as `logits`.
+        Tensor or Scalar, if `reduction` is ``'none'``, its shape is the same as `logits`.
         Otherwise, a scalar value will be returned.
 
     Raises:
@@ -1523,14 +1875,17 @@ class BCEWithLogitsLoss(LossBase):
         TypeError: If data type of `weight` or `pos_weight` is neither float16 nor float32.
         TypeError: If data type of `reduction` is not string.
         ValueError: If `weight` or `pos_weight` can not be broadcast to a tensor with shape of `logits`.
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
 
     Supported Platforms:
         ``Ascend``  ``GPU``  ``CPU``
 
     Examples:
-        >>> logits = Tensor(np.array([[-0.8, 1.2, 0.7], [-0.1, -0.4, 0.7]]).astype(np.float32))
-        >>> labels = Tensor(np.array([[0.3, 0.8, 1.2], [-0.6, 0.1, 2.2]]).astype(np.float32))
+        >>> import mindspore as ms
+        >>> import mindspore.nn as nn
+        >>> import numpy as np
+        >>> logits = ms.Tensor(np.array([[-0.8, 1.2, 0.7], [-0.1, -0.4, 0.7]]).astype(np.float32))
+        >>> labels = ms.Tensor(np.array([[0.3, 0.8, 1.2], [-0.6, 0.1, 2.2]]).astype(np.float32))
         >>> loss = nn.BCEWithLogitsLoss()
         >>> output = loss(logits, labels)
         >>> print(output)
@@ -1541,32 +1896,21 @@ class BCEWithLogitsLoss(LossBase):
         """Initialize BCEWithLogitsLoss."""
         super(BCEWithLogitsLoss, self).__init__()
         self.reduction = reduction
-        self.bce_with_logits_loss = P.BCEWithLogitsLoss(reduction=reduction)
         if isinstance(weight, Parameter):
             raise TypeError(f"For '{self.cls_name}', the 'weight' can not be a Parameter.")
         if isinstance(pos_weight, Parameter):
             raise TypeError(f"For '{self.cls_name}', the 'pos_weight' can not be a Parameter.")
         self.weight = weight
         self.pos_weight = pos_weight
-        self.ones = P.OnesLike()
 
     def construct(self, logits, labels):
         _check_is_tensor('logits', logits, self.cls_name)
         _check_is_tensor('labels', labels, self.cls_name)
-        ones_input = self.ones(logits)
-        if self.weight is not None:
-            weight = self.weight
-        else:
-            weight = ones_input
-        if self.pos_weight is not None:
-            pos_weight = self.pos_weight
-        else:
-            pos_weight = ones_input
-        loss = self.bce_with_logits_loss(logits, labels, weight, pos_weight)
+        loss = ops.binary_cross_entropy_with_logits(logits, labels, self.weight, self.pos_weight, self.reduction)
         return loss
 
 
-@constexpr
+@_primexpr
 def _check_ndim(logits_nidm, labels_ndim, prime_name=None):
     '''Internal function, used to check whether the dimension of logits and labels meets the requirements.'''
     msg_prefix = f'For \'{prime_name}\', the' if prime_name else "The"
@@ -1581,7 +1925,7 @@ def _check_ndim(logits_nidm, labels_ndim, prime_name=None):
                          f"dimension of 'logits' {logits_nidm} and dimension of 'labels' {labels_ndim}.")
 
 
-@constexpr
+@_primexpr
 def _check_channel_and_shape(logits, labels, prime_name=None):
     '''Internal function, used to check whether the channels or shape of logits and labels meets the requirements.'''
     msg_prefix = f'For \'{prime_name}\', the' if prime_name else "The"
@@ -1609,14 +1953,18 @@ class FocalLoss(LossBase):
     The function is shown as follows:
 
     .. math::
-        FL(p_t) = -(1-p_t)^\gamma log(p_t)
+        FL(p_t) = -(1-p_t)^\gamma \log(p_t)
 
     Args:
-        gamma (float): Gamma is used to adjust the steepness of weight curve in focal loss. Default: 2.0.
+        gamma (float): Gamma is used to adjust the steepness of weight curve in focal loss. Default: ``2.0`` .
         weight (Union[Tensor, None]): A rescaling weight applied to the loss of each batch element. The dimension of
-                                      weight should be 1. If None, no weight is applied. Default: None.
-        reduction (str): Type of reduction to be applied to loss. The optional values are "mean", "sum", and "none".
-                         If "none", do not perform reduction. Default: "mean".
+                                      weight should be 1. If None, no weight is applied. Default: ``None`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the weighted mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **logits** (Tensor) - Tensor of shape should be :math:`(N, C)` or :math:`(N, C, H)` or :math:`(N, C, H, W)`.
@@ -1630,7 +1978,7 @@ class FocalLoss(LossBase):
           range [-:math:`C`, :math:`C`). Where :math:`C` is the number of classes in logits.
 
     Outputs:
-        Tensor or Scalar, if `reduction` is "none", its shape is the same as `logits`.
+        Tensor or Scalar, if `reduction` is ``"none"``, its shape is the same as `logits`.
         Otherwise, a scalar value will be returned.
 
     Raises:
@@ -1638,14 +1986,16 @@ class FocalLoss(LossBase):
         TypeError: If `weight` is not a Tensor.
         ValueError: If `labels` dim is different from `logits`.
         ValueError: If `labels` channel is not 1 and `labels` shape is different from `logits`.
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
 
     Supported Platforms:
         ``Ascend``
 
     Examples:
-        >>> logits = Tensor([[0.8, 1.4], [0.5, 0.9], [1.2, 0.9]], mstype.float32)
-        >>> labels = Tensor([[1], [1], [0]], mstype.int32)
+        >>> import mindspore as ms
+        >>> import mindspore.nn as nn
+        >>> logits = ms.Tensor([[0.8, 1.4], [0.5, 0.9], [1.2, 0.9]], ms.float32)
+        >>> labels = ms.Tensor([[1], [1], [0]], ms.int32)
         >>> focalloss = nn.FocalLoss(weight=Tensor([1, 2]), gamma=2.0, reduction='mean')
         >>> output = focalloss(logits, labels)
         >>> print(output)
@@ -1711,18 +2061,6 @@ class FocalLoss(LossBase):
         return self.get_loss(loss)
 
 
-@constexpr
-def _dtype_check(logits_dtype, labels_dtype, prim_name):
-    """Check dtype."""
-    if logits_dtype not in [mstype.float32, mstype.float16]:
-        raise TypeError("For {}, the logits_dtype must be float32 or float16, but got {}.".format(prim_name,
-                                                                                                  logits_dtype))
-    if logits_dtype != labels_dtype:
-        raise TypeError("For {}, the labels_dtype must equal to logits_dtype {}, but got {}".format(prim_name,
-                                                                                                    logits_dtype,
-                                                                                                    labels_dtype))
-
-
 class HuberLoss(LossBase):
     r"""
     HuberLoss calculate the error between the predicted value and the target value.
@@ -1742,7 +2080,7 @@ class HuberLoss(LossBase):
             delta * (|x_n - y_n| - 0.5 * delta), & \text{otherwise. }
         \end{cases}
 
-    where :math:`N` is the batch size. If `reduction` is not "none", then:
+    where :math:`N` is the batch size. If `reduction` is not ``"none"``, then:
 
     .. math::
         \ell(x, y) =
@@ -1752,11 +2090,15 @@ class HuberLoss(LossBase):
         \end{cases}
 
     Args:
-        reduction (str): Type of reduction to be applied to loss. The optional values are "mean", "sum", and "none".
-            Default: "mean". If `reduction` is "mean" or "sum", then output a scalar Tensor, if `reduction` is "none",
-            the shape of the output Tensor is the broadcasted shape.
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
+
         delta (Union[int, float]): The threshold to change between two type of loss.
-            The value must be positive. Default: 1.0.
+            The value must be positive. Default: ``1.0`` .
 
     Inputs:
         - **logits** (Tensor) - Predicted value, Tensor of any dimension. The data type must be float16 or float32.
@@ -1765,7 +2107,7 @@ class HuberLoss(LossBase):
           and they should be broadcasted to each other.
 
     Outputs:
-        Tensor or Scalar, if `reduction` is "none", return a Tensor with same shape and dtype as `logits`.
+        Tensor or Scalar, if `reduction` is ``"none"``, return a Tensor with same shape and dtype as `logits`.
         Otherwise, a scalar value will be returned.
 
     Raises:
@@ -1773,77 +2115,58 @@ class HuberLoss(LossBase):
         TypeError: If data type of `logits` or `labels` are not the same.
         TypeError: If dtype of `delta` is neither float nor int.
         ValueError: If `delta` is less than or equal to 0.
-        ValueError: If `reduction` is not one of "none", "mean", "sum".
+        ValueError: If `reduction` is not one of ``"none"``, ``"mean"``, ``"sum"``.
         ValueError: If `logits` and `labels` have different shapes and cannot be broadcasted to each other.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> import mindspore
-        >>> from mindspore import Tensor, nn
+        >>> import mindspore as ms
+        >>> import mindspore.nn as nn
         >>> import numpy as np
         >>> # Case 1: logits.shape = labels.shape = (3,)
         >>> loss = nn.HuberLoss()
-        >>> logits = Tensor(np.array([1, 2, 3]), mindspore.float32)
-        >>> labels = Tensor(np.array([1, 2, 2]), mindspore.float32)
+        >>> logits = ms.Tensor(np.array([1, 2, 3]), ms.float32)
+        >>> labels = ms.Tensor(np.array([1, 2, 2]), ms.float32)
         >>> output = loss(logits, labels)
         >>> print(output)
         0.16666667
         >>> # Case 2: logits.shape = (3,), labels.shape = (2, 3)
         >>> loss = nn.HuberLoss(reduction="none")
-        >>> logits = Tensor(np.array([1, 2, 3]), mindspore.float32)
-        >>> labels = Tensor(np.array([[1, 1, 1], [1, 2, 2]]), mindspore.float32)
+        >>> logits = ms.Tensor(np.array([1, 2, 3]), ms.float32)
+        >>> labels = ms.Tensor(np.array([[1, 1, 1], [1, 2, 2]]), ms.float32)
         >>> output = loss(logits, labels)
         >>> print(output)
         [[0.  0.5 1.5]
          [0.  0.  0.5]]
     """
 
-    def __init__(self, reduction='mean', delta=1.0):
+    def __init__(self, reduction="mean", delta=1.0):
         """Initialize HuberLoss."""
         super(HuberLoss, self).__init__(reduction=reduction)
-        validator.check_value_type('delta', delta, [float, int], self.cls_name)
-        validator.check_number("delta", delta, 0.0, Rel.GT, self.cls_name)
-        self.sub = P.Sub()
-        self.mul = P.Mul()
-        self.abs = P.Abs()
-        self.less = P.Less()
-        self.square = P.Square()
-        self.select = P.Select()
-        self.dtype = P.DType()
+        self.reduction = reduction
         self.delta = delta
-        self.delta_half = 0.5 * self.delta
 
     def construct(self, logits, labels):
-        _check_is_tensor('logits', logits, self.cls_name)
-        _check_is_tensor('labels', labels, self.cls_name)
-        logits_dtype = self.dtype(logits)
-        labels_dtype = self.dtype(labels)
-        _dtype_check(logits_dtype, labels_dtype, self.cls_name)
-        z = self.abs(self.sub(logits, labels))
-        condition = self.less(z, self.delta)
-        l1 = self.mul(0.5, self.square(z))
-        l2 = self.mul(self.delta, self.sub(z, self.delta_half))
-        loss = self.select(condition, l1, l2)
-
-        return self.get_loss(loss)
+        return F.huber_loss(logits, labels, self.reduction, self.delta)
 
 
 class TripletMarginLoss(LossBase):
     r"""
     TripletMarginLoss operation.
 
-    Creates a criterion that measures the triplet loss given an input
-    tensors :math:`x1`, :math:`x2`, :math:`x3` and a margin with a value greater than :math:`0`.
-    This is used for measuring a relative similarity between samples. A triplet
-    is composed by `a`, `p` and `n` (i.e., `anchor`, `positive examples` and `negative
-    examples` respectively). The shapes of all input tensors should be
-    :math:`(N, D)`.
+    Triple loss is used to measure the relative similarity between samples,
+    which is measured by a triplet and a :math:`margin` with a value greater than :math:`0` .
+    The triplet is composed by :math:`a`, :math:`p`, :math:`n` in the following formula.
 
-    The distance swap is described in detail in the paper `Learning shallow
-    convolutional feature descriptors with triplet losses` by
-    V. Balntas, E. Riba et al.
+    The shapes of all input tensors should be :math:`(N, *)` , where :math:`N` is batch size
+    and :math:`*` means any number of additional dimensions.
+
+    The distance swap is described in detail in the paper
+    `Learning local feature descriptors with triplets and shallow convolutional neural
+    networks <http://158.109.8.37/files/BRP2016.pdf>`_
+    by V. Balntas, E. Riba et al.
 
     The loss function for each sample in the mini-batch is:
 
@@ -1856,28 +2179,36 @@ class TripletMarginLoss(LossBase):
         d(x_i, y_i) = \left\lVert {\bf x}_i - {\bf y}_i \right\rVert_p
 
     Args:
-        p (int): The norm degree for pairwise distance. Default: 2.
-        eps (float): Default: 1e-06.
-        swap (bool): The distance swap is described in detail in the paper
-            `Learning shallow convolutional feature descriptors with triplet losses` by
-            V. Balntas, E. Riba et al. Default: "False".
-        reduction (str): Apply specific reduction method to the output: 'none', 'mean', 'sum'. Default: "mean".
+        p (int, optional): The degree of norm for pairwise distance. Default: ``2`` .
+        eps (float, optional): Add small value to avoid division by zero. Default: ``1e-06`` .
+        swap (bool, optional): The distance swap change the negative distance to the distance between positive
+            sample and negative sample. Default: ``False`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
+
+        margin (Union[Tensor, float]) - Make a margin between the positive pair and the negative pair.
+            Default: ``1.0`` .
 
     Inputs:
         - **x** (Tensor) - A sample randomly selected from the training set. Data type must be BasicType.
-        - **positive** (Tensor) - A sample belonging to the same category as x, with the same type and shape as `x`.
-        - **negative** (Tensor) - A sample belonging to the different class from x, with the same type and shape as `x`.
-        - **margin** (Tensor) - Make a margin between the positive pair and the negative pair.
+          :math:`a` in the above formula.
+        - **positive** (Tensor) - A sample belonging to the same category as `x`, with the same type and
+          shape as `x`. :math:`p` in the above formula.
+        - **negative** (Tensor) - A sample belonging to the different class from `x`, with the same type and shape
+          as `x`. :math:`n` in the above formula.
+        - **margin** (Union[Tensor, float]) - Make a margin between the positive pair and the negative pair.
+          Default: ``1.0`` .
 
     Outputs:
-        Union[Tensor, Scalar], if `reduction` is "none", its shape is :math:`(N)`.
-        Otherwise, a scalar value will be returned.
+        Tensor. If `reduction` is ``"none"``, its shape is :math:`(N)`. Otherwise, a scalar value will be returned.
 
     Raises:
-        TypeError: If `x` or `positive` or 'negative' or 'margin' is not a Tensor.
-        TypeError: If dtype of `x` or `positive` or `negative` is not BasicType.
+        TypeError: If `x` or `positive` or 'negative' is not a Tensor.
         TypeError: If dtype of `x`, `positive` and `negative` is not the same.
-        TypeError: If `margin` is not float32.
         TypeError: If `p` is not an int.
         TypeError: If `eps` is not a float.
         TypeError: If `swap` is not a bool.
@@ -1885,28 +2216,37 @@ class TripletMarginLoss(LossBase):
         ValueError: If the dimension of input `x` or `positive` or `negative` is bigger than or equal to 8.
         ValueError: If length of shape of `margin` is not 0.
         ValueError: If shape of `x`, `positive` and `negative` cannot broadcast.
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
 
     Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU`
+        ``GPU``
 
     Examples:
+        >>> import mindspore as ms
+        >>> import mindspore.nn as nn
+        >>> import numpy as np
         >>> loss = nn.TripletMarginLoss()
-        >>> x = Tensor(np.array([[0.3, 0.7], [0.5, 0.5]]), mindspore.float32)
-        >>> positive = Tensor(np.array([[0.4, 0.6], [0.4, 0.6]]), mindspore.float32)
-        >>> negative = Tensor(np.array([[0.2, 0.9], [0.3, 0.7]]), mindspore.float32)
-        >>> margin = Tensor(1.0, mindspore.float32)
-        >>> output = loss(x, positive, negative, margin)
+        >>> x = ms.Tensor(np.array([[0.3, 0.7], [0.5, 0.5]]), ms.float32)
+        >>> positive = ms.Tensor(np.array([[0.4, 0.6], [0.4, 0.6]]), ms.float32)
+        >>> negative = ms.Tensor(np.array([[0.2, 0.9], [0.3, 0.7]]), ms.float32)
+        >>> output = loss(x, positive, negative)
         >>> print(output)
         0.8881968
     """
 
-    def __init__(self, p=2, swap=False, eps=1e-6, reduction='mean'):
+    def __init__(self, p=2, swap=False, eps=1e-06, reduction="mean", margin=1.):
         super(TripletMarginLoss, self).__init__()
-        self.triplet_margin_loss = TripletMarginLossOp(p=p, swap=swap, eps=eps, reduction=reduction)
+        self.p = p
+        self.swap = swap
+        self.eps = eps
+        self.reduction = reduction
+        self.margin = margin
 
-    def construct(self, x, positive, negative, margin):
-        return self.triplet_margin_loss(x, positive, negative, margin)
+    def construct(self, x, positive, negative, margin=1.):
+        if self.margin != 1.0:
+            margin = self.margin
+        return F.triplet_margin_loss(x, positive, negative, margin=margin, p=self.p,
+                                     eps=self.eps, swap=self.swap, reduction=self.reduction)
 
 
 @constexpr
@@ -1927,10 +2267,9 @@ class NLLLoss(LossBase):
     r"""
     Gets the negative log likelihood loss between logits and labels.
 
-    The nll loss with reduction=none can be described as:
+    The nll loss with :math:`reduction = none` can be described as:
 
     .. math::
-
         \ell(x, t)=L=\left\{l_{1}, \ldots, l_{N}\right\}^{\top},
         \quad l_{n}=-w_{t_{n}} x_{n, t_{n}},
         \quad w_{c}=\text { weight }[c] \cdot \mathbb{1}\{c \not= \text{ignore_index}\}
@@ -1939,7 +2278,7 @@ class NLLLoss(LossBase):
     :math:`N` is the batch size, :math:`c` belonging to :math:`[0, C-1]` is class index,
     where :math:`C` is the number of classes.
 
-    If `reduction` is not 'none' (default 'mean'), then
+    If `reduction` is not ``'none'`` (default 'mean'), then
 
     .. math::
 
@@ -1950,11 +2289,15 @@ class NLLLoss(LossBase):
 
     Args:
         weight (Tensor): The rescaling weight to each class. If the value is not None, the shape is :math:`(C,)`.
-            The data type only supports float32 or float16. Default: None.
+            The data type only supports float32 or float16. Default: ``None`` .
         ignore_index (int): Specifies a target value that is ignored (typically for padding value)
-            and does not contribute to the gradient. Default: -100.
-        reduction (str):  Apply specific reduction method to the output: 'none', 'mean', or 'sum'.
-            Default: 'mean'.
+            and does not contribute to the gradient. Default: ``-100`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the weighted mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **logits** (Tensor) - Tensor of shape :math:`(N, C)`
@@ -1970,7 +2313,7 @@ class NLLLoss(LossBase):
         TypeError: If `weight` is not a Tensor.
         TypeError: If `ignore_index` is not an int.
         TypeError: If the data type of `weight` is not float16 or float32.
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
         TypeError: If `logits` is not a Tensor.
         TypeError: If `labels` is not a Tensor.
 
@@ -1978,9 +2321,11 @@ class NLLLoss(LossBase):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-
-        >>> logits = mindspore.Tensor(np.random.randn(3, 5), mindspore.float32)
-        >>> labels = mindspore.Tensor(np.array([1, 0, 4]), mindspore.int32)
+        >>> import mindspore as ms
+        >>> import mindspore.nn as nn
+        >>> import numpy as np
+        >>> logits = ms.Tensor(np.random.randn(3, 5), ms.float32)
+        >>> labels = ms.Tensor(np.array([1, 0, 4]), ms.int32)
         >>> loss = nn.NLLLoss()
         >>> output = loss(logits, labels)
     """
@@ -1997,9 +2342,6 @@ class NLLLoss(LossBase):
         self.reduction = reduction
 
     def construct(self, logits, labels):
-        _check_is_tensor('logits', logits, self.cls_name)
-        _check_is_tensor('labels', labels, self.cls_name)
-        _check_nll_loss_inputs(logits.shape, labels.shape, logits.dtype, labels.dtype, self.cls_name)
         return F.nll_loss(logits, labels, self.weight, self.ignore_index, self.reduction)
 
 
@@ -2020,11 +2362,12 @@ def _check_cross_entropy_inputs(logits_shape, label_shape,
                              f"but get 'logits' shape: {logits_shape} and 'labels' shape: {label_shape}.")
     elif label_rank == logits_rank - 1:
         validator.check_type_name('labels', label_dtype, [mstype.int32], prim_name)
-        logits_shape_new = (logits_shape[0], *logits_shape[2:])
-        if logits_shape_new != label_shape:
-            raise ValueError(f"{msg_prefix} shape of 'logits' should be (N, C, d_0, d_1, ...), "
-                             f"and the shape of 'labels' should be (N, d_0, d_1, ...), "
-                             f"but get 'logits' shape: {logits_shape} and 'labels' shape: {label_shape}.")
+        if logits_rank != 1:
+            logits_shape_new = (logits_shape[0], *logits_shape[2:])
+            if logits_shape_new != label_shape:
+                raise ValueError(f"{msg_prefix} shape of 'logits' should be (N, C, d_0, d_1, ...), "
+                                 f"and the shape of 'labels' should be (N, d_0, d_1, ...), "
+                                 f"but get 'logits' shape: {logits_shape} and 'labels' shape: {label_shape}.")
     else:
         raise ValueError(f"{msg_prefix} rank of 'logits' and 'labels' should be:\n"
                          f"1. 'logits.ndim == labels.ndim' for probabilities, \n"
@@ -2056,7 +2399,7 @@ class CrossEntropyLoss(LossBase):
       where :math:`x` is the inputs, :math:`t` is the target, :math:`w` is the weight,
       N is the batch size, :math:`c` belonging to [0, C-1] is class index, where :math:`C` is the number of classes.
 
-      If reduction is not 'none' (default 'mean'), then
+      If reduction is not ``'none'`` (default 'mean'), then
 
       .. math::
 
@@ -2078,7 +2421,7 @@ class CrossEntropyLoss(LossBase):
       where :math:`x` is the inputs, :math:`t` is the target, :math:`w` is the weight,
       N is the batch size, :math:`c` belonging to [0, C-1] is class index, where :math:`C` is the number of classes.
 
-      If reduction is not 'none' (default 'mean'), then
+      If reduction is not ``'none'`` (default 'mean'), then
 
       .. math::
 
@@ -2090,14 +2433,19 @@ class CrossEntropyLoss(LossBase):
               \end{cases}
 
     Args:
-        weight (Tensor): The rescaling weight to each class. If the value is not None, the shape is (C,).
-            The data type only supports float32 or float16. Default: None.
+        weight (Tensor): The rescaling weight to each class. If the value is not None, the shape is :math:`(C,)`.
+            The data type only supports float32 or float16. Default: ``None`` .
         ignore_index (int): Specifies a target value that is ignored (typically for padding value)
-            and does not contribute to the gradient. Default: -100.
-        reduction (str):  Apply specific reduction method to the output: 'none', 'mean', or 'sum'.
-            Default: 'mean'.
+            and does not contribute to the gradient. Default: ``-100`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the weighted mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
+
         label_smoothing (float): Label smoothing values, a regularization tool used to prevent the model
-            from overfitting when calculating Loss. The value range is [0.0, 1.0]. Default value: 0.0.
+            from overfitting when calculating Loss. The value range is [0.0, 1.0]. Default value: ``0.0`` .
 
     Inputs:
         - **logits** (Tensor) - Tensor of shape :math:`(C,)` :math:`(N, C)` or :math:`(N, C, d_1, d_2, ..., d_K)`,
@@ -2114,7 +2462,7 @@ class CrossEntropyLoss(LossBase):
         TypeError: If `weight` is not a Tensor.
         TypeError: If `ignore_index` is not an int.
         TypeError: If the data type of `weight` is not float16 or float32.
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
         TypeError: If `label_smoothing` is not a float.
         TypeError: If `logits` is not a Tensor.
         TypeError: If `labels` is not a Tensor.
@@ -2123,15 +2471,17 @@ class CrossEntropyLoss(LossBase):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-
+        >>> import mindspore as ms
+        >>> import mindspore.nn as nn
+        >>> import numpy as np
         >>> # Case 1: Indices labels
-        >>> inputs = mindspore.Tensor(np.random.randn(3, 5), mindspore.float32)
-        >>> target = mindspore.Tensor(np.array([1, 0, 4]), mindspore.int32)
+        >>> inputs = ms.Tensor(np.random.randn(3, 5), ms.float32)
+        >>> target = ms.Tensor(np.array([1, 0, 4]), ms.int32)
         >>> loss = nn.CrossEntropyLoss()
         >>> output = loss(inputs, target)
         >>> # Case 2: Probability labels
-        >>> inputs = mindspore.Tensor(np.random.randn(3, 5), mindspore.float32)
-        >>> target = mindspore.Tensor(np.random.randn(3, 5), mindspore.float32)
+        >>> inputs = ms.Tensor(np.random.randn(3, 5), ms.float32)
+        >>> target = ms.Tensor(np.random.randn(3, 5), ms.float32)
         >>> loss = nn.CrossEntropyLoss()
         >>> output = loss(inputs, target)
     """
@@ -2141,7 +2491,7 @@ class CrossEntropyLoss(LossBase):
         super().__init__(reduction)
         validator.check_value_type('ignore_index', ignore_index, int, self.cls_name)
         validator.check_value_type('label_smoothing', label_smoothing, float, self.cls_name)
-        validator.check_float_range(label_smoothing, 0.0, 1.0, Rel.INC_BOTH, 'label_smoothing', self.cls_name)
+        validator.check_float_range(label_smoothing, 0.0, 1.0, validator.INC_BOTH, 'label_smoothing', self.cls_name)
 
         if weight is not None:
             validator.check_value_type("weight", weight, [Tensor], self.cls_name)
@@ -2166,7 +2516,7 @@ class CrossEntropyLoss(LossBase):
 
 class KLDivLoss(LossBase):
     r"""
-    Computes the Kullback-Leibler divergence between the logits and the labels.
+    Computes the Kullback-Leibler divergence between the `logits` and the `labels`.
 
     For tensors of the same shape :math:`x` and :math:`target`,
     the updating formulas of KLDivLoss algorithm are as follows,
@@ -2194,19 +2544,18 @@ class KLDivLoss(LossBase):
           only when `reduction` is set to 'batchmean'.
 
     Args:
-        reduction (str): Specifies the reduction to be applied to the output.
-            Default: 'mean'.
+        reduction (str): Specifies the reduction to be applied to the output. Default: ``'mean'`` .
 
-            - On Ascend, the value of `reduction` must be one of 'batchmean', 'none' or 'sum'.
-            - On GPU, the value of `reduction` must be one of 'mean', 'none' or 'sum'.
-            - On CPU, the value of `reduction` must be one of 'mean', 'batchmean', 'none' or 'sum'.
+            - On Ascend, the value of `reduction` must be one of ``'batchmean'`` , ``'none'`` or ``'sum'`` .
+            - On GPU, the value of `reduction` must be one of ``'mean'`` , ``'none'`` or ``'sum'`` .
+            - On CPU, the value of `reduction` must be one of ``'mean'`` , ``'batchmean'`` , ``'none'`` or ``'sum'`` .
 
     Inputs:
         - **logits** (Tensor) - The input Tensor. The data type must be float16, float32 or float64.
         - **labels** (Tensor) - The label Tensor which has the same shape and data type as `logits`.
 
     Outputs:
-        Tensor or Scalar, if `reduction` is 'none', then output is a tensor and has the same shape as `logits`.
+        Tensor or Scalar, if `reduction` is ``'none'``, then output is a tensor and has the same shape as `logits`.
         Otherwise, it is a scalar.
 
     Raises:
@@ -2220,8 +2569,11 @@ class KLDivLoss(LossBase):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> logits = Tensor(np.array([0.2, 0.7, 0.1]), mindspore.float32)
-        >>> labels = Tensor(np.array([0., 1., 0.]), mindspore.float32)
+        >>> import mindspore as ms
+        >>> import mindspore.nn as nn
+        >>> import numpy as np
+        >>> logits = ms.Tensor(np.array([0.2, 0.7, 0.1]), ms.float32)
+        >>> labels = ms.Tensor(np.array([0., 1., 0.]), ms.float32)
         >>> loss = nn.KLDivLoss(reduction='mean')
         >>> output = loss(logits, labels)
         >>> print(output)
@@ -2238,121 +2590,144 @@ class KLDivLoss(LossBase):
         return F.kl_div(logits, labels, self.reduction)
 
 
+def _check_ctcloss_targets_shape(targets):
+    """Internal function, used to check whether the shape of CTC targets meets the requirements."""
+    if targets.ndim > 2:
+        raise ValueError(f"For CTCLoss, when the shape of log_probs is (T, C), the dimension of targets should"
+                         f"be 1 or 2, but got {targets.ndim}.")
+    if targets.ndim == 2 and targets.shape[0] != 1:
+        raise ValueError(f"For CTCLoss, the first dimension of 2-D targets should be 1,"
+                         f"but got {targets.shape[0]}.")
+
+
 class CTCLoss(LossBase):
     """
-    Calculates the CTC (Connectionist Temporal Classification) loss.
+    Calculates the CTC (Connectionist Temporal Classification) loss. It's mainly used to calculate the loss between
+    the continuous, unsegemented time series and the target series.
 
     For the CTC algorithm, refer to `Connectionist Temporal Classification: Labeling Unsegmented Sequence Data with
     Recurrent Neural Networks <http://www.cs.toronto.edu/~graves/icml_2006.pdf>`_ .
 
     Args:
-        blank (int): The blank label. Default: 0.
-        reduction (str): Apply specific reduction method to the output: 'none', 'mean', or 'sum'. Default: 'mean'.
-        zero_infinity (bool): Whether to set infinite loss and correlation gradient to zero. Default: False.
+        blank (int, optional): The blank label. Default: ``0`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
+
+        zero_infinity (bool, optional): If loss is infinite, this parameter determines whether to set that loss
+            and its correlated gradient to zero. Default: ``False`` .
 
     Inputs:
-        - **log_probs** (Tensor) - A tensor of shape (T, N, C) or (T, C), where T is input length, N is batch size and
-          C is number of classes (including blank). T, N and C are positive integers.
-        - **targets** (Tensor) - A tensor of shape (N, S) or (sum( `target_lengths` )), where S is max target length,
-          means the target sequences.
-        - **input_lengths** (Union[tuple, Tensor, int]) - A tuple or Tensor of shape(N), or a number.
-          It means the lengths of the input.
-        - **target_lengths** (Union[tuple, Tensor, int]) - A tuple or Tensor of shape(N), or a number.
-          It means the lengths of the target.
+        - **log_probs** (Tensor) - A tensor of shape :math:`(T, N, C)` or :math:`(T, C)`, where T is length of input,
+          N is size of the batch and C is the number of classes. T, N and C are positive integers.
+        - **targets** (Tensor) - A tensor of shape :math:`(N, S)` or (sum( `target_lengths` )),
+          where S is max target length, means the target sequences.
+        - **input_lengths** (Union[tuple, Tensor]) - A tuple or Tensor of shape(N). It means the lengths of the input.
+        - **target_lengths** (Union[tuple, Tensor]) - A tuple or Tensor of shape(N). It means the lengths of the target.
 
     Outputs:
         - **neg_log_likelihood** (Tensor) - A loss value which is differentiable with respect to each input node.
 
     Raises:
+        TypeError: If `log_probs` or `targets` is not a Tensor.
         TypeError: If `zero_infinity` is not a bool, `reduction` is not string.
         TypeError: If the dtype of `log_probs` is not float or double.
         TypeError: If the dtype of `targets`, `input_lengths` or `target_lengths` is not int32 or int64.
-        ValueError: If `reduction` is not "none", "mean" or "sum".
-        ValueError: If the types of `targets`, `input_lengths` or `target_lengths` are different.
+        ValueError: If `reduction` is not ``"none"``, ``"mean"`` or ``"sum"``.
         ValueError: If the value of `blank` is not in range [0, C). C is number of classes of `log_probs` .
-        ValueError: If any value of `input_lengths` is larger than C. C is number of classes of `log_probs` .
-        ValueError: If any target_lengths[i] is not in range [0, input_length[i]].
+        ValueError: If the shape of `log_probs` is :math:`(T, C)`, the dimension of `targets` is not 1 or 2.
+        ValueError: If the shape of `log_probs` is :math:`(T, C)`, the first dimension of 2-D `target` is not 1.
+        RuntimeError: If any value of `input_lengths` is larger than T. T is length of `log_probs` .
+        RuntimeError: If any target_lengths[i] is not in range [0, input_length[i]].
 
     Supported Platforms:
-        ``Ascend`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore as ms
+        >>> import mindspore.nn as nn
         >>> import numpy as np
-        >>> from mindspore import Tensor
-        >>> from mindspore import dtype as mstype
-        >>> from mindspore.nn.loss import CTCLoss
         >>> T = 5      # Input sequence length
         >>> C = 2      # Number of classes
         >>> N = 2      # Batch size
         >>> S = 3      # Target sequence length of longest target in batch (padding length)
         >>> S_min = 2  # Minimum target length, for demonstration purposes
         >>> arr = np.arange(T*N*C).reshape((T, N, C))
-        >>> ms_input = Tensor(arr, dtype=mstype.float32)
+        >>> ms_input = ms.Tensor(arr, dtype=ms.float32)
         >>> input_lengths = np.full(shape=(N), fill_value=T)
-        >>> input_lengths = Tensor(input_lengths, dtype=mstype.int32)
+        >>> input_lengths = ms.Tensor(input_lengths, dtype=ms.int32)
         >>> target_lengths = np.full(shape=(N), fill_value=S_min)
-        >>> target_lengths = Tensor(target_lengths, dtype=mstype.int32)
+        >>> target_lengths = ms.Tensor(target_lengths, dtype=ms.int32)
         >>> target = np.random.randint(1, C, size=(N, S))
-        >>> target = Tensor(target, dtype=mstype.int32)
-        >>> ctc_loss = CTCLoss(blank=0, reduction='none', zero_infinity=False)
+        >>> target = ms.Tensor(target, dtype=ms.int32)
+        >>> ctc_loss = nn.CTCLoss(blank=0, reduction='none', zero_infinity=False)
         >>> loss = ctc_loss(ms_input, target, input_lengths, target_lengths)
         >>> print(loss)
-        Tensor(shape=[2], dtype=Float32, value= [-4.57949715e+001, -5.57949677e+001])
+        [-45.79497  -55.794968]
         >>> arr = np.arange(T*C).reshape((T, C))
-        >>> ms_input = Tensor(arr, dtype=mstype.float32)
-        >>> input_lengths = T
-        >>> target_lengths = S_min
+        >>> ms_input = ms.Tensor(arr, dtype=ms.float32)
+        >>> input_lengths = ms.Tensor([T], dtype=ms.int32)
+        >>> target_lengths = ms.Tensor([S_min], dtype=ms.int32)
         >>> target = np.random.randint(1, C, size=(S_min,))
-        >>> target = Tensor(target, dtype=mstype.int32)
-        >>> ctc_loss = CTCLoss(blank=0, reduction='none', zero_infinity=False)
+        >>> target = ms.Tensor(target, dtype=ms.int32)
+        >>> ctc_loss = nn.CTCLoss(blank=0, reduction='none', zero_infinity=False)
         >>> loss = ctc_loss(ms_input, target, input_lengths, target_lengths)
         >>> print(loss)
-        Tensor(shape=[1], dtype=Float32, value= [-2.57949677e+001])
+        -25.794968
     """
 
     def __init__(self, blank=0, reduction='mean', zero_infinity=False):
-        super().__init__(reduction)
-        self.ctcloss = CTCLossV2(blank=blank, reduction='none', zero_infinity=zero_infinity)
+        super().__init__()
+        self.blank = blank
+        self.reduction = reduction
+        self.zero_infinity = zero_infinity
 
     def construct(self, log_probs, targets, input_lengths, target_lengths):
-        if len(log_probs.shape) == 2:
-            n, c = log_probs.shape
-            log_probs = log_probs.reshape((n, 1, c))
-            targets = targets.reshape(1, targets.shape[0])
-            if isinstance(input_lengths, int):
-                input_lengths = Tensor([input_lengths], mstype.int32)
-            else:
-                raise ValueError("The dtype of input_lengths should be int32 or int64.")
-            if isinstance(target_lengths, int):
-                target_lengths = Tensor([target_lengths], mstype.int32)
-            else:
-                raise ValueError("The dtype of target_lengths should be int32 or int64.")
-        neg_log_hood, _ = self.ctcloss(log_probs, targets, input_lengths, target_lengths)
-        return self.get_loss(neg_log_hood)
+        _check_is_tensor('log_probs', log_probs, self.cls_name)
+        _check_is_tensor('targets', targets, self.cls_name)
+        if log_probs.ndim == 2:
+            _check_ctcloss_targets_shape(targets)
+            if targets.ndim == 1:
+                targets = targets.expand_dims(0)
+            log_probs = log_probs.expand_dims(-2)
+            neg_log_hood, _ = F.ctc_loss(log_probs, targets, input_lengths, target_lengths, self.blank, self.reduction,
+                                         self.zero_infinity)
+            return neg_log_hood.squeeze(axis=0)
+        neg_log_hood, _ = F.ctc_loss(log_probs, targets, input_lengths, target_lengths, self.blank, self.reduction,
+                                     self.zero_infinity)
+        return neg_log_hood
 
 
 class GaussianNLLLoss(LossBase):
-    r"""Gaussian negative log likelihood loss.
+    r"""
+    Gaussian negative log likelihood loss.
 
-    The targets are treated as samples from Gaussian distributions with expectations and variances predicted by the
-    neural network. For a `labels` tensor modelled as having Gaussian distribution with a tensor of expectations
-    `logits` and a tensor of positive variances `var` the loss is:
+    The target values are considered to be samples from a Gaussian distribution, where the expectation and variance are
+    predicted by a neural network. For `labels` modeled on a Gaussian distribution, `logits` to record expectations,
+    and the variance `var` (elements are all positive), the calculated loss is:
 
     .. math::
         \text{loss} = \frac{1}{2}\left(\log\left(\text{max}\left(\text{var},
         \ \text{eps}\right)\right) + \frac{\left(\text{logits} - \text{labels}\right)^2}
         {\text{max}\left(\text{var}, \ \text{eps}\right)}\right) + \text{const.}
 
-    where `eps` is used for stability of :math:`log`. By default, the constant term of the loss function is omitted
-    unless :math:`full=True`. If the shape of :math:`var` is not the same as `logits` (due to a
-    homoscedastic assumption), it must either have a final dimension of 1 or have one fewer dimension
-    (with all other sizes being the same) for correct broadcasting.
+    where :math:`eps` is used for stability of :math:`log`. When :math:`full=True`, a constant will be added to
+    the loss. If the shape of :math:`var` and :math:`logits` are not the same (due to a homoscedastic assumption),
+    their shapes must allow correct broadcasting.
 
-    Args:
-        full (bool): Include the constant term in the loss calculation. When :math:`full=True`, the constant term
-            `const.` will be :math:`0.5 * log(2\pi)`. Default: False.
-        eps (float): Used to improve the stability of log function. Default: 1e-6.
-        reduction (str): Apply specific reduction method to the output: 'none', 'mean', or 'sum'. Default: 'mean'.
+    Keyword Args:
+        full (bool, optional): Whether include the constant term in the loss calculation. When :math:`full=True`,
+            the constant term `const.` will be :math:`0.5 * log(2\pi)`. Default: ``False`` .
+        eps (float, optional): Used to improve the stability of log function. Default: ``1e-6`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **logits** (Tensor) - Tensor of shape :math:`(N, *)` or :math:`(*)` where :math:`*` means any number of
@@ -2364,30 +2739,29 @@ class GaussianNLLLoss(LossBase):
           (to allow for broadcasting).
 
     Returns:
-        Tensor or Tensor scalar, the computed loss depending on `reduction`.
+        Tensor or Tensor scalar, the computed loss depending on :math:`reduction`.
 
     Raises:
         TypeError: If `logits` is not a Tensor.
         TypeError: If `labels` is not a Tensor.
         TypeError: If `full` is not a bool.
         TypeError: If `eps` is not a float.
-        ValueError: If `eps` is not a float within [0, inf).
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `eps` is not a float within (0, inf).
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> import numpy as np
-        >>> from mindspore import Tensor
+        >>> import mindspore as ms
         >>> import mindspore.nn as nn
-        >>> import mindspore.common.dtype as mstype
+        >>> import numpy as np
         >>> arr1 = np.arange(8).reshape((4, 2))
         >>> arr2 = np.array([2, 3, 1, 4, 6, 4, 4, 9]).reshape((4, 2))
-        >>> logits = Tensor(arr1, mstype.float32)
-        >>> labels = Tensor(arr2, mstype.float32)
+        >>> logits = ms.Tensor(arr1, ms.float32)
+        >>> labels = ms.Tensor(arr2, ms.float32)
         >>> loss = nn.GaussianNLLLoss(reduction='mean')
-        >>> var = Tensor(np.ones((4, 1)), mstype.float32)
+        >>> var = ms.Tensor(np.ones((4, 1)), ms.float32)
         >>> output = loss(logits, labels, var)
         >>> print(output)
         1.4374993
@@ -2401,7 +2775,7 @@ class GaussianNLLLoss(LossBase):
 
     def __init__(self, *, full=False, eps=1e-6, reduction='mean'):
         super(GaussianNLLLoss, self).__init__()
-        validator.check_float_range(eps, 0, float('inf'), Rel.INC_NEITHER, "eps", self.cls_name)
+        validator.check_float_range(eps, 0, float('inf'), validator.INC_NEITHER, "eps", self.cls_name)
         validator.check_value_type('full', full, [bool], self.cls_name)
         validator.check_string(reduction, ['none', 'mean', 'sum'], 'reduction', 'gaussian_nll_loss')
         self.full = full
@@ -2417,9 +2791,8 @@ class GaussianNLLLoss(LossBase):
 
 class HingeEmbeddingLoss(LossBase):
     r"""
-    Hinge Embedding Loss. Compute the output according to the input elements. Measures the loss given an input tensor x
-    and a labels tensor y (containing 1 or -1).
-    This is usually used for measuring the similarity between two inputs.
+    Calculate the Hinge Embedding Loss value based on the input 'logits' and' labels' (only including 1 or -1).
+    Usually used to measure the similarity between two inputs.
 
     The loss function for :math:`n`-th sample in the mini-batch is
 
@@ -2440,37 +2813,42 @@ class HingeEmbeddingLoss(LossBase):
     where :math:`L = \{l_1,\dots,l_N\}^\top`.
 
     Args:
-        margin (float): Threshold defined by Hinge Embedding Loss :math:`margin`.
-            Represented as :math:`\Delta` in the formula. Default: 1.0.
-        reduction (str): Specify the computing method to be applied to the outputs: 'none', 'mean', or 'sum'.
-            Default: 'mean'.
+        margin (float, int): Threshold defined by Hinge Embedding Loss :math:`margin`.
+            Represented as :math:`\Delta` in the formula. Default: ``1.0`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
-        - **logits** (Tensor) - Tensor of shape :math:`(*)` where :math:`*` means any number of dimensions.
-        - **labels** (Tensor) - Same shape as the logits, contains -1 or 1.
+        - **logits** (Tensor) - The predicted value, expressed as :math:`x` in the equation.
+          Tensor of shape :math:`(*)` where :math:`*` means any number of dimensions.
+        - **labels** (Tensor) - Label value, represented as :math:`y` in the equation.
+          Same shape as the logits, contains -1 or 1.
 
     Returns:
-        Tensor or Tensor scalar, the computed loss depending on `reduction`.
+        Tensor or Tensor scalar, the computed loss depending on :math:`reduction`.
 
     Raises:
         TypeError: If `logits` is not a Tensor.
         TypeError: If `labels` is not a Tensor.
-        TypeError: If `margin` is not a float.
-        ValueError: If `labels` does not have the same shape as `logits`.
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        TypeError: If `margin` is not a float or int.
+        ValueError: If `labels` does not have the same shape as `logits` or they could not broadcast to each other.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
-    Examplse:
-        >>> import numpy as np
-        >>> from mindspore import Tensor
+    Examples:
+        >>> import mindspore as ms
         >>> import mindspore.nn as nn
-        >>> import mindspore.common.dtype as mstype
+        >>> import numpy as np
         >>> arr1 = np.array([0.9, -1.2, 2, 0.8, 3.9, 2, 1, 0, -1]).reshape((3, 3))
         >>> arr2 = np.array([1, 1, -1, 1, -1, 1, -1, 1, 1]).reshape((3, 3))
-        >>> logits = Tensor(arr1, mstype.float32)
-        >>> labels = Tensor(arr2, mstype.float32)
+        >>> logits = ms.Tensor(arr1, ms.float32)
+        >>> labels = ms.Tensor(arr2, ms.float32)
         >>> loss = nn.HingeEmbeddingLoss(reduction='mean')
         >>> output = loss(logits, labels)
         >>> print(output)
@@ -2479,7 +2857,7 @@ class HingeEmbeddingLoss(LossBase):
 
     def __init__(self, margin=1.0, reduction='mean'):
         super(HingeEmbeddingLoss, self).__init__()
-        validator.check_value_type('margin', margin, [float], self.cls_name)
+        validator.check_value_type('margin', margin, [float, int], self.cls_name)
         validator.check_string(reduction, ['none', 'sum', 'mean'], 'reduction', self.cls_name)
         self.margin = margin
         self.reduction = reduction

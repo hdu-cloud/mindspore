@@ -17,7 +17,7 @@ from __future__ import absolute_import
 
 import numpy as np
 
-from mindspore._checkparam import Rel, Validator as validator
+from mindspore import _checkparam as validator
 from mindspore._extends import cell_attr_register
 from mindspore.common import dtype as mstype
 from mindspore.common.parameter import Parameter
@@ -25,8 +25,9 @@ from mindspore.common.tensor import Tensor
 from mindspore.ops import functional as F
 from mindspore.ops import operations as P
 from mindspore.ops.operations import nn_ops as NN_OPS
-from mindspore.ops.primitive import constexpr
 from mindspore.nn.cell import Cell
+from mindspore import ops
+from mindspore.ops.primitive import _primexpr
 
 __all__ = ['Softmin',
            'Softmax',
@@ -71,10 +72,13 @@ class CELU(Cell):
 
         \text{CELU}(x) = \max(0,x) + \min(0, \alpha * (\exp(x/\alpha) - 1))
 
-    The picture about CELU looks like this `CELU <https://arxiv.org/abs/1704.07483>`_.
+    CELU Activation Function Graph:
+
+    .. image:: images/CELU.png
+        :align: center
 
     Args:
-        alpha (float): The :math:`\alpha` value for the Celu formulation. Default: 1.0
+        alpha (float): The :math:`\alpha` value for the Celu formulation. Default: ``1.0`` .
 
     Inputs:
         - **x** (Tensor) - The input of CELU. The required dtype is float16 or float32.
@@ -93,6 +97,9 @@ class CELU(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x = Tensor(np.array([-2.0, -1.0, 1.0, 2.0]), mindspore.float32)
         >>> celu = nn.CELU()
         >>> output = celu(x)
@@ -126,7 +133,7 @@ class Softmin(Cell):
 
     Args:
         axis (Union[int, tuple[int]]): The axis to apply Softmin operation, if the dimension of input `x` is x.ndim,
-            the range of axis is `[-x.ndim, x.ndim)`. -1 means the last dimension. Default: -1.
+            the range of axis is `[-x.ndim, x.ndim)`. -1 means the last dimension. Default: ``-1`` .
 
     Inputs:
         - **x** (Tensor) - Tensor for computing Softmin functions with data type of float16 or float32.
@@ -144,34 +151,35 @@ class Softmin(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> # axis = -1(default), and the sum of return value is 1.0.
         >>> x = Tensor(np.array([-1, -2, 0, 2, 1]), mindspore.float16)
         >>> softmin = nn.Softmin()
         >>> output = softmin(x)
         >>> print(output)
         [0.2341  0.636  0.0862  0.01165  0.03168 ]
-        >>> assert(1.0 == output.sum())
     """
 
     def __init__(self, axis=-1):
         """Initialize Softmin."""
         super(Softmin, self).__init__()
-        self.softmax = P.Softmax(axis)
+        self.axis = axis
 
     def construct(self, x):
-        x = -1 * x
-        return self.softmax(x)
+        return ops.function.softmin(x, self.axis)
 
 
 class Softmax2d(Cell):
     r"""
-    Applies SoftMax over features to each spatial location.
+    Softmax function applied to 2D features data.
 
-    When given a Tensor with shape of :math:`(C, H, W)` , it will
-    apply `Softmax` to each location :math:`(c, h, w)`.
+    Applies `Softmax` to each location :math:`(c, h, w)` with an input Tensor of shape :math:`(C, H, W)` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(N, C_{in}, H_{in}, W_{in})` or :math:`(C_{in}, H_{in}, W_{in})`.
+          The input of Softmax with data type of float16 or float32.
 
     Outputs:
         Tensor, which has the same type and shape as `x` with values in the range[0,1].
@@ -184,11 +192,16 @@ class Softmax2d(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x = Tensor(np.array([[[[0.1, 0.2]], [[0.3, 0.4]], [[0.6, 0.5]]]]), mindspore.float32)
         >>> softmax2d = nn.Softmax2d()
         >>> output = softmax2d(x)
         >>> print(output)
-        [[[[0.258, 0.28]], [[0.316, 0.342]], [[0.426, 0.378]]]
+        [[[[0.25838965 0.28001308]]
+        [[0.31559783 0.34200877]]
+        [[0.42601252 0.37797815]]]]
     """
 
     def __init__(self):
@@ -198,7 +211,7 @@ class Softmax2d(Cell):
         self.shape = P.Shape()
 
     @staticmethod
-    @constexpr
+    @_primexpr
     def _check_input_dim(shape, cls_name):
         dim = len(shape)
         if dim not in (3, 4):
@@ -227,7 +240,7 @@ class Softmax(Cell):
 
     Args:
         axis (Union[int, tuple[int]]): The axis to apply Softmax operation, if the dimension of input `x` is x.ndim,
-            the range of axis is `[-x.ndim, x.ndim)`, -1 means the last dimension. Default: -1.
+            the range of axis is `[-x.ndim, x.ndim)`, -1 means the last dimension. Default: ``-1`` .
 
     Inputs:
         - **x** (Tensor) - The input of Softmax with data type of float16 or float32.
@@ -245,13 +258,15 @@ class Softmax(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> # axis = -1(default), and the sum of return value is 1.0.
         >>> x = Tensor(np.array([-1, -2, 0, 2, 1]), mindspore.float16)
         >>> softmax = nn.Softmax()
         >>> output = softmax(x)
         >>> print(output)
         [0.03168 0.01166 0.0861  0.636   0.2341 ]
-        >>> assert(1.0 == output.sum())
     """
 
     def __init__(self, axis=-1):
@@ -273,12 +288,10 @@ class LogSoftmax(Cell):
 
     .. math::
 
-        \text{logsoftmax}(x_i) = \log \left(\frac{\exp(x_i)}{\sum_{j=0}^{n-1} \exp(x_j)}\right),
-
-    where :math:`x_{i}` is the :math:`i`-th slice in the given dimension of the input Tensor.
+        \text{logsoftmax}(x_i) = \log \left(\frac{\exp(x_i)}{\sum_{j=0}^{n-1} \exp(x_j)}\right)
 
     Args:
-        axis (int): The axis to apply LogSoftmax operation, -1 means the last dimension. Default: -1.
+        axis (int): The axis to apply LogSoftmax operation, -1 means the last dimension. Default: ``-1`` .
 
     Inputs:
         - **x** (Tensor) - The input of LogSoftmax, with float16 or float32 data type.
@@ -295,6 +308,9 @@ class LogSoftmax(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x = Tensor(np.array([[-1.0, 4.0, -8.0], [2.0, -5.0, 9.0]]), mindspore.float32)
         >>> log_softmax = nn.LogSoftmax()
         >>> output = log_softmax(x)
@@ -328,11 +344,13 @@ class ELU(Cell):
 
     where :math:`x_i` represents the element of the input and :math:`\alpha` represents the `alpha` parameter.
 
-    The picture about ELU looks like this `ELU <https://en.wikipedia.org/wiki/
-    Activation_function#/media/File:Activation_elu.svg>`_.
+    ELU Activation Function Graph:
+
+    .. image:: images/ELU.png
+        :align: center
 
     Args:
-        alpha (float): The alpha value of ELU, the data type is float. Default: 1.0.
+        alpha (float): The alpha value of ELU, the data type is float. Default: ``1.0`` .
 
     Inputs:
         - **x** (Tensor) - The input of ELU is a Tensor of any dimension with data type of float16 or float32.
@@ -349,6 +367,9 @@ class ELU(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x = Tensor(np.array([-1, -2, 0, 2, 1]), mindspore.float32)
         >>> elu = nn.ELU()
         >>> result = elu(x)
@@ -373,15 +394,20 @@ class ReLU(Cell):
 
         \text{ReLU}(x) = (x)^+ = \max(0, x),
 
-    It returns element-wise :math:`\max(0, x)`. Specially, the neurons with the negative output
-    will be suppressed and the active neurons will stay the same.
+    It returns element-wise :math:`\max(0, x)`.
 
-    The picture about ReLU looks like this `ReLU <https://en.wikipedia.org/wiki/
-    Activation_function#/media/File:Activation_rectified_linear.svg>`_ .
+    .. note::
+        The neurons with the negative output
+        will be suppressed and the active neurons will stay the same.
+
+    ReLU Activation Function Graph:
+
+    .. image:: images/ReLU.png
+        :align: center
 
     Inputs:
         - **x** (Tensor) - The input of ReLU is a Tensor of any dimension. The data type is `number <https://www.mind
-          spore.cn/docs/en/r2.0.0-alpha/api_python/mindspore.html#mindspore.dtype>`_ .
+          spore.cn/docs/en/master/api_python/mindspore.html#mindspore.dtype>`_ .
 
     Outputs:
         Tensor, with the same type and shape as the `x`.
@@ -393,6 +419,9 @@ class ReLU(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x = Tensor(np.array([-1, 2, -3, 2, -1]), mindspore.float16)
         >>> relu = nn.ReLU()
         >>> output = relu(x)
@@ -419,13 +448,16 @@ class ReLU6(Cell):
 
     .. math::
 
-        Y = \min(\max(0, x), 6).
+        Y = \min(\max(0, x), 6)
 
-    The input is a Tensor of any valid shape.
+    ReLU6 Activation Function Graph:
+
+    .. image:: images/ReLU6.png
+        :align: center
 
     Inputs:
-        - **x** (Tensor) - The input of ReLU6 with data type of float16 or float32.
-          The shape is :math:`(N,*)` where :math:`*` means, any number of additional dimensions.
+        - **x** (Tensor) - The input of ReLU6 with data type of float16 or float32 and that
+          is a Tensor of any valid shape.
 
     Outputs:
         Tensor, which has the same type as `x`.
@@ -437,6 +469,9 @@ class ReLU6(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x = Tensor(np.array([-1, -2, 0, 2, 1]), mindspore.float16)
         >>> relu6 = nn.ReLU6()
         >>> output = relu6(x)
@@ -468,8 +503,13 @@ class LeakyReLU(Cell):
     For more details, see `Rectifier Nonlinearities Improve Neural Network Acoustic Models
     <https://ai.stanford.edu/~amaas/papers/relu_hybrid_icml2013_final.pdf>`_.
 
+    LeakyReLU Activation Function Graph:
+
+    .. image:: images/LeakyReLU.png
+        :align: center
+
     Args:
-        alpha (Union[int, float]): Slope of the activation function at x < 0. Default: 0.2.
+        alpha (Union[int, float]): Slope of the activation function at x < 0. Default: ``0.2`` .
 
     Inputs:
         - **x** (Tensor) - The input of LeakyReLU is a Tensor of any dimension.
@@ -484,6 +524,9 @@ class LeakyReLU(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x = Tensor(np.array([[-1.0, 4.0, -8.0], [2.0, -5.0, 9.0]]), mindspore.float32)
         >>> leaky_relu = nn.LeakyReLU()
         >>> output = leaky_relu(x)
@@ -495,17 +538,10 @@ class LeakyReLU(Cell):
     def __init__(self, alpha=0.2):
         """Initialize LeakyReLU."""
         super(LeakyReLU, self).__init__()
-        validator.check_value_type('alpha', alpha, [float, int], self.cls_name)
-        self.greater_equal = P.GreaterEqual()
-        self.mul = P.Mul()
         self.alpha = alpha
-        self.select_op = P.Maximum()
-        if self.alpha > 1:
-            self.select_op = P.Minimum()
 
     def construct(self, x):
-        alpha_array = P.Cast()(F.scalar_to_tensor(self.alpha), P.DType()(x))
-        out = self.select_op(alpha_array * x, x)
+        out = ops.leaky_relu(x, self.alpha)
         return out
 
 
@@ -517,8 +553,8 @@ class RReLU(Cell):
     The activation function is defined as:
 
     .. math::
-            \text{RReLU}(x_{ji}) = \begin{cases}x_{ji}, &\text{if } x_{ji} \geq 0; \cr
-            {\alpha_{ji}} * x_{ji}, &\text{otherwise.}\end{cases}
+        \text{RReLU}(x_{ji}) = \begin{cases}x_{ji}, &\text{if } x_{ji} \geq 0; \cr
+        {\alpha_{ji}} * x_{ji}, &\text{otherwise.}\end{cases}
 
     where :math:`\alpha_{ji}` ~ :math:`U(l, u)`, :math:`l \le u`.
 
@@ -526,8 +562,8 @@ class RReLU(Cell):
     `Empirical Evaluation of Rectified Activations in Convolution Network <https://arxiv.org/pdf/1505.00853.pdf>`_ .
 
     Args:
-        lower (Union[int, float]): Slope of the activation function at x < 0. Default: 1/8.
-        upper (Union[int, float]): Slope of the activation function at x < 0. Default: 1/3.
+        lower (Union[int, float]): Slope of the activation function at x < 0. Default: ``1 / 8`` .
+        upper (Union[int, float]): Slope of the activation function at x < 0. Default: ``1 / 3`` .
 
     Inputs:
         - **x** (Tensor) - The input of RReLU is a Tensor of any dimension.
@@ -547,8 +583,7 @@ class RReLU(Cell):
 
     Examples:
         >>> import mindspore
-        >>> import mindspore.nn as nn
-        >>> from mindspore import Tensor
+        >>> from mindspore import Tensor, nn
         >>> import numpy as np
         >>> x = Tensor(np.array([[-1.0, 4.0], [2.0, 0]]), mindspore.float32)
         >>> r_relu = nn.RReLU()
@@ -563,19 +598,21 @@ class RReLU(Cell):
         validator.check_value_type('upper', upper, [float, int], self.cls_name)
         validator.check_value_type('lower', lower, [float, int], self.cls_name)
         if lower > upper:
-            raise ValueError(f"For {self.cls_name}, the value of 'upper' must be greater than 'lower', "
+            raise ValueError(f"For {self.cls_name}, the value of 'upper' must be greater than or equal to 'lower', "
                              f"but got upper: {upper}, lower: {lower}. ")
-
-        self.lower = lower
-        self.upper = upper
+        self.lower = Tensor(lower, dtype=mstype.float32)
+        self.upper = Tensor(upper, dtype=mstype.float32)
         self.sign = P.Sign()
 
     def construct(self, x):
-        size = x.shape
+        if not isinstance(x, Tensor):
+            raise TypeError(f"For 'rrelu', the input must be a Tensor, but got {type(x)}.")
+        _size = x.shape
+        _dtype = x.dtype
         sign_matrix = self.sign(x)
         negative_filter = sign_matrix.clip(None, 0)
         positive_filter = sign_matrix.clip(0, None)
-        mask = P.Cast()(Tensor(np.random.uniform(self.lower, self.upper, size=size)), P.DType()(x))
+        mask = ops.uniform(_size, self.lower, self.upper).astype(_dtype)
         negative_mask = negative_filter * mask * -1
         total_mask = negative_mask + positive_filter
         out = total_mask * x
@@ -586,12 +623,20 @@ class SeLU(Cell):
     r"""
     Activation function SeLU (Scaled exponential Linear Unit).
 
+    SeLU Activation Function Graph:
+
+    .. image:: images/SeLU.png
+        :align: center
+
     Refer to :func:`mindspore.ops.selu` for more details.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> input_x = Tensor(np.array([[-1.0, 4.0, -8.0], [2.0, -5.0, 9.0]]), mindspore.float32)
         >>> selu = nn.SeLU()
         >>> output = selu(input_x)
@@ -613,7 +658,7 @@ class SiLU(Cell):
     r"""
     Sigmoid Linear Unit activation function.
 
-    Applies the sigmoid linear unit function element-wise.
+    Applies the silu linear unit function element-wise.
 
     .. math::
 
@@ -625,11 +670,13 @@ class SiLU(Cell):
 
         \text{sigmoid}(x_i) = \frac{1}{1 + \exp(-x_i)},
 
-    The picture about SiLU looks like this
-    `SiLU <https://en.wikipedia.org/wiki/Activation_function#/media/File:Swish.svg>`_ .
+    SiLU Activation Function Graph:
+
+    .. image:: images/SiLU.png
+        :align: center
 
     Inputs:
-        - **x** (Tensor) - Input with the data type float16 or float32. Tensor of arbitrary dimensions.
+        - **x** (Tensor) - Input with the data type float16 or float32.
 
     Outputs:
         Tensor, with the same type and shape as the `x`.
@@ -641,6 +688,9 @@ class SiLU(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x = Tensor(np.array([-1, 2, -3, 2, -1]), mindspore.float16)
         >>> silu = nn.SiLU()
         >>> output = silu(x)
@@ -651,10 +701,9 @@ class SiLU(Cell):
     def __init__(self):
         """Initialize SiLU."""
         super(SiLU, self).__init__()
-        self.sigmoid = P.Sigmoid()
 
     def construct(self, x):
-        return self.sigmoid(x) * x
+        return ops.function.silu(x)
 
 
 class Tanh(Cell):
@@ -669,6 +718,11 @@ class Tanh(Cell):
 
     where :math:`x_i` is an element of the input Tensor.
 
+    Tanh Activation Function Graph:
+
+    .. image:: images/Tanh.png
+        :align: center
+
     Inputs:
         - **x** (Tensor) - Tensor of any dimension, input with data type of float16 or float32.
 
@@ -682,6 +736,9 @@ class Tanh(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x = Tensor(np.array([1, 2, 3, 2, 1]), mindspore.float16)
         >>> tanh = nn.Tanh()
         >>> output = tanh(x)
@@ -713,22 +770,20 @@ class Tanhshrink(Cell):
     where :math:`x_i` is an element of the input Tensor.
 
     Inputs:
-        - **x** (Tensor) - Tensor of any dimension, input with data type of float16 or float32.
+        - **x** (Tensor) - Tensor of any dimension.
 
     Outputs:
-        Tensor, with the same type and shape as the `x`.
+        Tensor, with the same shape as the `x`.
 
     Raises:
         TypeError: If `x` is not a Tensor.
-        TypeError: If dtype of `x` is neither float16 nor float32.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> import mindspore as ms
-        >>> import mindspore.nn as nn
-        >>> from mindspore import Tensor
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
         >>> import numpy as np
         >>> x = Tensor(np.array([1, 2, 3, 2, 1]), ms.float16)
         >>> tanhshrink = nn.Tanhshrink()
@@ -740,17 +795,9 @@ class Tanhshrink(Cell):
     def __init__(self):
         """Initialize Tanhshrink."""
         super(Tanhshrink, self).__init__()
-        self.tanh = P.Tanh()
 
     def construct(self, x):
-        return x - self.tanh(x)
-
-
-@constexpr
-def _dtype_check(x_dtype, prim_name):
-    """Check dtype."""
-    if x_dtype not in [mstype.float32, mstype.float16]:
-        raise TypeError("For {}, the x_dtype must be float32 or float16, but got {}.".format(prim_name, x_dtype))
+        return F.tanhshrink(x)
 
 
 class Hardtanh(Cell):
@@ -766,12 +813,17 @@ class Hardtanh(Cell):
 
     Linear region range :math:`[-1, 1]` can be adjusted using `min_val` and `max_val`.
 
+    Hardtanh Activation Function Graph:
+
+    .. image:: images/Hardtanh.png
+        :align: center
+
     Note:
         On Ascend, data type of float16 might lead to accidental accuracy problem.
 
     Args:
-        min_val (Union[int, float]): Minimum value of the linear region range. Default: -1.0.
-        max_val (Union[int, float]): Maximum value of the linear region range. Default: 1.0.
+        min_val (Union[int, float]): Minimum value of the linear region range. Default: ``-1.0`` .
+        max_val (Union[int, float]): Maximum value of the linear region range. Default: ``1.0`` .
 
     Inputs:
         - **x** (Tensor) - Input Tensor with data type of float16 or float32.
@@ -785,7 +837,7 @@ class Hardtanh(Cell):
         TypeError: If dtype of `x` is neither float16 nor float32.
         TypeError: If dtype of `min_val` is neither float nor int.
         TypeError: If dtype of `max_val` is neither float nor int.
-        ValueError: If `max_val` is less than `min_val`.
+        ValueError: If `min_val` is not less than `max_val`.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
@@ -804,34 +856,14 @@ class Hardtanh(Cell):
     def __init__(self, min_val=-1.0, max_val=1.0):
         """Initialize Hardtanh."""
         super(Hardtanh, self).__init__()
-        validator.check_value_type('min_val', min_val, [float, int], self.cls_name)
-        validator.check_value_type('max_val', max_val, [float, int], self.cls_name)
-        validator.check_number("max_val", max_val, min_val, Rel.GE, self.cls_name)
-
-        self.max = P.Maximum()
-        self.min = P.Minimum()
         self.min_val = min_val
         self.max_val = max_val
-        self.dtype = P.DType()
-        self.expand = P.ExpandDims()
-        self.squeeze = P.Squeeze(0)
+        if self.min_val >= self.max_val:
+            raise ValueError(f"For Hardtanh, min_val should be less than max_val,"
+                             f"but got {self.min_val} and {self.max_val}")
 
     def construct(self, x):
-        if not isinstance(x, Tensor):
-            raise TypeError("'x' must be a Tensor")
-        _dtype_check(self.dtype(x), self.cls_name)
-        # min_val and max_val are scalars, if x is 0d, x is also a scalar.
-        # However, ops.Maximum does not support input two scalar.
-        # To solve this problem, expand x from scalar to tensor, apply Maximum, then squeeze the output back to scalar.
-        if not x.shape:
-            x = self.expand(x, 0)
-            x = self.max(x, self.min_val)
-            x = self.min(x, self.max_val)
-            x = self.squeeze(x)
-        else:
-            x = self.max(x, self.min_val)
-            x = self.min(x, self.max_val)
-        return x
+        return F.hardtanh(x, self.min_val, self.max_val)
 
 
 class GELU(Cell):
@@ -849,13 +881,15 @@ class GELU(Cell):
     where :math:`P` is the cumulative distribution function
     of standard Gaussian distribution and :math:`x_i` is the element of the input.
 
-    The picture about GELU looks like this `GELU <https://en.wikipedia.org/wiki/
-    Activation_function#/media/File:Activation_gelu.png>`_.
+    GELU Activation Function Graph:
+
+    .. image:: images/GELU.png
+        :align: center
 
     Args:
-        approximate (bool): Whether to enable approximation. Default: True.
+        approximate (bool): Whether to enable approximation. Default: ``True`` .
 
-            If approximate is True, The gaussian error linear activation is:
+            If `approximate` is ``True``, The gaussian error linear activation is:
 
             :math:`0.5 * x * (1 + tanh(\sqrt(2 / \pi) * (x + 0.044715 * x^3)))`
 
@@ -877,6 +911,9 @@ class GELU(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x = Tensor(np.array([[-1.0, 4.0, -8.0], [2.0, -5.0, 9.0]]), mindspore.float32)
         >>> gelu = nn.GELU()
         >>> output = gelu(x)
@@ -896,20 +933,13 @@ class GELU(Cell):
         super(GELU, self).__init__()
         validator.check_bool(approximate, 'approximate', self.cls_name)
         self.approximate = approximate
-        if self.approximate:
-            self.gelu = P.GeLU()
+        if approximate:
+            self.approximate = 'tanh'
         else:
-            self.erf = P.Erf()
-            self.sqrt = P.Sqrt()
-            self.const0 = Tensor(0.5, mstype.float32)
-            self.const1 = Tensor(1.0, mstype.float32)
-            self.const2 = Tensor(2.0, mstype.float32)
+            self.approximate = 'none'
 
     def construct(self, x):
-        if self.approximate:
-            return self.gelu(x)
-        return x * F.cast(self.const0, x.dtype) * (F.cast(self.const1, x.dtype) + \
-                                                   self.erf(x / self.sqrt(F.cast(self.const2, x.dtype))))
+        return ops.gelu(x, approximate=self.approximate)
 
 
 class FastGelu(Cell):
@@ -925,6 +955,11 @@ class FastGelu(Cell):
                            \exp(0.851 * (x_i - \left| x_i \right|))
 
     where :math:`x_i` is the element of the input.
+
+    FastGelu Activation Function Graph:
+
+    .. image:: images/FastGelu.png
+        :align: center
 
     Inputs:
         - **x** (Tensor) - The input of FastGelu with data type of float16 or float32.
@@ -974,22 +1009,29 @@ class Sigmoid(Cell):
 
     where :math:`x_i` is the element of the input.
 
-    The picture about Sigmoid looks like this `Sigmoid <https://en.wikipedia.org/wiki/
-    Sigmoid_function#/media/File:Logistic-curve.svg>`_.
+    Sigmoid Activation Function Graph:
+
+    .. image:: images/Sigmoid.png
+        :align: center
 
     Inputs:
-        - **input_x** (Tensor) - The input of Sigmoid with data type of float16 or float32. Tensor of any dimension.
+        - **input_x** (Tensor) - Tensor of any dimension, the data type is
+          float16, float32, float64, complex64 or complex128.
 
     Outputs:
         Tensor, with the same type and shape as the `input_x`.
 
     Raises:
-        TypeError: If dtype of `input_x` is neither float16 nor float32.
+        TypeError: If dtype of `input_x` is not float16, float32, float64, complex64 or complex128.
+        TypeError: If `input_x` is not a Tensor.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x = Tensor(np.array([-1, -2, 0, 2, 1]), mindspore.float16)
         >>> sigmoid = nn.Sigmoid()
         >>> output = sigmoid(x)
@@ -1010,12 +1052,20 @@ class Softsign(Cell):
     r"""
     Softsign activation function.
 
+    Softsign Activation Function Graph:
+
+    .. image:: images/Softsign.png
+        :align: center
+
     Refer to :func:`mindspore.ops.softsign` for more details.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x = Tensor(np.array([0, -1, 2, 30, -30]), mindspore.float32)
         >>> softsign = nn.Softsign()
         >>> output = softsign(x)
@@ -1050,18 +1100,20 @@ class PReLU(Cell):
     Parameter :math:`w` has dimensionality of the argument channel. If called without argument
     channel, a single parameter :math:`w` will be shared across all channels.
 
-    The picture about PReLU looks like this `PReLU <https://en.wikipedia.org/wiki/
-    Activation_function#/media/File:Activation_prelu.svg>`_.
+    PReLU Activation Function Graph:
+
+    .. image:: images/PReLU.png
+        :align: center
 
     Args:
-        channel (int): The elements number of parameter.
-          It could be an int, and the value is 1 or the channels number of input tensor `x`. Default: 1.
+        channel (int): The elements number of parameter :math:`w`.
+          It could be an int, and the value is 1 or the channels number of input tensor `x`. Default: ``1`` .
         w (Union[float, list, Tensor]): The initial value of parameter. It could be a float, a float list or
-          a tensor has the same dtype as the input tensor `x`. Default: 0.25.
+          a tensor has the same dtype as the input tensor `x`. Default: ``0.25`` .
 
     Inputs:
         - **x** (Tensor) - The input of PReLU with data type of float16 or float32.
-          The shape is :math:`(N,*)` where :math:`*` means, any number of additional dimensions.
+          The shape is :math:`(N, *)` where :math:`*` means, any number of additional dimensions.
 
     Outputs:
         Tensor, with the same dtype and shape as the `x`.
@@ -1077,6 +1129,9 @@ class PReLU(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x = Tensor(np.array([[[[0.1, 0.6], [0.9, 0.9]]]]), mindspore.float32)
         >>> prelu = nn.PReLU()
         >>> output = prelu(x)
@@ -1118,15 +1173,9 @@ class PReLU(Cell):
                             f"but got {type(w).__name__}.")
         self.w = Parameter(w, name='a')
         self.prelu = P.PReLU()
-        self.relu = P.ReLU()
-        self.assign = P.Assign()
 
     def construct(self, x):
-        u = self.relu(self.w)
-        v = self.prelu(x, F.cast(u, x.dtype))
-        if self.training:
-            self.assign(self.w, u)
-        return v
+        return self.prelu(x, F.cast(self.w, x.dtype))
 
 
 class HSwish(Cell):
@@ -1138,7 +1187,10 @@ class HSwish(Cell):
     .. math::
         \text{hswish}(x_{i}) = x_{i} * \frac{ReLU6(x_{i} + 3)}{6},
 
-    where :math:`x_{i}` is the :math:`i`-th slice in the given dimension of the input Tensor.
+    HSwish Activation Function Graph:
+
+    .. image:: images/HSwish.png
+        :align: center
 
     Inputs:
         - **x** (Tensor) - The input of HSwish, data type must be float16 or float32.
@@ -1154,6 +1206,9 @@ class HSwish(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x = Tensor(np.array([-1, -2, 0, 2, 1]), mindspore.float16)
         >>> hswish = nn.HSwish()
         >>> result = hswish(x)
@@ -1177,9 +1232,12 @@ class HSigmoid(Cell):
     Hard sigmoid is defined as:
 
     .. math::
-        \text{hsigmoid}(x_{i}) = max(0, min(1, \frac{x_{i} + 3}{6})),
+        \text{hsigmoid}(x_{i}) = \max(0, \min(1, \frac{x_{i} + 3}{6})),
 
-    where :math:`x_{i}` is the :math:`i`-th slice in the given dimension of the input Tensor.
+    HSigmoid Activation Function Graph:
+
+    .. image:: images/HSigmoid.png
+        :align: center
 
     Inputs:
         - **input_x** (Tensor) - The input of HSigmoid. Tensor of any dimension.
@@ -1194,6 +1252,9 @@ class HSigmoid(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x = Tensor(np.array([-1, -2, 0, 2, 1]), mindspore.float16)
         >>> hsigmoid = nn.HSigmoid()
         >>> result = hsigmoid(x)
@@ -1217,9 +1278,14 @@ class LogSigmoid(Cell):
     Logsigmoid is defined as:
 
     .. math::
-        \text{logsigmoid}(x_{i}) = log(\frac{1}{1 + \exp(-x_i)}),
+        \text{logsigmoid}(x_{i}) = \log(\frac{1}{1 + \exp(-x_i)}),
 
     where :math:`x_{i}` is the element of the input.
+
+    LogSigmoid Activation Function Graph:
+
+    .. image:: images/LogSigmoid.png
+        :align: center
 
     Inputs:
         - **x** (Tensor) - The input of LogSigmoid with data type of float16 or float32.
@@ -1232,9 +1298,12 @@ class LogSigmoid(Cell):
         TypeError: If dtype of `x` is neither float16 nor float32.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> net = nn.LogSigmoid()
         >>> x = Tensor(np.array([1.0, 2.0, 3.0]), mindspore.float32)
         >>> output = net(x)
@@ -1264,12 +1333,20 @@ class LRN(Cell):
     r"""
     Local Response Normalization.
 
+    .. warning::
+        LRN is deprecated on Ascend due to potential accuracy problem. It's recommended to use other
+        normalization methods, e.g. :class:`mindspore.nn.BatchNorm1d` ,
+        :class:`mindspore.nn.BatchNorm2d` , :class:`mindspore.nn.BatchNorm3d`.
+
     Refer to :func:`mindspore.ops.lrn` for more details.
 
     Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU``
+        ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> input_x = Tensor(np.array([[[[0.1], [0.2]],
         ...                       [[0.3], [0.4]]]]), mindspore.float32)
         >>> output = nn.LRN()(input_x)
@@ -1301,8 +1378,14 @@ class SoftShrink(Cell):
         0, & \text{ otherwise }
         \end{cases}
 
+    SoftShrink Activation Function Graph:
+
+    .. image:: images/Softshrink.png
+        :align: center
+
     Args:
-        lambd: the :math:`\lambda` must be no less than zero for the SoftShrink formulation. Default: 0.5.
+        lambd (float): the :math:`\lambda` must be no less than zero for the SoftShrink formulation.
+            Default: ``0.5`` .
 
     Inputs:
         - **input_x** (Tensor) - The input of SoftShrink with data type of float16 or float32.
@@ -1318,10 +1401,13 @@ class SoftShrink(Cell):
         ValueError: If lambd is less than 0.
 
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> input_x = Tensor(np.array([[ 0.5297,  0.7871,  1.1754], [ 0.7836,  0.6218, -1.1542]]), mstype.float16)
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
+        >>> input_x = Tensor(np.array([[ 0.5297,  0.7871,  1.1754], [ 0.7836,  0.6218, -1.1542]]), mindspore.float16)
         >>> softshrink = nn.SoftShrink()
         >>> output = softshrink(input_x)
         >>> print(output)
@@ -1352,8 +1438,13 @@ class HShrink(Cell):
         0, & \text{ otherwise }
         \end{cases}
 
+    HShrink Activation Function Graph:
+
+    .. image:: images/HShrink.png
+        :align: center
+
     Args:
-        lambd (float): The threshold :math:`\lambda` defined by the Hard Shrink formula. Default: 0.5.
+        lambd (float): The threshold :math:`\lambda` defined by the Hard Shrink formula. Default: ``0.5`` .
 
     Inputs:
         - **input_x** (Tensor) - The input of Hard Shrink with data type of float16 or float32.
@@ -1366,7 +1457,7 @@ class HShrink(Cell):
         TypeError: If dtype of `input_x` is neither float16 nor float32.
 
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> import mindspore
@@ -1415,13 +1506,13 @@ class Threshold(Cell):
         TypeError: If `value` is not a float or an int.
 
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> import mindspore
-        >>> import mindspore.nn as nn
+        >>> from mindspore import Tensor, nn
         >>> m = nn.Threshold(0.1, 20)
-        >>> inputs = mindspore.Tensor([0.1, 0.2, 0.3], mindspore.float32)
+        >>> inputs = Tensor([0.1, 0.2, 0.3], mindspore.float32)
         >>> outputs = m(inputs)
         >>> print(outputs)
         [ 20.0     0.2      0.3]
@@ -1429,19 +1520,12 @@ class Threshold(Cell):
 
     def __init__(self, threshold, value):
         """Initialize Threshold."""
-        super().__init__()
-        validator.check_value_type('threshold', threshold, [float, int], self.cls_name)
-        validator.check_value_type('value', value, [float, int], self.cls_name)
+        super(Threshold, self).__init__()
         self.threshold = threshold
         self.value = value
-        self.greater = P.Greater()
-        self.fill = P.Fill()
-        self.select = P.Select()
 
     def construct(self, input_x):
-        cond = self.greater(input_x, self.threshold)
-        value = self.fill(input_x.dtype, input_x.shape, self.value)
-        return self.select(cond, input_x, value)
+        return F.threshold(input_x, self.threshold, self.value)
 
 
 class Mish(Cell):
@@ -1450,16 +1534,24 @@ class Mish(Cell):
 
     Refer to :func:`mindspore.ops.mish` for more details.
 
+    Mish Activation Function Graph:
+
+    .. image:: images/Mish.png
+        :align: center
+
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x = Tensor(np.array([[-1.0, 4.0, -8.0], [2.0, -5.0, 9.0]]), mindspore.float32)
         >>> mish = nn.Mish()
         >>> output = mish(x)
         >>> print(output)
-        [[-0.3034014  3.9974129 -0.0026832]
-         [ 1.9439590  -0.0033576 9.0000000]]
+        [[-3.03401530e-01 3.99741292e+00 -2.68321624e-03]
+         [ 1.94395900e+00 -3.35762873e-02 9.00000000e+00]]
     """
 
     def __init__(self):
@@ -1473,17 +1565,17 @@ class Mish(Cell):
 
 class GLU(Cell):
     r"""
-    Applies the gated linear unit function.
+    The gated linear unit function.
 
     .. math::
         {GLU}(a, b)= a \otimes \sigma(b)
 
     where :math:`a` is the first half of the input matrices and :math:`b` is the second half.
 
-    Here :math:`\sigma` is the sigmoid function, and :math:`*` is the Hadamard product.
+    Here :math:`\sigma` is the sigmoid function, and :math:`\otimes` is the Hadamard product.
 
     Args:
-        axis (int): the dimension on which to split the input. Default: -1
+        axis (int): the axis to split the input. Default: ``-1`` , the last axis in `x`.
 
     Inputs:
         - **x** (Tensor) - :math:`(\ast_1, N, \ast_2)` where `*` means, any number of additional dimensions.
@@ -1495,11 +1587,12 @@ class GLU(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> m = nn.GLU()
-        >>> input = Tensor([[0.1,0.2,0.3,0.4],[0.5,0.6,0.7,0.8]])
+        >>> import mindspore as ms
+        >>> m = ms.nn.GLU()
+        >>> input = ms.Tensor([[0.1,0.2,0.3,0.4],[0.5,0.6,0.7,0.8]])
         >>> output = m(input)
         >>> print(output)
-        [[0.05744425 0.11973753
+        [[0.05744425 0.11973753]
          [0.33409387 0.41398472]]
     """
 
@@ -1514,6 +1607,7 @@ class GLU(Cell):
         x1, x2 = self.spilt(x)
         x2 = self.sigmoid(x2)
         return x1 * x2
+
 
 _activation = {
     'softmin': Softmin,
@@ -1550,7 +1644,7 @@ def get_activation(name, prim_name=None):
 
     Args:
         name (str): The name of the activation function.
-        prim_name (Union[str, None]): The name of primitive. Default: None.
+        prim_name (Union[str, None]): The name of primitive. Default: ``None`` .
 
     Returns:
         Function, the activation function.
@@ -1559,6 +1653,7 @@ def get_activation(name, prim_name=None):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore.nn as nn
         >>> sigmoid = nn.get_activation('sigmoid')
         >>> print(sigmoid)
         Sigmoid<>

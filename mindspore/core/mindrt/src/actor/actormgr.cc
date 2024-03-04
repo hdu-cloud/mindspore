@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -125,6 +125,9 @@ void ActorMgr::RemoveActor(const std::string &name) {
 }
 
 void ActorMgr::TerminateAll() {
+  if (actors.empty()) {
+    return;
+  }
   // copy all the actors
   std::list<ActorReference> actorsWaiting;
   actorsMutex.lock();
@@ -196,14 +199,6 @@ int ActorMgr::EnqueueMessage(const mindspore::ActorReference actor, std::unique_
 
 int ActorMgr::Send(const AID &to, std::unique_ptr<MessageBase> msg, bool remoteLink, bool isExactNotRemote) {
   // The destination is local
-#ifdef BUILD_LITE
-  auto actor = GetActor(to);
-  if (actor != nullptr) {
-    return EnqueueMessage(actor, std::move(msg));
-  } else {
-    return ACTOR_NOT_FIND;
-  }
-#else
   if (IsLocalAddres(to)) {
     auto actor = GetActor(to);
     if (actor != nullptr) {
@@ -233,7 +228,6 @@ int ActorMgr::Send(const AID &to, std::unique_ptr<MessageBase> msg, bool remoteL
       return IO_NOT_FIND;
     }
   }
-#endif
 }
 
 AID ActorMgr::Spawn(const ActorReference &actor, bool shareThread) {

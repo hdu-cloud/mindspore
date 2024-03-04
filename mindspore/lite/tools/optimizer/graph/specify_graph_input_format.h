@@ -17,7 +17,7 @@
 #ifndef MINDSPORE_LITE_TOOLS_OPTIMIZER_GRAPH_SPECIFY_GRAPH_INPUT_FORMAT_H_
 #define MINDSPORE_LITE_TOOLS_OPTIMIZER_GRAPH_SPECIFY_GRAPH_INPUT_FORMAT_H_
 
-#include "backend/common/optimizer/pass.h"
+#include "include/backend/optimizer/pass.h"
 #include "tools/optimizer/common/gllo_utils.h"
 #include "include/api/format.h"
 #include "include/api/types.h"
@@ -27,12 +27,11 @@ namespace mindspore {
 namespace opt {
 class SpecifyGraphInputFormat : public Pass {
  public:
-  explicit SpecifyGraphInputFormat(bool update_input_format, mindspore::Format exp_graph_input_format = mindspore::NHWC,
+  explicit SpecifyGraphInputFormat(mindspore::Format exp_graph_input_format = mindspore::NHWC,
                                    mindspore::Format cur_graph_input_format = mindspore::NHWC)
       : Pass("SpecifyGraphInputFormat"),
         exp_graph_input_format_(exp_graph_input_format),
-        cur_graph_input_format_(cur_graph_input_format),
-        update_input_format_(update_input_format) {}
+        cur_graph_input_format_(cur_graph_input_format) {}
   ~SpecifyGraphInputFormat() override = default;
   bool Run(const FuncGraphPtr &graph) override;
 
@@ -43,7 +42,6 @@ class SpecifyGraphInputFormat : public Pass {
   STATUS HandleGraphInput(const FuncGraphPtr &graph);
   mindspore::Format exp_graph_input_format_;
   mindspore::Format cur_graph_input_format_;
-  bool update_input_format_ = false;
 };
 }  // namespace opt
 }  // namespace mindspore

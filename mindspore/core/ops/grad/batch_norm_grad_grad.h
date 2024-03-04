@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_BATCH_NORM_GRAD_GRAD_H_
 #define MINDSPORE_CORE_OPS_BATCH_NORM_GRAD_GRAD_H_
 
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -42,8 +42,9 @@ class MIND_API BatchNormGradGrad : public BaseOperator {
   std::string get_format() const;
 };
 
-abstract::AbstractBasePtr BatchNormGradGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr BatchNormGradGradInfer(const abstract::AnalysisEnginePtr &,
+                                                          const PrimitivePtr &primitive,
+                                                          const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,26 +14,33 @@
  * limitations under the License.
  */
 
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include <string>
 #include <utility>
 #include <algorithm>
 #include <map>
 #include <set>
 #include <deque>
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "utils/hash_set.h"
 #include "include/common/utils/utils.h"
 #include "base/base_ref.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "utils/ms_utils.h"
 #include "include/common/utils/convert_utils.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/kernel_info.h"
 #include "utils/ms_context.h"
 #include "utils/trace_base.h"
-#include "backend/common/optimizer/const_input_to_attr.h"
-#include "abstract/ops/primitive_infer_map.h"
+#include "backend/common/pass/const_input_to_attr.h"
+#include "backend/operator/ops_backend_infer_function.h"
+#include "frontend/operator/ops_front_infer_function.h"
+#include "backend/common/optimizer/dynamic_shape/dynamic_shape_helper.h"
+#include "mindspore/ccsrc/plugin/device/cpu/kernel/pyexecute/py_execute_cpu_kernel.h"
+#include "include/common/profiler.h"
 
 namespace mindspore {
 namespace opt {
@@ -137,7 +144,7 @@ CNodePtr NewCNode(const CNodePtr &cnode, const KernelGraphPtr &fg, const std::ve
 CNodePtr CheckAnfNodeIfCNodeAndInputSize(const AnfNodePtr &node, size_t input_size) {
   MS_EXCEPTION_IF_NULL(node);
   if (!node->isa<CNode>()) {
-    MS_LOG(EXCEPTION) << "The node is expected to be a cnode";
+    MS_LOG(INTERNAL_EXCEPTION) << "The node is expected to be a cnode";
   }
   auto cnode = node->cast<CNodePtr>();
   CheckCNodeInputSize(cnode, input_size);
@@ -257,20 +264,55 @@ tensor::TensorPtr CreateTensorWithValueTuple(const ValueTuplePtr &value_tuple_pt
   return tensor;
 }
 
-tensor::TensorPtr CreateEmptyTupleTensor() {
+tensor::TensorPtr CreateEmptyTupleTensor(const ValueTuplePtr &value_tuple) {
   std::vector<int64_t> tensor_shape = {0};
   tensor::TensorPtr tensor = std::make_shared<tensor::Tensor>(kInt64->type_id(), tensor_shape);
   MS_EXCEPTION_IF_NULL(tensor);
   tensor::DeviceInfo device_info{kOpFormat_DEFAULT, kInt64};
   tensor->set_device_info(device_info);
+  tensor->set_user_data(kTensorValueIsEmpty, value_tuple);
   return tensor;
+}
+
+AnfNodePtr CreateTensorInput(const KernelGraphPtr &kernel_graph, const AnfNodePtr &input_node) {
+  MS_EXCEPTION_IF_NULL(input_node);
+  auto value_node = input_node->cast<ValueNodePtr>();
+  MS_EXCEPTION_IF_NULL(value_node);
+  auto value = value_node->value();
+  MS_EXCEPTION_IF_NULL(value);
+  tensor::TensorPtr tensor_ptr = nullptr;
+  if (value->isa<Scalar>()) {
+    tensor_ptr = ScalarToTensor(value->cast<ScalarPtr>());
+  } else if (value->isa<ValueTuple>()) {
+    tensor_ptr = CreateTupleTensor(value->cast<ValueTuplePtr>());
+  } else if (value->isa<ValueList>()) {
+    tensor_ptr = CreateTupleTensor(std::make_shared<ValueTuple>(value->cast<ValueListPtr>()->value()));
+  } else {
+    MS_LOG(EXCEPTION) << "The value should be a scalar or value tuple";
+  }
+  if (tensor_ptr == nullptr) {
+    MS_LOG(DEBUG) << "Create tensor failed";
+    return nullptr;
+  }
+  auto tensor_input = std::make_shared<ValueNode>(tensor_ptr);
+  MS_EXCEPTION_IF_NULL(tensor_input);
+  tensor_input->set_abstract(tensor_ptr->ToAbstract());
+  if (kernel_graph != nullptr) {
+    tensor_input = kernel_graph->NewValueNode(tensor_input);
+    kernel_graph->AddValueNodeToGraph(tensor_input);
+    kernel_graph->FrontBackendlMapUpdate(input_node, tensor_input);
+  } else {
+    tensor_input = MakeValueNode(tensor_input);
+  }
+  tensor_input->set_scope(input_node->scope());
+  return tensor_input;
 }
 
 tensor::TensorPtr CreateTupleTensor(const ValueTuplePtr &value_tuple) {
   MS_EXCEPTION_IF_NULL(value_tuple);
   tensor::TensorPtr tensor = nullptr;
   if (value_tuple->value().empty()) {
-    tensor = CreateEmptyTupleTensor();
+    tensor = CreateEmptyTupleTensor(value_tuple);
     return tensor;
   }
   ValuePtr v = *(value_tuple->value().begin());
@@ -347,6 +389,7 @@ std::vector<AnfNodePtr> InsertTensorMoveForGraphOutput(const FuncGraphPtr &graph
         }
         break;
       }
+      MS_EXCEPTION_IF_NULL(output_pair.first);
       if (next_node == output_pair.first->cast<CNodePtr>()) {
         find = true;
         break;
@@ -357,6 +400,7 @@ std::vector<AnfNodePtr> InsertTensorMoveForGraphOutput(const FuncGraphPtr &graph
     }
     auto tensor_move = CreateTensorMoveOp(graph, next_node);
     auto kernel_info = std::make_shared<device::KernelInfo>();
+    MS_EXCEPTION_IF_NULL(tensor_move);
     tensor_move->set_kernel_info(kernel_info);
     (void)manager->Replace(next_node, tensor_move);
     ret.push_back(tensor_move);
@@ -505,7 +549,7 @@ std::shared_ptr<std::vector<std::pair<AnfNodePtr, int>>> GetRealNodeUsedListByOu
   MS_EXCEPTION_IF_NULL(manager);
   auto iter = manager->node_users().find(node);
   if (iter == manager->node_users().end()) {
-    MS_LOG(EXCEPTION) << "node has no output in manager";
+    MS_LOG(INTERNAL_EXCEPTION) << "node has no output in manager";
   }
   auto output_info_list = iter->second;
   for (const auto &output_info : output_info_list) {
@@ -522,7 +566,7 @@ std::shared_ptr<std::vector<std::pair<AnfNodePtr, int>>> GetRealNodeUsedListByOu
     } else {
       auto kernel_with_index = common::AnfAlgo::GetPrevNodeOutput(output_info.first, IntToSize(output_info.second - 1));
       if (kernel_with_index.first.get() != node.get()) {
-        MS_LOG(EXCEPTION) << "Get used node failed for op[" << common::AnfAlgo::GetCNodeName(node) << "]";
+        MS_LOG(INTERNAL_EXCEPTION) << "Get used node failed for op[" << common::AnfAlgo::GetCNodeName(node) << "]";
       }
       used_output_index = kernel_with_index.second;
     }
@@ -583,6 +627,22 @@ CNodePtr CreatTupleGetItemNode(const FuncGraphPtr &func_graph, const AnfNodePtr 
   return tuple_getitem;
 }
 
+CNodePtr CreateMakeTupleNode(const FuncGraphPtr &func_graph, const std::vector<AnfNodePtr> &tuple_inputs) {
+  MS_EXCEPTION_IF_NULL(func_graph);
+  std::vector<AnfNodePtr> make_tuple_inputs = {NewValueNode(prim::kPrimMakeTuple)};
+  AbstractBasePtrList make_tuple_abstract;
+  std::for_each(tuple_inputs.cbegin(), tuple_inputs.cend(),
+                [&make_tuple_inputs, &make_tuple_abstract](const AnfNodePtr &node) {
+                  MS_EXCEPTION_IF_NULL(node);
+                  (void)make_tuple_inputs.emplace_back(node);
+                  (void)make_tuple_abstract.emplace_back(node->abstract());
+                });
+  auto make_tuple = func_graph->NewCNode(make_tuple_inputs);
+  MS_EXCEPTION_IF_NULL(make_tuple);
+  make_tuple->set_abstract(std::make_shared<abstract::AbstractTuple>(make_tuple_abstract));
+  return make_tuple;
+}
+
 ValueNodePtr CreateShapeValueNode(const FuncGraphPtr &func_graph, const std::vector<int64_t> &shape, bool to_tensor) {
   MS_EXCEPTION_IF_NULL(func_graph);
   auto kernel_graph = func_graph->cast<KernelGraphPtr>();
@@ -631,12 +691,13 @@ CNodePtr AddCastNode(const FuncGraphPtr &func_graph, const TypeId dst_type, cons
   if (is_input) {
     auto node_input = common::AnfAlgo::GetInputNode(node, 0);
     (void)new_cast_inputs.emplace_back(node_input);
-    shape = common::AnfAlgo::GetOutputDetailShape(node_input, 0);
+    shape = AnfAlgo::GetOutputDetailShape(node_input, 0);
   } else {
     (void)new_cast_inputs.emplace_back(node);
-    shape = common::AnfAlgo::GetOutputDetailShape(node, 0);
+    shape = AnfAlgo::GetOutputDetailShape(node, 0);
   }
   CNodePtr new_cast = NewCNode(new_cast_inputs, func_graph, {node});
+  MS_EXCEPTION_IF_NULL(new_cast);
   new_cast->set_scope(node->scope());
   new_cast->set_abstract(node->abstract());
   common::AnfAlgo::SetNodeAttr(kAttrDstType, MakeValue(static_cast<size_t>(dst_type)), new_cast);
@@ -687,23 +748,31 @@ bool AnfEqual(const BaseRef &a, const BaseRef &b) {
     } else if (a_node->isa<ValueNode>() && b_node->isa<ValueNode>()) {
       auto a_value_node_ptr = a_node->cast<ValueNodePtr>();
       if (a_value_node_ptr == nullptr) {
-        MS_LOG(EXCEPTION) << "Cast value node ptr fail.";
+        MS_LOG(INTERNAL_EXCEPTION) << "Cast value node ptr fail.";
       }
       auto a_value_ptr = a_value_node_ptr->value();
       if (a_value_ptr == nullptr) {
-        MS_LOG(EXCEPTION) << "Value ptr is nullptr.";
+        MS_LOG(INTERNAL_EXCEPTION) << "Value ptr is nullptr.";
       }
 
       auto b_value_node_ptr = b_node->cast<ValueNodePtr>();
       if (b_value_node_ptr == nullptr) {
-        MS_LOG(EXCEPTION) << "Cast value node ptr fail.";
+        MS_LOG(INTERNAL_EXCEPTION) << "Cast value node ptr fail.";
       }
       auto b_value_ptr = b_value_node_ptr->value();
       if (b_value_ptr == nullptr) {
-        MS_LOG(EXCEPTION) << "Value ptr is nullptr.";
+        MS_LOG(INTERNAL_EXCEPTION) << "Value ptr is nullptr.";
       }
-
-      return (*a_value_ptr) == (*b_value_ptr);
+      if (a_value_ptr->isa<tensor::Tensor>() && b_value_ptr->isa<tensor::Tensor>()) {
+        auto a_tensor_ptr = a_value_ptr->cast<tensor::TensorPtr>();
+        auto b_tensor_ptr = b_value_ptr->cast<tensor::TensorPtr>();
+        if (a_tensor_ptr == nullptr || b_tensor_ptr == nullptr) {
+          MS_LOG(INTERNAL_EXCEPTION) << "Cast value node ptr fail.";
+        }
+        return a_tensor_ptr->ValueEqual(*b_tensor_ptr);
+      } else {
+        return (*a_value_ptr) == (*b_value_ptr);
+      }
     }
     MS_LOG(DEBUG) << "check AnfNodePtr equal";
   }
@@ -794,73 +863,123 @@ AnfNodePtr HandleSexpVector(const BaseRef &sexp, const BaseRef &graph, Primitive
   return CreateCNodeWithGraph(input_nodes, graph);
 }
 
-// rectify absttract if the input has been converted to the attr
-AbstractBasePtrList RectifyAbstractFromRegAttr(const PrimitivePtr &primitive,
-                                               const AbstractBasePtrList &input_abstract) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  opt::ConstInputToAttrInfoRegister reg;
-  if (!opt::ConstInputToAttrInfoRegistry::Instance().GetRegisterByOpName(primitive->name(), &reg)) {
-    return input_abstract;
-  }
-  if (common::AnfAlgo::HasDynamicShapeFlag(primitive)) {
-    return input_abstract;
-  }
-  auto ms_context = MsContext::GetInstance();
-  MS_EXCEPTION_IF_NULL(ms_context);
-  auto device = ms_context->get_param<std::string>(MS_CTX_DEVICE_TARGET);
-  if (device == kGPUDevice) {
-    if (IsOneOfDynamicShapeConstInputToAttrGPU(primitive->name())) {
-      return input_abstract;
-    }
-  }
-  auto convert_input_list = reg.GetConstInputAttrInfo();
-  auto input_names = primitive->GetAttr(kAttrInputNames);
-  if (input_names == nullptr) {
-    return input_abstract;
-  }
-  auto input_names_vec = GetValue<std::vector<std::string>>(input_names);
-  AbstractBasePtrList rectify_abs_list;
-  size_t ori_index = 0;
-  rectify_abs_list.resize(input_names_vec.size());
-  for (size_t index = 0; index < rectify_abs_list.size(); ++index) {
-    // if convert input list find the index it means the input has been converted to the attr
-    if (convert_input_list.find(index) != convert_input_list.end()) {
-      AbstractBasePtr rectify_abs = nullptr;
-      auto input_name = input_names_vec[index];
-      auto attr = primitive->GetAttr(input_name);
-      if (attr != nullptr) {
-        rectify_abs = attr->ToAbstract();
-      } else {
-        MS_LOG(DEBUG) << "the node prim name :" << primitive->name() << "input index :" << index
-                      << " input name :" << input_name << "has not been converted to the attr";
-        rectify_abs = input_abstract[ori_index++];
+std::pair<AbstractBasePtr, size_t> RectifyAbstractFromStructuralAttr(const ValuePtr &value,
+                                                                     const AbstractBasePtrList &input_abstract,
+                                                                     const std::vector<size_t> &list_start_vec,
+                                                                     size_t input_index) {
+  MS_EXCEPTION_IF_NULL(value);
+  auto begin_iter = input_abstract.begin() + input_index;
+  if (value->isa<ValueSequence>()) {
+    size_t offset = 0;
+    std::vector<AbstractBasePtr> abs_list;
+    auto seq_value = value->cast_ptr<ValueSequence>();
+    for (size_t i = 0; i < seq_value->size(); ++i) {
+      auto [abs, offset_inner] =
+        RectifyAbstractFromStructuralAttr((*seq_value)[i], input_abstract, list_start_vec, input_index + offset);
+      MS_EXCEPTION_IF_NULL(abs);
+      if (abs->isa<abstract::AbstractSequence>() &&
+          std::find(list_start_vec.begin(), list_start_vec.end(), input_index + offset) != list_start_vec.end()) {
+        auto abs_seq = abs->cast<abstract::AbstractSequencePtr>();
+        const auto &elements = abs_seq->elements();
+        bool is_nested = std::any_of(elements.begin(), elements.end(),
+                                     [](const AbstractBasePtr &abs) { return abs->isa<abstract::AbstractSequence>(); });
+        if (!is_nested) {
+          const auto &first_abs_in_list = input_abstract[input_index + offset];
+          MS_EXCEPTION_IF_NULL(first_abs_in_list);
+          if (!first_abs_in_list->has_user_data<kernel::PyExecuteOutputUserData>()) {
+            MS_LOG(INTERNAL_EXCEPTION) << "List input abstract PyExecuteOutputUserData not found.";
+          }
+          const auto &list_user_data = first_abs_in_list->user_data<kernel::PyExecuteOutputUserData>();
+          abs->set_user_data<kernel::PyExecuteOutputUserData>(list_user_data);
+        }
       }
-      rectify_abs_list[index] = rectify_abs;
-      continue;
+      (void)abs_list.emplace_back(abs);
+      offset += offset_inner;
     }
-    if (ori_index > input_abstract.size()) {
-      MS_LOG(EXCEPTION) << "Index " << ori_index << " is out of range in input abstract size " << input_abstract.size();
-    }
-    rectify_abs_list[index] = input_abstract[ori_index++];
+    (void)std::for_each(begin_iter, begin_iter + offset, [](AbstractBasePtr abs) -> void {
+      MS_LOG(DEBUG) << "The convert abs is :" << abs->ToString();
+    });
+    return std::make_pair(std::make_shared<abstract::AbstractTuple>(abs_list), offset);
   }
-  return rectify_abs_list;
+
+  const auto num_value = GetValue<int64_t>(value);
+
+  constexpr auto kNotDynamicFlag = -1;
+  if (num_value == kNotDynamicFlag) {
+    return std::make_pair(*begin_iter, 1);
+  } else {
+    MS_LOG(EXCEPTION) << "The attr of structural must all value -1 but got " << num_value;
+  }
+}
+
+AbstractBasePtr RectifyEmptyTupleAbstract(const ValuePtr &structural) {
+  MS_EXCEPTION_IF_NULL(structural);
+  if (!structural->isa<ValueTuple>()) {
+    MS_LOG(EXCEPTION) << "input abstract is out of range.";
+  }
+
+  auto value_tuple = structural->cast_ptr<ValueTuple>();
+  std::vector<AbstractBasePtr> abs_list;
+  MS_EXCEPTION_IF_NULL(value_tuple);
+  for (size_t i = 0; i < value_tuple->size(); ++i) {
+    auto item = (*value_tuple)[i];
+    (void)abs_list.emplace_back(RectifyEmptyTupleAbstract(item));
+  }
+
+  return std::make_shared<abstract::AbstractTuple>(abs_list);
+}
+
+AbstractBasePtrList RectifyAbstractFromTupleInputStructural(const ValuePtr &tuple_structural,
+                                                            const AbstractBasePtrList &input_abstract,
+                                                            const ValuePtrList &list_start) {
+  if (tuple_structural == nullptr) {
+    return input_abstract;
+  }
+  auto tuple_structural_value = tuple_structural->cast_ptr<ValueSequence>();
+  MS_EXCEPTION_IF_NULL(tuple_structural_value);
+  AbstractBasePtrList rectifyed_abs_list;
+  size_t input_index = 0;
+  for (size_t i = 0; i < tuple_structural_value->size(); ++i) {
+    auto item = (*tuple_structural_value)[i];
+    MS_EXCEPTION_IF_NULL(item);
+    if (input_abstract.size() <= input_index) {
+      // The Ori  Node : Oper(a, b, ())  ==> Oper(a, b)  with structural --> (-1, -1 , ())
+      // The abstract size will be smaller than the attr of tuple input structural.
+      (void)rectifyed_abs_list.emplace_back(RectifyEmptyTupleAbstract(item));
+    }
+    std::vector<size_t> list_start_vec;
+    (void)std::transform(list_start.begin(), list_start.end(), std::back_inserter(list_start_vec),
+                         [](const ValuePtr val) { return GetValue<size_t>(val); });
+    auto [abs, offset] = RectifyAbstractFromStructuralAttr(item, input_abstract, list_start_vec, input_index);
+    input_index += offset;
+    (void)rectifyed_abs_list.emplace_back(abs);
+    MS_LOG(DEBUG) << "Rectify abs :" << item->ToString() << ", from structural " << abs->ToString();
+  }
+
+  return rectifyed_abs_list;
 }
 
 AbstractBasePtrList RectifyAbstractFromDynamicInput(const PrimitivePtr &prim,
                                                     const AbstractBasePtrList &input_abstract) {
   MS_EXCEPTION_IF_NULL(prim);
-  auto dynamic_inputs_list = prim->GetAttr(kAttrDynInputSizes);
-  if (dynamic_inputs_list == nullptr) {
+  auto dyn_input_list = prim->GetAttr(kAttrDynInputSizes);
+  if (dyn_input_list == nullptr) {
     return input_abstract;
   }
   AbstractBasePtrList rectifyed_abs_list;
   const int kNotDynamicFlag = -1;
-  auto dynamic_inputs_index = GetValue<std::vector<int64_t>>(dynamic_inputs_list);
+  auto dynamic_input_index = GetValue<std::vector<int64_t>>(dyn_input_list);
   size_t input_index = 0;
-  for (auto item : dynamic_inputs_index) {
+  for (auto item : dynamic_input_index) {
     if (item == kNotDynamicFlag) {
       if (input_index >= input_abstract.size()) {
-        MS_LOG(EXCEPTION) << "Index " << input_index << " is out of range in input abstract " << input_abstract.size();
+        if ((prim->Hash() == prim::kPrimPyExecute->Hash() && prim->name() == prim::kPrimPyExecute->name())) {
+          MS_LOG(WARNING) << "For primitive \'PyExecute\', index " << input_index
+                          << " is out of range in input abstract " << input_abstract.size();
+          continue;
+        }
+        MS_LOG(EXCEPTION) << "For primitive \'" << prim->name() << "\', index " << input_index
+                          << " is out of range in input abstract " << input_abstract.size();
       }
       (void)rectifyed_abs_list.emplace_back(input_abstract[input_index++]);
     } else {
@@ -871,12 +990,13 @@ AbstractBasePtrList RectifyAbstractFromDynamicInput(const PrimitivePtr &prim,
       AbstractBasePtrList dynamic_inputs_abs;
       for (auto index = item; index > 0; --index) {
         if (input_index >= input_abstract.size()) {
-          // Not to check for PyExecute.
           if ((prim->Hash() == prim::kPrimPyExecute->Hash() && prim->name() == prim::kPrimPyExecute->name())) {
+            MS_LOG(WARNING) << "For primitive \'PyExecute\', index " << input_index
+                            << " is out of range in input abstract " << input_abstract.size();
             continue;
           }
-          MS_LOG(EXCEPTION) << "Index " << input_index << " is out of range in input abstract "
-                            << input_abstract.size();
+          MS_LOG(EXCEPTION) << "For primitive \'" << prim->name() << "\', index " << input_index
+                            << " is out of range in input abstract " << input_abstract.size();
         }
         (void)dynamic_inputs_abs.emplace_back(input_abstract[input_index++]);
       }
@@ -886,9 +1006,19 @@ AbstractBasePtrList RectifyAbstractFromDynamicInput(const PrimitivePtr &prim,
   return rectifyed_abs_list;
 }
 
-AbstractBasePtrList RectifyAbstract(const PrimitivePtr &primitive, const AbstractBasePtrList &input_abstract) {
-  auto rectify_abs_list = RectifyAbstractFromRegAttr(primitive, input_abstract);
-  return RectifyAbstractFromDynamicInput(primitive, rectify_abs_list);
+AbstractBasePtrList RectifyAbstract(const PrimitivePtr &prim, const AbstractBasePtrList &input_abstract) {
+  auto input_structural = prim->GetAttr(kAttrTupleInputStructural);
+  if (input_structural != nullptr) {
+    if (prim->HasAttr(kAttrListStartIndex)) {
+      auto list_start_index = prim->GetAttr(kAttrListStartIndex);
+      MS_EXCEPTION_IF_NULL(list_start_index);
+      auto list_start_index_value = list_start_index->cast_ptr<ValueSequence>();
+      MS_EXCEPTION_IF_NULL(list_start_index_value);
+      return RectifyAbstractFromTupleInputStructural(input_structural, input_abstract, list_start_index_value->value());
+    }
+    return RectifyAbstractFromTupleInputStructural(input_structural, input_abstract, {});
+  }
+  return RectifyAbstractFromDynamicInput(prim, input_abstract);
 }
 }  // namespace
 
@@ -912,7 +1042,7 @@ AnfNodePtr SexpToNode(const BaseRef &sexp, const BaseRef &graph, PrimitiveVarMap
   }
   auto value_node = CreateValueNodeWithSexp(sexp, primitive_vars);
   if (value_node == nullptr) {
-    MS_LOG(EXCEPTION) << "Sexp cannot converted, sexp: " + sexp.ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Sexp cannot converted, sexp: " + sexp.ToString();
   }
   return value_node;
 }
@@ -938,14 +1068,14 @@ AnfNodePtr GetAnfNodeByVar(const EquivPtr &equiv, const VarPtr &var_node) {
   }
   auto res = utils::cast<AnfNodePtr>(iter->second);
   if (res == nullptr) {
-    MS_LOG(EXCEPTION) << "Cast fail! Maybe var is not a anf node";
+    MS_LOG(INTERNAL_EXCEPTION) << "Cast fail! Maybe var is not a anf node";
   }
   return res;
 }
 
 int64_t GetGetitemIndex(const AnfNodePtr &getitem) {
   if (!getitem->isa<CNode>() || IsPrimitive(getitem, prim::kPrimTupleGetItem)) {
-    MS_LOG(EXCEPTION) << "Expect TupleGetItem, but got " << getitem->DebugString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Expect TupleGetItem, but got " << getitem->DebugString();
   }
   auto vnode = GetValueNode(getitem->cast<CNodePtr>()->input(kInputNodeOutputIndexInTupleGetItem));
   return GetValue<int64_t>(vnode);
@@ -1005,7 +1135,7 @@ ValueNodePtr MakeValueNode(const ValueNodePtr &value_node) {
   kernel_build_info_builder->SetOutputsFormat(std::vector<std::string>{kOpFormat_DEFAULT});
   // set value node initial device data type = infer data type
   std::vector<TypeId> types;
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(value_node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(value_node);
   for (size_t index = 0; index < output_num; ++index) {
     types.push_back(kTypeUnknown);
   }
@@ -1033,41 +1163,73 @@ void TransferDependOrUpdateState(const CNodePtr &old_node, const FuncGraphPtr &g
   }
 }
 
-void CppInferShape(const PrimitivePtr &prim, const AbstractBasePtrList &args_spec_list,
-                   const AbstractBasePtr &out_abs) {
+void GetPrimitiveChangeInfo(const PrimitivePtr &prim, std::string *me_name, bool *ir_change) {
   MS_EXCEPTION_IF_NULL(prim);
-  MS_EXCEPTION_IF_NULL(out_abs);
-  auto &prim_eval_implement_map = abstract::GetPrimitiveToEvalImplMap();
-  auto ret = prim_eval_implement_map.find(prim);
-  if (ret != prim_eval_implement_map.end()) {
-    // fing infer function in the front infer map and restore input abastract form dynamic inputs and reg attr
-    MS_EXCEPTION_IF_CHECK_FAIL(ret->second.IsImplInferShapeAndType(),
-                               "There is no infer-shape implement for frontend!");
-    auto infer_spec_list = RectifyAbstract(prim, args_spec_list);
-    auto shape = ret->second.InferShape(prim, infer_spec_list);
-    if (shape == nullptr) {
-      MS_LOG(EXCEPTION) << "Infer shape with frontend function failed.";
-    }
-    out_abs->set_shape(shape);
-    return;
-  } else {
-    // if the infer function has been not founded in the front infer map find it in the backend infer map instead
-    auto &prim_backend_eval_impl_map = abstract::GetPrimitiveToBackendEvalImplMap();
-    auto ret_backend = prim_backend_eval_impl_map.find(prim);
-    if (ret_backend != prim_backend_eval_impl_map.end()) {
-      MS_EXCEPTION_IF_CHECK_FAIL(ret_backend->second.IsImplInferShapeAndType(),
-                                 "There is no infer-shape implement for backend!");
-      auto infer_spec_list = args_spec_list;
-      if (!ret_backend->second.IsInWhileList()) {
-        infer_spec_list = RectifyAbstract(prim, args_spec_list);
-      }
-      auto shape = ret_backend->second.InferShape(prim, infer_spec_list);
+  MS_EXCEPTION_IF_NULL(me_name);
+  MS_EXCEPTION_IF_NULL(ir_change);
+  if (prim->HasAttr(kAttrMeOpName)) {
+    *me_name = GetValue<std::string>(prim->GetAttr(kAttrMeOpName));
+  }
+  if (prim->HasAttr(kAttrIRChange)) {
+    *ir_change = GetValue<bool>(prim->GetAttr(kAttrIRChange));
+  }
+  if (*ir_change || !me_name->empty()) {
+    MS_LOG(DEBUG) << "Note: primitive(" << prim->ToString() << ", me_name:" << *me_name
+                  << ", ori_name: " << prim->name() << ", ir_change" << *ir_change << ") "
+                  << "has been changed in ascend vm pass, it should been rectify abstract before infer or provide a "
+                     "new infer func";
+  }
+}
+
+void CppInferShape(const PrimitivePtr &prim, const AbstractBasePtrList &args_spec_list, const CNodePtr &cnode) {
+  MS_EXCEPTION_IF_NULL(prim);
+  MS_EXCEPTION_IF_NULL(cnode);
+  runtime::ProfilerRecorder profiler(runtime::ProfilerModule::kKernel, runtime::ProfilerEvent::kKernelInferInner,
+                                     prim->name(), true);
+  AbstractBasePtr out_abs;
+  auto old_abs = cnode->abstract();
+  MS_EXCEPTION_IF_NULL(old_abs);
+
+  MS_LOG(DEBUG) << "Infer name = " << cnode->fullname_with_scope();
+  for (size_t i = 0; i < args_spec_list.size(); i++) {
+    MS_LOG(DEBUG) << "Infer name '" << cnode->fullname_with_scope() << "', The input[" << i
+                  << "] abs is : " << args_spec_list[i]->ToString();
+  }
+
+  PrimitivePtr prim_clone = prim;
+  MS_EXCEPTION_IF_NULL(prim_clone);
+  std::string me_name;
+  std::string ori_name;
+  bool ir_change = false;
+  GetPrimitiveChangeInfo(prim, &me_name, &ir_change);
+  if (!me_name.empty()) {
+    prim_clone = prim->Clone();
+    ori_name = prim->name();
+    prim_clone->set_name(me_name);
+  }
+  auto found = abstract::GetBackendPrimitiveInferImpl(prim_clone);
+  if (found.has_value()) {
+    auto infer = found.value();
+    MS_EXCEPTION_IF_CHECK_FAIL(infer.IsImplInferShapeAndType(), "There is no infer-shape implement for backend!");
+    auto infer_spec_list = RectifyAbstract(prim_clone, args_spec_list);
+    if (common::AnfAlgo::IsDynamicSequence(cnode)) {
+      out_abs = infer.InferShapeAndType(nullptr, prim_clone, infer_spec_list);
+    } else {
+      out_abs = old_abs->Clone();
+      auto shape = infer.InferShape(prim_clone, infer_spec_list);
       if (shape == nullptr) {
         MS_LOG(EXCEPTION) << "Infer shape with backend function failed";
       }
       out_abs->set_shape(shape);
-      return;
     }
+    if (prim_clone != prim) {
+      *prim = *prim_clone;
+      prim->set_name(ori_name);
+    }
+    cnode->set_abstract(out_abs);
+    MS_LOG(DEBUG) << "The abstract of " << cnode->fullname_with_scope() << " changes from " << old_abs << " to "
+                  << out_abs;
+    return;
   }
 
   MS_LOG(EXCEPTION) << "Get infer functions failed, the operator is not support dynamic shape yet, primitive name:"
@@ -1076,26 +1238,28 @@ void CppInferShape(const PrimitivePtr &prim, const AbstractBasePtrList &args_spe
 
 AbstractBasePtr CppInferShapeAndType(const PrimitivePtr &prim, const AbstractBasePtrList &args_spec_list) {
   MS_EXCEPTION_IF_NULL(prim);
-  auto &prim_eval_implement_map = abstract::GetPrimitiveToEvalImplMap();
-  auto ret = prim_eval_implement_map.find(prim);
-  if (ret != prim_eval_implement_map.end()) {
-    // fing infer function in the front infer map and restore input abastract form dynamic inputs and reg attr
-    MS_EXCEPTION_IF_CHECK_FAIL(ret->second.IsImplInferShapeAndType(), "There is no infer-abstract implement!");
-    auto infer_spec_list = RectifyAbstract(prim, args_spec_list);
-    return ret->second.InferShapeAndType(nullptr, prim, infer_spec_list);
-  } else {
-    // if the infer function has been not founded in the front infer map find it in the backend infer map instead
-    auto &prim_backend_eval_impl_map = abstract::GetPrimitiveToBackendEvalImplMap();
-    auto ret_backend = prim_backend_eval_impl_map.find(prim);
-    if (ret_backend != prim_backend_eval_impl_map.end()) {
-      MS_EXCEPTION_IF_CHECK_FAIL(ret_backend->second.IsImplInferShapeAndType(),
-                                 "There is no infer-abstract implement!");
-      auto infer_spec_list = args_spec_list;
-      if (!ret_backend->second.IsInWhileList()) {
-        infer_spec_list = RectifyAbstract(prim, args_spec_list);
-      }
-      return ret_backend->second.InferShapeAndType(nullptr, prim, infer_spec_list);
+  PrimitivePtr prim_clone = prim;
+  MS_EXCEPTION_IF_NULL(prim_clone);
+  std::string me_name;
+  std::string ori_name;
+  bool ir_change = false;
+  GetPrimitiveChangeInfo(prim, &me_name, &ir_change);
+  if (!me_name.empty()) {
+    prim_clone = prim->Clone();
+    ori_name = prim->name();
+    prim_clone->set_name(me_name);
+  }
+  auto found = abstract::GetBackendPrimitiveInferImpl(prim_clone);
+  if (found.has_value()) {
+    auto infer = found.value();
+    MS_EXCEPTION_IF_CHECK_FAIL(infer.IsImplInferShapeAndType(), "There is no infer-abstract implement!");
+    auto infer_spec_list = RectifyAbstract(prim_clone, args_spec_list);
+    auto ret = infer.InferShapeAndType(nullptr, prim_clone, infer_spec_list);
+    if (prim_clone != prim) {
+      *prim = *prim_clone;
+      prim->set_name(ori_name);
     }
+    return ret;
   }
   MS_LOG(EXCEPTION) << "Get infer shape function failed, the operator is not support dynamic shape yet, primitive name:"
                     << prim->name() << " primitive type:" << prim->type_name();
@@ -1115,7 +1279,7 @@ kernel::KernelBuildInfoPtr GenerateKernelBuildInfo(const std::vector<AnfNodePtr>
       (void)inputs_device_format.emplace_back(kOpFormat_DEFAULT);
       (void)inputs_device_type.emplace_back(common::AnfAlgo::GetPrevNodeOutputInferDataType(cnode, input_index));
     }
-    size_t output_num = common::AnfAlgo::GetOutputTensorNum(cnode);
+    size_t output_num = AnfAlgo::GetOutputTensorNum(cnode);
     for (size_t output_index = 0; output_index < output_num; ++output_index) {
       (void)outputs_device_format.emplace_back(kOpFormat_DEFAULT);
       (void)outputs_device_type.emplace_back(common::AnfAlgo::GetOutputInferDataType(cnode, output_index));
@@ -1132,7 +1296,7 @@ std::vector<int64_t> GetNodeOutputUsedNum(const session::KernelGraph &kernel_gra
   MS_EXCEPTION_IF_NULL(node);
   auto manager = kernel_graph.manager();
   MS_EXCEPTION_IF_NULL(manager);
-  auto output_num = common::AnfAlgo::GetOutputTensorNum(node);
+  auto output_num = AnfAlgo::GetOutputTensorNum(node);
   std::vector<int64_t> output_used_num(output_num, 0);
   if (output_num == 1) {
     output_used_num[0] = SizeToLong(manager->node_users()[node].size());
@@ -1169,16 +1333,122 @@ void GetCustomOpAttrIndex(const PrimitivePtr &primitive, mindspore::HashSet<size
   }
   auto input_names_vec = GetValue<std::vector<std::string>>(input_names);
   auto attr_names_vec = GetValue<std::vector<std::string>>(attr_names);
-  if (input_names_vec.size() >= attr_names_vec.size()) {
-    size_t offset = input_names_vec.size() - attr_names_vec.size();
-    for (size_t i = offset; i < input_names_vec.size(); ++i) {
-      if (input_names_vec[i] != attr_names_vec[i - offset]) {
-        MS_LOG(EXCEPTION) << primitive->name() << " found mismatching attr name " << input_names_vec[i]
-                          << "in input_names and " << attr_names_vec[i - offset] << " in attr_names";
-      }
+  for (size_t i = 0; i < input_names_vec.size(); ++i) {
+    if (std::find(attr_names_vec.begin(), attr_names_vec.end(), input_names_vec[i]) != attr_names_vec.end()) {
       (void)indexes->insert(i);
     }
   }
+}
+
+size_t GetInputNodeIndex(const AnfNodePtr &input, const CNodePtr &user_node) {
+  MS_EXCEPTION_IF_NULL(input);
+  MS_EXCEPTION_IF_NULL(user_node);
+
+  AnfNodePtrList input_list = user_node->inputs();
+  auto pos = std::find(input_list.begin(), input_list.end(), input);
+  if (pos == input_list.end()) {
+    MS_LOG(EXCEPTION) << input->fullname_with_scope() << " is not the input of " << user_node->fullname_with_scope();
+  }
+
+  // The first input is Primitive and needs to be skipped.
+  return std::distance(input_list.begin() + kSizeOne, pos);
+}
+
+int64_t SplitTupleInputs(const FuncGraphPtr &graph, const AnfNodePtr &tuple_input,
+                         std::vector<AnfNodePtr> *plant_inputs) {
+  MS_EXCEPTION_IF_NULL(tuple_input);
+  if (!common::AnfAlgo::IsTupleOutput(tuple_input)) {
+    auto abs = tuple_input->abstract();
+    MS_EXCEPTION_IF_NULL(abs);
+    MS_LOG(WARNING) << "The Function only split the output type is tuple type but got" << abs->ToString();
+    return -1;
+  }
+  MS_EXCEPTION_IF_NULL(plant_inputs);
+  auto input_size = AnfAlgo::GetOutputElementNum(tuple_input);
+  if (tuple_input->isa<CNode>() && common::AnfAlgo::CheckPrimitiveType(tuple_input, prim::kPrimMakeTuple)) {
+    auto make_tuple = tuple_input->cast<CNodePtr>();
+    MS_EXCEPTION_IF_NULL(make_tuple);
+    size_t tuple_input_num = common::AnfAlgo::GetInputTensorNum(make_tuple);
+    for (size_t j = 0; j < tuple_input_num; ++j) {
+      // using for graph kernel
+      auto dyn_input_node = common::AnfAlgo::GetInputNode(make_tuple, j);
+      MS_EXCEPTION_IF_NULL(dyn_input_node);
+      // Handle tuple nested scenes.
+      if (dyn_input_node->isa<CNode>() && common::AnfAlgo::CheckPrimitiveType(dyn_input_node, prim::kPrimMakeTuple)) {
+        input_size += LongToSize(SplitTupleInputs(graph, dyn_input_node, plant_inputs));
+        continue;
+      }
+      (void)plant_inputs->emplace_back(dyn_input_node);
+    }
+    return input_size;
+  }
+  for (size_t index = 0; index < input_size; ++index) {
+    auto dynamic_input_node = CreatTupleGetItemNode(graph, tuple_input, index);
+    (void)plant_inputs->emplace_back(dynamic_input_node);
+  }
+  return input_size;
+}
+
+AnfNodePtr ConvertMakeTupleInputToPlantInputs(const FuncGraphPtr &graph, const CNodePtr &cnode_ptr) {
+  MS_EXCEPTION_IF_NULL(cnode_ptr);
+  MS_EXCEPTION_IF_NULL(graph);
+  if (common::AnfAlgo::CheckPrimitiveType(cnode_ptr, prim::kPrimCall) ||
+      common::AnfAlgo::CheckPrimitiveType(cnode_ptr, prim::kPrimPartial) ||
+      common::AnfAlgo::CheckPrimitiveType(cnode_ptr, prim::kPrimBpropCut)) {
+    return nullptr;
+  }
+
+  if (common::AnfAlgo::HasDynamicTupleInput(cnode_ptr)) {
+    MS_LOG(INFO) << "Node " << cnode_ptr->fullname_with_scope()
+                 << " has dynamic tuple input, can't convert. Node debug string:" << cnode_ptr->DebugString();
+    return nullptr;
+  }
+  bool cnode_is_print = common::AnfAlgo::CheckPrimitiveType(cnode_ptr, prim::kPrimPrint);
+  std::vector<AnfNodePtr> plant_inputs;
+  std::vector<int64_t> dyn_input_sizes;
+  plant_inputs.push_back(common::AnfAlgo::GetCNodePrimitiveNode(cnode_ptr));
+  size_t input_num = cnode_ptr->inputs().size() - 1;
+  for (size_t i = 0; i < input_num; ++i) {
+    auto input_node = common::AnfAlgo::GetInputNode(cnode_ptr, i);
+    MS_EXCEPTION_IF_NULL(input_node);
+    bool output_is_tuple = common::AnfAlgo::IsTupleOutput(input_node);
+    if (output_is_tuple && cnode_is_print) {
+      (void)dyn_input_sizes.emplace_back(SplitTupleInputs(graph, input_node, &plant_inputs));
+    } else if (output_is_tuple) {
+      auto dyn_input_size = SplitTupleInputs(graph, input_node, &plant_inputs);
+      if (dyn_input_size == 0) {
+        dyn_input_sizes.push_back(-1);
+        plant_inputs.push_back(input_node);
+      } else {
+        (void)dyn_input_sizes.emplace_back(dyn_input_size);
+      }
+    } else {
+      dyn_input_sizes.push_back(-1);
+      plant_inputs.push_back(input_node);
+    }
+  }
+  // If there is dynamic input, set the dyn_input_sizes as an attribute and update the inputs.
+  if (std::any_of(dyn_input_sizes.begin(), dyn_input_sizes.end(), [](int64_t s) { return s >= 0; })) {
+    auto new_cnode = NewCNode(plant_inputs, graph, {cnode_ptr});
+    MS_EXCEPTION_IF_NULL(new_cnode);
+    new_cnode->set_abstract(cnode_ptr->abstract());
+    new_cnode->set_scope(cnode_ptr->scope());
+    new_cnode->set_primal_attrs(cnode_ptr->primal_attrs());
+    new_cnode->set_attrs(cnode_ptr->attrs());
+    common::AnfAlgo::SetNodeAttr(kAttrDynInputSizes, MakeValue(dyn_input_sizes), new_cnode);
+    auto kernel_graph = graph->cast<KernelGraphPtr>();
+    if (kernel_graph != nullptr) {
+      kernel_graph->FrontBackendlMapUpdate(cnode_ptr, new_cnode);
+    }
+    return new_cnode;
+  }
+  return nullptr;
+}
+
+void InferOp(const CNodePtr &node, void *args) { dynamic_shape::InferOp(node, args); }
+
+void SetCppInferPyHanbdler(const InfPyHandler &infer_handler) {
+  dynamic_shape::set_cpp_infer_py_handler(infer_handler);
 }
 }  // namespace opt
 }  // namespace mindspore

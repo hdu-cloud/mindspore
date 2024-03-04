@@ -14,15 +14,31 @@
  * limitations under the License.
  */
 
-#include "ir/dtype.h"
 #include <cstdlib>
 #include <algorithm>
+#include <functional>
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "ir/dtype.h"
 #include "mindapi/base/type_id.h"
 #include "utils/log_adapter.h"
-#include "abstract/abstract_value.h"
+#include "base/base.h"
+#include "include/robin_hood.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/empty.h"
+#include "ir/dtype/monad_type.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/ref.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "utils/hash_map.h"
 
 namespace mindspore {
-TypePtr TypeAnything::DeepCopy() const { return kAnyType; }
+TypePtr TypeAny::DeepCopy() const { return kTypeAny; }
 
 std::string GetExcptionTypeString(TypeId id) {
   static mindspore::HashMap<TypeId, std::string> type_id_to_string = {{kMetaTypeType, "MetaType"},
@@ -59,6 +75,7 @@ TypePtr TypeIdToType(TypeId id) {
                                                                 {kNumberTypeFloat, kFloat32},
                                                                 {kNumberTypeFloat32, kFloat32},
                                                                 {kNumberTypeFloat64, kFloat64},
+                                                                {kNumberTypeBFloat16, kBFloat16},
                                                                 {kNumberTypeComplex64, kComplex64},
                                                                 {kNumberTypeInt8, kInt8},
                                                                 {kNumberTypeInt16, kInt16},
@@ -73,7 +90,7 @@ TypePtr TypeIdToType(TypeId id) {
                                                                 {kNumberTypeComplex64, kComplex64},
                                                                 {kNumberTypeComplex128, kComplex128},
                                                                 {kMetaTypeExternal, kTypeExternal},
-                                                                {kMetaTypeAnything, kAnyType},
+                                                                {kMetaTypeAny, kTypeAny},
                                                                 {kMetaTypeNone, kTypeNone},
                                                                 {kMetaTypeNull, kTypeNull},
                                                                 {kMetaTypeEllipsis, kTypeEllipsis},
@@ -81,9 +98,11 @@ TypePtr TypeIdToType(TypeId id) {
                                                                 {kObjectTypeRefKey, kRefKeyType},
                                                                 {kObjectTypeRef, kRefType},
                                                                 {kMetaTypeTypeType, kTypeType},
+                                                                {kObjectTypeClass, kClassType},
                                                                 {kObjectTypeString, kString},
                                                                 {kObjectTypeList, kList},
                                                                 {kObjectTypeTuple, kTuple},
+                                                                {kObjectTypeNumber, kNumber},
                                                                 {kObjectTypeDictionary, kDict},
                                                                 {kObjectTypeSlice, kSlice},
                                                                 {kObjectTypeKeyword, kKeyword},
@@ -250,7 +269,6 @@ TypePtr CSRTensorStrToType(const std::string &type_name) {
 }
 
 TypePtr MapTensorStrToType(const std::string &type_name) {
-  TypePtr type = nullptr;
   if (type_name == "MapTensor") {
     return std::make_shared<MapTensorType>();
   }
@@ -401,6 +419,7 @@ TypePtr GetTypeByFullString(const std::string &type_name) {
                                                     {"String", std::make_shared<String>()},
                                                     {"Problem", std::make_shared<Problem>()},
                                                     {"mstype", std::make_shared<TypeType>()},
+                                                    {"Keyword", std::make_shared<Keyword>()},
                                                     {"UMonad", kUMonadType},
                                                     {"IOMonad", kIOMonadType}};
 
@@ -447,7 +466,7 @@ TypePtr StringToType(const std::string &type_name) {
     // Class
     // SymbolicType
     // JTagged
-    // Anything
+    // Any
     // External
     MS_LOG(EXCEPTION) << "Unsupported type name: " << type_name << "!";
   }

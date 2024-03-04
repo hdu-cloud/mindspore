@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,12 +23,19 @@
 
 #include "extendrt/infer_session.h"
 #include "runtime/hardware/device_context.h"
-#include "extendrt/utils/kernel_graph_utils.h"
 #include "extendrt/session/lite_graph_executor.h"
+
 namespace mindspore {
 /// \brief Delegate Session implementation, use delegate api for inference.
-// TODO(zhaizhiqiang): use GraphSinkDelegateSession instead of GraphSinkSession in future.
+// (zhaizhiqiang): use GraphSinkDelegateSession instead of GraphSinkSession in future.
 // class GraphSinkDelegateSession
+struct DelegateGraphInfo {
+  std::vector<MutableTensorImplPtr> inputs;
+  std::vector<std::string> input_names;
+  std::vector<MutableTensorImplPtr> outputs;
+  std::vector<std::string> output_names;
+};
+
 class GraphSinkSession : public InferSession {
  public:
   GraphSinkSession() = default;
@@ -37,36 +44,37 @@ class GraphSinkSession : public InferSession {
   }
   ~GraphSinkSession() override;
 
-  Status Init(const std::shared_ptr<Context> &context) override;
-  Status CompileGraph(FuncGraphPtr graph, const void *data = nullptr, size_t size = 0) override;
-  Status RunGraph(const std::vector<tensor::Tensor> &inputs, std::vector<tensor::Tensor> *outputs,
+  Status Init(const std::shared_ptr<Context> &context, const ConfigInfos &config_info = {}) override;
+  Status CompileGraph(FuncGraphPtr graph, const void *data = nullptr, size_t size = 0,
+                      uint32_t *graph_id = nullptr) override;
+  Status CompileGraph(const void *model_data, size_t data_size, uint32_t *graph_id) override;
+  Status RunGraph(uint32_t graph_id, const std::vector<tensor::Tensor> &inputs, std::vector<tensor::Tensor> *outputs,
                   const MSKernelCallBack &before, const MSKernelCallBack &after) override;
-  Status RunGraph(const std::vector<tensor::Tensor> &inputs, std::vector<tensor::Tensor> *outputs) override;
-  Status Resize(const std::vector<tensor::Tensor> &inputs, const std::vector<std::vector<int64_t>> &dims) override;
+  Status RunGraph(uint32_t graph_id, const std::vector<tensor::Tensor> &inputs,
+                  std::vector<tensor::Tensor> *outputs) override;
+  Status Resize(uint32_t graph_id, const std::vector<tensor::Tensor> &inputs,
+                const std::vector<std::vector<int64_t>> &dims) override;
 
-  std::vector<MutableTensorImplPtr> GetOutputs() override;
-  std::vector<MutableTensorImplPtr> GetInputs() override;
-  std::vector<std::string> GetOutputNames() override;
-  std::vector<std::string> GetInputNames() override;
-  MutableTensorImplPtr GetOutputByTensorName(const std::string &tensorName) override;
-  MutableTensorImplPtr GetInputByTensorName(const std::string &name) override;
+  std::vector<MutableTensorImplPtr> GetOutputs(uint32_t graph_id) override;
+  std::vector<MutableTensorImplPtr> GetInputs(uint32_t graph_id) override;
+  std::vector<std::string> GetOutputNames(uint32_t graph_id) override;
+  std::vector<std::string> GetInputNames(uint32_t graph_id) override;
+  MutableTensorImplPtr GetOutputByTensorName(uint32_t graph_id, const std::string &tensorName) override;
+  MutableTensorImplPtr GetInputByTensorName(uint32_t graph_id, const std::string &name) override;
   void SetConfigInfo(ConfigInfos config_infos) { config_infos_ = config_infos; }
 
  private:
-  Status GeDeviceContextInit();
+  Status InitGraphInfo(DelegateGraphInfo *graph_info_ptr, uint32_t graph_id);
+  Status InitGraphInputsOutputs(const FuncGraphPtr &graph, DelegateGraphInfo *graph_info);
+  Status UpdateGraphInputsOutputs(uint32_t graph_id, DelegateGraphInfo *graph_info);
+  void UpdateDataFlowGraphInputsOutputs(DelegateGraphInfo *graph_info_ptr, const std::vector<tensor::Tensor> &inputs,
+                                        const std::vector<tensor::Tensor> &outputs);
 
   std::shared_ptr<mindspore::LiteGraphExecutor> graph_executor_;
   std::map<std::string, std::string> options_;
-  bool is_use_kernel_graph_ = true;
-  KernelGraphUtilsPtr kernel_graph_utils_;
+  std::map<uint32_t, DelegateGraphInfo> graph_infos_;
+  bool is_data_flow_graph_ = false;
   std::shared_ptr<Context> context_;
-  KernelGraphPtr kernel_graph_;
-  FuncGraphPtr func_graph_;
-  std::vector<MutableTensorImplPtr> inputs_;
-  std::vector<std::string> input_names_;
-  std::vector<MutableTensorImplPtr> outputs_;
-  std::vector<std::string> output_names_;
-  Status InitGraphInputsOutputs();
   ConfigInfos config_infos_;
 };
 }  // namespace mindspore

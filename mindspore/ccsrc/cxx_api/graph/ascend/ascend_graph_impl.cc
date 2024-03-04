@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,10 +25,12 @@
 #include "backend/common/session/executor_manager.h"
 #include "runtime/device/kernel_runtime_manager.h"
 #include "runtime/dev.h"
+#include "acl/acl_rt.h"
+#include "acl/acl.h"
 #include "include/common/utils/python_adapter.h"
 #include "backend/common/session/session_basic.h"
 #include "runtime/hardware/device_context_manager.h"
-#include "distributed/init.h"
+#include "include/backend/distributed/init.h"
 
 namespace mindspore {
 API_GRAPH_REG(kAscendDevice, AscendGraphImpl);
@@ -80,11 +82,11 @@ VectorRef GenerateInputsRef(const std::vector<tensor::TensorPtr> &inputs, const 
       auto param_ptr = (graph_params[i])->cast_ptr<Parameter>();
       MS_EXCEPTION_IF_NULL(param_ptr);
       if (!param_ptr->has_default()) {
-        MS_LOG(EXCEPTION) << "Parameter[" << i << "] has no default param";
+        MS_LOG(INTERNAL_EXCEPTION) << "Parameter[" << i << "] has no default param";
       }
       if (!param_ptr->default_param()->isa<Tensor>()) {
-        MS_LOG(EXCEPTION) << "Parameter[" << param_ptr->ToString()
-                          << "] is not initialized, need to call `.init_data()`";
+        MS_LOG(INTERNAL_EXCEPTION) << "Parameter[" << param_ptr->ToString()
+                                   << "] is not initialized, need to call `.init_data()`";
       }
       results.push_back(param_ptr->default_param());
     }
@@ -96,8 +98,8 @@ uint32_t GetRootGraphIdFromActorInfo(const std::string &actor_info) {
   const std::string prefix = "kernel_graph_";
   auto pos = actor_info.find(prefix);
   if (pos == std::string::npos) {
-    MS_LOG(EXCEPTION) << "Cannot find prefix " << prefix << " from actor_info" << actor_info
-                      << ", failed to get graph id.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Cannot find prefix " << prefix << " from actor_info" << actor_info
+                               << ", failed to get graph id.";
   }
   std::string first_num = "";
   for (size_t i = prefix.size(); i < actor_info.size(); ++i) {
@@ -228,8 +230,8 @@ Status AscendGraphImpl::ExecuteModel(const std::vector<MSTensor> &request, std::
     MS_LOG(ERROR) << "rtCtx is nullptr";
     return kMCDeviceError;
   }
-  rtError_t rt_ret = rtCtxSetCurrent(context_);
-  if (rt_ret != RT_ERROR_NONE) {
+  auto rt_ret = aclrtSetCurrentContext(context_);
+  if (rt_ret != ACL_ERROR_NONE) {
     MS_LOG(ERROR) << "Set Ascend rtCtx failed";
     return kMCDeviceError;
   }
@@ -355,8 +357,8 @@ Status AscendGraphImpl::Load(uint32_t device_id) {
     }
 
     // save d context
-    rtError_t rt_ret = rtCtxGetCurrent(&context_);
-    if (rt_ret != RT_ERROR_NONE || context_ == nullptr) {
+    auto rt_ret = aclrtGetCurrentContext(&context_);
+    if (rt_ret != ACL_ERROR_NONE || context_ == nullptr) {
       MS_LOG(ERROR) << "the ascend device context is null";
       return kMCDeviceError;
     }
@@ -365,8 +367,8 @@ Status AscendGraphImpl::Load(uint32_t device_id) {
     load_flag_ = true;
   }
 
-  rtError_t rt_ret = rtCtxSetCurrent(context_);
-  if (rt_ret != RT_ERROR_NONE) {
+  auto rt_ret = aclrtSetCurrentContext(context_);
+  if (rt_ret != ACL_ERROR_NONE) {
     MS_LOG(ERROR) << "Set the ascend device context failed";
     return kMCDeviceError;
   }
@@ -429,7 +431,7 @@ AscendGraphImpl::MsEnvGuard::MsEnvGuard(uint32_t device_id) : device_id_(device_
   }
 
   ms_context->set_param<int>(MS_CTX_EXECUTION_MODE, kGraphMode);
-  ms_context->set_param<uint32_t>(MS_CTX_DEVICE_ID, device_id_);
+  ms_context->set_param_inner<uint32_t>(MS_CTX_DEVICE_ID, device_id_);
   ms_context->set_param<std::string>(MS_CTX_DEVICE_TARGET, kAscendDevice);
   ms_context->set_param<bool>(MS_CTX_IS_MULTI_GRAPH_SINK, true);
 
@@ -447,9 +449,10 @@ AscendGraphImpl::MsEnvGuard::MsEnvGuard(uint32_t device_id) : device_id_(device_
       }
     }
   } else {
-    auto ret = rtSetDevice(static_cast<int32_t>(device_id_));
-    if (ret != RT_ERROR_NONE) {
-      MS_LOG(EXCEPTION) << "Device " << device_id_ << " call rtSetDevice failed, ret[" << static_cast<int>(ret) << "]";
+    auto ret = aclrtSetDevice(static_cast<int32_t>(device_id_));
+    if (ret != ACL_ERROR_NONE) {
+      MS_LOG(EXCEPTION) << "Device " << device_id_ << " call aclrtSetDevice failed, ret[" << static_cast<int>(ret)
+                        << "]";
     }
   }
 
@@ -480,9 +483,10 @@ AscendGraphImpl::MsEnvGuard::~MsEnvGuard() {
         return;
       }
     } else {
-      auto ret = rtDeviceReset(static_cast<int32_t>(device_id_));
-      if (ret != RT_ERROR_NONE) {
-        MS_LOG(ERROR) << "Device " << device_id_ << " call rtDeviceReset failed, ret[" << static_cast<int>(ret) << "]";
+      auto ret = aclrtResetDevice(static_cast<int32_t>(device_id_));
+      if (ret != ACL_ERROR_NONE) {
+        MS_LOG(ERROR) << "Device " << device_id_ << " call aclrtResetDevice failed, ret[" << static_cast<int>(ret)
+                      << "]";
         return;
       }
     }

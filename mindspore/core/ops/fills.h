@@ -17,9 +17,9 @@
 #ifndef MINDSPORE_CORE_OPS_FILLS_H_
 #define MINDSPORE_CORE_OPS_FILLS_H_
 #include <vector>
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
-#include "mindspore/core/ops/core_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -27,11 +27,11 @@ class MIND_API Fills : public BaseOperator {
  public:
   MIND_API_BASE_MEMBER(Fills);
   /// \brief Create a tensor filled with a scalar value. Refer to Python API @ref mindspore.ops.fills for more details.
-  Fills() : BaseOperator(prim::kFills) { InitIOName({"x", "value"}, {"y"}); }
+  Fills() : BaseOperator(kFillsOpName) { InitIOName({"x", "value"}, {"y"}); }
 };
 
-abstract::AbstractBasePtr FillsInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                     const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr FillsInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                              const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_FILLS_H_

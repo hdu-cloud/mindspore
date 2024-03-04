@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 #include "include/transform/graph_ir/utils.h"
+#include "mindspore/core/ops/other_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "transform/graph_ir/aoe_util.h"
 #include "transform/graph_ir/convert.h"
 #include "transform/graph_ir/op_adapter_map.h"
 #include "transform/graph_ir/op_adapter_util.h"
@@ -21,6 +24,7 @@
 #include "transform/graph_ir/op_adapter_desc.h"
 #include "transform/graph_ir/transform_util.h"
 #include "transform/graph_ir/graph_builder.h"
+#include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
 namespace transform {
@@ -42,11 +46,18 @@ OpAdapterPtr FindAdapter(const AnfNodePtr node, bool train) {
       name = GetCNodeTargetFuncName(cnode);
     }
 
+    // Convert TupleGetItem to control edge when it has monad.
+    if (name == kNameTupleGetItem) {
+      if (HasAbstractMonad(node)) {
+        name = kNameUpdateState;
+      }
+    }
     auto it_adpt = OpAdapterMap::get().find(name);
     if (it_adpt != OpAdapterMap::get().end()) {
       return it_adpt->second->Get(train);
     }
-    MS_LOG(EXCEPTION) << "Can't find OpAdapter for " << name;
+    MS_LOG(WARNING) << "Can't find OpAdapter for " << name;
+    return OpAdapterPtr(nullptr);
   }
 
   if (node->isa<ValueNode>()) {
@@ -63,7 +74,8 @@ OpAdapterPtr FindAdapter(const std::string &name, bool train) {
   if (it != OpAdapterMap::get().end()) {
     return it->second->Get(train);
   }
-  MS_LOG(EXCEPTION) << "Can't find OpAdapter for " << name;
+  MS_LOG(WARNING) << "Can't find OpAdapter for " << name;
+  return nullptr;
 }
 
 void ClearGeSessionAndRunner() {
@@ -151,6 +163,20 @@ bool IsWhileNode(const AnfNodePtr &node) {
   return false;
 }
 
+bool IsCallNode(const AnfNodePtr &node) {
+  if (!node->isa<CNode>()) {
+    return false;
+  }
+  auto graph = node->func_graph();
+  MS_EXCEPTION_IF_NULL(graph);
+  bool in_kg = graph->type_name() == kKernelGraphTypeName;
+  auto cnode = node->cast<CNodePtr>();
+  if (in_kg && IsPrimitiveCNode(node, prim::kPrimCall) && cnode->input(1)->isa<ValueNode>()) {
+    return true;
+  }
+  return false;
+}
+
 bool CheckSwitchBranch(const AnfNodePtr &node) {
   AnfNodePtr value_node = nullptr;
   if (IsPartialCNode(node)) {
@@ -200,6 +226,18 @@ bool IsIfNode(const AnfNodePtr &node) {
   return true;
 }
 
+bool IsInitDataSetQueueNode(const AnfNodePtr &node) {
+  if (!node->isa<CNode>()) {
+    return false;
+  }
+  auto cnode = node->cast<CNodePtr>();
+  MS_EXCEPTION_IF_NULL(cnode);
+  if (IsPrimitiveCNode(cnode, prim::kPrimInitDataSetQueue)) {
+    return true;
+  }
+  return false;
+}
+
 std::string GetCNodeTargetFuncName(const CNodePtr cnode) {
   if (IsCaseNode(cnode)) {
     return string(kNameCase);
@@ -209,6 +247,9 @@ std::string GetCNodeTargetFuncName(const CNodePtr cnode) {
   }
   if (IsIfNode(cnode)) {
     return string(kNameIf);
+  }
+  if (IsCallNode(cnode)) {
+    return string(kNamePartitionedCall);
   }
   return GetCNodeFuncName(cnode);
 }
@@ -242,8 +283,8 @@ std::vector<MeTensorPtr> ConvertGeTensors(const std::vector<GeTensorPtr> &ge_ten
 
 GeDataType ConvertDataType(const MeDataType &type) { return TransformUtil::ConvertDataType(type); }
 
-MeTensorPtr ConvertGeTensor(const GeTensorPtr &ge_tensor, const ShapeVector &request_dims) {
-  return TransformUtil::ConvertGeTensor(ge_tensor, request_dims);
+MeTensorPtr ConvertGeTensor(const GeTensorPtr &ge_tensor, const ShapeVector &request_dims, bool ref_mem) {
+  return TransformUtil::ConvertGeTensor(ge_tensor, request_dims, ref_mem);
 }
 
 MeTensorPtr ConvertGeTensor(const GeTensorPtr &tensor) { return TransformUtil::ConvertGeTensor(tensor); }
@@ -254,9 +295,23 @@ MeTensorPtr ConvertGeTensor(const GeTensorPtr &tensor, const TypeId &me_type) {
 
 std::shared_ptr<transform::GraphRunner> GetGraphRunner() { return DfGraphManager::GetInstance().GetGraphRunner(); }
 
-std::shared_ptr<ge::Session> GetGeSession() { return DfGraphManager::GetInstance().GetGeSession(); }
+std::shared_ptr<transform::GraphRunner> CheckAndGetGraphRunner(const transform::RunOptions &run_options) {
+  if (transform::GetGraphByName(run_options.name) == nullptr) {
+    MS_LOG(WARNING) << "Can not find " << run_options.name
+                    << " sub graph, don't need data init subgraph in INFER mode.";
+    return nullptr;
+  }
 
-void SetGeSession(const std::shared_ptr<ge::Session> &sess_ptr) {
+  auto graph_runner = transform::GetGraphRunner();
+  if (graph_runner == nullptr) {
+    MS_LOG(EXCEPTION) << "Can not found GraphRunner.";
+  }
+  return graph_runner;
+}
+
+std::shared_ptr<::ge::Session> GetGeSession() { return DfGraphManager::GetInstance().GetGeSession(); }
+
+void SetGeSession(const std::shared_ptr<::ge::Session> &sess_ptr) {
   DfGraphManager::GetInstance().SetGeSession(sess_ptr);
 }
 
@@ -278,10 +333,19 @@ FuncGraphPtr GetAnfGraph(uint32_t graph_id) { return DfGraphManager::GetInstance
 
 DfGraphWrapperPtr GetGraphByName(const std::string &name) { return DfGraphManager::GetInstance().GetGraphByName(name); }
 
+void AddOptimizeGraph(const std::string &name) { AoeUtil::GetInstance().AddOptimizeGraph(name); }
+
+void InitializeAoeUtil() { AoeUtil::GetInstance().Initialize(); }
+
+void DestroyAoeUtil() { AoeUtil::GetInstance().Destroy(); }
+
+void EnableAoeOffline() { AoeUtil::GetInstance().SetOfflineEnvDumpGeGraph(); }
+
 // convert
 
-DfGraphConvertorPtr NewConverter(const FuncGraphPtr &graph) {
-  auto converter = std::make_shared<transform::DfGraphConvertor>(graph);
+DfGraphConvertorPtr NewConverter(const FuncGraphPtr &graph, const std::string &phase_prefix,
+                                 RefModeFlag ref_mode_type) {
+  auto converter = std::make_shared<transform::DfGraphConvertor>(graph, phase_prefix, ref_mode_type);
   return converter;
 }
 
@@ -290,10 +354,15 @@ void SetTraining(const DfGraphConvertorPtr &converter, bool training) {
   converter->set_training(training);
 }
 
-void BuildGraph(const DfGraphConvertorPtr &converter,
+void SetExportAir(const DfGraphConvertorPtr &converter, bool export_air) {
+  MS_EXCEPTION_IF_NULL(converter);
+  converter->set_export_air(export_air);
+}
+
+void BuildGraph(const std::string &name, const DfGraphConvertorPtr &converter,
                 const std::map<std::string, std::shared_ptr<tensor::Tensor>> &maps) {
   MS_EXCEPTION_IF_NULL(converter);
-  (void)converter->ConvertAllNode().InitParam(maps).BuildGraph();
+  (void)converter->ConvertAllNode().InitParam(maps).BuildGraph(name);
 }
 
 void GenerateBroadcastGraph(const DfGraphConvertorPtr &converter, const TensorOrderMap &tensors) {
@@ -308,6 +377,14 @@ int ErrCode(const DfGraphConvertorPtr &converter) {
   MS_EXCEPTION_IF_NULL(converter);
   return converter->ErrCode();
 }
+
+void GenFakeComputeGraph(const std::string &name, const DfGraphConvertorPtr &converter,
+                         const std::map<std::string, std::shared_ptr<tensor::Tensor>> &maps) {
+  MS_EXCEPTION_IF_NULL(converter);
+  (void)converter->ConvertAllNode().InitParam(maps).GenFakeComputeGraph(name);
+}
+
+DfGraphPtr GenFakeGraph(const std::string &name) { return GenExampleGraph(name); }
 
 DfGraphPtr GetComputeGraph(const DfGraphConvertorPtr &converter) {
   MS_EXCEPTION_IF_NULL(converter);
@@ -326,7 +403,7 @@ DfGraphPtr GetBroadcastGraph(const DfGraphConvertorPtr &converter) {
   return converter->GetBroadcastGraph();
 }
 
-std::shared_ptr<ge::Session> NewSession(const SessionOptions &sess_options) {
+std::shared_ptr<::ge::Session> NewSession(const SessionOptions &sess_options) {
   return transform::GraphRunner::NewSession(sess_options);
 }
 
@@ -342,8 +419,55 @@ Status RunGraphAsync(const std::shared_ptr<GraphRunner> &runner, const RunOption
   return runner->RunGraphAsync(options, inputs, outputs);
 }
 
+Status RunGraphWithStreamAsync(const std::shared_ptr<GraphRunner> &runner, const RunOptions &options, void *stream,
+                               const std::vector<GeTensor> &inputs, std::vector<GeTensor> *outputs) {
+  MS_EXCEPTION_IF_NULL(runner);
+  return runner->RunGraphWithStreamAsync(options, stream, inputs, outputs);
+}
+
+Status RegisterExternalAllocator(const std::shared_ptr<GraphRunner> &runner, const void *const stream,
+                                 GeAllocatorPtr allocator) {
+  MS_EXCEPTION_IF_NULL(runner);
+  return runner->RegisterExternalAllocator(stream, allocator);
+}
+
+Status UnregisterExternalAllocator(const std::shared_ptr<GraphRunner> &runner, const void *const stream) {
+  MS_EXCEPTION_IF_NULL(runner);
+  return runner->UnregisterExternalAllocator(stream);
+}
+
 transform::Status CompileDatasetGraph(const DatasetGraphParam &param, const std::string &phase) {
   return BuildDatasetGraph(param, phase);
+}
+
+bool ConvertCheck(const AnfNodePtr &node) {
+  if (!node->cast<CNodePtr>() || !AnfUtils::IsRealKernel(node)) {
+    return true;
+  }
+  PrimitivePtr prim = common::AnfAlgo::GetCNodePrimitive(node);
+  auto &adapter_map = OpAdapterMap::get();
+  return adapter_map.find(prim->name()) != adapter_map.end();
+}
+
+bool DynamicShapeSupportCheck(const AnfNodePtr &node, bool train) {
+  auto adpt = FindAdapter(node, train);
+  MS_EXCEPTION_IF_NULL(adpt);
+  return adpt->GetDynamicShapeSupport();
+}
+
+bool SinkGraphCheck(const AnfNodePtr &node, bool train) {
+  PrimitivePtr prim = common::AnfAlgo::GetCNodePrimitive(node);
+  auto adpt = FindAdapter(prim->name(), train);
+  MS_EXCEPTION_IF_NULL(adpt);
+  auto input_attr_map = adpt->getInputAttrMap();
+  auto cnode = node->cast<CNodePtr>();
+  MS_EXCEPTION_IF_NULL(cnode);
+  for (auto &it : input_attr_map) {
+    if (!cnode->input(it.first)->isa<ValueNode>()) {
+      return false;
+    }
+  }
+  return true;
 }
 }  // namespace transform
 }  // namespace mindspore

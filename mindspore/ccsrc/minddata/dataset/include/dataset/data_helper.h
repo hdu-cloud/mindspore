@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,14 @@
 #define MINDSPORE_CCSRC_MINDDATA_DATASET_INCLUDE_DATASET_DATA_HELPER_H_
 
 #include <sys/stat.h>
+
+#if (defined(_WIN32) || defined(_WIN64)) && defined(_MSC_VER)
+#define F_OK 0
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -31,7 +39,6 @@
 
 namespace mindspore {
 namespace dataset {
-
 /// \brief Simple class to do data manipulation, contains helper function to update json files in dataset
 class DATASET_API DataHelper {
  public:
@@ -320,51 +327,71 @@ class DATASET_API DataHelper {
   /// \return Status The status code returned
   template <typename T>
   Status WriteBinFile(const std::string &in_file, const std::vector<T> &data) {
+    std::ofstream ofs(in_file, std::ios::binary | std::ios::out);
+    if (!ofs.is_open()) {
+      return Status(kMDUnexpectedError, "Failed to open file: " + in_file);
+    }
+    size_t length = data.size();
+    if (length == 0) {
+      ofs.close();
+      return Status(kMDUnexpectedError, "Input data is empty.");
+    }
+    (void)ofs.write(reinterpret_cast<const char *>(&data[0]), static_cast<std::streamsize>(length * sizeof(T)));
+    if (!ofs.good()) {
+      ofs.close();
+      return Status(kMDUnexpectedError, "Failed to write file: " + in_file);
+    }
+    ofs.close();
+
+    // Change the file mode
+    if (access(in_file.c_str(), F_OK) == -1) {
+      return Status(kMDUnexpectedError, "Couldn't access the file " + in_file);
+    }
     try {
-      std::ofstream o(in_file, std::ios::binary | std::ios::out);
-      if (!o.is_open()) {
-        return Status(kMDUnexpectedError, "Error opening Bin file to write");
+      if (chmod(in_file.c_str(), S_IRUSR | S_IWUSR) != 0) {
+        return Status(kMDUnexpectedError, "Change file " + in_file + " mode fail.");
       }
-      size_t length = data.size();
-      if (length == 0) {
-        return Status(kMDUnexpectedError, "size of data is 0 when written into file.");
-      }
-      o.write(reinterpret_cast<const char *>(&data[0]), std::streamsize(length * sizeof(T)));
-      o.close();
+    } catch (std::exception &e) {
+      return Status(kMDUnexpectedError, "File " + in_file + " change mode failed! May be not exist.");
     }
-    // Catch any exception and convert to Status return code
-    catch (const std::exception &err) {
-      return Status(kMDUnexpectedError, "Write bin file failed ");
-    }
+
     return Status::OK();
   }
 
   /// \brief Write pointer to bin, use pointer to avoid memcpy
-  /// \note The value of `length`` must be equal to the length of `data`
+  /// \note The value of `length` must be equal to the length of `data`
   /// \param[in] in_file File name to write to
   /// \param[in] data Pointer to data
   /// \param[in] length Length of values to write from pointer
   /// \return Status The status code returned
   template <typename T>
   Status WriteBinFile(const std::string &in_file, T *data, size_t length) {
+    if (data == nullptr) {
+      return Status(kMDUnexpectedError, "Input data can not be nullptr.");
+    }
+    std::ofstream ofs(in_file, std::ios::binary | std::ios::out);
+    if (!ofs.is_open()) {
+      return Status(kMDUnexpectedError, "Failed to open file: " + in_file);
+    }
+    (void)ofs.write(reinterpret_cast<const char *>(data), static_cast<std::streamsize>(length * sizeof(T)));
+    if (!ofs.good()) {
+      ofs.close();
+      return Status(kMDUnexpectedError, "Failed to write file: " + in_file);
+    }
+    ofs.close();
+
+    // Change the file mode
+    if (access(in_file.c_str(), F_OK) == -1) {
+      return Status(kMDUnexpectedError, "Couldn't access the file " + in_file);
+    }
     try {
-      if (data == nullptr) {
-        return Status(kMDUnexpectedError, "input data can not be null");
+      if (chmod(in_file.c_str(), S_IRUSR | S_IWUSR) != 0) {
+        return Status(kMDUnexpectedError, "Change file " + in_file + " mode fail.");
       }
-      std::ofstream o(in_file, std::ios::binary | std::ios::out);
-      if (!o.is_open()) {
-        return Status(kMDUnexpectedError, "Error opening Bin file to write");
-      }
-      o.write(reinterpret_cast<const char *>(data), std::streamsize(length * sizeof(T)));
-      if (!o.good()) {
-        return Status(kMDUnexpectedError, "Error writing Bin file");
-      }
-      o.close();
+    } catch (std::exception &e) {
+      return Status(kMDUnexpectedError, "File " + in_file + " change mode failed! May be not exist.");
     }
-    // Catch any exception and convert to Status return code
-    catch (const std::exception &err) {
-      return Status(kMDUnexpectedError, "Write bin file failed");
-    }
+
     return Status::OK();
   }
 
@@ -457,5 +484,4 @@ class DATASET_API DataHelper {
 };
 }  // namespace dataset
 }  // namespace mindspore
-
 #endif  // MINDSPORE_CCSRC_MINDDATA_DATASET_INCLUDE_DATASET_DATA_HELPER_H_

@@ -14,13 +14,37 @@
  * limitations under the License.
  */
 
+#include <map>
+#include <memory>
 #include <set>
 #include <utility>
-#include "ops/pad_v3.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "mindapi/src/helper.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
 #include "include/common/utils/utils.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/pad_v3.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -92,6 +116,20 @@ void ReflectModeCheck(const std::string &prim_name, const int64_t paddings_size,
   }
 }
 
+abstract::ShapePtr PaddingNoTensor(abstract::BaseShapePtr paddings_shape_ptr, const std::vector<int64_t> &x_shape) {
+  auto paddings_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(paddings_shape_ptr)[kShape];
+  size_t pad_dim = 0;
+  if (paddings_shape.size() >= 1) {
+    pad_dim = paddings_shape[0] / nTwo;
+  }
+  auto out_shape = x_shape;
+  auto dim_size = x_shape.size();
+  for (size_t i = dim_size - pad_dim; i < dim_size; ++i) {
+    out_shape[i] = abstract::Shape::kShapeDimAny;
+  }
+  return std::make_shared<abstract::Shape>(out_shape);
+}
+
 abstract::ShapePtr PadV3InferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   constexpr int64_t kEdgeMaxDims = 5;
   constexpr int64_t kOtherMinDims = 3;
@@ -104,6 +142,9 @@ abstract::ShapePtr PadV3InferShape(const PrimitivePtr &primitive, const std::vec
   }
   auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_shape_ptr)[kShape];
   auto dim_size = x_shape.size();
+  if (dim_size == 0) {
+    MS_EXCEPTION(ValueError) << "For '" << prim_name << "', the dimension of 'x' must bigger than 0.";
+  }
   if (input_shape_ptr->IsDynamic()) {
     return std::make_shared<abstract::Shape>(std::vector<int64_t>(dim_size, abstract::Shape::kShapeDimAny));
   }
@@ -121,7 +162,7 @@ abstract::ShapePtr PadV3InferShape(const PrimitivePtr &primitive, const std::vec
     auto paddings_value = paddings->BuildValue();
     MS_EXCEPTION_IF_NULL(paddings_value);
     if (!paddings_value->isa<tensor::Tensor>()) {
-      return std::make_shared<abstract::Shape>(std::vector<int64_t>(dim_size, abstract::Shape::kShapeDimAny));
+      return PaddingNoTensor(paddings_shape_ptr, x_shape);
     }
     paddings_arg = CheckAndConvertUtils::CheckTensorIntValue("paddings value", paddings_value, prim_name);
   } else if (padding_type->isa<Tuple>() || padding_type->isa<List>()) {
@@ -136,14 +177,15 @@ abstract::ShapePtr PadV3InferShape(const PrimitivePtr &primitive, const std::vec
   std::vector<int64_t> paddings_val;
   auto mode = GetValue<std::string>(primitive->GetAttr(kAttrMode));
   if (mode != kConstant) {
-    (void)CheckAndConvertUtils::CheckInteger("input dims for edge or reflect mode", size, kGreaterEqual, kOtherMinDims,
-                                             prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("input dims for edge, reflect or circular mode", size, kGreaterEqual,
+                                             kOtherMinDims, prim_name);
+    if (mode == kReflect) {
+      ReflectModeCheck(prim_name, paddings_size, x_shape, paddings_arg, size);
+    } else {
+      (void)CheckAndConvertUtils::CheckInteger("input dims for edge mode", size, kLessEqual, kEdgeMaxDims, prim_name);
+    }
   }
-  if (mode == kReflect) {
-    ReflectModeCheck(prim_name, paddings_size, x_shape, paddings_arg, size);
-  } else if (mode == kEdge) {
-    (void)CheckAndConvertUtils::CheckInteger("input dims for edge mode", size, kLessEqual, kEdgeMaxDims, prim_name);
-  }
+
   PaddingsSizeCheck(primitive, paddings_size, size);
   for (int64_t i = 0; i < paddings_size; ++i) {
     paddings_val.push_back(int64_t(paddings_arg[LongToSize(i)]));
@@ -159,7 +201,6 @@ abstract::ShapePtr PadV3InferShape(const PrimitivePtr &primitive, const std::vec
       }
     }
   }
-  primitive->set_attr("padding_switched", MakeValue(paddings_val));
   std::vector<std::pair<int64_t, int64_t>> paddings_attr;
   for (int64_t i = 0; i < size; ++i) {
     if (nTwo * i >= paddings_size) {
@@ -185,10 +226,19 @@ TypePtr PadV3InferType(const PrimitivePtr &prim, const std::vector<AbstractBaseP
   }
 
   std::map<std::string, TypePtr> args = {{"x", input_args[0]->BuildType()}};
-  return CheckAndConvertUtils::CheckTensorTypeSame(args,
-                                                   {kInt, kInt8, kInt16, kInt32, kInt64, kUInt, kUInt8, kUInt16, kFloat,
-                                                    kFloat16, kFloat32, kFloat64, kComplex64, kComplex128},
-                                                   prim->name());
+  auto mode = GetValue<string>(prim->GetAttr("mode"));
+  if (mode == kConstant) {
+    return CheckAndConvertUtils::CheckTensorTypeSame(
+      args,
+      {kInt, kInt8, kInt16, kInt32, kInt64, kUInt, kUInt8, kUInt16, kFloat, kFloat16, kFloat32, kFloat64, kComplex64,
+       kComplex128, kBool},
+      prim->name());
+  } else {
+    return CheckAndConvertUtils::CheckTensorTypeSame(args,
+                                                     {kInt, kInt8, kInt16, kInt32, kInt64, kUInt, kUInt8, kUInt16,
+                                                      kFloat, kFloat16, kFloat32, kFloat64, kComplex64, kComplex128},
+                                                     prim->name());
+  }
 }
 }  // namespace
 
@@ -209,10 +259,28 @@ AbstractBasePtr PadV3Infer(const abstract::AnalysisEnginePtr &, const PrimitiveP
 
 bool PadV3::get_paddings_contiguous() const { return GetValue<bool>(GetAttr("paddings_contiguous")); }
 std::string PadV3::get_mode() const { return GetValue<string>(GetAttr("mode")); }
-std::vector<int64_t> PadV3::get_paddings() const { return GetValue<std::vector<int64_t>>(GetAttr("padding_switched")); }
 
-REGISTER_HOST_DEPENDS(kNamePadV3, {kInputIndex1});
 MIND_API_OPERATOR_NAME_IMPL(PadV3, kNamePadV3, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(PadV3, prim::kPrimPadV3, PadV3Infer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGPadV3Infer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return PadV3InferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return PadV3InferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return PadV3Infer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {kInputIndex1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(PadV3, prim::kPrimPadV3, AGPadV3Infer, false);
 }  // namespace ops
 }  // namespace mindspore

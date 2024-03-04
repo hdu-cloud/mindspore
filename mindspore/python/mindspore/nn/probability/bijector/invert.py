@@ -13,7 +13,7 @@
 # limitations under the License.
 # ============================================================================
 """Invert Bijector"""
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from .bijector import Bijector
 
 
@@ -25,7 +25,7 @@ class Invert(Bijector):
 
     Args:
         bijector (Bijector): Base Bijector.
-        name (str): The name of the Bijector. Default: "". When name is set to "", it is actually
+        name (str): The name of the Bijector. Default: ``""`` . When name is set to "", it is actually
             'Invert' + bijector.name.
 
     Supported Platforms:

@@ -55,56 +55,74 @@ bool BaseShape::operator==(const BaseShape &other) const { return tid() == other
 
 bool BaseShape::operator!=(const BaseShape &other) const { return !(*this == other); }
 
-std::string Shape::ToString() const {
+std::string TensorShape::ToString() const {
   std::ostringstream buffer;
-  bool has_dyn_shape = IsDynamic();
-  if (has_dyn_shape) {
-    buffer << "{shape:";
-  }
   buffer << ShapeVectorToStr(shape_);
-  if (has_dyn_shape) {
-    buffer << "|min shape:";
-    buffer << ShapeVectorToStr(min_shape_);
-    buffer << "|max shape:";
-    buffer << ShapeVectorToStr(max_shape_);
-    buffer << "}";
-  }
   return buffer.str();
 }
 
-std::string Shape::DumpText() const {
+std::string TensorShape::DumpText() const {
   std::ostringstream buffer;
   buffer << "[";
   for (size_t i = 0; i < shape_.size(); i++) {
     buffer << (i > 0 ? ", " : "") << shape_[i];
-    if (shape_[i] == kShapeDimAny && min_shape_.size() == shape_.size() && max_shape_.size() == shape_.size()) {
-      buffer << "_" << min_shape_[i] << "^" << max_shape_[i];
-    }
   }
   buffer << "]";
   return buffer.str();
 }
 
-bool Shape::IsDynamic() const { return mindspore::IsDynamic(shape_); }
+bool TensorShape::IsDynamic() const { return mindspore::IsDynamic(shape_); }
 
-bool Shape::operator==(const BaseShape &other) const {
+bool TensorShape::operator==(const BaseShape &other) const {
   if (tid() != other.tid()) {
     return false;
   }
-  Shape other_shape = static_cast<const Shape &>(other);
+  const TensorShape &other_shape = static_cast<const TensorShape &>(other);
   if (shape_ != other_shape.shape_) {
     return false;
   }
-  if (!IsDynamic() || !other_shape.IsDynamic()) {
-    return true;
-  }
-  return (min_shape_ == other_shape.min_shape_) && (max_shape_ == other_shape.max_shape_);
+  return true;
 }
 
-void Shape::Broaden() {
+void TensorShape::Broaden() {
   for (size_t i = 0; i < shape_.size(); i++) {
     shape_[i] = kShapeDimAny;
   }
+}
+
+bool DynamicSequenceShape::IsDynamic() const {
+  if (element_shape_ == nullptr) {
+    return false;
+  }
+  return element_shape_->IsDynamic();
+}
+
+bool DynamicSequenceShape::IsDimZero() const {
+  if (element_shape_ == nullptr) {
+    return false;
+  }
+  return element_shape_->IsDimZero();
+}
+
+bool DynamicSequenceShape::IsDimUnknown() const {
+  if (element_shape_ == nullptr) {
+    return false;
+  }
+  return element_shape_->IsDimUnknown();
+}
+
+size_t DynamicSequenceShape::hash() const {
+  auto hash_code = static_cast<std::size_t>(tid());
+  hash_code = hash_combine(hash_code, element_shape_->hash());
+  return hash_code;
+}
+
+bool DynamicSequenceShape::operator==(const BaseShape &other) const {
+  if (!other.isa<DynamicSequenceShape>()) {
+    return false;
+  }
+  const auto &other_shape = dynamic_cast<const DynamicSequenceShape &>(other);
+  return element_shape_ == other_shape.element_shape_;
 }
 
 std::string SequenceShape::ToString() const {
@@ -124,7 +142,7 @@ std::string SequenceShape::ToString() const {
 
 BaseShapePtrList SequenceShape::ElementsClone() const {
   BaseShapePtrList ele_list;
-  for (auto p_shp : p_shapes_) {
+  for (const auto &p_shp : p_shapes_) {
     MS_EXCEPTION_IF_NULL(p_shp);
     ele_list.push_back(p_shp->Clone());
   }

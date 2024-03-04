@@ -16,16 +16,36 @@
 
 #include "ops/hamming_window.h"
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <memory>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/named.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/base/type_id.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/other_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
-const int64_t MAX_WINDOW_LEN = 1024 * 1024;
-
 #define WINDOW_LENGTH_CASE(DTYPE, TYPE, LENGTH_VALUE, LENGTH_TENSOR)                    \
   case (DTYPE): {                                                                       \
     LENGTH_VALUE = static_cast<int64_t>(*static_cast<TYPE *>(LENGTH_TENSOR->data_c())); \
@@ -42,8 +62,9 @@ abstract::ShapePtr HammingWindowInferShape(const PrimitivePtr &primitive,
   auto length_size = length_shape.size();
   const int64_t length_dim = 1;
   CheckAndConvertUtils::CheckInteger("length dim", length_size, kEqual, length_dim, primitive->name());
-  if (input_args[0]->isa<abstract::AbstractTensor>() && !input_args[0]->BuildValue()->isa<AnyValue>() &&
-      !input_args[0]->BuildValue()->isa<None>()) {
+  auto value = input_args[0]->BuildValue();
+  MS_EXCEPTION_IF_NULL(value);
+  if (input_args[0]->isa<abstract::AbstractTensor>() && !value->isa<ValueAny>() && !value->isa<None>()) {
     auto length = input_args[0]->cast<abstract::AbstractTensorPtr>();
     MS_EXCEPTION_IF_NULL(length);
     auto length_value_ptr = length->BuildValue();
@@ -79,9 +100,7 @@ abstract::ShapePtr HammingWindowInferShape(const PrimitivePtr &primitive,
     return std::make_shared<abstract::Shape>(out_shape);
   } else {
     std::vector<int64_t> out_shape = {abstract::Shape::kShapeDimAny};
-    std::vector<int64_t> infer_shape_min = {0};
-    std::vector<int64_t> infer_shape_max = {MAX_WINDOW_LEN};
-    return std::make_shared<abstract::Shape>(out_shape, infer_shape_min, infer_shape_max);
+    return std::make_shared<abstract::Shape>(out_shape);
   }
 }
 
@@ -138,6 +157,26 @@ AbstractBasePtr HammingWindowInfer(const abstract::AnalysisEnginePtr &, const Pr
   auto infer_shape = HammingWindowInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(HammingWindow, prim::kPrimHammingWindow, HammingWindowInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGHammingWindowInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return HammingWindowInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return HammingWindowInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return HammingWindowInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(HammingWindow, prim::kPrimHammingWindow, AGHammingWindowInfer, false);
 }  // namespace ops
 }  // namespace mindspore

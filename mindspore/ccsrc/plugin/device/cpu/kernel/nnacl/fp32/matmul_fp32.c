@@ -302,6 +302,8 @@ void MatMulOpt(const float *a, const float *b, float *c, const float *bias, ActT
 #ifdef ENABLE_ARM64
   if (out_type == OutType_C8) {
     MatmulFloatNeon64(a, b, c, bias, (int)act_type, deep, row, col, stride, 0, 0);
+  } else if (out_type == OutType_Nhwc && deep > C512NUM) {
+    BigMatmulFloatNeon64Opt(a, b, c, bias, (int)act_type, deep, row, col, stride);
   } else {
     MatmulFloatNeon64Opt(a, b, c, bias, (int)act_type, deep, row, col, stride, (int)(out_type));
   }
@@ -338,6 +340,32 @@ void GemmIsNotPack(const float *a, const float *b, float *c, const float *bias, 
 
   for (; index < row; ++index) {
     float dst = a[index] * b[0] + bias[0];
+    ActCompute(32, 0, C6NUM);
+    c[index] = dst;
+  }
+}
+
+// act_type must be 0, 1, 2. 0: no_act, 1: relu, 3: relu6.
+void Row1Deep1GemmIsNotPack(const float *a, const float *b, float *c, const float *bias, int col, int deep,
+                            int act_type) {
+  int index = 0;
+
+  SIMD_RUN_NO_SCALAR(Row1Deep1GemmIsNotPack, index, a, b, c, bias, col, act_type);
+  for (; index < col; ++index) {
+    float dst = a[0] * b[index] + bias[index];
+    ActCompute(32, 0, C6NUM);
+    c[index] = dst;
+  }
+}
+
+// act_type must be 0, 1, 2. 0: no_act, 1: relu, 3: relu6.
+void Row1Deep1NoBiasGemmIsNotPack(const float *a, const float *b, float *c, const float *bias, int col, int deep,
+                                  int act_type) {
+  int index = 0;
+
+  SIMD_RUN_NO_SCALAR(Row1Deep1NoBiasGemmIsNotPack, index, a, b, c, bias, col, act_type);
+  for (; index < col; ++index) {
+    float dst = a[0] * b[index];
     ActCompute(32, 0, C6NUM);
     c[index] = dst;
   }
@@ -412,8 +440,8 @@ void MatVecMulNoPackFp32(const float *a, const float *b, float *c, const float *
       }
       c[oc_index] = dst;
     }
-    a += k;
-    b += k * col;
+    a += C1500NUM;
+    b += C1500NUM * col;
   }
   if (k == depth) {
     return;

@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,6 +59,7 @@ void RepeatOp::Print(std::ostream &out, bool show_all) const {
 // this function will retry to pop the connector again and will get the non-EOE row if any.
 Status RepeatOp::GetNextRow(TensorRow *row) {
   RETURN_UNEXPECTED_IF_NULL(row);
+  RETURN_IF_NOT_OK(CollectOpInfoStart(this->NameWithID(), "GetFromPreviousOp"));
   if (child_.empty()) {
     RETURN_STATUS_UNEXPECTED("[Internal ERROR] Pipeline init failed, RepeatOp can't be the first op in pipeline.");
   }
@@ -68,6 +69,8 @@ Status RepeatOp::GetNextRow(TensorRow *row) {
   while (row->eoe()) {
     RETURN_IF_NOT_OK(EoeReceived(0));
     if (state_ == OpState::kDeOpIdle) {
+      RETURN_IF_NOT_OK(
+        CollectOpInfoEnd(this->NameWithID(), "GetFromPreviousOp", {{"TensorRowFlags", row->FlagName()}}));
       return Status::OK();
     }
     RETURN_IF_NOT_OK(child_[0]->GetNextRow(row));
@@ -76,6 +79,7 @@ Status RepeatOp::GetNextRow(TensorRow *row) {
   if (row->eof()) {
     RETURN_IF_NOT_OK(EofReceived(0));
   }
+  RETURN_IF_NOT_OK(CollectOpInfoEnd(this->NameWithID(), "GetFromPreviousOp", {{"TensorRowFlags", row->FlagName()}}));
   return Status::OK();
 }
 
@@ -130,5 +134,30 @@ Status RepeatOp::Reset() {
 }
 
 int64_t RepeatOp::GetTreeRepeatCount() { return num_repeats_; }
+
+Status RepeatOp::GetNextRowPullMode(TensorRow *const row) {
+  RETURN_UNEXPECTED_IF_NULL(row);
+  if (child_.empty()) {
+    RETURN_STATUS_UNEXPECTED(
+      "[Internal ERROR] Pipeline init failed, RepeatOp can't be the leaf node(first operator) of pipeline.");
+  }
+  RETURN_IF_NOT_OK(child_[0]->GetNextRowPullMode(row));
+  // Loop until non EOE is received
+  while (row->eoe()) {
+    MS_LOG(INFO) << "RepeatOp::GetNextRowPullMode eoe received.";
+    RETURN_IF_NOT_OK(EoeReceived(0));
+    if (state_ == OpState::kDeOpIdle) {
+      return Status::OK();
+    }
+    // Reset TensorRow (both vector and flags)
+    row->reset();
+    RETURN_IF_NOT_OK(child_[0]->GetNextRowPullMode(row));
+  }
+  // Check if the last buf is next eof
+  if (row->eof()) {
+    RETURN_IF_NOT_OK(EofReceived(0));
+  }
+  return Status::OK();
+}
 }  // namespace dataset
 }  // namespace mindspore

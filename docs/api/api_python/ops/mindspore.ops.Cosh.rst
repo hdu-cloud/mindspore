@@ -7,3 +7,8 @@
 
     更多详情请查看： :func:`mindspore.ops.cosh` 。
 
+    输入：
+        - **x** (Tensor) - 输入Tensor。
+
+    输出：
+        Tensor，shape和数据类型与 `x` 相同。

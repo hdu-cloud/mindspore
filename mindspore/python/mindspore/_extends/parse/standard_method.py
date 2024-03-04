@@ -1,6 +1,6 @@
 # This is the Python adaptation and derivative work of Myia (https://github.com/mila-iqia/myia/).
 #
-# Copyright 2020-2022 Huawei Technologies Co., Ltd
+# Copyright 2020-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,29 +20,34 @@ from __future__ import absolute_import
 from mindspore import Tensor, CSRTensor, COOTensor
 from mindspore import dtype as mstype
 from mindspore._c_expression import Tensor as Tensor_
-from mindspore.ops.function.sparse_func import sparse_add
+from mindspore.common import mutable
 import mindspore.common._monad as monad
 from mindspore.common.sparse_tensor import RowTensorInner
 from mindspore.ops.composite.base import _append, _insert, _pop, _list_clear, _reverse, \
-    _count, _extend, _dict_clear, _haskey, _update, _fromkeys
+    _extend, _dict_setitem, _dict_clear, _haskey, _update, _fromkeys
 
-from ..._checkparam import Validator as validator
-from ..._checkparam import check_is_number
+from ... import _checkparam as validator
+from ..._checkparam import check_is_number, check_reshape_shp, check_axis_in_range, \
+    check_axis_valid, check_and_canonicalize_axes
 from ...ops import functional as F
 from ...ops import operations as P
-from ...ops.composite import tail, MultitypeFuncGraph, env_get, hyper_add, \
+from ...ops import composite
+from ...ops.operations import array_ops
+from ...ops.composite import MultitypeFuncGraph, env_get, hyper_add, \
     zeros_like, ones_like, repeat_elements
 from ...ops.composite.multitype_ops import _constexpr_utils as const_utils
 from ...ops.composite.multitype_ops import _compile_utils as compile_utils
 from ...ops.operations.math_ops import Median
-from ...ops.operations._inner_ops import Format, issubclass_
+from ...ops.operations._inner_ops import Format
 from ...ops.operations import _csr_ops
 from ...ops.operations import _map_tensor_ops
-from ...ops.primitive import constexpr
+from ...ops.primitive import constexpr, _primexpr
 from ...common import dtype as mstype
-from ...ops.operations._sequence_ops import ListAppend
+from ...ops.operations._sequence_ops import ListAppend, ListInsert, SequenceMax, SequenceMin, \
+    SequenceIndex
 
-__all__ = ['MultitypeFuncGraph', 'env_get', 'hyper_add', 'zeros_like', 'ones_like']
+__all__ = ['MultitypeFuncGraph', 'env_get',
+           'hyper_add', 'zeros_like', 'ones_like']
 
 shape_ = P.Shape()
 dtype_ = P.DType()
@@ -53,10 +58,7 @@ size_op_ = P.Size()
 _format = Format()
 _reduce_sum_default = P.ReduceSum()
 _reduce_sum_keepdims = P.ReduceSum(True)
-_mean_keepdims = P.ReduceMean(True)
 _csr_mm = _csr_ops.CSRMM()
-_addcdiv = P.Addcdiv()
-_addcmul = P.Addcmul()
 
 itemsize_map = {mstype.bool_: 1, mstype.int8: 1, mstype.uint8: 1,
                 mstype.float16: 2, mstype.int16: 2, mstype.uint16: 2,
@@ -66,7 +68,7 @@ itemsize_map = {mstype.bool_: 1, mstype.int8: 1, mstype.uint8: 1,
 nan_tensor = Tensor(float('nan'), dtype=mstype.float32)
 
 
-def mean(x, axis=(), keep_dims=False):
+def mean(x, axis=None, keep_dims=False):
     """
     Reduces a dimension of a tensor by averaging all elements in the dimension.
 
@@ -89,10 +91,7 @@ def mean(x, axis=(), keep_dims=False):
         >>> print(output)
         2.0
     """
-    if axis is None:
-        axis = ()
-    reduce_mean = P.ReduceMean(keep_dims)
-    return reduce_mean(x, axis)
+    return F.mean(x, axis, keep_dims)
 
 
 def ndimension(x):
@@ -100,14 +99,14 @@ def ndimension(x):
     return len(x.shape)
 
 
-def prod(x, axis=(), keep_dims=False):
+def prod(input, axis=None, keep_dims=False):
     """
     Reduces a dimension of a tensor by product all elements in the dimension.
 
     Args:
-        x (Tensor): Input Tensor.
+        input (Tensor): Input Tensor.
         axis (Union[None, int, tuple(int), list(int)]): Dimensions of reduction,
-            when axis is None or empty tuple, reduce all dimensions. Default: ().
+            when axis is None or empty tuple, reduce all dimensions. Default: ``None``.
         keep_dims (bool): Whether to keep the reduced dimensions. Default: False.
 
     Returns:
@@ -124,41 +123,41 @@ def prod(x, axis=(), keep_dims=False):
         >>> print(output)
         6.0
     """
-    return F.prod(x, axis, keep_dims)
+    return F.prod(input, axis, keep_dims)
 
 
-def addcdiv(input_data, x1, x2, value):
+def addcdiv(input, tensor1, tensor2, value=1):
     """
-    Performs the element-wise division of tensor x1 by tensor x2,
+    Performs the element-wise division of tensor tensor1 by tensor tensor2,
     multiply the result by the scalar value and add it to input_data.
 
     Args:
-        input_data (Tensor): The tensor to be added.
-        x1 (Tensor): The numerator tensor.
-        x2 (Tensor): The denominator tensor.
-        value (Tensor): The multiplier for tensor x1/x2.
+        input (Tensor): The tensor to be added.
+        tensor1 (Tensor): The numerator tensor.
+        tensor1 (Tensor): The denominator tensor.
+        value (Union[Tensor, Number]): The multiplier for tensor1/tensor2. Default: 1.
 
     Returns:
-        Tensor, has the same shape and dtype as x1/x2.
+        Tensor, has the same shape and dtype as tensor1 / tensor2.
     """
-    return _addcdiv(input_data, x1, x2, value)
+    return F.addcdiv(input, tensor1, tensor2, value)
 
 
-def addcmul(input_data, x1, x2, value):
+def addcmul(input, tensor1, tensor2, value=1):
     """
-    Performs the element-wise product of tensor x1 and tensor x2,
+    Performs the element-wise product of tensor tensor1 and tensor tensor2,
     multiply the result by the scalar value and add it to input_data.
 
     Args:
-        input_data (Tensor): The tensor to be added.
-        x1 (Tensor): The tensor to be multiplied.
-        x2 (Tensor): The tensor to be multiplied.
-        value (Tensor): The multiplier for tensor x1*x2.
+        input (Tensor): The tensor to be added.
+        tensor1 (Tensor): The tensor to be multiplied.
+        tensor2 (Tensor): The tensor to be multiplied.
+        value (Union[Tensor, Number]): The multiplier for tensor1*tensor2. Default: 1.
 
     Returns:
-        Tensor, has the same shape and dtype as x1*x2.
+        Tensor, has the same shape and dtype as tensor1 * tensor2.
     """
-    return _addcmul(input_data, x1, x2, value)
+    return F.addcmul(input, tensor1, tensor2, value)
 
 
 def all_(x, axis=(), keep_dims=False):
@@ -173,11 +172,7 @@ def all_(x, axis=(), keep_dims=False):
     Returns:
         Tensor, has the same data type as x.
     """
-
-    if axis is None:
-        axis = ()
-    reduce_all = P.ReduceAll(keep_dims)
-    return reduce_all(x, axis)
+    return F.all(x, axis, keep_dims)
 
 
 def angle(x):
@@ -205,12 +200,41 @@ def any_(x, axis=(), keep_dims=False):
     return reduce_any(x, axis)
 
 
-def atan2(x, y):
+def atan2(input, other):
     r"""
     Computes the first input tensor multiplied by the logarithm of second input tensor element-wise.
     Refer to :func:`mindspore.ops.atan2` for more details.
     """
-    return F.atan2(x, y)
+    return F.atan2(input, other)
+
+
+def bincount(x, weights=None, minlength=0):
+    r"""
+    For details, please refer to :func:`mindspore.ops.bincount`.
+    """
+    return F.bincount(x, weights, minlength)
+
+
+def H(x):
+    """Returns a view of a matrix (2-D tensor) conjugated and transposed."""
+    output = x.swapaxes(0, 1)
+    if x.dtype in (mstype.complex64, mstype.complex128):
+        return output.conj()
+    return output
+
+
+def histc(x, bins=100, min=0., max=0.):
+    """
+    For details, please refer to :func:`mindspore.ops.histc`.
+    """
+    return F.histc(x, bins, min, max)
+
+
+def geqrf(x):
+    """
+    For details, please refer to :func:`mindspore.ops.geqrf`.
+    """
+    return F.geqrf(x)
 
 
 def size_(x):
@@ -226,8 +250,6 @@ def size_(x):
     Returns:
         size(int).
     """
-    if not shape_(x):
-        return size_op_(x) + 1
     return size_op_(x)
 
 
@@ -278,6 +300,73 @@ def strides_(x):
     return strides
 
 
+def slogdet(x):
+    r"""
+    For details, please refer to :func:`mindspore.ops.slogdet`.
+    """
+    return F.slogdet(x)
+
+
+def cauchy(x, median=0.0, sigma=1.0):
+    r"""
+    Fills the tensor with numbers drawn from the Cauchy distribution. It is
+    defined as follows:
+
+    .. math::
+        f(x)= \frac{1}{\pi} \frac{\sigma}{(x-median)^2 +\sigma^2}
+
+    Args:
+        x (Tensor): Input tensor.
+        median (float, optional): the location parameter, specifying the location
+            of the peak of the distribution. Default: 0.0.
+        sigma (float, optional): the scale parameter which specifies the half-width
+            at half-maximum. Default: 1.0.
+
+    Returns:
+        Tensor. A Tensor with the same type and shape of input.
+    """
+    out = P.Cauchy(list(x.shape), median, sigma)()
+    return F.cast(out, x.dtype)
+
+
+def log_normal(x, mean=1.0, std=2.0):
+    r"""
+    Fills the elements of the input tensor with log normal values initialized by
+    given mean and std:
+
+    .. math::
+        \text{f}(x;1.0,2.0)=\frac{1}{x\delta \sqrt[]{2\pi} }e^{-\frac{(\ln x-\mu )^2}{2\delta ^2} }
+
+    where \mu, \delta is mean and standard deviation of log normal distribution respectively.
+
+    Args:
+        x (Tensor): Input tensor.
+        mean (float, optional): the mean of normal distribution. With float data type.
+            Default: 1.0.
+        std (float, optional): the std of normal distribution. With float data type.
+            Default: 2.0.
+
+    Returns:
+        Tensor. A Tensor with the same type and shape of input.
+    """
+    log_normal = P.LogNormalReverse(mean, std)
+    return log_normal(x)
+
+
+def chunk(x, chunks, axis=0):
+    r"""
+    For details, please refer to :func:`mindspore.ops.chunk`.
+    """
+    return F.chunk(x, chunks, axis)
+
+
+def tril(x, diagonal=0):
+    r"""
+    For details, please refer to :func:`mindspore.ops.tril`.
+    """
+    return F.tril(x, diagonal)
+
+
 def hasattr(x, attr):  # pylint: disable=redefined-builtin
     """
     Return whether an object has the attribute.
@@ -290,7 +379,7 @@ def hasattr(x, attr):  # pylint: disable=redefined-builtin
         Boolean value, indicates whether the object x has attribute attr.
     """
     out = getattr(x, attr, mstype._null)
-    return not isinstance(out, mstype._null_type)
+    return not isinstance(out, mstype._NullType)
 
 
 def astype(x, dtype, copy=True):  # pylint: disable=redefined-outer-name
@@ -337,25 +426,35 @@ def minimum(x, y):
     return F.minimum(x, y)
 
 
-def tile(x, multiples):
+def multinomial(input, num_samples, replacement=True, seed=None):
     r"""
-    Replicates an input tensor with given multiples times.
+    Returns a tensor sampled from the multinomial probability distribution located in the corresponding
+    row of the input tensor.
 
-    Creates a new tensor by replicating `input_x` `multiples` times. The i'th dimension of
-    output tensor has `input_x.shape[i] * multiples[i]` elements, and the values of `input_x`
-    are replicated `multiples[i]` times along the i'th dimension.
+    Refer to :func:`mindspore.ops.multinomial` for more detail.
+    """
+    return F.multinomial(input, num_samples, replacement, seed)
+
+
+def tile(x, reps):
+    r"""
+    Replicates an input tensor with given reps times.
+
+    Creates a new tensor by replicating `input_x` `reps` times. The i'th dimension of
+    output tensor has `input_x.shape[i] * reps[i]` elements, and the values of `input_x`
+    are replicated `reps[i]` times along the i'th dimension.
 
     Note:
-        The length of `multiples` must be greater or equal to the length of dimension in `input_x`.
+        The length of `reps` must be greater or equal to the length of dimension in `input_x`.
 
     Args:
-        multiples (tuple[int]): The parameter that specifies the number of replications,
+        reps (tuple[int]): The parameter that specifies the number of replications,
             the parameter type is tuple, and the data type is int, i.e., :math:`(y_1, y_2, ..., y_S)`.
-            The length of `multiples` cannot be smaller than the length of the shape of `input_x`.
+            The length of `reps` cannot be smaller than the length of the shape of `input_x`.
             Only constant value is allowed.
 
     Returns:
-        Tensor, has the same data type as the `input_x`. Suppose the length of `multiples` is `d`,
+        Tensor, has the same data type as the `input_x`. Suppose the length of `reps` is `d`,
         the dimension of `input_x` is `input_x.dim`, and the shape of `input_x` is :math:`(x_1, x_2, ..., x_S)`.
 
         - If `input_x.dim = d`, then the shape of their corresponding positions can be multiplied, and
@@ -366,9 +465,9 @@ def tile(x, multiples):
           :math:`(1*y_1, ..., x_S*y_R)`.
 
     Raises:
-        TypeError: If `multiples` is not a tuple or its elements are not all int.
-        ValueError: If the elements of `multiples` are not all greater than 0.
-        ValueError: If the length of `multiples` are smaller than the length of dimension in `input_x`.
+        TypeError: If `reps` is not a tuple or its elements are not all int.
+        ValueError: If the elements of `reps` are not all greater than 0.
+        ValueError: If the length of `reps` are smaller than the length of dimension in `input_x`.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
@@ -377,15 +476,15 @@ def tile(x, multiples):
         >>> import mindspore as ms
         >>> from mindspore import Tensor
         >>> input_x = Tensor(np.array([[1, 2], [3, 4]]), mindspore.float32)
-        >>> multiples = (2, 3)
-        >>> output = input_x.tile(multiples)
+        >>> reps = (2, 3)
+        >>> output = input_x.tile(reps)
         >>> print(output)
         [[1.  2.  1.  2.  1.  2.]
         [3.  4.  3.  4.  3.  4.]
         [1.  2.  1.  2.  1.  2.]
         [3.  4.  3.  4.  3.  4.]]
-        >>> multiples = (2, 3, 2)
-        >>> output = input_x.tile(multiples)
+        >>> reps = (2, 3, 2)
+        >>> output = input_x.tile(reps)
         >>> print(output)
         [[[1. 2. 1. 2.]
         [3. 4. 3. 4.]
@@ -400,7 +499,7 @@ def tile(x, multiples):
         [1. 2. 1. 2.]
         [3. 4. 3. 4.]]]
     """
-    return F.tile(x, multiples)
+    return F.tile(x, reps)
 
 
 def short(x):
@@ -446,7 +545,7 @@ def transpose(x, *axis):
         (3, 2, 1)
     """
     ndim = F.rank(x)
-    perm = check_transpose_axis_const(axis, ndim)
+    perm = validator.check_transpose_axis(axis, ndim)
     return F.transpose(x, perm)
 
 
@@ -484,7 +583,7 @@ def reshape(x, *shape):
         [ 3.6  0.4]
         [ 0.5 -3.2]]
     """
-    new_shape = check_reshape_shp_const(shape)
+    new_shape = check_reshape_shp(shape)
     return F.reshape(x, new_shape)
 
 
@@ -612,17 +711,21 @@ def ravel(x):
     return reshape(x, (-1,))
 
 
-def flatten(x, order='C'):
+def flatten(x, order='C', *, start_dim=0, end_dim=-1):
     r"""
-    Return a copy of the tensor collapsed into one dimension.
+    Flatten a tensor along dimensions from `start_dim` to `start_dim`.
 
     Args:
-        order (str, optional): Can choose between 'C' and 'F'. 'C' means to
-            flatten in row-major (C-style) order. 'F' means to flatten in column-major
-            (Fortran-style) order. Only 'C' and 'F' are supported. Default: 'C'.
+        x (Tensor): Input tensor.
+        order (str, optional): Only 'C' and 'F' are supported. 'C' means to flatten in row-major (C-style) order.
+            'F' means to flatten in column-major (Fortran-style) order. Default: 'C'.
+
+    Keyword Args:
+        start_dim (int, optional): The first dimension to flatten. Default: 0.
+        end_dim (int, optional): The last dimension to flatten. Default: -1.
 
     Returns:
-        Tensor, has the same data type as input.
+        Tensor. If `x` is a 0-dimensional, a 1-dimensional Tensor will be returned.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
@@ -630,6 +733,9 @@ def flatten(x, order='C'):
     Raises:
         TypeError: If `order` is not string type.
         ValueError: If `order` is string type, but not 'C' or 'F'.
+        TypeError: If `start_dim` or `end_dim` is not int.
+        ValueError: If `start_dim` is greater than `end_dim` after canonicalized.
+        ValueError: If `start_dim` or `end_dim` is not in range of [-x.dim, x.dim-1].
 
     Examples:
         >>> import numpy as np
@@ -639,58 +745,42 @@ def flatten(x, order='C'):
         >>> print(output.shape)
         (24,)
     """
-    order = check_flatten_order_const(order)
-    if order == 'C':
-        return F.reshape(x, (-1,))
-
-    perm = F.make_range(0, F.rank(x))
-    new_order = F.tuple_reversed(perm)
-    return F.reshape(F.transpose(x, new_order), (-1,))
+    return F.flatten(x, order, start_dim=start_dim, end_dim=end_dim)
 
 
-def swapaxes(x, axis1, axis2):
+def scatter(self, axis, index, src):
+    """
+    Update the value in `src` to tensor according to the specified index.
+    """
+    return F.scatter(self, axis, index, src)
+
+
+def slice_scatter(input, src, axis=0, start=None, end=None, step=1):
+    r"""
+    Embeds the src into the input Tensor according to `axis`.
+    """
+    return F.slice_scatter(input, src, axis, start, end, step)
+
+
+def select_scatter(input, src, axis, index):
+    r"""
+    On the specified dimension `axis` of `input` , `src` is scattered into `input` on the specified `index` of `input` .
+    """
+    return F.select_scatter(input, src, axis, index)
+
+
+def swapaxes(input, axis0, axis1):
     """
     Interchange two axes of a tensor.
-
-    Args:
-        axis1 (int): First axis.
-        axis2 (int): Second axis.
-
-    Returns:
-        Transposed tensor, has the same data type as the input.
-
-    Raises:
-        TypeError: If `axis1` or `axis2` is not integer.
-        ValueError: If `axis1` or `axis2` is not in the range of :math:`[-ndim, ndim-1]`.
-
-    Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU``
-
-    Examples:
-        >>> import numpy as np
-        >>> from mindspore import Tensor
-        >>> x = Tensor(np.ones((2,3,4), dtype=np.float32))
-        >>> output = x.swapaxes(0, 2)
-        >>> print(output.shape)
-        (4,3,2)
     """
-    axis1, axis2 = check_swapaxes_axis_const((axis1, axis2), x.ndim)
+    return F.swapaxes(input, axis0, axis1)
 
-    if axis1 == axis2:
-        return x
-    if axis1 > axis2:
-        axis1, axis2 = axis2, axis1
 
-    perm = F.make_range(0, x.ndim)
-    new_perm = None
-    if axis2 + 1 < x.ndim:
-        new_perm = perm[0:axis1] + perm[axis2:axis2 + 1] + \
-                   perm[axis1 + 1:axis2] + perm[axis1:axis1 + 1] + perm[axis2 + 1:]
-    else:
-        new_perm = perm[0:axis1] + perm[axis2:axis2 + 1] + \
-                   perm[axis1 + 1:axis2] + perm[axis1:axis1 + 1]
-
-    return F.transpose(x, new_perm)
+def swapdims(x, dim0, dim1):
+    """
+    Interchange two dims of a tensor.
+    """
+    return F.swapdims(x, dim0, dim1)
 
 
 def squeeze(x, axis=None):
@@ -718,45 +808,12 @@ def squeeze(x, axis=None):
         >>> print(x.shape)
         (2, 2)
     """
-    shape = F.shape(x)
-    if axis is None:
-        return F.squeeze(x)
-    # yield squeezed shape based on the axes
-    new_shape = prepare_shape_for_squeeze_const(shape, axis)
-    return F.reshape(x, new_shape)
+    return F.squeeze(x, axis)
 
 
-def unbind(x, dim=0):
-    r"""
-    Removes a tensor dimension in specified axis.
-
-    Unstacks a tensor of rank `R` along axis dimension, and output tensors will have rank `(R-1)`.
-
-    Given a tensor of shape :math:`(x_1, x_2, ..., x_R)`. If :math:`0 \le axis`,
-    the shape of tensor in output is :math:`(x_1, x_2, ..., x_{axis}, x_{axis+2}, ..., x_R)`.
-
-    Args:
-        x (Tensor): The shape is :math:`(x_1, x_2, ..., x_R)`.
-            A tensor to be unstacked and the rank of the tensor must be greater than 0.
-        dim (int): Dimension along which to unpack. Negative values wrap around. The range is [-R, R). Default: 0.
-
-    Returns:
-        A tuple of tensors, the shape of each objects is the same.
-
-    Raises:
-        ValueError: If axis is out of the range [-R, R).
-
-    Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU``
-
-    Examples:
-        >>> x = Tensor(np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]]))
-        >>> output = x.unbind()
-        >>> print(output)
-        (Tensor(shape=[3], dtype=Int64, value=[1, 2, 3]), Tensor(shape=[3], dtype=Int64, value=[4, 5, 6]),
-        Tensor(shape=[3], dtype=Int64, value=[7, 8, 9]))
-    """
-    return P.Unstack(axis=dim)(x)
+def unbind(input, dim=0):
+    """For details, please refer to :func:`mindspore.ops.unbind`."""
+    return P.Unstack(axis=dim)(input)
 
 
 def argmax(x, axis=None, keepdims=False):
@@ -766,7 +823,7 @@ def argmax(x, axis=None, keepdims=False):
     Args:
         axis (Union[int, None], optional): The dimension to reduce.
           If `axis` is None, the indices of the maximum value within the
-          flattened input will be returned. Default: None.
+          flattened input will be returned. Default: ``None``.
         keepdims (bool, optional): Whether the output tensor retains the
           specified dimension. Ignored if `axis` is None. Default: False.
 
@@ -786,15 +843,7 @@ def argmax(x, axis=None, keepdims=False):
         >>> print(a.argmax())
         5
     """
-    is_axis_none = False
-    if axis is None:
-        x = ravel(x)
-        axis = 0
-        is_axis_none = True
-    out = P.Argmax(axis, mstype.int64)(x)
-    if keepdims and not is_axis_none:
-        out = expand_dims(out, axis)
-    return out
+    return F.argmax(x, axis, keepdims)
 
 
 def argmin(x, axis=None, keepdims=False):
@@ -834,7 +883,7 @@ def argmin(x, axis=None, keepdims=False):
         axis = 0
         is_axis_none = True
     else:
-        axis = check_axis_in_range_const(axis, F.rank(x))
+        axis = check_axis_in_range(axis, F.rank(x))
     out = P.Argmin(axis)(x)
     if keepdims and not is_axis_none:
         out = expand_dims(out, axis)
@@ -851,7 +900,7 @@ def argmin_with_value(x, axis=0, keep_dims=False):
     return F.min(x, axis, keep_dims)
 
 
-def median(x, global_median, axis=0, keep_dims=False):
+def median(input, global_median, axis=0, keep_dims=False):
     r"""
     Computes the median of input tensor.
 
@@ -859,9 +908,38 @@ def median(x, global_median, axis=0, keep_dims=False):
         When attr `global_median` is True, the second output Tensor value is meaningless.
 
     """
-    check_axis_in_range_const(axis, x.ndim)
+    check_axis_in_range(axis, input.ndim)
     median_ = Median(global_median, axis, keep_dims)
-    return median_(x)
+    return median_(input)
+
+
+def msort(x):
+    """
+    For details, please refer to :func:`mindspore.ops.msort`.
+    """
+    return F.msort(x)
+
+
+def mm(mat1, mat2):
+    """
+    For details, please refer to :func:`mindspore.ops.mm`.
+    """
+    return F.mm(mat1, mat2)
+
+
+def mT(x):
+    """
+    Returns a view of this tensor with the last two dimensions transposed.
+    x.mT is equivalent to x.transpose(-2, -1).
+    """
+    return swapaxes(x, -2, -1)
+
+
+def nan_to_num(x, nan=0.0, posinf=None, neginf=None):
+    """
+    For details, please refer to :func:`mindspore.ops.nan_to_num`.
+    """
+    return F.nan_to_num(x, nan, posinf, neginf)
 
 
 def cumsum(x, axis=None, dtype=None):
@@ -904,7 +982,7 @@ def cumsum(x, axis=None, dtype=None):
     if axis is None:
         x = x.ravel()
         axis = 0
-    check_axis_in_range_const(axis, x.ndim)
+    check_axis_in_range(axis, x.ndim)
     if dtype is not None:
         dtype = check_astype_dtype_const(dtype)
         if original_dtype != dtype:
@@ -926,12 +1004,19 @@ def cummax(x, axis):
     return F.cummax(x, axis)
 
 
-def index_fill(x, dim, index, value):
+def index_fill(x, axis, index, value):
     """
-    Fills the elements under the dim dimension of the input Tensor with the input value
+    Fills the elements under the axis dimension of the input Tensor with the input value
     by selecting the indices in the order given in index.
     """
-    return F.index_fill(x, dim, index, value)
+    return F.index_fill(x, axis, index, value)
+
+
+def index_select(x, axis, index):
+    """
+    Returns a new tensor which indexes the `x` tensor along dimension `axis` using the entries in `index` .
+    """
+    return F.index_select(x, axis, index)
 
 
 def copy(x):
@@ -972,7 +1057,8 @@ def copy(x):
     return x
 
 
-def max(x, axis=None, keepdims=False, initial=None, where=True):  # pylint: disable=redefined-builtin
+def max(input, axis=None, keepdims=False, *, initial=None,  # pylint: disable=redefined-builtin
+        where=True, return_indices=False):  # pylint: disable=redefined-outer-name
     """
     Returns the maximum of a tensor or maximum along an axis.
 
@@ -986,6 +1072,8 @@ def max(x, axis=None, keepdims=False, initial=None, where=True):  # pylint: disa
             If this is set to True, the axes which are reduced are left in the
             result as dimensions with size one. With this option, the result will
             broadcast correctly against the input array.
+
+    Keyword Args:
         initial (scalar, optional):
             The minimum value of an output element. Must be present to allow
             computation on empty slice.
@@ -993,6 +1081,8 @@ def max(x, axis=None, keepdims=False, initial=None, where=True):  # pylint: disa
             A boolean array which is broadcasted to match the dimensions of array,
             and selects elements to include in the reduction. If non-default value
             is passed, initial must also be provided.
+        return_indices (bool, optional): Whether to return the index of the minimum value. Default: False.
+                If `axis` is a list or tuple of ints, it must be False.
 
     Returns:
         Tensor or scalar, maximum of input tensor. If `axis` is None, the result is a scalar
@@ -1002,7 +1092,7 @@ def max(x, axis=None, keepdims=False, initial=None, where=True):  # pylint: disa
         TypeError: if the input is not a tensor.
 
     Supported Platforms:
-            ``Ascend`` ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> import numpy as np
@@ -1013,11 +1103,17 @@ def max(x, axis=None, keepdims=False, initial=None, where=True):  # pylint: disa
         >>> print(output)
         3.0
     """
-    return compile_utils.reduce_(x, P.ReduceMax(keepdims), cmp_fn=F.maximum,
-                                 axis=axis, keepdims=keepdims, initial=initial, where=where)
+    if isinstance(axis, (list, tuple)):
+        return compile_utils.reduce_(input, P.ReduceMax(keepdims), cmp_fn=F.maximum,
+                                     axis=axis, keepdims=keepdims, initial=initial, where=where)
+    values, indices = F.max(input, axis, keepdims, initial=initial, where=where)
+    if not return_indices:
+        return values
+    return values, indices
 
 
-def min(x, axis=None, keepdims=False, initial=None, where=True):  # pylint: disable=redefined-builtin
+def min(input, axis=None, keepdims=False, *, initial=None,  # pylint: disable=redefined-builtin
+        where=True, return_indices=False):  # pylint: disable=redefined-outer-name
     """
     Returns the minimum of a tensor or minimum along an axis.
 
@@ -1031,6 +1127,8 @@ def min(x, axis=None, keepdims=False, initial=None, where=True):  # pylint: disa
             If this is set to True, the axes which are reduced are left in the
             result as dimensions with size one. With this option, the result will
             broadcast correctly against the input array.
+
+    Keyword Args:
         initial (scalar, optional):
             The maximum value of an output element. Must be present to allow
             computation on empty slice.
@@ -1038,6 +1136,8 @@ def min(x, axis=None, keepdims=False, initial=None, where=True):  # pylint: disa
             A boolean array which is broadcasted to match the dimensions of array,
             and selects elements to include in the reduction. If non-default value
             is passed, initial must also be provided.
+        return_indices (bool, optional): Whether to return the index of the minimum value. Default: False.
+                If `axis` is a list or tuple of ints, it must be False.
 
     Returns:
         Tensor or scalar, minimum of `a`. If axis is None, the result is a scalar
@@ -1058,8 +1158,13 @@ def min(x, axis=None, keepdims=False, initial=None, where=True):  # pylint: disa
         >>> print(output)
         0.0
     """
-    return compile_utils.reduce_(x, P.ReduceMin(keepdims), cmp_fn=F.minimum,
-                                 axis=axis, keepdims=keepdims, initial=initial, where=where)
+    if isinstance(axis, (list, tuple)):
+        return compile_utils.reduce_(input, P.ReduceMin(keepdims), cmp_fn=F.minimum,
+                                     axis=axis, keepdims=keepdims, initial=initial, where=where)
+    values, indices = F.min(input, axis, keepdims, initial=initial, where=where)
+    if not return_indices:
+        return values
+    return values, indices
 
 
 def pow(x, y):  # pylint: disable=redefined-builtin
@@ -1076,40 +1181,47 @@ def log(x):
     return F.log(x)
 
 
-def log10(x):
+def log10(input):
     """
     Calculate the base-10 logarithm of Tensor.
     """
-    return F.log10(x)
+    return F.log10(input)
 
 
-def log2(x):
+def log2(input):
     """
     Calculate the base-2 logarithm of Tensor.
     """
-    return F.log2(x)
+    return F.log2(input)
 
 
-def logaddexp(x, other):
+def logaddexp(input, other):
     """
     Computes the logarithm of the sum of exponentiations of the inputs.
     """
-    return F.logaddexp(x, other)
+    return F.logaddexp(input, other)
 
 
-def logaddexp2(x, other):
+def logaddexp2(input, other):
     """
     Computes the logarithm of the sum of exponentiations in base of 2 of the inputs.
     """
-    return F.logaddexp2(x, other)
+    return F.logaddexp2(input, other)
 
 
-def logsumexp(x, dim, keepdim=False):
+def logcumsumexp(input, axis):
+    """
+    Computes the logarithm of the sum of exponentiations of the inputs along specified dimension.
+    """
+    return F.logcumsumexp(input, axis)
+
+
+def logsumexp(input, axis, keepdims=False):
     """
     Reduces a dimension of a tensor by calculating exponential for all elements in the dimension,
     then calculate logarithm of the sum.
     """
-    return F.logsumexp(x, dim, keepdim)
+    return F.logsumexp(input, axis, keepdims)
 
 
 def round_(x):
@@ -1148,6 +1260,13 @@ def deg2rad(x):
     return F.deg2rad(x)
 
 
+def dot(input, other):
+    r"""
+    For details, please refer to :func:`mindspore.ops.dot`.
+    """
+    return composite.dot(input, other)
+
+
 def copysign(x, other):
     """
     Create a new floating-point tensor with the magnitude of `x` and the sign of `other`, element-wise.
@@ -1155,43 +1274,41 @@ def copysign(x, other):
     return F.copysign(x, other)
 
 
-def numel(x):
+def numel(input):
     """
     Returns a Scalar of type int that represents the total number of elements in the Tensor.
     """
-    return F.numel(x)
+    return F.numel(input)
 
 
-def permute(x, *dims):
+def permute(input, *axis):
     """
     Permutes the dimensions of the input tensor according to input permutation.
     """
-    if dims is None:
-        raise ValueError(f"For Tensor.permute, the dims must not be none.")
-    if len(dims) == 1:
-        return F.permute(x, *dims)
-    return F.permute(x, dims)
+    ndim = F.rank(input)
+    perm = validator.check_transpose_axis(axis, ndim)
+    return F.permute(input, perm)
 
 
-def positive(x):
+def positive(input):
     """
     Return self Tensor.
     """
-    return F.positive(x)
+    return F.positive(input)
 
 
-def remainder(x, divisor):
+def remainder(input, divisor):
     """
     Returns element-wise remainder of division.
     """
-    return F.remainder(x, divisor)
+    return F.remainder(input, divisor)
 
 
-def unique_consecutive(x, return_idx=False, return_counts=False, axis=None):
+def unique_consecutive(input, return_idx=False, return_counts=False, axis=None):
     """
     Returns the elements that are unique in each consecutive group of equivalent elements in the input tensor.
     """
-    return F.unique_consecutive(x, return_idx, return_counts, axis)
+    return F.unique_consecutive(input, return_idx, return_counts, axis)
 
 
 def unique_with_pad(x, pad_num):
@@ -1244,9 +1361,11 @@ def resize(x, *new_shape):
     return res.reshape(new_shape)
 
 
-def det(x):
-    """Computes the determinant of one or more square matrices."""
-    return F.matrix_determinant(x)
+def det(input):
+    """
+    Computes the determinant of one or more square matrices.
+    """
+    return F.det(input)
 
 
 def diagonal(x, offset=0, axis1=0, axis2=1):
@@ -1284,7 +1403,8 @@ def diagonal(x, offset=0, axis1=0, axis2=1):
     """
     ndim = x.ndim
     if ndim < 2:
-        const_utils.raise_value_error('diagonal requires an array of at least two dimensions')
+        const_utils.raise_value_error(
+            'diagonal requires an array of at least two dimensions')
     dtype = x.dtype
 
     axes = check_axis_valid((axis1, axis2), ndim)
@@ -1300,8 +1420,9 @@ def diagonal(x, offset=0, axis1=0, axis2=1):
 
     e = F.eye(n, m, dtype)
     if offset >= m or offset <= -n:
-        e = F.fill(dtype, (n, m), 0)
-    elif offset != 0:
+        zero_shape = shape[:-2] + (0,)
+        return F.zeros(zero_shape, dtype)
+    if offset != 0:
         e = e.astype(mstype.float32)
         if offset > 0:
             e_left = F.fill(dtype, (n, offset), 0)
@@ -1311,7 +1432,7 @@ def diagonal(x, offset=0, axis1=0, axis2=1):
             e_upper = F.fill(dtype, (-offset, m), 0)
             e_lower = e[0:n + offset:1, ...]
             e = P.Concat(0)((e_upper, e_lower)).astype(dtype)
-    e = P.BroadcastTo(shape)(e)
+    e = F.broadcast_to(e, shape)
 
     prod_val = F.tensor_mul(x, e)
     res = F.reduce_sum(prod_val.astype(mstype.float32), -1)
@@ -1331,6 +1452,27 @@ def diagonal(x, offset=0, axis1=0, axis2=1):
     return res.astype(dtype)
 
 
+def diagonal_scatter(input, src, offset, dim1=0, dim2=1):
+    r"""
+    Embed `src` into the diagonal of `input` according to the `dim1` and `dim2`.
+    """
+    return F.diagonal_scatter(input, src, offset, dim1, dim2)
+
+
+def digamma(input):
+    """
+    Computes the logarithmic derivative of the gamma function on input.
+    """
+    return F.digamma(input)
+
+
+def lgamma(input):
+    """
+    Computes the natural logarithm of the absolute value of the gamma function on input.
+    """
+    return F.lgamma(input)
+
+
 def i0(x):
     """
     For details, please refer to :func:`mindspore.ops.i0`.
@@ -1343,6 +1485,27 @@ def isclose(x1, x2, rtol=1e-05, atol=1e-08, equal_nan=False):
     Returns a boolean tensor where two tensors are element-wise equal within a tolerance.
     """
     return F.isclose(x1, x2, rtol, atol, equal_nan)
+
+
+def isneginf(input):
+    """
+    Tests element-wise for negative infinity, returns result as bool array.
+    """
+    return F.isneginf(input)
+
+
+def isposinf(input):
+    """
+    Tests element-wise for positive infinity, returns result as bool array.
+    """
+    return F.isposinf(input)
+
+
+def isreal(input):
+    """
+    Tests element-wise for real number.
+    """
+    return F.isreal(input)
 
 
 def flip(x, dims):
@@ -1366,6 +1529,34 @@ def flipud(x):
     return F.flipud(x)
 
 
+def float_power(x, exponent):
+    """
+    For details, please refer to :func:`mindspore.ops.float_power`.
+    """
+    return F.float_power(x, exponent)
+
+
+def fmax(input, other):
+    """
+    For details, please refer to :func:`mindspore.ops.fmax`.
+    """
+    return F.fmax(input, other)
+
+
+def fmin(input, other):
+    """
+    For details, please refer to :func:`mindspore.ops.fmin`.
+    """
+    return F.fmin(input, other)
+
+
+def fmod(x, other):
+    """
+    For details, please refer to :func:`mindspore.ops.fmod`.
+    """
+    return F.fmod(x, other)
+
+
 def is_floating_point(x):
     """
     For details, please refer to :func:`mindspore.ops.is_floating_point`.
@@ -1380,11 +1571,25 @@ def is_signed(x):
     return x.dtype in mstype.signed_type
 
 
+def is_complex(x):
+    """
+    For details, please refer to :func:`mindspore.ops.is_complex`.
+    """
+    return F.is_complex(x)
+
+
 def inv(x):
     """
     Computes Reciprocal of input tensor element-wise.
     """
     return F.inv(x)
+
+
+def inverse(input):
+    """
+    Computes the inverse of a square matrix.
+    """
+    return F.inverse(input)
 
 
 def invert(x):
@@ -1425,6 +1630,8 @@ def trace(x, offset=0, axis1=0, axis2=1, dtype=None):
         >>> print(x.trace())
         3.0
     """
+    if offset == 0 and axis1 == 0 and axis2 == 1 and dtype is None:
+        return F.trace(x)
     d = x.diagonal(offset, axis1=axis1, axis2=axis2)
     shape = d.shape
     if dtype is None:
@@ -1473,14 +1680,15 @@ def take(x, indices, axis=None, mode='clip'):
         [4 3 6]
     """
     if mode not in ('raise', 'wrap', 'clip'):
-        const_utils.raise_value_error('raise should be one of "raise", "wrap", or "clip"')
+        const_utils.raise_value_error(
+            'raise should be one of "raise", "wrap", or "clip"')
     if axis is None:
         a = x.ravel()
         axis = 0
     else:
         a = x
     ndim = a.ndim
-    axis = check_axis_in_range_const(axis, ndim)
+    axis = check_axis_in_range(axis, ndim)
 
     shape_a = a.shape
     shape_indices = indices.shape
@@ -1494,10 +1702,40 @@ def take(x, indices, axis=None, mode='clip'):
     shape_indices = expanded_shape(ndim, size_indices, axis)
     indices = indices.reshape(shape_indices)
     shape_indices = shape_ni + (indices.size,) + shape_nk
-    indices = P.BroadcastTo(shape_indices)(indices)
+    indices = F.broadcast_to(indices, shape_indices)
 
     res = F.gather_d(a, axis, indices)
     return res.reshape(shape_out)
+
+
+def ms_type(input, dtype=None):
+    r"""
+    Change the dtype of the Tensor to the `dtype` . Return the type if `dtype` is None.
+    """
+    if dtype is None:
+        return str(input.dtype)
+    return input.astype(dtype)
+
+
+def type_as(input, other):
+    r"""
+    Change the dtype of `input` to the dtype of `other`.
+    """
+    return input.astype(other.dtype)
+
+
+def _infer_out_shape(*shapes):
+    """
+    Returns shape of output after broadcasting. Raises ValueError if shapes cannot be broadcast.
+    """
+    shape_out = list()
+    max_len = ms_max([len(it) for it in shapes])
+    for i in range(max_len):
+        items = [it[i - (max_len - len(it))] if i - (max_len - len(it))
+                                                >= 0 else 1 for it in shapes]
+        max_size = 0 if 0 in items else ms_max(items)
+        shape_out.append(max_size)
+    return tuple(shape_out)
 
 
 def choose(x, choices, mode='clip'):
@@ -1537,8 +1775,8 @@ def choose(x, choices, mode='clip'):
         [20 31 12  3]
     """
     if check_is_tensor(F.typeof(choices)):
-        shape_choice = infer_out_shape(x.shape, choices.shape[1:])
-        choices = P.BroadcastTo((choices.shape[0],) + shape_choice)(choices)
+        shape_choice = _infer_out_shape(x.shape, choices.shape[1:])
+        choices = F.broadcast_to(choices, (choices.shape[0],) + shape_choice)
     else:
         # broadcasts choices to the same shape if choices is a sequence
         choicelist = []
@@ -1548,27 +1786,29 @@ def choose(x, choices, mode='clip'):
                 choice = const_utils.make_tensor(choice)
             shapes += (choice.shape,)
             choicelist.append(choice)
-        shape_choice = infer_out_shape(x.shape, *shapes)
+        shape_choice = _infer_out_shape(x.shape, *shapes)
         tmp = []
         for choice in choicelist:
-            tmp.append(P.BroadcastTo(shape_choice)(choice))
+            tmp.append(F.broadcast_to(choice, shape_choice))
         choices = F.stack(tmp)
 
     if x.ndim == 0 or choices.ndim == 0:
         const_utils.raise_value_error('input cannot be scalars')
-    a = P.BroadcastTo(shape_choice)(x)
+    a = F.broadcast_to(x, shape_choice)
     dtype = choices.dtype
     # adjusts dtype for F.tensor_mul and F.gather_nd
     a = a.astype(mstype.int32)
     choices = choices.astype(mstype.int32)
-    a = compile_utils.check_indices(choices.shape[0], a, mode, allow_negative_index=False)
+    a = compile_utils.check_indices(
+        choices.shape[0], a, mode, allow_negative_index=False)
 
     grids = []
     ndim = len(a.shape)
     for i in range(ndim):
-        dim_grid = const_utils.make_tensor(F.make_range(a.shape[i]), mstype.int32)
+        dim_grid = const_utils.make_tensor(
+            F.make_range(a.shape[i]), mstype.int32)
         dim_shape = expanded_shape(ndim, a.shape[i], i)
-        dim_grid = P.BroadcastTo(a.shape)(dim_grid.reshape(dim_shape))
+        dim_grid = F.broadcast_to(dim_grid.reshape(dim_shape), a.shape)
         grids.append(dim_grid)
     grid = P.Stack(-1)(grids)
     indices = P.Concat(-1)((a.reshape(a.shape + (1,)), grid))
@@ -1603,6 +1843,14 @@ def searchsorted(x, v, side='left', sorter=None):
         >>> print(x.searchsorted(3))
         2
     """
+
+    def get_log2_size(size):
+        """Get log2 size"""
+        log2_res = F.log2(F.cast(size, mstype.float32))
+        ceil_res = F.ceil(log2_res)
+        cast_res = F.cast(ceil_res, mstype.int64)
+        return cast_res
+
     if side not in ('left', 'right'):
         const_utils.raise_value_error('invalid value for keyword "side"')
     a = x.astype(mstype.float32)
@@ -1611,7 +1859,8 @@ def searchsorted(x, v, side='left', sorter=None):
     shape = v.shape
     if sorter is not None:
         if sorter.ndim != 1 or sorter.size != a.size:
-            const_utils.raise_value_error('sorter must be 1-D array with the same size as `a`')
+            const_utils.raise_value_error(
+                'sorter must be 1-D array with the same size as `a`')
         sorter = const_utils.make_tensor(sorter)
         sorter = sorter.reshape(sorter.shape + (1,))
         a = F.gather_nd(a, sorter)
@@ -1619,59 +1868,43 @@ def searchsorted(x, v, side='left', sorter=None):
     i = F.fill(mstype.int32, shape, 0)
     j = F.fill(mstype.int32, shape, a.size)
 
-    sort_range = F.make_range(get_log2_size(F.shape_mul(a.shape) + 1))
-    for _ in sort_range:
+    loop_num = get_log2_size(F.shape_mul(a.shape) + 1)
+    index = Tensor([0])
+    while index < loop_num:
         mid = (i - F.neg_tensor(j)) // 2
         mask = less_op(v, F.gather_nd(a, mid.reshape(mid.shape + (1,))))
         i = F.select(mask, i, mid)
         j = F.select(mask, mid, j)
+        index += 1
     return j
 
 
 def fill(x, value):
     """
-    Fills the array with a scalar value.
-
-    Note:
-        Unlike Numpy, tensor.fill() will always returns a new tensor, instead of
-        filling the original tensor.
-
-    Args:
-        value (Union[None, int, float, bool]): All elements of a will be assigned this value.
-
-    Returns:
-        Tensor, with the original dtype and shape as input tensor.
-
-    Raises:
-        TypeError: If input arguments have types not specified above.
-        ValueError: If `shape` has entries < 0.
-
-    Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU``
-
-    Examples:
-        >>> import numpy as np
-        >>> from mindspore import Tensor
-        >>> a = Tensor(np.arange(4).reshape((2,2)).astype('float32'))
-        >>> print(a.fill(1.0))
-        [[1. 1.]
-        [1. 1.]]
+    `Tensor.fill` is deprecated, please use `ops.fill` instead.
     """
     if value is None:
         if x.dtype not in (mstype.float16, mstype.float32, mstype.float64):
             const_utils.raise_type_error("If None is used as value, the original Tensor's dtype must be float.")
         value = nan_tensor
         return F.tile(value, x.shape).astype(x.dtype)
-    if not isinstance(value, (int, float, bool)):
-        const_utils.raise_type_error("input value must be a scalar.")
     return F.fill(x.dtype, x.shape, value)
 
 
 def fills(x, value):
     """
-    Create a tensor of the same shape and type as the input tensor and fill it with specified value.
+    `Tensor.fills` is deprecated, please use `ops.fill` instead.
     """
     return F.fills(x, value)
+
+
+def fill_diagonal(x, fill_value, wrap=False):
+    """
+    Fills the main diagonal of a Tensor with a specified value and returns the result. The input has at least
+    2 dimensions, and all dimensions of input must be equal in length when the dimension of input is greater than 2.
+    """
+
+    return P.FillDiagonal(fill_value, wrap)(x)
 
 
 def ptp(x, axis=None, keepdims=False):
@@ -1684,7 +1917,7 @@ def ptp(x, axis=None, keepdims=False):
     Args:
         x (Tensor): Input tensor.
         axis (Union[None, int, tuple(int)]): Axis or axes along which the range is computed.
-            The default is to compute the variance of the flattened array. Default: None.
+            The default is to compute the variance of the flattened array. Default: ``None``.
         keepdims (bool): Default is False.
 
     Returns:
@@ -1709,70 +1942,24 @@ def ptp(x, axis=None, keepdims=False):
     if axis is None:
         axis = ()
     else:
-        check_axis_type(axis, True, True, False)
+        validator.check_axis_type(axis, True, True, False)
         axis = check_axis_valid(axis, x.ndim)
 
     return x.max(axis, keepdims) - x.min(axis, keepdims)
 
 
-def clip(x, xmin, xmax, dtype=None):
+def clamp(x, min=None, max=None):
     """
-    Clips (limits) the values in an array.
-
-    Given an interval, values outside the interval are clipped to the interval edges.
-    For example, if an interval of :math:`[0, 1]` is specified, values smaller than 0 become 0,
-    and values larger than 1 become 1.
-
-    Note:
-        Currently, clip with `nan` is not supported.
-
-    Args:
-        x (Tensor): Tensor containing elements to clip.
-        xmin (Tensor, scalar, None): Minimum value. If None, clipping is not performed
-            on lower interval edge. Not more than one of `xmin` and `xmax` may be None.
-        xmax (Tensor, scalar, None): Maximum value. If None, clipping is not performed
-            on upper interval edge. Not more than one of `xmin` and `xmax` may be None.
-            If `xmin` or `xmax` are tensors, then the three tensors will be broadcasted
-            to match their shapes.
-        dtype (:class:`mindspore.dtype`, optional): defaults to None. Overrides the dtype of the
-            output Tensor.
-
-    Returns:
-        Tensor, a tensor with the elements of `x`, but where values
-        < `xmin` are replaced with `xmin`, and those > `xmax` with `xmax`.
-
-    Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU``
-
-    Examples:
-        >>> from mindspore import Tensor
-        >>> x = Tensor([1, 2, 3, -4, 0, 3, 2, 0]).astype("float32")
-        >>> output = x.clip(0, 2)
-        >>> print(output)
-        [1 2 2 0 0 2 2 0]
+    Clamps all elements in `x` into the range `[min, max]`.
     """
-    if xmin is None and xmax is None:
-        const_utils.raise_value_error("One of max or min must be given.")
-    is_scalar = False
-    if xmin is not None:
-        xmin = const_utils.make_tensor(xmin, x.dtype)
-        if x.ndim == 0 and xmin.ndim == 0:
-            x = F.maximum(x.reshape((1,)), xmin).squeeze()
-        else:
-            x = F.maximum(x, xmin)
-    if xmax is not None:
-        xmax = const_utils.make_tensor(xmax, x.dtype)
-        if x.ndim == 0 and xmax.ndim == 0:
-            x = F.minimum(x.reshape((1,)), xmax).squeeze()
-        else:
-            x = F.minimum(x, xmax)
-    if is_scalar:
-        return x.squeeze()
-    if dtype is not None:
-        dtype = check_astype_dtype_const(dtype)
-        if dtype != x.dtype:
-            return x.astype(dtype)
-    return x
+    return F.clamp(x, min, max)
+
+
+def clip(x, min=None, max=None):
+    """
+    Clamps all elements in `x` into the range `[min, max]`.
+    """
+    return F.clamp(x, min, max)
 
 
 def var(x, axis=None, ddof=0, keepdims=False):
@@ -1816,7 +2003,7 @@ def var(x, axis=None, ddof=0, keepdims=False):
         axis = ()
     else:
         axis = check_and_canonicalize_axes(axis, x.ndim)
-    x_mean = _mean_keepdims(x, axis)
+    x_mean = F.mean(x, axis, True)
     x_sub = F.tensor_sub(x, x_mean)
     x_pow = F.tensor_pow(x_sub, 2)
     if keepdims:
@@ -1870,16 +2057,16 @@ def std(x, axis=None, ddof=0, keepdims=False):
     return F.tensor_pow(x_var, 0.5)
 
 
-def gather_elements(x, dim, index):
+def gather_elements(input, dim, index):
     r"""
     Gathers elements along an axis specified by dim.
 
     Refer to :func:`mindspore.ops.gather_elements` for more detail.
     """
-    return F.gather_elements(x, dim, index)
+    return F.gather_elements(input, dim, index)
 
 
-def sum(x, axis=None, dtype=None, keepdims=False, initial=None):  # pylint: disable=redefined-builtin
+def sum(input, axis=None, dtype=None, keepdims=False, initial=None):  # pylint: disable=redefined-builtin
     """
     Return sum of array elements over a given axis.
 
@@ -1888,8 +2075,8 @@ def sum(x, axis=None, dtype=None, keepdims=False, initial=None):  # pylint: disa
         `extobj` are not supported.
 
     Args:
-        x (Union[int, float, bool, list, tuple, Tensor]): Elements to sum.
-        axis (Union[None, int, tuple(int)]): Axis or axes along which a sum is performed. Default: None.
+        input (Union[int, float, bool, list, tuple, Tensor]): Elements to sum.
+        axis (Union[None, int, tuple(int)]): Axis or axes along which a sum is performed. Default: ``None``.
             If None, sum all of the elements of the input array.
             If axis is negative it counts from the last to the first axis.
             If axis is a tuple of ints, a sum is performed on all of the axes specified in the tuple
@@ -1924,29 +2111,74 @@ def sum(x, axis=None, dtype=None, keepdims=False, initial=None):  # pylint: disa
         >>> print(input_x.sum(axis=1))
         [10. 35.]
     """
-    input_x = x.astype(mstype.int32) if x.dtype == mstype.bool_ else x
-    dtype = input_x.dtype if dtype is None else dtype
-    dtype = check_astype_dtype_const(dtype)
-    if not isinstance(keepdims, int):
-        const_utils.raise_type_error("integer argument expected")
     if initial is not None and not isinstance(initial, (int, float, bool)):
-        const_utils.raise_type_error("initial argument should be a scalar.")
-    if axis is None:
-        axis = ()
-    else:
-        axis = check_and_canonicalize_axes(axis, x.ndim)
-
-    if not check_type_support(input_x.dtype, 'GPU', (mstype.float64, mstype.float32, mstype.float16)):
-        input_x = input_x.astype(mstype.float32)
-    if 0 in x.shape:
-        x = const_utils.make_tensor([0], x.dtype)
-    if keepdims:
-        res = _reduce_sum_keepdims(input_x, axis)
-    else:
-        res = _reduce_sum_default(input_x, axis)
+        raise TypeError(f"For Tensor.sum, initial must be int, float or bool, but got {type(initial)}.")
+    res = F.sum(input, axis, keepdims)
     if initial is not None:
         res += initial
-    return res.astype(dtype)
+    if dtype is not None:
+        res = res.astype(dtype)
+    return res
+
+
+@_primexpr
+def _check_sum_to_size(size, input_dim, shape_input):
+    """Check the length of size of sum_to_size."""
+    if len(size) > input_dim:
+        raise ValueError(f"For sum_to_size, size {size} is not expandable to the tensor size {shape_input}.")
+
+
+@_primexpr
+def _count_axes(size, input_shape, shape_input):
+    """Count the sum axes for sum_to_size."""
+    axes = []
+    for i in range(len(size)):
+        element = size[i]
+        if element != input_shape[i] and element == 1:
+            axes.append(i)
+        elif element != input_shape[i]:
+            raise ValueError(f"For sum_to_size, size {size} is not expandable to the tensor size {shape_input}.")
+    return axes
+
+
+def sum_to_size(input, *size):
+    """
+    Sum `input` to the `size`. `size` must be expandable to the Tensor size.
+    """
+    if len(size) == 1 and isinstance(size[0], tuple):
+        size = size[0]
+    shape_input = input.shape
+    _check_sum_to_size(size, input.ndim, shape_input)
+    if len(size) < input.ndim:
+        pre_axis = tuple(axis for axis in range(input.ndim - len(size)))
+        input = input.sum(pre_axis)
+
+    axes = _count_axes(size, input.shape, shape_input)
+    if axes:
+        return input.sum(tuple(axes), keepdims=True)
+    return input
+
+
+def nansum(input, axis=None, keepdims=False, *, dtype=None):
+    """
+    Computes sum of all elements, treating NaNs as zero.
+    """
+    return F.nansum(input, axis=axis, keepdims=keepdims, dtype=dtype)
+
+
+def nanmean(input, axis=None, keepdims=False, *, dtype=None):
+    r"""
+    Computes the mean of input tensor, ignoring NaN.
+    """
+    return F.nanmean(input, axis, keepdims, dtype=dtype)
+
+
+def nanmedian(input, axis=-1, keepdims=False):
+    r"""
+    Computes the median and indices of input tensor, ignoring NaN.
+    If all elements in the specified dimensions are NaN, the result will be NaN.
+    """
+    return F.nanmedian(input, axis, keepdims)
 
 
 def repeat(x, repeats, axis=None):
@@ -1996,7 +2228,7 @@ def repeat(x, repeats, axis=None):
         axis = 0
     if not isinstance(axis, int):
         const_utils.raise_type_error('axes should be integers')
-    check_axis_in_range_const(axis, x.ndim)
+    check_axis_in_range(axis, x.ndim)
     axis = axis + x.ndim if axis < 0 else axis
 
     if len(repeats) == 1:
@@ -2006,7 +2238,8 @@ def repeat(x, repeats, axis=None):
         return repeat_elements(x, repeats, axis)
     size = x.shape[axis]
     if len(repeats) != size:
-        const_utils.raise_value_error('operands could not be broadcast together')
+        const_utils.raise_value_error(
+            'operands could not be broadcast together')
     subs = P.Split(axis, size)(x)
     repeated_subs = []
     for sub_item, rep in zip(subs, repeats):
@@ -2019,7 +2252,6 @@ def repeat_interleave(x, repeats, dim=None):
     """
     For details, please refer to :func:`mindspore.ops.repeat_interleave`.
     """
-    dim = dim if dim is not None else 0
     return F.repeat_interleave(x, repeats, dim)
 
 
@@ -2075,9 +2307,19 @@ def hypot(x, other):
     return F.hypot(x, other)
 
 
-def soft_shrink(x, lambd=0.5):
+def soft_shrink(input, lambd=0.5):
     """Apply the soft shrink function for a tensor. Calculates the output according to the input elements."""
-    return F.SoftShrink(lambd)(x)
+    return F.soft_shrink(input, lambd)
+
+
+def matrix_determinant(input):
+    """Computes the determinant of one or more square matrices."""
+    return F.matrix_determinant(input)
+
+
+def log_matrix_determinant(input):
+    """Computes the sign and the log of the absolute value of the determinant of one or more square matrices."""
+    return F.log_matrix_determinant(input)
 
 
 def getitem(data, index):
@@ -2102,7 +2344,7 @@ def itemset(data, *args):
 
 def ms_iter(xs):
     """Implementation of `iter`."""
-    return xs.__ms_iter__()
+    return xs.__ms_iter__
 
 
 def ms_next(it):
@@ -2113,45 +2355,6 @@ def ms_next(it):
 def hasnext(it):
     """Implementation of `hasnext`."""
     return it.__ms_hasnext__()
-
-
-@constexpr
-def constant_abs(x):
-    """Returns the absolute value of the constant."""
-    if x is None:
-        raise ValueError("For abs(), the input should be a constant or Tensor type.")
-    return abs(x)
-
-
-def ms_abs(x):
-    """Implementation of `abs`."""
-    if isinstance(x, Tensor):
-        return abs_(x)
-    return constant_abs(x)
-
-
-@constexpr
-def constant_round(*data):
-    """Returns the rounded value of the constant."""
-    for x in data:
-        if x is None:
-            raise ValueError("For round(), the input should be a Tensor or 1-2 constants.")
-    return round(*data)
-
-
-def ms_round(*data):
-    """Implementation of `round`."""
-    len_data = len(data)
-    if len_data <= 0 or len_data > 2:
-        const_utils.raise_type_error("round() requires 1 or 2 arguments.")
-    if len_data == 1 or data[1] is None:
-        x = data[0]
-        if isinstance(x, Tensor):
-            return round_(x)
-        return constant_round(x)
-    if isinstance(data[0], Tensor) or isinstance(data[1], Tensor):
-        const_utils.raise_type_error("When applying round() to tensor, only one tensor is supported as input.")
-    return constant_round(*data)
 
 
 @constexpr
@@ -2167,11 +2370,9 @@ def str_func(*data):
     if data_len == 0:
         return ''
     data = data[0]
-    if isinstance(data, (CSRTensor, COOTensor, RowTensorInner)):
-        const_utils.raise_type_error("str() does not support sparse tensor input.")
-    if not F.isconstant(data):
-        const_utils.raise_type_error("str() does not support non-constant input.")
-    return cast_to_str(data)
+    if F.isconstant(data):
+        return cast_to_str(data)
+    return data.__str__()
 
 
 @constexpr
@@ -2187,23 +2388,27 @@ def bool_func(*data):
     if data_len == 0:
         return False
     data = data[0]
-    if isinstance(data, (CSRTensor, COOTensor, RowTensorInner)):
-        const_utils.raise_type_error("bool() does not support sparse tensor input.")
     if isinstance(data, (Tensor, Tensor_)):
         tensor_shape = F.shape(data)
         tensor_shape_len = len(tensor_shape)
         if tensor_shape_len == 0 or (tensor_shape_len == 1 and tensor_shape[0] == 1):
-            return data != 0
-        const_utils.raise_value_error("The truth value of an array with more than one element is ambiguous.")
+            return F.scalar_cast(data, mstype.bool_)
+        raise ValueError("The truth value of an array with more than one element is ambiguous.")
     if not F.isconstant(data):
-        return len(data) != 0
+        if hasattr(data, "__bool__"):
+            return data.__bool__()
+        if hasattr(data, "__len__"):
+            return len(data) != 0
+        return F.scalar_cast(data, mstype.bool_)
+    if isinstance(data, (CSRTensor, COOTensor, RowTensorInner)):
+        raise TypeError("bool() does not support sparse tensor input.")
     return cast_to_bool(data)
 
 
 @constexpr
 def cast_to_int(*data):
     target = data[0]
-    if isinstance(target, Tensor_):
+    if isinstance(target, (Tensor, Tensor_)):
         target = Tensor(target, internal=True)
     if len(data) == 1:
         return int(target)
@@ -2218,16 +2423,22 @@ def int_func(*data):
     if data_len == 0:
         return 0
     target = data[0]
+    base = 10
+    if data_len == 2:
+        base = data[1]
     if not F.isconstant(target):
-        const_utils.raise_type_error("int() does not support non-constant input.")
+        if base != 10:
+            const_utils.raise_type_error("int() does not support non-constant input when 'base' is specified.")
+        return F.scalar_cast(target, mstype.int64)
     if isinstance(target, (CSRTensor, COOTensor, RowTensorInner)):
-        const_utils.raise_type_error("int() does not support sparse tensor input.")
+        const_utils.raise_type_error(
+            "int() does not support sparse tensor input.")
     return cast_to_int(*data)
 
 
 @constexpr
 def cast_to_float(data):
-    if isinstance(data, Tensor_):
+    if isinstance(data, (Tensor, Tensor_)):
         data = Tensor(data, internal=True)
     return float(data)
 
@@ -2241,9 +2452,10 @@ def float_func(*data):
         return 0.0
     data = data[0]
     if not F.isconstant(data):
-        const_utils.raise_type_error("float() does not support non-constant input.")
+        return F.scalar_cast(data, mstype.float32)
     if isinstance(data, (CSRTensor, COOTensor, RowTensorInner)):
-        const_utils.raise_type_error("float() does not support sparse tensor input.")
+        const_utils.raise_type_error(
+            "float() does not support sparse tensor input.")
     return cast_to_float(data)
 
 
@@ -2256,13 +2468,20 @@ def list_func(*data):
         return F.make_list()
     data = data[0]
     if isinstance(data, (CSRTensor, COOTensor, RowTensorInner)):
-        const_utils.raise_type_error("list() does not support single sparse tensor input.")
+        const_utils.raise_type_error(
+            "list() does not support single sparse tensor input.")
     if not isinstance(data, Tensor) and not hasattr(data, "__ms_iter__"):
         data_type = F.typeof(data)
-        const_utils.raise_type_error(str(data_type) + " object is not iterable.")
+        const_utils.raise_type_error(
+            str(data_type) + " object is not iterable.")
     if isinstance(data, dict):
         data = data.keys()
-    ret = F.make_list()
+    if isinstance(data, (tuple, list)) and F.is_sequence_shape_unknown(data):
+        ret = mutable([], True)
+        if F.is_dynamic_sequence_element_unknown(data):
+            return ret
+    else:
+        ret = F.make_list()
     for i in range(len(data)):
         ret = ret + F.make_list(data[i])
     return ret
@@ -2272,18 +2491,23 @@ def tuple_func(*data):
     """Implementation of `tuple`."""
     data_len = len(data)
     if data_len >= 2:
-        const_utils.raise_type_error("tuple() requires 0 or 1 arguments.")
+        raise TypeError("tuple() requires 0 or 1 arguments.")
     if data_len == 0:
         return F.make_tuple()
     data = data[0]
     if isinstance(data, (CSRTensor, COOTensor, RowTensorInner)):
-        const_utils.raise_type_error("tuple() does not support single sparse tensor input.")
+        raise TypeError("tuple() does not support single sparse tensor input.")
     if not isinstance(data, Tensor) and not hasattr(data, "__ms_iter__"):
         data_type = F.typeof(data)
-        const_utils.raise_type_error(str(data_type) + " object is not iterable.")
+        raise TypeError(str(data_type) + " object is not iterable.")
     if isinstance(data, dict):
         data = data.keys()
-    ret = F.make_tuple()
+    if isinstance(data, (tuple, list)) and F.is_sequence_shape_unknown(data):
+        ret = mutable((), True)
+        if F.is_dynamic_sequence_element_unknown(data):
+            return ret
+    else:
+        ret = F.make_tuple()
     for i in range(len(data)):
         ret = ret + F.make_tuple(data[i])
     return ret
@@ -2309,7 +2533,8 @@ def get_max_min_data_len(*data):
     if isinstance(data, (dict, list, tuple)):
         len_data = len(data)
     else:
-        const_utils.raise_type_error("max() or min() does not support the data type.")
+        const_utils.raise_type_error(
+            "max() or min() does not support the data type.")
     return len_data
 
 
@@ -2321,7 +2546,8 @@ def get_tensor_num(data):
             tensor_shape = F.shape(input_data)
             tensor_shape_len = len(tensor_shape)
             if tensor_shape_len != 0 and not (tensor_shape_len == 1 and tensor_shape[0] == 1):
-                const_utils.raise_value_error("The truth value of an array with more than one element is ambiguous.")
+                const_utils.raise_value_error(
+                    "The truth value of an array with more than one element is ambiguous.")
             tensor_num = tensor_num + 1
     return tensor_num
 
@@ -2337,27 +2563,66 @@ def exist_tensor(data):
     return False
 
 
+def check_sequence_all_variable_scalar(x, str_info):
+    """Check whether x can be used in SequenceMax and SequenceMin"""
+    if F.is_sequence_shape_unknown(x):
+        if F.is_dynamic_sequence_element_unknown(x):
+            const_utils.raise_value_error(str_info + "() arg is an empty sequence.")
+        if not isinstance(x[0], (int, float)):
+            const_utils.raise_value_error(
+                "When the input to " + str_info + "() is dynamic length sequence, only support scalar type input")
+        return True
+    contain_variable_scalar = False
+    for i in x:
+        if not isinstance(i, (int, float)):
+            return False
+        if not contain_variable_scalar and not F.isconstant(i):
+            contain_variable_scalar = True
+    return contain_variable_scalar
+
+
+def get_data_type_str(input_data):
+    """Get the type of input."""
+    if isinstance(input_data, (int, float, bool)):
+        return "variable " + str(F.typeof(input_data))
+    return str(F.typeof(input_data))
+
+
+def check_isconstant(input_data, func_name):
+    """Check the input data of func is constant."""
+    if not F.isconstant(input_data):
+        const_utils.raise_type_error("The input of " + func_name + " only support Tensor, List, Tuple, constant Scalar,"
+                                                                   " but got " + get_data_type_str(input_data))
+
+
 def ms_max_one_element(x):
     """Implementation of `max` which inputs has only one element."""
     if isinstance(x, Tensor):
         tensor_shape = F.shape(x)
         tensor_shape_len = len(tensor_shape)
         if tensor_shape_len == 0:
-            const_utils.raise_type_error("Cannot iterate over a scalar tensor.")
+            const_utils.raise_type_error(
+                "Cannot iterate over a scalar tensor.")
         if tensor_shape_len >= 2:
-            const_utils.raise_value_error("The truth value of an array with more than one element is ambiguous.")
+            const_utils.raise_value_error(
+                "The truth value of an array with more than one element is ambiguous.")
         return x.max()
     # Deal with Tensor in tuple or list
     if isinstance(x, (list, tuple)):
+        if check_sequence_all_variable_scalar(x, "max"):
+            return SequenceMax()(x)
         if len(x) == 0:
             const_utils.raise_value_error("max() arg is an empty sequence.")
         tensor_num = get_tensor_num(x)
         if tensor_num == len(x):
             return max_tensor(x)
         if tensor_num != 0:
-            const_utils.raise_type_error("max() cannot contain both tensor and non-tensor type.")
+            const_utils.raise_type_error(
+                "max() cannot contain both tensor and non-tensor type.")
         if exist_tensor(x):
-            const_utils.raise_type_error("max() cannot support tensor in list or tuple nested now.")
+            const_utils.raise_type_error(
+                "max() cannot support tensor in list or tuple nested now.")
+    check_isconstant(x, "max()")
     return max_(x)
 
 
@@ -2375,10 +2640,14 @@ def ms_max(*data):
         if tensor_num == len_data:
             return max_tensor(*data)
         if tensor_num != 0:
-            const_utils.raise_type_error("max() cannot contain both tensor and non-tensor type.")
+            const_utils.raise_type_error(
+                "max() cannot contain both tensor and non-tensor type.")
         # exist tensor in list/tuple
         if exist_tensor(data):
-            const_utils.raise_value_error("The truth value of an array with more than one element is ambiguous.")
+            const_utils.raise_value_error(
+                "The truth value of an array with more than one element is ambiguous.")
+    for input_data in data:
+        check_isconstant(input_data, "max()")
     return max_(*data)
 
 
@@ -2415,21 +2684,28 @@ def ms_min_one_element(x):
         tensor_shape = F.shape(x)
         tensor_shape_len = len(tensor_shape)
         if tensor_shape_len == 0:
-            const_utils.raise_type_error("Cannot iterate over a scalar tensor.")
+            const_utils.raise_type_error(
+                "Cannot iterate over a scalar tensor.")
         if tensor_shape_len >= 2:
-            const_utils.raise_value_error("The truth value of an array with more than one element is ambiguous.")
+            const_utils.raise_value_error(
+                "The truth value of an array with more than one element is ambiguous.")
         return x.min()
     # Deal with Tensor in tuple or list
     if isinstance(x, (list, tuple)):
+        if check_sequence_all_variable_scalar(x, "min"):
+            return SequenceMin()(x)
         if len(x) == 0:
             const_utils.raise_value_error("min() arg is an empty sequence.")
         tensor_num = get_tensor_num(x)
         if tensor_num == len(x):
             return min_tensor(x)
         if tensor_num != 0:
-            const_utils.raise_type_error("min() cannot contain both tensor and non-tensor type.")
+            const_utils.raise_type_error(
+                "min() cannot contain both tensor and non-tensor type.")
         if exist_tensor(x):
-            const_utils.raise_type_error("min() cannot support tensor in list or tuple nested now.")
+            const_utils.raise_type_error(
+                "min() cannot support tensor in list or tuple nested now.")
+    check_isconstant(x, "min()")
     return min_(x)
 
 
@@ -2447,10 +2723,14 @@ def ms_min(*data):
         if tensor_num == len_data:
             return min_tensor(*data)
         if tensor_num != 0:
-            const_utils.raise_type_error("min() cannot contain both tensor and non-tensor type.")
+            const_utils.raise_type_error(
+                "min() cannot contain both tensor and non-tensor type.")
         # exist tensor in list/tuple
         if exist_tensor(data):
-            const_utils.raise_value_error("The truth value of an array with more than one element is ambiguous.")
+            const_utils.raise_value_error(
+                "The truth value of an array with more than one element is ambiguous.")
+    for input_data in data:
+        check_isconstant(input_data, "min()")
     return min_(*data)
 
 
@@ -2462,11 +2742,13 @@ def ms_sum(*data):
     x = data[0]
     if not isinstance(x, Tensor) and not hasattr(x, "__ms_iter__"):
         data_type = F.typeof(x)
-        const_utils.raise_type_error(str(data_type) + " object is not iterable.")
+        const_utils.raise_type_error(
+            str(data_type) + " object is not iterable.")
     if isinstance(x, Tensor):
         tensor_shape = F.shape(x)
         if len(tensor_shape) == 0:
-            const_utils.raise_type_error("Cannot iterate over a scalar tensor.")
+            const_utils.raise_type_error(
+                "Cannot iterate over a scalar tensor.")
     if isinstance(x, dict):
         x = x.keys()
     result = 0
@@ -2480,40 +2762,21 @@ def ms_sum(*data):
     return result
 
 
-@constexpr
-def python_len(data):
-    """Return the result of python built-in len function"""
-    return len(data)
-
-
 def ms_len(data):
     """Implementation of `len`."""
-    if not isinstance(data, Tensor) and F.isconstant(data):
-        return python_len(data)
-    return data.__len__()
-
-
-@constexpr
-def python_len_with_check(data):
-    """Return the result of python built-in len function with iterable check"""
-    if not hasattr(data, "__iter__"):
-        raise TypeError(str(type(data)) + " object is not iterable in graph mode.")
-    return len(data)
-
-
-def ms_len_with_iterable_check(data):
-    """Implementation of `len` with iterable check, used in len of condition."""
-    if not isinstance(data, Tensor) and F.isconstant(data):
-        return python_len_with_check(data)
-    if not hasattr(data, "__len__"):
-        type_str = str(F.typeof(data))
-        const_utils.raise_type_error(type_str + " object is not iterable in graph mode.")
     return data.__len__()
 
 
 def floor(x):
     """Rounds a tensor down to the closest integer element-wise."""
     return x.__floor__()
+
+
+def floor_divide(input, other):
+    r"""
+    Divides the first input tensor by the second input tensor element-wise and round down to the closest integer.
+    """
+    return F.floor_divide(input, other)
 
 
 def uadd(x):
@@ -2541,13 +2804,22 @@ def bool_(x):
     return x.__bool__()
 
 
+def check_len_(x):
+    """Check length is not 0"""
+    return x.__len__() != 0
+
+
+def real_bool_(x):
+    """bool function to get truth value"""
+    return bool(x)
+
+
 def enumerate_(x, start=0):
     """Enumerate list or tuple or tensor."""
     x_type = F.typeof(x)
     ret = ()
     op_name = "enumerate"
-    if check_is_tuple_or_list_or_tensor(x_type, op_name, "first input") and \
-            check_is_const_int(start, op_name, "start"):
+    if check_is_const_int(start, op_name, "start"):
         if check_is_tensor(x_type):
             for i in range(x.shape[0]):
                 ret += ((start + i, x[i]),)
@@ -2558,28 +2830,25 @@ def enumerate_(x, start=0):
 
 def expand_tensor_as(x, y):
     """Expand tensor"""
-    return P.BroadcastTo(shape_(y))(x)
+    return F.broadcast_to(x, shape_(y))
 
 
 def broadcast_to(x, shape):
     """Broadcasts tensor to a given shape."""
-    return P.BroadcastTo(shape)(x)
+    return F.broadcast_to(x, shape)
 
 
 def expand_dims(x, axis):
     """
     Insert a dimension of shape 1 at the specified axis of Tensor.
     """
-    check_is_int(axis, 'axis')
+    validator.check_is_int(axis, 'axis')
     return P.ExpandDims()(x, axis)
 
 
-def unsqueeze(x, dim):
-    """
-    Insert a dimension of shape 1 at the specified axis of Tensor.
-    """
-    check_is_int(dim, 'dim')
-    return P.ExpandDims()(x, dim)
+def unsqueeze(input, dim):
+    """For details, please refer to :func:`mindspore.ops.unsqueeze`."""
+    return P.ExpandDims()(input, dim)
 
 
 def masked_fill(x, mask, value):
@@ -2599,12 +2868,12 @@ def col2im(*inputs):
     return F.col2im(*inputs)
 
 
-def narrow(x, axis, start, length):
+def narrow(input, axis, start, length):
     """
     Returns a narrowed tensor from input tensor.
     The dimension axis is input from start to start + length.
     """
-    return F.narrow(x, axis, start, length)
+    return F.narrow(input, axis, start, length)
 
 
 def to_csr(x):
@@ -2623,14 +2892,22 @@ def to_coo(x):
     return F.dense_to_sparse_coo(x)
 
 
+def tolist(x):
+    """
+    Convert a Tensor to List, if the input is Tensor scalar, Python scalar will be returned.
+    """
+    return x.asnumpy().tolist()
+
+
 @constexpr
 def check_select_condition(cond_type):
     """
     Check select input condition.
     """
-    if isinstance(cond_type, mstype.tensor_type):
+    if isinstance(cond_type, mstype.TensorType):
         return
-    raise TypeError(f"For select, the argument condition should be Tensor, but got {cond_type}.")
+    raise TypeError(
+        f"For select, the argument condition should be Tensor, but got {cond_type}.")
 
 
 @constexpr
@@ -2670,6 +2947,13 @@ def view(x, *shape):
     return F.reshape(x, shape)
 
 
+def view_as(input, other):
+    """View self Tensor as the same shape as `other` ."""
+    if not isinstance(other, (Tensor, Tensor_)):
+        raise TypeError(f"For view_as, the input other must be a Tensor, but got {type(other)}")
+    return F.reshape(input, other.shape)
+
+
 def bitwise_and(x, y):
     """Returns bitwise `and` of two tensors element-wise."""
     return F.bitwise_and(x, y)
@@ -2685,9 +2969,40 @@ def bitwise_xor(x, y):
     return F.bitwise_xor(x, y)
 
 
+def bitwise_left_shift(x, y):
+    """Returns bitwise left shift of `x` by `other` bits."""
+    return F.bitwise_left_shift(x, y)
+
+
+def bitwise_right_shift(x, y):
+    """Returns bitwise right shift of `x` by `other` bits."""
+    return F.bitwise_right_shift(x, y)
+
+
 def exp(x):
     """Returns exponential of a tensor element-wise."""
     return F.exp(x)
+
+
+def real(x):
+    r"""
+    For details, please refer to :func:`mindspore.ops.real`.
+    """
+    return F.real(x)
+
+
+def rsqrt(x):
+    r"""
+    For details, please refer to :func:`mindspore.ops.rsqrt`.
+    """
+    return F.rsqrt(x)
+
+
+def reciprocal(x):
+    r"""
+    For details, please refer to :func:`mindspore.ops.reciprocal`.
+    """
+    return F.reciprocal(x)
 
 
 def sqrt(x):
@@ -2703,6 +3018,11 @@ def square(x):
 def sub(x, y):
     """Returns sub of a tensor element-wise."""
     return F.sub(x, y)
+
+
+def t(input):
+    """Transposes a 2-D tensor."""
+    return F.t(input)
 
 
 def tan(x):
@@ -2722,9 +3042,9 @@ def cosh(x):
     return F.cosh(x)
 
 
-def ger(x, y):
-    """Ger product of `x1` and `x2`.."""
-    return F.ger(x, y)
+def ger(input, vec2):
+    """Ger product of `input` and `vec2`."""
+    return F.ger(input, vec2)
 
 
 def gt(x, y):
@@ -2735,15 +3055,6 @@ def gt(x, y):
 def ge(x, y):
     """Compare the value of the input parameters :math:`x >= y` element-wise."""
     return F.ge(x, y)
-
-
-def while_cond(x):
-    """For while condition, if the condition is a tensor, the loop will not be unrolled"""
-    if issubclass_(F.typeof(x), F.typeof(mstype.tensor)):
-        is_cond = check_is_tensor_bool_cond(F.shape(x))
-        if is_cond:
-            return F.cast(x, mstype.bool_)
-    return x
 
 
 def tensor_scatter_add(x, indices, updates):
@@ -2813,18 +3124,34 @@ def unsorted_segment_prod(x, segment_ids, num_segments):
     return F.unsorted_segment_prod(x, segment_ids, num_segments)
 
 
-def negative(x):
+def negative(input):
     r"""
     Return a new tensor with the negative of the elements of input.
     """
-    return F.neg(x)
+    return F.neg(input)
 
 
-def nonzero(x):
+def nonzero(input):
     """
     Return a Tensor of the positions of all non-zero values.
     """
-    return F.nonzero(x)
+    return F.nonzero(input)
+
+
+def new_zeros(x, size, *, dtype=None):
+    r"""
+    Return a tensor of `size` filled with zeros. By default, the returned tensor has the same dtype as `x`.
+    """
+    _dtype = x.dtype if dtype is None else dtype
+    return F.zeros(size, dtype=_dtype)
+
+
+def new_ones(x, size, *, dtype=None):
+    r"""
+    Return a tensor of `size` filled with ones. By default, the returned tensor has the same dtype as `x`.
+    """
+    _dtype = x.dtype if dtype is None else dtype
+    return F.ones(size, dtype=_dtype)
 
 
 def diag(x):
@@ -2834,11 +3161,18 @@ def diag(x):
     return F.diag(x)
 
 
-def masked_select(x, mask):
+def diagflat(input, offset=0):
+    """
+    Creates a two-dimensional Tensor with the flattened input as a diagonal.
+    """
+    return F.diagflat(input, offset)
+
+
+def masked_select(input, mask):
     """
     Returns a new 1-D Tensor which indexes the input tensor according to the boolean mask.
     """
-    return F.masked_select(x, mask)
+    return F.masked_select(input, mask)
 
 
 def inplace_update(x, v, indices):
@@ -2863,21 +3197,23 @@ def coo_to_csr(x):
 
 def coo_to_dense(x):
     """convert coo to dense."""
-    zeros_tensor = F.zeros(x.shape, x.values.dtype)
+    zeros_tensor = F.zeros(x.shape, dtype=x.values.dtype)
     return F.tensor_scatter_update(zeros_tensor, x.indices, x.values)
 
 
 def coo_coalesce(x):
     """Returns the coalesced sparse tensor of the input."""
     shape = const_utils.make_tensor(x.shape)
-    res_indices, res_values, _ = P.Coalesce()(x.indices.transpose(), x.values, shape)
+    res_indices, res_values, _ = P.Coalesce()(
+        x.indices.transpose(), x.values, shape)
     return COOTensor(res_indices.transpose(), res_values, x.shape)
 
 
 def csr_to_coo(x):
     """convert csr to coo."""
     if x.ndim != 2:
-        const_utils.raise_value_error("Currently only support 2-D CSRTensor when converting to COOTensor.")
+        const_utils.raise_value_error(
+            "Currently only support 2-D CSRTensor when converting to COOTensor.")
     row_indices = F.csr2coo(x.indptr, x.values.shape[0])
     coo_indices = P.Stack(1)((row_indices, x.indices))
     return COOTensor(coo_indices, x.values, x.shape)
@@ -2888,7 +3224,7 @@ def csr_to_dense(x):
     return F.csr_to_dense(x)
 
 
-def random_categorical_(x, num_sample, seed=0, dtype=mstype.int64):
+def random_categorical(x, num_sample, seed=0, dtype=mstype.int64):
     r"""
     Generates random samples from a given categorical distribution tensor.
     Refer to :func:`mindspore.ops.random_categorical` for more detail.
@@ -2913,7 +3249,7 @@ def get_itemsize(x_type):
 @constexpr(check=False)
 def check_is_tensor(x):
     """check whether x is tensor."""
-    if isinstance(x, mstype.tensor_type):
+    if isinstance(x, mstype.TensorType):
         return True
     return False
 
@@ -2921,35 +3257,32 @@ def check_is_tensor(x):
 @constexpr
 def check_is_tuple_or_list_or_tensor(x, op_name, arg_name):
     """check whether x is list or tuple or tensor."""
-    if isinstance(x, (mstype.List, mstype.Tuple, mstype.tensor_type)):
+    if isinstance(x, (mstype.List, mstype.Tuple, mstype.TensorType)):
         return True
-    raise TypeError(f"For '{op_name}', the '{arg_name}' should be tuple or list or tensor, but got {x}.")
+    raise TypeError(
+        f"For '{op_name}', the '{arg_name}' should be tuple or list or tensor, but got {x}.")
 
 
-@constexpr
 def check_is_const_int(x, op_name, arg_name):
     """check whether x is const int."""
     if x is None:
-        raise TypeError(f"For '{op_name}', the '{arg_name}' should be a const int number, but got not const.")
+        raise TypeError(
+            f"For '{op_name}', the '{arg_name}' should be a const int number, but got not const.")
     if not isinstance(x, int):
-        raise TypeError(f"For '{op_name}', the '{arg_name}' should be a const int number, but got {x}.")
+        raise TypeError(
+            f"For '{op_name}', the '{arg_name}' should be a const int number, but got {x}.")
     return True
 
 
 @constexpr
-def check_is_tensor_bool_cond(shp):
-    """check if tensor is a bool condition"""
-    if shp in ((), (1,)):
-        return True
-    if -1 in shp:
-        raise ValueError(f"Only tensor which shape is () or (1,) can be converted to bool, but got tensor shape is "
-                         f"None")
-    raise ValueError(f"Only tensor which shape is () or (1,) can be converted to bool, but got tensor shape is {shp}")
-
-
-@constexpr
 def const_tensor_to_bool(x):
-    """convert bool tensor to bool condition"""
+    """convert bool tensor to bool condition
+        def const_tensor_to_bool(x):
+        convert bool tensor to bool condition
+        if x.shape == (1,):
+            return bool(x[0])
+        return bool(x)
+    """
     if x is None:
         raise ValueError("Only tensor which shape is () or (1,) can be converted to bool, but got None")
     x = x.asnumpy()
@@ -2961,7 +3294,7 @@ def const_tensor_to_bool(x):
         f"Only tensor which shape is () or (1,) can be converted to bool, but got tensor shape is {x.shape}")
 
 
-@constexpr
+@_primexpr
 def check_view_shape(x):
     """Check view function input shape"""
     if not x:
@@ -2973,35 +3306,29 @@ def check_view_shape(x):
     return x
 
 
-# convert normal param_check functions to constexpr functions
 check_astype_dtype_const = constexpr(validator.check_astype_dtype)
-check_transpose_axis_const = constexpr(validator.check_transpose_axis)
-check_reshape_shp_const = constexpr(validator.check_reshape_shp)
-check_flatten_order_const = constexpr(validator.check_flatten_order)
-check_swapaxes_axis_const = constexpr(validator.check_swapaxes_axis)
-prepare_shape_for_squeeze_const = constexpr(validator.prepare_shape_for_squeeze)
-check_axis_in_range_const = constexpr(validator.check_axis_in_range)
-check_axis_valid = constexpr(validator.check_axis_valid)
 max_ = constexpr(validator.max_)
 min_ = constexpr(validator.min_)
-expanded_shape = constexpr(validator.expanded_shape)
-tuple_slice = constexpr(validator.tuple_slice)
-infer_out_shape = constexpr(validator.infer_out_shape)
-get_log2_size = constexpr(validator.get_log2_size)
-check_axis_type = constexpr(validator.check_axis_type)
-check_and_canonicalize_axes = constexpr(validator.check_and_canonicalize_axes)
-empty_compile = constexpr(validator.empty_compile)
+expanded_shape = validator.expanded_shape
+tuple_slice = validator.tuple_slice
 check_type_support = constexpr(validator.check_type_support)
-check_is_int = constexpr(validator.check_is_int)
 check_type_name = constexpr(validator.check_type_name)
 check_value_type = constexpr(validator.check_value_type)
-check_int = constexpr(validator.check_int)
+check_is_int = constexpr(validator.check_is_int)
+check_bool_type = constexpr(validator.check_bool)
+check_is_int = constexpr(validator.check_is_int)
 check_bool = constexpr(validator.check_bool)
+
+
+@constexpr
+def empty_compile(dtype, shape):
+    """Returns an empty Tensor."""
+    return Tensor_(dtype, shape)
 
 
 def tensor_bool(x):
     """tensor as condition, if is constant, return immediate bool value"""
-    is_cond = check_is_tensor_bool_cond(F.shape(x))
+    is_cond = F.is_tensor_bool_cond(x)
     if is_cond and F.isconstant(x):
         return const_tensor_to_bool(x)
     return F.cast(x, mstype.bool_)
@@ -3020,6 +3347,11 @@ def or_(x, y):
 def matmul(x, y):
     """Implementation of `matmul` (`@`)."""
     return F.matmul(x, y)
+
+
+def inner(x, other):
+    """Computes the inner product of 2 tensors."""
+    return F.inner(x, other)
 
 
 def float_bool(x):
@@ -3046,9 +3378,11 @@ def str_bool(x):
     return True
 
 
-def matrix_determinant(x):
-    """Computes the determinant of one or more square matrices."""
-    return F.matrix_determinant(x)
+def matrix_power(input, n):
+    """
+    Raises a square matrix to the (integer) power `n` .
+    """
+    return F.matrix_power(input, n)
 
 
 def log1p(x):
@@ -3084,9 +3418,9 @@ def logit(x, eps=None):
     return F.logit(x, eps)
 
 
-def log_matrix_determinant(x):
-    """Computes the sign and the log of the absolute value of the determinant of one or more square matrices."""
-    return F.log_matrix_determinant(x)
+def logdet(x):
+    """Returns the log determinant of one or batches of square matrices."""
+    return F.logdet(x)
 
 
 def lerp(start, end, weight):
@@ -3094,9 +3428,10 @@ def lerp(start, end, weight):
     return F.lerp(start, end, weight)
 
 
-def norm(input_x, axis, p=2, keep_dims=False, epsilon=1e-12):
+# pylint: disable=redefined-builtin
+def norm(A, ord=None, dim=None, keepdim=False, *, dtype=None):
     """Returns the matrix norm or vector norm of a given tensor."""
-    return F.norm(input_x, axis, p, keep_dims, epsilon)
+    return F.norm(A, ord, dim, keepdim, dtype=dtype)
 
 
 def renorm(input_x, p, dim, maxnorm):
@@ -3109,19 +3444,13 @@ def renorm(input_x, p, dim, maxnorm):
     return F.renorm(input_x, p, dim, maxnorm)
 
 
-def list_bool(x):
-    """Implementation of `tuple_bool`."""
-    return len(x) != 0
-
-
-def tuple_bool(x):
-    """Implementation of `tuple_bool`."""
-    return len(x) != 0
-
-
-def dict_bool(x):
-    """Implementation of `dict_bool`."""
-    return len(x) != 0
+def sequence_index(sequence, target, start=None, end=None):
+    """Implementation of `tuple_index`."""
+    if start is None:
+        start = 0
+    if end is None:
+        end = len(sequence)
+    return SequenceIndex()(sequence, target, start, end)
 
 
 def none_bool(x):
@@ -3148,11 +3477,20 @@ def ceil(x):
 
 def top_k(input_x, k, sorted=True):
     """
-    Finds values and indices of the `k` largest entries along the last dimension.
+    `Tensor.top_k` is deprecated, please use `Tensor.topk` instead.
     """
     check_is_int(k, 'k')
     check_bool(sorted, 'sorted')
     return F.top_k(input_x, k, sorted)
+
+
+def topk(input_x, k, dim=None, largest=True, sorted=True):
+    r"""
+    For details, please refer to :func:`mindspore.ops.topk`.
+    """
+    check_is_int(k, 'k')
+    check_bool_type(sorted, 'sorted')
+    return F.topk(input_x, k, dim, largest=largest, sorted=sorted)
 
 
 def subtract(x, other, *, alpha=1):
@@ -3166,15 +3504,15 @@ def true_divide(divident, divisor):
     r"""
     Computes the element-wise division of input tensors.
     """
-    return F.div(divident, divisor, None)
+    return F.div(divident, divisor, rounding_mode=None)
 
 
 # pylint: disable=redefined-outer-name
-def triu(x, diagonal=0):
+def triu(input, diagonal=0):
     r"""
     Returns the triangular matrix based on the diagonal.
     """
-    return F.Triu(diagonal)(x)
+    return F.triu(input, diagonal)
 
 
 #############
@@ -3184,7 +3522,7 @@ def triu(x, diagonal=0):
 
 def tuple_next(xs):
     """Next tuple."""
-    return xs[0], tail(xs)
+    return xs[0], xs[1:]
 
 
 def tuple_hasnext(xs):
@@ -3194,7 +3532,7 @@ def tuple_hasnext(xs):
 
 def list_next(xs):
     """Next list."""
-    return xs[0], tail(xs)
+    return xs[0], xs[1:]
 
 
 def list_hasnext(xs):
@@ -3238,6 +3576,8 @@ def list_append(self_, list_item):
 
 def list_insert(self_, index, obj):
     """Insert into list"""
+    if F.is_sequence_shape_unknown(self_) or not F.isconstant(index):
+        return ListInsert()(self_, index, obj)
     return _insert(self_, index, obj)
 
 
@@ -3262,16 +3602,16 @@ def list_extend(self_, obj):
     return _extend(self_, obj)
 
 
-def list_count(self_, value):
-    """Count the num of value in list"""
-    return _count(self_, value)
-
-
 def dict_get(self_, key_index, default_value=None):
     """Get value by key from dict"""
     if not _haskey(self_, key_index):
         return default_value
     return F.dict_getitem(self_, key_index)
+
+
+def dict_setitem(self_, key, target):
+    """Dictionary setitem"""
+    return _dict_setitem(self_, key, target)
 
 
 def dict_clear(self_):
@@ -3377,7 +3717,7 @@ def coo_abs(x):
 
 def coo_add(x, y, thresh):
     """Implementation of `add` for COOTensor."""
-    return sparse_add(x, y, thresh)
+    return F.coo_add(x, y, thresh)
 
 
 ################
@@ -3399,12 +3739,11 @@ def sparse_ndim_(x):
     return F.tuple_len(x.shape)
 
 
-def bernoulli(x, p=0.5, seed=-1):
+def bernoulli(input, p=0.5, seed=None):
     """
     Randomly draws binary numbers from a Bernoulli distribution.
     """
-    check_is_int(seed, 'bernoulli', 'seed')
-    return F.bernoulli(x, p, seed)
+    return F.bernoulli(input, p, seed)
 
 
 def gather_nd(input_x, indices):
@@ -3415,20 +3754,53 @@ def gather_nd(input_x, indices):
     return F.gather_nd(input_x, indices)
 
 
-def gather(input_x, input_indices, axis):
+def gather(input_x, input_indices, axis, batch_dims=0):
     r"""
     Returns the slice of the input tensor corresponding to the elements of `input_indices` on the specified `axis`.
     Refer to :func:`mindspore.ops.gather` for more detail.
     """
-    return F.gather(input_x, input_indices, axis)
+    return F.gather(input_x, input_indices, axis, batch_dims)
 
 
-def split(input_x, axis=0, output_num=1):
+def split(tensor, split_size_or_sections, axis=0):
     """
-    Splits the input tensor into output_num of tensors along the given axis and output numbers.
+    Splits the Tensor into chunks along the given axis.
     Refer to :func:`mindspore.ops.split` for more detail.
     """
-    return F.split(input_x, axis, output_num)
+    return F.split(tensor, split_size_or_sections, axis)
+
+
+def tensor_split(input, indices_or_sections, axis=0):
+    """
+    Splits a tensor into multiple sub-tensors along the given axis.
+    Refer to :func:`mindspore.ops.tensor_split` for more detail.
+    """
+    return F.tensor_split(input, indices_or_sections, axis=axis)
+
+
+def vsplit(input, indices_or_sections):
+    """
+    Splits a tensor into multiple sub-tensors vertically. It is equivalent to `ops.tensor_split` with :math:`axis=0` .
+    Refer to :func:`mindspore.ops.vsplit` for more detail.
+    """
+    return F.vsplit(input, indices_or_sections)
+
+
+def hsplit(input, indices_or_sections):
+    """
+    Splits a tensor into multiple sub-tensors horizontally. It is equivalent to `ops.tensor_split` with :math:`axis=1` .
+    Refer to :func:`mindspore.ops.hsplit` for more detail.
+    """
+    return F.hsplit(input, indices_or_sections)
+
+
+def dsplit(input, indices_or_sections):
+    """
+    Splits a tensor into multiple sub-tensors along the 3rd axis.
+    It is equivalent to `ops.tensor_split` with :math:`axis=2` .
+    Refer to :func:`mindspore.ops.tensor_split` for more detail.
+    """
+    return F.dsplit(input, indices_or_sections)
 
 
 def xlogy(x, y):
@@ -3437,6 +3809,14 @@ def xlogy(x, y):
     Refer to :func:`mindspore.ops.xlogy` for more details.
     """
     return F.xlogy(x, y)
+
+
+def eigvals(x):
+    r"""
+    Computes the eigenvalues of a square matrix(batch square matrices).
+    Refer to :func:`mindspore.ops.eigvals` for more detail.
+    """
+    return F.eigvals(x)
 
 
 def erf(x):
@@ -3463,11 +3843,39 @@ def isfinite(x):
     return F.isfinite(x)
 
 
+def sin(x):
+    r"""
+    For details, please refer to :func:`mindspore.ops.sin`.
+    """
+    return F.sin(x)
+
+
+def sinc(x):
+    r"""
+    For details, please refer to :func:`mindspore.ops.sinc`.
+    """
+    return F.sinc(x)
+
+
 def cos(x):
     r"""
     Computes cosine of input element-wise.
     """
     return F.cos(x)
+
+
+def count_nonzero(x, axis=(), keep_dims=False, dtype=mstype.int32):
+    r"""
+    For details, please refer to :func:`mindspore.ops.count_nonzero`.
+    """
+    return F.count_nonzero(x, axis, keep_dims, dtype)
+
+
+def cov(x, *, correction=1, fweights=None, aweights=None):
+    r"""
+    For details, please refer to :func:`mindspore.ops.cov`.
+    """
+    return F.cov(x, correction=correction, fweights=fweights, aweights=aweights)
 
 
 def acos(x):
@@ -3484,18 +3892,18 @@ def asin(x):
     return F.asin(x)
 
 
-def acosh(x):
+def acosh(input):
     r"""
     Computes inverse hyperbolic cosine of the inputs element-wise.
     """
-    return F.acosh(x)
+    return F.acosh(input)
 
 
-def add(x, y):
+def add(input, other):
     r"""
     Computes the element-wise addition of input tensors.
     """
-    return F.add(x, y)
+    return F.add(input, other)
 
 
 def addr(x, vec1, vec2, beta=1, alpha=1):
@@ -3523,7 +3931,7 @@ def addmv(x, mat, vec, beta=1, alpha=1):
     r"""
     Multiplies matrix `mat` and vector `vec`. The vector `x` is added to the final result.
     """
-    return F.addmv(x, mat, vec, beta, alpha)
+    return F.addmv(x, mat, vec, beta=beta, alpha=beta)
 
 
 def adjoint(x):
@@ -3540,11 +3948,11 @@ def asinh(x):
     return F.asinh(x)
 
 
-def atan(x):
+def atan(input):
     r"""
     Computes inverse tangent of the input element-wise.
     """
-    return F.atan(x)
+    return F.atan(input)
 
 
 def atanh(x):
@@ -3629,6 +4037,14 @@ def cholesky_inverse(input_x, upper=False):
     Computes the inverse of the positive definite matrix using cholesky matrix factorization.
     """
     return F.cholesky_inverse(input_x, upper=upper)
+
+
+def cholesky_solve(input, input2, upper=False):
+    r"""
+    Computes the solution of a set of linear equations with a positive definite matrix,
+    according to its Cholesky decomposition factor `input2` .
+    """
+    return F.cholesky_solve(input, input2, upper=upper)
 
 
 def map_tensor_get(map_tensor, key_tensor, insert_default_value=True):
@@ -3733,7 +4149,8 @@ def expand(input, size):
     r"""
     Returns a new view of the self tensor with singleton dimensions expanded to a larger size.
     """
-    return F.expand(input, size)
+    size = P.TensorToTuple()(size)
+    return F.broadcast_to(input, size)
 
 
 def cumprod(input, dim, dtype=None):
@@ -3744,32 +4161,22 @@ def cumprod(input, dim, dtype=None):
 
 
 def multiply(input, other):
-    r"""
-    Multiplies two tensors element-wise.
-
-    .. math::
-
-        out_{i} = x_{i} * y_{i}
-
-    Refer to :func:`mindspore.ops.mul` for more details.
-
-    Supported platforms:
-        ``Ascend`` ``GPU`` ``CPU``
-
-    Example:
-        >>> x = Tensor(np.array([1.0, 2.0, 3.0]), mindspore.float32)
-        >>> y = Tensor(np.array([4.0, 5.0, 6.0]), mindspore.float32)
-        >>> output = x.multiply(y)
-        [4.0 10.0 18.0]
-    """
+    """For details, please refer to :func:`mindspore.ops.multiply`."""
     return F.multiply(input, other)
 
 
-def div(input, other, rounding_mode=None):
+def div(input, value, *, rounding_mode=None):
     r"""
-    Divides the tensor `input` by the given input tensor `other` in floating-point type element-wise.
+    Divides the tensor `input` by the given input tensor `value` in floating-point type element-wise.
     """
-    return F.div(input, other, rounding_mode)
+    return F.div(input, value, rounding_mode=rounding_mode)
+
+
+def eq(input, other):
+    r"""
+    Computes the equivalence between the tensor `input` and the given input tensor `other` element-wise.
+    """
+    return F.equal(input, other)
 
 
 def equal(x, y):
@@ -3927,6 +4334,34 @@ def ne(input, other):
     return F.ne(input, other)
 
 
+def not_equal(x, other):
+    r"""
+    Computes the non-equivalence of two tensors element-wise.
+    """
+    return F.not_equal(x, other)
+
+
+def sign(x):
+    r"""
+    For details, please refer to :func:`mindspore.ops.sign`.
+    """
+    return F.sign(x)
+
+
+def signbit(x):
+    """
+    For details, please refer to :func:`mindspore.ops.signbit`.
+    """
+    return F.signbit(x)
+
+
+def sgn(x):
+    """
+    For details, please refer to :func:`mindspore.ops.sgn`.
+    """
+    return F.sgn(x)
+
+
 def sinh(input):
     r"""
     Computes hyperbolic sine of the input element-wise.
@@ -3934,11 +4369,16 @@ def sinh(input):
     return F.sinh(input)
 
 
-def sort(input, dim=-1, descending=False):
+def sort(input, axis=-1, descending=False):
     r"""
     Sorts the elements of the input tensor along a given dimension in ascending order by value.
     """
-    return P.Sort(axis=dim, descending=descending)(input)
+    return F.sort(input, axis=axis, descending=descending)
+
+
+def argsort(input, axis=-1, descending=False):
+    """For details, please refer to :func:`mindspore.ops.argsort`."""
+    return F.argsort(input, axis, descending)
 
 
 def trunc(input):
@@ -3948,8 +4388,145 @@ def trunc(input):
     return F.trunc(input)
 
 
+def where(x, condition, y):
+    r"""
+    Returns a tensor whose elements are selected from either `x` or `y` depending on `condition`.
+    Please refer to :func:`mindspore.ops.where`.
+    """
+    return F.where(condition, x, y)
+
+
 def imag(input):
     r"""
     Returns a new tensor containing imaginary value of the input.
     """
     return F.imag(input)
+
+
+def diff(x, n=1, axis=-1, prepend=None, append=None):
+    r"""
+    For details, please refer to :func:`mindspore.ops.diff`.
+    """
+    return F.diff(x, n, axis, prepend, append)
+
+
+def frac(x):
+    r"""
+    For details, please refer to :func:`mindspore.ops.frac`.
+    """
+    return F.frac(x)
+
+
+def argwhere(input):
+    r"""
+    For details, please refer to :func:`mindspore.ops.argwhere`.
+    """
+    return F.argwhere(input)
+
+
+def moveaxis(input, source, destination):
+    r"""
+    For details, please refer to :func:`mindspore.ops.moveaxis`.
+    """
+    return F.moveaxis(input, source, destination)
+
+
+def movedim(input, source, destination):
+    r"""
+    For details, please refer to :func:`mindspore.ops.movedim`.
+    """
+    return F.movedim(input, source, destination)
+
+
+def nextafter(input, other):
+    r"""
+    For details, please refer to :func:`mindspore.ops.nextafter`.
+    """
+    return F.nextafter(input, other)
+
+
+def qr(input, some=True):
+    r"""
+    For details, please refer to :func:`mindspore.ops.qr`.
+    """
+    check_bool_type(some, 'some', 'Tensor.qr')
+    return F.qr(input, 'reduced' if some else 'complete')
+
+
+def ormqr(input, input2, input3, left=True, transpose=False):
+    r"""
+    For details, please refer to :func:`mindspore.ops.ormqr`.
+    """
+    return F.ormqr(input, input2, input3, left, transpose)
+
+
+def amax(input, axis=None, keep_dims=False):
+    r"""
+    For details, please refer to :func:`mindspore.ops.amax`.
+    """
+    return F.amax(input, axis, keep_dims)
+
+
+def amin(input, axis=None, keep_dims=False):
+    r"""
+    For details, please refer to :func:`mindspore.ops.amin`.
+    """
+    return F.amin(input, axis, keep_dims)
+
+
+def lu_solve(b, LU_data, LU_pivots):
+    r"""
+    For details, please refer to :func:`mindspore.Tensor.lu_solve`
+    """
+    return F.lu_solve(b, LU_data, LU_pivots)
+
+
+def masked_scatter(input, mask, tensor):
+    r"""
+    For details, please refer to :func:`mindspore.Tensor.masked_scatter`
+    """
+    return array_ops.MaskedScatter()(input, mask, tensor)
+
+
+def index_put(input, indices, values, accumulate=False):
+    r"""
+    For details, please refer to :func:`mindspore.Tensor.index_put`
+    """
+    check_bool_type(accumulate, 'accumulate', 'Tensor.index_put')
+    _index_put = array_ops.IndexPut(0 if accumulate is False else 1)
+    return _index_put(input, values, indices)
+
+
+def aminmax(input, *, axis=0, keepdims=False):
+    r"""
+    For details, please refer to :func:`mindspore.ops.aminmax`.
+    """
+    return F.aminmax(input, axis=axis, keepdims=keepdims)
+
+
+def quantile(input, q, axis=None, keepdims=False):
+    r"""
+    For details, please refer to :func:`mindspore.ops.quantile`.
+    """
+    return F.quantile(input, q, axis, keepdims)
+
+
+def nanquantile(input, q, axis=None, keepdims=False):
+    r"""
+    For details, please refer to :func:`mindspore.ops.nanquantile`.
+    """
+    return F.nanquantile(input, q, axis, keepdims)
+
+
+def orgqr(input, input2):
+    r"""
+    For details, please refer to :func:`mindspore.ops.orgqr`.
+    """
+    return F.orgqr(input, input2)
+
+
+def outer(input, vec2):
+    r"""
+    For details, please refer to :func:`mindspore.ops.vec2`.
+    """
+    return F.outer(input, vec2)

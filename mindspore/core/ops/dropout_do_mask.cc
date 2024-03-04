@@ -15,16 +15,30 @@
  */
 #include "ops/dropout_do_mask.h"
 
-#include <set>
-#include <string>
-#include <vector>
 #include <memory>
+#include <set>
+#include <vector>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "base/float16.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "ir/tensor.h"
+#include "mindapi/base/type_id.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -139,6 +153,24 @@ AbstractBasePtr DropoutDoMaskInfer(const abstract::AnalysisEnginePtr &, const Pr
   return abstract::MakeAbstract(DropoutDoMaskInferShape(primitive, input_args),
                                 DropoutDoMaskInferType(primitive, input_args));
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(DropoutDoMask, prim::kPrimDropoutDoMask, DropoutDoMaskInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGDropoutDoMaskInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DropoutDoMaskInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DropoutDoMaskInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DropoutDoMaskInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(DropoutDoMask, prim::kPrimDropoutDoMask, AGDropoutDoMaskInfer, false);
 }  // namespace ops
 }  // namespace mindspore

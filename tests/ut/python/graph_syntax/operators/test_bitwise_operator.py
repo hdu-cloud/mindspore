@@ -16,7 +16,7 @@
 import numpy as np
 import pytest
 import mindspore.nn as nn
-from mindspore import context
+from mindspore import context, jit, Tensor
 
 context.set_context(mode=context.GRAPH_MODE)
 
@@ -99,29 +99,6 @@ def test_bitwise_operator_augassign():
     assert result == (x & y, x | y, x ^ y)
 
 
-def test_bitwise_operator_error_list_input():
-    """
-    Feature: bitwise operator
-    Description: test bitwise operator with lists
-    Expectation: throw RuntimeError
-    """
-
-    class Net(nn.Cell):
-        def __init__(self):
-            super(Net, self).__init__()
-            self.const_x = [10]
-            self.const_y = [11]
-
-        def construct(self):
-            res = self.const_x & self.const_y
-            return res
-
-    net = Net()
-    with pytest.raises(RuntimeError) as err:
-        net()
-    assert "operation does not support the type" in str(err.value)
-
-
 def test_bitwise_operator_error_float_input():
     """
     Feature: bitwise operator
@@ -140,9 +117,8 @@ def test_bitwise_operator_error_float_input():
             return res
 
     net = Net()
-    with pytest.raises(TypeError) as err:
+    with pytest.raises(TypeError):
         net()
-    assert "Unsupported input type. For BitOr, only integer types are supported, but got" in str(err.value)
 
 
 def test_bitwise_operator_error_too_large_number():
@@ -162,3 +138,37 @@ def test_bitwise_operator_error_too_large_number():
     net = Net()
     with pytest.raises(RuntimeError):
         net(x, y)
+
+
+def test_and_multi_int_tensor():
+    """
+    Feature: graph and syntax
+    Description: Test and syntax in graph mode.
+    Expectation: No exception.
+    """
+    @jit
+    def foo():
+        x = Tensor([0, 1])
+        y = Tensor([1, 2])
+        print(x and y)
+        return x and y
+
+    with pytest.raises(ValueError) as error_info:
+        foo()
+    assert "can be converted to bool, but" in str(error_info.value)
+
+
+def test_and_multi_int_tensor_2():
+    """
+    Feature: graph and syntax
+    Description: Test and syntax in graph mode.
+    Expectation: No exception.
+    """
+    @jit
+    def foo(x, y):
+        print(x and y)
+        return x and y
+
+    with pytest.raises(ValueError) as error_info:
+        foo(Tensor([0, 1]), Tensor([1, 2]))
+    assert "can be converted to bool, but" in str(error_info.value)

@@ -18,10 +18,14 @@
 #include <memory>
 #include <algorithm>
 #include <set>
+#include "ops/ascend_op_name.h"
+#include "ops/other_op_name.h"
+#include "ops/array_op_name.h"
+#include "ops/framework_op_name.h"
 #include "runtime/device/ms_device_shape_transfer.h"
 #include "include/common/utils/utils.h"
 #include "plugin/device/ascend/kernel/hccl/hcom_util.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/common/utils/parallel_context.h"
 
@@ -37,14 +41,15 @@ std::string GetKernelFormat(const CNodePtr &kernel_node, size_t index) {
   auto op_name = common::AnfAlgo::GetCNodeName(kernel_node);
   auto parallel_context_instance = parallel::ParallelContext::GetInstance();
   MS_EXCEPTION_IF_NULL(parallel_context_instance);
-  if (parallel_context_instance->enable_parallel_optimizer() && op_name == kBroadcast) {
+  if (parallel_context_instance->enable_parallel_optimizer() && op_name == kBroadcastOpName) {
     return kOpFormat_DEFAULT;
   }
-  if (op_name == kReceive || op_name == kHcomSend || op_name == kAllToAllv) {
+  if (op_name == kReceiveOpName || op_name == kSendOpName || op_name == kAllToAllvOpName ||
+      op_name == kMuxReceiveOpName || op_name == kBarrierOpName) {
     return kOpFormat_DEFAULT;
   }
   auto format = AnfAlgo::GetPrevNodeOutputFormat(kernel_node, index);
-  if (op_name != kReduceScatter && op_name != kAllGatherOpName) {
+  if (op_name != kReduceScatterOpName && op_name != kAllGatherOpName) {
     return format;
   }
   auto input_shape = common::AnfAlgo::GetPrevNodeOutputInferShape(kernel_node, index);
@@ -69,13 +74,15 @@ void HcclMetadataInfo(const CNodePtr &kernel_node, std::vector<std::shared_ptr<K
   MS_EXCEPTION_IF_NULL(kernel_info_list);
   MS_EXCEPTION_IF_NULL(kernel_node);
   std::string op_name = common::AnfAlgo::GetCNodeName(kernel_node);
-  if (op_name != kAllGather && op_name != kAllReduce && op_name != kBroadcast && op_name != kReduceScatter &&
-      op_name != kHcomSend && op_name != kReceive && op_name != kAllToAllv) {
+  if (op_name != kAllGatherOpName && op_name != kAllReduceOpName && op_name != kBroadcastOpName &&
+      op_name != kReduceScatterOpName && op_name != kSendOpName && op_name != kReceiveOpName &&
+      op_name != kAllToAllvOpName && op_name != kMuxReceiveOpName && op_name != kMuxSendOpName &&
+      op_name != kReduceOpName && op_name != kBarrierOpName) {
     MS_LOG(DEBUG) << "Hccl does not have op [" << op_name << "]";
     return;
   }
   TypeId recv_type;
-  if (op_name == kReceive) {
+  if (op_name == kReceiveOpName) {
     if (!HcomUtil::GetHcomReceiveType(kernel_node, &recv_type)) {
       MS_LOG(EXCEPTION) << "GetHcomReceiveType fail!";
     }
@@ -87,21 +94,25 @@ void HcclMetadataInfo(const CNodePtr &kernel_node, std::vector<std::shared_ptr<K
   for (const auto &type : kHcclSupportTypes) {
     std::vector<std::string> inputs_format{};
     std::vector<TypeId> inputs_type{};
+    std::vector<KernelObjectType> input_object_type{};
     size_t input_num = common::AnfAlgo::GetInputTensorNum(kernel_node);
     for (size_t input_index = 0; input_index < input_num; ++input_index) {
       (void)inputs_format.emplace_back(GetKernelFormat(kernel_node, input_index));
-      inputs_type.push_back(type);
+      (void)inputs_type.push_back(type);
+      (void)input_object_type.push_back(KernelObjectType::TENSOR);
     }
     std::vector<std::string> outputs_format;
     std::vector<TypeId> outputs_type;
-    size_t output_num = common::AnfAlgo::GetOutputTensorNum(kernel_node);
+    std::vector<KernelObjectType> output_object_type{};
+    size_t output_num = AnfAlgo::GetOutputElementNum(kernel_node);
     for (size_t output_index = 0; output_index < output_num; ++output_index) {
       (void)outputs_format.emplace_back(GetKernelFormat(kernel_node, output_index));
-      if (op_name == kReceive) {
+      if (op_name == kReceiveOpName) {
         outputs_type.push_back(recv_type);
       } else {
         outputs_type.push_back(type);
       }
+      (void)output_object_type.push_back(KernelObjectType::TENSOR);
     }
     auto builder = KernelBuildInfo::KernelBuildInfoBuilder();
     builder.SetInputsFormat(inputs_format);
@@ -109,6 +120,8 @@ void HcclMetadataInfo(const CNodePtr &kernel_node, std::vector<std::shared_ptr<K
     builder.SetOutputsFormat(outputs_format);
     builder.SetOutputsDeviceType(outputs_type);
     builder.SetKernelType(HCCL_KERNEL);
+    builder.SetInputsKernelObjectType(input_object_type);
+    builder.SetOutputsKernelObjectType(output_object_type);
     kernel_info_list->push_back(builder.Build());
   }
 }

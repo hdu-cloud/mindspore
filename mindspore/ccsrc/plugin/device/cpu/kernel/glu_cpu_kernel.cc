@@ -19,7 +19,6 @@
 #include <functional>
 #include "mindspore/core/ops/glu.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
-#include "utils/ms_utils.h"
 
 namespace mindspore::kernel {
 namespace {
@@ -27,10 +26,14 @@ constexpr const size_t kGLUInputsNum = 1;
 constexpr const size_t kGLUOutputsNum = 1;
 constexpr const int64_t kParallelDataNum = 16 * 1024;
 const int64_t kEvenNum = 2;
+const int64_t kZero = 0;
 }  // namespace
 
 template <typename T>
 bool GLUCpuKernelMod::SplitWithDimZero(T *input_data_ptr, T *output_data_ptr) {
+  if (value_shape_vec_[0] == kZero) {
+    return true;
+  }
   int64_t copy_num = shape_value_ / value_shape_vec_[0];
   T *input_copy_ptr = input_data_ptr;
   if (value_shape_vec_[0] % kEvenNum != 0) {
@@ -69,7 +72,7 @@ bool GLUCpuKernelMod::SplitCompute(T *input_data_ptr, T *output_data_ptr) {
   }
   int64_t size_split = midfix / kEvenNum;
   int64_t subfix = 1;
-  for (size_t i = split_dim_ + 1; i < value_shape_vec_.size(); i++) {
+  for (size_t i = IntToSize(split_dim_ + 1); i < value_shape_vec_.size(); i++) {
     subfix *= value_shape_vec_[i];
   }
   int64_t offset = 0;

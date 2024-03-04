@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,10 +15,21 @@
  */
 
 #include "frontend/optimizer/irpass.h"
+#include "mindspore/core/ops/structure_ops.h"
+#include "mindspore/core/ops/sparse_tensor_ops.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "mindspore/core/ops/other_ops.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/arithmetic_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "frontend/optimizer/irpass/arithmetic_simplify.h"
 #include "frontend/optimizer/irpass/branch_culling.h"
 #include "frontend/optimizer/irpass/cast_eliminate.h"
-#include "frontend/optimizer/irpass/convert.h"
+#include "frontend/optimizer/irpass/get_grad_eliminate.h"
+#include "frontend/optimizer/irpass/print_converter.h"
 #include "frontend/optimizer/irpass/environ_eliminate.h"
 #include "frontend/optimizer/irpass/meta_fg_var_prepare.h"
 #include "frontend/optimizer/irpass/inline.h"
@@ -27,6 +38,7 @@
 #include "frontend/optimizer/irpass/stopgrad_eliminate.h"
 #include "frontend/optimizer/irpass/incorporate_call.h"
 #include "frontend/optimizer/irpass/item_tuple_or_list_eliminate.h"
+#include "frontend/optimizer/irpass/item_dict_eliminate.h"
 #include "frontend/optimizer/irpass/merge_addn.h"
 #include "frontend/optimizer/irpass/accumulaten_eliminate.h"
 #include "frontend/optimizer/irpass/less_batch_normalization.h"
@@ -51,14 +63,9 @@
 #include "frontend/optimizer/irpass/call_graph_tuple_transform.h"
 #include "frontend/optimizer/irpass/recompute_prepare.h"
 #include "frontend/optimizer/irpass/real_op_eliminate.h"
-#include "mindspore/ccsrc/frontend/optimizer/irpass/bprop_mindir/get_constexpr_ops.h"
-#include "mindspore/ccsrc/frontend/optimizer/irpass/bprop_mindir/get_class_type.h"
-#include "mindspore/ccsrc/frontend/optimizer/irpass/bprop_mindir/get_meta_fg.h"
-#include "mindspore/ccsrc/frontend/optimizer/irpass/bprop_mindir/get_primal_attr.h"
-#include "mindspore/ccsrc/frontend/optimizer/irpass/bprop_mindir/get_sub_func_graph.h"
-#include "mindspore/ccsrc/frontend/optimizer/irpass/bprop_mindir/class_type_resolve.h"
-#include "mindspore/ccsrc/frontend/optimizer/irpass/bprop_mindir/do_signature_resolve.h"
-#include "mindspore/ccsrc/frontend/optimizer/irpass/bprop_mindir/resolve_node_resolve.h"
+#include "frontend/optimizer/irpass/convert_tensor_eliminate.h"
+#include "frontend/optimizer/irpass/recompute.h"
+#include "frontend/optimizer/irpass/grad_partial_transform.h"
 
 namespace mindspore {
 namespace opt {
@@ -67,8 +74,6 @@ OptimizeIRPassLib::OptimizeIRPassLib() {
   arithmetic_simplify_ = MakeSubstitution(std::make_shared<ArithmeticSimplify>(), "arithmetic_simplify",
                                           {prim::kPrimScalarAdd, prim::kPrimScalarMul, prim::kPrimAdd,
                                            prim::kPrimIdentity, prim::kPrimMomentum, prim::kPrimMul, prim::kPrimPow});
-  arithmetic_simplify2_ =
-    MakeSubstitution(std::make_shared<ArithmeticSimplify2>(), "arithmetic_simplify2", {prim::kPrimMul});
   special_op_eliminate_ = MakeSubstitution(
     std::make_shared<SpecialOpEliminater>(), "special_op_eliminate",
     {prim::kPrimInsertGradientOf, prim::kPrimHookBackward, prim::kPrimCellBackwardHook, prim::kPrimPrintShapeType});
@@ -107,10 +112,18 @@ OptimizeIRPassLib::OptimizeIRPassLib() {
     {prim::kPrimTupleGetItem, prim::kPrimTupleSetItem, prim::kPrimListGetItem, prim::kPrimListSetItem});
   make_slice_get_slice_eliminator_ = MakeSubstitution(std::make_shared<MakeSliceSliceGetItemEliminator>(),
                                                       "make_slice_get_slice_eliminator", {prim::kPrimSliceGetItem});
+  dict_get_item_eliminator_ =
+    MakeSubstitution(std::make_shared<DictGetitemEliminator>(), "dict_get_item_eliminator", prim::kPrimDictGetItem);
+  dict_get_item_const_eliminator_ = MakeSubstitution(std::make_shared<DictGetitemConstEliminator>(),
+                                                     "dict_get_item_const_eliminator", prim::kPrimDictGetItem);
+  dict_set_item_eliminator_ =
+    MakeSubstitution(std::make_shared<DictSetitemEliminator>(), "dict_set_item_eliminator", prim::kPrimDictSetItem);
   stack_unstack_eliminate_ =
     MakeSubstitution(std::make_shared<StackUnstackEliminator>(), "stack_unstack_eliminate", prim::kPrimUnstack);
   tile_eliminate_ = MakeSubstitution(std::make_shared<TileEliminater>(), "tile_eliminate", prim::kPrimTile);
   cast_eliminate_ = MakeSubstitution(std::make_shared<CastEliminater>(), "cast_eliminate", prim::kPrimCast);
+  get_grad_eliminate_ =
+    MakeSubstitution(std::make_shared<GetGradEliminater>(), "get_grad_eliminate", prim::kPrimGetGrad);
   reshape_eliminate_ = MakeSubstitution(std::make_shared<ReshapeEliminater>(), "reshape_eliminate", prim::kPrimReshape);
   transpose_eliminate_ =
     MakeSubstitution(std::make_shared<TransposeSameIOEliminater>(), "transpose_eliminate", prim::kPrimTranspose);
@@ -131,6 +144,11 @@ OptimizeIRPassLib::OptimizeIRPassLib() {
   all_reduce_const_elim_ =
     MakeSubstitution(std::make_shared<AllReduceConstElim>(), "reduce_all_const_elim", prim::kPrimAllReduce);
   real_op_eliminate_ = MakeSubstitution(std::make_shared<RealOpEliminate>(), "real_op_eliminate", prim::kPrimRealInner);
+  convert_tensor_eliminate_ = MakeSubstitution(std::make_shared<ConvertTensorEliminate>(), "convert_tensor_eliminate",
+                                               {prim::kPrimConvertToAdapterTensor, prim::kPrimConvertToMsTensor});
+  convert_tensor_all_eliminate_ =
+    MakeSubstitution(std::make_shared<ConvertTensorAllEliminate>(), "convert_tensor_all_eliminate",
+                     {prim::kPrimConvertToAdapterTensor, prim::kPrimConvertToMsTensor});
 
   // Environ Item Eliminate
   environ_get_eliminate_ =
@@ -228,6 +246,9 @@ OptimizeIRPassLib::OptimizeIRPassLib() {
   print_tuple_wrapper_ =
     MakeSubstitution(std::make_shared<PrintTupleWrapper>(), "print_tuple_wrapper", prim::kPrimPrint);
 
+  print_const_string_wrapper_ =
+    MakeSubstitution(std::make_shared<PrintConstStringWrapper>(), "print_const_string_wrapper", prim::kPrimPrint);
+
   // tuple parameter graph transform
   call_graph_tuple_transform_ =
     MakeSubstitution(std::make_shared<CallGraphTupleTransform>(), "graph_param_transform", IsNode);
@@ -249,55 +270,38 @@ OptimizeIRPassLib::OptimizeIRPassLib() {
   // Value_Based Eliminate
   value_based_eliminate_ = MakeSubstitution(std::make_shared<ValueBasedEliminate>(), "value_based_eliminate",
                                             {prim::kPrimSelect, prim::kPrimMinimum, prim::kPrimMaximum});
+  // Partial func graph input defer inline
+  partial_defer_inline_ =
+    MakeSubstitution(std::make_shared<PartialDeferInline>(), "partial_defer_inline", prim::kPrimPartial);
 
-  // switch defer inline
+  // Switch func graph input defer inline
   switch_defer_inline_ =
     MakeSubstitution(std::make_shared<SwitchDeferInline>(), "switch_defer_inline", prim::kPrimSwitch);
 
-  // switch_layer defer inline
+  // SwitchLayer func graph input defer inline
   switch_layer_defer_inline_ =
     MakeSubstitution(std::make_shared<SwitchLayerDeferInline>(), "switch_layer_defer_inline", prim::kPrimSwitchLayer);
 
-  // recompute
+  // Recompute
   set_cell_output_no_recompute_ = MakeSubstitution(std::make_shared<SetCellOutputNoRecompute>(),
                                                    "set_cell_output_no_recompute", IsValueNode<FuncGraph>);
-
-  // Workaround
-  stop_gradient_special_op_ =
-    MakeSubstitution(std::make_shared<StopGradientSpecialOp>(), "stop_gradient_special_op", prim::kPrimBiasAddGrad);
+  remove_not_recompute_node_ =
+    MakeSubstitution(std::make_shared<RemoveNotRecomputeNode>(), "remove_not_recompute_node", IsCNode);
 }
 
 ResolveIRPassLib::ResolveIRPassLib() {
   // In resolver_, some patterns have priority over others.
-  resolver_ = MakeSubstitution(std::make_shared<Resolver>(), "getattr_resolve",
-                               {prim::kPrimGetAttr, prim::kPrimResolve}, opt::CHECK_RENORM, true);
+  resolver_ = MakeSubstitution(std::make_shared<Resolver>(), "getattr_setattr_resolve",
+                               {prim::kPrimGetAttr, prim::kPrimSetAttr, prim::kPrimResolve}, opt::CHECK_RENORM, true);
 }
 
 MetaUnpackPrepareLib::MetaUnpackPrepareLib() {
   meta_unpack_prepare_ = MakeSubstitution(std::make_shared<MetaFgVarPrepare>(), "meta_unpack_prepare", IsCNode);
 }
 
-BpropMindIRPassLib::BpropMindIRPassLib() {
-  get_constexpr_ops_ =
-    MakeSubstitution(std::make_shared<GetConstexprOps>(), "get_constexpr_ops", IsValueNode<prim::DoSignaturePrimitive>);
-
-  get_class_type_ = MakeSubstitution(std::make_shared<GetClassType>(), "get_class_type", IsValueNode<MindIRClassType>);
-
-  get_meta_fg_ = MakeSubstitution(std::make_shared<GetMetaFg>(), "get_meta_fg", IsValueNode<MindIRMetaFuncGraph>);
-
-  get_primal_attr_ = MakeSubstitution(std::make_shared<GetPrimalAttr>(), "get_primal_attr", {prim::kPrimGetAttr});
-
-  get_sub_func_graph_ =
-    MakeSubstitution(std::make_shared<GetSubFuncGraph>(), "get_sub_func_graph", {prim::kPrimResolve});
-
-  class_type_resolve_ =
-    MakeSubstitution(std::make_shared<ClassTypeResolve>(), "class_type_resolve", IsValueNode<parse::ClassType>);
-
-  do_signature_resolve_ =
-    MakeSubstitution(std::make_shared<DoSignatureResolve>(), "do_signature_resolve", IsCNodeDoSignature);
-
-  resolve_node_resolve_ =
-    MakeSubstitution(std::make_shared<ResolveNodeResolve>(), "resolve_node_resolve", {prim::kPrimResolve});
+GradPartialPassLib::GradPartialPassLib() {
+  grad_partial_transform_ =
+    MakeSubstitution(std::make_shared<GradPartialTransform>(), "grad_partial_transform", IsCNode);
 }
 }  // namespace irpass
 }  // namespace opt

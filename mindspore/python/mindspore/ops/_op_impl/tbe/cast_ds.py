@@ -25,7 +25,8 @@ cast_ds_op_info = TBERegOp("Cast") \
     .partial_flag(True) \
     .need_check_supported(True) \
     .attr("dst_type", "required", "int", "all") \
-    .dynamic_shape(True)\
+    .dynamic_shape(True) \
+    .dynamic_compile_static(True) \
     .input(0, "x", False, "required", "all") \
     .output(0, "y", False, "required", "all") \
     .op_pattern("formatAgnostic") \
@@ -42,11 +43,10 @@ cast_ds_op_info = TBERegOp("Cast") \
     .dtype_format(DataType.I32_None, DataType.BOOL_None) \
     .dtype_format(DataType.I32_None, DataType.F16_None) \
     .dtype_format(DataType.I32_None, DataType.F32_None) \
-    .dtype_format(DataType.I32_None, DataType.I8_None) \
-    .dtype_format(DataType.I32_None, DataType.U8_None) \
     .dtype_format(DataType.F16_None, DataType.U8_None) \
     .dtype_format(DataType.F16_None, DataType.F32_None) \
     .dtype_format(DataType.F16_None, DataType.I32_None) \
+    .dtype_format(DataType.F16_None, DataType.BOOL_None) \
     .dtype_format(DataType.F32_None, DataType.F16_None) \
     .dtype_format(DataType.F32_None, DataType.I32_None) \
     .get_op_info()

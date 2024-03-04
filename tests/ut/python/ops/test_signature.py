@@ -72,7 +72,9 @@ def test_scatter_nd_update():
     net = NetScatterNdUpdate()
     x = Tensor(np.ones([5]).astype(np.float16))
     idx = Tensor(np.ones([1]).astype(np.int32))
-    net(idx, x)
+    with pytest.raises(ValueError) as ex:
+        net(idx, x)
+        assert "the dimension of \'indices\' must be greater than or equal to 2" in str(ex.value)
 
 
 def test_signature_error_info():
@@ -91,7 +93,7 @@ def test_signature_error_info():
             return self.scatter(self.b, idx, x)
 
     net = NetScatterDiv()
-    with pytest.raises(RuntimeError) as ex:
+    with pytest.raises(TypeError) as ex:
         net(Tensor(np.random.randint(1, size=(5, 8, 2)).astype(np.int32)),
             Tensor(np.random.randint(1, 256, size=(5, 8, 2, 3)).astype(np.float32)))
     assert "Data type conversion of \'Parameter\' is not supported, " \

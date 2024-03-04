@@ -18,10 +18,11 @@
 #include <memory>
 #include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 #include "utils/ms_context.h"
 
 namespace mindspore {
@@ -98,14 +99,10 @@ abstract::ShapePtr AvgPool3DGradInferShape(const PrimitivePtr &primitive,
   if (!IsDynamicRank(grad_shape)) {
     (void)CheckAndConvertUtils::CheckInteger("grad_rank", SizeToLong(grad_shape.size()), kEqual, k5DInputDims, op_name);
   }
-  std::vector<int64_t> origin_input_size;
-  if (input_args[0]->isa<abstract::AbstractTuple>()) {  // origin_size is tuple
-    origin_input_size = GetValue<std::vector<int64_t>>(input_args[0]->BuildValue());
-  } else if (input_args[0]->isa<abstract::AbstractTensor>()) {
-    GetTensorIntValue(input_args[0], &origin_input_size, "origin_input_shape");
-  } else {
-    MS_LOG(EXCEPTION) << "For '" << op_name << "', the first input data size must be a tuple or tensor, but got: "
-                      << input_args[0]->BuildShape()->ToString() << ".";
+  auto origin_input_size = GetShapeValue(primitive, input_args[0]);
+  if (IsDynamic(origin_input_size)) {
+    auto dim = abstract::Shape::kShapeDimAny;
+    origin_input_size = {dim, dim, dim, dim, dim};
   }
   return std::make_shared<abstract::Shape>(origin_input_size);
 }
@@ -137,7 +134,25 @@ AbstractBasePtr AvgPool3DGradInfer(const abstract::AnalysisEnginePtr &, const Pr
   return res;
 }
 
-REGISTER_HOST_DEPENDS(kNameAvgPool3DGrad, {0});
-REGISTER_PRIMITIVE_EVAL_IMPL(AvgPool3DGrad, prim::kPrimAvgPool3DGrad, AvgPool3DGradInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGAvgPool3DGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return AvgPool3DGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return AvgPool3DGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return AvgPool3DGradInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(AvgPool3DGrad, prim::kPrimAvgPool3DGrad, AGAvgPool3DGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -14,18 +14,25 @@
  * limitations under the License.
  */
 
-#include <map>
 #include "ops/tile.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <map>
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 std::vector<int64_t> GetInferShape(const PrimitivePtr &prim, const std::vector<int64_t> &input_shape,
                                    const std::vector<int64_t> &multiples_v) {
+  if (multiples_v.size() < input_shape.size()) {
+    MS_EXCEPTION(ValueError)
+      << "For '" << prim->name()
+      << "', 'multiples' length cannot be smaller than 'input_x' dimension length, but got 'multiples' length:"
+      << multiples_v.size() << ", 'input_x' dimension length: " << input_shape.size() << ".";
+  }
   int64_t len_sub = SizeToLong(multiples_v.size() - input_shape.size());
   std::vector<int64_t> infer_shape = input_shape;
   std::vector<int64_t> multiples_w;
@@ -37,12 +44,6 @@ std::vector<int64_t> GetInferShape(const PrimitivePtr &prim, const std::vector<i
       (void)infer_shape.insert(infer_shape.begin(), 1);
     }
     multiples_w = multiples_v;
-  }
-  if (len_sub < 0) {
-    MS_EXCEPTION(ValueError)
-      << "For '" << prim->name()
-      << "', 'multiples' length cannot be smaller than 'input_x' dimension length, but got 'multiples' length:"
-      << multiples_v.size() << ", 'input_x' dimension length: " << input_shape.size() << ".";
   }
   for (size_t i = 0; i < multiples_w.size(); i++) {
     if (infer_shape[i] == abstract::Shape::kShapeDimAny) {
@@ -56,29 +57,45 @@ std::vector<int64_t> GetInferShape(const PrimitivePtr &prim, const std::vector<i
 abstract::ShapePtr TileInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
-  const int INDEX = 2;
-  (void)CheckAndConvertUtils::CheckInteger("input numbers", SizeToLong(input_args.size()), kEqual, INDEX, prim_name);
-  for (const auto &item : input_args) {
-    MS_EXCEPTION_IF_NULL(item);
-  }
+  constexpr int64_t num = 2;
+  (void)CheckAndConvertUtils::CheckInteger("input numbers", SizeToLong(input_args.size()), kEqual, num, prim_name);
   auto shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape());
   auto input_shape = shape_map[kShape];
   std::vector<int64_t> multiples_v;
   auto multiple_value = input_args[1]->BuildValue();
+  auto multiple_shape = input_args[1]->BuildShape();
   MS_EXCEPTION_IF_NULL(multiple_value);
-  if (multiple_value->isa<tensor::Tensor>()) {
-    multiples_v = CheckAndConvertUtils::CheckTensorIntValue("multiples", multiple_value, prim_name);
-    if (IsDynamicRank(multiples_v)) {
-      return std::make_shared<abstract::Shape>(ShapeVector{abstract::Shape::kShapeRankAny});
+  if (input_args[1]->isa<abstract::AbstractTensor>()) {
+    if (!IsValueKnown(multiple_value)) {
+      auto shape = multiple_shape->cast<abstract::ShapePtr>()->shape();
+      if (IsDynamic(shape)) {
+        return std::make_shared<abstract::Shape>(ShapeVector{abstract::Shape::kShapeRankAny});
+      }
+      return std::make_shared<abstract::Shape>(ShapeVector(shape[kIndex0], abstract::Shape::kShapeDimAny));
     }
+    multiples_v = CheckAndConvertUtils::CheckTensorIntValue("multiples", multiple_value, prim_name);
   } else {
-    multiples_v = CheckAndConvertUtils::CheckTupleInt("input[multiples]", multiple_value, prim_name);
+    auto tuple_abs = input_args[1]->cast<abstract::AbstractSequencePtr>();
+    if (tuple_abs == nullptr) {
+      MS_EXCEPTION(TypeError) << "For primitive[" << prim_name
+                              << "], the input[multiples] must be a tuple with all Int elements, but got "
+                              << input_args[1]->BuildType()->ToString();
+    }
+    if (!IsValueKnown(multiple_value)) {
+      if (tuple_abs->dynamic_len()) {
+        return std::make_shared<abstract::Shape>(ShapeVector{abstract::Shape::kShapeRankAny});
+      }
+      return std::make_shared<abstract::Shape>(
+        ShapeVector(tuple_abs->elements().size(), abstract::Shape::kShapeDimAny));
+    } else {
+      multiples_v = CheckAndConvertUtils::CheckTupleInt("input[multiples]", multiple_value, prim_name);
+    }
   }
 
   for (auto multiple : multiples_v) {
     if (multiple <= 0) {
-      MS_LOG(EXCEPTION) << "For '" << prim_name << "', 'multiples' must be an positive integer, but got " << multiples_v
-                        << ".";
+      MS_EXCEPTION(ValueError) << "For '" << prim_name << "', 'multiples' must be an positive integer, but got "
+                               << multiples_v << ".";
     }
   }
 
@@ -105,10 +122,22 @@ TypePtr TileInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePt
 }  // namespace
 
 MIND_API_OPERATOR_IMPL(Tile, BaseOperator);
-AbstractBasePtr TileInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                          const std::vector<AbstractBasePtr> &input_args) {
-  return abstract::MakeAbstract(TileInferShape(primitive, input_args), TileInferType(primitive, input_args));
-}
-REGISTER_PRIMITIVE_C(kNameTile, Tile);
+
+// AG means auto generated
+class MIND_API AGTileInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return TileInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return TileInferType(primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Tile, prim::kPrimTile, AGTileInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -38,6 +38,40 @@ get_version() {
     VERSION_STR=$(cat ${BASEPATH}/version.txt)
 }
 
+get_cpack_dir() {
+    # ${CPACK_PACKAGE_DIR}/${pkg_name} is the output of package_lite.cmake(make package)
+    # ${INSTALL_PREFIX}/${pkg_name} is the output of make install
+    # please use ${CPACK_PACKAGE_DIR}/${pkg_name} instead of ${INSTALL_PREFIX}/${pkg_name}
+    local pack_dir="_CPack_Packages"
+    local ms_pack="mindspore-lite-${VERSION_STR}"
+    local cpack_dir="${INSTALL_PREFIX}/${pack_dir}"
+
+    local linux_x86_path="${cpack_dir}/Linux/TGZ/${ms_pack}/linux-x64"
+    local linux_cortex_path="${cpack_dir}/Linux/TGZ/${ms_pack}/none-cortex-m7"
+    local linux_aarch64_path="${cpack_dir}/Linux/TGZ/${ms_pack}/linux-aarch64"
+    local linux_aarch32_path="${cpack_dir}/Linux/TGZ/${ms_pack}/linux-aarch32"
+    local android_aarch64_path="${cpack_dir}/Android/TGZ/${ms_pack}/android-aarch64"
+    local android_aarch32_path="${cpack_dir}/Android/TGZ/${ms_pack}/android-aarch32"
+
+    CPACK_PACKAGE_DIR=""
+    if [ -d "${linux_x86_path}" ]; then
+      CPACK_PACKAGE_DIR=${linux_x86_path}
+    elif [ -d "${linux_cortex_path}" ]; then
+      CPACK_PACKAGE_DIR=${linux_cortex_path}
+    elif [ -d "${linux_aarch64_path}" ]; then
+      CPACK_PACKAGE_DIR=${linux_aarch64_path}
+    elif [ -d "${linux_aarch32_path}" ]; then
+      CPACK_PACKAGE_DIR=${linux_aarch32_path}
+    elif [ -d "${android_aarch64_path}" ]; then
+      CPACK_PACKAGE_DIR=${android_aarch64_path}
+    elif [ -d "${android_aarch32_path}" ]; then
+      CPACK_PACKAGE_DIR=${android_aarch32_path}
+    else
+      echo "Please check cpack path."
+    fi
+    echo "Using cpack output path: ${CPACK_PACKAGE_DIR}"
+}
+
 write_commit_file() {
     COMMIT_STR=$(git log -1 | grep commit)
     echo ${COMMIT_STR} > "${BASEPATH}/mindspore/lite/build/.commit_id"
@@ -68,6 +102,7 @@ build_lite_jni_and_jar() {
 
     # copy so
     local is_train=on
+    local is_cloud_infer=off
     cd ${INSTALL_PREFIX}/
 
     rm -rf ${PKG_NAME}
@@ -91,21 +126,17 @@ build_lite_jni_and_jar() {
     cd java/jni
     # copy glog lib and headers
     LIB_GLOG="libmindspore_glog.so*"
-    if [[ ${MSLITE_ENABLE_RUNTIME_GLOG} == "on" || ${MSLITE_ENABLE_RUNTIME_GLOG} == "ON" || ${MSLITE_ENABLE_SERVER_INFERENCE} == "on" || ${MSLITE_ENABLE_SERVER_INFERENCE} == "ON" ]]; then
-      if [ -f "`echo ${INSTALL_PREFIX}/${PKG_NAME}/runtime/third_party/glog/${LIB_GLOG}`" ]; then
-        cp ${INSTALL_PREFIX}/${PKG_NAME}/runtime/third_party/glog/*.so* ${LITE_JAVA_PATH}/java/${NATIVE_PATH_ARCH}/libs/
-        cp ${INSTALL_PREFIX}/${PKG_NAME}/runtime/third_party/glog/*.so* ${LITE_JAVA_PATH}/native/libs/${NATIVE_PATH_ARCH}/
-      else
-        echo "no glog lib found, exit."
-        exit 1
-      fi
-      if [ -d "${BASEPATH}/output/tmp/${PKG_NAME}/runtime/include/third_party/glog" ]; then
-          rm -rf jni_include && mkdir jni_include
-          cp ${BASEPATH}/output/tmp/${PKG_NAME}/runtime/include/third_party/glog  ./jni_include -r
-      else
-          echo "no glog hesders found, exit."
-          exit 1
-      fi
+    if [ -f "`echo ${INSTALL_PREFIX}/${PKG_NAME}/runtime/third_party/glog/${LIB_GLOG}`" ]; then
+      cp ${INSTALL_PREFIX}/${PKG_NAME}/runtime/third_party/glog/*.so* ${LITE_JAVA_PATH}/java/${NATIVE_PATH_ARCH}/libs/
+      cp ${INSTALL_PREFIX}/${PKG_NAME}/runtime/third_party/glog/*.so* ${LITE_JAVA_PATH}/native/libs/${NATIVE_PATH_ARCH}/
+    else
+      echo "no glog lib found."
+    fi
+    if [ -d "${BASEPATH}/output/tmp/${PKG_NAME}/runtime/include/third_party/glog" ]; then
+        rm -rf jni_include && mkdir jni_include
+        cp ${BASEPATH}/output/tmp/${PKG_NAME}/runtime/include/third_party/glog  ./jni_include -r
+    else
+        echo "no glog hesders found."
     fi
     # build jni so
     echo "cmake ${JNI_CMAKE_ARGS} -DSUPPORT_TRAIN=${is_train} ${LITE_JAVA_PATH}/native/"
@@ -119,18 +150,47 @@ build_lite_jni_and_jar() {
     cp ./libmindspore-lite-jni.so ${LITE_JAVA_PATH}/java/${NATIVE_PATH_ARCH}/libs/
     cp ./libmindspore-lite-jni.so ${LITE_JAVA_PATH}/native/libs/${NATIVE_PATH_ARCH}/
     cp ./libmindspore-lite-jni.so ${INSTALL_PREFIX}/${PKG_NAME}/runtime/lib/
-    cp ${BASEPATH}/output/tmp/${PKG_NAME}/runtime/lib/*.so ${LITE_JAVA_PATH}/src/main/resources/com/mindspore/lite/${RESOURCE_PATH_ARCH}/
-    if [ -f "`echo ${BASEPATH}/output/tmp/${PKG_NAME}/runtime/third_party/glog/${LIB_GLOG}`" ]; then
-      cp ${BASEPATH}/output/tmp/${PKG_NAME}/runtime/third_party/glog/libmindspore_glog.so* ${LITE_JAVA_PATH}/src/main/resources/com/mindspore/lite/${RESOURCE_PATH_ARCH}/libmindspore_glog.so
+
+    if [[ "$MSLITE_ENABLE_CLOUD_FUSION_INFERENCE" == "ON" || "$MSLITE_ENABLE_CLOUD_FUSION_INFERENCE" == "on" ]];then
+      is_cloud_infer=on
     fi
-    LIB_JPEG="libjpeg.so*"
-    if [ -f "`echo ${BASEPATH}/output/tmp/${PKG_NAME}/runtime/third_party/libjpeg-turbo/lib/${LIB_JPEG}`" ]; then
-      cp ${BASEPATH}/output/tmp/${PKG_NAME}/runtime/third_party/libjpeg-turbo/lib/${LIB_JPEG} ${LITE_JAVA_PATH}/src/main/resources/com/mindspore/lite/${RESOURCE_PATH_ARCH}/libjpeg.so
+    if [[ "$MSLITE_ENABLE_CLOUD_INFERENCE" == "ON" || "$MSLITE_ENABLE_CLOUD_INFERENCE" == "on" ]];then
+      is_cloud_infer=on
     fi
-    LIB_TURBOJPEG="libturbojpeg.so*"
-    if [ -f "`echo ${BASEPATH}/output/tmp/${PKG_NAME}/runtime/third_party/libjpeg-turbo/lib/${LIB_TURBOJPEG}`" ]; then
-      cp ${BASEPATH}/output/tmp/${PKG_NAME}/runtime/third_party/libjpeg-turbo/lib/${LIB_TURBOJPEG} ${LITE_JAVA_PATH}/src/main/resources/com/mindspore/lite/${RESOURCE_PATH_ARCH}/libturbojpeg.so
+
+    RUNTIME_LIB_DIR="${BASEPATH}/output/tmp/${PKG_NAME}/runtime/lib"
+    if [[ -d ${RUNTIME_LIB_DIR} ]]; then
+      if [ "$(ls -A ${RUNTIME_LIB_DIR})" ]; then
+        cp ${RUNTIME_LIB_DIR}/*.so ${LITE_JAVA_PATH}/src/main/resources/com/mindspore/lite/${RESOURCE_PATH_ARCH}/
+      fi
     fi
+    CONVERTER_LIB_DIR="${BASEPATH}/output/tmp/${PKG_NAME}/tools/converter/lib"
+    if [[ "X$is_cloud_infer" = "Xon" && -d ${CONVERTER_LIB_DIR} ]]; then
+      if [ "$(ls -A ${CONVERTER_LIB_DIR})" ]; then
+        cp ${CONVERTER_LIB_DIR}/*.so ${LITE_JAVA_PATH}/src/main/resources/com/mindspore/lite/${RESOURCE_PATH_ARCH}/
+      fi
+    fi
+
+    if [ -f "`echo ${BASEPATH}/output/tmp/${PKG_NAME}/tools/converter/lib/${LIB_GLOG}`" ]; then
+      cp ${BASEPATH}/output/tmp/${PKG_NAME}/tools/converter/lib/libmindspore_glog.so* ${LITE_JAVA_PATH}/src/main/resources/com/mindspore/lite/${RESOURCE_PATH_ARCH}/libmindspore_glog.so
+    fi
+    LIB_OPENCV_IMGPROC="libopencv_imgproc.so*"
+    if [[ "X$is_cloud_infer" = "Xon" && -f "`echo ${BASEPATH}/output/tmp/${PKG_NAME}/tools/converter/lib/${LIB_OPENCV_IMGPROC}`" ]]; then
+      cp ${BASEPATH}/output/tmp/${PKG_NAME}/tools/converter/lib/${LIB_OPENCV_IMGPROC} ${LITE_JAVA_PATH}/src/main/resources/com/mindspore/lite/${RESOURCE_PATH_ARCH}/libopencv_imgproc.so
+    fi
+    LIB_OPENCV_CORE="libopencv_core.so*"
+    if [[ "X$is_cloud_infer" = "Xon" && -f "`echo ${BASEPATH}/output/tmp/${PKG_NAME}/tools/converter/lib/${LIB_OPENCV_CORE}`" ]]; then
+      cp ${BASEPATH}/output/tmp/${PKG_NAME}/tools/converter/lib/${LIB_OPENCV_CORE} ${LITE_JAVA_PATH}/src/main/resources/com/mindspore/lite/${RESOURCE_PATH_ARCH}/libopencv_core.so
+    fi
+    LIB_OPENCV_IMGCODECS="libopencv_imgcodecs.so*"
+    if [[ "X$is_cloud_infer" = "Xon" && -f "`echo ${BASEPATH}/output/tmp/${PKG_NAME}/tools/converter/lib/${LIB_OPENCV_IMGCODECS}`" ]]; then
+      cp ${BASEPATH}/output/tmp/${PKG_NAME}/tools/converter/lib/${LIB_OPENCV_IMGCODECS} ${LITE_JAVA_PATH}/src/main/resources/com/mindspore/lite/${RESOURCE_PATH_ARCH}/libopencv_imgcodecs.so
+    fi
+    LIB_DNNL="libdnnl.so*"
+    if [[ "X$is_cloud_infer" = "Xon" && -f "`echo ${BASEPATH}/output/tmp/${PKG_NAME}/runtime/third_party/dnnl/${LIB_DNNL}`" ]]; then
+      cp ${BASEPATH}/output/tmp/${PKG_NAME}/runtime/third_party/dnnl/${LIB_DNNL} ${LITE_JAVA_PATH}/src/main/resources/com/mindspore/lite/${RESOURCE_PATH_ARCH}/libdnnl.so
+    fi
+
     if [[ "X$is_train" = "Xon" ]]; then
       cp ./libmindspore-lite-train-jni.so ${LITE_JAVA_PATH}/java/${NATIVE_PATH_ARCH}/libs/
       cp ./libmindspore-lite-train-jni.so ${LITE_JAVA_PATH}/native/libs/${NATIVE_PATH_ARCH}/
@@ -138,6 +198,7 @@ build_lite_jni_and_jar() {
       cp ./libmindspore-lite-train-jni.so ${LITE_JAVA_PATH}/src/main/resources/com/mindspore/lite/${RESOURCE_PATH_ARCH}/
     fi
 
+    chmod -R 750 ${LITE_JAVA_PATH}/src/main/resources/com/mindspore/lite
     cd ${LITE_JAVA_PATH}/java
     rm -rf gradle .gradle gradlew gradlew.bat
     local gradle_version=""
@@ -173,8 +234,84 @@ build_lite_jni_and_jar() {
     echo "---------------- mindspore lite jni and jar: build success ----------------"
 }
 
+get_python_tag(){
+    local minor_version=`python3 -V 2>&1 | awk '{print $2}' | awk -F '.' '{print $2}'` || true
+    local py_tags="cp${python_version}${minor_version}-cp${python_version}${minor_version}"
+    if [[ "${minor_version}" == "7" ]]; then
+      py_tags="cp37-cp37m"
+    fi
+    echo ${py_tags}
+}
+
+build_akg() {
+  local python_version=`python3 -V 2>&1 | awk '{print $2}' | awk -F '.' '{print $1}'` || true
+  if [[ "${python_version}" == "3" ]]; then
+    echo "---------------- AKG: build start ----------------"
+    AKG_DIR=${BASEPATH}/akg
+    BUILD_DIR=${BASEPATH}/mindspore/lite/build
+    write_version() {
+        cd ${AKG_DIR}
+        if [ ! -e ${AKG_DIR}/version.txt ]; then
+            version=$(git branch | sed -n '/\* /s///p')
+            if [ -z "${version}" ]; then
+                version='master'
+            fi
+            echo ${version#r} >${BUILD_DIR}/akg/version.txt
+        else
+          cp ${AKG_DIR}/version.txt ${BUILD_DIR}/akg
+        fi
+        cp ${AKG_DIR}/setup.py ${BUILD_DIR}/akg/akg_setup.py
+    }
+    cd ${BUILD_DIR}
+    mkdir -pv akg
+    write_version
+    cd ${BUILD_DIR}/akg
+    mkdir -pv build
+    cd build
+    if [[ "X${DEBUG_MODE}" == "Xon" ]]; then
+        AKG_CMAKE_ARGS="${AKG_CMAKE_ARGS}  -DCMAKE_BUILD_TYPE=Debug -DUSE_AKG_LOG=1"
+    fi
+    # check llvm version for akg
+    AKG_CMAKE_ARGS="${AKG_CMAKE_ARGS} -DUSE_RPC=ON "
+    USE_LLVM=`bash ${BASEPATH}/scripts/build/akg_find_llvm.sh`
+    if [[ "X$USE_LLVM" == "Xon" ]]; then
+        graph_kernel_cfg="-DAKG_USE_LLVM=ON ${graph_kernel_cfg}"
+        AKG_CMAKE_ARGS="${AKG_CMAKE_ARGS} -DUSE_LLVM=ON"
+    fi
+    if [[ ("X${MSLITE_GPU_BACKEND}" == "Xtensorrt") && $1 == "x86_64" ]]; then
+        AKG_CMAKE_ARGS="${AKG_CMAKE_ARGS} -DUSE_CUDA=ON"
+        graph_kernel_cfg="-DAKG_USE_CUDA=ON ${graph_kernel_cfg}"
+    fi
+    if [[ ("X${MSLITE_ENABLE_ACL}" == "Xon") ]]; then
+        AKG_CMAKE_ARGS="${AKG_CMAKE_ARGS} -DENABLE_D=ON"
+        graph_kernel_cfg="-DAKG_ENABLE_D=ON ${graph_kernel_cfg}"
+    fi
+    echo "cmake ${AKG_CMAKE_ARGS}"
+    cmake -S ${AKG_DIR} ${AKG_CMAKE_ARGS} -B .
+    cmake --build . -j$THREAD_NUM
+    cmake --install .
+    cd ${BUILD_DIR}/akg
+    [ -d dist ] && rm -rf dist
+    python3 ${BUILD_DIR}/akg/akg_setup.py bdist_wheel
+    cd dist
+    for file in *.whl; do
+        file_name=$(basename $file)
+        prefix=$(echo $file_name | cut -d '-' -f 1-2)
+        PY_TAGS=`get_python_tag`
+        akg_pkg_name="${prefix}-${PY_TAGS}-linux_$1.whl"
+        mv $file ${akg_pkg_name}
+        sha256sum -b "$akg_pkg_name" >"$akg_pkg_name.sha256"
+        akg_package_path=dist/${akg_pkg_name}
+    done
+    echo "---------------- AKG: build end ----------------"
+    cd ${BUILD_DIR}
+  else
+    echo -e "\e[31mPython3 not found, so AKG will not be compiled. \e[0m"
+  fi
+}
+
 build_python_wheel_package() {
-  local python_version=`python -V 2>&1 | awk '{print $2}' | awk -F '.' '{print $1}'` || true
+  local python_version=`python3 -V 2>&1 | awk '{print $2}' | awk -F '.' '{print $1}'` || true
   if [[ "${python_version}" == "3" ]]; then
     cd ${BASEPATH}/mindspore/lite/build/
     local lite_wrapper_so=`ls python/_c_lite_wrapper*.so` || true
@@ -188,11 +325,12 @@ build_python_wheel_package() {
     if [[ "$1" == "x86_64" ]]; then
       local pkg_name=mindspore-lite-${VERSION_STR}-linux-x64
     fi
-    if [[ "${MSLITE_ENABLE_CLOUD_FUSION_INFERENCE}" == "on" ]]; then
+    if [[ ("${MSLITE_ENABLE_CLOUD_FUSION_INFERENCE}" == "on") || ("${MSLITE_ENABLE_CLOUD_INFERENCE}" == "on") ]]; then
       cp src/extendrt/*.so package/mindspore_lite/lib/
       find src/extendrt/delegate/graph_executor/litert/ -name "*.so" -exec cp '{}' package/mindspore_lite/lib/ \;
+      find src/extendrt/unified_executor/ -name "*.so" -exec cp '{}' package/mindspore_lite/lib/ \;
       find src/extendrt/convert/ -name "*.so" -exec cp '{}' package/mindspore_lite/lib/ \;
-      if [[ "${MSLITE_ENABLE_ACL}" ]]; then
+      if [[ "X${MSLITE_ENABLE_ACL}" == "Xon" ]]; then
         cp src/extendrt/kernel/ascend/*.so package/mindspore_lite/lib/
         local dvpp_utils=minddata/kernels-dvpp-image/utils/libdvpp_utils.so
         if [ -f ${dvpp_utils} ]; then
@@ -205,14 +343,26 @@ build_python_wheel_package() {
       if [ -f "${INSTALL_PREFIX}/${pkg_name}/runtime/lib/libtensorrt_plugin.so" ]; then
         cp ${INSTALL_PREFIX}/${pkg_name}/runtime/lib/libtensorrt_plugin.so package/mindspore_lite/lib/
       fi
+      if [ -f "${INSTALL_PREFIX}/${pkg_name}/runtime/lib/libascend_ge_plugin.so" ]; then
+        cp ${INSTALL_PREFIX}/${pkg_name}/runtime/lib/libascend_ge_plugin.so package/mindspore_lite/lib/
+      fi
+      if [ -f "${INSTALL_PREFIX}/${pkg_name}/runtime/lib/libllm_engine_plugin.so" ]; then
+        cp ${INSTALL_PREFIX}/${pkg_name}/runtime/lib/libllm_engine_plugin.so package/mindspore_lite/lib/
+      fi
     else
-      if [[ "${MSLITE_ENABLE_ACL}" ]]; then
+      if [[ "X${MSLITE_ENABLE_ACL}" == "Xon" ]]; then
         cp src/litert/kernel/ascend/*.so package/mindspore_lite/lib/
       fi
       cp src/*.so package/mindspore_lite/lib/
     fi
     if [ -d "${INSTALL_PREFIX}/${pkg_name}/runtime/third_party/glog" ]; then
       cp ${INSTALL_PREFIX}/${pkg_name}/runtime/third_party/glog/*.so* package/mindspore_lite/lib/
+    fi
+    if [ -d "${INSTALL_PREFIX}/${pkg_name}/runtime/third_party/dnnl" ]; then
+      cp ${INSTALL_PREFIX}/${pkg_name}/runtime/third_party/dnnl/*.so* package/mindspore_lite/lib/
+    fi
+    if [ -d "${CPACK_PACKAGE_DIR}/${pkg_name}/tools/custom_kernels" ]; then
+      cp -rf ${CPACK_PACKAGE_DIR}/${pkg_name}/tools/custom_kernels package/mindspore_lite/
     fi
     if [ -d "${INSTALL_PREFIX}/${pkg_name}/tools/converter/lib" ]; then
       cp ${INSTALL_PREFIX}/${pkg_name}/tools/converter/lib/*.so* package/mindspore_lite/lib/
@@ -234,14 +384,10 @@ build_python_wheel_package() {
     cp .commit_id package/mindspore_lite/
     echo "__version__ = '${VERSION_STR}'" > package/mindspore_lite/version.py
     cp ../python/setup.py  package/
-    export TOP_DIR=${BASEPATH}
     cd package
-    python setup.py bdist_wheel
-    local minor_version=`python -V 2>&1 | awk '{print $2}' | awk -F '.' '{print $2}'` || true
-    local py_tags="cp${python_version}${minor_version}-cp${python_version}${minor_version}"
-    if [[ "${minor_version}" == "7" ]]; then
-      py_tags="cp37-cp37m"
-    fi
+    rm -rf dist/mindspore_lite-*.whl
+    python3 setup.py bdist_wheel ${BASEPATH}
+    py_tags=`get_python_tag`
     local whl_name=mindspore_lite-${VERSION_STR}-${py_tags}-linux_$1.whl
     cp dist/mindspore_lite-*.whl ${BASEPATH}/output/${whl_name}
     cd ${BASEPATH}/output/
@@ -280,7 +426,7 @@ build_lite() {
       CMAKE_TOOLCHAIN_FILE=${BASEPATH}/cmake/lite_ios.cmake
     fi
 
-    BRANCH_NAME=nnie_3516_master_dev1
+    BRANCH_NAME=nnie_3516_master_dev2
     if [[ ("${MSLITE_REGISTRY_DEVICE}" == "Hi3516D" || "${TOOLCHAIN_NAME}" == "himix200") && "${local_lite_platform}" == "arm32" ]]; then
       TOOLCHAIN_NAME="himix200"
       MSLITE_REGISTRY_DEVICE=Hi3516D
@@ -328,9 +474,19 @@ build_lite() {
         LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DTOOLCHAIN_NAME=himix200"
         LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DMSLITE_MINDDATA_IMPLEMENT=off"
         LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DMSLITE_ENABLE_FP16=off -DMSLITE_ENABLE_TRAIN=off -DMSLITE_GPU_BACKEND=off"
+      elif [[ "${TOOLCHAIN_NAME}" == "ohos" ]]; then
+        pkg_name=mindspore-lite-${VERSION_STR}-ohos-arm32
+        CMAKE_TOOLCHAIN_FILE=${OHOS_NDK}/build/cmake/ohos.toolchain.cmake
+        LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DCMAKE_OHOS_NDK=${OHOS_NDK} -DOHOS_ARCH=armeabi-v7a -DOHOS_STL=c++_static -DTOOLCHAIN_NAME=${TOOLCHAIN_NAME}"
+        LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DMSLITE_MINDDATA_IMPLEMENT=off"
+        LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DMSLITE_ENABLE_FP16=off -DMSLITE_ENABLE_TRAIN=off -DMSLITE_GPU_BACKEND=off"
       else
         # CPU : Android-aarch32
         checkndk
+        if [ -n "${MS_CCACHE_PATH}" ]; then
+          echo "use ${MS_CCACHE_PATH} to speed up compilation."
+          LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DANDROID_CCACHE=${MS_CCACHE_PATH}"
+        fi
         export PATH=${ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin:${ANDROID_NDK}/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin:${PATH}
         CMAKE_TOOLCHAIN_FILE=${ANDROID_NDK}/build/cmake/android.toolchain.cmake
         LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DMSLITE_MINDDATA_IMPLEMENT=full"
@@ -357,6 +513,19 @@ build_lite() {
         LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DTOOLCHAIN_NAME=mix210"
         LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DMSLITE_MINDDATA_IMPLEMENT=off"
         LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DMSLITE_ENABLE_FP16=on -DMSLITE_ENABLE_TRAIN=off -DMSLITE_GPU_BACKEND=off"
+      elif [[ "${TOOLCHAIN_NAME}" == "ohos" ]]; then
+        pkg_name=mindspore-lite-${VERSION_STR}-ohos-aarch64
+        CMAKE_TOOLCHAIN_FILE=${OHOS_NDK}/build/cmake/ohos.toolchain.cmake
+        LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DCMAKE_OHOS_NDK=${OHOS_NDK} -DOHOS_ARCH=arm64-v8a -DOHOS_STL=c++_static -DTOOLCHAIN_NAME=${TOOLCHAIN_NAME}"
+        LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DMSLITE_MINDDATA_IMPLEMENT=off"
+        LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DMSLITE_ENABLE_FP16=on -DMSLITE_ENABLE_TRAIN=off -DMSLITE_GPU_BACKEND=off"
+      elif [[ "${AOS_SDK}" ]]; then
+        LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DMSLITE_MINDDATA_IMPLEMENT=full"
+        LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DTARGET_AOS_ARM=on"
+        if [[ "${TOOLCHAIN_NAME}" == "gcc" ]]; then
+          LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DTOOLCHAIN_NAME=gcc"
+          LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DMSLITE_ENABLE_FP16=off"
+        fi
       else
         if [[ "${machine}" == "aarch64" ]]; then
           # CPU : Linux-aarch64
@@ -367,6 +536,10 @@ build_lite() {
         else
           # CPU/GPU : Android-aarch64
           checkndk
+          if [ -n "${MS_CCACHE_PATH}" ]; then
+            echo "use ${MS_CCACHE_PATH} to speed up compilation."
+            LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DANDROID_CCACHE=${MS_CCACHE_PATH}"
+          fi
           export PATH=${ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin:${ANDROID_NDK}/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin:${PATH}
           CMAKE_TOOLCHAIN_FILE=${ANDROID_NDK}/build/cmake/android.toolchain.cmake
           LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DANDROID_NATIVE_API_LEVEL=19 -DANDROID_NDK=${ANDROID_NDK} -DANDROID_ABI=arm64-v8a -DANDROID_TOOLCHAIN_NAME=aarch64-linux-android-clang -DANDROID_STL=${MSLITE_ANDROID_STL}"
@@ -408,10 +581,18 @@ build_lite() {
     if [[ "X$MSLITE_COMPILE_TWICE" != "X" ]]; then
       LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} -DMSLITE_COMPILE_TWICE=${MSLITE_COMPILE_TWICE}"
     fi
-    if [[ "${local_lite_platform}" == "arm64" || "${local_lite_platform}" == "arm32" ]]; then
+    if [[ ("${local_lite_platform}" == "arm64" || "${local_lite_platform}" == "arm32") && "${TOOLCHAIN_NAME}" != "ohos" ]]; then
       echo "default link libc++_static.a, export MSLITE_ANDROID_STL=c++_shared to link libc++_shared.so"
     fi
-
+    if [[ ("X${MSLITE_ENABLE_CLOUD_FUSION_INFERENCE}" != "Xon") && ("X${MSLITE_ENABLE_CLOUD_INFERENCE}" != "Xon") ]]; then
+      ENABLE_AKG="off"
+    fi
+    if [[ ( ("${local_lite_platform}" == "x86_64" && "${machine}" == "x86_64") || ("${local_lite_platform}" == "arm64" && ${machine} == "aarch64") ) && ("${ENABLE_AKG}" == "on") ]]; then
+      akg_package_path=""
+      graph_kernel_cfg=""
+      build_akg ${machine}
+      LITE_CMAKE_ARGS="${LITE_CMAKE_ARGS} ${graph_kernel_cfg} -DAKG_PKG_PATH=${akg_package_path}"
+    fi
     echo "cmake ${LITE_CMAKE_ARGS} ${BASEPATH}/mindspore/lite"
     cmake ${LITE_CMAKE_ARGS} "${BASEPATH}/mindspore/lite"
 
@@ -435,9 +616,18 @@ build_lite() {
           make install
         fi
       fi
+
       make package
+      get_cpack_dir
+
+      local package_wheel=${MSLITE_ENABLE_PACKAGE_WHEEL}
+      if [[ ("${MSLITE_ENABLE_CLOUD_FUSION_INFERENCE}" == "on") || ("${MSLITE_ENABLE_CLOUD_INFERENCE}" == "on") || ("${MSLITE_ENABLE_SERVER_INFERENCE}" == "on") ]] && [[ ${MSLITE_ENABLE_PACKAGE_WHEEL} == "" ]]; then
+        package_wheel=on
+      fi
       if [[ "${local_lite_platform}" == "x86_64" && "X$CMAKE_TOOLCHAIN_FILE" == "X" ]]; then
-        build_python_wheel_package "x86_64"
+        if [[ "${package_wheel}" == "on" ]]; then
+          build_python_wheel_package "x86_64"
+        fi
         if [ "${JAVA_HOME}" ]; then
           echo -e "\e[31mJAVA_HOME=$JAVA_HOME  \e[0m"
           build_lite_jni_and_jar "${CMAKE_ARGS}" "x86_64"
@@ -446,7 +636,9 @@ build_lite() {
             echo -e "\e[31mIf you want to compile the JAR package, please set $JAVA_HOME. For example: export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-amd64 \e[0m"
         fi
       elif [[ "${local_lite_platform}" == "arm64" ]] && [[ "${machine}" == "aarch64" ]]; then
-        build_python_wheel_package "aarch64"
+        if [[ "${package_wheel}" == "on" ]]; then
+          build_python_wheel_package "aarch64"
+        fi
         if [ "${JAVA_HOME}" ]; then
           echo -e "\e[31mJAVA_HOME=$JAVA_HOME  \e[0m"
           build_lite_jni_and_jar "${CMAKE_ARGS}" "aarch64"
@@ -469,8 +661,16 @@ build_lite() {
           cp ${BASEPATH}/mindspore/lite/build/schema/model_generated.h ${schema_path}
           cp ${BASEPATH}/mindspore/lite/build/schema/ops_generated.h ${schema_path}
           cp ${BASEPATH}/mindspore/lite/build/schema/ops_types_generated.h ${schema_path}
-          local protobuf_arm_lib=${BASEPATH}/mindspore/lite/build/_deps/protobuf_arm-src/_build/libprotobuf-lite.a
-          if [ -e "$protobuf_arm_lib" ]; then
+          if [[ "${MSLITE_ENABLE_COREML}" == "ON" || "${MSLITE_ENABLE_COREML}" == "on" ]]; then
+            local protobuf_arm_lib=${BASEPATH}/mindspore/lite/build/_deps/protobuf_arm-src/_build/libprotobuf-lite.a
+            if [ ! -e "$protobuf_arm_lib" ]; then
+              local protobuf_arm_libpath=$(grep protobuf_arm_LIBPATH ${BASEPATH}/mindspore/lite/build/CMakeCache.txt | cut -d'=' -f2)
+              protobuf_arm_lib="${protobuf_arm_libpath}/libprotobuf-lite.a"
+            fi
+            if [ ! -e "$protobuf_arm_lib" ]; then
+              echo "failed to find libprotobuf-lite.a to build ios package"
+              exit 1
+            fi
             mkdir -p ${BASEPATH}/output/mindspore-lite.framework/third_party/protobuf
             cp $protobuf_arm_lib ${BASEPATH}/output/mindspore-lite.framework/third_party/protobuf/
           fi
@@ -489,7 +689,7 @@ build_lite() {
               cp ${INSTALL_PREFIX}/mindspore-lite*/tools/converter/lib/*.so* ${BASEPATH}/mindspore/lite/test/do_test || true
             fi
             cp ${INSTALL_PREFIX}/mindspore-lite*/runtime/lib/*.so* ${BASEPATH}/mindspore/lite/test/do_test || true
-            if [[ "${MSLITE_ENABLE_SERVER_INFERENCE}" == "ON" || "${MSLITE_ENABLE_SERVER_INFERENCE}" == "on" ]]; then
+            if [ -d "${INSTALL_PREFIX}/mindspore-lite*/runtime/third_party/glog" ]; then
               cp ${INSTALL_PREFIX}/mindspore-lite*/runtime/third_party/glog/*.so* ${BASEPATH}/mindspore/lite/test/do_test || true
             fi
             if [[ ! "${MSLITE_ENABLE_TRAIN}" || "${MSLITE_ENABLE_TRAIN}" == "ON" || "${MSLITE_ENABLE_TRAIN}" == "on" ]]; then
@@ -555,6 +755,10 @@ build_lite_arm64_and_jni() {
     # build jni so
     [ -n "${BASEPATH}" ] && rm -rf java/jni && mkdir -pv java/jni
     cd java/jni
+    if [ -n "${MS_CCACHE_PATH}" ]; then
+      echo "use ${MS_CCACHE_PATH} to speed up compilation."
+      ARM64_CMAKE_ARGS="$ARM64_CMAKE_ARGS -DANDROID_CCACHE=${MS_CCACHE_PATH}"
+    fi
     cmake ${ARM64_CMAKE_ARGS} -DSUPPORT_TRAIN=${is_train} -DPLATFORM_ARM64=on  \
           -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK}/build/cmake/android.toolchain.cmake" -DANDROID_NATIVE_API_LEVEL="19"      \
           -DANDROID_NDK="${ANDROID_NDK}" -DANDROID_ABI="arm64-v8a" -DANDROID_TOOLCHAIN_NAME="aarch64-linux-android-clang"  \
@@ -613,6 +817,10 @@ build_lite_arm32_and_jni() {
     # build jni so
     [ -n "${BASEPATH}" ] && rm -rf java/jni && mkdir -pv java/jni
     cd java/jni
+    if [ -n "${MS_CCACHE_PATH}" ]; then
+      echo "use ${MS_CCACHE_PATH} to speed up compilation."
+      ARM32_CMAKE_ARGS="$ARM32_CMAKE_ARGS -DANDROID_CCACHE=${MS_CCACHE_PATH}"
+    fi
     cmake ${ARM32_CMAKE_ARGS} -DSUPPORT_TRAIN=${is_train} -DPLATFORM_ARM32=on \
           -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK}/build/cmake/android.toolchain.cmake" -DANDROID_NATIVE_API_LEVEL="19"      \
           -DANDROID_NDK="${ANDROID_NDK}" -DANDROID_ABI="armeabi-v7a" -DANDROID_TOOLCHAIN_NAME="aarch64-linux-android-clang"  \
@@ -662,19 +870,30 @@ build_aar() {
     local minddata_so=${LITE_JAVA_PATH}/java/app/libs/arm64-v8a/libminddata-lite.so
     if [ -e "${minddata_so}" ]; then
       cp ${LITE_JAVA_PATH}/java/app/build/outputs/aar/mindspore-lite.aar ${BASEPATH}/output/mindspore-lite-full-${VERSION_STR}.aar
-      sha256sum ${BASEPATH}/output/mindspore-lite-full-${VERSION_STR}.aar > ${BASEPATH}/output/mindspore-lite-full-${VERSION_STR}.aar.sha256
+      cd ${BASEPATH}/output
+      sha256sum mindspore-lite-full-${VERSION_STR}.aar > mindspore-lite-full-${VERSION_STR}.aar.sha256
     else
       cp ${LITE_JAVA_PATH}/java/app/build/outputs/aar/mindspore-lite.aar ${BASEPATH}/output/mindspore-lite-${VERSION_STR}.aar
-      sha256sum ${BASEPATH}/output/mindspore-lite-${VERSION_STR}.aar > ${BASEPATH}/output/mindspore-lite-${VERSION_STR}.aar.sha256
+      cd ${BASEPATH}/output
+      sha256sum mindspore-lite-${VERSION_STR}.aar > mindspore-lite-${VERSION_STR}.aar.sha256
     fi
 }
 
 update_submodule()
 {
-  git submodule update --init graphengine
-  cd "${BASEPATH}/graphengine"
-  git submodule update --init metadef
+  if [[ "${MSLITE_ENABLE_ACL}" == "on" ]] || [[ "${AOS_SDK}" ]]; then
+    git submodule update --init graphengine
+    cd "${BASEPATH}/graphengine"
+    git submodule update --init 910/metadef
+  fi
   cd "${BASEPATH}"
+  if [[ ("X$ENABLE_AKG" == "Xon" && (("${MSLITE_ENABLE_CLOUD_FUSION_INFERENCE}" == "on") || ("${MSLITE_ENABLE_CLOUD_INFERENCE}" == "on"))) ]]; then
+    if [[ ("${MSLITE_ENABLE_ACL}" == "on") ]]; then
+      git submodule update --init akg
+    else
+      GIT_LFS_SKIP_SMUDGE=1 git submodule update --init akg
+    fi
+  fi
 }
 
 build_lite_x86_64_aarch64_jar()
@@ -778,9 +997,8 @@ fi
 
 INSTALL_PREFIX=${BASEPATH}/output/tmp
 LITE_JAVA_PATH=${BASEPATH}/mindspore/lite/java
-if [[ "${MSLITE_ENABLE_ACL}" == "on" ]]; then
-    update_submodule
-fi
+
+update_submodule
 
 CMAKE_ARGS="${CMAKE_ARGS} -DENABLE_VERBOSE=${ENABLE_VERBOSE}"
 if [[ "${DEBUG_MODE}" == "on" ]]; then
@@ -797,10 +1015,6 @@ fi
 
 get_version
 CMAKE_ARGS="${CMAKE_ARGS} -DVERSION_STR=${VERSION_STR}"
-
-if [[ "X$LITE_PLATFORM" != "Xx86_64" ]]; then
-    export ENABLE_AKG="off"
-fi
 
 if [[ "X$LITE_ENABLE_AAR" = "Xon" ]]; then
     build_aar

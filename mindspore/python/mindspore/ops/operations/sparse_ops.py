@@ -18,7 +18,7 @@
 
 """Operators for sparse operators."""
 
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.common import dtype as mstype
 from mindspore.ops import signature as sig
 from mindspore.ops.primitive import prim_attr_register, Primitive
@@ -57,9 +57,12 @@ class SparseDenseCwiseAdd(Primitive):
 
 
     Supported Platforms:
-        ``Ascend`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore.common.tensor import Tensor
+        >>> from mindspore.common import dtype as ms
+        >>> from mindspore.ops.operations import sparse_ops as ops
         >>> x1_indices = Tensor([[0, 0], [2, 2]], dtype=ms.int64)
         >>> x1_values = Tensor([1, 2], dtype=ms.int32)
         >>> x1_shape = Tensor([3, 3], dtype=ms.int64)
@@ -109,9 +112,12 @@ class SparseDenseCwiseMul(Primitive):
         ValueError: If `x1_indices` proceed to cross the border the interview.
 
     Supported Platforms:
-        ``Ascend`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore.common.tensor import Tensor
+        >>> from mindspore.common import dtype as ms
+        >>> from mindspore.ops.operations import sparse_ops as ops
         >>> x1_indices = Tensor([[0, 0], [2, 2]], dtype=ms.int64)
         >>> x1_values = Tensor([1, 2], dtype=ms.int32)
         >>> x1_shape = Tensor([3, 3], dtype=ms.int64)
@@ -161,9 +167,12 @@ class SparseDenseCwiseDiv(Primitive):
         ValueError: If `x1_indices` proceed to cross the border the interview.
 
     Supported Platforms:
-        ``Ascend`` ``CPU``
+        ``Ascend`` ``GPU``
 
     Examples:
+      >>> from mindspore.common.tensor import Tensor
+      >>> from mindspore.common import dtype as ms
+      >>> from mindspore.ops.operations import sparse_ops as ops
       >>> x1_indices = Tensor([[0, 0], [2, 2]], dtype=ms.int64)
       >>> x1_values = Tensor([4, 2], dtype=ms.int32)
       >>> x1_shape = Tensor([3, 3], dtype=ms.int64)
@@ -183,10 +192,10 @@ class SparseDenseCwiseDiv(Primitive):
 
 class SparseSlice(Primitive):
     r"""
-    Slices a SparseTensor based on the "start" and "size".
+    Slices a SparseTensor based on the `start` and `size`.
 
     Inputs:
-        - **indices** (Tensor) - A 2D Tensor (N x R matrix) of type int64. The indices of the SparseTensor.
+        - **indices** (Tensor) - A 2D Tensor of shape :math:`(N, R)`, the indices of the SparseTensor.
           Support int64, each element value should be a non-negative int number.
           The shape is :math:`(N, R)`.
         - **values** (Tensor) - A 1D Tensor, represents the value corresponding to the position in the `indices`.
@@ -200,9 +209,10 @@ class SparseSlice(Primitive):
 
     Outputs:
         A `SparseTensor` objects resulting from splicing.
-        - *y_indices: A Tensor of type int64.
-        - *y_values: A Tensor. Has the same type as "values".
-        - *y_shape: A Tensor of type int64. Has the same size as `size`.
+
+        - \*y_indices: A Tensor of type int64.
+        - \*y_values: A Tensor. Has the same type as `values`.
+        - \*y_shape: A Tensor of type int64. Has the same size as `size`.
 
     Raises:
         TypeError: If the dtype of `indices`, `shape`, `start`, `size` are not int64.
@@ -214,7 +224,7 @@ class SparseSlice(Primitive):
         ValueError: If the shape of `shape` is not corresponding to `size`.
 
     Supported Platforms:
-        ``Ascend`` ``CPU``
+
 
     Examples:
         >>> indices = Tensor(np.array([[0, 1], [1, 2], [1, 3], [2, 2]]).astype(np.int64))
@@ -277,7 +287,7 @@ class SparseSparseMaximum(Primitive):
         ValueError: If the `x1_shape` and `x2_shape` mismatch with each other.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> x1_indices = Tensor([[0, 1], [1, 2]])
@@ -295,6 +305,7 @@ class SparseSparseMaximum(Primitive):
         >>> print(y_values)
         [3. 4. 2.]
     """
+
     @prim_attr_register
     def __init__(self):
         """Initialize SparseSparseMaximum."""
@@ -307,7 +318,7 @@ class SetSize(Primitive):
      Number of unique elements along last dimension of input set.
 
     Args:
-        validate_indices (bool): If true, sparse tensor is transposed before multiplication. Default: True.
+        validate_indices (bool): If true, sparse tensor is transposed before multiplication. Default: ``True`` .
 
     Inputs:
         - **set_indices** (Tensor) - A 2-D Tensor, represents the position of the element in the sparse tensor.
@@ -331,13 +342,13 @@ class SetSize(Primitive):
             parameter description.
 
     Supported Platforms:
-        ``CPU``
+        ``Ascend`` ``CPU``
 
     Examples:
         >>> set_indices = Tensor(np.array([[0, 1], [1, 2]]).astype(np.int64))
         >>> set_values = Tensor(np.array([1, 2]).astype(np.int64))
         >>> set_shape = Tensor(np.array([3, 4]).astype(np.int64))
-        >>> setsize = op.SetSize()
+        >>> setsize = ops.SetSize()
         >>> out = setsize(set_indices, set_values, set_shape)
         >>> print(out)
         [1 1 0]
@@ -423,9 +434,11 @@ class SparseToDense(Primitive):
         ValueError: If `sparse_shape`, shape of `indices` and shape of `values` don't meet the parameter description.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, ops
         >>> indices = Tensor([[0, 1], [1, 2]])
         >>> values = Tensor([1, 2], dtype=mindspore.float32)
         >>> sparse_shape = (3, 4)
@@ -450,7 +463,7 @@ class SparseToDenseV2(Primitive):
 
     Args:
         validate_indices (bool): If true, indices are checked to make sure they are sorted in
-                                 lexicographic order and that there are no repeats. Default: True.
+                                 lexicographic order and that there are no repeats. Default: ``True`` .
 
     Inputs:
         - **indices** (Tensor) - A 0D, 1D, or 2D Tensor of type int32 or int64, represents the position
@@ -494,6 +507,7 @@ class SparseToDenseV2(Primitive):
         """Initialize SparseToDenseV2."""
         self.add_prim_attr("max_length", 1000000)
         self.validate_indices = validate_indices
+        validator.check_value_type('validate_indices', validate_indices, [bool], self.name)
         self.add_prim_attr("validate_indices", self.validate_indices)
         self.init_prim_io_names(
             inputs=['indices', 'output_shape', 'values', 'default_value'], outputs=['output'])
@@ -525,7 +539,7 @@ class SparseSoftmax(Primitive):
         ValueError: If the size of shape < 2.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> indices = Tensor([[0,0], [0,3], [1,2], [1,5], [2,0], [2,5]])
@@ -549,11 +563,11 @@ class SparseTensorDenseAdd(Primitive):
 
     Inputs:
         - **x1_indices** (Tensor) - A 2-D Tensor, represents the position of the element in the sparse tensor.
-          Support int32, int64, each element value should be a non-negative int number. The shape is :math:`(n, 2)`.
+          Support int32, int64, each element value should be a non-negative int number. The shape is :math:`(n, ndim)`.
         - **x1_values** (Tensor) - A 1-D Tensor, represents the value corresponding to the position in the `indices`.
           The shape should be :math:`(n,)`.
         - **x1_shape** (tuple(int)) - A positive int tuple which specifies the shape of sparse tensor,
-          should have 2 elements, represent sparse tensor shape is :math:`(N, C)`.
+          should have ndim elements, represent sparse tensor shape is :math:`(ndim,)`.
         - **x2** (Tensor) - A dense Tensor, the dtype is same as `values`.
 
     Outputs:
@@ -571,7 +585,7 @@ class SparseTensorDenseAdd(Primitive):
     Examples:
         >>> from mindspore import Tensor
         >>> import mindspore.ops as ops
-        >>> from mindspore.common import dtype as mstype
+        >>> from mindspore import dtype as mstype
         >>> x1_indices = Tensor([[0, 0], [0, 1]], dtype=mstype.int64)
         >>> x1_values = Tensor([1, 1], dtype=mstype.float32)
         >>> x1_shape = Tensor([3, 3], dtype=mstype.int64)
@@ -597,8 +611,8 @@ class SparseTensorDenseMatmul(Primitive):
     The rank of sparse matrix and dense matrix must be equal to `2`.
 
     Args:
-        adjoint_st (bool): If true, sparse tensor is transposed before multiplication. Default: False.
-        adjoint_dt (bool): If true, dense tensor is transposed before multiplication. Default: False.
+        adjoint_st (bool): If ``True`` , sparse tensor is transposed before multiplication. Default: ``False`` .
+        adjoint_dt (bool): If ``True`` , dense tensor is transposed before multiplication. Default: ``False`` .
 
     Inputs:
         - **indices** (Tensor) - A 2-D Tensor, represents the position of the element in the sparse tensor.
@@ -626,9 +640,13 @@ class SparseTensorDenseMatmul(Primitive):
             and shape of `dense` don't meet the parameter description.
 
     Supported Platforms:
-        ``CPU``
+        ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor
+        >>> from mindspore.ops import operations as ops
+        >>> from mindspore import dtype as mstype
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mindspore.int32)
         >>> values = Tensor([1, 2], dtype=mindspore.float32)
         >>> sparse_shape = (3, 4)
@@ -652,46 +670,6 @@ class SparseTensorDenseMatmul(Primitive):
         self.add_prim_attr('adjoint_b', self.adjoint_dt)
         validator.check_value_type("adjoint_st", adjoint_st, [bool], self.name)
         validator.check_value_type("adjoint_dt", adjoint_dt, [bool], self.name)
-        self.set_const_input_indexes([2])
-
-    def __infer__(self, indices, values, sparse_shape, dense):
-        validator.check_tensor_dtype_valid('indices', indices['dtype'], [
-            mstype.int32, mstype.int64], self.name)
-        valid_types = (mstype.float16, mstype.float32,
-                       mstype.float64, mstype.int32, mstype.int64)
-        args = {'values': values['dtype'], 'dense': dense['dtype']}
-        validator.check_tensors_dtypes_same_and_valid(
-            args, valid_types, self.name)
-        indices_shape = indices['shape']
-        if len(indices_shape) != 2 or indices_shape[1] != 2:
-            raise ValueError(f"For '{self.name}', the 'indices' must be a 2-D tensor and "
-                             f"the second dimension length must be 2, but got 'indices' shape: {indices_shape}.")
-        values_shape = values['shape']
-        if len(values_shape) != 1 or values_shape[0] != indices_shape[0]:
-            raise ValueError(f"For '{self.name}', the 'values' must be a 1-D tensor and "
-                             f"the first dimension length must be equal to the first dimension length of 'indices', "
-                             f"but got 'indices' shape: {indices_shape}, 'values' shape: {values_shape}.")
-        a_shape = sparse_shape['value'][::-1] if self.adjoint_st else sparse_shape['value']
-        b_shape = dense['shape'][::-1] if self.adjoint_dt else dense['shape']
-        for i in a_shape:
-            if isinstance(i, bool) or not isinstance(i, int) or i <= 0:
-                raise ValueError(f"For '{self.name}', all elements in 'sparse_shape' must be "
-                                 f"positive int number, but got 'sparse_shape': {sparse_shape['value']}.")
-        if len(a_shape) != 2 or len(b_shape) != 2:
-            raise ValueError(f"For '{self.name}', both the length of 'sparse_shape' and the tensor "
-                             f"rank of 'dense' must be equal to 2, but got the length of "
-                             f"'sparse_shape': {len(a_shape)}, "
-                             f"the tensor rank of 'dense': {len(b_shape)}.")
-        if a_shape[1] != b_shape[0]:
-            raise ValueError(f"For '{self.name}', the second dimension length of 'sparse_shape' must be equal to the "
-                             f"first dimension length of 'dense', but got "
-                             f"the tensor shape of 'sparse': {a_shape} and the tensor shape of 'dense': {b_shape}. "
-                             f"Don't meet the condition for matmul")
-        out_shape = [a_shape[0], b_shape[1]]
-        out = {'shape': tuple(out_shape),
-               'dtype': values['dtype'],
-               'value': None}
-        return out
 
 
 class CSRSparseMatrixToSparseTensor(Primitive):
@@ -769,7 +747,7 @@ class DenseToCSRSparseMatrix(Primitive):
     Converts a dense matrix(maybe batched) to its CSR sparse form.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Inputs:
         - **dense_input** (Tensor) - A 2-D or 3-D Tensor. It represents the input dense matrix.
@@ -799,7 +777,7 @@ class DenseToCSRSparseMatrix(Primitive):
         ValueError: If shape[1] of `indices` and rank of `dense_input` is not the same.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+
 
     Examples:
         >>> x = Tensor([[[1., 0.], [0., 2.]]], dtype=mindspore.float32)
@@ -834,12 +812,12 @@ class DenseToDenseSetOperation(Primitive):
     with the same first n-1 dimensions in x1 and x2.
 
     Args:
-        set_operation (str): The type of set operation, case insensitive. Default:"a-b".
+        set_operation (str): The type of set operation, case insensitive. Default: ``"a-b"`` .
             "a-b": Get the difference set of x1 to x2.
             "b-a": Get the difference set of x2 to x1.
             "intersection": Get the intersection set of x2 to x1.
             "union": Get the union set of x2 to x1.
-        validate_indices (bool): Optional attributes for DenseToDenseSetOperation.  Default: True.
+        validate_indices (bool): Optional attributes for DenseToDenseSetOperation.  Default: ``True`` .
 
     Inputs:
         - **x1** (Tensor) - The input tensor `x1` with rank `n`. 1st `n-1` dimensions must be the same as `x2`.
@@ -864,7 +842,7 @@ class DenseToDenseSetOperation(Primitive):
         ValueError: If the value of attr set_operation is not a valid value.
 
     Supported Platforms:
-        ``CPU``
+        ``Ascend`` ``CPU``
 
     Examples:
         >>> x1 = Tensor([[2, 2, 0], [2, 2, 1], [0, 2, 2]], dtype=mstype.int32)
@@ -898,7 +876,7 @@ class Sspaddmm(Primitive):
     If `x1_shape` is :math:`(s0, s1)`, `x2_shpae` should be :math:`(s0, s2)`, the `x3_shape` should be :math:`(s2, s1)`.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     .. math::
         out =\beta * x1  + \alpha * (x2 @ x3),
@@ -961,7 +939,7 @@ class Sspaddmm(Primitive):
         ValueError: If the shape of `alpha`, `beta` is not () or (1,).
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> x1_indices = Tensor(np.array([[0, 1], [0, 1]]), mstype.int64)
@@ -1033,7 +1011,7 @@ class SparseAddmm(Primitive):
         RuntimeError: If `x1_shape`, shape of `x2`, shape of `x3` don't meet the parameter description.
 
     Supported Platforms:
-        ``CPU``
+        ``GPU`` ``CPU``
 
     Examples:
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=ms.int32)
@@ -1065,7 +1043,7 @@ class SparseConcat(Primitive):
     Args:
         concat_dim(Scalar) - A Scalar, decide the dimension to concatenation along.
         The value must be in range [-rank, rank), where rank is the number of dimensions in each input
-        SparseTensor. Support int32, int64. Default: 0.
+        SparseTensor. Support int32, int64. Default: ``0`` .
 
     Inputs:
         - **sp_input_indices** (Tensor) - the list of Tensor which means COOTensor indices, and Need to
@@ -1088,7 +1066,7 @@ class SparseConcat(Primitive):
         Error: If input axis value is not in range [-rank, rank).
 
     Supported Platforms:
-        ``CPU``
+        ``Ascend`` ``CPU``
 
     Examples:
         >>> indices0 = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
@@ -1106,6 +1084,7 @@ class SparseConcat(Primitive):
          [3, 0],
          [4, 1]]), Tensor(shape=[4], dtype=Int32, value= [1, 2, 3, 4]), Tensor(shape=[2], dtype=Int64, value= [6, 4]))
     """
+
     @prim_attr_register
     def __init__(self, concat_dim=0):
         """Initialize SparseConcat."""
@@ -1251,7 +1230,7 @@ class SparseSegmentSqrtN(Primitive):
         ValueError: If `indices` is out of range of x's first dimension.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> x = Tensor(np.array([[1,2,3,4],[5,6,7,8],[9,10,11,12]]).astype(np.float32))
@@ -1313,7 +1292,7 @@ class SparseSegmentSqrtNWithNumSegments(Primitive):
         ValueError: If `indices` is out of range of x's first dimension.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> x = Tensor([[0, 1, 0, 0], [0, 1, 1, 0], [1, 0, 1, 0]], dtype=ms.float16)
@@ -1373,7 +1352,7 @@ class SparseMatrixNNZ(Primitive):
         ValueError: If shape[0] of `x_dense_shape` is not 2 or 3.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> dense_shape = Tensor([2,3], dtype=mstype.int32)
@@ -1426,7 +1405,7 @@ class SparseFillEmptyRows(Primitive):
         ValueError: If `sparse_shape`, shape of `indices` and shape of `values` don't meet the parameter description.
 
     Supported Platforms:
-        ``Ascend`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> indices = Tensor([[1, 0]], dtype=mstype.int64)
@@ -1487,9 +1466,12 @@ class SparseSegmentMeanWithNumSegments(Primitive):
         ValueError: If `indices` is out of range of x's first dimension.
 
     Supported Platforms:
-        ``CPU``
+        ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import Tensor
+        >>> import mindspore as ms
+        >>> import mindspore.ops.operations.sparse_ops as ops
         >>> x = Tensor([[0, 2, 0, 0], [0, 1, 1, 0], [2, 0, 2, 0]], dtype=ms.float16)
         >>> indices = Tensor([0, 2, 1], dtype=ms.int32)
         >>> segment_ids = Tensor([0, 0, 2], dtype=ms.int32)
@@ -1548,7 +1530,7 @@ class SparseAdd(Primitive):
         TypeError: If (x1_values/x2_values)'s type is not matched with thresh's type.
 
     Supported Platforms:
-        ``CPU`` ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
         >>> from mindspore import Tensor
@@ -1568,6 +1550,7 @@ class SparseAdd(Primitive):
         Tensor(shape=[4], dtype=Int32, value=[3, 1, 4, 2]),
         Tensor(shape=[2], dtype=Int64, value=[3, 4]))
     """
+
     @prim_attr_register
     def __init__(self):
         self.init_prim_io_names(
@@ -1581,7 +1564,7 @@ class SparseMatrixSoftmax(Primitive):
     Calculates the softmax of a CSRTensorMatrix.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Args:
         dtype (dtype.Number) - The valid data type. Only constant value is allowed.
@@ -1632,7 +1615,7 @@ class SparseMatrixSoftmax(Primitive):
         if not isinstance(dtype, (type(mstype.float32), type(mstype.single), type(mstype.float64),
                                   type(mstype.double))):
             raise TypeError(
-                "Only float32 and float64 type data are supported, but got {}".format(dtype))
+                f"Only float32 and float64 type data are supported, but got {dtype}")
         self.add_prim_attr("dtype", dtype)
         self.init_prim_io_names(inputs=['x_dense_shape', 'x_batch_pointers', 'x_row_pointers',
                                         'x_col_indices', 'x_values'],
@@ -1675,7 +1658,7 @@ class CSRSparseMatrixToDense(Primitive):
         ValueError: If shape[0] of `x_dense_shape` is not 2 or 3.
 
     Supported Platforms:
-        ``CPU``
+        ``Ascend`` ``CPU``
 
     Examples:
         >>> dense_shape = Tensor([2, 2], dtype=mindspore.int32)
@@ -1709,7 +1692,7 @@ class SparseMatrixTranspose(Primitive):
         It is assumed that all the inputs can form a legal CSR sparse matrix, otherwise this operator is not defined.
 
     Args:
-        conjugate (bool): If True, the output sparse tensor is conjugated . Default: False.
+        conjugate (bool): If ``True`` , the output sparse tensor is conjugated . Default: ``False`` .
 
     Inputs:
         - **dense_shape** (Tensor) - A 1-D Tensor, represents the shape of input sparse matrix under dense status.
@@ -1754,7 +1737,7 @@ class SparseMatrixTranspose(Primitive):
         TypeError: The input data should have the correct CSR form.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``CPU``
 
     Examples:
         >>> from mindspore.ops import operations as ops
@@ -1776,6 +1759,7 @@ class SparseMatrixTranspose(Primitive):
         >>> print(output[4])
         [99.]
     """
+
     @prim_attr_register
     def __init__(self, conjugate=False):
         """Initialize SparseMatrixTranspose"""
@@ -1926,13 +1910,14 @@ class SparseMatrixSparseMatMul(Primitive):
     Performs a matrix multiplication of a sparse matrix x1 with sparse matrix x2; return a sparse matrix x1*x2.
     Each matrix may be transposed or adjointed (conjugated and transposed),
     according to the Boolean parameters transpose_a,adjoint_a,transpose_b and adjoint_b.
-    At most one of transpose_a or adjoint_a may be True. Similarly, at most one of transpose_b or adjoint_b may be True.
+    At most one of transpose_a or adjoint_a may be ``True`` . Similarly, at most one of transpose_b or adjoint_b may
+    be ``True`` .
 
     Args:
-        transpose_a (bool): If true, sparse tensor x1 is transposed before multiplication. Default: False.
-        transpose_b (bool): If true, dense tensor x2 is transposed before multiplication. Default: False.
-        adjoint_a (bool): If true, sparse tensor x1 is adjointed before multiplication. Default: False.
-        adjoint_b (bool): If true, dense tensor x2 is adjointed before multiplication. Default: False.
+        transpose_a (bool): If ``True`` , sparse tensor x1 is transposed before multiplication. Default: ``False`` .
+        transpose_b (bool): If ``True`` , dense tensor x2 is transposed before multiplication. Default: ``False`` .
+        adjoint_a (bool): If ``True`` , sparse tensor x1 is adjointed before multiplication. Default: ``False`` .
+        adjoint_b (bool): If ``True`` , dense tensor x2 is adjointed before multiplication. Default: ``False`` .
 
     Inputs:
         - **x1_dense_shape** (Tensor) - A 1-D Tensor, represents the shape of input sparse matrix x1 under dense status.
@@ -2050,19 +2035,19 @@ class SparseMatrixMatMul(Primitive):
     Performs a matrix multiplication of a sparse matrix x1 with dense matrix x2; return a dense matrix x1*x2.
     Each matrix may be transposed or adjointed (conjugated and transposed)
     according to the Boolean parameters transpose_x1, adjoint_x1, transpose_x2 and adjoint_x2.
-    At most one of transpose_x1 or adjoint_x1 may be True.
-    Similarly, at most one of transpose_x2 or adjoint_x2 may be True.
+    At most one of transpose_x1 or adjoint_x1 may be ``True`` .
+    Similarly, at most one of transpose_x2 or adjoint_x2 may be ``True`` .
 
     Note:
         It is assumed that all the inputs can form a legal CSR sparse matrix, otherwise this operator is not defined.
 
     Args:
-        transpose_x1 (bool): If true, sparse tensor x1 is transposed before multiplication. Default: False.
-        transpose_x2 (bool): If true, dense tensor x2 is transposed before multiplication. Default: False.
-        adjoint_x1 (bool): If true, sparse tensor x1 is adjointed before multiplication. Default: False.
-        adjoint_x2 (bool): If true, dense tensor x2 is adjointed before multiplication. Default: False.
-        transpose_output (bool): If true, output x1*x2 is tansposed. Default: False.
-        conjugate_output (bool): If true, output x1*x2 is conjugated. Default: False.
+        transpose_x1 (bool): If ``True`` , sparse tensor x1 is transposed before multiplication. Default: ``False`` .
+        transpose_x2 (bool): If ``True`` , dense tensor x2 is transposed before multiplication. Default: ``False`` .
+        adjoint_x1 (bool): If ``True`` , sparse tensor x1 is adjointed before multiplication. Default: ``False`` .
+        adjoint_x2 (bool): If ``True`` , dense tensor x2 is adjointed before multiplication. Default: ``False`` .
+        transpose_output (bool): If ``True`` , output x1*x2 is tansposed. Default: ``False`` .
+        conjugate_output (bool): If ``True`` , output x1*x2 is conjugated. Default: ``False`` .
 
     Inputs:
         - **x1_dense_shape** (Tensor) - A 1-D Tensor. It represents the dense form shape of
@@ -2093,7 +2078,7 @@ class SparseMatrixMatMul(Primitive):
         ValueError: If shape[0]-1 of `x1_batch_pointers` and shape[0] of `x2_dense` are not the same.
 
     Supported Platforms:
-        ``Ascend`` ``CPU``
+        ``CPU``
 
     Examples:
         >>> x1_dense_shape = Tensor([4, 5], dtype=ms.int32)
@@ -2199,6 +2184,7 @@ class SparseMatrixAdd(Primitive):
          Tensor(shape=[2], dtype=Int32, values = [0, 1]),
          Tensor(shape=[2], dtype=Float32, values = [2.0, 4.0]))
     """
+
     @prim_attr_register
     def __init__(self):
         '''Initialize for SparseMatrixAdd'''
@@ -2216,7 +2202,7 @@ class SparseSplit(Primitive):
     `[0 : shape[split_dim] % num_split]` gets one extra dimension.
 
     Args:
-        num_split (int): An `int` that is `>= 1`. The number of ways to split. Default: 1.
+        num_split (int): An `int` that is `>= 1`. The number of ways to split. Default: ``1`` .
 
     Inputs:
         - **split_dim** (Tensor) -A 0-D Tensor of type `int64`.
@@ -2244,6 +2230,7 @@ class SparseSplit(Primitive):
     Supported Platforms:
 
     """
+
     @prim_attr_register
     def __init__(self, num_split=1):
         """Initialize SparseSplit."""
@@ -2379,6 +2366,7 @@ class SparseReshape(Primitive):
         >>> print(y_shape)
         [9 4]
     """
+
     @prim_attr_register
     def __init__(self):
         """Initialize SparseReshape."""
@@ -2392,10 +2380,10 @@ class SparseCountSparseOutput(Primitive):
     Counts the number of times each value occurs in the input.
 
     Args:
-        binary_output (bool) - If false, output the number of occurrences of each value,
-                               if True output 1 for orresponding values. Default False
-        minlength(Scalar) - Int type minimum value to count, default -1
-        maxlength(Scalar) - Int type maximum value to count, default -1
+        binary_output (bool) - If ``False`` , output the number of occurrences of each value,
+                               if ``True`` output 1 for orresponding values. Default: ``False`` .
+        minlength(Scalar) - Int type minimum value to count, Default: ``-1`` .
+        maxlength(Scalar) - Int type maximum value to count, Default: ``-1`` .
 
     Inputs:
         - **indices** (Tensor) - Tensor representing the position of the element in the sparse
@@ -2443,6 +2431,7 @@ class SparseCountSparseOutput(Primitive):
         ``CPU``
 
     """
+
     @prim_attr_register
     def __init__(self, binary_output=False, minlength=-1, maxlength=-1):
         self.init_prim_io_names(
@@ -2461,12 +2450,13 @@ class DenseToSparseSetOperation(Primitive):
     duplicates are allowed but ignored.
 
     Args:
-        set_operation (str): The type of set operation, supports four kinds of inputs, case insensitive. Default: "".
+        set_operation (str): The type of set operation, supports four kinds of inputs, case insensitive.
+            Default: ``""`` .
             "a-b": Get the difference set of x1 to x2.
             "b-a": Get the difference set of x2 to x1.
             "intersection": Get the intersection set of x2 to x1.
             "union": Get the union set of x2 to x1.
-        validate_indices (bool): Optional attributes for DenseToSparseSetOperation.  Default: True.
+        validate_indices (bool): Optional attributes for DenseToSparseSetOperation.  Default: ``True`` .
 
     Inputs:
         - **x1** (Tensor) - The input tensor `x1` with rank `n`. 1st `n-1` dimensions must be the same as `x2`.
@@ -2495,16 +2485,16 @@ class DenseToSparseSetOperation(Primitive):
         ``Ascend`` ``CPU``
 
     Examples:
-        >>> x1 = Tensor([[1 2] [3 0] [1 5]], dtype=ms.int64)
-        >>> x2_indices = Tensor([[0 1] [0 2] [1 2]], dtype=ms.int64)
-        >>> x2_values = Tensor([5 1 7],dtype=ms.int64)
-        >>> x2_shape = Tensor([3 3], dtype=ms.int64)
-        >>> dense_to_sparse_set_operation = ops.DenseToSparseSetOperation(set_operation='intersection')
-        >>> y_indices, y_values, y_shape = dense_to_sparse_set_operation(indices, values, sparse_shape)
+        >>> from mindspore.ops.operations.sparse_ops import DenseToSparseSetOperation
+        >>> x1 = Tensor([[1, 2], [3, 0], [1, 5]], dtype=ms.int64)
+        >>> x2_indices = Tensor([[0, 1], [0, 2], [1, 2]], dtype=ms.int64)
+        >>> x2_values = Tensor([5, 1, 7],dtype=ms.int64)
+        >>> x2_shape = Tensor([3, 3], dtype=ms.int64)
+        >>> dense_to_sparse_set_operation = DenseToSparseSetOperation(set_operation='intersection')
+        >>> out = dense_to_sparse_set_operation(x1, x2_indices, x2_values, x2_shape)
         >>> print(out)
-        (Tensor(shape=[2, 2], dtype=Int64, value=[[0, 0],[0, 1]]),
-         Tensor(shape=[2], dtype=Int64, value= [1, 2]),
-         Tensor(shape=[2], dtype=Int64, value= [3, 2]))
+        (Tensor(shape=[1, 2], dtype=Int64, value=
+        [[0, 0]]), Tensor(shape=[1], dtype=Int64, value= [1]), Tensor(shape=[2], dtype=Int64, value= [3, 1]))
     """
 
     @prim_attr_register
@@ -2535,11 +2525,12 @@ class RaggedTensorToTensor(Primitive):
     Inputs:
         - **shape** (Tensor) - A 1-D `Tensor`. Must be one of the following types: `int64`, `int32`.
           The desired shape of the output tensor.
-        - **values** (Tensor) - A 1-D `Tensor` representing the values of the ragged tensor.
+        - **values** (Tensor) - A 1-D or higher `Tensor` representing the values of the ragged tensor.
         - **default_value** (Tensor) - A `Tensor` representing the default value of the ragged tensor.
           Must have the same type as `values` and less dimension than `values`.
         - **row_partition_tensors** (list(Tensor)) - A list of at least 1 `Tensor` objects with the same
-          type in: `int64`, `int32`.
+          type in: `int64`, `int32`. The row partition tensor is 0-D, 1-D, 1-D, when the row partition type is
+          "FIRST_DIM_SIZE", "VALUE_ROWIDS", "ROW_SPLITS" respectively.
 
     Outputs:
         A `Tensor`. Has the same type as `values` and the shape is `shape`.
@@ -2548,20 +2539,17 @@ class RaggedTensorToTensor(Primitive):
         TypeError: If the type of `shape`, `values` or `default_value` is not Tensor.
         ValueError: If the dimension of `shape` or `values` is not 1.
         ValueError: If the dimension of `default_value` is more than `values`.
-        RuntimeError: If the order of `row_partition_tensors` is not support
+        ValueError: If the order or value of `row_partition_types` is not support.
+        RuntimeError: If the value of `row_partition_tensors` is not in ascending order
             when the `row_partition_types` is "ROW_SPLITS".
         RuntimeError: If value rowid is not less than first dim size
             when the `row_partition_types` is "FIRST_DIM_SIZE", "VALUE_ROWIDS".
-        RuntimeError: If the order of `row_partition_types` is not support.
-        RuntimeError: If the value of `row_partition_types` is not support.
-        RuntimeError: If row partition size plus `values` rank is not equal to `shape` rank.
+        ValueError: If row partition size plus `values` rank is not equal to `shape` rank.
 
     Supported Platforms:
         ``CPU``
 
     Examples:
-        >>> from mindspore.common import dtype as mstype
-        >>> from mindspore.common.tensor import Tensor
         >>> from mindspore.ops.operations.sparse_ops import RaggedTensorToTensor
         >>> shape = Tensor([4, 4], mstype.int32)
         >>> values = Tensor([1, 2, 3, 4, 5, 6, 7, 8, 9], mstype.int64)
@@ -2582,6 +2570,184 @@ class RaggedTensorToTensor(Primitive):
     @prim_attr_register
     def __init__(self, row_partition_types):
         """Initialize RaggedTensorToTensor"""
-        validator.check_value_type("row_partition_types", row_partition_types, [list], self.name)
         self.init_prim_io_names(inputs=['shape', 'values', 'default_value', 'row_partition_tensors'],
                                 outputs=['result'])
+        validator.check_value_type("row_partition_types", row_partition_types, [list], self.name)
+
+        if not row_partition_types:
+            raise ValueError(f"For {self.name}, row_partition_types cannot be empty.")
+
+        for i, item in enumerate(row_partition_types):
+            validator.check_value_type(f"row_partition_types[{i}]", item, [str], self.name)
+
+        valid_values = ("ROW_SPLITS", "FIRST_DIM_SIZE", "VALUE_ROWIDS")
+        if not set(row_partition_types).issubset(valid_values):
+            diff = tuple(set(row_partition_types).difference(valid_values))
+            raise ValueError(
+                f"For {self.name}, row_partition_types only support {valid_values}, "
+                f"but got {diff if len(diff) > 1 else repr(diff[0])}.")
+
+        first_element = valid_values[:2]
+        if row_partition_types[0] not in first_element:
+            raise ValueError(
+                f"For {self.name}, the first element of row_partition_types must be in {first_element}, "
+                f"but got '{row_partition_types[0]}'.")
+
+        if row_partition_types[0] == "FIRST_DIM_SIZE":
+            if set(row_partition_types[1:]) != {"VALUE_ROWIDS"}:
+                raise ValueError(
+                    f"For {self.name}, 'VALUE_ROWIDS' must be preceded by 'FIRST_DIM_SIZE' in row_partition_types.")
+        else:
+            if set(row_partition_types) != {"ROW_SPLITS"}:
+                raise ValueError(
+                    f"For {self.name}, the each element of row_partition_types must be 'ROW_SPLITS' "
+                    f"when row_splits tensor.")
+        self.num_row_partition_tensors = len(row_partition_types)
+        self.add_prim_attr("num_row_partition_tensors", self.num_row_partition_tensors)
+
+
+class SparseCross(Primitive):
+    """
+    Generates sparse cross from a list of sparse and dense tensors.
+
+    Args:
+        hashed_output (bool): If true, returns the hash of the cross instead of the string. This will allow us
+                              avoiding string manipulations.
+        num_buckets (int): An int that is >= 0. It is used if "hashed_output" is true.output = hashed_value%num_buckets
+                           if num_buckets > 0 else "hashed_value".
+        hash_key (int): Specify the hash_key that will be used by the "FingerprintCat64" function to combine the
+                        crosses fingerprints.
+        out_type (mindspore.dtype): The output data type. Defaults to "int64".
+        internal_type (mindspore.dtype): An type int64.
+
+    Inputs:
+        - **indices** (list(Tensor)) - A list of Tensor objects with type int64. 2-D.
+          Indices of each input SparseTensor.
+        - **values** (list(Tensor)) - A list of Tensor objects with types from: int64.
+          1-D. values of each SparseTensor.
+        - **shapes** (list(Tensor)) - A list with the same length as indices of Tensor objects with type int64.
+          1-D. Shapes of each SparseTensor.
+        - **dense_inputs** (list(Tensor)) - A list of Tensor objects with types from: int64.
+          2-D. Columns represented by dense Tensor.
+
+    Outputs:
+        - **output_indices** (Tensor) - A Tensor of type int64. 2-D. Indices of the concatenated SparseTensor.
+        - **output_values** (Tensor) - A Tensor of type "out_type". 1-D.
+          Non-empty values of the concatenated or hashed SparseTensor.
+        - **output_shape** (Tensor) - A Tensor of type int64. 1-D. Shape of the concatenated SparseTensor.
+
+    Raises:
+        TypeError: The indices shape rank is not equal to the shape rank.
+        TypeError: The indices element number is not equal to the value element number.
+        TypeError: The indices shape rank should be 2.
+        TypeError: The denses shape rank should be 2.
+        TypeError: The shapes rank should be 2.
+
+    Supported Platforms:
+        ``CPU``
+
+    Examples:
+        >>> from mindspore.ops.operations.sparse_ops import SparseCross
+        >>> indice1 = Tensor([[0,0],[1,0],[1,1]], dtype=mstype.int64)
+        >>> value1 = Tensor([1, 2, 3], dtype=mstype.int64)
+        >>> shape1 = Tensor([2, 2], dtype=mstype.int64)
+        >>> dense1 = Tensor([[1],[2]], dtype=mstype.int64)
+        >>> indice2 = Tensor([[0,0],[1,0],[1,1]], dtype=mstype.int64)
+        >>> value2 = Tensor([1, 2, 3], dtype=mstype.int64)
+        >>> shape2 = Tensor([2, 2], dtype=mstype.int64)
+        >>> dense2 = Tensor([[1],[2]], dtype=mstype.int64)
+        >>> indices = [indice1, indice2]
+        >>> values = [value1, value2]
+        >>> shapes = [shape1, shape2]
+        >>> dense_inputs = [dense1, dense2]
+        >>> hashed_output=True
+        >>> hash_key= 2
+        >>> out_type= mstype.int64
+        >>> internal_type = mstype.int64
+        >>> num_buckets=0
+        >>> sparse_cross = SparseCross(hashed_output, hash_key, out_type, internal_type, num_buckets)
+        >>> out = sparse_cross(indices, values, shapes, dense_inputs)
+        >>> print(out)
+        (Tensor(shape=[5, 2], dtype=Int64, value=
+        [[0, 0],
+        [1, 0],
+        [1, 1],
+        [1, 2],
+        [1, 3]]), Tensor(shape=[5], dtype=Int64, value= [1350190460805457680, 6319552725219729347,
+        4652439303631496997, 7670687697825594049,  174086171018132662]), Tensor(shape=[2], dtype=Int64, value= [2, 4]))
+    """
+
+    @prim_attr_register
+    def __init__(self, hashed_output, hash_key, out_type, internal_type, num_buckets=0):
+        """Initialize SparseCross."""
+        self.init_prim_io_names(inputs=["indices", "values", "shapes", "dense_inputs"],
+                                outputs=["output_indices", "output_values", "output_shape"])
+        validator.check_value_type("hashed_output", hashed_output, [bool], self.name)
+        validator.check_value_type("hash_key", hash_key, [int], self.name)
+        validator.check_value_type("out_type", out_type, [mstype.Type], self.name)
+        validator.check_value_type("internal_type", internal_type, [mstype.Type], self.name)
+        validator.check_value_type("num_buckets", num_buckets, [int], self.name)
+
+
+class RaggedTensorToSparse(Primitive):
+    r"""
+    Converts a RaggedTensor into a SparseTensor with the same values.
+
+    Args:
+        Tsplits(mindspore.dtype): A required attribute, the type of the `rt_nested_splits`. Default: `int64`.
+
+    Inputs:
+        - **rt_nested_splits** (list(Tensor)) - A list of at least 1 `Tensor` objects with the same
+          type in: `int64`, `int32`. The row_splits for the RaggedTensor.
+          Ragged splits is in ascending order, first value of splits must be 0 and final value of splits
+          must equal with the length of `rt_dense_values`.
+        - **rt_dense_values** (Tensor) - A `Tensor`. The flat_values for the RaggedTensor. The rank of values
+          must more than 0.
+
+    Outputs:
+        - **sparse_indices** (Tensor) - A `Tensor` of type int64. Contains the indices of the output
+          sparse tensor.
+        - **sparse_values** (Tensor) - A `Tensor`. Has the same type as rt_dense_values.
+          Contains the values of the output sparse tensor.
+        - **sparse_dense_shape** (Tensor) - A `Tensor` of type int64. Contains the dense shape of the
+          output sparse tensor.
+
+    Raises:
+        TypeError: If the type of `Tsplits`, `rt_nested_splits` or `rt_dense_values` is not support.
+        RuntimeError: If the order of `rt_nested_splits` is not support.
+        RuntimeError: If the first value of `rt_nested_splits` is not 0.
+        RuntimeError: If the final value of `rt_nested_splits` is not equal with the length of
+            `rt_dense_values`.
+        ValueError: If the rank of `rt_dense_values` is not more than 0.
+
+    Supported Platforms:
+
+
+    Examples:
+        >>> from mindspore.ops.operations.sparse_ops import RaggedTensorToSparse
+        >>> rt_nested_splits = Tensor([0, 3, 3, 5, 6], mstype.int64)
+        >>> rt_dense_values = Tensor([1, 2, 3, 4, 5, 6], mstype.int32)
+        >>> rt_nested_splits_list = []
+        >>> rt_nested_splits_list.append(rt_nested_splits)
+        >>> Tsplits = mstype.int64
+        >>> ragged_tensor_to_sparse = RaggedTensorToSparse(Tsplits)
+        >>> out = ragged_tensor_to_sparse(rt_nested_splits_list, rt_dense_values)
+        >>> print(out)
+        (Tensor(shape=[6, 2], dtype=Int64, value=
+        [[0, 0],
+         [0, 1],
+         [0, 2],
+         [2, 0],
+         [2, 1],
+         [3, 0]]),
+         Tensor(shape=[6], dtype=Int32, value= [1, 2, 3, 4, 5, 6]),
+         Tensor(shape=[2], dtype=Int64, value= [4, 3]))
+    """
+    @prim_attr_register
+    def __init__(self, Tsplits):
+        """Initialize RaggedTensorToSparse."""
+        self.init_prim_io_names(inputs=['rt_nested_splits', 'rt_dense_values'],
+                                outputs=['sparse_indices', 'sparse_values', 'sparse_dense_shape'])
+        validator.check_value_type("Tsplits", Tsplits, [mstype.Type], self.name)
+        valid_values = {mstype.int64, mstype.int32}
+        validator.check_type_name("Tsplits", Tsplits, valid_values, self.name)

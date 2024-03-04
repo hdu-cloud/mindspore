@@ -20,6 +20,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include "mindspore/core/ops/conv_pool_ops.h"
 #include "ops/op_utils.h"
 #include "ops/batch_norm.h"
 #include "ops/elu.h"
@@ -79,6 +80,7 @@
 #include "ops/sparse_softmax_cross_entropy_with_logits.h"
 #include "ops/grad/resize_grad.h"
 #include "ops/random_standard_normal.h"
+#include "ops/fill.h"
 #include "tools/converter/parser/parser_utils.h"
 #include "nnacl/op_base.h"
 using mindspore::ops::kNameAdd;
@@ -95,6 +97,7 @@ using mindspore::ops::kNameConv2DTranspose;
 using mindspore::ops::kNameDiv;
 using mindspore::ops::kNameElu;
 using mindspore::ops::kNameExp;
+using mindspore::ops::kNameFill;
 using mindspore::ops::kNameGeLU;
 using mindspore::ops::kNameL2Normalize;
 using mindspore::ops::kNameLayerNorm;
@@ -231,6 +234,24 @@ int MoveAttrMapCommon(const CNodePtr &cnode) {
   auto dst_prim = dst_node.GetPrim();
   MS_CHECK_TRUE_MSG(dst_prim != nullptr, RET_NULL_PTR, "dst_prim is nullptr.");
   dst_prim->SetAttrs(src_prim->attrs());
+  value_node->set_value(dst_prim);
+  return lite::RET_OK;
+}
+
+int MoveAttrMapArgMaxWithValue(const CNodePtr &cnode) {
+  MS_ASSERT(cnode != nullptr);
+  auto value_node = cnode->input(0)->cast<ValueNodePtr>();
+  MS_ASSERT(value_node != nullptr);
+  auto src_prim = GetValueNode<PrimitivePtr>(value_node);
+  if (src_prim == nullptr) {
+    MS_LOG(ERROR) << "value node is invalid.";
+    return lite::RET_ERROR;
+  }
+  ops::ArgMaxFusion dst_node;
+  auto dst_prim = dst_node.GetPrim();
+  MS_CHECK_TRUE_MSG(dst_prim != nullptr, RET_NULL_PTR, "dst_prim is nullptr.");
+  dst_prim->SetAttrs(src_prim->attrs());
+  dst_prim->AddAttr(ops::kOutMaxValue, MakeValue(true));
   value_node->set_value(dst_prim);
   return lite::RET_OK;
 }
@@ -680,7 +701,7 @@ bool PrimitiveAdjust::Run(const FuncGraphPtr &func_graphs) {
 REGIST_PRIMITIVE_ADJUST(kNameAdd, MoveAttrMapCommon<ops::AddFusion>)
 REGIST_PRIMITIVE_ADJUST(kNameAdder, MoveAttrMapAdder)
 REGIST_PRIMITIVE_ADJUST(kNameArgMax, MoveAttrMapCommon<ops::ArgMaxFusion>)
-REGIST_PRIMITIVE_ADJUST(kNameArgMaxWithValue, MoveAttrMapCommon<ops::ArgMaxFusion>)
+REGIST_PRIMITIVE_ADJUST(kNameArgMaxWithValue, MoveAttrMapArgMaxWithValue)
 REGIST_PRIMITIVE_ADJUST(kNameArgMin, MoveAttrMapCommon<ops::ArgMinFusion>)
 REGIST_PRIMITIVE_ADJUST(kNameArgMinWithValue, MoveAttrMapCommon<ops::ArgMinFusion>)
 REGIST_PRIMITIVE_ADJUST(kNameAvgPool, MoveAttrPool)
@@ -747,5 +768,6 @@ REGIST_PRIMITIVE_ADJUST(kNameResizeBilinearGrad, MoveAttrMapResizeGrad)
 REGIST_PRIMITIVE_ADJUST(kNameResizeNearestNeighborGrad, MoveAttrMapResizeGrad)
 REGIST_PRIMITIVE_ADJUST(kNameSoftplus, MoveAttrMapActivation)
 REGIST_PRIMITIVE_ADJUST(kNameDynamicShape, MoveAttrMapCommon<ops::Shape>)
+REGIST_PRIMITIVE_ADJUST(kNameFill, MoveAttrMapCommon<ops::Fill>)
 }  // namespace lite
 }  // namespace mindspore

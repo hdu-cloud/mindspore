@@ -17,11 +17,15 @@
 
 #include <vector>
 
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/nn_optimizer_ops.h"
+#include "ops/math_ops.h"
+#include "ops/array_ops.h"
+#include "ops/framework_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -54,14 +58,14 @@ const AnfNodePtr ApplyMomentumWeightDecayFusion::Process(const FuncGraphPtr &gra
   MS_EXCEPTION_IF_NULL(momentum);
   MS_EXCEPTION_IF_NULL(monad_state);
 
-  auto prim = std::make_shared<Primitive>(kFusedWeightApplyMomentum);
+  auto prim = std::make_shared<Primitive>(kFusedWeightApplyMomentumOpName);
   MS_EXCEPTION_IF_NULL(prim);
   std::vector<AnfNodePtr> inputs = {NewValueNode(prim), weight_decay, variable, accumulation,
                                     learning_rate,      gradient,     momentum, monad_state};
   auto replace_node = graph->NewCNode(inputs);
   MS_EXCEPTION_IF_NULL(replace_node);
   auto types = {common::AnfAlgo::GetOutputInferDataType(node, 0)};
-  auto shapes = {common::AnfAlgo::GetOutputDetailShape(node, 0)};
+  auto shapes = {AnfAlgo::GetOutputDetailShape(node, 0)};
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, replace_node.get());
   replace_node->set_scope(node->scope());
   return replace_node;

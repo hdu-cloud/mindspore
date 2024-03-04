@@ -14,28 +14,18 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_REVERSE_H_
-#define MINDSPORE_NNACL_REVERSE_H_
+#ifndef NNACL_FP32_REVERSE_FP32_H_
+#define NNACL_FP32_REVERSE_FP32_H_
 
-#ifdef ENABLE_NEON
-#include <arm_neon.h>
-#endif
 #include "nnacl/op_base.h"
-#define REVERSE_SHAPE_MAX_SIZE 4
-
-// For reverse.
-typedef struct ReverseParameter {
-  OpParameter op_parameter_;
-  int axis_[REVERSE_SHAPE_MAX_SIZE];
-  int num_axis_;
-} ReverseParameter;
+#include "nnacl/reverse_parameter.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-int Reverse(const float *input, float *output, size_t elem_size, int *index);
+int Reverse(const float *input, float *output, size_t elem_size, int32_t *index);
 #ifdef __cplusplus
 }
 #endif
 
-#endif  // MINDSPORE_NNACL_REVERSE_H_
+#endif  // NNACL_FP32_REVERSE_FP32_H_

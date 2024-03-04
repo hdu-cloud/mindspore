@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,14 @@
 
 #include "ops/crop_and_resize_grad_image.h"
 
-#include <set>
 #include <memory>
+#include <set>
 #include <string>
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
-#include "mindapi/src/helper.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/image_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -84,8 +85,8 @@ void CheckShapes(const std::string &prim_name, const ShapeVector &input_shape0, 
   }
 }
 
-abstract::ShapePtr GetReturnShape(const std::string &prim_name, const AbstractBasePtr &output_size,
-                                  const TypePtr &output_type, int64_t max_len, int64_t image_k_dep) {
+abstract::ShapePtr GetReturnShape(const std::string &prim_name, const AbstractBasePtr &output_size, int64_t max_len,
+                                  int64_t image_k_dep) {
   // Infer max shape of output
   if (output_size->isa<abstract::AbstractTensor>()) {
     const std::set<TypePtr> output_size_valid_types = {kInt32};
@@ -93,45 +94,34 @@ abstract::ShapePtr GetReturnShape(const std::string &prim_name, const AbstractBa
                                                      output_size_valid_types, prim_name);
     auto output_size_value = output_size->BuildValue();
     MS_EXCEPTION_IF_NULL(output_size_value);
-    if (!output_size_value->isa<None>() && !output_size_value->isa<AnyValue>()) {
+    if (IsValueKnown(output_size_value)) {
       auto output_size_tensor = output_size_value->cast<tensor::TensorPtr>();
       const std::vector<int64_t> const_output_size_shape = output_size_tensor->shape_c();
       std::vector<int64_t> output_size_value_vec(ImagekOutputSizeLen);
       if (const_output_size_shape.size() == ImagekOutputSizeD) {
-        auto value = reinterpret_cast<int *>(output_size_tensor->data_c());
+        auto value = static_cast<int *>(output_size_tensor->data_c());
         MS_EXCEPTION_IF_NULL(value);
         for (int64_t i = 0; i < ImagekOutputSizeLen; ++i) {
-          if (value[i] > 0) {
-            if (value[i] > max_len) {
-              MS_EXCEPTION(ValueError) << "The value in output_size must be no more than max length: " << max_len
-                                       << ", but got " << value[i]
-                                       << "! The value in output_size should be reduced or max_len should be increased";
-            }
-            output_size_value_vec[i] = static_cast<int64_t>(value[i]);
-          } else {
+          if (value[i] <= 0) {
             MS_EXCEPTION(ValueError) << "CropAndResizeGradImage expected output_size to have "
                                         "positive data, but got "
                                      << value[i];
           }
+          if (value[i] > max_len) {
+            MS_EXCEPTION(ValueError) << "The value in output_size must be no more than max length: " << max_len
+                                     << ", but got " << value[i]
+                                     << "! The value in output_size should be reduced or max_len should be increased";
+          }
+          output_size_value_vec[LongToSize(i)] = static_cast<int64_t>(value[LongToSize(i)]);
         }
         return std::make_shared<abstract::Shape>(output_size_value_vec);
       }
     }
   }
 
-  int64_t maxshape_dim0 = ImageKMaxshapeDim0;
-  int64_t maxshape_dim1 = 0;
-  int64_t maxshape_dim2 = 0;
-  if (output_type == kFloat32) {
-    maxshape_dim0 *= ImageKMaxshapeNum;
-  }
-  maxshape_dim2 = sqrt(max_len / maxshape_dim0);
-  maxshape_dim1 = maxshape_dim2 / image_k_dep;
   ShapeVector output_shape = {abstract::Shape::kShapeDimAny, abstract::Shape::kShapeDimAny,
                               abstract::Shape::kShapeDimAny, image_k_dep};
-  ShapeVector shape_min = {1, 1, 1, image_k_dep};
-  ShapeVector shape_max = {maxshape_dim0, maxshape_dim1, maxshape_dim2, image_k_dep};
-  return std::make_shared<abstract::Shape>(output_shape, shape_min, shape_max);
+  return std::make_shared<abstract::Shape>(output_shape);
 }
 
 abstract::ShapePtr CropAndResizeGradImageInferShape(const PrimitivePtr &primitive,
@@ -160,7 +150,7 @@ abstract::ShapePtr CropAndResizeGradImageInferShape(const PrimitivePtr &primitiv
   auto dtype_value = primitive->GetAttr("T");
   auto output_type = dtype_value->cast<TypePtr>();
   auto type_size = GetTypeByte(output_type);
-  if (type_size <= 0) {
+  if (type_size == 0) {
     MS_EXCEPTION(ValueError) << "the value of T is incorrect.";
   }
 
@@ -171,7 +161,7 @@ abstract::ShapePtr CropAndResizeGradImageInferShape(const PrimitivePtr &primitiv
   auto output_size = input_args[ImagekImagesSize];
   MS_EXCEPTION_IF_NULL(output_size);
 
-  return GetReturnShape(prim_name, output_size, output_type, max_len, input_shape0[ImagekDepth]);
+  return GetReturnShape(prim_name, output_size, max_len, input_shape0[ImagekDepth]);
 }
 
 TypePtr CropAndResizeGradImageInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
@@ -205,7 +195,27 @@ AbstractBasePtr CropAndResizeGradImageInfer(const abstract::AnalysisEnginePtr &,
   auto shape = CropAndResizeGradImageInferShape(primitive, input_args);
   return abstract::MakeAbstract(shape, type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(CropAndResizeGradImage, prim::kPrimCropAndResizeGradImage, CropAndResizeGradImageInfer,
-                             nullptr, true);
+
+// AG means auto generated
+class MIND_API AGCropAndResizeGradImageInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return CropAndResizeGradImageInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return CropAndResizeGradImageInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return CropAndResizeGradImageInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {3}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(CropAndResizeGradImage, prim::kPrimCropAndResizeGradImage,
+                                 AGCropAndResizeGradImageInfer, false);
 }  // namespace ops
 }  // namespace mindspore

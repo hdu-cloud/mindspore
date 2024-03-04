@@ -18,13 +18,13 @@
 #define MINDSPORE_CORE_OPS_MAPCACHEIDX_H_
 
 #include <map>
-#include <vector>
+#include <memory>
 #include <set>
 #include <string>
-#include <memory>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,8 +37,8 @@ class MIND_API MapCacheIdx : public BaseOperator {
                {"cache_idx", "old_emb_idx", "miss_emb_idx", "swap_cache_idx"});
   }
 };
-abstract::AbstractBasePtr MapCacheIdxInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                           const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr MapCacheIdxInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                    const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimMapCacheIdxPtr = std::shared_ptr<MapCacheIdx>;
 }  // namespace ops
 }  // namespace mindspore

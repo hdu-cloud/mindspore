@@ -14,22 +14,31 @@
  * limitations under the License.
  */
 
-#include <string>
-#include <algorithm>
-#include <map>
 #include <set>
 #include <vector>
 
-#include "ops/atanh.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/atanh.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::ShapePtr AtanhInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   (void)CheckAndConvertUtils::CheckArgs<abstract::AbstractTensor>(prim_name, input_args, 0);
   auto x = input_args[0]->BuildShape();
@@ -40,6 +49,7 @@ abstract::ShapePtr AtanhInferShape(const PrimitivePtr &primitive, const std::vec
 }
 
 TypePtr AtanhInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
   auto x_type = input_args[kInputIndex0]->BuildType();
@@ -58,6 +68,24 @@ AbstractBasePtr AtanhInfer(const abstract::AnalysisEnginePtr &, const PrimitiveP
   auto shapes = AtanhInferShape(primitive, input_args);
   return abstract::MakeAbstract(shapes, types);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Atanh, prim::kPrimAtanh, AtanhInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGAtanhInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return AtanhInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return AtanhInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return AtanhInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Atanh, prim::kPrimAtanh, AGAtanhInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -47,10 +47,11 @@ class GridSampler2DGradKernelMod : public NativeGpuKernelMod {
     T *dinput_addr = GetDeviceAddress<T>(outputs, kIndex0);
     T *dgrid_addr = GetDeviceAddress<T>(outputs, kIndex1);
 
-    GridSampler2DGrad(size_, dinput_size_, dgrid_size_, grad_addr, input_addr, grid_addr, dinput_addr, dgrid_addr,
-                      grad_shape_, input_shape_, grid_shape_, dinput_shape_, dgrid_shape_, grad_stride_, input_stride_,
-                      grid_stride_, dinput_stride_, dgrid_stride_, interpolation_mode_, padding_mode_, align_corners_,
-                      reinterpret_cast<cudaStream_t>(stream_ptr));
+    auto status = GridSampler2DGrad(
+      size_, dinput_size_, dgrid_size_, grad_addr, input_addr, grid_addr, dinput_addr, dgrid_addr, grad_shape_,
+      input_shape_, grid_shape_, dinput_shape_, dgrid_shape_, grad_stride_, input_stride_, grid_stride_, dinput_stride_,
+      dgrid_stride_, interpolation_mode_, padding_mode_, align_corners_, reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return true;
   }
 
@@ -125,6 +126,11 @@ class GridSampler2DGradKernelMod : public NativeGpuKernelMod {
       }
       stride_tmp = 1;
     };
+    grad_stride_.clear();
+    input_stride_.clear();
+    grid_stride_.clear();
+    dinput_stride_.clear();
+    dgrid_stride_.clear();
     stride_compute(grad_stride_, grad_shape_);
     stride_compute(input_stride_, input_shape_);
     stride_compute(grid_stride_, grid_shape_);
@@ -195,10 +201,11 @@ class GridSampler3DGradKernelMod : public NativeGpuKernelMod {
     T *grid_addr = GetDeviceAddress<T>(inputs, kIndex2);
     T *dinput_addr = GetDeviceAddress<T>(outputs, kIndex0);
     T *dgrid_addr = GetDeviceAddress<T>(outputs, kIndex1);
-    GridSampler3DGrad(size_, dinput_size_, dgrid_size_, grad_addr, input_addr, grid_addr, dinput_addr, dgrid_addr,
-                      grad_shape_, input_shape_, grid_shape_, dinput_shape_, dgrid_shape_, grad_stride_, input_stride_,
-                      grid_stride_, dinput_stride_, dgrid_stride_, interpolation_mode_, padding_mode_, align_corners_,
-                      reinterpret_cast<cudaStream_t>(stream_ptr));
+    auto status = GridSampler3DGrad(
+      size_, dinput_size_, dgrid_size_, grad_addr, input_addr, grid_addr, dinput_addr, dgrid_addr, grad_shape_,
+      input_shape_, grid_shape_, dinput_shape_, dgrid_shape_, grad_stride_, input_stride_, grid_stride_, dinput_stride_,
+      dgrid_stride_, interpolation_mode_, padding_mode_, align_corners_, reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return true;
   }
 
@@ -274,6 +281,11 @@ class GridSampler3DGradKernelMod : public NativeGpuKernelMod {
       }
       stride_tmp = 1;
     };
+    grad_stride_.clear();
+    input_stride_.clear();
+    grid_stride_.clear();
+    dinput_stride_.clear();
+    dgrid_stride_.clear();
     stride_compute(grad_stride_, grad_shape_);
     stride_compute(input_stride_, input_shape_);
     stride_compute(grid_stride_, grid_shape_);

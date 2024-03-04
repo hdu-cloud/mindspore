@@ -20,7 +20,7 @@
 #include <vector>
 #include <algorithm>
 #include <memory>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/conv_pool_ops.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
@@ -61,7 +61,7 @@ const AnfNodePtr AvgPoolGradForGE::Process(const FuncGraphPtr &graph, const AnfN
   std::string pad_mode;
   if (pad_mode_type == TypeId::kNumberTypeInt64) {
     auto pad_value = GetValue<int64_t>(pad_mode_value);
-    pad_mode = pad_value != 0 ? "SAME" : "VALID";
+    pad_mode = pad_value == 1 ? "SAME" : "VALID";
   } else {
     pad_mode = GetValue<std::string>(pad_mode_value);
   }
@@ -75,8 +75,9 @@ const AnfNodePtr AvgPoolGradForGE::Process(const FuncGraphPtr &graph, const AnfN
   auto origin_shape_value = MakeValue(value_node_data);
   auto origin_shape_node = NewValueNode(origin_shape_value);
   origin_shape_node->set_abstract(origin_shape_value->ToAbstract());
-  auto new_avg_pool_node = graph->NewCNode(
-    {NewValueNode(prim::kPrimAvgPoolGradGe), origin_shape_node, avg_pool_grad_node->input(kAvgPoolGradInputGradIndex)});
+  auto new_avg_pool_node = graph->NewCNode({NewValueNode(std::make_shared<Primitive>(kAvgPoolGradGeOpName)),
+                                            origin_shape_node, avg_pool_grad_node->input(kAvgPoolGradInputGradIndex)});
+  MS_EXCEPTION_IF_NULL(new_avg_pool_node);
   common::AnfAlgo::CopyNodeAttr(kPoolKernelSizeAttrName, avg_pool_grad_node, new_avg_pool_node);
   common::AnfAlgo::CopyNodeAttr(kPoolStridesAttrName, avg_pool_grad_node, new_avg_pool_node);
   common::AnfAlgo::SetNodeAttr(kPoolDataFormatAttrName, MakeValue(format), new_avg_pool_node);

@@ -19,10 +19,10 @@
 
 #include <map>
 #include <memory>
-#include <vector>
 #include <string>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -45,8 +45,8 @@ class MIND_API CeLU : public BaseOperator {
   float get_alpha() const;
 };
 
-abstract::AbstractBasePtr CeLUInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                    const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr CeLUInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                             const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimCeLUPtr = std::shared_ptr<CeLU>;
 }  // namespace ops
 }  // namespace mindspore

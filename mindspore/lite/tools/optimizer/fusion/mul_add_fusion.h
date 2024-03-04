@@ -20,7 +20,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/optimizer.h"
 #include "tools/converter/quantizer/quant_param_holder.h"
 #include "tools/optimizer/common/multiple_pattern_process_pass.h"
 #include "ops/fusion/scale_fusion.h"
@@ -48,6 +48,7 @@ class MulAddFusion : public MultiplePatternProcessPass {
   bool ScaleInputShapeValid(size_t *axis_offset) const;
   bool MulInputAnodeIsInferred(const AnfNodePtr &mul_input_anode) const;
   bool AdjustScaleBiasTensorShape(size_t *axis_offset) const;
+  bool CopyNodeFormat(CNodePtr node, mindspore::ops::PrimitiveCPtr prim) const;
 
  private:
   mutable ShapeVector mul_input_shape_;

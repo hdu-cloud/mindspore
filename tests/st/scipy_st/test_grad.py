@@ -19,7 +19,8 @@ import mindspore.nn as nn
 import mindspore.ops as ops
 from mindspore import context, Tensor
 from mindspore.scipy.linalg import cho_factor, cho_solve
-from mindspore.scipy.ops import Eigh, SolveTriangular
+from mindspore.ops.operations.linalg_ops import Eigh
+from mindspore.scipy.ops import SolveTriangular
 from tests.st.scipy_st.utils import create_random_rank_matrix, create_sym_pos_matrix, gradient_check
 
 
@@ -50,7 +51,7 @@ def test_cho_factor_grad():
     assert onp.allclose(c.asnumpy(), expect_output)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -88,7 +89,7 @@ def test_cho_solve_grad(lower, shape, data_type):
     assert gradient_check([msp_c, Tensor(b)], cho_solve_net, epsilon) < error
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -104,7 +105,6 @@ def test_eigh_grad(compute_eigenvectors, lower, shape, data_type):
     """
     onp.random.seed(0)
     dtype, epsilon, error = data_type
-
     class Net(nn.Cell):
         def __init__(self):
             super(Net, self).__init__()
@@ -132,7 +132,7 @@ def test_eigh_grad(compute_eigenvectors, lower, shape, data_type):
     assert gradient_check(Tensor(a), net, epsilon) < error
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -169,7 +169,7 @@ def test_trsm_grad_pynative(shapes, trans, lower, unit_diagonal, data_type):
     assert gradient_check([Tensor(a), Tensor(b)], net, epsilon) < error
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard

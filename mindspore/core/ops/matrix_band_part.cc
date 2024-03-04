@@ -14,13 +14,15 @@
  * limitations under the License.
  */
 #include "ops/matrix_band_part.h"
-#include <string>
 #include <algorithm>
+#include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 #include "utils/ms_context.h"
 
 namespace mindspore {
@@ -38,16 +40,8 @@ TypePtr MatrixBandPartInferType(const PrimitivePtr &prim, const std::vector<Abst
     MS_EXCEPTION_IF_NULL(item);
   }
   auto x_type = input_args[kInputIndex0]->BuildType();
-  auto context = MsContext::GetInstance();
-  MS_EXCEPTION_IF_NULL(context);
-  bool is_gpu = (context->get_param<std::string>(MS_CTX_DEVICE_TARGET) == kGPUDevice);
-  bool is_cpu = (context->get_param<std::string>(MS_CTX_DEVICE_TARGET) == kCPUDevice);
   std::set<TypePtr> valid_types{};
-  if (is_gpu || is_cpu) {
-    valid_types = common_valid_types_with_complex_and_bool;
-  } else {
-    valid_types = {kInt32, kInt64, kFloat16, kFloat32, kFloat64};
-  }
+  valid_types = common_valid_types_with_complex_and_bool;
   (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_type, valid_types, prim_name);
   (void)CheckAndConvertUtils::CheckTypeValid("lower", input_args[kInputIndex1]->BuildType(), {kInt32, kInt64},
                                              prim_name);
@@ -61,7 +55,9 @@ abstract::ShapePtr MatrixBandPartInferShape(const PrimitivePtr &primitive,
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   (void)CheckAndConvertUtils::CheckArgs<abstract::AbstractTensor>(prim_name, input_args, kInputIndex0);
-
+  for (const auto &item : input_args) {
+    MS_EXCEPTION_IF_NULL(item);
+  }
   auto x_shape_ptr = input_args[kInputIndex0]->BuildShape();
   MS_EXCEPTION_IF_NULL(x_shape_ptr);
   auto lower_shape_ptr = input_args[kInputIndex1]->BuildShape();
@@ -125,6 +121,24 @@ AbstractBasePtr MatrixBandPartInfer(const abstract::AnalysisEnginePtr &, const P
   auto shape = MatrixBandPartInferShape(primitive, input_args);
   return abstract::MakeAbstract(shape, type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(MatrixBandPart, prim::kPrimMatrixBandPart, MatrixBandPartInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMatrixBandPartInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MatrixBandPartInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MatrixBandPartInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MatrixBandPartInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MatrixBandPart, prim::kPrimMatrixBandPart, AGMatrixBandPartInfer, false);
 }  // namespace ops
 }  // namespace mindspore

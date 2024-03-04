@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -77,6 +77,10 @@ PYBIND_REGISTER(ConfigManager, 0, ([](const py::module *m) {
                     .def("get_dynamic_shape", &ConfigManager::dynamic_shape)
                     .def("set_fast_recovery", &ConfigManager::set_fast_recovery)
                     .def("get_fast_recovery", &ConfigManager::fast_recovery)
+                    .def("set_debug_mode", &ConfigManager::set_debug_mode)
+                    .def("get_debug_mode", &ConfigManager::get_debug_mode)
+                    .def("set_error_samples_mode", &ConfigManager::set_error_samples_mode)
+                    .def("get_error_samples_mode", &ConfigManager::get_error_samples_mode)
                     .def("load", [](ConfigManager &c, const std::string &s) { THROW_IF_ERROR(c.LoadFile(s)); });
                 }));
 
@@ -95,6 +99,13 @@ PYBIND_REGISTER(Tensor, 0, ([](const py::module *m) {
                     .def("__str__", &Tensor::ToString)
                     .def("shape", &Tensor::shape)
                     .def("type", &Tensor::type)
+                    .def("as_python",
+                         [](py::object &t) {
+                           auto &tensor = py::cast<Tensor &>(t);
+                           py::dict res;
+                           THROW_IF_ERROR(tensor.GetDataAsPythonObject(&res));
+                           return res;
+                         })
                     .def("as_array", [](py::object &t) {
                       auto &tensor = py::cast<Tensor &>(t);
                       if (tensor.type().IsString()) {
@@ -120,6 +131,7 @@ PYBIND_REGISTER(DataType, 0, ([](const py::module *m) {
                   (void)py::class_<DataType>(*m, "DataType")
                     .def(py::init<std::string>())
                     .def(py::self == py::self)
+                    .def("is_python", &DataType::IsPython)
                     .def("__str__", &DataType::ToString)
                     .def("__deepcopy__", [](py::object &t, const py::dict &memo) { return t; });
                 }));
@@ -195,6 +207,14 @@ PYBIND_REGISTER(ImageReadMode, 0, ([](const py::module *m) {
                     .value("DE_IMAGE_READ_MODE_UNCHANGED", ImageReadMode::kUNCHANGED)
                     .value("DE_IMAGE_READ_MODE_GRAYSCALE", ImageReadMode::kGRAYSCALE)
                     .value("DE_IMAGE_READ_MODE_COLOR", ImageReadMode::kCOLOR)
+                    .export_values();
+                }));
+
+PYBIND_REGISTER(ErrorSamplesMode, 0, ([](const py::module *m) {
+                  (void)py::enum_<ErrorSamplesMode>(*m, "ErrorSamplesMode", py::arithmetic())
+                    .value("DE_ERROR_SAMPLES_MODE_RETURN", ErrorSamplesMode::kReturn)
+                    .value("DE_ERROR_SAMPLES_MODE_REPLACE", ErrorSamplesMode::kReplace)
+                    .value("DE_ERROR_SAMPLES_MODE_SKIP", ErrorSamplesMode::kSkip)
                     .export_values();
                 }));
 }  // namespace dataset

@@ -15,10 +15,11 @@
 """basic"""
 from mindspore import context
 from mindspore.ops import operations as P
+from mindspore.ops import functional as F
 from mindspore.nn.cell import Cell
 from mindspore.ops.primitive import constexpr
 from mindspore.ops.operations import _inner_ops as inner
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from ._utils.utils import raise_none_error, cast_to_tensor, set_param_type, cast_type_for_device,\
     raise_not_implemented_util
 from ._utils.utils import CheckTuple, CheckTensor
@@ -102,7 +103,7 @@ class Distribution(Cell):
         self.device_target = context.get_context('device_target')
         self.checktuple = CheckTuple()
 
-        @constexpr
+        @constexpr(check=False)
         def _check_tensor(x, name):
             CheckTensor()(x, name)
             return x
@@ -113,7 +114,6 @@ class Distribution(Cell):
         # ops needed for the base class
         self.cast_base = P.Cast()
         self.dtype_base = P.DType()
-        self.fill_base = P.Fill()
         self.sametypeshape_base = inner.SameTypeShape()
         self.sq_base = P.Square()
         self.sqrt_base = P.Sqrt()
@@ -194,11 +194,11 @@ class Distribution(Cell):
             if broadcast_shape is None:
                 broadcast_shape = self.shape_base(arg)
                 common_dtype = self.dtype_base(arg)
-                broadcast_shape_tensor = self.fill_base(
+                broadcast_shape_tensor = F.fill(
                     common_dtype, broadcast_shape, 1.0)
             else:
                 broadcast_shape = self.shape_base(arg + broadcast_shape_tensor)
-                broadcast_shape_tensor = self.fill_base(
+                broadcast_shape_tensor = F.fill(
                     common_dtype, broadcast_shape, 1.0)
                 arg = self.broadcast(arg, broadcast_shape_tensor)
                 # check if the arguments have the same dtype

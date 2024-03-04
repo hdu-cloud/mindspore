@@ -15,12 +15,28 @@
  */
 #include "ops/glu.h"
 
+#include <memory>
 #include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -39,6 +55,9 @@ abstract::ShapePtr GLUInferShape(const PrimitivePtr &primitive, const std::vecto
   constexpr int64_t kEvenNum = 2;
   auto prim_name = primitive->name();
   auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
+  if (IsDynamicRank(x_shape)) {
+    return std::make_shared<abstract::Shape>(x_shape);
+  }
   auto x_rank = SizeToLong(x_shape.size());
   (void)CheckAndConvertUtils::CheckInteger("rank of x", x_rank, kGreaterEqual, 1, prim_name);
   auto axis = GetValue<int64_t>(primitive->GetAttr("axis"));
@@ -52,7 +71,7 @@ abstract::ShapePtr GLUInferShape(const PrimitivePtr &primitive, const std::vecto
     MS_EXCEPTION(ValueError) << "For '" << prim_name << "', x.shape[" << axis << "] must be even, but got "
                              << shape_of_split_dim << " .";
   }
-  shape[axis] = shape_of_split_dim / kEvenNum;
+  shape[LongToSize(axis)] = shape_of_split_dim / kEvenNum;
   return std::make_shared<abstract::Shape>(shape);
 }
 
@@ -72,6 +91,24 @@ AbstractBasePtr GLUInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 //
-REGISTER_PRIMITIVE_EVAL_IMPL(GLU, prim::kPrimGLU, GLUInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGGLUInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return GLUInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return GLUInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return GLUInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(GLU, prim::kPrimGLU, AGGLUInfer, false);
 }  // namespace ops
 }  // namespace mindspore

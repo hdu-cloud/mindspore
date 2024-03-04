@@ -34,7 +34,7 @@ def print_(*input_x):
         This function is used for debugging. When too much data is printed at the same time,
         in order not to affect the main process, the framework may discard some data. If you need to record the
         data completely, you are recommended to use the `Summary` function, and can check
-        `Summary <https://www.mindspore.cn/mindinsight/docs/en/r2.0.0-alpha/summary_record.html?highlight=summary#>`_.
+        `Summary <https://www.mindspore.cn/mindinsight/docs/en/master/summary_record.html>`_.
 
     Args:
         input_x (Union[Tensor, bool, int, float, str, tuple, list]): The inputs of print_.
@@ -44,12 +44,14 @@ def print_(*input_x):
         Invalid value, should be ignored.
 
     Raises:
-        TypeError: If `input_x` is not one of the following: Tensor, bool, int, float, str.
+        TypeError: If `input_x` is not one of the following: Tensor, bool, int, float, str, tuple or list.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor
         >>> x = Tensor(np.ones([2, 1]).astype(np.int32))
         >>> y = Tensor(np.ones([2, 2]).astype(np.int32))
         >>> result = ops.print_('Print Tensor x and Tensor y:', x, y)

@@ -14,13 +14,6 @@ set(TEST_SRC
 # add static securec link library
 include(${TOP_DIR}/cmake/dependency_securec.cmake)
 
-if(MSLITE_MINDDATA_IMPLEMENT STREQUAL "full")
-    set(TEST_SRC
-    ${TEST_SRC}
-    ${CMAKE_CURRENT_SOURCE_DIR}/net_runner.cc
-    )
-endif()
-
 add_executable(benchmark_train
         ${TEST_SRC}
         ${COMMON_SRC})
@@ -44,4 +37,8 @@ else()
     else()
         target_link_libraries(benchmark_train mindspore-lite mindspore-lite-train pthread securec)
     endif()
+endif()
+
+if(MSLITE_EXPORT_COMPUTE_IR)
+    target_link_libraries(benchmark_train mindspore_lite_drawer)
 endif()

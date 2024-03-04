@@ -15,15 +15,16 @@
  */
 #include "plugin/device/gpu/optimizer/add_relu_v2_fusion.h"
 
-#include <memory>
 #include <vector>
 #include <string>
 
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -40,7 +41,7 @@ kernel::KernelBuildInfoPtr GenerateKernelBuildInfo(CNodePtr node) {
     inputs_type.push_back(common::AnfAlgo::GetPrevNodeOutputInferDataType(node, input_index));
     inputs_format.push_back(kOpFormat_DEFAULT);
   }
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(node);
+  size_t output_num = AnfAlgo::GetOutputElementNum(node);
   for (size_t output_index = 0; output_index < output_num; ++output_index) {
     outputs_type.push_back(common::AnfAlgo::GetOutputInferDataType(node, output_index));
     outputs_format.push_back(kOpFormat_DEFAULT);
@@ -81,7 +82,7 @@ const AnfNodePtr AddReluV2Fusion::Process(const FuncGraphPtr &graph, const AnfNo
     return nullptr;
   }
 
-  auto prim = std::make_shared<Primitive>(kFusedAddReluV2Name);
+  auto prim = std::make_shared<Primitive>(kFusedAddReluV2OpName);
   MS_EXCEPTION_IF_NULL(prim);
   std::vector<AnfNodePtr> inputs = {NewValueNode(prim), x1, x2};
   auto add_relu = graph->NewCNode(inputs);
@@ -89,10 +90,10 @@ const AnfNodePtr AddReluV2Fusion::Process(const FuncGraphPtr &graph, const AnfNo
 
   std::vector<TypeId> types;
   std::vector<BaseShapePtr> shapes;
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(node);
+  size_t output_num = AnfAlgo::GetOutputElementNum(node);
   for (size_t i = 0; i < output_num; i++) {
     types.push_back(common::AnfAlgo::GetOutputInferDataType(node, i));
-    shapes.push_back(common::AnfAlgo::GetOutputDetailShape(node, i));
+    shapes.push_back(AnfAlgo::GetOutputDetailShape(node, i));
   }
 
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, add_relu.get());

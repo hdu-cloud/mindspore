@@ -14,13 +14,30 @@
  * limitations under the License.
  */
 
+#include <memory>
 #include <set>
 #include <utility>
-#include "ops/grad/mirror_pad_grad.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/dtype/number.h"
+#include "ir/named.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/grad/mirror_pad_grad.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -64,7 +81,7 @@ abstract::ShapePtr MirrorPadGradInferShape(const PrimitivePtr &primitive,
   auto paddings = input_args[kInputIndex1]->BuildValue();
   MS_EXCEPTION_IF_NULL(paddings);
   // if shape of x is determined and padding value is unknown, return a all -1 shape
-  if (paddings->isa<AnyValue>() || paddings->isa<None>()) {
+  if (paddings->isa<ValueAny>() || paddings->isa<None>()) {
     return std::make_shared<abstract::Shape>(ShapeVector(x_shape.size(), abstract::Shape::kShapeDimAny));
   }
 
@@ -136,6 +153,26 @@ AbstractBasePtr MirrorPadGradInfer(const abstract::AnalysisEnginePtr &, const Pr
   auto infer_shape = MirrorPadGradInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(MirrorPadGrad, prim::kPrimMirrorPadGrad, MirrorPadGradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMirrorPadGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MirrorPadGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MirrorPadGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MirrorPadGradInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MirrorPadGrad, prim::kPrimMirrorPadGrad, AGMirrorPadGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

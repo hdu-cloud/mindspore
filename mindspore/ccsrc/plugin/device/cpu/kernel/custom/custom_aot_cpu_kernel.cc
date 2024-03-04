@@ -41,23 +41,62 @@ CustomAOTCpuKernelMod::~CustomAOTCpuKernelMod() {
 #endif
 }
 
-bool CustomAOTCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
-                                 const std::vector<KernelTensorPtr> &outputs) {
-  kernel_name_ = base_operator->GetPrim()->name();
+void CustomAOTCpuKernelMod::SetKernelPath(const BaseOperatorPtr &base_operator) {
   const auto &exec_info = GetValue<std::string>(base_operator->GetPrim()->GetAttr("func_name"));
+
   if (auto pos = exec_info.find(":"); pos != std::string::npos) {
     auto path = exec_info.substr(0, pos);
+    if (base_operator->GetPrim()->HasAttr("path_from_env") &&
+        GetValue<bool>(base_operator->GetPrim()->GetAttr("path_from_env"))) {
+      const char *path_in_env = std::getenv(path.c_str());
+      if (path_in_env == nullptr) {
+        MS_LOG(WARNING) << "For '" << kernel_name_ << "' on CPU, the attr path_from_env is set but the env var ["
+                        << path << "] is empty. Use [" << path << "] as the path to the library instead.";
+      } else {
+        path = std::string(path_in_env);
+      }
+    }
     auto real_path = FileUtils::GetRealPath(path.c_str());
     if (!real_path.has_value()) {
       MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "' on CPU, couldn't find the AOT binary file: " << path;
     }
     file_path_ = real_path.value();
     func_name_ = exec_info.substr(pos + 1);
+
+    constexpr auto kWhiteList = "MS_CUSTOM_AOT_WHITE_LIST";
+    const char *value = std::getenv(kWhiteList);
+    if (value == nullptr) {
+      static bool print_cpu_warning_once = true;
+      if (print_cpu_warning_once) {
+        MS_LOG(WARNING) << "For '" << kernel_name_ << "' on CPU, no white list is set and it might cause problems. "
+                        << "Set the legal path of the file in MS_CUSTOM_AOT_WHITE_LIST.";
+        print_cpu_warning_once = false;
+      }
+    } else {
+      auto white_list = FileUtils::GetRealPath(value);
+      if (!white_list.has_value()) {
+        MS_LOG(EXCEPTION) << "Illegal white list path set in MS_CUSTOM_AOT_WHITE_LIST: " << std::string(value);
+      }
+      constexpr auto kKernelMeta = "akg_kernel_meta";
+      if (file_path_.find(white_list.value()) == std::string::npos &&
+          file_path_.find(kKernelMeta) == std::string::npos) {
+        MS_LOG(EXCEPTION)
+          << "For '" << kernel_name_
+          << "' on CPU, the file is not place in the legal path file defined by MS_CUSTOM_AOT_WHITE_LIST: "
+          << white_list.value() << ". The file path is: " << file_path_;
+      }
+    }
   } else {
     MS_LOG(EXCEPTION)
       << "For '" << kernel_name_ << "' on CPU, user defined function path '" << exec_info
       << "' is illegal. Proper function path should follow the format of 'dir_path/file_name:func_name'";
   }
+}
+
+bool CustomAOTCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+                                 const std::vector<KernelTensorPtr> &outputs) {
+  kernel_name_ = base_operator->GetPrim()->name();
+  SetKernelPath(base_operator);
 
   for (size_t i = 0; i < inputs.size(); i++) {
     auto in_shape = inputs[i]->GetShapeVector();
@@ -186,6 +225,25 @@ int CustomAOTCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const st
   if (ret != 0) {
     return ret;
   }
+
+  shapes_.clear();
+  shape_list_.clear();
+  ndims_.clear();
+
+  for (size_t i = 0; i < inputs.size(); i++) {
+    auto in_shape = inputs[i]->GetShapeVector();
+    (void)shape_list_.emplace_back(in_shape);
+    ndims_.push_back(SizeToInt(in_shape.size()));
+  }
+
+  for (size_t i = 0; i < outputs.size(); i++) {
+    auto out_shape = outputs[i]->GetShapeVector();
+    (void)shape_list_.emplace_back(out_shape);
+    ndims_.push_back(SizeToInt(out_shape.size()));
+  }
+
+  (void)std::transform(std::begin(shape_list_), std::end(shape_list_), std::back_inserter(shapes_),
+                       [](auto &v) { return &v[0]; });
   workspace_size_list_ = attrs_.WorkSpace();
   return static_cast<int>(KRET_OK);
 }

@@ -16,7 +16,6 @@
 
 #include "minddata/dataset/engine/datasetops/source/image_folder_op.h"
 
-#include <fstream>
 #include <unordered_set>
 
 #include "utils/ms_utils.h"
@@ -105,6 +104,7 @@ Status ImageFolderOp::PrepareData() {
 
 // Load 1 TensorRow (image,label) using 1 ImageLabelPair. 1 function call produces 1 TensorTow
 Status ImageFolderOp::LoadTensorRow(row_id_type row_id, TensorRow *trow) {
+  RETURN_UNEXPECTED_IF_NULL(trow);
   ImageLabelPair pair_ptr = image_label_pairs_[row_id];
   std::shared_ptr<Tensor> image, label;
   RETURN_IF_NOT_OK(Tensor::CreateScalar(pair_ptr->second, &label));
@@ -208,6 +208,7 @@ Status ImageFolderOp::PrescanWorkerEntry(int32_t worker_id) {
 // This helper function recursively walks all folder_paths, and send each foldername to folder_name_queue_
 // if mRecursive == false, don't go into folder of folders
 Status ImageFolderOp::RecursiveWalkFolder(Path *dir) {
+  RETURN_UNEXPECTED_IF_NULL(dir);
   std::shared_ptr<Path::DirIterator> dir_itr = Path::DirIterator::OpenDirectory(dir);
   RETURN_UNEXPECTED_IF_NULL(dir_itr);
   while (dir_itr->HasNext()) {
@@ -332,12 +333,71 @@ Status ImageFolderOp::ComputeColMap() {
 
 // Get number of classes
 Status ImageFolderOp::GetNumClasses(int64_t *num_classes) {
+  RETURN_UNEXPECTED_IF_NULL(num_classes);
   if (num_classes_ > 0) {
     *num_classes = num_classes_;
     return Status::OK();
   }
   RETURN_IF_NOT_OK(CountRowsAndClasses(folder_path_, extensions_, nullptr, num_classes, class_index_));
   num_classes_ = *num_classes;
+  return Status::OK();
+}
+
+Status ImageFolderOp::InitPullMode() {
+  // to avoid the concurrent and multi end signal in StartAsyncWalk, explicitly set num_workers_ to 1
+  num_workers_ = 1;
+  RETURN_IF_NOT_OK(folder_name_queue_->Register(tree_->AllTasks()));
+  RETURN_IF_NOT_OK(image_name_queue_->Register(tree_->AllTasks()));
+  RETURN_IF_NOT_OK(tree_->AllTasks()->CreateAsyncTask(Name() + "::WalkDir",
+                                                      std::bind(&ImageFolderOp::StartAsyncWalk, this), nullptr, id()));
+  RETURN_IF_NOT_OK(tree_->LaunchWorkers(num_workers_,
+                                        std::bind(&ImageFolderOp::PrescanWorkerEntry, this, std::placeholders::_1),
+                                        Name() + "::PrescanWorkerEntry", id()));
+  return PrepareData();
+}
+
+Status ImageFolderOp::GetClassIndexing(
+  std::vector<std::pair<std::string, std::vector<int32_t>>> *output_class_indexing) {
+  RETURN_UNEXPECTED_IF_NULL(output_class_indexing);
+  output_class_indexing->clear();
+
+  // if class_index_ exist, return directly
+  if (!class_index_.empty()) {
+    (void)std::transform(
+      class_index_.begin(), class_index_.end(), std::back_inserter(*output_class_indexing),
+      [](const auto &elem) { return std::pair<std::string, std::vector<int32_t>>(elem.first, {elem.second}); });
+    return Status::OK();
+  }
+
+  // Iter folder path
+  Path dir(folder_path_);
+  if (!dir.Exists() || !dir.IsDirectory()) {
+    RETURN_STATUS_UNEXPECTED("Invalid dataset_dir, " + folder_path_ + " does not exist or not a directory.");
+  }
+
+  std::shared_ptr<Path::DirIterator> dir_itr = Path::DirIterator::OpenDirectory(&dir);
+  RETURN_UNEXPECTED_IF_NULL(dir_itr);
+  std::vector<std::string> folder_names;
+  while (dir_itr->HasNext()) {
+    Path subdir = dir_itr->Next();
+    if (subdir.IsDirectory()) {
+      folder_names.push_back(subdir.Basename());
+    }
+  }
+  if (folder_names.empty()) {
+    RETURN_STATUS_UNEXPECTED("Invalid data, " + DatasetName(true) +
+                             "Dataset API can't read the data file (interface mismatch or no data found). Check " +
+                             DatasetName() + " file path: " + folder_path_);
+  }
+
+  std::sort(folder_names.begin(), folder_names.end());
+  int32_t label_count = 0;
+  (void)std::transform(folder_names.begin(), folder_names.end(), std::back_inserter(*output_class_indexing),
+                       [&label_count](const auto &elem) {
+                         auto p = std::pair<std::string, std::vector<int32_t>>(elem, {label_count});
+                         label_count++;
+                         return p;
+                       });
   return Status::OK();
 }
 }  // namespace dataset

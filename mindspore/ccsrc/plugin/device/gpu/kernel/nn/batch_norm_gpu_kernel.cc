@@ -15,17 +15,21 @@
  */
 
 #include "plugin/device/gpu/kernel/nn/batch_norm_gpu_kernel.h"
-#include <map>
 #include <algorithm>
-#include <utility>
+#include <map>
 #include <memory>
-#include "mindspore/core/ops/batch_norm.h"
+#include <utility>
+#include "ops/batch_norm.h"
+#include "ops/math_op_name.h"
+#include "ops/nn_op_name.h"
+#include "ops/op_name.h"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/elementwise/eltwise_ops_impl.cuh"
 
 namespace mindspore {
 namespace kernel {
 namespace {
-size_t kInputSize2 = 2;
-size_t kInputSize4 = 4;
+constexpr size_t kBatchNormInputShapeMaxSize = 4;
+constexpr size_t kBatchNormInputShapeMinSize = 2;
 float kExpAvgFactorDefault = 0.1;
 }  // namespace
 template <typename T>
@@ -68,26 +72,42 @@ bool BatchNormGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
                                               epsilon_),
       "Kernel launch failed");
   }
+  if (kernel_name_ == kBatchNormWithActivationOpName && activation_type_ == mindspore::ActivationType::SWISH) {
+    UnaryOpsCudaFunc<ElwiseOpType::kSiLU, T, T>(output_size_ / sizeof(T), y, y,
+                                                reinterpret_cast<cudaStream_t>(cuda_stream_));
+  }
   return true;
 }
 
 bool BatchNormGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                  const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
+  auto prim = base_operator->GetPrim();
+  MS_EXCEPTION_IF_NULL(prim);
   auto kernel_name_ = base_operator->name();
   auto kernel_ptr = std::dynamic_pointer_cast<ops::BatchNorm>(base_operator);
   if (kernel_ptr == nullptr) {
     MS_LOG(ERROR) << "Cast BatchNorm failed!";
     return false;
   }
+  auto activation_type_attr = prim->GetAttr(mindspore::ops::kActivationType);
+  if (activation_type_attr != nullptr) {
+    activation_type_ = ActivationType(GetValue<int64_t>(activation_type_attr));
+  }
+
   if (kernel_name_ == kBatchNormOpName) {
     bn_ops_ = CUDNN_BATCHNORM_OPS_BN;
-  } else if (kernel_name_ == kBatchNormWithActivation) {
+  } else if (kernel_name_ == kBatchNormWithActivationOpName && activation_type_ == mindspore::ActivationType::RELU) {
     bn_ops_ = CUDNN_BATCHNORM_OPS_BN_ACTIVATION;
-  } else if (kernel_name_ == kBatchNormWithAddAndActivation) {
+  } else if (kernel_name_ == kBatchNormWithActivationOpName && activation_type_ == mindspore::ActivationType::SWISH) {
+    // batch_norm + silu cuda kernel fusion
+    bn_ops_ = CUDNN_BATCHNORM_OPS_BN;
+  } else if (kernel_name_ == kBatchNormWithAddAndActivationOpName) {
     bn_ops_ = CUDNN_BATCHNORM_OPS_BN_ADD_ACTIVATION;
   } else {
-    MS_LOG(EXCEPTION) << "Only support these kernel names: " << kBatchNormOpName << ", " << kBatchNormWithActivation
-                      << ", " << kBatchNormWithAddAndActivation << ", but got " << kernel_name_;
+    MS_LOG(EXCEPTION) << "Only support these kernel names: " << kBatchNormOpName << ", "
+                      << kBatchNormWithActivationOpName << ", " << kBatchNormWithAddAndActivationOpName << ", but got "
+                      << kernel_name_;
   }
 
   auto iter = kernel_attr_map_.find(kernel_name_);
@@ -99,6 +119,7 @@ bool BatchNormGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std
       << ", but got " << kernel_name_;
     return false;
   }
+
   auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
   auto [is_match, index] = MatchKernelAttr(kernel_attr, GetOpSupport());
   if (!is_match) {
@@ -136,13 +157,21 @@ int BatchNormGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const st
   if (ret != 0) {
     return ret;
   }
-  auto shape = inputs[kIndex0]->GetDeviceShapeAdaptively();
-  if (shape.size() != kInputSize2 && shape.size() != kInputSize4) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the dimension of input must be 2 or 4, but got "
-                      << shape.size();
+
+  auto x_shape = inputs[kIndex0]->GetDeviceShapeAdaptively();
+  const size_t x_shape_size = x_shape.size();
+
+  auto format = inputs[kIndex0]->GetFormat();
+  if (x_shape_size == kBatchNormInputShapeMinSize) {
+    format = Format::NCHW;
+  } else if (format_ == Format::NHWC) {
+    format = Format::NHWC;
   }
 
-  if (shape.size() == kInputSize2) {
+  (void)x_shape.insert(x_shape.begin() + (format == Format::NHWC ? kIndex1 : x_shape_size),
+                       kBatchNormInputShapeMaxSize - x_shape_size, 1);
+
+  if (x_shape_size == kBatchNormInputShapeMinSize) {
     mode_ = CUDNN_BATCHNORM_PER_ACTIVATION;
   } else if (is_train_) {
     mode_ = CUDNN_BATCHNORM_SPATIAL_PERSISTENT;
@@ -150,12 +179,8 @@ int BatchNormGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const st
     mode_ = CUDNN_BATCHNORM_SPATIAL;
   }
 
-  CheckTensorSize({shape});
-  auto format = inputs[kIndex0]->GetFormat();
-  if (format_ == Format::NHWC) {
-    format = Format::NHWC;
-  }
-  SetTensorDescriptor(format, shape);
+  CheckTensorSize({x_shape});
+  SetTensorDescriptor(format, x_shape);
   InitSizeLists();
   return KRET_OK;
 }
@@ -252,13 +277,7 @@ void BatchNormGpuKernelMod::InitSizeLists() {
 void BatchNormGpuKernelMod::SetTensorDescriptor(const Format &format, const ShapeVector &shape) {
   cudnnTensorFormat_t cudnn_format;
   int batch, channel, height, width;
-  if (shape.size() == kInputSize2) {
-    batch = LongToInt(shape[kIndex0]);
-    channel = LongToInt(shape[kIndex1]);
-    height = 1;
-    width = 1;
-    cudnn_format = CUDNN_TENSOR_NCHW;
-  } else if (format == Format::NHWC) {
+  if (format == Format::NHWC) {
     batch = LongToInt(shape[kIndex0]);
     height = LongToInt(shape[kIndex1]);
     width = LongToInt(shape[kIndex2]);
@@ -322,7 +341,7 @@ std::map<std::string, std::vector<std::pair<KernelAttr, BatchNormGpuKernelMod::B
                                                   .AddOutputAttr(kNumberTypeFloat32)
                                                   .AddOutputAttr(kNumberTypeFloat32),
                                                 &BatchNormGpuKernelMod::LaunchKernel<half>}}},
-                                             {kBatchNormWithActivation,
+                                             {kBatchNormWithActivationOpName,
                                               {{KernelAttr()
                                                   .AddInputAttr(kNumberTypeFloat32)
                                                   .AddInputAttr(kNumberTypeFloat32)
@@ -347,7 +366,7 @@ std::map<std::string, std::vector<std::pair<KernelAttr, BatchNormGpuKernelMod::B
                                                   .AddOutputAttr(kNumberTypeFloat32)
                                                   .AddOutputAttr(kNumberTypeFloat32),
                                                 &BatchNormGpuKernelMod::LaunchKernel<half>}}},
-                                             {kBatchNormWithAddAndActivation,
+                                             {kBatchNormWithAddAndActivationOpName,
                                               {{KernelAttr()
                                                   .AddInputAttr(kNumberTypeFloat32)
                                                   .AddInputAttr(kNumberTypeFloat32)
@@ -393,10 +412,11 @@ std::vector<KernelAttr> BatchNormGpuKernelMod::GetOpSupport() {
 
 MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeGpuKernelMod, BatchNorm,
                                  []() { return std::make_shared<BatchNormGpuKernelMod>(kBatchNormOpName); });
-MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeGpuKernelMod, BatchNormWithActivation,
-                                 []() { return std::make_shared<BatchNormGpuKernelMod>(kBatchNormWithActivation); });
+MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeGpuKernelMod, BatchNormWithActivation, []() {
+  return std::make_shared<BatchNormGpuKernelMod>(kBatchNormWithActivationOpName);
+});
 MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeGpuKernelMod, BatchNormWithAddAndActivation, []() {
-  return std::make_shared<BatchNormGpuKernelMod>(kBatchNormWithAddAndActivation);
+  return std::make_shared<BatchNormGpuKernelMod>(kBatchNormWithAddAndActivationOpName);
 });
 }  // namespace kernel
 }  // namespace mindspore

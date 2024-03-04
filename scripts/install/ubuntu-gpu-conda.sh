@@ -116,16 +116,16 @@ sudo apt-get install curl gcc-7 libgmp-dev -y
 if [[ X"$OPENMPI" == "Xon" ]]; then
     echo "installing openmpi"
     cd /tmp
-    curl -O https://download.open-mpi.org/release/open-mpi/v4.0/openmpi-4.0.3.tar.gz
-    tar xzf openmpi-4.0.3.tar.gz
-    cd openmpi-4.0.3
-    ./configure --prefix=/usr/local/openmpi-4.0.3
+    curl -O https://download.open-mpi.org/release/open-mpi/v4.1/openmpi-4.1.4.tar.gz
+    tar xzf openmpi-4.1.4.tar.gz
+    cd openmpi-4.1.4
+    ./configure --prefix=/usr/local/openmpi-4.1.4
     make
     sudo make install
     set +e && source ~/.bashrc
     set -e
-    add_env PATH /usr/local/openmpi-4.0.3/bin
-    add_env LD_LIBRARY_PATH /usr/local/openmpi-4.0.3/lib
+    add_env PATH /usr/local/openmpi-4.1.4/bin
+    add_env LD_LIBRARY_PATH /usr/local/openmpi-4.1.4/lib
 fi
 
 # install conda
@@ -170,18 +170,13 @@ set -e
 
 # set up conda env and install mindspore-cpu
 env_name=mindspore_py3${PYTHON_VERSION##*.}
-declare -A cudnn_version_map=()
-cudnn_version_map["10.1"]="7.6.5"
-cudnn_version_map["11.1"]="8.1.0"
-cudnn_version_map["11.6"]="8.5.0"
 conda create -n $env_name python=${PYTHON_VERSION} -c conda-forge -y
 conda activate $env_name
-install_name="mindspore-gpu"
+install_name="mindspore"
 if [[ $MINDSPORE_VERSION != "EMPTY" ]]; then
     install_name="${install_name}=${MINDSPORE_VERSION}"
 fi
-conda install ${install_name} \
-    cudatoolkit=${CUDA_VERSION} cudnn=${cudnn_version_map[$CUDA_VERSION]} -c mindspore -c conda-forge -y
+conda install ${install_name} -c mindspore -c conda-forge -y
 
 # check mindspore installation
 python -c "import mindspore;mindspore.run_check()"

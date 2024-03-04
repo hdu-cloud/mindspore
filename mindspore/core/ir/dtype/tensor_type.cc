@@ -111,6 +111,34 @@ size_t TensorType::hash() const {
   return hash_value;
 }
 
+std::string AnyType::ToString() const {
+  if (element() == nullptr) {
+    return "Any(Tensor)";
+  }
+  return "Any(Tensor)[" + element()->ToString() + "]";
+}
+
+std::string AnyType::DumpText() const {
+  if (element() == nullptr) {
+    return "Any(Tensor)";
+  }
+  return "Any(Tensor)(" + element()->DumpText() + ")";
+}
+
+std::string NegligibleType::ToString() const {
+  if (element() == nullptr) {
+    return "Negligible(Tensor)";
+  }
+  return "Negligible(Tensor)[" + element()->ToString() + "]";
+}
+
+std::string NegligibleType::DumpText() const {
+  if (element() == nullptr) {
+    return "Negligible(Tensor)";
+  }
+  return "Negligible(Tensor)(" + element()->DumpText() + ")";
+}
+
 std::string SparseTensorType::ElementsDtypeStr(const StringType str_type) const {
   std::ostringstream oss;
   for (const TypePtr &elem : elements_) {
@@ -149,8 +177,10 @@ std::string SparseTensorType::ToReprString() const {
 
 const TypePtrList SparseTensorType::ElementsClone() const {
   TypePtrList elems;
-  (void)std::transform(elements_.begin(), elements_.end(), std::back_inserter(elems),
-                       [](const TypePtr &ele) { return ele->DeepCopy(); });
+  (void)std::transform(elements_.begin(), elements_.end(), std::back_inserter(elems), [](const TypePtr &ele) {
+    MS_EXCEPTION_IF_NULL(ele);
+    return ele->DeepCopy();
+  });
   return elems;
 }
 

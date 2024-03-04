@@ -54,15 +54,7 @@ class TransformUtil {
    * Return：
    *     [GeFormat] the data format for ge tensor
    * */
-  static GeFormat ConvertFormat(const string &format, const size_t shape_size);
-
-  /*
-   * Parameters:
-   *     type: [MeDataType] the data type for ME tensor
-   * Return：
-   *     [size_t] the buff size for the type in ME
-   * */
-  static size_t GetDataTypeSize(const MeDataType &type);
+  static GeFormat ConvertFormat(const std::string &format, size_t shape_size);
 
   /*
    * Parameters:
@@ -72,19 +64,19 @@ class TransformUtil {
    * Return：
    *     [shared_ptr<GeTensorDesc>] the shared pointer of ge tensor description
    * */
-  static std::shared_ptr<GeTensorDesc> GetGeTensorDesc(const ShapeVector &shape, const MeDataType &me_type,
-                                                       const std::string &format, const ShapeVector &ori_shape = {},
-                                                       const std::string &ori_format = {});
+  static std::shared_ptr<GeTensorDesc> GetGeTensorDesc(const ShapeVector &ori_shape, const MeDataType &me_type,
+                                                       const std::string &ori_format, const ShapeVector &dev_shape = {},
+                                                       const std::string &dev_format = {});
 
   /*
    * Parameters:
    *     tensor: [MeTensor] the data tensor in ME
    *     format: [string] the data format in ME op
-   *     is_input: [bool] whether the tensor is used as input, default:false
+   *     copy: [bool] whether copy tensor data, default:true
    * Return：
    *     [GeTensor] the data tensor in GE
    * */
-  static GeTensorPtr ConvertTensor(const MeTensorPtr &tensor, const std::string &format);
+  static GeTensorPtr ConvertTensor(const MeTensorPtr &tensor, const std::string &format, bool copy = true);
 
   /*
    * Parameters:
@@ -120,7 +112,7 @@ class TransformUtil {
    * Return：
    *     [MeTensor] the data tensor in ME
    * */
-  static MeTensorPtr ConvertGeTensor(GeTensorPtr ge_tensor, const ShapeVector &request_dims);
+  static MeTensorPtr ConvertGeTensor(GeTensorPtr ge_tensor, const ShapeVector &request_dims, bool ref_mem = false);
   /*
    * Parameters:
    *     ge_tensors: [std::vector<GeTensorPtr>] the data tensor in GE
@@ -145,7 +137,8 @@ class TransformUtil {
    * Return：
    *     [MeTensor] the data tensor in ME
    * */
-  static MeTensorPtr GenerateMeTensor(const GeTensorPtr &ge_tensor, const ShapeVector &me_dims, const TypeId &me_type);
+  static MeTensorPtr GenerateMeTensor(const GeTensorPtr &ge_tensor, const ShapeVector &me_dims, const TypeId &me_type,
+                                      bool ref_mem = false);
   /*
    * Parameters:
    *     type: [GeDataType] the ge tensor data type

@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_CLIP_BY_VALUE_H_
 #define MINDSPORE_CORE_OPS_CLIP_BY_VALUE_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,8 +35,8 @@ class MIND_API ClipByValue : public BaseOperator {
   }
   void Init() const {}
 };
-abstract::AbstractBasePtr ClipByValueInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                           const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr ClipByValueInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                    const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimClipByValuePtr = std::shared_ptr<ClipByValue>;
 }  // namespace ops
 }  // namespace mindspore

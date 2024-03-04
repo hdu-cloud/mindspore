@@ -15,13 +15,29 @@
  */
 
 #include "ops/sparse_segment_mean.h"
+
+#include <functional>
+#include <memory>
+#include <numeric>
+#include <set>
+
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
+
+bool IsEmptyTensor(const std::vector<int64_t> &dims) {
+  if (dims.size() == 1 && dims[0] == 0) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
 abstract::ShapePtr SparseSegmentMeanInferShape(const PrimitivePtr &prim,
                                                const std::vector<AbstractBasePtr> &input_args) {
   auto prim_name = prim->name();
@@ -42,7 +58,9 @@ abstract::ShapePtr SparseSegmentMeanInferShape(const PrimitivePtr &prim,
     constexpr int64_t unknown_shape = -2;
     return std::make_shared<abstract::Shape>(ShapeVector{unknown_shape});
   }
-
+  if (IsEmptyTensor(x_shape)) {
+    MS_EXCEPTION(ValueError) << "For '" << prim_name << "', 'x' can not be an empty Tensor.";
+  }
   constexpr int64_t number_one = 1;
   (void)CheckAndConvertUtils::CheckInteger("rank of 'x'", SizeToLong(x_shape.size()), kGreaterEqual,
                                            batch_rank + number_one, prim_name);
@@ -115,7 +133,26 @@ AbstractBasePtr SparseSegmentMeanInfer(const abstract::AnalysisEnginePtr &, cons
 }
 
 MIND_API_OPERATOR_IMPL(SparseSegmentMean, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseSegmentMean, prim::kPrimSparseSegmentMean, SparseSegmentMeanInfer, nullptr, true);
-REGISTER_HOST_DEPENDS(kNameSparseSegmentMean, {2});
+
+// AG means auto generated
+class MIND_API AGSparseSegmentMeanInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentMeanInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentMeanInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentMeanInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseSegmentMean, prim::kPrimSparseSegmentMean, AGSparseSegmentMeanInfer, false);
 }  // namespace ops
 }  // namespace mindspore

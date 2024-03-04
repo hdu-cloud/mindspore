@@ -17,15 +17,15 @@
 #ifndef MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_GPU_NN_LOCAL_RESPONSE_NORM_GPU_KERNEL_H_
 #define MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_GPU_NN_LOCAL_RESPONSE_NORM_GPU_KERNEL_H_
 
+#include <map>
 #include <string>
 #include <vector>
-#include <map>
+#include "include/common/utils/utils.h"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/local_response_norm_impl.cuh"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/transpose_impl.cuh"
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
 #include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
 #include "plugin/device/gpu/kernel/kernel_constants.h"
-#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/local_response_norm_impl.cuh"
-#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/transpose_impl_opt.cuh"
-#include "include/common/utils/utils.h"
 
 namespace mindspore {
 namespace kernel {
@@ -62,44 +62,26 @@ class LocalResponseNormGpuKernelMod : public NativeGpuKernelMod {
     auto y = GetDeviceAddress<T>(outputs, 0);
     const float alpha = 1;
     const float beta = 0;
-
     if (use_native_) {
-      std::vector<size_t> to_nhwc_axis = {0, 2, 3, 1};
-      std::vector<size_t> to_nchw_axis = {0, 3, 1, 2};
-      const size_t shape_size = 4 * sizeof(size_t);
-      size_t *ws_input_shape = GetDeviceAddress<size_t>(workspace, 0);
-      size_t *ws_transpose_shape = GetDeviceAddress<size_t>(workspace, 1);
-      size_t *ws_to_nhwc_axis = GetDeviceAddress<size_t>(workspace, 2);
-      size_t *ws_to_nchw_axis = GetDeviceAddress<size_t>(workspace, 3);
-      T *ws_x = GetDeviceAddress<T>(workspace, 4);
-      T *ws_y = GetDeviceAddress<T>(workspace, 5);
-      float *ws_scale = GetDeviceAddress<float>(workspace, 6);
+      T *ws_x = GetDeviceAddress<T>(workspace, 0);
+      T *ws_y = GetDeviceAddress<T>(workspace, 1);
+      float *ws_scale = GetDeviceAddress<float>(workspace, 2);
 
-      CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-        cudaMemcpyAsync(ws_input_shape, &input_shape_[0], shape_size, cudaMemcpyHostToDevice,
-                        reinterpret_cast<cudaStream_t>(stream_ptr)),
-        "cudaMemcpyAsync input_shape_ failed");
-      CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-        cudaMemcpyAsync(ws_transpose_shape, &transpose_shape_[0], shape_size, cudaMemcpyHostToDevice,
-                        reinterpret_cast<cudaStream_t>(stream_ptr)),
-        "cudaMemcpyAsync transpose_shape_ failed");
-      CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-        cudaMemcpyAsync(ws_to_nhwc_axis, &to_nhwc_axis[0], shape_size, cudaMemcpyHostToDevice,
-                        reinterpret_cast<cudaStream_t>(stream_ptr)),
-        "cudaMemcpyAsync to_nhwc_axis failed");
-      CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-        cudaMemcpyAsync(ws_to_nchw_axis, &to_nchw_axis[0], shape_size, cudaMemcpyHostToDevice,
-                        reinterpret_cast<cudaStream_t>(stream_ptr)),
-        "cudaMemcpyAsync to_nchw_axis failed");
+      TransposeInfo InInfo;
+      TransposeInfo OutInfo;
+      InInfo.input_shape = input_shape_;
+      InInfo.perm = std::vector<int32_t>{0, 2, 3, 1};
+      OutInfo.input_shape = transpose_shape_;
+      OutInfo.perm = std::vector<int32_t>{0, 3, 1, 2};
 
-      CalNCHW2NHWCInterface(num_elements_, 4, x, &input_shape_[0], &to_nhwc_axis[0], ws_input_shape, ws_to_nhwc_axis,
-                            ws_x, reinterpret_cast<cudaStream_t>(stream_ptr));
+      auto status = CalTranspose<T, true>(num_elements_, x, InInfo, ws_x, reinterpret_cast<cudaStream_t>(stream_ptr));
+      CHECK_CUDA_STATUS(status, "Transpose called by " + kernel_name_);
+      status = CalLocalResponseNormNHWC(ws_x, depth_radius_, bias_, alpha_, beta_, transpose_shape_[kDim3],
+                                        num_elements_, ws_scale, ws_y, reinterpret_cast<cudaStream_t>(stream_ptr));
 
-      CalLocalResponseNormNHWC(ws_x, depth_radius_, bias_, alpha_, beta_, transpose_shape_[3], num_elements_, ws_scale,
-                               ws_y, reinterpret_cast<cudaStream_t>(stream_ptr));
-
-      CalNHWC2NCHWInterface(num_elements_, 4, ws_y, &transpose_shape_[0], &to_nchw_axis[0], ws_transpose_shape,
-                            ws_to_nchw_axis, y, reinterpret_cast<cudaStream_t>(stream_ptr));
+      CHECK_CUDA_STATUS(status, kernel_name_);
+      CalTranspose<T, true>(num_elements_, ws_y, OutInfo, y, reinterpret_cast<cudaStream_t>(stream_ptr));
+      CHECK_CUDA_STATUS(status, "Transpose called by " + kernel_name_);
     } else {
       CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
         cudnnLRNCrossChannelForward(handle_, norm_desc_, lrn_mode_, &alpha, x_desc_, x, &beta, y_desc_, y),
@@ -141,34 +123,32 @@ class LocalResponseNormGpuKernelMod : public NativeGpuKernelMod {
       return ret;
     }
     ResetResource();
-    auto shape_signed = inputs[0]->GetShapeVector();
-    auto input_shape = Convert2SizeTClipNeg(shape_signed);
-    is_null_input_ = CHECK_SHAPE_NULL(input_shape, kernel_name_, "input");
+    input_shape_ = inputs[0]->GetShapeVector();
+    is_null_input_ = CHECK_SHAPE_NULL(input_shape_, kernel_name_, "input");
     if (is_null_input_) {
       InitSizeLists();
       return KRET_OK;
     }
-    if (input_shape.size() != 4) {
+    const int dimension = 4;
+    if (input_shape_.size() != dimension) {
       MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the dimension of input must be 4, but got "
-                        << input_shape.size();
+                        << input_shape_.size();
     }
 
+    const int THIRD_ELEMENT_INDEX = 2;
+    const int FOURTH_ELEMENT_INDEX = 3;
     if (use_native_) {
-      num_elements_ = 1;
-      for (auto x : input_shape) {
-        input_shape_.push_back(x);
-        num_elements_ *= x;
-      }
+      num_elements_ = static_cast<size_t>(SizeOf(input_shape_));
       transpose_shape_.push_back(input_shape_[0]);
-      transpose_shape_.push_back(input_shape_[2]);
-      transpose_shape_.push_back(input_shape_[3]);
+      transpose_shape_.push_back(input_shape_[THIRD_ELEMENT_INDEX]);
+      transpose_shape_.push_back(input_shape_[FOURTH_ELEMENT_INDEX]);
       transpose_shape_.push_back(input_shape_[1]);
     } else {
       const unsigned int lrnN = 2 * depth_radius_ + 1;
       double lrnAlpha = lrnN * alpha_;
       lrn_mode_ = CUDNN_LRN_CROSS_CHANNEL_DIM1;
       cudnn_data_type_ = GetCudnnDataType(TypeIdLabel(inputs[0]->GetDtype()));
-      SetCUDNNDescriptors(input_shape, lrnN, lrnAlpha);
+      SetCUDNNDescriptors(input_shape_, lrnN, lrnAlpha);
     }
 
     InitSizeLists();
@@ -206,11 +186,6 @@ class LocalResponseNormGpuKernelMod : public NativeGpuKernelMod {
       if (use_native_) {
         input_size_ = num_elements_ * sizeof(T);
         output_size_ = num_elements_ * sizeof(T);
-        const size_t shape_size = 4 * sizeof(size_t);
-        workspace_size_list_.push_back(shape_size);
-        workspace_size_list_.push_back(shape_size);
-        workspace_size_list_.push_back(shape_size);
-        workspace_size_list_.push_back(shape_size);
         workspace_size_list_.push_back(input_size_);
         workspace_size_list_.push_back(input_size_);
         workspace_size_list_.push_back(num_elements_ * sizeof(float));
@@ -226,13 +201,13 @@ class LocalResponseNormGpuKernelMod : public NativeGpuKernelMod {
   }
 
  private:
-  void SetCUDNNDescriptors(const std::vector<size_t> &shape, int lrnN, double lrnAlpha) {
+  void SetCUDNNDescriptors(const std::vector<int64_t> &shape, int lrnN, double lrnAlpha) {
     cudnnTensorFormat_t cudnn_format;
     int batch, channel, height, width;
-    batch = SizeToInt(shape[0]);
-    channel = SizeToInt(shape[1]);
-    height = SizeToInt(shape[2]);
-    width = SizeToInt(shape[3]);
+    batch = static_cast<int>(shape[kIndex0]);
+    channel = static_cast<int>(shape[kIndex1]);
+    height = static_cast<int>(shape[kIndex2]);
+    width = static_cast<int>(shape[kIndex3]);
     cudnn_format = CUDNN_TENSOR_NCHW;
     CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
       cudnnSetTensor4dDescriptor(x_desc_, cudnn_format, cudnn_data_type_, batch, channel, height, width),
@@ -261,8 +236,8 @@ class LocalResponseNormGpuKernelMod : public NativeGpuKernelMod {
   float beta_;
   bool use_native_;
   size_t num_elements_;
-  std::vector<size_t> input_shape_;
-  std::vector<size_t> transpose_shape_;
+  std::vector<int64_t> input_shape_;
+  std::vector<int64_t> transpose_shape_;
 };
 }  // namespace kernel
 }  // namespace mindspore

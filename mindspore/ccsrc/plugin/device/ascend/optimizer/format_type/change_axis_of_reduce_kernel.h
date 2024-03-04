@@ -16,7 +16,7 @@
 #ifndef MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_FORMAT_TYPE_CHANGE_AXIS_OF_REDUCE_KENRNEL_H_
 #define MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_FORMAT_TYPE_CHANGE_AXIS_OF_REDUCE_KENRNEL_H_
 
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/optimizer.h"
 
 namespace mindspore {
 namespace opt {
@@ -27,9 +27,6 @@ class ChangeAxisOfReduceKernel : public PatternProcessPass {
   ~ChangeAxisOfReduceKernel() override = default;
   const BaseRef DefinePattern() const override;
   const AnfNodePtr Process(const FuncGraphPtr &, const AnfNodePtr &node, const EquivPtr &) const override;
-
- private:
-  static void NormalizeReduceAttrAxis(const CNodePtr &cnode);
 };
 }  // namespace opt
 }  // namespace mindspore

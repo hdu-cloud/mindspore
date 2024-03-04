@@ -16,6 +16,7 @@
 
 #include "nnacl/infer/expand_dims_infer.h"
 #include "nnacl/infer/infer_register.h"
+#include "nnacl/tensor_c_utils.h"
 
 int ExpandDimsInferShape(const TensorC *const *inputs, size_t inputs_size, TensorC **outputs, size_t outputs_size,
                          OpParameter *parameter) {
@@ -27,7 +28,7 @@ int ExpandDimsInferShape(const TensorC *const *inputs, size_t inputs_size, Tenso
   const TensorC *input = inputs[0];
   TensorC *output = outputs[0];
   SetDataTypeFormat(output, input);
-  if (parameter->quant_type_ == QuantType_QUANT_WEIGHT) {
+  if (parameter->quant_type_ == Quant_QuantWeight) {
     output->data_type_ = kNumberTypeFloat32;
   }
   if (!InferFlag(inputs, inputs_size)) {

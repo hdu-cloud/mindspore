@@ -14,18 +14,38 @@
  * limitations under the License.
  */
 #include <memory>
-#include <algorithm>
 #include <set>
-#include "ops/op_utils.h"
+#include <string>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/named.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/type_id.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
 #include "ops/segment_arithmetic.h"
-#include "ops/segment_mean.h"
 #include "ops/segment_max.h"
+#include "ops/segment_mean.h"
 #include "ops/segment_min.h"
 #include "ops/segment_prod.h"
 #include "ops/segment_sum.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -48,32 +68,36 @@ void CheckSegmentIDDataMean(const T *segment_ids_data, const size_t data_size) {
 namespace {
 abstract::ShapePtr SegmentArithmeticInferShape(const PrimitivePtr &primitive,
                                                const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
+  auto prim_name = primitive->name();
+
   auto max_length_ptr = primitive->GetAttr("max_length");
   MS_EXCEPTION_IF_NULL(max_length_ptr);
   int64_t max_length = GetValue<int64_t>(max_length_ptr);
-  auto prim_name = primitive->name();
-  auto x_shape_ptr = input_args[0]->BuildShape();
-  MS_EXCEPTION_IF_NULL(x_shape_ptr);
-  auto segment_ids_shape_ptr = input_args[1]->BuildShape();
-  MS_EXCEPTION_IF_NULL(segment_ids_shape_ptr);
-  auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(x_shape_ptr)[kShape];
-  auto segment_ids_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(segment_ids_shape_ptr)[kShape];
+
+  auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
+  auto segment_ids_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->BuildShape())[kShape];
+
+  if (IsDynamicRank(x_shape)) {
+    return std::make_shared<abstract::Shape>(std::vector<int64_t>{abstract::Shape::kShapeRankAny});
+  }
+
   (void)CheckAndConvertUtils::CheckInteger("rank of 'x'", SizeToLong(x_shape.size()), kGreaterEqual, 1, prim_name);
   (void)CheckAndConvertUtils::CheckInteger("rank of 'segment_ids'", SizeToLong(segment_ids_shape.size()), kEqual, 1,
                                            prim_name);
-  if (segment_ids_shape[0] != x_shape[0]) {
+
+  auto is_dynamic = IsDynamic(x_shape) || IsDynamic(segment_ids_shape);
+  if (!is_dynamic && segment_ids_shape[0] != x_shape[0]) {
     MS_EXCEPTION(ValueError) << "For '" << prim_name
                              << "', the amount of data for segment_ids must be equal to the first dimension of the "
                                 "shape of input_x, but got "
                              << segment_ids_shape[0] << " and " << x_shape[0] << ".";
   }
-  if (IsDynamicRank(x_shape)) {
-    return std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
-  }
+
   ShapeVector out_shape(x_shape);
   auto segment_ids_ptr = input_args[1]->BuildValue();
   MS_EXCEPTION_IF_NULL(segment_ids_ptr);
-  if (!segment_ids_ptr->isa<AnyValue>() && !segment_ids_ptr->isa<None>()) {
+  if (!segment_ids_ptr->isa<ValueAny>() && !segment_ids_ptr->isa<None>()) {
     auto segment_ids_tensor = segment_ids_ptr->cast<tensor::TensorPtr>();
     MS_EXCEPTION_IF_NULL(segment_ids_tensor);
     auto data_size = segment_ids_tensor->DataSize();
@@ -100,6 +124,7 @@ abstract::ShapePtr SegmentArithmeticInferShape(const PrimitivePtr &primitive,
   } else {
     out_shape[0] = abstract::Shape::kShapeDimAny;
   }
+
   return std::make_shared<abstract::Shape>(out_shape);
 }
 
@@ -135,10 +160,29 @@ MIND_API_OPERATOR_IMPL(SegmentMean, BaseOperator);
 MIND_API_OPERATOR_IMPL(SegmentProd, BaseOperator);
 MIND_API_OPERATOR_IMPL(SegmentSum, BaseOperator);
 
-REGISTER_PRIMITIVE_EVAL_IMPL(SegmentMax, prim::kPrimSegmentMax, SegmentArithmeticInfer, nullptr, true);
-REGISTER_PRIMITIVE_EVAL_IMPL(SegmentMin, prim::kPrimSegmentMin, SegmentArithmeticInfer, nullptr, true);
-REGISTER_PRIMITIVE_EVAL_IMPL(SegmentMean, prim::kPrimSegmentMean, SegmentArithmeticInfer, nullptr, true);
-REGISTER_PRIMITIVE_EVAL_IMPL(SegmentProd, prim::kPrimSegmentProd, SegmentArithmeticInfer, nullptr, true);
-REGISTER_PRIMITIVE_EVAL_IMPL(SegmentSum, prim::kPrimSegmentSum, SegmentArithmeticInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGSegmentArithmeticInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SegmentArithmeticInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SegmentArithmeticInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SegmentArithmeticInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SegmentMax, prim::kPrimSegmentMax, AGSegmentArithmeticInfer, false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SegmentMin, prim::kPrimSegmentMin, AGSegmentArithmeticInfer, false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SegmentMean, prim::kPrimSegmentMean, AGSegmentArithmeticInfer, false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SegmentProd, prim::kPrimSegmentProd, AGSegmentArithmeticInfer, false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SegmentSum, prim::kPrimSegmentSum, AGSegmentArithmeticInfer, false);
 }  // namespace ops
 }  // namespace mindspore

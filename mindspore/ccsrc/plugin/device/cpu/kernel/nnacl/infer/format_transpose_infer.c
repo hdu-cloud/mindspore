@@ -17,6 +17,7 @@
 #include "nnacl/infer/format_transpose_infer.h"
 #include "nnacl/infer/infer_register.h"
 #include "nnacl/format_transpose_parameter.h"
+#include "nnacl/tensor_c_utils.h"
 
 int FormatTransposeInferShape(const TensorC *const *inputs, size_t inputs_size, TensorC **outputs, size_t outputs_size,
                               OpParameter *parameter) {
@@ -35,7 +36,8 @@ int FormatTransposeInferShape(const TensorC *const *inputs, size_t inputs_size, 
     return NNACL_INFER_INVALID;
   }
   if (input->shape_size_ != DIMENSION_4D) {
-    return NNACL_INFER_INVALID;
+    SetShapeArray(output, input->shape_, input->shape_size_);
+    return NNACL_OK;
   }
 
   int input_b = GetBatch(input);

@@ -23,8 +23,8 @@
 // adjust calculated position to origin dx array dimensions and copy value
 template <typename T>
 __global__ void CropAndResize(const size_t size, const T *input_image, float *input_boxes, int *input_box_index,
-                              int batch, int input_height, int input_width, int final_height,
-                              int final_width, int channel, int method, float extrapol_val, float *output) {
+                              int batch, int input_height, int input_width, int final_height, int final_width,
+                              int channel, int method, float extrapol_val, float *output) {
   for (size_t pos = blockIdx.x * blockDim.x + threadIdx.x; pos < size; pos += blockDim.x * gridDim.x) {
     // input format -> [batch, height, width, channel]
     // adjust pos_temp for accessing different dims channel onwards
@@ -36,6 +36,7 @@ __global__ void CropAndResize(const size_t size, const T *input_image, float *in
     const int pos_y = pos_temp % final_height;          // output y position
     const int pos_image_idx = pos_temp / final_height;  // output image
     const int box_index = input_box_index[pos_image_idx];
+    CUDA_KERNEL_ASSERT(box_index >= 0 && box_index < batch);
     // crop values
     const float y1 = input_boxes[4 * pos_image_idx + 0];
     const float x1 = input_boxes[4 * pos_image_idx + 1];
@@ -53,14 +54,14 @@ __global__ void CropAndResize(const size_t size, const T *input_image, float *in
     float target_y = 0;
     float target_x = 0;
     if (final_height > 1) {
-      target_y = y1 * (input_height - 1) + pos_y * scale_height;
+      target_y = static_cast<double>(y1 * (input_height - 1)) + pos_y * scale_height;
     } else {
-      target_y = 0.5 * (y1 + y2) + (input_height - 1);
+      target_y = 0.5 * (y1 + y2) * (input_height - 1);
     }
     if (final_width > 1) {
-      target_x = x1 * (input_width - 1) + pos_x * scale_width;
+      target_x = static_cast<double>(x1 * (input_width - 1)) + pos_x * scale_width;
     } else {
-      target_x = 0.5 * (x1 + x2) + (input_width - 1);
+      target_x = 0.5 * (x1 + x2) * (input_width - 1);
     }
     // use extrapolation value if out of range
     if (((target_x < 0) || (target_x > input_width - 1)) || ((target_y < 0) || (target_y > input_height - 1))) {
@@ -102,56 +103,66 @@ __global__ void CropAndResize(const size_t size, const T *input_image, float *in
 }
 
 template <typename T>
-void CalCropAndResize(const size_t size, const T *input_image, float *input_boxes, int *input_box_index, int batch,
-                      int input_height, int input_width, int final_height, int final_width, int channel,
-                      int method, float extrapol_val, float *output, cudaStream_t cuda_stream) {
+cudaError_t CalCropAndResize(const size_t size, const T *input_image, float *input_boxes, int *input_box_index,
+                             int batch, int input_height, int input_width, int final_height, int final_width,
+                             int channel, int method, float extrapol_val, float *output, cudaStream_t cuda_stream) {
   CropAndResize<<<GET_BLOCKS(size), GET_THREADS, 0, cuda_stream>>>(size, input_image, input_boxes, input_box_index,
                                                                    batch, input_height, input_width, final_height,
                                                                    final_width, channel, method, extrapol_val, output);
-  return;
+  return GetCudaStatus();
 }
 
-template CUDA_LIB_EXPORT void CalCropAndResize<int8_t>(const size_t size, const int8_t *input_image, float *input_boxes,
-                                                       int *input_box_index, int batch, int input_height,
-                                                       int input_width, int final_height, int final_width, int channel,
-                                                       int method, float extrapol_val, float *output,
-                                                       cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CalCropAndResize<int16_t>(const size_t size, const int16_t *input_image,
-                                                        float *input_boxes, int *input_box_index, int batch,
-                                                        int input_height, int input_width, int final_height,
-                                                        int final_width, int channel, int method, float extrapol_val,
-                                                        float *output, cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CalCropAndResize<int32_t>(const size_t size, const int32_t *input_image,
-                                                        float *input_boxes, int *input_box_index, int batch,
-                                                        int input_height, int input_width, int final_height,
-                                                        int final_width, int channel, int method, float extrapol_val,
-                                                        float *output, cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CalCropAndResize<int64_t>(const size_t size, const int64_t *input_image,
-                                                        float *input_boxes, int *input_box_index, int batch,
-                                                        int input_height, int input_width, int final_height,
-                                                        int final_width, int channel, int method, float extrapol_val,
-                                                        float *output, cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CalCropAndResize<half>(const size_t size, const half *input_image, float *input_boxes,
-                                                     int *input_box_index, int batch, int input_height, int input_width,
-                                                     int final_height, int final_width, int channel, int method,
-                                                     float extrapol_val, float *output, cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CalCropAndResize<float>(const size_t size, const float *input_image, float *input_boxes,
-                                                      int *input_box_index, int batch, int input_height,
-                                                      int input_width, int final_height, int final_width, int channel,
-                                                      int method, float extrapol_val, float *output,
-                                                      cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CalCropAndResize<double>(const size_t size, const double *input_image, float *input_boxes,
-                                                       int *input_box_index, int batch, int input_height,
-                                                       int input_width, int final_height, int final_width, int channel,
-                                                       int method, float extrapol_val, float *output,
-                                                       cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CalCropAndResize<uint8_t>(const size_t size, const uint8_t *input_image,
-                                                        float *input_boxes, int *input_box_index, int batch,
-                                                        int input_height, int input_width, int final_height,
-                                                        int final_width, int channel, int method,
-                                                        float extrapol_val, float *output, cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CalCropAndResize<uint16_t>(const size_t size, const uint16_t *input_image,
-                                                         float *input_boxes, int *input_box_index, int batch,
-                                                         int input_height, int input_width, int final_height,
-                                                         int final_width, int channel, int method, float extrapol_val,
-                                                         float *output, cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalCropAndResize<int8_t>(const size_t size, const int8_t *input_image,
+                                                              float *input_boxes, int *input_box_index, int batch,
+                                                              int input_height, int input_width, int final_height,
+                                                              int final_width, int channel, int method,
+                                                              float extrapol_val, float *output,
+                                                              cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalCropAndResize<int16_t>(const size_t size, const int16_t *input_image,
+                                                               float *input_boxes, int *input_box_index, int batch,
+                                                               int input_height, int input_width, int final_height,
+                                                               int final_width, int channel, int method,
+                                                               float extrapol_val, float *output,
+                                                               cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalCropAndResize<int32_t>(const size_t size, const int32_t *input_image,
+                                                               float *input_boxes, int *input_box_index, int batch,
+                                                               int input_height, int input_width, int final_height,
+                                                               int final_width, int channel, int method,
+                                                               float extrapol_val, float *output,
+                                                               cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalCropAndResize<int64_t>(const size_t size, const int64_t *input_image,
+                                                               float *input_boxes, int *input_box_index, int batch,
+                                                               int input_height, int input_width, int final_height,
+                                                               int final_width, int channel, int method,
+                                                               float extrapol_val, float *output,
+                                                               cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalCropAndResize<half>(const size_t size, const half *input_image,
+                                                            float *input_boxes, int *input_box_index, int batch,
+                                                            int input_height, int input_width, int final_height,
+                                                            int final_width, int channel, int method,
+                                                            float extrapol_val, float *output,
+                                                            cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalCropAndResize<float>(const size_t size, const float *input_image,
+                                                             float *input_boxes, int *input_box_index, int batch,
+                                                             int input_height, int input_width, int final_height,
+                                                             int final_width, int channel, int method,
+                                                             float extrapol_val, float *output,
+                                                             cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalCropAndResize<double>(const size_t size, const double *input_image,
+                                                              float *input_boxes, int *input_box_index, int batch,
+                                                              int input_height, int input_width, int final_height,
+                                                              int final_width, int channel, int method,
+                                                              float extrapol_val, float *output,
+                                                              cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalCropAndResize<uint8_t>(const size_t size, const uint8_t *input_image,
+                                                               float *input_boxes, int *input_box_index, int batch,
+                                                               int input_height, int input_width, int final_height,
+                                                               int final_width, int channel, int method,
+                                                               float extrapol_val, float *output,
+                                                               cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalCropAndResize<uint16_t>(const size_t size, const uint16_t *input_image,
+                                                                float *input_boxes, int *input_box_index, int batch,
+                                                                int input_height, int input_width, int final_height,
+                                                                int final_width, int channel, int method,
+                                                                float extrapol_val, float *output,
+                                                                cudaStream_t cuda_stream);

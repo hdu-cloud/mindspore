@@ -15,12 +15,11 @@
  */
 
 #include "plugin/device/cpu/kernel/mkldnn/pooling_grad_cpu_kernel.h"
-
 #include <functional>
 #include <unordered_map>
-
-#include "utils/ms_utils.h"
+#include "ops/conv_pool_op_name.h"
 #include "utils/profile.h"
+#include "kernel/ops_utils.h"
 
 namespace mindspore {
 namespace kernel {
@@ -29,7 +28,8 @@ constexpr size_t kAvgPooling3DGradInputsNum = 1;
 constexpr size_t kAvgPooling3DGradDynamicInputsNum = 2;
 constexpr size_t kPoolingGradInputsNum = 3;
 constexpr size_t kPoolingGradOutputsNum = 1;
-constexpr size_t kPoolingGradWorkSpaceNum = 2;
+constexpr size_t kMaxPoolingGradWorkSpaceNum = 2;
+constexpr size_t kAvgPoolingGradWorkSpaceNum = 1;
 constexpr size_t kGradIndex = 2;
 }  // namespace
 
@@ -69,6 +69,7 @@ bool PoolingGradCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const s
   pad_mode_ = GetValue<std::string>(prim->GetAttr(PAD_MODE));
   kernel_include_nc_ = GetValue<std::vector<int64_t>>(prim->GetAttr(KERNEL_SIZE));
   strides_include_nc_ = GetValue<std::vector<int64_t>>(prim->GetAttr(STRIDES));
+  dtype_ = inputs[grad_index_]->GetDtype();
   return true;
 }
 
@@ -129,32 +130,30 @@ int PoolingGradCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const 
     primitive_forward_ = CreatePrimitive<dnnl::pooling_forward>(forward_prim_desc);
     workspace_desc_ = GetWorkspaceDesc(forward_prim_desc);
     AddArgument(DNNL_ARG_WORKSPACE, workspace_desc_);
-
     size_t work_space = GetSize(workspace_desc_);
-    size_t dst_space =
-      std::accumulate(dst_shape_.begin(), dst_shape_.end(), size_t(1), std::multiplies<size_t>()) * sizeof(float);
     workspace_size_list_.push_back(work_space);
-    workspace_size_list_.push_back(dst_space);
   }
-  base_operator_ = base_operator;
-  inputs_ = inputs;
-  outputs_ = outputs;
+  size_t dst_space =
+    std::accumulate(dst_shape_.begin(), dst_shape_.end(), size_t(1), std::multiplies<size_t>()) * sizeof(float);
+  workspace_size_list_.push_back(dst_space);
   inputs_on_host_ = inputsOnHost;
   return KRET_OK;
 }
 
-void PoolingGradCpuKernelMod::ReComputeDivisor(float *dst) {
+template <typename T>
+void PoolingGradCpuKernelMod::ReComputeDivisor(T *dst) {
   const int64_t kernel_size = std::accumulate(kernel_.begin(), kernel_.end(), int64_t(1), std::multiplies<int64_t>());
   const size_t size = std::accumulate(dst_shape_.begin(), dst_shape_.end(), size_t(1), std::multiplies<size_t>());
   CTask task = [&](size_t start, size_t end) {
     for (size_t i = start; i < end; i++) {
-      dst[i] = dst[i] * LongToFloat(kernel_size) / LongToFloat(divisor_override_);
+      dst[i] = dst[i] * static_cast<T>(LongToFloat(kernel_size)) / static_cast<T>(LongToFloat(divisor_override_));
     }
   };
   ParallelLaunchAutoSearch(task, size, this, &parallel_search_info_);
 }
 
-void PoolingGradCpuKernelMod::EliminateInvalidPadding(float *dst) {
+template <typename T>
+void PoolingGradCpuKernelMod::EliminateInvalidPadding(T *dst) {
   if (dst_shape_.size() < SHAPE_5D || kernel_.size() + NC_LEN < SHAPE_5D ||
       padding_invalid_.size() + NC_LEN < SHAPE_5D) {
     MS_LOG(ERROR) << "The dst_shape must be 5D, the kernel and the padding_invalid must be 3D!";
@@ -187,13 +186,21 @@ void PoolingGradCpuKernelMod::EliminateInvalidPadding(float *dst) {
             const char h_bound = h == h_max ? '1' : '0';
             const char w_bound = w == w_max ? '1' : '0';
             const std::string bin{d_bound, h_bound, w_bound};
-            const int kernel_index = std::stoi(bin, nullptr, base);
+            int kernel_index = 0;
+            try {
+              kernel_index = std::stoi(bin, nullptr, base);
+            } catch (const std::invalid_argument &e) {
+              MS_LOG(EXCEPTION) << "invalid string to be cast to int!";
+            } catch (const std::out_of_range &e) {
+              MS_LOG(EXCEPTION) << "value is out of the range of int!";
+            }
             const int64_t valid_kernel_size = valid_kernel_array[kernel_index];
             if (valid_kernel_size != kernel_size) {
               const size_t index =
                 static_cast<size_t>(i * dst_shape_[D_INDEX] * dst_shape_[H_INDEX] * dst_shape_[W_INDEX] +
                                     d * dst_shape_[H_INDEX] * dst_shape_[W_INDEX] + h * dst_shape_[W_INDEX] + w);
-              dst[index] = dst[index] * LongToFloat(kernel_size) / LongToFloat(valid_kernel_size);
+              dst[index] =
+                dst[index] * static_cast<T>(LongToFloat(kernel_size)) / static_cast<T>(LongToFloat(valid_kernel_size));
             }
           }
         }
@@ -271,29 +278,55 @@ bool PoolingGradCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &inpu
                                      const std::vector<kernel::AddressPtr> &workspace,
                                      const std::vector<kernel::AddressPtr> &outputs) {
   // From CPUKernelExecutor::LaunchKernel
-  if (!Init(base_operator_, inputs_, outputs_)) {
+  if (!Init(op_, inputs_, outputs_)) {
     MS_LOG(ERROR) << "Re-init PoolingGradCpuKernelMod while launching failed";
     return false;
   }
-  auto resize_ret = Resize(base_operator_, inputs_, outputs_, inputs_on_host_);
+  auto resize_ret = Resize(op_, inputs_, outputs_, inputs_on_host_);
   if (resize_ret != KRET_OK) {
     MS_LOG(ERROR) << "Resize PoolingGradCpuKernelMod while launching failed: " << resize_ret;
     return false;
   }
 
   SetArgumentHandle(DNNL_ARG_DIFF_SRC, outputs[0]->addr);
-  SetArgumentHandle(DNNL_ARG_DIFF_DST, inputs[grad_index_]->addr);
 
   // For pooling_max, get the workspace that store the max value indexes.
   if (algorithm_ == dnnl::algorithm::pooling_max) {
-    CHECK_KERNEL_WORKSPACE_SIZE(workspace.size(), kPoolingGradWorkSpaceNum, kernel_name_);
+    SetArgumentHandle(DNNL_ARG_DIFF_DST, inputs[grad_index_]->addr);
+    CHECK_KERNEL_WORKSPACE_SIZE(workspace.size(), kMaxPoolingGradWorkSpaceNum, kernel_name_);
     ComputeMaxValueIndex(inputs[0]->addr, workspace[1]->addr, workspace[0]->addr);
     SetArgumentHandle(DNNL_ARG_WORKSPACE, workspace[0]->addr);
     ExecutePrimitive();
     return true;
   }
 
-  float *dst = reinterpret_cast<float *>(inputs[grad_index_]->addr);
+  if (dtype_ == kNumberTypeFloat32) {
+    return LaunchKernel<float>(inputs, workspace, outputs);
+  } else if (dtype_ == kNumberTypeFloat16) {
+    return LaunchKernel<float16>(inputs, workspace, outputs);
+  } else if (dtype_ == kNumberTypeFloat64) {
+    return LaunchKernel<double>(inputs, workspace, outputs);
+  } else {
+    MS_LOG(ERROR) << "For '" << kernel_name_ << " error get " << TypeIdToType(dtype_)->ToString();
+    return false;
+  }
+  return true;
+}
+
+template <typename T>
+bool PoolingGradCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs,
+                                           const std::vector<kernel::AddressPtr> &workspace,
+                                           const std::vector<kernel::AddressPtr> &outputs) {
+  // Copy data of inputs[grad_index_] to workspace to avoid input data being changed
+  CHECK_KERNEL_WORKSPACE_SIZE(workspace.size(), kAvgPoolingGradWorkSpaceNum, kernel_name_);
+  auto dst_work_addr = workspace[0]->addr;
+  auto cpy_ret = memcpy_s(dst_work_addr, workspace[0]->size, inputs[grad_index_]->addr, inputs[grad_index_]->size);
+  if (cpy_ret != EOK) {
+    MS_LOG_ERROR << "For '" << kernel_name_ << "', input memcpy to workspace error!";
+    return false;
+  }
+  SetArgumentHandle(DNNL_ARG_DIFF_DST, dst_work_addr);
+  T *dst = reinterpret_cast<T *>(dst_work_addr);
   if (divisor_override_ != 0) {
     ReComputeDivisor(dst);
   } else {

@@ -17,17 +17,17 @@
 #include <vector>
 #include <memory>
 #include "common/common_test.h"
+#include "ops/math_op_name.h"
 #define private public
 #define protected public
-#include "backend/common/optimizer/pattern_to_pattern.h"
+#include "include/backend/optimizer/pattern_to_pattern.h"
 #undef private
 #undef protected
 
-#include "mindspore/core/ops/core_ops.h"
 #include "ir/anf.h"
 #include "ir/value.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 
 namespace mindspore {
 namespace opt {

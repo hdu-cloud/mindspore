@@ -17,7 +17,7 @@ import os
 import pytest
 
 from mindspore import context
-from mindspore.train.model import Model
+from mindspore.train import Model
 from mindspore.common import set_seed
 
 from src.deepfm import ModelBuilder, AUCMetric
@@ -27,8 +27,10 @@ from src.callback import EvalCallBack, LossCallBack, TimeMonitor
 
 set_seed(1)
 
-@pytest.mark.level0
+
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_arm_ascend910b_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
 def test_deepfm():
@@ -69,12 +71,12 @@ def test_deepfm():
     callback_list.append(eval_callback)
 
     print("train_config.train_epochs:", train_config.train_epochs)
-    model.train(train_config.train_epochs, ds_train, callbacks=callback_list)
+    model.train(train_config.train_epochs, ds_train, callbacks=callback_list, dataset_sink_mode=True)
 
     export_loss_value = 0.52
     print("loss_callback.loss:", loss_callback.loss)
     assert loss_callback.loss < export_loss_value
-    export_per_step_time = 40.0
+    export_per_step_time = 30.0
     print("time_callback:", time_callback.per_step_time)
     assert time_callback.per_step_time < export_per_step_time
     print("*******test case pass!********")

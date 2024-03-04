@@ -28,10 +28,35 @@ int Find(const float *array, int len, float target) {
   return -1;
 }
 
-void Unique(const float *input, int input_len, float *output0, int *output0_len, int *output1) {
+void Unique(const float *input, int input_len, float *output0, int32_t *output0_len, int32_t *output1) {
   *output0_len = 0;
   for (int i = 0; i < input_len; i++) {
     int idx = Find(output0, *output0_len, input[i]);
+    if (idx != -1) {
+      *output1++ = idx;
+    } else {
+      output0[(*output0_len)++] = input[i];
+      *output1++ = *output0_len - 1;
+    }
+  }
+}
+
+int FindInt(const int32_t *array, int len, int target) {
+  if (array == NULL) {
+    return -1;
+  }
+  for (int i = 0; i < len; ++i) {
+    if (array[i] == target) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+void UniqueInt(const int32_t *input, int input_len, int32_t *output0, int32_t *output0_len, int32_t *output1) {
+  *output0_len = 0;
+  for (int i = 0; i < input_len; i++) {
+    int idx = FindInt(output0, *output0_len, input[i]);
     if (idx != -1) {
       *output1++ = idx;
     } else {

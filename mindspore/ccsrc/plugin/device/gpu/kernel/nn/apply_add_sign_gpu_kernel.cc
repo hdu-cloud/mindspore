@@ -34,9 +34,9 @@ bool ApplyAddSignGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const 
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  t_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  s_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex2).first);
-  g_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex6).first);
+  t_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  s_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex2).dtype);
+  g_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex6).dtype);
   return true;
 }
 
@@ -105,26 +105,9 @@ bool ApplyAddSignGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &input
   G *gradient = GetDeviceAddress<G>(inputs, 6);
   T *variable_out = GetDeviceAddress<T>(outputs, 0);
   T *accumulation_out = GetDeviceAddress<T>(outputs, 1);
-  S learning_rate_0 = 0.;
-  S alpha_0 = 0.;
-  S sign_decay_0 = 0.;
-  S beta_0 = 0.;
-  CHECK_CUDA_RET_WITH_ERROR_NOTRACE(
-    cudaMemcpyAsync(&learning_rate_0, learning_rate, s_elements_ * s_size_, cudaMemcpyDeviceToHost,
-                    reinterpret_cast<cudaStream_t>(stream_ptr_)),
-    "cudaMemcpy learning_rate failed");
-  CHECK_CUDA_RET_WITH_ERROR_NOTRACE(cudaMemcpyAsync(&alpha_0, alpha, s_elements_ * s_size_, cudaMemcpyDeviceToHost,
-                                                    reinterpret_cast<cudaStream_t>(stream_ptr_)),
-                                    "cudaMemcpy alpha failed");
-  CHECK_CUDA_RET_WITH_ERROR_NOTRACE(
-    cudaMemcpyAsync(&sign_decay_0, sign_decay, s_elements_ * s_size_, cudaMemcpyDeviceToHost,
-                    reinterpret_cast<cudaStream_t>(stream_ptr_)),
-    "cudaMemcpy sign_decay failed");
-  CHECK_CUDA_RET_WITH_ERROR_NOTRACE(cudaMemcpyAsync(&beta_0, beta, s_elements_ * s_size_, cudaMemcpyDeviceToHost,
-                                                    reinterpret_cast<cudaStream_t>(stream_ptr_)),
-                                    "cudaMemcpy beta failed");
-  ApplyAddSign(t_elements_, variable, accumulation, learning_rate_0, alpha_0, sign_decay_0, beta_0, gradient,
-               device_id_, reinterpret_cast<cudaStream_t>(stream_ptr_));
+  auto status = ApplyAddSign(t_elements_, variable, accumulation, learning_rate, alpha, sign_decay, beta, gradient,
+                             device_id_, reinterpret_cast<cudaStream_t>(stream_ptr_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   CHECK_CUDA_RET_WITH_ERROR_NOTRACE(
     cudaMemcpyAsync(variable_out, variable, outputs.at(kIndex0)->size, cudaMemcpyDeviceToDevice,
                     reinterpret_cast<cudaStream_t>(stream_ptr_)),

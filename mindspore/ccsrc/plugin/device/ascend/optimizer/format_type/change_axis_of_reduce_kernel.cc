@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,16 +22,14 @@
 
 #include "include/common/utils/utils.h"
 #include "utils/trace_base.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "kernel/common_utils.h"
+#include "kernel/framework_utils.h"
+#include "plugin/device/ascend/optimizer/ascend_helper.h"
 
-namespace mindspore {
-namespace opt {
+namespace mindspore::opt {
 namespace {
 using ConvertFunction = std::function<void(const CNodePtr &)>;
-
-void ConvertReduceAttrFraczAnd6HD(const CNodePtr &cnode);
 const size_t kAxis_N = 0;
 const size_t kAxis_C = 1;
 const size_t kAxis_C1 = 1;
@@ -44,12 +42,12 @@ const int64_t kAxisDim = 4;
 void SafeCheckFunction(const CNodePtr &cnode, const std::vector<int64_t> &reduce_axis) {
   MS_EXCEPTION_IF_NULL(cnode);
   if (reduce_axis.empty()) {
-    MS_LOG(EXCEPTION) << "The node " << cnode->DebugString() << "'s reduce axis got a empty vector"
-                      << trace::DumpSourceLines(cnode);
+    MS_LOG(INTERNAL_EXCEPTION) << "The node " << cnode->DebugString() << "'s reduce axis got a empty vector"
+                               << trace::DumpSourceLines(cnode);
   }
-  if (common::AnfAlgo::GetInputTensorNum(cnode) != 1 || common::AnfAlgo::GetOutputTensorNum(cnode) != 1) {
-    MS_LOG(EXCEPTION) << "The kind of reduce node [" << cnode->DebugString()
-                      << "] is not single input or single output." << trace::DumpSourceLines(cnode);
+  if (common::AnfAlgo::GetInputTensorNum(cnode) != 1 || AnfAlgo::GetOutputTensorNum(cnode) != 1) {
+    MS_LOG(INTERNAL_EXCEPTION) << "The kind of reduce node [" << cnode->DebugString()
+                               << "] is not single input or single output." << trace::DumpSourceLines(cnode);
   }
   for (auto elem : reduce_axis) {
     if (elem > kAxisDim) {
@@ -77,8 +75,8 @@ void ConvertReduceAttrFraczAnd6HD(const CNodePtr &cnode) {
   SafeCheckFunction(cnode, axis);
   auto format = AnfAlgo::GetInputFormat(cnode, 0);
   if (format != kOpFormat_FRAC_Z && format != kOpFormat_C1HWNCoC0) {
-    MS_LOG(EXCEPTION) << "The node [" << cnode->DebugString() << "] format " << format
-                      << " is not needed to change the axis";
+    MS_LOG(INTERNAL_EXCEPTION) << "The node [" << cnode->DebugString() << "] format " << format
+                               << " is not needed to change the axis";
   }
   for (auto elem : axis) {
     switch (elem) {
@@ -123,32 +121,42 @@ void ConvertReduceAttrNC1HWC0(const CNodePtr &cnode) {
   }
   common::AnfAlgo::SetNodeAttr(kAttrAxis, MakeValue(convert_axis), cnode);
 }
+
+void ConvertReduceAttrFracNZ(const CNodePtr &cnode) {
+  MS_EXCEPTION_IF_NULL(cnode);
+  auto axis = kernel::GetReduceAttrAxis(cnode);
+  std::vector<int64_t> convert_axis;
+  auto origin_shape = common::AnfAlgo::GetPrevNodeOutputInferShape(cnode, 0);
+  auto dims_num = static_cast<int64_t>(origin_shape.size());
+  SafeCheckFunction(cnode, axis);
+  int64_t kLastIndex = 1;
+  int64_t kLastIndexButOne = 2;
+  for (const auto &axis_value : axis) {
+    if (axis_value == dims_num - kLastIndex) {
+      // reduce last axis
+      (void)convert_axis.emplace_back(axis_value - kLastIndex);
+      (void)convert_axis.emplace_back(axis_value + kLastIndexButOne);
+    } else if (axis_value == dims_num - kLastIndexButOne) {
+      // reduce last axis but one
+      (void)convert_axis.emplace_back(axis_value + kLastIndex);
+      (void)convert_axis.emplace_back(axis_value + kLastIndexButOne);
+    } else {
+      (void)convert_axis.emplace_back(axis_value);
+    }
+  }
+  common::AnfAlgo::SetNodeAttr(kAttrAxis, MakeValue(convert_axis), cnode);
+}
+
 const std::map<std::string, ConvertFunction> kReduceConvertMap = {{kOpFormat_FRAC_Z, ConvertReduceAttrFraczAnd6HD},
                                                                   {kOpFormat_C1HWNCoC0, ConvertReduceAttrFraczAnd6HD},
-                                                                  {kOpFormat_NC1HWC0, ConvertReduceAttrNC1HWC0}};
+                                                                  {kOpFormat_NC1HWC0, ConvertReduceAttrNC1HWC0},
+                                                                  {kOpFormat_FRAC_NZ, ConvertReduceAttrFracNZ}};
 }  // namespace
 
 const BaseRef ChangeAxisOfReduceKernel::DefinePattern() const {
   VarPtr X = std::make_shared<Var>();
   VarPtr Xs = std::make_shared<SeqVar>();
   return VectorRef({X, Xs});
-}
-
-void ChangeAxisOfReduceKernel::NormalizeReduceAttrAxis(const CNodePtr &cnode) {
-  std::vector<int64_t> axis;
-  auto input_shape = common::AnfAlgo::GetPrevNodeOutputInferShape(cnode, 0);
-  auto axis_list = kernel::GetReduceAttrAxis(cnode);
-  if (axis_list.empty()) {
-    return;
-  }
-  for (const auto &elem : axis_list) {
-    if (elem < 0) {
-      axis.emplace_back(SizeToLong(input_shape.size()) + elem);
-    } else {
-      axis.emplace_back(elem);
-    }
-  }
-  common::AnfAlgo::SetNodeAttr(kAttrAxis, MakeValue(axis), cnode);
 }
 
 const AnfNodePtr ChangeAxisOfReduceKernel::Process(const FuncGraphPtr &, const AnfNodePtr &node,
@@ -159,19 +167,15 @@ const AnfNodePtr ChangeAxisOfReduceKernel::Process(const FuncGraphPtr &, const A
   if (AnfAlgo::GetOpPattern(node) != kernel::kReducePattern) {
     return nullptr;
   }
-  NormalizeReduceAttrAxis(node->cast<CNodePtr>());
-  auto convert_map = kReduceConvertMap.find(AnfAlgo::GetInputFormat(node, 0));
-  if (convert_map == kReduceConvertMap.end()) {
-    if (common::AnfAlgo::IsDynamicShape(node)) {
-      DynamicAttrUpdate(node);
-    }
-    return nullptr;
-  }
-  convert_map->second(node->cast<CNodePtr>());
   if (common::AnfAlgo::IsDynamicShape(node)) {
     DynamicAttrUpdate(node);
   }
+  auto convert_map = kReduceConvertMap.find(AnfAlgo::GetInputFormat(node, 0));
+  if (convert_map == kReduceConvertMap.end()) {
+    return nullptr;
+  }
+  NormalizeReduceAttrAxis(node->cast<CNodePtr>());
+  convert_map->second(node->cast<CNodePtr>());
   return nullptr;
 }
-}  // namespace opt
-}  // namespace mindspore
+}  // namespace mindspore::opt

@@ -48,12 +48,15 @@ void MatmulFloatNeon64(const float *a, const float *b, float *c, const float *bi
                        int col, size_t stride, size_t writeNhwc, size_t WriteWino);
 void MatmulFloatNeon64Opt(const float *a, const float *b, float *c, const float *bias, int act_type, int depth, int row,
                           int col, size_t stride, size_t write_mode);
+void BigMatmulFloatNeon64Opt(const float *a, const float *b, float *c, const float *bias, int act_type, int depth,
+                             int row, int col, size_t stride);
 void MatmulFloatNeon64OptRow8(const float *a, const float *b, float *c, const float *bias, int act_type, int depth,
                               int row, int col, size_t stride, size_t write_mode);
 void MatmulFloatNeon64OptRow4(const float *a, const float *b, float *c, const float *bias, int act_type, int depth,
                               int row, int col, size_t stride, size_t write_mode);
 void MatmulFloatNeon64OptRow12(const float *a, const float *b, float *c, const float *bias, int act_type, int depth,
                                int row, int col, size_t stride, size_t write_mode);
+void MatVecMulPackFp32(const float *a, const float *b, float *c, const float *bias, int act_type, int depth, int col);
 void MatVecMulFp32Neon64(const float *a, const float *b, float *c, const float *bias, int act_type, int depth, int col,
                          int align_col);
 
@@ -75,6 +78,12 @@ void MatMul12x8(const float *a, const float *b, float *dst, const float *bias, A
                 int col, int stride, int out_type);
 
 void GemmIsNotPack(const float *a, const float *b, float *c, const float *bias, int row, int deep, int act_type);
+
+void Row1Deep1GemmIsNotPack(const float *a, const float *b, float *c, const float *bias, int col, int deep,
+                            int act_type);
+
+void Row1Deep1NoBiasGemmIsNotPack(const float *a, const float *b, float *c, const float *bias, int col, int deep,
+                                  int act_type);
 
 void GemmIsNotPackOptimize(const float *a, const float *b, float *c, const float *bias, int m, int k, int act_type);
 

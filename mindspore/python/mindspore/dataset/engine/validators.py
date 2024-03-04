@@ -1,4 +1,4 @@
-# Copyright 2019-2022 Huawei Technologies Co., Ltd
+# Copyright 2019-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ Built-in validators.
 """
 import inspect as ins
 import os
-import re
 from functools import wraps
 import numpy as np
 
@@ -26,9 +25,9 @@ from mindspore._c_expression import typing
 from mindspore import log as logger
 from ..core.validator_helpers import parse_user_args, type_check, type_check_list, check_value, \
     INT32_MAX, check_valid_detype, check_dir, check_file, check_sampler_shuffle_shard_options, \
-    validate_dataset_param_value, check_padding_options, check_gnn_list_or_ndarray, check_gnn_list_of_pair_or_ndarray, \
+    validate_dataset_param_value, check_padding_options, \
     check_num_parallel_workers, check_columns, check_pos_int32, check_valid_str, check_dataset_num_shards_shard_id, \
-    check_valid_list_tuple, check_dict, check_feature_shape
+    check_valid_list_tuple
 
 from . import datasets
 from . import samplers
@@ -587,9 +586,10 @@ def check_tfrecorddataset(method):
 
         compression_type = param_dict.get('compression_type')
         if compression_type is not None and compression_type not in ['', 'ZLIB', 'GZIP']:
-            raise ValueError("Input compression_type can only be either '' (no compression), 'ZLIB', or 'GZIP', \
-                             but got '" + str(compression_type) + "'.")
-        if compression_type is not None and compression_type in ['ZLIB', 'GZIP']:
+            raise ValueError("Input compression_type can only be either '' (no compression), 'ZLIB', or 'GZIP', " +
+                             "but got '" + str(compression_type) + "'.")
+        if compression_type is not None and compression_type in ['ZLIB', 'GZIP'] and \
+            param_dict.get('num_samples') is not None:
             if param_dict.get('num_shards') is not None and ((isinstance(dataset_files, str) and \
                 param_dict.get('num_shards') > 1) or (isinstance(dataset_files, list) and \
                 len(dataset_files) < param_dict.get('num_shards'))):
@@ -598,9 +598,6 @@ def check_tfrecorddataset(method):
                 raise ValueError("When compression_type is provided, the number of dataset files cannot be less " +
                                  "than num_shards, but the actual number of files is " + str(num_files) +
                                  " and actual num_shards is " + str(act_num_shard) + ".")
-            if param_dict.get('num_samples') is None or param_dict.get('num_samples') <= 0:
-                raise ValueError("When compression_type is provided, num_samples must be provided and > 0, but got " +
-                                 str(param_dict.get('num_samples')) + " for num_samples.")
             if param_dict.get('shard_equal_rows') is None or not param_dict.get('shard_equal_rows'):
                 logger.warning("If compression_type is set, shard_equal_rows will be ignored.")
 
@@ -998,7 +995,7 @@ def check_dict_iterator(method):
 
     @wraps(method)
     def new_method(self, *args, **kwargs):
-        [num_epochs, _], param_dict = parse_user_args(method, *args, **kwargs)
+        [num_epochs, _, _], param_dict = parse_user_args(method, *args, **kwargs)
         nreq_param_bool = ['output_numpy']
         validate_dataset_param_value(nreq_param_bool, param_dict, bool)
         if num_epochs is not None:
@@ -1166,6 +1163,34 @@ def check_random_dataset(method):
     return new_method
 
 
+def check_rendered_sst2_dataset(method):
+    """A wrapper that wraps a parameter checker around the original Dataset(RenderedSST2Dataset)."""
+
+    @wraps(method)
+    def new_method(self, *args, **kwargs):
+        _, param_dict = parse_user_args(method, *args, **kwargs)
+
+        nreq_param_int = ['num_samples', 'num_parallel_workers', 'num_shards', 'shard_id']
+        nreq_param_bool = ['shuffle', 'decode']
+
+        dataset_dir = param_dict.get('dataset_dir')
+        usage = param_dict.get('usage')
+        check_dir(dataset_dir)
+        if usage is not None:
+            check_valid_str(usage, ['val', 'all', 'train', 'test'])
+
+        validate_dataset_param_value(nreq_param_int, param_dict, int)
+        validate_dataset_param_value(nreq_param_bool, param_dict, bool)
+        check_sampler_shuffle_shard_options(param_dict)
+
+        cache = param_dict.get('cache')
+        check_cache_option(cache)
+
+        return method(self, *args, **kwargs)
+
+    return new_method
+
+
 def check_pad_info(key, val):
     """check the key and value pair of pad_info in batch"""
     type_check(key, (str,), "key in pad_info")
@@ -1282,8 +1307,8 @@ def check_batch(method):
         if num_parallel_workers is not None:
             check_num_parallel_workers(num_parallel_workers)
         type_check(drop_remainder, (bool,), "drop_remainder")
-        type_check(max_rowsize, (int,), "max_rowsize")
-        check_pos_int32(max_rowsize, "max_rowsize")
+
+        check_max_rowsize(max_rowsize)
 
         if (input_columns is not None) and (per_batch_map is None):
             # input_columns must be None when per_batch_map is not set
@@ -1378,6 +1403,20 @@ def get_map_kwargs_from_dict(param_dict):
     return python_multiprocessing, max_rowsize, cache, callbacks, offload
 
 
+def check_max_rowsize(max_rowsize):
+    """check the max_rowsize"""
+    type_check(max_rowsize, (int, list), "max_rowsize")
+    if isinstance(max_rowsize, int):
+        type_check(max_rowsize, (int,), "max_rowsize")
+        check_pos_int32(max_rowsize, "max_rowsize")
+    elif isinstance(max_rowsize, list) and len(max_rowsize) == 2:
+        for index, value in enumerate(max_rowsize):
+            type_check(value, (int,), "max_rowsize[{}]".format(index))
+            check_pos_int32(value, "max_rowsizei[{}]".format(index))
+    else:
+        raise TypeError("max_rowsize should be a single integer or a list[in_rowsize, out_rowsize] of length 2.")
+
+
 def check_map(method):
     """check the input arguments of map."""
 
@@ -1433,8 +1472,7 @@ def check_map(method):
             check_num_parallel_workers(num_parallel_workers)
         type_check(python_multiprocessing, (bool,), "python_multiprocessing")
         check_cache_option(cache)
-        type_check(max_rowsize, (int,), "max_rowsize")
-        check_pos_int32(max_rowsize, "max_rowsize")
+        check_max_rowsize(max_rowsize)
         if offload is not None:
             type_check(offload, (bool,), "offload")
 
@@ -1546,9 +1584,10 @@ def check_device_send(method):
 
     @wraps(method)
     def new_method(self, *args, **kwargs):
-        [send_epoch_end, create_data_info_queue], _ = parse_user_args(method, *args, **kwargs)
+        [send_epoch_end, create_data_info_queue, queue_name], _ = parse_user_args(method, *args, **kwargs)
         type_check(send_epoch_end, (bool,), "send_epoch_end")
         type_check(create_data_info_queue, (bool,), "create_data_info_queue")
+        type_check(queue_name, (str,), "queue_name")
 
         return method(self, *args, **kwargs)
 
@@ -1913,329 +1952,6 @@ def check_hostname(hostname):
     return all(allowed.match(x) for x in hostname.split("."))
 
 
-def check_gnn_graphdata(method):
-    """check the input arguments of graphdata."""
-
-    @wraps(method)
-    def new_method(self, *args, **kwargs):
-        [dataset_file, num_parallel_workers, working_mode, hostname,
-         port, num_client, auto_shutdown], _ = parse_user_args(method, *args, **kwargs)
-        check_file(dataset_file)
-        if num_parallel_workers is not None:
-            check_num_parallel_workers(num_parallel_workers)
-        type_check(hostname, (str,), "hostname")
-        if check_hostname(hostname) is False:
-            raise ValueError("The hostname is illegal.")
-        type_check(working_mode, (str,), "working_mode")
-        if working_mode not in {'local', 'client', 'server'}:
-            raise ValueError("Invalid working mode, please enter 'local', 'client' or 'server'.")
-        type_check(port, (int,), "port")
-        check_value(port, (1024, 65535), "port")
-        type_check(num_client, (int,), "num_client")
-        check_value(num_client, (1, 255), "num_client")
-        type_check(auto_shutdown, (bool,), "auto_shutdown")
-        return method(self, *args, **kwargs)
-
-    return new_method
-
-
-def check_gnn_graph(method):
-    """check the input arguments of Graph."""
-
-    @wraps(method)
-    def new_method(self, *args, **kwargs):
-        [edges, node_feat, edge_feat, graph_feat, node_type, edge_type, num_parallel_workers, working_mode,
-         hostname, port, num_client, auto_shutdown], _ = parse_user_args(method, *args, **kwargs)
-
-        type_check(edges, (list, np.ndarray), "edges")
-        edges = np.asarray(edges)
-        if len(edges.shape) != 2 or edges.shape[0] != 2:
-            raise ValueError("Input 'edges' should be of 2 dimension, here got {}."
-                             " And shape of first dimension should be 2, here got {}.".format(len(edges.shape),
-                                                                                              edges.shape[0]))
-        if not np.issubdtype(edges.dtype, np.integer):
-            raise TypeError("Each element in input 'edges' should be int, got value: {}.".format(edges))
-
-        check_dict(node_feat, str, np.ndarray, "node_feat")
-        check_dict(edge_feat, str, np.ndarray, "edge_feat")
-        check_dict(graph_feat, str, np.ndarray, "graph_feat")
-        if node_type is not None:
-            type_check(node_type, (list, np.ndarray), "node_type")
-            if not all(isinstance(item, str) for item in list(node_type)):
-                raise TypeError("Type of each element in 'node_type' should be str.")
-        if edge_type is not None:
-            type_check(edge_type, (list, np.ndarray), "edge_type")
-            if not all(isinstance(item, str) for item in list(edge_type)):
-                raise TypeError("Type of each element in 'edge_type' should be str.")
-            edge_type = np.asarray(edge_type)
-            if len(edge_type.shape) != 1 or edge_type.shape[0] != edges.shape[1]:
-                raise ValueError(
-                    "Input 'edge_type' should be of 1 dimension, and its length should be {}, but got {}.".format(
-                        edges.shape[1], edge_type.shape[0]))
-
-        # check shape of node_feat and edge_feat
-        num_nodes = np.max(edges) + 1
-        check_feature_shape(node_feat, num_nodes, "node_feat")
-        check_feature_shape(edge_feat, edges.shape[1], "edge_feat")
-
-        if num_parallel_workers is not None:
-            check_num_parallel_workers(num_parallel_workers)
-        type_check(hostname, (str,), "hostname")
-        if check_hostname(hostname) is False:
-            raise ValueError("The hostname is illegal.")
-        type_check(working_mode, (str,), "working_mode")
-        if working_mode not in {'local', 'client', 'server'}:
-            raise ValueError("Invalid working mode, please enter 'local', 'client' or 'server'.")
-        type_check(port, (int,), "port")
-        check_value(port, (1024, 65535), "port")
-        type_check(num_client, (int,), "num_client")
-        check_value(num_client, (1, 255), "num_client")
-        type_check(auto_shutdown, (bool,), "auto_shutdown")
-        return method(self, *args, **kwargs)
-
-    return new_method
-
-
-def check_gnn_get_all_nodes(method):
-    """A wrapper that wraps a parameter checker around the GNN `get_all_nodes` function."""
-
-    @wraps(method)
-    def new_method(self, *args, **kwargs):
-        [node_type], _ = parse_user_args(method, *args, **kwargs)
-        if "GraphData" in str(type(self)):
-            type_check(node_type, (int,), "node_type")
-        else:
-            type_check(node_type, (str,), "node_type")
-
-        return method(self, *args, **kwargs)
-
-    return new_method
-
-
-def check_gnn_get_all_edges(method):
-    """A wrapper that wraps a parameter checker around the GNN `get_all_edges` function."""
-
-    @wraps(method)
-    def new_method(self, *args, **kwargs):
-        [edge_type], _ = parse_user_args(method, *args, **kwargs)
-        if "GraphData" in str(type(self)):
-            type_check(edge_type, (int,), "edge_type")
-        else:
-            type_check(edge_type, (str,), "edge_type")
-
-        return method(self, *args, **kwargs)
-
-    return new_method
-
-
-def check_gnn_get_nodes_from_edges(method):
-    """A wrapper that wraps a parameter checker around the GNN `get_nodes_from_edges` function."""
-
-    @wraps(method)
-    def new_method(self, *args, **kwargs):
-        [edge_list], _ = parse_user_args(method, *args, **kwargs)
-        check_gnn_list_or_ndarray(edge_list, "edge_list")
-
-        return method(self, *args, **kwargs)
-
-    return new_method
-
-
-def check_gnn_get_edges_from_nodes(method):
-    """A wrapper that wraps a parameter checker around the GNN `get_edges_from_nodes` function."""
-
-    @wraps(method)
-    def new_method(self, *args, **kwargs):
-        [node_list], _ = parse_user_args(method, *args, **kwargs)
-        check_gnn_list_of_pair_or_ndarray(node_list, "node_list")
-
-        return method(self, *args, **kwargs)
-
-    return new_method
-
-
-def check_gnn_get_all_neighbors(method):
-    """A wrapper that wraps a parameter checker around the GNN `get_all_neighbors` function."""
-
-    @wraps(method)
-    def new_method(self, *args, **kwargs):
-        [node_list, neighbour_type, _], _ = parse_user_args(method, *args, **kwargs)
-
-        check_gnn_list_or_ndarray(node_list, 'node_list')
-        if "GraphData" in str(type(self)):
-            type_check(neighbour_type, (int,), "neighbour_type")
-        else:
-            type_check(neighbour_type, (str,), "neighbour_type")
-
-        return method(self, *args, **kwargs)
-
-    return new_method
-
-
-def check_gnn_get_sampled_neighbors(method):
-    """A wrapper that wraps a parameter checker around the GNN `get_sampled_neighbors` function."""
-
-    @wraps(method)
-    def new_method(self, *args, **kwargs):
-        [node_list, neighbor_nums, neighbor_types, _], _ = parse_user_args(method, *args, **kwargs)
-
-        check_gnn_list_or_ndarray(node_list, 'node_list')
-
-        check_gnn_list_or_ndarray(neighbor_nums, 'neighbor_nums')
-        neighbor_nums = list(neighbor_nums)
-        if not neighbor_nums or len(neighbor_nums) > 6:
-            raise ValueError("Wrong number of input members for {0}, should be between 1 and 6, got {1}.".format(
-                'neighbor_nums', len(neighbor_nums)))
-
-        if "GraphData" in str(type(self)):
-            check_gnn_list_or_ndarray(neighbor_types, 'neighbor_types')
-        else:
-            check_gnn_list_or_ndarray(neighbor_types, 'neighbor_types', str)
-        neighbor_types = list(neighbor_types)
-        if not neighbor_types or len(neighbor_types) > 6:
-            raise ValueError("Wrong number of input members for {0}, should be between 1 and 6, got {1}.".format(
-                'neighbor_types', len(neighbor_types)))
-
-        if len(neighbor_nums) != len(neighbor_types):
-            raise ValueError(
-                "The number of members of neighbor_nums and neighbor_types is inconsistent.")
-
-        return method(self, *args, **kwargs)
-
-    return new_method
-
-
-def check_gnn_get_neg_sampled_neighbors(method):
-    """A wrapper that wraps a parameter checker around the GNN `get_neg_sampled_neighbors` function."""
-
-    @wraps(method)
-    def new_method(self, *args, **kwargs):
-        [node_list, neg_neighbor_num, neg_neighbor_type], _ = parse_user_args(method, *args, **kwargs)
-
-        check_gnn_list_or_ndarray(node_list, 'node_list')
-        type_check(neg_neighbor_num, (int,), "neg_neighbor_num")
-
-        if "GraphData" in str(type(self)):
-            type_check(neg_neighbor_type, (int,), "neg_neighbor_type")
-        else:
-            type_check(neg_neighbor_type, (str,), "neg_neighbor_type")
-
-        return method(self, *args, **kwargs)
-
-    return new_method
-
-
-def check_gnn_random_walk(method):
-    """A wrapper that wraps a parameter checker around the GNN `random_walk` function."""
-
-    @wraps(method)
-    def new_method(self, *args, **kwargs):
-        [target_nodes, meta_path, step_home_param, step_away_param, default_node], _ = parse_user_args(method, *args,
-                                                                                                       **kwargs)
-        check_gnn_list_or_ndarray(target_nodes, 'target_nodes')
-        check_gnn_list_or_ndarray(meta_path, 'meta_path')
-        type_check(step_home_param, (float,), "step_home_param")
-        type_check(step_away_param, (float,), "step_away_param")
-        type_check(default_node, (int,), "default_node")
-        check_value(default_node, (-1, INT32_MAX), "default_node")
-
-        return method(self, *args, **kwargs)
-
-    return new_method
-
-
-def check_aligned_list(param, param_name, member_type):
-    """Check whether the structure of each member of the list is the same."""
-
-    type_check(param, (list,), "param")
-    if not param:
-        raise TypeError(
-            "Parameter {0} or its members are empty".format(param_name))
-    member_have_list = None
-    list_len = None
-    for member in param:
-        if isinstance(member, list):
-            check_aligned_list(member, param_name, member_type)
-
-            if member_have_list not in (None, True):
-                raise TypeError("The type of each member of the parameter {0} is inconsistent.".format(
-                    param_name))
-            if list_len is not None and len(member) != list_len:
-                raise TypeError("The size of each member of parameter {0} is inconsistent.".format(
-                    param_name))
-            member_have_list = True
-            list_len = len(member)
-        else:
-            type_check(member, (member_type,), param_name)
-            if member_have_list not in (None, False):
-                raise TypeError("The type of each member of the parameter {0} is inconsistent.".format(
-                    param_name))
-            member_have_list = False
-
-
-def check_gnn_get_node_feature(method):
-    """A wrapper that wraps a parameter checker around the GNN `get_node_feature` function."""
-
-    @wraps(method)
-    def new_method(self, *args, **kwargs):
-        [node_list, feature_types], _ = parse_user_args(method, *args, **kwargs)
-
-        type_check(node_list, (list, np.ndarray), "node_list")
-        if isinstance(node_list, list):
-            check_aligned_list(node_list, 'node_list', int)
-        elif isinstance(node_list, np.ndarray):
-            if not node_list.dtype == np.int32:
-                raise TypeError("Each member in {0} should be of type int32. Got {1}.".format(
-                    node_list, node_list.dtype))
-
-        if "GraphData" in str(type(self)):
-            check_gnn_list_or_ndarray(feature_types, 'feature_types')
-        else:
-            check_gnn_list_or_ndarray(feature_types, 'feature_types', data_type=str)
-
-        return method(self, *args, **kwargs)
-
-    return new_method
-
-
-def check_gnn_get_graph_feature(method):
-    """A wrapper that wraps a parameter checker around the GNN `get_graph_feature` function."""
-
-    @wraps(method)
-    def new_method(self, *args, **kwargs):
-        [feature_types], _ = parse_user_args(method, *args, **kwargs)
-        check_gnn_list_or_ndarray(feature_types, 'feature_types', str)
-
-        return method(self, *args, **kwargs)
-
-    return new_method
-
-
-def check_gnn_get_edge_feature(method):
-    """A wrapper that wraps a parameter checker around the GNN `get_edge_feature` function."""
-
-    @wraps(method)
-    def new_method(self, *args, **kwargs):
-        [edge_list, feature_types], _ = parse_user_args(method, *args, **kwargs)
-
-        type_check(edge_list, (list, np.ndarray), "edge_list")
-        if isinstance(edge_list, list):
-            check_aligned_list(edge_list, 'edge_list', int)
-        elif isinstance(edge_list, np.ndarray):
-            if not edge_list.dtype == np.int32:
-                raise TypeError("Each member in {0} should be of type int32. Got {1}.".format(
-                    edge_list, edge_list.dtype))
-
-        if "GraphData" in str(type(self)):
-            check_gnn_list_or_ndarray(feature_types, 'feature_types')
-        else:
-            check_gnn_list_or_ndarray(feature_types, 'feature_types', data_type=str)
-
-        return method(self, *args, **kwargs)
-
-    return new_method
-
-
 def check_numpyslicesdataset(method):
     """A wrapper that wraps a parameter checker around the original Dataset(NumpySlicesDataset)."""
 
@@ -2363,6 +2079,36 @@ def check_flickr_dataset(method):
         annotation_file = param_dict.get('annotation_file')
         check_dir(dataset_dir)
         check_file(annotation_file)
+
+        validate_dataset_param_value(nreq_param_int, param_dict, int)
+        validate_dataset_param_value(nreq_param_bool, param_dict, bool)
+
+        check_sampler_shuffle_shard_options(param_dict)
+
+        cache = param_dict.get('cache')
+        check_cache_option(cache)
+
+        return method(self, *args, **kwargs)
+
+    return new_method
+
+
+def check_food101_dataset(method):
+    """A wrapper that wraps a parameter checker around the Food101Dataset."""
+
+    @wraps(method)
+    def new_method(self, *args, **kwargs):
+        _, param_dict = parse_user_args(method, *args, **kwargs)
+
+        nreq_param_int = ['num_samples', 'num_parallel_workers', 'num_shards', 'shard_id']
+        nreq_param_bool = ['decode', 'shuffle']
+
+        dataset_dir = param_dict.get('dataset_dir')
+        check_dir(dataset_dir)
+
+        usage = param_dict.get('usage')
+        if usage is not None:
+            check_valid_str(usage, ["train", "test", "all"], "usage")
 
         validate_dataset_param_value(nreq_param_int, param_dict, int)
         validate_dataset_param_value(nreq_param_bool, param_dict, bool)
@@ -2789,6 +2535,34 @@ def check_svhn_dataset(method):
     return new_method
 
 
+def check_sst2_dataset(method):
+    """A wrapper that wraps a parameter checker around the original SST2 Dataset."""
+
+    @wraps(method)
+    def new_method(self, *args, **kwargs):
+        _, param_dict = parse_user_args(method, *args, **kwargs)
+
+        nreq_param_int = ['num_samples', 'num_parallel_workers', 'num_shards', 'shard_id']
+
+        dataset_dir = param_dict.get('dataset_dir')
+        check_dir(dataset_dir)
+
+        usage = param_dict.get('usage')
+        if usage is not None:
+            check_valid_str(usage, ["train", "test", "dev"], "usage")
+
+        validate_dataset_param_value(nreq_param_int, param_dict, int)
+
+        check_sampler_shuffle_shard_options(param_dict)
+
+        cache = param_dict.get('cache')
+        check_cache_option(cache)
+
+        return method(self, *args, **kwargs)
+
+    return new_method
+
+
 def check_stl10_dataset(method):
     """A wrapper that wraps a parameter checker around the original Dataset(STL10Dataset)."""
 
@@ -2825,6 +2599,31 @@ def check_stl10_dataset(method):
         validate_dataset_param_value(nreq_param_int, param_dict, int)
         validate_dataset_param_value(nreq_param_bool, param_dict, bool)
 
+        check_sampler_shuffle_shard_options(param_dict)
+
+        cache = param_dict.get('cache')
+        check_cache_option(cache)
+
+        return method(self, *args, **kwargs)
+
+    return new_method
+
+
+def check_sun397_dataset(method):
+    """A wrapper that wraps a parameter checker around the original Dataset(SUN397Dataset)."""
+
+    @wraps(method)
+    def new_method(self, *args, **kwargs):
+        _, param_dict = parse_user_args(method, *args, **kwargs)
+
+        nreq_param_int = ['num_samples', 'num_parallel_workers', 'num_shards', 'shard_id']
+        nreq_param_bool = ['shuffle', 'decode']
+
+        dataset_dir = param_dict.get('dataset_dir')
+        check_dir(dataset_dir)
+
+        validate_dataset_param_value(nreq_param_int, param_dict, int)
+        validate_dataset_param_value(nreq_param_bool, param_dict, bool)
         check_sampler_shuffle_shard_options(param_dict)
 
         cache = param_dict.get('cache')

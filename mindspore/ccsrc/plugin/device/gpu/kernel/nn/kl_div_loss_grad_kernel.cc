@@ -47,6 +47,7 @@ int KLDivLossGradGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, cons
     return ret;
   }
   auto input_shape = inputs[kIndex1]->GetShapeVector();
+  input_size_ = 1;
   input_size_ *= SizeOf(input_shape);
   auto kl_div_loss_grad_ptr = std::dynamic_pointer_cast<ops::KLDivLossGrad>(base_operator);
   string reduction = kl_div_loss_grad_ptr->get_reduction();
@@ -66,7 +67,9 @@ bool KLDivLossGradGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inpu
   T *input_x = GetDeviceAddress<T>(inputs, kIndex1);
   T *input_y = GetDeviceAddress<T>(inputs, kIndex2);
   T *dx = GetDeviceAddress<T>(outputs, kIndex0);
-  KLDivLossGrad(input_size_, reduction_, input_x, input_y, dloss, dx, reinterpret_cast<cudaStream_t>(stream_ptr));
+  auto status =
+    KLDivLossGrad(input_size_, reduction_, input_x, input_y, dloss, dx, reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

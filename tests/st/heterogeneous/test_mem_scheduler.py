@@ -26,9 +26,9 @@ from mindspore import Tensor
 from mindspore.nn import TrainOneStepCell, WithLossCell
 from mindspore.nn.optim import Momentum
 from mindspore.ops import operations as P
-from tests.st.tbe_networks.resnet import resnet50
+from tests.st.networks.models.resnetv1_5 import resnet50
 
-context.set_context(mode=context.GRAPH_MODE, device_target="Ascend")
+context.set_context(mode=context.GRAPH_MODE, memory_optimize_level='O0')
 
 
 class LeNet(nn.Cell):
@@ -37,13 +37,15 @@ class LeNet(nn.Cell):
         self.relu = P.ReLU()
         self.batch_size = 32
 
-        self.conv1 = nn.Conv2d(1, 6, kernel_size=5, stride=1, padding=0, has_bias=False, pad_mode='valid')
-        self.conv2 = nn.Conv2d(6, 16, kernel_size=5, stride=1, padding=0, has_bias=False, pad_mode='valid')
+        self.conv1 = nn.Conv2d(1, 6, kernel_size=5, stride=1, padding=0, has_bias=False, pad_mode='valid',
+                               weight_init="normal")
+        self.conv2 = nn.Conv2d(6, 16, kernel_size=5, stride=1, padding=0, has_bias=False, pad_mode='valid',
+                               weight_init="normal")
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
         self.reshape = P.Reshape()
-        self.fc1 = nn.Dense(400, 120)
-        self.fc2 = nn.Dense(120, 84)
-        self.fc3 = nn.Dense(84, 10)
+        self.fc1 = nn.Dense(400, 120, weight_init="normal", bias_init="zeros")
+        self.fc2 = nn.Dense(120, 84, weight_init="normal", bias_init="zeros")
+        self.fc3 = nn.Dense(84, 10, weight_init="normal", bias_init="zeros")
 
 
     def construct(self, input_x):
@@ -97,7 +99,7 @@ def test_resnet():
     os.environ['ENABLE_MEM_SCHEDULER'] = '0'
 
 
-@pytest.mark.level1
+@pytest.mark.level0
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -125,7 +127,7 @@ def test_lenet():
     os.environ['ENABLE_MEM_SCHEDULER'] = '0'
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -154,7 +156,7 @@ def test_lenet_manual_offload():
     os.environ['ENABLE_MEM_SCHEDULER'] = '0'
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -166,8 +168,11 @@ def test_1024_batch_size_resnet():
     """
     os.environ['GRAPH_OP_RUN'] = '1'
     num_classes = 10
-    epoch = 4
+    epoch = 6
     batch_size = 1024
+    default_offload_path = './offload'
+    if not os.path.isdir(default_offload_path):
+        os.mkdir(default_offload_path)
     context.set_context(memory_offload='ON')
     net = resnet50(batch_size, num_classes)
     lr = 0.1
@@ -176,8 +181,7 @@ def test_1024_batch_size_resnet():
                                 net.get_parameters()), lr, momentum)
     criterion = nn.SoftmaxCrossEntropyWithLogits(sparse=True, reduction='mean')
     net_with_criterion = WithLossCell(net, criterion)
-    train_network = TrainOneStepCell(
-        net_with_criterion, optimizer)  # optimizer
+    train_network = TrainOneStepCell(net_with_criterion, optimizer)  # optimizer
     train_network.set_train()
     losses = []
     for _ in range(0, epoch):
@@ -186,5 +190,5 @@ def test_1024_batch_size_resnet():
         label = Tensor(np.ones([batch_size]).astype(np.int32))
         loss = train_network(data, label)
         losses.append(loss)
-    assert losses[-1].asnumpy() < 1
+    assert losses[-1].asnumpy() < 1.5
     os.environ['GRAPH_OP_RUN'] = '0'

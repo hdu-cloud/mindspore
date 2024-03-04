@@ -27,9 +27,14 @@ namespace mindspore {
 namespace pynative {
 class CastOperation {
  public:
-  CastOperation() = default;
+  CastOperation() {
+    type_prim_cache_.reserve(kDefaultContainerSize);
+    implicit_cast_map_.reserve(kDefaultContainerSize);
+  }
   ~CastOperation() = default;
   void DoCast(const FrontendOpRunInfoPtr &op_run_info);
+  void ClearRes();
+  ValuePtr DoNormalCast(const FrontendOpRunInfoPtr &cast_run_info, const ValuePtr &v, const TypeId &type_id) const;
 
  private:
   bool IsValueTypeInvalid(const ValuePtr &v) const;
@@ -39,7 +44,7 @@ class CastOperation {
                   const mindspore::HashMap<SignatureEnumDType, std::vector<size_t>> &type_indexes,
                   mindspore::HashMap<SignatureEnumDType, TypeId> *dst_type) const;
   const std::string &TypeIdToMsTypeStr(const TypeId &type_id) const;
-  bool GetSignatureType(const PrimitivePyPtr &prim, std::vector<SignatureEnumDType> *dtypes) const;
+  bool GetSignatureType(const std::vector<Signature> &signatures, std::vector<SignatureEnumDType> *dtypes) const;
   void GetTypeIndex(const std::vector<SignatureEnumDType> &dtypes,
                     mindspore::HashMap<SignatureEnumDType, std::vector<size_t>> *type_indexes) const;
   void SetTensorMixPrecisionCast(const FrontendOpRunInfoPtr &op_run_info) const;
@@ -55,9 +60,11 @@ class CastOperation {
                        const std::vector<SignatureEnumDType> &dtypes) const;
   void SetImplicitCast(const FrontendOpRunInfoPtr &op_run_info);
 
+  PrimitivePtr GetPrimByTypeId(const TypeId &type_id) const;
+
  private:
-  PrimitivePyPtr cast_prim_{nullptr};
   ImplicitCastCache implicit_cast_map_;
+  mutable mindspore::HashMap<TypeId, PrimitivePtr> type_prim_cache_;
 };
 using CastOperationPtr = std::shared_ptr<CastOperation>;
 }  // namespace pynative

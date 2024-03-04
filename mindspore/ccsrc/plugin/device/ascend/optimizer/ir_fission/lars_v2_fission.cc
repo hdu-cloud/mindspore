@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,9 +15,12 @@
  */
 #include "plugin/device/ascend/optimizer/ir_fission/lars_v2_fission.h"
 #include <memory>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/ascend_op_name.h"
+#include "ops/nn_op_name.h"
+#include "ops/math_op_name.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "include/common/utils/utils.h"
 #include "utils/trace_base.h"
 
@@ -54,8 +57,8 @@ CNodePtr LarsV2Fission::CreateLarsV2Update(const FuncGraphPtr &graph, const CNod
   MS_EXCEPTION_IF_NULL(graph);
   MS_EXCEPTION_IF_NULL(lars_v2);
   if (square_sum_all_outputs.size() != kSquareSumOutputNum) {
-    MS_LOG(EXCEPTION) << "The size of square_sum_all_outputs is not equal to " << kSquareSumOutputNum << "."
-                      << trace::DumpSourceLines(lars_v2);
+    MS_LOG(INTERNAL_EXCEPTION) << "The size of square_sum_all_outputs is not equal to " << kSquareSumOutputNum << "."
+                               << trace::DumpSourceLines(lars_v2);
   }
   CheckCNodeInputSize(lars_v2, kLarsV2InputTensorNum);
   std::vector<AnfNodePtr> inputs = {NewValueNode(std::make_shared<Primitive>(kLarsV2UpdateOpName)),

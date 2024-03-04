@@ -221,6 +221,7 @@ int DebugInfoManager::SaveInfo(const std::string &file_path) {
     SaveInfo(out_file, compared_info);
   }
   out_file.close();
+  ChangeFileMode(file_path, S_IRUSR);
   std::cout << "Success save debug info to " + file_path << "\n";
   return RET_OK;
 }
@@ -263,7 +264,8 @@ int DebugInfoManager::SetQuantStaticInfo(const std::vector<mindspore::lite::Tens
                                          const OpParameter *op_parameter, int tensor_index,
                                          QuantDebugInfo *quant_debug_info, const mindspore::lite::Tensor &tensor,
                                          const quant::DebugMode &debug_mode) {
-  MS_CHECK_TRUE_MSG(quant_debug_info != nullptr, RET_ERROR, "quant_debug_info is nullptr.");
+  CHECK_NULL_RETURN(op_parameter);
+  CHECK_NULL_RETURN(quant_debug_info);
   auto preferred_dim =
     mindspore::lite::WeightDecoder::GetPreferredDim(inputs, op_parameter, tensor_index, tensor.shape(), Version());
   float *quant_data;
@@ -292,7 +294,13 @@ int DebugInfoManager::SetQuantStaticInfo(const std::vector<mindspore::lite::Tens
     MS_LOG(ERROR) << "memcpy memory failed.";
     free(quant_debug_info->tensor_data.data);
     quant_debug_info->tensor_data.data = nullptr;
+    if (quant_data != static_cast<float *>(tensor.data())) {
+      free(quant_data);
+    }
     return false;
+  }
+  if (quant_data != static_cast<float *>(tensor.data())) {
+    free(quant_data);
   }
   quant_debug_info->tensor_data.data_type = kNumberTypeFloat32;
   quant_debug_info->tensor_data.size = buf_size;
@@ -371,12 +379,12 @@ int DebugInfoManager::AddComparedInfo(const mindspore::MSCallBackParam &call_bac
 }
 
 std::map<std::string, mindspore::schema::Tensor *> DebugInfoManager::ParseInputTensors(
-  const mindspore::lite::LiteModel &model) const {
+  const std::shared_ptr<lite::Model> &model) const {
   std::map<std::string, mindspore::schema::Tensor *> maps;
-  for (auto &node : model.graph_.all_nodes_) {
+  for (auto &node : model->graph_.all_nodes_) {
     for (auto &index : node->input_indices_) {
-      auto tensor_name = model.graph_.all_tensors_[index]->name()->str();
-      maps[tensor_name] = model.graph_.all_tensors_[index];
+      auto tensor_name = model->graph_.all_tensors_[index]->name()->str();
+      maps[tensor_name] = model->graph_.all_tensors_[index];
     }
   }
   return maps;
@@ -785,14 +793,14 @@ int DebugInfoManager::StatisticsDataPerRound(
   return RET_OK;
 }
 
-void DebugInfoManager::CollectQuantParam(const mindspore::lite::LiteModel &quant_lite_model) {
-  for (auto &node : quant_lite_model.graph_.all_nodes_) {
+void DebugInfoManager::CollectQuantParam(const std::shared_ptr<lite::Model> &quant_lite_model) {
+  for (auto &node : quant_lite_model->graph_.all_nodes_) {
     for (auto &index : node->input_indices_) {
-      auto tensor = quant_lite_model.graph_.all_tensors_[index];
+      auto tensor = quant_lite_model->graph_.all_tensors_[index];
       AddQuantParamExtend(node, tensor);
     }
     for (auto &index : node->output_indices_) {
-      auto tensor = quant_lite_model.graph_.all_tensors_[index];
+      auto tensor = quant_lite_model->graph_.all_tensors_[index];
       AddQuantParamExtend(node, tensor);
     }
   }
@@ -811,8 +819,8 @@ int DebugInfoManager::CompareOriginWithQuant(const std::shared_ptr<mindspore::Mo
                                              const std::shared_ptr<mindspore::Model> &quant,
                                              const std::map<std::string, OpParameter *> &op_parameters,
                                              const std::shared_ptr<ConverterPara> &param,
-                                             const mindspore::lite::LiteModel &origin_lite_model,
-                                             const mindspore::lite::LiteModel &quant_lite_model) {
+                                             const std::shared_ptr<lite::Model> &origin_lite_model,
+                                             const std::shared_ptr<lite::Model> &quant_lite_model) {
   auto begin = GetTimeUs();
   CollectQuantParam(quant_lite_model);
   std::string file_name = "quant_param.csv";

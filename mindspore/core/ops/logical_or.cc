@@ -15,15 +15,16 @@
  */
 
 #include <map>
-#include <string>
-#include <set>
-#include <vector>
 #include <memory>
+#include <set>
+#include <string>
+#include <vector>
 
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/comparison_ops.h"
 #include "ops/logical_or.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/src/helper.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,13 +36,29 @@ abstract::ShapePtr LogicalOrInferShape(const PrimitivePtr &primitive, const std:
 }
 
 TypePtr LogicalOrInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
-  std::map<std::string, TypePtr> types;
-  auto infer_dtype = input_args[0]->BuildType();
-  const std::set<TypePtr> valid_types = {kBool};
-  (void)types.emplace("x", input_args[0]->BuildType());
-  (void)types.emplace("y", input_args[1]->BuildType());
-  (void)CheckAndConvertUtils::CheckTensorTypeSame(types, valid_types, prim->name());
-  return infer_dtype;
+  MS_EXCEPTION_IF_NULL(prim);
+  auto x_dtype = input_args[0]->BuildType();
+  MS_EXCEPTION_IF_NULL(x_dtype);
+  auto y_dtype = input_args[1]->BuildType();
+  MS_EXCEPTION_IF_NULL(y_dtype);
+  const std::basic_string<char> kBool = "Tensor[Bool]";
+  std::ostringstream buffer;
+  buffer << "For primitive[LogicalOr], the input argument[x, y, ] must be a type of {Tensor[Bool], }, but got ";
+  string x_dtype_str = x_dtype->ToString();
+  string y_dtype_str = y_dtype->ToString();
+  if (!x_dtype->isa<TensorType>()) {
+    x_dtype_str = "Tensor[" + x_dtype_str + "]";
+  }
+  if (!y_dtype->isa<TensorType>()) {
+    y_dtype_str = "Tensor[" + y_dtype_str + "]";
+  }
+  if (x_dtype_str != kBool) {
+    MS_EXCEPTION(TypeError) << buffer.str() << x_dtype->ToString() << ".";
+  }
+  if (y_dtype_str != kBool) {
+    MS_EXCEPTION(TypeError) << buffer.str() << y_dtype->ToString() << ".";
+  }
+  return x_dtype;
 }
 }  // namespace
 
@@ -56,6 +73,23 @@ AbstractBasePtr LogicalOrInfer(const abstract::AnalysisEnginePtr &, const Primit
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(LogicalOr, prim::kPrimLogicalOr, LogicalOrInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGLogicalOrInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return LogicalOrInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return LogicalOrInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return LogicalOrInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(LogicalOr, prim::kPrimLogicalOr, AGLogicalOrInfer, false);
 }  // namespace ops
 }  // namespace mindspore

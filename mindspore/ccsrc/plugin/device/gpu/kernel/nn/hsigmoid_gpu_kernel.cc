@@ -34,8 +34,9 @@ bool HSigmoidGpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &i
   T *input_addr = GetDeviceAddress<T>(inputs, 0);
   T *output_addr = GetDeviceAddress<T>(outputs, 0);
 
-  CalHSigmoid(static_cast<size_t>(input_elements_), input_addr, output_addr,
-              reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = CalHSigmoid(static_cast<size_t>(input_elements_), input_addr, output_addr,
+                            reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -82,7 +83,7 @@ bool HSigmoidGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std:
   }
 
   kernel_func_ = func_list_[pair.second].second;
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   return true;
 }
 

@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,14 +32,15 @@
 #include "ir/dtype/type.h"
 #include "runtime/dev.h"
 #include "plugin/device/ascend/hal/device/lic_manager.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_convert_utils.h"
+#include "plugin/device/ascend/kernel/tbe/tbe_version.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_json/tbe_json_creator.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_json/single_tbe_json_creator.h"
 #include "include/common/utils/json_operation_utils.h"
 #include "mindspore/ccsrc/include/common/debug/common.h"
-#include "kernel/common_utils.h"
+#include "kernel/framework_utils.h"
 #include "mindspore/core/utils/file_utils.h"
 #include "plugin/device/ascend/hal/common/ascend_utils.h"
 
@@ -50,6 +51,7 @@ constexpr auto kCceKernelMeta = "kernel_meta/";
 constexpr auto kTbePrebuildRes = "kernel_meta/tbe_prebuild_res/";
 constexpr auto kJsonSuffix = ".json";
 constexpr auto kInfoSuffix = ".info";
+constexpr auto kMemCheck = "oom";
 constexpr auto kBuildRes = "build_result";
 constexpr auto kTUNE_BANK_PATH = "TUNE_BANK_PATH";
 constexpr auto kTUNE_DUMP_PATH = "TUNE_DUMP_PATH";
@@ -59,6 +61,7 @@ constexpr auto kJOpTuneSwitch = "op_tune_switch";
 constexpr auto kJOpTuneList = "op_tune_list";
 constexpr auto kJPassList = "pass_list";
 constexpr auto kCOMPILER_OP_LEVEL = "MS_COMPILER_OP_LEVEL";
+constexpr auto kCOMPILER_OP_DEBUG_CONFIG = "MS_COMPILER_OP_DEBUG_CONFIG";
 
 std::atomic<uintptr_t> KernelManager::kernel_stub_gen_ = 0;
 std::unordered_map<string, KernelMetaPtr> KernelManager::info_table_ = {};
@@ -123,22 +126,65 @@ std::string TbeUtils::GetKernelMetaTempDir() {
   return debug_path;
 }
 
-std::string GetOpDebugLevel() {
+std::string TbeUtils::GetOpDebugLevel() {
   static const std::set<size_t> value_ranges = {OP_DEBUG_LEVEL_0, OP_DEBUG_LEVEL_1, OP_DEBUG_LEVEL_2, OP_DEBUG_LEVEL_3,
                                                 OP_DEBUG_LEVEL_4};
   std::string op_debug_level = std::to_string(OP_DEBUG_LEVEL_3);
   auto env_level = common::GetEnv(kCOMPILER_OP_LEVEL);
   if (!env_level.empty()) {
-    if (!TbeUtils::IsOneOf(value_ranges, std::stoul(env_level.c_str()))) {
-      MS_LOG(WARNING)
-        << "Invalid environment variable '" << kCOMPILER_OP_LEVEL << "': " << env_level
-        << ", the value should be in [0, 1, 2, 3, 4], now using the default value 3."
-           "Get more detail info at https://www.mindspore.cn/tutorials/experts/zh-CN/master/env/env_var_list.html";
+    uint64_t num_env_level;
+    try {
+      num_env_level = std::stoul(env_level.c_str());
+    } catch (const std::exception &e) {
+      MS_LOG(EXCEPTION) << "Invalid argument: " << e.what() << " when parse " << env_level;
+    }
+    if (!TbeUtils::IsOneOf(value_ranges, num_env_level)) {
+      MS_LOG(WARNING) << "Invalid environment variable '" << kCOMPILER_OP_LEVEL << "': " << env_level
+                      << ", the value should be in [0, 1, 2, 3, 4], now using the default value 3."
+                         "Get more detail info at https://www.mindspore.cn/docs/zh-CN/master/note/env_var_list.html";
     } else {
       op_debug_level = env_level;
     }
   }
   return op_debug_level;
+}
+
+std::vector<std::string> TbeUtils::SplitAndRemoveSpace(const std::string &s, char delim) {
+  std::string item;
+  std::istringstream is(s);
+  std::vector<std::string> ret;
+  while (std::getline(is, item, delim)) {
+    (void)item.erase(std::remove(item.begin(), item.end(), ' '), item.end());
+    ret.push_back(item);
+  }
+  return ret;
+}
+
+std::string TbeUtils::GetOpDebugConfig() {
+  auto ms_context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context);
+  bool is_sink = ms_context->get_param<bool>(MS_CTX_ENABLE_TASK_SINK) &&
+                 (ms_context->get_param<int>(MS_CTX_EXECUTION_MODE) == kGraphMode);
+  auto op_debug_config = common::GetEnv(kCOMPILER_OP_DEBUG_CONFIG);
+  std::string ret_op_debug_config;
+  auto val_vec = TbeUtils::SplitAndRemoveSpace(op_debug_config, ',');
+  bool is_first = true;
+  for (auto &it : val_vec) {
+    if (it == kMemCheck && is_sink) {
+      if (is_first) {
+        is_first = false;
+      } else {
+        ret_op_debug_config += ", ";
+      }
+      ret_op_debug_config += it;
+    }
+  }
+  return ret_op_debug_config;
+}
+
+std::string GetTeVersion() {
+  static auto result = GetPyTeVersion();
+  return result;
 }
 
 nlohmann::json TbeUtils::GenSocInfo() {
@@ -148,12 +194,9 @@ nlohmann::json TbeUtils::GenSocInfo() {
   }
   auto context_ptr = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(context_ptr);
-  std::list<int64_t> list;
-  soc_info_json["coreNum"] = "";
+  soc_info_json["coreNum"] = device::ascend::GetAICoreNumber();
   soc_info_json["coreType"] = "";
-  soc_info_json["op_impl_mode"] = "";
   soc_info_json["vector_fp_ceiling"] = "";
-  soc_info_json["op_impl_mode_list"] = list;
   soc_info_json["l2Mode"] = "2";
   soc_info_json["l1Fusion"] = "false";
   soc_info_json["l2Fusion"] = "false";
@@ -163,8 +206,11 @@ nlohmann::json TbeUtils::GenSocInfo() {
   soc_info_json["op_debug_dir"] = GetOpDebugPath();
   soc_info_json["kernel_meta_temp_dir"] = GetKernelMetaTempDir();
   soc_info_json["op_debug_level"] = GetOpDebugLevel();
+  soc_info_json["op_debug_config"] = GetOpDebugConfig();
   soc_info_json["autoTilingMode"] = context_ptr->get_param<std::string>(MS_CTX_TUNE_MODE);
   soc_info_json["deviceId"] = std::to_string(context_ptr->get_param<uint32_t>(MS_CTX_DEVICE_ID));
+  soc_info_json["status_check"] = "true";
+
   std::string config_path;
   if (!Common::CommonFuncForConfigPath("", common::GetEnv("OP_BANK_PATH"), &config_path)) {
     MS_LOG(EXCEPTION) << "Invalid environment variable 'OP_BANK_PATH', the path is " << common::GetEnv("OP_BANK_PATH")
@@ -178,6 +224,8 @@ nlohmann::json TbeUtils::GenSocInfo() {
                          "permission, (3) whether the path is too long. ";
   }
   soc_info_json["mdl_bank_path"] = config_path;
+  soc_info_json["deterministic"] = context_ptr->get_param<std::string>(MS_CTX_DETERMINISTIC) == "ON";
+  soc_info_json["te_version"] = GetTeVersion();
   return soc_info_json;
 }
 
@@ -192,10 +240,11 @@ void TbeUtils::SaveJsonInfo(const std::string &json_name, const std::string &inf
     MS_LOG(WARNING) << "Save type not supported.";
     return;
   }
-  auto realpath = Common::CreatePrefixPath(path);
+  auto realpath = Common::CreatePrefixPath(path, true);
   if (!realpath.has_value()) {
-    MS_LOG(WARNING) << "Invalid environment variable '" << kCOMPILER_CACHE_PATH
-                    << "', the path is: " << realpath.value() << ". Please check (1) whether the path exists, "
+    MS_LOG(WARNING) << "Invalid environment variable '" << kCompilerCachePath
+                    << "' and invalid arg compile_cache_path in context, the path is: " << realpath.value()
+                    << ". Please check (1) whether the path exists, "
                     << "(2) whether the path has the access permission, (3) whether the path is too long. ";
     return;
   }
@@ -215,6 +264,10 @@ void TbeUtils::LoadCache() {
   static bool has_load = false;
   if (!has_load) {
     auto bin_map = KernelMeta::GetInstance();
+    if (bin_map == nullptr) {
+      MS_LOG(INFO) << "Kernel cache is invalid.";
+      return;
+    }
     auto config_path = TbeUtils::GetOpDebugPath();
     auto path = config_path + kCceKernelMeta;
     if (!bin_map->ReadIndex(path)) {
@@ -232,7 +285,7 @@ void TbeUtils::LoadCache() {
 void TbeUtils::UpdateCache(const std::string &kernel_name) {
   KernelMeta *bin_map = KernelMeta::GetInstance();
   if (bin_map == nullptr) {
-    MS_LOG(INFO) << "kernel cache is invalid.";
+    MS_LOG(INFO) << "Kernel cache is invalid.";
     return;
   }
   return bin_map->UpdateCache(kernel_name);
@@ -241,12 +294,15 @@ void TbeUtils::UpdateCache(const std::string &kernel_name) {
 KernelPackPtr TbeUtils::SearchCache(const std::string &kernel_name, const bool is_akg) {
   // search cache.
   KernelMeta *bin_map = KernelMeta::GetInstance();
-  MS_EXCEPTION_IF_NULL(bin_map);
+  if (bin_map == nullptr) {
+    MS_LOG(DEBUG) << "Kernel cache is invalid.";
+    return nullptr;
+  }
   return bin_map->GetKernelPack(kernel_name, is_akg);
 }
 
 KernelPackPtr TbeUtils::InsertCache(const std::string &kernel_name, const std::string &processor, const bool is_akg) {
-  MS_LOG(INFO) << "kernel name:  " << kernel_name << ", processr:" << processor;
+  MS_LOG(INFO) << "kernel name:  " << kernel_name << ", processor:" << processor;
   if (processor != kProcessorAiCore) {
     MS_LOG(EXCEPTION) << "process type should be aicore, actually is: " << processor;
   }
@@ -254,7 +310,7 @@ KernelPackPtr TbeUtils::InsertCache(const std::string &kernel_name, const std::s
 }
 
 int KernelManager::BinaryRegister(const mindspore::kernel::FlexArray &kernel_buffer, void **module, const string &magic,
-                                  bool has_kernel_list) {
+                                  const std::string &func_name, bool has_kernel_list) {
   static std::map<string, uint32_t> magic_maps = {{"RT_DEV_BINARY_MAGIC_PLAIN", RT_DEV_BINARY_MAGIC_PLAIN},
                                                   {"RT_DEV_BINARY_MAGIC_PLAIN_AICPU", RT_DEV_BINARY_MAGIC_PLAIN_AICPU},
                                                   {"RT_DEV_BINARY_MAGIC_PLAIN_AIVEC", RT_DEV_BINARY_MAGIC_PLAIN_AIVEC},
@@ -267,7 +323,7 @@ int KernelManager::BinaryRegister(const mindspore::kernel::FlexArray &kernel_buf
   dev_bin.data = kernel_buffer.contents;
   auto iter = magic_maps.find(magic);
   if (iter == magic_maps.end()) {
-    MS_LOG(INFO) << "Invalid magic number: " << magic;
+    MS_LOG(INFO) << "Invalid magic number: " << magic << ", kernel: " << func_name;
     return -1;
   }
   dev_bin.magic = iter->second;
@@ -275,14 +331,19 @@ int KernelManager::BinaryRegister(const mindspore::kernel::FlexArray &kernel_buf
   dev_bin.version = 0;
   auto ret = has_kernel_list ? rtRegisterAllKernel(&dev_bin, module) : rtDevBinaryRegister(&dev_bin, module);
   if (RT_ERROR_NONE != ret) {
-    MS_LOG(INFO) << "Call runtime rtDevBinaryRegister error.";
+    MS_LOG(INFO) << "Call runtime rtDevBinaryRegister error, ret: [" << ret
+                 << "], error message: " << device::ascend::ErrorManagerAdapter::GetErrorMessage(true)
+                 << ". Try to delete kernel compile cache files, and restart you project again.(These cache files in "
+                    "the custom directory if you used the environment variable 'MS_COMPILER_CACHE_PATH', otherwise in "
+                    "the current directory). Kernel: "
+                 << func_name;
     return -1;
   }
   return 0;
 }
 
 uintptr_t KernelManager::GenFuncStub(const mindspore::kernel::KernelPack &kernel_pack, bool force_reload,
-                                     uint32_t *block_dim, void **handle, std::string *origin_key) {
+                                     uint32_t *block_dim, void **handle) {
   MS_EXCEPTION_IF_NULL(block_dim);
   auto kernel = kernel_pack.GetKernel();
   if (kernel == nullptr) {
@@ -305,14 +366,15 @@ uintptr_t KernelManager::GenFuncStub(const mindspore::kernel::KernelPack &kernel
     if (iter != info_table_.end()) {
       auto kernelmeta = iter->second;
       *block_dim = kernelmeta->block_dim_;
-      if (!kernel_json_info.has_kernel_list) {
-        return kernelmeta->func_stub_;
+      if (handle != nullptr) {
+        *handle = kernelmeta->handle_;
       }
+      return kernelmeta->result_;
     }
   }
   void *module = nullptr;
-  if (BinaryRegister((*kernel_pack.GetKernel()), &module, magic, kernel_json_info.has_kernel_list) != 0) {
-    MS_LOG(INFO) << "Call runtime BinaryRegister error.";
+  if (BinaryRegister((*kernel_pack.GetKernel()), &module, magic, func_name, kernel_json_info.has_kernel_list) != 0) {
+    MS_LOG(INFO) << "Call runtime BinaryRegister error. Register for : " << func_name;
     if (module != nullptr) {
       (void)rtDevBinaryUnRegister(module);
     }
@@ -320,21 +382,26 @@ uintptr_t KernelManager::GenFuncStub(const mindspore::kernel::KernelPack &kernel
   }
   if (kernel_json_info.has_kernel_list) {
     MS_EXCEPTION_IF_NULL(handle);
-    MS_EXCEPTION_IF_NULL(origin_key);
+    std::lock_guard<std::mutex> lock(info_table_mutex_);
     *handle = module;
-    *origin_key = func_name;
+    info_table_[func_name] = std::make_shared<KernelMetaInfo>(KernelMetaInfo{1, *block_dim, module});
     return 1;
   }
   // to diff different funcs.
   uintptr_t func_stub = ++kernel_stub_gen_;
   if (RT_ERROR_NONE !=
       rtFunctionRegister(module, reinterpret_cast<void *>(func_stub), func_name.c_str(), func_name.c_str(), 0)) {
-    MS_LOG(INFO) << "Call runtime rtFunctionRegister error.";
+    MS_LOG(INFO) << "Call runtime rtFunctionRegister error, message:"
+                 << device::ascend::ErrorManagerAdapter::GetErrorMessage(true)
+                 << ". Try to delete kernel compile cache files, and restart you project again.(These cache files in "
+                    "the custom directory if you used the environment variable 'MS_COMPILER_CACHE_PATH', otherwise in "
+                    "the current directory). "
+                 << func_name;
     return 0;
   }
   // cache the registered kernelmeta.
   std::lock_guard<std::mutex> lock(info_table_mutex_);
-  info_table_[func_name] = std::make_shared<KernelMetaInfo>(KernelMetaInfo{func_stub, *block_dim});
+  info_table_[func_name] = std::make_shared<KernelMetaInfo>(KernelMetaInfo{func_stub, *block_dim, module});
   return func_stub;
 }
 
@@ -352,7 +419,7 @@ KernelMeta *KernelMeta::GetInstance() {
 bool KernelMeta::ReadIndex(const std::string &bin_dir) {
   DIR *dir = opendir(bin_dir.c_str());
   if (dir == nullptr) {
-    auto ret = mkdir(bin_dir.c_str(), S_IRWXG | S_IRWXU);
+    auto ret = mkdir(bin_dir.c_str(), S_IRWXU);
     if (ret != 0) {
       MS_LOG(INFO) << "kernel dir: " << bin_dir << "not exist";
       return false;
@@ -400,6 +467,8 @@ bool KernelMeta::ReadIndex(const std::string &bin_dir) {
 
 void TbeUtils::GetCompileInfo(const AnfNodePtr &node, std::string *compile_info, bool *get_flag) {
   MS_EXCEPTION_IF_NULL(node);
+  MS_EXCEPTION_IF_NULL(get_flag);
+  MS_EXCEPTION_IF_NULL(compile_info);
   MS_LOG(DEBUG) << "Get compile info from json file start. [" << node->fullname_with_scope() << "]";
   std::string json_name;
   if (common::AnfAlgo::HasNodeAttr(kAttrJsonFileName, node->cast<CNodePtr>())) {
@@ -436,13 +505,14 @@ void TbeUtils::GetCompileInfo(const AnfNodePtr &node, std::string *compile_info,
   if (!ParseJson(build_res_str, &build_res_json)) {
     MS_LOG(EXCEPTION) << "Parse build result for " << node->fullname_with_scope() << " error :" << build_res_str;
   }
-  *compile_info = build_res_json.dump();
+  *compile_info = read_new_json.at("compileInfo").dump();
   file.close();
   file.clear();
   MS_LOG(DEBUG) << "Get compile info from json file success.";
 }
 
 void TbeUtils::SaveCompileInfo(const std::string &json_name, const std::string &build_res, bool *save_flag) {
+  MS_EXCEPTION_IF_NULL(save_flag);
   MS_LOG(DEBUG) << "Save compile info to json file start, op: [" << json_name << "].";
   auto config_path = TbeUtils::GetOpDebugPath();
   std::string path = config_path + kCceKernelMeta + json_name + kJsonSuffix;

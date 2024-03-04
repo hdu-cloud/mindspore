@@ -17,6 +17,10 @@
 #include <memory>
 
 #include "common/common_test.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/arithmetic_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "common/py_func_graph_fetcher.h"
 
 #include "ir/anf.h"
@@ -28,7 +32,7 @@
 #include "frontend/optimizer/irpass.h"
 #include "frontend/optimizer/irpass/arithmetic_simplify.h"
 #include "frontend/optimizer/irpass/pynative_no_grad_eliminate.h"
-#include "pipeline/jit/action.h"
+#include "pipeline/jit/ps/action.h"
 
 #include "include/common/debug/draw.h"
 #include "frontend/operator/ops.h"

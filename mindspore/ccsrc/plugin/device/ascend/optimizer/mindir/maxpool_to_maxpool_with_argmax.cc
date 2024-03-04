@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,15 @@
 
 #include <vector>
 #include <memory>
+#include <string>
 
+#include "ops/conv_pool_ops.h"
 #include "include/common/utils/utils.h"
 #include "utils/ms_context.h"
 #include "utils/trace_base.h"
-#include "backend/common/optimizer/helper.h"
-#include "runtime/device/kernel_info.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/kernel_info.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
@@ -38,8 +40,8 @@ constexpr size_t kMaxPoolWithArgmaxOutputNum = 2;
 CNodePtr GetMaxPool(const CNodePtr &maxpool_grad) {
   MS_EXCEPTION_IF_NULL(maxpool_grad);
   if (maxpool_grad->inputs().size() != kMaxPoolGradInputNum) {
-    MS_LOG(EXCEPTION) << "MaxPoolGrad's input number should be " << (kMaxPoolGradInputNum - 1) << ", but got "
-                      << (maxpool_grad->inputs().size() - 1) << trace::DumpSourceLines(maxpool_grad);
+    MS_LOG(INTERNAL_EXCEPTION) << "MaxPoolGrad's input number should be " << (kMaxPoolGradInputNum - 1) << ", but got "
+                               << (maxpool_grad->inputs().size() - 1) << trace::DumpSourceLines(maxpool_grad);
   }
   auto maxpool_anf = maxpool_grad->input(kIndex2);
   MS_EXCEPTION_IF_NULL(maxpool_anf);
@@ -51,8 +53,8 @@ CNodePtr MaxPool2MaxPoolWithArgmax::CreateMaxPoolWithArgmax(const FuncGraphPtr &
   MS_EXCEPTION_IF_NULL(graph);
   MS_EXCEPTION_IF_NULL(maxpool);
   if (maxpool->inputs().size() != kMaxPoolInputNum) {
-    MS_LOG(EXCEPTION) << "MaxPool's input number should be " << (kMaxPoolInputNum - 1) << ", but got "
-                      << (maxpool->inputs().size() - 1) << trace::DumpSourceLines(maxpool);
+    MS_LOG(INTERNAL_EXCEPTION) << "MaxPool's input number should be " << (kMaxPoolInputNum - 1) << ", but got "
+                               << (maxpool->inputs().size() - 1) << trace::DumpSourceLines(maxpool);
   }
   std::vector<AnfNodePtr> maxpool_argmax_inputs = {NewValueNode(std::make_shared<Primitive>(kMaxPoolWithArgmaxOpName)),
                                                    maxpool->input(kIndex1)};
@@ -63,7 +65,7 @@ CNodePtr MaxPool2MaxPoolWithArgmax::CreateMaxPoolWithArgmax(const FuncGraphPtr &
   // MaxPoolWithArgmax's second output is argmax, whose datatype is uint16 and with same shape as first output
   TypeId argmax_dtype = kNumberTypeUInt16;
   auto types = {common::AnfAlgo::GetOutputInferDataType(maxpool, 0UL), argmax_dtype};
-  auto out_shape = common::AnfAlgo::GetOutputDetailShape(maxpool, 0UL);
+  auto out_shape = AnfAlgo::GetOutputDetailShape(maxpool, 0UL);
   std::vector<BaseShapePtr> shapes = {out_shape, out_shape};
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, maxpool_argmax.get());
   return maxpool_argmax;
@@ -75,8 +77,8 @@ CNodePtr MaxPool2MaxPoolWithArgmax::CreateMaxPoolGradWithArgmax(
   MS_EXCEPTION_IF_NULL(graph);
   MS_EXCEPTION_IF_NULL(maxpool_grad);
   if (maxpool_grad->inputs().size() != kMaxPoolGradInputNum) {
-    MS_LOG(EXCEPTION) << "MaxPoolGrad's input number should be " << (kMaxPoolGradInputNum - 1) << ", but got "
-                      << (maxpool_grad->inputs().size() - 1) << trace::DumpSourceLines(maxpool_grad);
+    MS_LOG(INTERNAL_EXCEPTION) << "MaxPoolGrad's input number should be " << (kMaxPoolGradInputNum - 1) << ", but got "
+                               << (maxpool_grad->inputs().size() - 1) << trace::DumpSourceLines(maxpool_grad);
   }
   // MaxPoolGrad's inputs are {input, output, grad_input}, MaxPoolGradWithArgmax's inputs are
   // {input, grad_input, argmax_output}
@@ -96,12 +98,12 @@ void MaxPool2MaxPoolWithArgmax::SetNodeAttrs(const CNodePtr &maxpool, const CNod
   auto strides = common::AnfAlgo::GetNodeAttr<std::vector<int64_t>>(maxpool, kAttrStrides);
   auto ksize = common::AnfAlgo::GetNodeAttr<std::vector<int64_t>>(maxpool, kAttrKernelSize);
   if (strides.size() != kMaxPoolAttrAxisNum) {
-    MS_LOG(EXCEPTION) << "MaxPool's attr strides has wrong axis number, should be " << kMaxPoolAttrAxisNum
-                      << ", but got " << strides.size() << trace::DumpSourceLines(maxpool);
+    MS_LOG(INTERNAL_EXCEPTION) << "MaxPool's attr strides has wrong axis number, should be " << kMaxPoolAttrAxisNum
+                               << ", but got " << strides.size() << trace::DumpSourceLines(maxpool);
   }
   if (ksize.size() != kMaxPoolAttrAxisNum) {
-    MS_LOG(EXCEPTION) << "MaxPool's attr ksize has wrong axis number, should be " << kMaxPoolAttrAxisNum << ", but got "
-                      << ksize.size() << trace::DumpSourceLines(maxpool);
+    MS_LOG(INTERNAL_EXCEPTION) << "MaxPool's attr ksize has wrong axis number, should be " << kMaxPoolAttrAxisNum
+                               << ", but got " << ksize.size() << trace::DumpSourceLines(maxpool);
   }
   // note that strides and ksize change from (1, 1, x, y) to (1, x, y, 1)
   strides[kIndex1] = strides[kIndex2];
@@ -118,6 +120,13 @@ void MaxPool2MaxPoolWithArgmax::SetNodeAttrs(const CNodePtr &maxpool, const CNod
   common::AnfAlgo::SetNodeAttr(kAttrStrides, MakeValue(strides), maxpool_grad_argmax);
   common::AnfAlgo::SetNodeAttr(kAttrKernelSize, MakeValue(ksize), maxpool_argmax);
   common::AnfAlgo::SetNodeAttr(kAttrKernelSize, MakeValue(ksize), maxpool_grad_argmax);
+}
+
+std::vector<std::string> MaxPool2MaxPoolWithArgmax::MustExistPrimitiveName() const {
+  std::vector<std::string> ret;
+  (void)ret.emplace_back(prim::kPrimMaxPool->name());
+  (void)ret.emplace_back(prim::kPrimMaxPoolGrad->name());
+  return ret;
 }
 
 const BaseRef MaxPool2MaxPoolWithArgmax::DefinePattern() const {

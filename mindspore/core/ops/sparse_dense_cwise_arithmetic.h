@@ -17,15 +17,13 @@
 #ifndef MINDSPORE_CORE_OPS_SPARSE_DENSE_CWISE_ARITHMETIC_H_
 #define MINDSPORE_CORE_OPS_SPARSE_DENSE_CWISE_ARITHMETIC_H_
 #include <vector>
-#include <memory>
 #include "ops/base_operator.h"
-#include "mindapi/base/types.h"
 
 namespace mindspore {
 namespace ops {
-abstract::AbstractBasePtr SparseDenseCwiseArithmeticInfer(const abstract::AnalysisEnginePtr &,
-                                                          const PrimitivePtr &primitive,
-                                                          const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr SparseDenseCwiseArithmeticInfer(
+  const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+  const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

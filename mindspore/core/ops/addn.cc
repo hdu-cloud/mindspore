@@ -14,15 +14,16 @@
  * limitations under the License.
  */
 
+#include "ops/addn.h"
+#include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
-#include <map>
-#include <memory>
-#include "ops/addn.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/src/helper.h"
 
 namespace mindspore {
 namespace ops {
@@ -64,13 +65,17 @@ bool AddNDynShapeJoin(ShapeVector *shape1, const ShapeVector *shape2) {
 }
 
 abstract::ShapePtr AddNInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
-  auto elements = input_args[0]->isa<abstract::AbstractTuple>()
-                    ? input_args[0]->cast<abstract::AbstractTuplePtr>()->elements()
-                    : input_args[0]->cast<abstract::AbstractListPtr>()->elements();
-  (void)CheckAndConvertUtils::CheckInteger("input num", SizeToLong(elements.size()), kGreaterEqual, 1,
-                                           primitive->name());
-  (void)primitive->AddAttr("N", MakeValue(SizeToLong(elements.size())));
-  (void)primitive->AddAttr("n", MakeValue(SizeToLong(elements.size())));
+  const auto &prim_name = primitive->name();
+  AbstractBasePtrList elements = input_args;
+  if (input_args.size() == 1) {
+    if (!input_args[0]->isa<abstract::AbstractSequence>()) {
+      MS_EXCEPTION(TypeError) << "For '" << prim_name
+                              << "', the input data type must be list or tuple of tensors.But got:"
+                              << input_args[0]->ToString();
+    }
+    elements = input_args[0]->cast<abstract::AbstractSequencePtr>()->elements();
+  }
+  (void)CheckAndConvertUtils::CheckInteger("input num", SizeToLong(elements.size()), kGreaterEqual, 1, prim_name);
   auto shape_0 = elements[0]->BuildShape();
   ShapeVector output_shape;
   for (size_t i = 0; i < elements.size(); ++i) {
@@ -91,21 +96,25 @@ abstract::ShapePtr AddNInferShape(const PrimitivePtr &primitive, const std::vect
     }
     // Join input[i] with input[0]
     if (!AddNDynShapeJoin(&output_shape, &shape_vec)) {
-      MS_EXCEPTION(ValueError) << "For '" << primitive->name() << "', input shape must be same, but got shape of input["
-                               << i << "]: " << shape->ToString() << ", shape of input[0]: " << shape_0->ToString()
-                               << ".";
+      MS_EXCEPTION(ValueError) << "For '" << prim_name << "', input shape must be same, but got shape of input[" << i
+                               << "]: " << shape->ToString() << ", shape of input[0]: " << shape_0->ToString() << ".";
     }
   }
   return std::make_shared<abstract::Shape>(output_shape);
 }
 
-TypePtr AddNInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
-  auto prim_name = prim->name();
-  auto elements = input_args[0]->isa<abstract::AbstractTuple>()
-                    ? input_args[0]->cast<abstract::AbstractTuplePtr>()->elements()
-                    : input_args[0]->cast<abstract::AbstractListPtr>()->elements();
+TypePtr AddNInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
+  const auto &prim_name = primitive->name();
+  AbstractBasePtrList elements = input_args;
+  if (input_args.size() == 1) {
+    if (!input_args[0]->isa<abstract::AbstractSequence>()) {
+      MS_EXCEPTION(TypeError) << "For '" << prim_name << "', the input data type must be list or tuple of tensors.";
+    }
+    elements = input_args[0]->cast<abstract::AbstractSequencePtr>()->elements();
+  }
   (void)CheckAndConvertUtils::CheckInteger("concat element num", SizeToLong(elements.size()), kGreaterEqual, 1,
-                                           prim->name());
+                                           prim_name);
   std::map<std::string, TypePtr> types;
   (void)types.emplace("element_0", elements[0]->BuildType());
   for (size_t i = 0; i < elements.size(); ++i) {
@@ -126,17 +135,29 @@ AbstractBasePtr AddNInfer(const abstract::AnalysisEnginePtr &, const PrimitivePt
                           const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
-  const int64_t kInputNum = 1;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterEqual, kInputNum, prim_name);
-  if (!input_args[0]->isa<abstract::AbstractTuple>() && !input_args[0]->isa<abstract::AbstractList>()) {
-    MS_EXCEPTION(TypeError) << "For '" << prim_name
-                            << "', the input data type must be list or tuple of tensors.But got:"
-                            << input_args[0]->ToString();
-  }
+  CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterEqual, 1, prim_name);
   auto infer_type = AddNInferType(primitive, input_args);
   auto infer_shape = AddNInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(AddN, prim::kPrimAddN, AddNInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGAddNInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return AddNInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return AddNInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return AddNInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(AddN, prim::kPrimAddN, AGAddNInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -15,15 +15,29 @@
  */
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 
-#include "ops/npu_clear_float_status.h"
-#include "ops/op_utils.h"
-#include "abstract/param_validator.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/other_ops.h"
+#include "ops/npu_clear_float_status.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -36,11 +50,7 @@ abstract::ShapePtr NPUClearFloatStatusInferShape(const PrimitivePtr &, const std
   }
   // dynamic shape
   if (IsDynamic(input_shape)) {
-    ShapeVector out_shape_dyn;
-    for (size_t i = 0; i < input_shape.size(); ++i) {
-      out_shape_dyn.push_back(abstract::Shape::kShapeDimAny);
-    }
-    return std::make_shared<abstract::Shape>(out_shape_dyn);
+    return std::make_shared<abstract::Shape>(ShapeVector(input_shape.size(), abstract::Shape::kShapeDimAny));
   }
   const int64_t normal_shape_size = 1;
   const int64_t normal_shape_len = 8;
@@ -74,7 +84,25 @@ AbstractBasePtr NPUClearFloatStatusInfer(const abstract::AnalysisEnginePtr &, co
   auto infer_shape = NPUClearFloatStatusInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(NPUClearFloatStatus, prim::kPrimNPUClearFloatStatus, NPUClearFloatStatusInfer, nullptr,
-                             true);
+
+// AG means auto generated
+class MIND_API AGNPUClearFloatStatusInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return NPUClearFloatStatusInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return NPUClearFloatStatusInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return NPUClearFloatStatusInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(NPUClearFloatStatus, prim::kPrimNPUClearFloatStatus, AGNPUClearFloatStatusInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

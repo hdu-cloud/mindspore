@@ -29,7 +29,7 @@
 #include "kernel/kernel.h"
 #include "plugin/factory/ms_factory.h"
 #include "plugin/device/cpu/kernel/cpu_kernel_mod.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "kernel/common_utils.h"
 #include "ir/anf.h"
@@ -54,8 +54,10 @@ constexpr char PAD_LIST[] = "pad_list";
 constexpr char PAD_MODE[] = "pad_mode";
 constexpr char PAD_MODE_LOWER_SAME[] = "same";
 constexpr char PAD_MODE_LOWER_VALID[] = "valid";
+constexpr char PAD_MODE_LOWER_PAD[] = "pad";
 constexpr char PAD_MODE_UPPER_SAME[] = "SAME";
 constexpr char PAD_MODE_UPPER_VALID[] = "VALID";
+constexpr char PAD_MODE_UPPER_PAD[] = "PAD";
 constexpr char COUNT_INCLUDE_PAD[] = "count_include_pad";
 constexpr char CEIL_MODE[] = "ceil_mode";
 constexpr char DIVISOR_OVERRIDE[] = "divisor_override";
@@ -139,7 +141,6 @@ class BACKEND_EXPORT NativeCpuKernelMod : public CpuKernelMod {
  public:
   NativeCpuKernelMod() = default;
   ~NativeCpuKernelMod() override = default;
-
   bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
               const std::vector<AddressPtr> &outputs, void * /*stream_ptr*/) override {
     return Launch(inputs, workspace, outputs);
@@ -153,13 +154,13 @@ class BACKEND_EXPORT NativeCpuKernelMod : public CpuKernelMod {
   static std::vector<KernelAttr> GetCpuSupportedList(const std::string &kernel_name) {
     auto temp_mod = kernel::Factory<NativeCpuKernelMod>::Instance().Create(kernel_name);
     if (temp_mod == nullptr) {
-      MS_LOG(WARNING) << "Not register CPU kernel of operator: " << kernel_name;
+      MS_LOG(INFO) << "Not register CPU kernel of operator: " << kernel_name;
       return std::vector<KernelAttr>{};
     }
     return temp_mod->GetAllSupportedList(kernel_name);
   }
 
-  std::vector<KernelAttr> GetOpSupport() { return {}; }
+  std::vector<KernelAttr> GetOpSupport() override { return {}; }
 
   enum KernelModType GetKernelModType() const override { return KernelModType::NativeCpuKernelMod; }
 
@@ -364,13 +365,6 @@ class AxisIterator {
   AxisIterator() = default;
   virtual ~AxisIterator() = default;
   void Init(const ShapeVector &input_shape, size_t axis);
-  // Iterate index through outer_size_ * inner_size_, combine inner iteration and outer iteration
-  // into one single iteration to fit ParallelLaunchAutoSearch
-  // Possible usage:
-  // for (i = 0; i < outer_size_ * inner_size_; i ++) {
-  //    axisIterator.SetOffset(i);
-  //    // Do computation
-  // }
   inline void SetOffset(size_t index) {
     size_t outer_index = index / inner_size_;
     size_t inner_index = index % inner_size_;

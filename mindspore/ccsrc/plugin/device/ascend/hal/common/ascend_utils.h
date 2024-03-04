@@ -19,8 +19,9 @@
 
 #include <string>
 #include <set>
-#include "plugin/device/ascend/hal/hardware/ascend_device_context.h"
-#include "backend/common/session/kernel_graph.h"
+#include <vector>
+#include "common/util/error_manager/error_manager.h"
+#include "include/backend/kernel_graph.h"
 
 namespace mindspore {
 namespace device {
@@ -39,19 +40,30 @@ std::string MapToString(const Map &value) {
   return buffer.str();
 }
 
-std::string GetErrorMessage(bool add_title = false);
-std::string GetWarningMessage();
-void SetErrorManagerContext();
+class ErrorManagerAdapter {
+ public:
+  ErrorManagerAdapter() = default;
+  ~ErrorManagerAdapter() = default;
+  static bool Init();
+  static std::string GetErrorMessage(bool add_title = false);
+  static std::string GetWarningMessage(bool add_title = false);
+  static void BindToCurrentThread();
+
+ private:
+  static void MessageHandler(std::ostringstream *oss);
+
+ private:
+  static error_message::Context context_;
+  static std::mutex initialized_mutex_;
+  static bool initialized_;
+  static std::vector<std::string> traceback_;
+};
 
 bool IsGraphMode();
 bool IsDynamicShapeGraph(const FuncGraphPtr &func_graph);
-
 std::string GetSocVersion();
-
-// Some NOP nodes have be hide in execution order, it doesn't have output device address, this function creates
-// output device address for these nodes, and the output device address is the same with input device address.
-void AssignOutputNopNodeDeviceAddress(const KernelGraphPtr &graph, const device::DeviceContext *device_context);
-
+std::string GetAICoreNumber();
+std::string GetAscendPath();
 std::string GetErrorMsg(uint32_t rt_error_code);
 }  // namespace ascend
 }  // namespace device

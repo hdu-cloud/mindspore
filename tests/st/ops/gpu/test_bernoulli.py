@@ -53,6 +53,21 @@ def test_bernoulli():
     assert elem_count * 0.4 < nonzero_count < elem_count * 0.6
 
 
+@pytest.mark.level1
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.env_onecard
+def test_bernoulli_empty_tensor():
+    """
+    Feature: bernoulli function
+    Description: test cases for Bernoulli
+    Expectation: the result matches scipy
+    """
+    context.set_context(mode=context.PYNATIVE_MODE, device_target="GPU")
+    x = Tensor([])
+    out = Net()(x, 0.5)
+    assert out.shape == (0,)
+
+
 class BernoulliDynamic(nn.Cell):
     def __init__(self, seed=-1):
         super(BernoulliDynamic, self).__init__()
@@ -76,10 +91,28 @@ def test_bernoulli_dynamic():
     """
     context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
     x = np.ones([32, 16, 2, 5]).astype(np.float32)
-    p = np.ones([5]).astype(np.float32) * 0.5
+    p = np.ones([1]).astype(np.float32) * 0.5
     net = BernoulliDynamic()
 
     output = net(Tensor(x), Tensor(p))
     nonzero_count = np.count_nonzero(output.asnumpy())
     elem_count = x.size
     assert elem_count * 0.4 < nonzero_count < elem_count * 0.6
+
+
+@pytest.mark.level1
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.env_onecard
+def test_bernoulli_dynamic_x_type_error():
+    """
+    Feature: Bernoulli function
+    Description: Test cases for Bernoulli
+    Expectation: Raise TypeError.
+    """
+    context.set_context(mode=context.PYNATIVE_MODE, device_target="GPU")
+    with pytest.raises(TypeError):
+        x = np.random.random(size=(15, 26, 2, 8, 10))
+        p = Tensor(np.random.random(size=(15, 26, 2, 8, 10)))
+        net = BernoulliDynamic()
+        output = net(x, p=p)
+        print(output)

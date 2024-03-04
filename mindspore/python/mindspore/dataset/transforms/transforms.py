@@ -17,6 +17,8 @@ The module transforms provides common operations, including Compose, OneHot and 
 """
 import json
 from abc import ABC
+import os
+import threading
 
 import sys
 from enum import IntEnum
@@ -36,6 +38,28 @@ from ..core.datatypes import mstype_to_detype, nptype_to_detype
 from ..vision.py_transforms_util import is_pil
 
 
+# hold all the executor objects when in training procedure
+# key : pid_tid which distinguishes multiple executors by process_id + thread_id
+# value : executor object which lifecycle will always exist during training
+EXECUTORS_LIST = dict()
+
+
+# the follow case process / thread exit need call the function
+# 1. user defined dataset with process mode
+# 2. user defined dataset with thread mode
+# 3. user defined transform in map op with process mode
+# 4. user defined transform in map op with thread mode
+# 5. batch op with per_batch_map operation in process mode
+# 6. batch op with per_batch_map operation in thread mode
+def clean_unused_executors():
+    """
+    clean the unused executor object in UDF or map with PyFunc process / thread mode
+    """
+    key = str(os.getpid()) + "_" + str(threading.currentThread().ident)
+    if key in EXECUTORS_LIST:
+        EXECUTORS_LIST.pop(key)
+
+
 class TensorOperation:
     """
     Base class Tensor Ops
@@ -44,7 +68,7 @@ class TensorOperation:
     def __init__(self):
         super().__init__()
         self.implementation = None
-        self.callable_op_ = None
+        self.device_target = "CPU"
 
     def __call__(self, *input_tensor_list):
         """
@@ -62,9 +86,22 @@ class TensorOperation:
             except (RuntimeError, TypeError):
                 raise TypeError("Invalid user input. Got {}: {}, cannot be converted into tensor." \
                                 .format(type(tensor), tensor))
-        if not hasattr(self, 'callable_op_') or self.callable_op_ is None:
-            self.callable_op_ = cde.Execute(self.parse())
-        output_tensor_list = self.callable_op_(tensor_row)
+
+        # get or create the executor from EXECUTORS_LIST
+        executor = None
+        key = str(os.getpid()) + "_" + str(threading.currentThread().ident)
+        if key in EXECUTORS_LIST:
+            # get the executor by process id and thread id
+            executor = EXECUTORS_LIST[key]
+            # remove the old transform which in executor and update the new transform
+            executor.UpdateOperation(self.parse())
+        else:
+            # create a new executor by process id and thread_id
+            executor = cde.Execute(self.parse())
+            # add the executor the global EXECUTORS_LIST
+            EXECUTORS_LIST[key] = executor
+
+        output_tensor_list = executor(tensor_row)
         output_numpy_list = [x.as_array() for x in output_tensor_list]
         return output_numpy_list[0] if len(output_numpy_list) == 1 else tuple(output_numpy_list)
 
@@ -220,12 +257,14 @@ class Compose(CompoundOperation):
         ``CPU``
 
     Examples:
-        >>> compose = transforms.Compose([vision.Decode(), vision.RandomCrop(512)])
-        >>> image_folder_dataset = image_folder_dataset.map(operations=compose)
-        >>> image_folder_dataset_dir = "/path/to/image_folder_dataset_directory"
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.transforms as transforms
+        >>> import mindspore.dataset.vision as vision
         >>>
         >>> # create a dataset that reads all files in dataset_dir with 8 threads
+        >>> image_folder_dataset_dir = "/path/to/image_folder_dataset_directory"
         >>> image_folder_dataset = ds.ImageFolderDataset(image_folder_dataset_dir, num_parallel_workers=8)
+        >>>
         >>> # create a list of transformations to be applied to the image data
         >>> transform = transforms.Compose([vision.Decode(to_pil=True),
         ...                                vision.RandomHorizontalFlip(0.5),
@@ -244,7 +283,7 @@ class Compose(CompoundOperation):
         ...                    vision.RandomErasing()]
         >>>
         >>> # apply the transform to the dataset through dataset.map()
-        >>> image_folder_dataset_1 = image_folder_dataset_1.map(operations=transforms_list, input_columns=["image"])
+        >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list, input_columns=["image"])
         >>>
         >>> # Certain C++ and Python ops can be combined, but not all of them
         >>> # An example of combined operations
@@ -271,17 +310,16 @@ class Compose(CompoundOperation):
         if all(hasattr(transform, "random") and not transform.random for transform in self.transforms):
             self.random = False
 
+    # pylint: disable=missing-docstring
     @staticmethod
     def decompose(operations):
-        """
-        Remove all compose operation from the given list of operations.
-
-        Args:
-            operations (list): list of transforms.
-
-        Returns:
-            list of operations without compose operations.
-        """
+        # Remove all compose operation from the given list of operations.
+        #
+        # Args:
+        #    operations (list): list of transforms.
+        #
+        # Returns:
+        #    list of operations without compose operations.
         new_operations = []
         for op in operations:
             if isinstance(op, Compose):
@@ -290,17 +328,16 @@ class Compose(CompoundOperation):
                 new_operations.append(op)
         return new_operations
 
+    # pylint: disable=missing-docstring
     @staticmethod
     def reduce(operations):
-        """
-        Wraps adjacent Python operations in a Compose to allow mixing of Python and C++ operations.
-
-        Args:
-            operations (list): list of tensor operations.
-
-        Returns:
-            list, the reduced list of operations.
-        """
+        # Wraps adjacent Python operations in a Compose to allow mixing of Python and C++ operations.
+        #
+        # Args:
+        #    operations (list): list of tensor operations.
+        #
+        # Returns:
+        #    list, the reduced list of operations.
         new_ops, start_ind, end_ind = [], 0, 0
         for i, op in enumerate(operations):
             if op.implementation == Implementation.C and not isinstance(op, FuncWrapper):
@@ -340,16 +377,31 @@ class Compose(CompoundOperation):
         """
         return util.compose(self.transforms, *args)
 
+    def __call__(self, *args):
+        '''
+        If PY op exists in self.transforms, should use _execute_py to keep the output types unchanged.
+        '''
+        if any([t.implementation == Implementation.PY for t in self.transforms]):
+            self.implementation = Implementation.PY
+        return super().__call__(*args)
+
+    def release_resource(self):
+        # release the executor which is used by current thread/process when
+        # use transform in eager mode in map op
+        # this will be call in MapOp::WorkerEntry
+        clean_unused_executors()
+
 
 class Concatenate(TensorOperation):
     """
-    Tensor operation that concatenates all columns into a single tensor, only 1D tenspr is supported.
+    Concatenate data with input array along given axis, only 1D data is supported.
 
     Args:
-        axis (int, optional): Concatenate the tensors along given axis. Default: 0.
-        prepend (numpy.ndarray, optional): NumPy array to be prepended to the already concatenated tensors.
-            Default: None.
-        append (numpy.ndarray, optional): NumPy array to be appended to the already concatenated tensors. Default: None.
+        axis (int, optional): The axis along which the arrays will be concatenated. Default: ``0``.
+        prepend (numpy.ndarray, optional): NumPy array to be prepended to the input array.
+            Default: ``None``, not to prepend array.
+        append (numpy.ndarray, optional): NumPy array to be appended to the input array.
+            Default: ``None``, not to append array.
 
     Raises:
         TypeError: If `axis` is not of type int.
@@ -360,7 +412,10 @@ class Concatenate(TensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.transforms as transforms
         >>> import numpy as np
+        >>>
         >>> # concatenate string
         >>> prepend_tensor = np.array(["dw", "df"], dtype='S')
         >>> append_tensor = np.array(["dwsdf", "df"], dtype='S')
@@ -393,6 +448,8 @@ class Duplicate(TensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.transforms as transforms
         >>> # Data before
         >>> # |  x      |
         >>> # +---------+
@@ -435,7 +492,10 @@ class Fill(TensorOperation):
 
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.transforms as transforms
         >>> import numpy as np
+        >>>
         >>> # generate a 1D integer numpy array from 0 to 4
         >>> def generator_1d():
         ...     for i in range(5):
@@ -463,10 +523,11 @@ class Mask(TensorOperation):
     Any element of the tensor that matches the predicate will be evaluated to True, otherwise False.
 
     Args:
-        operator (Relational): relational operators, it can be any of [Relational.EQ, Relational.NE, Relational.LT,
-            Relational.GT, Relational.LE, Relational.GE], take Relational.EQ as example, EQ refers to equal.
+        operator (Relational): relational operators, it can be ``Relational.EQ``, ``Relational.NE``, ``Relational.LT``,
+            ``Relational.GT``, ``Relational.LE``, ``Relational.GE``, take ``Relational.EQ`` as example,
+            EQ refers to equal.
         constant (Union[str, int, float, bool]): Constant to be compared to.
-        dtype (mindspore.dtype, optional): Type of the generated mask. Default: mindspore.dtype.bool\_.
+        dtype (mindspore.dtype, optional): Type of the generated mask. Default: ``mstype.bool_``.
 
     Raises:
         TypeError: `operator` is not of type Relational.
@@ -477,6 +538,8 @@ class Mask(TensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.transforms as transforms
         >>> from mindspore.dataset.transforms import Relational
         >>> # Data before
         >>> # |  col   |
@@ -507,25 +570,36 @@ class Mask(TensorOperation):
 
 class OneHot(TensorOperation):
     """
-    Tensor operation to apply one hot encoding.
+    Apply One-Hot encoding to the input labels.
+
+    For a 1-D input of shape :math:`(*)`, an output of shape :math:`(*, num_classes)` will be
+    returned, where the elements with index values equal to the input values will be set to 1,
+    and the rest will be set to 0. If a label smoothing rate is specified, the element values
+    are further smoothed to enhance generalization.
 
     Args:
-        num_classes (int): Number of classes of objects in dataset.
-            It should be larger than the largest label number in the dataset.
-        smoothing_rate (float, optional): Adjustable hyperparameter for label smoothing level.
-            Default: 0.0, means no smoothing is applied.
+        num_classes (int): Total number of classes. Must be greater than the maximum value
+            of the input labels.
+        smoothing_rate (float, optional): The amount of label smoothing. Must be between
+            [0.0, 1.0]. Default: ``0.0``, no label smoothing.
 
     Raises:
-        TypeError: `num_classes` is not of type int.
-        TypeError: `smoothing_rate` is not of type float or int.
-        ValueError: `smoothing_rate` is not in range [0.0, 1.0].
-        RuntimeError: Input tensor is not of type int.
-        RuntimeError: Input tensor is not a 1-D tensor.
+        TypeError: If `num_classes` is not of type int.
+        TypeError: If `smoothing_rate` is not of type float.
+        ValueError: If `smoothing_rate` is not in range of [0.0, 1.0].
+        RuntimeError: If input label is not of type int.
+        RuntimeError: If the dimension of the input label is not 1.
 
     Supported Platforms:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.transforms as transforms
+        >>>
+        >>> mnist_dataset_dir = "/path/to/mnist_dataset_directory"
+        >>> mnist_dataset = ds.MnistDataset(dataset_dir=mnist_dataset_dir)
+        >>>
         >>> # Assume that dataset has 10 classes, thus the label ranges from 0 to 9
         >>> onehot_op = transforms.OneHot(num_classes=10)
         >>> mnist_dataset = mnist_dataset.map(operations=onehot_op, input_columns=["label"])
@@ -547,10 +621,10 @@ class PadEnd(TensorOperation):
     Pad input tensor according to pad_shape, input tensor needs to have same rank.
 
     Args:
-        pad_shape (list(int)): List of integers representing the shape needed. Dimensions that set to `None` will
+        pad_shape (list(int)): List of integers representing the shape needed. Dimensions that set to ``None`` will
             not be padded (i.e., original dim will be used). Shorter dimensions will truncate the values.
-        pad_value (Union[str, bytes, int, float, bool], optional): Value used to pad. Default to 0 or empty
-            string in case of tensors of strings.
+        pad_value (Union[str, bytes, int, float, bool], optional): Value used to pad. Default: ``None``.
+            Default to ``0`` in case of tensors of Numbers, or empty string in case of tensors of strings.
 
     Raises:
         TypeError: If `pad_shape` is not of type list.
@@ -562,6 +636,8 @@ class PadEnd(TensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.transforms as transforms
         >>> # Data before
         >>> # |   col   |
         >>> # +---------+
@@ -607,7 +683,11 @@ class Plugin(TensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.transforms as transforms
+        >>>
         >>> plugin = transforms.Plugin("pluginlib.so", "PluginDecode")
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=plugin)
     """
 
@@ -629,7 +709,7 @@ class RandomApply(CompoundOperation):
 
     Args:
         transforms (list): List of transformations to be applied.
-        prob (float, optional): The probability to apply the transformation list. Default: 0.5.
+        prob (float, optional): The probability to apply the transformation list. Default: ``0.5``.
 
     Raises:
         TypeError: If `transforms` is not of type list.
@@ -643,13 +723,19 @@ class RandomApply(CompoundOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.transforms as transforms
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.transforms import Compose
+        >>>
         >>> transforms_list = [vision.RandomHorizontalFlip(0.5),
         ...                    vision.Normalize((0.491, 0.482, 0.447), (0.247, 0.243, 0.262)),
         ...                    vision.RandomErasing()]
         >>> composed_transform = Compose([vision.Decode(to_pil=True),
         ...                               transforms.RandomApply(transforms_list, prob=0.6),
         ...                               vision.ToTensor()])
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=composed_transform, input_columns=["image"])
     """
 
@@ -692,13 +778,19 @@ class RandomChoice(CompoundOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.transforms as transforms
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.transforms import Compose
+        >>>
         >>> transforms_list = [vision.RandomHorizontalFlip(0.5),
         ...                    vision.Normalize((0.491, 0.482, 0.447), (0.247, 0.243, 0.262)),
         ...                    vision.RandomErasing()]
         >>> composed_transform = Compose([vision.Decode(),
         ...                               transforms.RandomChoice(transforms_list),
         ...                               vision.ToTensor()])
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=composed_transform, input_columns=["image"])
 
     """
@@ -742,13 +834,19 @@ class RandomOrder(PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>> import mindspore.dataset.transforms as transforms
         >>> from mindspore.dataset.transforms import Compose
+        >>>
         >>> transforms_list = [vision.RandomHorizontalFlip(0.5),
         ...                    vision.Normalize((0.491, 0.482, 0.447), (0.247, 0.243, 0.262)),
         ...                    vision.RandomErasing()]
         >>> composed_transform = Compose([vision.Decode(to_pil=False),
         ...                               transforms.RandomOrder(transforms_list),
         ...                               vision.ToTensor()])
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=composed_transform, input_columns=["image"])
     """
 
@@ -773,17 +871,16 @@ class RandomOrder(PyTensorOperation):
 
 class Relational(IntEnum):
     """
-    Relationship operator.
+    Relational operator.
 
-    Possible enumeration values are: Relational.EQ, Relational.NE, Relational.GT, Relational.GE, Relational.LT,
-    Relational.LE.
+    Available values are as follows:
 
-    - Relational.EQ: refers to Equality.
-    - Relational.NE: refers not equal, or Inequality.
-    - Relational.GT: refers to Greater than.
-    - Relational.GE: refers to Greater than or equal to.
-    - Relational.LT: refers to Less than.
-    - Relational.LE: refers to Less than or equal to.
+    - Relational.EQ: Equal to.
+    - Relational.NE: Not equal to.
+    - Relational.GT: Greater than.
+    - Relational.GE: Greater than or equal to.
+    - Relational.LT: Less than.
+    - Relational.LE: Less than or equal to.
     """
     EQ = 0
     NE = 1
@@ -829,30 +926,31 @@ class _SliceOption(cde.SliceOption):
 
 class Slice(TensorOperation):
     """
-    Slice operation to extract a tensor out using the given n slices.
+    Extract a slice from the input.
 
-    The functionality of Slice is similar to NumPy's indexing feature (Currently only rank-1 tensors are supported).
+    Currently, only 1-D input is supported.
 
     Args:
-        slices (Union[int, list[int], slice, None, Ellipsis]):
-            Maximum `n` number of arguments to slice a tensor of rank `n` .
-            One object in slices can be one of:
-
-            1.  :py:obj:`int`: Slice this index only along the first dimension. Negative index is supported.
-            2.  :py:obj:`list(int)`: Slice these indices along the first dimension. Negative indices are supported.
-            3.  :py:obj:`slice`: Slice the generated indices from the
-                `slice <https://docs.python.org/3.7/library/functions.html?highlight=slice#slice>`_ object along the
-                first dimension. Similar to start:stop:step.
-            4.  :py:obj:`None`: Slice the whole dimension. Similar to :py:obj:`[:]` in Python indexing.
-            5.  :py:obj:`Ellipsis`: Slice the whole dimension, same result with `None` .
+        slices (Union[int, list[int], slice, Ellipsis]): The desired slice.
+            If the input type is int, it will slice the element with the specified index value.
+            Negative index is also supported.
+            If the input type is list[int], it will slice all the elements with the specified index values.
+            Negative index is also supported.
+            If the input type is `slice <https://docs.python.org/3.7/library/functions.html#slice>`_ ,
+            it will slice according to its specified start position, stop position and step size.
+            If the input type is `Ellipsis <https://docs.python.org/3.7/library/constants.html#Ellipsis>`_ ,
+            all elements will be sliced.
+            If the input is None, all elements will be sliced.
 
     Raises:
-        TypeError: If `slices` is not of type int, list[int], :py:obj:`slice` , :py:obj:`None` or :py:obj:`Ellipsis` .
+        TypeError: If `slices` is not of type Union[int, list[int], slice, Ellipsis].
 
     Supported Platforms:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.transforms as transforms
         >>> # Data before
         >>> # |   col   |
         >>> # +---------+
@@ -886,19 +984,22 @@ class TypeCast(TensorOperation):
     Tensor operation to cast to a given MindSpore data type or NumPy data type.
 
     Note:
-        This operation supports running on Ascend or GPU platforms by Offload.
+        This operation is executed on the CPU by default, but it is also supported
+        to be executed on the GPU or Ascend via heterogeneous acceleration.
 
     Args:
-        data_type (Union[mindspore.dtype, numpy.dtype]): mindspore.dtype or numpy.dtype (e.g. :class:`numpy.float32`)
+        data_type (Union[mindspore.dtype, numpy.dtype]): mindspore.dtype or numpy.dtype (e.g. `numpy.float32`)
             to be cast to.
 
     Raises:
         TypeError: If `data_type` is not of MindSpore data type bool, int, float, string or type :class:`numpy.dtype` .
 
     Supported Platforms:
-        ``CPU`` ``Ascend`` ``GPU``
+        ``CPU`` ``GPU`` ``Ascend``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.transforms as transforms
         >>> import numpy as np
         >>> from mindspore import dtype as mstype
         >>>
@@ -947,6 +1048,8 @@ class Unique(TensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.transforms as transforms
         >>> # Data before
         >>> # |  x                 |
         >>> # +--------------------+

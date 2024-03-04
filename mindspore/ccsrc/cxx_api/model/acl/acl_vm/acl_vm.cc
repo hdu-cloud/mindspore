@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "mindspore/core/ops/framework_ops.h"
 #include "cxx_api/model/acl/acl_model_options.h"
 #include "cxx_api/model/acl/acl_vm/acl_multi_graph_session.h"
 #include "utils/trace_base.h"
@@ -40,12 +41,12 @@ std::vector<MSTensor> ParseVectorMsTensorRef(const VectorRef &args) {
   for (const auto &arg : args) {
     if (utils::isa<VectorRef>(arg)) {
       auto ret = ParseVectorMsTensorRef(utils::cast<VectorRef>(arg));
-      ms_tensors.insert(ms_tensors.end(), ret.begin(), ret.end());
+      (void)ms_tensors.insert(ms_tensors.end(), ret.begin(), ret.end());
     } else if (utils::isa<MSTensorRef>(arg)) {
       auto wrapper = utils::cast<MSTensorRef>(arg);
-      ms_tensors.emplace_back(wrapper.GetTensor());
+      (void)ms_tensors.emplace_back(wrapper.GetTensor());
     } else {
-      MS_LOG(EXCEPTION) << "Invalid item " << arg.ToString();
+      MS_LOG(INTERNAL_EXCEPTION) << "Invalid item " << arg.ToString();
     }
   }
   return ms_tensors;
@@ -137,7 +138,7 @@ int64_t AclCompileGraph::Ref(const AnfNodePtr &node) {
     } else {
       MS_LOG(DEBUG) << "Push.";
       if (IsValueNode<Primitive>(node)) {
-        MS_LOG(EXCEPTION) << "must not be primitive in here NodeInfo: " << trace::GetDebugInfo(node->debug_info());
+        MS_LOG(EXCEPTION) << "must not be primitive in here NodeInfo: " << trace::GetDebugInfoStr(node->debug_info());
       } else if (IsValueNode<tensor::Tensor>(node)) {
         auto tensor_node = std::dynamic_pointer_cast<tensor::Tensor>(node->cast<ValueNodePtr>()->value());
         MS_EXCEPTION_IF_NULL(tensor_node);
@@ -230,7 +231,7 @@ void AclCompileGraph::AddPartial(const CNodePtr &node) {
   }
   auto fn = inputs[1];
   if (!IsValueNode<FuncGraph>(fn)) {
-    MS_LOG(EXCEPTION) << "The type of 1st input of node must be FuncGraph";
+    MS_LOG(INTERNAL_EXCEPTION) << "The type of 1st input of node must be FuncGraph";
   }
   for (size_t i = 1; i < inputs.size(); i++) {
     if (IsMonadNode(inputs[i])) {

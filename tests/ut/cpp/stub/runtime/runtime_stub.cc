@@ -30,7 +30,7 @@ rtError_t rtEventCreateWithFlag(rtEvent_t *event, uint32_t flag) { return RT_ERR
 
 rtError_t rtEventElapsedTime(float *time, rtEvent_t start, rtEvent_t end) { return RT_ERROR_NONE; }
 
-rtError_t rtMalloc(void **devPtr, uint64_t size, rtMemType_t type) { return RT_ERROR_NONE; }
+rtError_t rtMalloc(void **devPtr, uint64_t size, rtMemType_t type, const uint16_t moduleId) { return RT_ERROR_NONE; }
 
 rtError_t rtMemcpy(void *dst, uint64_t destMax, const void *src, uint64_t count, rtMemcpyKind_t kind) {
   return RT_ERROR_NONE;
@@ -108,8 +108,6 @@ rtError_t rtKernelFusionStart(rtStream_t stream) { return RT_ERROR_NONE; }
 
 rtError_t rtStreamWaitEvent(rtStream_t stream, rtEvent_t event) { return RT_ERROR_NONE; }
 
-rtError_t rtEventReset(rtEvent_t event, rtStream_t stream) { return RT_ERROR_NONE; }
-
 rtError_t rtEventRecord(rtEvent_t event, rtStream_t stream) { return RT_ERROR_NONE; }
 
 rtError_t rtLabelGoto(rtLabel_t label, rtStream_t stream) { return RT_ERROR_NONE; }
@@ -133,6 +131,8 @@ rtError_t rtModelCreate(rtModel_t *model, uint32_t flag) { return RT_ERROR_NONE;
 rtError_t rtModelBindStream(rtModel_t model, rtStream_t stream, uint32_t flag) { return RT_ERROR_NONE; }
 
 rtError_t rtStreamCreateWithFlags(rtStream_t *stream, int32_t priority, uint32_t flags) { return RT_ERROR_NONE; }
+
+rtError_t rtStreamSetMode(rtStream_t stm, const uint64_t stmMode) { return RT_ERROR_NONE; }
 
 rtError_t rtEventCreate(rtEvent_t *event) { return RT_ERROR_NONE; }
 
@@ -191,8 +191,8 @@ RTS_API rtError_t rtLabelCreateEx(rtLabel_t *label, rtStream_t stream) { return 
 RTS_API rtError_t rtLabelCreateExV2(rtLabel_t *lbl, rtModel_t mdl, rtStream_t stm) { return RT_ERROR_NONE; }
 
 RTS_API rtError_t rtCpuKernelLaunchWithFlag(const void *soName, const void *kernelName, uint32_t blockDim,
-                                              const rtArgsEx_t *argsInfo, rtSmDesc_t *smDesc, rtStream_t stm,
-                                              uint32_t flags) {
+                                            const rtArgsEx_t *argsInfo, rtSmDesc_t *smDesc, rtStream_t stm,
+                                            uint32_t flags) {
   return RT_ERROR_NONE;
 }
 
@@ -207,7 +207,7 @@ RTS_API rtError_t rtProfilerTraceEx(uint64_t id, uint64_t modelId, uint16_t tagI
 }
 
 RTS_API rtError_t rtKernelLaunchWithFlag(const void *stubFunc, uint32_t blockDim, rtArgsEx_t *argsInfo,
-                                           rtSmDesc_t *smDesc, rtStream_t stm, uint32_t flags) {
+                                         rtSmDesc_t *smDesc, rtStream_t stm, uint32_t flags) {
   return RT_ERROR_NONE;
 }
 
@@ -217,9 +217,17 @@ RTS_API rtError_t rtProfRegisterCtrlCallback(uint32_t moduleId, rtProfCtrlHandle
 
 RTS_API rtError_t rtGetRtCapability(rtFeatureType_t, int32_t, int64_t *) { return RT_ERROR_NONE; }
 
-RTS_API rtError_t rtKernelLaunchWithHandle(void *hdl, const uint64_t tilingKey, uint32_t blockDim,
-                                           rtArgsEx_t *argsInfo, rtSmDesc_t *smDesc, rtStream_t stm,
-                                           const void *kernelInfo) {
+RTS_API rtError_t rtKernelLaunchWithHandle(void *hdl, const uint64_t tilingKey, uint32_t blockDim, rtArgsEx_t *argsInfo,
+                                           rtSmDesc_t *smDesc, rtStream_t stm, const void *kernelInfo) {
+  return RT_ERROR_NONE;
+}
+
+RTS_API rtError_t rtGetEventID(rtEvent_t event, uint32_t *event_id) {
+  *event_id = 0;
+  return RT_ERROR_NONE;
+}
+
+RTS_API rtError_t rtGetDeviceInfo(uint32_t deviceId, int32_t moduleType, int32_t infoType, int64_t *val) {
   return RT_ERROR_NONE;
 }
 

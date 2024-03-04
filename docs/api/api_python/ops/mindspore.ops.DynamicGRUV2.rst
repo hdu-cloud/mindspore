@@ -19,16 +19,16 @@ mindspore.ops.DynamicGRUV2
     :math:`\sigma` 是sigmoid激活函数， :math:`*` 为Hadamard乘积。
 
     参数：
-        - **direction** (str) - 指定GRU方向，str类型。默认值："UNIDIRECTIONAL"。目前仅支持"UNIDIRECTIONAL"。
-        - **cell_depth** (int) - GRU单元深度。默认值：1。
-        - **keep_prob** (float) - Dropout保留概率。默认值：1.0。
-        - **cell_clip** (float) - 输出裁剪率。默认值：-1.0。
-        - **num_proj** (int) - 投影维度。默认值：0。
-        - **time_major** (bool) - 如为True，则指定输入的第一维度为序列长度 `num_step` ，如为False则第一维度为 `batch_size` 。默认值：True。
-        - **activation** (str) - 字符串，指定activation类型。默认值："tanh"。目前仅支持取值"tanh"。
-        - **gate_order** (str) - 字符串，指定weight和bias中门的排列顺序，可选值为"rzh"或"zrh"。默认值："rzh"。"rzh"代表顺序为：重置门、更新门、隐藏门。"zrh"代表顺序为：更新门，重置门，隐藏门。
-        - **reset_after** (bool) - 是否在矩阵乘法后使用重置门。默认值：True。
-        - **is_training** (bool) - 是否为训练模式。默认值：True。
+        - **direction** (str) - 指定GRU方向，str类型。默认值： ``"UNIDIRECTIONAL"`` 。目前仅支持 ``"UNIDIRECTIONAL"`` 。
+        - **cell_depth** (int) - GRU单元深度。默认值： ``1`` 。
+        - **keep_prob** (float) - Dropout保留概率。默认值： ``1.0`` 。
+        - **cell_clip** (float) - 输出裁剪率。默认值： ``-1.0`` 。
+        - **num_proj** (int) - 投影维度。默认值： ``0`` 。
+        - **time_major** (bool) - 如为 ``True`` ，则指定输入的第一维度为序列长度 `num_step` ，如为False则第一维度为 `batch_size` 。默认值： ``True`` 。
+        - **activation** (str) - 字符串，指定activation类型。默认值：``"tanh"`` 。目前仅支持取值 ``"tanh"`` 。
+        - **gate_order** (str) - 字符串，指定weight和bias中门的排列顺序，可选值为 ``"rzh"`` 或 ``"zrh"`` 。默认值： ``"rzh"`` 。 ``"rzh"`` 代表顺序为：重置门、更新门、隐藏门。 ``"zrh"`` 代表顺序为：更新门，重置门，隐藏门。
+        - **reset_after** (bool) - 是否在矩阵乘法后使用重置门。默认值： ``True`` 。
+        - **is_training** (bool) - 是否为训练模式。默认值： ``True`` 。
 
     输入：
         - **x** (Tensor) - 输入词序列。shape: :math:`(\text{num_step}, \text{batch_size}, \text{input_size})` 。数据类型支持float16。
@@ -46,19 +46,16 @@ mindspore.ops.DynamicGRUV2
           数据类型支持float16和float32。
 
     输出：
-        - **y** (Tensor) - Tensor，shape：
+        - **y** (Tensor) - Tensor，与 `bias_type` 数据类型相同。shape如下：
 
-          - :math:`(num\_step, batch\_size, min(hidden\_size, num\_proj))` ，如果 `num_proj` 大于0,
+          - :math:`(num\_step, batch\_size, min(hidden\_size, num\_proj))` ，如果 `num_proj` 大于0，
           - :math:`(num\_step, batch\_size, hidden\_size)` ，如果 `num_proj` 等于0。
-            
-          与 `bias_type` 数据类型相同。
 
         - **output_h** (Tensor) - Tensor，shape： :math:`(\text{num_step}, \text{batch_size}, \text{hidden_size})` 。与 `bias_type` 数据类型相同。
         - **update** (Tensor) - Tensor，shape： :math:`(\text{num_step}, \text{batch_size}, \text{hidden_size})` 。与 `bias_type` 数据类型相同。
         - **reset** (Tensor) - Tensor，shape： :math:`(\text{num_step}, \text{batch_size}, \text{hidden_size})` 。与 `bias_type` 数据类型相同。
         - **new** (Tensor) - Tensor，shape： :math:`(\text{num_step}, \text{batch_size}, \text{hidden_size})` 。与 `bias_type` 数据类型相同。
         - **hidden_new** (Tensor) - Tensor，shape： :math:`(\text{num_step}, \text{batch_size}, \text{hidden_size})` 。与 `bias_type` 数据类型相同。
-
           关于 `bias_type` :
 
           - 如果 `bias_input` 和 `bias_hidden` 均为 `None` ，则 `bias_type` 为 `init_h` 的数据类型。

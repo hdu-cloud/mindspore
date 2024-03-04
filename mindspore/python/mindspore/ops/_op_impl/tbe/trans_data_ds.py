@@ -28,6 +28,8 @@ trans_data_op_info = TBERegOp("TransData") \
           "DefaultFormat, NC1HWC0, FRACTAL_Z, FRACTAL_NZ, HWCN, C1HWNCoC0, NDHWC, NHWC") \
     .attr("dst_format", "required", "str",
           "DefaultFormat, NC1HWC0, FRACTAL_Z, FRACTAL_NZ, HWCN, C1HWNCoC0, NDHWC, NHWC") \
+    .attr("src_subformat", "optional", "int", "all", "1") \
+    .attr("dst_subformat", "optional", "int", "all", "1") \
     .attr("groups", "optional", "int", "all", "1") \
     .input(0, "src", False, "required", "all") \
     .output(0, "dst", False, "required", "all") \
@@ -59,10 +61,6 @@ trans_data_op_info = TBERegOp("TransData") \
     .dtype_format(DataType.F32_Default, DataType.F32_FracNZ) \
     .dtype_format(DataType.F16_FracNZ, DataType.F16_Default) \
     .dtype_format(DataType.F32_FracNZ, DataType.F32_Default) \
-    .dtype_format(DataType.BOOL_NHWC, DataType.BOOL_5HD) \
-    .dtype_format(DataType.BOOL_Default, DataType.BOOL_5HD) \
-    .dtype_format(DataType.BOOL_5HD, DataType.BOOL_NHWC) \
-    .dtype_format(DataType.BOOL_5HD, DataType.BOOL_Default) \
     .dtype_format(DataType.F16_Default, DataType.F16_NHWC) \
     .dtype_format(DataType.F16_Default, DataType.F16_HWCN) \
     .dtype_format(DataType.F16_NHWC, DataType.F16_Default) \
@@ -83,6 +81,10 @@ trans_data_op_info = TBERegOp("TransData") \
     .dtype_format(DataType.I8_NHWC, DataType.I8_HWCN) \
     .dtype_format(DataType.I8_HWCN, DataType.I8_Default) \
     .dtype_format(DataType.I8_HWCN, DataType.I8_NHWC) \
+    .dtype_format(DataType.I8_Default, DataType.I8_NC1HWC0) \
+    .dtype_format(DataType.I8_HWCN, DataType.I8_C1HWNCoC0) \
+    .dtype_format(DataType.I8_NCDHW, DataType.I8_NDC1HWC0) \
+    .dtype_format(DataType.I8_NDC1HWC0, DataType.I8_NCDHW) \
     .dtype_format(DataType.I16_Default, DataType.I16_NHWC) \
     .dtype_format(DataType.I16_Default, DataType.I16_HWCN) \
     .dtype_format(DataType.I16_NHWC, DataType.I16_Default) \
@@ -95,6 +97,8 @@ trans_data_op_info = TBERegOp("TransData") \
     .dtype_format(DataType.I32_NHWC, DataType.I32_HWCN) \
     .dtype_format(DataType.I32_HWCN, DataType.I32_Default) \
     .dtype_format(DataType.I32_HWCN, DataType.I32_NHWC) \
+    .dtype_format(DataType.I32_NDC1HWC0, DataType.I32_NCDHW) \
+    .dtype_format(DataType.I32_NCDHW, DataType.I32_NDC1HWC0) \
     .dtype_format(DataType.I64_Default, DataType.I64_NHWC) \
     .dtype_format(DataType.I64_Default, DataType.I64_HWCN) \
     .dtype_format(DataType.I64_NHWC, DataType.I64_Default) \
@@ -107,6 +111,9 @@ trans_data_op_info = TBERegOp("TransData") \
     .dtype_format(DataType.U8_NHWC, DataType.U8_HWCN) \
     .dtype_format(DataType.U8_HWCN, DataType.U8_Default) \
     .dtype_format(DataType.U8_HWCN, DataType.U8_NHWC) \
+    .dtype_format(DataType.U8_Default, DataType.U8_NC1HWC0) \
+    .dtype_format(DataType.U8_NCDHW, DataType.U8_NDC1HWC0) \
+    .dtype_format(DataType.U8_NDC1HWC0, DataType.U8_NCDHW) \
     .dtype_format(DataType.U16_Default, DataType.U16_NHWC) \
     .dtype_format(DataType.U16_Default, DataType.U16_HWCN) \
     .dtype_format(DataType.U16_NHWC, DataType.U16_Default) \
@@ -128,7 +135,6 @@ trans_data_op_info = TBERegOp("TransData") \
     .dtype_format(DataType.I32_FracNZ, DataType.I32_Default) \
     .dtype_format(DataType.F16_NDHWC, DataType.F16_5HD) \
     .dtype_format(DataType.F16_5HD, DataType.F16_NDHWC) \
-    .dtype_format(DataType.I8_HWCN, DataType.I8_C1HWNCoC0) \
     .dtype_format(DataType.F16_HWCN, DataType.F16_FracZ) \
     .dtype_format(DataType.F16_FracZ, DataType.F16_HWCN) \
     .dtype_format(DataType.F16_HWCN, DataType.F16_FracNZ) \
@@ -159,6 +165,12 @@ trans_data_op_info = TBERegOp("TransData") \
     .dtype_format(DataType.F32_NCDHW, DataType.F32_NDC1HWC0) \
     .dtype_format(DataType.F32_NDC1HWC0, DataType.F32_NCDHW) \
     .dtype_format(DataType.F32_NCDHW, DataType.F32_NDC1HWC0) \
+    .dtype_format(DataType.I8_Default, DataType.I8_5HD) \
+    .dtype_format(DataType.I8_5HD, DataType.I8_Default) \
+    .dtype_format(DataType.U8_Default, DataType.U8_5HD) \
+    .dtype_format(DataType.U8_5HD, DataType.U8_Default) \
+    .dtype_format(DataType.I32_Default, DataType.I32_5HD) \
+    .dtype_format(DataType.I32_5HD, DataType.I32_Default) \
     .get_op_info()
 
 

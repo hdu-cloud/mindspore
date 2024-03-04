@@ -24,8 +24,9 @@ from mindspore.parallel._utils import _is_in_auto_parallel_mode, _is_in_data_par
 from mindspore.parallel._ps_context import _is_ps_mode, _is_role_sched
 from mindspore.common.parameter import Parameter
 from mindspore.common.api import _pynative_executor
-from mindspore._c_expression import Primitive_, prim_type
-from mindspore._checkparam import Validator
+from mindspore.common._stub_tensor import _convert_stub
+from mindspore._c_expression import Primitive_, prim_type, typing
+from mindspore import _checkparam as Validator
 from mindspore.ops import signature as sig
 
 
@@ -185,9 +186,9 @@ class Primitive(Primitive_):
             In other parallel modes, strategies set here will be ignored.
 
         Args:
-            in_strategy (tuple): Describe the split strategy of operator input. Default: None.
+            in_strategy (tuple): Describe the split strategy of operator input. Default: ``None`` .
             out_strategy (tuple): Describe the split strategy of operator output, it is only for certain operators,
-                                  such as MatMul. Default: None.
+                                  such as MatMul. Default: ``None`` .
 
         Examples:
             >>> from mindspore import ops
@@ -308,9 +309,6 @@ class Primitive(Primitive_):
 
     def __call__(self, *args):
         should_elim, output = self.check_elim(*args)
-        for arg in args:
-            if isinstance(arg, Parameter) and arg.has_init:
-                arg.init_data()
         if should_elim:
             return output
         return _run_op(self, self.name, args)
@@ -370,7 +368,7 @@ class Primitive(Primitive_):
             - Not supported in pynative mode
 
         Args:
-            mode (bool): Specifies whether the primitive is recomputed. Default: True.
+            mode (bool): Specifies whether the primitive is recomputed. Default: ``True`` .
 
         Examples:
             >>> import numpy as np
@@ -486,10 +484,10 @@ class PrimitiveWithCheck(Primitive):
         ...     def __init__(self):
         ...         pass
         ...     def check_shape(self, input_x):
-        ...         validator.check_int(len(input_x), 1, Rel.GE, 'input_x rank', self.name)
+        ...         Validator.check_int(len(input_x), 1, validator.GE, 'input_x rank', self.name)
         ...
         ...     def check_dtype(self, input_x):
-        ...         validator.check_subclass("input_x", input_x, mstype.tensor, self.name)
+        ...         Validator.check_subclass("input_x", input_x, mstype.tensor_type, self.name)
         ...
         >>> # init a Primitive obj
         >>> add = Flatten()
@@ -501,10 +499,18 @@ class PrimitiveWithCheck(Primitive):
 
     def __check__(self, *args):
         """Checking the input shape and the input type of ops is valid """
-        tracks = ['dtype', 'shape']
-        for track in tracks:
-            fn = getattr(self, 'check_' + track)
-            fn(*(x[track] for x in args))
+        check_dtype_fn = getattr(self, 'check_dtype')
+        check_dtype_fn(*(x['dtype'] for x in args))
+
+        is_shape_known = True
+        for x in args:
+            shape = x['shape']
+            if shape is None or -1 in shape or -2 in shape:
+                is_shape_known = False
+                break
+        if is_shape_known:
+            check_shape_fn = getattr(self, 'check_shape')
+            check_shape_fn(*(x['shape'] for x in args))
 
     def _clone(self):
         """
@@ -731,38 +737,62 @@ def prim_attr_register(fn):
     return deco
 
 
-def constexpr(fn=None, get_instance=True, name=None, reuse_result=True, check=True):
+def _check_contains_variable(item_dtype, item_value):
     """
-    Creates a PrimitiveWithInfer operator that can infer the value at compile time. We can use it to define a function
-    to compute constant value using the constants in the constructor.
+    Check whether the item is or contains variable.
+    """
+    if isinstance(item_value, (list, tuple)):
+        for i, element in enumerate(item_value):
+            if _check_contains_variable(item_dtype[i], element):
+                return True
+    elif isinstance(item_value, dict):
+        if isinstance(item_dtype, typing.Keyword):
+            return item_value is None
+        for i in range(len(item_value)):
+            if _check_contains_variable(item_dtype[i], list(item_value.keys())[i]):
+                return True
+        for i in range(len(item_value)):
+            if _check_contains_variable(item_dtype[i], list(item_value.values())[i]):
+                return True
+    return item_dtype is not None and item_value is None
+
+
+def constexpr(fn=None, get_instance=True, name=None, reuse_result=True, check=True):
+    """Used to calculate constant in graph copmpiling process and improve compile performance in GRAPH_MODE.
 
     Args:
-        fn (function): A `fn` use as the infer_value of the output operator. Default: None.
-        get_instance (bool): If true, return the instance of operator,
-                             otherwise return the operator class. Default: True.
-        name (str): Defines the operator name. If `name` is None, use the function name as op name. Default: None.
-        reuse_result (bool): If true, the operator will be executed once and reuse the result next time,
-                             otherwise the operator will always be executed. Default: True.
-        check (bool): If ture, the parameters will be checked
-            and the warning message will raised if the parameter is not const value. Default: True.
+        fn (function): A `fn` use as the infer_value of the output operator. Default: ``None`` .
+        get_instance (bool): If ``True`` , return the instance of operator,
+                             otherwise return the operator class. Default: ``True`` .
+        name (str): Defines the operator name. If `name` is ``None`` , use the function name as op name.
+                             Default: ``None`` .
+        reuse_result (bool): If ``True`` , the operator will be executed once and reuse the result next time,
+                             otherwise the operator will always be executed. Default: ``True`` .
+        check (bool): If ``True`` , the parameters will be checked
+            and the warning message will raised if the parameter is not const value. Default: ``True`` .
 
     Examples:
-        >>> from mindspore.ops import constexpr
-        >>> a = (1, 2)
-        >>> # make an operator to calculate tuple len
-        >>> @constexpr
-        ... def tuple_len(x):
-        ...     return len(x)
+
+        >>> import mindspore as ms
+        >>> # define a constant calculate function with for loop inside and use use constexpr to accelerate the compile
+        >>> # process.
+        >>> @ms.constexpr
+        ... def for_loop_calculate(range_num):
+        ...     out = 0
+        ...     for i in range(range_num):
+        ...         if i %2 == 0 and i % 7 != 0:
+        ...             out = out + i
+        ...     return out // range_num
         ...
-        >>> print(tuple_len(a))
-        2
-        >>> # make an operator class to calculate tuple len
-        >>> @constexpr(get_instance=False, name="TupleLen")
-        ... def tuple_len_class(x):
-        ...     return len(x)
+        >>> # construct a net and run with GRAPH_MODE.
+        >>> @ms.jit
+        ... def my_func(x):
+        ...     new_shape = for_loop_calculate(100000)
+        ...     return ms.ops.broadcast_to(x, (new_shape, ))
         ...
-        >>> print(tuple_len_class()(a))
-        2
+        >>> out = my_func(ms.Tensor([1]))
+        >>> print(out.shape)
+        >>> (21428, )
     """
 
     def deco(fn):
@@ -775,16 +805,17 @@ def constexpr(fn=None, get_instance=True, name=None, reuse_result=True, check=Tr
 
             def __init__(self):
                 op_name = name if name else fn.__name__
-                PrimitiveWithInfer.__init__(self, op_name)
+                super(CompileOp, self).__init__(op_name)
                 self.set_const_prim(True)
                 self.fn = fn
+                self.add_prim_attr('constexpr_prim', True)
                 if not reuse_result:
                     self.add_prim_attr('forbid_reuse_result', True)
 
             def __infer__(self, *args):
                 value_args = []
                 for item in args:
-                    if (item["dtype"] is not None and item["value"] is None and check):
+                    if _check_contains_variable(item["dtype"], item["value"]) and check:
                         logger.warning("The \"" + self.name + "\" is a constexpr function." \
                                                               " The input arguments must be all constant value.")
                     value_args.append(item["value"])
@@ -802,8 +833,101 @@ def constexpr(fn=None, get_instance=True, name=None, reuse_result=True, check=Tr
     return deco
 
 
-@_wrap_func
+def _primexpr(fn=None, get_instance=True, name=None, reuse_result=True):
+    """
+    _primexpr is similar as constexpr except that when the input to the function decorated by _primexpr contains
+    variable, the function will be compiled as graph.
+
+    _primexpr is only for internal use.
+
+    Args:
+        fn (function): A `fn` use as the infer_value of the output operator. Default: ``None`` .
+        get_instance (bool): If ``True`` , return the instance of operator,
+                             otherwise return the operator class. Default: ``True`` .
+        name (str): Defines the operator name. If `name` is ``None`` , use the function name as op name.
+                             Default: ``None`` .
+        reuse_result (bool): If ``True`` , the operator will be executed once and reuse the result next time,
+                             otherwise the operator will always be executed. Default: ``True`` .
+    """
+
+    def deco(fn):
+        """Decorator for CompileOp."""
+
+        class CompileOp(PrimitiveWithInfer):
+            """
+            CompileOp is a temporary operator used to execute the constexpr function.
+            """
+
+            def __init__(self):
+                op_name = name if name else fn.__name__
+                PrimitiveWithInfer.__init__(self, op_name)
+                self.set_const_prim(True)
+                self.fn = fn
+                self.add_prim_attr('constexpr_prim', True)
+                if not reuse_result:
+                    self.add_prim_attr('forbid_reuse_result', True)
+
+            def __infer__(self, *args):
+                value_args = []
+                for item in args:
+                    if _check_contains_variable(item["dtype"], item["value"]):
+                        return {'dtype': None, 'shape': None, 'value': None, 'fn': (fn,)}
+                    value_args.append(item["value"])
+                return {'dtype': None, 'shape': None, 'value': fn(*value_args)}
+
+            def __call__(self, *args, **kwargs):
+                return fn(*args, **kwargs)
+
+        if get_instance:
+            return CompileOp()
+        return CompileOp
+
+    if fn is not None:
+        return deco(fn)
+    return deco
+
+
+class _RunOpHook:
+    """Hook for run op"""
+
+    current = None
+
+    def __init__(self, hook):
+        self.hook = hook
+        self.old = _RunOpHook.current
+
+    def __enter__(self):
+        _RunOpHook.current = self
+        return self
+
+    def __exit__(self, *err):
+        _RunOpHook.current = self.old
+
+
 def _run_op(obj, op_name, args):
     """Single op execution function supported by ge in PyNative mode."""
+    if not _RunOpHook.current:
+        for arg in args:
+            if isinstance(arg, Parameter) and arg.has_init:
+                arg.init_data()
+        stub = _pynative_executor.run_op_async(obj, op_name, args)
+        return _convert_stub(stub)
+    return _RunOpHook.current.hook(obj, args)
+
+
+@_wrap_func
+def _run_op_sync(obj, op_name, args):
+    """Single op execution function in synchronous mode."""
     output = _pynative_executor.real_run_op(obj, op_name, args)
     return output
+
+
+class _PrimitiveC(Primitive):
+    def __init__(self, name, attrs):
+        super().__init__(name)
+        for key, value in attrs.items():
+            super().add_prim_attr(key, value)
+
+
+def _get_primitivec(name, attrs):
+    return _PrimitiveC(name, attrs)

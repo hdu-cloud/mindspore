@@ -19,7 +19,7 @@ from mindspore.ops import functional as F, composite as C, operations as P
 from mindspore.common import Tensor
 import mindspore.common.dtype as mstype
 from mindspore.common.api import jit
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.nn.optim.optimizer import Optimizer
 from mindspore.nn.optim.optimizer import opt_init_args_register
 
@@ -55,9 +55,7 @@ def _check_param_value(accum, l1, l2, use_locking, prim_name=None):
 
 class ProximalAdagrad(Optimizer):
     r"""
-    Implements the ProximalAdagrad algorithm.
-
-    ProximalAdagrad is an online Learning and Stochastic Optimization.
+    Implements the ProximalAdagrad algorithm that is an online Learning and Stochastic Optimization.
     Refer to paper `Efficient Learning using Forward-Backward Splitting
     <http://papers.nips.cc//paper/3793-efficient-learning-using-forward-backward-splitting.pdf>`_.
 
@@ -110,8 +108,8 @@ class ProximalAdagrad(Optimizer):
               If `order_params` in the keys, other keys will be ignored and the element of 'order_params' must be in
               one group of `params`.
 
-        accum (float): The starting value for accumulators `accum`, must be zero or positive values. Default: 0.1.
-        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: 0.001.
+        accum (float): The starting value for accumulators `accum`, must be zero or positive values. Default: ``0.1`` .
+        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: ``0.001`` .
 
             - float: The fixed learning rate value. Must be equal to or greater than 0.
 
@@ -125,15 +123,15 @@ class ProximalAdagrad(Optimizer):
             - LearningRateSchedule: Learning rate is dynamic. During training, the optimizer calls the instance of
               LearningRateSchedule with step as the input to get the learning rate of the current step.
 
-        l1 (float): l1 regularization strength, must be greater than or equal to zero. Default: 0.0.
-        l2 (float): l2 regularization strength, must be greater than or equal to zero. Default: 0.0.
-        use_locking (bool): If true, use locks for updating operation. Default: False.
+        l1 (float): l1 regularization strength, must be greater than or equal to zero. Default: ``0.0`` .
+        l2 (float): l2 regularization strength, must be greater than or equal to zero. Default: ``0.0`` .
+        use_locking (bool): If true, use locks for updating operation. Default: ``False`` .
         loss_scale (float): Value for the loss scale. It must be greater than 0.0. In general, use the default value.
             Only when `FixedLossScaleManager` is used for training and the `drop_overflow_update` in
-            `FixedLossScaleManager` is set to False, then this value needs to be the same as the `loss_scale` in
+            `FixedLossScaleManager` is set to ``False`` , then this value needs to be the same as the `loss_scale` in
             `FixedLossScaleManager`. Refer to class :class:`mindspore.amp.FixedLossScaleManager` for more details.
-            Default: 1.0.
-        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: 0.0.
+            Default: ``1.0`` .
+        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: ``0.0`` .
 
             - float: The fixed weight decay value. Must be equal to or greater than 0.
 
@@ -158,13 +156,15 @@ class ProximalAdagrad(Optimizer):
         ValueError: If `accum`, `l1`, `l2` or `weight_decay` is less than 0.
 
     Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU``
+        ``Ascend`` ``GPU``
 
     Examples:
         >>> import mindspore as ms
         >>> from mindspore import nn
         >>>
-        >>> net = Net()
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> #1) All parameters use the same learning rate and weight decay
         >>> optim = nn.ProximalAdagrad(params=net.trainable_params())
         >>>
@@ -182,7 +182,7 @@ class ProximalAdagrad(Optimizer):
         >>> # The final parameters order in which the optimizer will be followed is the value of 'order_params'.
         >>>
         >>> loss = nn.SoftmaxCrossEntropyWithLogits()
-        >>> model = ms.Model(net, loss_fn=loss, optimizer=optim)
+        >>> model = ms.train.Model(net, loss_fn=loss, optimizer=optim)
     """
 
     @opt_init_args_register
@@ -207,6 +207,7 @@ class ProximalAdagrad(Optimizer):
         grads = self.scale_grad(grads)
         grads = self._grad_sparse_indices_deduplicate(grads)
         lr = self.get_lr()
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
         if self.is_group_lr:
             success = self.map_reverse(F.partial(_proximal_ada_grad_opt, self.opt, self.sparse_opt, self.l1, self.l2),
                                        lr, grads, params, accum)

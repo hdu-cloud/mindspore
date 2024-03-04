@@ -17,6 +17,7 @@
 #include <set>
 
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/image_ops.h"
 #include "ops/non_max_suppression_with_overlaps.h"
 
 namespace mindspore {
@@ -54,13 +55,14 @@ abstract::ShapePtr NonMaxSuppressionWithOverlapsInferShape(const PrimitivePtr &p
     return std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeRankAny}));
   }
 
+  (void)CheckAndConvertUtils::CheckInteger("rank of scores", SizeToLong(scores_shape->shape().size()), kEqual, 1,
+                                           prim_name);
   auto scores_shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->BuildShape());
   if (scores_shape_map[kShape][0] != -1) {
-    (void)CheckAndConvertUtils::CheckInteger("size of the second dimension of overlaps", overlaps_shape->shape()[1],
-                                             kEqual, overlaps_shape->shape()[0], prim_name);
     (void)CheckAndConvertUtils::CheckInteger("rank of overlaps", overlaps_shape->shape().size(), kEqual, kOverlapsRank,
                                              prim_name);
-    (void)CheckAndConvertUtils::CheckInteger("rank of scores", scores_shape->shape().size(), kEqual, 1, prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("size of the second dimension of overlaps", overlaps_shape->shape()[1],
+                                             kEqual, overlaps_shape->shape()[0], prim_name);
     (void)CheckAndConvertUtils::CheckInteger("length of scores", scores_shape->shape()[0], kEqual,
                                              overlaps_shape->shape()[0], prim_name);
     (void)CheckAndConvertUtils::CheckInteger("rank of max_output_size", max_output_size_shape->shape().size(), kEqual,
@@ -73,16 +75,13 @@ abstract::ShapePtr NonMaxSuppressionWithOverlapsInferShape(const PrimitivePtr &p
 
   // calculate output shape
   ShapeVector selected_indices_shape = {abstract::Shape::kShapeDimAny};
-  ShapeVector selected_indices_min_shape = {0};
   ShapeVector selected_indices_max_shape;
   if (scores_shape_map[kShape].size() > 0 && scores_shape_map[kShape][0] == -1) {
     selected_indices_max_shape = scores_shape_map[kMaxShape];
-    return std::make_shared<abstract::Shape>(selected_indices_shape, selected_indices_min_shape,
-                                             selected_indices_max_shape);
+    return std::make_shared<abstract::Shape>(selected_indices_shape, selected_indices_max_shape);
   }
   selected_indices_max_shape = scores_shape_map[kShape];
-  return std::make_shared<abstract::Shape>(selected_indices_shape, selected_indices_min_shape,
-                                           selected_indices_max_shape);
+  return std::make_shared<abstract::Shape>(selected_indices_shape, selected_indices_max_shape);
 }
 
 TypePtr NonMaxSuppressionWithOverlapsInferType(const PrimitivePtr &prim,
@@ -131,7 +130,24 @@ AbstractBasePtr NonMaxSuppressionWithOverlapsInfer(const abstract::AnalysisEngin
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(NonMaxSuppressionWithOverlaps, prim::kPrimNonMaxSuppressionWithOverlaps,
-                             NonMaxSuppressionWithOverlapsInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGNonMaxSuppressionWithOverlapsInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return NonMaxSuppressionWithOverlapsInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return NonMaxSuppressionWithOverlapsInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return NonMaxSuppressionWithOverlapsInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(NonMaxSuppressionWithOverlaps, prim::kPrimNonMaxSuppressionWithOverlaps,
+                                 AGNonMaxSuppressionWithOverlapsInfer, false);
 }  // namespace ops
 }  // namespace mindspore

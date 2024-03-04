@@ -24,17 +24,24 @@ Vision
     mindspore.dataset.FashionMnistDataset
     mindspore.dataset.FlickrDataset
     mindspore.dataset.Flowers102Dataset
+    mindspore.dataset.Food101Dataset
     mindspore.dataset.ImageFolderDataset
+    mindspore.dataset.KITTIDataset
     mindspore.dataset.KMnistDataset
+    mindspore.dataset.LFWDataset
+    mindspore.dataset.LSUNDataset
     mindspore.dataset.ManifestDataset
     mindspore.dataset.MnistDataset
+    mindspore.dataset.OmniglotDataset
     mindspore.dataset.PhotoTourDataset
     mindspore.dataset.Places365Dataset
     mindspore.dataset.QMnistDataset
+    mindspore.dataset.RenderedSST2Dataset
     mindspore.dataset.SBDataset
     mindspore.dataset.SBUDataset
     mindspore.dataset.SemeionDataset
     mindspore.dataset.STL10Dataset
+    mindspore.dataset.SUN397Dataset
     mindspore.dataset.SVHNDataset
     mindspore.dataset.USPSDataset
     mindspore.dataset.VOCDataset
@@ -52,14 +59,16 @@ Text
     mindspore.dataset.AmazonReviewDataset
     mindspore.dataset.CLUEDataset
     mindspore.dataset.CoNLL2000Dataset
-    mindspore.dataset.CSVDataset
     mindspore.dataset.DBpediaDataset
     mindspore.dataset.EnWik9Dataset
     mindspore.dataset.IMDBDataset
     mindspore.dataset.IWSLT2016Dataset
     mindspore.dataset.IWSLT2017Dataset
+    mindspore.dataset.Multi30kDataset
     mindspore.dataset.PennTreebankDataset
     mindspore.dataset.SogouNewsDataset
+    mindspore.dataset.SQuADDataset
+    mindspore.dataset.SST2Dataset
     mindspore.dataset.TextFileDataset
     mindspore.dataset.UDPOSDataset
     mindspore.dataset.WikiTextDataset
@@ -74,6 +83,9 @@ Audio
     :nosignatures:
     :template: classtemplate_dataset.rst
 
+    mindspore.dataset.CMUArcticDataset
+    mindspore.dataset.GTZANDataset
+    mindspore.dataset.LibriTTSDataset
     mindspore.dataset.LJSpeechDataset
     mindspore.dataset.SpeechCommandsDataset
     mindspore.dataset.TedliumDataset
@@ -104,19 +116,6 @@ User Defined
     mindspore.dataset.NumpySlicesDataset
     mindspore.dataset.PaddedDataset
     mindspore.dataset.RandomDataset
-
-Graph
-------
-
-.. autosummary::
-    :toctree: dataset
-    :nosignatures:
-    :template: classtemplate_dataset.rst
-
-    mindspore.dataset.ArgoverseDataset
-    mindspore.dataset.Graph
-    mindspore.dataset.GraphData
-    mindspore.dataset.InMemoryGraphDataset
 
 Sampler
 --------
@@ -174,6 +173,11 @@ The configuration module provides various functions to set and get the supported
     mindspore.dataset.config.get_fast_recovery
     mindspore.dataset.config.set_multiprocessing_timeout_interval
     mindspore.dataset.config.get_multiprocessing_timeout_interval
+    mindspore.dataset.config.set_error_samples_mode
+    mindspore.dataset.config.get_error_samples_mode
+    mindspore.dataset.config.ErrorSamplesMode
+    mindspore.dataset.config.set_debug_mode
+    mindspore.dataset.config.get_debug_mode
 
 Others
 -------
@@ -186,14 +190,14 @@ Others
     mindspore.dataset.BatchInfo
     mindspore.dataset.DatasetCache
     mindspore.dataset.DSCallback
-    mindspore.dataset.SamplingStrategy
     mindspore.dataset.Schema
     mindspore.dataset.Shuffle
     mindspore.dataset.WaitedDSCallback
-    mindspore.dataset.OutputFormat
     mindspore.dataset.compare
+    mindspore.dataset.debug.DebugHook
     mindspore.dataset.deserialize
     mindspore.dataset.serialize
     mindspore.dataset.show
     mindspore.dataset.sync_wait_for_dataset
     mindspore.dataset.utils.imshow_det_bbox
+    mindspore.dataset.utils.LineReader

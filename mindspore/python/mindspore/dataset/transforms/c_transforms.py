@@ -142,7 +142,7 @@ class TypeCast(TensorOperation):
         TypeError: If `data_type` is not of type bool, int, float or string.
 
     Supported Platforms:
-        ``CPU`` ``Ascend`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> import numpy as np
@@ -377,8 +377,9 @@ class Concatenate(TensorOperation):
     Args:
         axis (int, optional): Concatenate the tensors along given axis. Default: 0.
         prepend (numpy.array, optional): NumPy array to be prepended to the already concatenated tensors.
-            Default: None.
-        append (numpy.array, optional): NumPy array to be appended to the already concatenated tensors. Default: None.
+            Default: ``None``.
+        append (numpy.array, optional): NumPy array to be appended to the already concatenated tensors.
+            Default: ``None``.
 
     Raises:
         TypeError: If `axis` is not of type int.

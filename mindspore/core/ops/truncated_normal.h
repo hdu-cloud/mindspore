@@ -18,12 +18,12 @@
 #define MINDSPORE_CORE_OPS_TRUNCATEDNORMAL_H_
 
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -53,8 +53,9 @@ class MIND_API TruncatedNormal : public BaseOperator {
   int64_t get_seed2() const;
 };
 
-abstract::AbstractBasePtr TruncatedNormalInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                               const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr TruncatedNormalInfer(const abstract::AnalysisEnginePtr &,
+                                                        const PrimitivePtr &primitive,
+                                                        const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimTruncatedNormalPtr = std::shared_ptr<TruncatedNormal>;
 }  // namespace ops
 }  // namespace mindspore

@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,21 +17,23 @@
 #include "plugin/device/ascend/kernel/tbe/tbe_kernel_select/tbe_select_utils.h"
 
 #include <set>
+#include <memory>
+#include <map>
 #include <string>
-#include "base/base.h"
 #include "runtime/device/ms_device_shape_transfer.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
-#include "include/common/utils/anfalgo.h"
-#include "include/common/utils/utils.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_dynamic_shape_util.h"
+#include "utils/ms_context.h"
+#include "kernel/common_utils.h"
 
 namespace mindspore::kernel {
 namespace {
 constexpr size_t kNcdhwShapeSize = 5;
 
 bool CheckValidInputAndHiddenSize(const AnfNodePtr &node) {
+  MS_EXCEPTION_IF_NULL(node);
   if (node->isa<Parameter>()) {
     auto param = node->cast<ParameterPtr>();
+    MS_EXCEPTION_IF_NULL(param);
     return param->input_size() > 0 && param->hidden_size() > 0;
   }
   if (node->isa<CNode>()) {
@@ -43,22 +45,23 @@ bool CheckValidInputAndHiddenSize(const AnfNodePtr &node) {
 }  // namespace
 
 bool HostCheck::CheckValidDeviceShape(const AnfNodePtr &node) {
+  MS_EXCEPTION_IF_NULL(node);
   size_t real_input_num = common::AnfAlgo::GetInputTensorNum(node);
   for (size_t i = 0; i < real_input_num; i++) {
     auto format = AnfAlgo::GetInputFormat(node, i);
     if (!CheckValidInOutDeviceShape(node, i, false, format)) {
-      MS_LOG(WARNING) << "TBE Host check input device shape failed, node:" << node->fullname_with_scope()
-                      << ", format:" << format;
+      MS_LOG(DEBUG) << "TBE Host check input device shape failed, node:" << node->fullname_with_scope()
+                    << ", format:" << format;
       return false;
     }
   }
 
-  size_t real_output_num = common::AnfAlgo::GetOutputTensorNum(node);
+  size_t real_output_num = AnfAlgo::GetOutputElementNum(node);
   for (size_t i = 0; i < real_output_num; i++) {
     auto format = AnfAlgo::GetOutputFormat(node, i);
     if (!CheckValidInOutDeviceShape(node, i, true, format)) {
-      MS_LOG(WARNING) << "TBE Host check output device shape failed, node:" << node->fullname_with_scope()
-                      << ", format:" << format;
+      MS_LOG(DEBUG) << "TBE Host check output device shape failed, node:" << node->fullname_with_scope()
+                    << ", format:" << format;
       return false;
     }
   }
@@ -67,8 +70,9 @@ bool HostCheck::CheckValidDeviceShape(const AnfNodePtr &node) {
 
 std::vector<int64_t> HostCheck::GetFinalInferShape(const AnfNodePtr &node, size_t index, bool is_output,
                                                    const std::string &format) {
-  auto shape = is_output ? common::AnfAlgo::GetOutputDetailShape(node, index)
-                         : common::AnfAlgo::GetPrevNodeOutputDetailShape(node, index);
+  auto shape =
+    is_output ? AnfAlgo::GetOutputDetailShape(node, index) : AnfAlgo::GetPrevNodeOutputDetailShape(node, index);
+  MS_EXCEPTION_IF_NULL(shape);
   std::vector<int64_t> infer_shape;
   if (shape->isa<abstract::Shape>()) {
     auto shape_ptr = shape->cast<abstract::ShapePtr>();
@@ -79,7 +83,7 @@ std::vector<int64_t> HostCheck::GetFinalInferShape(const AnfNodePtr &node, size_
     return infer_shape;
   }
 
-  if (trans::IsNeedPadding(format, infer_shape.size())) {
+  if (trans::IsNeedPadding(format, infer_shape)) {
     auto reshape_type =
       is_output ? AnfAlgo::GetOutputReshapeType(node, index) : AnfAlgo::GetInputReshapeType(node, index);
     infer_shape = trans::PaddingShape(infer_shape, format, reshape_type, node);
@@ -111,6 +115,9 @@ bool HostCheck::CheckValidInOutDeviceShape(const AnfNodePtr &node, size_t index,
   if (check_4D_format.find(format) != check_4D_format.end()) {
     return infer_shape.size() == kShape4dDims;
   }
+  if (format == kOpFormat_NDC1HWC0) {
+    return (infer_shape.size() == kShape5dDims) || (infer_shape.size() == kShape6dDims);
+  }
   if (check_5D_format.find(format) != check_5D_format.end()) {
     return infer_shape.size() == kShape5dDims;
   }
@@ -125,16 +132,45 @@ bool HostCheck::CheckValidInOutDeviceShape(const AnfNodePtr &node, size_t index,
   }
 
   if (format == kOpFormat_ND_RNN_BIAS) {
-    return infer_shape.size() > 0 && CheckValidInputAndHiddenSize(node);
+    return !infer_shape.empty() && CheckValidInputAndHiddenSize(node);
   }
   return true;
+}
+
+bool IsOpSupportDynamicImpl(const CNodePtr &cnode) {
+  MS_EXCEPTION_IF_NULL(cnode);
+  auto node_name = common::AnfAlgo::GetCNodeName(cnode);
+  auto op_info_ptr = tbe::TbeDynamicShapeUtil::FindOp(node_name, cnode);
+  if (op_info_ptr == nullptr) {
+    MS_LOG(EXCEPTION) << "Can't get op info from tbe op store for " << cnode->fullname_with_scope();
+  }
+  auto is_op_dynamic_shape = common::AnfAlgo::IsDynamicShape(cnode);
+  auto is_kernel_dynamic_shape = op_info_ptr->dynamic_shape_support();
+  auto is_kernel_dynamic_compile_static = op_info_ptr->dynamic_compile_static();
+  auto is_dynamic_impl =
+    (is_op_dynamic_shape && is_kernel_dynamic_shape) || (!is_op_dynamic_shape && is_kernel_dynamic_compile_static);
+  return is_dynamic_impl;
+}
+
+bool IsKernelDynamicImpl(const AnfNodePtr &node) {
+  MS_EXCEPTION_IF_NULL(node);
+  if (!node->isa<CNode>()) {
+    MS_LOG(DEBUG) << "Node is not a cnode.";
+    return false;
+  }
+  auto cnode = node->cast<CNodePtr>();
+  MS_EXCEPTION_IF_NULL(cnode);
+  if (common::AnfAlgo::HasNodeAttr(kAttrIsKernelDynamicImpl, cnode)) {
+    return common::AnfAlgo::GetNodeAttr<bool>(node, kAttrIsKernelDynamicImpl);
+  }
+  return IsOpSupportDynamicImpl(cnode);
 }
 
 void GetSupportOriFormat(const CNodePtr &cnode, SupportFormat *support_format) {
   MS_EXCEPTION_IF_NULL(cnode);
   MS_EXCEPTION_IF_NULL(support_format);
-  auto input_num = common::AnfAlgo::GetInputTensorNum(cnode);
-  auto output_num = common::AnfAlgo::GetOutputTensorNum(cnode);
+  auto input_num = AnfAlgo::GetInputElementNum(cnode);
+  auto output_num = AnfAlgo::GetOutputElementNum(cnode);
   auto op_name = common::AnfAlgo::GetCNodeName(cnode);
   auto op_info = tbe::TbeDynamicShapeUtil::FindOp(op_name, cnode);
   MS_EXCEPTION_IF_NULL(op_info);
@@ -159,6 +195,7 @@ void PadScalarShape(ShapeVector *shape) {
 
 void GenerateSupportFormat(const std::string &support_input_format, size_t input_num,
                            const std::string &support_output_format, size_t output_num, SupportFormat *support_format) {
+  MS_EXCEPTION_IF_NULL(support_format);
   SupportFormatItem input_item(input_num, support_input_format);
   (void)support_format->input_format.emplace_back(input_item);
   SupportFormatItem output_item(output_num, support_output_format);
@@ -185,6 +222,10 @@ void ConstructSupportFormats(size_t put_size, const std::vector<SupportFormatIte
   for (size_t i = 0; i < put_size; ++i) {
     SupportFormatItem support_format_item = {};
     for (const auto &formats : support_format) {
+      if (i >= formats.size() && type_size > 0) {
+        MS_LOG(INTERNAL_EXCEPTION) << "Invalid index: " << i
+                                   << ", which exceed the size of formats: " << formats.size();
+      }
       for (size_t j = 0; j < type_size; ++j) {
         (void)support_format_item.emplace_back(formats.at(i));
       }
@@ -217,5 +258,179 @@ void GenerateSupportFormatDType(const CNodePtr &cnode, const SupportFormat &supp
       support_format_dtype->output_dtypes.at(0).size() != support_format_dtype->output_formats.at(0).size()) {
     MS_LOG(ERROR) << "GenerateSupportFormatDType failed.";
   }
+}
+
+bool CheckHitTargetDtype(const std::map<TypeId, TypeId> &type_map, const TypeId &in_dtype, const TypeId &device_dtype) {
+  if (in_dtype == device_dtype) {
+    return true;
+  }
+  auto iter = type_map.find(in_dtype);
+  if (iter == type_map.end()) {
+    return false;
+  }
+
+  if (iter->second != device_dtype) {
+    return false;
+  }
+
+  return true;
+}
+bool TagUnfoldRaiseReduce(const std::shared_ptr<kernel::KernelBuildInfo> &kernel_build_info, const CNodePtr &cnode,
+                          const std::map<TypeId, TypeId> &type_map) {
+  MS_EXCEPTION_IF_NULL(cnode);
+  MS_EXCEPTION_IF_NULL(kernel_build_info);
+
+  // Check input data type
+  size_t kernel_input_index = 0;
+  size_t fold_input_tensor_num = common::AnfAlgo::GetInputTensorNum(cnode);
+  for (size_t input_index = 0; input_index < fold_input_tensor_num; ++input_index) {
+    std::vector<TypeId> inputs_type = common::AnfAlgo::GetRealPrevNodesOutputInferDataType(cnode, input_index);
+    for (size_t i = 0; i < inputs_type.size(); ++i) {
+      if (kernel_input_index >= kernel_build_info->GetInputNum()) {
+        return false;
+      }
+
+      auto device_dtype = kernel_build_info->GetInputDeviceType(kernel_input_index);
+      if (device_dtype == kNumberTypeFloat) {
+        device_dtype = kNumberTypeFloat32;
+      }
+      if (!CheckHitTargetDtype(type_map, inputs_type[i], device_dtype)) {
+        return false;
+      }
+
+      ++kernel_input_index;
+    }
+  }
+  // Check output data type
+  for (size_t output_index = 0; output_index < kernel_build_info->GetOutputNum(); ++output_index) {
+    auto in_dtype = common::AnfAlgo::GetOutputInferDataType(cnode, output_index);
+    auto device_dtype = kernel_build_info->GetOutputDeviceType(output_index);
+    if (device_dtype == kNumberTypeFloat) {
+      device_dtype = kNumberTypeFloat32;
+    }
+    if (!CheckHitTargetDtype(type_map, in_dtype, device_dtype)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool TagFoldRaiseReduce(const std::shared_ptr<kernel::KernelBuildInfo> &kernel_build_info, const CNodePtr &cnode,
+                        const std::map<TypeId, TypeId> &type_map) {
+  MS_EXCEPTION_IF_NULL(cnode);
+  MS_EXCEPTION_IF_NULL(kernel_build_info);
+
+  // Check input data type
+  size_t kernel_input_index = 0;
+  for (size_t input_index = 0; input_index < common::AnfAlgo::GetInputTensorNum(cnode); ++input_index) {
+    if (kernel_build_info->GetInputKernelObjectType(kernel_input_index) == kernel::KernelObjectType::TUPLE) {
+      auto input_node = cnode->inputs()[input_index + 1];
+      TypeId in_dtype = common::AnfAlgo::GetOutputInferDataType(input_node, 0);
+      auto device_dtype = kernel_build_info->GetInputDeviceType(kernel_input_index);
+      if (device_dtype == kNumberTypeFloat) {
+        device_dtype = kNumberTypeFloat32;
+      }
+      if (!CheckHitTargetDtype(type_map, in_dtype, device_dtype)) {
+        return false;
+      }
+      ++kernel_input_index;
+    } else {
+      std::vector<TypeId> inputs_type = common::AnfAlgo::GetRealPrevNodesOutputInferDataType(cnode, input_index);
+      for (size_t i = 0; i < inputs_type.size(); ++i) {
+        if (kernel_input_index >= kernel_build_info->GetInputNum()) {
+          return false;
+        }
+        auto device_dtype = kernel_build_info->GetInputDeviceType(kernel_input_index);
+        if (device_dtype == kNumberTypeFloat) {
+          device_dtype = kNumberTypeFloat32;
+        }
+        if (!CheckHitTargetDtype(type_map, inputs_type[i], device_dtype)) {
+          return false;
+        }
+
+        ++kernel_input_index;
+      }
+    }
+  }
+  // Check output data type
+  for (size_t output_index = 0; output_index < kernel_build_info->GetOutputNum(); ++output_index) {
+    auto in_dtype = common::AnfAlgo::GetOutputInferDataType(cnode, output_index);
+    auto device_dtype = kernel_build_info->GetOutputDeviceType(output_index);
+    if (device_dtype == kNumberTypeFloat) {
+      device_dtype = kNumberTypeFloat32;
+    }
+    if (!CheckHitTargetDtype(type_map, in_dtype, device_dtype)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool TagRaiseReduce(const std::shared_ptr<kernel::KernelBuildInfo> &kernel_build_info, const CNodePtr &cnode,
+                    const std::map<TypeId, TypeId> &type_map) {
+  // filte kernel info that unsupported raise or reduce datatype
+  MS_EXCEPTION_IF_NULL(cnode);
+  MS_EXCEPTION_IF_NULL(kernel_build_info);
+
+  bool is_fold = kernel::IsFoldKernelBuildInfo(kernel_build_info);
+  if (is_fold) {
+    return TagFoldRaiseReduce(kernel_build_info, cnode, type_map);
+  } else {
+    return TagUnfoldRaiseReduce(kernel_build_info, cnode, type_map);
+  }
+}
+
+std::vector<std::shared_ptr<kernel::KernelBuildInfo>> FilterRaisedOrReducePrecisionMatchedKernelInfo(
+  const CNodePtr &cnode, const std::vector<std::shared_ptr<kernel::KernelBuildInfo>> &kernel_info_list,
+  bool *precision_reduce) {
+  MS_EXCEPTION_IF_NULL(precision_reduce);
+  std::vector<std::shared_ptr<kernel::KernelBuildInfo>> filtered_kernel_info_list;
+  // no need to raise or reduce precision for cast
+  auto node_name = common::AnfAlgo::GetCNodeName(cnode);
+  if (node_name == kCastOpName) {
+    return filtered_kernel_info_list;
+  }
+
+  const std::map<TypeId, TypeId> raise_map = {{kNumberTypeFloat16, kNumberTypeFloat32},
+                                              {kNumberTypeInt8, kNumberTypeInt32},
+                                              {kNumberTypeUInt8, kNumberTypeInt32}};
+  const std::map<TypeId, TypeId> reduce_map = {{kNumberTypeInt64, kNumberTypeInt32},
+                                               {kNumberTypeFloat, kNumberTypeFloat16},
+                                               {kNumberTypeFloat32, kNumberTypeFloat16}};
+  const std::map<TypeId, TypeId> transdata_raise_map = {{kNumberTypeBool, kNumberTypeFloat16}};
+  // raise precision
+  for (const auto &kernel_info : kernel_info_list) {
+    MS_EXCEPTION_IF_NULL(kernel_info);
+    if (TagRaiseReduce(kernel_info, cnode, raise_map)) {
+      filtered_kernel_info_list.push_back(kernel_info);
+    }
+    if (common::AnfAlgo::GetCNodeName(cnode) == kTransDataOpName &&
+        TagRaiseReduce(kernel_info, cnode, transdata_raise_map)) {
+      filtered_kernel_info_list.push_back(kernel_info);
+    }
+  }
+
+  if (!filtered_kernel_info_list.empty()) {
+    *precision_reduce = false;
+    return filtered_kernel_info_list;
+  }
+
+  // reduce precision or reduce_and_raise precision
+  auto context_ptr = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context_ptr);
+  if (context_ptr->get_param<bool>(MS_CTX_ENABLE_REDUCE_PRECISION)) {
+    auto reduce_and_raise_map = reduce_map;
+    reduce_and_raise_map.insert(raise_map.begin(), raise_map.end());
+    for (const auto &kernel_info : kernel_info_list) {
+      MS_EXCEPTION_IF_NULL(kernel_info);
+      if (TagRaiseReduce(kernel_info, cnode, reduce_and_raise_map)) {
+        filtered_kernel_info_list.push_back(kernel_info);
+      }
+    }
+  }
+  if (!filtered_kernel_info_list.empty()) {
+    *precision_reduce = true;
+  }
+  return filtered_kernel_info_list;
 }
 }  // namespace mindspore::kernel

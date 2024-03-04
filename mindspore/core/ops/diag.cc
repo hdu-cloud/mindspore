@@ -14,14 +14,28 @@
  * limitations under the License.
  */
 
-#include <set>
-#include <string>
-#include <vector>
 #include <memory>
-#include "ops/diag.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/diag.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -79,6 +93,23 @@ AbstractBasePtr DiagInfer(const abstract::AnalysisEnginePtr &, const PrimitivePt
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(Diag, prim::kPrimDiag, DiagInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGDiagInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DiagInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DiagInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DiagInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Diag, prim::kPrimDiag, AGDiagInfer, false);
 }  // namespace ops
 }  // namespace mindspore

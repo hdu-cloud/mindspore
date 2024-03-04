@@ -33,13 +33,13 @@
 namespace mindspore {
 namespace device {
 namespace ascend {
-class AscendKernelExecutor : public DeprecatedKernelExecutor {
+class AscendKernelExecutor : public KernelExecutor {
  public:
   AscendKernelExecutor() = default;
   ~AscendKernelExecutor() override = default;
 
-  void Initialize();
-  void Destroy();
+  void Initialize() override;
+  void Destroy() override;
 
   // Optimize the kernel graph for graph mode.
   void OptimizeGraph(const FuncGraphPtr &graph) const override;
@@ -58,9 +58,14 @@ class AscendKernelExecutor : public DeprecatedKernelExecutor {
 
   // Unify the MindIR, the default behavior uses the common unified MindIR.
   void UnifyMindIR(const KernelGraphPtr &graph) const override;
+  void AddMindIRPass(const KernelGraphPtr &graph) const override;
 
   // Get rank id for distributed training.
   uint32_t GetRankID() const override { return res_manager_->rank_id_; }
+
+  bool ExecuteKernelTask(const pynative::KernelTaskType &task_type, const device::DeviceAddressPtrList &input_addr_list,
+                         const TensorStorageInfoPtrList &input_storage_list,
+                         const device::DeviceAddressPtrList &output_addr_list) const override;
 
  private:
   // Launch device aicpu library
@@ -90,6 +95,7 @@ class AscendKernelExecutor : public DeprecatedKernelExecutor {
   mutable std::mutex launch_mutex_;
   AscendDeviceResManager *res_manager_{nullptr};
   AscendGraphExecutor *graph_executor_{nullptr};
+  bool initialized_ = false;
 };
 }  // namespace ascend
 }  // namespace device

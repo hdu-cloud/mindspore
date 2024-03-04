@@ -94,32 +94,36 @@ bool FloatStatusGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs
   }
   T *input = GetDeviceAddress<T>(inputs, 0);
 
+  cudaError_t status = cudaErrorNotReady;
   switch (kernel_type_) {
     case OP_STATUS: {
       float *output = GetDeviceAddress<float>(outputs, 0);
-      FillDeviceArray(outputs[0]->size / sizeof(float), output, 0.0f, reinterpret_cast<cudaStream_t>(cuda_stream_));
-      CalFloatStatus(input_size_ / sizeof(T), input, output, reinterpret_cast<cudaStream_t>(cuda_stream_));
+      status =
+        FillDeviceArray(outputs[0]->size / sizeof(float), output, 0.0f, reinterpret_cast<cudaStream_t>(cuda_stream_));
+      CHECK_CUDA_STATUS(status, kernel_name_);
+      status = CalFloatStatus(input_size_ / sizeof(T), input, output, reinterpret_cast<cudaStream_t>(cuda_stream_));
       break;
     }
     case OP_INF: {
       bool *output = GetDeviceAddress<bool>(outputs, 0);
-      CalIsInf(input_size_ / sizeof(T), input, output, reinterpret_cast<cudaStream_t>(cuda_stream_));
+      status = CalIsInf(input_size_ / sizeof(T), input, output, reinterpret_cast<cudaStream_t>(cuda_stream_));
       break;
     }
     case OP_NAN: {
       bool *output = GetDeviceAddress<bool>(outputs, 0);
-      CalIsNan(input_size_ / sizeof(T), input, output, reinterpret_cast<cudaStream_t>(cuda_stream_));
+      status = CalIsNan(input_size_ / sizeof(T), input, output, reinterpret_cast<cudaStream_t>(cuda_stream_));
       break;
     }
     case OP_FINITE: {
       bool *output = GetDeviceAddress<bool>(outputs, 0);
-      CalIsFinite(input_size_ / sizeof(T), input, output, reinterpret_cast<cudaStream_t>(cuda_stream_));
+      status = CalIsFinite(input_size_ / sizeof(T), input, output, reinterpret_cast<cudaStream_t>(cuda_stream_));
       break;
     }
     default: {
       MS_LOG(EXCEPTION) << "FloatStatus type " << kernel_type_ << " is not supported.";
     }
   }
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -142,28 +146,100 @@ std::vector<KernelAttr> FloatStatusGpuKernelMod::GetOpSupport() {
 std::map<std::string, std::vector<std::pair<KernelAttr, FloatStatusGpuKernelMod::FloatStatusOpFunc>>>
   FloatStatusGpuKernelMod::kernel_attr_map_ = {
     {kFloatStatus,
-     {{KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
+     {{KernelAttr().AddInputAttr(kNumberTypeBool).AddOutputAttr(kNumberTypeFloat32),
+       &FloatStatusGpuKernelMod::LaunchKernel<bool>},
+      {KernelAttr().AddInputAttr(kNumberTypeInt8).AddOutputAttr(kNumberTypeFloat32),
+       &FloatStatusGpuKernelMod::LaunchKernel<int8_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeInt16).AddOutputAttr(kNumberTypeFloat32),
+       &FloatStatusGpuKernelMod::LaunchKernel<int16_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeFloat32),
+       &FloatStatusGpuKernelMod::LaunchKernel<int32_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeFloat32),
+       &FloatStatusGpuKernelMod::LaunchKernel<int64_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeFloat32),
+       &FloatStatusGpuKernelMod::LaunchKernel<uint8_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeUInt16).AddOutputAttr(kNumberTypeFloat32),
+       &FloatStatusGpuKernelMod::LaunchKernel<uint16_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeFloat32),
+       &FloatStatusGpuKernelMod::LaunchKernel<uint32_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeUInt64).AddOutputAttr(kNumberTypeFloat32),
+       &FloatStatusGpuKernelMod::LaunchKernel<uint64_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
        &FloatStatusGpuKernelMod::LaunchKernel<float>},
       {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeFloat32),
        &FloatStatusGpuKernelMod::LaunchKernel<half>},
       {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat32),
        &FloatStatusGpuKernelMod::LaunchKernel<double>}}},
     {kIsInf,
-     {{KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeBool),
+     {{KernelAttr().AddInputAttr(kNumberTypeBool).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<bool>},
+      {KernelAttr().AddInputAttr(kNumberTypeInt8).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<int8_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeInt16).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<int16_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<int32_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<int64_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<uint8_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeUInt16).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<uint16_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<uint32_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeUInt64).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<uint64_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeBool),
        &FloatStatusGpuKernelMod::LaunchKernel<float>},
       {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeBool),
        &FloatStatusGpuKernelMod::LaunchKernel<half>},
       {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeBool),
        &FloatStatusGpuKernelMod::LaunchKernel<double>}}},
     {kIsNan,
-     {{KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeBool),
+     {{KernelAttr().AddInputAttr(kNumberTypeBool).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<bool>},
+      {KernelAttr().AddInputAttr(kNumberTypeInt8).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<int8_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeInt16).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<int16_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<int32_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<int64_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<uint8_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeUInt16).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<uint16_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<uint32_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeUInt64).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<uint64_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeBool),
        &FloatStatusGpuKernelMod::LaunchKernel<float>},
       {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeBool),
        &FloatStatusGpuKernelMod::LaunchKernel<half>},
       {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeBool),
        &FloatStatusGpuKernelMod::LaunchKernel<double>}}},
     {kIsFinite,
-     {{KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeBool),
+     {{KernelAttr().AddInputAttr(kNumberTypeBool).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<bool>},
+      {KernelAttr().AddInputAttr(kNumberTypeInt8).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<int8_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeInt16).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<int16_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<int32_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<int64_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<uint8_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeUInt16).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<uint16_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<uint32_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeUInt64).AddOutputAttr(kNumberTypeBool),
+       &FloatStatusGpuKernelMod::LaunchKernel<uint64_t>},
+      {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeBool),
        &FloatStatusGpuKernelMod::LaunchKernel<float>},
       {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeBool),
        &FloatStatusGpuKernelMod::LaunchKernel<half>},

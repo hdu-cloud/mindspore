@@ -15,14 +15,16 @@
  */
 
 #include "ops/conjugate_transpose.h"
-#include <vector>
+#include <algorithm>
 #include <memory>
 #include <set>
-#include <algorithm>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <vector>
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -43,7 +45,7 @@ abstract::ShapePtr ConjugateTransposeInferShape(const PrimitivePtr &primitive,
 
   auto perm_value = input_args[1]->BuildValue();
   MS_EXCEPTION_IF_NULL(perm_value);
-  if (perm_value->isa<AnyValue>()) {
+  if (!IsValueKnown(perm_value)) {
     std::vector<int64_t> output_shape(static_cast<int>(x_shape.size()), -1);
     return std::make_shared<abstract::Shape>(output_shape);
   }
@@ -61,7 +63,7 @@ abstract::ShapePtr ConjugateTransposeInferShape(const PrimitivePtr &primitive,
 
   for (auto p : p_value_raw) {
     p = (p >= 0) ? p : (static_cast<int64_t>(p_value_raw.size()) + p);
-    p_value.emplace_back(p);
+    (void)p_value.emplace_back(p);
   }
 
   if (x_shape.size() != p_value.size()) {
@@ -72,6 +74,7 @@ abstract::ShapePtr ConjugateTransposeInferShape(const PrimitivePtr &primitive,
 
   for (auto i : p_value) {
     (void)CheckAndConvertUtils::CheckInteger("perm element", i, kLessThan, SizeToLong(p_value.size()), op_name);
+    (void)CheckAndConvertUtils::CheckInteger("perm element", i, kGreaterEqual, 0, op_name);
   }
 
   std::vector<int64_t> tmp(p_value);
@@ -97,6 +100,8 @@ TypePtr ConjugateTransposeInferType(const PrimitivePtr &prim, const std::vector<
                                                     kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
   (void)CheckAndConvertUtils::CheckTensorTypeValid("x", input_args[0]->BuildType(), all_types_with_complex,
                                                    prim->name());
+  const std::set<TypePtr> perm_valid_types = {kTuple};
+  (void)CheckAndConvertUtils::CheckTypeValid("perm", input_args[1]->BuildType(), perm_valid_types, prim->name());
   return input_args[0]->BuildType();
 }
 }  // namespace
@@ -111,8 +116,27 @@ AbstractBasePtr ConjugateTransposeInfer(const abstract::AnalysisEnginePtr &, con
   return abstract::MakeAbstract(shape, type);
 }
 
-REGISTER_HOST_DEPENDS(kNameConjugateTranspose, {1});
 MIND_API_OPERATOR_IMPL(ConjugateTranspose, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(ConjugateTranspose, prim::kPrimConjugateTranspose, ConjugateTransposeInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGConjugateTransposeInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ConjugateTransposeInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ConjugateTransposeInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ConjugateTransposeInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ConjugateTranspose, prim::kPrimConjugateTranspose, AGConjugateTransposeInfer, false);
 }  // namespace ops
 }  // namespace mindspore

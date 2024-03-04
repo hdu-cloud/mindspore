@@ -18,9 +18,12 @@
 #include <algorithm>
 #include <memory>
 
-#include "backend/common/optimizer/helper.h"
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
+#include "include/backend/optimizer/helper.h"
 #include "include/common/utils/anfalgo.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/sequence_ops.h"
 
 namespace mindspore {
 namespace opt {
@@ -48,6 +51,21 @@ AnfNodePtr ConvertTupleInputToMakeTuple(const FuncGraphPtr &graph, const AnfNode
   kernel_graph->ReplaceGraphInput(tuple_anf, make_tuple);
   return make_tuple;
 }
+
+bool IsKerenlGraphOutput(const FuncGraphPtr &func_graph, const AnfNodePtr &node) {
+  const auto &outputs =
+    common::AnfAlgo::GetAllOutputIndexByReturnTypes(func_graph->output(), {prim::kPrimTupleGetItem});
+  return std::find_if(outputs.begin(), outputs.end(), [&node](const auto &output) { return output.first == node; }) !=
+         outputs.end();
+}
+
+bool IsNeedConvert(const FuncGraphPtr &func_graph, const AnfNodePtr &input) {
+  MS_EXCEPTION_IF_NULL(input);
+  return (input->Type() != nullptr && AnfUtils::IsRealKernel(input) && common::AnfAlgo::IsTupleOutput(input) &&
+          !common::AnfAlgo::CheckPrimitiveType(input, prim::kPrimCall) &&
+          (input->isa<Parameter>() || input->isa<ValueNode>() || IsKerenlGraphOutput(func_graph, input)) &&
+          (!common::AnfAlgo::IsDynamicSequence(input)));
+}
 }  // namespace
 
 const BaseRef ConvertTupleOutputToMaketuple::DefinePattern() const {
@@ -70,15 +88,18 @@ const AnfNodePtr ConvertTupleOutputToMaketuple::Process(const FuncGraphPtr &func
       return nullptr;
     }
   }
-  if (IsPrimitiveCNode(cnode, prim::kPrimUpdateState)) {
+  if (IsPrimitiveCNode(cnode, prim::kPrimUpdateState) || IsPrimitiveCNode(cnode, prim::kPrimBpropCut)) {
     return nullptr;
   }
+
   bool cnode_input_changed = false;
   for (size_t i = 0; i < cnode->inputs().size(); ++i) {
     const auto &input = cnode->inputs()[i];
-    if (input->Type() != nullptr && AnfUtils::IsRealKernel(input) && common::AnfAlgo::IsTupleOutput(input) &&
-        !common::AnfAlgo::CheckPrimitiveType(input, prim::kPrimCall)) {
-      cnode->set_input(i, ConvertTupleInputToMakeTuple(func_graph, input));
+    if (IsNeedConvert(func_graph, input)) {
+      MS_LOG(INFO) << "Convert tuple input to make tuple for node:" << node->fullname_with_scope()
+                   << ", input node:" << input->fullname_with_scope();
+      auto new_input = ConvertTupleInputToMakeTuple(func_graph, input);
+      cnode->set_input(i, new_input);
       cnode_input_changed = true;
     }
   }

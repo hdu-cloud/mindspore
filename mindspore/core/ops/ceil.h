@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,8 @@
 
 #ifndef MINDSPORE_CORE_OPS_CEIL_H_
 #define MINDSPORE_CORE_OPS_CEIL_H_
-#include <vector>
 #include <memory>
+#include <vector>
 
 #include "ops/base_operator.h"
 
@@ -34,8 +34,8 @@ class MIND_API Ceil : public BaseOperator {
   /// \brief Init. Refer to the parameters of Python API @ref mindspore.ops.Ceil for the inputs.
   void Init() const {}
 };
-abstract::AbstractBasePtr CeilInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                    const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr CeilInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                             const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_CEIL_H_

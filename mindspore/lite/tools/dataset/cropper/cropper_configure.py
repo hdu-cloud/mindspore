@@ -46,7 +46,7 @@ MANUAL_HEADERS = [
 # To stop gcc command once reaching these external headers
 # (not all of them may be used now in MindData lite)
 EXTERNAL_DEPS = [
-    "graphengine/inc/external",
+    "graphengine/910/inc/external",
     "akg/third_party/fwkacllib/inc",
     "third_party",
     "third_party/securec/include",
@@ -362,15 +362,15 @@ def main():
     dependencies.update(other_dependencies)
     errors += err
 
-    with os.fdopen(os.open(os.path.join(OUTPUT_LOCATION, DEPENDENCIES_FILENAME), os.O_WRONLY | os.O_CREAT, 0o660),
+    with os.fdopen(os.open(os.path.join(OUTPUT_LOCATION, DEPENDENCIES_FILENAME), os.O_WRONLY | os.O_CREAT, 0o600),
                    "w+") as f:
         json.dump(dependencies, f)
 
-    with os.fdopen(os.open(os.path.join(OUTPUT_LOCATION, ASSOCIATIONS_FILENAME), os.O_WRONLY | os.O_CREAT, 0o660),
+    with os.fdopen(os.open(os.path.join(OUTPUT_LOCATION, ASSOCIATIONS_FILENAME), os.O_WRONLY | os.O_CREAT, 0o600),
                    "w+") as f:
         json.dump(all_associations, f)
 
-    with os.fdopen(os.open(os.path.join(OUTPUT_LOCATION, ERRORS_FILENAME), os.O_WRONLY | os.O_CREAT, 0o660), "w+") as f:
+    with os.fdopen(os.open(os.path.join(OUTPUT_LOCATION, ERRORS_FILENAME), os.O_WRONLY | os.O_CREAT, 0o600), "w+") as f:
         f.write(errors)
 
 

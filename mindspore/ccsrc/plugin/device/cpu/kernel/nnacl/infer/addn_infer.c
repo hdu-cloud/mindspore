@@ -16,6 +16,7 @@
 
 #include "nnacl/infer/addn_infer.h"
 #include "nnacl/infer/infer_register.h"
+#include "nnacl/tensor_c_utils.h"
 
 int AddnInferShape(const TensorC *const *inputs, size_t inputs_size, TensorC **outputs, size_t outputs_size,
                    OpParameter *parameter) {
@@ -39,7 +40,7 @@ int AddnInferShape(const TensorC *const *inputs, size_t inputs_size, TensorC **o
 
   // check zerp dimension
   for (size_t i = 0; i < max_dims; i++) {
-    MS_CHECK_FALSE(input->shape_[i] == 0, NNACL_ERR);
+    NNACL_CHECK_FALSE(input->shape_[i] == 0, NNACL_ERR);
   }
 
   // determine max_dims

@@ -13,61 +13,56 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_KERNEL_H_
-#define MINDSPORE_NNACL_KERNEL_H_
+#ifndef NNACL_KERNEL_H_
+#define NNACL_KERNEL_H_
 
 #include "nnacl/op_base.h"
 #include "nnacl/infer/common_infer.h"
-#include "nnacl/experimental/ms_core.h"
 
 typedef struct ExecEnv {
-  void *allocator;
-  void *threadPool;
-  void *(*alloc)(void *allocator, size_t sz);
-  void (*free)(void *allocator, void *ptr);
-  int threadNum;
-  int (*parallelLaunch)(void *threadPool, void *task, void *param, int taskNr);
+  void *allocator_;
+  void *thread_pool_;
+  void *(*Alloc)(void *allocator, size_t sz);
+  void (*Free)(void *allocator, void *ptr);
+  int (*ParallelLaunch)(void *thread_pool, void *task, void *param, int task_num);
 } ExecEnv;
 
 typedef struct KernelBase {
-  int (*prepare)(struct KernelBase *self);  // prepare, e.g. pack weight
-  int (*release)(struct KernelBase *self);
-  int (*compute)(struct KernelBase *self);
-  int (*inferShape)(struct KernelBase *self);
-  int (*resize)(struct KernelBase *self);
-  OpParameter *param;
-  // by design, kernelBase's methods are not responsible for input/output tensors' management, user must be invokes
-  // KernelBase's infer shape and allocate/free input/output tensor at necessary time.
-  TensorC *in;
-  size_t insize;
-  TensorC *out;
-  size_t outsize;
-  ExecEnv *env;
-  bool inferShape_;
-  CoreFuncs *funcs;
+  int (*Release)(struct KernelBase *self);
+  int (*Prepare)(struct KernelBase *self);
+  int (*Compute)(struct KernelBase *self);
+  int (*Resize)(struct KernelBase *self);
+  int (*InferShape)(struct KernelBase *self);
+  int (*UpdateThread)(int32_t type, int64_t load, int64_t store, int64_t unit, int thread);
+  OpParameter *param_;
+  int thread_nr_;
+  ExecEnv *env_;
+  TensorC **in_;
+  size_t in_size_;
+  TensorC **out_;
+  size_t out_size_;
+  bool train_session_;
+  void *workspace_; /* only used in train */
+  int work_size_;   /* only used in train */
 } KernelBase;
 
 #ifdef _MSC_VER
-#define REG_KERNEL_CREATOR(op_type, format, data_type, func)
+#define REG_KERNEL_CREATOR(op, data_type, func)
 #else
-#define REG_KERNEL_CREATOR(op, format, data_type, func)                          \
-  __attribute__((constructor(102))) void Reg##op##format##data_type##Creator() { \
-    RegKernelCreator(op, format, data_type, func);                               \
-  }
+#define REG_KERNEL_CREATOR(op, data_type, func) \
+  __attribute__((constructor(102))) void Reg##op##data_type##Creator() { RegKernelCreator(op, data_type, func); }
 #endif
 
-typedef KernelBase *(*KernelCreator)(OpParameter *param, TensorC *in, size_t insize, TensorC *out, size_t outsize,
-                                     int data_type, FormatC format);
-void RegKernelCreator(int opType, int format, int dataType, KernelCreator func);
-CoreFuncs *GetCoreFuncs(bool use_fp16);
+#define REGIST_DT(DataType) (DataType - kNumberTypeBegin - 1)
+typedef KernelBase *(*KernelCreator)(OpParameter *param, int data_type);
+void RegKernelCreator(int opType, int dataType, KernelCreator func);
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-KernelBase *CreateKernel(OpParameter *param, TensorC *in, size_t insize, TensorC *out, size_t outsize, int data_type,
-                         FormatC format);
-bool SupportKernelC(int opType, int format, int dataType);
-ExecEnv *GetExecEnv(void);
+KernelBase *CreateKernel(OpParameter *param, TensorC **ins, size_t in_size, TensorC **outs, size_t out_size,
+                         int data_type, ExecEnv *env);
+bool SupportKernelC(int opType, int dataType);
 #ifdef __cplusplus
 }
 #endif

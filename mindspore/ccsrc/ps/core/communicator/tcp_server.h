@@ -23,7 +23,6 @@
 #include <event2/listener.h>
 #include <event2/thread.h>
 #include <event2/bufferevent_ssl.h>
-
 #include <exception>
 #include <functional>
 #include <iostream>
@@ -34,14 +33,15 @@
 #include <vector>
 #include <thread>
 #include <atomic>
+#include <utility>
 
 #include "ps/core/communicator/tcp_message_handler.h"
 #include "ps/core/communicator/ssl_wrapper.h"
 #include "ps/core/cluster_config.h"
 #include "utils/convert_utils_base.h"
 #include "ps/core/comm_util.h"
-#include "ps/constants.h"
-#include "ps/ps_context.h"
+#include "include/backend/distributed/ps/constants.h"
+#include "include/backend/distributed/ps/ps_context.h"
 #include "ps/core/file_configuration.h"
 
 namespace mindspore {
@@ -88,7 +88,8 @@ class TcpServer {
   using OnTimerOnce = std::function<void(const TcpServer &)>;
   using OnTimer = std::function<void()>;
 
-  TcpServer(const std::string &address, std::uint16_t port, Configuration *const config);
+  TcpServer(const std::string &address, std::uint16_t port, Configuration *const config,
+            const std::pair<uint32_t, uint32_t> &port_range = {});
   TcpServer(const TcpServer &server);
   virtual ~TcpServer();
 
@@ -141,6 +142,7 @@ class TcpServer {
   // The Configuration file
   Configuration *config_;
   int64_t max_connection_;
+  std::pair<uint32_t, uint32_t> port_range_;
 };
 }  // namespace core
 }  // namespace ps

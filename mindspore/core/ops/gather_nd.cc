@@ -14,16 +14,17 @@
  * limitations under the License.
  */
 
-#include <set>
+#include "ops/gather_nd.h"
 #include <map>
+#include <memory>
+#include <set>
 #include <string>
 #include <vector>
-#include <memory>
-#include "ops/gather_nd.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -34,6 +35,10 @@ abstract::ShapePtr GatherNdInferShape(const PrimitivePtr &primitive, const std::
   auto indices_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->BuildShape())[kShape];
   if (IsDynamicRank(input_shape) || IsDynamic(indices_shape)) {
     return std::make_shared<abstract::Shape>(ShapeVector{abstract::Shape::kShapeRankAny});
+  }
+  // make a scalar to tensor whose shape is (1,)
+  if (indices_shape.size() == 0) {
+    indices_shape.emplace_back(1);
   }
   auto input_rank = input_shape.size();
   auto indices_rank = indices_shape.size();
@@ -55,6 +60,7 @@ abstract::ShapePtr GatherNdInferShape(const PrimitivePtr &primitive, const std::
 }
 
 TypePtr GatherNdInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   std::set<TypePtr> int_types = {kInt32, kInt64};
   auto x_type = input_args[kInputIndex0]->BuildType();
   auto indices_type = input_args[kInputIndex1]->BuildType();
@@ -76,6 +82,24 @@ AbstractBasePtr GatherNdInfer(const abstract::AnalysisEnginePtr &, const Primiti
   auto infer_shape = GatherNdInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(GatherNd, prim::kPrimGatherNd, GatherNdInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGGatherNdInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return GatherNdInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return GatherNdInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return GatherNdInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(GatherNd, prim::kPrimGatherNd, AGGatherNdInfer, false);
 }  // namespace ops
 }  // namespace mindspore

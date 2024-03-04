@@ -15,18 +15,40 @@
  */
 
 #include "ops/bce_with_logits_loss.h"
-#include <string>
-#include <algorithm>
+
+#include <map>
 #include <memory>
+#include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/ms_context.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
+constexpr size_t MAX_LOGITS_DIMENSION = 8;
+constexpr size_t MIN_LOGITS_DIMENSION = 1;
+
 abstract::ShapePtr BCEWithLogitsLossInferShape(const PrimitivePtr &primitive,
                                                const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
@@ -63,6 +85,10 @@ abstract::ShapePtr BCEWithLogitsLossInferShape(const PrimitivePtr &primitive,
       << "For '" << op_name
       << "', the two input 'weight' and 'pos_weight' shape can not broadcast to logits and label.";
   }
+  if (!IsDynamic(logits_shape) && !IsDynamic(broadcast_weight_shape)) {
+    CheckAndConvertUtils::Check("label_shape", logits_shape, kEqual, broadcast_weight_shape, op_name);
+  }
+
   // For BCEWithLogitsLoss, if reduction in ('mean', 'sum'), output will be a scalar.
   if (reduction_value != "none") {
     std::vector<int64_t> broadcast_shape;
@@ -112,6 +138,24 @@ AbstractBasePtr BCEWithLogitsLossInfer(const abstract::AnalysisEnginePtr &, cons
   abstract::ShapePtr output_shape = BCEWithLogitsLossInferShape(primitive, input_args);
   return std::make_shared<abstract::AbstractTensor>(output_type, output_shape->shape());
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(BCEWithLogitsLoss, prim::kPrimBCEWithLogitsLoss, BCEWithLogitsLossInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGBCEWithLogitsLossInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return BCEWithLogitsLossInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return BCEWithLogitsLossInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return BCEWithLogitsLossInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(BCEWithLogitsLoss, prim::kPrimBCEWithLogitsLoss, AGBCEWithLogitsLossInfer, false);
 }  // namespace ops
 }  // namespace mindspore

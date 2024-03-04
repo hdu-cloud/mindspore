@@ -37,7 +37,7 @@ bool GerGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vect
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   return true;
 }
 
@@ -93,8 +93,9 @@ bool GerGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const 
   T *col_input = GetDeviceAddress<T>(inputs, 0);
   T *row_input = GetDeviceAddress<T>(inputs, 1);
   T *output = GetDeviceAddress<T>(outputs, 0);
-  CalGer(output_elements_, row_input, col_input, matrix_row_, matrix_col_, output, device_id_,
-         reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = CalGer(output_elements_, row_input, col_input, matrix_row_, matrix_col_, output, device_id_,
+                       reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

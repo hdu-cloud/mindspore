@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@
 #include <map>
 #include "plugin/device/ascend/kernel/tbe/tbe_kernel_mod.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_utils.h"
-#include "runtime/device/device_address.h"
+#include "include/backend/device_address.h"
 #include "ir/tensor.h"
 #include "register/op_tiling.h"
 namespace mindspore {
@@ -43,7 +43,7 @@ class DynamicTbeKernelMod : public TbeKernelMod {
     const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost = std::map<uint32_t, tensor::TensorPtr>()) override;
 
  protected:
-  void SyncData() override;
+  void SyncOutputShape() override;
 
   // Called only by atomic clean ops
   void InitAtomicOps(const optiling::utils::OpRunInfo &op_info);
@@ -63,7 +63,6 @@ class DynamicTbeKernelMod : public TbeKernelMod {
   uint64_t tiling_key_{0};
   void *handle_ = nullptr;
   void *func_stub_ = nullptr;
-  std::string origin_key_{""};
   std::string op_compile_info_{};
   bool need_skip_execute_ = false;
 };

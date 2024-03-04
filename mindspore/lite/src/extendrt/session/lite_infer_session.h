@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,15 +29,17 @@ class LiteInferSession : public InferSession {
   LiteInferSession() = default;
   explicit LiteInferSession(const std::shared_ptr<Context> &context) : context_(context) {}
   virtual ~LiteInferSession() = default;
-  Status Init(const std::shared_ptr<Context> &context) override;
-  Status CompileGraph(FuncGraphPtr graph, const void *data = nullptr, size_t size = 0) override;
-  Status RunGraph(const std::vector<tensor::Tensor> &inputs, std::vector<tensor::Tensor> *outputs) override;
-  std::vector<MutableTensorImplPtr> GetOutputs() override;
-  std::vector<MutableTensorImplPtr> GetInputs() override;
-  std::vector<std::string> GetOutputNames() override;
-  std::vector<std::string> GetInputNames() override;
-  MutableTensorImplPtr GetOutputByTensorName(const std::string &tensorName) override;
-  MutableTensorImplPtr GetInputByTensorName(const std::string &name) override;
+  Status Init(const std::shared_ptr<Context> &context, const ConfigInfos &config_info = {}) override;
+  Status CompileGraph(FuncGraphPtr graph, const void *data = nullptr, size_t size = 0,
+                      uint32_t *graph_id = nullptr) override;
+  Status RunGraph(uint32_t graph_id, const std::vector<tensor::Tensor> &inputs,
+                  std::vector<tensor::Tensor> *outputs) override;
+  std::vector<MutableTensorImplPtr> GetOutputs(uint32_t graph_id) override;
+  std::vector<MutableTensorImplPtr> GetInputs(uint32_t graph_id) override;
+  std::vector<std::string> GetOutputNames(uint32_t graph_id) override;
+  std::vector<std::string> GetInputNames(uint32_t graph_id) override;
+  MutableTensorImplPtr GetOutputByTensorName(uint32_t graph_id, const std::string &tensorName) override;
+  MutableTensorImplPtr GetInputByTensorName(uint32_t graph_id, const std::string &name) override;
 
  private:
   std::shared_ptr<lite::LiteSession> CreateLiteSession(const std::shared_ptr<lite::InnerContext> &context);
@@ -46,7 +48,6 @@ class LiteInferSession : public InferSession {
   std::vector<int32_t> TruncateShape(const std::vector<int64_t> &shape, enum TypeId type, size_t data_len,
                                      bool verify_size);
   std::vector<std::string> ConvertToTensorNames(const std::vector<mindspore::lite::Tensor *> &lite_tensors);
-  std::vector<tensor::TensorPtr> ConvertToTensors(const std::vector<mindspore::lite::Tensor *> &lite_tensors);
 
  private:
   std::shared_ptr<lite::LiteSession> lite_session_;

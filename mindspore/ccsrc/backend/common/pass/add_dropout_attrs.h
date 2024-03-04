@@ -17,7 +17,9 @@
 #ifndef MINDSPORE_CCSRC_BACKEND_OPTIMIZER_PASS_ADD_DROPOUT_ATTRS_H_
 #define MINDSPORE_CCSRC_BACKEND_OPTIMIZER_PASS_ADD_DROPOUT_ATTRS_H_
 
-#include "backend/common/optimizer/optimizer.h"
+#include <string>
+#include <vector>
+#include "include/backend/optimizer/optimizer.h"
 
 namespace mindspore {
 namespace opt {
@@ -27,6 +29,9 @@ class AddDropoutAttrs : public PatternProcessPass {
   ~AddDropoutAttrs() override = default;
   const BaseRef DefinePattern() const override;
   const AnfNodePtr Process(const FuncGraphPtr &func_graph, const AnfNodePtr &node, const EquivPtr &) const override;
+
+ private:
+  std::vector<std::string> MustExistPrimitiveName() const override;
 };
 }  // namespace opt
 }  // namespace mindspore

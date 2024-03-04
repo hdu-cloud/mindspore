@@ -108,12 +108,11 @@ bool AdamaxGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::v
   }
 
   kernel_func_ = func_list_[index].second;
-  t_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  s_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex3).first);
-  g_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex8).first);
+  t_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  s_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex3).dtype);
+  g_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex8).dtype);
 
   InOutputResize(base_operator, inputs, outputs);
-  outputs_ = outputs;
   return true;
 }
 
@@ -122,7 +121,6 @@ int AdamaxGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::
                                const std::map<uint32_t, tensor::TensorPtr> &) {
   InOutputResize(base_operator, inputs, outputs);
   kernel_ptr_ = base_operator;
-  outputs_ = outputs;
   return KRET_OK;
 }
 
@@ -142,8 +140,9 @@ bool AdamaxGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, con
   T *m_out = GetDeviceAddress<T>(outputs, kIndex1);
   T *v_out = GetDeviceAddress<T>(outputs, kIndex2);
 
-  ApplyAdamax(inputs[0]->size / sizeof(T), beta1_power, learning_rate, beta1, beta2, epsilon, gradient, variable, m, v,
-              device_id_, reinterpret_cast<cudaStream_t>(stream_ptr_));
+  auto status = ApplyAdamax(inputs[0]->size / sizeof(T), beta1_power, learning_rate, beta1, beta2, epsilon, gradient,
+                            variable, m, v, device_id_, reinterpret_cast<cudaStream_t>(stream_ptr_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemcpyAsync(variable_out, variable, variable_size_, cudaMemcpyDeviceToDevice,
                                                      reinterpret_cast<cudaStream_t>(stream_ptr_)),
                                      "cudaMemcpyAsync output failed");

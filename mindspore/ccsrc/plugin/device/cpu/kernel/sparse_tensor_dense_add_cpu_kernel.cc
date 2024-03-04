@@ -73,12 +73,12 @@ int SparseTensorDenseAddCpuKernelMod::Resize(const BaseOperatorPtr &base_operato
     MS_LOG(EXCEPTION) << "For '" << kernel_name_
                       << "', it requires 'x1_values' must be a 1-D Tensor and the first dimension length "
                       << "must be equal to the first dimension length of 'indices', but got 'x1_values' shape: "
-                      << Vector2Str(values_shape) << " and 'x1_indices' shape: " << Vector2Str(indices_shape);
+                      << values_shape << " and 'x1_indices' shape: " << indices_shape;
   }
   if (x1_rank != x2_rank) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_
-                      << "', x1 and x2 must have same ranks, but got 'x1' shape: " << Vector2Str(shape_shape)
-                      << "and 'x2' shape: " << Vector2Str(x2_shape_);
+                      << "', x1 and x2 must have same ranks, but got 'x1' shape: " << shape_shape
+                      << "and 'x2' shape: " << x2_shape_;
   }
   return KRET_OK;
 }
@@ -131,9 +131,8 @@ bool SparseTensorDenseAddCpuKernelMod::LaunchKernel(const std::vector<kernel::Ad
       int index = static_cast<int>(indices_addr[i * rank + j]);
       int output_shape_j = static_cast<int>(output_shape_[j]);
       if (index >= output_shape_j || index < 0) {
-        MS_EXCEPTION(ValueError) << "For '" << kernel_name_ << "', the " << i << "th x1_value in " << j
-                                 << "th dimension index: " << index << " of 'output' out of bounds: [0, "
-                                 << output_shape_j << ")";
+        MS_EXCEPTION(ValueError) << "For '" << kernel_name_ << "', the input x1_indices is out of bounds! "
+                                 << "x1_indices is: " << index << " , bounds is : [0, " << output_shape_j << ")";
       }
       size_t count = 1;
       for (size_t k = j + 1; k < rank; k++) {

@@ -18,7 +18,8 @@
 #include <vector>
 #include "mindspore/core/ops/lu_solve_.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/matrix_transpose_impl.cuh"
-#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/broadcast_impl.cuh"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/broadcast_to_impl.cuh"
+#include "plugin/device/gpu/kernel/math/broadcast_public.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/complex.h"
 
 namespace mindspore {
@@ -130,6 +131,9 @@ bool LuSolveGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, co
   T *b = GetDeviceAddress<T>(inputs, kIndex0);
   T *a = GetDeviceAddress<T>(inputs, kIndex1);
   int *piv_array = GetDeviceAddress<int>(inputs, kIndex2);
+  MS_EXCEPTION_IF_NULL(b);
+  MS_EXCEPTION_IF_NULL(a);
+  MS_EXCEPTION_IF_NULL(piv_array);
 
   auto a_col_major = GetDeviceAddress<T>(workspace, kIndex0);
   auto b_col_major = GetDeviceAddress<T>(workspace, kIndex1);
@@ -138,37 +142,47 @@ bool LuSolveGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, co
   auto a_broadcast = GetDeviceAddress<T>(workspace, kIndex4);
   auto b_broadcast = GetDeviceAddress<T>(workspace, kIndex5);
   auto piv_broadcast = GetDeviceAddress<int>(workspace, kIndex6);
+  MS_EXCEPTION_IF_NULL(a_col_major);
+  MS_EXCEPTION_IF_NULL(b_col_major);
+  MS_EXCEPTION_IF_NULL(a_device_array);
+  MS_EXCEPTION_IF_NULL(b_device_array);
+  MS_EXCEPTION_IF_NULL(a_broadcast);
+  MS_EXCEPTION_IF_NULL(b_broadcast);
+  MS_EXCEPTION_IF_NULL(piv_broadcast);
 
   T *output = GetDeviceAddress<T>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(output);
 
   CHECK_CUBLAS_RET_WITH_EXCEPT_NOTRACE(cublasSetStream(blas_handle_, cuda_stream_),
                                        "For LuSolveGpuKernelMod cublasSetStream Fail");
-
-  MatrixTranspose(a, LongToSize(batch_num_a_ * m_ * m_), SizeToInt(m_), SizeToInt(m_), a_col_major, device_id_,
-                  cuda_stream_);
-  MatrixTranspose(b, LongToSize(batch_num_b_ * m_ * k_), SizeToInt(m_), SizeToInt(k_), b_col_major, device_id_,
-                  cuda_stream_);
+  cudaError_t status = cudaErrorNotReady;
+  status = MatrixTranspose(a, LongToSize(batch_num_a_ * m_ * m_), SizeToInt(m_), SizeToInt(m_), a_col_major, device_id_,
+                           cuda_stream_);
+  CHECK_CUDA_STATUS(status, kernel_name_);
+  status = MatrixTranspose(b, LongToSize(batch_num_b_ * m_ * k_), SizeToInt(m_), SizeToInt(k_), b_col_major, device_id_,
+                           cuda_stream_);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   if (need_broadcast_) {
+    std::vector<int64_t> simplified_inp_shape;
+    std::vector<int64_t> simplified_out_shape;
     // expand_size :(*,m,m)
     auto origin_size = lhs_shape_;
     auto expand_size = output_shape_;
     expand_size[out_shape_len_ - kIndex1] = m_;
-    BroadcastTo(origin_size[kIndex0], origin_size[kIndex1], origin_size[kIndex2], origin_size[kIndex3],
-                origin_size[kIndex4], origin_size[kIndex5], origin_size[kIndex6], origin_size[kIndex7],
-                expand_size[kIndex0], expand_size[kIndex1], expand_size[kIndex2], expand_size[kIndex3],
-                expand_size[kIndex4], expand_size[kIndex5], expand_size[kIndex6], expand_size[kIndex7], a_col_major,
-                a_broadcast, cuda_stream_);
+    SimplifyBroadcastToShape(origin_size, expand_size, &simplified_inp_shape, &simplified_out_shape);
+    status =
+      BroadcastTo(simplified_inp_shape, simplified_out_shape, a_col_major, a_broadcast, device_id_, cuda_stream_);
+    CHECK_CUDA_STATUS(status, kernel_name_);
 
     // expand_size :(*,k,m)
     origin_size = rhs_shape_;
     expand_size = output_shape_;
     std::swap(origin_size[out_shape_len_ - kIndex1], origin_size[out_shape_len_ - kIndex2]);
     std::swap(expand_size[out_shape_len_ - kIndex1], expand_size[out_shape_len_ - kIndex2]);
-    BroadcastTo(origin_size[kIndex0], origin_size[kIndex1], origin_size[kIndex2], origin_size[kIndex3],
-                origin_size[kIndex4], origin_size[kIndex5], origin_size[kIndex6], origin_size[kIndex7],
-                expand_size[kIndex0], expand_size[kIndex1], expand_size[kIndex2], expand_size[kIndex3],
-                expand_size[kIndex4], expand_size[kIndex5], expand_size[kIndex6], expand_size[kIndex7], b_col_major,
-                b_broadcast, cuda_stream_);
+    SimplifyBroadcastToShape(origin_size, expand_size, &simplified_inp_shape, &simplified_out_shape);
+    status =
+      BroadcastTo(simplified_inp_shape, simplified_out_shape, b_col_major, b_broadcast, device_id_, cuda_stream_);
+    CHECK_CUDA_STATUS(status, kernel_name_);
 
     // origin_size:(*,m,1)
     // expand_size :(*,m,1)
@@ -176,11 +190,10 @@ bool LuSolveGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, co
     origin_size[out_shape_len_ - kIndex1] = 1;
     expand_size = output_shape_;
     expand_size[out_shape_len_ - kIndex1] = 1;
-    BroadcastTo(origin_size[kIndex0], origin_size[kIndex1], origin_size[kIndex2], origin_size[kIndex3],
-                origin_size[kIndex4], origin_size[kIndex5], origin_size[kIndex6], origin_size[kIndex7],
-                expand_size[kIndex0], expand_size[kIndex1], expand_size[kIndex2], expand_size[kIndex3],
-                expand_size[kIndex4], expand_size[kIndex5], expand_size[kIndex6], expand_size[kIndex7], piv_array,
-                piv_broadcast, cuda_stream_);
+    SimplifyBroadcastToShape(origin_size, expand_size, &simplified_inp_shape, &simplified_out_shape);
+    status =
+      BroadcastTo(simplified_inp_shape, simplified_out_shape, piv_array, piv_broadcast, device_id_, cuda_stream_);
+    CHECK_CUDA_STATUS(status, kernel_name_);
   } else {
     a_broadcast = a_col_major;
     b_broadcast = b_col_major;
@@ -203,8 +216,9 @@ bool LuSolveGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, co
                                                            piv_broadcast, b_device_array, &info, batch_num_out_),
                                        "For 'LuSolveGpuKernelMod', it launch cublasXgetrfBatched failed");
 
-  MatrixTranspose(b_broadcast, LongToSize(batch_num_out_ * m_ * k_), SizeToInt(k_), SizeToInt(m_), output, device_id_,
-                  cuda_stream_);
+  status = MatrixTranspose(b_broadcast, LongToSize(batch_num_out_ * m_ * k_), SizeToInt(k_), SizeToInt(m_), output,
+                           device_id_, cuda_stream_);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

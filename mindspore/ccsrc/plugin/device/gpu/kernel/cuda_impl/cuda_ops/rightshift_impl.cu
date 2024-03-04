@@ -19,7 +19,24 @@
 template <typename T>
 __global__ void CalRightShiftKernel(size_t size, const T *inputx, const T *inputy, T *output) {
   for (size_t pos = blockIdx.x * blockDim.x + threadIdx.x; pos < size; pos += blockDim.x * gridDim.x) {
-    T y1 = inputy[pos] <= static_cast<T>(0) ? static_cast<T>(0) : inputy[pos];
+    T y1 = inputy[pos];
+    T charbit = static_cast<T>(4) * CHAR_BIT;
+    if ((sizeof(T) * CHAR_BIT) < charbit) {
+      if (y1 > (sizeof(T) * CHAR_BIT) || y1 < -(sizeof(T) * CHAR_BIT)) {
+        if (y1 < (static_cast<T>(0))) {
+          y1 = (y1 % charbit) + charbit;
+          if (y1 == charbit) {
+            y1 = 0;
+          }
+        } else {
+          y1 = y1 % charbit;
+        }
+      }
+    } else {
+      if ((y1 > (sizeof(T) * CHAR_BIT)) || (y1 < -(sizeof(T) * CHAR_BIT))) {
+        y1 = y1 % (sizeof(T) * CHAR_BIT);
+      }
+    }
     output[pos] = inputx[pos] >> y1;
   }
 }
@@ -57,22 +74,40 @@ __global__ void BroadcastRightShiftKernel(const size_t l0, const size_t l1, cons
     r_index += Index(m, r4) * r5 * r6;
     r_index += Index(n, r5) * r6;
     r_index += Index(o, r6);
-    T y1 = inputy[r_index] <= static_cast<T>(0) ? static_cast<T>(0) : inputy[r_index];
+    T y1 = inputy[r_index];
+    T charbit = static_cast<T>(4) * CHAR_BIT;
+    if ((sizeof(T) * CHAR_BIT) < charbit) {
+      if (y1 > (sizeof(T) * CHAR_BIT) || y1 < -(sizeof(T) * CHAR_BIT)) {
+        if (y1 < (static_cast<T>(0))) {
+          y1 = (y1 % charbit) + charbit;
+          if (y1 == charbit) {
+            y1 = 0;
+          }
+        } else {
+          y1 = y1 % charbit;
+        }
+      }
+    } else {
+      if ((y1 > (sizeof(T) * CHAR_BIT)) || (y1 < -(sizeof(T) * CHAR_BIT))) {
+        y1 = y1 % (sizeof(T) * CHAR_BIT);
+      }
+    }
     output[pos] = inputx[l_index] >> y1;
   }
 }
 
 template <typename T>
-void CalRightShift(size_t size, const T *inputx, const T *inputy, T *output, const uint32_t &device_id,
-                   cudaStream_t cuda_stream) {
+cudaError_t CalRightShift(size_t size, const T *inputx, const T *inputy, T *output, const uint32_t &device_id,
+                          cudaStream_t cuda_stream) {
   CalRightShiftKernel<<<CUDA_BLOCKS(device_id, size), CUDA_THREADS(device_id), 0, cuda_stream>>>(size, inputx, inputy,
                                                                                                  output);
+  return GetCudaStatus();
 }
 
 template <typename T>
-void BroadcastRightShift(const std::vector<size_t> &inputx_shape, const std::vector<size_t> &inputy_shape,
-                         const std::vector<size_t> &output_shape, const T *inputx, const T *inputy, T *output,
-                         const uint32_t &device_id, cudaStream_t cuda_stream) {
+cudaError_t BroadcastRightShift(const std::vector<size_t> &inputx_shape, const std::vector<size_t> &inputy_shape,
+                                const std::vector<size_t> &output_shape, const T *inputx, const T *inputy, T *output,
+                                const uint32_t &device_id, cudaStream_t cuda_stream) {
   size_t size = 1;
   for (auto d : output_shape) {
     size *= d;
@@ -82,53 +117,63 @@ void BroadcastRightShift(const std::vector<size_t> &inputx_shape, const std::vec
     inputx_shape[6], inputy_shape[0], inputy_shape[1], inputy_shape[2], inputy_shape[3], inputy_shape[4],
     inputy_shape[5], inputy_shape[6], output_shape[0], output_shape[1], output_shape[2], output_shape[3],
     output_shape[4], output_shape[5], output_shape[6], inputx, inputy, output);
+  return GetCudaStatus();
 }
 
-template CUDA_LIB_EXPORT void CalRightShift<int8_t>(size_t, const int8_t *, const int8_t *, int8_t *, const uint32_t &,
-                                                    cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CalRightShift<int16_t>(size_t, const int16_t *, const int16_t *, int16_t *,
-                                                     const uint32_t &, cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CalRightShift<int32_t>(size_t, const int32_t *, const int32_t *, int32_t *,
-                                                     const uint32_t &, cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CalRightShift<int64_t>(size_t, const int64_t *, const int64_t *, int64_t *,
-                                                     const uint32_t &, cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CalRightShift<uint8_t>(size_t, const uint8_t *, const uint8_t *, uint8_t *,
-                                                     const uint32_t &, cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CalRightShift<uint16_t>(size_t, const uint16_t *, const uint16_t *, uint16_t *,
-                                                      const uint32_t &, cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CalRightShift<uint32_t>(size_t, const uint32_t *, const uint32_t *, uint32_t *,
-                                                      const uint32_t &, cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CalRightShift<uint64_t>(size_t, const uint64_t *, const uint64_t *, uint64_t *,
-                                                      const uint32_t &, cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalRightShift<int8_t>(size_t, const int8_t *, const int8_t *, int8_t *,
+                                                           const uint32_t &, cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalRightShift<int16_t>(size_t, const int16_t *, const int16_t *, int16_t *,
+                                                            const uint32_t &, cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalRightShift<int32_t>(size_t, const int32_t *, const int32_t *, int32_t *,
+                                                            const uint32_t &, cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalRightShift<int64_t>(size_t, const int64_t *, const int64_t *, int64_t *,
+                                                            const uint32_t &, cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalRightShift<uint8_t>(size_t, const uint8_t *, const uint8_t *, uint8_t *,
+                                                            const uint32_t &, cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalRightShift<uint16_t>(size_t, const uint16_t *, const uint16_t *, uint16_t *,
+                                                             const uint32_t &, cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalRightShift<uint32_t>(size_t, const uint32_t *, const uint32_t *, uint32_t *,
+                                                             const uint32_t &, cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalRightShift<uint64_t>(size_t, const uint64_t *, const uint64_t *, uint64_t *,
+                                                             const uint32_t &, cudaStream_t cuda_stream);
 
-template CUDA_LIB_EXPORT void BroadcastRightShift<int8_t>(const std::vector<size_t> &, const std::vector<size_t> &,
-                                                          const std::vector<size_t> &, const int8_t *, const int8_t *,
-                                                          int8_t *, const uint32_t &, cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void BroadcastRightShift<int16_t>(const std::vector<size_t> &, const std::vector<size_t> &,
-                                                           const std::vector<size_t> &, const int16_t *,
-                                                           const int16_t *, int16_t *, const uint32_t &,
-                                                           cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void BroadcastRightShift<int32_t>(const std::vector<size_t> &, const std::vector<size_t> &,
-                                                           const std::vector<size_t> &, const int32_t *,
-                                                           const int32_t *, int32_t *, const uint32_t &,
-                                                           cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void BroadcastRightShift<int64_t>(const std::vector<size_t> &, const std::vector<size_t> &,
-                                                           const std::vector<size_t> &, const int64_t *,
-                                                           const int64_t *, int64_t *, const uint32_t &,
-                                                           cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void BroadcastRightShift<uint8_t>(const std::vector<size_t> &, const std::vector<size_t> &,
-                                                           const std::vector<size_t> &, const uint8_t *,
-                                                           const uint8_t *, uint8_t *, const uint32_t &,
-                                                           cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void BroadcastRightShift<uint16_t>(const std::vector<size_t> &, const std::vector<size_t> &,
-                                                            const std::vector<size_t> &, const uint16_t *,
-                                                            const uint16_t *, uint16_t *, const uint32_t &,
-                                                            cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void BroadcastRightShift<uint32_t>(const std::vector<size_t> &, const std::vector<size_t> &,
-                                                            const std::vector<size_t> &, const uint32_t *,
-                                                            const uint32_t *, uint32_t *, const uint32_t &,
-                                                            cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void BroadcastRightShift<uint64_t>(const std::vector<size_t> &, const std::vector<size_t> &,
-                                                            const std::vector<size_t> &, const uint64_t *,
-                                                            const uint64_t *, uint64_t *, const uint32_t &,
-                                                            cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t BroadcastRightShift<int8_t>(const std::vector<size_t> &,
+                                                                 const std::vector<size_t> &,
+                                                                 const std::vector<size_t> &, const int8_t *,
+                                                                 const int8_t *, int8_t *, const uint32_t &,
+                                                                 cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t BroadcastRightShift<int16_t>(const std::vector<size_t> &,
+                                                                  const std::vector<size_t> &,
+                                                                  const std::vector<size_t> &, const int16_t *,
+                                                                  const int16_t *, int16_t *, const uint32_t &,
+                                                                  cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t BroadcastRightShift<int32_t>(const std::vector<size_t> &,
+                                                                  const std::vector<size_t> &,
+                                                                  const std::vector<size_t> &, const int32_t *,
+                                                                  const int32_t *, int32_t *, const uint32_t &,
+                                                                  cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t BroadcastRightShift<int64_t>(const std::vector<size_t> &,
+                                                                  const std::vector<size_t> &,
+                                                                  const std::vector<size_t> &, const int64_t *,
+                                                                  const int64_t *, int64_t *, const uint32_t &,
+                                                                  cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t BroadcastRightShift<uint8_t>(const std::vector<size_t> &,
+                                                                  const std::vector<size_t> &,
+                                                                  const std::vector<size_t> &, const uint8_t *,
+                                                                  const uint8_t *, uint8_t *, const uint32_t &,
+                                                                  cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t BroadcastRightShift<uint16_t>(const std::vector<size_t> &,
+                                                                   const std::vector<size_t> &,
+                                                                   const std::vector<size_t> &, const uint16_t *,
+                                                                   const uint16_t *, uint16_t *, const uint32_t &,
+                                                                   cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t BroadcastRightShift<uint32_t>(const std::vector<size_t> &,
+                                                                   const std::vector<size_t> &,
+                                                                   const std::vector<size_t> &, const uint32_t *,
+                                                                   const uint32_t *, uint32_t *, const uint32_t &,
+                                                                   cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t BroadcastRightShift<uint64_t>(const std::vector<size_t> &,
+                                                                   const std::vector<size_t> &,
+                                                                   const std::vector<size_t> &, const uint64_t *,
+                                                                   const uint64_t *, uint64_t *, const uint32_t &,
+                                                                   cudaStream_t cuda_stream);

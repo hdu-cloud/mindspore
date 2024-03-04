@@ -13,16 +13,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <vector>
-#include <map>
+#include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
-#include "ops/nth_element.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/nth_element.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -59,18 +77,22 @@ abstract::ShapePtr NthElementInferShape(const PrimitivePtr &primitive,
   } else if (input_args[1]->isa<abstract::AbstractScalar>()) {
     auto n = input_args[1]->cast<abstract::AbstractScalarPtr>();
     auto n_value_ptr = n->BuildValue();
-    if (!n_value_ptr->isa<Int64Imm>()) {
-      MS_EXCEPTION(TypeError) << "For primitive[" << prim_name << "], the n"
-                              << " must be a int, but got " << n_value_ptr->ToString() << ".";
+    if (!n_value_ptr->isa<ValueAny>()) {
+      if (!n_value_ptr->isa<Int64Imm>()) {
+        MS_EXCEPTION(TypeError) << "For primitive[" << prim_name << "], the n"
+                                << " must be a int, but got " << n_value_ptr->ToString() << ".";
+      }
+      n_val = GetValue<int32_t>(n_value_ptr);
     }
-    n_val = GetValue<int64_t>(n->BuildValue());
   } else {
     MS_EXCEPTION(TypeError) << "For primitive[" << prim_name << "], the n must be "
                             << "int or a scalar Tensor, but got " << input_args[1]->type_name() << ".";
   }
 
   (void)CheckAndConvertUtils::CheckInteger("n_value", n_val, kGreaterEqual, 0, primitive->name());
-  (void)CheckAndConvertUtils::CheckInteger("n_value", n_val, kLessThan, input_shape.back(), primitive->name());
+  if (input_shape.back() > 0) {
+    (void)CheckAndConvertUtils::CheckInteger("n_value", n_val, kLessThan, input_shape.back(), primitive->name());
+  }
   ShapeVector out_shape;
   int64_t len = SizeToLong(input_shape.size());
   for (int64_t i = 0; i < len - 1; i++) {
@@ -107,6 +129,23 @@ abstract::AbstractBasePtr NthElementInfer(const abstract::AnalysisEnginePtr &, c
   return std::make_shared<abstract::AbstractTensor>(infer_type, infer_shape);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(NthElement, prim::kPrimNthElement, NthElementInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGNthElementInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return NthElementInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return NthElementInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return NthElementInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(NthElement, prim::kPrimNthElement, AGNthElementInfer, false);
 }  // namespace ops
 }  // namespace mindspore

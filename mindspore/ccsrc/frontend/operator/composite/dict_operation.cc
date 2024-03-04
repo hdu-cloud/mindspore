@@ -20,13 +20,52 @@
 #include <utility>
 #include <algorithm>
 
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "abstract/param_validator.h"
 #include "frontend/optimizer/opt.h"
+#include "pipeline/jit/ps/fallback.h"
 #include "include/common/pybind_api/api_register.h"
 
 namespace mindspore {
 // namespace to support composite operators definition
 namespace prim {
+FuncGraphPtr DictSetItem::GenerateFuncGraph(const abstract::AbstractBasePtrList &args_list) {
+  constexpr size_t dict_setitem_args_size = 3;
+  abstract::CheckArgsSize("DictSetItem", args_list, dict_setitem_args_size);
+
+  constexpr size_t dict_index = 0;
+  auto data_abs = args_list[dict_index];
+  MS_EXCEPTION_IF_NULL(data_abs);
+  auto dict_abs = data_abs->cast<abstract::AbstractDictionaryPtr>();
+  MS_EXCEPTION_IF_NULL(dict_abs);
+
+  FuncGraphPtr ret = std::make_shared<FuncGraph>();
+  ret->set_flag(FUNC_GRAPH_FLAG_CORE, true);
+  ret->debug_info()->set_name("setitem");
+
+  auto dict_param = ret->add_parameter();
+  auto index_param = ret->add_parameter();
+  auto target_param = ret->add_parameter();
+  std::vector<AnfNodePtr> inputs = {dict_param, index_param, target_param};
+
+  if (fallback::HasObjInExtraInfoHolder(dict_abs) && !fallback::GetCreateInGraphFromExtraInfoHolder(dict_abs)) {
+    // The dict input has attached python object and the object is not created in graph.
+    // Convert the DictSetItem to InplaceDictSetItem node.
+    inputs.insert(inputs.begin(), NewValueNode(prim::kPrimDictInplaceSetItem));
+    auto dict_inplace_setitem_node = ret->NewCNodeInOrder(inputs);
+    dict_inplace_setitem_node->set_has_side_effect_node(true);
+    ret->set_output(dict_inplace_setitem_node);
+    ret->set_has_side_effect_node(true);
+    return ret;
+  }
+
+  inputs.insert(inputs.begin(), NewValueNode(prim::kPrimDictSetItem));
+  auto dict_setitem_node = ret->NewCNode(inputs);
+  ret->set_output(dict_setitem_node);
+  return ret;
+}
+
 FuncGraphPtr DictClear::GenerateFuncGraph(const abstract::AbstractBasePtrList &args_list) {
   constexpr size_t dict_clear_args_size = 1;
   abstract::CheckArgsSize("DictClear", args_list, dict_clear_args_size);
@@ -41,6 +80,29 @@ FuncGraphPtr DictClear::GenerateFuncGraph(const abstract::AbstractBasePtrList &a
   return ret;
 }
 
+AnfNodePtr GeneratePyExecuteNodeHasKey(const FuncGraphPtr &fg) {
+  auto dict_input = fg->add_parameter();
+  auto value_input = fg->add_parameter();
+
+  const std::string internal_dict = "__iternal_dict__";
+  const std::string internal_target = "__internal_target__";
+
+  std::stringstream script_buffer;
+  script_buffer << internal_target << " in " << internal_dict;
+  const std::string &script = script_buffer.str();
+  const auto script_str = std::make_shared<StringImm>(script);
+
+  std::vector<AnfNodePtr> key_value_names_list{NewValueNode(prim::kPrimMakeTuple)};
+  (void)key_value_names_list.emplace_back(NewValueNode(internal_dict));
+  (void)key_value_names_list.emplace_back(NewValueNode(internal_target));
+  const auto key_value_name_tuple = fg->NewCNode(key_value_names_list);
+  std::vector<AnfNodePtr> key_value_list{NewValueNode(prim::kPrimMakeTuple)};
+  (void)key_value_list.emplace_back(dict_input);
+  (void)key_value_list.emplace_back(value_input);
+  const auto key_value_tuple = fg->NewCNode(key_value_list);
+  return fallback::CreatePyExecuteCNode(fg, NewValueNode(script_str), key_value_name_tuple, key_value_tuple, nullptr);
+}
+
 FuncGraphPtr DictHasKey::GenerateFuncGraph(const abstract::AbstractBasePtrList &args_list) {
   constexpr size_t dict_has_key_args_size = 2;
   abstract::CheckArgsSize("DictHasKey", args_list, dict_has_key_args_size);
@@ -49,7 +111,20 @@ FuncGraphPtr DictHasKey::GenerateFuncGraph(const abstract::AbstractBasePtrList &
   ValuePtr key_value = args_list[1]->BuildValue();
   MS_EXCEPTION_IF_NULL(dict);
   MS_EXCEPTION_IF_NULL(key_value);
-  auto elems = dict->elements();
+  const auto &elems = dict->elements();
+  FuncGraphPtr ret = std::make_shared<FuncGraph>();
+  ret->set_flag(FUNC_GRAPH_FLAG_CORE, true);
+  ret->debug_info()->set_name("has_key");
+  // If key_value or value of dictionary has variable, then we convert has key operation to pyexecute.
+  bool has_variable = (key_value == kValueAny) || std::any_of(elems.cbegin(), elems.cend(),
+                                                              [&key_value](const abstract::AbstractElementPair &item) {
+                                                                return item.first->BuildValue() == kValueAny;
+                                                              });
+  if (has_variable) {
+    auto out = GeneratePyExecuteNodeHasKey(ret);
+    ret->set_output(out);
+    return ret;
+  }
   bool has_key = false;
   auto it = std::find_if(elems.cbegin(), elems.cend(), [&key_value](const abstract::AbstractElementPair &item) {
     return *key_value == *item.first->BuildValue();
@@ -58,9 +133,6 @@ FuncGraphPtr DictHasKey::GenerateFuncGraph(const abstract::AbstractBasePtrList &
     has_key = true;
   }
 
-  FuncGraphPtr ret = std::make_shared<FuncGraph>();
-  ret->set_flag(FUNC_GRAPH_FLAG_CORE, true);
-  ret->debug_info()->set_name("has_key");
   (void)ret->add_parameter();
   (void)ret->add_parameter();
 
@@ -92,7 +164,7 @@ FuncGraphPtr DictUpdate::GenerateFuncGraph(const abstract::AbstractBasePtrList &
 }
 
 void DictUpdate::AddNodeToLists(const AbstractBasePtr &arg, const FuncGraphPtr &ret, AnfNodePtrList *keys,
-                                AnfNodePtrList *values, std::vector<std::pair<ValuePtr, size_t>> *key_place_map) {
+                                AnfNodePtrList *values, std::vector<std::pair<ValuePtr, size_t>> *key_place_map) const {
   auto dict = dyn_cast<abstract::AbstractDictionary>(arg);
   MS_EXCEPTION_IF_NULL(dict);
   auto &dict_elems = dict->elements();
@@ -140,7 +212,7 @@ FuncGraphPtr DictFromKeys::GenerateFuncGraph(const abstract::AbstractBasePtrList
   return ret;
 }
 
-abstract::AbstractBasePtrList DictFromKeys::ParseIterableObject(const abstract::AbstractBasePtr &arg_key) {
+abstract::AbstractBasePtrList DictFromKeys::ParseIterableObject(const abstract::AbstractBasePtr &arg_key) const {
   auto key_type = arg_key->BuildType();
   if (key_type->IsSameTypeId(List::kTypeId) || key_type->IsSameTypeId(Tuple::kTypeId)) {
     abstract::AbstractSequencePtr dict_keys = dyn_cast<abstract::AbstractSequence>(arg_key);
@@ -152,19 +224,20 @@ abstract::AbstractBasePtrList DictFromKeys::ParseIterableObject(const abstract::
     MS_EXCEPTION_IF_NULL(dict_keys);
     AbstractBasePtrList keys;
     auto &dict_elems = dict_keys->elements();
-    std::transform(dict_elems.cbegin(), dict_elems.cend(), std::back_inserter(keys),
-                   [](const abstract::AbstractElementPair &item) { return item.first; });
+    (void)std::transform(dict_elems.cbegin(), dict_elems.cend(), std::back_inserter(keys),
+                         [](const abstract::AbstractElementPair &item) { return item.first; });
     return keys;
   }
   if (key_type->IsSameTypeId(String::kTypeId)) {
     string dict_keys = arg_key->BuildValue()->ToString();
     AbstractBasePtrList keys;
-    std::transform(dict_keys.cbegin(), dict_keys.cend(), std::back_inserter(keys),
-                   [](const char &item) { return std::make_shared<abstract::AbstractScalar>(std::string(1, item)); });
+    (void)std::transform(dict_keys.cbegin(), dict_keys.cend(), std::back_inserter(keys), [](const char &item) {
+      return std::make_shared<abstract::AbstractScalar>(std::string(1, item));
+    });
     return keys;
   }
 
-  MS_LOG(EXCEPTION) << key_type->ToString() << " object is not iterable";
+  MS_LOG(INTERNAL_EXCEPTION) << key_type->ToString() << " object is not iterable";
 }
 }  // namespace prim
 }  // namespace mindspore

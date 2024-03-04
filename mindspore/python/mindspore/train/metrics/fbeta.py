@@ -18,7 +18,7 @@ from __future__ import absolute_import
 import sys
 import numpy as np
 
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.train.metrics.metric import Metric, rearrange_inputs, _check_onehot_data
 
 
@@ -120,7 +120,7 @@ class Fbeta(Metric):
         Computes the fbeta.
 
         Args:
-            average (bool): Whether to calculate the average fbeta. Default: False.
+            average (bool): Whether to calculate the average fbeta. Default: ``False``.
 
         Returns:
             numpy.ndarray or numpy.float64, the computed result.

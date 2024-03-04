@@ -14,26 +14,41 @@
  * limitations under the License.
  */
 
-#include <set>
 #include <map>
+#include <memory>
+#include <set>
 #include <string>
 
-#include "ops/sparse_softmax_cross_entropy_with_logits.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/sparse_softmax_cross_entropy_with_logits.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::ShapePtr SparseSoftmaxCrossEntropyWithLogitsInferShape(const PrimitivePtr &primitive,
                                                                  const std::vector<AbstractBasePtr> &input_args) {
-  auto op_name = primitive->name();
+  MS_EXCEPTION_IF_NULL(primitive);
   auto features_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
   auto labels_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
   if (!IsDynamic(features_shape) && !IsDynamic(labels_shape)) {
-    (void)CheckAndConvertUtils::CheckInteger("batch of logits(features)", features_shape[kInputIndex0], kEqual,
-                                             labels_shape[kInputIndex0], op_name);
+    auto features_dims = features_shape.size();
+    auto labels_dims = labels_shape.size();
+    if (features_dims <= 1) {
+      MS_EXCEPTION(ValueError) << "Features shape length must be greater than 1";
+    }
+    if (labels_dims + 1 != features_dims) {
+      MS_EXCEPTION(ValueError) << "Features shape length must be equal to Labels shape length plus 1";
+    }
+    auto is_same_shape_value = std::equal(labels_shape.begin(), labels_shape.end(), features_shape.begin());
+    if (!is_same_shape_value) {
+      MS_EXCEPTION(ValueError)
+        << "Labels shape value must be equal to the Features except the last dimension of Features";
+    }
   }
   auto is_grad = false;
   if (primitive->HasAttr(kIsGrad)) {
@@ -48,11 +63,13 @@ abstract::ShapePtr SparseSoftmaxCrossEntropyWithLogitsInferShape(const Primitive
 
 TypePtr SparseSoftmaxCrossEntropyWithLogitsInferType(const PrimitivePtr &primitive,
                                                      const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto features_type = input_args[kInputIndex0]->BuildType();
   auto labels_type = input_args[kInputIndex1]->BuildType();
   const std::set<TypePtr> valid_features_types = {kFloat16, kFloat32};
   const std::set<TypePtr> valid_labels_types = {kInt32, kInt64};
-  std::map<std::string, TypePtr> features_args, labels_args;
+  std::map<std::string, TypePtr> features_args;
+  std::map<std::string, TypePtr> labels_args;
   (void)features_args.insert({"logits_type(features_type)", features_type});
   (void)labels_args.insert({"labels_type", labels_type});
   (void)CheckAndConvertUtils::CheckTensorTypeSame(features_args, valid_features_types, primitive->name());
@@ -75,7 +92,7 @@ AbstractBasePtr SparseSoftmaxCrossEntropyWithLogitsInfer(const abstract::Analysi
     MS_EXCEPTION_IF_NULL(input);
   }
   const int64_t kInputsNum = 2;
-  (void)CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputsNum, primitive->name());
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputsNum, primitive->name());
   auto infer_type = SparseSoftmaxCrossEntropyWithLogitsInferType(primitive, input_args);
   auto infer_shape = SparseSoftmaxCrossEntropyWithLogitsInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
@@ -84,8 +101,25 @@ AbstractBasePtr SparseSoftmaxCrossEntropyWithLogitsInfer(const abstract::Analysi
 bool SparseSoftmaxCrossEntropyWithLogits::get_is_grad() const { return GetValue<bool>(GetAttr(kIsGrad)); }
 
 MIND_API_OPERATOR_IMPL(SparseSoftmaxCrossEntropyWithLogits, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseSoftmaxCrossEntropyWithLogits, prim::kPrimSparseSoftmaxCrossEntropyWithLogits,
-                             SparseSoftmaxCrossEntropyWithLogitsInfer, nullptr, true);
-// REGISTER_PRIMITIVE_C(kNameSparseSoftmaxCrossEntropyWithLogits, SparseSoftmaxCrossEntropyWithLogits);
+
+// AG means auto generated
+class MIND_API AGSparseSoftmaxCrossEntropyWithLogitsInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSoftmaxCrossEntropyWithLogitsInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSoftmaxCrossEntropyWithLogitsInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSoftmaxCrossEntropyWithLogitsInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseSoftmaxCrossEntropyWithLogits, prim::kPrimSparseSoftmaxCrossEntropyWithLogits,
+                                 AGSparseSoftmaxCrossEntropyWithLogitsInfer, false);
 }  // namespace ops
 }  // namespace mindspore

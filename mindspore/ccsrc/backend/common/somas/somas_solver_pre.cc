@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -102,8 +102,10 @@ vector<TensorsDescMap> SomasSolverPre::CreateTensorsMaps(const TensorsDescMap &t
   return vecTensorsMap;
 }
 void FindBest(size_t total_sol, const vector<std::shared_ptr<SomasSolverCore>> &solvers, BestInfo *best_info) {
+  MS_EXCEPTION_IF_NULL(best_info);
   for (size_t sol = 0; sol < total_sol; sol++) {
     auto &solver = solvers[sol];
+    MS_EXCEPTION_IF_NULL(solver);
     auto &upperbound = solver->GetUpperbound();
     if (upperbound > best_info->worst) {
       best_info->worst = upperbound;
@@ -123,8 +125,8 @@ void FindBest(size_t total_sol, const vector<std::shared_ptr<SomasSolverCore>> &
 }
 Status SomasSolverPre::Solving(const session::KernelGraph &graph, TensorsDescMap *ptensors,
                                const std::vector<DynamicBitSet> *pConstraints,
-                               const vector<vector<size_t>> &continuous_v, bool bVerifySolution, bool ball,
-                               SortingType sorting, FittingType fitting, AlgorithmType algorithm) {
+                               const vector<vector<size_t>> &continuous_v, bool bVerifySolution, bool, SortingType,
+                               FittingType, AlgorithmType) {
   Status ret = SUCCESS;
   try {
     TensorsDescMap &tensors = *ptensors;
@@ -168,6 +170,7 @@ Status SomasSolverPre::Solving(const session::KernelGraph &graph, TensorsDescMap
     for (auto &tensor : tensors) {
       *(tensor.second.get()) = *(vecTensorsMap[best_info.best_sol][tensor.first]);
     }
+    MS_EXCEPTION_IF_NULL(best_solver);
     max_offset_ = best_solver->GetUpperbound();
     constexpr float kFloatPresent = 100.0;
     MS_LOG(INFO) << "SOMAS SOLVER RESUME:";
@@ -196,13 +199,11 @@ void SomasSolverPre::Log(const session::KernelGraph &graph, const TensorsDescMap
                          const vector<vector<size_t>> &continuous_v) const {
   auto context_ptr = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(context_ptr);
-  bool save_graphs = context_ptr->get_param<bool>(MS_CTX_SAVE_GRAPHS_FLAG);
-  if (!save_graphs) {
-    return;
+  if (context_ptr->CanDump(kIntroductory)) {
+    SolverInputLog(graph, tensors, continuous_v);
+    SolverOutputLog(graph, tensors);
+    TensorRelationLog(pConstraints, graph);
   }
-  SolverInputLog(graph, tensors, continuous_v);
-  SolverOutputLog(graph, tensors);
-  TensorRelationLog(pConstraints, graph);
 }
 
 void SomasSolverPre::TensorRelationLog(const std::vector<DynamicBitSet> *pConstraints,
@@ -210,7 +211,7 @@ void SomasSolverPre::TensorRelationLog(const std::vector<DynamicBitSet> *pConstr
   MS_LOG(INFO) << "SomasSolver::Log Writing somas_tensor_relation.ir..";
   auto context_ptr = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(context_ptr);
-  auto save_graphs_path = context_ptr->get_param<std::string>(MS_CTX_SAVE_GRAPHS_PATH);
+  auto save_graphs_path = context_ptr->GetSaveGraphsPath();
   std::string filename =
     GetSaveGraphsPathName("somas_tensor_relation_" + std::to_string(graph.graph_id()) + ".ir", save_graphs_path);
   std::ostringstream oss;
@@ -230,7 +231,7 @@ void SomasSolverPre::SolverInputLog(const session::KernelGraph &graph, const Ten
   MS_LOG(INFO) << "SomasSolver::Log Writing somas_solver_input..";
   auto context_ptr = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(context_ptr);
-  auto save_graphs_path = context_ptr->get_param<std::string>(MS_CTX_SAVE_GRAPHS_PATH);
+  auto save_graphs_path = context_ptr->GetSaveGraphsPath();
   std::string filename =
     GetSaveGraphsPathName("somas_solver_input_" + std::to_string(graph.graph_id()) + ".ir", save_graphs_path);
   std::ostringstream oss;
@@ -253,7 +254,7 @@ void SomasSolverPre::SolverOutputLog(const session::KernelGraph &graph, const Te
   MS_LOG(INFO) << "SomasSolver::Log Writing somas_solver_output_..";
   auto context_ptr = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(context_ptr);
-  auto save_graphs_path = context_ptr->get_param<std::string>(MS_CTX_SAVE_GRAPHS_PATH);
+  auto save_graphs_path = context_ptr->GetSaveGraphsPath();
   std::string out_filename =
     GetSaveGraphsPathName("somas_solver_output_" + std::to_string(graph.graph_id()) + ".ir", save_graphs_path);
   std::ostringstream oss;
@@ -262,6 +263,7 @@ void SomasSolverPre::SolverOutputLog(const session::KernelGraph &graph, const Te
   constexpr size_t contiguous_right = 3;
   for (auto &t : tensors) {
     SomasSolverTensorDescPtr tensor = t.second;
+    MS_EXCEPTION_IF_NULL(tensor);
     int continuous = 0;
     if (tensor->left_ == nullptr && tensor->right_ != nullptr) {
       continuous = contiguous_left;

@@ -17,15 +17,15 @@ from __future__ import absolute_import
 
 import numpy as np
 
+from mindspore import log as logger
 from mindspore.ops import operations as P
 from mindspore.common.tensor import Tensor
 from mindspore.common._decorator import deprecated
-from mindspore.ops.primitive import constexpr
+from mindspore.ops.primitive import constexpr, _primexpr
 from mindspore.ops import functional as F
 from mindspore.nn.cell import Cell
 from mindspore.common import dtype as mstype
-from mindspore._checkparam import Validator as validator
-from mindspore.ops._utils.utils import is_shape_unknown
+from mindspore import _checkparam as validator
 
 __all__ = ['ReduceLogSumExp',
            'Range',
@@ -33,6 +33,7 @@ __all__ = ['ReduceLogSumExp',
            'DiGamma',
            'IGamma',
            'LBeta',
+           'CosineSimilarity',
            'MatMul',
            'Moments',
            'MatInverse',
@@ -65,7 +66,7 @@ class ReduceLogSumExp(Cell):
         ReduceLogSumExp(x) = \log(\sum(e^x))
 
     Args:
-        axis (Union[int, tuple(int), list(int)]) - The dimensions to reduce. Default: (), reduce all dimensions.
+        axis (Union[int, tuple(int), list(int)]) - The dimensions to reduce. Default: ``()`` , reduce all dimensions.
             Only constant value is allowed.
         keep_dims (bool): If True, keep these reduced dimensions and the length is 1.
             If False, don't keep these dimensions.
@@ -93,8 +94,10 @@ class ReduceLogSumExp(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> x = Tensor(np.random.randn(3, 4, 5, 6).astype(np.float32))
-        >>> op = nn.ReduceLogSumExp(1, keep_dims=True)
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> x = ms.Tensor(np.random.randn(3, 4, 5, 6).astype(np.float32))
+        >>> op = ms.nn.ReduceLogSumExp(1, keep_dims=True)
         >>> output = op(x)
         >>> print(output.shape)
         (3, 1, 5, 6)
@@ -121,38 +124,15 @@ class ReduceLogSumExp(Cell):
 
 class Range(Cell):
     r"""
-    Creates a sequence of numbers in range [start, limit) with step size delta.
-
-    The size of output is :math:`\left \lfloor \frac{limit-start}{delta}  \right \rfloor + 1` and `delta` is the gap
-    between two values in the tensor.
-
-    .. math::
-
-        out_{i+1} = out_{i} +delta
-
-    Args:
-        start (Union[int, float]): If `limit` is `None`, the value acts as limit in the range and first entry
-            defaults to `0`. Otherwise, it acts as first entry in the range.
-        limit (Union[int, float]): Acts as upper limit of sequence. If `None`, defaults to the value of `start`
-            while set the first entry of the range to `0`. It can not be equal to `start`. Default: None.
-        delta (Union[int, float]): Increment of the range. It can not be equal to zero. Default: 1.
-
-    Outputs:
-        Tensor, the dtype is int if the dtype of `start`, `limit` and `delta` all are int. Otherwise, dtype is float.
-
-    Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU``
-
-    Examples:
-        >>> net = nn.Range(1, 8, 2)
-        >>> output = net()
-        >>> print(output)
-        [1 3 5 7]
+    The Range class will be deprecated in the future,
+    this function can be replaced by :func:`ops.range`
     """
 
     def __init__(self, start, limit=None, delta=1):
         """Initialize Range."""
         super(Range, self).__init__()
+        logger.warning("The Range class will be deprecated in the future,"
+                       "this function can be replaced by :func:`ops.range`")
         if delta == 0:
             raise ValueError(f"For '{self.cls_name}', the 'delta' can not be zero.")
         data = np.arange(start, limit, delta)
@@ -210,8 +190,10 @@ class LGamma(Cell):
         ``Ascend`` ``GPU``
 
     Examples:
-        >>> x = Tensor(np.array([2, 3, 4]).astype(np.float32))
-        >>> op = nn.LGamma()
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> x = ms.Tensor(np.array([2, 3, 4]).astype(np.float32))
+        >>> op = ms.nn.LGamma()
         >>> output = op(x)
         >>> print(output)
         [3.5762787e-07 6.9314754e-01 1.7917603e+00]
@@ -240,9 +222,7 @@ class LGamma(Cell):
         self.log1p = P.Log1p()
         self.abs = P.Abs()
         self.shape = P.Shape()
-        self.dyn_shape = P.TensorShape()
         self.dtype = P.DType()
-        self.fill = P.Fill()
         self.floor = P.Floor()
         self.equal = P.Equal()
         self.greater = P.Greater()
@@ -256,10 +236,10 @@ class LGamma(Cell):
     def construct(self, x):
         input_dtype = self.dtype(x)
         _check_input_dtype("x", input_dtype, [mstype.float16, mstype.float32], self.cls_name)
-        if is_shape_unknown(self.shape(x)):
+        if F.is_sequence_value_unknown(self.shape(x)):
             infinity = self.ones_like(x) * F.cast(self.inf, input_dtype)
         else:
-            infinity = self.fill(input_dtype, self.shape(x), self.inf)
+            infinity = F.fill(input_dtype, self.shape(x), self.inf)
 
         need_to_reflect = self.less(x, 0.5)
         neg_input = -x
@@ -328,8 +308,10 @@ class DiGamma(Cell):
         ``Ascend`` ``GPU``
 
     Examples:
-        >>> x = Tensor(np.array([2, 3, 4]).astype(np.float32))
-        >>> op = nn.DiGamma()
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> x = ms.Tensor(np.array([2, 3, 4]).astype(np.float32))
+        >>> op = ms.nn.DiGamma()
         >>> output = op(x)
         >>> print(output)
         [0.42278463  0.92278427 1.2561178]
@@ -352,7 +334,6 @@ class DiGamma(Cell):
         self.abs = P.Abs()
         self.shape = P.Shape()
         self.dtype = P.DType()
-        self.fill = P.Fill()
         self.floor = P.Floor()
         self.equal = P.Equal()
         self.less = P.Less()
@@ -373,8 +354,9 @@ class DiGamma(Cell):
             num = 0
             denom = k_base_lanczos_coeff
             for i in range(8):
-                num = num - k_lanczos_coefficients[i] / ((z + i + 1) * (z + i + 1))
-                denom = denom + k_lanczos_coefficients[i] / (z + i + 1)
+                j = z + i + 1
+                num = num - k_lanczos_coefficients[i] / (j * j)
+                denom = denom + k_lanczos_coefficients[i] / j
             return num, denom
 
         num, denom = _calculate_num_denom(z, self.k_base_lanczos_coeff, self.k_lanczos_coefficients)
@@ -387,7 +369,7 @@ class DiGamma(Cell):
         reduced_input = x + self.abs(self.floor(x + 0.5))
         reflection = y - self.pi * self.cos(self.pi * reduced_input) / self.sin(self.pi * reduced_input)
         real_result = self.select(need_to_reflect, reflection, y)
-        nan = self.fill(self.dtype(x), self.shape(x), np.nan)
+        nan = F.fill(self.dtype(x), self.shape(x), np.nan)
 
         return self.select(self.logicaland(self.less(x, 0), self.equal(x, self.floor(x))),
                            nan, real_result)
@@ -407,7 +389,6 @@ def _igamma_series(ax, x, a, enabled):
 
     logicaland = P.LogicalAnd()
     greater = P.Greater()
-    fill = P.Fill()
     shape = P.Shape()
     dtype = P.DType()
     select = P.Select()
@@ -440,8 +421,8 @@ def _igamma_series(ax, x, a, enabled):
                 select(enabled, x, vals[4]), select(enabled, dc_da, vals[5]),
                 select(enabled, dans_da, vals[6]))
 
-    ones = fill(dtype(a), shape(a), 1)
-    zeros = fill(dtype(a), shape(a), 0)
+    ones = F.fill(dtype(a), shape(a), 1)
+    zeros = F.fill(dtype(a), shape(a), 0)
     vals = (enabled, a, ones, ones, x, zeros, zeros)
 
     vals = _while_helper_func(cond, body, vals)
@@ -457,7 +438,6 @@ def _igammac_continued_fraction(ax, x, a, enabled):
     greater = P.Greater()
     less = P.Less()
     notequal = P.NotEqual()
-    fill = P.Fill()
     shape = P.Shape()
     dtype = P.DType()
     select = P.Select()
@@ -498,7 +478,7 @@ def _igammac_continued_fraction(ax, x, a, enabled):
         qk_is_nonzero = notequal(qk, 0)
         r = pk / qk
 
-        t = select(qk_is_nonzero, abs_x((ans - r) / r), fill(dtype(t), shape(t), 1))
+        t = select(qk_is_nonzero, abs_x((ans - r) / r), F.fill(dtype(t), shape(t), 1))
         ans = select(qk_is_nonzero, r, ans)
 
         dpk_da = dpkm1_da * z - pkm1 - dpkm2_da * yc + pkm2 * c
@@ -506,7 +486,7 @@ def _igammac_continued_fraction(ax, x, a, enabled):
         dans_da_new = select(qk_is_nonzero, (dpk_da - ans * dqk_da) / qk, dans_da)
         grad_conditional = select(qk_is_nonzero,
                                   abs_x(dans_da_new - dans_da),
-                                  fill(dtype(dans_da), shape(dans_da), 1))
+                                  F.fill(dtype(dans_da), shape(dans_da), 1))
 
         pkm2 = pkm1
         pkm1 = pk
@@ -541,16 +521,16 @@ def _igammac_continued_fraction(ax, x, a, enabled):
 
     y = 1 - a
     z = x + y + 1
-    c = fill(dtype(x), shape(x), 0)
-    pkm2 = fill(dtype(x), shape(x), 1)
+    c = F.fill(dtype(x), shape(x), 0)
+    pkm2 = F.fill(dtype(x), shape(x), 1)
     qkm2 = x
     pkm1 = x + 1
     qkm1 = z * x
     ans = pkm1 / qkm1
-    t = fill(dtype(x), shape(x), 1)
-    dpkm2_da = fill(dtype(x), shape(x), 0)
-    dqkm2_da = fill(dtype(x), shape(x), 0)
-    dpkm1_da = fill(dtype(x), shape(x), 0)
+    t = F.fill(dtype(x), shape(x), 1)
+    dpkm2_da = F.fill(dtype(x), shape(x), 0)
+    dqkm2_da = F.fill(dtype(x), shape(x), 0)
+    dpkm1_da = F.fill(dtype(x), shape(x), 0)
     dqkm1_da = -x
     dans_da = (dpkm1_da - ans * dqkm1_da) / qkm1
     vals = (enabled, ans, t, y, z, c, pkm1, qkm1, pkm2, qkm2, dpkm2_da, dqkm2_da, dpkm1_da, dqkm1_da, dans_da)
@@ -590,12 +570,14 @@ class IGamma(Cell):
                    or if x has different dtype with a.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> a = Tensor(np.array([2.0, 4.0, 6.0, 8.0]).astype(np.float32))
-        >>> x = Tensor(np.array([2.0, 3.0, 4.0, 5.0]).astype(np.float32))
-        >>> igamma = nn.IGamma()
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> a = ms.Tensor(np.array([2.0, 4.0, 6.0, 8.0]).astype(np.float32))
+        >>> x = ms.Tensor(np.array([2.0, 3.0, 4.0, 5.0]).astype(np.float32))
+        >>> igamma = ms.nn.IGamma()
         >>> output = igamma(a, x)
         >>> print (output)
         [0.593994  0.35276785  0.21486944  0.13337152]
@@ -620,7 +602,6 @@ class IGamma(Cell):
         self.exp = P.Exp()
         self.select = P.Select()
         self.zeroslike = P.ZerosLike()
-        self.fill = P.Fill()
         self.shape = P.Shape()
         self.dtype = P.DType()
         self.lgamma = LGamma()
@@ -636,9 +617,8 @@ class IGamma(Cell):
         ax = a * self.log(x) - x - self.lgamma(a)
         para_shape = self.shape(ax)
         if para_shape != ():
-            broadcastto = P.BroadcastTo(para_shape)
-            x = broadcastto(x)
-            a = broadcastto(a)
+            x = F.broadcast_to(x, para_shape)
+            a = F.broadcast_to(a, para_shape)
         x_is_zero = self.equal(x, 0)
         log_maxfloat = self.log_maxfloat32
         underflow = self.less(ax, self.neg(log_maxfloat))
@@ -648,7 +628,7 @@ class IGamma(Cell):
                              1 - _igammac_continued_fraction(ax, x, a, self.logicaland(enabled, use_igammac)),
                              _igamma_series(ax, x, a, self.logicaland(enabled, self.logicalnot(use_igammac))))
         output = self.select(x_is_zero, self.zeroslike(output), output)
-        output = self.select(domain_error, self.fill(self.dtype(a), self.shape(a), np.nan), output)
+        output = self.select(domain_error, F.fill(self.dtype(a), self.shape(a), np.nan), output)
         return output
 
 
@@ -683,9 +663,11 @@ class LBeta(Cell):
         ``Ascend`` ``GPU``
 
     Examples:
-        >>> x = Tensor(np.array([2.0, 4.0, 6.0, 8.0]).astype(np.float32))
-        >>> y = Tensor(np.array([2.0, 3.0, 14.0, 15.0]).astype(np.float32))
-        >>> lbeta = nn.LBeta()
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> x = ms.Tensor(np.array([2.0, 4.0, 6.0, 8.0]).astype(np.float32))
+        >>> y = ms.Tensor(np.array([2.0, 3.0, 14.0, 15.0]).astype(np.float32))
+        >>> lbeta = ms.nn.LBeta()
         >>> output = lbeta(y, x)
         >>> print(output)
         [-1.7917596  -4.094345  -12.000229  -14.754799]
@@ -721,9 +703,8 @@ class LBeta(Cell):
         x_plus_y = x + y
         para_shape = self.shape(x_plus_y)
         if para_shape != ():
-            broadcastto = P.BroadcastTo(para_shape)
-            x = broadcastto(x)
-            y = broadcastto(y)
+            x = F.broadcast_to(x, para_shape)
+            y = F.broadcast_to(y, para_shape)
         comp_less = self.less(x, y)
         x_min = self.select(comp_less, x, y)
         y_max = self.select(comp_less, y, x)
@@ -761,14 +742,17 @@ class LBeta(Cell):
         return self.select(comp_xless8, temp, log_beta_two_large)
 
 
-@constexpr
+@_primexpr
 def get_broadcast_matmul_shape(x_shape, y_shape, prim_name=None):
     """get broadcast_matmul shape"""
     msg_prefix = f"For '{prim_name}', the" if prim_name else "The"
-    if (len(x_shape) < 2) or (len(y_shape) < 2):
-        raise ValueError(f"{msg_prefix} length of 'x_shape' and 'y_shape' must be equal to or greater than 2, "
-                         f"but got the length of 'x_shape': {len(x_shape)} and the length of 'y_shape': "
-                         f"{len(y_shape)}.")
+
+    def _check_len():
+        if (len(x_shape) < 2) or (len(y_shape) < 2):
+            raise ValueError(f"{msg_prefix} length of 'x_shape' and 'y_shape' must be equal to or greater than 2, "
+                             f"but got the length of 'x_shape': {len(x_shape)} and the length of 'y_shape': "
+                             f"{len(y_shape)}.")
+    _check_len()
     x_shape_batch = x_shape[:-2]
     y_shape_batch = y_shape[:-2]
     if x_shape_batch == y_shape_batch:
@@ -777,17 +761,21 @@ def get_broadcast_matmul_shape(x_shape, y_shape, prim_name=None):
     y_len = len(y_shape)
     length = x_len if x_len < y_len else y_len
     broadcast_shape_back = []
+
+    def _check_broadcast(x_val, y_val, i):
+        if not (x_val == 1 or y_val == 1 or x_val == y_val):
+            raise ValueError(f"{msg_prefix} 'x_shape[{i}]' must be equal to 1, or the 'y_shape[{i}]' must be equal "
+                             f"to 1, or the 'x_shape[{i}]' must be equal to 'y_shape[{i}]', but got "
+                             f"'x_shape[{i}]': {x_val}, 'y_shape[{i}]': {y_val}.")
+
     for i in range(-length, -2):
+        _check_broadcast(x_shape[i], y_shape[i], i)
         if x_shape[i] == 1:
             broadcast_shape_back.append(y_shape[i])
         elif y_shape[i] == 1:
             broadcast_shape_back.append(x_shape[i])
-        elif x_shape[i] == y_shape[i]:
-            broadcast_shape_back.append(x_shape[i])
         else:
-            raise ValueError(f"{msg_prefix} 'x_shape[{i}]' must be equal to 1, or the 'y_shape[{i}]' must be equal "
-                             f"to 1, or the 'x_shape[{i}]' must be equal to 'y_shape[{i}]', but got "
-                             f"'x_shape[{i}]': {x_shape[i]}, 'y_shape[{i}]': {y_shape[i]}.")
+            broadcast_shape_back.append(x_shape[i])
 
     broadcast_shape_front = y_shape[0: y_len - length] if length == x_len else x_shape[0: x_len - length]
     x_broadcast_shape = broadcast_shape_front + tuple(broadcast_shape_back) + x_shape[-2:]
@@ -795,10 +783,15 @@ def get_broadcast_matmul_shape(x_shape, y_shape, prim_name=None):
     return x_broadcast_shape, y_broadcast_shape
 
 
-@constexpr
+@_primexpr
 def check_col_row_equal(x1_shape, x2_shape, transpose_x1, transpose_x2, prim_name=None):
     """check col and row equal"""
-    msg_prefix = f"For '{prim_name}', the" if prim_name else "The"
+    def _check(x1_col, x2_row):
+        msg_prefix = f"For '{prim_name}', the" if prim_name else "The"
+        if x1_col != x2_row:
+            raise ValueError(f"{msg_prefix} column of matrix dimensions of 'x1' must be equal to "
+                             f"the row of matrix dimensions of 'x2', but got 'x1_col' {x1_col} and 'x2_row' {x2_row}.")
+
     if len(x1_shape) == 1:
         transpose_x1 = False
         x1_shape = (1,) + x1_shape
@@ -809,9 +802,7 @@ def check_col_row_equal(x1_shape, x2_shape, transpose_x1, transpose_x2, prim_nam
     x2_last = x2_shape[-2:]
     x1_col = x1_last[not transpose_x1]  # x1_col = x1_last[1] if (not transpose_a) else x1_last[0]
     x2_row = x2_last[transpose_x2]  # x2_row = x2_last[0] if (not transpose_b) else x2_last[1]
-    if x1_col != x2_row:
-        raise ValueError(f"{msg_prefix} column of matrix dimensions of 'x1' must be equal to "
-                         f"the row of matrix dimensions of 'x2', but got 'x1_col' {x1_col} and 'x2_row' {x2_row}.")
+    _check(x1_col, x2_row)
 
 
 def matmul_op_select(x1_shape, x2_shape, transpose_x1, transpose_x2):
@@ -872,12 +863,10 @@ class MatMul(Cell):
             x2_shape = self.shape_op(x2)
 
         x1_broadcast_shape, x2_broadcast_shape = get_broadcast_matmul_shape(x1_shape, x2_shape)
-        x1_broadcast_to = P.BroadcastTo(x1_broadcast_shape)
-        x2_broadcast_to = P.BroadcastTo(x2_broadcast_shape)
         if x1_broadcast_shape != x1_shape:
-            x1 = x1_broadcast_to(x1)
+            x1 = F.broadcast_to(x1, x1_broadcast_shape)
         if x2_broadcast_shape != x2_shape:
-            x2 = x2_broadcast_to(x2)
+            x2 = F.broadcast_to(x2, x2_broadcast_shape)
 
         matmul_broadcast = matmul_op(x1, x2)
 
@@ -889,72 +878,82 @@ class MatMul(Cell):
         return matmul_broadcast
 
 
-class Moments(Cell):
-    """
-    Calculate the mean and variance of the input `x` along the specified `axis`.
+class CosineSimilarity(Cell):
+    r"""
+    Computes cosine similarity.
+
+    .. math::
+        \mathcal{K} = \frac{\textbf{x}\textbf{y}^{\top}}{\parallel \textbf{x} \parallel \parallel \textbf{y} \parallel},
+
+    where :math:`\mathcal{K}` is the similarity, :math:`\textbf{x}` is the first tensor `x1`,
+    :math:`\textbf{y}` is the second tensor `x2`.
+
+    To avoid numerical errors when dividing by small numbers,
+    the lower bound of :math:`\parallel \textbf{x} \parallel \parallel \textbf{y} \parallel` is set to `eps`.
 
     Args:
-        axis (Union[int, tuple(int), None]): Calculates the mean and variance along the specified axis.
-            When the value is None, it means to calculate the mean and variance of all values of `x`. Default: None.
-        keep_dims (Union[bool, None]): If True, the calculation result will retain the dimension of `axis`,
-            and the dimensions of the mean and variance are the same as the input. If False or None,
-            the dimension of `axis` will be reduced. Default: None.
+        dim (int, optional): Dimension. Default: ``1`` .
+        eps (float, optional): Small value. Default: ``1e-08`` .
 
     Inputs:
-        - **x** (Tensor) - Tensor of any dimension used to calculate the mean and variance.
-          Only float16 and float32 are supported.
+        - **x1** (Tensor) - The first tensor :math:`\textbf{x}`.
+          Shape: :math:`(\ast_1, D, \ast_2)` where :math:`D` is at position `dim`.
+        - **x2** (Tensor) - The second tensor :math:`\textbf{y}`. The shape is the same as `x1`.
 
     Outputs:
-        - **mean** (Tensor) - The mean value of `x` on `axis`, with the same data type as input `x`.
-        - **variance** (Tensor) - The variance of `x` on `axis`, with the same data type as input `x`.
+        Tensor, with shape :math:`(\ast_1, \ast_2)`, the data type will be inferred automatically.
 
     Raises:
-        TypeError: If `axis` is not one of int, tuple, None.
-        TypeError: If `keep_dims` is neither bool nor None.
-        TypeError: If dtype of `x` is neither float16 nor float32.
+        TypeError: If `x1` or `x2` is not a Tensor.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> # case1: axis = 0, keep_dims=True
-        >>> x = Tensor(np.array([[[1, 2], [3, 4]], [[5, 6], [7, 8]]]), mindspore.float32)
-        >>> net = nn.Moments(axis=0, keep_dims=True)
-        >>> output = net(x)
-        >>> print(output)
-        (Tensor(shape=[1, 2, 2], dtype=Float32, value=
-        [[[ 3.00000000e+00, 4.00000000e+00],
-          [ 5.00000000e+00, 6.00000000e+00]]]), Tensor(shape=[1, 2, 2], dtype=Float32, value=
-        [[[ 4.00000000e+00, 4.00000000e+00],
-          [ 4.00000000e+00, 4.00000000e+00]]]))
-        >>> # case2: axis = 1, keep_dims=True
-        >>> net = nn.Moments(axis=1, keep_dims=True)
-        >>> output = net(x)
-        >>> print(output)
-        (Tensor(shape=[2, 1, 2], dtype=Float32, value=
-        [[[ 2.00000000e+00, 3.00000000e+00]],
-         [[ 6.00000000e+00, 7.00000000e+00]]]), Tensor(shape=[2, 1, 2], dtype=Float32, value=
-        [[[ 1.00000000e+00, 1.00000000e+00]],
-         [[ 1.00000000e+00, 1.00000000e+00]]]))
-        >>> # case3: axis = 2, keep_dims=None(default)
-        >>> net = nn.Moments(axis=2)
-        >>> output = net(x)
-        >>> print(output)
-        (Tensor(shape=[2, 2], dtype=Float32, value=
-        [[ 1.50000000e+00, 3.50000000e+00],
-         [ 5.50000000e+00, 7.50000000e+00]]), Tensor(shape=[2, 2], dtype=Float32, value=
-        [[ 2.50000000e-01, 2.50000000e-01],
-         [ 2.50000000e-01, 2.50000000e-01]]))
-        >>> # case4: axis = None(default), keep_dims=None(default)
-        >>> net = nn.Moments()
-        >>> output = net(x)
-        >>> print(output)
-        (Tensor(shape=[], dtype=Float32, value= 4.5), Tensor(shape=[], dtype=Float32, value= 5.25))
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> x1 = ms.Tensor([[1.0, 3.0, 4.0, 7.0], [2.0, 4.0, 2.0, 5.0], [3.0, 1.0, 5.0, 8.0]])
+        >>> x2 = ms.Tensor([[2.0, 4.0, 2.0, 5.0], [3.0, 1.0, 5.0, 8.0], [1.0, 3.0, 4.0, 7.0]])
+        >>> func = ms.nn.layer.CosineSimilarity()
+        >>> out = func(x1, x2)
+        >>> print(out.asnumpy())
+        [0.9402562 0.8614609 0.9516245]
+    """
+
+    def __init__(self, dim=1, eps=1e-08):
+        """Initialize CosineSimilarity."""
+        super().__init__()
+        self.dim = dim
+        self.eps = eps
+        self.mul = P.Mul()
+        self.div = P.DivNoNan()
+        self.maximum = P.Maximum()
+        self.cast = P.Cast()
+
+    def construct(self, x1, x2):
+        if not isinstance(x1, Tensor):
+            raise TypeError(f"For 'CosineSimilarity', 'x1' must be a tensor, but got {type(x1)}")
+        if not isinstance(x2, Tensor):
+            raise TypeError(f"For 'CosineSimilarity', 'x2' must be a tensor, but got {type(x2)}")
+        w12 = self.mul(x1, x2).sum(self.dim)
+        w1 = self.mul(x1, x1).sum(self.dim)
+        w2 = self.mul(x2, x2).sum(self.dim)
+        n12 = self.maximum(self.mul(w1, w2), self.eps * self.eps).sqrt()
+        out = self.div(w12, n12)
+        return out
+
+
+class Moments(Cell):
+    """
+    The Moments class will be deprecated in the future,
+    this function can be replaced by :func:`ops.var_mean`
     """
 
     def __init__(self, axis=None, keep_dims=None):
         """Initialize Moments."""
         super(Moments, self).__init__()
+        logger.warning("The Moments class will be deprecated in the future,"
+                       "this function can be replaced by :func:`ops.var_mean`")
         if axis is None:
             axis = ()
         if isinstance(axis, tuple):
@@ -1004,8 +1003,10 @@ class MatInverse(Cell):
         ``GPU``
 
     Examples:
-        >>> x = Tensor(np.array([[4, 12, -16], [12, 37, -43], [-16, -43, 98]]).astype(np.float32))
-        >>> op = nn.MatInverse()
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> x = ms.Tensor(np.array([[4, 12, -16], [12, 37, -43], [-16, -43, 98]]).astype(np.float32))
+        >>> op = ms.nn.MatInverse()
         >>> output = op(x)
         >>> print(output)
         [[49.36112  -13.555558  2.1111116]
@@ -1046,8 +1047,10 @@ class MatDet(Cell):
         ``GPU``
 
     Examples:
-        >>> x = Tensor(np.array([[4, 12, -16], [12, 37, -43], [-16, -43, 98]]).astype(np.float32))
-        >>> op = nn.MatDet()
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> x = ms.Tensor(np.array([[4, 12, -16], [12, 37, -43], [-16, -43, 98]]).astype(np.float32))
+        >>> op = ms.nn.MatDet()
         >>> output = op(x)
         >>> print(output)
         35.999996

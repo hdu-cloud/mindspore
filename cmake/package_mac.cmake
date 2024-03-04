@@ -164,8 +164,8 @@ install(
     ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/ops
     ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/communication
     ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/profiler
-    ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/compression
     ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/rewrite
+    ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/safeguard
     ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/run_check
     ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/experimental
     DESTINATION ${INSTALL_PY_DIR}

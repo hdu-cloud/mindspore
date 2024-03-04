@@ -19,9 +19,9 @@
 #include <memory>
 #include <vector>
 #include "abstract/abstract_value.h"
+#include "mindapi/base/types.h"
 #include "ops/base_operator.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/base/types.h"
 
 namespace mindspore {
 namespace ops {
@@ -38,9 +38,6 @@ class MIND_API IdentityN : public BaseOperator {
   /// \brief Init.
   void Init() const {}
 };
-abstract::AbstractBasePtr IdentityNInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                         const std::vector<AbstractBasePtr> &input_args);
-
 using PrimIdentityNPtr = std::shared_ptr<IdentityN>;
 }  // namespace ops
 }  // namespace mindspore

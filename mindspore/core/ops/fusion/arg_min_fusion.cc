@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,8 +15,14 @@
  */
 
 #include "ops/fusion/arg_min_fusion.h"
-#include "ops/op_utils.h"
+
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -49,7 +55,5 @@ int64_t ArgMinFusion::get_top_k() const {
   MS_EXCEPTION_IF_NULL(value_ptr);
   return GetValue<int64_t>(value_ptr);
 }
-
-REGISTER_PRIMITIVE_C(kNameArgMinFusion, ArgMinFusion);
 }  // namespace ops
 }  // namespace mindspore

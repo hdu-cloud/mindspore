@@ -27,6 +27,7 @@
 #include "extendrt/kernel/ascend/options/acl_model_options.h"
 #include "include/api/types.h"
 #include "include/errorcode.h"
+#include "extendrt/kernel/ascend/profiling/profiling.h"
 
 namespace mindspore::kernel {
 namespace acl {
@@ -34,32 +35,30 @@ using mindspore::lite::STATUS;
 
 class ModelInfer {
  public:
-  ModelInfer(const Buffer &om_data, const AclModelOptionsPtr &options);
+  explicit ModelInfer(const AclModelOptionsPtr &options);
   ~ModelInfer() = default;
 
-  STATUS Init();
-  STATUS Finalize();
-  STATUS Load();
-  STATUS Inference(const std::vector<KernelTensorPtr> &inputs, const std::vector<KernelTensorPtr> &outputs);
-  // need to be called after model load
-  std::set<uint64_t> GetDynamicBatch();
-  // need to be called after model load
-  std::set<std::pair<uint64_t, uint64_t>> GetDynamicImage();
+  bool Init();
+  bool Finalize();
+  bool Load(const void *om_data, size_t om_data_size);
+  bool Inference(const std::vector<KernelTensorPtr> &inputs, const std::vector<KernelTensorPtr> &outputs);
   std::vector<Format> GetInputFormat();
   const std::vector<ShapeVector> GetOutputShape();
   const std::vector<ShapeVector> GetInputShape();
   const std::vector<TypeId> GetInputDataType();
+  const std::vector<TypeId> GetOutputDataType();
+  std::vector<Format> GetOutputFormat();
+
+  bool Resize(const std::vector<ShapeVector> &new_shapes);
 
  private:
-  STATUS LoadAclModel(const Buffer &om_data);
-
   bool init_flag_;
-  bool load_flag_;
   std::string device_type_;
   aclrtContext context_;
-  Buffer om_data_;
+  aclrtStream stream_;
   AclModelOptionsPtr options_;
   ModelProcess model_process_;
+  Profiling profiling_;
   std::shared_ptr<AclEnvGuard> acl_env_;
 };
 

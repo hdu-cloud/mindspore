@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
-#include <algorithm>
+#include <map>
+#include <set>
 
-#include "ops/sparse_segment_sum_with_num_segments.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "ops/sparse_segment_sum_with_num_segments.h"
 
 namespace mindspore {
 namespace ops {
@@ -34,9 +36,10 @@ abstract::ShapePtr SparseSegmentSumWithNumSegmentsInferShape(const PrimitivePtr 
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->BuildShape())[kShape];
   auto num_segments_shape =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex3]->BuildShape())[kShape];
-  (void)CheckAndConvertUtils::CheckInteger("indices_shape", indices_shape.size(), kEqual, kInputIndex1, prim->name());
-  (void)CheckAndConvertUtils::CheckInteger("segment_ids_shape", segment_ids_shape.size(), kEqual, kInputIndex1,
-                                           prim->name());
+  (void)CheckAndConvertUtils::CheckInteger("indices_shape", SizeToLong(indices_shape.size()), kEqual,
+                                           SizeToLong(kInputIndex1), prim->name());
+  (void)CheckAndConvertUtils::CheckInteger("segment_ids_shape", SizeToLong(segment_ids_shape.size()), kEqual,
+                                           SizeToLong(kInputIndex1), prim->name());
   if (x_shape.size() < kInputIndex1) {
     MS_EXCEPTION(ValueError) << "For '" << prim_name << "', "
                              << "x's rank must be greater than 1, but got [" << x_shape.size() << "].";
@@ -54,7 +57,7 @@ abstract::ShapePtr SparseSegmentSumWithNumSegmentsInferShape(const PrimitivePtr 
   if (IsDynamicRank(x_shape)) {
     return std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
   }
-  if (!input_args[kInputIndex3]->BuildValue()->isa<AnyValue>() &&
+  if (!input_args[kInputIndex3]->BuildValue()->isa<ValueAny>() &&
       !input_args[kInputIndex3]->BuildValue()->isa<None>()) {
     if (num_segments_shape.size() == kInputIndex1) {
       if (num_segments_shape[kInputIndex0] != kInputIndex1) {
@@ -110,14 +113,32 @@ AbstractBasePtr SparseSegmentSumWithNumSegmentsInfer(const abstract::AnalysisEng
                                                      const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(prim);
   auto prim_name = prim->name();
-  constexpr size_t kInputsNum = kInputIndex4;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputsNum, prim_name);
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, SizeToLong(kInputIndex4), prim_name);
   auto types = SparseSegmentSumWithNumSegmentsInferType(prim, input_args);
   auto shapes = SparseSegmentSumWithNumSegmentsInferShape(prim, input_args);
   return abstract::MakeAbstract(shapes, types);
 }
-REGISTER_HOST_DEPENDS(kNameSparseSegmentSumWithNumSegments, {3});
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseSegmentSumWithNumSegments, prim::kPrimSparseSegmentSumWithNumSegments,
-                             SparseSegmentSumWithNumSegmentsInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSparseSegmentSumWithNumSegmentsInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentSumWithNumSegmentsInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentSumWithNumSegmentsInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentSumWithNumSegmentsInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {3}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseSegmentSumWithNumSegments, prim::kPrimSparseSegmentSumWithNumSegments,
+                                 AGSparseSegmentSumWithNumSegmentsInfer, false);
 }  // namespace ops
 }  // namespace mindspore

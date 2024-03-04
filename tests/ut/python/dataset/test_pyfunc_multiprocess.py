@@ -1,4 +1,4 @@
-# Copyright 2022 Huawei Technologies Co., Ltd
+# Copyright 2022-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,6 +21,9 @@ import mindspore.dataset as ds
 import mindspore.dataset.transforms as transforms
 import mindspore.dataset.vision as vision
 from util import visualize_list
+
+# Run these tests in separate processes since many tests update config parameters, like shared memory config
+pytestmark = pytest.mark.forked
 
 MNIST_DATA_DIR = "../data/dataset/testMnistData"
 TF_DATA_DIR = ["../data/dataset/test_tf_file_3_images/train-0000-of-0001.data"]
@@ -105,7 +108,7 @@ def test_pyfunc_multiproc_noshrmem():
     mem_original = ds.config.get_enable_shared_mem()
     ds.config.set_enable_shared_mem(False)
 
-    mydata1 = create_dataset_pyop_multiproc(num_parallel_workers=12, repeat_size=2)
+    mydata1 = create_dataset_pyop_multiproc(num_parallel_workers=8, repeat_size=2)
     mycount1 = 0
     for _ in mydata1.create_dict_iterator(num_epochs=1):
         mycount1 += 1

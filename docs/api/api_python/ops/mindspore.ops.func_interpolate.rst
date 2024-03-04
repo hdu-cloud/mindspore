@@ -1,46 +1,73 @@
 mindspore.ops.interpolate
 =========================
 
-.. py:function:: mindspore.ops.interpolate(x, roi=None, scales=None, sizes=None, coordinate_transformation_mode="align_corners", mode="linear")
+.. py:function:: mindspore.ops.interpolate(input, size=None, scale_factor=None, mode="nearest", align_corners=None, recompute_scale_factor=None)
 
-    使用 `mode` 设置的插值方式调整输入 `x` 大小。
-
-    .. warning::
-        - 实验特性，接口可能发生变化。
-        - `roi` 是保留输入， `crop_and_resize` 坐标变换模式下生效，当前不支持。
-        - Ascend平台下，当前不支持将 `mode` 设置为"linear"。
-        - CPU平台下，当 `mode` 是"bilinear"时，当前不支持将 `coordinate_transformation_mode` 设置为"half_pixel"。
+    按照给定的 `size` 或 `scale_factor` 根据 `mode` 设置的插值方式，对输入 `input` 调整大小。
 
     参数：
-        - **x** (Tensor) - 输入Tensor。当 `mode` 是"linear"时， `x` 为三维Tensor。当 `mode` 是"bilinear"时， `x` 为四维Tensor。
-        - **roi** (tuple[float]，可选) - 在 `crop_and_resize` 坐标变换模式下生效，当前不支持。
-        - **scales** (tuple[float]，可选) - 输入shape每个维度resize的系数。 `scales` 中的数全是正数。 `scales` 的长度跟 `x` 的shape长度相同。 `scales` 和 `sizes` 同时只能指定一个。
-        - **sizes** (tuple[int]，可选) - 输入shape指定轴的新维度。 `sizes` 中的数全是正数。 `scales` 和 `sizes` 同时只能指定一个。当 `mode` 是"linear"时， `sizes` 为1个int元素 :math:`(new\_width,)` 的tuple。当 `mode` 是"bilinear"时， `sizes` 为2个int元素 :math:`(new\_height, new\_width)` 的tuple。
-        - **coordinate_transformation_mode** (str) - 指定进行坐标变换的方式，默认值是"align_corners"，还可选"half_pixel"和"asymmetric"。
-          假如我们需要将输入Tensor的x轴进行resize。我们记 `new_i` 为resize之后的Tenosr沿x轴的第i个坐标；记 `old_i` 为输入Tensor沿x轴的对应坐标；
-          记 `new_length` 是resize之后的Tensor沿着x轴的长度，记 `old_length` 是输入Tensor沿x轴的长度。我们可以通过下面的公式计算出来 `old_i` ：
+        - **input** (Tensor) - 被调整大小的Tensor。输入向量必须为三维，四维或五维，shape为 :math:`(N, C, [optional D], [optional H], W)` ，数据类型为float。
+        - **size** (Union[int, tuple[int], list[int]], 可选) - 目标大小。如果 `size` 为tuple或list，那么其长度应该和 `input` 去掉 `N, C` 的维度相同。 `size` 和 `scale_factor` 同时只能指定一个。默认值： ``None`` 。
+        - **scale_factor** (Union[float, tuple[float], list[float]]，可选) - 每个维度的缩放系数。如果 `scale_factor` 为tuple或list，那么其长度应该和 `input` 去掉 `N, C` 的维度相同。 `size` 和 `scale_factor` 同时只能指定一个。默认值： ``None`` 。
+        - **mode** (str) - 采样算法。以下采样方式的一种，'nearest'(最近邻插值)， 'linear' (线性插值，仅三维)，'bilinear' (双线性插值，仅四维)，'trilinear'(三线性插值，仅五维)，'bicubic' (双三次插值，仅四维)，'area'(区域插值)，'nearest-exact'(此方法类似于Scikit-Image和PIL最邻插值，可解决一些最邻插值的问题，三维和四维)。默认值： ``"nearest"`` 。
+        - **align_corners** (bool) - 如果为True，缩放比例系数使用 :math:`(new\_height - 1) / (height - 1)` 计算，此种方式调整的数据与原始数据边角对齐。如果为False，缩放系数通过 :math:`new\_height / height` 计算。默认值： ``None`` 。
 
           .. code-block::
 
-              old_i = new_length != 1 ? new_i * (old_length - 1) / (new_length - 1) : 0  # if set to 'align_corners'
+              old_i = new_length != 1 ? new_i * (old_length - 1) / (new_length - 1) : 0   # 'align_corners' 为 True
 
-              old_i = new_length > 1 ? (new_x + 0.5) * old_length / new_length - 0.5 : 0  # if set to 'half_pixel'
+              old_i = new_length > 1 ? (new_x + 0.5) * old_length / new_length - 0.5 : 0  # 'align_corners' 为 False
 
-              old_i = new_length != 0 ? new_i * old_length / new_length : 0  # if set to 'asymmetric'
+          此选项只对'linear'、'bilinear'和'bicubic'模式有效。默认值： ``False`` 。
+        - **recompute_scale_factor** (bool, 可选) - 重计算 `scale_factor` 。如果为True，会使用参数 `scale_factor` 计算参数 `size`，最终使用 `size` 的值进行缩放。如果为False，将使用 `size` 或 `scale_factor` 直接进行插值。默认值： ``None`` 。
 
-        - **mode** (str) - 所使用的插值方式。目前支持"linear"和"bilinear"插值方式。默认值："linear"。
+    .. note:: 'nearest-exact'模式与scikit-image和PIL的最近邻插值算法相同。'nearest'模式与OpenCV的INTER_NEAREST插值算法结果相同。
+
+    参数支持列表和支持平台：
+
+    +---------------+-----------+---------------+--------------+----------------+
+    | mode          | input.dim | align_corners | scale_factor | device         |
+    +===============+===========+===============+==============+================+
+    | nearest       | 3         | \-            | ×            | Ascend,GPU,CPU |
+    +---------------+-----------+---------------+--------------+----------------+
+    |               | 4         | \-            | ×            | Ascend,GPU,CPU |
+    +---------------+-----------+---------------+--------------+----------------+
+    |               | 5         | \-            | √            | Ascend,GPU,CPU |
+    +---------------+-----------+---------------+--------------+----------------+
+    | linear        | 3         | √             | ×            | Ascend,GPU,CPU |
+    +---------------+-----------+---------------+--------------+----------------+
+    | bilinear      | 4         | √             | ×            | Ascend,GPU,CPU |
+    +---------------+-----------+---------------+--------------+----------------+
+    | bicubic       | 4         | √             | ×            | Ascend,GPU,CPU |
+    +---------------+-----------+---------------+--------------+----------------+
+    | area          | 3         | \-            | √            | Ascend,GPU,CPU |
+    +---------------+-----------+---------------+--------------+----------------+
+    |               | 4         | \-            | √            | Ascend,GPU,CPU |
+    +---------------+-----------+---------------+--------------+----------------+
+    |               | 5         | \-            | √            | Ascend,GPU,CPU |
+    +---------------+-----------+---------------+--------------+----------------+
+    | nearest-exact | 3         | \-            | ×            | Ascend,CPU     |
+    +---------------+-----------+---------------+--------------+----------------+
+    |               | 4         | \-            | ×            | Ascend,CPU     |
+    +---------------+-----------+---------------+--------------+----------------+
+    | trilinear     | 5         | √             | √            | Ascend,GPU,CPU |
+    +---------------+-----------+---------------+--------------+----------------+
+
+    - `-` 表示无此参数。
+    - `×` 表示当前不支持此参数。
+    - `√` 表示当前支持此参数。
 
     返回：
-        Tensor，数据类型与 `x` 相同。
+        调整大小之后的Tensor，维度和数据类型与 `input` 相同。
 
     异常：
-        - **TypeError** - `x` 不是Tensor。
-        - **TypeError** - `x` 的数据类型不支持。
-        - **TypeError** - `scales` 不是float类型的tuple。
-        - **ValueError** - `scales` 中的数不全是正数。
-        - **TypeError** - `sizes` 不是int64类型的tuple。
-        - **ValueError** - `sizes` 中的数不全是正数。
-        - **TypeError** - `coordinate_transformation_mode` 不是string。
-        - **ValueError** - `coordinate_transformation_mode` 不在支持的列表中。
-        - **TypeError** - `mode` 不是string类型。
-        - **ValueError** - `mode` 不在支持的列表中。
+        - **TypeError** - `input` 不是Tensor。
+        - **ValueError** - `size` 和 `scale_factor` 都不为空。
+        - **ValueError** - `size` 和 `scale_factor` 都为空。
+        - **ValueError** - `size` 为元组或列表类型时长度不等于 `input.ndim - 2` 。
+        - **ValueError** - `scale_factor` 为元组或列表类型时长度不等于 `input.ndim - 2` 。
+        - **ValueError** - `mode` 不在模式支持列表中。
+        - **ValueError** - `input.ndim` 不在模式对应维度的支持列表中。
+        - **ValueError** - `size` 不为空， `recompute_scale_factor` 不为空。
+        - **ValueError** - `scale_factor` 不在对应的支持列表中。
+        - **ValueError** - `align_corners` 不在对应的支持列表中。

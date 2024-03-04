@@ -15,27 +15,55 @@
  */
 
 #include "ops/multi_margin_loss.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include <map>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/base/type_id.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
+constexpr size_t kMinInputNums = 2;
+constexpr size_t kMaxInputNums = 3;
+
 TypePtr MultiMarginLossInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
   (void)CheckAndConvertUtils::CheckTensorTypeValid("target", input_args[kInputIndex1]->BuildType(), {kInt64},
                                                    prim->name());
   const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64};
   std::map<std::string, TypePtr> types;
   (void)types.emplace("x", input_args[kInputIndex0]->BuildType());
-  if (input_args.size() == kInputIndex3 && input_args[kInputIndex2]->BuildType()->isa<TensorType>()) {
-    auto tensor_type = input_args[kInputIndex2]->BuildType()->cast<TensorTypePtr>();
-    MS_EXCEPTION_IF_NULL(tensor_type);
-    auto element = tensor_type->element();
-    MS_EXCEPTION_IF_NULL(element);
-    if (element->type_id() != kMetaTypeNone) {
-      (void)types.emplace("weight", input_args[kInputIndex2]->BuildType());
+  if (input_args.size() == kInputIndex3) {
+    if (input_args[kInputIndex2]->BuildType()->isa<TensorType>()) {
+      auto tensor_type = input_args[kInputIndex2]->BuildType()->cast<TensorTypePtr>();
+      MS_EXCEPTION_IF_NULL(tensor_type);
+      auto element = tensor_type->element();
+      MS_EXCEPTION_IF_NULL(element);
+      if (element->type_id() != kMetaTypeNone) {
+        (void)types.emplace("weight", input_args[kInputIndex2]->BuildType());
+      }
+    } else if (!input_args[kInputIndex2]->isa<abstract::AbstractNone>()) {
+      MS_EXCEPTION(TypeError) << "For MultiMarginLoss, weight should be a tensor.";
     }
   }
   (void)CheckAndConvertUtils::CheckTensorTypeSame(types, valid_types, prim->name());
@@ -134,17 +162,35 @@ string MultiMarginLoss::get_reduction() const {
 AbstractBasePtr MultiMarginLossInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                      const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
+  CheckAndConvertUtils::CheckInRange("multi_margin_loss_input_nums", input_args.size(), kIncludeBoth,
+                                     {kMinInputNums, kMaxInputNums}, primitive->name());
   MS_EXCEPTION_IF_NULL(input_args[kInputIndex0]);
   MS_EXCEPTION_IF_NULL(input_args[kInputIndex1]);
   if (input_args.size() == kDim3) {
     MS_EXCEPTION_IF_NULL(input_args[kInputIndex2]);
   }
-  CheckAndConvertUtils::CheckInRange("multi_margin_loss_input_nums", input_args.size(), kIncludeBoth, {kDim2, kDim3},
-                                     primitive->name());
   auto types = MultiMarginLossInferType(primitive, input_args);
   auto shapes = MultiMarginLossInferShape(primitive, input_args);
   return abstract::MakeAbstract(shapes, types);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(MultiMarginLoss, prim::kPrimMultiMarginLoss, MultiMarginLossInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMultiMarginLossInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MultiMarginLossInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MultiMarginLossInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MultiMarginLossInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MultiMarginLoss, prim::kPrimMultiMarginLoss, AGMultiMarginLossInfer, false);
 }  // namespace ops
 }  // namespace mindspore

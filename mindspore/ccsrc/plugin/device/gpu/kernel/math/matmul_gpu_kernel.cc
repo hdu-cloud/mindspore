@@ -20,11 +20,17 @@
 #include <utility>
 #include <memory>
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/complex.h"
-#include "mindspore/core/ops/mat_mul.h"
-#include "mindspore/core/ops/batch_matmul.h"
+#include "ops/batch_matmul.h"
+#include "ops/math_op_name.h"
+#include "utils/ms_context.h"
+#include "plugin/device/gpu/kernel/math/matmul/matmul_wrapper.h"
 
 namespace mindspore {
 namespace kernel {
+namespace {
+inline bool IsComplex(cudaDataType_t type) { return type == CUDA_C_32F || type == CUDA_C_64F; }
+}  // namespace
+
 bool MatMulGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                               const std::vector<KernelTensorPtr> &outputs) {
   kernel_name_ = base_operator->name();
@@ -65,7 +71,21 @@ bool MatMulGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::v
 
   transpose_x1_ = kernel_ptr->get_transpose_a() ? CUBLAS_OP_T : CUBLAS_OP_N;
   transpose_x2_ = kernel_ptr->get_transpose_b() ? CUBLAS_OP_T : CUBLAS_OP_N;
-  if (kernel_name_ == kFusedMatMulBiasAddName) {
+  if (transpose_x1_ != CUBLAS_OP_N && IsComplex(dtype_a_)) {
+    if (kernel_name_ == kBatchMatMulOpName) {
+      transpose_x1_ = CUBLAS_OP_C;
+    } else {
+      transpose_x1_ = CUBLAS_OP_T;
+    }
+  }
+  if (transpose_x2_ != CUBLAS_OP_N && IsComplex(dtype_b_)) {
+    if (kernel_name_ == kBatchMatMulOpName) {
+      transpose_x2_ = CUBLAS_OP_C;
+    } else {
+      transpose_x2_ = CUBLAS_OP_T;
+    }
+  }
+  if (kernel_name_ == kFusedMatMulBiasAddOpName) {
     is_fused_matmul_biasadd_ = true;
   }
   return true;
@@ -97,34 +117,18 @@ int MatMulGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::
     batch_ *= output_shape[i];
   }
 
-  if (transpose_x1_ == CUBLAS_OP_T && input1_shape.size() > (dims - kDimOffset2)) {
+  if (transpose_x1_ != CUBLAS_OP_N && input1_shape.size() > (dims - kDimOffset2)) {
     k_ = input1_shape[dims - kDimOffset2];
-  } else if (transpose_x1_ == CUBLAS_OP_N && input1_shape.size() > (dims - 1)) {
+  } else if (input1_shape.size() > (dims - 1)) {
     k_ = input1_shape[dims - 1];
   } else {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', init k_ via input1_shape failed.";
   }
 
+  compute_type_ = GetComputeType(dtype_a_);
+
   return KRET_OK;
 }
-
-#if CUDA_VERSION >= 11000
-cublasComputeType_t MatMulGpuKernelMod::GetComputeType() {
-  cublasComputeType_t compute_type = CUBLAS_COMPUTE_16F;
-  if (dtype_a_ == CUDA_R_16F && dtype_c_ == CUDA_R_16F) {
-    compute_type = CUBLAS_COMPUTE_32F;
-  } else if (dtype_a_ == CUDA_R_8I && dtype_c_ == CUDA_R_32I) {
-    compute_type = CUBLAS_COMPUTE_32I;
-  } else if (dtype_a_ == CUDA_R_16F || dtype_a_ == CUDA_R_32F || (dtype_a_ == CUDA_R_8I && dtype_c_ == CUDA_R_32F)) {
-    compute_type = CUBLAS_COMPUTE_32F;
-  } else if ((dtype_a_ == CUDA_R_32F && dtype_b_ == CUDA_R_32F) || (dtype_a_ == CUDA_C_32F && dtype_b_ == CUDA_C_32F)) {
-    compute_type = CUBLAS_COMPUTE_32F;
-  } else if ((dtype_a_ == CUDA_R_64F && dtype_b_ == CUDA_R_64F) || (dtype_a_ == CUDA_C_64F && dtype_b_ == CUDA_C_64F)) {
-    compute_type = CUBLAS_COMPUTE_64F;
-  }
-  return compute_type;
-}
-#endif
 
 template <typename T, typename S>
 bool MatMulGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
@@ -137,41 +141,24 @@ bool MatMulGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, con
   // The kernel registration is responsible for types consistency.
   S alpha = static_cast<S>(1.0f);
   S beta = static_cast<S>(0.0f);
-  const int lda = (transpose_x1_ == CUBLAS_OP_T) ? SizeToInt(m_) : SizeToInt(k_);
-  const int ldb = (transpose_x2_ == CUBLAS_OP_T) ? SizeToInt(k_) : SizeToInt(n_);
+  const int lda = (transpose_x1_ != CUBLAS_OP_N) ? SizeToInt(m_) : SizeToInt(k_);
+  const int ldb = (transpose_x2_ != CUBLAS_OP_N) ? SizeToInt(k_) : SizeToInt(n_);
   const int ldc = n_;
 
   try {
     if (is_fused_matmul_biasadd_) {
       auto input3_addr = GetDeviceAddress<T>(inputs, 2);
-      Fill(m_, n_, input3_addr, output_addr, reinterpret_cast<cudaStream_t>(stream_ptr));
+      auto status = Fill(m_, n_, input3_addr, output_addr, reinterpret_cast<cudaStream_t>(stream_ptr));
+      CHECK_CUDA_STATUS(status, kernel_name_);
       beta = static_cast<S>(1.0f);
     }
-
-#if CUDA_VERSION >= 11000
-    cublasComputeType_t compute_type = GetComputeType();
-    if (compute_type == CUBLAS_COMPUTE_32I) {
-      constexpr size_t bytes = 4;
-      if (lda % bytes != 0 || ldb % bytes != 0) {
-        MS_LOG(EXCEPTION) << "For '" << kernel_name_
-                          << "' the lda and ldb must be multiples of 4 when the compute_type is CUBLAS_COMPUTE_32I."
-                             "But got lda:"
-                          << lda << ", got ldb:" << ldb;
-      }
-    }
-#else
-    cudaDataType_t compute_type = (dtype_a_ == CUDA_R_64F) ? CUDA_R_64F : CUDA_R_32F;
-    if (dtype_a_ == CUDA_C_32F) {
-      compute_type = CUDA_C_32F;
-    }
-#endif
 
     // Use cublasGemmEx to get high performance when batch_ is 1
     if (batch_ == 1) {
       CHECK_CUBLAS_RET_WITH_EXCEPT_NOTRACE(
         cublasGemmEx(handle_, transpose_x2_, transpose_x1_, SizeToInt(n_), SizeToInt(m_), SizeToInt(k_), &alpha,
                      input2_addr, dtype_b_, ldb, input1_addr, dtype_a_, lda, &beta, output_addr, dtype_c_, ldc,
-                     compute_type, algo_),
+                     compute_type_, algo_),
         "cublasGemmEx failed. Possible reasons: the GPU is occupied by other processes.");
     } else {
       auto stride_a = SizeToLong(m_ * k_);
@@ -180,7 +167,7 @@ bool MatMulGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, con
       CHECK_CUBLAS_RET_WITH_EXCEPT_NOTRACE(
         cublasGemmStridedBatchedEx(handle_, transpose_x2_, transpose_x1_, SizeToInt(n_), SizeToInt(m_), SizeToInt(k_),
                                    &alpha, input2_addr, dtype_b_, ldb, stride_b, input1_addr, dtype_a_, lda, stride_a,
-                                   &beta, output_addr, dtype_c_, ldc, stride_c, batch_, compute_type, algo_),
+                                   &beta, output_addr, dtype_c_, ldc, stride_c, batch_, compute_type_, algo_),
         "cublasGemmStridedBatchedEx failed. Possible reasons: the GPU is occupied by other processes.");
     }
   } catch (const std::exception &e) {
@@ -200,6 +187,11 @@ std::map<std::string, std::vector<std::pair<KernelAttr, MatMulGpuKernelMod::MatM
          .AddInputAttr(kNumberTypeComplex64)
          .AddOutputAttr(kNumberTypeComplex64),
        &MatMulGpuKernelMod::LaunchKernel<Complex<float>, Complex<float>>},
+      {KernelAttr()
+         .AddInputAttr(kNumberTypeComplex128)
+         .AddInputAttr(kNumberTypeComplex128)
+         .AddOutputAttr(kNumberTypeComplex128),
+       &MatMulGpuKernelMod::LaunchKernel<Complex<double>, Complex<double>>},
       {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64),
        &MatMulGpuKernelMod::LaunchKernel<double, double>},
       {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
@@ -225,7 +217,7 @@ std::map<std::string, std::vector<std::pair<KernelAttr, MatMulGpuKernelMod::MatM
          .AddInputAttr(kNumberTypeComplex128)
          .AddOutputAttr(kNumberTypeComplex128),
        &MatMulGpuKernelMod::LaunchKernel<Complex<double>, Complex<double>>}}},
-    {kFusedMatMulBiasAddName,
+    {kFusedMatMulBiasAddOpName,
      {{KernelAttr()
          .AddInputAttr(kNumberTypeFloat64)
          .AddInputAttr(kNumberTypeFloat64)
@@ -265,6 +257,6 @@ MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeGpuKernelMod, MatMul,
 MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeGpuKernelMod, BatchMatMul,
                                  []() { return std::make_shared<MatMulGpuKernelMod>(kBatchMatMulOpName); });
 MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeGpuKernelMod, FusedMatMulBiasAdd,
-                                 []() { return std::make_shared<MatMulGpuKernelMod>(kFusedMatMulBiasAddName); });
+                                 []() { return std::make_shared<MatMulGpuKernelMod>(kFusedMatMulBiasAddOpName); });
 }  // namespace kernel
 }  // namespace mindspore

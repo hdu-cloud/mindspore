@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,7 +27,8 @@
 namespace mindspore {
 namespace dataset {
 // constructor
-AddSkipPass::InjectionFinder::InjectionFinder(const std::shared_ptr<DatasetNode> &node) : injection_point_(nullptr) {}
+AddSkipPass::InjectionFinder::InjectionFinder(const std::shared_ptr<DatasetNode> &node)
+    : injection_point_(nullptr), has_shuffle_node_(false) {}
 
 // Performs finder work for BuildVocabOp that has special rules about skip injection
 Status AddSkipPass::InjectionFinder::Visit(std::shared_ptr<RootNode> node, bool *const modified) {
@@ -37,8 +38,9 @@ Status AddSkipPass::InjectionFinder::Visit(std::shared_ptr<RootNode> node, bool 
                                "Invalid data, the number of children should be greater than zero.");
   // The injection is at the child of the root node
   injection_point_ = node->Children()[0];
-  num_epochs_ = node->num_epochs();
-  step_ = node->step();
+  num_epochs_ = node->NumEpochs();
+  step_ = node->Step();
+  dataset_size_ = node->DatasetSize();
   return Status::OK();
 }
 
@@ -59,6 +61,14 @@ Status AddSkipPass::InjectionFinder::Visit(std::shared_ptr<BuildSentenceVocabNod
   return Status::OK();
 }
 #endif
+
+// Detect shuffle node
+Status AddSkipPass::InjectionFinder::Visit(std::shared_ptr<ShuffleNode> node, bool *const modified) {
+  RETURN_UNEXPECTED_IF_NULL(node);
+  RETURN_UNEXPECTED_IF_NULL(modified);
+  has_shuffle_node_ = true;
+  return Status::OK();
+}
 
 Status AddSkipPass::InjectionFinder::VisitAfter(std::shared_ptr<DataQueueNode> node, bool *const modified) {
   RETURN_UNEXPECTED_IF_NULL(node);
@@ -81,17 +91,19 @@ Status AddSkipPass::RunOnTree(std::shared_ptr<DatasetNode> root_ir, bool *const 
   // The finder can make updates to the AddSkipPass object.
   AddSkipPass::InjectionFinder finder(root_ir);
   RETURN_IF_NOT_OK(finder.Run(root_ir, modified));
-
+  // If we detect a shuffle node in the pipeline, we disable fast-recovery
+  if (GlobalContext::config_manager()->fast_recovery() && finder.HasShuffleNode()) {
+    GlobalContext::config_manager()->set_fast_recovery(false);
+    MS_LOG(WARNING) << "Disabling fast recovery of Dataset pipeline since shuffle node is detected.";
+  }
   // The first injection logic is to check if we should inject the skip op as the root node.
   std::shared_ptr<DatasetNode> node = finder.injection_point();
   CHECK_FAIL_RETURN_UNEXPECTED(node != nullptr, "Failed to inject SkipOp.");
 
-  int64_t dataset_size = -1;
-  std::shared_ptr<DatasetSizeGetter> size_getter = std::make_shared<DatasetSizeGetter>();
-  RETURN_IF_NOT_OK(root_ir->GetDatasetSize(size_getter, false, &dataset_size));
-  CHECK_FAIL_RETURN_UNEXPECTED(dataset_size > 0, "Cannot reset the pipeline, dataset size is undefined");
   int32_t num_epochs = finder.GetNumEpochs();
   int64_t step = finder.GetStep();
+  int64_t dataset_size = finder.GetDatasetSize();
+  CHECK_FAIL_RETURN_UNEXPECTED(dataset_size > 0, "Cannot reset the pipeline, dataset size is undefined");
   CHECK_FAIL_RETURN_UNEXPECTED(step >= 0,
                                "Cannot reset the pipeline, reset step must be >= 0. step: " + std::to_string(step));
   if (step >= dataset_size * num_epochs) {

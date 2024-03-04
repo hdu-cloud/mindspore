@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -326,6 +326,8 @@ class UserConfig {
   bool GetPolyTOPSCodeSinking(void) const { return polytops_code_sinking_; }
   void SetPolyTOPSConstantToParameter(bool toggle) { polytops_constant_to_parameter_ = toggle; }
   bool GetPolyTOPSConstantToParameter(void) const { return polytops_constant_to_parameter_; }
+  void SetPolyTOPSUnfuseIndependentStmts(bool toggle) { polytops_unfuse_independent_stmts_ = toggle; }
+  bool GetPolyTOPSUnfuseIndependentStmts(void) const { return polytops_unfuse_independent_stmts_; }
   void SetPolyTOPSParameterShifting(bool toggle) { polytops_parameter_shifting_ = toggle; }
   bool GetPolyTOPSParameterShifting(void) const { return polytops_parameter_shifting_; }
   void SetPolyTOPSPostProcessingFullSets(bool toggle) { polytops_post_processing_full_sets_ = toggle; }
@@ -336,6 +338,8 @@ class UserConfig {
   bool GetPolyTOPSPostProcessingExtraOuterParallelLoop(void) const {
     return polytops_post_processing_extra_outer_parallel_loop_;
   }
+  void SetPolyTOPSPreProcessingSortRelations(bool toggle) { polytops_pre_processing_sort_relations_ = toggle; }
+  bool GetPolyTOPSPreProcessingSortRelations(void) const { return polytops_pre_processing_sort_relations_; }
   void SetPolyTOPSLargeOuterBounds(bool toggle) { polytops_large_outer_bounds_ = toggle; }
   bool GetPolyTOPSLargeOuterBounds(void) const { return polytops_large_outer_bounds_; }
   void SetPolyTOPSEnableSkewing(bool toggle) { polytops_enable_skewing_ = toggle; }
@@ -429,6 +433,8 @@ class UserConfig {
   void DumpScopDataScheduleAttrs(std::ofstream &of);
 
   bool GetUseNewSpace() { return use_new_space_; }
+
+  bool GetFrontendLower() { return frontend_lower_; }
 
   bool GetEnableAtomicAdd() { return enable_atomic_add_; }
 
@@ -531,6 +537,9 @@ class UserConfig {
     ParseBoolAttr(attrs, "pragma_tilesize_is_var", &tile_size_is_var_);
     ParseBoolAttr(attrs, "pragma_outerband_need_split", &outer_band_need_split_);
 
+    // AKG_TBE
+    ParseBoolAttr(attrs, "is_tbe_codegen", &frontend_lower_);
+
     // Mind-trick pass
     ParseIntAttr(attrs, "constrain_schedule_verbosity", &constrain_schedule_verbosity_);
     ParseIntAttr(attrs, "enable_multicore", &enable_multicore_);
@@ -545,10 +554,12 @@ class UserConfig {
     ParseBoolAttr(attrs, "polytops_check_schedules", &polytops_check_schedules_);
     ParseBoolAttr(attrs, "polytops_code_sinking", &polytops_code_sinking_);
     ParseBoolAttr(attrs, "polytops_constant_to_parameter", &polytops_constant_to_parameter_);
+    ParseBoolAttr(attrs, "polytops_unfuse_independent_stmts", &polytops_unfuse_independent_stmts_);
     ParseBoolAttr(attrs, "polytops_parameter_shifting", &polytops_parameter_shifting_);
     ParseBoolAttr(attrs, "polytops_post_processing_full_sets", &polytops_post_processing_full_sets_);
     ParseBoolAttr(attrs, "polytops_post_processing_extra_outer_parallel_loop",
                   &polytops_post_processing_extra_outer_parallel_loop_);
+    ParseBoolAttr(attrs, "polytops_pre_processing_sort_relations", &polytops_pre_processing_sort_relations_);
     ParseBoolAttr(attrs, "polytops_large_outer_bounds", &polytops_large_outer_bounds_);
     ParseBoolAttr(attrs, "polytops_enable_skewing", &polytops_enable_skewing_);
     ParseBoolAttr(attrs, "polytops_enable_parallel_skewing_only", &polytops_enable_parallel_skewing_only_);
@@ -741,6 +752,8 @@ class UserConfig {
 
   bool enable_atomic_add_{false};
   bool use_new_space_{false};
+  bool frontend_lower_{false};
+
   // tensor_core config
   bool enable_matmul_{false};
   bool enable_tensor_core_{false};
@@ -808,15 +821,17 @@ class UserConfig {
   bool mind_trick_gpu_autogen_automap_{true};
 
   // PolyTOPS config
-  std::string enable_polytops_{"never"};
+  std::string enable_polytops_{"auto"};
   bool polytops_was_used_{false};
   std::string polytops_solver_{""};
   bool polytops_check_schedules_{true};
   bool polytops_code_sinking_{true};
   bool polytops_constant_to_parameter_{true};
+  bool polytops_unfuse_independent_stmts_{false};
   bool polytops_parameter_shifting_{true};
   bool polytops_post_processing_full_sets_{true};
   bool polytops_post_processing_extra_outer_parallel_loop_{false};
+  bool polytops_pre_processing_sort_relations_{false};
   bool polytops_large_outer_bounds_{false};
   bool polytops_enable_skewing_{false};
   bool polytops_enable_parallel_skewing_only_{false};
@@ -1363,6 +1378,7 @@ class AnalysisResult {
     {10, "EXTERN_CALL"}, {11, "COUNT_OP"},    {12, "PARTIAL_ELEM"}};
   std::unordered_map<int, std::string> direction_map_ = {
     {0, "UNKNOWN"}, {1, "X_DIRECTION"}, {2, "Y_DIRECTION"}, {3, "ALL_DIRECTION"}};
+  const Provide *mmu_bias_init_c_{nullptr};
 
  private:
   // the whole operator information

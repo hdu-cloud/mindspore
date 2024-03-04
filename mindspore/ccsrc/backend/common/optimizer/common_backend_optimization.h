@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,8 @@
 #ifndef MINDSPORE_CCSRC_BACKEND_OPTIMIZER_COMMON_COMMON_BACKEND_OPTIMIZATION_H_
 #define MINDSPORE_CCSRC_BACKEND_OPTIMIZER_COMMON_COMMON_BACKEND_OPTIMIZATION_H_
 #include <memory>
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
+#include "include/backend/optimizer/pass_manager.h"
 namespace mindspore {
 namespace opt {
 BACKEND_EXPORT void BackendCommonOptimization(const std::shared_ptr<session::KernelGraph> &kernel_graph);
@@ -24,8 +25,13 @@ BACKEND_EXPORT void OpBackendCommonOptimization(const std::shared_ptr<session::K
 BACKEND_EXPORT void CommonFinalOptimization(const std::shared_ptr<session::KernelGraph> &kernel_graph);
 BACKEND_EXPORT void CommonUnifyMindIR(const std::shared_ptr<session::KernelGraph> &kernel_graph);
 BACKEND_EXPORT void AddDynamicShapeAttrPass(const std::shared_ptr<session::KernelGraph> &kernel_graph);
+BACKEND_EXPORT PassManagerPtr GetCommonUnifyMindIRPassManager();
 void EliminateIllegalDataTypePass(const std::shared_ptr<session::KernelGraph> &kernel_graph);
 void DynamicShapeConvertPass(const std::shared_ptr<session::KernelGraph> &kernel_graph);
+PassManagerPtr GetEliminateIllegalDataTypePassManager();
+PassManagerPtr GetBackendCommonOptimizationPassManagerPtr(const FuncGraphPtr &graph);
+BACKEND_EXPORT void OptimizationWithoutBackend(const std::shared_ptr<session::KernelGraph> &kernel_graph);
+BACKEND_EXPORT void OptimizationForAnyTypeKernelGraph(const std::shared_ptr<session::KernelGraph> &kernel_graph);
 }  // namespace opt
 }  // namespace mindspore
 

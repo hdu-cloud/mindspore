@@ -79,7 +79,7 @@ Status SpeechCommandsOp::ParseFileList(const std::string &pf_path, const std::st
   std::string file_list = (pf_usage == "test" ? kTestFiles : kValFiles);
   Path path(pf_path);
   std::string list_path = (Path(pf_path) / Path(file_list)).ToString();
-  std::ifstream file_reader(list_path);
+  std::ifstream file_reader(list_path, std::ios::in);
   while (getline(file_reader, line)) {
     Path file_path(path / line);
     loaded_names.insert(file_path.ToString());
@@ -107,6 +107,8 @@ Status SpeechCommandsOp::WalkAllFiles(const std::string &walk_path) {
     Path folder_path(folder_names[i]);
     if (folder_path.IsDirectory()) {
       auto folder_it = Path::DirIterator::OpenDirectory(&folder_path);
+      CHECK_FAIL_RETURN_UNEXPECTED(folder_it != nullptr, "Invalid path, failed to open dir: " + folder_path.ToString() +
+                                                           ", not exists or permission denied.");
       while (folder_it->HasNext()) {
         Path file = folder_it->Next();
         if (file.Extension() == kExtension) {
@@ -177,9 +179,11 @@ Status SpeechCommandsOp::GetFileInfo(const std::string &file_path, std::string *
   std::string label_string = file_path.substr(0, split_index);
   *label = label_string.substr(label_string.find_last_of(kSplitSymbol) + 1);  // plus "1" for index start from 0.
   std::string filename = file_path.substr(split_index + 1);
-  std::regex pattern = std::regex("(.*)_nohash_(\\d+)\\.wav");
   std::smatch result;
-  regex_match(filename, result, pattern);
+  {
+    std::unique_lock<std::mutex> _lock(mux_);
+    (void)regex_match(filename, result, std::regex("(.*)_nohash_(\\d+)\\.wav"));
+  }
   CHECK_FAIL_RETURN_UNEXPECTED(!(result[0] == "" || result[1] == ""),
                                "Invalid file name, failed to get file info: " + filename);
   *speaker_id = result[1];

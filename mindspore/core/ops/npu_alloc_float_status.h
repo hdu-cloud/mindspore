@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_NPU_ALLOC_FLOATSTATUS_H_
 #define MINDSPORE_CORE_OPS_NPU_ALLOC_FLOATSTATUS_H_
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,8 +31,6 @@ class MIND_API NPUAllocFloatStatus : public BaseOperator {
   NPUAllocFloatStatus() : BaseOperator(kNameNPUAllocFloatStatus) { InitIOName({}, {"data"}); }
   void Init() const {}
 };
-abstract::AbstractBasePtr NPUAllocFloatStatusInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                   const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_NPU_ALLOC_FLOATSTATUS_H_

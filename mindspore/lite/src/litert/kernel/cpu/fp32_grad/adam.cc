@@ -30,9 +30,6 @@ using mindspore::lite::RET_OK;
 using mindspore::schema::PrimitiveType_Adam;
 
 namespace mindspore::kernel {
-constexpr static int kWeightIdx = 0;
-constexpr static int kMomentVector1stIdx = 1;
-constexpr static int kMomentVector2stIdx = 2;
 constexpr static int kBeta1PowerIdx = 3;
 constexpr static int kBeta2PowerIdx = 4;
 constexpr static int kBeta1Idx = 6;
@@ -112,6 +109,11 @@ std::vector<int> AdamCPUKernel::GetOptimizerParamsIdxs() const {
   return indices;
 }
 
+std::vector<int> AdamCPUKernel::GetTrainableParamsIdxs() const {
+  std::vector<int> indices = {0, 1, 2, 3, 4, 5};
+  return indices;
+}
+
 int AdamCPUKernel::OptimizerStep() {
   CHECK_LESS_RETURN(in_tensors_.size(), DIMENSION_10D - 1);
   auto weight = reinterpret_cast<float *>(in_tensors_.at(kWeightIdx)->MutableData());
@@ -127,6 +129,8 @@ int AdamCPUKernel::OptimizerStep() {
   CHECK_NULL_RETURN(weight);
   CHECK_NULL_RETURN(m);
   CHECK_NULL_RETURN(v);
+  CHECK_NULL_RETURN(beta1_power);
+  CHECK_NULL_RETURN(beta2_power);
 
   int ret = RET_OK;
   if (grad_sum_ != nullptr && valid_grad_sum_) {

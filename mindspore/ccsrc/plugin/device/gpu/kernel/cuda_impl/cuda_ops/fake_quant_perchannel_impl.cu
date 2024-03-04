@@ -40,16 +40,18 @@ __global__ void NudgeMinMaxPerChannel(float *input_min, float *input_max, const 
   float nudge_zp = 0.f;
 
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < channel_num; i += blockDim.x * gridDim.x) {
+    float max_data = input_max[i];
+    float min_data = input_min[i];
     if (symmetric) {
-      input_max[i] = abs(input_min[i]) < input_max[i] ? input_max[i] : -input_min[i];
-      input_min[i] = abs(input_min[i]) < input_max[i] ? -input_max[i] : input_min[i];
+      max_data = abs(input_min[i]) < input_max[i] ? input_max[i] : -input_min[i];
+      min_data = abs(input_min[i]) < input_max[i] ? -input_max[i] : input_min[i];
     }
-    if ((quant_max - quant_min) == 0 || (input_max[i] - input_min[i]) == 0) {
+    if ((quant_max - quant_min) == 0 || (max_data - min_data) == 0) {
       scale[i] = 0.f;
       zp_from_min = 0.f;
     } else {
-      scale[i] = (input_max[i] - input_min[i]) / (quant_max - quant_min);
-      zp_from_min = quant_min - input_min[i] / scale[i];
+      scale[i] = (max_data - min_data) / (quant_max - quant_min);
+      zp_from_min = quant_min - min_data / scale[i];
     }
 
     if (zp_from_min <= quant_min) {
@@ -65,11 +67,12 @@ __global__ void NudgeMinMaxPerChannel(float *input_min, float *input_max, const 
   }
 }
 
-void CalNudgePerChannel(float *input_min, float *input_max, const float quant_min, const float quant_max,
-                        float *nudge_min, float *nudge_max, float *scale, const int channel_num, const bool symmetric,
-                        cudaStream_t cuda_stream) {
+cudaError_t CalNudgePerChannel(float *input_min, float *input_max, const float quant_min, const float quant_max,
+                               float *nudge_min, float *nudge_max, float *scale, const int channel_num,
+                               const bool symmetric, cudaStream_t cuda_stream) {
   NudgeMinMaxPerChannel<<<GET_BLOCKS(channel_num), GET_THREADS, 0, cuda_stream>>>(
     input_min, input_max, quant_min, quant_max, nudge_min, nudge_max, scale, channel_num, symmetric);
+  return GetCudaStatus();
 }
 
 /**
@@ -108,11 +111,12 @@ __global__ void FakeQuantPerChannel(const float *input, float *output, const int
   }
 }
 
-void CalFakeQuantPerChannel(const float *input, float *output, const int total_size, const int channel_size,
-                            const float *nudge_min, const float *nudge_max, const float *scale,
-                            cudaStream_t cuda_stream) {
+cudaError_t CalFakeQuantPerChannel(const float *input, float *output, const int total_size, const int channel_size,
+                                   const float *nudge_min, const float *nudge_max, const float *scale,
+                                   cudaStream_t cuda_stream) {
   FakeQuantPerChannel<<<GET_BLOCKS(total_size), GET_THREADS, 0, cuda_stream>>>(input, output, total_size, channel_size,
                                                                                nudge_min, nudge_max, scale);
+  return GetCudaStatus();
 }
 
 __global__ void FakeQuantPerChannelGrad(const float *input, const float *gradient, float *output, const int total_size,
@@ -130,9 +134,10 @@ __global__ void FakeQuantPerChannelGrad(const float *input, const float *gradien
   }
 }
 
-void CalFakeQuantPerChannelGrad(const float *input, const float *gradient, float *output, const int total_num,
-                                const int channel_num, const float *nudge_min, const float *nudge_max,
-                                cudaStream_t cuda_stream) {
+cudaError_t CalFakeQuantPerChannelGrad(const float *input, const float *gradient, float *output, const int total_num,
+                                       const int channel_num, const float *nudge_min, const float *nudge_max,
+                                       cudaStream_t cuda_stream) {
   FakeQuantPerChannelGrad<<<GET_BLOCKS(channel_num), GET_THREADS, 0, cuda_stream>>>(input, gradient, output, total_num,
                                                                                     channel_num, nudge_min, nudge_max);
+  return GetCudaStatus();
 }

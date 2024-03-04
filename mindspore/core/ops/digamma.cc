@@ -14,24 +14,31 @@
  * limitations under the License.
  */
 
-#include <vector>
-#include <map>
+#include <memory>
 #include <set>
-#include <string>
-#include <utility>
+#include <vector>
 
-#include "ops/digamma.h"
-#include "ops/op_utils.h"
-#include "utils/tensor_construct_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/digamma.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
-abstract::ShapePtr DigammaInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
+abstract::ShapePtr DigammaInferShape(const PrimitivePtr &, const std::vector<AbstractBasePtr> &input_args) {
   auto input_shape_ptr = CheckAndConvertUtils::GetTensorInputShape("Digamma", input_args, 0);
   auto input_shape = input_shape_ptr->shape();
   if (IsDynamicRank(input_shape)) {
@@ -43,7 +50,10 @@ abstract::ShapePtr DigammaInferShape(const PrimitivePtr &primitive, const std::v
   return input_shape_ptr;
 }
 TypePtr DigammaInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
+  const int64_t input_num = 1;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
   const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64};
   auto input = input_args[0]->BuildType();
   (void)CheckAndConvertUtils::CheckTensorTypeValid("input", input, valid_types, prim_name);
@@ -51,17 +61,20 @@ TypePtr DigammaInferType(const PrimitivePtr &primitive, const std::vector<Abstra
 }
 }  // namespace
 
-AbstractBasePtr DigammaInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                             const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  const int64_t input_num = 1;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
-  auto infer_type = DigammaInferType(primitive, input_args);
-  auto infer_shape = DigammaInferShape(primitive, input_args);
-  return abstract::MakeAbstract(infer_shape, infer_type);
-}
-
 MIND_API_OPERATOR_IMPL(Digamma, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(Digamma, prim::kPrimDigamma, DigammaInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGDigammaInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DigammaInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DigammaInferType(primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Digamma, prim::kPrimDigamma, AGDigammaInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -16,7 +16,7 @@ mindspore.nn.AdaMax
             w = w - \frac{l}{1 - \beta_1^{t+1}} * \frac{m_{t+1}}{v_{t+1} + \epsilon}
         \end{array}
 
-    :math:`m` 代表第一个动量矩阵，:math:`v` 代表第二个动量矩阵，:math:`g` 代表梯度 `gradients` ，:math:`\beta_1, \beta_2` 代表衰减速率 `beta1` 和 `beta2` ，:math:`t` 代表当前step，:math:`beta_1^t` 代表 `beta1` 的t次方 ， :math:`\l` 代表学习率 `learning_rate` ，:math:`w` 代表 `params` ， :math:`\epsilon` 代表 `eps` 。
+    :math:`m` 代表第一个动量矩阵，:math:`v` 代表第二个动量矩阵，:math:`g` 代表梯度 `gradients` ，:math:`\beta_1, \beta_2` 代表衰减速率 `beta1` 和 `beta2` ，:math:`t` 代表当前step，:math:`beta_1^t` 代表 `beta1` 的t次方 ， :math:`l` 代表学习率 `learning_rate` ，:math:`w` 代表 `params` ， :math:`\epsilon` 代表 `eps` 。
 
     .. note::
 
@@ -31,14 +31,14 @@ mindspore.nn.AdaMax
           .. include:: mindspore.nn.optim_group_gc.rst
           .. include:: mindspore.nn.optim_group_order.rst
 
-        - **learning_rate** (Union[float, int, Tensor, Iterable, LearningRateSchedule]) - 默认值：0.001。
+        - **learning_rate** (Union[float, int, Tensor, Iterable, LearningRateSchedule]) - 默认值： ``0.001`` 。
 
           .. include:: mindspore.nn.optim_arg_dynamic_lr.rst
 
-        - **beta1** (float) - 第一个动量矩阵的指数衰减率。参数范围（0.0,1.0）。默认值：0.9。
-        - **beta2** (float) - 第二个动量矩阵的指数衰减率。参数范围（0.0,1.0）。默认值：0.999。
-        - **eps** (float) - 加在分母上的值，以确保数值稳定。必须大于0。默认值：1e-8。
-        - **weight_decay** (Union[float, int, Cell]) - 权重衰减（L2 penalty）。默认值：0.0。
+        - **beta1** (float) - 第一个动量矩阵的指数衰减率。参数范围（0.0,1.0）。默认值： ``0.9`` 。
+        - **beta2** (float) - 第二个动量矩阵的指数衰减率。参数范围（0.0,1.0）。默认值： ``0.999``。
+        - **eps** (float) - 加在分母上的值，以确保数值稳定。必须大于0。默认值： ``1e-08`` 。
+        - **weight_decay** (Union[float, int, Cell]) - 权重衰减（L2 penalty）。默认值： ``0.0`` 。
 
           .. include:: mindspore.nn.optim_arg_dynamic_wd.rst
 

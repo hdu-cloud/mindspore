@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,18 +14,29 @@
  * limitations under the License.
  */
 
-#include <algorithm>
 #include <memory>
-#include <map>
 #include <set>
-#include <string>
 #include <vector>
 
-#include "ops/elu.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/elu.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -50,7 +61,7 @@ TypePtr EluInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr
   (void)CheckAndConvertUtils::CheckInteger("input numbers", SizeToLong(input_args.size()), kEqual, 1, prim_name);
   MS_EXCEPTION_IF_NULL(input_args[0]);
   auto x_type = input_args[0]->BuildType();
-  const std::set valid_types = {kFloat16, kFloat32, kFloat64};
+  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64};
   (void)CheckAndConvertUtils::CheckTensorTypeValid("input_x", x_type, valid_types, prim_name);
   return x_type;
 }
@@ -76,6 +87,24 @@ AbstractBasePtr EluInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr
   auto infer_shape = EluInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Elu, prim::kPrimElu, EluInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGEluInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return EluInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return EluInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return EluInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Elu, prim::kPrimElu, AGEluInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -22,8 +22,11 @@
 #include <vector>
 #include "pipeline/pynative/forward/forward.h"
 #include "pipeline/pynative/grad/grad.h"
+
 #include "pybind11/pybind11.h"
 #include "frontend/operator/composite/composite.h"
+#include "ir/anf.h"
+#include "mindrt/include/fork_utils.h"
 
 namespace mindspore::pynative {
 namespace py = pybind11;
@@ -51,11 +54,15 @@ class PyNativeExecutor : public std::enable_shared_from_this<PyNativeExecutor> {
     return forward_executor_;
   }
 
+  void StoreAsyncStatus(const FrontendOpRunInfoPtr &op_run_info) const;
+  // Generate stub tensor and dispatch async task.
+  py::object RunOpStub(const py::args &args) const;
   py::object RealRunOp(const py::args &args) const;
   py::object CallConstantFolding(const py::args &args) const;
   bool grad_flag() const;
   void set_grad_flag(bool flag) const;
-  void set_graph_phase(const std::string &graph_phase) const;
+  bool enable_grad() const;
+  void set_enable_grad(bool enable_grad) const;
   void set_py_exe_path(const py::object &py_exe_path) const;
   void set_kernel_build_server_dir(const py::object &kernel_build_server_dir) const;
   void SetHookChanged(const py::object &cell) const;
@@ -64,21 +71,30 @@ class PyNativeExecutor : public std::enable_shared_from_this<PyNativeExecutor> {
   py::object Run() const;
   void GradNet(const prim::GradOperationPtr &grad, const py::object &cell, const py::object &weights,
                const py::object &grad_position, const py::args &args) const;
-  py::object GradMsFunction(const py::object &out, const py::args &args) const;
-  void SetDynamicInput(const py::object &cell, const py::args &args) const;
+  py::object GradJit(const py::object &out, const py::args &args) const;
+  void SetDynamicInput(const py::object &obj, const py::args &args) const;
+  py::object GetDynamicInput(const py::object &actual_input) const;
 
-  py::object CheckAlreadyRun(const prim::GradOperationPtr &grad, const py::object &obj, const py::object &grad_hash_id,
-                             const py::args &args) const;
+  py::object CheckAlreadyRun(const prim::GradOperationPtr &grad, const py::object &obj, const py::object &weights,
+                             const py::object &grad_hash_id, const py::args &args) const;
   void ClearRes() const;
   // Sync stream
   void Sync() const;
-  void SetLazyBuild(bool enable) const;
   bool IsFirstCell() const;
-  void WorkerJoin() { grad_executor_->WorkerJoin(); }
-  void SetMsFunctionCompileStatus(bool is_compiling) const;
+  void WorkerJoin();
+  void SetJitCompileStatus(bool is_compiling, const std::string &phase) const;
+  void WaitBeforeFork();
+  void ParentAfterFork();
+  void ReinitAfterFork();
+  py::object RunSliceOpStub(const std::vector<ValuePtr> &input_v,
+                            const std::vector<SliceOpInfoPtr> &slice_op_infos) const;
 
  private:
-  PyNativeExecutor() = default;
+  PyNativeExecutor() {
+    // Register fork event callbacks.
+    ForkUtils::GetInstance().RegisterCallbacks(this, &PyNativeExecutor::WaitBeforeFork,
+                                               &PyNativeExecutor::ParentAfterFork, &PyNativeExecutor::ReinitAfterFork);
+  }
   static std::shared_ptr<PyNativeExecutor> executor_;
   static std::mutex instance_lock_;
   static ForwardExecutorPtr forward_executor_;

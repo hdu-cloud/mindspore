@@ -14,21 +14,18 @@
 # ============================================================================
 """constexpr util"""
 
-from itertools import compress, zip_longest
-from functools import partial
-from collections import deque
 import operator
+from functools import partial
+from itertools import compress
 
 import numpy as np
-
-from mindspore.ops.primitive import constexpr
-from mindspore import log as logger
 from mindspore.common import dtype as mstype
-from mindspore.common.tensor import Tensor
 from mindspore.common._register_for_tensor import tensor_operator_registry
-from mindspore.ops import _utils as op_utils
-from mindspore._checkparam import Validator as validator
+from mindspore.common.tensor import Tensor
 from mindspore.ops import operations as P
+from mindspore.ops.primitive import constexpr, _primexpr
+from mindspore import log as logger
+from mindspore import context
 
 ALL_TENSOR = 0
 NO_TENSOR = 1
@@ -116,10 +113,10 @@ def make_empty_slice():
     return slice(None, None, None)
 
 
-@constexpr
-def _deep_list(array_like, dim_size=-1):
+@_primexpr
+def _deep_list(array_like, dim_size=None):
     """convert nested tuple/list mixtures to pure nested list"""
-    if dim_size != -1:
+    if dim_size is not None:
         array_like = check_range(array_like, dim_size)
     if isinstance(array_like, (list, tuple)):
         return list(map(lambda x: _deep_list(x, dim_size), array_like))
@@ -158,9 +155,9 @@ def _deep_tensor_to_nparray(array_like):
     return array_like
 
 
-@constexpr
+@_primexpr
 def check_range(x, dim_size):
-    if dim_size == -1:
+    if dim_size is None:
         return x
     if isinstance(x, int) and not isinstance(x, bool):
         if x >= dim_size or x < -dim_size:
@@ -169,8 +166,8 @@ def check_range(x, dim_size):
     return x
 
 
-@constexpr
-def make_tensor(a, dtype=mstype.int64, data_shape=None, dim_size=-1):
+@_primexpr
+def make_tensor(a, dtype=mstype.int64, data_shape=None, dim_size=None):
     """
     Converts the input to tensor.
 
@@ -192,10 +189,13 @@ def make_tensor(a, dtype=mstype.int64, data_shape=None, dim_size=-1):
         return Tensor(np.zeros(data_shape), dtype)
 
     if not isinstance(a, (list, tuple, int, float, bool)):
-        raise TypeError("input data must be `int`, `float`, `bool`, `list` or `tuple`")
+        raise TypeError(f"Input data must be `int`, `float`, `bool`, `list` or `tuple`, but got {a}")
 
-    if dim_size != -1:
+    if dim_size is not None:
         a = check_range(a, dim_size)
+
+    if isinstance(a, int):
+        return P.ScalarToTensor()(a, dtype)
 
     if isinstance(a, (list, tuple)):
         # Convert all tuple/nested tuples to lists
@@ -215,7 +215,6 @@ def make_tensor(a, dtype=mstype.int64, data_shape=None, dim_size=-1):
 tensor_operator_registry.register('make_tensor', make_tensor)
 
 
-@constexpr
 def judge_data_dim(data_dim, min_data_dim=0, max_data_dim=8):
     """Judges whether the data dim is valid."""
     if data_dim < min_data_dim or data_dim > max_data_dim:
@@ -223,21 +222,11 @@ def judge_data_dim(data_dim, min_data_dim=0, max_data_dim=8):
                          f"{max_data_dim}], but got '{data_dim}'.")
 
 
-@constexpr
 def get_source_shape(data_shape, value_shape):
     """Returns the shape of value that will be used to broadcast against data."""
-    cannot_broadcast = False
-    source_shape = value_shape
-    for i, j in zip(reversed(data_shape), reversed(value_shape)):
-        if j not in (1, i):
-            cannot_broadcast = True
-    for i in range(len(value_shape) - len(data_shape)):
-        source_shape = data_shape
-        if value_shape[i] != 1:
-            cannot_broadcast = True
-    if cannot_broadcast:
-        raise ValueError(f'could not broadcast input array from shape {value_shape} to {data_shape}')
-    return source_shape
+    if len(value_shape) > len(data_shape):
+        return data_shape
+    return value_shape
 
 
 @constexpr
@@ -255,7 +244,7 @@ def check_tensor_setitem_index(index, element_type=None):
                 raise IndexError(
                     "Index of type '{}' is not supported yet.".format(type(item)))
         return True
-    if isinstance(index, mstype.tensor_type):
+    if isinstance(index, mstype.TensorType):
         if element_type is None or element_type != mstype.bool_:
             raise TypeError(
                 "The index of tensor should be a bool type tensor. "
@@ -351,13 +340,13 @@ def get_pos_of_indexes_types(indexes_types, op_name):
             slice_positions += (i,)
         elif isinstance(index_type, mstype.Ellipsis_):
             ellipsis_positions += (i,)
-        elif isinstance(index_type, mstype.none_type):
+        elif isinstance(index_type, mstype.NoneType):
             none_positions += (i,)
         elif isinstance(index_type, mstype.Int):
             int_positions += (i,)
         elif isinstance(index_type, mstype.Bool):
             bool_positions += (i,)
-        elif isinstance(index_type, mstype.tensor_type):
+        elif isinstance(index_type, mstype.TensorType):
             tensor_positions += (i,)
         elif isinstance(index_type, (list, tuple)):
             sequence_positions += (i,)
@@ -407,10 +396,27 @@ def slice2indices(input_slice, shape):
     start, stop, step = normalize_slice(input_slice, shape[0])
     if check_slice_empty(start, stop, step):
         return False
-    grids = ([np.array(list(range(start, stop, step)), dtype=np.int64)] +
-             [np.array(list(range(dim_size)), dtype=np.int64) for dim_size in shape[1:]])
-    mesh = np.ix_(*grids)
-    return Tensor(np.stack(np.broadcast_arrays(*mesh), axis=-1))
+    ndim = len(shape)
+    mesh = list()
+    range_op = P.Range()
+    cast_op = P.Cast()
+    grids = [
+        range_op(cast_op(start, mstype.int64), cast_op(stop, mstype.int64),
+                 cast_op(step, mstype.int64))
+    ]
+    grids += [
+        range_op(Tensor(0, mstype.int64), cast_op(dim_size, mstype.int64),
+                 Tensor(1, mstype.int64)) for dim_size in shape[1:]
+    ]
+    for j, grid in enumerate(grids):
+        mesh.append(P.Reshape()(grid, tuple(
+            [grid.size if j == t else 1 for t in range(ndim)])))
+    shapes = map(P.Shape(), mesh)
+    out_shape = infer_out_shape(*shapes)
+    mesh_arrays = list()
+    for arr in mesh:
+        mesh_arrays.append(P.BroadcastTo(out_shape)(arr))
+    return P.Stack(-1)(mesh_arrays)
 
 
 @constexpr
@@ -422,7 +428,7 @@ def check_indices(indices_size, index):
     return indices_size
 
 
-@constexpr
+@_primexpr
 def check_indices_value_size(indices_size, value_size):
     """Checks if the sizes are already matched."""
     if value_size < 1:
@@ -438,7 +444,7 @@ def check_indices_value_size(indices_size, value_size):
 @constexpr
 def tuple_index_type_cnt(types, op_name):
     """count the tensor type of types which contains the tuple elements' type."""
-    if all(isinstance(ele, mstype.tensor_type) for ele in types):
+    if all(isinstance(ele, mstype.TensorType) for ele in types):
         return ALL_TENSOR
     if all(isinstance(ele, (mstype.Int, mstype.Ellipsis_, mstype.Slice)) for ele in types):
         return ALL_BASIC
@@ -450,7 +456,7 @@ def check_value_elements(types):
     """Judges the type of all elements of the tuple."""
     tensor_number = 0
     for ele in types:
-        if isinstance(ele, mstype.tensor_type):
+        if isinstance(ele, mstype.TensorType):
             tensor_number += 1
     if tensor_number == 0:
         return NO_TENSOR
@@ -480,34 +486,60 @@ def check_tensors_dtype_same(data_dtype, value_dtype, op_name):
 
 
 @constexpr
+def get_broadcast_shape(x_shape, y_shape, prim_name):
+    """Get broadcast shape from input shapes."""
+    if x_shape is None or y_shape is None:
+        raise ValueError("get_broadcast_shape has dynamic rank input")
+    if None in x_shape or None in y_shape:
+        raise ValueError("get_broadcast_shape has dynamic shape input")
+    if x_shape == y_shape:
+        return x_shape
+    x_len = len(x_shape)
+    y_len = len(y_shape)
+    length = x_len if x_len < y_len else y_len
+    broadcast_shape_back = []
+
+    for i in range(-length, 0):
+        if x_shape[i] == 1:
+            broadcast_shape_back.append(y_shape[i])
+        elif y_shape[i] == 1:
+            broadcast_shape_back.append(x_shape[i])
+        elif x_shape[i] == y_shape[i]:
+            broadcast_shape_back.append(x_shape[i])
+        else:
+            raise ValueError(f"For '{prim_name}', x.shape and y.shape need to "
+                             f"broadcast. The value of x.shape[{i}] or y.shape[{i}]"
+                             f" must be 1 or -1 when they are not the same, "
+                             f"but got x.shape = {x_shape} "
+                             f"and y.shape = {y_shape}.")
+
+    broadcast_shape_front = y_shape[0: y_len - length] if length == x_len else x_shape[0: x_len - length]
+    broadcast_shape = list(broadcast_shape_front) + broadcast_shape_back
+    return broadcast_shape
+
+
+@constexpr
 def generate_broadcast_shape(shapes, op_name):
     """Generate broadcast shape for a tuple of shape."""
     if not shapes:
         return ()
     broadcast_shape = shapes[0]
-    for i, shape in enumerate(shapes):
-        logger.debug(f"Broadcasts the {i}th tensor, the shape is {shape}.")
-        try:
-            broadcast_shape = op_utils.get_broadcast_shape(
-                broadcast_shape, shape, op_name)
-        except ValueError as ex:
-            raise IndexError(ex)
+    for shape in shapes:
+        broadcast_shape = get_broadcast_shape(tuple(broadcast_shape), shape, op_name)
     return tuple(broadcast_shape)
 
 
-@constexpr
+@_primexpr
 def check_two_shapes_need_broadcast(shape_x, shape_y):
     """Check shape_y needs to be broadcast to shape_x."""
-    if any(j not in (i, 1) for i, j in zip(reversed(shape_x), reversed(shape_y))):
-        raise ValueError(f"{shape_y} could not broadcast with {shape_x}.")
     return shape_y != shape_x
 
 
-@constexpr
+@_primexpr
 def compute_multiples(origin_shape, broadcast_shape):
     """Compute multiples between origin shape with broadcast shape."""
     len_gap = len(broadcast_shape) - len(origin_shape)
-    return broadcast_shape[0:len_gap] + tuple(map(lambda x, y: x // y, broadcast_shape[len_gap:], origin_shape))
+    return broadcast_shape[0:len_gap] + tuple(map(lambda x, y: x // y, broadcast_shape[len_gap:], tuple(origin_shape)))
 
 
 @constexpr
@@ -517,7 +549,7 @@ def convert_scalar_to_tensor(data_shape, data_dtype, indices_shape, value, op_ty
         updates_shape = indices_shape + data_shape[1:]
     else:
         updates_shape = indices_shape[:-1] + data_shape[indices_shape[-1]:]
-    return Tensor(np.full(updates_shape, value), dtype=data_dtype)
+    return P.FillV2()(updates_shape, P.Cast()(value, data_dtype))
 
 
 def generate_updates_shape(data_shape, index_shape, op_type, is_dynamic):
@@ -578,12 +610,6 @@ def _judge_order_continuous(order_sequence):
 @constexpr
 def scalar_in_sequence(x, y):
     """Determine whether the scalar in the sequence."""
-    if x is None:
-        raise ValueError("Judge scalar in tuple or list require scalar and sequence must be constant, "
-                         "but the scalar is not.")
-    if y is None:
-        raise ValueError("Judge scalar in tuple or list require scalar and sequence must be constant, "
-                         "but the sequence is not.")
     return x in y
 
 
@@ -606,7 +632,7 @@ def check_number_index_type(number):
                      .format(number, type(number)))
 
 
-@constexpr
+@_primexpr
 def get_stride_info_from_slice(data_shape, slice_index):
     """Get stride info from a python slice"""
     begin, end, step = get_slice_stride(slice_index, data_shape[0])
@@ -707,7 +733,7 @@ def unpack(x):
     return x
 
 
-@constexpr
+@_primexpr
 def normalize_start(start, dim_size):
     """
     Normalize `start` according to the number of dimensions (`dim_size`).
@@ -715,24 +741,24 @@ def normalize_start(start, dim_size):
     """
     if start is None:
         return 0
-    if dim_size == -1:
+    if dim_size is None:
         return start
     if start < 0:
         return 0 if start < -dim_size else start % dim_size
     return start if start < dim_size else dim_size
 
 
-@constexpr
+@_primexpr
 def normalize_stop(stop, dim_size):
     """
     Normalize `stop` according to the number of dimensions (`dim_size`).
     If the number of dimensions is not given, return the original input directly.
     """
-    if stop is None and dim_size == -1:
+    if stop is None and dim_size is None:
         raise IndexError("Not Support stop is None when dim is dynamic")
     if stop is None:
         return dim_size
-    if dim_size == -1:
+    if dim_size is None:
         return stop
     if stop < 0:
         return 0 if stop < -dim_size else stop % dim_size
@@ -748,11 +774,9 @@ def get_step_from_slice(input_slice):
     return step
 
 
-@constexpr
+@_primexpr
 def normalize_slice(input_slice, dim_size):
     """Normalizes start, stop, step in a slice."""
-    start = normalize_start(input_slice.start, dim_size)
-    stop = normalize_stop(input_slice.stop, dim_size)
     step = input_slice.step
     if step is None:
         step = 1
@@ -771,7 +795,6 @@ def tuple_slice(tup, start, end):
     return tup[start:end]
 
 
-@constexpr
 def expanded_shape(shape, expand_size):
     return (1,)*expand_size + shape
 
@@ -804,12 +827,20 @@ def is_slice(x):
     return isinstance(x, slice)
 
 
-@constexpr
+@_primexpr
 def filter_expanded_dims(shape, not_expanded_dim):
+    """filter_expanded_dims"""
+    def _check(diff, shape):
+        if diff < 0:
+            raise ValueError(f'unable to broadcast {shape}')
+
     diff = len(not_expanded_dim) - len(shape)
-    if diff < 0:
-        raise ValueError(f'unable to broadcast {shape}')
-    return tuple(compress(shape, not_expanded_dim[diff:]))
+    _check(diff, shape)
+    res = list()
+    for i, flag in zip(shape, not_expanded_dim[diff:]):
+        if flag:
+            res.append(i)
+    return tuple(res)
 
 
 @constexpr
@@ -818,8 +849,8 @@ def sequence_to_index(sequence, dim_size):
     if not sequence:
         return False
     if all(isinstance(i, bool) for i in sequence):
-        if dim_size == -1:
-            raise IndexError("Not supported to take the subscript of dynamic shape tensor using Boolean type")
+        if dim_size is None:
+            return Tensor(sequence)
         seq_size = len(sequence)
         if seq_size != dim_size:
             raise IndexError(f'dimension is {dim_size} but corresponding boolean dimension is {seq_size}')
@@ -829,19 +860,31 @@ def sequence_to_index(sequence, dim_size):
     return make_tensor(sequence, mstype.int64, None, dim_size)
 
 
-@constexpr
+@_primexpr
 def int_to_index(i, shape):
     """Converts integer to tensor indices."""
+    def _check(i, dim_size):
+        if i < -dim_size or i >= dim_size:
+            raise IndexError(f'index {i} is out of bounds for axis 0 with size {dim_size}')
+
     dim_size = shape[0]
-    if i < -dim_size or i >= dim_size:
-        raise IndexError(f'index {i} is out of bounds for axis 0 with size {dim_size}')
-    i = i % dim_size
+    _check(i, dim_size)
+    i = (i + dim_size) % dim_size
     if len(shape) == 1:
-        return Tensor([[i]])
-    grids = [np.array(list(range(size)), dtype=np.int64) for size in shape[1:]]
-    mesh = np.ix_(*grids)
-    index = np.stack(np.broadcast_arrays(*mesh), -1)
-    return Tensor(np.insert(index, 0, i, -1))
+        return P.FillV2()((1, 1), P.Cast()(i, mstype.int64))
+    mesh = list()
+    ndim = len(shape) - 1
+    for j, size in enumerate(shape[1:]):
+        grid = P.Range()(Tensor(0, mstype.int64), P.Cast()(size, mstype.int64), Tensor(1, mstype.int64))
+        mesh.append(P.Reshape()(grid, tuple([size if j == t else 1 for t in range(ndim)])))
+    shapes = map(P.Shape(), mesh)
+    out_shape = infer_out_shape(*shapes)
+    mesh_arrays = list()
+    for arr in mesh:
+        mesh_arrays.append(P.BroadcastTo(out_shape)(arr))
+    index = P.Stack(-1)(mesh_arrays)
+    return P.Concat(-1)((P.FillV2()(P.Shape()(index)[:-1] + (1,),
+                                    P.Cast()(i, mstype.int64)), index))
 
 
 @constexpr
@@ -863,12 +906,12 @@ def rem_not_expanded_dims(idx_advanced, expand_true, tensor_index_ndim, rem_ndim
     return not_expanded_dim, idx_advanced
 
 
-@constexpr
+@_primexpr
 def check_slice_empty(start, stop, step):
-    return (start - stop)*step >= 0
+    return (start - stop) * step >= 0
 
 
-@constexpr
+@_primexpr
 def real_axes(ndim_orig, ndim_out, axes_orig):
     """Returns the real axes to be reduced after performing broadcast"""
     _diff = ndim_out - ndim_orig
@@ -877,10 +920,7 @@ def real_axes(ndim_orig, ndim_out, axes_orig):
     return axes + tuple(axes_orig)
 
 
-check_axis_valid_const = constexpr(validator.check_axis_valid)
-
-
-@constexpr
+@_primexpr
 def compute_slice_shape(slice_shape, broadcast_shape_len, slice_cnt, fancy_position):
     """Computes slice tensor shapes"""
     shape = [1] * len(slice_shape)
@@ -889,18 +929,19 @@ def compute_slice_shape(slice_shape, broadcast_shape_len, slice_cnt, fancy_posit
     return shape
 
 
-@constexpr
+@_primexpr
 def infer_out_shape(*shapes):
     """
     Returns shape of output after broadcasting. Raises ValueError if shapes cannot be broadcast.
     """
-    shape_out = deque()
-    reversed_shapes = map(reversed, shapes)
-    for items in zip_longest(*reversed_shapes, fillvalue=1):
+    shape_out = list()
+    max_len = max([len(it) for it in shapes])
+
+    for i in range(max_len):
+        items = [it[i-max_len+len(it)] if i-max_len +
+                 len(it) >= 0 else 1 for it in shapes]
         max_size = 0 if 0 in items else max(items)
-        if any(item not in (1, max_size) for item in items):
-            raise ValueError(f'operands could not be broadcast together with shapes {*shapes,}')
-        shape_out.appendleft(max_size)
+        shape_out.append(max_size)
     return tuple(shape_out)
 
 
@@ -911,6 +952,12 @@ def use_copy_slice(tuple_index):
                 isinstance(tuple_index[1], slice) and tuple_index[1].step in (1, None) and
                 all(x == slice(None, None, None) for x in tuple_index[2:]))
     return False
+
+
+@constexpr
+def is_ascend():
+    """Device target is Ascend or not"""
+    return context.get_context('device_target') == "Ascend"
 
 
 @constexpr
@@ -938,8 +985,22 @@ def get_output_dtype(dtype_1, dtype_2, use_complex=False):
 
 @constexpr
 def promote_binary_dtype(dtype_1, dtype_2):
+    """
+    promote binary types
+    """
     if dtype_1 == dtype_2:
         return dtype_1
     if dtype_1 in complex_types or dtype_2 in complex_types:
         return get_output_dtype(dtype_1, dtype_2, True)
     return get_output_dtype(dtype_1, dtype_2, False)
+
+
+@_primexpr
+def generate_padding_shape(shape, length):
+    """
+    pad the `shape` to `length` with 1.
+    """
+    if len(shape) > length:
+        raise ValueError(f"Can not pad {shape} to length {length}.")
+
+    return shape + (1,) * (length - len(shape))

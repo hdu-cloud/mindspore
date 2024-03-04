@@ -22,8 +22,9 @@ from collections import defaultdict
 import numpy as np
 import mindspore as ms
 from mindspore.parallel._parallel_serialization import _rank_list_for_transform_parallel_checkpoint, \
-    _transform_parallel_checkpoint, _get_device_num_from_strategy, _make_dir, _load_strategy_file, \
-    _extract_layout_map, _extract_src_dst_layout_map, _parameter_not_in_local_stage, _extract_pipeline_stage_num
+    _transform_parallel_checkpoint, _get_device_num_from_strategy, _make_dir, \
+    _extract_layout_map, _extract_src_dst_layout_map, _parameter_not_in_local_stage, _extract_pipeline_stage_num, \
+    _merge_protobuf_strategy, _merge_json_strategy
 
 
 __all__ = ["merge_pipeline_strategys", "rank_list_for_transform", "transform_checkpoint_by_rank",
@@ -33,6 +34,8 @@ __all__ = ["merge_pipeline_strategys", "rank_list_for_transform", "transform_che
 def merge_pipeline_strategys(src_strategy_dirs, dst_strategy_file):
     """
     Merge parallel strategy between all pipeline stages in pipeline parallel mode.
+    For more details about converting distributed Checkpoint, please refer to
+    `Model Transformation <https://www.mindspore.cn/tutorials/experts/en/master/parallel/model_transformation.html>`_.
 
     Note:
         Strategy file of each pipeline stage should be included in src_strategy_dirs.
@@ -46,8 +49,9 @@ def merge_pipeline_strategys(src_strategy_dirs, dst_strategy_file):
         NotADirectoryError: `src_strategy_dirs` is not a directory.
 
     Examples:
+        >>> import mindspore ms
         >>> # src_strategy_dir/stra0.ckpt, src_strategy_dir/stra1.ckpt ... src_strategy_dir/stra127.ckpt
-        >>> merge_pipeline_strategys("./src_strategy_dir", "./dst_strategy.ckpt")
+        >>> ms.merge_pipeline_strategys("./src_strategy_dir", "./dst_strategy.ckpt")
 
     """
     dst_strategy_dir, _ = os.path.split(dst_strategy_file)
@@ -55,41 +59,32 @@ def merge_pipeline_strategys(src_strategy_dirs, dst_strategy_file):
         _make_dir(dst_strategy_dir, "path")
     if not os.path.isdir(src_strategy_dirs):
         raise NotADirectoryError("src_strategy_dirs {} is not a directory.".format(src_strategy_dirs))
-    src_strategy_files = os.path.join(src_strategy_dirs, "*.ckpt")
-    dst_parallel_strategy_map = ms.train.node_strategy_pb2.ParallelStrategyMap()
-    merged_stage = []
-    for src_strategy_file in glob.glob(src_strategy_files):
-        src_parallel_strategy_map = _load_strategy_file(src_strategy_file)
-        strategy_items = src_parallel_strategy_map.parallel_strategy_item
-        layout_items = src_parallel_strategy_map.parallel_layout_item
-        if not strategy_items or not layout_items:
-            raise ValueError("The strategy file {} is empty".format(src_strategy_file))
-        pipeline_stage = strategy_items[0].parallel_strategys.stage
-        if pipeline_stage in merged_stage:
-            continue
-        for layout_item in layout_items:
-            layout_item.param_name = "-".join([str(pipeline_stage), layout_item.param_name])
-        dst_parallel_strategy_map.parallel_strategy_item.extend(strategy_items)
-        dst_parallel_strategy_map.parallel_layout_item.extend(layout_items)
-        merged_stage.append(pipeline_stage)
-    dst_parallel_strategy_map.current_stage = 1
-    with open(dst_strategy_file, "wb") as f:
-        f.write(dst_parallel_strategy_map.SerializeToString())
+    src_strategy_files_protobuf = glob.glob(os.path.join(src_strategy_dirs, "*.ckpt"))
+    src_strategy_files_json = glob.glob(os.path.join(src_strategy_dirs, "*.json"))
+    if src_strategy_files_protobuf and src_strategy_files_json:
+        raise ValueError("The strategys format should be all '.ckpt' or all '.json'")
+    is_protobuf = len(src_strategy_files_protobuf) > 0
+    if is_protobuf:
+        _merge_protobuf_strategy(src_strategy_files_protobuf, dst_strategy_file)
+    else:
+        _merge_json_strategy(src_strategy_files_json, dst_strategy_file)
+
 
 
 def rank_list_for_transform(rank_id, src_strategy_file=None, dst_strategy_file=None):
     """
     List of original distributed checkpoint rank index for obtaining the target checkpoint of a rank_id
-    during the distributed checkpoint conversion.
+    during the distributed checkpoint conversion. For more details about converting distributed Checkpoint,
+    please refer to `Model Transformation <https://www.mindspore.cn/tutorials/experts/en/master/parallel/model_transformation.html>`_.
 
     Args:
         rank_id (int): The rank of which distributed checkpoint needs to be obtained after conversion.
         src_strategy_file (str): Name of source sharding strategy file which saved by
-                                 'mindspore.set_auto_parallel_context(strategy_ckpt_save_file)'.
+                                 `mindspore.set_auto_parallel_context(strategy_ckpt_save_file)`.
                                  when the 'src_strategy_file' is None, it means that the source sharding strategy is
                                  without any sharing for each parameter. Default:None.
         dst_strategy_file (str): Name of destination sharding strategy file which saved by
-                                 'mindspore.set_auto_parallel_context(strategy_ckpt_save_file)'.
+                                 `mindspore.set_auto_parallel_context(strategy_ckpt_save_file)`.
                                  when the 'dst_strategy_file' is None, it means that the destination sharding strategy
                                  is without any sharing for each parameter. Default:None.
 
@@ -102,11 +97,12 @@ def rank_list_for_transform(rank_id, src_strategy_file=None, dst_strategy_file=N
         TypeError: `rank_id` is not a int.
 
     Examples:
+        >>> import mindspore as ms
         >>> rank_id = 0
-        >>> rank_list = rank_list_for_transform(rank_id, "./src_strategy.ckpt", "./dst_strategy.ckpt")
+        >>> rank_list = ms.rank_list_for_transform(rank_id, "./src_strategy.ckpt", "./dst_strategy.ckpt")
         >>> checkpoint_files_map = {}
         >>> for rank in rank_list:
-        >>>     checkpoint_files_map[rank] = "./pangu{}-100_2.ckpt".format(rank)
+        ...     checkpoint_files_map[rank] = "./pangu{}-100_2.ckpt".format(rank)
 
     """
     if not isinstance(rank_id, int):
@@ -140,7 +136,8 @@ def transform_checkpoint_by_rank(rank_id, checkpoint_files_map, save_checkpoint_
                                  src_strategy_file=None, dst_strategy_file=None):
     """
     Transform distributed checkpoint from source sharding strategy to destination sharding strategy by rank
-    for a network.
+    for a network. For more details about converting distributed Checkpoint, please refer to
+    `Model Transformation <https://www.mindspore.cn/tutorials/experts/en/master/parallel/model_transformation.html>`_.
 
     Args:
         rank_id (int): The rank of which distributed checkpoint needs to be obtained after conversion.
@@ -166,14 +163,15 @@ def transform_checkpoint_by_rank(rank_id, checkpoint_files_map, save_checkpoint_
         TypeError: `save_checkpoint_file_name` is not a string.
 
     Examples:
+        >>> import mindspore as ms
         >>> dst_device_num = 8
-        >>> for rank_id in range(dst_device_num)
-        >>>     rank_list = rank_list_for_transform(rank_id, "./src_strategy.ckpt", "./dst_strategy.ckpt")
-        >>>     checkpoint_files_map = {}
-        >>>     for rank in rank_list:
-        >>>         checkpoint_files_map[rank] = "./origin_checkpoint_rank{}/pangu{}-100_2.ckpt".format(rank)
-        >>>     save_checkpoint_file_name = "./new_checkpoint_rank{}/pangu{}-100_2.ckpt".format(rank_id)
-        >>>     transform_checkpoint_by_rank(rank_id, checkpoint_files_map, save_checkpoint_file_name,
+        >>> for rank_id in range(dst_device_num):
+        ...     rank_list = ms.rank_list_for_transform(rank_id, "./src_strategy.ckpt", "./dst_strategy.ckpt")
+        ...     checkpoint_files_map = {}
+        ...     for rank in rank_list:
+        ...         checkpoint_files_map[rank] = "./origin_checkpoint_rank{}/pangu{}-100_2.ckpt".format(rank)
+        ...     save_checkpoint_file_name = "./new_checkpoint_rank{}/pangu{}-100_2.ckpt".format(rank_id)
+        ...     ms.transform_checkpoint_by_rank(rank_id, checkpoint_files_map, save_checkpoint_file_name,
         ...                                  "./src_strategy.ckpt", "./dst_strategy.ckpt")
 
     """
@@ -222,9 +220,11 @@ def transform_checkpoints(src_checkpoints_dir, dst_checkpoints_dir, ckpt_prefix,
                           dst_strategy_file=None):
     """
     Transform distributed checkpoint from source sharding strategy to destination sharding strategy for a rank.
+    For more details about converting distributed Checkpoint, please refer to
+    `Model Transformation <https://www.mindspore.cn/tutorials/experts/en/master/parallel/model_transformation.html>`_.
 
     Note:
-        The src_checkpoints_dir directory structure should be organized like "src_checkpoints_dir/rank_0/a.ckpt", the
+        The `src_checkpoints_dir` directory structure should be organized like "src_checkpoints_dir/rank_0/a.ckpt", the
         rank number should be set to a subdirectory and the checkpoint file is stored in this subdirectory. If multiple
         files exist in a rank directory, the last file in the lexicgraphic order would be selected.
 
@@ -248,7 +248,8 @@ def transform_checkpoints(src_checkpoints_dir, dst_checkpoints_dir, ckpt_prefix,
         TypeError: `src_strategy_file` or `dst_strategy_file` is not a string.
 
     Examples:
-        >>> transform_checkpoints(src_checkpoints_dir, dst_checkpoints_dir, "dst_checkpoint",
+        >>> import mindspore as ms
+        >>> ms.transform_checkpoints(src_checkpoints_dir, dst_checkpoints_dir, "dst_checkpoint",
         ...                       "./src_strategy.ckpt", "./dst_strategy.ckpt")
 
     """

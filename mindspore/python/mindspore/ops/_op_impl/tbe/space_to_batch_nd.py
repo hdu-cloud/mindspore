@@ -16,15 +16,15 @@
 """SpaceToBatchND op"""
 from mindspore.ops.op_info_register import op_info_register, TBERegOp, DataType
 
-space_to_batch_nd_op_info = TBERegOp("SpaceToBatchND") \
+space_to_batch_nd_op_info = TBERegOp("SpaceToBatchNDD") \
     .fusion_type("OPAQUE") \
     .async_flag(False) \
     .binfile_name("space_to_batch_nd_d.so") \
     .compute_cost(10) \
     .kernel_name("space_to_batch_nd_d") \
     .partial_flag(True) \
-    .attr("block_shape", "required", "listInt", "all") \
-    .attr("paddings", "required", "listListInt", "all") \
+    .attr("block_shape", "required", "listInt", "all", "[]") \
+    .attr("paddings", "required", "listListInt", "all", "[[]]") \
     .input(0, "x", False, "required", "all", reshape_type="NH") \
     .output(0, "y", False, "required", "all", reshape_type="NH") \
     .dtype_format(DataType.F16_5HD, DataType.F16_5HD) \

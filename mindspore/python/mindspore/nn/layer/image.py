@@ -25,8 +25,8 @@ from mindspore.common.tensor import Tensor
 from mindspore.ops import operations as P
 from mindspore.ops.operations import _inner_ops as inner
 from mindspore.ops import functional as F
-from mindspore.ops.primitive import constexpr
-from mindspore._checkparam import Rel, Validator as validator
+from mindspore.ops.primitive import constexpr, _primexpr
+from mindspore import _checkparam as validator
 from mindspore.nn.layer.conv import Conv2d
 from mindspore.nn.layer.container import CellList
 from mindspore.nn.layer.pooling import AvgPool2d
@@ -64,8 +64,10 @@ class ImageGradients(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> net = nn.ImageGradients()
-        >>> image = Tensor(np.array([[[[1, 2], [3, 4]]]]), dtype=mindspore.int32)
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> net = ms.nn.ImageGradients()
+        >>> image = ms.Tensor(np.array([[[[1, 2], [3, 4]]]]), dtype=ms.int32)
         >>> output = net(image)
         >>> print(output)
         (Tensor(shape=[1, 1, 2, 2], dtype=Int32, value=
@@ -78,21 +80,20 @@ class ImageGradients(Cell):
         super(ImageGradients, self).__init__()
 
     def construct(self, images):
-        check = _check_input_4d(F.shape(images), "images", self.cls_name)
-        images = F.depend(images, check)
+        _check_input_4d(F.shape(images), "images", self.cls_name)
         batch_size, depth, height, width = P.Shape()(images)
         if height == 1:
-            dy = P.Fill()(P.DType()(images), (batch_size, depth, 1, width), 0)
+            dy = F.fill(P.DType()(images), (batch_size, depth, 1, width), 0)
         else:
             dy = images[:, :, 1:, :] - images[:, :, :height - 1, :]
-            dy_last = P.Fill()(P.DType()(images), (batch_size, depth, 1, width), 0)
+            dy_last = F.fill(P.DType()(images), (batch_size, depth, 1, width), 0)
             dy = P.Concat(2)((dy, dy_last))
 
         if width == 1:
-            dx = P.Fill()(P.DType()(images), (batch_size, depth, height, 1), 0)
+            dx = F.fill(P.DType()(images), (batch_size, depth, height, 1), 0)
         else:
             dx = images[:, :, :, 1:] - images[:, :, :, :width - 1]
-            dx_last = P.Fill()(P.DType()(images), (batch_size, depth, height, 1), 0)
+            dx_last = F.fill(P.DType()(images), (batch_size, depth, height, 1), 0)
             dx = P.Concat(3)((dx, dx_last))
         return dy, dx
 
@@ -120,19 +121,18 @@ def _get_dtype_max(dtype):
     return dtype_max
 
 
-@constexpr
+@_primexpr
 def _check_input_4d(input_shape, param_name, func_name):
     if len(input_shape) != 4:
         raise ValueError(f"For '{func_name}', the dimension of '{param_name}' must be 4d, "
                          f"but got {len(input_shape)}.")
-    return True
 
 
-@constexpr
+@_primexpr
 def _check_input_filter_size(input_shape, param_name, filter_size, func_name):
     _check_input_4d(input_shape, param_name, func_name)
-    validator.check(param_name + " shape[2]", input_shape[2], "filter_size", filter_size, Rel.GE, func_name)
-    validator.check(param_name + " shape[3]", input_shape[3], "filter_size", filter_size, Rel.GE, func_name)
+    validator.check(param_name + " shape[2]", input_shape[2], "filter_size", filter_size, validator.GE, func_name)
+    validator.check(param_name + " shape[3]", input_shape[3], "filter_size", filter_size, validator.GE, func_name)
 
 
 @constexpr
@@ -229,12 +229,12 @@ class SSIM(Cell):
 
     Args:
         max_val (Union[int, float]): The dynamic range of the pixel values (255 for 8-bit grayscale images).
-          Default: 1.0.
+          Default: ``1.0`` .
         filter_size (int): The size of the Gaussian filter. Default: 11. The value must be greater than or equal to 1.
-        filter_sigma (float): The standard deviation of Gaussian kernel. Default: 1.5.
+        filter_sigma (float): The standard deviation of Gaussian kernel. Default: ``1.5`` .
           The value must be greater than 0.
-        k1 (float): The constant used to generate c1 in the luminance comparison function. Default: 0.01.
-        k2 (float): The constant used to generate c2 in the contrast comparison function. Default: 0.03.
+        k1 (float): The constant used to generate c1 in the luminance comparison function. Default: ``0.01`` .
+        k2 (float): The constant used to generate c2 in the contrast comparison function. Default: ``0.03`` .
 
     Inputs:
         - **img1** (Tensor) - The first image batch with format 'NCHW'. It must be the same shape and dtype as img2.
@@ -254,12 +254,11 @@ class SSIM(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore as ms
         >>> import numpy as np
-        >>> import mindspore.nn as nn
-        >>> from mindspore import Tensor
-        >>> net = nn.SSIM()
-        >>> img1 = Tensor(np.ones([1, 3, 16, 16]).astype(np.float32))
-        >>> img2 = Tensor(np.ones([1, 3, 16, 16]).astype(np.float32))
+        >>> net = ms.nn.SSIM()
+        >>> img1 = ms.Tensor(np.ones([1, 3, 16, 16]).astype(np.float32))
+        >>> img2 = ms.Tensor(np.ones([1, 3, 16, 16]).astype(np.float32))
         >>> output = net(img1, img2)
         >>> print(output)
         [1.]
@@ -267,9 +266,9 @@ class SSIM(Cell):
     def __init__(self, max_val=1.0, filter_size=11, filter_sigma=1.5, k1=0.01, k2=0.03):
         super(SSIM, self).__init__()
         validator.check_value_type('max_val', max_val, [int, float], self.cls_name)
-        validator.check_number('max_val', max_val, 0.0, Rel.GT, self.cls_name)
+        validator.check_number('max_val', max_val, 0.0, validator.GT, self.cls_name)
         self.max_val = max_val
-        self.filter_size = validator.check_int(filter_size, 1, Rel.GE, 'filter_size', self.cls_name)
+        self.filter_size = validator.check_int(filter_size, 1, validator.GE, 'filter_size', self.cls_name)
         self.filter_sigma = validator.check_positive_float(filter_sigma, 'filter_sigma', self.cls_name)
         self.k1 = validator.check_value_type('k1', k1, [float], self.cls_name)
         self.k2 = validator.check_value_type('k2', k2, [float], self.cls_name)
@@ -321,13 +320,13 @@ class MSSSIM(Cell):
 
     Args:
         max_val (Union[int, float]): The dynamic range of the pixel values (255 for 8-bit grayscale images).
-          Default: 1.0.
+          Default: ``1.0`` .
         power_factors (Union[tuple, list]): Iterable of weights for each scale.
           Default: (0.0448, 0.2856, 0.3001, 0.2363, 0.1333). Default values obtained by Wang et al.
-        filter_size (int): The size of the Gaussian filter. Default: 11.
-        filter_sigma (float): The standard deviation of Gaussian kernel. Default: 1.5.
-        k1 (float): The constant used to generate c1 in the luminance comparison function. Default: 0.01.
-        k2 (float): The constant used to generate c2 in the contrast comparison function. Default: 0.03.
+        filter_size (int): The size of the Gaussian filter. Default: ``11`` .
+        filter_sigma (float): The standard deviation of Gaussian kernel. Default: ``1.5`` .
+        k1 (float): The constant used to generate c1 in the luminance comparison function. Default: ``0.01`` .
+        k2 (float): The constant used to generate c2 in the contrast comparison function. Default: ``0.03`` .
 
     Inputs:
         - **img1** (Tensor) - The first image batch with format 'NCHW'. It must be the same shape and dtype as img2.
@@ -350,11 +349,10 @@ class MSSSIM(Cell):
 
     Examples:
         >>> import numpy as np
-        >>> import mindspore.nn as nn
-        >>> from mindspore import Tensor
-        >>> net = nn.MSSSIM(power_factors=(0.033, 0.033, 0.033))
-        >>> img1 = Tensor(np.ones((1, 3, 128, 128)).astype(np.float32))
-        >>> img2 = Tensor(np.ones((1, 3, 128, 128)).astype(np.float32))
+        >>> import mindspore as ms
+        >>> net = ms.nn.MSSSIM(power_factors=(0.033, 0.033, 0.033))
+        >>> img1 = ms.Tensor(np.ones((1, 3, 128, 128)).astype(np.float32))
+        >>> img2 = ms.Tensor(np.ones((1, 3, 128, 128)).astype(np.float32))
         >>> output = net(img1, img2)
         >>> print(output)
         [1.]
@@ -363,10 +361,10 @@ class MSSSIM(Cell):
                  filter_sigma=1.5, k1=0.01, k2=0.03):
         super(MSSSIM, self).__init__()
         validator.check_value_type('max_val', max_val, [int, float], self.cls_name)
-        validator.check_number('max_val', max_val, 0.0, Rel.GT, self.cls_name)
+        validator.check_number('max_val', max_val, 0.0, validator.GT, self.cls_name)
         self.max_val = max_val
         validator.check_value_type('power_factors', power_factors, [tuple, list], self.cls_name)
-        self.filter_size = validator.check_int(filter_size, 1, Rel.GE, 'filter_size', self.cls_name)
+        self.filter_size = validator.check_int(filter_size, 1, validator.GE, 'filter_size', self.cls_name)
         self.filter_sigma = validator.check_positive_float(filter_sigma, 'filter_sigma', self.cls_name)
         self.k1 = validator.check_value_type('k1', k1, [float], self.cls_name)
         self.k2 = validator.check_value_type('k2', k2, [float], self.cls_name)
@@ -434,7 +432,7 @@ class PSNR(Cell):
 
     Args:
         max_val (Union[int, float]): The dynamic range of the pixel values (255 for 8-bit grayscale images).
-          The value must be greater than 0. Default: 1.0.
+          The value must be greater than 0. Default: ``1.0`` .
 
     Inputs:
         - **img1** (Tensor) - The first image batch with format 'NCHW'. It must be the same shape and dtype as img2.
@@ -452,9 +450,10 @@ class PSNR(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> net = nn.PSNR()
-        >>> img1 = Tensor([[[[1, 2, 3, 4], [1, 2, 3, 4]]]])
-        >>> img2 = Tensor([[[[3, 4, 5, 6], [3, 4, 5, 6]]]])
+        >>> import mindspore as ms
+        >>> net = ms.nn.PSNR()
+        >>> img1 = ms.Tensor([[[[1, 2, 3, 4], [1, 2, 3, 4]]]])
+        >>> img2 = ms.Tensor([[[[3, 4, 5, 6], [3, 4, 5, 6]]]])
         >>> output = net(img1, img2)
         >>> print(output)
         [-6.0206]
@@ -462,7 +461,7 @@ class PSNR(Cell):
     def __init__(self, max_val=1.0):
         super(PSNR, self).__init__()
         validator.check_value_type('max_val', max_val, [int, float], self.cls_name)
-        validator.check_number('max_val', max_val, 0.0, Rel.GT, self.cls_name)
+        validator.check_number('max_val', max_val, 0.0, validator.GT, self.cls_name)
         self.max_val = max_val
 
     def construct(self, img1, img2):
@@ -481,22 +480,26 @@ class PSNR(Cell):
         return psnr
 
 
-@constexpr
-def _raise_dims_rank_error(input_shape, param_name, func_name):
+@_primexpr
+def _check_rank(rank, input_shape, param_name, func_name):
     """raise error if input is not 3d or 4d"""
-    raise ValueError(f"{func_name} {param_name} must be 3d or 4d, but got shape {input_shape}")
+    def _check():
+        if rank not in (3, 4):
+            raise ValueError(f"{func_name} {param_name} must be 3d or 4d, but got shape {input_shape}")
+    _check()
 
 
-@constexpr
+@_primexpr
 def _get_bbox(rank, shape, central_fraction):
     """get bbox start and size for slice"""
+    n, c, h, w = -1, -1, -1, -1
     if rank == 3:
         c, h, w = shape
     else:
         n, c, h, w = shape
 
-    bbox_h_start = int((float(h) - np.float32(h * central_fraction)) / 2)
-    bbox_w_start = int((float(w) - np.float32(w * central_fraction)) / 2)
+    bbox_h_start = int((float(h) - float(h * central_fraction)) / 2)
+    bbox_w_start = int((float(w) - float(w * central_fraction)) / 2)
     bbox_h_size = h - bbox_h_start * 2
     bbox_w_size = w - bbox_w_start * 2
 
@@ -531,8 +534,10 @@ class CentralCrop(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> net = nn.CentralCrop(central_fraction=0.5)
-        >>> image = Tensor(np.random.random((4, 3, 4, 4)), mindspore.float32)
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> net = ms.nn.CentralCrop(central_fraction=0.5)
+        >>> image = ms.Tensor(np.random.random((4, 3, 4, 4)), ms.float32)
         >>> output = net(image)
         >>> print(output.shape)
         (4, 3, 2, 2)
@@ -541,15 +546,14 @@ class CentralCrop(Cell):
     def __init__(self, central_fraction):
         super(CentralCrop, self).__init__()
         validator.check_value_type("central_fraction", central_fraction, [float], self.cls_name)
-        validator.check_float_range(central_fraction, 0.0, 1.0, Rel.INC_RIGHT, 'central_fraction', self.cls_name)
+        validator.check_float_range(central_fraction, 0.0, 1.0, validator.INC_RIGHT, 'central_fraction', self.cls_name)
         self.central_fraction = central_fraction
         self.slice = P.Slice()
 
     def construct(self, image):
         image_shape = F.shape(image)
         rank = len(image_shape)
-        if rank not in (3, 4):
-            return _raise_dims_rank_error(image_shape, "image", self.cls_name)
+        _check_rank(rank, image_shape, "image", self.cls_name)
         if self.central_fraction == 1.0:
             return image
 
@@ -561,63 +565,74 @@ class CentralCrop(Cell):
 
 class PixelShuffle(Cell):
     r"""
-    Applies a pixelshuffle operation over an input signal composed of several input planes. This is useful for
-    implementiong efficient sub-pixel convolution with a stride of :math:`1/r`. For more details, refer to
+    Applies the PixelShuffle operation over input which implements sub-pixel convolutions
+    with stride :math:`1/r` . For more details, refer to
     `Real-Time Single Image and Video Super-Resolution Using an Efficient Sub-Pixel Convolutional Neural Network
     <https://arxiv.org/abs/1609.05158>`_ .
 
     Typically, the input is of shape :math:`(*, C \times r^2, H, W)` , and the output is of shape
-    :math:`(*, C, H \times r, W \times r)`, where r is an upscale factor and * is zero or more batch dimensions.
+    :math:`(*, C, H \times r, W \times r)`,
+    where :math:`r` is an upscale factor and :math:`*` is zero or more batch dimensions.
+
+    Note:
+        The dimension of input Tensor on Ascend should be less than 7.
 
     Args:
-        upscale_factor (int):  factor to increase spatial resolution by, and is a positive integer.
+        upscale_factor (int): factor to shuffle the input, and is a positive integer.
+            `upscale_factor` is the above-mentioned :math:`r`.
 
     Inputs:
-        - **x** (Tensor) - Tensor of shape :math:`(*, C \times r^2, H, W)` . The dimension of `x` is larger than 2, and
-          the length of third to last dimension can be divisible by `upscale_factor` squared.
+        - **input** (Tensor) - Tensor of shape :math:`(*, C \times r^2, H, W)` . The dimension of `x` is larger than 2,
+          and the length of third to last dimension can be divisible by `upscale_factor` squared.
 
     Outputs:
         - **output** (Tensor) - Tensor of shape :math:`(*, C, H \times r, W \times r)` .
 
     Raises:
         ValueError: If `upscale_factor` is not a positive integer.
-        ValueError: If the length of third to last dimension of `x` is not divisible by `upscale_factor` squared.
-        TypeError: If the dimension of `x` is less than 3.
+        ValueError: If the length of third to last dimension of `input` is not divisible by `upscale_factor` squared.
+        ValueError: If the dimension of `input` is less than 3.
+        TypeError: If `input` is not a Tensor.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> input_x = np.arange(3 * 2 * 9 * 4 * 4).reshape((3, 2, 9, 4, 4))
-        >>> input_x = mindspore.Tensor(input_x, mindspore.dtype.int32)
-        >>> pixel_shuffle = nn.PixelShuffle(3)
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> input_x = np.arange(3 * 2 * 8 * 4 * 4).reshape((3, 2, 8, 4, 4))
+        >>> input_x = ms.Tensor(input_x, ms.dtype.int32)
+        >>> pixel_shuffle = ms.nn.PixelShuffle(2)
         >>> output = pixel_shuffle(input_x)
         >>> print(output.shape)
-        (3, 2, 1, 12, 12)
+        (3, 2, 2, 8, 8)
     """
     def __init__(self, upscale_factor):
         super(PixelShuffle, self).__init__()
         self.upscale_factor = upscale_factor
 
-    def construct(self, x):
-        return ops.pixel_shuffle(x, self.upscale_factor)
+    def construct(self, input):
+        return ops.pixel_shuffle(input, self.upscale_factor)
 
 
 class PixelUnshuffle(Cell):
     r"""
-    Applies a pixelunshuffle operation over an input signal composed of several input planes. For more details, refer to
-    `Real-Time Single Image and Video Super-Resolution Using an Efficient Sub-Pixel Convolutional Neural Network
+    Applies the PixelUnshuffle operation over input which is the inverse of PixelShuffle. For more details, refer
+    to `Real-Time Single Image and Video Super-Resolution Using an Efficient Sub-Pixel Convolutional Neural Network
     <https://arxiv.org/abs/1609.05158>`_ .
 
     Typically, the input is of shape :math:`(*, C, H \times r, W \times r)` , and the output is of shape
-    :math:`(*, C \times r^2, H, W)` , where r is a downscale factor and * is zero or more batch dimensions.
+    :math:`(*, C \times r^2, H, W)` ,
+    where :math:`r` is a downscale factor and :math:`*` is zero or more batch dimensions.
 
     Args:
-        downscale_factor (int): factor to decrease spatial resolution by, and is a positive integer.
+        downscale_factor (int): factor to unshuffle the input, and is a positive integer.
+            `downscale_factor` is the above-mentioned :math:`r`.
 
     Inputs:
-        - **x** (Tensor) - Tensor of shape :math:`(*, C, H \times r, W \times r)` . The dimension of `x` is larger than
-          2, and the length of second to last dimension or last dimension can be divisible by `downscale_factor` .
+        - **input** (Tensor) - Tensor of shape :math:`(*, C, H \times r, W \times r)` . The dimension of `input` is
+          larger than 2, and the length of second to last dimension or last dimension can be divisible by
+          `downscale_factor` .
 
     Outputs:
         - **output** (Tensor) - Tensor of shape :math:`(*, C \times r^2, H, W)` .
@@ -625,22 +640,25 @@ class PixelUnshuffle(Cell):
     Raises:
         ValueError: If `downscale_factor` is not a positive integer.
         ValueError: If the length of second to last dimension or last dimension is not divisible by `downscale_factor` .
-        TypeError: If the dimension of `x` is less than 3.
+        ValueError: If the dimension of `input` is less than 3.
+        TypeError: If `input` is not a Tensor.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> pixel_unshuffle = nn.PixelUnshuffle(3)
-        >>> input_x = np.arange(12 * 12).reshape((1, 1, 12, 12))
-        >>> input_x = mindspore.Tensor(input_x, mindspore.dtype.int32)
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> pixel_unshuffle = ms.nn.PixelUnshuffle(2)
+        >>> input_x = np.arange(8 * 8).reshape((1, 1, 8, 8))
+        >>> input_x = ms.Tensor(input_x, ms.dtype.int32)
         >>> output = pixel_unshuffle(input_x)
         >>> print(output.shape)
-        (1, 9, 4, 4)
+        (1, 4, 4, 4)
     """
     def __init__(self, downscale_factor):
         super(PixelUnshuffle, self).__init__()
         self.downscale_factor = downscale_factor
 
-    def construct(self, x):
-        return ops.pixel_unshuffle(x, self.downscale_factor)
+    def construct(self, input):
+        return ops.pixel_unshuffle(input, self.downscale_factor)

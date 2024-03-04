@@ -25,6 +25,7 @@
 
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_ops.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
 #include "utils/tensor_construct_utils.h"
@@ -95,25 +96,20 @@ abstract::TupleShapePtr DenseToDenseSetOperationInferShape(const PrimitivePtr &p
 
   ShapeVector output_indices_vec = {-1, output_rank_dim};
   ShapeVector max_output_indices_vec;
-  ShapeVector min_output_indices_vec;
   if (!is_input_dynamic) {
     max_output_indices_vec = {max_num, output_rank_dim};
-    min_output_indices_vec = {0, output_rank_dim};
   }
   ShapeVector output_values_vec = {-1};
   ShapeVector max_output_values_vec;
-  ShapeVector min_output_values_vec;
   if (!is_input_dynamic) {
     max_output_values_vec = {max_num};
-    min_output_values_vec = {0};
   }
   ShapeVector output_shape_vec = {output_rank_dim};
 
   std::vector<abstract::BaseShapePtr> shape_tuple;
   abstract::ShapePtr output_indices_shape =
-    std::make_shared<abstract::Shape>(output_indices_vec, min_output_indices_vec, max_output_indices_vec);
-  abstract::ShapePtr output_values_shape =
-    std::make_shared<abstract::Shape>(output_values_vec, min_output_values_vec, max_output_values_vec);
+    std::make_shared<abstract::Shape>(output_indices_vec, max_output_indices_vec);
+  abstract::ShapePtr output_values_shape = std::make_shared<abstract::Shape>(output_values_vec, max_output_values_vec);
   abstract::ShapePtr output_shape = std::make_shared<abstract::Shape>(output_shape_vec);
 
   shape_tuple.push_back(output_indices_shape);
@@ -147,7 +143,25 @@ AbstractBasePtr DenseToDenseSetOperationInfer(const abstract::AnalysisEnginePtr 
   auto infershape = DenseToDenseSetOperationInferShape(primitive, input_args);
   return abstract::MakeAbstract(infershape, infertype);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(DenseToDenseSetOperation, prim::kPrimDenseToDenseSetOperation,
-                             DenseToDenseSetOperationInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGDenseToDenseSetOperationInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DenseToDenseSetOperationInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DenseToDenseSetOperationInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DenseToDenseSetOperationInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(DenseToDenseSetOperation, prim::kPrimDenseToDenseSetOperation,
+                                 AGDenseToDenseSetOperationInfer, false);
 }  // namespace ops
 }  // namespace mindspore

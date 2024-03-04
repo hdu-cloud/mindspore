@@ -21,12 +21,15 @@
 #include <algorithm>
 
 #include "ir/func_graph.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/comparison_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "ir/func_graph_cloner.h"
 #include "frontend/optimizer/optimizer_caller.h"
 #include "ir/pattern_matcher.h"
 #include "frontend/operator/ops.h"
 #include "frontend/optimizer/irpass.h"
-#include "pipeline/jit/parse/resolve.h"
+#include "pipeline/jit/ps/parse/resolve.h"
 
 namespace mindspore {
 namespace opt {
@@ -36,47 +39,27 @@ namespace irpass {
 class SwitchSimplify : public OptimizerCaller {
  public:
   AnfNodePtr operator()(const OptimizerPtr &, const AnfNodePtr &node) override {
-    static const auto support_fallback = common::GetEnv("MS_DEV_ENABLE_FALLBACK");
-    static const auto use_fallback = (support_fallback != "0");
-    PatternNode<AnfNodePtr> cond, true_br, false_br;
+    PatternNode<AnfNodePtr> cond;
+    PatternNode<AnfNodePtr> true_br;
+    PatternNode<AnfNodePtr> false_br;
     auto SwitchSimplLambda = [&node, &cond, &true_br, &false_br]() -> AnfNodePtr {
       auto value_ptr = GetValueNode(cond.GetNode(node));
       bool cond_value;
       if (value_ptr->isa<BoolImm>()) {
         cond_value = GetValue<bool>(value_ptr);
-      } else if (use_fallback && value_ptr->isa<parse::InterpretedObject>()) {
-        // {prim::kPrimSwitch, InterpretObject: 'True', X, Y}
-        // {prim::kPrimSwitch, InterpretObject: 'False', X, Y}
-        auto interpreted_obj = value_ptr->cast<parse::InterpretedObjectPtr>();
-        py::object obj = interpreted_obj->obj();
-        constexpr char PYTHON_MOD_PARSE_MODULE[] = "mindspore._extends.parse";
-        constexpr char PYTHON_MOD_CHECK_OBJ_BOOL[] = "check_obj_bool";
-        py::module mod = python_adapter::GetPyModule(PYTHON_MOD_PARSE_MODULE);
-        cond_value = python_adapter::CallPyModFn(mod, PYTHON_MOD_CHECK_OBJ_BOOL, obj).cast<bool>();
       } else {
         MS_LOG(EXCEPTION) << "The condition of branch must be a bool tensor value or a bool scalar value,"
                           << " not support this condition value: " << value_ptr->ToString();
       }
 
-      MS_LOG(DEBUG) << "condition value: " << value_ptr->ToString() << " bool:" << cond_value;
+      MS_LOG(DEBUG) << "condition value: " << value_ptr->ToString() << ", cond: " << cond_value;
       if (cond_value) {
         return true_br.GetNode(node);
       }
       return false_br.GetNode(node);
     };
 
-    auto IsDeterminateCondition = [](const AnfNodePtr &node) -> bool {
-      static const auto support_fallback = common::GetEnv("MS_DEV_ENABLE_FALLBACK");
-      static const auto use_fallback = (support_fallback != "0");
-      auto &abs = node->abstract();
-      bool is_interpret_object = false;
-      if (use_fallback && abs != nullptr) {
-        ValuePtr value = abs->BuildValue();
-        MS_EXCEPTION_IF_NULL(value);
-        is_interpret_object = value->isa<parse::InterpretedObject>();
-      }
-      return IsValueNode<BoolImm>(node) || is_interpret_object;
-    };
+    auto IsDeterminateCondition = [](const AnfNodePtr &node) -> bool { return IsValueNode<BoolImm>(node); };
     MATCH_REPLACE_LAMBDA_IF(node, PPrimitive(prim::kPrimSwitch, cond, true_br, false_br), SwitchSimplLambda,
                             cond.CheckFunc(IsDeterminateCondition, node));
 
@@ -91,7 +74,9 @@ class SwitchSimplify : public OptimizerCaller {
 class CompareSwitchSimplify : public OptimizerCaller {
  public:
   AnfNodePtr operator()(const OptimizerPtr &, const AnfNodePtr &node) override {
-    PatternNode<AnfNodePtr> cond, true_br, false_br;
+    PatternNode<AnfNodePtr> cond;
+    PatternNode<AnfNodePtr> true_br;
+    PatternNode<AnfNodePtr> false_br;
     auto CompareSwitchSimplifyLambda = [&node, &cond, &true_br, &false_br]() -> AnfNodePtr {
       auto cnode = node->cast<CNodePtr>();
       MS_EXCEPTION_IF_NULL(cnode);
@@ -154,7 +139,10 @@ class CompareSwitchSimplify : public OptimizerCaller {
 class FloatTupleGetItemSwitch : public OptimizerCaller {
  public:
   AnfNodePtr operator()(const OptimizerPtr &, const AnfNodePtr &node) override {
-    PatternNode<AnfNodePtr> cond, true_br, false_br, x;
+    PatternNode<AnfNodePtr> cond;
+    PatternNode<AnfNodePtr> true_br;
+    PatternNode<AnfNodePtr> false_br;
+    PatternNode<AnfNodePtr> x;
     MATCH_REPLACE_IF(node,
                      PPrimitive(prim::kPrimTupleGetItem, PPrimitive(prim::kPrimSwitch, cond, true_br, false_br), x),
                      PPrimitive(prim::kPrimSwitch, cond, PPrimitive(prim::kPrimTupleGetItem, true_br, x),
@@ -169,7 +157,11 @@ class FloatTupleGetItemSwitch : public OptimizerCaller {
 class FloatEnvironGetSwitch : public OptimizerCaller {
  public:
   AnfNodePtr operator()(const OptimizerPtr &, const AnfNodePtr &node) override {
-    PatternNode<AnfNodePtr> cond, true_br, false_br, x, x2;
+    PatternNode<AnfNodePtr> cond;
+    PatternNode<AnfNodePtr> true_br;
+    PatternNode<AnfNodePtr> false_br;
+    PatternNode<AnfNodePtr> x;
+    PatternNode<AnfNodePtr> x2;
     MATCH_REPLACE(node,
                   PPrimitive(prim::kPrimEnvironGet, PPrimitive(prim::kPrimSwitch, cond, true_br, false_br), x, x2),
                   PPrimitive(prim::kPrimSwitch, cond, PPrimitive(prim::kPrimEnvironGet, true_br, x, x2),
@@ -199,9 +191,9 @@ class ConvertSwitchReplacement {
   virtual ~ConvertSwitchReplacement() = default;
 
   bool operator()(const FuncGraphPtr &root, const OptimizerPtr &) const {
-    AnfNodePtr ret = root->get_return();
-    MS_EXCEPTION_IF_NULL(ret);
-    std::vector<AnfNodePtr> all_nodes = DeepScopedGraphSearch(ret);
+    auto manager = root->manager();
+    MS_EXCEPTION_IF_NULL(manager);
+    auto all_nodes = manager->all_nodes();
 
     bool change = false;
     for (auto &node : all_nodes) {
@@ -233,7 +225,11 @@ class ExchangeSwitchDependValue : public OptimizerCaller {
     ScopePtr scope = node->cast<CNodePtr>()->scope();
     ScopeGuard scope_guard(scope);
 
-    PatternNode<AnfNodePtr> cond, true_br, false_br, v, x;
+    PatternNode<AnfNodePtr> cond;
+    PatternNode<AnfNodePtr> true_br;
+    PatternNode<AnfNodePtr> false_br;
+    PatternNode<AnfNodePtr> v;
+    PatternNode<AnfNodePtr> x;
     MATCH_REPLACE_IF(node, PPrimitive(prim::kPrimSwitch, PPrimitive(prim::kPrimDepend, v, x), true_br, false_br),
                      PPrimitive(prim::kPrimDepend, PPrimitive(prim::kPrimSwitch, v, true_br, false_br), x),
                      IsVNode(v.GetNode(node)));

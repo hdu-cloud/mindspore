@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,51 @@
 
 namespace mindspore {
 namespace dataset {
+// global lock for cyl_bessel_i and cyl_bessel_if function
+std::mutex cyl_bessel_mux_;
+
+// Compute the thread nums.
+Status CountThreadNums(size_t input_size, float block_size, size_t *task_num, size_t *once_compute_size) {
+  CHECK_FAIL_RETURN_UNEXPECTED(block_size > 0, "Invalid data, the value of 'block_size' should be greater than 0.");
+  size_t audio_thread_num = 4;
+  size_t thread_num =
+    input_size < block_size * audio_thread_num ? std::ceil(input_size / block_size) : audio_thread_num;
+  *once_compute_size = (input_size + thread_num - 1) / thread_num;
+  if (*once_compute_size % TWO == 1) {
+    *once_compute_size += 1;
+  }
+  CHECK_FAIL_RETURN_UNEXPECTED((*once_compute_size) != 0,
+                               "Invalid data, the value of 'once_compute_size' should not be 0, but got 0.");
+  *task_num = input_size / (*once_compute_size);
+  if (input_size % (*once_compute_size) != 0) {
+    *task_num += 1;
+  }
+  return Status::OK();
+}
+
+Status AudioParallelLaunch(const std::function<void(size_t, size_t, size_t, size_t)> &task, size_t input_size,
+                           float block_size) {
+  std::vector<std::thread> threads;
+  size_t task_num = 0;
+  size_t once_compute_size = 0;
+  RETURN_IF_NOT_OK(CountThreadNums(input_size, block_size, &task_num, &once_compute_size));
+
+  for (size_t i = 0; i < task_num - 1; i++) {
+    size_t start = i * once_compute_size;
+    size_t end = start + once_compute_size;
+    threads.push_back(std::thread(task, start, end, i, task_num));
+  }
+
+  size_t start = (task_num - 1) * once_compute_size;
+  size_t end = input_size;
+  task(start, end, task_num - 1, task_num);
+
+  for (auto &thread : threads) {
+    thread.join();
+  }
+  return Status::OK();
+}
+
 /// \brief Calculate complex tensor angle.
 /// \param[in] input - Input tensor, must be complex, <channel, freq, time, complex=2>.
 /// \param[out] output - Complex tensor angle.
@@ -240,6 +285,8 @@ Status Mag(const std::shared_ptr<Tensor> &abs_0, const std::shared_ptr<Tensor> &
 template <typename T>
 Status TimeStretch(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> *output, float rate,
                    const std::shared_ptr<Tensor> &phase_advance) {
+  RETURN_UNEXPECTED_IF_NULL(input);
+  RETURN_UNEXPECTED_IF_NULL(output);
   // pack <..., freq, time, complex>
   TensorShape input_shape = input->shape();
   TensorShape toShape({input->Size() / (input_shape[-1] * input_shape[-2] * input_shape[-3]), input_shape[-3],
@@ -313,6 +360,8 @@ Status TimeStretch(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> *outpu
 
 Status TimeStretch(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, float rate, float hop_length,
                    int32_t n_freq) {
+  RETURN_UNEXPECTED_IF_NULL(input);
+  RETURN_UNEXPECTED_IF_NULL(output);
   std::shared_ptr<Tensor> phase_advance;
   switch (input->type().value()) {
     case DataType::DE_FLOAT32:
@@ -354,7 +403,7 @@ Status PhaseVocoder(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor
 
 Status Dct(std::shared_ptr<Tensor> *output, int n_mfcc, int n_mels, NormMode norm) {
   TensorShape dct_shape({n_mels, n_mfcc});
-  Tensor::CreateEmpty(dct_shape, DataType(DataType::DE_FLOAT32), output);
+  RETURN_IF_NOT_OK(Tensor::CreateEmpty(dct_shape, DataType(DataType::DE_FLOAT32), output));
   auto iter = (*output)->begin<float>();
   const float sqrt_2 = 1 / sqrt(2.0f);
   auto sqrt_2_n_mels = static_cast<float>(sqrt(2.0 / n_mels));
@@ -404,8 +453,9 @@ Status MaskAlongAxis(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tenso
   }
   TensorShape input_shape = input->shape();
   // squeeze input
-  TensorShape squeeze_shape = TensorShape({-1, input_shape[-2], input_shape[-1]});
-  (void)input->Reshape(squeeze_shape);
+  TensorShape squeeze_shape =
+    TensorShape({input_shape.NumOfElements() / input_shape[-2] / input_shape[-1], input_shape[-2], input_shape[-1]});
+  RETURN_IF_NOT_OK(input->Reshape(squeeze_shape));
 
   int check_dim_ind = (axis == 1) ? -2 : -1;
   CHECK_FAIL_RETURN_SYNTAX_ERROR(mask_start >= 0 && mask_start <= input_shape[check_dim_ind],
@@ -432,13 +482,15 @@ Status MaskAlongAxis(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tenso
       if (input->type() != DataType::DE_FLOAT64) {
         // tensor float 32
         auto mask_val = static_cast<float>(mask_value);
-        CHECK_FAIL_RETURN_UNEXPECTED(memcpy_s(start_mem_pos, cell_size, &mask_val, cell_size) == 0,
-                                     "MaskAlongAxis: mask failed, memory copy error.");
+        auto ret_code = memcpy_s(start_mem_pos, cell_size, &mask_val, cell_size);
+        CHECK_FAIL_RETURN_UNEXPECTED(ret_code == EOK, "MaskAlongAxis: mask failed, memory copy error, ret code: " +
+                                                        std::to_string(ret_code) + ".");
       } else {
         // tensor float 64
         auto mask_val = static_cast<double>(mask_value);
-        CHECK_FAIL_RETURN_UNEXPECTED(memcpy_s(start_mem_pos, cell_size, &mask_val, cell_size) == 0,
-                                     "MaskAlongAxis: mask failed, memory copy error.");
+        auto ret_code = memcpy_s(start_mem_pos, cell_size, &mask_val, cell_size);
+        CHECK_FAIL_RETURN_UNEXPECTED(ret_code == EOK, "MaskAlongAxis: mask failed, memory copy error, ret code: " +
+                                                        std::to_string(ret_code) + ".");
       }
     }
   } else {
@@ -450,18 +502,20 @@ Status MaskAlongAxis(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tenso
       if (input->type() != DataType::DE_FLOAT64) {
         // tensor float 32
         auto mask_val = static_cast<float>(mask_value);
-        CHECK_FAIL_RETURN_UNEXPECTED(memcpy_s(start_mem_pos, cell_size, &mask_val, cell_size) == 0,
-                                     "MaskAlongAxis: mask failed, memory copy error.");
+        auto ret_code = memcpy_s(start_mem_pos, cell_size, &mask_val, cell_size);
+        CHECK_FAIL_RETURN_UNEXPECTED(ret_code == EOK, "MaskAlongAxis: mask failed, memory copy error, ret code: " +
+                                                        std::to_string(ret_code) + ".");
       } else {
         // tensor float 64
         auto mask_val = static_cast<double>(mask_value);
-        CHECK_FAIL_RETURN_UNEXPECTED(memcpy_s(start_mem_pos, cell_size, &mask_val, cell_size) == 0,
-                                     "MaskAlongAxis: mask failed, memory copy error.");
+        auto ret_code = memcpy_s(start_mem_pos, cell_size, &mask_val, cell_size);
+        CHECK_FAIL_RETURN_UNEXPECTED(ret_code == EOK, "MaskAlongAxis: mask failed, memory copy error. ret code: " +
+                                                        std::to_string(ret_code) + ".");
       }
     }
   }
   // unsqueeze input
-  (void)input->Reshape(input_shape);
+  RETURN_IF_NOT_OK(input->Reshape(input_shape));
   *output = input;
   return Status::OK();
 }
@@ -474,21 +528,38 @@ Status Norm(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *outpu
   RETURN_IF_NOT_OK(
     ValidateTensorShape("ComplexNorm", input->IsComplex(), "<..., complex=2>", std::to_string(dim_back)));
   input_size.pop_back();
-  TensorShape out_shape = TensorShape(input_size);
-  RETURN_IF_NOT_OK(Tensor::CreateEmpty(out_shape, input->type(), output));
+  std::shared_ptr<Tensor> out;
+  RETURN_IF_NOT_OK(Tensor::CreateEmpty(TensorShape(input_size), input->type(), &out));
 
-  // calculate norm, using: .pow(2.).sum(-1).pow(0.5 * power)
-  auto itr_out = (*output)->begin<T>();
-  auto itr_in = input->begin<T>();
+  std::vector<std::thread> threads;
+  size_t count = input->Size();
+  float block_size = 30000;
 
-  for (; itr_out != (*output)->end<T>(); ++itr_out) {
-    auto a = static_cast<T>(*itr_in);
-    ++itr_in;
-    auto b = static_cast<T>(*itr_in);
-    ++itr_in;
-    auto res = pow(a, 2) + pow(b, 2);
-    *itr_out = static_cast<T>(pow(res, (0.5 * power)));
-  }
+  auto task = [&input, &out, &power, &count](size_t start, size_t end, size_t num, size_t task_num) {
+    if ((task_num - num) == 1) {
+      end = count;
+    }
+
+    auto itr_start = input->begin<T>();
+    itr_start += start;
+    auto itr_end = input->begin<T>();
+    itr_end += end;
+    auto itr_out = out->begin<T>();
+    size_t offset = start / TWO;
+    itr_out += offset;
+
+    // calculate norm, using: .pow(2.).sum(-1).pow(0.5 * power)
+    for (auto itr = itr_start; itr != itr_end; itr++) {
+      auto a = *itr;
+      ++itr;
+      auto b = *itr;
+      auto res = pow(a, TWO) + pow(b, TWO);
+      *itr_out = static_cast<T>(pow(res, (HALF * power)));
+      itr_out++;
+    }
+  };
+  RETURN_IF_NOT_OK(AudioParallelLaunch(task, count, block_size));
+  *output = out;
 
   return Status::OK();
 }
@@ -607,6 +678,10 @@ Status FadeIn(std::shared_ptr<Tensor> *output, int32_t fade_in_len, FadeShape fa
         // Compute the scale factor of the half_sine function, sin((*in_iter) * PI - PI / 2.0) / 2.0 + 0.5
         *iter = static_cast<T>(std::sin((*iter) * PI - PI / 2.0) / 2.0 + 0.5);
         break;
+      default:
+        RETURN_STATUS_UNEXPECTED(
+          "The fade_shape parameter only supports these types [FadeShape::kLinear, FadeShape::kExponential, "
+          "FadeShape::kLogarithmic, FadeShape::kQuarterSine, FadeShape::kHalfSine].");
     }
   }
   return Status::OK();
@@ -639,6 +714,10 @@ Status FadeOut(std::shared_ptr<Tensor> *output, int32_t fade_out_len, FadeShape 
         // Compute the scale factor of the half_sine function
         *iter = static_cast<T>(std::sin((*iter) * PI + PI / 2.0) / 2.0 + 0.5);
         break;
+      default:
+        RETURN_STATUS_UNEXPECTED(
+          "The fade_shape parameter only supports these types [FadeShape::kLinear, FadeShape::kExponential, "
+          "FadeShape::kLogarithmic, FadeShape::kQuarterSine, FadeShape::kHalfSine].");
     }
   }
   return Status::OK();
@@ -1225,9 +1304,12 @@ Status Kaiser(std::shared_ptr<Tensor> *output, int len, float beta = 12.0) {
   // Kaiser window function.
   auto iter = (*output)->begin<float>();
   float twice = 2.0;
-  for (ptrdiff_t i = 0; i < len; ++i) {
-    *(iter + i) =
-      std::cyl_bessel_i(0, beta * std::sqrt(1 - std::pow(i * twice / (len)-1.0, TWO))) / std::cyl_bessel_i(0, beta);
+  {
+    std::unique_lock<std::mutex> _lock(cyl_bessel_mux_);
+    for (ptrdiff_t i = 0; i < len; ++i) {
+      *(iter + i) =
+        std::cyl_bessel_i(0, beta * std::sqrt(1 - std::pow(i * twice / (len)-1.0, TWO))) / std::cyl_bessel_i(0, beta);
+    }
   }
   return Status::OK();
 #endif
@@ -1563,7 +1645,7 @@ Status SpectralCentroidImpl(const std::shared_ptr<Tensor> &input, std::shared_pt
       }
     }
     specgram.push_back(tmp);
-    specgram_sum.emplace_back(specgram[k].colwise().sum());
+    (void)specgram_sum.emplace_back(specgram[k].colwise().sum());
   }
   for (int k = 0; k < k_num; k++) {
     for (int i = 0; i < channals; ++i) {
@@ -1571,7 +1653,7 @@ Status SpectralCentroidImpl(const std::shared_ptr<Tensor> &input, std::shared_pt
         tmp(i, j) = freqs_r(i, 0) * specgram[k](i, j);
       }
     }
-    specgram_result.emplace_back((tmp).colwise().sum());
+    (void)specgram_result.emplace_back((tmp).colwise().sum());
   }
   auto itr_output = output_tensor->begin<T>();
   for (int k = 0; k < k_num; k++) {
@@ -1691,7 +1773,8 @@ template <typename T>
 Status ISTFT(const Eigen::MatrixXcd &stft_matrix, std::shared_ptr<Tensor> *output, int32_t n_fft, int32_t hop_length,
              int32_t win_length, WindowType window_type, bool center, int32_t length) {
   // check input
-  CHECK_FAIL_RETURN_UNEXPECTED(n_fft == ((stft_matrix.rows() - 1) * 2),
+  constexpr int64_t transform_size = 2;
+  CHECK_FAIL_RETURN_UNEXPECTED(n_fft == ((stft_matrix.rows() - 1) * transform_size),
                                "GriffinLim: the frequency of the input should equal to n_fft / 2 + 1");
 
   // window
@@ -1781,6 +1864,163 @@ Status ISTFT(const Eigen::MatrixXcd &stft_matrix, std::shared_ptr<Tensor> *outpu
     RETURN_IF_NOT_OK(Tensor::CreateFromVector(y_res, TensorShape({length}), &res_tensor));
   }
   *output = res_tensor;
+  return Status::OK();
+}
+
+template <typename T>
+Status Normalized(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, int32_t n_fft,
+                  int32_t win_length, WindowType window) {
+  RETURN_UNEXPECTED_IF_NULL(input);
+  RETURN_UNEXPECTED_IF_NULL(output);
+  // window
+  std::shared_ptr<Tensor> ifft_win_tensor;
+  RETURN_IF_NOT_OK(Window(&ifft_win_tensor, window, win_length));
+  if (win_length == 1) {
+    RETURN_IF_NOT_OK(Tensor::CreateEmpty(TensorShape({1}), DataType(DataType::DE_FLOAT32), &ifft_win_tensor));
+    auto win = ifft_win_tensor->begin<float>();
+    *(win) = 1;
+  }
+  // pad window to match n_fft, and add a broadcasting axis
+  std::shared_ptr<Tensor> ifft_win_pad;
+  ifft_win_pad = ifft_win_tensor;
+  if (win_length < n_fft) {
+    RETURN_IF_NOT_OK(Tensor::CreateEmpty(TensorShape({n_fft}), DataType(DataType::DE_FLOAT32), &ifft_win_pad));
+    int pad_left = (n_fft - win_length) / TWO;
+    int pad_right = n_fft - win_length - pad_left;
+    RETURN_IF_NOT_OK(Pad<float>(ifft_win_tensor, &ifft_win_pad, pad_left, pad_right, BorderType::kConstant));
+  }
+  float win_sum = 0.;
+  for (auto iter_win = ifft_win_pad->begin<float>(); iter_win != ifft_win_pad->end<float>(); ++iter_win) {
+    win_sum += (*iter_win) * (*iter_win);
+  }
+  win_sum = std::sqrt(win_sum);
+  for (auto iter_input = input->begin<T>(); iter_input != input->end<T>(); ++iter_input) {
+    *iter_input = (*iter_input) * win_sum;
+  }
+  *output = input;
+  return Status::OK();
+}
+
+template <typename T>
+Status Transistft(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, int32_t length, int32_t n_fft,
+                  int32_t win_length, int32_t hop_length, WindowType window, bool center, bool onesided) {
+  RETURN_UNEXPECTED_IF_NULL(output);
+  TensorShape input_shape = input->shape();
+  const int32_t kThreeAudioDim = 3;
+  auto m = n_fft / TWO + 1;
+  auto n = input_shape[-kDefaultAudioDim];
+  auto r = input_shape[-kThreeAudioDim];
+  auto size = r * n * input_shape[kThreeAudioDim];
+  // construct new tensor by input
+  std::shared_ptr<Tensor> istft_results;
+  for (int dim = 0; dim < input_shape[0]; dim++) {
+    // slice and squeeze the first dim
+    Tensor::TensorIterator<T> itr = input->begin<T>();
+    itr += dim * size;
+    // onesided
+    int a = onesided ? r : m;
+    // turn tensor to eigen matrixXcd
+    std::shared_ptr<Tensor> waveform;
+    Eigen::MatrixXcd stft_matrix(a, n);
+    for (int32_t index = 0; index < a; index++) {
+      for (int32_t cnt = 0; cnt < n; cnt++) {
+        if (itr < (dim + 1) * size + itr) {
+          T real = *(itr++);
+          T img = *(itr++);
+          stft_matrix(index, cnt) = std::complex<double>(real, img);
+        }
+      }
+    }
+    RETURN_IF_NOT_OK(ISTFT<T>(stft_matrix, &waveform, n_fft, hop_length, win_length, window, center, length));
+    if (input->shape().Rank() == TWO) {
+      // do not expand dim
+      istft_results = waveform;
+      continue;
+    }
+
+    if (istft_results != nullptr) {
+      RETURN_IF_NOT_OK(istft_results->InsertTensor({dim}, waveform));
+    } else {
+      RETURN_IF_NOT_OK(
+        Tensor::CreateEmpty(TensorShape({input_shape[0], waveform->shape()[0]}), waveform->type(), &istft_results));
+      RETURN_IF_NOT_OK(istft_results->InsertTensor({dim}, waveform));
+    }
+  }
+  *output = istft_results;
+  return Status::OK();
+}
+
+template <typename T>
+Status InverseSpectrogramImpl(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, int32_t length,
+                              int32_t n_fft, int32_t win_length, int32_t hop_length, int32_t pad, WindowType window,
+                              bool normalized, bool center, BorderType pad_mode, bool onesided) {
+  RETURN_UNEXPECTED_IF_NULL(output);
+  // pack
+  TensorShape input_shape = input->shape();
+  std::vector output_shape = input_shape.AsVector();
+  TensorShape input_reshape({input->Size() / input_shape[-1] / input_shape[-2] / input_shape[-3], input_shape[-3],
+                             input_shape[-2], input_shape[-1]});
+  RETURN_IF_NOT_OK(input->Reshape(input_reshape));
+  // normalized
+  std::shared_ptr<Tensor> normal_out;
+  normal_out = input;
+  if (normalized) {
+    RETURN_IF_NOT_OK(Normalized<T>(input, &normal_out, n_fft, win_length, window));
+  }
+  // construct new tensor by input
+  std::shared_ptr<Tensor> final_results;
+  int32_t output_length = length == 0 ? (input_shape[-kDefaultAudioDim] - 1) * hop_length : length + TWO * pad;
+  RETURN_IF_NOT_OK(
+    Transistft<T>(normal_out, &final_results, output_length, n_fft, win_length, hop_length, window, center, onesided));
+  // remove padding from front and backs
+  TensorShape waveform_shape = final_results->shape();
+  auto dim1_size = waveform_shape[-1];
+  auto dim2_size = waveform_shape[-kDefaultAudioDim];
+  auto cols = waveform_shape[-1] - TWO * pad;
+  auto start = &*final_results->begin<T>();
+  auto dim = dim1_size * dim2_size;
+  std::shared_ptr<Tensor> waveform;
+  if (length != 0 && (pad > 0)) {
+    std::vector<float> result(dim2_size * cols);
+    int32_t index = 0;
+    for (auto i = 0; i < dim; i += dim1_size) {
+      int32_t cnt = 0;
+      for (auto itr = start + i + pad; cnt < cols; ++itr) {
+        result[index] = *itr;
+        ++index;
+        ++cnt;
+      }
+    }
+    TensorShape change_shape({dim2_size, cols});
+    RETURN_IF_NOT_OK(Tensor::CreateFromVector(result, change_shape, &waveform));
+  } else {
+    waveform = final_results;
+  }
+  // unpack
+  output_shape.pop_back();
+  output_shape.pop_back();
+  output_shape.pop_back();
+  output_shape.push_back(cols);
+  RETURN_IF_NOT_OK(waveform->Reshape(TensorShape(output_shape)));
+  *output = waveform;
+  return Status::OK();
+}
+
+Status InverseSpectrogram(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, int32_t length,
+                          int32_t n_fft, int32_t win_length, int32_t hop_length, int32_t pad, WindowType window,
+                          bool normalized, bool center, BorderType pad_mode, bool onesided) {
+  RETURN_UNEXPECTED_IF_NULL(output);
+  RETURN_IF_NOT_OK(ValidateTensorShape("InverseSpectrogram",
+                                       input->shape().Size() > kDefaultAudioDim && input->IsComplex(),
+                                       "<..., freq, time, complex=2>"));
+  RETURN_IF_NOT_OK(ValidateTensorNumeric("InverseSpectrogram", input));
+  if (input->type().value() != DataType::DE_FLOAT64) {
+    RETURN_IF_NOT_OK(InverseSpectrogramImpl<float>(input, output, length, n_fft, win_length, hop_length, pad, window,
+                                                   normalized, center, pad_mode, onesided));
+  } else {
+    RETURN_IF_NOT_OK(InverseSpectrogramImpl<double>(input, output, length, n_fft, win_length, hop_length, pad, window,
+                                                    normalized, center, pad_mode, onesided));
+  }
   return Status::OK();
 }
 
@@ -1910,7 +2150,10 @@ Status InverseMelScaleImpl(const std::shared_ptr<Tensor> &input, std::shared_ptr
                            int32_t n_mels, int32_t sample_rate, float f_min, float f_max, int32_t max_iter,
                            float tolerance_loss, float tolerance_change, float sgd_lr, float sgd_momentum,
                            NormType norm, MelType mel_type, std::mt19937 rnd) {
-  f_max = f_max == 0 ? static_cast<T>(std::floor(sample_rate / 2)) : f_max;
+  constexpr int32_t sample_rate_factor = 2;
+  f_max = std::fabs(f_max) <= std::numeric_limits<float>::epsilon()
+            ? static_cast<T>(std::floor(sample_rate / sample_rate_factor))
+            : f_max;
   // create fb mat <freq, n_mels>
   std::shared_ptr<Tensor> freq_bin_mat;
   RETURN_IF_NOT_OK(CreateFbanks<T>(&freq_bin_mat, n_stft, f_min, f_max, n_mels, sample_rate, norm, mel_type));
@@ -2007,7 +2250,7 @@ Status InverseMelScale(const std::shared_ptr<Tensor> &input, std::shared_ptr<Ten
 }
 
 template <typename T>
-Status GetSincResampleKernel(int32_t orig_freq, int32_t des_freq, ResampleMethod resample_method,
+Status GetSincResampleKernel(const int32_t orig_freq, const int32_t des_freq, ResampleMethod resample_method,
                              int32_t lowpass_filter_width, float rolloff, float beta, DataType datatype,
                              Eigen::MatrixX<T> *kernel_ptr, int32_t *width) {
   CHECK_FAIL_RETURN_UNEXPECTED(orig_freq != 0, "Resample: invalid parameter, 'orig_freq' can not be zero.");
@@ -2049,10 +2292,13 @@ Status GetSincResampleKernel(int32_t orig_freq, int32_t des_freq, ResampleMethod
                         "Resample: ResampleMethod of Kaiser Window is not "
                         "supported on MacOS yet.");
 #else
-    T beta_bessel = std::cyl_bessel_if(0, beta);
-    window.noalias() = kernel_matrix.unaryExpr([=](T x) -> T {
-      return std::cyl_bessel_i(0, beta * sqrt(1 - pow((x / lowpass_filter_width), TWO))) / beta_bessel;
-    });
+    {
+      std::unique_lock<std::mutex> _lock(cyl_bessel_mux_);
+      T beta_bessel = std::cyl_bessel_if(0, beta);
+      window.noalias() = kernel_matrix.unaryExpr([=](T x) -> T {
+        return std::cyl_bessel_i(0, beta * sqrt(1 - pow((x / lowpass_filter_width), TWO))) / beta_bessel;
+      });
+    }
 #endif
   }
   kernel_matrix *= PI;
@@ -2065,13 +2311,14 @@ Status GetSincResampleKernel(int32_t orig_freq, int32_t des_freq, ResampleMethod
 
 template <typename T>
 std::shared_ptr<Eigen::MatrixX<T>> Cov1dStride(const Eigen::MatrixX<T> &waveform_pad_matrix,
-                                               const Eigen::MatrixX<T> &kernel, int32_t num_waveform, int32_t orig_freq,
-                                               int32_t target_length, int32_t pad_length) {
+                                               const Eigen::MatrixX<T> &kernel, const int32_t num_waveform,
+                                               const int32_t orig_freq, const int32_t target_length,
+                                               const int32_t pad_length) {
   Eigen::MatrixX<T> output_matrix(target_length, num_waveform);
   Eigen::MatrixX<T> mul_matrix;
-  int32_t kernel_x = kernel.rows();
-  int32_t kernel_y = kernel.cols();
-  int32_t resample_num = static_cast<int32_t>(ceil(static_cast<float>(target_length) / kernel_x));
+  const int32_t kernel_x = static_cast<int32_t>(kernel.rows());
+  const int32_t kernel_y = static_cast<int32_t>(kernel.cols());
+  const int32_t resample_num = static_cast<int32_t>(ceil(static_cast<float>(target_length) / kernel_x));
   Eigen::MatrixX<T> multi_input(kernel_y, resample_num);
   for (int32_t i = 0; i < num_waveform; i++) {
     for (int32_t j = 0, x_dim = 0; j + kernel_y < pad_length && x_dim < resample_num; j += orig_freq, ++x_dim) {
@@ -2086,35 +2333,35 @@ std::shared_ptr<Eigen::MatrixX<T>> Cov1dStride(const Eigen::MatrixX<T> &waveform
 template <typename T>
 Status Resample(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, float orig_freq, float des_freq,
                 ResampleMethod resample_method, int32_t lowpass_filter_width, float rolloff, float beta) {
-  TensorShape input_shape = input->shape();
-  int32_t waveform_length = input_shape[-1];
-  int32_t num_waveform = input->Size() / waveform_length;
-  TensorShape to_shape = TensorShape({num_waveform, waveform_length});
+  const TensorShape input_shape = input->shape();
+  const int32_t waveform_length = input_shape[-1];
+  const int32_t num_waveform = input->Size() / waveform_length;
+  const TensorShape to_shape = TensorShape({num_waveform, waveform_length});
   RETURN_IF_NOT_OK(input->Reshape(to_shape));
 
-  int32_t gcd = std::gcd(static_cast<int32_t>(orig_freq), static_cast<int32_t>(des_freq));
+  const int32_t gcd = std::gcd(static_cast<int32_t>(orig_freq), static_cast<int32_t>(des_freq));
   CHECK_FAIL_RETURN_UNEXPECTED(gcd != 0, "Resample: gcd cannot be equal to 0.");
-  int32_t orig_freq_prime = static_cast<int32_t>(floor(orig_freq / gcd));
-  int32_t des_freq_prime = static_cast<int32_t>(floor(des_freq / gcd));
+  const int32_t orig_freq_prime = static_cast<int32_t>(floor(orig_freq / gcd));
+  const int32_t des_freq_prime = static_cast<int32_t>(floor(des_freq / gcd));
   CHECK_FAIL_RETURN_UNEXPECTED(orig_freq_prime != 0, "Resample: invalid parameter, 'orig_freq_prime' cannot be zero.");
   Eigen::MatrixX<T> kernel;
   int32_t width = 0;
   RETURN_IF_NOT_OK(GetSincResampleKernel<T>(orig_freq_prime, des_freq_prime, resample_method, lowpass_filter_width,
                                             rolloff, beta, input->type(), &kernel, &width));
   const int32_t ZERO = 0;
-  const int32_t kernel_rows = kernel.rows();
-  const int32_t kernel_cols = kernel.cols();
-  ValidateGreaterThan("Resample", "kernel.cols()", kernel_cols, "boundary", ZERO);
-  ValidateGreaterThan("Resample", "kernel.rows()", kernel_rows, "boundary", ZERO);
+  const int32_t kernel_rows = static_cast<int32_t>(kernel.rows());
+  const int32_t kernel_cols = static_cast<int32_t>(kernel.cols());
+  RETURN_IF_NOT_OK(ValidateGreaterThan("Resample", "kernel.cols()", kernel_cols, "boundary", ZERO));
+  RETURN_IF_NOT_OK(ValidateGreaterThan("Resample", "kernel.rows()", kernel_rows, "boundary", ZERO));
 
   // padding
-  int32_t pad_length = waveform_length + 2 * width + orig_freq_prime;
+  const int32_t pad_length = waveform_length + 2 * width + orig_freq_prime;
   std::shared_ptr<Tensor> waveform_pad;
   RETURN_IF_NOT_OK(Tensor::CreateEmpty(TensorShape({1, pad_length}), input->type(), &waveform_pad));
   RETURN_IF_NOT_OK(Pad<T>(input, &waveform_pad, width, width + orig_freq_prime, BorderType::kConstant));
   Eigen::MatrixX<T> waveform_pad_matrix =
     Eigen::Map<Eigen::MatrixX<T>>(&*waveform_pad->begin<T>(), waveform_pad->shape()[1], waveform_pad->shape()[0]);
-  int32_t target_length =
+  const int32_t target_length =
     static_cast<int32_t>(std::ceil(static_cast<double>(des_freq_prime * waveform_length) / orig_freq_prime));
 
   // cov1d with stide = orig_freq_prime
@@ -2141,6 +2388,295 @@ Status Resample(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *o
       Resample<float>(waveform, output, orig_freq, des_freq, resample_method, lowpass_filter_width, rolloff, beta));
   }
   return Status::OK();
+}
+
+Status LFCC(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, int32_t sample_rate,
+            int32_t n_filter, int32_t n_lfcc, int32_t dct_type, bool log_lf, int32_t n_fft, int32_t win_length,
+            int32_t hop_length, float f_min, float f_max, int32_t pad, WindowType window, float power, bool normalized,
+            bool center, BorderType pad_mode, bool onesided, NormMode norm) {
+  RETURN_UNEXPECTED_IF_NULL(input);
+  RETURN_UNEXPECTED_IF_NULL(output);
+  std::shared_ptr<Tensor> spectrogram;
+  std::shared_ptr<Tensor> filter_mat;
+  std::shared_ptr<Tensor> dct_mat;
+  RETURN_IF_NOT_OK(Spectrogram(input, &spectrogram, pad, window, n_fft, hop_length, win_length, power, normalized,
+                               center, pad_mode, onesided));
+  RETURN_IF_NOT_OK(
+    CreateLinearFbanks(&filter_mat, static_cast<int32_t>(floor(n_fft / TWO)) + 1, f_min, f_max, n_filter, sample_rate));
+  RETURN_IF_NOT_OK(Dct(&dct_mat, n_lfcc, n_filter, norm));
+  std::shared_ptr<Tensor> spectrogramxfilter;
+  std::shared_ptr<Tensor> specgram_temp;
+
+  TensorShape specgram_shape = spectrogram->shape();
+  TensorShape specgram_reshape(
+    {spectrogram->Size() / specgram_shape[-1] / specgram_shape[-2], specgram_shape[-2], specgram_shape[-1]});
+  RETURN_IF_NOT_OK(spectrogram->Reshape(specgram_reshape));
+  auto filter_mat_ptr = &*filter_mat->begin<float>();
+  Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic>> matrix_fm(
+    filter_mat_ptr, n_filter, static_cast<int32_t>(floor(n_fft / TWO)) + 1);
+  auto dct_mat_ptr = &*dct_mat->begin<float>();
+  Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic>> matrix_dm(dct_mat_ptr, n_lfcc, n_filter);
+
+  int rows = specgram_reshape[1];
+  int cols = specgram_reshape[TWO];
+
+  std::vector<float> sf_temp;
+  Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic> mat_res;
+
+  for (int c = 0; c < specgram_reshape[0]; c++) {
+    Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic>> matrix_c(
+      &*spectrogram->begin<float>() + rows * cols * c, cols, rows);
+    mat_res.noalias() = (matrix_c * matrix_fm.transpose());
+    std::vector<float> vec_c(mat_res.data(), mat_res.data() + mat_res.size());
+    sf_temp.insert(sf_temp.end(), vec_c.begin(), vec_c.end());
+  }
+  // unpack
+  std::vector<int64_t> sf_shape_vec = specgram_shape.AsVector();
+  sf_shape_vec[specgram_shape.Size() - 1] = cols;
+  sf_shape_vec[specgram_shape.Size() - TWO] = n_filter;
+  TensorShape sf_shape(sf_shape_vec);
+  RETURN_IF_NOT_OK(Tensor::CreateFromVector(sf_temp, sf_shape, &spectrogramxfilter));
+
+  if (log_lf == true) {
+    float log_offset = 1e-6;
+    for (auto itr = spectrogramxfilter->begin<float>(); itr != spectrogramxfilter->end<float>(); ++itr) {
+      *itr = log(*itr + log_offset);
+    }
+    specgram_temp = spectrogramxfilter;
+  } else {
+    std::shared_ptr<Tensor> amplitude_to_db;
+    float multiplier = 10.0;
+    float db_multiplier = 0.0;
+    float amin = 1e-10;
+    float top_db = 80.0;
+    RETURN_IF_NOT_OK(AmplitudeToDB(spectrogramxfilter, &amplitude_to_db, multiplier, amin, db_multiplier, top_db));
+    specgram_temp = amplitude_to_db;
+  }
+
+  TensorShape st_shape = specgram_temp->shape();
+  TensorShape st_reshape({specgram_temp->Size() / st_shape[-1] / st_shape[-2], st_shape[-2], st_shape[-1]});
+  RETURN_IF_NOT_OK(specgram_temp->Reshape(st_reshape));
+
+  rows = st_reshape[1];
+  cols = st_reshape[TWO];
+  std::vector<float> out_temp;
+
+  for (int c = 0; c < st_reshape[0]; c++) {
+    Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic>> matrix_c(
+      &*specgram_temp->begin<float>() + rows * cols * c, cols, rows);
+    mat_res.noalias() = (matrix_c * matrix_dm.transpose());
+    std::vector<float> vec_c(mat_res.data(), mat_res.data() + mat_res.size());
+    out_temp.insert(out_temp.end(), vec_c.begin(), vec_c.end());
+  }
+  // unpack
+  std::vector<int64_t> output_shape_vec = st_shape.AsVector();
+  output_shape_vec[st_shape.Size() - 1] = cols;
+  output_shape_vec[st_shape.Size() - TWO] = n_lfcc;
+  TensorShape output_shape(output_shape_vec);
+  RETURN_IF_NOT_OK(Tensor::CreateFromVector(out_temp, output_shape, output));
+
+  return Status::OK();
+}
+
+Status MelSpectrogram(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, int32_t sample_rate,
+                      int32_t n_fft, int32_t win_length, int32_t hop_length, float f_min, float f_max, int32_t pad,
+                      int32_t n_mels, WindowType window, float power, bool normalized, bool center, BorderType pad_mode,
+                      bool onesided, NormType norm, MelType mel_scale) {
+  RETURN_UNEXPECTED_IF_NULL(input);
+  RETURN_UNEXPECTED_IF_NULL(output);
+  auto input_shape_vec = input->shape().AsVector();
+  CHECK_FAIL_RETURN_UNEXPECTED(n_fft < TWO * input_shape_vec[input_shape_vec.size() - 1],
+                               "MelSpectrogram: Padding size should be less than the corresponding input dimension.");
+  std::shared_ptr<Tensor> spectrogram;
+  RETURN_IF_NOT_OK(Spectrogram(input, &spectrogram, pad, window, n_fft, hop_length, win_length, power, normalized,
+                               center, pad_mode, onesided));
+  RETURN_IF_NOT_OK(
+    MelScale<float>(spectrogram, output, n_mels, sample_rate, f_min, f_max, n_fft / TWO + 1, norm, mel_scale));
+  return Status::OK();
+}
+
+Status MFCC(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, int32_t sample_rate, int32_t n_mfcc,
+            int32_t dct_type, bool log_mels, int32_t n_fft, int32_t win_length, int32_t hop_length, float f_min,
+            float f_max, int32_t pad, int32_t n_mels, WindowType window, float power, bool normalized, bool center,
+            BorderType pad_mode, bool onesided, NormType norm, NormMode norm_M, MelType mel_scale) {
+  RETURN_UNEXPECTED_IF_NULL(input);
+  RETURN_UNEXPECTED_IF_NULL(output);
+  std::shared_ptr<Tensor> mel_spectrogram;
+  std::shared_ptr<Tensor> dct_mat;
+  RETURN_IF_NOT_OK(MelSpectrogram(input, &mel_spectrogram, sample_rate, n_fft, win_length, hop_length, f_min, f_max,
+                                  pad, n_mels, window, power, normalized, center, pad_mode, onesided, norm, mel_scale));
+  RETURN_IF_NOT_OK(Dct(&dct_mat, n_mfcc, n_mels, norm_M));
+  if (log_mels) {
+    for (auto itr = mel_spectrogram->begin<float>(); itr != mel_spectrogram->end<float>(); ++itr) {
+      float log_offset = 1e-6;
+      *itr = log(*itr + log_offset);
+    }
+  } else {
+    std::shared_ptr<Tensor> amplitude_to_db;
+    float multiplier = 10.0;
+    float db_multiplier = 0.0;
+    float amin = 1e-10;
+    float top_db = 80.0;
+    RETURN_IF_NOT_OK(AmplitudeToDB(mel_spectrogram, &amplitude_to_db, multiplier, amin, db_multiplier, top_db));
+    mel_spectrogram = amplitude_to_db;
+  }
+  auto dct_mat_ptr = &*dct_mat->begin<float>();
+  Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic> mat_res;
+  Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic>> matrix_dm(dct_mat_ptr, n_mfcc, n_mels);
+  TensorShape st_shape = mel_spectrogram->shape();
+  TensorShape st_reshape({mel_spectrogram->Size() / st_shape[-1] / st_shape[-2], st_shape[-2], st_shape[-1]});
+  RETURN_IF_NOT_OK(mel_spectrogram->Reshape(st_reshape));
+
+  const dsize_t kRowIndex = 1;
+  const dsize_t kColIndex = 2;
+  int rows = st_reshape[kRowIndex];
+  int cols = st_reshape[kColIndex];
+  std::vector<float> out_temp;
+
+  for (int c = 0; c < st_reshape[0]; c++) {
+    Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic>> matrix_c(
+      &*mel_spectrogram->begin<float>() + rows * cols * c, cols, rows);
+    mat_res.noalias() = (matrix_c * matrix_dm.transpose());
+    std::vector<float> vec_c(mat_res.data(), mat_res.data() + mat_res.size());
+    out_temp.insert(out_temp.end(), vec_c.begin(), vec_c.end());
+  }
+  // unpack
+  std::vector<int64_t> output_shape_vec = st_shape.AsVector();
+  output_shape_vec[st_shape.Size() - 1] = cols;
+  output_shape_vec[st_shape.Size() - TWO] = n_mfcc;
+  TensorShape output_shape(output_shape_vec);
+  RETURN_IF_NOT_OK(Tensor::CreateFromVector(out_temp, output_shape, output));
+
+  return Status::OK();
+}
+
+template <typename T>
+Status PitchShiftImpl(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, int32_t sample_rate,
+                      int32_t n_steps, int32_t bins_per_octave, int32_t n_fft, int32_t win_length, int32_t hop_length,
+                      WindowType window) {
+  DataType data_type = input->type();
+  // pack batch
+  TensorShape shape = input->shape();
+  int input_len = shape[-1];
+
+  RETURN_IF_NOT_OK(input->Reshape(TensorShape({input->Size() / input_len, input_len})));
+  std::shared_ptr<Tensor> spec_f;
+
+  RETURN_IF_NOT_OK(SpectrogramImpl<T>(input, &spec_f, 0, window, n_fft, hop_length, win_length, 0, false, true,
+                                      BorderType::kReflect, true));
+
+  std::shared_ptr<Tensor> phase_advance;
+  int spec_f_length = spec_f->shape()[-3];
+  RETURN_IF_NOT_OK(Linspace<T>(&phase_advance, 0, PI * hop_length, spec_f_length));
+  TensorShape pshape = phase_advance->shape();
+  RETURN_IF_NOT_OK(phase_advance->Reshape(TensorShape(phase_advance->shape().AppendDim(1))));
+  std::shared_ptr<Tensor> spec_stretch;
+  float a = static_cast<float>(-n_steps) / bins_per_octave;
+  float rate = pow(2, a);
+
+  RETURN_IF_NOT_OK(TimeStretch<T>(spec_f, &spec_stretch, rate, phase_advance));
+
+  int ori_len = shape[-1];
+  int len_stretch = round(ori_len / rate);
+  std::shared_ptr<Tensor> final_results;
+  TensorShape tshape = spec_stretch->shape();
+  TensorShape new_shape({tshape[0], tshape[-3], spec_stretch->Size() / tshape[-3] / tshape[0]});
+  RETURN_IF_NOT_OK(spec_stretch->Reshape(new_shape));
+  auto size = tshape[0] * tshape[-3] * spec_stretch->Size() / tshape[-3] / tshape[0];
+  Tensor::TensorIterator<T> itr = spec_stretch->begin<T>();
+
+  for (int dim = 0; dim < new_shape[0]; dim++) {
+    // slice and squeeze the first dim
+    const int row = -3;
+    const int col = -2;
+    Eigen::MatrixXcd rebuilt(tshape[row], tshape[col]);
+
+    for (int j = 0; j < tshape[row]; j++) {
+      for (int i = 0; i < tshape[col]; i++) {
+        if (itr < (dim + 1) * size + itr) {
+          T real = *(itr++);
+          T img = *(itr++);
+          rebuilt(j, i) = std::complex<double>(real, img);
+        }
+      }
+    }
+
+    std::shared_ptr<Tensor> waveform;
+
+    RETURN_IF_NOT_OK(ISTFT<T>(rebuilt, &waveform, n_fft, hop_length, win_length, window, true, len_stretch));
+
+    if (spec_stretch->shape().Rank() == TWO) {
+      // do not expand dim
+      final_results = waveform;
+      continue;
+    }
+
+    if (final_results != nullptr) {
+      RETURN_IF_NOT_OK(final_results->InsertTensor({dim}, waveform));
+    } else {
+      RETURN_IF_NOT_OK(
+        Tensor::CreateEmpty(TensorShape({new_shape[0], waveform->shape()[0]}), waveform->type(), &final_results));
+      RETURN_IF_NOT_OK(final_results->InsertTensor({dim}, waveform));
+    }
+  }
+
+  std::shared_ptr<Tensor> waveform_shift;
+  const int32_t lowpass_filter_width = 6;
+  const float rolloff = 0.99;
+  const int new_rate = static_cast<int>(sample_rate / rate);
+  const float beta = 14.769656459379492;
+
+  RETURN_IF_NOT_OK(Resample<T>(final_results, &waveform_shift, new_rate, sample_rate,
+                               ResampleMethod::kSincInterpolation, lowpass_filter_width, rolloff, beta));
+
+  int shift_len = waveform_shift->shape()[-1];
+  std::shared_ptr<Tensor> waveform_end;
+  if (shift_len > ori_len) {
+    int32_t waveform_length = waveform_shift->shape()[-1];
+    int32_t num_waveform = waveform_shift->Size() / waveform_length;
+    auto ind = waveform_shift->begin<T>();
+    for (int i = 0; i < num_waveform; i++) {
+      std::shared_ptr<Tensor> wave_final;
+      RETURN_IF_NOT_OK(Tensor::CreateEmpty(TensorShape({ori_len}), input->type(), &wave_final));
+      if (i != 0) ind += shift_len - ori_len;
+      for (auto atr = wave_final->begin<T>(); atr != wave_final->end<T>(); atr++) {
+        *atr = *(ind++);
+      }
+      if (waveform_end != nullptr) {
+        RETURN_IF_NOT_OK(waveform_end->InsertTensor({i}, wave_final));
+      } else {
+        RETURN_IF_NOT_OK(Tensor::CreateEmpty(TensorShape({num_waveform, ori_len}), wave_final->type(), &waveform_end));
+        RETURN_IF_NOT_OK(waveform_end->InsertTensor({i}, wave_final));
+      }
+    }
+  } else {
+    RETURN_IF_NOT_OK(Pad<T>(waveform_shift, &waveform_end, 0, ori_len - shift_len, BorderType::kConstant));
+  }
+
+  auto output_shape = shape.AsVector();
+  output_shape.pop_back();
+  output_shape.push_back(waveform_end->shape()[-1]);
+  RETURN_IF_NOT_OK(waveform_end->Reshape(TensorShape(output_shape)));
+  *output = waveform_end;
+  return Status::OK();
+}
+
+Status PitchShift(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, int32_t sample_rate,
+                  int32_t n_steps, int32_t bins_per_octave, int32_t n_fft, int32_t win_length, int32_t hop_length,
+                  WindowType window) {
+  RETURN_UNEXPECTED_IF_NULL(input);
+  RETURN_UNEXPECTED_IF_NULL(output);
+  RETURN_IF_NOT_OK(ValidateLowRank("PitchShift", input, kMinAudioDim, "<..., time>"));
+  RETURN_IF_NOT_OK(ValidateTensorNumeric("PitchShift", input));
+  if (input->type().value() == DataType::DE_FLOAT64) {
+    return PitchShiftImpl<double>(input, output, sample_rate, n_steps, bins_per_octave, n_fft, win_length, hop_length,
+                                  window);
+  } else {
+    std::shared_ptr<Tensor> waveform;
+    RETURN_IF_NOT_OK(TypeCast(input, &waveform, DataType(DataType::DE_FLOAT32)));
+    return PitchShiftImpl<float>(waveform, output, sample_rate, n_steps, bins_per_octave, n_fft, win_length, hop_length,
+                                 window);
+  }
 }
 }  // namespace dataset
 }  // namespace mindspore

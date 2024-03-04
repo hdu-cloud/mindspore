@@ -24,7 +24,6 @@ from mindspore.ops import composite as C
 from mindspore.ops import operations as P
 from tests.ut.python.ops.test_math_ops import VirtualLoss
 
-
 grad_all = C.GradOperation(get_all=True)
 
 
@@ -75,7 +74,7 @@ def test_six_matmul_save():
             return out
 
     reset_auto_parallel_context()
-    set_auto_parallel_context(device_num=8, global_rank=0, strategy_ckpt_save_file="./strategy_stage1.ckpt",
+    set_auto_parallel_context(device_num=8, global_rank=0, strategy_ckpt_config={"save_file": "./strategy_stage1.ckpt"},
                               group_ckpt_save_file="./group_stage1.ckpt", dataset_strategy="full_batch")
     strategy1 = ((8, 1), (1, 1))
     strategy2 = ((1, 8), (8, 1))
@@ -137,7 +136,7 @@ def six_matmul_load():
             return out
 
     reset_auto_parallel_context()
-    set_auto_parallel_context(device_num=8, global_rank=0, strategy_ckpt_load_file="./strategy_stage1.ckpt",
+    set_auto_parallel_context(device_num=8, global_rank=0, strategy_ckpt_config={"load_file": "./strategy_stage1.ckpt"},
                               group_ckpt_save_file="./group_stage1.ckpt", dataset_strategy="full_batch")
     strategy1 = ((8, 1), (1, 1))
     strategy3 = ((8, 1), (1, 1))
@@ -156,6 +155,12 @@ def six_matmul_load():
 
 # model_parallel test
 def test_six_matmul_save_auto():
+    """
+    Feature: test auto parallel
+    Description: auto parallel
+    Expectation: compile success
+    """
+
     class NetWithLoss(nn.Cell):
         def __init__(self, network):
             super(NetWithLoss, self).__init__()
@@ -183,7 +188,7 @@ def test_six_matmul_save_auto():
             self.matmul4 = P.MatMul()
             self.matmul5 = P.MatMul()
             self.matmul6 = P.MatMul()
-            self.weight1 = Parameter(Tensor(np.ones([32, 64]), dtype=ms.float32), name="weight1")
+            self.weight1 = Parameter(Tensor(np.ones([32, 64]), dtype=ms.float32), name="weight1", requires_grad=False)
             self.weight2 = Parameter(Tensor(np.ones([64, 64]), dtype=ms.float32), name="weight2")
             self.weight3 = Parameter(Tensor(np.ones([64, 128]), dtype=ms.float32), name="weight3")
             self.weight4 = Parameter(Tensor(np.ones([128, 64]), dtype=ms.float32), name="weight4")
@@ -201,9 +206,12 @@ def test_six_matmul_save_auto():
             return out
 
     reset_auto_parallel_context()
-    set_auto_parallel_context(device_num=8, global_rank=0, strategy_ckpt_save_file="./strategy_stage1_auto.ckpt")
+    set_auto_parallel_context(device_num=8, global_rank=0,
+                              strategy_ckpt_config={"save_file": "./strategy_stage1_auto.json",
+                                                    "only_trainable_params": True})
     net = GradWrap(NetWithLoss(Net()))
-    context.set_auto_parallel_context(parallel_mode="auto_parallel", dataset_strategy="full_batch")
+    context.set_auto_parallel_context(parallel_mode="auto_parallel", search_mode="dynamic_programming",
+                                      dataset_strategy="full_batch")
     x1 = Tensor(np.ones([32, 32]), dtype=ms.float32)
     x6 = Tensor(np.ones([128, 32]), dtype=ms.float32)
     net.set_train()
@@ -212,6 +220,12 @@ def test_six_matmul_save_auto():
 
 # remove matmul2, add matmul7
 def six_matmul_load_auto():
+    """
+    Feature: test auto parallel
+    Description: auto parallel
+    Expectation: compile success
+    """
+
     class NetWithLoss(nn.Cell):
         def __init__(self, network):
             super(NetWithLoss, self).__init__()
@@ -256,13 +270,15 @@ def six_matmul_load_auto():
             return out
 
     reset_auto_parallel_context()
-    set_auto_parallel_context(device_num=8, global_rank=0, strategy_ckpt_load_file="./strategy_stage1_auto.ckpt")
+    set_auto_parallel_context(device_num=8, global_rank=0,
+                              strategy_ckpt_config={"load_file": "./strategy_stage1_auto.json"})
     strategy1 = ((2, 2), (2, 2))
     strategy3 = ((2, 2), (2, 2))
     strategy4 = ((2, 2), (2, 2))
     strategy5 = ((2, 2), (2, 2))
     net = GradWrap(NetWithLoss(Net(strategy1, strategy3, strategy4, strategy5)))
-    context.set_auto_parallel_context(parallel_mode="auto_parallel", dataset_strategy="full_batch")
+    context.set_auto_parallel_context(parallel_mode="auto_parallel", search_mode="dynamic_programming",
+                                      dataset_strategy="full_batch")
     x1 = Tensor(np.ones([32, 32]), dtype=ms.float32)
     x6 = Tensor(np.ones([128, 32]), dtype=ms.float32)
     x7 = Tensor(np.ones([32, 32]), dtype=ms.float32)

@@ -37,7 +37,7 @@ bool PDistGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::ve
   }
   kernel_func_ = func_list_[index].second;
   p_ = kernel_ptr_->get_p();
-  input_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  input_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   return true;
 }
 
@@ -78,8 +78,9 @@ bool PDistGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, cons
                                      const std::vector<AddressPtr> &outputs) {
   T *input = GetDeviceAddress<T>(inputs, 0);
   T *output = GetDeviceAddress<T>(outputs, 0);
-  CalPDist(x_size_, y_size_, input, output, p_, matrix_row_, matrix_col_, device_id_,
-           reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = CalPDist(x_size_, y_size_, input, output, p_, matrix_row_, matrix_col_, device_id_,
+                         reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

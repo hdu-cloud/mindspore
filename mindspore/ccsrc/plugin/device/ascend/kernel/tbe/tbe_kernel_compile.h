@@ -22,11 +22,13 @@
 #include <set>
 #include <memory>
 #include <vector>
+#include <utility>
+#include <atomic>
 #include "ir/anf.h"
 #include "kernel/kernel.h"
 #include "kernel/kernel_fusion.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_kernel_build.h"
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 
 namespace mindspore {
 namespace kernel {
@@ -51,7 +53,7 @@ struct TaskInfo {
 struct PreBuildResult {
   std::string core_type;
   std::string json_name;
-  kernel::FusionType fusion_type;
+  std::string fusion_type;
   nlohmann::json output_data_desc;
 };
 
@@ -77,9 +79,12 @@ class TbeKernelCompileManager {
   // pre build
   void TbePreBuild(const KernelGraphPtr &kernel_graph);
   // single op compile
-  void TbeSingleOpCompile(const std::vector<CNodePtr> &node_list);
+  std::pair<std::vector<CNodePtr>, std::vector<CNodePtr>> TbeSingleOpCompile(const std::vector<CNodePtr> &node_list);
   // fusion op compile
   JsonNameMap TbeFusionOpCompile(const std::vector<FusionScopeInfo> &fusion_scopes);
+  void ClearFailedLog() { failed_log_.clear(); }
+  std::string failed_log() { return failed_log_; }
+  void SetFusionOpsKernelIOSizeInfo(const std::vector<CNodePtr> &node_list);
 
  private:
   TbeKernelCompileManager() = default;
@@ -100,11 +105,12 @@ class TbeKernelCompileManager {
   // load tbe prebuild result from cached json file
   void LoadPreBuildResult();
   // load not support op
-  void LoadNotSupportOp();
+  void LoadNotSupportFusionOp();
   // query all build task
   void Query(const std::string &type);
   // single op build/pre-build
-  void QueryProcess(const std::string &type, const std::string &job_result, std::vector<int> *success_job);
+  void QueryProcess(const std::string &type, const std::string &job_result, std::vector<int> *success_job,
+                    std::vector<int> *failed_job);
   void GetAllTbeNodes(const std::shared_ptr<session::KernelGraph> &kernel_graph,
                       std::vector<CNodePtr> *tbe_nodes) const;
   void PrintProcessLog(const nlohmann::json &json, int adjust_log_level) const;
@@ -113,22 +119,40 @@ class TbeKernelCompileManager {
   void PrintCompileResult(const nlohmann::json &json);
   std::string ParseSelectAndCheckResult(const nlohmann::json &json, const CNodePtr &node) const;
   void ParseTargetJobStatus(const nlohmann::json &json, TargetJobStatus *target_status) const;
+  std::string ParseOpPattern(const std::string &json_str) const;
   nlohmann::json TurnStrToJson(const std::string &string) const;
   void SaveIOSizeInfo(const nlohmann::json &json, const std::string &json_name,
                       const std::vector<AnfNodePtr> &output_nodes = {});
   void ClearOldTask();
   void UpdateFusionTypeAndOutputDataDesc(const std::vector<CNodePtr> &nodes);
   JsonNameMap GetAllSuccessFusion();
-  void GenKernelMod(const std::vector<CNodePtr> &node_list);
+  std::pair<std::vector<CNodePtr>, std::vector<CNodePtr>> GenKernelMod(const std::vector<CNodePtr> &node_list);
   void DistributeCompileTask(const std::vector<CNodePtr> &node_list, const std::string &job_type);
   void DistributePreBuildTask(const std::vector<CNodePtr> &node_list);
 
+  void WakeUp();
+  void StartAutoSleep();
+  void InitServerProcess();
+  void FinalizeServerProcess();
+
+  std::thread auto_sleep_thread_;  // activate when status_ == kCountingDown
+  std::recursive_mutex sleep_mutex_;
+  enum Status {
+    kWorking,
+    kSleep,
+    kCountingDown,
+  } status_ = kSleep;
+  void SetStatus(Status status);
+
+  nlohmann::json init_json_;
+  nlohmann::json finalize_json_;
+  int64_t time_count_ = 0;
+  static constexpr int64_t kTimeoutSec = 20;
+
   // init flag
-  static bool tbe_init_flag_;
+  bool tbe_init_flag_ = false;
   // tune flag
-  static bool is_tune_flag_;
-  // need rebuild when is_tune_flag_ is true, or op_debug_level_ is one of [1, 2, 4]
-  static bool is_need_rebuild_;
+  bool is_tune_flag_ = false;
   // single op had build
   std::set<std::string> single_processed_kernels_;
   // single op had pre build
@@ -137,6 +161,8 @@ class TbeKernelCompileManager {
   std::set<std::string> fusion_processed_kernels_;
   // if op_debug_level is one of [1, 2, 4], skip tbe compile cache and rebuild again.
   std::string op_debug_level_;
+  // if op_debug_config is not empty, skip tbe compile cache and rebuild again.
+  std::string op_debug_config_;
   // id_node pair for node trace
   std::map<int, CNodePtr> job_id_to_node_;
   // id_task, all build jobs
@@ -154,9 +180,10 @@ class TbeKernelCompileManager {
   // for fusion op
   JsonNameMap success_fusion_ops_;
   JsonNameMap all_fusion_ops_;
+  // build failed log
+  std::string failed_log_;
 };
 }  // namespace ascend
 }  // namespace kernel
 }  // namespace mindspore
-
 #endif  // MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_TBE_TBE_KERNEL_COMPILE_H_

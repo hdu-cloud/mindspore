@@ -89,15 +89,23 @@ void CopyActor::OnMemoryAllocFinish(OpContext<DeviceTensor> *const context) {
                     << ", output size:" << output_device_tensor_[0]->GetSize();
   }
 
-  if (!Copy(output_device_tensor_[0], input_device_tensor_[0])) {
-    std::string error_info = "Copy device tensor failed: " + GetAID().Name();
-    SET_OPCONTEXT_FAIL_RET_WITH_ERROR((*context), error_info);
+  {
+    ProfilerRecorder profiler(ProfilerModule::kRuntime, ProfilerEvent::kCopyData, GetAID().Name());
+    if (!Copy(output_device_tensor_[0], input_device_tensor_[0])) {
+      std::string error_info = "Copy device tensor failed: " + GetAID().Name();
+      SET_OPCONTEXT_FAIL_RET_WITH_ERROR((*context), error_info);
+    }
+    output_device_tensor_[0]->SetNodeIndex(input_device_tensor_[0]->node_index().first.lock(),
+                                           input_device_tensor_[0]->node_index().second);
+    output_device_tensor_[0]->set_user_data(input_device_tensor_[0]->user_data());
+    output_device_tensor_[0]->set_sync_user_data_handler(input_device_tensor_[0]->sync_user_data_handler());
   }
 
   PostRun(context);
 }
 
 void CopyActor::FetchDeviceTensor(OpContext<DeviceTensor> *const context) {
+  ProfilerRecorder profiler(ProfilerModule::kRuntime, ProfilerEvent::kPreLaunch, GetAID().Name());
   MS_EXCEPTION_IF_NULL(context);
   const auto &input_device_context = device_contexts_[kInputDeviceContextIndex];
   const auto &output_device_context = device_contexts_[kOutputDeviceContextIndex];
@@ -136,12 +144,12 @@ void CopyActor::FetchDeviceTensor(OpContext<DeviceTensor> *const context) {
     input_device_tensor_[0] = input_data->data_;
 
     MS_EXCEPTION_IF_NULL(output_);
-    output_device_tensor_[0] = output_;
+    output_device_tensor_[0] = output_.get();
   }
 
   if (is_need_update_output_size_ && (input_device_tensor_[0]->GetSize() != output_device_tensor_[0]->GetSize())) {
-    MS_LOG(INFO) << GetAID().Name() << " update output size from " << output_device_tensor_[0]->GetSize() << " to "
-                 << input_device_tensor_[0]->GetSize();
+    MS_LOG(DEBUG) << GetAID().Name() << " update output size from " << output_device_tensor_[0]->GetSize() << " to "
+                  << input_device_tensor_[0]->GetSize();
     output_device_tensor_[0]->SetSize(input_device_tensor_[0]->GetSize());
   }
 }

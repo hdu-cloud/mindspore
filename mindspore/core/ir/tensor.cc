@@ -17,6 +17,7 @@
 #include "ir/tensor.h"
 
 #include <cstdint>
+#include <exception>
 #include <iomanip>
 #include <functional>
 #include <memory>
@@ -34,11 +35,14 @@
 #include "utils/ms_utils_secure.h"
 #include "utils/shape_utils.h"
 #include "utils/ordered_set.h"
+#include "utils/system/env.h"
+#include "utils/temp_file_manager.h"
 
 namespace mindspore {
 namespace tensor {
 constexpr auto kEllipsis = "...";
 constexpr auto kThreshold = 6;
+constexpr auto kThreshold1D = 1000;
 
 constexpr auto kThreshold1DFloat = kThreshold * 2;
 constexpr auto kThreshold1DInt = kThreshold * 4;
@@ -72,7 +76,7 @@ inline static void CopyTensorData(const TensorDataPtr &dest, const TensorDataPtr
   auto err = common::huge_memcpy(static_cast<uint8_t *>(dest->data()), dest_bytes,
                                  static_cast<const uint8_t *>(src->const_data()), src_bytes);
   if (err != EOK) {
-    MS_LOG(EXCEPTION) << "Copy tensor data failed! bytes: " << dest_bytes << "/" << src_bytes << ".";
+    MS_LOG(INTERNAL_EXCEPTION) << "Copy tensor data failed! bytes: " << dest_bytes << "/" << src_bytes << ".";
   }
 }
 
@@ -88,10 +92,11 @@ std::unique_ptr<T[]> NewData(const U *input, size_t size) {
   auto data = std::make_unique<T[]>(size);
   if constexpr (!std::is_same<T, U>::value &&
                 (std::is_same<T, float16>::value || std::is_same<U, float16>::value ||
+                 std::is_same<T, bfloat16>::value || std::is_same<U, bfloat16>::value ||
                  std::is_same<T, ComplexStorage<float>>::value || std::is_same<U, ComplexStorage<float>>::value ||
                  std::is_same<T, ComplexStorage<double>>::value || std::is_same<U, ComplexStorage<double>>::value)) {
-    // Because float16 do not support implicit cast from/to other types,
-    // We can not use std::copy() on array of float16, use a loop here.
+    // Because float16 and bfloat16 do not support implicit cast from/to other types,
+    // We can not use std::copy() on array of float16 and bfloat16, use a loop here.
     for (size_t i = 0; i < size; ++i) {
       data[i] = static_cast<T>(input[i]);
     }
@@ -161,6 +166,12 @@ std::unique_ptr<T[]> CopyData(const ShapeVector &shape, void *const data, TypeId
       auto buf = static_cast<double *>(data);
       return NewData<T>(buf, size);
     }
+#ifndef KERNEL_EXECUTOR_ANDROID
+    case kNumberTypeBFloat16: {
+      auto buf = static_cast<bfloat16 *>(data);
+      return NewData<T>(buf, size);
+    }
+#endif
     case kNumberTypeComplex64: {
       auto buf = static_cast<ComplexStorage<float> *>(data);
       return NewData<T>(buf, size);
@@ -203,7 +214,8 @@ class TensorStringifier {
       std::is_same<T, int16_t>::value || std::is_same<T, int32_t>::value || std::is_same<T, int64_t>::value ||
       std::is_same<T, uint16_t>::value || std::is_same<T, uint32_t>::value || std::is_same<T, uint64_t>::value ||
       std::is_same<T, float16>::value || std::is_same<T, float>::value || std::is_same<T, double>::value ||
-      std::is_same<T, ComplexStorage<float>>::value || std::is_same<T, ComplexStorage<double>>::value;
+      std::is_same<T, ComplexStorage<float>>::value || std::is_same<T, ComplexStorage<double>>::value ||
+      std::is_same<T, bfloat16>::value;
     static_assert(valid, "Type is invalid");
     if (data_size_ == 0) {
       return "";
@@ -315,7 +327,7 @@ class TensorStringifier {
         }
         ss << ' ';
       }
-      if (!isScalar && ndim_ == 1 && (i + 1) % linefeedThreshold == 0) {
+      if (!isScalar && ndim_ == 1 && end - start > (kThreshold >> 1) && (i + 1) % linefeedThreshold == 0) {
         // Add a line feed every {threshold of type} for 1D tensor.
         ss << '\n' << ' ';
       }
@@ -330,7 +342,7 @@ class TensorStringifier {
     ss << '[';
     if (depth == static_cast<ssize_t>(ndim_) - 1) {  // Bottom dimension
       ssize_t num = shape[depth];
-      if (num > kThreshold && ndim_ > 1) {
+      if ((num > kThreshold && ndim_ > 1) || (num > kThreshold1D && ndim_ == 1)) {
         OutputDataString(ss, *cursor, 0, kThreshold >> 1, use_comma, max_width);
         ss << ' ' << kEllipsis << ' ';
         OutputDataString(ss, *cursor, num - (kThreshold >> 1), num, use_comma, max_width);
@@ -396,7 +408,15 @@ template <typename T>
 class TensorDataImpl : public TensorData {
  public:
   explicit TensorDataImpl(const ShapeVector &shape) : ndim_(shape.size()), data_size_(SizeOf(shape)) {}
-  ~TensorDataImpl() override = default;
+  ~TensorDataImpl() override {
+    try {
+      RemoveOffloadFile();
+    } catch (const std::exception &e) {
+      MS_LOG(ERROR) << "Exception occurred when cleaning tensor. Error info " << e.what();
+    } catch (...) {
+      MS_LOG(ERROR) << "Exception occurred when cleaning tensor.";
+    }
+  }
 
   TensorDataImpl(const ShapeVector &shape, void *data, size_t data_len)
       : ndim_(shape.size()), data_size_(SizeOf(shape)), data_(CopyData<T>(shape, data, data_len)) {}
@@ -425,15 +445,40 @@ class TensorDataImpl : public TensorData {
   bool has_sub_data() const override { return false; }
 
   void *data() override {
-    if (data_ == nullptr) {
-      if (data_size_ > INT32_MAX) {
-        MS_LOG(WARNING) << "Try to alloca a large memory, size is:" << data_size_ * sizeof(T);
+    if (data_ != nullptr) {
+      return data_.get();
+    }
+
+    if (data_size_ > INT32_MAX) {
+      MS_LOG(WARNING) << "Try to alloca a large memory, size is:" << data_size_ * sizeof(T);
+    }
+    // Lazy allocation.
+    data_ = std::make_unique<T[]>(data_size_);
+
+    // Load data from file
+    if (!file_path_.empty()) {
+      auto fs = mindspore::system::Env::GetFileSystem();
+      MS_EXCEPTION_IF_NULL(fs);
+      if (fs->FileExist(file_path_)) {
+        auto file = fs->CreateWriteFile(file_path_, "r+");
+        MS_EXCEPTION_IF_NULL(file);
+        bool success = file->PRead(data_.get(), data_size_ * sizeof(T), 0);
+        if (!success) {
+          MS_LOG(WARNING) << "Tensor load data from file: " << file_path_ << " failed!";
+        }
+        if (!file->Close()) {
+          MS_LOG(WARNING) << "Close tensor file: " << file_path_ << " failed!";
+        }
+      } else {
+        MS_LOG(WARNING) << "Invalid tensor file path: " << file_path_;
       }
-      // Lazy allocation.
-      data_ = std::make_unique<T[]>(data_size_);
     }
     return data_.get();
   }
+
+  void set_file_path(const std::string &file_path) override { file_path_ = file_path; }
+
+  const std::string file_path() const { return file_path_; }
 
   const void *const_data() const override {
     // May return nullptr if data not initialized.
@@ -463,9 +508,18 @@ class TensorDataImpl : public TensorData {
   }
 
  private:
+  void RemoveOffloadFile() {
+    if (!file_path_.empty()) {
+      TempFileManager::GetInstance().RemoveFile(file_path_);
+      TempFileManager::GetInstance().UnRegister(file_path_);
+      file_path_ = "";
+    }
+  }
+
   size_t ndim_{0};
   size_t data_size_{0};
   std::unique_ptr<T[]> data_;
+  std::string file_path_{""};
 };
 
 // Tensor chunk data.
@@ -583,6 +637,10 @@ TensorDataPtr MakeTensorData(TypeId data_type, Args &&... args) {
       return std::make_shared<ImplClass<float>>(std::forward<Args>(args)...);
     case kNumberTypeFloat64:
       return std::make_shared<ImplClass<double>>(std::forward<Args>(args)...);
+#ifndef KERNEL_EXECUTOR_ANDROID
+    case kNumberTypeBFloat16:
+      return std::make_shared<ImplClass<bfloat16>>(std::forward<Args>(args)...);
+#endif
     case kNumberTypeComplex64:
       return std::make_shared<ImplClass<ComplexStorage<float>>>(std::forward<Args>(args)...);
     case kNumberTypeComplex128:
@@ -601,7 +659,7 @@ TensorDataPtr MakeTensorData(TypeId data_type, Args &&... args) {
 
 TensorDataPtr MakeTensorSubData(const TensorPtr &owner, size_t offset, const TensorDataPtr &data) {
   if (data->nbytes() == 0) {
-    MS_LOG(EXCEPTION) << "Tensor data size is 0.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Tensor data size is 0.";
   }
   auto sub_data = MakeTensorData<TensorSubDataImpl>(owner->data_type(), owner, offset, data->size(), data->ndim());
   // If tensor data is initialized, copy it.
@@ -626,12 +684,18 @@ Tensor::Tensor(const Tensor &tensor)
       base_shape_ptr_(tensor.base_shape_ptr_),
       cache_tensor_ptr_(tensor.cache_tensor_ptr_),
       hashmap_tensor_ptr_(tensor.hashmap_tensor_ptr_),
-      padding_type_(tensor.padding_type()),
       device_event_(tensor.device_event_),
       lazy_callback_(tensor.lazy_callback_),
-      user_data_(tensor.user_data_),
+      contiguous_callback_(tensor.contiguous_callback_),
+      pin_mem_register_(tensor.pin_mem_register_),
+      auto_grad_meta_data_(tensor.auto_grad_meta_data_),
       compression_type_(tensor.compression_type_),
-      tensor_name_(tensor.tensor_name_) {}
+      tensor_name_(tensor.tensor_name_),
+      address_future_(tensor.address_future_),
+      storage_info_(tensor.storage_info_) {
+  user_data_ = tensor.user_data_;
+  set_device_info(tensor.device_info());
+}
 
 Tensor::Tensor(const Tensor &tensor, TypeId data_type)
     : MetaTensor(data_type, tensor.shape_),
@@ -648,12 +712,53 @@ Tensor::Tensor(const Tensor &tensor, TypeId data_type)
       base_shape_ptr_(tensor.base_shape_ptr_),
       cache_tensor_ptr_(tensor.cache_tensor_ptr_),
       hashmap_tensor_ptr_(tensor.hashmap_tensor_ptr_),
-      padding_type_(tensor.padding_type()),
       device_event_(tensor.device_event_),
       lazy_callback_(tensor.lazy_callback_),
-      user_data_(tensor.user_data_),
+      contiguous_callback_(tensor.contiguous_callback_),
+      pin_mem_register_(tensor.pin_mem_register_),
+      auto_grad_meta_data_(tensor.auto_grad_meta_data_),
       compression_type_(tensor.compression_type_),
-      tensor_name_(tensor.tensor_name_) {}
+      tensor_name_(tensor.tensor_name_),
+      address_future_(tensor.address_future_),
+      storage_info_(tensor.storage_info_) {
+  user_data_ = tensor.user_data_;
+  set_device_info(tensor.device_info());
+}
+
+Tensor &Tensor::operator=(const Tensor &tensor) {
+  if (this == &tensor) {
+    return *this;
+  }
+  init_flag_ = tensor.init_flag_;
+  is_forward_output_ = tensor.is_forward_output_;
+  data_ = tensor.data_;
+  id_ = tensor.id_;
+  event_ = tensor.event_;
+  need_wait_ = tensor.need_wait_;
+  sync_status_ = tensor.sync_status_;
+  device_sync_ = tensor.device_sync_;
+  need_release_device_mem_ = tensor.need_release_device_mem_;
+  cache_enable_ = tensor.cache_enable_;
+  base_shape_ptr_ = tensor.base_shape_ptr_;
+  cache_tensor_ptr_ = tensor.cache_tensor_ptr_;
+  hashmap_tensor_ptr_ = tensor.hashmap_tensor_ptr_;
+  device_event_ = tensor.device_event_;
+  lazy_callback_ = tensor.lazy_callback_;
+  pin_mem_register_ = tensor.pin_mem_register_;
+  contiguous_callback_ = tensor.contiguous_callback_;
+  user_data_ = tensor.user_data_;
+  auto_grad_meta_data_ = tensor.auto_grad_meta_data_;
+  compression_type_ = tensor.compression_type_;
+  tensor_name_ = tensor.tensor_name_;
+  adapter_flag_ = tensor.adapter_flag_;
+  cast_dtype_ = tensor.cast_dtype_;
+  graph_output_ = tensor.graph_output_;
+  quant_params_ = tensor.quant_params_;
+  updated_by_device_ = tensor.updated_by_device_;
+  address_future_ = tensor.address_future_;
+  storage_info_ = tensor.storage_info_;
+  return *this;
+}
 
 Tensor::Tensor(TypeId data_type, const ShapeVector &shape, TensorDataPtr data)
     : MetaTensor(data_type, shape), data_(std::move(data)), id_(MakeId()) {}
@@ -669,6 +774,11 @@ Tensor::Tensor(TypeId data_type, const ShapeVector &shape, void *data, TypeId sr
 
 Tensor::Tensor(const std::vector<int64_t> &input, const TypePtr &data_type)
     : MetaTensor(TypeIdOf(data_type, kNumberTypeInt64), {static_cast<int>(input.size())}),
+      data_(MakeTensorData(data_type_, shape_, input.data(), input.size())),
+      id_(MakeId()) {}
+
+Tensor::Tensor(const std::vector<int32_t> &input, const TypePtr &data_type)
+    : MetaTensor(TypeIdOf(data_type, kNumberTypeInt32), {static_cast<int>(input.size())}),
       data_(MakeTensorData(data_type_, shape_, input.data(), input.size())),
       id_(MakeId()) {}
 
@@ -711,7 +821,12 @@ Tensor::Tensor(float16 input, const TypePtr &data_type)
     : MetaTensor(TypeIdOf(data_type, kNumberTypeFloat16), {}),
       data_(MakeTensorData(data_type_, ShapeVector{}, input)),
       id_(MakeId()) {}
-
+#ifndef KERNEL_EXECUTOR_ANDROID
+Tensor::Tensor(bfloat16 input, const TypePtr &data_type)
+    : MetaTensor(TypeIdOf(data_type, kNumberTypeBFloat16), {}),
+      data_(MakeTensorData(data_type_, ShapeVector{}, input)),
+      id_(MakeId()) {}
+#endif
 Tensor::Tensor(uint64_t input, const TypePtr &data_type)
     : MetaTensor(TypeIdOf(data_type, kNumberTypeUInt64), {}),
       data_(MakeTensorData(data_type_, ShapeVector{}, input)),
@@ -747,6 +862,15 @@ Tensor::Tensor(TypeId origin_data_type, const ShapeVector &shape, size_t compres
   compression_type_ = compression_type;
 }
 
+Tensor::~Tensor() {
+  try {
+    UnPinMemory();
+    pin_mem_register_ = nullptr;
+  } catch (const std::exception &e) {
+    MS_LOG(ERROR) << "Exception when destruct tensor. Error info " << e.what();
+  }
+}
+
 bool Tensor::operator==(const Tensor &tensor) const {
   return (&tensor == this || (MetaTensor::operator==(tensor) && data_ == tensor.data_));
 }
@@ -765,6 +889,46 @@ void Tensor::ExecuteLazyTask() const {
   if (lazy_callback_ != nullptr) {
     lazy_callback_();
   }
+
+  if (storage_info_ != nullptr && contiguous_callback_ != nullptr) {
+    device_sync_ = contiguous_callback_(nullptr, device_address(), storage_info());
+    device_sync_->set_original_ref_count(SIZE_MAX);
+    device_sync_->ResetRefCount();
+    address_future_ = nullptr;
+    storage_info_ = nullptr;
+  }
+}
+
+void Tensor::contiguous() {
+  if (storage_info_ != nullptr) {
+    contiguous_callback_(shared_from_base<Tensor>(), nullptr, nullptr);
+  }
+}
+
+bool Tensor::is_contiguous() const {
+  auto storage_info = storage_info_;
+  return storage_info == nullptr || storage_info->is_contiguous;
+}
+
+DeviceSyncPtr Tensor::device_address() const {
+  if (address_future_ != nullptr) {
+    device_sync_ = address_future_->Get();
+    MS_EXCEPTION_IF_NULL(device_sync_);
+    device_sync_->set_original_ref_count(SIZE_MAX);
+    device_sync_->ResetRefCount();
+  }
+  return device_sync_;
+}
+
+void Tensor::set_device_address(const DeviceSyncPtr &device_sync, bool need_update_ref_count) {
+  address_future_ = nullptr;
+  device_sync_ = device_sync;
+  // To support the old and new runtime coexistence, the output of old runtime may be the input of new runtime, so the
+  // device address cannot be released through ref count and set max ref count in this scenario.
+  if (need_update_ref_count && (device_sync_ != nullptr)) {
+    device_sync_->set_original_ref_count(SIZE_MAX);
+    device_sync_->ResetRefCount();
+  }
 }
 
 // Assign value to this tensor.
@@ -772,10 +936,14 @@ Tensor &Tensor::AssignValue(const Tensor &tensor) {
   if (this != &tensor) {
     lazy_callback_ = tensor.lazy_callback_;
     ExecuteLazyTask();
+    contiguous_callback_ = tensor.contiguous_callback_;
+    storage_info_ = tensor.storage_info_;
     MetaTensor::operator=(tensor);
-    device_sync_ = tensor.device_sync_;
+    address_future_ = nullptr;
+    device_sync_ = tensor.device_address();
     need_release_device_mem_ = tensor.need_release_device_mem_;
     is_forward_output_ = tensor.is_forward_output_;
+    MS_EXCEPTION_IF_NULL(data_);
     if (data_->is_sub_data()) {
       // If tensor data is sub data, we should keep data
       // memory address unchange and copy data to it.
@@ -783,11 +951,13 @@ Tensor &Tensor::AssignValue(const Tensor &tensor) {
     } else {
       data_ = tensor.data_;
     }
-    id_ = tensor.id_;
+    if (!is_parameter_) {
+      id_ = tensor.id_;
+      auto_grad_meta_data_ = tensor.auto_grad_meta_data_;
+    }
     event_ = tensor.event_;
     need_wait_ = tensor.need_wait_;
     sync_status_ = tensor.sync_status_;
-    padding_type_ = tensor.padding_type_;
     device_event_ = tensor.device_event_;
   }
   return *this;
@@ -813,6 +983,9 @@ abstract::AbstractBasePtr Tensor::ToAbstract() {
     abs_tensor = std::make_shared<abstract::AbstractRefTensor>(abs_tensor, ref_key);
   } else {
     abs_tensor->set_value(shared_from_base<Tensor>());
+  }
+  if (is_adapter()) {
+    abs_tensor->set_is_adapter(true);
   }
   return abs_tensor;
 }
@@ -859,23 +1032,27 @@ std::string Tensor::ToStringRepr() const {
 
 void Tensor::data_sync(bool need_wait) const {
   if (need_wait) {
+    device_sync_ = device_address();
     ExecuteLazyTask();
     Wait();
   }
   if (device_sync_ == nullptr) {
     return;
   }
-
+  MS_EXCEPTION_IF_NULL(data_);
   if (data_->is_sub_data()) {
     return;
   }
 
   std::vector<size_t> shape_tmp;
-  (void)std::transform(shape().begin(), shape().end(), std::back_inserter(shape_tmp), IntToSize);
+  (void)std::transform(shape().begin(), shape().end(), std::back_inserter(shape_tmp), LongToSize);
   auto size = abstract::ShapeSize(shape_tmp) * abstract::TypeIdSize(data_type());
   auto address = device_sync_;
   if (size != 0 && !address->SyncDeviceToHost(shape(), size, data_type(), data_c())) {
-    MS_LOG(EXCEPTION) << "SyncDeviceToHost failed.";
+    MS_LOG(INTERNAL_EXCEPTION) << "SyncDeviceToHost failed.";
+  }
+  if (!data_->file_path().empty()) {
+    device_sync_ = nullptr;
   }
   sync_status_ = kNeedSyncHostToDevice;
 }
@@ -888,7 +1065,7 @@ void Tensor::data_sync_directly(const DeviceSync *const device_sync, bool need_w
   if (device_sync == nullptr) {
     return;
   }
-
+  MS_EXCEPTION_IF_NULL(data_);
   if (data_->is_sub_data()) {
     return;
   }
@@ -897,13 +1074,14 @@ void Tensor::data_sync_directly(const DeviceSync *const device_sync, bool need_w
   (void)std::transform(shape().begin(), shape().end(), std::back_inserter(shape_tmp), IntToSize);
   auto size = abstract::ShapeSize(shape_tmp) * abstract::TypeIdSize(data_type());
   if (size != 0 && !device_sync->SyncDeviceToHost(shape(), size, data_type(), data_c())) {
-    MS_LOG(EXCEPTION) << "SyncDeviceToHost failed.";
+    MS_LOG(INTERNAL_EXCEPTION) << "SyncDeviceToHost failed.";
   }
   sync_status_ = kNeedSyncHostToDevice;
 }
 
 TypeId Tensor::set_data_type(TypeId data_type) {
   if (data_type != data_type_) {
+    MS_EXCEPTION_IF_NULL(data_);
     data_ = MakeTensorData(data_type, shape_, data_->data(), data_type_);
     return MetaTensor::set_data_type(data_type);
   }
@@ -915,6 +1093,44 @@ size_t Tensor::set_shape(const ShapeVector &shape) {
     data_ = MakeTensorData(data_type_, shape);
   }
   return MetaTensor::set_shape(shape);
+}
+
+bool Tensor::Offload(const std::string &file_path) {
+  if (file_path.empty()) {
+    return false;
+  }
+
+  auto fs = mindspore::system::Env::GetFileSystem();
+  MS_EXCEPTION_IF_NULL(fs);
+  MS_EXCEPTION_IF_NULL(data_);
+  auto data_ptr = data_->data();
+  auto file = fs->CreateWriteFile(file_path);
+  MS_EXCEPTION_IF_NULL(file);
+  TempFileManager::GetInstance().Register(file_path);
+  bool success = file->PWrite(data_ptr, LongToSize(data_->nbytes()), 0);
+  if (!file->Close()) {
+    MS_LOG(WARNING) << "Close tensor file: " << file_path << " failed!";
+  }
+  if (!success) {
+    MS_LOG(WARNING) << "Tensor write data to file: " << file_path << " failed!";
+    return false;
+  }
+
+  if (file_path == GetOffloadFilePath()) {
+    data_->set_file_path("");
+  }
+
+  data_ = MakeTensorData(data_type_, shape_);
+  MS_EXCEPTION_IF_NULL(data_);
+  data_->set_file_path(file_path);
+  return true;
+}
+
+const std::string Tensor::GetOffloadFilePath() const {
+  if (data_ == nullptr) {
+    return "";
+  }
+  return data_->file_path();
 }
 
 std::pair<void *, size_t> Tensor::GetChunkOffset() const {
@@ -1029,6 +1245,20 @@ TensorPtrList Tensor::GetFlattenedTensors(const TensorPtrList &tensors) {
   return result_tensors;
 }
 
+bool Tensor::CheckStub() {
+#if defined(WITH_BACKEND)
+  return false;
+#else
+  auto context_ptr = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context_ptr);
+  std::string backend_name = context_ptr->backend_policy();
+  if (backend_name == "vm") {
+    return false;
+  }
+  return true;
+#endif
+}
+
 size_t Tensor::GetFusionSize(const TensorPtrList &flat_tensors) {
   size_t fusion_size = 0;
   std::map<TypeId, size_t> type_groups;
@@ -1049,6 +1279,21 @@ size_t Tensor::GetFusionSize(const TensorPtrList &flat_tensors) {
 }
 
 bool Tensor::is_persistent_data() const { return this->data().is_persistent_data(); }
+
+void Tensor::PinMemory(PinnedMemRegister *pin_mem_register) {
+  if (pin_mem_register == nullptr) {
+    return;
+  }
+  pin_mem_register_ = pin_mem_register;
+  pin_mem_register_->RegisterPinnedMem(data_c(), Size());
+}
+
+void Tensor::UnPinMemory() {
+  if (pin_mem_register_ == nullptr) {
+    return;
+  }
+  pin_mem_register_->UnRegisterPinnedMem(data_c());
+}
 
 CSRTensor::CSRTensor(const TensorPtr indptr, const TensorPtr indices, const TensorPtr values, const ShapeVector &shape)
     : MetaSparseTensor(values->data_type(), shape), indptr_(indptr), indices_(indices), values_(values) {}

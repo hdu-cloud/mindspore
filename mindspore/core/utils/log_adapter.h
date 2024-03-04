@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,10 +26,8 @@
 #include <vector>
 #include <thread>
 #include <functional>
-#include "utils/macros.h"
-#ifndef BUILD_LITE
+#include "mindapi/base/macros.h"
 #include "utils/os.h"
-#endif
 #include "utils/overload.h"
 #include "./securec.h"
 #ifdef USE_GLOG
@@ -37,7 +35,6 @@
 #define google mindspore_private
 #include "glog/logging.h"
 #undef google
-#elif defined(BUILD_CORE_RUNTIME)
 #else
 #include "toolchain/slog.h"
 #endif
@@ -203,11 +200,7 @@ enum SubModuleId : int {
 };
 
 #ifndef SUBMODULE_ID
-#ifndef BUILD_LITE_INFERENCE
 #define SUBMODULE_ID mindspore::SubModuleId::SM_ME
-#else
-#define SUBMODULE_ID mindspore::SubModuleId::SM_LITE
-#endif
 #endif
 
 /// \brief Get sub-module name by the module id.
@@ -230,10 +223,11 @@ MS_EXPORT extern int g_ms_submodule_log_levels[];
 #if defined(_WIN32) || defined(_WIN64)
 /// \brief The max log level of current thread.
 MS_EXPORT extern enum MsLogLevel this_thread_max_log_level;
-#define MS_LOG_TRY_CATCH_SCOPE
 #else
 /// \brief The max log level of current thread.
 MS_EXPORT extern thread_local enum MsLogLevel this_thread_max_log_level;
+#endif
+
 class TryCatchGuard {
  public:
   TryCatchGuard() : origin_log_level_(this_thread_max_log_level) { this_thread_max_log_level = MsLogLevel::kWarning; }
@@ -243,17 +237,21 @@ class TryCatchGuard {
   enum MsLogLevel origin_log_level_;
 };
 #define MS_LOG_TRY_CATCH_SCOPE mindspore::TryCatchGuard mindspore_log_try_catch_guard
-#endif
 
 /// \brief LogWriter defines interface to write log.
 class MS_CORE_API LogWriter {
  public:
   using ExceptionHandler = void (*)(ExceptionType, const std::string &);
+  using MessageHandler = void (*)(std::ostringstream *oss);
   using TraceProvider = std::function<void(std::ostringstream &oss, bool add_title)>;
 
   LogWriter(const LocationInfo &location, MsLogLevel log_level, SubModuleId submodule,
-            ExceptionType excp_type = NoExceptionType)
-      : location_(location), log_level_(log_level), submodule_(submodule), exception_type_(excp_type) {}
+            ExceptionType excp_type = NoExceptionType, bool is_internal_exception = false)
+      : location_(location),
+        log_level_(log_level),
+        submodule_(submodule),
+        exception_type_(excp_type),
+        is_internal_exception_(is_internal_exception) {}
   ~LogWriter() = default;
 
   /// \brief Output log message from the input log stream.
@@ -261,12 +259,10 @@ class MS_CORE_API LogWriter {
   /// \param[in] stream The input log stream.
   void operator<(const LogStream &stream) const noexcept;
 
-#if !defined(BUILD_LITE_INFERENCE) || defined(BUILD_CORE_RUNTIME)
   /// \brief Output log message from the input log stream and then throw exception.
   ///
   /// \param[in] stream The input log stream.
   void operator^(const LogStream &stream) const NO_RETURN;
-#endif
 
   /// \brief Get the function pointer of converting exception types in c++.
   ///
@@ -277,6 +273,16 @@ class MS_CORE_API LogWriter {
   ///
   /// \param[in] A function pointer of converting exception types in c++.
   static void SetExceptionHandler(const ExceptionHandler &new_exception_handler);
+
+  /// \brief Get the function pointer of handling message for different device.
+  ///
+  /// \return A pointer of the function.
+  static const MessageHandler &GetMessageHandler();
+
+  /// \brief Set the function pointer of handling message for different device.
+  ///
+  /// \param[in] A function pointer of handling message for different device.
+  static void SetMessageHandler(const MessageHandler &new_message_handler);
 
   /// \brief Get the function pointer of printing trace stacks.
   ///
@@ -292,12 +298,14 @@ class MS_CORE_API LogWriter {
   void OutputLog(const std::ostringstream &msg) const;
   void RemoveLabelBeforeOutputLog(const std::ostringstream &msg) const;
   static ExceptionHandler &exception_handler();
+  static MessageHandler &message_handler();
   static TraceProvider &trace_provider();
 
   LocationInfo location_;
   MsLogLevel log_level_;
   SubModuleId submodule_;
   ExceptionType exception_type_;
+  bool is_internal_exception_;
 };
 
 #define MSLOG_IF(level, condition, excp_type)                                                                          \
@@ -305,16 +313,10 @@ class MS_CORE_API LogWriter {
                : mindspore::LogWriter(mindspore::LocationInfo(FILE_NAME, __LINE__, __FUNCTION__), level, SUBMODULE_ID, \
                                       excp_type) < mindspore::LogStream()
 
-#if !defined(BUILD_LITE_INFERENCE) || defined(BUILD_CORE_RUNTIME)
-#define MSLOG_THROW(excp_type)                                                                            \
+#define MSLOG_THROW(excp_type, is_internal_exception)                                                     \
   mindspore::LogWriter(mindspore::LocationInfo(FILE_NAME, __LINE__, __FUNCTION__), mindspore::kException, \
-                       SUBMODULE_ID, excp_type) ^                                                         \
+                       SUBMODULE_ID, excp_type, is_internal_exception) ^                                  \
     mindspore::LogStream()
-#else
-#define MSLOG_THROW(excp_type)                                                                                      \
-  mindspore::LogWriter(mindspore::LocationInfo(FILE_NAME, __LINE__, __FUNCTION__), mindspore::kError, SUBMODULE_ID, \
-                       excp_type) < mindspore::LogStream()
-#endif
 
 inline bool IS_OUTPUT_ON(enum MsLogLevel level) noexcept(true) {
   return (static_cast<int>(level) >= mindspore::g_ms_submodule_log_levels[SUBMODULE_ID] &&
@@ -328,29 +330,38 @@ inline bool IS_OUTPUT_ON(enum MsLogLevel level) noexcept(true) {
 #define MS_LOG_WARNING MSLOG_IF(mindspore::kWarning, IS_OUTPUT_ON(mindspore::kWarning), mindspore::NoExceptionType)
 #define MS_LOG_ERROR MSLOG_IF(mindspore::kError, IS_OUTPUT_ON(mindspore::kError), mindspore::NoExceptionType)
 
-#define MS_LOG_EXCEPTION MSLOG_THROW(mindspore::NoExceptionType)
-#define MS_EXCEPTION(type) MSLOG_THROW(type)
+#define MS_LOG_EXCEPTION MSLOG_THROW(mindspore::NoExceptionType, false)
+#define MS_EXCEPTION(type) MSLOG_THROW(type, false)
+
+// Below exceptions indicate that the exception is caused by BUG.
+// Internal exception info will guide user to seek help from community.
+// Here are 3 ways to make an internal exception:
+//     1) MS_INTERNAL_EXCEPTION(ErrorType) << exception_str;
+//     2) MS_LOG_INTERNAL_EXCEPTION << exception_str;
+//     3) MS_LOG(INTERNAL_EXCEPTION) << exception_str;
+#define MS_INTERNAL_EXCEPTION(type) MSLOG_THROW(type, true)
+#define MS_LOG_INTERNAL_EXCEPTION MSLOG_THROW(mindspore::NoExceptionType, true)
 }  // namespace mindspore
 
-#define MS_EXCEPTION_IF_NULL(ptr)                                  \
-  do {                                                             \
-    if ((ptr) == nullptr) {                                        \
-      MS_LOG(EXCEPTION) << "The pointer[" << #ptr << "] is null."; \
-    }                                                              \
+#define MS_EXCEPTION_IF_NULL(ptr)                                           \
+  do {                                                                      \
+    if ((ptr) == nullptr) {                                                 \
+      MS_LOG(INTERNAL_EXCEPTION) << "The pointer[" << #ptr << "] is null."; \
+    }                                                                       \
   } while (0)
 
-#define MS_EXCEPTION_IF_CHECK_FAIL(condition, error_info)            \
+#define MS_EXCEPTION_IF_CHECK_FAIL(condition, error_info)                     \
+  do {                                                                        \
+    if (!(condition)) {                                                       \
+      MS_LOG(INTERNAL_EXCEPTION) << "Failure info [" << (error_info) << "]."; \
+    }                                                                         \
+  } while (0)
+
+#define MS_EXCEPTION_IF_ZERO(name, value)                            \
   do {                                                               \
-    if (!(condition)) {                                              \
-      MS_LOG(EXCEPTION) << "Failure info [" << (error_info) << "]."; \
+    if ((value) == 0) {                                              \
+      MS_LOG(INTERNAL_EXCEPTION) << "The " << (name) << " is zero."; \
     }                                                                \
-  } while (0)
-
-#define MS_EXCEPTION_IF_ZERO(name, value)                   \
-  do {                                                      \
-    if ((value) == 0) {                                     \
-      MS_LOG(EXCEPTION) << "The " << (name) << " is zero."; \
-    }                                                       \
   } while (0)
 
 #define MS_ERROR_IF_NULL(ptr)                                    \

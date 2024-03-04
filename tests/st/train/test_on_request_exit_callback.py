@@ -18,16 +18,16 @@
 import os
 import shutil
 import signal
+import sys
 import time
 from multiprocessing import Process
 import numpy as np
 import pytest
 
-from mindspore import Model
 from mindspore import nn, context
 from mindspore import dataset as ds
 from mindspore.common.initializer import TruncatedNormal
-from mindspore.train.callback import Callback, OnRequestExit, LossMonitor
+from mindspore.train import Callback, OnRequestExit, LossMonitor, Model
 
 
 def conv(in_channels, out_channels, kernel_size, stride=1, padding=0):
@@ -136,6 +136,8 @@ def test_on_request_exit_callback():
     Expectation: When a signal received,
         the train process should be stopped and save the ckpt and mindir should be saved.
     """
+    if sys.platform != 'linux':
+        return
     context.set_context(mode=context.GRAPH_MODE)
     directory = "./data"
     if os.path.exists(directory):

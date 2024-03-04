@@ -165,13 +165,11 @@ Status CreateGroups(const std::vector<std::pair<std::string, std::vector<uint32_
   return SUCCESS;
 }
 #endif
+
 Status GroupManager::CreateGroup(const std::string &group_name, const std::vector<Device> &devices,
                                  mindspore::parallel::Group *const group) {
   // it is simple to use size to determine whether it is a world group
-  uint32_t world_size = 0;
-  (void)CommManager::GetInstance().GetRankSize(world_group_, &world_size);
-
-  if (devices.size() == world_size) {
+  if (devices.size() == g_device_manager->DeviceNum()) {
     auto iter = groups_.find(world_group_);
     if (iter == groups_.end()) {
       (void)group->Init(world_group_, devices);

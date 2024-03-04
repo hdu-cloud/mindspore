@@ -17,9 +17,9 @@
 #include "plugin/device/cpu/kernel/fast_gelu_cpu_kernel.h"
 #include <algorithm>
 #include <functional>
+#include "mindspore/core/ops/nn_optimizer_ops.h"
 #include "mindspore/core/ops/fast_gelu.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
-#include "utils/ms_utils.h"
 
 namespace mindspore::kernel {
 constexpr auto kFastGeLU = "FastGeLU";

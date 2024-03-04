@@ -19,8 +19,8 @@
 #include <memory>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -36,8 +36,6 @@ class MIND_API SparseMatrixSoftmax : public BaseOperator {
                {"c_dense_shape", "c_batch_pointers", "c_row_pointer", "c_col_indices", "c_values"});
   }
 };
-abstract::AbstractBasePtr SparseMatrixSoftmaxInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                   const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

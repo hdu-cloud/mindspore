@@ -20,18 +20,21 @@
 #include <set>
 #include <memory>
 #include <string>
+#include "mindspore/core/ops/sequence_ops.h"
 #include "tools/converter/adapter/acl/common/utils.h"
 #include "tools/converter/adapter/acl/mapper/tbe_op_def.h"
 #include "tools/common/tensor_util.h"
 #include "include/errorcode.h"
 #include "base/base.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "ops/concat.h"
 #include "ops/batch_norm.h"
 #include "ops/fused_batch_norm.h"
 #include "ops/instance_norm.h"
 #include "ops/stack.h"
 #include "ops/tuple_get_item.h"
+#include "ops/layer_norm.h"
+#include "ops/fusion/layer_norm_fusion.h"
+#include "ops/argmax_with_value.h"
 
 namespace mindspore {
 namespace lite {
@@ -39,8 +42,9 @@ namespace {
 constexpr size_t kCnodeInputMinNum = 2;
 constexpr auto kAnfPrimitiveIndex = 0;
 constexpr auto kNamewiEltwise = "Eltwise";
-const std::set<std::string> kCNodeWithMultiOutputs = {ops::kNameBatchNorm, ops::kNameFusedBatchNorm,
-                                                      ops::kNameInstanceNorm};
+const std::set<std::string> kCNodeWithMultiOutputs = {ops::kNameBatchNorm,       ops::kNameFusedBatchNorm,
+                                                      ops::kNameInstanceNorm,    ops::kNameLayerNorm,
+                                                      ops::kNameLayerNormFusion, ops::kNameArgMaxWithValue};
 const std::set<std::string> kCNodeWithDynamicInput = {kNamewiEltwise, ops::kNameConcat, ops::kNameStack,
                                                       acl::kNameConcatV2};
 }  // namespace
@@ -81,7 +85,7 @@ CNodePtr CreateTupleGetItemNode(const FuncGraphPtr &func_graph, const CNodePtr &
 static STATUS AdapteNodeWithMultiOutputs(const FuncGraphPtr &func_graph, const CNodePtr &cnode,
                                          const FuncGraphManagerPtr &manager) {
   std::string cnode_func_name = GetCNodeFuncName(cnode);
-  if (cnode_func_name == prim::kTupleGetItem) {
+  if (cnode_func_name == prim::kPrimTupleGetItem->name()) {
     return lite::RET_OK;
   }
 

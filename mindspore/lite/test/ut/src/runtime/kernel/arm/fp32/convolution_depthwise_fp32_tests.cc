@@ -19,7 +19,7 @@
 #include "common/common_test.h"
 #include "src/common/file_utils.h"
 #include "mindspore/lite/src/litert/kernel/cpu/base/convolution_base.h"
-#include "mindspore/lite/src/litert/kernel_registry.h"
+#include "nnacl/nnacl_manager.h"
 
 namespace mindspore {
 class TestConvolutionDwFp32 : public mindspore::CommonTest {
@@ -38,6 +38,8 @@ void InitConvDwParam(ConvParameter *conv_param) {
   conv_param->output_w_ = 288;
   conv_param->output_channel_ = 25;
 
+  conv_param->group_ = 25;
+
   conv_param->kernel_h_ = 3;
   conv_param->kernel_w_ = 3;
 
@@ -52,11 +54,11 @@ void InitConvDwParam(ConvParameter *conv_param) {
 }
 
 void InitConvDwCreator(std::vector<lite::Tensor *> *inputs, std::vector<lite::Tensor *> *outputs,
-                       const ConvParameter *conv_param) {
+                       const ConvParameter *conv_param, const InnerContext *ctx) {
   // prepare input, format NHWC
   size_t input_size;
   std::string input_path = "./test_data/convDw/convDwfp32_input.bin";
-  auto input_data = reinterpret_cast<float *>(mindspore::lite::ReadFile(input_path.c_str(), &input_size));
+  auto input_data = reinterpret_cast<float *>(lite::ReadFile(input_path.c_str(), &input_size, ctx->allocator));
 
   auto *input = new lite::Tensor;
   input->set_data_type(kNumberTypeFloat32);
@@ -68,7 +70,7 @@ void InitConvDwCreator(std::vector<lite::Tensor *> *inputs, std::vector<lite::Te
   // prepare weight, format co kh kw ci, ci = 1
   size_t weight_size;
   std::string weight_path = "./test_data/convDw/convDwfp32_weight.bin";
-  auto weight_data = reinterpret_cast<float *>(mindspore::lite::ReadFile(weight_path.c_str(), &weight_size));
+  auto weight_data = reinterpret_cast<float *>(lite::ReadFile(weight_path.c_str(), &weight_size, ctx->allocator));
 
   auto *weight = new lite::Tensor;
   weight->set_data_type(kNumberTypeFloat32);
@@ -99,24 +101,26 @@ void InitConvDwCreator(std::vector<lite::Tensor *> *inputs, std::vector<lite::Te
 
 TEST_F(TestConvolutionDwFp32, ConvDwFp32Accuracy) {
   // prepare stage
+  int thread_num = 1;
   auto conv_param = new ConvParameter();
+  conv_param->op_parameter_.type_ = PrimType_Conv2DFusion;
   InitConvDwParam(conv_param);
 
   // init ctx
   auto ctx = new InnerContext();
-  ctx->thread_num_ = 4;
+  ctx->thread_num_ = thread_num;
+  conv_param->op_parameter_.thread_num_ = thread_num;
   ASSERT_EQ(lite::RET_OK, ctx->Init());
 
   // init tensor
   std::vector<lite::Tensor *> inputs;
   std::vector<lite::Tensor *> outputs;
-  InitConvDwCreator(&inputs, &outputs, conv_param);
+  InitConvDwCreator(&inputs, &outputs, conv_param, ctx);
 
   // register op
   kernel::KernelKey desc = {kernel::KERNEL_ARCH::kCPU, kNumberTypeFloat32, NHWC, schema::PrimitiveType_Conv2DFusion};
-  auto creator = lite::KernelRegistry::GetInstance()->GetCreator(desc);
-  ASSERT_NE(creator, nullptr);
-  auto *kernel = creator(inputs, outputs, reinterpret_cast<OpParameter *>(conv_param), ctx, desc);
+
+  auto kernel = nnacl::NNACLKernelRegistry(&conv_param->op_parameter_, inputs, outputs, ctx, desc);
   ASSERT_NE(kernel, nullptr);
   // op run
   auto ret = kernel->Prepare();
@@ -139,7 +143,6 @@ TEST_F(TestConvolutionDwFp32, ConvDwFp32Accuracy) {
   // compare
   ASSERT_EQ(0, CompareOutputData(output_ptr, correct_data, outputs[0]->ElementsNum(), 0.0001));
 
-  delete conv_param;
   for (auto &input : inputs) {
     delete input;
   }
@@ -148,57 +151,7 @@ TEST_F(TestConvolutionDwFp32, ConvDwFp32Accuracy) {
   }
   delete kernel;
   delete correct_data;
+  delete ctx;
   MS_LOG(INFO) << "TestConvolutionDwFp32 accuracy passed";
-}
-
-TEST_F(TestConvolutionDwFp32, ConvDwFp32Performance) {
-  // prepare stage
-  auto conv_param = new ConvParameter();
-  InitConvDwParam(conv_param);
-
-  // init ctx
-  auto ctx = new InnerContext();
-  ctx->thread_num_ = 1;
-  ASSERT_EQ(lite::RET_OK, ctx->Init());
-
-  // init tensor
-  std::vector<lite::Tensor *> inputs;
-  std::vector<lite::Tensor *> outputs;
-  InitConvDwCreator(&inputs, &outputs, conv_param);
-
-  // register op
-  kernel::KernelKey desc = {kernel::KERNEL_ARCH::kCPU, kNumberTypeFloat32, NHWC, schema::PrimitiveType_Conv2DFusion};
-  auto creator = lite::KernelRegistry::GetInstance()->GetCreator(desc);
-  ASSERT_NE(creator, nullptr);
-  auto *kernel = creator(inputs, outputs, reinterpret_cast<OpParameter *>(conv_param), ctx, desc);
-  ASSERT_NE(kernel, nullptr);
-  auto ret = kernel->Prepare();
-  EXPECT_EQ(0, ret);
-
-  /* running warm up */
-  for (int i = 0; i < 3; i++) {
-    kernel->Run();
-  }
-
-  /* running time cost */
-  int loop_count = 10;
-  auto time_start = mindspore::lite::GetTimeUs();
-  for (int i = 0; i < loop_count; i++) {
-    kernel->Run();
-  }
-  auto time_end = mindspore::lite::GetTimeUs();
-  auto cost = time_end - time_start;
-  uint64_t time_avg = cost / loop_count;
-  printf("Convolution_depthwise fp32 average time : %f ms\n", time_avg / 1000.0f);
-
-  delete conv_param;
-  for (unsigned int i = 0; i < inputs.size(); i++) {
-    delete inputs[i];
-  }
-  for (unsigned int i = 0; i < outputs.size(); i++) {
-    delete outputs[i];
-  }
-  delete kernel;
-  MS_LOG(INFO) << "TestConvolutionDwFp32 performance passed";
 }
 }  // namespace mindspore

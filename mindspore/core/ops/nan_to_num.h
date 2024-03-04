@@ -16,13 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_NAN_TO_NUM_H_
 #define MINDSPORE_CORE_OPS_NAN_TO_NUM_H_
-#include <vector>
-#include <limits>
 #include <memory>
-
-#include "ops/base_operator.h"
-#include "mindapi/base/types.h"
+#include <vector>
 #include "include/common/utils/utils.h"
+#include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -40,8 +38,8 @@ class MIND_API NanToNum : public BaseOperator {
   void set_neginf_value(float nan_value);
   float get_neginf_value() const;
 };
-abstract::AbstractBasePtr NanToNumInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                        const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr NanToNumInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimNanToNumPtr = std::shared_ptr<NanToNum>;
 }  // namespace ops
 }  // namespace mindspore

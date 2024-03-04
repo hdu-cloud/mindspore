@@ -59,7 +59,7 @@ def fill_diagonal_pynative(nptype, fill_value, wrap):
     assert np.allclose(fill_diagonal_output, fill_diagonal_expect)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_fill_diagonal_graph_float32():
@@ -71,7 +71,7 @@ def test_fill_diagonal_graph_float32():
     fill_diagonal(np.float32, 5., True)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_fill_diagonal_pynative_int32():

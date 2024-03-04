@@ -15,31 +15,33 @@
 """Categorical Distribution"""
 import numpy as np
 from mindspore import context
+from mindspore.common import Tensor
 from mindspore.ops import operations as P
+from mindspore.ops import functional as F
 from mindspore.ops import composite as C
 from mindspore.ops.functional import stop_gradient
 from mindspore.ops.operations import _inner_ops as inner
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 import mindspore.ops as ops
 import mindspore.nn as nn
 from mindspore.common import dtype as mstype
 from .distribution import Distribution
 from ._utils.utils import check_prob, check_sum_equal_one, check_rank,\
-    check_distribution_name, raise_not_implemented_util
-from ._utils.custom_ops import exp_generic, log_generic, broadcast_to
+    check_distribution_name
+from ._utils.custom_ops import exp_generic, log_generic, broadcast_to, log_generic_with_check
 
 
 class Categorical(Distribution):
-    """
+    r"""
     Categorical distribution.
-    A Categorical Distribution is a discrete distribution with the range {1, 2, ..., k}
+    A Categorical Distribution is a discrete distribution with the range :math:`\{1, 2, ..., k\}`
     and the probability mass function as :math:`P(X = i) = p_i, i = 1, ..., k`.
 
     Args:
-        probs (Tensor, list, numpy.ndarray): Event probabilities. Default: None.
-        seed (int): The global seed is used in sampling. Global seed is used if it is None. Default: None.
-        dtype (mindspore.dtype): The type of the event samples. Default: mstype.int32.
-        name (str): The name of the distribution. Default: Categorical.
+        probs (Tensor, list, numpy.ndarray): Event probabilities. Default: ``None`` .
+        seed (int): The global seed is used in sampling. Global seed is used if it is None. Default: ``None`` .
+        dtype (mindspore.dtype): The type of the event samples. Default: ``mstype.int32`` .
+        name (str): The name of the distribution. Default: ``Categorical`` .
 
     Note:
         `probs` must have rank at least 1, values are proper probabilities and sum to 1.
@@ -148,7 +150,6 @@ class Categorical(Distribution):
         self.dtypeop = P.DType()
         self.exp = exp_generic
         self.expand_dim = P.ExpandDims()
-        self.fill = P.Fill()
         self.gather = P.GatherNd()
         self.greater = P.Greater()
         self.issubclass = inner.IsSubClass()
@@ -156,6 +157,7 @@ class Categorical(Distribution):
         # when the graph kernel mode is enable
         # use Log directly as akg will handle the corner cases
         self.log = P.Log() if context.get_context("enable_graph_kernel") else log_generic
+        self.log_with_check = P.Log() if context.get_context("enable_graph_kernel") else log_generic_with_check
         self.log_softmax = P.LogSoftmax()
         self.logicor = P.LogicalOr()
         self.logicand = P.LogicalAnd()
@@ -238,7 +240,7 @@ class Categorical(Distribution):
         """
         probs = self._check_param_type(probs)
         logits = self.log(probs)
-        return self.squeeze(-self.reduce_sum(logits * probs, -1))
+        return self.squeeze(P.Neg()(self.reduce_sum(logits * probs, -1)))
 
     def _kl_loss(self, dist, probs_b, probs=None):
         """
@@ -253,8 +255,11 @@ class Categorical(Distribution):
         probs_b = self._check_value(probs_b, 'probs_b')
         probs_b = self.cast(probs_b, self.parameter_type)
         probs_a = self._check_param_type(probs)
-        logits_a = self.log(probs_a)
-        logits_b = self.log(probs_b)
+        if probs is None:
+            logits_a = self.log(probs_a)
+        else:
+            logits_a = self.log_with_check(probs_a)
+        logits_b = self.log_with_check(probs_b)
         return self.squeeze(self.reduce_sum(
             self.softmax(logits_a) * (self.log_softmax(logits_a) - (self.log_softmax(logits_b))), -1))
 
@@ -287,7 +292,7 @@ class Categorical(Distribution):
         # here we simulate casting to int but still keeping float dtype
         value = self.cast(value, self.dtypeop(probs))
 
-        zeros = self.fill(self.dtypeop(value), self.shape(value), 0.0)
+        zeros = F.fill(self.dtypeop(value), self.shape(value), 0.0)
         between_zero_neone = self.logicand(self.less(value, 0,),
                                            self.greater(value, -1.))
         value = self.select(between_zero_neone,
@@ -323,15 +328,18 @@ class Categorical(Distribution):
         value_clipped = self.clip_by_value(value, 0.0, num_classes - 1)
         value_clipped = self.cast(value_clipped, self.index_type)
         # create index from 0 ... NumOfLabels
-        index = self.reshape(nn.Range(0, self.shape(value)[0], 1)(), (-1, 1))
+        start = Tensor(0, self.index_type)
+        end = self.cast(self.shape(value)[0], self.index_type)
+        delta = Tensor(1, self.index_type)
+        index = self.reshape(ops.range(start, end, delta), (-1, 1))
         index = self.concat((index, value_clipped))
 
         # index into logit_pmf, fill in out_of_bound places with -inf
         # reshape into label shape N
         logits_pmf = self.gather(self.reshape(
             logits, (-1, num_classes)), index)
-        nan = self.fill(self.dtypeop(logits_pmf),
-                        self.shape(logits_pmf), self.nan)
+        nan = F.fill(self.dtypeop(logits_pmf), self.shape(logits_pmf),
+                     self.nan)
         logits_pmf = self.select(out_of_bound, nan, logits_pmf)
         ans = self.reshape(logits_pmf, label_shape)
         if drop_dim:
@@ -351,7 +359,7 @@ class Categorical(Distribution):
 
         value = self.cast(value, self.dtypeop(probs))
 
-        zeros = self.fill(self.dtypeop(value), self.shape(value), 0.0)
+        zeros = F.fill(self.dtypeop(value), self.shape(value), 0.0)
         between_zero_neone = self.logicand(
             self.less(value, 0,), self.greater(value, -1.))
         value = self.select(between_zero_neone, zeros, P.Floor()(value))
@@ -386,7 +394,7 @@ class Categorical(Distribution):
         # reshape probs and fill less_than_zero places with 0
         probs = self.reshape(probs, (-1, num_classes))
         cdf = self.gather(self.cumsum(probs, 1), index)
-        zeros = self.fill(self.dtypeop(cdf), self.shape(cdf), 0.0)
+        zeros = F.fill(self.dtypeop(cdf), self.shape(cdf), 0.0)
         cdf = self.select(less_than_zero, zeros, cdf)
         cdf = self.reshape(cdf, label_shape)
 
@@ -405,8 +413,6 @@ class Categorical(Distribution):
         Returns:
             Tensor, shape is shape(probs)[:-1] + sample_shape
         """
-        if self.device_target == 'Ascend':
-            raise_not_implemented_util('On d backend, sample', self.name)
         shape = self.checktuple(shape, 'shape')
         probs = self._check_param_type(probs)
         num_classes = self.shape(probs)[-1]
@@ -419,7 +425,7 @@ class Categorical(Distribution):
             sample_shape = (1,)
 
         probs_2d = self.reshape(probs, (-1, num_classes))
-        sample_tensor = self.fill(self.dtype, shape, 1.0)
+        sample_tensor = F.fill(self.dtype, shape, 1.0)
         sample_tensor = self.reshape(sample_tensor, (-1, 1))
         num_sample = self.shape(sample_tensor)[0]
         samples = C.multinomial(probs_2d, num_sample, seed=self.seed)

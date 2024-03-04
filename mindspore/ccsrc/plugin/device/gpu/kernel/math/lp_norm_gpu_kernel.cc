@@ -20,11 +20,13 @@
 #include <string>
 #include <algorithm>
 #include <set>
+#include "mindspore/core/ops/math_ops.h"
 #include "abstract/utils.h"
 #include "kernel/common_utils.h"
 #include "mindspore/core/ops/lp_norm.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/lp_norm_impl.cuh"
-
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/elementwise/eltwise_ops_impl.cuh"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/elementwise/eltwise_ops_type.cuh"
 namespace mindspore {
 namespace kernel {
 bool LpNormGpuKernelMod::GetLpNormAttr(const BaseOperatorPtr &base_operator) {
@@ -36,9 +38,7 @@ bool LpNormGpuKernelMod::GetLpNormAttr(const BaseOperatorPtr &base_operator) {
   auto kernel_ptr = std::make_shared<ops::LpNorm>(base_operator->GetPrim());
 
   axis_ = kernel_ptr->get_axis();
-  int64_t p = kernel_ptr->get_p();
-  is_p_zero_ = (p == 0);
-  p_ = LongToFloat(p);
+  p_ = kernel_ptr->get_p();
   epsilon_ = kernel_ptr->get_epsilon();
   return true;
 }
@@ -123,7 +123,7 @@ int LpNormGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::
   output_stride_.resize(output_axis_.size());
   output_stride_[output_stride_.size() - 1] = 1;
   for (int i = static_cast<int>(output_stride_.size() - 2); i >= 0; --i) {
-    output_stride_[i] = output_stride_[i + 1] * output_shape_[i + 1];
+    output_stride_[i] = output_stride_[i + 1] * input_shape_[output_axis_[i + 1]];
   }
   output_elements_ = std::accumulate(output_shape_.begin(), output_shape_.end(), size_t(1), std::multiplies<size_t>());
   InitWorkSpaceSizeList();
@@ -135,19 +135,9 @@ bool LpNormGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, con
                                       const std::vector<AddressPtr> &outputs) {
   auto input = GetDeviceAddress<T>(inputs, kIndex0);
   auto output = GetDeviceAddress<T>(outputs, kIndex0);
-  auto host_template_one = static_cast<T>(1.0);
   if (is_scalar_input_) {
-    if (is_p_zero_) {
-      CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-        cudaMemcpyAsync(output, &host_template_one, outputs.at(kIndex0)->size, cudaMemcpyHostToDevice,
-                        reinterpret_cast<cudaStream_t>(cuda_stream_)),
-        "LpNormGpuKernelMod cudaMemcpyAsync host_template_one failed");
-    } else {
-      CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-        cudaMemcpyAsync(output, input, outputs.at(kIndex0)->size, cudaMemcpyDeviceToDevice,
-                        reinterpret_cast<cudaStream_t>(cuda_stream_)),
-        "LpNormGpuKernelMod cudaMemcpyAsync input data failed");
-    }
+    UnaryOpsCudaFunc<ElwiseOpType::kAbs, T, T>(outputs.at(kIndex0)->size / sizeof(T), input, output,
+                                               reinterpret_cast<cudaStream_t>(cuda_stream_));
     return true;
   }
   auto device_input_shape = GetDeviceAddress<size_t>(workspace, kIndex0);
@@ -168,8 +158,9 @@ bool LpNormGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, con
                     cudaMemcpyHostToDevice, reinterpret_cast<cudaStream_t>(cuda_stream_)),
     "LpNormGpuKernelMod cudaMemcpyAsync output_shape_ failed");
 
-  CHECK_CUDA_RET_WITH_ERROR_NOTRACE(cudaMemset(output, 0, output_elements_ * sizeof(T)),
-                                    "LpNormGpuKernelMod failed  to set output cuda memory to zeros.");
+  CHECK_CUDA_RET_WITH_ERROR_NOTRACE(
+    cudaMemsetAsync(output, 0, output_elements_ * sizeof(T), reinterpret_cast<cudaStream_t>(cuda_stream_)),
+    "LpNormGpuKernelMod failed  to set output cuda memory to zeros.");
 
   // The workspace for device output high precision.
   if constexpr (std::is_same_v<T, half>) {
@@ -177,13 +168,15 @@ bool LpNormGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, con
     auto middle_output_size = output_elements_ * sizeof(float);
     CHECK_CUDA_RET_WITH_ERROR_NOTRACE(cudaMemset(middle_output, 0, middle_output_size),
                                       "LpNormGpuKernelMod failed  to set middle output cuda memory to zeros.");
-    CalLpNorm(input, device_input_shape, input_shape_.size(), input_elements_, device_axis_output, device_output_stride,
-              output_axis_.size(), output_elements_, p_, epsilon_, middle_output, output, device_id_,
-              reinterpret_cast<cudaStream_t>(cuda_stream_));
+    auto status = CalLpNorm(input, device_input_shape, input_shape_.size(), input_elements_, device_axis_output,
+                            device_output_stride, output_axis_.size(), output_elements_, p_, epsilon_, middle_output,
+                            output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+    CHECK_CUDA_STATUS(status, kernel_name_);
   } else {
-    CalLpNorm(input, device_input_shape, input_shape_.size(), input_elements_, device_axis_output, device_output_stride,
-              output_axis_.size(), output_elements_, p_, epsilon_, nullptr, output, device_id_,
-              reinterpret_cast<cudaStream_t>(cuda_stream_));
+    auto status = CalLpNorm(input, device_input_shape, input_shape_.size(), input_elements_, device_axis_output,
+                            device_output_stride, output_axis_.size(), output_elements_, p_, epsilon_, nullptr, output,
+                            device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+    CHECK_CUDA_STATUS(status, kernel_name_);
   }
   return true;
 }

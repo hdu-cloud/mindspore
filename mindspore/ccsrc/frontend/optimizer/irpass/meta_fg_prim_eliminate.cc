@@ -26,14 +26,14 @@ bool ExpandMetaFgPrim::CheckIfEmbedMetaFgPrim(const CNodePtr &node) const {
   }
   auto func_graph = GetValueNode<FuncGraphPtr>(value_node);
   if (func_graph == nullptr) {
-    MS_LOG(EXCEPTION) << "Unexpected meta function graph node:" << node->DebugString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Unexpected meta function graph node:" << node->DebugString();
   }
   auto func_graph_manager = func_graph->manager();
   MS_EXCEPTION_IF_NULL(func_graph_manager);
   return func_graph_manager->func_graph_meta_fg_prim_total(func_graph);
 }
 
-void ExpandMetaFgPrim::GetMetaFgPrim(const std::vector<AnfNodePtr> &all_nodes) {
+void ExpandMetaFgPrim::GetMetaFgPrim(const AnfNodeSet &all_nodes) {
   MS_EXCEPTION_IF_NULL(prim_);
   prim_nodes_.clear();
   for (auto &node : all_nodes) {

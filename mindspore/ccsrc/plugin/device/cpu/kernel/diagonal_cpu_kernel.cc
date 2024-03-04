@@ -31,17 +31,14 @@ class PositionIterator {
   PositionIterator() {}
   ~PositionIterator() {}
   PositionIterator(std::vector<T> stt, std::vector<T> sh) {
-    if (stt.size() != sh.size()) {
-      PositionIterator();
-    } else {
-      for (unsigned int i = 0; i < sh.size(); i++) {
-        if (stt[i] >= sh[i]) {
-          PositionIterator();
-        }
-      }
-      pos_ = stt;
-      shape_ = sh;
+    MS_EXCEPTION_IF_CHECK_FAIL(stt.size() == sh.size(), "Inputs of PositionIterator must have same size.");
+    for (unsigned int i = 0; i < sh.size(); i++) {
+      MS_EXCEPTION_IF_CHECK_FAIL(sh[i] > 0, "The elements of input [sh] must be positive.");
+      MS_EXCEPTION_IF_CHECK_FAIL(
+        stt[i] < sh[i], "Each element of input [stt] must be less than the corresponding element of input [sh].");
     }
+    pos_ = stt;
+    shape_ = sh;
   }
   PositionIterator operator++() {
     pos_[shape_.size() - 1] += 1;
@@ -54,7 +51,10 @@ class PositionIterator {
     return *this;
   }
 
-  bool is_end() {
+  bool is_end() const {
+    if (pos_.empty() || shape_.empty()) {
+      return true;
+    }
     if (pos_[0] != shape_[0]) {
       return false;
     }
@@ -89,19 +89,11 @@ std::vector<T> construct_stride(std::vector<T> t_shape) {
   }
   return t_stride;
 }
-
-template <typename T>
-T get_data(int64_t basepos, int64_t offset, int64_t *ar, T *dptr) {
-  if (offset >= 0) {
-    return dptr[basepos + offset * ar[1]];
-  } else {
-    return dptr[basepos - offset * ar[0]];
-  }
-}
 }  // namespace
 
 bool DiagonalCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                 const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
   kernel_name_ = base_operator->name();
   if (inputs.empty() || outputs.empty()) {
     MS_LOG(ERROR) << "For 'Diagonal', it got empty inputs or outputs, which is invalid.";
@@ -111,6 +103,25 @@ bool DiagonalCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std:
   offset_ = GetValue<int64_t>(prim->GetAttr("offset"));
   dim1_ = GetValue<int64_t>(prim->GetAttr("dim1"));
   dim2_ = GetValue<int64_t>(prim->GetAttr("dim2"));
+  auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
+  auto [is_match, index] = MatchKernelAttr(kernel_attr, GetOpSupport());
+  if (!is_match) {
+    MS_LOG(ERROR) << "For 'Diagonal', the data type of input must be float32 or double, but got: " << kernel_attr
+                  << ".";
+    return false;
+  }
+  kernel_func_ = func_list_[index].second;
+  return true;
+}
+
+int DiagonalCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+                                 const std::vector<KernelTensorPtr> &outputs,
+                                 const std::map<uint32_t, tensor::TensorPtr> &) {
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kDiagonalInputsNum, kernel_name_);
+  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kDiagonalOutputsNum, kernel_name_);
+  if (int ret = KernelMod::Resize(base_operator, inputs, outputs); ret != KRET_OK) {
+    return ret;
+  }
   input_shape = inputs[0]->GetShapeVector();
   int64_t input_size = input_shape.size();
   if (input_size < N2) {
@@ -138,15 +149,7 @@ bool DiagonalCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std:
   } else {
     dsize = std::max<int64_t>(std::min(input_shape[dim1_] + offset_, input_shape[dim2_]), 0);
   }
-  auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
-  auto [is_match, index] = MatchKernelAttr(kernel_attr, GetOpSupport());
-  if (!is_match) {
-    MS_LOG(ERROR) << "For 'Diagonal', the data type of input must be float32 or double, but got: " << kernel_attr
-                  << ".";
-    return false;
-  }
-  kernel_func_ = func_list_[index].second;
-  return true;
+  return KRET_OK;
 }
 
 template <typename T>
@@ -155,7 +158,9 @@ bool DiagonalCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, c
   CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kDiagonalOutputsNum, kernel_name_);
 
   const T *input = GetDeviceAddress<T>(inputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(input);
   T *output = GetDeviceAddress<T>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(output);
   // Get some information of input
   size_t input_size = input_shape.size();
   // Compute
@@ -177,21 +182,22 @@ bool DiagonalCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, c
     vy_stride.pop_back();
     // diagonal
     std::vector<int64_t> v_start(vx_shape.size(), 0);
-    for (PositionIterator<int64_t> myiter(v_start, vx_shape); !myiter.is_end(); ++myiter) {
+    for (PositionIterator<int64_t> myiter(v_start, vx_shape); !myiter.is_end(); (void)++myiter) {
       auto p = myiter.get_pos();
       int64_t base_pos1 = mul_sum<int64_t>(p, vx_stride);
       int64_t outbase_pos = mul_sum<int64_t>(p, vy_stride);
       for (int i = 0; i < dsize; i++) {
         int64_t base_pos2 = i * (x_stride[dim1_] + x_stride[dim2_]);
         int64_t arr[N2] = {x_stride[dim1_], x_stride[dim2_]};
-        output[outbase_pos + i] = get_data(base_pos1 + base_pos2, offset_, arr, input);
+        output[outbase_pos + i] = offset_ >= 0 ? input[base_pos1 + base_pos2 + offset_ * arr[1]]
+                                               : input[base_pos1 + base_pos2 - offset_ * arr[0]];
       }
     }
   } else {
     for (int i = 0; i < dsize; i++) {
       int64_t base_pos = i * (x_stride[dim1_] + x_stride[dim2_]);
       int64_t arr[N2] = {x_stride[dim1_], x_stride[dim2_]};
-      output[i] = get_data(base_pos, offset_, arr, input);
+      output[i] = offset_ >= 0 ? input[base_pos + offset_ * arr[1]] : input[base_pos - offset_ * arr[0]];
     }
   }
   return true;

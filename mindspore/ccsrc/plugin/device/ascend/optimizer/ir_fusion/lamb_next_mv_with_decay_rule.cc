@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,9 +15,10 @@
  */
 #include "plugin/device/ascend/optimizer/ir_fusion/lamb_next_mv_with_decay_rule.h"
 #include <utility>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/ascend_op_name.h"
+#include "ops/math_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "plugin/device/ascend/optimizer/ascend_helper.h"
-#include "include/common/utils/anfalgo.h"
 #include "frontend/optimizer/opt.h"
 #include "utils/trace_base.h"
 namespace mindspore {
@@ -99,7 +100,8 @@ const AnfNodePtr LambNextMVWithDecayRule::Process(const FuncGraphPtr &func_graph
   auto manager = func_graph->manager();
   MS_EXCEPTION_IF_NULL(manager);
   if (manager->node_users().find(mul4) == manager->node_users().end()) {
-    MS_LOG(EXCEPTION) << "The Mul4 should be used by at least another node input." << trace::DumpSourceLines(node);
+    MS_LOG(INTERNAL_EXCEPTION) << "The Mul4 should be used by at least another node input."
+                               << trace::DumpSourceLines(node);
   }
   AnfNodeIndexSet mul4_outputs = manager->node_users()[mul4];
   auto iter = std::find_if(mul4_outputs.begin(), mul4_outputs.end(),

@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,10 @@
 #include "plugin/device/ascend/optimizer/enhancer/insert_tensor_move_for_getnext.h"
 #include <vector>
 #include <memory>
-#include "plugin/device/ascend/optimizer/ascend_helper.h"
-#include "backend/common/optimizer/helper.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/structure_op_name.h"
+#include "ops/sequence_ops.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
@@ -28,7 +29,7 @@ AnfNodePtr InsertTensorMoveForGetNextOutputs(const FuncGraphPtr &func_graph, con
     return nullptr;
   }
 
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(node);
+  size_t output_num = AnfAlgo::GetOutputElementNum(node);
   if (output_num == 0) {
     MS_LOG(DEBUG) << "Output number is zero, no need to insert tensor_move!";
     return node;
@@ -42,7 +43,7 @@ AnfNodePtr InsertTensorMoveForGetNextOutputs(const FuncGraphPtr &func_graph, con
     auto tuple_get_item = CreatTupleGetItemNode(func_graph, node, output_index);
     auto new_node = CreateTensorMoveOp(func_graph, tuple_get_item);
     if (new_node == nullptr) {
-      MS_LOG(EXCEPTION) << "Create tensor move op failed!";
+      MS_LOG(INTERNAL_EXCEPTION) << "Create tensor move op failed!";
     }
     if (common::AnfAlgo::IsDynamicShape(tuple_get_item)) {
       MS_LOG(DEBUG) << "The tenser move op has dynamic shape attr.";

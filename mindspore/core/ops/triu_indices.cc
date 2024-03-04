@@ -17,18 +17,32 @@
 #include "ops/triu_indices.h"
 
 #include <algorithm>
-#include <set>
-#include <string>
+#include <memory>
 
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
-#include "ops/op_utils.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::ShapePtr TriuIndicesInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto row_ptr = primitive->GetAttr("row");
   MS_EXCEPTION_IF_NULL(row_ptr);
   auto col_ptr = primitive->GetAttr("col");
@@ -59,6 +73,7 @@ abstract::ShapePtr TriuIndicesInferShape(const PrimitivePtr &primitive, const st
 }
 
 TypePtr TriuIndicesInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto dtype_attr = primitive->GetAttr("dtype");
   MS_EXCEPTION_IF_NULL(dtype_attr);
   auto infer_type = dtype_attr->cast<TypePtr>();
@@ -95,6 +110,24 @@ AbstractBasePtr TriuIndicesInfer(const abstract::AnalysisEnginePtr &, const Prim
   auto infer_shape = TriuIndicesInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(TriuIndices, prim::kPrimTriuIndices, TriuIndicesInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGTriuIndicesInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return TriuIndicesInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return TriuIndicesInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return TriuIndicesInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(TriuIndices, prim::kPrimTriuIndices, AGTriuIndicesInfer, false);
 }  // namespace ops
 }  // namespace mindspore

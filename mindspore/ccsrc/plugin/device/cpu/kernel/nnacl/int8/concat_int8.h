@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_INT8_CONCAT_INT8_H_
-#define MINDSPORE_NNACL_INT8_CONCAT_INT8_H_
+#ifndef NNACL_INT8_CONCAT_INT8_H_
+#define NNACL_INT8_CONCAT_INT8_H_
 
 #include "nnacl/op_base.h"
 #include "nnacl/concat_parameter.h"
@@ -23,10 +23,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-void Int8Concat(int8_t **inputs, int8_t *output_ptr, const ConcatParameter *para, int axis, int64_t real_dst_count,
-                int task_id);
+void Int8Concat(int8_t **inputs, int8_t *output, const ConcatParameter *para, int axis, int64_t real_dst_count,
+                int task_id, int input_num, int64_t count_unit, int64_t after_axis_size, int **input_shapes,
+                const int32_t *output_shape);
 #ifdef __cplusplus
 }
 #endif
 
-#endif  // MINDSPORE_NNACL_INT8_CONCAT_INT8_H_
+#endif  // NNACL_INT8_CONCAT_INT8_H_

@@ -114,16 +114,21 @@ package_data = {
         'bin/*',
         'lib/plugin/*',
         'lib/plugin/*/*',
+        'lib/plugin/*/*/*',
+        'lib/plugin/*/*/*/*',
+        'lib/plugin/*/*/*/*/*',
+        'lib/plugin/*/*/*/*/*/*',
+        'lib/plugin/*/*/*/*/*/*/*',
         'lib/*.so*',
         'lib/*.a',
         'lib/*.dylib*',
         '.commit_id',
         'config/*',
-        'ops/bprop_mindir/*',
         'include/*',
         'include/*/*',
         'include/*/*/*',
-        'include/*/*/*/*'
+        'include/*/*/*/*',
+        'Third_Party_Open_Source_Software_Notice'
     ]
 }
 

@@ -15,14 +15,28 @@
  */
 
 #include "ops/non_zero.h"
-#include <set>
+
 #include <functional>
-#include <iostream>
+#include <map>
+#include <set>
+
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "ops/primitive_c.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -36,7 +50,8 @@ abstract::ShapePtr NonZeroInferShape(const PrimitivePtr &primitive, const std::v
   auto x_shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape());
   // support dynamic rank
   if (IsDynamicRank(x_shape_map[kShape])) {
-    return std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeRankAny}));
+    return std::make_shared<abstract::Shape>(
+      ShapeVector({abstract::Shape::kShapeDimAny, abstract::Shape::kShapeDimAny}));
   }
 
   auto x_shape = x_shape_map[kMaxShape].empty() ? x_shape_map[kShape] : x_shape_map[kMaxShape];
@@ -46,9 +61,8 @@ abstract::ShapePtr NonZeroInferShape(const PrimitivePtr &primitive, const std::v
 
   auto x_num = std::accumulate(x_shape.begin(), x_shape.end(), int64_t(1), std::multiplies<int64_t>());
   ShapeVector output_shape = {abstract::Shape::kShapeDimAny, x_rank};
-  ShapeVector min_shape = {0, x_rank};
   ShapeVector max_shape = {x_num, x_rank};
-  return std::make_shared<abstract::Shape>(output_shape, min_shape, max_shape);
+  return std::make_shared<abstract::Shape>(output_shape, max_shape);
 }
 
 TypePtr NonZeroInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
@@ -70,6 +84,24 @@ AbstractBasePtr NonZeroInfer(const abstract::AnalysisEnginePtr &, const Primitiv
 }
 
 MIND_API_OPERATOR_IMPL(NonZero, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(NonZero, prim::kPrimNonZero, NonZeroInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGNonZeroInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return NonZeroInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return NonZeroInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return NonZeroInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(NonZero, prim::kPrimNonZero, AGNonZeroInfer, false);
 }  // namespace ops
 }  // namespace mindspore

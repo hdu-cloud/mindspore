@@ -19,14 +19,17 @@
 #include <vector>
 #include <string>
 
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/nn_optimizer_ops.h"
+#include "ops/nn_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "plugin/device/gpu/hal/device/kernel_info_setter.h"
 #include "utils/ms_context.h"
 #include "kernel/graph_kernel_info.h"
+#include "ops/op_name.h"
 
 namespace mindspore {
 namespace opt {
@@ -90,18 +93,19 @@ const AnfNodePtr BatchNormReluGradFusion::Process(const FuncGraphPtr &graph, con
   auto bias = common::AnfAlgo::GetInputNode(utils::cast<CNodePtr>(batch_norm), kIndex2);
   MS_EXCEPTION_IF_NULL(bias);
 
-  auto prim = std::make_shared<Primitive>(kBatchNormGradWithActivation);
+  auto prim = std::make_shared<Primitive>(kBatchNormGradWithActivationOpName);
   MS_EXCEPTION_IF_NULL(prim);
+  prim->AddAttr(mindspore::ops::kActivationType, MakeValue(static_cast<int64_t>(mindspore::ActivationType::RELU)));
   std::vector<AnfNodePtr> inputs = {NewValueNode(prim), dy, x, scale, save_mean, save_var, reserve, bias, y};
   auto fused_batch_norm_grad_with_relu = graph->NewCNode(inputs);
   MS_EXCEPTION_IF_NULL(fused_batch_norm_grad_with_relu);
 
   std::vector<TypeId> outputs_type;
   std::vector<BaseShapePtr> outputs_shape;
-  auto output_num = common::AnfAlgo::GetOutputTensorNum(node);
+  auto output_num = AnfAlgo::GetOutputTensorNum(node);
   for (size_t i = 0; i < output_num; i++) {
     outputs_type.push_back(common::AnfAlgo::GetOutputInferDataType(node, i));
-    outputs_shape.push_back(common::AnfAlgo::GetOutputDetailShape(node, i));
+    outputs_shape.push_back(AnfAlgo::GetOutputDetailShape(node, i));
   }
   common::AnfAlgo::SetOutputTypeAndDetailShape(outputs_type, outputs_shape, fused_batch_norm_grad_with_relu.get());
   common::AnfAlgo::CopyNodeAttrs(node, fused_batch_norm_grad_with_relu);

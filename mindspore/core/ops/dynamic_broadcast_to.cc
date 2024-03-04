@@ -17,8 +17,28 @@
 #include "ops/dynamic_broadcast_to.h"
 
 #include <set>
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
 #include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -27,7 +47,13 @@ inline void CheckShapeValid(const ShapeVector &x_shape, const ShapeVector &outpu
   if (IsDynamic(x_shape) || IsDynamic(output_shape)) {
     return;
   }
+
+  if (x_shape.size() > output_shape.size()) {
+    MS_EXCEPTION(ValueError) << "Not support shapes for broadcast, x_shape: " << x_shape
+                             << ", target shape: " << output_shape;
+  }
   auto outer_dim_offset = output_shape.size() - x_shape.size();
+
   for (size_t i = 0; i < x_shape.size(); ++i) {
     if (output_shape[i + outer_dim_offset] != x_shape[i] && x_shape[i] != 1) {
       MS_EXCEPTION(ValueError) << "Not support shapes for broadcast, x_shape: " << x_shape
@@ -44,37 +70,9 @@ abstract::ShapePtr DynamicBroadcastToInferShape(const PrimitivePtr &primitive,
   auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
   auto input_y = input_args[1];
   MS_EXCEPTION_IF_NULL(input_y);
-  abstract::ShapePtr y_shape;
-  auto y_value = input_y->BuildValue();
-  MS_EXCEPTION_IF_NULL(y_value);
-  if (input_y->isa<abstract::AbstractTensor>()) {
-    if (y_value->isa<tensor::Tensor>()) {
-      auto shape_value = CheckAndConvertUtils::CheckTensorIntValue("shape", y_value, prim_name);
-      CheckShapeValid(x_shape, shape_value);
-      return std::make_shared<abstract::Shape>(shape_value);
-    }
-    y_shape = CheckAndConvertUtils::GetTensorInputShape(prim_name, input_args, 1);
-    auto shape_value = y_shape->shape();
-    if (shape_value.size() != 1) {
-      MS_EXCEPTION(TypeError) << "For '" << prim_name << "', the shape size must be 1, but got: " << shape_value.size()
-                              << ".";
-    }
-    std::vector<int64_t> output_shape;
-    if (y_shape->IsDynamic()) {
-      output_shape.push_back(-2);
-    } else {
-      output_shape = GetShapeValue(primitive, input_y);
-      CheckAndConvertUtils::Check("x shape", SizeToLong(x_shape.size()), kLessEqual, SizeToLong(output_shape.size()),
-                                  prim_name);
-      CheckShapeValid(x_shape, output_shape);
-    }
-    return std::make_shared<abstract::Shape>(output_shape);
-  } else if (input_y->isa<abstract::AbstractTuple>()) {
-    auto out_shape = GetValue<std::vector<int64_t>>(y_value);
-    CheckShapeValid(x_shape, out_shape);
-    return std::make_shared<abstract::Shape>(out_shape);
-  }
-  MS_EXCEPTION(TypeError) << "For 'BroadcastTo', input args must be tensor or tuple.";
+  auto output_shape = GetShapeValue(primitive, input_y);
+  CheckShapeValid(x_shape, output_shape);
+  return std::make_shared<abstract::Shape>(output_shape);
 }
 
 TypePtr DynamicBroadcastToInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
@@ -82,6 +80,10 @@ TypePtr DynamicBroadcastToInferType(const PrimitivePtr &prim, const std::vector<
     MS_EXCEPTION_IF_NULL(item);
   }
   auto x_dtype = input_args[0]->BuildType()->cast<TensorTypePtr>();
+  if (x_dtype == nullptr) {
+    MS_EXCEPTION(TypeError) << "For Primitive[" << prim->name() << "], the input must be a Tensor, but got " << x_dtype
+                            << ".";
+  }
   std::set<TypePtr> template_types = {kTensorType};
   (void)CheckAndConvertUtils::CheckSubClass("x_dtype", x_dtype, template_types, prim->name());
   return x_dtype->element();
@@ -94,6 +96,26 @@ AbstractBasePtr DynamicBroadcastToInfer(const abstract::AnalysisEnginePtr &, con
   return abstract::MakeAbstract(DynamicBroadcastToInferShape(primitive, input_args),
                                 DynamicBroadcastToInferType(primitive, input_args));
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(DynamicBroadcastTo, prim::kPrimDynamicBroadcastTo, DynamicBroadcastToInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGDynamicBroadcastToInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicBroadcastToInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicBroadcastToInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicBroadcastToInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(DynamicBroadcastTo, prim::kPrimDynamicBroadcastTo, AGDynamicBroadcastToInfer, false);
 }  // namespace ops
 }  // namespace mindspore

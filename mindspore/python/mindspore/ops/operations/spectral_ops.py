@@ -14,7 +14,7 @@
 # ============================================================================
 
 """Spectral operators."""
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.common import dtype as mstype
 from mindspore.ops.primitive import Primitive, prim_attr_register
 
@@ -23,12 +23,30 @@ class BartlettWindow(Primitive):
     r"""
     Bartlett window function.
 
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
     Refer to :func:`mindspore.ops.bartlett_window` for more details.
 
+    Args:
+        periodic (bool, optional): If True, returns a window to be used as periodic function.
+          If False, return a symmetric window. Default: ``True``.
+        dtype (mindspore.dtype, optional): The desired datatype of returned tensor.
+            Only float16, float32 and float64 are allowed. Default: mstype.float32.
+
+    Inputs:
+        - **window_length** (Tensor) - The size of returned window, with data type int32, int64.
+          The input data should be an integer with a value of [0, 1000000].
+
+    Outputs:
+        A 1-D tensor of size `window_length` containing the window. Its datatype is set by the attr `dtype`.
+
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import Tensor, ops
+        >>> from mindspore import dtype as mstype
         >>> window_length = Tensor(5, mstype.int32)
         >>> bartlett_window = ops.BartlettWindow(periodic=True, dtype=mstype.float32)
         >>> output = bartlett_window(window_length)
@@ -50,12 +68,30 @@ class BlackmanWindow(Primitive):
     r"""
     Blackman window function.
 
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
     Refer to :func:`mindspore.ops.blackman_window` for more details.
 
+    Args:
+        periodic (bool, optional): If ``True`` , returns a window to be used as periodic function.
+            If ``False`` , return a symmetric window. Default: ``True`` .
+        dtype (mindspore.dtype, optional): the desired data type of returned tensor.
+            Only float16, float32 and float64 is allowed. Default: ``mstype.float32`` .
+
+    Inputs:
+        - **window_length** (Tensor) - the size of returned window, with data type int32, int64.
+          The input data should be an integer with a value of [0, 1000000].
+
+    Outputs:
+        A 1-D tensor of size `window_length` containing the window. Its datatype is set by the attr `dtype`.
+
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, ops
         >>> window_length = Tensor(10, mindspore.int32)
         >>> blackman_window = ops.BlackmanWindow(periodic = True, dtype = mindspore.float32)
         >>> output = blackman_window(window_length)

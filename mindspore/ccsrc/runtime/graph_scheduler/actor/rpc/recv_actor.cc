@@ -21,9 +21,10 @@
 #include <functional>
 #include <condition_variable>
 #include "proto/topology.pb.h"
-#include "distributed/rpc/tcp/constants.h"
+#include "kernel/framework_utils.h"
 #include "plugin/device/cpu/kernel/rpc/rpc_recv_kernel.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/distributed/rpc/tcp/constants.h"
 
 namespace mindspore {
 namespace runtime {
@@ -34,6 +35,7 @@ RecvActor::~RecvActor() {
     } catch (const std::exception &) {
       MS_LOG(ERROR) << "Failed to finalize for tcp server in recv actor.";
     }
+    server_ = nullptr;
   }
 }
 
@@ -41,13 +43,17 @@ void RecvActor::SetOpcontext(OpContext<DeviceTensor> *const op_context) {
   std::unique_lock<std::mutex> lock(context_mtx_);
   MS_EXCEPTION_IF_NULL(op_context);
   op_context_ = op_context;
-  is_context_valid_ = true;
-  context_cv_.notify_all();
 }
 
 void RecvActor::ResetOpcontext() {
   std::unique_lock<std::mutex> lock(context_mtx_);
   is_context_valid_ = false;
+}
+
+void RecvActor::UpdateStatus() {
+  std::unique_lock<std::mutex> lock(context_mtx_);
+  is_context_valid_ = true;
+  context_cv_.notify_all();
 }
 
 void RecvActor::SetRouteInfo(uint32_t, const std::string &, const std::string &recv_src_node_name,
@@ -57,36 +63,65 @@ void RecvActor::SetRouteInfo(uint32_t, const std::string &, const std::string &r
 }
 
 bool RecvActor::StartServer() {
-  // Step 1: Create a tcp server and start listening.
-  server_ = std::make_unique<TCPServer>();
-  MS_EXCEPTION_IF_NULL(server_);
+  // Step 1: Create a rpc server and start listening.
 
-  // Only set the memory allocating callback when using void* message.
-  bool use_void_msg = common::GetEnv("use_void").empty() ? false : true;
-  std::function<void *(size_t size)> allocate_callback;
-  if (use_void_msg) {
-    allocate_callback = std::bind(&RecvActor::AllocateMessage, this, std::placeholders::_1);
+#ifdef ENABLE_RDMA
+  if (common::GetEnv(kEnableRDMA) == "1") {
+    std::string ip = common::GetEnv(kRDMAIP);
+    uint32_t min_port = ClusterContext::instance()->port_range().first;
+    uint32_t max_port = ClusterContext::instance()->port_range().second;
+    uint32_t current_port = min_port;
+    std::string url = ip + ":" + std::to_string(current_port);
+
+    uint32_t retry_num = 0;
+    server_ = std::make_unique<RDMAServer>();
+    MS_EXCEPTION_IF_NULL(server_);
+    while (!server_->Initialize(url) && retry_num++ < kMaxRetryPortNum && current_port <= max_port) {
+      ++current_port;
+      MS_LOG(WARNING) << "Failed to initialize RDMAServer with url: " << url
+                      << ". Port number maybe occupied. Retry with increased port number: " << current_port;
+      url = ip + ":" + std::to_string(current_port);
+    }
+    if (!kURPCInited) {
+      MS_LOG(EXCEPTION) << "Failed to initialize RDMAServer.";
+    }
   } else {
-    allocate_callback = {};
+    server_ = std::make_unique<TCPServer>(false, distributed::cluster::ClusterContext::instance()->port_range());
+    MS_EXCEPTION_IF_NULL(server_);
+    // Set the memory allocating callback using void* message.
+    std::function<void *(size_t size)> allocate_callback =
+      std::bind(&RecvActor::AllocateMessage, this, std::placeholders::_1);
+    if (!server_->Initialize(allocate_callback)) {
+      MS_LOG(EXCEPTION) << "Failed to initialize rpc server for recv actor";
+    }
   }
+#else
+  server_ = std::make_unique<TCPServer>(false, distributed::cluster::ClusterContext::instance()->port_range());
+  MS_EXCEPTION_IF_NULL(server_);
+  // Set the memory allocating callback using void* message.
+  std::function<void *(size_t size)> allocate_callback =
+    std::bind(&RecvActor::AllocateMessage, this, std::placeholders::_1);
   if (!server_->Initialize(allocate_callback)) {
-    MS_LOG(EXCEPTION) << "Failed to initialize tcp server for recv actor";
+    MS_LOG(EXCEPTION) << "Failed to initialize rpc server for recv actor";
   }
-  ip_ = server_->GetIP();
-  port_ = server_->GetPort();
-  std::string server_url = ip_ + ":" + std::to_string(port_);
+#endif
 
   // Step 2: Set the message handler of the server.
   SetMessageHandler();
 
+  ip_ = server_->GetIP();
+  port_ = server_->GetPort();
+  std::string server_url = ip_ + ":" + std::to_string(port_);
   // Step 3: Register the server address to route table. The server should not be connected before this step is done.
   for (const auto &inter_process_edge_name : inter_process_edge_names_) {
     MS_LOG(INFO) << "Start server for recv actor. Server address: " << server_url
+                 << ", remote function id: " << kRemoteFuncId
                  << ", inter-process edge name: " << inter_process_edge_name;
     distributed::cluster::topology::ActorAddress recv_actor_addresss;
     recv_actor_addresss.set_actor_id(inter_process_edge_name);
     recv_actor_addresss.set_ip(ip_);
     recv_actor_addresss.set_port(port_);
+    recv_actor_addresss.set_func_id(kRemoteFuncId);
     MS_EXCEPTION_IF_NULL(actor_route_table_proxy_);
     if (!actor_route_table_proxy_->RegisterRoute(inter_process_edge_name, recv_actor_addresss)) {
       MS_LOG(EXCEPTION) << "Failed to register route for " << inter_process_edge_name << " " << server_url
@@ -94,6 +129,13 @@ bool RecvActor::StartServer() {
     }
   }
   return true;
+}
+
+void RecvActor::Clear() {
+  if (server_) {
+    server_->Finalize();
+    server_ = nullptr;
+  }
 }
 
 void RecvActor::StopRpcAtException() {
@@ -105,9 +147,6 @@ void RecvActor::StopRpcAtException() {
 }
 
 void RecvActor::RunOpInterProcessData(MessageBase *const msg, OpContext<DeviceTensor> *const context) {
-  // Once recv actor is launched, lock the context so that the next step's recv will not be launched in advance.
-  ResetOpcontext();
-
   MS_ERROR_IF_NULL_WO_RET_VAL(msg);
   MS_ERROR_IF_NULL_WO_RET_VAL(op_context_);
   MS_ERROR_IF_NULL_WO_RET_VAL(context);
@@ -124,6 +163,9 @@ void RecvActor::RunOpInterProcessData(MessageBase *const msg, OpContext<DeviceTe
 
   // We set remote data by the interface of the rpc kernel, because currently there's no remote input for a kernel mod.
   recv_kernel_mod->SetRemoteInput(msg);
+  if (common::GetEnv(kEnableRDMA) == "1") {
+    rdma_buf_ = msg->data;
+  }
 
   if (is_run) {
     Run(context);
@@ -161,13 +203,28 @@ bool RecvActor::CheckRunningCondition(const OpContext<DeviceTensor> *context) co
 void RecvActor::EraseInput(const OpContext<DeviceTensor> *context) {
   MS_EXCEPTION_IF_NULL(context);
   KernelActor::EraseInput(context);
+
   if (input_op_inter_process_.count(context->sequential_num_) != 0) {
     (void)input_op_inter_process_.erase(context->sequential_num_);
   }
   // Release data allocated by AllocateMessage.
   if (recv_data_ != nullptr) {
+    MS_EXCEPTION_IF_CHECK_FAIL((!device_contexts_.empty()), "The device context doesn't exist.");
+    MS_EXCEPTION_IF_NULL(device_contexts_[0]);
+    MS_EXCEPTION_IF_NULL(device_contexts_[0]->device_res_manager_);
     device_contexts_[0]->device_res_manager_->FreeMemory(recv_data_.get());
   }
+
+#ifdef ENABLE_RDMA
+  // Release data of URPC by caller.
+  if (common::GetEnv(kEnableRDMA) == "1" && rdma_buf_ != nullptr) {
+    auto rdma_server = dynamic_cast<RDMAServer *>(server_.get());
+    MS_EXCEPTION_IF_NULL(rdma_server);
+    auto urpc_alloc = rdma_server->urpc_allocator();
+    MS_EXCEPTION_IF_NULL(urpc_alloc);
+    urpc_alloc->free(rdma_buf_);
+  }
+#endif
 }
 
 void RecvActor::Run(OpContext<DeviceTensor> *const context) {
@@ -204,6 +261,7 @@ void *RecvActor::AllocateMemByDeviceRes(size_t size) {
     recv_data_->SetSize(size);
   }
 
+  MS_EXCEPTION_IF_CHECK_FAIL((!device_contexts_.empty()), "The device context doesn't exist.");
   MS_ERROR_IF_NULL_W_RET_VAL(device_contexts_[kIndex0], nullptr);
   MS_ERROR_IF_NULL_W_RET_VAL(device_contexts_[kIndex0]->device_res_manager_, nullptr);
   if (!device_contexts_[kIndex0]->device_res_manager_->AllocateMemory(recv_data_.get())) {
@@ -229,7 +287,6 @@ void RecvActor::AddArgSpecForInput(AbstractBasePtrList *args_spec_list, const Sh
   auto out_tensor = std::make_shared<tensor::Tensor>(data_type, shapes);
   MS_EXCEPTION_IF_NULL(out_tensor);
   out_tensor->set_device_address(output_addr, false);
-  out_tensor->data_sync();
 
   auto real_abs = real_input->abstract();
   MS_EXCEPTION_IF_NULL(real_abs);
@@ -239,6 +296,9 @@ void RecvActor::AddArgSpecForInput(AbstractBasePtrList *args_spec_list, const Sh
     real_abs->set_value(out_tensor);
     real_abs->set_shape(updated_shape);
   } else if (real_abs->isa<abstract::AbstractTuple>()) {
+    if (common::AnfAlgo::IsDynamicSequence(real_input)) {
+      MS_LOG(EXCEPTION) << "Invalid dynamic sequence for actor:" << GetAID() << " node:" << real_input->DebugString();
+    }
     auto abstract_tuple = real_abs->cast<abstract::AbstractTuplePtr>();
     MS_EXCEPTION_IF_NULL(abstract_tuple);
     MS_EXCEPTION_IF_CHECK_FAIL((real_input_index < abstract_tuple->elements().size()), "Index is out of range.");
@@ -324,19 +384,12 @@ void RecvActor::PreprocessRemoteInput(const MessageBase *const msg, bool *need_f
   MS_EXCEPTION_IF_NULL(msg);
   MS_EXCEPTION_IF_NULL(need_finalize);
 
-  size_t data_size = 0;
-  std::string msg_magic_header;
-  RpcDataPtr dynamic_shape_data;
-  if (common::GetEnv("use_void").empty()) {
-    data_size = msg->body.size();
-    msg_magic_header = msg->body.substr(0, strlen(kRpcDynamicShapeData));
-    dynamic_shape_data = const_cast<RpcDataPtr>(msg->body.c_str());
-  } else {
-    MS_EXCEPTION_IF_NULL(msg->data);
-    data_size = msg->size;
-    msg_magic_header = std::string(static_cast<RpcDataPtr>(msg->data), strlen(kRpcDynamicShapeData));
-    dynamic_shape_data = static_cast<RpcDataPtr>(msg->data);
-  }
+  // Parse the void * data.
+  size_t data_size = msg->size;
+  MS_EXCEPTION_IF_NULL(msg->data);
+  std::string msg_magic_header = std::string(static_cast<RpcDataPtr>(msg->data), strlen(kRpcDynamicShapeData));
+  RpcDataPtr dynamic_shape_data = static_cast<RpcDataPtr>(msg->data);
+
   if (data_size <= strlen(kRpcDynamicShapeData)) {
     MS_LOG(DEBUG) << "This is not a dynamic shape data. No need to preprocess.";
     return;
@@ -358,7 +411,7 @@ void RecvActor::PreprocessRemoteInput(const MessageBase *const msg, bool *need_f
   auto args = kernel::AbstractArgsFromCNode(kernel_);
   auto kernel_mod = AnfAlgo::GetKernelMod(kernel_);
   MS_EXCEPTION_IF_NULL(kernel_mod);
-  if (kernel_mod->Resize(args.op, args.inputs, args.outputs, args.depend_tensor_map) ==
+  if (kernel_mod->Resize(args.inputs, args.outputs, args.depend_tensor_map) ==
       static_cast<int>(kernel::KRET_RESIZE_FAILED)) {
     MS_LOG(EXCEPTION) << "Node " << kernel_->fullname_with_scope() << " Resize() failed.";
   }
@@ -373,6 +426,8 @@ MessageBase *RecvActor::HandleMessage(MessageBase *const msg) {
     return distributed::rpc::NULL_MSG;
   }
   lock.unlock();
+  // Once recv actor is launched, lock the context so that the next step's recv will not be launched in advance.
+  ResetOpcontext();
 
   MS_LOG(INFO) << "Rpc actor recv message for inter-process edge: " << inter_process_edge_names_;
 
@@ -384,7 +439,7 @@ MessageBase *RecvActor::HandleMessage(MessageBase *const msg) {
 }
 
 void RecvActor::SetMessageHandler() {
-  server_->SetMessageHandler(std::bind(&RecvActor::HandleMessage, this, std::placeholders::_1));
+  server_->SetMessageHandler(std::bind(&RecvActor::HandleMessage, this, std::placeholders::_1), ++kRemoteFuncId);
 }
 }  // namespace runtime
 }  // namespace mindspore

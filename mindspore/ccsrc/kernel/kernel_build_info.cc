@@ -17,11 +17,52 @@
 #include "kernel/kernel_build_info.h"
 
 #include <algorithm>
+#include <unordered_map>
 #include "utils/log_adapter.h"
 #include "include/common/debug/anf_dump_utils.h"
 
 namespace mindspore {
 namespace kernel {
+std::string KernelObjectTypeLabel(const KernelObjectType &obj_type) {
+  std::unordered_map<KernelObjectType, std::string> trans_map{{KernelObjectType::TUPLE, "Tuple"},
+                                                              {KernelObjectType::SCALAR, "Scalar"},
+                                                              {KernelObjectType::TENSOR, "Tensor"},
+                                                              {KernelObjectType::UNKNOWN_TYPE, "Unknown"},
+                                                              {KernelObjectType::TUPLE_UNFOLD, "TupleUnfold"}};
+  if (trans_map.find(obj_type) == trans_map.end()) {
+    return "Unknown";
+  }
+  return trans_map[obj_type];
+}
+
+std::string KernelTypeLabel(const KernelType &kernel_type) {
+  std::unordered_map<KernelType, std::string> trans_map{{KernelType::UNKNOWN_KERNEL_TYPE, "UNKNOWN_KERNEL_TYPE"},
+                                                        {KernelType::AKG_KERNEL, "AKG_KERNEL"},
+                                                        {KernelType::AICPU_KERNEL, "AICPU_KERNEL"},
+                                                        {KernelType::RT_KERNEL, "RT_KERNEL"},
+                                                        {KernelType::HCCL_KERNEL, "HCCL_KERNEL"},
+                                                        {KernelType::TBE_KERNEL, "TBE_KERNEL"},
+                                                        {KernelType::HOST_KERNEL, "HOST_KERNEL"},
+                                                        {KernelType::CPU_KERNEL, "CPU_KERNEL"},
+                                                        {KernelType::GPU_KERNEL, "GPU_KERNEL"},
+                                                        {KernelType::BISHENG_KERNEL, "BISHENG_KERNEL"},
+                                                        {KernelType::ACL_KERNEL, "ACL_KERNEL"},
+                                                        {KernelType::OPAPI_KERNEL, "OPAPI_KERNEL"}};
+  if (trans_map.find(kernel_type) == trans_map.end()) {
+    return "UNKNOWN_KERNEL_TYPE";
+  }
+  return trans_map[kernel_type];
+}
+
+std::string OpTypeLabel(const OpType &op_type) {
+  std::unordered_map<OpType, std::string> trans_map{
+    {OpType::UNKNOWN_OP_TYPE, "UNKNOWN_OP_TYPE"}, {OpType::DYNAMIC, "DYNAMIC"}, {OpType::SKIP, "SKIP"}};
+  if (trans_map.find(op_type) == trans_map.end()) {
+    return "UNKNOWN_OP_TYPE";
+  }
+  return trans_map[op_type];
+}
+
 std::string KernelBuildInfo::GetInputFormat(size_t input_index) const {
   if (input_index >= inputs_format_.size()) {
     MS_LOG(ERROR) << "The index [" << input_index << "] is exceed the number of input node";
@@ -54,21 +95,106 @@ TypeId KernelBuildInfo::GetOutputDeviceType(size_t output_index) const {
   return outputs_device_type_[output_index];
 }
 
+KernelObjectType KernelBuildInfo::GetInputKernelObjectType(size_t input_index) const {
+  if (inputs_kernel_object_type_.empty()) {
+    return KernelObjectType::UNKNOWN_TYPE;
+  }
+  if (input_index >= inputs_kernel_object_type_.size()) {
+    bool has_tuple_unfold =
+      std::any_of(inputs_kernel_object_type_.begin(), inputs_kernel_object_type_.end(),
+                  [](const KernelObjectType &obj_type) { return obj_type == KernelObjectType::TUPLE_UNFOLD; });
+    // tuple unfold may correspond to many formats or dtypes
+    if (!has_tuple_unfold) {
+      MS_LOG(ERROR) << "The input index [" << input_index
+                    << "] is exceed the number of input:" << inputs_kernel_object_type_.size();
+    }
+    return KernelObjectType::UNKNOWN_TYPE;
+  }
+  return inputs_kernel_object_type_[input_index];
+}
+
+KernelObjectType KernelBuildInfo::GetOutputKernelObjectType(size_t output_index) const {
+  if (outputs_kernel_object_type_.empty()) {
+    return KernelObjectType::UNKNOWN_TYPE;
+  }
+
+  // tuple unfold may correspond to many formats or dtypes
+  bool has_tuple_unfold =
+    std::any_of(outputs_kernel_object_type_.begin(), outputs_kernel_object_type_.end(),
+                [](const KernelObjectType &obj_type) { return obj_type == KernelObjectType::TUPLE_UNFOLD; });
+  if (has_tuple_unfold) {
+    return KernelObjectType::UNKNOWN_TYPE;
+  }
+
+  if (output_index >= outputs_kernel_object_type_.size()) {
+    MS_LOG(ERROR) << "The output index [" << output_index
+                  << "] is exceed the number of output:" << outputs_kernel_object_type_.size();
+    return KernelObjectType::UNKNOWN_TYPE;
+  }
+  return outputs_kernel_object_type_[output_index];
+}
+
+const std::vector<KernelObjectType> &KernelBuildInfo::GetAllOutputElementsKernelObjectTypes() const {
+  return output_elements_kernel_object_type_;
+}
+
 const std::string &KernelBuildInfo::GetOriginDataFormat() const { return origin_data_format_; }
 
 const std::vector<std::string> &KernelBuildInfo::GetAllInputFormats() const { return inputs_format_; }
 
 const std::vector<std::string> &KernelBuildInfo::GetAllOutputFormats() const { return outputs_format_; }
 
+const std::vector<std::string> &KernelBuildInfo::GetAllInputReshapeType() const { return input_reshape_type_; }
+
+const std::vector<std::string> &KernelBuildInfo::GetAllOutputReshapeType() const { return output_reshape_type_; }
+
 const std::vector<TypeId> &KernelBuildInfo::GetAllInputDeviceTypes() const { return inputs_device_type_; }
 
 const std::vector<TypeId> &KernelBuildInfo::GetAllOutputDeviceTypes() const { return outputs_device_type_; }
 
+const std::vector<KernelObjectType> &KernelBuildInfo::GetAllOutputKernelObjectTypes() const {
+  return outputs_kernel_object_type_;
+}
+
+const std::vector<KernelObjectType> &KernelBuildInfo::GetAllInputKernelObjectTypes() const {
+  return inputs_kernel_object_type_;
+}
+
+void KernelBuildInfo::SetOpType(const OpType &op_type) { op_type_ = op_type; }
+
+void KernelBuildInfo::SetOutputsKernelObjectType(const std::vector<KernelObjectType> &outputs_kernel_object_type) {
+  outputs_kernel_object_type_ = outputs_kernel_object_type;
+}
+
+void KernelBuildInfo::SetInputsKernelObjectType(const std::vector<KernelObjectType> &inputs_kernel_object_type) {
+  inputs_kernel_object_type_ = inputs_kernel_object_type;
+}
+
+void KernelBuildInfo::SetOutputElementsKernelObjectType(
+  const std::vector<KernelObjectType> &output_elements_kernel_object_type) {
+  output_elements_kernel_object_type_ = output_elements_kernel_object_type;
+}
+
+void KernelBuildInfo::SetInputsFormat(const std::vector<std::string> &inputs_format) { inputs_format_ = inputs_format; }
+
+void KernelBuildInfo::SetInputsDeviceType(const std::vector<TypeId> &inputs_device_type) {
+  inputs_device_type_ = inputs_device_type;
+}
+
 void KernelBuildInfo::SetOutputFormat(const std::string &format, size_t index) {
   if (index >= outputs_format_.size()) {
-    MS_LOG(EXCEPTION) << "The index [" << index << "] is exceed the number of output";
+    MS_LOG(EXCEPTION) << "The index [" << index
+                      << "] is exceed the length of output formats list, total size:" << outputs_format_.size();
   }
   outputs_format_[index] = format;
+}
+
+void KernelBuildInfo::SetInputFormat(const std::string &format, size_t index) {
+  if (index >= inputs_format_.size()) {
+    MS_LOG(EXCEPTION) << "The index [" << index
+                      << "] is exceed the length of input formats list, total size:" << inputs_format_.size();
+  }
+  inputs_format_[index] = format;
 }
 
 void KernelBuildInfo::SetOutputsFormat(const std::vector<std::string> &outputs_format) {
@@ -107,17 +233,6 @@ std::string KernelBuildInfo::GetInputReshapeType(size_t input_index) const {
   return input_reshape_type_[input_index];
 }
 
-std::string KernelBuildInfo::GetInputValueDepend(size_t input_index) const {
-  if (input_value_depend_.empty()) {
-    return "";
-  }
-  if (input_index >= input_value_depend_.size()) {
-    MS_LOG(EXCEPTION) << "The index [" << input_index << "] is exceed the number of input node size "
-                      << input_value_depend_.size();
-  }
-  return input_value_depend_[input_index];
-}
-
 std::string KernelBuildInfo::GetOutputReshapeType(size_t output_index) const {
   if (output_reshape_type_.empty()) {
     return "";
@@ -138,13 +253,32 @@ std::string KernelBuildInfo::ToString() const {
     }
     output_buffer << "<" << TypeIdLabel(GetInputDeviceType(index)) << "x" << GetInputFormat(index) << ">";
   }
-  output_buffer << ") -> (";
+  output_buffer << ", object_type: [";
+  auto input_object_types = GetAllInputKernelObjectTypes();
+  for (size_t index = 0; index < input_object_types.size(); ++index) {
+    if (index != 0) {
+      output_buffer << ",";
+    }
+    output_buffer << KernelObjectTypeLabel(input_object_types[index]);
+  }
+
+  output_buffer << "]) -> (";
   for (size_t index = 0; index < GetOutputNum(); ++index) {
     if (index != 0) {
-      output_buffer << ", ";
+      output_buffer << ",";
     }
     output_buffer << "<" << TypeIdLabel(GetOutputDeviceType(index)) << "x" << GetOutputFormat(index) << ">";
   }
+  output_buffer << ", object_type: [";
+  auto output_object_types = GetAllOutputKernelObjectTypes();
+  for (size_t index = 0; index < output_object_types.size(); ++index) {
+    if (index != 0) {
+      output_buffer << ", ";
+    }
+    output_buffer << KernelObjectTypeLabel(output_object_types[index]);
+  }
+  output_buffer << "], kernel_type: " << KernelTypeLabel(kernel_type());
+  output_buffer << ", op_type: " << OpTypeLabel(op_type());
   output_buffer << ")";
   return output_buffer.str();
 }
@@ -162,7 +296,7 @@ bool KernelBuildInfo::IsSimilarityKernelBuildInfo(const KernelBuildInfo &other) 
 }
 
 bool KernelBuildInfo::operator==(const KernelBuildInfo &other) const {
-  if (kernel_type_ != other.kernel_type_ || fusion_type_ != other.fusion_type_ || processor_ != other.processor_) {
+  if (kernel_type_ != other.kernel_type_ || processor_ != other.processor_) {
     return false;
   }
   return IsSimilarityKernelBuildInfo(other);
@@ -177,6 +311,11 @@ bool KernelBuildInfo::operator!=(const KernelBuildInfo &other) const { return !(
 void KernelBuildInfo::KernelBuildInfoBuilder::SetKernelType(const KernelType &kernel_type) {
   MS_EXCEPTION_IF_NULL(kernel_build_info_);
   kernel_build_info_->kernel_type_ = kernel_type;
+}
+
+void KernelBuildInfo::KernelBuildInfoBuilder::SetOpType(const OpType &op_type) {
+  MS_EXCEPTION_IF_NULL(kernel_build_info_);
+  kernel_build_info_->op_type_ = op_type;
 }
 
 void KernelBuildInfo::KernelBuildInfoBuilder::SetOriginDataFormat(const std::string &origin_data_format) {
@@ -204,7 +343,7 @@ void KernelBuildInfo::KernelBuildInfoBuilder::SetOutputsDeviceType(const std::ve
   kernel_build_info_->outputs_device_type_ = outputs_device_type;
 }
 
-void KernelBuildInfo::KernelBuildInfoBuilder::SetFusionType(FusionType fusion_type) {
+void KernelBuildInfo::KernelBuildInfoBuilder::SetFusionType(const std::string &fusion_type) {
   MS_EXCEPTION_IF_NULL(kernel_build_info_);
   kernel_build_info_->fusion_type_ = fusion_type;
 }
@@ -224,16 +363,29 @@ void KernelBuildInfo::KernelBuildInfoBuilder::SetProcessor(Processor processor) 
   kernel_build_info_->processor_ = processor;
 }
 
+void KernelBuildInfo::KernelBuildInfoBuilder::SetInputsKernelObjectType(
+  const std::vector<KernelObjectType> &inputs_kernel_object_type) {
+  MS_EXCEPTION_IF_NULL(kernel_build_info_);
+  kernel_build_info_->inputs_kernel_object_type_ = inputs_kernel_object_type;
+}
+
+void KernelBuildInfo::KernelBuildInfoBuilder::SetOutputsKernelObjectType(
+  const std::vector<KernelObjectType> &outputs_kernel_object_type) {
+  MS_EXCEPTION_IF_NULL(kernel_build_info_);
+  kernel_build_info_->outputs_kernel_object_type_ = outputs_kernel_object_type;
+}
+
+void KernelBuildInfo::KernelBuildInfoBuilder::SetOutputElementsKernelObjectType(
+  const std::vector<KernelObjectType> &output_elements_kernel_object_type) {
+  MS_EXCEPTION_IF_NULL(kernel_build_info_);
+  kernel_build_info_->output_elements_kernel_object_type_ = output_elements_kernel_object_type;
+}
+
 std::shared_ptr<KernelBuildInfo> KernelBuildInfo::KernelBuildInfoBuilder::Build() { return kernel_build_info_; }
 
 void KernelBuildInfo::KernelBuildInfoBuilder::SetInputsReshapeType(const std::vector<std::string> &input_reshape_type) {
   MS_EXCEPTION_IF_NULL(kernel_build_info_);
   kernel_build_info_->input_reshape_type_ = input_reshape_type;
-}
-
-void KernelBuildInfo::KernelBuildInfoBuilder::SetInputsValueDepend(const std::vector<std::string> &input_value_depend) {
-  MS_EXCEPTION_IF_NULL(kernel_build_info_);
-  kernel_build_info_->input_value_depend_ = input_value_depend;
 }
 
 void KernelBuildInfo::KernelBuildInfoBuilder::SetOutputsReshapeType(
@@ -306,6 +458,11 @@ void KernelBuildInfo::KernelBuildInfoBuilder::SetInputDeviceType(const TypeId &i
                       << ", but got: " << index;
   }
   kernel_build_info_->inputs_device_type_[index] = input_device_type;
+}
+
+void KernelBuildInfo::KernelBuildInfoBuilder::SetValid(bool valid) {
+  MS_EXCEPTION_IF_NULL(kernel_build_info_);
+  kernel_build_info_->valid_ = valid;
 }
 }  // namespace kernel
 }  // namespace mindspore

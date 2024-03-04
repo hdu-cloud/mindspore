@@ -18,13 +18,13 @@
 #define MINDSPORE_CORE_OPS_MAPUNIFORM_H_
 
 #include <map>
-#include <vector>
+#include <memory>
 #include <set>
 #include <string>
-#include <memory>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -34,8 +34,8 @@ class MIND_API MapUniform : public BaseOperator {
   MIND_API_BASE_MEMBER(MapUniform);
   MapUniform() : BaseOperator(kNameMapUniform) { InitIOName({"input", "per_group_size", "group_num"}, {"output"}); }
 };
-abstract::AbstractBasePtr MapUniformInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                          const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr MapUniformInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                   const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimMapUniformPtr = std::shared_ptr<MapUniform>;
 }  // namespace ops
 }  // namespace mindspore

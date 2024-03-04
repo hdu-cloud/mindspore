@@ -40,6 +40,7 @@
 #include "src/train/static_allocator.h"
 #include "src/train/train_populate_parameter.h"
 #include "src/train/train_populate_parameter_v0.h"
+#include "src/litert/kernel/cpu/nnacl/nnacl_batchnorm.h"
 
 namespace mindspore {
 namespace lite {
@@ -49,9 +50,37 @@ void FreeGradients(const std::vector<lite::Tensor *> &gradients) {
     delete gradient;
   }
 }  // namespace
+
+void AddNonConstTrainableParams(const std::vector<kernel::KernelExec *> &in_kernels, kernel::OptimizerKernel *optimizer,
+                                std::vector<lite::Tensor *> *params) {
+  auto indices = optimizer->GetTrainableParamsIdxs();
+  if (params->size() == indices.size()) {
+    return;
+  }
+  for (size_t ix = 0; ix < indices.size(); ix++) {
+    auto param = optimizer->in_tensors().at(indices[ix]);
+    if (param->IsConst()) {
+      continue;
+    }
+    for (size_t i = 0; i < in_kernels.size(); i++) {
+      auto out_tensors = in_kernels.at(i)->out_tensors();
+      if (std::find(out_tensors.begin(), out_tensors.end(), param) != out_tensors.end() &&
+          !in_kernels.at(i)->in_tensors().empty()) {
+        auto filtered_tensor = in_kernels.at(i)->in_tensors().at(FIRST_INPUT);
+        if (filtered_tensor->IsConst()) {
+          params->emplace_back(filtered_tensor);
+          break;
+        }
+      }
+    }
+  }
+}
 }  // namespace
 const char *kGradName = "Gradients";
 const char *kOptimizerName = "optimizer";
+constexpr auto kObfNodeName = "obf_op-obf_mul";
+constexpr size_t kFloatSize = 4;
+constexpr int kDataIndex = 1;
 
 TrainSession::TrainSession() {
   is_train_session_ = true;
@@ -176,89 +205,6 @@ int TrainSession::InitCallBack() {
   return RET_OK;
 }
 
-static int ReshapeWeightTensor(Tensor *orig_tensor, lite::Tensor *new_tensor) {
-  if (orig_tensor->data_type() != new_tensor->data_type()) {
-    MS_LOG(ERROR) << "Cannot reshape tensor of different type: " << new_tensor->tensor_name();
-    return RET_PARAM_INVALID;
-  }
-
-  if (orig_tensor->category() != lite::Category::CONST_TENSOR) {
-    MS_LOG(ERROR) << "Cannot reshape non const tensor: " << new_tensor->tensor_name();
-    return RET_ERROR;
-  }
-
-  auto orig_size = orig_tensor->Size();
-  uint8_t *new_data = reinterpret_cast<uint8_t *>(new_tensor->data());
-  if (new_data == nullptr) {
-    // Copy original data into new_tensor
-    new_data = reinterpret_cast<uint8_t *>(new_tensor->MutableData());
-    if (new_data == nullptr) {
-      MS_LOG(ERROR) << "Allocation of Data Failed" << new_tensor->tensor_name();
-      return RET_ERROR;
-    }
-    if (orig_size == 0) {
-      MS_LOG(ERROR) << "Operation failed: Both new tensors and original one have no data";
-      return RET_ERROR;
-    }
-    uint8_t *orig_data = reinterpret_cast<uint8_t *>(orig_tensor->data());
-    for (unsigned int loc = 0; loc < new_tensor->Size(); loc++) {
-      new_data[loc] = orig_data[loc % orig_size];
-    }
-  }
-
-  orig_tensor->FreeData();
-  orig_tensor->set_data(nullptr);
-  orig_tensor->set_shape(new_tensor->shape());
-
-  uint8_t *dst_data = reinterpret_cast<uint8_t *>(orig_tensor->MutableData());
-  if (dst_data == nullptr) {
-    MS_LOG(ERROR) << "Allocation of Data Failed";
-    return RET_ERROR;
-  }
-  std::copy(new_data, new_data + orig_tensor->Size(), dst_data);
-  return RET_OK;
-}
-
-int TrainSession::UpdateWeights(std::vector<lite::Tensor *> modify_tensors) {
-  unsigned int num_of_found_tensors = 0;
-  for (auto tensor : tensors_) {
-    for (auto modify : modify_tensors) {
-      if (modify == nullptr) {
-        MS_LOG(ERROR) << "Tensor is nullptr";
-        return RET_PARAM_INVALID;
-      }
-      if (modify->tensor_name() == tensor->tensor_name()) {
-        auto ret = ReshapeWeightTensor(tensor, modify);
-        num_of_found_tensors++;
-        if (ret != RET_OK) {
-          return ret;
-        }
-        break;
-      }
-    }
-  }
-  if (num_of_found_tensors != modify_tensors.size()) {
-    MS_LOG(ERROR) << "Did not find all the given tensors in the model";
-    return RET_ERROR;
-  }
-  auto ret = ReSizeKernels(kernels_);
-  if (ret != RET_OK) {
-    MS_LOG(ERROR) << "Resize kernels fail!";
-    return ret;
-  }
-
-  bool is_eval = IsEval();
-  ret = Train();  // This will trigger proper Allocation of static data;
-  if (ret != RET_OK) {
-    MS_LOG(ERROR) << "General failure occurred during Update of Weights";
-    return ret;
-  }
-  if (is_eval) {
-    ret = Eval();
-  }
-  return ret;
-}
-
 int TrainSession::AllocTensors(const std::vector<kernel::KernelExec *> &kernels) {
   if (!IS_STATIC_ALLOCATOR(allocator_)) return RET_OK;
   OptAllocator allocator;
@@ -349,6 +295,7 @@ int TrainSession::CompileTrainGraph(std::shared_ptr<Model> model) {
   RestoreOps(restore);
   CompileTrainKernels();      // Prepare a list of train kernels
   CompileOptimizedKernels();  // Prepare a list of kernels which are optimized (weight update step)
+  CompileTrainableParams();   // Prepare trainable parameters of optimizers
   CompileTrainOutputs();      // prepare outputs in train mode
   CompileEvalOutputs();       // prepare outputs in eval mode
   // Prepare a list of eval kernels
@@ -573,7 +520,7 @@ int TrainSession::RunGraph(const KernelCallBack &before, const KernelCallBack &a
     return ret;
   }
 
-  if (train_mode_ && virtual_batch_multiplier_) {
+  if (train_mode_ && (virtual_batch_multiplier_ != 0)) {
     virtual_batch_idx_++;
     if (virtual_batch_idx_ >= virtual_batch_multiplier_) {
       virtual_batch_idx_ = 0;
@@ -826,6 +773,55 @@ void TrainSession::CompileOptimizedKernels() {
           break;
         }
       }
+    }
+  }
+}
+
+int TrainSession::FindConstFoldedKernels() {
+  const_fold_kernels_.clear();
+  const_output_tensors_.clear();
+  for (auto kernel : this->inference_kernels_) {
+    bool is_input_const = true;
+    for (auto input : kernel->in_tensors()) {
+      if ((!input->IsConst() || input->IsGraphInput()) &&
+          std::find(const_output_tensors_.begin(), const_output_tensors_.end(), input) == const_output_tensors_.end()) {
+        is_input_const = false;
+      }
+      if (!is_input_const) {
+        const_fold_kernels_.emplace_back(kernel);
+        break;
+      }
+    }
+    if (is_input_const) {
+      auto ret = kernel->Execute();
+      if (RET_OK != ret) {
+        MS_LOG(ERROR) << "run kernel failed, name: " << kernel->name();
+        return ret;
+      }
+      for (auto output : kernel->out_tensors()) {
+        output->set_category(Category::CONST_TENSOR);
+        const_output_tensors_.emplace_back(output);
+      }
+    }
+  }
+  return RET_OK;
+}
+
+void TrainSession::CompileTrainableParams() {
+  for (auto kernel : this->train_kernels_) {
+    if (!IsOptimizer(kernel)) {
+      continue;
+    }
+    auto optimizer = static_cast<kernel::OptimizerKernel *>(kernel->kernel());
+    auto params = optimizer->GetTrainableParams();
+    auto in_kernels = kernel->in_kernels();
+    AddNonConstTrainableParams(in_kernels, optimizer, &params);
+
+    for (auto param : params) {
+      if (std::find(trainable_parameters_.begin(), trainable_parameters_.end(), param) != trainable_parameters_.end()) {
+        continue;
+      }
+      trainable_parameters_.emplace_back(param);
     }
   }
 }
@@ -1154,9 +1150,88 @@ int TrainSession::FindExportKernels(std::vector<kernel::KernelExec *> *export_ke
   return RET_OK;
 }
 
-int TrainSession::Export(const std::string &file_name, ModelType model_type, QuantizationType quant_type,
-                         FormatType format, std::vector<std::string> out_put_tensor_name) {
-  MS_CHECK_FALSE_MSG(file_name.empty(), RET_ERROR, "File name cannot be empty");
+template <typename DestType>
+int TrainSession::ExportByDifferentType(DestType destination, ModelType model_type, QuantizationType quant_type,
+                                        bool orig_train_state, std::vector<std::string> output_tensor_name) {
+  float obf_ratio = ModelRecoverObfuscate();
+  TrainExport texport(destination);
+  int status = texport.ExportInit(model_.get()->graph_.name_, model_.get()->graph_.version_);
+  TRAIN_SESSION_CHECK_FALSE_MSG(status != RET_OK, status, "Fail to init export");
+  if (!output_tensor_name.empty()) {
+    if (model_type == MT_INFERENCE) {
+      std::vector<kernel::KernelExec *> export_kernels = {};
+      status = FindExportKernels(&export_kernels, output_tensor_name, const_fold_kernels_);
+      TRAIN_SESSION_CHECK_FALSE_MSG(status != RET_OK, status, "FindExportKernels failed.");
+      status = texport.ExportNet(export_kernels, tensors_, const_output_tensors_, output_tensor_name, model_.get(),
+                                 quant_type);
+    } else {
+      MS_LOG(WARNING) << "Train model does not support to export selected output tensor, and all of the train kernels "
+                         "tensors will be exported";
+    }
+  } else {
+    if (quant_type == QT_NONE) {
+      if ((!model_buff_changed_) && (model_type == MT_TRAIN) &&
+          std::all_of(model_->graph_.all_nodes_.begin(), model_->graph_.all_nodes_.end(), [](const LiteGraph::Node *n) {
+            return n->quant_type_ == schema::QuantType::QuantType_QUANT_NONE;
+          })) {
+        status = texport.SaveModel(model_.get(), destination);
+        TRAIN_SESSION_CHECK_FALSE_MSG(status != RET_OK, status, "Failed to save model");
+        if (orig_train_state) {
+          status = Train();
+          TRAIN_SESSION_CHECK_FALSE_MSG(status != RET_OK, status, "Train failed.");
+        }
+        if (obf_ratio != 1.0) {
+          ModelDeObfuscate(obf_ratio);
+        }
+        return status;
+      }
+      status = texport.ExportNet(
+        (model_type == MT_TRAIN) ? train_kernels_ : const_fold_kernels_, tensors_, const_output_tensors_,
+        (model_type == MT_TRAIN) ? train_output_tensor_names_ : eval_output_tensor_names_, model_.get(), quant_type);
+
+    } else {
+      status = texport.ExportNet((model_type == MT_TRAIN) ? train_kernels_ : inference_kernels_, tensors_, {},
+                                 (model_type == MT_TRAIN) ? train_output_tensor_names_ : eval_output_tensor_names_,
+                                 model_.get(), quant_type);
+    }
+  }
+  TRAIN_SESSION_CHECK_FALSE_MSG(status != RET_OK, status, "Fail to export Network.");
+  if (model_type == MT_INFERENCE) {
+    status = texport.TrainModelDrop();
+    TRAIN_SESSION_CHECK_FALSE_MSG(status != RET_OK, status, "TrainModelDrop failed.");
+    status = texport.TrainModelFusion();
+    TRAIN_SESSION_CHECK_FALSE_MSG(status != RET_OK, status, "TrainModelFusion failed.");
+  }
+  if constexpr (std::is_same_v<DestType, const std::string &>) {
+    status = texport.SaveToFile();
+  } else {
+    status = texport.SaveToBuffer();
+  }
+  if (obf_ratio != 1.0) {
+    ModelDeObfuscate(obf_ratio);
+  }
+  TRAIN_SESSION_CHECK_FALSE_MSG(status != RET_OK, status, "failed to save to file or model buffer.");
+  return RET_OK;
+}
+
+template <typename DestType>
+int TrainSession::ExportInner(DestType destination, ModelType model_type, QuantizationType quant_type,
+                              FormatType format, std::vector<std::string> out_put_tensor_name) {
+  if constexpr (std::is_same_v<DestType, const std::string &>) {
+    MS_CHECK_FALSE_MSG(destination.empty(), RET_ERROR, "File name cannot be empty");
+    struct stat path_type;
+    if (stat(destination.c_str(), &path_type) == RET_OK) {
+      if (path_type.st_mode & S_IFDIR) {
+        MS_LOG(ERROR) << "Destination must be path, now is a directory";
+        return RET_ERROR;
+      }
+    }
+  } else if constexpr (std::is_same_v<DestType, Buffer *>) {
+    MS_CHECK_FALSE_MSG(destination == nullptr, RET_ERROR, "model buffer cannot be nullptr");
+  } else {
+    MS_LOG(ERROR) << "Unsupported destination.";
+    return RET_ERROR;
+  }
   MS_CHECK_FALSE_MSG(model_type > mindspore::lite::MT_INFERENCE || model_type < mindspore::lite::MT_TRAIN, RET_ERROR,
                      "Export model type parameter error");
   MS_CHECK_FALSE_MSG(quant_type < mindspore::lite::QT_DEFAULT || quant_type > mindspore::lite::QT_WEIGHT, RET_ERROR,
@@ -1164,61 +1239,68 @@ int TrainSession::Export(const std::string &file_name, ModelType model_type, Qua
   MS_CHECK_FALSE_MSG(format != FT_FLATBUFFERS, RET_ERROR, "File name cannot be empty");
 
   bool orig_train_state = IsTrain();
-  Eval();
-  TrainExport texport(file_name);
-  int status = texport.ExportInit(model_.get()->graph_.name_, model_.get()->graph_.version_);
+  // Find and prepare a list of kernels which are const folded
+  MS_CHECK_TRUE_MSG(FindConstFoldedKernels() == RET_OK, RET_ERROR, "FindConstFoldedKernels failed.");
+  auto status =
+    ExportByDifferentType<DestType>(destination, model_type, quant_type, orig_train_state, out_put_tensor_name);
   if (status != RET_OK) {
-    MS_LOG(ERROR) << "cannot init export";
+    MS_LOG(ERROR) << "Fail to export by different type";
     return status;
   }
+  if (orig_train_state) {
+    status = Train();
+    TRAIN_SESSION_CHECK_FALSE_MSG(status != RET_OK, status, "Train failed");
+  }
+  return RET_OK;
+}
 
-  if (!out_put_tensor_name.empty() && model_type == MT_INFERENCE) {
-    std::vector<kernel::KernelExec *> export_kernels = {};
-    status = FindExportKernels(&export_kernels, out_put_tensor_name, inference_kernels_);
-    if (status != RET_OK) {
-      MS_LOG(ERROR) << "FindExportKernels failed.";
+int TrainSession::Export(const std::string &file_name, ModelType model_type, QuantizationType quant_type,
+                         FormatType format, std::vector<std::string> out_put_tensor_name) {
+  return ExportInner<const std::string &>(file_name, model_type, quant_type, format, out_put_tensor_name);
+}
+
+int TrainSession::Export(Buffer *model_buffer, ModelType model_type, QuantizationType quant_type, FormatType format,
+                         std::vector<std::string> out_put_tensor_name) {
+  return ExportInner<Buffer *>(model_buffer, model_type, quant_type, format, out_put_tensor_name);
+}
+
+int TrainSession::ExportWeightsCollaborateWithMicro(const std::string &file_name, lite::ModelType model_type,
+                                                    FormatType format, bool enable_fp16,
+                                                    const std::vector<std::string> &changeable_weights_name) {
+  MS_CHECK_FALSE_MSG(file_name.empty(), RET_ERROR, "File name cannot be empty");
+  struct stat path_type;
+  if (stat(file_name.c_str(), &path_type) == RET_OK) {
+    if (path_type.st_mode & S_IFDIR) {
+      MS_LOG(ERROR) << "Destination must be path, now is a directory";
       return RET_ERROR;
     }
-    status = texport.ExportNet(export_kernels, tensors_, out_put_tensor_name, model_.get(), quant_type);
-  } else {
-    if ((quant_type == QT_NONE) && (model_type == MT_TRAIN) &&
-        std::all_of(model_->graph_.all_nodes_.begin(), model_->graph_.all_nodes_.end(), [](const LiteGraph::Node *n) {
-          return n->quant_type_ == schema::QuantType::QuantType_QUANT_NONE;
-        })) {
-      status = texport.SaveModel(model_.get(), file_name);
-      if (orig_train_state) Train();
-      return status;
-    } else {
-      status = texport.ExportNet((model_type == MT_TRAIN) ? train_kernels_ : inference_kernels_, tensors_,
-                                 (model_type == MT_TRAIN) ? train_output_tensor_names_ : eval_output_tensor_names_,
-                                 model_.get(), quant_type);
-    }
   }
+  MS_CHECK_FALSE_MSG(format != FT_FLATBUFFERS, RET_ERROR, "File name cannot be empty");
+  MS_CHECK_FALSE_MSG(model_type != mindspore::lite::MT_INFERENCE, RET_ERROR,
+                     "Currently, can only export inference-model's weights.");
+  int status = Eval();
+  TRAIN_SESSION_CHECK_FALSE_MSG(status != RET_OK, status, "Eval failed");
 
-  if (status != RET_OK) {
-    MS_LOG(ERROR) << "cannot export Network";
-    return status;
-  }
-  if (model_type == MT_INFERENCE) {
-    status = texport.TrainModelDrop();
-    if (status != RET_OK) {
-      MS_LOG(ERROR) << "TrainModelDrop failed.";
-      return status;
-    }
-    status = texport.TrainModelFusion();
-    if (status != RET_OK) {
-      MS_LOG(ERROR) << "TrainModelFusion failed.";
-      return status;
-    }
-  }
-  status = texport.SaveToFile();
+  TrainExport texport(file_name);
+  status = texport.ExportInit(model_.get()->graph_.name_, model_.get()->graph_.version_);
+  TRAIN_SESSION_CHECK_FALSE_MSG(status != RET_OK, status, "Fail to init export");
+  // Find and prepare a list of kernels which are const folded
+  MS_CHECK_TRUE_MSG(FindConstFoldedKernels() == RET_OK, RET_ERROR, "FindConstFoldedKernels failed.");
+  status = texport.ExportNet(const_fold_kernels_, tensors_, const_output_tensors_, eval_output_tensor_names_,
+                             model_.get(), QT_NONE);
+  TRAIN_SESSION_CHECK_FALSE_MSG(status != RET_OK, status, "Fail to export Network.");
+  status = texport.TrainModelDrop();
+  TRAIN_SESSION_CHECK_FALSE_MSG(status != RET_OK, status, "TrainModelDrop failed.");
+  status = texport.TrainModelFusion();
+  TRAIN_SESSION_CHECK_FALSE_MSG(status != RET_OK, status, "TrainModelFusion failed.");
+  status = texport.SaveWeightsToFile(enable_fp16, changeable_weights_name);
   if (status != RET_OK) {
     MS_LOG(ERROR) << "failed to save to " << file_name;
     return status;
   }
-  if (orig_train_state) Train();
-  return status;
+  return RET_OK;
 }
+
 std::vector<lite::Tensor *> TrainSession::GetFeatureMaps() const {
   std::vector<lite::Tensor *> features;
   for (auto cur_tensor : this->tensors_) {
@@ -1228,6 +1310,8 @@ std::vector<lite::Tensor *> TrainSession::GetFeatureMaps() const {
   }
   return features;
 }
+
+std::vector<lite::Tensor *> TrainSession::GetTrainableParams() const { return trainable_parameters_; }
 
 int TrainSession::UpdateFeatureMaps(const std::vector<lite::Tensor *> &features_map) {
   for (auto feature : features_map) {
@@ -1308,6 +1392,59 @@ size_t TrainSession::GetInplaceTensorOffset(kernel::KernelExec *kernel,
   auto tensor = kernel->in_tensors().at(input_idx);
   ref_count->at(tensor) = ref_count->at(tensor) + 1;
   return offset_map.at(tensor);
+}
+
+lite::Tensor *TrainSession::FindObfTensor() {
+  for (auto node : model_->graph_.all_nodes_) {
+    if (node->name_.find(kObfNodeName) != std::string::npos) {
+      auto idx = node->input_indices_[kDataIndex];
+      return tensors_[idx];
+    }
+  }
+  return nullptr;
+}
+
+int TrainSession::ChangeObfWeight(std::string tensor_name, float obf_ratio) {
+  float data[1] = {obf_ratio};
+  auto new_tensor = lite::Tensor::CreateTensor(tensor_name, TypeId::kNumberTypeFloat32, {1, 1}, data, kFloatSize);
+  std::vector<lite::Tensor *> modify_tensors;
+  if (new_tensor == nullptr) {
+    MS_LOG(ERROR) << "Create tensor failed";
+    return RET_ERROR;
+  }
+  modify_tensors.emplace_back(new_tensor);
+  auto ret = this->UpdateWeights(modify_tensors);
+  if (ret != kSuccess) {
+    MS_LOG(ERROR) << "UpdateWeights failed.";
+    return RET_ERROR;
+  }
+  return RET_OK;
+}
+
+float TrainSession::ModelRecoverObfuscate() {
+  float true_obf_ratio = 1.0;
+  auto tensor = FindObfTensor();
+  if (tensor != nullptr) {
+    std::string tensor_name = tensor->tensor_name();
+    true_obf_ratio = *(reinterpret_cast<float *>(tensor->data()));
+    float init_obf_ratio = 1.0;
+    ChangeObfWeight(tensor_name, init_obf_ratio);
+  }
+  return true_obf_ratio;
+}
+
+int TrainSession::ModelDeObfuscate(float obf_ratio) {
+  if (obf_ratio != 0.0) {
+    auto *tensor = FindObfTensor();
+    if (tensor != nullptr) {
+      std::string tensor_name = tensor->tensor_name();
+      return ChangeObfWeight(tensor_name, obf_ratio);
+    }
+    MS_LOG(ERROR) << "Obfuscate tensor is null";
+    return RET_ERROR;
+  }
+  MS_LOG(ERROR) << "Obfuscate value is 0";
+  return RET_ERROR;
 }
 }  // namespace lite
 }  // namespace mindspore

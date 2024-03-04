@@ -24,7 +24,6 @@
 #include <map>
 #include "runtime/hardware/device_context.h"
 #include "runtime/device/memory_manager.h"
-#include "runtime/device/auto_mem_offload.h"
 #include "plugin/device/ascend/hal/device/ascend_kernel_runtime.h"
 #include "plugin/device/ascend/hal/device/ascend_device_address.h"
 #include "plugin/device/ascend/hal/hardware/ascend_collective_comm_lib.h"
@@ -42,7 +41,8 @@ class AscendDeviceResManager : public DeviceResManager {
   void Destroy() override;
 
   // set rt_context_ to this thread to control device
-  bool BindDeviceToCurrentThread() const override;
+  bool BindDeviceToCurrentThread(bool /* force_bind */) const override;
+  void ResetStreamAndCtx() override;
 
   // Relevant function to allocate and free device memory of raw ptr.
   void *AllocateMemory(size_t size) const override;
@@ -82,7 +82,6 @@ class AscendDeviceResManager : public DeviceResManager {
   // Kernel Runtime  --- only for task sink
   AscendKernelRuntime *runtime_instance_{nullptr};
   std::shared_ptr<MemoryManager> mem_manager_{nullptr};
-  std::shared_ptr<MindRTAutoOffloadAdapter> auto_mem_offload_{nullptr};
 };
 }  // namespace ascend
 }  // namespace device

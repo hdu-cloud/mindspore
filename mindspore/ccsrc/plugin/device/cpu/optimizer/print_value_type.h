@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,13 @@
 #define MINDSPORE_CCSRC_PLUGIN_DEVICE_CPU_OPTIMIZER_PRINT_VALUE_TYPE_H_
 
 #include <string>
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/optimizer.h"
 
 namespace mindspore {
 namespace opt {
 class PrintValueType : public Pass {
  public:
-  explicit PrintValueType(const std::string &name) : Pass("print_value_type") {}
+  explicit PrintValueType(const std::string &) : Pass("print_value_type") {}
   ~PrintValueType() override = default;
   bool Run(const FuncGraphPtr &graph) override;
 };

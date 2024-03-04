@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,14 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "debug/data_dump/dump_json_parser.h"
+#include "include/backend/debug/data_dump/dump_json_parser.h"
 #include <fstream>
+#include <algorithm>
 #include "utils/log_adapter.h"
 #include "include/common/debug/common.h"
 #include "debug/utils.h"
+#include "ops/ascend_op_name.h"
 #include "utils/ms_context.h"
 #include "utils/convert_utils_base.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "debug/data_dump/npy_header.h"
 #include "include/common/debug/anf_dump_utils.h"
@@ -29,7 +31,6 @@
 
 namespace {
 constexpr auto kCommonDumpSettings = "common_dump_settings";
-constexpr auto kAsyncDumpSettings = "async_dump_settings";
 constexpr auto kE2eDumpSettings = "e2e_dump_settings";
 constexpr auto kDumpMode = "dump_mode";
 constexpr auto kPath = "path";
@@ -88,10 +89,46 @@ bool DumpJsonParser::IsDumpEnabled() {
 
   auto context = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(context);
-  if (context->get_param<int>(MS_CTX_EXECUTION_MODE) == kPynativeMode) {
-    MS_LOG(EXCEPTION) << "Dump is disabled in PyNative mode. Please set mode to GRAPH_MODE in context.";
+  if (context->get_param<int>(MS_CTX_EXECUTION_MODE) == kPynativeMode &&
+      context->get_param<std::string>(MS_CTX_DEVICE_TARGET) != kAscendDevice) {
+    MS_LOG(EXCEPTION) << "In GPU or CPU, Dump is disabled in PyNative mode. Please set mode to GRAPH_MODE in context.";
+  }
+  if (context->get_param<int>(MS_CTX_EXECUTION_MODE) == kPynativeMode &&
+      context->get_param<std::string>(MS_CTX_DEVICE_TARGET) == kAscendDevice && e2e_dump_enabled_) {
+    MS_LOG(EXCEPTION) << "Dump is only support asynchronous for Ascend in PyNative mode.";
   }
   return true;
+}
+
+void DumpJsonParser::PyNativeModeCheck() {
+  auto context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  if (context->get_param<int>(MS_CTX_EXECUTION_MODE) == kPynativeMode &&
+      op_debug_mode_ == static_cast<uint32_t>(DUMP_ALL)) {
+    MS_LOG(EXCEPTION) << "Dump is not supported in PyNative mode, it only support overflow check. Please set "
+                         "op_debug_mode to 1 or 2 or 3 in PyNative mode.";
+  }
+  if (context->get_param<int>(MS_CTX_EXECUTION_MODE) == kPynativeMode &&
+      dump_mode_ == static_cast<uint32_t>(DUMP_KERNELS_WITH_FLAG)) {
+    MS_LOG(EXCEPTION) << "Cell dump is only supported in GRAPH mode. Please set dump_mode to 0 or 1 in PyNative mode.";
+  }
+  if (context->get_param<int>(MS_CTX_EXECUTION_MODE) == kPynativeMode && iteration_ != "all") {
+    MS_LOG(EXCEPTION) << "Iteration is only supported 'all' in PyNative mode, Please set iteration value to 'all'.";
+  }
+}
+
+void DumpJsonParser::CheckGEBackend() {
+  auto context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  std::string backend = context->backend_policy();
+  if (backend == "ge") {
+    if (e2e_dump_enabled()) {
+      MS_LOG(EXCEPTION) << "E2e dump is not supported on 1980B. Please use async dump.";
+    }
+    if (dump_mode_ == static_cast<uint32_t>(DUMP_KERNELS_WITH_FLAG)) {
+      MS_LOG(EXCEPTION) << "Cell dump is not supported on 1980B. Please set dump_mode to 0 or 1.";
+    }
+  }
 }
 
 /*
@@ -139,6 +176,8 @@ void DumpJsonParser::Parse() {
 
   ParseE2eDumpSetting(j);
   ParseCommonDumpSetting(j);
+  PyNativeModeCheck();
+  CheckGEBackend();
   JudgeDumpEnabled();
 }
 
@@ -175,7 +214,11 @@ void DumpJsonParser::CopyDumpJsonToDir(uint32_t rank_id) {
     if (!realpath.has_value()) {
       MS_LOG(ERROR) << "Get real path failed in CopyDumpJsonToDir.";
     } else {
-      WriteJsonFile(realpath.value(), json_file);
+      if (!Common::FileExists(realpath.value())) {
+        WriteJsonFile(realpath.value(), json_file);
+      } else {
+        MS_LOG(WARNING) << "The file: " << realpath.value() << " is already exist, skip copy it.";
+      }
     }
   }
 }
@@ -222,6 +265,10 @@ void DumpJsonParser::CopyMSCfgJsonToDir(uint32_t rank_id) {
   if (!realpath.has_value()) {
     MS_LOG(ERROR) << "Get real path failed in CopyMSConfigJsonToDir.";
   } else {
+    if (Common::FileExists(realpath.value())) {
+      MS_LOG(WARNING) << "The file: " << realpath.value() << " is already exist, skip copy it.";
+      return;
+    }
     nlohmann::json ms_info;
     auto context = MsContext::GetInstance();
     MS_EXCEPTION_IF_NULL(context);
@@ -287,7 +334,7 @@ bool DumpJsonParser::DumpToFile(const std::string &filename, const void *data, s
     fout << mapped_name_str << "," << origin_name_str << "\n";
     fout.close();
     ChangeFileMode(mapping_file_str, S_IRUSR);
-    origin_file_path = prefix_path.value() + "/" + mapped_name_str;
+    final_file_path = prefix_path.value() + "/" + mapped_name_str;
   }
   auto file_path = Common::CreatePrefixPath(final_file_path);
   if (!file_path.has_value()) {
@@ -574,12 +621,26 @@ void DumpJsonParser::ParseKernels(const nlohmann::json &content) {
     MS_LOG(INFO) << "Dump config field <" << kKernels << "> is not used as the dump mode is not 1.";
     return;
   }
+  auto context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  std::string backend = context->backend_policy();
   for (const auto &kernel : content) {
+    bool ret;
     auto kernel_str = kernel.dump();
     kernel_str.erase(std::remove(kernel_str.begin(), kernel_str.end(), '\"'), kernel_str.end());
     MS_LOG(INFO) << "Need dump kernel:" << kernel_str;
-    auto ret = kernels_.try_emplace({kernel_str, 0});
-    if (!ret.second) {
+    if (static_cast<int>(kernel_str.rfind('/')) == -1 && static_cast<int>(kernel_str.rfind("-op")) == -1) {
+      if (backend == "ge") {
+        MS_LOG(WARNING) << "It is not supported to specify operator types on 1980B backend. " << kernel_str
+                        << " maybe not take effect.";
+        dump_layer_ += kernel_str + " ";
+      }
+      ret = kernel_types_.try_emplace({kernel_str, 0}).second;
+    } else {
+      ret = kernels_.try_emplace({kernel_str, 0}).second;
+      dump_layer_ += kernel_str + " ";
+    }
+    if (!ret) {
       MS_LOG(WARNING) << "Duplicate dump kernel name:" << kernel_str;
     }
   }
@@ -685,6 +746,7 @@ void DumpJsonParser::JudgeDumpEnabled() {
  */
 bool DumpJsonParser::NeedDump(const std::string &op_full_name) const {
   bool need_dump = false;
+
   switch (dump_mode_) {
     case DUMP_ALL:
       need_dump = true;
@@ -692,6 +754,22 @@ bool DumpJsonParser::NeedDump(const std::string &op_full_name) const {
     case DUMP_KERNEL:
       if (kernels_.find(op_full_name) != kernels_.end()) {
         need_dump = true;
+        break;
+      }
+      for (const auto &iter : kernel_types_) {
+        int start_index = static_cast<int>(op_full_name.rfind('/')) + 1;
+        int end_index = static_cast<int>(op_full_name.rfind('-'));
+        if (end_index == -1) {
+          end_index = static_cast<int>(op_full_name.length());
+        }
+        std::string op_name = op_full_name.substr(start_index, end_index - start_index);
+        transform(op_name.begin(), op_name.end(), op_name.begin(), ::tolower);
+        std::string kernel_type(iter.first);
+        transform(kernel_type.begin(), kernel_type.end(), kernel_type.begin(), ::tolower);
+        if (op_name.find(kernel_type) != std::string::npos) {
+          need_dump = true;
+          break;
+        }
       }
       break;
     case DUMP_KERNELS_WITH_FLAG:
@@ -803,11 +881,11 @@ void DumpJsonParser::UpdateNeedDumpKernels(const session::KernelGraph &kernel_gr
   GetCellDumpFlag(kernel_graph);
 
   MS_LOG(INFO) << "Update async dump kernel list for hccl";
-  std::map<std::string, uint32_t> update_kernels;
   for (const auto &kernel : kernel_graph.execution_order()) {
     MS_EXCEPTION_IF_NULL(kernel);
     if (AnfAlgo::GetKernelType(kernel) == HCCL_KERNEL &&
-        DumpJsonParser::GetInstance().NeedDump(GetKernelNodeName(kernel))) {
+        DumpJsonParser::GetInstance().NeedDump(GetKernelNodeName(kernel)) &&
+        DumpJsonParser::GetInstance().InputNeedDump()) {
       auto input_size = common::AnfAlgo::GetInputTensorNum(kernel);
       for (size_t i = 0; i < input_size; ++i) {
         auto input_with_index = common::AnfAlgo::GetPrevNodeOutput(kernel, i);
@@ -816,12 +894,21 @@ void DumpJsonParser::UpdateNeedDumpKernels(const session::KernelGraph &kernel_gr
         if (input->isa<CNode>()) {
           MS_LOG(INFO) << "[AsyncDump] Match Hccl Node:" << GetKernelNodeName(kernel)
                        << " Input:" << GetKernelNodeName(input);
-          update_kernels.try_emplace(GetKernelNodeName(input), 0);
-          cell_dump_kernels_.push_back(GetKernelNodeName(input));
+          hccl_input_kernels_.insert(GetKernelNodeName(input));
         }
       }
     }
   }
-  kernels_.insert(update_kernels.begin(), update_kernels.end());
+}
+
+bool DumpJsonParser::IsHCCLKernelInput(const std::string &kernel_name) const {
+  if (hccl_input_kernels_.empty()) {
+    return false;
+  }
+  auto iter = std::find(hccl_input_kernels_.begin(), hccl_input_kernels_.end(), kernel_name);
+  if (iter != hccl_input_kernels_.end()) {
+    return true;
+  }
+  return false;
 }
 }  // namespace mindspore

@@ -42,7 +42,8 @@ class RecvActor : public RpcActor {
         is_context_valid_(false),
         recv_data_(nullptr),
         ip_(""),
-        port_(0) {}
+        port_(0),
+        rdma_buf_(nullptr) {}
   ~RecvActor() override;
 
   // Besides set the op context, this method also notify the message handler to 'RunOpInterProcessData'.
@@ -52,12 +53,18 @@ class RecvActor : public RpcActor {
   // it should be blocked until 'SetOpcontext' is called.
   void ResetOpcontext() override;
 
+  // Update the context status after loop_count_actor is launched.
+  void UpdateStatus() override;
+
   // Set recv actor's source peer info, in another word, recv actor's input.
   void SetRouteInfo(uint32_t src_rank, const std::string &src_role, const std::string &recv_src_node_name,
                     const std::string &recv_dst_node_name) override;
 
   // Start recv actor server and register this server address to actor route table in scheduler by proxy.
   bool StartServer();
+
+  // Finalize rpc server.
+  void Clear() override;
 
   void StopRpcAtException() override;
 
@@ -96,7 +103,7 @@ class RecvActor : public RpcActor {
    */
   void *AllocateMemByDeviceRes(size_t size);
 
-  std::unique_ptr<TCPServer> server_;
+  std::unique_ptr<RPCServerBase> server_;
 
   // The variables used to ensure thread-safe of op context visited by recv actor.
   bool is_context_valid_;
@@ -123,12 +130,15 @@ class RecvActor : public RpcActor {
   // it, e.g., infer shape for RpcRecv kernel and call Resize().
   void PreprocessRemoteInput(const MessageBase *const msg, bool *need_finalize);
 
-  // The message callback of the tcp server.
+  // The message callback of the rpc server.
   MessageBase *HandleMessage(MessageBase *const msg);
 
   // The network address of this recv actor. It's generated automatically by rpc module.
   std::string ip_;
   uint32_t port_;
+
+  // Data returned by URPC. It should be released by RecvActor.
+  void *rdma_buf_;
 };
 
 using RecvActorPtr = std::shared_ptr<RecvActor>;

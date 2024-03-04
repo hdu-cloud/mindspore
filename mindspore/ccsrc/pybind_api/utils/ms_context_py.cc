@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -72,7 +72,7 @@ py::object MsCtxGetParameter(const std::shared_ptr<MsContext> &ctx, MsCtxParam p
 }  // namespace
 
 // Note: exported python enum variables beginning with '_' are for internal use
-void RegMsContext(py::module *m) {
+void RegMsContext(const py::module *m) {
   (void)py::enum_<MsCtxParam>(*m, "ms_ctx_param", py::arithmetic())
     .value("check_bprop", MsCtxParam::MS_CTX_CHECK_BPROP_FLAG)
     .value("enable_dump", MsCtxParam::MS_CTX_ENABLE_DUMP)
@@ -92,11 +92,21 @@ void RegMsContext(py::module *m) {
     .value("print_file_path", MsCtxParam::MS_CTX_PRINT_FILE_PATH)
     .value("profiling_options", MsCtxParam::MS_CTX_PROFILING_OPTIONS)
     .value("save_dump_path", MsCtxParam::MS_CTX_SAVE_DUMP_PATH)
+    .value("deterministic", MsCtxParam::MS_CTX_DETERMINISTIC)
+    .value("precision_mode", MsCtxParam::MS_CTX_PRECISION_MODE)
+    .value("jit_compile", MsCtxParam::MS_CTX_ENABLE_JIT_COMPILE)
+    .value("atomic_clean_policy", MsCtxParam::MS_CTX_ATOMIC_CLEAN_POLICY)
+    .value("matmul_allow_hf32", MsCtxParam::MS_CTX_MATMUL_ALLOW_HF32)
+    .value("conv_allow_hf32", MsCtxParam::MS_CTX_CONV_ALLOW_HF32)
+    .value("op_precision_mode", MsCtxParam::MS_CTX_OP_PRECISION_MODE)
     .value("save_graphs_path", MsCtxParam::MS_CTX_SAVE_GRAPHS_PATH)
+    .value("enable_compile_cache", MsCtxParam::MS_CTX_ENABLE_COMPILE_CACHE)
     .value("compile_cache_path", MsCtxParam::MS_CTX_COMPILE_CACHE_PATH)
     .value("variable_memory_max_size", MsCtxParam::MS_CTX_VARIABLE_MEMORY_MAX_SIZE)
     .value("device_id", MsCtxParam::MS_CTX_DEVICE_ID)
     .value("auto_tune_mode", MsCtxParam::MS_CTX_TUNE_MODE)
+    .value("aoe_tune_mode", MsCtxParam::MS_CTX_AOE_TUNE_MODE)
+    .value("aoe_job_type", MsCtxParam::MS_CTX_AOE_JOB_TYPE)
     .value("max_call_depth", MsCtxParam::MS_CTX_MAX_CALL_DEPTH)
     .value("env_config_path", MsCtxParam::MS_CTX_ENV_CONFIG_PATH)
     .value("graph_kernel_flags", MsCtxParam::MS_CTX_GRAPH_KERNEL_FLAGS)
@@ -106,13 +116,26 @@ void RegMsContext(py::module *m) {
     .value("memory_offload", MsCtxParam::MS_CTX_ENABLE_MEM_OFFLOAD)
     .value("memory_optimize_level", MsCtxParam::MS_CTX_MEMORY_OPTIMIZE_LEVEL)
     .value("op_timeout", MsCtxParam::MS_CTX_OP_TIMEOUT)
-    .value("save_graph_dot", MsCtxParam::MS_CTX_SAVE_GRAPH_DOT);
+    .value("jit_syntax_level", MsCtxParam::MS_CTX_JIT_SYNTAX_LEVEL)
+    .value("conv_fprop_algo", MsCtxParam::MS_CTX_CONV_FPROP_ALGO)
+    .value("conv_dgrad_algo", MsCtxParam::MS_CTX_CONV_DGRAD_ALGO)
+    .value("conv_wgrad_algo", MsCtxParam::MS_CTX_CONV_WGRAD_ALGO)
+    .value("conv_allow_tf32", MsCtxParam::MS_CTX_CONV_ALLOW_TF32)
+    .value("recompute_comm_overlap", MsCtxParam::MS_CTX_RECOMPUTE_COMM_OVERLAP)
+    .value("matmul_grad_comm_overlap", MsCtxParam::MS_CTX_GRAD_COMM_OVERLAP)
+    .value("matmul_allow_tf32", MsCtxParam::MS_CTX_MATMUL_ALLOW_TF32)
+    .value("enable_task_opt", MsCtxParam::MS_CTX_ENABLE_TASK_OPT)
+    .value("enable_grad_comm_opt", MsCtxParam::MS_CTX_ENABLE_GRAD_COMM_OPT)
+    .value("interleaved_matmul_comm", MsCtxParam::MS_CTX_INTERLEAVED_MATMUL_COMM)
+    .value("interleaved_layernorm_comm", MsCtxParam::MS_CTX_INTERLEAVED_LAYERNORM_COMM);
   (void)py::class_<mindspore::MsContext, std::shared_ptr<mindspore::MsContext>>(*m, "MSContext")
     .def_static("get_instance", &mindspore::MsContext::GetInstance, "Get ms context instance.")
     .def("get_param", &mindspore::MsCtxGetParameter, "Get value of specified parameter.")
     .def("set_param", &mindspore::MsCtxSetParameter, "Set value for specified parameter.")
+    .def("set_device_target_inner", &mindspore::MsContext::SetDeviceTargetFromInner, "Set device target inner.")
     .def("get_backend_policy", &mindspore::MsContext::backend_policy, "Get backend policy.")
     .def("set_backend_policy", &mindspore::MsContext::set_backend_policy, "Set backend policy.")
+    .def("get_ascend_soc_version", &mindspore::MsContext::ascend_soc_version, "Get ascend soc version.")
     .def("enable_dump_ir", &mindspore::MsContext::enable_dump_ir, "Get the ENABLE_DUMP_IR.")
     .def("is_ascend_plugin_loaded", &mindspore::MsContext::IsAscendPluginLoaded,
          "Get the status that has ascend plugin been loaded.")

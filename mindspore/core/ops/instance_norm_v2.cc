@@ -15,17 +15,32 @@
  */
 
 #include "ops/instance_norm_v2.h"
-#include <algorithm>
+
+#include <map>
 #include <memory>
-#include <set>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
-#include "ops/op_utils.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
 #include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -51,12 +66,14 @@ void InstanceNormV2InputShapeCheck(const PrimitivePtr &primitive, const std::vec
   ShapeVector check_shape = x_shape;
   int64_t image_size = 0;
   constexpr int64_t kDimSizeOne = 1;
-  if (x_shape.size() == kDim4) {
+  size_t dim4 = static_cast<size_t>(kDim4);
+  size_t dim5 = static_cast<size_t>(kDim5);
+  if (x_shape.size() == dim4) {
     // data format NCHW
     check_shape[kFormatNCHWIndexH] = kDimSizeOne;
     check_shape[kFormatNCHWIndexW] = kDimSizeOne;
     image_size = x_shape[kFormatNCHWIndexH] * x_shape[kFormatNCHWIndexW];
-  } else if (x_shape.size() == kDim5) {
+  } else if (x_shape.size() == dim5) {
     // data format NC1HWC0
     check_shape[kFormatNC1HWC0IndexH] = kDimSizeOne;
     check_shape[kFormatNC1HWC0IndexW] = kDimSizeOne;
@@ -141,6 +158,24 @@ AbstractBasePtr InstanceNormV2Infer(const abstract::AnalysisEnginePtr &, const P
   return abstract::MakeAbstract(shape, type);
 }
 MIND_API_OPERATOR_IMPL(InstanceNormV2, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(InstanceNormV2, prim::kPrimInstanceNormV2, InstanceNormV2Infer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGInstanceNormV2Infer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return InstanceNormV2InferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return InstanceNormV2InferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return InstanceNormV2Infer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(InstanceNormV2, prim::kPrimInstanceNormV2, AGInstanceNormV2Infer, false);
 }  // namespace ops
 }  // namespace mindspore

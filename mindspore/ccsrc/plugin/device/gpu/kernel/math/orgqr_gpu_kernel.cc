@@ -16,20 +16,22 @@
 
 #include "plugin/device/gpu/kernel/math/orgqr_gpu_kernel.h"
 #include <complex>
-#include <vector>
 #include <map>
 #include <utility>
+#include <vector>
 #include "abstract/utils.h"
-#include "kernel/common_utils.h"
 #include "include/common/utils/convert_utils.h"
+#include "kernel/common_utils.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/complex.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/real_to_complex_impl.cuh"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_public/cusolver.h"
 
 namespace mindspore {
 namespace kernel {
 bool OrgqrGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                              const std::vector<KernelTensorPtr> &outputs) {
   auto kernel_ptr = std::dynamic_pointer_cast<ops::Orgqr>(base_operator);
+  MS_EXCEPTION_IF_NULL(kernel_ptr);
   kernel_name_ = kernel_ptr->name();
   auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
   auto [is_match, index] = MatchKernelAttr(kernel_attr, GetOpSupport());
@@ -130,60 +132,21 @@ void OrgqrGpuKernelMod::InitSizeLists() {
   output_size_list_.push_back(batch_size_ * m_ * n_ * sizeof(T));
   workspace_size_list_.push_back(batch_size_ * sizeof(int));
   // for transpose input x and output y
-  workspace_size_list_.push_back(input_x_dims_ * sizeof(size_t));
-  workspace_size_list_.push_back(input_x_dims_ * sizeof(size_t));
   workspace_size_list_.push_back(batch_size_ * m_ * n_ * sizeof(T));
   workspace_size_list_.push_back(batch_size_ * m_ * n_ * sizeof(T));
-  workspace_size_list_.push_back(input_x_dims_ * sizeof(size_t));
 }
 
 template <typename T>
 void OrgqrGpuKernelMod::RunOrgqr(const size_t m, const size_t n, const size_t k, T *d_a, T *tau, int *dev_info,
                                  T *output_y) {
   int lwork = 0;
-  if constexpr (std::is_same_v<T, float>) {
-    CHECK_CUSOLVER_RET_WITH_EXCEPT_NOTRACE(cusolverDnSorgqr_bufferSize(handle_, m, n, k, d_a, m, tau, &lwork),
-                                           "cusolver query orgqr work size failed.");
-  } else if constexpr (std::is_same_v<T, double>) {
-    CHECK_CUSOLVER_RET_WITH_EXCEPT_NOTRACE(cusolverDnDorgqr_bufferSize(handle_, m, n, k, d_a, m, tau, &lwork),
-                                           "cusolver query orgqr work size failed.");
-  } else if constexpr (std::is_same_v<T, Complex<float>>) {
-    CHECK_CUSOLVER_RET_WITH_EXCEPT_NOTRACE(
-      cusolverDnCungqr_bufferSize(handle_, m, n, k, reinterpret_cast<cuComplex *>(d_a), m,
-                                  reinterpret_cast<cuComplex *>(tau), &lwork),
-      "cusolver query orgqr work size failed.");
-  } else if constexpr (std::is_same_v<T, Complex<double>>) {
-    CHECK_CUSOLVER_RET_WITH_EXCEPT_NOTRACE(
-      cusolverDnZungqr_bufferSize(handle_, m, n, k, reinterpret_cast<cuDoubleComplex *>(d_a), m,
-                                  reinterpret_cast<cuDoubleComplex *>(tau), &lwork),
-      "cusolver query orgqr work size failed.");
-  }
+  cusolver::orgqr_buffersize<T>(handle_, m, n, k, d_a, m, tau, &lwork);
 
   void *d_work = device::gpu::GPUMemoryAllocator::GetInstance().AllocTensorMem(sizeof(T) * lwork);
   if (d_work == nullptr) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', the memory of d_work alloc failed.";
   }
-  if constexpr (std::is_same_v<T, float>) {
-    CHECK_CUSOLVER_RET_WITH_EXCEPT_NOTRACE(
-      cusolverDnSorgqr(handle_, m, n, k, d_a, m, tau, static_cast<T *>(d_work), lwork, dev_info),
-      "cusolver orgqr failed.");
-  } else if constexpr (std::is_same_v<T, double>) {
-    CHECK_CUSOLVER_RET_WITH_EXCEPT_NOTRACE(
-      cusolverDnDorgqr(handle_, m, n, k, d_a, m, tau, static_cast<T *>(d_work), lwork, dev_info),
-      "cusolver orgqr failed.");
-  } else if constexpr (std::is_same_v<T, Complex<float>>) {
-    CHECK_CUSOLVER_RET_WITH_EXCEPT_NOTRACE(
-      cusolverDnCungqr(handle_, m, n, k, reinterpret_cast<cuComplex *>(d_a), m, reinterpret_cast<cuComplex *>(tau),
-                       reinterpret_cast<cuComplex *>(d_work), lwork, dev_info),
-      "cusolver orgqr failed.");
-  } else if constexpr (std::is_same_v<T, Complex<double>>) {
-    CHECK_CUSOLVER_RET_WITH_EXCEPT_NOTRACE(
-      cusolverDnZungqr(handle_, m, n, k, reinterpret_cast<cuDoubleComplex *>(d_a), m,
-                       reinterpret_cast<cuDoubleComplex *>(tau), reinterpret_cast<cuDoubleComplex *>(d_work), lwork,
-                       dev_info),
-      "cusolver orgqr failed.");
-  }
-
+  cusolver::orgqr<T>(handle_, m, n, k, d_a, m, tau, static_cast<T *>(d_work), lwork, dev_info);
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemcpyAsync(output_y, d_a, sizeof(T) * m_ * n_, cudaMemcpyDeviceToDevice,
                                                      reinterpret_cast<cudaStream_t>(cuda_stream_)),
                                      "cuda memcpy output A failed!");
@@ -195,7 +158,11 @@ void OrgqrGpuKernelMod::CheckResult(int *dev_info) {
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(info_gpu.data(), dev_info, sizeof(int) * batch_size_, cudaMemcpyDeviceToHost,
                     reinterpret_cast<cudaStream_t>(cuda_stream_)),
-    "Copy device result failed");
+    "For 'Orgqr', Copy device result failed");
+  if (cudaStreamQuery(reinterpret_cast<cudaStream_t>(cuda_stream_)) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(cuda_stream_)),
+                                       "cuda Stream Sync Failed.");
+  }
   for (size_t i = 0; i < info_gpu.size(); ++i) {
     if (info_gpu[i] != 0) {
       MS_LOG(INFO) << "For '" << kernel_name_ << "', the compute result has wrong value. The " << -info_gpu[i]
@@ -226,31 +193,35 @@ bool OrgqrGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, cons
   T *input_x = GetDeviceAddress<T>(inputs, kIndex0);
   T *input_tau = GetDeviceAddress<T>(inputs, kIndex1);
   T *output_y = GetDeviceAddress<T>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(input_x);
+  MS_EXCEPTION_IF_NULL(input_tau);
+  MS_EXCEPTION_IF_NULL(output_y);
 
   int *dev_info = GetDeviceAddress<int>(workspace, kIndex0);
-  size_t *d_trans_input_x_shape = GetDeviceAddress<size_t>(workspace, kIndex1);
-  size_t *d_trans_input_x_axis = GetDeviceAddress<size_t>(workspace, kIndex2);
-  T *d_input_x = GetDeviceAddress<T>(workspace, kIndex3);
-  T *d_output_y = GetDeviceAddress<T>(workspace, kIndex4);
-  size_t *d_trans_output_y_shape = GetDeviceAddress<size_t>(workspace, kIndex5);
+  T *d_input_x = GetDeviceAddress<T>(workspace, kIndex1);
+  T *d_output_y = GetDeviceAddress<T>(workspace, kIndex2);
+  MS_EXCEPTION_IF_NULL(dev_info);
+  MS_EXCEPTION_IF_NULL(d_input_x);
+  MS_EXCEPTION_IF_NULL(d_output_y);
 
-  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-    cudaMemcpyAsync(d_trans_input_x_axis, transpose_input_x_axis_, sizeof(size_t) * input_x_dims_,
-                    cudaMemcpyHostToDevice, reinterpret_cast<cudaStream_t>(cuda_stream_)),
-    "cuda memcpy failed!");
+  TransposeInfo x_info;
+  TransposeInfo y_info;
+  for (size_t i = 0; i < input_x_dims_; ++i) {
+    x_info.input_shape.push_back(static_cast<int64_t>(transpose_input_x_shape_[i]));
+    x_info.perm.push_back(static_cast<int32_t>(transpose_input_x_axis_[i]));
+    y_info.input_shape.push_back(static_cast<int64_t>(transpose_output_y_shape_[i]));
+    y_info.perm.push_back(static_cast<int32_t>(transpose_input_x_axis_[i]));
+  }
 
-  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-    cudaMemcpyAsync(d_trans_input_x_shape, transpose_input_x_shape_, sizeof(size_t) * input_x_dims_,
-                    cudaMemcpyHostToDevice, reinterpret_cast<cudaStream_t>(cuda_stream_)),
-    "cuda memcpy failed!");
-  CalTranspose(batch_size_ * m_ * n_, input_x, d_trans_input_x_shape, d_trans_input_x_axis, input_x_dims_, d_input_x,
-               reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto s1 = CalTranspose<T, true>(batch_size_ * m_ * n_, input_x, x_info, d_input_x,
+                                  reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(s1, "Transpose called by " + kernel_name_);
 
   LaunchOrgqr(d_input_x, input_tau, d_output_y, dev_info);
-  cudaMemcpyAsync(d_trans_output_y_shape, transpose_output_y_shape_, sizeof(size_t) * input_x_dims_,
-                  cudaMemcpyHostToDevice, reinterpret_cast<cudaStream_t>(cuda_stream_));
-  CalTranspose(batch_size_ * m_ * n_, d_output_y, d_trans_output_y_shape, d_trans_input_x_axis, input_x_dims_, output_y,
-               reinterpret_cast<cudaStream_t>(cuda_stream_));
+
+  auto s2 = CalTranspose<T, true>(batch_size_ * m_ * n_, d_output_y, y_info, output_y,
+                                  reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(s2, "Transpose called by " + kernel_name_);
 
   return true;
 }

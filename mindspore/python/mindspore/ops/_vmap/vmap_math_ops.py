@@ -19,13 +19,13 @@ from __future__ import absolute_import
 import mindspore.numpy as mnp
 from mindspore.ops import operations as P
 from mindspore.ops import functional as F
-from mindspore.ops import constexpr
+from mindspore.ops.primitive import _primexpr
 from mindspore.common import Tensor
 from mindspore.ops.operations import math_ops
 from mindspore.ops.operations import linalg_ops
 from mindspore.ops.operations import _inner_ops
 from mindspore.ops.primitive import Primitive
-from mindspore.ops.composite import _VmapGeneralRule
+from mindspore.ops.function import _VmapGeneralRule
 from mindspore.ops._vmap.vmap_base import vmap_rules_getters, vmap_general_preprocess, get_assign_vmap_rule, \
     get_unop_vmap_rule, _raise_value_error, _bdim_at_front, _broadcast_by_axis, _handle_broadcasting, \
     _vmap_clone_prim, _bdim_at_any, _get_reduce_batch_axis, _get_reduce_out_dim
@@ -33,7 +33,7 @@ from mindspore.ops.operations.math_ops import Bernoulli, BesselI0, BesselI1, Bes
     BesselK0, BesselK0e, BesselY0, BesselY1, BesselK1, BesselK1e, Median
 
 
-@constexpr
+@_primexpr
 def _broadcast_shape(nd, x_ndim, x_shape):
     return x_shape + (1,) * (nd - x_ndim)
 
@@ -66,6 +66,7 @@ def _broadcast_shape(nd, x_ndim, x_shape):
 @vmap_rules_getters.register(P.ApproximateEqual)
 @vmap_rules_getters.register(P.TruncateDiv)
 @vmap_rules_getters.register(P.TruncateMod)
+
 def get_broadcast_binary_op_vmap_rule(prim, axis_size):
     """VmapRule for binary operations with broadcasting, such as `Add` and `Sub`."""
 
@@ -111,6 +112,9 @@ def get_addcxxx_vmap_rule(prim, axis_size):
         x1, x1_dim = x1_bdim
         x2, x2_dim = x2_bdim
         value, value_dim = value_bdim
+        if input_data_dim == x1_dim and x1_dim == x2_dim and x2_dim == value_dim:
+            out = prim(input_data, x1, x2, value)
+            return out, input_data_dim
 
         input_data = _bdim_at_front(input_data, input_data_dim, axis_size)
         x1 = _bdim_at_front(x1, x1_dim, axis_size)
@@ -213,8 +217,9 @@ def get_lerp_vamp_rule(prim, axis_size):
         # Both broadcast end and weight to start.
         else:
             weight_shape = F.shape(weight)
-            if (start_dim == end_dim and start_dim == weight_dim) and (
-                    start_shape == end_shape and start_shape == weight_shape):
+            is_dim_ok = start_dim == end_dim and start_dim == weight_dim
+            is_shape_ok = start_shape == end_shape and start_shape == weight_shape
+            if is_dim_ok and is_shape_ok:
                 out = prim(start, end, weight)
                 return out, start_dim
             start, end = broadcast_a_b_shape(start_bdim, end_bdim)
@@ -433,7 +438,7 @@ def get_median_vmap_rule(prim, axis_size):
     axis = prim.axis
     keep_dims = prim.keep_dims
 
-    @constexpr
+    @_primexpr
     def trans_axis(axis, rank, dim, keep_dims):
         if axis < 0:
             axis += rank - 1
@@ -461,7 +466,7 @@ def get_index_add_vmap_rule(prim, axis_size):
     """VmapRule for IndexAdd."""
     axis = prim.axis
 
-    @constexpr
+    @_primexpr
     def _get_index_add_batch_axis(axis, x_dim, x_ndim):
         """get batch_axis for IndexAdd."""
         # case1: batch not exists
@@ -800,6 +805,44 @@ def get_square_sum_all_vmap_rule(prim, axis_size):
     return vmap_rule
 
 
+@vmap_rules_getters.register(math_ops.FFTWithSize)
+def get_fft_with_size_vmap_rule(prim, axis_size):
+    """VmapRule for `FFTWithSize` operation"""
+    if isinstance(prim, str):
+        prim_name = prim
+        prim = Primitive(prim)
+        signal_ndim = 1
+        inverse = False
+        real = False
+        norm = "backward"
+        oneside = True
+        signal_sizes = ()
+    else:
+        prim_name = prim.name
+        signal_ndim = prim.signal_ndim
+        inverse = prim.inverse
+        real = prim.real
+        norm = prim.norm
+        oneside = prim.oneside
+        signal_sizes = prim.signal_sizes
+
+    fft = math_ops.FFTWithSize(signal_ndim, inverse, real, norm, oneside, signal_sizes)
+
+    def vmap_rule(x_bdim):
+        is_all_none, result = vmap_general_preprocess(prim, x_bdim)
+        if is_all_none:
+            return result
+        x, x_dim = x_bdim
+        x_ndim = F.rank(x)
+        if x_dim < 0 or x_dim >= x_ndim - signal_ndim:
+            _raise_value_error("The source axi of `x` in `{} must be`in range of ({} {}), "
+                               "but got {}.".format(prim_name, 0, x_ndim - signal_ndim, x_dim))
+        out = fft(x)
+        return (out, x_dim)
+
+    return vmap_rule
+
+
 get_assign_vmap_rule = vmap_rules_getters.register(P.AssignAdd)(get_assign_vmap_rule)
 get_assign_vmap_rule = vmap_rules_getters.register(P.AssignSub)(get_assign_vmap_rule)
 
@@ -859,3 +902,4 @@ get_unop_vmap_rule = vmap_rules_getters.register(BesselK1e)(get_unop_vmap_rule)
 get_unop_vmap_rule = vmap_rules_getters.register(P.Trunc)(get_unop_vmap_rule)
 get_unop_vmap_rule = vmap_rules_getters.register(P.PopulationCount)(get_unop_vmap_rule)
 get_unop_vmap_rule = vmap_rules_getters.register(P.Square)(get_unop_vmap_rule)
+get_unop_vmap_rule = vmap_rules_getters.register(P.Eps)(get_unop_vmap_rule)

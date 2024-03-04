@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,9 @@
 #include <vector>
 #include <memory>
 
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "mindspore/core/ops/image_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
@@ -48,13 +50,17 @@ const AnfNodePtr ConvertDataTypeForCNodeInput(const AnfNodePtr &node, size_t inp
     return nullptr;
   } else if (infer_type == src_type) {
     // Create cast primitive.
+    MS_EXCEPTION_IF_NULL(prim::kPrimCast);
     PrimitivePtr cast_prim = std::make_shared<Primitive>(prim::kPrimCast->name());
+    MS_EXCEPTION_IF_NULL(cast_prim);
     (void)cast_prim->AddAttr("dst_type", TypeIdToType(dest_type));
     (void)cast_prim->AddAttr("DstT", TypeIdToType(dest_type));
     (void)cast_prim->AddAttr("SrcT", TypeIdToType(src_type));
     // Create dest type node.
     auto dest_type_ptr = TypeIdToType(dest_type);
     auto dest_type_node = NewValueNode(dest_type_ptr);
+    MS_EXCEPTION_IF_NULL(dest_type_node);
+    MS_EXCEPTION_IF_NULL(dest_type_ptr);
     dest_type_node->set_abstract(dest_type_ptr->ToAbstract());
     // Insert Cast node.
     auto func_graph = node->func_graph();
@@ -69,9 +75,9 @@ const AnfNodePtr ConvertDataTypeForCNodeInput(const AnfNodePtr &node, size_t inp
     cast->set_abstract(cast_abstract);
     auto manager = func_graph->manager();
     MS_EXCEPTION_IF_NULL(manager);
-    manager->SetEdge(node, input_idx, cast);
+    manager->SetEdge(node, SizeToInt(input_idx), cast);
   } else {
-    MS_LOG(EXCEPTION) << "Invalid data type: " << infer_type;
+    MS_LOG(INTERNAL_EXCEPTION) << "Invalid data type: " << infer_type;
   }
   return node;
 }
@@ -107,8 +113,8 @@ const AnfNodePtr ConvertResizeNearestNeighborXDtype::Process(const FuncGraphPtr 
       } else if (elem->isa<Int32Imm>()) {
         (void)values.emplace_back(MakeValue(GetValue<int32_t>(elem)));
       } else {
-        MS_LOG(EXCEPTION) << "Convert int64 to int32 failed for wrong value type. node: " << node->DebugString()
-                          << ", value type: " << elem->type_name();
+        MS_LOG(INTERNAL_EXCEPTION) << "Convert int64 to int32 failed for wrong value type. node: "
+                                   << node->DebugString() << ", value type: " << elem->type_name();
       }
     }
     auto new_tuple = std::make_shared<ValueTuple>(values);
@@ -116,7 +122,7 @@ const AnfNodePtr ConvertResizeNearestNeighborXDtype::Process(const FuncGraphPtr 
     new_value_node->set_abstract(new_tuple->ToAbstract());
     cnode->set_input(kIndex2, new_value_node);
   } else {
-    MS_LOG(EXCEPTION) << "Node: " << node->DebugString() << " second input is not tuple type.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Node: " << node->DebugString() << " second input is not tuple type.";
   }
   return node;
 }

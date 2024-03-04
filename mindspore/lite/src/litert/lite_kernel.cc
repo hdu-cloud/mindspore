@@ -16,7 +16,6 @@
 
 #include "src/litert/lite_kernel.h"
 #include <algorithm>
-#include "src/tensor.h"
 #include "src/common/utils.h"
 #include "src/litert/infer_manager.h"
 
@@ -41,9 +40,13 @@ void LiteKernel::FreeWorkspace() {
   ws_allocated_ = false;
 }
 
+int LiteKernel::InferShape() {
+  return lite::KernelInferShape(in_tensors_, out_tensors_, op_parameter_, ms_context_->allocator);
+}
+
 int LiteKernel::PreProcess() {
   if (!InferShapeDone()) {
-    auto ret = lite::KernelInferShape(in_tensors_, out_tensors_, op_parameter_, ms_context_->allocator);
+    auto ret = InferShape();
     if (ret != 0) {
       MS_LOG(ERROR) << "InferShape fail!";
       return ret;
@@ -108,7 +111,8 @@ int LiteKernel::Execute() {
     return ret;
   }
 
-  if (op_parameter_->is_zero_shape_ == false) {
+  /* op_parameter_ is null : run in kernel mod */
+  if (op_parameter_ == nullptr || op_parameter_->is_zero_shape_ == false) {
     ret = Run();
     if (lite::RET_OK != ret) {
       MS_LOG(ERROR) << "run kernel failed, name: " << this->name();

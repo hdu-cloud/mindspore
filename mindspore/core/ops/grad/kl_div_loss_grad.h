@@ -17,9 +17,9 @@
 #ifndef MINDSPORE_CORE_OPS_KL_DIV_LOSS_GRAD_H
 #define MINDSPORE_CORE_OPS_KL_DIV_LOSS_GRAD_H
 
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
 #include "ops/base_operator.h"
 
 namespace mindspore {
@@ -38,8 +38,9 @@ class MIND_API KLDivLossGrad : public BaseOperator {
   std::string get_reduction() const;
 };
 
-abstract::AbstractBasePtr KLDivLossGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                             const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr KLDivLossGradInfer(const abstract::AnalysisEnginePtr &,
+                                                      const PrimitivePtr &primitive,
+                                                      const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

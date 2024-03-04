@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,7 @@
 
 #include "plugin/device/ascend/hal/device/profiling/profiling_manager.h"
 #include <cstdlib>
-#include "common/util/error_manager/error_manager.h"
 #include "securec/include/securec.h"
-#include "./prof_mgr_core.h"
 #include "utils/log_adapter.h"
 #include "utils/ms_context.h"
 #include "utils/ms_utils.h"
@@ -46,7 +44,7 @@ ProfilingManager &ProfilingManager::GetInstance() {
 }
 
 ProfilingManager::ProfilingManager()
-    : device_id_(0), prof_cb_({0}), cur_state_(kProfilingInvalid), profiling_path_("") {}
+    : device_id_(0), prof_cb_({nullptr}), cur_state_(kProfilingInvalid), profiling_path_("") {}
 
 uint64_t ProfilingManager::GetJobId() const { return 0; }
 
@@ -120,12 +118,17 @@ bool ProfilingManager::InitProfiling(const std::string &profiling_path, uint32_t
   profiling_path_ = profiling_path;
   device_id_ = device_id;
 
-  bool ret = ProfRegisterCtrlCallback();
-  if (ret == false) {
-    return ret;
+  auto ms_context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context);
+  std::string backend = ms_context->backend_policy();
+  if (backend == "ge") {
+    MS_LOG(INFO) << "GE backend has been declare. No need to declare VM backend.";
+    return true;
   }
+  MS_LOG(INFO) << "Profiling backend is: " << backend;
 
-  return true;
+  bool ret = ProfRegisterCtrlCallback();
+  return ret;
 }
 
 bool ProfilingManager::ProfRegisterCtrlCallback() const {
@@ -242,7 +245,7 @@ void ProfilingManager::QueryHashId(const int32_t &device_id, const std::string &
                                        &hash_data, sizeof(MsprofHashData));
   if (ret != UintToInt(PROF_SUCCESS)) {
     MS_LOG(EXCEPTION) << "[Profiling] Query hash id of long string failed, src string is " << src_str.c_str()
-                      << ", ret is " << ret << "." << GetErrorMessage(true);
+                      << ", ret is " << ret << ".";
   }
 
   *hash_id = hash_data.hashId;

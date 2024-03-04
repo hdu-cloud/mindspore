@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -96,20 +96,21 @@ Status Edge::InitEdgeCost() {
     const auto fully_use = CostModelContext::GetInstance()->fully_use_device();
     const auto stra_follow = CostModelContext::GetInstance()->elementwise_stra_follow();
     if (fully_use) {
-      MS_LOG(EXCEPTION) << "Generating cost for edge: " << edge_name_
-                        << " failed, it may be caused by setting 'fully_use_devices' true. Try to set "
-                           "'fully_use_devices' false.";
+      MS_LOG(ERROR) << "Generating cost for edge: " << edge_name_
+                    << " failed, it may be caused by setting 'fully_use_devices' true. Try to set "
+                       "'fully_use_devices' false.";
     } else if (stra_follow) {
-      MS_LOG(EXCEPTION) << "Generating cost for edge: " << edge_name_
-                        << " failed, it may be caused by setting 'elementwise_op_strategy_follow' true. "
-                           "Try to set 'elementwise_op_strategy_follow' false.";
+      MS_LOG(ERROR) << "Generating cost for edge: " << edge_name_
+                    << " failed, it may be caused by setting 'elementwise_op_strategy_follow' true. "
+                       "Try to set 'elementwise_op_strategy_follow' false.";
     }
     if (edge_name_.find(RESHAPE) != std::string::npos) {
-      MS_LOG(EXCEPTION) << "Generating cost for edge: " << edge_name_
-                        << " failed, it may be caused by setting different strategies for operators following Reshape. "
-                           "Try to fix that.";
+      MS_LOG(ERROR) << "Generating cost for edge: " << edge_name_
+                    << " failed, it may be caused by setting different strategies for operators following Reshape. "
+                       "Try to fix that.";
     }
-    MS_LOG(EXCEPTION) << "Generating cost for edge: " << edge_name_ << " failed.";
+    MS_LOG(INFO) << "Generating cost for edge: " << edge_name_ << " failed.";
+    return Status::FAILED;
   }
   return Status::SUCCESS;
 }
@@ -339,14 +340,14 @@ CostPtr Edge::GetCostByStrategyPair(const CostPtrKey &stra_pair) {
   }
   auto cost_vec = cost_map_[stra_pair];
   if (cost_vec.empty()) {
-    PrintStrategy(stra_pair.first);
-    PrintStrategy(stra_pair.second);
-    MS_LOG(EXCEPTION) << "No available cost under current strategy pair of the edge: " << edge_name_;
+    MS_LOG(EXCEPTION) << "stra_pair.first: " << stra_pair.first->ToString() << ", "
+                      << "stra_pair.second: " << stra_pair.second->ToString() << ". "
+                      << "No available cost under current strategy pair of the edge: " << edge_name_;
   }
   if (cost_vec.size() > 1) {
-    PrintStrategy(stra_pair.first);
-    PrintStrategy(stra_pair.second);
-    MS_LOG(INFO) << "Multiple costs available under the stratey pair of the edge: " << edge_name_;
+    MS_LOG(INFO) << "stra_pair.first: " << stra_pair.first->ToString() << ", "
+                 << "stra_pair.second: " << stra_pair.second->ToString() << ". "
+                 << "Multiple costs available under the stratey pair of the edge: " << edge_name_;
   }
   return cost_vec[0];
 }
@@ -374,30 +375,32 @@ StrategyPtr Edge::GetNextOpStrategyByPrevOpStrategyWithMiniComm(const StrategyPt
       return nullptr;
     }
     MS_LOG(WARNING) << "Inconsistency occurred at edge: " << edge_name();
-    std::sort(next_stras.begin(), next_stras.end(),
-              [this](const std::pair<StrategyPtr, double> &a, const std::pair<StrategyPtr, double> &b) {
-                return !IsDoubleEqual(a.second, b.second) ? a.second < b.second : a.first->Compare(b.first);
-              });
-    return next_stras[0].first;
+    auto min_stra =
+      std::min_element(next_stras.begin(), next_stras.end(),
+                       [this](const std::pair<StrategyPtr, double> &a, const std::pair<StrategyPtr, double> &b) {
+                         return !IsDoubleEqual(a.second, b.second) ? a.second < b.second : a.first->Compare(b.first);
+                       });
+    return min_stra->first;
   }
   if (next_op_stras.size() > 1) {
     MS_LOG(INFO) << "There are multiple strategies for edge: " << edge_name_
                  << " with zero communication cost, choose the one with minimum computation costs.";
   }
   auto next_op = next_op_;
-  std::sort(next_op_stras.begin(), next_op_stras.end(),
-            [this, &next_op](const std::pair<StrategyPtr, double> &a, const std::pair<StrategyPtr, double> &b) {
-              if (!IsDoubleEqual(a.second, b.second)) {
-                return a.second < b.second;
-              }
-              auto cost_a = next_op->GetCostByStrategyPtr(a.first)[0]->communication_without_parameter_;
-              auto cost_b = next_op->GetCostByStrategyPtr(b.first)[0]->communication_without_parameter_;
-              if (!IsDoubleEqual(cost_a, cost_b)) {
-                return cost_a < cost_b;
-              }
-              return a.first->Compare(b.first);
-            });
-  return next_op_stras[0].first;
+  auto min_next_op_stra = std::min_element(
+    next_op_stras.begin(), next_op_stras.end(),
+    [this, &next_op](const std::pair<StrategyPtr, double> &a, const std::pair<StrategyPtr, double> &b) {
+      if (!IsDoubleEqual(a.second, b.second)) {
+        return a.second < b.second;
+      }
+      auto cost_a = next_op->GetCostByStrategyPtr(a.first)[0]->communication_without_parameter_;
+      auto cost_b = next_op->GetCostByStrategyPtr(b.first)[0]->communication_without_parameter_;
+      if (!IsDoubleEqual(cost_a, cost_b)) {
+        return cost_a < cost_b;
+      }
+      return a.first->Compare(b.first);
+    });
+  return min_next_op_stra->first;
 }
 
 StrategyPtr Edge::GetPrevOpStrategyByNextOpStrategyWithMiniComm(const StrategyPtr &next_op_stra) {
@@ -423,30 +426,32 @@ StrategyPtr Edge::GetPrevOpStrategyByNextOpStrategyWithMiniComm(const StrategyPt
       return nullptr;
     }
     MS_LOG(WARNING) << "Inconsistency occurred at edge: " << edge_name();
-    std::sort(prev_stras.begin(), prev_stras.end(),
-              [this](const std::pair<StrategyPtr, double> &a, const std::pair<StrategyPtr, double> &b) {
-                return !IsDoubleEqual(a.second, b.second) ? a.second < b.second : a.first->Compare(b.first);
-              });
-    return prev_stras[0].first;
+    auto min_prev_stra =
+      std::min_element(prev_stras.begin(), prev_stras.end(),
+                       [this](const std::pair<StrategyPtr, double> &a, const std::pair<StrategyPtr, double> &b) {
+                         return !IsDoubleEqual(a.second, b.second) ? a.second < b.second : a.first->Compare(b.first);
+                       });
+    return min_prev_stra->first;
   }
   if (prev_op_stras.size() > 1) {
     MS_LOG(INFO) << "There are multiple strategies for edge: " << edge_name_
                  << " with zero communication costs, choose the one with minimum computation costs.";
   }
   auto prev_op = prev_op_;
-  std::sort(prev_op_stras.begin(), prev_op_stras.end(),
-            [this, &prev_op](const std::pair<StrategyPtr, double> &a, const std::pair<StrategyPtr, double> &b) {
-              if (!IsDoubleEqual(a.second, b.second)) {
-                return a.second < b.second;
-              }
-              auto cost_a = prev_op->GetCostByStrategyPtr(a.first)[0]->communication_without_parameter_;
-              auto cost_b = prev_op->GetCostByStrategyPtr(b.first)[0]->communication_without_parameter_;
-              if (!IsDoubleEqual(cost_a, cost_b)) {
-                return cost_a < cost_b;
-              }
-              return a.first->Compare(b.first);
-            });
-  return prev_op_stras[0].first;
+  auto min_prev_op_stra = std::min_element(
+    prev_op_stras.begin(), prev_op_stras.end(),
+    [this, &prev_op](const std::pair<StrategyPtr, double> &a, const std::pair<StrategyPtr, double> &b) {
+      if (!IsDoubleEqual(a.second, b.second)) {
+        return a.second < b.second;
+      }
+      auto cost_a = prev_op->GetCostByStrategyPtr(a.first)[0]->communication_without_parameter_;
+      auto cost_b = prev_op->GetCostByStrategyPtr(b.first)[0]->communication_without_parameter_;
+      if (!IsDoubleEqual(cost_a, cost_b)) {
+        return cost_a < cost_b;
+      }
+      return a.first->Compare(b.first);
+    });
+  return min_prev_op_stra->first;
 }
 
 int64_t Edge::GetReshapeSWCIndexByNextOpStrategy(const StrategyPtr &next_op_stra) {
@@ -531,7 +536,8 @@ StrategyPtr Edge::GetNextOpStrategyByReshapeSWCIndex(int64_t swc_index) {
   return stra;
 }
 
-bool Edge::CheckStrategyConsistency(StrategyPtr prev_stra, StrategyPtr next_stra) {
+bool Edge::CheckStrategyConsistency(StrategyPtr prev_stra, StrategyPtr next_stra,
+                                    std::set<OperatorInfoPtr> *_diff_stra_params) {
   if (prev_stra == nullptr) {
     MS_LOG(EXCEPTION) << prev_op_->name() << "'s selected strategy is null!";
   }
@@ -540,22 +546,24 @@ bool Edge::CheckStrategyConsistency(StrategyPtr prev_stra, StrategyPtr next_stra
   }
   auto cost = GetCostByStrategyPair({prev_stra, next_stra});
   if (cost == nullptr || cost->communication_cost_ > 0.0) {
-    MS_LOG(INFO) << "The edge " << edge_name_ << "'s strategy: ";
-    PrintStrategy(prev_stra);
-    PrintStrategy(next_stra);
+    MS_LOG(INFO) << "The edge " << edge_name_ << "'s strategy: prev_stra is " << prev_stra->ToString()
+                 << ", next_stra is " << next_stra->ToString();
     if (prev_op_->IsTmpIdentity()) {
-      MS_LOG(ERROR) << "The parameter: " << prev_op_->refkey_parameter_name()
-                    << " has been used by operators with "
-                       "different sharding strategies. These operators are: ";
+      if (_diff_stra_params->count(prev_op_) == 0) {
+        _diff_stra_params->insert(prev_op_);
+      }
+      MS_LOG(INFO) << "The parameter: " << prev_op_->refkey_parameter_name()
+                   << " has been used by operators with "
+                      "different sharding strategies. These operators are: ";
       auto const &succ_edges = prev_op_->succ_edges();
       for (auto const &succ_edge : succ_edges) {
         if (succ_edge->next_operator()->cnodes().empty()) {
-          MS_LOG(EXCEPTION) << "No CNODE info has been set in operator: " << succ_edge->next_operator()->name();
+          MS_LOG(INFO) << "No CNODE info has been set in operator: " << succ_edge->next_operator()->name();
         }
-        MS_LOG(ERROR) << succ_edge->next_operator()->name() << ", the corresponding fullname is: "
-                      << succ_edge->next_operator()->cnodes()[0]->fullname_with_scope();
+        MS_LOG(INFO) << succ_edge->next_operator()->name() << ", the corresponding fullname is: "
+                     << succ_edge->next_operator()->cnodes()[0]->fullname_with_scope();
       }
-      MS_LOG(EXCEPTION) << "Configure these operators with consistent sharding strategies.";
+      MS_LOG(INFO) << "Configure these operators with consistent sharding strategies.";
     }
     MS_LOG(WARNING) << "There are redistribution cost occurs at edge: " << edge_name() << ".";
     return false;

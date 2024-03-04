@@ -18,7 +18,7 @@
 #include "plugin/device/ascend/kernel/tbe/tiling/op_tiling_adapter.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_kernel_build.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_dynamic_shape_util.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "plugin/device/ascend/hal/device/ge_types_convert.h"
 #include "include/common/utils/utils.h"
@@ -81,10 +81,10 @@ ge::NodePtr OpTilingCalculateAdapter::NewConstantOp(const CNodePtr &node, const 
   return constand_op;
 }
 
-std::vector<std::tuple<std::size_t, ge::NodePtr>> OpTilingCalculateAdapter::ConvertDepends(
-  const CNodePtr &node, const std::map<uint32_t, tensor::TensorPtr> &depend_tensor_map, ge::OpDescPtr *op_desc,
-  ge::ComputeGraphPtr *ge_graph) {
-  std::vector<std::tuple<std::size_t, ge::NodePtr>> constant_ops;
+std::map<std::size_t, ::ge::NodePtr> ConvertDepends(const CNodePtr &node,
+                                                    const std::map<uint32_t, tensor::TensorPtr> &depend_tensor_map,
+                                                    const ::ge::OpDescPtr &op_desc, ::ge::ComputeGraphPtr *ge_graph) {
+  std::map<std::size_t, ::ge::NodePtr> constant_ops;
   return constant_ops;
 }
 
@@ -113,7 +113,7 @@ ge::Operator OpTilingCalculateAdapter::AnfNodeToGeOperatorAdapter(
 }
 
 void OpTilingCalculateAdapter::UpdateWorkspace(const ::ge::NodePtr &ge_node,
-                                               const std::vector<int64_t> &workspace_size_list) {}
+                                               const std::vector<int64_t> &workspace_size_list) const {}
 }  // namespace tiling
 }  // namespace device
 }  // namespace mindspore

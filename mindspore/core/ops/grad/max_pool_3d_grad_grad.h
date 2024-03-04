@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_MAX_POOL_3D_GRAD_GRAD_H_
 #define MINDSPORE_CORE_OPS_MAX_POOL_3D_GRAD_GRAD_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 #include "ops/grad/max_pool_grad_grad.h"
 
 namespace mindspore {
@@ -36,8 +36,9 @@ class MIND_API MaxPool3DGradGrad : public MaxPoolGradGrad {
   }
 };
 
-abstract::AbstractBasePtr MaxPool3DGradGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr MaxPool3DGradGradInfer(const abstract::AnalysisEnginePtr &,
+                                                          const PrimitivePtr &primitive,
+                                                          const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

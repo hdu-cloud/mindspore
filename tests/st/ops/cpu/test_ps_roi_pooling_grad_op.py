@@ -15,9 +15,6 @@
 """
 Test PSROIPoolingGrad.
 """
-import tempfile
-import os
-
 import numpy as np
 import pytest
 
@@ -25,6 +22,7 @@ import mindspore as ms
 import mindspore.nn as nn
 import mindspore.ops as P
 from mindspore.ops.operations import _grad_ops as G
+from mindspore.common.api import _pynative_executor
 
 DEVICE_TARGET = "CPU"
 CTX_MODE = ms.context.GRAPH_MODE
@@ -205,24 +203,17 @@ def test_ps_roi_pooling_grad_mind_ir():
     spatial_scale = 1.0 / 16
     net = NetPSROIPoolingGrad(input_size, spatial_scale, group_size, output_dim)
     old_out = net(dy_ms, rois_ms)
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        file_name = os.path.join(tmp_dir, "ps_roi_pooling_grad.mindir")
-        ms.export(
-            net, dy_ms, rois_ms,
-            file_name=file_name,
-            file_format='MINDIR')
+    ms.export(
+        net, dy_ms, rois_ms,
+        file_name="ps_roi_pooling_grad",
+        file_format='MINDIR')
 
-        try:
-            graph = ms.load(file_name)
-            new_net = nn.GraphCell(graph)
-            new_out = new_net(dy_ms, rois_ms)
-            assert np.allclose(
-                old_out.asnumpy(), new_out.asnumpy(),
-                atol=ALL_CLOSE_CRITERION, rtol=ALL_CLOSE_CRITERION)
-        finally:
-            # Get write mode so that we can delete the file on Windows.
-            os.chmod(file_name, 0o700)
-            os.remove(file_name)
+    graph = ms.load("ps_roi_pooling_grad.mindir")
+    new_net = nn.GraphCell(graph)
+    new_out = new_net(dy_ms, rois_ms)
+    assert np.allclose(
+        old_out.asnumpy(), new_out.asnumpy(),
+        atol=ALL_CLOSE_CRITERION, rtol=ALL_CLOSE_CRITERION)
 
 
 @pytest.mark.level0
@@ -528,6 +519,7 @@ def test_ps_roi_pooling_grad_input_args_num():
             ms.Tensor([1.0], dtype=ms.float32),
             ms.Tensor([1.0], dtype=ms.float32)
         )
+        _pynative_executor.sync()
     except ValueError:
         return
     else:
@@ -557,6 +549,7 @@ def test_ps_roi_pooling_grad_input_type_unsupported():
             ms.Tensor([1.0], dtype=ms.float64),
             ms.Tensor([1.0], dtype=ms.float64)
         )
+        _pynative_executor.sync()
     except TypeError:
         return
     else:
@@ -586,6 +579,7 @@ def test_ps_roi_pooling_grad_input_type_unsupported2():
             1.0,
             ms.Tensor([1.0], dtype=ms.float32)
         )
+        _pynative_executor.sync()
     except TypeError:
         return
     else:
@@ -615,6 +609,7 @@ def test_ps_roi_pooling_grad_input_type_unsupported3():
             ms.Tensor([1.0], dtype=ms.float64),
             1.0
         )
+        _pynative_executor.sync()
     except TypeError:
         return
     else:

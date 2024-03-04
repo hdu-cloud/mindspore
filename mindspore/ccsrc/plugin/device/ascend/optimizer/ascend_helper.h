@@ -23,7 +23,7 @@
 #include "plugin/device/ascend/hal/device/kernel_select_ascend.h"
 #include "plugin/device/ascend/kernel/kernel_query.h"
 #include "kernel/oplib/oplib.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_dynamic_shape_util.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_kernel_select/tbe_kernel_select.h"
@@ -80,26 +80,21 @@ class OpFinder {
 };
 using OpFinderPtr = std::shared_ptr<OpFinder>;
 
-void RefreshKernelBuildInfo(const std::string &input_format, const std::string &output_format,
-                            const AnfNodePtr &trans_node, const std::string &reshape_type = {""},
-                            const TypeId &type_id = kTypeUnknown);
+void RefreshKernelBuildInfo(const KernelSelectPtr &kernel_select, const std::string &input_format,
+                            const std::string &output_format, const AnfNodePtr &trans_node,
+                            const std::string &reshape_type = {""}, const TypeId &type_id = kTypeUnknown);
 
 CNodePtr NewTransOpNode(const FuncGraphPtr &func_graph, const AnfNodePtr &input, const AnfNodePtr &orig_node,
                         const KernelSelectPtr &kernel_select, const bool need_padding, const std::string &op_name,
                         const std::vector<int64_t> &perm = std::vector<int64_t>{});
 
-CNodePtr AddCastOpNodeToGraph(const FuncGraphPtr &func_graph, const AnfNodePtr &input, const AnfNodePtr &orig_node,
-                              const std::string &format, const TypeId &input_type, const TypeId &output_type,
-                              const abstract::BaseShapePtr &origin_shape, const TypeId &origin_type,
-                              const std::string &reshape_type = std::string{});
+ValueNodePtr CreatePermValueNode(const FuncGraphPtr &func_graph, const std::vector<int64_t> &perm);
 
 AnfNodePtr InsertTransOpForInput(const FuncGraphPtr &func_graph, const AnfNodePtr &node,
                                  const KernelSelectPtr &kernel_select);
 
 AnfNodePtr InsertTransOpForOutput(const FuncGraphPtr &func_graph, const AnfNodePtr &orig_node, const AnfNodePtr &node,
                                   const KernelSelectPtr &kernel_select);
-
-CNodePtr InsertCastForInput(const FuncGraphPtr &func_graph, const CNodePtr &cnode);
 
 AnfNodePtr AddTransOpNodeToGraph(const FuncGraphPtr &func_graph, const AnfNodePtr &node,
                                  const KernelSelectPtr &kernel_select, size_t insert_index, bool is_insert_input);
@@ -113,7 +108,17 @@ AnfNodePtr AddTransOpNodeToGraphWithFormat(const FuncGraphPtr &func_graph, const
 void SetInputOutputNames(const std::vector<std::string> &input_names, const std::vector<std::string> &output_names,
                          const AnfNodePtr &node);
 
+void SelectCallInlineKernelInfo(const CNodePtr &node);
+
 const std::set<std::string> kCommonFormatSet = {kOpFormat_DEFAULT, kOpFormat_ND, kOpFormat_NCHW, kOpFormat_NCDHW};
+
+inline bool NeedInsertTransData(const ShapeVector &origin_shape, const std::string &format) {
+  bool shape_check =
+    origin_shape.size() > 1 || (origin_shape.size() == 1 && origin_shape[0] % SizeToLong(kCubeSize) != 0);
+  return kCommonFormatSet.find(format) == kCommonFormatSet.end() && (shape_check || format == kOpFormat_ND_RNN_BIAS);
+}
+
+void NormalizeReduceAttrAxis(const CNodePtr &cnode);
 }  // namespace opt
 }  // namespace mindspore
 #endif  // MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_ASCEND_HELPER_H_

@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,13 @@
 #include "securec/include/securec.h"
 #include "ops/fusion/prelu_fusion.h"
 #include "ops/elu.h"
+#include "ops/gelu.h"
 #include "ops/fusion/activation.h"
 #include "nnacl/op_base.h"
 #include "ops/softplus.h"
+#include "ops/selu.h"
+#include "ops/celu.h"
+#include "ops/hswish.h"
 
 namespace mindspore {
 namespace lite {
@@ -41,7 +45,7 @@ PrimitiveCPtr OnnxLeakyReluParser::Parse(const onnx::GraphProto &onnx_graph, con
   MS_CHECK_TRUE_RET(prim != nullptr, nullptr);
   for (const auto &onnx_node_attr : onnx_node.attribute()) {
     const auto &attribute_name = onnx_node_attr.name();
-    if (attribute_name == "alpha") {
+    if (attribute_name == kAttrAlpha) {
       prim->set_alpha(onnx_node_attr.f());
     }
   }
@@ -60,8 +64,7 @@ PrimitiveCPtr OnnxPReluParser::Parse(const onnx::GraphProto &onnx_graph, const o
   auto node_iter = std::find_if(onnx_graph.initializer().begin(), onnx_graph.initializer().end(),
                                 [input_name](const onnx::TensorProto &proto) { return proto.name() == input_name; });
   if (node_iter == onnx_graph.initializer().end()) {
-    MS_LOG(ERROR) << "not find node: " << input_name.c_str();
-    return nullptr;
+    MS_LOG(WARNING) << "not find node: " << input_name.c_str();
   } else {
     params.push_back(*node_iter);
   }
@@ -115,10 +118,18 @@ PrimitiveCPtr OnnxEluParser::Parse(const onnx::GraphProto &onnx_graph, const onn
   prim->set_activation_type(mindspore::ActivationType::ELU);
   for (const auto &onnx_node_attr : onnx_node.attribute()) {
     const auto &attribute_name = onnx_node_attr.name();
-    if (attribute_name == "alpha") {
+    if (attribute_name == kAttrAlpha) {
       prim->set_alpha(onnx_node_attr.f());
     }
   }
+
+  return prim->GetPrim();
+}
+
+PrimitiveCPtr OnnxGeluParser::Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) {
+  auto prim = std::make_unique<ops::Activation>();
+  MS_CHECK_TRUE_RET(prim != nullptr, nullptr);
+  prim->set_activation_type(mindspore::ActivationType::GELU);
 
   return prim->GetPrim();
 }
@@ -144,6 +155,11 @@ PrimitiveCPtr OnnxHardSigmoidParser::Parse(const onnx::GraphProto &onnx_graph, c
   MS_CHECK_TRUE_RET(prim != nullptr, nullptr);
   prim->set_activation_type(mindspore::ActivationType::HSIGMOID);
 
+  for (const auto &onnx_node_attr : onnx_node.attribute()) {
+    if (onnx_node_attr.name() == kAttrAlpha) {
+      prim->set_alpha(onnx_node_attr.f());
+    }
+  }
   return prim->GetPrim();
 }
 
@@ -151,6 +167,26 @@ PrimitiveCPtr OnnxSoftPlusParser::Parse(const onnx::GraphProto &onnx_graph, cons
   auto prim = std::make_unique<ops::Activation>();
   MS_CHECK_TRUE_RET(prim != nullptr, nullptr);
   prim->set_activation_type(mindspore::ActivationType::SOFTPLUS);
+
+  return prim->GetPrim();
+}
+
+PrimitiveCPtr OnnxSeluParser::Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) {
+  auto prim = std::make_unique<ops::SeLU>();
+  MS_CHECK_TRUE_RET(prim != nullptr, nullptr);
+
+  return prim->GetPrim();
+}
+
+PrimitiveCPtr OnnxCeluParser::Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) {
+  auto prim = std::make_unique<ops::CeLU>();
+  MS_CHECK_TRUE_RET(prim != nullptr, nullptr);
+  for (const auto &onnx_node_attr : onnx_node.attribute()) {
+    const auto &attribute_name = onnx_node_attr.name();
+    if (attribute_name == "alpha") {
+      prim->set_alpha(onnx_node_attr.f());
+    }
+  }
 
   return prim->GetPrim();
 }
@@ -163,5 +199,9 @@ OnnxNodeRegistrar g_onnxTanhParser("Tanh", new OnnxTanhParser());
 OnnxNodeRegistrar g_onnxSigmoidParser("Sigmoid", new OnnxSigmoidParser());
 OnnxNodeRegistrar g_onnxHardSigmoidParser("HardSigmoid", new OnnxHardSigmoidParser());
 OnnxNodeRegistrar g_onnxSoftPlusParser("Softplus", new OnnxSoftPlusParser());
+OnnxNodeRegistrar g_onnxGeluParser("Gelu", new OnnxGeluParser());
+OnnxNodeRegistrar g_onnxMegatronGeluParser("GeLUFunction", new OnnxGeluParser());
+OnnxNodeRegistrar g_onnxSeluParser("Selu", new OnnxSeluParser());
+OnnxNodeRegistrar g_onnxCeluParser("Celu", new OnnxCeluParser());
 }  // namespace lite
 }  // namespace mindspore

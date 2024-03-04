@@ -19,6 +19,10 @@
 #include <memory>
 #include <algorithm>
 #include <functional>
+#include "mindspore/core/ops/structure_ops.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/comparison_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "ops/lstm.h"
 #include "ops/squeeze.h"
 #include "ops/tuple_get_item.h"
@@ -40,13 +44,14 @@ constexpr size_t kCondCNodesNum = 4;
 constexpr size_t kBodyNodesNum = 95;
 constexpr size_t kBodyCNodesNum = 34;
 constexpr size_t kLSTMOutputNum = 3;
+constexpr size_t kPlaceholderMinSize = 20;
 constexpr auto kUnidirectionalGateNum = 4;
 const auto &p1 = std::placeholders::_1;
 constexpr float EPSILON = 1e-5;
 bool IsParameterNode(const BaseRef &n) { return utils::isa<ParameterPtr>(n); }
 
 std::vector<VectorRef> GenerateBodyGraphCellPattern(const std::vector<CondVarPtr> &placeholders) {
-  MS_CHECK_TRUE_RET(placeholders.size() > 19, {});
+  MS_CHECK_TRUE_RET(placeholders.size() >= kPlaceholderMinSize, {});
   auto is_var1 = std::make_shared<Var>();
   MS_CHECK_TRUE_RET(is_var1 != nullptr, {});
   VectorRef concat_i_w = VectorRef({is_var1, placeholders[8], placeholders[12]});
@@ -391,7 +396,10 @@ bool TfliteLstmCellFusion::CheckBodyGraph(const EquivPtr &equiv, float *zoneout_
   auto hidden_zoneout_new_node = utils::cast<AnfNodePtr>((*equiv)[hidden_zoneout_new_]);
   MS_ASSERT(hidden_zoneout_new_node != nullptr);
 
-  float cell_old, cell_new, hidden_old, hidden_new;
+  float cell_old;
+  float cell_new;
+  float hidden_old;
+  float hidden_new;
   if (GetFloatScalarFromTensorInfo(cell_zoneout_old_node, &cell_old) != RET_OK) {
     return false;
   }
@@ -616,7 +624,7 @@ CNodePtr TfliteLstmCellFusion::CreateOutputGetItem(const FuncGraphPtr &func_grap
   MS_ASSERT(func_graph != nullptr);
   MS_ASSERT(node != nullptr);
   auto tuple_get_item_prim = std::make_shared<ops::TupleGetItem>();
-  auto get_item_value = NewValueNode(MakeValue<int>(item_index));
+  auto get_item_value = NewValueNode(MakeValue<int64_t>(item_index));
   if (tuple_get_item_prim == nullptr || get_item_value == nullptr) {
     MS_LOG(ERROR) << "NewValueNode is nullptr";
     return nullptr;
@@ -675,8 +683,8 @@ STATUS TfliteLstmCellFusion::AdjustOtherGetItems(const FuncGraphPtr &func_graph,
     auto origin_index = value_node->value()->type()->number_type() == kNumberTypeInt64
                           ? GetValue<int64_t>(value_node->value())
                           : GetValue<int>(value_node->value());
-    int new_index = origin_index == 4 ? 2 : 1;
-    auto new_index_vnode = NewValueNode(MakeValue<int>(new_index));
+    int64_t new_index = origin_index == 4 ? 2 : 1;
+    auto new_index_vnode = NewValueNode(MakeValue<int64_t>(new_index));
     MS_CHECK_TRUE_RET(new_index_vnode != nullptr, RET_ERROR);
     new_inputs[2] = new_index_vnode;
     get_item->set_inputs(new_inputs);

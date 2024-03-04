@@ -7,7 +7,7 @@ mindspore.ops.MultitypeFuncGraph
 
     参数：
         - **name** (str) - 操作名。
-        - **read_value** (bool, 可选) - 如果注册函数不需要对输入的值进行更改，即所有输入都为按值传递，则将 `read_value` 设置为True。默认值：False。
+        - **read_value** (bool, 可选) - 如果注册函数不需要对输入的值进行更改，即所有输入都为按值传递，则将 `read_value` 设置为 ``True`` 。默认值： ``False`` 。
 
     异常：
         - **ValueError** - 找不到给定参数类型所匹配的函数。

@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,19 +47,6 @@ ShuffleOp::ShuffleOp(int32_t shuffle_size, uint32_t shuffle_seed, int32_t op_con
       shuffle_last_row_idx_(0),
       shuffle_buffer_state_(kShuffleStateInit) {}
 
-Status ShuffleOp::PrepareOperator() {
-  // Run any common code from super class first before adding our own
-  RETURN_IF_NOT_OK(DatasetOp::PrepareOperator());
-
-  // in reset mode, we need to move forward the random generator seed.
-  if (GlobalContext::config_manager()->fast_recovery() && op_current_repeats_ > 0) {
-    for (auto i = 0; i < op_current_repeats_; i++) {
-      SelfReset();
-    }
-  }
-  return Status::OK();
-}
-
 // Private function to re-init the shuffle op for another epoch.  Shuffle op calls this by
 // itself rather than waiting for the reset driven from operators above it in the pipeline.
 Status ShuffleOp::SelfReset() {
@@ -67,11 +54,11 @@ Status ShuffleOp::SelfReset() {
   // If reshuffle_each_epoch is false, then we always use the same seed for every
   // epoch.
   // If reshuffle_each_epoch is true, then the first epoch uses the given seed,
-  // and we increment the seed by one in all subsequent epochs
-  if (reshuffle_each_epoch_) {
-    shuffle_seed_++;
+  // and all subsequent epochs will then keep on using the rng_ without resetting it
+  if (!reshuffle_each_epoch_) {
+    rng_ = std::mt19937_64(shuffle_seed_);
   }
-  rng_ = std::mt19937_64(shuffle_seed_);
+
   shuffle_buffer_ = std::make_unique<TensorTable>();
   shuffle_last_row_idx_ = 0;
   shuffle_buffer_state_ = kShuffleStateInit;
@@ -114,12 +101,56 @@ Status ShuffleOp::AddRowToShuffleBuffer(TensorRow new_shuffle_row) {
   return Status::OK();
 }
 
+Status ShuffleOp::GetShuffledRowImpl(TensorRow *const row, bool is_pull_mode) {
+  RETURN_UNEXPECTED_IF_NULL(row);
+  // Step 1)
+  // Randomly select a slot from our shuffle buffer and copy that row into the output
+  // tensor table. We remove the data from the shuffle buffer, leaving that slot
+  // in the table as an empty vector
+  int64_t random_slot = rng_() % (shuffle_last_row_idx_ + 1);
+  TensorRow random_row = std::move((*shuffle_buffer_)[random_slot]);
+  *row = std::move(random_row);
+
+  // Step 2)
+  // Take the last row from shuffle buffer, and swap it into the row position that was
+  // just vacated.  This makes the shuffle buffer contiguous, with an empty slot at the
+  // tail of the shuffle buffer.
+  if (random_slot != shuffle_last_row_idx_) {
+    (*shuffle_buffer_)[random_slot] = std::move((*shuffle_buffer_)[shuffle_last_row_idx_]);
+  }
+
+  // Step 3)
+  // Refill the last slot of the shuffle buffer with the next row from input if we are in the
+  // active state.
+  // If we are in the draining state, we do not need to fetch another row to replace the one we
+  // just drained.
+  if (shuffle_buffer_state_ == kShuffleStateActive) {
+    TensorRow new_row;
+    if (!is_pull_mode) {
+      RETURN_IF_NOT_OK(child_iterator_->FetchNextTensorRow(&new_row));
+    } else {
+      RETURN_IF_NOT_OK(child_[0]->GetNextRowPullMode(&new_row));
+    }
+
+    if (!new_row.empty()) {
+      RETURN_IF_NOT_OK(AddRowToShuffleBuffer(std::move(new_row)));
+    } else {
+      shuffle_buffer_state_ = kShuffleStateDrain;
+    }
+  }
+
+  // If we are draining, reposition (decrement) our tail index in the shuffle buffer since we
+  // just drained a row from it.
+  if (shuffle_buffer_state_ == kShuffleStateDrain) {
+    shuffle_last_row_idx_--;
+  }
+  return Status::OK();
+}
+
 // Class functor operator () override.
 // All dataset ops operate by launching a thread (see ExecutionTree). This class functor will
 // provide the master loop that drives the logic for performing the work
 Status ShuffleOp::operator()() {
-  std::unique_ptr<TensorQTable> new_buffer_table;  // A tensor table to be used for output.
-
   // Synchronize with TaskManager once the thread is launched.
   TaskManager::FindMe()->Post();
 
@@ -132,7 +163,7 @@ Status ShuffleOp::operator()() {
   // Main operator loop
   while (true) {
     // Do an initial populate of the shuffle buffer
-    RETURN_IF_NOT_OK(InitShuffleBuffer());
+    RETURN_IF_NOT_OK(InitShuffleBuffer(false));
 
     // This is our main loop exit condition, when the iterator has no more data completely.
     if (child_iterator_->EofHandled()) {
@@ -144,50 +175,10 @@ Status ShuffleOp::operator()() {
     // When the tail index position of our shuffle buffer goes negative it means that we've
     // fully drained the data from the shuffle buffer and we're done.
     while (shuffle_last_row_idx_ >= 0) {
-      // Step 1)
-      // Create an output tensor table if one is not created yet.
-      if (!new_buffer_table) {
-        new_buffer_table = std::make_unique<TensorQTable>();
-      }
-
-      // Step 2)
-      // Randomly select a slot from our shuffle buffer and copy that row into the output
-      // tensor table. We remove the data from the shuffle buffer, leaving that slot
-      // in the table as an empty vector
-      int64_t random_slot = rng_() % (shuffle_last_row_idx_ + 1);
-      TensorRow random_row = std::move((*shuffle_buffer_)[random_slot]);
+      TensorRow row;
+      RETURN_IF_NOT_OK(GetShuffledRowImpl(&row, false));
       MS_LOG(DEBUG) << "Shuffle operator sending a row to output.";
-      RETURN_IF_NOT_OK(out_connector_->Add(std::move(random_row)));
-
-      // Step 3)
-      // Take the last row from shuffle buffer, and swap it into the row position that was
-      // just vacated.  This makes the shuffle buffer contiguous, with an empty slot at the
-      // tail of the shuffle buffer.
-      if (random_slot != shuffle_last_row_idx_) {
-        (*shuffle_buffer_)[random_slot] = std::move((*shuffle_buffer_)[shuffle_last_row_idx_]);
-      }
-
-      // Step 4)
-      // Refill the last slot of the shuffle buffer with the next row from input if we are in the
-      // active state.
-      // If we are in the draining state, we do not need to fetch another row to replace the one we
-      // just drained.
-      if (shuffle_buffer_state_ == kShuffleStateActive) {
-        TensorRow new_row;
-        RETURN_IF_NOT_OK(child_iterator_->FetchNextTensorRow(&new_row));
-
-        if (!new_row.empty()) {
-          RETURN_IF_NOT_OK(AddRowToShuffleBuffer(std::move(new_row)));
-        } else {
-          shuffle_buffer_state_ = kShuffleStateDrain;
-        }
-      }
-
-      // If we are draining, reposition (decrement) our tail index in the shuffle buffer since we
-      // just drained a row from it.
-      if (shuffle_buffer_state_ == kShuffleStateDrain) {
-        shuffle_last_row_idx_--;
-      }
+      RETURN_IF_NOT_OK(out_connector_->Add(std::move(row)));
     }
 
     // Since we overloaded eoeReceived function, we are responsible to flow the EOE up the
@@ -206,7 +197,7 @@ Status ShuffleOp::operator()() {
 
 // Private function populate the shuffle buffer initially by fetching from the child output
 // connector until the shuffle buffer is full (or there is no more data coming).
-Status ShuffleOp::InitShuffleBuffer() {
+Status ShuffleOp::InitShuffleBuffer(bool is_pull_mode) {
   MS_LOG(DEBUG) << "Shuffle operator initializing the shuffle buffer.";
 
   // The first phase of this operator is to read incoming buffers and then drain those
@@ -223,12 +214,20 @@ Status ShuffleOp::InitShuffleBuffer() {
   // Before we drop into the fetching loop, call the fetch once for the first time
   // to fill the first row and grab the first buffer.
   TensorRow new_row;
-  RETURN_IF_NOT_OK(child_iterator_->FetchNextTensorRow(&new_row));
-
-  if (child_iterator_->EofHandled()) {
-    MS_LOG(DEBUG) << "Shuffle operator init picked up EOF. No more epochs.";
-    RETURN_IF_NOT_OK(out_connector_->SendEOF());
-    return Status::OK();
+  if (!is_pull_mode) {
+    RETURN_IF_NOT_OK(child_iterator_->FetchNextTensorRow(&new_row));
+    if (child_iterator_->EofHandled()) {
+      MS_LOG(DEBUG) << "Shuffle operator init picked up EOF. No more epochs.";
+      RETURN_IF_NOT_OK(out_connector_->SendEOF());
+      return Status::OK();
+    }
+  } else {
+    RETURN_IF_NOT_OK(child_[0]->GetNextRowPullMode(&new_row));
+    if (new_row.eof()) {
+      MS_LOG(DEBUG) << "Shuffle operator init picked up EOF. No more epochs.";
+      eof_received_ = true;
+      return Status::OK();
+    }
   }
 
   if (new_row.empty()) {
@@ -242,7 +241,12 @@ Status ShuffleOp::InitShuffleBuffer() {
     RETURN_IF_NOT_OK(AddRowToShuffleBuffer(std::move(new_row)));
 
     // Fetch the next row
-    RETURN_IF_NOT_OK(child_iterator_->FetchNextTensorRow(&new_row));
+    if (!is_pull_mode) {
+      RETURN_IF_NOT_OK(child_iterator_->FetchNextTensorRow(&new_row));
+    } else {
+      // Fetch the next row
+      RETURN_IF_NOT_OK(child_[0]->GetNextRowPullMode(&new_row));
+    }
   }
 
   // If we quit the loop due to being at the shuffle size, still need to add the last row here.
@@ -263,5 +267,35 @@ Status ShuffleOp::EoeReceived(int32_t worker_id) {
   state_ = OpState::kDeOpIdle;
   return Status::OK();
 }
+
+Status ShuffleOp::GetNextRowPullMode(TensorRow *const row) {
+  RETURN_UNEXPECTED_IF_NULL(row);
+
+  // Do an initial populate of the shuffle buffer
+  if (shuffle_buffer_state_ == kShuffleStateInit) {
+    RETURN_IF_NOT_OK(InitShuffleBuffer(true));
+  }
+
+  if (eof_received_) {
+    *row = TensorRow(TensorRow::kFlagEOF);
+    return Status::OK();
+  }
+
+  if (shuffle_last_row_idx_ >= 0) {
+    RETURN_IF_NOT_OK(GetShuffledRowImpl(row, true));
+  } else {
+    *row = TensorRow(TensorRow::kFlagEOE);
+    if (IsLastIteration()) {
+      eof_received_ = true;
+    } else {
+      MS_LOG(DEBUG) << "Shuffle operator sending EOE.";
+      UpdateRepeatAndEpochCounter();
+      RETURN_IF_NOT_OK(this->SelfReset());
+    }
+  }
+  return Status::OK();
+}
+
+void ShuffleOp::Skip(int64_t skip_steps) { rng_.discard(skip_steps); }
 }  // namespace dataset
 }  // namespace mindspore

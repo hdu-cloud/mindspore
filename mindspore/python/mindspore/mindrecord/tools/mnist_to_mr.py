@@ -41,12 +41,20 @@ class MnistToMR:
         source (str): Directory that contains t10k-images-idx3-ubyte.gz,
                       train-images-idx3-ubyte.gz, t10k-labels-idx1-ubyte.gz
                       and train-labels-idx1-ubyte.gz.
-        destination (str): MindRecord file path to transform into, ensure that no file with the same name
-            exists in the directory.
-        partition_number (int, optional): The partition size. Default: 1.
+        destination (str): MindRecord file path to transform into, ensure that the directory is created in advance and
+            no file with the same name exists in the directory.
+        partition_number (int, optional): The partition size. Default: ``1`` .
 
     Raises:
         ValueError: If `source` , `destination` , `partition_number` is invalid.
+
+    Examples:
+        >>> from mindspore.mindrecord import MnistToMR
+        >>>
+        >>> mnist_dir = "/path/to/mnist"
+        >>> mindrecord_file = "/path/to/mindrecord/file"
+        >>> mnist_to_mr = MnistToMR(mnist_dir, mindrecord_file)
+        >>> status = mnist_to_mr.transform()
     """
 
     def __init__(self, source, destination, partition_number=1):
@@ -79,14 +87,8 @@ class MnistToMR:
 
         self.mnist_schema_json = {"label": {"type": "int64"}, "data": {"type": "bytes"}}
 
+    # pylint: disable=missing-docstring
     def run(self):
-        """
-        Execute transformation from Mnist to MindRecord.
-
-        Returns:
-            MSRStatus, SUCCESS or FAILED.
-        """
-
         if not cv_import:
             raise ModuleNotFoundError("opencv-python module not found, please use pip install it.")
 
@@ -99,10 +101,20 @@ class MnistToMR:
 
     def transform(self):
         """
-        Encapsulate the :func:`mindspore.mindrecord.MnistToMR.run` function to exit normally.
+        Execute transformation from Mnist to MindRecord.
+
+        Note:
+            Please refer to the Examples of :class:`mindspore.mindrecord.MnistToMR` .
 
         Returns:
             MSRStatus, SUCCESS or FAILED.
+
+        Raises:
+            ParamTypeError: If index field is invalid.
+            MRMOpenError: If failed to open MindRecord file.
+            MRMValidateDataError: If data does not match blob fields.
+            MRMSetHeaderError: If failed to set header.
+            MRMWriteDatasetError: If failed to write dataset.
         """
 
         t = ExceptionThread(target=self.run)
@@ -116,7 +128,7 @@ class MnistToMR:
     def _extract_images(self, filename):
         """Extract the images into a 4D tensor [image index, y, x, channels]."""
         real_file_path = os.path.realpath(filename)
-        with gzip.open(real_file_path) as bytestream:
+        with gzip.open(real_file_path, "rb") as bytestream:
             bytestream.read(16)
             buf = bytestream.read()
             data = np.frombuffer(buf, dtype=np.uint8)
@@ -126,7 +138,7 @@ class MnistToMR:
     def _extract_labels(self, filename):
         """Extract the labels into a vector of int64 label IDs."""
         real_file_path = os.path.realpath(filename)
-        with gzip.open(real_file_path) as bytestream:
+        with gzip.open(real_file_path, "rb") as bytestream:
             bytestream.read(8)
             buf = bytestream.read()
             labels = np.frombuffer(buf, dtype=np.uint8).astype(np.int64)

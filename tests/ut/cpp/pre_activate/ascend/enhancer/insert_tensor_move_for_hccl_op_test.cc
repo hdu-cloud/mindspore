@@ -15,19 +15,20 @@
  */
 #include "common/backend_common_test.h"
 #include "common/py_func_graph_fetcher.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "frontend/operator/ops.h"
 #include "ir/tensor.h"
 #include "include/common/debug/anf_ir_dump.h"
 #include "include/common/utils/utils.h"
 #include "kernel/kernel_build_info.h"
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/optimizer.h"
 #include "ir/param_info.h"
 #include "include/common/utils/anfalgo.h"
 
 #define private public
 #define protected public
 #include "plugin/device/ascend/optimizer/enhancer/insert_tensor_move_for_hccl_op.h"
+#include "plugin/device/ascend/optimizer/ir_fission/ascend_convert_tuple_input_to_dynamic_input.h"
 #undef private
 #undef protected
 namespace mindspore {
@@ -168,6 +169,8 @@ TEST_F(TestHWInsertTensorMoveForHccl, test_cond5) {
 
   auto optimizer = std::make_shared<opt::GraphOptimizer>();
   auto pm = std::make_shared<opt::PassManager>();
+  // This pass run before hccl_pass to unfold inputs of hccl node
+  pm->AddPass(std::make_shared<opt::AscendConvertTupleInputToDynamicInput>());
   auto pass = std::make_shared<opt::InsertTensorMoveForHcclOp>();
   pass->kernel_query_ = std::make_shared<MockInsertTensorMoveForHcclKernelQuery>();
   pm->AddPass(pass);

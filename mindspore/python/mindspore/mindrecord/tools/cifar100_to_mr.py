@@ -36,19 +36,24 @@ __all__ = ['Cifar100ToMR']
 
 class Cifar100ToMR:
     """
-    A class to transform from cifar100 to MindRecord.
-
-    Note:
-        For details about Examples, please refer to `Converting the CIFAR-10 Dataset <https://
-        www.mindspore.cn/tutorials/zh-CN/r2.0.0-alpha/advanced/dataset/record.html#converting-the-cifar-10-dataset>`_ .
+    A class to transform from cifar100 which needs to be a Python version with a name
+    similar to: ``cifar-100-python.tar.gz`` to MindRecord.
 
     Args:
         source (str): The cifar100 directory to be transformed.
-        destination (str): MindRecord file path to transform into, ensure that no file with the same name
-            exists in the directory.
+        destination (str): MindRecord file path to transform into, ensure that the directory is created in advance and
+            no file with the same name exists in the directory.
 
     Raises:
         ValueError: If source or destination is invalid.
+
+    Examples:
+        >>> from mindspore.mindrecord import Cifar100ToMR
+        >>>
+        >>> cifar100_dir = "/path/to/cifar100"
+        >>> mindrecord_file = "/path/to/mindrecord/file"
+        >>> cifar100_to_mr = Cifar100ToMR(cifar100_dir, mindrecord_file)
+        >>> status = cifar100_to_mr.transform()
     """
 
     def __init__(self, source, destination):
@@ -73,18 +78,8 @@ class Cifar100ToMR:
         self.destination = destination
         self.writer = None
 
+    # pylint: disable=missing-docstring
     def run(self, fields=None):
-        """
-        Execute transformation from cifar100 to MindRecord.
-
-        Args:
-            fields (list[str], optional):
-                A list of index field, e.g.["fine_label", "coarse_label"]. Default: None. For index
-                field settings, please refer to :func:`mindspore.mindrecord.FileWriter.add_index` .
-
-        Returns:
-            MSRStatus, SUCCESS or FAILED.
-        """
         if fields and not isinstance(fields, list):
             raise ValueError("The parameter fields should be None or list")
 
@@ -116,15 +111,26 @@ class Cifar100ToMR:
 
     def transform(self, fields=None):
         """
-        Encapsulate the :func:`mindspore.mindrecord.Cifar100ToMR.run` function to exit normally.
+        Execute transformation from cifar100 to MindRecord.
+
+        Note:
+            Please refer to the Examples of :class:`mindspore.mindrecord.Cifar100ToMR` .
 
         Args:
             fields (list[str], optional):
-                A list of index field, e.g.["fine_label", "coarse_label"]. Default: None. For index
+                A list of index field, e.g.["fine_label", "coarse_label"]. Default: ``None`` . For index
                 field settings, please refer to :func:`mindspore.mindrecord.FileWriter.add_index` .
 
         Returns:
             MSRStatus, SUCCESS or FAILED.
+
+        Raises:
+            ParamTypeError: If index field is invalid.
+            MRMOpenError: If failed to open MindRecord file.
+            MRMValidateDataError: If data does not match blob fields.
+            MRMSetHeaderError: If failed to set header.
+            MRMWriteDatasetError: If failed to write dataset.
+            ValueError: If parameter `fields` is invalid.
         """
 
         t = ExceptionThread(target=self.run, kwargs={'fields': fields})

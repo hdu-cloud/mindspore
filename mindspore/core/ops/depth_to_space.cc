@@ -14,11 +14,30 @@
  * limitations under the License.
  */
 
+#include <map>
+#include <memory>
 #include <set>
-#include "ops/depth_to_space.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/depth_to_space.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -83,8 +102,14 @@ abstract::ShapePtr DepthToSpaceInferShape(const PrimitivePtr &primitive,
   (void)CheckAndConvertUtils::CheckInteger("block_size", block_size % dim_1, kEqual, 0, prim_name);
   auto out_shape = x_shape;
   if (out_shape[dim_1] != abstract::Shape::kShapeDimAny) {
-    (void)CheckAndConvertUtils::CheckInteger("x_shape[1] % (block_size*block_size)",
-                                             x_shape[dim_1] % (block_size * block_size), kEqual, 0, prim_name);
+    auto in_c = x_shape[dim_1];
+    if (block_size > in_c || block_size * block_size > in_c) {
+      MS_EXCEPTION(ValueError) << "For DepthToSpace, the square of block_size must be smaller than the input channel, "
+                                  "but got the block_size is "
+                               << block_size << ", and the input channel is " << in_c << ".";
+    }
+    (void)CheckAndConvertUtils::CheckInteger("x_shape[1] % (block_size*block_size)", in_c % (block_size * block_size),
+                                             kEqual, 0, prim_name);
     out_shape[dim_1] /= block_size * block_size;
   }
   if (out_shape[dim_2] != abstract::Shape::kShapeDimAny) {
@@ -100,6 +125,9 @@ abstract::ShapePtr DepthToSpaceInferShape(const PrimitivePtr &primitive,
 }
 
 TypePtr DepthToSpaceInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(prim);
+  auto prim_name = prim->name();
+  (void)CheckAndConvertUtils::CheckInteger("input number", int64_t(input_args.size()), kEqual, 1, prim_name);
   for (const auto &item : input_args) {
     MS_EXCEPTION_IF_NULL(item);
   }
@@ -117,6 +145,24 @@ AbstractBasePtr DepthToSpaceInfer(const abstract::AnalysisEnginePtr &, const Pri
   auto infer_shape = DepthToSpaceInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(DepthToSpace, prim::kPrimDepthToSpace, DepthToSpaceInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGDepthToSpaceInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DepthToSpaceInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DepthToSpaceInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DepthToSpaceInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(DepthToSpace, prim::kPrimDepthToSpace, AGDepthToSpaceInfer, false);
 }  // namespace ops
 }  // namespace mindspore

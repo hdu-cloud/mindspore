@@ -18,11 +18,11 @@
 #define MINDSPORE_CORE_OPS_HSWISH_H_
 
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore::ops {
 constexpr auto kNameHSwish = "HSwish";
@@ -37,8 +37,8 @@ class MIND_API HSwish : public BaseOperator {
   void Init() const {}
 };
 
-abstract::AbstractBasePtr HSwishInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                      const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr HSwishInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                               const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace mindspore::ops
 
 #endif  // MINDSPORE_CORE_OPS_HSWISH_H_

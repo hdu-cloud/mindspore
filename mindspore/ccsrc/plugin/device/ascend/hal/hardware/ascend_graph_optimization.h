@@ -19,7 +19,9 @@
 
 #include <vector>
 #include <set>
-#include "backend/common/session/kernel_graph.h"
+#include <memory>
+#include "include/backend/kernel_graph.h"
+#include "include/backend/optimizer/graph_optimizer.h"
 
 namespace mindspore {
 namespace device {
@@ -34,6 +36,8 @@ class AscendGraphOptimization {
   void OptimizeGraph(const KernelGraphPtr &graph);
   void OptimizeSingleOpGraph(const KernelGraphPtr &graph);
   void UnifyMindIR(const KernelGraphPtr &graph);
+  void AscendMindIRPass(const KernelGraphPtr &graph) const;
+  void OpAdaptation(const KernelGraphPtr &graph);
   void Reset();
 
  private:
@@ -50,6 +54,7 @@ class AscendGraphOptimization {
   void OptimizeGraphWithoutDeviceInfo(const KernelGraphPtr &graph);
   void OptimizeGraphWithDeviceInfo(const KernelGraphPtr &graph);
   void OptimizeExecutionOrder(const KernelGraphPtr &graph);
+  void InlineSubGraph(const KernelGraphPtr &graph);
   void PostOptimization(const KernelGraphPtr &graph) const;
 
   // Graph Optimized level-3 interface
@@ -59,6 +64,7 @@ class AscendGraphOptimization {
   void AddGraphToManager(const NotNull<KernelGraphPtr> graph, const NotNull<FuncGraphManagerPtr> manager,
                          bool is_root = true);
   void SelectKernel(const KernelGraphPtr &graph);
+  void AscendInsertTypeTransformOps(const KernelGraphPtr &kernel_graph);
   void RecurseSelectKernelInfo(const KernelGraphPtr &graph);
   void HardWareOptimization(const KernelGraphPtr &graph);
   void HandleControlFlow(const NotNull<KernelGraphPtr> graph) const;

@@ -100,7 +100,7 @@ class _DataFormatter(logging.Formatter):
 
         Args:
             sub_module (str): The submodule name.
-            fmt (str): Specified format pattern. Default: None.
+            fmt (str): Specified format pattern. Default: ``None``.
         """
         super(_DataFormatter, self).__init__(fmt=fmt, **kwargs)
         self.sub_module = sub_module.upper()
@@ -234,9 +234,9 @@ def get_level():
 
     Examples:
         >>> import os
+        >>> import mindspore as ms
         >>> os.environ['GLOG_v'] = '0'
-        >>> from mindspore import log as logger
-        >>> level = logger.get_level()
+        >>> level = ms.get_level()
         >>> print(level)
         '0'
     """
@@ -279,7 +279,7 @@ def _check_directory_by_regular(target, reg=None, flag=re.ASCII, prim_name=None)
     if not isinstance(target, str):
         raise ValueError("The directory {} must be string, but got {}, please check it".format(target, type(target)))
     if reg is None:
-        reg = r"^[\/0-9a-zA-Z\_\-\.\:\\]+$"
+        reg = r"^[\/0-9a-zA-Z@\_\-\.\:\\]+$"
     if re.match(reg, target, flag) is None:
         prim_name = f'in `{prim_name}`' if prim_name else ""
         raise ValueError("'{}' {} is illegal, it should be match regular'{}' by flag'{}'".format(
@@ -388,14 +388,14 @@ def get_log_config():
 
     Examples:
         >>> import os
+        >>> import mindspore as ms
         >>> os.environ['GLOG_v'] = '1'
         >>> os.environ['GLOG_logtostderr'] = '0'
         >>> os.environ['GLOG_log_dir'] = '/var/log'
         >>> os.environ['logger_maxBytes'] = '5242880'
         >>> os.environ['logger_backupCount'] = '10'
         >>> os.environ['GLOG_stderrthreshold'] = '2'
-        >>> from mindspore import log as logger
-        >>> config= logger.get_log_config()
+        >>> config = ms.get_log_config()
         >>> print(config)
         {'GLOG_v': '1', 'GLOG_logtostderr': '0', 'GLOG_log_dir': '/var/log',
          'logger_maxBytes': '5242880', 'logger_backupCount': '10', 'GLOG_stderrthreshold': '2'}
@@ -435,7 +435,7 @@ def _find_caller(stack_info=False, stacklevel=1):
     file name, function name and line number.
 
     Args:
-        stack_info (bool): If the value is true, print stack information to the log. Default: False.
+        stack_info (bool): If the value is true, print stack information to the log. Default: ``False``.
 
     Returns:
         tuple, the tuple of the frame data.
@@ -478,6 +478,7 @@ def _get_rank_id():
     """Get rank id."""
     rank_id = os.getenv('RANK_ID')
     gpu_rank_id = os.getenv('OMPI_COMM_WORLD_RANK')
+    ms_node_id = os.getenv('MS_NODE_ID')
     rank = '0'
     if rank_id and gpu_rank_id and rank_id != gpu_rank_id:
         warnings.warn(
@@ -487,6 +488,8 @@ def _get_rank_id():
         rank = rank_id
     elif gpu_rank_id:
         rank = gpu_rank_id
+    elif ms_node_id:
+        rank = ms_node_id
     return rank
 
 

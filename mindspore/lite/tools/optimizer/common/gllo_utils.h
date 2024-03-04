@@ -24,10 +24,11 @@
 #include <utility>
 #include <vector>
 #include "ops/primitive_c.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "ir/anf.h"
 #include "ir/func_graph.h"
 #include "src/common/utils.h"
-#include "backend/common/optimizer/pattern_engine.h"
+#include "include/backend/optimizer/pattern_engine.h"
 #include "ops/fusion/conv2d_backprop_input_fusion.h"
 #include "schema/inner/model_generated.h"
 #include "tools/converter/converter_context.h"
@@ -55,7 +56,6 @@ inline constexpr size_t kInputSizeFour = 4;
 inline constexpr size_t kInputSizeFive = 5;
 inline const std::vector<int> kNH2NC = {0, 3, 1, 2};
 inline const std::vector<int> kNC2NH = {0, 2, 3, 1};
-inline const PrimitivePtr kPrimMakeTupleV2 = std::make_shared<Primitive>("make_tuple");
 inline const PrimitivePtr kPrimIdentity = std::make_shared<Primitive>("Identity");
 inline const PrimitivePtr kPrimConv2DBackpropInputFusion = std::make_shared<Primitive>("Conv2DBackpropInputFusion");
 
@@ -99,6 +99,8 @@ AnfNodePtr GetTupleGetItemRealInput(const CNodePtr &tuple_get_item);
 
 size_t GetTupleGetItemOutIndex(const CNodePtr &tuple_get_item);
 
+size_t GetListGetItemOutIndex(const CNodePtr &list_get_item);
+
 tensor::TensorPtr GetTensorInfo(const AnfNodePtr &node);
 
 AbstractBasePtr GetCNodeInputAbstract(const CNodePtr &cnode, size_t index);
@@ -109,7 +111,7 @@ ParameterPtr BuildParameterNode(const FuncGraphPtr &func_graph, const tensor::Te
                                 const std::string &node_name);
 
 ParameterPtr BuildIntValueParameterNode(const FuncGraphPtr &func_graph, const int32_t &data,
-                                        const std::string &node_name);
+                                        const std::string &node_name, bool empty_shape = false);
 
 ParameterPtr BuildIntVecParameterNode(const FuncGraphPtr &func_graph, const std::vector<int32_t> &data,
                                       const std::string &node_name);
@@ -118,16 +120,31 @@ ParameterPtr BuildIntVec2DParameterNode(const FuncGraphPtr &func_graph, const st
                                         const std::string &node_name);
 
 ParameterPtr BuildFloatValueParameterNode(const FuncGraphPtr &func_graph, const float &data,
-                                          const std::string &node_name);
+                                          const std::string &node_name, bool empty_shape = false);
 
 ParameterPtr BuildFloatVecParameterNode(const FuncGraphPtr &func_graph, const std::vector<float> &data,
                                         const std::string &node_name);
 
+ParameterPtr BuildFloat16VecParameterNode(const FuncGraphPtr &func_graph, const std::vector<float16> &data,
+                                          const std::string &node_name);
+
+ParameterPtr BuildFloatVec2DParameterNode(const FuncGraphPtr &func_graph, const std::vector<std::vector<float>> &data,
+                                          const std::string &node_name);
+
 CNodePtr GenTransposeNode(const FuncGraphPtr &func_graph, const AnfNodePtr &input_node, const std::vector<int> &perm,
                           const std::string &cnode_name);
 
+CNodePtr GenCastNode(const FuncGraphPtr &graph, const AnfNodePtr &input_node, const std::string &cnode_name,
+                     const TypeId dst_type, const AbstractBasePtr &abstract);
+
+CNodePtr GenReshapeNode(const FuncGraphPtr &func_graph, const AnfNodePtr &input_node, const std::vector<int> &shape,
+                        const std::string &cnode_name);
+
 CNodePtr GenGatherNode(const FuncGraphPtr &func_graph, const AnfNodePtr &input_node, const std::vector<int> &indices,
-                       const std::string &cnode_name);
+                       const std::string &cnode_name, const std::vector<int> &axis = {0});
+
+CNodePtr GenConcatNode(const FuncGraphPtr &func_graph, const std::vector<AnfNodePtr> &input_node_vec,
+                       const std::string &cnode_name, int64_t axis = 0);
 
 CNodePtr GenTupleGetItemNode(const FuncGraphPtr &func_graph, const CNodePtr &input, size_t index);
 
@@ -160,6 +177,8 @@ void PrintFuncGraph(const FuncGraphPtr &func_graph, const std::string &output_fi
 std::vector<KernelWithIndex> GetNodeInputs(const AnfNodePtr &anf_node);
 
 bool IsReduceModeMeetOutEqualIn(const PrimitivePtr &prim);
+
+STATUS AdjustInputToCnode(const CNodePtr &cnode, size_t input_index);
 
 template <const PrimitivePtr *prim = nullptr>
 inline bool IsSpecifiedNode(const BaseRef &n) {

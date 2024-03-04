@@ -35,10 +35,12 @@ class CoderGraph {
   explicit CoderGraph(Model *model) : model_(model) {}
   ~CoderGraph();
 
-  int ConvertTensors();
+  int ConvertTensors(bool enable_fp16);
   int InitGraphInOutTensors();
 
   void SetAllTensors(const std::vector<Tensor *> &all_tensors);
+
+  int RemoveCast();
 
   int InitInputs();
   void InitOutputs();

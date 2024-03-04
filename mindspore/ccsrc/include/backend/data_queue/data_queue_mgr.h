@@ -35,7 +35,6 @@
 namespace mindspore {
 namespace device {
 constexpr unsigned int MAX_WAIT_TIME_IN_SEC = 60;
-const unsigned int MAX_POP_TIMES = 4;
 class BlockingQueue;
 
 // channel_name, dynamic_shape, capacity, addr, shape

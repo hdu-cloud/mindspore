@@ -18,7 +18,9 @@
 #define MINDSPORE_CCSRC_RUNTIME_DEVICE_ASCEND_ASCEND_MEMORY_POOL_H_
 
 #include <memory>
-#include "common/mem_reuse/mem_dynamic_allocator.h"
+#include <string>
+#include "utils/hash_map.h"
+#include "include/backend/mem_reuse/mem_dynamic_allocator.h"
 
 namespace mindspore {
 namespace device {
@@ -31,11 +33,16 @@ class AscendMemoryPool : public DynamicMemPoolBestFit {
 
   size_t AllocDeviceMem(size_t size, DeviceMemPtr *addr) override;
   bool FreeDeviceMem(const DeviceMemPtr &addr) override;
+  size_t GetMaxUsedMemSize() const override;
   size_t free_mem_size() override;
+  uint64_t total_mem_size() const override;
   // Set mem pool block size
   void SetMemPoolBlockSize(size_t available_device_mem_size) override;
 
   void ResetIdleMemBuf() const;
+
+  // The main program entry of memory alloc.
+  DeviceMemPtr AllocOverflowTensorMem(size_t size, bool from_persistent_mem = false);
 
   static AscendMemoryPool &GetInstance() {
     static AscendMemoryPool instance;
@@ -44,10 +51,19 @@ class AscendMemoryPool : public DynamicMemPoolBestFit {
 
  protected:
   // Calculate memory block required alloc size when adding the memory block.
-  size_t CalMemBlockAllocSize(size_t size, bool from_persistent_mem) override;
+  size_t CalMemBlockAllocSize(size_t size, bool from_persistent_mem, bool need_recycle = false) override;
+
+  // The related interface of device memory eager free.
+  const bool IsEnableEagerFree() const override;
+  const bool SyncAllStreams() override;
+  size_t AllocDeviceMemByEagerFree(size_t size, DeviceMemPtr *addr) override;
+  size_t FreeDeviceMemByEagerFree(const DeviceMemPtr addr, const size_t size) override;
 
  private:
   AscendMemoryPool() = default;
+  std::mutex mutex_;
+  // overflow memory info, key is kernel, val is memory ptr
+  mindspore::HashMap<std::string, void *> overflow_memory_info_map_;
 };
 }  // namespace ascend
 }  // namespace device

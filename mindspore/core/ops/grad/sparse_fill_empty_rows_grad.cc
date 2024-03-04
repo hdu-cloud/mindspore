@@ -16,16 +16,30 @@
 
 #include "ops/grad/sparse_fill_empty_rows_grad.h"
 
-#include <set>
-#include <string>
-#include <vector>
 #include <memory>
-#include <algorithm>
+#include <set>
+#include <vector>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,33 +47,33 @@ namespace {
 abstract::TupleShapePtr SparseFillEmptyRowsGradInferShape(const PrimitivePtr &primitive,
                                                           const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
-  auto op_name = primitive->name();
+  for (const auto &item : input_args) {
+    MS_EXCEPTION_IF_NULL(item);
+  }
+  auto prim_name = primitive->name();
+  constexpr size_t number_one = 1;
+  auto map_shape_dtype = input_args[kInputIndex0]->BuildShape();
+  auto map_shape_vec = CheckAndConvertUtils::ConvertShapePtrToShapeMap(map_shape_dtype)[kShape];
+  auto d_value_dtype = input_args[kInputIndex1]->BuildShape();
+  auto grad_values_shape_vec = CheckAndConvertUtils::ConvertShapePtrToShapeMap(d_value_dtype)[kShape];
+  if (IsDynamicRank(map_shape_vec) || IsDynamicRank(grad_values_shape_vec)) {
+    abstract::ShapePtr map_shape_dyn = std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
+    abstract::ShapePtr grad_values_shape_dyn = std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
+    return std::make_shared<abstract::TupleShape>(
+      std::vector<abstract::BaseShapePtr>{map_shape_dyn, grad_values_shape_dyn});
+  }
+  (void)CheckAndConvertUtils::CheckInteger("dim of 'reverse_index_map'", SizeToLong(map_shape_vec.size()), kEqual,
+                                           SizeToLong(number_one), prim_name);
+  (void)CheckAndConvertUtils::CheckInteger("dim of 'grad_values'", SizeToLong(grad_values_shape_vec.size()), kEqual,
+                                           SizeToLong(number_one), prim_name);
 
-  auto reverse_index_map = CheckAndConvertUtils::CheckArgs<abstract::AbstractTensor>(op_name, input_args, 0);
-  auto grad_values = CheckAndConvertUtils::CheckArgs<abstract::AbstractTensor>(op_name, input_args, 1);
-
-  auto reverse_index_map_shape =
-    CheckAndConvertUtils::ConvertShapePtrToShapeMap(reverse_index_map->BuildShape())[kShape];
-  auto grad_values_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(grad_values->BuildShape())[kShape];
-
-  const int64_t size = 1;
-  (void)CheckAndConvertUtils::CheckInteger("reverse_index_map rank", SizeToLong(reverse_index_map_shape.size()), kEqual,
-                                           size, op_name);
-  (void)CheckAndConvertUtils::CheckInteger("grad_values rank", SizeToLong(grad_values_shape.size()), kEqual, size,
-                                           op_name);
-
-  abstract::ShapePtr y_values_shape;
-  abstract::ShapePtr y_default_value_shape;
-
-  ShapeVector out_y_values_shape_shape = {reverse_index_map_shape[0]};
-  ShapeVector out_y_default_value_shape = {};
-
-  y_values_shape = std::make_shared<abstract::Shape>(out_y_values_shape_shape);
-  y_default_value_shape = std::make_shared<abstract::Shape>(out_y_default_value_shape);
-  return std::make_shared<abstract::TupleShape>(
-    std::vector<abstract::BaseShapePtr>{y_values_shape, y_default_value_shape});
+  std::vector<abstract::BaseShapePtr> out_shape;
+  ShapeVector d_values = {map_shape_vec[0]};
+  ShapeVector d_default_value = {};
+  out_shape.push_back(std::make_shared<abstract::Shape>(d_values));
+  out_shape.push_back(std::make_shared<abstract::Shape>(d_default_value));
+  return std::make_shared<abstract::TupleShape>(out_shape);
 }
-
 TypePtr SparseFillEmptyRowsGradInferType(const PrimitivePtr &primitive,
                                          const std::vector<AbstractBasePtr> &input_args) {
   auto op_name = primitive->name();
@@ -85,7 +99,25 @@ AbstractBasePtr SparseFillEmptyRowsGradInfer(const abstract::AnalysisEnginePtr &
   auto infer_shape = SparseFillEmptyRowsGradInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseFillEmptyRowsGrad, prim::kPrimSparseFillEmptyRowsGrad, SparseFillEmptyRowsGradInfer,
-                             nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSparseFillEmptyRowsGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseFillEmptyRowsGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseFillEmptyRowsGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseFillEmptyRowsGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseFillEmptyRowsGrad, prim::kPrimSparseFillEmptyRowsGrad,
+                                 AGSparseFillEmptyRowsGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

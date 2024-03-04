@@ -16,12 +16,11 @@
 
 #include "plugin/device/ascend/optimizer/format_type/remove_host_kernel.h"
 #include <memory>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
+#include "include/backend/kernel_info.h"
+#include "include/backend/optimizer/helper.h"
 #include "include/common/utils/anfalgo.h"
-#include "include/common/utils/utils.h"
-#include "mindspore/core/ops/core_ops.h"
-#include "runtime/device/kernel_info.h"
-#include "backend/common/optimizer/helper.h"
+#include "mindspore/core/ops/array_ops.h"
 
 namespace mindspore {
 namespace opt {

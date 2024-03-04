@@ -1,4 +1,4 @@
-include_directories(${TOP_DIR}/graphengine/inc/external)
+include_directories(${TOP_DIR}/graphengine/910/inc/external)
 include_directories(${TOP_DIR}/mindspore)
 include_directories(${TOP_DIR}/mindspore/lite/src)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wl,-rpath,$ORIGIN/")
@@ -11,9 +11,16 @@ file(GLOB_RECURSE ASCEND_SRC ${CMAKE_CURRENT_SOURCE_DIR}
         "src/*.cc"
         "api/*.cc"
         "model/*.cc"
+        "profiling/*.cc"
         )
+set(ASCEND_SRC ${ASCEND_SRC} ${TOP_DIR}/mindspore/lite/src/litert/kernel/ascend/src/acl_mem_manager.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/model/acl_allocator.cc
+        )
+file(GLOB_RECURSE ACL_SRC ${CMAKE_CURRENT_SOURCE_DIR}
+        "../acl/*.cc")
 
-add_library(ascend_kernel_plugin SHARED ${ASCEND_SRC})
+add_library(ascend_kernel_plugin_mid OBJECT ${ASCEND_SRC} ${ACL_SRC})
+add_library(ascend_kernel_plugin SHARED $<TARGET_OBJECTS:ascend_kernel_plugin_mid>)
 add_dependencies(ascend_kernel_plugin fbs_inner_src)
 add_dependencies(ascend_kernel_plugin mindspore-extendrt)
 target_link_libraries(ascend_kernel_plugin mindspore-extendrt)

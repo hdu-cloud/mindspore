@@ -18,8 +18,8 @@
 #define MINDSPORE_CORE_OPS_INSTANCE_NORM_V2_GRAD_H_
 #include <map>
 #include <memory>
-#include <vector>
 #include <string>
+#include <vector>
 #include "mindapi/base/types.h"
 #include "ops/base_operator.h"
 
@@ -36,8 +36,9 @@ class MIND_API InstanceNormV2Grad : public BaseOperator {
   }
 };
 
-abstract::AbstractBasePtr InstanceNormV2GradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                  const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr InstanceNormV2GradInfer(const abstract::AnalysisEnginePtr &,
+                                                           const PrimitivePtr &primitive,
+                                                           const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimInstanceNormV2GradPtr = std::shared_ptr<InstanceNormV2Grad>;
 }  // namespace ops
 }  // namespace mindspore

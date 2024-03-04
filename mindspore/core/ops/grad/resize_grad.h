@@ -16,10 +16,10 @@
 
 #ifndef MINDSPORE_CORE_OPS_GRAD_RESIZE_GRAD_H_
 #define MINDSPORE_CORE_OPS_GRAD_RESIZE_GRAD_H_
-#include <vector>
 #include <memory>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,8 +35,8 @@ class MIND_API ResizeGrad : public BaseOperator {
   bool get_align_corners() const;
 };
 
-abstract::AbstractBasePtr ResizeGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                          const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr ResizeGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                   const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

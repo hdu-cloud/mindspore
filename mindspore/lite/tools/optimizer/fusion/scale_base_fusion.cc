@@ -17,6 +17,7 @@
 #define USE_DEPRECATED_API
 #include "tools/optimizer/fusion/scale_base_fusion.h"
 #include <memory>
+#include "mindspore/core/ops/lite_ops.h"
 #include "tools/common/tensor_util.h"
 #include "tools/optimizer/common/gllo_utils.h"
 #include "tools/converter/quantizer/quant_param_holder.h"
@@ -132,7 +133,8 @@ bool ScaleBaseFusion::CheckCurrCnodeProper(const CNodePtr &scale_cnode) const {
     MS_LOG(INFO) << "scale fusion not support dynamic dims";
     return false;
   }
-  int64_t axis = scale_prim->get_axis() < 0 ? scale_prim->get_axis() + in_shape.size() : scale_prim->get_axis();
+  int64_t axis =
+    scale_prim->get_axis() < 0 ? scale_prim->get_axis() + SizeToLong(in_shape.size()) : scale_prim->get_axis();
   if (axis != SizeToLong(in_shape.size() - 1)) {
     MS_LOG(INFO) << "scale axis must be the last dim of input";
     return false;

@@ -37,6 +37,11 @@ bool LayerNormCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std
                                  const std::vector<KernelTensorPtr> &outputs) {
   MS_EXCEPTION_IF_NULL(base_operator);
   kernel_name_ = base_operator->name();
+  auto kernel_ptr = std::dynamic_pointer_cast<ops::LayerNorm>(base_operator);
+  if (kernel_ptr == nullptr) {
+    MS_LOG(EXCEPTION) << "Cast ops::LayerNorm failed!";
+  }
+  eps_ = kernel_ptr->get_epsilon();
 
   auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
   auto [is_match, index] = MatchKernelAttr(kernel_attr, GetOpSupport());
@@ -85,7 +90,7 @@ int LayerNormCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const st
   }
   if (block_num_ == 0 || block_size_ == 0) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the dimension of 'input_x' must be at least 1, but got "
-                      << Vector2Str(x_shape);
+                      << x_shape;
   }
   return ret;
 }
@@ -110,12 +115,18 @@ void LayerNormCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
   if (outputs[kLayerNormOutputMeanIndex]->size != outputs[kLayerNormOutputVarIndex]->size) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the product of mean and var's shape must be " << block_num_;
   }
-  auto x = reinterpret_cast<T *>(inputs[kLayerNormInputXIndex]->addr);
-  auto gamma = reinterpret_cast<T *>(inputs[kLayerNormInputGammaIndex]->addr);
-  auto beta = reinterpret_cast<T *>(inputs[kLayerNormInputBetaIndex]->addr);
-  auto y = reinterpret_cast<T *>(outputs[kLayerNormOutputYIndex]->addr);
-  auto mean = reinterpret_cast<float *>(outputs[kLayerNormOutputMeanIndex]->addr);
-  auto var = reinterpret_cast<float *>(outputs[kLayerNormOutputVarIndex]->addr);
+  auto x = GetDeviceAddress<T>(inputs, kLayerNormInputXIndex);
+  auto gamma = GetDeviceAddress<T>(inputs, kLayerNormInputGammaIndex);
+  auto beta = GetDeviceAddress<T>(inputs, kLayerNormInputBetaIndex);
+  auto y = GetDeviceAddress<T>(outputs, kLayerNormOutputYIndex);
+  auto mean = GetDeviceAddress<float>(outputs, kLayerNormOutputMeanIndex);
+  auto var = GetDeviceAddress<float>(outputs, kLayerNormOutputVarIndex);
+  MS_EXCEPTION_IF_NULL(x);
+  MS_EXCEPTION_IF_NULL(gamma);
+  MS_EXCEPTION_IF_NULL(beta);
+  MS_EXCEPTION_IF_NULL(y);
+  MS_EXCEPTION_IF_NULL(mean);
+  MS_EXCEPTION_IF_NULL(var);
   size_t thread_num = common::ThreadPool::GetInstance().GetSyncRunThreadNum();
   if (block_num_ < thread_num) {
     thread_num = block_num_;
@@ -128,20 +139,25 @@ void LayerNormCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
         continue;
       }
       size_t i = c * thread_num + start;
-      float sum = 0.0f;
-      float square_sum = 0.0f;
+      double sum = 0.0;
+      double square_sum = 0.0;
       for (size_t j = i * block_size_; j < (i + 1) * block_size_; ++j) {
-        sum += static_cast<float>(x[j]);
-        square_sum += static_cast<float>(x[j] * x[j]);
+        auto x_j = static_cast<double>(x[j]);
+        sum += x_j;
+        square_sum += x_j * x_j;
       }
-      float block_mean = sum / block_size_;
-      float block_var = square_sum / block_size_ - block_mean * block_mean;
+      double block_mean = sum / block_size_;
+      float block_var = static_cast<float>(square_sum / block_size_ - block_mean * block_mean);
+      if (block_var < 0) {
+        block_var = 0;
+      }
+      MS_EXCEPTION_IF_ZERO("Var + Epsilon", block_var + eps_);
       for (size_t j = i * block_size_; j < (i + 1) * block_size_; ++j) {
         auto param_shift = j % param_num_;
         y[j] = (x[j] - static_cast<T>(block_mean)) / static_cast<T>(std::sqrt(block_var + eps_)) * gamma[param_shift] +
                beta[param_shift];
       }
-      mean[i] = block_mean;
+      mean[i] = static_cast<float>(block_mean);
       var[i] = block_var;
     }
   };

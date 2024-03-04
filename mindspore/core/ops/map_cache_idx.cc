@@ -15,21 +15,37 @@
  */
 
 #include "ops/map_cache_idx.h"
-#include <algorithm>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include <map>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
-constexpr size_t kMapCacheIdxInputsNum = 5;
-constexpr size_t kHashMapShapeSize = 2;
 abstract::TupleShapePtr MapCacheIdxInferShape(const PrimitivePtr &primitive,
                                               const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
+  constexpr int64_t kInputNum = 5;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputNum, prim_name);
   auto hashmap_shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape());
   auto hashmap_shape = hashmap_shape_map[kShape];
   auto indices_shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->BuildShape());
@@ -42,7 +58,8 @@ abstract::TupleShapePtr MapCacheIdxInferShape(const PrimitivePtr &primitive,
       std::vector<abstract::BaseShapePtr>{cache_idx_output, other_output, other_output, other_output});
   }
 
-  if (hashmap_shape.size() != kHashMapShapeSize) {
+  const size_t hashmap_shape_size = 2;
+  if (hashmap_shape.size() != hashmap_shape_size) {
     MS_EXCEPTION(ValueError) << "For '" << prim_name << "',"
                              << " the dimension of hashmap must be equal to 2, but got: " << hashmap_shape.size()
                              << ".";
@@ -52,8 +69,10 @@ abstract::TupleShapePtr MapCacheIdxInferShape(const PrimitivePtr &primitive,
 }
 
 TuplePtr MapCacheIdxInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
-  auto prim_name = prim->name();
   MS_EXCEPTION_IF_NULL(prim);
+  auto prim_name = prim->name();
+  constexpr int64_t kInputNum = 5;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputNum, prim_name);
   auto hashmap_type = input_args[0]->BuildType();
   auto indices_type = input_args[1]->BuildType();
 
@@ -68,14 +87,30 @@ TuplePtr MapCacheIdxInferType(const PrimitivePtr &prim, const std::vector<Abstra
 
 AbstractBasePtr MapCacheIdxInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                  const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kMapCacheIdxInputsNum, primitive->name());
   auto infer_type = MapCacheIdxInferType(primitive, input_args);
   auto infer_shape = MapCacheIdxInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
 MIND_API_OPERATOR_IMPL(MapCacheIdx, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(MapCacheIdx, prim::kPrimMapCacheIdx, MapCacheIdxInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMapCacheIdxInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MapCacheIdxInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MapCacheIdxInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MapCacheIdxInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MapCacheIdx, prim::kPrimMapCacheIdx, AGMapCacheIdxInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -35,19 +35,21 @@ struct ModelConstWeight {
   int numa_id = -1;
   std::unordered_map<int, void *> tensors_data;
   std::set<void *> fp16_fp32_data;
+  bool copy_buf;
 };
 
 class PackWeight {
  public:
   PackWeight() = default;
   ~PackWeight();
-  STATUS InitPackWeight(const void *model_buf, size_t model_size, std::string id, int numa_id);
+  STATUS InitPackWeight(const void *model_buf, size_t model_size, std::string id, int numa_id,
+                        bool need_copy_buf = true);
   char *GetSharedModelBuf(std::string id, int numa_id);
   STATUS StoreOriginTensorData(const void *model_buf, const void *origin_tensor_data);
   void *GetPackData(const void *tensor_data, const size_t size, bool *is_packed);
   STATUS ReplaceOriginTensorData(const void *model_buf, std::vector<Tensor *> *tensors, int tensor_index);
   void *ReplaceFp16Data(void *origin_fp16_data, size_t size);
-  void FreePackWeight(std::string id);
+  void FreePackWeight(std::string id, bool free_all = false);
 
  private:
   void FreePackedWeight(ModelConstWeight *weight);

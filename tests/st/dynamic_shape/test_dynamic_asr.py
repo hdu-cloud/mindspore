@@ -35,8 +35,7 @@ from mindspore.nn.wrap.grad_reducer import DistributedGradReducer
 from mindspore.ops import composite as C, functional as F
 from mindspore.ops.functional import stop_gradient
 from mindspore.parallel._utils import _get_parallel_mode, _get_device_num, _get_gradients_mean
-from mindspore.train import Model
-from mindspore.train.callback._callback import Callback
+from mindspore.train import Model, Callback
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -92,7 +91,7 @@ class MultiheadAttention(nn.Cell):
         self.matmul = P.BatchMatMul()
 
         self.softmax = nn.Softmax()
-        self.dropout = nn.Dropout(1 - attention_probs_dropout_prob)
+        self.dropout = nn.Dropout(p=attention_probs_dropout_prob)
         self.sub = P.Sub()
         self.add = P.TensorAdd()
         self.cast = P.Cast()
@@ -193,7 +192,7 @@ class ResidualNorm(nn.Cell):
 
     def __init__(self, size, dropout_prob=0.1):
         super(ResidualNorm, self).__init__()
-        self.dropout = nn.Dropout(1 - dropout_prob)
+        self.dropout = nn.Dropout(p=dropout_prob)
         self.add = P.TensorAdd()
         self.layernorm = nn.LayerNorm([size])
         self.out_shape = (-1, size)
@@ -202,7 +201,8 @@ class ResidualNorm(nn.Cell):
     def construct(self, hidden_status, input_tensor):
         output = self.dropout(hidden_status)
         output = self.add(output, input_tensor)
-        if -1 in P.Shape()(output):
+        # TODO Temp change for dynamic length sequence.
+        if F.is_sequence_value_unknown(P.Shape()(output)):
             output = P.ExpandDims()(output, 1)
         output = self.layernorm(output)
         output = P.Reshape()(output, self.out_shape)
@@ -213,7 +213,7 @@ class FeedForward(nn.Cell):
     def __init__(self, attention_size, intermediate_size,
                  hidden_act, hidden_dropout_prob):
         super(FeedForward, self).__init__()
-        self.dropout = nn.Dropout(1 - hidden_dropout_prob)
+        self.dropout = nn.Dropout(p=hidden_dropout_prob)
         self.linear1 = CustomDense(in_channels=attention_size,
                                    out_channels=intermediate_size,
                                    activation=hidden_act,
@@ -242,8 +242,8 @@ class Conv2dSubsampling(nn.Cell):
         :param int odim: output dim
         """
         super(Conv2dSubsampling, self).__init__()
-        self.conv1 = nn.Conv2d(1, odim, 3, 2, pad_mode="pad", padding=pad)
-        self.conv2 = nn.Conv2d(odim, odim, 3, 2, pad_mode="pad", padding=pad)
+        self.conv1 = nn.Conv2d(1, odim, 3, 2, pad_mode="pad", padding=pad, weight_init="normal", bias_init="zeros")
+        self.conv2 = nn.Conv2d(odim, odim, 3, 2, pad_mode="pad", padding=pad, weight_init="normal", bias_init="zeros")
         shape1 = 1 + (idim + 2 * pad - 3) // 2
         shape2 = 1 + (shape1 + 2 * pad - 3) // 2
         self.linear = CustomDense(odim * shape2, odim)
@@ -267,11 +267,13 @@ class Conv2dSubsampling(nn.Cell):
         x = self.conv2(x)
         x = self.relu(x)
 
-        (b, c, t, f) = self.shape(x)
+        # TODO: Temp change for dynamic length sequence.
+        (b, c, _, f) = self.shape(x)
         x = self.transpose(x, (0, 2, 1, 3))
         x = self.reshape(x, (-1, c*f))
         x = self.linear(x)
-        x = self.reshape(x, (b, t, self.odim))
+        # TODO: Temp change for dynamic length sequence.
+        x = self.reshape(x, (b, -1, self.odim))
         return x
 
 
@@ -301,7 +303,7 @@ class EncoderCell(nn.Cell):
             has_attention_mask=has_attention_mask,
             compute_type=compute_type)
 
-        self.dropout = nn.Dropout(1 - hidden_dropout_prob)
+        self.dropout = nn.Dropout(p=hidden_dropout_prob)
         self.intermediate = CustomDense(in_channels=size, out_channels=intermediate_size,
                                         activation=hidden_act, weight_init="zeros")
         self.res_norm = ResidualNorm(size, dropout_prob=hidden_dropout_prob)
@@ -323,8 +325,6 @@ class EncoderCell(nn.Cell):
         attention_output = self.reshape(attention_output, self.shape_2d)
         fc_output = self.feedforward(attention_output)
         output = self.res_norm(fc_output, attention_output)
-        if -1 in shape_out:
-            shape_out = P.DynamicShape()(x)
         return self.reshape(output, shape_out)
 
 
@@ -342,7 +342,7 @@ class PositionalEncoding(nn.Cell):
         super(PositionalEncoding, self).__init__()
 
         xscale = math.sqrt(dim)
-        self.dropout = nn.Dropout(1 - dropout_rate)
+        self.dropout = nn.Dropout(p=dropout_rate)
         self.mul = P.Mul()
         self.add = P.TensorAdd()
         self.shape = P.Shape()
@@ -358,8 +358,6 @@ class PositionalEncoding(nn.Cell):
         :return: Encoded x (B, time, dim)
         """
         _, l, _ = self.shape(x)
-        if -1 == l:
-            l = P.DynamicShape()(x)[1]
         pos = self.pe[:, :l, :]
         x = self.mul(x, self.te)
         x = self.add(x, pos)
@@ -586,11 +584,11 @@ class CTC(nn.Cell):
         super(CTC, self).__init__()
         self.ctc = P.CTCLoss(ignore_longer_outputs_than_inputs=False)
         self.transpose = P.Transpose()
-        self.linear_c = nn.Dense(adim, odim)
+        self.linear_c = nn.Dense(adim, odim, weight_init="normal", bias_init="zeros")
         self.reshape = P.Reshape()
         self.adim = adim
         self.odim = odim
-        self.dropout = nn.Dropout(1 - dropout_prob)
+        self.dropout = nn.Dropout(p=dropout_prob)
         self.cast = P.Cast()
         self.not_equal = P.NotEqual()
         self.ignore_id = ignore_id
@@ -606,14 +604,15 @@ class CTC(nn.Cell):
         self.layernorm = nn.LayerNorm([odim])
 
     def construct(self, hs_pad, hlens, ys_pad, label_indices, label_values):
-        (_, t, _) = self.shape(hs_pad)
         hs = self.reshape(hs_pad, (-1, self.adim))
         hs = self.dropout(hs)
         hs = self.linear_c(hs)
-        if -1 in self.shape(hs):
+        # TODO Temp change for dynamic length sequence.
+        if F.is_sequence_value_unknown(self.shape(hs)):
             hs = P.ExpandDims()(hs, 1)
         hs = self.layernorm(hs)
-        hs = self.reshape(hs, (self.batch_size, t, self.odim))
+        # TODO Temp change for dynamic length sequence.
+        hs = self.reshape(hs, (self.batch_size, -1, self.odim))
         ys_hat = self.transpose(hs, (1, 0, 2))
 
         if self.ignore_id != self.blk:
@@ -795,9 +794,9 @@ class MultiTaskTrainOneStepCell(nn.Cell):
     def construct(self, *inputs):
         weights = self.weights
         (loss, aloss, closs) = self.network(*inputs)
-        sens = (P.Fill()(P.DType()(loss), P.Shape()(loss), self.sens),
-                P.Fill()(P.DType()(aloss), P.Shape()(aloss), 0.0),
-                P.Fill()(P.DType()(closs), P.Shape()(closs), 0.0))
+        sens = (F.fill(P.DType()(loss), P.Shape()(loss), self.sens),
+                F.fill(P.DType()(aloss), P.Shape()(aloss), 0.0),
+                F.fill(P.DType()(closs), P.Shape()(closs), 0.0))
         grads = self.grad(self.network, weights)(*inputs, sens)
         grads = self.grad_reducer(grads)
         return (F.depend(loss, self.optimizer(grads)), aloss, closs)
@@ -814,30 +813,39 @@ def warmup_lr(init_lr, warmup_steps, total_steps):
     return np.array(lr).astype(np.float32)
 
 
-def create_dataset(batch_size=16, feats_dim=83, text_dim=6368):
-    feats_widths = (1024, 1015)
-    feats2_widths = ((1024, 1024), (1015, 1014))
-    token_widths = (24, 22)
-    text_widths = ((24, 22), (21, 22))
-    seq_shape_list = [((batch_size, 895, feats_dim), (batch_size, 23)), ((
-        batch_size, 896, feats_dim), (batch_size, 26))]
-    seq_shape_list = []
-
-    for feats_wid, feats2_wid, token_wid, text_wid in zip(feats_widths, feats2_widths, token_widths, text_widths):
-        seq_shape_list.append(((batch_size, feats_wid, feats_dim),
-                               ((feats2_wid[0], feats_dim), (feats2_wid[1], feats_dim)),
-                               (batch_size, token_wid),
-                               ((text_wid[0], text_dim), (text_wid[1], text_dim))))
+def create_dataset(batch_size=2, feats_dim=83, text_dim=6368):
+    if batch_size != 2 or feats_dim != 83 or text_dim != 6368:
+        raise ValueError("param wrong, only for batch_size 2, feats_dim 83 and text_dim 6368!")
 
     np.random.seed(0)
+
+    feats_widths = (598, 539)
+    token_widths = (15, 18)
+    tokens = [np.array([1491, 1122, 1741, 1307, 1115, 1499, 3382, 1465, 1176, 1044, 1116, 1043, 1002, 1859, 2127, 1138,
+                        1115, 1052, 1150, 1148, 1759, 2186, 1002, 1476, 1082, 1289, -1, -1, -1, -1], dtype=np.int32),
+              np.array([1162, 1487, 1182, 1496, 1066, 1096, 1940, 1308, 1307, 1897, 1316, 2452, 1651, 1380, 1297, 1859,
+                        2127, 1089, 1985, 1150, 1759, 2186, 1660, 2861, 2861, 1199, 1255, -1, -1, -1, -1, -1, -1, -1,
+                        -1, -1], dtype=np.int32)]
+    feats2_widths = ((feats_widths[0], 384), (feats_widths[1], 315))
+    text_widths = ((token_widths[0], 11), (token_widths[1], 9))
+
+    seq_shape_list = []
+    for feats_wid, token_wid, token_value, feats2_wid, text_wid in zip(
+            feats_widths, token_widths, tokens, feats2_widths, text_widths):
+        seq_shape_list.append(((batch_size, feats_wid, feats_dim),
+                               (batch_size, token_wid),
+                               token_value,
+                               ((feats2_wid[0], feats_dim), (feats2_wid[1], feats_dim)),
+                               ((text_wid[0], text_dim), (text_wid[1], text_dim))))
+
     data_list = []
-    for feats_shape1, feats_shape_temp, token_shape, text_shape_temp in seq_shape_list:
+    for feats_shape1, token_shape, token_value, feats_shape_temp, text_shape_temp in seq_shape_list:
         label_indices = []
         label_values = []
         text_shape = np.array(text_shape_temp).astype(np.int32)
         blank_token = text_shape[0][1] - 1
 
-        token = np.random.randn(*token_shape).astype(np.int32)
+        token = token_value.reshape(*token_shape).astype(np.int32)
 
         for batch_id, item in enumerate(token):
             tmp_token = copy.deepcopy(item)
@@ -943,7 +951,7 @@ class TimeMonitor(Callback):
         self.step += 1
 
 
-def asr_run(input_dict=None):
+def asr_run(exec_mode, input_dict=None):
     args_dict = {
         "adim": 256,
         "aheads": 1,
@@ -970,7 +978,7 @@ def asr_run(input_dict=None):
 
     args = argparse.Namespace(**args_dict)
     time.sleep(3)
-    context.set_context(mode=context.GRAPH_MODE)
+    context.set_context(mode=exec_mode)
 
     mindspore.set_seed(0)
     dataset = create_dataset(args.batch_size, args.feats_dim, args.text_dim)
@@ -1023,25 +1031,47 @@ def _compare_result(outputs, expects):
                 "[ERROR] compare as followings:\n ==> outputs: {},\n ==> expects: {}".format(output, expect))
 
 
-@pytest.mark.level1
-@pytest.mark.platform_arm_ascend_training
-@pytest.mark.platform_x86_ascend_training
-@pytest.mark.env_onecard
-def test_ascend_train():
+def test_ascend_train_by_mode(mode):
     """
     Feature: Test the simplified dynamic shape ASR network with small data in Ascend.
     Description:  The sequence length of inputs is dynamic.
     Expectation: Assert that the training loss of fixed data is consistent with the expected loss.
     """
-    context.set_context(mode=context.GRAPH_MODE, device_target="Ascend")
+    context.set_context(mode=mode, device_target="Ascend")
     start_time = time.time()
-    losses = asr_run()
+    losses = asr_run(mode)
     current_time = time.time()
     logging.info("Run asr with %f s.", current_time - start_time)
-    expect_losses = [np.array(106.237755, dtype=np.float32), np.array(90.78951, dtype=np.float32),
-                     np.array(89.331894, dtype=np.float32), np.array(102.211105, dtype=np.float32)]
+    expect_losses = [np.array(365.10015869140625, dtype=np.float32), np.array(301.9192199707031, dtype=np.float32),
+                     np.array(171.00082397460938, dtype=np.float32), np.array(144.65423583984375, dtype=np.float32)]
     _compare_result(losses[:1], expect_losses[:1])
     logging.info("Test asr done.")
+
+
+@pytest.mark.level1
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.env_onecard
+def test_ascend_train_graph():
+    """
+    Feature: Test the simplified dynamic shape ASR network with small data in Ascend.
+    Description:  The sequence length of inputs is dynamic.
+    Expectation: Assert that the training loss of fixed data is consistent with the expected loss.
+    """
+    test_ascend_train_by_mode(context.GRAPH_MODE)
+
+
+@pytest.mark.level1
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.env_onecard
+def test_ascend_train_pynative():
+    """
+    Feature: Test the simplified dynamic shape ASR network with small data in Ascend.
+    Description:  The sequence length of inputs is dynamic.
+    Expectation: Assert that the training loss of fixed data is consistent with the expected loss.
+    """
+    test_ascend_train_by_mode(context.PYNATIVE_MODE)
 
 
 @pytest.mark.level0
@@ -1055,10 +1085,10 @@ def test_gpu_train():
     """
     context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
     start_time = time.time()
-    losses = asr_run()
+    losses = asr_run(context.GRAPH_MODE)
     current_time = time.time()
     logging.info("Run asr with %f s.", current_time - start_time)
-    expect_losses = [np.array(727.7395, dtype=np.float32), np.array(518.216, dtype=np.float32),
-                     np.array(107.88617, dtype=np.float32), np.array(139.66273, dtype=np.float32)]
+    expect_losses = [np.array(365.14368, dtype=np.float32), np.array(293.88275, dtype=np.float32),
+                     np.array(153.87912, dtype=np.float32), np.array(129.04703, dtype=np.float32)]
     _compare_result(losses, expect_losses)
     logging.info("Test asr done.")

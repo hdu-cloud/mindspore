@@ -23,13 +23,17 @@
 #include <queue>
 #include <string>
 #include <vector>
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "abstract/abstract_value.h"
 #include "abstract/abstract_function.h"
 #include "ir/graph_utils.h"
 #include "utils/ms_context.h"
 #include "utils/trace_base.h"
 #if defined(__linux__) && defined(WITH_BACKEND)
-#include "ps/ps_context.h"
+#include "include/backend/distributed/ps/ps_context.h"
 #endif
 
 namespace mindspore {
@@ -73,7 +77,7 @@ void CompileGraph::Push(const AnfNodePtr &node) {
   MS_EXCEPTION_IF_NULL(node);
   if (slots_.count(node) > 0) {
     MS_LOG(WARNING) << "Push failed node in slots:" << node->DebugString()
-                    << " NodeInfo: " << trace::GetDebugInfo(node->debug_info());
+                    << " NodeInfo: " << trace::GetDebugInfoStr(node->debug_info());
     return;
   }
   MS_LOG(DEBUG) << "Push node: " << node->DebugString(true) << " height_: " << height_
@@ -110,7 +114,7 @@ int64_t CompileGraph::Ref(const AnfNodePtr &node) {
     } else {
       MS_LOG(DEBUG) << "Push.";
       if (IsValueNode<Primitive>(node)) {
-        MS_LOG(EXCEPTION) << "must not be primitive in here NodeInfo: " << trace::GetDebugInfo(node->debug_info());
+        MS_LOG(EXCEPTION) << "must not be primitive in here NodeInfo: " << trace::GetDebugInfoStr(node->debug_info());
       } else {
         AddInst(Instruction::kPush, GetValueNode(node));
       }
@@ -162,7 +166,7 @@ int64_t CompileGraph::LinConvert(const FuncGraphPtr &graph, const GraphSegmentPt
   if (!(*result.run)) {
     if (result.inputs.size() != result.outputs.size()) {
       MS_EXCEPTION_IF_NULL(graph);
-      MS_LOG(EXCEPTION) << "must inputs equal outputs NodeInfo: " << trace::GetDebugInfo(graph->debug_info());
+      MS_LOG(EXCEPTION) << "must inputs equal outputs NodeInfo: " << trace::GetDebugInfoStr(graph->debug_info());
     } else {
       size_t size = result.inputs.size();
       for (size_t i = 0; i < size; i++) {
@@ -245,7 +249,7 @@ bool CompileGraph::Compile(const FuncGraphPtr &graph) {
       auto &cut_node = segment->nodes_[0];
       MS_EXCEPTION_IF_NULL(cut_node);
       if (!cut_node->isa<CNode>()) {
-        MS_LOG(EXCEPTION) << "must be anfnode here NodeInfo: " << trace::GetDebugInfo(graph->debug_info());
+        MS_LOG(EXCEPTION) << "must be anfnode here NodeInfo: " << trace::GetDebugInfoStr(graph->debug_info());
       }
       auto node = cut_node->cast<CNodePtr>();
       ret = InterpretNode(graph, node);
@@ -307,7 +311,7 @@ void CompileGraph::AddPartial(const CNodePtr &node) {
   }
   auto fn = inputs[1];
   if (!IsValueNode<FuncGraph>(fn)) {
-    MS_LOG(EXCEPTION) << "The type of 1st input of node must be FuncGraph";
+    MS_LOG(EXCEPTION) << "The type of 1st input of node must be FuncGraph, but got:" << fn->ToString();
   }
   for (size_t i = 1; i < inputs.size(); i++) {
     args.emplace_back(Ref(inputs[i]));
@@ -475,7 +479,7 @@ FuncGraphPtr WrapPrimitives(const FuncGraphPtr &graph) {
       TypedPrimitiveAbstractClosurePtr tp = dyn_cast<abstract::TypedPrimitiveAbstractClosure>(type->GetUnique());
       MS_EXCEPTION_IF_NULL(tp);
       MS_EXCEPTION_IF_NULL(g);
-      for (auto t : tp->args_spec_list()) {
+      for (const auto &t : tp->args_abs_list()) {
         ParameterPtr p = g->add_parameter();
         p->set_abstract(t);
         args.push_back(p);
@@ -598,12 +602,6 @@ void SetMindRTEnable() {
     return;
   }
 #endif
-
-  std::string target = context_ptr->get_param<std::string>(MS_CTX_DEVICE_TARGET);
-  if (common::GetEnv("DISABLE_ASCEND_MINDRT") == "1" && target == kAscendDevice) {
-    context_ptr->set_param<bool>(MS_CTX_ENABLE_MINDRT, false);
-    return;
-  }
 
   MS_LOG(DEBUG) << "Enable mindRT.";
   context_ptr->set_param<bool>(MS_CTX_ENABLE_MINDRT, true);

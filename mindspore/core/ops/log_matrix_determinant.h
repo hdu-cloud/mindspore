@@ -18,8 +18,8 @@
 #define MINDSPORE_CORE_OPS_LOG_MATRIX_DETERMINANT_H_
 #include <memory>
 #include <vector>
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -30,8 +30,9 @@ class MIND_API LogMatrixDeterminant : public BaseOperator {
   LogMatrixDeterminant() : BaseOperator(kNameLogMatrixDeterminant) { InitIOName({"x"}, {"sign", "output"}); }
 };
 
-abstract::AbstractBasePtr LogMatrixDeterminantInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                    const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr LogMatrixDeterminantInfer(const abstract::AnalysisEnginePtr &,
+                                                             const PrimitivePtr &primitive,
+                                                             const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimLogMatrixDeterminantPtr = std::shared_ptr<LogMatrixDeterminant>;
 }  // namespace ops
 }  // namespace mindspore

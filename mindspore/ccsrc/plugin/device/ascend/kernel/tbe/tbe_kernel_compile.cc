@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,8 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include "ops/other_op_name.h"
+#include "ops/framework_ops.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_json/tbe_json_creator.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_json/tbe_json_utils.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_json/single_tbe_json_creator.h"
@@ -33,7 +35,7 @@
 #include "plugin/device/ascend/kernel/tbe/tbe_kernel_mod.h"
 #include "plugin/device/ascend/kernel/tbe/dynamic_tbe_kernel_mod.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_convert_utils.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "backend/common/session/kernel_build_client.h"
 #include "common/util/error_manager/error_manager.h"
@@ -44,6 +46,8 @@
 #include "utils/trace_base.h"
 #include "include/common/utils/utils.h"
 #include "include/common/utils/json_operation_utils.h"
+#include "include/backend/debug/profiler/profiling.h"
+#include "include/common/utils/compile_cache_context.h"
 
 namespace mindspore {
 namespace kernel {
@@ -64,6 +68,9 @@ constexpr auto kOfflineTune = "offlineTune";
 constexpr auto kCheckSupport = "CheckSupport";
 constexpr auto kSelectFormat = "SelectFormat";
 constexpr auto kFullySupported = "FULLY_SUPPORTED";
+constexpr auto kNotSupported = "NOT_SUPPORTED";
+constexpr auto kPartiallySupported = "PARTIALLY_SUPPORTED";
+constexpr auto kUnSupportedReason = "The shape is not support now";
 constexpr auto kLevel = "level";
 constexpr auto kMessage = "message";
 constexpr auto kErrorCode = "errCode";
@@ -103,11 +110,12 @@ constexpr auto kMS_BUILD_PROCESS_NUM = "MS_BUILD_PROCESS_NUM";
 constexpr auto kMS_PARA_DEBUG_PATH = "PARA_DEBUG_PATH";
 constexpr auto kTBE_IMPL_PATH = "TBE_IMPL_PATH";
 constexpr auto kTUNE_OPS_NAME = "TUNE_OPS_NAME";
-constexpr int KSleepUSeconds = 3000;
-constexpr int KSleepInterval = 1000;
+constexpr auto KSleepUSeconds = 3000;
+constexpr auto KSleepInterval = 1000;
 const uint64_t kUSecondInSecond = 1000000;
 
 namespace {
+constexpr auto kPatternOpaque = "Opaque";
 inline bool Order(const nlohmann::json &json1, const nlohmann::json &json2) {
   return json1[kIndex].dump() < json2[kIndex].dump();
 }
@@ -190,7 +198,13 @@ uint32_t GetProcessNum() {
       MS_LOG(EXCEPTION) << "Invalid environment variable '" << kMS_BUILD_PROCESS_NUM
                         << "', it should be a digit, but got: " << env_process_num;
     }
-    process_num = UlongToUint(std::stoul(env_process_num));
+    uint64_t process_num_ulong = 0;
+    try {
+      process_num_ulong = std::stoul(env_process_num);
+    } catch (const std::exception &e) {
+      MS_LOG(EXCEPTION) << "Invalid argument: " << e.what() << " when parse " << env_process_num;
+    }
+    process_num = UlongToUint(process_num_ulong);
     if (process_num < IntToUint(1) || process_num > kDEFAULT_PROCESS_NUM) {
       MS_LOG(EXCEPTION) << "Invalid environment variable '" << kMS_BUILD_PROCESS_NUM
                         << "', the value should be in [1, 24], but got: " << process_num;
@@ -236,6 +250,16 @@ std::vector<std::string> GetTuneOpsList(const std::string &d) {
     (void)res.emplace_back(ops.substr(p1));
   }
   return res;
+}
+
+std::string ReplaceString(const std::string &input, const std::string &search_str, const std::string &replace_str) {
+  auto ret = input;
+  size_t pos = ret.find(search_str);
+  while (pos != std::string::npos) {
+    ret.replace(pos, search_str.length(), replace_str);
+    pos = ret.find(search_str, pos + replace_str.length());
+  }
+  return ret;
 }
 }  // namespace
 
@@ -290,6 +314,15 @@ void TbeKernelCompileManager::ParseTargetJobStatus(const nlohmann::json &json, T
       target_status->job_status = kFailed;
     }
   }
+}
+
+std::string TbeKernelCompileManager::ParseOpPattern(const std::string &json_str) const {
+  nlohmann::json result;
+  if (!ParseJson(json_str, &result)) {
+    MS_LOG(WARNING) << "Parse op pattern json error. Origin result: " << json_str;
+    return kPatternOpaque;
+  }
+  return GetJsonValue<std::string>(result, "pattern");
 }
 
 nlohmann::json TbeKernelCompileManager::TurnStrToJson(const std::string &string) const {
@@ -347,20 +380,26 @@ void TbeKernelCompileManager::GetAllTbeNodes(const std::shared_ptr<session::Kern
   auto all_nodes = kernel_graph->execution_order();
   for (const auto &anf_node : all_nodes) {
     MS_EXCEPTION_IF_NULL(anf_node);
-    if (!AnfUtils::IsRealKernel(anf_node)) {
+    if (!AnfUtils::IsRealKernel(anf_node) || IsPrimitiveCNode(anf_node, prim::kPrimCallInline)) {
       continue;
     }
     KernelType kernel_type = AnfAlgo::GetKernelType(anf_node);
     if (kernel_type == TBE_KERNEL) {
       if (AnfAlgo::GetKernelMod(anf_node) == nullptr) {
-        (void)tbe_nodes->push_back(anf_node);
+        tbe_nodes->push_back(anf_node);
       }
     }
   }
 }
 
 std::string TbeKernelCompileManager::DispatchCompileTask(const nlohmann::json &kernel_json) const {
-  return AscendKernelBuildClient::Instance().DispatchToServer(kernel_json.dump());
+  std::string ret;
+  try {
+    ret = AscendKernelBuildClient::Instance().DispatchToServer(kernel_json.dump());
+  } catch (const std::exception &e) {
+    MS_LOG(EXCEPTION) << e.what();
+  }
+  return ret;
 }
 
 void TbeKernelCompileManager::SavePreBuildResult(const std::string &json_name, const std::string &pre_build_result) {
@@ -369,24 +408,31 @@ void TbeKernelCompileManager::SavePreBuildResult(const std::string &json_name, c
     MS_LOG(WARNING) << "Parse pre-build result error. Origin result: " << pre_build_result;
     return;
   }
-  auto op_pattern = GetJsonValue<std::string>(result, "op_pattern");
-  auto fusion_type = kernel::GetFusionTypeByName(op_pattern);
+  auto op_pattern = ParseOpPattern(GetJsonValue<std::string>(result, "op_pattern"));
   auto output_data_desc = GetJsonValue<nlohmann::json>(result, "op_params");
   auto core_type = GetJsonValue<nlohmann::json>(result, "core_type");
   // save pre build result
   struct PreBuildResult pre_res;
   pre_res.json_name = json_name;
-  pre_res.fusion_type = fusion_type;
+  pre_res.fusion_type = op_pattern;
   pre_res.core_type = core_type;
   pre_res.output_data_desc = output_data_desc;
   prebuild_res_map_[json_name] = pre_res;
 }
 
 void TbeKernelCompileManager::SaveFailedTaskCompileResult(int task_id) {
-  auto task_info = task_map_[task_id];
-  auto json_name = task_info.json_name;
+  const auto task_iter = task_map_.find(task_id);
+  if (task_iter == task_map_.end()) {
+    MS_LOG(WARNING) << "Can not find pre-build task_id:" << task_id;
+    return;
+  }
+  auto json_name = task_iter->second.json_name;
   auto config_path = TbeUtils::GetOpDebugPath();
   auto cache_file = config_path + kNotSupportFusionOp;
+  if (cache_file.size() > PATH_MAX) {
+    MS_LOG(WARNING) << "File path length should be smaller than " << PATH_MAX << ", but got " << cache_file;
+    return;
+  }
   std::ofstream file_write;
   file_write.open(cache_file, std::ios::app);
   if (!file_write.is_open()) {
@@ -395,7 +441,7 @@ void TbeKernelCompileManager::SaveFailedTaskCompileResult(int task_id) {
   }
   file_write << json_name << std::endl;
   file_write.close();
-  not_support_fusion_ops_.insert(json_name);
+  (void)not_support_fusion_ops_.insert(json_name);
 }
 
 void TbeKernelCompileManager::SaveSucceedTaskCompileResult(int task_id, const std::string &compile_info,
@@ -447,6 +493,28 @@ void TbeKernelCompileManager::SaveIOSizeInfo(const nlohmann::json &json, const s
   kernel_io_size_info_[json_name] = info;
 }
 
+void TbeKernelCompileManager::SetFusionOpsKernelIOSizeInfo(const std::vector<CNodePtr> &node_list) {
+  auto &context = CompileCacheContext::GetInstance();
+  for (const auto &node : node_list) {
+    if (!common::AnfAlgo::HasNodeAttr(kAttrIsUBFusionOp, node) ||
+        !common::AnfAlgo::GetNodeAttr<bool>(node, kAttrIsUBFusionOp)) {
+      continue;
+    }
+    auto full_name = node->fullname_with_scope();
+    const auto &cached_io_size_info = context.GetIOSizeInfo(full_name);
+    if (cached_io_size_info.json_name.empty()) {
+      continue;
+    }
+    KernelIOSizeInfo io_size_info;
+    const auto &json_name = cached_io_size_info.json_name;
+    full_name_to_json_name_[full_name] = json_name;
+    io_size_info.json_name = json_name;
+    io_size_info.input_size_list = cached_io_size_info.input_size_list;
+    io_size_info.output_size_list = cached_io_size_info.output_size_list;
+    kernel_io_size_info_[json_name] = io_size_info;
+  }
+}
+
 void TbeKernelCompileManager::SaveTaskInfo(const bool is_dynamic, const nlohmann::json &json,
                                            const std::string &json_name, const std::string &full_name, int task_id,
                                            int64_t scope_id) {
@@ -464,8 +532,9 @@ void TbeKernelCompileManager::SaveTaskInfo(const bool is_dynamic, const nlohmann
 }
 
 void TbeKernelCompileManager::QueryProcess(const std::string &type, const std::string &job_result,
-                                           std::vector<int> *success_job) {
+                                           std::vector<int> *success_job, std::vector<int> *failed_job) {
   MS_EXCEPTION_IF_NULL(success_job);
+  MS_EXCEPTION_IF_NULL(failed_job);
   auto json_obj = TurnStrToJson(job_result);
   // the query job' status.
   if (json_obj.at(kStatus) == kSuccess) {
@@ -486,16 +555,20 @@ void TbeKernelCompileManager::QueryProcess(const std::string &type, const std::s
       if (type == kPreCompile) {
         MS_LOG(INFO) << "Single op pre build failed, op: " << kernel_name
                      << "\n except_msg : " << target_status.except_msg;
-        (void)success_job->emplace_back(target_status.target_job_id);
+        (void)failed_job->emplace_back(target_status.target_job_id);
       } else if (type == kCompile) {
-        auto target_node = job_id_to_node_[target_status.target_job_id];
-        ClearOldTask();
-        MS_LOG(EXCEPTION) << "Single op compile failed, op: " << kernel_name
-                          << ".#dmsg#Operator Compilation Exception Message:#dmsg#" << target_status.except_msg
-                          << trace::DumpSourceLines(target_node);
+        auto target_job_id = target_status.target_job_id;
+        auto target_cnode = job_id_to_node_[target_job_id];
+        std::ostringstream oss;
+        (void)failed_job->emplace_back(target_job_id);
+        oss << "op: " << kernel_name << ".#dmsg#Operator Compilation Exception Message:#dmsg#"
+            << target_status.except_msg << trace::DumpSourceLines(target_cnode) << "\n";
+        failed_log_ += oss.str();
+        MS_LOG(INFO) << "Single op compile failed. " << oss.str();
       } else {
-        MS_LOG(INFO) << "Op " << kernel_name << " " << type << " failed,\n except_msg : " << target_status.except_msg;
-        (void)success_job->emplace_back(target_status.target_job_id);
+        MS_LOG(INFO) << "Op " << kernel_name << " " << type << " failed,\n except_msg : "
+                     << ReplaceString(target_status.except_msg, "RuntimeError", "RuntimeErr");
+        (void)failed_job->emplace_back(target_status.target_job_id);
       }
     }
     return;
@@ -509,6 +582,7 @@ void TbeKernelCompileManager::Query(const std::string &type) {
   size_t sleep_time = 0;
   while (!task_map_.empty()) {
     std::vector<int> success_job;
+    std::vector<int> failed_job;
     auto iter = task_map_.begin();
     while (iter != task_map_.end()) {
       nlohmann::json query_json;
@@ -517,15 +591,22 @@ void TbeKernelCompileManager::Query(const std::string &type) {
       JsonAssemble(kQuery, kernel_json, &query_json);
       auto job_result = DispatchCompileTask(query_json);
       query_cnt++;
-      QueryProcess(type, job_result, &success_job);
+      QueryProcess(type, job_result, &success_job, &failed_job);
       (void)iter++;
     }
+
     bool sleep_flag = true;
     for (auto k : success_job) {
       (void)task_map_.erase(k);
       sleep_flag = false;
     }
     success_job.clear();
+    for (auto k : failed_job) {
+      (void)task_map_.erase(k);
+      sleep_flag = false;
+    }
+    failed_job.clear();
+
     if (sleep_flag && !task_map_.empty()) {
       if ((query_cnt - last_sleep) > KSleepInterval * task_map_.size()) {
         MS_LOG(INFO) << "Querying Parallel Compilation Job. Current Query Count: " << query_cnt;
@@ -535,16 +616,27 @@ void TbeKernelCompileManager::Query(const std::string &type) {
       }
     }
   }
+  SetStatus(kCountingDown);
 }
 
-void TbeKernelCompileManager::GenKernelMod(const std::vector<CNodePtr> &node_list) {
+std::pair<std::vector<CNodePtr>, std::vector<CNodePtr>> TbeKernelCompileManager::GenKernelMod(
+  const std::vector<CNodePtr> &node_list) {
   MS_LOG(INFO) << "Gen kernel mod start!";
+  std::vector<CNodePtr> success_nodes;
+  std::vector<CNodePtr> failed_nodes;
+
   for (auto &node : node_list) {
     MS_EXCEPTION_IF_NULL(node);
     if (AnfAlgo::GetKernelMod(node) != nullptr) {
+      (void)success_nodes.emplace_back(node);
       continue;  // kernel mod already exist, continue;
     }
+    auto op_name = common::AnfAlgo::GetCNodeName(node);
+
     auto full_name = node->fullname_with_scope();
+    if (common::AnfAlgo::HasNodeAttr(kAttrOriFusionName, node)) {
+      full_name = common::AnfAlgo::GetNodeAttr<std::string>(node, kAttrOriFusionName);
+    }
     auto json_name = full_name_to_json_name_[full_name];
     auto kernel_pack = tbe::TbeUtils::SearchCache(json_name, false);
     if (kernel_pack == nullptr) {
@@ -552,8 +644,9 @@ void TbeKernelCompileManager::GenKernelMod(const std::vector<CNodePtr> &node_lis
       MS_EXCEPTION_IF_NULL(bin_map);
       kernel_pack = bin_map->SearchInFile(json_name);
       if (kernel_pack == nullptr) {
-        MS_LOG(EXCEPTION) << "Can not find .json file or the .o file for op:" << json_name
-                          << trace::DumpSourceLines(node);
+        MS_LOG(INFO) << "Can not find .json file or the .o file for op:" << json_name << trace::DumpSourceLines(node);
+        (void)failed_nodes.emplace_back(node);
+        continue;
       }
     }
     auto kernel_info_json = kernel_pack->kernel_json_info();
@@ -572,10 +665,17 @@ void TbeKernelCompileManager::GenKernelMod(const std::vector<CNodePtr> &node_lis
     kernel_mod_ptr->SetInputSizeList(iter->second.input_size_list);
     kernel_mod_ptr->SetOutputSizeList(iter->second.output_size_list);
     kernel_mod_ptr->SetWorkspaceSizeList(kernel_info_json.workspaces);
+    if (op_name == kNPUClearFloatStatusV2OpName || op_name == kNPUGetFloatStatusV2OpName) {
+      constexpr size_t io_byte_size = 32;
+      const std::vector<size_t> size_list = {io_byte_size};
+      kernel_mod_ptr->SetInputSizeList(size_list);
+      kernel_mod_ptr->SetOutputSizeList(size_list);
+    }
     AnfAlgo::SetKernelMod(kernel_mod_ptr, node.get());
+    (void)success_nodes.emplace_back(node);
   }
-  ClearOldTask();
   MS_LOG(INFO) << "Gen kernel mod end!";
+  return std::make_pair(success_nodes, failed_nodes);
 }
 
 void TbeKernelCompileManager::UpdateFusionTypeAndOutputDataDesc(const std::vector<CNodePtr> &nodes) {
@@ -591,12 +691,11 @@ void TbeKernelCompileManager::UpdateFusionTypeAndOutputDataDesc(const std::vecto
     }
     auto pre_res = prebuild_res_map_[kernel_name];
     auto fusion_type = pre_res.fusion_type;
-    auto fusion_name = GetFusionNameByType(fusion_type);
     auto output_data_desc = pre_res.output_data_desc;
     auto core_type = pre_res.core_type;
     AnfAlgo::SetCoreType(node, core_type);
     AnfAlgo::SetFusionType(node, fusion_type);
-    common::AnfAlgo::SetNodeAttr(kAttrTbeFusionType, MakeValue(fusion_name), node);
+    common::AnfAlgo::SetNodeAttr(kAttrTbeFusionType, MakeValue(fusion_type), node);
     AnfAlgo::SetOutputDataDesc(node, {output_data_desc});
   }
   MS_LOG(INFO) << "End update fusion type after pre build";
@@ -674,7 +773,7 @@ void TbeKernelCompileManager::DistributePreBuildTask(const std::vector<CNodePtr>
       // same op skip prebuild
       continue;
     }
-    pre_build_single_processed_kernels_.insert(json_name);
+    (void)pre_build_single_processed_kernels_.insert(json_name);
     JsonAssemble(kPreCompile, kernel_json, &build_json);
     auto task_id = GetJsonValue<int>(build_json, kJobId);
     auto is_dynamic = common::AnfAlgo::IsDynamicShape(node);
@@ -724,7 +823,7 @@ void TbeKernelCompileManager::DistributeCompileTask(const std::vector<CNodePtr> 
     }
     // save all task io size info for gen kernel mod
     SaveIOSizeInfo(kernel_json, json_name);
-    if (tbe::TbeUtils::SearchCache(json_name, false) != nullptr && !is_need_rebuild_) {
+    if (tbe::TbeUtils::SearchCache(json_name, false) != nullptr) {
       // cache exist, no need compile
       continue;
     }
@@ -732,7 +831,7 @@ void TbeKernelCompileManager::DistributeCompileTask(const std::vector<CNodePtr> 
       // same op only compile once
       continue;
     }
-    single_processed_kernels_.insert(json_name);
+    (void)single_processed_kernels_.insert(json_name);
     JsonAssemble(job_type, kernel_json, &build_json);
     // save compile json to file; cache io size for gen kernel mod
     auto build_str = build_json.dump(indent);
@@ -754,13 +853,16 @@ void TbeKernelCompileManager::DistributeCompileTask(const std::vector<CNodePtr> 
 void TbeKernelCompileManager::TbePreBuild(const KernelGraphPtr &kernel_graph) {
   MS_EXCEPTION_IF_NULL(kernel_graph);
   MS_LOG(INFO) << "Single op pre build start.";
-  struct timeval start_time, end_time;
+  struct timeval start_time;
+  struct timeval end_time;
   (void)gettimeofday(&start_time, nullptr);
   std::vector<CNodePtr> node_list;
   GetAllTbeNodes(kernel_graph, &node_list);
   if (node_list.empty()) {
     return;
   }
+  WakeUp();
+  SetStatus(kWorking);
   DistributeCompileTask(node_list, kPreCompile);
   Query(kPreCompile);
   UpdateFusionTypeAndOutputDataDesc(node_list);
@@ -771,15 +873,31 @@ void TbeKernelCompileManager::TbePreBuild(const KernelGraphPtr &kernel_graph) {
   MS_LOG(INFO) << "Single op pre build end.";
 }
 
-void TbeKernelCompileManager::TbeSingleOpCompile(const std::vector<CNodePtr> &node_list) {
+std::pair<std::vector<CNodePtr>, std::vector<CNodePtr>> TbeKernelCompileManager::TbeSingleOpCompile(
+  const std::vector<CNodePtr> &node_list) {
+  auto &context = CompileCacheContext::GetInstance();
+  if (context.FusionOpBuildInfoFlag()) {
+    MS_LOG(INFO) << "Set fusion ops kernel io size info.";
+    SetFusionOpsKernelIOSizeInfo(node_list);
+  }
+
+  profiler::CollectHostInfo("Ascend", "Operator Compilation", "CreateAscendKernel_TbeSingleOpCompile", 0, 0, 0);
   MS_LOG(INFO) << "Single op parallel build start.";
   auto job_type = is_tune_flag_ ? kTune : kCompile;
+  WakeUp();
+  SetStatus(kWorking);
   DistributeCompileTask(node_list, job_type);
   Query(job_type);
-  GenKernelMod(node_list);
+  auto ret = GenKernelMod(node_list);
+  ClearOldTask();
+  MS_LOG(INFO) << "TBE Single op parallel build result: all:" << node_list.size() << " success:" << ret.first.size()
+               << " failed:" << ret.second.size() << ".";
+  profiler::CollectHostInfo("Ascend", "Operator Compilation", "CreateAscendKernel_TbeSingleOpCompile", 0, 0, 1);
+  return ret;
 }
 
 JsonNameMap TbeKernelCompileManager::TbeFusionOpCompile(const std::vector<FusionScopeInfo> &fusion_scopes) {
+  profiler::CollectHostInfo("Ascend", "Operator Compilation", "TbeFusionOpCompile", 0, 0, 0);
   MS_LOG(INFO) << "Fusion op build start";
   auto json_creator = std::make_shared<FusionBuildTbeJsonCreator>();
   MS_EXCEPTION_IF_NULL(json_creator);
@@ -787,6 +905,9 @@ JsonNameMap TbeKernelCompileManager::TbeFusionOpCompile(const std::vector<Fusion
   success_fusion_ops_.clear();
   nlohmann::json fusion_op;
   nlohmann::json build_json;
+  auto &context = CompileCacheContext::GetInstance();
+  WakeUp();
+  SetStatus(kWorking);
   for (const auto &fusion_scope_iter : fusion_scopes) {
     fusion_op.clear();
     build_json.clear();
@@ -800,7 +921,15 @@ JsonNameMap TbeKernelCompileManager::TbeFusionOpCompile(const std::vector<Fusion
     // save all fusion ops to filter those compile succeed ops
     all_fusion_ops_[fusion_scope_iter.scope_id] = full_name;
     SaveIOSizeInfo(fusion_op, json_name, fusion_scope_iter.output_nodes);
-    if (tbe::TbeUtils::SearchCache(json_name, false) != nullptr && !is_need_rebuild_) {
+    if (CompileCacheEnable() && (kernel_io_size_info_.find(json_name) != kernel_io_size_info_.end())) {
+      const auto &io_size_info = kernel_io_size_info_[json_name];
+      CachedIOSizeInfo cached_io_size_info;
+      cached_io_size_info.json_name = json_name;
+      cached_io_size_info.input_size_list = io_size_info.input_size_list;
+      cached_io_size_info.output_size_list = io_size_info.output_size_list;
+      context.PushFullnameIoSizeInfo(full_name, cached_io_size_info);
+    }
+    if (tbe::TbeUtils::SearchCache(json_name, false) != nullptr) {
       // cache exist, no need compile
       continue;
     }
@@ -812,7 +941,7 @@ JsonNameMap TbeKernelCompileManager::TbeFusionOpCompile(const std::vector<Fusion
       // fusion op not support
       continue;
     }
-    fusion_processed_kernels_.insert(json_name);
+    (void)fusion_processed_kernels_.insert(json_name);
     JsonAssemble(job_type, fusion_op, &build_json);
     auto build_str = build_json.dump(indent);
     MS_LOG(DEBUG) << "FusionOp build json file : " << build_str;
@@ -824,6 +953,7 @@ JsonNameMap TbeKernelCompileManager::TbeFusionOpCompile(const std::vector<Fusion
     SaveTaskInfo(false, build_json, json_name, full_name, task_id, fusion_scope_iter.scope_id);
   }
   Query(job_type);
+  profiler::CollectHostInfo("Ascend", "Operator Compilation", "TbeFusionOpCompile", 0, 0, 1);
   // only fusion op compile succeed can be return
   return GetAllSuccessFusion();
 }
@@ -831,7 +961,7 @@ JsonNameMap TbeKernelCompileManager::TbeFusionOpCompile(const std::vector<Fusion
 std::string TbeKernelCompileManager::TbeOpSelectFormat(const CNodePtr &node) const {
   MS_EXCEPTION_IF_NULL(node);
   auto full_name = node->fullname_with_scope();
-  MS_LOG(DEBUG) << "Op select format start for op [" << full_name << "]";
+  MS_LOG(INFO) << "Op select format start for op [" << full_name << "]";
   auto json_creator = std::make_shared<SelectTbeJsonCreator>();
   MS_EXCEPTION_IF_NULL(json_creator);
   nlohmann::json kernel_info;
@@ -842,11 +972,13 @@ std::string TbeKernelCompileManager::TbeOpSelectFormat(const CNodePtr &node) con
   JsonAssemble(kSelectFormat, kernel_info, &select_json);
   auto select_ret = DispatchCompileTask(select_json);
   auto json_ret = TurnStrToJson(select_ret);
+  MS_LOG(INFO) << "Op select format result: " << select_ret;
   return ParseSelectAndCheckResult(json_ret, node);
 }
 
 bool TbeKernelCompileManager::TbeOpCheckSupported(const CNodePtr &node, nlohmann::json *kernel_json) const {
   MS_EXCEPTION_IF_NULL(node);
+  MS_EXCEPTION_IF_NULL(kernel_json);
   auto full_name = node->fullname_with_scope();
   MS_LOG(DEBUG) << "Check supported for op [" << full_name << "]";
   auto json_creator = std::make_shared<BuildTbeJsonCreator>();
@@ -856,16 +988,29 @@ bool TbeKernelCompileManager::TbeOpCheckSupported(const CNodePtr &node, nlohmann
   if (!json_creator->GenInputsJson(node, &compute_json)) {
     MS_LOG(ERROR) << "update inputs json failed, node full name:" << node->fullname_with_scope();
   }
+  auto outputs_json_tmp = compute_json[kJOutputDesc];
+  if (!json_creator->GenOutputsJson(node, &compute_json)) {
+    MS_LOG(ERROR) << "update outputs json failed, node full name:" << node->fullname_with_scope();
+  }
   nlohmann::json check_json;
   JsonAssemble(kCheckSupport, *kernel_json, &check_json);
   auto check_ret = DispatchCompileTask(check_json);
-  auto json_ret = TurnStrToJson(check_ret);
-  std::string check_info = ParseSelectAndCheckResult(json_ret, node);
   compute_json[kJInputDesc] = inputs_json_tmp;
-  return check_info == kFullySupported;
+  compute_json[kJOutputDesc] = outputs_json_tmp;
+  auto json_ret = TurnStrToJson(check_ret);
+  if (json_ret.at(kStatus) == kFailed) {
+    MS_LOG(DEBUG) << "Call check supported api failed, result info: " << check_ret;
+    return false;
+  }
+  auto check_result = json_ret.at(kResult);
+  if (check_result == kPartiallySupported || check_result == kFullySupported) {
+    return true;
+  }
+  MS_LOG(DEBUG) << "The shape is not support, result info: " << check_ret;
+  return false;
 }
 
-void TbeKernelCompileManager::LoadNotSupportOp() {
+void TbeKernelCompileManager::LoadNotSupportFusionOp() {
   static bool has_load = false;
   if (!has_load) {
     auto config_path = TbeUtils::GetOpDebugPath();
@@ -873,12 +1018,12 @@ void TbeKernelCompileManager::LoadNotSupportOp() {
     std::ifstream file_read;
     file_read.open(cache_file.c_str());
     if (!file_read.is_open()) {
-      MS_LOG(INFO) << "The file does not exist. File: " << cache_file;
+      MS_LOG(INFO) << "Note: File is not open. File: " << cache_file;
       return;
     }
     std::string json_name;
     while (file_read >> json_name) {
-      not_support_fusion_ops_.insert(json_name);
+      (void)not_support_fusion_ops_.insert(json_name);
     }
     file_read.close();
     has_load = true;
@@ -938,27 +1083,28 @@ void TbeKernelCompileManager::TbeInitialize() {
     return;
   }
   MS_LOG(INFO) << "TbeInitialize start";
-  nlohmann::json init_json;
+  init_json_ = nlohmann::json();
   nlohmann::json soc_info = TbeUtils::GenSocInfo();
-  JsonAssemble(kInitialize, soc_info, &init_json);
-  auto offline_tune = (init_json[kJobContent][kSocInfo][kOfflineTune]).get<bool>();
-  op_debug_level_ = (init_json[kJobContent][kSocInfo]["op_debug_level"]).get<std::string>();
-  auto auto_tiling_mode = (init_json[kJobContent][kSocInfo]["autoTilingMode"]).get<std::string>();
+  JsonAssemble(kInitialize, soc_info, &init_json_);
+  auto offline_tune = (init_json_[kJobContent][kSocInfo][kOfflineTune]).get<bool>();
+  op_debug_level_ = (init_json_[kJobContent][kSocInfo]["op_debug_level"]).get<std::string>();
+  op_debug_config_ = (init_json_[kJobContent][kSocInfo]["op_debug_config"]).get<std::string>();
+  auto auto_tiling_mode = (init_json_[kJobContent][kSocInfo]["autoTilingMode"]).get<std::string>();
   tbe_init_flag_ = true;
   is_tune_flag_ = offline_tune || (auto_tiling_mode != "NO_TUNE");
-  is_need_rebuild_ = is_tune_flag_ || TbeUtils::IsOneOf({"1", "2", "4"}, op_debug_level_);
 
-  auto init_str = init_json.dump();
+  auto init_str = init_json_.dump();
   MS_LOG(INFO) << "TbeInitialize json file : " << init_str;
-  TbeUtils::SaveJsonInfo(kInitialize, init_json.dump(indent));
-  auto init_ret = DispatchCompileTask(init_json);
+  TbeUtils::SaveJsonInfo(kInitialize, init_json_.dump(indent));
+  auto init_ret = DispatchCompileTask(init_json_);
   auto json_ret = TurnStrToJson(init_ret);
   PrintInitResult(json_ret);
   // load cache before kernel build
   LoadPreBuildResult();
   // load not support op
-  LoadNotSupportOp();
+  LoadNotSupportFusionOp();
   TbeUtils::LoadCache();
+  StartAutoSleep();
 }
 
 void TbeKernelCompileManager::TbeFinalize() {
@@ -968,6 +1114,7 @@ void TbeKernelCompileManager::TbeFinalize() {
     return;
   }
   op_debug_level_ = "";
+  op_debug_config_ = "";
   tbe_init_flag_ = false;
   is_tune_flag_ = false;
   ClearOldTask();
@@ -985,10 +1132,99 @@ void TbeKernelCompileManager::ClearOldTask() {
   fusion_processed_kernels_.clear();
 }
 
-TbeKernelCompileManager::~TbeKernelCompileManager() { TbeFinalize(); }
-bool TbeKernelCompileManager::tbe_init_flag_ = false;
-bool TbeKernelCompileManager::is_tune_flag_ = false;
-bool TbeKernelCompileManager::is_need_rebuild_ = false;
+TbeKernelCompileManager::~TbeKernelCompileManager() {
+  TbeFinalize();
+  SetStatus(kSleep);
+  if (auto_sleep_thread_.joinable()) {
+    MS_LOG(DEBUG) << "Start join auto sleep thread.";
+    auto_sleep_thread_.join();
+  }
+}
+
+void TbeKernelCompileManager::WakeUp() {
+  if (!tbe_init_flag_) {
+    MS_LOG(EXCEPTION) << "Cannot weak up TBE before init.";
+  }
+  MS_LOG(INFO) << "Start wake up tbe process, before status " << status_;
+
+  std::lock_guard lock(sleep_mutex_);
+  if (status_ == kSleep) {
+    InitServerProcess();
+    StartAutoSleep();
+  } else {
+    // update count down when kWorking or kCountingDown
+    time_count_ = kTimeoutSec;
+    MS_LOG(DEBUG) << "Update time count to " << time_count_;
+  }
+}
+
+void TbeKernelCompileManager::StartAutoSleep() {
+  std::lock_guard lock(sleep_mutex_);
+  MS_LOG(DEBUG) << "Update time count to " << time_count_;
+  time_count_ = kTimeoutSec;
+  MS_LOG(DEBUG) << "Status is " << status_;
+  if (status_ == kCountingDown) {
+    return;
+  }
+  status_ = kCountingDown;
+  if (auto_sleep_thread_.joinable()) {
+    MS_LOG(DEBUG) << "Start join auto sleep thread.";
+    auto_sleep_thread_.join();
+  }
+  auto_sleep_thread_ = std::thread([this]() {
+    bool loop = true;
+    while (loop) {
+      MS_LOG(DEBUG) << "time count " << time_count_;
+      std::unique_lock lock(sleep_mutex_);
+      if (status_ == kWorking) {
+        time_count_ = kTimeoutSec;
+        lock.unlock();
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      } else if (status_ == kSleep) {
+        MS_LOG(DEBUG) << "Sleep from external, exit.";
+        loop = false;
+      } else if (--time_count_ <= 0) {
+        MS_LOG(DEBUG) << "Status is " << status_ << " time count is " << time_count_ << ", start sleep.";
+        FinalizeServerProcess();
+        status_ = kSleep;
+        loop = false;
+      } else {
+        lock.unlock();
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      }
+    }
+  });
+}
+
+void TbeKernelCompileManager::InitServerProcess() {
+  auto init_ret = DispatchCompileTask(init_json_);
+  auto json_ret = TurnStrToJson(init_ret);
+  PrintInitResult(json_ret);
+}
+
+void TbeKernelCompileManager::FinalizeServerProcess() {
+  if (!AscendKernelBuildClient::Instance().IsOpen()) {
+    MS_LOG(INFO) << "AscendKernelBuildClient has been closed.";
+    return;
+  }
+  if (finalize_json_.empty()) {
+    nlohmann::json soc_info = TbeUtils::GenSocInfo();
+    JsonAssemble(kFinalize, soc_info, &finalize_json_);
+  }
+  auto fin_ret = DispatchCompileTask(finalize_json_);
+  auto json_ret = TurnStrToJson(fin_ret);
+  if (json_ret.at(kStatus) == kFailed) {
+    PrintProcessLog(json_ret);
+    MS_LOG(EXCEPTION) << "TbeFinalize running failed.";
+  }
+  MS_LOG(INFO) << "TbeFinalize running success.";
+}
+
+void TbeKernelCompileManager::SetStatus(Status status) {
+  std::lock_guard lock(sleep_mutex_);
+  MS_LOG(INFO) << "Set status from " << status_ << " to " << status;
+  status_ = status;
+}
 }  // namespace ascend
 }  // namespace kernel
 }  // namespace mindspore

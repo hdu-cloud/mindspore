@@ -17,10 +17,11 @@
 #include "plugin/device/ascend/kernel/rts/rt_kernel_info.h"
 #include <unordered_map>
 #include <algorithm>
+#include "ops/ascend_op_name.h"
+#include "ops/other_op_name.h"
 #include "include/common/utils/convert_utils.h"
 #include "include/common/utils/utils.h"
-#include "utils/ms_utils.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
@@ -69,9 +70,11 @@ void GetRtKelInfo(const CNodePtr &kernel_node,
   if (IsDefaultKernelInfo(node_name)) {
     auto kernel_build_info_builder = std::make_shared<kernel::KernelBuildInfo::KernelBuildInfoBuilder>();
     // set input infos
-    auto input_num = common::AnfAlgo::GetInputTensorNum(kernel_node);
+    auto input_num = AnfAlgo::GetInputElementNum(kernel_node);
     MS_EXCEPTION_IF_NULL(kernel_build_info_builder);
     kernel_build_info_builder->SetInputsFormat(std::vector<std::string>(input_num, kOpFormat_DEFAULT));
+    kernel_build_info_builder->SetInputsKernelObjectType(
+      std::vector<KernelObjectType>(input_num, KernelObjectType::TENSOR));
     std::vector<TypeId> input_types = {};
     for (size_t i = 0; i < input_num; i++) {
       input_types.push_back(common::AnfAlgo::GetPrevNodeOutputInferDataType(kernel_node, i));
@@ -80,8 +83,9 @@ void GetRtKelInfo(const CNodePtr &kernel_node,
     // Kernel ops in while-list such as 'LabelSet' always return UMonad.
     kernel_build_info_builder->SetOutputsFormat({kOpFormat_DEFAULT});
     kernel_build_info_builder->SetOutputsDeviceType({TypeId::kObjectTypeUMonad});
+    kernel_build_info_builder->SetOutputsKernelObjectType({KernelObjectType::TENSOR});
     // set other info
-    kernel_build_info_builder->SetFusionType(kernel::FusionType::OPAQUE);
+    kernel_build_info_builder->SetFusionType(kPatternOpaque);
     kernel_build_info_builder->SetProcessor(kernel::Processor::AICORE);
     kernel_build_info_builder->SetKernelType(KernelType::RT_KERNEL);
     kernel_info_list->push_back(kernel_build_info_builder->Build());

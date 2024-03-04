@@ -15,6 +15,7 @@
 """Softplus Bijector"""
 import numpy as np
 from mindspore.ops import operations as P
+from mindspore.ops import functional as F
 from mindspore.nn.layer.activation import LogSigmoid
 from ..distribution._utils.custom_ops import exp_generic, log_generic
 from .bijector import Bijector
@@ -31,8 +32,8 @@ class Softplus(Bijector):
     where k is the sharpness factor.
 
     Args:
-        sharpness (float, list, numpy.ndarray, Tensor): The scale factor. Default: 1.0.
-        name (str): The name of the Bijector. Default: 'Softplus'.
+        sharpness (float, list, numpy.ndarray, Tensor): The scale factor. Default: ``1.0`` .
+        name (str): The name of the Bijector. Default: ``'Softplus'`` .
 
     Note:
         The dtype of `sharpness` must be float.
@@ -41,7 +42,7 @@ class Softplus(Bijector):
         TypeError: When the dtype of the sharpness is not float.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> import mindspore
@@ -51,7 +52,7 @@ class Softplus(Bijector):
         >>>
         >>> # To initialize a Softplus bijector of sharpness 2.0.
         >>> softplus = msb.Softplus(2.0)
-        >>> # To use a ScalarAffine bijector in a network.
+        >>> # To use a Softplus bijector in a network.
         >>> value = Tensor([1, 2, 3], dtype=mindspore.float32)
         >>> ans1 = softplus.forward(value)
         >>> print(ans1.shape)
@@ -84,7 +85,6 @@ class Softplus(Bijector):
         self.abs = P.Abs()
         self.dtypeop = P.DType()
         self.cast = P.Cast()
-        self.fill = P.Fill()
         self.greater = P.Greater()
         self.less = P.Less()
         self.log_sigmoid = LogSigmoid()
@@ -103,7 +103,7 @@ class Softplus(Bijector):
         too_large = self.greater(x, -self.threshold)
         too_small_value = self.exp(x)
         too_large_value = x
-        ones = self.fill(self.dtypeop(x), self.shape(x), 1.0)
+        ones = F.fill(self.dtypeop(x), self.shape(x), 1.0)
         too_small_or_too_large = self.logicalor(too_small, too_large)
         x = self.select(too_small_or_too_large, ones, x)
         y = self.log(self.exp(x) + 1.0)
@@ -119,7 +119,7 @@ class Softplus(Bijector):
         too_large = self.greater(x, (-1) * self.threshold)
         too_small_value = self.log(x)
         too_large_value = x
-        ones = self.fill(self.dtypeop(x), self.shape(x), 1.0)
+        ones = F.fill(self.dtypeop(x), self.shape(x), 1.0)
         too_small_or_too_large = self.logicalor(too_small, too_large)
         x = self.select(too_small_or_too_large, ones, x)
         y = x + self.log(self.abs(self.expm1((-1)*x)))

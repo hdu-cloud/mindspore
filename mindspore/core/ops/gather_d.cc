@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,12 +15,36 @@
  */
 
 #include "ops/gather_d.h"
+
 #include <memory>
 #include <set>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/type_id.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -30,46 +54,33 @@ bool GetGatherDimValue(const AbstractBasePtr dim_ptr, int64_t *dim_v) {
   MS_EXCEPTION_IF_NULL(dim_ptr);
   auto dim_value_ptr = dim_ptr->BuildValue();
   MS_EXCEPTION_IF_NULL(dim_value_ptr);
-  auto dim_type_ptr = dim_ptr->BuildType();
-  MS_EXCEPTION_IF_NULL(dim_type_ptr);
-  bool dim_value_type_error = false;
   if (dim_value_ptr->isa<tensor::Tensor>()) {
     auto dim_tensor = dim_value_ptr->cast<tensor::TensorPtr>();
     MS_EXCEPTION_IF_NULL(dim_tensor);
     size_t data_size = dim_tensor->DataSize();
     MS_EXCEPTION_IF_CHECK_FAIL(data_size == 1, "dim value is not equal to one!");
-    auto dim_type_id = dim_type_ptr->cast<TensorTypePtr>();
-    MS_EXCEPTION_IF_NULL(dim_type_id);
-    auto element = dim_type_id->element();
-    MS_EXCEPTION_IF_NULL(element);
     if (dim_tensor->data_c() == nullptr) {
       return false;
     }
-    if (element->type_id() == kNumberTypeInt64) {
+    if (dim_tensor->data_type_c() == TypeId::kNumberTypeInt64) {
       auto dim_data64 = reinterpret_cast<int64_t *>(dim_tensor->data_c());
       MS_EXCEPTION_IF_NULL(dim_data64);
       *dim_v = static_cast<int64_t>(*dim_data64);
       return true;
-    } else if (element->type_id() == kNumberTypeInt32) {
+    } else if (dim_tensor->data_type_c() == TypeId::kNumberTypeInt32) {
       auto dim_data32 = reinterpret_cast<int *>(dim_tensor->data_c());
       MS_EXCEPTION_IF_NULL(dim_data32);
       *dim_v = static_cast<int64_t>(*dim_data32);
       return true;
-    } else {
-      dim_value_type_error = true;
     }
   } else {
     if (dim_value_ptr->isa<Int32Imm>() || dim_value_ptr->isa<Int64Imm>()) {
       *dim_v = GetValue<int64_t>(dim_value_ptr);
       return true;
-    } else {
-      dim_value_type_error = true;
     }
   }
 
-  if (dim_value_type_error) {
-    MS_LOG(EXCEPTION) << "For GatherD, 'dim' must be one of these types: [int32/int64].";
-  }
+  MS_LOG(EXCEPTION) << "For GatherD, 'dim' must be one of these types: [int32/int64].";
   return false;
 }
 
@@ -102,7 +113,7 @@ abstract::ShapePtr GatherDInferShape(const PrimitivePtr &primitive, const std::v
   MS_EXCEPTION_IF_CHECK_FAIL(input_args[kInputIndex2]->BuildShape()->isa<abstract::Shape>(), "index's shape wrong.");
   auto index_shape_element = input_args[kInputIndex2]->BuildShape()->cast<abstract::ShapePtr>();
   auto index_shape = index_shape_element->shape();
-  bool is_dim_dynamic = input_args[kInputIndex1]->BuildValue()->isa<AnyValue>();
+  bool is_dim_dynamic = input_args[kInputIndex1]->BuildValue()->isa<ValueAny>();
   if (IsDynamicRank(x_shape) || is_dim_dynamic) {
     return std::make_shared<abstract::Shape>(index_shape);
   }
@@ -154,6 +165,26 @@ AbstractBasePtr GatherDInfer(const abstract::AnalysisEnginePtr &, const Primitiv
   auto infer_shape = GatherDInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(GatherD, prim::kPrimGatherD, GatherDInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGGatherDInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return GatherDInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return GatherDInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return GatherDInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(GatherD, prim::kPrimGatherD, AGGatherDInfer, false);
 }  // namespace ops
 }  // namespace mindspore

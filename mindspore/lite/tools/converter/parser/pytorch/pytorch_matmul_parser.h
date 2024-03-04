@@ -30,6 +30,14 @@ class PytorchAddmmParser : public PytorchNodeParser {
 
   PrimitiveCPtr Parse(const torch::jit::Node *torch_node, std::vector<size_t> *input_indices) override;
 };
+
+class PytorchLinearParser : public PytorchNodeParser {
+ public:
+  PytorchLinearParser() : PytorchNodeParser("Linear") {}
+  ~PytorchLinearParser() override = default;
+
+  PrimitiveCPtr Parse(const torch::jit::Node *torch_node, std::vector<size_t> *input_indices) override;
+};
 }  // namespace lite
 }  // namespace mindspore
 #endif  // MINDSPORE_LITE_TOOLS_CONVERTER_PARSER_PYTORCH_PYTORCH_MATMUL_PARSER_H_

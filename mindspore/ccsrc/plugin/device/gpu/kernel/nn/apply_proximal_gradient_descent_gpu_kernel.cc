@@ -44,7 +44,7 @@ bool ApplyProximalGradientDescentGpuKernelMod::Init(const BaseOperatorPtr &base_
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   if (inputs.empty() || outputs.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "' got empty inputs or outputs, which is invalid.";
     return false;
@@ -79,26 +79,26 @@ int ApplyProximalGradientDescentGpuKernelMod::Resize(const BaseOperatorPtr &base
     MS_LOG(ERROR) << "For '" << kernel_name_
                   << "', the shape of 'delta' must be the same as the shape of 'var', "
                      "but got the shape of 'delta': "
-                  << Vector2Str(delta_shape) << " and the shape of 'var': " << Vector2Str(var_shape);
+                  << delta_shape << " and the shape of 'var': " << var_shape;
     return KRET_RESIZE_FAILED;
   }
 
   if (!alpha_shape.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_
                   << "', 'alpha' must be a scalar,and dimension of 'alpha' must be 0,but got the dimension of 'alpha': "
-                  << Vector2Str(alpha_shape);
+                  << alpha_shape;
     return KRET_RESIZE_FAILED;
   }
   if (!l1_shape.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_
                   << "', 'l1' must be a scalar,and dimension of 'l1' must be 0,but got the dimension of 'l1': "
-                  << Vector2Str(l1_shape);
+                  << l1_shape;
     return KRET_RESIZE_FAILED;
   }
   if (!l2_shape.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_
                   << "', 'l2' must be a scalar,and dimension of 'l2' must be 0,but got the dimension of 'l2': "
-                  << Vector2Str(l2_shape);
+                  << l2_shape;
     return KRET_RESIZE_FAILED;
   }
 
@@ -117,9 +117,10 @@ bool ApplyProximalGradientDescentGpuKernelMod::LaunchKernel(const std::vector<Ad
   auto delta = reinterpret_cast<T *>(inputs[kDeltaIndex]->addr);
   auto output = reinterpret_cast<T *>(outputs[kOutputIndex]->addr);
 
-  CalApplyProximalGradientDescent(input_elements_, var, alpha, l1, l2, delta, output, device_id_,
-                                  reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = CalApplyProximalGradientDescent(input_elements_, var, alpha, l1, l2, delta, output, device_id_,
+                                                reinterpret_cast<cudaStream_t>(cuda_stream_));
 
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -131,7 +132,8 @@ std::vector<std::pair<KernelAttr, ApplyProximalGradientDescentGpuKernelMod::Kern
        .AddInputAttr(kNumberTypeFloat32)
        .AddInputAttr(kNumberTypeFloat32)
        .AddInputAttr(kNumberTypeFloat32)
-       .AddOutputAttr(kNumberTypeFloat32),
+       .AddOutputAttr(kNumberTypeFloat32)
+       .AddOutInRef(0, 0),
      &ApplyProximalGradientDescentGpuKernelMod::LaunchKernel<float>},
     {KernelAttr()
        .AddInputAttr(kNumberTypeFloat16)
@@ -139,7 +141,8 @@ std::vector<std::pair<KernelAttr, ApplyProximalGradientDescentGpuKernelMod::Kern
        .AddInputAttr(kNumberTypeFloat16)
        .AddInputAttr(kNumberTypeFloat16)
        .AddInputAttr(kNumberTypeFloat16)
-       .AddOutputAttr(kNumberTypeFloat16),
+       .AddOutputAttr(kNumberTypeFloat16)
+       .AddOutInRef(0, 0),
      &ApplyProximalGradientDescentGpuKernelMod::LaunchKernel<half>},
     {KernelAttr()
        .AddInputAttr(kNumberTypeFloat64)
@@ -147,7 +150,8 @@ std::vector<std::pair<KernelAttr, ApplyProximalGradientDescentGpuKernelMod::Kern
        .AddInputAttr(kNumberTypeFloat64)
        .AddInputAttr(kNumberTypeFloat64)
        .AddInputAttr(kNumberTypeFloat64)
-       .AddOutputAttr(kNumberTypeFloat64),
+       .AddOutputAttr(kNumberTypeFloat64)
+       .AddOutInRef(0, 0),
      &ApplyProximalGradientDescentGpuKernelMod::LaunchKernel<double>}};
 
 std::vector<KernelAttr> ApplyProximalGradientDescentGpuKernelMod::GetOpSupport() {

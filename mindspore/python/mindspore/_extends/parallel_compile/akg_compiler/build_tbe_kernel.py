@@ -25,7 +25,7 @@ from tbe.common.buildcfg import build_config
 from tbe.dsl import auto_schedule
 from tbe.dsl import build as tbe_build
 import tbe.common.context.op_context as op_context
-
+from impl.dynamic.add import _add_check_format, _infer_shape
 
 def initialize(kernel_meta_parent_dir):
     """Initialize the TBE compile environment."""
@@ -98,7 +98,6 @@ class TransShape:
             formats.append(v["format"])
             ori_formats.append(v["ori_format"])
         if len(shapes) == 2 and len(shapes[0]) != len(shapes[1]):
-            from impl.add import _add_check_format, _infer_shape
             format_pattern = _add_check_format({"shape": shapes[0], "format": formats[0]},
                                                {"shape": shapes[1], "format": formats[1]})
             ori_shape0 = ori_shapes[0] if ori_shapes[0] is not None else infer_ori_shape(
@@ -410,7 +409,7 @@ def update_json(json_dict, inputs_name, outputs_name, inplace_names, kernel_meta
             pass
         # generate new .json
         try:
-            with os.fdopen(os.open(json_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o660), 'w') as fi:
+            with os.fdopen(os.open(json_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as fi:
                 json.dump(json_dict, fi, sort_keys=True, indent=4, separators=(',', ':'))
         except OSError:
             pass

@@ -13,12 +13,13 @@
 # limitations under the License.
 # ============================================================================
 """ test_parse_numpy """
-import pytest
 import numpy as np
-from mindspore import nn
-from mindspore import context
+from mindspore import nn, context, jit, Tensor
 
 context.set_context(mode=context.GRAPH_MODE)
+
+
+np_array_data = np.array([1, 2, 3])
 
 
 def test_use_numpy_constant():
@@ -45,11 +46,7 @@ def test_use_numpy_method():
             return ret
 
     net = Net()
-    # Not raise NotImplementedError('Mindspore not supports to use the numpy ...') any more,
-    # but raise RuntimeError('Should not use Python object in runtime...'), after support JIT Fallback.
-    with pytest.raises(RuntimeError) as err:
-        net()
-    assert "Should not use Python object in runtime" in str(err.value)
+    net()
 
 
 def test_use_numpy_module():
@@ -62,8 +59,32 @@ def test_use_numpy_module():
             return ret
 
     net = Net()
-    # Not raise NotImplementedError('Mindspore not supports to use the numpy ...') any more,
-    # but raise RuntimeError('Should not use Python object in runtime...'), after support JIT Fallback.
-    with pytest.raises(RuntimeError) as err:
-        net()
-    assert "Should not use Python object in runtime" in str(err.value)
+    net()
+
+
+def test_np_calculate():
+    """
+    Feature: Fallback feature.
+    Description: Support numpy calculation.
+    Expectation: No exception.
+    """
+    @jit
+    def np_calculate():
+        x = np.array([3, 1, 2, 4, 5])
+        y = x % 2
+        z = Tensor(y)
+        return z
+    assert np.all(np_calculate().asnumpy() == np.array([1, 1, 0, 0, 1]))
+
+
+def test_np_array():
+    """
+    Feature: Fallback feature.
+    Description: Support numpy calculation.
+    Expectation: No exception.
+    """
+    @jit
+    def func():
+        return Tensor(np_array_data)
+
+    assert np.all(func().asnumpy() == np_array_data)

@@ -20,6 +20,11 @@
 #include <vector>
 #include <utility>
 #include <algorithm>
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/lite_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "include/errorcode.h"
 #include "tools/lite_exporter/fetch_content.h"
 #include "ops/make_tuple.h"
@@ -401,7 +406,7 @@ int RemoveRedundantOpPass::RemoveInvalidTransposeOp(const AnfNodePtr &anf_node, 
     return lite::RET_NO_CHANGE;
   }
   auto index_node = cnode->inputs()[kInputIndexTwo]->cast<ParameterPtr>();
-  if (index_node == nullptr) {
+  if (index_node == nullptr || !index_node->has_default()) {
     return RET_OK;
   }
   auto tensor_info = std::dynamic_pointer_cast<tensor::Tensor>(index_node->default_param());
@@ -479,12 +484,60 @@ int RemoveRedundantOpPass::RemoveUmonad(const FuncGraphPtr &func_graph, const Fu
   return RET_OK;
 }
 
+int RemoveRedundantOpPass::RemoveRedundantOp(const FuncGraphPtr &func_graph, const FuncGraphManagerPtr &manager,
+                                             const AnfNodePtr &node) {
+  int status = RET_OK;
+  if (CheckPrimitiveType(node, kPrimIdentity)) {
+    status = ReplaceOp(node, manager);
+  }
+  if (CheckPrimitiveType(node, prim::kPrimLoad)) {
+    status = ReplaceOp(node, manager);
+  }
+  if (CheckPrimitiveType(node, prim::kPrimTensorMove)) {
+    status = ReplaceOp(node, manager);
+  }
+  if (CheckPrimitiveType(node, prim::kPrimUpdateState) && !keep_update_state_) {
+    status = ReplaceUpdateStateOp(func_graph, node);
+  }
+  if (CheckPrimitiveType(node, prim::kPrimTupleGetItem)) {
+    status = ReplaceTupleGetItem(node, manager);
+  }
+  if (!is_train_model_ && CheckPrimitiveType(node, prim::kPrimDropout)) {
+    status = RemoveDropoutOp(node, manager);
+  }
+  if (CheckPrimitiveType(node, prim::kPrimPadFusion)) {
+    status = RemoveInvalidPadOp(node, manager);
+  }
+  if (CheckPrimitiveType(node, prim::kPrimTranspose)) {
+    status = RemoveInvalidTransposeOp(node, manager);
+  }
+  if (CheckPrimitiveType(node, prim::kPrimIf) || CheckPrimitiveType(node, prim::kPrimWhile)) {
+    auto sub_func_graph = GetValueNode<FuncGraphPtr>(node->cast<CNodePtr>()->input(1));
+    if (sub_func_graph == nullptr) {
+      lite::ReturnCode::GetSingleReturnCode()->UpdateReturnCode(lite::RET_NULL_PTR);
+      return lite::RET_NULL_PTR;
+    }
+    (void)Run(sub_func_graph);
+    sub_func_graph = GetValueNode<FuncGraphPtr>(node->cast<CNodePtr>()->input(2));
+    if (sub_func_graph == nullptr) {
+      lite::ReturnCode::GetSingleReturnCode()->UpdateReturnCode(lite::RET_NULL_PTR);
+      return lite::RET_NULL_PTR;
+    }
+    (void)Run(sub_func_graph);
+  }
+  return status;
+}
+
 bool RemoveRedundantOpPass::Run(const FuncGraphPtr &func_graph) {
   MS_ASSERT(func_graph != nullptr);
   auto manager = Manage(func_graph, true);
   MS_ASSERT(manager != nullptr);
   if (!is_train_model_) {
-    RemoveUmonad(func_graph, manager);
+    auto ret = RemoveUmonad(func_graph, manager);
+    if (ret != lite::RET_OK) {
+      MS_LOG(ERROR) << "remove umonad.";
+      return false;
+    }
   }
 
   auto node_list = TopoSort(func_graph->get_return());
@@ -493,41 +546,7 @@ bool RemoveRedundantOpPass::Run(const FuncGraphPtr &func_graph) {
     if (!utils::isa<CNodePtr>(node)) {
       continue;
     }
-    if (CheckPrimitiveType(node, kPrimIdentity)) {
-      status = ReplaceOp(node, manager);
-    }
-    if (CheckPrimitiveType(node, prim::kPrimLoad)) {
-      status = ReplaceOp(node, manager);
-    }
-    if (CheckPrimitiveType(node, prim::kPrimUpdateState)) {
-      status = ReplaceUpdateStateOp(func_graph, node);
-    }
-    if (CheckPrimitiveType(node, prim::kPrimTupleGetItem)) {
-      status = ReplaceTupleGetItem(node, manager);
-    }
-    if (!is_train_model_ && CheckPrimitiveType(node, prim::kPrimDropout)) {
-      status = RemoveDropoutOp(node, manager);
-    }
-    if (CheckPrimitiveType(node, prim::kPrimPadFusion)) {
-      status = RemoveInvalidPadOp(node, manager);
-    }
-    if (CheckPrimitiveType(node, prim::kPrimTranspose)) {
-      status = RemoveInvalidTransposeOp(node, manager);
-    }
-    if (CheckPrimitiveType(node, prim::kPrimIf) || CheckPrimitiveType(node, prim::kPrimWhile)) {
-      auto sub_func_graph = GetValueNode<FuncGraphPtr>(node->cast<CNodePtr>()->input(1));
-      if (sub_func_graph == nullptr) {
-        lite::ReturnCode::GetSingleReturnCode()->UpdateReturnCode(lite::RET_NULL_PTR);
-        return false;
-      }
-      (void)Run(sub_func_graph);
-      sub_func_graph = GetValueNode<FuncGraphPtr>(node->cast<CNodePtr>()->input(2));
-      if (sub_func_graph == nullptr) {
-        lite::ReturnCode::GetSingleReturnCode()->UpdateReturnCode(lite::RET_NULL_PTR);
-        return false;
-      }
-      (void)Run(sub_func_graph);
-    }
+    status = RemoveRedundantOp(func_graph, manager, node);
     if (status != lite::RET_OK && status != lite::RET_NO_CHANGE) {
       MS_LOG(ERROR) << "remove identity pass is failed.";
       return false;
@@ -537,6 +556,7 @@ bool RemoveRedundantOpPass::Run(const FuncGraphPtr &func_graph) {
     func_graph->DropNode(node);
   }
   FlattenMakeTuple(func_graph, manager);
+  remove_cnode_.clear();
   return true;
 }
 }  // namespace mindspore::opt

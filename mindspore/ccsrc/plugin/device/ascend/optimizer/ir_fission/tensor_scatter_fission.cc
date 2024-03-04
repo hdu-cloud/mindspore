@@ -18,11 +18,12 @@
 #include <vector>
 #include <memory>
 
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/framework_op_name.h"
+#include "ops/array_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/common/utils/utils.h"
-#include "ops/core_ops.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "utils/trace_base.h"
 
 namespace mindspore {
@@ -50,22 +51,20 @@ const AnfNodePtr TensorScatterFission::Process(const FuncGraphPtr &graph, const 
   scatter_nd_node->set_scope(node->scope());
   scatter_nd_node->set_abstract(node->abstract());
   common::AnfAlgo::SetNodeAttr(kAttrUseLocking, MakeValue(false), scatter_nd_node);
+  if (common::AnfAlgo::HasNodeAttr(kAttrCustAicpu, cnode)) {
+    common::AnfAlgo::CopyNodeAttr(kAttrCustAicpu, cnode, scatter_nd_node);
+  }
   return scatter_nd_node;
-}
-
-ValueNodePtr TensorScatterUpdateFission::GetScatterNdPrimNode() const {
-  return NewValueNode(std::make_shared<Primitive>(prim::kPrimScatterNdUpdate->name()));
-}
-
-const BaseRef TensorScatterUpdateFission::DefinePattern() const {
-  VarPtr input = std::make_shared<Var>();
-  VarPtr indices = std::make_shared<Var>();
-  VarPtr updates = std::make_shared<Var>();
-  return VectorRef({prim::kPrimTensorScatterUpdate, input, indices, updates});
 }
 
 ValueNodePtr TensorScatterAddFission::GetScatterNdPrimNode() const {
   return NewValueNode(std::make_shared<Primitive>(prim::kPrimScatterNdAdd->name()));
+}
+
+std::vector<std::string> TensorScatterAddFission::MustExistPrimitiveName() const {
+  std::vector<std::string> ret;
+  ret.emplace_back(prim::kPrimTensorScatterAdd->name());
+  return ret;
 }
 
 const BaseRef TensorScatterAddFission::DefinePattern() const {
@@ -79,6 +78,12 @@ ValueNodePtr TensorScatterSubFission::GetScatterNdPrimNode() const {
   return NewValueNode(std::make_shared<Primitive>(prim::kPrimScatterNdSub->name()));
 }
 
+std::vector<std::string> TensorScatterSubFission::MustExistPrimitiveName() const {
+  std::vector<std::string> ret;
+  ret.emplace_back(prim::kPrimTensorScatterSub->name());
+  return ret;
+}
+
 const BaseRef TensorScatterSubFission::DefinePattern() const {
   VarPtr input = std::make_shared<Var>();
   VarPtr indices = std::make_shared<Var>();
@@ -90,6 +95,12 @@ ValueNodePtr TensorScatterMaxFission::GetScatterNdPrimNode() const {
   return NewValueNode(std::make_shared<Primitive>(prim::kPrimScatterNdMax->name()));
 }
 
+std::vector<std::string> TensorScatterMaxFission::MustExistPrimitiveName() const {
+  std::vector<std::string> ret;
+  ret.emplace_back(prim::kPrimTensorScatterMax->name());
+  return ret;
+}
+
 const BaseRef TensorScatterMaxFission::DefinePattern() const {
   VarPtr input = std::make_shared<Var>();
   VarPtr indices = std::make_shared<Var>();
@@ -99,6 +110,12 @@ const BaseRef TensorScatterMaxFission::DefinePattern() const {
 
 ValueNodePtr TensorScatterMinFission::GetScatterNdPrimNode() const {
   return NewValueNode(std::make_shared<Primitive>(prim::kPrimScatterNdMin->name()));
+}
+
+std::vector<std::string> TensorScatterMinFission::MustExistPrimitiveName() const {
+  std::vector<std::string> ret;
+  ret.emplace_back(prim::kPrimTensorScatterMin->name());
+  return ret;
 }
 
 const BaseRef TensorScatterMinFission::DefinePattern() const {

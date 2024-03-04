@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,10 +15,11 @@
  */
 
 #include "plugin/device/cpu/kernel/mkldnn/pooling_cpu_kernel.h"
-
+#include <iostream>
 #include <string>
+#include <algorithm>
 #include <functional>
-#include "utils/ms_utils.h"
+#include "ops/conv_pool_op_name.h"
 
 namespace mindspore {
 namespace kernel {
@@ -27,32 +28,50 @@ constexpr size_t kPoolingInputsNum = 1;
 constexpr size_t kPoolingOutputsNum = 1;
 }  // namespace
 
-bool PoolingCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
-                               const std::vector<KernelTensorPtr> &outputs) {
+void PoolingCpuKernelMod::InitPoolingFields(const BaseOperatorPtr &base_operator,
+                                            const std::vector<KernelTensorPtr> &inputs,
+                                            const std::vector<KernelTensorPtr> &outputs) {
   MS_EXCEPTION_IF_NULL(base_operator);
-  PrimitivePtr prim = base_operator->GetPrim();
-  MS_EXCEPTION_IF_NULL(prim);
-  kernel_name_ = prim->name();
-  if (prim->HasAttr(CEIL_MODE)) {
-    ValuePtr ceil_mode = prim->GetAttr(CEIL_MODE);
+  kernel_name_ = base_operator->name();
+  dtype_ = inputs[0]->GetDtype();
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kPoolingInputsNum, kernel_name_);
+  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kPoolingOutputsNum, kernel_name_);
+
+  format_ = GetValue<std::string>(base_operator->GetAttr(FORMAT));
+  pad_mode = GetValue<std::string>(base_operator->GetAttr(PAD_MODE));
+  kernel_include_nc = GetValue<std::vector<int64_t>>(base_operator->GetAttr(KERNEL_SIZE));
+  strides_include_nc = GetValue<std::vector<int64_t>>(base_operator->GetAttr(STRIDES));
+
+  if (base_operator->HasAttr(CEIL_MODE)) {
+    ValuePtr ceil_mode = base_operator->GetPrim()->GetAttr(CEIL_MODE);
     ceil_mode_ = (ceil_mode->isa<BoolImm>() && GetValue<bool>(ceil_mode)) ||
                  (ceil_mode->isa<Int64Imm>() && GetValue<int64_t>(ceil_mode) == 1);
   }
-  if (kernel_name_ == kAvgPoolOpName || kernel_name_ == kAvgPool3DOpName) {
-    algorithm_ = dnnl::algorithm::pooling_avg;
-    if (prim->HasAttr(COUNT_INCLUDE_PAD) && GetValue<bool>(prim->GetAttr(COUNT_INCLUDE_PAD))) {
-      algorithm_ = dnnl::algorithm::pooling_avg_include_padding;
-    }
-    if (prim->HasAttr(DIVISOR_OVERRIDE) && GetValue<int64_t>(prim->GetAttr(DIVISOR_OVERRIDE)) != 0) {
-      divisor_override_ = GetValue<int64_t>(prim->GetAttr(DIVISOR_OVERRIDE));
+
+  if (kernel_name_ == kAvgPool3DOpName && (pad_mode == PAD_MODE_LOWER_PAD || pad_mode == PAD_MODE_UPPER_PAD) &&
+      base_operator->HasAttr(DIVISOR_OVERRIDE) && GetValue<int64_t>(base_operator->GetAttr(DIVISOR_OVERRIDE)) != 0 &&
+      base_operator->HasAttr(COUNT_INCLUDE_PAD) && !GetValue<bool>(base_operator->GetAttr(COUNT_INCLUDE_PAD))) {
+    auto pad = GetValue<std::vector<int64_t>>(base_operator->GetAttr(PAD_LIST));
+    if (std::any_of(pad.begin(), pad.end(), [](int64_t pad) { return pad > 0; })) {
+      MS_LOG(EXCEPTION) << kernel_name_ << "does not support the scenes while padmode == " << pad_mode
+                        << " && padding > 0 && count_include_pad == False && divisor_override != None";
     }
   }
-  format_ = GetValue<std::string>(prim->GetAttr(FORMAT));
-  pad_mode_ = GetValue<std::string>(prim->GetAttr(PAD_MODE));
-  kernel_include_nc_ = GetValue<std::vector<int64_t>>(prim->GetAttr(KERNEL_SIZE));
-  strides_include_nc_ = GetValue<std::vector<int64_t>>(prim->GetAttr(STRIDES));
-  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kPoolingInputsNum, kernel_name_);
-  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kPoolingOutputsNum, kernel_name_);
+
+  if (kernel_name_ == kAvgPoolOpName || kernel_name_ == kAvgPool3DOpName) {
+    algorithm_ = dnnl::algorithm::pooling_avg;
+    if (base_operator->HasAttr(COUNT_INCLUDE_PAD) && GetValue<bool>(base_operator->GetAttr(COUNT_INCLUDE_PAD))) {
+      algorithm_ = dnnl::algorithm::pooling_avg_include_padding;
+    }
+    if (base_operator->HasAttr(DIVISOR_OVERRIDE) && GetValue<int64_t>(base_operator->GetAttr(DIVISOR_OVERRIDE)) != 0) {
+      divisor_override_ = GetValue<int64_t>(base_operator->GetAttr(DIVISOR_OVERRIDE));
+    }
+  }
+}
+
+bool PoolingCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+                               const std::vector<KernelTensorPtr> &outputs) {
+  InitPoolingFields(base_operator, inputs, outputs);
   return true;
 }
 
@@ -65,12 +84,12 @@ int PoolingCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std:
   auto src_shape = inputs[0]->GetDeviceShapeAdaptively();
   dst_shape_ = outputs[0]->GetDeviceShapeAdaptively();
   const size_t src_dim = src_shape.size();
+  const dnnl::memory::desc src_desc = GetDefaultMemDesc(src_shape);
+  const dnnl::memory::desc dst_desc = GetDefaultMemDesc(dst_shape_);
   if (src_dim != SHAPE_4D && src_dim != SHAPE_5D) {
     MS_LOG(ERROR) << "Pooling only supports 4D/5D input, but got " << src_dim << "D!";
     return KRET_RESIZE_FAILED;
   }
-  const dnnl::memory::desc src_desc = GetDefaultMemDesc(src_shape);
-  const dnnl::memory::desc dst_desc = GetDefaultMemDesc(dst_shape_);
   if (src_dim == SHAPE_4D && format_ != NCHW) {
     MS_LOG(ERROR) << kernel_name_ << " only supports 4D input with NCHW format, but got format " << format_;
     return KRET_RESIZE_FAILED;
@@ -79,44 +98,39 @@ int PoolingCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std:
     MS_LOG(ERROR) << kernel_name_ << " only supports 5D input with NCDHW format, but got format " << format_;
     return KRET_RESIZE_FAILED;
   }
-  if (kernel_include_nc_.size() != src_dim) {
-    MS_LOG(ERROR) << kernel_name_ << " requires kernel_size must be " << src_dim << "D, but got "
-                  << kernel_include_nc_.size() << "D!";
-    return KRET_RESIZE_FAILED;
+  if (kernel_include_nc.size() != src_dim) {
+    MS_LOG(EXCEPTION) << kernel_name_ << " requires kernel_size must be " << src_dim << "D, but got "
+                      << kernel_include_nc.size() << "D!";
   }
-  if (strides_include_nc_.size() != src_dim) {
-    MS_LOG(ERROR) << kernel_name_ << " requires strides must be " << src_dim << "D, but got "
-                  << strides_include_nc_.size() << "D!";
-    return KRET_RESIZE_FAILED;
+  if (strides_include_nc.size() != src_dim) {
+    MS_LOG(EXCEPTION) << kernel_name_ << " requires strides must be " << src_dim << "D, but got "
+                      << strides_include_nc.size() << "D!";
   }
-  const dnnl::memory::dims kernel(kernel_include_nc_.begin() + NC_LEN, kernel_include_nc_.end());
-  const dnnl::memory::dims strides(strides_include_nc_.begin() + NC_LEN, strides_include_nc_.end());
+  const dnnl::memory::dims kernel(kernel_include_nc.begin() + NC_LEN, kernel_include_nc.end());
+  const dnnl::memory::dims strides(strides_include_nc.begin() + NC_LEN, strides_include_nc.end());
   const dnnl::memory::dims dilation(kernel.size(), kPoolingDilation);
   dnnl::memory::dims padding_l;
   dnnl::memory::dims padding_r;
   kernel_ = kernel;
-  PaddingInfo padding_info{pad_mode_,  kernel_,    strides,           dilation,
-                           &padding_l, &padding_r, &padding_invalid_, ceil_mode_};
+  PaddingInfo padding_info{pad_mode, kernel_, strides, dilation, &padding_l, &padding_r, &padding_invalid_, ceil_mode_};
   GetPadding(base_operator, src_shape, padding_info);
-
   const auto desc = CreateDesc<dnnl::pooling_forward::desc>(dnnl::prop_kind::forward_inference, algorithm_, src_desc,
                                                             dst_desc, strides, kernel, padding_l, padding_r);
   const auto prim_desc = CreateDesc<dnnl::pooling_forward::primitive_desc>(desc, engine_);
+
   primitive_ = CreatePrimitive<dnnl::pooling_forward>(prim_desc);
   AddArgument(DNNL_ARG_SRC, src_desc);
   AddArgument(DNNL_ARG_DST, dst_desc);
 
-  base_operator_ = base_operator;
-  inputs_ = inputs;
-  outputs_ = outputs;
   inputs_on_host_ = inputsOnHost;
   return KRET_OK;
 }
 
-void PoolingCpuKernelMod::EliminateInvalidPadding(float *dst) {
+template <typename T>
+void PoolingCpuKernelMod::EliminateInvalidPadding(T *dst) {
   if (dst_shape_.size() < SHAPE_5D || kernel_.size() + NC_LEN < SHAPE_5D ||
       padding_invalid_.size() + NC_LEN < SHAPE_5D) {
-    MS_LOG(ERROR) << "The dst_shape must be 5D, the kernel and the padding_invalid must be 3D!";
+    MS_LOG(EXCEPTION) << "The dst_shape must be 5D, the kernel and the padding_invalid must be 3D!";
   }
   const auto d_max = LongToSize(dst_shape_[D_INDEX] - 1);
   const auto h_max = LongToSize(dst_shape_[H_INDEX] - 1);
@@ -146,13 +160,21 @@ void PoolingCpuKernelMod::EliminateInvalidPadding(float *dst) {
             const char h_bound = h == h_max ? '1' : '0';
             const char w_bound = w == w_max ? '1' : '0';
             const std::string bin{d_bound, h_bound, w_bound};
-            const int kernel_index = std::stoi(bin, nullptr, base);
+            int kernel_index = 0;
+            try {
+              kernel_index = std::stoi(bin, nullptr, base);
+            } catch (const std::invalid_argument &e) {
+              MS_LOG(EXCEPTION) << "invalid string to be cast to int!";
+            } catch (const std::out_of_range &e) {
+              MS_LOG(EXCEPTION) << "value is out of the range of int!";
+            }
             const int64_t valid_kernel_size = valid_kernel_array[kernel_index];
             if (valid_kernel_size != kernel_size) {
               const size_t index =
                 static_cast<size_t>(i * dst_shape_[D_INDEX] * dst_shape_[H_INDEX] * dst_shape_[W_INDEX] +
                                     d * dst_shape_[H_INDEX] * dst_shape_[W_INDEX] + h * dst_shape_[W_INDEX] + w);
-              dst[index] = dst[index] * LongToFloat(kernel_size) / LongToFloat(valid_kernel_size);
+              dst[index] =
+                dst[index] * static_cast<T>(LongToFloat(kernel_size)) / static_cast<T>(LongToFloat(valid_kernel_size));
             }
           }
         }
@@ -163,12 +185,13 @@ void PoolingCpuKernelMod::EliminateInvalidPadding(float *dst) {
                            &parallel_search_info_);
 }
 
-void PoolingCpuKernelMod::ReComputeDivisor(float *dst) {
+template <typename T>
+void PoolingCpuKernelMod::ReComputeDivisor(T *dst) {
   const int64_t kernel_size = std::accumulate(kernel_.begin(), kernel_.end(), int64_t(1), std::multiplies<int64_t>());
   const size_t size = std::accumulate(dst_shape_.begin(), dst_shape_.end(), size_t(1), std::multiplies<size_t>());
   CTask task = [&](size_t start, size_t end) {
     for (size_t i = start; i < end; i++) {
-      dst[i] = dst[i] * LongToFloat(kernel_size) / LongToFloat(divisor_override_);
+      dst[i] = dst[i] * static_cast<T>(LongToFloat(kernel_size)) / static_cast<T>(LongToFloat(divisor_override_));
     }
   };
   ParallelLaunchAutoSearch(task, size, this, &parallel_search_info_);
@@ -177,10 +200,9 @@ void PoolingCpuKernelMod::ReComputeDivisor(float *dst) {
 std::vector<KernelAttr> PoolingCpuKernelMod::GetOpSupport() {
   static std::map<std::string, std::vector<KernelAttr>> support_list_map = {
     {kMaxPoolOpName, {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32)}},
-    {kMaxPool3DOpName, {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32)}},
     {kAvgPoolOpName, {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32)}},
-    {kAvgPool3DOpName, {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32)}}};
-
+    {kAvgPoolOpName, {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeFloat16)}},
+    {kAvgPoolOpName, {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64)}}};
   auto iter = support_list_map.find(kernel_type_);
   if (iter == support_list_map.end()) {
     MS_LOG(EXCEPTION) << "Does not support " << kernel_type_ << "!";
@@ -188,27 +210,14 @@ std::vector<KernelAttr> PoolingCpuKernelMod::GetOpSupport() {
   return iter->second;
 }
 
-bool PoolingCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &inputs, const std::vector<kernel::AddressPtr> &,
-                                 const std::vector<kernel::AddressPtr> &outputs) {
-  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kPoolingInputsNum, kernel_name_);
-  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kPoolingOutputsNum, kernel_name_);
-
-  // From CPUKernelExecutor::LaunchKernel
-  if (!Init(base_operator_, inputs_, outputs_)) {
-    MS_LOG(ERROR) << "Re-init PoolingCpuKernelMod while launching failed";
-    return false;
-  }
-  auto resize_ret = Resize(base_operator_, inputs_, outputs_, inputs_on_host_);
-  if (resize_ret != KRET_OK) {
-    MS_LOG(ERROR) << "Resize PoolingCpuKernelMod while launching failed: " << resize_ret;
-    return false;
-  }
-
+template <typename T>
+bool PoolingCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs,
+                                       const std::vector<kernel::AddressPtr> &outputs) {
   SetArgumentHandle(DNNL_ARG_SRC, inputs[0]->addr);
   SetArgumentHandle(DNNL_ARG_DST, outputs[0]->addr);
   ExecutePrimitive();
 
-  float *dst = reinterpret_cast<float *>(outputs[0]->addr);
+  T *dst = reinterpret_cast<T *>(outputs[0]->addr);
   if (divisor_override_ != 0) {
     ReComputeDivisor(dst);
     return true;
@@ -219,16 +228,35 @@ bool PoolingCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &inputs, 
   if (algorithm_ == dnnl::algorithm::pooling_avg_include_padding && has_invalid_padding) {
     EliminateInvalidPadding(dst);
   }
-  return true;
+  return false;
 }
 
-MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeCpuKernelMod, MaxPool3D,
-                                 []() { return std::make_shared<PoolingCpuKernelMod>(kMaxPool3DOpName); });
-MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeCpuKernelMod, MaxPool,
-                                 []() { return std::make_shared<PoolingCpuKernelMod>(kMaxPoolOpName); });
-MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeCpuKernelMod, AvgPool,
-                                 []() { return std::make_shared<PoolingCpuKernelMod>(kAvgPoolOpName); });
-MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeCpuKernelMod, AvgPool3D,
-                                 []() { return std::make_shared<PoolingCpuKernelMod>(kAvgPool3DOpName); });
+bool PoolingCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &inputs, const std::vector<kernel::AddressPtr> &,
+                                 const std::vector<kernel::AddressPtr> &outputs) {
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kPoolingInputsNum, kernel_name_);
+  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kPoolingOutputsNum, kernel_name_);
+
+  // From CPUKernelExecutor::LaunchKernel
+  if (!Init(op_, inputs_, outputs_)) {
+    MS_LOG(ERROR) << "Re-init PoolingCpuKernelMod while launching failed";
+    return false;
+  }
+  auto resize_ret = Resize(op_, inputs_, outputs_, inputs_on_host_);
+  if (resize_ret != KRET_OK) {
+    MS_LOG(ERROR) << "Resize PoolingCpuKernelMod while launching failed: " << resize_ret;
+    return false;
+  }
+  if (dtype_ == kNumberTypeFloat32) {
+    LaunchKernel<float>(inputs, outputs);
+  } else if (dtype_ == kNumberTypeFloat16) {
+    LaunchKernel<float16>(inputs, outputs);
+  } else if (dtype_ == kNumberTypeFloat64) {
+    LaunchKernel<double>(inputs, outputs);
+  } else {
+    MS_LOG(ERROR) << "For '" << kernel_name_ << "', the dtype of input should be float16, float32 or float64, but got "
+                  << TypeIdToType(dtype_)->ToString();
+  }
+  return true;
+}
 }  // namespace kernel
 }  // namespace mindspore

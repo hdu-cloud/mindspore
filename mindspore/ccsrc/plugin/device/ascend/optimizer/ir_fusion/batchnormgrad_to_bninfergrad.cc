@@ -14,15 +14,18 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/optimizer/ir_fusion/batchnormgrad_to_bninfergrad.h"
+
 #include <memory>
 #include <vector>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include <string>
+#include "ops/sequence_ops.h"
+#include "ops/nn_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "abstract/abstract_value.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -106,6 +109,12 @@ bool NeedFusion(const FuncGraphPtr &graph, const AnfNodePtr &node, CNodePtr *bat
   return CheckBatchNormGrad(graph, *batchnorm_grad);
 }
 }  // namespace
+
+std::vector<std::string> BatchNormGrad2BNInferGrad::MustExistPrimitiveName() const {
+  std::vector<std::string> ret;
+  ret.emplace_back(prim::kPrimBatchNormGrad->name());
+  return ret;
+}
 
 const BaseRef BatchNormGrad2BNInferGrad::DefinePattern() const {
   VarPtr Xs = std::make_shared<SeqVar>();

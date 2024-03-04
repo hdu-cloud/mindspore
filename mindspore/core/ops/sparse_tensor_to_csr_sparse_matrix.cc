@@ -14,19 +14,33 @@
  * limitations under the License.
  */
 
-#include <set>
-#include <map>
-#include <string>
-#include <vector>
+#include <algorithm>
 #include <memory>
+#include <set>
+#include <vector>
 
-#include "ops/sparse_tensor_to_csr_sparse_matrix.h"
+#include "abstract/abstract_value.h"
 #include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/named.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
-#include "ops/op_utils.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "ops/sparse_tensor_to_csr_sparse_matrix.h"
 #include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -54,6 +68,10 @@ abstract::TupleShapePtr SparseTensorToCSRSparseMatrixInferShape(const PrimitiveP
   const int64_t kBatchRank = 3;
   std::vector<int64_t> x_dense_shape_shape =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->BuildShape())[kShape];
+  if (x_dense_shape_shape.size() == 0) {
+    MS_EXCEPTION(ValueError) << "For '" << primitive->name() << "', the input x_dense_shape should "
+                             << "have rank 2 or 3, but got " << x_dense_shape_shape.size() << ".";
+  }
   const int64_t rank_x = x_dense_shape_shape[0];
   if (!IsDynamic(x_dense_shape_shape) && rank_x != kDefalutRank && rank_x != kBatchRank) {
     MS_EXCEPTION(ValueError) << "For '" << primitive->name() << "', the input x_dense_shape should "
@@ -93,7 +111,7 @@ abstract::TupleShapePtr SparseTensorToCSRSparseMatrixInferShape(const PrimitiveP
   abstract::ShapePtr y_row_pointers_shape_list;
 
   if (input_args[kInputIndex2]->isa<abstract::AbstractTensor>() &&
-      !input_args[kInputIndex2]->BuildValue()->isa<AnyValue>() &&
+      !input_args[kInputIndex2]->BuildValue()->isa<ValueAny>() &&
       !input_args[kInputIndex2]->BuildValue()->isa<None>()) {
     auto dense_shape = input_args[kInputIndex2]->cast<abstract::AbstractTensorPtr>();
     auto dense_shape_ptr = dense_shape->BuildValue();
@@ -139,8 +157,26 @@ AbstractBasePtr SparseTensorToCSRSparseMatrixInfer(const abstract::AnalysisEngin
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseTensorToCSRSparseMatrix, prim::kPrimSparseTensorToCSRSparseMatrix,
-                             SparseTensorToCSRSparseMatrixInfer, nullptr, true);
-REGISTER_HOST_DEPENDS(kNameSparseTensorToCSRSparseMatrix, {2});
+// AG means auto generated
+class MIND_API AGSparseTensorToCSRSparseMatrixInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseTensorToCSRSparseMatrixInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseTensorToCSRSparseMatrixInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseTensorToCSRSparseMatrixInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseTensorToCSRSparseMatrix, prim::kPrimSparseTensorToCSRSparseMatrix,
+                                 AGSparseTensorToCSRSparseMatrixInfer, false);
 }  // namespace ops
 }  // namespace mindspore

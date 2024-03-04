@@ -17,12 +17,12 @@ from __future__ import absolute_import
 
 import math
 
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from mindspore import context
 from mindspore.train._utils import _exec_datagraph, _get_types_and_shapes
 from mindspore.nn.wrap import GetNextSingleOp
 from mindspore.parallel._utils import _get_device_num, _need_to_full, _to_full_shapes
-from mindspore.parallel._ps_context import _is_role_pserver, _is_role_sched
+from mindspore.parallel._ps_context import _is_role_sched
 
 
 def _send_data(dataset, epoch_num):
@@ -51,8 +51,9 @@ class DatasetHelper:
 
     Args:
         dataset (DataSet): The training dataset iterator.
-        dataset_sink_mode (bool): If true use GetNext to fetch the data, or else feed the data from host. Default: True.
-        sink_size (int): Control the amount of data in each sink.
+        dataset_sink_mode (bool): If true use GetNext to fetch the data, or else feed the data from host.
+            Default: ``True``.
+        sink_size (int): Control the number of steps for each sinking.
                              If sink_size=-1, sink the complete dataset for each epoch.
                              If sink_size>0, sink sink_size data for each epoch. Default: -1.
         epoch_num (int): Control the number of epoch data to send. Default: 1.
@@ -146,7 +147,7 @@ class _DatasetIter:
         if hasattr(self.dataset, '__loop_size__'):
             sink_size = self.dataset.__loop_size__
         else:
-            if context.get_context("enable_ge") or context.get_context("device_target") == "Ascend":
+            if context.get_context("device_target") == "Ascend":
                 if self.sink_size > 0:
                     sink_size = self.sink_size
                 else:
@@ -163,7 +164,7 @@ class _DatasetIterMSLoopSink(_DatasetIter):
             loop_size = dataset.__loop_size__ + iter_first_order
             sink_count = int(sink_size / loop_size) * 2
         self.sink_count = sink_count
-        if _is_role_pserver() or _is_role_sched():
+        if _is_role_sched():
             self.sink_count = 1
         # for self._parallel_mode equal to semi_auto_parallel or auto_parallel, and not using full_batch,
         # use a complete tensor to compile, and slice tensor to run. The batch dimension of tensors for

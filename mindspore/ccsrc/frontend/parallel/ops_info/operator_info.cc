@@ -19,20 +19,21 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <numeric>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
-#include <unordered_map>
-#include <numeric>
 
-#include "ir/dtype.h"
-#include "ir/tensor.h"
-#include "ir/value.h"
 #include "frontend/parallel/auto_parallel/edge_costmodel.h"
 #include "frontend/parallel/auto_parallel/graph_costmodel.h"
-#include "include/common/utils/parallel_context.h"
-#include "utils/log_adapter.h"
+#include "frontend/parallel/step_parallel_utils.h"
 #include "include/common/debug/anf_dump_utils.h"
+#include "include/common/utils/parallel_context.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace parallel {
@@ -137,6 +138,7 @@ Status OperatorInfo::CheckStrategyByVector(const Shapes &stra, const Shapes &inp
     Shape sub_input_shape = inputs_shape.at(i);
     size_t strategy_len = sub_strategy.size();
     size_t inputs_len = sub_input_shape.size();
+    MS_LOG(INFO) << "Compare: sub_input_shape:" << sub_input_shape << " sub_strategy: " << sub_strategy;
     if (strategy_len != inputs_len) {
       MS_LOG(ERROR) << name_ << ": The strategy is " << StrategyToString(stra) << ", strategy len: " << strategy_len
                     << " is not equal to inputs len: " << inputs_len << ", index: " << i;
@@ -152,7 +154,7 @@ Status OperatorInfo::CheckStrategyByVector(const Shapes &stra, const Shapes &inp
       }
 
       int64_t shape_value = sub_input_shape.at(j);
-      if ((shape_value % strategy_value) != 0) {
+      if (shape_value != -1 && (shape_value % strategy_value) != 0) {
         MS_LOG(ERROR) << name_ << ": The strategy is " << StrategyToString(stra) << ", shape " << shape_value
                       << " cannot be divisible by strategy value " << strategy_value;
         return FAILED;
@@ -187,15 +189,158 @@ Status OperatorInfo::CheckStrategyValue(const StrategyPtr &strategy, const Shape
 void OperatorInfo::ResetQueueMember() {
   inputs_tensor_info_.clear();
   outputs_tensor_info_.clear();
-  inputs_tensor_map_.clear();
   outputs_tensor_map_.clear();
-  dev_matrix_shape_.clear();
+  out_dev_matrix_shape_.clear();
   forward_op_.clear();
   mirror_ops_.clear();
   sub_ops_.clear();
   replace_op_.clear();
   replace_op_info_.clear();
   virtual_div_op_.clear();
+  if (!is_layout_config_) {
+    inputs_tensor_map_.clear();
+    dev_matrix_shape_.clear();
+  }
+}
+
+Status OperatorInfo::CheckLayoutConfigBase() {
+  // size
+  if (inputs_tensor_map_.size() != inputs_shape_.size()) {
+    MS_LOG(ERROR) << name_
+                  << ": the size of inputs tensor map and inputs shape must be equal, but the inputs tensor map is "
+                  << inputs_tensor_map_ << ", and the inputs shape is " << inputs_shape_;
+    return FAILED;
+  }
+
+  for (size_t i = 0; i < inputs_shape_.size(); ++i) {
+    if (inputs_shape_[i].size() != inputs_tensor_map_[i].size()) {
+      MS_LOG(ERROR) << name_
+                    << ": the size of input tensor map and input shape must be equal, but the inputs tensor map is "
+                    << inputs_tensor_map_ << ", and the inputs shape is " << inputs_shape_ << ", the " << i
+                    << "th is not equal";
+      return FAILED;
+    }
+  }
+
+  size_t dev_matrix_size = dev_matrix_shape_.size();
+  strategy_from_layout_.clear();
+
+  for (size_t j = 0; j < inputs_tensor_map_.size(); ++j) {
+    Shape tmp_strategy;
+    for (size_t k = 0; k < inputs_tensor_map_[j].size(); ++k) {
+      auto map = inputs_tensor_map_[j][k];
+
+      // range
+      if (map == MAP_NONE) {
+        tmp_strategy.push_back(NO_SPLIT_STRATEGY);
+        continue;
+      }
+
+      if (map < 0 || map >= SizeToLong(dev_matrix_size)) {
+        MS_LOG(ERROR) << name_ << ": the range of tensor_map's value is [-1, " << (dev_matrix_size - 1)
+                      << "], but the inputs tensor map is " << inputs_tensor_map_;
+        return FAILED;
+      }
+
+      // divisible
+      auto shard_num = dev_matrix_shape_[dev_matrix_size - LongToSize(map) - 1];
+      MS_EXCEPTION_IF_ZERO("shard_num", shard_num);
+      if (inputs_shape_[j][k] % shard_num != 0) {
+        MS_LOG(ERROR) << name_ << ": the shape is not divisible by layout, the input shape is " << inputs_shape_
+                      << ", the dev matrix is " << dev_matrix_shape_ << ", and the tensor map is "
+                      << inputs_tensor_map_;
+        return FAILED;
+      }
+
+      // if shard_num is 1, reset the map to -1
+      if (shard_num == NO_SPLIT_STRATEGY) {
+        inputs_tensor_map_[j][k] = MAP_NONE;
+      }
+      tmp_strategy.push_back(shard_num);
+    }
+    strategy_from_layout_.push_back(tmp_strategy);
+  }
+
+  MS_LOG(INFO) << name_ << ": the strategy from layout is " << strategy_from_layout_;
+  return SUCCESS;
+}
+
+Status OperatorInfo::GetLayoutConfig() {
+  auto layout_iter = attrs_.find(LAYOUT);
+  if (layout_iter == attrs_.end()) {
+    return SUCCESS;
+  }
+
+  MS_EXCEPTION_IF_NULL(layout_iter->second);
+  auto layout = layout_iter->second;
+  if (!layout->isa<ValueDictionary>()) {
+    MS_LOG(ERROR) << name_ << ": the layout is not a dict";
+    return FAILED;
+  }
+
+  auto dict = layout->cast<ValueDictionaryPtr>();
+  for (const auto &kv : dict->value()) {
+    ValuePtr key_ptr = kv.first;
+    ValuePtr value_ptr = kv.second;
+    MS_EXCEPTION_IF_NULL(key_ptr);
+    MS_EXCEPTION_IF_NULL(value_ptr);
+    if (!key_ptr->isa<StringImm>()) {
+      MS_LOG(EXCEPTION) << name_ << ": the value of key is not string";
+    }
+
+    std::string key = key_ptr->cast<StringImmPtr>()->value();
+
+    if (key == DEV_MATRIX) {
+      if (!value_ptr->isa<ValueTuple>()) {
+        MS_LOG(ERROR) << name_ << ": the type of dev matrix is not tuple";
+        return FAILED;
+      }
+
+      dev_matrix_shape_ = GetValue<std::vector<int64_t>>(value_ptr);
+      auto used_devices =
+        std::accumulate(dev_matrix_shape_.begin(), dev_matrix_shape_.end(), 1, std::multiplies<int64_t>());
+      if (used_devices != stage_device_size_) {
+        MS_LOG(ERROR) << name_
+                      << ": the product of dev matrix must be equal to the stage divece size, but the dev matrix is "
+                      << dev_matrix_shape_ << ", but the stage device size is " << stage_device_size_;
+        return FAILED;
+      }
+      continue;
+    }
+
+    if (key == INPUT_TENSOR_MAP) {
+      auto var = value_ptr->cast<ValueTuplePtr>();
+      if (!value_ptr->isa<ValueTuple>()) {
+        MS_LOG(ERROR) << name_ << ": the type of input_tensor_map is not tuple";
+        return FAILED;
+      }
+
+      std::vector<ValuePtr> elements = var->value();
+      for (const auto &ele : elements) {
+        Shape tensor_map;
+        if (ele->isa<ValueSequence>()) {
+          auto value_tuple = ele->cast<ValueTuplePtr>();
+          std::vector<ValuePtr> value_vector = value_tuple->value();
+          (void)std::transform(value_vector.begin(), value_vector.end(), std::back_inserter(tensor_map),
+                               [](const ValuePtr &value) { return static_cast<int64_t>(GetValue<int64_t>(value)); });
+          inputs_tensor_map_.push_back(tensor_map);
+        } else {
+          MS_LOG(ERROR) << name_ << ": the format of input tensor map is wrong! Need ValueSequence";
+          return FAILED;
+        }
+      }
+      continue;
+    }
+
+    MS_LOG(ERROR) << name_ << ": the invalid key for layout: " << key;
+    return FAILED;
+  }
+
+  MS_LOG(INFO) << name_ << ": the dev matrix is " << dev_matrix_shape_ << ", the tensor map is " << inputs_tensor_map_;
+
+  is_layout_config_ = true;
+
+  return CheckLayoutConfigBase();
 }
 
 Status OperatorInfo::InferAttrs() {
@@ -206,6 +351,15 @@ Status OperatorInfo::InferAttrs() {
   if (GetAttrs() != SUCCESS) {
     return FAILED;
   }
+
+  if (GetLayoutConfig() != SUCCESS) {
+    return FAILED;
+  }
+
+  if (is_layout_config_ && CheckLayoutConfig() != SUCCESS) {
+    return FAILED;
+  }
+
   infer_attrs_completed_ = true;
   return SUCCESS;
 }
@@ -455,21 +609,11 @@ void AddCommOpMeanFlag(const CNodePtr &comm_node) {
   (void)prim->SetAttrs(attrs);
 }
 
-void AddCommOpMirrorFlag(const CNodePtr &comm_node, bool do_mirror) {
+void AddCNodePrimAttr(const CNodePtr &comm_node, const std::string &attr_name, const ValuePtr &attr_val) {
   MS_EXCEPTION_IF_NULL(comm_node);
   auto prim = GetValueNode<PrimitivePtr>(comm_node->input(0));
   auto attrs = prim->attrs();
-  MS_EXCEPTION_IF_NULL(ParallelContext::GetInstance());
-  attrs[DO_MIRROR] = MakeValue<bool>(do_mirror);
-  (void)prim->SetAttrs(attrs);
-}
-
-void AddCommOpAddAccuFlag(const CNodePtr &comm_node, bool add_accu) {
-  MS_EXCEPTION_IF_NULL(comm_node);
-  auto prim = GetValueNode<PrimitivePtr>(comm_node->input(0));
-  auto attrs = prim->attrs();
-  MS_EXCEPTION_IF_NULL(ParallelContext::GetInstance());
-  attrs[ADD_ACCU] = MakeValue<bool>(add_accu);
+  attrs[attr_name] = attr_val;
   (void)prim->SetAttrs(attrs);
 }
 
@@ -491,7 +635,8 @@ void AddCommOpParamFlag(const CNodePtr &comm_node) {
 
 Operator CreateAllGatherOp(const std::string &group) {
   OperatorName operator_name = ALL_GATHER;
-  ValuePtr attr0_value = MakeValue(group);  // group
+  // group
+  ValuePtr attr0_value = MakeValue(group);
   Attr attr0 = std::make_pair(GROUP, attr0_value);
   OperatorAttrs operator_attrs;
   operator_attrs.push_back(attr0);
@@ -504,36 +649,14 @@ Operator CreateAllGatherOp(const std::string &group) {
   return op;
 }
 
-Operator CreateMiniStepAllGatherOp(const std::string &group) {
-  int64_t grad_accumulation_step = ParallelContext::GetInstance()->grad_accumulation_step();
-  bool mean_flag = ParallelContext::GetInstance()->gradients_mean();
-
-  OperatorName operator_name = MINI_STEP_ALL_GATHER;
-  ValuePtr attr0_value = MakeValue(group);  // group
-  Attr attr0 = std::make_pair(GROUP, attr0_value);
-  ValuePtr attr1_value = MakeValue(grad_accumulation_step);  // grad_accumulation_step
-  Attr attr1 = std::make_pair(GRAD_ACCUMULATION_STEP, attr1_value);
-  ValuePtr attr2_value = MakeValue(mean_flag);  // mean_flag
-  Attr attr2 = std::make_pair(MEAN_FLAG, attr2_value);
-  OperatorAttrs operator_attrs;
-  operator_attrs.push_back(attr0);
-  operator_attrs.push_back(attr1);
-  operator_attrs.push_back(attr2);
-
-  OperatorParams operator_param;
-  OperatorArgs operator_arg = std::make_pair(operator_attrs, operator_param);
-
-  Operator op = std::make_pair(operator_name, operator_arg);
-  MS_LOG(INFO) << "Create MINI_STEP_ALL_GATHER success, the group is " << group;
-  return op;
-}
-
 Operator CreateMicroStepAllGatherOp(const std::string &group) {
   bool mean_flag = ParallelContext::GetInstance()->gradients_mean();
   OperatorName operator_name = MICRO_STEP_ALL_GATHER;
-  ValuePtr attr0_value = MakeValue(group);  // group
+  // group
+  ValuePtr attr0_value = MakeValue(group);
   Attr attr0 = std::make_pair(GROUP, attr0_value);
-  ValuePtr attr1_value = MakeValue(mean_flag);  // mean_flag
+  // mean_flag
+  ValuePtr attr1_value = MakeValue(mean_flag);
   Attr attr1 = std::make_pair(MEAN_FLAG, attr1_value);
   OperatorAttrs operator_attrs;
   operator_attrs.push_back(attr0);
@@ -590,13 +713,7 @@ OperatorVector CreateMirrorOps(const std::string &group_name, size_t dev_num) {
   operator_attrs.push_back(attr2);
 
   OperatorName operator_name;
-  if (grad_accumulation_step > 1) {
-    operator_name = MIRROR_MINI_STEP_OPERATOR;
-    ValuePtr attr3_value = MakeValue(grad_accumulation_step);
-    Attr attr3 = std::make_pair(GRAD_ACCUMULATION_STEP, attr3_value);
-    operator_attrs.push_back(attr3);
-    MS_LOG(INFO) << "The grad accumulation step is " << grad_accumulation_step << ", use mini step mirror";
-  } else if (split_stage_num > 1) {
+  if (grad_accumulation_step > 1 || split_stage_num > 1) {
     operator_name = MIRROR_MICRO_STEP_OPERATOR;
   } else {
     operator_name = MIRROR_OPERATOR;
@@ -670,13 +787,16 @@ Status OperatorInfo::CreateGroupForOptShard(TensorLayout *tensor_layout, std::ve
     return SUCCESS;
   }
   int64_t optimizer_weight_shard_size = ParallelContext::GetInstance()->optimizer_weight_shard_size();
+  MS_EXCEPTION_IF_ZERO("optimizer_weight_shard_size", optimizer_weight_shard_size);
   if (optimizer_weight_shard_size != -1) {
     // not fully use opt shard
     int64_t index = std::find(group_devices.begin(), group_devices.end(), rank) - group_devices.begin();
     int64_t repeated_size = SizeToLong(group_devices.size());
-    if (repeated_size % optimizer_weight_shard_size != 0) {
-      MS_LOG(WARNING) << name_ << ": Parallel optimizer: optimizer_weight_shard_size " << optimizer_weight_shard_size
-                      << " can not be applied. The repeated size is " << repeated_size;
+    if (repeated_size % optimizer_weight_shard_size != 0 || repeated_size < optimizer_weight_shard_size) {
+      MS_LOG(WARNING) << "Parallel optimizer:"
+                      << " optimizer_weight_shard_size " << optimizer_weight_shard_size
+                      << " can not be applied for the parameter used by" << cnode_->fullname_with_scope()
+                      << " The data parallel group size is " << repeated_size;
       return FAILED;
     }
     repeated_size = repeated_size / optimizer_weight_shard_size;
@@ -700,6 +820,7 @@ Status OperatorInfo::CreateGroupForOptShard(TensorLayout *tensor_layout, std::ve
     // create mirror group
     // eg: optimizer_weight_shard_size = 2, [0, 8, 16, 24] -> [0, 16], [8, 24]
     int64_t device_num = g_device_manager->stage_device_num();
+    MS_EXCEPTION_IF_ZERO("repeated_size", repeated_size);
     Shape dev_mat = {repeated_size, device_num / repeated_size};
     DeviceMatrix temp_dev_matrix(rank, stage_device_list_, dev_mat);
     RankList mirror_group_devices;
@@ -738,6 +859,7 @@ Status OperatorInfo::CreateGroupForOptShard(TensorLayout *tensor_layout, std::ve
   auto integrated_save = ParallelContext::GetInstance()->optimizer_weight_shard_aggregated_save();
   if (!integrated_save) {
     tensor_layout->set_opt_weight_shard_size(LongToInt(optimizer_weight_shard_size));
+    MS_EXCEPTION_IF_ZERO("SizeToLong(group_devices.size()) - 1", SizeToLong(group_devices.size()) - 1);
     int64_t opt_weight_shard_step =
       (group_devices.back() - group_devices.front()) / (SizeToLong(group_devices.size()) - 1);
     tensor_layout->set_opt_weight_shard_step(LongToInt(opt_weight_shard_step));
@@ -796,66 +918,6 @@ Shape GetSliceShape(const Shape &tensor_shape, const Dimensions &strategy) {
   return slice_shape;
 }
 
-Status InferSliceShapeByStrategy(const Strategies &strategys, const Shapes &shapes, Shapes *slice_shapes) {
-  if (slice_shapes == nullptr) {
-    MS_LOG(ERROR) << "The slice_shapes is null.";
-    return FAILED;
-  }
-  if (strategys.size() != shapes.size()) {
-    MS_LOG(ERROR) << "Strategy size " << strategys.size() << " not equal to shape size " << shapes.size();
-    return FAILED;
-  }
-
-  for (size_t i = 0; i < strategys.size(); ++i) {
-    if (strategys.at(i).size() != shapes.at(i).size()) {
-      MS_LOG(ERROR) << "Strategy dimension " << strategys.at(i).size() << " not equal to shape dimension "
-                    << shapes.at(i).size();
-      slice_shapes->clear();
-      return FAILED;
-    }
-
-    for (size_t j = 0; j < shapes.at(i).size(); ++j) {
-      if (strategys.at(i).at(j) <= 0) {
-        MS_LOG(ERROR) << "Invalid strategy: " << ShapeToString(strategys[i])
-                      << " the element is less than or equal to 0.";
-        slice_shapes->clear();
-        return FAILED;
-      }
-      if (shapes.at(i).at(j) % strategys.at(i).at(j) != 0) {
-        MS_LOG(ERROR) << "Shape cannot be divisible by strategy, " << shapes.at(i).at(j) << " : "
-                      << strategys.at(i).at(j);
-        slice_shapes->clear();
-        return FAILED;
-      }
-    }
-    Shape slice_shape = GetSliceShape(shapes.at(i), strategys.at(i));
-    slice_shapes->push_back(slice_shape);
-  }
-
-  return SUCCESS;
-}
-
-Status OperatorInfo::InferSliceShape(const Strategies &inputs_strategy, const Strategies &outputs_strategy,
-                                     Shapes *inputs_slice_shape, Shapes *outputs_slice_shape) {
-  if (inputs_slice_shape == nullptr || outputs_slice_shape == nullptr) {
-    MS_LOG(ERROR) << name_ << ": The slice_shape is null.";
-    return FAILED;
-  }
-
-  if (InferSliceShapeByStrategy(inputs_strategy, inputs_shape_, inputs_slice_shape) != SUCCESS) {
-    MS_LOG(ERROR) << name_ << ": Infer inputs slice shape error.";
-    return FAILED;
-  }
-
-  if (InferSliceShapeByStrategy(outputs_strategy, outputs_shape_, outputs_slice_shape) != SUCCESS) {
-    MS_LOG(ERROR) << name_ << ": Infer outputs slice shape error.";
-    inputs_slice_shape->clear();
-    return FAILED;
-  }
-
-  return SUCCESS;
-}
-
 Status OperatorInfo::Init(const StrategyPtr &in_strategy, const StrategyPtr &out_strategy) {
   if (InitWithAutoRepeatCalc(in_strategy, out_strategy) != SUCCESS) {
     MS_LOG(ERROR) << name_ << " : Init failed.";
@@ -879,55 +941,63 @@ Status OperatorInfo::InitForCostModel(const StrategyPtr &in_strategy, const Stra
 // auto insert repeated_calculation_num for dev_matrix_shape when repeated_calculation_num > 1
 Status OperatorInfo::InitForCostModelWithAutoRepeatCalc(const StrategyPtr &in_strategy,
                                                         const StrategyPtr &out_strategy) {
-  if (in_strategy == nullptr) {
-    MS_LOG(ERROR) << name_ << ": The strategy is null.";
+  if (!is_layout_config_ && in_strategy == nullptr) {
+    MS_LOG(ERROR) << name_ << ": The strategy is null, the inputs shape is " << inputs_shape_;
     return FAILED;
   }
+
+  // need to clear queues before Init(),
+  // because Init() may be called multiple times by cost model
+  ResetQueueMember();
 
   if (InferAttrs() != SUCCESS) {
     MS_LOG(ERROR) << name_ << ": InferAttrs failed.";
     return FAILED;
   }
 
-  // must be after InferAttrs()
-  if (CheckStrategy(in_strategy) != SUCCESS) {
-    FILTER_LOG(is_auto_parallel_) << name_ << ": CheckStrategy failed.";
-    return FAILED;
+  // if layout is configured, no need to check strategy and infer dev matrix
+  if (!is_layout_config_) {
+    // must be after InferAttrs()
+    if (CheckStrategy(in_strategy) != SUCCESS) {
+      FILTER_LOG(is_auto_parallel_) << name_ << ": CheckStrategy failed.";
+      return FAILED;
+    }
+    strategy_ = in_strategy;
+
+    if (out_strategy && CheckOutputStrategy(out_strategy) != SUCCESS) {
+      MS_LOG(ERROR) << name_ << ": The output strategy is invalid";
+      return FAILED;
+    }
+    out_strategy_ = out_strategy;
+
+    if (InferDevMatrixShape() != SUCCESS) {
+      MS_LOG(ERROR) << name_ << ": InferDevMatrixShape failed.";
+      return FAILED;
+    }
+
+    used_devices_ = std::accumulate(dev_matrix_shape_.begin(), dev_matrix_shape_.end(), 1, std::multiplies<int64_t>());
+
+    // must be after InferDevMatrixShape
+    if (InferRepeatedCalcInfo() != SUCCESS) {
+      MS_LOG(ERROR) << name_ << ": InferRepeatedCalcInfo failed.";
+      return FAILED;
+    }
+
+    // if repeated calculation, need to set the repeated_calc_num as the last dimension of dev-matrix for layout
+    SetRepeatedCalcDevMatrix();
+
+    if (InferTensorMap() != SUCCESS) {
+      MS_LOG(ERROR) << name_ << ": InferTensorMap failed.";
+      return FAILED;
+    }
+
+    ResetTensorMapIfRepeatedCalc();
+  } else {
+    if (InferOutputTensorMap() != SUCCESS) {
+      MS_LOG(ERROR) << name_ << ": InferOutputTensorMap failed.";
+      return FAILED;
+    }
   }
-  strategy_ = in_strategy;
-
-  if (out_strategy && CheckOutputStrategy(out_strategy) != SUCCESS) {
-    MS_LOG(ERROR) << name_ << ": The output strategy is invalid";
-    return FAILED;
-  }
-  out_strategy_ = out_strategy;
-
-  // need to clear queues before Init(),
-  // because Init() may be called multiple times by cost model
-  ResetQueueMember();
-
-  if (InferDevMatrixShape() != SUCCESS) {
-    MS_LOG(ERROR) << name_ << ": InferDevMatrixShape failed.";
-    return FAILED;
-  }
-
-  used_devices_ = std::accumulate(dev_matrix_shape_.begin(), dev_matrix_shape_.end(), 1, std::multiplies<int64_t>());
-
-  // must be after InferDevMatrixShape
-  if (InferRepeatedCalcInfo() != SUCCESS) {
-    MS_LOG(ERROR) << name_ << ": InferRepeatedCalcInfo failed.";
-    return FAILED;
-  }
-
-  // if repeated calculation, need to set the repeated_calc_num as the last dimension of dev-matrix for layout
-  SetRepeatedCalcDevMatrix();
-
-  if (InferTensorMap() != SUCCESS) {
-    MS_LOG(ERROR) << name_ << ": InferTensorMap failed.";
-    return FAILED;
-  }
-
-  ResetTensorMapIfRepeatedCalc();
 
   if (InferTensorInfo() != SUCCESS) {
     MS_LOG(ERROR) << name_ << ": InferTensorInfo failed.";
@@ -1083,9 +1153,6 @@ std::shared_ptr<Strategies> OperatorInfo::GenerateBatchStrategiesWithCheck() {
       return batch_strategy;
     }
     for (size_t j = 0; j < input_shape.size(); ++j) {
-      if (input_shape[j] <= 0) {
-        return batch_strategy;
-      }
       if (stra[j] == 1) {
         continue;
       }
@@ -1170,32 +1237,11 @@ Status PrepareStrategyBase(int64_t stage_id, size_t dev_num, const Shapes &input
 }
 
 std::shared_ptr<Strategies> OperatorInfo::GenerateBatchStrategies() {
-  if (inputs_shape_.empty() && InferAttrs() != SUCCESS) {
+  if (InferAttrs() != SUCCESS) {
     MS_LOG(EXCEPTION) << name_ << ": Infer attrs failed";
   }
   ComputeBatchSplitFlagList();
   return GenerateBatchStrategiesBySplitFlag(inputs_shape_, split_flag_list_);
-}
-
-void PrintStrategy(const StrategyPtr &strategy) {
-  if (strategy == nullptr) {
-    return;
-  }
-  std::string all_strategy = "";
-  for (size_t i = 0; i < strategy->GetInputNumber(); ++i) {
-    all_strategy += "[";
-    for (size_t j = 0; j < strategy->GetInputDim()[i].size(); ++j) {
-      all_strategy += std::to_string(strategy->GetInputDim()[i][j]);
-      if (j != strategy->GetInputDim()[i].size() - 1) {
-        all_strategy += ", ";
-      }
-    }
-    all_strategy += "]";
-    if (i != strategy->GetInputNumber() - 1) {
-      all_strategy += ", ";
-    }
-  }
-  MS_LOG(INFO) << "The strategy is: " << all_strategy;
 }
 
 // generate strategies for that each dimension of input0 and input1 is relevant, such as: ([a, b, c, d], [a, b, c, d])
@@ -1457,6 +1503,7 @@ Status GenerateStrategiesForIndependentInputs(int64_t stage_id, const Shapes &in
   if (dev_num_2_power == 0) {
     return GenerateStrategiesForIndependentInputsBase(stage_id, dev_num, inputs_shape, splittable_inputs, sp_vector);
   }
+  MS_EXCEPTION_IF_ZERO("dev_num - dev_num_2_power", dev_num - dev_num_2_power);
   auto dev_num_not_2_power = dev_num / (dev_num - dev_num_2_power);
   std::vector<StrategyPtr> sp_vector_2_power_part;
   if (GenerateStrategiesForIndependentInputsBase(stage_id, dev_num - dev_num_2_power, inputs_shape, splittable_inputs,
@@ -1478,6 +1525,7 @@ Status GenerateStrategiesForIndependentInputs(int64_t stage_id, const Shapes &in
         auto new_stra_arrays{stra_arrays};
         new_stra_arrays[i][j] = new_stra_arrays[i][j] * UlongToLong(dev_num_not_2_power);
         // discard invalid strategy
+        MS_EXCEPTION_IF_ZERO("new_stra_arrays[i][j]", new_stra_arrays[i][j]);
         if (inputs_shape[i][j] % new_stra_arrays[i][j] != 0) {
           continue;
         }
@@ -1721,6 +1769,7 @@ void OperatorInfo::ApproximateStrategies() {
   }
   MS_LOG(INFO) << name_ << ": Approximating strategy-cost";
   auto epsilon = CostModelContext::GetInstance()->dp_algo_approxi_epsilon();
+  MS_EXCEPTION_IF_ZERO("epsilon", epsilon);
   auto target_num = static_cast<size_t>(std::ceil(1.0 / epsilon));
   if (strategy_cost_.size() <= target_num) {
     MS_LOG(INFO) << name_ << "'s strategy number is: " << strategy_cost_.size()
@@ -1741,6 +1790,7 @@ void OperatorInfo::ApproximateStrategies() {
       }
       return false;
     });
+  MS_EXCEPTION_IF_ZERO("target_num", target_num);
   size_t step_length = origin_stra_cost.size() / target_num;
   for (size_t i = 0; ret.size() < target_num && static_cast<size_t>(i * step_length) < origin_stra_cost.size(); ++i) {
     ret.push_back(origin_stra_cost[static_cast<size_t>(i * step_length)]);
@@ -1865,9 +1915,9 @@ Status OperatorInfo::CorrectMemoryCost(size_t input_index) {
                                 static_cast<double>(operator_cost()->inputs_type_lengths()[input_index]);
     swc->cost_list[0]->memory_with_reuse_ -= parameter_mem_cost;
     if (swc->cost_list[0]->memory_with_reuse_ < 0) {
-      MS_LOG(ERROR) << name_ << ": The memory cost after correction is: " << swc->cost_list[0]->memory_with_reuse_
-                    << ", the parameter memory cost is: " << parameter_mem_cost;
-      return FAILED;
+      MS_LOG(WARNING) << name_ << ": The memory cost after correction is: " << swc->cost_list[0]->memory_with_reuse_
+                      << ", the parameter memory cost is: " << parameter_mem_cost;
+      swc->cost_list[0]->memory_with_reuse_ = 0;
     }
   }
   return SUCCESS;
@@ -2027,8 +2077,7 @@ void OperatorInfo::SetSelectedStrategy(const StrategyPtr &s_strategy, size_t cur
     MS_LOG(INFO) << name_ << " has already been set strategy.";
     return;
   }
-  MS_LOG(INFO) << name_ << ": Set strategy";
-  PrintStrategy(s_strategy);
+  MS_LOG(INFO) << name_ << ": Set strategy " << s_strategy->ToString();
   selected_strategy_ = s_strategy;
   selected_strategy_depth_ = SizeToLong(curr_depth);
 }
@@ -2048,10 +2097,9 @@ double OperatorInfo::GetForwardMemoryCostFromCNode() {
 void OperatorInfo::CheckSelectedStrategy(const StrategyPtr &s_strategy) {
   MS_EXCEPTION_IF_NULL(s_strategy);
   if (!s_strategy->IsEqual(selected_strategy_)) {
-    MS_LOG(INFO) << name_ << "'s strategy may cause suboptimal, the determined strategy:";
-    PrintStrategy(selected_strategy_);
-    MS_LOG(INFO) << name_ << ": The minimal strategy:";
-    PrintStrategy(s_strategy);
+    MS_LOG(INFO) << name_
+                 << "'s strategy may cause suboptimal, the determined strategy: " << selected_strategy_->ToString()
+                 << "The minimal strategy: " << s_strategy->ToString();
   }
 }
 
@@ -2069,11 +2117,12 @@ Status OperatorInfo::GenerateStrategies(int64_t stage_id) {
 
   size_t success = 0;
   for (auto &sp : sp_vector) {
-    PrintStrategy(sp);
     if (SetCostUnderStrategy(sp) == SUCCESS) {
       success++;
-      MS_LOG(INFO) << name_ << ": Successfully generated " << success << " strategy.";
-      PrintStrategy(sp);
+      MS_LOG(INFO) << name_ << ": Successfully generated the " << GetSerialNumberString(success)
+                   << " strategy: " << sp->ToString();
+    } else {
+      MS_LOG(INFO) << name_ << ": SetCostUnderStrategy failed, the strategy is " << sp->ToString();
     }
   }
   return SUCCESS;
@@ -2217,6 +2266,21 @@ ForwardOp CreateReduceMeanForwardOp(const std::vector<Group> &forward_group, con
   MS_LOG(INFO) << "The divisor of Div op is " << device_list.size() << ", the dtype is " << dtype_name;
 
   return {op0, op1};
+}
+
+std::vector<int64_t> GetTensorValue(const ValuePtr &ori_value) {
+  MS_EXCEPTION_IF_NULL(ori_value);
+  if (!ori_value->isa<tensor::Tensor>()) {
+    MS_LOG(INTERNAL_EXCEPTION) << "Value is not tensor";
+  }
+  auto tensor_ptr = ori_value->cast<tensor::TensorPtr>();
+  std::vector<int64_t> value;
+  auto element_size = tensor_ptr->data().size();
+  auto *data = static_cast<int64_t *>(tensor_ptr->data_c());
+  for (auto i = 0; i < element_size; i++) {
+    value.push_back(data[i]);
+  }
+  return value;
 }
 }  // namespace parallel
 }  // namespace mindspore

@@ -26,9 +26,10 @@
 #include <unordered_map>
 #include <nlohmann/json.hpp>
 
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 #include "ir/anf.h"
 #include "kernel/kernel.h"
+#include "kernel/kash/kernel_pack.h"
 
 namespace mindspore {
 namespace kernel {
@@ -59,6 +60,12 @@ class TbeUtils {
   static void LoadCache();
 
   static void GenLicInfo(nlohmann::json *lic_info_json);
+
+  static std::string GetOpDebugConfig();
+
+  static std::string GetOpDebugLevel();
+
+  static std::vector<std::string> SplitAndRemoveSpace(const std::string &s, char delim);
 
   static nlohmann::json GenSocInfo();
 
@@ -94,21 +101,22 @@ class TbeUtils {
 };
 
 struct KernelMetaInfo {
-  uintptr_t func_stub_;
+  uintptr_t result_;
   uint32_t block_dim_;
+  void *handle_;
 };
 using KernelMetaPtr = std::shared_ptr<KernelMetaInfo>;
 
 class KernelManager {
  public:
-  static uintptr_t GenFuncStub(const KernelPack &kernel_pack, bool force_reload, uint32_t *block_dim,
-                               void **handle = nullptr, std::string *origin_key = nullptr);
+  static uintptr_t GenFuncStub(const KernelPack &kernel_pack, bool force_reload, uint32_t *block_dim, void **handle);
   static std::string GetStubFuncName(const KernelPackPtr &kernel_pack);
 
  private:
   KernelManager() = default;
   ~KernelManager() = default;
-  static int BinaryRegister(const FlexArray &kernel_buffer, void **module, const string &magic, bool has_kernel_list);
+  static int BinaryRegister(const FlexArray &kernel_buffer, void **module, const string &magic,
+                            const std::string &func_name, bool has_kernel_list);
   static std::unordered_map<string, KernelMetaPtr> info_table_;
   static std::atomic<uintptr_t> kernel_stub_gen_;
   static std::mutex info_table_mutex_;

@@ -38,11 +38,16 @@ const std::unordered_map<std::string, std::vector<size_t>> &GetToNCHWOpMap();
 const std::vector<std::string> &GetDynamicFormatOpList();
 bool IsDynamicFormatOp(const std::string &op_type);
 bool IsDynamicFormatOpWithAxis(const std::string &op_type);
+STATUS GetCastDstDataType(const CNodePtr &cnode, int *perm);
 STATUS GetTransposePerm(const CNodePtr &cnode, std::vector<int> *perm);
 void RemoveIfMonad(const CNodePtr &cnode);
 bool IsMonadNode(const AnfNodePtr &node);
 bool IsSpecialType(const CNodePtr &cnode);
+int DetermineCertainOutputFormat(const CNodePtr &cnode, int index, Format *format);
 int DetermineCertainVarInputFormat(const CNodePtr &cnode, size_t index, Format *format);
+int SetAbstractTensorInfo(const AbstractBasePtr &abstract);
+STATUS GetFormatSensitiveOpInsertIndex(const CNodePtr &cnode, std::vector<size_t> *insert_index);
+int ConvertAbstractFormatShape(const AbstractBasePtr &abstract, FormatTransNodeType perm);
 }  // namespace opt
 }  // namespace mindspore
 

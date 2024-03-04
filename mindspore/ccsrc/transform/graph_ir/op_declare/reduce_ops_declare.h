@@ -17,11 +17,10 @@
 #ifndef MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_REDUCE_OPS_DECLARE_H_
 #define MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_REDUCE_OPS_DECLARE_H_
 
-#include "utils/hash_map.h"
+#include "inc/ops/reduce_ops.h"
 #include "transform/graph_ir/op_declare/op_declare_macro.h"
-#include "ops/reduce_ops.h"
+#include "utils/hash_map.h"
 
-namespace mindspore::transform {
 DECLARE_OP_ADAPTER(ReduceMean)
 DECLARE_OP_USE_OUTPUT(ReduceMean)
 
@@ -49,13 +48,18 @@ DECLARE_OP_USE_OUTPUT(BNTrainingUpdateGrad)
 DECLARE_OP_ADAPTER(ReduceSum)
 DECLARE_OP_USE_OUTPUT(ReduceSum)
 
-DECLARE_OP_ADAPTER(ReduceSumD)
-DECLARE_OP_USE_OUTPUT(ReduceSumD)
-
 DECLARE_OP_ADAPTER(ReduceAny)
 DECLARE_OP_USE_OUTPUT(ReduceAny)
 
+DECLARE_OP_ADAPTER(ReduceStd)
+DECLARE_OP_USE_OUTPUT(ReduceStd)
+
 DECLARE_OP_ADAPTER(ReduceProd)
 DECLARE_OP_USE_OUTPUT(ReduceProd)
-}  // namespace mindspore::transform
+
+DECLARE_OP_ADAPTER(ReduceLogSumExp)
+DECLARE_OP_USE_OUTPUT(ReduceLogSumExp)
+
+DECLARE_OP_ADAPTER(ReduceLogSum)
+DECLARE_OP_USE_OUTPUT(ReduceLogSum)
 #endif  // MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_REDUCE_OPS_DECLARE_H_

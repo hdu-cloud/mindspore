@@ -15,14 +15,17 @@
  */
 
 #include "ops/sparse_softmax.h"
-#include <set>
+
 #include <map>
+#include <memory>
+#include <set>
 #include <string>
+
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
-#include "ops/op_utils.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
 #include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -107,6 +110,24 @@ AbstractBasePtr SparseSoftmaxInfer(const abstract::AnalysisEnginePtr &, const Pr
   auto infershape = SparseSoftmaxInferShape(primitive, input_args);
   return abstract::MakeAbstract(infershape, infertype);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseSoftmax, prim::kPrimSparseSoftmax, SparseSoftmaxInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSparseSoftmaxInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSoftmaxInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSoftmaxInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSoftmaxInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseSoftmax, prim::kPrimSparseSoftmax, AGSparseSoftmaxInfer, false);
 }  // namespace ops
 }  // namespace mindspore

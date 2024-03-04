@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,21 +14,34 @@
  * limitations under the License.
  */
 #include "minddata/dataset/engine/datasetops/map_op/map_op.h"
+
 #include <algorithm>
 #include <cstring>
 #include <memory>
+#include <set>
 #include <vector>
 
 #include "minddata/dataset/callback/callback_param.h"
 #include "minddata/dataset/core/config_manager.h"
 #include "minddata/dataset/include/dataset/constants.h"
 #include "minddata/dataset/core/global_context.h"
+#include "minddata/dataset/core/tensor_row.h"
 
 #include "minddata/dataset/engine/datasetops/map_op/cpu_map_job.h"
+#if !defined(BUILD_LITE) && defined(ENABLE_D)
+#include "minddata/dataset/engine/datasetops/map_op/npu_map_job.h"
+#endif
 #include "minddata/dataset/engine/ir/datasetops/map_node.h"
 #include "minddata/dataset/kernels/tensor_op.h"
+#ifdef ENABLE_PYTHON
+#include "minddata/dataset/kernels/py_func_op.h"
+#endif
 #include "minddata/dataset/util/log_adapter.h"
 #include "minddata/dataset/util/task_manager.h"
+#if !defined(BUILD_LITE) && defined(ENABLE_D)
+#include "minddata/dataset/kernels/image/dvpp/acl_adapter.h"
+#include "minddata/dataset/kernels/image/dvpp/utils/ErrorCode.h"
+#endif
 
 namespace mindspore {
 namespace dataset {
@@ -96,29 +109,51 @@ Status MapOp::FetchNextWork(int32_t worker_id, TensorRow *row, std::vector<std::
 }
 
 Status MapOp::GenerateWorkerJob(const std::unique_ptr<MapWorkerJob> *worker_job, int32_t worker_id) {
+  // create the map_job by first op
   std::shared_ptr<MapJob> map_job = nullptr;
   MapTargetDevice prev_target = MapTargetDevice::kCpu;
-  for (size_t j = 0; j < tfuncs_[worker_id].size(); j++) {
-    // Currently we only have CPU as the device target
-    // In the future, we will have heuristic or control from user to select target device
+  CHECK_FAIL_RETURN_UNEXPECTED(tfuncs_[worker_id].size() > 0, "[Internal ERROR] Map's operations is null.");
+#if !defined(BUILD_LITE) && defined(ENABLE_D)
+  if (tfuncs_[worker_id][0]->IsDvppOp()) {
+    prev_target = MapTargetDevice::kAscend910B;
+    map_job = std::make_shared<NpuMapJob>();
+  } else {
+#endif
+    map_job = std::make_shared<CpuMapJob>();
+#if !defined(BUILD_LITE) && defined(ENABLE_D)
+  }
+#endif
+  RETURN_IF_NOT_OK(map_job->AddOperation(tfuncs_[worker_id][0]));
+
+  // continue create job from the second op
+  for (size_t j = 1; j < tfuncs_[worker_id].size(); j++) {
     MapTargetDevice target_device = MapTargetDevice::kCpu;
-
-    // If there is no existing map_job, we will create one.
-    // map_job could be nullptr when we are at the first tensor op or when the target device of the prev op
-    // is different with that of the current op.
-    if (map_job == nullptr) {
-      map_job = std::make_shared<CpuMapJob>();
+    if (tfuncs_[worker_id][j]->IsDvppOp()) {
+      target_device = MapTargetDevice::kAscend910B;
     }
-    RETURN_IF_NOT_OK(map_job->AddOperation(tfuncs_[worker_id][j]));
 
-    // Push map_job into worker_job if one of the two conditions is true:
-    // 1) It is the last tensor operation in tfuncs_
-    // 2) The the target device of the current tensor operation is different with previous one
-    if ((j + 1 == tfuncs_[worker_id].size()) || ((j != 0) && (prev_target != target_device))) {
+    if (target_device != prev_target) {
       (*worker_job)->jobs.push_back(std::move(map_job));
+      // create a new map_job for different target device operation
+#if !defined(BUILD_LITE) && defined(ENABLE_D)
+      if (target_device == MapTargetDevice::kAscend910B) {
+        map_job = std::make_shared<NpuMapJob>();
+      } else {
+#endif
+        map_job = std::make_shared<CpuMapJob>();
+#if !defined(BUILD_LITE) && defined(ENABLE_D)
+      }
+#endif
+      RETURN_IF_NOT_OK(map_job->AddOperation(tfuncs_[worker_id][j]));
+    } else {
+      RETURN_IF_NOT_OK(map_job->AddOperation(tfuncs_[worker_id][j]));
     }
 
     prev_target = target_device;
+  }
+
+  if (map_job != nullptr) {
+    (*worker_job)->jobs.push_back(std::move(map_job));
   }
 
   return Status::OK();
@@ -196,10 +231,59 @@ Status MapOp::WorkerEntry(int32_t worker_id) {
     python_mp_->set_thread_to_worker(worker_id);
   }
 
+#if !defined(BUILD_LITE) && defined(ENABLE_D)
+  // init Ascend910B resource
+  bool dvpp_flag = false;
+  for (auto &op : tfuncs_[0]) {
+    if (op->IsDvppOp()) {
+      dvpp_flag = true;
+      break;
+    }
+  }
+
+  device::DeviceContext *device_context = nullptr;
+  size_t stream_id = 0;
+  if (dvpp_flag) {
+    MS_LOG(INFO) << "Init resource for Ascend910B.";
+    auto ms_context = MsContext::GetInstance();
+    if (ms_context == nullptr) {
+      RETURN_STATUS_UNEXPECTED("Get ms context failed by MsContext::GetInstance()");
+    }
+    device_context = device::DeviceContextManager::GetInstance().GetOrCreateDeviceContext(
+      {ms_context->get_param<std::string>(MS_CTX_DEVICE_TARGET), ms_context->get_param<uint32_t>(MS_CTX_DEVICE_ID)});
+    if (device_context == nullptr) {
+      RETURN_STATUS_UNEXPECTED("Get device context failed by ms context");
+    }
+    device_context->Initialize();
+    if (device_context->device_res_manager_ == nullptr) {
+      RETURN_STATUS_UNEXPECTED("The device resource manager is null.");
+    }
+
+    std::string soc_version;
+    auto ret = AclAdapter::GetInstance().GetSocName(&soc_version);
+    if (ret != APP_ERR_OK) {
+      RETURN_STATUS_UNEXPECTED("Get Soc Version failed.");
+    }
+    if (soc_version.find("Ascend910B") == std::string::npos) {
+      std::string err_msg = "The SoC: " + soc_version + " is not Ascend910B";
+      RETURN_STATUS_UNEXPECTED(err_msg);
+    }
+
+    if (device_context->device_res_manager_->CreateStream(&stream_id) != true) {
+      RETURN_STATUS_UNEXPECTED("Create new stream failed on Ascend910B platform.");
+    }
+    MS_LOG(INFO) << "Create new stream id: " << std::to_string(stream_id);
+  }
+#endif
+
   TensorRow in_row;
   std::vector<std::shared_ptr<MapJob>> job_list;
+
+  RETURN_IF_NOT_OK(CollectOpInfoStart(this->NameWithID(), "WorkerGet"));
   // Fetch next data row and map job list
   RETURN_IF_NOT_OK(FetchNextWork(worker_id, &in_row, &job_list));
+  RETURN_IF_NOT_OK(CollectOpInfoEnd(this->NameWithID(), "WorkerGet", {{"TensorRowFlags", in_row.FlagName()}}));
+  RETURN_IF_NOT_OK(CollectOpInfoStart(this->NameWithID(), "WorkerProcess"));
 
   // Now that init work is done, drop into the main fetching loop.
   // Map op does not use child iterator, and it needs to manually handle eoe and eof's itself
@@ -207,26 +291,46 @@ Status MapOp::WorkerEntry(int32_t worker_id) {
   while (true) {
     // Handle special logic where row carries a ctrl flag.
     if (in_row.Flags() != TensorRow::kFlagNone) {
+      RETURN_IF_NOT_OK(CollectOpInfoEnd(this->NameWithID(), "WorkerProcess", {{"TensorRowFlags", in_row.FlagName()}}));
       if (in_row.quit()) {
         break;
       }
       RETURN_IF_NOT_OK(worker_out_queues_[worker_id]->EmplaceBack(std::move(in_row)));
+      if (in_row.wait()) {
+        RETURN_IF_NOT_OK(TaskManager::FindMe()->Wait());  // wait for auto tune update workers successful
+        TaskManager::FindMe()->Clear();
+      }
     } else {
       CHECK_FAIL_RETURN_UNEXPECTED(in_row.size() != 0, "[Internal ERROR] MapOp got an empty TensorRow.");
       TensorRow out_row;
       // Perform the compute function of TensorOp(s) and store the result in new_tensor_table.
+#if !defined(BUILD_LITE) && defined(ENABLE_D)
+      RETURN_IF_NOT_OK(WorkerCompute(in_row, &out_row, job_list, device_context, stream_id));
+#else
       RETURN_IF_NOT_OK(WorkerCompute(in_row, &out_row, job_list));
+#endif
+      RETURN_IF_NOT_OK(CollectOpInfoEnd(this->NameWithID(), "WorkerProcess", {{"TensorRowFlags", in_row.FlagName()}}));
       // Push the row onto the connector for next operator to consume.
       RETURN_IF_NOT_OK(worker_out_queues_[worker_id]->EmplaceBack(std::move(out_row)));
     }
+    RETURN_IF_NOT_OK(CollectOpInfoStart(this->NameWithID(), "WorkerGet"));
     // Fetch next data row and map job list
     RETURN_IF_NOT_OK(FetchNextWork(worker_id, &in_row, &job_list));
+    RETURN_IF_NOT_OK(CollectOpInfoEnd(this->NameWithID(), "WorkerGet", {{"TensorRowFlags", in_row.FlagName()}}));
+    RETURN_IF_NOT_OK(CollectOpInfoStart(this->NameWithID(), "WorkerProcess"));
   }
+
+  // map operation with PyFunc use global executor in Python Layer to run transform in eager mode
+  // release the executor in the current thread when the thread is done
+  RETURN_IF_NOT_OK(ReleaseResource(worker_id));
+
   return Status::OK();
 }
 
+#if !defined(BUILD_LITE) && defined(ENABLE_D)
 Status MapOp::WorkerCompute(const TensorRow &in_row, TensorRow *out_row,
-                            const std::vector<std::shared_ptr<MapJob>> &job_list) {
+                            const std::vector<std::shared_ptr<MapJob>> &job_list, device::DeviceContext *device_context,
+                            size_t stream_id) {
   int32_t num_cols = in_row.size();
 
   std::vector<TensorRow> job_input_table;
@@ -255,7 +359,41 @@ Status MapOp::WorkerCompute(const TensorRow &in_row, TensorRow *out_row,
   for (size_t i = 0; i < job_list.size(); i++) {
     RETURN_IF_INTERRUPTED();
     // Execute MapWorkerJob.
-    RETURN_IF_NOT_OK(job_list[i]->Run(job_input_table, &result_table));
+    Status rc;
+    if (job_list[i]->Type() == MapTargetDevice::kCpu) {
+      rc = job_list[i]->Run(job_input_table, &result_table);
+    } else if (job_list[i]->Type() == MapTargetDevice::kAscend910B) {
+      rc = job_list[i]->Run(job_input_table, &result_table, device_context, stream_id);
+    } else {
+      RETURN_STATUS_UNEXPECTED("The map job type: " + std::to_string(static_cast<int>(job_list[i]->Type())) +
+                               " is not implemented.");
+    }
+    if (rc.IsError()) {
+      if (GlobalContext::config_manager()->error_samples_mode() == ErrorSamplesMode::kReplace) {
+        MS_LOG(WARNING)
+          << "Detected an erroneous sample in MindData Map operation, and will replace with a healthy sample: " +
+               rc.GetErrDescription();
+        *out_row = TensorRow(TensorRow::kFlagError);
+        return Status::OK();
+      } else if (GlobalContext::config_manager()->error_samples_mode() == ErrorSamplesMode::kSkip) {
+        MS_LOG(WARNING) << "Detected an erroneous sample in MindData Map operation, and will skip this sample: " +
+                             rc.GetErrDescription();
+        *out_row = TensorRow(TensorRow::kFlagError);
+        return Status::OK();
+      } else {
+        // if thread had been interrupted, don't care the error
+        if (TaskManager::FindMe()->Interrupted()) {
+          MS_LOG(INFO) << "Current thread had been interrupted by TaskManager.";
+          return StatusCode::kMDInterrupted;
+        } else if (python_mp_ != nullptr && !python_mp_->is_running()) {
+          // when sink_mode=True, dataset_size / output_shapes / output_types / columna_names ops before training
+          // will cause map workers to stop first
+          MS_LOG(INFO) << "The multi workers of map operation had stopped.";
+          return StatusCode::kMDInterrupted;
+        }
+        return rc;
+      }
+    }
     // Assign the processed data as an input for the next job processing, except for the last TensorOp in the list.
     if (i + 1 < job_list.size()) {
       job_input_table = std::move(result_table);
@@ -290,6 +428,99 @@ Status MapOp::WorkerCompute(const TensorRow &in_row, TensorRow *out_row,
 
   return Status::OK();
 }
+#else
+Status MapOp::WorkerCompute(const TensorRow &in_row, TensorRow *out_row,
+                            const std::vector<std::shared_ptr<MapJob>> &job_list) {
+  int32_t num_cols = in_row.size();
+
+  std::vector<TensorRow> job_input_table;
+  std::vector<TensorRow> original_table;
+  TensorRow to_process;
+  // Prepare the data that we need from in_row
+  // to_process   : A vector of Tensors only holding cols in input_columns.
+
+  // From the current row, select the Tensor that need to be passed to TensorOp
+  (void)std::transform(to_process_indices_.begin(), to_process_indices_.end(), std::back_inserter(to_process),
+                       [&in_row](const auto &it) { return in_row[it]; });
+  to_process.setId(in_row.getId());
+  std::vector<std::string> cur_row_path = in_row.getPath();
+  if (cur_row_path.size() > 0) {
+    std::vector<std::string> to_process_path;
+    (void)std::transform(to_process_indices_.begin(), to_process_indices_.end(), std::back_inserter(to_process_path),
+                         [&cur_row_path](const auto &it) { return cur_row_path[it]; });
+    to_process.setPath(to_process_path);
+  }
+  job_input_table.push_back(std::move(to_process));
+  original_table.push_back(in_row);
+
+  // Variable to keep the result after executing the job.
+  std::vector<TensorRow> result_table;
+  // Executing the list of jobs.
+  for (size_t i = 0; i < job_list.size(); i++) {
+    RETURN_IF_INTERRUPTED();
+    // Execute MapWorkerJob.
+    Status rc = job_list[i]->Run(job_input_table, &result_table);
+    if (rc.IsError()) {
+      if (GlobalContext::config_manager()->error_samples_mode() == ErrorSamplesMode::kReplace) {
+        MS_LOG(WARNING)
+          << "Detected an erroneous sample in MindData Map operation, and will replace with a healthy sample: " +
+               rc.GetErrDescription();
+        *out_row = TensorRow(TensorRow::kFlagError);
+        return Status::OK();
+      } else if (GlobalContext::config_manager()->error_samples_mode() == ErrorSamplesMode::kSkip) {
+        MS_LOG(WARNING) << "Detected an erroneous sample in MindData Map operation, and will skip this sample: " +
+                             rc.GetErrDescription();
+        *out_row = TensorRow(TensorRow::kFlagError);
+        return Status::OK();
+      } else {
+        // if thread had been interrupted, don't care the error
+        if (TaskManager::FindMe()->Interrupted()) {
+          MS_LOG(INFO) << "Current thread had been interrupted by TaskManager.";
+          return StatusCode::kMDInterrupted;
+        } else if (python_mp_ != nullptr && !python_mp_->is_running()) {
+          // when sink_mode=True, dataset_size / output_shapes / output_types / columna_names ops before training
+          // will cause map workers to stop first
+          MS_LOG(INFO) << "The multi workers of map operation had stopped.";
+          return StatusCode::kMDInterrupted;
+        }
+        return rc;
+      }
+    }
+    // Assign the processed data as an input for the next job processing, except for the last TensorOp in the list.
+    if (i + 1 < job_list.size()) {
+      job_input_table = std::move(result_table);
+    }
+  }
+
+  // Sanity check a row in result_table
+  if (!result_table.empty() && out_columns_.size() != result_table[0].size()) {
+    RETURN_STATUS_UNEXPECTED(
+      "Invalid columns, the number of columns returned in 'map' operations should match "
+      "the number of 'output_columns', but got the number of columns returned in 'map' operations: " +
+      std::to_string(result_table[0].size()) +
+      ", the number of 'output_columns': " + std::to_string(out_columns_.size()) + ".");
+  }
+
+  // Merging the data processed by job (result_table) with the data that are not used.
+  if (in_columns_.size() == out_columns_.size()) {
+    // Place the processed tensor back into the original index of the input tensor
+    for (size_t i = 0; i < result_table[0].size(); i++) {
+      original_table[0][to_process_indices_[i]] = std::move(result_table[0][i]);
+    }
+    *out_row = std::move(original_table[0]);
+  } else {
+    // Append the data in the original table that we did not use to the end of each row in result_table.
+    for (int32_t i = 0; i < num_cols; i++) {
+      if (keep_input_columns_[i]) {
+        result_table[0].push_back(std::move(original_table[0][i]));
+      }
+    }
+    *out_row = std::move(result_table[0]);
+  }
+
+  return Status::OK();
+}
+#endif
 
 Status MapOp::ComputeColMap() {
   // If the map has not been set up yet in the base class, then set it up
@@ -359,10 +590,21 @@ void MapOp::CreateFinalColMap(std::unordered_map<std::string, int32_t> *col_name
   size_t num_cols = col_name_id_map->size();
   std::vector<int32_t> new_ids(num_cols);
   if (in_columns_.size() == out_columns_.size()) {
+    // example
+    // in_columns: [a, b], out_columns: [c, d]
+    // in_columns: [a, b], out_columns: [b, a]
+    // in_columns: [a, b, c], out_columns: [b, c, a]
+
+    // get the input columns index
+    std::vector<size_t> input_columns_index = {};
     for (size_t i = 0; i < in_columns_.size(); i++) {
-      int32_t loc = (*col_name_id_map)[in_columns_[i]];
+      input_columns_index.push_back((*col_name_id_map)[in_columns_[i]]);
       (void)col_name_id_map->erase(in_columns_[i]);
-      (*col_name_id_map)[out_columns_[i]] = loc;
+    }
+
+    // update the output column index
+    for (size_t i = 0; i < input_columns_index.size(); i++) {
+      (*col_name_id_map)[out_columns_[i]] = input_columns_index[i];
     }
 
     // Set the base class final column id map result
@@ -450,6 +692,67 @@ std::vector<int32_t> MapOp::GetMPWorkerPIDs() const {
     return python_mp_->get_pids();
   }
   return DatasetOp::GetMPWorkerPIDs();
+}
+
+Status MapOp::GetNextRowPullMode(TensorRow *const row) {
+  TensorRow new_row;
+  RETURN_IF_NOT_OK(child_[0]->GetNextRowPullMode(&new_row));
+  if (new_row.eoe()) {
+    UpdateRepeatAndEpochCounter();
+  }
+  if (new_row.empty()) {
+    (*row) = std::move(new_row);
+    return Status::OK();
+  }
+  auto column_name_id_map = child_[0]->column_name_id_map();
+  TensorRow i_row;
+  TensorRow o_row;
+  (void)std::transform(to_process_indices_.begin(), to_process_indices_.end(), std::back_inserter(i_row),
+                       [&new_row](const auto &it) { return new_row[it]; });
+  i_row.setId(new_row.getId());
+  std::vector<std::string> cur_row_path = new_row.getPath();
+  if (cur_row_path.size() > 0) {
+    std::vector<std::string> to_process_path;
+    (void)std::transform(to_process_indices_.begin(), to_process_indices_.end(), std::back_inserter(to_process_path),
+                         [&cur_row_path](const auto &it) { return cur_row_path[it]; });
+    i_row.setPath(to_process_path);
+  }
+  // Apply transforms on tensor
+  for (auto &t : tfuncs_[0]) {
+    Status rc = t->Compute(i_row, &o_row);
+    if (rc.IsError()) {
+      std::string op_name = t->Name();
+      RETURN_IF_NOT_OK(util::RebuildMapErrorMsg(i_row, op_name, &rc));
+    }
+    i_row = std::move(o_row);
+  }
+  if (in_columns_.size() == out_columns_.size()) {
+    // assign transformed tensor back to the original
+    for (size_t i = 0; i < to_process_indices_.size(); i++) {
+      new_row[to_process_indices_[i]] = i_row.at(i);
+    }
+    (*row) = std::move(new_row);
+  } else {
+    // Append the data in the new row that we did not use to the end of i_row.
+    for (size_t i = 0; i < new_row.size(); i++) {
+      if (keep_input_columns_[i]) {
+        i_row.push_back(std::move(new_row[i]));
+      }
+    }
+    (*row) = std::move(i_row);
+  }
+  return Status::OK();
+}
+
+Status MapOp::ReleaseResource(int32_t worker_id) {
+  if (python_mp_ == nullptr) {
+    for (auto &op : tfuncs_[worker_id]) {
+      if (op->Name() == kPyFuncOp) {
+        RETURN_IF_NOT_OK(op->ReleaseResource());
+      }
+    }
+  }
+  return Status::OK();
 }
 }  // namespace dataset
 }  // namespace mindspore

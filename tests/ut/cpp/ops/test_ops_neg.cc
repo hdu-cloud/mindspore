@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,45 +18,33 @@
 #include "common/common_test.h"
 #include "ops/neg.h"
 #include "ir/dtype/type.h"
-#include "ir/value.h"
 #include "abstract/dshape.h"
 #include "utils/tensor_construct_utils.h"
+#include "ir/primitive.h"
+#include "abstract/abstract_value.h"
+#include "utils/ms_context.h"
+#include "ops/test_ops.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace ops {
-class TestNeg : public UT::Common {
- public:
-  TestNeg() {}
-  void SetUp() {}
-  void TearDown() {}
-};
+class TestNeg : public TestOps, public testing::WithParamInterface<EltwiseOpParams> {};
 
-TEST_F(TestNeg, test_ops_neg1) {
-  auto neg = std::make_shared<Neg>();
-  auto tensor_x = TensorConstructUtils::CreateOnesTensor(kNumberTypeFloat32, std::vector<int64_t>{2, 3, 4, 5});
-  MS_EXCEPTION_IF_NULL(tensor_x);
-  auto abstract = neg->Infer({tensor_x->ToAbstract()});
-  MS_EXCEPTION_IF_NULL(abstract);
-  EXPECT_EQ(abstract->isa<abstract::AbstractTensor>(), true);
-  auto shape_ptr = abstract->BuildShape();
-  MS_EXCEPTION_IF_NULL(shape_ptr);
-  EXPECT_EQ(shape_ptr->isa<abstract::Shape>(), true);
-  auto shape = shape_ptr->cast<abstract::ShapePtr>();
-  MS_EXCEPTION_IF_NULL(shape);
-  auto shape_vec = shape->shape();
-  auto type = abstract->BuildType();
-  MS_EXCEPTION_IF_NULL(type);
-  EXPECT_EQ(type->isa<TensorType>(), true);
-  auto tensor_type = type->cast<TensorTypePtr>();
-  MS_EXCEPTION_IF_NULL(tensor_type);
-  auto data_type = tensor_type->element();
-  MS_EXCEPTION_IF_NULL(data_type);
-  EXPECT_EQ(data_type->type_id(), kNumberTypeFloat32);
-  EXPECT_EQ(shape_vec.size(), 4);
-  EXPECT_EQ(shape_vec[0], 2);
-  EXPECT_EQ(shape_vec[1], 3);
-  EXPECT_EQ(shape_vec[2], 4);
-  EXPECT_EQ(shape_vec[3], 5);
+TEST_P(TestNeg, dyn_shape) {
+  const auto &param = GetParam();
+  auto x = std::make_shared<abstract::AbstractTensor>(param.x_type, param.x_shape);
+  auto expect = std::make_shared<abstract::AbstractTensor>(param.out_type, param.out_shape);
+  ASSERT_NE(x, nullptr);
+  auto prim = std::make_shared<Primitive>(kNameNeg);
+  auto out_abstract = opt::CppInferShapeAndType(prim, {x});
+  ASSERT_NE(out_abstract, nullptr);
+  ASSERT_TRUE(*out_abstract == *expect);
 }
+
+INSTANTIATE_TEST_CASE_P(TestNeg, TestNeg,
+                        testing::Values(
+                          EltwiseOpParams{{2, 3}, kFloat32, {2, 3}, kFloat32},
+                          EltwiseOpParams{{-1, -1}, kFloat32, {-1, -1}, kFloat32},
+                          EltwiseOpParams{{-2}, kFloat32, {-2}, kFloat32}));
 }  // namespace ops
 }  // namespace mindspore

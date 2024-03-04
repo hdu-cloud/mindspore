@@ -33,23 +33,19 @@ def test_resize_bicubic_grad_graph():
     types = [np.float32, np.float64]
     for type_i in types:
         grad = np.array([1, 2, 3, 4])
-        grad = grad.reshape([1, 2, 2, 1])
-        gradients = Tensor(grad.astype(np.float32))
+        grad = grad.reshape([1, 1, 2, 2])
+        gradients = Tensor(grad.astype(type_i))
         ori = np.array([1, 2, 3, 4])
-        ori = ori.reshape([1, 1, 4, 1])
+        ori = ori.reshape([1, 1, 1, 4])
         origin = Tensor(ori.astype(type_i))
         output = ResizeBicubicGrad(False, False)(gradients, origin)
         expect_type = output.asnumpy().dtype
         expect = np.array([4, 0, 6, 0])
-        expect = expect.reshape([1, 1, 4, 1])
-        if type_i == np.float32:
-            expect = expect.astype(np.float32)
-            assert expect_type == 'float32'
-            assert (output.asnumpy() == expect).all()
-        else:
-            expect = expect.astype(np.float64)
-            assert expect_type == 'float64'
-            assert (output.asnumpy() == expect).all()
+        expect = expect.reshape([1, 1, 1, 4])
+
+        expect = expect.astype(type_i)
+        assert expect_type == type_i
+        assert (output.asnumpy() == expect).all()
 
 
 @pytest.mark.level1
@@ -65,20 +61,16 @@ def test_resize_bicubic_grad_pynative():
     types_2 = [np.float32, np.float64]
     for type_i in types_2:
         grad = np.array([1, 2, 3, 4])
-        grad = grad.reshape([1, 2, 2, 1])
-        gradients = Tensor(grad.astype(np.float32))
+        grad = grad.reshape([1, 1, 2, 2,])
+        gradients = Tensor(grad.astype(type_i))
         ori = np.array([1, 2, 3, 4])
-        ori = ori.reshape([1, 1, 4, 1])
+        ori = ori.reshape([1, 1, 1, 4])
         origin = Tensor(ori.astype(type_i))
         output = ResizeBicubicGrad(False, False)(gradients, origin)
         expect_type_2 = output.asnumpy().dtype
         expect = np.array([4, 0, 6, 0])
-        expect = expect.reshape([1, 1, 4, 1])
-        if type_i == np.float32:
-            expect = expect.astype(np.float32)
-            assert expect_type_2 == 'float32'
-            assert (output.asnumpy() == expect).all()
-        else:
-            expect = expect.astype(np.float64)
-            assert expect_type_2 == 'float64'
-            assert (output.asnumpy() == expect).all()
+        expect = expect.reshape([1, 1, 1, 4])
+
+        expect = expect.astype(type_i)
+        assert expect_type_2 == type_i
+        assert (output.asnumpy() == expect).all()

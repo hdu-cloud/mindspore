@@ -19,12 +19,16 @@
 #include <map>
 #include <utility>
 #include "graph/def_types.h"
-#include "common/util/error_manager/error_manager.h"
 #include "include/backend/data_queue/data_queue_mgr.h"
+#include "include/common/utils/python_adapter.h"
 #include "utils/log_adapter.h"
+#include "ops/structure_op_name.h"
 #include "plugin/device/ascend/hal/common/ascend_utils.h"
-#include "plugin/device/ascend/hal/device/ascend_kernel_runtime.h"
-#include "ps/ps_cache/ps_data/ps_data_prefetch.h"
+#include "runtime/device/kernel_runtime.h"
+#include "runtime/device/kernel_runtime_manager.h"
+#include "include/backend/distributed/ps/ps_cache/ps_data_prefetch.h"
+#include "include/backend/distributed/embedding_cache/embedding_cache_utils.h"
+#include "acl/acl_rt.h"
 
 namespace mindspore {
 namespace device {
@@ -64,7 +68,7 @@ bool GetAclDataType(const std::string &str_type, aclDataType *acl_type) {
 }
 
 void CheckRtRetWithError(rtError_t error, const std::string &msg) {
-  if (error != RT_ERROR_NONE) {
+  if (error != ACL_ERROR_NONE) {
     MS_LOG(ERROR) << "Rt error: " << msg << " | Error number: " << error;
   }
 }
@@ -84,6 +88,10 @@ void AddHandle(acltdtChannelHandle **handle, std::thread *use_thread) {
   }
 
   g_acl_handle_map.emplace_back(void_handle, use_thread);
+  {
+    std::lock_guard<std::mutex> lock(g_acl_destroy_all_mutex);
+    g_acl_destroy_all = false;
+  }
 }
 
 void DelHandle(acltdtChannelHandle **handle) {
@@ -137,8 +145,8 @@ bool IsClosed() {
 AscendDataQueueDynamic::AscendDataQueueDynamic(const std::string &channel_name, const size_t capacity)
     : DataQueue(channel_name, capacity), stream_(nullptr), node_info_(nullptr) {
   auto context_key = device_context_->device_context_key();
-  auto runtime_instance = dynamic_cast<ascend::AscendKernelRuntime *>(
-    device::KernelRuntimeManager::Instance().GetKernelRuntime(context_key.device_name_, context_key.device_id_));
+  auto runtime_instance =
+    device::KernelRuntimeManager::Instance().GetKernelRuntime(context_key.device_name_, context_key.device_id_);
   node_info_ = std::make_unique<NodeInfo[]>(capacity);
   stream_ = runtime_instance->compute_stream();
 }
@@ -155,11 +163,12 @@ DataQueueStatus AscendDataQueueDynamic::Push(std::vector<DataQueueItem> data) {
       MS_LOG(ERROR) << "Allocate device memory of data queue failed";
     }
     CheckRtRetWithError(
-      rtMemcpyAsync(addr, item.data_len, item.data_ptr, item.data_len, RT_MEMCPY_HOST_TO_DEVICE, stream_),
+      aclrtMemcpyAsync(addr, item.data_len, item.data_ptr, item.data_len, ACL_MEMCPY_HOST_TO_DEVICE, stream_),
       "Rt Memcpy Error");
     item.device_addr = addr;
   }
-  CheckRtRetWithError(rtStreamSynchronize(stream_), "Call runtime rtStreamSynchronize failed");
+  CheckRtRetWithError(aclrtSynchronizeStreamWithTimeout(stream_, -1),
+                      "Call runtime aclrtSynchronizeStreamWithTimeout failed");
   node_info_[tail_].data_ = std::move(data);
   tail_ = (tail_ + 1) % (capacity_);
   ++size_;
@@ -181,22 +190,55 @@ DataQueueStatus AscendDataQueueDynamic::Pop() {
 }
 
 AscendTdtQueue::AscendTdtQueue(const std::string &channel_name) : DataQueue(channel_name, 0), acl_handle_(nullptr) {
-  // init ErrorManager, 0 means success
-  if (ErrorManager::GetInstance().Init() != 0) {
+  // Init ErrorManager
+  if (!ascend::ErrorManagerAdapter::Init()) {
     MS_LOG(WARNING) << "[Internal Error] Init ErrorManager failed.";
   }
   // get device id
   MS_EXCEPTION_IF_NULL(MsContext::GetInstance());
   device_id_ = MsContext::GetInstance()->get_param<uint32_t>(MS_CTX_DEVICE_ID);
 
+  aclError ret = aclrtSetDevice(device_id_);
+  if (ret != ACL_ERROR_NONE) {
+    MS_LOG(ERROR) << "Acl open device " << device_id_ << " failed.";
+  }
+
+#if defined(ENABLE_PYTHON) && !defined(ENABLE_ANDROID)
+  // There is a python flag in MindSpore to recognize if the runtime env is python.
+  // If we only use MD feature, python_env_flag will not set to true,
+  // then init.cc will not call ClearResAtexit at the end of MindSpore to clean resource.
+  // The original case is [only MD + mbuf + device_queue + send], the ascend stream release
+  // failed if we don't call ClearResAtexit first.
+  mindspore::python_adapter::set_python_env_flag(true);
+#endif
+
   // create acl tdt handle
   if (!channel_name_.empty()) {
-    acl_handle_ = acltdtCreateChannel(device_id_, channel_name_.c_str());
-    if (acl_handle_ == nullptr) {
-      MS_LOG(EXCEPTION) << "Create channel for sending data failed. The details refer to 'Ascend Error Message'."
-                           "#umsg#User Help Message:#umsg#Please check DEVICE ID setting, DEVICE ID that passed"
-                           "into dataset(from context) and training process should be the same."
-                        << ascend::GetErrorMessage(true);
+    // When "capacity" is too large, device memory will be exploded
+    size_t data_queue_capacity = 128;
+    std::string env_capacity_str = common::GetEnv("MS_DATASET_SINK_QUEUE");
+    if (!env_capacity_str.empty()) {
+      int32_t env_capacity = atoi(env_capacity_str.c_str());
+      if (env_capacity <= 0) {
+        MS_LOG(EXCEPTION) << "Invalid data queue capacity.#umsg#User Help Message:#umsg#"
+                             "Expect env variable MS_DATASET_SINK_QUEUE > 0.";
+      }
+      data_queue_capacity = env_capacity;
+    }
+    // Create device channel
+    acl_handle_ = acltdtCreateChannelWithCapacity(device_id_, channel_name_.c_str(), data_queue_capacity);
+    if (acl_handle_ != nullptr) {
+      MS_LOG(INFO) << "Select MBUF channel, the capacity of data queue is: " << data_queue_capacity;
+      queue_type_ = "Ascend_MBUF";
+    } else {
+      MS_LOG(INFO) << "Select TDT channel.";
+      acl_handle_ = acltdtCreateChannel(device_id_, channel_name_.c_str());
+      queue_type_ = "Ascend_TDT";
+      if (acl_handle_ == nullptr) {
+        MS_LOG(EXCEPTION) << "Create channel for sending data failed.#umsg#User Help Message:#umsg#"
+                             "Please check DEVICE ID setting, DEVICE ID that passed into dataset"
+                             "(from context) and training process should be the same.";
+      }
     }
     tdt_handle::AddHandle(&acl_handle_, nullptr);
   }
@@ -214,8 +256,7 @@ AscendTdtQueue::AscendTdtQueue(const std::string &channel_name) : DataQueue(chan
 AscendTdtQueue::~AscendTdtQueue() {
   if (acl_handle_ != nullptr) {
     if (acltdtDestroyChannel(acl_handle_) != ACL_SUCCESS) {
-      MS_LOG(EXCEPTION) << "Failed to destroy channel for tdt queue. The details refer to 'Ascend Error Message'."
-                        << ascend::GetErrorMessage(true);
+      MS_LOG(EXCEPTION) << "Failed to destroy channel for tdt queue. The details refer to 'Ascend Error Message'.";
     } else {
       tdt_handle::DelHandle(&acl_handle_);
       acl_handle_ = nullptr;
@@ -224,6 +265,24 @@ AscendTdtQueue::~AscendTdtQueue() {
   if (DataQueueMgr::GetInstance().IsCreated(channel_name_)) {
     DataQueueMgr::GetInstance().Free(channel_name_);
   }
+  aclError rt_ret = aclrtResetDevice(device_id_);
+  if (rt_ret != ACL_ERROR_NONE) {
+    MS_LOG(ERROR) << "Reset device " << device_id_ << " failed.";
+  }
+}
+
+size_t AscendTdtQueue::QueryQueueSize() const {
+  size_t size = 0;
+  if (!IsOpen()) {
+    MS_LOG(INFO) << "Mbuf channel has been closed, should not query size.";
+    return 0;
+  }
+  auto status = acltdtQueryChannelSize(acl_handle_, &size);
+  if (status != ACL_SUCCESS) {
+    MS_LOG(EXCEPTION) << "Unable to query real-time size of Mbuf channel: " << channel_name_
+                      << ", error code: " << status;
+  }
+  return size;
 }
 
 bool AscendTdtQueue::IsOpen() const { return !tdt_handle::IsClosed(); }
@@ -243,11 +302,6 @@ DataQueueStatus AscendTdtQueue::Push(std::vector<DataQueueItem> data) {
     acltdtDataItem *item0 = acltdtGetDataItem(acl_dataset, 0);
     std::string item_type;
     ParseType(acltdtGetDataTypeFromItem(item0), &item_type);
-    if (!ps::PsDataPrefetch::GetInstance().PrefetchData(channel_name_, acltdtGetDataAddrFromItem(item0),
-                                                        acltdtGetDataSizeFromItem(item0), item_type)) {
-      MS_LOG(ERROR) << "PrefetchData failed in when pre-processing sending data.";
-      return DataQueueStatus::INTERNAL_ERROR;
-    }
   }
   auto status = acltdtSendTensor(acl_handle_, acl_dataset, -1);
   DestroyAclDataset(acl_dataset);
@@ -260,12 +314,11 @@ DataQueueStatus AscendTdtQueue::Push(std::vector<DataQueueItem> data) {
                       << "transmission channel on the device side. So we force the data transmission channel to stop.";
       return DataQueueStatus::SUCCESS;
     }
-    MS_LOG(EXCEPTION) << "Tdt Send data failed. The details refer to 'Ascend Error Message'."
-                      << ascend::GetErrorMessage(true);
+    MS_LOG(EXCEPTION) << "Tdt Send data failed. The details refer to 'Ascend Error Message'.";
   }
   auto wingman = DataQueueMgr::GetInstance().GetDataQueue(channel_name_);
   if (wingman != nullptr && wingman->IsOpen() && !data.empty()) {
-    wingman->Push(data);
+    (void)wingman->Push(data);
   }
   return DataQueueStatus::SUCCESS;
 }
@@ -370,8 +423,8 @@ void AscendTdtQueue::DestroyAclDataset(acltdtDataset *acl_dataset, bool include_
 
 AscendHostQueue::AscendHostQueue(const std::string &channel_name)
     : DataQueue(channel_name, 0), queue_id_to_trans_id_map_(), queue_id_(0) {
-  // init ErrorManager, 0 means success
-  if (ErrorManager::GetInstance().Init() != 0) {
+  // Init ErrorManager
+  if (ascend::ErrorManagerAdapter::Init()) {
     MS_LOG(WARNING) << "[Internal Error] Init ErrorManager failed.";
   }
   // get device id
@@ -392,9 +445,9 @@ DataQueueStatus AscendHostQueue::Push(std::vector<DataQueueItem> data) {
 }
 
 bool AscendHostQueue::HostQueueInit() {
-  auto rt_ret = rtSetDevice(device_id_);
+  auto rt_ret = aclrtSetDevice(device_id_);
   if (rt_ret != ACL_RT_SUCCESS) {
-    MS_LOG(ERROR) << "call rtSetDevice failed, ret = " << rt_ret;
+    MS_LOG(ERROR) << "call aclrtSetDevice failed, ret = " << rt_ret;
     return false;
   }
 
@@ -487,9 +540,9 @@ bool AscendHostQueue::LaunchTensor2MBuff(const std::vector<DataQueueItem> &data,
 bool AscendHostQueue::EnqueueData(void *buff, bool *need_resend) {
   MS_EXCEPTION_IF_NULL(need_resend);
   *need_resend = false;
-  auto rt_error = rtSetDevice(device_id_);
+  auto rt_error = aclrtSetDevice(device_id_);
   if (rt_error != ACL_RT_SUCCESS) {
-    MS_LOG(ERROR) << "call rtSetDevice device failed, ret=" << rt_error;
+    MS_LOG(ERROR) << "call aclrtSetDevice device failed, ret=" << rt_error;
     return false;
   }
   rt_error = rtMemQueueEnQueue(device_id_, queue_id_, buff);
@@ -657,6 +710,9 @@ void WingmanQueue::Close() {
 std::shared_ptr<BlockingQueue> GetTdtWingManQueue(const std::shared_ptr<AnfNode> &node) {
   if (common::AnfAlgo::GetCNodeName(node) != kGetNextOpName) return nullptr;
   auto queue_name = common::AnfAlgo::GetNodeAttr<std::string>(node, "shared_name");
+  if (!DataQueueMgr::GetInstance().IsCreated(queue_name)) {
+    return nullptr;
+  }
   return DataQueueMgr::GetInstance().GetDataQueue(queue_name);
 }
 

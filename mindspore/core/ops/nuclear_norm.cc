@@ -14,13 +14,29 @@
  * limitations under the License.
  */
 #include <algorithm>
+#include <memory>
 #include <set>
 
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
 #include "ops/nuclear_norm.h"
-#include "ops/op_utils.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -103,9 +119,27 @@ AbstractBasePtr NuclearNormInfer(const abstract::AnalysisEnginePtr &, const Prim
   CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputsNum, primitive->name());
   auto infer_type = NuclearNormInferType(primitive, input_args);
   auto infer_shape = NuclearNormInferShape(primitive, input_args);
-  return abstract::MakeAbstract(infer_shape, infer_type);
+  return abstract::MakeAbstractTensor(infer_shape, infer_type);
 }
 MIND_API_OPERATOR_IMPL(NuclearNorm, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(NuclearNorm, prim::kPrimNuclearNorm, NuclearNormInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGNuclearNormInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return NuclearNormInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return NuclearNormInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return NuclearNormInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(NuclearNorm, prim::kPrimNuclearNorm, AGNuclearNormInfer, false);
 }  // namespace ops
 }  // namespace mindspore

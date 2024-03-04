@@ -14,40 +14,19 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_BASE_TILE_H_
-#define MINDSPORE_NNACL_BASE_TILE_H_
+#ifndef NNACL_BASE_TILE_BASE_H_
+#define NNACL_BASE_TILE_BASE_H_
 
-#include "nnacl/op_base.h"
-#define MAX_TILE_DIM_SIZE 8
-typedef struct TileParameter {
-  // primitive parameter
-  OpParameter op_parameter_;
-  int multiples_[MAX_TILE_DIM_SIZE];
-  int dims_[MAX_TILE_DIM_SIZE];
-  size_t dims_size_;
-  size_t multiples_size_;
-
-  // shape correlative
-  int in_shape_[MAX_TILE_DIM_SIZE];
-  int out_shape_[MAX_TILE_DIM_SIZE];
-  int in_strides_[MAX_TILE_DIM_SIZE];
-  int out_strides_[MAX_TILE_DIM_SIZE];
-
-  // other parameter
-  int in_dim_;
-  size_t data_size_;
-  size_t fast_outer_size_;
-  size_t fast_stride_;
-  size_t fast_multiple_;
-} TileParameter;
+#include "nnacl/kernel/tile.h"
+#include "nnacl/tile_parameter.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-void Tile(void *input_data, void *output_data, const TileParameter *parameter);
-void TileSimple(void *input_data, void *output_data, size_t begin, size_t end, const TileParameter *parameter);
+void Tile(void *input_data, void *output_data, const TileStruct *tile);
+void TileSimple(void *input_data, void *output_data, size_t begin, size_t end, const TileStruct *tile);
 #ifdef __cplusplus
 }
 #endif
 
-#endif  // MINDSPORE_NNACL_BASE_TILE_H_
+#endif  // NNACL_BASE_TILE_BASE_H_

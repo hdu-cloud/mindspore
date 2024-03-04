@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,9 @@
 
 #include <memory>
 #include <vector>
-#include "backend/common/optimizer/optimizer.h"
-#include "plugin/device/ascend/optimizer/platform.h"
+#include "include/backend/optimizer/optimizer.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "plugin/device/ascend/hal/common/platform_info_util.h"
 
 namespace mindspore {
 namespace opt {
@@ -29,7 +30,7 @@ class Conv2dBackpropInputDilationFusion : public PatternProcessPass {
       : PatternProcessPass("conv2d_backprop_input_dilation_fusion", multigraph) {
     x0_ = std::make_shared<Var>();
     x1_ = std::make_shared<Var>();
-    conv2d_bp_input_var_ = std::make_shared<Var>(std::make_shared<Primitive>(prim::kPrimConv2DBackpropInput->name()));
+    conv2d_bp_input_var_ = std::make_shared<Var>(std::make_shared<Primitive>(prim::kPrimConv2DBackpropInputD->name()));
   }
   ~Conv2dBackpropInputDilationFusion() override = default;
   const BaseRef DefinePattern() const override;

@@ -14,14 +14,15 @@
  * limitations under the License.
  */
 
+#include "ops/lerp.h"
+#include <algorithm>
 #include <map>
 #include <string>
-#include <algorithm>
-#include "ops/lerp.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -82,6 +83,24 @@ AbstractBasePtr LerpInfer(const abstract::AnalysisEnginePtr &, const PrimitivePt
   auto lerp_output_shape = LerpInferShape(primitive, input_args)->shape();
   return std::make_shared<abstract::AbstractTensor>(lerp_output_data_type, lerp_output_shape);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Lerp, prim::kPrimLerp, LerpInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGLerpInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return LerpInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return LerpInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return LerpInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Lerp, prim::kPrimLerp, AGLerpInfer, false);
 }  // namespace ops
 }  // namespace mindspore

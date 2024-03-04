@@ -14,18 +14,31 @@
  * limitations under the License.
  */
 #include "ops/floor_div.h"
-#include <algorithm>
-#include <functional>
-#include <string>
-#include <vector>
+
 #include <memory>
 #include <set>
+#include <string>
+#include <vector>
+
 #include "abstract/abstract_value.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/primitive_c.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -78,6 +91,24 @@ AbstractBasePtr FloorDivInfer(const abstract::AnalysisEnginePtr &, const Primiti
   auto infer_shape = FloorDivInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(FloorDiv, prim::kPrimFloorDiv, FloorDivInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGFloorDivInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return FloorDivInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return FloorDivInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return FloorDivInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(FloorDiv, prim::kPrimFloorDiv, AGFloorDivInfer, false);
 }  // namespace ops
 }  // namespace mindspore

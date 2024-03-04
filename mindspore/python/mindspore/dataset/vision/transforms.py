@@ -31,7 +31,11 @@ The Python implementation is mainly based on PIL.
     class attributes (self.xxx) to support save() and load().
 
 Examples:
+    >>> import mindspore.dataset as ds
+    >>> import mindspore.dataset.vision as vision
     >>> from mindspore.dataset.vision import Border, Inter
+    >>> import mindspore.dataset.transforms as transforms
+    >>>
     >>> image_folder_dataset_dir = "/path/to/image_folder_dataset_directory"
     >>> # create a dataset that reads all files in dataset_dir with 8 threads
     >>> image_folder_dataset = ds.ImageFolderDataset(image_folder_dataset_dir,
@@ -74,7 +78,7 @@ from .validators import check_adjust_brightness, check_adjust_contrast, check_ad
     check_random_select_subpolicy_op, check_random_solarize, check_range, check_rescale, check_resize, \
     check_resize_interpolation, check_resized_crop, check_rgb_to_hsv, check_rotate, check_slice_patches, \
     check_solarize, check_ten_crop, check_trivial_augment_wide, check_uniform_augment, check_to_tensor, \
-    FLOAT_MAX_INTEGER
+    check_device_target, FLOAT_MAX_INTEGER
 from ..core.datatypes import mstype_to_detype, nptype_to_detype
 from ..transforms.py_transforms_util import Implementation
 from ..transforms.transforms import CompoundOperation, PyTensorOperation, TensorOperation, TypeCast
@@ -82,7 +86,7 @@ from ..transforms.transforms import CompoundOperation, PyTensorOperation, Tensor
 
 class ImageTensorOperation(TensorOperation):
     """
-    Base class of Image Tensor Ops
+    Base class of Image Tensor Ops.
     """
 
     def __call__(self, *input_tensor_list):
@@ -98,26 +102,34 @@ class ImageTensorOperation(TensorOperation):
 
 
 class AdjustBrightness(ImageTensorOperation, PyTensorOperation):
-    r"""
-    Apdjust brightness of input image. Input image is expected to be in [H, W, C] format.
+    """
+    Adjust the brightness of the input image.
 
     Args:
-        brightness_factor (float): How much to adjust the brightness. Can be any non negative number.
-            0 gives a black image, 1 gives the original image,
-            while 2 increases the brightness by a factor of 2.
+        brightness_factor (float): How much to adjust the brightness, must be non negative.
+            ``0`` gives a black image, ``1`` gives the original image,
+            while ``2`` increases the brightness by a factor of 2.
 
     Raises:
         TypeError: If `brightness_factor` is not of type float.
         ValueError: If `brightness_factor` is less than 0.
-        RuntimeError: If given tensor shape is not <H, W, C>.
+        RuntimeError: If shape of the input image is not <H, W, C>.
 
     Supported Platforms:
-        ``CPU``
+        ``CPU`` ``Ascend``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.AdjustBrightness(brightness_factor=2.0)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_adjust_brightness
@@ -125,8 +137,39 @@ class AdjustBrightness(ImageTensorOperation, PyTensorOperation):
         super().__init__()
         self.brightness_factor = brightness_factor
 
+    @check_device_target
+    def device(self, device_target="CPU"):
+        """
+        Set the device for the current operator execution.
+
+        Args:
+            device_target (str, optional): The operator will be executed on this device. Currently supports
+                ``CPU`` . Default: ``CPU`` .
+
+        Raises:
+            TypeError: If `device_target` is not of type str.
+            ValueError: If `device_target` is not ``CPU`` .
+
+        Supported Platforms:
+            ``CPU``
+
+        Examples:
+            >>> import mindspore.dataset as ds
+            >>> import mindspore.dataset.vision as vision
+            >>>
+            >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
+            >>> transforms_list = [vision.Decode().device("CPU"), vision.AdjustBrightness(2.0).device("Ascend")]
+            >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list, input_columns=["image"])
+
+        Tutorial Examples:
+            - `Illustration of vision transforms
+              <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
+        """
+        self.device_target = device_target
+        return self
+
     def parse(self):
-        return cde.AdjustBrightnessOperation(self.brightness_factor)
+        return cde.AdjustBrightnessOperation(self.brightness_factor, self.device_target)
 
     def _execute_py(self, img):
         """
@@ -142,26 +185,34 @@ class AdjustBrightness(ImageTensorOperation, PyTensorOperation):
 
 
 class AdjustContrast(ImageTensorOperation, PyTensorOperation):
-    r"""
-    Adjust contrast of input image. Input image is expected to be in [H, W, C] format.
+    """
+    Adjust the contrast of the input image.
 
     Args:
-        contrast_factor (float): How much to adjust the contrast. Can be any non negative number.
-            0 gives a solid gray image, 1 gives the original image,
-            while 2 increases the contrast by a factor of 2.
+        contrast_factor (float): How much to adjust the contrast, must be non negative.
+            ``0`` gives a solid gray image, ``1`` gives the original image,
+            while ``2`` increases the contrast by a factor of 2.
 
     Raises:
         TypeError: If `contrast_factor` is not of type float.
         ValueError: If `contrast_factor` is less than 0.
-        RuntimeError: If given tensor shape is not <H, W, C>.
+        RuntimeError: If shape of the input image is not <H, W, C>.
 
     Supported Platforms:
-        ``CPU``
+        ``CPU`` ``Ascend``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.AdjustContrast(contrast_factor=2.0)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_adjust_contrast
@@ -169,8 +220,39 @@ class AdjustContrast(ImageTensorOperation, PyTensorOperation):
         super().__init__()
         self.contrast_factor = contrast_factor
 
+    @check_device_target
+    def device(self, device_target="CPU"):
+        """
+        Set the device for the current operator execution.
+
+        Args:
+            device_target (str, optional): The operator will be executed on this device. Currently supports
+                ``CPU`` . Default: ``CPU`` .
+
+        Raises:
+            TypeError: If `device_target` is not of type str.
+            ValueError: If `device_target` is not ``CPU`` .
+
+        Supported Platforms:
+            ``CPU``
+
+        Examples:
+            >>> import mindspore.dataset as ds
+            >>> import mindspore.dataset.vision as vision
+            >>>
+            >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
+            >>> transforms_list = [vision.Decode().device("CPU"), vision.AdjustContrast(0).device("Ascend")]
+            >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list, input_columns=["image"])
+
+        Tutorial Examples:
+            - `Illustration of vision transforms
+              <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
+        """
+        self.device_target = device_target
+        return self
+
     def parse(self):
-        return cde.AdjustContrastOperation(self.contrast_factor)
+        return cde.AdjustContrastOperation(self.contrast_factor, self.device_target)
 
     def _execute_py(self, img):
         """
@@ -187,7 +269,7 @@ class AdjustContrast(ImageTensorOperation, PyTensorOperation):
 
 class AdjustGamma(ImageTensorOperation, PyTensorOperation):
     r"""
-    Apply gamma correction on input image. Input image is expected to be in [..., H, W, C] or [H, W] format.
+    Apply gamma correction on input image. Input image is expected to be in <..., H, W, C> or <H, W> format.
 
     .. math::
         I_{\text{out}} = 255 \times \text{gain} \times \left(\frac{I_{\text{in}}}{255}\right)^{\gamma}
@@ -201,7 +283,7 @@ class AdjustGamma(ImageTensorOperation, PyTensorOperation):
             The output image pixel value is exponentially related to the input image pixel value.
             gamma larger than 1 make the shadows darker,
             while gamma smaller than 1 make dark regions lighter.
-        gain (float, optional): The constant multiplier. Default: 1.0.
+        gain (float, optional): The constant multiplier. Default: ``1.0``.
 
     Raises:
         TypeError: If `gain` is not of type float.
@@ -213,9 +295,17 @@ class AdjustGamma(ImageTensorOperation, PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.AdjustGamma(gamma=10.0, gain=1.0)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_adjust_gamma
@@ -242,25 +332,33 @@ class AdjustGamma(ImageTensorOperation, PyTensorOperation):
 
 
 class AdjustHue(ImageTensorOperation, PyTensorOperation):
-    r"""
-    Adjust hue of input image. Input image is expected to be in [H, W, C] format.
+    """
+    Adjust the hue of the input image.
 
     Args:
         hue_factor (float): How much to add to the hue channel,
-            must be in the interval [-0.5, 0.5].
+            must be in range of [-0.5, 0.5].
 
     Raises:
         TypeError: If `hue_factor` is not of type float.
         ValueError: If `hue_factor` is not in the interval [-0.5, 0.5].
-        RuntimeError: If given tensor shape is not <H, W, C>.
+        RuntimeError: If shape of the input image is not <H, W, C>.
 
     Supported Platforms:
-        ``CPU``
+        ``CPU`` ``Ascend``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.AdjustHue(hue_factor=0.2)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_adjust_hue
@@ -268,8 +366,39 @@ class AdjustHue(ImageTensorOperation, PyTensorOperation):
         super().__init__()
         self.hue_factor = hue_factor
 
+    @check_device_target
+    def device(self, device_target="CPU"):
+        """
+        Set the device for the current operator execution.
+
+        Args:
+            device_target (str, optional): The operator will be executed on this device. Currently supports
+                ``CPU`` . Default: ``CPU`` .
+
+        Raises:
+            TypeError: If `device_target` is not of type str.
+            ValueError: If `device_target` is not ``CPU`` .
+
+        Supported Platforms:
+            ``CPU``
+
+        Examples:
+            >>> import mindspore.dataset as ds
+            >>> import mindspore.dataset.vision as vision
+            >>>
+            >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
+            >>> transforms_list = [vision.Decode().device("CPU"), vision.AdjustHue(0.5).device("Ascend")]
+            >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list, input_columns=["image"])
+
+        Tutorial Examples:
+            - `Illustration of vision transforms
+              <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
+        """
+        self.device_target = device_target
+        return self
+
     def parse(self):
-        return cde.AdjustHueOperation(self.hue_factor)
+        return cde.AdjustHueOperation(self.hue_factor, self.device_target)
 
     def _execute_py(self, img):
         """
@@ -285,25 +414,35 @@ class AdjustHue(ImageTensorOperation, PyTensorOperation):
 
 
 class AdjustSaturation(ImageTensorOperation, PyTensorOperation):
-    r"""
-    Adjust saturation of input image. Input image is expected to be in [H, W, C] format.
+    """
+    Adjust the saturation of the input image.
 
     Args:
-        saturation_factor (float): How much to adjust the saturation. Can be any non negative number.
-            0 gives a black image, 1 gives the original image while 2 increases the saturation by a factor of 2.
+        saturation_factor (float): How much to adjust the saturation, must be non negative.
+            ``0`` gives a black image, ``1`` gives the original image
+            while ``2`` increases the saturation by a factor of 2.
 
     Raises:
         TypeError: If `saturation_factor` is not of type float.
         ValueError: If `saturation_factor` is less than 0.
-        RuntimeError: If given tensor shape is not <H, W, C> or channel is not 3.
+        RuntimeError: If shape of the input image is not <H, W, C>.
+        RuntimeError: If channel of the input image is not 3.
 
     Supported Platforms:
-        ``CPU``
+        ``CPU`` ``Ascend``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.AdjustSaturation(saturation_factor=2.0)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_adjust_saturation
@@ -311,8 +450,39 @@ class AdjustSaturation(ImageTensorOperation, PyTensorOperation):
         super().__init__()
         self.saturation_factor = saturation_factor
 
+    @check_device_target
+    def device(self, device_target="CPU"):
+        """
+        Set the device for the current operator execution.
+
+        Args:
+            device_target (str, optional): The operator will be executed on this device. Currently supports
+                ``CPU`` . Default: ``CPU`` .
+
+        Raises:
+            TypeError: If `device_target` is not of type str.
+            ValueError: If `device_target` is not ``CPU`` .
+
+        Supported Platforms:
+            ``CPU``
+
+        Examples:
+            >>> import mindspore.dataset as ds
+            >>> import mindspore.dataset.vision as vision
+            >>>
+            >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
+            >>> transforms_list = [vision.Decode().device("CPU"), vision.AdjustSaturation(2.0).device("Ascend")]
+            >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list, input_columns=["image"])
+
+        Tutorial Examples:
+            - `Illustration of vision transforms
+              <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
+        """
+        self.device_target = device_target
+        return self
+
     def parse(self):
-        return cde.AdjustSaturationOperation(self.saturation_factor)
+        return cde.AdjustSaturationOperation(self.saturation_factor, self.device_target)
 
     def _execute_py(self, img):
         """
@@ -328,26 +498,34 @@ class AdjustSaturation(ImageTensorOperation, PyTensorOperation):
 
 
 class AdjustSharpness(ImageTensorOperation):
-    r"""
-    Adjust sharpness of input image. Input image is expected to be in [H, W, C] or [H, W] format.
+    """
+    Adjust the sharpness of the input image.
 
     Args:
-        sharpness_factor (float): How much to adjust the sharpness, should be a
-            non negative number. 0 gives a blurred image, 1 gives the
-            original image while 2 increases the Sharpness by a factor of 2.
+        sharpness_factor (float): How much to adjust the sharpness, must be
+            non negative. ``0`` gives a blurred image, ``1`` gives the
+            original image while ``2`` increases the sharpness by a factor of 2.
 
     Raises:
         TypeError: If `sharpness_factor` is not of type float.
         ValueError: If `sharpness_factor` is less than 0.
-        RuntimeError: If given tensor shape is not <H, W, C> or <H, W>.
+        RuntimeError: If shape of the input image is not <H, W> or <H, W, C>.
 
     Supported Platforms:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.AdjustSharpness(sharpness_factor=2.0)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_adjust_sharpness
@@ -366,49 +544,46 @@ class Affine(ImageTensorOperation):
 
     Args:
         degrees (float): Rotation angle in degrees between -180 and 180, clockwise direction.
-        translate (Sequence): The horizontal and vertical translations, must be a sequence of size 2.
+        translate (Sequence[float, float]): The horizontal and vertical translations, must be a sequence of size 2.
         scale (float): Scaling factor, which must be positive.
-        shear (Union[float, Sequence]): Shear angle value in degrees between -180 to 180.
-            If a number is provided, a shearing parallel to X axis with a factor selected from
-            ( `-shear` , `shear` ) will be applied.
-            If a sequence is provided, a shearing parallel to X axis with a factor selected
-            from ( `shear` [0], `shear` [1]) will be applied.
-        resample (Inter, optional): An optional resampling filter. Default: Inter.NEAREST.
-            It can be any of [Inter.BILINEAR, Inter.NEAREST, Inter.BICUBIC, Inter.AREA].
-
-            - Inter.BILINEAR, means resample method is bilinear interpolation.
-
-            - Inter.NEAREST, means resample method is nearest-neighbor interpolation.
-
-            - Inter.BICUBIC, means resample method is bicubic interpolation.
-
-            - Inter.AREA, means resample method is pixel area interpolation.
-
-        fill_value (Union[int, tuple[int, int, int]], optional): Optional fill_value to fill the area
+        shear (Union[float, Sequence[float, float]]): Shear angle value in degrees between -180 to 180.
+            If float is provided, shear along the x axis with this value, without shearing along the y axis;
+            If Sequence[float, float] is provided, shear along the x axis and y axis with these two values separately.
+        resample (Inter, optional): Image interpolation method defined by :class:`~.vision.Inter` .
+            Default: ``Inter.NEAREST``.
+        fill_value (Union[int, tuple[int, int, int]], optional): Optional `fill_value` to fill the area
             outside the transform in the output image. There must be three elements in tuple and the value
-            of single element is [0, 255]. Default: 0.
+            of single element is [0, 255]. Default: ``0``.
 
     Raises:
         TypeError: If `degrees` is not of type float.
         TypeError: If `translate` is not of type Sequence[float, float].
         TypeError: If `scale` is not of type float.
-        TypeError: If `shear` is not of float or Sequence[float, float].
-        TypeError: If `resample` is not of type :class:`mindspore.dataset.vision.Inter` .
-        TypeError: If `fill_value` is not of type int or tuple[int, int, int].
         ValueError: If `scale` is non positive.
-        RuntimeError: If given tensor shape is not <H, W> or <H, W, C>.
+        TypeError: If `shear` is not of float or Sequence[float, float].
+        TypeError: If `resample` is not of type :class:`~.vision.Inter` .
+        TypeError: If `fill_value` is not of type int or tuple[int, int, int].
+        RuntimeError: If shape of the input image is not <H, W> or <H, W, C>.
 
     Supported Platforms:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.vision import Inter
         >>>
         >>> decode_op = vision.Decode()
         >>> affine_op = vision.Affine(degrees=15, translate=[0.2, 0.2], scale=1.1, shear=[1.0, 1.0],
         ...                           resample=Inter.BILINEAR)
         >>> affine_list = [decode_op, affine_op]
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=affine_list, input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_affine
@@ -442,35 +617,26 @@ class AutoAugment(ImageTensorOperation):
 
     Args:
         policy (AutoAugmentPolicy, optional): AutoAugment policies learned on different datasets.
-            Default: AutoAugmentPolicy.IMAGENET.
-            It can be any of [AutoAugmentPolicy.IMAGENET, AutoAugmentPolicy.CIFAR10, AutoAugmentPolicy.SVHN].
+            Default: ``AutoAugmentPolicy.IMAGENET``.
+            It can be ``AutoAugmentPolicy.IMAGENET``, ``AutoAugmentPolicy.CIFAR10``, ``AutoAugmentPolicy.SVHN``.
             Randomly apply 2 operations from a candidate set. See auto augmentation details in AutoAugmentPolicy.
 
-            - AutoAugmentPolicy.IMAGENET, means to apply AutoAugment learned on ImageNet dataset.
+            - ``AutoAugmentPolicy.IMAGENET``, means to apply AutoAugment learned on ImageNet dataset.
 
-            - AutoAugmentPolicy.CIFAR10, means to apply AutoAugment learned on Cifar10 dataset.
+            - ``AutoAugmentPolicy.CIFAR10``, means to apply AutoAugment learned on Cifar10 dataset.
 
-            - AutoAugmentPolicy.SVHN, means to apply AutoAugment learned on SVHN dataset.
+            - ``AutoAugmentPolicy.SVHN``, means to apply AutoAugment learned on SVHN dataset.
 
-        interpolation (Inter, optional): Image interpolation mode for Resize operation. Default: Inter.NEAREST.
-            It can be any of [Inter.NEAREST, Inter.BILINEAR, Inter.BICUBIC, Inter.AREA].
-
-            - Inter.NEAREST: means interpolation method is nearest-neighbor interpolation.
-
-            - Inter.BILINEAR: means interpolation method is bilinear interpolation.
-
-            - Inter.BICUBIC: means the interpolation method is bicubic interpolation.
-
-            - Inter.AREA: means the interpolation method is pixel area interpolation.
-
+        interpolation (Inter, optional): Image interpolation method defined by :class:`~.vision.Inter` .
+            Default: ``Inter.NEAREST``.
         fill_value (Union[int, tuple[int]], optional): Pixel fill value for the area outside the transformed image.
             It can be an int or a 3-tuple. If it is a 3-tuple, it is used to fill R, G, B channels respectively.
             If it is an integer, it is used for all RGB channels. The fill_value values must be in range [0, 255].
-            Default: 0.
+            Default: ``0``.
 
     Raises:
         TypeError: If `policy` is not of type :class:`mindspore.dataset.vision.AutoAugmentPolicy` .
-        TypeError: If `interpolation` is not of type :class:`mindspore.dataset.vision.Inter` .
+        TypeError: If `interpolation` is not of type :class:`~.vision.Inter` .
         TypeError: If `fill_value` is not an integer or a tuple of length 3.
         RuntimeError: If given tensor shape is not <H, W, C>.
 
@@ -478,13 +644,21 @@ class AutoAugment(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.vision import AutoAugmentPolicy, Inter
         >>>
         >>> transforms_list = [vision.Decode(), vision.AutoAugment(policy=AutoAugmentPolicy.IMAGENET,
         ...                                                        interpolation=Inter.NEAREST,
         ...                                                        fill_value=0)]
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_auto_augment
@@ -509,9 +683,9 @@ class AutoContrast(ImageTensorOperation, PyTensorOperation):
 
     Args:
         cutoff (float, optional): Percent of lightest and darkest pixels to cut off from
-            the histogram of input image. The value must be in the range [0.0, 50.0]. Default: 0.0.
+            the histogram of input image. The value must be in the range [0.0, 50.0]. Default: ``0.0``.
         ignore (Union[int, sequence], optional): The background pixel values to ignore,
-            The ignore values must be in range [0, 255]. Default: None.
+            The ignore values must be in range [0, 255]. Default: ``None``.
 
     Raises:
         TypeError: If `cutoff` is not of type float.
@@ -524,9 +698,17 @@ class AutoContrast(ImageTensorOperation, PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.AutoContrast(cutoff=10.0, ignore=[10, 20])]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_auto_contrast
@@ -564,10 +746,10 @@ class BoundingBoxAugment(ImageTensorOperation):
         transform (TensorOperation): Transformation operation to be applied on random selection
             of bounding box regions of a given image.
         ratio (float, optional): Ratio of bounding boxes to apply augmentation on.
-            Range: [0.0, 1.0]. Default: 0.3.
+            Range: [0.0, 1.0]. Default: ``0.3``.
 
     Raises:
-        TypeError: If `transform` is an image processing operation in :class:`mindspore.dataset.vision.transforms` .
+        TypeError: If `transform` is an image processing operation in `mindspore.dataset.vision` .
         TypeError: If `ratio` is not of type float.
         ValueError: If `ratio` is not in range [0.0, 1.0].
         RuntimeError: If given bounding box is invalid.
@@ -576,12 +758,20 @@ class BoundingBoxAugment(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> # set bounding box operation with ratio of 1 to apply rotation on all bounding boxes
         >>> bbox_aug_op = vision.BoundingBoxAugment(vision.RandomRotation(90), 1)
         >>> # map to apply ops
         >>> image_folder_dataset = image_folder_dataset.map(operations=[bbox_aug_op],
         ...                                                 input_columns=["image", "bbox"],
         ...                                                 output_columns=["image", "bbox"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_bounding_box_augment_cpp
@@ -613,20 +803,29 @@ class CenterCrop(ImageTensorOperation, PyTensorOperation):
     Raises:
         TypeError: If `size` is not of type integer or sequence.
         ValueError: If `size` is less than or equal to 0.
-        RuntimeError: If given tensor shape is not <H, W> or <H, W, C>.
+        RuntimeError: If given tensor shape is not <H, W> or <..., H, W, C>.
 
     Supported Platforms:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
+        >>>
         >>> # crop image to a square
         >>> transforms_list1 = [vision.Decode(), vision.CenterCrop(50)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list1,
         ...                                                 input_columns=["image"])
         >>> # crop image to portrait style
         >>> transforms_list2 = [vision.Decode(), vision.CenterCrop((60, 40))]
-        >>> image_folder_dataset_1 = image_folder_dataset_1.map(operations=transforms_list2,
-        ...                                                     input_columns=["image"])
+        >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list2,
+        ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_center_crop
@@ -708,15 +907,23 @@ class ConvertColor(ImageTensorOperation):
         ``CPU``
 
     Examples:
-        >>> import mindspore.dataset.vision.utils as mode
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
+        >>>
         >>> # Convert RGB images to GRAY images
-        >>> convert_op = vision.ConvertColor(mode.ConvertMode.COLOR_RGB2GRAY)
+        >>> convert_op = vision.ConvertColor(vision.ConvertMode.COLOR_RGB2GRAY)
         >>> image_folder_dataset = image_folder_dataset.map(operations=convert_op,
         ...                                                 input_columns=["image"])
         >>> # Convert RGB images to BGR images
-        >>> convert_op = vision.ConvertColor(mode.ConvertMode.COLOR_RGB2BGR)
-        >>> image_folder_dataset_1 = image_folder_dataset_1.map(operations=convert_op,
-        ...                                                     input_columns=["image"])
+        >>> convert_op = vision.ConvertColor(vision.ConvertMode.COLOR_RGB2BGR)
+        >>> image_folder_dataset = image_folder_dataset.map(operations=convert_op,
+        ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_convert_color
@@ -752,11 +959,19 @@ class Crop(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> decode_op = vision.Decode()
         >>> crop_op = vision.Crop((0, 0), 32)
         >>> transforms_list = [decode_op, crop_op]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_crop
@@ -780,9 +995,9 @@ class CutMixBatch(ImageTensorOperation):
     Args:
         image_batch_format (ImageBatchFormat): The method of padding. Can be any of
             [ImageBatchFormat.NHWC, ImageBatchFormat.NCHW].
-        alpha (float, optional): Hyperparameter of beta distribution, must be larger than 0. Default: 1.0.
+        alpha (float, optional): Hyperparameter of beta distribution, must be larger than 0. Default: ``1.0``.
         prob (float, optional): The probability by which CutMix is applied to each image,
-            which must be in range: [0.0, 1.0]. Default: 1.0.
+            which must be in range: [0.0, 1.0]. Default: ``1.0``.
 
     Raises:
         TypeError: If `image_batch_format` is not of type :class:`mindspore.dataset.vision.ImageBatchFormat` .
@@ -796,7 +1011,12 @@ class CutMixBatch(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>> import mindspore.dataset.transforms as transforms
         >>> from mindspore.dataset.vision import ImageBatchFormat
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> onehot_op = transforms.OneHot(num_classes=10)
         >>> image_folder_dataset= image_folder_dataset.map(operations=onehot_op,
         ...                                                input_columns=["label"])
@@ -804,6 +1024,10 @@ class CutMixBatch(ImageTensorOperation):
         >>> image_folder_dataset = image_folder_dataset.batch(5)
         >>> image_folder_dataset = image_folder_dataset.map(operations=cutmix_batch_op,
         ...                                                 input_columns=["image", "label"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_cut_mix_batch_c
@@ -824,9 +1048,9 @@ class CutOut(ImageTensorOperation):
 
     Args:
         length (int): The side length of each square patch, must be larger than 0.
-        num_patches (int, optional): Number of patches to be cut out of an image, must be larger than 0. Default: 1.
+        num_patches (int, optional): Number of patches to be cut out of an image, must be larger than 0. Default: ``1``.
         is_hwc (bool, optional): Whether the input image is in HWC format.
-            True - HWC format, False - CHW format. Default: True.
+            ``True`` - HWC format, ``False`` - CHW format. Default: ``True``.
 
     Raises:
         TypeError: If `length` is not of type integer.
@@ -840,9 +1064,17 @@ class CutOut(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.CutOut(80, num_patches=10)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_cutout_new
@@ -864,7 +1096,9 @@ class Decode(ImageTensorOperation, PyTensorOperation):
     Supported image formats: JPEG, BMP, PNG, TIFF, GIF(need `to_pil=True` ), WEBP(need `to_pil=True` ).
 
     Args:
-        to_pil (bool, optional): decode to PIL Image. Default: False.
+        to_pil (bool, optional): Whether to decode the image to the PIL data type. If ``True``,
+            the image will be decoded to the PIL data type, otherwise it will be decoded to the
+            NumPy data type. Default: ``False``.
 
     Raises:
         RuntimeError: If given tensor is not a 1D sequence.
@@ -872,18 +1106,26 @@ class Decode(ImageTensorOperation, PyTensorOperation):
         RuntimeError: If the input image is already decoded.
 
     Supported Platforms:
-        ``CPU``
+        ``CPU`` ``Ascend``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
         >>> # Eager usage
         >>> import numpy as np
         >>> raw_image = np.fromfile("/path/to/image/file", np.uint8)
         >>> decoded_image = vision.Decode()(raw_image)
         >>>
         >>> # Pipeline usage
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.RandomHorizontalFlip()]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_decode
@@ -910,8 +1152,43 @@ class Decode(ImageTensorOperation, PyTensorOperation):
                             "but got {0}.".format(img.ndim))
         return super().__call__(img)
 
+    @check_device_target
+    def device(self, device_target="CPU"):
+        """
+        Set the device for the current operator execution.
+
+        Args:
+            device_target (str, optional): The operator will be executed on this device. Currently supports
+                ``CPU`` . Default: ``CPU`` .
+
+        Raises:
+            TypeError: If `device_target` is not of type str.
+            ValueError: If `device_target` is not ``CPU`` .
+
+        Supported Platforms:
+            ``CPU``
+
+        Examples:
+            >>> import mindspore.dataset as ds
+            >>> import mindspore.dataset.vision as vision
+            >>> from mindspore.dataset.vision import Inter
+            >>>
+            >>> decode_op = vision.Decode().device("Ascend")
+            >>> resize_op = vision.Resize([100, 75], Inter.BICUBIC)
+            >>> transforms_list = [decode_op, resize_op]
+            >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
+            >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
+            ...                                                 input_columns=["image"])
+
+        Tutorial Examples:
+            - `Illustration of vision transforms
+              <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
+        """
+        self.device_target = device_target
+        return self
+
     def parse(self):
-        return cde.DecodeOperation(True)
+        return cde.DecodeOperation(True, self.device_target)
 
     def _execute_py(self, img):
         """
@@ -937,9 +1214,17 @@ class Equalize(ImageTensorOperation, PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.Equalize()]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     def __init__(self):
@@ -972,28 +1257,40 @@ class Erase(ImageTensorOperation):
         left (int): Horizontal ordinate of the upper left corner of erased region.
         height (int): Height of erased region.
         width (int): Width of erased region.
-        value (Union[int, Sequence[int]], optional): Pixel value used to pad the erased area.
-            If a single integer is provided, it will be used for all RGB channels.
-            If a sequence of length 3 is provided, it will be used for R, G, B channels respectively.
-            Default: 0.
-        inplace (bool, optional): Whether to apply erasing inplace. Default: False.
+        value (Union[int, Sequence[int, int, int]], optional): Pixel value used to pad the erased area.
+            Default: ``0``. If int is provided, it will be used for all RGB channels.
+            If Sequence[int, int, int] is provided, it will be used for R, G, B channels respectively.
+        inplace (bool, optional): Whether to apply erasing inplace. Default: ``False``.
 
     Raises:
         TypeError: If `top` is not of type int.
+        ValueError: If `top` is negative.
         TypeError: If `left` is not of type int.
+        ValueError: If `left` is negative.
         TypeError: If `height` is not of type int.
+        ValueError: If `height` is not positive.
         TypeError: If `width` is not of type int.
-        TypeError: If `value` is not of type int or Sequence[int].
+        ValueError: If `width` is not positive.
+        TypeError: If `value` is not of type int or Sequence[int, int, int].
+        ValueError: If `value` is not in range of [0, 255].
         TypeError: If `inplace` is not of type bool.
-        RuntimeError: If given tensor shape is not <H, W, C>.
+        RuntimeError: If shape of the input image is not <H, W, C>.
 
     Supported Platforms:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.Erase(10,10,10,10)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_erase
@@ -1029,6 +1326,8 @@ class FiveCrop(PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> import numpy
         >>> from mindspore.dataset.transforms import Compose
         >>>
@@ -1037,8 +1336,13 @@ class FiveCrop(PyTensorOperation):
         ...                            # 4D stack of 5 images
         ...                            lambda *images: numpy.stack([vision.ToTensor()(image) for image in images])])
         >>> # apply the transform to dataset through map function
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns="image")
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_five_crop
@@ -1062,17 +1366,22 @@ class FiveCrop(PyTensorOperation):
 
 
 class GaussianBlur(ImageTensorOperation):
-    """
+    r"""
     Blur input image with the specified Gaussian kernel.
 
     Args:
-        kernel_size (Union[int, Sequence[int]]): Size of the Gaussian kernel to use. The value must be positive and odd.
-            If only an integer is provided, the kernel size will be (kernel_size, kernel_size). If a sequence of integer
-            is provided, it must be a sequence of 2 values which represents (width, height).
-        sigma (Union[float, Sequence[float]], optional): Standard deviation of the Gaussian kernel to use.
-            Default: None. The value must be positive. If only a float is provided, the sigma will be (sigma, sigma).
-            If a sequence of float is provided, it must be a sequence of 2 values which represents (width, height).
-            If None is provided, the sigma will be calculated as ((kernel_size - 1) * 0.5 - 1) * 0.3 + 0.8.
+        kernel_size (Union[int, Sequence[int, int]]): The size of the Gaussian kernel. Must be positive and odd.
+            If the input type is int, the value will be used as both the width and height of the Gaussian kernel.
+            If the input type is Sequence[int, int], the two elements will be used as the width and height of the
+            Gaussian kernel respectively.
+        sigma (Union[float, Sequence[float, float]], optional): The standard deviation of the Gaussian kernel.
+            Must be positive.
+            If the input type is float, the value will be used as the standard deviation of both the width and
+            height of the Gaussian kernel.
+            If the input type is Sequence[float, float], the two elements will be used as the standard deviation
+            of the width and height of the Gaussian kernel respectively.
+            Default: ``None`` , the standard deviation of the Gaussian kernel will be obtained by the
+            formula :math:`((kernel\_size - 1) * 0.5 - 1) * 0.3 + 0.8` .
 
     Raises:
         TypeError: If `kernel_size` is not of type int or Sequence[int].
@@ -1085,9 +1394,17 @@ class GaussianBlur(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(to_pil=True), vision.GaussianBlur(3, 3)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_gaussian_blur
@@ -1112,25 +1429,32 @@ class Grayscale(PyTensorOperation):
     Convert the input PIL Image to grayscale.
 
     Args:
-        num_output_channels (int): The number of channels desired for the output image, must be 1 or 3.
-            If 3 is provided, the returned image will have 3 identical RGB channels. Default: 1.
+        num_output_channels (int): The number of channels desired for the output image, must be ``1`` or ``3``.
+            If ``3`` is provided, the returned image will have 3 identical RGB channels. Default: ``1``.
 
     Raises:
         TypeError: If `num_output_channels` is not of type integer.
-        ValueError: If `num_output_channels` is not 1 or 3.
+        ValueError: If `num_output_channels` is not ``1`` or ``3``.
 
     Supported Platforms:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.transforms import Compose
         >>>
         >>> transforms_list = Compose([vision.Decode(to_pil=True),
         ...                            vision.Grayscale(3),
         ...                            vision.ToTensor()])
         >>> # apply the transform to dataset through map function
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns="image")
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_num_channels
@@ -1164,9 +1488,17 @@ class HorizontalFlip(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(to_pil=True), vision.HorizontalFlip()]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     def __init__(self):
@@ -1182,8 +1514,8 @@ class HsvToRgb(PyTensorOperation):
     Convert the input numpy.ndarray images from HSV to RGB.
 
     Args:
-        is_hwc (bool): If True, means the input image is in shape of (H, W, C) or (N, H, W, C).
-            Otherwise, it is in shape of (C, H, W) or (N, C, H, W). Default: False.
+        is_hwc (bool): If ``True``, means the input image is in shape of <H, W, C> or <N, H, W, C>.
+            Otherwise, it is in shape of <C, H, W> or <N, C, H, W>. Default: ``False``.
 
     Raises:
         TypeError: If `is_hwc` is not of type bool.
@@ -1192,6 +1524,8 @@ class HsvToRgb(PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.transforms import Compose
         >>>
         >>> transforms_list = Compose([vision.Decode(to_pil=True),
@@ -1199,8 +1533,13 @@ class HsvToRgb(PyTensorOperation):
         ...                            vision.ToTensor(),
         ...                            vision.HsvToRgb()])
         >>> # apply the transform to dataset through map function
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns="image")
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_hsv_to_rgb
@@ -1225,25 +1564,34 @@ class HsvToRgb(PyTensorOperation):
 
 class HWC2CHW(ImageTensorOperation):
     """
-    Transpose the input image from shape (H, W, C) to (C, H, W).
+    Transpose the input image from shape <H, W, C> to <C, H, W>.
     If the input image is of shape <H, W>, it will remain unchanged.
 
     Note:
-        This operation supports running on Ascend or GPU platforms by Offload.
+        This operation is executed on the CPU by default, but it is also supported
+        to be executed on the GPU or Ascend via heterogeneous acceleration.
 
     Raises:
         RuntimeError: If shape of the input image is not <H, W> or <H, W, C>.
 
     Supported Platforms:
-        ``CPU``
+        ``CPU`` ``GPU`` ``Ascend``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(),
         ...                    vision.RandomHorizontalFlip(0.75),
         ...                    vision.RandomCrop(512),
         ...                    vision.HWC2CHW()]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     def __init__(self):
@@ -1257,18 +1605,29 @@ class HWC2CHW(ImageTensorOperation):
 
 class Invert(ImageTensorOperation, PyTensorOperation):
     """
-    Apply invert on input image in RGB mode. This operation will reassign every pixel to (255 - pixel).
+    Invert the colors of the input RGB image.
+
+    For each pixel in the image, if the original pixel value is `pixel`,
+    the inverted pixel value will be `255 - pixel`.
 
     Raises:
-        RuntimeError: If given tensor shape is not <H, W, C>.
+        RuntimeError: If the input image is not in shape of <H, W, C>.
 
     Supported Platforms:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.Invert()]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     def __init__(self):
@@ -1312,6 +1671,8 @@ class LinearTransformation(PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> import numpy as np
         >>> from mindspore.dataset.transforms import Compose
         >>>
@@ -1324,8 +1685,13 @@ class LinearTransformation(PyTensorOperation):
         ...                            vision.ToTensor(),
         ...                            vision.LinearTransformation(transformation_matrix, mean_vector)])
         >>> # apply the transform to dataset through map function
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns="image")
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_linear_transform
@@ -1341,7 +1707,7 @@ class LinearTransformation(PyTensorOperation):
         Execute method.
 
         Args:
-            np_img (numpy.ndarray): Image in shape of (C, H, W) to be linearly transformed.
+            np_img (numpy.ndarray): Image in shape of <C, H, W> to be linearly transformed.
 
         Returns:
             numpy.ndarray, linearly transformed image.
@@ -1353,16 +1719,16 @@ class MixUp(PyTensorOperation):
     """
     Randomly mix up a batch of numpy.ndarray images together with its labels.
 
-    Each image will be multiplied by a random weight lambda generated from the Beta distribution and then added
-    to another image multiplied by 1 - lambda. The same transformation will be applied to their labels with the
-    same value of lambda. Make sure that the labels are one-hot encoded in advance.
+    Each image will be multiplied by a random weight :math:`lambda` generated from the Beta distribution and then added
+    to another image multiplied by :math:`1 - lambda`. The same transformation will be applied to their labels with the
+    same value of :math:`lambda`. Make sure that the labels are one-hot encoded in advance.
 
     Args:
         batch_size (int): The number of images in a batch.
         alpha (float): The alpha and beta parameter for the Beta distribution.
-        is_single (bool, optional): If True, it will randomly mix up [img0, ..., img(n-1), img(n)] with
+        is_single (bool, optional): If ``True``, it will randomly mix up [img0, ..., img(n-1), img(n)] with
             [img1, ..., img(n), img0] in each batch. Otherwise, it will randomly mix up images with the
-            output of the previous batch. Default: True.
+            output of the previous batch. Default: ``True``.
 
     Raises:
         TypeError: If `batch_size` is not of type integer.
@@ -1375,6 +1741,11 @@ class MixUp(PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>> import mindspore.dataset.transforms as transforms
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> # first decode the image
         >>> image_folder_dataset = image_folder_dataset.map(operations=vision.Decode(),
         ...                                                 input_columns="image")
@@ -1386,8 +1757,12 @@ class MixUp(PyTensorOperation):
         >>> image_folder_dataset = image_folder_dataset.batch(batch_size=batch_size)
         >>> # finally mix up the images and labels
         >>> image_folder_dataset = image_folder_dataset.map(
-        ...     operations=py_vision.MixUp(batch_size=batch_size, alpha=0.2),
+        ...     operations=vision.MixUp(batch_size=batch_size, alpha=0.2),
         ...     input_columns=["image", "label"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_mix_up
@@ -1433,7 +1808,8 @@ class MixUpBatch(ImageTensorOperation):
     Note that you need to make labels into one-hot format and batched before calling this operation.
 
     Args:
-        alpha (float, optional): Hyperparameter of beta distribution. The value must be positive. Default: 1.0.
+        alpha (float, optional): Hyperparameter of beta distribution. The value must be positive.
+            Default: ``1.0``.
 
     Raises:
         TypeError: If `alpha` is not of type float.
@@ -1444,6 +1820,11 @@ class MixUpBatch(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>> import mindspore.dataset.transforms as transforms
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> onehot_op = transforms.OneHot(num_classes=10)
         >>> image_folder_dataset= image_folder_dataset.map(operations=onehot_op,
         ...                                                input_columns=["label"])
@@ -1451,6 +1832,10 @@ class MixUpBatch(ImageTensorOperation):
         >>> image_folder_dataset = image_folder_dataset.batch(5)
         >>> image_folder_dataset = image_folder_dataset.map(operations=mixup_batch_op,
         ...                                                 input_columns=["image", "label"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_mix_up_batch_c
@@ -1469,7 +1854,8 @@ class Normalize(ImageTensorOperation):
     the input image with: output[channel] = (input[channel] - mean[channel]) / std[channel], where channel >= 1.
 
     Note:
-        This operation supports running on Ascend or GPU platforms by Offload.
+        This operation is executed on the CPU by default, but it is also supported
+        to be executed on the GPU or Ascend via heterogeneous acceleration.
 
     Args:
         mean (sequence): List or tuple of mean values for each channel, with respect to channel order.
@@ -1477,7 +1863,7 @@ class Normalize(ImageTensorOperation):
         std (sequence): List or tuple of standard deviations for each channel, with respect to channel order.
             The standard deviation values must be in range (0.0, 255.0].
         is_hwc (bool, optional): Whether the input image is HWC.
-            True - HWC format, False - CHW format. Default: True.
+            ``True`` - HWC format, ``False`` - CHW format. Default: ``True``.
 
     Raises:
         TypeError: If `mean` is not of type sequence.
@@ -1485,17 +1871,25 @@ class Normalize(ImageTensorOperation):
         TypeError: If `is_hwc` is not of type bool.
         ValueError: If `mean` is not in range [0.0, 255.0].
         ValueError: If `std` is not in range (0.0, 255.0].
-        RuntimeError: If given tensor format is not <H, W> or <...,H, W, C>.
+        RuntimeError: If given tensor format is not <H, W> or <..., H, W, C>.
 
     Supported Platforms:
-        ``CPU``
+        ``CPU`` ``GPU`` ``Ascend``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> decode_op = vision.Decode() ## Decode output is expected to be HWC format
         >>> normalize_op = vision.Normalize(mean=[121.0, 115.0, 100.0], std=[70.0, 68.0, 71.0], is_hwc=True)
         >>> transforms_list = [decode_op, normalize_op]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_normalize
@@ -1507,8 +1901,45 @@ class Normalize(ImageTensorOperation):
         self.random = False
         self.implementation = Implementation.C
 
+    @check_device_target
+    def device(self, device_target="CPU"):
+        """
+        Set the device for the current operator execution.
+
+        Args:
+            device_target (str, optional): The operator will be executed on this device. Currently supports
+                ``CPU`` . Default: ``CPU`` .
+
+        Raises:
+            TypeError: If `device_target` is not of type str.
+            ValueError: If `device_target` is not ``CPU`` .
+
+        Supported Platforms:
+            ``CPU``
+
+        Examples:
+            >>> import mindspore.dataset as ds
+            >>> import mindspore.dataset.vision as vision
+            >>> from mindspore.dataset.vision import Inter
+            >>>
+            >>> decode_op = vision.Decode()
+            >>> resize_op = vision.Resize([100, 75], Inter.BICUBIC)
+            >>> transforms_list = [decode_op, resize_op]
+            >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
+            >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
+            ...                                                 input_columns=["image"])
+            >>> normalize_op = vision.Normalize(mean=[121.0, 115.0, 100.0], std=[70.0, 68.0, 71.0]).device("Ascend")
+            >>> image_folder_dataset = image_folder_dataset.map(operations=normalize_op, input_columns=["image"])
+
+        Tutorial Examples:
+            - `Illustration of vision transforms
+              <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
+        """
+        self.device_target = device_target
+        return self
+
     def parse(self):
-        return cde.NormalizeOperation(self.mean, self.std, self.is_hwc)
+        return cde.NormalizeOperation(self.mean, self.std, self.is_hwc, self.device_target)
 
 
 class NormalizePad(ImageTensorOperation):
@@ -1520,9 +1951,9 @@ class NormalizePad(ImageTensorOperation):
             The mean values must be in range (0.0, 255.0].
         std (sequence): List or tuple of standard deviations for each channel, with respect to channel order.
             The standard deviation values must be in range (0.0, 255.0].
-        dtype (str, optional): Set the output data type of normalized image. Default: "float32".
-        is_hwc (bool, optional): Whether the input image is HWC.
-            True - HWC format, False - CHW format. Default: True.
+        dtype (str, optional): Set the output data type of normalized image. Default: ``"float32"``.
+        is_hwc (bool, optional): Specify the format of input image.
+            ``True`` - HW(C) format, ``False`` - CHW format. Default: ``True``.
 
     Raises:
         TypeError: If `mean` is not of type sequence.
@@ -1537,6 +1968,10 @@ class NormalizePad(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> decode_op = vision.Decode()
         >>> normalize_pad_op = vision.NormalizePad(mean=[121.0, 115.0, 100.0],
         ...                                        std=[70.0, 68.0, 71.0],
@@ -1573,30 +2008,24 @@ class Pad(ImageTensorOperation, PyTensorOperation):
             If 4 values are provided as a list or tuple, it pads the left, top, right and bottom respectively.
             The pad values must be non-negative.
         fill_value (Union[int, tuple[int]], optional): The pixel intensity of the borders, only valid for
-            padding_mode Border.CONSTANT. If it is a 3-tuple, it is used to fill R, G, B channels respectively.
+            `padding_mode` ``Border.CONSTANT``. If it is a 3-tuple, it is used to fill R, G, B channels respectively.
             If it is an integer, it is used for all RGB channels.
-            The fill_value values must be in range [0, 255]. Default: 0.
-        padding_mode (Border, optional): The method of padding. Default: Border.CONSTANT. Can be any of
-            [Border.CONSTANT, Border.EDGE, Border.REFLECT, Border.SYMMETRIC].
+            The fill_value values must be in range [0, 255]. Default: ``0``.
+        padding_mode (Border, optional): The method of padding. Default: ``Border.CONSTANT``. Can be
+            ``Border.CONSTANT``, ``Border.EDGE``, ``Border.REFLECT``, ``Border.SYMMETRIC``.
 
-            - Border.CONSTANT, means it fills the border with constant values.
+            - ``Border.CONSTANT`` , means it fills the border with constant values.
 
-            - Border.EDGE, means it pads with the last value on the edge.
+            - ``Border.EDGE`` , means it pads with the last value on the edge.
 
-            - Border.REFLECT, means it reflects the values on the edge omitting the last
+            - ``Border.REFLECT`` , means it reflects the values on the edge omitting the last
               value of edge.
 
-            - Border.SYMMETRIC, means it reflects the values on the edge repeating the last
+            - ``Border.SYMMETRIC`` , means it reflects the values on the edge repeating the last
               value of edge.
-
-    Note:
-        The behavior when `padding` is a sequence of length 2 will change from padding left/top with
-        the first value and right/bottom with the second, to padding left/right with the first one
-        and top/bottom with the second in the future. Or you can pass in a 4-element sequence to specify
-        left, top, right and bottom respectively.
 
     Raises:
-        TypeError: If `padding` is not of type int or Sequence[int, int], Sequence[int, int, int, int]].
+        TypeError: If `padding` is not of type int or Sequence[int, int], Sequence[int, int, int, int].
         TypeError: If `fill_value` is not of type int or tuple[int].
         TypeError: If `padding_mode` is not of type :class:`mindspore.dataset.vision.Border` .
         ValueError: If `padding` is negative.
@@ -1607,9 +2036,17 @@ class Pad(ImageTensorOperation, PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.Pad([100, 100, 100, 100])]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_pad
@@ -1650,18 +2087,18 @@ class PadToSize(ImageTensorOperation):
         offset (Union[int, Sequence[int, int]], optional): The lengths to pad on the top and left.
             If int is provided, pad both top and left borders with this value.
             If Sequence[int, int] is provided, is should be in order of [top, left].
-            Default: None, means to pad symmetrically, keeping the original image in center.
+            Default: ``None``, means to pad symmetrically, keeping the original image in center.
         fill_value (Union[int, tuple[int, int, int]], optional): Pixel value used to pad the borders,
-            only valid when `padding_mode` is Border.CONSTANT.
+            only valid when `padding_mode` is ``Border.CONSTANT``.
             If int is provided, it will be used for all RGB channels.
             If tuple[int, int, int] is provided, it will be used for R, G, B channels respectively. Default: 0.
-        padding_mode (Border, optional): Method of padding. It can be Border.CONSTANT, Border.EDGE, Border.REFLECT
-            or Border.SYMMETRIC. Default: Border.CONSTANT.
+        padding_mode (Border, optional): Method of padding. It can be ``Border.CONSTANT``, ``Border.EDGE``,
+            ``Border.REFLECT`` or Border.SYMMETRIC. Default: ``Border.CONSTANT``.
 
-            - Border.CONSTANT, pads with a constant value.
-            - Border.EDGE, pads with the last value at the edge of the image.
-            - Border.REFLECT, pads with reflection of the image omitting the last value on the edge.
-            - Border.SYMMETRIC, pads with reflection of the image repeating the last value on the edge.
+            - ``Border.CONSTANT`` , pads with a constant value.
+            - ``Border.EDGE`` , pads with the last value at the edge of the image.
+            - ``Border.REFLECT`` , pads with reflection of the image omitting the last value on the edge.
+            - ``Border.SYMMETRIC`` , pads with reflection of the image repeating the last value on the edge.
 
     Raises:
         TypeError: If `size` is not of type int or Sequence[int, int].
@@ -1677,9 +2114,17 @@ class PadToSize(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.PadToSize([256, 256])]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_pad_to_size
@@ -1703,34 +2148,27 @@ class Perspective(ImageTensorOperation, PyTensorOperation):
     Apply perspective transformation on input image.
 
     Args:
-        start_points (Sequence[Sequence[int, int]]): List containing four lists of two integers corresponding to four
-            corners [top-left, top-right, bottom-right, bottom-left] of the original image.
-        end_points (Sequence[Sequence[int, int]]): List containing four lists of two integers corresponding to four
-            corners [top-left, top-right, bottom-right, bottom-left] of the transformed image.
-        interpolation (Inter, optional): Method of interpolation. It can be Inter.BILINEAR, Inter.LINEAR,
-            Inter.NEAREST, Inter.AREA, Inter.PILCUBIC, Inter.CUBIC or Inter.BICUBIC. Default: Inter.BILINEAR.
-
-            - Inter.BILINEAR, bilinear interpolation.
-            - Inter.LINEAR, bilinear interpolation, here is the same as Inter.BILINEAR.
-            - Inter.NEAREST, nearest-neighbor interpolation.
-            - Inter.BICUBIC, bicubic interpolation.
-            - Inter.CUBIC: means the interpolation method is bicubic interpolation, here is the same as Inter.BICUBIC.
-            - Inter.PILCUBIC, means interpolation method is bicubic interpolation like implemented in pillow, input
-              should be in 3 channels format.(PIL input is not supported)
-            - Inter.AREA, pixel area interpolation.(PIL input is not supported)
+        start_points (Sequence[Sequence[int, int]]): Sequence of the starting point coordinates, containing four
+            two-element subsequences, corresponding to [top-left, top-right, bottom-right, bottom-left] of the
+            quadrilateral in the original image.
+        end_points (Sequence[Sequence[int, int]]): Sequence of the ending point coordinates, containing four
+            two-element subsequences, corresponding to [top-left, top-right, bottom-right, bottom-left] of the
+            quadrilateral in the target image.
+        interpolation (Inter, optional): Image interpolation method defined by :class:`~.vision.Inter` .
+            Default: ``Inter.BILINEAR``.
 
     Raises:
-        TypeError: If `start_points` is not of type Sequence[Sequence[int, int]] of length 4.
-        TypeError: If element in `start_points` is not of type Sequence[int, int] of length 2.
-        TypeError: If `end_points` is not of type Sequence[Sequence[int, int]] of length 4.
-        TypeError: If element in `end_points` is not of type Sequence[int, int] of length 2.
-        TypeError: If `interpolation` is not of type :class:`mindspore.dataset.vision.Inter` .
-        RuntimeError: If given tensor shape is not <H, W> or <H, W, C>.
+        TypeError: If `start_points` is not of type Sequence[Sequence[int, int]].
+        TypeError: If `end_points` is not of type Sequence[Sequence[int, int]].
+        TypeError: If `interpolation` is not of type :class:`~.vision.Inter` .
+        RuntimeError: If shape of the input image is not <H, W> or <H, W, C>.
 
     Supported Platforms:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.transforms import Compose
         >>> from mindspore.dataset.vision import Inter
         >>>
@@ -1739,8 +2177,13 @@ class Perspective(ImageTensorOperation, PyTensorOperation):
         >>> transforms_list = Compose([vision.Decode(),
         ...                            vision.Perspective(start_points, end_points, Inter.BILINEAR)])
         >>> # apply the transform to dataset through map function
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns="image")
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_perspective
@@ -1760,7 +2203,7 @@ class Perspective(ImageTensorOperation, PyTensorOperation):
             raise TypeError("Current Interpolation is not supported with NumPy input.")
         return cde.PerspectiveOperation(self.start_points, self.end_points, Inter.to_c_type(self.interpolation))
 
-    def execute_py(self, img):
+    def _execute_py(self, img):
         """
         Execute method.
 
@@ -1777,7 +2220,8 @@ class Perspective(ImageTensorOperation, PyTensorOperation):
 
 class Posterize(ImageTensorOperation):
     """
-    Posterize an image by reducing the number of bits for each color channel.
+    Reduce the bit depth of the color channels of image to create a high contrast and vivid color effect,
+    similar to that seen in posters or printed materials.
 
     Args:
         bits (int): The number of bits to keep for each channel, should be in range of [0, 8].
@@ -1785,7 +2229,20 @@ class Posterize(ImageTensorOperation):
     Raises:
         TypeError: If `bits` is not of type int.
         ValueError: If `bits` is not in range [0, 8].
-        RuntimeError: If given tensor shape is not <H, W> or <H, W, C>.
+        RuntimeError: If shape of the input image is not <H, W> or <H, W, C>.
+
+    Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
+        >>> transforms_list = [vision.Decode(), vision.Posterize(4)]
+        >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
+        ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_posterize
@@ -1800,46 +2257,51 @@ class Posterize(ImageTensorOperation):
 
 class RandAugment(ImageTensorOperation):
     """
-    Apply RandAugment data augmentation method based on
-    `RandAugment: Learning Augmentation Strategies from Data <https://arxiv.org/pdf/1909.13719.pdf>`_ .
-    This operation works only with 3-channel RGB images.
+    Apply RandAugment data augmentation method on the input image.
+
+    Refer to `RandAugment: Learning Augmentation Strategies from Data <https://arxiv.org/pdf/1909.13719.pdf>`_ .
+
+    Only support 3-channel RGB image.
 
     Args:
-        num_ops (int, optional): Number of augmentation transformations to apply sequentially. Default: 2.
-        magnitude (int, optional): Magnitude for all the transformations and its value should be smaller than the value
-            of num_magnitude_bins. Default: 9.
-        num_magnitude_bins (int, optional): The number of different magnitude values. The number of different magnitude
-            values, must be greater than or equal to 2. Default: 31.
-        interpolation (Inter, optional): Image interpolation mode for Resize operation.
-            It can be any of [Inter.NEAREST, Inter.BILINEAR, Inter.BICUBIC, Inter.AREA]. Default: Inter.NEAREST.
-
-            - Inter.NEAREST: means interpolation method is nearest-neighbor interpolation.
-
-            - Inter.BILINEAR: means interpolation method is bilinear interpolation.
-
-            - Inter.BICUBIC: means the interpolation method is bicubic interpolation.
-
-            - Inter.AREA: means the interpolation method is pixel area interpolation.
-
-        fill_value (Union[int, tuple[int, int, int]], optional): Pixel fill value for the area outside the transformed
-            image. It can be an int or a 3-tuple. If it is a 3-tuple, it is used to fill R, G, B channels respectively.
-            If it is an integer, it is used for all RGB channels. The fill_value values must be in range [0, 255].
-            Default: 0.
+        num_ops (int, optional): Number of augmentation transformations to apply sequentially. Default: ``2``.
+        magnitude (int, optional): Magnitude for all the transformations, must be smaller than
+            `num_magnitude_bins`. Default: ``9``.
+        num_magnitude_bins (int, optional): The number of different magnitude values,
+            must be no less than 2. Default: ``31``.
+        interpolation (Inter, optional): Image interpolation method defined by :class:`~.vision.Inter` .
+            Default: ``Inter.NEAREST``.
+        fill_value (Union[int, tuple[int, int, int]], optional): Pixel fill value for the area outside the
+            transformed image, must be in range of [0, 255]. Default: ``0``.
+            If int is provided, pad all RGB channels with this value.
+            If tuple[int, int, int] is provided, pad R, G, B channels respectively.
 
     Raises:
         TypeError: If `num_ops` is not of type int.
+        ValueError: If `num_ops` is negative.
         TypeError: If `magnitude` is not of type int.
+        ValueError: If `magnitude` is not positive.
         TypeError: If `num_magnitude_bins` is not of type int.
-        TypeError: If `interpolation` not of type :class:`mindspore.dataset.vision.Inter` .
-        TypeError: If `fill_value` is not an int or a tuple of length 3.
-        RuntimeError: If given tensor shape is not <H, W, C>.
+        ValueError: If `num_magnitude_bins` is less than 2.
+        TypeError: If `interpolation` not of type :class:`~.vision.Inter` .
+        TypeError: If `fill_value` is not of type int or tuple[int, int, int].
+        ValueError: If `fill_value` is not in range of [0, 255].
+        RuntimeError: If shape of the input image is not <H, W, C>.
 
     Supported Platforms:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.RandAugment()]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list, input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_rand_augment
@@ -1865,10 +2327,10 @@ class RandomAdjustSharpness(ImageTensorOperation):
 
     Args:
         degree (float): Sharpness adjustment degree, which must be non negative.
-            Degree of 0.0 gives a blurred image, degree of 1.0 gives the original image,
-            and degree of 2.0 increases the sharpness by a factor of 2.
+            Degree of ``0.0`` gives a blurred image, degree of ``1.0`` gives the original image,
+            and degree of ``2.0`` increases the sharpness by a factor of 2.
         prob (float, optional): Probability of the image being sharpness adjusted, which
-            must be in range of [0.0, 1.0]. Default: 0.5.
+            must be in range of [0.0, 1.0]. Default: ``0.5``.
 
     Raises:
         TypeError: If `degree` is not of type float.
@@ -1881,9 +2343,17 @@ class RandomAdjustSharpness(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.RandomAdjustSharpness(2.0, 0.5)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_random_adjust_sharpness
@@ -1906,7 +2376,7 @@ class RandomAffine(ImageTensorOperation, PyTensorOperation):
             If `degrees` is a number, the range will be (-degrees, degrees).
             If `degrees` is a sequence, it should be (min, max).
         translate (sequence, optional): Sequence (tx_min, tx_max, ty_min, ty_max) of minimum/maximum translation in
-            x(horizontal) and y(vertical) directions, range [-1.0, 1.0]. Default: None.
+            x(horizontal) and y(vertical) directions, range [-1.0, 1.0]. Default: ``None``.
             The horizontal and vertical shift is selected randomly from the range:
             (tx_min*width, tx_max*width) and (ty_min*height, ty_max*height), respectively.
             If a tuple or list of size 2, then a translate parallel to the X axis in the range of
@@ -1914,9 +2384,9 @@ class RandomAffine(ImageTensorOperation, PyTensorOperation):
             If a tuple or list of size 4, then a translate parallel to the X axis in the range of
             (translate[0], translate[1]) and a translate parallel to the Y axis in the range of
             (translate[2], translate[3]) are applied.
-            If None, no translation is applied.
+            If ``None``, no translation is applied.
         scale (sequence, optional): Scaling factor interval, which must be non negative.
-            Default: None, original scale is used.
+            Default: ``None``, original scale is used.
         shear (Union[float, Sequence[float, float], Sequence[float, float, float, float]], optional):
             Range of shear factor to select from.
             If float is provided, a shearing parallel to X axis with a factor selected from
@@ -1925,28 +2395,19 @@ class RandomAffine(ImageTensorOperation, PyTensorOperation):
             from ( `shear` [0], `shear` [1]) will be applied.
             If Sequence[float, float, float, float] is provided, a shearing parallel to X axis with a factor selected
             from ( `shear` [0], `shear` [1]) and a shearing parallel to Y axis with a factor selected from
-            ( `shear` [2], `shear` [3]) will be applied. Default: None, means no shearing.
-        resample (Inter, optional): An optional resampling filter. Default: Inter.NEAREST.
-            It can be any of [Inter.BILINEAR, Inter.NEAREST, Inter.BICUBIC, Inter.AREA].
-
-            - Inter.BILINEAR, means resample method is bilinear interpolation.
-
-            - Inter.NEAREST, means resample method is nearest-neighbor interpolation.
-
-            - Inter.BICUBIC, means resample method is bicubic interpolation.
-
-            - Inter.AREA, means resample method is pixel area interpolation.
-
+            ( `shear` [2], `shear` [3]) will be applied. Default: ``None``, means no shearing.
+        resample (Inter, optional): Image interpolation method defined by :class:`~.vision.Inter` .
+            Default: ``Inter.NEAREST``.
         fill_value (Union[int, tuple[int]], optional): Optional fill_value to fill the area outside the transform
             in the output image. There must be three elements in tuple and the value of single element is [0, 255].
-            Default: 0, filling is performed.
+            Default: ``0``, filling is performed.
 
     Raises:
         TypeError: If `degrees` is not of type int, float or sequence.
         TypeError: If `translate` is not of type sequence.
         TypeError: If `scale` is not of type sequence.
         TypeError: If `shear` is not of type int, float or sequence.
-        TypeError: If `resample` is not of type :class:`mindspore.dataset.vision.Inter` .
+        TypeError: If `resample` is not of type :class:`~.vision.Inter` .
         TypeError: If `fill_value` is not of type int or tuple[int].
         ValueError: If `degrees` is negative.
         ValueError: If `translate` is not in range [-1.0, 1.0].
@@ -1958,15 +2419,23 @@ class RandomAffine(ImageTensorOperation, PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.vision import Inter
+        >>>
         >>> decode_op = vision.Decode()
         >>> random_affine_op = vision.RandomAffine(degrees=15,
         ...                                        translate=(-0.1, 0.1, 0, 0),
         ...                                        scale=(0.9, 1.1),
         ...                                        resample=Inter.NEAREST)
         >>> transforms_list = [decode_op, random_affine_op]
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_random_affine
@@ -2044,11 +2513,11 @@ class RandomAutoContrast(ImageTensorOperation):
 
     Args:
         cutoff (float, optional): Percent of the lightest and darkest pixels to be cut off from
-            the histogram of the input image. The value must be in range of [0.0, 50.0]. Default: 0.0.
+            the histogram of the input image. The value must be in range of [0.0, 50.0]. Default: ``0.0``.
         ignore (Union[int, sequence], optional): The background pixel values to be ignored, each of
-            which must be in range of [0, 255]. Default: None.
+            which must be in range of [0, 255]. Default: ``None``.
         prob (float, optional): Probability of the image being automatically contrasted, which
-            must be in range of [0.0, 1.0]. Default: 0.5.
+            must be in range of [0.0, 1.0]. Default: ``0.5``.
 
     Raises:
         TypeError: If `cutoff` is not of type float.
@@ -2063,9 +2532,17 @@ class RandomAutoContrast(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.RandomAutoContrast(cutoff=0.0, ignore=None, prob=0.5)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_random_auto_contrast
@@ -2092,7 +2569,7 @@ class RandomColor(ImageTensorOperation, PyTensorOperation):
     Args:
          degrees (Sequence[float], optional): Range of random color adjustment degrees, which must be non-negative.
             It should be in (min, max) format. If min=max, then it is a
-            single fixed magnitude operation. Default: (0.1, 1.9).
+            single fixed magnitude operation. Default: ``(0.1, 1.9)``.
 
     Raises:
         TypeError: If `degrees` is not of type Sequence[float].
@@ -2103,9 +2580,17 @@ class RandomColor(ImageTensorOperation, PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.RandomColor((0.5, 2.0))]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_positive_degrees
@@ -2135,22 +2620,23 @@ class RandomColorAdjust(ImageTensorOperation, PyTensorOperation):
     Randomly adjust the brightness, contrast, saturation, and hue of the input image.
 
     Note:
-        This operation supports running on Ascend or GPU platforms by Offload.
+        This operation is executed on the CPU by default, but it is also supported
+        to be executed on the GPU or Ascend via heterogeneous acceleration.
 
     Args:
-        brightness (Union[float, Sequence[float]], optional): Brightness adjustment factor. Default: (1, 1).
+        brightness (Union[float, Sequence[float]], optional): Brightness adjustment factor. Default: ``(1, 1)``.
             Cannot be negative.
             If it is a float, the factor is uniformly chosen from the range [max(0, 1-brightness), 1+brightness].
             If it is a sequence, it should be [min, max] for the range.
-        contrast (Union[float, Sequence[float]], optional): Contrast adjustment factor. Default: (1, 1).
+        contrast (Union[float, Sequence[float]], optional): Contrast adjustment factor. Default: ``(1, 1)``.
             Cannot be negative.
             If it is a float, the factor is uniformly chosen from the range [max(0, 1-contrast), 1+contrast].
             If it is a sequence, it should be [min, max] for the range.
-        saturation (Union[float, Sequence[float]], optional): Saturation adjustment factor. Default: (1, 1).
+        saturation (Union[float, Sequence[float]], optional): Saturation adjustment factor. Default: ``(1, 1)``.
             Cannot be negative.
             If it is a float, the factor is uniformly chosen from the range [max(0, 1-saturation), 1+saturation].
             If it is a sequence, it should be [min, max] for the range.
-        hue (Union[float, Sequence[float]], optional): Hue adjustment factor. Default: (0, 0).
+        hue (Union[float, Sequence[float]], optional): Hue adjustment factor. Default: ``(0, 0)``.
             If it is a float, the range will be [-hue, hue]. Value should be 0 <= hue <= 0.5.
             If it is a sequence, it should be [min, max] where -0.5 <= min <= max <= 0.5.
 
@@ -2166,9 +2652,13 @@ class RandomColorAdjust(ImageTensorOperation, PyTensorOperation):
         RuntimeError: If given tensor shape is not <H, W, C>.
 
     Supported Platforms:
-        ``CPU``
+        ``CPU`` ``GPU`` ``Ascend``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> decode_op = vision.Decode()
         >>> transform_op = vision.RandomColorAdjust(brightness=(0.5, 1),
         ...                                         contrast=(0.4, 1),
@@ -2176,6 +2666,10 @@ class RandomColorAdjust(ImageTensorOperation, PyTensorOperation):
         >>> transforms_list = [decode_op, transform_op]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_random_color_adjust
@@ -2231,30 +2725,30 @@ class RandomCrop(ImageTensorOperation, PyTensorOperation):
             If size is an integer, a square crop of size (size, size) is returned.
             If size is a sequence of length 2, an image of size (height, width) will be cropped.
         padding (Union[int, Sequence[int]], optional): The number of pixels to pad each border of the image.
-            The padding value(s) must be non-negative. Default: None.
-            If padding is not None, pad image first with padding values.
+            The padding value(s) must be non-negative. Default: ``None``.
+            If `padding` is not ``None``, pad image first with padding values.
             If a single number is provided, pad all borders with this value.
             If a tuple or lists of 2 values are provided, pad the (left and right)
             with the first value and (top and bottom) with the second value.
             If 4 values are provided as a list or tuple,
             pad the left, top, right and bottom respectively.
         pad_if_needed (bool, optional): Pad the image if either side is smaller than
-            the given output size. Default: False.
+            the given output size. Default: ``False``.
         fill_value (Union[int, tuple[int]], optional): The pixel intensity of the borders, only valid for
             padding_mode Border.CONSTANT. If it is a 3-tuple, it is used to fill R, G, B channels respectively.
             If it is an integer, it is used for all RGB channels.
-            The fill_value values must be in range [0, 255]. Default: 0.
-        padding_mode (Border, optional): The method of padding. Default: Border.CONSTANT. It can be any of
-            [Border.CONSTANT, Border.EDGE, Border.REFLECT, Border.SYMMETRIC].
+            The fill_value values must be in range [0, 255]. Default: ``0``.
+        padding_mode (Border, optional): The method of padding. Default: ``Border.CONSTANT``. It can be any of
+            ``Border.CONSTANT``, ``Border.EDGE``, ``Border.REFLECT``, ``Border.SYMMETRIC``.
 
-            - Border.CONSTANT, means it fills the border with constant values.
+            - ``Border.CONSTANT`` , means it fills the border with constant values.
 
-            - Border.EDGE, means it pads with the last value on the edge.
+            - ``Border.EDGE`` , means it pads with the last value on the edge.
 
-            - Border.REFLECT, means it reflects the values on the edge omitting the last
+            - ``Border.REFLECT`` , means it reflects the values on the edge omitting the last
               value of edge.
 
-            - Border.SYMMETRIC, means it reflects the values on the edge repeating the last
+            - ``Border.SYMMETRIC`` , means it reflects the values on the edge repeating the last
               value of edge.
 
     Raises:
@@ -2266,18 +2760,26 @@ class RandomCrop(ImageTensorOperation, PyTensorOperation):
         ValueError: If `size` is not positive.
         ValueError: If `padding` is negative.
         ValueError: If `fill_value` is not in range [0, 255].
-        RuntimeError: If given tensor shape is not <H, W> or <H, W, C>.
+        RuntimeError: If given tensor shape is not <H, W> or <..., H, W, C>.
 
     Supported Platforms:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.vision import Border
+        >>>
         >>> decode_op = vision.Decode()
         >>> random_crop_op = vision.RandomCrop(512, [200, 200, 200, 200], padding_mode=Border.EDGE)
         >>> transforms_list = [decode_op, random_crop_op]
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_random_crop
@@ -2326,31 +2828,19 @@ class RandomCropDecodeResize(ImageTensorOperation):
             If size is an integer, a square crop of size (size, size) is returned.
             If size is a sequence of length 2, it should be (height, width).
         scale (Union[list, tuple], optional): Range [min, max) of respective size of the
-            original size to be cropped, which must be non-negative. Default: (0.08, 1.0).
+            original size to be cropped, which must be non-negative. Default: ``(0.08, 1.0)``.
         ratio (Union[list, tuple], optional): Range [min, max) of aspect ratio to be
-            cropped, which must be non-negative. Default: (3. / 4., 4. / 3.).
-        interpolation (Inter, optional): Image interpolation mode for resize operation. Default: Inter.BILINEAR.
-            It can be any of [Inter.BILINEAR, Inter.NEAREST, Inter.BICUBIC, Inter.AREA, Inter.PILCUBIC].
-
-            - Inter.BILINEAR, means interpolation method is bilinear interpolation.
-
-            - Inter.NEAREST, means interpolation method is nearest-neighbor interpolation.
-
-            - Inter.BICUBIC, means interpolation method is bicubic interpolation.
-
-            - Inter.AREA, means interpolation method is pixel area interpolation.
-
-            - Inter.PILCUBIC, means interpolation method is bicubic interpolation like implemented in pillow, input
-              should be in 3 channels format.
-
-        max_attempts (int, optional): The maximum number of attempts to propose a valid crop_area. Default: 10.
-            If exceeded, fall back to use center_crop instead. The max_attempts value must be positive.
+            cropped, which must be non-negative. Default: ``(3. / 4., 4. / 3.)``.
+        interpolation (Inter, optional): Image interpolation method defined by :class:`~.vision.Inter` .
+            Default: ``Inter.BILINEAR``.
+        max_attempts (int, optional): The maximum number of attempts to propose a valid crop_area. Default: ``10``.
+            If exceeded, fall back to use center_crop instead. The `max_attempts` value must be positive.
 
     Raises:
         TypeError: If `size` is not of type int or Sequence[int].
         TypeError: If `scale` is not of type tuple.
         TypeError: If `ratio` is not of type tuple.
-        TypeError: If `interpolation` is not of type :class:`mindspore.dataset.vision.Inter` .
+        TypeError: If `interpolation` is not of type :class:`~.vision.Inter` .
         TypeError: If `max_attempts` is not of type integer.
         ValueError: If `size` is not positive.
         ValueError: If `scale` is negative.
@@ -2362,14 +2852,22 @@ class RandomCropDecodeResize(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.vision import Inter
+        >>>
         >>> resize_crop_decode_op = vision.RandomCropDecodeResize(size=(50, 75),
         ...                                                       scale=(0.25, 0.5),
         ...                                                       interpolation=Inter.NEAREST,
         ...                                                       max_attempts=5)
         >>> transforms_list = [resize_crop_decode_op]
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_random_resize_crop
@@ -2409,37 +2907,31 @@ class RandomCropWithBBox(ImageTensorOperation):
             If size is an integer, a square crop of size (size, size) is returned.
             If size is a sequence of length 2, an image of size (height, width) will be cropped.
         padding (Union[int, Sequence[int]], optional): The number of pixels to pad the image
-            The padding value(s) must be non-negative. Default: None.
-            If padding is not None, first pad image with padding values.
+            The padding value(s) must be non-negative. Default: ``None``.
+            If `padding` is not ``None``, first pad image with padding values.
             If a single number is provided, pad all borders with this value.
             If a tuple or lists of 2 values are provided, pad the (left and right)
             with the first value and (top and bottom) with the second value.
             If 4 values are provided as a list or tuple, pad the left, top, right and bottom respectively.
         pad_if_needed (bool, optional): Pad the image if either side is smaller than
-            the given output size. Default: False.
+            the given output size. Default: ``False``.
         fill_value (Union[int, tuple[int]], optional): The pixel intensity of the borders, only valid for
             padding_mode Border.CONSTANT. If it is a 3-tuple, it is used to fill R, G, B channels respectively.
             If it is an integer, it is used for all RGB channels.
-            The fill_value values must be in range [0, 255]. Default: 0.
-        padding_mode (Border, optional): The method of padding. Default: Border.CONSTANT. It can be any of
-            [Border.CONSTANT, Border.EDGE, Border.REFLECT, Border.SYMMETRIC].
+            The fill_value values must be in range [0, 255]. Default: ``0``.
+        padding_mode (Border, optional): The method of padding. Default: ``Border.CONSTANT``. It can be any of
+            ``Border.CONSTANT``, ``Border.EDGE``, ``Border.REFLECT``, ``Border.SYMMETRIC``.
 
-            - Border.CONSTANT, means it fills the border with constant values.
+            - ``Border.CONSTANT`` , means it fills the border with constant values.
 
-            - Border.EDGE, means it pads with the last value on the edge.
+            - ``Border.EDGE`` , means it pads with the last value on the edge.
 
-            - Border.REFLECT, means it reflects the values on the edge omitting the last
+            - ``Border.REFLECT`` , means it reflects the values on the edge omitting the last
               value of edge.
 
-            - Border.SYMMETRIC, means it reflects the values on the edge repeating the last
+            - ``Border.SYMMETRIC`` , means it reflects the values on the edge repeating the last
 
               value of edge.
-
-    Note:
-        The behavior when `padding` is a sequence of length 2 will change from padding left/top with
-        the first value and right/bottom with the second, to padding left/right with the first one
-        and top/bottom with the second in the future. Or you can pass in a 4-element sequence to specify
-        left, top, right and bottom respectively.
 
     Raises:
         TypeError: If `size` is not of type int or Sequence[int].
@@ -2456,11 +2948,19 @@ class RandomCropWithBBox(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> decode_op = vision.Decode()
         >>> random_crop_with_bbox_op = vision.RandomCropWithBBox([512, 512], [200, 200, 200, 200])
         >>> transforms_list = [decode_op, random_crop_with_bbox_op]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_random_crop
@@ -2495,7 +2995,7 @@ class RandomEqualize(ImageTensorOperation):
 
     Args:
         prob (float, optional): Probability of the image being equalized, which
-            must be in range of [0.0, 1.0]. Default: 0.5.
+            must be in range of [0.0, 1.0]. Default: ``0.5``.
 
     Raises:
         TypeError: If `prob` is not of type float.
@@ -2506,9 +3006,17 @@ class RandomEqualize(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.RandomEqualize(0.5)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_prob
@@ -2529,20 +3037,20 @@ class RandomErasing(PyTensorOperation):
 
     Args:
         prob (float, optional): Probability of performing erasing, which
-            must be in range of [0.0, 1.0]. Default: 0.5.
+            must be in range of [0.0, 1.0]. Default: ``0.5``.
         scale (Sequence[float, float], optional): Range of area scale of the erased area relative
             to the original image to select from, arranged in order of (min, max).
-            Default: (0.02, 0.33).
+            Default: ``(0.02, 0.33)``.
         ratio (Sequence[float, float], optional): Range of aspect ratio of the erased area to select
-            from, arraged in order of (min, max). Default: (0.3, 3.3).
+            from, arraged in order of (min, max). Default: ``(0.3, 3.3)``.
         value (Union[int, str, Sequence[int, int, int]]): Pixel value used to pad the erased area.
             If a single integer is provided, it will be used for all RGB channels.
             If a sequence of length 3 is provided, it will be used for R, G, B channels respectively.
-            If a string of 'random' is provided, each pixel will be erased with a random value obtained
-            from a standard normal distribution. Default: 0.
-        inplace (bool, optional): Whether to apply erasing inplace. Default: False.
+            If a string of ``'random'`` is provided, each pixel will be erased with a random value obtained
+            from a standard normal distribution. Default: ``0``.
+        inplace (bool, optional): Whether to apply erasing inplace. Default: ``False``.
         max_attempts (int, optional): The maximum number of attempts to propose a valid
-            erased area, beyond which the original image will be returned. Default: 10.
+            erased area, beyond which the original image will be returned. Default: ``10``.
 
     Raises:
         TypeError: If `prob` is not of type float.
@@ -2561,14 +3069,21 @@ class RandomErasing(PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.transforms import Compose
         >>>
         >>> transforms_list = Compose([vision.Decode(to_pil=True),
         ...                            vision.ToTensor(),
         ...                            vision.RandomErasing(value='random')])
         >>> # apply the transform to dataset through map function
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns="image")
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_random_erasing
@@ -2587,7 +3102,7 @@ class RandomErasing(PyTensorOperation):
         Execute method.
 
         Args:
-            np_img (numpy.ndarray): image in shape of (C, H, W) to be randomly erased.
+            np_img (numpy.ndarray): image in shape of <C, H, W> to be randomly erased.
 
         Returns:
             numpy.ndarray, erased image.
@@ -2606,7 +3121,7 @@ class RandomGrayscale(PyTensorOperation):
 
     Args:
         prob (float, optional): Probability of performing grayscale conversion,
-            which must be in range of [0.0, 1.0]. Default: 0.1.
+            which must be in range of [0.0, 1.0]. Default: ``0.1``.
 
     Raises:
         TypeError: If `prob` is not of type float.
@@ -2616,14 +3131,21 @@ class RandomGrayscale(PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.transforms import Compose
         >>>
         >>> transforms_list = Compose([vision.Decode(to_pil=True),
         ...                            vision.RandomGrayscale(0.3),
         ...                            vision.ToTensor()])
         >>> # apply the transform to dataset through map function
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns="image")
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_prob
@@ -2660,7 +3182,7 @@ class RandomHorizontalFlip(ImageTensorOperation, PyTensorOperation):
 
     Args:
         prob (float, optional): Probability of the image being flipped,
-            which must be in range of [0.0, 1.0]. Default: 0.5.
+            which must be in range of [0.0, 1.0]. Default: ``0.5``.
 
     Raises:
         TypeError: If `prob` is not of type float.
@@ -2671,9 +3193,17 @@ class RandomHorizontalFlip(ImageTensorOperation, PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.RandomHorizontalFlip(0.75)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_prob
@@ -2699,11 +3229,11 @@ class RandomHorizontalFlip(ImageTensorOperation, PyTensorOperation):
 
 class RandomHorizontalFlipWithBBox(ImageTensorOperation):
     """
-    Flip the input image horizontally randomly with a given probability and adjust bounding boxes accordingly.
+    Randomly flip the input image and its bounding box horizontally with a given probability.
 
     Args:
         prob (float, optional): Probability of the image being flipped,
-            which must be in range of [0.0, 1.0]. Default: 0.5.
+            which must be in range of [0.0, 1.0]. Default: ``0.5``.
 
     Raises:
         TypeError: If `prob` is not of type float.
@@ -2714,9 +3244,17 @@ class RandomHorizontalFlipWithBBox(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.RandomHorizontalFlipWithBBox(0.70)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_prob
@@ -2735,7 +3273,7 @@ class RandomInvert(ImageTensorOperation):
 
     Args:
         prob (float, optional): Probability of the image being inverted,
-            which must be in range of [0.0, 1.0]. Default: 0.5.
+            which must be in range of [0.0, 1.0]. Default: ``0.5``.
 
     Raises:
         TypeError: If `prob` is not of type float.
@@ -2746,9 +3284,17 @@ class RandomInvert(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.RandomInvert(0.5)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_prob
@@ -2767,7 +3313,7 @@ class RandomLighting(ImageTensorOperation, PyTensorOperation):
     calculated from the imagenet dataset.
 
     Args:
-        alpha (float, optional): Intensity of the image, which must be non-negative. Default: 0.05.
+        alpha (float, optional): Intensity of the image, which must be non-negative. Default: ``0.05``.
 
     Raises:
         TypeError: If `alpha` is not of type float.
@@ -2778,9 +3324,17 @@ class RandomLighting(ImageTensorOperation, PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.RandomLighting(0.1)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_alpha
@@ -2810,20 +3364,16 @@ class RandomPerspective(PyTensorOperation):
     Randomly apply perspective transformation to the input PIL Image with a given probability.
 
     Args:
-        distortion_scale (float, optional): Scale of distortion, in range of [0.0, 1.0]. Default: 0.5.
+        distortion_scale (float, optional): Scale of distortion, in range of [0.0, 1.0]. Default: ``0.5``.
         prob (float, optional): Probability of performing perspective transformation, which
-            must be in range of [0.0, 1.0]. Default: 0.5.
-        interpolation (Inter, optional): Method of interpolation. It can be Inter.BILINEAR,
-            Inter.NEAREST or Inter.BICUBIC. Default: Inter.BICUBIC.
-
-            - Inter.BILINEAR, bilinear interpolation.
-            - Inter.NEAREST, nearest-neighbor interpolation.
-            - Inter.BICUBIC, bicubic interpolation.
+            must be in range of [0.0, 1.0]. Default: ``0.5``.
+        interpolation (Inter, optional): Image interpolation method defined by :class:`~.vision.Inter` .
+            Default: ``Inter.BICUBIC``.
 
     Raises:
         TypeError: If `distortion_scale` is not of type float.
         TypeError: If `prob` is not of type float.
-        TypeError: If `interpolation` is not of type :class:`mindspore.dataset.vision.Inter` .
+        TypeError: If `interpolation` is not of type :class:`~.vision.Inter` .
         ValueError: If `distortion_scale` is not in range of [0.0, 1.0].
         ValueError: If `prob` is not in range of [0.0, 1.0].
 
@@ -2831,14 +3381,21 @@ class RandomPerspective(PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.transforms import Compose
         >>>
         >>> transforms_list = Compose([vision.Decode(to_pil=True),
         ...                            vision.RandomPerspective(prob=0.1),
         ...                            vision.ToTensor()])
         >>> # apply the transform to dataset through map function
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns="image")
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_random_perspective
@@ -2870,6 +3427,9 @@ class RandomPerspective(PyTensorOperation):
 
 class RandomPosterize(ImageTensorOperation):
     """
+    Reduce the bit depth of the color channels of image with a given probability
+    to create a high contrast and vivid color image.
+
     Reduce the number of bits for each color channel to posterize the input image randomly with a given probability.
 
     Args:
@@ -2877,7 +3437,7 @@ class RandomPosterize(ImageTensorOperation):
             Bits values must be in range of [1,8], and include at
             least one integer value in the given range. It must be in
             (min, max) or integer format. If min=max, then it is a single fixed
-            magnitude operation. Default: (8, 8).
+            magnitude operation. Default: ``(8, 8)``.
 
     Raises:
         TypeError: If `bits` is not of type integer or sequence of integer.
@@ -2888,9 +3448,17 @@ class RandomPosterize(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.RandomPosterize((6, 8))]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_random_posterize
@@ -2909,7 +3477,7 @@ class RandomPosterize(ImageTensorOperation):
 class RandomResizedCrop(ImageTensorOperation, PyTensorOperation):
     """
     This operation will crop the input image randomly,
-    and resize the cropped image using a selected interpolation mode :class:`mindspore.dataset.vision.Inter` .
+    and resize the cropped image using a selected interpolation mode :class:`~.vision.Inter` .
 
     Note:
         If the input image is more than one, then make sure that the image size is the same.
@@ -2919,51 +3487,44 @@ class RandomResizedCrop(ImageTensorOperation, PyTensorOperation):
             If size is an integer, a square of size (size, size) will be cropped with this value.
             If size is a sequence of length 2, an image of size (height, width) will be cropped.
         scale (Union[list, tuple], optional): Range [min, max) of respective size of the original
-            size to be cropped, which must be non-negative. Default: (0.08, 1.0).
+            size to be cropped, which must be non-negative. Default: ``(0.08, 1.0)``.
         ratio (Union[list, tuple], optional): Range [min, max) of aspect ratio to be
-            cropped, which must be non-negative. Default: (3. / 4., 4. / 3.).
-        interpolation (Inter, optional): Method of interpolation. Default: Inter.BILINEAR.
-            It can be any of [Inter.BILINEAR, Inter.NEAREST, Inter.BICUBIC, Inter.AREA, Inter.PILCUBIC].
-
-            - Inter.BILINEAR, means interpolation method is bilinear interpolation.
-
-            - Inter.NEAREST, means interpolation method is nearest-neighbor interpolation.
-
-            - Inter.BICUBIC, means interpolation method is bicubic interpolation.
-
-            - Inter.AREA, means interpolation method is pixel area interpolation.
-
-            - Inter.PILCUBIC, means interpolation method is bicubic interpolation like implemented in pillow, input
-              should be in 3 channels format.
-
-            - Inter.ANTIALIAS, means the interpolation method is antialias interpolation.
-
+            cropped, which must be non-negative. Default: ``(3. / 4., 4. / 3.)``.
+        interpolation (Inter, optional): Image interpolation method defined by :class:`~.vision.Inter` .
+            Default: ``Inter.BILINEAR``.
         max_attempts (int, optional): The maximum number of attempts to propose a valid
-            crop_area. Default: 10. If exceeded, fall back to use center_crop instead.
+            crop_area. Default: ``10``. If exceeded, fall back to use center_crop instead.
 
     Raises:
         TypeError: If `size` is not of type int or Sequence[int].
         TypeError: If `scale` is not of type tuple or list.
         TypeError: If `ratio` is not of type tuple or list.
-        TypeError: If `interpolation` is not of type :class:`mindspore.dataset.vision.Inter` .
+        TypeError: If `interpolation` is not of type :class:`~.vision.Inter` .
         TypeError: If `max_attempts` is not of type int.
         ValueError: If `size` is not positive.
         ValueError: If `scale` is negative.
         ValueError: If `ratio` is negative.
         ValueError: If `max_attempts` is not positive.
-        RuntimeError: If given tensor shape is not <H, W> or <..., H, W, C>.
 
     Supported Platforms:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.vision import Inter
+        >>>
         >>> decode_op = vision.Decode()
         >>> resize_crop_op = vision.RandomResizedCrop(size=(50, 75), scale=(0.25, 0.5),
         ...                                           interpolation=Inter.BILINEAR)
         >>> transforms_list = [decode_op, resize_crop_op]
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_random_resize_crop
@@ -3013,20 +3574,13 @@ class RandomResizedCropWithBBox(ImageTensorOperation):
             If size is an integer, a square crop of size (size, size) is returned.
             If size is a sequence of length 2, it should be (height, width).
         scale (Union[list, tuple], optional): Range (min, max) of respective size of the original
-            size to be cropped, which must be non-negative. Default: (0.08, 1.0).
+            size to be cropped, which must be non-negative. Default: ``(0.08, 1.0)``.
         ratio (Union[list, tuple], optional): Range (min, max) of aspect ratio to be
-            cropped, which must be non-negative. Default: (3. / 4., 4. / 3.).
-        interpolation (Inter, optional): Image interpolation mode. Default: Inter.BILINEAR.
-            It can be any of [Inter.BILINEAR, Inter.NEAREST, Inter.BICUBIC].
-
-            - Inter.BILINEAR, means interpolation method is bilinear interpolation.
-
-            - Inter.NEAREST, means interpolation method is nearest-neighbor interpolation.
-
-            - Inter.BICUBIC, means interpolation method is bicubic interpolation.
-
+            cropped, which must be non-negative. Default: ``(3. / 4., 4. / 3.)``.
+        interpolation (Inter, optional): Image interpolation method defined by :class:`~.vision.Inter` .
+            Default: ``Inter.BILINEAR``.
         max_attempts (int, optional): The maximum number of attempts to propose a valid
-            crop area. Default: 10. If exceeded, fall back to use center crop instead.
+            crop area. Default: ``10``. If exceeded, fall back to use center crop instead.
 
     Raises:
         TypeError: If `size` is not of type int or Sequence[int].
@@ -3044,12 +3598,20 @@ class RandomResizedCropWithBBox(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.vision import Inter
+        >>>
         >>> decode_op = vision.Decode()
         >>> bbox_op = vision.RandomResizedCropWithBBox(size=50, interpolation=Inter.NEAREST)
         >>> transforms_list = [decode_op, bbox_op]
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_random_resize_crop
@@ -3072,7 +3634,7 @@ class RandomResizedCropWithBBox(ImageTensorOperation):
 
 class RandomResize(ImageTensorOperation):
     """
-    Resize the input image using :class:`mindspore.dataset.vision.Inter` , a randomly selected interpolation mode.
+    Resize the input image using :class:`~.vision.Inter` , a randomly selected interpolation mode.
 
     Args:
         size (Union[int, Sequence[int]]): The output size of the resized image. The size value(s) must be positive.
@@ -3089,14 +3651,22 @@ class RandomResize(ImageTensorOperation):
         ``CPU``
 
     Examples:
-        >>> # randomly resize image, keeping aspect ratio
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
+        >>> # 1) randomly resize image, keeping aspect ratio
         >>> transforms_list1 = [vision.Decode(), vision.RandomResize(50)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list1,
         ...                                                 input_columns=["image"])
-        >>> # randomly resize image to landscape style
+        >>> # 2) randomly resize image to landscape style
         >>> transforms_list2 = [vision.Decode(), vision.RandomResize((40, 60))]
-        >>> image_folder_dataset_1 = image_folder_dataset_1.map(operations=transforms_list2,
-        ...                                                     input_columns=["image"])
+        >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list2,
+        ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_resize
@@ -3115,7 +3685,7 @@ class RandomResize(ImageTensorOperation):
 class RandomResizeWithBBox(ImageTensorOperation):
     """
     Tensor operation to resize the input image
-    using a randomly selected interpolation mode :class:`mindspore.dataset.vision.Inter` and adjust
+    using a randomly selected interpolation mode :class:`~.vision.Inter` and adjust
     bounding boxes accordingly.
 
     Args:
@@ -3133,14 +3703,24 @@ class RandomResizeWithBBox(ImageTensorOperation):
         ``CPU``
 
     Examples:
-        >>> # randomly resize image with bounding boxes, keeping aspect ratio
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
+        >>>
+        >>> # 1) randomly resize image with bounding boxes, keeping aspect ratio
         >>> transforms_list1 = [vision.Decode(), vision.RandomResizeWithBBox(60)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list1,
         ...                                                 input_columns=["image"])
-        >>> # randomly resize image with bounding boxes to portrait style
+        >>>
+        >>> # 2) randomly resize image with bounding boxes to portrait style
         >>> transforms_list2 = [vision.Decode(), vision.RandomResizeWithBBox((80, 60))]
-        >>> image_folder_dataset_1 = image_folder_dataset_1.map(operations=transforms_list2,
-        ...                                                     input_columns=["image"])
+        >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list2,
+        ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_resize
@@ -3164,27 +3744,18 @@ class RandomRotation(ImageTensorOperation, PyTensorOperation):
         degrees (Union[int, float, sequence]): Range of random rotation degrees.
             If `degrees` is a number, the range will be converted to (-degrees, degrees).
             If `degrees` is a sequence, it should be (min, max).
-        resample (Inter, optional): An optional resampling filter. Default: Inter.NEAREST.
-            It can be any of [Inter.BILINEAR, Inter.NEAREST, Inter.BICUBIC, Inter.AREA].
-
-            - Inter.BILINEAR, means resample method is bilinear interpolation.
-
-            - Inter.NEAREST, means resample method is nearest-neighbor interpolation.
-
-            - Inter.BICUBIC, means resample method is bicubic interpolation.
-
-            - Inter.AREA, means the interpolation method is pixel area interpolation.
-
-        expand (bool, optional):  Optional expansion flag. Default: False. If set to True, expand the output
-            image to make it large enough to hold the entire rotated image.
-            If set to False or omitted, make the output image the same size as the input.
+        resample (Inter, optional): Image interpolation method defined by :class:`~.vision.Inter` .
+            Default: ``Inter.NEAREST``.
+        expand (bool, optional):  Optional expansion flag. Default: ``False``. If set to ``True``,
+            expand the output image to make it large enough to hold the entire rotated image.
+            If set to ``False`` or omitted, make the output image the same size as the input.
             Note that the expand flag assumes rotation around the center and no translation.
-        center (tuple, optional): Optional center of rotation (a 2-tuple). Default: None.
-            Origin is the top left corner. None sets to the center of the image.
+        center (tuple, optional): Optional center of rotation (a 2-tuple). Default: ``None``.
+            Origin is the top left corner. ``None`` sets to the center of the image.
         fill_value (Union[int, tuple[int]], optional): Optional fill color for the area outside the rotated image.
             If it is a 3-tuple, it is used to fill R, G, B channels respectively.
             If it is an integer, it is used for all RGB channels.
-            The fill_value values must be in range [0, 255]. Default: 0.
+            The fill_value values must be in range [0, 255]. Default: ``0``.
 
     Raises:
         TypeError: If `degrees` is not of type integer, float or sequence.
@@ -3199,13 +3770,21 @@ class RandomRotation(ImageTensorOperation, PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.vision import Inter
+        >>>
         >>> transforms_list = [vision.Decode(),
         ...                    vision.RandomRotation(degrees=5.0,
         ...                    resample=Inter.NEAREST,
         ...                    expand=True)]
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_random_rotation
@@ -3276,6 +3855,10 @@ class RandomSelectSubpolicy(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> policy = [[(vision.RandomRotation((45, 45)), 0.5),
         ...            (vision.RandomVerticalFlip(), 1),
         ...            (vision.RandomColorAdjust(), 0.8)],
@@ -3283,6 +3866,10 @@ class RandomSelectSubpolicy(ImageTensorOperation):
         ...            (vision.RandomColorAdjust(), 0.2)]]
         >>> image_folder_dataset = image_folder_dataset.map(operations=vision.RandomSelectSubpolicy(policy),
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_random_select_subpolicy_op
@@ -3312,7 +3899,7 @@ class RandomSharpness(ImageTensorOperation, PyTensorOperation):
     Args:
         degrees (Union[list, tuple], optional): Range of random sharpness adjustment degrees,
             which must be non-negative. It should be in (min, max) format. If min=max, then
-            it is a single fixed magnitude operation. Default: (0.1, 1.9).
+            it is a single fixed magnitude operation. Default: ``(0.1, 1.9)``.
 
     Raises:
         TypeError : If `degrees` is not a list or a tuple.
@@ -3323,9 +3910,17 @@ class RandomSharpness(ImageTensorOperation, PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.RandomSharpness(degrees=(0.2, 1.9))]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_positive_degrees
@@ -3356,7 +3951,7 @@ class RandomSolarize(ImageTensorOperation):
     the subrange to (255 - pixel).
 
     Args:
-        threshold (tuple, optional): Range of random solarize threshold. Default: (0, 255).
+        threshold (tuple, optional): Range of random solarize threshold. Default: ``(0, 255)``.
             Threshold values should always be in (min, max) format,
             where min and max are integers in the range [0, 255], and min <= max.
             If min=max, then invert all pixel values above min(max).
@@ -3369,9 +3964,17 @@ class RandomSolarize(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.RandomSolarize(threshold=(10,100))]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_random_solarize
@@ -3390,7 +3993,7 @@ class RandomVerticalFlip(ImageTensorOperation, PyTensorOperation):
 
     Args:
         prob (float, optional): Probability of the image being flipped, which
-            must be in range of [0.0, 1.0]. Default: 0.5.
+            must be in range of [0.0, 1.0]. Default: ``0.5``.
 
     Raises:
         TypeError: If `prob` is not of type float.
@@ -3401,9 +4004,17 @@ class RandomVerticalFlip(ImageTensorOperation, PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.RandomVerticalFlip(0.25)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_prob
@@ -3433,7 +4044,7 @@ class RandomVerticalFlipWithBBox(ImageTensorOperation):
 
     Args:
         prob (float, optional): Probability of the image being flipped,
-            which must be in range of [0.0, 1.0]. Default: 0.5.
+            which must be in range of [0.0, 1.0]. Default: ``0.5``.
 
     Raises:
         TypeError: If `prob` is not of type float.
@@ -3444,9 +4055,17 @@ class RandomVerticalFlipWithBBox(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.RandomVerticalFlipWithBBox(0.20)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_prob
@@ -3465,7 +4084,8 @@ class Rescale(ImageTensorOperation):
     with: output = image * rescale + shift.
 
     Note:
-        This operation supports running on Ascend or GPU platforms by Offload.
+        This operation is executed on the CPU by default, but it is also supported
+        to be executed on the GPU or Ascend via heterogeneous acceleration.
 
     Args:
         rescale (float): Rescale factor.
@@ -3476,12 +4096,20 @@ class Rescale(ImageTensorOperation):
         TypeError: If `shift` is not of type float.
 
     Supported Platforms:
-        ``CPU`` ``Ascend`` ``GPU``
+        ``CPU`` ``GPU`` ``Ascend``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.Rescale(1.0 / 255.0, -1.0)]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_rescale
@@ -3497,42 +4125,40 @@ class Rescale(ImageTensorOperation):
 
 class Resize(ImageTensorOperation, PyTensorOperation):
     """
-    Resize the input image to the given size with a given interpolation mode :class:`mindspore.dataset.vision.Inter` .
+    Resize the input image to the given size with a given interpolation mode :class:`~.vision.Inter` .
 
     Args:
         size (Union[int, Sequence[int]]): The output size of the resized image. The size value(s) must be positive.
             If size is an integer, the smaller edge of the image will be resized to this value with
             the same image aspect ratio.
             If size is a sequence of length 2, it should be (height, width).
-        interpolation (Inter, optional): Image interpolation mode. Default: Inter.BILINEAR.
-            It can be any of [Inter.BILINEAR, Inter.LINEAR, Inter.NEAREST, Inter.BICUBIC, Inter.AREA, Inter.PILCUBIC,
-            Inter.ANTIALIAS].
-
-            - Inter.BILINEAR, bilinear interpolation.
-            - Inter.LINEAR, bilinear interpolation, here is the same as Inter.BILINEAR.
-            - Inter.NEAREST, nearest-neighbor interpolation.
-            - Inter.BICUBIC, bicubic interpolation.
-            - Inter.AREA, pixel area interpolation.
-            - Inter.PILCUBIC, bicubic interpolation like implemented in Pillow, only valid when the input is
-              a 3-channel image in the numpy.ndarray format.
-            - Inter.ANTIALIAS, antialias interpolation.
+        interpolation (Inter, optional): Image interpolation method defined by :class:`~.vision.Inter` .
+            Default: ``Inter.LINEAR``.
 
     Raises:
         TypeError: If `size` is not of type int or Sequence[int].
-        TypeError: If `interpolation` is not of type Inter.
+        TypeError: If `interpolation` is not of type :class:`~.vision.Inter` .
         ValueError: If `size` is not positive.
         RuntimeError: If given tensor shape is not <H, W> or <H, W, C>.
 
     Supported Platforms:
-        ``CPU``
+        ``CPU`` ``Ascend``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.vision import Inter
+        >>>
         >>> decode_op = vision.Decode()
         >>> resize_op = vision.Resize([100, 75], Inter.BICUBIC)
         >>> transforms_list = [decode_op, resize_op]
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_resize_interpolation
@@ -3549,10 +4175,48 @@ class Resize(ImageTensorOperation, PyTensorOperation):
             self.implementation = Implementation.PY
         self.random = False
 
+    @check_device_target
+    def device(self, device_target="CPU"):
+        """
+        Set the device for the current operator execution.
+
+        Args:
+            device_target (str, optional): The operator will be executed on this device. Currently supports
+                ``CPU`` . Default: ``CPU`` .
+
+        Raises:
+            TypeError: If `device_target` is not of type str.
+            ValueError: If `device_target` is not ``CPU`` .
+
+        Supported Platforms:
+            ``CPU``
+
+        Examples:
+            >>> import mindspore.dataset as ds
+            >>> import mindspore.dataset.vision as vision
+            >>> from mindspore.dataset.vision import Inter
+            >>>
+            >>> decode_op = vision.Decode()
+            >>> resize_op = vision.Resize([100, 75], Inter.BICUBIC).device("Ascend")
+            >>> transforms_list = [decode_op, resize_op]
+            >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
+            >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
+            ...                                                 input_columns=["image"])
+
+        Tutorial Examples:
+            - `Illustration of vision transforms
+              <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
+        """
+        self.device_target = device_target
+        if self.interpolation == Inter.ANTIALIAS and self.device_target == "Ascend":
+            raise ValueError("The current InterpolationMode is not supported by DVPP. It is {}."
+                             .format(self.interpolation))
+        return self
+
     def parse(self):
         if self.interpolation == Inter.ANTIALIAS:
-            raise TypeError("Current Interpolation is not supported with NumPy input.")
-        return cde.ResizeOperation(self.c_size, Inter.to_c_type(self.interpolation))
+            raise TypeError("The current InterpolationMode is not supported with NumPy input.")
+        return cde.ResizeOperation(self.c_size, Inter.to_c_type(self.interpolation), self.device_target)
 
     def _execute_py(self, img):
         """
@@ -3571,47 +4235,50 @@ class Resize(ImageTensorOperation, PyTensorOperation):
 
 class ResizedCrop(ImageTensorOperation):
     """
-    Crop the input image at a specific location, and resize the cropped image using a selected interpolation mode.
+    Crop the input image at a specific region and resize it to desired size.
 
     Args:
-        top (int): Horizontal ordinate of the upper left corner of the crop image.
-        left (int): Vertical ordinate of the upper left corner of the crop image.
-        height (int): Height of cropped image.
-        width (int): Width of cropped image.
-        size (Union[int, Sequence[int]]): The output size of the resized image. The size value(s) must be positive.
-            If size is an integer, a square of size (size, size) will be cropped with this value.
-            If size is a sequence of length 2, an image of size (height, width) will be cropped.
-        interpolation (Inter, optional): Image interpolation mode. Default: Inter.LINEAR.
-            It can be any of [Inter.LINEAR, Inter.NEAREST, Inter.BICUBIC, Inter.AREA, Inter.PILCUBIC].
-
-            - Inter.LINEAR, means interpolation method is bilinear interpolation.
-
-            - Inter.NEAREST, means interpolation method is nearest-neighbor interpolation.
-
-            - Inter.BICUBIC, means interpolation method is bicubic interpolation.
-
-            - Inter.AREA, means interpolation method is pixel area interpolation.
-
-            - Inter.PILCUBIC, means interpolation method is bicubic interpolation like implemented in pillow, input
-              should be in 3 channels format.
+        top (int): Horizontal ordinate of the upper left corner of the crop region.
+        left (int): Vertical ordinate of the upper left corner of the crop region.
+        height (int): Height of the crop region.
+        width (int): Width of the cropp region.
+        size (Union[int, Sequence[int, int]]): The size of the output image.
+            If int is provided, the smaller edge of the image will be resized to this value,
+            keeping the image aspect ratio the same.
+            If Sequence[int, int] is provided, it should be (height, width).
+        interpolation (Inter, optional): Image interpolation method defined by :class:`~.vision.Inter` .
+            Default: ``Inter.BILINEAR``.
 
     Raises:
         TypeError: If `top` is not of type int.
+        ValueError: If `top` is negative.
         TypeError: If `left` is not of type int.
+        ValueError: If `left` is negative.
         TypeError: If `height` is not of type int.
+        ValueError: If `height` is not positive.
         TypeError: If `width` is not of type int.
-        TypeError: If `size` is not of type int or Sequence[int].
-        TypeError: If `interpolation` is not of type :class:`mindspore.dataset.vision.Inter` .
-        RuntimeError: If given tensor shape is not <H, W> or <H, W, C>.
+        ValueError: If `width` is not positive.
+        TypeError: If `size` is not of type int or Sequence[int, int].
+        ValueError: If `size` is not posotive.
+        TypeError: If `interpolation` is not of type :class:`~.vision.Inter` .
+        RuntimeError: If shape of the input image is not <H, W> or <H, W, C>.
 
     Supported Platforms:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.vision import Inter
+        >>>
         >>> transforms_list = [vision.Decode(), vision.ResizedCrop(0, 0, 128, 128, (100, 75), Inter.BILINEAR)]
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_resized_crop
@@ -3642,18 +4309,12 @@ class ResizeWithBBox(ImageTensorOperation):
             If size is an integer, smaller edge of the image will be resized to this value with
             the same image aspect ratio.
             If size is a sequence of length 2, it should be (height, width).
-        interpolation (Inter, optional): Image interpolation mode. Default: Inter.LINEAR.
-            It can be any of [Inter.LINEAR, Inter.NEAREST, Inter.BICUBIC].
-
-            - Inter.LINEAR, means interpolation method is bilinear interpolation.
-
-            - Inter.NEAREST, means interpolation method is nearest-neighbor interpolation.
-
-            - Inter.BICUBIC, means interpolation method is bicubic interpolation.
+        interpolation (Inter, optional): Image interpolation method defined by :class:`~.vision.Inter` .
+            Default: ``Inter.LINEAR``.
 
     Raises:
         TypeError: If `size` is not of type int or Sequence[int].
-        TypeError: If `interpolation` is not of type Inter.
+        TypeError: If `interpolation` is not of type :class:`~.vision.Inter` .
         ValueError: If `size` is not positive.
         RuntimeError: If given tensor shape is not <H, W> or <H, W, C>.
 
@@ -3661,12 +4322,20 @@ class ResizeWithBBox(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.vision import Inter
+        >>>
         >>> decode_op = vision.Decode()
         >>> bbox_op = vision.ResizeWithBBox(50, Inter.NEAREST)
         >>> transforms_list = [decode_op, bbox_op]
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_resize_interpolation
@@ -3688,8 +4357,8 @@ class RgbToHsv(PyTensorOperation):
     Convert the input numpy.ndarray images from RGB to HSV.
 
     Args:
-        is_hwc (bool): If True, means the input image is in shape of (H, W, C) or (N, H, W, C).
-            Otherwise, it is in shape of (C, H, W) or (N, C, H, W). Default: False.
+        is_hwc (bool): If ``True``, means the input image is in shape of <H, W, C> or <N, H, W, C>.
+            Otherwise, it is in shape of <C, H, W> or <N, C, H, W>. Default: ``False``.
 
     Raises:
         TypeError: If `is_hwc` is not of type bool.
@@ -3698,6 +4367,8 @@ class RgbToHsv(PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.transforms import Compose
         >>>
         >>> transforms_list = Compose([vision.Decode(to_pil=True),
@@ -3705,8 +4376,13 @@ class RgbToHsv(PyTensorOperation):
         ...                            vision.ToTensor(),
         ...                            vision.RgbToHsv()])
         >>> # apply the transform to dataset through map function
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns="image")
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_rgb_to_hsv
@@ -3735,28 +4411,22 @@ class Rotate(ImageTensorOperation):
 
     Args:
         degrees (Union[int, float]): Rotation degrees.
-
-        resample (Inter, optional): An optional resampling filter. Default: Inter.NEAREST.
-            It can be any of [Inter.BILINEAR, Inter.NEAREST, Inter.BICUBIC].
-
-            - Inter.BILINEAR, means resample method is bilinear interpolation.
-            - Inter.NEAREST, means resample method is nearest-neighbor interpolation.
-            - Inter.BICUBIC, means resample method is bicubic interpolation.
-
-        expand (bool, optional):  Optional expansion flag. Default: False. If set to True, expand the output
-            image to make it large enough to hold the entire rotated image.
-            If set to False or omitted, make the output image the same size as the input.
+        resample (Inter, optional): Image interpolation method defined by :class:`~.vision.Inter` .
+            Default: ``Inter.NEAREST``.
+        expand (bool, optional):  Optional expansion flag. Default: ``False``. If set to ``True``,
+            expand the output image to make it large enough to hold the entire rotated image.
+            If set to ``False`` or omitted, make the output image the same size as the input.
             Note that the expand flag assumes rotation around the center and no translation.
-        center (tuple, optional): Optional center of rotation (a 2-tuple). Default: None.
-            Origin is the top left corner. None sets to the center of the image.
+        center (tuple, optional): Optional center of rotation (a 2-tuple). Default: ``None``.
+            Origin is the top left corner. ``None`` sets to the center of the image.
         fill_value (Union[int, tuple[int]], optional): Optional fill color for the area outside the rotated image.
             If it is a 3-tuple, it is used to fill R, G, B channels respectively.
             If it is an integer, it is used for all RGB channels.
-            The fill_value values must be in range [0, 255]. Default: 0.
+            The fill_value values must be in range [0, 255]. Default: ``0``.
 
     Raises:
         TypeError: If `degrees` is not of type integer, float or sequence.
-        TypeError: If `resample` is not of type Inter.
+        TypeError: If `resample` is not of type :class:`~.vision.Inter` .
         TypeError: If `expand` is not of type bool.
         TypeError: If `center` is not of type tuple.
         TypeError: If `fill_value` is not of type int or tuple[int].
@@ -3767,13 +4437,21 @@ class Rotate(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.vision import Inter
+        >>>
         >>> transforms_list = [vision.Decode(),
         ...                    vision.Rotate(degrees=30.0,
         ...                    resample=Inter.NEAREST,
         ...                    expand=True)]
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_rotate
@@ -3806,13 +4484,14 @@ class SlicePatches(ImageTensorOperation):
     number of output tensors is equal to num_height*num_width.
 
     Args:
-        num_height (int, optional): The number of patches in vertical direction, which must be positive. Default: 1.
-        num_width (int, optional): The number of patches in horizontal direction, which must be positive. Default: 1.
-        slice_mode (Inter, optional): A mode represents pad or drop. Default: SliceMode.PAD.
-            It can be any of [SliceMode.PAD, SliceMode.DROP].
+        num_height (int, optional): The number of patches in vertical direction, which must be positive. Default: ``1``.
+        num_width (int, optional): The number of patches in horizontal direction, which must be positive.
+            Default: ``1``.
+        slice_mode (SliceMode, optional): A mode represents pad or drop. Default: ``SliceMode.PAD``.
+            It can be ``SliceMode.PAD``, ``SliceMode.DROP``.
         fill_value (int, optional): The border width in number of pixels in
             right and bottom direction if slice_mode is set to be SliceMode.PAD.
-            The fill_value must be in range [0, 255]. Default: 0.
+            The `fill_value` must be in range [0, 255]. Default: ``0``.
 
     Raises:
         TypeError: If `num_height` is not of type integer.
@@ -3828,15 +4507,24 @@ class SlicePatches(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
         >>> # default padding mode
         >>> decode_op = vision.Decode()
         >>> num_h, num_w = (1, 4)
         >>> slice_patches_op = vision.SlicePatches(num_h, num_w)
         >>> transforms_list = [decode_op, slice_patches_op]
         >>> cols = ['img' + str(x) for x in range(num_h*num_w)]
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"],
         ...                                                 output_columns=cols)
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_slice_patches
@@ -3860,7 +4548,7 @@ class Solarize(ImageTensorOperation):
     Args:
         threshold (Union[float, Sequence[float, float]]): Range of solarize threshold, should always
             be in (min, max) format, where min and max are integers in range of [0, 255], and min <= max.
-            If min=max, then invert all pixel values above min(max).
+            If a single value is provided or min=max, then invert all pixel values above min(max).
 
     Raises:
         TypeError: If `threshold` is not of type float or Sequence[float, float].
@@ -3870,9 +4558,17 @@ class Solarize(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.Solarize(threshold=(10, 100))]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_solarize
@@ -3895,8 +4591,8 @@ class TenCrop(PyTensorOperation):
         size (Union[int, Sequence[int, int]]): The size of the cropped image.
             If a single integer is provided, a square of size (size, size) will be cropped with this value.
             If a sequence of length 2 is provided, an image of size (height, width) will be cropped.
-        use_vertical_flip (bool, optional): If True, flip the images vertically. Otherwise, flip them
-            horizontally. Default: False.
+        use_vertical_flip (bool, optional): If ``True``, flip the images vertically. Otherwise, flip them
+            horizontally. Default: ``False``.
 
     Raises:
         TypeError: If `size` is not of type integer or sequence of integer.
@@ -3907,6 +4603,8 @@ class TenCrop(PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> import numpy
         >>> from mindspore.dataset.transforms import Compose
         >>>
@@ -3915,8 +4613,13 @@ class TenCrop(PyTensorOperation):
         ...                            # 4D stack of 10 images
         ...                            lambda *images: numpy.stack([vision.ToTensor()(image) for image in images])])
         >>> # apply the transform to dataset through map function
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns="image")
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_ten_crop
@@ -3951,6 +4654,8 @@ class ToNumpy(PyTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.transforms import Compose
         >>>
         >>> # Use ToNumpy to explicitly select C++ implementation of subsequent op
@@ -3959,8 +4664,13 @@ class ToNumpy(PyTensorOperation):
         ...                            vision.ToNumpy(),
         ...                            vision.Resize((100, 120))])
         >>> # apply the transform to dataset through map function
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns="image")
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     def __init__(self):
@@ -3986,16 +4696,15 @@ class ToPIL(PyTensorOperation):
     """
     Convert the input decoded numpy.ndarray image to PIL Image.
 
-    Note:
-        The conversion mode will be determined by the data type using :class:`PIL.Image.fromarray` .
-
     Raises:
-        TypeError: If the input image is not of type :class:`numpy.ndarray` or :class:`PIL.Image.Image` .
+        TypeError: If the input image is not of type :class:`numpy.ndarray` or `PIL.Image.Image` .
 
     Supported Platforms:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.transforms import Compose
         >>>
         >>> # data is already decoded, but not in PIL Image format
@@ -4003,8 +4712,13 @@ class ToPIL(PyTensorOperation):
         ...                            vision.RandomHorizontalFlip(0.5),
         ...                            vision.ToTensor()])
         >>> # apply the transform to dataset through map function
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns="image")
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     def __init__(self):
@@ -4028,20 +4742,22 @@ class ToPIL(PyTensorOperation):
 class ToTensor(ImageTensorOperation):
     """
     Convert the input PIL Image or numpy.ndarray to numpy.ndarray of the desired dtype, rescale the pixel value
-    range from [0, 255] to [0.0, 1.0] and change the shape from (H, W, C) to (C, H, W).
+    range from [0, 255] to [0.0, 1.0] and change the shape from <H, W, C> to <C, H, W>.
 
     Args:
         output_type (Union[mindspore.dtype, numpy.dtype], optional): The desired dtype of the output image.
-            Default: :class:`numpy.float32` .
+            Default: ``np.float32`` .
 
     Raises:
-        TypeError: If the input image is not of type :class:`PIL.Image.Image` or :class:`numpy.ndarray` .
+        TypeError: If the input image is not of type `PIL.Image.Image` or :class:`numpy.ndarray` .
         TypeError: If dimension of the input image is not 2 or 3.
 
     Supported Platforms:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.transforms import Compose
         >>>
         >>> # create a list of transformations to be applied to the "image" column of each data row
@@ -4049,8 +4765,13 @@ class ToTensor(ImageTensorOperation):
         ...                            vision.RandomHorizontalFlip(0.5),
         ...                            vision.ToTensor()])
         >>> # apply the transform to dataset through map function
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns="image")
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_to_tensor
@@ -4075,19 +4796,22 @@ class ToType(TypeCast):
     It is the same as that of :class:`mindspore.dataset.transforms.TypeCast` .
 
     Note:
-        This operation supports running on Ascend or GPU platforms by Offload.
+        This operation is executed on the CPU by default, but it is also supported
+        to be executed on the GPU or Ascend via heterogeneous acceleration.
 
     Args:
         data_type (Union[mindspore.dtype, numpy.dtype]): The desired data type of the output image,
-            such as :class:`numpy.float32` .
+            such as ``numpy.float32`` .
 
     Raises:
         TypeError: If `data_type` is not of type :class:`mindspore.dtype` or :class:`numpy.dtype` .
 
     Supported Platforms:
-        ``CPU`` ``Ascend`` ``GPU``
+        ``CPU`` ``GPU`` ``Ascend``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> import numpy as np
         >>> from mindspore.dataset.transforms import Compose
         >>>
@@ -4096,56 +4820,61 @@ class ToType(TypeCast):
         ...                            vision.ToTensor(),
         ...                            vision.ToType(np.float32)])
         >>> # apply the transform to dataset through map function
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns="image")
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
 
 class TrivialAugmentWide(ImageTensorOperation):
     """
-    Apply TrivialAugmentWide data augmentation method based on
+    Apply TrivialAugmentWide data augmentation method on the input image.
+
+    Refer to
     `TrivialAugmentWide: Tuning-free Yet State-of-the-Art Data Augmentation <https://arxiv.org/abs/2103.10158>`_ .
-    This operation works only with 3-channel RGB images.
+
+    Only support 3-channel RGB image.
 
     Args:
         num_magnitude_bins (int, optional): The number of different magnitude values,
-            must be greater than or equal to 2. Default: 31.
-        interpolation (Inter, optional): Image interpolation mode for Resize operation. Default: Inter.NEAREST.
-            It can be any of [Inter.NEAREST, Inter.BILINEAR, Inter.BICUBIC, Inter.AREA].
-
-            - Inter.NEAREST: means interpolation method is nearest-neighbor interpolation.
-
-            - Inter.BILINEAR: means interpolation method is bilinear interpolation.
-
-            - Inter.BICUBIC: means the interpolation method is bicubic interpolation.
-
-            - Inter.AREA: means the interpolation method is pixel area interpolation.
-
-        fill_value (Union[int, tuple[int, int, int]], optional): Pixel fill value for the area outside
-            the transformed image.
-            It can be an int or a 3-tuple. If it is a 3-tuple, it is used to fill R, G, B channels respectively.
-            If it is an integer, it is used for all RGB channels. The fill_value values must be in range [0, 255]
-            Default: 0.
+            must be greater than or equal to 2. Default: ``31``.
+        interpolation (Inter, optional): Image interpolation method defined by :class:`~.vision.Inter` .
+            Default: ``Inter.NEAREST``.
+        fill_value (Union[int, tuple[int, int, int]], optional): Pixel fill value for the area outside the
+            transformed image, must be in range of [0, 255]. Default: ``0``.
+            If int is provided, pad all RGB channels with this value.
+            If tuple[int, int, int] is provided, pad R, G, B channels respectively.
 
     Raises:
         TypeError: If `num_magnitude_bins` is not of type int.
         ValueError: If `num_magnitude_bins` is less than 2.
-        TypeError: If `interpolation` is not of type Inter.
-        TypeError: If `fill_value` is not an integer or a tuple of length 3.
-        RuntimeError: If given tensor shape is not <H, W, C>.
+        TypeError: If `interpolation` not of type :class:`~.vision.Inter` .
+        TypeError: If `fill_value` is not of type int or tuple[int, int, int].
+        ValueError: If `fill_value` is not in range of [0, 255].
+        RuntimeError: If shape of the input image is not <H, W, C>.
 
     Supported Platforms:
         ``CPU``
 
     Examples:
-        >>> from mindspore.dataset.vision import AutoAugmentPolicy, Inter
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>> from mindspore.dataset.vision import Inter
         >>>
-        >>> transforms_list = [vision.Decode(),
-        ...                    vision.TrivialAugmentWide(num_magnitude_bins=31,
-        ...                                              interpolation=Inter.NEAREST,
-        ...                                              fill_value=0)]
+        >>> transforms_list = [vision.Decode(), vision.TrivialAugmentWide(num_magnitude_bins=31,
+        ...                                                               interpolation=Inter.NEAREST,
+        ...                                                               fill_value=0)]
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_trivial_augment_wide
@@ -4174,7 +4903,8 @@ class UniformAugment(CompoundOperation):
 
     Args:
          transforms (Sequence): Sequence of transformations to select from.
-         num_ops (int, optional): Number of transformations to be sequentially and randomly applied. Default: 2.
+         num_ops (int, optional): Number of transformations to be sequentially and randomly applied.
+            Default: ``2``.
 
     Raises:
         TypeError: If `transforms` is not a sequence of data processing operations.
@@ -4185,6 +4915,8 @@ class UniformAugment(CompoundOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
         >>> from mindspore.dataset.transforms import Compose
         >>>
         >>> transforms = [vision.CenterCrop(64),
@@ -4195,8 +4927,13 @@ class UniformAugment(CompoundOperation):
         ...                            vision.UniformAugment(transforms),
         ...                            vision.ToTensor()])
         >>> # apply the transform to dataset through map function
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns="image")
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     @check_uniform_augment
@@ -4233,9 +4970,17 @@ class VerticalFlip(ImageTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>>
+        >>> image_folder_dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory")
         >>> transforms_list = [vision.Decode(), vision.VerticalFlip()]
         >>> image_folder_dataset = image_folder_dataset.map(operations=transforms_list,
         ...                                                 input_columns=["image"])
+
+    Tutorial Examples:
+        - `Illustration of vision transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_
     """
 
     def __init__(self):

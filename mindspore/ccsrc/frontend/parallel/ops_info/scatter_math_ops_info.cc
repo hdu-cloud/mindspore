@@ -26,7 +26,7 @@
 #include "frontend/parallel/dynamic_creator.h"
 #include "frontend/parallel/strategy.h"
 #include "frontend/parallel/tensor_layout/tensor_redistribution.h"
-#include "pipeline/jit/resource.h"
+#include "pipeline/jit/ps/resource.h"
 #include "frontend/parallel/graph_util/generate_graph.h"
 
 namespace mindspore {
@@ -111,6 +111,7 @@ Status ScatterMathOpsInfo::InferBias() {
     return SUCCESS;
   }
 
+  MS_EXCEPTION_IF_ZERO("input_strategy.at(0)", input_strategy.at(0));
   slice_size_ = input_shape.at(0) / input_strategy.at(0);
   int64_t input_shard_num =
     std::accumulate(input_strategy.begin(), input_strategy.end(), 1, std::multiplies<int64_t>());
@@ -120,10 +121,12 @@ Status ScatterMathOpsInfo::InferBias() {
     if (repeated_num_in_dev_matrix_right_) {
       rank = rank / repeated_calc_num_;
     } else {
+      MS_EXCEPTION_IF_ZERO("input_shard_num", input_shard_num);
       rank = rank % input_shard_num;
     }
   }
 
+  MS_EXCEPTION_IF_ZERO("input_column_shard_num", input_column_shard_num);
   bias_ = rank / input_column_shard_num * slice_size_;
   return SUCCESS;
 }
@@ -156,7 +159,7 @@ Status ScatterMathOpsInfo::ComputeReplaceGraph(const CNodePtr &cnode) {
   auto dtype = gen_g.PushBack({gen_g.NewOpInst(DTYPE), gen_g.virtual_input_node()});
   auto cast = gen_g.PushBack({gen_g.NewOpInst(CAST), equal, dtype});
   std::vector<int64_t> mask_shape = inputs_shape_[1];
-  mask_shape.insert(mask_shape.end(), inputs_shape_[2].size() - inputs_shape_[1].size(), 1);
+  (void)mask_shape.insert(mask_shape.end(), inputs_shape_[2].size() - inputs_shape_[1].size(), 1);
   auto reshape = gen_g.PushBack({gen_g.NewOpInst(RESHAPE), cast, NewValueNode(MakeValue(mask_shape))});
   auto sub_mask =
     gen_g.PushBack({gen_g.NewOpInst(SUB), NewValueNode(std::make_shared<tensor::Tensor>(1.0, kFloat32)), reshape});
@@ -198,7 +201,7 @@ Status ScatterAddInfo::ComputeReplaceGraph(const CNodePtr &cnode) {
   auto dtype = gen_g.PushBack({gen_g.NewOpInst(DTYPE), gen_g.virtual_input_node()});
   auto cast = gen_g.PushBack({gen_g.NewOpInst(CAST), equal, dtype});
   std::vector<int64_t> mask_shape = inputs_shape_[1];
-  mask_shape.insert(mask_shape.end(), inputs_shape_[2].size() - inputs_shape_[1].size(), 1);
+  (void)mask_shape.insert(mask_shape.end(), inputs_shape_[2].size() - inputs_shape_[1].size(), 1);
   auto reshape = gen_g.PushBack({gen_g.NewOpInst(RESHAPE), cast, NewValueNode(MakeValue(mask_shape))});
   auto mul = gen_g.PushBack({gen_g.NewOpInst(MUL), gen_g.virtual_input_node(), reshape});
   auto info_position = name_.find("Info");

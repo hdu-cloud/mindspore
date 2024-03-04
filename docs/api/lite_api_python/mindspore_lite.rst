@@ -1,6 +1,8 @@
 mindspore_lite
 ==============
 
+Python接口仅支持云侧推理。
+
 运行环境
 --------
 
@@ -8,10 +10,6 @@ mindspore_lite
     :toctree: mindspore_lite
 
     mindspore_lite.Context
-    mindspore_lite.DeviceInfo
-    mindspore_lite.CPUDeviceInfo
-    mindspore_lite.GPUDeviceInfo
-    mindspore_lite.AscendDeviceInfo
 
 转换
 --------
@@ -28,10 +26,11 @@ mindspore_lite
 .. mscnautosummary::
     :toctree: mindspore_lite
 
-    mindspore_lite.ModelType
     mindspore_lite.Model
-    mindspore_lite.RunnerConfig
+    mindspore_lite.ModelGroup
+    mindspore_lite.ModelGroupFlag
     mindspore_lite.ModelParallelRunner
+    mindspore_lite.ModelType
 
 张量
 ------

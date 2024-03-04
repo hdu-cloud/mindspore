@@ -22,7 +22,7 @@ from mindspore import log as logger
 from mindspore.train.serialization import load_checkpoint, save_checkpoint
 from mindspore.train.callback._callback import Callback
 from mindspore.train._utils import _make_directory
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 
 
 class BackupAndRestore(Callback):
@@ -34,11 +34,11 @@ class BackupAndRestore(Callback):
 
     Args:
         backup_dir (str): Path to store and load the checkpoint file.
-        save_freq(Union['epoch', int]): When set to `'epoch'` the callback saves the checkpoint at the end of
+        save_freq(Union['epoch', int]): When set to 'epoch' the callback saves the checkpoint at the end of
                                         each epoch. When set to an integer, the callback saves the checkpoint
-                                        every `save_freq` epoch. Default: 'epoch'.
+                                        every `save_freq` epoch. Default: ``"epoch"`` .
         delete_checkpoint(bool): If `delete_checkpoint=True`, the checkpoint will be deleted after
-                                        training is finished. Default: True.
+                                        training is finished. Default: ``True`` .
 
     Raises:
         ValueError: If backup_dir is not str.
@@ -46,21 +46,18 @@ class BackupAndRestore(Callback):
         ValueError: If delete_checkpoint is not bool.
 
     Examples:
-        .. note::
-            Before running the following example, you need to customize the network LeNet5 and
-            dataset preparation function create_dataset. Refer to
-            `Building a Network <https://www.mindspore.cn/tutorials/en/r2.0.0-alpha/beginner/model.html>`_
-            and `Dataset <https://www.mindspore.cn/tutorials/en/r2.0.0-alpha/beginner/dataset.html>`_ .
-
         >>> from mindspore import nn
-        >>> from mindspore.train import Model, BackupAndRestore
+        >>> from mindspore.train import Model, BackupAndRestore, RunContext
         >>>
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
         >>> net = LeNet5()
         >>> loss = nn.SoftmaxCrossEntropyWithLogits(sparse=True, reduction='mean')
         >>> optim = nn.Momentum(net.trainable_params(), 0.01, 0.9)
         >>> model = Model(net, loss_fn=loss, optimizer=optim)
-        >>> data_path = './MNIST_Data'
-        >>> dataset = create_dataset(data_path)
+        >>> # Create the dataset taking MNIST as an example. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/mnist.py
+        >>> dataset = create_dataset()
         >>> backup_ckpt = BackupAndRestore("backup")
         >>> model.train(10, dataset, callbacks=backup_ckpt)
     """
@@ -69,7 +66,7 @@ class BackupAndRestore(Callback):
         ckpt_dir = _make_directory(backup_dir)
         self.backup_file = os.path.join(ckpt_dir, 'backup.ckpt')
         if save_freq != "epoch":
-            self.save_freq = Validator.check_positive_int(step_size)
+            self.save_freq = Validator.check_positive_int(save_freq)
         else:
             self.save_freq = 1
         self.delete_checkpoint = Validator.check_bool(delete_checkpoint)

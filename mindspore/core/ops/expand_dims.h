@@ -16,15 +16,15 @@
 
 #ifndef MINDSPORE_CORE_OPS_EXPAND_DIMS_H_
 #define MINDSPORE_CORE_OPS_EXPAND_DIMS_H_
-#include <vector>
 #include <memory>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
 constexpr auto kNameExpandDims = "ExpandDims";
-/// \brief Adds an additional dimension to ‘input_x` at the given axis.
+/// \brief Adds an additional dimension to `input_x` at the given axis.
 /// Refer to Python API @ref mindspore.ops.ExpandDims for more details.
 class MIND_API ExpandDims : public BaseOperator {
  public:
@@ -34,8 +34,8 @@ class MIND_API ExpandDims : public BaseOperator {
   /// \brief Init. Refer to the parameters of Python API @ref mindspore.ops.ExpandDims for the inputs.
   void Init() const {}
 };
-abstract::AbstractBasePtr ExpandDimsInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                          const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr ExpandDimsInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                   const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimExpandDims = std::shared_ptr<ExpandDims>;
 }  // namespace ops
 }  // namespace mindspore

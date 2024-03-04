@@ -26,20 +26,22 @@
 #include <vector>
 #include "ir/value.h"
 #include "ir/graph_utils.h"
+#include "ir/func_graph.h"
 #include "base/base.h"
 #include "include/common/utils/utils.h"
-#include "ir/func_graph.h"
-#include "distributed/constants.h"
+#include "ops/array_op_name.h"
+#include "include/backend/distributed/constants.h"
 #if defined(__linux__) && defined(WITH_BACKEND)
-#include "distributed/cluster/cluster_context.h"
+#include "include/backend/distributed/cluster/cluster_context.h"
 #else
-#include "distributed/cluster/dummy_cluster_context.h"
+#include "include/backend/distributed/cluster/dummy_cluster_context.h"
 #endif
 #include "frontend/parallel/cache_embedding/ps_embedding_cache_inserter.h"
 
 namespace mindspore {
 namespace parallel {
 using distributed::cluster::ClusterContext;
+using AnfNodePtrSet = std::set<AnfNodePtr>;
 
 constexpr char kEnvNeedFusion[] = "fusion";
 
@@ -293,6 +295,18 @@ ValueNodePtr CreateUMonadNode();
  * @return {CNodePtr}: UpdateState node.
  */
 CNodePtr CreateUpdateStateNode(const FuncGraphPtr &func_graph, const AnfNodePtrList &update_state_inputs);
+
+// Filter out 'func_graph' nodes' dependency matrix to the specified target nodes set.
+std::map<AnfNodePtr, AnfNodePtrSet> FilterDependencyToTargetNode(const FuncGraphPtr &func_graph,
+                                                                 const AnfNodePtrSet &target_nodes);
+
+// After a new node is added, the depended set should be updated to keep the minimal dependencies.
+AnfNodePtrSet UpdateDependedSet(const AnfNodePtr &new_node, const AnfNodePtrSet &old_depended_set,
+                                const std::map<AnfNodePtr, AnfNodePtrSet> &node_dependency);
+
+// Connect hung nodes to output in case they are optimized out.
+void HandleHungNodes(const FuncGraphPtr &func_graph, const NodeLabels &node_labels, OperatorLabel process_label,
+                     const AnfNodePtrList &hung_nodes_list);
 
 // Base class for different execution modes. It builds distributed graphs, optimize execution performance, etc.
 class DistributedExecutionMode {
@@ -582,6 +596,9 @@ class GraphSplitter {
   InOutDegreeList GenerateInOutDegreeList(const std::vector<SplitGraphSegment> &segments,
                                           const InterProcessOpEdgesInfo &comm_edges);
 
+  //  Must add extra dependency edge for RpcSend and RpcRecv nodes in case they are optimized out or lose explicit
+  //  dependencies.
+  void AddDependencyBetweenEdges(const InterProcessOpEdgesInfo &comm_edges);
   // For the segments on this process, dependency edges should be created so that they won't be optimized out.
   void AddDependencyBetweenSegments(const InOutDegreeList &in_out_degree_list);
 
@@ -590,6 +607,11 @@ class GraphSplitter {
 
   // Replace nodes inputs with Recv nodes.
   void ReplaceOriginNodesWithRecv(const FusedInterProcessOpPairMap &fused_inter_process_op_pairs);
+
+  void AddSendRecvDependency(const InterProcessOpEdgesInfo &in_degree_comm_edges, const AnfNodePtrSet &send_src_nodes,
+                             const std::map<AnfNodePtr, AnfNodePtrSet> &src_nodes_to_send_nodes,
+                             const std::map<AnfNodePtr, AnfNodePtrSet> &node_dependency,
+                             std::map<AnfNodePtr, bool> *is_send_node_hung);
 
   // Add outputs edges for send nodes so that they won't be optimized out.
   void AddDependencyForSend(const FusedInterProcessOpPairMap &fused_inter_process_op_pairs);

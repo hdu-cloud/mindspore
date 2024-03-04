@@ -106,22 +106,22 @@ Status Places365Op::GetClassIds(std::map<int32_t, std::vector<int64_t>> *cls_ids
 Status Places365Op::GetFileContent(const std::string &info_file, std::string *ans) {
   RETURN_UNEXPECTED_IF_NULL(ans);
   std::ifstream reader;
-  reader.open(info_file);
+  reader.open(info_file, std::ios::in);
   CHECK_FAIL_RETURN_UNEXPECTED(
     !reader.fail(), "Invalid file, failed to open " + info_file + ": Places365 file is damaged or permission denied.");
   reader.seekg(0, std::ios::end);
   std::size_t size = reader.tellg();
   reader.seekg(0, std::ios::beg);
-  char *buffer = new char[size + 1];
-  reader.read(buffer, size);
-  buffer[size] = '\0';
+
+  CHECK_FAIL_RETURN_UNEXPECTED(size > 0, "Invalid file, the file size of " + info_file + " is unexpected, got size 0.");
+  std::string buffer(size, ' ');
+  reader.read(&buffer[0], size);
   reader.close();
 
   // remove \n character in the buffer.
-  std::string so(buffer);
   std::regex pattern("([\\s\\n]+)");
   std::string fmt = " ";
-  std::string s = std::regex_replace(so, pattern, fmt);
+  std::string s = std::regex_replace(buffer, pattern, fmt);
 
   // remove the head and tail whiteblanks of the s.
   s.erase(0, s.find_first_not_of(" "));
@@ -147,7 +147,7 @@ Status Places365Op::LoadCategories(const std::string &category_meta_name) {
   uint32_t label;
   // Category meta info is read into string s in the format: "category1 label1 category2 label2 category3 label3 ...".
   // Use blank space delimiter to split the string and process each substring.
-  // Like state matchine, the type of each substring needs to be switched.
+  // Like state matching, the type of each substring needs to be switched.
   enum ColType { CATEGORY, LABEL };
   std::size_t pos = 0;
   ColType col_idx = CATEGORY;
@@ -198,7 +198,7 @@ Status Places365Op::LoadFileLists(const std::string &filelists_meta_name) {
   uint32_t label;
   // Category meta info is read into string s in the format: "path1 label1 path2 label2 path2 label3 ...".
   // Use blank space delimiter to split the string and process each substring.
-  // Like state matchine, the type of each substring needs to be switched.
+  // Like state matching, the type of each substring needs to be switched.
   enum ColType { PATH, LABEL };
   std::size_t pos = 0;
   ColType col_idx = PATH;

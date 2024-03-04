@@ -19,6 +19,7 @@
 #include "utils/log_adapter.h"
 #include "external/ge/ge_api_types.h"
 #include "acl/acl_base.h"
+#include "cxx_api/acl_utils.h"
 
 namespace mindspore {
 static const std::map<enum DataType, std::string> kSupportedDtypeOptionMap = {{DataType::kNumberTypeFloat16, "FP16"},
@@ -52,7 +53,7 @@ AclModelOptions::AclModelOptions(const std::shared_ptr<Context> &context) {
   }
   dynamic_batch_size_ = ascend_info->GetDynamicBatchSize();
   dynamic_image_size_ = ascend_info->GetDynamicImageSize();
-  precision_mode_ = ascend_info->GetPrecisionMode();
+  precision_mode_ = TransforPrecisionToAcl(ascend_info->GetPrecisionMode());
   op_select_impl_mode_ = ascend_info->GetOpSelectImplMode();
   fusion_switch_cfg_path_ = ascend_info->GetFusionSwitchConfigPath();
   device_id_ = ascend_info->GetDeviceID();
@@ -66,6 +67,15 @@ AclModelOptions::AclModelOptions(const std::shared_ptr<Context> &context) {
     return;
   }
   soc_version_ = soc_name;
+}
+
+std::string AclModelOptions::GetSocName() {
+  const char *soc_name = aclrtGetSocName();
+  if (soc_name == nullptr) {
+    MS_LOG(WARNING) << "Get soc version failed.";
+    return "";
+  }
+  return soc_name;
 }
 
 void AclModelOptions::RenameInput(const std::vector<std::string> &input_names) {
@@ -132,6 +142,36 @@ std::tuple<std::map<std::string, std::string>, std::map<std::string, std::string
     build_options.emplace(acl_option_key, *ms_option);
   }
 
+  // init by config file param
+  for (auto item : init_options_map_) {
+    MS_LOG(INFO) << "Option " << item.first << " : " << item.second;
+    if (item.first == ge::ir_option::SOC_VERSION) {
+      auto soc_version = item.second;
+      if (soc_version != soc_version_) {
+        MS_LOG(WARNING) << "ge.socVersion: " << soc_version
+                        << " is different with this machine core type: " << soc_version_;
+      }
+      init_options[item.first] = item.second;
+      continue;
+    }
+    if (init_options.find(item.first) != init_options.end()) {
+      MS_LOG(WARNING) << "the parameters[" << item.first
+                      << "] have been set through the API and do not need to be repeated.";
+      continue;
+    }
+    init_options.emplace(item.first, item.second);
+  }
+
+  for (auto item : build_options_map_) {
+    MS_LOG(INFO) << "Option " << item.first << " : " << item.second;
+    if (build_options.find(item.first) != build_options.end()) {
+      MS_LOG(WARNING) << "the parameters[" << item.first
+                      << "] have been set through the API and do not need to be repeated.";
+      continue;
+    }
+    build_options.emplace(item.first, item.second);
+  }
+
   // first_graph_flag has value means being multi graph mode
   if (first_graph_flag_.has_value()) {
     for (const auto &option : multi_graph_unsupported_options) {
@@ -146,6 +186,34 @@ std::tuple<std::map<std::string, std::string>, std::map<std::string, std::string
   }
 
   return {init_options, build_options};
+}
+
+std::string AclModelOptions::GenAoeOptions(std::vector<std::string> *aoe_modes) {
+  std::string res;
+  std::map<std::string, std::string> aoe_options = aoe_global_options_map_;
+  aoe_options.insert(aoe_tuning_options_map_.begin(), aoe_tuning_options_map_.end());
+  if (aoe_options.find("job_type") != aoe_options.end()) {
+    aoe_modes->clear();
+    (void)aoe_modes->emplace_back(aoe_options.at("job_type"));
+  }
+  if (aoe_modes->empty()) {
+    MS_LOG(WARNING) << "Aoe mode are invalid "
+                    << "; It should be 'subgraph tuning, operator tuning' in aoe_mode, or '1, 2' in job_type";
+  }
+
+  for (auto item : aoe_options) {
+    if (item.first == "job_type" || item.first == "framework" || item.first == "model") {
+      continue;
+    }
+    if (item.second.empty()) {
+      res += " --" + item.first;
+    } else {
+      res += " --" + item.first + "=" + item.second;
+    }
+  }
+
+  MS_LOG(INFO) << "aoe_options: " << res;
+  return res;
 }
 
 std::string AclModelOptions::GenAclOptionsKey() const {

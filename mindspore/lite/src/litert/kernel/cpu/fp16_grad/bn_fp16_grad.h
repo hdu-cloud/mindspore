@@ -18,8 +18,8 @@
 #define MINDSPORE_LITE_SRC_RUNTIME_KERNEL_CPU_FP16_GRAD_BN_FP16_GRAD_H_
 
 #include <vector>
-#include "src/litert/kernel_exec.h"
-#include "nnacl/fp32_grad/batch_norm.h"
+#include "src/executor/kernel_exec.h"
+#include "nnacl/fp32_grad/batch_norm_grad.h"
 
 namespace mindspore::kernel {
 

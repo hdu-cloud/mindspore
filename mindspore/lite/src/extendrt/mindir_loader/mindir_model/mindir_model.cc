@@ -23,7 +23,7 @@
 #include "utils/ms_utils_secure.h"
 #include "extendrt/mindir_loader/mindir_model/mindir_model_util.h"
 #include "extendrt/mindir_loader/mindir_model/kernel_mod_util.h"
-#include "src/litert/kernel_exec.h"
+#include "src/executor/kernel_exec.h"
 #include "extendrt/mindir_loader/mindir_model/inner_kernel.h"
 #include "extendrt/mock/lite_runtime/populate/base_operator_populate_register.h"
 
@@ -109,7 +109,8 @@ mindspore::kernel::KernelExec *MindirModel::FindLiteKernel(const std::vector<min
   auto ret = lite::KernelRegistry::GetInstance()->GetKernelExec(in_tensors, out_tensors, context, nullptr, desc,
                                                                 op_parameter, &kernel_exec, node->primitive_);
   if (ret != lite::RET_OK || kernel_exec == nullptr) {
-    MS_LOG(ERROR) << "find lite kernel failed with code " << ret;
+    MS_LOG(ERROR) << "find lite kernel failed with code " << ret << ", node: " << node->name_
+                  << ", type: " << node->op_type_;
     return nullptr;
   }
   return kernel_exec;

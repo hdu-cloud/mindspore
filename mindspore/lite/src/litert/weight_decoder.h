@@ -26,7 +26,7 @@
 #include <cmath>
 #include "nnacl/matmul_parameter.h"
 #include "nnacl/gather_parameter.h"
-#include "src/litert/kernel_exec.h"
+#include "src/executor/kernel_exec.h"
 #include "src/common/utils.h"
 #include "src/tensor.h"
 #include "src/litert/lite_model.h"
@@ -37,10 +37,12 @@ static constexpr int kBitNum1 = 1;
 static constexpr int kBitNum8 = 8;
 static constexpr int kBitNum16 = 16;
 static constexpr int kBitNum32 = 32;
+static constexpr int kMaxVarCorr = 10;
+static constexpr int kNumberBase = 10;
 
 namespace mindspore::lite {
 
-class WeightDecoder {
+class MS_API WeightDecoder {
  public:
   static int DequantNode(const OpParameter *op_parameter, const std::vector<Tensor *> &in_tensors, TypeId dst_data_type,
                          const std::string &model_version, bool float_mode);
@@ -54,12 +56,16 @@ class WeightDecoder {
     while (!iss1.eof() || !iss2.eof()) {
       getline(iss1, string1, '.');
       getline(iss2, string2, '.');
-      if (stoi(string1) > stoi(string2)) return 1;
-      if (stoi(string1) < stoi(string2)) return -1;
+      int64_t integer1 = std::strtol(string1.c_str(), nullptr, kNumberBase);
+      int64_t integer2 = std::strtol(string2.c_str(), nullptr, kNumberBase);
+      if (integer1 > integer2) return 1;
+      if (integer1 < integer2) return -1;
       string1 = string2 = "0";
     }
     return 0;
   }
+
+  static int GetMatMulPreferredDim(const OpParameter *op_parameter, int input_index, const std::vector<int> &dims);
 
   template <typename T>
   static int GetPreferredDim(const std::vector<T *> &in_tensors, const OpParameter *op_parameter, int index,
@@ -197,7 +203,7 @@ class WeightDecoder {
       auto zero_point = param.zeroPoint;
       auto var_corr = param.var_corr;
       auto mean_corr = param.mean_corr;
-      if (var_corr < 0 || var_corr > 10) {
+      if (var_corr < 0 || var_corr > kMaxVarCorr) {
         MS_LOG(WARNING) << "unexpected var_corr: " << var_corr;
         var_corr = 1;
       }
@@ -213,8 +219,6 @@ class WeightDecoder {
     }
     return dequant_datas;
   }
-
-  static int GetMatMulPreferredDim(const OpParameter *op_parameter, int input_index, const std::vector<int> &dims);
 
   static int GetDeConvPreferredDim(const OpParameter *op_parameter, const std::vector<int> &dims);
 
@@ -317,7 +321,7 @@ class WeightDecoder {
   static void UnPackFromUintToOrigin(const T2 &packed_data, std::queue<bool> *unpack_bit_data) {
     auto n = packed_data;
     size_t bit_count = 0;
-    while (bit_count < sizeof(T2) * 8) {
+    while (bit_count < sizeof(T2) * kBitNum8) {
       bool a = n % 2;
       n = n >> 1;
       bit_count++;

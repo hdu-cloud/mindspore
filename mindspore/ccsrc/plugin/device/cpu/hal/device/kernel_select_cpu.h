@@ -25,6 +25,8 @@
 #include "ir/dtype/type.h"
 #include "include/common/utils/utils.h"
 #include "utils/ms_context.h"
+#include "kernel/common_utils.h"
+#include "kernel/framework_utils.h"
 #include "kernel/kernel_build_info.h"
 #include "kernel/graph_kernel_info.h"
 #include "include/backend/visible.h"
@@ -32,8 +34,9 @@
 namespace mindspore {
 namespace device {
 namespace cpu {
-using DataType = std::pair<TypeId, std::string>;
-std::pair<std::string, ExceptionType> SetKernelInfoWithMsg(const CNodePtr &apply_kernel_ptr);
+using kernel::DataType;
+bool IsVmapNotSupported(const CNodePtr &node);
+BACKEND_EXPORT std::pair<std::string, ExceptionType> SetKernelInfoWithMsg(const CNodePtr &apply_kernel_ptr);
 
 class BACKEND_EXPORT CPUGraphKernelInfo : public GraphKernelInfo {
  public:

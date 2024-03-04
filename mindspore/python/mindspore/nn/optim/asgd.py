@@ -21,7 +21,7 @@ from mindspore.common.api import jit
 from mindspore.common.tensor import Tensor
 import mindspore.common.dtype as mstype
 import mindspore
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.nn.optim.optimizer import Optimizer
 from mindspore.nn.optim.optimizer import opt_init_args_register
 
@@ -81,7 +81,7 @@ class ASGD(Optimizer):
               If `order_params` in the keys, other keys will be ignored and the element of 'order_params' must be in
               one group of `params`.
 
-        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): learning_rate. Default: 0.1.
+        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): learning_rate. Default: ``0.1`` .
 
             - float: The fixed learning rate value. Must be equal to or greater than 0.
 
@@ -95,10 +95,10 @@ class ASGD(Optimizer):
             - LearningRateSchedule: Learning rate is dynamic. During training, the optimizer calls the instance of
               LearningRateSchedule with step as the input to get the learning rate of current step.
 
-        lambd (float): The decay term. Default: 1e-4.
-        alpha (float): The power for :math:`eta` update. Default: 0.75.
-        t0 (float): The point of starting averaging. Default: 1e6.
-        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: 0.0.
+        lambd (float): The decay term. Default: ``1e-4`` .
+        alpha (float): The power for :math:`\eta` update. Default: ``0.75`` .
+        t0 (float): The point of starting averaging. Default: ``1e6`` .
+        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: ``0.0`` .
 
             - float: The fixed weight decay value. Must be equal to or greater than 0.
 
@@ -127,7 +127,9 @@ class ASGD(Optimizer):
         >>> import mindspore as ms
         >>> from mindspore import nn
         >>>
-        >>> net = Net()
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> #1) All parameters use the same learning rate and weight decay
         >>> optim = nn.ASGD(params=net.trainable_params())
         >>>
@@ -145,7 +147,7 @@ class ASGD(Optimizer):
         >>> # The final parameters order in which the optimizer will be followed is the value of 'order_params'.
         >>>
         >>> loss = nn.SoftmaxCrossEntropyWithLogits()
-        >>> model = ms.Model(net, loss_fn=loss, optimizer=optim)
+        >>> model = ms.train.Model(net, loss_fn=loss, optimizer=optim)
     """
 
     @opt_init_args_register
@@ -183,8 +185,7 @@ class ASGD(Optimizer):
         gradients = self.gradients_centralization(gradients)
         gradients = self.scale_grad(gradients)
         lrs = self.get_lr()
-        if not self._is_dynamic_lr_or_weight_decay():
-            self.assignadd(self.global_step, self.global_step_increase_tensor)
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
         success = True
         params = self._parameters
         for index, (grad, param, mu, eta, ax) in enumerate(zip(gradients, params, self.mu, self.eta, self.ax)):

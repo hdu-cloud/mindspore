@@ -17,8 +17,12 @@
 #include <memory>
 #include <vector>
 #include <string>
-#include "backend/common/optimizer/helper.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/ascend_op_name.h"
+#include "ops/nn_optimizer_ops.h"
+#include "ops/math_ops.h"
+#include "ops/framework_ops.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
@@ -46,7 +50,7 @@ const BaseRef MomentumLossscaleFusion::DefinePattern() const {
   VarPtr X4 = std::make_shared<Var>();
   // UpdateState node
   VarPtr X5 = std::make_shared<Var>();
-  return VectorRef({prim::kPrimApplyMomentum, X0, X1, X2, VectorRef({prim::kPrimMul, Xs}), X4, X5});
+  return VectorRef({prim::kPrimApplyMomentumD, X0, X1, X2, VectorRef({prim::kPrimMul, Xs}), X4, X5});
 }
 
 const AnfNodePtr MomentumLossscaleFusion::Process(const FuncGraphPtr &func_graph, const AnfNodePtr &node,

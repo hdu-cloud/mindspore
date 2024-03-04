@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,11 @@
 #include <set>
 #include <algorithm>
 #include <unordered_map>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/conv_pool_op_name.h"
+#include "ops/nn_optimizer_op_name.h"
+#include "ops/array_op_name.h"
+#include "ops/math_op_name.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "kernel/oplib/opinfo.h"
 #include "frontend/parallel/ops_info/ops_utils.h"
@@ -44,8 +48,10 @@ constexpr int kFloat16 = 1;
 constexpr int kInt8 = 2;
 constexpr int kInt32 = 3;
 constexpr int kUint8 = 4;
+constexpr int kInt64 = 9;
 constexpr int kUint64 = 10;
 constexpr int kBool = 12;
+constexpr int kbFloat = 27;
 constexpr size_t kC0 = 16;
 constexpr size_t kShapeIndex0 = 0;
 constexpr size_t kShapeIndex1 = 1;
@@ -54,8 +60,8 @@ constexpr size_t kShapeIndex3 = 3;
 constexpr size_t kShapeIndex4 = 4;
 int TypeStrToDstType(const std::string &type_str) {
   std::unordered_map<std::string, int> type_name_type_id_map = {
-    {"Float", kFloat}, {"Float32", kFloat}, {"Float16", kFloat16}, {"Int8", kInt8},
-    {"Int32", kInt32}, {"UInt8", kUint8},   {"UInt64", kUint64},   {"Bool", kBool}};
+    {"Float", kFloat}, {"Float32", kFloat}, {"Float16", kFloat16}, {"Int8", kInt8}, {"Int32", kInt32},
+    {"UInt8", kUint8}, {"Int64", kInt64},   {"UInt64", kUint64},   {"Bool", kBool}};
   auto iter = type_name_type_id_map.find(type_str);
   if (iter != type_name_type_id_map.end()) {
     return iter->second;
@@ -65,34 +71,23 @@ int TypeStrToDstType(const std::string &type_str) {
   return kInvalid;
 }
 }  // namespace
-std::unordered_set<std::string> TbeAdapter::input_order_adjusted_ops_ = {kConv2DBackpropInputOpName,
-                                                                         kConv2DBackpropFilterOpName,
-                                                                         kLogSoftmaxGradOpName,
-                                                                         kLayerNormGradOpName,
-                                                                         kLayerNormXBackpropOpName,
-                                                                         kLayerNormXBackpropV2OpName,
-                                                                         kLayerNormBetaGammaBackpropOpName,
-                                                                         kMinimumGradOpName,
-                                                                         kMaximumGradOpName,
-                                                                         kStridedSliceGradOpName,
-                                                                         kApplyCenteredRMSPropOpName};
 
 bool TbeAdapter::IsSpecialFusionComputeNode(const std::vector<mindspore::AnfNodePtr> &compute_nodes) {
   auto result = std::find_if(compute_nodes.begin(), compute_nodes.end(), [](const auto &it) {
     auto op_name = common::AnfAlgo::GetCNodeName(it);
-    return (op_name == kConv2DBackpropInputOpName || op_name == kConv2DOpName);
+    return (op_name == kConv2DBackpropInputDOpName || op_name == kConv2DOpName);
   });
   return result != compute_nodes.end();
 }
 
 bool TbeAdapter::GetSpecInputLayers(const std::string &op_name, const std::vector<mindspore::AnfNodePtr> &reorder_layer,
                                     std::map<const AnfNodePtr, FusionDataType> *spec_data_input) {
-  if ((op_name == kReluGradV2OpName || op_name == kAddNOpName || op_name == kTensorAddOpName) &&
+  if ((op_name == kReLUGradV2OpName || op_name == kAddNOpName || op_name == kTensorAddOpName) &&
       reorder_layer.empty()) {
     MS_LOG(WARNING) << "Fusion error: node(" << op_name << " )'s input is null. ";
     return false;
   }
-  if (op_name == kReluGradV2OpName) {
+  if (op_name == kReLUGradV2OpName) {
     (*spec_data_input)[reorder_layer[0]] = kFusionReLUGradV2;
   } else if (op_name == kAddNOpName) {
     for (const auto &it : reorder_layer) {
@@ -168,7 +163,7 @@ bool TbeAdapter::GetSpecDataInput(const FusionScopeInfo &fusion_scope_info,
       auto input = ccompute_node->input(i);
       auto find_iter = std::find(input_nodes.begin(), input_nodes.end(), input);
       if (find_iter != input_nodes.end()) {
-        layer.emplace_back((*find_iter));
+        (void)layer.emplace_back((*find_iter));
       }
     }
     InputOrderPass<AnfNodePtr>(compute_node, layer, &reorder_layer);
@@ -197,6 +192,7 @@ bool TbeAdapter::IsPlaceHolderInput(const AnfNodePtr &node, const OpIOInfoPtr &i
     MS_LOG(EXCEPTION) << "Cnode: " << cnode_name << " doesn't has attribute placeholder_index.";
   }
 }
+
 void TbeAdapter::CastAttrJsonPrePass(const AnfNodePtr &anf_node, std::vector<OpAttrPtr> *op_info_attrs,
                                      nlohmann::json *attrs_json) {
   MS_EXCEPTION_IF_NULL(anf_node);
@@ -232,11 +228,12 @@ void TbeAdapter::CastAttrJsonPrePass(const AnfNodePtr &anf_node, std::vector<OpA
 }
 
 void TbeAdapter::CastAttrJsonPost(const AnfNodePtr &anf_node, nlohmann::json *attrs_json) {
+  MS_EXCEPTION_IF_NULL(attrs_json);
   if (common::AnfAlgo::GetCNodeName(anf_node) != kCastOpName) {
     return;
   }
-  std::map<int, std::string> dst_type_map{{0, "float32"}, {1, "float16"}, {2, "int8"}, {3, "int32"},
-                                          {4, "uint8"},   {10, "uint64"}, {12, "bool"}};
+  const std::map<int, std::string> dst_type_map = {{0, "float32"}, {1, "float16"}, {2, "int8"}, {3, "int32"},
+                                                   {4, "uint8"},   {10, "uint64"}, {12, "bool"}};
   auto type_id = GetJsonValue<int>(attrs_json->at(0), kJValue);
   auto iter = dst_type_map.find(type_id);
   if (iter != dst_type_map.end()) {

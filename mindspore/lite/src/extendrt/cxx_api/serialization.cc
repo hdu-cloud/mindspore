@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "include/api/serialization.h"
+#include <dirent.h>
 #include <fstream>
 #include <sstream>
 #include "utils/log_adapter.h"
@@ -67,7 +68,13 @@ Buffer ReadFile(const std::string &file) {
   }
 
   (void)ifs.seekg(0, std::ios::end);
-  size_t size = static_cast<size_t>(ifs.tellg());
+  auto tellg_size = ifs.tellg();
+  if (tellg_size < 0) {
+    MS_LOG(ERROR) << "Malloc buf failed, file: " << real_path;
+    ifs.close();
+    return buffer;
+  }
+  size_t size = static_cast<size_t>(tellg_size);
   buffer.ResizeData(size);
   if (buffer.DataSize() != size) {
     MS_LOG(ERROR) << "Malloc buf failed, file: " << real_path;
@@ -80,6 +87,25 @@ Buffer ReadFile(const std::string &file) {
   ifs.close();
 
   return buffer;
+}
+
+std::vector<std::string> ReadFileNames(const std::string &dir) {
+  std::vector<std::string> files;
+  auto dp = opendir(dir.c_str());
+  if (dp == nullptr) {
+    return {};
+  }
+  while (true) {
+    auto item = readdir(dp);
+    if (item == nullptr) {
+      break;
+    }
+    if (item->d_type == DT_REG) {
+      files.push_back(item->d_name);
+    }
+  }
+  closedir(dp);
+  return files;
 }
 
 Key::Key(const char *dec_key, size_t key_len) {
@@ -331,13 +357,20 @@ Status Serialization::SetParameters(const std::map<std::vector<char>, Buffer> &,
   return kMEFailed;
 }
 
-Status Serialization::ExportModel(const Model &, ModelType, Buffer *) {
+Status Serialization::ExportModel(const Model &, ModelType, Buffer *, QuantizationType, bool,
+                                  const std::vector<std::vector<char>> & /* output_tensor_name */) {
   MS_LOG(ERROR) << "Unsupported feature.";
   return kMEFailed;
 }
 
 Status Serialization::ExportModel(const Model &, ModelType, const std::vector<char> &, QuantizationType, bool,
                                   const std::vector<std::vector<char>> &output_tensor_name) {
+  MS_LOG(ERROR) << "Unsupported feature.";
+  return kMEFailed;
+}
+
+Status Serialization::ExportWeightsCollaborateWithMicro(const Model &, ModelType, const std::vector<char> &, bool, bool,
+                                                        const std::vector<std::vector<char>> &) {
   MS_LOG(ERROR) << "Unsupported feature.";
   return kMEFailed;
 }

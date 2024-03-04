@@ -12,15 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-
 import pytest
 import numpy as np
 
 import mindspore
-from mindspore import Tensor
+from mindspore import Tensor, ops
 import mindspore.nn as nn
 import mindspore.context as context
-from mindspore.ops import composite as C
 
 
 class NetBatchDot(nn.Cell):
@@ -29,7 +27,7 @@ class NetBatchDot(nn.Cell):
         self.axes = axes
 
     def construct(self, x, y):
-        return C.batch_dot(x, y, self.axes)
+        return ops.batch_dot(x, y, self.axes)
 
 
 # Implementation with numpy in tensorflow
@@ -63,7 +61,6 @@ def _reference_batch_dot(x, y, axes):
 def test_batch_dot_fp32():
     context.set_context(mode=context.GRAPH_MODE, device_target="CPU")
     np.random.seed(12876)
-
     # case 1
     shape_x1 = (3, 12, 5, 2, 3)
     shape_x2 = (3, 1, 7, 3, 2)

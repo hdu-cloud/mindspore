@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,8 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_CCSRC_MINDDATA_DATASET_KERNELS_IMAGE_DVPP_DVPP_VIDEO_H
-#define MINDSPORE_CCSRC_MINDDATA_DATASET_KERNELS_IMAGE_DVPP_DVPP_VIDEO_H
+#ifndef MINDSPORE_CCSRC_MINDDATA_DATASET_KERNELS_IMAGE_DVPP_UTILS_DVPP_VIDEO_H_
+#define MINDSPORE_CCSRC_MINDDATA_DATASET_KERNELS_IMAGE_DVPP_UTILS_DVPP_VIDEO_H_
 
 #include <dirent.h>
 #include <unistd.h>
@@ -26,12 +26,17 @@
 #include <thread>
 #include <vector>
 
-#include "ThreadSafeQueue.h"
-#include "VdecHelper.h"
+#include "minddata/dataset/kernels/image/dvpp/utils/ThreadSafeQueue.h"
+#include "minddata/dataset/kernels/image/dvpp/utils/VdecHelper.h"
 
 constexpr int INVALID_CHANNEL_ID = -1;
 constexpr int INVALID_STREAM_FORMAT = -1;
 constexpr int VIDEO_CHANNEL_MAX = 23;
+constexpr int THIRD_ELEMENT_INDEX = 2;
+constexpr int FOURTH_ELEMENT_INDEX = 3;
+constexpr int FIFTH_ELEMENT_INDEX = 4;
+constexpr int SIXTH_ELEMENT_INDEX = 5;
+constexpr int EIGHTH_ELEMENT_INDEX = 7;
 
 using FrameProcessCallBack = int (*)(void *callback_param, void *frame_data, int frame_size);
 
@@ -52,9 +57,9 @@ class ChannelIdGenerator {
       channelId_[i] = INVALID_CHANNEL_ID;
     }
   }
-  ~ChannelIdGenerator() {}
+  ~ChannelIdGenerator() = default;
 
-  int GenerateChannelId(void) {
+  int GenerateChannelId() {
     std::lock_guard<std::mutex> lock(mutex_lock_);
     for (int i = 0; i < VIDEO_CHANNEL_MAX; i++) {
       if (channelId_[i] == INVALID_CHANNEL_ID) {
@@ -74,51 +79,51 @@ class ChannelIdGenerator {
   }
 
  private:
-  int channelId_[VIDEO_CHANNEL_MAX];
+  int channelId_[VIDEO_CHANNEL_MAX]{};
   mutable std::mutex mutex_lock_;
 };
 
 class FrameExtarct {
  public:
   FrameExtarct(uint8_t *data, uint32_t size, uint32_t width, uint32_t height, uint32_t type);
-  ~FrameExtarct() {}
+  ~FrameExtarct() = default;
   void Decode(FrameProcessCallBack callback, void *callbackParam);
   void ExtractFrameH264(const uint8_t *buf_ptr, int *size_ptr);
   void ExtractFrameH265(const uint8_t *buf_ptr, int *size_ptr);
-  int IsFinished() { return isFinished_; }
+  int IsFinished() const { return isFinished_; }
   void StopDecode() { isStop_ = true; }
 
  private:
   inline bool FindStartH264(const uint8_t *buf, int idx) {
-    int32_t tmp = buf[idx + 3] & 0x1F;
+    int32_t tmp = buf[idx + FOURTH_ELEMENT_INDEX] & 0x1F;
     // Find 00 00 01
-    return (buf[idx] == 0) && (buf[idx + 1] == 0) && (buf[idx + 2] == 1) &&
-           (((tmp == 0x5 || tmp == 0x1) && ((buf[idx + 4] & 0x80) == 0x80)) ||
-            (tmp == 20 && (buf[idx + 7] & 0x80) == 0x80));
+    return (buf[idx] == 0) && (buf[idx + 1] == 0) && (buf[idx + THIRD_ELEMENT_INDEX] == 1) &&
+           (((tmp == 0x5 || tmp == 0x1) && ((buf[idx + FIFTH_ELEMENT_INDEX] & 0x80) == 0x80)) ||
+            (tmp == 0x14 && (buf[idx + EIGHTH_ELEMENT_INDEX] & 0x80) == 0x80));
   }
 
   inline bool FindEndH264(const uint8_t *buf, int idx) {
     // Find 00 00 01
-    int32_t tmp = buf[idx + 3] & 0x1F;
-    return (buf[idx] == 0) && (buf[idx + 1] == 0) && (buf[idx + 2] == 1) &&
-           ((tmp == 15) || (tmp == 7) || (tmp == 8) || (tmp == 6) ||
-            ((tmp == 5 || tmp == 1) && ((buf[idx + 4] & 0x80) == 0x80)) ||
-            (tmp == 20 && (buf[idx + 7] & 0x80) == 0x80));
+    int32_t tmp = buf[idx + FOURTH_ELEMENT_INDEX] & 0x1F;
+    return (buf[idx] == 0) && (buf[idx + 1] == 0) && (buf[idx + THIRD_ELEMENT_INDEX] == 1) &&
+           ((tmp == 0xF) || (tmp == 0x7) || (tmp == 0x8) || (tmp == 0x6) ||
+            ((tmp == 0x5 || tmp == 1) && ((buf[idx + FIFTH_ELEMENT_INDEX] & 0x80) == 0x80)) ||
+            (tmp == 0x14 && (buf[idx + EIGHTH_ELEMENT_INDEX] & 0x80) == 0x80));
   }
 
   inline bool FindStartH265(const uint8_t *buf, int idx) {
-    uint32_t tmp = (buf[idx + 3] & 0x7E) >> 1;
+    uint32_t tmp = (buf[idx + FOURTH_ELEMENT_INDEX] & 0x7EU) >> 1;
     // Find 00 00 01
-    return (buf[idx + 0] == 0) && (buf[idx + 1] == 0) && (buf[idx + 2] == 1) && (tmp <= 21) &&
-           ((buf[idx + 5] & 0x80) == 0x80);
+    return (buf[idx + 0] == 0) && (buf[idx + 1] == 0) && (buf[idx + THIRD_ELEMENT_INDEX] == 1) && (tmp <= 0x15U) &&
+           ((buf[idx + SIXTH_ELEMENT_INDEX] & 0x80) == 0x80);
   }
 
   inline bool FindEndH265(const uint8_t *buf, int idx) {
-    uint32_t tmp = (buf[idx + 3] & 0x7E) >> 1;
+    uint32_t tmp = (buf[idx + FOURTH_ELEMENT_INDEX] & 0x7EU) >> 1;
     // Find 00 00 01
-    return ((buf[idx + 0] == 0) && (buf[idx + 1] == 0) && (buf[idx + 2] == 1) &&
-            ((tmp == 32) || (tmp == 33) || (tmp == 34) || (tmp == 39) || (tmp == 40) ||
-             ((tmp <= 21) && (buf[idx + 5] & 0x80) == 0x80)));
+    return ((buf[idx + 0] == 0) && (buf[idx + 1] == 0) && (buf[idx + THIRD_ELEMENT_INDEX] == 1) &&
+            ((tmp == 0x20U) || (tmp == 0x21U) || (tmp == 0x22U) || (tmp == 0x27U) || (tmp == 0x28U) ||
+             ((tmp <= 0x15U) && (buf[idx + SIXTH_ELEMENT_INDEX] & 0x80) == 0x80)));
   }
 
  private:
@@ -165,18 +170,18 @@ class DvppVideo {
   AclLiteError Close();
 
   void DestroyResource();
-  bool IsStop() { return isStop_; }
-  bool IsJam() { return isJam_; }
+  bool IsStop() const { return isStop_; }
+  bool IsJam() const { return isJam_; }
 
  private:
   AclLiteError InitResource();
   AclLiteError InitVdecDecoder();
   AclLiteError InitFrameExtractor();
   void StartFrameDecoder();
-  AclLiteError FrameImageEnQueue(std::shared_ptr<ImageData> frameData);
+  AclLiteError FrameImageEnQueue(const std::shared_ptr<ImageData> &frameData);
   std::shared_ptr<ImageData> FrameImageOutQueue(bool noWait = false);
 
-  void SaveYuvFile(FILE *const fd, const ImageData &frame);
+  void SaveYuvFile(FILE *fd, const ImageData &frame);
 
  private:
   uint8_t *data_;
@@ -207,5 +212,4 @@ class DvppVideo {
   VdecHelper *dvppVdec_;
   ThreadSafeQueue<std::shared_ptr<ImageData>> frameImageQueue_;
 };
-
-#endif  // MINDSPORE_CCSRC_MINDDATA_DATASET_KERNELS_IMAGE_DVPP_DVPP_VIDEO_H
+#endif  // MINDSPORE_CCSRC_MINDDATA_DATASET_KERNELS_IMAGE_DVPP_UTILS_DVPP_VIDEO_H_

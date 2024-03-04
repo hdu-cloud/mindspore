@@ -25,6 +25,7 @@ from mindspore.nn.loss import SoftmaxCrossEntropyWithLogits
 from mindspore.nn.optim.momentum import Momentum
 from mindspore.ops import composite as C
 from mindspore.ops import operations as P
+from mindspore.ops import functional as F
 from mindspore.nn.wrap.cell_wrapper import _VirtualDatasetCell
 from mindspore.parallel import set_algo_parameters
 from mindspore.train import Model
@@ -34,7 +35,6 @@ from tests.ut.python.ops.test_math_ops import VirtualLoss
 
 context.set_context(mode=context.GRAPH_MODE)
 context.reset_auto_parallel_context()
-
 
 grad_all = C.GradOperation(get_all=True)
 
@@ -82,13 +82,13 @@ def reshape_net(strategy0, strategy1, strategy2):
     return ReshapeNet(strategy0=strategy0, strategy1=strategy1, strategy2=strategy2)
 
 
-def reshape_common(parallel_mode, strategy0, strategy1, strategy2, strategy_loss):
+def reshape_common(parallel_mode, strategy0, strategy1, strategy2, strategy_loss, search_mode="dynamic_programming"):
     learning_rate = 0.1
     momentum = 0.9
     epoch_size = 2
 
     context.reset_auto_parallel_context()
-    context.set_auto_parallel_context(parallel_mode=parallel_mode, device_num=8)
+    context.set_auto_parallel_context(parallel_mode=parallel_mode, device_num=8, search_mode=search_mode)
     predict = Tensor(np.ones([32, 512, 7, 7]), dtype=ms.float32)
     label = Tensor(np.ones([32]), dtype=ms.int32)
     dataset = Dataset(predict, label, 2)
@@ -414,7 +414,7 @@ class TrainOneStepCell(nn.Cell):
     def construct(self, data):
         weights = self.weights
         loss = self.network(data)
-        sens = P.Fill()(P.DType()(loss), P.Shape()(loss), self.sens)
+        sens = F.fill(P.DType()(loss), P.Shape()(loss), self.sens)
         grads = self.grad(self.network, weights)(data, sens)
 
         self.optimizer(grads)
@@ -563,7 +563,12 @@ class CrossEntropyLoss(nn.Cell):
         return loss
 
 
-def test_flatten_reshape(parallel_mode="auto_parallel"):
+def test_flatten_reshape(parallel_mode="auto_parallel", search_mode="dynamic_programming"):
+    """
+    Feature: test auto parallel
+    Description: auto parallel
+    Expectation: compile success
+    """
     batch_size = 16
     learning_rate = 0.1
     momentum = 0.9
@@ -582,7 +587,12 @@ def test_flatten_reshape(parallel_mode="auto_parallel"):
     model.train(epoch_size, dataset, dataset_sink_mode=False)
 
 
-def test_flatten_reshape2(parallel_mode="auto_parallel"):
+def test_flatten_reshape2(parallel_mode="auto_parallel", search_mode="dynamic_programming"):
+    """
+    Feature: test auto parallel
+    Description: auto parallel
+    Expectation: compile success
+    """
     batch_size = 16
     learning_rate = 0.1
     momentum = 0.9
@@ -624,7 +634,12 @@ class ParallelReshapeNet(nn.Cell):
 
 # the shape of input and output of reshape is the same
 # reshape is optimized before step_parallel
-def test_flatten_reshape3(parallel_mode="auto_parallel"):
+def test_flatten_reshape3(parallel_mode="auto_parallel", search_mode="dynamic_programming"):
+    """
+    Feature: test auto parallel
+    Description: auto parallel
+    Expectation: compile success
+    """
     batch_size = 16
     learning_rate = 0.1
     momentum = 0.9

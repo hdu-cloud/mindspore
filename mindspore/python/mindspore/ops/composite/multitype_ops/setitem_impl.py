@@ -22,10 +22,15 @@ from mindspore.ops.operations._inner_ops import SliceGetItem
 from mindspore.ops.operations import _map_tensor_ops
 from mindspore.ops.composite import base
 from mindspore.common import Tensor
+from mindspore.ops.composite.base import _dict_setitem
+from ...operations._sequence_ops import SequenceSliceSetItem
+
+DOC_URL = "https://mindspore.cn/search/en?inputValue=Index%20value%20assignment"
 
 setitem = base.MultitypeFuncGraph('setitem')
-
+setitem.set_doc_url(DOC_URL)
 slice_get_item = SliceGetItem()
+sequence_slice_setitem = SequenceSliceSetItem()
 
 
 class _ListSliceSetItem(base.ListSliceSetItem_):
@@ -145,6 +150,11 @@ def _list_slice_setitem_with_tuple(data, slice_index, value):
     Outputs:
         list, type is the same as the element type of data.
     """
+    if F.is_sequence_shape_unknown(data) or F.is_sequence_shape_unknown(value) or not F.isconstant(slice_index):
+        start = slice_get_item(slice_index, "start")
+        stop = slice_get_item(slice_index, "stop")
+        step = slice_get_item(slice_index, "step")
+        return sequence_slice_setitem(data, value, start, stop, step)
     list_value = list(value)
     return _list_slice_set_item(data, slice_index, list_value)
 
@@ -162,6 +172,11 @@ def _list_slice_setitem_with_list(data, slice_index, value):
     Outputs:
         list, type is the same as the element type of data.
     """
+    if F.is_sequence_shape_unknown(data) or F.is_sequence_shape_unknown(value) or not F.isconstant(slice_index):
+        start = slice_get_item(slice_index, "start")
+        stop = slice_get_item(slice_index, "stop")
+        step = slice_get_item(slice_index, "step")
+        return sequence_slice_setitem(data, value, start, stop, step)
     return _list_slice_set_item(data, slice_index, value)
 
 
@@ -179,6 +194,11 @@ def _list_slice_setitem_with_tensor(data, slice_index, value):
         list, type is the same as the element type of data.
     """
     value_list = list(value)
+    if F.is_sequence_shape_unknown(data) or F.is_sequence_shape_unknown(value_list) or not F.isconstant(slice_index):
+        start = slice_get_item(slice_index, "start")
+        stop = slice_get_item(slice_index, "stop")
+        step = slice_get_item(slice_index, "step")
+        return sequence_slice_setitem(data, value_list, start, stop, step)
     return _list_slice_set_item(data, slice_index, value_list)
 
 
@@ -233,7 +253,7 @@ def _dict_setitem_with_tensor(data, key, value):
     Outputs:
         dict, type is as same as the element type of data.
     """
-    return F.dict_setitem(data, key, value)
+    return _dict_setitem(data, key, value)
 
 
 @setitem.register("Tensor", "Tensor", "Tensor")
@@ -419,7 +439,7 @@ def _tensor_setitem_by_slice_with_tensor(data, input_slice, value):
     Outputs:
         Tensor, element type and shape is same as data.
     """
-    return compile_utils.tensor_setitem_by_slice_with_tensor(data, input_slice, value)
+    return compile_utils.tensor_setitem_by_slice(data, input_slice, value)
 
 
 @setitem.register("Tensor", "Slice", "Number")
@@ -441,7 +461,7 @@ def _tensor_setitem_by_slice_with_number(data, input_slice, value):
     Outputs:
         Tensor, element type and shape is same as data.
     """
-    return compile_utils.tensor_setitem_by_slice_with_number(data, input_slice, value)
+    return compile_utils.tensor_setitem_by_slice(data, input_slice, value)
 
 
 @setitem.register("Tensor", "Slice", "List")
@@ -463,7 +483,7 @@ def _tensor_setitem_by_slice_with_list(data, input_slice, value):
     Outputs:
         Tensor, element type and shape is same as data.
     """
-    return compile_utils.tensor_setitem_by_slice_with_sequence(data, input_slice, value)
+    return compile_utils.tensor_setitem_by_slice(data, input_slice, value)
 
 
 @setitem.register("Tensor", "Slice", "Tuple")
@@ -485,7 +505,7 @@ def _tensor_setitem_by_slice_with_tuple(data, input_slice, value):
     Outputs:
         Tensor, element type and shape is same as data.
     """
-    return compile_utils.tensor_setitem_by_slice_with_sequence(data, input_slice, value)
+    return compile_utils.tensor_setitem_by_slice(data, input_slice, value)
 
 
 @setitem.register("Tensor", "Number", "Number")
@@ -849,4 +869,5 @@ def _map_tensor_setitem(map_tensor, key_tensor, value_tensor):
     Outputs:
         MapTensor, the map tensor be updated.
     """
-    return _map_tensor_ops.put(map_tensor, key_tensor, value_tensor)
+    _map_tensor_ops.put(map_tensor, key_tensor, value_tensor)
+    return map_tensor

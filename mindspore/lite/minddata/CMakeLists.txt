@@ -5,6 +5,7 @@ if(NOT Patch_FOUND)
 endif()
 
 include(${TOP_DIR}/cmake/external_libs/jpeg_turbo.cmake)
+include(${TOP_DIR}/cmake/external_libs/zlib.cmake)
 
 set(MINDDATA_DIR ${CCSRC_DIR}/minddata/dataset)
 set(CMAKE_CXX_STANDARD 17)
@@ -12,28 +13,53 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS_DEBUG "$ENV{CXXFLAGS} -O0 -g2 -ggdb -fno-inline-functions -fno-omit-frame-pointer \
   -D_LIBCPP_INLINE_VISIBILITY='' -D_LIBCPP_DISABLE_EXTERN_TEMPLATE=1 -DHALF_ENABLE_CPP11_USER_LITERALS=0 \
   -D_FORTIFY_SOURCE=2 -Wno-cpp")
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Werror -Wno-return-std-move -Wno-unused-private-field \
-  -Wno-unused-lambda-capture -Wno-sign-compare -Wno-overloaded-virtual -Wno-unneeded-internal-declaration \
-  -Wno-unused-variable -Wno-pessimizing-move -Wno-inconsistent-missing-override")
-
-set(CMAKE_CXX_FLAGS "$ENV{CXXFLAGS} -I/usr/local/include -std=c++17 -Wall -fPIC")
+if(TARGET_AOS_ARM)
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wno-sign-compare -Wno-overloaded-virtual \
+        -Wno-unused-variable")
+    set(CMAKE_CXX_FLAGS "$ENV{CXXFLAGS} -std=c++17 -Wall -fPIC -march=armv8.2-a -funsafe-math-optimizations \
+        -ftree-vectorize -flax-vector-conversions")
+else()
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Werror -Wno-return-std-move -Wno-unused-private-field \
+      -Wno-unused-lambda-capture -Wno-sign-compare -Wno-overloaded-virtual -Wno-unneeded-internal-declaration \
+      -Wno-unused-variable -Wno-pessimizing-move -Wno-inconsistent-missing-override")
+    set(CMAKE_CXX_FLAGS "$ENV{CXXFLAGS} -I/usr/local/include -std=c++17 -Wall -fPIC")
+endif()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OPTION_CXX_FLAGS}")
 
 if(PLATFORM_ARM)
-    set(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O2 -Werror -Wno-return-std-move -Wno-unused-private-field \
-      -Wno-unused-lambda-capture -Wno-sign-compare -Wno-overloaded-virtual -Wno-unneeded-internal-declaration \
-      -Wno-unused-variable -Wno-pessimizing-move -Wno-inconsistent-missing-override \
-      -DHALF_ENABLE_CPP11_USER_LITERALS=0 -D_FORTIFY_SOURCE=2")
+    if(TARGET_AOS_ARM)
+        set(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O2 -Wno-sign-compare -Wno-overloaded-virtual \
+          -Wno-unused-variable -DHALF_ENABLE_CPP11_USER_LITERALS=0 -D_FORTIFY_SOURCE=2 -O2")
+    else()
+        set(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O2 -Werror -Wno-return-std-move -Wno-unused-private-field \
+          -Wno-unused-lambda-capture -Wno-sign-compare -Wno-overloaded-virtual -Wno-unneeded-internal-declaration \
+          -Wno-unused-variable -Wno-pessimizing-move -Wno-inconsistent-missing-override \
+          -DHALF_ENABLE_CPP11_USER_LITERALS=0 -D_FORTIFY_SOURCE=2")
+    endif()
 else()
     set(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O2 -Wl,--allow-shlib-undefined -DHALF_ENABLE_CPP11_USER_LITERALS=0 \
       -D_FORTIFY_SOURCE=2")
 endif()
-
-set(CMAKE_C_FLAGS "-fPIC -fPIE -D_FORTIFY_SOURCE=2 -O2 -Wall -Werror -fstack-protector-strong -Wno-attributes \
-  -Wno-deprecated-declarations -Wno-missing-braces ${CMAKE_C_FLAGS}")
-set(CMAKE_CXX_FLAGS "-fPIC -fPIE -D_FORTIFY_SOURCE=2 -O2 -Wall -Werror -fstack-protector-strong -Wno-attributes \
-  -Wno-deprecated-declarations -Wno-missing-braces -Wno-overloaded-virtual ${CMAKE_CXX_FLAGS}")
+if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+    # debug mode do not change flags
+else()
+    set(CMAKE_C_FLAGS "-fPIC -fPIE -D_FORTIFY_SOURCE=2 -O2 -Wall -Werror -fstack-protector-strong -Wno-attributes \
+      -Wno-deprecated-declarations -Wno-missing-braces ${CMAKE_C_FLAGS}")
+    set(CMAKE_CXX_FLAGS "-fPIC -fPIE -D_FORTIFY_SOURCE=2 -O2 -Wall -Werror -fstack-protector-strong -Wno-attributes \
+      -Wno-deprecated-declarations -Wno-missing-braces -Wno-overloaded-virtual ${CMAKE_CXX_FLAGS}")
+    if(TARGET_AOS_ARM)
+        set(CMAKE_C_FLAGS "-fPIC -fPIE -D_FORTIFY_SOURCE=2 -O2 -Wall -fstack-protector-strong -Wno-attributes \
+        -Wno-deprecated-declarations -Wno-missing-braces ${CMAKE_C_FLAGS}")
+        set(CMAKE_CXX_FLAGS "-fPIC -fPIE -D_FORTIFY_SOURCE=2 -O2 -Wall -fstack-protector-strong -Wno-attributes \
+        -Wno-deprecated-declarations -Wno-missing-braces -Wno-overloaded-virtual ${CMAKE_CXX_FLAGS}")
+    else()
+        set(CMAKE_C_FLAGS "-fPIC -fPIE -D_FORTIFY_SOURCE=2 -O2 -Wall -Werror -fstack-protector-strong -Wno-attributes \
+        -Wno-deprecated-declarations -Wno-missing-braces ${CMAKE_C_FLAGS}")
+        set(CMAKE_CXX_FLAGS "-fPIC -fPIE -D_FORTIFY_SOURCE=2 -O2 -Wall -Werror -fstack-protector-strong \
+        -Wno-attributes -Wno-deprecated-declarations -Wno-missing-braces -Wno-overloaded-virtual ${CMAKE_CXX_FLAGS}")
+    endif()
+endif()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-non-virtual-dtor")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-sign-compare")
@@ -55,18 +81,20 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility=default")
 
 set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS} -s")
 
-if(MSLITE_ENABLE_RUNTIME_GLOG AND MSLITE_ENABLE_CLOUD_FUSION_INFERENCE)
+if(MSLITE_ENABLE_RUNTIME_GLOG AND (MSLITE_ENABLE_CLOUD_FUSION_INFERENCE OR MSLITE_ENABLE_CLOUD_INFERENCE))
     add_definitions(-DUSE_GLOG)
     string(REPLACE "-fno-rtti" "" CMAKE_C_FLAGS ${CMAKE_C_FLAGS})
     string(REPLACE "-fno-rtti" "" CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS})
 endif()
 
 if(MSLITE_ENABLE_ACL)
-include_directories(${TOP_DIR}/graphengine/metadef/inc/external)
-include_directories(${TOP_DIR}/graphengine/metadef/inc)
-include_directories(${TOP_DIR}/graphengine/inc)
-include_directories(${TOP_DIR}/graphengine/inc/external)
-include_directories(${TOP_DIR}/graphengine/third_party/fwkacllib/inc)
+include_directories(${TOP_DIR}/graphengine/910/metadef/inc/external)
+include_directories(${TOP_DIR}/graphengine/910/metadef/inc)
+include_directories(${TOP_DIR}/graphengine/910/inc)
+include_directories(${TOP_DIR}/graphengine/910/inc/external)
+include_directories(${TOP_DIR}/graphengine/910/third_party/fwkacllib)
+include_directories(${TOP_DIR}/graphengine/910/third_party/fwkacllib/inc)
+include_directories(${TOP_DIR}/graphengine/910/third_party/fwkacllib/inc/aoe)
 include_directories(${CCSRC_DIR})
 endif()
 
@@ -122,12 +150,14 @@ if(MSLITE_MINDDATA_IMPLEMENT STREQUAL "full")
     include_directories("${MINDDATA_DIR}/kernels/image")
     include_directories("${MINDDATA_DIR}/liteapi")
     include_directories("${TOP_DIR}")
+    include_directories("${TOP_DIR}/mindspore/ccsrc/plugin/device/cpu/kernel")
 
     set(MINDDATA_FULL_SRC
         ${TOP_DIR}/mindspore/lite/src/litert/cxx_api/types.cc
         ${TOP_DIR}/mindspore/lite/src/litert/cxx_api/tensor_utils.cc
         ${TOP_DIR}/mindspore/lite/src/litert/cxx_api/tensor/tensor_impl.cc
         ${TOP_DIR}/mindspore/lite/src/tensor.cc
+        ${TOP_DIR}/mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/tensor_c_utils.c
         ${TOP_DIR}/mindspore/lite/src/common/utils.cc
         ${TOP_DIR}/mindspore/lite/src/common/string_util.cc
         ${CORE_DIR}/utils/status.cc
@@ -190,6 +220,7 @@ if(MSLITE_MINDDATA_IMPLEMENT STREQUAL "full")
         ${MINDDATA_DIR}/engine/opt/pre/add_skip_pass.cc
         ${MINDDATA_DIR}/engine/opt/pre/getter_pass.cc
         ${MINDDATA_DIR}/engine/opt/pre/input_validation_pass.cc
+        ${MINDDATA_DIR}/engine/opt/pre/debug_mode_pass.cc
         ${MINDDATA_DIR}/engine/opt/pre/cache_validation_pass.cc
         ${MINDDATA_DIR}/engine/opt/pre/node_removal_pass.cc
         ${MINDDATA_DIR}/engine/opt/pre/epoch_ctrl_pass.cc
@@ -198,11 +229,12 @@ if(MSLITE_MINDDATA_IMPLEMENT STREQUAL "full")
         ${MINDDATA_DIR}/engine/opt/post/auto_worker_pass.cc
         ${MINDDATA_DIR}/engine/opt/pass.cc
         ${MINDDATA_DIR}/engine/perf/auto_tune.cc
-        ${MINDDATA_DIR}/engine/perf/profiling.cc
-        ${MINDDATA_DIR}/engine/perf/monitor.cc
-        ${MINDDATA_DIR}/engine/perf/device_queue_tracing.cc
         ${MINDDATA_DIR}/engine/perf/connector_size.cc
         ${MINDDATA_DIR}/engine/perf/dataset_iterator_tracing.cc
+        ${MINDDATA_DIR}/engine/perf/device_queue_tracing.cc
+        ${MINDDATA_DIR}/engine/perf/info_collector.cc
+        ${MINDDATA_DIR}/engine/perf/monitor.cc
+        ${MINDDATA_DIR}/engine/perf/profiling.cc
         ${MINDDATA_DIR}/engine/datasetops/source/sampler/sampler.cc
         ${MINDDATA_DIR}/engine/datasetops/source/sampler/subset_sampler.cc
         ${MINDDATA_DIR}/engine/datasetops/source/sampler/distributed_sampler.cc
@@ -308,7 +340,7 @@ if(MSLITE_MINDDATA_IMPLEMENT STREQUAL "full")
         ${MINDDATA_DIR}/util/arena.cc
         )
 
-        if(MSLITE_ENABLE_CLOUD_FUSION_INFERENCE)
+        if(MSLITE_ENABLE_CLOUD_FUSION_INFERENCE OR MSLITE_ENABLE_CLOUD_INFERENCE)
             set(MINDDATA_FULL_SRC
                 ${MINDDATA_FULL_SRC}
                 ${MINDDATA_DIR}/kernels/image/pad_op.cc
@@ -342,7 +374,7 @@ if(MSLITE_MINDDATA_IMPLEMENT STREQUAL "full")
     set(minddata_lite_submodules
         $<TARGET_OBJECTS:minddata-lite-obj>
     )
-    if(MSLITE_ENABLE_CLOUD_FUSION_INFERENCE AND MSLITE_ENABLE_ACL)
+    if((MSLITE_ENABLE_CLOUD_FUSION_INFERENCE OR MSLITE_ENABLE_CLOUD_INFERENCE) AND MSLITE_ENABLE_ACL)
         add_dependencies(minddata-lite-obj kernels-dvpp-image)
         set(minddata_lite_submodules
             ${minddata_lite_submodules}
@@ -354,23 +386,41 @@ if(MSLITE_MINDDATA_IMPLEMENT STREQUAL "full")
     add_library(minddata-lite_static STATIC ${minddata_lite_submodules})
     set_target_properties(minddata-lite_static PROPERTIES OUTPUT_NAME "minddata-lite")
 
-    find_package(Threads REQUIRED)
-    target_link_libraries(minddata-lite
-        securec
-        mindspore::jpeg_turbo
-        mindspore::turbojpeg
-        mindspore::json
-        Threads::Threads
-        )
-    target_link_libraries(minddata-lite_static
-        securec
-        mindspore::jpeg_turbo
-        mindspore::turbojpeg
-        mindspore::json
-        Threads::Threads
-        )
+    if(TARGET_AOS_ARM)
+        set(THREADS_PREFER_PTHREAD_FLAG ON)
+        target_link_libraries(minddata-lite
+                securec
+                mindspore::jpeg_turbo
+                mindspore::turbojpeg
+                mindspore::json
+                pthread
+                )
+        target_link_libraries(minddata-lite_static
+                securec
+                mindspore::jpeg_turbo
+                mindspore::turbojpeg
+                mindspore::json
+                pthread
+                )
+    else()
+        find_package(Threads REQUIRED)
+        target_link_libraries(minddata-lite
+            securec
+            mindspore::jpeg_turbo
+            mindspore::turbojpeg
+            mindspore::json
+            Threads::Threads
+            )
+        target_link_libraries(minddata-lite_static
+            securec
+            mindspore::jpeg_turbo
+            mindspore::turbojpeg
+            mindspore::json
+            Threads::Threads
+            )
+    endif()
 
-    if(MSLITE_ENABLE_CLOUD_FUSION_INFERENCE AND MSLITE_ENABLE_ACL)
+    if((MSLITE_ENABLE_CLOUD_FUSION_INFERENCE OR MSLITE_ENABLE_CLOUD_INFERENCE) AND MSLITE_ENABLE_ACL)
         target_link_libraries(minddata-lite
             mindspore_core
             mindspore::opencv_core
@@ -678,4 +728,8 @@ elseif(MSLITE_MINDDATA_IMPLEMENT STREQUAL "lite_cv")
         endif()
         target_link_libraries(minddata-lite ${LIBCLANG_RT_LIB})
     endif()
+endif()
+
+if(MSLITE_ENABLE_CLOUD_FUSION_INFERENCE OR MSLITE_ENABLE_CLOUD_INFERENCE)
+    target_link_libraries(minddata-lite ${PYTHON_LIBRARIES})
 endif()

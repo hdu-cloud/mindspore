@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,13 +20,14 @@
 #include <string>
 #include <memory>
 #include "ir/anf.h"
-#include "backend/common/optimizer/pattern_engine.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/pattern_engine.h"
+#include "include/backend/optimizer/helper.h"
 #include "plugin/device/ascend/optimizer/ascend_pass_control.h"
 
 namespace mindspore {
 namespace opt {
 bool CheckMatmulNeighborNodes(const FuncGraphPtr &func_graph, const AnfNodePtr &up_node, const AnfNodePtr &down_node);
+bool CheckShapeDimInfo(const ShapeVector &shape);
 
 class ReshapeTransposeFusion : public PatternProcessPassWithSwitch {
  public:

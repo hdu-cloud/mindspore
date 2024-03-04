@@ -13,22 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-#include <set>
+#include "ops/sparse_segment_sqrt_n.h"
 #include <map>
+#include <memory>
+#include <set>
 #include <string>
 #include <vector>
-#include <memory>
-#include <algorithm>
-#include <iostream>
 
-#include "ops/sparse_segment_sqrt_n.h"
 #include "abstract/dshape.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -41,10 +38,10 @@ abstract::ShapePtr SparseSegmentSqrtNInferShape(const PrimitivePtr &prim,
   auto indices_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
   auto segment_ids_shape =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->BuildShape())[kShape];
-  (void)CheckAndConvertUtils::CheckInteger("indices_shape", SizeToLong(indices_shape.size()), kEqual, kInputIndex1,
-                                           prim->name());
+  (void)CheckAndConvertUtils::CheckInteger("indices_shape", SizeToLong(indices_shape.size()), kEqual,
+                                           SizeToLong(kInputIndex1), prim->name());
   (void)CheckAndConvertUtils::CheckInteger("segment_ids_shape", SizeToLong(segment_ids_shape.size()), kEqual,
-                                           kInputIndex1, prim->name());
+                                           SizeToLong(kInputIndex1), prim->name());
   if (x_shape.size() < kInputIndex1) {
     MS_EXCEPTION(ValueError) << "For '" << prim_name << "', "
                              << "x's rank must be greater than 1, but got [" << x_shape.size() << "].";
@@ -58,7 +55,7 @@ abstract::ShapePtr SparseSegmentSqrtNInferShape(const PrimitivePtr &prim,
   if (IsDynamicRank(x_shape)) {
     return std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
   }
-  if (!input_args[kInputIndex2]->BuildValue()->isa<AnyValue>() &&
+  if (!input_args[kInputIndex2]->BuildValue()->isa<ValueAny>() &&
       !input_args[kInputIndex2]->BuildValue()->isa<None>()) {
     auto segment_ids_value_ptr = input_args[kInputIndex2]->BuildValue();
     MS_EXCEPTION_IF_NULL(segment_ids_value_ptr);
@@ -107,7 +104,26 @@ AbstractBasePtr SparseSegmentSqrtNInfer(const abstract::AnalysisEnginePtr &, con
   auto shapes = SparseSegmentSqrtNInferShape(prim, input_args);
   return abstract::MakeAbstract(shapes, types);
 }
-REGISTER_HOST_DEPENDS(kNameSparseSegmentSqrtN, {2});
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseSegmentSqrtN, prim::kPrimSparseSegmentSqrtN, SparseSegmentSqrtNInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSparseSegmentSqrtNInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentSqrtNInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentSqrtNInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentSqrtNInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseSegmentSqrtN, prim::kPrimSparseSegmentSqrtN, AGSparseSegmentSqrtNInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 #ifdef ENABLE_FP16
 #include "nnacl/base/cast_base.h"
 #endif
+#include "nnacl/nnacl_common.h"
 #include "src/litert/kernel_exec_util.h"
 
 namespace mindspore::lite {
@@ -75,7 +76,12 @@ int MindrtExecutor::PrepareGraphInput(const std::vector<kernel::KernelExec *> &k
     for (size_t k = 0; k < in_tensor_size; ++k) {
       auto tensor = kernels[j]->in_tensors()[k];
       if (!tensor->IsGraphInput()) {
-        continue;
+        // for that extendrt create isolated_input_map_ outside of executor
+        auto input = isolate_input_map_->find(tensor);
+        if (input == isolate_input_map_->end() || !input->second->IsGraphInput()) {
+          continue;
+        }
+        tensor = input->second;
       }
       size_t idx = std::find(inputs.begin(), inputs.end(), tensor) - inputs.begin();
       if (idx == inputs.size()) {
@@ -123,7 +129,7 @@ int MindrtExecutor::PrepareGraphOutput(const std::vector<kernel::KernelExec *> &
           MS_LOG(ERROR) << "new opdata failed.";
           return RET_NULL_PTR;
         }
-        op_actors_[j]->AddResultIndex(output_data_.size());
+        op_actors_[j]->AddResultIndex(output_data_.size(), k);
         (void)output_data_.emplace_back(data);
       }
     }
@@ -144,7 +150,17 @@ int MindrtExecutor::Resize(const std::vector<mindspore::lite::Tensor *> &inputs,
 }
 
 int MindrtExecutor::PreInitActors() {
-  for (auto actor : op_actors_) {
+  // for that extendrt create isolated_input_map_ outside of executor
+  if (!isolate_input_map_->empty()) {
+    for (auto &iter : *isolate_input_map_) {
+      ctx_->SetLinkInfo(iter.second, iter.first);
+    }
+    for (const auto &actor : op_actors_) {
+      actor->set_isolate_input_map(isolate_input_map_);
+    }
+    return RET_OK;
+  }
+  for (const auto &actor : op_actors_) {
     int ret = actor->PreInit(&op_actors_, isolate_input_map_);
     if (ret != RET_OK) {
       MS_LOG(ERROR) << "IsolateInputData failed, actor aid: " << actor->GetAID();
@@ -254,37 +270,41 @@ int MindrtExecutor::TransferGraphOutput() {
     }
     dst_tensor->set_shape(src_tensor->shape());
     /* dst tensor free in FreeOutputTensor */
-#ifdef ENABLE_FP16
-    if (src_tensor->data_type() == kNumberTypeFloat16) {
+    if (src_tensor->data_type() == kNumberTypeFloat16 && dst_tensor->data_type() == kNumberTypeFloat32) {
       auto ret = dst_tensor->MallocData();
       if (ret != RET_OK) {
         MS_LOG(ERROR) << "MallocData failed";
         return ret;
       }
+#ifdef ENABLE_FP16
       Fp16ToFloat32(reinterpret_cast<float16_t *>(src_tensor->MutableData()),
                     reinterpret_cast<float *>(dst_tensor->data()), dst_tensor->ElementsNum());
-    } else {
+#else
+      auto src_data = reinterpret_cast<const uint16_t *>(src_tensor->MutableData());
+      auto dst_data = reinterpret_cast<float *>(dst_tensor->data());
+      for (int i = 0; i < dst_tensor->ElementsNum(); i++) {
+        dst_data[i] = ShortToFloat32(src_data[i]);
+      }
 #endif
+    } else {
       if (dst_tensor->allocator() != src_tensor->allocator()) {
         dst_tensor->set_allocator(src_tensor->allocator());
       }
       if (src_tensor->allocator() != nullptr) {
         dst_tensor->set_data(src_tensor->data());
-        dst_tensor->set_own_data(src_tensor->own_data());
+        dst_tensor->set_own_data(src_tensor->IsConst() ? false : src_tensor->own_data());
       } else {
         dst_tensor->set_data(src_tensor->data());
         src_tensor->set_data(nullptr);
       }
-#ifdef ENABLE_FP16
     }
-#endif
     src_tensor->DecRefCount();
   }
   return RET_OK;
 }
 
 void MindrtExecutor::FreeOutputTensor() {
-  for (auto tensor_map : *isolate_output_map_) {
+  for (auto &&tensor_map : *isolate_output_map_) {
     auto src_tensor = tensor_map.first;
     auto dst_tensor = tensor_map.second;
     if (dst_tensor->data_type() == kNumberTypeGLUInt && src_tensor->data_type() == kNumberTypeGLUInt) {

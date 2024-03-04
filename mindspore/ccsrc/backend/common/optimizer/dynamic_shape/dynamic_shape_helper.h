@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,23 @@
 #ifndef MINDSPORE_CCSRC_BACKEND_COMMON_OPTIMIZER_DYNAMIC_SHAPE_DYNAMIC_SHAPE_HELPER_H
 #define MINDSPORE_CCSRC_BACKEND_COMMON_OPTIMIZER_DYNAMIC_SHAPE_DYNAMIC_SHAPE_HELPER_H
 
+#include <vector>
+#include <memory>
+
 #include "ir/anf.h"
 #include "utils/ms_utils.h"
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/optimizer.h"
+#include "include/backend/optimizer/helper.h"
+#include "runtime/pynative/op_compiler.h"
+#include "kernel/framework_utils.h"
 
 namespace mindspore::opt::dynamic_shape {
 bool IsRealCNode(const BaseRef &n);
-BACKEND_EXPORT void InferOp(const CNodePtr &node, void *args = nullptr);
+void InferOp(const CNodePtr &node, void *args = nullptr);
+kernel::KernelArgs InferOp(const CNodePtr &cnode, const pynative::ExecuteKernelInfo &execute_kernel,
+                           const std::vector<tensor::TensorPtr> &input_tensors);
+kernel::KernelArgs SetOpArgs(const CNodePtr &cnode, const pynative::ExecuteKernelInfo &execute_kernel,
+                             const std::vector<tensor::TensorPtr> &input_tensors);
 AnfNodePtr GenInferNode(const AnfNodePtr &node);
 AnfNodePtr GenInitNode(const AnfNodePtr &node);
 
@@ -54,5 +64,8 @@ class CustomActorNodeManager {
   DISABLE_COPY_AND_ASSIGN(CustomActorNodeManager)
   OrderedMap<AnfNodePtr, RelatedCustomActorNode> custom_nodes_map_;
 };
+
+extern InfPyHandler cpp_infer_py_handler_;
+void set_cpp_infer_py_handler(const InfPyHandler &infer_handler);
 }  // namespace mindspore::opt::dynamic_shape
 #endif  // MINDSPORE_CCSRC_BACKEND_COMMON_OPTIMIZER_DYNAMIC_SHAPE_DYNAMIC_SHAPE_HELPER_H

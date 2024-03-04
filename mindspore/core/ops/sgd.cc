@@ -15,9 +15,13 @@
  */
 
 #include "ops/sgd.h"
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
+
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_name.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -45,16 +49,6 @@ abstract::BaseShapePtr SgdInferShape(const PrimitivePtr &primitive, const std::v
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kGradientIndex]->BuildShape())[kShape];
   auto stat_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kStatIndex]->BuildShape())[kShape];
   auto accum_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kAccumIndex]->BuildShape())[kShape];
-
-  (void)CheckAndConvertUtils::CheckInteger("parameters rank", SizeToLong(parameters_shape.size()), kGreaterThan, 0,
-                                           prim_name);
-
-  (void)CheckAndConvertUtils::CheckValue("parameters shape", parameters_shape, kEqual, "gradient shape", gradient_shape,
-                                         prim_name);
-  (void)CheckAndConvertUtils::CheckValue("parameters shape", parameters_shape, kEqual, "stat shape", stat_shape,
-                                         prim_name);
-  (void)CheckAndConvertUtils::CheckValue("parameters shape", parameters_shape, kEqual, "accum shape", accum_shape,
-                                         prim_name);
 
   auto learning_rate_shape =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kLearningRateIndex]->BuildShape())[kShape];
@@ -142,6 +136,23 @@ abstract::AbstractBasePtr SGDInfer(const abstract::AnalysisEnginePtr &, const Pr
   return abstract::MakeAbstract(shapes, types);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(SGD, prim::kPrimSGD, SGDInfer, nullptr, true)
+// AG means auto generated
+class MIND_API AGSGDInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return sgd::SgdInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return sgd::SdgInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SGDInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SGD, prim::kPrimSGD, AGSGDInfer, false);
 }  // namespace ops
 }  // namespace mindspore

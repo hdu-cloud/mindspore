@@ -17,6 +17,7 @@
 #include "plugin/device/cpu/kernel/scatter_nd_cpu_kernel.h"
 #include <algorithm>
 #include <string>
+#include <mutex>
 #include "include/common/thread_pool.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 
@@ -39,35 +40,43 @@ struct ComputeParams {
 };
 
 template <typename S, typename T>
-void Compute(ScatterNdCpuKernelMod *content, const ComputeParams<S, T> *params, const size_t start, const size_t end) {
-  T *target = params->target_;
+void ComputeOffset(ScatterNdCpuKernelMod *content, const ComputeParams<S, T> *params, size_t num_units) {
   S *indices = params->indices_;
-  T *updates = params->updates_;
   std::vector<int> *out_strides = params->out_strides_;
-
-  for (size_t i = start; i < end; ++i) {
-    int offset = 0;
-    for (size_t j = 0; j < IntToSize(params->indices_unit_rank_); ++j) {
-      int index = static_cast<int>(indices[i * IntToSize(params->indices_unit_rank_) + j]);
-      if (index < 0) {
-        MS_LOG(EXCEPTION) << "For '" << kKernelName
-                          << "', each element in 'indices' must be greater "
-                             "than or equal to 0, but got "
-                          << index;
+  size_t indices_unit_rank = IntToSize(params->indices_unit_rank_);
+  auto task = [&](size_t start, size_t end) {
+    for (size_t i = start; i < end; i++) {
+      int offset = 0;
+      for (size_t j = 0; j < indices_unit_rank; j++) {
+        int index = static_cast<int>(indices[i * indices_unit_rank + j]);
+        if (index < 0) {
+          MS_LOG(EXCEPTION) << "For '" << kKernelName
+                            << "', each element in 'indice' must be greater than or equal to 0, but got " << index;
+        }
+        if (index >= content->out_shape_[j]) {
+          MS_LOG(EXCEPTION) << "For '" << kKernelName
+                            << "', each element in 'indices' should be smaller than the value of shape, but got "
+                            << index << " and got the value of shape " << content->out_shape_[j];
+        }
+        offset += index * out_strides->at(j) * params->unit_size_;
       }
-      if (index > static_cast<int>(content->out_shape_[j])) {
-        MS_LOG(EXCEPTION) << "For '" << kKernelName
-                          << "', each element in 'indices' should be smaller than the value of shape, but got " << index
-                          << " and got the value of shape " << content->out_shape_[j];
-      }
-      offset += index * out_strides->at(j) * params->unit_size_;
+      content->offset_vec_[i] = offset;
     }
-    auto task = [&target, &updates, &params, offset, i](size_t update_start, size_t update_end) {
-      for (size_t idx = update_start; idx < update_end; idx++) {
-        target[IntToSize(offset) + idx] += updates[IntToSize(params->unit_size_) * i + idx];
-      }
-    };
-    ParallelLaunchAutoSearch(task, IntToSize(params->unit_size_), content, &content->parallel_search_info_);
+  };
+  ParallelLaunchAutoSearch(task, num_units, content, &content->parallel_search_info_);
+}
+
+template <typename S, typename T>
+void ComputeOutput(ScatterNdCpuKernelMod *content, const ComputeParams<S, T> *params, size_t num_units) {
+  T *target = params->target_;
+  T *updates = params->updates_;
+
+  for (size_t i = 0; i < num_units; i++) {
+    auto t = target + content->offset_vec_[i];
+    auto u = updates + params->unit_size_ * i;
+    for (size_t j = 0; j < IntToSize(params->unit_size_); j++) {
+      t[j] += u[j];
+    }
   }
 }
 }  // namespace
@@ -165,22 +174,23 @@ int ScatterNdCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const st
 template <typename S, typename T>
 bool ScatterNdCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs,
                                          const std::vector<kernel::AddressPtr> &outputs) {
-  auto target = reinterpret_cast<T *>(outputs[0]->addr);
+  auto target = GetDeviceAddress<T>(outputs, 0);
   auto target_init = memset_s(target, outputs[0]->size, 0, outputs[0]->size);
   if (target_init != EOK) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', memset failed. Error no: " << target_init;
   }
   ComputeParams<S, T> params;
   params.target_ = target;
-  params.indices_ = reinterpret_cast<S *>(inputs[0]->addr);
-  params.updates_ = reinterpret_cast<T *>(inputs[1]->addr);
+  params.indices_ = GetDeviceAddress<S>(inputs, 0);
+  params.updates_ = GetDeviceAddress<T>(inputs, 1);
   params.target_mem_size_ = outputs[0]->size;
   params.unit_size_ = unit_size_;
   params.indices_unit_rank_ = indices_unit_rank_;
   params.out_strides_ = &out_strides_;
-  for (size_t idx = 0; idx < num_units_; idx++) {
-    Compute<S, T>(this, &params, idx, idx + 1);
-  }
+  offset_vec_.clear();
+  offset_vec_.resize(num_units_);
+  ComputeOffset<S, T>(this, &params, num_units_);
+  ComputeOutput<S, T>(this, &params, num_units_);
   return true;
 }
 
@@ -207,6 +217,7 @@ std::vector<std::pair<KernelAttr, ScatterNdCpuKernelMod::ScatterNdFunc>> Scatter
   DTYPE_REGISTER(kNumberTypeUInt8, kNumberTypeInt32, kNumberTypeUInt8, uint8_t),
   DTYPE_REGISTER(kNumberTypeComplex128, kNumberTypeInt32, kNumberTypeComplex128, complex128),
   DTYPE_REGISTER(kNumberTypeComplex64, kNumberTypeInt32, kNumberTypeComplex64, complex64),
+  DTYPE_REGISTER(kNumberTypeBool, kNumberTypeInt32, kNumberTypeBool, bool),
   DTYPE_REGISTER(kNumberTypeFloat64, kNumberTypeInt64, kNumberTypeFloat64, double),
   DTYPE_REGISTER(kNumberTypeFloat32, kNumberTypeInt64, kNumberTypeFloat32, float),
   DTYPE_REGISTER(kNumberTypeInt64, kNumberTypeInt64, kNumberTypeInt64, int64_t),
@@ -219,6 +230,7 @@ std::vector<std::pair<KernelAttr, ScatterNdCpuKernelMod::ScatterNdFunc>> Scatter
   DTYPE_REGISTER(kNumberTypeUInt8, kNumberTypeInt64, kNumberTypeUInt8, uint8_t),
   DTYPE_REGISTER(kNumberTypeComplex128, kNumberTypeInt64, kNumberTypeComplex128, complex128),
   DTYPE_REGISTER(kNumberTypeComplex64, kNumberTypeInt64, kNumberTypeComplex64, complex64),
+  DTYPE_REGISTER(kNumberTypeBool, kNumberTypeInt64, kNumberTypeBool, bool),
 };
 
 std::vector<KernelAttr> ScatterNdCpuKernelMod::GetOpSupport() {

@@ -13,17 +13,29 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "ops/grad/deformable_offsets_grad.h"
 
-#include <map>
-#include <vector>
-#include <string>
 #include <memory>
 #include <set>
+#include <string>
+#include <vector>
 
-#include "ops/grad/deformable_offsets_grad.h"
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -44,6 +56,8 @@ std::vector<TypePtr> DeformableOffsetsGradInferType(const PrimitivePtr &prim,
                                                     const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(prim);
   auto prim_name = prim->name();
+  // check inputs num.
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kDeformableOffsetsGradInputSize, prim_name);
 
   auto dout_type = input_args[kDeformableOffsetsGradInputDoutIndex]->BuildType();
   auto x_type = input_args[kDeformableOffsetsGradInputInputIndex]->BuildType();
@@ -57,23 +71,6 @@ std::vector<TypePtr> DeformableOffsetsGradInferType(const PrimitivePtr &prim,
   return {x_elem_type, offset_elem_type};
 }
 }  // namespace
-
-MIND_API_OPERATOR_IMPL(DeformableOffsetsGrad, BaseOperator);
-AbstractBasePtr DeformableOffsetsGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                           const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  auto prim_name = primitive->name();
-  // check inputs num.
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kDeformableOffsetsGradInputSize, prim_name);
-  auto out_grad_types = DeformableOffsetsGradInferType(primitive, input_args);
-  auto out_grad_shapes = DeformableOffsetsGradInferShape(primitive, input_args);
-  std::vector<abstract::AbstractBasePtr> out_grads_abs;
-  for (size_t i = 0; i < out_grad_shapes.size(); ++i) {
-    auto grad_i_abs = std::make_shared<abstract::AbstractTensor>(out_grad_types[i], out_grad_shapes[i]);
-    (void)out_grads_abs.emplace_back(grad_i_abs);
-  }
-  return std::make_shared<abstract::AbstractTuple>(out_grads_abs);
-}
 
 void DeformableOffsetsGrad::Init(const std::vector<int64_t> &strides, const std::vector<int64_t> &pads,
                                  const std::vector<int64_t> &ksize, const std::vector<int64_t> &dilations,
@@ -156,7 +153,21 @@ bool DeformableOffsetsGrad::get_modulated() const {
   return GetValue<bool>(value_ptr);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(DeformableOffsetsGrad, prim::kPrimDeformableOffsetsGrad, DeformableOffsetsGradInfer,
-                             nullptr, true);
+MIND_API_OPERATOR_IMPL(DeformableOffsetsGrad, BaseOperator);
+
+class MIND_API DeformableOffsetsGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return std::make_shared<abstract::TupleShape>(DeformableOffsetsGradInferShape(primitive, input_args));
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return std::make_shared<Tuple>(DeformableOffsetsGradInferType(primitive, input_args));
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(DeformableOffsetsGrad, prim::kPrimDeformableOffsetsGrad, DeformableOffsetsGradInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

@@ -33,6 +33,7 @@ from mindspore import context
 
 class OneParameterNet(nn.Cell):
     """Net definition"""
+
     def __init__(self, param_type, strategy1, strategy2):
         super(OneParameterNet, self).__init__()
         self.fc1 = P.MatMul().shard(strategy1)
@@ -45,8 +46,10 @@ class OneParameterNet(nn.Cell):
         x = self.fc1(x, p1)
         return self.sub(x, 0)
 
+
 class Net(nn.Cell):
     """Net definition"""
+
     def __init__(self, param_type, strategy1, strategy2):
         super(Net, self).__init__()
         self.fc1 = P.MatMul().shard(strategy1)
@@ -66,6 +69,7 @@ class Net(nn.Cell):
 
 class Net2(nn.Cell):
     """Net definition"""
+
     def __init__(self, param_type, strategy1, strategy2):
         super(Net2, self).__init__()
         self.net1 = Net(param_type, strategy1, strategy2)
@@ -128,7 +132,7 @@ def auto_parallel_compile_net(mode, dev_num, net, strategy1=None, strategy2=None
 class TestGlobalNormInserted:
     def setup_method(self):
         self.output_path = './graphs' + self.__str__()
-        context.set_context(save_graphs=True,
+        context.set_context(save_graphs=3,
                             save_graphs_path=self.output_path)
 
     def teardown_method(self):
@@ -195,7 +199,6 @@ class TestGlobalNormInserted:
                                   loss_scale_manager=DynamicLossScaleManager())
         self.run_count_check(target_count=1, pattern=r"=16.*PARALLEL_GLOBALNORM_DIV")
         self.run_count_check(target_count=3, pattern=r"PARALLEL_GLOBALNORM")
-
 
     def test_pipeline_global_norm_fp16(self):
         """

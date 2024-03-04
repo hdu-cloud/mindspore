@@ -17,12 +17,12 @@
 #ifndef MINDSPORE_CORE_OPS_CTC_LOSS_V2_GRAD_H_
 #define MINDSPORE_CORE_OPS_CTC_LOSS_V2_GRAD_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -53,8 +53,9 @@ class MIND_API CTCLossV2Grad : public BaseOperator {
   bool get_zero_infinity() const;
 };
 
-abstract::AbstractBasePtr CTCLossV2GradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                             const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr CTCLossV2GradInfer(const abstract::AnalysisEnginePtr &,
+                                                      const PrimitivePtr &primitive,
+                                                      const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimCTCLossV2Ptr = std::shared_ptr<CTCLossV2Grad>;
 }  // namespace ops
 }  // namespace mindspore

@@ -14,18 +14,20 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_BASE_ARITHMETIC_BASE_H_
-#define MINDSPORE_NNACL_BASE_ARITHMETIC_BASE_H_
+#ifndef NNACL_BASE_ARITHMETIC_BASE_H_
+#define NNACL_BASE_ARITHMETIC_BASE_H_
 
-#include "nnacl/arithmetic.h"
+#include "nnacl/arithmetic_parameter.h"
 #include "nnacl/nnacl_utils.h"
 #include "nnacl/nnacl_common.h"
+#include "nnacl/kernel/arithmetic.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 void CalcMultiplesAndStrides(ArithmeticParameter *param);
+void CalcStructMultiplesAndStrides(ArithmeticStruct *arithmetic);
 
 #ifdef __cplusplus
 }

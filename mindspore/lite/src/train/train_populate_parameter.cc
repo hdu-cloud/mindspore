@@ -17,10 +17,10 @@
 #include "src/common/ops/populate/populate_register.h"
 #include "src/common/ops/populate/default_populate.h"
 #include "nnacl/strided_slice_parameter.h"
-#include "nnacl/arithmetic.h"
+#include "nnacl/arithmetic_parameter.h"
 #include "nnacl/conv_parameter.h"
 #include "nnacl/pooling_parameter.h"
-#include "nnacl/power_parameter.h"
+#include "nnacl/pow_parameter.h"
 #include "nnacl/activation_parameter.h"
 #include "nnacl/fp32_grad/softmax_crossentropy_parameter.h"
 #include "nnacl/fp32_grad/optimizer.h"
@@ -214,7 +214,7 @@ OpParameter *PopulateMaxPoolGradParameter(const void *prim) {
   pooling_param->pad_r_ = 0;
   pooling_param->stride_w_ = static_cast<int>(value->strides()->Get(1));
   pooling_param->stride_h_ = static_cast<int>(value->strides()->Get(0));
-  pooling_param->round_mode_ = RoundMode_No;
+  pooling_param->round_type_ = RoundType_No;
   pooling_param->pool_mode_ = PoolMode_MaxPool;
   switch (value->pad_mode()) {
     case schema::PadMode_SAME:
@@ -265,7 +265,7 @@ OpParameter *PopulateAvgPoolGradParameter(const void *prim) {
       pooling_param->pad_mode_ = Pad_pad;
       break;
   }
-  pooling_param->round_mode_ = RoundMode_No;
+  pooling_param->round_type_ = RoundType_No;
   pooling_param->pool_mode_ = PoolMode_AvgPool;
   return reinterpret_cast<OpParameter *>(pooling_param);
 }
@@ -385,12 +385,12 @@ OpParameter *PopulateConvolutionGradInputParameter(const void *prim) {
 }
 
 OpParameter *PopulatePowerGradParameter(const void *prim) {
-  PowerParameter *power_param = reinterpret_cast<PowerParameter *>(malloc(sizeof(PowerParameter)));
+  PowParameter *power_param = reinterpret_cast<PowParameter *>(malloc(sizeof(PowParameter)));
   if (power_param == nullptr) {
-    MS_LOG(ERROR) << "malloc PowerParameter failed.";
+    MS_LOG(ERROR) << "malloc PowParameter failed.";
     return nullptr;
   }
-  memset(power_param, 0, sizeof(PowerParameter));
+  memset(power_param, 0, sizeof(PowParameter));
   auto primitive = static_cast<const schema::Primitive *>(prim);
   auto value = primitive->value_as_PowerGrad();
   MS_ASSERT(value != nullptr);
@@ -621,6 +621,8 @@ void PopulateTrainParameters() {
   Registry SgdParameterRegistry(schema::PrimitiveType_SGD, PopulateSgdParameter, lite::SCHEMA_CUR);
   Registry BNGradParameterRegistry(schema::PrimitiveType_BatchNormGrad, PopulateBNGradParameter, lite::SCHEMA_CUR);
   Registry AdamParameterRegistry(schema::PrimitiveType_Adam, PopulateAdamParameter, lite::SCHEMA_CUR);
+  Registry AdamWeightDecayParameterRegistry(schema::PrimitiveType_AdamWeightDecay, lite::DefaultPopulateParameter,
+                                            lite::SCHEMA_CUR);
   Registry AssignParameterRegistry(schema::PrimitiveType_Assign, lite::DefaultPopulateParameter, lite::SCHEMA_CUR);
   Registry AssignAddParameterRegistry(schema::PrimitiveType_AssignAdd, lite::DefaultPopulateParameter,
                                       lite::SCHEMA_CUR);

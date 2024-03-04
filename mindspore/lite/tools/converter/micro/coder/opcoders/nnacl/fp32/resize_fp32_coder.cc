@@ -68,7 +68,9 @@ int ResizeFP32Coder::ReSize() {
   }
 
   MS_CHECK_RET_CODE_WITH_EXE(MallocTmpBuffer(), "MallocTmpBuffer failed", FreeTmpBuffer());
-  MS_CHECK_RET_CODE_WITH_EXE(ResizePrepare(), "ResizePrepare failed", FreeTmpBuffer());
+  if (input_tensor_->data_type() == kNumberTypeFloat32 || input_tensor_->data_type() == kNumberTypeFloat) {
+    MS_CHECK_RET_CODE_WITH_EXE(ResizePrepare(), "ResizePrepare failed", FreeTmpBuffer());
+  }
 
   return RET_OK;
 }
@@ -128,8 +130,8 @@ int ResizeFP32Coder::MallocTmpBuffer() {
   }
 
   {
-    size_t line_buffer_size = sizeof(float) * x_len_ * input_tensor_->Channel() * kTwo * kMaxThreadNumSupported;
-    line_buffer_ = reinterpret_cast<float *>(allocator_->Malloc(kNumberTypeFloat32, line_buffer_size, kWorkspace));
+    size_t line_buffer_size = DataTypeLen() * x_len_ * input_tensor_->Channel() * kTwo * kMaxThreadNumSupported;
+    line_buffer_ = allocator_->Malloc(kNumberTypeUInt8, line_buffer_size, kWorkspace);
     CHECK_MALLOC_RES(line_buffer_, RET_NULL_PTR);
   }
   return RET_OK;
@@ -168,12 +170,12 @@ int ResizeFP32Coder::DoCode(CoderContext *const context) {
 
   switch (method_) {
     case static_cast<int>(schema::ResizeMethod_LINEAR): {
-      code.CodeArray("y_bottoms", coordinate_.y_bottoms_, sizeof(int) * y_len_, true);
-      code.CodeArray("y_tops", coordinate_.y_tops_, sizeof(int) * y_len_, true);
-      code.CodeArray("x_lefts", coordinate_.x_lefts_, sizeof(int) * x_len_, true);
-      code.CodeArray("x_rights", coordinate_.x_rights_, sizeof(int) * x_len_, true);
-      code.CodeArray("y_weights", y_weights_, sizeof(float) * y_weight_len_, true);
-      code.CodeArray("x_weights", x_weights_, sizeof(float) * x_weight_len_, true);
+      code.CodeArray("y_bottoms", coordinate_.y_bottoms_, y_len_, true);
+      code.CodeArray("y_tops", coordinate_.y_tops_, y_len_, true);
+      code.CodeArray("x_lefts", coordinate_.x_lefts_, x_len_, true);
+      code.CodeArray("x_rights", coordinate_.x_rights_, x_len_, true);
+      code.CodeArray("y_weights", y_weights_, y_weight_len_, true);
+      code.CodeArray("x_weights", x_weights_, x_weight_len_, true);
 
       int c = input_tensor_->shape().at(kNHWC_C);
       code << "float *line0 = " << MemoryAllocator::GetInstance()->GetRuntimeAddr(line_buffer_) << ";\n";
@@ -188,12 +190,13 @@ int ResizeFP32Coder::DoCode(CoderContext *const context) {
       break;
     }
     case static_cast<int>(schema::ResizeMethod_CUBIC): {
-      code.CodeArray("y_tops", coordinate_.y_tops_, sizeof(int) * y_len_, true);
-      code.CodeArray("x_lefts", coordinate_.x_lefts_, sizeof(int) * x_len_, true);
-      code.CodeArray("y_weights", y_weights_, sizeof(float) * y_weight_len_, true);
-      code.CodeArray("x_weights", x_weights_, sizeof(float) * x_weight_len_, true);
+      code.CodeArray("y_tops", coordinate_.y_tops_, y_len_, true);
+      code.CodeArray("x_lefts", coordinate_.x_lefts_, x_len_, true);
+      code.CodeArray("y_weights", y_weights_, y_weight_len_, true);
+      code.CodeArray("x_weights", x_weights_, x_weight_len_, true);
+      auto buffer_str = "(float *)" + MemoryAllocator::GetInstance()->GetRuntimeAddr(line_buffer_);
       code.CodeFunction("ResizeBicubic", input_tensor_, output_tensor_, "input_shape", "output_shape", "y_tops",
-                        "x_lefts", "y_weights", "x_weights", line_buffer_, 0, new_height_);
+                        "x_lefts", "y_weights", "x_weights", buffer_str, 0, new_height_);
       break;
     }
     default: {

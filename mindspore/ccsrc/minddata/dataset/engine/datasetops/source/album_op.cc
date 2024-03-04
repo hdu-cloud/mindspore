@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2022 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,9 +37,7 @@ AlbumOp::AlbumOp(int32_t num_wkrs, std::string file_dir, int32_t queue_size, boo
       extensions_(exts),
       data_schema_(std::move(data_schema)),
       sampler_ind_(0),
-      dirname_offset_(0),
-      sample_ids_(nullptr),
-      curr_row_(0) {
+      dirname_offset_(0) {
   // Set the column name map (base class field)
   for (int32_t i = 0; i < data_schema_->NumColumns(); ++i) {
     column_name_id_map_[data_schema_->Column(i).Name()] = i;
@@ -322,7 +320,7 @@ Status AlbumOp::LoadTensorRow(row_id_type row_id, TensorRow *row) {
   (*row) = TensorRow(row_id, {});
   MS_LOG(INFO) << "Image row file: " << file << ".";
 
-  std::ifstream file_handle(folder_path_ + file);
+  std::ifstream file_handle(folder_path_ + file, std::ios::in);
   if (!file_handle.is_open()) {
     RETURN_STATUS_UNEXPECTED("Invalid json file, " + folder_path_ + file + " does not exist or permission denied.");
   }
@@ -338,8 +336,11 @@ Status AlbumOp::LoadTensorRow(row_id_type row_id, TensorRow *row) {
 
       // loop over each column descriptor, this can optimized by switch cases
       for (int32_t i = 0; i < columns; i++) {
-        file_handle.close();
-        RETURN_IF_NOT_OK(loadColumnData(file, i, js, row));
+        auto s = loadColumnData(file, i, js, row);
+        if (s != Status::OK()) {
+          file_handle.close();
+          return s;
+        }
       }
     } catch (const std::exception &err) {
       file_handle.close();
@@ -407,8 +408,9 @@ Status AlbumOp::loadColumnData(const std::string &file, int32_t index, nlohmann:
 }
 
 void AlbumOp::Print(std::ostream &out, bool show_all) const {
+  constexpr int64_t field_width = 2;
   // Always show the id and name as first line regardless if this summary or detailed print
-  out << "(" << std::setw(2) << operator_id_ << ") <AlbumOp>:";
+  out << "(" << std::setw(field_width) << operator_id_ << ") <AlbumOp>:";
   if (!show_all) {
     // Call the super class for displaying any common 1-liner info
     ParallelOp::Print(out, show_all);
@@ -430,28 +432,8 @@ Status AlbumOp::ComputeColMap() {
       column_name_id_map_[data_schema_->Column(i).Name()] = i;
     }
   } else {
-    MS_LOG(WARNING) << "Column name map is already set!";
+    MS_LOG(INFO) << "Column name map is already set!";
   }
-  return Status::OK();
-}
-
-Status AlbumOp::GetNextRowPullMode(TensorRow *const row) {
-  if (image_rows_.empty()) {
-    RETURN_IF_NOT_OK(PrepareData());
-  }
-  if (sample_ids_ == nullptr) {
-    RETURN_IF_NOT_OK(this->InitSampler());
-    TensorRow sample_row;
-    RETURN_IF_NOT_OK(sampler_->GetNextSample(&sample_row));
-    sample_ids_ = sample_row[0];
-  }
-  if (curr_row_ + 1 > sample_ids_->Size()) {
-    return Status::OK();
-  }
-  int64_t key;
-  RETURN_IF_NOT_OK(sample_ids_->GetItemAt(&key, {curr_row_}));
-  RETURN_IF_NOT_OK(LoadTensorRow(key, row));
-  curr_row_++;
   return Status::OK();
 }
 }  // namespace dataset

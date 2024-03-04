@@ -20,7 +20,6 @@
 #include <map>
 #include <limits>
 #include <memory>
-#include "utils/ms_utils.h"
 #include "plugin/device/cpu/kernel/sparse_count_sparse_output_cpu_kernel.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 #include "ops/sparse_count_sparse_output.h"
@@ -43,27 +42,33 @@ template <class T>
 using BatchedMap = std::vector<std::map<int64_t, T>>;
 
 void SparseCountSparseOutputCpuKernelMod::CheckIndicesInBounds(const int64_t *indices_addr, const int64_t *shape_ptr,
-                                                               size_t indices_length, bool is_1d, size_t rank) const {
-  for (size_t i = 0; i < indices_length; i++) {
-    if ((!is_1d) && (rank == 2)) {
-      if (i % 2 == 0) {
-        if (indices_addr[i] >= shape_ptr[0]) {
-          MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the input index value " << indices_addr[i]
-                            << " must be in [0, " << shape_ptr[0] << ") as given by dense shape";
+                                                               size_t indices_length, bool is_1d, size_t rank,
+                                                               int64_t n_batches) const {
+  if (rank == 0) {
+    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', input rank must be greater than 0, but got 0.";
+  }
+  indices_length = indices_length / rank;
+  for (size_t i = 0; i < rank; i++) {
+    if (!is_1d) {
+      for (size_t j = 0; j < indices_length; j++) {
+        if (indices_addr[i + j * rank] >= shape_ptr[i]) {
+          MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the input index value " << indices_addr[i + j * rank]
+                            << " must be in [0, " << shape_ptr[i] << ") as given by dense shape";
           break;
         }
-      } else if (indices_addr[i] >= shape_ptr[1]) {
-        MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the input index value " << indices_addr[i]
-                          << " must be in [0, " << shape_ptr[1] << ") as given by dense shape";
-        break;
       }
-    } else if (is_1d) {
-      if (indices_addr[i] >= shape_ptr[0]) {
+    } else {
+      if (indices_addr[i] >= shape_ptr[i]) {
         MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the input index value " << indices_addr[i]
-                          << " must be in [0, " << shape_ptr[0] << ") as given by dense shape";
+                          << " must be in [0, " << shape_ptr[i] << ") as given by dense shape";
         break;
       }
     }
+  }
+
+  if (n_batches <= 0 || n_batches > kMaxBatches) {
+    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', cannot allocate " << n_batches
+                      << " batches, dense shape too wide";
   }
 }
 
@@ -92,7 +97,6 @@ bool SparseCountSparseOutputCpuKernelMod::Init(const BaseOperatorPtr &base_opera
                   << ", but got " << inputs.size();
     return false;
   }
-  outputs_ = outputs;
   size_t output_num = outputs.size();
   CHECK_KERNEL_OUTPUTS_NUM(output_num, kSparseCountSparseOutputOutputsNum, kernel_name_);
 
@@ -124,8 +128,11 @@ int SparseCountSparseOutputCpuKernelMod::Resize(const BaseOperatorPtr &base_oper
   values_shape_ = inputs[kValuesIndex]->GetShapeVector();
   shape_shape_ = inputs[kShapeIndex]->GetShapeVector();
   weights_shape_ = inputs[kWeightsIndex]->GetShapeVector();
-  values_size_ = LongToSize(values_shape_[0]);
   auto ret = KernelMod::Resize(base_operator, inputs, outputs, inputsOnHost);
+  if (ret != KRET_OK && ret != KRET_UNKNOWN_OUT_SHAPE) {
+    return ret;
+  }
+  values_size_ = LongToSize(values_shape_[0]);
   if (ret == KRET_UNKNOWN_OUT_SHAPE) {
     if (input_size_list_.size() != kSparseCountSparseOutputInputsNum) {
       MS_LOG(ERROR) << "For '" << kernel_name_ << "', Input size list should be " << kSparseCountSparseOutputInputsNum
@@ -167,14 +174,9 @@ bool SparseCountSparseOutputCpuKernelMod::LaunchKernel(const std::vector<kernel:
   // Check if values and weights are valid
   CheckValidValuesAndWeights<I>(values_addr, use_weights);
 
-  // Check that index values are in bounds of the dense shape
-  CheckIndicesInBounds(indices_addr, shape_ptr, indices_length, is_1d, rank);
-
   int64_t n_batches = is_1d ? 1 : shape_ptr[0];
-  if (n_batches <= 0 || n_batches > kMaxBatches) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', cannot allocate " << n_batches
-                      << " batches, dense shape too wide";
-  }
+  // Check that index values are in bounds of the dense shape
+  CheckIndicesInBounds(indices_addr, shape_ptr, indices_length, is_1d, rank, n_batches);
 
   int64_t max_val = 0;
   auto per_batch_counts = BatchedMap<T>(shape_ptr[0]);
@@ -217,8 +219,8 @@ bool SparseCountSparseOutputCpuKernelMod::LaunchKernel(const std::vector<kernel:
         if (is_1d) {
           output_indices[value_pos] = x.first;
         } else {
-          output_indices[value_pos * rank] = i;
-          output_indices[value_pos * rank + 1] = x.first;
+          output_indices[value_pos * 2] = i;
+          output_indices[value_pos * 2 + 1] = x.first;
         }
         output_values[value_pos] = x.second;
         ++value_pos;
@@ -234,7 +236,7 @@ bool SparseCountSparseOutputCpuKernelMod::LaunchKernel(const std::vector<kernel:
   }
 
   // Update output shape based on number of dimensions
-  int64_t num_dim = static_cast<int64_t>(rank);
+  int64_t num_dim = static_cast<int64_t>(rank) > 1 ? 2 : 1;
   std::vector<int64_t> out_indices_shape = {value_pos, num_dim};
   std::vector<int64_t> out_values_shape = {value_pos};
   std::vector<int64_t> out_dense_shape_shape = {num_dim};

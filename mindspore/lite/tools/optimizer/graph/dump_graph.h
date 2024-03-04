@@ -17,7 +17,7 @@
 #define MINDSPORE_LITE_TOOLS_OPTIMIZER_GRAPH_DUMP_GRAPH_H_
 
 #include <memory>
-#include "backend/common/optimizer/pass.h"
+#include "include/backend/optimizer/pass.h"
 #include "tools/converter/export_model.h"
 #include "include/registry/pass_base.h"
 #include "mindapi/ir/func_graph.h"
@@ -47,7 +47,7 @@ class DumpGraph : public registry::PassBase, public Pass {
   }
 
  private:
-  const std::shared_ptr<ConverterPara> param_;
+  const std::shared_ptr<ConverterPara> &param_;
 };
 }  // namespace opt
 }  // namespace mindspore

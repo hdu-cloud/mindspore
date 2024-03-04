@@ -19,7 +19,7 @@
 #include <string>
 #include <vector>
 #include "include/backend/visible.h"
-#include "runtime/device/device_address.h"
+#include "include/backend/device_address.h"
 #include "utils/shape_utils.h"
 
 namespace mindspore {
@@ -45,14 +45,15 @@ class BACKEND_EXPORT CPUDeviceAddress : public DeviceAddress {
   bool SyncHostToDevice(const ShapeVector &shape, size_t size, TypeId type, const void *host_ptr,
                         const std::string &format) const override;
   bool SyncDeviceToDevice(const DeviceSync *src_device_addr) const override;
+  bool SyncDeviceToDevice(const ShapeVector &shape, size_t size, TypeId type, const void *src_ptr,
+                          const std::string &format) const override;
 
   bool DumpMemToFile(const std::string &filepath, const std::string &host_fmt, const ShapeVector &host_shape,
                      TypeId host_type, bool trans_flag) const override;
   void ClearDeviceMemory() override;
-  DeviceType GetDeviceType() const override { return DeviceType::kCPU; }
+  void ClearUserData() override;
 
- protected:
-  void DoClearDeviceMemory();
+  DeviceType GetDeviceType() const override { return DeviceType::kCPU; }
 };
 }  // namespace cpu
 }  // namespace device

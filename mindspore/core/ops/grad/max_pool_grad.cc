@@ -15,9 +15,24 @@
  */
 
 #include "ops/grad/max_pool_grad.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include <algorithm>
+#include <map>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -26,7 +41,7 @@ abstract::ShapePtr MaxPoolGradInferShape(const PrimitivePtr &primitive,
                                          const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape());
-  auto shape = std::make_shared<abstract::Shape>(shape_map[kShape], shape_map[kMinShape], shape_map[kMaxShape]);
+  auto shape = std::make_shared<abstract::Shape>(shape_map[kShape]);
   return shape;
 }
 TypePtr MaxPoolGradInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
@@ -46,6 +61,24 @@ abstract::AbstractBasePtr MaxPoolGradInfer(const abstract::AnalysisEnginePtr &, 
   auto infer_shape = MaxPoolGradInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(MaxPoolGrad, prim::kPrimMaxPoolGrad, MaxPoolGradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMaxPoolGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPoolGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPoolGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPoolGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MaxPoolGrad, prim::kPrimMaxPoolGrad, AGMaxPoolGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -17,7 +17,8 @@
 #include <memory>
 #include <vector>
 #include <algorithm>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/array_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
@@ -32,7 +33,7 @@ CNodePtr UnsortedSegmentSumFission::CreateConcatD(const FuncGraphPtr &graph, con
                                                   const size_t &pad_dim_size) const {
   MS_EXCEPTION_IF_NULL(graph);
   MS_EXCEPTION_IF_NULL(sum);
-  std::vector<AnfNodePtr> concat_inputs = {NewValueNode(std::make_shared<Primitive>(kConcatOpName))};
+  std::vector<AnfNodePtr> concat_inputs = {NewValueNode(std::make_shared<Primitive>(kConcatDOpName))};
   auto x_input = sum->input(kIndex1);
   for (size_t i = 0; i < pad_dim_size; ++i) {
     concat_inputs.push_back(x_input);
@@ -42,20 +43,8 @@ CNodePtr UnsortedSegmentSumFission::CreateConcatD(const FuncGraphPtr &graph, con
   concat->set_scope(sum->scope());
   auto shape = common::AnfAlgo::GetPrevNodeOutputInferShape(sum, 0);
   shape[shape.size() - 1] = SizeToLong(pad_dim_size);
-  if (IsDynamic(shape)) {
-    auto min_shape = common::AnfAlgo::GetInputMinShape(sum, 0);
-    auto max_shape = common::AnfAlgo::GetInputMaxShape(sum, 0);
-    if (!min_shape.empty() && !max_shape.empty()) {
-      min_shape[shape.size() - 1] = SizeToLong(pad_dim_size);
-      max_shape[shape.size() - 1] = SizeToLong(pad_dim_size);
-    }
-    BaseShapePtr base_shape = std::make_shared<abstract::Shape>(shape, min_shape, max_shape);
-    common::AnfAlgo::SetOutputTypeAndDetailShape({common::AnfAlgo::GetPrevNodeOutputInferDataType(sum, 0)},
-                                                 {base_shape}, concat.get());
-  } else {
-    common::AnfAlgo::SetOutputInferTypeAndShape({common::AnfAlgo::GetPrevNodeOutputInferDataType(sum, 0)}, {shape},
-                                                concat.get());
-  }
+  common::AnfAlgo::SetOutputInferTypeAndShape({common::AnfAlgo::GetPrevNodeOutputInferDataType(sum, 0)}, {shape},
+                                              concat.get());
   common::AnfAlgo::SetNodeAttr(kAttrAxis, MakeValue(SizeToLong(shape.size() - 1)), concat);
   common::AnfAlgo::SetNodeAttr(kAttrDynInputSizes, MakeValue(std::vector<int64_t>{SizeToLong(pad_dim_size)}), concat);
   return concat;
@@ -74,21 +63,8 @@ CNodePtr UnsortedSegmentSumFission::CreateUnsortedSegmentSum(const FuncGraphPtr 
   new_sum->set_scope(orig_sum->scope());
   auto shape = common::AnfAlgo::GetOutputInferShape(orig_sum, 0);
   shape[shape.size() - 1] = SizeToLong(pad_dim_size);
-  if (IsDynamic(shape)) {
-    auto min_shape = common::AnfAlgo::GetOutputMinShape(orig_sum, 0);
-    auto max_shape = common::AnfAlgo::GetInputMaxShape(orig_sum, 0);
-    if (!min_shape.empty() && !max_shape.empty()) {
-      min_shape[shape.size() - 1] = SizeToLong(pad_dim_size);
-      max_shape[shape.size() - 1] = SizeToLong(pad_dim_size);
-    }
-
-    BaseShapePtr base_shape = std::make_shared<abstract::Shape>(shape, min_shape, max_shape);
-    common::AnfAlgo::SetOutputTypeAndDetailShape({common::AnfAlgo::GetOutputInferDataType(orig_sum, 0)}, {base_shape},
-                                                 new_sum.get());
-  } else {
-    common::AnfAlgo::SetOutputInferTypeAndShape({common::AnfAlgo::GetOutputInferDataType(orig_sum, 0)}, {shape},
-                                                new_sum.get());
-  }
+  common::AnfAlgo::SetOutputInferTypeAndShape({common::AnfAlgo::GetOutputInferDataType(orig_sum, 0)}, {shape},
+                                              new_sum.get());
   if (common::AnfAlgo::HasNodeAttr(kAttrCustAicpu, orig_sum)) {
     common::AnfAlgo::SetNodeAttr(kAttrCustAicpu, MakeValue(kUnsortedSegmentSumOpName), new_sum);
   }

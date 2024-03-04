@@ -15,6 +15,7 @@
  */
 
 #include "runtime/hardware/device_context.h"
+#include "backend/common/optimizer/common_backend_optimization.h"
 
 namespace mindspore {
 namespace device {
@@ -42,7 +43,7 @@ bool DeviceResManager::AllocateMemory(DeviceAddress *const &address) const {
 void DeviceResManager::FreeMemory(DeviceAddress *const &address) const {
   MS_EXCEPTION_IF_NULL(address);
   if (address->GetPtr() == nullptr) {
-    MS_LOG(EXCEPTION) << "Device ptr is null in device address to release!";
+    MS_LOG(EXCEPTION) << "Device ptr is null in device address:" << address << " to release!";
   }
 
   if (!address->from_mem_pool()) {
@@ -52,5 +53,7 @@ void DeviceResManager::FreeMemory(DeviceAddress *const &address) const {
   FreeMemory(address->GetMutablePtr());
   address->set_ptr(nullptr);
 }
+
+void KernelExecutor::UnifyMindIR(const KernelGraphPtr &graph) const { opt::CommonUnifyMindIR(graph); }
 }  // namespace device
 }  // namespace mindspore

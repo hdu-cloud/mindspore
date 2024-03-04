@@ -17,14 +17,15 @@
 #include "plugin/device/cpu/kernel/nllloss_cpu_kernel.h"
 #include <map>
 #include <string>
+#include <utility>
 #include "mindspore/core/ops/nllloss.h"
-#include "nnacl/errorcode.h"
 
 namespace mindspore {
 namespace kernel {
 namespace {
 constexpr size_t kNLLLossInputsNum = 3;
 constexpr size_t kNLLLossOutputsNum = 2;
+constexpr int minLabelNum = 0;
 const std::map<Reduction, ReductionType> kReductionMap = {
   {Reduction::MEAN, Reduction_Mean}, {Reduction::REDUCTION_SUM, Reduction_Sum}, {Reduction::NONE, Reduction_None}};
 }  // namespace
@@ -40,11 +41,12 @@ bool NLLLossCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::
   kernel_name_ = kernel_ptr->GetPrim()->name();
   auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
 
-  bool is_match = MatchKernelAttr(kernel_attr, GetOpSupport()).first;
+  auto [is_match, index] = MatchKernelAttr(kernel_attr, GetOpSupport());
   if (!is_match) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', it does not support this kernel data type: " << kernel_attr;
     return false;
   }
+  kernel_func_ = func_list_[index].second;
 
   auto reduction = kernel_ptr->get_reduction();
   auto pair = kReductionMap.find(reduction);
@@ -52,7 +54,8 @@ bool NLLLossCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::
     MS_LOG(EXCEPTION) << "For " << kernel_name_
                       << ", the attr 'reduction' only support 'mean', 'sum' and 'none', but got " << reduction;
   }
-  nllloss_param_.reduction_type_ = pair->second;
+  reduction_type_ = pair->second;
+  ignore_index_ = static_cast<int32_t>(kernel_ptr->get_ignore_index());
   return true;
 }
 
@@ -71,24 +74,69 @@ int NLLLossCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std:
   return KRET_OK;
 }
 
-bool NLLLossCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &inputs,
-                                 const std::vector<kernel::AddressPtr> &workspace,
-                                 const std::vector<kernel::AddressPtr> &outputs) {
+template <typename T>
+bool NLLLossCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs,
+                                       const std::vector<kernel::AddressPtr> &workspace,
+                                       const std::vector<kernel::AddressPtr> &outputs) {
   CHECK_KERNEL_INPUTS_NUM(kNLLLossInputsNum, inputs.size(), kernel_name_);
   CHECK_KERNEL_OUTPUTS_NUM(kNLLLossOutputsNum, outputs.size(), kernel_name_);
 
-  const auto *logits = reinterpret_cast<float *>(inputs[kIndex0]->addr);
-  const auto *labels = reinterpret_cast<int *>(inputs[kIndex1]->addr);
-  const auto *weight = reinterpret_cast<float *>(inputs[kIndex2]->addr);
-  auto *loss = reinterpret_cast<float *>(outputs[kIndex0]->addr);
-  auto *total_weight = reinterpret_cast<float *>(outputs[kIndex1]->addr);
+  const auto *logits = static_cast<float *>(inputs[kIndex0]->addr);
+  const auto *labels = static_cast<T *>(inputs[kIndex1]->addr);
+  const auto *weight = static_cast<float *>(inputs[kIndex2]->addr);
+  auto *loss = static_cast<float *>(outputs[kIndex0]->addr);
+  auto *total_weight = static_cast<float *>(outputs[kIndex1]->addr);
+  if (logits == nullptr || labels == nullptr || weight == nullptr) {
+    MS_LOG(EXCEPTION) << "Nllloss does not support null input";
+  }
 
-  int ret = NLLLoss(logits, labels, weight, loss, total_weight, &nllloss_param_);
-  if (ret != static_cast<int>(NNACL_OK)) {
-    MS_LOG(EXCEPTION) << "Launch " << kernel_name_ << " failed, the nnacl error code " << ret;
+  float total_loss = 0.0;
+  float tmp_total_weight = 0.0;
+  for (int i = 0; i < nllloss_param_.batch_; i++) {
+    if (labels[i] == ignore_index_) {
+      continue;
+    }
+    if (labels[i] < minLabelNum || labels[i] > nllloss_param_.class_num_) {
+      MS_EXCEPTION(ValueError) << "For '" << kernel_name_ << "', the label must in scope[0, C-1], but got" << labels[i];
+    }
+    if (!(labels[i] < nllloss_param_.class_num_)) {
+      MS_EXCEPTION(ValueError) << "For '" << kernel_name_
+                               << "', the labels should be smaller than the number of classes, but got " << labels[i];
+    }
+    int index = i * nllloss_param_.class_num_ + labels[i];
+    float n_weight = weight[labels[i]];
+    float n_loss = -logits[index] * n_weight;
+    tmp_total_weight += n_weight;
+    total_loss += n_loss;
+    if (reduction_type_ == Reduction_None) {
+      loss[i] = n_loss;
+    }
+  }
+
+  *total_weight = tmp_total_weight;
+  if (reduction_type_ == Reduction_Sum) {
+    *loss = total_loss;
+  } else if (reduction_type_ == Reduction_Mean) {
+    *loss = total_loss / tmp_total_weight;
   }
   return true;
 }
+
+std::vector<std::pair<KernelAttr, NLLLossCpuKernelMod::NLLLossFunc>> NLLLossCpuKernelMod::func_list_ = {
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeFloat32)
+     .AddInputAttr(kNumberTypeInt32)
+     .AddInputAttr(kNumberTypeFloat32)
+     .AddOutputAttr(kNumberTypeFloat32)
+     .AddOutputAttr(kNumberTypeFloat32),
+   &NLLLossCpuKernelMod::LaunchKernel<int32_t>},
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeFloat32)
+     .AddInputAttr(kNumberTypeInt64)
+     .AddInputAttr(kNumberTypeFloat32)
+     .AddOutputAttr(kNumberTypeFloat32)
+     .AddOutputAttr(kNumberTypeFloat32),
+   &NLLLossCpuKernelMod::LaunchKernel<int64_t>}};
 
 MS_KERNEL_FACTORY_REG(NativeCpuKernelMod, NLLLoss, NLLLossCpuKernelMod);
 }  // namespace kernel

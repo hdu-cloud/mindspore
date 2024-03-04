@@ -41,17 +41,22 @@
 #include "minddata/dataset/audio/ir/kernels/griffin_lim_ir.h"
 #include "minddata/dataset/audio/ir/kernels/highpass_biquad_ir.h"
 #include "minddata/dataset/audio/ir/kernels/inverse_mel_scale_ir.h"
+#include "minddata/dataset/audio/ir/kernels/inverse_spectrogram_ir.h"
+#include "minddata/dataset/audio/ir/kernels/lfcc_ir.h"
 #include "minddata/dataset/audio/ir/kernels/lfilter_ir.h"
 #include "minddata/dataset/audio/ir/kernels/lowpass_biquad_ir.h"
 #include "minddata/dataset/audio/ir/kernels/magphase_ir.h"
 #include "minddata/dataset/audio/ir/kernels/mask_along_axis_iid_ir.h"
 #include "minddata/dataset/audio/ir/kernels/mask_along_axis_ir.h"
 #include "minddata/dataset/audio/ir/kernels/mel_scale_ir.h"
+#include "minddata/dataset/audio/ir/kernels/mel_spectrogram_ir.h"
+#include "minddata/dataset/audio/ir/kernels/mfcc_ir.h"
 #include "minddata/dataset/audio/ir/kernels/mu_law_decoding_ir.h"
 #include "minddata/dataset/audio/ir/kernels/mu_law_encoding_ir.h"
 #include "minddata/dataset/audio/ir/kernels/overdrive_ir.h"
 #include "minddata/dataset/audio/ir/kernels/phase_vocoder_ir.h"
 #include "minddata/dataset/audio/ir/kernels/phaser_ir.h"
+#include "minddata/dataset/audio/ir/kernels/pitch_shift_ir.h"
 #include "minddata/dataset/audio/ir/kernels/resample_ir.h"
 #include "minddata/dataset/audio/ir/kernels/riaa_biquad_ir.h"
 #include "minddata/dataset/audio/ir/kernels/sliding_window_cmn_ir.h"
@@ -525,6 +530,101 @@ std::shared_ptr<TensorOperation> InverseMelScale::Parse() {
     data_->tolerance_loss_, data_->tolerance_change_, data_->sgdargs_, data_->norm_, data_->mel_type_);
 }
 
+// InverseSpectrogram Transform Operation.
+struct InverseSpectrogram::Data {
+  Data(int32_t length, int32_t n_fft, int32_t win_length, int32_t hop_length, int32_t pad, WindowType window,
+       bool normalized, bool center, BorderType pad_mode, bool onesided)
+      : length_(length),
+        n_fft_(n_fft),
+        win_length_(win_length),
+        hop_length_(hop_length),
+        pad_(pad),
+        window_(window),
+        normalized_(normalized),
+        center_(center),
+        pad_mode_(pad_mode),
+        onesided_(onesided) {}
+  int32_t length_;
+  int32_t n_fft_;
+  int32_t win_length_;
+  int32_t hop_length_;
+  int32_t pad_;
+  WindowType window_;
+  bool normalized_;
+  bool center_;
+  BorderType pad_mode_;
+  bool onesided_;
+};
+
+InverseSpectrogram::InverseSpectrogram(int32_t length, int32_t n_fft, int32_t win_length, int32_t hop_length,
+                                       int32_t pad, WindowType window, bool normalized, bool center,
+                                       BorderType pad_mode, bool onesided)
+    : data_(std::make_shared<Data>(length, n_fft, win_length, hop_length, pad, window, normalized, center, pad_mode,
+                                   onesided)) {}
+
+std::shared_ptr<TensorOperation> InverseSpectrogram::Parse() {
+  return std::make_shared<InverseSpectrogramOperation>(
+    data_->length_, data_->n_fft_, data_->win_length_, data_->hop_length_, data_->pad_, data_->window_,
+    data_->normalized_, data_->center_, data_->pad_mode_, data_->onesided_);
+}
+
+// LFCC Transform Operation.
+struct LFCC::Data {
+  Data(int32_t sample_rate, int32_t n_filter, int32_t n_lfcc, float f_min, float f_max, int32_t dct_type, NormMode norm,
+       bool log_lf, int32_t n_fft, int32_t win_length, int32_t hop_length, int32_t pad, WindowType window, float power,
+       bool normalized, bool center, BorderType pad_mode, bool onesided)
+      : sample_rate_(sample_rate),
+        n_filter_(n_filter),
+        n_lfcc_(n_lfcc),
+        f_min_(f_min),
+        f_max_(f_max),
+        dct_type_(dct_type),
+        norm_(norm),
+        log_lf_(log_lf),
+        n_fft_(n_fft),
+        win_length_(win_length),
+        hop_length_(hop_length),
+        pad_(pad),
+        window_(window),
+        power_(power),
+        normalized_(normalized),
+        center_(center),
+        pad_mode_(pad_mode),
+        onesided_(onesided) {}
+  int32_t sample_rate_;
+  int32_t n_filter_;
+  int32_t n_lfcc_;
+  float f_min_;
+  float f_max_;
+  int32_t dct_type_;
+  NormMode norm_;
+  bool log_lf_;
+  int32_t n_fft_;
+  int32_t win_length_;
+  int32_t hop_length_;
+  int32_t pad_;
+  WindowType window_;
+  float power_;
+  bool normalized_;
+  bool center_;
+  BorderType pad_mode_;
+  bool onesided_;
+};
+
+LFCC::LFCC(int32_t sample_rate, int32_t n_filter, int32_t n_lfcc, float f_min, float f_max, int32_t dct_type,
+           NormMode norm, bool log_lf, int32_t n_fft, int32_t win_length, int32_t hop_length, int32_t pad,
+           WindowType window, float power, bool normalized, bool center, BorderType pad_mode, bool onesided)
+    : data_(std::make_shared<Data>(sample_rate, n_filter, n_lfcc, f_min, f_max, dct_type, norm, log_lf, n_fft,
+                                   win_length, hop_length, pad, window, power, normalized, center, pad_mode,
+                                   onesided)) {}
+
+std::shared_ptr<TensorOperation> LFCC::Parse() {
+  return std::make_shared<LFCCOperation>(
+    data_->sample_rate_, data_->n_filter_, data_->n_lfcc_, data_->f_min_, data_->f_max_, data_->dct_type_, data_->norm_,
+    data_->log_lf_, data_->n_fft_, data_->win_length_, data_->hop_length_, data_->pad_, data_->window_, data_->power_,
+    data_->normalized_, data_->center_, data_->pad_mode_, data_->onesided_);
+}
+
 // LFilter Transform Operation.
 struct LFilter::Data {
   Data(const std::vector<float> &a_coeffs, const std::vector<float> &b_coeffs, bool clamp)
@@ -652,6 +752,124 @@ Status MelscaleFbanks(MSTensor *output, int32_t n_freqs, float f_min, float f_ma
   return Status::OK();
 }
 
+// MelSpectrogram Transform Operation.
+struct MelSpectrogram::Data {
+  Data(int32_t sample_rate, int32_t n_fft, int32_t win_length, int32_t hop_length, float f_min, float f_max,
+       int32_t pad, int32_t n_mels, WindowType window, float power, bool normalized, bool center, BorderType pad_mode,
+       bool onesided, NormType norm, MelType mel_scale)
+      : sample_rate_(sample_rate),
+        n_fft_(n_fft),
+        win_length_(win_length),
+        hop_length_(hop_length),
+        f_min_(f_min),
+        f_max_(f_max),
+        pad_(pad),
+        n_mels_(n_mels),
+        window_(window),
+        power_(power),
+        normalized_(normalized),
+        center_(center),
+        pad_mode_(pad_mode),
+        onesided_(onesided),
+        norm_(norm),
+        mel_scale_(mel_scale) {}
+  int32_t sample_rate_;
+  int32_t n_fft_;
+  int32_t win_length_;
+  int32_t hop_length_;
+  float f_min_;
+  float f_max_;
+  int32_t pad_;
+  int32_t n_mels_;
+  WindowType window_;
+  float power_;
+  bool normalized_;
+  bool center_;
+  BorderType pad_mode_;
+  bool onesided_;
+  NormType norm_;
+  MelType mel_scale_;
+};
+
+MelSpectrogram::MelSpectrogram(int32_t sample_rate, int32_t n_fft, int32_t win_length, int32_t hop_length, float f_min,
+                               float f_max, int32_t pad, int32_t n_mels, WindowType window, float power,
+                               bool normalized, bool center, BorderType pad_mode, bool onesided, NormType norm,
+                               MelType mel_scale)
+    : data_(std::make_shared<Data>(sample_rate, n_fft, win_length, hop_length, f_min, f_max, pad, n_mels, window, power,
+                                   normalized, center, pad_mode, onesided, norm, mel_scale)) {}
+
+std::shared_ptr<TensorOperation> MelSpectrogram::Parse() {
+  return std::make_shared<MelSpectrogramOperation>(
+    data_->sample_rate_, data_->n_fft_, data_->win_length_, data_->hop_length_, data_->f_min_, data_->f_max_,
+    data_->pad_, data_->n_mels_, data_->window_, data_->power_, data_->normalized_, data_->center_, data_->pad_mode_,
+    data_->onesided_, data_->norm_, data_->mel_scale_);
+}
+
+// MFCC Transform Operation.
+struct MFCC::Data {
+  Data(int32_t sample_rate, int32_t n_mfcc, int32_t dct_type, NormMode norm, bool log_mels, int32_t n_fft,
+       int32_t win_length, int32_t hop_length, float f_min, float f_max, int32_t pad, int32_t n_mels, WindowType window,
+       float power, bool normalized, bool center, BorderType pad_mode, bool onesided, NormType norm_mel,
+       MelType mel_scale)
+      : sample_rate_(sample_rate),
+        n_mfcc_(n_mfcc),
+        dct_type_(dct_type),
+        norm_(norm),
+        log_mels_(log_mels),
+        n_fft_(n_fft),
+        win_length_(win_length),
+        hop_length_(hop_length),
+        f_min_(f_min),
+        f_max_(f_max),
+        pad_(pad),
+        n_mels_(n_mels),
+        window_(window),
+        power_(power),
+        normalized_(normalized),
+        center_(center),
+        pad_mode_(pad_mode),
+        onesided_(onesided),
+        norm_mel_(norm_mel),
+        mel_scale_(mel_scale) {}
+  int32_t sample_rate_;
+  int32_t n_mfcc_;
+  int32_t dct_type_;
+  NormMode norm_;
+  bool log_mels_;
+  int32_t n_fft_;
+  int32_t win_length_;
+  int32_t hop_length_;
+  float f_min_;
+  float f_max_;
+  int32_t pad_;
+  int32_t n_mels_;
+  WindowType window_;
+  float power_;
+  bool normalized_;
+  bool center_;
+  BorderType pad_mode_;
+  bool onesided_;
+  NormType norm_mel_;
+  MelType mel_scale_;
+  std::map<std::string, std::string> melkwargs_;
+};
+
+MFCC::MFCC(int32_t sample_rate, int32_t n_mfcc, int32_t dct_type, NormMode norm, bool log_mels, int32_t n_fft,
+           int32_t win_length, int32_t hop_length, float f_min, float f_max, int32_t pad, int32_t n_mels,
+           WindowType window, float power, bool normalized, bool center, BorderType pad_mode, bool onesided,
+           NormType norm_mel, MelType mel_scale)
+    : data_(std::make_shared<Data>(sample_rate, n_mfcc, dct_type, norm, log_mels, n_fft, win_length, hop_length, f_min,
+                                   f_max, pad, n_mels, window, power, normalized, center, pad_mode, onesided, norm_mel,
+                                   mel_scale)) {}
+
+std::shared_ptr<TensorOperation> MFCC::Parse() {
+  return std::make_shared<MFCCOperation>(data_->sample_rate_, data_->n_mfcc_, data_->dct_type_, data_->norm_,
+                                         data_->log_mels_, data_->n_fft_, data_->win_length_, data_->hop_length_,
+                                         data_->f_min_, data_->f_max_, data_->pad_, data_->n_mels_, data_->window_,
+                                         data_->power_, data_->normalized_, data_->center_, data_->pad_mode_,
+                                         data_->onesided_, data_->norm_mel_, data_->mel_scale_);
+}
+
 // MuLawDecoding Transform Operation.
 struct MuLawDecoding::Data {
   explicit Data(int32_t quantization_channels) : quantization_channels_(quantization_channels) {}
@@ -758,6 +976,35 @@ std::shared_ptr<TensorOperation> PhaseVocoder::Parse() {
     return nullptr;
   }
   return std::make_shared<PhaseVocoderOperation>(data_->rate_, phase_advance);
+}
+
+// pitchshift
+struct PitchShift::Data {
+  Data(int32_t sample_rate, int32_t n_steps, int32_t bins_per_octave, int32_t n_fft, int32_t win_length,
+       int32_t hop_length, WindowType window)
+      : sample_rate_(sample_rate),
+        n_steps_(n_steps),
+        bins_per_octave_(bins_per_octave),
+        n_fft_(n_fft),
+        win_length_(win_length),
+        hop_length_(hop_length),
+        window_(window) {}
+  int32_t sample_rate_;
+  int32_t n_steps_;
+  int32_t bins_per_octave_;
+  int32_t n_fft_;
+  int32_t win_length_;
+  int32_t hop_length_;
+  WindowType window_;
+};
+
+PitchShift::PitchShift(int32_t sample_rate, int32_t n_steps, int32_t bins_per_octave, int32_t n_fft, int32_t win_length,
+                       int32_t hop_length, WindowType window)
+    : data_(std::make_shared<Data>(sample_rate, n_steps, bins_per_octave, n_fft, win_length, hop_length, window)) {}
+
+std::shared_ptr<TensorOperation> PitchShift::Parse() {
+  return std::make_shared<PitchShiftOperation>(data_->sample_rate_, data_->n_steps_, data_->bins_per_octave_,
+                                               data_->n_fft_, data_->win_length_, data_->hop_length_, data_->window_);
 }
 
 // Resample Transform Operation.

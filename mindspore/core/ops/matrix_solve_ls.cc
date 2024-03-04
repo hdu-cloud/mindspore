@@ -14,15 +14,28 @@
  * limitations under the License.
  */
 
-#include <set>
 #include <map>
+#include <memory>
+#include <set>
 #include <string>
 #include <vector>
-#include <memory>
-#include "ops/matrix_solve_ls.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/matrix_solve_ls.h"
+#include "ops/op_name.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,9 +44,14 @@ abstract::ShapePtr MatrixSolveLsInferShape(const PrimitivePtr &primitive,
                                            const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
+  const int64_t input_num = 3;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, prim_name);
   auto matrix_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
   auto rhs_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->BuildShape())[kShape];
   auto l2_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[2]->BuildShape())[kShape];
+  if (IsDynamicRank(matrix_shape) || IsDynamicRank(rhs_shape)) {
+    return std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeRankAny}));
+  }
 
   (void)CheckAndConvertUtils::CheckInteger("input matrix rank", SizeToLong(matrix_shape.size()), kGreaterEqual, 2L,
                                            prim_name);
@@ -41,7 +59,7 @@ abstract::ShapePtr MatrixSolveLsInferShape(const PrimitivePtr &primitive,
                                            prim_name);
   (void)CheckAndConvertUtils::CheckInteger("input l2 rank", SizeToLong(l2_shape.size()), kEqual, 0L, prim_name);
 
-  constexpr size_t offset = 2;
+  constexpr decltype(matrix_shape)::difference_type offset = 2;
   std::vector<int64_t> matrix_last(matrix_shape.end() - offset, matrix_shape.end());
   std::vector<int64_t> rhs_last(rhs_shape.end() - offset, rhs_shape.end());
   std::vector<int64_t> y_shape(rhs_shape.begin(), rhs_shape.end() - offset);
@@ -49,6 +67,16 @@ abstract::ShapePtr MatrixSolveLsInferShape(const PrimitivePtr &primitive,
   int64_t matrix_col = matrix_last[1];
   int64_t rhs_row = rhs_last[0];
   int64_t rhs_col = rhs_last[1];
+  if (IsDynamicShape(matrix_shape) || IsDynamicShape(rhs_shape)) {
+    for (size_t i = 0; i < y_shape.size(); ++i) {
+      if (matrix_shape[i] == abstract::Shape::kShapeDimAny || rhs_shape[i] == abstract::Shape::kShapeDimAny) {
+        y_shape[i] = abstract::Shape::kShapeDimAny;
+      }
+    }
+    y_shape.push_back(matrix_col);
+    y_shape.push_back(rhs_col);
+    return std::make_shared<abstract::Shape>(y_shape);
+  }
 
   for (size_t i = 0; i < matrix_shape.size() - offset; ++i) {
     if (matrix_shape[i] != rhs_shape[i]) {
@@ -74,9 +102,11 @@ TypePtr MatrixSolveLsInferType(const PrimitivePtr &primitive, const std::vector<
   MS_EXCEPTION_IF_NULL(primitive);
   const std::set<TypePtr> valid_types = {kFloat32, kFloat64, kComplex64, kComplex128};
   const std::set<TypePtr> l2_valid_types = {kFloat64};
-  auto matrix_type = input_args[0]->BuildType();
-  auto rhs_type = input_args[1]->BuildType();
-  auto l2_type = input_args[2]->BuildType();
+  const int64_t input_num = 3;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
+  auto matrix_type = input_args[kIndex0]->BuildType();
+  auto rhs_type = input_args[kIndex1]->BuildType();
+  auto l2_type = input_args[kIndex2]->BuildType();
   std::map<std::string, TypePtr> types;
   (void)types.emplace("matrix", matrix_type);
   (void)types.emplace("rhs", rhs_type);
@@ -84,21 +114,38 @@ TypePtr MatrixSolveLsInferType(const PrimitivePtr &primitive, const std::vector<
   (void)CheckAndConvertUtils::CheckTypeValid("matrix", matrix_type, valid_types, primitive->name());
   (void)CheckAndConvertUtils::CheckTypeValid("rhs", rhs_type, valid_types, primitive->name());
   (void)CheckAndConvertUtils::CheckTypeValid("l2_regularizer", l2_type, l2_valid_types, primitive->name());
-  CheckAndConvertUtils::CheckTensorTypeSame(types, valid_types, primitive->name());
+  (void)CheckAndConvertUtils::CheckTensorTypeSame(types, valid_types, primitive->name());
 
   return matrix_type;
 }
 }  // namespace
 
+MIND_API_OPERATOR_IMPL(MatrixSolveLs, BaseOperator);
+
 AbstractBasePtr MatrixSolveLsInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                    const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  const int64_t input_num = 3;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
   auto infer_type = MatrixSolveLsInferType(primitive, input_args);
   auto infer_shape = MatrixSolveLsInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(MatrixSolveLs, prim::kPrimMatrixSolveLs, MatrixSolveLsInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMatrixSolveLsInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MatrixSolveLsInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MatrixSolveLsInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MatrixSolveLsInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MatrixSolveLs, prim::kPrimMatrixSolveLs, AGMatrixSolveLsInfer, false);
 }  // namespace ops
 }  // namespace mindspore

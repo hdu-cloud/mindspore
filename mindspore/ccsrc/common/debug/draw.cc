@@ -15,18 +15,15 @@
  */
 
 #include "include/common/debug/draw.h"
-
 #include <iostream>
 #include <iterator>
 #include <vector>
 #include <string>
 #include <algorithm>
-
 #include "ir/meta_func_graph.h"
 #include "ir/primitive.h"
 #include "ir/graph_utils.h"
 #include "ir/tensor.h"
-#include "include/common/utils/utils.h"
 #include "include/common/debug/anf_dump_utils.h"
 #include "mindspore/core/utils/file_utils.h"
 
@@ -339,7 +336,7 @@ void BaseDigraph::SubGraph(const FuncGraphPtr &key, const std::shared_ptr<BaseDi
     return;
   }
 
-  std::string label = key->debug_info()->get_full_name();
+  std::string label = key->debug_info()->debug_name();
   if (label.empty()) {
     label = gsub->name();
   }
@@ -520,9 +517,9 @@ void Digraph::Node(const AnfNodePtr &node, int id) {
     buffer_ << "label=\"" << node->ToString();
     if (IsValueNode<FuncGraph>(node)) {
       FuncGraphPtr nextNet = GetValueNode<FuncGraphPtr>(node);
-      std::string nextNetName = nextNet->debug_info()->get_full_name();
+      std::string nextNetName = nextNet->debug_info()->debug_name();
       if (!nextNetName.empty()) {
-        buffer_ << "[" << nextNet->debug_info()->get_full_name().c_str() << "]";
+        buffer_ << "[" << nextNet->debug_info()->debug_name().c_str() << "]";
       }
     }
     buffer_ << "\","

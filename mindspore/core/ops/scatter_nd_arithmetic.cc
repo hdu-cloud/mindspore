@@ -14,23 +14,27 @@
  * limitations under the License.
  */
 
-#include "ops/scatter_nd_update.h"
-#include "ops/scatter_nd_add.h"
-#include "ops/scatter_nd_sub.h"
-#include "ops/scatter_nd_mul.h"
-#include "ops/scatter_nd_div.h"
-#include "ops/scatter_nd_max.h"
-#include "ops/scatter_nd_min.h"
 #include <map>
 #include <string>
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_utils.h"
+#include "ops/scatter_nd_add.h"
+#include "ops/scatter_nd_div.h"
+#include "ops/scatter_nd_max.h"
+#include "ops/scatter_nd_min.h"
+#include "ops/scatter_nd_mul.h"
+#include "ops/scatter_nd_sub.h"
+#include "ops/scatter_nd_update.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
+constexpr auto kIndexMinSize = 2;
+constexpr auto kUpdateMinSize = 1;
+
 abstract::ShapePtr ScatterNdArithmeticInferShape(const PrimitivePtr &primitive,
                                                  const std::vector<AbstractBasePtr> &input_args) {
   auto prim_name = primitive->name();
@@ -51,14 +55,15 @@ abstract::ShapePtr ScatterNdArithmeticInferShape(const PrimitivePtr &primitive,
   const int64_t input_x_size = SizeToLong(input_x_shape.size());
   const int64_t indices_size = SizeToLong(indices_shape.size());
   const int64_t updates_size = SizeToLong(updates_shape.size());
-  const int64_t last_dim = indices_shape.back();
 
+  (void)CheckAndConvertUtils::CheckValue<int64_t>("dimension of 'indices'", indices_size, kGreaterEqual, kIndexMinSize,
+                                                  prim_name);
+  (void)CheckAndConvertUtils::CheckValue<int64_t>("dimension of 'updates'", updates_size, kGreaterEqual, kUpdateMinSize,
+                                                  prim_name);
+
+  const int64_t last_dim = indices_shape.back();
   (void)CheckAndConvertUtils::CheckValue("the value of last dimension of 'indices'", last_dim, kLessEqual,
                                          "the dimension of 'input_x'", input_x_size, prim_name);
-
-  (void)CheckAndConvertUtils::CheckValue<int64_t>("dimension of 'indices'", indices_size, kGreaterEqual, 1, prim_name);
-  (void)CheckAndConvertUtils::CheckValue<int64_t>("dimension of 'updates'", updates_size, kGreaterEqual, 1, prim_name);
-
   (void)CheckAndConvertUtils::CheckValue("len(updates.shape)'", updates_size, kEqual,
                                          "len(indices.shape) - 1 + len(input_x.shape) - indices.shape[-1]",
                                          indices_size - 1 + input_x_size - last_dim, prim_name);
@@ -186,12 +191,30 @@ AbstractBasePtr ScatterNdArithmeticInfer(const abstract::AnalysisEnginePtr &, co
   auto infer_shape = ScatterNdArithmeticInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(ScatterNdUpdate, prim::kPrimScatterNdUpdate, ScatterNdArithmeticInfer, nullptr, true);
-REGISTER_PRIMITIVE_EVAL_IMPL(ScatterNdAdd, prim::kPrimScatterNdAdd, ScatterNdArithmeticInfer, nullptr, true);
-REGISTER_PRIMITIVE_EVAL_IMPL(ScatterNdSub, prim::kPrimScatterNdSub, ScatterNdArithmeticInfer, nullptr, true);
-REGISTER_PRIMITIVE_EVAL_IMPL(ScatterNdMul, prim::kPrimScatterNdMul, ScatterNdArithmeticInfer, nullptr, true);
-REGISTER_PRIMITIVE_EVAL_IMPL(ScatterNdDiv, prim::kPrimScatterNdDiv, ScatterNdArithmeticInfer, nullptr, true);
-REGISTER_PRIMITIVE_EVAL_IMPL(ScatterNdMax, prim::kPrimScatterNdMax, ScatterNdArithmeticInfer, nullptr, true);
-REGISTER_PRIMITIVE_EVAL_IMPL(ScatterNdMin, prim::kPrimScatterNdMin, ScatterNdArithmeticInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGScatterNdArithmeticInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScatterNdArithmeticInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScatterNdArithmeticInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScatterNdArithmeticInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScatterNdUpdate, prim::kPrimScatterNdUpdate, AGScatterNdArithmeticInfer, false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScatterNdAdd, prim::kPrimScatterNdAdd, AGScatterNdArithmeticInfer, false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScatterNdSub, prim::kPrimScatterNdSub, AGScatterNdArithmeticInfer, false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScatterNdMul, prim::kPrimScatterNdMul, AGScatterNdArithmeticInfer, false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScatterNdDiv, prim::kPrimScatterNdDiv, AGScatterNdArithmeticInfer, false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScatterNdMax, prim::kPrimScatterNdMax, AGScatterNdArithmeticInfer, false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScatterNdMin, prim::kPrimScatterNdMin, AGScatterNdArithmeticInfer, false);
 }  // namespace ops
 }  // namespace mindspore

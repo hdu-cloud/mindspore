@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,47 +16,51 @@
 #include <vector>
 #include <memory>
 #include "common/common_test.h"
-#include "ops/exp.h"
 #include "ir/dtype/type.h"
-#include "ir/value.h"
 #include "abstract/dshape.h"
 #include "utils/tensor_construct_utils.h"
+#include "ir/primitive.h"
+#include "abstract/abstract_value.h"
+#include "utils/ms_context.h"
+#include "ops/test_ops.h"
+#include "ops/exp.h"
+#include "ops/test_ops_dyn_cases.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace ops {
-class TestExp : public UT::Common {
- public:
-  TestExp() {}
-  void SetUp() {}
-  void TearDown() {}
-};
+class TestExp : public TestOps,
+                public testing::WithParamInterface<std::tuple<EltwiseOpShapeParams, EltwiseOpTypeParams>> {};
 
-TEST_F(TestExp, test_ops_exp1) {
-  auto exp = std::make_shared<Exp>();
-  auto tensor_x = TensorConstructUtils::CreateOnesTensor(kNumberTypeFloat16, std::vector<int64_t>{2, 3, 4, 5});
-  MS_EXCEPTION_IF_NULL(tensor_x);
-  auto abstract = exp->Infer({tensor_x->ToAbstract()});
-  MS_EXCEPTION_IF_NULL(abstract);
-  EXPECT_EQ(abstract->isa<abstract::AbstractTensor>(), true);
-  auto shape_ptr = abstract->BuildShape();
-  MS_EXCEPTION_IF_NULL(shape_ptr);
-  EXPECT_EQ(shape_ptr->isa<abstract::Shape>(), true);
-  auto shape = shape_ptr->cast<abstract::ShapePtr>();
-  MS_EXCEPTION_IF_NULL(shape);
-  auto shape_vec = shape->shape();
-  auto type = abstract->BuildType();
-  MS_EXCEPTION_IF_NULL(type);
-  EXPECT_EQ(type->isa<TensorType>(), true);
-  auto tensor_type = type->cast<TensorTypePtr>();
-  MS_EXCEPTION_IF_NULL(tensor_type);
-  auto data_type = tensor_type->element();
-  MS_EXCEPTION_IF_NULL(data_type);
-  EXPECT_EQ(data_type->type_id(), kNumberTypeFloat16);
-  EXPECT_EQ(shape_vec.size(), 4);
-  EXPECT_EQ(shape_vec[0], 2);
-  EXPECT_EQ(shape_vec[1], 3);
-  EXPECT_EQ(shape_vec[2], 4);
-  EXPECT_EQ(shape_vec[3], 5);
+TEST_P(TestExp, dyn_shape) {
+  const auto &shape_param = std::get<0>(GetParam());
+  const auto &dtype_param = std::get<1>(GetParam());
+  auto x = std::make_shared<abstract::AbstractTensor>(dtype_param.x_type, shape_param.x_shape);
+  auto expect = std::make_shared<abstract::AbstractTensor>(dtype_param.out_type, shape_param.out_shape);
+  ASSERT_NE(x, nullptr);
+  auto prim = std::make_shared<Primitive>(kNameExp);
+  auto out_abstract = opt::CppInferShapeAndType(prim, {x});
+  ASSERT_NE(out_abstract, nullptr);
+  ASSERT_TRUE(*out_abstract == *expect);
 }
+
+auto ExpOpTypeCases = testing::ValuesIn({
+  EltwiseOpTypeParams{kBool, kBool},
+  EltwiseOpTypeParams{kInt8, kInt8},
+  EltwiseOpTypeParams{kInt16, kInt16},
+  EltwiseOpTypeParams{kInt32, kInt32},
+  EltwiseOpTypeParams{kInt64, kInt64},
+  EltwiseOpTypeParams{kUInt8, kUInt8},
+  EltwiseOpTypeParams{kUInt16, kUInt16},
+  EltwiseOpTypeParams{kUInt32, kUInt32},
+  EltwiseOpTypeParams{kUInt64, kUInt64},
+  EltwiseOpTypeParams{kFloat16, kFloat16},
+  EltwiseOpTypeParams{kFloat32, kFloat32},
+  EltwiseOpTypeParams{kFloat64, kFloat64},
+  EltwiseOpTypeParams{kComplex64, kComplex64},
+  EltwiseOpTypeParams{kComplex128, kComplex128},
+});
+
+INSTANTIATE_TEST_CASE_P(TestExp, TestExp, testing::Combine(EltwiseDynShapeTestCases, ExpOpTypeCases));
 }  // namespace ops
 }  // namespace mindspore

@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,12 +19,16 @@
 #include <vector>
 #include <algorithm>
 #include <string>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/ascend_op_name.h"
+#include "ops/math_ops.h"
+#include "ops/lite_ops.h"
+#include "ops/array_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
 #include "abstract/abstract_value.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "utils/trace_base.h"
 namespace mindspore {
 namespace opt {
@@ -37,7 +41,7 @@ AnfNodePtr GetMul0(const FuncGraphPtr &graph, const AnfNodePtr &input2, const An
   auto manager = graph->manager();
   MS_EXCEPTION_IF_NULL(manager);
   if (manager->node_users().find(input2) == manager->node_users().end()) {
-    MS_LOG(EXCEPTION) << "node has no output in manager" << trace::DumpSourceLines(input2);
+    MS_LOG(INTERNAL_EXCEPTION) << "node has no output in manager" << trace::DumpSourceLines(input2);
   }
 
   AnfNodePtr mul0 = nullptr;
@@ -113,14 +117,14 @@ CNodePtr ConfusionMulGradFusion::CreateFusionNode(const FuncGraphPtr &graph, con
   common::AnfAlgo::CopyNodeAttr(kAttrKeepDims, reduce_sum, fusion_node);
   auto types = {common::AnfAlgo::GetOutputInferDataType(mul0, 0),
                 common::AnfAlgo::GetOutputInferDataType(reduce_sum, 0)};
-  auto shapes = {common::AnfAlgo::GetOutputDetailShape(mul0, 0), common::AnfAlgo::GetOutputDetailShape(reduce_sum, 0)};
+  auto shapes = {AnfAlgo::GetOutputDetailShape(mul0, 0), AnfAlgo::GetOutputDetailShape(reduce_sum, 0)};
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, fusion_node.get());
   return fusion_node;
 }
 
 const BaseRef ConfusionMulGradFusion::DefinePattern() const {
   VectorRef mul1({prim::kPrimMul, input3_, input2_});
-  VectorRef reduce_sum({prim::kPrimReduceSum, mul1});
+  VectorRef reduce_sum({prim::kPrimReduceSumD, mul1});
   return reduce_sum;
 }
 

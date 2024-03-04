@@ -16,15 +16,35 @@
 
 #include "ops/conv3d_transpose.h"
 
-#include <set>
-#include <map>
-#include <string>
 #include <algorithm>
-#include "utils/check_convert_utils.h"
+#include <iterator>
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <vector>
+
+#include "abstract/abstract_value.h"
 #include "abstract/dshape.h"
-#include "ir/dtype/tensor_type.h"
-#include "ops/op_utils.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -187,6 +207,8 @@ constexpr size_t kAxis2 = 2;
 constexpr size_t kAxis3 = 3;
 constexpr size_t kAxis4 = 4;
 constexpr size_t kAxis5 = 5;
+constexpr size_t kInputArgsSizeTwo = 2;
+constexpr size_t kInputArgsSizeOne = 1;
 
 inline std::vector<int64_t> CheckTuple(const std::string &prim_name, const std::string &attr_name,
                                        const ValuePtr &attr) {
@@ -215,13 +237,24 @@ inline bool CheckShape(const std::string &op, const ShapeVector &shape) {
   }
   return true;
 }
+
+inline void Conv3DTransposeInferCheck(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args,
+                                      bool infer_shape) {
+  MS_EXCEPTION_IF_NULL(primitive);
+  for (auto item : input_args) {
+    MS_EXCEPTION_IF_NULL(item);
+  }
+  const int64_t input_num = infer_shape ? kInputArgsSizeTwo : kInputArgsSizeOne;
+  (void)CheckAndConvertUtils::CheckInteger("Conv3DTranspose infer check", SizeToLong(input_args.size()), kGreaterEqual,
+                                           input_num, primitive->name());
+}
 }  // namespace
 
 class Conv3DTransposeInfer : public abstract::OpInferBase {
  public:
   BaseShapePtr InferShape(const PrimitivePtr &primitive,
                           const std::vector<AbstractBasePtr> &input_args) const override {
-    MS_EXCEPTION_IF_NULL(primitive);
+    Conv3DTransposeInferCheck(primitive, input_args, true);
     auto prim_name = primitive->name();
 
     std::map<std::string, TypePtr> types;
@@ -273,7 +306,7 @@ class Conv3DTransposeInfer : public abstract::OpInferBase {
     int64_t w_out = abstract::Shape::kShapeDimAny;
     int64_t h_out = abstract::Shape::kShapeDimAny;
 
-    int64_t group = primitive->GetAttr(kGroup)->cast<Int64ImmPtr>()->value();
+    int64_t group = GetValue<int64_t>(primitive->GetAttr(kGroup));
     CaculateShape(x_shape, kernel_size, stride, dilation, pad_mode, &pad_list, &output_padding, &d_out, &h_out, &w_out);
     primitive->set_attr(kPadList, MakeValue(pad_list));
     primitive->set_attr(kOutputPadding, MakeValue(output_padding));
@@ -287,6 +320,7 @@ class Conv3DTransposeInfer : public abstract::OpInferBase {
   }
 
   TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    Conv3DTransposeInferCheck(primitive, input_args, false);
     const std::set<TypePtr> valid_types = {kFloat16, kFloat32};
     auto x_dtype = input_args[0]->BuildType();
     (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_dtype, valid_types, primitive->name());

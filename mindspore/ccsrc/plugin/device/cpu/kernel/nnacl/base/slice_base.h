@@ -13,20 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_BASE_SLICE_BASE_H_
-#define MINDSPORE_NNACL_BASE_SLICE_BASE_H_
+#ifndef NNACL_BASE_SLICE_BASE_H_
+#define NNACL_BASE_SLICE_BASE_H_
 
 #include "nnacl/op_base.h"
 #include "nnacl/errorcode.h"
 #include "nnacl/slice_parameter.h"
+#include "nnacl/kernel/slice.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-void PadSliceParameterTo8D(SliceParameter *param);
+void InitSliceStruct(SliceStruct *slice, TensorC *in_tensor, TensorC *begin_tensor, TensorC *size_tensor);
+void PadSliceParameterTo8D(SliceStruct *param);
 
-void DoSlice(const void *input, void *output, const SliceParameter *param, int thread_id, int data_size);
-void DoSliceNoParallel(const void *input, void *output, const SliceParameter *param, int data_size);
+void DoSlice(const void *input, void *output, const SliceStruct *param, int thread_id, int thread_num, int data_size);
+void DoSliceNoParallel(const void *input, void *output, const SliceStruct *param, int data_size);
 #ifdef __cplusplus
 }
 #endif

@@ -172,6 +172,18 @@ class CeilInfo : public ActivationOther {
   ~CeilInfo() override = default;
 };
 
+class CholeskyInfo : public Softmax {
+ public:
+  CholeskyInfo(const std::string &name, const Shapes &inputs_shape, const Shapes &outputs_shape,
+               const PrimitiveAttrs &attrs)
+      : Softmax(name, inputs_shape, outputs_shape, attrs) {}
+  ~CholeskyInfo() override = default;
+
+ protected:
+  Status CheckStrategy(const StrategyPtr &strategy) override;
+  Status GetAttrs() override;
+};
+
 class AtanhInfo : public ActivationOther {
  public:
   AtanhInfo(const std::string &name, const Shapes &inputs_shape, const Shapes &outputs_shape,
@@ -257,6 +269,54 @@ class BesselI1eInfo : public ActivationOther {
                 const PrimitiveAttrs &attrs)
       : ActivationOther(name, inputs_shape, outputs_shape, attrs, std::make_shared<BesselI1eCost>()) {}
   ~BesselI1eInfo() override = default;
+};
+
+class BesselI0Info : public ActivationOther {
+ public:
+  BesselI0Info(const std::string &name, const Shapes &inputs_shape, const Shapes &outputs_shape,
+               const PrimitiveAttrs &attrs)
+      : ActivationOther(name, inputs_shape, outputs_shape, attrs, std::make_shared<BesselI0eCost>()) {}
+  ~BesselI0Info() override = default;
+};
+
+class BesselI1Info : public ActivationOther {
+ public:
+  BesselI1Info(const std::string &name, const Shapes &inputs_shape, const Shapes &outputs_shape,
+               const PrimitiveAttrs &attrs)
+      : ActivationOther(name, inputs_shape, outputs_shape, attrs, std::make_shared<BesselI0eCost>()) {}
+  ~BesselI1Info() override = default;
+};
+
+class BesselJ0Info : public ActivationOther {
+ public:
+  BesselJ0Info(const std::string &name, const Shapes &inputs_shape, const Shapes &outputs_shape,
+               const PrimitiveAttrs &attrs)
+      : ActivationOther(name, inputs_shape, outputs_shape, attrs, std::make_shared<BesselI0eCost>()) {}
+  ~BesselJ0Info() override = default;
+};
+
+class BesselJ1Info : public ActivationOther {
+ public:
+  BesselJ1Info(const std::string &name, const Shapes &inputs_shape, const Shapes &outputs_shape,
+               const PrimitiveAttrs &attrs)
+      : ActivationOther(name, inputs_shape, outputs_shape, attrs, std::make_shared<BesselI0eCost>()) {}
+  ~BesselJ1Info() override = default;
+};
+
+class LgammaInfo : public BesselJ1Info {
+ public:
+  LgammaInfo(const std::string &name, const Shapes &inputs_shape, const Shapes &outputs_shape,
+             const PrimitiveAttrs &attrs)
+      : BesselJ1Info(name, inputs_shape, outputs_shape, attrs) {}
+  ~LgammaInfo() override = default;
+};
+
+class TruncInfo : public BesselJ1Info {
+ public:
+  TruncInfo(const std::string &name, const Shapes &inputs_shape, const Shapes &outputs_shape,
+            const PrimitiveAttrs &attrs)
+      : BesselJ1Info(name, inputs_shape, outputs_shape, attrs) {}
+  ~TruncInfo() override = default;
 };
 }  // namespace parallel
 }  // namespace mindspore

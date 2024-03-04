@@ -15,14 +15,26 @@
  */
 
 #include "ops/avg_pool_v1.h"
-#include <string>
-#include <algorithm>
+
 #include <memory>
 #include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "mindapi/src/helper.h"
+
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/format.h"
+#include "mindapi/base/types.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -127,6 +139,24 @@ AbstractBasePtr AvgPoolV1Infer(const abstract::AnalysisEnginePtr &, const Primit
   return std::make_shared<abstract::AbstractTensor>(avgpool_v1_infer_type, avgpool_v1_infer_shape);
 }
 MIND_API_OPERATOR_IMPL(AvgPoolV1, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(AvgPoolV1, prim::kPrimAvgPoolV1, AvgPoolV1Infer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGAvgPoolV1Infer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return AvgPoolV1InferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return AvgPoolV1InferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return AvgPoolV1Infer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(AvgPoolV1, prim::kPrimAvgPoolV1, AGAvgPoolV1Infer, false);
 }  // namespace ops
 }  // namespace mindspore

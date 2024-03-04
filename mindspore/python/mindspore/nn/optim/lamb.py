@@ -23,8 +23,7 @@ from mindspore.ops import functional as F
 from mindspore.ops.operations import _inner_ops as inner
 from mindspore.common.tensor import Tensor
 from mindspore.common.api import jit
-from mindspore._checkparam import Validator as validator
-from mindspore._checkparam import Rel
+from mindspore import _checkparam as validator
 from mindspore.nn.optim.optimizer import Optimizer
 from mindspore.nn.optim.optimizer import opt_init_args_register
 
@@ -69,8 +68,8 @@ def _check_param_value(beta1, beta2, eps, prim_name):
     validator.check_value_type("beta1", beta1, [float], prim_name)
     validator.check_value_type("beta2", beta2, [float], prim_name)
     validator.check_value_type("eps", eps, [float], prim_name)
-    validator.check_float_range(beta1, 0.0, 1.0, Rel.INC_NEITHER, "beta1", prim_name)
-    validator.check_float_range(beta2, 0.0, 1.0, Rel.INC_NEITHER, "beta2", prim_name)
+    validator.check_float_range(beta1, 0.0, 1.0, validator.INC_NEITHER, "beta1", prim_name)
+    validator.check_float_range(beta2, 0.0, 1.0, validator.INC_NEITHER, "beta2", prim_name)
     validator.check_positive_float(eps, "eps", prim_name)
 
 
@@ -133,13 +132,17 @@ class Lamb(Optimizer):
         There is usually no connection between a optimizer and mixed precision. But when `FixedLossScaleManager` is used
         and `drop_overflow_update` in `FixedLossScaleManager` is set to False, optimizer needs to set the 'loss_scale'.
         As this optimizer has no argument of `loss_scale`, so `loss_scale` needs to be processed by other means. Refer
-        document `LossScale <https://www.mindspore.cn/tutorials/zh-CN/r2.0.0-alpha/advanced/mixed_precision.html>`_ to
+        document `LossScale <https://www.mindspore.cn/tutorials/en/master/advanced/mixed_precision.html>`_ to
         process `loss_scale` correctly.
 
         If parameters are not grouped, the `weight_decay` in optimizer will be applied on the network parameters without
         'beta' or 'gamma' in their names. Users can group parameters to change the strategy of decaying weight. When
         parameters are grouped, each group can set `weight_decay`. If not, the `weight_decay` in optimizer will be
         applied.
+
+    .. warning::
+        The update process of the Lamb optimizer is not completely elementwise, and the sharding of weights in
+        distributed parallel may affect the update result.
 
     Args:
         params (Union[list[Parameter], list[dict]]): Must be list of `Parameter` or list of `dict`. When the
@@ -182,14 +185,14 @@ class Lamb(Optimizer):
             - LearningRateSchedule: Learning rate is dynamic. During training, the optimizer calls the instance of
               LearningRateSchedule with step as the input to get the learning rate of current step.
 
-        beta1 (float): The exponential decay rate for the 1st moment estimations. Default: 0.9.
+        beta1 (float): The exponential decay rate for the 1st moment estimations. Default: ``0.9`` .
             Should be in range (0.0, 1.0).
-        beta2 (float): The exponential decay rate for the 2nd moment estimations. Default: 0.999.
+        beta2 (float): The exponential decay rate for the 2nd moment estimations. Default: ``0.999`` .
             Should be in range (0.0, 1.0).
-        eps (float): Term added to the denominator to improve numerical stability. Default: 1e-6.
+        eps (float): Term added to the denominator to improve numerical stability. Default: ``1e-6`` .
             Should be greater than 0.
 
-        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: 0.0.
+        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: ``0.0`` .
 
             - float: The fixed weight decay value. Must be equal to or greater than 0.
 
@@ -202,7 +205,7 @@ class Lamb(Optimizer):
         - **gradients** (tuple[Tensor]) - The gradients of `params`, the shape is the same as `params`.
 
     Outputs:
-        tuple[bool], all elements are True.
+        tuple[bool], all elements are ``True`` .
 
     Raises:
         TypeError: If `learning_rate` is not one of int, float, Tensor, Iterable, LearningRateSchedule.
@@ -219,14 +222,15 @@ class Lamb(Optimizer):
     Examples:
         >>> import mindspore as ms
         >>> from mindspore import nn
-        >>> from mindspore.nn import learning_rate_schedule
         >>>
-        >>> net = Net()
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> #1) All parameters use the same learning rate and weight decay
         >>> optim = nn.Lamb(params=net.trainable_params(), learning_rate=0.1)
         >>>
         >>> #2) Use parameter groups and set different values
-        >>> poly_decay_lr = learning_rate_schedule.PolynomialDecayLR(learning_rate=0.1, end_learning_rate=0.01,
+        >>> poly_decay_lr = nn.PolynomialDecayLR(learning_rate=0.1, end_learning_rate=0.01,
         ...                                                    decay_steps=4, power = 0.5)
         >>> conv_params = list(filter(lambda x: 'conv' in x.name, net.trainable_params()))
         >>> no_conv_params = list(filter(lambda x: 'conv' not in x.name, net.trainable_params()))
@@ -241,7 +245,7 @@ class Lamb(Optimizer):
         >>> # The final parameters order in which the optimizer will be followed is the value of 'order_params'.
         >>>
         >>> loss = nn.SoftmaxCrossEntropyWithLogits()
-        >>> model = ms.Model(net, loss_fn=loss, optimizer=optim)
+        >>> model = ms.train.Model(net, loss_fn=loss, optimizer=optim)
     """
     _support_parallel_optimizer = True
 
@@ -263,8 +267,7 @@ class Lamb(Optimizer):
     def construct(self, gradients):
         weight_decay = self.get_weight_decay()
         lr = self.get_lr()
-        if not self._is_dynamic_lr_or_weight_decay():
-            self.assignadd(self.global_step, self.global_step_increase_tensor)
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
         lamb_opt = _lamb_opt
         gradients = self.flatten_gradients(gradients)
         gradients = self.gradients_centralization(gradients)

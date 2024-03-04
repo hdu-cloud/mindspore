@@ -15,16 +15,15 @@
  */
 #include "plugin/device/cpu/kernel/fft_with_size_cpu_kernel.h"
 #include <algorithm>
-#include <string>
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 
-#define FFTWITHSIZE_SWITCH_DIM_CALCULATE(T1, T2, real, inverse)                                                 \
-  if (signal_ndim == 1) {                                                                                       \
-    FFTWithSizeCompute<T1, T2, 1, real, inverse>(p_x, p_y, onesided, normalized, checked_signal_size, x_shape); \
-  } else if (signal_ndim == 2) {                                                                                \
-    FFTWithSizeCompute<T1, T2, 2, real, inverse>(p_x, p_y, onesided, normalized, checked_signal_size, x_shape); \
-  } else {                                                                                                      \
-    FFTWithSizeCompute<T1, T2, 3, real, inverse>(p_x, p_y, onesided, normalized, checked_signal_size, x_shape); \
+#define FFTWITHSIZE_SWITCH_DIM_CALCULATE(T1, T2, real, inverse)                                                    \
+  if (signal_ndim_ == 1) {                                                                                         \
+    FFTWithSizeCompute<T1, T2, 1, real, inverse>(p_x, p_y, onesided_, normalized_, checked_signal_size, x_shape_); \
+  } else if (signal_ndim_ == 2) {                                                                                  \
+    FFTWithSizeCompute<T1, T2, 2, real, inverse>(p_x, p_y, onesided_, normalized_, checked_signal_size, x_shape_); \
+  } else {                                                                                                         \
+    FFTWithSizeCompute<T1, T2, 3, real, inverse>(p_x, p_y, onesided_, normalized_, checked_signal_size, x_shape_); \
   }
 using std::vector;
 namespace mindspore {
@@ -56,7 +55,9 @@ int64_t get_element_num(const std::vector<int64_t> &shape, size_t rank) {
   size_t back_itr = shape.size();
   int64_t size = 1;
   for (size_t i = 1; i <= rank; i++) {
-    size *= shape[back_itr - i];
+    auto dim = shape[back_itr - i];
+    MS_EXCEPTION_IF_CHECK_FAIL(dim > 0, "The element in shape must be positive.");
+    size *= dim;
   }
   return size;
 }
@@ -70,18 +71,42 @@ void change_axes(Eigen::array<unsigned int, size> *axes) {
 }
 }  // namespace
 
-void FFTWithSizeCpuKernelMod::InitKernel(const CNodePtr &kernel_node) {
-  MS_EXCEPTION_IF_NULL(kernel_node);
-  node_wpt_ = kernel_node;
+bool FFTWithSizeCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+                                   const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
+  kernel_name_ = base_operator->name();
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kInputNum, kernel_name_);
+  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kOutputNum, kernel_name_);
+  auto prim = base_operator->GetPrim();
+  MS_EXCEPTION_IF_NULL(prim);
 
-  auto kernel_attr = GetKernelAttrFromNode(kernel_node);
+  signal_ndim_ = GetValue<int64_t>(prim->GetAttr("signal_ndim"));
+  inverse_ = GetValue<bool>(prim->GetAttr("inverse"));
+  onesided_ = GetValue<bool>(prim->GetAttr("onesided"));
+  normalized_ = GetValue<string>(prim->GetAttr("norm"));
+  real_ = GetValue<bool>(prim->GetAttr("real"));
+  raw_checked_signal_size_ = GetValue<std::vector<int64_t>>(prim->GetAttr("signal_sizes"));
+
+  auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
   auto [is_match, index] = MatchKernelAttr(kernel_attr, GetOpSupport());
   if (!is_match) {
-    MS_LOG(EXCEPTION) << "FFT_with_size valid cpu kernel does not support this kernel data type: " << kernel_attr;
+    MS_LOG(EXCEPTION) << kernel_name_ << " valid cpu kernel does not support this kernel data type: " << kernel_attr;
   }
   kernel_func_ = func_list_[index].second;
+  return true;
 }
 
+int FFTWithSizeCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+                                    const std::vector<KernelTensorPtr> &outputs,
+                                    const std::map<uint32_t, tensor::TensorPtr> &) {
+  MS_EXCEPTION_IF_NULL(base_operator);
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), 1, kernel_name_);
+  if (auto ret = KernelMod::Resize(base_operator, inputs, outputs); ret != KRET_OK) {
+    return ret;
+  }
+  x_shape_ = inputs[0]->GetShapeVector();
+  return KRET_OK;
+}
 double Getnormalized(int64_t element_num, const std::string &normalized, bool is_reverse) {
   double result = 1.0;
   if (!is_reverse) {
@@ -118,6 +143,8 @@ inline Eigen::DSizes<Eigen::DenseIndex, signal_ndim + 1> GetFlatShape(const std:
     for (size_t j = x_dims - static_cast<size_t>(signal_ndim), i = 1; j < x_dims; j++, i++) {
       tensor_shape[i] = x_shape[j];
     }
+  } else {
+    MS_LOG(EXCEPTION) << "x_dims must not be less than signal_ndim.";
   }
   return tensor_shape;
 }
@@ -141,7 +168,7 @@ bool FFTWithSizeCompute(T1 *input_x, T2 *output_y, bool onesided, std::string no
           temp_tensor_shape[signal_ndim] = (temp_tensor_shape[signal_ndim] - 1) * kRealFFTSideNum;
         } else {
           if (checked_signal_size.back() / kRealFFTSideNum + 1 == temp_tensor_shape[signal_ndim]) {
-            temp_tensor_shape[(size_t)signal_ndim] = checked_signal_size.back();
+            temp_tensor_shape[static_cast<size_t>(signal_ndim)] = checked_signal_size.back();
           }
         }
         if (temp_tensor_shape.back() == tensor_shape.back()) {
@@ -229,29 +256,26 @@ bool FFTWithSizeCompute(T1 *input_x, T2 *output_y, bool onesided, std::string no
 template <typename T1, typename T2>
 bool FFTWithSizeCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs,
                                            const std::vector<kernel::AddressPtr> &outputs) {
-  int64_t signal_ndim = common::AnfAlgo::GetNodeAttr<int64_t>(node_wpt_, "signal_ndim");
-  bool inverse = common::AnfAlgo::GetNodeAttr<bool>(node_wpt_, "inverse");
-  bool onesided = common::AnfAlgo::GetNodeAttr<bool>(node_wpt_, "onesided");
-  std::string normalized = common::AnfAlgo::GetNodeAttr<string>(node_wpt_, "norm");
-  bool real = common::AnfAlgo::GetNodeAttr<bool>(node_wpt_, "real");
-  std::vector<int64_t> raw_checked_signal_size =
-    common::AnfAlgo::GetNodeAttr<std::vector<int64_t>>(node_wpt_, "signal_sizes");
-  std::vector<int64_t> checked_signal_size(raw_checked_signal_size.begin(), raw_checked_signal_size.end());
-  std::vector<int64_t> x_shape = AnfAlgo::GetInputDeviceShape(node_wpt_, 0);
-  const int64_t choose = FFTWithSize_choose(real, inverse);
-  auto p_x = reinterpret_cast<T1 *>(inputs[0]->addr);
-  auto p_y = reinterpret_cast<T2 *>(outputs[0]->addr);
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), 1, kernel_name_);
+  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), 1, kernel_name_);
+  std::vector<int64_t> checked_signal_size(raw_checked_signal_size_.begin(), raw_checked_signal_size_.end());
+  const int64_t choose = FFTWithSize_choose(real_, inverse_);
+  auto p_x = GetDeviceAddress<T1>(inputs, kIndex0);
+  auto p_y = GetDeviceAddress<T2>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(p_x);
+  MS_EXCEPTION_IF_NULL(p_y);
   if constexpr (std::is_same<T1, T2>::value) {  // fft and ifft
     if (choose == kDimNum_FFT) {
       FFTWITHSIZE_SWITCH_DIM_CALCULATE(T1, T2, false, false);
     } else {
       FFTWITHSIZE_SWITCH_DIM_CALCULATE(T1, T2, false, true);
     }
-  } else {                                                                              // rfft and irfft
-    if constexpr (std::is_same<T1, float>::value || std::is_same<T1, double>::value) {  // rfft
-      FFTWITHSIZE_SWITCH_DIM_CALCULATE(T1, T2, true, false);
-    } else {  // irfft
+  } else {  // rfft and irfft
+    if constexpr (std::is_same<T1, std::complex<float>>::value ||
+                  std::is_same<T1, std::complex<double>>::value) {  // irfft
       FFTWITHSIZE_SWITCH_DIM_CALCULATE(T1, T2, true, true);
+    } else {  // rfft
+      FFTWITHSIZE_SWITCH_DIM_CALCULATE(T1, T2, true, false);
     }
   }
   return true;
@@ -269,7 +293,19 @@ std::vector<std::pair<KernelAttr, FFTWithSizeCpuKernelMod::FFTWithSizeFunc>> FFT
   {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeComplex128),
    &FFTWithSizeCpuKernelMod::LaunchKernel<double, std::complex<double>>},
   {KernelAttr().AddInputAttr(kNumberTypeComplex128).AddOutputAttr(kNumberTypeFloat64),
-   &FFTWithSizeCpuKernelMod::LaunchKernel<std::complex<double>, double>}};
+   &FFTWithSizeCpuKernelMod::LaunchKernel<std::complex<double>, double>},
+  {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeComplex64),
+   &FFTWithSizeCpuKernelMod::LaunchKernel<uint8_t, std::complex<float>>},
+  {KernelAttr().AddInputAttr(kNumberTypeInt8).AddOutputAttr(kNumberTypeComplex64),
+   &FFTWithSizeCpuKernelMod::LaunchKernel<int8_t, std::complex<float>>},
+  {KernelAttr().AddInputAttr(kNumberTypeInt16).AddOutputAttr(kNumberTypeComplex64),
+   &FFTWithSizeCpuKernelMod::LaunchKernel<int16_t, std::complex<float>>},
+  {KernelAttr().AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeComplex64),
+   &FFTWithSizeCpuKernelMod::LaunchKernel<int32_t, std::complex<float>>},
+  {KernelAttr().AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeComplex64),
+   &FFTWithSizeCpuKernelMod::LaunchKernel<int64_t, std::complex<float>>},
+  {KernelAttr().AddInputAttr(kNumberTypeBool).AddOutputAttr(kNumberTypeComplex64),
+   &FFTWithSizeCpuKernelMod::LaunchKernel<bool, std::complex<float>>}};
 
 std::vector<KernelAttr> FFTWithSizeCpuKernelMod::GetOpSupport() {
   std::vector<KernelAttr> support_list;

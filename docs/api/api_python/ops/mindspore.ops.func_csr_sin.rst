@@ -6,10 +6,10 @@ mindspore.ops.csr_sin
     逐元素计算输入CSRTensor的正弦。
 
     .. math::
-        out_i = sin(x_i)
+        out_i = \sin(x_i)
 
     参数：
-        - **x** (CSRTensor) - CSRTensor的shape为 :math:`(N,*)` 其中 :math:`*` 表示任意数量的附加维度。
+        - **x** (CSRTensor) - CSRTensor的输入。
 
     返回：
         CSRTensor，shape与 `x` 相同。

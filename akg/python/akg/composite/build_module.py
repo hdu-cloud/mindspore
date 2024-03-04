@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # coding: utf-8
-# Copyright 2020-2022 Huawei Technologies Co., Ltd
+# Copyright 2020-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,15 +20,13 @@ import json
 from collections.abc import Iterable
 import akg
 from akg import tvm
+from tvm.autotvm.env import AutotvmGlobalScope
+from akg.utils.tbe_codegen_utils import build_tbe_codegen
 from akg.utils.kernel_exec import ReturnType, is_symbolic_tiling
 from .split_stitch import split_stitch_attr
-from .construct_args import get_construct_args, get_tune_construct_args, \
-    should_enable_attr, get_stmt_for_tune, add_attrs_in_segment_infos, \
-    update_attrs
 from .construct_args import ConstructType, ConstructKey
 from .construct_args import get_construct_args, get_tune_construct_args, \
     should_enable_attr, get_stmt_for_tune, add_attrs_in_segment_infos
-from .split_stitch import split_stitch_attr
 
 
 def generate_trait(desc):
@@ -406,6 +404,18 @@ def _update_attrs_ascend(all_ops, attr):
     attr["multicore_loop_switch_hoist"] = "UnsortedSegmentSum" not in all_ops
     return attr
 
+def _cpp_build(attrs, process, poly, segment_tree, segment_infos):
+    if attrs.get("is_tbe_codegen"):
+        func = tvm.get_global_func("lower_composite")
+    else:
+        func = tvm.get_global_func("lower_composite_to_module")
+
+    if "ret_mode" in attrs:
+        return _build_for_tuning(attrs, func, process, segment_tree, segment_infos)
+
+    res = func(process, poly, segment_tree, segment_infos)
+    return res
+
 
 def _build_to_module(desc_s, desc_d, attrs=None, poly=True):
     """
@@ -511,10 +521,17 @@ def _build_to_module(desc_s, desc_d, attrs=None, poly=True):
     segment_tree, segment_infos = get_construct_args(desc_s, attrs, post_funcs)
     process = desc_d["process"]
 
-    func = tvm.get_global_func("lower_composite_to_module")
-    if "ret_mode" in attrs and poly:
-        return _build_for_tuning(attrs, func, process, segment_tree, segment_infos)
-    return func(process, poly, segment_tree, segment_infos)
+    return _cpp_build(attrs, process, poly, segment_tree, segment_infos)
+
+
+def _get_ascend_type(desc):
+    if "target_info" not in desc.keys():
+        return None
+
+    target_info_type = desc["target_info"]
+    if target_info_type.get("arch"):
+        return target_info_type.get("arch")
+    return None
 
 
 def _build_to_module_ascend(desc_s_in, desc_d_in, attr, use_repo=True):
@@ -632,14 +649,31 @@ def _build_to_module_ascend(desc_s_in, desc_d_in, attr, use_repo=True):
         ConstructType.STITCH: _stitch_postprocess,
         ConstructType.NORMAL: _normal_postprocess,
     }
-    segment_tree, segment_infos = get_construct_args(desc_s_in, attr, post_funcs)
     process = desc_d_in["process"]
+    ascend_type = _get_ascend_type(desc_d_in)
+    ascend_type_to_section = {"Ascend910A": "1.6", "Ascend310P3": "1.7",
+                              "Ascend910B1": "2.1", "Ascend910B2": "2.2", "Ascend910B3": "2.3", "Ascend910B4": "2.4"}
+    if ascend_type is not None:
+        section = ascend_type_to_section.get(ascend_type, "1.6")
+        config_func = akg.tvm.get_global_func("cce.set_product_section")
+        config_func(section)
+        if section >= "2.1":
+            attr["is_tbe_codegen"] = True
+    segment_tree, segment_infos = get_construct_args(desc_s_in, attr, post_funcs)
+    poly = True
+    res = _cpp_build(attr, process, poly, segment_tree, segment_infos)
+    if attr.get("is_tbe_codegen"):
+        kernel_name = desc_d_in['op']
+        stmt_json = akg.tvm.save_json(res[0], "0.8.0")
+        args_json = []
+        for buf in res[1]:
+            args_json.append(akg.tvm.save_json(buf, "0.8.0"))
 
-    func = tvm.get_global_func("lower_composite_to_module")
-    if "ret_mode" in attr:
-        return _build_for_tuning(attr, func, process, segment_tree, segment_infos)
-    return func(process, True, segment_tree, segment_infos)
-
+        is_success = build_tbe_codegen(kernel_name, stmt_json, args_json, ascend_type, attr.get("dynamic", False))
+        if not is_success:
+            raise TypeError("npu_inference codegen failed.")
+        return kernel_name
+    return res
 
 def _set_backend(desc_d):
     desc_d_process = desc_d
@@ -653,6 +687,13 @@ def _set_backend(desc_d):
         desc_d_process["op_desc"][i] = op
     desc_s = json.dumps(desc_d_process)
     return desc_s
+
+
+def _set_cuda_compute_capability(desc_d):
+    """set the compute_capability from info file"""
+    sm_str = "".join(desc_d.get("target_info", {}).get("compute_capability", "0.0").split("."))
+    if sm_str != "00":
+        AutotvmGlobalScope.current.cuda_target_arch = "sm_" + sm_str
 
 
 def build(kernel_desc, attrs=None, poly=True, use_repo=True):
@@ -683,6 +724,9 @@ def build(kernel_desc, attrs=None, poly=True, use_repo=True):
         attrs = dict()
     backend = desc_d['process']
     attrs = _set_attrs(desc_d, attrs, poly)
+    # set compute_capability for cuda backend
+    if backend == "cuda":
+        _set_cuda_compute_capability(desc_d)
     if backend == 'aicore':
         return _build_to_module_ascend(desc_s, desc_d, attrs, use_repo)
     else:

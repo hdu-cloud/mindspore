@@ -15,8 +15,10 @@
  */
 
 #include "transform/graph_ir/op_declare/nn_batch_norm_ops_declare.h"
-#include <vector>
 #include <string>
+#include <vector>
+#include "ops/nn_op_name.h"
+#include "ops/ascend_op_name.h"
 
 namespace mindspore::transform {
 // BatchNorm
@@ -44,6 +46,7 @@ OUTPUT_MAP(BNInference) = {{0, OUTPUT_DESC(y)}};
 REG_ADPT_DESC(BNInference, kNameBNInference, ADPT_DESC(BNInference))
 REG_ADPT_DESC(BatchNorm, kNameBatchNorm, ADPT_DESC(BatchNorm))
 REG_ADPT_DESC(FusedBatchNorm, kNameFusedBatchNorm, ADPT_DESC(BatchNorm))
+REG_ADPT_DESC(BNInferenceD, kBNInferenceDOpName, ADPT_DESC(BNInference))
 
 // BNInfer
 INPUT_MAP(BNInfer) = {{1, INPUT_DESC(x)},

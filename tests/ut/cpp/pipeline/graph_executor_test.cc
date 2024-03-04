@@ -18,8 +18,8 @@
 
 #include "common/common_test.h"
 #include "utils/log_adapter.h"
-#include "pipeline/jit/action.h"
-#include "pipeline/jit/pipeline.h"
+#include "pipeline/jit/ps/action.h"
+#include "pipeline/jit/ps/pipeline.h"
 
 namespace mindspore {
 namespace pipeline {
@@ -38,7 +38,7 @@ TEST_F(TestGraphExecutor, test_jit_config_with_jit_level_equal_o0) {
   auto jit_level = pipeline::GetJitLevel();
   ASSERT_TRUE(jit_level == "O0");
 
-  auto actions = GePipeline();
+  auto actions = VmPipeline(std::make_shared<pipeline::Resource>());
   bool ret = false;
   for (auto action : actions) {
     if (action.first == "combine_like_graphs") {
@@ -58,7 +58,7 @@ TEST_F(TestGraphExecutor, test_jit_config_with_jit_level_equal_o1) {
   auto jit_level = pipeline::GetJitLevel();
   ASSERT_TRUE(jit_level == "O1");
 
-  auto actions = GePipeline();
+  auto actions = VmPipeline(std::make_shared<pipeline::Resource>());
   bool ret = false;
   for (auto action : actions) {
     if (action.first == "combine_like_graphs") {
@@ -77,7 +77,7 @@ TEST_F(TestGraphExecutor, test_jit_config_with_unused_config) {
   auto jit_level = pipeline::GetJitLevel();
   ASSERT_TRUE(jit_level == "");
 
-  auto actions = GePipeline();
+  auto actions = VmPipeline(std::make_shared<pipeline::Resource>());
   bool ret = false;
   for (auto action : actions) {
     if (action.first == "combine_like_graphs") {

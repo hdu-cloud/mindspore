@@ -14,16 +14,17 @@
  * limitations under the License.
  */
 #include "ops/relu_v3.h"
-#include <string>
 #include <algorithm>
 #include <map>
 #include <set>
+#include <string>
 #include <vector>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -51,6 +52,24 @@ AbstractBasePtr ReLUV3Infer(const abstract::AnalysisEnginePtr &, const Primitive
   auto shape = ReLUV3InferShape(primitive, input_args);
   return abstract::MakeAbstract(shape, type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(ReLUV3, prim::kPrimReLUV3, ReLUV3Infer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGReLUV3Infer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ReLUV3InferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ReLUV3InferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ReLUV3Infer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ReLUV3, prim::kPrimReLUV3, AGReLUV3Infer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -21,9 +21,10 @@
 #include <string>
 #include "tools/optimizer/common/gllo_utils.h"
 #include "include/registry/converter_context.h"
+#include "tools/converter/quantizer/quant_params.h"
 
 using mindspore::converter::FmkType;
-using mindspore::schema::QuantType;
+using mindspore::lite::quant::QuantType;
 namespace mindspore::lite {
 class MindirAdjust {
  public:
@@ -36,8 +37,7 @@ class MindirAdjust {
  private:
   int AdjustInputDataType(AnfNodePtr anf_node);
   int ValueNodeInt64Convert(AnfNodePtr anf_node);
-  int ComputeQuantParams(AnfNodePtr anf_node);
-  int UpdateConv2DTransposeInput(const CNodePtr &cnode);
+  int ConvertQuantParams(AnfNodePtr anf_node, const FuncGraphManagerPtr &manager);
   int ResetFuncGraph(const FuncGraphPtr &fg, std::set<FuncGraphPtr> all_func_graphs);
 
   FmkType fmk_type_ = FmkType::kFmkTypeMs;

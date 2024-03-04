@@ -42,10 +42,13 @@ endif()
 if(NOT ENABLE_SECURITY)
     list(APPEND _DEBUG_SRC_LIST
         "${CMAKE_CURRENT_SOURCE_DIR}/data_dump/cpu_e2e_dump.cc"
+        "${CMAKE_CURRENT_SOURCE_DIR}/data_dump/overflow_dumper.cc"
         "${CMAKE_CURRENT_SOURCE_DIR}/data_dump/dump_json_parser.cc"
         "${CMAKE_CURRENT_SOURCE_DIR}/data_dump/dump_utils.cc"
         "${CMAKE_CURRENT_SOURCE_DIR}/data_dump/npy_header.cc"
         "${CMAKE_CURRENT_SOURCE_DIR}/utils.cc"
+        "${CMAKE_CURRENT_SOURCE_DIR}/common/csv_writer.cc"
+        "${CMAKE_CURRENT_SOURCE_DIR}/summary/summary.cc"
         )
     if(NOT CMAKE_SYSTEM_NAME MATCHES "Windows")
         list(APPEND _DEBUG_SRC_LIST

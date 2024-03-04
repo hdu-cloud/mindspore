@@ -149,6 +149,8 @@ class MapOp : public ParallelOp<std::unique_ptr<MapWorkerJob>, TensorRow> {
   /// \return vector of int
   std::vector<int32_t> GetMPWorkerPIDs() const override;
 
+  Status GetNextRowPullMode(TensorRow *const row) override;
+
  private:
   // A helper function to create jobs for workers.
   Status GenerateWorkerJob(const std::unique_ptr<MapWorkerJob> *worker_job, int32_t worker_id);
@@ -186,11 +188,17 @@ class MapOp : public ParallelOp<std::unique_ptr<MapWorkerJob>, TensorRow> {
   // @return Status The status code returned
   Status WorkerEntry(int32_t worker_id) override;  //  In: workerId assigned by tree_
 
+#if !defined(BUILD_LITE) && defined(ENABLE_D)
   // Private function for worker thread to perform TensorOp's compute function and get the result.
   // @param in_row Input TensorRow
   // @param[out] out_row Generated TensorRow
   Status WorkerCompute(const TensorRow &in_row, TensorRow *out_row,
+                       const std::vector<std::shared_ptr<MapJob>> &job_list, device::DeviceContext *device_context,
+                       size_t stream_id);
+#else
+  Status WorkerCompute(const TensorRow &in_row, TensorRow *out_row,
                        const std::vector<std::shared_ptr<MapJob>> &job_list);
+#endif
 
   // Private function that create the final column name to index mapping and
   // get indices of the columns this mapop does not use.
@@ -214,6 +222,15 @@ class MapOp : public ParallelOp<std::unique_ptr<MapWorkerJob>, TensorRow> {
   Status Launch() override;
   Status AddNewWorkers(int32_t num_new_workers) override;
   Status RemoveWorkers(int32_t num_workers) override;
+
+  /// \brief Gets the implementation status for operator in pull mode
+  /// \return implementation status
+  ImplementedPullMode PullModeImplementationStatus() const override { return ImplementedPullMode::Implemented; }
+
+ private:
+  Status RebuildMapErrorMsg(const TensorRow &input_row, const std::string &op_name, Status *rc);
+
+  Status ReleaseResource(int32_t worker_id);
 };
 }  // namespace dataset
 }  // namespace mindspore

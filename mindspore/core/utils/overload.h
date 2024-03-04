@@ -21,58 +21,75 @@
 #include <utility>
 #include <vector>
 #include <iostream>
-#include <initializer_list>
 #include <map>
 #include <memory>
 #include <string>
 #include "utils/hash_map.h"
 
 namespace mindspore {
+constexpr size_t kThresholdToDisplayIndex = 10;
 template <typename T>
-std::ostream &operator<<(std::ostream &out, const std::vector<T> &v) {
-  out << "[const vector][";
-  size_t last = v.size() - 1;
+std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
+  os << "[const vector]{";
+  const bool display_index = (v.size() > kThresholdToDisplayIndex);
+  size_t last_index = v.size() - 1;
   for (size_t i = 0; i < v.size(); ++i) {
-    out << v[i];
-    if (i != last) {
-      out << ", ";
+    if (display_index) {
+      os << "[" << i << "]:{";
     }
-  }
-  out << "]";
-  return out;
-}
-
-template <typename T>
-std::ostream &operator<<(std::ostream &os, const std::list<T> &vec) {
-  bool begin = true;
-  os << "[const list][";
-  for (auto &item : vec) {
-    if (!begin) {
+    os << v[i];
+    if (display_index) {
+      os << "}";
+    }
+    if (i != last_index) {
       os << ", ";
-    } else {
-      begin = false;
     }
-    os << item;
   }
-  os << "]";
-
+  os << "}";
   return os;
 }
 
 template <typename T>
-std::ostream &operator<<(std::ostream &os, const std::initializer_list<T> &vec) {
-  bool begin = true;
-  os << "[";
-  for (auto &item : vec) {
-    if (!begin) {
-      os << ", ";
-    } else {
-      begin = false;
+std::ostream &operator<<(std::ostream &os, const std::list<T> &v) {
+  os << "[const list]{";
+  const bool display_index = (v.size() > kThresholdToDisplayIndex);
+  size_t i = 0;
+  size_t last_index = v.size() - 1;
+  for (auto it = v.begin(); it != v.end(); ++it, ++i) {
+    if (display_index) {
+      os << "[" << i << "]:{";
     }
-    os << item;
+    os << *it;
+    if (display_index) {
+      os << "}";
+    }
+    if (i != last_index) {
+      os << ", ";
+    }
   }
-  os << "]";
+  os << "}";
+  return os;
+}
 
+template <typename T>
+std::ostream &operator<<(std::ostream &os, const std::initializer_list<T> &v) {
+  os << "[const initializer_list]{";
+  const bool display_index = (v.size() > kThresholdToDisplayIndex);
+  size_t i = 0;
+  size_t last_index = v.size() - 1;
+  for (auto it = v.begin(); it != v.end(); ++it, ++i) {
+    if (display_index) {
+      os << "[" << i << "]:{";
+    }
+    os << *it;
+    if (display_index) {
+      os << "}";
+    }
+    if (i != last_index) {
+      os << ", ";
+    }
+  }
+  os << "}";
   return os;
 }
 

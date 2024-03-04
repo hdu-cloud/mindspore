@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_RANDOM_SHUFFLE_H_
 #define MINDSPORE_CORE_OPS_RANDOM_SHUFFLE_H_
 
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 namespace mindspore {
 namespace ops {
 constexpr auto kRandomShuffle = "RandomShuffle";
@@ -50,8 +50,9 @@ class MIND_API RandomShuffle : public BaseOperator {
   int64_t get_seed2() const;
 };
 
-abstract::AbstractBasePtr RandomShuffleInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                             const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr RandomShuffleInfer(const abstract::AnalysisEnginePtr &,
+                                                      const PrimitivePtr &primitive,
+                                                      const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimRandomShufflePtr = std::shared_ptr<RandomShuffle>;
 }  // namespace ops
 }  // namespace mindspore

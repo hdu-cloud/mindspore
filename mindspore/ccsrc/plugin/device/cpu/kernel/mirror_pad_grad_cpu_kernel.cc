@@ -59,6 +59,10 @@ int MirrorPadGradCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, cons
   }
   input_shape_ = inputs.at(kIndex0)->GetShapeVector();
   dims_ = int64_t(input_shape_.size());
+  if (dims_ <= 0) {
+    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the dim must greater than 0, but got " << dims_;
+  }
+  input_size_ = 1;
   for (auto x : input_shape_) {
     input_size_ *= x;
   }
@@ -67,7 +71,11 @@ int MirrorPadGradCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, cons
   num_paddings_ = padding_shape[0];
 
   output_shape_ = outputs.at(kIndex0)->GetShapeVector();
+  output_size_ = 1;
   for (auto x : output_shape_) {
+    if (x == 0) {
+      MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', all the dims in output shape can not be 0, but got " << x;
+    }
     output_size_ *= x;
   }
   return ret;
@@ -75,7 +83,7 @@ int MirrorPadGradCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, cons
 
 template <typename T>
 void MirrorPadGradCpuKernelMod::paddings_type(const std::vector<AddressPtr> &inputs,
-                                              const std::vector<AddressPtr> &outputs) const {
+                                              const std::vector<AddressPtr> &outputs) {
   if (pad_dtype_ == kNumberTypeInt32) {
     LaunchKernel<T, int32_t>(inputs, outputs);
   } else if (pad_dtype_ == kNumberTypeInt64) {
@@ -87,7 +95,7 @@ void MirrorPadGradCpuKernelMod::paddings_type(const std::vector<AddressPtr> &inp
 }
 
 bool MirrorPadGradCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &inputs,
-                                       const std::vector<kernel::AddressPtr> &workspace,
+                                       const std::vector<kernel::AddressPtr> &,
                                        const std::vector<kernel::AddressPtr> &outputs) {
   CHECK_KERNEL_INPUTS_NUM(inputs.size(), kMirrorPadGradInputsNum, kernel_name_);
   CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kMirrorPadGradOutputsNum, kernel_name_);
@@ -124,21 +132,30 @@ bool MirrorPadGradCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &in
 
 template <typename T>
 void MirrorPadGradCpuKernelMod::slice(std::vector<int64_t> extents, std::vector<int64_t> rhs_offsets,
-                                      std::vector<int64_t> input_strides, std::vector<T> inputs_addr,
-                                      const std::vector<AddressPtr> &outputs) const {
+                                      std::vector<int64_t> input_strides, std::vector<T> inputs,
+                                      const std::vector<AddressPtr> &outputs) {
   auto *outputs_addr = static_cast<T *>(outputs[0]->addr);
-  int64_t output_inx = 0;
-  while (output_inx < output_size_) {
-    int64_t tmp = output_inx;
-    int64_t data_pos = 0;
-    for (int64_t i = dims_ - 1; i >= 0; --i) {
-      int64_t inx_mod = 0;
-      inx_mod = tmp % extents[i];
-      tmp = tmp / extents[i];
-      data_pos += (rhs_offsets[i] + inx_mod) * input_strides[i];
+  auto inputs_addr = reinterpret_cast<T *>(inputs.data());
+  size_t index = LongToSize(dims_ - 1);
+  auto copy_size = sizeof(T) * LongToSize(extents[index]);
+  for (int64_t i = 0; i < output_size_; i += extents[index]) {
+    std::vector<int64_t> pos(LongToSize(dims_), 0);
+    auto idx = i / extents[index];
+    for (int j = LongToInt(dims_ - 2); j >= 0; --j) {
+      if (idx == 0) {
+        break;
+      }
+      pos[j] = idx % extents[j];
+      idx /= extents[j];
     }
-    *(outputs_addr + output_inx) = inputs_addr[data_pos];
-    ++output_inx;
+    int64_t input_index = 0;
+    for (size_t j = 0; j < pos.size(); j++) {
+      input_index += (pos[j] + rhs_offsets[j]) * input_strides[j];
+    }
+    int ret = memcpy_s(outputs_addr + LongToSize(i), copy_size, inputs_addr + LongToSize(input_index), copy_size);
+    if (ret != 0) {
+      MS_LOG(EXCEPTION) << "The memcpy_s error, errorno(" << ret << ")";
+    }
   }
 }
 
@@ -154,14 +171,17 @@ std::vector<std::pair<int64_t, int64_t>> MirrorPadGradCpuKernelMod::extract_padd
 
 template <typename T1, typename T2>
 void MirrorPadGradCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
-                                             const std::vector<AddressPtr> &outputs) const {
+                                             const std::vector<AddressPtr> &outputs) {
   auto *inputs_data = static_cast<T1 *>(inputs[0]->addr);
   auto *paddings_arg = static_cast<T2 *>(inputs[1]->addr);
   int64_t block_num = 1;
 
   std::vector<T1> inputs_addr;
-  for (int64_t i = 0; i < input_size_; ++i) {
-    inputs_addr.push_back(*(inputs_data + i));
+  inputs_addr.resize(input_size_);
+
+  int ret = memcpy_s(inputs_addr.data(), input_size_ * sizeof(T1), inputs_data, input_size_ * sizeof(T1));
+  if (ret != 0) {
+    MS_LOG(EXCEPTION) << "The memcpy_s error, errorno(" << ret << ")";
   }
 
   std::vector<std::pair<int64_t, int64_t>> paddings = extract_paddings<T2>(paddings_arg);
@@ -189,7 +209,8 @@ void MirrorPadGradCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inpu
       std::vector<int64_t> block_pos(i + 1, 0);
       while (inx < total_block) {
         for (int64_t j = i; j >= 0; --j) {
-          if (j > 0 && block_pos[j] >= extents[j]) {
+          bool newline = j > 0 && block_pos[j] >= extents[j];
+          if (newline) {
             block_pos[j] -= extents[j];
             block_pos[j - 1] += 1;
           } else {
@@ -220,7 +241,8 @@ void MirrorPadGradCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inpu
       std::vector<int64_t> block_pos(i + 1, 0);
       while (inx < total_block) {
         for (int64_t j = i; j >= 0; --j) {
-          if (j > 0 && block_pos[j] >= extents[j]) {
+          bool newline = j > 0 && block_pos[j] >= extents[j];
+          if (newline) {
             block_pos[j] -= extents[j];
             block_pos[j - 1] += 1;
           } else {

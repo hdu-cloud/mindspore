@@ -28,7 +28,6 @@
 #include "src/extendrt/cxx_api/model_pool/predict_task_queue.h"
 namespace mindspore {
 class PredictTaskQueue;
-enum Strategy { BASE = 0, ADVANCED = 1 };
 
 struct WorkerConfig {
   std::map<std::string, std::map<std::string, std::string>> config_info;
@@ -36,8 +35,6 @@ struct WorkerConfig {
   std::shared_ptr<Context> context = nullptr;
   int numa_id = -1;
   int worker_id = -1;
-  int task_queue_id = -1;
-  Strategy strategy;
 };
 
 class ModelWorker {
@@ -46,7 +43,7 @@ class ModelWorker {
 
   ~ModelWorker() = default;
 
-  Status Init(const char *model_buf, size_t size);
+  Status Init(const char *model_buf, size_t size, ModelType model_type);
 
   Status UpdateConfig(const std::string &section, const std::pair<std::string, std::string> &config);
 
@@ -61,12 +58,17 @@ class ModelWorker {
 
   bool IsAvailable();
 
-  void CreateThreadWorker(const char *model_buf, size_t size, const std::shared_ptr<WorkerConfig> &worker_config,
-                          const std::shared_ptr<PredictTaskQueue> &predict_task_queue, bool *create_success);
+  void InitModelWorker(const char *model_buf, size_t size, const std::shared_ptr<WorkerConfig> &worker_config,
+                       const std::shared_ptr<PredictTaskQueue> &predict_task_queue, bool *create_success,
+                       ModelType model_type);
 
- private:
+  inline bool ModelIsNull() { return model_is_nullptr_; }
+
+  inline int GetWorkerID() { return worker_id_; }
+
   void Run();
 
+ private:
   std::pair<std::vector<std::vector<int64_t>>, bool> GetModelResize(const std::vector<MSTensor> &model_inputs,
                                                                     const std::vector<MSTensor> &inputs);
 
@@ -75,7 +77,7 @@ class ModelWorker {
   void PrintWorkerInfo();
 
  private:
-  std::shared_ptr<mindspore::Model> model_ = nullptr;
+  mindspore::Model *model_ = nullptr;
   std::shared_ptr<WorkerConfig> worker_config_ = nullptr;
   std::shared_ptr<PredictTaskQueue> predict_task_queue_ = nullptr;
   std::vector<MSTensor> origin_worker_inputs_;
@@ -87,6 +89,8 @@ class ModelWorker {
   // run
   std::mutex mtx_worker_;
   std::atomic_bool available_ = true;
+  bool model_is_nullptr_ = false;
+  int worker_id_ = -1;
 };
 }  // namespace mindspore
 #endif  // MINDSPORE_LITE_SRC_EXTENDRT_CXX_API_MODEL_POOL_MODEL_WORKER_H_

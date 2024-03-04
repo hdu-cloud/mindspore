@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,13 +27,14 @@ GraphImplFactory &GraphImplFactory::Instance() {
 
 void GraphImplFactory::Register(const std::string &device_name, GraphImplCreator &&creator) {
   MS_LOG(DEBUG) << "Start register graph impl for " << device_name;
-  creators_.emplace_back(std::move(creator));
+  (void)creators_.emplace_back(std::move(creator));
 }
 
 std::shared_ptr<GraphCell::GraphImpl> GraphImplFactory::Create(enum DeviceType device_type) {
   for (auto &item : creators_) {
     MS_EXCEPTION_IF_NULL(item);
     auto val = item();
+    MS_EXCEPTION_IF_NULL(val);
     if (val->CheckDeviceSupport(device_type)) {
       return val;
     }
@@ -53,13 +54,14 @@ ModelImplFactory &ModelImplFactory::Instance() {
 
 void ModelImplFactory::Register(const std::string &device_name, ModelImplCreator &&creator) {
   MS_LOG(DEBUG) << "Start register model for " << device_name;
-  creators_.emplace_back(std::move(creator));
+  (void)creators_.emplace_back(std::move(creator));
 }
 
 std::shared_ptr<ModelImpl> ModelImplFactory::Create(enum DeviceType device_type) {
   for (auto &item : creators_) {
     MS_EXCEPTION_IF_NULL(item);
     auto val = item();
+    MS_EXCEPTION_IF_NULL(val);
     if (val->CheckDeviceSupport(device_type)) {
       return val;
     }

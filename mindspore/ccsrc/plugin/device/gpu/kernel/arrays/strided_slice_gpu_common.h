@@ -21,9 +21,9 @@
 #include <algorithm>
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
 #include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "kernel/common_utils.h"
+#include "kernel/ops_utils.h"
 #include "ops/strided_slice.h"
 
 namespace mindspore {
@@ -34,9 +34,11 @@ class StridedSliceGpuCommon {
   StridedSliceGpuCommon() : null_output_(false) {}
   ~StridedSliceGpuCommon() = default;
 
+  inline bool IsEmptyInput(int input_size) { return input_size == 0; }
+
   void CollectInfo(const BaseOperatorPtr &base_operator) {
     auto shape_tmp = Convert2Long(input_shape_);
-    FillEmptyDims(base_operator, &begin_, &end_, &strides_, &shape_tmp);
+    FillEmptyDims(base_operator, &begin_, &end_, &strides_, &shape_tmp, true);
     input_shape_ = Convert2SizeT(shape_tmp);
     ParseStrideSliceMasks(base_operator, &begin_, &end_, &strides_, shape_tmp);
     FillOutputDim();

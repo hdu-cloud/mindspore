@@ -19,24 +19,27 @@
 #include <dirent.h>
 #include <fstream>
 #include <set>
+#include <algorithm>
+#include "utils/crypto.h"
 #include "mindspore/ccsrc/include/common/debug/dump_proto.h"
 #include "mindspore/ccsrc/include/common/utils/utils.h"
 #include "src/common/file_utils.h"
 #include "src/common/common.h"
 #include "tools/converter/parser/parser_utils.h"
+#include "tools/common/graph_util.h"
 #include "mindspore/core/utils/file_utils.h"
 #include "mindspore/core/ir/quantization_param.h"
-#include "mindspore/lite/tools/converter/quantizer/quant_param_holder.h"
 #include "mindspore/lite/tools/converter/quantizer/quant_params.h"
 #include "mindspore/lite/tools/converter/quantizer/quantize_util.h"
 
 namespace mindspore::lite {
+namespace {
 // unit is byte. model size more than 1G need split.
 constexpr const size_t TOTAL_SAVE = 1024 * 1024 * 1024;
 constexpr const size_t PARA_ROUND = 1024;
 constexpr const int64_t OFFSET = 64;
+constexpr size_t kEncMaxLen = 16;
 
-namespace {
 bool DeleteDirRecursively(const std::string &dir_name) {
   DIR *dir = opendir(dir_name.c_str());
   dirent *dirent = nullptr;
@@ -100,6 +103,81 @@ int MindIRSerializer::RemoveQuantParameterHolder(FuncGraphPtr func_graph) {
   return RET_OK;
 }
 
+int MindIRSerializer::UpdateParamCount(const FuncGraphPtr &func_graph) {
+  auto fv_count = 0;
+  std::vector<AnfNodePtr> params;
+  std::vector<AnfNodePtr> reorder_param;
+  reorder_param.reserve(func_graph->parameters().size());
+  for (const auto &node : func_graph->parameters()) {
+    auto param_node = node->cast<ParameterPtr>();
+    if (param_node == nullptr) {
+      MS_LOG(ERROR) << "The parameters() in func graph should be all Parameter Node. but got " << node->DebugString();
+      return RET_ERROR;
+    }
+    if (param_node->has_default()) {
+      (void)params.emplace_back(param_node);
+      ++fv_count;
+      continue;
+    }
+    (void)reorder_param.emplace_back(param_node);
+  }
+  std::copy(params.begin(), params.end(), std::back_inserter(reorder_param));
+  func_graph->set_parameters(reorder_param);
+  func_graph->set_fv_param_count(fv_count);
+  return RET_OK;
+}
+
+int MindIRSerializer::PreProcSaveTogether(const FuncGraphPtr &func_graph) {
+  if (func_graph == nullptr) {
+    MS_LOG(ERROR) << "func_graph is nullptr.";
+    return RET_ERROR;
+  }
+
+  auto ret = UpdateParamCount(func_graph);
+  if (ret != RET_OK) {
+    MS_LOG(ERROR) << "Update parameter count failed.";
+    return ret;
+  }
+
+  ret = ConvertQuantHolderToQuantizationParam(func_graph);
+  if (ret != RET_OK) {
+    MS_LOG(ERROR) << "add quant parameter holder failed.";
+    return ret;
+  }
+
+  ret = RemoveQuantParameterHolder(func_graph);
+  if (ret != RET_OK && ret != RET_NO_CHANGE) {
+    MS_LOG(ERROR) << "remove quant parameter holder failed.";
+    return ret;
+  }
+
+  // Parse func_graph as model proto
+  std::string proto_string = GetBinaryProtoString(func_graph);
+  if (proto_string.empty()) {
+    MS_LOG(ERROR) << "parse proto string failed.";
+    return RET_ERROR;
+  }
+
+  if (!model_proto_.ParseFromString(proto_string)) {
+    MS_LOG(ERROR) << "parse model proto from string failed.";
+    return RET_ERROR;
+  }
+
+  ret = ParamDict(func_graph);
+  if (ret != RET_OK) {
+    MS_LOG(ERROR) << "parse param form funcgraph failed.";
+    return ret;
+  }
+
+  ret = IfSaveTogether(&save_together_);
+  if (ret != RET_OK) {
+    MS_LOG(ERROR) << "error occur when check condition of saving together.";
+    return ret;
+  }
+
+  return RET_OK;
+}
+
 int MindIRSerializer::Save(const std::shared_ptr<ConverterPara> &param, const FuncGraphPtr &func_graph) {
   if (func_graph == nullptr) {
     MS_LOG(ERROR) << "func_graph is nullptr.";
@@ -116,49 +194,57 @@ int MindIRSerializer::Save(const std::shared_ptr<ConverterPara> &param, const Fu
     return ret;
   }
 
-  ret = ConvertQuantHolderToQuantizationParam(func_graph);
+  // Serialize to protobuf using unique parameter name label.
+  common::SetEnv("MS_DEV_TRACE_LABEL_WITH_UNIQUE_ID", "1", 0);
+
+  // Do preprocess on func_graph and check conditions for saving together.
+  ret = PreProcSaveTogether(func_graph);
   if (ret != RET_OK) {
-    MS_LOG(ERROR) << "add quant parameter holder failed.";
+    MS_LOG(ERROR) << "PreProcSaveTogether failed";
     return ret;
   }
 
-  ret = RemoveQuantParameterHolder(func_graph);
-  if (ret != RET_OK && ret != RET_NO_CHANGE) {
-    MS_LOG(ERROR) << "remove quant parameter holder failed.";
-    return ret;
-  }
-
-  auto proto_string = GetBinaryProtoString(func_graph);
-  if (proto_string.empty()) {
-    MS_LOG(ERROR) << "parse proto string failed.";
-    return RET_NULL_PTR;
-  }
-
-  if (!model_proto_.ParseFromString(proto_string)) {
-    MS_LOG(ERROR) << "parse model proto from string failed.";
-    return RET_NULL_PTR;
-  }
-
-  ret = ParamDict(func_graph);
-  if (ret != RET_OK) {
-    MS_LOG(ERROR) << "parse param form funcgraph failed.";
-    return ret;
-  }
-
-  ret = IfSaveTogether(&save_together_);
-  if (ret != RET_OK) {
-    MS_LOG(ERROR) << "error occur when check condition of saving together.";
-    return ret;
-  }
-  is_fusion_ = !param->no_fusion;
   if (save_together_) {
-    ret = SaveMindIRTogether();
+    ret = SaveMindIRTogether(param);
   } else {
-    ret = SplitSave();
+    ret = SplitSave(param);
   }
   if (ret != RET_OK) {
     MS_LOG(ERROR) << "save mindir weight failed.";
     return ret;
+  }
+  return RET_OK;
+}
+
+int MindIRSerializer::ConvertInputQuantHolderToQuantizationParam(const CNodePtr &cnode,
+                                                                 const QuantParamHolderPtr &quant_params_holder) {
+  auto input_quant_params = quant_params_holder->get_input_quant_params();
+  for (unsigned int index = 0; index < input_quant_params.size(); index++) {
+    if (index + quant::kPrimOffset >= cnode->size()) {
+      MS_LOG(DEBUG) << cnode->fullname_with_scope() << " quant_params index out of range, index: " << index
+                    << " but cnode size: " << cnode->size();
+      continue;
+    }
+    auto input = cnode->input(index + quant::kPrimOffset);
+    if (input->isa<mindspore::Parameter>()) {
+      auto ret = ConvertParameterNode(cnode, input->cast<ParameterPtr>(), index);
+      if (ret == RET_NO_CHANGE) {
+        continue;
+      } else if (ret != RET_OK) {
+        MS_LOG(ERROR) << input->fullname_with_scope() << " converter parameter node quant param failed.";
+        return ret;
+      }
+    } else if (input->isa<mindspore::ValueNode>()) {
+      auto ret = ConvertValueNode(cnode, input->cast<ValueNodePtr>(), index);
+      if (ret == RET_NO_CHANGE) {
+        continue;
+      } else if (ret != RET_OK) {
+        MS_LOG(ERROR) << input->fullname_with_scope() << " converter value node quant param failed.";
+        return ret;
+      }
+    } else {
+      MS_LOG(DEBUG) << input->fullname_with_scope() << " Not supported to convert quant param.";
+    }
   }
   return RET_OK;
 }
@@ -182,46 +268,88 @@ int MindIRSerializer::ConvertQuantHolderToQuantizationParam(const FuncGraphPtr &
         MS_LOG(DEBUG) << cnode->fullname_with_scope() << " : primitive is nullptr";
         return RET_OK;
       }
-      auto quant_params_holder = quant::GetCNodeQuantHolder(primitive);
-      if (quant_params_holder == nullptr ||
-          quant_params_holder->quant_type() == mindspore::schema::QuantType_QUANT_NONE) {
+      if (primitive->HasAttr(quant::kQuantType)) {
+        MS_LOG(DEBUG) << cnode->fullname_with_scope() << " already set quant_param into tensor.";
         continue;
       }
-
+      auto quant_params_holder = GetCNodeQuantHolder(primitive);
+      if (quant_params_holder == nullptr) {
+        MS_LOG(DEBUG) << cnode->fullname_with_scope() << " quant_params_holder not exist.";
+        continue;
+      }
       auto quant_type = MakeValue(static_cast<int>(quant_params_holder->quant_type()));
       MS_CHECK_TRUE_MSG(quant_type != nullptr, RET_ERROR, "quant_type is nullptr.");
-
       primitive->AddAttr(quant::kQuantType, quant_type);
-      auto input_quant_params = quant_params_holder->get_input_quant_params();
-      for (unsigned int index = 0; index < input_quant_params.size(); index++) {
-        auto input = cnode->input(index + quant::kPrimOffset);
-        if (!input->isa<Parameter>()) {
-          continue;
-        }
-        auto parameter_ptr = input->cast<ParameterPtr>();
-        auto tensor = parameter_ptr->default_param()->cast<tensor::TensorPtr>();
-        auto quant_cluster = quant_params_holder->GetQuantClusters(index);
-        if (!quant_cluster.empty()) {
-          QuantizationParam quantization(quant::kClusterQuant);
-          quantization.AddAttr(quant::kClusterCentroidList, MakeValue(quant_cluster));
-          tensor->set_quant_param(std::vector<std::shared_ptr<mindspore::QuantizationParam>>{
-            std::make_shared<mindspore::QuantizationParam>(quantization)});
-          continue;
-        }
-        if (quant_params_holder->CheckInit(index, true)) {
-          auto quantization_ptr = ConvertQuantParamTToQuantizationParam(input_quant_params[index]);
-          tensor->set_quant_param(std::vector<std::shared_ptr<mindspore::QuantizationParam>>{quantization_ptr});
-        }
+      auto ret = ConvertInputQuantHolderToQuantizationParam(cnode, quant_params_holder);
+      if (ret != RET_OK) {
+        return ret;
       }
-
       auto output_quant_params = quant_params_holder->get_output_quant_params();
+      std::vector<ValuePtr> quantization_param_list;
       for (unsigned int index = 0; index < output_quant_params.size(); index++) {
         if (quant_params_holder->CheckInit(index, false)) {
           auto quantization_ptr = ConvertQuantParamTToQuantizationParam(output_quant_params[index]);
-          primitive->AddAttr(quant::kQuantParam, quantization_ptr);
+          quantization_param_list.push_back(quantization_ptr);
         }
       }
+      primitive->AddAttr(quant::kQuantParam, std::make_shared<ValueList>(quantization_param_list));
     }
+  }
+  return RET_OK;
+}
+
+int MindIRSerializer::ConvertParameterNode(const CNodePtr &cnode, const ParameterPtr &parameter_ptr, size_t index) {
+  auto input = cnode->input(index + quant::kPrimOffset);
+  auto primitive = GetValueNode<PrimitivePtr>(cnode->input(0));
+  CHECK_NULL_RETURN(primitive);
+  auto quant_params_holder = GetCNodeQuantHolder(primitive);
+  auto input_quant_params = quant_params_holder->get_input_quant_params();
+  CHECK_NULL_RETURN(parameter_ptr);
+  if (!parameter_ptr->has_default()) {
+    MS_LOG(WARNING) << input->fullname_with_scope() << " is parameter but don't have default.";
+    return RET_NO_CHANGE;
+  }
+  CHECK_NULL_RETURN(parameter_ptr->default_param());
+  auto tensor = parameter_ptr->default_param()->cast<tensor::TensorPtr>();
+  auto quant_cluster = quant_params_holder->GetQuantClusters(index);
+  if (!quant_cluster.empty()) {
+    QuantizationParam quantization(quant::kClusterQuant);
+    quantization.AddAttr(quant::kClusterCentroidList, MakeValue(quant_cluster));
+    tensor->set_quant_param(std::vector<std::shared_ptr<mindspore::QuantizationParam>>{
+      std::make_shared<mindspore::QuantizationParam>(quantization)});
+    return RET_NO_CHANGE;
+  }
+  if (quant_params_holder->CheckInit(index, true)) {
+    auto quantization_ptr = ConvertQuantParamTToQuantizationParam(input_quant_params[index]);
+    tensor->set_quant_param(std::vector<std::shared_ptr<mindspore::QuantizationParam>>{quantization_ptr});
+  }
+  return RET_OK;
+}
+
+int MindIRSerializer::ConvertValueNode(const CNodePtr &cnode, const ValueNodePtr &value_node_ptr, size_t index) {
+  auto input = cnode->input(index + quant::kPrimOffset);
+  auto primitive = GetValueNode<PrimitivePtr>(cnode->input(0));
+  CHECK_NULL_RETURN(primitive);
+  auto quant_params_holder = GetCNodeQuantHolder(primitive);
+  auto input_quant_params = quant_params_holder->get_input_quant_params();
+  CHECK_NULL_RETURN(value_node_ptr);
+
+  auto tensor = value_node_ptr->value()->cast<tensor::TensorPtr>();
+  if (tensor == nullptr) {
+    MS_LOG(WARNING) << input->fullname_with_scope() << " can't cast to tensor";
+    return RET_NO_CHANGE;
+  }
+  auto quant_cluster = quant_params_holder->GetQuantClusters(index);
+  if (!quant_cluster.empty()) {
+    QuantizationParam quantization(quant::kClusterQuant);
+    quantization.AddAttr(quant::kClusterCentroidList, MakeValue(quant_cluster));
+    tensor->set_quant_param(std::vector<std::shared_ptr<mindspore::QuantizationParam>>{
+      std::make_shared<mindspore::QuantizationParam>(quantization)});
+    return RET_NO_CHANGE;
+  }
+  if (quant_params_holder->CheckInit(index, true)) {
+    auto quantization_ptr = ConvertQuantParamTToQuantizationParam(input_quant_params[index]);
+    tensor->set_quant_param(std::vector<std::shared_ptr<mindspore::QuantizationParam>>{quantization_ptr});
   }
   return RET_OK;
 }
@@ -237,15 +365,15 @@ std::shared_ptr<mindspore::QuantizationParam> MindIRSerializer::ConvertQuantPara
   std::vector<ValuePtr> meanCorr_list;
   std::vector<ValuePtr> numBits_list;
   std::vector<ValuePtr> narrowRange_list;
-  for (auto quantparamt : quant_param) {
-    scale_list.push_back(MakeValue(quantparamt.scale));
-    zeroPoint_list.push_back(MakeValue(quantparamt.zeroPoint));
-    min_list.push_back(MakeValue(quantparamt.min));
-    max_list.push_back(MakeValue(quantparamt.max));
-    varCorr_list.push_back(MakeValue(quantparamt.varCorr));
-    meanCorr_list.push_back(MakeValue(quantparamt.meanCorr));
-    numBits_list.push_back(MakeValue(quantparamt.numBits));
-    narrowRange_list.push_back(MakeValue(quantparamt.narrowRange));
+  for (auto quant : quant_param) {
+    scale_list.push_back(MakeValue(quant.scale));
+    zeroPoint_list.push_back(MakeValue(quant.zeroPoint));
+    min_list.push_back(MakeValue(quant.min));
+    max_list.push_back(MakeValue(quant.max));
+    varCorr_list.push_back(MakeValue(quant.varCorr));
+    meanCorr_list.push_back(MakeValue(quant.meanCorr));
+    numBits_list.push_back(MakeValue(quant.numBits));
+    narrowRange_list.push_back(MakeValue(quant.narrowRange));
   }
   quantization.AddAttr(quant::kScaleList, std::make_shared<ValueList>(scale_list));
   quantization.AddAttr(quant::kZeroPointList, std::make_shared<ValueList>(zeroPoint_list));
@@ -258,7 +386,7 @@ std::shared_ptr<mindspore::QuantizationParam> MindIRSerializer::ConvertQuantPara
   return std::make_shared<mindspore::QuantizationParam>(quantization);
 }
 
-int MindIRSerializer::SaveMindIRTogether() {
+int MindIRSerializer::SaveMindIRTogether(const std::shared_ptr<ConverterPara> &param) {
   for (auto &param_proto : *(model_proto_.mutable_graph()->mutable_parameter())) {
     std::string proto_name = param_proto.name();
     auto para = GetFgParaAccordingToProtoName(proto_name);
@@ -273,7 +401,7 @@ int MindIRSerializer::SaveMindIRTogether() {
     param_proto.set_raw_data(data->data_c(), static_cast<size_t>(data->data().nbytes()));
   }
 
-  return SaveProtoToFile(&model_proto_, save_model_path_);
+  return SaveProtoToFile(&model_proto_, save_model_path_, param);
 }
 
 int MindIRSerializer::CreateParameterDir() {
@@ -287,14 +415,12 @@ int MindIRSerializer::CreateParameterDir() {
     MS_LOG(ERROR) << "create file system failed.";
     return RET_NULL_PTR;
   }
-
-  if (fs_->FileExist(dir_name_)) {
+  if (fs_->FileExist(dir_name_) && remove_variable_dir_) {
     if (!DeleteDirRecursively(dir_name_)) {
       return RET_ERROR;
     }
   }
-
-  if (!fs_->CreateDir(dir_name_)) {
+  if (!fs_->FileExist(dir_name_) && !fs_->CreateDir(dir_name_)) {
     MS_LOG(ERROR) << "create dir failed.";
     return RET_ERROR;
   }
@@ -376,7 +502,7 @@ std::string MindIRSerializer::CreateExternalPath(const std::string &external_fil
   return external_local_path;
 }
 
-int MindIRSerializer::SplitSave() {
+int MindIRSerializer::SplitSave(const std::shared_ptr<ConverterPara> &param) {
   MS_LOG(DEBUG) << "Parameters in the net capacity exceeds 1G, save MindIR model and parameters separately.";
   int ret = CreateParameterDir();
   if (ret != RET_OK) {
@@ -385,7 +511,7 @@ int MindIRSerializer::SplitSave() {
   }
 
   int index = 0;
-  std::string external_local = model_name_ + "_data_" + std::to_string(index);
+  std::string external_local = "data_" + std::to_string(index);
   auto external_local_path = CreateExternalPath(external_local);
   if (fs_->FileExist(external_local_path)) {
     if (!fs_->DeleteFile(external_local_path)) {
@@ -425,7 +551,7 @@ int MindIRSerializer::SplitSave() {
     parameter_size += ((append_size + data_length) / PARA_ROUND);
     if (parameter_size > static_cast<int64_t>(TOTAL_SAVE)) {
       index++;
-      external_local = model_name_ + "data_" + std::to_string(index);
+      external_local = "data_" + std::to_string(index);
       data_fs_->close();
       delete data_fs_;
       ret = ChangeParaDataFile(external_local);
@@ -435,7 +561,8 @@ int MindIRSerializer::SplitSave() {
       }
       parameter_size = OFFSET / PARA_ROUND;
     }
-    *(param_proto.mutable_external_data()->mutable_location()) = external_local;
+    std::string external_local_data = model_name_ + "_variables/" + external_local;
+    *(param_proto.mutable_external_data()->mutable_location()) = external_local_data;
     param_proto.mutable_external_data()->set_length(data_length);
     param_proto.mutable_external_data()->set_offset(offset);
     data_fs_->write(static_cast<const char *>(data->data_c()), data_length);
@@ -447,8 +574,13 @@ int MindIRSerializer::SplitSave() {
     offset += (data_length + append_size);
     delete[] append_data;
   }
-
-  return SaveProtoToFile(&model_proto_, save_model_path_);
+  std::string split_model_file_name = "";
+#ifdef _WIN32
+  split_model_file_name = save_path_ + "\\" + model_name_ + "_graph.mindir";
+#else
+  split_model_file_name = save_path_ + "/" + model_name_ + "_graph.mindir";
+#endif
+  return SaveProtoToFile(&model_proto_, split_model_file_name, param);
 }
 
 int MindIRSerializer::ParserPath(const std::string &output_path) {
@@ -506,18 +638,12 @@ int MindIRSerializer::IfSaveTogether(bool *save_together) {
   return RET_OK;
 }
 
-int MindIRSerializer::SaveProtoToFile(mind_ir::ModelProto *model_proto, const std::string &output_file) {
-  mind_ir::GraphProto *graph_proto = model_proto->mutable_graph();
-  mind_ir::AttributeProto *attr_proto = graph_proto->add_attribute();
-  if (attr_proto != nullptr) {
-    attr_proto->set_name(kIsOptimized);
-    attr_proto->set_type(mind_ir::AttributeProto_AttributeType_BOOL);
-    attr_proto->set_i(is_fusion_);
-  }
-  if (isRuntimeConvert_) {
+int MindIRSerializer::SaveProtoToFile(mind_ir::ModelProto *model_proto, const std::string &output_file,
+                                      const std::shared_ptr<ConverterPara> &param) {
+  if (!is_export_model_) {
+    MS_LOG(INFO) << "No need to save proto to file";
     return RET_OK;
   }
-
   auto realpath = Common::CreatePrefixPath(output_file, true);
   if (!realpath.has_value()) {
     MS_LOG(ERROR) << "Get real path of file " << output_file << " failed.";
@@ -530,12 +656,48 @@ int MindIRSerializer::SaveProtoToFile(mind_ir::ModelProto *model_proto, const st
     MS_LOG(ERROR) << "Open the file '" << realpath.value() << "' failed!" << ErrnoToString(errno);
     return RET_ERROR;
   }
-
-  if (!model_proto->SerializeToOstream(&fout)) {
-    MS_LOG(ERROR) << "Failed to write the mindir proto to file " << realpath.value();
+  unsigned char enc_key[kEncMaxLen] = {0};
+  size_t key_len = 0;
+  auto ret = InitEncryptKey(param, enc_key, &key_len);
+  if (ret != RET_OK) {
+    MS_LOG(ERROR) << "Init encrypt key failed";
     fout.close();
-    return RET_ERROR;
+    return ret;
   }
+  if (key_len > 0) {
+    void *buffer = nullptr;
+    size_t size = 0;
+    ret = GetBuffAndSize(&buffer, &size);
+    if (ret != RET_OK) {
+      MS_LOG(ERROR) << "Get buffer and size failed";
+      fout.close();
+      return ret;
+    }
+    size_t encrypt_len = 0;
+    auto encrypt_content =
+      Encrypt(&encrypt_len, reinterpret_cast<Byte *>(buffer), size, enc_key, key_len, param->encrypt_mode);
+    if (encrypt_content == nullptr || encrypt_len == 0) {
+      MS_LOG(ERROR) << "Encrypt failed.";
+      free(buffer);
+      fout.close();
+      return RET_ERROR;
+    }
+    fout.write(reinterpret_cast<const char *>(encrypt_content.get()), encrypt_len);
+    if (fout.bad()) {
+      MS_LOG(ERROR) << "Write model file failed: " << save_model_path_;
+      free(buffer);
+      fout.close();
+      return RET_ERROR;
+    }
+    free(buffer);
+  } else {
+    if (!model_proto->SerializeToOstream(&fout)) {
+      MS_LOG(ERROR) << "Failed to write the mindir proto to file " << realpath.value();
+      fout.close();
+      return RET_ERROR;
+    }
+  }
+
   fout.close();
   ChangeFileMode(realpath.value(), S_IRUSR);
   return RET_OK;
@@ -556,15 +718,15 @@ int MindIRSerializer::GetBuffAndSize(void **buff, size_t *size) {
   return RET_OK;
 }
 
-int MindIRSerialize(const std::shared_ptr<ConverterPara> &param, const FuncGraphPtr &func_graph, bool isRuntimeConvert,
+int MindIRSerialize(const std::shared_ptr<ConverterPara> &param, const FuncGraphPtr &func_graph, bool need_buff,
                     void **buff, size_t *size) {
-  mindspore::lite::MindIRSerializer serializer(isRuntimeConvert);
+  mindspore::lite::MindIRSerializer serializer;
   auto ret = serializer.Save(param, func_graph);
   if (ret != RET_OK) {
     MS_LOG(ERROR) << "MindIR serialize fail";
     return ret;
   }
-  if (isRuntimeConvert) {
+  if (need_buff) {
     return serializer.GetBuffAndSize(buff, size);
   }
   return RET_OK;

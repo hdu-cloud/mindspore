@@ -21,6 +21,7 @@
 #include <utility>
 #include <algorithm>
 #include <memory>
+#include "mindspore/core/ops/math_ops.h"
 #include "nnacl/fp32/arithmetic_self_fp32.h"
 
 namespace mindspore {
@@ -181,6 +182,8 @@ std::map<std::string, std::vector<std::pair<KernelAttr, UnaryOpCpuFuncCreator>>>
      SpecializeUnaryFunc<int32_t, int32_t>},
     {KernelAttr().AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeInt64),
      SpecializeUnaryFunc<int64_t, int64_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeUInt8),
+     SpecializeUnaryFunc<uint8_t, uint8_t>},
     {KernelAttr().AddInputAttr(kNumberTypeUInt16).AddOutputAttr(kNumberTypeUInt16),
      SpecializeUnaryFunc<uint16_t, uint16_t>},
     {KernelAttr().AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeUInt32),
@@ -197,7 +200,9 @@ std::map<std::string, std::vector<std::pair<KernelAttr, UnaryOpCpuFuncCreator>>>
 bool UnaryOpCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                const std::vector<KernelTensorPtr> &outputs) {
   kernel_name_ = base_operator->name();
-  if (inputs.empty() || outputs.empty()) {
+  std::vector<int64_t> input_shape = inputs[kIndex0]->GetShapeVector();
+  is_null_input_ = CHECK_SHAPE_NULL(input_shape, kernel_name_, "input");
+  if (inputs.empty() || outputs.empty() || is_null_input_) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', it got empty inputs or outputs, which is invalid.";
     return false;
   }

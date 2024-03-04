@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <string>
 #include <memory>
+#include <set>
 
 #ifndef ENABLE_LITE_ACL
 #include "pybind11/pybind11.h"
@@ -27,7 +28,7 @@
 #include "sys/time.h"
 #include "include/common/utils/utils.h"
 #include "include/common/utils/callbacks.h"
-#if (defined ENABLE_D) || (defined ENABLE_HELPER)
+#if (defined ENABLE_D) || (defined ENABLE_LITE_ACL)
 #include "transform/graph_ir/callbacks_ge.h"
 #include "common/ge_inner_error_codes.h"
 #endif
@@ -40,7 +41,7 @@ namespace py = pybind11;
 namespace mindspore {
 namespace transform {
 std::shared_ptr<::ge::Session> GraphRunner::NewSession(const SessionOptions &sess_options) {
-#if (defined ENABLE_D) || (defined ENABLE_HELPER)
+#if (defined ENABLE_D) || (defined ENABLE_LITE_ACL)
   std::shared_ptr<::ge::Session> ret;
   auto ms_context = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(ms_context);
@@ -63,14 +64,14 @@ GraphRunner::GraphRunner(const GraphRunnerOptions &options)
   if (ConfigManager::GetInstance().parallel_strategy() == ParallelStrategy::ONE_DEVICE) {
     MS_LOG(INFO) << "ME run in ONE_DEVICE strategy mode";
   }
-#if (defined ENABLE_D) || (defined ENABLE_HELPER)
+#if (defined ENABLE_D) || (defined ENABLE_LITE_ACL)
   auto ms_context = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(ms_context);
 #endif
   if (options.sess_ptr != nullptr) {
     sess_ = options.sess_ptr;
   } else {
-#if (defined ENABLE_D) || (defined ENABLE_HELPER)
+#if (defined ENABLE_D) || (defined ENABLE_LITE_ACL)
     if (ms_context->backend_policy() == "ge") {
       sess_ = NewSession(options.options);
       if (sess_ == nullptr) {
@@ -85,11 +86,11 @@ GraphRunner::GraphRunner(const GraphRunnerOptions &options)
     MS_LOG(INFO) << "The GraphManager is empty!!";
     return;
   }
-#if (defined ENABLE_D) || (defined ENABLE_HELPER)
+#if (defined ENABLE_D) || (defined ENABLE_LITE_ACL)
   if (ms_context->backend_policy() != "ge") {
     return;
   }
-#ifndef ENABLE_HELPER
+#ifndef ENABLE_LITE_ACL
   // register the callback function
   if (sess_->RegisterCallBackFunc(callbacks::kCheckPoint, callbacks::CheckpointSaveCallback) != ::ge::GRAPH_SUCCESS) {
     MS_LOG(EXCEPTION) << "Register callback failed!";
@@ -124,7 +125,7 @@ Status GraphRunner::RunGraph(const RunOptions &options, const std::vector<GeTens
 
   DfGraphWrapperPtr wrap_ptr = graph_manager_.GetGraphByName(name);
   if (wrap_ptr == nullptr) {
-    MS_LOG(ERROR) << "Get graph form DfGraphManager failed!";
+    MS_LOG(WARNING) << "Get graph form DfGraphManager failed!";
     return Status::NOT_FOUND;
   }
 
@@ -142,10 +143,11 @@ Status GraphRunner::RunGraph(const RunOptions &options, const std::vector<GeTens
 
   MS_LOG(INFO) << "Run the graph " << name << " in GE with " << ge_inputs.size() << " inputs";
 
-  struct timeval start_time, end_time;
+  struct timeval start_time;
+  struct timeval end_time;
   (void)gettimeofday(&start_time, nullptr);
 
-#if (defined ENABLE_D) || (defined ENABLE_HELPER)
+#if (defined ENABLE_D) || (defined ENABLE_LITE_ACL)
   auto ms_context = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(ms_context);
   if (ms_context->backend_policy() == "ge") {
@@ -186,7 +188,7 @@ Status GraphRunner::RunGraphAsync(const RunOptions &options, const std::vector<G
 
   DfGraphWrapperPtr wrap_ptr = graph_manager_.GetGraphByName(name);
   if (wrap_ptr == nullptr) {
-    MS_LOG(ERROR) << "Get graph form DfGraphManager failed!";
+    MS_LOG(WARNING) << "Get graph form DfGraphManager failed!";
     return Status::NOT_FOUND;
   }
 
@@ -197,7 +199,7 @@ Status GraphRunner::RunGraphAsync(const RunOptions &options, const std::vector<G
 
   // call ge::RunGraphAsync() to exec a graph;
   std::vector<GeTensor> ge_inputs;
-#if (defined ENABLE_D) || (defined ENABLE_HELPER)
+#if (defined ENABLE_D) || (defined ENABLE_LITE_ACL)
   auto ms_context = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(ms_context);
   if (ConfigManager::GetInstance().dataset_mode() != DS_SINK_MODE) {
@@ -207,10 +209,11 @@ Status GraphRunner::RunGraphAsync(const RunOptions &options, const std::vector<G
 #endif
   MS_LOG(INFO) << "Run the graph in GE with " << ge_inputs.size() << " inputs";
 
-  struct timeval start_time, end_time;
+  struct timeval start_time;
+  struct timeval end_time;
   (void)gettimeofday(&start_time, nullptr);
 
-#if (defined ENABLE_D) || (defined ENABLE_HELPER)
+#if (defined ENABLE_D) || (defined ENABLE_LITE_ACL)
   std::mutex mutex;
   std::condition_variable condition;
   bool is_finished = false;
@@ -308,6 +311,154 @@ Status GraphRunner::RunGraph(const RunOptions &options, const std::vector<MeTens
     MS_LOG(INFO) << "Return Me tensor outputs num is: " << outputs->size();
     return Status::SUCCESS;
   }
+}
+
+Status GraphRunner::RunGraphWithStreamAsync(const RunOptions &options, void *stream,
+                                            const std::vector<GeTensor> &inputs, std::vector<GeTensor> *outputs) {
+  MS_EXCEPTION_IF_NULL(outputs);
+  std::string name = options.name;
+  if (name.empty()) {
+    MS_LOG(ERROR) << "The graph name is null";
+    return Status::INVALID_ARGUMENT;
+  }
+
+  DfGraphWrapperPtr wrap_ptr = graph_manager_.GetGraphByName(name);
+  if (wrap_ptr == nullptr) {
+    MS_LOG(ERROR) << "Get graph form DfGraphManager failed!";
+    return Status::NOT_FOUND;
+  }
+
+  if (wrap_ptr->graph_ptr_ == nullptr) {
+    MS_LOG(WARNING) << "The graph is null";
+    return Status::NOT_FOUND;
+  }
+
+  auto ms_context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context);
+
+  MS_LOG(INFO) << "Run the graph in GE with " << inputs.size() << " inputs";
+  struct timeval start_time, end_time;
+  (void)gettimeofday(&start_time, nullptr);
+
+  if (ms_context->backend_policy() == "ge") {
+    if (sess_ == nullptr) {
+      MS_LOG(ERROR) << "The GE session is null, can't run the graph!";
+      return Status::FAILED;
+    }
+    std::lock_guard<std::mutex> lock(wrap_ptr->mutex_);
+    wrap_ptr->times_++;
+    ge::Status ret = sess_->RunGraphWithStreamAsync(static_cast<uint32_t>(wrap_ptr->id_), stream, inputs, *outputs);
+    if (ret != ge::GRAPH_SUCCESS) {
+      MS_LOG(ERROR) << "Call GE RunGraphWithStreamAsync Failed, ret is: " << ret;
+      return Status::FAILED;
+    }
+  }
+
+  (void)gettimeofday(&end_time, nullptr);
+  const uint64_t kUSecondInSecond = 1000000;
+  uint64_t cost = kUSecondInSecond * static_cast<uint64_t>(end_time.tv_sec - start_time.tv_sec);
+  cost += static_cast<uint64_t>(end_time.tv_usec - start_time.tv_usec);
+  MS_LOG(INFO) << "Call GE RunGraph Success in " << cost << " us, the GE outputs num is: " << outputs->size();
+
+  return Status::SUCCESS;
+}
+
+Status GraphRunner::RegisterExternalAllocator(const void *const stream, GeAllocatorPtr allocator) {
+  ge::Status ret = sess_->RegisterExternalAllocator(stream, allocator);
+  if (ret != ge::GRAPH_SUCCESS) {
+    MS_LOG(ERROR) << "Call GE RegisterExternalAllocator Failed, ret is: " << ret;
+    return Status::FAILED;
+  }
+  return Status::SUCCESS;
+}
+
+Status GraphRunner::UnregisterExternalAllocator(const void *const stream) {
+  ge::Status ret = sess_->UnregisterExternalAllocator(stream);
+  if (ret != ge::GRAPH_SUCCESS) {
+    MS_LOG(ERROR) << "Call GE UnregisterExternalAllocator Failed, ret is: " << ret;
+    return Status::FAILED;
+  }
+  return Status::SUCCESS;
+}
+
+Status GraphRunner::CompileGraph(const RunOptions &options, ::ge::CompiledGraphSummaryPtr *graph_summary) {
+  MS_EXCEPTION_IF_NULL(graph_summary);
+  DfGraphWrapperPtr wrap_ptr = nullptr;
+  auto name = options.name;
+  auto ret = GetWrapper(name, &wrap_ptr);
+  if (ret != Status::SUCCESS) {
+    return ret;
+  }
+
+  MS_LOG(INFO) << "Start compile graph " << name;
+  ge::Status ge_ret = sess_->CompileGraph(static_cast<uint32_t>(wrap_ptr->id_));
+  if (ge_ret != ge::GRAPH_SUCCESS) {
+    MS_LOG(ERROR) << "Call GE CompileGraph Failed, ret is: " << ge_ret;
+    return Status::FAILED;
+  }
+
+  MS_LOG(INFO) << "Compile graph " << name << " success, start to get graph summary.";
+  *graph_summary = sess_->GetCompiledGraphSummary(static_cast<uint32_t>(wrap_ptr->id_));
+  MS_EXCEPTION_IF_NULL(*graph_summary);
+  MS_LOG(INFO) << "Get graph summary success for graph " << name;
+  return Status::SUCCESS;
+}
+
+Status GraphRunner::SetConstMemory(const RunOptions &options, const void *const memory, size_t size) {
+  DfGraphWrapperPtr wrap_ptr = nullptr;
+  auto name = options.name;
+  auto ret = GetWrapper(name, &wrap_ptr);
+  if (ret != Status::SUCCESS) {
+    return ret;
+  }
+  ge::Status ge_ret = sess_->SetGraphConstMemoryBase(static_cast<uint32_t>(wrap_ptr->id_), memory, size);
+  if (ge_ret != ge::GRAPH_SUCCESS) {
+    MS_LOG(ERROR) << "Call GE SetGraphConstMemoryBase Failed, ret is: " << ge_ret;
+    return Status::FAILED;
+  }
+  return Status::SUCCESS;
+}
+
+Status GraphRunner::UpdateFeatureMemory(const RunOptions &options, const void *const memory, size_t size) {
+  DfGraphWrapperPtr wrap_ptr = nullptr;
+  auto name = options.name;
+  auto ret = GetWrapper(name, &wrap_ptr);
+  if (ret != Status::SUCCESS) {
+    return ret;
+  }
+  ge::Status ge_ret = sess_->UpdateGraphFeatureMemoryBase(static_cast<uint32_t>(wrap_ptr->id_), memory, size);
+  if (ge_ret != ge::GRAPH_SUCCESS) {
+    MS_LOG(ERROR) << "Call GE SetGraphConstMemoryBase Failed, ret is: " << ge_ret;
+    return Status::FAILED;
+  }
+  return Status::SUCCESS;
+}
+
+Status GraphRunner::GetWrapper(const std::string &name, DfGraphWrapperPtr *wrapper) const {
+  MS_EXCEPTION_IF_NULL(wrapper);
+  if (name.empty()) {
+    MS_LOG(ERROR) << "The graph name is null";
+    return Status::INVALID_ARGUMENT;
+  }
+
+  DfGraphWrapperPtr wrap_ptr = graph_manager_.GetGraphByName(name);
+  if (wrap_ptr == nullptr) {
+    MS_LOG(ERROR) << "Get graph form DfGraphManager failed!";
+    return Status::NOT_FOUND;
+  }
+
+  if (wrap_ptr->graph_ptr_ == nullptr) {
+    MS_LOG(WARNING) << "The graph is null";
+    return Status::NOT_FOUND;
+  }
+
+  if (sess_ == nullptr) {
+    MS_LOG(ERROR) << "The GE session is null, can't run the graph!";
+    return Status::FAILED;
+  }
+
+  *wrapper = wrap_ptr;
+  return Status::SUCCESS;
 }
 }  // namespace transform
 }  // namespace mindspore

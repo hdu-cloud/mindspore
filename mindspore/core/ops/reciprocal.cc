@@ -15,15 +15,16 @@
  */
 
 #include "ops/reciprocal.h"
-#include <set>
 #include <map>
+#include <memory>
+#include <set>
 #include <string>
 #include <vector>
-#include <memory>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -43,9 +44,8 @@ TypePtr ReciprocalInferType(const PrimitivePtr &prim, const std::vector<Abstract
   std::map<std::string, TypePtr> types;
   (void)types.emplace("x", input_args[0]->BuildType());
   std::set<TypePtr> valid_params_types = {kTensorType};
-  const std::set<TypePtr> common_valid_types = {kInt32, kInt64, kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
   (void)CheckAndConvertUtils::CheckSubClass("x", input_args[0]->BuildType(), valid_params_types, op_name);
-  (void)CheckAndConvertUtils::CheckTensorTypeSame(types, common_valid_types, prim->name());
+  (void)CheckAndConvertUtils::CheckTensorTypeSame(types, common_valid_types_with_complex_and_bool, prim->name());
   return input_args[0]->BuildType();
 }
 }  // namespace
@@ -60,6 +60,24 @@ AbstractBasePtr ReciprocalInfer(const abstract::AnalysisEnginePtr &, const Primi
   auto infer_shape = ReciprocalInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Reciprocal, prim::kPrimReciprocal, ReciprocalInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGReciprocalInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ReciprocalInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ReciprocalInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ReciprocalInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Reciprocal, prim::kPrimReciprocal, AGReciprocalInfer, false);
 }  // namespace ops
 }  // namespace mindspore

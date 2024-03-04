@@ -21,14 +21,14 @@ from mindspore.ops.function import math_func, nn_func
 
 
 def csr_cos(x: CSRTensor) -> CSRTensor:
-    """
+    r"""
     Computes cosine of input element-wise.
 
     .. math::
-        out_i = cos(x_i)
+        out_i = \cos(x_i)
 
     .. warning::
-        If use Float64, there may be a problem of missing precision.
+        Currently support data types float16 and float32. If use Float64, there may be a problem of missing precision.
 
     Args:
         x (CSRTensor): Input CSRTensor.
@@ -45,6 +45,8 @@ def csr_cos(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -60,11 +62,11 @@ def csr_cos(x: CSRTensor) -> CSRTensor:
 
 
 def coo_cos(x: COOTensor) -> COOTensor:
-    """
+    r"""
     Computes cosine of input element-wise.
 
     .. math::
-        out_i = cos(x_i)
+        out_i = \cos(x_i)
 
     .. warning::
         If use Float64, there may be a problem of missing precision.
@@ -78,12 +80,14 @@ def coo_cos(x: COOTensor) -> COOTensor:
     Raises:
         TypeError: If `x` is not a COOTensor.
         TypeError: If dtype of `x` is not float16, float32 or float64, complex64,
-    complex128.
+            complex128.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -103,7 +107,7 @@ def csr_tan(x: CSRTensor) -> CSRTensor:
 
     .. math::
 
-        out_i = tan(x_i)
+        out_i = \tan(x_i)
 
     Args:
         x (CSRTensor): The input CSRTensor.
@@ -115,9 +119,11 @@ def csr_tan(x: CSRTensor) -> CSRTensor:
         TypeError: If `x` is not a CSRTensor.
 
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -138,7 +144,7 @@ def coo_tan(x: COOTensor) -> COOTensor:
 
     .. math::
 
-        out_i = tan(x_i)
+        out_i = \tan(x_i)
 
     Args:
         x (COOTensor): The input COOTensor.
@@ -150,9 +156,11 @@ def coo_tan(x: COOTensor) -> COOTensor:
         TypeError: If `x` is not a COOTensor.
 
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -175,7 +183,7 @@ def csr_exp(x: CSRTensor) -> CSRTensor:
         out_i = e^{x_i}
 
     Args:
-        x (CSRTensor): The input CSRTensor, its rank must be in [0, 7] inclusive.
+        x (CSRTensor): The input CSRTensor.
 
     Returns:
         CSRTensor, has the same shape and dtype as the `x`.
@@ -187,6 +195,8 @@ def csr_exp(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -203,14 +213,14 @@ def csr_exp(x: CSRTensor) -> CSRTensor:
 
 def coo_exp(x: COOTensor) -> COOTensor:
     """
-    Returns coo_exponential of a COOTensor element-wise.
+    Returns the element-wise exponential of a COOTensor.
 
     .. math::
 
         out_i = e^{x_i}
 
     Args:
-        x (COOTensor): The input COOTensor, its rank must be in [0, 7] inclusive.
+        x (COOTensor): The input COOTensor.
 
     Returns:
         COOTensor, has the same shape and dtype as the `x`.
@@ -222,6 +232,8 @@ def coo_exp(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -256,6 +268,8 @@ def csr_inv(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -291,6 +305,8 @@ def coo_inv(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -305,7 +321,7 @@ def coo_inv(x: COOTensor) -> COOTensor:
 
 
 def csr_relu(x: CSRTensor) -> CSRTensor:
-    """
+    r"""
     Computes ReLU (Rectified Linear Unit activation function) of input csr_tensors element-wise.
 
     It returns max(x, 0) element-wise. Specially, the neurons with the negative output
@@ -313,7 +329,7 @@ def csr_relu(x: CSRTensor) -> CSRTensor:
 
     .. math::
 
-        ReLU(x) = (x)^+ = max(0, x)
+        ReLU(x) = (x)^+ = \max(0, x)
 
     Note:
         In general, this operator is more commonly used. The difference from `ReLuV2` is that the `ReLuV2` will
@@ -323,7 +339,7 @@ def csr_relu(x: CSRTensor) -> CSRTensor:
         x (CSRTensor): Input CSRTensor.
 
     Returns:
-        CSRTensor of shape :math:`(N, *)`, with the same dtype and shape as the `x`.
+        CSRTensor, with the same dtype and shape as the `x`.
 
     Raises:
         TypeError: If dtype of `x` is not a number.
@@ -333,6 +349,8 @@ def csr_relu(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -348,25 +366,27 @@ def csr_relu(x: CSRTensor) -> CSRTensor:
 
 
 def coo_relu(x: COOTensor) -> COOTensor:
-    """
+    r"""
     Computes ReLU (Rectified Linear Unit activation function) of input coo_tensors element-wise.
 
-    It returns max(x, 0) element-wise. Specially, the neurons with the negative output
+    It returns :math:`\max(x,\  0)` element-wise. Specially, the neurons with the negative output
     will be suppressed and the active neurons will stay the same.
 
     .. math::
 
-        ReLU(x) = (x)^+ = max(0, x)
+        ReLU(x) = (x)^+ = \max(0, x)
 
     Note:
         In general, this operator is more commonly used. The difference from `ReLuV2` is that the `ReLuV2` will
         output one more Mask.
 
     Args:
-        x (COOTensor): Input COOTensor.
+        x (COOTensor): Input COOTensor with shape :math:`(N, *)`, where :math:`*`
+            means any number of additional dimensions. Its dtype is
+            `number <https://www.mindspore.cn/docs/en/master/api_python/mindspore.html#mindspore.dtype>`_.
 
     Returns:
-        COOTensor of shape :math:`(N, *)`, with the same dtype and shape as the `x`.
+        COOTensor, has the same shape and dtype as the `x`.
 
     Raises:
         TypeError: If dtype of `x` is not a number.
@@ -376,6 +396,8 @@ def coo_relu(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -398,7 +420,7 @@ def csr_expm1(x: CSRTensor) -> CSRTensor:
         out_i = e^{x_i} - 1
 
     Args:
-        x (CSRTensor): The input CSRTensor with a dtype of float16 or float32, its rank must be in [0, 7] inclusive.
+        x (CSRTensor): The input CSRTensor with a dtype of float16 or float32.
 
     Returns:
         CSRTensor, has the same shape as the `x`.
@@ -411,6 +433,8 @@ def csr_expm1(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -434,7 +458,7 @@ def coo_expm1(x: COOTensor) -> COOTensor:
         out_i = e^{x_i} - 1
 
     Args:
-        x (COOTensor): The input COOTensor with a dtype of float16 or float32, its rank must be in [0, 7] inclusive.
+        x (COOTensor): The input COOTensor with a dtype of float16 or float32.
 
     Returns:
         COOTensor, has the same shape as the `x`.
@@ -447,6 +471,8 @@ def coo_expm1(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -467,7 +493,7 @@ def csr_isfinite(x: CSRTensor) -> CSRTensor:
     .. math::
 
         out_i = \begin{cases}
-          & \text{ if } x_{i} = \text{Finite},\ \ True\  \\
+          & \text{ if } x_{i} = \text{Finite},\ \ True \\
           & \text{ if } x_{i} \ne \text{Finite},\ \ False
         \end{cases}
 
@@ -484,6 +510,8 @@ def csr_isfinite(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -522,6 +550,8 @@ def coo_isfinite(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -536,27 +566,30 @@ def coo_isfinite(x: COOTensor) -> COOTensor:
 
 
 def csr_asin(x: CSRTensor) -> CSRTensor:
-    """
+    r"""
     Computes arcsine of input csr_tensors element-wise.
 
     .. math::
 
-        out_i = sin^{-1}(x_i)
+        out_i = \sin^{-1}(x_i)
 
     Args:
-        x (CSRTensor): Input CSRTensor.
+        x (CSRTensor): Input CSRTensor. The data types should be one of the following types:
+            float16, float32, float64.
 
     Returns:
         CSRTensor, has the same shape and dtype as `x`.
 
     Raises:
         TypeError: If `x` is not a CSRTensor.
-        TypeError: If dtype of `x` is not float16, float32, float64, complex64, complex128.
+        TypeError: If dtype of `x` is not float16, float32, float64.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -572,15 +605,17 @@ def csr_asin(x: CSRTensor) -> CSRTensor:
 
 
 def coo_asin(x: COOTensor) -> COOTensor:
-    """
+    r"""
     Computes arcsine of input coo_tensors element-wise.
 
     .. math::
 
-        out_i = sin^{-1}(x_i)
+        out_i = \sin^{-1}(x_i)
 
     Args:
-        x (COOTensor): Input COOTensor.
+        x (COOTensor): Input COOTensor. The shape of COOTensor is :math:`(N,*)` ,
+            where :math:`*` means any number of additional dimensions.
+            The data type should be one of the following types: float16, float32, float64, complex64, complex128.
 
     Returns:
         COOTensor, has the same shape and dtype as `x`.
@@ -593,6 +628,8 @@ def coo_asin(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -615,7 +652,7 @@ def csr_sqrt(x: CSRTensor) -> CSRTensor:
         out_{i} = \sqrt{x_{i}}
 
     Args:
-        x (CSRTensor): The input CSRTensor with a dtype of Number, its rank must be in [0, 7] inclusive.
+        x (CSRTensor): The input CSRTensor with a dtype of Number.
 
     Returns:
         CSRTensor, has the same shape and dtype as the `x`.
@@ -627,6 +664,8 @@ def csr_sqrt(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -650,7 +689,7 @@ def coo_sqrt(x: COOTensor) -> COOTensor:
         out_{i} = \sqrt{x_{i}}
 
     Args:
-        x (COOTensor): The input COOTensor with a dtype of Number, its rank must be in [0, 7] inclusive.
+        x (COOTensor): The input COOTensor with a dtype of Number.
 
     Returns:
         COOTensor, has the same shape and dtype as the `x`.
@@ -662,6 +701,8 @@ def coo_sqrt(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -676,11 +717,11 @@ def coo_sqrt(x: COOTensor) -> COOTensor:
 
 
 def csr_log(x: CSRTensor) -> CSRTensor:
-    """
+    r"""
     Returns the natural logarithm of a CSRTensor element-wise.
 
     .. math::
-        y_i = log_e(x_i)
+        y_i = \log_e(x_i)
 
     .. warning::
         If the input value of operator Log is within the range (0, 0.01] or [0.95, 1.05], the output accuracy may
@@ -701,6 +742,8 @@ def csr_log(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -716,11 +759,11 @@ def csr_log(x: CSRTensor) -> CSRTensor:
 
 
 def coo_log(x: COOTensor) -> COOTensor:
-    """
+    r"""
     Returns the natural logarithm of a COOTensor element-wise.
 
     .. math::
-        y_i = log_e(x_i)
+        y_i = \log_e(x_i)
 
     .. warning::
         If the input value of operator Log is within the range (0, 0.01] or [0.95, 1.05], the output accuracy may
@@ -741,6 +784,8 @@ def coo_log(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -780,6 +825,8 @@ def csr_isnan(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -820,6 +867,8 @@ def coo_isnan(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -834,12 +883,12 @@ def coo_isnan(x: COOTensor) -> COOTensor:
 
 
 def csr_acos(x: CSRTensor) -> CSRTensor:
-    """
+    r"""
     Computes arccosine of input csr_tensors element-wise.
 
     .. math::
 
-        out_i = cos^{-1}(x_i)
+        out_i = \cos^{-1}(x_i)
 
     Args:
         x (CSRTensor): Input CSRTensor.
@@ -856,6 +905,8 @@ def csr_acos(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -871,12 +922,12 @@ def csr_acos(x: CSRTensor) -> CSRTensor:
 
 
 def coo_acos(x: COOTensor) -> COOTensor:
-    """
+    r"""
     Computes arccosine of input coo_tensors element-wise.
 
     .. math::
 
-        out_i = cos^{-1}(x_i)
+        out_i = \cos^{-1}(x_i)
 
     Args:
         x (COOTensor): Input COOTensor.
@@ -892,6 +943,8 @@ def coo_acos(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -914,8 +967,7 @@ def csr_floor(x: CSRTensor) -> CSRTensor:
         out_i = \lfloor x_i \rfloor
 
     Args:
-        x (CSRTensor): The input CSRTensor, its rank must be in [0, 7] inclusive
-            and data type must be float16, float32 or float64.
+        x (CSRTensor): The input CSRTensor, its data type must be float16, float32 or float64.
 
     Returns:
         CSRTensor, has the same shape as `x`.
@@ -928,6 +980,8 @@ def csr_floor(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -951,8 +1005,7 @@ def coo_floor(x: COOTensor) -> COOTensor:
         out_i = \lfloor x_i \rfloor
 
     Args:
-        x (COOTensor): The input COOTensor, its rank must be in [0, 7] inclusive
-            and data type must be float16, float32 or float64.
+        x (COOTensor): The input COOTensor, its data type must be float16, float32 or float64.
 
     Returns:
         COOTensor, has the same shape as `x`.
@@ -965,6 +1018,8 @@ def coo_floor(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -984,7 +1039,7 @@ def csr_atan(x: CSRTensor) -> CSRTensor:
 
     .. math::
 
-        out_i = tan^{-1}(x_i)
+        out_i = \tan^{-1}(x_i)
 
     Args:
         x (CSRTensor): The data type should be one of the following types: float16, float32.
@@ -1000,6 +1055,8 @@ def csr_atan(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -1015,12 +1072,12 @@ def csr_atan(x: CSRTensor) -> CSRTensor:
 
 
 def coo_atan(x: COOTensor) -> COOTensor:
-    """
+    r"""
     Computes the trigonometric inverse tangent of the input element-wise.
 
     .. math::
 
-        out_i = tan^{-1}(x_i)
+        out_i = \tan^{-1}(x_i)
 
     Args:
         x (COOTensor): The data type should be one of the following types: float16, float32.
@@ -1036,6 +1093,8 @@ def coo_atan(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -1058,7 +1117,7 @@ def csr_square(x: CSRTensor) -> CSRTensor:
         out_{i} = (x_{i})^2
 
     Args:
-        x (CSRTensor): The input CSRTensor with a dtype of Number, its rank must be in [0, 7] inclusive.
+        x (CSRTensor): The input CSRTensor with a dtype of Number.
 
     Returns:
         CSRTensor, has the same shape and dtype as the `x`.
@@ -1070,6 +1129,8 @@ def csr_square(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -1093,7 +1154,7 @@ def coo_square(x: COOTensor) -> COOTensor:
         out_{i} = (x_{i})^2
 
     Args:
-        x (COOTensor): The input COOTensor with a dtype of Number, its rank must be in [0, 7] inclusive.
+        x (COOTensor): The input COOTensor with a dtype of Number.
 
     Returns:
         COOTensor, has the same shape and dtype as the `x`.
@@ -1105,6 +1166,8 @@ def coo_square(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -1142,6 +1205,8 @@ def csr_relu6(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -1180,6 +1245,8 @@ def coo_relu6(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -1202,7 +1269,7 @@ def csr_sinh(x: CSRTensor) -> CSRTensor:
         out_i = \sinh(x_i)
 
     Args:
-        x (CSRTensor): The input CSRTensor of hyperbolic sine function, its rank must be in [0, 7] inclusive.
+        x (CSRTensor): The input CSRTensor of hyperbolic sine function.
 
     Returns:
         CSRTensor, has the same shape as `x`.
@@ -1214,6 +1281,8 @@ def csr_sinh(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -1237,7 +1306,7 @@ def coo_sinh(x: COOTensor) -> COOTensor:
         out_i = \sinh(x_i)
 
     Args:
-        x (COOTensor): The input COOTensor of hyperbolic sine function, its rank must be in [0, 7] inclusive.
+        x (COOTensor): The input COOTensor of hyperbolic sine function.
 
     Returns:
         COOTensor, has the same shape as `x`.
@@ -1249,6 +1318,8 @@ def coo_sinh(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -1271,7 +1342,7 @@ def csr_ceil(x: CSRTensor) -> CSRTensor:
         out_i = \lceil x_i \rceil = \lfloor x_i \rfloor + 1
 
     Args:
-        x (CSRTensor): The input CSRTensor with a dtype of float16 or float32, its rank must be in [0, 7] inclusive.
+        x (CSRTensor): The input CSRTensor with a dtype of float16 or float32.
 
     Returns:
         CSRTensor, has the same shape as the `x`.
@@ -1284,6 +1355,8 @@ def csr_ceil(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -1320,6 +1393,8 @@ def coo_ceil(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -1342,8 +1417,8 @@ def csr_cosh(x: CSRTensor) -> CSRTensor:
         out_i = \cosh(x_i)
 
     Args:
-        x (CSRTensor): The input CSRTensor of hyperbolic cosine function, its rank must be in [0, 7] inclusive
-            and data type must be float16, float32, float64, complex64 or complex128.
+        x (CSRTensor): The input CSRTensor of hyperbolic cosine function, its data type
+            must be float16, float32, float64, complex64 or complex128.
 
     Returns:
         CSRTensor, has the same shape as `x`.
@@ -1357,6 +1432,8 @@ def csr_cosh(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -1380,8 +1457,8 @@ def coo_cosh(x: COOTensor) -> COOTensor:
         out_i = \cosh(x_i)
 
     Args:
-        x (COOTensor): The input COOTensor of hyperbolic cosine function, its rank must be in [0, 7] inclusive
-            and data type must be float16, float32, float64, complex64 or complex128.
+        x (COOTensor): The input COOTensor of hyperbolic cosine function, its data type
+            must be float16, float32, float64, complex64 or complex128.
 
     Returns:
         COOTensor, has the same shape as `x`.
@@ -1395,6 +1472,8 @@ def coo_cosh(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -1431,6 +1510,8 @@ def csr_softsign(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -1468,6 +1549,8 @@ def coo_softsign(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -1486,7 +1569,7 @@ def csr_log1p(x: CSRTensor) -> CSRTensor:
     Returns the natural logarithm of one plus the input CSRTensor element-wise.
 
     .. math::
-        out_i = {log_e}(x_i + 1)
+        out_i = \text{log_e}(x_i + 1)
 
     Args:
         x (CSRTensor): The input CSRTensor. With float16 or float32 data type.
@@ -1503,6 +1586,8 @@ def csr_log1p(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -1522,10 +1607,11 @@ def coo_log1p(x: COOTensor) -> COOTensor:
     Returns the natural logarithm of one plus the input COOTensor element-wise.
 
     .. math::
-        out_i = {log_e}(x_i + 1)
+        out_i = \text{log_e}(x_i + 1)
 
     Args:
-        x (COOTensor): The input COOTensor. With float16 or float32 data type.
+        x (COOTensor): The input COOTensor, should have dtype of float16 or float32
+            and its value should be greater than -1.
 
     Returns:
         COOTensor, has the same shape as the `x`.
@@ -1538,6 +1624,8 @@ def coo_log1p(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -1552,7 +1640,7 @@ def coo_log1p(x: COOTensor) -> COOTensor:
 
 
 def csr_round(x: CSRTensor) -> CSRTensor:
-    r"""
+    """
     Returns half to even of a CSRTensor element-wise.
 
     .. math::
@@ -1572,6 +1660,8 @@ def csr_round(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -1592,7 +1682,7 @@ def coo_round(x: COOTensor) -> COOTensor:
 
     .. math::
 
-        out_i \\approx x_i
+        out_i \approx x_i
 
     Args:
         x (COOTensor): The input COOTensor.
@@ -1607,6 +1697,8 @@ def coo_round(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -1644,6 +1736,8 @@ def csr_tanh(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU``  ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -1682,6 +1776,8 @@ def coo_tanh(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU``  ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -1704,7 +1800,7 @@ def csr_asinh(x: CSRTensor) -> CSRTensor:
         out_i = \sinh^{-1}(input_i)
 
     Args:
-        x (CSRTensor): The input CSRTensor of inverse hyperbolic sine function, its rank must be in [0, 7] inclusive.
+        x (CSRTensor): The input CSRTensor of inverse hyperbolic sine function.
 
     Returns:
         CSRTensor, has the same shape and type as `x`.
@@ -1716,6 +1812,8 @@ def csr_asinh(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -1739,7 +1837,7 @@ def coo_asinh(x: COOTensor) -> COOTensor:
         out_i = \sinh^{-1}(input_i)
 
     Args:
-        x (COOTensor): The input COOTensor of inverse hyperbolic sine function, its rank must be in [0, 7] inclusive.
+        x (COOTensor): The input COOTensor of inverse hyperbolic sine function.
 
     Returns:
         COOTensor, has the same shape and type as `x`.
@@ -1751,6 +1849,8 @@ def coo_asinh(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -1773,7 +1873,7 @@ def csr_neg(x: CSRTensor) -> CSRTensor:
         out_{i} = - x_{i}
 
     Args:
-        x (CSRTensor): The input CSRTensor with a dtype of Number, its rank must be in [0, 7] inclusive.
+        x (CSRTensor): The input CSRTensor with a dtype of Number.
 
     Returns:
         CSRTensor, has the same shape and dtype as input.
@@ -1785,6 +1885,8 @@ def csr_neg(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -1808,7 +1910,7 @@ def coo_neg(x: COOTensor) -> COOTensor:
         out_{i} = - x_{i}
 
     Args:
-        x (COOTensor): The input COOTensor with a dtype of Number, its rank must be in [0, 7] inclusive.
+        x (COOTensor): The input COOTensor with a dtype of Number.
 
     Returns:
         COOTensor, has the same shape and dtype as input.
@@ -1820,6 +1922,8 @@ def coo_neg(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -1841,12 +1945,8 @@ def csr_acosh(x: CSRTensor) -> CSRTensor:
 
         out_i = \cosh^{-1}(input_i)
 
-    .. warning::
-        Given an input CSRTensor x, the function computes inverse hyperbolic cosine of every element.
-        Input range is [1, inf].
-
     Args:
-        x (CSRTensor): The input CSRTensor of inverse hyperbolic cosine function, its rank must be in [0, 7] inclusive.
+        x (CSRTensor): The input CSRTensor of inverse hyperbolic cosine function, its element must be in range [1, inf].
 
     Returns:
         CSRTensor, has the same shape and type as `x`.
@@ -1858,6 +1958,8 @@ def csr_acosh(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -1878,14 +1980,14 @@ def coo_acosh(x: COOTensor) -> COOTensor:
 
     .. math::
 
-        out_i = \cosh^{-1}(input_i)
+        y_i = \cosh^{-1}(x_i)
 
     .. warning::
         Given an input COOTensor x, the function computes inverse hyperbolic cosine of every element.
         Input range is [1, inf].
 
     Args:
-        x (COOTensor): The input COOTensor of inverse hyperbolic cosine function, its rank must be in [0, 7] inclusive.
+        x (COOTensor): The input COOTensor of inverse hyperbolic cosine function.
 
     Returns:
         COOTensor, has the same shape and type as `x`.
@@ -1897,6 +1999,8 @@ def coo_acosh(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -1933,9 +2037,11 @@ def csr_isinf(x: CSRTensor) -> CSRTensor:
         TypeError: If `x` is not a CSRTensor.
 
     Supported Platforms:
-        ``CPU`` ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -1961,7 +2067,7 @@ def coo_isinf(x: COOTensor) -> COOTensor:
         & \text{ if } x_{i} \ne \text{Inf},\ \ False
         \end{cases}
 
-    where :math:`Inf` means not a number.
+    where :math:`Inf` means infinitity or negative infinitity.
 
     Args:
         x (COOTensor): The input COOTensor.
@@ -1973,9 +2079,11 @@ def coo_isinf(x: COOTensor) -> COOTensor:
         TypeError: If `x` is not a COOTensor.
 
     Supported Platforms:
-        ``CPU`` ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -1990,7 +2098,7 @@ def coo_isinf(x: COOTensor) -> COOTensor:
 
 
 def csr_atanh(x: CSRTensor) -> CSRTensor:
-    """
+    r"""
     Computes inverse hyperbolic tangent of the input element-wise.
 
     .. math::
@@ -1998,10 +2106,11 @@ def csr_atanh(x: CSRTensor) -> CSRTensor:
         out_i = \tanh^{-1}(x_{i})
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Args:
-        x (CSRTensor): Input CSRTensor.
+        x (CSRTensor): Input CSRTensor. The shape is :math:`(N, *)` where :math:`*` means,
+            any number of additional dimensions.
             The data type should be one of the following types: float16, float32.
 
     Returns:
@@ -2015,6 +2124,8 @@ def csr_atanh(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -2030,7 +2141,7 @@ def csr_atanh(x: CSRTensor) -> CSRTensor:
 
 
 def coo_atanh(x: COOTensor) -> COOTensor:
-    """
+    r"""
     Computes inverse hyperbolic tangent of the input element-wise.
 
     .. math::
@@ -2038,7 +2149,7 @@ def coo_atanh(x: COOTensor) -> COOTensor:
         out_i = \tanh^{-1}(x_{i})
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Args:
         x (COOTensor): Input COOTensor.
@@ -2055,6 +2166,8 @@ def coo_atanh(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -2094,6 +2207,8 @@ def csr_sigmoid(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -2134,6 +2249,8 @@ def coo_sigmoid(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -2168,6 +2285,8 @@ def csr_abs(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -2203,6 +2322,8 @@ def coo_abs(x: COOTensor) -> COOTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -2217,12 +2338,12 @@ def coo_abs(x: COOTensor) -> COOTensor:
 
 
 def csr_sin(x: CSRTensor) -> CSRTensor:
-    """
+    r"""
     Computes sine of the input element-wise.
 
     .. math::
 
-        out_i = sin(x_i)
+        out_i = \sin(x_i)
 
     Args:
         x (CSRTensor): Input CSRTensor.
@@ -2239,6 +2360,8 @@ def csr_sin(x: CSRTensor) -> CSRTensor:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, CSRTensor
         >>> indptr = Tensor([0, 1, 2, 2], dtype=mstype.int32)
         >>> indices = Tensor([3, 0], dtype=mstype.int32)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
@@ -2254,12 +2377,12 @@ def csr_sin(x: CSRTensor) -> CSRTensor:
 
 
 def coo_sin(x: COOTensor) -> COOTensor:
-    """
+    r"""
     Computes sine of the input element-wise.
 
     .. math::
 
-        out_i = sin(x_i)
+        out_i = \sin(x_i)
 
     Args:
         x (COOTensor): Input COOTensor.
@@ -2270,12 +2393,14 @@ def coo_sin(x: COOTensor) -> COOTensor:
     Raises:
         TypeError: If `x` is not a COOTensor.
         TypeError: If dtype of `x` is not float16, float32 or float64, complex64,
-    complex128.
+            complex128.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=mstype.int64)
         >>> values = Tensor([-1, 2], dtype=mstype.float32)
         >>> shape = (3, 4)
@@ -2289,14 +2414,16 @@ def coo_sin(x: COOTensor) -> COOTensor:
     return COOTensor(x.indices, math_func.sin(x.values), x.shape)
 
 
-__all__ = ["csr_cos", "csr_tan", "csr_exp", "csr_inv", "csr_relu", "csr_expm1", "csr_isfinite",
-           "csr_asin", "csr_sqrt", "csr_log", "csr_isnan", "csr_acos", "csr_floor", "csr_atan",
-           "csr_square", "csr_relu6", "csr_sinh", "csr_ceil", "csr_cosh", "csr_softsign",
-           "csr_log1p", "csr_round", "csr_tanh", "csr_asinh", "csr_neg", "csr_acosh", "csr_isinf",
-           "csr_atanh", "csr_sigmoid", "csr_abs", "csr_sin", "coo_cos", "coo_tan", "coo_exp",
-           "coo_inv", "coo_relu", "coo_expm1", "coo_isfinite", "coo_asin", "coo_sqrt", "coo_log",
-           "coo_isnan", "coo_acos", "coo_floor", "coo_atan", "coo_square", "coo_relu6", "coo_sinh",
-           "coo_ceil", "coo_cosh", "coo_softsign", "coo_log1p", "coo_round", "coo_tanh",
-           "coo_asinh", "coo_neg", "coo_acosh", "coo_isinf", "coo_atanh", "coo_sigmoid", "coo_abs",
-           "coo_sin"]
+__all__ = [
+    "csr_cos", "csr_tan", "csr_exp", "csr_inv", "csr_relu", "csr_expm1", "csr_isfinite",
+    "csr_asin", "csr_sqrt", "csr_log", "csr_isnan", "csr_acos", "csr_floor", "csr_atan",
+    "csr_square", "csr_relu6", "csr_sinh", "csr_ceil", "csr_cosh", "csr_softsign",
+    "csr_log1p", "csr_round", "csr_tanh", "csr_asinh", "csr_neg", "csr_acosh", "csr_isinf",
+    "csr_atanh", "csr_sigmoid", "csr_abs", "csr_sin", "coo_cos", "coo_tan", "coo_exp",
+    "coo_inv", "coo_relu", "coo_expm1", "coo_isfinite", "coo_asin", "coo_sqrt", "coo_log",
+    "coo_isnan", "coo_acos", "coo_floor", "coo_atan", "coo_square", "coo_relu6", "coo_sinh",
+    "coo_ceil", "coo_cosh", "coo_softsign", "coo_log1p", "coo_round", "coo_tanh",
+    "coo_asinh", "coo_neg", "coo_acosh", "coo_isinf", "coo_atanh", "coo_sigmoid", "coo_abs",
+    "coo_sin"
+]
 __all__.sort()

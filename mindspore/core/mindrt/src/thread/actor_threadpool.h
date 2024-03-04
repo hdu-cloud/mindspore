@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,14 +36,35 @@ class ActorWorker : public Worker {
   explicit ActorWorker(ThreadPool *pool, size_t index) : Worker(pool, index) {}
   void CreateThread() override;
   bool ActorActive();
-  ~ActorWorker() override{};
+  ~ActorWorker() override {
+    {
+      std::lock_guard<std::mutex> _l(mutex_);
+      alive_ = false;
+    }
+    cond_var_->notify_one();
+
+    bool terminate = false;
+    int count = 0;
+    while (local_task_queue_ && !terminate && count++ < kMaxCount) {
+      terminate = local_task_queue_->Empty();
+      if (!terminate) {
+        auto task_split = local_task_queue_->Dequeue();
+        (void)TryRunTask(task_split);
+      }
+    }
+
+    if (thread_->joinable()) {
+      thread_->join();
+    }
+    local_task_queue_ = nullptr;
+  };
 
  private:
   void RunWithSpin();
   bool RunQueueActorTask();
 };
 
-class ActorThreadPool : public ThreadPool {
+class MS_CORE_API ActorThreadPool : public ThreadPool {
  public:
   // create ThreadPool that contains actor thread and kernel thread
   static ActorThreadPool *CreateThreadPool(size_t actor_thread_num, size_t all_thread_num, BindMode bind_mode) {

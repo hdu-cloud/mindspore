@@ -18,18 +18,20 @@
 #include <vector>
 #include <string>
 #include <utility>
+#include <unordered_set>
 #include "utils/hash_map.h"
 #include "utils/hash_set.h"
 #include "ir/anf.h"
-#include "backend/common/optimizer/pass.h"
-#include "backend/common/optimizer/fusion_id_allocator.h"
+#include "include/backend/optimizer/pass.h"
+#include "plugin/device/ascend/optimizer/fusion_id_allocator.h"
 #include "plugin/device/ascend/optimizer/ascend_pass_control.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/kernel_info.h"
 #include "kernel/kernel.h"
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 
 namespace mindspore {
 namespace opt {
+constexpr auto kPatternElemWise = "ElemWise";
 constexpr size_t MAX_ELTWISE_NUM = 3;
 constexpr size_t MIN_ELTWISE_SIZE = 2;
 constexpr size_t ELTWISE_INPUT_SIZE = 2;
@@ -46,6 +48,7 @@ constexpr size_t MULTI_ELTWISE_SIZE = 4;
 constexpr int64_t kBNTrainingUpdateOutputUsedTotalNum = 5;
 constexpr int64_t kConvOutputUsedTotalNum = 4;
 using FusedNodeRecord = std::vector<mindspore::HashSet<AnfNodePtr>>;
+using RemovedUpdateStateInfo = mindspore::HashMap<AnfNodePtr, std::pair<AnfNodePtr, size_t>>;
 
 struct BufferFusionInfo_t {
   std::string full_name;
@@ -60,6 +63,11 @@ struct BufferFusionInfo_t {
   bool all_outputs_from_last_node = true;
 };
 
+struct RemovedInputsInfo_t {
+  std::vector<AnfNodePtr> removed_inputs;
+  size_t origin_input_size;
+};
+
 class FusionBasePass : public PassWithSwitch {
  public:
   FusionBasePass(const std::string &name, FusionIdAllocatorPtr idAllocator)
@@ -72,9 +80,28 @@ class FusionBasePass : public PassWithSwitch {
  protected:
   bool RunPass(const FuncGraphPtr &graph) override;
   void SetRecordFusionId(const mindspore::HashSet<AnfNodePtr> &record);
-  bool CheckEltWiseNode(const session::KernelGraph &kernel_graph, const AnfNodePtr &node);
-  bool CheckDoubleInEltWiseNode(const session::KernelGraph &kernel_graph, const AnfNodePtr &node);
-  bool CheckMultiOutputEltWiseNode(const session::KernelGraph &kernel_graph, const AnfNodePtr &node);
+  bool CheckEltWiseNode(const session::KernelGraph &kernel_graph, const AnfNodePtr &node,
+                        const std::unordered_set<std::string> &fusion_types, size_t input_size,
+                        size_t not_updatestate_size);
+
+  bool CheckSingleInEltWiseNode(const session::KernelGraph &kernel_graph, const AnfNodePtr &node) {
+    return CheckSingleInEltWiseNode(kernel_graph, node, {kPatternElemWise});
+  }
+  bool CheckSingleInEltWiseNode(const session::KernelGraph &kernel_graph, const AnfNodePtr &node,
+                                const std::unordered_set<std::string> &fusion_types);
+
+  bool CheckDoubleInEltWiseNode(const session::KernelGraph &kernel_graph, const AnfNodePtr &node) {
+    return CheckDoubleInEltWiseNode(kernel_graph, node, {kPatternElemWise});
+  }
+  bool CheckDoubleInEltWiseNode(const session::KernelGraph &kernel_graph, const AnfNodePtr &node,
+                                const std::unordered_set<std::string> &fusion_types);
+
+  bool CheckMultiOutputEltWiseNode(const session::KernelGraph &kernel_graph, const AnfNodePtr &node) {
+    return CheckMultiOutputEltWiseNode(kernel_graph, node, {kPatternElemWise});
+  }
+  bool CheckMultiOutputEltWiseNode(const session::KernelGraph &kernel_graph, const AnfNodePtr &node,
+                                   const std::unordered_set<std::string> &fusion_types);
+
   size_t GetNotUpdateStateUserNums(const session::KernelGraph &kernel_graph, const AnfNodePtr &node) const;
   FusionIdAllocatorPtr fusion_id_allocator;
 };

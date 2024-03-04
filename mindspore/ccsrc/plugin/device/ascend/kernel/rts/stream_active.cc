@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 #include "plugin/device/ascend/kernel/rts/stream_active.h"
 #include "runtime/stream.h"
 #include "plugin/device/ascend/hal/device/ge_runtime/task_info.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 
 using mindspore::ge::model_runner::StreamActiveTaskInfo;
@@ -35,7 +35,8 @@ bool StreamActiveKernel::Init(const AnfNodePtr &anf_node) {
   auto primitive = common::AnfAlgo::GetCNodePrimitive(anf_node);
   MS_EXCEPTION_IF_NULL(primitive);
   if (!common::AnfAlgo::HasNodeAttr(kAttrActiveStreamList, anf_node->cast<CNodePtr>())) {
-    MS_LOG(EXCEPTION) << "StreamActiveKernel " << anf_node->DebugString() << "has no attr kAttrActiveStreamList";
+    MS_LOG(INTERNAL_EXCEPTION) << "StreamActiveKernel " << anf_node->DebugString()
+                               << "has no attr kAttrActiveStreamList";
   }
   active_streams_index_ = GetValue<std::vector<uint32_t>>(primitive->GetAttr(kAttrActiveStreamList));
   return true;
@@ -74,9 +75,12 @@ std::vector<TaskInfoPtr> StreamActiveKernel::GenTask(const std::vector<AddressPt
                << ", stream id:" << stream_id;
   stream_id_ = stream_id;
   std::vector<TaskInfoPtr> task_info_list;
-  for (auto &index : active_streams_index_) {
+  for (size_t i = 0; i < active_streams_index_.size(); ++i) {
+    uint32_t index = active_streams_index_[i];
+    std::string op_name =
+      (i == active_streams_index_.size() - 1) ? (unique_name_) : (unique_name_ + "_" + std::to_string(index));
     std::shared_ptr<StreamActiveTaskInfo> task_info_ptr =
-      std::make_shared<StreamActiveTaskInfo>(unique_name_, stream_id, index);
+      std::make_shared<StreamActiveTaskInfo>(op_name, stream_id, index);
     MS_EXCEPTION_IF_NULL(task_info_ptr);
     (void)task_info_list.emplace_back(task_info_ptr);
     MS_LOG(INFO) << "StreamActiveKernel GenTask: streamId:" << stream_id << ", Active streamId:" << index;

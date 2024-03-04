@@ -15,17 +15,35 @@
  */
 #include "ops/sparse_fill_empty_rows.h"
 
+#include <map>
+#include <memory>
 #include <set>
 #include <string>
-#include <map>
 #include <vector>
-#include <memory>
-#include <algorithm>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/named.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,8 +55,8 @@ bool CheckSparseFillEmptyRowsInputs(const std::vector<AbstractBasePtr> &input_ar
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->BuildShape())[kShape];
   auto default_value_shape =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex3]->BuildShape())[kShape];
-
-  if (IsDynamic(indices_shape) || IsDynamic(values_shape) || IsDynamic(dense_shape_shape)) {
+  if (IsDynamic(indices_shape) || IsDynamic(values_shape) || IsDynamic(dense_shape_shape) ||
+      IsDynamic(default_value_shape)) {
     return false;
   }
 
@@ -50,6 +68,10 @@ bool CheckSparseFillEmptyRowsInputs(const std::vector<AbstractBasePtr> &input_ar
 
   (void)CheckAndConvertUtils::CheckInteger("indices rank", SizeToLong(indices_shape.size()), kEqual, indice_rank,
                                            op_name);
+  if (indices_shape[1] != dense_rank) {
+    MS_EXCEPTION(ValueError) << "For SparseFillEmptyRows, "
+                             << "the last dim of the indices must be 2, but got " << indices_shape[1] << ".";
+  }
   (void)CheckAndConvertUtils::CheckInteger("values rank", SizeToLong(values_shape.size()), kEqual, values_rank,
                                            op_name);
   (void)CheckAndConvertUtils::CheckInteger("dense_shape rank", SizeToLong(dense_shape_shape.size()), kEqual,
@@ -57,10 +79,6 @@ bool CheckSparseFillEmptyRowsInputs(const std::vector<AbstractBasePtr> &input_ar
   (void)CheckAndConvertUtils::CheckInteger("dense_shape size", dense_shape_shape[0], kEqual, dense_rank, op_name);
   (void)CheckAndConvertUtils::CheckInteger("default_value rank", SizeToLong(default_value_shape.size()), kEqual,
                                            default_value_rank, op_name);
-  if (indices_shape[1] != dense_rank) {
-    MS_EXCEPTION(ValueError) << "For SparseFillEmptyRows, "
-                             << "the last dim of the indices must be 2, but got " << indices_shape[1] << ".";
-  }
   if (indices_shape[0] != values_shape[0]) {
     MS_EXCEPTION(ValueError) << "For SparseFillEmptyRows, "
                              << "the size of indices must be equal to values, but got " << indices_shape[0] << " and "
@@ -81,17 +99,16 @@ abstract::TupleShapePtr SparseFillEmptyRowsInferShape(const PrimitivePtr &primit
   auto input_shape_value = input_args[kInputIndex2]->BuildValue();
   MS_EXCEPTION_IF_NULL(input_shape_value);
 
-  if (CheckSparseFillEmptyRowsInputs(input_args, op_name) && !input_shape_value->isa<AnyValue>() &&
+  if (CheckSparseFillEmptyRowsInputs(input_args, op_name) && !input_shape_value->isa<ValueAny>() &&
       !input_shape_value->isa<None>()) {
     auto indice_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
     const int64_t input_nnz = indice_shape[0];
 
     auto dense_row = CheckAndConvertUtils::CheckTensorIntValue("x_dense_shape", input_shape_value, op_name)[0];
-    output_indices_shape =
-      std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeDimAny, rank}),
-                                        ShapeVector({input_nnz, rank}), ShapeVector({input_nnz + dense_row, rank}));
-    output_values_shape = std::make_shared<abstract::Shape>(
-      ShapeVector({abstract::Shape::kShapeDimAny}), ShapeVector({input_nnz}), ShapeVector({input_nnz + dense_row}));
+    output_indices_shape = std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeDimAny, rank}),
+                                                             ShapeVector({input_nnz + dense_row, rank}));
+    output_values_shape = std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeDimAny}),
+                                                            ShapeVector({input_nnz + dense_row}));
     output_empty_row_indicator_shape = std::make_shared<abstract::Shape>(ShapeVector({dense_row}));
     output_reverse_index_map_shape = std::make_shared<abstract::Shape>(ShapeVector({input_nnz}));
   } else {
@@ -136,8 +153,27 @@ AbstractBasePtr SparseFillEmptyRowsInfer(const abstract::AnalysisEnginePtr &, co
   auto infer_shape = SparseFillEmptyRowsInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_HOST_DEPENDS(kNameSparseFillEmptyRows, {2});
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseFillEmptyRows, prim::kPrimSparseFillEmptyRows, SparseFillEmptyRowsInfer, nullptr,
-                             true);
+
+// AG means auto generated
+class MIND_API AGSparseFillEmptyRowsInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseFillEmptyRowsInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseFillEmptyRowsInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseFillEmptyRowsInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseFillEmptyRows, prim::kPrimSparseFillEmptyRows, AGSparseFillEmptyRowsInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

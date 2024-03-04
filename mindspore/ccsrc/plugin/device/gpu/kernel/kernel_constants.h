@@ -18,6 +18,7 @@
 #define MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_GPU_KERNEL_CONSTANTS_H_
 #include <map>
 #include <string>
+#include "mindspore/core/ops/framework_ops.h"
 
 namespace mindspore {
 namespace kernel {
@@ -32,6 +33,12 @@ static constexpr char kValidPadModeUpperCase[] = "VALID";
 
 // Used by Pooling and Conv2d
 static constexpr char kValidPadModeLowerCase[] = "valid";
+
+// Used by Pooling and Conv2d
+static constexpr char kPadPadModeUpperCase[] = "PAD";
+
+// Used by Pooling and Conv2d
+static constexpr char kPadPadModeLowerCase[] = "pad";
 
 // Used by Pooling
 static constexpr char kAvgPoolingModeUpperCase[] = "AVG";

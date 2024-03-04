@@ -15,12 +15,17 @@
  */
 #include <memory>
 #include "common/common_test.h"
+#include "ops/other_op_name.h"
 #include "plugin/device/ascend/hal/hccl_adapter/all_to_all_v_calc_param.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "mindspore/core/ir/dtype/type_id.h"
 
 namespace mindspore::hccl {
+namespace {
+constexpr auto kPatternOpaque = "Opaque";
+}
+
 class TestHcclAdapter : public UT::Common {
  public:
   TestHcclAdapter() {}
@@ -29,7 +34,7 @@ class TestHcclAdapter : public UT::Common {
   CNodePtr CreateAllToAllvNode(const FuncGraphPtr &graph, const std::vector<AnfNodePtr> inputs,
                                const std::vector<int64_t> &send_rank_ids, const std::vector<int64_t> &recv_rank_ids) {
     MS_EXCEPTION_IF_NULL(graph);
-    std::vector<AnfNodePtr> all_to_all_v_input = {NewValueNode(std::make_shared<Primitive>(kAllToAllVOpName))};
+    std::vector<AnfNodePtr> all_to_all_v_input = {NewValueNode(std::make_shared<Primitive>(kAllToAllvOpName))};
     all_to_all_v_input.insert(all_to_all_v_input.end(), inputs.begin(), inputs.end());
     auto all_to_all_v = graph->NewCNode(all_to_all_v_input);
     MS_EXCEPTION_IF_NULL(all_to_all_v);
@@ -42,7 +47,7 @@ class TestHcclAdapter : public UT::Common {
   void SetOutputs(const CNodePtr &cnode, const std::vector<ShapeVector> &shape, const std::vector<TypeId> &data_type) {
     common::AnfAlgo::SetOutputInferTypeAndShape(data_type, shape, cnode.get());
     kernel::KernelBuildInfo::KernelBuildInfoBuilder builder;
-    builder.SetFusionType(kernel::FusionType::OPAQUE);
+    builder.SetFusionType(kPatternOpaque);
     builder.SetProcessor(kernel::Processor::AICORE);
     builder.SetKernelType(TBE_KERNEL);
     builder.SetInputsFormat(std::vector<std::string>(cnode->size() - 1, format_));
@@ -65,7 +70,7 @@ class TestHcclAdapter : public UT::Common {
       common::AnfAlgo::SetOutputInferTypeAndShape(std::vector<TypeId>{data_type[i]}, std::vector<ShapeVector>{shape[i]},
                                                   node.get());
       kernel::KernelBuildInfo::KernelBuildInfoBuilder builder;
-      builder.SetFusionType(kernel::FusionType::OPAQUE);
+      builder.SetFusionType(kPatternOpaque);
       builder.SetProcessor(kernel::Processor::AICORE);
       builder.SetKernelType(TBE_KERNEL);
       builder.SetInputsFormat({format_});

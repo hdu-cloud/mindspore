@@ -37,6 +37,12 @@ bool CumProdCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::
   auto kernel_ptr = std::dynamic_pointer_cast<ops::CumProd>(base_operator);
   MS_ERROR_IF_NULL_W_RET_VAL(kernel_ptr, false);
   kernel_name_ = kernel_ptr->name();
+
+  if (inputs[kIndex0] == nullptr || inputs[kIndex1] == nullptr) {
+    MS_LOG(ERROR) << "Inputs have nullptr, please check inputs";
+    return false;
+  }
+
   dtype_ = inputs[kIndex0]->GetDtype();
   exclusive_ = kernel_ptr->GetExclusive();
   reverse_ = kernel_ptr->GetReverse();
@@ -45,6 +51,12 @@ bool CumProdCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::
   auto input_num = inputs.size();
   if (input_num != kCumProdInputsNum) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', the number of inputs must be 2 or 3, but got " << input_num;
+    return false;
+  }
+
+  auto dims_shape = inputs[kIndex0]->GetShapeVector();
+  if (dims_shape.size() == 0) {
+    MS_LOG(ERROR) << "Invalid input tensor shape: " << dims_shape.size();
     return false;
   }
 
@@ -242,6 +254,10 @@ bool CumProdCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &in
     return false;
   }
   Reshape();
+  if (dims_[kDimSize1] == 0) {
+    MS_LOG(INFO) << "Input tensor is empty. Please check input data.";
+    return true;
+  }
   // multithreading
   size_t lens = inputs[0]->size > 0 ? static_cast<size_t>(inputs[0]->size / sizeof(T)) : 1;
   auto task = [this, &input, &output, &ws](size_t start, size_t end) {

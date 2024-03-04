@@ -1418,12 +1418,16 @@ bool AbstractNode::IsWorkerOrServer0(const std::unordered_map<std::string, NodeI
   return false;
 }
 
-void AbstractNode::CreateTcpServer() {
+void AbstractNode::CreateTcpServer(const std::pair<uint32_t, uint32_t> &port_range) {
   MS_EXCEPTION_IF_NULL(config_);
   std::string interface;
-  std::string server_ip;
-  CommUtil::GetAvailableInterfaceAndIP(&interface, &server_ip);
-  server_ = std::make_shared<TcpServer>(server_ip, 0, config_.get());
+  std::string server_ip = common::GetEnv("MS_WORKER_IP");
+  if (server_ip.empty()) {
+    MS_LOG(INFO) << "'MS_WORKER_IP' env is not set, so get first available network interface.";
+    CommUtil::GetAvailableInterfaceAndIP(&interface, &server_ip);
+  }
+
+  server_ = std::make_shared<TcpServer>(server_ip, 0, config_.get(), port_range);
   MS_EXCEPTION_IF_NULL(server_);
   server_->SetMessageCallback([&](const std::shared_ptr<TcpConnection> &conn, const std::shared_ptr<MessageMeta> &meta,
                                   const Protos &protos, const void *data, size_t size) {

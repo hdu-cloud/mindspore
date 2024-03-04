@@ -49,6 +49,7 @@ constexpr auto KModelOptionAscendFusionSwitchCfgPath = "mindspore.option.ascend.
 constexpr auto kModelOptionAscendDynamicBatchSize = "mindspore.option.ascend.dynamic_batch_size";
 constexpr auto kModelOptionAscendDynamicImageSize = "mindspore.option.ascend.dynamic_image_size";
 constexpr auto kModelOptionAscendBufferOptimize = "mindspore.option.ascend.buffer_optimize";
+constexpr auto kModelOptionAscendRankID = "mindspore.option.ascend.rank_id";
 #ifdef USE_GLOG
 extern "C" {
 extern void mindspore_log_init();
@@ -94,6 +95,22 @@ void Context::SetInterOpParallelNum(int32_t parallel_num) {
     return;
   }
   data_->inter_op_parallel_num_ = parallel_num;
+}
+
+void Context::SetGroupInfoFile(std::string group_info_file) {
+  if (data_ == nullptr) {
+    MS_LOG(ERROR) << "Invalid context.";
+    return;
+  }
+  data_->group_info_file_ = group_info_file;
+}
+
+std::string Context::GetGroupInfoFile() const {
+  if (data_ == nullptr) {
+    MS_LOG(ERROR) << "Invalid context.";
+    return "";
+  }
+  return data_->group_info_file_;
 }
 
 int32_t Context::GetInterOpParallelNum() const {
@@ -421,12 +438,20 @@ uint32_t GPUDeviceInfo::GetDeviceID() const {
 }
 
 int GPUDeviceInfo::GetRankID() const {
+#ifdef SUPPORT_TENSORRT
   data_->params[kModelOptionGPURankID] = lite::GetRankID();
+#else
+  data_->params[kModelOptionGPURankID] = 0;
+#endif
   return GetValue<int>(data_, kModelOptionGPURankID);
 }
 
 int GPUDeviceInfo::GetGroupSize() const {
+#ifdef SUPPORT_TENSORRT
   data_->params[kModelOptionGPUGroupSize] = lite::GetGPUGroupSize();
+#else
+  data_->params[kModelOptionGPUGroupSize] = 1;
+#endif
   return GetValue<int>(data_, kModelOptionGPUGroupSize);
 }
 
@@ -453,6 +478,22 @@ uint32_t AscendDeviceInfo::GetDeviceID() const {
     return 0;
   }
   return GetValue<uint32_t>(data_, kModelOptionAscendDeviceID);
+}
+
+void AscendDeviceInfo::SetRankID(uint32_t rank_id) {
+  if (data_ == nullptr) {
+    MS_LOG(ERROR) << "Invalid context.";
+    return;
+  }
+  data_->params[kModelOptionAscendRankID] = rank_id;
+}
+
+uint32_t AscendDeviceInfo::GetRankID() const {
+  if (data_ == nullptr) {
+    MS_LOG(ERROR) << "Invalid context.";
+    return 0;
+  }
+  return GetValue<uint32_t>(data_, kModelOptionAscendRankID);
 }
 
 void AscendDeviceInfo::SetInsertOpConfigPath(const std::vector<char> &cfg_path) {

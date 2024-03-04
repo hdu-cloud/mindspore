@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1017,52 +1017,52 @@ void RowMajor2Col4MajorParallel(const float *src_ptr, float *dst_ptr, int row, i
   }
 }
 
-inline void RowMajor2ColMajor(const float *src_ptr, float *dst_ptr, int row, int col) {
+void RowMajor2ColMajor(const float *src_ptr, float *dst_ptr, int row, int col) {
   RowMajor2ColMajorParallel(src_ptr, dst_ptr, row, col, 0, row);
 }
-inline void RowMajor2RowMajor(const float *src_ptr, float *dst_ptr, int row, int col) {
+void RowMajor2RowMajor(const float *src_ptr, float *dst_ptr, int row, int col) {
   RowMajor2RowMajorParallel(src_ptr, dst_ptr, row, col, 0, row);
 }
-inline void RowMajor2Row4Major(const float *src_ptr, float *dst_ptr, int row, int col) {
+void RowMajor2Row4Major(const float *src_ptr, float *dst_ptr, int row, int col) {
   RowMajor2Row4MajorParallel(src_ptr, dst_ptr, row, col, 0, row);
 }
-inline void RowMajor2Row6Major(const float *src_ptr, float *dst_ptr, int row, int col) {
+void RowMajor2Row6Major(const float *src_ptr, float *dst_ptr, int row, int col) {
   RowMajor2Row6MajorParallel(src_ptr, dst_ptr, row, col, 0, row);
 }
-inline void RowMajor2Row8Major(const float *src_ptr, float *dst_ptr, int row, int col) {
+void RowMajor2Row8Major(const float *src_ptr, float *dst_ptr, int row, int col) {
   RowMajor2Row8MajorParallel(src_ptr, dst_ptr, row, col, 0, row);
 }
-inline void RowMajor2Row12Major(const float *src_ptr, float *dst_ptr, int row, int col) {
+void RowMajor2Row12Major(const float *src_ptr, float *dst_ptr, int row, int col) {
   RowMajor2Row12MajorParallel(src_ptr, dst_ptr, row, col, 0, row);
 }
-inline void RowMajor2Row16Major(const float *src_ptr, float *dst_ptr, int row, int col) {
+void RowMajor2Row16Major(const float *src_ptr, float *dst_ptr, int row, int col) {
   RowMajor2Row16MajorParallel(src_ptr, dst_ptr, row, col, 0, row);
 }
-inline void RowMajor2Row32Major(const float *src_ptr, float *dst_ptr, int col, int row) {
+void RowMajor2Row32Major(const float *src_ptr, float *dst_ptr, int col, int row) {
   RowMajor2Row32MajorParallel(src_ptr, dst_ptr, col, row, 0, col);
 }
-inline void RowMajor2Row64Major(const float *src_ptr, float *dst_ptr, int col, int row) {
+void RowMajor2Row64Major(const float *src_ptr, float *dst_ptr, int col, int row) {
   RowMajor2Row64MajorParallel(src_ptr, dst_ptr, col, row, 0, col);
 }
-inline void RowMajor2Col12Major(const float *src_ptr, float *dst_ptr, int row, int col) {
+void RowMajor2Col12Major(const float *src_ptr, float *dst_ptr, int row, int col) {
   RowMajor2Col12MajorParallel(src_ptr, dst_ptr, row, col, 0, row);
 }
-inline void RowMajor2Col8Major(const float *src_ptr, float *dst_ptr, int row, int col) {
+void RowMajor2Col8Major(const float *src_ptr, float *dst_ptr, int row, int col) {
   RowMajor2Col8MajorParallel(src_ptr, dst_ptr, row, col, 0, row);
 }
-inline void RowMajor2Col16Major(const float *src_ptr, float *dst_ptr, int row, int col) {
+void RowMajor2Col16Major(const float *src_ptr, float *dst_ptr, int row, int col) {
   RowMajor2Col16MajorParallel(src_ptr, dst_ptr, row, col, 0, row);
 }
-inline void RowMajor2Col32Major(const float *src_ptr, float *dst_ptr, int row, int col) {
+void RowMajor2Col32Major(const float *src_ptr, float *dst_ptr, int row, int col) {
   RowMajor2Col32MajorParallel(src_ptr, dst_ptr, row, col, 0, row);
 }
-inline void RowMajor2Col64Major(const float *src_ptr, float *dst_ptr, int row, int col) {
+void RowMajor2Col64Major(const float *src_ptr, float *dst_ptr, int row, int col) {
   RowMajor2Col64MajorParallel(src_ptr, dst_ptr, row, col, 0, row);
 }
-inline void RowMajor2Col6Major(const float *src_ptr, float *dst_ptr, int row, int col) {
+void RowMajor2Col6Major(const float *src_ptr, float *dst_ptr, int row, int col) {
   RowMajor2Col6MajorParallel(src_ptr, dst_ptr, row, col, 0, row);
 }
-inline void RowMajor2Col4Major(const float *src_ptr, float *dst_ptr, int row, int col) {
+void RowMajor2Col4Major(const float *src_ptr, float *dst_ptr, int row, int col) {
   RowMajor2Col4MajorParallel(src_ptr, dst_ptr, row, col, 0, row);
 }
 
@@ -1150,57 +1150,79 @@ void PackNHWCToNHWCXFp32(const void *src, void *dst, int batch, int plane, int c
   }
 }
 
-#ifdef ENABLE_AVX
+#if defined(ENABLE_AVX) || defined(ENABLE_ARM64)
+void PackNHWCToNXHWCXFp32H1W1(int output_channel, int oc_block_num, int input_channel, float *tmp_weight,
+                              const float *src, int oc_block_unit, Transpose8X8Fp32Func transpose_func) {
+  int oc_block8 = DOWN_DIV(output_channel, C8NUM);
+  int oc = 0;
+  int oc_block = 0;
+  int ic8 = DOWN_ROUND(input_channel, C8NUM);
+  int oc_remainder_step = 0;
+  if (oc_block8 != oc_block_num) {
+    oc_block8 = oc_block8 / oc_block_unit * oc_block_unit;
+    oc_remainder_step = (oc_block_num - oc_block8) * C8NUM;
+  }
+  for (; oc < oc_block8; oc += (oc_block / C8NUM)) {
+    oc_block = MSMIN(oc_block_unit, oc_block8 - oc) * C8NUM;  // max_tile = 32 ==> 24 ==> 16 ==> 8
+    for (int oc_tmp = 0; oc_tmp < oc_block; oc_tmp += C8NUM) {
+      int ic = 0;
+      for (; ic < ic8; ic += C8NUM) {
+        transpose_func(src + ic, tmp_weight + ic * oc_block + oc_tmp, input_channel, oc_block);
+      }
+      for (; ic < input_channel; ++ic) {
+        for (int j = 0; j < C8NUM; ++j) {
+          tmp_weight[ic * oc_block + oc_tmp + j] = src[ic + input_channel * j];
+        }
+      }
+      src += C8NUM * input_channel;
+    }
+    tmp_weight += oc_block * input_channel;
+  }
+  oc = output_channel - oc_block8 * C8NUM;
+  for (int oc_remainder = 0; oc_remainder < oc; ++oc_remainder) {
+    for (int ic = 0; ic < input_channel; ++ic) {
+      tmp_weight[oc_remainder + oc_remainder_step * ic] = src[ic + oc_remainder * input_channel];
+    }
+  }
+}
+
 // PackNHWCToNXHWCXFp32 is SWPackNHWCToNXHWCXFp32 asm optimize
 void PackNHWCToNXHWCXFp32(int kernel_h, int kernel_w, int output_channel, int oc_block_num, int input_channel,
                           float *tmp_weight, const float *src) {
+#ifdef ENABLE_ARM64
+  Transpose8X8Fp32Func transpose_func = Transpose8X8Fp32Arm64;
+  int oc_block_unit = C2NUM;
+#elif defined(ENABLE_AVX)
+  Transpose8X8Fp32Func transpose_func = Transpose8X8Fp32Avx;
+  int oc_block_unit = C4NUM;
+#endif
   // pack weight NHWC to N32HWC32 N24HWC24 N16HWC16 N8HWC8
   // output_channel: batch
+  int plane = kernel_w * kernel_h;
+  if (plane == 1) {  // conv 1x1 weight pack
+    PackNHWCToNXHWCXFp32H1W1(output_channel, oc_block_num, input_channel, tmp_weight, src, oc_block_unit,
+                             transpose_func);
+    return;
+  }
+
   int ic8 = DOWN_ROUND(input_channel, C8NUM);
   int oc_block8 = DOWN_DIV(output_channel, C8NUM);
   int oc_block = 0;
   int oc = 0;
   int oc_remainder_step = 0;
   if (oc_block8 != oc_block_num) {
-    oc_block8 = oc_block8 / C4NUM * C4NUM;
+    oc_block8 = oc_block8 / oc_block_unit * oc_block_unit;
     oc_remainder_step = (oc_block_num - oc_block8) * C8NUM;
   }
-  int plane = kernel_w * kernel_h;
-  if (plane == 1) {  // conv 1x1 weight pack
-    for (; oc < oc_block8; oc += (oc_block / C8NUM)) {
-      oc_block = MSMIN(C4NUM, oc_block8 - oc) * C8NUM;  // max_tile = 32 ==> 24 ==> 16 ==> 8
-      for (int oc_tmp = 0; oc_tmp < oc_block; oc_tmp += C8NUM) {
-        int ic = 0;
-        for (; ic < ic8; ic += C8NUM) {
-          Transpose8X8Fp32Avx(src + ic, tmp_weight + ic * oc_block + oc_tmp, input_channel, oc_block);
-        }
-        for (; ic < input_channel; ++ic) {
-          for (int j = 0; j < C8NUM; ++j) {
-            tmp_weight[ic * oc_block + oc_tmp + j] = src[ic + input_channel * j];
-          }
-        }
-        src += C8NUM * input_channel;
-      }
-      tmp_weight += oc_block * input_channel;
-    }
-    oc = output_channel - oc_block8 * C8NUM;
-    for (int oc_remainder = 0; oc_remainder < oc; ++oc_remainder) {
-      for (int ic = 0; ic < input_channel; ++ic) {
-        tmp_weight[oc_remainder + oc_remainder_step * ic] = src[ic + oc_remainder * input_channel];
-      }
-    }
-    return;
-  }
-
   for (; oc < oc_block8; oc += (oc_block / C8NUM)) {
-    oc_block = MSMIN(C4NUM, oc_block8 - oc) * C8NUM;  // max_tile = 32 ==> 24 ==> 16 ==> 8
+    oc_block = MSMIN(oc_block_unit, oc_block8 - oc) * C8NUM;  // max_tile = 32 ==> 24 ==> 16 ==> 8
     for (int oc_tmp = 0; oc_tmp < oc_block; oc_tmp += C8NUM) {
       for (int hw = 0; hw < plane; ++hw) {
         int ic = 0;
         for (; ic < ic8; ic += C8NUM) {
-          Transpose8X8Fp32Avx(src + hw * input_channel + ic,
-                              tmp_weight + hw * oc_block * input_channel + ic * oc_block + oc_tmp,
-                              input_channel * plane, oc_block);
+          transpose_func(src + hw * input_channel + ic,
+                         tmp_weight + hw * oc_block * input_channel + ic * oc_block + oc_tmp, input_channel * plane,
+                         oc_block);
         }
         for (; ic < input_channel; ++ic) {
           for (int j = 0; j < C8NUM; ++j) {
@@ -1360,6 +1382,85 @@ void PackNC4HW4ToNHWCFp32(const void *src, void *dst, int batch, int plane, int 
       for (int i = 0; i < res_c; i++) {
         int src_res_c_offset = src_kernel_offset + (c4 - 1) * C4NUM * plane + i;
         int dst_res_c_offset = dst_kernel_offset + (c4 - 1) * C4NUM + i;
+        ((float *)dst + dst_res_c_offset)[0] = ((float *)src + src_res_c_offset)[0];
+      }
+    }
+  }
+}
+
+void PackNC8HW8ToNCHWFp32(const void *src, void *dst, int batch, int plane, int channel) {
+  int c8 = UP_ROUND(channel, C8NUM);
+  for (int b = 0; b < batch; b++) {
+    int src_offset = b * plane * c8;
+    int dst_offset = b * plane * channel;
+
+    const float *fp32_src = (const float *)src + src_offset;
+    float *fp32_dst = (float *)dst + dst_offset;
+    for (size_t c = 0; c < channel; c++) {
+      size_t c_div = c / C8NUM;
+      size_t c_mod = c % C8NUM;
+      for (size_t p = 0; p < plane; p++) {
+        int src_offset_c = c_div * plane * C8NUM + p * C8NUM + c_mod;
+        int dst_offset_c = c * plane + p;
+        fp32_dst[dst_offset_c] = fp32_src[src_offset_c];
+      }
+    }
+  }
+}
+
+void PackNHWCToNC8HW8Fp32(const void *src, void *dst, int batch, int plane, int channel) {
+  int c8 = UP_DIV(channel, C8NUM);
+  int c8_minus = c8 - 1;
+  for (int b = 0; b < batch; b++) {
+    int src_oc_offset = b * plane * channel;
+    int dst_oc_offset = b * plane * c8 * C8NUM;
+    for (int k = 0; k < plane; k++) {
+      int src_kernel_offset = src_oc_offset + k * channel;
+      int dst_kernel_offset = dst_oc_offset + k * C8NUM;
+      for (int j = 0; j < c8_minus; ++j) {
+        int src_ic_offset = src_kernel_offset + j * C8NUM;
+        int dst_ic_offset = dst_kernel_offset + j * plane * C8NUM;
+        for (int i = 0; i < C8NUM; ++i) {
+          ((float *)dst + dst_ic_offset)[i] = ((float *)src + src_ic_offset)[i];
+        }
+      }
+      int tmp_c = c8_minus * C8NUM;
+      int tmp_c_offset = tmp_c * plane;
+      int res_c = channel - tmp_c;
+      if (res_c > channel) {
+        return;
+      }
+      for (int l = 0; l < res_c; ++l) {
+        int src_ic_offset = src_kernel_offset + tmp_c + l;
+        int dst_ic_offset = dst_kernel_offset + tmp_c_offset + l;
+        ((float *)dst + dst_ic_offset)[0] = ((float *)src + src_ic_offset)[0];
+      }
+    }
+  }
+}
+
+void PackNC8HW8ToNHWCFp32(const void *src, void *dst, int batch, int plane, int channel) {
+  int c8 = UP_DIV(channel, C8NUM);
+  for (int b = 0; b < batch; b++) {
+    int src_offset = b * plane * c8 * C8NUM;
+    int dst_offset = b * plane * channel;
+    for (int k = 0; k < plane; k++) {
+      int src_kernel_offset = src_offset + k * C8NUM;
+      int dst_kernel_offset = dst_offset + k * channel;
+      for (int c = 0; c < c8 - 1; c++) {
+        int src_c_offset = src_kernel_offset + c * plane * C8NUM;
+        int dst_c_offset = dst_kernel_offset + c * C8NUM;
+
+        ((float *)dst + dst_c_offset)[Index0] = ((float *)src + src_c_offset)[Index0];
+        ((float *)dst + dst_c_offset)[Index1] = ((float *)src + src_c_offset)[Index1];
+        ((float *)dst + dst_c_offset)[Index2] = ((float *)src + src_c_offset)[Index2];
+        ((float *)dst + dst_c_offset)[Index3] = ((float *)src + src_c_offset)[Index3];
+      }
+      // res part
+      int res_c = channel - (c8 - 1) * C8NUM;
+      for (int i = 0; i < res_c; i++) {
+        int src_res_c_offset = src_kernel_offset + (c8 - 1) * C8NUM * plane + i;
+        int dst_res_c_offset = dst_kernel_offset + (c8 - 1) * C8NUM + i;
         ((float *)dst + dst_res_c_offset)[0] = ((float *)src + src_res_c_offset)[0];
       }
     }
@@ -1579,6 +1680,86 @@ void PackNHWCToNCHWFp32(const void *src, void *dst, int batches, int plane, int 
   }
 }
 
+/*
+|<---------------- plane --------------->|
++---------------------------+------------+  ---
+|          |     |          |            |   ↑
+|8x8-blocks| ... |8x8-blocks|   right    |   |
+|          |     |          |            |   |
++ - - - - -+     + - - - - -+            |   |
+|   ...      ...     ...    |    top     | channel
++ - - - - -+     + - - - - -|            |   |
+|          |     |          |   tails    |   |
+|8x8-blocks| ... |8x8-blocks|            |   |
++---------------------------+------------+   |
+|                           |right bottom|   |
+|     left bottom tails     |   tails    |   ↓
++---------------------------+------------+  ---
+*/
+void TransposeFp32(const void *src, void *dst, int batches, int channel, int plane, int start, int end) {
+#ifdef ENABLE_ARM64
+  Transpose8X8Fp32Func Transpose8X8Fp32Func_ = Transpose8X8Fp32Arm64;
+#elif defined(ENABLE_ARM32)
+  Transpose8X8Fp32Func Transpose8X8Fp32Func_ = Transpose8X8Fp32Arm32;
+#elif defined(ENABLE_AVX)
+  Transpose8X8Fp32Func Transpose8X8Fp32Func_ = Transpose8X8Fp32Avx;
+#elif defined(ENABLE_SSE) && !defined(ENABLE_AVX)
+  Transpose8X8Fp32Func Transpose8X8Fp32Func_ = Transpose8X8Fp32Sse;
+#endif
+  int m_pad = UP_DIV(channel, C8NUM);
+  int n_pad = UP_DIV(plane, C8NUM);
+  int m_blk = channel / C8NUM;
+  int n_blk = plane / C8NUM;
+  int b_stride = plane * channel;
+  //  printf("channel, plane: %d, %d\n", channel, plane);
+  int b = 0, m = 0, n = 0;
+  // To make write dst consecutively, (m,n):(0,0)->(1,0)->...->(0,1)->(1,1)->...
+  offset_to_index_init(start, 6, &m, m_pad, &n, n_pad, &b, batches);
+  for (int task = start; task < end; task++) {
+    const float *src_batch = (const float *)src + b * b_stride;
+    float *dst_batch = (float *)dst + b * b_stride;
+    int m_start = m * C8NUM;
+    int n_start = n * C8NUM;
+    if (m < m_blk && n < n_blk) {
+      // process 8x8-blocks
+      const float *from = src_batch + m_start * plane + n_start;
+      float *to = dst_batch + n_start * channel + m_start;
+#if defined(ENABLE_ARM64) || defined(ENABLE_AVX) || defined(ENABLE_SSE) || defined(ENABLE_ARM32)
+      Transpose8X8Fp32Func_(from, to, plane, channel);
+#else
+      for (int tr = 0; tr < C8NUM; tr++) {
+        for (int tc = 0; tc < C8NUM; tc++) {
+          to[tc * plane + tr] = from[tr * channel + tc];
+        }
+      }
+#endif
+    } else {
+      // process right bottom tails
+      const float *from = src_batch;
+      float *to = dst_batch;
+      int i_start = m_start;
+      int i_end = channel;
+      int j_start = n_start;
+      int j_end = plane;
+      if (m >= m_blk && n < n_blk) {
+        // process left bottom tails
+        from = src_batch + n_start;
+        to = dst_batch + n_start * channel;
+        j_start = 0;
+        j_end = C8NUM;
+      } else if (m < m_blk && n >= n_blk) {
+        // process right top tails
+        from = src_batch + m_start * plane;
+        to = dst_batch + m_start;
+        i_start = 0;
+        i_end = C8NUM;
+      }
+      transpose_tail(from, to, j_start, j_end, i_start, i_end, channel, plane);
+    }
+    offset_to_index_step(6, &m, m_pad, &n, n_pad, &b, batches);
+  }
+}
+
 void PackNCHWToNHWCFp32(const void *src, void *dst, int batch, int plane, int channel, int task_id, int thread_count) {
   PackNHWCToNCHWFp32(src, dst, batch, channel, plane, task_id, thread_count);
 }
@@ -1736,42 +1917,57 @@ inline void Transpose8X8Fp32Arm32(const float *src_ptr, float *dst_ptr, int src_
 #endif
 
 #ifdef ENABLE_AVX
+/*
+  Using _mm256_insertf128_ps at the beginning, instead of using  _mm256_permute2f128_ps at the end.
+  On the whole, 4 vinsertf128 and 4 vperm2f128 are used less than before.
+*/
 inline void Transpose8X8Fp32Avx(const float *src_ptr, float *dst_ptr, int src_stride, int dst_stride) {
-  MS_LOAD256X8_F32(src, src_ptr, src_stride)
-  __m256 r1 = _mm256_unpacklo_ps(src1, src2);
-  __m256 r2 = _mm256_unpackhi_ps(src1, src2);
-  __m256 r3 = _mm256_unpacklo_ps(src3, src4);
-  __m256 r4 = _mm256_unpackhi_ps(src3, src4);
-  __m256 r5 = _mm256_unpacklo_ps(src5, src6);
-  __m256 r6 = _mm256_unpackhi_ps(src5, src6);
-  __m256 r7 = _mm256_unpacklo_ps(src7, src8);
-  __m256 r8 = _mm256_unpackhi_ps(src7, src8);
+  const float *src1 = src_ptr + 0 * src_stride;
+  const float *src2 = src_ptr + 1 * src_stride;
+  const float *src3 = src_ptr + 2 * src_stride;
+  const float *src4 = src_ptr + 3 * src_stride;
+  const float *src5 = src_ptr + 4 * src_stride;
+  const float *src6 = src_ptr + 5 * src_stride;
+  const float *src7 = src_ptr + 6 * src_stride;
+  const float *src8 = src_ptr + 7 * src_stride;
+
+  __m256 r1, r2, r3, r4, r5, r6, r7, r8;
+  __m256 t1, t2, t3, t4, t5, t6, t7, t8;
+  // _mm256_castps128_ps256 is only for compilation and generates no instructions, thus it has zero latency.
+  r1 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_loadu_ps(src1 + 0)), _mm_loadu_ps(src5 + 0), 1);
+  r2 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_loadu_ps(src2 + 0)), _mm_loadu_ps(src6 + 0), 1);
+  r3 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_loadu_ps(src3 + 0)), _mm_loadu_ps(src7 + 0), 1);
+  r4 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_loadu_ps(src4 + 0)), _mm_loadu_ps(src8 + 0), 1);
+  r5 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_loadu_ps(src1 + 4)), _mm_loadu_ps(src5 + 4), 1);
+  r6 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_loadu_ps(src2 + 4)), _mm_loadu_ps(src6 + 4), 1);
+  r7 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_loadu_ps(src3 + 4)), _mm_loadu_ps(src7 + 4), 1);
+  r8 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_loadu_ps(src4 + 4)), _mm_loadu_ps(src8 + 4), 1);
+
+  t1 = _mm256_unpacklo_ps(r1, r2);
+  t2 = _mm256_unpackhi_ps(r1, r2);
+  t3 = _mm256_unpacklo_ps(r3, r4);
+  t4 = _mm256_unpackhi_ps(r3, r4);
+  t5 = _mm256_unpacklo_ps(r5, r6);
+  t6 = _mm256_unpackhi_ps(r5, r6);
+  t7 = _mm256_unpacklo_ps(r7, r8);
+  t8 = _mm256_unpackhi_ps(r7, r8);
 
   __m256 v;
-  v = _mm256_shuffle_ps(r1, r3, 0x4E);
-  src1 = _mm256_blend_ps(r1, v, 0xCC);
-  src2 = _mm256_blend_ps(r3, v, 0x33);
+  v = _mm256_shuffle_ps(t1, t3, 0x4E);
+  r1 = _mm256_blend_ps(t1, v, 0xCC);
+  r2 = _mm256_blend_ps(t3, v, 0x33);
 
-  v = _mm256_shuffle_ps(r2, r4, 0x4E);
-  src3 = _mm256_blend_ps(r2, v, 0xCC);
-  src4 = _mm256_blend_ps(r4, v, 0x33);
+  v = _mm256_shuffle_ps(t2, t4, 0x4E);
+  r3 = _mm256_blend_ps(t2, v, 0xCC);
+  r4 = _mm256_blend_ps(t4, v, 0x33);
 
-  v = _mm256_shuffle_ps(r5, r7, 0x4E);
-  src5 = _mm256_blend_ps(r5, v, 0xCC);
-  src6 = _mm256_blend_ps(r7, v, 0x33);
+  v = _mm256_shuffle_ps(t5, t7, 0x4E);
+  r5 = _mm256_blend_ps(t5, v, 0xCC);
+  r6 = _mm256_blend_ps(t7, v, 0x33);
 
-  v = _mm256_shuffle_ps(r6, r8, 0x4E);
-  src7 = _mm256_blend_ps(r6, v, 0xCC);
-  src8 = _mm256_blend_ps(r8, v, 0x33);
-
-  r1 = _mm256_permute2f128_ps(src1, src5, 0x20);
-  r2 = _mm256_permute2f128_ps(src2, src6, 0x20);
-  r3 = _mm256_permute2f128_ps(src3, src7, 0x20);
-  r4 = _mm256_permute2f128_ps(src4, src8, 0x20);
-  r5 = _mm256_permute2f128_ps(src1, src5, 0x31);
-  r6 = _mm256_permute2f128_ps(src2, src6, 0x31);
-  r7 = _mm256_permute2f128_ps(src3, src7, 0x31);
-  r8 = _mm256_permute2f128_ps(src4, src8, 0x31);
+  v = _mm256_shuffle_ps(t6, t8, 0x4E);
+  r7 = _mm256_blend_ps(t6, v, 0xCC);
+  r8 = _mm256_blend_ps(t8, v, 0x33);
 
   STORE256X8_F32(dst_ptr, dst_stride, r);
 }

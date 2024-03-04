@@ -19,7 +19,9 @@
 #include <vector>
 #include <string>
 #include <regex>
-#include "backend/common/optimizer/helper.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "include/backend/optimizer/helper.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
@@ -98,6 +100,12 @@ CNodePtr InplaceAssignAfterTupleGetItem(const FuncGraphPtr &func_graph, const CN
     }
   }
   return nullptr;
+}
+
+std::vector<std::string> InplaceAssignForCustomOp::MustExistPrimitiveName() const {
+  std::vector<std::string> ret;
+  (void)ret.emplace_back(prim::kPrimCustom->name());
+  return ret;
 }
 
 const AnfNodePtr InplaceAssignForCustomOp::Process(const FuncGraphPtr &func_graph, const AnfNodePtr &node,

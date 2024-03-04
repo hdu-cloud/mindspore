@@ -4,6 +4,8 @@ set(CODER_SRC
         ${MICRO_DIR}/coder/context.cc
         ${MICRO_DIR}/coder/graph.cc
         ${MICRO_DIR}/coder/session.cc
+        ${MICRO_DIR}/coder/shape_info_container.cc
+        ${MICRO_DIR}/coder/dynamic_mem_manager.cc
         ${MICRO_DIR}/coder/utils/coder_utils.cc
         ${MICRO_DIR}/coder/utils/dir_utils.cc
         ${MICRO_DIR}/coder/utils/train_utils.cc
@@ -25,8 +27,10 @@ set(CODER_GENERATOR_SRC
         ${MICRO_DIR}/coder/generator/inference/inference_generator.cc
         ${MICRO_DIR}/coder/generator/component/common_component.cc
         ${MICRO_DIR}/coder/generator/component/weight_component.cc
+        ${MICRO_DIR}/coder/generator/component/allocator_component.cc
         ${MICRO_DIR}/coder/generator/component/cmake_component.cc
         ${MICRO_DIR}/coder/generator/component/train_component.cc
+        ${MICRO_DIR}/coder/generator/component/component.cc
         ${MICRO_DIR}/coder/generator/component/const_blocks/cmake_lists.cc
         ${MICRO_DIR}/coder/generator/component/const_blocks/debug_utils.cc
         ${MICRO_DIR}/coder/generator/component/const_blocks/msession.cc
@@ -43,6 +47,7 @@ set(CODER_OPCODERS_SRC
         ${MICRO_DIR}/coder/wrapper/int8/conv1x1_init_int8_wrapper.c
         ${MICRO_DIR}/coder/wrapper/int8/conv_init_int8_wrapper.c
         ${MICRO_DIR}/coder/opcoders/file_collector.cc
+        ${MICRO_DIR}/coder/opcoders/parallel.cc
         ${MICRO_DIR}/coder/opcoders/op_coder.cc
         ${MICRO_DIR}/coder/opcoders/op_coder_builder.cc
         ${MICRO_DIR}/coder/opcoders/op_coder_register.cc
@@ -60,7 +65,10 @@ set(CODER_OPCODERS_SRC
         ${MICRO_DIR}/coder/opcoders/base/reshape_base_coder.cc
         ${MICRO_DIR}/coder/opcoders/base/softmax_base_coder.cc
         ${MICRO_DIR}/coder/opcoders/base/detection_post_process_base_coder.cc
+        ${MICRO_DIR}/coder/opcoders/base/stack_base_coder.cc
+        ${MICRO_DIR}/coder/opcoders/base/unstack_base_coder.cc
         ${MICRO_DIR}/coder/opcoders/base/strided_slice_base_coder.cc
+        ${MICRO_DIR}/coder/opcoders/base/reshape_dynamic_base_coder.cc
         #### cmsis int8 coder
         ${MICRO_DIR}/coder/opcoders/cmsis-nn/int8/add_int8_coder.cc
         ${MICRO_DIR}/coder/opcoders/cmsis-nn/int8/conv2d_base_coder.cc
@@ -71,6 +79,36 @@ set(CODER_OPCODERS_SRC
         ${MICRO_DIR}/coder/opcoders/cmsis-nn/int8/pooling_int8_coder.cc
         ${MICRO_DIR}/coder/opcoders/cmsis-nn/int8/reshape_int8_coder.cc
         ${MICRO_DIR}/coder/opcoders/cmsis-nn/int8/softmax_int8_coder.cc
+        #### nnacl fp16 coder
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/activation_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/arithmetic_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/pooling_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/concat_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/custom_gru_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/deconv2d_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/resize_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/transpose_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/layernorm_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/reduce_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/resize_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/matmul_fp16_base_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/matmul_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/conv2d_delegate_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/conv_depthwise_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/convolution_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/convolution_winograd_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/convolution_1x1_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/conv_depthwise_3x3_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/conv_depthwise_sw_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/lstm_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/arithmetic_self_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/softmax_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/slice_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/scale_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/activation_dynamic_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/matmul_dynamic_fp16_base_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/matmul_dynamic_fp16_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp16/transpose_dynamic_fp16_coder.cc
         #### nnacl fp32 coder
         ${MICRO_DIR}/coder/opcoders/nnacl/fp32/activation_fp32_coder.cc
         ${MICRO_DIR}/coder/opcoders/nnacl/fp32/addn_fp32_coder.cc
@@ -87,6 +125,7 @@ set(CODER_OPCODERS_SRC
         ${MICRO_DIR}/coder/opcoders/nnacl/fp32/convolution_fp32_coder.cc
         ${MICRO_DIR}/coder/opcoders/nnacl/fp32/convolution_winograd_fp32_coder.cc
         ${MICRO_DIR}/coder/opcoders/nnacl/fp32/convolution_depthwise_fp32_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp32/custom_gru_fp32_coder.cc
         ${MICRO_DIR}/coder/opcoders/nnacl/fp32/full_connection_fp32_coder.cc
         ${MICRO_DIR}/coder/opcoders/nnacl/fp32/gather_fp32_coder.cc
         ${MICRO_DIR}/coder/opcoders/nnacl/fp32/groupnorm_fp32_coder.cc
@@ -107,6 +146,12 @@ set(CODER_OPCODERS_SRC
         ${MICRO_DIR}/coder/opcoders/nnacl/fp32/exp_fp32_coder.cc
         ${MICRO_DIR}/coder/opcoders/nnacl/fp32/deconv2d_fp32_coder.cc
         ${MICRO_DIR}/coder/opcoders/nnacl/fp32/prelu_fp32_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp32/layernorm_fp32_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp32/ones_like_fp32_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp32/fill_fp32_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp32/slice_fp32_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp32/gather_dynamic_fp32_coder.cc
+        ${MICRO_DIR}/coder/opcoders/nnacl/fp32/transpose_dynamic_fp32_coder.cc
         #### nnacl fp32_grad coder
         ${MICRO_DIR}/coder/opcoders/nnacl/fp32_grad/activation_grad_coder.cc
         ${MICRO_DIR}/coder/opcoders/nnacl/fp32_grad/adam_coder.cc

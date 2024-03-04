@@ -15,9 +15,29 @@
  */
 
 #include "ops/apply_rms_prop.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include <map>
+#include <set>
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -29,7 +49,8 @@ class ApplyRMSPropInfer : public abstract::OpInferBase {
     MS_EXCEPTION_IF_NULL(primitive);
     auto op_name = primitive->name();
     MS_LOG(INFO) << "For '" << op_name << "', it's now doing infer shape.";
-    const int64_t kInputNum = 8;
+    const int64_t kInputNum = 5;
+    const int64_t kInputNumNormal = 8;
     CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterEqual, kInputNum, op_name);
     auto var_shape = input_args[0]->BuildShape();
     auto ms_shape = input_args[1]->BuildShape();
@@ -67,9 +88,14 @@ class ApplyRMSPropInfer : public abstract::OpInferBase {
                                << "', 'grad' must have the same shape as 'var'. But got 'grad' shape: "
                                << grad_shape->ToString() << ", 'var' shape: " << var_shape->ToString() << ".";
     }
-    auto shape_element = var_shape->cast<abstract::ShapePtr>();
-    MS_EXCEPTION_IF_NULL(shape_element);
-    return shape_element;
+    if (input_args.size() >= kInputNumNormal) {
+      auto shape_element = var_shape->cast<abstract::ShapePtr>();
+      MS_EXCEPTION_IF_NULL(shape_element);
+      return shape_element;
+    } else {
+      return std::make_shared<abstract::TupleShape>(
+        std::vector<abstract::BaseShapePtr>{var_shape, ms_shape, mom_shape});
+    }
   }
 
   TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {

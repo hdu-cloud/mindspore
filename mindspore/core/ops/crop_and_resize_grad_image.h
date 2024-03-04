@@ -17,14 +17,14 @@
 #ifndef MINDSPORE_CORE_OPS_CROP_AND_RESIZE_GRAD_IMAGE_H_
 #define MINDSPORE_CORE_OPS_CROP_AND_RESIZE_GRAD_IMAGE_H_
 
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "ops/primitive_c.h"
-#include "ops/base_operator.h"
 #include "abstract/abstract_value.h"
-#include "utils/check_convert_utils.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -49,9 +49,9 @@ class MIND_API CropAndResizeGradImage : public BaseOperator {
   /// \brief Get method.
   ResizeMethod get_method() const;
 };
-abstract::AbstractBasePtr CropAndResizeGradImageInfer(const abstract::AnalysisEnginePtr &,
-                                                      const PrimitivePtr &primitive,
-                                                      const std::vector<AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr CropAndResizeGradImageInfer(const abstract::AnalysisEnginePtr &,
+                                                               const PrimitivePtr &primitive,
+                                                               const std::vector<AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

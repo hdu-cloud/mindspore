@@ -75,7 +75,6 @@ class Strategy {
   std::vector<StrategyPtr> GetInternalStrategies() const { return internal_stragies_; }
   size_t GetInternalSize() const { return internal_size_; }
 
-  // TODO(Xiaoda): need fix for adapting 'CoverStrategy'
   bool IsEqual(const StrategyPtr &another_stra) {
     if (another_stra == nullptr) {
       return false;
@@ -109,6 +108,24 @@ class Strategy {
   void CoverStrategy(const StrategyPtr &another_stra) {
     internal_stragies_.push_back(another_stra);
     internal_size_++;
+  }
+
+  std::string ToString() const {
+    std::ostringstream oss;
+    for (size_t i = 0; i < this->GetInputNumber(); ++i) {
+      oss << "[";
+      for (size_t j = 0; j < this->GetInputDim()[i].size(); ++j) {
+        oss << std::to_string(this->GetInputDim()[i][j]);
+        if (j != this->GetInputDim()[i].size() - 1) {
+          oss << ", ";
+        }
+      }
+      oss << "]";
+      if (i != this->GetInputNumber() - 1) {
+        oss << ", ";
+      }
+    }
+    return oss.str();
   }
 
  private:

@@ -95,6 +95,7 @@ constexpr char kEnWik9Node[] = "EnWik9Dataset";
 constexpr char kFakeImageNode[] = "FakeImageDataset";
 constexpr char kFashionMnistNode[] = "FashionMnistDataset";
 constexpr char kFlickrNode[] = "FlickrDataset";
+constexpr char kFood101Node[] = "Food101Dataset";
 constexpr char kGeneratorNode[] = "GeneratorDataset";
 constexpr char kGTZANNode[] = "GTZANDataset";
 constexpr char kImageFolderNode[] = "ImageFolderDataset";
@@ -117,12 +118,15 @@ constexpr char kPhotoTourNode[] = "PhotoTourDataset";
 constexpr char kPlaces365Node[] = "Places365Dataset";
 constexpr char kQMnistNode[] = "QMnistDataset";
 constexpr char kRandomNode[] = "RandomDataset";
+constexpr char kRenderedSST2Node[] = "RenderedSST2Dataset";
 constexpr char kSBUNode[] = "SBUDataset";
 constexpr char kSemeionNode[] = "SemeionDataset";
 constexpr char kSogouNewsNode[] = "SogouNewsDataset";
 constexpr char kSpeechCommandsNode[] = "SpeechCommandsDataset";
 constexpr char kSQuADNode[] = "SQuADDataset";
+constexpr char kSST2Node[] = "SST2Dataset";
 constexpr char kSTL10Node[] = "STL10Dataset";
+constexpr char kSUN397Node[] = "SUN397Dataset";
 constexpr char kTedliumNode[] = "TedliumDataset";
 constexpr char kTextFileNode[] = "TextFileDataset";
 constexpr char kTFRecordNode[] = "TFRecordDataset";
@@ -136,7 +140,7 @@ constexpr char kYelpReviewNode[] = "YelpReviewDataset";
 constexpr char kYesNoNode[] = "YesNoDataset";
 
 Status AddShuffleOp(int64_t num_files, int64_t num_devices, int64_t num_rows, int64_t total_rows,
-                    int32_t connector_que_size, std::shared_ptr<DatasetOp> *shuffle_op);
+                    int32_t connector_que_size, std::shared_ptr<ShuffleOp> *shuffle_op);
 
 // Helper function to validate dataset files parameter
 Status ValidateDatasetFilesParam(const std::string &dataset_name, const std::vector<std::string> &dataset_files,
@@ -322,6 +326,10 @@ class DatasetNode : public std::enable_shared_from_this<DatasetNode> {
   /// \return Shared pointer to the original object
   std::shared_ptr<DatasetNode> SetDatasetCache(const std::shared_ptr<DatasetCache> &cache);
 
+  /// \brief Setter function for descendant_of_cache_
+  /// \param[in] descendant_of_cache Indicator for whether this node is a descendant of cache.
+  void setDescendantOfCache(bool descendant_of_cache) { descendant_of_cache_ = descendant_of_cache; }
+
   /// \brief A helper templated function for casting "this" pointer to shared_ptr<derived>
   ///     Similar to shared_from_this, except this one will give you the derived class as shared_ptr
   /// \return A shared_ptr casted to the derived class
@@ -454,6 +462,11 @@ class NonMappableSourceNode : public DatasetNode {
   ///     defaults so that this source node will produce the full set of data into the cache.
   /// \return Status of the function
   virtual Status MakeSimpleProducer() = 0;
+
+  void SetSkipSteps(int64_t skip_steps) { skip_steps_ = skip_steps; }
+
+ protected:
+  int64_t skip_steps_ = 0;
 };
 }  // namespace dataset
 }  // namespace mindspore

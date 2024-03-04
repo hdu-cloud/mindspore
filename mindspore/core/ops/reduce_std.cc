@@ -15,13 +15,27 @@
  */
 
 #include "ops/reduce_std.h"
+
+#include <memory>
 #include <set>
 
-#include "ops/op_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/utils.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -30,6 +44,10 @@ abstract::TupleShapePtr ReduceStdInferShape(const PrimitivePtr &primitive,
                                             const std::vector<AbstractBasePtr> &input_args) {
   auto prim_name = primitive->name();
   auto input_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
+  if (IsDynamicRank(input_shape)) {
+    auto x = std::make_shared<abstract::Shape>(std::vector<int64_t>{abstract::Shape::kShapeRankAny});
+    return std::make_shared<abstract::TupleShape>(std::vector<abstract::BaseShapePtr>{x, x});
+  }
   auto input_rank = SizeToLong(input_shape.size());
   (void)CheckAndConvertUtils::CheckInteger("input_rank", input_rank, kGreaterEqual, 1, prim_name);
   auto axis = GetValue<std::vector<int64_t>>(primitive->GetAttr("axis"));
@@ -115,6 +133,24 @@ AbstractBasePtr ReduceStdInfer(const abstract::AnalysisEnginePtr &, const Primit
   auto infer_shape = ReduceStdInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(ReduceStd, prim::kPrimReduceStd, ReduceStdInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGReduceStdInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ReduceStdInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ReduceStdInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ReduceStdInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ReduceStd, prim::kPrimReduceStd, AGReduceStdInfer, false);
 }  // namespace ops
 }  // namespace mindspore

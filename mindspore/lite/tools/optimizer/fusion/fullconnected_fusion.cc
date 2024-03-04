@@ -18,6 +18,7 @@
 #include "tools/optimizer/fusion/fullconnected_fusion.h"
 #include <memory>
 #include <vector>
+#include "mindspore/core/ops/nn_ops.h"
 #include "tools/common/tensor_util.h"
 #include "ops/fusion/full_connection.h"
 #include "tools/optimizer/common/gllo_utils.h"
@@ -154,6 +155,8 @@ int CalNewCnodeBias(const FuncGraphPtr &func_graph, const CNodePtr &curr_cnode, 
       MS_LOG(ERROR) << "weight with bias shape of fullconnected node don't match.";
       return RET_ERROR;
     }
+    auto parameter_node = curr_bias_node->cast<ParameterPtr>();
+    parameter_node->set_name(curr_bias_node->fullname_with_scope() + "_fusion");
   } else {
     auto new_bias_node = func_graph->add_parameter();
     std::vector<int64_t> shape_vector(curr_weight_shape[0]);
@@ -173,8 +176,6 @@ int CalNewCnodeBias(const FuncGraphPtr &func_graph, const CNodePtr &curr_cnode, 
   int row = prev_bias_shape.size() == 1 ? 1 : prev_bias_shape[0];
   Segmm<float>(true, prev_bias_data, curr_weight_data, curr_bias_data, curr_bias_data, row, curr_weight_shape[0],
                curr_weight_shape[1]);
-  auto parameter_node = curr_bias_node->cast<ParameterPtr>();
-  parameter_node->set_name(curr_bias_node->fullname_with_scope() + "_fusion");
   return RET_OK;
 }
 

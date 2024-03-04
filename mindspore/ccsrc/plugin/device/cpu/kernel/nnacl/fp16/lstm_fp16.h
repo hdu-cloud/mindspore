@@ -14,20 +14,24 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_FP16_LSTM_H_
-#define MINDSPORE_NNACL_FP16_LSTM_H_
+#ifndef NNACL_FP16_LSTM_FP16_H_
+#define NNACL_FP16_LSTM_FP16_H_
 
 #include "nnacl/lstm_parameter.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
-void PackLstmWeightFp32ToFp16(float16_t *dst, const float *src, int batch, int deep, int col, int col_align);
+void PackLstmWeightFp32ToFp16(float16_t *dst, const float *src, int batch, int deep, int col, int col_align,
+                              const int32_t *order);
 
-void PackLstmWeightFp16(float16_t *dst, const float16_t *src, int batch, int deep, int col, int col_align);
+void PackLstmWeightFp16(float16_t *dst, const float16_t *src, int batch, int deep, int col, int col_align,
+                        const int32_t *order);
 
-void PackLstmBiasFp32ToFp16(float16_t *dst, const float *src, int batch, int col, int col_align, bool is_bidirectional);
+void PackLstmBiasFp32ToFp16(float16_t *dst, const float *src, int batch, int col, int col_align, bool is_bidirectional,
+                            const int32_t *order);
 
-void PackLstmBiasFp16(float16_t *dst, const float16_t *src, int batch, int col, int col_align, bool is_bidirectional);
+void PackLstmBiasFp16(float16_t *dst, const float16_t *src, int batch, int col, int col_align, bool is_bidirectional,
+                      const int32_t *order);
 
 void LstmMatMulFp16(float16_t *c, const float16_t *a, const float16_t *b, const float16_t *bias, int row, int deep,
                     int col, bool is_vec);
@@ -40,10 +44,11 @@ void ElementMulAccFp16(const float16_t *input0, const float16_t *input1, float16
 int ElementOptMulAccFp16(const float16_t *input0, const float16_t input1, float16_t *output, const int element_size);
 
 void LstmFp16(float16_t *output, const float16_t *input, const float16_t *weight_i, const float16_t *weight_h,
-              const float16_t *input_bias, const float16_t *state_bias, float16_t *hidden_state, float16_t *cell_state,
-              float16_t *buffer[6], const LstmParameter *lstm_param);
+              const float16_t *input_bias, const float16_t *state_bias, const float16_t *weight_project,
+              const float16_t *project_bias, float16_t *hidden_state, float16_t *cell_state, float16_t *buffer[C7NUM],
+              const LstmParameter *lstm_param);
 #ifdef __cplusplus
 }
 #endif
 
-#endif  // MINDSPORE_NNACL_FP16_LSTM_H_
+#endif  //  NNACL_FP16_LSTM_FP16_H_

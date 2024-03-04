@@ -14,22 +14,14 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_SOFTMAX_PARAMETER_H_
-#define MINDSPORE_NNACL_SOFTMAX_PARAMETER_H_
+#ifndef NNACL_SOFTMAX_PARAMETER_H_
+#define NNACL_SOFTMAX_PARAMETER_H_
 
 #include "nnacl/op_base.h"
 
 typedef struct SoftmaxParameter {
-  // primitive parameter
   OpParameter op_parameter_;
   int32_t axis_;
-
-  // shape correlative
-  int input_shape_[DIMENSION_5D];
-
-  // other parameter
-  int element_size_;
-  int n_dim_;
 } SoftmaxParameter;
 
-#endif  // MINDSPORE_NNACL_SOFTMAX_PARAMETER_H_
+#endif  // NNACL_SOFTMAX_PARAMETER_H_

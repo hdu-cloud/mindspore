@@ -13,8 +13,10 @@
 # limitations under the License.
 # ============================================================================
 """ test_dict_get """
+import math
 from mindspore import Tensor, jit, context, mutable
 from mindspore.ops.primitive import constexpr
+from mindspore.ops.primitive import _primexpr
 
 context.set_context(mode=context.GRAPH_MODE)
 
@@ -105,3 +107,84 @@ def test_constexpr_input_with_mutable_list():
 
     out = foo(Tensor([1]))
     assert out == 3
+
+
+@_primexpr
+def count_none_2(arg):
+    if arg is None:
+        raise ValueError("The arg is None")
+    a = 0
+    if not isinstance(a, (list, tuple)):
+        if a is None:
+            return 1
+        return 0
+    for e in arg:
+        if e is None:
+            a += 1
+    return a
+
+
+def test__primexpr_with_mutable_list():
+    """
+    Feature: constexpr with mutable list.
+    Description: If mutable list is used as constexpr input, all elements will be converted to None.
+    Expectation: No exception.
+    """
+    @jit
+    def foo(x):
+        arg = mutable([Tensor([1]), Tensor([2]), x])
+        return count_none_2(arg)
+
+    out = foo(Tensor([1]))
+    assert out == 0
+
+
+def test__primexpr_with_mutable_scalar():
+    """
+    Feature: constexpr with mutable list.
+    Description: If mutable list is used as constexpr input, all elements will be converted to None.
+    Expectation: No exception.
+    """
+    @jit
+    def foo():
+        arg = mutable(2)
+        return count_none_2(arg)
+
+    out = foo()
+    assert out == 0
+
+
+def test_constexpr_with_float_input():
+    """
+    Feature: constexpr with float input.
+    Description: Ensure constexpr with float input has correct value.
+    Expectation: No exception.
+    """
+    @constexpr
+    def calculate_floor(x, y):
+        return math.floor(x * y)
+
+    @jit
+    def foo():
+        return calculate_floor(0.9, 20)
+
+    out = foo()
+    assert out == 18
+
+
+def test_constexpr_with_float_input_2():
+    """
+    Feature: constexpr with float input.
+    Description: Ensure constexpr with float input has correct value.
+    Expectation: No exception.
+    """
+    @constexpr
+    def calculate_floor(x, y):
+        return math.floor(x * y)
+
+    @jit
+    def foo(a, b):
+        return calculate_floor(a, b)
+
+    out = foo(0.9, 20)
+    assert out == 18

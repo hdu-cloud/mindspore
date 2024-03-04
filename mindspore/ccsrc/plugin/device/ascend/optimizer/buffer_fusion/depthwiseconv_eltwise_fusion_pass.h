@@ -17,15 +17,14 @@
 #define MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_BUFFER_FUSION_PASS_DEPTHWISECONV_ELTWISE_FUSION_PASS_H_
 
 #include <utility>
-
 #include "utils/hash_set.h"
 #include "plugin/device/ascend/optimizer/buffer_fusion/fusion_base_pass.h"
 #include "ir/anf.h"
-#include "backend/common/optimizer/pass.h"
-#include "backend/common/optimizer/fusion_id_allocator.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/optimizer/pass.h"
+#include "plugin/device/ascend/optimizer/fusion_id_allocator.h"
+#include "include/backend/kernel_info.h"
 #include "kernel/kernel.h"
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 
 namespace mindspore {
 namespace opt {

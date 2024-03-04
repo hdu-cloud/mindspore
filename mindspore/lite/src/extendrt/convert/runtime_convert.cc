@@ -17,178 +17,148 @@
 #include <map>
 #include <string>
 #include "src/extendrt/convert/runtime_convert.h"
-#include "src/common/config_infos.h"
 #include "tools/common/string_util.h"
-#include "tools/converter/converter.h"
+#include "tools/converter/converter_funcgraph.h"
 #include "tools/converter/cxx_api/converter_para.h"
+#include "tools/converter/config_parser/config_file_parser.h"
 
-const int kBatchDim = 0;
-const int kDynImgSize = 0;
-const int kDynBatchSize = 1;
-int CheckBatchStringSupport(const std::vector<std::string> &batch_str_vec) {
-  if (batch_str_vec.empty()) {
-    return -1;
-  }
-  std::string only_batch = batch_str_vec[0];
-  for (size_t i = 1; i < batch_str_vec.size(); ++i) {
-    if (batch_str_vec[i] != only_batch) {
-      return -1;
+static int ParseShapeStrToShapeMap(const std::string &input_shape_str,
+                                   std::vector<std::vector<int64_t>> *input_shapes) {
+  std::vector<int64_t> shape;
+  auto shape_strs = mindspore::lite::StrSplit(input_shape_str, std::string(";"));
+  for (const auto &shape_str : shape_strs) {
+    if (shape_str.empty()) {
+      continue;
     }
+    shape.clear();
+    auto string_split = mindspore::lite::StrSplit(shape_str, std::string(":"));
+    constexpr int kMinShapeSizeInStr = 2;
+    if (string_split.size() < kMinShapeSizeInStr) {
+      MS_LOG(ERROR) << "shape size must not be less than " << kMinShapeSizeInStr;
+      return mindspore::lite::RET_INPUT_PARAM_INVALID;
+    }
+    auto name = string_split[0];
+    for (size_t i = 1; i < string_split.size() - 1; ++i) {
+      name += ":" + string_split[i];
+    }
+    if (name.empty()) {
+      MS_LOG(ERROR) << "input tensor name is empty";
+      return mindspore::lite::RET_INPUT_PARAM_INVALID;
+    }
+    auto dim_strs = string_split[string_split.size() - 1];
+    if (dim_strs.empty()) {
+      MS_LOG(ERROR) << "input tensor dim string is empty";
+      return mindspore::lite::RET_INPUT_PARAM_INVALID;
+    }
+    auto dims = mindspore::lite::StrSplit(dim_strs, std::string(","));
+    if (dims.empty()) {
+      MS_LOG(ERROR) << "input tensor dim is empty";
+      return mindspore::lite::RET_INPUT_PARAM_INVALID;
+    }
+    for (const auto &dim : dims) {
+      int64_t dim_value;
+      try {
+        dim_value = std::stoi(dim);
+      } catch (const std::exception &e) {
+        MS_LOG(ERROR) << "Get dim failed: " << e.what();
+        return mindspore::lite::RET_INPUT_PARAM_INVALID;
+      }
+      shape.push_back(dim_value);
+    }
+    input_shapes->push_back(shape);
   }
-  return 0;
+  return RET_OK;
 }
 
-const size_t kIndex0 = 0;
-const size_t kIndex1 = 1;
-const size_t kIndex2 = 2;
-const size_t kIndex3 = 3;
-const int64_t kdynDim = -1;
-int DynBatchOrDynImage(const ShapeVector &shape) {
-  if (shape.size() != 4) {
-    MS_LOG(ERROR) << "Do not support input shape which is not equal to 4 (N C H W)";
-    return -1;
+static int UpdateDynamicInputShape(mindspore::FuncGraphPtr func_graph, const std::string &input_shape_str) {
+  if (func_graph == nullptr) {
+    MS_LOG(ERROR) << "funcGraph is nullptr";
+    return RET_ERROR;
   }
-  if (shape[kIndex0] != -1 && ((shape[kIndex1] == kdynDim && shape[kIndex2] == kdynDim && shape[kIndex3] != kdynDim) ||
-                               (shape[kIndex1] == kdynDim && shape[kIndex2] != kdynDim && shape[kIndex3] == kdynDim) ||
-                               (shape[kIndex1] != kdynDim && shape[kIndex2] == kdynDim && shape[kIndex3] == kdynDim))) {
-    return kDynImgSize;
+  std::vector<std::vector<int64_t>> input_shapes;
+  auto ret = ParseShapeStrToShapeMap(input_shape_str, &input_shapes);
+  if (ret != RET_OK) {
+    MS_LOG(ERROR) << "parse shape string to shape map error";
+    return RET_ERROR;
   }
-  if (shape[kIndex0] == kdynDim && shape[kIndex1] != kdynDim && shape[kIndex2] != kdynDim &&
-      shape[kIndex3] != kdynDim) {
-    return kDynBatchSize;
+
+  if (input_shapes.size() != func_graph->get_inputs().size()) {
+    MS_LOG(ERROR) << "Number of inputs from the config [" << input_shapes.size() << "] does not match graph inputs ["
+                  << func_graph->get_inputs().size() << "]";
+    return RET_ERROR;
   }
-  return -1;
+
+  size_t input_index = 0;
+  for (auto shape_vec : input_shapes) {
+    auto shape_ptr = std::make_shared<mindspore::abstract::Shape>(shape_vec);
+    func_graph->get_inputs()[input_index]->abstract()->set_shape(shape_ptr);
+    input_index++;
+  }
+
+  return RET_OK;
 }
 
-std::string CombineDynImgString(const struct mindspore::ProfileConfigs &profile) {
-  ShapeVector shape = profile.input_infos[kIndex0].input_shape;
-  std::string ret = "";
-  size_t first_dim = kIndex0, second_dim = kIndex0;
-  if (shape[kIndex1] == kdynDim && shape[kIndex2] == kdynDim) {
-    first_dim = kIndex1;
-    second_dim = kIndex2;
-  } else if (shape[kIndex1] == kdynDim && shape[kIndex3] == kdynDim) {
-    first_dim = kIndex1;
-    second_dim = kIndex3;
-  } else if (shape[kIndex2] == kdynDim && shape[kIndex3] == kdynDim) {
-    first_dim = kIndex2;
-    second_dim = kIndex3;
-  }
-  for (size_t dim_idx = 0; dim_idx < profile.profiles.size(); ++dim_idx) {
-    int64_t min_first = profile.profiles[dim_idx].inputs[kIndex0].min_dims[first_dim];
-    int64_t max_first = profile.profiles[dim_idx].inputs[kIndex0].max_dims[first_dim];
-    int64_t min_second = profile.profiles[dim_idx].inputs[kIndex0].min_dims[second_dim];
-    int64_t max_second = profile.profiles[dim_idx].inputs[kIndex0].max_dims[second_dim];
-    for (int64_t i = min_first; i <= max_first; ++i) {
-      for (int64_t j = min_second; j <= max_second; ++j) {
-        ret += std::to_string(i) + "," + std::to_string(j) + ";";
+void SetParamByAscendInfo(const std::shared_ptr<mindspore::ConverterPara> &param,
+                          const std::shared_ptr<mindspore::AscendDeviceInfo> &ascend_info) {
+  std::string dynamic_batch_size = ascend_info->GetDynamicBatchSize();
+  if (!dynamic_batch_size.empty()) {
+    std::vector<std::string> batch_size_string = mindspore::lite::SplitStringToVector(dynamic_batch_size, ',');
+    for (const auto &item : batch_size_string) {
+      int32_t val;
+      if (mindspore::lite::ConvertIntNum(item, &val)) {
+        size_t tmp_val = static_cast<size_t>(val);
+        param->aclModelOptionCfgParam.dynamic_batch_size.push_back(tmp_val);
       }
     }
   }
-  ret = ret.substr(0, ret.size() - 1);  // discard the final ";"
-  return ret;
-}
-
-std::string RemoveInputShapeBrackets(const std::string &input_shape_str) {
-  std::string ret = "";
-  for (size_t i = 0; i < input_shape_str.size(); ++i) {
-    if (input_shape_str[i] == '[' || input_shape_str[i] == ']') {
-      continue;
-    }
-    ret += input_shape_str[i];
+  if (ascend_info->GetDeviceID() >= 0) {
+    param->aclModelOptionCfgParam.device_id = ascend_info->GetDeviceID();
   }
-  return ret;
-}
-
-std::string FindInAscendMap(const std::string &key, const std::map<string, string> &ascend_map) {
-  auto it = ascend_map.find(key);
-  if (it != ascend_map.end()) {
-    return it->second;
+  if (ascend_info->GetOutputType() != mindspore::DataType::kTypeUnknown) {
+    param->aclModelOptionCfgParam.output_type = ascend_info->GetOutputType();
   }
-  return "";
-}
-
-void SetParamByConfigfile(const std::shared_ptr<mindspore::ConverterPara> &param,
-                          const std::map<string, string> &ascend_map) {
-  param->aclModelOptionCfgParam.input_format = FindInAscendMap("input_format", ascend_map);
-  param->aclModelOptionCfgParam.precision_mode = FindInAscendMap("precision_mode", ascend_map);
-  param->aclModelOptionCfgParam.op_select_impl_mode = FindInAscendMap("op_select_impl_mode", ascend_map);
-  param->aclModelOptionCfgParam.fusion_switch_config_file_path =
-    FindInAscendMap("fusion_switch_config_file_path", ascend_map);
-  param->aclModelOptionCfgParam.buffer_optimize = FindInAscendMap("buffer_optimize", ascend_map);
-  param->aclModelOptionCfgParam.insert_op_config_file_path = FindInAscendMap("insert_op_config_file_path", ascend_map);
-  param->aclModelOptionCfgParam.om_file_path = FindInAscendMap("om_file_path", ascend_map);
-
-  auto it = ascend_map.find("input_shape");
-  if (it != ascend_map.end()) {
-    param->aclModelOptionCfgParam.input_shape = RemoveInputShapeBrackets(it->second);
+  if (!ascend_info->GetInputShapeMap().empty()) {
+    param->aclModelOptionCfgParam.input_shape_map = ascend_info->GetInputShapeMap();
   }
-
-  it = ascend_map.find("device_id");
-  if (it != ascend_map.end()) {
-    int32_t val;
-    if (mindspore::lite::ConvertIntNum(it->second, &val)) {
-      param->aclModelOptionCfgParam.device_id = val;
-    } else {
-      MS_LOG(ERROR) << "Convert device id failed";
-    }
+  if (!ascend_info->GetInputFormat().empty()) {
+    param->aclModelOptionCfgParam.input_format = ascend_info->GetInputFormat();
   }
-
-  it = ascend_map.find("output_type");
-  if (it != ascend_map.end()) {
-    int32_t val;
-    if (mindspore::lite::ConvertIntNum(it->second, &val)) {
-      param->aclModelOptionCfgParam.output_type = static_cast<mindspore::DataType>(val);
-    } else {
-      MS_LOG(ERROR) << "Convert output_type failed";
-    }
+  if (!ascend_info->GetInputShape().empty()) {
+    param->aclModelOptionCfgParam.input_shape = ascend_info->GetInputShape();
   }
-
-  it = ascend_map.find("dynamic_dims");
-  if (it != ascend_map.end()) {
-    std::vector<std::string> batch_size_string = mindspore::lite::SplitStringToVector(it->second, ';');
-    if (CheckBatchStringSupport(batch_size_string) != 0) {
-      MS_LOG(ERROR) << "Do not support different dynamic_dims!";
-      return;
-    }
-    struct mindspore::ProfileConfigs tmp_profile;
-    if (!mindspore::ProfileParser::Parse(ascend_map, false, &tmp_profile)) {
-      MS_LOG(ERROR) << "Parse dynamic_dims failed";
-    }
-    ShapeVector input_shape_vec = tmp_profile.input_infos[0].input_shape;
-    switch (DynBatchOrDynImage(input_shape_vec)) {
-      case kDynImgSize:
-        param->aclModelOptionCfgParam.dynamic_image_size = CombineDynImgString(tmp_profile);
-        break;
-      case kDynBatchSize:
-        for (size_t i = 0; i < tmp_profile.profiles.size(); ++i) {  // dynamic batch size
-          int64_t min_batch = tmp_profile.profiles[i].inputs[0].min_dims[kBatchDim];
-          int64_t max_batch = tmp_profile.profiles[i].inputs[0].max_dims[kBatchDim];
-          for (int64_t batch = min_batch; batch <= max_batch; ++batch) {
-            param->aclModelOptionCfgParam.dynamic_batch_size.push_back(batch);
-          }
-        }
-        break;
-      default:
-        MS_LOG(ERROR) << "Do not support input shape which is not equal to 4 (N C H W)";
-    }
+  if (!ascend_info->GetPrecisionMode().empty()) {
+    param->aclModelOptionCfgParam.precision_mode = ascend_info->GetPrecisionMode();
+  }
+  if (!ascend_info->GetOpSelectImplMode().empty()) {
+    param->aclModelOptionCfgParam.op_select_impl_mode = ascend_info->GetOpSelectImplMode();
+  }
+  if (!ascend_info->GetFusionSwitchConfigPath().empty()) {
+    param->aclModelOptionCfgParam.fusion_switch_config_file_path = ascend_info->GetFusionSwitchConfigPath();
+  }
+  if (!ascend_info->GetBufferOptimizeMode().empty()) {
+    param->aclModelOptionCfgParam.buffer_optimize = ascend_info->GetBufferOptimizeMode();
+  }
+  if (!ascend_info->GetInsertOpConfigPath().empty()) {
+    param->aclModelOptionCfgParam.insert_op_config_file_path = ascend_info->GetInsertOpConfigPath();
+  }
+  if (!ascend_info->GetDynamicImageSize().empty()) {
+    param->aclModelOptionCfgParam.dynamic_image_size = ascend_info->GetDynamicImageSize();
   }
 }
 
-mindspore::api::FuncGraphPtr RuntimeConvert(const char *model_buf, const size_t &buf_size,
-                                            const std::shared_ptr<mindspore::Context> &context,
-                                            const ConfigInfos &config_info) {
+int RuntimeConvert(const mindspore::api::FuncGraphPtr &graph, const std::shared_ptr<mindspore::Context> &context,
+                   const mindspore::ConfigInfos &config_info) {
   auto param = std::make_shared<mindspore::ConverterPara>();
   if (param == nullptr) {
     MS_LOG(ERROR) << "New ConverterPara failed";
-    return nullptr;
+    return RET_ERROR;
   }
   param->fmk_type = mindspore::converter::kFmkTypeMs;
   param->input_data_type = mindspore::DataType::kTypeUnknown;
   param->output_data_type = mindspore::DataType::kTypeUnknown;
   param->weight_fp16 = false;
   param->train_model = false;
-  param->export_mindir = mindspore::kMindIR;
+  param->save_type = mindspore::kMindIR;
   param->enable_encryption = false;
   param->is_runtime_converter = true;
 
@@ -196,47 +166,53 @@ mindspore::api::FuncGraphPtr RuntimeConvert(const char *model_buf, const size_t 
   for (auto &device : device_list) {
     if (device->GetDeviceType() == mindspore::kAscend) {
       param->aclModelOptionCfgParam.offline = false;
-      param->device = "Ascend";
+      param->device = "Ascend310";
       param->no_fusion = false;
       if (config_info.find("ascend_context") != config_info.end()) {
         std::map<std::string, std::string> ascend_map = config_info.at("ascend_context");
-        SetParamByConfigfile(param, ascend_map);
-      } else {
-        auto ascend_info = device->Cast<mindspore::AscendDeviceInfo>();
-        std::string dynamic_batch_size = ascend_info->GetDynamicBatchSize();
-        if (!dynamic_batch_size.empty()) {
-          std::vector<std::string> batch_size_string = mindspore::lite::SplitStringToVector(dynamic_batch_size, ',');
-          for (const auto &item : batch_size_string) {
-            int32_t val;
-            if (mindspore::lite::ConvertIntNum(item, &val)) {
-              size_t tmp_val = static_cast<size_t>(val);
-              param->aclModelOptionCfgParam.dynamic_batch_size.push_back(tmp_val);
-            }
-          }
+        mindspore::lite::ConfigFileParser config_parser;
+        if (!config_parser.SetParamByConfigfile(param, ascend_map)) {
+          MS_LOG(ERROR) << "Failed to parse config item ascend_context";
+          return RET_ERROR;
         }
-        param->aclModelOptionCfgParam.device_id = ascend_info->GetDeviceID();
-        param->aclModelOptionCfgParam.output_type = ascend_info->GetOutputType();
-        param->aclModelOptionCfgParam.input_shape_map = ascend_info->GetInputShapeMap();
-        param->aclModelOptionCfgParam.input_format = ascend_info->GetInputFormat();
-        param->aclModelOptionCfgParam.input_shape = ascend_info->GetInputShape();
-        param->aclModelOptionCfgParam.precision_mode = ascend_info->GetPrecisionMode();
-        param->aclModelOptionCfgParam.op_select_impl_mode = ascend_info->GetOpSelectImplMode();
-        param->aclModelOptionCfgParam.fusion_switch_config_file_path = ascend_info->GetFusionSwitchConfigPath();
-        param->aclModelOptionCfgParam.buffer_optimize = ascend_info->GetBufferOptimizeMode();
-        param->aclModelOptionCfgParam.insert_op_config_file_path = ascend_info->GetInsertOpConfigPath();
-        param->aclModelOptionCfgParam.dynamic_image_size = ascend_info->GetDynamicImageSize();
       }
+      if (device->GetProvider() == mindspore::lite::kAscendProviderGe) {
+        param->provider = mindspore::lite::kAscendProviderGe;
+        continue;
+      }
+
+      auto ascend_info = device->Cast<mindspore::AscendDeviceInfo>();
+      SetParamByAscendInfo(param, ascend_info);
+
+      if (!((param->aclModelOptionCfgParam.input_shape).empty())) {
+        auto ret = UpdateDynamicInputShape(std::dynamic_pointer_cast<mindspore::FuncGraph>(graph->impl()),
+                                           param->aclModelOptionCfgParam.input_shape);
+        if (ret != RET_OK) {
+          MS_LOG(ERROR) << "Runtime convert update dynamic input shape failed";
+          return ret;
+        }
+      } else if (!param->aclModelOptionCfgParam.build_options_map.empty() &&
+                 param->aclModelOptionCfgParam.build_options_map.find("input_shape") !=
+                   param->aclModelOptionCfgParam.build_options_map.end()) {
+        auto shape_str = param->aclModelOptionCfgParam.build_options_map.at("input_shape");
+        auto ret = UpdateDynamicInputShape(std::dynamic_pointer_cast<mindspore::FuncGraph>(graph->impl()), shape_str);
+        if (ret != RET_OK) {
+          MS_LOG(ERROR) << "Runtime convert update dynamic input shape failed";
+          return ret;
+        }
+      }
+    } else if (device->GetDeviceType() == mindspore::kGPU) {
+      param->device = "GPU";
     } else {
       continue;
     }
   }
-
-  mindspore::lite::ConverterImpl cvt;
-  mindspore::FuncGraphPtr graph = cvt.Convert(param, model_buf, buf_size);
-  if (graph == nullptr) {
+  auto func_graph = std::dynamic_pointer_cast<mindspore::FuncGraph>(graph->impl());
+  mindspore::lite::ConverterFuncGraph cvt;
+  auto status = cvt.Optimize(param, func_graph);
+  if (status != RET_OK) {
     MS_LOG(ERROR) << "Convert model failed";
-    return nullptr;
+    return status;
   }
-  auto api_graph = mindspore::api::MakeShared<mindspore::api::FuncGraph>(graph);
-  return api_graph;
+  return RET_OK;
 }

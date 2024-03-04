@@ -168,10 +168,11 @@ PYBIND_REGISTER(ConcatNode, 2, ([](const py::module *m) {
                   (void)py::class_<ConcatNode, DatasetNode, std::shared_ptr<ConcatNode>>(*m, "ConcatNode",
                                                                                          "to create a ConcatNode")
                     .def(py::init([](const std::vector<std::shared_ptr<DatasetNode>> &datasets, py::handle sampler,
-                                     const py::list &children_flag_and_nums, const py::list &children_start_end_index) {
-                      auto concat = std::make_shared<ConcatNode>(datasets, toSamplerObj(sampler),
-                                                                 toPairVector(children_flag_and_nums),
-                                                                 toPairVector(children_start_end_index));
+                                     const py::list &children_flag_and_nums, const py::list &children_start_end_index,
+                                     const py::list &children_sizes) {
+                      auto concat = std::make_shared<ConcatNode>(
+                        datasets, toSamplerObj(sampler), toPairVector(children_flag_and_nums),
+                        toPairVector(children_start_end_index), toInt64Vector(children_sizes));
                       THROW_IF_ERROR(concat->ValidateParams());
                       return concat;
                     }));
@@ -193,7 +194,7 @@ PYBIND_REGISTER(MapNode, 2, ([](const py::module *m) {
                   (void)py::class_<MapNode, DatasetNode, std::shared_ptr<MapNode>>(*m, "MapNode", "to create a MapNode")
                     .def(py::init([](const std::shared_ptr<DatasetNode> &self, const py::list &operations,
                                      const py::list &input_columns, const py::list &output_columns,
-                                     std::vector<std::shared_ptr<PyDSCallback>> &py_callbacks, int64_t max_rowsize,
+                                     std::vector<std::shared_ptr<PyDSCallback>> &py_callbacks,
                                      const ManualOffloadMode &offload,
                                      std::shared_ptr<PythonMultiprocessingRuntime> &python_mp) {
                       auto map = std::make_shared<MapNode>(
@@ -223,7 +224,8 @@ PYBIND_REGISTER(PythonMultiprocessingRuntime, 1, ([](const py::module *m) {
                            THROW_IF_ERROR(rt.get_thread_to_worker(&res));
                            return res;
                          })
-                    .def("reset", &PythonMultiprocessingRuntime::reset);
+                    .def("reset", &PythonMultiprocessingRuntime::reset)
+                    .def("is_running", &PythonMultiprocessingRuntime::is_running);
                 }));
 
 PYBIND_REGISTER(ProjectNode, 2, ([](const py::module *m) {

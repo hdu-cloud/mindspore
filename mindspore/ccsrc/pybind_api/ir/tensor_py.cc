@@ -23,7 +23,9 @@
 #include "utils/shape_utils.h"
 #include "utils/cache_embedding_hashmap_struct.h"
 #include "include/common/utils/python_adapter.h"
-#include "mindspore/ccsrc/distributed/embedding_cache/embedding_cache_utils.h"
+#include "mindspore/ccsrc/include/backend/distributed/embedding_cache/embedding_cache_utils.h"
+#include "pybind_api/ir/tensor_index_py.h"
+#include "include/common/profiler.h"
 
 namespace mindspore {
 namespace tensor {
@@ -111,6 +113,8 @@ static std::string GetPyTypeFormat(TypeId data_type) {
   switch (data_type) {
     case TypeId::kNumberTypeFloat16:
       return "e";
+    case TypeId::kNumberTypeBFloat16:
+      return "f";
     case TypeId::kNumberTypeFloat32:
       return py::format_descriptor<float>::format();
     case TypeId::kNumberTypeFloat64:
@@ -156,26 +160,29 @@ static bool IsCContiguous(const py::array &input) {
 // TensorDataNumpy implements TensorData using numpy array.
 class TensorDataNumpy : public TensorData {
  public:
-  explicit TensorDataNumpy(py::buffer_info &&buffer) : buffer_(std::move(buffer)) {}
+  explicit TensorDataNumpy(py::buffer_info &&buffer) : buffer_(std::make_unique<py::buffer_info>(std::move(buffer))) {}
 
-  ~TensorDataNumpy() override = default;
+  ~TensorDataNumpy() override {
+    py::gil_scoped_acquire acquire;
+    buffer_.reset();
+  }
 
   /// Total number of elements.
-  ssize_t size() const override { return buffer_.size; }
+  ssize_t size() const override { return buffer()->size; }
 
   /// Byte size of a single element.
-  ssize_t itemsize() const override { return buffer_.itemsize; }
+  ssize_t itemsize() const override { return buffer()->itemsize; }
 
   /// Total number of bytes.
-  ssize_t nbytes() const override { return buffer_.itemsize * buffer_.size; }
+  ssize_t nbytes() const override { return buffer()->itemsize * buffer()->size; }
 
   /// Number of dimensions.
-  ssize_t ndim() const override { return buffer_.ndim; }
+  ssize_t ndim() const override { return buffer()->ndim; }
 
   /// Data pointer.
   void *data() override { return buffer_data(); }
 
-  const void *const_data() const override { return buffer_.ptr; }
+  const void *const_data() const override { return buffer()->ptr; }
 
   bool is_sub_data() const override { return false; }
 
@@ -183,10 +190,11 @@ class TensorDataNumpy : public TensorData {
 
   bool is_from_numpy() const override { return true; }
 
-  const std::vector<ssize_t> &shape() const { return buffer_.shape; }
+  const std::vector<ssize_t> &shape() const { return buffer()->shape; }
 
   /// To string.
   std::string ToString(const TypeId, const ShapeVector &, bool use_comma) const override {
+    py::gil_scoped_acquire gil_acquire;
     if (use_comma) {
       // Call python np.array2string(data_, separator=', ') to convert string with comma.
       py::dict kwargs;
@@ -201,14 +209,19 @@ class TensorDataNumpy : public TensorData {
 
   /// py::array object. by default, use py::str() as the dummy owner to prevent data copy.
   py::array py_array(const py::handle &owner = py::str()) const {
-    return py::array(py::dtype(buffer_), buffer_.shape, buffer_.strides, buffer_.ptr, owner);
+    py::gil_scoped_acquire acquire;
+    return py::array(py::dtype(*buffer()), buffer()->shape, buffer()->strides, buffer()->ptr, owner);
   }
 
  private:
-  void *buffer_data() const { return buffer_.ptr; }
+  void *buffer_data() const { return buffer_->ptr; }
+  std::unique_ptr<py::buffer_info> const &buffer() const {
+    MS_EXCEPTION_IF_NULL(buffer_);
+    return buffer_;
+  }
 
   // The internal buffer.
-  py::buffer_info buffer_;
+  std::unique_ptr<py::buffer_info> buffer_;
 };
 
 // This class is uesd to get huge tensor data from persistent storage. Tensor data can be got by slice.
@@ -221,19 +234,19 @@ class PersistentTensorDataNumpy : public TensorDataNumpy {
   ~PersistentTensorDataNumpy() override = default;
 
   // Fill data with a special slice tensor data. It will read data from persistent storage.
-  void FillSliceData(const uint32_t param_key, const int slice_index) {
+  void FillSliceData(const int32_t param_key, const int slice_index) {
     if (slice_index >= slice_num_) {
       MS_LOG(ERROR) << "Slice index is out of range, index: " << slice_index;
       return;
     }
-    auto emb_store = embedding_store_manager.Get(std::to_string(param_key));
+    auto emb_store = embedding_storage_manager.Get(param_key);
     MS_EXCEPTION_IF_NULL(emb_store);
 
     size_t first_dim = (size_t)SliceDataShape()[0];
     size_t start_key = slice_index * first_dim;
-    std::vector<size_t> keys(first_dim);
+    std::vector<int> keys(first_dim);
     std::iota(keys.begin(), keys.end(), start_key);
-    if (!emb_store->Get(first_dim, keys.data(), this->data())) {
+    if (!emb_store->Get({keys.data(), first_dim * sizeof(int)}, {this->data(), LongToSize(this->nbytes())})) {
       MS_LOG(EXCEPTION) << "Failed to get data from embedding store!";
     }
   }
@@ -250,6 +263,7 @@ class PersistentTensorDataNumpy : public TensorDataNumpy {
 };
 
 TensorPtr TensorPy::MakeTensor(const py::array &input, const TypePtr &type_ptr) {
+  py::gil_scoped_acquire acquire;
   // Get input buffer info.
   py::buffer_info buf = input.request();
   // Check data types.
@@ -292,6 +306,7 @@ TensorPtr TensorPy::MakeTensor(const py::array &input, const TypePtr &type_ptr) 
 
 /// Creates a Tensor from a numpy array without copy
 TensorPtr TensorPy::MakeTensorOfNumpy(const py::array &input) {
+  py::gil_scoped_acquire acquire;
   // Check format.
   if (!IsCContiguous(input)) {
     MS_LOG(EXCEPTION) << "Array should be C contiguous.";
@@ -312,6 +327,7 @@ TensorPtr TensorPy::MakeTensorOfNumpy(const py::array &input) {
 
 /// Creates a Tensor from a numpy array without copy, use persistent tensor data
 TensorPtr TensorPy::MakePersistentDataTensorOfNumpy(const py::array &input, const py::int_ slice_num) {
+  py::gil_scoped_acquire acquire;
   // Check format.
   if (!IsCContiguous(input)) {
     MS_LOG(EXCEPTION) << "Array should be C contiguous.";
@@ -436,7 +452,17 @@ void TensorPy::FlushFromCache(const Tensor &tensor) {
   }
 }
 
+py::bytes TensorPy::GetBytes(const Tensor &tensor) {
+  py::gil_scoped_release gil_release;
+  if (tensor.NeedWait()) {
+    tensor.Wait();
+  }
+  tensor.data_sync();
+  return py::bytes(static_cast<const char *>(tensor.data_c()), tensor.Size());
+}
+
 py::array TensorPy::SyncAsNumpy(const Tensor &tensor) {
+  runtime::ProfilerStageRecorder recorder(runtime::ProfilerStage::kAsnumpy);
   {
     py::gil_scoped_release gil_release;
     if (tensor.NeedWait()) {
@@ -456,6 +482,7 @@ py::array TensorPy::AsNumpy(const Tensor &tensor) {
   // Use TensorData as the owner to prevent use-after-free problem.
   // We can NOT use Tensor as the owner since its TensorData may change
   // by other operations such as AssignValue().
+  py::gil_scoped_acquire acquire;
   py::object owner = py::cast(tensor.data_ptr());
   auto data_numpy = dynamic_cast<const TensorDataNumpy *>(&tensor.data());
   if (data_numpy != nullptr) {
@@ -467,7 +494,19 @@ py::array TensorPy::AsNumpy(const Tensor &tensor) {
   return py::array(py::dtype(info), info.shape, info.strides, info.ptr, owner);
 }
 
+void TensorPy::Offload(const Tensor &tensor) {
+  py::gil_scoped_release gil_release;
+  if (tensor.NeedWait()) {
+    tensor.Wait();
+  }
+  tensor.data_sync();
+
+  // Release device address of graph output tensor.
+  const_cast<Tensor &>(tensor).set_device_address(nullptr);
+}
+
 py::array TensorPy::AsNumpyOfSlice(const Tensor &tensor, const int32_t param_key, const int slice_index) {
+  py::gil_scoped_acquire acquire;
   py::object owner = py::cast(tensor.data_ptr());
   auto data_numpy = std::dynamic_pointer_cast<PersistentTensorDataNumpy>(tensor.data_ptr());
   MS_EXCEPTION_IF_NULL(data_numpy);
@@ -488,7 +527,7 @@ static ShapeVector GetShapeFromTuple(const py::tuple &tuple) {
   }
   return shape;
 }
-void RegMetaTensor(py::module *m) {
+void RegMetaTensor(const py::module *m) {
   // Define python MetaTensor class.
   (void)py::class_<MetaTensor, std::shared_ptr<MetaTensor>>(*m, "MetaTensor")
     .def(py::init<TypePtr, const ShapeVector>(), py::arg("dtype"), py::arg("shape"))
@@ -562,6 +601,7 @@ void RegMetaTensor(py::module *m) {
          }),
          py::arg("input"), py::arg("dtype") = nullptr)
     .def_property("init_flag", &Tensor::is_init, &Tensor::set_init_flag)
+    .def_property("adapter_flag", &Tensor::is_adapter, &Tensor::set_adapter_flag)
     .def_property_readonly("_dtype", &Tensor::Dtype, R"mydelimiter(
                              Get the tensor's data type.
 
@@ -630,9 +670,12 @@ void RegMetaTensor(py::module *m) {
                                  (4, 4)
                              )mydelimiter")
     .def("_flatten_tensors", Tensor::FlattenTensors, py::arg("fusion_size") = 0)
+    .def("setitem_index_info", TensorIndex::SetItemIndexInfo)
+    .def("getitem_index_info", TensorIndex::GetItemIndexInfo)
     .def("_is_flattened", Tensor::IsFlattened)
     .def("_get_flattened_tensors", Tensor::GetFlattenedTensors)
     .def("_get_fusion_size", Tensor::GetFusionSize)
+    .def("_is_test_stub", Tensor::CheckStub)
     .def("from_numpy", TensorPy::MakeTensorOfNumpy, R"mydelimiter(
                              Creates a Tensor from a numpy.ndarray without copy.
 
@@ -660,6 +703,19 @@ void RegMetaTensor(py::module *m) {
                              Examples:
                                  >>> a = np.ones((2, 3))
                                  >>> t = mindspore.Tensor.persistent_data_from_numpy(a, 1)
+                             )mydelimiter")
+    .def("get_bytes", &TensorPy::GetBytes, R"mydelimiter(
+                             Get raw data of tensor with type of bytes.
+
+                             Returns:
+                                 Bytes of tensor.
+
+                             Examples:
+                                 >>> import mindspore as ms
+                                 >>> from mindspore import Tensor
+                                 >>> x = ms.Tensor([1, 2, 3], ms.int16)
+                                 >>> print(x.get_bytes())
+                                 b'\x01\x00\x02\x00\x03\x00'
                              )mydelimiter")
     .def("asnumpy", TensorPy::SyncAsNumpy, R"mydelimiter(
                              Convert tensor to numpy.ndarray.
@@ -757,10 +813,36 @@ void RegMetaTensor(py::module *m) {
                                   >>> data.set_dtype(mindspore.int32)
                                   mindspore.int32
                               )mydelimiter")
+    .def("offload", &Tensor::Offload, R"mydelimiter(
+                              Offload tensor data to file.
+
+                              Arg:
+                                  str : file path to save tensor data.
+                              Returns:
+                                  bool, whether the tensor offload success.
+                              Examples:
+                                  >>> data = mindspore.Tensor(np.ones((1, 2), np.float32))
+                                  >>> data.offload('./test.data')
+                                  True
+                              )mydelimiter")
+    .def("offload_file_path", &Tensor::GetOffloadFilePath, R"mydelimiter(
+                              Offload file path for tensor.
+
+                              Returns:
+                                 str, offload file path for tensor.
+                              Examples:
+                                  >>> data = mindspore.Tensor(np.ones((1, 2), np.float32))
+                                  >>> ret = data.offload('./test.data')
+                                  >>> ret = (data.offload_file_path() != '')
+                                  True
+                              )mydelimiter")
     .def("set_cast_dtype", &Tensor::set_cast_dtype, py::arg("dtype") = nullptr)
     .def("data_sync", &Tensor::data_sync)
+    .def("contiguous", &Tensor::contiguous)
+    .def("is_contiguous", &Tensor::is_contiguous)
     .def("__str__", &Tensor::ToString)
     .def("__repr__", &Tensor::ToStringRepr)
+    .def("_offload", &TensorPy::Offload)
     .def(py::pickle(
       [](const Tensor &t) {  // __getstate__
         /* Return a tuple that fully encodes the state of the object */
@@ -787,7 +869,7 @@ py::tuple GetSparseTensorShape(const T &sparse_tensor) {
 
 py::tuple CSRTensorPy::GetPyTupleShape(const CSRTensor &csr_tensor) { return GetSparseTensorShape(csr_tensor); }
 
-void RegCSRTensor(py::module *m) {
+void RegCSRTensor(const py::module *m) {
   // Define python CSRTensor class.
   (void)py::class_<CSRTensor, std::shared_ptr<CSRTensor>>(*m, "CSRTensor")
     .def(py::init([](const Tensor &indptr, const Tensor &indices, const Tensor &values, const py::tuple &shape) {
@@ -808,7 +890,7 @@ void RegCSRTensor(py::module *m) {
 
 py::tuple COOTensorPy::GetPyTupleShape(const COOTensor &coo_tensor) { return GetSparseTensorShape(coo_tensor); }
 
-void RegCOOTensor(py::module *m) {
+void RegCOOTensor(const py::module *m) {
   // Define python COOTensor class.
   (void)py::class_<COOTensor, std::shared_ptr<COOTensor>>(*m, "COOTensor")
     .def(py::init([](const Tensor &indices, const Tensor &values, const py::tuple &shape) {
@@ -828,7 +910,7 @@ void RegCOOTensor(py::module *m) {
 
 py::tuple RowTensorPy::GetPyTupleShape(const RowTensor &row_tensor) { return GetSparseTensorShape(row_tensor); }
 
-void RegRowTensor(py::module *m) {
+void RegRowTensor(const py::module *m) {
   // Define python RowTensor class.
   (void)py::class_<RowTensor, std::shared_ptr<RowTensor>>(*m, "RowTensor")
     .def(py::init([](const Tensor &indices, const Tensor &values, const py::tuple &shape) {

@@ -16,11 +16,11 @@
 #ifndef MINDSPORE_CORE_OPS_IOU_H_
 #define MINDSPORE_CORE_OPS_IOU_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -29,9 +29,12 @@ constexpr auto kNameIOU = "IOU";
 class MIND_API IOU : public BaseOperator {
  public:
   MIND_API_BASE_MEMBER(IOU);
-  IOU() : BaseOperator(kNameIOU) { InitIOName({"x,y"}, {"output"}); }
+  IOU() : BaseOperator(kNameIOU) { InitIOName({"anchor_boxes", "gt_boxes"}, {"output"}); }
   void Init() const {}
 };
+
+MIND_API abstract::AbstractBasePtr IouInferFunc(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_IOU_H_

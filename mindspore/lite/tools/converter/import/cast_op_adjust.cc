@@ -15,6 +15,7 @@
  */
 #include "tools/converter/import/cast_op_adjust.h"
 #include <vector>
+#include "mindspore/core/ops/array_ops.h"
 #include "tools/lite_exporter/fetch_content.h"
 #include "mindspore/lite/include/errorcode.h"
 
@@ -149,20 +150,6 @@ bool CastOpAdjust::Run(const FuncGraphPtr &func_graph, bool strict_mode_flag) {
       auto ret = manager->Replace(node, cast_cnode->input(1));
       if (!ret) {
         MS_LOG(ERROR) << "Replace node to its input failed.";
-        return false;
-      }
-    }
-
-    if (output_type_value == kNumberTypeInt64) {
-      auto parameter = opt::BuildIntValueParameterNode(func_graph, kNumberTypeInt32,
-                                                       cast_cnode->input(opt::kInputIndexTwo)->fullname_with_scope());
-      if (parameter == nullptr) {
-        MS_LOG(ERROR) << "Create parameter failed.";
-        return false;
-      }
-      auto ret = manager->Replace(node, parameter);
-      if (!ret) {
-        MS_LOG(ERROR) << "Replace node to parameter failed.";
         return false;
       }
     }

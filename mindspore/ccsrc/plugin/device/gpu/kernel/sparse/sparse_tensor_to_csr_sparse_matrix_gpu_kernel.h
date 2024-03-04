@@ -35,7 +35,7 @@ class SparseTensorToCSRSparseMatrixGpuKernelMod : public NativeGpuKernelMod {
 
   bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
               const std::vector<AddressPtr> &outputs, void *cuda_stream) override {
-    stream = reinterpret_cast<cudaStream_t>(cuda_stream);
+    stream_ = reinterpret_cast<cudaStream_t>(cuda_stream);
     return kernel_func_(this, inputs, workspace, outputs);
   }
 
@@ -59,18 +59,15 @@ class SparseTensorToCSRSparseMatrixGpuKernelMod : public NativeGpuKernelMod {
   static std::vector<std::pair<KernelAttr, SparseTensorToCSRSparseMatrixFunc>> func_list_;
 
  private:
-  float alpha_;
   size_t unit_size_{1};
   size_t input_elements_{};
-  void *cuda_stream_{nullptr};
   int elements[3] = {0, 0, 0};
-  cudaStream_t stream;
+  cudaStream_t stream_;
   cusparseHandle_t handle_{nullptr};
   int row_num;
   int batch_size;
   int temp_nnz;
-  std::vector<int> y_batch_pointers_ptr_test;
-  std::vector<int> x_dense_shape_ptr_test;
+  int bapt;
   SparseTensorToCSRSparseMatrixFunc kernel_func_{};
 };
 }  // namespace kernel

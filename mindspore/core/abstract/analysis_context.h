@@ -25,7 +25,7 @@
 #include <utility>
 #include <unordered_map>
 
-#include "utils/macros.h"
+#include "mindapi/base/macros.h"
 #include "utils/hashing.h"
 #include "ir/func_graph.h"
 #include "abstract/abstract_value.h"
@@ -44,10 +44,12 @@ class MS_CORE_API AnalysisContext : public std::enable_shared_from_this<Analysis
 
   AnalysisContextPtr parent() const { return parent_ == nullptr ? nullptr : parent_->shared_from_this(); }
   const FuncGraphPtr &func_graph() const { return func_graph_; }
-  const AbstractBasePtrList &args_spec_list() const { return args_spec_list_; }
+  const AbstractBasePtrList &args_abs_list() const { return args_abs_list_; }
 
   // Extend this context with values for another graph.
-  AnalysisContextPtr NewContext(const FuncGraphPtr &fg, const AbstractBasePtrList &args_spec_list);
+  AnalysisContextPtr NewContext(const FuncGraphPtr &fg, const AbstractBasePtrList &args_abs_list);
+
+  AnalysisContextPtr GetCachedContext(const FuncGraphPtr &fg, const AbstractBasePtrList &args_abs_list);
 
   // Return a context restricted to a graph and its parent.
   AnalysisContextPtr FindOwnOrParentContext(FuncGraph *fg);
@@ -65,8 +67,8 @@ class MS_CORE_API AnalysisContext : public std::enable_shared_from_this<Analysis
 
  protected:
   // Make constructor protected to prevent creating an isolated context object.
-  AnalysisContext(AnalysisContext *parent, const FuncGraphPtr &fg, const AbstractBasePtrList &args_spec_list)
-      : parent_(parent), func_graph_(fg), args_spec_list_(args_spec_list) {}
+  AnalysisContext(AnalysisContext *parent, const FuncGraphPtr &fg, const AbstractBasePtrList &args_abs_list)
+      : parent_(parent), func_graph_(fg), args_abs_list_(args_abs_list) {}
 
  private:
   // Clear to release resources.
@@ -77,7 +79,7 @@ class MS_CORE_API AnalysisContext : public std::enable_shared_from_this<Analysis
 
   // Create a new context instance.
   static AnalysisContextPtr CreateContext(AnalysisContext *parent, const FuncGraphPtr &fg,
-                                          const AbstractBasePtrList &args_spec_list);
+                                          const AbstractBasePtrList &args_abs_list);
 
   using ChildKey = std::pair<FuncGraphPtr, AbstractBasePtrList>;
 
@@ -96,7 +98,7 @@ class MS_CORE_API AnalysisContext : public std::enable_shared_from_this<Analysis
   FuncGraphPtr func_graph_;
 
   // Func graph arguments in current context.
-  AbstractBasePtrList args_spec_list_;
+  AbstractBasePtrList args_abs_list_;
 
   // Children contexts discriminated by func_graph & arguments.
   std::unordered_map<ChildKey, AnalysisContextPtr, ChildHash, ChildEqual> children_;

@@ -15,13 +15,15 @@
 """Context of auto parallel"""
 from __future__ import absolute_import
 import os
+import copy
 import threading
 from mindspore import context
 import mindspore.log as logger
 from mindspore.parallel._dp_allreduce_fusion import _set_fusion_strategy_by_idx, _set_fusion_strategy_by_size
 from mindspore.parallel._ps_context import _is_role_pserver
 from mindspore._c_expression import AutoParallelContext
-from mindspore._checkparam import args_type_check, Validator
+from mindspore._checkparam import args_type_check
+from mindspore import _checkparam as Validator
 
 _MAX_GROUP_NAME_LEN = 127
 _DEFAULT_HCCL_FUSION_GROUP_NAME = "hccl_world_groupsum1"
@@ -40,6 +42,18 @@ class _ParallelFusionConfig:
     AUTO = "auto"
     INDEX = "index"
     SIZE = "size"
+    OPENSTATE = "openstate"
+    CONFIG = {"openstate": True,
+              "allreduce": {"mode": "auto", "config": None},
+              "allgather": {"mode": "auto", "config": None},
+              "reducescatter": {"mode": "auto", "config": None}}
+
+    @classmethod
+    def reset(cls):
+        cls.CONFIG = {"openstate": True,
+                      "allreduce": {"mode": "auto", "config": None},
+                      "allgather": {"mode": "auto", "config": None},
+                      "reducescatter": {"mode": "auto", "config": None}}
 
 
 class _ParallelOptimizerConfig:
@@ -48,6 +62,7 @@ class _ParallelOptimizerConfig:
     """
     GRADIENT_ACCUMULATION_SHARD = "gradient_accumulation_shard"
     PARALLEL_OPTIMIZER_THRESHOLD = "parallel_optimizer_threshold"
+    OPTIMIZER_WEIGHT_SHARD_SIZE = "optimizer_weight_shard_size"
 
 
 class _AutoParallelContext:
@@ -117,6 +132,9 @@ class _AutoParallelContext:
             KeyError: When key of comm_fusion is not 'allreduce'.
         """
         self.check_context_handle()
+        config = copy.deepcopy(config)
+        if _ParallelFusionConfig.OPENSTATE not in config.keys():
+            config[_ParallelFusionConfig.OPENSTATE] = True
         for key in list(config.keys()):
             if key == _ParallelFusionConfig.ALLREDUCE:
                 self._set_allreduce_comm_fusion(config[key])
@@ -124,91 +142,18 @@ class _AutoParallelContext:
                 self._set_allgather_comm_fusion(config[key], key)
             elif key == _ParallelFusionConfig.REDUCESCATTER:
                 self._set_allgather_comm_fusion(config[key], key)
+            elif key == _ParallelFusionConfig.OPENSTATE:
+                self._set_openstate_comm_fusion(config[key])
             else:
-                raise KeyError("comm fusion type must be allreduce, allgather or reducescatter, but got {}".format(key))
+                raise KeyError("comm fusion type must be openstate,"
+                               "allreduce, allgather or reducescatter, but got {}".format(key))
+            if key in _ParallelFusionConfig.CONFIG:
+                _ParallelFusionConfig.CONFIG[key] = config[key]
 
     def get_comm_fusion(self):
         """Get comm fusion config."""
         self.check_context_handle()
-        mode = self._context_handle.get_fusion_mode()
-        if mode in (_ParallelFusionConfig.AUTO, _ParallelFusionConfig.SIZE):
-            config = self.fusion_threshold_mb()
-        if mode == _ParallelFusionConfig.INDEX:
-            config = self.get_all_reduce_fusion_split_indices()
-        return {_ParallelFusionConfig.ALLREDUCE: {_ParallelFusionConfig.MODE: mode,
-                                                  _ParallelFusionConfig.FUSION_CONFIG: config}}
-
-    def _set_allgather_comm_fusion(self, comm_fusion, comm_type="allgather"):
-        """
-        Set allgather and reducescatter fusion method for auto parallel.
-
-        Args:
-            comm_fusion (dict): A dict contains the methods and values for setting the fusion method. Currently it
-                                  supports four fusion methods: `auto` and `size`.
-            comm_type (str): The name of the communication operator, `allgather` or `reducescatter`.
-
-        Raises:
-            KeyError: When key of comm_fusion is not 'mode' or 'config'.
-            KeyError: When `mode` is not 'auto', 'size'.
-        """
-        self.check_context_handle()
-        if comm_type == "allgather" and not self.get_enable_all_gather_fusion():
-            return
-        if comm_type == "reducescatter" and not self.get_enable_reduce_scatter_fusion():
-            return
-        if not isinstance(comm_fusion, dict):
-            raise TypeError("For 'comm_fusion', {} config must be dict, but got the type : {}.".format(
-                comm_type, type(comm_fusion)))
-        if _ParallelFusionConfig.MODE not in comm_fusion:
-            raise KeyError("For 'comm_fusion', the key 'mode' should be contained.")
-        if _ParallelFusionConfig.FUSION_CONFIG not in comm_fusion:
-            raise KeyError("For 'comm_fusion', the key 'config' should be contained.")
-        check_mode = [_ParallelFusionConfig.AUTO, _ParallelFusionConfig.SIZE]
-        if comm_fusion[_ParallelFusionConfig.MODE] in check_mode:
-            self._context_handle.set_fusion_mode(comm_fusion[_ParallelFusionConfig.MODE])
-        else:
-            raise KeyError("fusion method mode must be auto or size, but got {}".format(
-                comm_fusion[_ParallelFusionConfig.MODE]))
-
-        fusion_threshold = 64
-        if comm_fusion[_ParallelFusionConfig.MODE] != _ParallelFusionConfig.AUTO:
-            fusion_threshold = comm_fusion[_ParallelFusionConfig.FUSION_CONFIG]
-        self.set_fusion_threshold_mb(fusion_threshold, comm_type)
-
-    def _set_allreduce_comm_fusion(self, comm_fusion):
-        """
-        Set fusion method for auto parallel.
-
-        Args:
-            comm_fusion (dict): A dict contains the methods and values for setting the fusion method. Currently it
-                                  supports four fusion methods: `auto`, `size` and `index`.
-
-        Raises:
-            KeyError: When key of comm_fusion is not 'mode' or 'config'.
-            KeyError: When `mode` is not 'auto', 'size' or 'index'.
-        """
-        self.check_context_handle()
-        if not self.get_enable_all_reduce_fusion():
-            return
-        if not isinstance(comm_fusion, dict):
-            raise TypeError("For 'comm_fusion', the 'allreduce' config must be dict, but got the type : {}.".format(
-                type(comm_fusion)))
-        if _ParallelFusionConfig.MODE not in comm_fusion:
-            raise KeyError("For 'comm_fusion', the key 'mode' should be contained.")
-        if _ParallelFusionConfig.FUSION_CONFIG not in comm_fusion:
-            raise KeyError("For 'comm_fusion', the key 'config' should be contained.")
-        check_mode = [_ParallelFusionConfig.AUTO, _ParallelFusionConfig.INDEX, _ParallelFusionConfig.SIZE]
-        if comm_fusion[_ParallelFusionConfig.MODE] in check_mode:
-            self._context_handle.set_fusion_mode(comm_fusion[_ParallelFusionConfig.MODE])
-        else:
-            raise KeyError("fusion method mode must be auto, index or size, but got {}".format(
-                comm_fusion[_ParallelFusionConfig.MODE]))
-        if comm_fusion[_ParallelFusionConfig.MODE] == _ParallelFusionConfig.AUTO:
-            self.set_fusion_threshold_mb(fusion_threshold=64)
-        if comm_fusion[_ParallelFusionConfig.MODE] == _ParallelFusionConfig.SIZE:
-            self.set_fusion_threshold_mb(comm_fusion[_ParallelFusionConfig.FUSION_CONFIG])
-        if comm_fusion[_ParallelFusionConfig.MODE] == _ParallelFusionConfig.INDEX:
-            self.set_all_reduce_fusion_split_indices(comm_fusion[_ParallelFusionConfig.FUSION_CONFIG])
+        return _ParallelFusionConfig.CONFIG
 
     def set_fusion_threshold_mb(self, fusion_threshold=64, comm_type="allreduce"):
         """
@@ -231,7 +176,6 @@ class _AutoParallelContext:
             self._context_handle.set_allgather_fusion_threshold_mb(fusion_threshold)
         if comm_type == _ParallelFusionConfig.REDUCESCATTER:
             self._context_handle.set_reducescatter_fusion_threshold_mb(fusion_threshold)
-
 
     def fusion_threshold_mb(self):
         """Get all reduce threshold."""
@@ -284,6 +228,22 @@ class _AutoParallelContext:
         """Get the stages of the pipeline"""
         self.check_context_handle()
         return self._context_handle.get_pipeline_stage_split_num()
+
+    def set_pipeline_segments(self, segments):
+        """Set the segments of the pipeline"""
+        if isinstance(segments, bool) or not isinstance(segments, int):
+            raise TypeError("For 'set_auto_parallel_context', the argument 'pipeline_segments' "
+                            "must be int, but got the type : {}.".format(type(segments)))
+        if segments < 1:
+            raise ValueError("For 'set_auto_parallel_context', the argument 'pipeline_segments' "
+                             "should be greater or equal 1, but got the value of segments : {}.".format(segments))
+        self.check_context_handle()
+        self._context_handle.set_pipeline_segment_split_num(segments)
+
+    def get_pipeline_segments(self):
+        """Get the stages of the pipeline"""
+        self.check_context_handle()
+        return self._context_handle.get_pipeline_segment_split_num()
 
     def set_gradients_mean(self, gradients_mean):
         """
@@ -426,7 +386,7 @@ class _AutoParallelContext:
         """
         Set the value of sharding strategy propagation in AUTO_PARALLEL mode. If True, the strategy-configured operators
         will propagate the strategies to other operators with minimum redistribution cost; otherwise, the algorithm
-        will search the desired strategies. Default: False.
+        will search the desired strategies. Default: ``False``.
         This attribute is replaced by context.set_auto_parallel_context(search_mode="sharding_propagation").
 
         Args:
@@ -521,6 +481,9 @@ class _AutoParallelContext:
                 if not isinstance(dim, int):
                     raise TypeError("For 'set_auto_parallel_context', the element of argument "
                                     "'dataset_strategy' must be int type, but got the type : {} .".format(type(dim)))
+        if context.get_context('mode') == context.PYNATIVE_MODE:
+            raise ValueError("In PyNative mode, the setting value of 'dataset_strategy' must be either 'full_batch' "
+                             f"or 'data_parallel', but got {dataset_strategy}.")
         self._dataset_strategy_using_str = False
         self._context_handle.set_dataset_strategy(dataset_strategy)
 
@@ -531,7 +494,11 @@ class _AutoParallelContext:
             if self._context_handle.get_full_batch():
                 return "full_batch"
             return "data_parallel"
-        return self._context_handle.get_dataset_strategy()
+        dataset_strategy = self._context_handle.get_dataset_strategy()
+        if context.get_context('mode') == context.PYNATIVE_MODE:
+            raise ValueError("In PyNative mode, the value of 'dataset_strategy' must be either 'full_batch' "
+                             f"or 'data_parallel', but got the setting value is {dataset_strategy}.")
+        return dataset_strategy
 
     def set_grad_accumulation_step(self, grad_accumulation_step):
         """
@@ -540,6 +507,9 @@ class _AutoParallelContext:
         Args:
             grad_accumulation_step (int): The grad accumulation step.
         """
+        if grad_accumulation_step > 1:
+            raise ValueError("The interface is deprecated. To use gradient accumulation, "
+                             "please use GradAccumulationCell in mindspore.nn.wrap.cell_wrapper.")
         self.check_context_handle()
         Validator.check_positive_int(grad_accumulation_step)
         self._context_handle.set_grad_accumulation_step(grad_accumulation_step)
@@ -566,6 +536,52 @@ class _AutoParallelContext:
         """Get strategy checkpoint save path."""
         self.check_context_handle()
         return self._context_handle.get_strategy_ckpt_save_file()
+
+    def set_strategy_ckpt_config(self, strategy_ckpt_config):
+        """
+        Set strategy checkpoint config.
+
+        Args:
+            strategy_ckpt_config (dict): The strategy checkpoint config.
+        """
+        self.check_context_handle()
+        if not isinstance(strategy_ckpt_config, dict):
+            raise TypeError("For 'set_auto_parallel_context', the argument 'strategy_ckpt_config' "
+                            "must be dict, but got the type : {}.".format(type(strategy_ckpt_config)))
+        for config_name in strategy_ckpt_config:
+            unknown_config = []
+            if config_name not in ["load_file", "save_file", "only_trainable_params"]:
+                unknown_config.append(config_name)
+
+            if unknown_config:
+                raise ValueError("Unknown config: {}".format(unknown_config))
+        if "load_file" in strategy_ckpt_config:
+            load_file = strategy_ckpt_config.get("load_file")
+            if not isinstance(load_file, str):
+                raise TypeError("For 'set_auto_parallel_context().set_strategy_ckpt_config', "
+                                "the argument 'load_file' must be str, but got the type : {} .".format(type(load_file)))
+            self._context_handle.set_strategy_ckpt_load_file(load_file)
+        if "save_file" in strategy_ckpt_config:
+            save_file = strategy_ckpt_config.get("save_file")
+            if not isinstance(save_file, str):
+                raise TypeError("For 'set_auto_parallel_context().set_strategy_ckpt_config', "
+                                "the argument 'save_file' must be str, but got the type : {} .".format(type(save_file)))
+            self._context_handle.set_strategy_ckpt_save_file(save_file)
+        if "only_trainable_params" in strategy_ckpt_config:
+            only_trainable_params = strategy_ckpt_config.get("only_trainable_params")
+            if not isinstance(only_trainable_params, bool):
+                raise TypeError("For 'set_auto_parallel_context().set_strategy_ckpt_config', "
+                                "the argument 'only_trainable_params' must be bool,"
+                                " but got the type : {} .".format(type(only_trainable_params)))
+            self._context_handle.set_stra_file_only_trainable_params(only_trainable_params)
+
+    def get_strategy_ckpt_config(self):
+        """Get strategy checkpoint config."""
+        self.check_context_handle()
+        load_file = self._context_handle.get_strategy_ckpt_load_file()
+        save_file = self._context_handle.get_strategy_ckpt_save_file()
+        only_trainable_param = self._context_handle.get_stra_file_only_trainable_params()
+        return {"load_file": load_file, "save_file": save_file, "only_trainable_params": only_trainable_param}
 
     def set_group_ckpt_save_file(self, group_ckpt_save_file):
         """Set group checkpoint save path."""
@@ -761,6 +777,11 @@ class _AutoParallelContext:
                             .format(type(enable_parallel_optimizer)))
         self._context_handle.set_enable_parallel_optimizer(enable_parallel_optimizer)
 
+    def get_enable_fold_pipeline(self):
+        """Get parallel optimizer flag."""
+        self.check_context_handle()
+        return self._context_handle.get_enable_fold_pipeline()
+
     def get_enable_parallel_optimizer(self):
         """Get parallel optimizer flag."""
         self.check_context_handle()
@@ -770,8 +791,6 @@ class _AutoParallelContext:
         r"""
         Set the configure for parallel optimizer. The configure provides more detailed behavior control about parallel
         training when parallel optimizer is enabled.
-        Currently it supports the key `gradient_accumulation_shard`. The configure will be effective
-        when we use context.set_auto_parallel_context(enable_parallel_optimizer=True).
 
         Args:
             parallel_optimizer_config(dict): A dict contains the keys and values for setting the parallel optimizer
@@ -789,14 +808,21 @@ class _AutoParallelContext:
                                                  enabled, parameters with size smaller than this threshold will not be
                                                  sharded across the devices. Parameter size = shape[0] \* ... \*
                                                  shape[n] \* size(dtype). Non-negative. Unit: KB. Default: 64.
+            - optimizer_weight_shard_size(int): Set the optimizer weight shard group size if you want to specific the
+                                                maximum group size across devices when the parallel optimizer is
+                                                enabled. The numerical range can be (0, device_num]. Default value
+                                                is -1, which means the optimizer weight shard group size will
+                                                the data parallel group of each parameter. Default -1.
+
         """
         self.check_context_handle()
         grad_shard_name = _ParallelOptimizerConfig.GRADIENT_ACCUMULATION_SHARD
         threshold_name = _ParallelOptimizerConfig.PARALLEL_OPTIMIZER_THRESHOLD
+        optimizer_weight_shard_size_name = _ParallelOptimizerConfig.OPTIMIZER_WEIGHT_SHARD_SIZE
 
         for config_name in parallel_optimizer_config:
             unknown_config = []
-            if config_name not in [grad_shard_name, threshold_name]:
+            if config_name not in [grad_shard_name, threshold_name, optimizer_weight_shard_size_name]:
                 unknown_config.append(config_name)
 
             if unknown_config:
@@ -814,6 +840,11 @@ class _AutoParallelContext:
             self._context_handle.set_parallel_optimizer_threshold(
                 parallel_optimizer_config[threshold_name])
 
+        if optimizer_weight_shard_size_name in parallel_optimizer_config:
+            value = parallel_optimizer_config[optimizer_weight_shard_size_name]
+            Validator.check_positive_int(value)
+            self.set_optimizer_weight_shard_size(value)
+
     def get_grad_accumulation_shard(self):
         """Get grad accumulation shard."""
         self.check_context_handle()
@@ -827,7 +858,7 @@ class _AutoParallelContext:
     def set_enable_alltoall(self, enable_a2a):
         """
         Set the value of enabling AllToAll. If False, AllGather and Split are used to circumvent AllToAll.
-        Default: False.
+        Default: ``False``.
 
         Args:
             enable_a2a (bool): Enable/disable AllToAll.
@@ -893,6 +924,13 @@ class _AutoParallelContext:
         self.check_context_handle()
         return self._context_handle.get_optimizer_weight_shard_size()
 
+    def set_ops_strategy_json_config(self, type, path, mode):
+        """
+         Set configuration of saving ops strategy in file .json.
+        """
+        self.check_context_handle()
+        self._context_handle.set_ops_strategy_json_config(type, path, mode)
+
     def set_optimizer_weight_shard_aggregated_save(self, optimizer_weight_shard_aggregated_save):
         """
         Set optimizer_weight_shard_aggregated_save.
@@ -912,6 +950,7 @@ class _AutoParallelContext:
         return self._context_handle.get_optimizer_weight_shard_aggregated_save()
 
     def get_full_batch_is_set(self):
+        """Get full batch attr"""
         self.check_context_handle()
         return self._context_handle.get_full_batch_is_set()
 
@@ -919,6 +958,7 @@ class _AutoParallelContext:
         """Reset all settings."""
         self.check_context_handle()
         self._context_handle.reset()
+        _ParallelFusionConfig.reset()
 
     def _check_and_default_group(self, group):
         """Validate the given group, if group is empty, returns a default fusion group"""
@@ -936,6 +976,120 @@ class _AutoParallelContext:
                 group = _DEFAULT_NCCL_FUSION_GROUP_NAME
         return group
 
+    def _set_allgather_comm_fusion(self, comm_fusion, comm_type="allgather"):
+        """
+        Set allgather and reducescatter fusion method for auto parallel.
+
+        Args:
+            comm_fusion (dict): A dict contains the methods and values for setting the fusion method. Currently it
+                                  supports four fusion methods: `auto` and `size`.
+            comm_type (str): The name of the communication operator, `allgather` or `reducescatter`.
+
+        Raises:
+            KeyError: When key of comm_fusion is not 'mode' or 'config'.
+            KeyError: When `mode` is not 'auto', 'size'.
+        """
+        self.check_context_handle()
+        if comm_type == "allgather" and not self.get_enable_all_gather_fusion():
+            return
+        if comm_type == "reducescatter" and not self.get_enable_reduce_scatter_fusion():
+            return
+        if not isinstance(comm_fusion, dict):
+            raise TypeError("For 'comm_fusion', {} config must be dict, but got the type : {}.".format(
+                comm_type, type(comm_fusion)))
+        if _ParallelFusionConfig.MODE not in comm_fusion:
+            raise KeyError("For 'comm_fusion', the key 'mode' should be contained.")
+        if _ParallelFusionConfig.FUSION_CONFIG not in comm_fusion:
+            raise KeyError("For 'comm_fusion', the key 'config' should be contained.")
+        check_mode = [_ParallelFusionConfig.AUTO, _ParallelFusionConfig.SIZE]
+        if comm_fusion[_ParallelFusionConfig.MODE] in check_mode:
+            self._context_handle.set_fusion_mode(comm_fusion[_ParallelFusionConfig.MODE])
+        else:
+            raise KeyError("fusion method mode must be auto or size, but got {}".format(
+                comm_fusion[_ParallelFusionConfig.MODE]))
+
+        fusion_threshold = 64
+        if comm_fusion[_ParallelFusionConfig.MODE] != _ParallelFusionConfig.AUTO:
+            fusion_threshold = comm_fusion[_ParallelFusionConfig.FUSION_CONFIG]
+        self.set_fusion_threshold_mb(fusion_threshold, comm_type)
+
+    def _set_allreduce_comm_fusion(self, comm_fusion):
+        """
+        Set fusion method for auto parallel.
+
+        Args:
+            comm_fusion (dict): A dict contains the methods and values for setting the fusion method. Currently it
+                                  supports four fusion methods: `auto`, `size` and `index`.
+
+        Raises:
+            KeyError: When key of comm_fusion is not 'mode' or 'config'.
+            KeyError: When `mode` is not 'auto', 'size' or 'index'.
+        """
+        self.check_context_handle()
+        if not self.get_enable_all_reduce_fusion():
+            return
+        if not isinstance(comm_fusion, dict):
+            raise TypeError("For 'comm_fusion', the 'allreduce' config must be dict, but got the type : {}.".format(
+                type(comm_fusion)))
+        if _ParallelFusionConfig.MODE not in comm_fusion:
+            raise KeyError("For 'comm_fusion', the key 'mode' should be contained.")
+        if _ParallelFusionConfig.FUSION_CONFIG not in comm_fusion:
+            raise KeyError("For 'comm_fusion', the key 'config' should be contained.")
+        check_mode = [_ParallelFusionConfig.AUTO, _ParallelFusionConfig.INDEX, _ParallelFusionConfig.SIZE]
+        if comm_fusion[_ParallelFusionConfig.MODE] in check_mode:
+            self._context_handle.set_fusion_mode(comm_fusion[_ParallelFusionConfig.MODE])
+        else:
+            raise KeyError("fusion method mode must be auto, index or size, but got {}".format(
+                comm_fusion[_ParallelFusionConfig.MODE]))
+        if comm_fusion[_ParallelFusionConfig.MODE] == _ParallelFusionConfig.AUTO:
+            self.set_fusion_threshold_mb(fusion_threshold=64)
+        if comm_fusion[_ParallelFusionConfig.MODE] == _ParallelFusionConfig.SIZE:
+            self.set_fusion_threshold_mb(comm_fusion[_ParallelFusionConfig.FUSION_CONFIG])
+        if comm_fusion[_ParallelFusionConfig.MODE] == _ParallelFusionConfig.INDEX:
+            self.set_all_reduce_fusion_split_indices(comm_fusion[_ParallelFusionConfig.FUSION_CONFIG])
+
+    def _set_openstate_comm_fusion(self, openstate):
+        """
+        Set open state for comm fusion.
+
+        Args:
+            openstate (bool): The open state value to set the fusion method whether or not. Currently it
+                                  supports two states: `True`, or `Flase`.
+
+        Raises:
+            TypeError: When the value is not bool.
+        """
+        self.check_context_handle()
+        if not isinstance(openstate, bool):
+            raise TypeError("For 'comm_fusion', the 'openstate' must be bool, but got the type : {}.".format(
+                type(openstate)))
+        if not openstate:
+            self.set_enable_all_reduce_fusion(openstate)
+            self.set_enable_all_gather_fusion(openstate)
+            self.set_enable_reduce_scatter_fusion(openstate)
+
+def _set_ops_strategy_json_config(type="SAVE", path="", mode="all"):
+    """
+    Set strategy json configuration.
+
+    Args:
+        type (str): The parameter for choosing save or load .json file.
+        path (str): Path to save or load parallel strategy json.
+        mode (str): The parameter for choosing save all or important operators.
+
+    Raises:
+        KeyError: When type is not 'SAVE' or 'LOAD'.
+        KeyError: When mode is not 'all' or 'principal'.
+    """
+    dir_path = os.path.dirname(path)
+    if dir_path and not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+    check_type = ["SAVE", "LOAD"]
+    check_mode = ["all", "principal"]
+    if type in check_type and mode in check_mode:
+        auto_parallel_context().set_ops_strategy_json_config(type, path, mode)
+    else:
+        raise KeyError("Type must be 'SAVE' or 'LOAD' and mode must be 'all' or 'principal'")
 
 _AUTO_PARALLEL_CONTEXT = None
 
@@ -960,6 +1114,7 @@ _set_auto_parallel_context_func_map = {
     "gradient_fp32_sync": auto_parallel_context().set_gradient_fp32_sync,
     "loss_repeated_mean": auto_parallel_context().set_loss_repeated_mean,
     "pipeline_stages": auto_parallel_context().set_pipeline_stages,
+    "pipeline_segments": auto_parallel_context().set_pipeline_segments,
     "parallel_mode": auto_parallel_context().set_parallel_mode,
     "search_mode": auto_parallel_context().set_strategy_search_mode,
     "auto_parallel_search_mode": auto_parallel_context().set_auto_parallel_search_mode,
@@ -978,8 +1133,8 @@ _set_auto_parallel_context_func_map = {
     "optimizer_weight_shard_aggregated_save": auto_parallel_context().set_optimizer_weight_shard_aggregated_save,
     "sharding_propagation": auto_parallel_context().set_sharding_propagation,
     "enable_alltoall": auto_parallel_context().set_enable_alltoall,
+    "strategy_ckpt_config": auto_parallel_context().set_strategy_ckpt_config,
     "comm_fusion": auto_parallel_context().set_comm_fusion}
-
 
 _get_auto_parallel_context_func_map = {
     "device_num": auto_parallel_context().get_device_num,
@@ -1005,6 +1160,7 @@ _get_auto_parallel_context_func_map = {
     "sharding_propagation": auto_parallel_context().get_sharding_propagation,
     "enable_alltoall": auto_parallel_context().get_enable_alltoall,
     "comm_fusion": auto_parallel_context().get_comm_fusion,
+    "strategy_ckpt_config": auto_parallel_context().get_strategy_ckpt_config,
     "full_batch_is_set": auto_parallel_context().get_full_batch_is_set}
 
 
@@ -1014,8 +1170,8 @@ _get_auto_parallel_context_func_map = {
                  strategy_ckpt_save_file=str, full_batch=bool, enable_parallel_optimizer=bool,
                  grad_accumulation_step=int, all_reduce_fusion_config=list, group_ckpt_save_file=str,
                  communi_parallel_mode=str, optimizer_weight_shard_size=int, sharding_propagation=bool,
-                 optimizer_weight_shard_aggregated_save=bool, enable_alltoall=bool, comm_fusion=dict)
-
+                 optimizer_weight_shard_aggregated_save=bool, enable_alltoall=bool, comm_fusion=dict,
+                 strategy_ckpt_config=dict)
 def _set_auto_parallel_context(**kwargs):
     """
     Set auto parallel context.
@@ -1026,11 +1182,11 @@ def _set_auto_parallel_context(**kwargs):
     Args:
         device_num (int): Available device number, the value must be in [1, 4096]. Default: 1.
         global_rank (int): Global rank id, the value must be in [0, 4095]. Default: 0.
-        gradients_mean (bool): Whether to perform mean operator after all-reduce of mirror. Default: False.
+        gradients_mean (bool): Whether to perform mean operator after all-reduce of mirror. Default: ``False``.
         loss_repeated_mean (bool): Whether to perform mean operator in backward in the case of repeated
-                        calculations. Default: True.
+                        calculations. Default: ``True``.
         gradient_fp32_sync (bool): Gradients allreduce by fp32 even though gradients is fp16 if this flag is True.
-                        Default: True.
+                        Default: ``True``.
         parallel_mode (str): There are five kinds of parallel modes, "stand_alone", "data_parallel",
                      "hybrid_parallel", "semi_auto_parallel" and "auto_parallel". Default: "stand_alone".
 
@@ -1056,13 +1212,13 @@ def _set_auto_parallel_context(**kwargs):
                      for forward compatibility, and this attribute will be deleted in a future MindSpore version.
         parameter_broadcast (bool): Indicating whether to broadcast parameters before training.
                        "stand_alone", "semi_auto_parallel" and "auto_parallel" do not support parameter
-                       broadcast. Default: False.
+                       broadcast. Default: ``False``.
         strategy_ckpt_load_file (str): The path to load parallel strategy checkpoint. Default: ''
         strategy_ckpt_save_file (str): The path to save parallel strategy checkpoint. Default: ''
         group_ckpt_save_file (str): The path to save parallel group checkpoint. Default: ''
-        full_batch (bool): Whether to load the whole batch on each device. Default: False.
+        full_batch (bool): Whether to load the whole batch on each device. Default: ``False``.
         dataset_strategy Union[str, tuple]: Dataset sharding strategy. Default: "data_parallel".
-        enable_parallel_optimizer (bool): Enable using optimizer segmentation or not. Default: False.
+        enable_parallel_optimizer (bool): Enable using optimizer segmentation or not. Default: ``False``.
         all_reduce_fusion_config (list): Set allreduce fusion strategy by parameters indices.
         pipeline_stages (int): Set the stage information for pipeline parallel. This indicates how
                         the devices are distributed alone the pipeline. The total devices will be divided into
@@ -1080,22 +1236,33 @@ def _set_auto_parallel_context(**kwargs):
                                     It should be larger than one and less than or equal with the data parallel size.
                                     Default: -1, which means fully use parallel optimizer in data parallel dimension.
         optimizer_weight_shard_aggregated_save (bool): Whether to integrated save weight shard when enable parallel
-                                                       optimizer. Default: False.
+                                                       optimizer. Default: ``False``.
         sharding_propagation (bool): Set the value of sharding strategy propagation in AUTO_PARALLEL mode. If True,
                                     the strategy-configured operators will propagate the strategies to other
                                     operators with minimum redistribution cost; otherwise, the algorithm will
-                                    search the desired strategies. Default: False.
+                                    search the desired strategies. Default: ``False``.
         enable_alltoall (bool): Set the value of enabling AllToAll. If False, AllGather and Split are used to
-                                circumvent AllToAll. Default: False.
+                                circumvent AllToAll. Default: ``False``.
         comm_fusion (dict): A dict contains the types and configurations for setting the communication fusion. each
                     communication fusion config has two keys: "mode" and "config".
                     It supports following communication fusion types and configurations:
+
+                    - openstate: Whether turn on the communication fusion or not. If `openstate` is `True`, turn on
+                        the communication fusion, otherwise, turn off the communication fusion. Default: `True`.
 
                     - allreduce: if communication fusion type is `allreduce`. The `mode` contains: `auto`, `size`
                         and `index`. In `auto` mode, allreduce fusion is configured by gradients size, and the default
                         fusion threshold is `64` MB. In 'size' mode, allreduce fusion is configured by gradients size
                         manually, and the fusion threshold must be larger than `0` MB. In `index` mode, it is same as
                         `all_reduce_fusion_config`.
+
+                    - allgather: If communication fusion type is `allgather`. The `mode` contains: `auto`, `size`.
+                        In `auto` mode, AllGather fusion is configured by gradients size, and the default fusion
+                        threshold is `64` MB. In 'size' mode, AllGather fusion is configured by gradients size
+                        manually, and the fusion threshold must be larger than `0` MB.
+
+                    - reducescatter: If communication fusion type is `reducescatter`. The `mode` contains: `auto`
+                        and `size`. Config is same as `allgather`.
 
 
     Raises:
@@ -1140,8 +1307,8 @@ def _reset_auto_parallel_context():
     - strategy_ckpt_load_file: ""
     - strategy_ckpt_save_file: ""
     - enable_parallel_optimizer: False
-    - search_mode: dynamic_programming
-    - auto_parallel_search_mode: dynamic_programming
+    - search_mode: 'recursive_programming
+    - auto_parallel_search_mode: 'recursive_programming
     - sharding_propagation: False
     - pipeline_stages: 0
     - gradient_accumulation_shard: True

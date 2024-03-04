@@ -14,16 +14,33 @@
  * limitations under the License.
  */
 
-#include <string>
 #include <algorithm>
+#include <iterator>
 #include <memory>
 #include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "ops/grad/resize_nearest_neighbor_grad.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/image_ops.h"
+#include "ops/grad/resize_nearest_neighbor_grad.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -34,43 +51,34 @@ constexpr auto kResizeIdx = 1;
 abstract::ShapePtr ResizeNearestNeighborGradInferShape(const PrimitivePtr &primitive,
                                                        const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
-  (void)primitive->AddAttr(kHalfPixelCenters, MakeValue(false));
   auto prim_name = primitive->name();
   if (input_args.size() != kResizeNearestNeighborGradInputNum) {
     MS_LOG(EXCEPTION) << "ResizeNearsetNeighborGrad's input num should be " << kResizeNearestNeighborGradInputNum
                       << ", but got " << input_args.size();
   }
+
   auto grad_shape_ptr = CheckAndConvertUtils::GetTensorInputShape(prim_name, input_args, 0);
   auto grad_shape = grad_shape_ptr->shape();
-  auto size_ptr = input_args[kResizeIdx]->BuildValue();
-  MS_EXCEPTION_IF_NULL(size_ptr);
-
-  std::vector<int64_t> size_v;
-  if (size_ptr->isa<tensor::Tensor>()) {
-    auto size_tensor = size_ptr->cast<tensor::TensorPtr>();
-    MS_EXCEPTION_IF_NULL(size_tensor);
-    size_t data_size = size_tensor->DataSize();
-    auto tensor_data = reinterpret_cast<int64_t *>(size_tensor->data_c());
-    MS_EXCEPTION_IF_NULL(tensor_data);
-    for (size_t i = 0; i < data_size; ++i) {
-      size_v.push_back(static_cast<int64_t>(*tensor_data));
-      ++tensor_data;
-    }
-  } else if (size_ptr->isa<ValueTuple>()) {
-    std::vector<ValuePtr> size_vec = size_ptr->cast<ValueTuplePtr>()->value();
-    (void)std::transform(size_vec.begin(), size_vec.end(), std::back_inserter(size_v),
-                         [](const ValuePtr e) { return GetValue<int64_t>(e); });
-  } else if (size_ptr->isa<AnyValue>()) {
-    size_v.push_back(-1);
-    size_v.push_back(-1);
+  std::vector<int64_t> ret_shape;
+  if (IsDynamicRank(grad_shape)) {
+    ret_shape.push_back(abstract::Shape::kShapeDimAny);
+    ret_shape.push_back(abstract::Shape::kShapeDimAny);
   } else {
-    size_v = GetValue<std::vector<int64_t>>(size_ptr);
+    const int64_t kVALUE_4 = 4;
+    (void)CheckAndConvertUtils::CheckInteger("grads", SizeToLong(grad_shape.size()), kEqual, kVALUE_4, prim_name);
+    ret_shape.push_back(grad_shape[kInputIndex0]);
+    ret_shape.push_back(grad_shape[kInputIndex1]);
   }
 
-  std::vector<int64_t> ret_shape;
-  ret_shape.push_back(grad_shape[0]);
-  ret_shape.push_back(grad_shape[1]);
+  auto size_ptr = input_args[kResizeIdx]->BuildValue();
+  MS_EXCEPTION_IF_NULL(size_ptr);
+  std::vector<int64_t> size_v = GetShapeValue(primitive, input_args[kResizeIdx]);
+  if (!IsDynamicRank(size_v)) {
+    const int64_t kVALUE_2 = 2;
+    (void)CheckAndConvertUtils::CheckInteger("size", SizeToLong(size_v.size()), kEqual, kVALUE_2, prim_name);
+  }
   ret_shape.insert(ret_shape.end(), size_v.begin(), size_v.end());
+
   return std::make_shared<abstract::Shape>(ret_shape);
 }
 
@@ -99,7 +107,27 @@ AbstractBasePtr ResizeNearestNeighborGradInfer(const abstract::AnalysisEnginePtr
   return abstract::MakeAbstract(ResizeNearestNeighborGradInferShape(primitive, input_args),
                                 ResizeNearestNeighborGradInferType(primitive, input_args));
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(ResizeNearestNeighborGrad, prim::kPrimResizeNearestNeighborGrad,
-                             ResizeNearestNeighborGradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGResizeNearestNeighborGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ResizeNearestNeighborGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ResizeNearestNeighborGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ResizeNearestNeighborGradInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ResizeNearestNeighborGrad, prim::kPrimResizeNearestNeighborGrad,
+                                 AGResizeNearestNeighborGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

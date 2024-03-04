@@ -16,9 +16,10 @@
 
 #include "tools/converter/adapter/acl/common/utils.h"
 #include <functional>
+#include "mindspore/core/ops/sequence_ops.h"
 #include "tools/optimizer/common/gllo_utils.h"
+#include "tools/common/node_util.h"
 #include "base/base_ref.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "abstract/dshape.h"
 #include "abstract/abstract_value.h"
 #include "include/common/utils/utils.h"
@@ -102,7 +103,7 @@ STATUS GetShapeVectorFromCNode(const mindspore::CNodePtr &cnode, std::vector<int
   auto shape_ptr = mindspore::utils::cast<mindspore::abstract::ShapePtr>(cnode_abstract_tensor->BuildShape());
   CHECK_NULL_RETURN(shape_ptr);
   if (shape_ptr->shape().empty()) {
-    MS_LOG(WARNING) << "Shape is empty " << cnode->fullname_with_scope();
+    MS_LOG(INFO) << "Shape is empty " << cnode->fullname_with_scope();
   }
 
   *shape_vector = shape_ptr->shape();
@@ -182,6 +183,68 @@ std::vector<int> GetIntParameterData(const ParameterPtr &param_ptr) {
   return result;
 }
 
+std::vector<int64_t> GetInt64ParameterData(const ParameterPtr &param_ptr) {
+  std::vector<int64_t> result;
+  MS_CHECK_TRUE_MSG(param_ptr != nullptr, result, "Param is nullptr.");
+
+  if (!param_ptr->has_default()) {
+    MS_LOG(DEBUG) << "Param has not default.";
+    return result;
+  }
+  auto default_param = param_ptr->default_param();
+  MS_CHECK_TRUE_MSG(default_param != nullptr, result, "default_param is nullptr.");
+  if (!utils::isa<tensor::TensorPtr>(default_param)) {
+    MS_LOG(DEBUG) << "Tensor info is not tensor::TensorPtr.";
+    return result;
+  }
+  auto default_param_ptr = utils::cast<tensor::TensorPtr>(default_param);
+  MS_CHECK_TRUE_MSG(default_param_ptr != nullptr, result, "default_param_ptr is nullptr.");
+  if (default_param_ptr->data_type() != kNumberTypeInt64) {
+    MS_LOG(DEBUG) << "Default param is not int64.";
+    return result;
+  }
+
+  auto ptr = reinterpret_cast<int64_t *>(default_param_ptr->data_c());
+  MS_CHECK_TRUE_MSG(ptr != nullptr, result, "ptr is nullptr.");
+  int shape_size =
+    std::accumulate(default_param_ptr->shape().begin(), default_param_ptr->shape().end(), 1, std::multiplies<int>());
+  for (int i = 0; i < shape_size; i++) {
+    result.emplace_back(ptr[i]);
+  }
+  return result;
+}
+
+std::vector<float> GetFloatParameterData(const ParameterPtr &param_ptr) {
+  std::vector<float> result;
+  MS_CHECK_TRUE_MSG(param_ptr != nullptr, result, "Param is nullptr.");
+
+  if (!param_ptr->has_default()) {
+    MS_LOG(DEBUG) << "Param has not default.";
+    return result;
+  }
+  auto default_param = param_ptr->default_param();
+  MS_CHECK_TRUE_MSG(default_param != nullptr, result, "default_param is nullptr.");
+  if (!utils::isa<tensor::TensorPtr>(default_param)) {
+    MS_LOG(DEBUG) << "Tensor info is not tensor::TensorPtr.";
+    return result;
+  }
+  auto default_param_ptr = utils::cast<tensor::TensorPtr>(default_param);
+  MS_CHECK_TRUE_MSG(default_param_ptr != nullptr, result, "default_param_ptr is nullptr.");
+  if (default_param_ptr->data_type() != kNumberTypeFloat32 && default_param_ptr->data_type() != kNumberTypeFloat) {
+    MS_LOG(DEBUG) << "Default param is not int.";
+    return result;
+  }
+
+  auto ptr = reinterpret_cast<float *>(default_param_ptr->data_c());
+  MS_CHECK_TRUE_MSG(ptr != nullptr, result, "ptr is nullptr.");
+  int shape_size =
+    std::accumulate(default_param_ptr->shape().begin(), default_param_ptr->shape().end(), 1, std::multiplies<float>());
+  for (int i = 0; i < shape_size; i++) {
+    result.emplace_back(ptr[i]);
+  }
+  return result;
+}
+
 bool IsCaseNode(const CNodePtr node) {
   MS_CHECK_TRUE_MSG(node != nullptr, false, "node is nullptr.");
   if (node->input(0) == nullptr) {
@@ -212,7 +275,7 @@ STATUS DelRedundantParameter(const FuncGraphPtr &func_graph) {
   auto parameters = func_graph->parameters();
   for (auto &parameter : parameters) {
     CHECK_NULL_RETURN(parameter);
-    if (std::find(nodes.begin(), nodes.end(), parameter) == nodes.end()) {
+    if (std::find(nodes.begin(), nodes.end(), parameter) == nodes.end() && !lite::IsGraphInput(parameter)) {
       func_graph->DropNode(parameter);
     }
   }

@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,17 +16,18 @@
 #ifndef MINDSPORE_CCSRC_MINDDATA_DATASET_CORE_DATA_TYPE_H_
 #define MINDSPORE_CCSRC_MINDDATA_DATASET_CORE_DATA_TYPE_H_
 
-#if !defined(ENABLE_ANDROID) || defined(ENABLE_CLOUD_FUSION_INFERENCE)
+#if !defined(ENABLE_ANDROID) || defined(ENABLE_MINDDATA_PYTHON)
 #include <opencv2/core/hal/interface.h>
 #endif
 
 #include <string>
-#ifdef ENABLE_PYTHON
+#ifdef ENABLE_MINDDATA_PYTHON
 #include "pybind11/numpy.h"
 #include "pybind11/pybind11.h"
 #include "minddata/dataset/core/pybind_support.h"
 namespace py = pybind11;
 #else
+#include "base/bfloat16.h"
 #include "base/float16.h"
 #endif
 #include "minddata/dataset/include/dataset/constants.h"
@@ -52,6 +53,7 @@ class DataType {
     DE_FLOAT64,
     DE_STRING,
     DE_BYTES,
+    DE_PYTHON,
     NUM_OF_TYPES
   };
 
@@ -63,7 +65,7 @@ class DataType {
     const uint8_t cvType_;                      // OpenCv matching type
   };
 
-#ifdef ENABLE_PYTHON
+#ifdef ENABLE_MINDDATA_PYTHON
   static inline const TypeInfo kTypeInfo[] = {
     // name, sizeInBytes, pybindType, pybindFormatDescriptor, openCV
     {"unknown", 0, "object", "", kCVInvalidType},                                        // DE_UNKNOWN
@@ -80,10 +82,11 @@ class DataType {
     {"float32", 4, "float32", py::format_descriptor<float>::format(), CV_32F},           // DE_FLOAT32
     {"float64", 8, "double", py::format_descriptor<double>::format(), CV_64F},           // DE_FLOAT64
     {"string", 0, "str", "U", kCVInvalidType},                                           // DE_STRING
-    {"bytes", 0, "bytes", "S", kCVInvalidType}                                           // DE_BYTES
+    {"bytes", 0, "bytes", "S", kCVInvalidType},                                          // DE_BYTES
+    {"python", 0, "object", "O", kCVInvalidType}                                         // DE_PYTHON
   };
 #else
-#if !defined(ENABLE_ANDROID) || defined(ENABLE_CLOUD_FUSION_INFERENCE)
+#if !defined(ENABLE_ANDROID) || defined(ENABLE_MINDDATA_PYTHON)
   static inline const TypeInfo kTypeInfo[] = {
     // name, sizeInBytes, pybindTypem formatDescriptor, openCV
     {"unknown", 0, "object", "", kCVInvalidType},  // DE_UNKNOWN
@@ -158,7 +161,7 @@ class DataType {
   /// \return the number of bytes of the type.
   uint8_t SizeInBytes() const;
 
-#if !defined(ENABLE_ANDROID) || defined(ENABLE_CLOUD_FUSION_INFERENCE)
+#if !defined(ENABLE_ANDROID) || defined(ENABLE_MINDDATA_PYTHON)
   // Convert from DataType to OpenCV type
   /// \return
   uint8_t AsCVType() const;
@@ -200,7 +203,7 @@ class DataType {
   template <typename T>
   static DataType FromCType();
 
-#ifdef ENABLE_PYTHON
+#ifdef ENABLE_MINDDATA_PYTHON
   // Convert from DataType to Pybind type
   /// \return
   py::dtype AsNumpyType() const;
@@ -241,6 +244,8 @@ class DataType {
   bool IsNumeric() const { return IsInt() || IsFloat() || IsBool(); }
 
   bool IsString() const { return type_ == DataType::DE_STRING || type_ == DataType::DE_BYTES; }
+
+  bool IsPython() const { return type_ == DataType::DE_PYTHON; }
 
   Type value() const { return type_; }
 

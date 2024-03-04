@@ -33,12 +33,10 @@ namespace mindspore {
 struct Context::Data {
   std::vector<std::shared_ptr<DeviceInfoContext>> device_info_list;
   int affinity_mode_ = 0;
-  int32_t thread_num = 0;  // defaults are automatically adjusted based on computer performance
+  std::string group_info_file_ = "";
   int32_t inter_op_parallel_num_ = 0;
-  bool enable_parallel_ = false;
+  int32_t thread_num = 0;  // defaults are automatically adjusted based on computer performance
   std::vector<int32_t> affinity_core_list_;
-  std::shared_ptr<AbstractDelegate> delegate = nullptr;
-  bool float_mode = false;
 };
 
 struct DeviceInfoContext::Data {

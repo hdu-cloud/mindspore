@@ -20,57 +20,103 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <utility>
 #include "pipeline/pynative/base.h"
 #include "pipeline/pynative/pynative_execute.h"
 
+#ifndef MS_UNLIKELY
+#ifdef _MSC_VER
+#define MS_UNLIKELY(x) (x)
+#define MS_LIKELY(x) (x)
+#else
+#define MS_LIKELY(x) __builtin_expect(!!(x), 1)
+#define MS_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif
+#endif
 namespace mindspore {
 namespace pynative {
 class PyNativeExecutor;
-
 namespace PyNativeAlgo {
 // Common function
 struct Common {
+  static AbstractBasePtr SetAbstractValueToAnyValue(const AbstractBasePtr &abs);
+  static AnfNodePtr ConvertValueSequenceToMakeTuple(const ValueNodePtr &node, const FuncGraphPtr &func_graph);
   static std::string GetIdByValue(const ValuePtr &v);
+  static std::string GetCellId(const std::string &obj_id, const std::vector<std::string> &input_arg_id_vec,
+                               const std::vector<ValuePtr> &input_arg_value_vec);
+  static void SplitString(const std::string &str, std::vector<std::string> *id_vec);
   static bool ValueHasDynamicShape(const ValuePtr &value);
   static bool IsTensor(const ValuePtr &v, bool include_sequence = false);
+  static bool IsControlFlowGraph(const FuncGraphPtr &func_graph);
   static ValuePtr FilterSensValues(const ValuePtr &value);
   static tensor::TensorPtr GetTensorFromParam(const AnfNodePtr &param_node);
-  static void SetForwardOutputFlag(const ValuePtr &v);
   static void DumpGraphIR(const std::string &filename, const FuncGraphPtr &graph);
+  static TypeId GetTypeFromAbstract(const abstract::AbstractBasePtr &abs);
+  static ShapeVector GetShapeFromAbstract(const abstract::AbstractBasePtr &abs);
+  static ValuePtr CreatOutputTensorValueByAbstract(const abstract::AbstractBasePtr &abs);
+  static void ReplaceCNodeWithValueNode(const FuncGraphPtr &bprop_graph);
   static std::shared_ptr<PyNativeExecutor> GetPyNativeExecutor();
+  static void StubNodeToValue(const FrontendOpRunInfoPtr &op_run_info);
+  static void GetConstInputToAttr(const PrimitivePtr &op_prim, const std::string &op_name,
+                                  const std::string &device_target, bool is_dynamic_shape,
+                                  mindspore::HashSet<size_t> *input_to_attr_index);
+  static ValueNodePtr CreateValueNodeByValue(const ValuePtr &v, const abstract::AbstractBasePtr &abs = nullptr);
+  static ValuePtr CreateFakeValueWithoutDeviceAddress(const ValuePtr &value);
+  static tensor::TensorPtr CreateFakeTensorWithoutDeviceAddress(const tensor::TensorPtr &tensor);
+  static inline bool IsParam(TensorGradType grad_type) {
+    return grad_type == TensorGradType::kParameter || grad_type == TensorGradType::kInput;
+  }
+  static inline bool IsConstant(TensorGradType grad_type) { return grad_type == TensorGradType::kConstant; }
+  static TensorGradType SetValueGradInfo(const ValuePtr &value, const TopCellInfoPtr &top_cell,
+                                         TensorGradType grad_type);
+  static TensorGradType SetTensorGradInfo(const tensor::TensorPtr &tensor, const TopCellInfoPtr &top_cell);
+  static void SetGraphInputAndWeightsInfo(const FrontendOpRunInfoPtr &op_run_info, const FuncGraphPtr &func_graph,
+                                          const TopCellInfoPtr &top_cell);
+  static void ProcessTupleParam(const FuncGraphPtr &bprop_graph, size_t position);
 };
 
 // Parser python
 struct PyParser {
-  static std::string GetPyObjId(const py::handle &obj);
   static std::string GetIdByPyObj(const py::object &obj);
+  static std::pair<std::vector<std::string>, std::vector<ValuePtr>> GetArgsIdAndValue(const py::args &args);
   static void SetPrim(const FrontendOpRunInfoPtr &op_run_info, const py::object &prim_arg);
-  static void ParseOpInputByPythonObj(const FrontendOpRunInfoPtr &op_run_info, const py::list &op_inputs);
+  static void ParseOpInputByPythonObj(const FrontendOpRunInfoPtr &op_run_info, const py::list &op_inputs,
+                                      bool stub = false);
+  static void PrepareOpGradInfo(const FrontendOpRunInfoPtr &op_run_info);
 };
 
 // Data convert
 struct DataConvert {
   static py::object ValueToPyObj(const ValuePtr &v);
-  static ValuePtr PyObjToValue(const py::object &obj);
-  static ValuePtr BaseRefToValue(const BaseRef &value);
-  static ValuePtr VectorRefToValue(const VectorRef &vec_ref);
-  static void FlattenTupleArg(const ValuePtr &v, std::vector<ValuePtr> *flatten_v);
+  static ValuePtr PyObjToValue(const py::object &obj, bool stub = false);
+  static ValuePtr BaseRefToValue(const BaseRef &value, bool requires_grad, bool is_out_sequence);
+  static ValuePtr VectorRefToValue(const VectorRef &vec_ref, bool requires_grad, bool is_out_sequence);
+  static void FlattenValueSeqArg(const ValuePtr &v, std::vector<ValuePtr> *flatten_v);
   static void FlattenArgs(const std::vector<ValuePtr> &v_vec, std::vector<ValuePtr> *flatten_v, bool has_sens);
-  static void GetInputTensor(const FrontendOpRunInfoPtr &op_run_info, const std::string &device_target);
+  static void GetInputTensor(const FrontendOpRunInfoPtr &op_run_info, const TopCellInfoPtr &top_cell);
   static void ConvertCSRTensorToTensorList(const FrontendOpRunInfoPtr &op_run_info,
-                                           const tensor::CSRTensorPtr &csr_tensor, const PrimitivePtr &op_prim);
+                                           const tensor::CSRTensorPtr &csr_tensor, const TopCellInfoPtr &top_cell,
+                                           size_t index);
+  static void ConvertMapTensor(const FrontendOpRunInfoPtr &op_run_info, const tensor::MapTensorPtr &map_tensor,
+                               const TopCellInfoPtr &top_cell, size_t index);
   static void ConvertValueTupleToTensor(const FrontendOpRunInfoPtr &op_run_info, const ValueSequencePtr &value_seq);
+  static ValuePtr ConvertValueDictToValueTuple(const ValuePtr &v);
   static void PlantTensorTupleToVector(const FrontendOpRunInfoPtr &op_run_info, const ValueSequencePtr &value_seq,
-                                       const PrimitivePtr &op_prim, size_t index);
+                                       size_t index, const TopCellInfoPtr &top_cell);
   static void ConvertTupleValueToTensor(const FrontendOpRunInfoPtr &op_run_info, const ValueSequencePtr &value_seq,
-                                        const PrimitivePtr &op_prim, size_t index);
+                                        size_t index, const TopCellInfoPtr &top_cell);
   static void ConvertValueToTensor(const FrontendOpRunInfoPtr &op_run_info, const ValuePtr &v, size_t index,
-                                   const PrimitivePtr &op_prim);
-  static bool NeedConvertConstInputToAttr(const FrontendOpRunInfoPtr &op_run_info, const std::string &device_target,
-                                          mindspore::HashSet<size_t> *input_to_attr_ptr);
+                                   const TopCellInfoPtr &top_cell);
   static bool RunOpConvertConstInputToAttr(const FrontendOpRunInfoPtr &op_run_info, const ValuePtr &v,
-                                           size_t input_index, const PrimitivePtr &op_prim,
-                                           const mindspore::HashSet<size_t> &input_attrs);
+                                           size_t input_index);
+};
+
+// Some common functions used in both jit and PackFunc grad
+struct GradCommon {
+  static bool IsRealOp(const AnfNodePtr &cnode);
+  static void GetUsedCNodeInBpropGraph(const CNodePtr &cnode, const mindspore::HashSet<size_t> &unused_inputs,
+                                       AnfNodePtrList *node_list);
+  static void SetForward(const AnfNodePtrList &node_list);
 };
 };  // namespace PyNativeAlgo
 }  // namespace pynative

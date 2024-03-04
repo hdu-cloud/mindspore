@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "mindspore/core/ops/structure_ops.h"
 #include "utils/hash_map.h"
 #include "ir/anf.h"
 #include "ir/manager.h"
@@ -96,7 +97,8 @@ static inline bool isTraversable(const AnfNodePtr &node) {
   const auto &value = value_node->value();
   return (value != nullptr) && (value->isa<FuncGraph>() || value->isa<RefKey>() || value->isa<MindIRClassType>() ||
                                 value->isa<MindIRMetaFuncGraph>() || value->isa<parse::ClassType>() ||
-                                value->isa<prim::DoSignaturePrimitive>());
+                                value->isa<prim::DoSignaturePrimitive>() || value->isa<ValueSequence>() ||
+                                value->isa<parse::NameSpace>() || value->isa<ValueDictionary>());
 }
 
 static AnfNodePtr DoTransform(const OptimizerPtr &optimizer, const AnfNodePtr &node,
@@ -127,7 +129,7 @@ static AnfNodePtr DoTransform(const OptimizerPtr &optimizer, const AnfNodePtr &n
 static void UpdateTransformingListForSubstitutions(const AnfNodePtr &node, std::deque<AnfNodePtr> *todo, bool change) {
   auto fg = GetValuePtr<FuncGraph>(node);
   if (fg != nullptr) {
-    (void)todo->emplace_back(fg->output());
+    (void)todo->emplace_back(fg->return_node());
   }
 
   if (change) {
@@ -145,7 +147,7 @@ static void UpdateTransformingListForIR(const AnfNodePtr &node, std::deque<AnfNo
                                         const SubstitutionPtr &substitution) {
   auto fg = GetValuePtr<FuncGraph>(node);
   if (fg != nullptr) {
-    (void)todo->emplace_back(fg->output());
+    (void)todo->emplace_back(fg->return_node());
   }
 
   // If there is a priority pattern in substitution, don't transform the new node,
@@ -161,12 +163,11 @@ static void UpdateTransformingListForIR(const AnfNodePtr &node, std::deque<AnfNo
   }
 }
 
-static void UpdateTransformingListWithUserNodes(const OptimizerPtr &optimizer, const AnfNodePtr &node,
+static void UpdateTransformingListWithUserNodes(const FuncGraphManagerPtr &manager, const AnfNodePtr &node,
                                                 std::deque<AnfNodePtr> *todo, bool change, SeenNum seen) {
   if (!change) {
     return;
   }
-  auto manager = optimizer->manager();
   MS_EXCEPTION_IF_NULL(manager);
   auto &node_users = manager->node_users();
   auto users_iterator = node_users.find(node);
@@ -193,7 +194,7 @@ bool SubstitutionList::ApplyIRToSubstitutions(const OptimizerPtr &optimizer, con
   FuncGraphManagerPtr manager = optimizer->manager();
   auto seen = NewSeenGeneration();
   std::deque<AnfNodePtr> todo;
-  (void)todo.emplace_back(func_graph->output());
+  (void)todo.emplace_back(func_graph->return_node());
   bool changes = false;
   auto &all_nodes = manager->all_nodes();
   while (!todo.empty()) {
@@ -216,7 +217,7 @@ bool SubstitutionList::ApplyIRToSubstitutions(const OptimizerPtr &optimizer, con
       }
     }
     UpdateTransformingListForSubstitutions(node, &todo, change);
-    UpdateTransformingListWithUserNodes(optimizer, node, &todo, change, seen);
+    UpdateTransformingListWithUserNodes(manager, node, &todo, change, seen);
   }
 #ifdef ENABLE_PROFILE
   MsProfile::StatTime("opt.transforms." + optimizer->name(), GetTime() - start);
@@ -233,7 +234,7 @@ bool SubstitutionList::ApplySubstitutionToIR(const OptimizerPtr &optimizer, cons
   MS_EXCEPTION_IF_NULL(manager);
   auto seen = NewSeenGeneration();
   std::deque<AnfNodePtr> todo;
-  (void)todo.emplace_back(func_graph->output());
+  (void)todo.emplace_back(func_graph->return_node());
   bool changes = false;
 
   auto &all_nodes = manager->all_nodes();
@@ -254,7 +255,7 @@ bool SubstitutionList::ApplySubstitutionToIR(const OptimizerPtr &optimizer, cons
       node = res;
     }
     UpdateTransformingListForIR(node, &todo, change, substitution);
-    UpdateTransformingListWithUserNodes(optimizer, node, &todo, change, seen);
+    UpdateTransformingListWithUserNodes(manager, node, &todo, change, seen);
   }
 
 #ifdef ENABLE_PROFILE
@@ -268,8 +269,8 @@ void SubstitutionList::DisplayStatusOfSubstitution(const mindspore::HashMap<std:
   constexpr int pad_width = 4;
   std::stringstream ss;
   ss << std::endl
-     << "Pass: " << optimizer->name() << "(" << optimizer->CurPass_.counter << ")_" << optimizer->CurPass_.name
-     << std::endl;
+     << "Pass: " << optimizer->name() << "(" << optimizer->current_pass_.counter << ")_"
+     << optimizer->current_pass_.name << std::endl;
   for (size_t i = 0; i < list_.size(); i++) {
     auto name = list_[i]->name_;
     ss << std::left << std::setw(SizeToInt(space) + pad_width) << name << "\t";
@@ -302,16 +303,18 @@ bool SubstitutionList::ApplySubstitutionsToIR(const OptimizerPtr &optimizer, con
       loop = loop || change;
 #ifdef ENABLE_DUMP_IR
       static const auto enable_dump_pass_ir = GetDumpConfig().enable_dump_pass_ir;
-      if (enable_dump_pass_ir && MsContext::GetInstance()->get_param<bool>(MS_CTX_SAVE_GRAPHS_FLAG)) {
-        auto fg_name = optimizer->name() + "_r" + std::to_string(optimizer->CurPass_.counter) + "_" +
-                       optimizer->CurPass_.name + "_" + substitution->name_;
+      auto context = MsContext::GetInstance();
+      MS_EXCEPTION_IF_NULL(context);
+      if ((enable_dump_pass_ir && context->CanDump(kIntroductory)) || context->CanDump(kFully)) {
+        auto fg_name = optimizer->name() + "_r" + std::to_string(optimizer->current_pass_.counter) + "_" +
+                       optimizer->current_pass_.name + "_" + substitution->name_;
         static const auto switch_order = (common::GetEnv("MS_DEV_SAVE_GRAPHS_SORT_MODE") == "1");
         if (switch_order) {
           ExportIR(fg_name + ".ir", func_graph);
         } else {
           DumpIR(fg_name + ".ir", func_graph);
         }
-        if (MsContext::GetInstance()->get_param<bool>(MS_CTX_SAVE_GRAPH_DOT)) {
+        if (context->CanDump(kFully)) {
           draw::Draw(fg_name + ".dot", func_graph);
         }
       }
@@ -348,12 +351,12 @@ bool SubstitutionList::operator()(const FuncGraphPtr &func_graph, const Optimize
   if (traverse_mode == kOptTraverseFromIRToSubstitutions &&
       MsContext::GetInstance()->get_param<int>(MS_CTX_EXECUTION_MODE) != kPynativeMode &&
       optimizer->traverse_nodes_first() && !is_once_ && !global_sensitive_) {
-    MS_LOG(DEBUG) << "IR >> SUB, " << optimizer->name() << "(r" << optimizer->CurPass_.counter << ")_"
-                  << optimizer->CurPass_.name;
+    MS_LOG(DEBUG) << "IR >> SUB, " << optimizer->name() << "(r" << optimizer->current_pass_.counter << ")_"
+                  << optimizer->current_pass_.name;
     changes = ApplyIRToSubstitutions(optimizer, func_graph);
   } else {
-    MS_LOG(DEBUG) << "SUB >> IR, " << optimizer->name() << "(r" << optimizer->CurPass_.counter << ")_"
-                  << optimizer->CurPass_.name;
+    MS_LOG(DEBUG) << "SUB >> IR, " << optimizer->name() << "(r" << optimizer->current_pass_.counter << ")_"
+                  << optimizer->current_pass_.name;
     changes = ApplySubstitutionsToIR(optimizer, func_graph);
   }
   return changes;
@@ -368,7 +371,7 @@ bool SimpleRewriter::Run() {
       (void)todo.emplace_back(node);
     }
   };
-  (void)todo.emplace_back(root_graph_->output());
+  (void)todo.emplace_back(root_graph_->return_node());
   auto &all_nodes = manager_->all_nodes();
   while (!todo.empty()) {
     AnfNodePtr node = std::move(todo.front());
@@ -385,13 +388,17 @@ bool SimpleRewriter::Run() {
     } else {
       auto fg = GetValuePtr<FuncGraph>(node);
       if (fg != nullptr) {
-        add_todo(fg->output());
+        add_todo(fg->return_node());
       }
     }
+    TraceGuard trace_guard(std::make_shared<TraceOpt>(node->debug_info()));
+    ScopeGuard scope_guard(node->scope());
     auto new_node = NodeRewrite(node);
     if (new_node != nullptr) {
       (void)manager_->Replace(node, new_node);
       changed = true;
+      // Need push the users of new_node to the deque.
+      UpdateTransformingListWithUserNodes(manager_, new_node, &todo, changed, seen);
     }
   }
   return changed;

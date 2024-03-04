@@ -1,4 +1,4 @@
-# Copyright 2020-2021 Huawei Technologies Co., Ltd
+# Copyright 2020-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -98,6 +98,53 @@ def test_max_device_memory_size():
         context.set_context(max_device_memory=1)
         context.set_context(max_device_memory="3.5G")
     context.set_context.__wrapped__(max_device_memory="3GB")
+
+
+def test_ascend_config():
+    """"
+    Feature: test_ascend_config function
+    Description: Test case for simplest ascend_config
+    Expectation: The results are as expected
+    """
+    context.set_context(device_target="Ascend")
+    with pytest.raises(ValueError):
+        context.set_context(precision_mode="force_fp16")
+    with pytest.raises(ValueError):
+        context.set_context(jit_compile=True)
+    with pytest.raises(ValueError):
+        context.set_context(atomic_clean_policy=0)
+    with pytest.raises(ValueError):
+        context.set_context(matmul_allow_hf32=0)
+    with pytest.raises(ValueError):
+        context.set_context(conv_allow_hf32=0)
+    with pytest.raises(ValueError):
+        context.set_context(op_precision_mode="/path")
+    with pytest.raises(ValueError):
+        context.set_context(ascend_config={"precision_mode": "xxx"})
+    with pytest.raises(ValueError):
+        context.set_context(ascend_config={"xxxx": 1})
+    with pytest.raises(ValueError):
+        context.set_context(ascend_config={"jit_compile": "xxx"})
+    with pytest.raises(ValueError):
+        context.set_context(ascend_config={"jit_compile": 2})
+    with pytest.raises(ValueError):
+        context.set_context(ascend_config={"atomic_clean_policy": "xxx"})
+    with pytest.raises(ValueError):
+        context.set_context(ascend_config={"atomic_clean_policy": 3})
+    with pytest.raises(ValueError):
+        context.set_context(ascend_config={"precision_mode": 2})
+    with pytest.raises(ValueError):
+        context.set_context(ascend_config={"matmul_allow_hf32": 2})
+    with pytest.raises(ValueError):
+        context.set_context(ascend_config={"conv_allow_hf32": 2})
+    with pytest.raises(TypeError):
+        context.set_context(ascend_config={"op_precision_mode": 2})
+    with pytest.raises(ValueError):
+        context.set_context(ascend_config={"op_precision_mode": "./invalid_path"})
+    context.set_context.__wrapped__(ascend_config={
+        "precision_mode": "force_fp16", "jit_compile": True, "atomic_clean_policy": 1,
+        "matmul_allow_hf32": False, "conv_allow_hf32": True, "op_precision_mode": "./"})
+
 
 def test_print_file_path():
     """test_print_file_path"""

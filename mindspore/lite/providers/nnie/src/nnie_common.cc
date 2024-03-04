@@ -277,7 +277,9 @@ static int NnieSetBlobAddr(HI_U64 *phy_addr, HI_U8 **vir_addr, NnieParam *nnie_p
 
 static int NnieParamInit(NnieCfg *nnie_cfg, NnieParam *nnie_param) {
   HI_U32 i;
-  HI_U32 total_size = 0, total_task_buf_size = 0, tmp_buf_size_ = 0;
+  HI_U32 total_size = 0;
+  HI_U32 total_task_buf_size = 0;
+  HI_U32 tmp_buf_size_ = 0;
   HI_S32 ret = HI_SUCCESS;
   HI_U32 off_set = 0;
   HI_U64 phy_addr = 0;
@@ -570,7 +572,9 @@ static int NnieFillSrcDataSeq(NnieCfg *nnie_cfg, SVP_SRC_BLOB_S *blob, HI_U32 in
   HI_U32 *step_addr_u32 = NNIE_CONVERT_64BIT_ADDR(HI_U32, blob->unShape.stSeq.u64VirAddrStep);
   HI_U32 dim = blob->unShape.stSeq.u32Dim;
   HI_U32 stride = blob->u32Stride;
-  HI_U32 i, j, n;
+  HI_U32 i;
+  HI_U32 j;
+  HI_U32 n;
   HI_U32 total_step_num = 0;
   HI_U8 *input_addr_u8 = NNIE_CONVERT_64BIT_ADDR(HI_U8, blob->u64VirAddr);
   HI_S32 *input_addr_s32 = NNIE_CONVERT_64BIT_ADDR(HI_S32, blob->u64VirAddr);
@@ -623,7 +627,8 @@ HI_U32 GetBlobSize(const SVP_SRC_BLOB_S &blob) {
 }
 
 static int NnieFillSrcData(NnieCfg *nnie_cfg, NnieParam *nnie_param, NnieDataIndex *input_data_idx, HI_U32 input_size) {
-  HI_U32 i, ret;
+  HI_U32 i;
+  HI_U32 ret;
   SVP_SRC_BLOB_S *blob = &nnie_param->seg_data_[input_data_idx->seg_idx_].src_[input_data_idx->node_idx_];
 
   if (SVP_BLOB_TYPE_SEQ_S32 == blob->enType) {

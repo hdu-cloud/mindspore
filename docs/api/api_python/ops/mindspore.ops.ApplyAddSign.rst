@@ -18,13 +18,13 @@
     Ascend上支持的输入数据类型为：float16和float32；CPU和GPU上支持的输入数据类型为：float16、float32和float64。
 
     输入：
-        - **var** (Parameter) - 要更新的权重。任意维度，其数据类型为float32或float16。
-        - **m** (Parameter) - 要更新的权重，shape和数据类型与 `var` 相同。
+        - **var** (Parameter) - 要更新的权重。任意维度，其数据类型为float32或float16。其shape为 :math:`(N, *)` ，其中 :math:`*` 为任意数量的额外维度。
+        - **m** (Parameter) - 要更新的权重，shape与 `var` 相同。
         - **lr** (Union[Number, Tensor]) - 学习率，必须是Scalar。数据类型为float32或float16。
         - **sign_decay** (Union[Number, Tensor]) - 必须是Scalar。数据类型为float32或float16。
         - **alpha** (Union[Number, Tensor]) - 必须是Scalar。数据类型为float32或float16。
         - **beta** (Union[Number, Tensor]) - 指数衰减率，必须是Scalar。数据类型为float32或float16。
-        - **grad** (Tensor) - 梯度，shape和数据类型与 `var` 相同。
+        - **grad** (Tensor) - 梯度，shape与 `var` 相同。
 
     输出：
         2个Tensor组成的tuple，更新后的数据。
@@ -36,4 +36,4 @@
         - **TypeError** - 如果 `var` 、 `lr` 、 `alpha` 、 `sign_decay` 或 `beta` 的数据类型既不是float16也不是float32。
         - **TypeError** - 如果 `lr` 、 `alpha` 或 `sign_decay` 既不是数值型，也不是Tensor。
         - **TypeError** - 如果 `grad` 不是Tensor。
-        - **RuntimeError** - 如果不支持参数的 `var` 、 `accum` 和 `grad` 数据类型转换。
+        - **TypeError** - 如果不支持参数的 `var` 、 `accum` 和 `grad` 数据类型转换。

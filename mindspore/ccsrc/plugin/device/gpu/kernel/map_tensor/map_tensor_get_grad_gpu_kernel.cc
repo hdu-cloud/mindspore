@@ -70,8 +70,8 @@ bool MapTensorGetGradGpuKernelMod::Init(const BaseOperatorPtr &base_operator,
   // Get kernel launch function.
   kernel_launch_func_ = map_tensor_get_grad_func_list_[index].second;
 
-  input_keys_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).first);
-  input_dout_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex2).first);
+  input_keys_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).dtype);
+  input_dout_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex2).dtype);
 
   // The output of this kernel is dynamic, so need update the output shape.
   is_need_retrieve_output_shape_ = true;
@@ -104,12 +104,10 @@ int MapTensorGetGradGpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
   for (size_t i = keys_shape.size(); i < dout_shape.size(); i++) {
     value_dims_.push_back(dout_shape[i]);
   }
-
-  outputs_ = outputs;
   return KRET_OK;
 }
 
-void MapTensorGetGradGpuKernelMod::SyncData() {
+void MapTensorGetGradGpuKernelMod::SyncOutputShape() {
   MS_EXCEPTION_IF_CHECK_FAIL(outputs_.size() == 1, "The outputs number of kernel MapTensorGetGrad should be 1");
   outputs_[0]->SetShapeVector(value_dims_);
 }

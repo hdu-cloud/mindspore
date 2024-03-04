@@ -1,4 +1,4 @@
-# Copyright 2020-2022 Huawei Technologies Co., Ltd
+# Copyright 2020-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,8 +23,7 @@ from mindspore import log as logger
 from mindspore._checkparam import _check_3d_int_or_tuple
 from mindspore import context
 from mindspore.ops import signature as sig
-from mindspore._checkparam import Validator as validator
-from mindspore._checkparam import Rel
+from mindspore import _checkparam as validator
 from mindspore.common import dtype as mstype
 from mindspore.common._decorator import deprecated
 from mindspore.ops.primitive import Primitive
@@ -102,22 +101,41 @@ class CeLU(Primitive):
 
     Refer to :func:`mindspore.ops.celu` for more details.
 
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
+    Args:
+        alpha (float, optional): The :math:`\alpha` value for the Celu formulation. Default: ``1.0`` .
+
+    Inputs:
+        - **input_x** (Tensor) - The input tensor with a dtype of float16 or float32.
+
+    Outputs:
+        Tensor, with the same type and shape as the `input_x`.
+
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> input_x = Tensor(np.array([-2.0, -1.0, 1.0, 2.0]), mindspore.float32)
         >>> celu = ops.CeLU(alpha=1.0)
         >>> output = celu(input_x)
         >>> print(output)
         [-0.86466473 -0.63212055  1.          2.        ]
+        >>> input_x = Tensor(2.1, mindspore.float32)
+        >>> output = celu(input_x)
+        >>> print(output)
+        2.1
     """
 
     @prim_attr_register
     def __init__(self, alpha=1.0):
         """Initialize CeLU"""
         validator.check_value_type("alpha", alpha, [float], self.name)
-        validator.check_float(alpha, 0.0, Rel.NE, "alpha", self.name)
+        validator.check_float(alpha, 0.0, validator.NE, "alpha", self.name)
         self.alpha = alpha
         self.add_prim_attr('alpha', self.alpha)
 
@@ -128,10 +146,20 @@ class Flatten(Primitive):
 
     Refer to :func:`mindspore.ops.flatten` for more details.
 
+    Inputs:
+        - **input_x** (Tensor) - Tensor of shape :math:`(N, \ldots)` to be flattened, where :math:`N` is batch size.
+
+    Outputs:
+        Tensor, the shape of the output tensor is :math:`(N, X)`, where :math:`X` is
+        the product of the remaining dimension.
+
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> input_x = Tensor(np.ones(shape=[1, 2, 3, 4]), mindspore.float32)
         >>> flatten = ops.Flatten()
         >>> output = flatten(input_x)
@@ -148,10 +176,23 @@ class AdaptiveAvgPool3D(Primitive):
     r"""
     AdaptiveAvgPool3D operation.
 
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
     Refer to :func:`mindspore.ops.adaptive_avg_pool3d` for more details.
 
+    Args:
+        output_size (Union[int, tuple]): Specify the size of output tensor. It
+            can be a single int or a tuple of three ints.
+
+    Inputs:
+        - **x** (Tensor) - The input of AdaptiveAvgPool3D, which is a 5D or 4D tensor.
+
+    Outputs:
+        Tensor, with the same type as the `x`.
+
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> import mindspore
@@ -183,7 +224,7 @@ class AdaptiveAvgPool3D(Primitive):
         for i, size in enumerate(self.output_size):
             validator.check_value_type(f"output_size[{i}]", size, [int, type(None)], self.name)
             if size is not None:
-                validator.check_number(f"output_size[{i}]", size, 0, Rel.GE, self.name)
+                validator.check_number(f"output_size[{i}]", size, 0, validator.GE, self.name)
 
         self.output_size = tuple(-1 if val is None else val for val in self.output_size)
 
@@ -191,67 +232,39 @@ class AdaptiveAvgPool3D(Primitive):
         self.init_prim_io_names(inputs=['x'], outputs=['y'])
 
 
-class AdaptiveAvgPool2DV1(Primitive):
+class AdaptiveAvgPool2D(Primitive):
     r"""
-    AdaptiveAvgPool2DV1 operation.
+    AdaptiveAvgPool2D operation.
 
-    This operator applies a 2D adaptive average pooling to an input signal composed of multiple input planes.
-    That is, for any input size, the size of the specified output is H x W.
-    The number of output features is equal to the number of input planes.
+    Refer to :func:`mindspore.ops.adaptive_avg_pool2d` for more details.
 
-    The input and output data format can be "NCHW" and "CHW". N is the batch size, C is the number of channels,
-    H is the feature height, and W is the feature width.
-
-    For AdaptiveAvgPool2DV1:
-
-    ..  math::
-        \begin{align}
-        h_{start} &= floor(i * H_{in} / H_{out})\\
-        h_{end} &= ceil((i + 1) * H_{in} / H_{out})\\
-        w_{start} &= floor(j * W_{in} / W_{out})\\
-        w_{end} &= ceil((j + 1) * W_{in} / W_{out})\\
-        Output(i,j) &= \frac{\sum Input[h_{start}:h_{end}, w_{start}:w_{end}]}{(h_{end}- h_{start})
-        * (w_{end}- w_{start})}
-        \end{align}
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
 
     Args:
-        - output_size (Union[int, tuple]): The target output size is H x W.
-          ouput_size can be a tuple, or a single H for H x H, and H and W can be int or None
-          which means the output size is the same as the input.
+        output_size (Union[int, tuple]): The target output size. `output_size` can be a tuple :math:`(H, W)`,
+            or an int H for :math:`(H, H)`. :math:`H` and :math:`W` can be int or None.
+            If it is None, it means the output size is the same as the input size.
 
     Inputs:
-        - **input_x** (Tensor) - The input of AdaptiveAvgPool2DV1, which is a 3D or 4D tensor,
-          with float16 or float32 data type.
+        - **input_x** (Tensor) - The input of AdaptiveAvgPool2D, which is a 3D or 4D tensor,
+          with float16 ,float32 or float64 data type.
 
     Outputs:
         Tensor, with the same type as the `input_x`.
 
-        Shape of the output is `input_x_shape[:len(input_x_shape) - len(out_shape)] + out_shape`.
-
-    .. math::
-        out\_shape = \begin{cases}
-        input\_x\_shape[-2] + output\_size[1], & \text{if output_size is (None, w);}\\
-        output\_size[0] + input\_x\_shape[-1], & \text{if output_size is (h, None);}\\
-        input\_x\_shape[-2:], & \text{if output_size is (None, None);}\\
-        (h, h), & \text{if output_size is h;}\\
-        (h, w), & \text{if output_size is (h, w)}
-        \end{cases}
-
-    Raises:
-        TypeError: If `input_x` is not a tensor.
-        TypeError: If dtype of `input_x` is not float16 nor float32.
-        ValueError: If `output_size` is a tuple and the length of `output_size` is not 2.
-        ValueError: If the dimension of `input_x` is less than or equal to the dimension of `output_size`.
-
     Supported Platforms:
-        ``Ascend`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> # case 1: output_size=(None, 2)
         >>> input_x = Tensor(np.array([[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
         ...                            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
         ...                            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]]), mindspore.float32)
-        >>> adaptive_avg_pool_2d = ops.AdaptiveAvgPool2DV1((None, 2))
+        >>> adaptive_avg_pool_2d = ops.AdaptiveAvgPool2D((None, 2))
         >>> output = adaptive_avg_pool_2d(input_x)
         >>> print(output)
         [[[1.5 2.5]
@@ -264,7 +277,7 @@ class AdaptiveAvgPool2DV1(Primitive):
           [4.5 5.5]
           [7.5 8.5]]]
         >>> # case 2: output_size=2
-        >>> adaptive_avg_pool_2d = ops.AdaptiveAvgPool2DV1(2)
+        >>> adaptive_avg_pool_2d = ops.AdaptiveAvgPool2D(2)
         >>> output = adaptive_avg_pool_2d(input_x)
         >>> print(output)
         [[[3. 4.]
@@ -274,7 +287,7 @@ class AdaptiveAvgPool2DV1(Primitive):
          [[3. 4.]
           [6. 7.]]]
         >>> # case 3: output_size=(1, 2)
-        >>> adaptive_avg_pool_2d = ops.AdaptiveAvgPool2DV1((1, 2))
+        >>> adaptive_avg_pool_2d = ops.AdaptiveAvgPool2D((1, 2))
         >>> output = adaptive_avg_pool_2d(input_x)
         >>> print(output)
         [[[4.5 5.5]]
@@ -284,77 +297,38 @@ class AdaptiveAvgPool2DV1(Primitive):
 
     @prim_attr_register
     def __init__(self, output_size):
-        """Initialize AdaptiveAvgPool2DV1."""
+        """Initialize AdaptiveAvgPool2D."""
         self.init_prim_io_names(inputs=['x'], outputs=['y'])
         validator.check_value_type("output_size", output_size, [int, tuple], self.name)
         if isinstance(output_size, tuple):
-            validator.check_int(len(output_size), 2, Rel.EQ, 'length of output_size', self.name)
+            validator.check_int(len(output_size), 2, validator.EQ, 'length of output_size', self.name)
         self.output_size = (output_size, output_size) if isinstance(self.output_size, int) else output_size
         for i, size in enumerate(self.output_size):
             validator.check_value_type(f"output_size[{i}]", size, [int, type(None)], self.name)
             if size is not None:
-                validator.check_number(f"output_size[{i}]", size, 0, Rel.GE, self.name)
+                validator.check_number(f"output_size[{i}]", size, 0, validator.GE, self.name)
 
         self.output_size = tuple(-1 if val is None else val for val in self.output_size)
         self.add_prim_attr('output_size', self.output_size)
 
 
-class AdaptiveAvgPool2D(AdaptiveAvgPool2DV1):
-    r"""
-    2D adaptive average pooling for temporal data.
-
-    Refer to :func:`mindspore.ops.adaptive_avg_pool2d` for more details.
-
-    Supported Platforms:
-        ``GPU``
-
-    Examples:
-        >>> # case 1: output_size=(None, 2)
-        >>> input_x = Tensor(np.array([[[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
-        ...                             [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
-        ...                             [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]]]), mindspore.float32)
-        >>> adaptive_avg_pool_2d = ops.AdaptiveAvgPool2D((None, 2))
-        >>> output = adaptive_avg_pool_2d(input_x)
-        >>> print(output)
-        [[[[1.5 2.5]
-           [4.5 5.5]
-           [7.5 8.5]]
-          [[1.5 2.5]
-           [4.5 5.5]
-           [7.5 8.5]]
-          [[1.5 2.5]
-           [4.5 5.5]
-           [7.5 8.5]]]]
-        >>> # case 2: output_size=2
-        >>> adaptive_avg_pool_2d = ops.AdaptiveAvgPool2D(2)
-        >>> output = adaptive_avg_pool_2d(input_x)
-        >>> print(output)
-        [[[[3. 4.]
-           [6. 7.]]
-          [[3. 4.]
-           [6. 7.]]
-          [[3. 4.]
-           [6. 7.]]]]
-        >>> # case 3: output_size=(1, 2)
-        >>> adaptive_avg_pool_2d = ops.AdaptiveAvgPool2D((1, 2))
-        >>> output = adaptive_avg_pool_2d(input_x)
-        >>> print(output)
-        [[[[4.5 5.5]]
-          [[4.5 5.5]]
-          [[4.5 5.5]]]]
-    """
-
-    @prim_attr_register
-    def __init__(self, output_size):
-        """Initialize AdaptiveAvgPool2D."""
-        super(AdaptiveAvgPool2D, self).__init__(output_size)
-
-
 class AdaptiveMaxPool2D(Primitive):
     r"""
-    Applies a 2D adaptive max pooling over an input signal composed of several input planes.
+    Performs 2D adaptive max pooling on a multi-plane input signal.
 
     Refer to :func:`mindspore.ops.adaptive_max_pool2d` for more details.
+
+    Args:
+        output_size (Union[int, tuple]): The target output size. `output_size` can be a tuple :math:`(H, W)`,
+            or an int H for :math:`(H, H)`. :math:`H` and :math:`W` can be int or None.
+            If it is None, it means the output size is the same as the input size.
+
+    Inputs:
+        - **input_x** (Tensor) - The input of AdaptiveMaxPool2D, which is a 3D or 4D tensor,
+          with float16, float32 or float64 data type.
+
+    Outputs:
+        Tensor, with the same type as the `input_x`.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
@@ -366,7 +340,7 @@ class AdaptiveMaxPool2D(Primitive):
         ...                             [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]]]), mindspore.float32)
         >>> adaptive_max_pool_2d = ops.AdaptiveMaxPool2D((None, 2))
         >>> output = adaptive_max_pool_2d(input_x)
-        >>> print(output)
+        >>> print(output[0])
         [[[[2. 3.]
            [5. 6.]
            [8. 9.]]
@@ -379,7 +353,7 @@ class AdaptiveMaxPool2D(Primitive):
         >>> # case 2: output_size=2
         >>> adaptive_max_pool_2d = ops.AdaptiveMaxPool2D(2)
         >>> output = adaptive_max_pool_2d(input_x)
-        >>> print(output)
+        >>> print(output[0])
         [[[[5. 6.]
            [8. 9.]]
           [[5. 6.]
@@ -389,34 +363,44 @@ class AdaptiveMaxPool2D(Primitive):
         >>> # case 3: output_size=(1, 2)
         >>> adaptive_max_pool_2d = ops.AdaptiveMaxPool2D((1, 2))
         >>> output = adaptive_max_pool_2d(input_x)
-        >>> print(output)
+        >>> print(output[0])
         [[[[8. 9.]]
           [[8. 9.]]
           [[8. 9.]]]]
     """
 
     @prim_attr_register
-    def __init__(self, output_size, return_indices=False):
+    def __init__(self, output_size):
         """Initialize AdaptiveMaxPool2D."""
         validator.check_value_type("output_size", output_size, [int, tuple], self.name)
-        validator.check_value_type("return_indices", return_indices, [bool], self.name)
         if isinstance(output_size, tuple):
-            validator.check_int(len(output_size), 2, Rel.EQ,
+            validator.check_int(len(output_size), 2, validator.EQ,
                                 'length of output_size', self.name)
         self.output_size = (output_size, output_size) if isinstance(self.output_size, int) else output_size
         self.output_size = (-1 if self.output_size[0] is None else self.output_size[0],
                             -1 if self.output_size[1] is None else self.output_size[1])
         for size in self.output_size:
-            validator.check_number("output_size", size, -1, Rel.GE, None)
+            validator.check_number("output_size", size, -1, validator.GE, None)
         self.add_prim_attr('output_size', self.output_size)
-        self.add_prim_attr('return_indices', return_indices)
 
 
 class AdaptiveMaxPool3D(Primitive):
     r"""
-    Applies a 3D adaptive max pooling over an input signal composed of several input planes.
+    Performs 3D adaptive max pooling on a multi-plane input signal.
 
     Refer to :func:`mindspore.ops.adaptive_max_pool3d` for more details.
+
+    Inputs:
+        - **x** (Tensor) - Tensor, with shape :math:`(C, D, H, W)` or :math:`(N, C, D, H, W)`.
+        - **output_size** (Union[int, tuple]) - The specified output size, which is an integer that represents depth,
+          height and width, or a tuple of three int numbers that represent depth, height and width respectively.
+          The value must be a positive integer. If it is None, the output size and input size of the corresponding
+          dimension are the same.
+
+    Outputs:
+        - **y** (Tensor) - Tensor, with the same number of dims and data type as the `input`.
+        - **argmax** (Tensor) - Tensor, the indices of max value, which has the same shape as the
+          `y` and it's data type is int32.
 
     Supported Platforms:
         ``GPU`` ``CPU``
@@ -449,10 +433,26 @@ class Softmax(Primitive):
 
     Refer to :func:`mindspore.ops.softmax` for more details.
 
+    Args:
+        axis (Union[int, tuple]): The axis to perform the Softmax operation. Default: ``-1`` .
+
+    Inputs:
+        - **logits** (Tensor) - Tensor of shape :math:`(N, *)`, where :math:`*` means, any number of
+          additional dimensions. Supported dtypes:
+
+          - Ascend: float16, float32.
+          - GPU/CPU: float16, float32, float64.
+
+    Outputs:
+        Tensor, with the same type and shape as the logits.
+
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> logits = Tensor(np.array([1, 2, 3, 4, 5]), mindspore.float32)
         >>> softmax = ops.Softmax()
         >>> output = softmax(logits)
@@ -477,10 +477,23 @@ class LogSoftmax(Primitive):
 
     Refer to :func:`mindspore.ops.log_softmax` for more details.
 
+    Args:
+        axis (int, optional): The axis to perform the Log softmax operation. Default: ``-1`` .
+
+    Inputs:
+        - **logits** (Tensor) - Tensor of shape :math:`(N, *)`, where :math:`*` means, any number of
+          additional dimensions, with float16 or float32 data type.
+
+    Outputs:
+        Tensor, with the same type and shape as the `logits`.
+
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> logits = Tensor(np.array([1, 2, 3, 4, 5]), mindspore.float32)
         >>> log_softmax = ops.LogSoftmax()
         >>> output = log_softmax(logits)
@@ -504,23 +517,29 @@ class Softplus(Primitive):
 
     .. math::
 
-        \text{output} = \log(1 + \exp(\text{x})),
+        \text{output} = \log(1 + \exp(\text{x}))
 
     Inputs:
-        - **input_x** (Tensor) - Tensor of shape :math:`(N, *)`, where :math:`*` means, any number of
-          additional dimensions, with float16 or float32 data type.
+        - **input_x** (Tensor) - Tensor of any dimension.
+          Supported dtypes:
+
+          - GPU/CPU: float16, float32, float64.
+          - Ascend: float16, float32.
 
     Outputs:
         Tensor, with the same type and shape as the `input_x`.
 
     Raises:
         TypeError: If `input_x` is not a Tensor.
-        TypeError: If the dtype of `input_x` is neither float16 nor float32.
+        TypeError: If the dtype of `input_x` is not float16, float32 or float64.
 
     Supported Platforms:
         ``Ascend``  ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> input_x = Tensor(np.array([1, 2, 3, 4, 5]), mindspore.float32)
         >>> softplus = ops.Softplus()
         >>> output = softplus(input_x)
@@ -540,10 +559,20 @@ class Softsign(Primitive):
 
     Refer to :func:`mindspore.ops.softsign` for more details.
 
+    Inputs:
+        - **input_x** (Tensor) - Tensor of shape :math:`(N, *)`, where :math:`*` means, any number of
+          additional dimensions, with float16 or float32 data type.
+
+    Outputs:
+        Tensor, with the same type and shape as the `input_x`.
+
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> input_x = Tensor(np.array([0, -1, 2, 30, -30]), mindspore.float32)
         >>> softsign = ops.Softsign()
         >>> output = softsign(input_x)
@@ -563,10 +592,19 @@ class ReLU(Primitive):
 
     Refer to :func:`mindspore.ops.relu` for more details.
 
+    Inputs:
+        - **input_x** (Tensor) - Input Tensor of numeric types.
+
+    Outputs:
+        Tensor, has the same dtype and shape as `input_x`.
+
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> input_x = Tensor(np.array([[-1.0, 4.0, -8.0], [2.0, -5.0, 9.0]]), mindspore.float32)
         >>> relu = ops.ReLU()
         >>> output = relu(input_x)
@@ -595,7 +633,7 @@ class ReLUV3(Primitive):
     Inputs:
         - **input_x** (Tensor) - Tensor of shape :math:`(N, *)`, where :math:`*` means, any number of
           additional dimensions, data type is
-          `number <https://www.mindspore.cn/docs/en/r2.0.0-alpha/api_python/mindspore.html#mindspore.dtype>`_.
+          `number <https://www.mindspore.cn/docs/en/master/api_python/mindspore.html#mindspore.dtype>`_.
 
     Outputs:
         Tensor of shape :math:`(N, *)`, with the same type and shape as the `input_x`.
@@ -625,41 +663,39 @@ class Mish(PrimitiveWithInfer):
     r"""
     Computes MISH(A Self Regularized Non-Monotonic Neural Activation Function) of input tensors element-wise.
 
-    The function is shown as follows:
-
-    .. math::
-
-        \text{output} = x * \tanh(\log(1 + \exp(\text{x})))
-
-    See more details in `A Self Regularized Non-Monotonic Neural Activation Function
-    <https://arxiv.org/abs/1908.08681>`_.
+    Refer to :func:`mindspore.ops.mish` for more details.
 
     Inputs:
-        - **x** (Tensor) - Tensor of shape :math:`(N, *)`, where :math:`*` means, any number of
-          additional dimensions, with float16 or float32 data type.
+        - **x** (Tensor) - The input Tensor.
+          Supported dtypes:
+
+          - GPU/CPU: float16, float32, float64.
+          - Ascend: float16, float32.
 
     Outputs:
         Tensor, with the same type and shape as the `x`.
-
-    Raises:
-        TypeError: If dtype of `x` is neither float16 nor float32.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> x = Tensor(np.array([[-1.0, 4.0, -8.0], [2.0, -5.0, 9.0]]), mindspore.float32)
         >>> mish = ops.Mish()
         >>> output = mish(x)
+        >>> print(output.shape)
+        (2, 3)
+        >>> x = Tensor(2.1, mindspore.float32)
+        >>> output = mish(x)
         >>> print(output)
-        [[-0.3034014  3.9974129 -0.0026832]
-         [ 1.9439590  -0.0033576 9.0000000]]
+        2.050599
     """
 
     @prim_attr_register
     def __init__(self):
         """Initialize Mish"""
-        super().__init__("Mish")
         self.init_prim_io_names(inputs=['x'], outputs=['output'])
 
 
@@ -696,6 +732,9 @@ class SeLU(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> input_x = Tensor(np.array([[-1.0, 4.0, -8.0], [2.0, -5.0, 9.0]]), mindspore.float32)
         >>> selu = ops.SeLU()
         >>> output = selu(input_x)
@@ -707,7 +746,6 @@ class SeLU(Primitive):
     @prim_attr_register
     def __init__(self):
         """Initialize SeLU"""
-        super().__init__("SeLU")
         self.init_prim_io_names(inputs=['input_x'], outputs=['output'])
 
 
@@ -717,10 +755,21 @@ class ReLU6(PrimitiveWithCheck):
 
     Refer to :func:`mindspore.ops.relu6` for more details.
 
+    Inputs:
+        - **input_x** (Tensor) - Tensor of shape :math:`(N, *)`,
+          where :math:`*` means any number of additional dimensions.
+          Data type must be float16, float32.
+
+    Outputs:
+        Tensor, with the same type and shape as the `input_x`.
+
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> input_x = Tensor(np.array([[-1.0, 4.0, -8.0], [2.0, -5.0, 9.0]]), mindspore.float32)
         >>> relu6 = ops.ReLU6()
         >>> result = relu6(input_x)
@@ -804,7 +853,7 @@ class Elu(Primitive):
     Activation_function#/media/File:Activation_elu.svg>`_ .
 
     Args:
-        alpha (float): The alpha value of ELU, the data type is float. Only support '1.0' currently. Default: 1.0.
+        alpha (float): The alpha value of ELU, the data type is float. Only support '1.0' currently. Default: ``1.0`` .
 
     Inputs:
         - **input_x** (Tensor) - The input of ELU is a Tensor of any dimension with data type of
@@ -822,6 +871,9 @@ class Elu(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> input_x = Tensor(np.array([[-1.0, 4.0, -8.0], [2.0, -5.0, 9.0]]), mindspore.float32)
         >>> elu = ops.Elu()
         >>> output = elu(input_x)
@@ -834,7 +886,7 @@ class Elu(Primitive):
     def __init__(self, alpha=1.0):
         """Initialize Elu"""
         validator.check_value_type("alpha", alpha, [float], self.name)
-        validator.check_number("alpha", alpha, 1.0, Rel.EQ, self.name)
+        validator.check_number("alpha", alpha, 1.0, validator.EQ, self.name)
         self.init_prim_io_names(inputs=['x'], outputs=['output', 'mask'])
 
 
@@ -844,10 +896,19 @@ class HSwish(Primitive):
 
     Refer to :func:`mindspore.ops.hardswish` for more details.
 
+    Inputs:
+        - **input_x** (Tensor) - The input Tensor.
+
+    Outputs:
+        Tensor, with the same type and shape as the `input_x`.
+
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> hswish = ops.HSwish()
         >>> input_x = Tensor(np.array([-1, -2, 0, 2, 1]), mindspore.float16)
         >>> result = hswish(input_x)
@@ -864,12 +925,22 @@ class HSwish(Primitive):
 class Sigmoid(Primitive):
     r"""
     Sigmoid activation function.
+
     Refer to :func:`mindspore.ops.sigmoid` for more details.
+
+    Inputs:
+        - **input_x** (Tensor) - Tensor of any dimension.
+
+    Outputs:
+        Tensor, with the same type and shape as the input_x.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> input_x = Tensor(np.array([1, 2, 3, 4, 5]), mindspore.float32)
         >>> sigmoid = ops.Sigmoid()
         >>> output = sigmoid(input_x)
@@ -887,30 +958,21 @@ class HSigmoid(Primitive):
     r"""
     Hard sigmoid activation function.
 
-    Applies hard sigmoid activation element-wise. The input is a Tensor with any valid shape.
-
-    Hard sigmoid is defined as:
-
-    .. math::
-
-        \text{hsigmoid}(x_{i}) = max(0, min(1, \frac{x_{i} + 3}{6})),
-
-    where :math:`x_i` is an element of the input Tensor.
+    Refer to :func:`mindspore.ops.hardsigmoid` for more details.
 
     Inputs:
-        - **input_x** (Tensor) - Tensor of shape :math:`(N, *)`, where :math:`*` means, any number of
-          additional dimensions.
+        - **input_x** (Tensor) - The input Tensor.
 
     Outputs:
         Tensor, with the same type and shape as the `input_x`.
-
-    Raises:
-        TypeError: If `input_x` is not a Tensor.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> hsigmoid = ops.HSigmoid()
         >>> input_x = Tensor(np.array([-1, -2, 0, 2, 1]), mindspore.float16)
         >>> result = hsigmoid(input_x)
@@ -930,10 +992,19 @@ class Tanh(Primitive):
 
     Refer to :func:`mindspore.ops.tanh` for more details.
 
+    Inputs:
+        - **input_x** (Tensor) - Input Tensor of any dimension.
+
+    Outputs:
+        Tensor, with the same type and shape as the `input_x`.
+
     Supported Platforms:
         ``Ascend`` ``GPU``  ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> input_x = Tensor(np.array([1, 2, 3, 4, 5]), mindspore.float32)
         >>> tanh = ops.Tanh()
         >>> output = tanh(input_x)
@@ -981,10 +1052,10 @@ class InstanceNorm(PrimitiveWithInfer):
     where :math:`\gamma` is scale, :math:`\beta` is bias, :math:`\epsilon` is epsilon.
 
     Args:
-        epsilon (float): A small value added for numerical stability. Default: 1e-5.
+        epsilon (float): A small value added for numerical stability. Default: ``1e-5`` .
         momentum (float): The hyper parameter to compute moving average for running_mean and running_var
             (e.g. :math:`new\_running\_mean = momentum * running\_mean + (1 - momentum) * current\_mean`).
-            Momentum value must be [0, 1]. Default: 0.1.
+            Momentum value must be [0, 1]. Default: ``0.1`` .
 
     Inputs:
         - **input_x** (Tensor) - The input of InstanceNorm, Tensor of shape :math:`(N, C)`,
@@ -1048,8 +1119,8 @@ class InstanceNorm(PrimitiveWithInfer):
         """Initialize InstanceNorm."""
         self.init_prim_io_names(inputs=['x', 'gamma', 'beta', 'mean', 'variance'],
                                 outputs=['y', 'save_mean', 'save_variance'])
-        self.epsilon = validator.check_float_range(epsilon, 0, 1, Rel.INC_RIGHT, 'epsilon', self.name)
-        self.momentum = validator.check_float_range(momentum, 0, 1, Rel.INC_BOTH, 'momentum', self.name)
+        self.epsilon = validator.check_float_range(epsilon, 0, 1, validator.INC_RIGHT, 'epsilon', self.name)
+        self.momentum = validator.check_float_range(momentum, 0, 1, validator.INC_BOTH, 'momentum', self.name)
         self._update_parameter = True
         self.add_prim_attr('side_effect_mem', True)
 
@@ -1081,9 +1152,9 @@ class InstanceNormV2(Primitive):
             statistics in both training and eval modes.
         momentum (float): The hyper parameter to compute moving average for running_mean and running_var
             (e.g. :math:`new\_running\_mean = momentum * running\_mean + (1 - momentum) * current\_mean`).
-            Momentum value must be [0, 1]. Default: 0.1.
+            Momentum value must be [0, 1]. Default: ``0.1`` .
         epsilon (float): A small value added to the denominator for numerical stability.
-            Epsilon value must be [0, 1). Default: 1e-5.
+            Epsilon value must be [0, 1). Default: ``1e-5`` .
 
     Inputs:
         - **x** (Tensor) - The input of InstanceNormV2, Tensor of shape :math:`(N, C, H, W)`
@@ -1153,57 +1224,9 @@ class InstanceNormV2(Primitive):
                                 outputs=['y', 'batch_mean', 'batch_variance'])
         validator.check_is_float(epsilon, 'epsilon', self.name)
         validator.check_is_float(momentum, 'momentum', self.name)
-        validator.check_float_range(epsilon, 0, 1, Rel.INC_RIGHT, 'epsilon', self.name)
-        validator.check_float_range(momentum, 0, 1, Rel.INC_BOTH, 'momentum', self.name)
+        validator.check_float_range(epsilon, 0, 1, validator.INC_RIGHT, 'epsilon', self.name)
+        validator.check_float_range(momentum, 0, 1, validator.INC_BOTH, 'momentum', self.name)
         validator.check_bool(is_training, "is_training", self.name)
-
-
-class BNTrainingReduce(Primitive):
-    """
-    The BNTrainingReduce interface is deprecated, please use the :class:`mindspore.ops.BatchNorm` instead.
-
-    Supported Platforms:
-        Deprecated
-    """
-
-    @deprecated("1.5", "ops.BatchNorm", False)
-    @prim_attr_register
-    def __init__(self, data_format="NCHW"):
-        """Initialize BNTrainingReduce."""
-        self.init_prim_io_names(inputs=['x'], outputs=['sum', 'square_sum'])
-        self.format = validator.check_string(data_format, ['NCHW', 'NHWC'], 'format', self.name)
-        if context.get_context("device_target") != "GPU" and self.format == "NHWC":
-            raise ValueError(f"For '{self.name}', the 'NHWC' format is only supported in GPU target, "
-                             f"but got the 'data_format' is {self.format} and "
-                             f"the platform is {context.get_context('device_target')}.")
-        self.add_prim_attr('data_format', self.format)
-
-
-class BNTrainingUpdate(Primitive):
-    """
-    The BNTrainingUpdate interface is deprecated, please use the :class:`mindspore.ops.BatchNorm` instead.
-
-    Supported Platforms:
-        Deprecated
-    """
-
-    @deprecated("1.5", "ops.BatchNorm", False)
-    @prim_attr_register
-    def __init__(self, isRef=True, epsilon=1e-5, factor=0.1, data_format="NCHW"):
-        """Initialize BNTrainingUpdate."""
-        self.init_prim_io_names(inputs=['x', 'sum', 'square_sum', 'scale', 'b', 'mean', 'variance'],
-                                outputs=['y', 'running_mean', 'running_variance', 'save_mean', 'save_inv_variance'])
-        validator.check_value_type("isRef", isRef, [bool], self.name)
-        validator.check_value_type("epsilon", epsilon, [float], self.name)
-        validator.check_value_type("factor", factor, [float], self.name)
-        self.epsilon = validator.check_float_range(epsilon, 0, 1, Rel.INC_RIGHT, 'epsilon', 'BNTrainingUpdate')
-        self.factor = validator.check_float_range(factor, 0, 1, Rel.INC_BOTH, 'factor', 'BNTrainingUpdate')
-        self.format = validator.check_string(data_format, ['NCHW', 'NHWC'], 'format', self.name)
-        if context.get_context("device_target") != "GPU" and self.format == "NHWC":
-            raise ValueError(f"For '{self.name}', the 'NHWC' format is only supported in GPU target, "
-                             f"but got the 'data_format' is {self.format} and "
-                             f"the platform is {context.get_context('device_target')}.")
-        self.add_prim_attr('data_format', self.format)
 
 
 class BatchNorm(PrimitiveWithInfer):
@@ -1221,8 +1244,9 @@ class BatchNorm(PrimitiveWithInfer):
 
         y = \frac{x - mean}{\sqrt{variance + \epsilon}} * \gamma + \beta
 
-    where :math:`\gamma` is scale, :math:`\beta` is bias, :math:`\epsilon` is epsilon, :math:`mean` is the mean of x,
-    :math:`variance` is the variance of x.
+    where :math:`\gamma` is scale, :math:`\beta` is bias, :math:`\epsilon` is epsilon,
+    :math:`mean` is the mean of :math:`x`,
+    :math:`variance` is the variance of :math:`x`.
 
     .. warning::
         - If the operation is used for inference, and outputs "reserve_space_1" and "reserve_space_2" are available,
@@ -1230,17 +1254,17 @@ class BatchNorm(PrimitiveWithInfer):
         - For Ascend 310, the result accuracy fails to reach 1‰ due to the square root instruction.
 
     Args:
-        is_training (bool): If `is_training` is True, `mean` and `variance` are computed during training.
-            If `is_training` is False, they're loaded from checkpoint during inference. Default: False.
-        epsilon (float): A small value added for numerical stability. Default: 1e-5.
+        is_training (bool): If `is_training` is ``True`` , `mean` and `variance` are computed during training.
+            If `is_training` is ``False`` , they're loaded from checkpoint during inference. Default: ``False`` .
+        epsilon (float): A small value added for numerical stability. Default: ``1e-5``, value must be (0, 1] .
         momentum (float): The hyper parameter to compute moving average for running_mean and running_var
             (e.g. :math:`new\_running\_mean = (1 - momentum) * running\_mean + momentum * current\_mean`).
-            Momentum value must be [0, 1]. Default: 0.1.
-        data_format (str): The optional value for data format, is 'NHWC' or 'NCHW'.
-            Default: "NCHW".
+            Momentum value must be [0, 1]. Default: ``0.1`` .
+        data_format (str): The optional value for data format, is ``'NHWC'`` or ``'NCHW'``, and the ``'NHWC'`` format
+            is only supported in GPU target. Default: ``"NCHW"`` .
 
     Inputs:
-        If `is_training` is False, inputs are Tensors.
+        If `is_training` is ``False`` , inputs are Tensors.
 
         - **input_x** (Tensor) - Tensor of shape :math:`(N, C)`, with float16 or float32 data type.
         - **scale** (Tensor) - Tensor of shape :math:`(C,)`, with float16 or float32 data type.
@@ -1248,7 +1272,7 @@ class BatchNorm(PrimitiveWithInfer):
         - **mean** (Tensor) - Tensor of shape :math:`(C,)`, has the same data type with `scale`.
         - **variance** (Tensor) - Tensor of shape :math:`(C,)`, has the same data type with `scale`.
 
-        If `is_training` is True, `scale`, `bias`, `mean` and `variance` are Parameters.
+        If `is_training` is ``True`` , `scale`, `bias`, `mean` and `variance` are Parameters.
 
         - **input_x** (Tensor) - Tensor of shape :math:`(N, C)`, with float16 or float32 data type.
         - **scale** (Parameter) - Parameter of shape :math:`(C,)`, with float16 or float32 data type.
@@ -1273,9 +1297,12 @@ class BatchNorm(PrimitiveWithInfer):
         TypeError: If dtype of `input_x`, `scale` is neither float16 nor float32.
 
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> input_x = Tensor(np.ones([2, 2]), mindspore.float32)
         >>> scale = Tensor(np.ones([2]), mindspore.float32)
         >>> bias = Tensor(np.ones([2]), mindspore.float32)
@@ -1304,8 +1331,8 @@ class BatchNorm(PrimitiveWithInfer):
         else:
             self.add_prim_attr('side_effect_mem', True)
         validator.check_value_type('is_training', is_training, (bool,), self.name)
-        validator.check_float_range(epsilon, 0, 1, Rel.INC_RIGHT, 'epsilon', self.name)
-        validator.check_float_range(momentum, 0, 1, Rel.INC_BOTH, 'momentum', self.name)
+        validator.check_float_range(epsilon, 0, 1, validator.INC_RIGHT, 'epsilon', self.name)
+        validator.check_float_range(momentum, 0, 1, validator.INC_BOTH, 'momentum', self.name)
         self.format = validator.check_string(data_format, ['NCHW', 'NHWC'], 'format', self.name)
         if context.get_context("device_target") != "GPU" and self.format == "NHWC":
             raise ValueError(f"For '{self.name}', the 'NHWC' format is only supported in GPU target, "
@@ -1318,12 +1345,12 @@ class BatchNorm(PrimitiveWithInfer):
     def infer_shape(self, input_x, scale, bias, mean, variance):
         input_x_channel = input_x[-1] if self.format == "NHWC" else input_x[1]
         validator.check_equal_int(len(scale), 1, "scale rank", self.name)
-        validator.check("scale shape", scale, "bias shape", bias, Rel.EQ, self.name)
-        validator.check("scale shape[0]", scale[0], "input_x channel", input_x_channel, Rel.EQ, self.name)
+        validator.check("scale shape", scale, "bias shape", bias, validator.EQ, self.name)
+        validator.check("scale shape[0]", scale[0], "input_x channel", input_x_channel, validator.EQ, self.name)
         if not self.is_training:
             validator.check_equal_int(len(mean), 1, "mean rank", self.name)
-            validator.check("mean shape", mean, "variance shape", variance, Rel.EQ, self.name)
-            validator.check("mean shape", mean, "scale shape", scale, Rel.EQ, self.name)
+            validator.check("mean shape", mean, "variance shape", variance, validator.EQ, self.name)
+            validator.check("mean shape", mean, "scale shape", scale, validator.EQ, self.name)
         return input_x, scale, scale, scale, scale
 
     def infer_dtype(self, input_x, scale, bias, mean, variance):
@@ -1337,18 +1364,165 @@ class Conv2D(Primitive):
     r"""
     2D convolution layer.
 
-    Refer to :func:`mindspore.ops.conv2d` for more details.
+    Applies a 2D convolution over an input tensor which is typically of shape :math:`(N, C_{in}, H_{in}, W_{in})`,
+    where :math:`N` is batch size, :math:`C` is channel number, :math:`H` is feature height, :math:`W` is feature width.
+
+    The output is calculated based on formula:
+
+    .. math::
+
+        \text{out}(N_i, C_{\text{out}_j}) = \text{bias}(C_{\text{out}_j}) +
+        \sum_{k = 0}^{C_{in} - 1} \text{ccor}({\text{weight}(C_{\text{out}_j}, k), \text{X}(N_i, k)})
+
+    where :math:`bias` is the output channel bias, :math:`ccor` is
+    the `cross-correlation <https://en.wikipedia.org/wiki/Cross-correlation>`_,
+    , :math:`weight` is the convolution kernel value and :math:`X` represents the input feature map.
+
+    Here are the indices' meanings:
+    - :math:`i` corresponds to the batch number, ranging from 0 to N-1, where N is the batch size of the input.
+
+    - :math:`j` corresponds to the output channel, ranging from 0 to C_{out}-1, where C_{out} is the number of
+      output channels, which is also equal to the number of kernels.
+
+    - :math:`k` corresponds to the input channel, ranging from 0 to C_{in}-1, where C_{in} is the number of
+      input channels, which is also equal to the number of channels in the convolutional kernels.
+
+    Therefore, in the above formula, :math:`{bias}(C_{out_j})` represents the bias of the :math:`j`-th
+    output channel, :math:`{weight}(C_{out_j}, k)` represents the slice of the :math:`j`-th convolutional
+    kernel in the :math:`k`-th channel, and :math:`{X}(N_i, k)` represents the slice of the :math:`k`-th input
+    channel in the :math:`i`-th batch of the input feature map.
+
+    The shape of the convolutional kernel is given by :math:`(kernel\_size[0], kernel\_size[1])`,
+    where :math:`kernel\_size[0]` and :math:`kernel\_size[1]` are the height and width of the kernel, respectively.
+    If we consider the input and output channels as well as the `group` parameter, the complete kernel shape
+    will be :math:`(C_{out}, C_{in} / \text{group}, \text{kernel_size[0]}, \text{kernel_size[1]})`,
+    where `group` is the number of groups dividing `x`'s input channel when applying group convolution.
+
+    For more details about convolution layer, please refer to `Gradient Based Learning Applied to Document Recognition
+    <http://vision.stanford.edu/cs598_spring07/papers/Lecun98.pdf>`_.
+
+    Note:
+        On Ascend platform, only group convolution in depthwise convolution scenarios is supported.
+        That is, when `group>1`, condition `in\_channels` = `out\_channels` = `group` must be satisfied.
+
+    Args:
+        out_channel (int): Specifies output channel :math:`C_{out}`.
+        kernel_size (Union[int, tuple[int]]): Specifies the height and width of the 2D convolution kernel.
+            It can be a single int or a tuple of 2 integers. A single int means the value is for both the height
+            and the width. A tuple of 2 ints means the first value is for the height and the other is for the width.
+        mode (int, optional): Modes for different convolutions. The value is currently not used. Default: ``1`` .
+        pad_mode (str, optional): Specifies the padding mode with a padding value of 0. It can be set to:
+            ``"same"`` , ``"valid"`` or ``"pad"`` . Default: ``"valid"`` .
+
+            - ``"same"``: Pad the input around its edges so that the shape of input and output
+              are the same when `stride` is set to ``1``.
+              The amount of padding to is calculated by the operator internally, If the amount is even, it is
+              uniformly distributed around the input, if it is odd, the excess amount goes to the right/bottom side.
+              If this mode is set, `pad` must be 0.
+            - ``"valid"``: No padding is applied to the input, and the output returns the maximum
+              possible height and width. Extra pixels that could not complete a full stride will
+              be discarded. If this mode is set, `pad` must be 0.
+            - ``"pad"``: Pad the input with a specified amount. In this mode, the amount of padding
+              in the height and width directions is determined by the `pad` parameter.
+              If this mode is set, `pad` must be greater than or equal to 0.
+
+        pad (Union(int, tuple[int]), optional): Specifies the amount of padding to apply on input
+            when `pad_mode` is set to ``"pad"``. It can be a single int or a tuple of 4 ints.
+            If `pad` is one integer, the paddings of top, bottom, left and right are the same, equal to `pad`.
+            If `pad` is a tuple with four integers, the paddings of top, bottom, left and right will be equal to pad[0],
+            pad[1], pad[2], and pad[3] accordingly. Default: ``0`` .
+        stride (Union(int, tuple[int]), optional): Specifies the stride of the convolution kernel's movement.
+            It can be a single int or a tuple of two or four ints. A single int means the stride is the same in
+            both the height and width directions. A tuple of two ints indicates the strides in the height and
+            width directions, respectively. For a tuple of four ints, the two ints correspond to (N, C) dimension
+            are treated as 1, and the two correspond to (H, W) dimensions is the step size in the height
+            and width directions respectively. Default: ``1`` .
+        dilation (Union(int, tuple[int]), optional): Specifies the dilation rate to use for dilated convolution.
+            It can be a single int or a tuple of 2 or 4 integers. A single int means the dilation size is the same
+            in both the height and width directions. A tuple of two ints represents the dilation size in
+            the height and width directions, respectively. For a tuple of four ints, the two ints correspond
+            to (N, C) dimension are treated as 1, and the two correspond to (H, W) dimensions is the
+            dilation size in the height and width directions respectively.
+            Assuming :math:`dilation=(d0, d1)`, the convolutional kernel samples the input with a
+            spacing of :math:`d0-1` elements in the height direction and :math:`d1-1` elements in the width direction.
+            The values in the height and width dimensions are in the ranges [1, H] and [1, W], respectively.
+            Default: ``1`` .
+        group (int, optional): Specifies the number of groups dividing `x`'s input channel when applying
+            group convolution. Default: ``1`` .
+        data_format (str, optional): The optional value for data format, is ``'NHWC'`` or ``'NCHW'`` .
+            Default: ``"NCHW"`` .
+
+    Inputs:
+        - **x** (Tensor) - Input tensor of shape :math:`(N, C_{in}, H_{in}, W_{in})` or
+          :math:`(N, H_{in}, W_{in}, C_{in}, )` depending on `data_format` .
+        - **weight** (Tensor) - The convolutional kernel value, it should has shape
+          :math:`(C_{out}, C_{in} / \text{group}, \text{kernel_size[0]}, \text{kernel_size[1]})` .
+
+    Outputs:
+        Tensor, the value that applied 2D convolution. The shape is :math:`(N, C_{out}, H_{out}, W_{out})`
+        or :math:`(N, H_{out}, W_{out}, C_{out}, )`.
+        To see how different pad modes affect the output shape, please refer to
+        :class:`mindspore.nn.Conv2d` for more details.
+
+    Raises:
+        TypeError: If `kernel_size`, `stride`, `pad` or `dilation` is neither an int nor a tuple.
+        TypeError: If `out_channel` or `group` is not an int.
+        ValueError: If `kernel_size`, `stride` or `dilation` is less than 1.
+        ValueError: If `pad_mode` is not one of ``'same'``, ``'valid'`` or ``'pad'``.
+        ValueError: If `pad` is a tuple whose length is not equal to 4.
+        ValueError: If `pad_mode` it not equal to ``'pad'`` and `pad` is not equal to ``(0, 0, 0, 0)``.
+        ValueError: If `data_format` is neither ``'NHWC'`` nor ``'NCHW'`` .
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
+        >>> # case 1: All parameters use default values.
         >>> x = Tensor(np.ones([10, 32, 32, 32]), mindspore.float32)
         >>> weight = Tensor(np.ones([32, 32, 3, 3]), mindspore.float32)
         >>> conv2d = ops.Conv2D(out_channel=32, kernel_size=3)
         >>> output = conv2d(x, weight)
         >>> print(output.shape)
         (10, 32, 30, 30)
+        >>> # case 2: pad_mode="pad", other parameters being default.
+        >>> x = Tensor(np.ones([10, 32, 32, 32]), mindspore.float32)
+        >>> weight = Tensor(np.ones([32, 32, 3, 3]), mindspore.float32)
+        >>> conv2d = ops.Conv2D(out_channel=32, kernel_size=3, pad_mode="pad", pad=(4, 10, 4, 10))
+        >>> output = conv2d(x, weight)
+        >>> print(output.shape)
+        (10, 32, 44, 44)
+        >>> # case 3: stride=(2, 4), other parameters being default.
+        >>> x = Tensor(np.ones([10, 32, 32, 32]), mindspore.float32)
+        >>> weight = Tensor(np.ones([32, 32, 3, 3]), mindspore.float32)
+        >>> conv2d = ops.Conv2D(out_channel=32, kernel_size=3, stride=(2, 4))
+        >>> output = conv2d(x, weight)
+        >>> print(output.shape)
+        (10, 32, 15, 8)
+        >>> # case 4: dilation=2, other parameters being default.
+        >>> x = Tensor(np.ones([10, 32, 32, 32]), mindspore.float32)
+        >>> weight = Tensor(np.ones([32, 32, 3, 3]), mindspore.float32)
+        >>> conv2d = ops.Conv2D(out_channel=32, kernel_size=3, dilation=2)
+        >>> output = conv2d(x, weight)
+        >>> print(output.shape)
+        (10, 32, 28, 28)
+        >>> # case 5: group=2, other parameters being default.
+        >>> x = Tensor(np.ones([10, 64, 32, 32]), mindspore.float32)
+        >>> weight = Tensor(np.ones([32, 32, 3, 3]), mindspore.float32)
+        >>> conv2d = ops.Conv2D(out_channel=32, kernel_size=3, group=2)
+        >>> output = conv2d(x, weight)
+        >>> print(output.shape)
+        (10, 32, 30, 30)
+        >>> # case 6: All parameters are specified.
+        >>> x = Tensor(np.ones([10, 64, 32, 32]), mindspore.float32)
+        >>> weight = Tensor(np.ones([32, 32, 3, 3]), mindspore.float32)
+        >>> conv2d = ops.Conv2D(out_channel=32, kernel_size=3, pad_mode="pad",
+        ...                     pad=(4, 10, 4, 10), stride=(2, 4), dilation=2,  group=2)
+        >>> output = conv2d(x, weight)
+        >>> print(output.shape)
+        (10, 32, 21, 11)
     """
 
     @prim_attr_register
@@ -1400,16 +1574,17 @@ class Conv2D(Primitive):
 
 class DataFormatVecPermute(Primitive):
     r"""
-    Permute input tensor from src_format to dst_format.
+    Converts the input tensor from the `src_format` to the `dst_format` by permuting its dimensions.
 
     Args:
-        src_format (str, optional): An optional value for source data format. The format can be 'NHWC' and 'NCHW'.
-            Default: 'NHWC'.
-        dst_format (str, optional): An optional value for destination data format. The format can be 'NHWC' and 'NCHW'.
-            Default: 'NCHW'.
+        src_format (str, optional): the source data format, which can be ``'NHWC'`` and ``'NCHW'`` .
+          Default: ``'NHWC'`` .
+        dst_format (str, optional): the target data format, which can be ``'NHWC'`` and ``'NCHW'`` .
+          Default: ``'NCHW'`` .
 
     Inputs:
-        - **input_x** (Tensor) - A Tensor of shape (4, ) or (4, 2) in source data format. Only supports int32 and int64.
+        - **input_x** (Tensor) - A Tensor of shape :math:`(4, )` or :math:`(4, 2)` in source data format.
+          Supports int32 and int64 datatype.
 
     Outputs:
         Tensor, has the same data type and shape as the `input_x`.
@@ -1418,10 +1593,10 @@ class DataFormatVecPermute(Primitive):
         TypeError: If `input_x` is not a Tensor.
         TypeError: If dtype of `input_x` is neither int32 nor int64.
         ValueError: If `src_format` or `dst_format` is not a str in ['NHWC', 'NCHW'].
-        ValueError: If input_x shape is not (4, ) or (4, 2).
+        ValueError: If `input_x` shape is not :math:`(4, )` or :math:`(4, 2)`.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> class Net(nn.Cell):
@@ -1505,8 +1680,8 @@ class DepthwiseConv2dNative(PrimitiveWithInfer):
     def infer_shape(self, x_shape, w_shape, b_shape=None):
         validator.check_equal_int(len(w_shape), 4, "weight rank", self.name)
         validator.check_equal_int(len(x_shape), 4, "x rank", self.name)
-        validator.check("x_shape[1]", x_shape[1], "w_shape[1]", w_shape[1], Rel.EQ, self.name)
-        validator.check('kernel_size', self.kernel_size, 'w_shape[2:4]', tuple(w_shape[2:4]), Rel.EQ, self.name)
+        validator.check("x_shape[1]", x_shape[1], "w_shape[1]", w_shape[1], validator.EQ, self.name)
+        validator.check('kernel_size', self.kernel_size, 'w_shape[2:4]', tuple(w_shape[2:4]), validator.EQ, self.name)
 
         kernel_size_n, _, kernel_size_h, kernel_size_w = w_shape
         _, _, stride_h, stride_w = self.stride
@@ -1549,7 +1724,7 @@ class DepthwiseConv2dNative(PrimitiveWithInfer):
         args = {'x': x_dtype, 'w': w_dtype}
         validator.check_tensors_dtypes_same_and_valid(args, mstype.number_type, self.name)
         if x_dtype.element_type() == mstype.int8:
-            return mstype.tensor_type(mstype.int32)
+            return mstype.TensorType(mstype.int32)
         return x_dtype
 
 
@@ -1559,13 +1734,13 @@ class _Pool(PrimitiveWithInfer):
 
     Args:
         kernel_size (Union[int, tuple[int]]): The size of the kernel, that must be a tuple
-           of two `int` for height and width. Default: 1.
+           of two `int` for height and width. Default: ``1`` .
         strides (Union[int, tuple[int]]): The stride of the window, that must be
-            a tuple of two `int` for height and width. Default: 1.
-        pad_mode (str): The optional value for pad mode, is "same" or "valid".
-            Default: "valid".
-        data_format (str): The optional value for data format, is 'NHWC' or 'NCHW'.
-            Default: "NCHW".
+            a tuple of two `int` for height and width. Default: ``1`` .
+        pad_mode (str): The optional value for pad mode, is ``"same"`` or ``"valid"`` .
+            Default: ``"valid"`` .
+        data_format (str): The optional value for data format, is ``'NHWC'`` or ``'NCHW'`` .
+            Default: ``"NCHW"`` .
     """
 
     @prim_attr_register
@@ -1628,8 +1803,13 @@ class _Pool(PrimitiveWithInfer):
                 out_w = math.ceil(input_w / stride_w)
         out_shape = [batch, channel, out_h, out_w] if self.format == "NCHW" else [batch, out_h, out_w, channel]
 
-        for shape_value in out_shape:
-            if shape_value <= 0 and shape_value != -1:
+        is_dynamic_shape = False
+        for in_shape_val in x_shape_norm:
+            if in_shape_val == -1:
+                is_dynamic_shape = True
+
+        for out_shape_val in out_shape:
+            if out_shape_val <= 0 and not is_dynamic_shape:
                 raise ValueError(f"For '{self.name}', the each element of the output shape must be larger than 0, "
                                  f"but got output shape: {out_shape}. The input shape: {x_shape}, "
                                  f"kernel size: {self.kernel_size}, strides: {self.strides}."
@@ -1638,7 +1818,7 @@ class _Pool(PrimitiveWithInfer):
         return out_shape
 
     def infer_dtype(self, x_dtype):
-        validator.check_subclass("input", x_dtype, mstype.tensor, self.name)
+        validator.check_subclass("input", x_dtype, mstype.tensor_type, self.name)
         return x_dtype
 
 
@@ -1659,25 +1839,30 @@ class MaxPool(_Pool):
     Args:
         kernel_size (Union[int, tuple[int]]): The size of kernel used to take the maximum value,
             is an int number that represents height and width of the kernel, or a tuple
-            of two int numbers that represent height and width respectively. Default: 1.
+            of two int numbers that represent height and width respectively. Default: ``1`` .
         strides (Union[int, tuple[int]]): The distance of kernel moving, an int number that represents
             not only the height of movement but also the width of movement, or a tuple of two int numbers that
-            represent height and width of movement respectively. Default: 1.
-        pad_mode (str): The optional value of pad mode is "same" or "valid".
-            Default: "valid".
+            represent height and width of movement respectively. Default: ``1`` .
+        pad_mode (str, optional): Specifies the padding mode with a padding value of 0. It can be set to:
+            ``"same"`` or ``"valid"`` . Default: ``"valid"`` .
 
-            - same: Adopts the way of completion. The height and width of the output will be the same as
-              the input. The total number of padding will be calculated in horizontal and vertical
-              directions and evenly distributed to top, bottom, left and right if possible.
-              Otherwise, the last extra padding will be done from the bottom and the right side.
+            - ``"same"``: Pad the input around its edges so that the shape of input and output
+              are the same when `stride` is set to ``1``.
+              The amount of padding to is calculated by the operator internally, If the amount is even, it is
+              uniformly distributed around the input, if it is odd, the excess amount goes to the right/bottom side.
+            - ``"valid"``: No padding is applied to the input, and the output returns the maximum
+              possible height and width. Extra pixels that could not complete a full stride will
+              be discarded.
 
-            - valid: Adopts the way of discarding. The possible largest height and width of output
-              will be returned without padding. Extra pixels will be discarded.
-        data_format (str) : The optional value for data format, is 'NHWC' or 'NCHW'.
-            Default: 'NCHW'.
+        data_format (str) : The optional value for data format, is ``'NHWC'`` or ``'NCHW'`` .
+            Default: ``'NCHW'`` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(N, C_{in}, H_{in}, W_{in})`.
+          Supported dtypes:
+
+          - CPU: float16, float32, float64.
+          - GPU/Ascend: float16, float32.
 
     Outputs:
         Tensor, with shape :math:`(N, C_{out}, H_{out}, W_{out})`.
@@ -1693,6 +1878,9 @@ class MaxPool(_Pool):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> x = Tensor(np.arange(1 * 3 * 3 * 4).reshape((1, 3, 3, 4)), mindspore.float32)
         >>> maxpool_op = ops.MaxPool(pad_mode="VALID", kernel_size=2, strides=1)
         >>> output = maxpool_op(x)
@@ -1728,22 +1916,23 @@ class MaxPoolV1(Primitive):
     Args:
         kernel_size (Union[int, tuple[int]]): The size of kernel used to take the max value,
             is an integer that represents height and width of the kernel, or a tuple
-            of two integers that represent height and width respectively. Default: 1.
+            of two integers that represent height and width respectively. Default: ``1`` .
         strides (Union[int, tuple[int]]): The distance of kernel moving, an integer that represents
             the height and width of movement are both strides, or a tuple of two integers that
-            represent height and width of movement, respectively. Default: 1.
-        pad_mode (str): The optional value for pad mode, is "same" or "valid".
-            Default: "valid".
+            represent height and width of movement, respectively. Default: ``1`` .
+        pad_mode (str, optional): Specifies the padding mode with a padding value of 0. It can be set to:
+            ``"same"`` or ``"valid"`` . Default: ``"valid"`` .
 
-            - same: Adopts the way of completion. The height and width of the output will be the same as
-              the input. The number of padding will be calculated in horizontal and vertical
-              directions, and evenly distributed to top and bottom, left and right if possible.
-              Otherwise, the extra padding will be done from the bottom and the right side.
+            - ``"same"``: Pad the input around its edges so that the shape of input and output
+              are the same when `stride` is set to ``1``.
+              The amount of padding to is calculated by the operator internally, If the amount is even, it is
+              uniformly distributed around the input, if it is odd, the excess amount goes to the right/bottom side.
+            - ``"valid"``: No padding is applied to the input, and the output returns the maximum
+              possible height and width. Extra pixels that could not complete a full stride will
+              be discarded.
 
-            - valid: Adopts the way of discarding. The possible largest height and width of the
-              output will be returned without padding. Extra pixels will be discarded.
-        data_format (str) : The optional value for data format, is 'NCHW' or 'NHWC'.
-            Default: 'NCHW'.
+        data_format (str) : The optional value for data format, is ``'NCHW'`` or ``'NHWC'`` .
+            Default: ``'NCHW'`` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(N, C_{in}, H_{in}, W_{in})`.
@@ -1801,97 +1990,7 @@ class MaxPoolV1(Primitive):
         self.add_prim_attr("kernel_size", kernel_size_adapted)
         self.add_prim_attr("strides", strides_adapted)
 
-
-class MaxPoolWithArgmax(Primitive):
-    r"""
-    Performs max pooling on the input Tensor and returns both max values and indices.
-
-    Typically the input is of shape :math:`(N_{in}, C_{in}, H_{in}, W_{in})`, MaxPool outputs
-    regional maximum in the :math:`(H_{in}, W_{in})`-dimension. Given kernel size
-    :math:`ks = (h_{ker}, w_{ker})` and stride :math:`s = (s_0, s_1)`, the operation is as follows:
-
-    .. math::
-        \text{output}(N_i, C_j, h, w) = \max_{m=0, \ldots, h_{ker}-1} \max_{n=0, \ldots, w_{ker}-1}
-        \text{input}(N_i, C_j, s_0 \times h + m, s_1 \times w + n)
-
-    Args:
-        kernel_size (Union[int, tuple[int]]): The size of kernel used to take the maximum value and argmax
-            value, is an int number that represents height and width of the kernel, or a tuple of
-            two int numbers that represent height and width respectively. Default: 1.
-        strides (Union[int, tuple[int]]): The distance of kernel moving, an int number that represents
-            not only the height of movement but also the width of movement, or a tuple of two int numbers that
-            represent height and width of movement respectively. Default: 1.
-        pad_mode (str): The optional value for pad mode, is "same" or "valid".
-            Default: "valid".
-
-            - same: Adopts the way of completion. The height and width of the output will be the same as
-              the input. The total number of padding will be calculated in horizontal and vertical
-              directions and evenly distributed to top, bottom, left and right if possible.
-              Otherwise, the last extra padding will be done from the bottom and the right side.
-
-            - valid: Adopts the way of discarding. The possible largest height and width of output
-              will be returned without padding. Extra pixels will be discarded.
-
-        data_format (str) : The optional value for data format, is 'NHWC' or 'NCHW'.
-            Default: 'NCHW'.
-
-    Inputs:
-        - **x** (Tensor) - Tensor of shape :math:`(N, C_{in}, H_{in}, W_{in})`.
-          Data type must be float16 or float32.
-
-    Outputs:
-        Tuple of 2 Tensors, representing the maxpool result and where the max values are generated.
-
-        - **output** (Tensor) -  Maxpooling result, with shape :math:`(N, C_{out}, H_{out}, W_{out})`.
-          It has the same data type as `x`.
-        - **mask** (Tensor) -  Max values' index represented by the mask. Data type is int32.
-
-    Raises:
-        TypeError: If the data type of `x` is neither float16 nor float32.
-        TypeError: If `kernel_size` or `strides` is neither an int nor a tuple.
-        TypeError: If `x` is not a Tensor.
-
-    Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU``
-
-    Examples:
-        >>> x = Tensor(np.arange(1 * 3 * 3 * 4).reshape((1, 3, 3, 4)), mindspore.float32)
-        >>> maxpool_arg_op = ops.MaxPoolWithArgmax(pad_mode="VALID", kernel_size=2, strides=1)
-        >>> output_tensor, argmax = maxpool_arg_op(x)
-        >>> print(output_tensor)
-        [[[[ 5.  6.  7.]
-           [ 9. 10. 11.]]
-          [[17. 18. 19.]
-           [21. 22. 23.]]
-          [[29. 30. 31.]
-           [33. 34. 35.]]]]
-    """
-
-    @prim_attr_register
-    def __init__(self, kernel_size=1, strides=1, pad_mode="valid", data_format="NCHW"):
-        """Initialize MaxPoolWithArgmax."""
-        self.init_prim_io_names(inputs=['x'], outputs=['output', 'mask'])
-        validator.check_value_type('kernel_size', kernel_size, [int, tuple], self.name)
-        validator.check_value_type('strides', strides, [int, tuple], self.name)
-        validator.check_value_type('pad_mode', pad_mode, [str], self.name)
-        self.pad_mode = validator.check_string(pad_mode.upper(), ['VALID', 'SAME'], 'pad_mode', self.name)
-        self.add_prim_attr("pad_mode", self.pad_mode)
-        self.format = validator.check_string(data_format, ['NCHW', 'NHWC'], 'format', self.name)
-        if context.get_context("device_target") != "GPU" and self.format == "NHWC":
-            raise ValueError(f"For '{self.name}', the 'NHWC' format is only supported in GPU target, "
-                             f"but got the 'data_format' is {self.format} and "
-                             f"the platform is {context.get_context('device_target')}.")
-        self.kernel_size = _check_positive_int_or_tuple(
-            "kernel_size", kernel_size, self.name, allow_four=False, ret_four=True)
-        self.kernel_size = (1, self.kernel_size[-2], self.kernel_size[-1], 1)
-        self.add_prim_attr("kernel_size", self.kernel_size)
-
-        self.strides = _check_positive_int_or_tuple("strides", strides, self.name, allow_four=False, ret_four=True)
-        self.strides = (1, self.strides[-2], self.strides[-1], 1)
-        self.add_prim_attr("strides", self.strides)
-
-
-class MaxPool3D(PrimitiveWithInfer):
+class MaxPool3D(Primitive):
     r"""
     Applies a 3D max pooling over an input Tensor which can be regarded as a composition of 3D planes.
 
@@ -1907,36 +2006,40 @@ class MaxPool3D(PrimitiveWithInfer):
     Args:
         kernel_size (Union[int, tuple[int]]): The size of kernel used to take the maximum value,
             is an int number that represents depth, height and width of the kernel, or a tuple
-            of three int numbers that represent depth, height and width respectively. Default: 1.
+            of three int numbers that represent depth, height and width respectively. Default: ``1`` .
         strides (Union[int, tuple[int]]): The distance of kernel moving, an int number that represents
             not only the depth, height of movement but also the width of movement,, or a tuple of three int numbers that
-            represent depth, height and width of movement respectively. Default: 1.
-        pad_mode (str): The optional value of pad mode is "same", "valid" or "pad".
-            Default: "valid".
+            represent depth, height and width of movement respectively. Default: ``1`` .
+        pad_mode (str, optional): Specifies the padding mode with a padding value of 0. It can be set to:
+            ``"SAME"`` , ``"VALID"`` or ``"PAD"`` . Default: ``"VALID"`` .
 
-            - same: Adopts the way of completion. The height and width of the output will be the same as
-              the input. The total number of padding will be calculated in horizontal and vertical
-              directions and evenly distributed to top, bottom, left and right if possible.
-              Otherwise, the last extra padding will be done from the bottom and the right side.
+            - ``"SAME"``: Pad the input around its depth/height/width dimension so that the shape of input and output
+              are the same when `stride` is set to ``1``.
+              The amount of padding to is calculated by the operator internally.  If the amount is even,
+              it isuniformly distributed around the input, if it is odd, the excess amount goes
+              to the front/right/bottom side.
+              If this mode is set, `pad_list` must be 0.
+            - ``"VALID"``: No padding is applied to the input, and the output returns the maximum
+              possible depth, height and width. Extra pixels that could not complete a full stride will
+              be discarded. If this mode is set, `pad_list` must be 0.
+            - ``"PAD"``: Pad the input with a specified amount. In this mode, the amount of padding
+              in the depth, height and width dimension is determined by the `pad_list` parameter.
+              If this mode is set, `pad_list` must be greater than or equal to 0.
 
-            - valid: Adopts the way of discarding. The possible largest height and width of output
-              will be returned without padding. Extra pixels will be discarded.
-
-            - pad: Implicit paddings on both sides of the input in depth, height and width. The number of "pad" will
-              be padded to the input Tensor borders. "pad_list" must be greater than or equal to 0.
-
-        pad_list (Union(int, tuple[int])): The pad value to be filled. Default: 0. If `pad` is an integer, the paddings
-            of head, tail, top, bottom, left and right are the same, equal to pad. If `pad` is a tuple of six
+        pad_list (Union(int, tuple[int])): The pad value to be filled. Default: ``0`` . If `pad` is an integer, the
+            paddings of head, tail, top, bottom, left and right are the same, equal to pad. If `pad` is a tuple of six
             integers, the padding of head, tail, top, bottom, left and right equals to pad[0], pad[1], pad[2],
             pad[3], pad[4] and pad[5] correspondingly.
         ceil_mode (Union[bool, None]): Whether to use ceil instead of floor to calculate output shape.
             Only effective in "pad" mode.
-            When "pad_mode" is "pad" and "ceil_mode" is "None", "ceil_mode" will be set as "False". Default: None.
-        data_format (str) : The optional value for data format. Currently only support 'NCDHW'. Default: 'NCDHW'.
+            When "pad_mode" is ``"pad"`` and "ceil_mode" is ``"None"`` , "ceil_mode" will be set as ``"False"``.
+            Default: ``None`` .
+        data_format (str) : The optional value for data format. Currently only support ``'NCDHW'`` .
+            Default: ``'NCDHW'`` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(N, C, D_{in}, H_{in}, W_{in})`.
-          Data type must be float16 or float32.
+          Data type must be float16, float32 or float64.
 
     Outputs:
         Tensor, with shape :math:`(N, C, D_{out}, H_{out}, W_{out})`. Has the data type of `x`.
@@ -1945,8 +2048,8 @@ class MaxPool3D(PrimitiveWithInfer):
         TypeError: If `kernel_size` or `strides` is neither an int nor a tuple.
         TypeError: If `pad_mode` or `data_format` is not a string.
         ValueError: If numbers in `kernel_size` or `strides` are not positive.
-        ValueError: If `pad_mode` is not one of 'same', 'valid' or 'pad'.
-        ValueError: If `pad_mode` is 'same' or 'valid', 'ceil_mode' is not None.
+        ValueError: If `pad_mode` is not one of 'SAME', 'VALID' or 'PAD'.
+        ValueError: If `pad_mode` is 'SAME' or 'VALID', 'ceil_mode' is not None.
         ValueError: If `kernel_size` or `strides` is a tuple whose length is not equal to 3.
         ValueError: If `data_format` is not 'NCDHW'.
 
@@ -1954,8 +2057,11 @@ class MaxPool3D(PrimitiveWithInfer):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> x = Tensor(np.arange(1 * 2 * 2 * 2 * 3).reshape((1, 2, 2, 2, 3)), mindspore.float32)
-        >>> max_pool3d = ops.MaxPool3D(kernel_size=2, strides=1, pad_mode="valid")
+        >>> max_pool3d = ops.MaxPool3D(kernel_size=2, strides=1, pad_mode="VALID")
         >>> output = max_pool3d(x)
         >>> print(output)
         [[[[[10. 11.]]]
@@ -2003,55 +2109,15 @@ class MaxPool3D(PrimitiveWithInfer):
                 validator.check_non_negative_int(item, 'pad_list item', self.name)
         self.add_prim_attr("pad_list", self.pad_list)
 
-    def infer_shape(self, x_shape):
-        validator.check_equal_int(len(x_shape), 5, "x rank", self.name)
-        batch, channel, input_d, input_h, input_w = x_shape
-        self.add_prim_attr("x_shape", x_shape)
-        _, _, kernel_d, kernel_h, kernel_w = self.kernel_size
-        _, _, stride_d, stride_h, stride_w = self.strides
-
-        if self.pad_mode == "VALID":
-            out_d = math.ceil((input_d - (kernel_d - 1)) / stride_d)
-            out_h = math.ceil((input_h - (kernel_h - 1)) / stride_h)
-            out_w = math.ceil((input_w - (kernel_w - 1)) / stride_w)
-        elif self.pad_mode == "SAME":
-            out_d = math.ceil(input_d / stride_d)
-            out_h = math.ceil(input_h / stride_h)
-            out_w = math.ceil(input_w / stride_w)
-        else:
-            out_d = ((input_d + self.pad_list[0] + self.pad_list[1] -
-                      (kernel_d - 1) - 1) / stride_d) + 1
-            out_h = ((input_h + self.pad_list[2] + self.pad_list[3] -
-                      (kernel_h - 1) - 1) / stride_h) + 1
-            out_w = ((input_w + self.pad_list[4] + self.pad_list[5] -
-                      (kernel_w - 1) - 1) / stride_w) + 1
-            if self.ceil_mode:
-                out_d = math.ceil(out_d)
-                out_h = math.ceil(out_h)
-                out_w = math.ceil(out_w)
-            else:
-                out_d = math.floor(out_d)
-                out_h = math.floor(out_h)
-                out_w = math.floor(out_w)
-        out_shape = [batch, channel, out_d, out_h, out_w]
-
-        _check_shape('output', out_shape, self.name)
-        return out_shape
-
-    def infer_dtype(self, x_dtype):
-        validator.check_tensor_dtype_valid("x", x_dtype, [mstype.float16, mstype.float32], self.name)
-        return x_dtype
-
 
 class MaxUnpool2D(Primitive):
     r"""
-    Computes a partial inverse of MaxPool2D.
+    Calculates the partial inverse of MaxPool2D operation.
 
-    MaxPool2D is not fully invertible, since the non-maximal values are lost.
-
-    MaxUnpool2D takes in as input the output of MaxPool2D including the indices of
-    the maximal values and computes a partial inverse in which all non-maximal values
-    are set to zero. Typically the input is of shape :math:`(N, C, H_{in}, W_{in})` ,
+    Since MaxPool2D loses non-maximal values, it is not fully invertible.
+    Therefore, MaxUnpool2D takes the output of MaxPool2D, including the indices of
+    the maximal values, and computes a partial inverse where all non-maximal values are set to zero.
+    Typically the input is of shape :math:`(N, C, H_{in}, W_{in})` ,
     the output is of shape :math:`(N, C, H_{out}, W_{out})` , the operation is as follows:
 
     .. math::
@@ -2060,23 +2126,26 @@ class MaxUnpool2D(Primitive):
         W_{out} = (W{in} - 1) \times strides[1] - 2 \times pads[1] + ksize[1] \\
         \end{array}
 
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
     Args:
         ksize (Union[int, tuple[int]]): The size of kernel used to take the maximum value,
             is an int number that represents height and width of the kernel, or a tuple
             of two int numbers that represent height and width respectively.
         strides (Union[int, tuple[int]], optional): The strides of kernel moving.
-            If `strides` is 0 or (0, 0), then `strides` equal to `ksize` . Default: 0.
+            If `strides` is 0 or (0, 0), then `strides` equal to `ksize` . Default: ``0`` .
 
             - An int number that represents the height and width of movement are both `strides` .
             - A tuple of two int numbers that represent height and width of movement respectively.
 
-        pads (Union[int, tuple[int]], optional): The pad value to be filled. Default: 0.
+        pads (Union[int, tuple[int]], optional): The pad value to be filled. Default: ``0`` .
 
             - If `pads` is an integer, the paddings of height and width are the same, equal to pads.
             - If `pads` is a tuple of two integers, the padding of height and width equal to pads[0]
               and pads[1] correspondingly.
 
-        output_shape (tuple[int], optional): The target output size is an optional input. Default: ().
+        output_shape (tuple[int], optional): The target output size is an optional input. Default: ``()`` .
 
             - If :math:`output\_shape == ()` , then the shape of output computed by `kszie`, `strides` and `pads` .
             - If :math:`output\_shape != ()` , then `output_shape` must be :math:`(N, C, H, W)` or :math:`(N, H, W, C)`
@@ -2084,13 +2153,13 @@ class MaxUnpool2D(Primitive):
               (N, C, H_{out} + strides[0], W_{out} + strides[1])]`.
 
         data_format (str, optional): The optional value for data format.
-            Currently support 'NCHW' and 'NHWC'. Default: 'NCHW'.
+            Currently support ``"NCHW"`` and ``"NHWC"`` . Default: ``"NCHW"`` .
 
     Inputs:
         - **x** (Tensor) - The input Tensor to invert.
           Tensor of shape :math:`(N, C, H_{in}, W_{in})` or :math:`(N, H_{in}, W_{in}, C)`.
         - **argmax** (Tensor) - Max values' index represented by the `argmax`.
-          Tensor of shape must be same with input 'x'.
+          Tensor of shape must be same with input `x`.
           Values of `argmax` must belong to :math:`[0, H_{in} \times W_{in} - 1]`.
           Data type must be in int32 or int64.
 
@@ -2110,9 +2179,11 @@ class MaxUnpool2D(Primitive):
                     computed by attr `ksize`, `strides` and `pads`.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> x = Tensor(np.array([[[[0, 1], [8, 9]]]]).astype(np.float32))
         >>> argmax = Tensor(np.array([[[[0, 1], [2, 3]]]]).astype(np.int64))
         >>> maxunpool2d = ops.MaxUnpool2D(ksize=1, strides=1, pads=0)
@@ -2148,12 +2219,9 @@ class MaxUnpool2D(Primitive):
 
 class MaxUnpool3D(Primitive):
     r"""
-    Computes a partial inverse of MaxUnpool3D.
+    Computes the inverse of :class:`mindspore.ops.MaxPool3D`.
 
-    MaxUnpool3D is not fully invertible, since the non-maximal values are lost.
-
-    MaxUnpool3D takes in as input the output of MaxUnpool3D including the indices of the maximal
-    values and computes a partial inverse in which all non-maximal values are set to zero.
+    MaxUnpool3D keeps the maximal value and set all position of non-maximal values to zero.
     Typically the input is of shape :math:`(N, C, D_{in}, H_{in}, W_{in})`, the output is of
     shape :math:`(N, C, D_{out}, H_{out}, W_{out})`, the operation is as follows.
 
@@ -2164,55 +2232,65 @@ class MaxUnpool3D(Primitive):
         W_{out} = (W{in} - 1) \times strides[2] - 2 \times pads[2] + ksize[2] \\
         \end{array}
 
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
     Args:
         ksize (Union[int, tuple[int]]): The size of kernel used to take the maximum value,
             is an int number that represents depth, height and width of the kernel, or a tuple
             of three int numbers that represent depth, height and width respectively.
-        strides (Union[int, tuple[int]]): The distance of kernel moving, an int number that represents
-            the depth, height and width of movement are both strides, or a tuple of three int numbers that
-            represent depth, height and width of movement respectively.
-            If strides is 0 or (0, 0, 0), then strides equal to ksize. Default: 0.
-        pads (Union[int, tuple[int]]): The pad value to be filled. Default: 0. If `pads` is an integer,
-            the paddings of depth, height and width are the same, equal to pads. If `pads` is a tuple of three integers,
-            the padding of depth, height and width equal to pads[0], pads[1] and pads[2] correspondingly.
-        output_shape (tuple[int]) : The target output size is an optional input. Default: ().
-            If output_shape == (), then the shape of output computed by kszie, strides and pads.
-            If output_shape != (), then output_shape must be :math:`(N, C, D, H, W)` or
-            :math:`(N, D, H, W, C)` and output_shape must belong to
+        strides (Union[int, tuple[int]], optional): The distance of kernel moving. Default: ``0`` .
+
+            - If it is an int number, the depth, height and width of movement are all equal to `strides`.
+            - If it is a tuple of three int numbers, they represent depth, height and width of movement respectively.
+            - If strides is 0 or (0, 0, 0), then `strides` equal to `ksize`.
+
+        pads (Union[int, tuple[int]], optional): The pad value to be filled. Default: ``0`` .
+
+            - If `pads` is an integer, the paddings of depth, height and width are the same, equal to pads.
+            - If `pads` is a tuple of three integers, the padding of depth, height and width equal to pads[0],
+              pads[1] and pads[2] correspondingly.
+
+        output_shape (tuple[int], optional) : The target output size. Default: ``()`` .
+            If :math:`output\_shape == ()`, then the shape of output computed by kszie, strides and pads shown above.
+            If :math:`output\_shape != ()`, then output_shape format must be :math:`(N, C, D, H, W)` or
+            :math:`(N, D, H, W, C)` and output_shape must be in range
             :math:`[(N, C, D_{out} - strides[0], H_{out} - strides[1], W_{out} - strides[2]),
             (N, C, D_{out} + strides[0], H_{out} + strides[1], W_{out} + strides[2])]`.
-        data_format (str) : The optional value for data format. Currently support 'NCDHW' and 'NDHWC'. Default: 'NCDHW'.
+        data_format (str, optional) : The optional value for data format. Currently
+            support ``'NCDHW'`` and ``'NDHWC'`` . Default: ``'NCDHW'`` .
 
     Inputs:
         - **x** (Tensor) - The input Tensor to invert.
           Tensor of shape :math:`(N, C, D_{in}, H_{in}, W_{in})` or :math:`(N, D_{in}, H_{in}, W_{in}, C)`.
-        - **argmax** (Tensor) - Max values' index represented by the argmax.
-          Tensor of shape must be same with input 'x'.
-          Values of argmax must belong to :math:`[0, D_{in} \times H_{in} \times W_{in} - 1]`.
-          Data type must be in int32 or int64.
+        - **argmax** (Tensor) - Max values' index. Tensor that has the same shape as `x`.
+          Values of `argmax` must be in range :math:`[0, D_{in} \times H_{in} \times W_{in} - 1]`.
+          Data type must be int32 or int64.
 
     Outputs:
         Tensor, with shape :math:`(N, C, D_{out}, H_{out}, W_{out})` or :math:`(N, D_{out}, H_{out}, W_{out}, C)`.
         Has the same data type with `x`.
 
     Raises:
-        TypeError: If data type of `x` or `argmax` is not supported.
+        TypeError: If data type of `x` or `argmax` is Number.
         TypeError: If `ksize`, `strides` or `pads` is neither int nor tuple.
-        ValueError: If numbers in `strides` (also support 0 and (0, 0, 0)) or `ksize` is not positive.
+        ValueError: If numbers in `strides` or `ksize` is negative.
         ValueError: If numbers in `pads` is negative.
         ValueError: If `ksize`, `strides` or `pads` is a tuple whose length is not equal to 3.
         ValueError: If `data_format` is not a str or is neither `NCDHW` nor `NDHWC`.
         ValueError: If `output_shape` whose length is neither 0 or 5.
-        ValueError: If `output_shape` is not close to output size
+        ValueError: If `output_shape` is not close to output size range
                     computed by attr `ksize, strides, pads`.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> x = Tensor(np.array([[[[[0, 1], [8, 9]]]]]).astype(np.float32))
         >>> argmax = Tensor(np.array([[[[[0, 1], [2, 3]]]]]).astype(np.int64))
-        >>> maxunpool3d = P.MaxUnpool3D(ksize=1, strides=1, pads=0)
+        >>> maxunpool3d = ops.MaxUnpool3D(ksize=1, strides=1, pads=0)
         >>> output = maxunpool3d(x, argmax)
         >>> print(output.asnumpy())
         [[[[[0. 1.]
@@ -2242,7 +2320,7 @@ class MaxUnpool3D(Primitive):
         self.output_shape = output_shape
 
 
-class AvgPool(_Pool):
+class AvgPool(Primitive):
     r"""
     Average pooling operation.
 
@@ -2251,29 +2329,34 @@ class AvgPool(_Pool):
     Args:
         kernel_size (Union[int, tuple[int]]): The size of kernel used to take the average value,
             is an int number that represents height and width of the kernel, or a tuple
-            of two int numbers that represent height and width respectively. Default: 1.
+            of two int numbers that represent height and width respectively. Default: ``1`` .
         strides (Union[int, tuple[int]]): The distance of kernel moving, an int number that represents
             the height and width of movement are both strides, or a tuple of two int numbers that
-            represent height and width of movement respectively. Default: 1.
-        pad_mode (str): The optional value for pad mode, is 'same' or 'valid'.
-            Default: 'valid'.
+            represent height and width of movement respectively. Default: ``1`` .
+        pad_mode (str, optional): Specifies the padding mode with a padding value of 0. It can be set to:
+            ``"same"`` or ``"valid"`` . Default: ``"valid"`` .
 
-            - same: The height and width of the output are the same as the input divided by 'strides'
-              and rounded up.
+            - ``"same"``: Pad the input around its edges so that the shape of input and output
+              are the same when `stride` is set to ``1``.
+              The amount of padding to is calculated by the operator internally, If the amount is even, it is
+              uniformly distributed around the input, if it is odd, the excess amount goes to the right/bottom side.
+            - ``"valid"``: No padding is applied to the input, and the output returns the maximum
+              possible height and width. Extra pixels that could not complete a full stride will
+              be discarded.
 
-            - valid: Returns the output of the valid calculation without filling. Redundant pixels that
-              do not satisfy the calculation will be discarded.
-        data_format (str): The format of input and output data. It should be 'NHWC' or 'NCHW'.
-            Default: 'NCHW'.
+        data_format (str, optional): The format of input and output data. It should be ``'NHWC'`` or ``'NCHW'`` .
+            Default: ``'NCHW'`` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(N, C_{in}, H_{in}, W_{in})`.
+          Supported dtypes: float16, float32, float64.
 
     Outputs:
         Tensor, with shape :math:`(N, C_{out}, H_{out}, W_{out})`.
 
     Raises:
         TypeError: If `kernel_size` or `strides` is neither int nor tuple.
+        TypeError: If dtype of `x` is not  float16, float32 or float64.
         ValueError: If `kernel_size` or `strides` is less than 1.
         ValueError: If `pad_mode` is neither 'valid' nor 'same' with not case sensitive.
         ValueError: If `data_format` is neither 'NCHW' nor 'NHWC'.
@@ -2283,6 +2366,9 @@ class AvgPool(_Pool):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops, nn
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -2307,7 +2393,23 @@ class AvgPool(_Pool):
     @prim_attr_register
     def __init__(self, kernel_size=1, strides=1, pad_mode="valid", data_format="NCHW"):
         """Initialize AvgPool."""
-        super(AvgPool, self).__init__(kernel_size, strides, pad_mode, data_format)
+        self.init_prim_io_names(inputs=['x'], outputs=['output'])
+        validator.check_value_type('kernel_size', kernel_size, [int, tuple], self.name)
+        validator.check_value_type('strides', strides, [int, tuple], self.name)
+        validator.check_value_type('pad_mode', pad_mode, [str], self.name)
+        self.pad_mode = validator.check_string(pad_mode.upper(), ['VALID', 'SAME'], 'pad_mode', self.name)
+        self.add_prim_attr("pad_mode", self.pad_mode)
+        self.format = validator.check_string(data_format, ['NCHW', 'NHWC'], 'format', self.name)
+        if context.get_context("device_target") != "GPU" and self.format == "NHWC":
+            raise ValueError(f"For '{self.name}', the 'NHWC' format is only supported in GPU target, "
+                             f"but got the 'data_format' is {self.format} and "
+                             f"the platform is {context.get_context('device_target')}.")
+        self.add_prim_attr('data_format', self.format)
+        self.kernel_size = _check_positive_int_or_tuple(
+            "kernel_size", kernel_size, self.name, allow_four=False, ret_four=True)
+        self.add_prim_attr("kernel_size", self.kernel_size)
+        self.strides = _check_positive_int_or_tuple("strides", strides, self.name, allow_four=False, ret_four=True)
+        self.add_prim_attr("strides", self.strides)
 
 
 class AvgPoolV1(Primitive):
@@ -2334,22 +2436,23 @@ class AvgPoolV1(Primitive):
     Args:
         kernel_size (Union[int, tuple[int]]): The size of the kernel used to take the average value,
             is an integer that represents height and width of the kernel, or a tuple
-            of two integers that represent height and width respectively. Default: 1.
+            of two integers that represent height and width respectively. Default: ``1`` .
         strides (Union[int, tuple[int]]): The distance of kernel moving, an integer that represents
             the height and width of movement are both strides, or a tuple of two integers that
-            represent height and width of movement, respectively. Default: 1.
-        pad_mode (str): The optional value for pad mode, should be one of "same" or "valid".
-            Default: "valid".
+            represent height and width of movement, respectively. Default: ``1`` .
+        pad_mode (str, optional): Specifies the padding mode with a padding value of 0. It can be set to:
+            ``"same"`` or ``"valid"`` . Default: ``"valid"`` .
 
-            - same: Adopts the way of completion. The height and width of output will be the same as
-              the input. The total number of padding will be calculated horizontally and vertically,
-              and evenly distributed to top and bottom, left and right if possible.
-              Otherwise, the last extra padding will be done from bottom and right.
+            - ``"same"``: Pad the input around its edges so that the shape of input and output
+              are the same when `stride` is set to ``1``.
+              The amount of padding to is calculated by the operator internally, If the amount is even, it is
+              uniformly distributed around the input, if it is odd, the excess amount goes to the right/bottom side.
+            - ``"valid"``: No padding is applied to the input, and the output returns the maximum
+              possible height and width. Extra pixels that could not complete a full stride will
+              be discarded.
 
-            - valid: Adopts the way of discarding. The largest possible height and width of output
-              will be returned without padding. Extra pixels will be discarded.
-        data_format (str): The format of input and output data. Should be 'NHWC' or 'NCHW'.
-            Default: 'NCHW'.
+        data_format (str): The format of input and output data. Should be ``'NHWC'`` or ``'NCHW'`` .
+            Default: ``'NCHW'`` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(N, C_{in}, H_{in}, W_{in})`.
@@ -2489,6 +2592,22 @@ class MaxPool3DWithArgmax(Primitive):
         \max_{l=0, \ldots, d_{ker}-1} \max_{m=0, \ldots, h_{ker}-1} \max_{n=0, \ldots, w_{ker}-1}
         \text{input}(N_i, C_j, s_0 \times d + l, s_1 \times h + m, s_2 \times w + n)
 
+    The output is a Tensor with shape :math:`(N_{out}, C_{out}, D_{out}, H_{out}, W_{out})` and its depth, height and
+    width are:
+
+    .. math::
+        \begin{array}{ll} \\
+            D_{out} = \frac{D_{in} + 2 \times \text{pads}[0] - \text{dilation}[0] \times (\text{ksize}[0] - 1) - 1}
+                {\text{stride}[0]} + 1 \\
+            H_{out} = \frac{H_{in} + 2 \times \text{pads}[1] - \text{dilation}[1] \times (\text{ksize}[1] - 1) - 1}
+                {\text{stride}[1]} + 1 \\
+            W_{out} = \frac{W_{in} + 2 \times \text{pads}[2] - \text{dilation}[2] \times (\text{ksize}[2] - 1) - 1}
+                {\text{stride}[2]} + 1 \\
+        \end{array}
+
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
     Args:
         ksize (Union[int, tuple[int]]): The size of kernel used to take the maximum value and arg
             value, is an int number that represents depth, height and width of the kernel, or a tuple of
@@ -2498,10 +2617,11 @@ class MaxPool3DWithArgmax(Primitive):
             represent depth, height and width of movement respectively.
         pads (Union[int, tuple[int]]): An int number that represents the depth, height and width of movement are both
             strides, or a tuple of three int numbers that represent depth, height and width of movement respectively.
-        dilation (Union[int, tuple[int]]): Default: '(1, 1, 1)'.
-        ceil_mode (bool): Whether to use ceil instead of floor to calculate output shape. Default: False.
-        data_format (str) : The optional value for data format. Currently only support 'NCDHW'. Default: 'NCDHW'.
-        argmax_type (mindspore.dtype) : The dtype for argmax. Default: mstype.int64.
+        dilation (Union[int, tuple[int]]): Default: ``(1, 1, 1)`` .
+        ceil_mode (bool): Whether to use ceil instead of floor to calculate output shape. Default: ``False`` .
+        data_format (str) : The optional value for data format. Currently only support ``'NCDHW'`` .
+            Default: ``'NCDHW'`` .
+        argmax_type (mindspore.dtype) : The dtype for argmax. Default: ``mstype.int64`` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(N_{in}, C_{in}, D_{in}, H_{in}, W_{in})` with data type of int8,
@@ -2524,9 +2644,12 @@ class MaxPool3DWithArgmax(Primitive):
         ValueError: If `argmax_type` is not mindspore.int64 or mindspore.int32.
 
     Supported Platforms:
-        ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> x = Tensor(np.arange(2 * 1 * 2 * 2 * 2).reshape((2, 1, 2, 2, 2)), mindspore.float32)
         >>> max_pool3d_with_arg_op = ops.MaxPool3DWithArgmax(ksize=2, strides=1, pads=1)
         >>> output_tensor, argmax = max_pool3d_with_arg_op(x)
@@ -2538,7 +2661,7 @@ class MaxPool3DWithArgmax(Primitive):
 
     @prim_attr_register
     def __init__(self, ksize, strides, pads, dilation=(1, 1, 1), ceil_mode=False,
-                 data_format="NCDHW", argmax_type=mstype.int64):
+                 data_format='NCDHW', argmax_type=mstype.int64):
         """Initialize MaxPool3DWithArgmax."""
         self.init_prim_io_names(inputs=['x'], outputs=['y', 'argmax'])
         validator.check_value_type('ceil_mode', ceil_mode, bool, self.name)
@@ -2575,19 +2698,34 @@ class Conv2DTranspose(Conv2DBackpropInput):
     Args:
         out_channel (int): The dimensionality of the output space.
         kernel_size (Union[int, tuple[int]]): The size of the convolution window.
-        pad_mode (str): Modes to fill padding. It could be "valid", "same", or "pad". Default: "valid".
+        pad_mode (str, optional): Specifies the padding mode with a padding value of 0. It can be set to:
+            ``"same"`` , ``"valid"`` or ``"pad"`` . Default: ``"valid"`` .
+
+            - ``"same"``: Pad the input around its edges so that the shape of input and output
+              are the same when `stride` is set to ``1``.
+              The amount of padding to is calculated by the operator internally, If the amount is even, it is
+              uniformly distributed around the input, if it is odd, the excess amount goes to the right/bottom side.
+              If this mode is set, `pad` must be 0.
+            - ``"valid"``: No padding is applied to the input, and the output returns the maximum
+              possible height and width. Extra pixels that could not complete a full stride will
+              be discarded. If this mode is set, `pad` must be 0.
+            - ``"pad"``: Pad the input with a specified amount. In this mode, the amount of padding
+              in the height and width directions is determined by the `pad` parameter.
+              If this mode is set, `pad` must be greater than or equal to 0.
+
             Please refer to :class:`mindspore.nn.Conv2dTranspose` for more specifications about `pad_mode`.
-        pad (Union[int, tuple[int]]): The pad value to be filled. Default: 0. If `pad` is an integer, the paddings of
-                    top, bottom, left and right are the same, equal to pad. If `pad` is a tuple of four integers, the
-                    padding of top, bottom, left and right equal to pad[0], pad[1], pad[2], and pad[3] correspondingly.
-        pad_list (Union[str, None]): The pad list like (top, bottom, left, right). Default: None.
-        mode (int): Modes for different convolutions. The value is currently not used. Default: 1.
-        stride (Union[int, tuple[int]]): The stride to be applied to the convolution filter. Default: 1.
+        pad (Union[int, tuple[int]]): The pad value to be filled. Default: ``0`` . If `pad` is an integer, the paddings
+                    of top, bottom, left and right are the same, equal to pad. If `pad` is a tuple of four integers,
+                    the padding of top, bottom, left and right equal to pad[0], pad[1], pad[2], and pad[3]
+                    correspondingly.
+        pad_list (Union[str, None]): The pad list like (top, bottom, left, right). Default: ``None`` .
+        mode (int): Modes for different convolutions. The value is currently not used. Default: ``1`` .
+        stride (Union[int, tuple[int]]): The stride to be applied to the convolution filter. Default: ``1`` .
         dilation (Union[int, tuple[int]]): Specifies the dilation rate to be used for the dilated convolution.
-            Default: 1.
-        group (int): Splits input into groups. Default: 1.
-        data_format (str): The format of input and output data. It should be 'NHWC' or 'NCHW'，\
-            default is 'NCHW'.
+            Default: ``1`` .
+        group (int): Splits input into groups. Default: ``1`` .
+        data_format (str): The format of input and output data. It should be ``'NHWC'`` or ``'NCHW'`` .
+            Default is ``'NCHW'`` .
 
     Inputs:
         - **dout** (Tensor) - the gradients with respect to the output of the convolution.
@@ -2613,6 +2751,9 @@ class Conv2DTranspose(Conv2DBackpropInput):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> dout = Tensor(np.ones([10, 32, 30, 30]), mindspore.float32)
         >>> weight = Tensor(np.ones([32, 32, 3, 3]), mindspore.float32)
         >>> x = Tensor(np.ones([10, 32, 32, 32]))
@@ -2636,13 +2777,18 @@ class BiasAdd(Primitive):
     consistent with the shape of the input Tensor.
 
     Args:
-        data_format (str): The format of input and output data. It should be 'NHWC', 'NCHW' or 'NCDHW'.
-            Default is 'NCHW'.
+        data_format (str, optional): The format of input and output data.
+            It should be ``"NHWC"`` , ``"NCHW"`` or ``"NCDHW"`` .
+            Default is ``"NCHW"`` .
 
     Inputs:
-        - **input_x** (Tensor) - The input tensor. The shape can be 2-5 dimensions.
+        - **input_x** (Tensor) - The input tensor. The shape can be 2-5 dimensions. Supported dtypes:
+
+          - Ascend/CPU: all Number type.
+          - GPU: float16, float32, int8.
+
         - **bias** (Tensor) - The bias tensor, with shape :math:`(C)`. C must be the same as channel dimension C of
-          `input_x`.
+          `input_x`. It has the same type as `input_x`.
 
     Outputs:
         Tensor, with the same shape and data type as `input_x`.
@@ -2651,14 +2797,16 @@ class BiasAdd(Primitive):
         TypeError: If `data_format` is not a str.
         ValueError: If value of `data_format` is not in the range of ['NHWC','NCHW','NCDHW'].
         TypeError: If `input_x` or `bias` is not a Tensor.
-        TypeError: If dtype of `input_x` or `bias` is neither float16 nor float32.
-        TypeError: If dtype of `input_x` or `bias` is inconsistent.
+        TypeError: If dtype of `input_x` and `bias` is inconsistent.
         TypeError: If dimension of `input_x` is not in the range [2, 5].
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> input_x = Tensor(np.arange(6).reshape((2, 3)), mindspore.float32)
         >>> bias = Tensor(np.random.random(3).reshape((3,)), mindspore.float32)
         >>> bias_add = ops.BiasAdd()
@@ -2679,7 +2827,7 @@ class NLLLoss(Primitive):
     r"""
     Gets the negative log likelihood loss between logits and labels.
 
-    The nll loss with reduction=none can be described as:
+    The nll loss with :math:`reduction = none` can be described as:
 
     .. math::
 
@@ -2690,7 +2838,7 @@ class NLLLoss(Primitive):
     where :math:`x` is the logits, :math:`t` is the labels, :math:`w` is the weight,
     N is the batch size, :math:`c` belonging to [0, C-1] is class index, where :math:`C` is the number of classes.
 
-    If reduction is not 'none' (default 'mean'), then
+    If :math:`reduction \neq none` (default ``'mean'`` ), then
 
     .. math::
 
@@ -2700,34 +2848,48 @@ class NLLLoss(Primitive):
         \end{array}\right.
 
     Args:
-        reduction (str): Apply specific reduction method to the output: 'none', 'mean', or 'sum'. Default: 'mean'.
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the weighted mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
+
+        ignore_index (int): Specifies a target value that is ignored
+            and does not contribute to the input gradient. Default: ``-100`` .
 
     Inputs:
         - **logits** (Tensor) - Input logits, with shape :math:`(N, C)`. Data type only supports float32 or float16.
-        - **labels** (Tensor) - Ground truth labels, with shape :math:`(N,)`. Data type only supports int32.
+        - **labels** (Tensor) - Ground truth labels, with shape :math:`(N,)`, where each value belong to
+          :math:`[0, C-1]`. Data type only supports int32 or int64.
         - **weight** (Tensor) - The rescaling weight to each class, with shape :math:`(C,)` and data type only
           supports float32 or float16.
 
     Outputs:
         Tuple of 2 tensors composed with `loss` and `total_weight`.
 
-        - **loss** (Tensor) - When `reduction` is 'none' and `logits` is a 2D tensor, the `loss` shape is :math:`(N,)`.
-          Otherwise, the `loss` is a scalar. The data type is the same with `input's`.
+        - **loss** (Tensor) - When `reduction` is ``'none'`` and `logits` is a 2D tensor,
+          the `loss` shape is :math:`(N,)`. Otherwise, the `loss` is a scalar.
+          The data type is the same with `input's`.
         - **total_weight** (Tensor) - The `total_weight` is a scalar. The data type is the same with `weight's`.
 
     Raises:
-        TypeError: If dtype of `logits` or `weight` is neither float16 nor float32, `labels` is not int32.
+        TypeError: If dtype of `logits` or `weight` is neither float16 nor float32.
+        TypeError: If dtype of `labels` is neither int32 nor int64.
         ValueError: If `logits` is not a one or two dimension tensor, `labels` and `weight` are not
                     one dimension tensors.
                     When `logits` is a two dimension tensor, the first dimension of `logits` is not equal to `labels`,
                     and second dimension of `logits` is not equal to `weight`.
                     When `logits` is a one dimension tensor, the dimensions of `logits`, `labels`
                     and `weight` should be equal to each other.
+        ValueError: If the value of `labels` exceed :math:`[0, C-1]`, where :math:`C` is the number of classes.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> logits = Tensor(np.array([[0.5488135, 0.71518934],
         ...                           [0.60276335, 0.5448832],
         ...                           [0.4236548, 0.6458941]]).astype(np.float32))
@@ -2742,10 +2904,11 @@ class NLLLoss(Primitive):
     """
 
     @prim_attr_register
-    def __init__(self, reduction="mean"):
+    def __init__(self, reduction="mean", ignore_index=-100):
         """Initialize NLLLoss"""
         self.init_prim_io_names(inputs=['x', 'target', "weight"], outputs=['loss', 'total_weight'])
         self.reduction = validator.check_string(reduction, ['none', 'sum', 'mean'], 'reduction', self.name)
+        validator.check_value_type('ignore_index', ignore_index, [int], self.name)
 
 
 class SoftmaxCrossEntropyWithLogits(Primitive):
@@ -2781,6 +2944,8 @@ class SoftmaxCrossEntropyWithLogits(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, ops
         >>> logits = Tensor([[2, 4, 1, 4, 5], [2, 1, 2, 4, 3]], mindspore.float32)
         >>> labels = Tensor([[0, 0, 0, 0, 1], [0, 0, 0, 1, 0]], mindspore.float32)
         >>> softmax_cross = ops.SoftmaxCrossEntropyWithLogits()
@@ -2811,7 +2976,7 @@ class SparseSoftmaxCrossEntropyWithLogits(Primitive):
         \end{array}
 
     Args:
-        is_grad (bool): If true, this operation returns the computed gradient. Default: False.
+        is_grad (bool): If ``True`` , this operation returns the computed gradient. Default: ``False`` .
 
     Inputs:
         - **logits** (Tensor) - Input logits, with shape :math:`(N, C)`. Data type must be float16 or float32.
@@ -2820,18 +2985,20 @@ class SparseSoftmaxCrossEntropyWithLogits(Primitive):
 
     Outputs:
         Tensor, if `is_grad` is False, the output tensor is the value of loss which is a scalar tensor;
-        if `is_grad` is True, the output tensor is the gradient of input with the same shape as `logits`.
+        if `is_grad` is ``True`` , the output tensor is the gradient of input with the same shape as `logits`.
 
     Raises:
         TypeError: If `is_grad` is not a bool.
         TypeError: If dtype of `logits` is neither float16 nor float32.
         TypeError: If dtype of `labels` is neither int32 nor int64.
-        ValueError: If logits.shape[0] != labels.shape[0].
+        ValueError: If :math:`logits.shape[0] != labels.shape[0]`.
 
     Supported Platforms:
         ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, ops
         >>> logits = Tensor([[2, 3, 1, 4, 5], [2, 1, 2, 4, 3]], mindspore.float32)
         >>> labels = Tensor([0, 1], mindspore.int32)
         >>> sparse_softmax_cross = ops.SparseSoftmaxCrossEntropyWithLogits()
@@ -2917,31 +3084,39 @@ class ApplyMomentum(Primitive):
 
     Args:
         use_locking (bool): Whether to enable a lock to protect the variable and accumulation tensors
-                            from being updated. Default: False.
-        use_nesterov (bool): Enable Nesterov momentum. Default: False.
-        gradient_scale (float): The scale of the gradient. Default: 1.0.
+                            from being updated. Default: ``False`` .
+        use_nesterov (bool): Enable Nesterov momentum. Default: ``False`` .
+        gradient_scale (float): The scale of the gradient. Default: ``1.0`` .
 
     Inputs:
-        - **variable** (Parameter) - Weights to be updated. Data type must be float.
+        - **variable** (Parameter) - Weights to be updated. Data type must be float64, int64, float, float16,
+          int16, int32, int8, uint16, uint32, uint64, uint8, complex64, complex128.
         - **accumulation** (Parameter) - Accumulated gradient value by moment weight,
           has the same data type with `variable`.
-        - **learning_rate** (Union[Number, Tensor]) - The learning rate value, must be a float number or
-          a scalar tensor with float data type.
+        - **learning_rate** (Union[Number, Tensor]) - The learning rate value, must be a float64, int64, float,
+          float16, int16, int32, int8, uint16, uint32, uint64, uint8, complex64, complex128 number or
+          a scalar tensor with float64, int64, float, float16, int16, int32, int8, uint16, uint32, uint64, uint8,
+          complex64, complex128 data type.
         - **gradient** (Tensor) - Gradient, has the same data type as `variable`.
-        - **momentum** (Union[Number, Tensor]) - Momentum, must be a float number or
-          a scalar tensor with float data type.
+        - **momentum** (Union[Number, Tensor]) - Momentum, must be a float64, int64, float, float16, int16, int32,
+          int8, uint16, uint32, uint64, uint8, complex64, complex128 number or
+          a scalar tensor with float64, int64, float, float16, int16, int32, int8, uint16, uint32, uint64, uint8,
+          complex64, complex128 data type.
 
     Outputs:
         Tensor, parameters to be updated.
 
     Raises:
         TypeError: If the `use_locking` or `use_nesterov` is not a bool or `gradient_scale` is not a float.
-        RuntimeError: If the data type of `var`, `accum` and `grad` conversion of Parameter is not supported.
+        TypeError: If the data type of `var`, `accum` and `grad` conversion of Parameter is not supported.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops, Parameter
         >>> class Net(nn.Cell):
         ...    def __init__(self):
         ...        super(Net, self).__init__()
@@ -2987,10 +3162,30 @@ class SmoothL1Loss(Primitive):
 
     Refer to :func:`mindspore.ops.smooth_l1_loss` for more details.
 
+    Args:
+        beta (float, optional): A parameter used to control the point where the function will change between
+            L1 to L2 loss. The value should be greater than zero. Default: ``1.0`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'none'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
+
+    Inputs:
+        - **logits** (Tensor) - Input Tensor of any dimension. Data type must be float16, float32 or float64.
+        - **labels** (Tensor) - Ground truth data, has the same shape and dtype as the `logits`.
+
+    Outputs:
+        Tensor, loss float tensor, same shape and dtype as the `logits`.
+
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> loss = ops.SmoothL1Loss()
         >>> logits = Tensor(np.array([1, 2, 3]), mindspore.float32)
         >>> labels = Tensor(np.array([1, 2, 2]), mindspore.float32)
@@ -3003,23 +3198,53 @@ class SmoothL1Loss(Primitive):
     def __init__(self, beta=1.0, reduction='none'):
         """Initialize SmoothL1Loss."""
         validator.check_value_type('beta', beta, [float], self.name)
-        validator.check('beta', beta, '', 0, Rel.GT, self.name)
+        validator.check('beta', beta, '', 0, validator.GT, self.name)
         validator.check_string(
             reduction, ['none', 'sum', 'mean'], 'reduction', self.name)
+        self.add_prim_attr('sigma', self.beta)
         self.init_prim_io_names(inputs=['prediction', 'target'], outputs=['output'])
 
 
 class MultiMarginLoss(Primitive):
     r"""
-    Creates a criterion that optimizes a multi-class classification hinge loss (margin-based loss)
-    between input and output.
+    Creates a loss function that minimizes the hinge loss
+    for multi-class classification tasks.
+    The loss is calculated by comparing the input and output of the function.
+
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
 
     Refer to :func:`mindspore.ops.multi_margin_loss` for more details.
 
+    Args:
+        p (int, optional): The norm degree for pairwise distance. Should be 1 or 2. Default: ``1`` .
+        margin (int, optional): A parameter to change pairwise distance. Default: ``1.0`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the weighted mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
+
+    Inputs:
+        - **inputs** (Tensor) - Input , with shape :math:`(N, C)`. Data type only support float32, float16
+          or float64.
+        - **target** (Tensor) - Ground truth labels, with shape :math:`(N,)`. Data type only support int64. The
+          value of target should be non-negative, less than C.
+        - **weight** (Tensor) - The rescaling weight to each class with shape :math:`(C,)`. Data type only
+          support float16, float32 or float64.
+
+    Outputs:
+        Tensor, When `reduction` is ``'none'``, the shape is :math:`(N,)`.
+        Otherwise, it is a scalar. Has the same data type with `inputs`.
+
     Supported Platforms:
-        ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> x = Tensor(np.ones(shape=[3, 3]), mindspore.float32)
         >>> target = Tensor(np.array([1, 2, 1]), mindspore.int64)
         >>> weight = Tensor(np.array([1, 1, 1]), mindspore.float32)
@@ -3033,7 +3258,7 @@ class MultiMarginLoss(Primitive):
     def __init__(self, p=1, margin=1.0, reduction="mean"):
         """Initialize MultiMarginLoss"""
         self.p = validator.check_value_type('p', p, [int], self.name)
-        validator.check_int(p, {1, 2}, Rel.IN, 'p', self.name)
+        validator.check_int(p, {1, 2}, validator.IN, 'p', self.name)
         self.margin = validator.check_value_type('margin', margin, [float], self.name)
         self.reduction = validator.check_string(reduction, ['none', 'sum', 'mean'], 'reduction', self.name)
         self.init_prim_io_names(inputs=['x', 'target', 'weight'], outputs=['y'])
@@ -3053,26 +3278,34 @@ class SoftMarginLoss(Primitive):
     where :math:`x.nelement()` is the number of elements of x.
 
     Args:
-        reduction (str): Apply specific reduction method to the output: 'none', 'mean' or 'sum'. Default: "mean".
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **logits** (Tensor) - Predict data. Data type must be float16 or float32.
         - **labels** (Tensor) - Ground truth data, with the same type and shape as `logits`.
 
     Outputs:
-        Tensor or Scalar, if `reduction` is "none", its shape is the same as `logits`.
+        Tensor or Scalar, if `reduction` is ``"none"``, its shape is the same as `logits`.
         Otherwise, a scalar value will be returned.
 
     Raises:
         TypeError: If `logits` or `labels` is not a Tensor.
         TypeError: If dtype of `logits` or `labels` is neither float16 nor float32.
         ValueError: If shape of `logits` is not the same as `labels`.
-        ValueError: If `reduction` is not one of 'none', 'mean' or 'sum'.
+        ValueError: If `reduction` is not one of ``"none"`` , ``"mean"`` or ``"sum"`` .
 
     Supported Platforms:
         ``Ascend`` ``GPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> loss = ops.SoftMarginLoss()
         >>> logits = Tensor(np.array([[0.3, 0.7], [0.5, 0.5]]), mindspore.float32)
         >>> labels = Tensor(np.array([[-1, 1], [1, -1]]), mindspore.float32)
@@ -3111,6 +3344,9 @@ class L2Loss(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> input_x = Tensor(np.array([1, 2, 3]), mindspore.float16)
         >>> l2_loss = ops.L2Loss()
         >>> output = l2_loss(input_x)
@@ -3128,10 +3364,10 @@ class DataFormatDimMap(Primitive):
     Returns the dimension index in the destination data format given in the source data format.
 
     Args:
-        src_format (str): An optional value for source data format. The format can be 'NHWC' and 'NCHW'.
-            Default: 'NHWC'.
-        dst_format (str): An optional value for destination data format. The format can be 'NHWC' and 'NCHW'.
-            Default: 'NCHW'.
+        src_format (str): An optional value for source data format. The format can be ``'NHWC'`` and ``'NCHW'`` .
+            Default: ``'NHWC'`` .
+        dst_format (str): An optional value for destination data format. The format can be ``'NHWC'`` and ``'NCHW'`` .
+            Default: ``'NCHW'`` .
 
     Inputs:
         - **input_x** (Tensor) - A Tensor, each element is used as a dimension index of the source data format.
@@ -3149,6 +3385,8 @@ class DataFormatDimMap(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, ops
         >>> input_x = Tensor([0, 1, 2, 3], mindspore.int32)
         >>> dfdm = ops.DataFormatDimMap()
         >>> output = dfdm(input_x)
@@ -3170,7 +3408,7 @@ class RNNTLoss(PrimitiveWithInfer):
     Computes the RNNTLoss and its gradient with respect to the softmax outputs.
 
     Args:
-        blank_label (int): blank label. Default: 0.
+        blank_label (int): blank label. Default: ``0`` .
 
     Inputs:
         - **acts** (Tensor) - Tensor of shape :math:`(B, T, U, V)`. Data type must be float16 or float32.
@@ -3191,6 +3429,8 @@ class RNNTLoss(PrimitiveWithInfer):
         ``Ascend``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import ops, Tensor
         >>> B, T, U, V = 1, 2, 3, 5
         >>> blank = 0
         >>> acts = np.random.random((B, T, U, V)).astype(np.float32)
@@ -3217,10 +3457,13 @@ class RNNTLoss(PrimitiveWithInfer):
         validator.check_equal_int(len(labels_shape), 2, 'labels_rank', self.name)
         validator.check_equal_int(len(input_length_shape), 1, 'input_length_rank', self.name)
         validator.check_equal_int(len(label_length_shape), 1, 'label_length_rank', self.name)
-        validator.check('labels shape[0]', labels_shape[0], 'acts shape[0]', acts_shape[0], Rel.EQ, self.name)
-        validator.check('labels shape[1]', labels_shape[1], 'acts shape[2]-1', acts_shape[2] - 1, Rel.EQ, self.name)
-        validator.check('input_length size', input_length_shape[0], 'acts shape[0]', acts_shape[0], Rel.EQ, self.name)
-        validator.check('label_length size', label_length_shape[0], 'acts shape[0]', acts_shape[0], Rel.EQ, self.name)
+        validator.check('labels shape[0]', labels_shape[0], 'acts shape[0]', acts_shape[0], validator.EQ, self.name)
+        validator.check('labels shape[1]', labels_shape[1], 'acts shape[2]-1',
+                        acts_shape[2] - 1, validator.EQ, self.name)
+        validator.check('input_length size', input_length_shape[0], 'acts shape[0]',
+                        acts_shape[0], validator.EQ, self.name)
+        validator.check('label_length size', label_length_shape[0], 'acts shape[0]',
+                        acts_shape[0], validator.EQ, self.name)
         costs_shape = (acts_shape[0],)
         return costs_shape, acts_shape
 
@@ -3248,9 +3491,9 @@ class SGD(PrimitiveWithCheck):
         For more details, please refer to :class:`mindspore.nn.SGD`.
 
     Args:
-        dampening (float): The dampening for momentum. Default: 0.0.
-        weight_decay (float): Weight decay (L2 penalty). Default: 0.0.
-        nesterov (bool): Enable Nesterov momentum. Default: False.
+        dampening (float): The dampening for momentum. Default: ``0.0`` .
+        weight_decay (float): Weight decay (L2 penalty). Default: ``0.0`` .
+        nesterov (bool): Enable Nesterov momentum. Default: ``False`` .
 
     Inputs:
         - **parameters** (Tensor) - Parameters to be updated. With float16 or float32 data type.
@@ -3276,6 +3519,9 @@ class SGD(PrimitiveWithCheck):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> sgd = ops.SGD()
         >>> parameters = Tensor(np.array([2, -0.5, 1.7, 4]), mindspore.float32)
         >>> gradient = Tensor(np.array([1, -1, 0.5, 2]), mindspore.float32)
@@ -3301,13 +3547,10 @@ class SGD(PrimitiveWithCheck):
 
     def check_shape(self, parameters_shape, gradient_shape, learning_rate_shape,
                     accum_shape, momentum_shape, stat_shape):
-        validator.check_positive_int(len(parameters_shape), "parameters rank", self.name)
-        validator.check_int(len(gradient_shape), 0, Rel.GE, f'gradient rank', self.name)
-        validator.check_int(len(learning_rate_shape), 0, Rel.GE, f'learning rate rank', self.name)
-        validator.check_positive_int(len(accum_shape), "accumulation rank", self.name)
-        validator.check_int(len(momentum_shape), 0, Rel.GE, f'momentum rank', self.name)
-        validator.check_int(len(stat_shape), 0, Rel.GE, f'stat rank', self.name)
-        validator.check("gradient shape", gradient_shape, "stat shape", stat_shape, Rel.EQ, self.name)
+        validator.check_int(len(gradient_shape), 0, validator.GE, f'gradient rank', self.name)
+        validator.check_int(len(learning_rate_shape), 0, validator.GE, f'learning rate rank', self.name)
+        validator.check_int(len(momentum_shape), 0, validator.GE, f'momentum rank', self.name)
+        validator.check_int(len(stat_shape), 0, validator.GE, f'stat rank', self.name)
 
     def check_dtype(self, parameters_dtype, gradient_dtype, learning_rate_dtype,
                     accum_dtype, momentum_dtype, stat_dtype):
@@ -3345,10 +3588,10 @@ class ApplyRMSProp(PrimitiveWithInfer):
 
     Args:
         use_locking (bool): Whether to enable a lock to protect the variable and accumulation tensors
-                            from being updated. Default: False.
+                            from being updated. Default: ``False`` .
 
     Inputs:
-        - **var** (Tensor) - Weights to be updated.
+        - **var** (Parameter) - Weights to be updated.
         - **mean_square** (Tensor) - Mean square gradients, must be the same type as `var`.
         - **moment** (Tensor) - Delta of `var`, must be the same type as `var`.
         - **learning_rate** (Union[Number, Tensor]) - Learning rate. Must be a float number or
@@ -3373,6 +3616,8 @@ class ApplyRMSProp(PrimitiveWithInfer):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops, Parameter
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -3439,10 +3684,10 @@ class ApplyCenteredRMSProp(Primitive):
 
     Args:
         use_locking (bool): Whether to enable a lock to protect the variable and accumulation tensors
-                            from being updated. Default: False.
+                            from being updated. Default: ``False`` .
 
     Inputs:
-        - **var** (Tensor) - Weights to be updated.
+        - **var** (Parameter) - Weights to be updated.
         - **mean_gradient** (Tensor) - Mean gradients, must be the same type as `var`.
         - **mean_square** (Tensor) - Mean square gradients, must be the same type as `var`.
         - **moment** (Tensor) - Delta of `var`, must be the same type as `var`.
@@ -3467,6 +3712,8 @@ class ApplyCenteredRMSProp(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops, Parameter
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -3510,26 +3757,28 @@ class LayerNorm(Primitive):
 
     Args:
         begin_norm_axis (int): The begin axis of the `input_x` to apply LayerNorm,
-            the value must be in [-1, rank(input)). Default: 1.
+            the value must be in [-1, rank(input_x)). Default: ``1`` .
         begin_params_axis (int): The begin axis of the parameter input (`gamma`, `beta`) to
-            apply LayerNorm, the value must be in [-1, rank(input)). Default: 1.
-        epsilon (float): A value added to the denominator for numerical stability. Default: 1e-7.
+            apply LayerNorm, the value must be in [-1, rank(input_x)). Default: ``1`` .
+        epsilon (float): A value added to the denominator for numerical stability(:math:`\epsilon`). Default: ``1e-7`` .
 
     Inputs:
         - **input_x** (Tensor) - Tensor of shape :math:`(N, \ldots)`.
-          The input of LayerNorm.
-        - **gamma** (Tensor) - Tensor of shape :math:`(P_0, \ldots, P_\text{begin_params_axis})`.
-          The learnable parameter `gamma` as the scale on norm.
-        - **beta** (Tensor) - Tensor of shape :math:`(P_0, \ldots, P_\text{begin_params_axis})`.
-          The learnable parameter `beta` as the scale on norm.
+          The input of LayerNorm. Supported dtypes: float16, float32, float64.
+        - **gamma** (Tensor) - Tensor of shape :math:`input_x_shape[begin_params_axis:]`. The learnable parameter
+          :math:`\gamma` as the scale on norm. Supported dtypes: float16, float32, float64.
+        - **beta** (Tensor) - Tensor of shape :math:`input_x_shape[begin_params_axis:]`. The learnable parameter
+          :math:`\beta` as the scale on norm. Supported dtypes: float16, float32, float64.
 
     Outputs:
         tuple[Tensor], tuple of 3 tensors, the normalized input and the updated parameters.
 
         - **output_x** (Tensor) - The normalized input, has the same type and shape as the `input_x`.
-          The shape is :math:`(N, C)`.
-        - **mean** (Tensor) - Tensor of shape :math:`(C,)`.
-        - **variance** (Tensor) - Tensor of shape :math:`(C,)`.
+        - **mean** (Tensor) - The first `begin_norm_axis` dimensions of `mean` shape is the same as `input_x`,
+          and the remaining dimensions are 1. Suppose the shape of the `input_x` is :math:`(x_1, x_2, \ldots, x_R)`,
+          the shape of the `mean` is :math:`(x_1, \ldots, x_{begin_params_axis}, 1, \ldots, 1)`
+          (when `begin_params_axis=0`, the shape of `mean` is :math:`(1, \ldots, 1)` ).
+        - **variance** (Tensor) - Shape is the same as `mean` .
 
     Raises:
         TypeError: If `begin_norm_axis` or `begin_params_axis` is not an int.
@@ -3540,6 +3789,9 @@ class LayerNorm(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> input_x = Tensor(np.array([[1, 2, 3], [1, 2, 3]]), mindspore.float32)
         >>> gamma = Tensor(np.ones([3]), mindspore.float32)
         >>> beta = Tensor(np.ones([3]), mindspore.float32)
@@ -3576,13 +3828,17 @@ class L2Normalize(Primitive):
     where :math:`\epsilon` is epsilon and :math:`\sum_{i}^{}\left | x_i  \right | ^2` calculate the sum of squares of
     the input `x` along the dimension `axis`.
 
+    Note:
+        On Ascend, input data type of float64 is currently not supported.
+
     Args:
-        axis (Union[list(int), tuple(int), int]): Specify the axis for calculating the L2 norm. Default: 0.
-        epsilon (float): A small value added for numerical stability. Default: 1e-4.
+        axis (Union[list(int), tuple(int), int]): Specify the axis for calculating the L2 norm. Default: ``0`` .
+        epsilon (float): A small value added for numerical stability. Default: ``1e-4`` .
 
     Inputs:
-        - **x** (Tensor) - Input to compute the normalization. Tensor of shape :math:`(N, \ldots)`.
-          Data type must be float16 or float32.
+        - **x** (Tensor) - Input to compute the normalization. Tensor of shape :math:`(N, *)`,
+          where :math:`*` means any number of additional dimensions.
+          Data type must be float16, float32 or float64.
 
     Outputs:
         Tensor, with the same type and shape as the `x`.
@@ -3591,13 +3847,16 @@ class L2Normalize(Primitive):
         TypeError: If `axis` is not one of the following: list, tuple or int.
         TypeError: If `epsilon` is not a float.
         TypeError: If `x` is not a Tensor.
-        TypeError: If dtype of `x` is neither float16 nor float32.
+        TypeError: If dtype of `x` is not in [float16, float32, float64].
         ValueError: If dimension of `x` is not greater than 0.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> l2_normalize = ops.L2Normalize()
         >>> x = Tensor(np.random.randint(-256, 256, (2, 3, 4)), mindspore.float32)
         >>> output = l2_normalize(x)
@@ -3619,91 +3878,16 @@ class L2Normalize(Primitive):
         self.axis = axis
 
 
-class DropoutGenMask(Primitive):
-    """
-    The DropoutGenMask interface is deprecated, please use the :class:`mindspore.ops.Dropout` instead.
-
-    Supported Platforms:
-        Deprecated
-    """
-
-    @deprecated("1.5", "ops.Dropout", False)
-    @prim_attr_register
-    def __init__(self, Seed0=0, Seed1=0):
-        """Initialize DropoutGenMask."""
-        self.init_prim_io_names(inputs=['shape', 'keep_prob'], outputs=['output'])
-        validator.check_value_type("Seed0", Seed0, [int], self.name)
-        validator.check_value_type("Seed1", Seed1, [int], self.name)
-        self.add_prim_attr("side_effect_hidden", True)
-
-
-class DropoutDoMask(Primitive):
-    """
-    The DropoutDoMask interface is deprecated, please use the :class:`mindspore.ops.Dropout` instead.
-
-    Supported Platforms:
-        Deprecated
-    """
-
-    @deprecated("1.5", "ops.Dropout", False)
-    @prim_attr_register
-    def __init__(self):
-        pass
-
-
 class ResizeBilinear(PrimitiveWithInfer):
     r"""
-    Resizes an image to a certain size using the bilinear interpolation.
+    This API is deprecated, please use the :class:`mindspore.ops.ResizeBilinearV2` instead.
+    For general resizing with other interpolation methods, refer to :func:`mindspore.ops.interpolate` for more details.
 
-    The resizing only affects the lower two dimensions which represent the height and width. The input images
-    can be represented by different data types, but the data types of output images are always float32.
-
-    For general resize, refer to :func:`mindspore.ops.interpolate` for more details.
-
-    .. warning::
-        This interface does not support dynamic shape and is subject to change or deletion,
-        use :func:`mindspore.ops.interpolate` instead.
-
-    Args:
-        size (Union[tuple[int], list[int]]): A tuple or list of 2 int elements :math:`(new\_height, new\_width)`,
-            the new size of the images.
-        align_corners (bool): If true, rescale input by :math:`(new\_height - 1) / (height - 1)`,
-                       which exactly aligns the 4 corners of images and resized images. If false,
-                       rescale by :math:`new\_height / height`. Default: False.
-        half_pixel_centers (bool): Whether half pixel center. If set to True, `align_corners` should be False.
-                           Default: False.
-
-    Inputs:
-        - **x** (Tensor) - Image to be resized. Input images must be a 4-D tensor with shape
-          :math:`(batch, channels, height, width)`, with data type of float32 or float16.
-
-    Outputs:
-        Tensor, resized image. 4-D with shape :math:`(batch, channels, new\_height, new\_width)`,
-        with the same data type as input `x`.
-
-    Raises:
-        TypeError: If `size` is neither a tuple nor list.
-        TypeError: If `align_corners` is not a bool.
-        TypeError: If `half_pixel_centers` is not a bool.
-        TypeError: If `align_corners` and `half_pixel_centers` are all True.
-        TypeError: If `half_pixel_centers` is True and device_target not Ascend.
-        TypeError: If dtype of `x` is neither float16 nor float32.
-        TypeError: If `x` is not a Tensor.
-        ValueError: If length of shape of `x` is not equal to 4.
+    Note:
+        Dynamic shape feature is not supported for now.
 
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
-
-    Examples:
-        >>> x = Tensor([[[[1, 2, 3, 4, 5], [1, 2, 3, 4, 5]]]], mindspore.float32)
-        >>> resize_bilinear = ops.ResizeBilinear((5, 5))
-        >>> output = resize_bilinear(x)
-        >>> print(output)
-        [[[[1. 2. 3. 4. 5.]
-           [1. 2. 3. 4. 5.]
-           [1. 2. 3. 4. 5.]
-           [1. 2. 3. 4. 5.]
-           [1. 2. 3. 4. 5.]]]]
+        Deprecated
     """
 
     @prim_attr_register
@@ -3723,7 +3907,7 @@ class ResizeBilinear(PrimitiveWithInfer):
             validator.check_positive_int(value, f'{i}th value of size', self.name)
 
     def infer_shape(self, input_shape):
-        validator.check("dimension of input", len(input_shape), "", 4, Rel.EQ, self.name)
+        validator.check("dimension of input", len(input_shape), "", 4, validator.EQ, self.name)
         input_shape = list(input_shape)
         batch, channel, _, _ = input_shape
         out_shape = [batch, channel]
@@ -3734,6 +3918,7 @@ class ResizeBilinear(PrimitiveWithInfer):
     def infer_dtype(self, input_dtype):
         validator.check_tensor_dtype_valid('input_dtype', input_dtype, [mstype.float16, mstype.float32],
                                            self.name)
+        self.add_prim_attr("dtype", input_dtype)
         return input_dtype
 
 
@@ -3745,52 +3930,56 @@ class UpsampleTrilinear3D(Primitive):
     using trilinear upscaling algorithm.
 
     Note:
-        One of `scales` and `output_size` MUST be specified and it is an error if both are specified.
+        One of `scales` and `output_size` must be specified. And it is an error if both are specified.
 
     Args:
-        output_size (Union[tuple[int], list[int]], optional):  A tuple or list of 3 int
-            elements :math:`(output\_depth, output\_height, output\_width)`.
-            Defaults to None. Only one of `scales` and `output_size` can be specified.
-        scales (Union[tuple[float], list[float]], optional): A tuple or list of 3 float
-           elements :math:`(scale\_depth, scale\_height, scale\_width)`. Defaults to None.
-        align_corners (bool, optional): An optional bool. Defaults to false.
-            If True, the input and output tensors are aligned by the center points of their corner pixels,
+        align_corners (bool, optional): An optional bool. Default: ``False``.
+            If ``True``, the input and output tensors are aligned by the center points of their corner pixels,
             preserving the values at the corner pixels.
-            If False, the input and output tensors are aligned by the corner points of their corner pixels,
+            If ``False`` , the input and output tensors are aligned by the corner points of their corner pixels,
             and the interpolation use edge value padding for out of boundary values.
 
     Inputs:
-        - **x** (Tensor) - A 5-D input tensor of shape :math:`(N, C, D_{in}, H_{in}, W_{in})`.
-          Must be one of the following types: float16, float32, float64.
+        - **x** (Tensor) - 5D tensor of shape :math:`(N, C, D_{in}, H_{in}, W_{in})`. Supporting types:
+          [float16, float32, float64].
+        - **output_size** (Union[tuple[int], list[int]]):  A tuple or list of 3 int elements
+          :math:`(output\_depth, output\_height, output\_width)`. Default: ``None``.
+        - **scales** (Union[tuple[float], list[float]]): A tuple or list of 3 float
+          elements :math:`(scale\_depth, scale\_height, scale\_width)`. Default: ``None``.
 
     Outputs:
-        - **y** (Tensor) - Upsampled output with the same data type as `x`.
-          Tensor of shape :math:`(N, C, D_{out}, H_{out}, W_{out})`.
+        - **y** (Tensor) - Upsampled output with the same data type as `x`, whose shape is
+          :math:`(N, C, D_{out}, H_{out}, W_{out})`.
 
     Raises:
-        TypeError: When `output_size` is not None and `output_size` is not list[int] or tuple[int].
-        TypeError: When `scales` is not None and `scales` is not list[float] or tuple[float].
+        TypeError: When `output_size` is not ``None`` and `output_size` is not list[int] or tuple[int].
+        TypeError: When `scales` is not ``None`` and `scales` is not list[float] or tuple[float].
         TypeError: If dtype of `x` is not in [float16, float32, float64].
         TypeError: If type of `align_corners` is not bool.
-        ValueError: If any value of `output_size` is negative or zero when `output_size` is not empty.
-        ValueError: If any value of `scales` is negative or zero when `scales` is not empty.
+        ValueError: If any value of `output_size` is negative or zero when `output_size` is not ``None``.
+        ValueError: If any value of `scales` is negative or zero when `scales` is not ``None``.
         ValueError: If shape of `x` is not 5D.
         ValueError: If none of `scales` and `output_size` is specified or both specified.
         ValueError: If size of `scales` is not equal 3 when `scales` is specified.
         ValueError: If size of `output_size` is not equal 3 when `output_size` is specified.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> ops = ops.UpsampleTrilinear3D(output_size=[4, 64, 48])
-        >>> out = ops(Tensor(input_data=np.random.randn(2, 3, 4, 512, 256)))
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
+        >>> net = ops.UpsampleTrilinear3D()
+        >>> in_x = Tensor(input_data=np.random.randn(2, 3, 4, 512, 256))
+        >>> output_size=[4, 64, 48]
+        >>> out = net(in_x, output_size, None)
         >>> print(out.shape)
         (2, 3, 4, 64, 48)
-        ...
-        >>> ops = ops.UpsampleTrilinear3D(output_size=[2, 4, 4])
+        >>>
+        >>> net = ops.UpsampleTrilinear3D()
         >>> in_x = Tensor(np.arange(1, 5, dtype=np.float32).reshape((1, 1, 1, 2, 2)))
-        >>> out = ops(in_x)
+        >>> output_size=[2, 4, 4]
+        >>> out = net(in_x, output_size, None)
         >>> print(out)
         [[[[[1.   1.25 1.75 2.  ]
             [1.5  1.75 2.25 2.5 ]
@@ -3803,23 +3992,11 @@ class UpsampleTrilinear3D(Primitive):
     """
 
     @prim_attr_register
-    def __init__(self, output_size=None, scales=None, align_corners=False):
+    def __init__(self, align_corners=False):
         """Initialize UpsampleTrilinear3D."""
-        self.init_prim_io_names(inputs=['x'], outputs=['y'])
-        self.output_size = [] if output_size is None else output_size
-        self.scales = [] if scales is None else scales
+        self.init_prim_io_names(inputs=['x', 'output_size', 'scales'], outputs=['y'])
         self.align_corners = align_corners
-
-        validator.check_value_type("output_size", self.output_size, [list, tuple], self.name)
-        validator.check_value_type("scales", self.scales, [list, tuple], self.name)
         validator.check_bool(self.align_corners, "align_corners", self.name)
-        if len(self.output_size) == 3:
-            validator.check_positive_int_sequence(self.output_size, "output_size", self.name)
-        if len(self.scales) == 3:
-            validator.check_positive_float_sequence(self.scales, "scales", self.name)
-
-        self.add_prim_attr('output_size', self.output_size)
-        self.add_prim_attr('scales', self.scales)
         self.add_prim_attr('align_corners', self.align_corners)
 
 
@@ -3836,24 +4013,22 @@ class OneHot(Primitive):
     Args:
         axis (int): Position to insert the value. e.g. If shape of `indices` is :math:`(N, C)`, and `axis` is -1,
             the output shape will be :math:`(N, C, D)`, If `axis` is 0, the output shape will be :math:`(D, N, C)`.
-            Default: -1.
+            Default: ``-1`` .
 
     Inputs:
         - **indices** (Tensor) - A tensor of indices. Tensor of shape :math:`(X_0, \ldots, X_n)`.
-          Data type must be uint8, int32 or int64.
+          Data type must be int32 or int64.
         - **depth** (int) - A scalar defining the depth of the one-hot dimension.
         - **on_value** (Tensor) - A value to fill in output when `indices[j] = i`.
-          Support uint8, uint16, uint32, uint64, int8, int16, int32, int64, float16, float32, float64,
-          bool, complex64, complex128.
         - **off_value** (Tensor) - A value to fill in output when `indices[j] != i`.
-          Has the same data type as `on_value`.
+          It has the same data type as `on_value`.
 
     Outputs:
         Tensor, one-hot tensor. Tensor of shape :math:`(X_0, \ldots, X_{axis}, \text{depth} ,X_{axis+1}, \ldots, X_n)`.
 
     Raises:
         TypeError: If `axis` or `depth` is not an int.
-        TypeError: If dtype of `indices` is not uint8, int32 or int64.
+        TypeError: If dtype of `indices` is not int32 or int64.
         TypeError: If `indices`, `on_value` or `off_value` is not a Tensor.
         ValueError: If `axis` is not in range [-1, len(indices_shape)].
         ValueError: If `depth` is less than 0.
@@ -3862,6 +4037,9 @@ class OneHot(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> indices = Tensor(np.array([0, 1, 2]), mindspore.int32)
         >>> depth, on_value, off_value = 3, Tensor(1.0, mindspore.float32), Tensor(0.0, mindspore.float32)
         >>> onehot = ops.OneHot()
@@ -3877,26 +4055,6 @@ class OneHot(Primitive):
         """Initialize OneHot."""
         self.init_prim_io_names(inputs=['indices', 'depth', 'on_value', 'off_value'], outputs=['output'])
         validator.check_value_type("axis", axis, [int], self.name)
-
-
-class Gelu(PrimitiveWithInfer):
-    """
-    Same as operator GeLU. Gelu will be deprecated in the future.
-    Please use GeLU instead.
-    """
-
-    @deprecated("1.1", "GeLU", True)
-    @prim_attr_register
-    def __init__(self):
-        """Initialize Gelu"""
-        self.init_prim_io_names(inputs=['x'], outputs=['output'])
-
-    def infer_shape(self, input_x):
-        return input_x
-
-    def infer_dtype(self, input_x):
-        validator.check_tensor_dtype_valid("input_x", input_x, (mstype.float16, mstype.float32), self.name)
-        return input_x
 
 
 class GeLU(Primitive):
@@ -3929,6 +4087,9 @@ class GeLU(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> x = Tensor(np.array([1.0, 2.0, 3.0]), mindspore.float32)
         >>> gelu = ops.GeLU()
         >>> result = gelu(x)
@@ -3942,36 +4103,25 @@ class GeLU(Primitive):
         self.init_prim_io_names(inputs=['x'], outputs=['output'])
 
 
-class FastGelu(PrimitiveWithInfer):
-    """
-    Same as operator FastGeLU. FastGelu will be deprecated in the future.
-    Please use FastGeLU instead.
-    """
-
-    @deprecated("1.1", "FastGeLU", True)
-    @prim_attr_register
-    def __init__(self):
-        """Initialize FastGelu."""
-        self.init_prim_io_names(inputs=['x'], outputs=['output'])
-
-    def infer_shape(self, input_x):
-        return input_x
-
-    def infer_dtype(self, input_x):
-        validator.check_tensor_dtype_valid("input_x", input_x, (mstype.float16, mstype.float32), self.name)
-        return input_x
-
-
 class FastGeLU(Primitive):
     r"""
     Fast Gaussian Error Linear Units activation function.
 
     Refer to :func:`mindspore.ops.fast_gelu` for more details.
 
+    Inputs:
+        - **x** (Tensor) - Input to compute the FastGeLU with data type of float16 or float32.
+
+    Outputs:
+        Tensor, with the same type and shape as `x`.
+
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> x = Tensor(np.array([[-1.0, 4.0, -8.0], [2.0, -5.0, 9.0]]), mindspore.float32)
         >>> fast_gelu = ops.FastGeLU()
         >>> output = fast_gelu(x)
@@ -4016,7 +4166,7 @@ class GetNext(Primitive):
         >>> import mindspore
         >>> from mindspore import ops
         >>> from mindspore import dataset as ds
-        >>> from mindspore.common import dtype as mstype
+        >>> from mindspore import dtype as mstype
         >>> data_path = "/path/to/MNIST_Data/train/"
         >>> train_dataset = ds.MnistDataset(data_path, num_samples=10)
         >>> dataset_helper = mindspore.DatasetHelper(train_dataset, dataset_sink_mode=True)
@@ -4036,7 +4186,7 @@ class GetNext(Primitive):
         """Initialize GetNext."""
         validator.check_value_type("types", types, [list, tuple], self.name)
         validator.check_value_type("shapes", shapes, [list, tuple], self.name)
-        validator.check("types length", len(types), "shapes length", len(shapes), Rel.EQ, self.name)
+        validator.check("types length", len(types), "shapes length", len(shapes), validator.EQ, self.name)
         validator.check_value_type("output_num", output_num, [int], self.name)
 
 
@@ -4046,10 +4196,23 @@ class PReLU(PrimitiveWithInfer):
 
     Refer to :func:`mindspore.ops.prelu` for more details.
 
+    Inputs:
+        - **x** (Tensor) - The input Tensor of the activation function. The data type is float16 or float32.
+          The shape is :math:`(N, C, *)` where :math:`*` means, any number of additional dimensions.
+        - **weight** (Tensor) -  Weight Tensor. The data type is float16 or float32.
+          The weight can only be a vector, and the length is the same as the number of channels C of the `input_x`.
+          On GPU devices, when the input is a scalar, the shape is 1.
+
+    Outputs:
+        Tensor, with the same type as `x`.
+
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -4076,11 +4239,11 @@ class PReLU(PrimitiveWithInfer):
         self.init_prim_io_names(inputs=['x', 'weight'], outputs=['output'])
 
 
-class LSTM(PrimitiveWithInfer):
-    """
+class LSTM(Primitive):
+    r"""
     Performs the Long Short-Term Memory (LSTM) on the input.
 
-    For detailsed information, please refer to :class:`mindspore.nn.LSTM`.
+    For more information, please refer to :class:`mindspore.nn.LSTM`.
 
     Args:
         input_size (int): Number of features of input.
@@ -4090,33 +4253,41 @@ class LSTM(PrimitiveWithInfer):
         bidirectional (bool): Specifies whether it is a bidirectional LSTM.
         dropout (float): If not 0, append `Dropout` layer on the outputs of each
             LSTM layer except the last layer. The range of dropout is [0.0, 1.0].
+        proj_size (int): If `proj_size` > 0, a projection of the corresponding size will be used,
+            which is only supported on CPU now. Default: ``0`` .
 
     Inputs:
-        - **input** (Tensor) - Tensor of shape (seq_len, batch_size, `input_size`) or
-          (batch_size, seq_len, `input_size`).
-        - **h** (tuple) - Tensor of shape (num_directions * `num_layers`, batch_size, `hidden_size`).
-        - **c** (tuple) - Tensor of shape (num_directions * `num_layers`, batch_size, `hidden_size`).
+        - **input** (Tensor) - Tensor of shape :math:`(seq\_len, batch\_size, input\_size)` or
+          :math:`(batch\_size, seq\_len, input\_size)`.
+        - **h** (Tensor) - Tensor of shape :math:`(num\_directions * num\_layers, batch\_size, real\_hidden\_size)`.
+        - **c** (Tensor) - Tensor of shape :math:`(num\_directions * num\_layers, batch\_size, hidden\_size)`.
         - **w** (Tensor) - A weight Tensor.
 
-    Outputs:
-        Tuple, a tuple contains (`output`, `h_n`, `c_n`, `reserve`, `state`).
+        If :math:`proj\_size > 0` , :math:`real\_hidden\_size = proj\_size` , otherwise
+        :math:`real\_hidden\_size = hidden\_size` .
 
-        - **output** (Tensor) - Tensor of shape (seq_len, batch_size, num_directions * `hidden_size`).
-        - **h_n** (Tensor) - Tensor of shape (num_directions * `num_layers`, batch_size, `hidden_size`).
-        - **c_n** (Tensor) - Tensor of shape (num_directions * `num_layers`, batch_size, `hidden_size`).
-        - **reserve** (Tensor) - Tensor of shape (r, 1).
-        - **state** (Tensor) - Random number generator state and its shape is (s, 1).
+    Outputs:
+        Tuple, a tuple contains `(output, h_n, c_n, reserve, state)`.
+
+        - **output** (Tensor) - Tensor of shape :math:`(seq\_len, batch\_size, num\_directions * real\_hidden\_size)`.
+        - **h_n** (Tensor) - Tensor of shape :math:`(num\_directions * num\_layers, batch\_size, real\_hidden\_size)`.
+        - **c_n** (Tensor) - Tensor of shape :math:`(num\_directions * num\_layers, batch\_size, hidden\_size)`.
+        - **reserve** (Tensor) - Tensor of shape :math:`(r, 1)`.
+        - **state** (Tensor) - Random number generator state and its shape is :math:`(s, 1)`.
 
     Raises:
         TypeError: If `input_size`, `hidden_size` or `num_layers` is not an int.
         TypeError: If `has_bias` or `bidirectional` is not a bool.
         TypeError: If `dropout` is not a float.
         ValueError: If `dropout` is not in range [0.0, 1.0].
+        ValueError: If `proj_size` is not in range [0, `hidden_size`).
 
     Supported Platforms:
         ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> input_size = 10
         >>> hidden_size = 2
         >>> num_layers = 1
@@ -4143,44 +4314,22 @@ class LSTM(PrimitiveWithInfer):
     """
 
     @prim_attr_register
-    def __init__(self, input_size, hidden_size, num_layers, has_bias, bidirectional, dropout):
+    def __init__(self, input_size, hidden_size, num_layers, has_bias, bidirectional, dropout, proj_size=0):
         """Initialize LSTM."""
         self.input_size = validator.check_positive_int(input_size, "input_size", self.name)
         self.hidden_size = validator.check_positive_int(hidden_size, "hidden_size", self.name)
+        self.proj_size = validator.check_int_range(proj_size, 0, hidden_size, validator.INC_LEFT,
+                                                   'proj_size', self.name)
         self.num_layers = validator.check_positive_int(num_layers, "num_layers", self.name)
         self.has_bias = validator.check_value_type("has_bias", has_bias, (bool,), self.name)
         self.bidirectional = validator.check_value_type("bidirectional", bidirectional, (bool,), self.name)
         self.dropout = validator.check_value_type("dropout", dropout, [float], self.name)
-        self.dropout = validator.check_float_range(dropout, 0, 1, Rel.INC_BOTH, 'dropout', self.name)
+        self.dropout = validator.check_float_range(dropout, 0, 1, validator.INC_BOTH, 'dropout', self.name)
 
         if bidirectional:
             self.num_directions = 2
         else:
             self.num_directions = 1
-
-    def infer_shape(self, x_shape, h_shape, c_shape, w_shape):
-        validator.check_equal_int(len(x_shape), 3, "x rank", self.name)
-        validator.check_equal_int(x_shape[2], self.input_size, "x[2]", self.name)
-
-        # h and c should be same shape
-        validator.check_equal_int(len(h_shape), 3, "h rank", self.name)
-        validator.check("h_shape", h_shape, "c_shape", c_shape, Rel.EQ, self.name)
-
-        validator.check_int(h_shape[0], self.num_layers * self.num_directions, Rel.EQ, "h[0]", self.name)
-        validator.check_equal_int(h_shape[1], x_shape[1], "h[1]", self.name)
-        validator.check_int(h_shape[2], self.hidden_size, Rel.EQ, "h[2]", self.name)
-
-        y_shape = (x_shape[0], x_shape[1], self.hidden_size * self.num_directions)
-
-        # set arbitrary shape for reserved space
-        reserved_shape = (1, 1)
-        state_shape = (1, 1)
-        return y_shape, h_shape, c_shape, reserved_shape, state_shape
-
-    def infer_dtype(self, x_dtype, h_dtype, c_dtype, w_dtype):
-        args = {'x': x_dtype, 'h': h_dtype, 'c': c_dtype, 'w': w_dtype}
-        validator.check_tensors_dtypes_same_and_valid(args, (mstype.float32, mstype.float16), self.name)
-        return x_dtype, x_dtype, x_dtype, x_dtype, x_dtype
 
 
 class SigmoidCrossEntropyWithLogits(Primitive):
@@ -4200,7 +4349,7 @@ class SigmoidCrossEntropyWithLogits(Primitive):
         \end{array}
 
     Inputs:
-        - **logits** (Tensor) - Input logits. Tensor of shape :math:`(N, *)` where :math:`*` means, any number
+        - **logits** (Tensor) - Input logits. Tensor of shape :math:`(N, *)` where :math:`*` means any number
           of additional dimensions.
         - **label** (Tensor) - Ground truth label. With the same shape and type as `logits`.
 
@@ -4214,6 +4363,8 @@ class SigmoidCrossEntropyWithLogits(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> logits = Tensor(np.array([[-0.8, 1.2, 0.7], [-0.1, -0.4, 0.7]]).astype(np.float32))
         >>> labels = Tensor(np.array([[0.3, 0.8, 1.2], [-0.6, 0.1, 2.2]]).astype(np.float32))
         >>> sigmoid = ops.SigmoidCrossEntropyWithLogits()
@@ -4240,7 +4391,7 @@ class BCEWithLogitsLoss(PrimitiveWithInfer):
 
         \begin{array}{ll} \\
             p_{ij} = sigmoid(X_{ij}) = \frac{1}{1 + e^{-X_{ij}}} \\
-            L_{ij} = -[Y_{ij} * log(p_{ij}) + (1 - Y_{ij})log(1 - p_{ij})]
+            L_{ij} = -[Y_{ij}log(p_{ij}) + (1 - Y_{ij})log(1 - p_{ij})]
         \end{array}
 
     :math:`i` indicates the :math:`i^{th}` sample, :math:`j` indicates the category. Then,
@@ -4258,8 +4409,8 @@ class BCEWithLogitsLoss(PrimitiveWithInfer):
     and the third method is to calculate the sum of all losses.
 
     This operator will multiply the output by the corresponding weight.
-    The tensor weight assigns different weights to each piece of data in the batch,
-    and the tensor pos_weight adds corresponding weights to the positive examples of each category.
+    The tensor `weight` assigns different weights to each piece of data in the batch,
+    and the tensor `pos_weight` adds corresponding weights to the positive examples of each category.
 
     In addition, it can trade off recall and precision by adding weights to positive examples.
     In the case of multi-label classification the loss can be described as:
@@ -4271,12 +4422,16 @@ class BCEWithLogitsLoss(PrimitiveWithInfer):
         \end{array}
 
     where c is the class number (c>1 for multi-label binary classification, c=1 for single-label binary classification),
-    n is the number of the sample in the batch and :math:`p_c` is the weight of the positive answer for the class c.
-    :math:`p_c>1` increases the recall, :math:`p_c<1` increases the precision.
+    n is the number of the sample in the batch and :math:`P_c` is the weight of the positive answer for the class c.
+    :math:`P_c>1` increases the recall, :math:`P_c<1` increases the precision.
 
     Args:
-        reduction (str): Type of reduction to be applied to loss. The optional values are 'mean', 'sum', and 'none',
-             not case sensitive. If 'none', do not perform reduction. Default: 'mean'.
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the weighted mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **logits** (Tensor) - Input logits. Data type must be float16 or float32.
@@ -4290,7 +4445,7 @@ class BCEWithLogitsLoss(PrimitiveWithInfer):
           Data type must be float16 or float32.
 
     Outputs:
-        Tensor or Scalar, if `reduction` is 'none', it's a tensor with the same shape and type as input `logits`.
+        Tensor or Scalar, if `reduction` is ``'none'``, it's a tensor with the same shape and type as input `logits`.
         Otherwise, the output is a scalar.
 
     Raises:
@@ -4298,12 +4453,15 @@ class BCEWithLogitsLoss(PrimitiveWithInfer):
         TypeError: If data type of any input is neither float16 nor float32.
         TypeError: If data type of `reduction` is not string.
         ValueError: If `weight` or `pos_weight` can not be broadcast to a tensor with shape of `logits`.
-        ValueError: If `reduction` is not one of 'none', 'mean' or 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'`` or ``'sum'``.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> logits = Tensor(np.array([[-0.8, 1.2, 0.7], [-0.1, -0.4, 0.7]]), mindspore.float32)
         >>> label = Tensor(np.array([[0.3, 0.8, 1.2], [-0.6, 0.1, 2.2]]), mindspore.float32)
         >>> weight = Tensor(np.array([1.0, 1.0, 1.0]), mindspore.float32)
@@ -4335,8 +4493,8 @@ class Pad(Primitive):
             be extended behind the input tensor in the `D` th dimension.
 
     Inputs:
-        - **input_x** (Tensor) - Tensor of shape :math:`(N, *)`, where :math:`*` means, any number of
-          additional dimensions.
+        - **input_x** (Tensor) - Tensor to be padded. It has shape :math:`(N, *)`, where :math:`*` means
+          any number of additional dimensions.
 
     Outputs:
         Tensor, the tensor after padding.
@@ -4351,6 +4509,9 @@ class Pad(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> input_x = Tensor(np.array([[-0.1, 0.3, 3.6], [0.4, 0.5, -3.2]]), mindspore.float32)
         >>> pad_op = ops.Pad(((1, 2), (2, 1)))
         >>> output = pad_op(input_x)
@@ -4372,21 +4533,34 @@ class Pad(Primitive):
 
 class PadV3(Primitive):
     """
-    Pads the input tensor according to the paddings, `mode` and `paddings_contiguous`.
+    Pads the input Tensor according to the `paddings`, `mode` and `paddings_contiguous`.
 
     Args:
         mode (str, optional): An optional string indicates padding mode,
-            support "constant", "reflect", "edge". Default: "constant".
+            support ``"constant"`` , ``"reflect"`` , ``"edge"`` , ``"circular"`` . Default: ``"constant"`` .
+            The effects of various padding modes are as follows:
+
+            - ``"constant"``: Pads the input Tensor with value specified by `constant_value`.
+            - ``"reflect"``: Pads the input Tensor by reflecting the values of the pixels at the
+              boundary of the Tensor.
+            - ``"edge"``: Pads the input Tensor with the values of the pixels on the border of the Tensor.
+            - ``"circular"``: Circular padding mode. In this mode, the pixels from one edge of the image
+              are wrapped around to the opposite edge, such that the pixel on the right edge of the
+              image is replaced with the pixel on the left edge, and the pixel on the bottom edge
+              is replaced with the pixel on the top edge.
+
         paddings_contiguous (bool, optional): An optional bool value indicates if the padding is paddings_contiguous.
-            If true, paddings is arranged as [begin0, end0, begin1, end1, ...]
-            If false, paddings is arranged as [begin0, begin1, ..., end1, end2, ...]
-            Default:True.
+            If ``True`` , paddings is arranged as [begin0, end0, begin1, end1, ...]
+            If ``False`` , paddings is arranged as [begin0, begin1, ..., end1, end2, ...]
+            Default: ``True`` .
 
     Inputs:
-        - **x** (Tensor) - Tensor of shape :math:`(N, *)`, where :math:`*` means, any number of
-          additional dimensions.
-        - **paddings** (Tensor) - Only constant value is allowed. A 1D tensor of type int32 or int64.
-        - **constant_value** (Tensor, optional) - A tensor with the same type as `x`, padding value in 'constant' mode.
+        - **x** (Tensor) - Tensor to be padded. It has shape :math:`(N, *)`, where :math:`*` means
+          any number of additional dimensions.
+        - **paddings** (Tensor) -  Specifies the number of zeros to be padded before and after each
+          dimension of the input Tensor `x`. It's a 1D Tensor of type int32 or int64.
+        - **constant_value** (Tensor, optional) - Padding value to use in 'constant' mode,
+          if not specified, 0 is used instead. It has the same type as `x`.
 
     Outputs:
         Tensor, the tensor after padding.
@@ -4397,19 +4571,20 @@ class PadV3(Primitive):
         ValueError: If `mode` is not a str or not in support modes.
         ValueError: If `mode` is "constant", the element's number of `paddings` not be even.
         ValueError: If `mode` is "constant", the element's number of `paddings` large than input dim * 2.
-        ValueError: If `mode` is "edge" or "reflect", the element's number of `paddings` is not 2, 4 or 6.
-        ValueError: If `mode` is "edge" or "reflect", `x` dims equals 3,
-            the element's number of `paddings` is 2.
-        ValueError: If `mode` is "edge" or "reflect", `x` dims equals 4,
-            the element's number of `paddings` is 4.
-        ValueError: If `mode` is "edge" or "reflect", `x` dims smaller than 3.
-        ValueError: If `mode` is "edge", x dims bigger than 5.
+        ValueError: If `mode` is "edge" "reflect" or "circular", the element's number of `paddings` is not 2, 4 or 6.
+        ValueError: If `mode` is "edge" "reflect" or "circular", `x` dims equals 3,
+            the element's number of `paddings` is not 2.
+        ValueError: If `mode` is "edge" "reflect" or "circular", `x` dims equals 4,
+            the element's number of `paddings` is not 4.
+        ValueError: If `mode` is "circular", `x` dims equals 5, the element's number of `paddings` is not 6.
+        ValueError: If `mode` is "edge", "reflect" or "circular", `x` dims smaller than 3.
+        ValueError: If `mode` is "edge" or "circular", x dims bigger than 5.
         ValueError: If `mode` is "reflect", x dims bigger than 4.
         ValueError: If `mode` is "reflect", padding size bigger than the corresponding `x` dimension.
         ValueError: After padding, output's shape number is not greater than 0.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> # case1: mode="reflect", paddings_contiguous=True
@@ -4425,7 +4600,7 @@ class PadV3(Primitive):
         >>> pad = Net(mode="reflect", paddings_contiguous=True)
         >>> output = pad(x)
         >>> print(output)
-        [[[1., 0., 1., 0.]]]
+        [[[1. 0. 1. 0.]]]
         >>> # case2: mode="constant", padding_contigous=False
         >>> class Net(nn.Cell):
         ...    def __init__(self, mode, paddings_contiguous):
@@ -4440,14 +4615,14 @@ class PadV3(Primitive):
         >>> pad = Net(mode="constant", paddings_contiguous=False)
         >>> output = pad(x)
         >>> print(output)
-        [[[1.5, 0., 1., 2., 1.5]]])
+        [[1.5 0. 1. 2. 1.5]]
     """
 
     @prim_attr_register
     def __init__(self, mode='constant', paddings_contiguous=True):
         """Initialize PadV3"""
         self.init_prim_io_names(inputs=['x', 'paddings', 'constant_value'], outputs=['y'])
-        validator.check_string(mode, ['constant', 'reflect', 'edge'], 'mode', self.name)
+        validator.check_string(mode, ['constant', 'reflect', 'edge', 'circular'], 'mode', self.name)
         validator.check_bool(paddings_contiguous, "paddings_contiguous", self.name)
         self.mode = mode
         self.paddings_contiguous = paddings_contiguous
@@ -4458,29 +4633,34 @@ class MirrorPad(Primitive):
     Pads the input tensor according to the paddings and mode.
 
     Args:
-        mode (str): Specifies the padding mode. The optional values are "REFLECT" and "SYMMETRIC".
-            Default: "REFLECT".
+        mode (str, optional): An optional string specifying the pad method.
+            The optional values are ``'REFLECT'`` and ``'SYMMETRIC'`` .
+            Default: ``'REFLECT'`` .
+
+            - ``'REFLECT'``: Reflect the value on the edge while omitting the last one.
+              For example, pad [1, 2, 3, 4] with 2 elements on both sides will result in [3, 2, 1, 2, 3, 4, 3, 2].
+            - ``'SYMMETRIC'``: Reflect the value on the edge while repeating the last one.
+              For example, pad [1, 2, 3, 4] with 2 elements on both sides will result in [2, 1, 1, 2, 3, 4, 4, 3].
 
     Inputs:
         - **input_x** (Tensor) - Tensor of shape :math:`(N, *)`, where :math:`*` means, any number of
           additional dimensions.
         - **paddings** (Tensor) - Paddings requires constant tensor. The value of `paddings` is a
-          matrix(list), and its shape is (N, 2). N is the rank of input data. All elements of paddings
+          matrix(list), and its shape is :math:`(N, 2)`. N is the rank of input data. All elements of paddings
           are int type. For the input in the `D` th dimension, paddings[D, 0] indicates how many sizes
           to be extended ahead of the input tensor in the `D` th dimension, and paddings[D, 1]
           indicates how many sizes to be extended behind the input tensor in the `D` th dimension. Both
           paddings[D, 0] and paddings[D, 1] must be no greater than input_x.dim_size(D)
           (or input_x.dim_size(D) - 1) if mode is SYMMETRIC (if REFLECT, respectively).
 
-
     Outputs:
         Tensor, the tensor after padding.
 
-        - If `mode` is "REFLECT", it uses a way of symmetrical copying through the axis of symmetry to fill in.
+        - If `mode` is ``'REFLECT'``, it uses a way of symmetrical copying through the axis of symmetry to fill in.
           If the `input_x` is [[1,2,3], [4,5,6], [7,8,9]] and `paddings` is [[1,1], [2,2]], then the
           `Outputs` is [[6,5,4,5,6,5,4], [3,2,1,2,3,2,1], [6,5,4,5,6,5,4], [9,8,7,8,9,8,7], [6,5,4,5,6,5,4]].
           For a more intuitive understanding, please see the example below.
-        - If `mode` is "SYMMETRIC", the filling method is similar to the "REFLECT". It is also copied
+        - If `mode` is ``'SYMMETRIC'``, the filling method is similar to the ``'REFLECT'``. It is also copied
           according to the symmetry axis, except that it includes the symmetry axis. If the `input_x`
           is [[1,2,3], [4,5,6], [7,8,9]] and `paddings` is [[1,1], [2,2]], then the `Outputs` is
           [[2,1,1,2,3,3,2], [2,1,1,2,3,3,2], [5,4,4,5,6,6,5], [8,7,7,8,9,9,8], [8,7,7,8,9,9,8]].
@@ -4492,7 +4672,7 @@ class MirrorPad(Primitive):
         ValueError: If paddings.size is not equal to 2 * rank of input_x.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> from mindspore import Tensor, nn, ops
@@ -4531,10 +4711,9 @@ class MirrorPad(Primitive):
         self.init_prim_io_names(inputs=['x', 'paddings'], outputs=['y'])
         validator.check_string(mode, ['REFLECT', 'SYMMETRIC'], 'mode', self.name)
         self.mode = mode
-        self.set_const_input_indexes([1])
 
 
-class ComputeAccidentalHits(PrimitiveWithCheck):
+class ComputeAccidentalHits(Primitive):
     r"""
     Compute accidental hits of sampled classes which match target classes.
 
@@ -4544,7 +4723,7 @@ class ComputeAccidentalHits(PrimitiveWithCheck):
     the weight is FLOAT_MAX. FLOAT_MAX indicates the max value in the type of Float
 
     Args:
-        num_true (int): The number of target classes per training example. Default: 1.
+        num_true (int): The number of target classes per training example. Default: ``1`` .
 
     Inputs:
         - **true_classes** (Tensor) - The target classes. With data type of int32 or int64
@@ -4570,6 +4749,8 @@ class ComputeAccidentalHits(PrimitiveWithCheck):
         ``Ascend``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> true_classes = np.array([[1, 2], [0, 4], [3, 3]])
         >>> sampled_candidates = np.array([0, 1, 2, 3, 4])
         >>> sampler = ops.ComputeAccidentalHits(2)
@@ -4587,25 +4768,8 @@ class ComputeAccidentalHits(PrimitiveWithCheck):
         self.init_prim_io_names(inputs=['true_classes', 'sampled_candidates'],
                                 outputs=['indices', 'ids', 'weights'])
         validator.check_value_type("num_true", num_true, [int], self.name)
-        validator.check_number("num_true", num_true, 1, Rel.GE, self.name)
+        validator.check_number("num_true", num_true, 1, validator.GE, self.name)
         self.num_true = num_true
-
-    def check_shape(self, true_classes_shape, sampled_candidates_shape):
-        validator.check_int(len(true_classes_shape), 2, Rel.EQ, 'dim of true_classes', self.name)
-        validator.check_int(len(sampled_candidates_shape), 1, Rel.EQ, 'dim of sampled_candidates', self.name)
-        validator.check("true_classes shape[1]", true_classes_shape[1], "num_true", self.num_true, Rel.EQ, self.name)
-
-        indices_len = -1
-        return (indices_len,), (indices_len,), (indices_len,)
-
-    def check_dtype(self, true_classes_type, sampled_candidates_type):
-        validator.check_subclass("true_classes_type", true_classes_type, mstype.tensor, self.name)
-        validator.check_subclass("sampled_candidates_type", sampled_candidates_type, mstype.tensor, self.name)
-        valid_types = (mstype.int32, mstype.int64)
-        validator.check_tensor_dtype_valid("true_classes_type", true_classes_type, valid_types, self.name)
-        validator.check_tensor_dtype_valid("sampled_candidates_type", sampled_candidates_type, valid_types, self.name)
-        weights_type = mstype.float32
-        return true_classes_type, true_classes_type, weights_type
 
 
 class ROIAlign(Primitive):
@@ -4622,9 +4786,9 @@ class ROIAlign(Primitive):
         spatial_scale (float): A scaling factor that maps the raw image coordinates to the input
             feature map coordinates. Suppose the height of a RoI is `ori_h` in the raw image and `fea_h` in the
             input feature map, the `spatial_scale` must be `fea_h / ori_h`.
-        sample_num (int): Number of sampling points. Default: 2.
+        sample_num (int): Number of sampling points. Default: ``2`` .
         roi_end_mode (int): Number must be 0 or 1. If roi_end_mode=0, use the legacy implementation.
-            If roi_end_mode=1, end pixel of the roi_box will be shifted by +1*spatial_scale. Default: 1.
+            If roi_end_mode=1, end pixel of the roi_box will be shifted by +1*spatial_scale. Default: ``1`` .
 
 
     Inputs:
@@ -4648,6 +4812,9 @@ class ROIAlign(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> features = Tensor(np.array([[[[1., 2.], [3., 4.]]]]), mindspore.float32)
         >>> rois = Tensor(np.array([[0, 0.2, 0.3, 0.2, 0.3]]), mindspore.float32)
         >>> roi_align = ops.ROIAlign(2, 2, 0.5, 2)
@@ -4665,7 +4832,7 @@ class ROIAlign(Primitive):
         validator.check_value_type("spatial_scale", spatial_scale, [float], self.name)
         validator.check_value_type("sample_num", sample_num, [int], self.name)
         validator.check_value_type("roi_end_mode", roi_end_mode, [int], self.name)
-        validator.check_int_range(roi_end_mode, 0, 1, Rel.INC_BOTH, "roi_end_mode", self.name)
+        validator.check_int_range(roi_end_mode, 0, 1, validator.INC_BOTH, "roi_end_mode", self.name)
         self.pooled_height = pooled_height
         self.pooled_width = pooled_width
         self.spatial_scale = spatial_scale
@@ -4698,31 +4865,33 @@ class Adam(Primitive):
     :math:`\epsilon` represents
     `epsilon`.
 
+    Inputs of `var`, `m`, `v` and `gradient`
+    comply with the implicit type conversion rules to make the data types consistent.
+    If they have different data types, the lower priority data type will be converted to
+    the relatively highest priority data type.
+
     Args:
         use_locking (bool): Whether to enable a lock to protect variable tensors from being updated.
-            If true, updates of the var, m, and v tensors will be protected by a lock.
-            If false, the result is unpredictable. Default: False.
+            If ``True`` , updates of the var, m, and v tensors will be protected by a lock.
+            If ``False`` , the result is unpredictable. Default: ``False`` .
         use_nesterov (bool): Whether to use Nesterov Accelerated Gradient (NAG) algorithm to update the gradients.
-            If true, update the gradients using NAG.
-            If false, update the gradients without using NAG. Default: False.
+            If ``True`` , update the gradients using NAG.
+            If ``False`` , update the gradients without using NAG. Default: ``False`` .
 
     Inputs:
-        - **var** (Tensor) - Weights to be updated. The shape is :math:`(N, *)` where :math:`*` means,
+        - **var** (Parameter) - Weights to be updated. The shape is :math:`(N, *)` where :math:`*` means,
           any number of additional dimensions. The data type can be float16 or float32.
-        - **m** (Tensor) - The 1st moment vector in the updating formula,
-          the shape and data type value should be the same as `var`.
-        - **v** (Tensor) - the 2nd moment vector in the updating formula,
-          the shape and data type value should be the same as `var`. Mean square gradients with the same type as `var`.
-        - **beta1_power** (float) - :math:`beta_1^t(\beta_1^{t})` in the updating formula,
-          the data type value should be the same as `var`.
-        - **beta2_power** (float) - :math:`beta_2^t(\beta_2^{t})` in the updating formula,
-          the data type value should be the same as `var`.
-        - **lr** (float) - :math:`l` in the updating formula. The paper suggested value is :math:`10^{-8}`,
-          the data type value should be the same as `var`.
-        - **beta1** (float) - The exponential decay rate for the 1st moment estimations,
-          the data type value should be the same as `var`. The paper suggested value is :math:`0.9`.
-        - **beta2** (float) - The exponential decay rate for the 2nd moment estimations,
-          the data type value should be the same as `var`. The paper suggested value is :math:`0.999`.
+        - **m** (Parameter) - The 1st moment vector in the updating formula,
+          the shape should be the same as `var`.
+        - **v** (Parameter) - the 2nd moment vector in the updating formula,
+          the shape should be the same as `var`.
+        - **beta1_power** (float) - :math:`beta_1^t(\beta_1^{t})` in the updating formula.
+        - **beta2_power** (float) - :math:`beta_2^t(\beta_2^{t})` in the updating formula.
+        - **lr** (float) - :math:`l` in the updating formula. The paper suggested value is :math:`10^{-8}`.
+        - **beta1** (float) - The exponential decay rate for the 1st moment estimations.
+          The paper suggested value is :math:`0.9`.
+        - **beta2** (float) - The exponential decay rate for the 2nd moment estimations.
+          The paper suggested value is :math:`0.999`.
         - **epsilon** (float) - Term added to the denominator to improve numerical stability.
         - **gradient** (Tensor) - Gradient, has the same shape and data type as `var`.
 
@@ -4735,13 +4904,16 @@ class Adam(Primitive):
 
     Raises:
         TypeError: If neither `use_locking` nor `use_nesterov` is a bool.
-        TypeError: If `var`, `m` or `v` is not a Tensor.
+        TypeError: If `var`, `m` or `v` is not a Parameter.
         TypeError: If `beta1_power`, `beta2_power1`, `lr`, `beta1`, `beta2`, `epsilon` or `gradient` is not a Tensor.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -4761,6 +4933,18 @@ class Adam(Primitive):
         [[0.9996838 0.9996838]
          [0.9996838 0.9996838]]
     """
+    __mindspore_signature__ = (
+        sig.make_sig('var', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('m', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T1),
+        sig.make_sig('v', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T2),
+        sig.make_sig('beta1_power', dtype=sig.sig_dtype.T3),
+        sig.make_sig('beta2_power', dtype=sig.sig_dtype.T4),
+        sig.make_sig('lr', dtype=sig.sig_dtype.T5),
+        sig.make_sig('beta1', dtype=sig.sig_dtype.T6),
+        sig.make_sig('beta2', dtype=sig.sig_dtype.T7),
+        sig.make_sig('epsilon', dtype=sig.sig_dtype.T8),
+        sig.make_sig('gradient', dtype=sig.sig_dtype.T)
+    )
 
     @prim_attr_register
     def __init__(self, use_locking=False, use_nesterov=False):
@@ -4802,8 +4986,8 @@ class AdamWeightDecay(Primitive):
 
     Args:
         use_locking (bool): Whether to enable a lock to protect variable tensors from being updated.
-            If true, updates of the var, m, and v tensors will be protected by a lock.
-            If false, the result is unpredictable. Default: False.
+            If ``True`` , updates of the var, m, and v tensors will be protected by a lock.
+            If ``False`` , the result is unpredictable. Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - Weights to be updated. The shape is :math:`(N, *)` where :math:`*` means,
@@ -4811,7 +4995,7 @@ class AdamWeightDecay(Primitive):
         - **m** (Parameter) - The 1st moment vector in the updating formula,
           it should have the the shape as `var`. The data type can be float16 or float32.
         - **v** (Parameter) - The 2nd moment vector in the updating formula,
-          it should have the same shape and dtype as `m`.
+          it should have the same shape as `m`.
         - **lr** (float) - :math:`lr` in the updating formula. The paper suggested value is :math:`10^{-8}`,
           the data type should be float32.
         - **beta1** (float) - The exponential decay rate for the 1st moment estimations,
@@ -4821,8 +5005,8 @@ class AdamWeightDecay(Primitive):
         - **epsilon** (float) - Term added to the denominator to improve numerical stability,
           the data type should be float32.
         - **decay** (float) - The weight decay value, must be a scalar tensor with float32 data type.
-          Default: 0.0.
-        - **gradient** (Tensor) - Gradient, has the same shape and data type as `var`.
+          Default: ``0.0`` .
+        - **gradient** (Tensor) - Gradient, has the same shape as `var`.
 
     Outputs:
         Tuple of 3 Tensor, the updated parameters.
@@ -4836,9 +5020,9 @@ class AdamWeightDecay(Primitive):
         TypeError: If `lr`, `beta1`, `beta2`, `epsilon` or `decay` is not a float32.
         TypeError: If `var`, `m` or `v` is not a Parameter with dtype float16 or float32.
         TypeError: If `gradient` is not a Tensor.
-        ValueError: - If `eps` <= 0.
-        ValueError: - If `beta1`, `beta2` is not in range (0.0,1.0).
-        ValueError: - If `decay` < 0.
+        ValueError: If `eps` <= 0.
+        ValueError: If `beta1`, `beta2` is not in range (0.0,1.0).
+        ValueError: If `decay` < 0.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
@@ -4909,11 +5093,11 @@ class AdamNoUpdateParam(Primitive):
 
     Args:
         use_locking (bool): Whether to enable a lock to protect variable tensors from being updated.
-            If true, updates of the var, m, and v tensors will be protected by a lock.
-            If false, the result is unpredictable. Default: False.
+            If ``True`` , updates of the var, m, and v tensors will be protected by a lock.
+            If ``False`` , the result is unpredictable. Default: ``False`` .
         use_nesterov (bool): Whether to use Nesterov Accelerated Gradient (NAG) algorithm to update the gradients.
-            If true, update the gradients using NAG.
-            If false, update the gradients without using NAG. Default: False.
+            If ``True`` , update the gradients using NAG.
+            If ``False`` , update the gradients without using NAG. Default: ``False`` .
 
     Inputs:
         - **m** (Tensor) - The 1st moment vector in the updating formula. The shape is :math:`(N, *)`
@@ -5009,11 +5193,11 @@ class FusedSparseAdam(Primitive):
 
     Args:
         use_locking (bool): Whether to enable a lock to protect variable tensors from being updated.
-            If true, updates of the var, m, and v tensors will be protected by a lock.
-            If false, the result is unpredictable. Default: False.
+            If ``True`` , updates of the var, m, and v tensors will be protected by a lock.
+            If ``False`` , the result is unpredictable. Default: ``False`` .
         use_nesterov (bool): Whether to use Nesterov Accelerated Gradient (NAG) algorithm to update the gradients.
-            If true, update the gradients using NAG.
-            If false, update the gradients without using NAG. Default: False.
+            If ``True`` , update the gradients using NAG.
+            If ``False`` , update the gradients without using NAG. Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - Parameters to be updated with float32 data type. The shape is :math:`(N, *)`
@@ -5136,11 +5320,11 @@ class FusedSparseLazyAdam(Primitive):
 
     Args:
         use_locking (bool): Whether to enable a lock to protect variable tensors from being updated.
-            If true, updates of the var, m, and v tensors will be protected by a lock.
-            If false, the result is unpredictable. Default: False.
+            If ``True`` , updates of the var, m, and v tensors will be protected by a lock.
+            If ``False`` , the result is unpredictable. Default: ``False`` .
         use_nesterov (bool): Whether to use Nesterov Accelerated Gradient (NAG) algorithm to update the gradients.
-            If true, update the gradients using NAG.
-            If false, update the gradients without using NAG. Default: False.
+            If ``True`` , update the gradients using NAG.
+            If ``False`` , update the gradients without using NAG. Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - Parameters to be updated with float32 data type. The shape is :math:`(N, *)`
@@ -5248,7 +5432,7 @@ class FusedSparseFtrl(Primitive):
         l2 (float): l2 regularization strength, must be greater than or equal to zero.
         lr_power (float): Learning rate power controls how the learning rate decreases during training,
             must be less than or equal to zero. Use fixed learning rate if `lr_power` is zero.
-        use_locking (bool): Use locks for updating operation if true . Default: False.
+        use_locking (bool): Use locks for updating operation if True . Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - The variable to be updated. The data type must be float32. The shape is :math:`(N, *)`
@@ -5323,7 +5507,7 @@ class FusedSparseFtrl(Primitive):
         self.lr = validator.check_positive_float(lr, "lr", self.name)
         self.l1 = validator.check_non_negative_float(l1, "l1", self.name)
         self.l2 = validator.check_non_negative_float(l2, "l2", self.name)
-        self.lr_power = validator.check_number("lr_power", lr_power, 0, Rel.LE, self.name)
+        self.lr_power = validator.check_number("lr_power", lr_power, 0, validator.LE, self.name)
         self.use_locking = validator.check_value_type("use_locking", use_locking, [bool], self.name)
 
 
@@ -5344,8 +5528,8 @@ class FusedSparseProximalAdagrad(Primitive):
     the relatively highest priority data type.
 
     Args:
-        use_locking (bool): If true, the variable and accumulation tensors will be protected from being updated.
-            Default: False.
+        use_locking (bool): If ``True`` , the variable and accumulation tensors will be protected from being updated.
+            Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - Variable tensor to be updated. The data type must be float32.
@@ -5448,18 +5632,19 @@ class KLDivLoss(Primitive):
 
     Args:
         reduction (str): Specifies the reduction to be applied to the output.
-            Default: 'mean'.
+            Default: ``'mean'`` .
 
-            - On Ascend, the value of `reduction` must be one of 'batchmean', 'none' or 'sum'.
-            - On GPU, the value of `reduction` must be one of 'mean', 'none' or 'sum'.
-            - On CPU, the value of `reduction` must be one of 'mean', 'batchmean', 'none' or 'sum'.
+            - On Ascend, the value of `reduction` must be one of ``'batchmean'``, ``'none'`` or ``'sum'``.
+            - On GPU, the value of `reduction` must be one of ``'mean'``, ``'none'`` or ``'sum'``.
+            - On CPU, the value of `reduction` must be one of ``'mean'``, ``'batchmean'``, ``'none'``
+              or ``'sum'``.
 
     Inputs:
         - **logits** (Tensor) - The input Tensor. The data type must be float16, float32 or float64.
         - **labels** (Tensor) - The label Tensor which has the same shape and data type as `logits`.
 
     Outputs:
-        Tensor or Scalar, if `reduction` is 'none', then output is a tensor and has the same shape as `logits`.
+        Tensor or Scalar, if `reduction` is ``'none'``, then output is a tensor and has the same shape as `logits`.
         Otherwise it is a scalar.
 
     Raises:
@@ -5473,6 +5658,9 @@ class KLDivLoss(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -5498,7 +5686,7 @@ class KLDivLoss(Primitive):
         elif device_target == "GPU":
             support_mode = ['none', 'mean', 'sum']
         elif device_target == "Ascend":
-            support_mode = ['none', 'batchmean', 'sum']
+            support_mode = ['none', 'batchmean', 'sum', 'mean']
         else:
             raise ValueError(f"'{self.name}' unknown device target: '{device_target}'")
 
@@ -5518,7 +5706,7 @@ class BinaryCrossEntropy(Primitive):
 
     In which, :math:`L` indicates the loss of all batch_sizes, :math:`l` indicates the loss of one batch_size,
     and n indicates one batch_size in the 1-N range, :math:`w_n` indicates the
-    weight of nth batch of binary cross entropy. Then,
+    weight of :math:`n`-th batch of binary cross entropy. Then,
 
     .. math::
         \ell(x, y) = \begin{cases}
@@ -5528,19 +5716,22 @@ class BinaryCrossEntropy(Primitive):
         \end{cases}
 
     .. warning::
-        - The value of "x" must range from 0 to 1.
-        - The value of "y" must be "0" or "1".
+        - The value of :math:`x` must range from 0 to 1.
 
     Args:
-        reduction (str): Specifies the reduction to be applied to the output.
-            Its value must be one of 'none', 'mean' or 'sum'. Default: 'mean'.
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the weighted mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **logits** (Tensor) - The predictive value whose data type must be float16 or float32,
           The shape is :math:`(N, *)` where :math:`*` means, any number of additional dimensions.
         - **labels** (Tensor) - The target value which has the same shape and data type as `logits`.
         - **weight** (Tensor, optional) - A rescaling weight applied to the loss of each batch element.
-          And it must have the same shape and data type as `logits`. Default: None.
+          And it must have the same shape and data type as `logits`. Default: ``None`` .
 
     Outputs:
         Tensor or Scalar. Returns Tensor that has the same dtype and shape as `logits` if `reduction` is 'none'.
@@ -5548,7 +5739,7 @@ class BinaryCrossEntropy(Primitive):
 
     Raises:
         TypeError: If dtype of `logits`, `labels` or `weight` (if given) is neither float16 nor float32.
-        ValueError: If `reduction` is not one of 'none', 'mean' or 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'`` or ``'sum'``.
         ValueError: If shape of `labels` is not the same as `logits` or `weight` (if given).
         TypeError: If `logits`, `labels` or `weight` is not a Tensor.
 
@@ -5556,6 +5747,9 @@ class BinaryCrossEntropy(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -5607,10 +5801,10 @@ class ApplyAdaMax(Primitive):
     Inputs:
         - **var** (Parameter) - Variable to be updated. With float32 or float16 data type.
           The shape is :math:`(N, *)` where :math:`*` means, any number of additional dimensions.
-        - **m** (Parameter) - The 1st moment vector in the updating formula, has the same shape and type as `var`.
+        - **m** (Parameter) - The 1st moment vector in the updating formula, has the same shape as `var`.
           With float32 or float16 data type.
         - **v** (Parameter) - The 2nd moment vector in the updating formula. Mean square gradients
-          with the same shape and type as `var`. With float32 or float16 data type.
+          with the same shape as `var`. With float32 or float16 data type.
         - **beta1_power** (Union[Number, Tensor]) - :math:`beta_1^t` in the updating formula, must be a scalar.
           With float32 or float16 data type.
         - **lr** (Union[Number, Tensor]) - Learning rate, :math:`l` in the updating formula, must be a scalar.
@@ -5621,7 +5815,7 @@ class ApplyAdaMax(Primitive):
           must be a scalar. With float32 or float16 data type.
         - **epsilon** (Union[Number, Tensor]) - A small value added for numerical stability, must be a scalar.
           With float32 or float16 data type.
-        - **grad** (Tensor) - A tensor for gradient, has the same shape and type as `var`.
+        - **grad** (Tensor) - A tensor for gradient, has the same shape as `var`.
           With float32 or float16 data type.
 
     Outputs:
@@ -5636,12 +5830,15 @@ class ApplyAdaMax(Primitive):
                    float16 nor float32.
         TypeError: If `beta_power`, `lr`, `beta1`, `beta2` or `epsilon` is neither a Number nor a Tensor.
         TypeError: If `grad` is not a Tensor.
-        RuntimeError: If the data type of `var`, `m`, `v` and `grad` conversion of Parameter is not supported.
+        TypeError: If the data type of `var`, `m`, `v` and `grad` conversion of Parameter is not supported.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops, Parameter
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -5737,11 +5934,11 @@ class ApplyAdadelta(Primitive):
         TypeError: If dtype of `var`, `accum`, `accum_update`, `lr`, `rho`, `epsilon` or `grad` is neither float16 nor
                    float32.
         TypeError: If `accum_update`, `lr`, `rho` or `epsilon` is neither a Number nor a Tensor.
-        RuntimeError: If the data type of `var`, `accum`, `accum_update` and `grad` conversion of Parameter
+        TypeError: If the data type of `var`, `accum`, `accum_update` and `grad` conversion of Parameter
                       is not supported.
 
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> import numpy as np
@@ -5815,14 +6012,14 @@ class ApplyAdagrad(Primitive):
     the relatively highest priority data type.
 
     Args:
-        update_slots (bool): If `True`, `accum` will be updated. Default: True.
+        update_slots (bool): If ``True`` , `accum` will be updated. Default: ``True`` .
 
     Inputs:
-        - **var** (Parameter) - Variable to be updated. With float32 or float16 data type.
+        - **var** (Parameter) - Variable to be updated. With float or complex data type.
           The shape is :math:`(N, *)` where :math:`*` means, any number of additional dimensions.
-        - **accum** (Parameter) - Accumulation to be updated. The shape and data type must be the same as `var`.
-        - **lr** (Union[Number, Tensor]) - The learning rate value, must be a scalar. With float32 or float16 data type.
-        - **grad** (Tensor) - A tensor for gradient. The shape and data type must be the same as `var`.
+        - **accum** (Parameter) - Accumulation to be updated. The shape must be the same as `var`.
+        - **lr** (Union[Number, Tensor]) - The learning rate value, must be a scalar. With float or complex data type.
+        - **grad** (Tensor) - A tensor for gradient. The shape must be the same as `var`.
 
     Outputs:
         Tuple of 2 Tensors, the updated parameters.
@@ -5831,14 +6028,17 @@ class ApplyAdagrad(Primitive):
         - **accum** (Tensor) - The same shape and data type as `accum`.
 
     Raises:
-        TypeError: If dtype of `var`, `accum`, `lr` or `grad` is neither float16 nor float32.
+        TypeError: If dtype of `var`, `accum`, `lr` or `grad` is neither float nor complex.
         TypeError: If `lr` is neither a Number nor a Tensor.
-        RuntimeError: If the data type of `var`, `accum` and `grad` conversion of Parameter is not supported.
+        TypeError: If the data type of `var`, `accum` and `grad` conversion of Parameter is not supported.
 
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops, Parameter
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -5895,19 +6095,19 @@ class ApplyAdagradV2(Primitive):
     the relatively highest priority data type.
 
     Note:
-        The difference is that `ApplyAdagradV2` has one more small constant value than `ApplyAdagrad`.
+        The difference is that `ApplyAdagradV2` has one more small constant value :math:`\epsilon` than `ApplyAdagrad`.
 
     Args:
         epsilon (float): A small value added for numerical stability.
-        update_slots (bool): If `True`, `accum` will be updated. Default: True.
+        update_slots (bool): If ``True`` , `accum` will be updated. Default: ``True`` .
 
     Inputs:
         - **var** (Parameter) - Variable to be updated. With float16 or float32 data type.
           The shape is :math:`(N, *)` where :math:`*` means, any number of additional dimensions.
-        - **accum** (Parameter) - Accumulation to be updated. The shape and data type must be the same as `var`.
+        - **accum** (Parameter) - Accumulation to be updated. The shape must be the same as `var`.
         - **lr** (Union[Number, Tensor]) - The learning rate value, must be a float number or
           a scalar tensor with float16 or float32 data type.
-        - **grad** (Tensor) - A tensor for gradient. The shape and data type must be the same as `var`.
+        - **grad** (Tensor) - A tensor for gradient. The shape must be the same as `var`.
 
     Outputs:
         Tuple of 2 Tensors, the updated parameters.
@@ -5918,12 +6118,15 @@ class ApplyAdagradV2(Primitive):
     Raises:
         TypeError: If dtype of `var`, `accum`, `lr` or `grad` is neither float16 nor float32.
         TypeError: If `lr` is neither a Number nor a Tensor.
-        RuntimeError: If the data type of `var`, `accum` and `grad` conversion of Parameter is not supported.
+        TypeError: If the data type of `var`, `accum` and `grad` conversion of Parameter is not supported.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops, Parameter
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -6005,18 +6208,18 @@ class SparseApplyAdagradV2(Primitive):
     Args:
         lr (float): Learning rate.
         epsilon (float): A small value added for numerical stability.
-        use_locking (bool): If `True`, the `var` and `accum` tensors will be protected from being updated.
-            Default: False.
-        update_slots (bool): If `True`, the computation logic will be different to `False`. Default: True.
+        use_locking (bool): If ``True`` , the `var` and `accum` tensors will be protected from being updated.
+            Default: ``False`` .
+        update_slots (bool): If ``True`` , the computation logic will be different to `False`. Default: ``True`` .
 
     Inputs:
         - **var** (Parameter) - Variable to be updated. The data type must be float16 or float32.
           The shape is :math:`(N, *)` where :math:`*` means, any number of additional dimensions.
-        - **accum** (Parameter) - Accumulation to be updated. The shape and data type must be the same as `var`.
-        - **grad** (Tensor) - Gradients has the same data type as `var` and
+        - **accum** (Parameter) - Accumulation to be updated. The shape must be the same as `var`.
+        - **grad** (Tensor) - Gradients has the same shape as `var` and
           :math:`grad.shape[1:] = var.shape[1:]` if var.shape > 1.
         - **indices** (Tensor) - A vector of indices into the first dimension of `var` and `accum`.
-          The type must be int32 and indices.shape[0] = grad.shape[0].
+          The type must be int32 and :math:`indices.shape[0] = grad.shape[0]`.
 
     Outputs:
         Tuple of 2 tensors, the updated parameters.
@@ -6032,9 +6235,12 @@ class SparseApplyAdagradV2(Primitive):
         RuntimeError: If the data type of `var`, `accum` and `grad` conversion of Parameter is not supported.
 
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops, Parameter
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -6092,8 +6298,8 @@ class ApplyProximalAdagrad(Primitive):
     the relatively highest priority data type.
 
     Args:
-        use_locking (bool): If true, the var and accumulation tensors will be protected from being updated.
-            Default: False.
+        use_locking (bool): If ``True`` , the var and accumulation tensors will be protected from being updated.
+            Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - Variable to be updated. The data type must be float16 or float32.
@@ -6118,12 +6324,14 @@ class ApplyProximalAdagrad(Primitive):
         TypeError: If dtype of `var`, `lr`, `l1` or `l2` is neither float16 nor float32.
         TypeError: If `lr`, `l1` or `l2` is neither a Number nor a Tensor.
         TypeError: If `grad` is not a Tensor.
-        RuntimeError: If the data type of `var`, `accum` and `grad` conversion of Parameter is not supported.
+        TypeError: If the data type of `var`, `accum` and `grad` conversion of Parameter is not supported.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops, Parameter
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -6187,24 +6395,24 @@ class SparseApplyProximalAdagrad(Primitive):
     the relatively highest priority data type.
 
     Args:
-        use_locking (bool): If true, the `var` and `accum` tensors will be protected from being updated.
-            Default: False.
+        use_locking (bool): If ``True`` , the `var` and `accum` tensors will be protected from being updated.
+            Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - Variable tensor to be updated. The data type must be float16 or float32.
           The shape is :math:`(N, *)` where :math:`*` means, any number of additional dimensions.
-        - **accum** (Parameter) - Variable tensor to be updated, has the same shape and dtype as `var`.
+        - **accum** (Parameter) - Variable tensor to be updated, has the same shape as `var`.
         - **lr** (Union[Number, Tensor]) - The learning rate value, must be a float number or
           a scalar tensor with float16 or float32 data type. It must be positive.
         - **l1** (Union[Number, Tensor]) - l1 regularization strength, must be a float number or
           a scalar tensor with float16 or float32 data type. It must be non-negative.
         - **l2** (Union[Number, Tensor]) - l2 regularization strength, must be a float number or
           a scalar tensor with float16 or float32 data type. It must be non-negative.
-        - **grad** (Tensor) - A tensor of the same type as `var` and
-          grad.shape[1:] = var.shape[1:] if var.shape > 1.
+        - **grad** (Tensor) - A tensor must meet with
+          :math:`grad.shape[1:] = var.shape[1:]` if var.shape > 1.
         - **indices** (Tensor) - A tensor of indices in the first dimension of `var` and `accum`.
           If there are duplicates in `indices`, the behavior is undefined. Must be one of the
-          following types: int32, int64 and indices.shape[0] = grad.shape[0].
+          following types: int32, int64 and :math:`indices.shape[0] = grad.shape[0]`.
 
     Outputs:
         Tuple of 2 tensors, the updated parameters.
@@ -6220,9 +6428,11 @@ class SparseApplyProximalAdagrad(Primitive):
         RuntimeError: If the data type of `var`, `accum` and `grad` conversion of Parameter is not supported.
 
     Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU``
+        ``Ascend`` ``GPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops, Parameter
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -6292,14 +6502,14 @@ class ApplyAddSign(Primitive):
     Inputs:
         - **var** (Parameter) - Variable tensor to be updated. With float16, float32 or float64 data type.
           The shape is :math:`(N, *)` where :math:`*` means, any number of additional dimensions.
-        - **m** (Parameter) - Variable tensor to be updated, has the same shape and data type as `var`.
+        - **m** (Parameter) - Variable tensor to be updated, has the same data type as `var`.
         - **lr** (Union[Number, Tensor]) - The learning rate value, must be a scalar.
           With float16, float32 or float64 data type.
         - **alpha** (Union[Number, Tensor]) - Must be a scalar. With float16, float32 or float64 data type.
         - **sign_decay** (Union[Number, Tensor]) - Must be a scalar. With float16, float32 or float64 data type.
         - **beta** (Union[Number, Tensor]) - The exponential decay rate, must be a scalar.
           With float16, float32 or float64 data type.
-        - **grad** (Tensor) - A tensor of the same shape and data type as `var`, for the gradient.
+        - **grad** (Tensor) - A tensor of the same shape as `var`, for the gradient.
 
     Outputs:
         Tuple of 2 Tensors, the updated parameters.
@@ -6311,12 +6521,14 @@ class ApplyAddSign(Primitive):
         TypeError: If dtype of `var`, `lr`, `alpha`, `sign_decay` or `beta` is not float16, float32 or float64.
         TypeError: If `lr`, `alpha` or `sign_decay` is neither a Number nor a Tensor.
         TypeError: If `grad` is not a Tensor.
-        RuntimeError: If the data type of `var`, `accum` and `grad` conversion of Parameter is not supported.
+        TypeError: If the data type of `var`, `accum` and `grad` conversion of Parameter is not supported.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops, Parameter
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -6391,7 +6603,7 @@ class ApplyPowerSign(Primitive):
         - **var** (Parameter) - Variable tensor to be updated. With float64, float32 or float16 data type.
           If data type of `var` is float16, all inputs must have the same data type as `var`.
           The shape is :math:`(N, *)` where :math:`*` means, any number of additional dimensions.
-        - **m** (Parameter) - Variable tensor to be updated, has the same shape and data type as `var`.
+        - **m** (Parameter) - Variable tensor to be updated, has the same shape as `var`.
         - **lr** (Union[Number, Tensor]) - The learning rate value, should be a scalar or Tensor
           with float64, float32 or float16 data type.
         - **logbase** (Union[Number, Tensor]) - Should be a scalar or Tensor with float64, float32 or float16 data type.
@@ -6399,7 +6611,7 @@ class ApplyPowerSign(Primitive):
           float16 data type.
         - **beta** (Union[Number, Tensor]) - The exponential decay rate, should be a scalar or Tensor
           with float64, float32 or float16 data type.
-        - **grad** (Tensor) - A tensor of the same shape and data type as `var`, for the gradient.
+        - **grad** (Tensor) - A tensor of the same shape as `var`, for the gradient.
 
     Outputs:
         Tuple of 2 Tensors, the updated parameters.
@@ -6412,13 +6624,15 @@ class ApplyPowerSign(Primitive):
         float32 or float64.
         TypeError: If `lr`, `logbase`, `sign_decay` or `beta` is neither a Number nor a Tensor.
         TypeError: If `grad` is not a Tensor.
-        RuntimeError: If the data type of `lr`, `logbase`, `sign_decay` and `grad` conversion of Parameter
+        TypeError: If the data type of `lr`, `logbase`, `sign_decay` and `grad` conversion of Parameter
                       is not supported.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops, Parameter
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -6480,7 +6694,7 @@ class ApplyGradientDescent(Primitive):
         - **var** (Parameter) - Variable tensor to be updated. With float32 or float16 data type.
           The shape is :math:`(N, *)` where :math:`*` means, any number of additional dimensions.
         - **alpha** (Union[Number, Tensor]) - Scaling factor, must be a scalar. With float32 or float16 data type.
-        - **delta** (Tensor) - A tensor for the change, has the same shape and data type as `var`.
+        - **delta** (Tensor) - A tensor for the change, has the same shape as `var`.
 
     Outputs:
         Tensor, represents the updated `var`.
@@ -6489,12 +6703,14 @@ class ApplyGradientDescent(Primitive):
         TypeError: If dtype of `var` or `alpha` is neither float16 nor float32.
         TypeError: If `delta` is not a Tensor.
         TypeError: If `alpha` is neither a Number nor a Tensor.
-        RuntimeError: If the data type of `var` and `delta` conversion of Parameter is not supported.
+        TypeError: If the data type of `var` and `delta` conversion of Parameter is not supported.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops, Parameter
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -6560,12 +6776,14 @@ class ApplyProximalGradientDescent(Primitive):
         TypeError: If dtype of `var`, `alpha`, `l1` or `l2` is neither float16 nor float32.
         TypeError: If `alpha`, `l1` or `l2` is neither a Number nor a Tensor.
         TypeError: If `delta` is not a Tensor.
-        RuntimeError: If the data type of `var`, and `delta` conversion of Parameter is not supported.
+        TypeError: If the data type of `var`, and `delta` conversion of Parameter is not supported.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops, Parameter
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -6607,9 +6825,9 @@ class LARSUpdate(PrimitiveWithInfer):
     For more details, please refer to :class:`mindspore.nn.LARS`.
 
     Args:
-        epsilon (float): Term added to the denominator to improve numerical stability. Default: 1e-05.
-        hyperpara (float): Trust coefficient for calculating the local learning rate. Default: 0.001.
-        use_clip (bool): Whether to use clip operation for calculating the local learning rate. Default: False.
+        epsilon (float): Term added to the denominator to improve numerical stability. Default: ``1e-05`` .
+        hyperpara (float): Trust coefficient for calculating the local learning rate. Default: ``0.001`` .
+        use_clip (bool): Whether to use clip operation for calculating the local learning rate. Default: ``False`` .
 
     Inputs:
         - **weight** (Tensor) - A tensor, representing the weight.
@@ -6634,6 +6852,8 @@ class LARSUpdate(PrimitiveWithInfer):
         ``Ascend``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -6669,24 +6889,32 @@ class ApplyFtrl(Primitive):
 
     For more details, please refer to :class:`mindspore.nn.FTRL`.
 
+    Note:
+        - Currently, only positive numbers are supported on the Ascend platform,
+          and the calculation results for other scenarios are not defined.
+        - Inputs of `var`, `accum`, `linear` and `grad` comply with the implicit type conversion rules
+          to make the data types consistent.
+          If they have different data types, the lower priority data type will be converted to
+          the relatively highest priority data type.
+
     Args:
-        use_locking (bool): Use locks for updating operation if true . Default: False.
+        use_locking (bool): Use locks for updating operation if ``True`` . Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - The variable to be updated. The data type must be float16 or float32.
           The shape is :math:`(N, *)` where :math:`*` means, any number of additional dimensions.
-        - **accum** (Parameter) - The accumulation to be updated, must be same shape and data type as `var`.
-        - **linear** (Parameter) - The linear coefficient to be updated, must be same shape and data type as `var`.
+        - **accum** (Parameter) - The accumulation to be updated, must be same shape as `var`.
+        - **linear** (Parameter) - The linear coefficient to be updated, must be same shape as `var`.
         - **grad** (Tensor) - Gradient. The data type must be float16 or float32.
-        - **lr** (Union[Number, Tensor]) - The learning rate value, must be positive. Default: 0.001.
+        - **lr** (Union[Number, Tensor]) - The learning rate value, must be positive. Default: ``0.001`` .
           It must be a float number or a scalar tensor with float16 or float32 data type.
         - **l1** (Union[Number, Tensor]) - l1 regularization strength, must be greater than or equal to zero.
-          Default: 0.0. It must be a float number or a scalar tensor with float16 or float32 data type.
+          Default: ``0.0`` . It must be a float number or a scalar tensor with float16 or float32 data type.
         - **l2** (Union[Number, Tensor]) - l2 regularization strength, must be greater than or equal to zero.
-          Default: 0.0. It must be a float number or a scalar tensor with float16 or float32 data type.
+          Default: ``0.0`` . It must be a float number or a scalar tensor with float16 or float32 data type.
         - **lr_power** (Union[Number, Tensor]) - Learning rate power controls how the learning rate decreases
           during training, must be less than or equal to zero. Use fixed learning rate if lr_power is zero.
-          Default: -0.5. It must be a float number or a scalar tensor with float16 or float32 data type.
+          Default: ``-0.5`` . It must be a float number or a scalar tensor with float16 or float32 data type.
 
     Outputs:
         - **var** (Tensor) - Represents the updated `var`. As the input parameters has been updated in-place, this
@@ -6697,11 +6925,16 @@ class ApplyFtrl(Primitive):
         TypeError: If dtype of `var`, `grad`, `lr`, `l1`, `l2` or `lr_power` is neither float16 nor float32.
         TypeError: If `lr`, `l1`, `l2` or `lr_power` is neither a Number nor a Tensor.
         TypeError: If `grad` is not a Tensor.
+        TypeError: If the parameter types of `var`, `accum` and `linear` are inconsistent.
+        TypeError: If the parameter types of `grad`, `lr`, `l1`, `l2`, `lr_power` are inconsistent with `var`
+            and the precision is greater than `var`.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, ops, Parameter
         >>> class ApplyFtrlNet(nn.Cell):
         ...     def __init__(self):
         ...         super(ApplyFtrlNet, self).__init__()
@@ -6730,6 +6963,17 @@ class ApplyFtrl(Primitive):
          [ 0.00066425 0.15075898]]
     """
 
+    __mindspore_signature__ = (
+        sig.make_sig('var', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('accum', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('linear', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('grad', dtype=sig.sig_dtype.T),
+        sig.make_sig('lr', dtype=sig.sig_dtype.T),
+        sig.make_sig('l1', dtype=sig.sig_dtype.T),
+        sig.make_sig('l2', dtype=sig.sig_dtype.T),
+        sig.make_sig('lr_power', dtype=sig.sig_dtype.T)
+    )
+
     @prim_attr_register
     def __init__(self, use_locking=False):
         """Initialize ApplyFtrl."""
@@ -6754,17 +6998,18 @@ class SparseApplyFtrl(Primitive):
         l2 (float): l2 regularization strength, must be greater than or equal to zero.
         lr_power (float): Learning rate power controls how the learning rate decreases during training,
             must be less than or equal to zero. Use fixed learning rate if `lr_power` is zero.
-        use_locking (bool, optional): Use locks for updating operation if true . Default: False.
+        use_locking (bool, optional): Use locks for updating operation if ``True`` . Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - The variable to be updated. The data type must be float16 or float32.
           The shape is :math:`(N, *)` where :math:`*` means, any number of additional dimensions.
-        - **accum** (Parameter) - The accumulation to be updated, must be same data type and shape as `var`.
-        - **linear** (Parameter) - The linear coefficient to be updated, must be the same data type and shape as `var`.
-        - **grad** (Tensor) - A tensor of the same type as `var` and grad.shape[1:] = var.shape[1:] if var.shape > 1.
+        - **accum** (Parameter) - The accumulation to be updated, must be same shape as `var`.
+        - **linear** (Parameter) - The linear coefficient to be updated, must be the same shape as `var`.
+        - **grad** (Tensor) - A tensor must meet with :math:`grad.shape[1:] = var.shape[1:]`
+          if var.shape > 1.
         - **indices** (Tensor) - A tensor of indices in the first dimension of `var` and `accum`.
           If there are duplicates in `indices`, the behavior is undefined.
-          The type must be int32 or int64 and indices.shape[0] = grad.shape[0].
+          The type must be int32 or int64 and :math:`indices.shape[0] = grad.shape[0]`.
 
     Outputs:
         - **var** (Tensor) - Tensor, has the same shape and data type as `var`.
@@ -6782,6 +7027,9 @@ class SparseApplyFtrl(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn, Parameter
         >>> class SparseApplyFtrlNet(nn.Cell):
         ...     def __init__(self):
         ...         super(SparseApplyFtrlNet, self).__init__()
@@ -6823,7 +7071,7 @@ class SparseApplyFtrl(Primitive):
         self.lr = validator.check_positive_float(lr, "lr", self.name)
         self.l1 = validator.check_non_negative_float(l1, "l1", self.name)
         self.l2 = validator.check_non_negative_float(l2, "l2", self.name)
-        self.lr_power = validator.check_number("lr_power", lr_power, 0, Rel.LE, self.name)
+        self.lr_power = validator.check_number("lr_power", lr_power, 0, validator.LE, self.name)
         self.use_locking = validator.check_value_type("use_locking", use_locking, [bool], self.name)
         self.init_prim_io_names(inputs=['var', 'accum', 'linear', 'grad', 'indices'],
                                 outputs=['var', 'accum', 'linear'])
@@ -6832,74 +7080,10 @@ class SparseApplyFtrl(Primitive):
 
 class SparseApplyFtrlV2(PrimitiveWithInfer):
     """
-    Updates relevant entries according to the FTRL-proximal scheme. This class has one more attribute, named
-    l2_shrinkage, than class SparseApplyFtrl.
-
-    All of inputs except `indices` comply with the implicit type conversion rules to make the data types consistent.
-    If they have different data types, the lower priority data type will be converted to
-    the relatively highest priority data type.
-
-
-    Args:
-        lr (float): The learning rate value, must be positive.
-        l1 (float): l1 regularization strength, must be greater than or equal to zero.
-        l2 (float): l2 regularization strength, must be greater than or equal to zero.
-        l2_shrinkage (float): L2 shrinkage regularization.
-        lr_power (float): Learning rate power controls how the learning rate decreases during training,
-            must be less than or equal to zero. Use fixed learning rate if `lr_power` is zero.
-        use_locking (bool, optional): If `True`, the var and accumulation tensors will be protected from being updated.
-            Default: False.
-
-    Inputs:
-        - **var** (Parameter) - The variable to be updated. The data type must be float16 or float32.
-          The shape is :math:`(N, *)` where :math:`*` means, any number of additional dimensions.
-        - **accum** (Parameter) - The accumulation to be updated, must be same data type and shape as `var`.
-        - **linear** (Parameter) - the linear coefficient to be updated, must be same data type and shape as `var`.
-        - **grad** (Tensor) - A tensor of the same type as `var` and
-          :math:`grad.shape[1:] = var.shape[1:]` if var.shape > 1.
-        - **indices** (Tensor) - A vector of indices in the first dimension of `var` and `accum`.
-          The type must be int32 and indices.shape[0] = grad.shape[0].
-
-    Outputs:
-        Tuple of 3 Tensor, the updated parameters.
-
-        - **var** (Tensor) - Tensor, has the same shape and data type as `var`.
-        - **accum** (Tensor) - Tensor, has the same shape and data type as `accum`.
-        - **linear** (Tensor) - Tensor, has the same shape and data type as `linear`.
-
-    Raises:
-        TypeError: If `lr`, `l1`, `l2`, `lr_power` or `use_locking` is not a float.
-        TypeError: If `use_locking` is not a bool.
-        TypeError: If dtype of `var`, `accum`, `linear` or `grad` is neither float16 nor float32.
-        TypeError: If dtype of `indices` is not int32.
-        RuntimeError: If the data type of all of inputs except `indices` conversion of Parameter is not supported.
+    The SparseApplyFtrlV2 interface is deprecated, please use the :class:`mindspore.ops.SparseApplyFtrl` instead.
 
     Supported Platforms:
-        ``Ascend``
-
-    Examples:
-        >>> class SparseApplyFtrlV2Net(nn.Cell):
-        ...     def __init__(self):
-        ...         super(SparseApplyFtrlV2Net, self).__init__()
-        ...         self.sparse_apply_ftrl_v2 = ops.SparseApplyFtrlV2(lr=0.01, l1=0.0, l2=0.0,
-        ...                                                         l2_shrinkage=0.0, lr_power=-0.5)
-        ...         self.var = Parameter(Tensor(np.array([[0.2, 0.3]]).astype(np.float32)), name="var")
-        ...         self.accum = Parameter(Tensor(np.array([[0.5, 0.9]]).astype(np.float32)), name="accum")
-        ...         self.linear = Parameter(Tensor(np.array([[0.7, 0.5]]).astype(np.float32)), name="linear")
-        ...
-        ...     def construct(self, grad, indices):
-        ...         out = self.sparse_apply_ftrl_v2(self.var, self.accum, self.linear, grad, indices)
-        ...         return out
-        ...
-        >>> net = SparseApplyFtrlV2Net()
-        >>> grad = Tensor(np.array([[0.8, 0.5]]).astype(np.float32))
-        >>> indices = Tensor(np.ones([1]), mindspore.int32)
-        >>> output = net(grad, indices)
-        >>> print(output)
-        (Tensor(shape=[1, 2], dtype=Float32, value=
-        [[ 2.00000003e-01,  3.00000012e-01]]), Tensor(shape=[1, 2], dtype=Float32, value=
-        [[ 5.00000000e-01,  8.99999976e-01]]), Tensor(shape=[1, 2], dtype=Float32, value=
-        [[ 6.99999988e-01,  5.00000000e-01]]))
+        Deprecated
     """
 
     __mindspore_signature__ = (
@@ -6910,6 +7094,7 @@ class SparseApplyFtrlV2(PrimitiveWithInfer):
         sig.make_sig('indices', dtype=sig.sig_dtype.T1)
     )
 
+    @deprecated("2.1", "ops.SparseApplyFtrl", False)
     @prim_attr_register
     def __init__(self, lr, l1, l2, l2_shrinkage, lr_power, use_locking=False):
         """Initialize SparseApplyFtrlV2."""
@@ -6920,18 +7105,18 @@ class SparseApplyFtrlV2(PrimitiveWithInfer):
         self.lr = validator.check_positive_float(lr, "lr", self.name)
         self.l1 = validator.check_non_negative_float(l1, "l1", self.name)
         self.l2 = validator.check_non_negative_float(l2, "l2", self.name)
-        self.lr_power = validator.check_number("lr_power", lr_power, 0, Rel.LE, self.name)
+        self.lr_power = validator.check_number("lr_power", lr_power, 0, validator.LE, self.name)
         self.l2_shrinkage = validator.check_value_type("l2_shrinkage", l2_shrinkage, [float], self.name)
         self.use_locking = validator.check_value_type("use_locking", use_locking, [bool], self.name)
         self.add_prim_attr('side_effect_mem', True)
 
     def infer_shape(self, var_shape, accum_shape, linear_shape, grad_shape, indices_shape):
-        validator.check('var shape', var_shape, 'accum shape', accum_shape, Rel.EQ, self.name)
-        validator.check('var shape', var_shape, 'linear shape', linear_shape, Rel.EQ, self.name)
+        validator.check('var shape', var_shape, 'accum shape', accum_shape, validator.EQ, self.name)
+        validator.check('var shape', var_shape, 'linear shape', linear_shape, validator.EQ, self.name)
         if len(var_shape) > 1:
-            validator.check('var_shape[1:]', var_shape[1:], 'grad_shape[1:]', grad_shape[1:], Rel.EQ, self.name)
-        validator.check_int(len(indices_shape), 1, Rel.EQ, "indices rank", self.name)
-        validator.check('grad_shape[0]', grad_shape[0], 'indices_shape[0]', indices_shape[0], Rel.EQ, self.name)
+            validator.check('var_shape[1:]', var_shape[1:], 'grad_shape[1:]', grad_shape[1:], validator.EQ, self.name)
+        validator.check_int(len(indices_shape), 1, validator.EQ, "indices rank", self.name)
+        validator.check('grad_shape[0]', grad_shape[0], 'indices_shape[0]', indices_shape[0], validator.EQ, self.name)
         return var_shape, accum_shape, linear_shape
 
     def infer_dtype(self, var_dtype, accum_dtype, linear_dtype, grad_dtype, indices_dtype):
@@ -6943,22 +7128,50 @@ class SparseApplyFtrlV2(PrimitiveWithInfer):
 
 
 class Dropout(PrimitiveWithCheck):
-    """
+    r"""
     During training, randomly zeroes some of the elements of the input tensor
-    with probability 1-`keep_prob` from a Bernoulli distribution. It plays the
+    with probability :math:`1 - keep\_prob` from a Bernoulli distribution. It plays the
     role of reducing neuron correlation and avoid overfitting.
 
     Refer to :func:`mindspore.ops.dropout` for more details.
+
+    Args:
+        keep_prob (float, optional): The keep rate, between 0 and 1, e.g. keep_prob = 0.9,
+            means dropping out 10% of input units. Default: ``0.5`` .
+        Seed0 (int, optional): Seed0 value for random generating. Default: ``0`` .
+        Seed1 (int, optional): Seed1 value for random generating. Default: ``0`` .
+
+    Inputs:
+        - **x** (Tensor) - The input Tensor of shape :math:`(*, N)`, with data type of float16, float32 or float64.
+
+    Outputs:
+        - **output** (Tensor) - With the same shape and data type as `x`.
+        - **mask** (Tensor) - The mask applied to `x`.
+
+          - On GPU and CPU, `mask` has the same shape and data type as `x`.
+          - On Ascend, to achieve a better performance, it is denoted as a 1-D Tensor
+            with Uint8 data type. It has shape :math:`(byte\_counts, )` where :math:`byte\_counts` is the
+            number of bytes needed to mask the input `x`, :math:`byte\_counts` is calculated using the
+            following formula:
+
+            .. math::
+
+                byte\_counts = \text{ceil}(\text{cumprod}(x.shape) / 128) * 16
+
+            If shape of `x` is :math:`(2, 3, 4, 5, 6)`, the shape of `mask` will be :math:`(96, )`.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> dropout = ops.Dropout3D(keep_prob=0.5)
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
+        >>> dropout = ops.Dropout(keep_prob=0.5)
         >>> x = Tensor(np.ones([1, 2, 3, 4, 5]), mindspore.float32)
         >>> output, mask = dropout(x)
-        >>> print(output.shape)
-        (1, 2, 3, 4, 5)
+        >>> print(output.shape, mask.shape, mask.dtype)
+        (1, 2, 3, 4, 5) (16,) UInt8
     """
 
     @prim_attr_register
@@ -6966,10 +7179,11 @@ class Dropout(PrimitiveWithCheck):
         """Initialize Dropout."""
         self.seed0 = validator.check_value_type("Seed0", Seed0, [int], self.name)
         self.seed1 = validator.check_value_type("Seed1", Seed1, [int], self.name)
-        self.keep_prob = validator.check_float_range(keep_prob, 0, 1, Rel.INC_RIGHT, "keep_prob", self.name)
+        self.keep_prob = validator.check_float_range(keep_prob, 0, 1, validator.INC_RIGHT, "keep_prob", self.name)
+        self.add_prim_attr("side_effect_hidden", True)
 
     def check_shape(self, x_shape):
-        validator.check_int(len(x_shape), 1, Rel.GE, "x_shape", self.name)
+        validator.check_int(len(x_shape), 1, validator.GE, "x_shape", self.name)
 
     def check_dtype(self, x_dtype):
         valid_dtypes = (mstype.float16, mstype.float32, mstype.float64)
@@ -6978,21 +7192,41 @@ class Dropout(PrimitiveWithCheck):
 
 class Dropout2D(PrimitiveWithInfer):
     r"""
-    During training, randomly zeroes some channels of the input tensor with probability 1-`keep_prob`
-    from a Bernoulli distribution(For a 4-dimensional tensor with a shape of NCHW, the channel feature map refers
-    to a 2-dimensional feature map with the shape of HW).
+    During training, randomly zeroes some channels of the input tensor with probability :math:`1-keep\_prob`
+    from a Bernoulli distribution(For a 4-dimensional tensor with a shape of :math:`(N, C, H, W)`,
+    the channel feature map refers
+    to a 2-dimensional feature map with the shape of :math:`(H, W)`).
 
     Dropout2D can improve the independence between channel feature maps.
 
     Note:
         The keep probability :math:`keep\_prob` is equal to :math:`1 - p` in :func:`mindspore.ops.dropout2d`.
 
-    Refer to :func:`mindspore.ops.dropout2d` for more details.
+    Args:
+        keep_prob (float, optional): The keep probability of a channel, between 0 and 1, e.g. `keep_prob` = 0.8,
+            means dropping out 20% of channels. Default: ``0.5`` .
+
+    Inputs:
+        - **x** (Tensor) - A 4-D tensor with shape :math:`(N, C, H, W)`, where N is the batch size, C is the number
+          of channels, H is the feature height, and W is the feature width.
+
+    Outputs:
+        - **output** (Tensor) - With the same shape and data type as `x`.
+        - **mask** (Tensor) - With the same shape as `x` and the data type is bool.
+
+    Raises:
+        TypeError: If `x` is not a Tensor.
+        TypeError: If the data type of `keep_prob` is not float.
+        ValueError: If `keep_prob` is out of the range `[0.0, 1.0]`.
+        ValueError: If `x` shape is not `4D`.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> dropout = ops.Dropout2D(keep_prob=0.5)
         >>> x = Tensor(np.ones([2, 1, 2, 3]), mindspore.float32)
         >>> output, mask = dropout(x)
@@ -7005,26 +7239,45 @@ class Dropout2D(PrimitiveWithInfer):
         """Initialize Dropout2D."""
         super().__init__("Dropout2D")
         self.keep_prob = validator.check_value_type("keep_prob", keep_prob, [float], self.name)
-        self.keep_prob = validator.check_float_range(keep_prob, 0.0, 1.0, Rel.INC_BOTH, "keep_prob", self.name)
+        self.keep_prob = validator.check_float_range(keep_prob, 0.0, 1.0, validator.INC_BOTH, "keep_prob", self.name)
 
 
 class Dropout3D(PrimitiveWithInfer):
     r"""
     During training, randomly zeroes some channels of the input tensor
-    with probability 1-`keep_prob` from a Bernoulli distribution(For a 5-dimensional tensor with a shape of NCDHW,
+    with probability :math:`1-keep\_prob` from a Bernoulli distribution(For a 5-dimensional
+    tensor with a shape of NCDHW,
     the channel feature map refers to a 3-dimensional feature map with a shape of DHW).
-
-    Dropout3D can improve the independence between channel feature maps.
 
     Note:
         The keep probability :math:`keep\_prob` is equal to :math:`1 - p` in :func:`mindspore.ops.dropout3d`.
 
-    Refer to :func:`mindspore.ops.dropout3d` for more details.
+    Dropout3D can improve the independence between channel feature maps.
+
+    Args:
+        keep_prob (float): The keep probability of a channel, between 0 and 1, e.g. `keep_prob` = 0.8,
+            means dropping out 20% of channels. Default: ``0.5`` .
+
+    Inputs:
+        - **x** (Tensor) - A 5-D tensor with shape :math:`(N, C, D, H, W)`, where N is the batch size, C is the number
+          of channels, D is the feature depth, H is the feature height, and W is the feature width.
+
+    Outputs:
+        - **output** (Tensor) - With the same shape and data type as `x`.
+        - **mask** (Tensor) - With the same shape as `x` and the data type is bool.
+
+    Raises:
+        TypeError: If the data type of `keep_prob` is not float.
+        ValueError: If `keep_prob` is out of the range [0.0, 1.0];
+                    or if the dim of input is not 5-D.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> dropout = ops.Dropout3D(keep_prob=0.5)
         >>> x = Tensor(np.ones([2, 1, 2, 1, 2]), mindspore.float32)
         >>> output, mask = dropout(x)
@@ -7037,7 +7290,7 @@ class Dropout3D(PrimitiveWithInfer):
         """Initialize Dropout3D."""
         super().__init__("Dropout3D")
         self.keep_prob = validator.check_value_type("keep_prob", keep_prob, [float], self.name)
-        self.keep_prob = validator.check_float_range(keep_prob, 0.0, 1.0, Rel.INC_BOTH, "keep_prob", self.name)
+        self.keep_prob = validator.check_float_range(keep_prob, 0.0, 1.0, validator.INC_BOTH, "keep_prob", self.name)
 
 
 class CTCLoss(Primitive):
@@ -7054,13 +7307,13 @@ class CTCLoss(Primitive):
     such that the length of target series must be less than or equal to the length of input.
 
     Args:
-        preprocess_collapse_repeated (bool): If true, repeated labels will be collapsed prior to the CTC calculation.
-                                             Default: False.
-        ctc_merge_repeated (bool): If false, during CTC calculation, repeated non-blank labels will not be merged
+        preprocess_collapse_repeated (bool): If ``True`` , repeated labels will be collapsed prior to the CTC
+                                             calculation. Default: ``False`` .
+        ctc_merge_repeated (bool): If ``False`` , during CTC calculation, repeated non-blank labels will not be merged
                                    and these labels will be interpreted as individual ones. This is a simplified
-                                   version of CTC. Default: True.
-        ignore_longer_outputs_than_inputs (bool): If true, sequences with longer outputs than inputs will be ignored.
-                                                  Default: False.
+                                   version of CTC. Default: ``True`` .
+        ignore_longer_outputs_than_inputs (bool): If ``True`` , sequences with longer outputs than inputs will be
+                                                  ignored. Default: ``False`` .
 
     Inputs:
         - **x** (Tensor) - The input Tensor must be a `3-D` tensor whose shape is
@@ -7092,6 +7345,9 @@ class CTCLoss(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> x = Tensor(np.array([[[0.3, 0.6, 0.6],
         ...                       [0.4, 0.3, 0.9]],
         ...
@@ -7132,10 +7388,37 @@ class CTCGreedyDecoder(Primitive):
 
     Refer to :func:`mindspore.ops.ctc_greedy_decoder` for more details.
 
+    Note:
+        On Ascend, 'merge_repeated' can not be set to false.
+
+    Args:
+        merge_repeated (bool, optional): If ``True`` , merge repeated classes in output. Default: ``True`` .
+
+    Inputs:
+        - **inputs** (Tensor) - The input Tensor must be a 3-D tensor whose shape is
+          :math:`(max\_time, batch\_size, num\_classes)`. `num_classes` must be `num_labels + 1` classes,
+          `num_labels` indicates the number of actual labels. Blank labels are reserved.
+          Default blank label is `num_classes - 1`. Data type must be float32 or float64.
+        - **sequence_length** (Tensor) - A tensor containing sequence lengths with the shape of :math:`(batch\_size, )`.
+          The type must be int32. Each value in the tensor must be equal to or less than `max_time`.
+
+    Outputs:
+        - **decoded_indices** (Tensor) - A tensor with shape of :math:`(total\_decoded\_outputs, 2)`.
+          Data type is int64.
+        - **decoded_values** (Tensor) - A tensor with shape of :math:`(total\_decoded\_outputs, )`,
+          it stores the decoded classes. Data type is int64.
+        - **decoded_shape** (Tensor) - A tensor with shape of :math:`(batch\_size, max\_decoded\_length)`.
+          Data type is int64.
+        - **log_probability** (Tensor) - A tensor with shape of :math:`(batch\_size, 1)`,
+          containing sequence log-probability, has the same type as `inputs`.
+
     Supported Platforms:
-        ``Ascend`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> inputs = Tensor(np.array([[[0.6, 0.4, 0.2], [0.8, 0.6, 0.3]],
         ...                           [[0.0, 0.6, 0.0], [0.5, 0.4, 0.5]]]), mindspore.float32)
         >>> sequence_length = Tensor(np.array([2, 2]), mindspore.int32)
@@ -7173,23 +7456,24 @@ class BasicLSTMCell(PrimitiveWithInfer):
     def __init__(self, keep_prob=1.0, forget_bias=1.0, state_is_tuple=True, activation='tanh'):
         """Initialize BasicLSTMCell."""
         self.keep_prob = validator.check_value_type("keep_prob", keep_prob, [float], self.name)
-        self.keep_prob = validator.check_float_range(keep_prob, 0.0, 1.0, Rel.INC_BOTH, "keep_prob", self.name)
+        self.keep_prob = validator.check_float_range(keep_prob, 0.0, 1.0, validator.INC_BOTH, "keep_prob", self.name)
         self.forget_bias = validator.check_value_type("forget_bias", forget_bias, [float], self.name)
         self.state_is_tuple = validator.check_value_type("state_is_tuple", state_is_tuple, [bool], self.name)
         self.activation = validator.check_string(activation, ['tanh'], "activation", self.name)
 
     def infer_shape(self, x_shape, h_shape, c_shape, w_shape, b_shape):
-        validator.check_int(len(x_shape), 2, Rel.EQ, "x rank", self.name)
-        validator.check_int(len(h_shape), 2, Rel.EQ, "h rank", self.name)
-        validator.check_int(len(c_shape), 2, Rel.EQ, "c rank", self.name)
-        validator.check_int(len(w_shape), 2, Rel.EQ, "w rank", self.name)
-        validator.check_int(len(b_shape), 1, Rel.EQ, "b rank", self.name)
-        validator.check("x_shape[0]", x_shape[0], "h_shape[0]", h_shape[0], Rel.EQ, self.name)
-        validator.check("c_shape[0]", c_shape[0], "h_shape[0]", h_shape[0], Rel.EQ, self.name)
-        validator.check("c_shape[1]", c_shape[1], "h_shape[1]", h_shape[1], Rel.EQ, self.name)
-        validator.check("w_shape[1]", w_shape[1], "4*h_shape[1]", 4 * h_shape[1], Rel.EQ, self.name)
-        validator.check("w_shape[0]", w_shape[0], "x_shape[1]+h_shape[1]", x_shape[1] + h_shape[1], Rel.EQ, self.name)
-        validator.check("b_shape[0]", b_shape[0], "4*h_shape[1]", 4 * h_shape[1], Rel.EQ, self.name)
+        validator.check_int(len(x_shape), 2, validator.EQ, "x rank", self.name)
+        validator.check_int(len(h_shape), 2, validator.EQ, "h rank", self.name)
+        validator.check_int(len(c_shape), 2, validator.EQ, "c rank", self.name)
+        validator.check_int(len(w_shape), 2, validator.EQ, "w rank", self.name)
+        validator.check_int(len(b_shape), 1, validator.EQ, "b rank", self.name)
+        validator.check("x_shape[0]", x_shape[0], "h_shape[0]", h_shape[0], validator.EQ, self.name)
+        validator.check("c_shape[0]", c_shape[0], "h_shape[0]", h_shape[0], validator.EQ, self.name)
+        validator.check("c_shape[1]", c_shape[1], "h_shape[1]", h_shape[1], validator.EQ, self.name)
+        validator.check("w_shape[1]", w_shape[1], "4*h_shape[1]", 4 * h_shape[1], validator.EQ, self.name)
+        validator.check("w_shape[0]", w_shape[0], "x_shape[1]+h_shape[1]", x_shape[1] + h_shape[1],
+                        validator.EQ, self.name)
+        validator.check("b_shape[0]", b_shape[0], "4*h_shape[1]", 4 * h_shape[1], validator.EQ, self.name)
         ct_shape = c_shape
         ht_shape = c_shape
         it_shape = c_shape
@@ -7233,21 +7517,23 @@ class DynamicRNN(Primitive):
     :math:`W_{ix}, b_{ix}` are the weight and bias used to transform from input :math:`x` to :math:`i`.
 
     Args:
-        cell_type (str): A string identifying the cell type in the operator. Default: 'LSTM'.
+        cell_type (str, optional): A string identifying the cell type in the operator. Default: ``'LSTM'`` .
             Only 'LSTM' is currently supported.
-        direction (str): A string identifying the direction in the operator. Default: 'UNIDIRECTIONAL'.
+        direction (str, optional): A string identifying the direction in the operator. Default: ``'UNIDIRECTIONAL'`` .
             Only 'UNIDIRECTIONAL' is currently supported.
-        cell_depth (int): An integer identifying the cell depth in the operator. Default: 1.
-        use_peephole (bool): A bool identifying if use peephole in the operator. Default: False.
-        keep_prob (float): A float identifying the keep prob in the operator. Default: 1.0.
-        cell_clip (float): A float identifying the cell clip in the operator. Default: -1.0.
-        num_proj (int): An integer identifying the number projection in the operator. Default: 0.
-        time_major (bool): A bool identifying the time major in the operator. Default: True.
-            Only `True` is currently supported.
-        activation (str): A string identifying the type of activation function in the operator. Default: 'tanh'.
-            Only 'tanh' is currently supported.
-        forget_bias (float): A float identifying the forget bias in the operator. Default: 0.0.
-        is_training (bool): A bool identifying is training in the operator. Default: True.
+        cell_depth (int, optional): An integer identifying the cell depth in the operator. Default: ``1`` .
+        use_peephole (bool, optional): A bool identifying if use peephole in the operator. Default: ``False`` .
+        keep_prob (float, optional): A float identifying the keep prob in the operator. Default: ``1.0`` .
+        cell_clip (float, optional): A float identifying the cell clip in the operator. Default: ``-1.0`` .
+        num_proj (int, optional): An integer identifying the number projection in the operator. Default: ``0`` .
+        time_major (bool, optional): A bool specify the data format of `x`. If it is set to ``True`` , the format is
+            :math:`(num\_step, batch\_size, input\_size)`, if it is set to False, the format is
+            :math:`(batch\_size, num\_step, input\_size)`.
+            Default: ``True`` . Only supports ``True`` at present.
+        activation (str, optional): A string identifying the type of activation function in the operator.
+            Default: ``'tanh'`` . Only 'tanh' is currently supported.
+        forget_bias (float, optional): A float identifying the forget bias in the operator. Default: ``0.0`` .
+        is_training (bool, optional): A bool identifying is training in the operator. Default: ``True`` .
 
     Inputs:
         - **x** (Tensor) - Current words. Tensor of shape :math:`(num\_step, batch\_size, input\_size)`.
@@ -7294,6 +7580,8 @@ class DynamicRNN(Primitive):
         ``Ascend``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> x = Tensor(np.random.rand(2, 16, 64).astype(np.float16))
         >>> w = Tensor(np.random.rand(96, 128).astype(np.float16))
         >>> b = Tensor(np.random.rand(128).astype(np.float16))
@@ -7357,20 +7645,21 @@ class DynamicGRUV2(Primitive):
     :math:`\sigma` is the sigmoid function, and :math:`*` is the Hadamard product.
 
     Args:
-        direction (str): A string identifying the direction in the operator. Default: 'UNIDIRECTIONAL'.
-            Only 'UNIDIRECTIONAL' is currently supported.
-        cell_depth (int): An integer identifying the cell depth in the operator. Default: 1.
-        keep_prob (float): A float identifying the keep prob in the operator. Default: 1.0.
-        cell_clip (float): A float identifying the cell clip in the operator. Default: -1.0.
-        num_proj (int): An integer identifying the number projection in the operator. Default: 0.
-        time_major (bool): A bool identifying the time major in the operator. Default: True.
-        activation (str) : A string identifying the type of activation function in the operator. Default: 'tanh'.
-            Only 'tanh' is currently supported.
-        gate_order (str): A string identifying the gate order in weight and bias. Default: 'rzh'.
-            'zrh' is another option. Here, 'rzh' means the gate order is: reset gate, update gate, hidden gate.
-            'zrh' means the gate order is: update gate, reset gate, hidden gate.
-        reset_after (bool): A bool identifying whether to apply reset gate after matrix multiplication. Default: True.
-        is_training (bool): A bool identifying is training in the operator. Default: True.
+        direction (str): A string identifying the direction in the operator. Default: ``'UNIDIRECTIONAL'`` .
+            Only ``'UNIDIRECTIONAL'`` is currently supported.
+        cell_depth (int): An integer identifying the cell depth in the operator. Default: ``1`` .
+        keep_prob (float): A float identifying the keep prob in the operator. Default: ``1.0`` .
+        cell_clip (float): A float identifying the cell clip in the operator. Default: ``-1.0`` .
+        num_proj (int): An integer identifying the number projection in the operator. Default: ``0`` .
+        time_major (bool): A bool identifying the time major in the operator. Default: ``True`` .
+        activation (str) : A string identifying the type of activation function in the operator.
+            Default: ``'tanh'`` . Only ``'tanh'`` is currently supported.
+        gate_order (str): A string identifying the gate order in weight and bias. Default: ``'rzh'`` .
+            ``'zrh'`` is another option. Here, ``'rzh'`` means the gate order is: reset gate, update gate, hidden gate.
+            ``'zrh'`` means the gate order is: update gate, reset gate, hidden gate.
+        reset_after (bool): A bool identifying whether to apply reset gate after matrix multiplication.
+            Default: ``True`` .
+        is_training (bool): A bool identifying is training in the operator. Default: ``True`` .
 
     Inputs:
         - **x** (Tensor) - Current words.
@@ -7432,6 +7721,8 @@ class DynamicGRUV2(Primitive):
         ``Ascend``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> x = Tensor(np.random.rand(2, 8, 64).astype(np.float16))
         >>> weight_i = Tensor(np.random.rand(64, 48).astype(np.float16))
         >>> weight_h = Tensor(np.random.rand(16, 48).astype(np.float16))
@@ -7481,10 +7772,28 @@ class InTopK(Primitive):
 
     Refer to :func:`mindspore.ops.intopk` for more details.
 
+    Args:
+        k (int): Specifies the number of top elements to be used for computing precision along the last dimension.
+
+    Inputs:
+        - **x1** (Tensor) - A 2D Tensor defines the predictions of a batch of samples with float16 or float32
+          data type.
+        - **x2** (Tensor) - A 1D Tensor defines the labels of a batch of samples with int32 data type. The size of `x2`
+          must be equal to the first dimension of `x1`. The values of `x2` can not be negative and
+          must be equal to or less than index of x1's second dimension.
+
+    Outputs:
+        Tensor has 1 dimension of type bool and the same shape with `x2`. For labeling sample `i` in `x2`,
+        if the label in the first `k` predictions for sample `i` is in `x1`, then the value is ``True`` ,
+        otherwise ``False`` .
+
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> x1 = Tensor(np.array([[1, 8, 5, 2, 7], [4, 9, 1, 3, 5]]), mindspore.float32)
         >>> x2 = Tensor(np.array([1, 3]), mindspore.int32)
         >>> in_top_k = ops.InTopK(3)
@@ -7500,25 +7809,30 @@ class InTopK(Primitive):
         validator.check_value_type("k", k, [int], self.name)
 
 
-class LRN(PrimitiveWithInfer):
+class LRN(Primitive):
     r"""
     Local Response Normalization.
+
+    .. warning::
+        LRN is deprecated on Ascend due to potential accuracy problem. It's recommended to use other
+        normalization methods, e.g. :class:`mindspore.ops.BatchNorm`.
 
     .. math::
 
         b_{c} = a_{c}\left(k + \frac{\alpha}{n}
         \sum_{c'=\max(0, c-n/2)}^{\min(N-1,c+n/2)}a_{c'}^2\right)^{-\beta}
 
-    where the :math:`a_{c}` indicates the specific value of the pixel corresponding to c in feature map;
+    where the :math:`a_{c}` indicates the specific value of the pixel corresponding to :math:`c` in feature map;
     where the :math:`n/2` indicates the `depth_radius`; where the :math:`k` indicates the `bias`;
     where the :math:`\alpha` indicates the `alpha`; where the :math:`\beta` indicates the `beta`.
 
     Args:
-        depth_radius (int): Half-width of the 1-D normalization window with the shape of 0-D. Default: 5.
-        bias (float): An offset (usually positive to avoid dividing by 0). Default: 1.0.
-        alpha (float): A scale factor, usually positive. Default: 1.0.
-        beta (float): An exponent. Default: 0.5.
-        norm_region (str): Specifies normalization region. Options: "ACROSS_CHANNELS". Default: "ACROSS_CHANNELS".
+        depth_radius (int): Half-width of the 1-D normalization window with the shape of 0-D. Default: ``5`` .
+        bias (float): An offset (usually positive to avoid dividing by 0). Default: ``1.0`` .
+        alpha (float): A scale factor, usually positive. Default: ``1.0`` .
+        beta (float): An exponent. Default: ``0.5`` .
+        norm_region (str): Specifies normalization region. Options: ``"ACROSS_CHANNELS"`` .
+            Default: ``"ACROSS_CHANNELS"`` .
 
     Inputs:
         - **x** (Tensor) - A 4-D Tensor with float16 or float32 data type.
@@ -7533,9 +7847,12 @@ class LRN(PrimitiveWithInfer):
         TypeError: If `x` is not a Tensor.
 
     Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU``
+        ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> x = Tensor(np.array([[[[0.1], [0.2]],
         ...                       [[0.3], [0.4]]]]), mindspore.float32)
         >>> lrn = ops.LRN()
@@ -7580,38 +7897,41 @@ class AvgPool3D(Primitive):
     Args:
         kernel_size (Union[int, tuple[int]]): The size of kernel used to take the average value,
             is an int number that represents depth, height and width are both kernel_size, or a tuple
-            of three int numbers that represent depth, height and width respectively. Default: 1.
+            of three int numbers that represent depth, height and width respectively. Default: ``1`` .
         strides (Union[int, tuple[int]]): The distance of kernel moving, an int number that represents
             the depth, height and width of movement are both strides, or a tuple of three int numbers that
-            represent depth, height and width of movement respectively. Default: 1.
-        pad_mode (str): The optional value for pad mode, is "same", "valid", "pad".
-            Default: "valid".
+            represent depth, height and width of movement respectively. Default: ``1`` .
+        pad_mode (str, optional): Specifies the padding mode with a padding value of 0. It can be set to:
+            ``"same"`` , ``"valid"`` or ``"pad"`` . Default: ``"valid"`` .
 
-            - same: Adopts the way of completion. The depth, height and width of the output will be the same as
-              the input. The total number of padding will be calculated in depth, horizontal and vertical
-              directions and evenly distributed to head and tail, top and bottom, left and right if possible.
-              Otherwise, the last extra padding will be done from the tail, bottom and the right side.
+            - ``"same"``: Pad the input around its depth/height/width dimension so that the shape of input and output
+              are the same when `stride` is set to ``1``.
+              The amount of padding to is calculated by the operator internally.  If the amount is even,
+              it isuniformly distributed around the input, if it is odd, the excess amount goes
+              to the front/right/bottom side.
               If this mode is set, `pad` must be 0.
+            - ``"valid"``: No padding is applied to the input, and the output returns the maximum
+              possible depth, height and width. Extra pixels that could not complete a full stride will
+              be discarded. If this mode is set, `pad` must be 0.
+            - ``"pad"``: Pad the input with a specified amount. In this mode, the amount of padding
+              in the depth, height and width dimension is determined by the `pad` parameter.
+              If this mode is set, `pad` must be greater than or equal to 0.
 
-            - valid: Adopts the way of discarding. The possible largest depth, height and width of output
-              will be returned without padding. Extra pixels will be discarded. If this mode is set, `pad`
-              must be 0.
-
-            - pad: Implicit paddings on both sides of the input in depth, height, width. The number of `pad` will
-              be padded to the input Tensor borders. `pad` must be greater than or equal to 0.
-        pad (Union(int, tuple[int])): The pad value to be filled. Default: 0. If `pad` is an integer, the paddings of
-                    head, tail, top, bottom, left and right are the same, equal to pad. If `pad` is a tuple of six
-                    integers, the padding of head, tail, top, bottom, left and right equal to pad[0], pad[1], pad[2],
-                    pad[3], pad[4] and pad[5] correspondingly.
-        ceil_mode (bool): If True, ceil instead of floor to compute the output shape. Default: False.
-        count_include_pad (bool): If True, averaging calculation will include the zero-padding. Default: True.
+        pad (Union(int, tuple[int], list[int])): The pad value to be filled. Default: ``0`` . If `pad` is an integer,
+            the paddings of head, tail, top, bottom, left and right are the same, equal to pad.
+            If `pad` is a tuple of six integers, the padding of head, tail, top, bottom, left and right equal to
+            pad[0], pad[1], pad[2], pad[3], pad[4] and pad[5] correspondingly.
+        ceil_mode (bool): If ``True`` , ceil instead of floor to compute the output shape. Default: ``False`` .
+        count_include_pad (bool): If ``True`` , averaging calculation will include the zero-padding.
+            Default: ``True`` .
         divisor_override (int): If specified, it will be used as divisor in the averaging calculation,
-            otherwise kernel_size will be used. Default: 0.
-        data_format (str) : The optional value for data format. Currently only support 'NCDHW'. Default: 'NCDHW'.
+            otherwise kernel_size will be used. Default: ``0`` .
+        data_format (str) : The optional value for data format. Currently only support ``'NCDHW'`` .
+            Default: ``'NCDHW'`` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(N, C, D_{in}, H_{in}, W_{in})`.
-          Currently support float16 and float32 data type.
+          Currently support float16, float32 and float64 data type.
 
     Outputs:
         Tensor, with shape :math:`(N, C, D_{out}, H_{out}, W_{out})`. Has the same data type with `x`.
@@ -7633,6 +7953,9 @@ class AvgPool3D(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, ops
+        >>> import numpy as np
         >>> x = Tensor(np.arange(1 * 2 * 2 * 2 * 3).reshape((1, 2, 2, 2, 3)), mindspore.float16)
         >>> avg_pool3d = ops.AvgPool3D(kernel_size=2, strides=1, pad_mode="valid")
         >>> output = avg_pool3d(x)
@@ -7650,7 +7973,7 @@ class AvgPool3D(Primitive):
         self.add_prim_attr('kernel_size', self.kernel_size)
         self.strides = _check_3d_int_or_tuple('strides', strides, self.name, ret_five=True)
         self.add_prim_attr('strides', self.strides)
-        validator.check_value_type('pad', pad, (int, tuple), self.name)
+        validator.check_value_type('pad', pad, (int, tuple, list), self.name)
         if isinstance(pad, int):
             pad = (pad,) * 6
         if len(pad) != 6:
@@ -7678,18 +8001,210 @@ class Conv3D(Primitive):
     r"""
     3D convolution layer.
 
-    Refer to :func:`mindspore.ops.conv3d` for more details.
+    Applies a 3D convolution over an input tensor which is typically of shape
+    :math:`(N, C_{in}, D_{in}, H_{in}, W_{in})`,
+    where :math:`N` is batch size, :math:`C` is channel number, :math:`D` is feature depth,
+    :math:`H` is feature height, :math:`W` is feature width.
+
+    The output is calculated based on formula:
+
+    .. math::
+
+        \text{out}(N_i, C_{\text{out}_j}) = \text{bias}(C_{\text{out}_j}) +
+        \sum_{k = 0}^{C_{in} - 1} \text{ccor}({\text{weight}(C_{\text{out}_j}, k), \text{X}(N_i, k)})
+
+    where :math:`bias` is the output channel bias, :math:`ccor` is
+    the `cross-correlation <https://en.wikipedia.org/wiki/Cross-correlation>`_,
+    , :math:`weight` is the convolution kernel value and :math:`X` represents the input feature map.
+
+    Here are the indices' meanings:
+    - :math:`i` corresponds to the batch number, ranging from 0 to N-1, where N is the batch size of the input.
+
+    - :math:`j` corresponds to the output channel, ranging from 0 to C_{out}-1, where C_{out} is the number of
+      output channels, which is also equal to the number of kernels.
+
+    - :math:`k` corresponds to the input channel, ranging from 0 to C_{in}-1, where C_{in} is the number of
+      input channels, which is also equal to the number of channels in the convolutional kernels.
+
+    Therefore, in the above formula, :math:`{bias}(C_{out_j})` represents the bias of the :math:`j`-th
+    output channel, :math:`{weight}(C_{out_j}, k)` represents the slice of the :math:`j`-th convolutional
+    kernel in the :math:`k`-th channel, and :math:`{X}(N_i, k)` represents the slice of the :math:`k`-th input
+    channel in the :math:`i`-th batch of the input feature map.
+
+    The shape of the convolutional kernel is given by
+    :math:`(\text{kernel_size[0]}, \text{kernel_size[1]}, \text{kernel_size[2]})`
+    where :math:`kernel\_size[0]` , :math:`kernel\_size[1]` and :math:`kernel\_size[2]` are the depth,
+    height and width of the kernel, respectively.
+    If we consider the input and output channels as well as the `group` parameter, the complete kernel shape
+    will be :math:`(C_{out}, C_{in} / \text{group}, \text{kernel_size[0]},
+    \text{kernel_size[1]}, \text{kernel_size[2]})`,
+    where `group` is the number of groups dividing `x`'s input channel when applying group convolution.
+
+    For more details about convolution layer, please refer to `Gradient Based Learning Applied to Document Recognition
+    <http://vision.stanford.edu/cs598_spring07/papers/Lecun98.pdf>`_.
+
+    Note:
+        1. On Ascend platform, `groups = 1` must be satisfied.
+        2. On Ascend `dilation` on depth only supports the case of 1.
+
+    Args:
+        out_channel (int): Specifies output channel :math:`C_{out}`.
+        kernel_size (Union[int, tuple[int]]): Specifies the depth, height and width of the 3D convolution kernel.
+            It can be a single int or a tuple of 3 integers. A single int means the value is for depth, height
+            and the width. A tuple of 3 ints means the first value is for depth and
+            the rest is for the height and width.
+        mode (int, optional): Modes for different convolutions. It is currently not used. Default: ``1`` .
+        stride (Union[int, tuple[int]], optional): The distance of kernel moving, it can be an int number
+            that represents the depth, height and width of movement or a tuple of three int numbers that
+            represent depth, height and width movement respectively. Default: ``1`` .
+        pad_mode (str, optional): Specifies the padding mode with a padding value of 0. It can be set to:
+            ``"same"`` , ``"valid"`` or ``"pad"`` . Default: ``"valid"`` .
+
+            - ``"same"``: Pad the input around its depth/height/width dimension so that the shape of input and output
+              are the same when `stride` is set to ``1``.
+              The amount of padding to is calculated by the operator internally.  If the amount is even,
+              it isuniformly distributed around the input, if it is odd, the excess amount goes
+              to the front/right/bottom side.
+              If this mode is set, `pad` must be 0.
+            - ``"valid"``: No padding is applied to the input, and the output returns the maximum
+              possible depth, height and width. Extra pixels that could not complete a full stride will
+              be discarded. If this mode is set, `pad` must be 0.
+            - ``"pad"``: Pad the input with a specified amount. In this mode, the amount of padding
+              in the depth, height and width dimension is determined by the `pad` parameter.
+              If this mode is set, `pad` must be greater than or equal to 0.
+
+        pad (Union(int, tuple[int]), optional): Specifies the amount of padding to apply on input
+            when `pad_mode` is set to ``"pad"``. It can be a single int or a tuple of 6 ints.
+            If `pad` is one integer, the paddings of head, tail, top, bottom,
+            left and right are the same, equal to `pad`. If `pad` is a tuple with 6 integers, the
+            paddings of head, tail, top, bottom, left and right is equal to pad[0],
+            pad[1], pad[2], pad[3], pad[4] and pad[5] accordingly. Default: ``0`` .
+        dilation (Union[int, tuple[int]], optional): Specifies the dilation rate to use for dilated convolution.
+            It can be a single int or a tuple of 3 integers. A single int means the dilation size is the same
+            in the depth, height and width directions. A tuple of 3 ints represents the dilation size in
+            the depth, height and width directions, respectively.
+            Assuming :math:`dilation=(d0, d1, d2)`, the convolutional kernel samples the input with a
+            spacing of :math:`d0-1` elements in the depth direction,
+            :math:`d1-1` elements in the height direction, :math:`d2-1` elements in the
+            width direction respectively. The values in the depth, height and width dimensions are in the
+            ranges [1, D], [1, H] and [1, W], respectively.
+            Default: ``1`` .
+        group (int, optional): The number of groups into which the filter is divided. `in_channels`
+            and `out_channels` must be divisible by `group`. Default: ``1`` .
+        data_format (str, optional): The optional value for data format. Currently only support ``"NCDHW"`` .
+
+    Inputs:
+        - **x** (Tensor) - Tensor of shape :math:`(N, C_{in}, D_{in}, H_{in}, W_{in})`.
+          Currently input data type only support float16 and float32.
+        - **weight** (Tensor) - Set size of kernel is :math:`(k_d, K_h, K_w)`, then the shape is
+          :math:`(C_{out}, C_{in}/groups, k_d, K_h, K_w)`.
+          Currently weight data type only support float16 and float32.
+        - **bias** (Tensor) - Tensor of shape :math:`(C_{out})`. When bias is None, zeros will be used.
+          Default: ``None`` .
+
+    Outputs:
+        Tensor, the value that applied 3D convolution. The shape is :math:`(N, C_{out}, D_{out}, H_{out}, W_{out})`.
+
+        `pad_mode` is ``"same"``:
+
+        .. math::
+            \begin{array}{ll} \\
+                D_{out} = \left \lceil{\frac{D_{in}}{\text{stride[0]}}} \right \rceil \\
+                H_{out} = \left \lceil{\frac{H_{in}}{\text{stride[1]}}} \right \rceil \\
+                W_{out} = \left \lceil{\frac{W_{in}}{\text{stride[2]}}} \right \rceil \\
+            \end{array}
+
+        `pad_mode` is ``"valid"``:
+
+        .. math::
+            \begin{array}{ll} \\
+                D_{out} = \left \lfloor{\frac{D_{in} - \text{dilation[0]} \times (\text{kernel_size[0]} - 1) }
+                {\text{stride[0]}} + 1} \right \rfloor \\
+                H_{out} = \left \lfloor{\frac{H_{in} - \text{dilation[1]} \times (\text{kernel_size[1]} - 1) }
+                {\text{stride[1]}} + 1} \right \rfloor \\
+                W_{out} = \left \lfloor{\frac{W_{in} - \text{dilation[2]} \times (\text{kernel_size[2]} - 1) }
+                {\text{stride[2]}} + 1} \right \rfloor \\
+            \end{array}
+
+        `pad_mode` is ``"pad"``:
+
+        .. math::
+            \begin{array}{ll} \\
+                D_{out} = \left \lfloor{\frac{D_{in} + pad[0] + pad[1] - (\text{dilation[0]} - 1) \times
+                \text{kernel_size[0]} - 1 }{\text{stride[0]}} + 1} \right \rfloor \\
+                H_{out} = \left \lfloor{\frac{H_{in} + pad[2] + pad[3] - (\text{dilation[1]} - 1) \times
+                \text{kernel_size[1]} - 1 }{\text{stride[1]}} + 1} \right \rfloor \\
+                W_{out} = \left \lfloor{\frac{W_{in} + pad[4] + pad[5] - (\text{dilation[2]} - 1) \times
+                \text{kernel_size[2]} - 1 }{\text{stride[2]}} + 1} \right \rfloor \\
+            \end{array}
+
+    Raises:
+        TypeError: If `out_channel` or `group` is not an int.
+        TypeError: If `kernel_size`, `stride`, `pad` or `dilation` is neither an int nor a tuple.
+        ValueError: If `out_channel`, `kernel_size`, `stride` or `dilation` is less than 1.
+        ValueError: If `pad` is less than 0.
+        ValueError: If `pad_mode` is not one of 'same', 'valid' or 'pad'.
+        ValueError: If `pad` is a tuple whose length is not equal to 6.
+        ValueError: If `pad_mode` is not equal to 'pad' and `pad` is not equal to (0, 0, 0, 0, 0, 0).
+        ValueError: If `data_format` is not 'NCDHW'.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
+        >>> # case 1: specify kernel_size with tuple, all parameters use default values.
         >>> x = Tensor(np.ones([16, 3, 10, 32, 32]), mindspore.float16)
         >>> weight = Tensor(np.ones([32, 3, 4, 3, 3]), mindspore.float16)
         >>> conv3d = ops.Conv3D(out_channel=32, kernel_size=(4, 3, 3))
         >>> output = conv3d(x, weight)
         >>> print(output.shape)
         (16, 32, 7, 30, 30)
+        >>> # case 2: specify kernel_size with int, all parameters use default values.
+        >>> x = Tensor(np.ones([10, 20, 32, 32, 32]), mindspore.float32)
+        >>> weight = Tensor(np.ones([40, 20, 3, 3, 3]), mindspore.float32)
+        >>> conv3d = ops.Conv3D(out_channel=40, kernel_size=3)
+        >>> output = conv3d(x, weight)
+        >>> print(output.shape)
+        (10, 40, 30, 30, 30)
+         >>> # case 3: stride=(1, 2, 3), other parameters being default.
+        >>> x = Tensor(np.ones([10, 20, 32, 32, 32]), mindspore.float32)
+        >>> weight = Tensor(np.ones([40, 20, 3, 3, 3]), mindspore.float32)
+        >>> conv3d = ops.Conv3D(out_channel=40, kernel_size=3, stride=(1, 2, 3))
+        >>> output = conv3d(x, weight)
+        >>> print(output.shape)
+        (10, 40, 30, 15, 10)
+         >>> # case 4: pad_mode="pad", other parameters being default.
+        >>> x = Tensor(np.ones([10, 20, 32, 32, 32]), mindspore.float32)
+        >>> weight = Tensor(np.ones([40, 20, 3, 3, 3]), mindspore.float32)
+        >>> conv3d = ops.Conv3D(out_channel=40, kernel_size=3, pad_mode="pad", pad=2)
+        >>> output = conv3d(x, weight)
+        >>> print(output.shape)
+        (10, 40, 34, 34, 34)
+         >>> # case 5: dilation=(1, 1, 1), other parameters being default.
+        >>> x = Tensor(np.ones([10, 20, 32, 32, 32]), mindspore.float32)
+        >>> weight = Tensor(np.ones([40, 20, 3, 3, 3]), mindspore.float32)
+        >>> conv3d = ops.Conv3D(out_channel=40, kernel_size=3, dilation=(1, 1, 1))
+        >>> output = conv3d(x, weight)
+        >>> print(output.shape)
+        (10, 40, 30, 30, 30)
+        >>> # case 6: group=1, other parameters being default.
+        >>> x = Tensor(np.ones([10, 20, 32, 32, 32]), mindspore.float32)
+        >>> weight = Tensor(np.ones([40, 20, 3, 3, 3]), mindspore.float32)
+        >>> conv3d = ops.Conv3D(out_channel=40, kernel_size=3, group=1)
+        >>> output = conv3d(x, weight)
+        >>> print(output.shape)
+        (10, 40, 30, 30, 30)
+        >>> # case 7: All parameters are specified.
+        >>> x = Tensor(np.ones([10, 20, 32, 32, 32]), mindspore.float32)
+        >>> weight = Tensor(np.ones([40, 20, 3, 3, 3]), mindspore.float32)
+        >>> conv3d = ops.Conv3D(out_channel=40, kernel_size=3, stride=(1, 2, 3), pad_mode="pad",
+        ...                     pad=2, dilation=(1), group=1)
+        >>> output = conv3d(x, weight)
+        >>> print(output.shape)
+        (10, 40, 34, 17, 12)
     """
 
     @prim_attr_register
@@ -7706,6 +8221,9 @@ class Conv3D(Primitive):
         """Initialize Conv3D"""
         self.init_prim_io_names(inputs=['x', 'w'], outputs=['output'])
         self.kernel_size = _check_3d_int_or_tuple('kernel_size', kernel_size, self.name)
+        if isinstance(kernel_size, int):
+            self.kernel_size = (kernel_size,) * 3
+        self.add_prim_attr('kernel_size', self.kernel_size)
         self.stride = _check_3d_int_or_tuple('stride', stride, self.name, allow_five=False, ret_five=True)
         self.add_prim_attr('strides', self.stride)
         target = context.get_context("device_target")
@@ -7741,7 +8259,9 @@ class Conv3D(Primitive):
         self.add_prim_attr('data_format', self.format)
         self.out_channel = validator.check_positive_int(out_channel, 'out_channel', self.name)
         validator.check_value_type("group", group, (int,), self.name)
-        validator.check_int_range(group, 1, out_channel, Rel.INC_BOTH, "group", self.name)
+        if self.out_channel % group != 0:
+            raise ValueError("The argument 'group' should be divisible by 'out_channel'")
+
         self.group = group
         self.add_prim_attr('groups', self.group)
         self.add_prim_attr('offset_x', 0)
@@ -7755,15 +8275,30 @@ class Conv3DBackpropInput(Primitive):
         out_channel (int): The dimension of the output.
         kernel_size (Union[int, tuple[int]]): The kernel size of the 3D convolution.
         mode (int): Modes for different convolutions. Not currently used.
-        pad_mode (str): Modes to fill padding. It could be "valid", "same", or "pad". Default: "valid".
-        pad (Union(int, tuple[int])): The pad value to be filled. Default: 0. If `pad` is an integer, the paddings of
-                    head, tail, top, bottom, left and right are the same, equal to pad. If `pad` is a tuple of four
-                    integers, the padding of head, tail, top, bottom, left and right equal to pad[0], pad[1], pad[2],
-                    pad[3], pad[4] and pad[5] correspondingly.
-        stride (Union(int, tuple[int])): The stride to be applied to the convolution filter. Default: 1.
-        dilation (Union(int, tuple[int])): Specifies the space to use between kernel elements. Default: 1.
-        group (int): Splits input into groups. Default: 1.
-        data_format (str): The optional value for data format. Currently only support 'NCDHW'.
+        pad_mode (str, optional): Specifies the padding mode with a padding value of 0. It can be set to:
+            ``"same"`` , ``"valid"`` or ``"pad"`` . Default: ``"valid"`` .
+
+            - ``"same"``: Pad the input around its depth/height/width dimension so that the shape of input and output
+              are the same when `stride` is set to ``1``.
+              The amount of padding to is calculated by the operator internally.  If the amount is even,
+              it isuniformly distributed around the input, if it is odd, the excess amount goes
+              to the front/right/bottom side.
+              If this mode is set, `pad` must be 0.
+            - ``"valid"``: No padding is applied to the input, and the output returns the maximum
+              possible depth, height and width. Extra pixels that could not complete a full stride will
+              be discarded. If this mode is set, `pad` must be 0.
+            - ``"pad"``: Pad the input with a specified amount. In this mode, the amount of padding
+              in the depth, height and width dimension is determined by the `pad` parameter.
+              If this mode is set, `pad` must be greater than or equal to 0.
+
+        pad (Union(int, tuple[int])): The pad value to be filled. Default: ``0`` . If `pad` is an integer, the
+                    paddings of head, tail, top, bottom, left and right are the same, equal to pad. If `pad` is a
+                    tuple of four integers, the padding of head, tail, top, bottom, left and right equal to pad[0],
+                    pad[1], pad[2], pad[3], pad[4] and pad[5] correspondingly.
+        stride (Union(int, tuple[int])): The stride to be applied to the convolution filter. Default: ``1`` .
+        dilation (Union(int, tuple[int])): Specifies the space to use between kernel elements. Default: ``1`` .
+        group (int): Splits input into groups. Default: ``1`` .
+        data_format (str): The optional value for data format. Currently only support ``'NCDHW'`` .
 
     Inputs:
         - **weight** (Tensor) - Set size of kernel is :math:`(D_{in}, K_h, K_w)`, then the shape is
@@ -7882,8 +8417,8 @@ class SparseApplyAdadelta(Primitive):
 
     Args:
         epsilon (float): A small value added for numerical stability. Its value must be greater or equal to 0.
-        use_locking (bool): If `True`, the `var` and `accum` tensors will be protected from being updated.
-            Default: False.
+        use_locking (bool): If ``True`` , the `var` and `accum` tensors will be protected from being updated.
+            Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - Weights to be updated. With float32 or float16 data type.
@@ -7963,7 +8498,7 @@ class SparseApplyAdadelta(Primitive):
     def __init__(self, epsilon, use_locking=False):
         """Initialize SparseApplyAdadelta"""
         validator.check_value_type("epsilon", epsilon, [float], self.name)
-        validator.check_number("epsilon", epsilon, 0.0, Rel.GE, self.name)
+        validator.check_number("epsilon", epsilon, 0.0, validator.GE, self.name)
         validator.check_value_type("use_locking", use_locking, [bool], self.name)
 
 
@@ -7974,21 +8509,26 @@ class CTCLossV2(Primitive):
     The CTC algorithm is proposed in `Connectionist Temporal Classification: Labeling Unsegmented Sequence Data with
     Recurrent Neural Networks <http://www.cs.toronto.edu/~graves/icml_2006.pdf>`_.
 
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
     Args:
-        blank (int, optional): The blank label. Default: 0.
-        reduction (str, optional): Apply specific reduction method to the output. Currently only support 'none',
-            not case sensitive. Default: "none".
-        zero_infinity (bool, optional): Whether to set infinite loss and correlation gradient to zero. Default: False.
+        blank (int, optional): The blank label. Default: ``0`` .
+        reduction (str, optional): Apply specific reduction method to the output. Currently only support ``'none'``.
+            Default: ``'none'`` .
+
+        zero_infinity (bool, optional): If loss is infinite, this parameter determines whether to set that loss
+            and its correlated gradient to zero. Default: ``False`` .
 
     Inputs:
-        - **log_probs** (Tensor) - A tensor of shape :math:`(T, C, N)`, where :math:`T` is input length, :math:`N` is
-          batch size and :math:`C` is number of classes (including blank).
+        - **log_probs** (Tensor) - A tensor of shape :math:`(T, N, C)`, where :math:`T` is input length, :math:`N` is
+          batch size and :math:`C` is number of classes (including blank). Supported dtypes: float32, float64.
         - **targets** (Tensor) - A tensor of shape :math:`(N, S)`, where :math:`S` is max target length,
-          means the target sequences.
+          means the target sequences. Supported dtypes: int32, int64.
         - **input_lengths** (Union(Tuple, Tensor)) - A tuple or Tensor of shape :math:`(N)`.
-          It means the lengths of the input.
+          It means the lengths of the input. Supported dtypes: int32, int64.
         - **target_lengths** (Union(Tuple, Tensor)) - A tuple or Tensor of shape :math:`(N)`.
-          It means the lengths of the target.
+          It means the lengths of the target. Supported dtypes: int32, int64.
 
     Outputs:
         - **neg_log_likelihood** (Tensor) - A loss value which is differentiable with respect to each input node.
@@ -8001,19 +8541,22 @@ class CTCLossV2(Primitive):
         TypeError: If the dtype of `targets`, `input_lengths` or `target_lengths` is not int32 or int64.
         ValueError: If the rank of `log_probs` is not 3.
         ValueError: If the rank of `targets` is not 2.
-        ValueError: If the shape of `input_lengths` does not match {batch_size|N}.
-        ValueError: If the shape of `target_lengths` does not match {batch_size|N}.
+        ValueError: If the shape of `input_lengths` does not match batch_size :math:`N`.
+        ValueError: If the shape of `target_lengths` does not match batch_size :math:`N`.
         TypeError: If the types of `targets`, `input_lengths` or `target_lengths` are different.
-        ValueError: If the value of `blank` is not in range [0, num_labels|C).
+        ValueError: If the value of `blank` is not in range [0, C).
         RuntimeError: If any value of `input_lengths` is larger than (num_labels|C).
-        RuntimeError: If any `target_lengths[i]` is not in range [0, `input_length[i]` ].
+        RuntimeError: If any `target_lengths[i]` is not in range [0, `input_length[i]`].
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
+        >>> from mindspore import dtype as mstype
         >>> log_probs = Tensor(np.array([[[0.3, 0.6, 0.6]],
-                                         [[0.9, 0.4, 0.2]]]).astype(np.float32))
+        ...                              [[0.9, 0.4, 0.2]]]).astype(np.float32))
         >>> targets = Tensor(np.array([[0, 1]]), mstype.int32)
         >>> input_lengths = Tensor(np.array([2]), mstype.int32)
         >>> target_lengths = Tensor(np.array([1]), mstype.int32)
@@ -8050,10 +8593,10 @@ class CTCLossV2Grad(Primitive):
     Recurrent Neural Networks <http://www.cs.toronto.edu/~graves/icml_2006.pdf>`_.
 
     Args:
-        blank (int): The blank label. Default: 0.
+        blank (int): The blank label. Default: ``0`` .
         reduction (string): Apply specific reduction method to the output. Currently only support 'none'.
-            Default: "none".
-        zero_infinity (bool): Whether to set infinite loss and correlation gradient to zero. Default: False.
+            Default: ``"none"`` .
+        zero_infinity (bool): Whether to set infinite loss and correlation gradient to zero. Default: ``False`` .
 
     Inputs:
         - **grad_out** (Tenosr) - Gradient renewal codfficient, A tensor for shape (N), where N is batch size.
@@ -8119,6 +8662,9 @@ class Conv3DTranspose(Primitive):
         W_{out} = (W_{in} - 1) \times \text{stride}[2] - 2 \times \text{pad}[2] + \text{dilation}[2]
         \times (\text{kernel_size}[2] - 1) + \text{output_padding}[2] + 1
 
+    Note:
+        In Ascend, `group` must be equal to 1.
+
     Args:
         in_channel (int): The channel of the input x.
         out_channel (int): The channel of the weight x.
@@ -8127,34 +8673,38 @@ class Conv3DTranspose(Primitive):
             Single int means the value is for the depth, height and width of the kernel.
             A tuple of 3 ints means the first value is for the depth, the second value is for the height and the
             other is for the width of the kernel.
-        mode (int): Modes for different convolutions. Default is 1. It is currently not used.
-        pad_mode (str): Specifies padding mode. The optional values are
-            "same", "valid", "pad". Default: "valid".
+        mode (int, optional): Modes for different convolutions. Default is ``1`` . It is currently not used.
+        pad_mode (str, optional): Specifies the padding mode with a padding value of 0. It can be set to:
+            ``"same"`` , ``"valid"`` or ``"pad"`` . Default: ``"valid"`` .
 
-            - same: Adopts the way of completion. The depth, height and width of the output will be equal to
-              the input `x` divided by stride. The padding will be evenly calculated in head and tail, top and bottom,
-              left and right directions possiblily.
-              Otherwise, the last extra padding will be calculated from the tail, bottom and the right side.
+            - ``"same"``: Pad the input around its depth/height/width dimension so that the shape of input and output
+              are the same when `stride` is set to ``1``.
+              The amount of padding to is calculated by the operator internally.  If the amount is even,
+              it isuniformly distributed around the input, if it is odd, the excess amount goes
+              to the front/right/bottom side.
               If this mode is set, `pad` must be 0.
+            - ``"valid"``: No padding is applied to the input, and the output returns the maximum
+              possible depth, height and width. Extra pixels that could not complete a full stride will
+              be discarded. If this mode is set, `pad` must be 0.
+            - ``"pad"``: Pad the input with a specified amount. In this mode, the amount of padding
+              in the depth, height and width dimension is determined by the `pad` parameter.
+              If this mode is set, `pad` must be greater than or equal to 0.
 
-            - valid: Adopts the way of discarding. The possible largest depth, height and width of output
-              will be returned without padding. Extra pixels will be discarded. If this mode is set, `pad`
-              and `output_padding` must be 0.
-
-            - pad: Implicit paddings on both sides of the input in depth, height and width. The number of `pad` will
-              be padded to the input Tensor borders. `pad` must be greater than or equal to 0.
-
-        pad (Union(int, tuple[int])): The pad value to be filled. Default: 0. If `pad` is an integer, the paddings of
-             head, tail, top, bottom, left and right are the same, equal to pad. If `pad` is a tuple of six integers,
-             the padding of head, tail, top, bottom, left and right equal to pad[0], pad[1], pad[2], pad[3], pad[4]
-             and pad[5] correspondingly.
-        stride (Union(int, tuple[int])): The distance of kernel moving, an int number that represents
+        pad (Union(int, tuple[int]), optional): The pad value to be filled. Default: ``0`` . If `pad` is an integer,
+            the paddings of head, tail, top, bottom, left and right are the same, equal to pad.
+            If `pad` is a tuple of six integers, the padding of head, tail, top, bottom, left and right equal
+            to pad[0], pad[1], pad[2], pad[3], pad[4] and pad[5] correspondingly.
+        stride (Union(int, tuple[int]), optional): The distance of kernel moving, an int number that represents
             the depth, height and width of movement are both strides, or a tuple of three int numbers that
-            represent depth, height and width of movement respectively. Default: 1.
-        dilation (Union(int, tuple[int])): Specifies the space to use between kernel elements. Default: 1.
-        group (int): Splits input into groups. Default: 1. Only 1 is currently supported.
-        output_padding (Union(int, tuple[int])): Add extra size to each dimension of the output. Default: 0.
-        data_format (str): The optional value for data format. Currently only 'NCDHW' is supported.
+            represent depth, height and width of movement respectively. Default: ``1`` .
+        dilation (Union(int, tuple[int]), optional): Specifies the space to use between kernel elements.
+            Default: ``1`` .
+        group (int, optional): The number of groups into which the filter is divided. `in_channels`
+            and `out_channels` must be divisible by `group`. Default: ``1`` .
+        output_padding (Union(int, tuple[int]), optional): Add extra size to each dimension of the output.
+            Default: ``0`` .
+        data_format (str, optional): The optional value for data format. Currently only ``'NCDHW'`` is supported.
+            Default: ``'NCDHW'``.
 
     Inputs:
         - **dout** (Tensor) - The gradients with respect to the output of the convolution.
@@ -8165,7 +8715,7 @@ class Conv3DTranspose(Primitive):
           :math:`(C_{in}, C_{out}//group, K_d, K_h, K_w)`. Where :math:`group` is the Args parameter,
           :math:`//` is the symbol for integer division.
           Currently weight data type only supports float16 and float32.
-        - **bias** (Tensor) - Tensor of shape :math:`C_{out}`. Currently, only support none. Default: None.
+        - **bias** (Tensor) - Tensor of shape :math:`C_{out}`. Currently, only support none. Default: ``None`` .
 
     Outputs:
         Tensor, the gradients with respect to the input of convolution 3D.
@@ -8188,6 +8738,9 @@ class Conv3DTranspose(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> dout = Tensor(np.ones([32, 16, 10, 32, 32]), mindspore.float16)
         >>> weight = Tensor(np.ones([16, 3, 4, 6, 2]), mindspore.float16)
         >>> conv3d_transpose = ops.Conv3DTranspose(in_channel=16, out_channel=3, kernel_size=(4, 6, 2))
@@ -8216,6 +8769,8 @@ class Conv3DTranspose(Primitive):
         self.out_channel = validator.check_positive_int(out_channel, 'out_channel', self.name)
         self.add_prim_attr('out_channel', self.out_channel)
         self.kernel_size = _check_3d_int_or_tuple('kernel_size', kernel_size, self.name)
+        if isinstance(kernel_size, int):
+            self.kernel_size = (kernel_size,) * 3
         self.add_prim_attr('kernel_size', self.kernel_size)
         self.stride = _check_3d_int_or_tuple('stride', stride, self.name, allow_five=False,
                                              ret_five=True)
@@ -8245,8 +8800,16 @@ class Conv3DTranspose(Primitive):
         self.add_prim_attr('pad_list', self.pad_list)
         self.mode = validator.check_equal_int(mode, 1, 'mode', self.name)
         self.add_prim_attr('mode', self.mode)
-        self.group = validator.check_equal_int(group, 1, 'group', self.name)
+        validator.check_value_type("group", group, (int,), self.name)
+        validator.check_int_range(group, 1, out_channel, validator.INC_BOTH, "group", self.name)
+        if self.out_channel % group != 0:
+            raise ValueError("The argument 'group' should be divisible by 'out_channel'")
+        device_target = context.get_context("device_target")
+        if device_target == "Ascend" and group != 1:
+            raise ValueError("On Ascend platform, group = 1 must be satisfied.")
+        self.group = group
         self.add_prim_attr('groups', self.group)
+
         self.format = validator.check_string(data_format, ['NCDHW'], 'format', self.name)
         self.add_prim_attr('data_format', self.format)
 
@@ -8258,17 +8821,19 @@ class Conv3DTranspose(Primitive):
                              f"when 'pad_mode' is not \"pad\", but got 'output_padding' is "
                              f"{output_padding} and 'pad_mode' is {pad_mode}.")
         self.add_prim_attr('output_padding', self.output_padding)
-        validator.check_int_range(self.kernel_size[0] * self.kernel_size[1] * self.kernel_size[2], 1, 343, Rel.INC_BOTH,
-                                  'The product of height, width and depth of kernel_size belonging [1, 343]', self.name)
-        validator.check_int_range(self.stride[0] * self.stride[1] * self.stride[2], 1, 343, Rel.INC_BOTH,
+        validator.check_int_range(self.kernel_size[0] * self.kernel_size[1] * self.kernel_size[2],
+                                  1, 343, validator.INC_BOTH,
+                                  'The product of height, width and depth of kernel_size belonging [1, 343]',
+                                  self.name)
+        validator.check_int_range(self.stride[0] * self.stride[1] * self.stride[2], 1, 343, validator.INC_BOTH,
                                   'The product of height, width and depth of stride belonging [1, 343]', self.name)
-        validator.check_int_range(self.stride[1] * self.stride[2], 1, 256, Rel.INC_BOTH,
+        validator.check_int_range(self.stride[1] * self.stride[2], 1, 256, validator.INC_BOTH,
                                   'The product of height, width and depth of stride belonging [1, 256]', self.name)
-        validator.check_int_range(self.output_padding[2], 0, max(self.dilation[2], self.stride[2]), Rel.INC_LEFT,
+        validator.check_int_range(self.output_padding[2], 0, max(self.dilation[2], self.stride[2]), validator.INC_LEFT,
                                   'output_padding_d belonging [0, max(stride_d, dilation_d))', self.name)
-        validator.check_int_range(self.output_padding[3], 0, max(self.dilation[3], self.stride[3]), Rel.INC_LEFT,
+        validator.check_int_range(self.output_padding[3], 0, max(self.dilation[3], self.stride[3]), validator.INC_LEFT,
                                   'output_padding_h belonging [0, max(stride_h,dilation_h))', self.name)
-        validator.check_int_range(self.output_padding[4], 0, max(self.dilation[4], self.stride[4]), Rel.INC_LEFT,
+        validator.check_int_range(self.output_padding[4], 0, max(self.dilation[4], self.stride[4]), validator.INC_LEFT,
                                   'output_padding_w belonging [0, max(stride_w,dilation_w))', self.name)
 
 
@@ -8286,7 +8851,9 @@ class Dilation2D(Primitive):
         \text{input}(N_i, C_j, s_0 \times h + d_0 \times m, s_1 \times w + d_1 \times n) + \text{filter}(C_j, m, n)
 
     .. warning::
-        This operator is an experimental operator.
+        This is an experimental API that is subjected to change or deletion.
+
+    Note:
         If the input data type is float32, this operator is still executed in float16 mode.
 
     Args:
@@ -8301,18 +8868,22 @@ class Dilation2D(Primitive):
                                       each sampling location. Its value must be greater or equal to 1 and bounded by
                                       the height and width of the input `x`.
 
-        pad_mode (str): Specifies padding mode. The optional values are
-            "same", "valid". Default: "same". Both upper and lower case are supported.
+        pad_mode (str, optional): Specifies the padding mode with a padding value of 0. It can be set to:
+            ``"same"`` or ``"valid"`` . Default: ``"valid"`` .
 
-            - same: Adopts the way of completion. The height and width of the output will be the same as
-              the input `x`.
+            - ``"same"``: Pad the input around its edges so that the shape of input and output
+              are the same when `stride` is set to ``1``.
+              The amount of padding to is calculated by the operator internally, If the amount is even, it is
+              uniformly distributed around the input, if it is odd, the excess amount goes to the right/bottom side.
+            - ``"valid"``: No padding is applied to the input, and the output returns the maximum
+              possible height and width. Extra pixels that could not complete a full stride will
+              be discarded.
 
-            - valid: Adopts the way of discarding. The possible largest height and width of output will be returned
-              without padding. Extra pixels will be discarded.
-        data_format (str): The value for data format, only 'NCHW' is supported at present. Default: "NCHW".
+        data_format (str, optional): The value for data format, only ``'NCHW'`` is supported at present.
+            Default: ``"NCHW"`` .
 
     Inputs:
-        - **x** (Tensor) - Input data. A four dimension tensor with float16 or float32 data type. The shape must be
+        - **x** (Tensor) - Input data. A 4-D Tensor, its shape must be
           :math:`(N, C_{in}, H_{in}, W_{in})`.
         - **filter** (Tensor) - A three dimension tensor with the same type as input. The shape must be
           :math:`(C_{in}, H_{filter}, W_{filter})`.
@@ -8385,7 +8956,9 @@ class Dilation2D(Primitive):
         self.pad_mode = validator.check_string(pad_mode, ['VALID', 'SAME', 'valid', 'same'], 'pad_mode', self.name)
         self.add_prim_attr('pad_mode', self.pad_mode.upper())
         self.stride = _check_format_stride_or_dilation("stride", stride, self.name, self.data_format)
-        if self.stride[2] < 1 or self.stride[2] > 255 or self.stride[3] < 1 or self.stride[3] > 255:
+        def is_in_range(x):
+            return 1 <= x <= 255
+        if not is_in_range(self.stride[2]) or not is_in_range(self.stride[3]):
             raise ValueError(f'For Dilation2D, size of stride is not supported, '
                              f'stride should be in the range of [1, 255], '
                              f'but got stride_h: `{self.stride[2]}`, stride_w: `{self.stride[3]}`.')
@@ -8398,10 +8971,19 @@ class SoftShrink(Primitive):
     r"""
     Applies the SoftShrink function element-wise.
 
-    Refer to :func:`mindspore.ops.soft_shrink` for more details.
+    Refer to :func:`mindspore.ops.softshrink` for more details.
+
+    Args:
+        lambd(float, optional): The :math:`\lambda` must be no less than zero. Default: ``0.5`` .
+
+    Inputs:
+        - **input_x** (Tensor) - The input of soft shrink with data type of float16 or float32.
+
+    Outputs:
+        Tensor, has the same shape and data type as `input_x`.
 
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> import mindspore
@@ -8419,7 +9001,7 @@ class SoftShrink(Primitive):
     def __init__(self, lambd=0.5):
         """Initialize SoftShrink"""
         validator.check_value_type("lambd", lambd, [float], self.name)
-        validator.check_number("lambd", lambd, 0, Rel.GE, self.name)
+        validator.check_number("lambd", lambd, 0, validator.GE, self.name)
 
 
 class HShrink(Primitive):
@@ -8428,8 +9010,17 @@ class HShrink(Primitive):
 
     Refer to :func:`mindspore.ops.hardshrink` for more details.
 
+    Args:
+        lambd (float, optional): The threshold :math:`\lambda` defined by the Hard Shrink formula. Default: ``0.5`` .
+
+    Inputs:
+        - **input_x** (Tensor) - The input of Hard Shrink with data type of float16 or float32.
+
+    Outputs:
+        Tensor, the same shape and data type as the input.
+
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> import mindspore as ms
@@ -8480,17 +9071,17 @@ class ApplyAdagradDA(Primitive):
     the relatively highest priority data type.
 
     Args:
-        use_locking (bool): If `True`, updating of the `var` and `accum` tensors will be protected by a lock.
-                            Otherwise the behavior is undefined, but may exhibit less contention. Default: False.
+        use_locking (bool): If ``True`` , updating of the `var` and `accum` tensors will be protected by a lock.
+                            Otherwise the behavior is undefined, but may exhibit less contention. Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - Variable to be updated. The data type must be float16 or float32.
           The shape is :math:`(N, *)` where :math:`*` means, any number of additional dimensions.
-        - **gradient_accumulator** (Parameter) - The dict of mutable tensor gradient_accumulator. Must have the same
-          shape and dtype as `var`.
-        - **gradient_squared_accumulator** (Parameter) - The dict of mutable tensor gradient_squared_accumulator.
-          Must have the same shape and dtype as `var`.
-        - **grad** (Tensor) - A tensor for gradient. Must have the same shape and dtype as `var`.
+        - **gradient_accumulator** (Parameter) - The dict of mutable tensor :math:`grad\_accum`. Must have the same
+          shape as `var`.
+        - **gradient_squared_accumulator** (Parameter) - The dict of mutable tensor :math:`grad\_squared\_accum`.
+          Must have the same shape as `var`.
+        - **grad** (Tensor) - A tensor for gradient. Must have the same shape as `var`.
         - **lr** ([Number, Tensor]) - Scaling factor. Must be a scalar. With float32 or float16 data type.
         - **l1** ([Number, Tensor]) -  L1 regularization. Must be a scalar. With float32 or float16 data type.
         - **l2** ([Number, Tensor]) -  L2 regularization. Must be a scalar. With float32 or float16 data type.
@@ -8513,13 +9104,16 @@ class ApplyAdagradDA(Primitive):
         TypeError: If dtype of `gradient_accumulator`, `gradient_squared_accumulator` or `grad` is not same as `var`.
         TypeError: If dtype of `global_step` is not int32 nor int64.
         ValueError: If the shape size of `lr`, `l1`, `l2` and `global_step` is not 0.
-        RuntimeError: If the data type of `var`, `gradient_accumulator`, `gradient_squared_accumulator` and `grad`
+        TypeError: If the data type of `var`, `gradient_accumulator`, `gradient_squared_accumulator` and `grad`
                       conversion of Parameter is not supported.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, nn, ops, Parameter
         >>> class ApplyAdagradDANet(nn.Cell):
         ...     def __init__(self, use_locking=False):
         ...         super(ApplyAdagradDANet, self).__init__()
@@ -8595,8 +9189,8 @@ class SparseApplyRMSProp(Primitive):
         momentum (float): Momentum. The value should be greater or equal to 0, otherwise the behavior is undefined.
         epsilon (float): A small value added for numerical stability. The value should be greater than 0,
                          otherwise the behavior is undefined.
-        use_locking (bool): If `True`, updating of the var, ms, and mom tensors are protected by a lock;
-                            otherwise the behavior is undefined, but may exhibit less contention. Default: False.
+        use_locking (bool): If ``True`` , updating of the var, ms, and mom tensors are protected by a lock;
+                            otherwise the behavior is undefined, but may exhibit less contention. Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - Variable to be updated. The data type must be float16 or float32.
@@ -8634,7 +9228,7 @@ class SparseApplyRMSProp(Primitive):
         RuntimeError: If the data type of `var`, `ms`, `mom` and `grad` conversion of Parameter is not supported.
 
     Supported Platforms:
-        ``Ascend``  ``CPU`` ``GPU``
+        ``Ascend``  ``GPU`` ``CPU``
 
     Examples:
         >>> class SparseApplyRMSPropNet(nn.Cell):
@@ -8682,9 +9276,9 @@ class SparseApplyRMSProp(Primitive):
         validator.check_value_type("momentum", momentum, [float], self.name)
         validator.check_value_type("epsilon", epsilon, [float], self.name)
         validator.check_value_type("use_locking", use_locking, [bool], self.name)
-        self.epsilon = validator.check_number("epsilon", epsilon, 0.0, Rel.GT, self.name)
-        self.momentum = validator.check_number("momentum", momentum, 0.0, Rel.GE, self.name)
-        self.rho = validator.check_float_range(rho, 0.0, 1.0, Rel.INC_BOTH, "rho", self.name)
+        self.epsilon = validator.check_number("epsilon", epsilon, 0.0, validator.GT, self.name)
+        self.momentum = validator.check_number("momentum", momentum, 0.0, validator.GE, self.name)
+        self.rho = validator.check_float_range(rho, 0.0, 1.0, validator.INC_BOTH, "rho", self.name)
 
 
 class SparseApplyCenteredRMSProp(Primitive):
@@ -8711,8 +9305,9 @@ class SparseApplyCenteredRMSProp(Primitive):
         will not update in iterations during which the `grad` is zero.
 
     Args:
-        use_locking (bool): If `True`, updating of the `var`, `mg`, `ms`, and `mom` tensors will be protected by a lock.
-                            Otherwise the behavior is undefined, but may exhibit less contention. Default: False.
+        use_locking (bool): If ``True`` , updating of the `var`, `mg`, `ms`, and `mom` tensors will be protected by a
+                            lock. Otherwise the behavior is undefined, but may exhibit less contention.
+                            Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - Variable tensor to be updated. The data type must be int8, int16, int32, int64,
@@ -8751,13 +9346,9 @@ class SparseApplyCenteredRMSProp(Primitive):
         ValueError: If shape of `grad` is not same as shape of `var` except first dimension.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> import numpy as np
-        >>> from mindspore import Tensor
-        >>> import mindspore.common.dtype as mstype
-        >>> import mindspore.ops.operations.nn_ops as nn_ops
         >>> var = Tensor(np.array([[0.6, 0.4], [0.1, 0.5]]).astype(np.float32))
         >>> mg = Tensor(np.array([[0.1, 0.3], [0.1, 0.5]]).astype(np.float32))
         >>> ms = Tensor(np.array([[0.2, 0.1], [0.1, 0.2]]).astype(np.float32))
@@ -8776,10 +9367,10 @@ class SparseApplyCenteredRMSProp(Primitive):
     """
 
     __mindspore_signature__ = (
-        sig.make_sig('var', dtype=sig.sig_dtype.T),
-        sig.make_sig('mg', dtype=sig.sig_dtype.T),
-        sig.make_sig('ms', dtype=sig.sig_dtype.T),
-        sig.make_sig('mom', dtype=sig.sig_dtype.T),
+        sig.make_sig('var', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('mg', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('ms', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('mom', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
         sig.make_sig('lr', dtype=sig.sig_dtype.T),
         sig.make_sig('rho', dtype=sig.sig_dtype.T),
         sig.make_sig('momentum', dtype=sig.sig_dtype.T),
@@ -8821,10 +9412,10 @@ class ApplyKerasMomentum(Primitive):
     RuntimeError exception will be thrown when the data type conversion of Parameter is required.
 
     Args:
-        use_locking (bool): If `True`, updating of the `var` and `accum` tensors will be protected by a lock;
-                            Otherwise the behavior is undefined, but may exhibit less contention. Default: False.
-        use_nesterov (bool): If `True`, the tensor passed to compute grad will be var + momentum * accum,
-                            so in the end, the var you get is actually var + momentum * accum. Default: False.
+        use_locking (bool): If ``True`` , updating of the `var` and `accum` tensors will be protected by a lock;
+                            Otherwise the behavior is undefined, but may exhibit less contention. Default: ``False`` .
+        use_nesterov (bool): If ``True`` , the tensor passed to compute grad will be var + momentum * accum,
+                            so in the end, the var you get is actually var + momentum * accum. Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - Variable to be updated. With float16 or float32 data type.
@@ -8894,18 +9485,40 @@ class ApplyKerasMomentum(Primitive):
 
 class MultilabelMarginLoss(Primitive):
     r"""
-    MultilabelMarginLoss operation.
+    Creates a loss criterion that minimizes the hinge loss for multi-class
+    classification tasks.
+    It takes a 2D mini-batch Tensor :math:`x` as input and a 2D
+    Tensor :math:`y` containing target class indices as output.
 
-    Creates a criterion that optimizes a multi-class multi-classification
-    hinge loss (margin-based loss) between input :math:`x` (a 2D mini-batch `Tensor`)
-    and output :math:`y` (which is a 2D `Tensor` of target class indices).
+    Refer to :func:`mindspore.ops.multilabel_margin_loss` for more details.
 
-    Refer to :func:`mindspore.ops.multi_label_margin_loss` for more details.
+    Args:
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
+
+    Inputs:
+        - **x** (Tensor) - Predict data. Tensor of shape :math:`(C)` or :math:`(N, C)`, where :math:`N`
+          is the batch size and :math:`C` is the number of classes. Data type must be float16 or float32.
+        - **target** (Tensor) - Ground truth data, with the same shape as `input`, data type must be int32 and
+          label targets padded by -1.
+
+    Outputs:
+        - **y** (Union[Tensor, Scalar]) - The loss of MultilabelMarginLoss. If `reduction` is ``"none"``, its shape
+          is :math:`(N)`. Otherwise, a scalar value will be returned.
+        - **is_target** (Tensor) - Output tensor for backward input, with the same shape as `target`,
+          data type must be int32.
 
     Supported Platforms:
         ``Ascend`` ``GPU``
 
     Examples:
+       >>> import mindspore
+       >>> import numpy as np
+       >>> from mindspore import Tensor, ops
        >>> loss = ops.MultilabelMarginLoss()
        >>> x = Tensor(np.array([[0.1, 0.2, 0.4, 0.8], [0.2, 0.3, 0.5, 0.7]]), mindspore.float32)
        >>> target = Tensor(np.array([[1, 2, 0, 3], [2, 3, -1, 1]]), mindspore.int32)
@@ -8935,13 +9548,26 @@ class ApplyAdamWithAmsgrad(Primitive):
             var:=var-lr_t*m_t/(\sqrt{\hat v_t}+\epsilon) \\
         \end{array}
 
+    Inputs of `var`, `m`, `v`, `vhat` and `grad` comply with the implicit type conversion rules
+    to make the data types consistent.
+    If they have different data types, the lower priority data type will be converted to
+    the relatively highest priority data type.
+
+    Inputs of `beta1_power`, `beta1`, `beta2` and `epsilon` comply with the implicit type conversion rules
+    to make the data types consistent.
+    If they have different data types, the lower priority data type will be converted to
+    the relatively highest priority data type.
+
+    However, note that there is no implicit type conversion rule between `var` and `beta1_power`;
+    the two sets of rules are independent of each other.
+
     Args:
         beta1 (float): A Tensor. Must have the same type as beta1_power. Momentum factor. Must be a scalar.
         beta2 (float): A Tensor. Must have the same type as beta1_power. Momentum factor. Must be a scalar.
         epsilon (float): A Tensor. Must have the same type as beta1_power. Ridge term. Must be a scalar.
-        use_locking (bool): use_locking: If True , updating of the `var`, `m`, and `v` tensors will
+        use_locking (bool): use_locking: If ``True`` , updating of the `var`, `m`, and `v` tensors will
           be protected by a lock; Otherwise the behavior is undefined, but may exhibit less contention.
-          Default: False.
+          Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - Variable to be updated. The data type can be float16 or float32.
@@ -8976,7 +9602,7 @@ class ApplyAdamWithAmsgrad(Primitive):
         ValueError: If the shape of `beta1_power`, `beta2_power`, `lr` is not 0.
 
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> class ApplyAdamWithAmsgradNet(nn.Cell):
@@ -9020,17 +9646,170 @@ class ApplyAdamWithAmsgrad(Primitive):
         self.add_prim_attr("side_effect_mem", True)
 
 
-class GridSampler3D(Primitive):
-    """
-    Given an input and a grid, the output is calculated using the input values
-    and pixel positions in the grid. Only volume (5-D) input is supported.
+class ApplyAdamWithAmsgradV2(Primitive):
+    r"""
+    Update var according to the Adam algorithm.
 
-    Refer to :func:`mindspore.ops.grid_sample` for more details.
+    .. math::
+        \begin{array}{l1} \\
+            lr_t:=learning\_rate*\sqrt{1-\beta_2^t}/(1-\beta_1^t) \\
+            m_t:=\beta_1*m_{t-1}+(1-\beta_1)*g \\
+            v_t:=\beta_2*v_{t-1}+(1-\beta_2)*g*g \\
+            \hat v_t:=\max(\hat v_{t-1}, v_t) \\
+            var:=var-lr_t*m_t/(\sqrt{\hat v_t}+\epsilon) \\
+        \end{array}
+
+    All of the inputs are consistent with implicit type conversion rules,
+    which ensure that the data types are the same. If they have different data types, the lower precision data type
+    will be converted to the data type with relatively higher precision.
+
+    Args:
+        use_locking (bool): If ``True`` , updating of the `var`, `m`, and `v` tensors will
+            be protected by a lock; Otherwise the behavior is undefined, but may exhibit less contention.
+            Default: ``False`` .
+
+    Inputs:
+        - **var** (Parameter) - Variable to be updated. The data type can be float16, float32 or float64.
+        - **m** (Parameter) - The 1st moment vector in the updating formula,
+          the shape should be the same as `var`.
+        - **v** (Parameter) - The 2nd moment vector in the updating formula,
+          the shape should be the same as `var`.
+        - **vhat** (Parameter) - :math:`\hat v_t` in the updating formula,
+          the shape and data type value should be the same as `var`.
+        - **beta1_power** (Union[float, Tensor]) - :math:`beta_1^t(\beta_1^{t})` in the updating formula,
+          with float16, float32 or float64 data type.
+        - **beta2_power** (Union[float, Tensor]) - :math:`beta_2^t(\beta_2^{t})` in the updating formula,
+          with float16, float32 or float64 data type.
+        - **lr** (Union[float, Tensor]) - Learning rate, with float16, float32 or float64 data type.
+        - **beta1** (Union[float, Tensor]) - Exponential decay rate of the first moment.
+          The data type can be float16, float32 or float64.
+        - **beta2** (Union[float, Tensor]) - Exponential decay rate of the second moment.
+          The data type can be float16, float32 or float64.
+        - **epsilon** (Union[float, Tensor]) - A value added to the denominator to ensure numerical stability.
+          The data type can be float16, float32 or float64.
+        - **grad** (Tensor) - The gradient, has the same shape as `var`.
+
+    Outputs:
+        Tuple of 4 Tensors, the updated parameters.
+
+        - **var** (Tensor) - The same shape and data type as `var`.
+        - **m** (Tensor) - The same shape and data type as `m`.
+        - **v** (Tensor) - The same shape and data type as `v`.
+        - **vhat** (Tensor) - The same shape and data type as `vhat`.
+
+    Raises:
+        TypeError: If `var`, `m`, `v`, `vhat` is not a Parameter.
+        TypeError: If dtype of `var`, `m`, `v`, `vhat`, `beta1_power`, `beta2_power`,
+            `lr`, `beta1` , `beta2` , `epsilon` or `grad` is not float64, float32 or float16.
+        RuntimeError: If the data type of `var`, `m`, `v` , `vhat` and `grad` conversion of Parameter is not supported.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore.ops as ops
+        >>> import mindspore.nn as nn
+        >>> from mindspore import Tensor, Parameter
+        >>> import numpy as np
+        >>> class ApplyAdamWithAmsgradNet(nn.Cell):
+        ...     def __init__(self, use_locking=False):
+        ...         super(ApplyAdamWithAmsgradNet, self).__init__()
+        ...         self.apply_adam_with_amsgrad = ops.ApplyAdamWithAmsgradV2(use_locking)
+        ...         self.var = Parameter(Tensor(np.array([[0.2, 0.2], [0.2, 0.2]]).astype(np.float32)), name="var")
+        ...         self.m = Parameter(Tensor(np.array([[0.1, 0.2], [0.4, 0.3]]).astype(np.float32)), name="m")
+        ...         self.v = Parameter(Tensor(np.array([[0.2, 0.1], [0.3, 0.4]]).astype(np.float32)), name="v")
+        ...         self.vhat = Parameter(Tensor(np.array([[0.1, 0.2], [0.6, 0.2]]).astype(np.float32)), name="vhat")
+        ...         self.beta1 = 0.8
+        ...         self.beta2 = 0.999
+        ...         self.epsilon = 1e-8
+        ...         self.beta1_power = 0.9
+        ...         self.beta2_power = 0.999
+        ...         self.lr = 0.01
+        ...
+        ...     def construct(self, grad):
+        ...         out = self.apply_adam_with_amsgrad(self.var, self.m, self.v, self.vhat,
+        ...                                            self.beta1_power, self.beta2_power, self.lr,
+        ...                                            self.beta1, self.beta2, self.epsilon, grad)
+        ...         return out
+        >>> net = ApplyAdamWithAmsgradNet()
+        >>> grad = Tensor(np.array([[0.4, 0.2], [0.2, 0.3]]).astype(np.float32))
+        >>> output = net(grad)
+        >>> print(net.var.asnumpy())
+        [[0.19886853 0.1985858 ]
+        [0.19853032 0.19849943]]
+    """
+
+    __mindspore_signature__ = (
+        sig.make_sig('var', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('m', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('v', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('vhat', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('beta1_power', dtype=sig.sig_dtype.T),
+        sig.make_sig('beta2_power', dtype=sig.sig_dtype.T),
+        sig.make_sig('lr', dtype=sig.sig_dtype.T),
+        sig.make_sig('beta1', dtype=sig.sig_dtype.T),
+        sig.make_sig('beta2', dtype=sig.sig_dtype.T),
+        sig.make_sig('epsilon', dtype=sig.sig_dtype.T),
+        sig.make_sig('grad', dtype=sig.sig_dtype.T)
+    )
+
+    @prim_attr_register
+    def __init__(self, use_locking=False):
+        """Initialize ApplyAdamWithAmsgradv2"""
+        validator.check_value_type("use_locking", use_locking, [bool], self.name)
+        self.add_prim_attr("side_effect_mem", True)
+
+
+class GridSampler3D(Primitive):
+    """
+    Given an input and a grid, the output is calculated using the input values
+    and pixel positions in the grid. Only volume (5-D) input is supported.
+
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
+    Refer to :func:`mindspore.ops.grid_sample` for more details.
+
+    Args:
+        interpolation_mode (str, optional): An optional string specifying the interpolation method.
+            The optional values are ``"bilinear"`` or ``"nearest"`` . Default: ``"bilinear"`` .
+
+            - ``"nearest"``: Nearest neighbor interpolation. Each output pixel is assigned the value of the
+              nearest input pixel. This method is simple and fast but can result in blocky or pixelated outputs.
+            - ``"bilinear"``: Bilinear interpolation. Each output pixel is a weighted average of the four nearest input
+              pixels, computed using bilinear interpolation. This method produces smoother results compared
+              to nearest neighbor interpolation.
+
+        padding_mode (str, optional): An optional string specifying the pad method.
+            The optional values are ``"zeros"`` , ``"border"`` or ``"reflection"`` . Default: ``"zeros"`` .
+            When the sampling grid is outside input's bounds, effects of various padding modes are as follows:
+
+            - ``"zeros"``: Pads the input tensor with zeros.
+            - ``"border"``: Pads the input tensor with the values of the pixels on the border of the tensor.
+            - ``"reflection"``: Pads the input tensor by reflecting the values of the pixels at the
+              boundary of the tensor.
+
+        align_corners (bool, optional): An optional bool specifying alignment method. If set to ``True`` ,
+            the extrema (-1 and 1) are considered as referring to
+            the center points of the input’s corner pixels. If set to ``False`` , they are instead considered as
+            referring to the corner points of the input’s corner pixels, making the sampling more resolution agnostic.
+            Default: ``False`` .
+
+    Inputs:
+        - **input_x** (Tensor) - A 5-D tensor with dtype of float16, float32 or float64
+          and shape of :math:`(N, C, D_{in}, H_{in}, W_{in})`.
+        - **grid** (Tensor) - A 5-D tensor whose dtype is the same as `input_x` and whose shape is :math:`(N, D_{out},
+          H_{out}, W_{out}, 3)`.
+
+    Outputs:
+        A 5-D Tensor whose dtype is the same as `input_x` and whose shape is :math:`(N, C, D_{out}, H_{out}, W_{out})`.
+
+    Supported Platforms:
+        ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> gridsampler = ops.GridSampler3D(interpolation_mode='bilinear', padding_mode='zeros', align_corners=True)
         >>> input_x = Tensor(np.arange(32).reshape((2, 2, 2, 2, 2)).astype(np.float32))
         >>> grid = Tensor(np.arange(-0.2, 1, 0.1).reshape((2, 2, 1, 1, 3)).astype(np.float32))
@@ -9062,35 +9841,40 @@ class FractionalMaxPool(Primitive):
     r"""
     Performs fractional max pooling on the input.
 
-    Fractional max pooling is similar to regular max pooling, In regular max pooling, you downsize an
-    input set by taking the maximum value of smaller N x N subsections of the set (often 2x2), and try
-    to reduce the set by a factor of N, where N is an integer. Fractional max pooling, means that the
-    overall reduction ratio N does not have to be an integer.
-    The sizes of the pooling regions are generated randomly but are fairly uniform.
+    Fractional max pooling is similar to regular max pooling, but with the added flexibility of
+    allowing the overall reduction ratio `N` to be a non-integer value. In regular max pooling,
+    an input set is reduced in size by taking the maximum value of  `N x N` (usually 2x2)
+    subsections of the set, with the goal of reducing the set by a factor of `N`, where `N` is an integer.
+
+    In contrast, fractional max pooling uses randomly generated pool sizes that are fairly uniform in size.
 
     .. warning::
         "pooling_ratio", currently only supports row and col dimension and should be >= 1.0, the first
-        and last elements must be 1.0 because we don't allow pooling on batch and channels dimensions.
+        and last elements must be 1.0 because pooling on batch and channels dimensions is not allowed.
 
     Args:
-        pooling_ratio (list(float)): Decide the shape of output, is a list of floats that has length >= 4.
-            Pooling ratio for each dimension of value should be >=0, currently only support for row and col
-            dimension. The first and last elements must be 1.0 because we don't allow pooling on batch and
-            channels dimensions.
-        pseudo_random(bool, optional): When set to True, generates the pooling
-            sequence in a pseudo random fashion, otherwise, in a random fashion.
-            Check paper Benjamin Graham, Fractional Max-Pooling for difference between pseudo_random and
-            random. Defaults to False.
-        overlapping(bool, optional): When set to True, it means when pooling,
-            the values at the boundary of adjacent pooling cells are used by both cells.
-            When set to False, the values are not reused. Defaults to False.
-        deterministic(bool, optional): When set to True, a fixed pooling region
-            will be used when iterating over a FractionalMaxPool node in the computation graph. Mainly
-            used in unit test to make FractionalMaxPool deterministic. When set to False,
-            fixed pool regions will not be used. Defaults to False.
-        seed(int, optional): If either seed or seed2 are set to be non-zero, the random number generator is
-            seeded by the given seed. Otherwise, it is seeded by a random seed. Defaults to 0.
-        seed2(int, optional): An second seed to avoid seed collision. Defaults to 0.
+        pooling_ratio (list(float)): Decide the shape of output, is a list of float numbers has length >= 4.
+            Pooling ratio for each dimension of value should not be less than 0, currently only support
+            for row and col dimension.
+        pseudo_random(bool, optional): Generate the pooling sequence either randomly or pseudo-randomly.
+            If the pseudo_random parameter is set to ``True`` , the sequence will be generated in a
+            pseudo-random fashion, otherwise it will be generated randomly.
+            Refer to `Fractional Max-Pooling  <https://arxiv.org/pdf/1412.6071>`_
+            by Benjamin Graham to understand the distinction between the two.
+            Default: ``False`` .
+        overlapping(bool, optional): When set to ``True`` , the values at the boundary of adjacent pooling cells
+            will be shared by both cells during pooling process. When set to ``False`` , the values are not reused.
+            Default: ``False`` .
+        deterministic(bool, optional): If deterministic is set to ``True`` , a fixed pooling region will be used
+            in the computation graph, ensuring that the FractionalMaxPool is deterministic.
+            This is often used in unit tests. When set to ``False`` , fixed pool regions will not be used.
+            Default: ``False`` .
+        seed(int, optional): If either seed or seed2 are set to a non-zero value, the random number
+            generator will be seeded using the specified seed. If neither seed nor seed2 are set,
+            the generator will be seeded by a random seed.
+            Default: ``0`` .
+        seed2(int, optional): The second seed to avoid seed collision.
+            Default: ``0`` .
 
     Inputs:
         - **x** (Tensor) -The data type must be one of the following types: float32, float64, int32, int64.
@@ -9112,7 +9896,7 @@ class FractionalMaxPool(Primitive):
         ValueError: If the first and last element of `pooling_ratio` is not equal to 1.0.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> x = np.array([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]).reshape([1,4,4,1]).astype(np.int64)
@@ -9143,9 +9927,10 @@ class FractionalMaxPool(Primitive):
 
 class FractionalMaxPool3DWithFixedKsize(Primitive):
     r"""
-    This operator applies a 3D fractional max pooling over an input signal composed of several input planes.
-    The max-pooling operation is applied in kD x kH x kW regions by a stochastic step size determined
-    by the target output size.
+    Applies a 3D fractional max pooling to an input signal composed of multiple input planes.
+    The max-pooling operation is applied in :math:`(kD, kH, kW)` regions by a stochastic step size determined by
+    the target output size `output_shape`.
+
     The number of output features is equal to the number of input planes.
 
     Refer to the paper `Fractional MaxPooling by Ben Graham <https://arxiv.org/abs/1412.6071>`_  for more details.
@@ -9153,15 +9938,16 @@ class FractionalMaxPool3DWithFixedKsize(Primitive):
     The input and output data format can be "NCDHW" and "NDHWC". N is the batch size, C is the number of channels,
     D the feature depth, H is the feature height, and W is the feature width.
 
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
     Args:
-        ksize (Union[float, tuple]): The target ksize is D x H x W.
-            ksize can be a tuple, or a single K for K x K x K.
-            specifying the window size (D, H, W) of the input tensor.
-        output_shape (Union[int, tuple]): The target output_shape is D x H x W.
-            output_shape can be a tuple, or a single H for H x H x H.
-            specifying the size (D, H, W) of the output tensor.
-        data_format (str) : The optional value for data format.
-            Currently support 'NCDHW' and 'NHDWC'. Default: 'NCDHW'.
+        ksize (Union[float, tuple]): Size of the pooling window. `ksize` can be a tuple of three values specify a
+            shape :math:`(k_D, k_H, k_W)`, or a single int `K` for :math:`(K, K, K)`.
+        output_shape (Union[int, tuple]): The target output shape. `output_shape` can be a tuple of three values
+            specify a shape :math:`(D_{out}, H_{out}, W_{out})`, or a single float `S` for :math:`(S, S, S)`.
+        data_format (str, optional): The optional value for data format.
+            Currently support ``'NCDHW'`` and ``'NHDWC'`` . Default: ``'NCDHW'`` .
 
     Inputs:
         - **x** (Tensor) - The input of FractionalMaxPool3DWithFixedKsize, which is a 4D or 5D tensor.
@@ -9193,19 +9979,19 @@ class FractionalMaxPool3DWithFixedKsize(Primitive):
         ValueError: If the third dimension size of `random_samples` is not 3.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> x = Tensor(np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
         ...       .reshape([1, 1, 2, 2, 4]), mstype.float32)
         >>> random_samples = Tensor(np.array([0.7, 0.7, 0.7]).reshape([1, 1, 3]), mstype.float32)
-        >>> ksize = (1.0, 1.0, 1.0)
+        >>> ksize = (1, 1, 1)
         >>> output_shape = (1, 1, 2)
         >>> net = ops.FractionalMaxPool3DWithFixedKsize(ksize = ksize, output_shape = output_shape)
         >>> output, argmax = net(x, random_samples)
         >>> print(output)
-        >>> print(argmax)
         [[[[[13. 16.]]]]]
+        >>> print(argmax)
         [[[[[12 15]]]]]
     """
 
@@ -9213,15 +9999,15 @@ class FractionalMaxPool3DWithFixedKsize(Primitive):
     def __init__(self, ksize, output_shape, data_format="NCDHW"):
         """Initialize FractionalMaxPool3DWithFixedKsize."""
         self.init_prim_io_names(inputs=["x", "random_samples"], outputs=["y", "argmax"])
-        validator.check_value_type("ksize", ksize, [float, tuple], self.name)
+        validator.check_value_type("ksize", ksize, [int, tuple], self.name)
         self.ksize = ksize
-        if isinstance(self.ksize, float):
+        if isinstance(self.ksize, int):
             self.ksize = (ksize, ksize, ksize)
         if len(self.ksize) != 3:
-            raise ValueError(f"For '{self.name}', attr 'ksize' must be an positive float number or a tuple of "
-                             f"three float numbers, but got {len(self.ksize)} numbers.")
+            raise ValueError(f"For '{self.name}', attr 'ksize' must be an positive int number or a tuple of "
+                             f"three positive int numbers, but got {len(self.ksize)} numbers.")
         for item in self.ksize:
-            validator.check_positive_float(item, 'ksize item', self.name)
+            validator.check_positive_int(item, 'ksize item', self.name)
         self.output_shape = validator.check_value_type("output_shape", output_shape, [int, tuple], self.name)
         self.data_format = validator.check_string(data_format, ['NCDHW', 'NDHWC'], 'data_format', self.name)
         self.output_shape = _check_3d_int_or_tuple("output_shape", output_shape,
@@ -9234,11 +10020,10 @@ class FractionalAvgPool(Primitive):
     r"""
     Performs fractional avg pooling on the input.
 
-    Fractional avg pooling is similar to regular avg pooling, In regular avg pooling, you downsize an
-    input set by taking the avgrage value of smaller N x N subsections of the set (often 2x2), and try
-    to reduce the set by a factor of N, where N is an integer. Fractional avg pooling, means that the
-    overall reduction ratio N does not have to be an integer. In each pooling region, a mean operation
-    is performed.
+    Fractional avg pooling is similar to regular avg pooling, but with the added flexibility of
+    allowing the overall reduction ratio `N` to be a non-integer value. In regular avg pooling,
+    an input set is reduced in size by taking the average value of  `N x N` (usually 2x2)
+    subsections of the set, with the goal of reducing the set by a factor of `N`, where `N` is an integer.
 
     .. warning::
         "pooling_ratio", currently only supports row and col dimension and should be >= 1.0, the first
@@ -9249,20 +10034,25 @@ class FractionalAvgPool(Primitive):
             Pooling ratio for each dimension of value should be >=0, currently only support for row and col
             dimension. The first and last elements must be 1.0 because we don't allow pooling on batch and
             channels dimensions.
-        pseudo_random(bool, optional): When set to True, generates the pooling
-            sequence in a pseudorandom fashion, otherwise, in a random fashion.
-            Check paper Benjamin Graham, Fractional Max-Pooling for difference between pseudo_random and
-            random. Defaults to False.
-        overlapping(bool, optional): When set to True, it means when pooling,
-            the values at the boundary of adjacent pooling cells are used by both cells.
-            When set to False, the values are not reused. Defaults to False.
-        deterministic(bool, optional): When set to True, a fixed pooling region
-            will be used when iterating over a FractionalAvgPool node in the computation graph. Mainly
-            used in unit test to make FractionalAvgPool deterministic. When set to False,
-            fixed pool regions will not be used. Defaults to False.
-        seed(int, optional): If either seed or seed2 are set to be non-zero, the random number generator
-            is seeded by the given seed. Otherwise, it is seeded by a random seed. Defaults to 0.
-        seed2(int, optional): An second seed to avoid seed collision. Defaults to 0.
+        pseudo_random(bool, optional): Generate the pooling sequence either randomly or pseudo-randomly.
+            If the pseudo_random parameter is set to ``True`` , the sequence will be generated in a
+            pseudo-random fashion, otherwise it will be generated randomly.
+            Refer to `Fractional Max-Pooling  <https://arxiv.org/pdf/1412.6071>`_
+            by Benjamin Graham to understand the distinction between the two.
+            Default: ``False`` .
+        overlapping(bool, optional): When set to ``True`` , the values at the boundary of adjacent pooling cells
+            will be shared by both cells during pooling process. When set to ``False`` , the values are not reused.
+            Default: ``False`` .
+        deterministic(bool, optional): If deterministic is set to ``True`` , a fixed pooling region will be used
+            in the computation graph, ensuring that the FractionalAvgPool is deterministic.
+            This is often used in unit tests. When set to ``False`` , fixed pool regions will not be used.
+            Default: ``False`` .
+        seed(int, optional): If either seed or seed2 are set to a non-zero value, the random number
+            generator will be seeded using the specified seed. If neither seed nor seed2 are set,
+            the generator will be seeded by a random seed.
+            Default: ``0`` .
+        seed2(int, optional): The second seed to avoid seed collision.
+            Default: ``0`` .
 
     Inputs:
         - **x** (Tensor) -The data type must be one of the following types: float32, float64, int32, int64.
@@ -9284,7 +10074,7 @@ class FractionalAvgPool(Primitive):
         ValueError: If the first and last element of `pooling_ratio` is not equal to 1.0.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> x = np.array([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]).reshape([1,4,4,1]).astype(np.int64)
@@ -9315,20 +10105,23 @@ class FractionalAvgPool(Primitive):
 
 class NthElement(Primitive):
     r"""
-    Finds values of the n-th order statistic for the last dimension.
-    If the input is a vector (rank-1), finds the entries which is the nth-smallest value in
-    the vector and outputs their values as scalar tensor.
-    For matrices (resp. higher rank input), computes the entries which is the nth-smallest value in
-    each row (resp. vector along the last dimension). Thus, values.shape = input.shape[:-1].
+    Computes the n-th smallest values for the last dimension of the input Tensor.
+
+    - When `input` is a 1-D Tensor (i.e. Vector), it finds the nth-smallest value in the vector
+      and outputs its value as a scalar Tensor.
+    - When `input` is matrices or has higher rank, it finds the nth-smallest value
+      in each row (or vector along the last dimension) and outputs
+      these values in a Tensor with shape of `values.shape = input.shape[:-1]`.
 
     Args:
-        reverse (bool, optional): An optional bool. When set to True, find the nth-largest value
-          in the vector and vice versa. Default: False.
+        reverse (bool, optional): An optional bool. If set to ``True`` , it find the :math:`n`-th largest value
+          in the vector instead of the nth-smallest. Default: ``False`` .
 
     Inputs:
-        - **input** (Tensor) - A Tensor. 1-D or higher with last dimension at least :math:`n+1`.
-        - **n** (Union[int, Tensor]) -  If the n is a tensor, it should be a 0-D tensor, dtype is int32.
-          Valid range of n is :math:`[0, input.shape[-1])`.
+        - **input** (Tensor) - Input Tensor with 1-D or higher dimension.
+        - **n** (Union[int, Tensor]) -  If the `n` is a Tensor, it should be a 0-D Tensor, dtype is int32.
+          Valid range of `n` is :math:`[0, input.shape[-1])` where :math:`input.shape[-1]` is
+          last dimension size of `input`.
 
     Outputs:
         - **values** (Tensor) - Its shape satisfies:  `values`.shape = `input`.shape[:-1].
@@ -9340,7 +10133,7 @@ class NthElement(Primitive):
         ValueError**: If n is out of :math:`[0, input.shape[-1])`.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> input = Tensor(np.array([[1,2,3],[4,5,6]]) , mstype.int8)
@@ -9368,7 +10161,7 @@ class PSROIPooling(Primitive):
         spatial_scale (float): a scaling factor that maps the box coordinates to the input coordinates.
                                For example, if your boxes are defined on the scale of a 224x224 image and
                                your input is a 112x112 feature map (resulting from a 0.5x scaling of the original
-                               image), you’ll want to set this to 0.5.
+                               image), you'll want to set this to 0.5.
         group_size (int): the size of the output (in pixels) after the pooling is performed, as (height, width).
         output_dim (int): the dim of the output after the pooling is performed.
 
@@ -9428,9 +10221,9 @@ class PSROIPooling(Primitive):
         ...                                       group_size=7)
         >>> out = psROIPooling(features, rois)
         >>> print(out.shape)
-            (4, 3, 7, 7)
+        (4, 3, 7, 7)
         >>> print(out.dtype)
-            Float32
+        Float32
     """
 
     @prim_attr_register
@@ -9475,13 +10268,15 @@ class TripletMarginLoss(Primitive):
         d(x_i, y_i) = \left\lVert {\bf x}_i - {\bf y}_i \right\rVert_p
 
     Args:
-        p (int, optional): The norm degree for pairwise distance. Default: 2.
-        eps (float, optional): Default: 1e-06.
-        swap (bool, optional): The distance swap is described in detail in the paper
-            `Learning local feature descriptors with triplets and shallow convolutional neural networks`
-            by V. Balntas, E. Riba et al. Default: "False".
-        reduction (str, optional): Apply specific reduction method to the
-            output: 'none', 'mean', 'sum'. Default: "mean".
+        p (int, optional): The norm degree for pairwise distance. Default: ``2`` .
+        eps (float, optional): Default: ``1e-6`` .
+        swap (bool, optional): The distance swap. Default: ``False`` .
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **x** (Tensor) - A sample randomly selected from the training set. Data type must be BasicType.
@@ -9492,7 +10287,7 @@ class TripletMarginLoss(Primitive):
         - **margin** (Tensor) - Make a margin between the positive pair and the negative pair.
 
     Outputs:
-        Union[Tensor, Scalar], if `reduction` is "none", its shape is :math:`(N)`.
+        Union[Tensor, Scalar], if `reduction` is ``"none"``, its shape is :math:`(N)`.
         Otherwise, a scalar value will be returned.
 
     Raises:
@@ -9509,12 +10304,15 @@ class TripletMarginLoss(Primitive):
           is bigger than or equal to 8.
         ValueError: If length of shape of `margin` is not 0.
         ValueError: If shape of `x`, `positive` and `negative` cannot broadcast.
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``GPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> loss = ops.TripletMarginLoss()
         >>> x = Tensor(np.array([[0.3, 0.7], [0.5, 0.5]]), mindspore.float32)
         >>> positive = Tensor(np.array([[0.4, 0.6], [0.4, 0.6]]), mindspore.float32)
@@ -9542,7 +10340,7 @@ class DeformableOffsets(Primitive):
     Refer to :func:`mindspore.ops.deformable_conv2d` for more details.
 
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
     """
 
     @prim_attr_register
@@ -9590,42 +10388,59 @@ class DeformableOffsets(Primitive):
 
 class GridSampler2D(Primitive):
     """
-    This operation samples 2d input_x by using interpolation based on flow field grid, which is usually gennerated by
-    :func:`mindspore.ops.affine_grid`.
+    This operation samples 2d `input_x` by using interpolation based on flow field grid,
+    which is usually gennerated by :func:`mindspore.ops.affine_grid`.
+
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
+    Refer to :func:`mindspore.ops.grid_sample` for more details.
 
     Args:
-        interpolation_mode (str): An optional string specifying the interpolation method. The optional values are
-            "bilinear" or "nearest". Default: "bilinear".
-        padding_mode (str): An optional string specifying the pad method. The optional values are "zeros", "border" or
-            "reflection". Default: "zeros".
-        align_corners (bool): An optional bool. When set to True, the centers of the corner pixels of the input
-            and output tensors are aligned. When set to False, it is not aligned. Defaults to False.
+        interpolation_mode (str, optional): An optional string specifying the interpolation method.
+            The optional values are
+            ``"bilinear"`` or ``"nearest"`` . Default: ``"bilinear"`` .
+
+            - ``"nearest"``: Nearest neighbor interpolation. Each output pixel is assigned the value of the
+              nearest input pixel. This method is simple and fast but can result in blocky or pixelated outputs.
+            - ``"bilinear"``: Bilinear interpolation. Each output pixel is a weighted average of the four nearest input
+              pixels, computed using bilinear interpolation. This method produces smoother results compared
+              to nearest neighbor interpolation.
+
+        padding_mode (str, optional): An optional string specifying the pad method.
+            The optional values are ``"zeros"`` , ``"border"`` or ``"reflection"`` . Default: ``"zeros"`` .
+            When the sampling grid is outside input's bounds, effects of various padding modes are as follows:
+
+            - ``"zeros"``: Pads the input tensor with zeros.
+            - ``"border"``: Pads the input tensor with the values of the pixels on the border of the tensor.
+            - ``"reflection"``: Pads the input tensor by reflecting the values of the pixels at the
+              boundary of the tensor.
+
+        align_corners (bool, optional): An optional bool. When set to ``True`` ,
+            the centers of the corner pixels of the input
+            and output tensors are aligned. When set to ``False`` , it is not aligned. Default: ``False`` .
 
     Inputs:
-        - **input_x** (Tensor) - A 4-D tensor with dtype of float16 or float32 and shape of :math:`(N, C,
-          H_{in}, W_{in})`.
-        - **grid** (Tensor) - A 4-D tensor whose dtype is the same as `input_x` and whose shape is :math:`(N,
-          H_{out}, W_{out}, 2)`. Used to specify the sampling pixel locations normalized by the input spatial
+        - **input_x** (Tensor) - A 4-D tensor with shape
+          :math:`(N, C, H_{in}, W_{in})`. Supported dtypes:
+
+          - Ascend: float16, float32.
+          - GPU/CPU: float16, float32, float64.
+
+        - **grid** (Tensor) - A 4-D tensor whose dtype is the same as `input_x` and whose shape is
+          :math:`(N, H_{out}, W_{out}, 2)`.
+          Used to specify the sampling pixel locations normalized by the input spatial
           dimensions.
 
     Outputs:
-        A 4-D Tensor whose dtype is the same as `input_x` and whose shape is :math:`(N, C, H_{out}, W_{out})`.
-
-    Raises:
-        TypeError: If `input_x` or `grid` is not a Tensor.
-        TypeError: If the dtypes of `input_x` and `grid` are inconsistent.
-        TypeError: If the dtype of `input_x` or `grid` is not a valid type.
-        TypeError: If `align_corners` is not a boolean value.
-        ValueError: If the rank of `input_x` or `grid` is not equal to 4.
-        ValueError: If the first dimension of `input_x` is not equal to that of `grid`.
-        ValueError: If the forth dimension of `grid` is not equal to 2.
-        ValueError: If `interpolation_mode` is not "bilinear", "nearest" or a string value.
-        ValueError: If `padding_mode` is not "zeros", "border", "reflection" or a string value.
+       A 4-D Tensor whose dtype is the same as `input_x` and whose shape is :math:`(N, C, H_{out}, W_{out})`.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> gridsampler = ops.GridSampler2D(interpolation_mode='bilinear', padding_mode='zeros', align_corners=True)
         >>> input_x = Tensor(np.arange(16).reshape((2, 2, 2, 2)).astype(np.float32))
         >>> grid = Tensor(np.arange(-9, 9, 0.5).reshape((2, 3, 3, 2)).astype(np.float32))
@@ -9661,37 +10476,26 @@ class Pdist(Primitive):
     r"""
     Computes the p-norm distance between each pair of row vectors in the input.
 
-    .. math::
-
-        y[n] = \sqrt[p]{{\mid x_{i} - x_{j} \mid}^p},
-
-    where :math:`x_{i}, x_{j}` are two different row vectors in the input.
+    Refer to :func:`mindspore.ops.pdist` for more details.
 
     Args:
-        p (float): p value for the p norm distance to calculate between each vector pair ∈[0,∞]. Default: 2.0.
+        p (float, optional): The order of norm distance, :math:`p∈[0, ∞)`. Default: ``2.0`` .
 
     Inputs:
-        - **x** (Tensor) - Input tensor with dtype of float16 or float32 and shape of :math:`(N, M)`.
+        - **x** (Tensor) - Input tensor of shape :math:`(*B, N, M)`. :math:`*B` is batch size,
+          one-dim or multi-dim. Supported dtypes: float16, float32 or float64.
 
     Outputs:
-        Tensor, has the same dtype as `x`, whose shape is :math:`(N * (N - 1) / 2)`.
-
-    Raises:
-        TypeError: If `x` is not a Tensor.
-        TypeError: If dtype of `x` is not float16, float32 or float64.
-        TypeError: If `p` is not a float.
-        ValueError: If `p` is a negative float.
-        ValueError: If dimension of `x` is not 2.
+        Tensor, has the same dtype as `x`.
 
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
-        >>> from mindspore import Tensor
-        >>> from mindspore.ops.operations.nn_ops import Pdist
+        >>> from mindspore import Tensor, ops
         >>> import numpy as np
         >>> x = Tensor(np.array([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]]).astype(np.float32))
-        >>> op = Pdist(p=2.0)
+        >>> op = ops.Pdist(p=2.0)
         >>> y = op(x)
         >>> print(y)
         [1.4142135 2.828427  1.4142135]
@@ -9713,44 +10517,43 @@ class UpsampleNearest3D(Primitive):
     This operator scale up the volumetric input with specified `output_size` or `scales` factors, using nearest
     neighbor algorithm.
 
-    One of `output_size` or `scales` must be given, and cannot specify both.
-
-    Args:
-        output_size (Union[tuple[int], list[int]], optional): A tuple or list of int
-            specifying the output volumetric size.
-            Default: None.
-        scales (Union[tuple[float], list[float]], optional): A tuple or list of float
-            specifying the upsampling factors.
-            Default: None.
+    One of `output_size` or `scales` must be given, and can not specified both at the same time.
 
     Inputs:
-        - **x** (Tensor) - 5D tensor of shape :math:`(N, C, D_{in}, H_{in}, W_{in})`. Must be one of the
-          following types: [float16, float32, float64].
+        - **x** (Tensor) - 5D tensor of shape :math:`(N, C, D_{in}, H_{in}, W_{in})`.
+          Supporting types: [float16, float32, float64].
+        - **output_size** (Union[tuple[int], list[int]]): A tuple or list of int specifying the output volumetric size.
+          Default: ``None``.
+        - **scales** (Union[tuple[float], list[float]]): A tuple or list of float specifying the upsampling factors.
+          Default: ``None``.
 
     Outputs:
-        - **y** (Tensor) - Upsampled output with the same data type as `x`.
-          Tensor of shape :math:`(N, C, D_{out}, H_{out}, W_{out})`.
+        - **y** (Tensor) - Upsampled output with the same type as `x` , whose shape is
+          :math:`(N, C, D_{out}, H_{out}, W_{out})`.
 
     Raises:
-        TypeError: When `output_size` is not None and `output_size` is not list[int] or tuple[int].
-        TypeError: When `scales` is not None and `scales` is not list[float] or tuple[float].
-        TypeError: If dtype of `x` is not int [float16, float32, float64].
-        ValueError: If any value of `output_size` is negative or zero when `output_size` is not empty.
-        ValueError: If any value of `scales` is negative or zero when `scales` is not empty.
+        TypeError: When `output_size` is not ``None`` and `output_size` is not list[int] or tuple[int].
+        TypeError: When `scales` is not ``None`` and `scales` is not list[float] or tuple[float].
+        TypeError: If dtype of `x` is not int [uint8, float16, float32, float64].
+        ValueError: If any value of `output_size` is negative or zero when `output_size` is not ``None``.
+        ValueError: If any value of `scales` is negative or zero when `scales` is not ``None``.
         ValueError: If shape of `x` is not 5D.
         ValueError: If none of `scales` and `output_size` is specified or both specified.
         ValueError: If size of `scales` is not equal 3 when `scales` is specified.
         ValueError: If size of `output_size` is not equal 3 when `output_size` is specified.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
+        >>> from mindspore import dtype as mstype
         >>> x = Tensor(np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
         ...       .reshape([1, 1, 2, 2, 4]), mstype.float32)
         >>> output_size = [3, 4, 5]
-        >>> net = ops.UpsampleNearest3D(output_size = output_size)
-        >>> output = net(x)
+        >>> net = ops.UpsampleNearest3D()
+        >>> output = net(x, output_size, None)
         >>> print(output)
         [[[[[ 1.  1.  2.  3.  4.]
             [ 1.  1.  2.  3.  4.]
@@ -9767,21 +10570,9 @@ class UpsampleNearest3D(Primitive):
     """
 
     @prim_attr_register
-    def __init__(self, output_size=None, scales=None):
+    def __init__(self):
         """Initialize UpsampleNearest3D."""
-        self.init_prim_io_names(inputs=['x'], outputs=['y'])
-        if output_size is None:
-            output_size = []
-        if scales is None:
-            scales = []
-        validator.check_value_type('output_size', output_size, [tuple, list], self.name)
-        for item in output_size:
-            validator.check_int(item, 0, Rel.GT, 'output_size_item', self.name)
-        validator.check_value_type('scales', scales, [tuple, list], self.name)
-        for item in scales:
-            validator.check_float(item, 0, Rel.GT, 'scales_item', self.name)
-        self.add_prim_attr('output_size', output_size)
-        self.add_prim_attr('scales', scales)
+        self.init_prim_io_names(inputs=['x', 'output_size', 'scales'], outputs=['y'])
 
 
 class SparseApplyAdagradDA(Primitive):
@@ -9805,8 +10596,8 @@ class SparseApplyAdagradDA(Primitive):
     relatively highest priority data type.
 
     Args:
-        use_locking (bool): If `True`, updating of the `var` and `accum` tensors will be protected by a lock.
-                            Otherwise the behavior is undefined, but may exhibit less contention. Default: False.
+        use_locking (bool): If ``True`` , updating of the `var` and `accum` tensors will be protected by a lock.
+                            Otherwise the behavior is undefined, but may exhibit less contention. Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - Variable to be updated.
@@ -9844,16 +10635,12 @@ class SparseApplyAdagradDA(Primitive):
                       conversion of Parameter is not supported.
 
     Supported Platforms:
-        ``CPU``
+        ``GPU`` ``CPU``
 
     Examples:
-        >>> import numpy as np
-        >>> from mindspore import Tensor
-        >>> import mindspore.common.dtype as mstype
-        >>> import mindspore.ops.operations.nn_ops as nn_ops
-        >>> var = Tensor(np.array([[1,2], [1,2]]).astype(np.float32))
-        >>> grad_accum = Tensor(np.array([[2,1], [3,1]]).astype(np.float32))
-        >>> grad_square_accum = Tensor(np.array([[4,1], [5,1]]).astype(np.float32))
+        >>> var = Parameter(Tensor(np.array([[1,2], [1,2]]).astype(np.float32)))
+        >>> grad_accum = Parameter(Tensor(np.array([[2,1], [3,1]]).astype(np.float32)))
+        >>> grad_square_accum = Parameter(Tensor(np.array([[4,1], [5,1]]).astype(np.float32)))
         >>> grad = Tensor(np.array([[5,1], [6,1]]).astype(np.float32))
         >>> indices = Tensor(np.array([0, 1], dtype=np.int32))
         >>> lr = Tensor(2, mstype.float32)
@@ -9869,9 +10656,9 @@ class SparseApplyAdagradDA(Primitive):
     """
 
     __mindspore_signature__ = (
-        sig.make_sig('var', dtype=sig.sig_dtype.T),
-        sig.make_sig('grad_accum', dtype=sig.sig_dtype.T),
-        sig.make_sig('grad_square_accum', dtype=sig.sig_dtype.T),
+        sig.make_sig('var', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('grad_accum', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('grad_square_accum', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
         sig.make_sig('grad', dtype=sig.sig_dtype.T),
         sig.make_sig('indices', dtype=sig.sig_dtype.T1),
         sig.make_sig('lr', dtype=sig.sig_dtype.T),
@@ -9905,10 +10692,10 @@ class SparseApplyMomentum(Primitive):
     the relatively highest priority data type.
 
     Args:
-        use_locking (bool): If `True`, the `var` and `accum` tensors will be protected from being updated.
-            Default: False.
+        use_locking (bool): If ``True`` , the `var` and `accum` tensors will be protected from being updated.
+            Default: ``False`` .
         use_nesterov (bool): If `True`, the tensor passed to compute grad will be var + momentum * accum,
-            so in the end, the var you get is actually var + momentum * accum. Default: False.
+            so in the end, the var you get is actually var + momentum * accum. Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - Variable tensor to be updated. The data type must be int8, int16, int32, int64,
@@ -9941,7 +10728,7 @@ class SparseApplyMomentum(Primitive):
                       is not supported.
 
     Supported Platforms:
-        ``CPU``
+        ``GPU`` ``CPU``
 
     Examples:
         >>> import mindspore.ops.operations.nn_ops as nn_ops
@@ -9991,8 +10778,8 @@ class SparseApplyProximalGradientDescent(Primitive):
     the relatively highest priority data type.
 
     Args:
-        use_locking (bool): If `True`, the `var` tensors will be protected from being updated.
-            Default: False.
+        use_locking (bool): If ``True`` , the `var` tensors will be protected from being updated.
+            Default: ``False`` .
 
     Inputs:
         - **var** (Parameter) - Variable tensor to be updated. The data type must be int8, int16, int32, int64,
@@ -10025,7 +10812,7 @@ class SparseApplyProximalGradientDescent(Primitive):
                       is not supported.
 
     Supported Platforms:
-        ``CPU``
+        ``GPU`` ``CPU``
 
     Examples:
         >>> import mindspore.ops.operations.nn_ops as nn_ops
@@ -10043,7 +10830,7 @@ class SparseApplyProximalGradientDescent(Primitive):
     """
 
     __mindspore_signature__ = (
-        sig.make_sig('var', dtype=sig.sig_dtype.T),
+        sig.make_sig('var', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
         sig.make_sig('alpha', dtype=sig.sig_dtype.T),
         sig.make_sig('l1', dtype=sig.sig_dtype.T),
         sig.make_sig('l2', dtype=sig.sig_dtype.T),
@@ -10080,8 +10867,8 @@ class NuclearNorm(Primitive):
             dimensions of `x` to calculate the matrix nuclear norm
             across. If `dim` is None, the nuclear norm will be calculated across all dimensions of `x`. The length of
             `dim` should be 2. The value in `dim` should be in this range:[-x_rank, x_rank). x_rank is the dimension of
-            Tensor `x`. The value of `dim[0]` or `dim[1]` can not point to the same dimension. Default: None.
-        keepdim (bool, optional): Whether the output Tensor have `dim` retained or not. Default: False.
+            Tensor `x`. The value of `dim[0]` or `dim[1]` can not point to the same dimension. Default: ``None`` .
+        keepdim (bool, optional): Whether the output Tensor have `dim` retained or not. Default: ``False`` .
 
     Inputs:
         - **x** (Tensor) - Input to compute the matrix nuclear norm. The dimension of `x` should be greater than or
@@ -10104,7 +10891,7 @@ class NuclearNorm(Primitive):
                     x_rank is the dimension of Tensor `x`.
 
     Supported Platforms:
-        ``CPU``
+        ``Ascend`` ``CPU``
 
     Examples:
         >>> input_x = Tensor(np.array([[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
@@ -10139,7 +10926,7 @@ class NuclearNorm(Primitive):
         """Initialize NuclearNorm."""
         validator.check_value_type("dim", dim, [list, tuple, type(None)], self.name)
         if dim is not None:
-            validator.check_int(len(dim), 2, Rel.EQ, 'length of dim_size', self.name)
+            validator.check_int(len(dim), 2, validator.EQ, 'length of dim_size', self.name)
             validator.check_is_int(dim[0], "dim[0]", self.name)
             validator.check_is_int(dim[1], "dim[1]", self.name)
         else:
@@ -10148,44 +10935,38 @@ class NuclearNorm(Primitive):
 
 
 class GLU(Primitive):
-    r"""The gated linear unit.
+    r"""
+    Computes GLU (Gated Linear Unit activation function) of input tensors.
 
-    .. math ::
-        \begin{array}{ll} \\
-            \text{GLU}(a, b) = a \otimes \sigma(b)
-        \end{array}
-    where `input` is split in half along `dim` to form `a` and `b`,
-    σ is the sigmoid function and ⊗ is the element-wise product between matrices.
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
+    Refer to :func:`mindspore.ops.glu` for more details.
 
     Args:
-        axis (int): Dimension on which to split the input.
-            The value of `axis` must be in the range [-rank(`x`), rank(`x`)). Default: -1.
+        axis (int, optional): Axis on which to split the input.
+            The value of `axis` must be an int within range [-rank(`x`), rank(`x`)).
+            Default: ``-1`` , specifying the last dimension.
 
     Inputs:
         - **x** (Tensor) - Input tensor. `x.shape[axis]` must be even.
 
     Outputs:
-        - **y** (Tensor) - The output of Glu, has the same data type with `x`.
-        With the same shape as `x`, except for the dimension of `axis`, y.shape[axis] = x.shape[axis] / 2.
-
-    Raises:
-        TypeError: If data type of `x` is not one of the following: float16, float32, float64.
-        TypeError: If data type of `axis` is not int.
-        ValueError: If `axis` is not in the range [-rank(`x`), rank(`x`)).
-        ValueError: If the dimension of the `x` is not equal or greater than 1.
-        ValueError: If `x.shape[axis]` is not even.
+        Tensor, has the same data type with `x`.
 
     Supported Platforms:
         ``Ascend`` ``CPU``
 
     Examples:
-        >>> from mindspore.ops.operations import nn_ops
+        >>> from mindspore import ops, Tensor
+        >>> from mindspore import dtype as mstype
+        >>> import numpy as np
         >>> axis = 0
         >>> x = Tensor(np.array([0.3220, 0.9545, 0.7879, 0.0975, 0.3698,
         ...                            0.5135, 0.5740, 0.3435, 0.1895, 0.8764,
         ...                            0.4980, 0.9673, 0.9879, 0.6988, 0.9022,
         ...                            0.9304, 0.1558, 0.0153, 0.1559, 0.9852]).reshape([2, 2, 5]), mstype.float32)
-        >>> glu = nn_ops.GLU(axis=axis)
+        >>> glu = ops.GLU(axis=axis)
         >>> y = glu(x)
         >>> print(y)
         [[[0.20028052 0.6916126  0.57412136 0.06512236 0.26307625]
@@ -10201,21 +10982,20 @@ class GLU(Primitive):
 class FractionalMaxPoolWithFixedKsize(Primitive):
     r"""
     Applies a 2D fractional max pooling to an input signal composed of multiple input planes.
-    The max-pooling operation is applied in kH x kW regions by a stochastic step size determined by
-    the target output size. For any input size, the size of the specified output is H x W. The number
-    of output features is equal to the number of input planes.
+    The max-pooling operation is applied in :math:`(kH, kW)` regions by a stochastic step size determined by
+    the target output size `output_shape`.
+
+    The number of output features is equal to the number of input planes.
 
     Fractional MaxPooling is described in the paper `Fractional Max-Pooling <https://arxiv.org/pdf/1412.6071>`_.
 
     Args:
-        ksize (Union[int, tuple[int]]): The size of kernel window used to take the maximum value.
-            The target ksize is H x W. ksize can be a tuple, or a single K for K x K.
-            specifying the window size (H, W) of the input tensor.
-        output_shape (Union[int, tuple[int]]): The target output size is H x W.
-            output_shape can be a tuple, or a single H for H x H.
-            specifying the size (H, W) of the output tensor.
-        data_format (str, optional): The optional value for data format, is 'NCHW'.
-            Default: "NCHW".
+        ksize (Union[int, tuple[int]]): Size of the pooling window. `ksize` can be a tuple of two values
+          specify a shape :math:`(k_H, k_W)`, or a single int `K` for :math:`(K, K)`.
+        output_shape (Union[int, tuple[int]]): The target output shape. `output_shape` can be a
+          tuple of two values specify a shape :math:`(H_{out}, W_{out})`, or a single float `S` for :math:`(S, S)`.
+        data_format (str, optional): The optional value for data format, is ``'NCHW'`` .
+            Default: ``"NCHW"`` .
 
     Inputs:
         - **input_x** (Tensor) - Tensor of shape :math:`(N, C, H_{in}, W_{in})`,
@@ -10225,7 +11005,7 @@ class FractionalMaxPoolWithFixedKsize(Primitive):
 
     Outputs:
         - **y** (Tensor) - Has the same type as the `input_x`.
-          Has the shape :math:`(N, C, output\underline{~}shape{H}, output\underline{~}shape{W})`.
+          Has the shape :math:`(N, C, H_{out}, W_{out})`.
         - **argmax** (Tensor) -A tensor whose data type must be int64. Has the same shape as the `y`.
 
     Raises:
@@ -10277,3 +11057,377 @@ class FractionalMaxPoolWithFixedKsize(Primitive):
         self.add_prim_attr("output_shape", self.output_shape)
         self.data_format = validator.check_string(data_format, ['NCHW'], 'data_format', self.name)
         self.init_prim_io_names(inputs=['input_x', 'random_samples'], outputs=['y', 'argmax'])
+
+
+class ChannelShuffle(Primitive):
+    r"""
+    Divide the channels in a tensor of shape :math:`(*, C, H, W)` into :math:`g` group and
+    rearrange them as :math:`(*, \frac C g, g, H*W)`, while keeping the original tensor shapes.
+
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
+    Refer to :func:`mindspore.ops.channel_shuffle` for more detail.
+
+    Args:
+        group (int): Number of group to divide channels in.
+
+    Inputs:
+        - **x** (Tensor) - Tensor to be divided, it has shape :math:`(*, C, H, W)`,
+          with float16, float32, int8, int16, int32, int64, uint8, uint16, uint32, uint64 data type.
+
+    Outputs:
+        A Tensor, has the same type as the `x`, and has the shape :math:`(*, C, H, W)`.
+
+    Supported Platforms:
+        ``Ascend`` ``CPU``
+
+    Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
+        >>> group = 2
+        >>> x = Tensor(np.arange(1 * 4 * 2 * 2).reshape(1, 4, 2, 2).astype(np.int16))
+        >>> channel_shuffle_func = ops.ChannelShuffle(group)
+        >>> y = channel_shuffle_func(x)
+        >>> print(y)
+        [[[[ 0  1]
+           [ 2  3]]
+           [[ 8  9]
+           [10 11]]
+           [[ 4  5]
+           [ 6  7]]
+           [[12 13]
+           [14 15]]]]
+    """
+
+    @prim_attr_register
+    def __init__(self, group):
+        """Initialize ChannelShuffle"""
+        if not isinstance(group, int):
+            raise ValueError(f"For '{self.name}', attr 'group' must be an positive int number")
+        self.init_prim_io_names(inputs=['x'], outputs=['y'])
+
+
+class MaxPoolWithArgmaxV2(Primitive):
+    r"""
+    Performs max pooling on the input Tensor and returns both max values and indices.
+
+    Typically the input is of shape :math:`(N_{in}, C_{in}, H_{in}, W_{in})`, MaxPool outputs
+    regional maximum in the :math:`(H_{in}, W_{in})`-dimension. Given kernel size
+    :math:`(h_{ker}, w_{ker})` and stride :math:`(s_0, s_1)`, the operation is as follows:
+
+    .. math::
+        \text{output}(N_i, C_j, h, w) = \max_{m=0, \ldots, h_{ker}-1} \max_{n=0, \ldots, w_{ker}-1}
+        \text{input}(N_i, C_j, s_0 \times h + m, s_1 \times w + n)
+
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
+    Args:
+        kernel_size (Union[int, tuple[int]]): The size of kernel used to take the maximum value and argmax
+            value, is an int number that represents height and width of the kernel, or a tuple of
+            two int numbers that represent height and width respectively.
+        strides (Union[int, tuple[int]], optional): The distance of kernel moving, an int number that represents
+            not only the height of movement but also the width of movement, or a tuple of two int numbers that
+            represent height and width of movement respectively. Default: ``None`` , meaning that
+            `strides = kernel_size`.
+        pads (Union[int, tuple[int]], optional): An int number that represents the depth,
+            height and width of movement are both strides, or a tuple of two int numbers that represent
+            depth, height and width of movement respectively.
+            Default: 0.
+        dilation (Union[int, tuple[int]], optional): Control the stride of elements in the kernel. Default: ``(1, 1)`` .
+        ceil_mode (bool, optional): Whether to use ceil instead of floor to calculate output shape. Default: ``False`` .
+        argmax_type (mindspore.dtype, optional) : The dtype for argmax.
+            Default: ``mstype.int64`` . [Disabled in Ascend.]
+
+    Inputs:
+        - **x** (Tensor) - Tensor of shape :math:`(N_{in}, C_{in}, H_{in}, W_{in})` with data type of int8,
+          int16, int32, int64, uint8, uint16, uint32, uint64, float16, float32 or float64 in CPU and GPU,
+          with that of float16 in Ascend.
+
+    Outputs:
+        Tuple of 2 Tensors, representing the maxpool result and where the max values are generated.
+
+        - **output** (Tensor) - Maxpooling result, with shape :math:`(N_{out}, C_{out}, H_{out}, W_{out})`.
+          It has the same data type as `x`.
+
+          .. math::
+              H_{out} = \left\lfloor\frac{H_{in} + 2 * \text{pads[0]} - \text{dilation[0]}
+               \times (\text{kernel_size[0]} - 1) - 1}{\text{strides[0]}} + 1\right\rfloor
+
+          .. math::
+              W_{out} = \left\lfloor\frac{W_{in} + 2 * \text{pads[1]} - \text{dilation[1]}
+               \times (\text{kernel_size[1]} - 1) - 1}{\text{strides[1]}} + 1\right\rfloor
+
+        - **argmax** (Tensor) - Index corresponding to the maximum value.
+          Data type is int32 or int64 in GPU and CPU, is uint16 in Ascend.
+
+    Raises:
+        TypeError: If `x` is not a Tensor.
+        ValueError: If length of shape of `x` is not equal to 4.
+        TypeError: If `kernel_size` , `strides` , `pads` or `dilation` is not int or tuple.
+        ValueError: If `kernel_size`, `strides` or `dilation` is less than 1.
+        ValueError: If `pads` is less than 0.
+        ValueError: If `pads` is more than half of `kernel_size`.
+        ValueError: If `argmax_type` is not mindspore.int64 or mindspore.int32.
+        TypeError: If `ceil_mode` is not bool.
+
+    Supported Platforms:
+        ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
+        >>> x = Tensor(np.arange(20 * 16 * 50 * 32).reshape((20, 16, 50, 32)), mindspore.float32)
+        >>> maxpool_arg_v2_op = ops.MaxPoolWithArgmaxV2(kernel_size=(3, 2), strides=(2, 1))
+        >>> output_tensor, argmax = maxpool_arg_v2_op(x)
+        >>> print(output_tensor.shape)
+        (20, 16, 24, 31)
+        >>> print(argmax.shape)
+        (20, 16, 24, 31)
+    """
+
+    @prim_attr_register
+    def __init__(self, kernel_size, strides=None, pads=0, dilation=(1, 1), ceil_mode=False, argmax_type=mstype.int64):
+        """Initialize MaxPoolWithArgmaxV2."""
+        self.init_prim_io_names(inputs=["x"], outputs=["output", "argmax"])
+        validator.check_value_type("ceil_mode", ceil_mode, bool, self.name)
+        self.ceil_mode = ceil_mode
+        validator.check_value_type("argmax_type", argmax_type, [mstype.Type], self.name)
+        argmax_type_valid_values = (mstype.int32, mstype.int64)
+        validator.check_type_name("argmax_type", argmax_type, argmax_type_valid_values, self.name)
+        if argmax_type == mstype.int32:
+            self.add_prim_attr("argmax_type", 3)
+        elif argmax_type == mstype.int64:
+            self.add_prim_attr("argmax_type", 4)
+        else:
+            raise ValueError(
+                f"For '{self.name}', the 'argmax_type' must be mstype.int32 or mstype.int64, but got {argmax_type}.")
+        self.kernel_size = _check_positive_int_or_tuple("kernel_size", kernel_size, self.name, ret_four=True)
+        if strides is None:
+            strides = kernel_size
+        self.strides = _check_positive_int_or_tuple("strides", strides, self.name, ret_four=True)
+        self.pads = _check_positive_int_or_tuple("pads", pads, self.name, ret_four=True, strict_positive=False)
+        self.dilation = _check_positive_int_or_tuple("dilation", dilation, self.name, ret_four=True)
+        self.add_prim_attr("kernel_size", self.kernel_size)
+        self.add_prim_attr("strides", self.strides)
+        self.add_prim_attr("pads", self.pads)
+        self.add_prim_attr("dilation", self.dilation)
+        self.add_prim_attr("ceil_mode", self.ceil_mode)
+
+
+class Dense(Primitive):
+    r"""
+    The dense connected fusion operator.
+
+    Applies dense connected operator for the input. The implement of the operation is as:
+
+    .. math::
+        output = x @ w ^ T + b,
+
+    where :math:`x` is the input tensor, :math:`w` is a weight matrix with the same data type as the :math:`x` ,
+    and :math:`b` is a bias vector with the same data type as the :math:`x` (only if `b` is not ``None``).
+
+    Inputs:
+        - **x** (Tensor) - The shape must meet the following requirement: :math:`len(x.shape)>0`.
+        - **w** (Tensor) - The shape must meet the following requirements:
+          If :math:`len(x.shape)>1`, :math:`len(w.shape)=2`. If :math:`len(x.shape)=1`, :math:`len(w.shape)=1`.
+          :math:`w.shape[-1]=x.shape[-1]`.
+        - **b** (Union[Tensor, None]) - If `b` is not ``None``, the shape must meet the following requirements:
+          If :math:`len(x.shape)>1`, :math:`len(b.shape)=0` or :math:`len(b.shape)=1` .
+          If :math:`len(b.shape)=1`, :math:`b.shape[0]=w.shape[0]`.
+          If :math:`len(x.shape)=1`, :math:`len(b.shape)=0`.
+
+    Outputs:
+        If :math:`len(x.shape)>1`, Tensor of shape :math:`(*x.shape[:-1], w.shape[0])`.
+        If :math:`len(x.shape)=1`, Tensor of shape :math:`()`.
+
+    Supported Platforms:
+        ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
+        >>> x = Tensor(np.random.random((4, 5, 6, 7)).astype(np.float32))
+        >>> weight = Tensor(np.random.random((6, 7)).astype(np.float32))
+        >>> bias = Tensor(np.random.random((6,)).astype(np.float32))
+        >>> dense = ops.Dense()
+        >>> output = dense(x, weight, bias)
+        >>> print(output.shape)
+        (4, 5, 6, 6)
+    """
+
+    @prim_attr_register
+    def __init__(self):
+        """Initialize Dense."""
+        self.init_prim_io_names(inputs=['x', 'w', 'b'], outputs=["output"])
+        self.add_prim_attr("has_bias", True)
+
+
+class WKV(Primitive):
+    r"""
+    The WKV computation is similar to AFT(Zhai et al., 2021), but W is now a channel-wise vector multiplied
+    by relative position rather than a pairwise matrix in AFT. We also introduce a vector U for separately
+    attending to the current token in order to compensate for potential degeneration of W.
+
+    Inputs:
+        - **w** (Tensor) - The time_first tensor with data type of float32.
+          Input tensor of shape :math:`(hidden\_size,)`.
+        - **u** (Tensor]) - The time_decay tensor with data type of float32.
+          Input tensor of shape :math:`(hidden\_size,)`.
+        - **k** (Tensor) - The key tensor with data type of float32.
+          Input tensor of shape :math:`(batch\_size, seq\_length, hidden\_size)`.
+        - **v** (Tensor) - The value tensor with data type of float32.
+          Input tensor of shape :math:`(batch\_size, seq\_length, hidden\_size)`.
+        - **sp** (Tensor) - The states_p tensor with data type of float32.
+          Input tensor of shape :math:`(batch\_size, seq\_length, hidden\_size)`.
+        - **sq** (Tensor) - The states_q tensor with data type of float32.
+          Input tensor of shape :math:`(batch\_size, hidden\_size)`.
+        - **sm** (Tensor) - The states_m tensor with data type of float32.
+          Input tensor of shape :math:`(batch\_size, hidden\_size)`.
+
+    Outputs:
+        Tensor of shape :math:`(batch\_size, seq\_length, hidden\_size)`.
+
+    Supported Platforms:
+        ``Ascend``
+
+    Examples:
+        >>> from mindspore.ops.operations import nn_ops
+        >>> b = 32
+        >>> t = 2
+        >>> c = 128
+        >>> w = Tensor(np.random.randn(c).astype(np.float32))
+        >>> u = Tensor(np.random.randn(c).astype(np.float32))
+        >>> k = Tensor(np.random.randn(b, t, c).astype(np.float32))
+        >>> v = Tensor(np.random.randn(b, t, c).astype(np.float32))
+        >>> sp = Tensor(np.random.randn(b, c).astype(np.float32))
+        >>> sq = Tensor(np.random.randn(b, c).astype(np.float32))
+        >>> sm = Tensor(np.random.randn(b, c).astype(np.float32))
+        >>> dense = nn_ops.WKV()
+        >>> output = dense(w, u, k, v, sp, sq, sm)
+        >>> print(output[0].shape)
+        (32, 2, 128)
+    """
+
+    @prim_attr_register
+    def __init__(self):
+        """Initialize WKV."""
+        self.init_prim_io_names(inputs=["time_first", "time_decay", "key", "value", "sp", "sq", "sm"],
+                                outputs=["output", "out_sp", "out_sq", "out_sm"])
+
+
+class PromptFlashAttention(Primitive):
+    r"""
+    The interface for fully inference.
+    B -- Batch size
+    S -- Sequence length
+    H -- Hidden size
+
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
+    Inputs:
+        - **query** (Tensor) - The query tensor with data type of float16 or float32.
+          Input tensor of shape :math:`(B, S, H)` / `(B, N, S, D)`.
+        - **key** (Tensor) - The key tensor with data type of float16 or float32.
+          Input tensor of shape :math:`(B, S, H)` / `(B, N, S, D)`.
+        - **value** (Tensor) - The value tensor with data type of float16 or float32.
+          Input tensor of shape :math:`(B, S, H)` / `(B, N, S, D)`.
+        - **attn_mask** (Tensor) - The attention mask tensor with data type of float16 or float32.
+          For each element, 0 indicates retention and 1 indicates discard. Input tensor of shape :math:`(B, 1, S, S)`.
+        - **padding_mask** (Tensor) - The padding mask tensor with data type of float16 or float32
+        - **actual_seq_lengths** (Tensor): Describe actual sequence length of each input with data type of int.
+        - **num_heads**  (int): The number of heads.
+        - **scale_value** (float): The scale value indicating the scale coefficient, which is used as the scalar of
+          Muls in the calculation. Default: 1.0.
+        - **pre_tokens** (int): Previous tokens. Default: 2147483547.
+        - **next_tokens** (int): next tokens.  Default: 0.
+          indicate the upper triangle, Indicate the number of data blocks involved in the calculation. The value 0
+          indicates that the data blocks in the upper triangle are not involved in the calculation
+        - **input_layout** (str): the data layout of the input qkv, support `(BSH)` and `(BNSD)`, Default `BSH`.
+        - **num_key_value_heads** (int): head numbers of key/value which are used in GQA algorithm.
+          The value o indicates if the key and value have the same head nums, use numHeads.  Default: 0.
+
+    Outputs:
+        - **attention_out** (Tensor) - Input tensor of shape :math:`(B, S, H)` / `(B, N, S, D)`.
+
+    """
+    @prim_attr_register
+    def __init__(self, num_heads, scale_value=1.0, pre_tokens=2147483547, next_tokens=0, input_layout='BSH',
+                 num_key_value_heads=0):
+        """Initialize PromptFlashAttention."""
+        validator.check_value_type('num_heads', num_heads, [int], self.name)
+        validator.check_value_type('scale_value', scale_value, [float], self.name)
+        validator.check_value_type('pre_tokens', pre_tokens, [int], self.name)
+        validator.check_value_type('next_tokens', next_tokens, [int], self.name)
+        validator.check_value_type('input_layout', input_layout, [str], self.name)
+        validator.check_value_type('num_key_value_heads', num_key_value_heads, [int], self.name)
+        self.init_prim_io_names(inputs=["query", "key", "value", "attn_mask", "padding_mask", "actual_seq_lengths"],
+                                outputs=["attention_out"])
+
+
+class FlashAttentionScore(Primitive):
+    r"""
+    FlashAttentionScore.
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+    B -- Batch size
+    S -- Sequence length
+    H -- Hidden size
+    N -- Num heads
+    D -- Dim size
+    Args:
+        head_num (int): The number of the heads.
+        keep_prob (float): The keep probability of dropout. Default: 1.0.
+        scale_value (float): The scale value. Default: 1.0.
+        pre_tokens (int): Previous tokens. Default: 65536.
+        next_tokens (int): Next tokens. Default: 65536.
+        inner_precise (int): Specify the execution mode, where 0 indicates high precision mode and 1 indicates high
+        performance mode. Default: 0.
+        input_layout (str, optional): Specifies the layout of `query`, the value must be one of ["BSH", "SBH"].
+        Currently, only BSH is supported. Default: "BSH".
+
+    Inputs:
+        - **query** (Tensor) - The query tensor with data type must be in [float16, float32, bfloat16].
+          Input tensor of shape :math:`(B, S, H)`.
+        - **key** (Tensor) - The key tensor with data must be in [float16, float32, bfloat16].
+          Input tensor of shape :math:`(B, S, H)`.
+        - **value** (Tensor) - The value tensor with data must be in [float16, float32, bfloat16].
+          Input tensor of shape :math:`(B, S, H)`.
+        - **attn_mask** (Tensor) - The attention mask tensor with data type of float16 or uint8.
+          For each element, 0 indicates retention and 1 indicates discard. Input tensor of shape :math:`(B, 1, S, S)`.
+        - **drop_mask** (Tensor) - The dropout mask tensor with data type of UInt8.
+          Input tensor of shape :math:`(B, N, S, S // 8) or ()`.
+        - **real_shift** (None) - The position embedding code of float16 or float32, not implemented yet.
+        - **padding_mask** (None) - The padding mask of float16 or float32, not implemented yet.
+
+    Outputs:
+        - **attention_out** (Tensor) - (B, S, H)
+        - **softmax_max** (Tensor) - (B, N, S, 16)/(B, N, S, 8) when fp16/fp32
+        - **softmax_sum** (Tensor) - (B, N, S, 16)/(B, N, S, 8) when fp16/fp32
+    Supported Platforms:
+        ``Ascend``
+    """
+
+    @prim_attr_register
+    def __init__(self, head_num, keep_prob=1.0, scale_value=1.0, pre_tokens=65536, next_tokens=65536, inner_precise=0,
+                 input_layout="BSH"):
+        """Initialize FlashAttentionScore"""
+        validator.check_value_type('head_num', head_num, [int], self.name)
+        validator.check_value_type('keep_prob', keep_prob, [int, float], self.name)
+        validator.check_float(keep_prob, 0.0, validator.GE, "keep_prob", self.name)
+        validator.check_float(keep_prob, 1.0, validator.LE, "keep_prob", self.name)
+        validator.check_value_type('scale_value', scale_value, [float], self.name)
+        validator.check_value_type('pre_tokens', pre_tokens, [int], self.name)
+        validator.check_value_type('next_tokens', next_tokens, [int], self.name)
+        validator.check_value_type('inner_precise', inner_precise, [int], self.name)
+        if inner_precise not in [0, 1]:
+            raise ValueError(f"Attribute 'inner_precise' must be either 0 or 1, but got {inner_precise}")
+        validator.check_value_type('input_layout', input_layout, [str], self.name)
+        if input_layout not in ["BSH"]:
+            raise ValueError(f"Attribute 'input_layout' must be either 'bsh' or 'sbh', but got {input_layout}")
+        self.init_prim_io_names(
+            inputs=['query', 'key', 'value', 'attn_mask', 'drop_mask', 'real_shift', 'padding_mask'],
+            outputs=['attention_out', 'softmax_max', 'softmax_sum'])

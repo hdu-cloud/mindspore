@@ -230,7 +230,15 @@ union PrimitiveType {
     GatherD,
     GroupNormFusion,
     Log1p,
-    TensorScatterAdd
+    TensorScatterAdd,
+    SparseFillEmptyRows,
+    SparseReshape,
+    SparseSegmentSum,
+    ScatterElements,
+    Triu,
+    Tril,
+    AdamWeightDecay,
+    FillV2,
 }
 
 table Abs {
@@ -394,6 +402,7 @@ table Attention {
     head_num: long;
     head_size: long;
     cross: bool;
+    scale: float;
 }
 
 table Conv2DBackpropFilterFusion {
@@ -680,6 +689,7 @@ table LSTM {
     dropout: float;
     zoneout_cell: float = 0;
     zoneout_hidden: float = 0;
+    proj_size: long = 0;
 }
 
 table LSTMGrad {
@@ -1238,6 +1248,9 @@ table ReduceScatter {
 table DynamicQuant {
     symmetric: bool = false;
     dst_type: long = 32;
+    activation_channel: bool = false;
+    prefer_axis: long = 0;
+    transpose: bool = false;
 }
 
 table LSTMGradData {
@@ -1296,4 +1309,30 @@ table Log1p {
 }
 
 table TensorScatterAdd {
+}
+
+table SparseFillEmptyRows {
+}
+
+table SparseReshape {
+}
+
+table SparseSegmentSum {
+}
+
+table ScatterElements {
+    axis: long;
+}
+
+table Triu {
+}
+
+table Tril {
+}
+
+table AdamWeightDecay {
+    use_locking: bool;
+}
+
+table FillV2 {
 }

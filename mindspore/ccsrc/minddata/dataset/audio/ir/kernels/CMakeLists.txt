@@ -27,17 +27,22 @@ add_library(audio-ir-kernels OBJECT
         griffin_lim_ir.cc
         highpass_biquad_ir.cc
         inverse_mel_scale_ir.cc
+        inverse_spectrogram_ir.cc
+        lfcc_ir.cc
         lfilter_ir.cc
         lowpass_biquad_ir.cc
         magphase_ir.cc
         mask_along_axis_iid_ir.cc
         mask_along_axis_ir.cc
         mel_scale_ir.cc
+        mel_spectrogram_ir.cc
+        mfcc_ir.cc
         mu_law_decoding_ir.cc
         mu_law_encoding_ir.cc
         overdrive_ir.cc
         phase_vocoder_ir.cc
         phaser_ir.cc
+        pitch_shift_ir.cc
         resample_ir.cc
         riaa_biquad_ir.cc
         sliding_window_cmn_ir.cc

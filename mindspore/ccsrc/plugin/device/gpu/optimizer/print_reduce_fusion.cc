@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,14 +20,16 @@
 #include <string>
 #include <utility>
 #include <algorithm>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
+using mindspore::tensor::Tensor;
 kernel::KernelBuildInfoPtr GenerateKernelBuildInfo(CNodePtr node) {
   std::vector<std::string> inputs_format;
   std::vector<std::string> outputs_format;
@@ -40,7 +42,7 @@ kernel::KernelBuildInfoPtr GenerateKernelBuildInfo(CNodePtr node) {
     inputs_format.push_back(kOpFormat_DEFAULT);
     inputs_type.push_back(common::AnfAlgo::GetPrevNodeOutputInferDataType(node, input_index));
   }
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(node);
   for (size_t output_index = 0; output_index < output_num; output_index++) {
     outputs_format.push_back(kOpFormat_DEFAULT);
     outputs_type.push_back(common::AnfAlgo::GetOutputInferDataType(node, output_index));
@@ -68,6 +70,13 @@ bool GetOptList(const std::vector<AnfNodePtr> &node_list, std::vector<AnfNodePtr
     std::vector<std::string> string_value;
     std::vector<std::pair<int64_t, int64_t>> value_type;
     if (IsPrimitiveCNode(node, prim::kPrimPrint)) {
+      auto prim = common::AnfAlgo::GetCNodePrimitive(node);
+      MS_EXCEPTION_IF_NULL(prim);
+      std::vector<int64_t> fake_tensor_pos;
+      if (prim->HasAttr(kFakeTensorPos)) {
+        auto value_ptr = prim->GetAttr(kFakeTensorPos);
+        fake_tensor_pos = GetValue<std::vector<int64_t>>(value_ptr);
+      }
       size_t input_num = common::AnfAlgo::GetInputTensorNum(node);
       for (size_t i = 0; i < input_num; i++) {
         auto current_node = common::AnfAlgo::GetInputNode(utils::cast<CNodePtr>(node), i);
@@ -80,7 +89,8 @@ bool GetOptList(const std::vector<AnfNodePtr> &node_list, std::vector<AnfNodePtr
         auto shape = value_node->abstract();
         MS_EXCEPTION_IF_NULL(shape);
         auto shape_node = dyn_cast<abstract::Shape>(shape->GetShapeTrack());
-        if (shape_node != nullptr) {
+        bool is_fake_tensor = (std::find(fake_tensor_pos.begin(), fake_tensor_pos.end(), i) != fake_tensor_pos.end());
+        if ((!IsValueNode<Tensor>(value_node) || is_fake_tensor) && shape_node != nullptr) {
           // a scalar or tuple
           auto shape_size = shape_node->shape().size();
           if (shape_size != 0) {
@@ -176,13 +186,20 @@ bool PrintReduceFusion::Run(const FuncGraphPtr &graph) {
     common::AnfAlgo::SetNodeAttr("string_value", MakeValue<std::vector<std::string>>(string_value), print_fused);
     common::AnfAlgo::SetNodeAttr("value_type", MakeValue<std::vector<int64_t>>(value_type), print_fused);
     common::AnfAlgo::SetNodeAttr("value_type_pos", MakeValue<std::vector<int64_t>>(value_type_pos), print_fused);
+    auto old_prim = GetCNodePrimitive(cnode);
+    if (old_prim->HasAttr(kFakeTensorListPos)) {
+      auto value_ptr = old_prim->GetAttr(kFakeTensorListPos);
+      auto fake_tensor_list_pos = GetValue<std::vector<int64_t>>(value_ptr);
+      common::AnfAlgo::SetNodeAttr(kFakeTensorListPos, MakeValue<std::vector<int64_t>>(fake_tensor_list_pos),
+                                   print_fused);
+    }
     // set output type and shape
     std::vector<TypeId> types;
     std::vector<BaseShapePtr> shapes;
-    size_t output_num = common::AnfAlgo::GetOutputTensorNum(cnode);
+    size_t output_num = AnfAlgo::GetOutputTensorNum(cnode);
     for (size_t i = 0; i < output_num; i++) {
       types.push_back(common::AnfAlgo::GetOutputInferDataType(cnode, i));
-      shapes.push_back(common::AnfAlgo::GetOutputDetailShape(cnode, i));
+      shapes.push_back(AnfAlgo::GetOutputDetailShape(cnode, i));
     }
     common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, print_fused.get());
     // add build info

@@ -45,7 +45,7 @@ class Net(nn.Cell):
         return self.hswish(x)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -76,7 +76,11 @@ def expect_hswish_forward_result(x):
 
 
 def expect_hswish_backward_result(x, dout):
-    return np.where(x <= -3, 0, np.where(x >= 3, 1, x / 3 + 0.5)) * dout
+    dtype = x.dtype
+    x = x.astype(np.float32)
+    dout = dout.astype(np.float32)
+    result = np.where(x <= -3, 0, np.where(x >= 3, 1, x / 3 + 0.5)) * dout
+    return result.astype(dtype)
 
 
 def judge_result_correct(result, expect):
@@ -100,7 +104,7 @@ def generate_test_cases(np_type, mode):
     judge_result_correct(output[0].asnumpy(), expect)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.env_onecard
@@ -157,7 +161,7 @@ def test_hswish_vmap(dtype, shape=(100, 2)):
     assert np_all_close_with_loss(output_vmap.asnumpy(), output_manually.asnumpy())
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard

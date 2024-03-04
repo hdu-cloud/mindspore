@@ -13,13 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_PRIOR_BOX_PARAMETER_H_
-#define MINDSPORE_NNACL_PRIOR_BOX_PARAMETER_H_
+#ifndef NNACL_PRIOR_BOX_PARAMETER_H_
+#define NNACL_PRIOR_BOX_PARAMETER_H_
 
 #include "nnacl/op_base.h"
 
 typedef struct PriorBoxParameter {
-  // Primitive parameter
   OpParameter op_parameter_;
   int32_t min_sizes_size;
   int32_t min_sizes[MAX_SHAPE_SIZE];
@@ -37,4 +36,4 @@ typedef struct PriorBoxParameter {
   float offset;
 } PriorBoxParameter;
 
-#endif  // MINDSPORE_NNACL_PRIOR_BOX_PARAMETER_H_
+#endif  // NNACL_PRIOR_BOX_PARAMETER_H_

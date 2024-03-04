@@ -26,6 +26,7 @@ negative = base.MultitypeFuncGraph("negative", True)
 `negative` is a metafuncgraph object which will give the negative of an object according to its input type
 using ".register" decorator.
 """
+negative.set_need_raise()
 
 
 @negative.register("Number")

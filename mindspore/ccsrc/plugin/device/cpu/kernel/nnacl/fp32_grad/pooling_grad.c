@@ -13,23 +13,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "nnacl/fp32_grad/pooling_grad.h"
 #include <stdint.h>
 #include <string.h>
 #include <float.h>
-#include "nnacl/fp32_grad/pooling_grad.h"
+#include "nnacl/op_base.h"
 
-void AvgPoolingGrad(const float *input_ptr, float *output_ptr, int count, const PoolingParameter *pooling_param) {
+void AvgPoolingGrad(const float *input_ptr, float *output_ptr, int count, const PoolingParameter *pooling_param,
+                    const PoolingComputeParam *pooling_args) {
   int stride_w = pooling_param->stride_w_;
   int stride_h = pooling_param->stride_h_;
   int pad_w = pooling_param->pad_l_;
   int pad_h = pooling_param->pad_u_;
-  int win_w = pooling_param->window_w_;
-  int win_h = pooling_param->window_h_;
-  int channel = pooling_param->input_channel_;
-  int in_w = pooling_param->input_w_;
-  int in_h = pooling_param->input_h_;
-  int output_w = pooling_param->output_w_;
-  int output_h = pooling_param->output_h_;
+  int win_w = pooling_args->window_w_;
+  int win_h = pooling_args->window_h_;
+  int channel = pooling_args->input_channel_;
+  int in_w = pooling_args->input_w_;
+  int in_h = pooling_args->input_h_;
+  int output_w = pooling_args->output_w_;
+  int output_h = pooling_args->output_h_;
 
   const float kk = 1.0f / (float)(win_h * win_w);
 #if ENABLE_ARM
@@ -48,14 +50,14 @@ void AvgPoolingGrad(const float *input_ptr, float *output_ptr, int count, const 
         int kw_s = MSMAX(0, over_w);
         int kw_e = MSMIN(win_w, in_w + over_w);
         int ic = 0;
-        for (; ic < channel - 4; ic += 4) {
+        for (; ic < channel - C4NUM; ic += C4NUM) {
           int idx = (yw + yh * output_w) * channel + ic;
 #ifdef ENABLE_ARM
           float32x4_t in = vld1q_f32(inPtr + idx);
           float32x4_t delta = vmulq_f32(in, factor);
 #else
-          float delta[4] = {inPtr[idx], inPtr[idx + 1], inPtr[idx + 2], inPtr[idx + 3]};
-          for (int i = 0; i < 4; i++) delta[i] *= kk;
+          float delta[C4NUM] = {inPtr[idx], inPtr[idx + C1NUM], inPtr[idx + C2NUM], inPtr[idx + C3NUM]};
+          for (int i = 0; i < C4NUM; i++) delta[i] *= kk;
 #endif
           for (int kh = kh_s; kh < kh_e; kh++) {
             int xh = yh * stride_h + kh - pad_h;
@@ -68,7 +70,7 @@ void AvgPoolingGrad(const float *input_ptr, float *output_ptr, int count, const 
               vst1q_f32(out_vec, outs);
 #else
 
-              for (int i = 0; i < 4; i++) {
+              for (int i = 0; i < C4NUM; i++) {
                 out[(xw + in_w * xh) * channel + ic + i] += ((float *)&delta)[i];
               }
 #endif
@@ -101,18 +103,18 @@ static int32x4_t MaxIndex(float32x4_t in, float32x4_t *max, int32x4_t index, int
 #endif
 
 void MaxPoolingGrad(const float *input_ptr, const float *dy_ptr, float *output_ptr, int output_batch,
-                    const PoolingParameter *pooling_param) {
+                    const PoolingParameter *pooling_param, const PoolingComputeParam *pooling_args) {
   int stride_w = pooling_param->stride_w_;
   int stride_h = pooling_param->stride_h_;
   int pad_w = pooling_param->pad_l_;
   int pad_h = pooling_param->pad_u_;
-  int win_w = pooling_param->window_w_;
-  int win_h = pooling_param->window_h_;
-  int channel = pooling_param->input_channel_;
-  int in_w = pooling_param->input_w_;
-  int in_h = pooling_param->input_h_;
-  int output_w = pooling_param->output_w_;
-  int output_h = pooling_param->output_h_;
+  int win_w = pooling_args->window_w_;
+  int win_h = pooling_args->window_h_;
+  int channel = pooling_args->input_channel_;
+  int in_w = pooling_args->input_w_;
+  int in_h = pooling_args->input_h_;
+  int output_w = pooling_args->output_w_;
+  int output_h = pooling_args->output_h_;
   for (int ib = 0; ib < output_batch; ib++) {
     float *out = output_ptr + ib * in_h * in_w * channel;
     const float *inPtr = input_ptr + ib * in_h * in_w * channel;
@@ -126,16 +128,16 @@ void MaxPoolingGrad(const float *input_ptr, const float *dy_ptr, float *output_p
         int kw_s = MSMAX(0, over_w);
         int kw_e = MSMIN(win_w, in_w + over_w);
         int ic = 0;
-        for (; ic <= channel - 4; ic += 4) {
+        for (; ic <= channel - C4NUM; ic += C4NUM) {
           int idx = (yw + yh * output_w) * channel + ic;
 #ifdef ENABLE_ARM
           uint32x4_t max_idx = vdupq_n_u32(0);
           float32x4_t max_val = vdupq_n_f32(-FLT_MAX);
           float32x4_t delta = vld1q_f32(dyPtr + idx);
 #else
-          float delta[4] = {dyPtr[idx], dyPtr[idx + 1], dyPtr[idx + 2], dyPtr[idx + 3]};
-          float max_val[4] = {-FLT_MAX, -FLT_MAX, -FLT_MAX, -FLT_MAX};
-          int max_idx[4] = {0};
+          float delta[C4NUM] = {dyPtr[idx], dyPtr[idx + C1NUM], dyPtr[idx + C2NUM], dyPtr[idx + C3NUM]};
+          float max_val[C4NUM] = {-FLT_MAX, -FLT_MAX, -FLT_MAX, -FLT_MAX};
+          int max_idx[C4NUM] = {0};
 #endif
           for (int kh = kh_s; kh < kh_e; kh++) {
             int xh = yh * stride_h + kh - pad_h;
@@ -148,8 +150,9 @@ void MaxPoolingGrad(const float *input_ptr, const float *dy_ptr, float *output_p
               max_idx = vreinterpretq_u32_s32(
                 MaxIndex(in, &max_val, vreinterpretq_s32_u32(index), vreinterpretq_s32_u32(max_idx)));
 #else
-              float val[4] = {inPtr[val_idx], inPtr[val_idx + 1], inPtr[val_idx + 2], inPtr[val_idx + 3]};
-              for (int i = 0; i < 4; i++) {
+              float val[C4NUM] = {inPtr[val_idx], inPtr[val_idx + C1NUM], inPtr[val_idx + C2NUM],
+                                  inPtr[val_idx + C3NUM]};
+              for (int i = 0; i < C4NUM; i++) {
                 if (val[i] > max_val[i]) {
                   max_val[i] = val[i];
                   max_idx[i] = val_idx + i;
@@ -158,7 +161,7 @@ void MaxPoolingGrad(const float *input_ptr, const float *dy_ptr, float *output_p
 #endif
             }
           }
-          for (int i = 0; i < 4; i++) {
+          for (int i = 0; i < C4NUM; i++) {
             out[((int *)&max_idx)[i]] += ((float *)&delta)[i];
           }
         }

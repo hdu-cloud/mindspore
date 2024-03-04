@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,10 @@
 #include "plugin/device/ascend/optimizer/ir_fusion/layer_norm_beta_gamma_backprop_fusion.h"
 #include <memory>
 #include <vector>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/nn_op_name.h"
+#include "ops/sequence_ops.h"
+#include "ops/array_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "utils/trace_base.h"
 namespace mindspore {
@@ -36,8 +39,8 @@ void GetOutputCastNodes(const FuncGraphPtr &func_graph, const AnfNodePtr &node, 
     auto output_cnode = output->cast<CNodePtr>();
     MS_EXCEPTION_IF_NULL(output_cnode);
     if (common::AnfAlgo::GetCNodeName(output_cnode) != prim::kPrimTupleGetItem->name()) {
-      MS_LOG(EXCEPTION) << "The output of node " << node->DebugString() << " should be "
-                        << prim::kPrimTupleGetItem->name() << trace::DumpSourceLines(node);
+      MS_LOG(INTERNAL_EXCEPTION) << "The output of node " << node->DebugString() << " should be "
+                                 << prim::kPrimTupleGetItem->name() << trace::DumpSourceLines(node);
     }
     if (manager->node_users().find(output) == manager->node_users().end() ||
         manager->node_users()[output].size() != 1) {
@@ -83,7 +86,7 @@ bool CheckLayernormBetaGammaBackprop(const FuncGraphPtr &func_graph, const CNode
                  << kLayerNormBetaGammaBackpropInputTensorNum;
     return false;
   }
-  if (common::AnfAlgo::GetOutputTensorNum(cnode) != kLayerNormBetaGammaBackpropOutputNum) {
+  if (AnfAlgo::GetOutputTensorNum(cnode) != kLayerNormBetaGammaBackpropOutputNum) {
     MS_LOG(INFO) << "The node " << cnode->DebugString() << " outputs num is not equal to "
                  << kLayerNormBetaGammaBackpropOutputNum;
     return false;

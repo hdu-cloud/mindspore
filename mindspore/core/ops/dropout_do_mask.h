@@ -17,10 +17,10 @@
 #ifndef MINDSPORE_CORE_OPS_DROPOUT_DO_MASK_H_
 #define MINDSPORE_CORE_OPS_DROPOUT_DO_MASK_H_
 
-#include <vector>
 #include <memory>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -36,8 +36,9 @@ class MIND_API DropoutDoMask : public BaseOperator {
   /// \brief Init. Refer to the parameters of Python API @ref mindspore.ops.DropoutDoMask for the inputs.
   void Init() const {}
 };
-abstract::AbstractBasePtr DropoutDoMaskInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                             const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr DropoutDoMaskInfer(const abstract::AnalysisEnginePtr &,
+                                                      const PrimitivePtr &primitive,
+                                                      const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

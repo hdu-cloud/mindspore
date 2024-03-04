@@ -179,7 +179,7 @@ MSKernelCallBack BiasCorrectionStrategy::GetCPUFloatBeforeCallBack() {
       MS_LOG(INFO) << "tensor type is " << tensor.DataType();
       return true;
     }
-    size_t elem_count = tensor.ElementNum();
+    size_t elem_count = static_cast<size_t>(tensor.ElementNum());
     MS_CHECK_GT(elem_count, 0, false);
     std::vector<float> fp32_op_input(elem_count);
     auto ret =
@@ -521,21 +521,17 @@ int BiasCorrectionStrategy::DoCNodeBiasCorrection(const FuncGraphPtr &quant_func
                                                   bool int32_bias) {
   auto op_name = cnode->fullname_with_scope();
   const auto &bias_diff = op_bias_diff_sum_map_[op_name];
-  auto primitive = GetValueNode<PrimitivePtr>(cnode->input(0));
-  if (primitive == nullptr) {
-    MS_LOG(ERROR) << op_name << " primitive is nullptr.";
-    return RET_NULL_PTR;
-  }
-  auto quant_param_holder = GetCNodeQuantHolder(primitive);
-  MS_CHECK_TRUE_MSG(quant_param_holder != nullptr, RET_NULL_PTR, "quant_param_holder is nullptr.");
-  auto input_quant_params = quant_param_holder->get_input_quant_params();
   if (cnode->size() == kHasBiasTensorSize) {
     auto bias = cnode->input(THIRD_INPUT + 1);
     auto bias_parameter_ptr = bias->cast<ParameterPtr>();
     auto bias_default_param = bias_parameter_ptr->default_param();
     auto bias_tensor = bias_default_param->cast<tensor::TensorPtr>();
     if (int32_bias) {
-      auto bias_quant_params = input_quant_params.at(THIRD_INPUT);
+      if (bias_tensor->quant_params().empty()) {
+        MS_LOG(ERROR) << bias->fullname_with_scope() << " bias tesnor quant param Not exist.";
+        return RET_ERROR;
+      }
+      auto bias_quant_params = quant::ConvertQuantizationParamToQuantParamT(bias_tensor->quant_params().front());
       auto status = AddBiasToInt32Tensor(cnode, bias_tensor, bias_quant_params, bias_diff);
       if (status != RET_OK) {
         MS_LOG(ERROR) << op_name << " Add bias to int32 tensor failed.";
@@ -548,18 +544,20 @@ int BiasCorrectionStrategy::DoCNodeBiasCorrection(const FuncGraphPtr &quant_func
         return RET_ERROR;
       }
     }
-  } else if (cnode->size() == kHasBiasTensorSize - 1) {
+  } else if (cnode->size() == kHasBiasTensorSize - kPrimOffset) {
     MS_LOG(INFO) << op_name << " add bias input";
     // need to add bias input
-    auto parameter = quant_func_graph->add_parameter();
-    auto status = CreateFp32BiasTensor(quant_func_graph, cnode, parameter, bias_diff);
+    auto bias_parameter = quant_func_graph->add_parameter();
+    auto status = CreateFp32BiasTensor(quant_func_graph, cnode, bias_parameter, bias_diff);
     if (status != RET_OK) {
       MS_LOG(ERROR) << op_name << " Create fp32 bias tensor failed.";
       return RET_ERROR;
     }
     if (int32_bias) {
       FixedBitWeightQuantization fixed_bit_quant;
-      status = fixed_bit_quant.QuantBias(parameter, primitive);
+      auto weight_parameter = cnode->input(SECOND_INPUT + kPrimOffset)->cast<ParameterPtr>();
+      auto active_quant_params = quant::GetInputNodeQuantParam(cnode, FIRST_INPUT + kPrimOffset);
+      status = fixed_bit_quant.QuantBias(weight_parameter, bias_parameter, active_quant_params);
       if (status != RET_OK) {
         MS_LOG(ERROR) << op_name << " Do bias quant failed.";
         return RET_ERROR;
@@ -660,14 +658,13 @@ MSKernelCallBack BiasCorrectionStrategy::GetNVGPUInt8AfterCallBack() {
 int BiasCorrectionStrategy::DoBiasCorrection(const FuncGraphPtr &quant_func_graph) {
   int status;
   switch (param_->fullQuantParam.target_device) {
+    case DSP:
+    case ASCEND:
     case CPU:
       status = DoCPUBiasCorrection(quant_func_graph);
       break;
     case NVGPU:
       status = DoNVGPUBiasCorrection(quant_func_graph);
-      break;
-    case DSP:
-      status = DoCPUBiasCorrection(quant_func_graph);
       break;
     default:
       MS_LOG(ERROR) << "Unsupported target device " << param_->fullQuantParam.target_device << " for bias correction.";

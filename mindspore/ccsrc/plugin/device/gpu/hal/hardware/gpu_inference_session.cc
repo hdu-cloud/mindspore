@@ -19,7 +19,7 @@
 #include "ir/anf.h"
 #include "ir/param_info.h"
 #include "runtime/device/kernel_runtime.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "utils/ms_utils.h"
 #include "runtime/device/ms_device_shape_transfer.h"
@@ -42,6 +42,10 @@ void GpuInferenceSession::LoadInputData(const std::shared_ptr<KernelGraph> &kern
     }
     auto pk_node = input_nodes[i]->cast<ParameterPtr>();
     MS_EXCEPTION_IF_NULL(pk_node);
+    if (!pk_node->IsUsedByRealKernelInGraph(kernel_graph->graph_id())) {
+      MS_LOG(INFO) << "Kernel graph inputs have anfnode which has no user.";
+      continue;
+    }
     auto device_address = AnfAlgo::GetMutableOutputAddr(pk_node, 0);
     MS_EXCEPTION_IF_NULL(device_address);
     if (!common::AnfAlgo::IsParameterWeight(pk_node)) {
@@ -69,6 +73,10 @@ GraphId GpuInferenceSession::CompileGraphImpl(NotNull<FuncGraphPtr> func_graph) 
     }
     auto pk_node = input_nodes[i]->cast<ParameterPtr>();
     MS_EXCEPTION_IF_NULL(pk_node);
+    if (!pk_node->IsUsedByRealKernelInGraph(kernel_graph->graph_id())) {
+      MS_LOG(INFO) << "Kernel graph inputs have anfnode which has no user.";
+      continue;
+    }
     auto device_address = AnfAlgo::GetMutableOutputAddr(pk_node, 0);
     MS_EXCEPTION_IF_NULL(device_address);
     if (common::AnfAlgo::IsParameterWeight(pk_node)) {
@@ -161,6 +169,7 @@ bool GpuInferenceSession::CompareInput(const tensor::TensorPtr &input, const Par
 
   // compare data type
   auto kernel_build_info = AnfAlgo::GetSelectKernelBuildInfo(parameter);
+  MS_EXCEPTION_IF_NULL(kernel_build_info);
   if (input->data_type() != kernel_build_info->GetOutputDeviceType(0)) {
     MS_LOG(ERROR) << "Input data type is inconsistent. The actual data type is " << input->data_type()
                   << ", but the parameter data type is " << kernel_build_info->GetOutputDeviceType(0)
@@ -208,6 +217,7 @@ std::string GpuInferenceSession::InputsInfo(const std::vector<ParameterPtr> &par
 
   std::string actual = "given inputs:{ ";
   for (size_t i = 0; i < inputs.size(); ++i) {
+    MS_EXCEPTION_IF_NULL(inputs[i]);
     actual += std::to_string(i) + ": dims " + std::to_string(inputs[i]->shape().size()) + ", shape " +
               PrintInputShape(inputs[i]->shape()) + ", data type " + data_type_to_string(inputs[i]->data_type()) + " }";
   }

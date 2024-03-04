@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,8 @@
 #include "plugin/device/ascend/optimizer/ir_fission/concat_fission.h"
 #include <memory>
 #include <vector>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "utils/trace_base.h"
 
@@ -26,7 +27,7 @@ AnfNodePtr ConcatFission::CreateNewConcat(const FuncGraphPtr &func_graph, const 
                                           size_t begin_index, size_t offset) const {
   MS_EXCEPTION_IF_NULL(func_graph);
   MS_EXCEPTION_IF_NULL(origin_concat_cnode);
-  std::vector<AnfNodePtr> new_concat_inputs = {NewValueNode(std::make_shared<Primitive>(prim::kPrimConcat->name()))};
+  std::vector<AnfNodePtr> new_concat_inputs = {NewValueNode(std::make_shared<Primitive>(prim::kPrimConcatD->name()))};
   for (size_t i = begin_index; i < begin_index + offset; ++i) {
     new_concat_inputs.emplace_back(origin_concat_cnode->input(i));
   }
@@ -50,43 +51,31 @@ AnfNodePtr ConcatFission::CreateNewConcat(const FuncGraphPtr &func_graph, const 
   if (axis_from_attr < 0) {
     axis_from_attr += SizeToLong(input_shape.size());
   }
-  auto output_shape_ptr = common::AnfAlgo::GetOutputDetailShape(origin_concat_cnode, 0);
+  auto output_shape_ptr = AnfAlgo::GetOutputDetailShape(origin_concat_cnode, 0);
   MS_EXCEPTION_IF_NULL(output_shape_ptr);
   auto output_shapeptr = output_shape_ptr->cast<abstract::ShapePtr>();
   MS_EXCEPTION_IF_NULL(output_shapeptr);
   auto output_shape = output_shapeptr->shape();
-  auto output_shape_min = output_shapeptr->min_shape();
-  auto output_shape_max = output_shapeptr->max_shape();
   if (axis_from_attr < 0 || axis_from_attr >= SizeToLong(output_shape.size()) ||
       axis_from_attr >= SizeToLong(input_shape.size())) {
-    MS_LOG(EXCEPTION) << "The concat_dim value " << axis_from_attr << "is out of range"
-                      << trace::DumpSourceLines(origin_concat_cnode);
+    MS_LOG(INTERNAL_EXCEPTION) << "The concat_dim value " << axis_from_attr << "is out of range"
+                               << trace::DumpSourceLines(origin_concat_cnode);
   }
   auto axis = LongToSize(axis_from_attr);
   output_shape[axis] = 0;
-  if (!output_shape_min.empty() && !output_shape_max.empty()) {
-    output_shape_min[axis] = 0;
-    output_shape_max[axis] = 0;
-  }
   for (size_t i = begin_index; i < begin_index + offset; ++i) {
-    auto last_input_shape_ptr = common::AnfAlgo::GetPrevNodeOutputDetailShape(origin_concat_cnode, i - 1);
+    auto last_input_shape_ptr = AnfAlgo::GetPrevNodeOutputDetailShape(origin_concat_cnode, i - 1);
     MS_EXCEPTION_IF_NULL(last_input_shape_ptr);
     auto last_input_shapeptr = last_input_shape_ptr->cast<abstract::ShapePtr>();
     MS_EXCEPTION_IF_NULL(last_input_shapeptr);
     auto last_input_shape = last_input_shapeptr->shape();
-    auto last_input_shape_min = last_input_shapeptr->min_shape();
-    auto last_input_shape_max = last_input_shapeptr->max_shape();
     if (last_input_shape[axis] == -1 || output_shape[axis] == -1) {
       output_shape[axis] = -1;
     } else {
       output_shape[axis] += last_input_shape[axis];
     }
-    if (!output_shape_min.empty() && !last_input_shape_min.empty()) {
-      output_shape_min[axis] += last_input_shape_min[axis];
-      output_shape_max[axis] += last_input_shape_max[axis];
-    }
   }
-  auto concat_output_shape_ptr = std::make_shared<abstract::Shape>(output_shape, output_shape_min, output_shape_max);
+  auto concat_output_shape_ptr = std::make_shared<abstract::Shape>(output_shape);
   common::AnfAlgo::SetOutputTypeAndDetailShape({common::AnfAlgo::GetOutputInferDataType(origin_concat_cnode, 0)},
                                                {concat_output_shape_ptr}, new_concat.get());
   return new_concat;
@@ -94,7 +83,7 @@ AnfNodePtr ConcatFission::CreateNewConcat(const FuncGraphPtr &func_graph, const 
 
 const BaseRef ConcatFission::DefinePattern() const {
   VarPtr Xs = std::make_shared<SeqVar>();
-  return VectorRef({prim::kPrimConcat, Xs});
+  return VectorRef({prim::kPrimConcatD, Xs});
 }
 
 const AnfNodePtr ConcatFission::Process(const FuncGraphPtr &func_graph, const AnfNodePtr &node,
@@ -111,7 +100,7 @@ const AnfNodePtr ConcatFission::Process(const FuncGraphPtr &func_graph, const An
   CNodePtr new_cnode = cnode;
   while (origin_input_size > inputs_divisor_) {
     MS_EXCEPTION_IF_NULL(new_cnode);
-    std::vector<AnfNodePtr> base_concat_inputs{NewValueNode(std::make_shared<Primitive>(prim::kPrimConcat->name()))};
+    std::vector<AnfNodePtr> base_concat_inputs{NewValueNode(std::make_shared<Primitive>(prim::kPrimConcatD->name()))};
     size_t cur_input_index = 1;
     // Divide the inputs of concat by inputs_divisor_.
     while (origin_input_size - cur_input_index + 1 >= inputs_divisor_) {

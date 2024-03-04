@@ -15,15 +15,25 @@
  */
 #include "ops/polygamma.h"
 
-#include <map>
 #include <set>
-#include <string>
 
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
 #include "mindapi/src/helper.h"
-#include "ops/op_utils.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -34,6 +44,12 @@ abstract::ShapePtr PolygammaInferShape(const PrimitivePtr &primitive, const std:
   auto x_shape_ptr = input_args[kInputIndex1]->BuildShape();
   auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(x_shape_ptr)[kShape];
   int64_t input_a;
+  (void)CheckAndConvertUtils::CheckArgs<abstract::AbstractTensor>(prim_name, input_args, 0);
+  auto a_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
+  if (a_shape.size() != 0) {
+    MS_EXCEPTION(ValueError) << "For '" << primitive->name()
+                             << "', 'a' should be a 0-dim Tensor, but got rank: " << a_shape.size() << ".";
+  }
   if (input_args[kInputIndex0]->isa<abstract::AbstractTensor>()) {
     auto input_a_ptr = input_args[kInputIndex0]->cast<abstract::AbstractTensorPtr>();
     MS_EXCEPTION_IF_NULL(input_a_ptr);
@@ -49,7 +65,11 @@ abstract::ShapePtr PolygammaInferShape(const PrimitivePtr &primitive, const std:
   } else if (input_args[kInputIndex0]->isa<abstract::AbstractScalar>()) {
     auto input_a_ptr = input_args[kInputIndex0]->cast<abstract::AbstractScalarPtr>();
     MS_EXCEPTION_IF_NULL(input_a_ptr);
-    input_a = GetValue<int64_t>(input_a_ptr->BuildValue());
+    auto input_value = input_a_ptr->BuildValue();
+    if (input_value->isa<ValueAny>()) {
+      return std::make_shared<abstract::Shape>(x_shape);
+    }
+    input_a = GetValue<int64_t>(input_value);
   } else {
     MS_LOG(EXCEPTION) << "For '" << primitive->name()
                       << "', the input a type should be tensor or scalar, but got invalid abstract type:"
@@ -77,11 +97,28 @@ AbstractBasePtr PolygammaInfer(const abstract::AnalysisEnginePtr &, const Primit
   auto prim_name = primitive->name();
   const int64_t kInputNum = 2;
   CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterEqual, kInputNum, prim_name);
-  auto infer_type = PolygammaInferType(primitive, input_args);
   auto infer_shape = PolygammaInferShape(primitive, input_args);
+  auto infer_type = PolygammaInferType(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(Polygamma, prim::kPrimPolygamma, PolygammaInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGPolygammaInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return PolygammaInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return PolygammaInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return PolygammaInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Polygamma, prim::kPrimPolygamma, AGPolygammaInfer, false);
 }  // namespace ops
 }  // namespace mindspore

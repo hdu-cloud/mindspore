@@ -38,7 +38,7 @@ bool PDistGradGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std
   }
   kernel_func_ = func_list_[index].second;
   p_ = kernel_ptr_->get_p();
-  input_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  input_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   return true;
 }
 
@@ -107,8 +107,9 @@ bool PDistGradGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
   T *y = GetDeviceAddress<T>(inputs, kTwoindex);
   T *output = GetDeviceAddress<T>(outputs, kZeroindex);
   T *buffer = GetDeviceAddress<T>(workspace, kZeroindex);
-  CalPDistGrad(x_size_, y_size_, y_grad_size_, y_grad, x, y, matrix_row_, matrix_col_, p_, output, buffer, device_id_,
-               reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = CalPDistGrad(x_size_, y_size_, y_grad_size_, y_grad, x, y, matrix_row_, matrix_col_, p_, output, buffer,
+                             device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

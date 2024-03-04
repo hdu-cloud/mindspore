@@ -26,7 +26,7 @@
 #include "frontend/parallel/dynamic_creator.h"
 #include "frontend/parallel/strategy.h"
 #include "frontend/parallel/tensor_layout/tensor_redistribution.h"
-#include "pipeline/jit/resource.h"
+#include "pipeline/jit/ps/resource.h"
 
 namespace mindspore {
 namespace parallel {
@@ -164,6 +164,7 @@ Status BatchNormInfo::InferAllReduceGroupBySize() {
 
   CheckGlobalDeviceManager();
   int64_t rank = g_device_manager->global_rank();
+  MS_EXCEPTION_IF_ZERO("group_size", group_size_);
   int64_t tmp = rank / group_size_;
 
   RankList group_rank_list;

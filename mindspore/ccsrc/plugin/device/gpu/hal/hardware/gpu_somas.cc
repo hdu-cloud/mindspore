@@ -17,8 +17,9 @@
 #include "plugin/device/gpu/hal/hardware/gpu_somas.h"
 #include <string>
 #include <vector>
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "utils/ms_context.h"
+#include "ops/framework_op_name.h"
 
 namespace mindspore {
 namespace device {
@@ -55,7 +56,7 @@ void GPUSomas::InitEventInfo(const session::KernelGraph &graph) {
   auto &kernels = graph.execution_order();
   for (const auto &kernel : kernels) {
     auto type = common::AnfAlgo::GetCNodeName(kernel);
-    if (type == kSendOpName) {
+    if (type == kStreamSendOpName) {
       auto event = common::AnfAlgo::GetNodeAttr<uintptr_t>(kernel, kAttrRecordEvent);
       auto iter = event_map_.find(event);
       if (iter == event_map_.end()) {
@@ -65,7 +66,7 @@ void GPUSomas::InitEventInfo(const session::KernelGraph &graph) {
       } else {
         iter->second.send_ = kernel;
       }
-    } else if (type == kRecvOpName) {
+    } else if (type == kStreamRecvOpName) {
       auto event = common::AnfAlgo::GetNodeAttr<uintptr_t>(kernel, kAttrWaitEvent);
       auto iter = event_map_.find(event);
       if (iter == event_map_.end()) {
@@ -148,6 +149,8 @@ void GPUSomas::CommunicationTensorProcess(const std::vector<somas::SomasTensorPt
     }
   }
 }
+
+bool GPUSomas::NeedContiguous(const std::vector<size_t> &inputs) const { return inputs.size() > ALONE; }
 }  // namespace gpu
 }  // namespace device
 }  // namespace mindspore

@@ -21,7 +21,7 @@
 #include <vector>
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_class/helper_base.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/resize_bicubic_grad_impl.cuh"
-#include "mindspore/ccsrc/kernel/common_utils.h"
+#include "mindspore/ccsrc/kernel/ops_utils.h"
 
 namespace mindspore {
 namespace cukernel {
@@ -56,9 +56,9 @@ class ResizeBicubicGradHelperGpuKernel : public GpuKernelHelperBase {
                  const std::vector<std::vector<int64_t>> &output_shapes) override {
     constexpr size_t INPUT_NUM = 1;
     constexpr size_t OUTPUT_NUM = 1;
-    constexpr int INPUT_W_ORDER = 2;
-    constexpr int OUTPUT_W_ORDER = 2;
-    constexpr int INPUT_C_ORDER = 3;
+    constexpr int INPUT_C_ORDER = 1;
+    constexpr int INPUT_H_ORDER = 2;
+    constexpr int INPUT_W_ORDER = 3;
     ResetResource();
     align_corners_ = false;
     is_null_resizebicubic_grad_input_ = false;
@@ -86,15 +86,20 @@ class ResizeBicubicGradHelperGpuKernel : public GpuKernelHelperBase {
       return inp_flag;
     }
     batch_ = input_grad_shape_[0];
-    input_grad_height_ = input_grad_shape_[1];
-    input_grad_width_ = input_grad_shape_[INPUT_W_ORDER];
     channel_ = input_grad_shape_[INPUT_C_ORDER];
-    origin_height_ = origin_shape_[1];
-    origin_width_ = origin_shape_[OUTPUT_W_ORDER];
+    input_grad_height_ = input_grad_shape_[INPUT_H_ORDER];
+    input_grad_width_ = input_grad_shape_[INPUT_W_ORDER];
+    origin_height_ = origin_shape_[INPUT_H_ORDER];
+    origin_width_ = origin_shape_[INPUT_W_ORDER];
     int out_flag =
       CalShapesSizeInBytes<S>(output_shapes, OUTPUT_NUM, kernel_name_, "output_shapes", &output_size_list_);
     if (out_flag == -1) {
       return out_flag;
+    }
+    int work_flag =
+      CalShapesSizeInBytes<float>(output_shapes, OUTPUT_NUM, kernel_name_, "work_shapes", &work_size_list_);
+    if (work_flag == -1) {
+      return work_flag;
     }
     is_null_resizebicubic_grad_input_ = (inp_flag == 1 || out_flag == 1);
     return CheckKernelParam();
@@ -107,12 +112,17 @@ class ResizeBicubicGradHelperGpuKernel : public GpuKernelHelperBase {
     }
     T *input_grad_ptr = nullptr;
     S *input_origin_image_ptr = nullptr;
+    float *work_ptr = nullptr;
     S *output_ptr = nullptr;
     int flag = GetDeviceAddress<T>(input_ptrs, 0, kernel_name_, &input_grad_ptr);
     if (flag != 0) {
       return flag;
     }
     flag = GetDeviceAddress<S>(input_ptrs, 1, kernel_name_, &input_origin_image_ptr);
+    if (flag != 0) {
+      return flag;
+    }
+    flag = GetDeviceAddress<float>(work_ptrs, 0, kernel_name_, &work_ptr);
     if (flag != 0) {
       return flag;
     }
@@ -123,9 +133,10 @@ class ResizeBicubicGradHelperGpuKernel : public GpuKernelHelperBase {
     h_scale_ = kernel::Scaling(origin_height_, input_grad_height_, align_corners_);
     w_scale_ = kernel::Scaling(origin_width_, input_grad_width_, align_corners_);
     // call cuda kernel
-    CalResizeBicubicGrad(input_grad_ptr, batch_, channel_, input_grad_height_, input_grad_width_, origin_height_,
-                         origin_width_, h_scale_, w_scale_, output_ptr, half_pixel_centers_, device_id_,
-                         reinterpret_cast<cudaStream_t>(cuda_stream));
+    auto status = CalResizeBicubicGrad(input_grad_ptr, batch_, channel_, input_grad_height_, input_grad_width_,
+                                       origin_height_, origin_width_, h_scale_, w_scale_, work_ptr, output_ptr,
+                                       half_pixel_centers_, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return 0;
   }
 

@@ -22,13 +22,17 @@
 #include <string>
 #include <atomic>
 #include <iostream>
-#include "src/litert/kernel_exec.h"
+#include "src/executor/kernel_exec.h"
 #include "include/errorcode.h"
 using mindspore::lite::RET_ERROR;
 using mindspore::lite::RET_OK;
 using mindspore::lite::RET_OUT_OF_TENSOR_RANGE;
 
 namespace mindspore::kernel {
+constexpr static int kWeightIdx = 0;
+constexpr static int kMomentVector1stIdx = 1;
+constexpr static int kMomentVector2stIdx = 2;
+
 enum class WeightUpdateMode { NORMAL, VIRTUAL_BATCH, ACCUMULATE_GRADS };
 
 class OptimizerKernel : public LiteKernel {
@@ -55,6 +59,11 @@ class OptimizerKernel : public LiteKernel {
   float GetLearningRate() { return lr_; }
 
   virtual std::vector<int> GetOptimizerParamsIdxs() const {
+    std::vector<int> indices;
+    return indices;
+  }
+
+  virtual std::vector<int> GetTrainableParamsIdxs() const {
     std::vector<int> indices;
     return indices;
   }
@@ -93,6 +102,19 @@ class OptimizerKernel : public LiteKernel {
       }
     }
     return found;
+  }
+
+  std::vector<lite::Tensor *> GetTrainableParams() const {
+    std::vector<lite::Tensor *> params;
+    auto indices = GetTrainableParamsIdxs();
+    for (size_t ix = 0; ix < indices.size(); ix++) {
+      auto param = in_tensors_.at(indices[ix]);
+      if (!param->IsConst()) {
+        continue;
+      }
+      params.push_back(param);
+    }
+    return params;
   }
 
   lite::Tensor *GetGradients() {

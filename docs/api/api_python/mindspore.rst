@@ -11,6 +11,7 @@ mindspore
     :toctree: mindspore
 
     mindspore.Tensor
+    mindspore.tensor
     mindspore.COOTensor
     mindspore.CSRTensor
     mindspore.RowTensor
@@ -36,6 +37,7 @@ mindspore
     mindspore.dtype_to_pytype
     mindspore.pytype_to_dtype
     mindspore.get_py_obj_dtype
+    mindspore.QuantDtype
 
 运行环境
 ---------
@@ -55,6 +57,8 @@ mindspore
     mindspore.set_algo_parameters
     mindspore.get_algo_parameters
     mindspore.reset_algo_parameters
+    mindspore.set_offload_context
+    mindspore.get_offload_context
 
 随机种子
 ---------
@@ -78,6 +82,7 @@ mindspore
     mindspore.load
     mindspore.load_checkpoint
     mindspore.load_distributed_checkpoint
+    mindspore.load_mindir
     mindspore.load_param_into_net
     mindspore.merge_pipeline_strategys
     mindspore.merge_sliced_parameter
@@ -86,6 +91,7 @@ mindspore
     mindspore.rank_list_for_transform
     mindspore.restore_group_info_list
     mindspore.save_checkpoint
+    mindspore.save_mindir
     mindspore.transform_checkpoint_by_rank
     mindspore.transform_checkpoints
 
@@ -97,6 +103,7 @@ mindspore
 
     mindspore.grad
     mindspore.value_and_grad
+    mindspore.get_grad
     mindspore.jacfwd
     mindspore.jacrev
     mindspore.jvp
@@ -134,6 +141,8 @@ mindspore
     mindspore.ms_function
     mindspore.ms_memory_recycle
     mindspore.mutable
+    mindspore.constexpr
+    mindspore.lazy_inline
 
 工具
 -----

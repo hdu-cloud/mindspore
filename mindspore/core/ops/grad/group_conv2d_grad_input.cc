@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 
-#include <memory>
 #include "ops/grad/group_conv2d_grad_input.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {

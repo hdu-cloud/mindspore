@@ -15,16 +15,30 @@
  */
 
 #include "ops/col2im.h"
-#include <algorithm>
+
 #include <memory>
 #include <set>
-#include <string>
 #include <vector>
+
 #include "abstract/abstract_value.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/image_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -144,13 +158,18 @@ abstract::ShapePtr Col2ImInferShape(const PrimitivePtr &primitive, const std::ve
   auto output_size_ptr = input_args[kInputIndex1];
   MS_EXCEPTION_IF_NULL(output_size_ptr);
   auto output_size_value = GetShapeValue(primitive, output_size_ptr);
+  if (IsValueKnown(output_size_ptr->BuildValue()) &&
+      std::any_of(output_size_value.begin(), output_size_value.end(), [](auto x) { return x < 0; })) {
+    MS_EXCEPTION(ValueError) << "For 'Col2Im', the value of 'output_size' must not be negative, but got ["
+                             << output_size_value[kIndex0] << ", " << output_size_value[kIndex1] << "].";
+  }
 
   auto is_dynamic_rank = IsDynamicRank(x_shape) || IsDynamicRank(output_size_value);
   if (is_dynamic_rank) {
-    return std::make_shared<abstract::Shape>(std::vector<int64_t>{-1, -1, -1, -1});
+    return std::make_shared<abstract::Shape>(std::vector<int64_t>(x_size, abstract::Shape::kShapeDimAny));
   }
 
-  if (!(IsDynamic(x_shape) || IsDynamic(output_size_value))) {
+  if (!(IsDynamic(x_shape) || !(IsValueKnown(input_args[1]->BuildValue())))) {
     Col2ImShapeCheck(x_shape, kernel_size, dilation, padding, stride, output_size_value[kInputIndex0],
                      output_size_value[kInputIndex1]);
   }
@@ -160,6 +179,8 @@ abstract::ShapePtr Col2ImInferShape(const PrimitivePtr &primitive, const std::ve
 }
 
 TypePtr Col2ImInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  auto size_type = input_args[kInputIndex1]->BuildType();
+  (void)CheckAndConvertUtils::CheckTensorTypeValid("output_size", size_type, {kInt32, kInt64}, primitive->name());
   return CheckAndConvertUtils::GetTensorInputType(kNameCol2Im, input_args, kInputIndex0);
 }
 }  // namespace
@@ -175,8 +196,27 @@ AbstractBasePtr Col2ImInfer(const abstract::AnalysisEnginePtr &, const Primitive
   return abstract::MakeAbstract(shapes, types);
 }
 
-REGISTER_HOST_DEPENDS(kNameCol2Im, {1});
 MIND_API_OPERATOR_IMPL(Col2Im, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(Col2Im, prim::kPrimCol2Im, Col2ImInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGCol2ImInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return Col2ImInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return Col2ImInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return Col2ImInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Col2Im, prim::kPrimCol2Im, AGCol2ImInfer, false);
 }  // namespace ops
 }  // namespace mindspore

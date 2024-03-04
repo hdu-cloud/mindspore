@@ -28,6 +28,8 @@ from mindspore.ops import functional as F
 from mindspore.ops import operations as P
 from mindspore.ops.function.math_func import matrix_exp
 from mindspore.ops.function.math_func import sinc
+from mindspore.ops.function.math_func import quantile
+from mindspore.ops.function.math_func import nanquantile
 from mindspore.ops.function.math_func import nan_to_num
 from mindspore.ops.operations.image_ops import CropAndResizeGradBoxes, AdjustHue, AdjustContrastv2, \
                                                AdjustSaturation, CombinedNonMaxSuppression, CropAndResizeGradImage
@@ -41,6 +43,7 @@ from mindspore.ops.operations.math_ops import ReduceStd
 from mindspore.ops.operations.math_ops import CumulativeLogsumexp
 from mindspore.ops.operations.math_ops import Sinc
 from mindspore.ops.operations.math_ops import NanToNum
+from mindspore.ops.operations.math_ops import Bernoulli
 from mindspore.ops.operations.array_ops import ConjugateTranspose
 from mindspore.ops.operations.array_ops import UnravelIndex
 from mindspore.ops.operations.math_ops import Trace
@@ -56,6 +59,7 @@ from mindspore.ops.operations.math_ops import MatrixLogarithm
 from mindspore.ops.operations.math_ops import CholeskySolve
 from mindspore.ops.operations.math_ops import InplaceIndexAdd
 from mindspore.ops.operations.math_ops import NextAfter
+from mindspore.ops.operations.math_ops import Fmax
 from mindspore.ops.operations.math_ops import ComplexAbs
 from mindspore.ops.operations.math_ops import Orgqr
 from mindspore.ops.operations.math_ops import CompareAndBitpack
@@ -74,11 +78,13 @@ from mindspore.ops.operations.array_ops import SegmentMin
 from mindspore.ops.operations.array_ops import SegmentSum
 from mindspore.ops.operations.array_ops import IdentityN
 from mindspore.ops.operations.array_ops import IndexFill
+from mindspore.ops.operations.array_ops import IndexPut
 from mindspore.ops.operations.array_ops import SegmentMean
 from mindspore.ops.operations.array_ops import SegmentProd
 from mindspore.ops.operations.array_ops import ScatterAddWithAxis
 from mindspore.ops.operations.array_ops import ConcatOffsetV1
 from mindspore.ops.operations.random_ops import NonDeterministicInts
+from mindspore.ops.operations.random_ops import Uniform
 from mindspore.ops.operations.random_ops import TruncatedNormal
 from mindspore.ops.operations.random_ops import MultinomialWithReplacement
 from mindspore.ops.operations.random_ops import ParameterizedTruncatedNormal
@@ -86,6 +92,7 @@ from mindspore.ops.operations.random_ops import LogNormalReverse
 from mindspore.ops.operations.image_ops import NonMaxSuppressionWithOverlaps
 from mindspore.ops.operations.image_ops import ResizeArea
 from mindspore.ops.operations.image_ops import ScaleAndTranslate
+from mindspore.ops.operations.image_ops import ResizeV2
 from mindspore.ops.operations.other_ops import SampleDistortedBoundingBoxV2
 from mindspore.ops.operations.array_ops import Triu
 from mindspore.ops.operations.array_ops import ResizeNearestNeighborV2
@@ -100,8 +107,10 @@ from mindspore.ops.operations.math_ops import Betainc
 from mindspore.ops.operations.math_ops import Diagonal
 from mindspore.ops.operations.math_ops import Hypot
 from mindspore.ops.operations.math_ops import Heaviside
+from mindspore.ops.operations.math_ops import Quantile
 from mindspore.ops.operations.math_ops import Lcm
 from mindspore.ops.operations.math_ops import DivNoNan
+from mindspore.ops.operations.math_ops import Fmin
 from mindspore.ops.operations.math_ops import Gcd
 from mindspore.ops.operations.math_ops import Histogram
 from mindspore.ops.operations.math_ops import Median
@@ -136,9 +145,9 @@ from mindspore.ops.operations.nn_ops import MaxUnpool3D
 from mindspore.ops.operations.nn_ops import InstanceNormV2
 from mindspore.ops.operations._grad_ops import InstanceNormV2Grad
 from mindspore.ops.operations.linalg_ops import Geqrf
-from mindspore.nn.loss.loss import MultiMarginLoss
-from mindspore.nn.loss.loss import MultilabelMarginLoss
-from mindspore.nn.loss.loss import TripletMarginLoss
+from mindspore.ops.operations.nn_ops import MultiMarginLoss
+from mindspore.ops.operations.nn_ops import MultilabelMarginLoss
+from mindspore.ops.operations.nn_ops import TripletMarginLoss
 from mindspore.ops.operations.array_ops import Mvlgamma
 from mindspore.ops.operations.spectral_ops import BartlettWindow
 from mindspore.ops.operations.nn_ops import SparseSoftmaxCrossEntropyWithLogitsV2
@@ -161,6 +170,7 @@ from mindspore.ops.operations._grad_ops import MaxPoolGradV1
 from mindspore.ops.operations.nn_ops import ReLUV3
 from mindspore.ops.operations.nn_ops import GLU
 from mindspore.ops.operations.sparse_ops import RaggedTensorToTensor
+from mindspore.ops.operations.sparse_ops import RaggedTensorToSparse
 from mindspore.ops.operations.sparse_ops import CSRSparseMatrixToDense
 from mindspore.ops.operations.sparse_ops import SetSize
 from mindspore.ops.operations.sparse_ops import DenseToCSRSparseMatrix, Sspaddmm
@@ -177,6 +187,7 @@ from mindspore.ops.operations.sparse_ops import SparseMatrixTranspose
 from mindspore.ops.operations.sparse_ops import CSRSparseMatrixToSparseTensor
 from mindspore.ops.operations.sparse_ops import SparseAddmm
 from mindspore.ops.operations.sparse_ops import SparseConcat
+from mindspore.ops.operations.sparse_ops import SparseCross
 from mindspore.ops.operations.sparse_ops import SparseTensorToCSRSparseMatrix
 from mindspore.ops.operations.sparse_ops import SparseSparseMaximum
 from mindspore.ops.operations.sparse_ops import SparseSparseMinimum
@@ -198,6 +209,7 @@ from mindspore.ops.operations.array_ops import RightShift
 from mindspore.ops.operations.array_ops import LeftShift
 from mindspore.ops.operations.array_ops import Expand
 from mindspore.ops.operations.array_ops import HammingWindow
+from mindspore.ops.operations.array_ops import AffineGrid
 from mindspore.ops.operations.nn_ops import SparseApplyMomentum
 from mindspore.ops.operations.nn_ops import AdaptiveAvgPool3D
 from mindspore.ops.operations.nn_ops import AdaptiveMaxPool3D
@@ -461,6 +473,16 @@ class NanToNumFunc(nn.Cell):
         return y
 
 
+class RandpermFunc(nn.Cell):
+    def __init__(self):
+        super(RandpermFunc, self).__init__()
+        self.randperm = ops.function.random_func.randperm
+
+    def construct(self, n, seed, offset, dtype):
+        y = self.randperm(n, seed, offset, dtype)
+        return y
+
+
 class Moments(nn.Cell):
     """Moments net definition"""
 
@@ -559,7 +581,7 @@ class CountNonZero(nn.Cell):
         self.dtype = dtype
 
     def construct(self, input_x):
-        nonzero_num = C.count_nonzero(input_x, self.axis, self.keep_dims, self.dtype)
+        nonzero_num = ops.count_nonzero(input_x, self.axis, self.keep_dims, self.dtype)
         return nonzero_num
 
 
@@ -1355,6 +1377,26 @@ class MatrixSetDiagV3Net(nn.Cell):
         return self.matrix_set_diag_v3(x, diagonal, self.k)
 
 
+class QuantileFunc(nn.Cell):
+    def __init__(self):
+        super(QuantileFunc, self).__init__()
+        self.quantile = quantile
+
+    def construct(self, x, q):
+        y = self.quantile(x, q)
+        return y
+
+
+class NanQuantileFunc(nn.Cell):
+    def __init__(self):
+        super(NanQuantileFunc, self).__init__()
+        self.nanquantile = nanquantile
+
+    def construct(self, x, q):
+        y = self.nanquantile(x, q)
+        return y
+
+
 class SparseApplyCenteredRMSPropNet(nn.Cell):
     def __init__(self, use_locking=False):
         super(SparseApplyCenteredRMSPropNet, self).__init__()
@@ -1723,6 +1765,18 @@ test_case_math_ops = [
         'block': SincFunc(),
         'desc_inputs': [[2, 3]],
         'desc_bprop': [[2, 3]]}),
+    ('Quantile_1', {
+        'block': Quantile(),
+        'desc_inputs': [[2, 3], [3]],
+        'skip': ['backward']}),
+    ('Quantile_2', {
+        'block': QuantileFunc(),
+        'desc_inputs': [[2, 3], [3]],
+        'skip': ['backward']}),
+    ('NanQuantile', {
+        'block': NanQuantileFunc(),
+        'desc_inputs': [[2, 3], [3]],
+        'skip': ['backward']}),
     ('Asin', {
         'block': P.Asin(),
         'desc_inputs': [[2, 3]],
@@ -2038,6 +2092,14 @@ test_case_math_ops = [
                         Tensor(np.random.rand(3), mstype.int32),
                         Tensor(np.random.rand(16), mstype.float32)],
         'desc_bprop': [(Tensor(np.random.rand(1), mstype.float32), Tensor(np.random.rand(1), mstype.float32))]}),
+    ('NLLLossGrad', {
+        'block': G.NLLLossGrad(reduction="mean"),
+        'desc_inputs': [Tensor(np.random.rand(3, 16), mstype.float32),
+                        Tensor(np.random.rand(1), mstype.float32),
+                        Tensor(np.random.rand(3), mstype.int32),
+                        Tensor(np.random.rand(16), mstype.float32),
+                        Tensor(np.random.rand(1), mstype.float32)],
+        'skip': ['backward']}),
     ('BatchNorm3d', {
         'block': BatchNorm3d(num_features=3),
         'desc_inputs': [Tensor(np.random.rand(3, 3, 3, 5, 4).astype(np.float32))],
@@ -2491,6 +2553,10 @@ test_case_math_ops = [
                         Tensor(np.array([[[1.], [3.]], [[1.], [3.]]]).astype(np.float32)),
                         Tensor(np.random.uniform(0.0, 5.0), mstype.float64)],
         'desc_bprop': [Tensor(np.array([[[1.], [1.]], [[1.], [1.]]]).astype(np.float32))]}),
+    ('MatrixDeterminant', {
+        'block': P.MatrixDeterminant(),
+        'desc_inputs': [Tensor(np.array([[[-1, -2], [-3, -4]], [[5, 6], [7, 8]]]).astype(np.float32))],
+        'desc_bprop': [Tensor(np.array([1.0, 2.0]).astype(np.float32))]}),
     ('Median', {
         'block': Median(global_median=False, axis=0, keep_dims=False),
         'desc_inputs': [Tensor(np.array([[1.0, 7.0, 6.0], [5.0, 1.0, 3.0], [9.0, 17.0, 1.0]]).astype(np.float32))],
@@ -2503,6 +2569,10 @@ test_case_math_ops = [
                         Tensor(np.array([1, 1, 1]).astype(np.int64))),
         'desc_bprop': [],
         'skip': ['backward']}),
+    ('LogMatrixDeterminant', {
+        'block': P.LogMatrixDeterminant(),
+        'desc_inputs': [Tensor(np.array([[[-1, -2], [-3, -4]], [[5, 6], [7, 8]]]).astype(np.float32))],
+        'desc_bprop': [(Tensor(np.array([1, 2]).astype(np.float32)), Tensor(np.array([1, 2]).astype(np.float32)))]}),
     ('Erfinv', {
         'block': P.Erfinv(),
         'desc_inputs': [Tensor(np.array([0.1, 0.1, 0.1]).astype(np.float16))],
@@ -2575,6 +2645,16 @@ test_case_math_ops = [
         'desc_inputs': [Tensor(np.array([[1.0, 2.0, 3.0], [2.0, 3.0, 4.0], [3.0, 4.0, 5.0]]).astype(np.float32)),
                         Tensor(np.array([[1.0], [2.0], [3.0]]).astype(np.float32))],
         'desc_bprop': [Tensor(np.array([[0.], [1.], [-0.5]]).astype(np.float32))]}),
+    ('Fmin', {
+        'block': Fmin(),
+        'desc_inputs': [Tensor(np.array([[2, 2, 3]]).astype(np.float32)),
+                        Tensor(np.array([[2, 2, 3]]).astype(np.float32))],
+        'desc_bprop': [Tensor(np.array([[2, 2, 3]]).astype(np.float32))]}),
+    ('Fmax', {
+        'block': Fmax(),
+        'desc_inputs': [Tensor(np.array([2, 2, 3]).astype(np.float32)),
+                        Tensor(np.array([2, 2, 3]).astype(np.float32))],
+        'desc_bprop': [Tensor(np.array([2, 2, 3]).astype(np.float32))]}),
     ('Trace', {
         'block': Trace(),
         'desc_inputs': [Tensor(np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]).astype(np.float32))],
@@ -2640,7 +2720,7 @@ test_case_nn_ops = [
                         ([9], {'dtype': np.int64})],
         'skip': ['backward']}),
     ('FractionalMaxPool3DWithFixedKsize', {
-        'block': FractionalMaxPool3DWithFixedKsize(ksize=(1.0, 1.0, 2.0), output_shape=(2, 2, 3)),
+        'block': FractionalMaxPool3DWithFixedKsize(ksize=(1, 1, 2), output_shape=(2, 2, 3)),
         'desc_inputs': [([1, 1, 4, 4, 7], {'dtype': np.int64}),
                         ([1, 1, 3], {'dtype': np.float32})],
         'desc_bprop': [([1, 1, 2, 2, 3], {'dtype': np.int64}),
@@ -2652,11 +2732,13 @@ test_case_nn_ops = [
                         ([1, 1, 2, 2, 3], {'dtype': np.int64})],
         'skip': ['backward']}),
     ('UpsampleNearest3D', {
-        'block': UpsampleNearest3D(output_size=[4, 64, 48], scales=None),
+        'block': UpsampleNearest3D(),
+        'desc_const': [[4, 64, 48], None],
         'desc_inputs': [([2, 3, 4, 512, 256], {'dtype': np.float32})],
         'desc_bprop': [([2, 3, 4, 64, 48], {'dtype': np.float32})]}),
     ('UpsampleNearest3DGrad', {
-        'block': UpsampleNearest3DGrad(input_size=[2, 3, 4, 512, 256], output_size=[4, 64, 48], scales=None),
+        'block': UpsampleNearest3DGrad(),
+        'desc_const': [[2, 3, 4, 512, 256], [4, 64, 48], None],
         'desc_inputs': [([2, 3, 4, 64, 48], {'dtype': np.float32})],
         'skip': ['backward']}),
     ('MaxPool3DWithArgmax', {
@@ -3003,11 +3085,13 @@ test_case_nn_ops = [
                         ([32, 24, 1, 1, 13], {'dtype': np.float32})],
         'skip': ['backward']}),
     ('UpsampleTrilinear3D', {
-        'block': UpsampleTrilinear3D(output_size=[4, 64, 48]),
+        'block': UpsampleTrilinear3D(),
+        'desc_const': [[4, 64, 48], None],
         'desc_inputs': [([2, 3, 4, 512, 256], {'dtype': np.float32})],
         'desc_bprop': [([2, 3, 4, 64, 48], {'dtype': np.float32})]}),
-    ('UpsampleNearest3DGrad', {
-        'block': UpsampleTrilinear3DGrad(input_size=[2, 3, 4, 512, 256], output_size=[4, 64, 48], scales=None),
+    ('UpsampleTrilinear3DGrad', {
+        'block': UpsampleTrilinear3DGrad(),
+        'desc_const': [[2, 3, 4, 512, 256], [4, 64, 48], None],
         'desc_inputs': [([2, 3, 4, 64, 48], {'dtype': np.float32})],
         'skip': ['backward']}),
     ('DropoutGenMask', {
@@ -3022,7 +3106,7 @@ test_case_nn_ops = [
         'desc_inputs': [[64, 12, 128, 128], Tensor(np.ones(1572864).astype(np.uint8))],
         'desc_bprop': [[64, 12, 128, 128]]}),
     ('Dropout', {
-        'block': nn.Dropout(0.5),
+        'block': nn.Dropout(p=0.5),
         'desc_inputs': [[64, 12, 128, 128]],
         'desc_bprop': [[64, 12, 128, 128]]}),
     ('ReduceMean0', {
@@ -3136,6 +3220,12 @@ test_case_nn_ops = [
     ('ApplyProximalAdagrad', {
         'block': ApplyProximalAdagradNet(),
         'desc_inputs': [[3, 3]],
+        'skip': ['backward']}),
+    ('Bernoulli', {
+        'block': Bernoulli(seed=1),
+        'desc_inputs': [
+            Tensor(np.array([1, 2, 3]).astype(np.float32)),
+            Tensor(np.array([0.0, 1.0, 1.0]).astype(np.float32))],
         'skip': ['backward']}),
     ('SparseDenseCwiseAdd', {
         'block': SparseDenseCwiseAdd(),
@@ -3281,7 +3371,7 @@ test_case_nn_ops = [
     ('MultiMarginLoss', {
         'block': MultiMarginLoss(reduction="mean"),
         'desc_inputs': [Tensor(np.array([[0.3, 0.7], [0.5, 0.5]]).astype(np.float32)),
-                        Tensor(np.array([0, 0]).astype(np.int64))],
+                        Tensor(np.array([0, 0]).astype(np.int64)), None],
         'desc_bprop': [[1]]}),
     ('L2Loss_1', {
         'block': P.L2Loss(),
@@ -3302,14 +3392,14 @@ test_case_nn_ops = [
         'desc_bprop': []}),
     ('ResizeBicubic', {
         'block': ResizeBicubic(align_corners=False, half_pixel_centers=False),
-        'desc_inputs': [Tensor([[[[1.0], [2.0]], [[3.0], [4.0]]]]),
+        'desc_inputs': [Tensor([[[[1., 2.], [3., 4.]]]]),
                         Tensor(np.array([1, 4]).reshape(2).astype(np.int32))],
-        'desc_bprop': [Tensor([[[[1.], [1.5], [2.], [2.09375]]]], mstype.float32)]}),
+        'desc_bprop': [Tensor([[[[1., 1.5, 2., 2.09375]]]], mstype.float32)]}),
     ('ResizeBicubicGrad', {
         'block': ResizeBicubicGrad(),
-        'desc_inputs': [Tensor([[[[1.0], [2.0]], [[3.0], [4.0]]]], mstype.float32),
-                        Tensor([[[[1.], [4.], [6.], [4.]]]])],
-        'desc_bprop': [Tensor([[[[1, 2, 3, 4, 5]]]], mstype.float32)],
+        'desc_inputs': [Tensor([[[[1., 2.], [3., 4.]]]], mstype.float32),
+                        Tensor([[[[1., 4., 6., 4.]]]], mstype.float32)],
+        'desc_bprop': [Tensor([[[[1., 4., 6., 4.]]]], mstype.float32)],
         'skip': ['backward']}),
     ('ResizeBilinear', {
         'block': P.ResizeBilinear((5, 5)),
@@ -3460,10 +3550,10 @@ test_case_nn_ops = [
         'skip': ['backward']}),
     ('SparseApplyCenteredRMSProp', {
         'block': SparseApplyCenteredRMSPropNet(),
-        'desc_inputs': [Tensor(np.array([[0.6, 0.4], [0.1, 0.5]]).astype(np.float32)),
-                        Tensor(np.array([[0.1, 0.3], [0.1, 0.5]]).astype(np.float32)),
-                        Tensor(np.array([[0.2, 0.1], [0.1, 0.2]]).astype(np.float32)),
-                        Tensor(np.array([[0.2, 0.1], [0.1, 0.2]]).astype(np.float32)),
+        'desc_inputs': [Parameter(Tensor(np.array([[0.6, 0.4], [0.1, 0.5]]).astype(np.float32))),
+                        Parameter(Tensor(np.array([[0.1, 0.3], [0.1, 0.5]]).astype(np.float32))),
+                        Parameter(Tensor(np.array([[0.2, 0.1], [0.1, 0.2]]).astype(np.float32))),
+                        Parameter(Tensor(np.array([[0.2, 0.1], [0.1, 0.2]]).astype(np.float32))),
                         Tensor(0.001, mstype.float32),
                         Tensor(1e-10, mstype.float32),
                         Tensor(0.001, mstype.float32),
@@ -3524,9 +3614,9 @@ test_case_nn_ops = [
                        Tensor(np.ones([2, 2, 5], np.float32))]}),
     ('SparseApplyAdagradDA', {
         'block': SparseApplyAdagradDANet(),
-        'desc_inputs': [Tensor(np.array([[0.4, 0.5], [0.3, 0.1]]).astype(np.float32)),
-                        Tensor(np.array([[0.3, 0.6], [0.3, 0.6]]).astype(np.float32)),
-                        Tensor(np.array([[0.3, 0.6], [0.3, 0.6]]).astype(np.float32)),
+        'desc_inputs': [Parameter(Tensor(np.array([[0.4, 0.5], [0.3, 0.1]]).astype(np.float32))),
+                        Parameter(Tensor(np.array([[0.3, 0.6], [0.3, 0.6]]).astype(np.float32))),
+                        Parameter(Tensor(np.array([[0.3, 0.6], [0.3, 0.6]]).astype(np.float32))),
                         Tensor(np.array([[0.4, 0.5], [0.2, 0.1]]).astype(np.float32)),
                         Tensor(np.array([0, 1]).astype(np.int32)),
                         Tensor(0.001, mstype.float32),
@@ -3536,7 +3626,7 @@ test_case_nn_ops = [
         'skip': ['backward']}),
     ('SparseApplyProximalGradientDescent', {
         'block': SparseApplyProximalGradientDescentNet(),
-        'desc_inputs': [Tensor(np.array([[0.4, 0.5], [0.3, 0.1]]).astype(np.float32)),
+        'desc_inputs': [Parameter(Tensor(np.array([[0.4, 0.5], [0.3, 0.1]]).astype(np.float32))),
                         Tensor(0.01, mstype.float32),
                         Tensor(0.88, mstype.float32),
                         Tensor(0.3, mstype.float32),
@@ -3609,6 +3699,10 @@ test_case_array_ops = [
         'block': P.DepthToSpace(2),
         'desc_inputs': [[1, 12, 1, 1]],
         'desc_bprop': [[1, 3, 2, 2]]}),
+    ('AffineGrid', {
+        'block': AffineGrid(align_corners=False),
+        'desc_inputs': [Tensor(np.random.rand(1, 2, 3), mstype.float32), (1, 1, 1, 2)],
+        'desc_bprop': [Tensor(np.random.rand(1, 1, 2, 2), mstype.float32)]}),
     ('Split', {
         'block': P.Split(1, 2),
         'desc_inputs': [Tensor(np.array([[1, 1, 1, 1], [2, 2, 2, 2]]))],
@@ -3769,8 +3863,7 @@ test_case_array_ops = [
         'desc_bprop': [Tensor(np.array([[3, 4, 5], [4, 2, 6]]).astype(np.float32))]
         }),
     ('Im2Col', {
-        'block': Im2Col(ksizes=[2, 2], dilations=[1, 1], strides=[2, 2],
-                        padding_mode="CALCULATED", pads=[1]),
+        'block': Im2Col(ksizes=[2, 2], dilations=[1, 1], strides=[2, 2], pads=[1]),
         'desc_inputs': [[2, 5, 16, 16]],
         'skip': ['backward']}),
     ('Col2Im', {
@@ -3943,6 +4036,12 @@ test_case_array_ops = [
                         Tensor(4.0, mstype.float32)],
         'desc_bprop': [Tensor(np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]), mstype.float32)],
     }),
+    ('IndexPut', {
+        'block': IndexPut(1),
+        'desc_inputs': [(Tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], mstype.float32)),
+                        (Tensor([3.0], mstype.float32)),
+                        (Tensor([0, 1], mstype.int32),)],
+        'desc_bprop': [Tensor([[1, 1, 1], [1, 1, 1]], mstype.float32)]}),
     ('MaskedScatter', {
         'block': MaskedScatter(),
         'desc_inputs': [Tensor(np.array([[1.0, 2.0, 3.0]]), mstype.float32),
@@ -4231,6 +4330,14 @@ test_case_image_ops = [
                         Tensor(0, mstype.float32),
                         Tensor(0, mstype.float32)],
         'skip': ['backward']}),
+    ("ResizeV2", {
+        'block': ResizeV2(coordinate_transformation_mode="half_pixel", mode="nearest"),
+        'desc_inputs': [Tensor(np.array([[[[1, 2, 3, 4]]]]).astype(np.float32)),
+                        Tensor(np.array([0]).astype(np.float32)),
+                        Tensor(np.array([0]).astype(np.float32)),
+                        Tensor(np.array([1, 1, 1, 8]).astype(np.int64))],
+        'desc_bprop': [Tensor(np.array([[[[1, 2, 3, 4, 5, 6, 7, 8]]]]).astype(np.float32))]
+    }),
 ]
 
 test_case_other_ops = [
@@ -4238,9 +4345,19 @@ test_case_other_ops = [
         'block': NonDeterministicInts(dtype=mstype.int32),
         'desc_inputs': [Tensor(np.array([2, 2]), mstype.int32)],
         'skip': ['backward']}),
+    ('UniformOps', {
+        'block': Uniform(minval=0., maxval=1., seed=1, offset=1),
+        'desc_inputs': [Tensor(np.array([2, 2]), mstype.float32)],
+        'skip': ['backward']}),
     ('TruncatedNormal', {
         'block': TruncatedNormal(dtype=mstype.float32, seed=1, seed2=1),
         'desc_inputs': [Tensor(np.array([2, 2]), mstype.int32)],
+        'skip': ['backward']}),
+    ('Randperm', {
+        'block': RandpermFunc(),
+        'desc_inputs': [Tensor(np.random.randint(1, 20, (1)).astype(np.int64), mstype.int64),
+                        Tensor(np.array([0]), mstype.int64),
+                        Tensor(np.array([0]), mstype.int64), mstype.int64],
         'skip': ['backward']}),
     ('MultinomialWithReplacement', {
         'block': MultinomialWithReplacement(numsamples=3, replacement=True),
@@ -4603,7 +4720,7 @@ test_case_other_ops = [
         'desc_inputs': [Tensor(np.array([[[[0.5, 0.5, 0.5]]]], np.float32))],
         'desc_bprop': [Tensor(np.array([[[[0., 0., 0.5]]]], np.float32))]}),
     ('FillV2', {
-        'block': inner.FillV2(),
+        'block': P.FillV2(),
         'desc_inputs': [Tensor([2, 3], mstype.int32),
                         Tensor(1, mstype.float32)],
         'desc_bprop': [Tensor([[1, 1, 1], [1, 1, 1]], mstype.float32)]}),
@@ -4817,6 +4934,15 @@ test_case_sparse_ops = [
         'desc_bprop': [Tensor(np.array([[0, 1], [1, 2], [1, 3]]).astype(np.int64)),
                        Tensor(np.array([1, 2, 3]).astype(np.int64)),
                        Tensor(np.array([2, 3]).astype(np.int64))]}),
+    ('RaggedTensorToSparse', {
+        'block': RaggedTensorToSparse(Tsplits=mstype.int64),
+        'desc_inputs': [(Tensor(np.array([0, 2, 4]).astype(np.int64)),
+                         Tensor(np.array([0, 3, 3, 5, 6]).astype(np.int64))),
+                        Tensor(np.array([1, 2, 3, 4, 5, 6]).astype(np.int64))],
+        'desc_bprop': [Tensor(np.array([[2, 0, 2], [0, 1, -1], [0, 0, -1],
+                                        [0, 0, 2], [0, 0, 1], [0, 1, 0]]).astype(np.int64)),
+                       Tensor(np.array([0, 1, 0, 0, 0, 0]).astype(np.int64)),
+                       Tensor(np.array([2, -1, 0]).astype(np.int64))]}),
     ('SparseSliceGrad', {
         'block': SparseSliceGrad(),
         'desc_inputs': [Tensor(np.array([1, 2, 3]).astype(np.int64)),
@@ -4832,6 +4958,18 @@ test_case_sparse_ops = [
                         (Tensor([0, 3, 3, 7, 9], mstype.int32),)],
         'skip': ['backward'],
     }),
+    ('SparseCross', {
+        'block': SparseCross(hashed_output=True, num_buckets=1, hash_key=1,
+                             out_type=mstype.int64, internal_type=mstype.int64),
+        'desc_inputs': [(Tensor([[0, 0], [1, 0], [1, 1]], mstype.int64),
+                         Tensor([[0, 0], [1, 0]], mstype.int64)),
+                        (Tensor([1, 2, 3], mstype.int64),
+                         Tensor([4, 5], mstype.int64)),
+                        (Tensor([2, 2], mstype.int64),
+                         Tensor([2, 1], mstype.int64)),
+                        (Tensor([[6], [7]], mstype.int64),
+                         Tensor([[6], [7]], mstype.int64))],
+        'skip': ['backward']}),
 ]
 
 test_case_lists = [test_case_nn_ops, test_case_math_ops, test_case_array_ops,

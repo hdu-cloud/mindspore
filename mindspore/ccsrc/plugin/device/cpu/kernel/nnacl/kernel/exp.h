@@ -13,25 +13,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_KERNEL_EXP_H_
-#define MINDSPORE_NNACL_KERNEL_EXP_H_
+#ifndef NNACL_KERNEL_EXP_H_
+#define NNACL_KERNEL_EXP_H_
 
 #include "nnacl/op_base.h"
 #include "nnacl/tensor_c.h"
 #include "nnacl/kernel.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+typedef struct ExpStruct {
+  KernelBase base_;
+  float in_scale_;
+  float out_scale_;
+  int element_num_;
+  int (*Exp)(const void *in, void *out, const struct ExpStruct *exp, int task_id);
+} ExpStruct;
 
-typedef struct ExpStru {
-  KernelBase base;
-} ExpStru;
+KernelBase *CreateExp(OpParameter *param, int data_type);
 
-KernelBase *CreateExp(OpParameter *param, TensorC *in, size_t insize, TensorC *out, size_t outsize, int data_type,
-                      FormatC format);
-
-#ifdef __cplusplus
-}
-#endif
-#endif  // MINDSPORE_NNACL_KERNEL_EXP_H_
+#endif  // NNACL_KERNEL_EXP_H_

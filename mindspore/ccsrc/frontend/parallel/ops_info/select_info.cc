@@ -25,7 +25,7 @@
 #include "frontend/parallel/dynamic_creator.h"
 #include "frontend/parallel/strategy.h"
 #include "frontend/parallel/tensor_layout/tensor_redistribution.h"
-#include "pipeline/jit/resource.h"
+#include "pipeline/jit/ps/resource.h"
 
 namespace mindspore {
 namespace parallel {
@@ -128,5 +128,6 @@ std::vector<StrategyPtr> SelectInfo::GenerateOpStrategies(int64_t stage_id) {
 }
 
 REGISTER(SelectInfo);
+REGISTER(BetaincInfo);
 }  // namespace parallel
 }  // namespace mindspore

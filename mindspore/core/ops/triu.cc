@@ -14,16 +14,32 @@
  * limitations under the License.
  */
 #include "ops/triu.h"
-#include <string>
-#include <algorithm>
+
+#include <map>
 #include <memory>
 #include <set>
 #include <vector>
 
-#include "ops/op_utils.h"
-#include "mindapi/src/helper.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,7 +49,9 @@ abstract::ShapePtr TriuInferShape(const PrimitivePtr &primitive, const std::vect
   auto prim_name = primitive->name();
 
   const int64_t kShapeSize = 2;
-  auto shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape());
+  auto input_shape = input_args[0];
+  MS_EXCEPTION_IF_NULL(input_shape);
+  auto shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_shape->BuildShape());
   auto x_shape = shape_map[kShape];
   if (IsDynamicRank(x_shape)) {
     return std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
@@ -44,11 +62,16 @@ abstract::ShapePtr TriuInferShape(const PrimitivePtr &primitive, const std::vect
 }
 
 TypePtr TriuInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
-  auto x_type = input_args[0]->BuildType();
+  MS_EXCEPTION_IF_NULL(prim);
+  auto prim_name = prim->name();
+
+  auto input_shape = input_args[0];
+  MS_EXCEPTION_IF_NULL(input_shape);
+  auto x_type = input_shape->BuildType();
   MS_EXCEPTION_IF_NULL(x_type);
   const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64, kInt8,   kInt16,  kInt32,
                                          kInt64,   kUInt8,   kUInt16,  kUInt32, kUInt64, kBool};
-  (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_type, valid_types, prim->name());
+  (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_type, valid_types, prim_name);
   return x_type;
 }
 }  // namespace
@@ -70,6 +93,24 @@ AbstractBasePtr TriuInfer(const abstract::AnalysisEnginePtr &, const PrimitivePt
 }
 
 MIND_API_OPERATOR_IMPL(Triu, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(Triu, prim::kPrimTriu, TriuInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGTriuInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return TriuInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return TriuInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return TriuInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Triu, prim::kPrimTriu, AGTriuInfer, false);
 }  // namespace ops
 }  // namespace mindspore

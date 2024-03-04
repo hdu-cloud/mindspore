@@ -43,7 +43,8 @@ static size_t DumpSortingCircleList(const std::deque<AnfNodePtr> &todo, const An
 }
 
 std::vector<AnfNodePtr> TopoSort(const AnfNodePtr &root, const SuccFunc &succ, const IncludeFunc &include) {
-  constexpr size_t kVecReserve = 64;
+  constexpr auto kVecReserve = 64;
+  constexpr auto kRecursiveLevel = 2;
   std::vector<AnfNodePtr> res;
   if (root == nullptr) {
     return res;
@@ -84,25 +85,27 @@ std::vector<AnfNodePtr> TopoSort(const AnfNodePtr &root, const SuccFunc &succ, c
         // To dump all nodes in a circle.
         MS_LOG(ERROR) << "Graph cycle exists. Circle is: ";
         auto circle_len = DumpSortingCircleList(todo, next, seen);
-        MS_LOG(EXCEPTION) << "Graph cycle exists, size: " << circle_len << ", strike node: " << next->DebugString(2);
+        MS_LOG(INTERNAL_EXCEPTION) << "Graph cycle exists, size: " << circle_len
+                                   << ", strike node: " << next->DebugString(kRecursiveLevel);
       }
     } else if (incl > EXCLUDE) {  // Not NOFOLLOW or EXCLUDE
-      MS_LOG(EXCEPTION) << "The result of include(node) must be one of: \"follow\", \"nofollow\", \"exclude\"";
+      MS_LOG(INTERNAL_EXCEPTION) << "The result of include(node) must be one of: \"follow\", \"nofollow\", \"exclude\"";
     }
   }
   return res;
 }
 
-// Search the cnodes inside this graph only.
-std::vector<CNodePtr> BroadFirstSearchGraphCNodes(const CNodePtr &start) {
+// Search all CNode in root's graph only.
+std::vector<CNodePtr> BroadFirstSearchGraphCNodes(const CNodePtr &root) {
   constexpr size_t kVecReserve = 64;
-  std::vector<CNodePtr> vec;
-  vec.reserve(kVecReserve);
+  std::vector<CNodePtr> cnodes;
+  cnodes.reserve(kVecReserve);
   auto seen = NewSeenGeneration();
-  start->seen_ = seen;
-  (void)vec.emplace_back(start);
-  for (size_t i = 0; i < vec.size(); ++i) {
-    CNodePtr &node = vec[i];
+  MS_EXCEPTION_IF_NULL(root);
+  root->seen_ = seen;
+  (void)cnodes.emplace_back(root);
+  for (size_t i = 0; i < cnodes.size(); ++i) {
+    CNodePtr &node = cnodes[i];
     auto &inputs = node->inputs();
     for (auto &input : inputs) {
       if (input->seen_ == seen) {
@@ -111,17 +114,17 @@ std::vector<CNodePtr> BroadFirstSearchGraphCNodes(const CNodePtr &start) {
       input->seen_ = seen;
       auto input_cnode = input->cast<CNodePtr>();
       if (input_cnode != nullptr) {
-        (void)vec.emplace_back(std::move(input_cnode));
+        (void)cnodes.emplace_back(std::move(input_cnode));
       }
     }
   }
-  return vec;
+  return cnodes;
 }
 
-// search the cnode match the predicate inside this graph only
-CNodePtr BroadFirstSearchFirstOf(const std::vector<CNodePtr> &starts, const MatchFunc &match_predicate) {
+// Search all CNode match the predicate in roots' graph only.
+CNodePtr BroadFirstSearchFirstOf(const std::vector<CNodePtr> &roots, const MatchFunc &match_predicate) {
   std::deque<CNodePtr> todo;
-  todo.insert(todo.end(), starts.begin(), starts.end());
+  (void)todo.insert(todo.end(), roots.begin(), roots.end());
   auto seen = NewSeenGeneration();
   while (!todo.empty()) {
     CNodePtr top = todo.front();
@@ -144,7 +147,7 @@ CNodePtr BroadFirstSearchFirstOf(const std::vector<CNodePtr> &starts, const Matc
   return nullptr;
 }
 
-std::vector<FuncGraphPtr> BroadFirstSearchGraphUsed(const FuncGraphPtr &root) {
+std::vector<FuncGraphPtr> BroadFirstSearchGraphUsed(const FuncGraphPtr &root, const GraphFilterFunc &filter) {
   std::vector<FuncGraphPtr> todo;
   todo.push_back(root);
   auto seen = NewSeenGeneration();
@@ -155,6 +158,9 @@ std::vector<FuncGraphPtr> BroadFirstSearchGraphUsed(const FuncGraphPtr &root) {
     auto used = top->func_graphs_used();
     for (auto &item : used) {
       if (item.first->seen_ == seen) {
+        continue;
+      }
+      if (filter && filter(item.first)) {
         continue;
       }
       todo.push_back(item.first);
@@ -188,9 +194,9 @@ std::vector<AnfNodePtr> SuccDeeper(const AnfNodePtr &node) {
 
   auto graph = GetValuePtr<FuncGraph>(node);
   if (graph != nullptr) {
-    auto &ret = graph->return_node();
-    if (ret != nullptr) {
-      vecs.push_back(ret);
+    auto &res = graph->return_node();
+    if (res != nullptr) {
+      vecs.push_back(res);
     }
     return vecs;
   } else if (node->func_graph() != nullptr) {
@@ -211,9 +217,9 @@ std::vector<AnfNodePtr> SuccDeeperSimple(const AnfNodePtr &node) {
 
   auto graph = GetValuePtr<FuncGraph>(node);
   if (graph != nullptr) {
-    auto &ret = graph->return_node();
-    if (ret != nullptr) {
-      vecs.push_back(ret);
+    auto &res = graph->return_node();
+    if (res != nullptr) {
+      vecs.push_back(res);
     }
   } else if (node->isa<CNode>()) {
     FetchCNodeSuccessors(node->cast<CNodePtr>(), &vecs);
@@ -242,6 +248,7 @@ std::vector<AnfNodePtr> SuccIncludeFV(const FuncGraphPtr &fg, const AnfNodePtr &
     auto input_fg = GetValuePtr<FuncGraph>(input);
     if (input_fg != nullptr) {
       for (auto &fv : input_fg->free_variables_nodes()) {
+        MS_EXCEPTION_IF_NULL(fv);
         if (fv->func_graph() == fg && fg->nodes().contains(fv)) {
           vecs.push_back(fv);
         }
@@ -263,9 +270,9 @@ std::vector<AnfNodePtr> SuccWithFilter(const GraphFilterFunc &graph_filter, cons
     if (graph_filter != nullptr && graph_filter(graph)) {
       return vecs;
     }
-    auto &ret = graph->return_node();
-    if (ret != nullptr) {
-      vecs.push_back(ret);
+    auto &res = graph->return_node();
+    if (res != nullptr) {
+      vecs.push_back(res);
     }
   } else if (node->isa<CNode>()) {
     FetchCNodeSuccessors(node->cast<CNodePtr>(), &vecs);

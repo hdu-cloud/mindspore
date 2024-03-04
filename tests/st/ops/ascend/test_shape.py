@@ -18,7 +18,8 @@ import mindspore.context as context
 import mindspore.nn as nn
 import mindspore.dataset as ds
 from mindspore.ops import operations as P
-from mindspore import Model, Tensor
+from mindspore import Tensor
+from mindspore.train import Model
 import mindspore as ms
 
 context.set_context(mode=context.GRAPH_MODE,
@@ -32,7 +33,7 @@ class Net(nn.Cell):
     def __init__(self):
         super(Net, self).__init__()
         self.unique = P.Unique()
-        self.shape = P.TensorShape()
+        self.shape = P.Shape()
         self.reshape = P.Reshape()
         self.add = P.Add()
 
@@ -42,7 +43,7 @@ class Net(nn.Cell):
         res = self.reshape(val, size)
         return res
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard

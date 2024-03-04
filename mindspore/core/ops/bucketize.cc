@@ -16,10 +16,11 @@
 
 #include "ops/bucketize.h"
 
-#include "ops/op_utils.h"
-#include "mindapi/src/helper.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -65,6 +66,24 @@ AbstractBasePtr BucketizeInfer(const abstract::AnalysisEnginePtr &, const Primit
   auto infer_shape = BucketizeInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Bucketize, prim::kPrimBucketize, BucketizeInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGBucketizeInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return BucketizeInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return BucketizeInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return BucketizeInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Bucketize, prim::kPrimBucketize, AGBucketizeInfer, false);
 }  // namespace ops
 }  // namespace mindspore

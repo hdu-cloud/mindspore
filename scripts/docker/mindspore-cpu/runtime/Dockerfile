@@ -72,5 +72,4 @@ RUN mkdir -pv /root/.pip \
     && echo "trusted-host=mirrors.aliyun.com" >> /root/.pip/pip.conf \
     && echo "index-url=http://mirrors.aliyun.com/pypi/simple/" >> /root/.pip/pip.conf \
     && pip install --upgrade pip \
-    && pip install --no-cache-dir py-spy \
     && pip cache purge

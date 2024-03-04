@@ -16,14 +16,15 @@
 
 #include "ops/sqrt.h"
 #include <complex>
-#include <vector>
-#include <string>
-#include <memory>
 #include <map>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <memory>
+#include <string>
+#include <vector>
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -59,7 +60,8 @@ abstract::ShapePtr SqrtInferShape(const PrimitivePtr &primitive, const std::vect
 
 TypePtr SqrtInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   auto x_type = input_args[kInputIndex0]->BuildType();
-  (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_type, common_valid_types_with_complex, primitive->name());
+  (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_type, common_valid_types_with_complex_and_bool,
+                                                   primitive->name());
   return x_type;
 }
 
@@ -119,6 +121,27 @@ AbstractBasePtr SqrtInfer(const abstract::AnalysisEnginePtr &, const PrimitivePt
   auto shapes = SqrtInferShape(primitive, input_args);
   return abstract::MakeAbstract(shapes, types);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Sqrt, prim::kPrimSqrt, SqrtInfer, SqrtInferValue, true);
+
+// AG means auto generated
+class MIND_API AGSqrtInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SqrtInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SqrtInferType(primitive, input_args);
+  }
+  ValuePtr InferValue(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SqrtInferValue(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SqrtInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Sqrt, prim::kPrimSqrt, AGSqrtInfer, true);
 }  // namespace ops
 }  // namespace mindspore

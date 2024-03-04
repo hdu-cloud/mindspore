@@ -22,6 +22,8 @@ aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR}/src COMMON_SRC3)
 set(MSLITE_NNIE_LINK_LIB nnie mpi VoiceEngine upvqe dnvqe)
 
 add_library(mslite_nnie SHARED
-        ${COMMON_SRC3})
+        ${COMMON_SRC3}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/litert/cxx_api/kernel.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/registry/kernel_interface_registry.cc)
 target_link_libraries(mslite_nnie ${MSLITE_NNIE_LINK_LIB} securec)
 

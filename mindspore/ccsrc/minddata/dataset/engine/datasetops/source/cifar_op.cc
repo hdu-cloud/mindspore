@@ -54,11 +54,12 @@ Status CifarOp::RegisterAndLaunchThreads() {
 
 // Load 1 TensorRow (image,label). 1 function call produces 1 TensorTow
 Status CifarOp::LoadTensorRow(row_id_type index, TensorRow *trow) {
+  RETURN_UNEXPECTED_IF_NULL(trow);
   std::shared_ptr<Tensor> label;
   std::shared_ptr<Tensor> fine_label;
   std::shared_ptr<Tensor> ori_image = cifar_image_label_pairs_[index].first;
   std::shared_ptr<Tensor> copy_image;
-  uint64_t path_index = std::ceil(index / kCifarBlockImageNum);
+  uint64_t path_index = static_cast<uint64_t>(std::ceil(index / kCifarBlockImageNum));
   RETURN_IF_NOT_OK(Tensor::CreateFromTensor(ori_image, &copy_image));
   RETURN_IF_NOT_OK(Tensor::CreateScalar(cifar_image_label_pairs_[index].second[0], &label));
 
@@ -130,21 +131,24 @@ Status CifarOp::ReadCifar10BlockData() {
       }
     }
 
-    std::ifstream in(file, std::ios::binary);
+    std::ifstream in(file, std::ios::in | std::ios::binary);
     CHECK_FAIL_RETURN_UNEXPECTED(
       in.is_open(), "Invalid cifar10 file, failed to open " + file + ", the file is damaged or permission denied.");
 
     for (uint32_t index = 0; index < num_cifar10_records / kCifarBlockImageNum; ++index) {
       (void)in.read(reinterpret_cast<char *>(&(image_data[0])), block_size * sizeof(unsigned char));
-      CHECK_FAIL_RETURN_UNEXPECTED(!in.fail(), "Invalid cifar10 file, failed to read data from: " + file +
-                                                 ", re-download dataset(make sure it is CIFAR-10 binary version).");
-      (void)cifar_raw_data_block_->EmplaceBack(image_data);
+      if (in.fail()) {
+        in.close();
+        RETURN_STATUS_UNEXPECTED("Invalid cifar10 file, failed to read data from: " + file +
+                                 ", re-download dataset(make sure it is CIFAR-10 binary version).");
+      }
+      RETURN_IF_NOT_OK(cifar_raw_data_block_->EmplaceBack(image_data));
       // Add file path info
       path_record_.push_back(file);
     }
     in.close();
   }
-  (void)cifar_raw_data_block_->EmplaceBack(std::vector<unsigned char>());  // end block
+  RETURN_IF_NOT_OK(cifar_raw_data_block_->EmplaceBack(std::vector<unsigned char>()));  // end block
 
   return Status::OK();
 }
@@ -180,21 +184,24 @@ Status CifarOp::ReadCifar100BlockData() {
       RETURN_STATUS_UNEXPECTED("Invalid cifar100 file, Cifar100 train/test file is missing in: " + file_name);
     }
 
-    std::ifstream in(file, std::ios::binary);
+    std::ifstream in(file, std::ios::in | std::ios::binary);
     CHECK_FAIL_RETURN_UNEXPECTED(
       in.is_open(), "Invalid cifar100 file, failed to open " + file + ", the file is damaged or permission denied.");
 
     for (uint32_t index = 0; index < num_cifar100_records / kCifarBlockImageNum; index++) {
       (void)in.read(reinterpret_cast<char *>(&(image_data[0])), block_size * sizeof(unsigned char));
-      CHECK_FAIL_RETURN_UNEXPECTED(!in.fail(), "Invalid cifar100 file, failed to read data from: " + file +
-                                                 ", re-download dataset(make sure it is CIFAR-100 binary version).");
-      (void)cifar_raw_data_block_->EmplaceBack(image_data);
+      if (in.fail()) {
+        in.close();
+        RETURN_STATUS_UNEXPECTED("Invalid cifar100 file, failed to read data from: " + file +
+                                 ", re-download dataset(make sure it is CIFAR-100 binary version).");
+      }
+      RETURN_IF_NOT_OK(cifar_raw_data_block_->EmplaceBack(image_data));
       // Add file path info
       path_record_.push_back(file);
     }
     in.close();
   }
-  (void)cifar_raw_data_block_->EmplaceBack(std::vector<unsigned char>());  // block end
+  RETURN_IF_NOT_OK(cifar_raw_data_block_->EmplaceBack(std::vector<unsigned char>()));  // block end
   return Status::OK();
 }
 
@@ -284,6 +291,7 @@ Status CifarOp::GetClassIds(std::map<int32_t, std::vector<int64_t>> *cls_ids) co
 Status CifarOp::CountTotalRows(const std::string &dir, const std::string &usage, bool isCIFAR10, int64_t *count) {
   // the logic of counting the number of samples is copied from ReadCifar100Block() and ReadCifar10Block()
   // Note that this count logic is flawed, should be able to copy the sampler of original CifarOp without state
+  RETURN_UNEXPECTED_IF_NULL(count);
   *count = 0;
   const int64_t num_samples = 0;
   const int64_t start_index = 0;
@@ -334,11 +342,12 @@ Status CifarOp::CountTotalRows(const std::string &dir, const std::string &usage,
         }
       }
 
-      std::ifstream in(file, std::ios::binary);
+      std::ifstream in(file, std::ios::in | std::ios::binary);
 
       CHECK_FAIL_RETURN_UNEXPECTED(
         in.is_open(), "Invalid cifar10 file, failed to open " + file + ", the file is damaged or permission denied.");
       *count = *count + num_cifar10_records;
+      in.close();
     }
     return Status::OK();
   } else {
@@ -364,9 +373,10 @@ Status CifarOp::CountTotalRows(const std::string &dir, const std::string &usage,
       } else if (file_name.find("train") != std::string::npos) {
         num_cifar100_records += kCifar100RecordsPerTrainFile;
       }
-      std::ifstream in(file, std::ios::binary);
+      std::ifstream in(file, std::ios::in | std::ios::binary);
       CHECK_FAIL_RETURN_UNEXPECTED(
         in.is_open(), "Invalid cifar100 file, failed to open " + file + ", the file is damaged or permission denied.");
+      in.close();
     }
     *count = num_cifar100_records;
     return Status::OK();
@@ -385,5 +395,11 @@ Status CifarOp::ComputeColMap() {
   return Status::OK();
 }
 
+Status CifarOp::InitPullMode() {
+  RETURN_IF_NOT_OK(cifar_raw_data_block_->Register(tree_->AllTasks()));
+  RETURN_IF_NOT_OK(tree_->AllTasks()->CreateAsyncTask(
+    "Get cifar data block", std::bind(&CifarOp::ReadCifarBlockDataAsync, this), nullptr, id()));
+  return PrepareData();
+}
 }  // namespace dataset
 }  // namespace mindspore

@@ -15,17 +15,31 @@
  */
 
 #include "ops/max_pool.h"
-#include <string>
 #include <algorithm>
+#include <map>
 #include <memory>
-#include <set>
+#include <string>
 #include <vector>
-#include <cmath>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 #include "utils/ms_context.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -64,8 +78,9 @@ int64_t CeilDiv(int64_t a, int64_t b) {
 void CheckOutshapeValid(const PrimitivePtr &primitive, const std::vector<int64_t> &out_shape,
                         const std::vector<int64_t> &in_shape, const std::vector<int64_t> &kernel_size,
                         const std::vector<int64_t> &strides) {
+  bool is_dynamic_shape = std::any_of(in_shape.begin(), in_shape.end(), [](int64_t in) { return in == -1; });
   for (auto out : out_shape) {
-    if (out <= 0 && out != -1) {
+    if (out <= 0 && !is_dynamic_shape) {
       MS_EXCEPTION(ValueError)
         << "For '" << primitive->name()
         << "', the each element of the output shape must be larger than 0, but got output shape: " << out_shape
@@ -136,7 +151,8 @@ abstract::ShapePtr MaxPoolInferShape(const PrimitivePtr &primitive, const std::v
     ConvertShapeNHWCToNCHW(&in_shape);
   }
 
-  int64_t out_h = 0, out_w = 0;
+  int64_t out_h = 0;
+  int64_t out_w = 0;
   if (pad_mode == PadMode::SAME) {
     out_h = in_shape[kIndex2] == -1 ? -1 : CeilDiv(in_shape[kIndex2], strides[kIndex2]);
     out_w = in_shape[kIndex3] == -1 ? -1 : CeilDiv(in_shape[kIndex3], strides[kIndex3]);
@@ -236,6 +252,24 @@ abstract::AbstractBasePtr MaxPoolInfer(const abstract::AnalysisEnginePtr &, cons
   abstract::ShapePtr shape = MaxPoolInferShape(primitive, input_args);
   return abstract::MakeAbstract(shape, type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(MaxPool, prim::kPrimMaxPool, MaxPoolInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMaxPoolInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPoolInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPoolInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPoolInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MaxPool, prim::kPrimMaxPool, AGMaxPoolInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -14,22 +14,35 @@
  * limitations under the License.
  */
 #include "ops/tridiagonal_matmul.h"
-#include <set>
+
 #include <map>
 #include <memory>
+#include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
+constexpr auto kTridiagonalMatMulInputNums = 4;
 namespace {
 abstract::ShapePtr TridiagonalMatMulInferShape(const PrimitivePtr &primitive,
                                                const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kTridiagonalMatMulInputNums, primitive->name());
   auto superdiag_shape_ptr = input_args[0]->BuildShape();
   MS_EXCEPTION_IF_NULL(superdiag_shape_ptr);
   auto maindiag_shape_ptr = input_args[1]->BuildShape();
@@ -98,6 +111,8 @@ abstract::ShapePtr TridiagonalMatMulInferShape(const PrimitivePtr &primitive,
 }
 
 TypePtr TridiagonalMatMulInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(prim);
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kTridiagonalMatMulInputNums, prim->name());
   const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
   std::map<std::string, TypePtr> types;
   auto superdiag_infer_type = input_args[0]->BuildType();
@@ -119,14 +134,29 @@ TypePtr TridiagonalMatMulInferType(const PrimitivePtr &prim, const std::vector<A
 
 AbstractBasePtr TridiagonalMatMulInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                        const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  const int64_t input_num = 4;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
   auto infer_type = TridiagonalMatMulInferType(primitive, input_args);
   auto infer_shape = TridiagonalMatMulInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(TridiagonalMatMul, prim::kPrimTridiagonalMatMul, TridiagonalMatMulInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGTridiagonalMatMulInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return TridiagonalMatMulInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return TridiagonalMatMulInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return TridiagonalMatMulInfer(engine, primitive, input_args);
+  }
+};
+
+MIND_API_OPERATOR_IMPL(TridiagonalMatMul, BaseOperator);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(TridiagonalMatMul, prim::kPrimTridiagonalMatMul, AGTridiagonalMatMulInfer, false);
 }  // namespace ops
 }  // namespace mindspore

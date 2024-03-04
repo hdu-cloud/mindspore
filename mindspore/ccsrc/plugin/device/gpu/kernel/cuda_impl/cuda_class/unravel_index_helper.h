@@ -80,8 +80,9 @@ class UnravelIndexHelperGpuKernel : public GpuKernelHelperBase {
     (void)GetDeviceAddress<T>(work_ptrs, 0, kernel_name_, &check_dims_ptr);
 
     // call cuda kernel
-    CalUnravelIndex(input_indices_ptr, input_dims_ptr, indices_size, dims_size, output_ptr, device_id_,
-                    reinterpret_cast<cudaStream_t>(cuda_stream));
+    auto status = CalUnravelIndex(input_indices_ptr, input_dims_ptr, indices_size, dims_size, output_ptr, device_id_,
+                                  reinterpret_cast<cudaStream_t>(cuda_stream));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return 0;
   }
 

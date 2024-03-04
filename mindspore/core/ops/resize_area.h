@@ -17,13 +17,13 @@
 #ifndef MINDSPORE_CORE_OPS_RESIZE_AREA_H_
 #define MINDSPORE_CORE_OPS_RESIZE_AREA_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/primitive_c.h"
+#include <string>
+#include <vector>
 #include "abstract/abstract_value.h"
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
+#include "ops/primitive_c.h"
 
 namespace mindspore {
 namespace ops {
@@ -36,8 +36,8 @@ class MIND_API ResizeArea : public BaseOperator {
   void set_align_corners(const bool align_corners);
   bool get_align_corners() const;
 };
-abstract::AbstractBasePtr ResizeAreaInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                          const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr ResizeAreaInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                   const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimResizeAreaPtr = std::shared_ptr<ResizeArea>;
 }  // namespace ops
 }  // namespace mindspore

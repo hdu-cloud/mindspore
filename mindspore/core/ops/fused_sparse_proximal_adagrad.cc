@@ -15,13 +15,32 @@
  */
 
 #include "ops/fused_sparse_proximal_adagrad.h"
-#include <string>
+
+#include <map>
 #include <memory>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/overload.h"
 
 namespace mindspore {
 namespace ops {
@@ -122,7 +141,24 @@ AbstractBasePtr FusedSparseProximalAdagradInfer(const abstract::AnalysisEnginePt
   return abstract::MakeAbstract(shapes, types);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(FusedSparseProximalAdagrad, prim::kPrimFusedSparseProximalAdagrad,
-                             FusedSparseProximalAdagradInfer, nullptr, true)
+// AG means auto generated
+class MIND_API AGFusedSparseProximalAdagradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return fused_sparse_proximal_adagrad::FusedSparseProximalAdagradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return fused_sparse_proximal_adagrad::FusedSparseProximalAdagradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return FusedSparseProximalAdagradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(FusedSparseProximalAdagrad, prim::kPrimFusedSparseProximalAdagrad,
+                                 AGFusedSparseProximalAdagradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

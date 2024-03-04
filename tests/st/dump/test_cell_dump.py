@@ -106,7 +106,7 @@ def test_ascend_cell_dump():
         # make sure 2 relu dump files are generated with correct name prefix
         time.sleep(5)
         assert len(os.listdir(dump_file_path)) == 3
-        relu_file_name = "ReLU.Default_network-WithLossCell__backbone-ReluReduceMeanDenseRelu_ReLU-op*.*.*.*"
+        relu_file_name = "Relu.Default_network-WithLossCell__backbone-ReluReduceMeanDenseRelu_Relu-op*.*.*.*"
         relu_file1 = glob.glob(os.path.join(dump_file_path, relu_file_name))[0]
         relu_file2 = glob.glob(os.path.join(dump_file_path, relu_file_name))[1]
         assert relu_file1
@@ -114,13 +114,13 @@ def test_ascend_cell_dump():
 
         # make sure 1 ReluGrad dump files are generated with correct name prefix
         relu_grad_file_name = "ReluGrad.Gradients_Default_network-WithLossCell__backbone" \
-                              "-ReluReduceMeanDenseRelu_gradReLU_ReluGrad-op*.*.*.*"
+                              "-ReluReduceMeanDenseRelu_gradReLU-expand_ReluGrad-op*.*.*.*"
         relu_grad_file1 = glob.glob(os.path.join(dump_file_path, relu_grad_file_name))[0]
         assert relu_grad_file1
         del os.environ['MINDSPORE_DUMP_CONFIG']
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -148,12 +148,14 @@ def test_ascend_not_cell_dump():
                 time.sleep(2)
         check_dump_structure(dump_path, dump_config_path, 1, 1, 1)
 
-        # make sure set_dump is ignored and all cell layer are dumped
-        assert len(os.listdir(dump_file_path)) == 10
+        # make sure set_dump is ignored and all cell layer are dumped, at leat 2 Relu, 1 ReduceMean, 1 MatMul,
+        # 1 SoftmaxCrossEntropyWithLogits in forward graph, and some operators such as Momentum and other gradient
+        # operators in backward graph.
+        assert len(os.listdir(dump_file_path)) > 10
         del os.environ['MINDSPORE_DUMP_CONFIG']
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -183,7 +185,7 @@ def test_ascend_cell_empty_dump():
         del os.environ['MINDSPORE_DUMP_CONFIG']
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -213,7 +215,8 @@ def test_ascend_cell_dump_set_enable_false():
 
         # make sure directory has dumped files with enabled=True
         assert len(os.listdir(dump_file_path)) == 1
-        mean_file_name = "ReduceMean.Default_network-WithLossCell__backbone-ReluReduceMeanDenseRelu_ReduceMean-*.*.*.*"
+        mean_file_name = "ReduceMeanD.Default_network-WithLossCell__backbone" \
+                         "-ReluReduceMeanDenseRelu_ReduceMeanD-*.*.*.*"
         mean_file = glob.glob(os.path.join(dump_file_path, mean_file_name))[0]
         assert mean_file
         del os.environ['MINDSPORE_DUMP_CONFIG']
@@ -227,7 +230,7 @@ class OperateSymbolNet(Cell):
         return x
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard

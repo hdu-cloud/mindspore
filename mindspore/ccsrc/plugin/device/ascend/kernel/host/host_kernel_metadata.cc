@@ -17,11 +17,9 @@
 #include "plugin/device/ascend/kernel/host/host_kernel_metadata.h"
 #include <memory>
 #include <string>
-#include "kernel/oplib/oplib.h"
-#include "kernel/common_utils.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "mindspore/core/ops/core_ops.h"
+#include "kernel/oplib/oplib.h"
 
 namespace mindspore {
 namespace kernel {
@@ -36,17 +34,21 @@ void HostMetadataInfo(const CNodePtr &kernel_node, std::vector<std::shared_ptr<K
   }
   std::vector<std::string> inputs_format{};
   std::vector<TypeId> inputs_type{};
-  size_t input_num = common::AnfAlgo::GetInputTensorNum(kernel_node);
+  std::vector<KernelObjectType> inputs_object_type{};
+  size_t input_num = AnfAlgo::GetInputElementNum(kernel_node);
   for (size_t input_index = 0; input_index < input_num; ++input_index) {
     inputs_format.emplace_back(kOpFormat_DEFAULT);
     inputs_type.push_back(common::AnfAlgo::GetPrevNodeOutputInferDataType(kernel_node, input_index));
+    inputs_object_type.push_back(KernelObjectType::TENSOR);
   }
   std::vector<std::string> outputs_format;
   std::vector<TypeId> outputs_type;
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(kernel_node);
+  std::vector<KernelObjectType> outputs_object_type{};
+  size_t output_num = AnfAlgo::GetOutputElementNum(kernel_node);
   for (size_t output_index = 0; output_index < output_num; ++output_index) {
     outputs_format.emplace_back(kOpFormat_DEFAULT);
     outputs_type.push_back(common::AnfAlgo::GetOutputInferDataType(kernel_node, output_index));
+    outputs_object_type.push_back(KernelObjectType::TENSOR);
   }
   auto builder = KernelBuildInfo::KernelBuildInfoBuilder();
   builder.SetInputsFormat(inputs_format);
@@ -54,6 +56,8 @@ void HostMetadataInfo(const CNodePtr &kernel_node, std::vector<std::shared_ptr<K
   builder.SetOutputsFormat(outputs_format);
   builder.SetOutputsDeviceType(outputs_type);
   builder.SetKernelType(HOST_KERNEL);
+  builder.SetInputsKernelObjectType(inputs_object_type);
+  builder.SetOutputsKernelObjectType(outputs_object_type);
   kernel_info_list->push_back(builder.Build());
 }
 }  // namespace kernel

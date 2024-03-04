@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,16 +16,12 @@
 
 #include "plugin/device/ascend/kernel/tbe/tbe_kernel_select/agnostic_selector/tbe_kernel_agnostic_selector.h"
 
-#include "include/common/utils/utils.h"
-#include "include/common/utils/anfalgo.h"
-#include "plugin/device/ascend/kernel/tbe/tbe_kernel_select/tbe_select_utils.h"
-
 namespace mindspore::kernel {
 void TbeKernelAgnosticSelector::GetSupportedFormatDType(SupportFormatDType *support_format_dtype) {
   MS_EXCEPTION_IF_NULL(cnode_ptr_);
   SupportFormat support_format;
-  auto input_num = common::AnfAlgo::GetInputTensorNum(cnode_ptr_);
-  auto output_num = common::AnfAlgo::GetOutputTensorNum(cnode_ptr_);
+  auto input_num = AnfAlgo::GetInputElementNum(cnode_ptr_);
+  auto output_num = AnfAlgo::GetOutputElementNum(cnode_ptr_);
   if (input_num != 1 || output_num != 1) {
     MS_LOG(EXCEPTION) << "Agnostic only support one input. input_num: " << input_num << ", output num: " << output_num
                       << ", full_name:" << cnode_ptr_->fullname_with_scope();

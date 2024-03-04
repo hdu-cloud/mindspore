@@ -14,13 +14,28 @@
  * limitations under the License.
  */
 
-#include <memory>
 #include <map>
-#include "ops/grad/batch_norm_grad_grad.h"
-#include "utils/check_convert_utils.h"
+#include <memory>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/grad/batch_norm_grad_grad.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -109,6 +124,24 @@ AbstractBasePtr BatchNormGradGradInfer(const abstract::AnalysisEnginePtr &, cons
 }
 
 MIND_API_OPERATOR_IMPL(BatchNormGradGrad, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(BatchNormGradGrad, prim::kPrimBatchNormGradGrad, BatchNormGradGradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGBatchNormGradGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return BatchNormGradGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return BatchNormGradGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return BatchNormGradGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(BatchNormGradGrad, prim::kPrimBatchNormGradGrad, AGBatchNormGradGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

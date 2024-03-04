@@ -14,15 +14,37 @@
  * limitations under the License.
  */
 #include "ops/parameterized_truncated_normal.h"
-#include <string>
-#include <algorithm>
+
+#include <functional>
+#include <map>
 #include <memory>
+#include <numeric>
 #include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/named.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/random_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -36,12 +58,12 @@ void ParameterizedTruncatedNormalCheckdims(const std::vector<AbstractBasePtr> &i
     auto para_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[i]->BuildShape())[kShape];
     if (para_shape.size() > 1) {
       MS_EXCEPTION(ValueError) << "For ParameterizedTruncatedNormal, " << parameters.at(i - 1)
-                               << "should be at most rank 1, but got rank " << para_shape.size() << ".";
+                               << " should be at most rank 1, but got rank " << para_shape.size() << ".";
     }
     if (para_shape.size() == 1) {
       int64_t para_num = std::accumulate(para_shape.begin(), para_shape.end(), int64_t(1), std::multiplies{});
       if (!(para_num == 1 || para_num == batch_size)) {
-        MS_EXCEPTION(ValueError) << "For ParameterizedTruncatedNormal, " << parameters.at(i - 1) << "must be 0d, or "
+        MS_EXCEPTION(ValueError) << "For ParameterizedTruncatedNormal, " << parameters.at(i - 1) << " must be 0d, or "
                                  << parameters.at(i - 1) << ".shape = (" << batch_size << ", ), but got (" << para_num
                                  << ", ).";
       }
@@ -66,7 +88,7 @@ abstract::ShapePtr ParameterizedTruncatedNormalInferShape(const PrimitivePtr &pr
 
   auto shape_value = input_args[kInputIndex0]->BuildValue();
   MS_EXCEPTION_IF_NULL(shape_value);
-  if (!shape_value->isa<AnyValue>() && !shape_value->isa<None>()) {
+  if (!shape_value->isa<ValueAny>() && !shape_value->isa<None>()) {
     auto out_shape = CheckAndConvertUtils::CheckTensorIntValue("shape", shape_value, op_name);
     (void)CheckAndConvertUtils::CheckPositiveVector("shape", out_shape, op_name);
     ParameterizedTruncatedNormalCheckdims(input_args, out_shape[0]);
@@ -74,14 +96,13 @@ abstract::ShapePtr ParameterizedTruncatedNormalInferShape(const PrimitivePtr &pr
     return std::make_shared<abstract::Shape>(out_shape);
   } else {
     std::vector<int64_t> output_shape = {-2};
-    ShapeVector shape_min = {1};
-    ShapeVector shape_max = {1};
-    return std::make_shared<abstract::Shape>(output_shape, shape_min, shape_max);
+    return std::make_shared<abstract::Shape>(output_shape);
   }
 }
 
 TypePtr ParameterizedTruncatedNormalInferType(const PrimitivePtr &primitive,
                                               const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   auto input_type_shape = input_args[kInputIndex0]->BuildType();
   auto input_type_mean = input_args[kInputIndex1]->BuildType();
@@ -130,8 +151,27 @@ AbstractBasePtr ParameterizedTruncatedNormalInfer(const abstract::AnalysisEngine
   auto infer_shape = ParameterizedTruncatedNormalInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_HOST_DEPENDS(kParameterizedTruncatedNormal, {0});
-REGISTER_PRIMITIVE_EVAL_IMPL(ParameterizedTruncatedNormal, prim::kPrimParameterizedTruncatedNormal,
-                             ParameterizedTruncatedNormalInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGParameterizedTruncatedNormalInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ParameterizedTruncatedNormalInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ParameterizedTruncatedNormalInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ParameterizedTruncatedNormalInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ParameterizedTruncatedNormal, prim::kPrimParameterizedTruncatedNormal,
+                                 AGParameterizedTruncatedNormalInfer, false);
 }  // namespace ops
 }  // namespace mindspore

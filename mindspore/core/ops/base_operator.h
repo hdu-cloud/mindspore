@@ -17,10 +17,10 @@
 #ifndef MINDSPORE_CORE_OPS_BASE_OPERATOR_
 #define MINDSPORE_CORE_OPS_BASE_OPERATOR_
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
-#include <map>
 
 #include "mindapi/ir/primitive.h"
 
@@ -41,8 +41,7 @@ using PrimitivePtr = std::shared_ptr<Primitive>;
 
 namespace mindspore {
 namespace ops {
-class PrimitiveC;
-using PrimitiveCPtr = std::shared_ptr<PrimitiveC>;
+using PrimitiveCPtr = PrimitivePtr;
 class MIND_API BaseOperator : public api::Primitive {
  public:
   MIND_API_BASE_MEMBER(BaseOperator);
@@ -63,7 +62,7 @@ class MIND_API OperatorRegister {
 
   static OperatorRegister &GetInstance();
 
-  const std::map<std::string, OperatorDefineFunc> &GetOperatorMap();
+  const std::map<std::string, OperatorDefineFunc> &GetOperatorMap() const;
 
   void SetOperatorMap(const std::string &kname, const OperatorDefineFunc &fn);
 
@@ -76,6 +75,7 @@ class MIND_API OperatorRegisterHelper {
  public:
   OperatorRegisterHelper(const std::string &kname, const OperatorDefineFunc &fn) {
     OperatorRegister::GetInstance().SetOperatorMap(kname, fn);
+    (void)id_;  // make compiler happy on macos
   }
 
   ~OperatorRegisterHelper() = default;

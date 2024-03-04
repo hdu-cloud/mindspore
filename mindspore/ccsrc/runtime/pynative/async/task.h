@@ -17,31 +17,53 @@
 #ifndef MINDSPORE_MINDSPORE_CCSRC_RUNTIME_PYNATIVE_ASYNC_TASK_H_
 #define MINDSPORE_MINDSPORE_CCSRC_RUNTIME_PYNATIVE_ASYNC_TASK_H_
 
+#include <cstdint>
+#include <exception>
+
 namespace mindspore {
 namespace pynative {
 enum TaskType {
   kUnknownTask = 0,
-  kOpRunTask,
-  kOpBuildTask,
+  kDeviceOpTask,
+  kDeviceOpBuildTask,
   kBpropTask,
+  kFrontendTask,
+  kBackendTask,
+  kKernelTask,
   kExitTask,
+  kWaitTask
 };
+
+enum class KernelTaskType { kNORMAL_VIEW_TASK = 0, kCONTIGUOUS_TASK, kCOPY_TASK };
+
 class AsyncTask {
  public:
   explicit AsyncTask(TaskType task_type) : task_type_(task_type) {}
   virtual ~AsyncTask() = default;
   virtual void Run() = 0;
+  virtual bool RunWithRet() { return false; }
+  virtual void SetException(const std::exception_ptr & /* e */) {}
 
   TaskType task_type() const { return task_type_; }
+  uint32_t task_id() const { return task_id_; }
+  void set_task_id(uint32_t task_id) { task_id_ = task_id; }
 
  private:
   TaskType task_type_;
+  uint32_t task_id_{UINT32_MAX};
 };
 
 class ExitTask : public AsyncTask {
  public:
   ExitTask() : AsyncTask(kExitTask) {}
   ~ExitTask() override = default;
+  void Run() override {}
+};
+
+class WaitTask : public AsyncTask {
+ public:
+  WaitTask() : AsyncTask(kWaitTask) {}
+  ~WaitTask() override = default;
   void Run() override {}
 };
 }  // namespace pynative

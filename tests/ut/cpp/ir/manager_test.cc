@@ -14,11 +14,15 @@
  * limitations under the License.
  */
 #include "common/common_test.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/arithmetic_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "common/py_func_graph_fetcher.h"
 #include "ir/dtype.h"
 #include "ir/manager.h"
 #include "ir/func_graph_cloner.h"
-#include "pipeline/jit/parse/parse.h"
+#include "pipeline/jit/ps/parse/parse.h"
 #include "frontend/operator/ops.h"
 #include "utils/log_adapter.h"
 #include "include/common/debug/draw.h"
@@ -95,7 +99,7 @@ class NestingSpecs {
   ~NestingSpecs() {}
 
   std::string Name(Any node) {
-    std::string name = label_manage::Label(node.cast<AnfNodePtr>()->debug_info());
+    std::string name = trace::Label(node.cast<AnfNodePtr>()->debug_info());
     if (stage_->subs().find(name) != stage_->subs().end()) {
       return stage_->subs()[name];
     }

@@ -15,13 +15,31 @@
  */
 
 #include "ops/compare_and_bitpack.h"
+
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/comparison_ops.h"
+#include "mindspore/core/ops/image_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -29,6 +47,7 @@ namespace {
 abstract::ShapePtr CompareAndBitpackInferShape(const PrimitivePtr &primitive,
                                                const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
+  auto prim_name = primitive->name();
   auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
   // support dynamic rank
   if (IsDynamicRank(x_shape)) {
@@ -44,16 +63,16 @@ abstract::ShapePtr CompareAndBitpackInferShape(const PrimitivePtr &primitive,
   const size_t divisible_num = 8;
   auto threshold_shape_size = SizeToLong(threshold_shape.size());
   (void)CheckAndConvertUtils::CheckInteger("threshold's rank'", threshold_shape_size, kEqual, SizeToLong(kShapeSize_),
-                                           primitive->name());
+                                           prim_name);
 
   // Input should be at least a vector
   (void)CheckAndConvertUtils::CheckInteger("x's rank'", SizeToLong(x_rank), kNotEqual, SizeToLong(kShapeSize_),
-                                           primitive->name());
+                                           prim_name);
 
   // check the innermost dimension of `x`'s shape is disvisible by 8.
   if (x_shape[x_rank - 1] != -1) {
     CheckAndConvertUtils::Check("x innermost dimension % 8", x_shape[x_rank - 1] % SizeToLong(divisible_num), kEqual, 0,
-                                primitive->name());
+                                prim_name);
   }
   std::vector<int64_t> out_shape;
   for (int dim = 0; dim < SizeToLong(x_rank - 1); dim = dim + 1) {
@@ -69,8 +88,12 @@ TypePtr CompareAndBitpackInferType(const PrimitivePtr &primitive, const std::vec
   MS_EXCEPTION_IF_NULL(primitive);
   const std::set<TypePtr> valid_types = {kBool, kFloat16, kFloat32, kFloat64, kInt8, kInt16, kInt32, kInt64};
   std::map<std::string, TypePtr> types;
-  (void)types.emplace("x", input_args[kInputIndex0]->BuildType());
-  (void)types.emplace("threshold", input_args[kInputIndex1]->BuildType());
+  auto x_type = input_args[kInputIndex0]->BuildType();
+  MS_EXCEPTION_IF_NULL(x_type);
+  auto threshold_type = input_args[kInputIndex1]->BuildType();
+  MS_EXCEPTION_IF_NULL(threshold_type);
+  (void)types.emplace("x", x_type);
+  (void)types.emplace("threshold", threshold_type);
   (void)CheckAndConvertUtils::CheckTensorTypeSame(types, valid_types, primitive->name());
   return std::make_shared<TensorType>(kUInt8);
 }
@@ -87,6 +110,24 @@ AbstractBasePtr CompareAndBitpackInfer(const abstract::AnalysisEnginePtr &, cons
 }
 
 MIND_API_OPERATOR_IMPL(CompareAndBitpack, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(CompareAndBitpack, prim::kPrimCompareAndBitpack, CompareAndBitpackInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGCompareAndBitpackInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return CompareAndBitpackInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return CompareAndBitpackInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return CompareAndBitpackInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(CompareAndBitpack, prim::kPrimCompareAndBitpack, AGCompareAndBitpackInfer, false);
 }  // namespace ops
 }  // namespace mindspore

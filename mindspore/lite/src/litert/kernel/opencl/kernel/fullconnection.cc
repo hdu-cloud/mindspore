@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -52,7 +52,7 @@ int FullConnectionOpenCLKernel::CheckSpecs() {
   }
   // for fusion: ActivationType_TANH
   if (param->act_type_ != ActType_No && param->act_type_ != ActType_Relu && param->act_type_ != ActType_Relu6 &&
-      static_cast<schema::ActivationType>(param->act_type_) != ActivationType_TANH) {
+      param->act_type_ != ActType_Tanh && param->act_type_ != ActType_Sigmoid) {
     MS_LOG(WARNING) << "Unsupported activation type " << param->act_type_;
     return RET_ERROR;
   }
@@ -63,7 +63,9 @@ int FullConnectionOpenCLKernel::CheckSpecs() {
   if (input_nhw < N_) {
     MS_LOG(WARNING) << "Unsupported fullconnection shape";
   }
-  if (!in_tensors_.at(kWeightIndex)->IsConst()) {
+  auto weight_tensor = in_tensors_.at(kWeightIndex)->ConvertToTensorC();
+  bool is_const = (weight_tensor->category_ == ConstTensor || weight_tensor->category_ == ConstScalar);
+  if (!is_const) {
     weight_var_ = true;
     if (!param->b_transpose_) {
       MS_LOG(WARNING) << "If fullconnection input weight is not constant, b_transpose_ should be true.";
@@ -123,9 +125,11 @@ int FullConnectionOpenCLKernel::Prepare() {
 
 int FullConnectionOpenCLKernel::InitWeights() {
   if (!weight_var_) {
-    auto ret = InitFilter();
-    if (ret != RET_OK) {
-      return ret;
+    if (!(stored_weight_ == nullptr && in_tensors_.at(kWeightIndex)->data() == nullptr)) {
+      auto ret = InitFilter();
+      if (ret != RET_OK) {
+        return ret;
+      }
     }
   }
   return InitBias();
@@ -153,7 +157,7 @@ int FullConnectionOpenCLKernel::InitFilter() {
   auto padWeightFp16 = reinterpret_cast<float16_t *>(padWeight_);
   memset(padWeight_, 0x00, nhw_remainder * intensor_shape.Slice * co4 * C4NUM * C4NUM * dtype_size);
   void *src_data = stored_weight_ == nullptr ? in_tensors_.at(kWeightIndex)->data() : stored_weight_;
-  MS_ASSERT(src_data);
+  CHECK_NULL_RETURN(src_data);
   auto originWeightFp32 = reinterpret_cast<float *>(src_data);
   auto originWeightFp16 = reinterpret_cast<float16_t *>(src_data);
   bool isModelFp16 = in_tensors_.at(kWeightIndex)->data_type() == kNumberTypeFloat16;
@@ -208,7 +212,8 @@ int FullConnectionOpenCLKernel::InitBias() {
   auto allocator = ocl_runtime_->GetAllocator();
   int co4 = UP_DIV(CO_, C4NUM);
   size_t dtype_size = enable_fp16_ ? sizeof(uint16_t) : sizeof(float);
-  size_t im_dst_x, im_dst_y;
+  size_t im_dst_x;
+  size_t im_dst_y;
   im_dst_x = co4;
   im_dst_y = 1;
   size_t img_dtype = CL_FLOAT;
@@ -229,7 +234,7 @@ int FullConnectionOpenCLKernel::InitBias() {
   memset(bias_, 0x00, co4 * C4NUM * dtype_size);
   if (in_tensors_.size() == INPUT_TENSOR_SIZE_3) {
     void *src_data = stored_bias_ == nullptr ? in_tensors_.at(kBiasIndex)->data() : stored_bias_;
-    MS_ASSERT(src_data);
+    CHECK_NULL_RETURN(src_data);
     if (in_tensors_[kBiasIndex]->data_type() == kNumberTypeFloat32 && enable_fp16_) {
       for (int i = 0; i < CO_; i++) {
         reinterpret_cast<float16_t *>(bias_)[i] = reinterpret_cast<float *>(src_data)[i];
@@ -270,7 +275,7 @@ int FullConnectionOpenCLKernel::InitFilter() {
   auto padWeight = reinterpret_cast<float *>(padWeight_);
   memset(padWeight_, 0x00, nhw_remainder * intensor_shape.Slice * co4 * C4NUM * C4NUM * dtype_size);
   void *src_data = stored_weight_ == nullptr ? in_tensors_.at(kWeightIndex)->data() : stored_weight_;
-  MS_ASSERT(src_data);
+  CHECK_NULL_RETURN(src_data);
   auto originWeight = reinterpret_cast<float *>(src_data);
 
   // pad weight
@@ -311,7 +316,8 @@ int FullConnectionOpenCLKernel::InitBias() {
   auto allocator = ocl_runtime_->GetAllocator();
   int co4 = UP_DIV(CO_, C4NUM);
   size_t dtype_size = sizeof(float);
-  size_t im_dst_x, im_dst_y;
+  size_t im_dst_x;
+  size_t im_dst_y;
   im_dst_x = co4;
   im_dst_y = 1;
   size_t img_dtype = CL_FLOAT;

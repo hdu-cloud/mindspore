@@ -17,6 +17,8 @@
 #ifndef MINDSPORE_CCSRC_RUNTIME_GRAPH_SCHEDULER_RPC_NODE_SCHEDULER_H_
 #define MINDSPORE_CCSRC_RUNTIME_GRAPH_SCHEDULER_RPC_NODE_SCHEDULER_H_
 
+#include <map>
+#include <string>
 #include <memory>
 #include "runtime/graph_scheduler/actor/actor_set.h"
 #include "runtime/graph_scheduler/graph_compiler.h"
@@ -48,6 +50,9 @@ class RpcNodeScheduler {
 
   // Reset op context for rpc actors.
   void ResetOpcontext(const RpcActorSetPtr &rpc_actors);
+
+  // Clear resource of rpc actors. Finalize tcp clients/servers.
+  void Clear();
 
   // Abort rpc communication. This is usually called when the cluster exits with exception.
   void Abort();
@@ -93,26 +98,29 @@ class RpcActorOpContextSetter {
 };
 
 // This class is used to refresh the state of the rpc actor. For example, the mux recv actor receives requests for
-// the service process. Currently, the requests are processed serially. After each request (that is, the execution of an
-// actor dag) ends, the state of the Recv actor needs to be refreshed. Make it in the ready state to continue with the
-// next request.
+// the service process. Currently, the requests are processed serially. Before each request (that is, the execution of
+// an actor dag) begins, the state of the Recv actor needs to be refreshed. Make it in the ready state to continue with
+// the next request.
 class RpcActorStatusUpdater {
  public:
   static RpcActorStatusUpdater &GetInstance();
 
   // Set rpc actors which need to be update status.
-  void set_rpc_actors(const RpcActorSetPtr &rpc_actors);
+  void set_rpc_actors(const std::string &graph_name, const RpcActorSetPtr &rpc_actors);
 
   // Update rpc actors' status.
-  void UpdateRpcActorStatus() const;
+  void UpdateRpcActorStatus(const std::string &graph_name);
+
+  // Sent data should be flushed after each step.
+  void FlushRpcData(const std::string &graph_name);
 
  private:
   RpcActorStatusUpdater() = default;
   ~RpcActorStatusUpdater() = default;
   DISABLE_COPY_AND_ASSIGN(RpcActorStatusUpdater);
 
-  // Record rpc actors which need to update status.
-  RpcActorSetWeakPtr rpc_actors_;
+  // Record graph's rpc actors which need to update status.
+  std::map<std::string, RpcActorSetWeakPtr> graph_to_rpc_actors_;
 };
 }  // namespace runtime
 }  // namespace mindspore

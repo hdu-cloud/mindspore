@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -96,7 +96,8 @@ PullIterator::~PullIterator() = default;
 // Get the next row from the data pipeline.
 Status PullIterator::GetRows(int32_t num_rows, std::vector<MSTensorVec> *const row) {
   RETURN_UNEXPECTED_IF_NULL(row);
-  CHECK_FAIL_RETURN_UNEXPECTED(pull_consumer_ != nullptr, "Consumer is nullptr. Please launch iterator fist.");
+  CHECK_FAIL_RETURN_UNEXPECTED(pull_consumer_ != nullptr, "Consumer is nullptr. Please launch iterator first.");
+  row->clear();
   for (int i = 0; i < num_rows; i++) {
     std::vector<std::shared_ptr<dataset::Tensor>> md_row;
     Status rc = pull_consumer_->GetNextAsVector(&md_row);
@@ -120,6 +121,7 @@ Status PullIterator::GetRows(int32_t num_rows, std::vector<MSTensorVec> *const r
 Status PullIterator::GetNextRow(MSTensorVec *const row) {
   RETURN_UNEXPECTED_IF_NULL(row);
   CHECK_FAIL_RETURN_UNEXPECTED(pull_consumer_ != nullptr, "Consumer is nullptr.");
+  row->clear();
   std::vector<std::shared_ptr<dataset::Tensor>> md_row;
   Status rc = pull_consumer_->GetNextAsVector(&md_row);
   if (rc.IsError()) {
@@ -139,6 +141,7 @@ Status PullIterator::GetNextRow(MSTensorVec *const row) {
 // for the tree, the reason why this is the case is due to the fact that PullBasedIterator does not need
 // to instantiate threads for each op. As such, the call to the consumer will by pass the execution tree.
 Status PullIterator::BuildAndLaunchTree(const std::shared_ptr<Dataset> &ds, int32_t num_epochs) {
+  RETURN_UNEXPECTED_IF_NULL(ds);
   if (pull_consumer_ == nullptr) {
     pull_consumer_ = std::make_unique<PullBasedIteratorConsumer>();
   }

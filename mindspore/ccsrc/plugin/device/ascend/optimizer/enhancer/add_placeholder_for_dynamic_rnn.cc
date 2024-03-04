@@ -17,16 +17,23 @@
 #include "plugin/device/ascend/optimizer/enhancer/add_placeholder_for_dynamic_rnn.h"
 #include <vector>
 #include <memory>
-#include "backend/common/optimizer/helper.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include <string>
+#include "ops/array_op_name.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/common/utils/utils.h"
 #include "abstract/abstract_value.h"
-#include "mindspore/core/ops/core_ops.h"
 
 namespace mindspore {
 namespace opt {
 constexpr size_t kInsertIdx = 3;
+std::vector<std::string> InsertPlaceholderForDynamicRNN::MustExistPrimitiveName() const {
+  std::vector<std::string> ret;
+  ret.emplace_back(kDynamicRNNOpName);
+  return ret;
+}
+
 const BaseRef InsertPlaceholderForDynamicRNN::DefinePattern() const {
   std::shared_ptr<Var> V = std::make_shared<CondVar>(UnVisited);
   std::shared_ptr<Var> Xs = std::make_shared<SeqVar>();
@@ -44,13 +51,12 @@ const AnfNodePtr InsertPlaceholderForDynamicRNN::Process(const FuncGraphPtr &fun
     return nullptr;
   }
   common::AnfAlgo::SetNodeAttr(kAttrVisited, MakeValue(true), node);
-  auto kernel_graph = func_graph->cast<std::shared_ptr<session::KernelGraph>>();
-  MS_EXCEPTION_IF_NULL(kernel_graph);
   size_t input_num = common::AnfAlgo::GetInputTensorNum(node);
   if (input_num == 0) {
     return nullptr;
   }
 
+  auto kernel_graph = func_graph->cast<std::shared_ptr<session::KernelGraph>>();
   std::vector<AnfNodePtr> new_inputs = {common::AnfAlgo::GetCNodePrimitiveNode(cnode)};
   for (size_t in_idx = 0; in_idx < input_num; in_idx++) {
     auto input_node = common::AnfAlgo::GetInputNode(cnode, in_idx);
@@ -59,8 +65,13 @@ const AnfNodePtr InsertPlaceholderForDynamicRNN::Process(const FuncGraphPtr &fun
       auto value_node = NewValueNode(value);
       MS_EXCEPTION_IF_NULL(value_node);
       value_node->set_abstract(std::make_shared<abstract::AbstractNone>());
-      auto new_node = kernel_graph->NewValueNode(value_node);
-      new_inputs.push_back(new_node);
+      ValueNodePtr new_vnode = nullptr;
+      if (kernel_graph == nullptr) {
+        new_vnode = value_node;
+      } else {
+        new_vnode = kernel_graph->NewValueNode(value_node);
+      }
+      new_inputs.push_back(new_vnode);
     }
     new_inputs.push_back(input_node);
   }
@@ -68,6 +79,7 @@ const AnfNodePtr InsertPlaceholderForDynamicRNN::Process(const FuncGraphPtr &fun
   CNodePtr new_node = nullptr;
   if (kernel_graph == nullptr) {
     new_node = std::make_shared<CNode>(*cnode);
+    new_node->CloneUserData(cnode);
   } else {
     new_node = NewCNode(cnode, kernel_graph);
   }

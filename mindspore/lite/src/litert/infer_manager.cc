@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,59 @@ namespace mindspore {
 namespace lite {
 namespace {
 static const size_t kNumMaxMallocSize = GetMaxMallocSize();
+}  // namespace
+
+bool InferCheckerAll(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
+  if (outputs.empty()) {
+    return false;
+  }
+  auto out = outputs.front();
+  if (out == nullptr) {
+    return false;
+  }
+  if (!out->get_shape_changed() && std::any_of(inputs.begin(), inputs.end(), [](const lite::Tensor *input) {
+        if (input == nullptr) {
+          return false;
+        }
+        return input->get_shape_changed();
+      })) {
+    return false;
+  }
+  auto shape = out->shape();
+  return !std::any_of(shape.begin(), shape.end(), [](const int dim) { return dim < 0; });
+}
+
+bool InferCheckerInput(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
+  if (outputs.empty()) {
+    return false;
+  }
+  if (outputs.front() == nullptr) {
+    return false;
+  }
+  return std::all_of(outputs.begin(), outputs.end(),
+                     [](const lite::Tensor *output) {
+                       if (output == nullptr) {
+                         return false;
+                       }
+                       return output->get_shape_changed();
+                     }) ||
+         std::all_of(inputs.begin(), inputs.end(), [](const lite::Tensor *input) {
+           if (input == nullptr) {
+             return false;
+           }
+           return !input->get_shape_changed();
+         });
+}
+
+bool InferCheckerOutput(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
+  if (outputs.empty()) {
+    return false;
+  }
+  if (outputs.front() == nullptr) {
+    return false;
+  }
+  auto shape = outputs.front()->shape();
+  return !std::any_of(shape.begin(), shape.end(), [](const int dim) { return dim < 0; });
 }
 
 int KernelInferShape(const std::vector<lite::Tensor *> &inputs, const std::vector<lite::Tensor *> &outputs,
@@ -97,7 +150,7 @@ int CheckInfershapeResult(int result, const std::vector<lite::Tensor *> &inputs,
     return RET_INFER_INVALID;
   } else if (result != NNACL_OK) {
     if (result == NNACL_FORMAT_ERROR) {
-      MS_LOG(ERROR) << "Unexpected input format " << inputs[0]->format();
+      MS_LOG(WARNING) << "Unexpected input format " << inputs[0]->format();
     }
     return RET_INFER_ERR;
   }
@@ -138,35 +191,27 @@ int KernelInferShape(const std::vector<lite::Tensor *> &inputs, const std::vecto
   }
   std::vector<TensorC *> in_tensors;
   std::vector<TensorC *> out_tensors;
-  if (parameter->type_ == static_cast<int>(schema::PrimitiveType_PartialFusion) ||
-      parameter->type_ == static_cast<int>(schema::PrimitiveType_Switch) ||
-      parameter->type_ == static_cast<int>(schema::PrimitiveType_Call) ||
-      parameter->type_ == static_cast<int>(schema::PrimitiveType_SwitchLayer)) {
-    MS_LOG(INFO) << "no need infer shape.";
-    return RET_OK;
-  }
-
   int ret = GenerateInTensorC(inputs, &in_tensors, allocator);
   if (ret != RET_OK) {
-    FreeAllTensorC(&in_tensors, allocator);
+    FreeInTensorC(&in_tensors, allocator);
     return RET_ERROR;
   }
-  ret = GenerateOutTensorC(parameter, outputs, &out_tensors, allocator);
+  ret = GenerateOutTensorC(parameter, outputs, &out_tensors);
   if (ret != RET_OK) {
-    FreeAllTensorC(&in_tensors, allocator);
-    FreeAllTensorC(&out_tensors, allocator);
+    FreeInTensorC(&in_tensors, allocator);
+    FreeOutTensorC(&out_tensors, allocator);
     return RET_ERROR;
   }
   auto infer_shape_func = GetInferFunc(parameter->type_);
   if (infer_shape_func == nullptr) {
     MS_LOG(ERROR) << "Get infershape func failed! type:" << PrimitiveCurVersionTypeName(parameter->type_);
-    FreeAllTensorC(&in_tensors, allocator);
-    FreeAllTensorC(&out_tensors, allocator);
+    FreeInTensorC(&in_tensors, allocator);
+    FreeOutTensorC(&out_tensors, allocator);
     return RET_ERROR;
   }
   ret = infer_shape_func(static_cast<TensorC **>(in_tensors.data()), in_tensors.size(), out_tensors.data(),
                          out_tensors.size(), parameter);
-  FreeAllTensorC(&in_tensors, allocator);
+  FreeInTensorC(&in_tensors, allocator);
   for (size_t i = 0; i < out_tensors.size(); i++) {
     if (out_tensors.at(i) == nullptr) {
       continue;
@@ -176,29 +221,28 @@ int KernelInferShape(const std::vector<lite::Tensor *> &inputs, const std::vecto
       auto tensor_list = MallocTensorListDataAccordingToTensorListC(outputs.at(i), tensor_list_c);
       if (tensor_list == nullptr) {
         MS_LOG(ERROR) << "get as tensorlist failed";
-        FreeAllTensorC(&out_tensors, allocator);
+        FreeOutTensorC(&out_tensors, allocator);
         return RET_ERROR;
       }
       auto tensor_ret = TensorListC2TensorList(tensor_list_c, tensor_list);
       if (tensor_ret != RET_OK) {
         MS_LOG(ERROR) << "TensorCList2TensorList failed";
-        FreeAllTensorC(&out_tensors, allocator);
+        FreeOutTensorC(&out_tensors, allocator);
         return tensor_ret;
       }
     } else {
-      auto tensor_ret = TensorC2Tensor(out_tensors.at(i), outputs.at(i), allocator);
-      if (tensor_ret != RET_OK) {
-        MS_LOG(ERROR) << "TensorC2Tensor failed";
-        FreeAllTensorC(&out_tensors, allocator);
-        return tensor_ret;
+      if (out_tensors.at(i)->data_ != nullptr) {
+        outputs.at(i)->set_own_data(true);
+        outputs.at(i)->set_category(CONST_TENSOR);
       }
     }
 
     if (ret == NNACL_INFER_INVALID) {
       outputs.at(i)->set_shape({-1});
     }
+    outputs.at(i)->set_shape_changed(true);
   }
-  FreeAllTensorC(&out_tensors, allocator);
+  FreeOutTensorC(&out_tensors, allocator);
 
   return CheckInfershapeResult(ret, inputs, outputs, parameter);
 }

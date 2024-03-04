@@ -25,7 +25,7 @@
 #include <system_error>
 
 #include "actor/log.h"
-#include "distributed/rpc/tcp/constants.h"
+#include "include/backend/distributed/rpc/tcp/constants.h"
 
 namespace mindspore {
 namespace distributed {
@@ -240,6 +240,14 @@ bool SocketOperation::GetSockAddr(const std::string &url, SocketAddress *addr) {
   if (result > 0) {
     addr->saIn.sin_family = AF_INET;
     addr->saIn.sin_port = htons(port);
+    if (!common::GetEnv(kEnvWorkerIp).empty()) {
+      std::string ip_addr = common::GetEnv(kEnvWorkerIp);
+      SocketAddress v4_addr;
+      if (inet_pton(AF_INET, ip_addr.c_str(), &v4_addr.saIn.sin_addr) <= 0) {
+        MS_LOG(EXCEPTION) << "User-specified worker address " << ip_addr
+                          << " is not valid, we need to user IPv4 address.";
+      }
+    }
     return true;
   }
 
@@ -247,11 +255,45 @@ bool SocketOperation::GetSockAddr(const std::string &url, SocketAddress *addr) {
   if (result > 0) {
     addr->saIn6.sin6_family = AF_INET6;
     addr->saIn6.sin6_port = htons(port);
+    if (!common::GetEnv(kEnvWorkerIp).empty()) {
+      std::string ip_addr = common::GetEnv(kEnvWorkerIp);
+      SocketAddress v6_addr;
+      if (inet_pton(AF_INET6, ip_addr.c_str(), &(v6_addr.saIn6.sin6_addr)) <= 0) {
+        MS_LOG(EXCEPTION) << "User-specified worker address " << ip_addr
+                          << " is not valid, we need to user IPv6 address.";
+      }
+      v6_addr.saIn6.sin6_family = AF_INET6;
+      std::string if_name = GetInterfaceName(&v6_addr);
+      addr->saIn6.sin6_scope_id = if_nametoindex(if_name.c_str());
+    }
     return true;
   }
 
   MS_LOG(ERROR) << "Parse ip failed, result: " << result << ", url: " << url.c_str();
   return false;
+}
+
+std::string SocketOperation::GetIP(int fd) {
+  int retval = 0;
+  std::string ip = "";
+  union SocketAddress isa;
+  socklen_t isaLen = sizeof(struct sockaddr_storage);
+  retval = getsockname(fd, &isa.sa, &isaLen);
+  if (retval > 0) {
+    MS_LOG(INFO) << "Failed to call getsockname, fd: " << fd << ", ret: " << retval << ", errno: " << errno;
+    return ip;
+  }
+
+  if (isa.sa.sa_family == AF_INET) {
+    char ipv4[INET_ADDRSTRLEN] = {0};
+    ip = inet_ntop(isa.sa.sa_family, &isa.saIn.sin_addr, ipv4, INET_ADDRSTRLEN);
+  } else if (isa.sa.sa_family == AF_INET6) {
+    char ipv6[INET6_ADDRSTRLEN] = {0};
+    ip = inet_ntop(isa.sa.sa_family, &isa.saIn6.sin6_addr, ipv6, INET6_ADDRSTRLEN);
+  } else {
+    MS_LOG(INFO) << "Unknown fd: " << fd << ", family: " << isa.sa.sa_family;
+  }
+  return ip;
 }
 
 uint16_t SocketOperation::GetPort(int fd) {
@@ -316,7 +358,8 @@ int SocketOperation::Connect(int sock_fd, const struct sockaddr *sa, socklen_t s
     if (errno == EINPROGRESS) {
       /* set iomux for write event */
     } else {
-      MS_LOG(ERROR) << "Failed to call connect, fd: " << sock_fd << ", ret: " << retval << ", errno: " << errno;
+      MS_LOG(ERROR) << "Failed to call connect, fd: " << sock_fd << ", ret: " << retval << ", errno: " << errno << " "
+                    << strerror(errno);
       return retval;
     }
   }
@@ -327,6 +370,35 @@ int SocketOperation::Connect(int sock_fd, const struct sockaddr *sa, socklen_t s
     return RPC_ERROR;
   }
   return RPC_OK;
+}
+
+std::string SocketOperation::GetInterfaceName(SocketAddress *const addr) {
+  struct ifaddrs *if_address = nullptr;
+  struct ifaddrs *ifa = nullptr;
+  std::string if_name;
+  if (getifaddrs(&if_address) == -1) {
+    MS_LOG(WARNING) << "Get ifaddrs failed.";
+  }
+  for (ifa = if_address; ifa != nullptr; ifa = ifa->ifa_next) {
+    if (ifa->ifa_addr != nullptr && addr->sa.sa_family == ifa->ifa_addr->sa_family) {
+      if (addr->sa.sa_family == AF_INET) {
+        struct sockaddr_in *addr_in = reinterpret_cast<struct sockaddr_in *>(ifa->ifa_addr);
+        if (addr_in->sin_addr.s_addr == addr->saIn.sin_addr.s_addr) {
+          if_name = ifa->ifa_name;
+        }
+      }
+      if (addr->sa.sa_family == AF_INET6) {
+        struct sockaddr_in6 *addr_in6 = reinterpret_cast<struct sockaddr_in6 *>(ifa->ifa_addr);
+        if (memcmp(&addr_in6->sin6_addr, &addr->saIn6.sin6_addr, sizeof(addr_in6->sin6_addr)) == 0) {
+          if_name = ifa->ifa_name;
+        }
+      }
+    }
+  }
+  MS_EXCEPTION_IF_NULL(if_address);
+  freeifaddrs(if_address);
+  MS_LOG(INFO) << "Using interface name " << if_name;
+  return if_name;
 }
 
 int SocketOperation::Listen(const std::string &url) {
@@ -345,17 +417,22 @@ int SocketOperation::Listen(const std::string &url) {
   }
 
   // bind
-  if (::bind(listenFd, reinterpret_cast<struct sockaddr *>(&addr), sizeof(SocketAddress)) > 0) {
-    MS_LOG(ERROR) << "Failed to call bind, url: " << url.c_str();
+  if (::bind(listenFd, reinterpret_cast<struct sockaddr *>(&addr), sizeof(SocketAddress)) != 0) {
+    MS_LOG(WARNING) << "Failed to call bind, url: " << url.c_str() << " " << strerror(errno);
     if (close(listenFd) != 0) {
       MS_LOG(EXCEPTION) << "Failed to close fd:" << listenFd;
+    }
+    // If this address is already in use, return -2 to the caller so it can distinguish from other return value.
+    if (errno == EADDRINUSE) {
+      return kAddressInUseError;
     }
     return -1;
   }
 
   // listen
-  if (::listen(listenFd, SOCKET_LISTEN_BACKLOG) > 0) {
-    MS_LOG(ERROR) << "Failed to call listen, fd: " << listenFd << ", errno: " << errno << ", url: " << url.c_str();
+  if (::listen(listenFd, SOCKET_LISTEN_BACKLOG) != 0) {
+    MS_LOG(ERROR) << "Failed to call listen, fd: " << listenFd << ", errno: " << errno << ", url: " << url.c_str()
+                  << " " << strerror(errno);
     if (close(listenFd) != 0) {
       MS_LOG(EXCEPTION) << "Failed to close fd:" << listenFd;
     }

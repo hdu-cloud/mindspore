@@ -20,6 +20,7 @@ import mindspore.context as context
 from mindspore.common.tensor import Tensor
 from mindspore.ops import operations as P
 from mindspore.nn import Cell
+from mindspore.common.api import _pynative_executor
 
 
 @pytest.mark.level1
@@ -81,7 +82,7 @@ def broadcast_to_dtype(dtype):
     assert np.allclose(output.asnumpy(), expect)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_broadcast_to_dtype():
@@ -138,12 +139,14 @@ def test_broadcast_dyn_invalid_init():
     x_np = np.random.rand(4, 5).astype(np.float32)
     with pytest.raises(ValueError):
         P.BroadcastTo(ms_shape)(Tensor(x_np))
+        _pynative_executor.sync()
 
     context.set_context(mode=context.GRAPH_MODE, device_target='GPU')
     ms_shape = (-1, 1, -1, -1)
     x_np = np.random.rand(4, 5).astype(np.float32)
     with pytest.raises(ValueError):
         P.BroadcastTo(ms_shape)(Tensor(x_np))
+        _pynative_executor.sync()
 
 
 class BroadcastToNet(Cell):
@@ -159,7 +162,7 @@ class BroadcastToNet(Cell):
         return self.broadcastto(input_x)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_broadcast_to_dynamic_shape():
@@ -177,3 +180,21 @@ def test_broadcast_to_dynamic_shape():
     output = broadcast_to_net(input_x)
     expect = np.broadcast_to(input_x_np, shape)
     assert np.allclose(output.asnumpy(), expect)
+
+
+@pytest.mark.level0
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.env_onecard
+def test_broadcast_exception():
+    """
+    Feature: Test invalid input and target shape in of BroadcastTo.
+    Description: target shape is empty, but input shape is not empty.
+    Expectation: the result match with expected result.
+    """
+    with pytest.raises(Exception) as info:
+        shape = (0,)
+        x_np = np.random.randint(1, 4)
+        P.BroadcastTo(shape)(Tensor(x_np))
+        assert "ValueError: For 'BroadcastTo', each dimension pair, input_x shape and target shape must be equal or \
+        input dimension is 1 or target dimension is -1. But got input_x shape: [const vector][], target shape: \
+        [const vector][0]." in str(info.value)

@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -212,7 +212,8 @@ using OnesLikeCost = CastCost;
 using RangeCost = CastCost;
 using SplitCost = CastCost;
 using ScatterUpdateCost = CastCost;
-using UniformRealCost = CastCost;
+using RandomDistributeCost = CastCost;
+using FillV2Cost = CastCost;
 using ResizeBilinearCost = CastCost;
 using BoundingBoxEncodeCost = CastCost;
 using IOUCost = CastCost;

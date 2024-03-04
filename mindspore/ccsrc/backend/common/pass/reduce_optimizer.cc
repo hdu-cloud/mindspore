@@ -16,6 +16,10 @@
 
 #include "backend/common/pass/reduce_optimizer.h"
 #include <vector>
+#include <set>
+#include <string>
+#include "ops/math_op_name.h"
+#include "ops/array_ops.h"
 #include "include/common/utils/anfalgo.h"
 #include "utils/ms_context.h"
 
@@ -66,13 +70,6 @@ AnfNodePtr ReduceOptimizer::NewRangeOp(const AnfNodePtr &rank_op, const KernelGr
   MS_EXCEPTION_IF_NULL(range_op);
   range_op->set_abstract(rank_op->abstract());
   return range_op;
-}
-
-AnfNodePtr ReduceOptimizer::InsertAssistNode(const CNodePtr &cnode, const KernelGraphPtr &) const {
-  // the input dim is unknown, need rank + range, don't supported now;
-  MS_LOG(EXCEPTION)
-    << "Can not support the case that input is dim unknown and axis is empty or axis contain value less 0. node: "
-    << trace::DumpSourceLines(cnode);
 }
 
 AnfNodePtr ReduceOptimizer::CreateValueNodeWithVector(const CNodePtr &cnode, const KernelGraphPtr &kernel_graph,
@@ -154,7 +151,7 @@ AnfNodePtr ReduceOptimizer::NewAssistValueNode(const CNodePtr &cnode, const Kern
         // case 2: contain value less 0;
         for (auto &iter : value_tuple->value()) {
           auto item = GetValue<int64_t>(iter->cast<ScalarPtr>());
-          if (item < 0) {
+          if (item < 0 && !(IsDynamicRank(x_shape->shape()))) {
             (void)axis_value.emplace_back(item + static_cast<int64_t>(x_shape->shape().size()));
           } else {
             (void)axis_value.emplace_back(item);
@@ -170,6 +167,13 @@ AnfNodePtr ReduceOptimizer::NewAssistValueNode(const CNodePtr &cnode, const Kern
   return nullptr;
 }
 
+bool IsReduceOp(const std::string &op_name) {
+  const std::set<std::string> kReduceOpSet = {kReduceSumOpName, kReduceMeanOpName, kReduceProdOpName};
+
+  auto iter = kReduceOpSet.find(op_name);
+  return iter != kReduceOpSet.end();
+}
+
 const AnfNodePtr ReduceOptimizer::Process(const FuncGraphPtr &func_graph, const AnfNodePtr &node,
                                           const EquivPtr &) const {
   MS_EXCEPTION_IF_NULL(func_graph);
@@ -177,12 +181,17 @@ const AnfNodePtr ReduceOptimizer::Process(const FuncGraphPtr &func_graph, const 
   auto cnode = node->cast<CNodePtr>();
   MS_EXCEPTION_IF_NULL(cnode);
   auto op_name = common::AnfAlgo::GetCNodeName(cnode);
-  if (op_name != kReduceSumOpName && op_name != kReduceMeanOpName) {
-    MS_LOG(DEBUG) << "Current node is not: " << kReduceSumOpName << ", skip!";
+  if (!IsReduceOp(op_name)) {
+    MS_LOG(DEBUG) << "Skip ReduceOptimizer for " << op_name;
     return nullptr;
   }
-  if (!common::AnfAlgo::IsDynamicShape(cnode) && !common::AnfAlgo::HasNodeAttr(kAttrMutableKernel, cnode)) {
+  if (common::AnfAlgo::HasNodeAttr(kAttrSkipMode, cnode) && common::AnfAlgo::GetNodeAttr<bool>(cnode, kAttrSkipMode)) {
     MS_LOG(DEBUG) << "Current node is not dynamic shape, skip!";
+    return nullptr;
+  }
+  auto shape = dyn_cast<abstract::Shape>(cnode->input(1)->Shape())->shape();
+  if (IsDynamicRank(shape)) {
+    MS_LOG(DEBUG) << "Current node is dynamic rank, skip!";
     return nullptr;
   }
   common::AnfAlgo::SetNodeAttr(kAttrVisited, MakeValue(true), node);

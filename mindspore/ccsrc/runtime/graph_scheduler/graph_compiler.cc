@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License"){}
  * you may not use this file except in compliance with the License.
@@ -20,35 +20,44 @@
 #include <utility>
 #include <algorithm>
 #include <functional>
+#include <list>
 #include "runtime/graph_scheduler/graph_scheduler.h"
 #include "runtime/device/device_address_utils.h"
 #include "runtime/pynative/op_executor.h"
-#include "runtime/device/device_address.h"
+#include "include/backend/device_address.h"
 #include "runtime/device/ms_device_shape_transfer.h"
 #include "runtime/pynative/op_runtime_info.h"
+#include "runtime/pynative/op_compiler.h"
 #include "include/common/utils/convert_utils.h"
-#include "common/graph_kernel/graph_kernel_flags.h"
+#include "backend/common/graph_kernel/graph_kernel_flags.h"
+#include "backend/common/optimizer/common_backend_optimization.h"
 #include "utils/ms_context.h"
 #include "ir/tensor.h"
-#include "kernel/common_utils.h"
-#include "profiler/device/profiling.h"
-#include "backend/common/optimizer/helper.h"
+#include "kernel/framework_utils.h"
+#include "include/backend/debug/profiler/profiling.h"
+#include "include/backend/optimizer/helper.h"
 #include "base/base_ref_utils.h"
 #include "include/common/debug/dump_proto.h"
 #include "include/common/utils/parallel_context.h"
+#include "plugin/device/cpu/hal/hardware/cpu_device_context.h"
 #ifdef ENABLE_DEBUGGER
-#include "debug/debugger/debugger.h"
+#include "include/backend/debug/debugger/debugger.h"
 #endif
 #ifdef ENABLE_DUMP_IR
 #include "include/common/debug/anf_ir_dump.h"
 #endif
 #ifndef ENABLE_SECURITY
-#include "debug/data_dump/dump_json_parser.h"
+#include "include/backend/debug/data_dump/dump_json_parser.h"
+#include "include/backend/optimizer/graph_optimizer.h"
 #endif
 #if defined(__linux__) && defined(WITH_BACKEND)
-#include "ps/ps_context.h"
+#include "include/backend/distributed/ps/ps_context.h"
 #include "runtime/graph_scheduler/embedding_cache_scheduler.h"
 #endif
+#include "include/common/profiler.h"
+#include "include/common/utils/compile_cache_context.h"
+#include "utils/phase.h"
+#include "pipeline/jit/ps/base.h"
 
 namespace mindspore {
 namespace runtime {
@@ -73,13 +82,54 @@ void SetSummaryNodesRefCount(const KernelGraph *graph) {
     device_address->ResetRefCount();
   }
 }
-}  // namespace
 
-GraphCompilerInfo::~GraphCompilerInfo() {
-  GraphScheduler::GetInstance().Clear(name_, graphs_, origin_parameters_order_, control_node_parser_);
+bool EnableBackendCompileCache(const FuncGraphPtr &func_graph, const device::DeviceType &device_type) {
+  if (!CompileCacheEnable()) {
+    return false;
+  }
+  auto &context = CompileCacheContext::GetInstance();
+  if (context.FrontGraph() != func_graph) {
+    return false;
+  }
+  if (context.RestrictedScenarios()) {
+    return false;
+  }
+  if (MsContext::GetInstance()->backend_policy() == "ge") {
+    return false;
+  }
+  if (device_type != device::DeviceType::kAscend) {
+    return false;
+  }
+  auto ms_context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context);
+  if (ms_context->CellReuseLevel() != CellReuseLevel::kNoCellReuse) {
+    return false;
+  }
+  return true;
 }
 
-namespace {
+bool UseCacheToCompileGraph(const FuncGraphPtr &func_graph, const device::DeviceType &device_type) {
+  if (!EnableBackendCompileCache(func_graph, device_type)) {
+    return false;
+  }
+  auto &context = CompileCacheContext::GetInstance();
+  if (!context.UseCompileCache()) {
+    return false;
+  }
+  return true;
+}
+
+bool ExportCompileCache(const FuncGraphPtr &func_graph, const device::DeviceType &device_type) {
+  if (!EnableBackendCompileCache(func_graph, device_type)) {
+    return false;
+  }
+  auto &context = CompileCacheContext::GetInstance();
+  if (context.UseCompileCache()) {
+    return false;
+  }
+  return true;
+}
+
 // Fetch the real input of the nop node recursively.
 AnfNodePtr FetchRealNodeByNopNode(const AnfNodePtr &node) {
   MS_EXCEPTION_IF_NULL(node);
@@ -92,104 +142,60 @@ AnfNodePtr FetchRealNodeByNopNode(const AnfNodePtr &node) {
 
   const auto &inputs = cnode->inputs();
   if (inputs.size() <= 1) {
-    MS_LOG(EXCEPTION) << "Invalid cnode:" << cnode->DebugString();
+    MS_LOG(INTERNAL_EXCEPTION) << "#dmsg#Runtime error info:#dmsg#Invalid cnode:" << cnode->DebugString();
   }
   return FetchRealNodeByNopNode(inputs[1]);
 }
 
 // Recursively delete the nodes in the eliminate nodes list in the graph, check node records
 // the nodes that have been checked during the recursive process.
-void EliminateNodesFromGraph(CNode *node, const std::set<AnfNodePtr> &eliminate_nodes,
+void EliminateNodesFromGraph(CNode *cnode, const std::set<AnfNodePtr> &eliminate_nodes,
                              std::set<CNode *> *checked_nodes) {
-  MS_EXCEPTION_IF_NULL(node);
+  MS_EXCEPTION_IF_NULL(cnode);
   MS_EXCEPTION_IF_NULL(checked_nodes);
 
-  if (checked_nodes->find(node) != checked_nodes->end()) {
-    return;
-  }
-
-  (void)checked_nodes->emplace(node);
-  const auto &inputs = node->inputs();
-  std::vector<AnfNodePtr> new_inputs;
-  for (auto &input : inputs) {
-    MS_EXCEPTION_IF_NULL(input);
-    if (!input->isa<CNode>()) {
-      (void)new_inputs.emplace_back(input);
+  std::list<CNode *> todo_list = {cnode};
+  while (!todo_list.empty()) {
+    auto cur_node = todo_list.back();
+    MS_EXCEPTION_IF_NULL(cur_node);
+    todo_list.pop_back();
+    if (checked_nodes->find(cur_node) != checked_nodes->end()) {
       continue;
     }
-
-    if (eliminate_nodes.find(input) == eliminate_nodes.end()) {
-      (void)new_inputs.emplace_back(input);
-    } else {
-      // If input is an eliminate node, replace it by its real input.
-      const auto &real_input = FetchRealNodeByNopNode(input);
-      MS_EXCEPTION_IF_NULL(real_input);
-
-      // Since the output of previous node will be cached, the cache needs to be updated after eliminating the nopnode.
-      auto kernel_info = node->kernel_info();
-      if (kernel_info) {
-        auto runtime_cache = kernel_info->runtime_cache();
-        if (runtime_cache.runtime_cache().is_valid()) {
-          runtime_cache.runtime_cache().update_prev_node_output(
-            new_inputs.size() - 1, common::AnfAlgo::VisitKernelWithReturnType(real_input, 0));
-        }
+    (void)checked_nodes->emplace(cur_node);
+    const auto &inputs = cur_node->inputs();
+    std::vector<AnfNodePtr> new_inputs;
+    for (auto &input : inputs) {
+      MS_EXCEPTION_IF_NULL(input);
+      if (!input->isa<CNode>()) {
+        (void)new_inputs.emplace_back(input);
+        continue;
       }
-      (void)new_inputs.emplace_back(real_input);
-    }
-    const auto &cnode = input->cast<CNodePtr>();
-    MS_EXCEPTION_IF_NULL(cnode);
-    EliminateNodesFromGraph(cnode.get(), eliminate_nodes, checked_nodes);
-  }
-  node->set_inputs(new_inputs);
-}
+      if (eliminate_nodes.find(input) == eliminate_nodes.end()) {
+        (void)new_inputs.emplace_back(input);
+      } else {
+        // If input is an eliminate node, replace it by its real input.
+        const auto &real_input = FetchRealNodeByNopNode(input);
+        MS_EXCEPTION_IF_NULL(real_input);
 
-// Check whether a cnode has a monad input.
-bool HasMonadInput(const CNodePtr &cnode) {
-  MS_EXCEPTION_IF_NULL(cnode);
-  const auto &inputs = cnode->inputs();
-  for (const auto &input : inputs) {
-    MS_EXCEPTION_IF_NULL(input);
-    if (HasAbstractMonad(input)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Collect all nopnodes which are input of kernel that not support multi-thread execute.
-std::set<CNodePtr> FetchNopNodeNotSupportEliminate(const KernelGraph *const graph) {
-  MS_EXCEPTION_IF_NULL(graph);
-  std::set<CNodePtr> invalid_nopnodes;
-
-  // In the implementation of some cpu operators, shape information is obtained through the input of the kernel
-  // in launchkernel stage. The nopnode input of these operators cannot be eliminated.
-  const std::set<std::string> kCPUOpNoEliminateList = {kConcatOpName};
-
-  for (const auto &cnode : graph->execution_order()) {
-    MS_EXCEPTION_IF_NULL(cnode);
-    // If target is not cpu, the total cnode in graph can skip.
-    auto target = GetCNodeTarget(cnode);
-    if (target != kCPUDevice) {
-      break;
-    }
-
-    // kernel not support multi-thread execute will be inited in launch kernel, so its input cannot be eliminated.
-    if (kCPUOpNoEliminateList.find(common::AnfAlgo::GetCNodeName(cnode)) != kCPUOpNoEliminateList.end()) {
-      const auto &inputs = cnode->inputs();
-      for (const auto &input : inputs) {
-        MS_EXCEPTION_IF_NULL(input);
-        const auto &input_with_index = common::AnfAlgo::VisitKernelWithReturnType(input, 0);
-        if ((input_with_index.first != nullptr) && (input_with_index.first->isa<CNode>()) &&
-            common::AnfAlgo::IsNopNode(input_with_index.first)) {
-          // Collect all of the nopnode inputs.
-          (void)invalid_nopnodes.emplace(input->cast<CNodePtr>());
-          MS_LOG(INFO) << "Add invalid nopnode:" << input->DebugString()
-                       << " for node not support mulit-thread execute list.";
+        // Since the output of previous node will be cached, the cache needs to be updated after eliminating the
+        // nopnode.
+        auto kernel_info = cur_node->kernel_info();
+        if (kernel_info) {
+          auto runtime_cache = kernel_info->runtime_cache();
+          if (runtime_cache.runtime_cache().is_valid()) {
+            runtime_cache.runtime_cache().update_prev_node_output(
+              new_inputs.size() - 1, common::AnfAlgo::VisitKernelWithReturnType(real_input, 0));
+          }
         }
+        (void)new_inputs.emplace_back(real_input);
       }
+      const auto &cnode_input = input->cast<CNodePtr>();
+      MS_EXCEPTION_IF_NULL(cnode_input);
+      todo_list.push_back(cnode_input.get());
     }
+    cur_node->set_inputs(new_inputs);
   }
-  return invalid_nopnodes;
 }
 
 void OptimizeNopNode(KernelGraph *graph) {
@@ -198,13 +204,11 @@ void OptimizeNopNode(KernelGraph *graph) {
   std::vector<CNodePtr> nop_nodes_need_set_ref;
   std::set<AnfNodePtr> nop_nodes_need_eliminated;
 
-  // Skip the graph mode or dynamic shape.
+  // Skip the graph mode.
   if (graph->is_graph_run_mode()) {
     return;
   }
 
-  // Invalid nopnode is those cannot be eliminated in some scene.
-  const auto &invalid_nopnodes = FetchNopNodeNotSupportEliminate(graph);
   const auto &output_node = graph->output();
   MS_EXCEPTION_IF_NULL(output_node);
   const auto &graph_outputs = common::AnfAlgo::GetAllOutputWithIndex(output_node);
@@ -222,7 +226,7 @@ void OptimizeNopNode(KernelGraph *graph) {
     }
     // The nopnode which satisfies the following conditions cannot be eliminated and set to ref node:
     // 1.dynamic shape 2.side effect 3. must not be eliminated.
-    if (graph->is_dynamic_shape() || HasMonadInput(cnode) || (invalid_nopnodes.find(cnode) != invalid_nopnodes.end())) {
+    if (graph->is_dynamic_shape() || common::AnfAlgo::HasMonadInput(cnode)) {
       (void)new_execution_order.emplace_back(cnode);
       (void)nop_nodes_need_set_ref.emplace_back(cnode);
     } else {
@@ -231,27 +235,33 @@ void OptimizeNopNode(KernelGraph *graph) {
     }
   }
 
-  // Add the ref node pairs.
+  // Eliminate the nop nodes.
+  std::set<CNode *> checked_nodes;
+  MS_EXCEPTION_IF_NULL(graph->return_node());
+  EliminateNodesFromGraph(graph->return_node().get(), nop_nodes_need_eliminated, &checked_nodes);
+  graph->set_execution_order(new_execution_order);
+
+  // Add the ref node pairs, which must be after elimination to avoid using elimination nodes.
   for (auto &ref_node : nop_nodes_need_set_ref) {
     MS_EXCEPTION_IF_NULL(ref_node);
     auto input_node = common::AnfAlgo::GetInputNode(ref_node, 0);
     MS_EXCEPTION_IF_NULL(input_node);
-    auto origin_pair = common::AnfAlgo::VisitKernelWithReturnType(input_node, 0, true);
+    // Record the original information of ref node.
+    auto origin_pair = common::AnfAlgo::VisitKernelWithReturnType(input_node, 0, false);
     MS_EXCEPTION_IF_NULL(origin_pair.first);
     // The device address of parameter as input may be not the running used in the heterogeneous or control flow
     // scenarios, and not set the ref node.
     if (origin_pair.first->isa<Parameter>() || origin_pair.first->isa<ValueNode>()) {
       continue;
     }
+    // The ref node cannot be set for node pairs from different device target(appears in the kernel backoff scene).
+    if (AnfAlgo::FetchDeviceTarget(origin_pair.first, graph) != AnfAlgo::FetchDeviceTarget(ref_node, graph)) {
+      continue;
+    }
     MS_LOG(INFO) << "The reference relation of nopnode " << ref_node->fullname_with_scope() << ", index: " << 0
                  << " to input " << origin_pair.first->fullname_with_scope() << ", index: " << origin_pair.second;
     graph->AddRefCorrespondPairs(std::make_pair(ref_node, 0), origin_pair);
   }
-
-  std::set<CNode *> checked_nodes;
-  MS_EXCEPTION_IF_NULL(graph->return_node());
-  EliminateNodesFromGraph(graph->return_node().get(), nop_nodes_need_eliminated, &checked_nodes);
-  graph->set_execution_order(new_execution_order);
 }
 
 bool IsEnableZeroCopy(bool run_in_pynative) {
@@ -282,149 +292,396 @@ bool IsEnableZeroCopy(bool run_in_pynative) {
                           parallel_mode == parallel::kHybridParallel || parallel_mode == parallel::kDataParallel;
   // If there are auto parallel in graph, the flag should not be set. In parallel, the continue memory in communication
   // ops not support addr change.
-  if (is_parallel_mode) {
+  // force zero copy when use ge
+  bool is_enable_ge = ms_context->backend_policy() == "ge";
+  const std::string &phase = PhaseManager::GetInstance().phase();
+  bool is_train = false;
+  if (phase.length() != 0) {
+    is_train = pipeline::GetPhasePrefix(phase) == "train";
+  }
+  if (is_parallel_mode && (!is_enable_ge || !is_train)) {
     return false;
   }
   return true;
 }
-}  // namespace
+
 void SetRunGraphBySingleOpFlag(const KernelGraphPtr &graph) {
+  MS_EXCEPTION_IF_NULL(graph);
   for (auto &node : graph->execution_order()) {
+    MS_EXCEPTION_IF_NULL(node);
     MS_EXCEPTION_IF_NULL(node->input(0));
     bool enable = false;
     if (!AnfAlgo::NodeValueIsFuncGraph(node->input(0))) {
-      if (kernel::IfNeedSkipResize(node)) {
-        MS_LOG(DEBUG) << "Enable Run Graph By Single Op";
+      if (kernel::IfNeedSkipResize(node) && graph->has_flag(kFlagPyNativeRunInGraph)) {
+        MS_LOG(INFO) << "Enable Run Graph By Single Op";
         enable = true;
       }
     }
-    if (enable || common::AnfAlgo::IsControlOpExecInBackend(node)) {
+    // BpGraph contain bprop_cut node.
+    auto contain_bprop_cut = common::AnfAlgo::IsBpropCutOpExecInBackend(node);
+    if (enable || contain_bprop_cut) {
+      MS_LOG(INFO) << "Set kFlagEnableRunGraphBySingleOp: NeedSkipResize:" << enable
+                   << ", BpGraph contain bprop_cut node:" << contain_bprop_cut;
       graph->set_flag(kFlagEnableRunGraphBySingleOp, true);
       break;
     }
   }
 }
-GraphId GraphCompiler::CompileGraph(const GraphSegmentPtr &segment, const AnfNodePtrList &outputs,
+
+void UseCacheToCompileGraphImpl(const KernelGraphPtr &graph, const DeviceContext *device_context) {
+  MS_EXCEPTION_IF_NULL(graph);
+  MS_EXCEPTION_IF_NULL(device_context);
+
+  auto &compile_cache_context = CompileCacheContext::GetInstance();
+  (void)profiler::CollectHostInfo(kModelNameRuntime, kEventCompileGraph, kStageCreateKernel, 1, 0, 0);
+  compile_cache_context.SetFusionOpBuildInfoFlag(true);
+  device_context->GetKernelExecutor(false)->CreateKernel(graph->execution_order());
+  compile_cache_context.SetFusionOpBuildInfoFlag(false);
+  (void)profiler::CollectHostInfo(kModelNameRuntime, kEventCompileGraph, kStageCreateKernel, 1, 0, 1);
+  // Kernels that are not supported by other device can be backed off and rebuilt on the CPU.
+#ifdef WITH_BACKEND
+  if (!graph->is_from_single_op()) {
+    auto cpu_context = device::DeviceContextManager::GetInstance().GetOrCreateDeviceContext(
+      {kCPUDevice, device_context->device_context_key().device_id_});
+    MS_EXCEPTION_IF_NULL(cpu_context);
+    auto cpu_executor = dynamic_cast<device::cpu::CPUKernelExecutor *>(cpu_context->GetKernelExecutor(false).get());
+    MS_EXCEPTION_IF_NULL(cpu_executor);
+    cpu_executor->RebuildKernelSelectBackoffOp(graph->execution_order());
+  }
+#endif
+#ifndef ENABLE_SECURITY
+  // Update needed dump kernels for mindRT.
+  DumpJsonParser::GetInstance().UpdateNeedDumpKernels(*graph.get());
+#endif
+  if (graph->is_dynamic_shape()) {
+    auto profiler_manage_inst = profiler::ProfilerManager::GetInstance();
+    MS_EXCEPTION_IF_NULL(profiler_manage_inst);
+    profiler_manage_inst->SetNetDynamicShapeStatus();
+  }
+}
+
+bool IsValidSequence(const ValueSequencePtr &sequence_value) {
+  MS_EXCEPTION_IF_NULL(sequence_value);
+  const auto &values = sequence_value->value();
+  if (values.empty()) {
+    return true;
+  }
+  MS_EXCEPTION_IF_NULL(values[0]);
+  if (values[0]->isa<ValueSequence>()) {
+    return false;
+  }
+  if (values[0]->type() == nullptr) {
+    MS_LOG(DEBUG) << "Failed to get type from value tuple:" << sequence_value->ToString();
+    return false;
+  }
+  TypeId base_type = values[0]->type()->type_id();
+  for (size_t i = 1; i < values.size(); ++i) {
+    MS_EXCEPTION_IF_NULL(values[i]->type());
+    TypeId type = values[i]->type()->type_id();
+    if (type != base_type) {
+      MS_LOG(DEBUG) << "Invalid value type for value:" << sequence_value->ToString();
+      return false;
+    }
+  }
+  return true;
+}
+
+void CollectValueNodeForKernelGraph(const KernelGraphPtr &graph) {
+  MS_EXCEPTION_IF_NULL(graph);
+  graph->ClearAllValueNode();
+  const auto &nodes = TopoSort(graph->get_return());
+  for (const auto &node : nodes) {
+    MS_EXCEPTION_IF_NULL(node);
+    if (!node->isa<ValueNode>() || node->kernel_info() == nullptr) {
+      continue;
+    }
+    const auto &value_node = node->cast<ValueNodePtr>();
+    MS_EXCEPTION_IF_NULL(value_node);
+    const auto &value = value_node->value();
+    MS_EXCEPTION_IF_NULL(value);
+    if (value->isa<Primitive>() ||
+        (value->isa<ValueSequence>() && (!IsValidSequence(value->cast<ValueSequencePtr>())))) {
+      continue;
+    }
+    MS_LOG(DEBUG) << "Add value node:" << node->DebugString() << " for kernel graph:" << graph->ToString();
+    graph->AddValueNodeToGraph(value_node);
+  }
+}
+
+GraphId CompileAnyTypeInputGraph(const KernelGraphPtr &graph, const AnfNodePtrList &outputs,
+                                 const DeviceContext *device_context) {
+  MS_EXCEPTION_IF_NULL(graph);
+  for (const auto &input : graph->inputs()) {
+    MS_LOG(DEBUG) << "input node:" << input->DebugString()
+                  << " abstract:" << (input->abstract() == nullptr ? "null" : input->abstract()->ToString());
+  }
+  MS_LOG(DEBUG) << "Pre construct any type input kernel graph:" << graph->ToString();
+  graph->set_is_any_type_input(true);
+  opt::OptimizationForAnyTypeKernelGraph(graph);
+  graph->SetInputNodes();
+  for (const auto &input : graph->input_nodes()) {
+    MS_LOG(DEBUG) << "input node:" << input->DebugString() << " abstract:" << input->abstract()->ToString();
+  }
+  auto backend_output = graph->output();
+  MS_EXCEPTION_IF_NULL(backend_output);
+  graph->CacheGraphOutputToFrontNodeWithIndex({backend_output}, outputs);
+  graph->UpdateInternalParameter();
+  DeviceAddressUtils::CreateParameterDeviceAddress(device_context, graph);
+
+  auto output_with_indexs = common::AnfAlgo::GetAllOutputWithIndex(graph->output());
+  for (const auto &output_with_index : output_with_indexs) {
+    const auto &output = output_with_index.first;
+    MS_EXCEPTION_IF_NULL(output);
+    if (common::AnfAlgo::IsBpropCutOpExecInBackend(output) || HasAbstractMonad(output)) {
+      continue;
+    }
+    if (output->kernel_info() == nullptr) {
+      output->set_kernel_info(std::make_shared<device::KernelInfo>());
+    }
+    auto kernel_info = dynamic_cast<device::KernelInfo *>(output->kernel_info());
+    MS_EXCEPTION_IF_NULL(kernel_info);
+    // select_kernel_build_info() has checked whether return pointer is null
+    auto build_info = kernel_info->select_kernel_build_info();
+    if (build_info != nullptr) {
+      continue;
+    }
+    size_t output_num = 1;
+    if (output->abstract() != nullptr) {
+      output_num = common::AnfAlgo::GetOutputNumByAbstract(output->abstract());
+    }
+    kernel::KernelBuildInfo::KernelBuildInfoBuilder builder;
+    builder.SetOutputsFormat(std::vector<std::string>(output_num, kOpFormat_DEFAULT));
+    builder.SetOutputsDeviceType(std::vector<TypeId>(output_num, kTypeUnknown));
+    builder.SetOutputsKernelObjectType(
+      std::vector<kernel::KernelObjectType>(output_num, kernel::KernelObjectType::TENSOR));
+    AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), output.get());
+    MS_LOG(DEBUG) << "Set kernel build info for node:" << output->DebugString() << " output num:" << output_num;
+  }
+  CollectValueNodeForKernelGraph(graph);
+  DeviceAddressUtils::CreateValueNodeDeviceAddress(device_context, graph);
+  DeviceAddressUtils::CreateGraphOutputDeviceAddress(device_context, graph);
+  return graph->graph_id();
+}
+}  // namespace
+
+GraphId GraphCompiler::CompileGraph(const GraphSegmentPtr &segment,
+                                    const std::pair<AnfNodePtrList, AnfNodePtrList> &io_nodes,
                                     const DeviceContext *device_context, device::RunMode run_mode,
                                     bool run_in_pynative) {
-  MS_EXCEPTION_IF_NULL(session_);
   MS_EXCEPTION_IF_NULL(segment);
   MS_EXCEPTION_IF_NULL(device_context);
   MS_LOG(INFO) << "Status record: start compile graph.";
   auto nodes = segment->nodes_;
-  auto device_terget = device_context->GetDeviceType();
+  auto device_target = device_context->GetDeviceType();
   // Generate kernel graph.
-  KernelGraphPtr graph =
-    session_->ConstructKernelGraph(nodes, outputs, device_terget, true, IsEnableZeroCopy(run_in_pynative));
-  MS_EXCEPTION_IF_NULL(graph);
+  (void)profiler::CollectHostInfo(kModelNameRuntime, kEventCompileGraph, kStageConstructKernelGraph, 1, 0, 0);
+  auto kernel_graph =
+    session_->ConstructKernelGraph(nodes, io_nodes.second, device_target, true, IsEnableZeroCopy(run_in_pynative));
+  (void)profiler::CollectHostInfo(kModelNameRuntime, kEventCompileGraph, kStageConstructKernelGraph, 1, 0, 1);
+  SetGraphDependency(kernel_graph, segment);
+  return CompileGraph(kernel_graph, io_nodes, device_context, run_mode, run_in_pynative);
+}
 
-  opt::EliminateIllegalDataTypePass(graph);
-  SetGraphDependency(graph, segment);
+GraphId GraphCompiler::CompileGraph(const KernelGraphPtr &kernel_graph,
+                                    const std::pair<AnfNodePtrList, AnfNodePtrList> &io_nodes,
+                                    const DeviceContext *device_context, device::RunMode run_mode,
+                                    bool run_in_pynative) {
+  MS_EXCEPTION_IF_NULL(session_);
+  MS_EXCEPTION_IF_NULL(device_context);
+  MS_EXCEPTION_IF_NULL(kernel_graph);
 
-  // Unify the MindIR, must be before of the graph optimization.
-  auto deprecated_kernel_executor =
-    dynamic_cast<device::DeprecatedKernelExecutor *>(device_context->kernel_executor_.get());
-  if (deprecated_kernel_executor != nullptr) {
-    deprecated_kernel_executor->UnifyMindIR(graph);
-  } else {
-    opt::CommonUnifyMindIR(graph);
+  const auto &outputs = io_nodes.second;
+  if (common::AnfAlgo::IsAnyTypeInput(io_nodes.first)) {
+    return CompileAnyTypeInputGraph(kernel_graph, outputs, device_context);
   }
-
-  // The graph common optimization.
-  graph->UpdateGraphAquireGilAttr();
-  opt::BackendCommonOptimization(graph);
-  graph->SetInputNodes();
-  auto manager = MakeManager({graph});
+  kernel_graph->erase_flag(kFlagPyNativeRunInGraph);
+  SetRunGraphBySingleOpFlag(kernel_graph);
+  kernel_graph->UpdateGraphAquireGilAttr();
+  opt::OptimizationWithoutBackend(kernel_graph);
+  // Unify the MindIR, must be before of the kernel_graph optimization.
+  auto kernel_executor = device_context->GetKernelExecutor(false);
+  if (kernel_executor != nullptr) {
+    kernel_executor->AddMindIRPass(kernel_graph);
+  }
+  kernel_graph->SetInputNodes();
+  auto manager = MakeManager({kernel_graph});
   if (manager) {
-    manager->AddFuncGraph(graph);
-    graph->set_manager(manager);
+    manager->AddFuncGraph(kernel_graph);
+    kernel_graph->set_manager(manager);
   }
-  session_->SetInputNodeUsage(graph, manager);
-  graph->SetOptimizerFlag();
+  auto context_ptr = MsContext::GetInstance();
+  session_->SetInputNodeUsage(kernel_graph, manager);
+  MS_EXCEPTION_IF_NULL(context_ptr);
+  if (context_ptr->backend_policy() == "ge" && device_context->GetDeviceType() == device::DeviceType::kAscend &&
+      !IsEnableRefMode()) {
+    MS_EXCEPTION_IF_NULL(device_context->graph_executor_);
+    if (!device_context->graph_executor_->CompileGraph(kernel_graph, {})) {
+      MS_LOG(EXCEPTION) << "Compile kernel_graph failed: " << kernel_graph->graph_id();
+    }
+    kernel_graph->UpdateInternalParameter();
+    kernel_graph->CacheGraphOutputToFrontNodeWithIndex({kernel_graph->output()}, outputs);
+    kernel_graph->set_front_outputs(outputs);
+    return kernel_graph->graph_id();
+  }
+  kernel_graph->SetOptimizerFlag();
 
   if (run_mode == device::RunMode::kUnknown) {
-    graph->set_run_mode(device_context->GetRunMode(graph));
+    kernel_graph->set_run_mode(device_context->GetRunMode(kernel_graph));
   } else {
-    graph->set_run_mode(run_mode);
+    kernel_graph->set_run_mode(run_mode);
   }
 
   GraphId graph_id = 0;
   if (run_in_pynative) {
     MS_EXCEPTION_IF_NULL(session_);
-    // Graph kernel does not support pynative mode now, print a warning here.
+    // kernel_graph kernel does not support pynative mode now, print a warning here.
     graphkernel::GraphKernelFlags::GetInstance().CheckSupport();
-    graph_id = graph->graph_id();
+    graph_id = kernel_graph->graph_id();
   } else {
-    graph_id = CompileGraphImpl(graph, device_context, run_in_pynative);
+    graph_id = CompileGraphImpl(kernel_graph, device_context, run_in_pynative);
   }
 
-  graph->set_front_outputs(outputs);
+  kernel_graph->set_front_outputs(outputs);
 
-  graph->set_root_graph_id(graph_id);
-  session_->DumpGraphs({graph});
+  kernel_graph->set_root_graph_id(graph_id);
+  session_->DumpGraphs({kernel_graph});
 
-  // The graph is not compiled yet in PyNative Mode.
-  // Need to cache output latter when the graph is compiled.
+  // The kernel_graph is not compiled yet in PyNative Mode.
+  // Need to cache output latter when the kernel_graph is compiled.
   if (!run_in_pynative) {
-    // Cache the backend graph output nodes to front nodes with output index.
-    auto backend_node = graph->output();
+    // Cache the backend kernel_graph output nodes to front nodes with output index.
+    auto backend_node = kernel_graph->output();
     MS_EXCEPTION_IF_NULL(backend_node);
-    graph->CacheGraphOutputToFrontNodeWithIndex({backend_node}, outputs);
+    kernel_graph->CacheGraphOutputToFrontNodeWithIndex({backend_node}, outputs);
   }
-  AnfAlgo::UpdateGraphValidRefPair(graph);
-
-  SetRunGraphBySingleOpFlag(graph);
+  AnfAlgo::UpdateGraphValidRefPair(kernel_graph);
 
   MS_LOG(INFO) << "Status record: end compile graph. graph id: " << graph_id;
   return graph_id;
 }
 
+GraphCompilerInfo::~GraphCompilerInfo() {
+  GraphScheduler::GetInstance().Clear(name_, graphs_, origin_parameters_order_, control_node_parser_);
+}
+
 GraphId GraphCompiler::CompileDynamicGraph(const GraphSegmentPtr &segment, const AnfNodePtrList &outputs,
                                            const DeviceContext *device_context) {
-  MS_EXCEPTION_IF_NULL(session_);
   MS_EXCEPTION_IF_NULL(segment);
   MS_EXCEPTION_IF_NULL(device_context);
   MS_LOG(INFO) << "Status record: start compile graph.";
+
   auto nodes = segment->nodes_;
-  auto device_terget = device_context->GetDeviceType();
+  auto device_target = device_context->GetDeviceType();
   // Generate kernel graph.
-  KernelGraphPtr graph = session_->ConstructKernelGraph(nodes, outputs, device_terget, true, false);
-  MS_EXCEPTION_IF_NULL(graph);
+  (void)profiler::CollectHostInfo(kModelNameRuntime, kEventCompileGraph, kStageConstructKernelGraph, 1, 0, 0);
+  const auto &kernel_graph = session_->ConstructKernelGraph(nodes, outputs, device_target, true, false);
+  return CompileDynamicGraph(kernel_graph, device_context);
+}
 
-  graph->set_flag(kAttrMutableKernel, true);
+GraphId GraphCompiler::CompileDynamicGraph(const KernelGraphPtr &kernel_graph, const DeviceContext *device_context) {
+  MS_EXCEPTION_IF_NULL(kernel_graph);
+  MS_EXCEPTION_IF_NULL(device_context);
+  // Dynamic shape or dynamic graph structure flag.
+  kernel_graph->set_flag(kAttrMutableKernel, true);
+  MS_LOG(INFO) << "Set kFlagEnableRunGraphBySingleOp: Dynamic shape or dynamic graph structure flag";
+  kernel_graph->set_flag(kFlagEnableRunGraphBySingleOp, true);
 
-  opt::EliminateIllegalDataTypePass(graph);
-  // Unify the MindIR, must be before of the graph optimization.
-  auto deprecated_kernel_executor =
-    dynamic_cast<device::DeprecatedKernelExecutor *>(device_context->kernel_executor_.get());
-  if (deprecated_kernel_executor != nullptr) {
-    deprecated_kernel_executor->UnifyMindIR(graph);
-  } else {
-    opt::CommonUnifyMindIR(graph);
+  auto kernel_executor = device_context->GetKernelExecutor(true);
+  if (kernel_executor != nullptr) {
+    kernel_executor->AddMindIRPass(kernel_graph);
   }
 
-  // The graph common optimization.
-  graph->UpdateGraphAquireGilAttr();
-  opt::BackendCommonOptimization(graph);
-  graph->SetInputNodes();
-  auto manager = MakeManager({graph});
+  kernel_graph->UpdateGraphAquireGilAttr();
+  kernel_graph->SetInputNodes();
+  auto manager = Manage(kernel_graph);
   if (manager) {
-    manager->AddFuncGraph(graph);
-    graph->set_manager(manager);
+    manager->AddFuncGraph(kernel_graph);
+    kernel_graph->set_manager(manager);
   }
-  session_->SetInputNodeUsage(graph, manager);
-  graph->SetOptimizerFlag();
-  graph->set_run_mode(device::RunMode::kKernelMode);
+  session_->SetInputNodeUsage(kernel_graph, manager);
+  kernel_graph->SetOptimizerFlag();
+  kernel_graph->set_run_mode(device::RunMode::kKernelMode);
 
-  // Graph kernel does not support pynative mode now, print a warning here.
+  // kernel_graph kernel does not support pynative mode now, print a warning here.
   graphkernel::GraphKernelFlags::GetInstance().CheckSupport();
 
-  GraphId graph_id = graph->graph_id();
-  graph->set_root_graph_id(graph_id);
-  session_->DumpGraphs({graph});
+  GraphId graph_id = kernel_graph->graph_id();
+  kernel_graph->set_root_graph_id(graph_id);
+  session_->DumpGraphs({kernel_graph});
 
-  MS_LOG(INFO) << "Status record: end compile graph. graph id: " << graph_id;
+  auto &exec_nodes = kernel_graph->execution_order();
+  (void)std::for_each(exec_nodes.begin(), exec_nodes.end(), [](const CNodePtr &node) {
+    common::AnfAlgo::SetNodeAttr(kAttrMutableKernel, MakeValue(true), node);
+  });
+
+  MS_LOG(INFO) << "Status record: end compile kernel_graph. kernel_graph id: " << graph_id;
   return graph_id;
+}
+
+KernelGraphPtr GraphCompiler::ConstructKernelGraphForGraphRunMode(const FuncGraphPtr &func_graph,
+                                                                  const DeviceContext *device_context,
+                                                                  std::vector<KernelGraphPtr> *const all_graphs,
+                                                                  bool *const need_return_ahead) {
+  MS_EXCEPTION_IF_NULL(func_graph);
+  MS_EXCEPTION_IF_NULL(device_context);
+  MS_EXCEPTION_IF_NULL(all_graphs);
+  auto device_target = device_context->GetDeviceType();
+  KernelGraphPtr root_graph = session_->ConstructKernelGraph(func_graph, all_graphs, device_target);
+  MS_EXCEPTION_IF_NULL(root_graph);
+  for (const auto &graph : *all_graphs) {
+    MS_EXCEPTION_IF_NULL(graph);
+    MS_LOG(INFO) << "Set root graph for graph: " << graph->graph_id() << " to: " << root_graph->graph_id() << ".";
+    graph->set_root_graph_id(root_graph->graph_id());
+    graph->set_run_mode(device::RunMode::kGraphMode);
+    graph->set_is_loop_count_sink(true);
+    graph->set_attrs(func_graph->attrs());
+    opt::OptimizationWithoutBackend(graph);
+  }
+
+  // Unify the MindIR, must be before of the graph optimization.
+  auto kernel_executor = device_context->GetKernelExecutor(false);
+  if (kernel_executor != nullptr) {
+    kernel_executor->AddMindIRPass(root_graph);
+  }
+
+  // todo: waiting for GraphExecutor
+  MS_EXCEPTION_IF_NULL(MsContext::GetInstance());
+  if (MsContext::GetInstance()->backend_policy() == "ge") {
+    auto manager = MakeManager();
+    MS_EXCEPTION_IF_NULL(manager);
+    for (const auto &graph : *all_graphs) {
+      MS_EXCEPTION_IF_NULL(graph);
+      graph->set_flag(kFlagEnableZeroCopyInGraph, true);
+      manager->AddFuncGraph(graph);
+      graph->set_manager(manager);
+      graph->SetInputNodes();
+    }
+    root_graph->SetInputNodes();
+    MS_EXCEPTION_IF_NULL(device_context->graph_executor_);
+    if (!device_context->graph_executor_->CompileGraph(root_graph, {})) {
+      MS_LOG(EXCEPTION) << "Compile graph failed: " << root_graph->graph_id();
+    }
+    root_graph->CacheGraphOutputToFrontNodeWithIndex({root_graph->output()}, {func_graph->output()});
+    *need_return_ahead = true;
+  }
+  if (*need_return_ahead) {
+    return root_graph;
+  }
+  // set executing sink true in graph mode
+  root_graph->set_run_mode(device::RunMode::kGraphMode);
+  root_graph->set_is_loop_count_sink(true);
+#if defined(__linux__) && defined(WITH_BACKEND)
+  // Embedding cache need global step of compute graph, can not enable loop sink, move loop control to loop count actor.
+  if (ps::PSContext::instance()->cache_enable()) {
+    root_graph->set_is_loop_count_sink(false);
+    for (const auto &graph : *all_graphs) {
+      MS_EXCEPTION_IF_NULL(graph);
+      graph->set_is_loop_count_sink(false);
+    }
+  }
+#endif
+  root_graph->SetInputNodes();
+  return root_graph;
 }
 
 GraphId GraphCompiler::CompileWholeGraphForGraphRunMode(const FuncGraphPtr &func_graph,
@@ -436,67 +693,27 @@ GraphId GraphCompiler::CompileWholeGraphForGraphRunMode(const FuncGraphPtr &func
   // Generate kernel graph.
   std::vector<KernelGraphPtr> all_graphs;
   auto device_target = device_context->GetDeviceType();
-  KernelGraphPtr root_graph = session_->ConstructKernelGraph(func_graph, &all_graphs, device_target);
-  MS_EXCEPTION_IF_NULL(root_graph);
-  for (const auto &graph : all_graphs) {
-    MS_EXCEPTION_IF_NULL(graph);
-    MS_LOG(INFO) << "Set root graph for graph: " << graph->graph_id() << " to: " << root_graph->graph_id() << ".";
-    graph->set_root_graph_id(root_graph->graph_id());
-    graph->set_run_mode(device::RunMode::kGraphMode);
-    graph->set_is_loop_count_sink(true);
+  KernelGraphPtr root_graph;
+  bool need_return_ahead = false;
+  if (UseCacheToCompileGraph(func_graph, device_target)) {
+    root_graph = session_->ConstructKernelGraph(&all_graphs);
+    use_cache_to_compile_graph_ = true;
+  } else {
+    root_graph = ConstructKernelGraphForGraphRunMode(func_graph, device_context, &all_graphs, &need_return_ahead);
   }
-
-  // todo: waiting for GraphExecutor
-  MS_EXCEPTION_IF_NULL(MsContext::GetInstance());
-  if (MsContext::GetInstance()->backend_policy() == "ge") {
-    auto manager = MakeManager();
-    MS_EXCEPTION_IF_NULL(manager);
-    for (const auto &graph : all_graphs) {
-      MS_EXCEPTION_IF_NULL(graph);
-      manager->AddFuncGraph(graph);
-      graph->set_manager(manager);
-    }
-    MS_EXCEPTION_IF_NULL(device_context->graph_executor_);
-    if (!device_context->graph_executor_->CompileGraph(root_graph, {})) {
-      MS_LOG(EXCEPTION) << "Compile graph failed: " << root_graph->graph_id();
-    }
-    root_graph->CacheGraphOutputToFrontNodeWithIndex({root_graph->output()}, {func_graph->output()});
-    return root_graph->graph_id();
+  GraphId graph_id = root_graph->graph_id();
+  if (need_return_ahead) {
+    return graph_id;
   }
-
-  // set executing sink true in graph mode
-  root_graph->set_run_mode(device::RunMode::kGraphMode);
-  root_graph->set_is_loop_count_sink(true);
-#if defined(__linux__) && defined(WITH_BACKEND)
-  // Embedding cache need global step of compute graph, can not enable loop sink, move loop control to loop count actor.
-  if (ps::PSContext::instance()->cache_enable()) {
-    root_graph->set_is_loop_count_sink(false);
-    for (const auto &graph : all_graphs) {
-      MS_EXCEPTION_IF_NULL(graph);
-      graph->set_is_loop_count_sink(false);
-    }
+  if (ExportCompileCache(func_graph, device_target)) {
+    export_compile_cache_ = true;
   }
-#endif
-
-  // Unify the MindIR, must be before of the graph optimization.
-  auto deprecated_kernel_executor =
-    dynamic_cast<device::DeprecatedKernelExecutor *>(device_context->kernel_executor_.get());
-  if (deprecated_kernel_executor != nullptr) {
-    deprecated_kernel_executor->UnifyMindIR(root_graph);
-  }
-
-  // The graph common optimization.
-  opt::BackendCommonOptimization(root_graph);
-  root_graph->SetInputNodes();
-
-  GraphId graph_id = 0;
   if (!func_graph->has_flag(kFlagPyNativeRunInGraph)) {
     graph_id = CompileGraphImpl(root_graph, device_context);
-  } else {
-    graph_id = root_graph->graph_id();
   }
-  // Set summary nodes for all graphs.
-  session_->SetSummaryNodesForAllGraphs(root_graph.get(), all_graphs);
+  if (CompileCacheEnable()) {
+    CompileCacheContext::GetInstance().Clear();
+  }
 
   // dump all graphs.
   // for ascend mindRT.
@@ -512,13 +729,13 @@ GraphId GraphCompiler::CompileWholeGraphForGraphRunMode(const FuncGraphPtr &func
     AnfAlgo::UpdateGraphValidRefPair(root_graph);
   } else {
     for (auto &node : root_graph->execution_order()) {
-      if (common::AnfAlgo::IsControlOpExecInBackend(node)) {
+      if (common::AnfAlgo::IsBpropCutOpExecInBackend(node)) {
+        MS_LOG(INFO) << "Set kFlagEnableRunGraphBySingleOp: IsBpropCutOpExecInBackend";
         root_graph->set_flag(kFlagEnableRunGraphBySingleOp, true);
       }
     }
     root_graph->set_front_outputs({func_graph->output()});
   }
-
   MS_LOG(INFO) << "Status record: end compile graph. graph id: " << graph_id;
   return graph_id;
 }
@@ -527,70 +744,94 @@ GraphId GraphCompiler::CompileGraphImpl(const KernelGraphPtr &graph, const Devic
                                         bool run_in_pynative) const {
   MS_EXCEPTION_IF_NULL(graph);
   MS_EXCEPTION_IF_NULL(device_context);
-  const auto &ms_context = MsContext::GetInstance();
-  MS_EXCEPTION_IF_NULL(ms_context);
   MS_EXCEPTION_IF_NULL(session_);
-
+  const auto &context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  if (use_cache_to_compile_graph_) {
+    UseCacheToCompileGraphImpl(graph, device_context);
+  } else {
 #ifdef ENABLE_DUMP_IR
-  bool save_graphs = ms_context->get_param<bool>(MS_CTX_SAVE_GRAPHS_FLAG);
-  // Dump .pb graph before graph optimization.
-  if (save_graphs) {
-    DumpIRProto(graph, "before_opt_" + std::to_string(graph->graph_id()));
-  }
-#endif
-  MS_EXCEPTION_IF_NULL(device_context->kernel_executor_);
-  // Execute optimization pass.
-  device_context->kernel_executor_->OptimizeGraph(graph);
-  // Generate 'KernelMod' for all kernels and set 'KernelMod' into kernel,
-  // 'KernelMod' is real executive object of kernel.
-  device_context->kernel_executor_->CreateKernel(graph->execution_order());
-
-  // Read the output and input ref map and set to the kernel graph.
-  AnfAlgo::AddOutInRefToGraph(graph);
-
-  // Optimize the nop node.
-  if (!run_in_pynative) {
-    OptimizeNopNode(graph.get());
-#ifdef ENABLE_DUMP_IR
-    if (save_graphs) {
-      DumpIR("hwopt_comm_after_eliminate_nopnode_" + graph->ToString(), graph);
+    if (context->CanDump(kIntroductory)) {
+      // Dump .pb graph before graph optimization.
+      DumpIRProto(graph, "before_opt_" + std::to_string(graph->graph_id()));
     }
 #endif
-  }
+    MS_EXCEPTION_IF_NULL(device_context->GetKernelExecutor(false));
+    // Execute optimization pass.
+    (void)profiler::CollectHostInfo(kModelNameRuntime, kEventCompileGraph, kStageOptimizeGraph, 1, 0, 0);
+    device_context->GetKernelExecutor(false)->OptimizeGraph(graph);
+    (void)profiler::CollectHostInfo(kModelNameRuntime, kEventCompileGraph, kStageOptimizeGraph, 1, 0, 1);
+    // Generate 'KernelMod' for all kernels and set 'KernelMod' into kernel,
+    // 'KernelMod' is real executive object of kernel.
+    (void)profiler::CollectHostInfo(kModelNameRuntime, kEventCompileGraph, kStageCreateKernel, 1, 0, 0);
+    device_context->GetKernelExecutor(false)->CreateKernel(graph->execution_order());
+    (void)profiler::CollectHostInfo(kModelNameRuntime, kEventCompileGraph, kStageCreateKernel, 1, 0, 1);
+
+    // Kernels that are not supported by other device can be backed off and rebuilt on the CPU.
+#ifdef WITH_BACKEND
+    if (!graph->is_from_single_op()) {
+      auto cpu_device_context = device::DeviceContextManager::GetInstance().GetOrCreateDeviceContext(
+        {kCPUDevice, device_context->device_context_key().device_id_});
+      MS_EXCEPTION_IF_NULL(cpu_device_context);
+      auto cpu_executor =
+        dynamic_cast<device::cpu::CPUKernelExecutor *>(cpu_device_context->GetKernelExecutor(false).get());
+      MS_EXCEPTION_IF_NULL(cpu_executor);
+      cpu_executor->RebuildKernelSelectBackoffOp(graph->execution_order());
+    }
+#endif
+
+    // Read the output and input ref map and set to the kernel graph.
+    AnfAlgo::AddOutInRefToGraph(graph);
+
+    // Optimize the nop node.
+    if (!run_in_pynative) {
+      OptimizeNopNode(graph.get());
+#ifdef ENABLE_DUMP_IR
+      if (context->CanDump(kIntroductory)) {
+        DumpIR("hwopt_comm_after_eliminate_nopnode_" + graph->ToString() + ".ir", graph, true);
+      }
+#endif
+    }
 
 #ifndef ENABLE_SECURITY
-  session_->SetSummaryNodes(graph.get());
-  // Update needed dump kernels for mindRT.
-  DumpJsonParser::GetInstance().UpdateNeedDumpKernels(*graph.get());
+    session_->RecurseSetSummaryNodesForAllGraphs(graph.get());
+    // Update needed dump kernels for mindRT.
+    DumpJsonParser::GetInstance().UpdateNeedDumpKernels(*graph.get());
 #endif
 
-#if defined(__linux__) && defined(WITH_BACKEND)
-  // Set device address for embedding cache parameter, only enable when enable embedding cache mode.
-  EmbeddingCacheScheduler::GetInstance().SetEmbedCachedParamAddress(device_context, graph);
-#endif
-
-  // dynamic shape pass of graphmode
-  auto kernel_graph = graph->cast<KernelGraphPtr>();
-  MS_EXCEPTION_IF_NULL(kernel_graph);
-  if (kernel_graph->is_dynamic_shape()) {
-    opt::DynamicShapeConvertPass(graph);
-  }
-  auto profiler_manage_inst = profiler::ProfilerManager::GetInstance();
-  MS_EXCEPTION_IF_NULL(profiler_manage_inst);
-  if (kernel_graph->is_dynamic_shape()) {
-    profiler_manage_inst->SetNetDynamicShapeStatus();
+    // dynamic shape pass of graphmode
+    if (graph->is_dynamic_shape()) {
+      if (!graph->is_graph_run_mode()) {
+        opt::DynamicShapeConvertPass(graph);
+      }
+      auto profiler_manage_inst = profiler::ProfilerManager::GetInstance();
+      MS_EXCEPTION_IF_NULL(profiler_manage_inst);
+      profiler_manage_inst->SetNetDynamicShapeStatus();
+    }
   }
 
+  if (export_compile_cache_) {
+    session_->CacheKernelGraph(graph);
+  }
   // Adjust kernel graph before run graph.
-  device_context->kernel_executor_->PreprocessBeforeRun(graph);
+  device_context->GetKernelExecutor(false)->PreprocessBeforeRun(graph);
+  graph->UpdateInternalParameter();
+  // Set device target for parameter affinity.
+  AnfAlgo::SetParameterDeviceTarget(graph);
 
   // Create device address for all anf nodes of graph.
   CreateDeviceAddress(graph, device_context);
 
+#if defined(__linux__) && defined(WITH_BACKEND)
+  // Set device address for embedding cache parameter, only enable when enable embedding cache mode.
+  // `CreateDeviceAddress` should execute before this step.
+  EmbeddingCacheScheduler::GetInstance().SetEmbedCachedParamAddress(device_context, graph);
+#endif
+
   SetSummaryNodesRefCount(graph.get());
 #ifdef ENABLE_DUMP_IR
   // Dump .pb graph after graph optimization.
-  if (save_graphs) {
+  if (context->CanDump(kIntroductory)) {
     DumpIRProto(graph, "after_opt_" + std::to_string(graph->graph_id()));
   }
 #endif
@@ -657,15 +898,11 @@ TensorPtr GraphCompiler::GetSingleOpInputTensorByIndex(const CNodePtr &kernel,
 
 void GraphCompiler::GetSingleOpRunInfoAndGraphInfo(const CNodePtr &kernel, const InputTensorInfo &tensor_info,
                                                    bool use_dynamic_shape_process,
-                                                   session::BackendOpRunInfoPtr *op_run_info, GraphInfo *graph_info,
+                                                   session::BackendOpRunInfoPtr *op_run_info,
                                                    const GraphOutputInfo *const graph_output_info) {
   MS_EXCEPTION_IF_NULL(session_);
-  MS_EXCEPTION_IF_NULL(graph_info);
-  *op_run_info = session_->GetSingleOpRunInfo(kernel, *graph_info, tensor_info, graph_output_info);
+  *op_run_info = session_->GetSingleOpRunInfo(kernel, tensor_info, graph_output_info);
   (*op_run_info)->base_op_run_info.use_dynamic_shape_process = use_dynamic_shape_process;
-  session_->GetSingleOpGraphInfo(kernel, tensor_info, graph_info, *op_run_info);
-  MS_EXCEPTION_IF_NULL(*op_run_info);
-  (*op_run_info)->base_op_run_info.graph_info = *graph_info;
 }
 
 void GraphCompiler::CalculateRefCount(const KernelGraphPtr &graph, std::map<KernelWithIndex, size_t> *ref_count) const {
@@ -675,11 +912,12 @@ void GraphCompiler::CalculateRefCount(const KernelGraphPtr &graph, std::map<Kern
 
 void GraphCompiler::CalculateForwardOpOutputCount(const KernelGraphPtr &graph,
                                                   const std::vector<tensor::TensorPtr> &inputs,
-                                                  std::map<std::string, size_t> *forward_op_output_tensor_id) const {
+                                                  std::map<std::string, size_t> *forward_op_output_tensor_id,
+                                                  const std::map<AnfNodePtr, size_t> &parameter_index) const {
   MS_EXCEPTION_IF_NULL(session_);
   MS_EXCEPTION_IF_NULL(forward_op_output_tensor_id);
   forward_op_output_tensor_id->clear();
-  session_->GetForwardOpOutputRefCount(graph.get(), inputs, forward_op_output_tensor_id);
+  session_->GetForwardOpOutputRefCount(graph.get(), inputs, forward_op_output_tensor_id, parameter_index);
 }
 
 void GraphCompiler::UpdateRefCount(const std::set<KernelWithIndex> &input_kernels_with_index,

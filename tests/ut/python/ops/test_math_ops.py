@@ -14,7 +14,6 @@
 # ============================================================================
 """ test math ops """
 import functools
-
 import numpy as np
 
 import mindspore as ms
@@ -28,11 +27,11 @@ from mindspore.ops import operations as P
 from mindspore.ops import functional as F
 from mindspore.ops.operations._grad_ops import IgammaGradA
 from mindspore.ops import prim_attr_register, PrimitiveWithInfer
-from mindspore.ops.operations.math_ops import Zeta, Igamma, Igammac
+from mindspore.ops.operations.math_ops import Zeta, Igamma, Igammac, BatchMatMul
 from mindspore.ops.operations.math_ops import MatrixTriangularSolve
 from mindspore.ops.operations.sparse_ops import DenseToDenseSetOperation
 from mindspore.ops.operations.sparse_ops import DenseToSparseSetOperation
-from mindspore.ops.function.math_func import inplace_index_add
+from mindspore.ops.function.math_func import inplace_index_add, polar
 
 from mindspore.common.parameter import Parameter
 from mindspore.common.initializer import initializer
@@ -284,7 +283,6 @@ class NpuFloatNet(nn.Cell):
         self.alloc_status = P.NPUAllocFloatStatus()
         self.get_status = P.NPUGetFloatStatus()
         self.clear_status = P.NPUClearFloatStatus()
-        self.fill = P.Fill()
         self.shape_op = P.Shape()
         self.select = P.Select()
         self.less = P.Less()
@@ -303,7 +301,7 @@ class NpuFloatNet(nn.Cell):
         get_status = self.get_status(init)
         init = F.depend(init, get_status) # let reduce_sum depend on get_statusk
         flag_sum = self.reduce_sum(init, (0,))
-        base = self.cast(self.fill(self.dtype(res), self.shape_op(res), 0.0), self.dtype(flag_sum))
+        base = self.cast(F.fill(self.dtype(res), self.shape_op(res), 0.0), self.dtype(flag_sum))
         cond = self.less(base, flag_sum)
         out = self.select(cond, self.cast(base, self.dtype(res)), res)
         return out
@@ -314,11 +312,19 @@ class DiagNet(nn.Cell):
 
     def __init__(self):
         super(DiagNet, self).__init__()
-        self.fill = P.Fill()
         self.diag = P.Diag()
 
     def construct(self, x):
-        return x - self.diag(self.fill(mstype.float32, (3,), 1.0))
+        return x - self.diag(F.fill(mstype.float32, (3,), 1.0))
+
+
+class FmaxFunc(nn.Cell):
+    def __init__(self):
+        super(FmaxFunc, self).__init__()
+        self.fmax_ = ops.function.math_func.fmax
+
+    def construct(self, x1, x2):
+        return self.fmax_(x1, x2)
 
 
 class NetWithLossCumSum(nn.Cell):
@@ -414,6 +420,42 @@ class LdexpFunc(nn.Cell):
         return self.ldexp(x, other)
 
 
+class BlockDiagFunc(nn.Cell):
+    def __init__(self):
+        super(BlockDiagFunc, self).__init__()
+        self.block_diag = ops.block_diag
+
+    def construct(self, x1, x2, x3, x4, x5):
+        return self.block_diag(x1, x2, x3, x4, x5)
+
+
+class AtLeast1DFunc(nn.Cell):
+    def __init__(self):
+        super(AtLeast1DFunc, self).__init__()
+        self.atleast_1d = ops.atleast_1d
+
+    def construct(self, x1, x2, x3):
+        return self.atleast_1d([x1, x2, x3])
+
+
+class DstackFunc(nn.Cell):
+    def __init__(self):
+        super(DstackFunc, self).__init__()
+        self.dstack = ops.dstack
+
+    def construct(self, x1, x2):
+        return self.dstack([x1, x2])
+
+
+class DiffFunc(nn.Cell):
+    def __init__(self):
+        super(DiffFunc, self).__init__()
+        self.diff = ops.diff
+
+    def construct(self, x):
+        return self.diff(x)
+
+
 class AtLeast2DFunc(nn.Cell):
     def __init__(self):
         super(AtLeast2DFunc, self).__init__()
@@ -421,6 +463,24 @@ class AtLeast2DFunc(nn.Cell):
 
     def construct(self, x1, x2, x3):
         return self.atleast_2d([x1, x2, x3])
+
+
+class CartesianProdFunc(nn.Cell):
+    def __init__(self):
+        super(CartesianProdFunc, self).__init__()
+        self.cartesian_prod = ops.cartesian_prod
+
+    def construct(self, x1, x2):
+        return self.cartesian_prod(x1, x2)
+
+
+class AtLeast3DFunc(nn.Cell):
+    def __init__(self):
+        super(AtLeast3DFunc, self).__init__()
+        self.atleast_3d = ops.atleast_3d
+
+    def construct(self, x1, x2, x3):
+        return self.atleast_3d([x1, x2, x3])
 
 
 class VstackFunc(nn.Cell):
@@ -432,6 +492,24 @@ class VstackFunc(nn.Cell):
         return self.vstack([x1, x2])
 
 
+class CombinationsFunc(nn.Cell):
+    def __init__(self):
+        super(CombinationsFunc, self).__init__()
+        self.combinations = ops.combinations
+
+    def construct(self, x):
+        return self.combinations(x)
+
+
+class DistFunc(nn.Cell):
+    def __init__(self):
+        super(DistFunc, self).__init__()
+        self.dist = ops.dist
+
+    def construct(self, input_x, input_y):
+        return self.dist(input_x, input_y)
+
+
 class CopysignFunc(nn.Cell):
     def __init__(self):
         super(CopysignFunc, self).__init__()
@@ -441,6 +519,15 @@ class CopysignFunc(nn.Cell):
         return self.copysign(x, other)
 
 
+class HannWindowFunc(nn.Cell):
+    def __init__(self):
+        super(HannWindowFunc, self).__init__()
+        self.hann_window = ops.hann_window
+
+    def construct(self, window_length):
+        return self.hann_window(window_length)
+
+
 class HypotFunc(nn.Cell):
     def __init__(self):
         super(HypotFunc, self).__init__()
@@ -448,6 +535,16 @@ class HypotFunc(nn.Cell):
 
     def construct(self, x1, x2):
         y = self.hypot_(x1, x2)
+        return y
+
+
+class NanSumFunc(nn.Cell):
+    def __init__(self):
+        super(NanSumFunc, self).__init__()
+        self.nansum = ops.function.math_func.nansum
+
+    def construct(self, x, axes):
+        y = self.nansum(x, axes)
         return y
 
 
@@ -481,13 +578,22 @@ class LogAddExp2Func(nn.Cell):
         return y
 
 
+class KaiserWindowFunc(nn.Cell):
+    def __init__(self):
+        super(KaiserWindowFunc, self).__init__()
+        self.kaiser_window = ops.kaiser_window
+
+    def construct(self, window_length):
+        return self.kaiser_window(window_length)
+
+
 class AddmvFunc(nn.Cell):
     def __init__(self):
         super(AddmvFunc, self).__init__()
         self.addmv = ops.addmv
 
     def construct(self, x, mat, vec, beta=1, alpha=1):
-        y = self.addmv(x, mat, vec, beta, alpha)
+        y = self.addmv(x, mat, vec, beta=beta, alpha=alpha)
         return y
 
 
@@ -497,7 +603,7 @@ class AddrFunc(nn.Cell):
         self.addr = ops.addr
 
     def construct(self, x, vec1, vec2, beta=1, alpha=1):
-        y = self.addr(x, vec1, vec2, beta, alpha)
+        y = self.addr(x, vec1, vec2, beta=beta, alpha=alpha)
         return y
 
 
@@ -614,6 +720,15 @@ class Log10Net(nn.Cell):
         return self.log10(x)
 
 
+class FminFunc(nn.Cell):
+    def __init__(self):
+        super(FminFunc, self).__init__()
+        self.fmin_ = ops.function.math_func.fmin
+
+    def construct(self, x1, x2):
+        return self.fmin_(x1, x2)
+
+
 class FracNet(nn.Cell):
     def __init__(self):
         super(FracNet, self).__init__()
@@ -630,6 +745,15 @@ class KronFunc(nn.Cell):
 
     def construct(self, x, y):
         return self.kron(x, y)
+
+
+class PolarFunc(nn.Cell):
+    def __init__(self):
+        super(PolarFunc, self).__init__()
+        self.polar = polar
+
+    def construct(self, x, y):
+        return self.polar(x, y)
 
 
 class Rot90Func(nn.Cell):
@@ -658,7 +782,7 @@ class TrapzFunc(nn.Cell):
         self.trapz = ops.trapz
 
     def construct(self, y, x=None, dx=1.0, dim=-1):
-        out = self.trapz(y, x, dx, dim)
+        out = self.trapz(y, x, dx=dx, dim=dim)
         return out
 
 
@@ -728,8 +852,42 @@ test_case_math_ops = [
                         Tensor(np.array([1, 2, 3, 4]), dtype=ms.int32)],
         'skip': ['backward']
     }),
+    ('BlockDiag', {
+        'block': BlockDiagFunc(),
+        'desc_inputs': [Tensor(np.array([[4], [3], [2]]), ms.int32),
+                        Tensor(np.array([7, 6, 5]), ms.int32),
+                        Tensor(np.array(1), ms.int32),
+                        Tensor(np.array([[5, 4, 3], [2, 1, 0]]), ms.int32),
+                        Tensor(np.array([[8, 7], [7, 8]]), ms.int32)]
+    }),
+    ('AtLeast1D', {
+        'block': AtLeast1DFunc(),
+        'desc_inputs': [Tensor(np.array([[1, 1, 1], [1, 1, 1]]), ms.float64),
+                        Tensor(np.array(1), ms.float64),
+                        Tensor(np.array([1, 1, 1, 1, 1]), ms.float64)]
+    }),
+    ('Dstack', {
+        'block': DstackFunc(),
+        'desc_inputs': [Tensor(np.array([1, 2, 3]), ms.float32),
+                        Tensor(np.array([4, 5, 6]), ms.float32)]
+    }),
+    ('Diff', {
+        'block': DiffFunc(),
+        'desc_inputs': [Tensor(np.array([1, 3, -1, 0, 4]), ms.int32)]
+    }),
     ('AtLeast2D', {
         'block': AtLeast2DFunc(),
+        'desc_inputs': [Tensor(np.array([[1, 1, 1], [1, 1, 1]]), ms.float64),
+                        Tensor(np.array(1), ms.float64),
+                        Tensor(np.array([1, 1, 1, 1, 1]), ms.float64)]
+    }),
+    ('CartesianProd', {
+        'block': CartesianProdFunc(),
+        'desc_inputs': [Tensor(np.array([1, 2]), ms.int32),
+                        Tensor(np.array([5]), ms.int32)]
+    }),
+    ('AtLeast3D', {
+        'block': AtLeast3DFunc(),
         'desc_inputs': [Tensor(np.array([[1, 1, 1], [1, 1, 1]]), ms.float64),
                         Tensor(np.array(1), ms.float64),
                         Tensor(np.array([1, 1, 1, 1, 1]), ms.float64)]
@@ -739,15 +897,32 @@ test_case_math_ops = [
         'desc_inputs': [Tensor(np.array([1, 2, 3]), ms.int32),
                         Tensor(np.array([4, 5, 6]), ms.int32)]
     }),
+    ('Combinations', {
+        'block': CombinationsFunc(),
+        'desc_inputs': [Tensor(np.array([1, 3, -1, 0, 4]), ms.int32)]
+    }),
+    ('Dist', {
+        'block': DistFunc(),
+        'desc_inputs': [Tensor(np.array([[[1, 1], [2, 2]]]), ms.float32),
+                        Tensor(np.array([[[3, 3], [3, 3]]]), ms.float32)]
+    }),
     ('Copysign', {
         'block': CopysignFunc(),
         'desc_inputs': [Tensor(np.array([[0.3, -0.7], [0.5, 0.5]])),
                         Tensor(np.array([[-0.4, 0.6], [0.4, -0.6]]))]
     }),
+    ('HannWindow', {
+        'block': HannWindowFunc(),
+        'desc_inputs': [5]
+    }),
     ('LogAddExp2', {
         'block': LogAddExp2Func(),
         'desc_inputs': [Tensor(np.array([1.0, 2.0, 3.0], np.float16)), Tensor(np.array([2.0], np.float16))],
         'desc_bprop': [Tensor(np.array([1.0, 2.0, 3.0], np.float16)), Tensor(np.array([2.0], np.float16))],
+    }),
+    ('KaiserWindow', {
+        'block': KaiserWindowFunc(),
+        'desc_inputs': [5]
     }),
     ('LogAddExp', {
         'block': LogAddExpFunc(),
@@ -780,12 +955,12 @@ test_case_math_ops = [
     }),
     ('Addmv', {
         'block': AddmvFunc(),
-        'desc_inputs': [Tensor(np.array([1, 1])),
-                        Tensor(np.array([[1, 2, 1], [1, 1, 1]])),
-                        Tensor(np.array([1, 1, 1]))],
-        'desc_bprop': [Tensor(np.array([1, 1])),
-                       Tensor(np.array([[1, 2, 1], [1, 1, 1]])),
-                       Tensor(np.array([1, 1, 1]))],
+        'desc_inputs': [Tensor(np.array([1, 1], np.int32)),
+                        Tensor(np.array([[1, 2, 1], [1, 1, 1]], np.int32)),
+                        Tensor(np.array([1, 1, 1], np.int32))],
+        'desc_bprop': [Tensor(np.array([1, 1], np.int32)),
+                       Tensor(np.array([[1, 2, 1], [1, 1, 1]], np.int32)),
+                       Tensor(np.array([1, 1, 1], np.int32))],
     }),
     ('Exp2', {
         'block': Exp2Func(),
@@ -849,6 +1024,12 @@ test_case_math_ops = [
         'desc_inputs': [Tensor(np.array([[0, 1, 2], [3, 4, 5]]).astype(np.float32)),
                         Tensor(np.array([[-1, -2, -3], [-4, -6, -8]]).astype(np.float32))],
         'skip': ['backward']}),
+    ('Polar', {
+        'block': PolarFunc(),
+        'desc_inputs': [Tensor(np.array([[0, 1, 2], [3, 4, 5]]).astype(np.float32)),
+                        Tensor(np.array([[-1, -2, -3], [-4, -6, -8]]).astype(np.float32))],
+        'desc_bprop': [Tensor(np.array([1+2j, 2+3j, 3+4j], np.complex64))],
+    }),
     ('Rot90', {
         'block': Rot90Func(),
         'desc_inputs': [Tensor(np.array([[0, 1], [2, 3]]).astype(np.float32))],
@@ -857,6 +1038,10 @@ test_case_math_ops = [
         'block': RemainderNet(),
         'desc_inputs': [Tensor(np.array([-1.0, 5.0, 6.0]), ms.float32), Tensor(np.array([3.0, 2.0, 3.0]), ms.float32)],
         'skip': ['backward']}),
+    ('NanSum', {
+        'block': NanSumFunc(),
+        'desc_inputs': [Tensor(np.array([1.0, 2.0, 3.0], np.float32)), int(0)],
+        'desc_bprop': [Tensor(np.array([1.0, 2.0, 3.0], np.float32))]}),
 ]
 
 test_case_lists = [test_case_math_ops]
@@ -921,10 +1106,20 @@ raise_set = [
         'desc_inputs': [Tensor(np.array([2, 5, 8]).astype(np.int32)),
                         Tensor(np.array([4, 3, 12]).astype(np.int32))],
         'skip': ['backward']}),
+    ('Fmin', {
+        'block': FminFunc(),
+        'desc_inputs': [Tensor(np.array([1.0, 2.0, 3.0], np.float32)),
+                        Tensor(np.array([2.0, 1.0, 4.0], np.float32))],
+        'desc_bprop': [Tensor(np.array([1.0, 2.0, 3.0], np.float32))]}),
     ('Zeta', {
         'block': Zeta(),
         'desc_inputs': [Tensor(np.array([1, 1, 1, 1], np.float32)),
                         Tensor([0.5, 0.5, 0.5, 0.5], mstype.float32)]}),
+    ('Fmax', {
+        'block': FmaxFunc(),
+        'desc_inputs': [Tensor(np.array([1.0, 2.0, 3.0], np.float32)),
+                        Tensor(np.array([2.0, 1.0, 4.0], np.float32))],
+        'desc_bprop': [Tensor(np.array([1.0, 2.0, 3.0], np.float32))]}),
     ('Lcm', {
         'block': LcmFunc(),
         'desc_inputs': [Tensor(np.array([2, 5, 8]).astype(np.int32)),
@@ -1028,6 +1223,11 @@ raise_set = [
         'desc_inputs': [Tensor(np.array([-4.0, 5.0, 6.0]), ms.float32),
                         Tensor(np.array([3.0, 2.0]), ms.float32)],
         'skip': ['backward']}),
+    ('BatchMatMul', {
+        'block': BatchMatMul(),
+        'desc_inputs': [Tensor(np.ones([2, 4, 2, 2]).astype(np.float32)),
+                        Tensor(np.ones([2, 4, 2, 2]).astype(np.float32))],
+        'desc_bprop': [Tensor(np.ones([2, 4, 2, 2]).astype(np.float32))]}),
 ]
 
 

@@ -17,10 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_SPARSE_CONCAT_H_
 #define MINDSPORE_CORE_OPS_SPARSE_CONCAT_H_
 #include <memory>
+#include <string>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -49,9 +50,10 @@ class MIND_API SparseConcat : public BaseOperator {
   ///
   /// \return bool concat_dim value.
   int64_t get_concat_dim() const;
+
+ private:
+  const std::string kConcatDim = "concat_dim";
 };
-abstract::AbstractBasePtr SparseConcatInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                            const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

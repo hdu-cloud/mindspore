@@ -18,9 +18,12 @@
 #include <utility>
 #include <map>
 #include <algorithm>
+#include <complex>
 
 #include "include/common/utils/convert_utils.h"
 #include "include/common/utils/utils.h"
+#include "utils/shape_utils.h"
+
 #ifndef ENABLE_LITE_ACL
 #include "include/common/utils/python_adapter.h"
 #endif
@@ -38,6 +41,52 @@ const size_t kIdx1 = 1;
 const size_t kIdx2 = 2;
 const size_t kIdx3 = 3;
 
+namespace {
+class MsTensorRel {
+ public:
+  explicit MsTensorRel(const MeTensorPtr &tensor) : tensor_(tensor) {}
+  ~MsTensorRel() = default;
+  void Rel() const { tensor_ = nullptr; }
+
+ private:
+  mutable MeTensorPtr tensor_;
+};
+}  // namespace
+
+class TensorRefData : public tensor::TensorData {
+ public:
+  TensorRefData(void *data, ssize_t data_size, ssize_t itemsize, ssize_t ndim)
+      : data_(data), data_size_(data_size), itemsize_(itemsize), ndim_(ndim) {}
+
+  ~TensorRefData() override = default;
+
+  // Total number of elements.
+  ssize_t size() const override { return data_size_; }
+
+  // Byte size of a single element.
+  ssize_t itemsize() const override { return itemsize_; }
+
+  // Total number of bytes.
+  ssize_t nbytes() const override { return size() * itemsize(); }
+
+  // Number of dimensions.
+  ssize_t ndim() const override { return ndim_; }
+
+  void *data() override { return data_; }
+  const void *const_data() const override { return data_; }
+
+  bool is_sub_data() const override { return false; }
+  bool has_sub_data() const override { return false; }
+
+  std::string ToString(TypeId type, const ShapeVector &shape, bool use_comma) const override { return ""; }
+
+ protected:
+  void *data_ = nullptr;
+  ssize_t data_size_ = 0;
+  ssize_t itemsize_ = 0;
+  ssize_t ndim_ = 0;
+};
+
 vector<int64_t> TransformUtil::ConvertIntToList(int64_t data, int size) {
   vector<int64_t> list{};
   if (size <= 0) {
@@ -51,13 +100,23 @@ vector<int64_t> TransformUtil::ConvertIntToList(int64_t data, int size) {
 }
 
 static std::map<MeDataType, GeDataType> datatype_trans_map = {
-  {MeDataType::kNumberTypeFloat16, GeDataType::DT_FLOAT16}, {MeDataType::kNumberTypeFloat32, GeDataType::DT_FLOAT},
-  {MeDataType::kNumberTypeFloat64, GeDataType::DT_DOUBLE},  {MeDataType::kNumberTypeInt8, GeDataType::DT_INT8},
-  {MeDataType::kNumberTypeInt16, GeDataType::DT_INT16},     {MeDataType::kNumberTypeInt32, GeDataType::DT_INT32},
-  {MeDataType::kNumberTypeInt64, GeDataType::DT_INT64},     {MeDataType::kNumberTypeUInt8, GeDataType::DT_UINT8},
-  {MeDataType::kNumberTypeUInt16, GeDataType::DT_UINT16},   {MeDataType::kNumberTypeUInt32, GeDataType::DT_UINT32},
-  {MeDataType::kNumberTypeUInt64, GeDataType::DT_UINT64},   {MeDataType::kNumberTypeBool, GeDataType::DT_BOOL},
-  {MeDataType::kObjectTypeString, GeDataType::DT_STRING}};
+  {MeDataType::kNumberTypeFloat16, GeDataType::DT_FLOAT16},
+  {MeDataType::kNumberTypeFloat32, GeDataType::DT_FLOAT},
+  {MeDataType::kNumberTypeFloat64, GeDataType::DT_DOUBLE},
+  {MeDataType::kNumberTypeBFloat16, GeDataType::DT_BF16},
+  {MeDataType::kNumberTypeInt8, GeDataType::DT_INT8},
+  {MeDataType::kNumberTypeInt16, GeDataType::DT_INT16},
+  {MeDataType::kNumberTypeInt32, GeDataType::DT_INT32},
+  {MeDataType::kNumberTypeInt64, GeDataType::DT_INT64},
+  {MeDataType::kNumberTypeUInt8, GeDataType::DT_UINT8},
+  {MeDataType::kNumberTypeUInt16, GeDataType::DT_UINT16},
+  {MeDataType::kNumberTypeUInt32, GeDataType::DT_UINT32},
+  {MeDataType::kNumberTypeUInt64, GeDataType::DT_UINT64},
+  {MeDataType::kNumberTypeBool, GeDataType::DT_BOOL},
+  {MeDataType::kObjectTypeString, GeDataType::DT_STRING},
+  {MeDataType::kNumberTypeFloat, GeDataType::DT_FLOAT},
+  {MeDataType::kNumberTypeComplex64, GeDataType::DT_COMPLEX64},
+  {MeDataType::kNumberTypeComplex128, GeDataType::DT_COMPLEX128}};
 
 GeDataType TransformUtil::ConvertDataType(const MeDataType &type) {
   MS_LOG(DEBUG) << "Convert me data type: " << TypeIdLabel(type) << " to ge data type";
@@ -65,23 +124,6 @@ GeDataType TransformUtil::ConvertDataType(const MeDataType &type) {
     return datatype_trans_map[type];
   } else {
     return GeDataType::DT_UNDEFINED;
-  }
-}
-
-static std::map<MeDataType, size_t> datatype_size_map = {
-  {MeDataType::kNumberTypeFloat16, sizeof(float) / 2}, {MeDataType::kNumberTypeFloat32, sizeof(float)},  // 1/2 of float
-  {MeDataType::kNumberTypeFloat64, sizeof(double)},    {MeDataType::kNumberTypeInt8, sizeof(int8_t)},
-  {MeDataType::kNumberTypeInt16, sizeof(int16_t)},     {MeDataType::kNumberTypeInt32, sizeof(int32_t)},
-  {MeDataType::kNumberTypeInt64, sizeof(int64_t)},     {MeDataType::kNumberTypeUInt8, sizeof(uint8_t)},
-  {MeDataType::kNumberTypeUInt16, sizeof(uint16_t)},   {MeDataType::kNumberTypeUInt32, sizeof(uint32_t)},
-  {MeDataType::kNumberTypeUInt64, sizeof(uint64_t)},   {MeDataType::kNumberTypeBool, sizeof(bool)}};
-
-size_t TransformUtil::GetDataTypeSize(const MeDataType &type) {
-  if (datatype_size_map.find(type) != datatype_size_map.end()) {
-    return datatype_size_map[type];
-  } else {
-    MS_LOG(ERROR) << "Illegal tensor data type!";
-    return kErrorSize;
   }
 }
 
@@ -109,7 +151,6 @@ GeFormat TransformUtil::ConvertFormat(const string &format, const size_t shape_s
     {kOpFormat_FRACTAL_ZN_LSTM, GeFormat::FORMAT_FRACTAL_ZN_LSTM},
     {kOpFormat_ND_RNN_BIAS, GeFormat::FORMAT_ND_RNN_BIAS},
     {kOpFormat_FRACTAL_ZN_RNN, GeFormat::FORMAT_FRACTAL_ZN_RNN}};
-  MS_LOG(INFO) << "GetGeFormat format:" << format << " shape_size:" << shape_size;
   if (format == kOpFormat_DEFAULT) {
     return shape_size == k4dSize ? GeFormat::FORMAT_NCHW : GeFormat::FORMAT_ND;
   }
@@ -121,18 +162,19 @@ GeFormat TransformUtil::ConvertFormat(const string &format, const size_t shape_s
   return iter->second;
 }
 
-std::shared_ptr<GeTensorDesc> TransformUtil::GetGeTensorDesc(const ShapeVector &me_shape, const MeDataType &me_type,
-                                                             const std::string &format, const ShapeVector &ori_shape,
-                                                             const std::string &ori_format) {
+std::shared_ptr<GeTensorDesc> TransformUtil::GetGeTensorDesc(const ShapeVector &ori_shape, const MeDataType &me_type,
+                                                             const std::string &ori_format,
+                                                             const ShapeVector &dev_shape,
+                                                             const std::string &dev_format) {
   // convert me shape to ge shape
-  GeShape shape(me_shape);
-  if (shape.GetDimNum() == 0) {
-    MS_LOG(INFO) << "The dims size of Ge tensor is zero";
+  GeShape ori_ge_shape(ori_shape);
+  if (ori_ge_shape.GetDimNum() == 0) {
+    MS_LOG(DEBUG) << "The dims size of Ge tensor is zero";
   }
   // convert me format to ge format
-  GeFormat ge_format = ConvertFormat(format, me_shape.size());
-  if (ge_format == GeFormat::FORMAT_ND) {
-    MS_LOG(INFO) << "Set ND data format";
+  GeFormat ori_ge_format = ConvertFormat(ori_format, ori_shape.size());
+  if (ori_ge_format == GeFormat::FORMAT_ND) {
+    MS_LOG(DEBUG) << "Set ND data format";
   }
   // convert me datatype to ge datatype
   GeDataType data_type = ConvertDataType(me_type);
@@ -140,25 +182,24 @@ std::shared_ptr<GeTensorDesc> TransformUtil::GetGeTensorDesc(const ShapeVector &
     MS_LOG(ERROR) << "undefined data type :" << me_type;
     return nullptr;
   }
-
-  auto desc = std::make_shared<GeTensorDesc>(shape, ge_format, data_type);
+  auto desc = std::make_shared<GeTensorDesc>();
   if (desc == nullptr) {
     MS_LOG(ERROR) << "Create GeTensorDesc failed!";
     return nullptr;
   }
+  // set ori shape and format.
+  desc->SetOriginShape(ori_ge_shape);
+  desc->SetOriginFormat(ori_ge_format);
+  desc->SetDataType(data_type);
 
-  if (!ori_shape.empty()) {
-    GeShape ge_ori_shape(ori_shape);
-    desc->SetOriginShape(ge_ori_shape);
-  }
+  // set device shape and format, if value is empty, use ori shape and format replace.
+  auto dev_ge_shape = dev_shape.empty() ? ori_ge_shape : GeShape(dev_shape);
+  GeFormat dev_ge_format = dev_format.empty() ? ori_ge_format : ConvertFormat(dev_format, dev_ge_shape.GetDimNum());
+  desc->SetShape(dev_ge_shape);
+  desc->SetFormat(dev_ge_format);
 
-  if (!ori_format.empty()) {
-    GeFormat ge_ori_format = ConvertFormat(ori_format, ori_shape.size());
-    desc->SetOriginFormat(ge_ori_format);
-  }
-
-  MS_LOG(INFO) << "SetRealDimCnt is :" << me_shape.size();
-  desc->SetRealDimCnt(SizeToInt(me_shape.size()));
+  MS_LOG(DEBUG) << "SetRealDimCnt is :" << ori_shape.size();
+  desc->SetRealDimCnt(SizeToInt(ori_shape.size()));
   return desc;
 }
 
@@ -208,7 +249,13 @@ GeTensorPtr ConvertStringTensor(const MeTensorPtr &tensor, const std::string &fo
 
   if (buf.format.back() == 'w') {
     auto max_length = buf.format.substr(0, buf.format.length() - 1);
-    auto string_max_length = LongToSize(std::stol(max_length));
+    int64_t max_length_long = 0;
+    try {
+      max_length_long = std::stol(max_length);
+    } catch (const std::exception &e) {
+      MS_LOG(EXCEPTION) << "Invalid argument:" << e.what() << " when parse " << max_length;
+    }
+    auto string_max_length = LongToSize(max_length_long);
     if (string_max_length == 0) {
       MS_LOG(ERROR) << "Failed to get Tensor Desc. Please check string length";
       return nullptr;
@@ -236,7 +283,14 @@ GeTensorPtr ConvertStringTensor(const MeTensorPtr &tensor, const std::string &fo
     tensor_ptr = make_shared<GeTensor>(*desc);
     (void)tensor_ptr->SetData(string_vector);
   } else {
-    auto string_length = LongToSize(std::stol(buf.format.substr(0, buf.format.length() - 1)));
+    int64_t length_long = 0;
+    try {
+      length_long = std::stol(buf.format.substr(0, buf.format.length() - 1));
+    } catch (const std::exception &e) {
+      MS_LOG(EXCEPTION) << "Invalid argument:" << e.what() << " when parse "
+                        << buf.format.substr(0, buf.format.length() - 1);
+    }
+    auto string_length = LongToSize(length_long);
     if (string_length == 0) {
       MS_LOG(ERROR) << "Failed to get Tensor Desc. Please check string length";
       return nullptr;
@@ -255,7 +309,7 @@ GeTensorPtr ConvertStringTensor(const MeTensorPtr &tensor, const std::string &fo
 }
 #endif
 
-GeTensorPtr TransformUtil::ConvertTensor(const MeTensorPtr &tensor, const std::string &format) {
+GeTensorPtr TransformUtil::ConvertTensor(const MeTensorPtr &tensor, const std::string &format, bool copy) {
   // get tensor data type size
   MS_EXCEPTION_IF_NULL(tensor);
   auto me_data_type = tensor->data_type();
@@ -269,10 +323,9 @@ GeTensorPtr TransformUtil::ConvertTensor(const MeTensorPtr &tensor, const std::s
     MS_LOG(ERROR) << "The Me Tensor data type size is wrong, type size is: " << type_size;
     return nullptr;
   }
-  size_t elements_num = IntToSize(tensor->ElementsNum());
 
   // get tensor buff size
-  size_t data_buff_size = elements_num * type_size;
+  size_t data_buff_size = tensor->Size();
   if (data_buff_size == 0) {
     MS_LOG(INFO) << "The Me Tensor data buff size is 0.";
   }
@@ -282,10 +335,27 @@ GeTensorPtr TransformUtil::ConvertTensor(const MeTensorPtr &tensor, const std::s
     MS_LOG(ERROR) << "Failed to get Tensor Desc";
     return nullptr;
   }
-  GeTensorPtr tensor_ptr = make_shared<GeTensor>(*desc, static_cast<uint8_t *>(tensor->data_c()), data_buff_size);
-  if (tensor_ptr != nullptr) {
-    MS_LOG(INFO) << "Convert Me Tensor to Ge Tensor success!";
+  GeTensorPtr tensor_ptr = make_shared<GeTensor>(*desc);
+  if (tensor_ptr == nullptr) {
+    MS_LOG(ERROR) << "Failed to convert Me Tensor to Ge Tensor!";
+    return nullptr;
   }
+  if (copy) {
+    auto ret = tensor_ptr->SetData(static_cast<uint8_t *>(tensor->data_c()), data_buff_size);
+    if (ret != ge::GRAPH_SUCCESS) {
+      MS_LOG(ERROR) << "Failed to call ge::Tensor SetData(const uint8_t*, size), data size " << data_buff_size;
+      return nullptr;
+    }
+  } else {
+    MsTensorRel rel(tensor);
+    auto ret = tensor_ptr->SetData(static_cast<uint8_t *>(tensor->data_c()), data_buff_size,
+                                   [rel](uint8_t *) -> void { rel.Rel(); });
+    if (ret != ge::GRAPH_SUCCESS) {
+      MS_LOG(ERROR) << "Failed to call ge::Tensor SetData(uint8_t*, size, DeleteFunc), data size " << data_buff_size;
+      return nullptr;
+    }
+  }
+  MS_LOG(INFO) << "Convert Me Tensor to Ge Tensor success!";
   return tensor_ptr;
 }
 
@@ -331,6 +401,8 @@ MeDataType TransformUtil::ConvertGeDataType(const GeDataType &type) {
   switch (type) {
     case GeDataType::DT_FLOAT16:
       return MeDataType::kNumberTypeFloat16;
+    case GeDataType::DT_BF16:
+      return MeDataType::kNumberTypeBFloat16;
     case GeDataType::DT_FLOAT:
       return MeDataType::kNumberTypeFloat32;
     case GeDataType::DT_DOUBLE:
@@ -431,32 +503,47 @@ ShapeVector TransformUtil::ConvertGeShape(const GeShape &ge_shape, const ShapeVe
 }
 
 MeTensorPtr TransformUtil::GenerateMeTensor(const GeTensorPtr &ge_tensor, const ShapeVector &me_dims,
-                                            const TypeId &me_type) {
-  MeTensor me_tensor(me_type, me_dims);
-
-  // Get the writable data pointer of the tensor and cast it to its data type.
-  auto me_data_ptr = me_tensor.data_c();
-  size_t me_data_size = static_cast<size_t>(me_tensor.data().nbytes());
-  MS_EXCEPTION_IF_NULL(me_data_ptr);
+                                            const TypeId &me_type, bool ref_mem) {
   MS_EXCEPTION_IF_NULL(ge_tensor);
-  if (me_data_size < ge_tensor->GetSize()) {
-    MS_LOG(ERROR) << "ME tensor data size[" << me_data_size << " bytes] is less than GE tensor ["
-                  << ge_tensor->GetSize() << " bytes]";
-    return nullptr;
-  }
-
-  // Copy or use the writable data pointer of the ME tensor.
   MS_EXCEPTION_IF_NULL(ge_tensor->GetData());
   if (ge_tensor->GetSize() == 0) {
     MS_LOG(ERROR) << "GE tensor data size is zero!";
     return nullptr;
   }
 
-  // Use memcpy here, not memcpy_s, just because the size of ge_tensor may be bigger than 2GB
-  // which is the size limit of memcpy_s.
-  (void)memcpy(me_data_ptr, ge_tensor->GetData(), ge_tensor->GetSize());
+  if (ref_mem) {
+    void *data = reinterpret_cast<void *>(const_cast<uint8_t *>(ge_tensor->GetData()));
+    ssize_t data_size = static_cast<ssize_t>(SizeOf(me_dims));
+    ssize_t itemsize = MeTensor(me_type, ShapeVector()).data().itemsize();
+    ssize_t ndim = static_cast<ssize_t>(me_dims.size());
+    auto ref_data = std::make_shared<TensorRefData>(data, data_size, itemsize, ndim);
+    return make_shared<MeTensor>(me_type, me_dims, ref_data);
+  } else {
+    MeTensor me_tensor(me_type, me_dims);
 
-  return make_shared<MeTensor>(me_tensor);
+    // Get the writable data pointer of the tensor and cast it to its data type.
+    auto me_data_ptr = me_tensor.data_c();
+    size_t me_data_size = static_cast<size_t>(me_tensor.data().nbytes());
+    MS_EXCEPTION_IF_NULL(me_data_ptr);
+    size_t length = ge_tensor->GetSize();
+    if (me_data_size < length) {
+      MS_LOG(ERROR) << "ME tensor data size[" << me_data_size << " bytes] is less than GE tensor [" << length
+                    << " bytes]";
+      return nullptr;
+    }
+
+    if (length < SECUREC_MEM_MAX_LEN) {
+      int ret_code = memcpy_s(me_data_ptr, length, ge_tensor->GetData(), length);
+      if (ret_code != EOK) {
+        MS_LOG(ERROR) << "Memcpy_s from ge_tensor to me_tensor failed.";
+        return nullptr;
+      }
+    } else {
+      (void)memcpy(me_data_ptr, ge_tensor->GetData(), length);
+    }
+
+    return make_shared<MeTensor>(me_tensor);
+  }
 }
 
 MeTensorPtr TransformUtil::ConvertGeTensor(const GeTensorPtr &ge_tensor) {
@@ -486,7 +573,7 @@ MeTensorPtr TransformUtil::ConvertGeTensor(const GeTensorPtr &ge_tensor, const T
 }
 
 // if request_dims is empty, use ge tensor's shape,otherwise convert to request shape
-MeTensorPtr TransformUtil::ConvertGeTensor(const GeTensorPtr ge_tensor, const ShapeVector &request_dims) {
+MeTensorPtr TransformUtil::ConvertGeTensor(const GeTensorPtr ge_tensor, const ShapeVector &request_dims, bool ref_mem) {
   MS_EXCEPTION_IF_NULL(ge_tensor);
   GeShape ge_shape = ge_tensor->GetTensorDesc().GetShape();
   vector<int64_t> me_dims = ConvertGeShape(ge_shape, request_dims);
@@ -498,7 +585,7 @@ MeTensorPtr TransformUtil::ConvertGeTensor(const GeTensorPtr ge_tensor, const Sh
                   << static_cast<int>(ge_tensor->GetTensorDesc().GetDataType());
     return nullptr;
   }
-  return GenerateMeTensor(ge_tensor, me_dims, type_id);
+  return GenerateMeTensor(ge_tensor, me_dims, type_id, ref_mem);
 }
 
 std::string TransformUtil::PrintGeTensor(const GeTensorPtr ge_tensor) {

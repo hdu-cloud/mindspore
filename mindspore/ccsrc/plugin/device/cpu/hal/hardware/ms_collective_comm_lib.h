@@ -22,11 +22,11 @@
 #include <string>
 #include "runtime/collective/collective_communication_lib.h"
 #include "plugin/device/cpu/hal/hardware/ms_communication_group.h"
-#include "distributed/cluster/cluster_context.h"
+#include "include/backend/distributed/cluster/cluster_context.h"
 #include "ps/core/collective_ops_impl.h"
 #include "plugin/device/cpu/hal/hardware/ms_collective_node.h"
 #include "plugin/device/cpu/hal/hardware/allreduce_impl.h"
-#include "distributed/cluster/topology/compute_graph_node.h"
+#include "include/backend/distributed/cluster/topology/compute_graph_node.h"
 
 namespace mindspore {
 namespace device {
@@ -41,7 +41,7 @@ using ps::core::NodeCommand;
 constexpr uint32_t kWaitDuration = 5;
 
 // The retry number for MsCollectiveCommLib initializing.
-constexpr uint32_t kMSCollectiveRetryTime = 80;
+constexpr uint32_t kMSCollectiveRetryTime = 200;
 
 // The collective communication library for MindSpore self developed communication framework.
 class MsCollectiveCommLib : public CollectiveCommunicationLib {

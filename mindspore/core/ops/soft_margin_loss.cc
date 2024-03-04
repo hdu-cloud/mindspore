@@ -13,13 +13,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <map>
+#include <memory>
+#include <set>
 #include <string>
-#include "ops/soft_margin_loss.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/base/types.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "ops/soft_margin_loss.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,7 +51,11 @@ abstract::ShapePtr SoftMarginLossInferShape(const PrimitivePtr &primitive,
                                            kSoftMarginLossInputSize, op_name);
   auto predict = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
   auto label = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->BuildShape())[kShape];
-  CheckAndConvertUtils::Check("logits shape", predict, kEqual, label, op_name, ValueError);
+  CheckAndConvertUtils::Check("logits shape", SizeToLong(predict.size()), kEqual, SizeToLong(label.size()), op_name,
+                              ValueError);
+  if (!IsDynamic(predict) && !IsDynamic(label)) {
+    (void)CheckAndConvertUtils::Check("label_shape", predict, kEqual, label, op_name);
+  }
   auto out_shape = predict;
   int64_t reduction;
   CheckAndConvertUtils::GetReductionEnumValue(primitive->GetAttr(kReduction), &reduction);
@@ -71,10 +93,28 @@ void SoftMarginLoss::Init(const std::string &reduction) { this->set_reduction(re
 MIND_API_OPERATOR_IMPL(SoftMarginLoss, BaseOperator);
 AbstractBasePtr SoftMarginLossInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                     const std::vector<AbstractBasePtr> &input_args) {
-  return abstract::MakeAbstract(SoftMarginLossInferShape(primitive, input_args),
-                                SoftMarginLossInferType(primitive, input_args));
+  auto shape = SoftMarginLossInferShape(primitive, input_args);
+  auto type = SoftMarginLossInferType(primitive, input_args);
+  return abstract::MakeAbstractTensor(shape, type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(SoftMarginLoss, prim::kPrimSoftMarginLoss, SoftMarginLossInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGSoftMarginLossInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SoftMarginLossInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SoftMarginLossInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SoftMarginLossInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SoftMarginLoss, prim::kPrimSoftMarginLoss, AGSoftMarginLossInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,7 +48,8 @@ int TransposeBaseCPUKernel::ReSize() {
     MS_LOG(ERROR) << "Do transpose reset failed.";
     return ret;
   }
-  is_valid_ = in_tensors_[FIRST_INPUT]->shape().size() == static_cast<size_t>(param_->num_axes_);
+  is_valid_ = in_tensors_[FIRST_INPUT]->shape().size() == static_cast<size_t>(param_->num_axes_) &&
+              in_tensors_[FIRST_INPUT]->shape().size() == param_->perm_size_;
   if (!is_valid_) {
     return RET_OK;
   }
@@ -84,39 +85,56 @@ int TransposeBaseCPUKernel::ResetStatus() {
     MS_LOG(ERROR) << "input shape out of range.";
     return RET_ERROR;
   }
-  int trans_nd[MAX_TRANSPOSE_DIM_SIZE] = {0, 2, 1};
-  int *perm_data{nullptr};
   if (in_shape.size() != static_cast<size_t>(param_->num_axes_)) {
-    perm_data = trans_nd;
+    int perm_data[MAX_TRANSPOSE_DIM_SIZE] = {0, 2, 1};
     if (in_shape.size() == C3NUM && param_->num_axes_ == C4NUM) {
       param_->num_axes_ = C3NUM;
     }
     if (param_->num_axes_ == 0) {
       for (int i = 0; i < static_cast<int>(in_shape.size()); ++i) {
-        trans_nd[i] = static_cast<int>(in_shape.size()) - 1 - i;
+        perm_data[i] = static_cast<int>(in_shape.size()) - 1 - i;
       }
       param_->num_axes_ = static_cast<int>(in_shape.size());
     }
+    MS_CHECK_TRUE_MSG(param_->num_axes_ <= MAX_TRANSPOSE_DIM_SIZE, RET_ERROR, "transpose perm is invalid.");
+    for (int i = 0; i < param_->num_axes_; ++i) {
+      param_->perm_[i] = perm_data[i];
+    }
+    return RET_OK;
   } else {
     MS_ASSERT(in_tensors_.size() == C2NUM);
     auto perm_tensor = in_tensors_.at(SECOND_INPUT);
-    if (perm_tensor->data_type() != kNumberTypeInt32) {
+    if (perm_tensor->data_type() == kNumberTypeInt32) {
+      auto perm_data = reinterpret_cast<int *>(perm_tensor->data());
+      MSLITE_CHECK_PTR(perm_data);
+      std::vector<int> perm(perm_data, perm_data + in_tensors_[SECOND_INPUT]->ElementsNum());
+      if (perm.size() != std::unordered_set<int>(perm.cbegin(), perm.cend()).size()) {
+        MS_LOG(ERROR) << "Invalid perm, the same element exits in perm.";
+        return RET_ERROR;
+      }
+      MS_CHECK_TRUE_MSG(param_->num_axes_ <= MAX_TRANSPOSE_DIM_SIZE, RET_ERROR, "transpose perm is invalid.");
+      for (int i = 0; i < param_->num_axes_; ++i) {
+        param_->perm_[i] = perm_data[i];
+      }
+      return RET_OK;
+    } else if (perm_tensor->data_type() == kNumberTypeInt64) {
+      auto perm_data = reinterpret_cast<int64_t *>(perm_tensor->data());
+      MSLITE_CHECK_PTR(perm_data);
+      std::vector<int> perm(perm_data, perm_data + in_tensors_[SECOND_INPUT]->ElementsNum());
+      if (perm.size() != std::unordered_set<int>(perm.cbegin(), perm.cend()).size()) {
+        MS_LOG(ERROR) << "Invalid perm, the same element exits in perm.";
+        return RET_ERROR;
+      }
+      MS_CHECK_TRUE_MSG(param_->num_axes_ <= MAX_TRANSPOSE_DIM_SIZE, RET_ERROR, "transpose perm is invalid.");
+      for (int i = 0; i < param_->num_axes_; ++i) {
+        param_->perm_[i] = perm_data[i];
+      }
+      return RET_OK;
+    } else {
       MS_LOG(ERROR) << "Unsupported type id: " << perm_tensor->data_type() << " of perm tensor.";
       return RET_ERROR;
     }
-    perm_data = reinterpret_cast<int *>(perm_tensor->data());
-    MSLITE_CHECK_PTR(perm_data);
-    std::vector<int> perm(perm_data, perm_data + in_tensors_[SECOND_INPUT]->ElementsNum());
-    if (perm.size() != std::unordered_set<int>(perm.cbegin(), perm.cend()).size()) {
-      MS_LOG(ERROR) << "Invalid perm, the same element exits in perm.";
-      return RET_ERROR;
-    }
   }
-  MS_CHECK_TRUE_MSG(param_->num_axes_ <= MAX_TRANSPOSE_DIM_SIZE, RET_ERROR, "transpose perm is invalid.");
-  for (int i = 0; i < param_->num_axes_; ++i) {
-    param_->perm_[i] = perm_data[i];
-  }
-  return RET_OK;
 }
 
 int TransposeBaseCPUKernel::OptimizeShape() {
@@ -233,7 +251,11 @@ int TransposeBaseCPUKernel::CopyInputToOutput() {
   out_tensor->FreeData();
   out_tensor->ResetRefCount();
   out_tensor->set_data(in_tensor->data());
-  out_tensor->set_own_data(in_tensor->own_data());
+  if (in_tensor->IsConst()) {
+    out_tensor->set_own_data(false);
+  } else {
+    out_tensor->set_own_data(in_tensor->own_data());
+  }
   return RET_OK;
 }
 

@@ -22,14 +22,22 @@
 #include <string>
 #include <set>
 #include <fstream>
+#include "mindspore/core/ops/structure_ops.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "mindspore/core/ops/lite_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "base/float16.h"
 #include "ops/fusion/conv2d_fusion.h"
 #include "ops/transpose.h"
+#include "ops/cast.h"
 #include "ops/gather.h"
+#include "ops/concat.h"
+#include "ops/reshape.h"
 #include "ops/tuple_get_item.h"
 #include "tools/common/tensor_util.h"
 #include "frontend/operator/ops.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "tools/converter/quantizer/quant_param_holder.h"
 #include "nnacl/op_base.h"
 #include "src/common/log_util.h"
@@ -37,6 +45,7 @@
 #include "tools/optimizer/common/helper.h"
 #include "ops/op_utils.h"
 #include "ops/custom.h"
+#include "ops/tensor_copy.h"
 #include "include/common/utils/anfalgo.h"
 #include "tools/optimizer/common/format_utils.h"
 
@@ -70,50 +79,52 @@ int DeduceDimConvertion(schema::Format src_format, schema::Format dst_format, st
   return lite::RET_OK;
 }
 
-template <typename T>
-void TransposeData(const ShapeVector &origin_shape, const ShapeVector &cur_shape, const std::vector<int> &perm,
-                   const T *const weight_data, std::vector<T> *buf) {
-  MS_ASSERT(weight_data != nullptr && buf != nullptr);
-  MS_ASSERT(origin_shape.size() == cur_shape.size() && cur_shape.size() == perm.size());
-  int count = 1;
-  for (const auto &dat : origin_shape) {
-    if (INT_MUL_OVERFLOW(count, static_cast<int>(dat))) {
-      return;
-    }
-    count *= static_cast<int>(dat);
+template <class T>
+void TransposeDim4(const ShapeVector &input_shape, const ShapeVector &output_shape, const std::vector<int> &perm,
+                   const T *const in_data, T *out_data) {
+  auto num_axes = input_shape.size();
+  std::vector<int64_t> strides;
+  std::vector<int64_t> out_strides;
+  strides.resize(num_axes);
+  out_strides.resize(num_axes);
+  strides[num_axes - 1] = 1LL;
+  out_strides[num_axes - 1] = 1LL;
+  for (size_t i = num_axes - 1; i >= 1; i--) {
+    strides[i - 1] = input_shape[i] * strides[i];
+    out_strides[i - 1] = output_shape[i] * out_strides[i];
   }
-  ShapeVector post_multiply(cur_shape.size());
-  std::unordered_map<int, int> dim_map;
-  for (int i = static_cast<int>(cur_shape.size()) - 1; i >= 0; --i) {
-    if (i == static_cast<int>(cur_shape.size() - 1)) {
-      post_multiply[i] = 1;
-    } else {
-      post_multiply[i] = cur_shape[i + 1] * post_multiply[i + 1];
-    }
-    dim_map[perm[i]] = i;
-  }
-  std::unordered_map<int, int> position_map;
-  for (int i = 0; i < count; ++i) {
-    int temp = i;
-    for (int j = static_cast<int>(origin_shape.size()) - 1; j >= 0; --j) {
-      MS_ASSERT(origin_shape[j] > 0);
-      position_map[j] = temp % origin_shape[j];
-      temp /= origin_shape[j];
-    }
-    int64_t new_pos = 0;
-    for (const auto &pair_y : position_map) {
-      if (INT_MUL_OVERFLOW(post_multiply[dim_map[pair_y.first]], pair_y.second)) {
-        MS_LOG(ERROR) << "int multiply overflow";
-        return;
-      }
-      if (INT_ADD_OVERFLOW(new_pos, post_multiply[dim_map[pair_y.first]] * pair_y.second)) {
-        MS_LOG(ERROR) << "int add overflow";
-        return;
-      }
-      new_pos += post_multiply[dim_map[pair_y.first]] * pair_y.second;
-    }
+  const auto stride0 = strides[perm[kIndex0]];
+  const auto stride1 = strides[perm[kIndex1]];
+  const auto stride2 = strides[perm[kIndex2]];
+  const auto stride3 = strides[perm[kIndex3]];
+  const auto out_stride0 = out_strides[kIndex0];
+  const auto out_stride1 = out_strides[kIndex1];
+  const auto out_stride2 = out_strides[kIndex2];
+  const auto output0 = output_shape[kIndex0];
+  const auto output1 = output_shape[kIndex1];
+  const auto output2 = output_shape[kIndex2];
+  const auto output3 = output_shape[kIndex3];
 
-    buf->at(new_pos) = weight_data[i];
+  int64_t out_beg_i = 0;
+  int64_t beg_i = 0;
+  for (int64_t i = 0; i < output0; ++i) {
+    int64_t out_beg_ij = out_beg_i;
+    int64_t beg_ij = beg_i;
+    for (int64_t j = 0; j < output1; ++j) {
+      int64_t out_beg_ijk = out_beg_ij;
+      int64_t beg_ijk = beg_ij;
+      for (int64_t k = 0; k < output2; ++k) {
+        for (int64_t m = 0; m < output3; ++m) {
+          out_data[out_beg_ijk + m] = in_data[beg_ijk + m * stride3];
+        }
+        out_beg_ijk += out_stride2;
+        beg_ijk += stride2;
+      }
+      out_beg_ij += out_stride1;
+      beg_ij += stride1;
+    }
+    out_beg_i += out_stride0;
+    beg_i += stride0;
   }
 }
 
@@ -159,7 +170,7 @@ STATUS DoTransposeData(const tensor::TensorPtr &tensor, schema::Format src_forma
   void *originWeightData = tensor->data_c();
   MS_CHECK_TRUE_RET(originWeightData != nullptr, RET_ERROR);
   T *weightData = static_cast<T *>(originWeightData);
-  TransposeData<T>(origin_shape, new_shape, perm, weightData, &buf);
+  TransposeDim4<T>(origin_shape, new_shape, perm, weightData, buf.data());
   if (memcpy_s(tensor->data_c(), tensor->Size(), buf.data(), count * sizeof(T)) != EOK) {
     MS_LOG(ERROR) << "memcpy_s failed.";
     return RET_ERROR;
@@ -203,6 +214,21 @@ bool IsRealKernel(const AnfNodePtr &node) {
   return !is_virtual_node;
 }
 
+void CopyDataFromInt64(const int64_t *origin_data, int *tensor_data, size_t data_count) {
+  for (size_t i = 0; i < data_count; ++i) {
+    if (origin_data[i] == INT64_MAX) {
+      tensor_data[i] = INT32_MAX;
+    } else if (origin_data[i] == INT64_MIN) {
+      tensor_data[i] = INT32_MIN;
+    } else if (origin_data[i] > static_cast<int64_t>(INT32_MAX) || origin_data[i] < static_cast<int64_t>(INT32_MIN)) {
+      MS_LOG(WARNING) << "int64 data " << origin_data[i] << " cannot fit into int32";
+      tensor_data[i] = origin_data[i] > 0 ? INT32_MAX : INT32_MIN;
+    } else {
+      tensor_data[i] = static_cast<int>(origin_data[i]);
+    }
+  }
+}
+
 int CopyTensorDataFromTensorInfo(const tensor::TensorPtr &tensor_info,
                                  const std::shared_ptr<tensor::Tensor> &tensor_info_dst, size_t data_count) {
   if (tensor_info->data_type() == kNumberTypeInt64) {
@@ -213,14 +239,7 @@ int CopyTensorDataFromTensorInfo(const tensor::TensorPtr &tensor_info,
     }
     auto *origin_data = reinterpret_cast<int64_t *>(tensor_info->data_c());
     MS_CHECK_TRUE_MSG(origin_data != nullptr, lite::RET_NULL_PTR, "origin_data is nullptr");
-    for (size_t i = 0; i < data_count; ++i) {
-      if (origin_data[i] > static_cast<int64_t>(INT32_MAX) || origin_data[i] < static_cast<int64_t>(INT32_MIN)) {
-        MS_LOG(WARNING) << "int64 data " << origin_data[i] << " cannot fit into int32";
-        tensor_data[i] = origin_data[i] > 0 ? INT32_MAX : INT32_MIN;
-      } else {
-        tensor_data[i] = static_cast<int>(origin_data[i]);
-      }
-    }
+    CopyDataFromInt64(origin_data, tensor_data, data_count);
   } else if (tensor_info->data_type() == kNumberTypeFloat64) {
     auto *tensor_data = reinterpret_cast<float *>(tensor_info_dst->data_c());
     if (tensor_data == nullptr) {
@@ -287,13 +306,20 @@ std::vector<int> CastToInt(const ValuePtr &value) {
     }
   } else {
     auto data_type = value->type()->number_type();
-    if (data_type == kNumberTypeInt64) {
-      cur_value.push_back(static_cast<int>(GetValue<int64_t>(value)));
-    } else if (data_type == kNumberTypeInt || data_type == kNumberTypeInt32) {
-      cur_value.push_back(GetValue<int>(value));
-    } else {
-      MS_LOG(ERROR) << "the function only process integer data.";
-      return {};
+    switch (data_type) {
+      case kNumberTypeInt64:
+        cur_value.push_back(static_cast<int>(GetValue<int64_t>(value)));
+        break;
+      case kNumberTypeInt:
+      case kNumberTypeInt32:
+        cur_value.push_back(GetValue<int>(value));
+        break;
+      case kNumberTypeBool:
+        cur_value.push_back(GetValue<bool>(value));
+        break;
+      default:
+        MS_LOG(ERROR) << "the function only process integer data.";
+        return {};
     }
   }
   return cur_value;
@@ -531,26 +557,7 @@ AbstractBasePtr GetCNodeInputAbstract(const CNodePtr &cnode, size_t index) {
     abstract = value_node->abstract();
   } else if (utils::isa<CNodePtr>(input)) {
     auto input_cnode = input->cast<CNodePtr>();
-    if (CheckPrimitiveType(input_cnode, prim::kPrimTupleGetItem)) {
-      auto tuple_inputs = input_cnode->inputs();
-      MS_ASSERT(tuple_inputs.size() == kTupleGetItemInputSize);
-      auto get_item_input_cnode = tuple_inputs.at(1);
-      MS_ASSERT(get_item_input_cnode != nullptr);
-      auto idx = GetTupleGetItemOutIndex(input_cnode);
-      if (!utils::isa<abstract::AbstractTuplePtr>(get_item_input_cnode->abstract())) {
-        MS_LOG(ERROR) << "TupleGetItem's abstract is not AbstractTuple";
-        return nullptr;
-      }
-      auto abstract_tuple = utils::cast<abstract::AbstractTuplePtr>(get_item_input_cnode->abstract());
-      auto abstract_list = abstract_tuple->elements();
-      if (abstract_list.size() <= idx) {
-        MS_LOG(ERROR) << "AbstractTuple's size is smaller than expect";
-        return nullptr;
-      }
-      abstract = abstract_list[idx];
-    } else {
-      abstract = input_cnode->abstract();
-    }
+    abstract = input_cnode->abstract();
   } else {
     MS_LOG(ERROR) << "unsupported input node type";
     return nullptr;
@@ -624,7 +631,7 @@ bool IsParamOrValueNodeWithData(const BaseRef &n) {
 bool IsParallelSplitConvNode(const BaseRef &n) {
   if (utils::isa<AnfNodePtr>(n)) {
     auto anf_node = utils::cast<AnfNodePtr>(n);
-    PrimitivePtr prim;
+    PrimitivePtr prim = nullptr;
     if (utils::isa<CNodePtr>(anf_node)) {
       prim = GetValueNode<PrimitivePtr>(anf_node->cast<CNodePtr>()->input(kAnfPrimitiveIndex));
     }
@@ -632,7 +639,6 @@ bool IsParallelSplitConvNode(const BaseRef &n) {
       prim = GetValueNode<PrimitivePtr>(anf_node);
     }
     if (prim == nullptr) {
-      MS_LOG(ERROR) << "prim is nullptr";
       return false;
     }
     int device_type =
@@ -648,7 +654,7 @@ bool IsParallelSplitConvNode(const BaseRef &n) {
 bool IsConvNode(const BaseRef &n) {
   if (utils::isa<AnfNodePtr>(n)) {
     auto anf_node = utils::cast<AnfNodePtr>(n);
-    PrimitivePtr prim;
+    PrimitivePtr prim = nullptr;
     if (utils::isa<CNodePtr>(anf_node)) {
       prim = GetValueNode<PrimitivePtr>(anf_node->cast<CNodePtr>()->input(kAnfPrimitiveIndex));
     }
@@ -656,7 +662,6 @@ bool IsConvNode(const BaseRef &n) {
       prim = GetValueNode<PrimitivePtr>(anf_node);
     }
     if (prim == nullptr) {
-      MS_LOG(ERROR) << "prim is nullptr";
       return false;
     }
 
@@ -766,6 +771,29 @@ size_t GetTupleGetItemOutIndex(const CNodePtr &tuple_get_item) {
   return indexes.front();
 }
 
+size_t GetListGetItemOutIndex(const CNodePtr &list_get_item) {
+  if (list_get_item == nullptr || list_get_item->size() != kInputSizeThree) {
+    MS_LOG(ERROR) << "The node list_get_item is invalid.";
+    return SIZE_MAX;
+  }
+  auto output_index_value_node = list_get_item->input(kInputIndexTwo);
+  if (output_index_value_node == nullptr) {
+    MS_LOG(ERROR) << "The node list_get_item is invalid.";
+    return SIZE_MAX;
+  }
+  auto value_node = output_index_value_node->cast<ValueNodePtr>();
+  if (value_node == nullptr) {
+    MS_LOG(ERROR) << "The node list_get_item is invalid.";
+    return SIZE_MAX;
+  }
+  auto indexes = CastToInt(value_node->value());
+  if (indexes.empty()) {
+    MS_LOG(ERROR) << "The node list_get_item is invalid.";
+    return SIZE_MAX;
+  }
+  return indexes.front();
+}
+
 STATUS TransFilterFormat(const tensor::TensorPtr &tensor, schema::Format src_format, schema::Format dst_format) {
   MS_CHECK_TRUE_RET(tensor != nullptr, RET_ERROR);
   std::unordered_map<TypeId, std::function<STATUS(const tensor::TensorPtr &, schema::Format, schema::Format)>>
@@ -842,13 +870,13 @@ ParameterPtr BuildParameterNode(const FuncGraphPtr &func_graph, const tensor::Te
 }
 
 ParameterPtr BuildIntValueParameterNode(const FuncGraphPtr &func_graph, const int32_t &data,
-                                        const std::string &node_name) {
+                                        const std::string &node_name, bool empty_shape) {
   MS_CHECK_TRUE_RET(func_graph != nullptr, nullptr);
   auto param_node = func_graph->add_parameter();
   MS_CHECK_TRUE_RET(param_node != nullptr, nullptr);
   param_node->set_name(node_name);
-
-  auto tensor_info = lite::CreateTensorInfo(&data, sizeof(int32_t), {1}, kNumberTypeInt32);
+  ShapeVector shape = empty_shape ? std::vector<int64_t>{} : std::vector<int64_t>{1};
+  auto tensor_info = lite::CreateTensorInfo(&data, sizeof(int32_t), shape, kNumberTypeInt32);
   if (tensor_info == nullptr) {
     MS_LOG(ERROR) << "Create tensor info failed";
     return nullptr;
@@ -917,13 +945,14 @@ ParameterPtr BuildIntVec2DParameterNode(const FuncGraphPtr &func_graph, const st
 }
 
 ParameterPtr BuildFloatValueParameterNode(const FuncGraphPtr &func_graph, const float &data,
-                                          const std::string &node_name) {
+                                          const std::string &node_name, bool empty_shape) {
   MS_CHECK_TRUE_RET(func_graph != nullptr, nullptr);
   auto param_node = func_graph->add_parameter();
   MS_CHECK_TRUE_RET(param_node != nullptr, nullptr);
   param_node->set_name(node_name);
 
-  auto tensor_info = lite::CreateTensorInfo(&data, sizeof(float), {1}, kNumberTypeFloat32);
+  ShapeVector shape = empty_shape ? std::vector<int64_t>{} : std::vector<int64_t>{1};
+  auto tensor_info = lite::CreateTensorInfo(&data, sizeof(float), shape, kNumberTypeFloat32);
   if (tensor_info == nullptr) {
     MS_LOG(ERROR) << "Create tensor info failed";
     return nullptr;
@@ -933,6 +962,30 @@ ParameterPtr BuildFloatValueParameterNode(const FuncGraphPtr &func_graph, const 
     MS_LOG(ERROR) << "init parameter from tensor info failed";
     return nullptr;
   }
+  return param_node;
+}
+
+ParameterPtr BuildFloat16VecParameterNode(const FuncGraphPtr &func_graph, const std::vector<float16> &data,
+                                          const std::string &node_name) {
+  MS_CHECK_TRUE_RET(func_graph != nullptr, nullptr);
+  auto param_node = func_graph->add_parameter();
+  MS_CHECK_TRUE_RET(param_node != nullptr, nullptr);
+  param_node->set_name(node_name);
+
+  std::vector<int64_t> shape_vector{static_cast<int64_t>(data.size())};
+  auto tensor_info =
+    lite::CreateTensorInfo(data.data(), data.size() * sizeof(float16), shape_vector, kNumberTypeFloat16);
+  if (tensor_info == nullptr) {
+    MS_LOG(ERROR) << "Create tensor info failed";
+    return nullptr;
+  }
+
+  auto status = lite::InitParameterFromTensorInfo(param_node, tensor_info);
+  if (status != RET_OK) {
+    MS_LOG(ERROR) << "init parameter from tensor info failed";
+    return nullptr;
+  }
+
   return param_node;
 }
 
@@ -959,6 +1012,37 @@ ParameterPtr BuildFloatVecParameterNode(const FuncGraphPtr &func_graph, const st
   return param_node;
 }
 
+ParameterPtr BuildFloatVec2DParameterNode(const FuncGraphPtr &func_graph, const std::vector<std::vector<float>> &data,
+                                          const std::string &node_name) {
+  MS_CHECK_TRUE_RET(func_graph != nullptr, nullptr);
+  auto param_node = func_graph->add_parameter();
+  MS_CHECK_TRUE_RET(param_node != nullptr, nullptr);
+  param_node->set_name(node_name);
+
+  MS_CHECK_TRUE_RET(!data.empty(), nullptr);
+  std::vector<int64_t> shape_vector;
+  shape_vector.push_back(data.size());
+  shape_vector.push_back(data.at(0).size());
+
+  std::vector<float> data_1d;
+  for (auto pair : data) {
+    data_1d.insert(data_1d.end(), pair.begin(), pair.end());
+  }
+
+  auto size = data_1d.size() * sizeof(float);
+  auto tensor_info = lite::CreateTensorInfo(data_1d.data(), size, shape_vector, kNumberTypeFloat32);
+  if (tensor_info == nullptr) {
+    MS_LOG(ERROR) << "Create tensor info failed";
+    return nullptr;
+  }
+  auto status = lite::InitParameterFromTensorInfo(param_node, tensor_info);
+  if (status != RET_OK) {
+    MS_LOG(ERROR) << "init parameter from tensor info failed";
+    return nullptr;
+  }
+  return param_node;
+}
+
 CNodePtr GenTransposeNode(const FuncGraphPtr &func_graph, const AnfNodePtr &input_node, const std::vector<int> &perm,
                           const std::string &cnode_name) {
   MS_CHECK_TRUE_RET(func_graph != nullptr, nullptr);
@@ -978,11 +1062,85 @@ CNodePtr GenTransposeNode(const FuncGraphPtr &func_graph, const AnfNodePtr &inpu
   auto quant_params_holder = std::make_shared<lite::QuantParamHolder>(kInputSizeTwo, 1);
   MS_CHECK_TRUE_RET(quant_params_holder != nullptr, nullptr);
   trans_prim->AddAttr("quant_params", quant_params_holder);
+  auto input_abstract = input_node->abstract();
+  if (input_abstract != nullptr) {
+    auto abstract = input_abstract->Clone();
+    MS_CHECK_TRUE_RET(abstract != nullptr, nullptr);
+    FormatTransNodeType perm_type = perm == kNC2NH ? kNCHW2NHWC : (perm == kNH2NC ? kNHWC2NCHW : kNONE);
+    if (ConvertAbstractFormatShape(abstract, perm_type) != RET_OK) {
+      MS_LOG(WARNING) << "Convert abstract failed for node: " << cnode->fullname_with_scope();
+      return cnode;
+    }
+    cnode->set_abstract(abstract);
+  }
   return cnode;
 }
 
+CNodePtr GenCastNode(const FuncGraphPtr &graph, const AnfNodePtr &input_node, const std::string &cnode_name,
+                     const TypeId dst_type, const AbstractBasePtr &abstract) {
+  MS_CHECK_TRUE_RET(graph != nullptr, nullptr);
+  MS_CHECK_TRUE_RET(input_node != nullptr, nullptr);
+  ops::Cast cast_node;
+  auto new_cast_c = cast_node.GetPrim();
+  if (new_cast_c == nullptr) {
+    MS_LOG(ERROR) << "new_cast_c is nullptr";
+    return nullptr;
+  }
+  TypePtr dst_type_ptr = TypeIdToType(dst_type);
+  if (dst_type_ptr == nullptr) {
+    MS_LOG(ERROR) << "dst_type_ptr is nullptr";
+    return nullptr;
+  }
+  new_cast_c->AddAttr(ops::kDstType, dst_type_ptr);
+  ValueNodePtr value_node = NewValueNode(new_cast_c);
+  if (value_node == nullptr) {
+    MS_LOG(ERROR) << "NewValueNode Failed";
+    return nullptr;
+  }
+
+  auto dtype_value = MakeValue(dst_type_ptr);
+  auto dtype_value_node = NewValueNode(dtype_value);
+  dtype_value_node->set_abstract(dtype_value->ToAbstract());
+  graph->AddValueNode(dtype_value_node);
+
+  auto cast_cnode = graph->NewCNode({value_node});
+  if (cast_cnode == nullptr) {
+    MS_LOG(ERROR) << "new_cnode is nullptr";
+    return nullptr;
+  }
+  cast_cnode->set_fullname_with_scope(cnode_name);
+  cast_cnode->set_abstract(abstract);
+  auto manager = Manage(graph);
+  (void)manager->Replace(input_node, cast_cnode);
+  manager->AddEdge(cast_cnode, input_node);
+  manager->AddEdge(cast_cnode, dtype_value_node);
+  return cast_cnode;
+}
+
+CNodePtr GenReshapeNode(const FuncGraphPtr &func_graph, const AnfNodePtr &input_node, const std::vector<int> &shape,
+                        const std::string &cnode_name) {
+  MS_CHECK_TRUE_RET(func_graph != nullptr, nullptr);
+  MS_CHECK_TRUE_RET(input_node != nullptr, nullptr);
+  auto reshape_prim = std::make_shared<ops::Reshape>();
+  if (reshape_prim == nullptr) {
+    MS_LOG(ERROR) << "create reshape failed.";
+    return nullptr;
+  }
+  auto prim_c = reshape_prim->GetPrim();
+  prim_c->set_attr("shape", MakeValue(shape));
+  ValueNodePtr value_node = NewValueNode(prim_c);
+  MS_CHECK_TRUE_MSG(value_node != nullptr, nullptr, "Create value_node return nullptr");
+  auto new_shape_node = opt::BuildIntVecParameterNode(func_graph, shape, cnode_name + "_shape");
+  MS_CHECK_TRUE_MSG(new_shape_node != nullptr, nullptr, "Create shape parameter return nullptr");
+  std::vector<AnfNodePtr> op_inputs = {value_node, input_node, new_shape_node};
+  auto reshape_cnode = func_graph->NewCNode(op_inputs);
+  MS_CHECK_TRUE_MSG(reshape_cnode != nullptr, nullptr, "Create cnode return nullptr");
+  reshape_cnode->set_fullname_with_scope(cnode_name);
+  return reshape_cnode;
+}
+
 CNodePtr GenGatherNode(const FuncGraphPtr &func_graph, const AnfNodePtr &input_node, const std::vector<int> &indices,
-                       const std::string &cnode_name) {
+                       const std::string &cnode_name, const std::vector<int> &axis) {
   if (func_graph == nullptr || input_node == nullptr) {
     MS_LOG(ERROR) << "input parameter is nullptr, which is invalid.";
     return nullptr;
@@ -992,7 +1150,7 @@ CNodePtr GenGatherNode(const FuncGraphPtr &func_graph, const AnfNodePtr &input_n
     MS_LOG(ERROR) << "make indices node failed.";
     return nullptr;
   }
-  auto axis_node = BuildIntVecParameterNode(func_graph, {0}, cnode_name + "_axis");
+  auto axis_node = BuildIntVecParameterNode(func_graph, axis, cnode_name + "_axis");
   if (axis_node == nullptr) {
     MS_LOG(ERROR) << "make indices node failed.";
     return nullptr;
@@ -1014,6 +1172,27 @@ CNodePtr GenGatherNode(const FuncGraphPtr &func_graph, const AnfNodePtr &input_n
   return cnode;
 }
 
+CNodePtr GenConcatNode(const FuncGraphPtr &func_graph, const std::vector<AnfNodePtr> &input_node_vec,
+                       const std::string &cnode_name, int64_t axis) {
+  if (func_graph == nullptr) {
+    MS_LOG(ERROR) << "func_graph is nullptr, which is invalid.";
+    return nullptr;
+  }
+  ops::Concat concat_node;
+  concat_node.set_axis(axis);
+  auto concat_prim = concat_node.GetPrim();
+  MS_CHECK_TRUE_RET(concat_prim != nullptr, nullptr);
+  auto cnode = func_graph->NewCNode(concat_prim, input_node_vec);
+  MS_ASSERT(cnode != nullptr);
+  auto manager = Manage(func_graph);
+  MS_ASSERT(manager != nullptr);
+  cnode->set_fullname_with_scope(cnode_name);
+  auto quant_params_holder = std::make_shared<lite::QuantParamHolder>(input_node_vec.size(), 1);
+  MS_CHECK_TRUE_RET(quant_params_holder != nullptr, nullptr);
+  concat_prim->AddAttr("quant_params", quant_params_holder);
+  return cnode;
+}
+
 CNodePtr GenTupleGetItemNode(const FuncGraphPtr &func_graph, const CNodePtr &input, size_t index) {
   if (func_graph == nullptr || input == nullptr) {
     MS_LOG(ERROR) << "input parameter is nullptr, which is invalid.";
@@ -1021,7 +1200,7 @@ CNodePtr GenTupleGetItemNode(const FuncGraphPtr &func_graph, const CNodePtr &inp
   }
   auto tuple_get_item_prim = std::make_shared<ops::TupleGetItem>();
   MS_CHECK_TRUE_RET(tuple_get_item_prim != nullptr, nullptr);
-  auto second_input = NewValueNode(MakeValue<int>(index));
+  auto second_input = NewValueNode(MakeValue<int64_t>(index));
   MS_CHECK_TRUE_RET(second_input != nullptr, nullptr);
   auto tuple_get_item_prim_c = tuple_get_item_prim->GetPrim();
   MS_CHECK_TRUE_RET(tuple_get_item_prim_c != nullptr, nullptr);
@@ -1051,6 +1230,9 @@ STATUS FetchShapeFromAbstract(const abstract::AbstractBasePtr &abstract, ShapeVe
 
 bool IsTrainOp(const CNodePtr &cnode) {
   auto prim = GetValueNode<PrimitivePtr>(cnode->input(0));
+  if (prim == nullptr) {
+    return false;
+  }
   auto cnode_type = prim->name();
   // optimizer op
   if (cnode_type == "Adam" || cnode_type == "SGD" || cnode_type == "ApplyMomentum") {
@@ -1237,7 +1419,10 @@ std::pair<CNodePtr, int> GetRealCertainVarInput(const CNodePtr &cnode, size_t in
   MS_CHECK_TRUE_MSG(cnode != nullptr, {}, "function's parameter is nullptr.");
   MS_CHECK_TRUE_MSG(cnode->input(index) != nullptr, {}, "required input is nullptr");
   auto real_input_cnode = cnode->input(index)->cast<CNodePtr>();
-  MS_CHECK_TRUE_MSG(real_input_cnode != nullptr, {}, "input node is not a cnode.");
+  if (real_input_cnode == nullptr) {
+    MS_LOG(DEBUG) << "input node is not a cnode.";
+    return {};
+  }
   int item_index = 0;
   if (opt::CheckPrimitiveType(real_input_cnode, prim::kPrimTupleGetItem)) {
     auto index_node = real_input_cnode->input(opt::kInputIndexTwo);
@@ -1326,7 +1511,11 @@ void PrintFuncGraph(const FuncGraphPtr &func_graph, const std::string &output_fi
     if (anf_node->cast<CNodePtr>()) {
       return GetCNodeFuncName(anf_node->cast<CNodePtr>());
     } else if (anf_node->cast<ParameterPtr>()) {
-      return "Parameter";
+      if (anf_node->cast<ParameterPtr>()->has_default()) {
+        return "Parameter_Constant";
+      } else {
+        return "Parameter_Variable";
+      }
     } else if (anf_node->cast<ValueNodePtr>()) {
       return "ValueNode";
     }
@@ -1343,19 +1532,29 @@ void PrintFuncGraph(const FuncGraphPtr &func_graph, const std::string &output_fi
       fp << std::endl;
       continue;
     }
+    TypeId type_id = kTypeUnknown;
+    GetDataTypeFromAnfNode(node, &type_id);
     fp << node->fullname_with_scope() << ", type: " << type_name(node) << ", shape: " << GetAnfNodeOutputShape(node, 0)
-       << std::endl;
+       << ", data type: " << static_cast<int>(type_id) << std::endl;
     auto inputs = cnode->inputs();
     for (auto &input : inputs) {
       if (IsValueNode<Primitive>(input)) {
         continue;
       }
+      type_id = kTypeUnknown;
+      GetDataTypeFromAnfNode(node, &type_id);
       fp << "---input " << input->fullname_with_scope() << ", type: " << type_name(input)
-         << ", shape: " << GetAnfNodeOutputShape(input, 0) << std::endl;
+         << ", shape: " << GetAnfNodeOutputShape(input, 0) << ", data type: " << static_cast<int>(type_id) << std::endl;
     }
     auto prim = GetValueNode<PrimitivePtr>(cnode->input(0));
-    for (auto &attr : prim->attrs()) {
-      fp << "---attr " << attr.first << ": " << attr.second->ToString() << std::endl;
+    if (prim != nullptr) {
+      for (auto &attr : prim->attrs()) {
+        if (attr.second) {
+          fp << "---attr " << attr.first << ": " << attr.second->ToString() << std::endl;
+        } else {
+          fp << "---attr " << attr.first << ": value nullptr" << std::endl;
+        }
+      }
     }
     fp << std::endl;
   }
@@ -1376,7 +1575,7 @@ std::vector<KernelWithIndex> GetNodeInputs(const AnfNodePtr &anf_node) {
     const auto &pre_node_output = common::AnfAlgo::GetPrevNodeOutput(cnode, input_idx);
     auto pre_node = pre_node_output.first;
     if (opt::CheckPrimitiveType(pre_node, prim::kPrimMakeTuple) ||
-        opt::CheckPrimitiveType(pre_node, opt::kPrimMakeTupleV2)) {
+        opt::CheckPrimitiveType(pre_node, prim::kPrimMakeTupleV2)) {
       auto tuple_inputs = GetNodeInputs(pre_node);
       std::copy(tuple_inputs.begin(), tuple_inputs.end(), std::back_inserter(inputs));
     } else {
@@ -1385,6 +1584,8 @@ std::vector<KernelWithIndex> GetNodeInputs(const AnfNodePtr &anf_node) {
   }
   return inputs;
 }
+#else
+std::vector<KernelWithIndex> GetNodeInputs(const AnfNodePtr &anf_node) { return {}; }
 #endif
 
 bool IsReduceModeMeetOutEqualIn(const PrimitivePtr &prim) {
@@ -1398,5 +1599,39 @@ bool IsReduceModeMeetOutEqualIn(const PrimitivePtr &prim) {
   std::set<int64_t> meet_mode = {Reduce_Mean, Reduce_Max, Reduce_Min, Reduce_Prod, Reduce_Sum};
   return meet_mode.find(mode) != meet_mode.end();
 }
-}  // namespace opt
+
+STATUS AdjustInputToCnode(const CNodePtr &cnode, size_t input_index) {
+  auto func_graph = cnode->func_graph();
+  if (func_graph == nullptr) {
+    MS_LOG(ERROR) << "func graph is nullptr.";
+    return RET_ERROR;
+  }
+  ops::TensorMove tensor_move;
+  auto tensor_move_prim = tensor_move.GetPrim();
+  if (tensor_move_prim == nullptr) {
+    MS_LOG(ERROR) << "tensor move prim is nullptr.";
+    return RET_ERROR;
+  }
+  auto tensor_move_cnode = func_graph->NewCNode(tensor_move_prim, {cnode->inputs()[input_index]});
+  if (tensor_move_cnode == nullptr) {
+    MS_LOG(ERROR) << "new cnode failed.";
+    return RET_ERROR;
+  }
+  auto manager = Manage(func_graph);
+  if (manager == nullptr) {
+    MS_LOG(ERROR) << "manager is nullptr.";
+    return RET_ERROR;
+  }
+  tensor_move_cnode->set_fullname_with_scope(cnode->fullname_with_scope() + "tensor_move" +
+                                             std::to_string(input_index));
+  auto temp_abstract = cnode->input(input_index)->abstract()->Clone();
+  if (temp_abstract == nullptr) {
+    MS_LOG(ERROR) << "abstract clone failed.";
+    return RET_ERROR;
+  }
+  tensor_move_cnode->set_abstract(temp_abstract);
+  manager->SetEdge(cnode, input_index, tensor_move_cnode);
+  return RET_OK;
+}
+};  // namespace opt
 }  // namespace mindspore

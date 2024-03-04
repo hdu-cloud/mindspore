@@ -24,6 +24,8 @@
 #include <set>
 
 #include "utils/hash_map.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "ir/func_graph_cloner.h"
 #include "frontend/optimizer/irpass.h"
 #include "frontend/optimizer/optimizer.h"
@@ -65,7 +67,9 @@ class PartialEliminater : public AnfVisitor {
     }
     // {X, Ys, Xs} if Xs has monad
     if (!IsValueNode<FuncGraph>(X_)) {
-      MS_LOG(EXCEPTION) << "not support yet as X_ is not a funcgraph. node: " << node->DebugString(2);
+      constexpr auto recursive_level = 2;
+      MS_LOG(INTERNAL_EXCEPTION) << "Not support yet as X_ is not a funcgraph. node: "
+                                 << node->DebugString(recursive_level);
     }
     auto fg = GetValueNode<FuncGraphPtr>(X_);
     MS_EXCEPTION_IF_NULL(fg);
@@ -108,7 +112,9 @@ class PartialEliminater : public AnfVisitor {
 
     X_ = inputs[1];
     // fill Xs
-    (void)std::copy(inputs.begin() + 2, inputs.end(), std::back_inserter(Xs_));
+    // {Partial, Function, Args....}
+    constexpr auto args_index = 2;
+    (void)std::copy(inputs.begin() + args_index, inputs.end(), std::back_inserter(Xs_));
   }
 
  private:
@@ -132,12 +138,14 @@ class ChoicePartialEliminater : public AnfVisitor {
     auto &inputs = node->cast<CNodePtr>()->inputs();
     // {prim::kPrimPartial, G}
     if (inputs.size() < kPartialMinInputSize) {
-      MS_LOG(EXCEPTION) << "Node should be Partial CNode, but: " << node->DebugString();
+      MS_LOG(INTERNAL_EXCEPTION) << "Node should be Partial CNode, but: " << node->DebugString();
     }
     if (IsValueNode<FuncGraph>(inputs[1])) {
       fg_list_.push_back(inputs[1]);
       AnfNodePtrList args;
-      (void)std::copy(inputs.begin() + 2, inputs.end(), std::back_inserter(args));
+      // {Partial, Function, Args....}
+      constexpr auto args_index = 2;
+      (void)std::copy(inputs.begin() + args_index, inputs.end(), std::back_inserter(args));
       args_list_.push_back(args);
     }
     return;
@@ -214,21 +222,24 @@ class ChoicePartialEliminater : public AnfVisitor {
 
  private:
   static std::vector<AnfNodePtr> ArgsUnion(const std::vector<AnfNodePtrList> args_list) {
-    std::set<AnfNodePtr> no_monad_args;
-    std::set<AnfNodePtr> monad_args;
+    std::vector<AnfNodePtr> no_monad_args;
+    std::vector<AnfNodePtr> monad_args;
     for (const auto &args : args_list) {
       for (const auto &arg : args) {
         if (HasAbstractMonad(arg)) {
-          (void)monad_args.insert(arg);
+          if (count(monad_args.begin(), monad_args.end(), arg) == 0) {
+            monad_args.push_back(arg);
+          }
           continue;
         }
-        (void)no_monad_args.insert(arg);
+        if (count(no_monad_args.begin(), no_monad_args.end(), arg) == 0) {
+          no_monad_args.push_back(arg);
+        }
       }
     }
     // Keep monad args after no monad args.
-    std::vector<AnfNodePtr> union_args(no_monad_args.cbegin(), no_monad_args.cend());
-    (void)union_args.insert(union_args.cend(), monad_args.cbegin(), monad_args.cend());
-    return union_args;
+    (void)no_monad_args.insert(no_monad_args.end(), monad_args.begin(), monad_args.end());
+    return no_monad_args;
   }
 
   static HashMap<FuncGraphPtr, HashMap<AnfNodePtr, size_t>> GenOldArgsIndexes(
@@ -258,11 +269,11 @@ class ChoicePartialEliminater : public AnfVisitor {
       }
       size_t arg_index = it->second;
       if (arg_index >= fg->parameters().size()) {
-        MS_LOG(EXCEPTION) << "Index:" << arg_index << " out of range:" << fg->parameters().size();
+        MS_LOG(INTERNAL_EXCEPTION) << "Index:" << arg_index << " out of range:" << fg->parameters().size();
       }
       return fg->parameters()[arg_index];
     }
-    MS_LOG(EXCEPTION) << "Can't find parameter of arg:" << arg->DebugString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Can't find parameter of arg:" << arg->DebugString();
   }
 
   static std::vector<AnfNodePtr> GetFuncGraphNewParameters(
@@ -326,7 +337,6 @@ class SwitchPartialEliminater : public ChoicePartialEliminater {
     if (fg_list_.size() != kSwitchBranchesNum && args_list_.size() != kSwitchBranchesNum) {
       return nullptr;
     }
-    // Should not continue;
     if (!CheckFuncGraphAndArgs()) {
       return nullptr;
     }
@@ -341,6 +351,8 @@ class SwitchPartialEliminater : public ChoicePartialEliminater {
 
  private:
   AnfNodePtr BuildNewSwitchNode(const CNodePtr &switch_call, const std::vector<AnfNodePtr> &new_args) {
+    auto fg = switch_call->func_graph();
+    MS_EXCEPTION_IF_NULL(fg);
     const auto input0 = switch_call->input(0);
     MS_EXCEPTION_IF_NULL(input0);
     const auto switch_node = input0->cast<CNodePtr>();
@@ -348,13 +360,13 @@ class SwitchPartialEliminater : public ChoicePartialEliminater {
     // {Switch, cond, G1, G2}
     std::vector<AnfNodePtr> switch_inputs = {switch_node->input(0), switch_node->input(1)};
     (void)switch_inputs.insert(switch_inputs.end(), fg_list_.begin(), fg_list_.end());
-    const auto new_switch_cnode = switch_call->func_graph()->NewCNode(std::move(switch_inputs));
+    const auto new_switch_cnode = fg->NewCNode(std::move(switch_inputs));
     new_switch_cnode->set_abstract(switch_node->abstract());
     // Create switch call.
     TraceGuard guard2(std::make_shared<TraceCopy>(switch_call->debug_info()));
     AnfNodePtrList switch_call_inputs{new_switch_cnode};
     (void)switch_call_inputs.insert(switch_call_inputs.end(), new_args.begin(), new_args.end());
-    const auto new_call_node = switch_call->func_graph()->NewCNode(std::move(switch_call_inputs));
+    const auto new_call_node = fg->NewCNode(std::move(switch_call_inputs));
     new_call_node->set_abstract(switch_call->abstract());
     return new_call_node;
   }

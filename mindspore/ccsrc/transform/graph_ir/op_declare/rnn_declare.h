@@ -17,11 +17,10 @@
 #ifndef MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_RNN_DECLARE_H_
 #define MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_RNN_DECLARE_H_
 
-#include "utils/hash_map.h"
-#include "ops/rnn.h"
+#include "inc/ops/rnn.h"
 #include "transform/graph_ir/op_declare/op_declare_macro.h"
+#include "utils/hash_map.h"
 
-namespace mindspore::transform {
 DECLARE_OP_ADAPTER(BasicLSTMCell)
 DECLARE_OP_USE_OUTPUT(BasicLSTMCell)
 
@@ -54,5 +53,7 @@ DECLARE_OP_USE_OUTPUT(CommonLSTM)
 
 DECLARE_OP_ADAPTER(GRUV2HiddenGradCell)
 DECLARE_OP_USE_OUTPUT(GRUV2HiddenGradCell)
-}  // namespace mindspore::transform
+
+DECLARE_OP_ADAPTER(CommonGRU)
+DECLARE_OP_USE_OUTPUT(CommonGRU)
 #endif  // MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_RNN_DECLARE_H_

@@ -1,7 +1,7 @@
 /**
  * This is the C++ adaptation and derivative work of Myia (https://github.com/mila-iqia/myia/).
  *
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,10 +48,11 @@ FuncGraph::FuncGraph(GraphDebugInfoPtr &&debug_info)
       manager_(),
       debug_info_(std::move(debug_info)),
       stub_(false),
-      switch_input_(std::make_shared<bool>(false)),
-      switch_layer_input_(std::make_shared<bool>(false)),
       stage_(-1),
+      segment_(1),
       phase_(PhaseManager::GetInstance().phase()) {}
+
+FuncGraph::~FuncGraph() { subclass_destruct_flag_ = true; }
 
 void FuncGraph::DoBreakLoop() {
   if (attached_mng_cnt() > 0) {
@@ -63,7 +64,7 @@ void FuncGraph::DoBreakLoop() {
   used_forward_nodes_.clear();
   func_graph_cache_.clear();
   parameters_.clear();
-  paramter_obj_nodes_.clear();
+  parameter_obj_nodes_.clear();
   return_ = nullptr;
   set_dropped(true);
 }
@@ -140,6 +141,7 @@ ParameterPtr FuncGraph::AddFvParameter(const std::string &name, const ValuePtr &
   param->set_name(name);
   MS_EXCEPTION_IF_NULL(param->debug_info());
   param->debug_info()->set_name(name);
+  param->debug_info()->set_trace_info(nullptr);
   MS_EXCEPTION_IF_NULL(default_value);
   param->set_default_param(default_value);
   param->set_abstract(default_value->ToAbstract());
@@ -230,9 +232,9 @@ void FuncGraph::DumpCNodeList() {
 
 std::string FuncGraph::ToString() const {
   std::ostringstream buffer;
-  auto debug_info = const_cast<FuncGraph *>(this)->shared_from_base<FuncGraph>()->debug_info();
-  buffer << mindspore::label_manage::Label(debug_info);
-  buffer << "." << debug_info->get_id();
+  auto debug_info = const_cast<FuncGraph *>(this)->debug_info();
+  buffer << mindspore::trace::Label(debug_info);
+  buffer << "_" << debug_info->get_id();
   return buffer.str();
 }
 
@@ -295,8 +297,8 @@ void FuncGraph::DropValueNode(const AnfNodePtr &node) {
     } else {
       value_nodes_[node]--;
       if (value_nodes_[node] < 0) {
-        MS_LOG(EXCEPTION) << "Count of ValueNode '" << node
-                          << "' dec from 0. NodeInfo: " << trace::GetDebugInfo(debug_info());
+        MS_LOG(INTERNAL_EXCEPTION) << "Count of ValueNode '" << node
+                                   << "' dec from 0. NodeInfo: " << trace::GetDebugInfoStr(debug_info());
       }
     }
   }
@@ -336,8 +338,8 @@ bool FuncGraph::DropFreeVariable(const AnfNodePtr &node) {
     } else {
       free_variables_[node]--;
       if (free_variables_[node] < 0) {
-        MS_LOG(EXCEPTION) << "Count of free variable '" << node
-                          << "' dec from 0. NodeInfo: " << trace::GetDebugInfo(debug_info());
+        MS_LOG(INTERNAL_EXCEPTION) << "Count of free variable '" << node
+                                   << "' dec from 0. NodeInfo: " << trace::GetDebugInfoStr(debug_info());
       }
     }
   }
@@ -406,8 +408,8 @@ bool FuncGraph::DropFuncGraphUsed(const FuncGraphPtr &fg) {
     } else {
       func_graphs_used_[fg]--;
       if (func_graphs_used_[fg] < 0) {
-        MS_LOG(EXCEPTION) << "Count of FuncGraph '" << fg
-                          << "' dec from 0. NodeInfo: " << trace::GetDebugInfo(debug_info());
+        MS_LOG(INTERNAL_EXCEPTION) << "Count of FuncGraph '" << fg
+                                   << "' dec from 0. NodeInfo: " << trace::GetDebugInfoStr(debug_info());
       }
     }
   }
@@ -455,8 +457,8 @@ void FuncGraph::DropFuncGraphCNodeIndex(const CNodeIndexPairPtr &pair) {
     } else {
       func_graph_cnodes_index_[pair]--;
       if (func_graph_cnodes_index_[pair] < 0) {
-        MS_LOG(EXCEPTION) << "Count of CNode/Index '" << pair->first << "/" << pair->second
-                          << "' dec from 0. NodeInfo: " << trace::GetDebugInfo(debug_info());
+        MS_LOG(INTERNAL_EXCEPTION) << "Count of CNode/Index '" << pair->first << "/" << pair->second
+                                   << "' dec from 0. NodeInfo: " << trace::GetDebugInfoStr(debug_info());
       }
     }
   }
@@ -491,8 +493,8 @@ void FuncGraph::DropMetaFgPrimValueNode(const AnfNodePtr &value_node) {
     } else {
       meta_fg_prim_value_nodes_[value_node]--;
       if (meta_fg_prim_value_nodes_[value_node] < 0) {
-        MS_LOG(EXCEPTION) << "Count of MetaFgPrim ValueNode '" << value_node->DebugString()
-                          << "' dec from 0. NodeInfo: " << trace::GetDebugInfo(debug_info());
+        MS_LOG(INTERNAL_EXCEPTION) << "Count of MetaFgPrim ValueNode '" << value_node->DebugString()
+                                   << "' dec from 0. NodeInfo: " << trace::GetDebugInfoStr(debug_info());
       }
     }
   }
@@ -501,8 +503,8 @@ void FuncGraph::DropMetaFgPrimValueNode(const AnfNodePtr &value_node) {
 FuncGraphPtr FuncGraph::parent() {
   // report the bug early.
   if (manager_.lock() == nullptr) {
-    MS_LOG(EXCEPTION) << "BUG: no manager for this func graph: " << ToString()
-                      << " NodeInfo: " << trace::GetDebugInfo(debug_info());
+    MS_LOG(INTERNAL_EXCEPTION) << "BUG: no manager for this func graph: " << ToString()
+                               << " NodeInfo: " << trace::GetDebugInfoStr(debug_info());
   }
   auto mng = manager_.lock();
   MS_EXCEPTION_IF_NULL(mng);
@@ -549,7 +551,7 @@ AnfNodePtr FuncGraph::GetDefaultValueByName(const std::string &name) {
   }
   auto default_value = itr->second;
   if (default_value == nullptr) {
-    MS_LOG(EXCEPTION) << "Graph parameter " << name << " not exist";
+    MS_LOG(INTERNAL_EXCEPTION) << "Graph parameter " << name << " not exist";
   }
   if (IsValueNode<Null>(default_value)) {
     return nullptr;
@@ -593,12 +595,12 @@ AnfNodePtr FuncGraph::GetVariableArgParameter() {
   min_param_num += fv_param_count_;
 
   if (parameters_.size() < min_param_num) {
-    MS_LOG(EXCEPTION) << "Length of parameters is " << parameters_.size()
-                      << " which less than the sum of following: fv_param_count: " << fv_param_count_
-                      << ", has_vararg: " << has_vararg_ << ", has_kwarg: " << has_kwarg_
-                      << ", kw_only_args_count_: " << kw_only_args_count_;
+    MS_LOG(INTERNAL_EXCEPTION) << "Length of parameters is " << parameters_.size()
+                               << " which less than the sum of following: fv_param_count: " << fv_param_count_
+                               << ", has_vararg: " << has_vararg_ << ", has_kwarg: " << has_kwarg_
+                               << ", kw_only_args_count_: " << kw_only_args_count_;
   }
-  return parameters_[parameters_.size() - min_param_num + IntToSize(kw_only_args_count_)];
+  return parameters_[parameters_.size() - min_param_num];
 }
 
 std::string FuncGraph::GetVariableArgName() {
@@ -616,8 +618,8 @@ std::string FuncGraph::GetVariableArgName() {
 AnfNodePtr FuncGraph::GetVariableKwargParameter() {
   if (has_kwarg_) {
     if (parameters_.size() < fv_param_count_ + 1) {
-      MS_LOG(EXCEPTION) << "Length of parameters is " << parameters_.size() << ", fv_param_count is " << fv_param_count_
-                        << ", parameters is less than 1 + fv_param_count";
+      MS_LOG(INTERNAL_EXCEPTION) << "Length of parameters is " << parameters_.size() << ", fv_param_count is "
+                                 << fv_param_count_ << ", parameters is less than 1 + fv_param_count";
     }
     return parameters_[(parameters_.size() - fv_param_count_) - 1];
   }
@@ -625,12 +627,9 @@ AnfNodePtr FuncGraph::GetVariableKwargParameter() {
 }
 
 std::string FuncGraph::GetVariableKwargName() {
-  if (has_kwarg_) {
-    if (parameters_.size() < fv_param_count_ + 1) {
-      MS_LOG(EXCEPTION) << "Length of parameters is " << parameters_.size() << ", fv_param_count is " << fv_param_count_
-                        << ", parameters is less than 1 + fv_param_count";
-    }
-    auto parameter = parameters_[(parameters_.size() - fv_param_count_) - 1]->cast_ptr<Parameter>();
+  auto kwarg_param = GetVariableKwargParameter();
+  if (kwarg_param != nullptr) {
+    auto parameter = kwarg_param->cast_ptr<Parameter>();
     MS_EXCEPTION_IF_NULL(parameter);
     return parameter->name();
   }
@@ -645,10 +644,6 @@ AnfNodePtrList FuncGraph::GetKwOnlyArgsParameters() {
 
   size_t min_param_num = 0;
   size_t varargs_kwargs_num = 0;
-  if (has_vararg_) {
-    min_param_num += 1;
-    varargs_kwargs_num += 1;
-  }
   if (has_kwarg_) {
     min_param_num += 1;
     varargs_kwargs_num += 1;
@@ -657,10 +652,10 @@ AnfNodePtrList FuncGraph::GetKwOnlyArgsParameters() {
   min_param_num += fv_param_count_;
 
   if (parameters_.size() < min_param_num) {
-    MS_LOG(EXCEPTION) << "Length of parameters is " << parameters_.size()
-                      << " which less than the sum of following: fv_param_count: " << fv_param_count_
-                      << ", has_vararg: " << has_vararg_ << ", has_kwarg: " << has_kwarg_
-                      << ", kw_only_args_count: " << kw_only_args_count_;
+    MS_LOG(INTERNAL_EXCEPTION) << "Length of parameters is " << parameters_.size()
+                               << " which less than the sum of following: fv_param_count: " << fv_param_count_
+                               << ", has_vararg: " << has_vararg_ << ", has_kwarg: " << has_kwarg_
+                               << ", kw_only_args_count: " << kw_only_args_count_;
   }
   size_t kw_only_args_start_offset = parameters_.size() - min_param_num;
   std::copy(parameters_.cbegin() + kw_only_args_start_offset, parameters_.cend() - fv_param_count_ - varargs_kwargs_num,
@@ -709,13 +704,13 @@ std::list<CNodePtr> FuncGraph::GetOrderedCnodes() {
 
 void FuncGraph::EraseUnusedNodeInOrder() {
   auto mng = manager_.lock();
-  if (mng) {
+  if (mng != nullptr) {
     auto &all_nodes = nodes();
     // Erase unused cnode.
     for (auto it = order_.begin(); it != order_.end();) {
       if (!all_nodes.contains(*it)) {
         MS_EXCEPTION_IF_NULL(*it);
-        MS_LOG(DEBUG) << "Remove node: " << (*it)->ToString() << " in graph " << ToString() << " order.";
+        MS_LOG(DEBUG) << "Remove node: " << (*it)->DebugString() << " in graph " << ToString() << " order.";
         it = order_.erase(it);
         continue;
       }
@@ -725,12 +720,13 @@ void FuncGraph::EraseUnusedNodeInOrder() {
 }
 
 void FuncGraph::EraseUnusedNodeInOrder(const AnfNodePtr &node) {
-  if (node) {
-    auto cnode = node->cast<CNodePtr>();
-    if (cnode) {
-      (void)order_.erase(cnode);
-      MS_LOG(DEBUG) << "Remove node: " << node->DebugString() << " from order list.";
-    }
+  if (node == nullptr) {
+    return;
+  }
+  auto cnode = node->cast<CNodePtr>();
+  if (cnode != nullptr) {
+    (void)order_.erase(cnode);
+    MS_LOG(DEBUG) << "Remove node: " << node->DebugString() << " from order list.";
   }
 }
 

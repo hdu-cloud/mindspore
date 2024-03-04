@@ -22,14 +22,14 @@
 #include <map>
 #include <utility>
 #include <unordered_set>
-#include "runtime/device/device_address.h"
+#include "include/backend/device_address.h"
 #include "ir/tensor.h"
 #include "include/common/utils/convert_utils.h"
 #ifdef ENABLE_DEBUGGER
-#include "debug/debugger/debugger.h"
+#include "include/backend/debug/debugger/debugger.h"
 #endif
-#include "backend/common/session/kernel_graph.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/kernel_graph.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "kernel/kernel.h"
 #include "utils/ms_context.h"
@@ -61,7 +61,6 @@ class BACKEND_EXPORT KernelRuntime {
   void AssignCommunicationOutputFromMemoryPool(const AnfNodePtr &node) const;
   void AssignCommunicationInputFromMemoryPool(const AnfNodePtr &node) const;
   void RunOpClearMemory(const session::KernelGraph &graph) const;
-  void RunOpMallocPre(const session::KernelGraph &graph, const std::vector<tensor::TensorPtr> &input_tensors);
   using TbeLaunchKernelModCallBack =
     std::function<void(const AnfNodePtr &, const kernel::KernelMod *kernel_mod, std::vector<AddressPtr> *)>;
   static void tbe_call_setter(const TbeLaunchKernelModCallBack &call) { tbe_call_ = call; }
@@ -83,6 +82,8 @@ class BACKEND_EXPORT KernelRuntime {
   virtual void ClearGlobalIdleMem() {}
   virtual void CreateContext() {}
   virtual void SetContext() {}
+  virtual void SetContextForce() {}
+  virtual void ResetStreamAndCtx() {}
   virtual const void *context() const { return nullptr; }
   uint8_t *MallocMem(MemType type, size_t size, const DeviceAddressPtr &address) {
     return mem_manager_->MallocMem(type, size, address);
@@ -100,7 +101,7 @@ class BACKEND_EXPORT KernelRuntime {
   // for GPU and D to impl
   virtual void ReleaseDeviceRes() {}
   void set_device_id(uint32_t device_id) { device_id_ = device_id; }
-  uint32_t device_id() { return device_id_; }
+  uint32_t device_id() const { return device_id_; }
   static bool UseMemScheduler();
   void SyncParameter(const session::KernelGraph &graph, const std::shared_ptr<MemScheduler> &mem_scheduler) const;
 

@@ -299,14 +299,16 @@ Status ShardHeader::ParseSchema(const json &schemas) {
     std::vector<std::string> blob_fields = schema["blob_fields"].get<std::vector<std::string>>();
     json schema_body = schema["schema"];
     std::shared_ptr<Schema> parsed_schema = Schema::Build(schema_description, schema_body);
-    RETURN_UNEXPECTED_IF_NULL_MR(parsed_schema);
+    CHECK_FAIL_RETURN_UNEXPECTED_MR(
+      parsed_schema != nullptr,
+      "[Internal ERROR] Failed to build schema, Please check the [ERROR] logs before for more details.");
     AddSchema(parsed_schema);
   }
   return Status::OK();
 }
 
 void ShardHeader::ParseShardAddress(const json &address) {
-  std::copy(address.begin(), address.end(), std::back_inserter(shard_addresses_));
+  (void)std::copy(address.begin(), address.end(), std::back_inserter(shard_addresses_));
 }
 
 std::vector<std::string> ShardHeader::SerializeHeader() {
@@ -642,6 +644,8 @@ Status ShardHeader::PagesToFile(const std::string dump_file_name) {
     page_out_handle << shard_pages << "\n";
   }
   page_out_handle.close();
+
+  ChangeFileMode(realpath.value(), S_IRUSR | S_IWUSR);
   return Status::OK();
 }
 
@@ -653,12 +657,16 @@ Status ShardHeader::FileToPages(const std::string dump_file_name) {
   CHECK_FAIL_RETURN_UNEXPECTED_MR(realpath.has_value(),
                                   "[Internal ERROR] Failed to get the realpath of Pages file, path: " + dump_file_name);
   // attempt to open the file contains the page in json
-  std::ifstream page_in_handle(realpath.value());
+  std::ifstream page_in_handle(realpath.value(), std::ios::in);
   CHECK_FAIL_RETURN_UNEXPECTED_MR(page_in_handle.good(),
                                   "[Internal ERROR] Pages file does not exist, path: " + dump_file_name);
   std::string line;
   while (std::getline(page_in_handle, line)) {
-    RETURN_IF_NOT_OK_MR(ParsePage(json::parse(line), -1, true));
+    auto s = ParsePage(json::parse(line), -1, true);
+    if (s != Status::OK()) {
+      page_in_handle.close();
+      return s;
+    }
   }
   page_in_handle.close();
   return Status::OK();

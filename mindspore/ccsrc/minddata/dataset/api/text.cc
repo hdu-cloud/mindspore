@@ -36,6 +36,19 @@ constexpr size_t kMaxLoggedRows = 10;
 // FUNCTIONS TO CREATE TEXT OPERATIONS
 // (In alphabetical order)
 
+// AddToken
+struct AddToken::Data {
+  Data(const std::string &token, bool begin) : token_(token), begin_(begin) {}
+  std::string token_;
+  bool begin_;
+};
+
+AddToken::AddToken(const std::string &token, bool begin) : data_(std::make_shared<Data>(token, begin)) {}
+
+std::shared_ptr<TensorOperation> AddToken::Parse() {
+  return std::make_shared<AddTokenOperation>(data_->token_, data_->begin_);
+}
+
 #ifndef _WIN32
 // BasicTokenizer
 struct BasicTokenizer::Data {
@@ -179,7 +192,7 @@ Status JiebaTokenizer::ParserFile(const std::string &file_path,
     LOG_AND_RETURN_STATUS_SYNTAX_ERROR(err_msg);
   }
 
-  std::ifstream ifs(realpath.value());
+  std::ifstream ifs(realpath.value(), std::ios::in);
   if (!ifs) {
     std::string err_msg = "JiebaTokenizer : Fail to load dictionary from the input file, check the file path.";
     LOG_AND_RETURN_STATUS_SYNTAX_ERROR(err_msg);
@@ -380,6 +393,16 @@ ToVectors::ToVectors(const std::shared_ptr<Vectors> &vectors, const std::vector<
 std::shared_ptr<TensorOperation> ToVectors::Parse() {
   return std::make_shared<ToVectorsOperation>(data_->vectors_, data_->unk_init_, data_->lower_case_backup_);
 }
+
+// Truncate
+struct Truncate::Data {
+  explicit Data(int32_t max_seq_len) : max_seq_len_(max_seq_len) {}
+  int32_t max_seq_len_;
+};
+
+Truncate::Truncate(int32_t max_seq_len) : data_(std::make_shared<Data>(max_seq_len)) {}
+
+std::shared_ptr<TensorOperation> Truncate::Parse() { return std::make_shared<TruncateOperation>(data_->max_seq_len_); }
 
 // TruncateSequencePair
 struct TruncateSequencePair::Data {

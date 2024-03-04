@@ -20,12 +20,13 @@ from sklearn.metrics import roc_auc_score
 import mindspore.common.dtype as mstype
 from mindspore.ops import composite as C
 from mindspore.ops import operations as P
+from mindspore.ops import functional as F
 from mindspore.nn import Dropout
 from mindspore.nn.optim import Adam
-from mindspore.train.metrics import Metric
+from mindspore.train import Metric
 from mindspore import nn, Tensor, ParameterTuple, Parameter
 from mindspore.common.initializer import Uniform, initializer
-from mindspore.train.callback import ModelCheckpoint, CheckpointConfig
+from mindspore.train import ModelCheckpoint, CheckpointConfig
 from mindspore.parallel._utils import _get_device_num, _get_parallel_mode, _get_gradients_mean
 from mindspore.context import ParallelMode
 from mindspore.nn.wrap.grad_reducer import DistributedGradReducer
@@ -137,7 +138,7 @@ class DenseLayer(nn.Cell):
         self.matmul = P.MatMul(transpose_b=False)
         self.bias_add = P.BiasAdd()
         self.cast = P.Cast()
-        self.dropout = Dropout(keep_prob=1.0)
+        self.dropout = Dropout(p=0.0)
         self.mul = P.Mul()
         self.realDiv = P.RealDiv()
         self.scale_coef = scale_coef
@@ -315,7 +316,7 @@ class TrainStepWrap(nn.Cell):
     def construct(self, batch_ids, batch_wts, label):
         weights = self.weights
         loss = self.network(batch_ids, batch_wts, label)
-        sens = P.Fill()(P.DType()(loss), P.Shape()(loss), self.sens)  #
+        sens = F.fill(P.DType()(loss), P.Shape()(loss), self.sens)  #
         grads = self.grad(self.network, weights)(batch_ids, batch_wts, label, sens)
         if self.reducer_flag:
             # apply grad reducer on grads

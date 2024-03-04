@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_ATAN2_H_
 #define MINDSPORE_CORE_OPS_ATAN2_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,8 +35,8 @@ class MIND_API Atan2 : public BaseOperator {
   explicit Atan2(const std::string k_name) : BaseOperator(k_name) { InitIOName({"x", "y"}, {"output"}); }
   void Init() const {}
 };
-abstract::AbstractBasePtr Atan2Infer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                     const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr Atan2Infer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                              const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

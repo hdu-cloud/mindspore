@@ -21,6 +21,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include "kernel/oplib/op_info_keys.h"
 #include "ir/dtype.h"
 #include "ir/kernel_info_dev.h"
 #include "kernel/kernel.h"
@@ -31,15 +32,40 @@
 
 namespace mindspore {
 namespace kernel {
+constexpr auto kPatternOpaque = "Opaque";
+enum KernelObjectType : int {
+  UNKNOWN_TYPE = 0,
+  TENSOR,
+  SCALAR,
+  TUPLE,
+  TUPLE_UNFOLD,
+};
+
+enum OpType : int {
+  UNKNOWN_OP_TYPE = 0,
+  DYNAMIC,
+  SKIP,
+};
+
+std::string KernelObjectTypeLabel(const KernelObjectType &obj_type);
+BACKEND_EXPORT std::string KernelTypeLabel(const KernelType &kernel_type);
+std::string OpTypeLabel(const OpType &op_type);
+
 class BACKEND_EXPORT KernelBuildInfo {
  public:
   class KernelBuildInfoBuilder;
 
-  KernelBuildInfo() {}
+  KernelBuildInfo() = default;
 
   ~KernelBuildInfo() = default;
 
   KernelType kernel_type() const { return kernel_type_; }
+
+  OpType op_type() const { return op_type_; }
+
+  void set_kernel_type(KernelType kernel_type) { kernel_type_ = kernel_type; }
+
+  void set_op_type(OpType op_type) { op_type_ = op_type; }
 
   std::string GetInputFormat(size_t input_index) const;
 
@@ -49,9 +75,11 @@ class BACKEND_EXPORT KernelBuildInfo {
 
   TypeId GetOutputDeviceType(size_t output_index) const;
 
-  std::string GetInputReshapeType(size_t input_index) const;
+  KernelObjectType GetInputKernelObjectType(size_t input_index) const;
 
-  std::string GetInputValueDepend(size_t input_index) const;
+  KernelObjectType GetOutputKernelObjectType(size_t output_index) const;
+
+  std::string GetInputReshapeType(size_t input_index) const;
 
   bool IsInputDefaultPadding() const;
 
@@ -69,17 +97,37 @@ class BACKEND_EXPORT KernelBuildInfo {
 
   const std::vector<TypeId> &GetAllOutputDeviceTypes() const;
 
-  std::vector<std::string> GetAllOutputReshapeType() const;
+  const std::vector<KernelObjectType> &GetAllInputKernelObjectTypes() const;
 
-  std::vector<std::string> GetAllInputReshapeType() const;
+  const std::vector<KernelObjectType> &GetAllOutputKernelObjectTypes() const;
+
+  const std::vector<KernelObjectType> &GetAllOutputElementsKernelObjectTypes() const;
+
+  void SetOpType(const OpType &op_type);
+
+  void SetOutputsKernelObjectType(const std::vector<KernelObjectType> &outputs_kernel_object_type);
+
+  void SetInputsKernelObjectType(const std::vector<KernelObjectType> &inputs_kernel_object_type);
+
+  void SetOutputElementsKernelObjectType(const std::vector<KernelObjectType> &output_elements_kernel_object_type);
+
+  const std::vector<std::string> &GetAllOutputReshapeType() const;
+
+  const std::vector<std::string> &GetAllInputReshapeType() const;
 
   std::string core_type() const { return core_type_; }
 
   void SetOutputFormat(const std::string &format, size_t index);
 
+  void SetInputFormat(const std::string &format, size_t index);
+
   void SetOutputDeviceType(const TypeId &output_device_type, size_t index);
 
+  void SetInputsFormat(const std::vector<std::string> &inputs_format);
+
   void SetOutputsFormat(const std::vector<std::string> &outputs_format);
+
+  void SetInputsDeviceType(const std::vector<TypeId> &inputs_device_type);
 
   void SetOutputsDeviceType(const std::vector<TypeId> &outputs_device_type);
 
@@ -87,9 +135,13 @@ class BACKEND_EXPORT KernelBuildInfo {
 
   std::vector<nlohmann::json> output_data_desc() const { return output_data_desc_; }
 
-  FusionType fusion_type() const { return fusion_type_; }
+  std::string fusion_type() const { return fusion_type_; }
+
+  bool valid() const { return valid_; }
+  void set_valid(bool valid) { valid_ = valid; }
 
   Processor processor() const { return processor_; }
+  void set_processor(Processor processor) { processor_ = processor; }
 
   size_t GetInputNum() const;
 
@@ -108,7 +160,8 @@ class BACKEND_EXPORT KernelBuildInfo {
   static auto constexpr kInvalidFormat = "InvalidFormat";
 
  private:
-  KernelType kernel_type_{TBE_KERNEL};
+  KernelType kernel_type_{UNKNOWN_KERNEL_TYPE};
+  OpType op_type_{UNKNOWN_OP_TYPE};
   std::string origin_data_format_{kOpFormat_DEFAULT};
   std::string core_type_;
   std::vector<std::string> inputs_format_;
@@ -118,10 +171,16 @@ class BACKEND_EXPORT KernelBuildInfo {
   std::vector<std::string> output_reshape_type_;
   std::vector<TypeId> inputs_device_type_;
   std::vector<TypeId> outputs_device_type_;
+  std::vector<KernelObjectType> inputs_kernel_object_type_;
+  std::vector<KernelObjectType> outputs_kernel_object_type_;
+  // Indicates kernel object types of elements in TupleUnfold.
+  // Only valid when output kernel object type is TupleUnfold.
+  std::vector<KernelObjectType> output_elements_kernel_object_type_;
   std::vector<nlohmann::json> output_data_desc_;
-  std::vector<std::string> input_value_depend_;
-  FusionType fusion_type_{kernel::FusionType::OPAQUE};
-  Processor processor_{AICORE};
+  std::string fusion_type_{kPatternOpaque};
+  Processor processor_{UNKNOWN};
+  // Indicates whether buildinfo is valid, the invalid buildinfo needs to select kernel again.
+  bool valid_{true};
 };
 using KernelBuildInfoPtr = std::shared_ptr<KernelBuildInfo>;
 
@@ -132,6 +191,7 @@ class BACKEND_EXPORT KernelBuildInfo::KernelBuildInfoBuilder {
   explicit KernelBuildInfoBuilder(const KernelBuildInfoPtr &kernel_build_info)
       : kernel_build_info_(std::make_shared<KernelBuildInfo>()) {
     SetKernelType(kernel_build_info->kernel_type());
+    SetOpType(kernel_build_info->op_type());
     SetFusionType(kernel_build_info->fusion_type());
     SetProcessor(kernel_build_info->processor());
     SetOpPattern(kernel_build_info->op_pattern());
@@ -141,18 +201,22 @@ class BACKEND_EXPORT KernelBuildInfo::KernelBuildInfoBuilder {
       (void)kernel_build_info_->inputs_device_type_.emplace_back(kernel_build_info->GetInputDeviceType(index));
       (void)kernel_build_info_->inputs_format_.emplace_back(kernel_build_info->GetInputFormat(index));
       (void)kernel_build_info_->input_reshape_type_.emplace_back(kernel_build_info->GetInputReshapeType(index));
-      (void)kernel_build_info_->input_value_depend_.emplace_back(kernel_build_info->GetInputValueDepend(index));
     }
+    kernel_build_info_->inputs_kernel_object_type_ = kernel_build_info->GetAllInputKernelObjectTypes();
+
     for (size_t index = 0; index < kernel_build_info->GetOutputNum(); ++index) {
       (void)kernel_build_info_->outputs_device_type_.emplace_back(kernel_build_info->GetOutputDeviceType(index));
       (void)kernel_build_info_->outputs_format_.emplace_back(kernel_build_info->GetOutputFormat(index));
       (void)kernel_build_info_->output_reshape_type_.emplace_back(kernel_build_info->GetOutputReshapeType(index));
     }
+    kernel_build_info_->outputs_kernel_object_type_ = kernel_build_info->GetAllOutputKernelObjectTypes();
   }
 
   ~KernelBuildInfoBuilder() = default;
 
   void SetKernelType(const KernelType &kernel_type);
+
+  void SetOpType(const OpType &op_type);
 
   void SetOriginDataFormat(const std::string &origin_data_format);
 
@@ -166,13 +230,17 @@ class BACKEND_EXPORT KernelBuildInfo::KernelBuildInfoBuilder {
 
   void SetInputsReshapeType(const std::vector<std::string> &input_reshape_type);
 
-  void SetInputsValueDepend(const std::vector<std::string> &input_value_depend);
-
   void SetOutputsReshapeType(const std::vector<std::string> &output_reshape_type);
+
+  void SetInputsKernelObjectType(const std::vector<KernelObjectType> &input_kernel_object_type);
+
+  void SetOutputsKernelObjectType(const std::vector<KernelObjectType> &output_kernel_object_type);
+
+  void SetOutputElementsKernelObjectType(const std::vector<KernelObjectType> &output_elements_kernel_object_type);
 
   void SetCoreType(const std::string &core_type);
 
-  void SetFusionType(FusionType fusion_type);
+  void SetFusionType(const std::string &fusion_type);
   // save prebuild result
   void SetOutputDataDesc(const std::vector<nlohmann::json> &data_desc);
 
@@ -191,6 +259,8 @@ class BACKEND_EXPORT KernelBuildInfo::KernelBuildInfoBuilder {
   void SetInputDeviceType(const TypeId &input_device_type, size_t index);
 
   void SetOutputDeviceType(const TypeId &output_device_type, size_t index);
+
+  void SetValid(bool valid);
 
   std::shared_ptr<KernelBuildInfo> Build();
 

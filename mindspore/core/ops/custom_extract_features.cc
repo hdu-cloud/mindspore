@@ -15,10 +15,9 @@
  */
 
 #include "ops/custom_extract_features.h"
-#include "utils/check_convert_utils.h"
-#include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
 #include "mindapi/src/helper.h"
+#include "ops/primitive_c.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {

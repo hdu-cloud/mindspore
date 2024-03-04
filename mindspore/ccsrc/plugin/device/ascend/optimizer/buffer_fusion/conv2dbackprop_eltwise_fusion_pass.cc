@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,16 +14,26 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/optimizer/buffer_fusion/conv2dbackprop_eltwise_fusion_pass.h"
-#include "kernel/kernel_fusion.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include <unordered_set>
+#include <set>
+#include <string>
+#include "ops/nn_optimizer_op_name.h"
+#include "ops/math_op_name.h"
+#include "ops/lite_op_name.h"
+#include "ops/conv_pool_ops.h"
+#include "ops/framework_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "utils/ms_context.h"
-#include "backend/common/optimizer/fusion_id_allocator.h"
-#include "plugin/device/ascend/optimizer/platform.h"
+#include "plugin/device/ascend/optimizer/fusion_id_allocator.h"
+#include "plugin/device/ascend/hal/common/platform_info_util.h"
 
 namespace mindspore {
 namespace opt {
+namespace {
+constexpr auto kPatternBroadcast = "Broadcast";
+}
+
 void Conv2DBackpropEltwiseFusionPass::MatchConv2DBackpropInputEltwise(const CNodePtr &cnode,
                                                                       FusedNodeRecord *candidate_fusion) {
   MS_EXCEPTION_IF_NULL(cnode);
@@ -35,7 +45,14 @@ void Conv2DBackpropEltwiseFusionPass::MatchConv2DBackpropInputEltwise(const CNod
       fusion_id_allocator->HasFusionIdAttr(eltwise_input)) {
     return;
   }
-  if (common::AnfAlgo::CheckPrimitiveType(eltwise_input, prim::kPrimConv2DBackpropInput)) {
+  if (common::AnfAlgo::CheckPrimitiveType(eltwise_input, prim::kPrimConv2DBackpropInputD)) {
+    // if cnode is ReluGradV2, we need do further check
+    // skip when output0 of Conv2DBackpropInputD is fp32, it may be slower
+    const std::unordered_set<TypeId> fp32_types{TypeId::kNumberTypeFloat32, TypeId::kNumberTypeFloat};
+    if (common::AnfAlgo::GetCNodeName(cnode) == kReLUGradV2OpName &&
+        fp32_types.count(AnfAlgo::GetOutputDeviceDataType(eltwise_input, kIndex0)) > 0) {
+      return;
+    }
     (void)record.insert(eltwise_input);
     candidate_fusion->push_back(record);
     SetRecordFusionId(record);
@@ -55,7 +72,11 @@ void Conv2DBackpropEltwiseFusionPass::MatchSingleFusionPattern(const session::Ke
     }
     auto cnode = node->cast<CNodePtr>();
     MS_EXCEPTION_IF_NULL(cnode);
-    if (common::AnfAlgo::GetCNodeName(cnode) == kReluGradV2OpName) {
+    std::set<std::string> support_node_names = {kReLUGradV2OpName, kReluOpName, kPReluOpName, kLeakyReluOpName,
+                                                kAddOpName};
+    std::set<std::string> support_fusion_types = {kPatternElemWise, kPatternBroadcast};
+    if (support_node_names.count(common::AnfAlgo::GetCNodeName(cnode)) > 0 &&
+        support_fusion_types.count(AnfAlgo::GetFusionType(cnode)) > 0) {
       MatchConv2DBackpropInputEltwise(cnode, candidate_fusion);
     }
   }

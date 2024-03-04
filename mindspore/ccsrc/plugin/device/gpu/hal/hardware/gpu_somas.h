@@ -21,7 +21,7 @@
 #include <string>
 #include <vector>
 #include "backend/common/somas/somas.h"
-#include "runtime/hardware/device_type.h"
+#include "include/backend/device_type.h"
 
 namespace mindspore {
 namespace device {
@@ -34,6 +34,7 @@ class GPUSomas : public somas::Somas {
   string GetDeviceName() const override;
   size_t GetAlignSize(size_t original_size) const override;
   void CommunicationTensorProcess(const std::vector<somas::SomasTensorPtr> &tensors) const override;
+  bool NeedContiguous(const std::vector<size_t> &inputs) const override;
 
   bool GetDependExecOrderFlag(const session::KernelGraph &graph) const override;
   bool InitDevSpecControlTensors(const session::KernelGraph &graph) override;

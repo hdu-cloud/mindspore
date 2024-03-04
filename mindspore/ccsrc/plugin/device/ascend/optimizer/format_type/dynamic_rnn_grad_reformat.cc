@@ -15,8 +15,22 @@
  */
 #include "plugin/device/ascend/optimizer/format_type/dynamic_rnn_grad_reformat.h"
 #include <memory>
-#include "plugin/device/ascend/optimizer/ascend_helper.h"
+#include <string>
+#include <utility>
 
+#include "ops/ascend_op_name.h"
+#include "ops/math_ops.h"
+#include "ops/array_ops.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/anf_runtime_algorithm.h"
+#include "include/common/utils/anfalgo.h"
+#include "include/common/utils/utils.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
+#include "kernel/kernel_build_info.h"
+#include "mindapi/base/type_id.h"
+#include "ops/base_operator.h"
+#include "utils/log_adapter.h"
 namespace mindspore {
 namespace opt {
 const BaseRef DynamicRNNGradReformat::DefinePattern() const {
@@ -24,7 +38,7 @@ const BaseRef DynamicRNNGradReformat::DefinePattern() const {
   VarPtr Xs2 = std::make_shared<Var>();
   MS_EXCEPTION_IF_NULL(Xs);
   MS_EXCEPTION_IF_NULL(Xs2);
-  const auto split = std::make_shared<Primitive>(prim::kPrimSplitV->name());
+  const auto split = std::make_shared<Primitive>(prim::kPrimSplitVD->name());
   return VectorRef({split, VectorRef({std::make_shared<Primitive>(prim::kPrimMatMul->name()), Xs, Xs2})});
 }
 

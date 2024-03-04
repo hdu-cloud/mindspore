@@ -22,7 +22,7 @@ namespace mindspore::lite {
 namespace py = pybind11;
 
 void ConverterPyBind(const py::module &m) {
-  py::enum_<converter::FmkType>(m, "FmkType")
+  (void)py::enum_<converter::FmkType>(m, "FmkType")
     .value("kFmkTypeTf", converter::FmkType::kFmkTypeTf)
     .value("kFmkTypeCaffe", converter::FmkType::kFmkTypeCaffe)
     .value("kFmkTypeOnnx", converter::FmkType::kFmkTypeOnnx)
@@ -30,8 +30,8 @@ void ConverterPyBind(const py::module &m) {
     .value("kFmkTypeTflite", converter::FmkType::kFmkTypeTflite)
     .value("kFmkTypePytorch", converter::FmkType::kFmkTypePytorch);
 
-  py::class_<Converter, std::shared_ptr<Converter>>(m, "ConverterBind")
-    .def(py::init<converter::FmkType, const std::string &, const std::string &, const std::string &>())
+  (void)py::class_<Converter, std::shared_ptr<Converter>>(m, "ConverterBind")
+    .def(py::init<>())
     .def("set_config_file", py::overload_cast<const std::string &>(&Converter::SetConfigFile))
     .def("get_config_file", &Converter::GetConfigFile)
     .def("set_config_info",
@@ -48,8 +48,8 @@ void ConverterPyBind(const py::module &m) {
     .def("get_input_data_type", &Converter::GetInputDataType)
     .def("set_output_data_type", &Converter::SetOutputDataType)
     .def("get_output_data_type", &Converter::GetOutputDataType)
-    .def("set_export_mindir", &Converter::SetExportMindIR)
-    .def("get_export_mindir", &Converter::GetExportMindIR)
+    .def("set_save_type", &Converter::SetSaveType)
+    .def("get_save_type", &Converter::GetSaveType)
     .def("set_decrypt_key", py::overload_cast<const std::string &>(&Converter::SetDecryptKey))
     .def("get_decrypt_key", &Converter::GetDecryptKey)
     .def("set_decrypt_mode", py::overload_cast<const std::string &>(&Converter::SetDecryptMode))
@@ -60,12 +60,23 @@ void ConverterPyBind(const py::module &m) {
     .def("get_encrypt_key", &Converter::GetEncryptKey)
     .def("set_infer", &Converter::SetInfer)
     .def("get_infer", &Converter::GetInfer)
+#if !defined(ENABLE_CLOUD_FUSION_INFERENCE) && !defined(ENABLE_CLOUD_INFERENCE)
     .def("set_train_model", &Converter::SetTrainModel)
     .def("get_train_model", &Converter::GetTrainModel)
+#endif
     .def("set_no_fusion", &Converter::SetNoFusion)
     .def("get_no_fusion", &Converter::GetNoFusion)
     .def("set_device", py::overload_cast<const std::string &>(&Converter::SetDevice))
     .def("get_device", &Converter::GetDevice)
-    .def("converter", py::overload_cast<>(&Converter::Convert));
+    .def("set_chip_name", py::overload_cast<const std::string &>(&Converter::SetChipName))
+    .def("get_chip_name", &Converter::GetChipName)
+    .def("set_device_id", &Converter::SetDeviceId)
+    .def("get_device_id", &Converter::GetDeviceId)
+    .def("set_rank_id", &Converter::SetRankId)
+    .def("get_rank_id", &Converter::GetRankId)
+    .def("convert",
+         py::overload_cast<converter::FmkType, const std::string &, const std::string &, const std::string &>(
+           &Converter::Convert),
+         py::call_guard<py::gil_scoped_release>());
 }
 }  // namespace mindspore::lite

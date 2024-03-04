@@ -17,14 +17,14 @@
 #ifndef MINDSPORE_CORE_OPS_RESIZE_BICUBIC_GRAD_H_
 #define MINDSPORE_CORE_OPS_RESIZE_BICUBIC_GRAD_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/primitive_c.h"
+#include <string>
+#include <vector>
 #include "abstract/abstract_value.h"
-#include "utils/check_convert_utils.h"
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -38,12 +38,11 @@ class MIND_API ResizeBicubicGrad : public BaseOperator {
   void set_half_pixel_centers(const bool half_pixel_centers);
   bool get_align_corners() const;
   bool get_half_pixel_centers() const;
-  abstract::AbstractBasePtr ResizeBicubicGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                   const std::vector<AbstractBasePtr> &input_args);
-  using PrimResizeBicubicGrad = std::shared_ptr<ResizeBicubicGrad>;
 };
-abstract::AbstractBasePtr ResizeBicubicGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                 const std::vector<AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr ResizeBicubicGradInfer(const abstract::AnalysisEnginePtr &,
+                                                          const PrimitivePtr &primitive,
+                                                          const std::vector<AbstractBasePtr> &input_args);
+using PrimResizeBicubicGrad = std::shared_ptr<ResizeBicubicGrad>;
 }  // namespace ops
 }  // namespace mindspore
 

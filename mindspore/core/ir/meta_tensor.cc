@@ -61,7 +61,9 @@ int64_t MetaTensor::DimensionSize(size_t index) const {
   return dim_size;
 }
 
-int MetaTensor::ElementsNum() const { return std::accumulate(shape_.begin(), shape_.end(), 1, std::multiplies<int>()); }
+int64_t MetaTensor::ElementsNum() const {
+  return std::accumulate(shape_.begin(), shape_.end(), static_cast<int64_t>(1), std::multiplies<int64_t>());
+}
 
 TypePtr MetaTensor::SetDtype(const TypePtr type_ptr) {
   if (type_ptr == nullptr) {
@@ -85,16 +87,6 @@ std::string MetaTensor::ToString() const {
   }
   buf << ")";
   return buf.str();
-}
-
-std::string MetaTensor::DumpText() const {
-  std::ostringstream oss;
-  oss << type_name() << "(" << static_cast<int>(data_type_) << ")[";
-  for (size_t i = 0; i < shape_.size(); ++i) {
-    oss << (i > 0 ? ", " : "") << shape_[i];
-  }
-  oss << "]";
-  return oss.str();
 }
 
 MetaSparseTensor::MetaSparseTensor() : data_type_(TypeId::kTypeUnknown) {}

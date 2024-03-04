@@ -14,14 +14,15 @@
  * limitations under the License.
  */
 #include "ops/relu.h"
-#include <string>
 #include <map>
 #include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -48,6 +49,14 @@ class ReLUInfer : public abstract::OpInferBase {
     return x_type;
   }
 };
+abstract::AbstractBasePtr ReLUInferFunc(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                        const std::vector<abstract::AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
+  ReLUInfer relu_infer;
+  auto type = relu_infer.InferType(primitive, input_args);
+  auto shape = relu_infer.InferShape(primitive, input_args);
+  return abstract::MakeAbstract(shape, type);
+}
 REGISTER_PRIMITIVE_OP_INFER_IMPL(ReLU, prim::kPrimReLU, ReLUInfer, false);
 }  // namespace ops
 }  // namespace mindspore

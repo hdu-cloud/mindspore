@@ -25,10 +25,10 @@
 #include <string>
 
 #include "utils/hash_map.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "ir/anf.h"
 #include "ir/func_graph.h"
 #include "abstract/abstract_value.h"
-#include "mindspore/core/ops/core_ops.h"
 
 namespace mindspore {
 class SymbolicKeyInstance : public Value {
@@ -72,7 +72,7 @@ class SymbolicKeyInstance : public Value {
 
   bool operator==(const Value &other) const override {
     if (other.isa<SymbolicKeyInstance>()) {
-      auto other_ = static_cast<const SymbolicKeyInstance &>(other);
+      auto &other_ = static_cast<const SymbolicKeyInstance &>(other);
       return *this == other_;
     } else {
       return false;
@@ -123,7 +123,7 @@ static inline AnfNodePtr NewEnviron(const FuncGraphPtr &fg) {
 static inline bool IsNewEnvironNode(const AnfNodePtr &node) { return IsPrimitiveCNode(node, prim::kPrimEnvironCreate); }
 
 static inline abstract::AbstractBasePtr MakeEnvironAbstract() {
-  return std::make_shared<abstract::AbstractScalar>(kAnyValue, std::make_shared<EnvType>());
+  return std::make_shared<abstract::AbstractScalar>(kValueAny, std::make_shared<EnvType>());
 }
 }  // namespace mindspore
 

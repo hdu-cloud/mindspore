@@ -6,51 +6,29 @@ if(MSLITE_ENABLE_MODEL_ENCRYPTION)
 endif()
 
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
-set(TOOLS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
-set(CCSRC_SRC
-        ${CCSRC_DIR}/backend/common/optimizer/pattern_engine.cc
-        ${CCSRC_DIR}/backend/common/optimizer/visit.cc
-        ${CCSRC_DIR}/backend/common/optimizer/graph_optimizer.cc
-        )
-
-if(NOT WIN32)
-    set(CCSRC_SRC ${CCSRC_SRC}
-        ${CCSRC_DIR}/utils/anfalgo.cc
-        ${CCSRC_DIR}/utils/convert_utils.cc
-        ${CCSRC_DIR}/utils/utils.cc
-        ${CCSRC_DIR}/utils/parallel_context.cc
-        )
+if(ENABLE_GPU)
+    add_compile_definitions(ENABLE_GPU)
 endif()
 
-if(MSLITE_ENABLE_GRAPH_KERNEL)
-    add_compile_definitions(MSLITE_ENABLE_GRAPH_KERNEL)
-    file(GLOB_RECURSE GRAPH_KERNEL_SRC
-            ${TOOLS_DIR}/graph_kernel/common/*.cc
-            ${TOOLS_DIR}/graph_kernel/converter/*.cc
-            ${CCSRC_DIR}/common/graph_kernel/core/*.cc
-            ${CCSRC_DIR}/common/graph_kernel/expanders/*.cc
-            ${CCSRC_DIR}/common/graph_kernel/model/*.cc
-            ${CCSRC_DIR}/common/graph_kernel/split_model/*.cc
-            ${CCSRC_DIR}/common/graph_kernel/graph_kernel_flags.cc
-            ${CCSRC_DIR}/kernel/akg/akg_kernel_json_generator.cc
-            )
-    set(CCSRC_SRC
-            ${CCSRC_SRC}
-            ${GRAPH_KERNEL_SRC}
-            )
-endif()
+include(${LITE_DIR}/cmake/ccsrc_converter.cmake)
 
 include_directories(${TOP_DIR}/mindspore/ccsrc/plugin/device/cpu/kernel)
 
 file(GLOB_RECURSE CONVERTER_SRC RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/ops/*.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/converter.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/offline_packing_optimizer.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/converter_packed_node.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/converter_funcgraph.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/converter_metagraph.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/anf_transform.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/anf_transform_for_ge.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/graphdef_transform.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/optimizer.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/export_model.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/optimizer_manager.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/session/*.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/graph_util.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/meta_graph_utils.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/node_util.cc
@@ -63,6 +41,8 @@ file(GLOB_RECURSE CONVERTER_SRC RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/meta_graph_serializer.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/parse_config_utils.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/statistic_utils.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/../common/func_graph_utils.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/../common/custom_ascend_utils.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/parser_utils.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/tf_bidirection_gru_cf_fusion.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/unused_node_remove_pass.cc
@@ -72,10 +52,12 @@ file(GLOB_RECURSE CONVERTER_SRC RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/unify_format.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/adapter/acl/plugin/acl_pass_plugin.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/import/*.cc
+        ${SRC_DIR}/extendrt/delegate/plugin/ascend_ge_executor_plugin.cc
         ${SRC_DIR}/common/quant_utils.cc
         ${SRC_DIR}/common/dynamic_library_loader.cc
         ${SRC_DIR}/train/train_populate_parameter.cc
         ${SRC_DIR}/common/config_file.cc
+        ${SRC_DIR}/common/config_infos.cc
         ${SRC_DIR}/common/primitive_t_utils.cc
         ../optimizer/*.cc
         )
@@ -89,6 +71,7 @@ add_subdirectory(parser/caffe)
 add_subdirectory(parser/tflite)
 add_subdirectory(parser/onnx)
 add_subdirectory(parser/tf)
+add_subdirectory(parser/om)
 if(ENABLE_CONVERT_PYTORCH_MODEL)
     add_subdirectory(parser/pytorch)
 endif()
@@ -104,7 +87,7 @@ add_subdirectory(micro/coder)
 add_subdirectory(${CORE_DIR} mindspore_core)
 
 if(MSLITE_ENABLE_ACL)
-    include_directories(${TOP_DIR}/graphengine/inc/external)
+    include_directories(${TOP_DIR}/graphengine/910/inc/external)
     set(MODE_ASCEND_ACL ON)
     include(${TOP_DIR}/cmake/dependency_graphengine.cmake)
     add_subdirectory(adapter/acl)
@@ -116,18 +99,33 @@ file(GLOB CXX_API_SRCS
         ${SRC_DIR}/litert/cxx_api/model/*.cc
         ${SRC_DIR}/litert/cxx_api/graph/*.cc
         ${SRC_DIR}/litert/cxx_api/tensor/*.cc)
+if(MSLITE_ENABLE_PARALLEL_INFERENCE)
+    set(CXX_API_SRCS
+            ${CXX_API_SRCS}
+            ${SRC_DIR}/extendrt/cxx_api/model_pool/predict_task_queue.cc
+            ${SRC_DIR}/extendrt/cxx_api/model_pool/model_worker.cc
+            ${SRC_DIR}/extendrt/cxx_api/model_pool/model_pool.cc
+            ${SRC_DIR}/extendrt/cxx_api/model_pool/model_parallel_runner.cc
+            ${SRC_DIR}/extendrt/cxx_api/model_pool/model_parallel_runner_impl.cc
+            ${SRC_DIR}/extendrt/cxx_api/model_pool/resource_manager.cc
+            )
+endif()
 
-file(GLOB RUNTIME_PASS_SRCS
-        ${SRC_DIR}/litert/pass/*.cc)
+if(MSLITE_ENABLE_RUNTIME_PASS)
+        file(GLOB KERNEL_ONLINE_FUSION_SRC ${SRC_DIR}/litert/pass/online_fusion/*.cc)
+endif()
+
+file(GLOB FORMAT_PASS_SRCS ${SRC_DIR}/litert/pass/format_pass/*.cc)
 
 set(LITE_SRC ${API_SRC}
         ${CXX_API_SRCS}
-        ${RUNTIME_PASS_SRCS}
+        ${FORMAT_PASS_SRCS}
         ${SRC_DIR}/common/ops/ops_def.cc
         ${SRC_DIR}/common/ops/ops_utils.cc
         ${SRC_DIR}/common/ops/anf_utils.cc
         ${SRC_DIR}/common/utils.cc
         ${SRC_DIR}/common/file_utils.cc
+        ${SRC_DIR}/common/mmap_utils.cc
         ${SRC_DIR}/common/context_util.cc
         ${SRC_DIR}/common/graph_util.cc
         ${SRC_DIR}/common/string_util.cc
@@ -142,6 +140,7 @@ set(LITE_SRC ${API_SRC}
         ${SRC_DIR}/litert/runtime_shape_fusion_pass.cc
         ${SRC_DIR}/litert/runtime_pass.cc
         ${SRC_DIR}/litert/inner_context.cc
+        ${SRC_DIR}/litert/thread_pool_reuse_manager.cc
         ${SRC_DIR}/tensor.cc
         ${SRC_DIR}/litert/tensor_category.cc
         ${SRC_DIR}/litert/schema_tensor_wrapper.cc
@@ -149,12 +148,14 @@ set(LITE_SRC ${API_SRC}
         ${SRC_DIR}/litert/kernel_registry.cc
         ${SRC_DIR}/registry/register_kernel_impl.cc
         ${SRC_DIR}/litert/lite_kernel.cc
-        ${SRC_DIR}/litert/kernel_exec.cc
+        ${SRC_DIR}/executor/kernel_exec.cc
         ${SRC_DIR}/litert/kernel_exec_util.cc
         ${SRC_DIR}/litert/scheduler.cc
-        ${SRC_DIR}/litert/sub_graph_kernel.cc
+        ${SRC_DIR}/executor/sub_graph_kernel.cc
         ${SRC_DIR}/litert/sub_graph_split.cc
+        ${KERNEL_ONLINE_FUSION_SRC}
         ${SRC_DIR}/litert/lite_session.cc
+        ${SRC_DIR}/litert/runtime_packed_node_pass.cc
         ${SRC_DIR}/litert/executor.cc
         ${SRC_DIR}/litert/lite_model.cc
         ${SRC_DIR}/litert/model_manager.cc
@@ -164,11 +165,18 @@ set(LITE_SRC ${API_SRC}
         ${SRC_DIR}/litert/huffman_decode.cc
         ${SRC_DIR}/extendrt/delegate/tensorrt/distribution/distribution_base.cc
         ${SRC_DIR}/extendrt/delegate/plugin/tensorrt_executor_plugin.cc
+        ${SRC_DIR}/infer/primitive_type.cc
         ${LITE_DIR}/src/extendrt/mock/lite_runtime/populate/base_operator_populate_register.cc
         ${SRC_DIR}/control_flow/control_flow_scheduler.cc
         ${SRC_DIR}/control_flow/control_subgraph_creator.cc
         ${SRC_DIR}/litert/kernel/ascend/plugin/ascend_kernel_plugin.cc
-        )
+        ${SRC_DIR}/extendrt/kernel/ascend/plugin/ascend_allocator_plugin.cc
+)
+
+if(MSLITE_ENABLE_CUSTOM_KERNEL)
+    file(GLOB KERNEL_REG_SRC ${SRC_DIR}/registry/*.cc)
+    set(LITE_SRC ${LITE_SRC} ${KERNEL_REG_SRC})
+endif()
 
 if(NOT ANDROID_NDK_TOOLCHAIN_INCLUDED)
     set(LITE_SRC
@@ -190,24 +198,24 @@ set(MODEL_LOADER_FRAMEWORK_SRC
         ${SRC_DIR}/extendrt/mindir_loader/model_loader.cc
 )
 
-if(MSLITE_ENABLE_CLOUD_FUSION_INFERENCE)
-add_compile_definitions(ENABLE_CLOUD_FUSION_INFERENCE)
+if(MSLITE_ENABLE_CLOUD_FUSION_INFERENCE OR MSLITE_ENABLE_CLOUD_INFERENCE)
+    add_compile_definitions(ENABLE_CLOUD_FUSION_INFERENCE)
+    add_compile_definitions(ENABLE_CLOUD_INFERENCE)
+    add_compile_definitions(SUPPORT_TRAIN)
+    set(SUPPORT_TRAIN on)
 
-# string(REPLACE "-Werror" "" CMAKE_C_FLAGS ${CMAKE_C_FLAGS})
-# string(REPLACE "-Werror" "" CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS})
+    set(MINDIR_MODEL_SRC
+            ${MINDIR_MODEL_SRC}
+            ${SRC_DIR}/extendrt/mindir_loader/mindir_model/mindir_model.cc
+            ${SRC_DIR}/extendrt/mindir_loader/mindir_model/mindir_model_util.cc
+            ${SRC_DIR}/extendrt/mindir_loader/mindir_model/mindir_model_convertor.cc
+            ${SRC_DIR}/extendrt/mindir_loader/mindir_model/mindir_model_loader.cc
+            ${SRC_DIR}/extendrt/mindir_loader/mindir_model/kernel_mod_util.cc
+            )
 
-set(MINDIR_MODEL_SRC
-        ${MINDIR_MODEL_SRC}
-        ${SRC_DIR}/extendrt/mindir_loader/mindir_model/mindir_model.cc
-        ${SRC_DIR}/extendrt/mindir_loader/mindir_model/mindir_model_util.cc
-        ${SRC_DIR}/extendrt/mindir_loader/mindir_model/mindir_model_convertor.cc
-        ${SRC_DIR}/extendrt/mindir_loader/mindir_model/mindir_model_loader.cc
-        ${SRC_DIR}/extendrt/mindir_loader/mindir_model/kernel_mod_util.cc
-        )
-
-set(MINDIR_KERNEL_SRC
-        ${MINDIR_KERNEL_SRC}
-        ${SRC_DIR}/extendrt/mindir_loader/mindir_model/inner_kernel.cc)
+    set(MINDIR_KERNEL_SRC
+            ${MINDIR_KERNEL_SRC}
+            ${SRC_DIR}/extendrt/mindir_loader/mindir_model/inner_kernel.cc)
 endif()
 
 set(LITE_SRC
@@ -226,12 +234,6 @@ if(MSLITE_ENABLE_BFC_MEMORY)
         ${SRC_DIR}/extendrt/numa_adapter.cc
         )
 endif()
-
-if(MSLITE_ENABLE_EXPERIMENTAL_KERNEL)
-    set(LITE_SRC ${LITE_SRC}
-        ${SRC_DIR}/../experimental/src/exec_env_utils.cc)
-endif()
-
 
 if(MSLITE_ENABLE_SHARING_MODEL_WEIGHT)
     set(LITE_SRC
@@ -259,19 +261,12 @@ if(MSLITE_ENABLE_MINDRT)
     include_directories(${CORE_DIR}/mindrt)
     include_directories(${CORE_DIR}/mindrt/include)
     include_directories(${CORE_DIR}/mindrt/src/)
-    file(GLOB MINDRT_SRC
-            ${CORE_DIR}/mindrt/src/*.cc
-            ${CORE_DIR}/mindrt/src/actor/*.cc
-            ${CORE_DIR}/mindrt/src/async/*.cc
-            ${CORE_DIR}/mindrt/src/evloop/*.cc
-            ${CORE_DIR}/mindrt/src/timer/*.cc
-            ${CORE_DIR}/mindrt/src/thread/*.cc
-            )
 
     set(LITE_SRC
             ${LITE_SRC}
             ${MINDRT_SRC}
             ${SRC_DIR}/litert/lite_mindrt.cc
+            ${SRC_DIR}/litert/parallel_lite_actor.cc
             ${SRC_DIR}/litert/mindrt_executor.cc
             ${SRC_DIR}/control_flow/control_actor_creator.cc
             )
@@ -323,21 +318,26 @@ set(TFLITE_FBS_FILES
 ms_build_flatbuffers_lite(TFLITE_FBS_FILES ${CMAKE_CURRENT_SOURCE_DIR}/parser/tflite/ tflite_fbs_src
         ${CMAKE_BINARY_DIR}/schema "inner")
 
+set(LITE_SRC
+        ${LITE_SRC}
+        ${CORE_DIR}/abstract/abstract_value.cc
+        ${CORE_DIR}/ir/anf.cc
+        ${CORE_DIR}/base/base.cc
+        )
+
 set_property(SOURCE ${CONVERTER_SRC} PROPERTY COMPILE_DEFINITIONS SUBMODULE_ID=mindspore::SubModuleId::SM_LITE)
-set_property(SOURCE ${CCSRC_SRC} PROPERTY COMPILE_DEFINITIONS SUBMODULE_ID=mindspore::SubModuleId::SM_LITE)
 set_property(SOURCE ${LITE_SRC} PROPERTY COMPILE_DEFINITIONS SUBMODULE_ID=mindspore::SubModuleId::SM_LITE)
 
 add_library(converter_runtime_mid OBJECT ${LITE_SRC})
 add_dependencies(converter_runtime_mid fbs_src fbs_inner_src)
+add_dependencies(converter_runtime_mid ccsrc_src_mid)
 target_compile_options(converter_runtime_mid PRIVATE "-Wno-stringop-overflow")
 add_library(mindspore_converter SHARED $<TARGET_OBJECTS:converter_runtime_mid>)
 
 add_library(converter_src_mid OBJECT ${CONVERTER_SRC})
 add_dependencies(converter_src_mid fbs_src fbs_inner_src)
 
-add_library(ccsrc_src_mid OBJECT ${CCSRC_SRC})
-add_dependencies(ccsrc_src_mid fbs_src fbs_inner_src)
-target_compile_definitions(ccsrc_src_mid PRIVATE BACKEND_DLL)
+
 target_compile_definitions(converter_src_mid PRIVATE BACKEND_DLL)
 target_compile_definitions(quantizer_mid PRIVATE BACKEND_DLL)
 
@@ -369,6 +369,7 @@ target_link_libraries(mindspore_converter
         tf_parser_mid
         caffe_parser_mid
         onnx_parser_mid
+        om_parser_mid
         lite_exporter_mid
         graph_pass_mid
         fusion_mid
@@ -386,6 +387,10 @@ target_link_libraries(mindspore_converter
         coder_mid
         mindir_serializer_mid
         )
+
+if(MSLITE_EXPORT_COMPUTE_IR)
+    target_link_libraries(mindspore_converter mindspore_lite_drawer)
+endif()
 
 if(SUPPORT_TRAIN)
     target_link_libraries(mindspore_converter train_cpu_kernel_mid)
@@ -406,11 +411,6 @@ endif()
 
 if(NOT WIN32)
     target_link_libraries(mindspore_converter dl)
-endif()
-
-if(MSLITE_ENABLE_MODEL_OBF)
-    target_link_libraries(mindspore_converter
-            ${OBF_LIB_DIR}/libmsdeobfuscator-lite.so)
 endif()
 
 add_subdirectory(converter_lite)

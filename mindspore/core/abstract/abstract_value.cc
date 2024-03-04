@@ -1,7 +1,7 @@
 /**
  * This is the C++ adaptation and derivative work of Myia (https://github.com/mila-iqia/myia/).
  *
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,11 +34,39 @@
 namespace mindspore {
 namespace abstract {
 using mindspore::common::IsEqual;
+
+AbstractBase::AbstractBase(const ValuePtr &value, const TypePtr &type, const BaseShapePtr &shape)
+    : value_(value), type_(type), shape_(shape) {}
+
+AbstractBase::AbstractBase(const AbstractBase &other)
+    : Base(other),
+      value_(other.value_),
+      type_(other.type_),
+      shape_(other.shape_),
+      value_desc_(other.value_desc_),
+      name_(other.name_),
+      inplace_abstract_(other.inplace_abstract_) {
+  user_data_ = other.user_data_;
+}
+
+AbstractBase &AbstractBase::operator=(const AbstractBase &other) {
+  if (&other != this) {
+    this->value_ = other.value_;
+    this->type_ = other.type_;
+    this->shape_ = other.shape_;
+    this->user_data_ = other.user_data_;
+    this->value_desc_ = other.value_desc_;
+    this->name_ = other.name_;
+    this->inplace_abstract_ = other.inplace_abstract_;
+  }
+  return *this;
+}
+
 AbstractBase::TraceNodeProvider AbstractBase::trace_node_provider_ = nullptr;
 
 std::string JoinSupplementaryInfo(const AbstractBasePtr &abstract1, const AbstractBasePtr &abstract2) {
   std::ostringstream oss;
-  oss << "\nInner Message:\nThis: " << abstract1->ToString() << ", other: " << abstract2->ToString();
+  oss << "#dmsg#Framework Error Message:#dmsg#This: " << abstract1->ToString() << ", other: " << abstract2->ToString();
   // Get trace info of node.
   AnfNodePtr node = nullptr;
   if (AbstractBase::trace_node_provider_ != nullptr) {
@@ -91,6 +119,46 @@ static inline bool IsUndeterminedType(const TypePtr &type) {
   return (type != nullptr) && (type->type_id() == kObjectTypeUndeterminedType);
 }
 
+void AbstractBase::set_value(const ValuePtr &value) {
+  MS_EXCEPTION_IF_NULL(value);
+  value_ = value;
+}
+
+void AbstractBase::set_type(const TypePtr &type) {
+  MS_EXCEPTION_IF_NULL(type);
+  type_ = type;
+}
+
+void AbstractBase::set_shape(const BaseShapePtr &shape) {
+  MS_EXCEPTION_IF_NULL(shape);
+  shape_ = shape;
+}
+
+const std::string &AbstractBase::value_desc() const { return value_desc_; }
+
+std::size_t AbstractBase::hash() const { return tid(); }
+
+void AbstractBase::set_value_desc(const std::string &desc) { value_desc_ = desc; }
+
+const TypePtr &AbstractBase::GetTypeTrack() const { return type_; }
+
+const ValuePtr &AbstractBase::GetValueTrack() const { return value_; }
+
+const BaseShapePtr &AbstractBase::GetShapeTrack() const { return shape_; }
+
+BaseShapePtr AbstractBase::BuildShape() const { return kNoShape; }
+
+void AbstractBase::set_trace_node_provider(const TraceNodeProvider &trace_node_provider) {
+  trace_node_provider_ = trace_node_provider;
+}
+
+inline AbstractBasePtr AbstractBase::Join(const AbstractBasePtr &other) {
+  MS_EXCEPTION_IF_NULL(other);
+  return shared_from_base<AbstractBase>();
+}
+
+bool AbstractBase::IsBroaden() const { return value_ == kValueAny; }
+
 bool AbstractBase::operator==(const AbstractBase &other) const {
   if (this == &other) {
     // Same object.
@@ -118,7 +186,7 @@ ValuePtr AbstractBase::BuildValue() const {
 AbstractBasePtr AbstractBase::Broaden() const {
   AbstractBasePtr clone = Clone();
   MS_EXCEPTION_IF_NULL(clone);
-  clone->set_value(kAnyValue);
+  clone->set_value(kValueAny);
   return clone;
 }
 
@@ -147,17 +215,61 @@ std::string AbstractBase::ToString(bool verbose) const {
   auto type = BuildType();
   if (shape != nullptr && type != nullptr) {
     buffer << type << ", " << shape->ToString();
-    if (tensor_value != nullptr && tensor_value != kAnyValue) {
+    if (tensor_value != nullptr && tensor_value != kValueAny) {
       buffer << ", value=...";
     }
   } else if (type != nullptr) {
     buffer << type;
-    if (tensor_value != nullptr && tensor_value != kAnyValue) {
+    if (tensor_value != nullptr && tensor_value != kValueAny) {
       buffer << ", value=...";
     }
   }
   return buffer.str();
 }
+
+void AbstractBase::set_interpret_bool_checker(InterpretBoolChecker checker) { interpret_bool_checker_ = checker; }
+
+AbstractBase::InterpretBoolChecker AbstractBase::interpret_bool_checker() { return interpret_bool_checker_; }
+
+void AbstractBase::set_pyexecute_user_data_catcher(PyExecuteUserDataCatcher catcher) {
+  pyexecute_user_data_catcher_ = catcher;
+}
+
+AbstractBase::PyExecuteUserDataCatcher AbstractBase::pyexecute_user_data_catcher() {
+  return pyexecute_user_data_catcher_;
+}
+
+std::string AbstractBase::name() const { return name_; }
+
+void AbstractBase::set_name(const std::string &name) { name_ = name; }
+
+AbstractBasePtr AbstractBase::inplace_abstract() const { return inplace_abstract_; }
+
+void AbstractBase::set_inplace_abstract(const AbstractBasePtr &inplace_abstract) {
+  inplace_abstract_ = inplace_abstract;
+}
+
+ValuePtr AbstractBase::RealBuildValue() const { return kValueAny; }
+
+AbstractScalar::AbstractScalar() : AbstractBase(kValueAny, kTypeAny) {}
+
+AbstractScalar::AbstractScalar(const ValuePtr &value, const TypePtr &type) : AbstractBase(value, type) {}
+
+AbstractScalar::AbstractScalar(const ValuePtr &value) : AbstractBase(value, value->type()) {}
+
+AbstractScalar::AbstractScalar(int value) : AbstractBase(MakeValue(value), kInt32) {}
+
+AbstractScalar::AbstractScalar(int64_t value) : AbstractBase(MakeValue(value), kInt64) {}
+
+AbstractScalar::AbstractScalar(float value) : AbstractBase(MakeValue(value), kFloat32) {}
+
+AbstractScalar::AbstractScalar(double value) : AbstractBase(MakeValue(value), kFloat64) {}
+
+AbstractScalar::AbstractScalar(bool value) : AbstractBase(MakeValue(value), kBool) {}
+
+AbstractScalar::AbstractScalar(const std::string &value) : AbstractBase(MakeValue(value), kString) {}
+
+AbstractScalar::AbstractScalar(const TypePtr &type) : AbstractBase(kValueAny, type) {}
 
 AbstractBasePtr AbstractScalar::Broaden() const {
   if (is_variable_) {
@@ -180,28 +292,46 @@ AbstractBasePtr AbstractScalar::Join(const AbstractBasePtr &other) {
   if (*this == *other) {
     return shared_from_base<AbstractBase>();
   }
-  const auto &type_self = GetTypeTrack();
-  const auto &type_other = other->GetTypeTrack();
-  TypePtr res_type = TypeJoin(type_self, type_other);
-  if (res_type == kAnyType) {
-    TypeJoinLogging(type_self, type_other, shared_from_base<AbstractBase>(), other);
+  const auto &this_type = GetTypeTrack();
+  const auto &other_type = other->GetTypeTrack();
+  TypePtr res_type = TypeJoin(this_type, other_type);
+  if (res_type == kTypeAny) {
+    TypeJoinLogging(this_type, other_type, shared_from_base<AbstractBase>(), other);
   }
-  const auto &value_self = GetValueTrack();
+  const auto &this_value = GetValueTrack();
   const auto &value_other = other->GetValueTrack();
-  ValuePtr res_value = ValueJoin(value_self, value_other);
-  if (res_value == value_self) {
+  if (other->isa<AbstractNegligible>() && !this_value->isa<ValueAny>()) {
+    return std::make_shared<AbstractAny>();
+  }
+
+  ValuePtr res_value = ValueJoin(this_value, value_other);
+  if (res_value == this_value) {
     return shared_from_base<AbstractBase>();
   }
   return std::make_shared<AbstractScalar>(res_value, res_type);
 }
 
+void AbstractScalar::set_is_variable(bool is_variable) { is_variable_ = is_variable; }
+
+std::size_t AbstractScalar::hash() const {
+  return hash_combine({tid(), GetValueTrack()->hash(), GetTypeTrack()->hash()});
+}
+
+TypePtr AbstractScalar::BuildType() const { return GetTypeTrack(); }
+
+AbstractBasePtr AbstractScalar::Clone() const {
+  auto abs = std::make_shared<AbstractScalar>(GetValueTrack(), GetTypeTrack()->Clone());
+  abs->set_is_variable(is_variable_);
+  return abs;
+}
+
 AbstractBasePtr AbstractType::Clone() const {
-  ValuePtr value_self = GetValueTrack();
-  if (value_self == nullptr || !value_self->isa<Type>()) {
+  ValuePtr this_value = GetValueTrack();
+  if (this_value == nullptr || !this_value->isa<Type>()) {
     return nullptr;
   }
-  auto type_self = value_self->cast_ptr<Type>();
-  return std::make_shared<AbstractType>(type_self->Clone());
+  auto this_type = this_value->cast_ptr<Type>();
+  return std::make_shared<AbstractType>(this_type->Clone());
 }
 
 bool AbstractType::operator==(const AbstractBase &other) const {
@@ -214,22 +344,60 @@ bool AbstractType::operator==(const AbstractBase &other) const {
 
 std::string AbstractType::ToString() const {
   std::ostringstream buffer;
-  ValuePtr value_self = GetValueTrack();
-  if (value_self == nullptr) {
+  ValuePtr this_value = GetValueTrack();
+  if (this_value == nullptr) {
     buffer << "AbstractType value: nullptr";
     return buffer.str();
   }
-  if (!value_self->isa<Type>()) {
+  if (!this_value->isa<Type>()) {
     buffer << type_name() << "(Value: nullptr)";
     return buffer.str();
   }
-  auto type_self = value_self->cast_ptr<Type>();
+  auto this_type = this_value->cast_ptr<Type>();
   buffer << type_name() << "("
-         << "Value: " << type_self->ToString() << ")";
+         << "Value: " << this_type->ToString() << ")";
   return buffer.str();
 }
 
-std::string AbstractError::ToString() const {
+AbstractBasePtr AbstractClass::Join(const AbstractBasePtr &other) {
+  MS_EXCEPTION_IF_NULL(other);
+  bool success = (*this == *other);
+  if (!success) {
+    const auto &this_type = GetTypeTrack();
+    const auto &other_type = other->GetTypeTrack();
+    TypeJoinLogging(this_type, other_type, shared_from_base<AbstractBase>(), other);
+  }
+  return shared_from_base<AbstractBase>();
+}
+
+AbstractBasePtr AbstractClass::Clone() const { return std::make_shared<AbstractClass>(GetValueTrack()); }
+
+bool AbstractClass::operator==(const AbstractBase &other) const {
+  if (this == &other) {
+    return true;
+  }
+  return tid() == other.tid() && IsEqual(GetValueTrack(), other.GetValueTrack());
+}
+
+std::string AbstractClass::ToString() const {
+  std::ostringstream buffer;
+  ValuePtr val = GetValueTrack();
+  MS_EXCEPTION_IF_NULL(val);
+  buffer << type_name() << "(" << val->ToString() << ")";
+  return buffer.str();
+}
+
+TypePtr AbstractType::BuildType() const { return std::make_shared<TypeType>(); }
+
+AbstractBasePtr AbstractType::Broaden() const { return Clone(); }
+
+AbstractProblem::AbstractProblem(const ValueProblemPtr &err, const AnfNodePtr &node) : AbstractBase(err), node_(node) {
+  if (err == nullptr || node == nullptr) {
+    MS_LOG(EXCEPTION) << "err or node is nullptr";
+  }
+}
+
+std::string AbstractProblem::ToString() const {
   std::ostringstream buffer;
   auto value_track = GetValueTrack();
   MS_EXCEPTION_IF_NULL(value_track);
@@ -239,8 +407,37 @@ std::string AbstractError::ToString() const {
   return buffer.str();
 }
 
+TypePtr AbstractProblem::BuildType() const { return std::make_shared<Problem>(); }
+
+AbstractBasePtr AbstractProblem::Broaden() const { return Clone(); }
+
+AbstractBasePtr AbstractProblem::Clone() const {
+  return std::make_shared<AbstractProblem>(GetValueTrack()->cast<ValueProblemPtr>(), node_);
+}
+
+AbstractScript::AbstractScript() : AbstractBase(kValueAny, kTypeAny) {}
+
+AbstractScript::AbstractScript(const ValuePtr &value, const TypePtr &type) : AbstractBase(value, type) {}
+
+AbstractScript::AbstractScript(const ValuePtr &value) : AbstractBase(value, kString) {}
+
+std::size_t AbstractScript::hash() const {
+  return hash_combine({tid(), GetValueTrack()->hash(), GetTypeTrack()->hash()});
+}
+
+TypePtr AbstractScript::BuildType() const { return GetTypeTrack(); }
+
+AbstractBasePtr AbstractScript::Clone() const {
+  return std::make_shared<AbstractScript>(GetValueTrack(), GetTypeTrack()->Clone());
+}
+
+AbstractBasePtr AbstractScript::Broaden() const { return Clone(); }
+
 AbstractBasePtr AbstractFunction::Join(const AbstractBasePtr &other) {
   MS_EXCEPTION_IF_NULL(other);
+  if (other->isa<AbstractNegligible>()) {
+    return shared_from_base<AbstractBase>();
+  }
   auto other_func = dyn_cast<AbstractFunction>(other);
   if (other_func == nullptr) {
     AbstractTypeJoinLogging(shared_from_base<AbstractBase>(), other);
@@ -256,6 +453,162 @@ bool AbstractFunction::operator==(const AbstractBase &other) const {
     return false;
   }
   return *this == static_cast<const AbstractFunction &>(other);
+}
+
+TypePtr AbstractFunction::BuildType() const { return std::make_shared<Function>(); }
+
+AbstractBasePtr AbstractFunction::Clone() const { return Copy(); }
+
+AbstractBasePtr AbstractFunction::Broaden() const {
+  return const_cast<AbstractFunction *>(this)->shared_from_base<AbstractFunction>();
+}
+
+std::uintptr_t AbstractFunction::tracking_id() const { return 0; }
+
+AbstractFunctionPtr AbstractFunction::CopyWithoutTrackingId() const { return Copy(); }
+
+AnalysisContextPtr AbstractFunction::context() const { return nullptr; }
+
+std::uintptr_t AbstractFunction::ToTrackingId(const AnfNodePtr &node) {
+  return reinterpret_cast<std::uintptr_t>(node.get());
+}
+
+AbstractKeywordArg::AbstractKeywordArg(const std::string &key, const AbstractBasePtr &argument)
+    : arg_name_(key), arg_value_(argument) {}
+
+std::string AbstractKeywordArg::get_key() const { return arg_name_; }
+
+AbstractBasePtr AbstractKeywordArg::get_arg() const { return arg_value_; }
+
+AbstractUndetermined::AbstractUndetermined() : AbstractBase(kValueAny) {}
+
+AbstractUndetermined::AbstractUndetermined(const AbstractBasePtr &element, const BaseShapePtr &shape)
+    : AbstractBase(kValueAny), element_(element) {
+  if (element == nullptr) {
+    MS_LOG(EXCEPTION) << "element is nullptr";
+  }
+  if (element->isa<AbstractUndetermined>()) {
+    MS_LOG(EXCEPTION) << "element type error";
+  }
+  MS_EXCEPTION_IF_NULL(shape);
+  if (shape->isa<NoShape>()) {
+    MS_LOG(EXCEPTION) << "AbstractUndetermined can't set shape as NoShape.";
+  }
+  AbstractBase::set_shape(shape);
+}
+
+AbstractUndetermined::AbstractUndetermined(const TypePtr &element_type, const ShapeVector &shape)
+    : AbstractBase(kValueAny), element_(std::make_shared<AbstractScalar>(kValueAny, element_type)) {
+  if (element_type == nullptr) {
+    MS_LOG(EXCEPTION) << "element_type is nullptr";
+  }
+  AbstractBase::set_shape(std::make_shared<Shape>(shape));
+}
+
+AbstractUndetermined::AbstractUndetermined(const TypePtr &element_type, const BaseShapePtr &shape)
+    : AbstractBase(kValueAny), element_(std::make_shared<AbstractScalar>(kValueAny, element_type)) {
+  if (element_type == nullptr) {
+    MS_LOG(EXCEPTION) << "element_type is nullptr";
+  }
+  MS_EXCEPTION_IF_NULL(shape);
+  if (shape->isa<NoShape>()) {
+    MS_LOG(EXCEPTION) << "AbstractUndetermined can't set shape as NoShape.";
+  }
+  AbstractBase::set_shape(shape);
+}
+
+TypePtr AbstractUndetermined::BuildType() const { return std::make_shared<UndeterminedType>(); }
+
+AbstractBasePtr AbstractUndetermined::Clone() const { return std::make_shared<AbstractUndetermined>(); }
+
+AbstractBasePtr AbstractUndetermined::element() const { return element_; }
+
+AbstractTensor::AbstractTensor(const AbstractBasePtr &element, const BaseShapePtr &shape)
+    : AbstractUndetermined(element, shape) {}
+
+AbstractTensor::AbstractTensor(const TypePtr &element_type, const ShapeVector &shape)
+    : AbstractUndetermined(element_type, shape) {}
+
+AbstractTensor::AbstractTensor(const tensor::TensorPtr &tensor)
+    : AbstractUndetermined(tensor->Dtype(), tensor->shape()) {}
+
+AbstractTensor::AbstractTensor(const TypePtr &element_type, const BaseShapePtr &shape)
+    : AbstractUndetermined(element_type, shape) {}
+
+void AbstractTensor::set_value_range(const ValuePtr &min_value, const ValuePtr &max_value) {
+  min_value_ = min_value;
+  max_value_ = max_value;
+}
+
+const ValuePtr &AbstractTensor::get_min_value() const { return min_value_; }
+
+const ValuePtr &AbstractTensor::get_max_value() const { return max_value_; }
+
+void AbstractTensor::set_shape_value(const ValuePtr &shape_value) { shape_value_ = shape_value; }
+
+const ValuePtr &AbstractTensor::get_shape_value() const { return shape_value_; }
+
+std::size_t AbstractTensor::hash() const {
+  // We have to exclude value pointer from hash, because CSE (Common Subexpression Elimination)
+  // will use this hash to find duplicate ValueNodes that Tensor values are equal.
+  auto hash_sum = hash_combine(tid(), element_->hash());
+  const auto &shape = GetShapeTrack();
+  if (shape != nullptr) {
+    hash_sum = hash_combine(hash_sum, shape->hash());
+  }
+  return hash_sum;
+}
+
+bool AbstractTensor::is_adapter() const { return is_adapter_; }
+
+void AbstractTensor::set_is_adapter(bool is_adapter) { is_adapter_ = is_adapter; }
+
+AbstractAny::AbstractAny()
+    : AbstractTensor(DefaultDtype(), std::make_shared<Shape>(ShapeVector({Shape::kShapeRankAny}))) {}
+
+AbstractBasePtr AbstractAny::Join(const AbstractBasePtr &other) {
+  MS_EXCEPTION_IF_NULL(other);
+  return std::make_shared<AbstractAny>();
+}
+
+AbstractBasePtr AbstractAny::Broaden() const { return Clone(); }
+
+AbstractBasePtr AbstractAny::Clone() const {
+  auto any_abstract = std::make_shared<AbstractAny>();
+  if (supposed_tensor_dtype()) {
+    MS_EXCEPTION_IF_NULL(element());
+    const auto &dtype = element()->BuildType();
+    MS_EXCEPTION_IF_NULL(any_abstract->element());
+    any_abstract->element()->set_type(dtype);
+    any_abstract->set_supposed_tensor_dtype(true);
+  }
+  return any_abstract;
+}
+
+std::string AbstractAny::ToString() const { return type_name(); }
+
+bool AbstractAny::supposed_tensor_dtype() const { return supposed_tensor_dtype_; }
+
+void AbstractAny::set_supposed_tensor_dtype(bool flag) { supposed_tensor_dtype_ = flag; }
+
+TypePtr AbstractAny::DefaultDtype() { return kFloat64; }
+
+const std::string &AbstractJoinedAny::message() const { return message_; }
+
+void AbstractJoinedAny::set_message(const std::string &message) { message_ = message; }
+
+AbstractJoinedAny::ExceptionType AbstractJoinedAny::exception() const { return exception_; }
+
+void AbstractJoinedAny::set_exception(ExceptionType exception) { exception_ = exception; }
+
+void AbstractJoinedAny::ThrowException() const {
+  if (exception_ == kTypeError) {
+    MS_EXCEPTION(TypeError) << message_;
+  } else if (exception_ == kValueError) {
+    MS_EXCEPTION(ValueError) << message_;
+  } else {
+    MS_LOG(EXCEPTION) << message_;
+  }
 }
 
 namespace {
@@ -383,12 +736,12 @@ void CheckSequenceNodesValid(const AnfNodeWeakPtrList &sequence_nodes) {
                   << ", current_node: " << current_sequence_node->DebugString();
 
     if (candidate_flags->size() != current_flags->size()) {
-      MS_LOG(EXCEPTION) << "Flag not same size";
+      MS_LOG(INTERNAL_EXCEPTION) << "Flag not same size";
     }
     for (size_t j = 0; j < candidate_flags->size(); ++j) {
       if ((*candidate_flags)[j] != (*current_flags)[j]) {
-        MS_LOG(EXCEPTION) << "Not equal elements_use_flags[" << j << "], this_flag: " << (*candidate_flags)[j]
-                          << ", other_flag: " << (*current_flags)[j];
+        MS_LOG(INTERNAL_EXCEPTION) << "Not equal elements_use_flags[" << j << "], this_flag: " << (*candidate_flags)[j]
+                                   << ", other_flag: " << (*current_flags)[j];
       }
     }
   }
@@ -439,11 +792,21 @@ const AbstractBasePtr AbstractSequence::operator[](const std::size_t &dim) const
 
 std::string AbstractSequence::ToStringInternal() const {
   std::ostringstream buffer;
+  if (dynamic_len_) {
+    buffer << "dynamic_len_element_abs: "
+           << (dynamic_len_element_abs_ == nullptr ? "nullptr" : dynamic_len_element_abs_->ToString());
+    return buffer.str();
+  }
   size_t i = 0;
   size_t size = elements_.size();
+  auto prefix_space = std::string(space_num_, ' ');
   for (const auto &element : elements_) {
     MS_EXCEPTION_IF_NULL(element);
-    buffer << "element[" << i << "]: " << element->ToString();
+    if (element->isa<AbstractSequence>()) {
+      constexpr auto kIndent = 4;
+      element->cast<AbstractSequencePtr>()->space_num_ = space_num_ + kIndent;
+    }
+    buffer << "\n" << prefix_space << "element[" << i << "]: " << element->ToString();
     if (i < size - 1) {
       buffer << ", ";
     }
@@ -454,11 +817,12 @@ std::string AbstractSequence::ToStringInternal() const {
 
 std::string AbstractSequence::ToString() const {
   std::stringstream ss;
+  ss << "\n";
   ss << type_name();
   ss << "{";
   ss << ToStringInternal();
   if (!dynamic_len_ && sequence_nodes() != nullptr && !sequence_nodes()->empty()) {
-    ss << ", sequence_nodes: {";
+    ss << ", " << std::string(space_num_, ' ') << "sequence_nodes: {";
     for (size_t i = 0; i < sequence_nodes()->size(); ++i) {
       auto sequence_node = (*sequence_nodes())[i].lock();
       if (sequence_node == nullptr) {
@@ -477,7 +841,9 @@ std::string AbstractSequence::ToString() const {
     }
     ss << "}";
   }
+  ss << ", dynamic_len:" << dynamic_len_ << ", is dyn arg:" << dyn_len_arg_;
   ss << "}";
+  ss << "\n";
   return ss.str();
 }
 
@@ -514,8 +880,14 @@ AnfNodeWeakPtrList AbstractSequence::SequenceNodesJoin(const AbstractBasePtr &ot
   auto this_sequence_nodes_size = (this->sequence_nodes() == nullptr ? 0 : this->sequence_nodes()->size());
   auto other_sequence_nodes_size =
     (other_sequence->sequence_nodes() == nullptr ? 0 : other_sequence->sequence_nodes()->size());
-  if (this_sequence_nodes_size == 0 || other_sequence_nodes_size == 0) {
+  // The tuple or list output which has sequence_nodes may be joined with a tuple output node like top_k,
+  // we should return the branch which has sequence_nodes.
+  if (this_sequence_nodes_size == 0 && other_sequence_nodes_size == 0) {
     return sequence_nodes;
+  } else if (this_sequence_nodes_size == 0) {
+    return *(other_sequence->sequence_nodes());
+  } else if (other_sequence_nodes_size == 0) {
+    return *(this->sequence_nodes());
   }
   // Collect this and other sequence nodes.
   if (this->sequence_nodes() != nullptr) {
@@ -547,8 +919,8 @@ void SynchronizeSequenceElementsUseFlagsRecursively(const AbstractSequencePtr &l
   lhs_sequence->InsertSequenceNodes(sequence_nodes);
   rhs_sequence->InsertSequenceNodes(sequence_nodes);
   if (lhs_sequence->elements().size() != rhs_sequence->elements().size()) {
-    MS_LOG(EXCEPTION) << "The elements size should be equal, " << lhs_sequence->ToString() << ", "
-                      << rhs_sequence->ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "The elements size should be equal, " << lhs_sequence->ToString() << ", "
+                               << rhs_sequence->ToString();
   }
   for (size_t i = 0; i < lhs_sequence->elements().size(); ++i) {
     auto lhs_inner_sequence = dyn_cast<AbstractSequence>(lhs_sequence->elements()[i]);
@@ -565,7 +937,7 @@ void SynchronizeSequenceElementsUseFlagsRecursively(const AbstractSequencePtr &l
 
 void AbstractSequence::InsertSequenceNodes(const AnfNodeWeakPtrList &sequence_nodes) {
   if (dynamic_len_) {
-    MS_LOG(EXCEPTION) << "Can not insert sequence nodes for dynamic length sequence " << ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Can not insert sequence nodes for dynamic length sequence " << ToString();
   }
   if (sequence_nodes_ == nullptr) {
     MS_LOG(DEBUG) << "The sequence_nodes is null.";
@@ -579,7 +951,7 @@ void AbstractSequence::InsertSequenceNodes(const AnfNodeWeakPtrList &sequence_no
 
 void AbstractSequence::InsertSequenceNode(const AnfNodePtr &sequence_node) {
   if (dynamic_len_) {
-    MS_LOG(EXCEPTION) << "Can not insert sequence node for dynamic length sequence " << ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Can not insert sequence node for dynamic length sequence " << ToString();
   }
   if (sequence_nodes_ == nullptr) {
     MS_LOG(DEBUG) << "The sequence_nodes is null.";
@@ -598,7 +970,7 @@ void AbstractSequence::InsertSequenceNode(const AnfNodePtr &sequence_node) {
 
 void AbstractSequence::UpdateSequenceNode(const AnfNodePtr &old_sequence_node, const AnfNodePtr &new_sequence_node) {
   if (dynamic_len_) {
-    MS_LOG(EXCEPTION) << "Can not update sequence node for dynamic length sequence " << ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Can not update sequence node for dynamic length sequence " << ToString();
   }
   if (sequence_nodes_ == nullptr) {
     MS_LOG(DEBUG) << "The sequence_nodes is null.";
@@ -612,7 +984,7 @@ void AbstractSequence::UpdateSequenceNode(const AnfNodePtr &old_sequence_node, c
     CheckSequenceNodesValid(*sequence_nodes_);
     return;
   }
-  MS_LOG(EXCEPTION) << "Not found old node \'" << old_sequence_node->DebugString() << "\' in sequence nodes.";
+  MS_LOG(INTERNAL_EXCEPTION) << "Not found old node \'" << old_sequence_node->DebugString() << "\' in sequence nodes.";
 }
 
 bool AbstractSequence::PurifyElements() {
@@ -649,13 +1021,13 @@ bool AbstractSequence::PurifyElements() {
   // Purify the elements.
   auto &elements_use_flags = *elements_use_flags_ptr;
   if (elements_use_flags.size() < elements_.size()) {
-    MS_LOG(EXCEPTION) << "Elements size should not be greater to elements use flags size. " << ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Elements size should not be greater to elements use flags size. " << ToString();
   }
   for (size_t i = 0; i < elements_.size(); ++i) {
     MS_EXCEPTION_IF_NULL(elements_[i]);
     if (!elements_use_flags[i]) {
       const auto unuse_node_none = std::make_shared<AbstractScalar>(std::make_shared<Int32Imm>(0));
-      if (elements_[i]->isa<AbstractError>()) {
+      if (elements_[i]->isa<AbstractProblem>()) {
         unuse_node_none->set_type(std::make_shared<Problem>());
       }
       elements_[i] = unuse_node_none;
@@ -667,38 +1039,88 @@ bool AbstractSequence::PurifyElements() {
   return true;
 }
 
-void AbstractSequence::CheckAndConvertToDynamicLenSequence() {
-  const size_t input_len = size();
+bool AbstractCanJoin(const AbstractBasePtr &abs1, const AbstractBasePtr &abs2) {
+  try {
+    MS_LOG_TRY_CATCH_SCOPE;
+    (void)abs1->Join(abs2);
+  } catch (std::exception &) {
+    return false;
+  }
+  return true;
+}
+
+// Convert self from a fixed length sequence to dynamic length sequence.
+void AbstractSequence::CheckAndConvertToDynamicLenSequence(bool raise_exception) {
+  // Can not use size() since it will raise error when sequence is already dynamic length.
+  const size_t input_len = elements_.size();
   if (input_len > 1) {
     auto first_element = elements()[0];
     MS_EXCEPTION_IF_NULL(first_element);
     auto first_element_shape = first_element->BuildShape();
     MS_EXCEPTION_IF_NULL(first_element_shape);
     auto first_element_type_id = first_element->BuildType()->generic_type_id();
-    for (size_t i = 0; i < input_len; ++i) {
+    for (size_t i = 1; i < input_len; ++i) {
       auto cur_element = elements()[i];
       MS_EXCEPTION_IF_NULL(cur_element);
       auto cur_element_type_id = cur_element->BuildType()->generic_type_id();
       if (first_element_type_id != cur_element_type_id) {
+        if (!raise_exception) {
+          return;
+        }
         MS_EXCEPTION(ValueError) << "In graph mode, the element type of dynamic length array must be the same."
                                  << "The element type do not match, can not convert to dynamic length sequence. "
-                                 << "The first element type is: " << TypeIdToString(first_element_type_id) << "The "
+                                 << "The 0th element type is: " << TypeIdToString(first_element_type_id) << ". The "
                                  << i << "th element type is: " << TypeIdToString(cur_element_type_id);
       }
       auto cur_element_shape = cur_element->BuildShape();
       MS_EXCEPTION_IF_NULL(cur_element_shape);
       if (*first_element_shape != *cur_element_shape) {
+        if (!raise_exception) {
+          return;
+        }
         MS_EXCEPTION(ValueError) << "In graph mode, the element shape of dynamic length array must be the same."
                                  << "The element shape do not match, can not convert to dynamic length sequence. "
-                                 << "The first element shape is: " << first_element_shape->ToString() << "The " << i
+                                 << "The 0th element shape is: " << first_element_shape->ToString() << ". The " << i
                                  << "th element shape is: " << cur_element_shape->ToString();
+      }
+      if (!AbstractCanJoin(first_element, cur_element)) {
+        if (!raise_exception) {
+          return;
+        }
+        MS_EXCEPTION(TypeError) << "In graph mode, the element shape of dynamic length array must be the same."
+                                << "The element do not match, can not convert to dynamic length sequence. "
+                                << "The 0th element is: " << first_element->ToString() << ". The " << i
+                                << "th element shape is: " << cur_element->ToString();
       }
     }
     set_dynamic_len_element_abs(first_element);
   } else if (input_len == 1) {
     set_dynamic_len_element_abs(elements()[0]);
   }
+  set_value(kValueAny);
+  // Set sequence nodes to nulltpr to disable DDE.
+  sequence_nodes_ = nullptr;
   set_dynamic_len(true);
+}
+
+// Convert self's cloned abstract from a fixed length sequence to dynamic length sequence, just like tensor broaden.
+AbstractSequencePtr AbstractSequence::BroadenToDynamicLenSequence() {
+  if (dynamic_len()) {
+    return shared_from_base<AbstractSequence>();
+  }
+  if (isa<AbstractSparseTensor>()) {
+    return shared_from_base<AbstractSequence>();
+  }
+  auto clone_sequence = Clone()->cast<AbstractSequencePtr>();
+  clone_sequence->CheckAndConvertToDynamicLenSequence(false);
+  if (clone_sequence->dynamic_len()) {
+    set_dyn_len_arg();
+    // Set all sequence inputs as used if trans from fixed length to dynamic length.
+    SetSequenceElementsUseFlagsRecursively(shared_from_base<AbstractSequence>(), true);
+    return clone_sequence;
+  }
+  // Convert to dynamic len failed, return original abstract.
+  return shared_from_base<AbstractSequence>();
 }
 
 TypePtrList AbstractSequence::ElementsType() const {
@@ -751,15 +1173,28 @@ AbstractBasePtrList AbstractSequence::ElementsPartialBroaden() const {
   return element_list;
 }
 
+std::pair<bool, ValuePtr> GetValueFromUserData(const AbstractBasePtr &element_abs) {
+  MS_EXCEPTION_IF_NULL(element_abs);
+  if (abstract::AbstractBase::pyexecute_user_data_catcher()) {
+    return abstract::AbstractBase::pyexecute_user_data_catcher()(element_abs);
+  }
+  return {false, nullptr};
+}
+
 template <typename T>
 ValuePtr AbstractSequence::ElementsBuildValue() const {
   std::vector<ValuePtr> element_value_list;
   for (const auto &element : elements_) {
     MS_EXCEPTION_IF_NULL(element);
-    ValuePtr element_value = element->BuildValue();
+    auto [has_user_data, element_value] = GetValueFromUserData(element);
+    if (has_user_data && element_value != nullptr) {
+      element_value_list.push_back(element_value);
+      continue;
+    }
+    element_value = element->BuildValue();
     MS_EXCEPTION_IF_NULL(element_value);
-    if (element_value->isa<AnyValue>()) {
-      return kAnyValue;
+    if (element_value->isa<ValueAny>()) {
+      return kValueAny;
     }
     element_value_list.push_back(element_value);
   }
@@ -769,13 +1204,9 @@ template MS_CORE_API ValuePtr AbstractSequence::ElementsBuildValue<ValueTuple>()
 template MS_CORE_API ValuePtr AbstractSequence::ElementsBuildValue<ValueList>() const;
 
 template <typename T>
-AbstractBasePtr AbstractSequence::ElementsJoin(const AbstractBasePtr &other) {
+AbstractBasePtr AbstractSequence::ElementsJoin(const AbstractSequencePtr &other) {
   MS_EXCEPTION_IF_NULL(other);
-  auto other_sequeue = dyn_cast_ptr<T>(other);
-  if (other_sequeue == nullptr) {
-    AbstractTypeJoinLogging(shared_from_base<AbstractBase>(), other);
-  }
-  auto joined_list = AbstractJoin(elements_, other_sequeue->elements_);
+  auto joined_list = AbstractJoin(elements_, other->elements_);
   bool changes = false;
   for (std::size_t i = 0; i < elements_.size(); i++) {
     if (elements_[i] != joined_list[i]) {
@@ -788,8 +1219,8 @@ AbstractBasePtr AbstractSequence::ElementsJoin(const AbstractBasePtr &other) {
   }
   return std::make_shared<T>(joined_list);
 }
-template AbstractBasePtr AbstractSequence::ElementsJoin<AbstractList>(const AbstractBasePtr &);
-template AbstractBasePtr AbstractSequence::ElementsJoin<AbstractTuple>(const AbstractBasePtr &);
+template AbstractBasePtr AbstractSequence::ElementsJoin<AbstractList>(const AbstractSequencePtr &);
+template AbstractBasePtr AbstractSequence::ElementsJoin<AbstractTuple>(const AbstractSequencePtr &);
 
 std::size_t AbstractSequence::hash() const {
   if (dynamic_len_) {
@@ -807,7 +1238,7 @@ std::size_t AbstractSequence::size() const {
     if (dynamic_len_element_abs_ == nullptr) {
       return 0;
     }
-    MS_LOG(EXCEPTION) << "Can not get size for dynamic length sequence " << ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Can not get size for dynamic length sequence " << ToString();
   }
   return elements_.size();
 }
@@ -817,50 +1248,80 @@ bool AbstractSequence::empty() const {
     if (dynamic_len_element_abs_ == nullptr) {
       return true;
     }
-    MS_LOG(EXCEPTION) << "Can not call function empty() for dynamic length sequence " << ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Can not call function empty() for dynamic length sequence " << ToString();
   }
   return elements_.empty();
+}
+
+void AbstractSequence::set_dynamic_len(bool dynamic_len) {
+  if (dynamic_len) {
+    sequence_nodes_ = nullptr;
+  }
+  dynamic_len_ = dynamic_len;
 }
 
 void AbstractSequence::set_dynamic_len_element_abs(const AbstractBasePtr &dynamic_len_element_abs) {
   if (dynamic_len_element_abs == nullptr) {
     return;
   }
-  if (dynamic_len_element_abs_ != nullptr) {
-    MS_EXCEPTION(TypeError) << "The abstract of element for variable length sequence " << ToString()
-                            << " is already set, this can not be reset.";
+  if (dynamic_len_element_abs->isa<abstract::AbstractDictionary>()) {
+    MS_EXCEPTION(TypeError) << "DynamicSequence does not support dictionary type as element type now.";
   }
   // dynamic_len_element_abs should ignore value.
-  dynamic_len_element_abs_ = BroadenAllValues(dynamic_len_element_abs);
+  dynamic_len_element_abs_ = AbstractBroaden(dynamic_len_element_abs);
 }
 
-bool AbstractSequence::operator==(const AbstractSequence &other) const {
+bool AbstractSequence::operator==(const AbstractBase &other) const {
   if (this == &other) {
     return true;
   }
   if (tid() != other.tid()) {
     return false;
   }
-  if (dynamic_len_ != other.dynamic_len()) {
+  const auto &other_sequence = dynamic_cast<const AbstractSequence &>(other);
+  if (dynamic_len_ != other_sequence.dynamic_len()) {
     // Variable length sequence and constant length sequence can not be the same.
     return false;
   }
 
   if (dynamic_len_) {
     // If the abstract of element for two variable sequence is the same, these two sequence is the same.
-    return IsEqual(dynamic_len_element_abs_, other.dynamic_len_element_abs());
+    return IsEqual(dynamic_len_element_abs_, other_sequence.dynamic_len_element_abs());
   }
 
-  if (elements_.size() != other.elements_.size()) {
+  if (elements_.size() != other_sequence.elements_.size()) {
     return false;
   }
   for (size_t i = 0; i < elements_.size(); ++i) {
-    if (!IsEqual(elements_[i], other.elements_[i])) {
+    if (!IsEqual(elements_[i], other_sequence.elements_[i])) {
       return false;
     }
   }
   return true;
 }
+
+const AbstractBasePtrList &AbstractSequence::elements() const { return elements_; }
+
+const std::shared_ptr<AnfNodeWeakPtrList> &AbstractSequence::sequence_nodes() const { return sequence_nodes_; }
+
+void AbstractSequence::set_sequence_nodes(const std::shared_ptr<AnfNodeWeakPtrList> &sequence_nodes) {
+  sequence_nodes_ = sequence_nodes;
+}
+
+bool AbstractSequence::dynamic_len() const { return dynamic_len_; }
+
+AbstractBasePtr AbstractSequence::dynamic_len_element_abs() const { return dynamic_len_element_abs_; }
+
+void AbstractSequence::set_dyn_len_arg() { dyn_len_arg_ = true; }
+
+bool AbstractSequence::dyn_len_arg() const { return dyn_len_arg_; }
+
+AbstractTuple::AbstractTuple(AbstractBasePtrList &&elements, const std::shared_ptr<AnfNodeWeakPtrList> &tuple_nodes)
+    : AbstractSequence(std::move(elements), tuple_nodes) {}
+
+AbstractTuple::AbstractTuple(const AbstractBasePtrList &elements,
+                             const std::shared_ptr<AnfNodeWeakPtrList> &tuple_nodes)
+    : AbstractSequence(elements, tuple_nodes) {}
 
 TypePtr AbstractTuple::BuildType() const {
   auto ret = std::make_shared<Tuple>(ElementsType());
@@ -875,13 +1336,17 @@ TypePtr AbstractTuple::BuildType() const {
 
 BaseShapePtr AbstractTuple::BuildShape() const {
   if (dynamic_len_) {
-    return kDynamicSequenceShape;
+    if (dynamic_len_element_abs_ == nullptr) {
+      return std::make_shared<DynamicSequenceShape>(nullptr);
+    }
+    return std::make_shared<DynamicSequenceShape>(dynamic_len_element_abs_->BuildShape());
   }
   return std::make_shared<TupleShape>(ElementsShape());
 }
 
 AbstractBasePtr AbstractTuple::Clone() const {
   auto ret = std::make_shared<AbstractTuple>(ElementsClone(), sequence_nodes());
+  ret->dyn_len_arg_ = dyn_len_arg_;
   ret->set_dynamic_len(dynamic_len_);
   ret->set_dynamic_len_element_abs(dynamic_len_element_abs_);
   return ret;
@@ -903,7 +1368,7 @@ AbstractBasePtr AbstractTuple::PartialBroaden() const {
 
 ValuePtr AbstractTuple::RealBuildValue() const {
   if (dynamic_len_) {
-    return kAnyValue;
+    return kValueAny;
   }
   return ElementsBuildValue<ValueTuple>();
 }
@@ -912,25 +1377,13 @@ void AbstractTuple::set_shape(const BaseShapePtr &shape) {
   auto tuple_shape = dyn_cast_ptr<TupleShape>(shape);
   MS_EXCEPTION_IF_NULL(tuple_shape);
   if (tuple_shape->shape().size() != elements_.size()) {
-    MS_LOG(EXCEPTION) << "Size mismatch: " << tuple_shape->shape().size() << " vs " << elements_.size();
+    MS_LOG(INTERNAL_EXCEPTION) << "Size mismatch: " << tuple_shape->shape().size() << " vs " << elements_.size();
   }
 
   for (size_t i = 0; i < elements_.size(); ++i) {
     MS_EXCEPTION_IF_NULL(elements_[i]);
     elements_[i]->set_shape(tuple_shape->shape()[i]);
   }
-}
-
-bool AbstractTuple::operator==(const AbstractTuple &other) const { return AbstractSequence::operator==(other); }
-
-bool AbstractTuple::operator==(const AbstractBase &other) const {
-  if (this == &other) {
-    return true;
-  }
-  if (!other.isa<AbstractTuple>()) {
-    return false;
-  }
-  return AbstractSequence::operator==(static_cast<const AbstractSequence &>(other));
 }
 
 bool AbstractTuple::ContainsAllBroadenTensors() const {
@@ -956,7 +1409,7 @@ bool AbstractTuple::ContainsAllConstants() const {
     MS_EXCEPTION_IF_NULL(element_value);
     // Check if tuple contains only constants, i.e. string, number, constant tensor and tuple.
     if (!(element_value->isa<StringImm>() || element_value->isa<Scalar>() ||
-          (element->isa<abstract::AbstractTensor>() && element_value != kAnyValue) ||
+          (element->isa<abstract::AbstractTensor>() && element_value != kValueAny) ||
           element->isa<abstract::AbstractTuple>())) {
       return false;
     }
@@ -969,13 +1422,31 @@ bool AbstractTuple::ContainsAllConstants() const {
   return true;
 }
 
-bool AbstractList::operator==(const AbstractList &other) const { return AbstractSequence::operator==(other); }
+bool AbstractTuple::operator==(const AbstractBase &other) const {
+  if (this == &other) {
+    return true;
+  }
+  if (!other.isa<AbstractTuple>()) {
+    return false;
+  }
+  return AbstractSequence::operator==(static_cast<const AbstractSequence &>(other));
+}
+
+AbstractList::AbstractList(AbstractBasePtrList &&elements, const std::shared_ptr<AnfNodeWeakPtrList> &list_nodes)
+    : AbstractSequence(std::move(elements), list_nodes) {}
+
+AbstractList::AbstractList(const AbstractBasePtrList &elements, const std::shared_ptr<AnfNodeWeakPtrList> &list_nodes)
+    : AbstractSequence(elements, list_nodes) {}
 
 bool AbstractList::operator==(const AbstractBase &other) const {
   if (this == &other) {
     return true;
   }
   if (!other.isa<AbstractList>()) {
+    return false;
+  }
+  auto other_extra_info = static_cast<const AbstractList &>(other).extra_info();
+  if (extra_info_->size() != 0 && other_extra_info->size() != 0 && extra_info_ != other_extra_info) {
     return false;
   }
   return AbstractSequence::operator==(static_cast<const AbstractSequence &>(other));
@@ -994,15 +1465,20 @@ TypePtr AbstractList::BuildType() const {
 
 BaseShapePtr AbstractList::BuildShape() const {
   if (dynamic_len_) {
-    return kDynamicSequenceShape;
+    if (dynamic_len_element_abs_ == nullptr) {
+      return std::make_shared<DynamicSequenceShape>(nullptr);
+    }
+    return std::make_shared<DynamicSequenceShape>(dynamic_len_element_abs_->BuildShape());
   }
   return std::make_shared<ListShape>(ElementsShape());
 }
 
 AbstractBasePtr AbstractList::Clone() const {
   auto ret = std::make_shared<AbstractList>(ElementsClone(), sequence_nodes());
+  ret->dyn_len_arg_ = dyn_len_arg_;
   ret->set_dynamic_len(dynamic_len_);
   ret->set_dynamic_len_element_abs(dynamic_len_element_abs_);
+  ret->set_extra_info(extra_info_);
   return ret;
 }
 
@@ -1010,6 +1486,7 @@ AbstractBasePtr AbstractList::Broaden() const {
   auto ret = std::make_shared<AbstractList>(ElementsBroaden(), sequence_nodes());
   ret->set_dynamic_len(dynamic_len_);
   ret->set_dynamic_len_element_abs(dynamic_len_element_abs_);
+  ret->set_extra_info(extra_info_);
   return ret;
 }
 
@@ -1017,58 +1494,119 @@ AbstractBasePtr AbstractList::PartialBroaden() const {
   auto ret = std::make_shared<AbstractList>(ElementsPartialBroaden(), sequence_nodes());
   ret->set_dynamic_len(dynamic_len_);
   ret->set_dynamic_len_element_abs(dynamic_len_element_abs_);
+  ret->set_extra_info(extra_info_);
   return ret;
 }
 
 ValuePtr AbstractList::RealBuildValue() const {
   if (dynamic_len_) {
-    return kAnyValue;
+    return kValueAny;
   }
   return ElementsBuildValue<ValueList>();
 }
 
-template <typename T>
-AbstractBasePtr AbstractSequence::DynamicLenSequenceJoin(const AbstractBasePtr &other) {
-  auto other_seq = dyn_cast_ptr<T>(other);
-  if (other_seq == nullptr) {
-    MS_LOG(EXCEPTION) << "Can not join AbstractTuple with AbstractList, the first abstract is: " << ToString()
-                      << " and the second abstract is: " << other->ToString();
-  }
-  if (!dynamic_len_ || !other_seq->dynamic_len()) {
-    MS_LOG(EXCEPTION) << "Can not join dynamic length sequence with constant length Sequence.";
+void AbstractList::CheckAndConvertToDynamicLenSequence(bool raise_exception) {
+  AbstractSequence::CheckAndConvertToDynamicLenSequence(raise_exception);
+  ClearExtraInfo();
+}
+
+std::shared_ptr<AbstractSequence> AbstractSequence::DynamicLenSequenceJoin(const AbstractSequencePtr &other) {
+  auto other_dyn_sequence_abs = other;
+  if (!dynamic_len() || !other->dynamic_len()) {
+    MS_LOG(EXCEPTION) << "Can't join fixed length sequence. \nthis:" << ToString() << ", \nother:" << other->ToString();
   }
   auto element_abs1 = dynamic_len_element_abs_;
-  auto element_abs2 = other_seq->dynamic_len_element_abs();
+  auto element_abs2 = other_dyn_sequence_abs->dynamic_len_element_abs();
   AbstractBasePtr join_element_abs = nullptr;
-
   // When two element abstracts are not nullptr, join them to get the new element abstract.
-  // When one or none of the element abstract is nullptr, the result element abstract is nullptr.
-  if (element_abs1 != nullptr && element_abs2 != nullptr) {
+  // When one or none of the element abstract is nullptr, the result element abstract is another.
+  if (element_abs1 == nullptr) {
+    join_element_abs = element_abs2;
+  } else if (element_abs2 == nullptr) {
+    join_element_abs = element_abs1;
+  } else {
     join_element_abs = element_abs1->Join(element_abs2);
   }
-  auto ret = Clone();
-  ret->cast<AbstractSequencePtr>()->set_dynamic_len_element_abs(join_element_abs);
+  auto ret = Clone()->cast<AbstractSequencePtr>();
+  ret->set_dynamic_len_element_abs(join_element_abs);
   return ret;
 }
 
 AbstractBasePtr AbstractTuple::Join(const AbstractBasePtr &other) {
-  if (dynamic_len_) {
-    return DynamicLenSequenceJoin<AbstractTuple>(other);
+  if (other->isa<AbstractNegligible>()) {
+    return shared_from_base<AbstractBase>();
   }
-  auto res = dyn_cast<AbstractSequence>(ElementsJoin<AbstractTuple>(other));
+  auto other_sequence = other->cast<AbstractTuplePtr>();
+  if (other_sequence == nullptr) {
+    AbstractTypeJoinLogging(shared_from_base<AbstractBase>(), other);
+  }
+  try {
+    if (dynamic_len_) {
+      return DynamicLenSequenceJoin(other_sequence->BroadenToDynamicLenSequence());
+    }
+    if (other_sequence->dynamic_len()) {
+      return other_sequence->DynamicLenSequenceJoin(BroadenToDynamicLenSequence());
+    }
+    if (other_sequence->size() != size()) {
+      auto dyn_len_sequence = BroadenToDynamicLenSequence();
+      return dyn_len_sequence->Join(other_sequence->BroadenToDynamicLenSequence());
+    }
+  } catch (std::exception &e) {
+    MS_LOG(ERROR) << e.what();
+    AbstractTypeJoinLogging(shared_from_base<AbstractBase>(), other);
+  }
+  auto res = dyn_cast<AbstractSequence>(ElementsJoin<AbstractTuple>(other_sequence));
   MS_EXCEPTION_IF_NULL(res);
   res->InsertSequenceNodes(SequenceNodesJoin(other));
   return res;
 }
 
 AbstractBasePtr AbstractList::Join(const AbstractBasePtr &other) {
-  if (dynamic_len_) {
-    return DynamicLenSequenceJoin<AbstractList>(other);
+  if (other->isa<AbstractNegligible>()) {
+    return shared_from_base<AbstractBase>();
   }
-  auto res = dyn_cast<AbstractSequence>(ElementsJoin<AbstractList>(other));
+  auto other_sequence = other->cast<AbstractListPtr>();
+  if (other_sequence == nullptr) {
+    AbstractTypeJoinLogging(shared_from_base<AbstractBase>(), other);
+  }
+  try {
+    if (dynamic_len_) {
+      return DynamicLenSequenceJoin(other_sequence->BroadenToDynamicLenSequence());
+    }
+    if (other_sequence->dynamic_len()) {
+      return other_sequence->DynamicLenSequenceJoin(BroadenToDynamicLenSequence());
+    }
+    if (other_sequence->size() != size()) {
+      auto dyn_len_sequence = BroadenToDynamicLenSequence();
+      return dyn_len_sequence->DynamicLenSequenceJoin(other_sequence->BroadenToDynamicLenSequence());
+    }
+  } catch (std::exception &e) {
+    MS_LOG(ERROR) << e.what();
+    AbstractTypeJoinLogging(shared_from_base<AbstractBase>(), other);
+  }
+
+  auto res = dyn_cast<AbstractSequence>(ElementsJoin<AbstractList>(other_sequence));
   MS_EXCEPTION_IF_NULL(res);
   res->InsertSequenceNodes(SequenceNodesJoin(other));
   return res;
+}
+
+ValuePtr AbstractNamedTuple::RealBuildValue() const {
+  std::vector<ValuePtr> element_value_list;
+  for (const auto &element : elements_) {
+    MS_EXCEPTION_IF_NULL(element);
+    auto element_value = element->BuildValue();
+    MS_EXCEPTION_IF_NULL(element_value);
+    element_value_list.push_back(element_value);
+  }
+  std::vector<ValuePtr> key_value_list;
+  for (const auto &key : keys_) {
+    MS_EXCEPTION_IF_NULL(key);
+    auto key_value = key->BuildValue();
+    MS_EXCEPTION_IF_NULL(key_value);
+    key_value_list.push_back(key_value);
+  }
+  return std::make_shared<ValueNamedTuple>(type_name_, key_value_list, element_value_list);
 }
 
 TypePtr AbstractSlice::BuildType() const {
@@ -1081,12 +1619,14 @@ TypePtr AbstractSlice::BuildType() const {
   return std::make_shared<Slice>(start, stop, step);
 }
 
-bool AbstractSlice::operator==(const AbstractSlice &other) const {
-  if (this == &other) {
-    return true;
-  }
-  return IsEqual(start_, other.start_) && IsEqual(stop_, other.stop_) && IsEqual(step_, other.step_);
-}
+AbstractDictionary::AbstractDictionary(const std::vector<AbstractElementPair> &key_values) : key_values_(key_values) {}
+
+std::size_t AbstractDictionary::size() const { return key_values_.size(); }
+
+const std::vector<AbstractElementPair> &AbstractDictionary::elements() const { return key_values_; }
+
+AbstractSlice::AbstractSlice(const AbstractBasePtr &start, const AbstractBasePtr &stop, const AbstractBasePtr &step)
+    : start_(start), stop_(stop), step_(step) {}
 
 bool AbstractSlice::operator==(const AbstractBase &other) const {
   if (this == &other) {
@@ -1095,7 +1635,8 @@ bool AbstractSlice::operator==(const AbstractBase &other) const {
   if (!other.isa<AbstractSlice>()) {
     return false;
   }
-  return *this == static_cast<const AbstractSlice &>(other);
+  const auto &other_slice = dynamic_cast<const AbstractSlice &>(other);
+  return IsEqual(start_, other_slice.start_) && IsEqual(stop_, other_slice.stop_) && IsEqual(step_, other_slice.step_);
 }
 
 AbstractBasePtr AbstractSlice::Clone() const {
@@ -1138,8 +1679,8 @@ ValuePtr AbstractSlice::RealBuildValue() const {
   ValuePtr start = start_->BuildValue();
   ValuePtr stop = stop_->BuildValue();
   ValuePtr step = step_->BuildValue();
-  if (start->isa<AnyValue>() || stop->isa<AnyValue>() || step->isa<AnyValue>()) {
-    return kAnyValue;
+  if (start->isa<ValueAny>() || stop->isa<ValueAny>() || step->isa<ValueAny>()) {
+    return kValueAny;
   }
   return std::make_shared<ValueSlice>(start, stop, step);
 }
@@ -1151,10 +1692,16 @@ std::size_t AbstractSlice::hash() const {
   return hash_combine({tid(), start_->hash(), stop_->hash(), step_->hash()});
 }
 
+AbstractBasePtr AbstractSlice::start() const { return start_; }
+
+AbstractBasePtr AbstractSlice::stop() const { return stop_; }
+
+AbstractBasePtr AbstractSlice::step() const { return step_; }
+
 ShapePtr AbstractUndetermined::shape() const {
   auto shp = dyn_cast<Shape>(GetShapeTrack());
   if (shp == nullptr) {
-    MS_LOG(EXCEPTION) << "Tensor should have a shape.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Tensor should have a shape.";
   }
   return shp;
 }
@@ -1162,7 +1709,7 @@ ShapePtr AbstractUndetermined::shape() const {
 void AbstractUndetermined::set_shape(const BaseShapePtr &shape) {
   MS_EXCEPTION_IF_NULL(shape);
   if (shape->isa<NoShape>()) {
-    MS_LOG(EXCEPTION) << "AbstractUndetermined can't set shape as NoShape.";
+    MS_LOG(INTERNAL_EXCEPTION) << "AbstractUndetermined can't set shape as NoShape.";
   }
   AbstractBase::set_shape(shape);
 }
@@ -1187,7 +1734,9 @@ AbstractBasePtr AbstractTensor::Join(const AbstractBasePtr &other) {
   auto other_type = other->BuildType();
   MS_EXCEPTION_IF_NULL(other_type);
   MS_EXCEPTION_IF_NULL(element_);
-
+  if (other->isa<AbstractNegligible>()) {
+    return shared_from_base<AbstractBase>();
+  }
   // AbstractTensor join with AbstractUndetermined
   if (other_type->type_id() == kObjectTypeUndeterminedType) {
     auto other_undetermined_tensor = dyn_cast_ptr<AbstractUndetermined>(other);
@@ -1219,23 +1768,29 @@ AbstractBasePtr AbstractTensor::Join(const AbstractBasePtr &other) {
   // Check element
   auto element = element_->Join(other_tensor->element_);
   MS_EXCEPTION_IF_NULL(element);
-  return std::make_shared<AbstractTensor>(element, res_shape);
+  auto ret = std::make_shared<AbstractTensor>(element, res_shape);
+  ret->set_is_adapter(is_adapter_);
+  return ret;
 }
 
 bool AbstractTensor::equal_to(const AbstractTensor &other) const {
   if (this == &other) {
     return true;
   }
+  // Check if both Tensor or both AdapterTensor.
+  if (is_adapter() != other.is_adapter()) {
+    return false;
+  }
   const auto &v1 = GetValueTrack();
   const auto &v2 = other.GetValueTrack();
   MS_EXCEPTION_IF_NULL(v1);
   MS_EXCEPTION_IF_NULL(v2);
   // Check if both point to same specific value.
-  if (!v1->isa<AnyValue>()) {
+  if (!v1->isa<ValueAny>()) {
     return v1 == v2;
   }
-  // Check if both are AnyValue.
-  if (!v2->isa<AnyValue>()) {
+  // Check if both are ValueAny.
+  if (!v2->isa<ValueAny>()) {
     return false;
   }
   // Check element type.
@@ -1274,6 +1829,7 @@ AbstractBasePtr AbstractTensor::Clone() const {
   clone->set_value(GetValueTrack());
   clone->set_value_range(get_min_value(), get_max_value());
   clone->set_shape_value(get_shape_value());
+  clone->set_is_adapter(is_adapter());
   return clone;
 }
 
@@ -1283,7 +1839,8 @@ AbstractBasePtr AbstractTensor::Broaden() const {
   auto shp = shape();
   MS_EXCEPTION_IF_NULL(shp);
   broaden->set_shape(shp->Clone());
-  broaden->set_value(kAnyValue);
+  broaden->set_value(kValueAny);
+  broaden->set_is_adapter(is_adapter());
   return broaden;
 }
 
@@ -1294,7 +1851,8 @@ AbstractBasePtr AbstractTensor::BroadenWithShape() const {
   MS_EXCEPTION_IF_NULL(shp);
   shp->Broaden();
   broaden->set_shape(shp);
-  broaden->set_value(kAnyValue);
+  broaden->set_value(kValueAny);
+  broaden->set_is_adapter(is_adapter());
   return broaden;
 }
 
@@ -1313,30 +1871,45 @@ std::string AbstractTensor::ToString() const {
   return buffer.str();
 }
 
+TypePtr AbstractAny::BuildType() const {
+  MS_EXCEPTION_IF_NULL(element_);
+  TypePtr element_type = element_->BuildType();
+  return std::make_shared<AnyType>(element_type);
+}
+
+AbstractBasePtr AbstractNegligible::Join(const AbstractBasePtr &other) {
+  MS_EXCEPTION_IF_NULL(other);
+  if (other->isa<AbstractScalar>()) {
+    const auto &value_other = other->GetValueTrack();
+    if (!value_other->isa<ValueAny>()) {
+      return std::make_shared<AbstractAny>();
+    }
+  }
+  return other;
+}
+
+AbstractBasePtr AbstractNegligible::Clone() const { return std::make_shared<AbstractNegligible>(); }
+
+AbstractBasePtr AbstractNegligible::Broaden() const { return Clone(); }
+
+std::string AbstractNegligible::ToString() const { return type_name(); }
+
+TypePtr AbstractNegligible::BuildType() const {
+  MS_EXCEPTION_IF_NULL(element_);
+  TypePtr element_type = element_->BuildType();
+  return std::make_shared<NegligibleType>(element_type);
+}
+
 TypePtr AbstractDictionary::BuildType() const {
-  std::vector<std::pair<TypePtr, TypePtr>> key_values;
+  std::vector<std::pair<ValuePtr, TypePtr>> key_values;
   for (const auto &item : key_values_) {
     MS_EXCEPTION_IF_NULL(item.first);
     MS_EXCEPTION_IF_NULL(item.second);
-    TypePtr key_type = item.first->BuildType();
+    ValuePtr key_type = item.first->BuildValue();
     TypePtr value_type = item.second->BuildType();
-    key_values.emplace_back(key_type, value_type);
+    (void)key_values.emplace_back(key_type, value_type);
   }
   return std::make_shared<Dictionary>(key_values);
-}
-
-bool AbstractDictionary::operator==(const AbstractDictionary &other) const {
-  if (key_values_.size() != other.key_values_.size()) {
-    return false;
-  }
-  for (size_t index = 0; index < key_values_.size(); ++index) {
-    auto &kv1 = key_values_[index];
-    auto &kv2 = other.key_values_[index];
-    if (!IsEqual(kv1.first, kv2.first) || !IsEqual(kv1.second, kv2.second)) {
-      return false;
-    }
-  }
-  return true;
 }
 
 bool AbstractDictionary::operator==(const AbstractBase &other) const {
@@ -1346,7 +1919,18 @@ bool AbstractDictionary::operator==(const AbstractBase &other) const {
   if (!other.isa<AbstractDictionary>()) {
     return false;
   }
-  return *this == static_cast<const AbstractDictionary &>(other);
+  const auto &other_dict = dynamic_cast<const AbstractDictionary &>(other);
+  if (key_values_.size() != other_dict.key_values_.size()) {
+    return false;
+  }
+  for (size_t index = 0; index < key_values_.size(); ++index) {
+    auto &kv1 = key_values_[index];
+    auto &kv2 = other_dict.key_values_[index];
+    if (!IsEqual(kv1.first, kv2.first) || !IsEqual(kv1.second, kv2.second)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 AbstractBasePtr AbstractDictionary::Clone() const {
@@ -1357,7 +1941,9 @@ AbstractBasePtr AbstractDictionary::Clone() const {
                          MS_EXCEPTION_IF_NULL(item.second);
                          return std::make_pair(item.first->Clone(), item.second->Clone());
                        });
-  return std::make_shared<AbstractDictionary>(kv);
+  auto ret = std::make_shared<AbstractDictionary>(kv);
+  ret->set_extra_info(extra_info_);
+  return ret;
 }
 
 AbstractBasePtr AbstractDictionary::Broaden() const {
@@ -1367,7 +1953,9 @@ AbstractBasePtr AbstractDictionary::Broaden() const {
                          MS_EXCEPTION_IF_NULL(item.second);
                          return std::make_pair(item.first, item.second->Broaden());
                        });
-  return std::make_shared<AbstractDictionary>(kv);
+  auto ret = std::make_shared<AbstractDictionary>(kv);
+  ret->set_extra_info(extra_info_);
+  return ret;
 }
 
 std::string AbstractDictionary::ToString() const {
@@ -1403,13 +1991,58 @@ ValuePtr AbstractDictionary::RealBuildValue() const {
     auto value_element_value = item.second->BuildValue();
     MS_EXCEPTION_IF_NULL(key_element_value);
     MS_EXCEPTION_IF_NULL(value_element_value);
-    if (value_element_value->isa<AnyValue>()) {
-      return kAnyValue;
+    if (value_element_value->isa<ValueAny>()) {
+      return kValueAny;
     }
-    key_values.emplace_back(key_element_value, value_element_value);
+    (void)key_values.emplace_back(key_element_value, value_element_value);
   }
   return std::make_shared<ValueDictionary>(key_values);
 }
+
+AbstractBasePtr AbstractDictionary::Join(const AbstractBasePtr &other) {
+  if (other->isa<AbstractNegligible>()) {
+    return shared_from_base<AbstractBase>();
+  }
+  auto other_dict = other->cast<AbstractDictionaryPtr>();
+  if (other_dict == nullptr) {
+    AbstractTypeJoinLogging(shared_from_base<AbstractBase>(), other);
+  }
+  if (elements().size() != other_dict->elements().size()) {
+    MS_LOG(EXCEPTION)
+      << "Join failed as dict don't have the same size. spec1: " << ::mindspore::ToString(elements())
+      << ", spec2: " << ::mindspore::ToString(other_dict->elements())
+      << ".\nFor more details, please refer to https://www.mindspore.cn/search?inputValue=Type%20Join%20Failed\n";
+  }
+
+  auto JoinElement = [](const AbstractBasePtr &abs1, const AbstractBasePtr &abs2) -> AbstractBasePtr {
+    MS_EXCEPTION_IF_NULL(abs1);
+    auto joined_res = abs1->Join(abs2);
+    MS_EXCEPTION_IF_NULL(joined_res);
+    return joined_res;
+  };
+
+  std::vector<AbstractElementPair> joined_key_values;
+  bool changes = false;
+  for (std::size_t i = 0; i < elements().size(); i++) {
+    auto key_value = elements()[i];
+    auto other_key_value = other_dict->elements()[i];
+    auto joined_key = JoinElement(elements()[i].first, other_dict->elements()[i].first);
+    if (joined_key != elements()[i].first) {
+      changes = true;
+    }
+    auto joined_value = JoinElement(elements()[i].second, other_dict->elements()[i].second);
+    if (joined_value != elements()[i].second) {
+      changes = true;
+    }
+    (void)joined_key_values.emplace_back(joined_key, joined_value);
+  }
+  if (!changes) {
+    return shared_from_base<AbstractBase>();
+  }
+  return std::make_shared<AbstractDictionary>(joined_key_values);
+}
+
+AbstractJTagged::AbstractJTagged(const AbstractBasePtr &element) : element_(element) {}
 
 TypePtr AbstractJTagged::BuildType() const {
   MS_EXCEPTION_IF_NULL(element_);
@@ -1419,6 +2052,9 @@ TypePtr AbstractJTagged::BuildType() const {
 
 AbstractBasePtr AbstractJTagged::Join(const AbstractBasePtr &other) {
   MS_EXCEPTION_IF_NULL(other);
+  if (other->isa<AbstractNegligible>()) {
+    return shared_from_base<AbstractBase>();
+  }
   auto other_jtagged = dyn_cast_ptr<AbstractJTagged>(other);
   if (other_jtagged == nullptr) {
     AbstractTypeJoinLogging(shared_from_base<AbstractBase>(), other);
@@ -1428,8 +2064,6 @@ AbstractBasePtr AbstractJTagged::Join(const AbstractBasePtr &other) {
   return std::make_shared<AbstractJTagged>(joined_elem);
 }
 
-bool AbstractJTagged::operator==(const AbstractJTagged &other) const { return IsEqual(element_, other.element_); }
-
 bool AbstractJTagged::operator==(const AbstractBase &other) const {
   if (this == &other) {
     return true;
@@ -1437,7 +2071,8 @@ bool AbstractJTagged::operator==(const AbstractBase &other) const {
   if (!other.isa<AbstractJTagged>()) {
     return false;
   }
-  return *this == static_cast<const AbstractJTagged &>(other);
+  const auto &other_jtagged = dynamic_cast<const AbstractJTagged &>(other);
+  return IsEqual(element_, other_jtagged.element_);
 }
 
 std::string AbstractJTagged::ToString() const {
@@ -1448,12 +2083,21 @@ std::string AbstractJTagged::ToString() const {
   return buffer.str();
 }
 
+AbstractBasePtr AbstractJTagged::Clone() const { return std::make_shared<AbstractJTagged>(element_->Clone()); }
+
+AbstractBasePtr AbstractJTagged::Broaden() const { return std::make_shared<AbstractJTagged>(element_->Broaden()); }
+
+AbstractBasePtr AbstractJTagged::element() { return element_; }
+
+std::size_t AbstractJTagged::hash() const { return hash_combine(tid(), element_->hash()); }
+
 AbstractRefTensor::AbstractRefTensor(const AbstractTensorPtr &ref_value, const ValuePtr &ref_key_value)
     : AbstractTensor(*ref_value), ref_key_value_(ref_key_value) {
   set_type(std::make_shared<RefType>());
+  set_is_adapter(ref_value->is_adapter());
   MS_EXCEPTION_IF_NULL(ref_key_value);
-  if (ref_key_value != kAnyValue && !ref_key_value->isa<RefKey>()) {
-    MS_LOG(EXCEPTION) << "ref_key_value must be kAnyValue or RefKey, but got:" << ref_key_value->ToString();
+  if (ref_key_value != kValueAny && !ref_key_value->isa<RefKey>()) {
+    MS_LOG(INTERNAL_EXCEPTION) << "ref_key_value must be kValueAny or RefKey, but got:" << ref_key_value->ToString();
   }
 }
 
@@ -1464,24 +2108,22 @@ TypePtr AbstractRefTensor::BuildType() const {
   return std::make_shared<RefType>(subtype);
 }
 
-bool AbstractRefTensor::operator==(const AbstractRefTensor &other) const {
+bool AbstractRefTensor::operator==(const AbstractBase &other) const {
   if (this == &other) {
     return true;
   }
-  // Check whether Tensor value is equal.
-  return AbstractTensor::equal_to(other);
-}
-
-bool AbstractRefTensor::operator==(const AbstractBase &other) const {
   if (!other.isa<AbstractRefTensor>()) {
     return false;
   }
-  return *this == static_cast<const AbstractRefTensor &>(other);
+  return AbstractTensor::equal_to(dynamic_cast<const AbstractTensor &>(other));
 }
 
 AbstractBasePtr AbstractRefTensor::Join(const std::shared_ptr<AbstractRefTensor> &other) {
   if (*this == *other) {
     return shared_from_base<AbstractRefTensor>();
+  }
+  if (other->isa<AbstractNegligible>()) {
+    return shared_from_base<AbstractBase>();
   }
   // Firstly, join the ref_key_value.
   auto joined_ref_key = ValueJoin(ref_key_value_, other->ref_key_value_);
@@ -1497,11 +2139,14 @@ AbstractBasePtr AbstractRefTensor::Join(const AbstractBasePtr &other) {
   if (other->isa<AbstractRefTensor>()) {
     return AbstractRefTensor::Join(other->cast<AbstractRefPtr>());
   }
+  if (other->isa<AbstractNegligible>()) {
+    return shared_from_base<AbstractBase>();
+  }
   // Abstract ref join other abstract are same to AbstractTensor::Join.
   auto joined_tensor = AbstractTensor::Join(other);
   if (!joined_tensor->isa<AbstractTensor>()) {
-    MS_LOG(EXCEPTION) << "Expect an AbstractTensor, but got:" << joined_tensor->ToString()
-                      << ", other:" << other->ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Expect an AbstractTensor, but got:" << joined_tensor->ToString()
+                               << ", other:" << other->ToString();
   }
   return joined_tensor;
 }
@@ -1534,14 +2179,13 @@ std::string AbstractRefTensor::ToString() const {
 
 AbstractBasePtr AbstractRefTensor::PartialBroaden() const { return Clone(); }
 
-bool AbstractNone::operator==(const AbstractNone &) const { return true; }
+AbstractNone::AbstractNone() : AbstractBase() { set_type(std::make_shared<TypeNone>()); }
 
-bool AbstractNone::operator==(const AbstractBase &other) const {
-  if (this == &other) {
-    return true;
-  }
-  return other.isa<AbstractNone>();
-}
+TypePtr AbstractNone::BuildType() const { return std::make_shared<TypeNone>(); }
+
+AbstractBasePtr AbstractNone::Clone() const { return std::make_shared<AbstractNone>(); }
+
+bool AbstractNone::operator==(const AbstractBase &other) const { return other.isa<AbstractNone>(); }
 
 std::string AbstractNone::ToString() const {
   std::ostringstream buffer;
@@ -1549,16 +2193,26 @@ std::string AbstractNone::ToString() const {
   return buffer.str();
 }
 
+AbstractBasePtr AbstractNone::Join(const AbstractBasePtr &other) {
+  MS_EXCEPTION_IF_NULL(other);
+  if (other->isa<AbstractNegligible>()) {
+    return shared_from_base<AbstractBase>();
+  }
+  if (!other->isa<AbstractNone>()) {
+    AbstractTypeJoinLogging(shared_from_base<AbstractBase>(), other);
+  }
+  return shared_from_base<AbstractNone>();
+}
+
+AbstractNull::AbstractNull() : AbstractBase(kNull) { set_type(std::make_shared<TypeNull>()); }
+
+TypePtr AbstractNull::BuildType() const { return std::make_shared<TypeNull>(); }
+
+AbstractBasePtr AbstractNull::Clone() const { return std::make_shared<AbstractNull>(); }
+
 ValuePtr AbstractNone::RealBuildValue() const { return kNone; }
 
-bool AbstractNull::operator==(const AbstractNull &) const { return true; }
-
-bool AbstractNull::operator==(const AbstractBase &other) const {
-  if (this == &other) {
-    return true;
-  }
-  return other.isa<AbstractNull>();
-}
+bool AbstractNull::operator==(const AbstractBase &other) const { return other.isa<AbstractNull>(); }
 
 std::string AbstractNull::ToString() const {
   std::ostringstream buffer;
@@ -1566,14 +2220,13 @@ std::string AbstractNull::ToString() const {
   return buffer.str();
 }
 
-bool AbstractTimeOut::operator==(const AbstractTimeOut &) const { return true; }
+AbstractTimeOut::AbstractTimeOut() : AbstractBase(kNull) { set_type(std::make_shared<TypeNull>()); }
 
-bool AbstractTimeOut::operator==(const AbstractBase &other) const {
-  if (this == &other) {
-    return true;
-  }
-  return other.isa<AbstractTimeOut>();
-}
+TypePtr AbstractTimeOut::BuildType() const { return std::make_shared<TypeNull>(); }
+
+AbstractBasePtr AbstractTimeOut::Clone() const { return std::make_shared<AbstractTimeOut>(); }
+
+bool AbstractTimeOut::operator==(const AbstractBase &other) const { return other.isa<AbstractTimeOut>(); }
 
 std::string AbstractTimeOut::ToString() const {
   std::ostringstream buffer;
@@ -1582,20 +2235,111 @@ std::string AbstractTimeOut::ToString() const {
   return buffer.str();
 }
 
-bool AbstractEllipsis::operator==(const AbstractEllipsis &) const { return true; }
+AbstractEllipsis::AbstractEllipsis() : AbstractBase(kEllipsis) { set_type(std::make_shared<TypeEllipsis>()); }
 
-bool AbstractEllipsis::operator==(const AbstractBase &other) const {
-  if (this == &other) {
-    return true;
-  }
-  return other.isa<AbstractEllipsis>();
-}
+TypePtr AbstractEllipsis::BuildType() const { return std::make_shared<TypeEllipsis>(); }
+
+AbstractBasePtr AbstractEllipsis::Clone() const { return std::make_shared<AbstractEllipsis>(); }
+
+bool AbstractEllipsis::operator==(const AbstractBase &other) const { return other.isa<AbstractEllipsis>(); }
 
 std::string AbstractEllipsis::ToString() const {
   std::ostringstream buffer;
   buffer << type_name() << "(Value: Ellipsis)";
   return buffer.str();
 }
+
+AbstractBasePtr AbstractRefTensor::CloneAsTensor() const { return AbstractTensor::Clone(); }
+
+AbstractTensorPtr AbstractRefTensor::ref() { return shared_from_base<AbstractTensor>(); }
+
+ValuePtr AbstractRefTensor::ref_key_value() const { return ref_key_value_; }
+
+AbstractSparseTensor::AbstractSparseTensor(AbstractBasePtrList &&elements,
+                                           const std::shared_ptr<AnfNodeWeakPtrList> &tuple_nodes)
+    : AbstractTuple(std::move(elements), tuple_nodes) {}
+
+AbstractSparseTensor::AbstractSparseTensor(const AbstractBasePtrList &elements,
+                                           const std::shared_ptr<AnfNodeWeakPtrList> &tuple_nodes)
+    : AbstractTuple(elements, tuple_nodes) {}
+
+BaseShapePtr AbstractSparseTensor::BuildShape() const {
+  return std::make_shared<TupleShape>(ElementsShapeTupleRecursive());
+}
+
+AbstractRowTensor::AbstractRowTensor(const AbstractBasePtr &element, const BaseShapePtr &shape)
+    : AbstractUndetermined(element, shape) {}
+
+AbstractRowTensor::AbstractRowTensor(const TypePtr &element_type, const ShapeVector &shape)
+    : AbstractUndetermined(element_type, shape) {}
+
+const AbstractTensorPtr AbstractRowTensor::indices() const { return indices_; }
+
+void AbstractRowTensor::set_indices(const AbstractTensorPtr &indices) { indices_ = indices; }
+
+const AbstractTensorPtr AbstractRowTensor::values() const { return values_; }
+
+void AbstractRowTensor::set_values(const AbstractTensorPtr &values) { values_ = values; }
+
+const AbstractTuplePtr AbstractRowTensor::dense_shape() const { return dense_shape_; }
+
+void AbstractRowTensor::set_dense_shape(const AbstractTuplePtr &dense_shape) { dense_shape_ = dense_shape; }
+
+AbstractCOOTensor::AbstractCOOTensor(AbstractBasePtrList &&elements,
+                                     const std::shared_ptr<AnfNodeWeakPtrList> &tuple_nodes)
+    : AbstractSparseTensor(std::move(elements), tuple_nodes) {}
+
+AbstractCOOTensor::AbstractCOOTensor(const AbstractBasePtrList &elements,
+                                     const std::shared_ptr<AnfNodeWeakPtrList> &tuple_nodes)
+    : AbstractSparseTensor(elements, tuple_nodes) {}
+
+AbstractCSRTensor::AbstractCSRTensor(AbstractBasePtrList &&elements,
+                                     const std::shared_ptr<AnfNodeWeakPtrList> &tuple_nodes)
+    : AbstractSparseTensor(std::move(elements), tuple_nodes) {}
+
+AbstractCSRTensor::AbstractCSRTensor(const AbstractBasePtrList &elements,
+                                     const std::shared_ptr<AnfNodeWeakPtrList> &tuple_nodes)
+    : AbstractSparseTensor(elements, tuple_nodes) {}
+
+std::size_t AbstractMonad::hash() const { return hash_combine({tid()}); }
+
+TypePtr AbstractMonad::BuildType() const { return GetTypeTrack(); }
+
+AbstractBasePtr AbstractMonad::Broaden() const { return AbstractBase::Broaden(); }
+
+std::string AbstractMonad::ToString() const {
+  std::ostringstream buffer;
+  buffer << type_name() << "(" << GetValueTrack()->ToString() << ")";
+  return buffer.str();
+}
+
+AbstractMonad::AbstractMonad(const ValuePtr &value, const TypePtr &type) : AbstractBase(value, type) {}
+
+AbstractUMonad::AbstractUMonad(const ValuePtr &value) : AbstractMonad(value, kUMonadType) {}
+
+AbstractBasePtr AbstractUMonad::Clone() const { return std::make_shared<AbstractUMonad>(GetValueTrack()); }
+
+AbstractIOMonad::AbstractIOMonad(const ValuePtr &value) : AbstractMonad(value, kIOMonadType) {}
+
+AbstractBasePtr AbstractIOMonad::Clone() const { return std::make_shared<AbstractIOMonad>(GetValueTrack()); }
+
+MapTensorTypePtr AbstractMapTensor::map_tensor_type() const { return dyn_cast<MapTensorType>(GetTypeTrack()); }
+
+ShapePtr AbstractMapTensor::shape() const { return dyn_cast<Shape>(GetShapeTrack()); }
+
+const ShapePtr &AbstractMapTensor::value_shape() const { return value_shape_; }
+
+const ValuePtr &AbstractMapTensor::ref_key_value() const { return ref_key_value_; }
+
+const ValuePtr &AbstractMapTensor::default_value() const { return default_value_; }
+
+const ValuePtr &AbstractMapTensor::permit_filter_value() const { return permit_filter_value_; }
+
+const ValuePtr &AbstractMapTensor::evict_filter_value() const { return evict_filter_value_; }
+
+TypePtr AbstractMapTensor::BuildType() const { return GetTypeTrack(); }
+
+BaseShapePtr AbstractMapTensor::BuildShape() const { return GetShapeTrack(); }
 
 TypePtr AbstractKeywordArg::BuildType() const {
   MS_EXCEPTION_IF_NULL(arg_value_);
@@ -1649,15 +2393,15 @@ ValuePtr AbstractKeywordArg::RealBuildValue() const {
   MS_EXCEPTION_IF_NULL(arg_value_);
   ValuePtr value = arg_value_->BuildValue();
   MS_EXCEPTION_IF_NULL(value);
-  if (value->isa<AnyValue>()) {
-    return kAnyValue;
+  if (value->isa<ValueAny>()) {
+    return kValueAny;
   }
   return std::make_shared<KeywordArg>(arg_name_, value);
 }
 
-std::size_t AbstractBasePtrListHash(const AbstractBasePtrList &args_spec_list) {
+std::size_t AbstractBasePtrListHash(const AbstractBasePtrList &args_abs_list) {
   // Hash for empty list is zero.
-  if (args_spec_list.empty()) {
+  if (args_abs_list.empty()) {
     return 0;
   }
   // Hashing all elements is costly, we only calculate hash from
@@ -1666,13 +2410,13 @@ std::size_t AbstractBasePtrListHash(const AbstractBasePtrList &args_spec_list) {
   // we should use this hash function in hash tables that can tolerate
   // high hash conflicts, such as std::unordered_map.
   constexpr size_t kMaxLastElements = 4;
-  const size_t n_args = args_spec_list.size();
+  const size_t n_args = args_abs_list.size();
   // Hash from list size and the first element.
-  std::size_t hash_value = hash_combine(n_args, args_spec_list[0]->hash());
+  std::size_t hash_value = hash_combine(n_args, args_abs_list[0]->hash());
   // Hash from last few elements.
   const size_t start = ((n_args > kMaxLastElements) ? (n_args - kMaxLastElements) : 1);
   for (size_t i = start; i < n_args; ++i) {
-    hash_value = hash_combine(hash_value, args_spec_list[i]->hash());
+    hash_value = hash_combine(hash_value, args_abs_list[i]->hash());
   }
   return hash_value;
 }
@@ -1695,7 +2439,7 @@ template <typename T>
 const T AbstractSparseTensor::GetAbsPtrAt(size_t index) const {
   if (index >= size()) {
     MS_LOG(EXCEPTION) << "Index should be in range of [0, " << size() << "), but got " << index
-                      << " for abstract: " << ToString();
+                      << " for abstract: " << type_name();
   }
   AbstractBasePtr base = elements()[index];
   MS_EXCEPTION_IF_NULL(base);
@@ -1743,7 +2487,7 @@ TypePtr AbstractSparseTensor::BuildType() const { return std::make_shared<Sparse
 const AbstractTuplePtr AbstractSparseTensor::shape() const {
   auto res = GetAbsPtrAt<abstract::AbstractTuplePtr>(size() - 1);
   if (res == nullptr) {
-    MS_LOG(EXCEPTION) << "Get shape nullptr in AbstractSparseTensor: " << ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Get shape nullptr in AbstractSparseTensor: " << ToString();
   }
   return res;
 }
@@ -1781,7 +2525,7 @@ AbstractRowTensorPtr AbstractRowTensor::MakeAbstract(const BaseShapePtr &shp) co
   MS_EXCEPTION_IF_NULL(element());
   auto broaden = std::make_shared<AbstractRowTensor>(element()->Broaden());
   broaden->set_shape(shp);
-  broaden->set_value(kAnyValue);
+  broaden->set_value(kValueAny);
   MS_EXCEPTION_IF_NULL(indices_);
   MS_EXCEPTION_IF_NULL(values_);
   MS_EXCEPTION_IF_NULL(dense_shape_);
@@ -1857,16 +2601,22 @@ AbstractBasePtr AbstractCOOTensor::PartialBroaden() const { return Broaden(); }
 
 std::string AbstractCOOTensor::ToString() const {
   std::ostringstream buffer;
+  auto indices_ = GetAbsPtrAt<abstract::AbstractTensorPtr>(kIndicesIdx);
+  auto values_ = GetAbsPtrAt<abstract::AbstractTensorPtr>(kValuesIdx);
+  auto shape_ = GetAbsPtrAt<abstract::AbstractTuplePtr>(size() - 1);
+  MS_EXCEPTION_IF_NULL(indices_);
+  MS_EXCEPTION_IF_NULL(values_);
+  MS_EXCEPTION_IF_NULL(shape_);
   buffer << type_name() << "("
-         << "indices: " << indices()->ToString() << ", values" << values()->ToString()
-         << ", dense_shape: " << shape()->ToString();
+         << "indices: " << indices_->ToString() << ", values" << values_->ToString()
+         << ", dense_shape: " << shape_->ToString();
   return buffer.str();
 }
 
 const AbstractTensorPtr AbstractCOOTensor::indices() const {
   auto res = GetAbsPtrAt<abstract::AbstractTensorPtr>(kIndicesIdx);
   if (res == nullptr) {
-    MS_LOG(EXCEPTION) << "Get indices nullptr in AbstractCOOTensor: " << ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Get indices nullptr in AbstractCOOTensor: " << ToString();
   }
   return res;
 }
@@ -1874,7 +2624,7 @@ const AbstractTensorPtr AbstractCOOTensor::indices() const {
 const AbstractTensorPtr AbstractCOOTensor::values() const {
   auto res = GetAbsPtrAt<abstract::AbstractTensorPtr>(kValuesIdx);
   if (res == nullptr) {
-    MS_LOG(EXCEPTION) << "Get values nullptr in AbstractCOOTensor: " << ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Get values nullptr in AbstractCOOTensor: " << ToString();
   }
   return res;
 }
@@ -1910,16 +2660,24 @@ AbstractBasePtr AbstractCSRTensor::PartialBroaden() const { return Broaden(); }
 
 std::string AbstractCSRTensor::ToString() const {
   std::ostringstream buffer;
+  auto indptr_ = GetAbsPtrAt<abstract::AbstractTensorPtr>(kIndptrIdx);
+  auto indices_ = GetAbsPtrAt<abstract::AbstractTensorPtr>(kIndicesIdx);
+  auto values_ = GetAbsPtrAt<abstract::AbstractTensorPtr>(kValuesIdx);
+  auto shape_ = GetAbsPtrAt<abstract::AbstractTuplePtr>(size() - 1);
+  MS_EXCEPTION_IF_NULL(indptr_);
+  MS_EXCEPTION_IF_NULL(indices_);
+  MS_EXCEPTION_IF_NULL(values_);
+  MS_EXCEPTION_IF_NULL(shape_);
   buffer << type_name() << "("
-         << "indptr: " << indptr()->ToString() << ", indices: " << indices()->ToString() << ", values"
-         << values()->ToString() << ", dense_shape: " << shape()->ToString();
+         << "indptr: " << indptr_->ToString() << ", indices: " << indices_->ToString() << ", values"
+         << values_->ToString() << ", dense_shape: " << shape_->ToString();
   return buffer.str();
 }
 
 const AbstractTensorPtr AbstractCSRTensor::indptr() const {
   auto res = GetAbsPtrAt<abstract::AbstractTensorPtr>(kIndptrIdx);
   if (res == nullptr) {
-    MS_LOG(EXCEPTION) << "Get indptr nullptr in AbstractCSRTensor: " << ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Get indptr nullptr in AbstractCSRTensor: " << ToString();
   }
   return res;
 }
@@ -1927,7 +2685,7 @@ const AbstractTensorPtr AbstractCSRTensor::indptr() const {
 const AbstractTensorPtr AbstractCSRTensor::indices() const {
   auto res = GetAbsPtrAt<abstract::AbstractTensorPtr>(kIndicesIdx);
   if (res == nullptr) {
-    MS_LOG(EXCEPTION) << "Get indices nullptr in AbstractCSRTensor: " << ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Get indices nullptr in AbstractCSRTensor: " << ToString();
   }
   return res;
 }
@@ -1935,7 +2693,7 @@ const AbstractTensorPtr AbstractCSRTensor::indices() const {
 const AbstractTensorPtr AbstractCSRTensor::values() const {
   auto res = GetAbsPtrAt<abstract::AbstractTensorPtr>(kValuesIdx);
   if (res == nullptr) {
-    MS_LOG(EXCEPTION) << "Get values nullptr in AbstractCSRTensor: " << ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Get values nullptr in AbstractCSRTensor: " << ToString();
   }
   return res;
 }
@@ -1943,14 +2701,14 @@ const AbstractTensorPtr AbstractCSRTensor::values() const {
 AbstractMapTensor::AbstractMapTensor(const MapTensorPtr &map_tensor)
     : AbstractBase(map_tensor, std::make_shared<MapTensorType>(map_tensor->KeyDtype(), map_tensor->ValueDtype()),
                    std::make_shared<Shape>(map_tensor->shape())),
-      ref_key_value_(kAnyValue),
+      ref_key_value_(kValueAny),
       default_value_(map_tensor->default_value()),
       permit_filter_value_(map_tensor->permit_filter_value()),
       evict_filter_value_(map_tensor->evict_filter_value()),
       value_shape_(std::make_shared<Shape>(map_tensor->value_shape())) {}
 
 AbstractMapTensor::AbstractMapTensor(const MapTensorPtr &map_tensor, const ValuePtr &ref_key_value)
-    : AbstractBase(kAnyValue, std::make_shared<MapTensorType>(map_tensor->KeyDtype(), map_tensor->ValueDtype()),
+    : AbstractBase(kValueAny, std::make_shared<MapTensorType>(map_tensor->KeyDtype(), map_tensor->ValueDtype()),
                    std::make_shared<Shape>(map_tensor->shape())),
       ref_key_value_(ref_key_value),
       default_value_(map_tensor->default_value()),
@@ -1959,7 +2717,7 @@ AbstractMapTensor::AbstractMapTensor(const MapTensorPtr &map_tensor, const Value
       value_shape_(std::make_shared<Shape>(map_tensor->value_shape())) {}
 
 AbstractMapTensor::AbstractMapTensor(const AbstractMapTensor &other)
-    : AbstractBase(other.GetValueTrack(), other.GetTypeTrack(), other.GetShapeTrack()),
+    : AbstractBase(other),
       ref_key_value_(other.ref_key_value_),
       default_value_(other.default_value_),
       permit_filter_value_(other.permit_filter_value()),
@@ -1982,10 +2740,26 @@ AbstractMapTensor::AbstractMapTensor(const TypePtr &type, const ShapePtr &value_
   set_shape(std::make_shared<mindspore::abstract::Shape>(shape));
 }
 
+AbstractMapTensor &AbstractMapTensor::operator=(const AbstractMapTensor &other) {
+  if (this == &other) {
+    return *this;
+  }
+  this->ref_key_value_ = other.ref_key_value();
+  this->default_value_ = other.default_value();
+  this->permit_filter_value_ = other.permit_filter_value();
+  this->evict_filter_value_ = other.evict_filter_value();
+  this->value_shape_ = other.value_shape_;
+  this->set_shape(other.shape());
+  return *this;
+}
+
 AbstractBasePtr AbstractMapTensor::Clone() const { return std::make_shared<AbstractMapTensor>(*this); }
 
 AbstractBasePtr AbstractMapTensor::Join(const AbstractBasePtr &other) {
   MS_EXCEPTION_IF_NULL(other);
+  if (other->isa<AbstractNegligible>()) {
+    return shared_from_base<AbstractBase>();
+  }
   // Same pointer.
   if (this == other.get()) {
     return shared_from_base<AbstractMapTensor>();
@@ -1999,7 +2773,7 @@ AbstractBasePtr AbstractMapTensor::Join(const AbstractBasePtr &other) {
 
   // Join type.
   auto joined_type = TypeJoin(GetTypeTrack(), other_abs->GetTypeTrack());
-  if (joined_type == kAnyType) {
+  if (joined_type == kTypeAny) {
     TypeJoinLogging(GetTypeTrack(), other_abs->GetTypeTrack(), shared_from_base<AbstractBase>(), other);
   }
 
@@ -2010,28 +2784,28 @@ AbstractBasePtr AbstractMapTensor::Join(const AbstractBasePtr &other) {
   }
 
   // Join value.
-  auto joined_value = (GetValueTrack() == other_abs->GetValueTrack() ? GetValueTrack() : kAnyValue);
+  auto joined_value = (GetValueTrack() == other_abs->GetValueTrack() ? GetValueTrack() : kValueAny);
 
   // Join the ref_key_value.
   auto joined_ref_key = ValueJoin(ref_key_value_, other_abs->ref_key_value_);
 
   // Join the default_value.
   auto joined_default_value = ValueJoin(default_value_, other_abs->default_value_);
-  if (joined_default_value == kAnyValue) {
+  if (joined_default_value == kValueAny) {
     MS_EXCEPTION(ValueError) << "Join default value failed for MapTensor. " << default_value_->ToString()
                              << " != " << other_abs->default_value_->ToString();
   }
 
   // Join the permit_filter_value.
   auto joined_permit_filter_value = ValueJoin(permit_filter_value_, other_abs->permit_filter_value_);
-  if (joined_permit_filter_value == kAnyValue) {
+  if (joined_permit_filter_value == kValueAny) {
     MS_EXCEPTION(ValueError) << "Join default value failed for MapTensor. " << permit_filter_value_->ToString()
                              << " != " << other_abs->permit_filter_value_->ToString();
   }
 
   // Join the evict_filter_value.
   auto joined_evict_filter_value = ValueJoin(evict_filter_value_, other_abs->evict_filter_value_);
-  if (joined_evict_filter_value == kAnyValue) {
+  if (joined_evict_filter_value == kValueAny) {
     MS_EXCEPTION(ValueError) << "Join evict_filter_value failed for MapTensor. " << evict_filter_value_->ToString()
                              << " != " << other_abs->evict_filter_value_->ToString();
   }
@@ -2045,28 +2819,25 @@ bool AbstractMapTensor::operator==(const AbstractBase &other) const {
   if (this == &other) {
     return true;
   }
-  if (tid() != other.tid()) {
+  if (!other.isa<AbstractMapTensor>()) {
     return false;
   }
-  return *this == (static_cast<const AbstractMapTensor &>(other));
-}
-
-bool AbstractMapTensor::operator==(const AbstractMapTensor &other) const {
   const auto &v1 = GetValueTrack();
   const auto &v2 = other.GetValueTrack();
   MS_EXCEPTION_IF_NULL(v1);
   MS_EXCEPTION_IF_NULL(v2);
   // Check if both point to same specific value.
-  if (!v1->isa<AnyValue>()) {
+  if (!v1->isa<ValueAny>()) {
     return v1 == v2;
   }
-  // Check if both are AnyValue.
-  if (!v2->isa<AnyValue>()) {
+  // Check if both are ValueAny.
+  if (!v2->isa<ValueAny>()) {
     return false;
   }
-  return common::IsEqual(GetTypeTrack(), other.GetTypeTrack()) &&
-         common::IsEqual(GetShapeTrack(), other.GetShapeTrack()) &&
-         common::IsEqual(default_value(), other.default_value());
+  const auto &other_map_tensor = dynamic_cast<const AbstractMapTensor &>(other);
+  return common::IsEqual(GetTypeTrack(), other_map_tensor.GetTypeTrack()) &&
+         common::IsEqual(GetShapeTrack(), other_map_tensor.GetShapeTrack()) &&
+         common::IsEqual(default_value(), other_map_tensor.default_value());
 }
 
 std::size_t AbstractMapTensor::hash() const {
@@ -2104,14 +2875,7 @@ AbstractBasePtr AbstractUMonad::Join(const AbstractBasePtr &other) {
   return shared_from_base<AbstractBase>();
 }
 
-bool AbstractUMonad::operator==(const AbstractUMonad &) const { return true; }
-
-bool AbstractUMonad::operator==(const AbstractBase &other) const {
-  if (this == &other) {
-    return true;
-  }
-  return other.isa<AbstractUMonad>();
-}
+bool AbstractUMonad::operator==(const AbstractBase &other) const { return other.isa<AbstractUMonad>(); }
 
 AbstractBasePtr AbstractIOMonad::Join(const AbstractBasePtr &other) {
   MS_EXCEPTION_IF_NULL(other);
@@ -2125,14 +2889,7 @@ AbstractBasePtr AbstractIOMonad::Join(const AbstractBasePtr &other) {
   return shared_from_base<AbstractBase>();
 }
 
-bool AbstractIOMonad::operator==(const AbstractIOMonad &) const { return true; }
-
-bool AbstractIOMonad::operator==(const AbstractBase &other) const {
-  if (this == &other) {
-    return true;
-  }
-  return other.isa<AbstractIOMonad>();
-}
+bool AbstractIOMonad::operator==(const AbstractBase &other) const { return other.isa<AbstractIOMonad>(); }
 
 ValuePtr GetRefKeyValue(const AbstractBasePtr &abs) {
   auto abs_ref = abs->cast_ptr<AbstractRefTensor>();

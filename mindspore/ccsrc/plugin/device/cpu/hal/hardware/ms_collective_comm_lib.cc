@@ -16,8 +16,9 @@
 
 #include "plugin/device/cpu/hal/hardware/ms_collective_comm_lib.h"
 
-#include "distributed/constants.h"
-#include "distributed/recovery/recovery_context.h"
+#include "utils/ms_context.h"
+#include "include/backend/distributed/constants.h"
+#include "include/backend/distributed/recovery/recovery_context.h"
 #include "runtime/collective/collective_communication_lib.h"
 #include "plugin/device/cpu/hal/hardware/allreduce_impl.h"
 
@@ -42,12 +43,15 @@ bool MsCollectiveCommLib::Initialize(uint32_t global_rank, uint32_t global_rank_
     return true;
   }
 
-  launcher_ = std::make_unique<AllReduceLauncher>();
-  CHECK_IF_NULL(launcher_);
-  if (!launcher_->Initialize()) {
-    MS_LOG(EXCEPTION) << "Failed to initialize the allreduce launcher.";
+  // Only use AllReduceLauncher when this is CPU backend.
+  if (MsContext::GetInstance()->get_param<std::string>(MS_CTX_DEVICE_TARGET) == kCPUDevice) {
+    launcher_ = std::make_unique<AllReduceLauncher>();
+    CHECK_IF_NULL(launcher_);
+    if (!launcher_->Initialize()) {
+      MS_LOG(EXCEPTION) << "Failed to initialize the allreduce launcher.";
+    }
+    node_ = launcher_->collective_node();
   }
-  node_ = launcher_->collective_node();
 
   cgn_ = std::dynamic_pointer_cast<distributed::cluster::topology::ComputeGraphNode>(
     ClusterContext::instance()->node_base());
@@ -88,7 +92,7 @@ bool MsCollectiveCommLib::AllGatherHostHashName(size_t host_hash_name, std::vect
 
   auto role = common::GetEnv(distributed::kEnvRole);
   bool success = false;
-  // It this is not recovery scenario, retry for 3*80s, which is 4 minutes.
+  // It this is not recovery scenario, retry for 3*200s, which is 10 minutes.
   const size_t interval = 3;
   size_t retry = RecoveryContext::GetInstance()->enable_recovery() ? SIZE_MAX : kMSCollectiveRetryTime;
   while (!success && --retry > 0) {
@@ -117,16 +121,9 @@ bool MsCollectiveCommLib::AllGatherHostHashName(size_t host_hash_name, std::vect
 
 bool MsCollectiveCommLib::BroadcastUniqueID(const std::string &group_name, size_t root_info_size, void *root_info) {
   CHECK_IF_NULL(root_info);
-  CHECK_IF_NULL(node_);
   CHECK_IF_NULL(cgn_);
   auto group = GetGroup(group_name);
   CHECK_IF_NULL(group);
-
-  if (!synchronized_) {
-    node_->SynchronizeAddresses();
-  } else {
-    synchronized_ = false;
-  }
 
   uint32_t group_rank_id = group->GetGroupRank(cgn_->rank_id());
   if (group_rank_id == 0) {
@@ -154,7 +151,6 @@ bool MsCollectiveCommLib::BroadcastUniqueID(const std::string &group_name, size_
 bool MsCollectiveCommLib::SendUniqueID(const std::string &group_name, size_t root_info_size,
                                        const void *root_info) const {
   CHECK_IF_NULL(root_info);
-  CHECK_IF_NULL(node_);
   CHECK_IF_NULL(cgn_);
 
   // Create the group info which contains the unique id and send it to the meta server.
@@ -162,13 +158,14 @@ bool MsCollectiveCommLib::SendUniqueID(const std::string &group_name, size_t roo
   std::string group_info_key = node_role_prefix + kGroupInfoPrefix + group_name;
 
   bool success = false;
-  // It this is not recovery scenario, retry for 3*80s, which is 4 minutes.
+  // It this is not recovery scenario, retry for 3*200s, which is 10 minutes.
   const size_t interval = 3;
   size_t retry = RecoveryContext::GetInstance()->enable_recovery() ? SIZE_MAX : kMSCollectiveRetryTime;
   while (!success && --retry > 0) {
     success = cgn_->PutMetadata(group_info_key, root_info, root_info_size);
     if (!success) {
-      MS_LOG(WARNING) << "Failed to send unique id for group " << group_name << ". Retry time " << retry;
+      MS_LOG(WARNING) << "Failed to send unique id for group " << group_name << ". Retry time: " << retry << "/"
+                      << kMSCollectiveRetryTime;
       (void)sleep(interval);
     }
   }
@@ -181,14 +178,13 @@ bool MsCollectiveCommLib::SendUniqueID(const std::string &group_name, size_t roo
 
 bool MsCollectiveCommLib::QueryUniqueID(const std::string &group_name, size_t root_info_size, void *root_info) const {
   CHECK_IF_NULL(root_info);
-  CHECK_IF_NULL(node_);
   CHECK_IF_NULL(cgn_);
 
   std::string node_role_prefix = cgn_->role() + "_";
   std::string group_info_key = node_role_prefix + kGroupInfoPrefix + group_name;
 
   bool success = false;
-  // It this is not recovery scenario, retry for 3*80s, which is 4 minutes.
+  // It this is not recovery scenario, retry for 3*200s, which is 10 minutes.
   const size_t interval = 3;
   size_t retry = RecoveryContext::GetInstance()->enable_recovery() ? SIZE_MAX : kMSCollectiveRetryTime;
   while (!success && --retry > 0) {
@@ -201,12 +197,18 @@ bool MsCollectiveCommLib::QueryUniqueID(const std::string &group_name, size_t ro
       }
       success = true;
     } else {
-      MS_LOG(WARNING) << "Retry to lookup the unique id for group " << group_name << " from the meta server node...";
+      MS_LOG(WARNING) << "Retry to lookup the unique id for group " << group_name
+                      << " from the meta server node...Retry time: " << retry << "/" << kMSCollectiveRetryTime;
       (void)sleep(interval);
     }
   }
   if (!success) {
-    MS_LOG(EXCEPTION) << "Failed to fetch the unique id of the collective lib from the meta server node.";
+    const auto &group_info = groups_.at(group_name);
+    uint32_t root_rank = group_info->group_ranks().at(0);
+    MS_LOG(EXCEPTION)
+      << "Failed to fetch the unique id of the collective lib from the meta server node. Maybe the root rank process "
+         "of this group has exited or has not executed to QueryUniqueID step. Please check root rank: "
+      << root_rank << "'s log.";
   }
   return true;
 }

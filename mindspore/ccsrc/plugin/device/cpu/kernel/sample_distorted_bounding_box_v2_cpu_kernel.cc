@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,7 +51,7 @@ void SampleDistortedBoundingBoxV2CPUKernelMod::InitMSPhiloxRandom(int64_t seed, 
     seed = static_cast<int64_t>(New64());
     seed2 = static_cast<int64_t>(New64());
   }
-  generator_ = random::MSPhiloxRandom(seed, seed2);
+  generator_ = random::PhiloxRandom(seed, seed2);
 }
 
 float SampleDistortedBoundingBoxV2CPUKernelMod::RandFloat() {
@@ -85,7 +85,7 @@ uint32_t SampleDistortedBoundingBoxV2CPUKernelMod::Uniform(uint32_t n) {
 }
 
 uint32_t SampleDistortedBoundingBoxV2CPUKernelMod::GenerateSingle() {
-  if (used_result_index_ == random::MSPhiloxRandom::kResultElementCount) {
+  if (used_result_index_ == random::PhiloxRandom::kResultElementCount) {
     unused_results_ = generator_();
     used_result_index_ = 0;
   }
@@ -202,8 +202,35 @@ bool SampleDistortedBoundingBoxV2CPUKernelMod::Init(const BaseOperatorPtr &base_
   seed_ = op_prim->get_seed();
   seed2_ = op_prim->get_seed2();
   aspect_ratio_range_ = op_prim->get_aspect_ratio_range();
+  if (aspect_ratio_range_.size() != kShapeSize2) {
+    MS_LOG(ERROR) << "For '" << kernel_name_ << "', aspect_ratio_range field must specify 2 dimensions.";
+    return false;
+  }
+  if (aspect_ratio_range_[kIndex1] <= kFloatNum0 || aspect_ratio_range_[kIndex0] <= kFloatNum0) {
+    MS_LOG(ERROR) << "For '" << kernel_name_ << "', aspect_ratio_range must be positive: ["
+                  << aspect_ratio_range_[kIndex0] << "], [" << aspect_ratio_range_[kIndex1] << "].";
+    return false;
+  }
   area_range_ = op_prim->get_area_range();
+  if (area_range_.size() != kShapeSize2) {
+    MS_LOG(ERROR) << "For '" << kernel_name_ << "', area_range field must specify 2 dimensions.";
+    return false;
+  }
+  if (area_range_[kIndex1] <= kFloatNum0 || area_range_[kIndex0] <= kFloatNum0) {
+    MS_LOG(ERROR) << "For '" << kernel_name_ << "', area_range must be positive: [" << area_range_[kIndex0] << "], ["
+                  << area_range_[kIndex1] << "].";
+    return false;
+  }
+  if (area_range_[kIndex1] > kFloatNum1 || area_range_[kIndex0] > kFloatNum1) {
+    MS_LOG(ERROR) << "For '" << kernel_name_ << "', area_range must be less then or equal to 1.0: ["
+                  << area_range_[kIndex0] << "], [" << area_range_[kIndex1] << "].";
+    return false;
+  }
   max_attempts_ = op_prim->get_max_attempts();
+  if (max_attempts_ <= SizeToLong(kNumber0)) {
+    MS_LOG(ERROR) << "For '" << kernel_name_ << "', max_attempts must be positive: [" << max_attempts_ << "].";
+    return false;
+  }
   use_image_if_no_bounding_boxes_ = op_prim->get_use_image();
   auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
   auto is_match = MatchKernelAttr(kernel_attr, GetOpSupport());
@@ -249,40 +276,20 @@ int SampleDistortedBoundingBoxV2CPUKernelMod::Resize(const BaseOperatorPtr &base
                   << shape_bounding_boxes[shape_dim_bounding_boxes - 1] << "].";
     return KRET_RESIZE_FAILED;
   }
-
-  if (max_attempts_ <= SizeToLong(kNumber0)) {
-    MS_LOG(ERROR) << "For '" << kernel_name_ << "', max_attempts must be positive: [" << max_attempts_ << "].";
-    return KRET_RESIZE_FAILED;
-  }
-  if (aspect_ratio_range_[kIndex1] <= kFloatNum0 || aspect_ratio_range_[kIndex0] <= kFloatNum0) {
-    MS_LOG(ERROR) << "For '" << kernel_name_ << "', aspect_ratio_range must be positive: ["
-                  << aspect_ratio_range_[kIndex0] << "], [" << aspect_ratio_range_[kIndex1] << "].";
-    return KRET_RESIZE_FAILED;
-  }
-  if (area_range_[kIndex1] <= kFloatNum0 || area_range_[kIndex0] <= kFloatNum0) {
-    MS_LOG(ERROR) << "For '" << kernel_name_ << "', area_range must be positive: [" << area_range_[kIndex0] << "], ["
-                  << area_range_[kIndex1] << "].";
-    return KRET_RESIZE_FAILED;
-  }
-  if (area_range_[kIndex1] > kFloatNum1 || area_range_[kIndex0] > kFloatNum1) {
-    MS_LOG(ERROR) << "For '" << kernel_name_ << "', area_range must be less then or equal to 1.0: ["
-                  << area_range_[kIndex0] << "], [" << area_range_[kIndex1] << "].";
-    return KRET_RESIZE_FAILED;
-  }
-  if (aspect_ratio_range_.size() != kShapeSize2) {
-    MS_LOG(ERROR) << "For '" << kernel_name_ << "', aspect_ratio_range field must specify 2 dimensions.";
-    return KRET_RESIZE_FAILED;
-  }
-  if (area_range_.size() != kShapeSize2) {
-    MS_LOG(ERROR) << "For '" << kernel_name_ << "', area_range field must specify 2 dimensions.";
-    return KRET_RESIZE_FAILED;
-  }
   return KRET_OK;
 }
 
 bool SampleDistortedBoundingBoxV2CPUKernelMod::Launch(const std::vector<kernel::AddressPtr> &inputs,
                                                       const std::vector<kernel::AddressPtr> & /* workspace */,
                                                       const std::vector<kernel::AddressPtr> &outputs) {
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kInputSize, kernel_name_);
+  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kOutputSize, kernel_name_);
+  MS_EXCEPTION_IF_NULL(inputs[kIndex0]);
+  MS_EXCEPTION_IF_NULL(inputs[kIndex1]);
+  MS_EXCEPTION_IF_NULL(inputs[kIndex2]);
+  MS_EXCEPTION_IF_NULL(outputs[kIndex0]);
+  MS_EXCEPTION_IF_NULL(outputs[kIndex1]);
+  MS_EXCEPTION_IF_NULL(outputs[kIndex2]);
   if (dtype_ == kNumberTypeUInt8) {
     LaunchSDBBExt2<uint8_t>(inputs, outputs);
   } else if (dtype_ == kNumberTypeInt8) {
@@ -300,6 +307,17 @@ bool SampleDistortedBoundingBoxV2CPUKernelMod::Launch(const std::vector<kernel::
 }
 
 template <typename T>
+void SampleDistortedBoundingBoxV2CPUKernelMod::CheckSDBBExt2(T *inputs0, float *inputs1, float *inputs2, T *outputs0,
+                                                             T *outputs1, float *outputs2) {
+  MS_EXCEPTION_IF_NULL(inputs0);
+  MS_EXCEPTION_IF_NULL(inputs1);
+  MS_EXCEPTION_IF_NULL(inputs2);
+  MS_EXCEPTION_IF_NULL(outputs0);
+  MS_EXCEPTION_IF_NULL(outputs1);
+  MS_EXCEPTION_IF_NULL(outputs2);
+}
+
+template <typename T>
 void SampleDistortedBoundingBoxV2CPUKernelMod::LaunchSDBBExt2(const std::vector<AddressPtr> &inputs,
                                                               const std::vector<AddressPtr> &outputs) {
   auto image_size = reinterpret_cast<T *>(inputs[kIndex0]->addr);
@@ -308,6 +326,7 @@ void SampleDistortedBoundingBoxV2CPUKernelMod::LaunchSDBBExt2(const std::vector<
   auto begin = reinterpret_cast<T *>(outputs[kIndex0]->addr);
   auto size = reinterpret_cast<T *>(outputs[kIndex1]->addr);
   auto bboxes = reinterpret_cast<float *>(outputs[kIndex2]->addr);
+  CheckSDBBExt2(image_size, bounding_boxes, min_object_covered, begin, size, bboxes);
 
   const int32_t height = static_cast<int32_t>(image_size[kIndex0]);
   const int32_t width = static_cast<int32_t>(image_size[kIndex1]);

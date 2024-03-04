@@ -17,13 +17,15 @@
 #include <map>
 #include <memory>
 #include <cstdio>
+#include <vector>
 #include "utils/system/env.h"
 #include "utils/file_utils.h"
 #include "utils/anf_utils.h"
-#include "common/graph_kernel/graph_kernel_flags.h"
-#include "common/graph_kernel/core/tuning_splitter.h"
-#include "common/graph_kernel/core/graph_kernel_utils.h"
-#include "tools/graph_kernel/converter/akg/akg_build.h"
+#include "backend/common/graph_kernel/graph_kernel_flags.h"
+#include "backend/common/graph_kernel/core/tuning_splitter.h"
+#include "tools/graph_kernel/converter/akg/akg_kernel_builder.h"
+#include "backend/common/graph_kernel/core/graph_kernel_utils.h"
+#include "tools/graph_kernel/converter/akg/utils.h"
 
 namespace mindspore::graphkernel {
 SplitSchemerPtr GraphKernelSplitterWithTuning::GetSplitSchema(const std::string &processor) {
@@ -43,12 +45,11 @@ bool GraphKernelSplitterWithTuning::StartTuning(const std::string &dir_path) con
   attrs << "}";
   std::ostringstream py_cmd;
   std::string tune_interface = "poly_graph_split_with_json_dir";
-  py_cmd << kAddAkgPath;
+  py_cmd << kAddMSLiteAkg;
   py_cmd << "from akg.ms import " << tune_interface << "\n";
   py_cmd << "if not " << tune_interface << "(\'" << dir_path << "\', " << attrs.str() << "):\n";
   py_cmd << "    raise RuntimeError(\'Tune fail. info path: " << dir_path << "\')";
   std::string cmd = "python -c \"" + py_cmd.str() + "\"";
-  MS_LOG(INFO) << "GraphKernel split tuning content: \n" << cmd;
   auto ret = std::system(cmd.c_str());
   if (!WIFEXITED(ret)) {
     MS_LOG(ERROR) << "Python process start fail! process content is as follows:\n" << cmd;
@@ -85,7 +86,7 @@ void SignTunedGraphs(const FuncGraphPtr &func_graph) {
     if (fs->FileExist(kernel_obj)) {
       // sign the funcgraph with its current kernel name, the tuned result can be used if
       // its kernel name is the same as the signature when building kernels.
-      AkgKernelJsonGenerator json_generator(option);
+      GraphKernelJsonGenerator json_generator(option);
       std::vector<AnfNodePtr> node_list, input_list, output_list;
       GkUtils::GetValidKernelNodes(fg, &node_list, &input_list, &output_list);
       (void)json_generator.CollectFusedJson(node_list, input_list, output_list);
@@ -96,7 +97,8 @@ void SignTunedGraphs(const FuncGraphPtr &func_graph) {
 }
 
 bool GraphKernelSplitterWithTuning::Run(const FuncGraphPtr &func_graph) {
-  if (GraphKernelFlags::GetInstance().online_tuning == 0) {
+  if (Callback::Instance()->GetTargetFromContext() == kAscendDevice ||
+      GraphKernelFlags::GetInstance().online_tuning == 0) {
     tuning_flag_ = false;
     return GraphKernelSplitter::Run(func_graph);
   }

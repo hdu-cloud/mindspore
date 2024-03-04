@@ -14,17 +14,32 @@
  * limitations under the License.
  */
 
-#include <set>
 #include <map>
-#include <vector>
 #include <memory>
+#include <set>
 #include <string>
+#include <vector>
 
-#include "ops/assign.h"
-#include "ops/op_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
 #include "ir/dtype/ref.h"
-#include "utils/check_convert_utils.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/assign.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,8 +52,9 @@ abstract::ShapePtr AssignInferShape(const PrimitivePtr &prim, const std::vector<
   auto variable_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(variable_shape_ptr)[kShape];
   auto value_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(value_shape_ptr)[kShape];
   auto shape_element = variable_shape_ptr->cast<abstract::ShapePtr>();
-  if (variable_shape_ptr->IsDynamic() || value_shape_ptr->IsDynamic()) {
-    return shape_element;
+  auto value_shape_element = value_shape_ptr->cast<abstract::ShapePtr>();
+  if (value_shape_ptr->IsDynamic()) {
+    return value_shape_element;
   }
   if (variable_shape.size() != value_shape.size()) {
     if (variable_shape.size() == 1 && variable_shape[0] == 1 && value_shape.empty()) {
@@ -91,6 +107,24 @@ AbstractBasePtr AssignInfer(const abstract::AnalysisEnginePtr &, const Primitive
   }
   return abstract::MakeAbstract(AssignInferShape(primitive, input_args), AssignInferType(primitive, input_args));
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Assign, prim::kPrimAssign, AssignInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGAssignInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return AssignInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return AssignInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return AssignInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Assign, prim::kPrimAssign, AGAssignInfer, false);
 }  // namespace ops
 }  // namespace mindspore

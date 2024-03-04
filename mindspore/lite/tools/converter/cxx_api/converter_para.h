@@ -25,6 +25,7 @@
 #include "tools/converter/preprocess/preprocess_param.h"
 #include "tools/converter/adapter/acl/common/acl_types.h"
 #include "tools/converter/micro/coder/config.h"
+#include "src/common/config_infos.h"
 
 namespace mindspore {
 enum ParallelSplitType { SplitNo = 0, SplitByUserRatio = 1, SplitByUserAttr = 2 };
@@ -33,6 +34,21 @@ struct ParallelSplitConfig {
   ParallelSplitType parallel_split_type_ = SplitNo;
   std::vector<int64_t> parallel_compute_rates_;
   std::vector<std::string> parallel_devices_;
+};
+
+struct CpuOptionCfg {
+  std::string architecture;
+  std::string instruction;
+};
+
+struct GraphKernelCfg {
+  std::string graph_kernel_flags;
+};
+
+struct AscendGeOptionCfg {
+  std::vector<std::string> plugin_custom_ops;
+  std::vector<int64_t> inputs_to_variable;
+  std::vector<int64_t> outputs_to_variable;
 };
 
 struct ConverterPara {
@@ -47,18 +63,29 @@ struct ConverterPara {
   std::map<std::string, std::vector<int64_t>> input_shape;
   Format input_format = NHWC;
   Format spec_input_format = DEFAULT_FORMAT;
+  Format spec_output_format = DEFAULT_FORMAT;
   DataType input_data_type = DataType::kNumberTypeFloat32;
   DataType output_data_type = DataType::kNumberTypeFloat32;
-  ModelType export_mindir = kMindIR_Lite;
+#if defined(ENABLE_CLOUD_FUSION_INFERENCE) || defined(ENABLE_CLOUD_INFERENCE)
+  ModelType save_type = kMindIR;
+#else
+  ModelType save_type = kMindIR_Lite;
+#endif
   std::string decrypt_key;
   std::string decrypt_mode = "AES-GCM";
   std::string encrypt_key;
   std::string encrypt_mode = "AES-GCM";  // inner
+#ifdef ENABLE_OPENSSL
+  bool enable_encryption = true;
+#else
   bool enable_encryption = false;
+#endif
   bool pre_infer = false;
   bool train_model = false;
   bool no_fusion = false;
+  bool optimize_transformer = false;
   bool is_runtime_converter = false;
+  bool enable_memory_offload = false;
   std::set<std::string> fusion_blacklists;
 
   // inner
@@ -71,7 +98,16 @@ struct ConverterPara {
   lite::acl::AclModelOptionCfg aclModelOptionCfgParam;
   lite::micro::MicroParam microParam;
   ParallelSplitConfig parallel_split_config;
+  AscendGeOptionCfg ascendGeOptionCfg;
   std::string device;
+  std::string provider;
+  std::string chip_name;
+  CpuOptionCfg cpuOptionCfgParam;
+  lite::quant::TransformQuantParam transformQuantParam;
+  lite::quant::DynamicQuantParam dynamicQuantParam;
+  GraphKernelCfg graphKernelParam;
+  // configs parse from config_file
+  ConfigInfos config_infos;
 };
 }  // namespace mindspore
 #endif  // MINDSPORE_LITE_TOOLS_CONVERTER_CXX_API_CONVERTER_PARA_H_

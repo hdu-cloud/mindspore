@@ -17,6 +17,7 @@
 #ifndef MINDSPORE_CORE_IR_TENSOR_H_
 #define MINDSPORE_CORE_IR_TENSOR_H_
 
+#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,17 +25,18 @@
 #include <mutex>
 #include <condition_variable>
 #include <utility>
-
 #include "ir/device_sync.h"
 #include "ir/meta_tensor.h"
 #include "utils/log_adapter.h"
 #include "base/float16.h"
-#include "base/user_data.h"
+#include "base/bfloat16.h"
 #include "utils/shape_utils.h"
 #include "utils/ms_exception.h"
 #include "ir/device_event.h"
 #include "utils/os.h"
 #include "ir/quantization_param.h"
+#include "ir/meta_grad_data.h"
+#include "ir/tensor_storage_info.h"
 
 // brief mindspore namespace.
 //
@@ -58,6 +60,29 @@ enum TensorCompressionType {
   kBitPacking = 4,
   kFSEInt = 5,
   kFSEInfer = 6
+};
+
+// Pinned memory register interface.
+class MS_CORE_API PinnedMemRegister {
+ public:
+  /// \brief Default constructor for register.
+  PinnedMemRegister() = default;
+
+  /// \brief Virtual destructor for register.
+  virtual ~PinnedMemRegister() = default;
+
+  /// \brief Register pinned memory.
+  ///
+  /// \param[in] addr The host address to pin.
+  /// \param[in] size The host data size.
+  /// \return Void.
+  virtual void RegisterPinnedMem(void *addr, size_t size) = 0;
+
+  /// \brief UnRegister pinned memory.
+  ///
+  /// \param[in] addr The host address to unpin.
+  /// \return Void.
+  virtual void UnRegisterPinnedMem(void *addr) = 0;
 };
 
 // A sub namespace in ME to support tensor related definition.
@@ -144,6 +169,19 @@ class MS_CORE_API TensorData {
   /// \param[in] use_comma Whether to use comma.
   /// \return The display information.
   virtual std::string ToString(TypeId type, const ShapeVector &shape, bool use_comma) const = 0;
+
+  /// \brief Set data saved file path.
+  ///
+  /// \param[in] data file path.
+  /// \return Void.
+  virtual void set_file_path(const std::string &path) {
+    MS_LOG(INFO) << "Call default set file path, and do nothing with " << path << ".";
+  }
+
+  /// \brief Get data saved file path.
+  ///
+  /// \return data file path.
+  virtual const std::string file_path() const { return ""; }
 };
 
 using TensorDataPtr = std::shared_ptr<TensorData>;
@@ -184,6 +222,32 @@ class WaitEvent : public ExceptionListener {
 class Tensor;
 using TensorPtr = std::shared_ptr<Tensor>;
 using TensorPtrList = std::vector<std::shared_ptr<Tensor>>;
+
+template <typename T>
+class FutureData {
+ public:
+  FutureData(std::shared_ptr<T> data, std::exception_ptr e_ptr) : data_(std::move(data)), e_ptr_(std::move(e_ptr)) {}
+  virtual ~FutureData() {}
+
+  virtual std::shared_ptr<T> GetData() const { return data_; }
+  const std::exception_ptr &GetException() const { return e_ptr_; }
+
+ private:
+  std::shared_ptr<T> data_;
+  std::exception_ptr e_ptr_;
+};
+
+template <typename T>
+class FutureBase {
+ public:
+  explicit FutureBase(std::future<std::shared_ptr<tensor::FutureData<T>>> future) : future_(std::move(future)) {}
+  virtual ~FutureBase() {}
+  virtual std::shared_ptr<T> Get() = 0;
+
+ protected:
+  std::future<std::shared_ptr<tensor::FutureData<T>>> future_;
+  std::shared_ptr<tensor::FutureData<T>> future_data_;
+};
 
 // Tensor entity class
 class MS_CORE_API Tensor : public MetaTensor {
@@ -236,6 +300,12 @@ class MS_CORE_API Tensor : public MetaTensor {
   /// \param[in] data_type [TypeId] data type.
   explicit Tensor(const std::vector<int64_t> &input, const TypePtr &data_type = nullptr);
 
+  /// \brief Create 1 dimension tensor from an int vector.
+  ///
+  /// \param[in] input [std::vector<int32_t>] the data for tensor.
+  /// \param[in] data_type [TypeId] data type.
+  explicit Tensor(const std::vector<int32_t> &input, const TypePtr &data_type = nullptr);
+
   /// \brief Create 1 dimension tensor from a float vector.
   ///
   /// \param[in] input [std::vector<double>] the data for tensor.
@@ -284,6 +354,12 @@ class MS_CORE_API Tensor : public MetaTensor {
   /// \param[in] data_type [TypeId] data type.
   explicit Tensor(float16 input, const TypePtr &data_type = nullptr);
 
+  /// \brief Create 0 dimension tensor from a bfloat16 scalar.
+  ///
+  /// \param[in] input [bfloat16] the data for tensor.
+  /// \param[in] data_type [TypeId] data type.
+  explicit Tensor(bfloat16 input, const TypePtr &data_type = nullptr);
+
   /// \brief Create 0 dimension tensor from a uint64 scalar.
   ///
   /// \param[in] input [uint64] the data for tensor.
@@ -329,8 +405,10 @@ class MS_CORE_API Tensor : public MetaTensor {
   Tensor(TypeId origin_data_type, const ShapeVector &shape, size_t compression_data_size,
          TensorCompressionType compression_type);
 
+  Tensor &operator=(const Tensor &tensor);
+
   /// Destructor of Tensor.
-  ~Tensor() override = default;
+  ~Tensor() override;
 
   MS_DECLARE_PARENT(Tensor, MetaTensor);
 
@@ -466,6 +544,16 @@ class MS_CORE_API Tensor : public MetaTensor {
   /// \param[in] flag Whether this Tensor is initialized.
   void set_init_flag(bool flag) { init_flag_ = flag; }
 
+  /// \brief Check whether this Tensor needs to be converted.
+  ///
+  /// \return Whether this Tensor needs to be converted.
+  bool is_adapter() const { return adapter_flag_; }
+
+  /// \brief Set the adapter flag of this Tensor.
+  ///
+  /// \param[in] flag Whether this Tensor needs to be converted.
+  void set_adapter_flag(bool flag) { adapter_flag_ = flag; }
+
   /// \brief Check if this Tensor is forward output.
   ///
   /// \return Whether this Tensor is forward output.
@@ -479,22 +567,14 @@ class MS_CORE_API Tensor : public MetaTensor {
   /// \brief Get the device address.
   ///
   /// \return The device address.
-  DeviceSyncPtr device_address() const { return device_sync_; }
+  DeviceSyncPtr device_address() const;
 
   /// \brief Set the device address.
   ///
   /// \param[in] device_sync The input Device synchronization.
   /// \param[in] need_update_ref_count If need_update_ref_count is true, the device address cannot be released and
   /// reused, so the feature map should set false when set device address of tensor.
-  void set_device_address(const DeviceSyncPtr &device_sync, bool need_update_ref_count = true) {
-    device_sync_ = device_sync;
-    // To support the old and new runtime coexistence, the output of old runtime may be the input of new runtime, so the
-    // device address cannot be released through ref count and set max ref count in this scenario.
-    if (need_update_ref_count && (device_sync_ != nullptr)) {
-      device_sync_->set_original_ref_count(SIZE_MAX);
-      device_sync_->ResetRefCount();
-    }
-  }
+  void set_device_address(const DeviceSyncPtr &device_sync, bool need_update_ref_count = true);
 
   /// \brief Check whether to release device memory.
   ///
@@ -505,16 +585,6 @@ class MS_CORE_API Tensor : public MetaTensor {
   ///
   /// \param[in] release_device_mem If release_device_mem is ture, the device memory will to be released.
   void set_need_release_device_mem(bool release_device_mem) { need_release_device_mem_ = release_device_mem; }
-
-  /// \brief Set the padding type of this Tensor.
-  ///
-  /// \param[in] padding_type The input padding type.
-  void set_padding_type(const std::string padding_type) { padding_type_ = padding_type; }
-
-  /// \brief Get the padding type of this Tensor.
-  ///
-  /// \return The padding type.
-  std::string padding_type() const { return padding_type_; }
 
   /// \brief Get the id of this Tensor.
   ///
@@ -676,36 +746,28 @@ class MS_CORE_API Tensor : public MetaTensor {
   /// \param[in] lazy_callback The callback from backend when lazy build is enabled
   void set_lazy_callback(const std::function<void(void)> &lazy_callback) { lazy_callback_ = lazy_callback; }
 
+  /// \brief Set contiguous callback function to this Tensor
+  ///
+  /// \param[in] contiguous_callback The callback from backend when need to make tensor contiguous.
+  void set_contiguous_callback(const std::function<DeviceSyncPtr(const tensor::TensorPtr &, const DeviceSyncPtr &,
+                                                                 const TensorStorageInfoPtr &)> &contiguous_callback) {
+    contiguous_callback_ = contiguous_callback;
+  }
+
   /// \brief Get the memory chunk pointer and offset if memory chunk for this tensor exists.
   ///
   /// \return The memory chunk pointer and offset, nullptr and 0 if no memory chunk exists.
   std::pair<void *, size_t> GetChunkOffset() const;
 
-  /// \brief Set user data.
-  ///
-  /// \param[in] key The key of user data.
-  /// \param[in] value The value of user data, nullptr to erase the user data.
-  template <typename T>
-  void set_user_data(const std::string &key, const std::shared_ptr<T> &value) {
-    user_data_.set<T>(key, value);
-  }
+  /// @brief Get Pynative auto_grad meta data.
+  /// @return Auto grad meta data
+  const AutoGradMetaDataPtr &auto_grad_meta_data() const { return auto_grad_meta_data_; }
 
-  /// \brief Get user data.
-  ///
-  /// \param[in] key The key of user data.
-  ///
-  /// \return Pointer to user data.
-  template <typename T>
-  std::shared_ptr<T> user_data(const std::string &key) const {
-    return user_data_.get<T>(key);
+  /// @brief Set Pynative auto_grad meta data.
+  /// @param auto_grad_meta_data
+  void set_auto_grad_meta_data(const AutoGradMetaDataPtr &auto_grad_meta_data) {
+    auto_grad_meta_data_ = auto_grad_meta_data;
   }
-
-  /// \brief Check whether there is corresponding user data by the given key.
-  ///
-  /// \param[in] key The key of user data.
-  ///
-  /// \return True if it exists, otherwise false.
-  bool has_user_data(const std::string &key) const { return user_data_.has(key); }
 
   /// \brief Reset tensors data so that they are using contiguous memory chunks grouped by data type.
   ///
@@ -728,6 +790,13 @@ class MS_CORE_API Tensor : public MetaTensor {
   ///
   /// \return Tensors that data are pointed to each contiguous memory chunks, empty if failed.
   static TensorPtrList GetFlattenedTensors(const TensorPtrList &tensors);
+
+  /// \brief Get tensors stub flag.
+  ///
+  /// \param[in] none.
+  ///
+  /// \return If compile with backend, return false, else return true.
+  static bool CheckStub();
 
   /// \brief Get the fusion size for the given flat tensors.
   ///
@@ -756,6 +825,18 @@ class MS_CORE_API Tensor : public MetaTensor {
   /// \return tensor name.
   const std::string &name() const { return tensor_name_; }
 
+  /// \brief Set tensor future.
+  ///
+  /// \param[in] address_future The future to get device address.
+  void set_address_future(const std::shared_ptr<FutureBase<DeviceSync>> &address_future) {
+    address_future_ = address_future;
+  }
+
+  /// \brief Get tensor future.
+  ///
+  /// \return The future to get device address.
+  const std::shared_ptr<FutureBase<DeviceSync>> address_future() const { return address_future_; }
+
   /// \brief Set tensor quant param.
   ///
   /// \param[in] quant_param The tensor quant param.
@@ -768,10 +849,47 @@ class MS_CORE_API Tensor : public MetaTensor {
   /// \return tensor quant param.
   const std::vector<std::shared_ptr<QuantizationParam>> &quant_params() const { return quant_params_; }
 
+  /// \brief Offload tensor to file.
+  ///
+  /// \return offload tensor success.
+  bool Offload(const std::string &file_path);
+
+  /// \brief Get tensor offload file path.
+  ///
+  /// \return offload file path, or empty string if tensor has not offload.
+  const std::string GetOffloadFilePath() const;
+
+  /// \brief Set tensor storage info.
+  ///
+  /// \param[in] tensors The tensors to be processed.
+  void set_storage_info(const TensorStorageInfoPtr &storage_info) const { storage_info_ = storage_info; }
+
+  /// \brief Get tensor storage info.
+  ///
+  /// \return Tensor storage info, the value is nullptr default.
+  const TensorStorageInfoPtr storage_info() const { return storage_info_; }
+
+  /// \brief pin tensor memory.
+  ///
+  /// \param[in] register to pin tensor data.
+  void PinMemory(PinnedMemRegister *pin_mem_register);
+
+  /// \brief unpin tensor memory.
+  void UnPinMemory();
+
+  /// \brief Convert tensor into contiguous memory.
+  void contiguous();
+
+  /// \brief Determines whether the memory of tensor is contiguous.
+  ///
+  /// \return True if tensor memory is contiguous, false otherwise.
+  bool is_contiguous() const;
+
  private:
   void ExecuteLazyTask() const;
 
   bool init_flag_{false};
+  bool adapter_flag_{false};
   bool is_forward_output_{false};
   TensorDataPtr data_{nullptr};
   std::string id_{""};
@@ -780,7 +898,7 @@ class MS_CORE_API Tensor : public MetaTensor {
   mutable TensorSyncStatus sync_status_{kNeedSyncHostToDevice};
   bool graph_output_{false};
   bool updated_by_device_{false};
-  DeviceSyncPtr device_sync_{nullptr};
+  mutable DeviceSyncPtr device_sync_{nullptr};
   // Release device address of graph output tensor or not.
   bool need_release_device_mem_{false};
   bool cache_enable_{false};
@@ -788,14 +906,18 @@ class MS_CORE_API Tensor : public MetaTensor {
   BaseShapePtr base_shape_ptr_{nullptr};
   std::shared_ptr<Tensor> cache_tensor_ptr_{nullptr};
   std::shared_ptr<Tensor> hashmap_tensor_ptr_{nullptr};
-  std::string padding_type_{""};
   TypePtr cast_dtype_{nullptr};
   std::shared_ptr<DeviceEvent> device_event_{nullptr};
   std::function<void(void)> lazy_callback_{nullptr};
-  UserData user_data_;
+  std::function<DeviceSyncPtr(const tensor::TensorPtr &, const DeviceSyncPtr &, const TensorStorageInfoPtr &)>
+    contiguous_callback_{nullptr};
+  PinnedMemRegister *pin_mem_register_{nullptr};
+  AutoGradMetaDataPtr auto_grad_meta_data_{nullptr};
   TensorCompressionType compression_type_{kNoCompression};
   std::vector<std::shared_ptr<QuantizationParam>> quant_params_;
   std::string tensor_name_;
+  mutable std::shared_ptr<FutureBase<DeviceSync>> address_future_{};
+  mutable TensorStorageInfoPtr storage_info_{nullptr};
 };
 
 // CSRTensor entity class

@@ -1,4 +1,4 @@
-# Copyright 2019-2022 Huawei Technologies Co., Ltd
+# Copyright 2019-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,14 +23,15 @@ Common imported modules in corresponding API examples are as follows:
     import mindspore.dataset as ds
 """
 from __future__ import absolute_import
-
+from enum import IntEnum
 import os
 import platform
 import random
 import numpy
 import mindspore._c_dataengine as cde
 from mindspore import log as logger
-from mindspore.dataset.core.validator_helpers import replace_none
+from mindspore.dataset.core.validator_helpers import replace_none, type_check
+from mindspore.dataset.debug import DebugHook, PrintMetaDataHook
 
 __all__ = ['set_sending_batches', 'load', '_init_device_info',
            'set_seed', 'get_seed',
@@ -46,12 +47,15 @@ __all__ = ['set_sending_batches', 'load', '_init_device_info',
            'set_auto_offload', 'get_auto_offload',
            'set_enable_watchdog', 'get_enable_watchdog',
            'set_fast_recovery', 'get_fast_recovery',
+           'set_debug_mode', 'get_debug_mode',
+           'set_error_samples_mode', 'get_error_samples_mode', 'ErrorSamplesMode',
            'set_multiprocessing_timeout_interval', 'get_multiprocessing_timeout_interval']
 
 INT32_MAX = 2147483647
 UINT32_MAX = 4294967295
 
 _config = cde.GlobalContext.config_manager()
+_debug_context = {}
 
 
 def _init_device_info():
@@ -100,23 +104,26 @@ def _init_device_info():
 
 def set_seed(seed):
     """
-    Set the seed so the random generated number will be fixed for deterministic results.
+    Set the seed for the random number generator in data pipeline.
+
+    The seed can be set to control the initial state of the random generator
+    for the purpose of fixing the result of random number generation.
 
     Note:
-        This set_seed function sets the seed in the Python random library and numpy.random library
-        for deterministic Python augmentations using randomness. This set_seed function should
-        be called when iterator is created to reset the random seed.
+        This interface will set the random seed of the `random`, `numpy.random`
+        and `mindspore.dataset` modules to the specified value at the same time.
 
     Args:
-        seed(int): Random number seed. It is used to generate deterministic random numbers.
+        seed (int): The desired seed. Must be non-negative.
 
     Raises:
-        TypeError: If `seed` isn't of type int.
-        ValueError: If `seed` < 0 or `seed` > UINT32_MAX(4294967295).
+        TypeError: If `seed` is not of type int.
+        ValueError: If `seed` is a negative value.
 
     Examples:
         >>> # Set a new global configuration value for the seed value.
         >>> # Operations with randomness will use the seed value to generate random values.
+        >>> import mindspore.dataset as ds
         >>> ds.config.set_seed(1000)
     """
     if not isinstance(seed, int) or isinstance(seed, bool):
@@ -134,7 +141,7 @@ def get_seed():
     """
     Get random number seed. If the seed has been set, then will
     return the set value, otherwise it will return the default seed value
-    which equals to std::mt19937::default_seed.
+    which equals to `std::mt19937::default_seed <http://www.cplusplus.com/reference/random/mt19937/>`_ .
 
     Returns:
         int, random number seed.
@@ -142,6 +149,7 @@ def get_seed():
     Examples:
         >>> # Get the global configuration of seed.
         >>> # If set_seed() is never called before, the default value(std::mt19937::default_seed) will be returned.
+        >>> import mindspore.dataset as ds
         >>> seed = ds.config.get_seed()
     """
     return _config.get_seed()
@@ -149,22 +157,32 @@ def get_seed():
 
 def set_prefetch_size(size):
     """
-    Set the queue capacity of the thread in pipeline.
+    Set the buffer queue size between dataset operations in the pipeline.
+
+    The presence of a buffer queue allows the current operation to start
+    processing subsequent data before the next operation fetches it, so the
+    operations can execute asynchronously and concurrently.
+
+    A larger buffer queue size reduces the overall processing latency when
+    neighboring operations have unbalanced throughput rates, but also consumes
+    more system memory.
 
     Args:
-        size (int): The length of the cache queue.
+        size (int): The size of the buffer queue, must be greater than 0.
 
     Raises:
         TypeError: If `size` is not of type int.
-        ValueError: If `size` <= 0 or `size` > INT32_MAX(2147483647).
+        ValueError: If `size` is not a positive number.
 
     Note:
-        Since total memory used for prefetch can grow very large with high number of workers,
-        when the number of workers is greater than 4, the per worker prefetch size will be reduced.
-        The actual prefetch size at runtime per-worker will be prefetchsize * (4 / num_parallel_workers).
+        The total memory consumed by the buffer queue is proportional to the number
+        of worker threads. To avoid overuse of memory, when the number of worker
+        threads is greater than 4, the actual buffer queue size used will be adjusted
+        to the greater of (`size` * 4 / number of worker threads) and 1.
 
     Examples:
         >>> # Set a new global configuration value for the prefetch size.
+        >>> import mindspore.dataset as ds
         >>> ds.config.set_prefetch_size(1000)
     """
     if not isinstance(size, int) or isinstance(size, bool):
@@ -186,6 +204,7 @@ def get_prefetch_size():
     Examples:
         >>> # Get the global configuration of prefetch size.
         >>> # If set_prefetch_size() is never called before, the default value(16) will be returned.
+        >>> import mindspore.dataset as ds
         >>> prefetch_size = ds.config.get_prefetch_size()
     """
     return _config.get_op_connector_size()
@@ -206,6 +225,7 @@ def set_num_parallel_workers(num):
     Examples:
         >>> # Set a new global configuration value for the number of parallel workers.
         >>> # Now parallel dataset operations will run with 8 workers.
+        >>> import mindspore.dataset as ds
         >>> ds.config.set_num_parallel_workers(8)
     """
     if not isinstance(num, int) or isinstance(num, bool):
@@ -220,6 +240,7 @@ def get_num_parallel_workers():
     """
     Get the global configuration of number of parallel workers.
     This is the DEFAULT num_parallel_workers value used for each operation.
+    If `set_num_parallel_workers` is never called before, the default value(8) will be returned.
 
     Returns:
         int, number of parallel workers to be used as a default for each operation.
@@ -227,6 +248,7 @@ def get_num_parallel_workers():
     Examples:
         >>> # Get the global configuration of parallel workers.
         >>> # If set_num_parallel_workers() is never called before, the default value(8) will be returned.
+        >>> import mindspore.dataset as ds
         >>> num_parallel_workers = ds.config.get_num_parallel_workers()
     """
     return _config.get_num_parallel_workers()
@@ -234,7 +256,8 @@ def get_num_parallel_workers():
 
 def set_numa_enable(numa_enable):
     """
-    Set the default state of numa enabled. If numa_enable is True, need to ensure numa library is installed.
+    Set the default state of numa enabled. If `numa_enable` is ``True``, need to
+    ensure `numa library <http://rpmfind.net/linux/rpm2html/search.php?query=libnuma-devel>`_ is installed.
 
     Args:
         numa_enable (bool): Whether to use numa bind feature.
@@ -245,6 +268,7 @@ def set_numa_enable(numa_enable):
     Examples:
         >>> # Set a new global configuration value for the state of numa enabled.
         >>> # Now parallel dataset operations will run with numa bind function
+        >>> import mindspore.dataset as ds
         >>> ds.config.set_numa_enable(True)
     """
     if not isinstance(numa_enable, bool):
@@ -255,13 +279,14 @@ def set_numa_enable(numa_enable):
 def get_numa_enable():
     """
     Get the state of numa to indicate enabled/disabled.
-    This is the DEFAULT numa enabled value used for the all process.
+    This is the numa config used for all processes, it is disabled by default.
 
     Returns:
         bool, the default state of numa enabled.
 
     Examples:
         >>> # Get the global configuration of numa.
+        >>> import mindspore.dataset as ds
         >>> numa_state = ds.config.get_numa_enable()
     """
     return _config.get_numa_enable()
@@ -280,6 +305,7 @@ def set_monitor_sampling_interval(interval):
 
     Examples:
         >>> # Set a new global configuration value for the monitor sampling interval.
+        >>> import mindspore.dataset as ds
         >>> ds.config.set_monitor_sampling_interval(100)
     """
     if not isinstance(interval, int) or isinstance(interval, bool):
@@ -301,6 +327,7 @@ def get_monitor_sampling_interval():
     Examples:
         >>> # Get the global configuration of monitor sampling interval.
         >>> # If set_monitor_sampling_interval() is never called before, the default value(1000) will be returned.
+        >>> import mindspore.dataset as ds
         >>> sampling_interval = ds.config.get_monitor_sampling_interval()
     """
     return _config.get_monitor_sampling_interval()
@@ -312,7 +339,7 @@ def set_auto_num_workers(enable):
 
     If turned on, the num_parallel_workers in each op will be adjusted automatically, possibly overwriting the
     num_parallel_workers passed in by user or the default value (if user doesn't pass anything) set by
-    ds.config.set_num_parallel_workers().
+    :func:`mindspore.dataset.config.set_num_parallel_workers`.
 
     For now, this function is only optimized for YoloV3 dataset with per_batch_map (running map in batch).
     This feature aims to provide a baseline for optimized num_workers assignment for each operation.
@@ -326,6 +353,7 @@ def set_auto_num_workers(enable):
 
     Examples:
         >>> # Enable auto_num_worker feature, this might override the num_parallel_workers passed in by user
+        >>> import mindspore.dataset as ds
         >>> ds.config.set_auto_num_workers(True)
     """
     if not isinstance(enable, bool):
@@ -361,13 +389,14 @@ def _set_auto_workers_config(option):
 
 def get_auto_num_workers():
     """
-    Get the setting (turned on or off) automatic number of workers.
+    Get the setting (turned on or off) automatic number of workers, it is disabled by default.
 
     Returns:
         bool, whether auto number worker feature is turned on.
 
     Examples:
         >>> # Get the global configuration of auto number worker feature.
+        >>> import mindspore.dataset as ds
         >>> flag = ds.config.get_auto_num_workers()
     """
     return _config.get_auto_num_workers()
@@ -375,17 +404,19 @@ def get_auto_num_workers():
 
 def set_callback_timeout(timeout):
     """
-    Set the default timeout (in seconds) for DSWaitedCallback.
+    Set the default timeout (in seconds) for :class:`mindspore.dataset.WaitedDSCallback` .
 
     Args:
-        timeout (int): Timeout (in seconds) to be used to end the wait in DSWaitedCallback in case of a deadlock.
+        timeout (int): Timeout (in seconds) to be used to end the wait in :class:`mindspore.dataset.WaitedDSCallback`
+            in case of a deadlock. The `timeout` must be greater than 0.
 
     Raises:
         TypeError: If `timeout` is not type int.
-        ValueError: If `timeout` <= 0 or `timeout` > INT32_MAX(2147483647).
+        ValueError: If `timeout` is not a positive number.
 
     Examples:
         >>> # Set a new global configuration value for the timeout value.
+        >>> import mindspore.dataset as ds
         >>> ds.config.set_callback_timeout(100)
     """
     if not isinstance(timeout, int) or isinstance(timeout, bool):
@@ -397,14 +428,17 @@ def set_callback_timeout(timeout):
 
 def get_callback_timeout():
     """
-    Get the default timeout for WaitedDSCallback.
+    Get the default timeout (in seconds) for :class:`mindspore.dataset.WaitedDSCallback` .
+    If `set_callback_timeout` is never called before, the default value(60) will be returned.
 
     Returns:
-        int, Timeout (in seconds) to be used to end the wait in DSWaitedCallback in case of a deadlock.
+        int, Timeout (in seconds) to be used to end the wait in :class:`mindspore.dataset.WaitedDSCallback` in case of
+        a deadlock.
 
     Examples:
         >>> # Get the global configuration of callback timeout.
         >>> # If set_callback_timeout() is never called before, the default value(60) will be returned.
+        >>> import mindspore.dataset as ds
         >>> callback_timeout = ds.config.get_callback_timeout()
     """
     return _config.get_callback_timeout()
@@ -439,6 +473,7 @@ def load(file):
         >>> #     "seed": 5489,
         >>> #     "monitorSamplingInterval": 30
         >>> # }
+        >>> import mindspore.dataset as ds
         >>> config_file = "/path/to/config/file"
         >>> ds.config.load(config_file)
     """
@@ -447,43 +482,40 @@ def load(file):
 
 def set_enable_autotune(enable, filepath_prefix=None):
     """
-    Set whether to enable AutoTune. AutoTune is disabled by default.
+    Set whether to enable AutoTune for data pipeline parameters.
 
-    AutoTune is used to automatically adjust the global configuration of the data pipeline
-    according to the workload of environmental resources during the training process to
-    improve the speed of data processing.
+    It can be used to automatically adjust the parameter configurations
+    of each operation in the data processing pipeline, such as parallelism
+    and buffer queue size, according to the load of the environment resources
+    during training, so as to improve the overall processing speed.
 
-    The optimized global configuration can be saved as a JSON file by setting `json_filepath`
-    for subsequent reuse.
+    AutoTune is not enabled by default.
 
     Args:
         enable (bool): Whether to enable AutoTune.
-        filepath_prefix (str, optional): The prefix filepath to save the optimized global configuration.
-            The rank id and the json extension will be appended to the filepath_prefix string in multi-device training,
-            rank id will be set to 0 in standalone training.
-            For example, if filepath_prefix="/path/to/some/dir/prefixname" and rank_id is 1, then the path
-            of the generated file will be "/path/to/some/dir/prefixname_1.json"
-            If the file already exists, it will be automatically overwritten. Default: None,
-            means not to save the configuration file, but the tuned result still can be checked through INFO log.
+        filepath_prefix (str, optional): The path where the optimized parameter configuration will be saved.
+            Effective only if `enable` is `True`. The parameter configuration file on each Device will be
+            saved separately, and the final file name will be `filepath_prefix + RANK_ID + ".json"`,
+            where RANK_ID is the Device ID corresponding to the file. Default: ``None`` , no configuration
+            file is saved.
 
     Raises:
         TypeError: If `enable` is not of type boolean.
-        TypeError: If `json_filepath` is not of type str.
-        RuntimeError: If `json_filepath` is an empty string.
-        RuntimeError: If `json_filepath` is a directory.
-        RuntimeError: If `json_filepath` does not exist.
-        RuntimeError: If `json_filepath` does not have write permission.
+        TypeError: If `filepath_prefix` is not of type str.
+        RuntimeError: If `filepath_prefix` is an empty string.
+        RuntimeError: If `filepath_prefix` is a directory.
+        RuntimeError: If `filepath_prefix` does not exist.
+        RuntimeError: If `filepath_prefix` does not have write permission.
 
     Note:
-        - When `enable` is False, `json_filepath` will be ignored.
-        - The JSON file can be loaded by API `mindspore.dataset.deserialize` to build a tuned pipeline.
-        - In distributed training scenario, set_enable_autotune() must be called after cluster communication has been
-          initialized (mindspore.communication.management.init()), otherwise the AutoTune file will always suffix with
-          rank id 0.
+        - Saved parameter profiles can be loaded via the `mindspore.dataset.deserialize` interface to
+          directly obtain a data processing pipeline object configured with optimal parameters.
+        - The parameter tuning process can be viewed by turning on INFO level logging.
 
-    An example of the generated JSON file is as follows. "remark" file will conclude that if the dataset has been
-    tuned or not. "summary" filed will show the tuned configuration of dataset pipeline. Users can modify scripts
-    based on the tuned result.
+    An example of the generated configuration file is as follows, the "remark" field describes whether or not data
+    processing parameter tuning has been performed, the "summary" field briefly shows each operation in the data
+    processing pipeline and its corresponding optimal configuration, and the "tree" field provides complete
+    information about the structure of the data processing pipeline.
 
     .. code-block::
 
@@ -501,6 +533,8 @@ def set_enable_autotune(enable, filepath_prefix=None):
         }
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>>
         >>> # enable AutoTune and save optimized data pipeline configuration
         >>> ds.config.set_enable_autotune(True, "/path/to/autotune_out.json")
         >>>
@@ -534,13 +568,14 @@ def set_enable_autotune(enable, filepath_prefix=None):
 
 def get_enable_autotune():
     """
-    Get whether AutoTune is currently enabled.
+    Get whether AutoTune is currently enabled, it is disabled by default.
 
     Returns:
         bool, whether AutoTune is currently enabled.
 
     Examples:
         >>> # get the state of AutoTune
+        >>> import mindspore.dataset as ds
         >>> autotune_flag = ds.config.get_enable_autotune()
     """
     return _config.get_enable_autotune()
@@ -550,7 +585,7 @@ def set_autotune_interval(interval):
     """
     Set the configuration adjustment interval (in steps) for AutoTune.
 
-    The default setting is 0, which will adjust the configuration after each epoch.
+    The default setting is ``0``, which will adjust the configuration after each epoch.
     Otherwise, the configuration will be adjusted every `interval` steps.
 
     Args:
@@ -562,6 +597,7 @@ def set_autotune_interval(interval):
 
     Examples:
         >>> # set a new interval for AutoTune
+        >>> import mindspore.dataset as ds
         >>> ds.config.set_autotune_interval(30)
     """
     if not isinstance(interval, int) or isinstance(interval, bool):
@@ -575,12 +611,14 @@ def set_autotune_interval(interval):
 def get_autotune_interval():
     """
     Get the current configuration adjustment interval (in steps) for AutoTune.
+    If `set_autotune_interval` is never called before, the default value(0) will be returned.
 
     Returns:
         int, the configuration adjustment interval (in steps) for AutoTune.
 
     Examples:
         >>> # get the global configuration of the autotuning interval
+        >>> import mindspore.dataset as ds
         >>> autotune_interval = ds.config.get_autotune_interval()
     """
     return _config.get_autotune_interval()
@@ -598,13 +636,12 @@ def get_enable_shared_mem():
 
     Examples:
         >>> # Get the flag of shared memory feature.
+        >>> import mindspore.dataset as ds
         >>> shared_mem_flag = ds.config.get_enable_shared_mem()
     """
     # For Windows and MacOS we forbid shared mem function temporarily
     enable_shared_mem = _config.get_enable_shared_mem()
     if enable_shared_mem and platform.system().lower() in {"windows", "darwin"}:
-        logger.warning(
-            "For Windows and MacOS we forbid shared mem function temporarily.")
         _config.set_enable_shared_mem(False)
         return False
     return enable_shared_mem
@@ -612,20 +649,24 @@ def get_enable_shared_mem():
 
 def set_enable_shared_mem(enable):
     """
-    Set the default state of shared memory flag. If shared_mem_enable is True, will use shared memory queues
-    to pass data to processes that are created for operations that set python_multiprocessing=True.
+    Set whether to use shared memory for interprocess communication when data processing multiprocessing is turned on.
+
+    Using shared memory can speed up the efficiency of data transfer between processes.
+
+    Shared memory is used by default.
 
     Note:
-        `set_enable_shared_mem` is not supported on Windows and MacOS platforms yet.
+        Windows and MacOS systems are not supported yet.
 
     Args:
-        enable (bool): Whether to use shared memory in operations when python_multiprocessing=True.
+        enable (bool): Whether to use shared memory for interprocess communication.
 
     Raises:
-        TypeError: If `enable` is not a boolean data type.
+        TypeError: If `enable` is not of type bool.
 
     Examples:
         >>> # Enable shared memory feature to improve the performance of Python multiprocessing.
+        >>> import mindspore.dataset as ds
         >>> ds.config.set_enable_shared_mem(True)
     """
     if not isinstance(enable, bool):
@@ -642,17 +683,26 @@ def set_enable_shared_mem(enable):
 
 def set_sending_batches(batch_num):
     """
-    Set the default sending batches when training with sink_mode=True in Ascend device.
+    Set the upper limit on the number of batches of data that the Host can send to the Device.
+
+    Can be used to implement customized data sending control logic to solve the problem of
+    Device out of memory. In each epoch, when the actual number of batches sent to the Device
+    reaches this value, the Host will stop continuing to send until the user increases this
+    upper limit again through this interface.
+
+    Currently, it is only supported when training in sink mode with Ascend backend, which can
+    be enabled via the :class:`mindspore.train.Model.train` interface.
 
     Args:
-        batch_num (int): the total sending batches, when batch_num is set, it will wait unless sending batches
-         increase, default is 0 which means will send all batches in dataset.
+        batch_num (int): The upper limit on the number of batches of data that the Host can
+            send to the Device. ``0`` indicates that there is no upper limit for sending.
 
     Raises:
         TypeError: If `batch_num` is not of type int.
 
     Examples:
         >>> # Set a new global configuration value for the sending batches
+        >>> import mindspore.dataset as ds
         >>> ds.config.set_sending_batches(10)
     """
     if not isinstance(batch_num, int) or isinstance(batch_num, bool):
@@ -673,6 +723,7 @@ def set_auto_offload(offload):
 
     Examples:
         >>> # Enable automatic offload feature
+        >>> import mindspore.dataset as ds
         >>> ds.config.set_auto_offload(True)
     """
     if not isinstance(offload, bool):
@@ -682,13 +733,14 @@ def set_auto_offload(offload):
 
 def get_auto_offload():
     """
-    Get the state of the automatic offload flag (True or False)
+    Get the state of the automatic offload flag (True or False), it is disabled by default.
 
     Returns:
         bool, Whether the automatic offload feature is enabled.
 
     Examples:
         >>> # Get the global configuration of the automatic offload feature.
+        >>> import mindspore.dataset as ds
         >>> auto_offload = ds.config.get_auto_offload()
     """
     return _config.get_auto_offload()
@@ -700,13 +752,14 @@ def set_enable_watchdog(enable):
     Watchdog is a thread which cleans up hanging subprocesses.
 
     Args:
-        enable (bool): Whether to launch a watchdog Python thread. System default: True.
+        enable (bool): Whether to launch a watchdog Python thread.
 
     Raises:
         TypeError: If `enable` is not a boolean data type.
 
     Examples:
         >>> # Set a new global configuration value for the state of watchdog Python thread as enabled.
+        >>> import mindspore.dataset as ds
         >>> ds.config.set_enable_watchdog(True)
     """
     if not isinstance(enable, bool):
@@ -717,13 +770,14 @@ def set_enable_watchdog(enable):
 def get_enable_watchdog():
     """
     Get the state of watchdog Python thread to indicate enabled or disabled state.
-    This is the DEFAULT watchdog Python thread state value used for the all processes.
+    This is a Python watchdog thread used for all processes, it is enabled by default.
 
     Returns:
         bool, the default state of watchdog Python thread enabled.
 
     Examples:
         >>> # Get the global configuration of watchdog Python thread.
+        >>> import mindspore.dataset as ds
         >>> watchdog_state = ds.config.get_enable_watchdog()
     """
     return _config.get_enable_watchdog()
@@ -736,7 +790,7 @@ def set_multiprocessing_timeout_interval(interval):
 
     Args:
         interval (int): Interval (in seconds) to be used for multiprocessing/multithreading timeout when main
-          process/thread gets data from subprocess/child threads. System default: 300s.
+            process/thread gets data from subprocess/child threads.
 
     Raises:
         TypeError: If `interval` is not of type int.
@@ -744,6 +798,7 @@ def set_multiprocessing_timeout_interval(interval):
 
     Examples:
         >>> # Set a new global configuration value for multiprocessing/multithreading timeout when getting data.
+        >>> import mindspore.dataset as ds
         >>> ds.config.set_multiprocessing_timeout_interval(300)
     """
     if not isinstance(interval, int) or isinstance(interval, bool):
@@ -761,12 +816,14 @@ def get_multiprocessing_timeout_interval():
 
     Returns:
         int, interval (in seconds) for multiprocessing/multithreading timeout when main process/thread gets data from
-        subprocesses/child threads. Default: 300s.
+        subprocesses/child threads. If `set_multiprocessing_timeout_interval` is never called before,
+        the default value(300) will be returned.
 
     Examples:
         >>> # Get the global configuration of multiprocessing/multithreading timeout when main process/thread gets data
         >>> # from subprocesses/child threads. If set_multiprocessing_timeout_interval() is never called before, the
         >>> # default value(300) will be returned.
+        >>> import mindspore.dataset as ds
         >>> multiprocessing_timeout_interval = ds.config.get_multiprocessing_timeout_interval()
     """
     return _config.get_multiprocessing_timeout_interval()
@@ -783,6 +840,7 @@ def set_dynamic_shape(is_dynamic):
         TypeError: If `is_dynamic` is not a boolean data type.
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> ds.config.set_dynamic_shape(True)
     """
     if not isinstance(is_dynamic, bool):
@@ -792,11 +850,13 @@ def set_dynamic_shape(is_dynamic):
 
 def get_dynamic_shape():
     """
-    Get the dynamic shape flag of the dataset
+    Get the dynamic shape flag of the dataset, it is set to False by default.
+
     Returns:
         bool, whether the dataset is dynamic shape.
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> is_dynamic_shape = ds.config.get_dynamic_shape()
     """
     return _config.get_dynamic_shape()
@@ -805,7 +865,7 @@ def get_dynamic_shape():
 def set_fast_recovery(fast_recovery):
     """
     Set whether dataset pipeline should recover in fast mode during failover
-    (yet with slightly different random augmentations).
+    (In fast mode, random augmentations may not get same results as before the failure occurred).
 
     Args:
         fast_recovery (bool): Whether the dataset pipeline recovers in fast mode.
@@ -814,6 +874,7 @@ def set_fast_recovery(fast_recovery):
         TypeError: If `fast_recovery` is not a boolean data type.
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> ds.config.set_fast_recovery(False)
     """
     if not isinstance(fast_recovery, bool):
@@ -824,11 +885,204 @@ def set_fast_recovery(fast_recovery):
 def get_fast_recovery():
     """
     Get whether the fast recovery mode is enabled for the current dataset pipeline.
+    It is set to True by default.
 
     Returns:
         bool, whether the dataset recovers fast in failover reset.
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> is_fast_recovery = ds.config.get_fast_recovery()
     """
     return _config.get_fast_recovery()
+
+
+def set_debug_mode(debug_mode_flag: bool, debug_hook_list: list = None):
+    """
+    Set the debug_mode flag of the dataset pipeline. When enabled, the dataset pipeline is run synchronously and
+    sequentially with a single thread.
+
+    Note:
+        When debug_mode is enabled,
+
+        - If random seed has not been set, will internally set the seed to 1.
+          So that debug mode execution of the dataset pipeline can produce deterministic results.
+
+        - The following configuration settings are ignored:
+
+          - auto_offload (False is used.)
+          - enable_autotune (False is used.)
+          - error_samples_mode (ErrorSamplesMode.RETURN is used.)
+          - num_parallel_workers (Value 1 is used.)
+
+        - The `offload` parameter in `map` operation will be ignored.
+        - The `python_multiprocessing` parameter in `GeneratorDataset`, `map`/`batch` operation will be ignored.
+        - The `cache` parameter in Dataset loading API will be ignored.
+
+    Args:
+        debug_mode_flag (bool): Whether dataset pipeline debug mode is enabled, which forces the pipeline
+            to run synchronously and sequentially.
+        debug_hook_list (list[DebugHook]): a list of debug hook objects to be inserted before and after each
+            transform operation in map operation. Default: ``None``, which means to use basic print hook,
+            which prints shape/size/type of each input/output data of each transformation.
+
+    Raises:
+        TypeError: If `debug_mode_flag` is not a boolean data type.
+        TypeError: If `debug_hook_list` is not a list type.
+        TypeError: If any item in `debug_hook_list` is not DebugHook type.
+
+    Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.vision as vision
+        >>> import mindspore.dataset.debug as debug
+        >>>
+        >>> # 1. Enable dataset pipeline debug mode and use default debug hook.
+        >>> # Print shape and type of input/output data of each transform op in map operator.
+        >>> ds.config.set_debug_mode(True)
+        >>>
+        >>> # 2. Enable dataset pipeline debug mode and use pre-defined debug hook provided by MindData.
+        >>> ds.config.set_debug_mode(True, debug_hook_list=[debug.PrintDataHook()])
+        >>>
+        >>> # 3. Enable dataset pipeline debug mode and use user-defined debug hook. It must define a
+        >>> # class inherited from DebugHook.
+        >>> class CustomizedHook(debug.DebugHook):
+        ...     def __init__(self):
+        ...         super().__init__()
+        ...
+        ...     def compute(self, *args):
+        ...         # Add your debugging code here.
+        ...         return args
+        >>>
+        >>> ds.config.set_debug_mode(True, debug_hook_list=[CustomizedHook()])
+        >>>
+        >>> # 4. Enable dataset pipeline debug mode and use user-defined debug hook and insert by users manually.
+        >>> ds.config.set_debug_mode(True)
+        >>> dataset = ds.ImageFolderDataset(dataset_dir="/path/to/image_folder_dataset_directory")
+        >>>
+        >>> # The debug hook is added after Decode operation.
+        >>> dataset = dataset.map([vision.Decode(), CustomizedHook(), vision.CenterCrop(100)])
+    """
+    if not isinstance(debug_mode_flag, bool):
+        raise TypeError("debug_mode_flag isn't of type boolean.")
+    if debug_hook_list is None:
+        debug_hook_list = [PrintMetaDataHook()]
+    if not isinstance(debug_hook_list, list):
+        raise TypeError("debug_hook_list is not a list.")
+    for debug_func in debug_hook_list:
+        if not isinstance(debug_func, DebugHook):
+            raise TypeError("All items in debug_hook_list must be of type DebugHook.")
+    if debug_mode_flag:
+        logger.warning("Dataset pipeline debug mode is enabled. Performance will be impacted because the pipeline"
+                       " will be running in a single thread.")
+    if debug_hook_list:
+        _debug_context["debug_hook_list"] = debug_hook_list
+
+    _config.set_debug_mode(debug_mode_flag)
+
+
+def get_debug_mode():
+    """
+    Get whether debug mode is currently enabled for the data pipeline.
+
+    Returns:
+        bool, whether data pipeline debug mode is enabled.
+
+    Examples:
+        >>> import mindspore.dataset as ds
+        >>> debug_mode = ds.config.get_debug_mode()
+    """
+    return _config.get_debug_mode()
+
+
+def _get_debug_hook_list():
+    """
+    INTERNAL USE ONLY!
+    Get value of debug_hook_list.
+
+    Returns:
+        list, the debug hook objects to be inserted in map operation to debug inputs/outputs of each transform.
+    """
+    return _debug_context.get("debug_hook_list")
+
+
+class ErrorSamplesMode(IntEnum):
+    """
+    An enumeration for `error_samples_mode` .
+
+    Possible enumeration values are: ErrorSamplesMode.RETURN, ErrorSamplesMode.REPLACE, ErrorSamplesMode.SKIP.
+
+    - ErrorSamplesMode.RETURN: means erroneous sample results in error raised and returned.
+    - ErrorSamplesMode.REPLACE: means erroneous sample is replaced with an internally determined sample.
+    - ErrorSamplesMode.SKIP: means erroneous sample is skipped.
+    """
+
+    RETURN = 0
+    REPLACE = 1
+    SKIP = 2
+
+
+# Convert ErrorSamplesMode from Python enum format to CDE enum format
+_PYTHON_TO_CDE_ERROR_SAMPLES_MODE = {
+    ErrorSamplesMode.RETURN: cde.ErrorSamplesMode.DE_ERROR_SAMPLES_MODE_RETURN,
+    ErrorSamplesMode.REPLACE: cde.ErrorSamplesMode.DE_ERROR_SAMPLES_MODE_REPLACE,
+    ErrorSamplesMode.SKIP: cde.ErrorSamplesMode.DE_ERROR_SAMPLES_MODE_SKIP
+}
+
+# Convert ErrorSamplesMode from CDE int format to Python enum format
+_CDE_TO_PYTHON_ERROR_SAMPLES_MODE = {
+    0: ErrorSamplesMode.RETURN,
+    1: ErrorSamplesMode.REPLACE,
+    2: ErrorSamplesMode.SKIP
+}
+
+
+def set_error_samples_mode(error_samples_mode):
+    """
+    Set the method in which erroneous samples should be processed in a dataset pipeline.
+
+    Note:
+        - This error samples feature is only applicable to the Map operation in a dataset pipeline.
+        - For ``ErrorSamplesMode.REPLACE`` mode, a cache of other samples will be used.
+        - If ``ErrorSamplesMode.SKIP`` mode is used in a distributed setting, beware to manually ensure the
+          number of valid samples are the same for each shard (otherwise one may encounter hangs).
+          One technique is to manually concat a dataset of all valid samples plus a
+          take operation for the number of skipped erroneous samples.
+
+    Args:
+        error_samples_mode (ErrorSamplesMode): The method in which erroneous samples should be processed in a dataset
+            pipeline. It can be any of [ErrorSamplesMode.RETURN, ErrorSamplesMode.REPLACE, ErrorSamplesMode.SKIP].
+
+            - ``ErrorSamplesMode.RETURN``: means erroneous sample results in error raised and returned.
+
+            - ``ErrorSamplesMode.REPLACE``: means erroneous sample is replaced with a correct sample.
+
+            - ``ErrorSamplesMode.SKIP``: means erroneous sample is skipped.
+
+    Raises:
+        TypeError: If `error_samples_mode` is not of type ErrorSamplesMode.
+
+    Examples:
+        >>> import mindspore.dataset as ds
+        >>> ds.config.set_error_samples_mode(ds.config.ErrorSamplesMode.SKIP)
+    """
+    type_check(error_samples_mode, (ErrorSamplesMode,), "error_samples_mode")
+    _config.set_error_samples_mode(_PYTHON_TO_CDE_ERROR_SAMPLES_MODE.get(error_samples_mode))
+
+
+def get_error_samples_mode():
+    """
+    Get the current configuration for strategy for processing erroneous samples in a dataset pipeline.
+    If `set_error_samples_mode` is never called before, the default setting is ErrorSamplesMode.RETURN.
+
+    Returns:
+        ErrorSamplesMode, The method in which erroneous samples should be processed in a dataset pipeline.
+
+        - ErrorSamplesMode.RETURN: means erroneous sample results in error raised and returned.
+        - ErrorSamplesMode.REPLACE: means erroneous sample is replaced with an internally determined sample.
+        - ErrorSamplesMode.SKIP: means erroneous sample is skipped.
+
+    Examples:
+        >>> import mindspore.dataset as ds
+        >>> error_samples_mode = ds.config.get_error_samples_mode()
+    """
+    return _CDE_TO_PYTHON_ERROR_SAMPLES_MODE.get(_config.get_error_samples_mode())

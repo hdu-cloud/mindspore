@@ -15,16 +15,29 @@
  */
 
 #include "ops/neg.h"
+
 #include <complex>
-#include <vector>
-#include <string>
 #include <memory>
-#include <map>
-#include <set>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "base/float16.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "mindapi/base/type_id.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -48,9 +61,8 @@ abstract::ShapePtr NegInferShape(const PrimitivePtr &, const std::vector<Abstrac
 }
 
 TypePtr NegInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
-  const std::set<TypePtr> valid_types = {kUInt8,   kInt8,    kInt16,   kInt32,     kInt64,
-                                         kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
-  (void)CheckAndConvertUtils::CheckTensorTypeValid("x", input_args[0]->BuildType(), valid_types, prim->name());
+  (void)CheckAndConvertUtils::CheckTensorTypeValid("x", input_args[0]->BuildType(), common_valid_types_with_complex,
+                                                   prim->name());
   return input_args[0]->BuildType();
 }
 
@@ -149,6 +161,27 @@ AbstractBasePtr NegInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr
   auto infer_shape = NegInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Neg, prim::kPrimNeg, NegInfer, NegInferValue, true);
+
+// AG means auto generated
+class MIND_API AGNegInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return NegInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return NegInferType(primitive, input_args);
+  }
+  ValuePtr InferValue(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return NegInferValue(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return NegInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Neg, prim::kPrimNeg, AGNegInfer, true);
 }  // namespace ops
 }  // namespace mindspore

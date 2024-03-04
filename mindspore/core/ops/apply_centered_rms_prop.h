@@ -16,14 +16,14 @@
 
 #ifndef MINDSPORE_CORE_OPS_APPLY_CENTERED_RMS_PROP_H_
 #define MINDSPORE_CORE_OPS_APPLY_CENTERED_RMS_PROP_H_
-#include <vector>
-#include <memory>
-#include <string>
-#include <set>
 #include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,8 +37,9 @@ class MIND_API ApplyCenteredRMSProp : public BaseOperator {
       {"var", "mean_gradient", "mean_square", "moment"});
   }
 };
-abstract::AbstractBasePtr ApplyCenteredRMSPropInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                    const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr ApplyCenteredRMSPropInfer(const abstract::AnalysisEnginePtr &,
+                                                             const PrimitivePtr &primitive,
+                                                             const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimApplyCenteredRMSPropPtr = std::shared_ptr<ApplyCenteredRMSProp>;
 }  // namespace ops
 }  // namespace mindspore

@@ -15,10 +15,30 @@
  */
 
 #include "ops/extract_volume_patches.h"
+
+#include <map>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
 #include "ir/dtype/number.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -155,7 +175,25 @@ AbstractBasePtr ExtractVolumePatchesInfer(const abstract::AnalysisEnginePtr &, c
   auto shape = ExtractVolumePatchesInferShape(primitive, input_args);
   return abstract::MakeAbstract(shape, type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(ExtractVolumePatches, prim::kPrimExtractVolumePatches, ExtractVolumePatchesInfer, nullptr,
-                             true);
+
+// AG means auto generated
+class MIND_API AGExtractVolumePatchesInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ExtractVolumePatchesInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ExtractVolumePatchesInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ExtractVolumePatchesInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ExtractVolumePatches, prim::kPrimExtractVolumePatches, AGExtractVolumePatchesInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

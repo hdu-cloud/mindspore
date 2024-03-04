@@ -71,7 +71,7 @@ bool NMSWithOverlapsFwdGpuKernelMod::Init(const BaseOperatorPtr &base_operator,
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  data_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  data_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   std::vector<int64_t> overlaps_shape = std::vector<int64_t>(inputs.at(kIndex0)->GetDeviceShapeAdaptively().begin(),
                                                              inputs.at(kIndex0)->GetDeviceShapeAdaptively().end());
   std::vector<int64_t> scores_shape = std::vector<int64_t>(inputs.at(kIndex1)->GetDeviceShapeAdaptively().begin(),
@@ -146,7 +146,6 @@ int NMSWithOverlapsFwdGpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
     }
   }
   ResetResource();
-  outputs_ = outputs;
   std::vector<size_t> shape = std::vector<size_t>(inputs[kIndex0]->GetDeviceShapeAdaptively().begin(),
                                                   inputs[kIndex0]->GetDeviceShapeAdaptively().end());
   is_null_input_ = CHECK_SHAPE_NULL(shape, kernel_name_, "input");
@@ -165,7 +164,6 @@ bool NMSWithOverlapsFwdGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> 
   if (is_null_input_) {
     return true;
   }
-  stream_ptr_ = stream_ptr;
   T *overlaps = GetDeviceAddress<T>(inputs, kIndex0);
   T *scores = GetDeviceAddress<T>(inputs, kIndex1);
   int *max_output_size = GetDeviceAddress<int>(inputs, kIndex2);
@@ -181,24 +179,33 @@ bool NMSWithOverlapsFwdGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> 
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(&max_output_size_host, max_output_size, sizeof(int), cudaMemcpyDeviceToHost,
                     reinterpret_cast<cudaStream_t>(stream_ptr)),
-    "cudaMemcpy value variable failed.");
+    "For 'NonMaxSuppressionWithOverlaps', cudaMemcpyAsync value variable failed.");
+  if (cudaStreamQuery(reinterpret_cast<cudaStream_t>(stream_ptr)) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(stream_ptr)),
+                                       "cuda Stream Sync Failed.");
+  }
+
   if (max_output_size_host < 0) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', max_output_size must be greater than zero , but got "
                   << max_output_size << ".";
     return false;
   }
   // num_output_ -> valid_num
-  num_output_ = CalSort(num_input_, index_buff, scores, up_score, valid_score_num, score_thershold, device_id_,
-                        reinterpret_cast<cudaStream_t>(stream_ptr));
-  CalPreprocess(num_output_, sel_boxes, row_mask, device_id_, reinterpret_cast<cudaStream_t>(stream_ptr));
-  CalNms(num_output_, num_input_, iou_thershold, overlaps, sel_boxes, row_mask, index_buff, device_id_,
-         reinterpret_cast<cudaStream_t>(stream_ptr));
-  num_output_ = CalPostprocess(num_output_, max_output_size, valid_score_num, score_thershold, index_buff, sel_idx,
-                               sel_boxes, device_id_, reinterpret_cast<cudaStream_t>(stream_ptr));
+  auto status = CalSort(num_input_, index_buff, scores, up_score, valid_score_num, score_thershold, device_id_,
+                        reinterpret_cast<cudaStream_t>(stream_ptr), &num_output_);
+  CHECK_CUDA_STATUS(status, kernel_name_);
+  status = CalPreprocess(num_output_, sel_boxes, row_mask, device_id_, reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
+  status = CalNms(num_output_, num_input_, iou_thershold, overlaps, sel_boxes, row_mask, index_buff, device_id_,
+                  reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
+  status = CalPostprocess(num_output_, max_output_size, valid_score_num, score_thershold, index_buff, sel_idx,
+                          sel_boxes, device_id_, reinterpret_cast<cudaStream_t>(stream_ptr), &num_output_);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
-void NMSWithOverlapsFwdGpuKernelMod::SyncData() {
+void NMSWithOverlapsFwdGpuKernelMod::SyncOutputShape() {
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(stream_ptr_)),
                                      "cudaStreamSynchronized failed");
 

@@ -15,7 +15,10 @@
  */
 
 #include "plugin/device/cpu/kernel/pad_v3_cpu_kernel.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
+#include "mindspore/core/ops/op_name.h"
 #include "mindspore/core/ops/pad_v3.h"
 
 namespace mindspore {
@@ -25,16 +28,13 @@ constexpr auto kPadV3 = "PadV3";
 constexpr const size_t kConstantInputsNum = 3;
 constexpr const size_t kOtherInputsNum = 2;
 constexpr const size_t kOutputsNum = 1;
-constexpr int64_t kInput3D = 3;
-constexpr int64_t kInput4D = 4;
-constexpr int64_t kInput5D = 5;
 constexpr int64_t kPadding1D = 2;
 constexpr int64_t kPadding2D = 4;
 constexpr int64_t kPadding3D = 6;
 constexpr int64_t kNum2 = 2;
 constexpr int64_t kNum3 = 3;
 constexpr int64_t kNum4 = 4;
-const std::vector<std::string> mode_list = {"constant", "reflect", "edge"};
+const std::vector<std::string> mode_list = {ops::kConstant, ops::kReflect, ops::kEdge, ops::kCircular};
 }  // namespace
 
 bool PadV3CpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
@@ -208,11 +208,12 @@ void PadV3CpuKernelMod::OtherModeCompute1D(T *input_ptr, T *output_ptr, int64_t 
   int64_t nplane = 0;
   int64_t input_w = input_shape_[kNum2];
   int64_t output_w = output_shape_.end()[-1];
-  int64_t pad_l = paddings_[0];
+  int64_t pad_l = paddings_[kIndex0];
+  int64_t pad_r = paddings_[kIndex1];
   int64_t i_start_x = std::max(int64_t(0), -pad_l);
   int64_t o_start_x = std::max(int64_t(0), pad_l);
   for (int64_t j = 0; j < output_w; ++j) {
-    auto ip_x = IndexCalculate(pad_l, j, input_w, o_start_x, i_start_x);
+    auto ip_x = IndexCalculate(pad_l, pad_r, j, input_w, o_start_x, i_start_x);
     T *dest_p = output_ptr + p * output_w * (nplane + 1) + j;
     T *src_p = input_ptr + +p * input_w * (nplane + 1) + ip_x;
     *dest_p = *src_p;
@@ -221,21 +222,23 @@ void PadV3CpuKernelMod::OtherModeCompute1D(T *input_ptr, T *output_ptr, int64_t 
 
 template <typename T>
 void PadV3CpuKernelMod::OtherModeCompute2D(T *input_ptr, T *output_ptr, int64_t p) const {
-  int64_t pad_l = paddings_[0];
-  int64_t pad_t = paddings_[kNum2];
+  int64_t pad_l = paddings_[kIndex0];
+  int64_t pad_r = paddings_[kIndex1];
+  int64_t pad_t = paddings_[kIndex2];
+  int64_t pad_d = paddings_[kIndex3];
   int64_t nplane = 0;
-  int64_t input_h = input_shape_[kNum2];
-  int64_t input_w = input_shape_[kNum3];
-  int64_t output_h = input_h + pad_t + paddings_[kNum3];
-  int64_t output_w = input_w + pad_l + paddings_[1];
+  int64_t input_h = input_shape_[kIndex2];
+  int64_t input_w = input_shape_[kIndex3];
+  int64_t output_h = input_h + pad_t + paddings_[kIndex3];
+  int64_t output_w = input_w + pad_l + paddings_[kIndex1];
   int64_t i_start_x = std::max(int64_t(0), -pad_l);
   int64_t i_start_y = std::max(int64_t(0), -pad_t);
   int64_t o_start_x = std::max(int64_t(0), pad_l);
   int64_t o_start_y = std::max(int64_t(0), pad_t);
   for (int64_t i = 0; i < output_h; ++i) {
     for (int64_t j = 0; j < output_w; ++j) {
-      auto ip_x = IndexCalculate(pad_l, j, input_w, o_start_x, i_start_x);
-      auto ip_y = IndexCalculate(pad_t, i, input_h, o_start_y, i_start_y);
+      auto ip_x = IndexCalculate(pad_l, pad_r, j, input_w, o_start_x, i_start_x);
+      auto ip_y = IndexCalculate(pad_t, pad_d, i, input_h, o_start_y, i_start_y);
       T *dest_p = output_ptr + p * output_w * output_h * (nplane + 1) + i * output_w + j;
       T *src_p = input_ptr + p * input_w * input_h * (nplane + 1) + ip_y * input_w + ip_x;
       *dest_p = *src_p;
@@ -245,9 +248,12 @@ void PadV3CpuKernelMod::OtherModeCompute2D(T *input_ptr, T *output_ptr, int64_t 
 
 template <typename T>
 void PadV3CpuKernelMod::OtherModeCompute3D(T *input_ptr, T *output_ptr, int64_t p) const {
-  int64_t pad_l = paddings_[0];
-  int64_t pad_t = paddings_[kNum2];
-  int64_t pad_f = paddings_[kNum4];
+  int64_t pad_l = paddings_[kIndex0];
+  int64_t pad_r = paddings_[kIndex1];
+  int64_t pad_t = paddings_[kIndex2];
+  int64_t pad_d = paddings_[kIndex3];
+  int64_t pad_f = paddings_[kIndex4];
+  int64_t pad_b = paddings_[kIndex5];
   int64_t nplane = 0;
   int64_t input_d = input_shape_[kNum2];
   int64_t input_h = input_shape_[kNum3];
@@ -264,9 +270,9 @@ void PadV3CpuKernelMod::OtherModeCompute3D(T *input_ptr, T *output_ptr, int64_t 
   for (int64_t k = 0; k < output_d; ++k) {
     for (int64_t j = 0; j < output_h; ++j) {
       for (int64_t i = 0; i < output_w; ++i) {
-        auto ip_x = IndexCalculate(pad_l, i, input_w, o_start_x, i_start_x);
-        auto ip_y = IndexCalculate(pad_t, j, input_h, o_start_y, i_start_y);
-        auto ip_z = IndexCalculate(pad_f, k, input_d, o_start_z, i_start_z);
+        auto ip_x = IndexCalculate(pad_l, pad_r, i, input_w, o_start_x, i_start_x);
+        auto ip_y = IndexCalculate(pad_t, pad_d, j, input_h, o_start_y, i_start_y);
+        auto ip_z = IndexCalculate(pad_f, pad_b, k, input_d, o_start_z, i_start_z);
         T *dest_p =
           output_ptr + p * output_w * output_h * output_d * (nplane + 1) + k * output_w * output_h + j * output_w + i;
         T *src_p =
@@ -277,22 +283,26 @@ void PadV3CpuKernelMod::OtherModeCompute3D(T *input_ptr, T *output_ptr, int64_t 
   }
 }
 
-int64_t PadV3CpuKernelMod::IndexCalculate(int64_t pad_value, int64_t now, int64_t input_value, int64_t o_start,
-                                          int64_t i_start) const {
+int64_t PadV3CpuKernelMod::IndexCalculate(int64_t pad_value, int64_t pad_end, int64_t now, int64_t input_value,
+                                          int64_t o_start, int64_t i_start) const {
   int64_t ip = 0;
   if (now < pad_value) {
-    if (mode_ == "reflect") {
+    if (mode_ == ops::kReflect) {
       ip = pad_value + pad_value - now;
-    } else if (mode_ == "edge") {
+    } else if (mode_ == ops::kEdge) {
       ip = pad_value;
+    } else if (mode_ == ops::kCircular) {
+      ip = input_value + now + std::min(int64_t(0), pad_end);
     }
   } else if (now >= pad_value && now < input_value + pad_value) {
     ip = now;
   } else {
-    if (mode_ == "reflect") {
+    if (mode_ == ops::kReflect) {
       ip = (input_value + pad_value - 1) + (input_value + pad_value - 1) - now;
-    } else if (mode_ == "edge") {
+    } else if (mode_ == ops::kEdge) {
       ip = input_value + pad_value - 1;
+    } else if (mode_ == ops::kCircular) {
+      ip = now - input_value - std::min(int64_t(0), pad_value);
     }
   }
   ip = ip - o_start + i_start;
@@ -307,7 +317,7 @@ bool PadV3CpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, cons
   }
   auto input_ptr = static_cast<T *>(inputs[0]->addr);
   auto output_ptr = static_cast<T *>(outputs[0]->addr);
-  if (mode_ == "constant") {
+  if (mode_ == ops::kConstant) {
     T constant_values = *(static_cast<T *>(inputs[2]->addr));
     for (int64_t i = 0; i < input_dim_ / kNum2; ++i) {
       int64_t u = paddings_[i * kNum2];
@@ -351,6 +361,7 @@ const std::vector<std::pair<KernelAttr, PadV3CpuKernelMod::KernelRunFunc>> &PadV
     {PAD_V3_GRAD_CPU_TWO_INPUTS_REG(kNumberTypeUInt64, kNumberTypeInt64, uint64_t, int64_t)},
     {PAD_V3_GRAD_CPU_TWO_INPUTS_REG(kNumberTypeComplex64, kNumberTypeInt64, std::complex<float>, int64_t)},
     {PAD_V3_GRAD_CPU_TWO_INPUTS_REG(kNumberTypeComplex128, kNumberTypeInt64, std::complex<double>, int64_t)},
+    {PAD_V3_GRAD_CPU_TWO_INPUTS_REG(kNumberTypeBool, kNumberTypeInt64, bool, int64_t)},
 
     {PAD_V3_GRAD_CPU_TWO_INPUTS_REG(kNumberTypeFloat16, kNumberTypeInt32, float16, int32_t)},
     {PAD_V3_GRAD_CPU_TWO_INPUTS_REG(kNumberTypeFloat32, kNumberTypeInt32, float, int32_t)},
@@ -365,6 +376,7 @@ const std::vector<std::pair<KernelAttr, PadV3CpuKernelMod::KernelRunFunc>> &PadV
     {PAD_V3_GRAD_CPU_TWO_INPUTS_REG(kNumberTypeUInt64, kNumberTypeInt32, uint64_t, int32_t)},
     {PAD_V3_GRAD_CPU_TWO_INPUTS_REG(kNumberTypeComplex64, kNumberTypeInt32, std::complex<float>, int32_t)},
     {PAD_V3_GRAD_CPU_TWO_INPUTS_REG(kNumberTypeComplex128, kNumberTypeInt32, std::complex<double>, int32_t)},
+    {PAD_V3_GRAD_CPU_TWO_INPUTS_REG(kNumberTypeBool, kNumberTypeInt32, bool, int32_t)},
 
     {PAD_V3_GRAD_CPU_THREE_INPUTS_REG(kNumberTypeFloat16, kNumberTypeInt64, float16, int64_t)},
     {PAD_V3_GRAD_CPU_THREE_INPUTS_REG(kNumberTypeFloat32, kNumberTypeInt64, float, int64_t)},
@@ -379,6 +391,7 @@ const std::vector<std::pair<KernelAttr, PadV3CpuKernelMod::KernelRunFunc>> &PadV
     {PAD_V3_GRAD_CPU_THREE_INPUTS_REG(kNumberTypeUInt64, kNumberTypeInt64, uint64_t, int64_t)},
     {PAD_V3_GRAD_CPU_THREE_INPUTS_REG(kNumberTypeComplex64, kNumberTypeInt64, std::complex<float>, int64_t)},
     {PAD_V3_GRAD_CPU_THREE_INPUTS_REG(kNumberTypeComplex128, kNumberTypeInt64, std::complex<double>, int64_t)},
+    {PAD_V3_GRAD_CPU_THREE_INPUTS_REG(kNumberTypeBool, kNumberTypeInt64, bool, int64_t)},
 
     {PAD_V3_GRAD_CPU_THREE_INPUTS_REG(kNumberTypeFloat16, kNumberTypeInt32, float16, int32_t)},
     {PAD_V3_GRAD_CPU_THREE_INPUTS_REG(kNumberTypeFloat32, kNumberTypeInt32, float, int32_t)},
@@ -393,6 +406,7 @@ const std::vector<std::pair<KernelAttr, PadV3CpuKernelMod::KernelRunFunc>> &PadV
     {PAD_V3_GRAD_CPU_THREE_INPUTS_REG(kNumberTypeUInt64, kNumberTypeInt32, uint64_t, int32_t)},
     {PAD_V3_GRAD_CPU_THREE_INPUTS_REG(kNumberTypeComplex64, kNumberTypeInt32, std::complex<float>, int32_t)},
     {PAD_V3_GRAD_CPU_THREE_INPUTS_REG(kNumberTypeComplex128, kNumberTypeInt32, std::complex<double>, int32_t)},
+    {PAD_V3_GRAD_CPU_THREE_INPUTS_REG(kNumberTypeBool, kNumberTypeInt32, bool, int32_t)},
   };
   return func_list;
 }

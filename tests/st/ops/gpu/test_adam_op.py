@@ -13,6 +13,7 @@
 # limitations under the License.
 # ============================================================================
 
+import os
 import math
 import pytest
 import numpy as np
@@ -26,6 +27,7 @@ from mindspore.nn import TrainOneStepCell, WithLossCell
 from mindspore.nn.optim import Adam
 from mindspore.ops import operations as P
 from mindspore.ops.functional import vmap
+from mindspore.experimental import MapParameter
 
 context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
 
@@ -36,7 +38,7 @@ class NetAdam(nn.Cell):
         self.batch_size = 1
         self.reshape = P.Reshape()
         weight = Tensor(np.ones([10, 16]).astype(np.float32) * 0.01)
-        self.fc1 = Dense(16, 10, weight_init=weight)
+        self.fc1 = Dense(16, 10, weight_init=weight, bias_init="zeros")
 
     def construct(self, input_x):
         output = self.reshape(input_x, (self.batch_size, -1))
@@ -56,7 +58,7 @@ class NetWithSparseGatherV2(nn.Cell):
         return self.gather(self.weight1, indices, self.axis) + self.weight2
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_adam():
@@ -94,7 +96,7 @@ def test_adam():
     assert losses2[1] > losses2[2]
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_lazy_adam():
@@ -118,7 +120,7 @@ def test_lazy_adam():
     assert np.allclose(output.asnumpy(), expected_output)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_adam_offload_acc():
@@ -162,7 +164,7 @@ class AdamNetVmap(nn.Cell):
         self.net = net
         self.var_np = np.random.randn(*shape).astype(np.float32)
         self.m_np = np.random.randn(*shape).astype(np.float32)
-        self.v_np = np.random.randn(*shape).astype(np.float32)
+        self.v_np = abs(np.random.randn(*shape).astype(np.float32))
         self.var = Parameter(Tensor(self.var_np), name="var")
         self.m = Parameter(Tensor(self.m_np), name="m")
         self.v = Parameter(Tensor(self.v_np), name="v")
@@ -199,3 +201,37 @@ def test_apply_adam_witm_adam_op_vmap():
                               vmap_adam.v_np, grad_np)
 
     np.testing.assert_allclose(ms_var, np_var, rtol=error, atol=error)
+
+
+@pytest.mark.level1
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.env_onecard
+def test_adam_net_with_map_tensor():
+    """
+    Feature: Adam gpu kernel for MapTensor update.
+    Description: Test Adam gpu kernel for MapTensor update.
+    Expectation: Result is correct.
+    """
+    class NetWithMapParameter(nn.Cell):
+        def __init__(self):
+            super(NetWithMapParameter, self).__init__()
+            self.weight = MapParameter(key_dtype=ms.int32, value_dtype=ms.float32,
+                                       value_shape=(1, 2), default_value="ones")
+            self.weight.unique = True
+
+        def construct(self, indices):
+            return self.weight.get(indices, True)
+
+    if not 'SAULT_ENV_TYPE' in os.environ or not "CUDA10" in os.environ['SAULT_ENV_TYPE']:
+        context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
+
+        indices = Tensor(np.array([0, 2, 1]).astype(np.int32))
+        net = NetWithMapParameter()
+
+        optimizer = Adam(net.trainable_params(), learning_rate=0.1, use_lazy=True)
+        train_network = TrainOneStepCell(net, optimizer)
+        output = train_network(indices)
+        assert np.allclose(output.asnumpy(), np.array([[[1, 1]], [[1, 1]], [[1, 1]]]))
+
+        _, values, _ = net.weight.export_data()
+        assert np.allclose(values, np.array([[[0.9, 0.9]], [[0.9, 0.9]], [[0.9, 0.9]]]))

@@ -26,7 +26,6 @@ class NetROIAlignGrad(nn.Cell):
     def __init__(self, pooled_height, pooled_width, spatial_scale, sample_num, is_dyn_rank=False):
         super(NetROIAlignGrad, self).__init__()
         self.shape = ops.Shape()
-        self.dyn_shape = ops.TensorShape()
         self.roi_align_grad = G.ROIAlignGrad(pooled_height, pooled_width, spatial_scale, sample_num)
         self.is_dyn_rank = is_dyn_rank
         self.convert_to_dynamic_rank = inner.ConvertToDynamic(is_dynamic_rank=is_dyn_rank).add_prim_attr(
@@ -39,8 +38,6 @@ class NetROIAlignGrad(nn.Cell):
             rois = self.convert_to_dynamic_rank(rois)
             xdiff = self.convert_to_dynamic_rank(xdiff)
         xdiff_shape = self.shape(xdiff)
-        if -1 in xdiff_shape or -2 in xdiff_shape:
-            xdiff_shape = self.dyn_shape(xdiff)
         return self.roi_align_grad(dy, rois, xdiff_shape)
 
 
@@ -76,7 +73,7 @@ def roi_align_grad_case(data_type=np.float16, is_dyn_shape=False, is_dyn_rank=Fa
     np.testing.assert_almost_equal(output.asnumpy(), expect, decimal=4)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_x86_ascend_training
@@ -94,7 +91,7 @@ def test_roi_align_grad_float16():
     roi_align_grad_case(np.float16)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_x86_ascend_training
@@ -112,7 +109,7 @@ def test_roi_align_grad_float32():
     roi_align_grad_case(np.float32)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -128,7 +125,7 @@ def test_roi_align_grad_float16_dynamic_shape():
     roi_align_grad_case(np.float16, True)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard

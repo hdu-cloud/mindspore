@@ -22,6 +22,7 @@ from mindspore.common.api import _cell_graph_executor
 from mindspore.nn.optim import Adam, FTRL
 from mindspore.ops import composite as C
 from mindspore.ops import operations as P
+from mindspore.ops import functional as F
 from mindspore.parallel._cost_model_context import _set_multi_subgraphs
 from mindspore.parallel._utils import _reset_op_id as reset_op_id
 from mindspore.parallel._cost_model_context import _set_algo_single_loop
@@ -36,7 +37,7 @@ class SubNet(nn.Cell):
         super().__init__()
         self.matmul = P.BatchMatMul()
         self.relu = P.ReLU()
-        self.weight = Parameter(Tensor(np.ones([8, 8, 8, 8]), dtype=ms.float32), "matmul_w"+str(index))
+        self.weight = Parameter(Tensor(np.ones([8, 8, 8, 8]), dtype=ms.float32), "matmul_w" + str(index))
 
     def construct(self, x):
         out = self.matmul(x, self.weight)
@@ -117,8 +118,8 @@ class TrainStepWarp(nn.Cell):
         weights_w = self.weights_w
         weights_d = self.weights_d
         loss_w, loss_d = self.network(x)
-        sens_w = P.Fill()(P.DType()(loss_w), P.Shape()(loss_w), self.sens)
-        sens_d = P.Fill()(P.DType()(loss_d), P.Shape()(loss_d), self.sens)
+        sens_w = F.fill(P.DType()(loss_w), P.Shape()(loss_w), self.sens)
+        sens_d = F.fill(P.DType()(loss_d), P.Shape()(loss_d), self.sens)
         grads_w = self.grad_w(self.loss_net_w, weights_w)(x, sens_w)
         self.optimizer_w(grads_w)
         grads_d = self.grad_d(self.loss_net_d, weights_d)(x, sens_d)
@@ -127,7 +128,13 @@ class TrainStepWarp(nn.Cell):
 
 
 def test_double_subgraphs():
-    context.set_auto_parallel_context(parallel_mode="auto_parallel", device_num=8, global_rank=0)
+    """
+    Feature: test auto parallel
+    Description: auto parallel
+    Expectation: compile success
+    """
+    context.set_auto_parallel_context(parallel_mode="auto_parallel", search_mode="dynamic_programming", device_num=8,
+                                      global_rank=0)
     _set_algo_single_loop(True)
     net = TrainStepWarp(NetWithLoss(Net()))
     _set_multi_subgraphs()

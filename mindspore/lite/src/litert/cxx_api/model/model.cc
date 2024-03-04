@@ -30,7 +30,6 @@
 #if defined(ENABLE_PRE_INFERENCE) && defined(__linux__) && !defined(Debug)
 #include "src/common/thread_utils.h"
 #endif
-#include "src/litert/cxx_api/expression/net_impl.h"
 #include "src/litert/cxx_api/callback/callback_adapter.h"
 #include "src/litert/cxx_api/callback/callback_impl.h"
 #include "src/litert/cxx_api/model/model_impl.h"
@@ -46,7 +45,6 @@ extern void mindspore_log_init();
 }
 #endif
 
-std::mutex g_impl_init_lock;
 #ifdef ENABLE_OPENSSL
 Status DecryptModel(const std::string &cropto_lib_path, const void *model_buf, size_t model_size, const Key &dec_key,
                     const std::string &dec_mode, std::unique_ptr<Byte[]> *decrypt_buffer, size_t *decrypt_len) {
@@ -69,18 +67,9 @@ Status Model::Build(const void *model_data, size_t data_size, ModelType model_ty
                     const std::shared_ptr<Context> &model_context, const Key &dec_key,
                     const std::vector<char> &dec_mode, const std::vector<char> &cropto_lib_path) {
 #ifdef ENABLE_OPENSSL
-  {
-    std::unique_lock<std::mutex> impl_lock(g_impl_init_lock);
-    if (impl_ == nullptr) {
-#ifdef USE_GLOG
-      mindspore::mindspore_log_init();
-#endif
-      impl_ = std::make_shared<ModelImpl>();
-      if (impl_ == nullptr) {
-        MS_LOG(ERROR) << "Model implement is null.";
-        return kLiteFileError;
-      }
-    }
+  if (impl_ == nullptr) {
+    MS_LOG(ERROR) << "Model implement is null.";
+    return kLiteNullptr;
   }
   if (dec_key.len > 0) {
     std::unique_ptr<Byte[]> decrypt_buffer;
@@ -99,14 +88,20 @@ Status Model::Build(const void *model_data, size_t data_size, ModelType model_ty
   } else {
     Status ret;
 #if defined(ENABLE_PRE_INFERENCE) && defined(__linux__) && !defined(Debug)
-    if (lite::GetNumThreads() == lite::kSingleThread) {
+    if (lite::GetNumThreads() == lite::kSingleThread && impl_->IsEnablePreInference()) {
       pid_t pid = fork();
       if (pid < 0) {
         return kLiteError;
       } else if (pid == 0) {  // child process
-        ret = impl_->BuildAndRun(model_data, data_size, model_type, model_context);
-        int ret_code = ret == kSuccess ? lite::kProcessSuccess : lite::kProcessFailed;
-        exit(ret_code);
+        auto impl = std::make_shared<ModelImpl>();
+        if (impl != nullptr) {
+          (void)impl->BuildAndRun(model_data, data_size, model_type, model_context);
+          impl.reset();
+          const_cast<std::shared_ptr<Context> &>(model_context).reset();
+        } else {
+          MS_LOG(WARNING) << "new ModelImpl failed, pre inference failed.";
+        }
+        exit(lite::kProcessSuccess);
       }
       ret = lite::CheckPidStatus(pid);
       if (ret != kSuccess) {
@@ -129,29 +124,26 @@ Status Model::Build(const void *model_data, size_t data_size, ModelType model_ty
 
 Status Model::Build(const void *model_data, size_t data_size, ModelType model_type,
                     const std::shared_ptr<Context> &model_context) {
-  {
-    std::unique_lock<std::mutex> impl_lock(g_impl_init_lock);
-    if (impl_ == nullptr) {
-#ifdef USE_GLOG
-      mindspore::mindspore_log_init();
-#endif
-      impl_ = std::make_shared<ModelImpl>();
-      if (impl_ == nullptr) {
-        MS_LOG(ERROR) << "Model implement is null.";
-        return kLiteFileError;
-      }
-    }
+  if (impl_ == nullptr) {
+    MS_LOG(ERROR) << "Model implement is null.";
+    return kLiteNullptr;
   }
   Status ret;
 #if defined(ENABLE_PRE_INFERENCE) && defined(__linux__) && !defined(Debug)
-  if (lite::GetNumThreads() == lite::kSingleThread) {
+  if (lite::GetNumThreads() == lite::kSingleThread && impl_->IsEnablePreInference()) {
     pid_t pid = fork();
     if (pid < 0) {
       return kLiteError;
     } else if (pid == 0) {  // child process
-      ret = impl_->BuildAndRun(model_data, data_size, model_type, model_context);
-      int ret_code = ret == kSuccess ? lite::kProcessSuccess : lite::kProcessFailed;
-      exit(ret_code);
+      auto impl = std::make_shared<ModelImpl>();
+      if (impl != nullptr) {
+        (void)impl->BuildAndRun(model_data, data_size, model_type, model_context);
+        impl.reset();
+        const_cast<std::shared_ptr<Context> &>(model_context).reset();
+      } else {
+        MS_LOG(WARNING) << "new ModelImpl failed, pre inference failed.";
+      }
+      exit(lite::kProcessSuccess);
     }
     ret = lite::CheckPidStatus(pid);
     if (ret != kSuccess) {
@@ -171,22 +163,13 @@ Status Model::Build(const std::vector<char> &model_path, ModelType model_type,
                     const std::shared_ptr<Context> &model_context, const Key &dec_key,
                     const std::vector<char> &dec_mode, const std::vector<char> &cropto_lib_path) {
 #ifdef ENABLE_OPENSSL
-  {
-    std::unique_lock<std::mutex> impl_lock(g_impl_init_lock);
-    if (impl_ == nullptr) {
-#ifdef USE_GLOG
-      mindspore::mindspore_log_init();
-#endif
-      impl_ = std::make_shared<ModelImpl>();
-      if (impl_ == nullptr) {
-        MS_LOG(ERROR) << "Model implement is null.";
-        return kLiteFileError;
-      }
-    }
+  if (impl_ == nullptr) {
+    MS_LOG(ERROR) << "Model implement is null.";
+    return kLiteNullptr;
   }
   if (dec_key.len > 0) {
     size_t model_size;
-    auto model_buf = lite::ReadFile(model_path.data(), &model_size);
+    auto model_buf = lite::ReadFile(CharToString(model_path).c_str(), &model_size);
     if (model_buf == nullptr) {
       MS_LOG(ERROR) << "Read model file failed";
       return kLiteError;
@@ -210,14 +193,20 @@ Status Model::Build(const std::vector<char> &model_path, ModelType model_type,
   } else {
     Status ret;
 #if defined(ENABLE_PRE_INFERENCE) && defined(__linux__) && !defined(Debug)
-    if (lite::GetNumThreads() == lite::kSingleThread) {
+    if (lite::GetNumThreads() == lite::kSingleThread && impl_->IsEnablePreInference()) {
       pid_t pid = fork();
       if (pid < 0) {
         return kLiteError;
       } else if (pid == 0) {  // child process
-        ret = impl_->BuildAndRun(CharToString(model_path), model_type, model_context);
-        int ret_code = ret == kSuccess ? lite::kProcessSuccess : lite::kProcessFailed;
-        exit(ret_code);
+        auto impl = std::make_shared<ModelImpl>();
+        if (impl != nullptr) {
+          (void)impl->BuildAndRun(CharToString(model_path), model_type, model_context);
+          impl.reset();
+          const_cast<std::shared_ptr<Context> &>(model_context).reset();
+        } else {
+          MS_LOG(WARNING) << "new ModelImpl failed, pre inference failed.";
+        }
+        exit(lite::kProcessSuccess);
       }
       ret = lite::CheckPidStatus(pid);
       if (ret != kSuccess) {
@@ -241,29 +230,26 @@ Status Model::Build(const std::vector<char> &model_path, ModelType model_type,
 
 Status Model::Build(const std::vector<char> &model_path, ModelType model_type,
                     const std::shared_ptr<Context> &model_context) {
-  {
-    std::unique_lock<std::mutex> impl_lock(g_impl_init_lock);
-    if (impl_ == nullptr) {
-#ifdef USE_GLOG
-      mindspore::mindspore_log_init();
-#endif
-      impl_ = std::make_shared<ModelImpl>();
-      if (impl_ == nullptr) {
-        MS_LOG(ERROR) << "Model implement is null.";
-        return kLiteFileError;
-      }
-    }
+  if (impl_ == nullptr) {
+    MS_LOG(ERROR) << "Model implement is null.";
+    return kLiteNullptr;
   }
   Status ret;
 #if defined(ENABLE_PRE_INFERENCE) && defined(__linux__) && !defined(Debug)
-  if (lite::GetNumThreads() == lite::kSingleThread) {
+  if (lite::GetNumThreads() == lite::kSingleThread && impl_->IsEnablePreInference()) {
     pid_t pid = fork();
     if (pid < 0) {
       return kLiteError;
     } else if (pid == 0) {  // child process
-      ret = impl_->BuildAndRun(CharToString(model_path), model_type, model_context);
-      int ret_code = ret == kSuccess ? lite::kProcessSuccess : lite::kProcessFailed;
-      exit(ret_code);
+      auto impl = std::make_shared<ModelImpl>();
+      if (impl != nullptr) {
+        (void)impl->BuildAndRun(CharToString(model_path), model_type, model_context);
+        impl.reset();
+        const_cast<std::shared_ptr<Context> &>(model_context).reset();
+      } else {
+        MS_LOG(WARNING) << "new ModelImpl failed, pre inference failed.";
+      }
+      exit(lite::kProcessSuccess);
     }
     ret = lite::CheckPidStatus(pid);
     if (ret != kSuccess) {
@@ -282,18 +268,9 @@ Status Model::Build(const std::vector<char> &model_path, ModelType model_type,
 Status Model::Build(GraphCell graph, const std::shared_ptr<Context> &model_context,
                     const std::shared_ptr<TrainCfg> &train_cfg) {
   std::stringstream err_msg;
-  {
-    std::unique_lock<std::mutex> impl_lock(g_impl_init_lock);
-    if (impl_ == nullptr) {
-#ifdef USE_GLOG
-      mindspore::mindspore_log_init();
-#endif
-      impl_ = std::make_shared<ModelImpl>();
-      if (impl_ == nullptr) {
-        MS_LOG(ERROR) << "Model implement is null.";
-        return kLiteFileError;
-      }
-    }
+  if (impl_ == nullptr) {
+    MS_LOG(ERROR) << "Model implement is null.";
+    return kLiteNullptr;
   }
 
   if (graph.GetGraph() == nullptr) {
@@ -306,24 +283,35 @@ Status Model::Build(GraphCell graph, const std::shared_ptr<Context> &model_conte
     MS_LOG(ERROR) << err_msg.str();
     return Status(kLiteNullptr, err_msg.str());
   }
+#if defined(ENABLE_PRE_INFERENCE) && defined(__linux__) && !defined(Debug)
+  if (lite::GetNumThreads() == lite::kSingleThread && impl_->IsEnablePreInference()) {
+    pid_t pid = fork();
+    if (pid < 0) {
+      return kLiteError;
+    } else if (pid == 0) {  // child process
+      auto impl = std::make_shared<ModelImpl>();
+      if (impl != nullptr) {
+        impl->SetContext(model_context);
+        impl->SetGraph(graph.GetGraph());
+        impl->SetConfig(train_cfg);
+        (void)impl->BuildAndRun();
+        impl.reset();
+        const_cast<std::shared_ptr<Context> &>(model_context).reset();
+      } else {
+        MS_LOG(WARNING) << "new ModelImpl failed, pre inference failed.";
+      }
+      exit(lite::kProcessSuccess);
+    }
+    auto ret = lite::CheckPidStatus(pid);
+    if (ret != kSuccess) {
+      MS_LOG(ERROR) << "PreResize or PreInference failed.";
+      return ret;
+    }
+  }
+#endif
   impl_->SetContext(model_context);
   impl_->SetGraph(graph.GetGraph());
   impl_->SetConfig(train_cfg);
-#if defined(ENABLE_PRE_INFERENCE) && defined(__linux__) && !defined(Debug)
-  pid_t pid = fork();
-  if (pid < 0) {
-    return kLiteError;
-  } else if (pid == 0) {  // child process
-    auto ret = impl_->BuildAndRun();
-    int ret_code = ret == kSuccess ? lite::kProcessSuccess : lite::kProcessFailed;
-    exit(ret_code);
-  }
-  auto ret = lite::CheckPidStatus(pid);
-  if (ret != kSuccess) {
-    MS_LOG(ERROR) << "PreResize or PreInference failed.";
-    return ret;
-  }
-#endif
   return impl_->Build();
 }
 
@@ -386,11 +374,19 @@ bool Model::HasPreprocess() {
   return false;
 }
 
-Model::Model() : impl_(nullptr) {}
+Model::Model() {
+#ifdef USE_GLOG
+  mindspore::mindspore_log_init();
+#endif
+  impl_ = std::make_shared<ModelImpl>();
+  if (impl_ == nullptr) {
+    MS_LOG(ERROR) << "Failed to create ModelImpl";
+  }
+}
 
 Model::~Model() {}
 
-bool Model::CheckModelSupport(enum DeviceType device_type, ModelType model_type) {
+bool Model::CheckModelSupport(DeviceType device_type, ModelType model_type) {
   if (device_type == kCPU) {
     return true;
   }
@@ -470,16 +466,9 @@ std::vector<MSTensor> Model::GetOutputsByNodeName(const std::vector<char> &node_
 }
 
 Status Model::LoadConfig(const std::vector<char> &config_path) {
-  std::unique_lock<std::mutex> impl_lock(g_impl_init_lock);
-  if (impl_ != nullptr) {
-    MS_LOG(ERROR) << "impl_ illegal in LoadConfig.";
-    return Status(kLiteFileError, "Illegal operation.");
-  }
-
-  impl_ = std::make_shared<ModelImpl>();
   if (impl_ == nullptr) {
     MS_LOG(ERROR) << "Model implement is null.";
-    return Status(kLiteFileError, "Fail to load config file.");
+    return kLiteNullptr;
   }
 
   auto ret = impl_->LoadConfig(CharToString(config_path));
@@ -492,15 +481,11 @@ Status Model::LoadConfig(const std::vector<char> &config_path) {
 
 Status Model::UpdateConfig(const std::vector<char> &section,
                            const std::pair<std::vector<char>, std::vector<char>> &config) {
-  std::unique_lock<std::mutex> impl_lock(g_impl_init_lock);
   if (impl_ == nullptr) {
-    impl_ = std::make_shared<ModelImpl>();
+    MS_LOG(ERROR) << "Model implement is null.";
+    return kLiteNullptr;
   }
-  if (impl_ != nullptr) {
-    return impl_->UpdateConfig(CharToString(section), {CharToString(config.first), CharToString(config.second)});
-  }
-  MS_LOG(ERROR) << "Model implement is null!";
-  return kLiteFileError;
+  return impl_->UpdateConfig(CharToString(section), {CharToString(config.first), CharToString(config.second)});
 }
 
 Status Model::SetTrainMode(bool train) {
@@ -538,6 +523,15 @@ std::vector<MSTensor> Model::GetFeatureMaps() const {
     return empty;
   }
   return impl_->GetFeatureMaps();
+}
+
+std::vector<MSTensor> Model::GetTrainableParams() const {
+  std::vector<MSTensor> empty;
+  if (impl_ == nullptr) {
+    MS_LOG(ERROR) << "Model implement is null.";
+    return empty;
+  }
+  return impl_->GetTrainableParams();
 }
 
 Status Model::UpdateFeatureMaps(const std::vector<MSTensor> &new_weights) {

@@ -33,9 +33,6 @@
 namespace mindspore {
 class ModelImpl;
 class Metrics;
-class Net;
-class Node;
-class Expr;
 
 namespace dataset {
 class Dataset;
@@ -45,44 +42,43 @@ class MS_API Model {
  public:
   Model();
   ~Model();
-  Model(const Model &) = delete;
-  void operator=(const Model &) = delete;
 
   /// \brief Build a model from model buffer so that it can run on a device.
   ///
   /// \param[in] model_data Define the buffer read from a model file.
   /// \param[in] data_size Define bytes number of model buffer.
-  /// \param[in] model_type Define The type of model file. Options: ModelType::kMindIR, ModelType::kOM. Only
-  /// ModelType::kMindIR is valid for Lite.
-  /// \param[in] model_context Define the context used to store options during execution.
+  /// \param[in] model_type Define The type of model file. Options: ModelType::kMindIR, ModelType::kMindIR_Lite. Only
+  /// ModelType::kMindIR_Lite is valid for Device-side Inference. Cloud-side Inference supports options
+  /// ModelType::kMindIR and ModelType::kMindIR_Lite, but option odelType::kMindIR_Lite will be removed in future
+  /// iterations. \param[in] model_context Define the context used to store options during execution.
   ///
-  /// \return Status.
+  /// \return Status. kSuccess: build success, kLiteModelRebuild: build model repeatedly, Other: other types of errors.
   Status Build(const void *model_data, size_t data_size, ModelType model_type,
                const std::shared_ptr<Context> &model_context = nullptr);
 
   /// \brief Load and build a model from model buffer so that it can run on a device.
   ///
   /// \param[in] model_path Define the model path.
-  /// \param[in] model_type Define The type of model file. Options: ModelType::kMindIR, ModelType::kOM. Only
-  /// ModelType::kMindIR is valid for Lite.
-  /// \param[in] model_context Define the context used to store options during execution.
+  /// \param[in] model_type Define The type of model file. Options: ModelType::kMindIR, ModelType::kMindIR_Lite. Only
+  /// ModelType::kMindIR_Lite is valid for Device-side Inference. Cloud-side Inference supports options
+  /// ModelType::kMindIR and ModelType::kMindIR_Lite, but option odelType::kMindIR_Lite will be removed in future
+  /// iterations. \param[in] model_context Define the context used to store options during execution.
   ///
-  /// \return Status.
+  /// \return Status. kSuccess: build success, kLiteModelRebuild: build model repeatedly, Other: other types of errors.
   inline Status Build(const std::string &model_path, ModelType model_type,
                       const std::shared_ptr<Context> &model_context = nullptr);
-
   /// \brief Build a model from model buffer so that it can run on a device.
   ///
   /// \param[in] model_data Define the buffer read from a model file.
   /// \param[in] data_size Define bytes number of model buffer.
-  /// \param[in] model_type Define The type of model file. Options: ModelType::kMindIR, ModelType::kOM. Only
-  /// ModelType::kMindIR is valid for Lite.
-  /// \param[in] model_context Define the context used to store options during execution.
-  /// \param[in] dec_key Define the key used to decrypt the ciphertext model. The key length is 16.
-  /// \param[in] dec_mode Define the decryption mode. Options: AES-GCM.
-  /// \param[in] cropto_lib_path Define the openssl library path.
+  /// \param[in] model_type Define The type of model file. Options: ModelType::kMindIR, ModelType::kMindIR_Lite. Only
+  /// ModelType::kMindIR_Lite is valid for Device-side Inference. Cloud-side Inference supports options
+  /// ModelType::kMindIR and ModelType::kMindIR_Lite, but option odelType::kMindIR_Lite will be removed in future
+  /// iterations. \param[in] model_context Define the context used to store options during execution. \param[in] dec_key
+  /// Define the key used to decrypt the ciphertext model. The key length is 16. \param[in] dec_mode Define the
+  /// decryption mode. Options: AES-GCM. \param[in] cropto_lib_path Define the openssl library path.
   ///
-  /// \return Status.
+  /// \return Status. kSuccess: build success, kLiteModelRebuild: build model repeatedly, Other: other types of errors.
   inline Status Build(const void *model_data, size_t data_size, ModelType model_type,
                       const std::shared_ptr<Context> &model_context, const Key &dec_key, const std::string &dec_mode,
                       const std::string &cropto_lib_path);
@@ -90,14 +86,14 @@ class MS_API Model {
   /// \brief Load and build a model from model buffer so that it can run on a device.
   ///
   /// \param[in] model_path Define the model path.
-  /// \param[in] model_type Define The type of model file. Options: ModelType::kMindIR, ModelType::kOM. Only
-  /// ModelType::kMindIR is valid for Lite.
-  /// \param[in] model_context Define the context used to store options during execution.
-  /// \param[in] dec_key Define the key used to decrypt the ciphertext model. The key length is 16.
-  /// \param[in] dec_mode Define the decryption mode. Options: AES-GCM.
-  /// \param[in] cropto_lib_path Define the openssl library path.
+  /// \param[in] model_type Define The type of model file. Options: ModelType::kMindIR, ModelType::kMindIR_Lite. Only
+  /// ModelType::kMindIR_Lite is valid for Device-side Inference. Cloud-side Inference supports options
+  /// ModelType::kMindIR and ModelType::kMindIR_Lite, but option odelType::kMindIR_Lite will be removed in future
+  /// iterations. \param[in] model_context Define the context used to store options during execution. \param[in] dec_key
+  /// Define the key used to decrypt the ciphertext model. The key length is 16. \param[in] dec_mode Define the
+  /// decryption mode. Options: AES-GCM. \param[in] cropto_lib_path Define the openssl library path.
   ///
-  /// \return Status.
+  /// \return Status. kSuccess: build success, kLiteModelRebuild: build model repeatedly, Other: other types of errors.
   inline Status Build(const std::string &model_path, ModelType model_type,
                       const std::shared_ptr<Context> &model_context, const Key &dec_key, const std::string &dec_mode,
                       const std::string &cropto_lib_path);
@@ -113,17 +109,6 @@ class MS_API Model {
   Status Build(GraphCell graph, const std::shared_ptr<Context> &model_context = nullptr,
                const std::shared_ptr<TrainCfg> &train_cfg = nullptr);
 
-  /// \brief Build train model
-  ///
-  /// \param[in] graph A forward network
-  /// \param[in] optimizer An optimizer node
-  /// \param[in] inputs Inputs expression for the trained network (ex: input, label )
-  /// \param[in] model_context A context used to store options during execution.
-  /// \param[in] train_cfg A config used by training
-  /// \return Status
-
-  Status Build(GraphCell graph, Node *optimizer, std::vector<Expr *> inputs,
-               const std::shared_ptr<Context> &model_context, const std::shared_ptr<TrainCfg> &train_cfg);
   /// \brief Build a Transfer Learning model where the backbone weights are fixed and the head weights are trainable
   ///
   /// \param[in] backbone The static, non-learnable part of the graph
@@ -151,7 +136,7 @@ class MS_API Model {
   /// \return Status.
   Status UpdateWeights(const std::vector<MSTensor> &new_weights);
 
-  /// \brief Inference model.
+  /// \brief Inference model API. If use this API in train mode, it's equal to RunStep API.
   ///
   /// \param[in] inputs A vector where model inputs are arranged in sequence.
   /// \param[out] outputs Which is a pointer to a vector. The model outputs are filled in the container in sequence.
@@ -162,7 +147,7 @@ class MS_API Model {
   Status Predict(const std::vector<MSTensor> &inputs, std::vector<MSTensor> *outputs,
                  const MSKernelCallBack &before = nullptr, const MSKernelCallBack &after = nullptr);
 
-  /// \brief Inference model.
+  /// \brief Inference model API. If use this API in train mode, it's equal to RunStep API.
   ///
   /// \param[in] before CallBack before predict.
   /// \param[in] after CallBack after predict.
@@ -170,7 +155,7 @@ class MS_API Model {
   /// \return Status.
   Status Predict(const MSKernelCallBack &before = nullptr, const MSKernelCallBack &after = nullptr);
 
-  /// \brief Run model by step.
+  /// \brief Training API. Run model by step.
   ///
   /// \param[in] before CallBack before RunStep.
   /// \param[in] after CallBack after RunStep.
@@ -240,8 +225,13 @@ class MS_API Model {
 
   /// \brief Obtain all weights tensors of the model.
   ///
-  /// \return The vector that includes all gradient tensors.
+  /// \return The vector that includes all weights tensors.
   std::vector<MSTensor> GetFeatureMaps() const;
+
+  /// \brief Obtain all trainable parameters of the model optimizers.
+  ///
+  /// \return The vector that includes all trainable parameters.
+  std::vector<MSTensor> GetTrainableParams() const;
 
   /// \brief Update weights tensors of the model.
   ///
@@ -285,7 +275,7 @@ class MS_API Model {
 
   /// \brief Initialize object with metrics.
   ///
-  /// \param[in] metrics A verctor of metrics objects.
+  /// \param[in] metrics A vector of metrics objects.
   ///
   /// \return 0 on success or -1 in case of error
   Status InitMetrics(std::vector<Metrics *> metrics);
@@ -365,6 +355,8 @@ class MS_API Model {
   ///
   /// \return Status of operation.
   Status Evaluate(std::shared_ptr<dataset::Dataset> ds, std::vector<TrainCallBack *> cbs);
+
+  const std::shared_ptr<ModelImpl> impl() const { return impl_; }
 
  private:
   friend class Serialization;

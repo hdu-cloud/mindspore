@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "mindspore/core/ops/math_ops.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
 #include "plugin/device/cpu/kernel/nnacl/op_base.h"
@@ -250,7 +251,7 @@ bool GerCpuKernelMod::LaunchMacBatches(const std::vector<kernel::AddressPtr> &in
   T *input2 = reinterpret_cast<T *>(inputs[kIndex1]->addr);
   T *output = reinterpret_cast<T *>(outputs[kIndex0]->addr);
   auto task = [this, &input1, &input2, &output](size_t start, size_t end) {
-    for (size_t batch_index = 0; batch_index < end; batch_index++) {
+    for (size_t batch_index = start; batch_index < end; batch_index++) {
       size_t row_i_s = batch_index * this->in1dim_;
       size_t col_i_s = batch_index * this->in2dim_;
       size_t out_i_s = batch_index * this->in1dim_ * this->in2dim_;

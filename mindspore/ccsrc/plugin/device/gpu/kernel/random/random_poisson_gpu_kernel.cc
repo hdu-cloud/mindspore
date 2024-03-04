@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,19 +43,22 @@ bool RandomPoissonGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const
                                      const std::vector<KernelTensorPtr> &outputs) {
   MS_EXCEPTION_IF_NULL(base_operator);
   kernel_name_ = base_operator->name();
+  MS_EXCEPTION_IF_NULL(inputs[0]);
+  MS_EXCEPTION_IF_NULL(inputs[1]);
+  MS_EXCEPTION_IF_NULL(outputs[0]);
   if (!MatchKernelFunc(base_operator, inputs, outputs)) {
     return false;
   }
-  auto kernel_ptr = std::make_shared<ops::RandomPoisson>(base_operator->GetPrim());
-  seed_ = static_cast<int64_t>(kernel_ptr->get_seed());
-  seed2_ = static_cast<int64_t>(kernel_ptr->get_seed2());
+  uint64_t seed = static_cast<uint64_t>(GetValue<int64_t>(base_operator->GetAttr("seed")));
+  uint64_t seed2 = static_cast<uint64_t>(GetValue<int64_t>(base_operator->GetAttr("seed2")));
+  seed_ = random::GetSeed(seed, seed2);
   return true;
 }
 
 int RandomPoissonGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                       const std::vector<KernelTensorPtr> &outputs,
                                       const std::map<uint32_t, tensor::TensorPtr> &) {
-  if (auto ret = KernelMod ::Resize(base_operator, inputs, outputs); ret != KRET_OK) {
+  if (auto ret = KernelMod::Resize(base_operator, inputs, outputs); ret != KRET_OK) {
     return ret;
   }
   ResetResource();
@@ -76,11 +79,16 @@ bool RandomPoissonGpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPt
                                              const std::vector<kernel::AddressPtr> &outputs) {
   R *rate_addr = GetDeviceAddress<R>(inputs, 1);
   T *output = GetDeviceAddress<T>(outputs, 0);
-  curandState *devStates = nullptr;
   void *workspace_addr = GetDeviceAddress<void *>(workspace, 0);
+  MS_EXCEPTION_IF_NULL(rate_addr);
+  MS_EXCEPTION_IF_NULL(output);
+  MS_EXCEPTION_IF_NULL(workspace_addr);
+  curandState *devStates = nullptr;
   devStates = reinterpret_cast<curandState *>(workspace_addr);
-  RandomPoisson(seed_, seed2_, devStates, rate_addr, rate_elements_, output, output_elements_,
-                reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = RandomPoisson(seed_, seed_offset_, devStates, rate_addr, rate_elements_, output, output_elements_,
+                              reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
+  seed_offset_ += 1;
   return true;
 }
 

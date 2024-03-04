@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,16 +15,40 @@
  */
 
 #include "ops/conv2d.h"
-#include <string>
+
 #include <algorithm>
+#include <cmath>
+#include <iterator>
+#include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "ir/dtype/tensor_type.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/base/type_id.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 using mindspore::abstract::Shape;
 namespace mindspore {
@@ -67,12 +91,15 @@ std::vector<int64_t> CheckAttrIntOrTuple(const ValuePtr &attr, const size_t star
   MS_EXCEPTION_IF_NULL(attr);
   if (attr->isa<ValueTuple>()) {
     std::vector<ValuePtr> attr_vec = attr->cast<ValueTuplePtr>()->value();
+    if (attr_vec.size() < start_idx + num_element) {
+      MS_LOG(EXCEPTION) << "ValueTuple size verify failed. ValueTuple size is " << attr_vec.size()
+                        << ", start index is " << start_idx << ", element number is " << num_element;
+    }
     auto it_start = attr_vec.begin() + SizeToLong(start_idx);
     (void)std::transform(it_start, it_start + SizeToLong(num_element), std::back_inserter(result),
                          [](const ValuePtr &e) -> int64_t { return GetValue<int64_t>(e); });
   } else {
-    int64_t attr_val = attr->cast<Int64ImmPtr>()->value();
-    (void)result.insert(result.begin(), num_element, attr_val);
+    (void)result.insert(result.begin(), num_element, GetValue<int64_t>(attr));
   }
   return result;
 }
@@ -183,14 +210,16 @@ abstract::ShapePtr Conv2dInferShape(const PrimitivePtr &primitive, const std::ve
   auto w_shape = w_shape_map[kShape];
 
   ShapeVector output_shape;
+  const auto shape_size = 4;
   if (IsDynamicRank(x_shape) || IsDynamicRank(w_shape)) {
-    std::vector<ValuePtr> pad_list_val = {MakeValue(0), MakeValue(0), MakeValue(0), MakeValue(0)};
+    std::vector<int64_t> pad_list(shape_size, abstract::Shape::kShapeDimAny);
+    std::vector<ValuePtr> pad_list_val = {MakeValue(pad_list[kIndex0]), MakeValue(pad_list[kIndex1]),
+                                          MakeValue(pad_list[kIndex2]), MakeValue(pad_list[kIndex3])};
     primitive->set_attr("pad_list", MakeValue(pad_list_val));
     output_shape = {abstract::Shape::kShapeRankAny};
     return std::make_shared<abstract::Shape>(output_shape);
   }
 
-  const int64_t shape_size = 4;
   (void)CheckAndConvertUtils::CheckInteger("x shape size", SizeToLong(x_shape.size()), kEqual, shape_size, prim_name);
   (void)CheckAndConvertUtils::CheckInteger("w shape size", SizeToLong(w_shape.size()), kEqual, shape_size, prim_name);
   CheckShapeAnyAndPositive(prim_name + " x_shape", x_shape);
@@ -260,7 +289,7 @@ abstract::ShapePtr Conv2dInferShape(const PrimitivePtr &primitive, const std::ve
 }
 
 TypePtr Conv2dInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
-  const std::set<TypePtr> valid_types = {kInt8, kInt32, kInt64, kFloat16, kFloat32};
+  const std::set<TypePtr> valid_types = {kInt8, kInt32, kInt64, kFloat16, kFloat32, kBFloat16};
   auto out_type = CheckAndConvertUtils::CheckTypeValid("x", input_args[0]->BuildType(), valid_types, prim->name());
   if (out_type->type_id() == TypeId::kNumberTypeInt8) {
     out_type = kInt32;
@@ -389,13 +418,31 @@ AbstractBasePtr Conv2dInfer(const abstract::AnalysisEnginePtr &, const Primitive
   const int64_t input_num = 2;
   (void)CheckAndConvertUtils::CheckInteger("Conv2d infer", SizeToLong(input_args.size()), kGreaterEqual, input_num,
                                            primitive->name());
-  const std::set<TypePtr> valid_types = {kInt8, kInt32, kInt64, kFloat16, kFloat32};
+  const std::set<TypePtr> valid_types = {kInt8, kInt32, kInt64, kFloat16, kFloat32, kBFloat16};
   std::map<std::string, TypePtr> types;
   (void)types.emplace("x", input_args[0]->BuildType());
   (void)types.emplace("w", input_args[1]->BuildType());
   (void)CheckAndConvertUtils::CheckTensorTypeSame(types, valid_types, primitive->name());
   return abstract::MakeAbstract(Conv2dInferShape(primitive, input_args), Conv2dInferType(primitive, input_args));
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Conv2D, prim::kPrimConv2D, Conv2dInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGConv2dInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return Conv2dInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return Conv2dInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return Conv2dInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Conv2D, prim::kPrimConv2D, AGConv2dInfer, false);
 }  // namespace ops
 }  // namespace mindspore

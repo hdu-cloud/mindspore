@@ -19,6 +19,7 @@
 #include <numeric>
 #include <vector>
 #include <unordered_map>
+#include "mindspore/core/ops/array_ops.h"
 #include "ops/op_utils.h"
 #include "ops/transpose.h"
 #include "tools/lite_exporter/fetch_content.h"
@@ -67,9 +68,12 @@ std::unordered_map<std::string, VectorRef> ReshapeTransposeFusion::DefinePattern
   return patterns;
 }
 
-bool CheckTransposeCanFused(const FuncGraphPtr &func_graph, const CNodePtr &transpose) {
+bool CheckTransposeCanFused(const FuncGraphPtr &func_graph, const CNodePtr &transpose, const std::vector<int> &perm) {
   MS_ASSERT(func_graph != nullptr && transpose != nullptr);
   MS_CHECK_TRUE_RET(transpose->size() == kInputSizeThree, false);
+  if (perm == kNH2NC || perm == kNC2NH) {
+    return false;
+  }
   auto input_abstract = GetCNodeInputAbstract(transpose, 1);
   MS_CHECK_TRUE_RET(input_abstract != nullptr, false);
   ShapeVector input_shape;
@@ -89,14 +93,23 @@ bool CheckTransposeCanFused(const FuncGraphPtr &func_graph, const CNodePtr &tran
     MS_LOG(WARNING) << "The input shape or output shape of transpose is invalid.";
     return false;
   }
-  input_shape.erase(std::remove_if(input_shape.begin(), input_shape.end(), [](int64_t x) { return x == 1; }),
-                    input_shape.end());
-  output_shape.erase(std::remove_if(output_shape.begin(), output_shape.end(), [](int64_t x) { return x == 1; }),
-                     output_shape.end());
-  if (input_shape != output_shape) {
-    return false;
+  int dim_size = static_cast<int>(input_shape.size());
+  std::vector<int> in_dim_index_valid;
+  for (int i = 0; i < dim_size; ++i) {
+    if (input_shape[i] > 1) {
+      in_dim_index_valid.push_back(i);
+    }
   }
-  return true;
+  std::vector<int> out_dim_index_valid;
+  for (size_t i = 0; i < perm.size(); ++i) {
+    if (perm[i] < 0 || perm[i] >= dim_size) {
+      return false;
+    }
+    if (input_shape[perm[i]] > 1) {
+      out_dim_index_valid.push_back(perm[i]);
+    }
+  }
+  return in_dim_index_valid == out_dim_index_valid;
 }
 
 std::vector<int> GetShapeOfReshape(const CNodePtr &reshape_cnode, bool *changed = nullptr) {
@@ -139,12 +152,12 @@ AnfNodePtr ReshapeTransposeFusion::ReshapeTransFusion(const FuncGraphPtr &func_g
   if (IsMultiOutputTensors(func_graph, reshape)) {
     return nullptr;
   }
-  if (!CheckTransposeCanFused(func_graph, transpose)) {
-    return nullptr;
-  }
   std::vector<int> perm;
   if (GetTransposePerm(transpose, &perm) != RET_OK) {
     MS_LOG(ERROR) << "fetch transpose's perm failed.";
+    return nullptr;
+  }
+  if (!CheckTransposeCanFused(func_graph, transpose, perm)) {
     return nullptr;
   }
   auto shape = GetShapeOfReshape(reshape_cnode);
@@ -173,7 +186,12 @@ AnfNodePtr ReshapeTransposeFusion::TransReshapeFusion(const FuncGraphPtr &func_g
   MS_CHECK_TRUE_RET(transpose != nullptr, nullptr);
   auto transpose_cnode = transpose->cast<CNodePtr>();
   MS_CHECK_TRUE_RET(transpose_cnode != nullptr, nullptr);
-  if (!CheckTransposeCanFused(func_graph, transpose_cnode)) {
+  std::vector<int> perm;
+  if (GetTransposePerm(transpose_cnode, &perm) != RET_OK) {
+    MS_LOG(ERROR) << "fetch transpose's perm failed.";
+    return nullptr;
+  }
+  if (!CheckTransposeCanFused(func_graph, transpose_cnode, perm)) {
     return nullptr;
   }
   auto manager = func_graph->manager();

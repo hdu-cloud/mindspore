@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@ class MindDataNode;
 class NonMappableSourceNode;
 class ProjectNode;
 class RenameNode;
+class RootNode;
 class SkipNode;
 
 /// \class SkipPushdownPass skip_pushdown_pass.h
@@ -51,7 +52,7 @@ class SkipPushdownPass : public IRTreePass {
     SkipNodes();
 
     /// \brief Destructor
-    ~SkipNodes() = default;
+    ~SkipNodes() override = default;
 
     /// \brief Perform skip node pushdown initiation check on a SkipNode
     /// \param[in] node The node being visited
@@ -101,6 +102,14 @@ class SkipPushdownPass : public IRTreePass {
     /// \return Status The status code returned
     Status Visit(std::shared_ptr<NonMappableSourceNode> node, bool *const modified) override;
 
+#ifdef ENABLE_PYTHON
+    /// \brief Perform skip node pushdown check on a GeneratorNode
+    /// \param[in] node The node being visited
+    /// \param[in, out] modified Indicator if the node was changed at all
+    /// \return Status The status code returned
+    Status Visit(std::shared_ptr<GeneratorNode> node, bool *const modified) override;
+#endif
+
 #ifndef ENABLE_ANDROID
     /// \brief Perform skip node pushdown check on a MindDataNode
     /// \param[in] node The node being visited
@@ -114,6 +123,12 @@ class SkipPushdownPass : public IRTreePass {
     /// \param[in, out] modified Indicator if the node was changed at all
     /// \return Status The status code returned
     Status Visit(std::shared_ptr<DatasetNode> node, bool *const modified) override;
+
+    /// \brief Perform skip node pushdown check on a RootNode
+    /// \param[in] node The node being visited
+    /// \param[in, out] modified Indicator if the node was changed at all
+    /// \return Status The status code returned
+    Status Visit(std::shared_ptr<RootNode> node, bool *const modified) override;
 
     /// \brief Perform skip node pushdown completion check on a DatasetNode
     /// \param[in] node The node being visited
@@ -132,9 +147,23 @@ class SkipPushdownPass : public IRTreePass {
     const std::vector<std::shared_ptr<DatasetNode>> &nodes_to_remove() const { return nodes_to_remove_; }
 
    private:
+    template <class T>
+    Status InsertSkipNode(std::shared_ptr<T> node) {
+      CHECK_FAIL_RETURN_UNEXPECTED(skip_count_ >= 0, "The skip size cannot be negative.");
+      if (skip_count_ == 0) {
+        return Status::OK();
+      }  // no active skip node above. normal flow
+
+      // insert a skip node above
+      (void)insert_skip_above_.emplace_back(node, skip_count_);
+      skip_count_ = 0;
+      return Status::OK();
+    }
+
     std::vector<std::pair<std::shared_ptr<DatasetNode>, int64_t>> insert_skip_above_;
     std::vector<std::shared_ptr<DatasetNode>> nodes_to_remove_;
     int64_t skip_count_;
+    int64_t skip_steps_;
   };
 
  public:
@@ -142,7 +171,7 @@ class SkipPushdownPass : public IRTreePass {
   SkipPushdownPass();
 
   /// \brief Destructor
-  ~SkipPushdownPass() = default;
+  ~SkipPushdownPass() override = default;
 
   /// \brief Runs a skip_pushdown pass to push down the skip node found in the tree (for Reset scenario).
   /// \param[in, out] tree The tree to operate on.

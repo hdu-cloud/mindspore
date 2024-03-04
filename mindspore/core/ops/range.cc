@@ -14,13 +14,34 @@
  * limitations under the License.
  */
 #include "ops/range.h"
-#include <string>
+
 #include <memory>
 #include <set>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <type_traits>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/type.h"
+#include "ir/named.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "ops/op_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -60,7 +81,7 @@ void Range::Init(const int64_t d_type, const int64_t start, const int64_t limit,
 
 namespace {
 #define IsSameType(source_type, cmp_type) (cmp_type->equal(source_type))
-#define IsNoneOrAnyValue(value_ptr) ((value_ptr->isa<None>()) || (value_ptr->isa<AnyValue>()))
+#define IsNoneOrAnyValue(value_ptr) ((value_ptr->isa<None>()) || (value_ptr->isa<ValueAny>()))
 template <typename T>
 int64_t RangeCalculateShape(const tensor::TensorPtr start_ptr, const tensor::TensorPtr limit_ptr,
                             const tensor::TensorPtr delta_ptr) {
@@ -90,6 +111,30 @@ int64_t RangeCalculateShape(const tensor::TensorPtr start_ptr, const tensor::Ten
 
 abstract::ShapePtr RangeCheckAndInferShape(const PrimitivePtr &primitive,
                                            const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
+  const auto prim_name = primitive->name();
+
+  ShapeVector out_shape = {};
+  auto start_shape_map =
+    CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
+  auto limit_shape_map =
+    CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
+  auto delta_shape_map =
+    CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->BuildShape())[kShape];
+  if (IsDynamicRank(start_shape_map) || IsDynamicRank(limit_shape_map) || IsDynamicRank(delta_shape_map) ||
+      IsDynamicShape(start_shape_map) || IsDynamicShape(limit_shape_map) || IsDynamicShape(delta_shape_map)) {
+    (void)out_shape.emplace_back(abstract::Shape::kShapeDimAny);
+    return std::make_shared<abstract::Shape>(out_shape);
+  }
+
+  std::vector<int64_t> valid_shape{};
+  auto start_shape = input_args[kInputIndex0]->BuildShape();
+  auto limit_shape = input_args[kInputIndex1]->BuildShape();
+  auto delta_shape = input_args[kInputIndex2]->BuildShape();
+  const std::map<std::string, BaseShapePtr> input_shapes = {
+    {"start_shape", start_shape}, {"limit_shape", limit_shape}, {"delta_shape", delta_shape}};
+  (void)CheckAndConvertUtils::CheckTensorShapeSame(input_shapes, valid_shape, prim_name);
+
   int64_t shape_size = abstract::Shape::kShapeDimAny;
   auto start_value = input_args[kInputIndex0]->BuildValue();
   auto limit_value = input_args[kInputIndex1]->BuildValue();
@@ -123,7 +168,6 @@ abstract::ShapePtr RangeCheckAndInferShape(const PrimitivePtr &primitive,
     }
   }
 
-  ShapeVector out_shape = {};
   if (is_compile) {
     (void)out_shape.emplace_back(abstract::Shape::kShapeDimAny);
     return std::make_shared<abstract::Shape>(out_shape);
@@ -134,21 +178,24 @@ abstract::ShapePtr RangeCheckAndInferShape(const PrimitivePtr &primitive,
 }
 
 TypePtr RangeCheckAndInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(prim);
+  const auto &prim_name = prim->name();
   std::set<TypePtr> support_types = {kInt32, kInt64, kFloat32, kFloat64};
   auto start_type = CheckAndConvertUtils::CheckTensorTypeValid("start", input_args[kInputIndex0]->BuildType(),
-                                                               support_types, prim->name());
+                                                               support_types, prim_name);
   auto limit_type = CheckAndConvertUtils::CheckTensorTypeValid("limit", input_args[kInputIndex1]->BuildType(),
-                                                               support_types, prim->name());
+                                                               support_types, prim_name);
   auto delta_type = CheckAndConvertUtils::CheckTensorTypeValid("delta", input_args[kInputIndex2]->BuildType(),
-                                                               support_types, prim->name());
+                                                               support_types, prim_name);
   MS_EXCEPTION_IF_NULL(start_type);
   MS_EXCEPTION_IF_NULL(limit_type);
   MS_EXCEPTION_IF_NULL(delta_type);
   bool same_type = IsSameType(start_type, limit_type) && IsSameType(limit_type, delta_type);
   if (!same_type) {
-    MS_EXCEPTION(TypeError) << "For Range, start, limit delta should have same type, but get start["
-                            << start_type->meta_type() << "], limit[" << limit_type->meta_type() << "], delta["
-                            << delta_type->meta_type() << "].";
+    MS_EXCEPTION(TypeError) << "For '" << prim_name << "', start, limit and delta should have same type, but get start["
+                            << TypeIdToString(start_type->type_id()) << "], limit["
+                            << TypeIdToString(limit_type->type_id()) << "], delta["
+                            << TypeIdToString(delta_type->type_id()) << "].";
   }
   return start_type;
 }
@@ -173,7 +220,25 @@ AbstractBasePtr RangeInfer(const abstract::AnalysisEnginePtr &, const PrimitiveP
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_HOST_DEPENDS(kNameRange, {0, 1, 2});
-REGISTER_PRIMITIVE_EVAL_IMPL(Range, prim::kPrimRange, RangeInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGRangeInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return RangeCheckAndInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return RangeCheckAndInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return RangeInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0, 1, 2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Range, prim::kPrimRange, AGRangeInfer, false);
 }  // namespace ops
 }  // namespace mindspore

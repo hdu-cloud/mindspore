@@ -27,14 +27,15 @@ from mindspore.nn.loss.loss import LossBase
 from mindspore.nn.optim.momentum import Momentum
 from mindspore.ops import operations as P
 from mindspore.parallel import set_algo_parameters
-from mindspore.train.callback import Callback
-from mindspore.train.model import Model
+from mindspore.train import Callback
+from mindspore.train import Model
 from mindspore.context import ParallelMode
 
 context.set_context(mode=context.GRAPH_MODE, device_target="Ascend")
 context.set_context(device_id=int(os.getenv('DEVICE_ID')))
 init()
-context.set_auto_parallel_context(gradients_mean=True, parallel_mode=ParallelMode.AUTO_PARALLEL)
+context.set_auto_parallel_context(gradients_mean=True, parallel_mode=ParallelMode.AUTO_PARALLEL,
+                                  search_mode="dynamic_programming")
 np.random.seed(10)
 
 

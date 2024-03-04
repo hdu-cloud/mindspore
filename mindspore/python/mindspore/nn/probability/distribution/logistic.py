@@ -15,8 +15,9 @@
 """Logistic Distribution"""
 import numpy as np
 from mindspore.ops import operations as P
+from mindspore.ops import functional as F
 from mindspore.ops import composite as C
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from mindspore.common import dtype as mstype
 from .distribution import Distribution
 from ._utils.utils import check_greater_zero
@@ -32,14 +33,14 @@ class Logistic(Distribution):
     .. math::
         f(x, a, b) = 1 / b \exp(\exp(-(x - a) / b) - x).
 
-    where a and b are loc and scale parameter respectively.
+    where :math:`a, b` are loc and scale parameter respectively.
 
     Args:
-        loc (float, list, numpy.ndarray, Tensor): The location of the Logistic distribution. Default: None.
-        scale (float, list, numpy.ndarray, Tensor): The scale of the Logistic distribution. Default: None.
-        seed (int): The seed used in sampling. The global seed is used if it is None. Default: None.
-        dtype (mindspore.dtype): The type of the event samples. Default: mstype.float32.
-        name (str): The name of the distribution. Default: 'Logistic'.
+        loc (float, list, numpy.ndarray, Tensor): The location of the Logistic distribution. Default: ``None`` .
+        scale (float, list, numpy.ndarray, Tensor): The scale of the Logistic distribution. Default: ``None`` .
+        seed (int): The seed used in sampling. The global seed is used if it is None. Default: ``None`` .
+        dtype (mindspore.dtype): The type of the event samples. Default: ``mstype.float32`` .
+        name (str): The name of the distribution. Default: ``'Logistic'`` .
 
     Note:
         `scale` must be greater than zero.
@@ -153,7 +154,6 @@ class Logistic(Distribution):
         self.dtypeop = P.DType()
         self.exp = exp_generic
         self.expm1 = P.Expm1()
-        self.fill = P.Fill()
         self.less = P.Less()
         self.log = log_generic
         self.log1p = P.Log1p()
@@ -171,7 +171,7 @@ class Logistic(Distribution):
 
         self.threshold = np.log(np.finfo(np.float32).eps) + 1.
         self.tiny = np.finfo(np.float).tiny
-        self.sd_const = np.pi/np.sqrt(3)
+        self.sd_const = np.pi / np.sqrt(3)
 
     def _softplus(self, x):
         too_small = self.less(x, self.threshold)
@@ -179,7 +179,7 @@ class Logistic(Distribution):
         too_small_value = self.exp(x)
         too_large_value = x
         too_small_or_too_large = self.logicalor(too_small, too_large)
-        ones = self.fill(self.dtypeop(x), self.shape(x), 1.0)
+        ones = F.fill(self.dtypeop(x), self.shape(x), 1.0)
         x = self.select(too_small_or_too_large, ones, x)
         y = self.log(self.exp(x) + 1.0)
         return self.select(too_small, too_small_value, self.select(too_large, too_large_value, y))

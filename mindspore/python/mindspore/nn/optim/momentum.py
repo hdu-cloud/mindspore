@@ -20,7 +20,7 @@ from mindspore.common.parameter import Parameter
 from mindspore.common.tensor import Tensor
 from mindspore.common.api import jit
 import mindspore.common.dtype as mstype
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from mindspore.nn.optim.optimizer import Optimizer
 from mindspore.nn.optim.optimizer import opt_init_args_register
 from mindspore.nn.optim._dist_optimizer_registry import _register_dist_optimizer
@@ -69,19 +69,20 @@ class Momentum(Optimizer):
     learning <https://dl.acm.org/doi/10.5555/3042817.3043064>`_ for more details.
 
     .. math::
-            v_{t+1} = v_{t} \ast u + grad
+        v_{t+1} = v_{t} \ast u + grad
 
     If use_nesterov is True:
 
     .. math::
-            p_{t+1} =  p_{t} - (grad \ast lr + v_{t+1} \ast u \ast lr)
+        p_{t+1} =  p_{t} - (grad \ast lr + v_{t+1} \ast u \ast lr)
 
     If use_nesterov is False:
 
     .. math::
-            p_{t+1} = p_{t} - lr \ast v_{t+1}
+        p_{t+1} = p_{t} - lr \ast v_{t+1}
 
-    Here: where grad, lr, p, v and u denote the gradients, learning_rate, params, moments, and momentum respectively.
+    Here: where :math:`grad`, :math:`lr`, :math:`p`, :math:`v` and :math:`u` denote the gradients,
+    learning_rate, params, moments, and momentum respectively.
 
     Note:
         If parameters are not grouped, the `weight_decay` in optimizer will be applied on the network parameters without
@@ -133,7 +134,7 @@ class Momentum(Optimizer):
         momentum (float): Hyperparameter of type float, means momentum for the moving average.
             It must be at least 0.0.
 
-        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: 0.0.
+        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: ``0.0`` .
 
             - float: The fixed weight decay value. Must be equal to or greater than 0.
 
@@ -144,16 +145,16 @@ class Momentum(Optimizer):
 
         loss_scale (float): A floating point value for the loss scale. It must be greater than 0.0. In general, use the
             default value. Only when `FixedLossScaleManager` is used for training and the `drop_overflow_update` in
-            `FixedLossScaleManager` is set to False, then this value needs to be the same as the `loss_scale` in
+            `FixedLossScaleManager` is set to ``False`` , then this value needs to be the same as the `loss_scale` in
             `FixedLossScaleManager`. Refer to class :class:`mindspore.amp.FixedLossScaleManager` for more details.
-            Default: 1.0.
-        use_nesterov (bool): Enable Nesterov momentum. Default: False.
+            Default: ``1.0`` .
+        use_nesterov (bool): Enable Nesterov momentum. Default: ``False`` .
 
     Inputs:
         - **gradients** (tuple[Tensor]) - The gradients of `params`, the shape is the same as `params`.
 
     Outputs:
-        tuple[bool]. All elements are True.
+        tuple[bool]. All elements are ``True`` .
 
     Raises:
         TypeError: If `learning_rate` is not one of int, float, Tensor, Iterable, LearningRateSchedule.
@@ -171,7 +172,9 @@ class Momentum(Optimizer):
         >>> import mindspore as ms
         >>> from mindspore import nn
         >>>
-        >>> net = Net()
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> #1) All parameters use the same learning rate and weight decay
         >>> optim = nn.Momentum(params=net.trainable_params(), learning_rate=0.1, momentum=0.9)
         >>>
@@ -189,7 +192,7 @@ class Momentum(Optimizer):
         >>> # The final parameters order in which the optimizer will be followed is the value of 'order_params'.
         >>>
         >>> loss = nn.SoftmaxCrossEntropyWithLogits()
-        >>> model = ms.Model(net, loss_fn=loss, optimizer=optim, metrics=None)
+        >>> model = ms.train.Model(net, loss_fn=loss, optimizer=optim, metrics=None)
     """
     @opt_init_args_register
     def __init__(self, params, learning_rate, momentum, weight_decay=0.0, loss_scale=1.0, use_nesterov=False):
@@ -217,6 +220,7 @@ class Momentum(Optimizer):
         gradients = self.gradients_centralization(gradients)
         gradients = self.scale_grad(gradients)
         lr = self.get_lr()
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
         if self.use_dist_optimizer:
             if self.is_group_lr:
                 success = self.hyper_map_reverse(F.partial(_momentum_opt, self.opt, self.momentum),

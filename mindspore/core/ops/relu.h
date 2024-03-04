@@ -16,12 +16,12 @@
 #ifndef MINDSPORE_CORE_OPS_RELU_H_
 #define MINDSPORE_CORE_OPS_RELU_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -36,6 +36,8 @@ class MIND_API ReLU : public BaseOperator {
   /// \brief Init.
   void Init() const {}
 };
+MIND_API abstract::AbstractBasePtr ReLUInferFunc(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

@@ -16,13 +16,13 @@
 
 #ifndef MINDSPORE_CORE_OPS_ARG_MAX_H_
 #define MINDSPORE_CORE_OPS_ARG_MAX_H_
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
 
-#include "ops/base_operator.h"
-#include "mindapi/base/types.h"
 #include "mindapi/base/type_id.h"
+#include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -51,8 +51,8 @@ class MIND_API Argmax : public BaseOperator {
   /// \return output_type.
   TypeId get_output_type() const;
 };
-abstract::AbstractBasePtr ArgMaxInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                      const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr ArgMaxInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                               const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimArgMax = std::shared_ptr<Argmax>;
 }  // namespace ops
 }  // namespace mindspore

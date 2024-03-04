@@ -55,6 +55,33 @@ def test_make_coo():
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.platform_x86_gpu_training
+@pytest.mark.platform_x86_cpu
+@pytest.mark.env_onecard
+def test_make_coo_empty():
+    """
+    Feature: Test COOTensor Constructor in Graph and PyNative.
+    Description: Test COOTensor(indices, values, shape) and COOTensor(COOTensor)
+    Expectation: Success.
+    """
+    indices = Tensor([], dtype=mstype.int32)
+    values = Tensor([], dtype=mstype.float32)
+    dense_shape = (3, 4)
+
+    def test_pynative():
+        return COOTensor(indices, values, dense_shape)
+    test_graph = jit(test_pynative)
+
+    coo1 = test_pynative()
+    coo2 = test_graph()
+    compare_coo(coo1, coo2)
+    coo3 = COOTensor(coo_tensor=coo2)
+    compare_coo(coo3, coo2)
+
+
+@pytest.mark.level1
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_coo_tensor_with_control_if():
     """
@@ -105,7 +132,7 @@ def test_coo_tensor_with_control_if():
     assert out[2] == shape
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.platform_x86_gpu_training
@@ -180,7 +207,7 @@ def test_coo_method():
     assert np.allclose(to_dense_output.asnumpy(), to_dense_expect)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_coo_coalesce():
@@ -212,7 +239,7 @@ def test_coo_coalesce():
     assert np.allclose(expect_values, coalesce_output.values.asnumpy())
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
@@ -296,7 +323,7 @@ def test_coo_attr():
             assert py_tuple[i] == g_tuple[i]
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
@@ -389,7 +416,7 @@ def test_coo_bprop():
     compare_res(test_coo_to_dense(indices, values, dense_shape), values_on)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_dense_to_coo():
@@ -414,7 +441,7 @@ def test_dense_to_coo():
     compare_coo(coo_tensor_graph, expect)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard

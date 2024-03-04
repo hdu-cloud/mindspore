@@ -31,8 +31,10 @@ from tests.dataset_mock import MindData
 
 context.set_context(mode=context.PYNATIVE_MODE)
 
+
 class Net(nn.Cell):
     """Net definition"""
+
     def __init__(self):
         super(Net, self).__init__()
         self.fc1 = nn.Dense(128, 768, activation='relu')
@@ -55,6 +57,7 @@ class Net(nn.Cell):
         s = self.fc4(s)
         return s
 
+
 class Dataset(MindData):
     def __init__(self, predict, label, length=3):
         super(Dataset, self).__init__(size=length)
@@ -75,6 +78,7 @@ class Dataset(MindData):
     def reset(self):
         self.index = 0
 
+
 class DenseNet1(nn.Cell):
     def __init__(self, has_bias=True, activation='relu'):
         super(DenseNet1, self).__init__()
@@ -89,6 +93,7 @@ class DenseNet1(nn.Cell):
         v = self.fc3(k)
         s = self.fc4(v)
         return s
+
 
 class DenseNet2(nn.Cell):
     def __init__(self, has_bias=True, activation='relu'):
@@ -113,6 +118,7 @@ class DenseNet2(nn.Cell):
         z = self.fc8(w)
         return z
 
+
 class DenseNet3(nn.Cell):
     def __init__(self, has_bias=True, activation='relu'):
         super(DenseNet3, self).__init__()
@@ -121,6 +127,7 @@ class DenseNet3(nn.Cell):
     def construct(self, x):
         q = self.fc1(x)
         return q
+
 
 class SimpleDMLNet(nn.Cell):
     def __init__(self, net1, net2):
@@ -132,6 +139,7 @@ class SimpleDMLNet(nn.Cell):
         x1 = self.backbone1(x)
         x2 = self.backbone2(x)
         return x1 + x2
+
 
 def train_common(net):
     batch_size = 32
@@ -154,6 +162,7 @@ def train_common(net):
     allreduce_fusion_dict = _cell_graph_executor._get_allreduce_fusion(model._train_network)
     print(allreduce_fusion_dict)
     return allreduce_fusion_dict
+
 
 def test_allreduce_fusion_auto():
     """
@@ -179,6 +188,7 @@ def test_allreduce_fusion_auto():
                    'backbone1.fc1.weight': 1}
     assert allreduce_fusion_dict == expect_dict
 
+
 def test_allreduce_fusion_size():
     """
     Feature: test_allreduce_fusion in size mode
@@ -203,8 +213,7 @@ def test_allreduce_fusion_size():
                    'backbone1.fc1.weight': 1}
     assert allreduce_fusion_dict == expect_dict
     cost_model_context.reset_cost_model_context()
-    comm_fusion = auto_parallel_context().get_comm_fusion()
-    assert comm_fusion_dict == comm_fusion
+
 
 def test_lamb_split_fusion_in_index():
     """
@@ -226,6 +235,7 @@ def test_lamb_split_fusion_in_index():
     train_network = TrainOneStepCell(net_with_loss, optimizer)
     _cell_graph_executor.compile(train_network, inputs, label)
     context.reset_auto_parallel_context()
+
 
 def test_allreduce_fusion_size_priority():
     """
@@ -256,6 +266,7 @@ def test_allreduce_fusion_size_priority():
                    'backbone1.fc1.weight': 1}
     assert allreduce_fusion_dict == expect_dict
 
+
 def test_allreduce_fusion_size_one_tensor():
     """
     Feature: test_allreduce_fusion in size mode with one tensor
@@ -269,6 +280,7 @@ def test_allreduce_fusion_size_one_tensor():
     expect_dict = {'fc1.weight': 1}
     assert allreduce_fusion_dict == expect_dict
 
+
 def test_fusion_invalid_value_failed():
     """
     Feature: test_allreduce_fusion with invalid value
@@ -279,6 +291,18 @@ def test_fusion_invalid_value_failed():
         comm_fusion_dict = {"allreduce": {"mode": "size", "config": "30.12"}}
         context.set_auto_parallel_context(parallel_mode=ParallelMode.SEMI_AUTO_PARALLEL, comm_fusion=comm_fusion_dict)
 
+
+def test_openstate_invalid_value_failed():
+    """
+    Feature: test_openstate with invalid value
+    Description: test_openstate with invalid value
+    Expectation: throw TypeError
+    """
+    with pytest.raises(TypeError):
+        comm_fusion_dict = {"openstate": "True"}
+        context.set_auto_parallel_context(parallel_mode=ParallelMode.SEMI_AUTO_PARALLEL, comm_fusion=comm_fusion_dict)
+
+
 def test_enable_invalid_value_failed():
     """
     Feature: enable_all_reduce_fusion with invalid value
@@ -287,3 +311,94 @@ def test_enable_invalid_value_failed():
     """
     with pytest.raises(TypeError):
         auto_parallel_context().set_enable_all_reduce_fusion(enable_all_reduce_fusion="fusion")
+
+
+def test_allreduce_fusion_openstate():
+    """
+    Feature: test priority of "openstate" and "comm_fusion"
+    Description: test priority of "openstate" and "comm_fusion"
+    Expectation: success
+    """
+    comm_fusion_dict = {"openstate": False, "allreduce": {"mode": "size", "config": 32}}
+    context.set_auto_parallel_context(parallel_mode=ParallelMode.SEMI_AUTO_PARALLEL, comm_fusion=comm_fusion_dict)
+    net = SimpleDMLNet(DenseNet1(has_bias=False, activation=None), DenseNet2(has_bias=False, activation=None))
+    allreduce_fusion_dict = train_common(net)
+    expect_dict = {}
+    assert allreduce_fusion_dict == expect_dict
+
+
+def test_allreduce_fusion_auto_with_openstate():
+    """
+    Feature: test_allreduce_fusion in auto mode with openstate
+    Description: allreduce fusion in auto mode with openstate
+    Expectation: success
+    """
+    comm_fusion_dict = {"openstate": True, "allreduce": {"mode": "auto", "config": None}}
+    context.set_auto_parallel_context(parallel_mode=ParallelMode.SEMI_AUTO_PARALLEL, comm_fusion=comm_fusion_dict)
+    net = SimpleDMLNet(DenseNet1(has_bias=False, activation=None), DenseNet2(has_bias=False, activation=None))
+    allreduce_fusion_dict = train_common(net)
+    expect_dict = {'backbone2.fc8.weight': 1,
+                   'backbone2.fc7.weight': 1,
+                   'backbone2.fc6.weight': 1,
+                   'backbone1.fc4.weight': 1,
+                   'backbone1.fc3.weight': 1,
+                   'backbone1.fc2.weight': 1,
+                   'backbone2.fc5.weight': 1,
+                   'backbone2.fc4.weight': 1,
+                   'backbone2.fc3.weight': 1,
+                   'backbone2.fc2.weight': 1,
+                   'backbone2.fc1.weight': 1,
+                   'backbone1.fc1.weight': 1}
+    assert allreduce_fusion_dict == expect_dict
+
+
+def test_allreduce_fusion_with_openstate_reset():
+    """
+    Feature: test_allreduce_fusion in auto mode with openstate and reset
+    Description: allreduce fusion in auto mode with openstate and reset
+    Expectation: success
+    """
+    comm_fusion_dict = {"openstate": False, "allreduce": {"mode": "auto", "config": None}}
+    context.set_auto_parallel_context(parallel_mode=ParallelMode.SEMI_AUTO_PARALLEL, comm_fusion=comm_fusion_dict)
+    net = SimpleDMLNet(DenseNet1(has_bias=False, activation=None), DenseNet2(has_bias=False, activation=None))
+    allreduce_fusion_dict = train_common(net)
+    expect_dict = {'backbone2.fc8.weight': 1,
+                   'backbone2.fc7.weight': 1,
+                   'backbone2.fc6.weight': 1,
+                   'backbone1.fc4.weight': 1,
+                   'backbone1.fc3.weight': 1,
+                   'backbone1.fc2.weight': 1,
+                   'backbone2.fc5.weight': 1,
+                   'backbone2.fc4.weight': 1,
+                   'backbone2.fc3.weight': 1,
+                   'backbone2.fc2.weight': 1,
+                   'backbone2.fc1.weight': 1,
+                   'backbone1.fc1.weight': 1}
+    assert allreduce_fusion_dict != expect_dict
+    context.reset_auto_parallel_context()
+    context.set_auto_parallel_context(parallel_mode=ParallelMode.SEMI_AUTO_PARALLEL)
+    allreduce_fusion_dict = train_common(net)
+    assert allreduce_fusion_dict == expect_dict
+
+
+def test_get_comm_fusion():
+    """
+    Feature: test_get_comm_fusion in auto mode with openstate and reset
+    Description:  get comm fusion and reset
+    Expectation: success
+    """
+    comm_fusion_dict = {"openstate": False, "allreduce": {"mode": "auto", "config": None}}
+    context.set_auto_parallel_context(parallel_mode=ParallelMode.SEMI_AUTO_PARALLEL, comm_fusion=comm_fusion_dict)
+    fusion_dict = context.get_auto_parallel_context("comm_fusion")
+    expect_dict = {"openstate": False,
+                   "allreduce": {"mode": "auto", "config": None},
+                   "allgather": {"mode": "auto", "config": None},
+                   "reducescatter": {"mode": "auto", "config": None}}
+    assert fusion_dict == expect_dict
+    context.reset_auto_parallel_context()
+    fusion_dict = context.get_auto_parallel_context("comm_fusion")
+    expect_dict = {"openstate": True,
+                   "allreduce": {"mode": "auto", "config": None},
+                   "allgather": {"mode": "auto", "config": None},
+                   "reducescatter": {"mode": "auto", "config": None}}
+    assert fusion_dict == expect_dict

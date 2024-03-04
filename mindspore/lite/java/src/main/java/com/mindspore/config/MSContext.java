@@ -20,17 +20,23 @@ import java.util.ArrayList;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-
+/**
+ * Context is used to store environment variables during execution.
+ *
+ * @since v1.0
+ */
 public class MSContext {
-    private static Logger LOGGER = MindsporeLite.GetLogger();
+    private static Logger LOGGER = Logger.getLogger(MSContext.class.toString());
     static {
         MindsporeLite.init();
     }
 
-    private long msContextPtr;
-    private static final long EMPTY_CONTEXT_PTR_VALUE = 0;
+    private static final long EMPTY_CONTEXT_PTR_VALUE = 0L;
     private static final int ERROR_VALUE = -1;
-    private static final String NULLPTR_ERROR_MESSAGE="Context pointer from java is nullptr.\n";
+    private static final int NPU_FREQUENCY_VALUE = 3;
+    private static final String NULLPTR_ERROR_MESSAGE="Context pointer from java is nullptr.";
+
+    private long msContextPtr;
 
     /**
      * Construct function.
@@ -59,7 +65,17 @@ public class MSContext {
      * @return add status.
      */
     public boolean addDeviceInfo(int deviceType, boolean isEnableFloat16) {
-        return addDeviceInfo(msContextPtr, deviceType, isEnableFloat16, 3);
+        return addDeviceInfo(msContextPtr, deviceType, isEnableFloat16, NPU_FREQUENCY_VALUE);
+    }
+
+    /**
+     * Add device info to context.
+     * 
+     * @param ascendDeviceInfo Device info for Ascend backend.
+     * @return add status.
+     */
+    public boolean addDeviceInfo(AscendDeviceInfo ascendDeviceInfo) {
+        return addDeviceInfo(msContextPtr, ascendDeviceInfo);
     }
 
     /**
@@ -148,13 +164,13 @@ public class MSContext {
      * @return The current thread number setting.
      */
     public int getThreadNum() {
-        int ret_val = ERROR_VALUE;
+        int retVal = ERROR_VALUE;
         if (isInitialized()) {
-            ret_val = getThreadNum(this.msContextPtr);
+            retVal = getThreadNum(this.msContextPtr);
         } else {
             LOGGER.log(Level.SEVERE, NULLPTR_ERROR_MESSAGE);
         }
-        return ret_val;
+        return retVal;
     }
 
     /**
@@ -178,13 +194,13 @@ public class MSContext {
      * @return The current operators parallel number setting.
      */
     public int getInterOpParallelNum() {
-        int ret_val = ERROR_VALUE;
+        int retVal = ERROR_VALUE;
         if (isInitialized()) {
-            ret_val = getInterOpParallelNum(this.msContextPtr);
+            retVal = getInterOpParallelNum(this.msContextPtr);
         } else {
             LOGGER.log(Level.SEVERE, NULLPTR_ERROR_MESSAGE);
         }
-        return ret_val;
+        return retVal;
     }
 
     /**
@@ -209,13 +225,13 @@ public class MSContext {
      * @return Thread affinity to CPU cores. 0: no affinities, 1: big cores first, 2: little cores first
      */
     public int getThreadAffinityMode() {
-        int ret_val = ERROR_VALUE;
+        int retVal = ERROR_VALUE;
         if (isInitialized()) {
-            ret_val = getThreadAffinityMode(this.msContextPtr);
+            retVal = getThreadAffinityMode(this.msContextPtr);
         } else {
             LOGGER.log(Level.SEVERE, NULLPTR_ERROR_MESSAGE);
         }
-        return ret_val;
+        return retVal;
     }
 
     /**
@@ -229,11 +245,11 @@ public class MSContext {
     public void setThreadAffinity(ArrayList<Integer> coreList) {
         if (isInitialized()) {
             int len = coreList.size();
-            int[] coreList_array = new int[len];
+            int[] coreListArray = new int[len];
             for (int i = 0; i < len; i++) {
-                coreList_array[i] = coreList.get(i);
+                coreListArray[i] = coreList.get(i);
             }
-            setThreadAffinity(this.msContextPtr, coreList_array);
+            setThreadAffinity(this.msContextPtr, coreListArray);
         } else {
             LOGGER.log(Level.SEVERE, NULLPTR_ERROR_MESSAGE);
         }
@@ -247,13 +263,13 @@ public class MSContext {
      */
 
     public ArrayList<Integer> getThreadAffinityCoreList() {
-        ArrayList<Integer> ret_val = new ArrayList<>();
+        ArrayList<Integer> retVal = new ArrayList<>();
         if (isInitialized()) {
-            ret_val = getThreadAffinityCoreList(this.msContextPtr);
+            retVal = getThreadAffinityCoreList(this.msContextPtr);
         } else {
             LOGGER.log(Level.SEVERE, NULLPTR_ERROR_MESSAGE);
         }
-        return ret_val;
+        return retVal;
     }
 
     /**
@@ -277,13 +293,13 @@ public class MSContext {
      * @return boolean value that indicates whether in parallel.
      */
     public boolean getEnableParallel() {
-        boolean ret_val = false;
+        boolean retVal = false;
         if (isInitialized()) {
-            ret_val = getEnableParallel(this.msContextPtr);
+            retVal = getEnableParallel(this.msContextPtr);
         } else {
             LOGGER.log(Level.SEVERE, NULLPTR_ERROR_MESSAGE);
         }
-        return ret_val;
+        return retVal;
     }
 
 
@@ -292,6 +308,8 @@ public class MSContext {
     private native long createDefaultMSContext();
 
     private native boolean addDeviceInfo(long msContextPtr, int deviceType, boolean isEnableFloat16, int npuFrequency);
+
+    private native boolean addDeviceInfo(long msContextPtr, AscendDeviceInfo ascendDeviceInfo);
 
     private native void free(long msContextPtr);
 

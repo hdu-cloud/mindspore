@@ -17,10 +17,11 @@
 #include "plugin/device/gpu/kernel/nn/pooling_grad_gpu_kernel.h"
 #include <functional>
 #include <memory>
+#include "mindspore/core/ops/math_ops.h"
 #include "mindspore/core/ops/grad/pool_grad.h"
 #include "mindspore/core/ops/grad/avg_pool_3d_grad.h"
 #include "mindspore/core/ops/grad/max_pool_3d_grad.h"
-#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/broadcast_impl.cuh"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/binary_ops_impl.cuh"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/avg_pool3d_helper_impl.cuh"
 
 namespace mindspore {
@@ -138,10 +139,8 @@ bool PoolingGradGpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr>
     dy = GetDeviceAddress<T>(inputs, kIndex2);
     dx = GetDeviceAddress<T>(outputs, kIndex0);
   }
-
-  const float alpha = 1;
-  const float beta = 0;
-
+  T alpha = static_cast<T>(1.0f);
+  T beta = static_cast<T>(0.0f);
   if (divisor_override_ != 0) {
     T *work_addr = GetDeviceAddress<T>(workspace, kIndex2);
     T *dy_work_addr = GetDeviceAddress<T>(workspace, kIndex3);
@@ -161,20 +160,40 @@ bool PoolingGradGpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr>
       CalRealKernelSize(input_shape_, kernel_size_, edge_kernel_, work_addr, device_id_,
                         reinterpret_cast<cudaStream_t>(cuda_stream_));
     }
-    ElewiseArith(output_num, BROADCAST_TYPE_MUL, dy_work_addr, work_addr, dy_work_addr,
-                 reinterpret_cast<cudaStream_t>(cuda_stream_));
+    std::vector<int64_t> shape = {static_cast<int64_t>(output_num)};
+    BinaryOpWithBroadcastCudaFunc<BinaryOpType::kMul, T, T, T>(false, shape, shape, shape, dy_work_addr, work_addr,
+                                                               dy_work_addr, device_id_,
+                                                               reinterpret_cast<cudaStream_t>(cuda_stream_));
+    if (cudnn_data_type_ == CUDNN_DATA_DOUBLE) {
+      CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
+        cudnnPoolingBackward(cudnn_handle_, pooling_descriptor_, &alpha, y_descriptor_, y, dy_descriptor_, dy_work_addr,
+                             x_descriptor_, x_data, &beta, dx_descriptor_, dx),
+        "For '" + kernel_name_ + "', cudnnPoolingBackward failed");
+    } else {
+      const float alphaf = static_cast<float>(alpha);
+      const float betaf = static_cast<float>(beta);
+      CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
+        cudnnPoolingBackward(cudnn_handle_, pooling_descriptor_, &alphaf, y_descriptor_, y, dy_descriptor_,
+                             dy_work_addr, x_descriptor_, x_data, &betaf, dx_descriptor_, dx),
+        "For '" + kernel_name_ + "', cudnnPoolingBackward failed");
+    }
 
-    CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
-      cudnnPoolingBackward(cudnn_handle_, pooling_descriptor_, &alpha, y_descriptor_, y, dy_descriptor_, dy_work_addr,
-                           x_descriptor_, x_data, &beta, dx_descriptor_, dx),
-      "For '" + kernel_name_ + "', cudnnPoolingBackward failed");
     return true;
   }
+  if (cudnn_data_type_ == CUDNN_DATA_DOUBLE) {
+    CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
+      cudnnPoolingBackward(cudnn_handle_, pooling_descriptor_, &alpha, y_descriptor_, y, dy_descriptor_, dy,
+                           x_descriptor_, x_data, &beta, dx_descriptor_, dx),
+      "For '" + kernel_name_ + "', cudnnPoolingBackward failed");
+  } else {
+    const float alphaf = static_cast<float>(alpha);
+    const float betaf = static_cast<float>(beta);
+    CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
+      cudnnPoolingBackward(cudnn_handle_, pooling_descriptor_, &alphaf, y_descriptor_, y, dy_descriptor_, dy,
+                           x_descriptor_, x_data, &betaf, dx_descriptor_, dx),
+      "For '" + kernel_name_ + "', cudnnPoolingBackward failed");
+  }
 
-  CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
-    cudnnPoolingBackward(cudnn_handle_, pooling_descriptor_, &alpha, y_descriptor_, y, dy_descriptor_, dy,
-                         x_descriptor_, x_data, &beta, dx_descriptor_, dx),
-    "For '" + kernel_name_ + "', cudnnPoolingBackward failed");
   return true;
 }
 
@@ -497,7 +516,13 @@ std::map<std::string, std::vector<std::pair<KernelAttr, PoolingGradGpuKernelMod:
          .AddInputAttr(kNumberTypeFloat16)
          .AddInputAttr(kNumberTypeFloat16)
          .AddOutputAttr(kNumberTypeFloat16),
-       &PoolingGradGpuKernelMod::LaunchKernel<half>}}},
+       &PoolingGradGpuKernelMod::LaunchKernel<half>},
+      {KernelAttr()
+         .AddInputAttr(kNumberTypeFloat64)
+         .AddInputAttr(kNumberTypeFloat64)
+         .AddInputAttr(kNumberTypeFloat64)
+         .AddOutputAttr(kNumberTypeFloat64),
+       &PoolingGradGpuKernelMod::LaunchKernel<double>}}},
     {kAvgPoolGrad,
      {{KernelAttr()
          .AddInputAttr(kNumberTypeFloat32)
@@ -510,7 +535,13 @@ std::map<std::string, std::vector<std::pair<KernelAttr, PoolingGradGpuKernelMod:
          .AddInputAttr(kNumberTypeFloat16)
          .AddInputAttr(kNumberTypeFloat16)
          .AddOutputAttr(kNumberTypeFloat16),
-       &PoolingGradGpuKernelMod::LaunchKernel<half>}}},
+       &PoolingGradGpuKernelMod::LaunchKernel<half>},
+      {KernelAttr()
+         .AddInputAttr(kNumberTypeFloat64)
+         .AddInputAttr(kNumberTypeFloat64)
+         .AddInputAttr(kNumberTypeFloat64)
+         .AddOutputAttr(kNumberTypeFloat64),
+       &PoolingGradGpuKernelMod::LaunchKernel<double>}}},
     {kAvgPool3DGrad,
      {{KernelAttr().AddInputAttr(kNumberTypeInt64).AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64),
        &PoolingGradGpuKernelMod::LaunchKernel<double>},

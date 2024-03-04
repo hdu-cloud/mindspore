@@ -18,6 +18,9 @@
 #include "tools/optimizer/fusion/matmul_add_fusion.h"
 #include <vector>
 #include <memory>
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/lite_ops.h"
 #include "ops/fusion/add_fusion.h"
 #include "ops/fusion/mat_mul_fusion.h"
 #include "tools/optimizer/common/gllo_utils.h"
@@ -61,19 +64,19 @@ bool IsPrimitiveProper(const CNodePtr &add_cnode, const CNodePtr &matmul_cnode, 
     }
   }
   auto matmul_primc = ops::GetOperator<ops::MatMulFusion>(matmul_cnode->input(0));
-  MS_CHECK_TRUE_RET(matmul_primc != nullptr, false);
-  if (matmul_primc->GetAttr(ops::kActivationType) != nullptr &&
-      matmul_primc->get_activation_type() != ActivationType::NO_ACTIVATION) {
-    MS_LOG(INFO) << matmul_cnode->fullname_with_scope() << " has activation attr";
-    return false;
+  if (matmul_primc != nullptr) {
+    if (matmul_primc->GetAttr(ops::kActivationType) != nullptr &&
+        matmul_primc->get_activation_type() != ActivationType::NO_ACTIVATION) {
+      MS_LOG(INFO) << matmul_cnode->fullname_with_scope() << " has activation attr";
+      return false;
+    }
+    auto matmul_prim_c = matmul_primc->GetPrim();
+    MS_CHECK_TRUE_RET(matmul_prim_c != nullptr, false);
+    if (IsQuantParameterNode(matmul_prim_c)) {
+      MS_LOG(INFO) << matmul_cnode->fullname_with_scope() << "is quant node";
+      return false;
+    }
   }
-  auto matmul_prim_c = matmul_primc->GetPrim();
-  MS_CHECK_TRUE_RET(matmul_prim_c != nullptr, false);
-  if (IsQuantParameterNode(matmul_prim_c)) {
-    MS_LOG(INFO) << matmul_cnode->fullname_with_scope() << "is quant node";
-    return false;
-  }
-
   return true;
 }
 
@@ -119,7 +122,8 @@ bool MatMulAddFusion::Run(const FuncGraphPtr &func_graph) {
       continue;
     }
     auto add_cnode = node->cast<CNodePtr>();
-    if (!CheckPrimitiveType(node, prim::kPrimAddFusion) && !CheckPrimitiveType(node, prim::kPrimBiasAdd)) {
+    if (!CheckPrimitiveType(node, prim::kPrimAddFusion) && !CheckPrimitiveType(node, prim::kPrimBiasAdd) &&
+        !CheckPrimitiveType(node, prim::kPrimAdd)) {
       continue;
     }
     if (IsMarkedTrainOp(add_cnode)) {
@@ -127,7 +131,8 @@ bool MatMulAddFusion::Run(const FuncGraphPtr &func_graph) {
     }
     size_t index = 0;
 
-    if (!CheckAndGetCnodeIndex(add_cnode, &index, prim::kPrimMatMulFusion)) {
+    if (!CheckAndGetCnodeIndex(add_cnode, &index, prim::kPrimMatMulFusion) &&
+        !CheckAndGetCnodeIndex(add_cnode, &index, prim::kPrimMatMul)) {
       continue;
     }
 

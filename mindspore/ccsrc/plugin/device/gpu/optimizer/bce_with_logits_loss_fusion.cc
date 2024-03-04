@@ -18,11 +18,13 @@
 #include <memory>
 #include <vector>
 #include <string>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "plugin/device/gpu/hal/device/kernel_info_setter.h"
 
 namespace mindspore {
@@ -39,9 +41,13 @@ AnfNodePtr AddReduceNode(const FuncGraphPtr &func_graph, const AnfNodePtr &node)
   MS_EXCEPTION_IF_NULL(new_cnode);
   auto kernel_graph = func_graph->cast<std::shared_ptr<session::KernelGraph>>();
   MS_EXCEPTION_IF_NULL(kernel_graph);
-  auto predict_input = cnode->inputs()[1];
+  auto predict_inputs_list = cnode->inputs();
+  if (predict_inputs_list.size() <= 1) {
+    MS_LOG(EXCEPTION) << "Node must have more than 2 inputs, but get " << predict_inputs_list.size();
+  }
+  auto predict_input = predict_inputs_list[1];
   auto new_node_dtype = {common::AnfAlgo::GetOutputInferDataType(predict_input, 0)};
-  auto new_node_shape = {common::AnfAlgo::GetOutputDetailShape(predict_input, 0)};
+  auto new_node_shape = {AnfAlgo::GetOutputDetailShape(predict_input, 0)};
   common::AnfAlgo::SetOutputTypeAndDetailShape(new_node_dtype, new_node_shape, new_cnode.get());
 
   // Add reduce node
@@ -58,6 +64,7 @@ AnfNodePtr AddReduceNode(const FuncGraphPtr &func_graph, const AnfNodePtr &node)
   axis_node->set_abstract(axis_tensor->ToAbstract());
   axis_node = kernel_graph->NewValueNode(axis_node);
   kernel_graph->AddValueNodeToGraph(axis_node);
+  common::AnfAlgo::SetNodeAttr(kAttrReduction, MakeValue("none"), new_cnode);
   if (reduction == "sum") {
     reduce_inputs = {NewValueNode(std::make_shared<Primitive>(prim::kPrimReduceSum->name())), new_cnode, axis_node};
   } else if (reduction == "mean") {
@@ -69,7 +76,7 @@ AnfNodePtr AddReduceNode(const FuncGraphPtr &func_graph, const AnfNodePtr &node)
   auto reduce_node = func_graph->NewCNode(reduce_inputs);
   MS_EXCEPTION_IF_NULL(reduce_node);
   auto type = common::AnfAlgo::GetOutputInferDataType(node, 0);
-  auto shape = {common::AnfAlgo::GetOutputDetailShape(node, 0)};
+  auto shape = {AnfAlgo::GetOutputDetailShape(node, 0)};
   common::AnfAlgo::SetOutputTypeAndDetailShape({type}, shape, reduce_node.get());
   common::AnfAlgo::SetNodeAttr("keep_dims", MakeValue(false), reduce_node);
   reduce_node->set_scope(cnode->scope());

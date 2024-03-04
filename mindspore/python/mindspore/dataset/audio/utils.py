@@ -26,7 +26,8 @@ class BorderType(str, Enum):
     """
     Padding mode.
 
-    Possible enumeration values are: BorderType.CONSTANT, BorderType.EDGE, BorderType.REFLECT, BorderType.SYMMETRIC.
+    Possible enumeration values are: ``BorderType.CONSTANT``, ``BorderType.EDGE``, ``BorderType.REFLECT``,
+    ``BorderType.SYMMETRIC``.
 
     - BorderType.CONSTANT: Pad with a constant value.
     - BorderType.EDGE: Pad with the last value on the edge.
@@ -48,8 +49,8 @@ class DensityFunction(str, Enum):
     """
     Density function type.
 
-    Possible enumeration values are: DensityFunction.TPDF, DensityFunction.RPDF,
-    DensityFunction.GPDF.
+    Possible enumeration values are: ``DensityFunction.TPDF``, ``DensityFunction.RPDF``,
+    ``DensityFunction.GPDF``.
 
     - DensityFunction.TPDF: Triangular Probability Density Function.
     - DensityFunction.RPDF: Rectangular Probability Density Function.
@@ -64,8 +65,8 @@ class FadeShape(str, Enum):
     """
     Fade Shapes.
 
-    Possible enumeration values are: FadeShape.QUARTER_SINE, FadeShape.HALF_SINE, FadeShape.LINEAR,
-    FadeShape.LOGARITHMIC, FadeShape.EXPONENTIAL.
+    Possible enumeration values are: ``FadeShape.QUARTER_SINE``, ``FadeShape.HALF_SINE``, ``FadeShape.LINEAR``,
+    ``FadeShape.LOGARITHMIC``, ``FadeShape.EXPONENTIAL``.
 
     - FadeShape.QUARTER_SINE: means the fade shape is quarter_sine mode.
     - FadeShape.HALF_SINE: means the fade shape is half_sine mode.
@@ -84,7 +85,7 @@ class GainType(str, Enum):
     """
     Gain Types.
 
-    Possible enumeration values are: GainType.AMPLITUDE, GainType.POWER, GainType.DB.
+    Possible enumeration values are: ``GainType.AMPLITUDE``, ``GainType.POWER``, ``GainType.DB``.
 
     - GainType.AMPLITUDE: means input gain type is amplitude.
     - GainType.POWER: means input gain type is power.
@@ -99,7 +100,7 @@ class Interpolation(str, Enum):
     """
     Interpolation Type.
 
-    Possible enumeration values are: Interpolation.LINEAR, Interpolation.QUADRATIC.
+    Possible enumeration values are: ``Interpolation.LINEAR``, ``Interpolation.QUADRATIC``.
 
     - Interpolation.LINEAR: means input interpolation type is linear.
     - Interpolation.QUADRATIC: means input interpolation type is quadratic.
@@ -112,7 +113,7 @@ class MelType(str, Enum):
     """
     Mel scale implementation type.
 
-    Possible enumeration values are: MelType.HTK, MelType.SLANEY.
+    Possible enumeration values are: ``MelType.HTK``, ``MelType.SLANEY``.
 
     - MelType.HTK: The Hidden Markov Toolkit (HTK) implementation, refer to `HTK <https://htk.eng.cam.ac.uk/>`_ .
     - MelType.SLANEY: The MATLAB Auditory Toolbox of Slaney implementation,
@@ -139,7 +140,7 @@ class NormMode(str, Enum):
     """
     Normalization mode.
 
-    Possible enumeration values are: NormMode.ORTHO, NormMode.NONE.
+    Possible enumeration values are: ``NormMode.ORTHO``, ``NormMode.NONE``.
 
     - NormMode.ORTHO: Use an ortho-normal DCT basis.
     - NormMode.NONE: No normalization.
@@ -152,7 +153,7 @@ class NormType(str, Enum):
     """
     Normalization type.
 
-    Possible enumeration values are: NormType.SLANEY, NormType.NONE.
+    Possible enumeration values are: ``NormType.SLANEY``, ``NormType.NONE``.
 
     - NormType.SLANEY: Use an area normalization.
     - NormType.NONE: No narmalization.
@@ -165,7 +166,7 @@ class ResampleMethod(str, Enum):
     """
     Resample method.
 
-    Possible enumeration values are: ResampleMethod.SINC_INTERPOLATION, ResampleMethod.KAISER_WINDOW.
+    Possible enumeration values are: ``ResampleMethod.SINC_INTERPOLATION``, ``ResampleMethod.KAISER_WINDOW``.
 
     - ResampleMethod.SINC_INTERPOLATION: The Whittaker-Shannon interpolation or sinc interpolation formula.
     - ResampleMethod.KAISER_WINDOW: The Kaiser window interpolation.
@@ -178,7 +179,7 @@ class ScaleType(str, Enum):
     """
     Scale Types.
 
-    Possible enumeration values are: ScaleType.POWER, ScaleType.MAGNITUDE.
+    Possible enumeration values are: ``ScaleType.POWER``, ``ScaleType.MAGNITUDE``.
 
     - ScaleType.POWER: means the scale of input audio is power.
     - ScaleType.MAGNITUDE: means the scale of input audio is magnitude.
@@ -191,8 +192,8 @@ class WindowType(str, Enum):
     """
     Window function type.
 
-    Possible enumeration values are: WindowType.BARTLETT, WindowType.BLACKMAN, WindowType.HAMMING, WindowType.HANN,
-    WindowType.KAISER.
+    Possible enumeration values are: ``WindowType.BARTLETT``, ``WindowType.BLACKMAN``,
+    ``WindowType.HAMMING``, ``WindowType.HANN``, ``WindowType.KAISER``.
 
     - WindowType.BARTLETT: Bartlett window function.
     - WindowType.BLACKMAN: Blackman window function.
@@ -218,10 +219,21 @@ def create_dct(n_mfcc, n_mels, norm=NormMode.NONE):
     Args:
         n_mfcc (int): Number of mfc coefficients to retain, the value must be greater than 0.
         n_mels (int): Number of mel filterbanks, the value must be greater than 0.
-        norm (NormMode, optional): Normalization mode, can be NormMode.NONE or NormMode.ORTHO. Default: NormMode.NONE.
+        norm (NormMode, optional): Normalization mode, can be ``NormMode.NONE`` or ``NormMode.ORTHO``.
+            Default: ``NormMode.NONE``.
 
     Returns:
         numpy.ndarray, the transformation matrix, to be right-multiplied to row-wise data of size (n_mels, n_mfcc).
+
+    Raises:
+        TypeError: If `n_mfcc` is not of type int.
+        ValueError: If `n_mfcc` is not positive.
+        TypeError: If `n_mels` is not of type int.
+        ValueError: If `n_mels` is not positive.
+        TypeError: If `n_mels` is not of type :class:`mindspore.dataset.audio.NormMode` .
+
+    Supported Platforms:
+        ``CPU``
 
     Examples:
         >>> from mindspore.dataset.audio import create_dct, NormMode
@@ -257,14 +269,30 @@ def linear_fbanks(n_freqs, f_min, f_max, n_filter, sample_rate):
     Creates a linear triangular filterbank.
 
     Args:
-        n_freqs (int): Number of frequency.
-        f_min (float): Minimum of frequency in Hz.
-        f_max (float): Maximum of frequency in Hz.
+        n_freqs (int): Number of frequencies to highlight/apply.
+        f_min (float): Minimum frequency in Hz.
+        f_max (float): Maximum frequency in Hz.
         n_filter (int): Number of (linear) triangular filter.
-        sample_rate (int): Sample rate.
+        sample_rate (int): Sample rate of the waveform.
 
     Returns:
         numpy.ndarray, the linear triangular filterbank.
+
+    Raises:
+        TypeError: If `n_freqs` is not of type int.
+        ValueError: If `n_freqs` is negative.
+        TypeError: If `f_min` is not of type float.
+        ValueError: If `f_min` is negative.
+        TypeError: If `f_max` is not of type float.
+        ValueError: If `f_max` is negative.
+        ValueError: If `f_min` is larger than `f_max`.
+        TypeError: If `n_filter` is not of type int.
+        ValueError: If `n_filter` is not positive.
+        TypeError: If `sample_rate` is not of type int.
+        ValueError: If `sample_rate` is not positive.
+
+    Supported Platforms:
+        ``CPU``
 
     Examples:
         >>> from mindspore.dataset.audio import linear_fbanks
@@ -303,12 +331,30 @@ def melscale_fbanks(n_freqs, f_min, f_max, n_mels, sample_rate, norm=NormType.NO
         f_max (float): Maximum of frequency in Hz.
         n_mels (int): Number of mel filterbanks.
         sample_rate (int): Sample rate of the audio waveform.
-        norm (NormType, optional): Normalization method, can be NormType.NONE or NormType.SLANEY.
-            Default: NormType.NONE.
-        mel_type (MelType, optional): Scale to use, can be MelType.HTK or MelType.SLANEY. Default: MelType.HTK.
+        norm (NormType, optional): Normalization method, can be ``NormType.NONE`` or ``NormType.SLANEY``.
+            Default: ``NormType.NONE``.
+        mel_type (MelType, optional): Scale to use, can be ``MelType.HTK`` or ``MelType.SLANEY``.
+            Default: ``MelType.HTK``.
 
     Returns:
         numpy.ndarray, the frequency transformation matrix with shape ( `n_freqs` , `n_mels` ).
+
+    Raises:
+        TypeError: If `n_freqs` is not of type int.
+        ValueError: If `n_freqs` is a negative number.
+        TypeError: If `f_min` is not of type float.
+        ValueError: If `f_min` is greater than `f_max` .
+        TypeError: If `f_max` is not of type float.
+        ValueError: If `f_max` is a negative number.
+        TypeError: If `n_mels` is not of type int.
+        ValueError: If `n_mels` is not positive.
+        TypeError: If `sample_rate` is not of type int.
+        ValueError: If `sample_rate` is not positive.
+        TypeError: If `norm` is not of type :class:`mindspore.dataset.audio.NormType` .
+        TypeError: If `mel_type` is not of type :class:`mindspore.dataset.audio.MelType` .
+
+    Supported Platforms:
+        ``CPU``
 
     Examples:
         >>> from mindspore.dataset.audio import melscale_fbanks

@@ -23,14 +23,18 @@
 #include <memory>
 #include <map>
 #include "ir/anf.h"
+#include "ops/conv_pool_ops.h"
+#include "ops/nn_optimizer_ops.h"
+#include "ops/nn_ops.h"
+#include "ops/array_ops.h"
+#include "ops/math_op_name.h"
 #include "ir/dtype.h"
 #include "include/common/utils/utils.h"
 #include "kernel/kernel.h"
 #include "kernel/kernel_build_info.h"
 #include "kernel/graph_kernel_info.h"
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 #include "kernel/common_utils.h"
-#include "ops/core_ops.h"
 #include "utils/ms_context.h"
 #include "include/backend/visible.h"
 
@@ -53,18 +57,18 @@ static std::map<std::string, std::pair<std::vector<size_t>, std::vector<size_t>>
   {kAvgPoolOpName, {{0}, {0}}},
   {kAvgPoolGradOpName, {{0, 1, 2}, {0}}},
   {kBatchNormOpName, {{0}, {0}}},
-  {kBatchNormWithActivation, {{0}, {0}}},
-  {kBatchNormWithAddAndActivation, {{0, 5}, {0}}},
+  {kBatchNormWithActivationOpName, {{0}, {0}}},
+  {kBatchNormWithAddAndActivationOpName, {{0, 5}, {0}}},
   {kBatchNormGradOpName, {{0, 1}, {0}}},
-  {kBatchNormGradWithActivation, {{0, 1, 7}, {0}}},
-  {kBatchNormGradWithAddAndActivation, {{0, 1, 7}, {0, 3}}},
+  {kBatchNormGradWithActivationOpName, {{0, 1, 7}, {0}}},
+  {kBatchNormGradWithAddAndActivationOpName, {{0, 1, 7}, {0, 3}}},
   {kBiasAddOpName, {{0}, {0}}},
   {prim::kPrimBiasAddGrad->name(), {{0}, {}}},
   // Format insensitive.
   {prim::kPrimReLU->name(), {{0}, {0}}},
   {prim::kPrimReluGrad->name(), {{0, 1}, {0}}},
   {prim::kPrimReLU6->name(), {{0}, {0}}},
-  {prim::kPrimRelu6Grad->name(), {{0, 1}, {0}}},
+  {prim::kPrimReLU6Grad->name(), {{0, 1}, {0}}},
   {kSliceOpName, {{0}, {0}}},
   {kSliceGradOpName, {{0, 1}, {0}}},
   {kTensorAddOpName, {{0, 1}, {0}}},

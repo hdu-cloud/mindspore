@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,13 @@
 #include "plugin/device/ascend/hal/hccl_adapter/hccl_adapter.h"
 #include "plugin/device/ascend/hal/hccl_adapter/all_to_all_v_calc_param.h"
 #include "plugin/device/ascend/hal/device/ge_runtime/task_info.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/common/utils/comm_manager.h"
 #include "utils/ms_context.h"
+
+using HcclTaskInfoPtr = std::shared_ptr<mindspore::ge::model_runner::HcclTaskInfo>;
+using mindspore::ge::model_runner::HcclTaskInfo;
 
 namespace mindspore::kernel {
 HcomAllToAllKernel::HcomAllToAllKernel() {}
@@ -127,7 +130,7 @@ std::vector<TaskInfoPtr> HcomAllToAllKernel::GenTask(const std::vector<AddressPt
                                                      const std::vector<AddressPtr> &outputs, uint32_t stream_id) {
   auto anf_node = anf_node_.lock();
   if (!anf_node) {
-    MS_LOG(EXCEPTION) << "anf_node pointer is expired.";
+    MS_LOG(INTERNAL_EXCEPTION) << "anf_node pointer is expired.";
   }
 
   stream_id_ = stream_id;
@@ -168,11 +171,33 @@ std::vector<TaskInfoPtr> HcomAllToAllKernel::GenTask(const std::vector<AddressPt
       workspace_addr = workspace.at(0)->addr;
     }
 
-    results.emplace_back(std::make_shared<ge::model_runner::HcclTaskInfo>(
-      unique_name_, stream_id, hccl::HcclAdapter::GetHcclType(anf_node), input_data_addr, output_data_addr,
-      workspace_addr, task.workspace_size, task.stream_num, private_def,
-      hccl::HcclAdapter::GetInstance().GetHcclOpsKernelInfoStore(), hccl_count_, root_id_, op_type_, data_type_, group_,
-      NeedDump()));
+    HcclTaskInfoPtr hcclTaskInfo =
+      std::make_shared<HcclTaskInfo>(unique_name_, stream_id, hccl::HcclAdapter::GetHcclType(anf_node), input_data_addr,
+                                     output_data_addr, workspace_addr, task.workspace_size, task.stream_num,
+                                     private_def, hccl::HcclAdapter::GetInstance().GetHcclOpsKernelInfoStore(),
+                                     hccl_count_, root_id_, op_type_, data_type_, group_, NeedDump());
+    hcclTaskInfo->set_output_num(outputs.size());
+    hcclTaskInfo->set_hccl_kernel_output_shape_list(hccl_kernel_output_shape_list_);
+    auto cnode = anf_node->cast<CNodePtr>();
+    MS_EXCEPTION_IF_NULL(cnode);
+    hcclTaskInfo->set_graph_id(AnfAlgo::GetGraphId(cnode.get()));
+    FuncGraphPtr f_graph = cnode->func_graph();
+    MS_EXCEPTION_IF_NULL(f_graph);
+    auto kernel_graph = f_graph->cast<KernelGraphPtr>();
+    auto input_ctrl_tensors = kernel_graph->device_loop_control_tensors();
+    hcclTaskInfo->set_device_loop_ctrl_tensors(input_ctrl_tensors);
+    std::vector<std::vector<int64_t>> hccl_output_infer_shape_list;
+    if (!HcomUtil::GetKernelOutputInferShape(anf_node, &hccl_output_infer_shape_list)) {
+      MS_LOG(ERROR) << "GetKernelOutputInferShape fail!";
+    }
+    hcclTaskInfo->set_hccl_host_output_shape_list(hccl_output_infer_shape_list);
+    for (size_t j = 0; j < outputs.size(); j++) {
+      auto address = AnfAlgo::GetOutputAddr(cnode, j);
+      hcclTaskInfo->add_output_addr(address->GetPtr());
+      hcclTaskInfo->add_output_size_list(address->GetSize());
+      hcclTaskInfo->add_data_format(AnfAlgo::GetOutputFormat(anf_node, j));
+    }
+    (void)results.emplace_back(hcclTaskInfo);
   }
 
   return results;

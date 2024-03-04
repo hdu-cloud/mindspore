@@ -111,5 +111,8 @@ MatmulFp32BaseCPUKernel *CreateMatmulFp32CPUKernel(OpParameter *parameter, const
   return kernel;
 }
 
-REG_KERNEL(kCPU, kNumberTypeFloat32, PrimitiveType_MatMulFusion, LiteKernelCreator<MatmulCPUKernel>)
+int MatmulCPUKernel::PreparePackedWeight(const lite::Tensor *tensor) {
+  matmul_base_->SetWeightIsPacked(true);
+  return RET_OK;
+}
 }  // namespace mindspore::kernel

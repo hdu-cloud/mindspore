@@ -20,14 +20,18 @@
 #include <utility>
 #include <vector>
 
+#include "mindspore/core/ops/sequence_ops.h"
 #include "ir/anf.h"
 #include "ir/func_graph.h"
 #include "abstract/abstract_value.h"
 #include "abstract/abstract_function.h"
 #include "abstract/dshape.h"
+#include "include/common/fallback.h"
 #include "include/common/pybind_api/api_register.h"
-#include "pipeline/jit/debug/trace.h"
+#include "pipeline/jit/ps/debug/trace.h"
 #include "frontend/operator/ops.h"
+#include "mindspore/core/utils/ms_context.h"
+#include "pipeline/jit/ps/fallback.h"
 
 namespace mindspore {
 // namespace to support composite operators definition
@@ -49,20 +53,20 @@ AnfNodePtr Map::FullMakeLeaf(const FuncGraphPtr &func_graph, const AnfNodePtr &f
 
 FuncGraphPtr Map::GenerateLeafFunc(const size_t &args_size) {
   // Generate func for leaf nodes
-  FuncGraphPtr ptrGraph = std::make_shared<FuncGraph>();
-  ptrGraph->set_flag(FUNC_GRAPH_FLAG_CORE, true);
-  ptrGraph->set_flag(FUNC_GRAPH_FLAG_SPECIALIZE_PARAMETER, true);
-  ptrGraph->debug_info()->set_name("map");
-  AnfNodePtr ptrFnArg = nullptr;
+  FuncGraphPtr res_fg = std::make_shared<FuncGraph>();
+  res_fg->set_flag(FUNC_GRAPH_FLAG_CORE, true);
+  res_fg->set_flag(FUNC_GRAPH_FLAG_SPECIALIZE_PARAMETER, true);
+  res_fg->debug_info()->set_name("map");
+  AnfNodePtr fn_param = nullptr;
   if (fn_leaf_ == nullptr) {
-    ptrFnArg = ptrGraph->add_parameter();
+    fn_param = res_fg->add_parameter();
   }
   AnfNodePtrList args;
   for (size_t i = 0; i < args_size; ++i) {
-    args.emplace_back(ptrGraph->add_parameter());
+    args.emplace_back(res_fg->add_parameter());
   }
-  ptrGraph->set_output(FullMakeLeaf(ptrGraph, ptrFnArg, args));
-  return ptrGraph;
+  res_fg->set_output(FullMakeLeaf(res_fg, fn_param, args));
+  return res_fg;
 }
 
 std::pair<std::string, std::string> Map::GetMapInputIndex(size_t num) const {
@@ -101,6 +105,9 @@ AnfNodePtr Map::FullMakeList(const std::shared_ptr<List> &type, const FuncGraphP
       MS_LOG(EXCEPTION) << "The " << error_index << " element in Map has wrong type, expected a List, but got "
                         << item.second->ToString() << ".";
     }
+    if (lhs->dynamic_len()) {
+      MS_LOG(EXCEPTION) << "For 'map', the dynamic length input is unsupported in graph mode";
+    }
     if (lhs->elements().size() != size) {
       oss << "\nThe length of the " << error_index << " element in Map is " << size << ", but the length of the "
           << next_index << " element in Map is " << lhs->elements().size() << ".\n";
@@ -112,15 +119,15 @@ AnfNodePtr Map::FullMakeList(const std::shared_ptr<List> &type, const FuncGraphP
     MS_LOG(EXCEPTION) << "For 'Map', the length of lists must be the same. " << oss.str();
   }
 
-  constexpr size_t kPrimHoldLen = 1;
+  constexpr size_t prim_hold_len = 1;
   std::vector<AnfNodePtr> inputs;
-  inputs.reserve(size + kPrimHoldLen);
+  inputs.reserve(size + prim_hold_len);
   inputs.push_back(NewValueNode(prim::kPrimMakeList));
 
   for (size_t i = 0; i < size; i++) {
     MS_LOG(DEBUG) << "FullMakeList for the " << i << "th arg of the target, reverse_: " << reverse_ << ".";
-    auto ptrGraph = GenerateLeafFunc(arg_pairs.size());
-    auto fn = NewValueNode(ptrGraph);
+    auto res_fg = GenerateLeafFunc(arg_pairs.size());
+    auto fn = NewValueNode(res_fg);
 
     std::vector<AnfNodePtr> inputs2;
     inputs2.push_back(fn);
@@ -157,6 +164,9 @@ AnfNodePtr Map::FullMakeTuple(const std::shared_ptr<Tuple> &type, const FuncGrap
   for (auto &item : arg_pairs) {
     num++;
     auto lhs = std::dynamic_pointer_cast<Tuple>(item.second);
+    if (lhs->dynamic_len()) {
+      MS_LOG(EXCEPTION) << "For 'map', the dynamic length input is unsupported in graph mode";
+    }
     auto [error_index, next_index] = GetMapInputIndex(num);
     if (lhs == nullptr) {
       MS_LOG(EXCEPTION) << "The " << error_index << " element in Map has wrong type, expected a Tuple, but got "
@@ -173,15 +183,15 @@ AnfNodePtr Map::FullMakeTuple(const std::shared_ptr<Tuple> &type, const FuncGrap
     MS_LOG(EXCEPTION) << "For 'Map', the length of tuples must be the same. " << oss.str();
   }
 
-  constexpr size_t kPrimHoldLen = 1;
+  constexpr size_t prim_hold_len = 1;
   std::vector<AnfNodePtr> inputs;
-  inputs.reserve(size + kPrimHoldLen);
+  inputs.reserve(size + prim_hold_len);
   inputs.push_back(NewValueNode(prim::kPrimMakeTuple));
 
   for (size_t i = 0; i < size; i++) {
     MS_LOG(DEBUG) << "FullMakeTuple for the " << i << "th arg of the tuple inputs, reverse_: " << reverse_ << ".";
-    auto ptrGraph = GenerateLeafFunc(arg_pairs.size());
-    auto fn = NewValueNode(ptrGraph);
+    auto res_fg = GenerateLeafFunc(arg_pairs.size());
+    auto fn = NewValueNode(res_fg);
 
     std::vector<AnfNodePtr> inputs2;
     inputs2.push_back(fn);
@@ -236,7 +246,7 @@ AnfNodePtr Map::Make(const FuncGraphPtr &func_graph, const AnfNodePtr &fn_arg, c
     if (is_not_same) {
       std::ostringstream oss;
       oss << "There are " << (arg_pairs.size() + 1) << " inputs of `" << name_ << "`, corresponding type info:\n"
-          << trace::GetDebugInfo(func_graph->debug_info()) << ".\n";
+          << trace::GetDebugInfoStr(func_graph->debug_info()) << ".\n";
       int64_t idx = 0;
       std::string str_index = "first";
       for (auto &item : arg_pairs) {
@@ -272,38 +282,52 @@ AnfNodePtr Map::Make(const FuncGraphPtr &func_graph, const AnfNodePtr &fn_arg, c
   }
 }
 
-FuncGraphPtr Map::GenerateFromTypes(const TypePtrList &args_spec_list) {
-  FuncGraphPtr ptrGraph = std::make_shared<FuncGraph>();
-  ptrGraph->set_flag(FUNC_GRAPH_FLAG_CORE, true);
-  ptrGraph->set_flag(FUNC_GRAPH_FLAG_SPECIALIZE_PARAMETER, true);
-  ptrGraph->debug_info()->set_name("map");
+FuncGraphPtr Map::GenerateFromTypes(const TypePtrList &args_abs_list) {
+  const auto allow_fallback_runtime = (fallback::GetJitSyntaxLevel() >= kCompatible);
+  bool has_any =
+    std::any_of(args_abs_list.begin(), args_abs_list.end(), [](const TypePtr &type) { return type->isa<AnyType>(); });
+  if (allow_fallback_runtime && has_any) {
+    FuncGraphPtr func_graph = std::make_shared<FuncGraph>();
+    AnfNodePtrList node_inputs{};
+    for (auto type : args_abs_list) {
+      node_inputs.push_back(func_graph->add_parameter());
+    }
+    auto ret_node =
+      fallback::GeneratePyInterpretNodeWithScriptSrc(func_graph, args_abs_list, node_inputs, node_expr_src_);
+    func_graph->set_output(ret_node);
+    return func_graph;
+  }
+  FuncGraphPtr res_fg = std::make_shared<FuncGraph>();
+  res_fg->set_flag(FUNC_GRAPH_FLAG_CORE, true);
+  res_fg->set_flag(FUNC_GRAPH_FLAG_SPECIALIZE_PARAMETER, true);
+  res_fg->debug_info()->set_name("map");
 
-  AnfNodePtr ptrFnArg = nullptr;
+  AnfNodePtr fn_param = nullptr;
   std::size_t i = 0;
   if (fn_leaf_ == nullptr) {
-    ptrFnArg = ptrGraph->add_parameter();
+    fn_param = res_fg->add_parameter();
     i = 1;
   }
   ArgsPairList arg_pairs;
-  std::size_t size = args_spec_list.size();
+  std::size_t size = args_abs_list.size();
   for (; i < size; ++i) {
-    MS_LOG(DEBUG) << "GenerateFromTypes for elements from " << args_spec_list[i]->ToString() << ".";
-    arg_pairs.push_back(std::make_pair(ptrGraph->add_parameter(), args_spec_list[i]));
+    MS_LOG(DEBUG) << "GenerateFromTypes for elements from " << args_abs_list[i]->ToString() << ".";
+    arg_pairs.push_back(std::make_pair(res_fg->add_parameter(), args_abs_list[i]));
   }
 
-  ptrGraph->set_output(Make(ptrGraph, ptrFnArg, arg_pairs));
-  return ptrGraph;
+  res_fg->set_output(Make(res_fg, fn_param, arg_pairs));
+  return res_fg;
 }
 
-abstract::AbstractBasePtrList Map::NormalizeArgs(const AbstractBasePtrList &args_spec_list) const {
+abstract::AbstractBasePtrList Map::NormalizeArgs(const AbstractBasePtrList &args_abs_list) const {
   if (fn_leaf_ == nullptr) {
-    if (args_spec_list.empty()) {
+    if (args_abs_list.empty()) {
       MS_LOG(EXCEPTION) << "The arguments of Map operator should not be empty.";
     }
-    MS_EXCEPTION_IF_NULL(args_spec_list[0]);
+    MS_EXCEPTION_IF_NULL(args_abs_list[0]);
     // Assert that map's function param does not contain free variables
-    if (args_spec_list[0]->isa<FuncGraphAbstractClosure>()) {
-      auto graph_func = dyn_cast<FuncGraphAbstractClosure>(args_spec_list[0]);
+    if (args_abs_list[0]->isa<FuncGraphAbstractClosure>()) {
+      auto graph_func = dyn_cast<FuncGraphAbstractClosure>(args_abs_list[0]);
       auto func_graph = graph_func->func_graph();
       if (func_graph->parent() != nullptr) {
         MS_LOG(EXCEPTION) << "The Map operator don't support Closure with free variable yet.";
@@ -312,7 +336,7 @@ abstract::AbstractBasePtrList Map::NormalizeArgs(const AbstractBasePtrList &args
   }
 
   AbstractBasePtrList broadened;
-  (void)std::transform(args_spec_list.begin(), args_spec_list.end(), std::back_inserter(broadened),
+  (void)std::transform(args_abs_list.begin(), args_abs_list.end(), std::back_inserter(broadened),
                        [](const AbstractBasePtr &arg) -> AbstractBasePtr {
                          MS_EXCEPTION_IF_NULL(arg);
                          return arg->Broaden();

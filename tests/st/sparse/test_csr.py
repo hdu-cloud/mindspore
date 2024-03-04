@@ -63,6 +63,34 @@ def test_make_csr():
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
+def test_make_csr_empty():
+    """
+    Feature: Test CSRTensor Constructor in Graph and PyNative.
+    Description: Test CSRTensor(indptr, indices, values, shape) and CSRTensor(CSRTensor)
+    Expectation: Success.
+    """
+    indptr = Tensor([], dtype=mstype.int32)
+    indices = Tensor([], dtype=mstype.int32)
+    values = Tensor([], dtype=mstype.float32)
+    shape = (2, 6)
+
+    def test_pynative():
+        return CSRTensor(indptr, indices, values, shape)
+    test_graph = jit(test_pynative)
+
+    csr1 = test_pynative()
+    csr2 = test_graph()
+    compare_csr(csr1, csr2)
+    csr3 = CSRTensor(csr_tensor=csr2)
+    compare_csr(csr3, csr2)
+
+
+@pytest.mark.level0
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.platform_x86_cpu
+@pytest.mark.env_onecard
 def test_csr_attr():
     """
     Feature: Test CSRTensor GetAttr in Graph and PyNative.
@@ -119,7 +147,7 @@ def test_csr_attr():
             assert py_tuple[i] == g_tuple[i]
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.platform_x86_gpu_training
@@ -283,9 +311,10 @@ def test_batch_csr_ops():
         sparse2 = csr_tensor / dense_tensor
         return sparse1, sparse2
 
-    res_reducesum = test_ops_pynative_reducesum()
+    # TODO(PyTrace): PyTrace Async bug.
     test_ops_graph_reducesum = jit(test_ops_pynative_reducesum)
     graph_res_reducesum = test_ops_graph_reducesum()
+    res_reducesum = test_ops_pynative_reducesum()
     expect1 = np.array([[2., 1., 3.]], dtype=np.float32)
     expect2 = np.array([[2., 1., 3.]], dtype=np.float32)
     assert np.allclose(res_reducesum[0].asnumpy(), expect1)
@@ -293,9 +322,10 @@ def test_batch_csr_ops():
     assert np.allclose(graph_res_reducesum[0].asnumpy(), expect1)
     assert np.allclose(graph_res_reducesum[2].asnumpy(), expect2)
 
-    res_elemwise = test_ops_pynative_sparse_elemwise()
+    # TODO(PyTrace): PyTrace Async bug.
     test_ops_graph_elemwise = jit(test_ops_pynative_sparse_elemwise)
     graph_res_elemwise = test_ops_graph_elemwise()
+    res_elemwise = test_ops_pynative_sparse_elemwise()
     expect3 = np.array([[2., 1., 3.], [4., 2., 6.]], dtype=np.float32)
     expect4 = np.array([[2., 1., 3.], [1., 0.5, 1.5]], dtype=np.float32)
     assert np.allclose(res_elemwise[0].values.asnumpy(), expect3)
@@ -349,8 +379,9 @@ def test_csr_ops():
     test_ops_graph_dense = jit(test_ops_pynative_dense)
     test_ops_graph_sparse = jit(test_ops_pynative_sparse)
 
-    pynative_res_dense = test_ops_pynative_dense()
+    # TODO(PyTrace): PyTrace async bug.
     graph_res_dense = test_ops_graph_dense()
+    pynative_res_dense = test_ops_pynative_dense()
     expect1 = np.array([[2.], [1.]], dtype=np.float32)
     expect2 = np.array([[2.], [1.]], dtype=np.float32)
     expect3 = np.array([[2., 4.], [1., 2.]], dtype=np.float32)
@@ -361,8 +392,9 @@ def test_csr_ops():
     assert np.allclose(graph_res_dense[1].asnumpy(), expect2)
     assert np.allclose(graph_res_dense[2].asnumpy(), expect3)
 
-    pynative_res_sparse = test_ops_pynative_sparse()
+    # TODO(PyTrace): PyTrace async bug.
     graph_res_sparse = test_ops_graph_sparse()
+    pynative_res_sparse = test_ops_pynative_sparse()
     expect3 = np.array([2., 1.], dtype=np.float32)
     assert np.allclose(pynative_res_sparse[0].values.asnumpy(), expect3)
     assert np.allclose(pynative_res_sparse[1].values.asnumpy(), expect3)
@@ -372,7 +404,7 @@ def test_csr_ops():
     assert np.allclose(graph_res_sparse[2].values.asnumpy(), expect3)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.platform_x86_gpu_training
@@ -416,7 +448,7 @@ def test_csrtensor_export_and_import_mindir():
     assert out.shape == outputs_after_load.shape
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_csrops_export_and_import_mindir():
@@ -475,7 +507,7 @@ def test_csrops_export_and_import_mindir():
     assert out[4].shape == outputs_after_load[4].shape
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.platform_x86_gpu_training
@@ -515,7 +547,7 @@ def test_isinstance_csr_tensor():
     assert out2 == (False, False, False, True, True, False, True)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
@@ -636,7 +668,7 @@ def test_bprop():
     assert np.allclose(csr_div_output_2[3].asnumpy(), csr_div_expect_2_2)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
@@ -674,7 +706,7 @@ def test_csr_method():
     assert np.allclose(to_dense_output.asnumpy(), to_dense_expect)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
@@ -774,7 +806,7 @@ def test_bprop2():
     compare_res(test_csr_to_dense(indptr, indices, values, dense_shape), values_on)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_dense_to_csr():
@@ -803,7 +835,7 @@ def test_dense_to_csr():
     assert (dense_tensor_grad[0].asnumpy() == np.array([[0, 1, 2, 0], [0, 0, 0, 0], [1, 0, 0, 0]])).all()
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
@@ -860,7 +892,7 @@ def test_csr_magic_methods():
     compare_csr(sub_output, sub_expect)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard

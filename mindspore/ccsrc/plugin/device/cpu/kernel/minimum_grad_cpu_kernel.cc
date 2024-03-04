@@ -79,11 +79,11 @@ int MinimumGradCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const 
 
   x_shape_ = inputs[kIndex0]->GetShapeVector();
   y_shape_ = inputs[kIndex1]->GetShapeVector();
-  dout_shape = inputs[kIndex2]->GetShapeVector();
+  dout_shape_ = inputs[kIndex2]->GetShapeVector();
 
   CheckShape(&x_shape_);
   CheckShape(&y_shape_);
-  CheckShape(&dout_shape);
+  CheckShape(&dout_shape_);
 
   return KRET_OK;
 }
@@ -138,11 +138,42 @@ const std::vector<std::pair<KernelAttr, MinimumGradCpuKernelMod::KernelRunFunc>>
 }
 
 template <typename T>
-void MinimumGradRecTask(const T *x, const T *y, const T *dout, T *dx, T *dy, const size_t dim, const size_t x_index,
-                        const size_t y_index, const size_t dout_index, const std::vector<size_t> &x_cargo,
-                        const std::vector<size_t> &y_cargo, const std::vector<size_t> &dout_cargo,
-                        const std::vector<size_t> &x_shape, const std::vector<size_t> &y_shape,
-                        const std::vector<size_t> &dout_shape) {
+void MinimumGradCpuKernelMod::MinimumGradRecTask(const T *x, const T *y, const T *dout, T *dx, T *dy, const size_t dim,
+                                                 const size_t x_index, const size_t y_index, const size_t dout_index,
+                                                 const std::vector<size_t> &x_cargo, const std::vector<size_t> &y_cargo,
+                                                 const std::vector<size_t> &dout_cargo,
+                                                 const std::vector<size_t> &x_shape, const std::vector<size_t> &y_shape,
+                                                 const std::vector<size_t> &dout_shape) {
+  auto task = [&](size_t start, size_t end) {
+    for (size_t i = start; i < end; i++) {
+      size_t x_i = x_shape[dim] == dout_shape[dim] ? i * x_cargo[dim] : 0;
+      size_t y_i = y_shape[dim] == dout_shape[dim] ? i * y_cargo[dim] : 0;
+      size_t dout_i = i * dout_cargo[dim];
+
+      if (dim == dout_shape.size() - 1) {
+        if (*(x + x_index + x_i) < *(y + y_index + y_i)) {
+          *(dx + x_index + x_i) += *(dout + dout_index + i);
+        } else if (*(x + x_index + x_i) > *(y + y_index + y_i)) {
+          *(dy + y_index + y_i) += *(dout + dout_index + i);
+        } else {
+          *(dx + x_index + x_i) += *(dout + dout_index + i) / 2;
+          *(dy + y_index + y_i) += *(dout + dout_index + i) / 2;
+        }
+      } else {
+        MinimumGradRecTaskSerialized(x, y, dout, dx, dy, dim + 1, x_index + x_i, y_index + y_i, dout_index + dout_i,
+                                     x_cargo, y_cargo, dout_cargo, x_shape, y_shape, dout_shape, true);
+      }
+    }
+  };
+  ParallelLaunchAutoSearch(task, dout_shape[dim], this, &parallel_search_info_);
+}
+
+template <typename T>
+void MinimumGradCpuKernelMod::MinimumGradRecTaskSerialized(
+  const T *x, const T *y, const T *dout, T *dx, T *dy, size_t dim, size_t x_index, size_t y_index, size_t dout_index,
+  const std::vector<size_t> &x_cargo, const std::vector<size_t> &y_cargo, const std::vector<size_t> &dout_cargo,
+  const std::vector<size_t> &x_shape, const std::vector<size_t> &y_shape, const std::vector<size_t> &dout_shape,
+  bool paralleled) {
   for (size_t i = 0; i < dout_shape[dim]; i++) {
     size_t x_i = x_shape[dim] == dout_shape[dim] ? i * x_cargo[dim] : 0;
     size_t y_i = y_shape[dim] == dout_shape[dim] ? i * y_cargo[dim] : 0;
@@ -151,19 +182,24 @@ void MinimumGradRecTask(const T *x, const T *y, const T *dout, T *dx, T *dy, con
     if (dim == dout_shape.size() - 1) {
       if (*(x + x_index + x_i) < *(y + y_index + y_i)) {
         *(dx + x_index + x_i) += *(dout + dout_index + i);
-      } else {
+      } else if (*(x + x_index + x_i) > *(y + y_index + y_i)) {
         *(dy + y_index + y_i) += *(dout + dout_index + i);
+      } else {
+        *(dx + x_index + x_i) += *(dout + dout_index + i) / 2;
+        *(dy + y_index + y_i) += *(dout + dout_index + i) / 2;
       }
-    } else {
+    } else if (x_shape[dim + 1] == y_shape[dim + 1] && !paralleled) {
       MinimumGradRecTask(x, y, dout, dx, dy, dim + 1, x_index + x_i, y_index + y_i, dout_index + dout_i, x_cargo,
                          y_cargo, dout_cargo, x_shape, y_shape, dout_shape);
+    } else {
+      MinimumGradRecTaskSerialized(x, y, dout, dx, dy, dim + 1, x_index + x_i, y_index + y_i, dout_index + dout_i,
+                                   x_cargo, y_cargo, dout_cargo, x_shape, y_shape, dout_shape, paralleled);
     }
   }
 }
 
 template <typename T>
-bool MinimumGradCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
-                                           const std::vector<AddressPtr> &workspace,
+bool MinimumGradCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
                                            const std::vector<AddressPtr> &outputs) {
   auto *x_addr = reinterpret_cast<T *>(inputs[0]->addr);
   auto *y_addr = reinterpret_cast<T *>(inputs[1]->addr);
@@ -182,22 +218,27 @@ bool MinimumGradCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', memset 'y' failed. Error no: " << ret;
   }
 
-  std::vector<size_t> x_shape(dout_shape.size(), 1);
-  std::vector<size_t> y_shape(dout_shape.size(), 1);
-  std::vector<size_t> x_cargo(dout_shape.size(), 0);
-  std::vector<size_t> y_cargo(dout_shape.size(), 0);
-  std::vector<size_t> dout_cargo(dout_shape.size(), 0);
-  auto dout_shape_sizet = Convert2SizeT(dout_shape);
+  std::vector<size_t> x_shape(dout_shape_.size(), 1);
+  std::vector<size_t> y_shape(dout_shape_.size(), 1);
+  std::vector<size_t> x_cargo(dout_shape_.size(), 0);
+  std::vector<size_t> y_cargo(dout_shape_.size(), 0);
+  std::vector<size_t> dout_cargo(dout_shape_.size(), 0);
+  auto dout_shape_sizet = Convert2SizeT(dout_shape_);
 
-  GetShape(&x_shape, x_shape_, dout_shape);
-  GetShape(&y_shape, y_shape_, dout_shape);
+  GetShape(&x_shape, x_shape_, dout_shape_);
+  GetShape(&y_shape, y_shape_, dout_shape_);
 
   GetCargo(&x_cargo, x_shape, dout_shape_sizet);
   GetCargo(&y_cargo, y_shape, dout_shape_sizet);
   GetCargo(&dout_cargo, dout_shape_sizet, dout_shape_sizet);
 
-  MinimumGradRecTask<T>(x_addr, y_addr, dout_addr, dx_addr, dy_addr, 0, 0, 0, 0, x_cargo, y_cargo, dout_cargo, x_shape,
-                        y_shape, dout_shape_sizet);
+  if (x_shape[0] == y_shape[0]) {
+    MinimumGradRecTask<T>(x_addr, y_addr, dout_addr, dx_addr, dy_addr, 0, 0, 0, 0, x_cargo, y_cargo, dout_cargo,
+                          x_shape, y_shape, dout_shape_sizet);
+  } else {
+    MinimumGradRecTaskSerialized<T>(x_addr, y_addr, dout_addr, dx_addr, dy_addr, 0, 0, 0, 0, x_cargo, y_cargo,
+                                    dout_cargo, x_shape, y_shape, dout_shape_sizet, false);
+  }
   return true;
 }
 

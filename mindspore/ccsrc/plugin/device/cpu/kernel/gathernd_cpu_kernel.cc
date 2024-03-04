@@ -18,7 +18,6 @@
 #include <algorithm>
 #include <utility>
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
-#include "utils/ms_utils.h"
 
 namespace mindspore {
 namespace kernel {
@@ -58,15 +57,15 @@ int GatherNdCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std
   }
 
   indices_shapes_.clear();
-  output_shapes_.clear();
   dims_.clear();
   batch_indices_.clear();
-  batch_strides_.clear();
 
   input_shapes_ = inputs[0]->GetShapeVector();
   indices_shapes_ = inputs[1]->GetShapeVector();
-  output_shapes_ = inputs[0]->GetShapeVector();
-
+  // make a scalar to tensor whose shape is (1,)
+  if (indices_shapes_.size() == 0) {
+    (void)indices_shapes_.emplace_back(1);
+  }
   // Reshape()
   size_t dim_of_indices = 1;
   for (size_t i = 0; i < indices_shapes_.size() - IntToSize(1); ++i) {
@@ -75,10 +74,6 @@ int GatherNdCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std
 
   size_t dim_after_indices = 1;
   size_t dim_indices_last = LongToSize(indices_shapes_[indices_shapes_.size() - IntToSize(1)]);
-  if (dim_indices_last == 0) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the value of indices_shapes_[" << indices_shapes_.size()
-                      << " - 1] can not be 0.";
-  }
   for (size_t i = dim_indices_last; i < input_shapes_.size(); i++) {
     dim_after_indices *= LongToSize(input_shapes_[i]);
   }
@@ -86,16 +81,13 @@ int GatherNdCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std
   (void)dims_.emplace_back(dim_of_indices);
   (void)dims_.emplace_back(dim_after_indices);
   (void)dims_.emplace_back(dim_indices_last);
-  batch_strides_.resize(dim_indices_last, 0);
   batch_indices_.resize(dim_indices_last, 0);
 
   if (dim_indices_last > 0) {
-    batch_strides_[dim_indices_last - 1] = input_shapes_[dim_indices_last - 1];
-    batch_indices_[dim_indices_last - 1] = dims_[1];
+    batch_indices_[SizeToInt(dim_indices_last) - 1] = SizeToInt(dims_[1]);
   }
 
-  for (size_t i = dim_indices_last - 1; i > 0; --i) {
-    batch_strides_[i - 1] = input_shapes_[i - 1];
+  for (int i = static_cast<int>(dim_indices_last) - 1; i > 0; --i) {
     batch_indices_[i - 1] = batch_indices_[i] * LongToInt(input_shapes_[i]);
   }
   return ret;
@@ -115,24 +107,33 @@ bool GatherNdCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &i
   size_t indices_dim1 = dims_[2];
 
   size_t num = output_dim0 * output_dim1;
-  if (num > MAX_INT) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', exceed MAX_INT: " << MAX_INT << ", dim0: " << output_dim0
-                      << ", dim1: " << output_dim1;
-  }
+  auto task = [&](size_t start, size_t end) {
+    for (size_t write_index = start; write_index < end; write_index++) {
+      size_t i = write_index / output_dim1 % output_dim0;
+      size_t j = write_index % output_dim1;
 
-  for (size_t write_index = 0; write_index < num; write_index++) {
-    size_t i = write_index / output_dim1 % output_dim0;
-    size_t j = write_index % output_dim1;
-
-    int read_index = 0;
-    for (size_t k = 0; k < indices_dim1; k++) {
-      size_t ind = indices_dim1 * i + k;
-      int indices_i = indices_addr[ind];
-      read_index += indices_i * batch_indices_[k];
+      int read_index = 0;
+      for (size_t k = 0; k < indices_dim1; k++) {
+        size_t ind = indices_dim1 * i + k;
+        int indices_i = indices_addr[ind];
+        if (indices_i >= input_shapes_[k] || indices_i < 0) {
+          std::vector<S> error_indice(indices_dim1);
+          auto ret = memcpy_s(error_indice.data(), sizeof(S) * indices_dim1, indices_addr + indices_dim1 * i,
+                              sizeof(S) * indices_dim1);
+          if (ret != EOK) {
+            MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', memcpy_s failed, Error no: " << ret;
+          }
+          MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the indices[" << i << "]: " << error_indice
+                            << ", does not index into input_shape: " << input_shapes_ << ".";
+        }
+        read_index += indices_i * batch_indices_[k];
+      }
+      read_index += SizeToInt(j);
+      output_addr[write_index] = input_addr[read_index];
     }
-    read_index += SizeToInt(j);
-    output_addr[write_index] = input_addr[read_index];
-  }
+  };
+  ParallelLaunchAutoSearch(task, num, this, &parallel_search_info_);
+
   return true;
 }
 

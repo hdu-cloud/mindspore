@@ -16,15 +16,17 @@
 #include "ops/rightshift.h"
 #include <algorithm>
 #include <functional>
-#include <string>
-#include <vector>
+#include <map>
 #include <memory>
 #include <set>
+#include <string>
+#include <vector>
 
-#include "ops/op_utils.h"
-#include "mindapi/src/helper.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -50,8 +52,8 @@ TypePtr RightShiftInferType(const PrimitivePtr &primitive, const std::vector<Abs
   MS_EXCEPTION_IF_NULL(x_type);
   MS_EXCEPTION_IF_NULL(y_type);
   std::map<std::string, TypePtr> types;
-  types.insert({"input_x", x_type});
-  types.insert({"input_y", y_type});
+  (void)types.insert({"input_x", x_type});
+  (void)types.insert({"input_y", y_type});
   const std::set<TypePtr> valid_types = {kInt8, kInt16, kInt32, kInt64, kUInt8, kUInt16, kUInt32, kUInt64};
   (void)CheckAndConvertUtils::CheckTensorTypeSame(types, valid_types, prim_name);
   return x_type;
@@ -68,6 +70,24 @@ AbstractBasePtr RightShiftInfer(const abstract::AnalysisEnginePtr &, const Primi
   auto infer_shape = RightShiftInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(RightShift, prim::kPrimRightShift, RightShiftInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGRightShiftInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return RightShiftInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return RightShiftInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return RightShiftInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(RightShift, prim::kPrimRightShift, AGRightShiftInfer, false);
 }  // namespace ops
 }  // namespace mindspore

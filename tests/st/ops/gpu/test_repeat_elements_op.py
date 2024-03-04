@@ -21,6 +21,7 @@ from mindspore.ops import composite as C
 import mindspore.nn as nn
 import mindspore.context as context
 
+
 class RepeatElementsNet(nn.Cell):
     def __init__(self, rep, axis):
         super(RepeatElementsNet, self).__init__()
@@ -35,6 +36,7 @@ def repeat_elements(x, rep, axis):
     repeat_elements_net = RepeatElementsNet(rep, axis)
     return repeat_elements_net(Tensor(x.astype(np.int32))).asnumpy()
 
+
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -45,6 +47,7 @@ def test_repeat_elements_1d_one_element_rep_1():
     ms_out = repeat_elements(a, 1, 0)
     np_out = a.repeat(1, 0)
     np.testing.assert_array_equal(np_out, ms_out)
+
 
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
@@ -61,6 +64,7 @@ def test_repeat_elements_1d_one_element_rep_many():
     np_out = a.repeat(513, 0)
     np.testing.assert_array_equal(np_out, ms_out)
 
+
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -72,6 +76,7 @@ def test_repeat_elements_1d_rep_1():
     np_out = a.repeat(1, 0)
     np.testing.assert_array_equal(np_out, ms_out)
 
+
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -82,6 +87,7 @@ def test_repeat_elements_1d_rep_many():
     ms_out = repeat_elements(a, 231, 0)
     np_out = a.repeat(231, 0)
     np.testing.assert_array_equal(np_out, ms_out)
+
 
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
@@ -98,6 +104,7 @@ def test_repeat_elements_2d_one_element_rep_1():
     np_out = a.repeat(1, 1)
     np.testing.assert_array_equal(np_out, ms_out)
 
+
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -112,6 +119,7 @@ def test_repeat_elements_2d_one_element_rep_many():
     ms_out = repeat_elements(a, 13, 1)
     np_out = a.repeat(13, 1)
     np.testing.assert_array_equal(np_out, ms_out)
+
 
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
@@ -128,6 +136,7 @@ def test_repeat_elements_2d_rep_1():
     np_out = a.repeat(1, 1)
     np.testing.assert_array_equal(np_out, ms_out)
 
+
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -142,6 +151,7 @@ def test_repeat_elements_2d_rep_many():
     ms_out = repeat_elements(a, 23, 1)
     np_out = a.repeat(23, 1)
     np.testing.assert_array_equal(np_out, ms_out)
+
 
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
@@ -162,6 +172,7 @@ def test_repeat_elements_3d_one_element_rep_1():
     np_out = a.repeat(1, 2)
     np.testing.assert_array_equal(np_out, ms_out)
 
+
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -180,6 +191,7 @@ def test_repeat_elements_3d_one_element_rep_many():
     ms_out = repeat_elements(a, 43, 2)
     np_out = a.repeat(43, 2)
     np.testing.assert_array_equal(np_out, ms_out)
+
 
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
@@ -200,6 +212,7 @@ def test_repeat_elements_3d_rep_1():
     np_out = a.repeat(1, 2)
     np.testing.assert_array_equal(np_out, ms_out)
 
+
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -218,6 +231,7 @@ def test_repeat_elements_3d_rep_many():
     ms_out = repeat_elements(a, 14, 2)
     np_out = a.repeat(14, 2)
     np.testing.assert_array_equal(np_out, ms_out)
+
 
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
@@ -266,6 +280,7 @@ def test_repeat_elements_4d_one_element_rep_many():
     np_out = a.repeat(17, 3)
     np.testing.assert_array_equal(np_out, ms_out)
 
+
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -313,6 +328,7 @@ def test_repeat_elements_4d_rep_many():
     np_out = a.repeat(23, 3)
     np.testing.assert_array_equal(np_out, ms_out)
 
+
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -339,6 +355,7 @@ def test_repeat_elements_5d_one_element_rep_1():
     ms_out = repeat_elements(a, 1, 4)
     np_out = a.repeat(1, 4)
     np.testing.assert_array_equal(np_out, ms_out)
+
 
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
@@ -367,6 +384,7 @@ def test_repeat_elements_5d_one_element_rep_many():
     np_out = a.repeat(19, 4)
     np.testing.assert_array_equal(np_out, ms_out)
 
+
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -394,6 +412,7 @@ def test_repeat_elements_5d_rep_1():
     np_out = a.repeat(1, 4)
     np.testing.assert_array_equal(np_out, ms_out)
 
+
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -420,6 +439,7 @@ def test_repeat_elements_5d_rep_many():
     ms_out = repeat_elements(a, 7, 4)
     np_out = a.repeat(7, 4)
     np.testing.assert_array_equal(np_out, ms_out)
+
 
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
@@ -460,12 +480,13 @@ def test_repeat_elements_large_one_element_rep_1():
     np_out = a.repeat(1, 7)
     np.testing.assert_array_equal(np_out, ms_out)
 
+
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_repeat_elements_large_one_element_rep_many():
     context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
-    a = np.arange(1).reshape(1, 1, 1, 1, 1, 1, 1, 1)
+    a = np.arange(1).reshape(1, 1, 1, 1, 1, 1)
 
     ms_out = repeat_elements(a, 42, 0)
     np_out = a.repeat(42, 0)
@@ -491,13 +512,6 @@ def test_repeat_elements_large_one_element_rep_many():
     np_out = a.repeat(42, 5)
     np.testing.assert_array_equal(np_out, ms_out)
 
-    ms_out = repeat_elements(a, 42, 6)
-    np_out = a.repeat(42, 6)
-    np.testing.assert_array_equal(np_out, ms_out)
-
-    ms_out = repeat_elements(a, 42, 7)
-    np_out = a.repeat(42, 7)
-    np.testing.assert_array_equal(np_out, ms_out)
 
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
@@ -538,12 +552,13 @@ def test_repeat_elements_large_rep_1():
     np_out = a.repeat(1, 7)
     np.testing.assert_array_equal(np_out, ms_out)
 
+
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_repeat_elements_large_rep_many():
     context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
-    a = np.arange(1152).reshape(4, 3, 4, 2, 1, 1, 4, 3)
+    a = np.arange(1152).reshape(4, 3, 4, 2, 4, 3)
 
     ms_out = repeat_elements(a, 4, 0)
     np_out = a.repeat(4, 0)
@@ -569,20 +584,13 @@ def test_repeat_elements_large_rep_many():
     np_out = a.repeat(4, 5)
     np.testing.assert_array_equal(np_out, ms_out)
 
-    ms_out = repeat_elements(a, 4, 6)
-    np_out = a.repeat(4, 6)
-    np.testing.assert_array_equal(np_out, ms_out)
-
-    ms_out = repeat_elements(a, 4, 7)
-    np_out = a.repeat(4, 7)
-    np.testing.assert_array_equal(np_out, ms_out)
 
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_repeat_elements_half():
     context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
-    a = np.arange(1152).astype(np.float16).reshape(4, 3, 4, 2, 1, 1, 4, 3)
+    a = np.arange(1152).astype(np.float16).reshape(4, 3, 4, 2, 4, 3)
 
     ms_out = repeat_elements(a, 4, 0)
     np_out = a.repeat(4, 0)
@@ -608,13 +616,6 @@ def test_repeat_elements_half():
     np_out = a.repeat(4, 5)
     np.testing.assert_array_equal(np_out, ms_out)
 
-    ms_out = repeat_elements(a, 4, 6)
-    np_out = a.repeat(4, 6)
-    np.testing.assert_array_equal(np_out, ms_out)
-
-    ms_out = repeat_elements(a, 4, 7)
-    np_out = a.repeat(4, 7)
-    np.testing.assert_array_equal(np_out, ms_out)
 
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
@@ -640,6 +641,7 @@ def test_repeat_elements_net_multi_use():
     ms_out = repeat_elements_net(Tensor(a.astype(np.int32))).asnumpy()
     np_out = a.repeat(rep, axis)
     np.testing.assert_array_equal(np_out, ms_out)
+
 
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training

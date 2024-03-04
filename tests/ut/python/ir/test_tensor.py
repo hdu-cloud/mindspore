@@ -74,6 +74,7 @@ def test_tensor_type_float16():
     assert t_float16.shape == (2, 3)
     assert t_float16.dtype == ms.float16
 
+
 def test_tensor_type_complex64():
     np_input = np.array(
         [[1+0.1j, 2j, 3+0.3j], [4-0.4j, 5, 6]], dtype=np.complex64)

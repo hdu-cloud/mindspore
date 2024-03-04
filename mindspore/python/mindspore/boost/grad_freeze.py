@@ -17,6 +17,7 @@ from __future__ import absolute_import
 from __future__ import division
 
 import numpy as np
+from mindspore import nn
 from mindspore.nn.cell import Cell
 from mindspore.nn.optim import Optimizer
 from mindspore.common import Tensor
@@ -42,7 +43,9 @@ class FreezeOpt(Cell):
     Args:
         opt (Cell): non-freezing optimizer instance, such as 'Momentum', 'SGD'.
         train_parameter_groups (Union[tuple, list]): Groups of parameters for gradients freezing training.
+            Default: ``None`` .
         train_strategy (Union[tuple(int), list(int), Tensor]): Strategy for gradients freezing training.
+            Default: ``None`` .
 
     Supported Platforms:
         ``Ascend``
@@ -201,15 +204,40 @@ class GradientFreeze:
         total_steps (int): Steps of the whole training.
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, Parameter, nn
+        >>> import mindspore.ops as ops
+        >>> from mindspore.nn import WithLossCell
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import boost
+        >>>
+        >>> class Net(nn.Cell):
+        ...    def __init__(self, in_features, out_features):
+        ...        super(Net, self).__init__()
+        ...        self.weight = Parameter(Tensor(np.ones([in_features, out_features]).astype(np.float32)),
+        ...                                name='weight')
+        ...        self.matmul = ops.MatMul()
+        ...
+        ...    def construct(self, x):
+        ...        output = self.matmul(x, self.weight)
+        ...        return output
+        >>> size, in_features, out_features = 16, 16, 10
+        >>> net = Net(in_features, out_features)
+        >>> loss = nn.MSELoss()
+        >>> optimizer = nn.Momentum(net.trainable_params(), learning_rate=0.1, momentum=0.9)
+        >>> net_with_loss = WithLossCell(net, loss)
         >>> gradient_freeze_class = boost.GradientFreeze(10, 1, 0.5, 2000)
-        >>> network, optimizer = gradient_freeze_class.freeze_generate(network, optimizer)
+        >>> network, optimizer = gradient_freeze_class.freeze_generate(net_with_loss, optimizer)
+        >>> inputs = Tensor(np.ones([size, in_features]).astype(np.float32))
+        >>> label = Tensor(np.zeros([size, out_features]).astype(np.float32))
+        >>> output = network(inputs, label)
     """
     def __init__(self, param_groups, freeze_type, freeze_p, total_steps):
         self._param_groups = param_groups
         self._freeze_type = freeze_type
         self._freeze_p = freeze_p
         self._total_steps = total_steps
-        self.grad_reducer = F.identity
+        self.grad_reducer = nn.Identity()
 
     def split_parameters_groups(self, net, freeze_para_groups_number):
         r"""
@@ -312,9 +340,9 @@ def freeze_cell(reducer_flag, network, optimizer, sens, grad, use_grad_accumulat
         sens (numbers.Number):  The scaling number.
         grad (tuple(Tensor)): Tuple of gradient tensors.
         use_grad_accumulation (bool): Use gradient accumulation flag.
-        mean (bool): Gradients mean flag. default: None.
-        degree (int): Device number. default: None.
-        max_accumulation_step (int): Max accumulation steps. default: 1.
+        mean (bool): Gradients mean flag. Default: ``None`` .
+        degree (int): Device number. Default: ``None`` .
+        max_accumulation_step (int): Max accumulation steps. Default: ``1`` .
 
     Examples:
         >>> import numpy as np
@@ -348,7 +376,7 @@ def freeze_cell(reducer_flag, network, optimizer, sens, grad, use_grad_accumulat
                                              use_grad_accumulation, opt, max_accumulation_step)
                             for reducer, opt in zip(grad_reducers, optimizer.opts))
     else:
-        freeze_nets = tuple(_TrainFreezeCell(network, sens, grad, F.identity,
+        freeze_nets = tuple(_TrainFreezeCell(network, sens, grad, nn.Identity(),
                                              use_grad_accumulation, opt, max_accumulation_step)
                             for opt in optimizer.opts)
     return freeze_nets

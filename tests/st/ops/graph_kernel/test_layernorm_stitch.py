@@ -31,7 +31,7 @@ class EmbeddingPostprocessor(Cell):
         super(EmbeddingPostprocessor, self).__init__()
         self.layernorm = nn.LayerNorm((768,))
         self.add = P.Add()
-        self.dropout = nn.Dropout(1 - 0.1)
+        self.dropout = nn.Dropout(p=0.1)
 
     def construct(self, word_embeddings, token_type_embeddings, position_embeddings):
         output = word_embeddings
@@ -79,7 +79,7 @@ def test_layernorm(shape1, shape2, dtype):
     compare_result(expect, output, dtype)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_layernorm_gpu():

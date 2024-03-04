@@ -25,8 +25,11 @@
 #include <string>
 #include <utility>
 
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/other_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "utils/hash_map.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "frontend/operator/ops.h"
 #include "frontend/optimizer/optimizer.h"
 #include "include/common/utils/parallel_context.h"
@@ -34,6 +37,7 @@
 #include "frontend/parallel/graph_util/generate_graph.h"
 #include "frontend/parallel/graph_util/graph_info.h"
 #include "frontend/parallel/graph_util/node_info.h"
+#include "frontend/parallel/graph_util/get_parallel_info.h"
 #include "frontend/parallel/graph_util/pipeline_split_utils.h"
 #include "frontend/parallel/node_check.h"
 #include "ir/param_info.h"
@@ -42,9 +46,10 @@
 #include "include/common/utils/comm_manager.h"
 #include "utils/ms_context.h"
 #include "utils/symbolic.h"
-#include "pipeline/jit/pipeline.h"
+#include "pipeline/jit/ps/pipeline.h"
 #include "mindspore/core/utils/parallel_node_check.h"
 #include "frontend/parallel/step_parallel_utils.h"
+#include "mindspore/core/ops/nn_ops.h"
 
 namespace mindspore {
 namespace parallel {
@@ -97,7 +102,7 @@ static ParameterUsersInfo FindRefKeyNodeUsers(const RefKeyPair &ref_key_pair, bo
   return parameter_user_info;
 }
 
-static ParameterUsersInfo FindParameterNodeUsers(const AnfNodePtr &node) {
+static ParameterUsersInfo FindParameterNodeUsers(const AnfNodePtr &node, const std::vector<AnfNodePtr> &all_nodes) {
   // In this case, node is a Parameter
   ParameterUsersInfo parameter_user_info;
   MS_EXCEPTION_IF_NULL(node->func_graph());
@@ -109,30 +114,28 @@ static ParameterUsersInfo FindParameterNodeUsers(const AnfNodePtr &node) {
       if (candidate.second != 1) {
         continue;
       }
-      auto load_node_users = node->func_graph()->manager()->node_users()[candidate_node];
+      auto &node_user_map = node->func_graph()->manager()->node_users();
+      auto load_node_users = node_user_map[candidate_node];
       for (auto &node_user : load_node_users) {
         auto cnode = node_user.first->cast<CNodePtr>();
-        if (IsSomePrimitive(cnode, DEPEND)) {
-          auto depend_node_users = node->func_graph()->manager()->node_users()[node_user.first];
-          for (auto depend_user : depend_node_users) {
-            if (IsPrimitiveCNode(depend_user.first, prim::kPrimLoad)) {
-              auto local_load_node_users = node->func_graph()->manager()->node_users()[depend_user.first];
-              for (auto local_load_user : local_load_node_users) {
-                auto local_cnode = local_load_user.first->cast<CNodePtr>();
-                if (local_cnode == nullptr || !local_cnode->has_user_data<OperatorInfo>() ||
-                    IsSomePrimitive(local_cnode, RECEIVE)) {
-                  continue;
-                }
-                parameter_user_info.second.second.insert(local_load_user);
-              }
-            }
-          }
+        std::pair<AnfNodePtr, int> child_parallel_care_node;
+        if (IsSomePrimitive(cnode, UPDATESTATE) || !cnode->in_forward_flag()) {
+          continue;
         }
-
+        if (!IsSomePrimitive(cnode, MAKE_TUPLE) && (IsParallelCareNode(cnode) || IsAutoParallelCareNode(cnode))) {
+          child_parallel_care_node = node_user;
+        } else {
+          child_parallel_care_node = BFSParallelCareNode(cnode, node_user_map, node_user.second, all_nodes);
+        }
+        if (child_parallel_care_node.first) {
+          cnode = child_parallel_care_node.first->cast<CNodePtr>();
+        } else {
+          continue;
+        }
         if (cnode == nullptr || !cnode->has_user_data<OperatorInfo>() || IsSomePrimitive(cnode, RECEIVE)) {
           continue;
         }
-        parameter_user_info.second.second.insert(node_user);
+        parameter_user_info.second.second.insert(child_parallel_care_node);
       }
     } else {
       auto c = candidate_node->cast<CNodePtr>();
@@ -165,7 +168,8 @@ static RefKeyPair CNodeWithRefKeys(const AnfNodePtr &cnode) {
   return {nullptr, refkeys};
 }
 
-ParameterUsersInfo FindParameterUsers(const AnfNodePtr &node, bool (*IsCareNode)(const CNodePtr &)) {
+ParameterUsersInfo FindParameterUsers(const AnfNodePtr &node, bool (*IsCareNode)(const CNodePtr &),
+                                      const std::vector<AnfNodePtr> &all_nodes) {
   ParameterUsersInfo parameter_users_info;
 
   auto cnode_with_refkeys = CNodeWithRefKeys(node);
@@ -173,8 +177,12 @@ ParameterUsersInfo FindParameterUsers(const AnfNodePtr &node, bool (*IsCareNode)
     // the node is a ref key node
     return FindRefKeyNodeUsers(cnode_with_refkeys, IsCareNode);
   } else if (node->isa<Parameter>()) {
+    auto param_ptr = node->cast<ParameterPtr>();
+    MS_EXCEPTION_IF_NULL(param_ptr);
     // the node is a parameter node
-    return FindParameterNodeUsers(node);
+    if (param_ptr->has_default()) {
+      return FindParameterNodeUsers(node, all_nodes);
+    }
   }
 
   return parameter_users_info;
@@ -214,9 +222,76 @@ static bool IsUsedParameter(const FuncGraphPtr &graph, const AnfNodePtr &paramet
   return true;
 }
 
+static RankList GetDevListByTensorMapValue(DeviceMatrix dev_matrix, int64_t tensor_map_value, size_t dev_matrix_size) {
+  RankList rank_list;
+  if (tensor_map_value >= SizeToLong(dev_matrix_size) || tensor_map_value < MAP_NONE) {
+    MS_LOG(ERROR) << "The size of dev_matrix is " << dev_matrix_size << ", but the tensor map value is "
+                  << tensor_map_value;
+    return rank_list;
+  }
+
+  if (tensor_map_value == MAP_NONE) {
+    rank_list.push_back(g_device_manager->global_rank());
+    return rank_list;
+  }
+
+  uint64_t dim = dev_matrix_size - LongToSize(tensor_map_value) - 1;
+  if (dev_matrix.GetDevicesAlongDim(dim, &rank_list) != SUCCESS) {
+    MS_LOG(ERROR) << "Get devices along dim failed";
+  }
+
+  return rank_list;
+}
+
+static bool IsSameTensorLayout(const TensorLayout &a, const TensorLayout &b) {
+  if (!a.IsSameTensorShape(b)) {
+    return false;
+  }
+  if (a.IsSameDeviceArrangement(b) && a.IsSameTensorMap(b)) {
+    return true;
+  }
+
+  Shape a_tensor_map = a.tensor_map().array();
+  Shape b_tensor_map = b.tensor_map().array();
+  if (a_tensor_map.size() != b_tensor_map.size()) {
+    return false;
+  }
+
+  CheckGlobalDeviceManager();
+  int64_t rank = g_device_manager->global_rank();
+  DeviceMatrix a_dev_matrix(rank, g_device_manager->GetDeviceListInThisStage(), a.device_arrangement().array());
+  DeviceMatrix b_dev_matrix(rank, g_device_manager->GetDeviceListInThisStage(), b.device_arrangement().array());
+  size_t a_dev_mat_size = a.device_arrangement().array().size();
+  size_t b_dev_mat_size = b.device_arrangement().array().size();
+
+  for (size_t i = 0; i < a_tensor_map.size(); ++i) {
+    if (a_tensor_map[i] == MAP_NONE && b_tensor_map[i] == MAP_NONE) {
+      continue;
+    }
+
+    RankList a_dev_list_by_dim = GetDevListByTensorMapValue(a_dev_matrix, a_tensor_map[i], a_dev_mat_size);
+    RankList b_dev_list_by_dim = GetDevListByTensorMapValue(b_dev_matrix, b_tensor_map[i], b_dev_mat_size);
+    if (a_dev_list_by_dim.empty() || b_dev_list_by_dim.empty()) {
+      MS_LOG(EXCEPTION) << "Can not get device list by tensor map value, these layouts are " << a.ToString()
+                        << std::endl
+                        << " and " << b.ToString();
+    }
+
+    if (a_dev_list_by_dim != b_dev_list_by_dim) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool IsSameTensorInfo(const TensorInfo &a, const TensorInfo &b) {
+  return IsSameTensorLayout(a.tensor_layout(), b.tensor_layout());
+}
+
 void CheckParameterSplit(const std::vector<AnfNodePtr> &all_nodes) {
   for (auto &node : all_nodes) {
-    ParameterUsersInfo parameter_users_info = FindParameterUsers(node, IsParallelCareNode);
+    ParameterUsersInfo parameter_users_info = FindParameterUsers(node, IsParallelCareNode, all_nodes);
     auto &users_set = parameter_users_info.second.second;
     if (users_set.size() <= 1) {
       continue;
@@ -230,11 +305,13 @@ void CheckParameterSplit(const std::vector<AnfNodePtr> &all_nodes) {
     for (auto iter = users_set.begin() + 1; iter != users_set.end(); ++iter) {
       auto &user = *iter;
       auto user_tensor_info = GetInputsTensorInfo(user);
-      if (parameter_tensor_info == user_tensor_info) {
+      if (IsSameTensorInfo(parameter_tensor_info, user_tensor_info)) {
         continue;
       } else {
         MS_LOG(EXCEPTION) << "The parameter: " << parameter_name
-                          << " has multiple users, but the TensorInfo are different";
+                          << " has multiple users, but the TensorInfo are different, they are "
+                          << parameter_tensor_info.tensor_layout().ToString() << std::endl
+                          << " and " << user_tensor_info.tensor_layout().ToString();
       }
     }
   }
@@ -304,36 +381,32 @@ void HandleNoUsedParameter(const FuncGraphPtr &root) {
     return;
   }
 
-  // in grad accumulation mode, if use dynamic lr, it has some parameters in optimizer which no used for first graph,
-  // but used for second graph(such as global_step), so can not change their shapes
-  int64_t grad_accumulation_step = ParallelContext::GetInstance()->grad_accumulation_step();
-  if (grad_accumulation_step > 1) {
-    MS_LOG(INFO) << "In grad accumulation mode, do not handle no used parameters";
-    return;
-  }
-
   auto dev_num = g_device_manager->stage_device_num();
   auto parameters = root->parameters();
-  for (auto &parameter : parameters) {
-    if (IsUsedParameter(root, parameter, 0)) {
-      continue;
+  if (parameters.empty()) {
+    MS_LOG(INFO) << "Parameters is not in graph, thus no need to set parallel shape";
+  } else {
+    for (auto &parameter : parameters) {
+      if (IsUsedParameter(root, parameter, 0)) {
+        continue;
+      }
+      auto parameter_shape = GetNodeShape(parameter);
+      if (parameter_shape.empty()) {
+        continue;
+      }
+      Shape slice_shape = parameter_shape[0];
+      if (slice_shape.empty() || slice_shape[0] < dev_num) {
+        continue;
+      }
+      slice_shape[0] = slice_shape[0] / dev_num;
+      auto slice_shape_ptr = std::make_shared<abstract::Shape>(slice_shape);
+      auto abstract = parameter->abstract();
+      MS_EXCEPTION_IF_NULL(abstract);
+      auto abstract_cloned = abstract->Clone();
+      MS_EXCEPTION_IF_NULL(abstract_cloned);
+      abstract_cloned->set_shape(slice_shape_ptr);
+      parameter->set_abstract(abstract_cloned);
     }
-    auto parameter_shape = GetNodeShape(parameter);
-    if (parameter_shape.empty()) {
-      continue;
-    }
-    Shape slice_shape = parameter_shape[0];
-    if (slice_shape.empty() || slice_shape[0] < dev_num) {
-      continue;
-    }
-    slice_shape[0] = slice_shape[0] / dev_num;
-    auto slice_shape_ptr = std::make_shared<abstract::Shape>(slice_shape);
-    auto abstract = parameter->abstract();
-    MS_EXCEPTION_IF_NULL(abstract);
-    auto abstract_cloned = abstract->Clone();
-    MS_EXCEPTION_IF_NULL(abstract_cloned);
-    abstract_cloned->set_shape(slice_shape_ptr);
-    parameter->set_abstract(abstract_cloned);
   }
 }
 
@@ -391,10 +464,13 @@ void SliceParameterObj(const ParameterPtr &parameter, const TensorLayoutPtr &ten
   // create python layout obj
   const auto &device_arrangement = tensor_layout->device_arrangement().array();
   const auto &tensor_map = tensor_layout->tensor_map().array();
-  const auto &slice_shape = tensor_layout->slice_shape().array();
+  auto slice_shape = tensor_layout->slice_shape().array();
   int64_t field_size = tensor_layout->get_field_size();
   bool uniform_split = tensor_layout->uniform_split();
   std::string opt_shard_group = tensor_layout->opt_shard_group();
+  if (!opt_shard_group.empty()) {
+    slice_shape = tensor_layout->opt_shard_slice_shape();
+  }
   py::tuple layout =
     py::make_tuple(device_arrangement, tensor_map, slice_shape, field_size, uniform_split, opt_shard_group);
 
@@ -416,12 +492,102 @@ void SliceParameterObj(const ParameterPtr &parameter, const TensorLayoutPtr &ten
   }
 }
 
-void InitOptimizerState(const FuncGraphPtr &root) {
-  auto parameters = root->parameters();
-  for (auto &parameter : parameters) {
-    if (!ParameterIsCloned(parameter)) {
+void SliceTensorObj(const ParameterPtr &parameter, const TensorLayoutPtr &tensor_layout, size_t rank_id) {
+  auto param = parameter->default_param();
+  MS_EXCEPTION_IF_NULL(param);
+  auto p_tensor = param->cast<tensor::TensorPtr>();
+  MS_EXCEPTION_IF_NULL(p_tensor);
+  if (p_tensor->DataSize() == 1) {
+    MS_LOG(INFO) << "The parameter's data size is 1, no need to layout.";
+    return;
+  }
+  if (tensor_layout == nullptr) {
+    MS_LOG(INFO) << "No need to layout parameter";
+    return;
+  }
+  // start get layout info
+  const auto &device_arrangement = tensor_layout->device_arrangement().array();
+  for (auto i : device_arrangement) std::cout << i << ' ';
+  const auto &tensor_map = tensor_layout->tensor_map().array();
+  auto slice_shape = tensor_layout->slice_shape().array();
+  int64_t field_size = tensor_layout->get_field_size();
+  bool uniform_split = tensor_layout->uniform_split();
+  if (uniform_split == 0) {
+    MS_LOG(ERROR) << "The load tensor only support uniform split now.";
+  }
+  std::string opt_shard_group = tensor_layout->opt_shard_group();
+  if (!opt_shard_group.empty()) {
+    slice_shape = tensor_layout->opt_shard_slice_shape();
+  }
+  py::tuple layout =
+    py::make_tuple(device_arrangement, tensor_map, slice_shape, field_size, uniform_split, opt_shard_group);
+
+  MS_LOG(INFO) << "origin p_tensor:" << p_tensor->name() << p_tensor->Size() << p_tensor->shape();
+  auto tensor_py = python_adapter::CastToPyObj(p_tensor);
+  // Call Python _slice_tensor Fn to slice python tensor obj
+  auto new_tensor_py =
+    python_adapter::CallPyFn(SLICE_PARAMETER_FN_PATH, SLICE_TENSOR_FN_NAME, tensor_py, layout, rank_id);
+  MS_LOG(INFO) << "Success Call Python _slice_parameter Fn to slice python parameter obj";
+  auto new_tensor = new_tensor_py.cast<tensor::TensorPtr>();
+  MS_LOG(INFO) << "new p_tensor:" << new_tensor->name() << new_tensor->Size() << new_tensor->shape();
+  parameter->set_default_param(new_tensor);
+}
+
+static void SliceCacheParameterObj(const ParameterPtr &parameter, const py::dict &layout_dict) {
+  auto param_info = parameter->param_info();
+  if (param_info == nullptr) {
+    MS_LOG(WARNING) << "parameter: " << parameter->DebugString() << " doesn't have param_info.";
+    return;
+  }
+  auto graph_executor = pipeline::GraphExecutorPy::GetInstance();
+  MS_EXCEPTION_IF_NULL(graph_executor);
+  auto phase = graph_executor->phase();
+  auto py_obj = GetPyParameterObj(param_info, OBJ);
+  if (py::isinstance<py::none>(py_obj)) {
+    MS_LOG(WARNING) << "Parameter: " << parameter->DebugString() << " can't find python obj.";
+    return;
+  }
+  auto name = parameter->name();
+  if (!layout_dict.contains(name)) {
+    (void)python_adapter::CallPyFn(SLICE_PARAMETER_FN_PATH, INIT_OPTIMIZER_STATE_FN, py_obj, py::str(phase));
+    return;
+  }
+  auto layout = layout_dict[py::str(name)];
+  // Call Python _slice_parameter Fn to slice python parameter obj
+  (void)python_adapter::CallPyFn(SLICE_PARAMETER_FN_PATH, SLICE_PARAMETER_FN_NAME, py_obj, py::str(phase), layout);
+
+  // handle cloned parameter, like accu_grad and optimizer param
+  auto cloned_py_obj = GetPyParameterObj(param_info, CLONED_OBJ);
+  if (!py::isinstance<py::none>(cloned_py_obj)) {
+    if (!py::isinstance<py::list>(cloned_py_obj)) {
+      MS_LOG(EXCEPTION) << "parameter: " << parameter->DebugString() << " doesn't have correct cloned obj";
+    }
+    auto obj_list = py::cast<py::list>(cloned_py_obj);
+    for (size_t i = 0; i < obj_list.size(); ++i) {
+      py::object each_cloned_obj = obj_list[i];
+      (void)python_adapter::CallPyFn(SLICE_PARAMETER_FN_PATH, SLICE_PARAMETER_FN_NAME, each_cloned_obj, py::str(phase),
+                                     layout);
+    }
+  }
+}
+
+void InitCompileCacheParams(const pipeline::ResourcePtr &resource) {
+  auto layout_dict = GetParameterLayoutFromResource(resource);
+  auto graph = resource->func_graph();
+  auto params = graph->parameters();
+  for (auto &param : params) {
+    auto param_ptr = param->cast<ParameterPtr>();
+    MS_EXCEPTION_IF_NULL(param_ptr);
+    if (!param_ptr->has_default()) {
       continue;
     }
+    SliceCacheParameterObj(param_ptr, layout_dict);
+  }
+}
+
+void InitPynativeNoShardParams(const FuncGraphPtr &root) {
+  auto parameters = root->parameters();
+  for (auto &parameter : parameters) {
     auto param_ptr = parameter->cast<ParameterPtr>();
     MS_EXCEPTION_IF_NULL(param_ptr);
     auto param_info = param_ptr->param_info();
@@ -454,59 +620,6 @@ void AutoParallelPostProcess(const FuncGraphPtr &root) {
       continue;
     }
     SliceParameterObj(param_ptr, layout);
-  }
-}
-
-static void InsertFullySplitParamGradAccu(const std::pair<AnfNodePtr, int> &node_user,
-                                          const FuncGraphManagerPtr &manager, const AnfNodePtr &accu_parameter) {
-  auto cnode = node_user.first->cast<CNodePtr>();
-  auto prim = GetCNodePrimitive(cnode);
-  if (prim == nullptr) {
-    MS_LOG(WARNING) << cnode->DebugString() << " can not insert fully split param grad accumulation node";
-    return;
-  }
-  OperatorAttrs attrs;
-  auto py_instance = CreateOpInstance(attrs, "_VirtualAdd", "grad_accu");
-  auto value_node = NewValueNode(py_instance);
-  std::vector<AnfNodePtr> virtual_node_input = {value_node, cnode->input(IntToSize(node_user.second)), accu_parameter};
-  auto graph = cnode->func_graph();
-  auto virtual_node = graph->NewCNode(virtual_node_input);
-  manager->SetEdge(cnode, node_user.second, virtual_node);
-}
-
-void HandleFullySplitParameters(const FuncGraphPtr &root) {
-  int64_t grad_accumulation_step = ParallelContext::GetInstance()->grad_accumulation_step();
-  if ((grad_accumulation_step <= 1) || root->has_flag(kAccumulation)) {
-    return;
-  }
-
-  auto parameters = root->parameters();
-  auto node_users_map = root->manager()->node_users();
-  for (auto &parameter : parameters) {
-    auto param_ptr = parameter->cast<ParameterPtr>();
-    MS_EXCEPTION_IF_NULL(param_ptr);
-
-    if (!IsFullySplitParameter(param_ptr)) {
-      continue;
-    }
-
-    auto accu_parameter = FindGradAccuParameter(parameters, param_ptr->name());
-    if (!accu_parameter) {
-      continue;  // some parameters no need to handle, such as itself or lr
-    }
-
-    auto node_users = node_users_map[parameter];
-    for (auto &user : node_users) {
-      auto node = user.first;
-      auto cnode = node->cast<CNodePtr>();
-      MS_EXCEPTION_IF_NULL(cnode);
-      if (!cnode->in_forward_flag()) {
-        continue;
-      }
-      InsertFullySplitParamGradAccu(user, root->manager(), accu_parameter);
-      MS_LOG(INFO) << "Insert full split assign add node for " << param_ptr->name();
-      break;  // only need to insert once, if the parameter has many users
-    }
   }
 }
 
@@ -678,14 +791,62 @@ static std::pair<AnfNodePtr, bool> FindParameterByValueNode(const AnfNodePtr &no
   return std::make_pair(nullptr, false);
 }
 
+AnfNodePtr RefParameterToActualParameter(const AnfNodePtr &node) {
+  if (!node->isa<Parameter>()) {
+    return nullptr;
+  }
+  auto node_param_ptr = node->cast<ParameterPtr>();
+  if (node_param_ptr->has_default()) {
+    return node;
+  }
+  auto sub_func_graph = node_param_ptr->func_graph();
+  auto call_cnodes_map = sub_func_graph->func_graph_cnodes_index();
+  auto sub_graph_parameters = sub_func_graph->parameters();
+  auto curr_param_iter = std::find(sub_graph_parameters.begin(), sub_graph_parameters.end(), node);
+  if (curr_param_iter == sub_graph_parameters.end()) {
+    MS_LOG(EXCEPTION) << "Cannot find param " << node_param_ptr->DebugString() << " in current sub_graph";
+  }
+  size_t curr_param_index = static_cast<size_t>(curr_param_iter - sub_graph_parameters.begin());
+  for (const auto &node_pair : call_cnodes_map) {
+    if (!node_pair.first->first->isa<CNode>() || node_pair.first->second > 0) {
+      continue;
+    }
+    auto cnode = node_pair.first->first->cast<CNodePtr>();
+    auto cnode_input = cnode->input(curr_param_index + 1);
+    auto new_cnode = GetInputNodeWithFilter(cnode_input, [&](const CNodePtr &cnode) {
+      bool filter = IsPrimitiveCNode(cnode, prim::kPrimMicroStepAllGather) ||
+                    IsPrimitiveCNode(cnode, prim::kPrimLoad) || IsPrimitiveCNode(cnode, prim::kPrimDepend);
+      return std::make_pair(filter, 1);
+    });
+    return RefParameterToActualParameter(new_cnode);
+  }
+  return nullptr;
+}
+
 static std::pair<AnfNodePtr, bool> FindParameterByParameter(const AnfNodePtr &node,
                                                             const std::string &name = ALL_REDUCE) {
-  auto param_ptr = node->user_data<parallel::TensorLayout>();
-  if (param_ptr && !param_ptr->opt_shard_group().empty() && param_ptr->opt_shard_mirror_group().empty() &&
-      name == ALL_REDUCE) {
+  if (!node->isa<Parameter>()) {
+    MS_LOG(EXCEPTION) << "The node is not a parameter, node:" << node->DebugString();
+  }
+  auto node_param_ptr = node->cast<ParameterPtr>();
+  if (node_param_ptr->has_default()) {
+    auto param_ptr = node->user_data<parallel::TensorLayout>();
+    if (param_ptr && !param_ptr->opt_shard_group().empty() && param_ptr->opt_shard_mirror_group().empty() &&
+        name == ALL_REDUCE) {
+      return std::make_pair(nullptr, false);
+    }
+    return std::make_pair(node, false);
+  }
+  AnfNodePtr ref_param = RefParameterToActualParameter(node);
+  if (!ref_param) {
     return std::make_pair(nullptr, false);
   }
-  return std::make_pair(node, false);
+  auto ref_param_layout = ref_param->user_data<parallel::TensorLayout>();
+  if (ref_param_layout && !ref_param_layout->opt_shard_group().empty() &&
+      ref_param_layout->opt_shard_mirror_group().empty() && name == ALL_REDUCE) {
+    return std::make_pair(nullptr, false);
+  }
+  return std::make_pair(ref_param, false);
 }
 
 static std::pair<AnfNodePtr, bool> FindParameterByFuncGraph(const AnfNodePtr &node) {
@@ -695,18 +856,10 @@ static std::pair<AnfNodePtr, bool> FindParameterByFuncGraph(const AnfNodePtr &no
   MS_EXCEPTION_IF_NULL(fg);
   auto fg_parameters = fg->parameters();
 
-  auto pre_node = GetRealKernelNode(fg->output(), -1, nullptr);
+  auto pre_node = GetRealKernelNode(fg->output(), -1, nullptr).first;
   auto pre_cnode = pre_node->cast<CNodePtr>();
   for (size_t index = 1; index < pre_cnode->inputs().size(); ++index) {
     auto res = FindParameter(pre_cnode->input(index), pre_cnode->func_graph());
-    if (!res.first) {
-      continue;
-    }
-    return res;
-  }
-  // If nothing found in the sub graphs, we search from the inputs of the graph.
-  for (size_t index = 1; index < fg_parameters.size(); ++index) {
-    auto res = FindParameter(cnode->input(index), fg);
     if (!res.first) {
       continue;
     }
@@ -728,9 +881,11 @@ std::pair<AnfNodePtr, bool> FindParameter(const AnfNodePtr &node, const FuncGrap
   if (node->isa<ValueNode>()) {
     return FindParameterByValueNode(node, func_graph);
   }
-
   CNodePtr cnode = node->cast<CNodePtr>();
   MS_EXCEPTION_IF_NULL(cnode);
+  if (IsValueNode<FuncGraph>(cnode->input(0))) {
+    return FindParameterByFuncGraph(node);
+  }
   if (!IsValueNode<Primitive>(cnode->input(0))) {
     for (size_t index = 0; index < cnode->inputs().size(); ++index) {
       auto res = FindParameter(cnode->input(index), func_graph);
@@ -745,9 +900,6 @@ std::pair<AnfNodePtr, bool> FindParameter(const AnfNodePtr &node, const FuncGrap
   // Skip allgather here and find parameter recursively.
   if (IsParallelCareNode(cnode) && !IsInAllGatherNodeList(cnode)) {
     return std::make_pair(nullptr, false);
-  }
-  if (IsValueNode<FuncGraph>(cnode->input(0))) {
-    return FindParameterByFuncGraph(node);
   }
   ValueNodePtr prim_anf_node = cnode->input(0)->cast<ValueNodePtr>();
   MS_EXCEPTION_IF_NULL(prim_anf_node);
@@ -882,7 +1034,7 @@ std::vector<bool> IsBorderAdaSumSendReceive(const AnfNodePtr &node, const RankLi
   }
   size_t border_step = size_t(log2(adasum_rank_distance / ADASUM_MIN_DIS));
   int64_t fusion_id = GetValue<int64_t>(send_rec_prim->GetAttr("origin_fusion"));
-  // when cuting nodes, the fusion id should change.
+  // when cutting nodes, the fusion id should change.
   int64_t new_fusion_id = fusion_id + SizeToLong(g_device_manager->DeviceNum() * (border_step + IntToSize(1)));
   send_rec_prim->set_attr(FUSION, MakeValue(new_fusion_id));
   std::vector<int64_t> group_list;
@@ -1306,6 +1458,149 @@ void HandleAdaFactorOpt(const FuncGraphPtr &root) {
       row_col_node->set_abstract(cloned_abstract);
       MS_LOG(INFO) << "Set the slice shape for " << row_col_param_name << ", origin shape is " << origin_shape
                    << ", new slice shape is " << opt_shard_slice_shape;
+    }
+  }
+}
+
+static std::shared_ptr<TensorLayout> GenerateTensorLayoutForParamReshapeWithStra(const AnfNodePtr &node,
+                                                                                 const Dimensions input_stra) {
+  CheckGlobalDeviceManager();
+  int64_t dev_num = g_device_manager->stage_device_num();
+  MS_EXCEPTION_IF_ZERO("dev_num", dev_num);
+
+  Shapes inputs_shape = GetNodeShape(node);
+  Shape param_shape = inputs_shape[0];
+
+  Shape param_dev_matrix_shape(input_stra.size() + 1, 0);
+  for (size_t i = param_dev_matrix_shape.size() - 1; i > 0; i--) {
+    param_dev_matrix_shape[i] = input_stra[i - 1];
+  }
+  param_dev_matrix_shape[0] =
+    dev_num / std::accumulate(input_stra.begin(), input_stra.end(), 1, std::multiplies<int64_t>());
+
+  TensorMap param_tensor_map;
+  for (size_t i = 0; i < param_shape.size(); ++i) {
+    param_tensor_map.push_back(static_cast<int64_t>(param_shape.size() - i - 1));
+  }
+
+  TensorLayout param_layout;
+
+  if (param_layout.InitFromVector(param_dev_matrix_shape, param_tensor_map, param_shape) != SUCCESS) {
+    MS_LOG(EXCEPTION) << "Infer param-Reshape with strategy tensor layout failed.";
+  }
+
+  return std::make_shared<TensorLayout>(param_layout);
+}
+
+static std::shared_ptr<TensorLayout> FindParameterNextLayout(const AnfNodePtr &node, size_t curr_depth) {
+  if (curr_depth > MAX_RECURSIVE_DEPTH) {
+    MS_LOG(WARNING) << "When finding the next tensor layout for the parameter, exceeded the maximum recursion depth: "
+                    << MAX_RECURSIVE_DEPTH;
+    return nullptr;
+  }
+  FuncGraphManagerPtr manager = node->func_graph()->manager();
+  MS_EXCEPTION_IF_NULL(manager);
+  AnfNodeIndexSet node_set = manager->node_users()[node];
+  for (auto &node_pair : node_set) {
+    if (IsPrimitiveCNode(node_pair.first, prim::kPrimLoad)) {
+      auto layout_param = FindParameterNextLayout(node_pair.first, ++curr_depth);
+      if (!layout_param) {
+        continue;
+      }
+      return layout_param;
+    }
+    CNodePtr use_apply = node_pair.first->cast<CNodePtr>();
+    if (use_apply == nullptr || !IsValueNode<Primitive>(use_apply->input(0))) {
+      continue;
+    }
+    ValueNodePtr prim_anf_node = use_apply->input(0)->cast<ValueNodePtr>();
+    MS_EXCEPTION_IF_NULL(prim_anf_node);
+    PrimitivePtr node_prim = prim_anf_node->value()->cast<PrimitivePtr>();
+    MS_EXCEPTION_IF_NULL(node_prim);
+    if (node_prim->name() == DEPEND && node_pair.second != 1) {
+      continue;
+    }
+    if (node_prim->name() == RESHAPE) {
+      auto attrs_temp = node_prim->attrs();
+      if (!StrategyFound(attrs_temp)) {
+        continue;
+      }
+      StrategyPtr strategy = ExtractStrategy(attrs_temp[IN_STRATEGY]);
+      Strategies stra = strategy->GetInputDim();
+      Dimensions input_strategy = stra.at(0);
+
+      auto param_layout = GenerateTensorLayoutForParamReshapeWithStra(node, input_strategy);
+
+      return param_layout;
+    }
+    if (IsParallelCareNode(use_apply) && use_apply->has_user_data<OperatorInfo>()) {
+      auto layout = GetInputLayoutFromCNode(node_pair);
+      return std::make_shared<TensorLayout>(layout);
+    }
+  }
+  return nullptr;
+}
+
+std::shared_ptr<TensorLayout> CreateParameterLayout(const AnfNodePtr &node) {
+  // Create DataParallel tensor layout for parameter(support WideDeep).
+  auto next_layout = FindParameterNextLayout(node, 0);
+  if (next_layout != nullptr) {
+    return next_layout;
+  }
+  CheckGlobalDeviceManager();
+  int64_t dev_num = g_device_manager->stage_device_num();
+  MS_EXCEPTION_IF_ZERO("dev_num", dev_num);
+  TensorLayout input_tensor_layout;
+  // create input_shape
+  Shapes inputs_shape = GetNodeShape(node);
+  Shape input_shape_array = inputs_shape[0];
+
+  // create dev_matrix
+  Shape dev_matrix_array = {dev_num};
+
+  // create tensor_map
+  size_t shape_size = input_shape_array.size();
+  TensorMap input_tensor_map_array(shape_size, MAP_NONE);
+  if ((shape_size > 0) && (input_shape_array[0] % dev_num == 0)) {
+    input_tensor_map_array[0] = 0;  // shard parameter's first dimension when parameter->Reshape->Op
+  }
+
+  if (input_tensor_layout.InitFromVector(dev_matrix_array, input_tensor_map_array, input_shape_array) != SUCCESS) {
+    MS_LOG(EXCEPTION) << "Create tensor layout for parameter failed.";
+  }
+  return std::make_shared<TensorLayout>(input_tensor_layout);
+}
+
+// temporary method for handling StandardNormal Insertion in opt graph
+void InsertUniformRealForTaggedNodes(const FuncGraphManagerPtr &manager, const std::vector<AnfNodePtr> &all_nodes) {
+  for (auto &node : all_nodes) {
+    MS_EXCEPTION_IF_NULL(node);
+    if (!node->isa<CNode>()) {
+      continue;
+    }
+    auto primitive = GetCNodePrimitive(node);
+    if (primitive == nullptr) {
+      continue;
+    }
+    if (common::AnfAlgo::IsCommunicationOp(node)) {
+      continue;
+    }
+    auto comm_prim = common::AnfAlgo::GetCNodePrimitive(node);
+    if (comm_prim->HasAttr("insert_rand")) {
+      MS_LOG(INFO) << "Insert UniformReal to node" << node->DebugString();
+      std::vector<AnfNodePtr> inputShape = {NewValueNode(prim::kPrimShape), node->cast<CNodePtr>()->input(kIndex1)};
+      auto inputShapeNode = node->func_graph()->NewCNode(inputShape);
+
+      std::vector<AnfNodePtr> uniformReal = {NewValueNode(prim::kPrimUniformReal), inputShapeNode->cast<AnfNodePtr>()};
+      auto uniformRealNode = node->func_graph()->NewCNode(uniformReal);
+
+      auto uniformRealPrim = GetCNodePrimitive(uniformRealNode);
+      auto attrs = uniformRealPrim->attrs();
+      attrs["seed"] = MakeValue<int64_t>(0);
+      attrs["seed2"] = MakeValue<int64_t>(0);
+      (void)uniformRealPrim->SetAttrs(attrs);
+
+      manager->SetEdge(node, 1, uniformRealNode);
     }
   }
 }

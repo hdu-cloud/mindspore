@@ -15,9 +15,9 @@
 """Gumbel Distribution"""
 import numpy as np
 from mindspore.ops import operations as P
-from mindspore._checkparam import Validator
+from mindspore.ops import functional as F
+from mindspore import _checkparam as Validator
 from mindspore.common import dtype as mstype
-import mindspore.nn as nn
 import mindspore.nn.probability.bijector as msb
 import mindspore.nn.probability.distribution as msd
 from .transformed_distribution import TransformedDistribution
@@ -28,20 +28,20 @@ from ._utils.custom_ops import exp_generic, log_generic
 class Gumbel(TransformedDistribution):
     r"""
     Gumbel distribution.
-    A Gumbel distributio is a continuous distribution with the range :math:`[0, 1]`
+    A Gumbel distributio is a continuous distribution with the range of all real numbers
     and the probability density function:
 
     .. math::
         f(x, a, b) = 1 / b \exp(\exp(-(x - a) / b) - x),
 
-    where a and b are loc and scale parameter respectively.
+    where :math:`a, b` are loc and scale parameter respectively.
 
     Args:
         loc (int, float, list, numpy.ndarray, Tensor): The location of Gumbel distribution.
         scale (int, float, list, numpy.ndarray, Tensor): The scale of Gumbel distribution.
-        seed (int): the seed used in sampling. The global seed is used if it is None. Default: 0.
-        dtype (mindspore.dtype): type of the distribution. Default: mstype.float32.
-        name (str): the name of the distribution. Default: 'Gumbel'.
+        seed (int): the seed used in sampling. The global seed is used if it is None. Default: ``0`` .
+        dtype (mindspore.dtype): type of the distribution. Default: ``mstype.float32`` .
+        name (str): the name of the distribution. Default: ``'Gumbel'`` .
 
     Note:
         `scale` must be greater than zero.
@@ -102,8 +102,7 @@ class Gumbel(TransformedDistribution):
         self.const = P.ScalarToTensor()
         self.exp = exp_generic
         self.expm1 = P.Expm1()
-        self.fill = P.Fill()
-        self.lgamma = nn.LGamma()
+        self.lgamma = P.Lgamma()
         self.log = log_generic
         self.shape = P.Shape()
         self.squeeze = P.Squeeze(0)
@@ -164,7 +163,7 @@ class Gumbel(TransformedDistribution):
         """
         The mode of the distribution.
         """
-        return self.loc * self.fill(self.parameter_type, self.shape(self.scale), 1.0)
+        return self.loc * F.fill(self.parameter_type, self.shape(self.scale), 1.0)
 
     def _sd(self):
         r"""
@@ -174,7 +173,7 @@ class Gumbel(TransformedDistribution):
             STD(X) = \frac{\pi}{\sqrt(6)} * scale
         """
         scale = self.scale * \
-            self.fill(self.parameter_type, self.broadcast_shape, 1.0)
+            F.fill(self.parameter_type, self.broadcast_shape, 1.0)
         return scale * np.pi / self.sqrt(self.const(6., mstype.float32))
 
     def _entropy(self):
@@ -185,7 +184,7 @@ class Gumbel(TransformedDistribution):
             H(X) = 1. + \log(scale) + Euler-Mascheroni_constant
         """
         scale = self.scale * \
-            self.fill(self.parameter_type, self.broadcast_shape, 1.0)
+            F.fill(self.parameter_type, self.broadcast_shape, 1.0)
         return 1. + self.log(scale) + np.euler_gamma
 
     def _log_prob(self, value):

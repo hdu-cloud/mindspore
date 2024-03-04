@@ -19,7 +19,10 @@
 
 #include <vector>
 #include <map>
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
+#include "utils/ms_context.h"
+#include "kernel/kernel_build_info.h"
+#include "kernel/graph_kernel_info.h"
 
 namespace mindspore {
 namespace device {

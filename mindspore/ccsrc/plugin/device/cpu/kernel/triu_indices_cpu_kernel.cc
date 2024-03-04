@@ -21,27 +21,40 @@
 
 namespace mindspore {
 namespace kernel {
-void TriuIndicesCpuKernelMod::InitKernel(const CNodePtr &kernel_node) {
-  MS_EXCEPTION_IF_NULL(kernel_node);
-  row_ = common::AnfAlgo::GetNodeAttr<int64_t>(kernel_node, "row");
-  col_ = common::AnfAlgo::GetNodeAttr<int64_t>(kernel_node, "col");
-  offset_ = common::AnfAlgo::GetNodeAttr<int64_t>(kernel_node, "offset");
+bool TriuIndicesCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+                                   const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
+  kernel_name_ = base_operator->name();
+  auto prim = base_operator->GetPrim();
+  MS_EXCEPTION_IF_NULL(prim);
+
+  row_ = GetValue<int64_t>(prim->GetAttr("row"));
+  col_ = GetValue<int64_t>(prim->GetAttr("col"));
+  offset_ = GetValue<int64_t>(prim->GetAttr("offset"));
   if (row_ < 0) {
     MS_EXCEPTION(ValueError) << "For TriuIndices, row is " << row_ << ", but row should be greater than or equal to 0.";
   }
   if (col_ < 0) {
     MS_EXCEPTION(ValueError) << "For TriuIndices, col is " << col_ << ", but col should be greater than or equal to 0.";
   }
-  auto kernel_attr = GetKernelAttrFromNode(kernel_node);
+  auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
   auto [is_match, index] = MatchKernelAttr(kernel_attr, GetOpSupport());
   if (!is_match) {
     MS_LOG(EXCEPTION) << "TriuIndices does not support this kernel data type: " << kernel_attr;
   }
   kernel_func_ = func_list_[index].second;
+  return true;
+}
+
+int TriuIndicesCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+                                    const std::vector<KernelTensorPtr> &outputs,
+                                    const std::map<uint32_t, tensor::TensorPtr> &) {
+  MS_EXCEPTION_IF_NULL(base_operator);
+  return KernelMod::Resize(base_operator, inputs, outputs);
 }
 
 template <typename T>
-bool TriuIndicesCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs,
+bool TriuIndicesCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &,
                                            const std::vector<kernel::AddressPtr> &,
                                            const std::vector<kernel::AddressPtr> &outputs) {
   auto offset1_ = offset_ - 1;
@@ -49,16 +62,18 @@ bool TriuIndicesCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr>
   auto m_last_row = std::max<int64_t>(0, std::min<int64_t>(col_, row_ + offset1_));
   auto n_row_all = std::max<int64_t>(0, std::min<int64_t>(row_, row_ + offset1_));
   auto n_row_trapezoid = (m_last_row - m_first_row + 1);
-  auto tril_size = ((m_first_row + m_last_row) * n_row_trapezoid) >> 1;
+  auto tril_size = (static_cast<size_t>((m_first_row + m_last_row) * n_row_trapezoid)) >> 1;
   auto diff_row = n_row_all - n_row_trapezoid;
   if (diff_row > 0) {
     tril_size += diff_row * col_;
   }
   auto triu_size = row_ * col_ - tril_size;
-  auto *output_addr = reinterpret_cast<T *>(outputs[0]->addr);
+  auto output_addr = GetDeviceAddress<T>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(output_addr);
   int64_t i = 0;
-  int64_t c = std::max<int64_t>(0, offset_), r = 0;
-  while (i < triu_size) {
+  int64_t c = std::max<int64_t>(0, offset_);
+  int64_t r = 0;
+  while (i < SizeToLong(triu_size)) {
     output_addr[i] = r;
     output_addr[triu_size + i++] = c;
     c += 1;
@@ -76,8 +91,8 @@ std::vector<std::pair<KernelAttr, TriuIndicesCpuKernelMod::TriuIndicesFunc>> Tri
 
 std::vector<KernelAttr> TriuIndicesCpuKernelMod::GetOpSupport() {
   std::vector<KernelAttr> support_list;
-  std::transform(func_list_.begin(), func_list_.end(), std::back_inserter(support_list),
-                 [](const std::pair<KernelAttr, TriuIndicesFunc> &item) { return item.first; });
+  (void)std::transform(func_list_.begin(), func_list_.end(), std::back_inserter(support_list),
+                       [](const std::pair<KernelAttr, TriuIndicesFunc> &item) { return item.first; });
   return support_list;
 }
 

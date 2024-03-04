@@ -16,15 +16,14 @@
 
 #ifndef MINDSPORE_CORE_OPS_LOG_SPACE_H_
 #define MINDSPORE_CORE_OPS_LOG_SPACE_H_
-#include <cstdint>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -51,8 +50,8 @@ class MIND_API LogSpace : public BaseOperator {
   /// \return steps.
   int64_t get_steps() const;
 };
-abstract::AbstractBasePtr LogSpaceInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                        const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr LogSpaceInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

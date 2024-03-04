@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,15 +19,27 @@
 #include <memory>
 #include <map>
 #include <string>
+#include "ops/base_operator.h"
 #include "plugin/device/ascend/kernel/ascend_kernel_mod.h"
-#include "plugin/device/ascend/kernel/acl/acl_kernel_utils.h"
+#include "runtime/pynative/op_runtime_info.h"
+#include "transform/acl_ir/acl_convert.h"
 
 namespace mindspore {
 namespace kernel {
+using TensorParams = transform::TensorParams;
+
 class AclKernelMod : public AscendKernelMod {
  public:
-  AclKernelMod() = default;
-  explicit AclKernelMod(const AnfNodePtr &anf_node_ptr) : AscendKernelMod(anf_node_ptr) {}
+  AclKernelMod() {
+    if (converter_ == nullptr) {
+      converter_ = std::make_shared<transform::AclConverter>();
+    }
+  }
+  explicit AclKernelMod(const AnfNodePtr &anf_node_ptr) : AscendKernelMod(anf_node_ptr) {
+    if (converter_ == nullptr) {
+      converter_ = std::make_shared<transform::AclConverter>();
+    }
+  }
   ~AclKernelMod() = default;
 
   bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
@@ -36,27 +48,38 @@ class AclKernelMod : public AscendKernelMod {
                                    const std::vector<AddressPtr> &, uint32_t) override;
 
   int Resize(
-    const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
-    const std::vector<KernelTensorPtr> &outputs,
+    const std::vector<KernelTensorPtr> &inputs, const std::vector<KernelTensorPtr> &outputs,
     const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost = std::map<uint32_t, tensor::TensorPtr>()) override;
 
-  void SetOpType(const std::string &op_type) { op_type_ = op_type; }
-  void SetInputDescList(const std::vector<GeTensorDescPtr> &input_desc_list) { input_desc_list_ = input_desc_list; }
-  void SetOutputDescList(const std::vector<GeTensorDescPtr> &output_desc_list) { output_desc_list_ = output_desc_list; }
-  void SetAttrList(const std::map<std::string, ValuePtr> &attr_list) { attr_list_ = attr_list; }
-  void SetDynamic(const bool is_dynamic) { is_dynamic_ = is_dynamic; }
+  void SetDeviceInfo(const std::vector<std::string> &input_device_formats,
+                     const std::vector<std::string> &output_device_formats,
+                     const std::vector<TypeId> &input_device_types, const std::vector<TypeId> &output_device_types);
+  bool IsNeedRetrieveOutputShape() override;
+
+  void PackageInput(const size_t idx, const std::string &format, ShapeVector *shape);
+  void PackageOutput(const size_t idx, const ShapeVector &shape);
+  void SetPrimitive(const PrimitivePtr &primitive);
+  void SetNeedConvertHostTensor(const bool convert_flag) { need_convert_host_tensor_ = convert_flag; }
+  void CreateAclConverter();
 
  protected:
-  void SyncData() override;
-  bool SkipUnRunNode(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &outputs, void *stream_ptr,
-                     const size_t input_size);
+  std::string DebugString() const;
+  void SyncOutputShape() override;
+  void GetInputInfo(const std::vector<KernelTensorPtr> &inputs);
+  int GetOutputInfo(const std::vector<KernelTensorPtr> &outputs);
 
  private:
-  std::vector<GeTensorDescPtr> input_desc_list_{};
-  std::vector<GeTensorDescPtr> output_desc_list_{};
-  std::map<std::string, ValuePtr> attr_list_{};
-  std::string op_type_{};
-  bool is_dynamic_{false};
+  std::vector<TensorParams> input_params_;
+  std::vector<TensorParams> output_params_;
+  transform::AclInputToHost input_to_host_array_;
+
+  PrimitivePtr primitive_ptr_;
+  std::string kernel_name_;
+
+  std::vector<std::string> ms_attr_str_;
+  transform::AclConverterPtr converter_;
+
+  bool need_convert_host_tensor_{false};
 };
 
 using AclKernelModPtr = std::shared_ptr<AclKernelMod>;

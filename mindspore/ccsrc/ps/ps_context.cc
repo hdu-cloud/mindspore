@@ -14,21 +14,52 @@
  * limitations under the License.
  */
 
-#include "ps/ps_context.h"
+#include "include/backend/distributed/ps/ps_context.h"
 
+#include "ir/tensor.h"
 #include "kernel/kernel.h"
 #include "utils/log_adapter.h"
 #include "utils/ms_utils.h"
 #if ((defined ENABLE_CPU) && (!defined _WIN32) && !defined(__APPLE__))
-#include "distributed/cluster/cluster_context.h"
-#include "ps/ps_cache/ps_data/ps_data_prefetch.h"
-#include "distributed/embedding_cache/embedding_cache_utils.h"
+#include "include/backend/distributed/cluster/cluster_context.h"
+#include "include/backend/distributed/ps/ps_cache/ps_data_prefetch.h"
+#include "ps/core/cluster_config.h"
+#include "include/backend/distributed/embedding_cache/embedding_cache_utils.h"
 #else
-#include "distributed/cluster/dummy_cluster_context.h"
+#include "include/backend/distributed/cluster/dummy_cluster_context.h"
+#include "ps/core/cluster_config.h"
 #endif
 
 namespace mindspore {
 namespace ps {
+namespace {
+constexpr uint16_t kDefaultSchedPort = 6667;
+constexpr uint16_t kDefaultSchedManagerPort = 11202;
+}  // namespace
+PSContext::PSContext()
+    : ps_enabled_(false),
+      is_worker_(false),
+      is_pserver_(false),
+      is_sched_(false),
+      rank_id_(0),
+      worker_num_(0),
+      server_num_(0),
+      scheduler_host_("0.0.0.0"),
+      scheduler_port_(kDefaultSchedPort),
+      role_(kEnvRoleOfNotPS),
+      server_mode_(""),
+      cluster_config_(nullptr),
+      scheduler_manage_port_(kDefaultSchedManagerPort),
+      config_file_path_(""),
+      node_id_(""),
+      enable_ssl_(false),
+      client_password_(),
+      server_password_(),
+      http_url_prefix_(""),
+      instance_name_("") {}
+
+PSContext::~PSContext() {}
+
 std::shared_ptr<PSContext> PSContext::instance() {
   static std::once_flag init_flag;
   static std::shared_ptr<PSContext> ps_instance = nullptr;
@@ -155,17 +186,13 @@ void PSContext::InsertHashTableSize(const std::string &param_name, size_t cache_
 #endif
 }
 
-void PSContext::ReInsertHashTableSize(const std::string &new_param_name, const std::string &cur_param_name,
-                                      size_t cache_vocab_size, size_t embedding_size) const {
+void PSContext::ReInsertHashTableSize(const std::string &new_param_name, const std::string &cur_param_name) const {
 #if ((defined ENABLE_CPU) && (!defined _WIN32) && !defined(__APPLE__))
   if (enable_distributed_mindrt()) {
-    embedding_cache_table_manager.ReInsertHashTableSize(new_param_name, cur_param_name, cache_vocab_size,
-                                                        embedding_size);
+    embedding_cache_table_manager.ReInsertHashTableSize(new_param_name, cur_param_name);
   }
 #endif
 }
-
-void PSContext::InsertWeightInitInfo(const std::string &, size_t, size_t) const { return; }
 
 void PSContext::InsertAccumuInitInfo(const std::string &param_name, float init_val) const {
 #if ((defined ENABLE_CPU) && (!defined _WIN32) && !defined(__APPLE__))
@@ -193,6 +220,18 @@ bool PSContext::cache_enable() const {
   return PsDataPrefetch::GetInstance().cache_enable();
 #endif
   return false;
+}
+
+void PSContext::set_cache_size(size_t cache_size) const {
+#if ((defined ENABLE_CPU) && (!defined _WIN32) && !defined(__APPLE__))
+  distributed::EmbeddingCacheTableManager::GetInstance().set_cache_size(cache_size);
+#endif
+}
+
+void PSContext::set_sparse_format(bool is_sparse) {
+#if ((defined ENABLE_CPU) && (!defined _WIN32) && !defined(__APPLE__))
+  distributed::EmbeddingCacheTableManager::GetInstance().set_sparse_format(is_sparse);
+#endif
 }
 
 void PSContext::set_rank_id(uint32_t) const { return; }
@@ -257,6 +296,9 @@ void PSContext::set_enable_ssl(bool enabled) { enable_ssl_ = enabled; }
 
 char *PSContext::client_password() { return client_password_; }
 void PSContext::set_client_password(const char *password) {
+  if (password == nullptr) {
+    MS_LOG(EXCEPTION) << "Can't set None or nullptr for client password.";
+  }
   if (strlen(password) >= kMaxPasswordLen) {
     MS_LOG(EXCEPTION) << "Client password is longer than max password length " << kMaxPasswordLen;
   }
@@ -275,6 +317,9 @@ void PSContext::ClearClientPassword() {
 
 char *PSContext::server_password() { return server_password_; }
 void PSContext::set_server_password(const char *password) {
+  if (password == nullptr) {
+    MS_LOG(EXCEPTION) << "Can't set None or nullptr for server password.";
+  }
   if (strlen(password) >= kMaxPasswordLen) {
     MS_LOG(EXCEPTION) << "Client password is longer than max password length " << kMaxPasswordLen;
   }
@@ -300,6 +345,33 @@ const std::string &PSContext::instance_name() const { return instance_name_; }
 bool PSContext::enable_distributed_mindrt() const {
   bool ms_cluster_enabled = distributed::cluster::ClusterContext::instance()->initialized();
   return ms_cluster_enabled;
+}
+
+void PSContext::set_checkpoint_load_status(bool status) {
+#if ((defined ENABLE_CPU) && (!defined _WIN32) && !defined(__APPLE__))
+  return embedding_cache_table_manager.set_checkpoint_load_status(status);
+#endif
+}
+
+int32_t PSContext::StoreWarmUpPtrByTensor(const int32_t param_key, const tensor::TensorPtr &tensor_ptr) {
+  MS_EXCEPTION_IF_NULL(tensor_ptr);
+#if ((defined ENABLE_CPU) && (!defined _WIN32) && !defined(__APPLE__))
+  return embedding_cache_table_manager.StoreWarmUpPtr(param_key, tensor_ptr);
+#else
+  return -1;
+#endif
+}
+
+int32_t PSContext::StoreWarmUpPtrByTensorList(const int32_t param_key, const tensor::TensorPtr &key_ptr,
+                                              const tensor::TensorPtr &value_ptr, const tensor::TensorPtr &status_ptr) {
+  MS_EXCEPTION_IF_NULL(key_ptr);
+  MS_EXCEPTION_IF_NULL(value_ptr);
+  MS_EXCEPTION_IF_NULL(status_ptr);
+#if ((defined ENABLE_CPU) && (!defined _WIN32) && !defined(__APPLE__))
+  return embedding_cache_table_manager.StoreWarmUpPtr(param_key, key_ptr, value_ptr, status_ptr);
+#else
+  return -1;
+#endif
 }
 }  // namespace ps
 }  // namespace mindspore

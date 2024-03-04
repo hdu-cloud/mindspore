@@ -6,7 +6,7 @@ mindspore.dataset.vision.ConvertColor
     更改图像的色彩空间。
 
     参数：
-        - **convert_mode**  (ConvertMode) - 图像色彩空间转换的模式。
+        - **convert_mode**  (:class:`~.vision.ConvertMode`) - 图像色彩空间转换的模式。
 
           - **ConvertMode.COLOR_BGR2BGRA**: 将 BGR 图像转换为 BGRA 图像。
           - **ConvertMode.COLOR_RGB2RGBA**: 将 RGB 图像转换为 RGBA 图像。
@@ -32,3 +32,7 @@ mindspore.dataset.vision.ConvertColor
     异常：
         - **TypeError** - 如果 `convert_mode` 不是类 :class:`mindspore.dataset.vision.ConvertMode` 的类型。
         - **RuntimeError** - 如果输入图像的shape不是 <H, W> 或 <H, W, C>。
+
+    教程样例：
+        - `视觉变换样例库
+          <https://www.mindspore.cn/docs/zh-CN/master/api_python/samples/dataset/vision_gallery.html>`_

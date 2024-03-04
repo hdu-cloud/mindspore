@@ -16,7 +16,7 @@
 import numpy as np
 from mindspore.ops import operations as P
 from mindspore.ops import composite as C
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from mindspore.common import dtype as mstype
 from mindspore.common import Tensor
 from .distribution import Distribution
@@ -36,11 +36,12 @@ class Normal(Distribution):
     the standard deviation of the normal distribution respectively.
 
     Args:
-        mean (int, float, list, numpy.ndarray, Tensor): The mean of the Normal distribution. Default: None.
-        sd (int, float, list, numpy.ndarray, Tensor): The standard deviation of the Normal distribution. Default: None.
-        seed (int): The seed used in sampling. The global seed is used if it is None. Default: None.
-        dtype (mindspore.dtype): The type of the event samples. Default: mstype.float32.
-        name (str): The name of the distribution. Default: 'Normal'.
+        mean (int, float, list, numpy.ndarray, Tensor): The mean of the Normal distribution. Default: ``None`` .
+        sd (int, float, list, numpy.ndarray, Tensor): The standard deviation of the Normal distribution.
+            Default: ``None`` .
+        seed (int): The seed used in sampling. The global seed is used if it is None. Default: ``None`` .
+        dtype (mindspore.dtype): The type of the event samples. Default: ``mstype.float32`` .
+        name (str): The name of the distribution. Default: ``'Normal'`` .
 
     Note:
         `sd` must be greater than zero.

@@ -16,7 +16,8 @@
 
 #include "plugin/device/ascend/optimizer/format_type/convert_unsupported_transnode_to_aicpu.h"
 #include <memory>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "kernel/kernel_build_info.h"
 
@@ -53,7 +54,7 @@ const AnfNodePtr ConvertUnSupportNodeToAICPU::Process(const mindspore::FuncGraph
     common::AnfAlgo::SetNodeAttr(kAttrIsAiCpuKernel, MakeValue(true), node);
   } else {
     MS_LOG(EXCEPTION) << "Kernel " << kernel_builder_info->ToString() << "is not supported in AiCPU & AiCore : node ["
-                      << node->DebugString() << "]" << trace::DumpSourceLines(node);
+                      << node->fullname_with_scope() << "]" << trace::DumpSourceLines(node);
   }
   return nullptr;
 }

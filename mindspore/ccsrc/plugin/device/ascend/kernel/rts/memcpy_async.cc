@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@
 #include "abstract/utils.h"
 #include "runtime/mem.h"
 #include "acl/acl_rt.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "runtime/device/ms_device_shape_transfer.h"
 #include "utils/ms_context.h"
@@ -80,7 +80,7 @@ void MemCpyAsyncKernel::GetInputOutputDataType(const AnfNodePtr &anf_node) {
   MS_EXCEPTION_IF_NULL(anf_node);
   size_t input_size = common::AnfAlgo::GetInputTensorNum(anf_node);
   if (input_size != 1) {
-    MS_LOG(EXCEPTION) << "MemCpyAsync input size is not 1, got " << input_size;
+    MS_LOG(INTERNAL_EXCEPTION) << "MemCpyAsync input size is not 1, got " << input_size;
   }
   input_type_id_ = AnfAlgo::GetPrevNodeOutputDeviceDataType(anf_node, 0);
 }
@@ -89,7 +89,7 @@ void MemCpyAsyncKernel::GetInputOutputTotalCount(const AnfNodePtr &anf_node) {
   MS_EXCEPTION_IF_NULL(anf_node);
   size_t input_size = common::AnfAlgo::GetInputTensorNum(anf_node);
   if (input_size != 1) {
-    MS_LOG(EXCEPTION) << "MemCpyAsync input size is not 1, got " << input_size;
+    MS_LOG(INTERNAL_EXCEPTION) << "MemCpyAsync input size is not 1, got " << input_size;
   }
   size_t type_size = abstract::TypeIdSize(input_type_id_);
   auto shape_i = AnfAlgo::GetInputDeviceShape(anf_node, 0);
@@ -107,11 +107,11 @@ std::vector<TaskInfoPtr> MemCpyAsyncKernel::GenTask(const std::vector<AddressPtr
                                                     const std::vector<AddressPtr> &,
                                                     const std::vector<AddressPtr> &outputs, uint32_t stream_id) {
   if (inputs.size() != 1) {
-    MS_LOG(EXCEPTION) << "MemCpyAsync op inputs is not one";
+    MS_LOG(INTERNAL_EXCEPTION) << "MemCpyAsync op inputs is not one";
   }
 
   if (outputs.size() != 1) {
-    MS_LOG(EXCEPTION) << "MemCpyAsync op output is not one";
+    MS_LOG(INTERNAL_EXCEPTION) << "MemCpyAsync op output is not one";
   }
 
   MS_EXCEPTION_IF_NULL(outputs[0]);
@@ -159,7 +159,9 @@ std::vector<std::shared_ptr<kernel::KernelBuildInfo>> MemCpyAsyncDesc::GetKernel
       builder.SetOutputsDeviceType(output_type);
       builder.SetProcessor(AICORE);
       builder.SetKernelType(RT_KERNEL);
-      builder.SetFusionType(OPAQUE);
+      builder.SetFusionType(kPatternOpaque);
+      builder.SetInputsKernelObjectType({KernelObjectType::TENSOR});
+      builder.SetOutputsKernelObjectType({KernelObjectType::TENSOR});
       memcpy_build_info.emplace_back(builder.Build());
     }
   }

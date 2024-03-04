@@ -14,15 +14,30 @@
  * limitations under the License.
  */
 #include "ops/batch_to_space_nd_v2.h"
-#include <string>
-#include <algorithm>
+
+#include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -32,9 +47,6 @@ abstract::ShapePtr BatchToSpaceNDV2InferShape(const PrimitivePtr &primitive,
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
-  auto shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape());
-  auto input_min_shape = shape_map[kMinShape];
-  auto input_max_shape = shape_map[kMaxShape];
   auto out_shape = x_shape;
 
   int64_t block_shape_prod = 1;
@@ -68,35 +80,8 @@ abstract::ShapePtr BatchToSpaceNDV2InferShape(const PrimitivePtr &primitive,
       << out_shape[0] << ", 'block_shape_prod' with value: " << block_shape_prod << ".";
   }
   out_shape[0] = int64_t(floor(out_shape[0] / static_cast<float>(block_shape_prod)));
-  if (input_min_shape.size() == 0 || input_max_shape.size() == 0) {
-    return std::make_shared<abstract::Shape>(out_shape);
-  }
-  auto output_min_shape = input_min_shape;
-  auto output_max_shape = input_max_shape;
-  for (size_t i = 0; i < size; i++) {
-    auto x_block_prod_min = output_min_shape[i + offset] * block_shape[i];
-    auto x_block_prod_max = output_max_shape[i + offset] * block_shape[i];
-    auto crops_sum = crops[i * index2] + crops[i * index2 + 1];
-    CheckAndConvertUtils::Check("x block shape prod min", x_block_prod_min, kGreaterThan, crops_sum, prim_name);
-    CheckAndConvertUtils::Check("x block shape prod max", x_block_prod_max, kGreaterThan, crops_sum, prim_name);
-    output_min_shape[i + offset] = x_block_prod_min - crops_sum;
-    output_max_shape[i + offset] = x_block_prod_max - crops_sum;
-  }
-  if (output_min_shape[0] % block_shape_prod != 0) {
-    MS_EXCEPTION(ValueError) << "For '" << prim_name
-                             << "', the first dim of output min shape must be divisible by 'block_shape_prod'. But got "
-                                "first dim of output min shape: "
-                             << output_min_shape[0] << ", 'block_shape_prod' with value: " << block_shape_prod << ".";
-  }
-  if (output_max_shape[0] % block_shape_prod != 0) {
-    MS_EXCEPTION(ValueError) << "For '" << prim_name
-                             << "', the first dim of output max shape must be divisible by 'block_shape_prod'. But got "
-                                "first dim of output max shape: "
-                             << output_min_shape[0] << ", 'block_shape_prod' with value: " << block_shape_prod << ".";
-  }
-  output_min_shape[0] = int64_t(floor(output_min_shape[0] / static_cast<float>(block_shape_prod)));
-  output_max_shape[0] = int64_t(floor(output_max_shape[0] / static_cast<float>(block_shape_prod)));
-  return std::make_shared<abstract::Shape>(out_shape, output_min_shape, output_max_shape);
+
+  return std::make_shared<abstract::Shape>(out_shape);
 }
 
 TypePtr BatchToSpaceNDV2InferType(const std::vector<AbstractBasePtr> &input_args) {
@@ -125,7 +110,26 @@ AbstractBasePtr BatchToSpaceNDV2Infer(const abstract::AnalysisEnginePtr &, const
   auto infer_shape = BatchToSpaceNDV2InferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(BatchToSpaceNDV2, prim::kPrimBatchToSpaceNDV2, BatchToSpaceNDV2Infer, nullptr, true);
-REGISTER_HOST_DEPENDS(kNameBatchToSpaceNDV2, {1, 2});
+
+// AG means auto generated
+class MIND_API AGBatchToSpaceNDV2Infer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return BatchToSpaceNDV2InferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &, const std::vector<AbstractBasePtr> &input_args) const override {
+    return BatchToSpaceNDV2InferType(input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return BatchToSpaceNDV2Infer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1, 2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(BatchToSpaceNDV2, prim::kPrimBatchToSpaceNDV2, AGBatchToSpaceNDV2Infer, false);
 }  // namespace ops
 }  // namespace mindspore

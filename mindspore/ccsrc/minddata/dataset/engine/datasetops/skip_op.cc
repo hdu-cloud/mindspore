@@ -26,7 +26,7 @@ namespace dataset {
 SkipOp::SkipOp(int32_t count) : PipelineOp(0), max_skips_(count), skip_count_(0) {}
 
 // Destructor
-SkipOp::~SkipOp() {}
+SkipOp::~SkipOp() = default;
 
 // A print method typically used for debugging
 void SkipOp::Print(std::ostream &out, bool show_all) const {
@@ -47,10 +47,13 @@ Status SkipOp::operator()() { RETURN_STATUS_UNEXPECTED("[Internal ERROR] SkipOp 
 
 Status SkipOp::GetNextRow(TensorRow *row) {
   RETURN_UNEXPECTED_IF_NULL(row);
+  RETURN_IF_NOT_OK(CollectOpInfoStart(this->NameWithID(), "GetFromPreviousOp"));
   bool eoe_received = false;
   while (skip_count_ < max_skips_) {
     RETURN_IF_NOT_OK(child_[0]->GetNextRow(row));
     if (row->eof()) {
+      RETURN_IF_NOT_OK(CollectOpInfoEnd(this->NameWithID(), "GetFromPreviousOp",
+                                        {{"TensorRowFlags", TensorRow(TensorRow::kFlagEOF).FlagName()}}));
       return Status::OK();
     }
     if (row->eoe() && !once_only_) {
@@ -63,6 +66,43 @@ Status SkipOp::GetNextRow(TensorRow *row) {
   }
   if (!eoe_received) {
     RETURN_IF_NOT_OK(child_[0]->GetNextRow(row));
+    data_produced_++;
+  }
+  if (row->eoe()) {
+    UpdateRepeatAndEpochCounter();
+    if (!once_only_) {
+      skip_count_ = 0;
+    } else {
+      // In pipeline recovery, if the skip count is equal to the dataset size,
+      // it means we should begin at the next epoch, so we ignore the eoe
+      // here and return the next data
+      if (data_produced_ == 1) {  // eoe is the first data we get
+        RETURN_IF_NOT_OK(child_[0]->GetNextRow(row));
+      }
+    }
+  }
+  RETURN_IF_NOT_OK(CollectOpInfoEnd(this->NameWithID(), "GetFromPreviousOp", {{"TensorRowFlags", row->FlagName()}}));
+  return Status::OK();
+}
+
+Status SkipOp::GetNextRowPullMode(TensorRow *const row) {
+  RETURN_UNEXPECTED_IF_NULL(row);
+  bool eoe_received = false;
+  while (skip_count_ < max_skips_) {
+    RETURN_IF_NOT_OK(child_[0]->GetNextRowPullMode(row));
+    if (row->eof()) {
+      return Status::OK();
+    }
+    if (row->eoe() && !once_only_) {
+      eoe_received = true;
+      break;
+    }
+    if (!row->eoe()) {
+      skip_count_++;
+    }
+  }
+  if (!eoe_received) {
+    RETURN_IF_NOT_OK(child_[0]->GetNextRowPullMode(row));
   }
   if (row->eoe()) {
     UpdateRepeatAndEpochCounter();

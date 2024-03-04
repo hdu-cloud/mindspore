@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,16 +14,21 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/optimizer/buffer_fusion/conv_double_in_fusion_pass.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "kernel/kernel_fusion.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "utils/ms_context.h"
-#include "backend/common/optimizer/fusion_id_allocator.h"
-#include "plugin/device/ascend/optimizer/platform.h"
+#include "plugin/device/ascend/optimizer/fusion_id_allocator.h"
+#include "plugin/device/ascend/hal/common/platform_info_util.h"
 
 namespace mindspore {
 namespace opt {
+namespace {
+constexpr auto kPatternConvolution = "Convolution";
+}
+
 void ConvDoubleInFusionPass::MatchConvDoubleInEltwise(const CNodePtr &cnode, const session::KernelGraph &kernel_graph,
                                                       FusedNodeRecord *candidate_fusion) {
   MS_EXCEPTION_IF_NULL(cnode);
@@ -45,7 +50,7 @@ void ConvDoubleInFusionPass::MatchConvDoubleInEltwise(const CNodePtr &cnode, con
     return;
   }
   if (AnfAlgo::GetKernelType(double_in_eltwise_input) == KernelType::TBE_KERNEL &&
-      AnfAlgo::GetFusionType(double_in_eltwise_input) == kernel::FusionType::CONV) {
+      AnfAlgo::GetFusionType(double_in_eltwise_input) == kPatternConvolution) {
     (void)record.insert(double_in_eltwise_input);
     candidate_fusion->push_back(record);
     SetRecordFusionId(record);
@@ -64,9 +69,8 @@ void ConvDoubleInFusionPass::MatchSingleFusionPattern(const session::KernelGraph
     }
     auto cnode = node->cast<CNodePtr>();
     MS_EXCEPTION_IF_NULL(cnode);
-    if (AnfAlgo::GetKernelType(cnode) == KernelType::TBE_KERNEL &&
-        AnfAlgo::GetFusionType(cnode) == kernel::FusionType::ELEMWISE && cnode->inputs().size() == ELTWISE_INPUT_SIZE &&
-        !common::AnfAlgo::CheckPrimitiveType(node, prim::kPrimReLUV2)) {
+    if (AnfAlgo::GetKernelType(cnode) == KernelType::TBE_KERNEL && AnfAlgo::GetFusionType(cnode) == kPatternElemWise &&
+        cnode->inputs().size() == ELTWISE_INPUT_SIZE && !common::AnfAlgo::CheckPrimitiveType(node, prim::kPrimReluV2)) {
       MatchConvDoubleInEltwise(cnode, kernel_graph, candidate_fusion);
     }
   }

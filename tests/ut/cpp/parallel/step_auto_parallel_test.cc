@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 #include "common/common_test.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "frontend/parallel/step_parallel.h"
 #include "frontend/parallel/step_parallel_utils.h"
 #include "frontend/parallel/step_auto_parallel.h"
 #include "frontend/parallel/auto_parallel/edge_costmodel.h"
 #include "frontend/parallel/ops_info/operator_info.h"
 #include "frontend/operator/ops.h"
-#include "pipeline/jit/static_analysis/static_analysis.h"
+#include "pipeline/jit/ps/static_analysis/static_analysis.h"
 
 namespace mindspore {
 namespace parallel {

@@ -17,7 +17,6 @@
 #include "plugin/device/cpu/kernel/mkldnn/batch_norm_cpu_kernel.h"
 #include <map>
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
-#include "utils/ms_utils.h"
 #include "mindspore/core/ops/batch_norm.h"
 
 namespace mindspore {
@@ -25,26 +24,25 @@ namespace kernel {
 namespace {
 constexpr size_t kBatchNormInputsNum = 5;
 constexpr size_t kBatchNormOutputsNum = 5;
-constexpr size_t kBatchNormInputShapeSize = 4;
-constexpr size_t kBatchNormInputShapeSize2 = 2;
+constexpr size_t kBatchNormInputShapeMaxSize = 4;
 }  // namespace
 
 bool BatchNormCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                  const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
   auto kernel_ptr = std::dynamic_pointer_cast<ops::BatchNorm>(base_operator);
   if (!kernel_ptr) {
     MS_LOG(ERROR) << "cast BatchNorm ops failed!";
     return false;
   }
-  auto kernel_name = kernel_ptr->GetPrim()->name();
-  auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
 
+  kernel_name_ = kernel_ptr->GetPrim()->name();
+  auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
   bool is_match = MatchKernelAttr(kernel_attr, GetOpSupport()).first;
   if (!is_match) {
-    MS_LOG(EXCEPTION) << kernel_name << " does not support this kernel data type: " << kernel_attr;
+    MS_LOG(EXCEPTION) << kernel_name_ << " does not support this kernel data type: " << kernel_attr;
   }
 
-  base_operator_ = base_operator;
   is_train_ = kernel_ptr->get_is_training();
   momentum_ = kernel_ptr->get_momentum();
   epsilon_ = kernel_ptr->get_epsilon();
@@ -60,11 +58,7 @@ int BatchNormCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const st
   }
 
   auto x_shape = inputs[kIndex0]->GetDeviceShapeAdaptively();
-  if (x_shape.size() == kBatchNormInputShapeSize2) {
-    (void)x_shape.insert(x_shape.end(), kBatchNormInputShapeSize - kBatchNormInputShapeSize2, 1);
-  } else if (x_shape.size() != kBatchNormInputShapeSize) {
-    MS_LOG(EXCEPTION) << "Batchnorm only support nchw input!";
-  }
+  (void)x_shape.insert(x_shape.end(), kBatchNormInputShapeMaxSize - x_shape.size(), 1);
 
   batch_size_ = x_shape[0];
   channel_ = x_shape[1];
@@ -96,8 +90,6 @@ int BatchNormCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const st
   AddArgument(DNNL_ARG_DST, x_desc);
 
   InitWorkspaceSize(inputs);
-  inputs_ = inputs;
-  outputs_ = outputs;
   inputs_on_host_ = inputsOnHost;
   return KRET_OK;
 }
@@ -115,11 +107,11 @@ bool BatchNormCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &inputs
   CHECK_KERNEL_INPUTS_NUM(inputs.size(), kBatchNormInputsNum, kernel_name_);
   CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kBatchNormOutputsNum, kernel_name_);
   // From CPUKernelExecutor::LaunchKernel
-  if (!Init(base_operator_, inputs_, outputs_)) {
+  if (!Init(op_, inputs_, outputs_)) {
     MS_LOG(ERROR) << "Re-init BatchNormCpuKernelMod while launching failed";
     return false;
   }
-  auto resize_ret = Resize(base_operator_, inputs_, outputs_, inputs_on_host_);
+  auto resize_ret = Resize(op_, inputs_, outputs_, inputs_on_host_);
   if (resize_ret != KRET_OK) {
     MS_LOG(ERROR) << "Resize BatchNormCpuKernelMod while launching failed: " << resize_ret;
     return false;

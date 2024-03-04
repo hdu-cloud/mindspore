@@ -16,6 +16,9 @@
 
 #include "minddata/dataset/text/ir/kernels/text_ir.h"
 
+#include <fstream>
+
+#include "minddata/dataset/text/kernels/add_token_op.h"
 #ifndef _WIN32
 #include "minddata/dataset/text/kernels/basic_tokenizer_op.h"
 #include "minddata/dataset/text/kernels/bert_tokenizer_op.h"
@@ -34,6 +37,7 @@
 #include "minddata/dataset/text/kernels/sliding_window_op.h"
 #include "minddata/dataset/text/kernels/to_number_op.h"
 #include "minddata/dataset/text/kernels/to_vectors_op.h"
+#include "minddata/dataset/text/kernels/truncate_op.h"
 #include "minddata/dataset/text/kernels/truncate_sequence_pair_op.h"
 #include "minddata/dataset/text/kernels/unicode_char_tokenizer_op.h"
 #include "minddata/dataset/text/kernels/wordpiece_tokenizer_op.h"
@@ -46,6 +50,7 @@
 #include "minddata/dataset/util/path.h"
 #include "minddata/dataset/util/validators.h"
 
+#include "minddata/dataset/audio/ir/validators.h"
 #include "minddata/dataset/text/ir/validators.h"
 
 namespace mindspore {
@@ -55,6 +60,34 @@ namespace text {
 /* ####################################### Derived TensorOperation classes ################################# */
 
 // (In alphabetical order)
+
+// AddToken
+AddTokenOperation::AddTokenOperation(const std::string &token, bool begin) : token_(token), begin_(begin) {}
+
+AddTokenOperation::~AddTokenOperation() = default;
+
+std::shared_ptr<TensorOp> AddTokenOperation::Build() {
+  std::shared_ptr<AddTokenOp> tensor_op = std::make_shared<AddTokenOp>(token_, begin_);
+  return tensor_op;
+}
+
+Status AddTokenOperation::ValidateParams() {
+  if (token_.empty()) {
+    std::string err_msg = "AddToken: Parameter token is not provided.";
+    LOG_AND_RETURN_STATUS_SYNTAX_ERROR(err_msg);
+  }
+  return Status::OK();
+}
+
+std::string AddTokenOperation::Name() const { return kAddTokenOperation; }
+
+Status AddTokenOperation::to_json(nlohmann::json *out_json) {
+  nlohmann::json args;
+  args["token"] = token_;
+  args["begin"] = begin_;
+  *out_json = args;
+  return Status::OK();
+}
 
 #ifndef _WIN32
 // BasicTokenizerOperation
@@ -174,7 +207,7 @@ double CalcFreqSum(const std::vector<cppjieba::DictUnit> &node_infos) {
 Status ValidateMPPPath(const std::string &dict_path) {
   double freq_sum = 0.0;
   std::vector<cppjieba::DictUnit> static_node_infos;
-  std::ifstream ifs(dict_path.c_str());
+  std::ifstream ifs(dict_path.c_str(), std::ios::in);
   CHECK_FAIL_RETURN_UNEXPECTED(ifs.is_open(), "JiebaTokenizer: Failed to open file: " + dict_path);
   std::string line;
   std::vector<std::string> buf;
@@ -194,6 +227,7 @@ Status ValidateMPPPath(const std::string &dict_path) {
   }
   freq_sum = CalcFreqSum(static_node_infos);
   if (freq_sum <= 0) {
+    ifs.close();
     RETURN_STATUS_UNEXPECTED("JiebaTokenizer: MPSegment algorithm file format is incorrect.");
   }
   ifs.close();
@@ -215,7 +249,7 @@ bool GetLine(std::ifstream &ifs, std::string *line) {
 }
 
 Status ValidateHMMPath(const std::string &dict_path) {
-  std::ifstream ifs(dict_path.c_str());
+  std::ifstream ifs(dict_path.c_str(), std::ios::in);
   CHECK_FAIL_RETURN_UNEXPECTED(ifs.is_open(), "JiebaTokenizer: Failed to open file: " + dict_path);
   std::string line;
   std::vector<std::string> buf;
@@ -228,9 +262,12 @@ Status ValidateHMMPath(const std::string &dict_path) {
       "content fails to be obtained when startProb is loaded.");
   }
   cppjieba::Split(line, buf, " ");
-  CHECK_FAIL_RETURN_UNEXPECTED(buf.size() == kStatusSum,
-                               "JiebaTokenizer: The file format of the MPSegment algorithm is incorrect, and the "
-                               "content fails to be obtained when startProb is loaded.");
+  if (buf.size() != kStatusSum) {
+    ifs.close();
+    RETURN_STATUS_UNEXPECTED(
+      "JiebaTokenizer: The file format of the MPSegment algorithm is incorrect, and the "
+      "content fails to be obtained when startProb is loaded.");
+  }
 
   // Load transProb
   for (size_t i = 0; i < kStatusSum; i++) {
@@ -241,9 +278,12 @@ Status ValidateHMMPath(const std::string &dict_path) {
         "content fails to be obtained when transProb is loaded.");
     }
     cppjieba::Split(line, buf, " ");
-    CHECK_FAIL_RETURN_UNEXPECTED(buf.size() == kStatusSum,
-                                 "JiebaTokenizer: The file format of the MPSegment algorithm is incorrect, and the "
-                                 "content fails to be obtained when transProb is loaded.");
+    if (buf.size() != kStatusSum) {
+      ifs.close();
+      RETURN_STATUS_UNEXPECTED(
+        "JiebaTokenizer: The file format of the MPSegment algorithm is incorrect, and the "
+        "content fails to be obtained when transProb is loaded.");
+    }
   }
   if (!GetLine(ifs, &line)) {
     ifs.close();
@@ -552,6 +592,27 @@ Status ToVectorsOperation::ValidateParams() {
 std::shared_ptr<TensorOp> ToVectorsOperation::Build() {
   std::shared_ptr<ToVectorsOp> tensor_op = std::make_shared<ToVectorsOp>(vectors_, unk_init_, lower_case_backup_);
   return tensor_op;
+}
+
+// TruncateOperation
+TruncateOperation::TruncateOperation(int32_t max_seq_len) : max_seq_len_(max_seq_len) {}
+
+Status TruncateOperation::ValidateParams() {
+  RETURN_IF_NOT_OK(ValidateIntScalarNonNegative("Truncate", "max_seq_len", max_seq_len_));
+
+  return Status::OK();
+}
+
+std::shared_ptr<TensorOp> TruncateOperation::Build() {
+  std::shared_ptr<TruncateOp> tensor_op = std::make_shared<TruncateOp>(max_seq_len_);
+  return tensor_op;
+}
+
+Status TruncateOperation::to_json(nlohmann::json *out_json) {
+  nlohmann::json args;
+  args["max_seq_len"] = max_seq_len_;
+  *out_json = args;
+  return Status::OK();
 }
 
 // TruncateSequencePairOperation

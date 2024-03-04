@@ -18,12 +18,11 @@
 
 #include <map>
 #include <memory>
-#include <vector>
 #include <string>
-
-#include "ops/base_operator.h"
-#include "mindapi/base/types.h"
+#include <vector>
 #include "include/common/utils/utils.h"
+#include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -59,8 +58,9 @@ class MIND_API SparseApplyAdagrad : public BaseOperator {
   bool get_use_locking() const;
 };
 
-abstract::AbstractBasePtr SparseApplyAdagradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                  const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr SparseApplyAdagradInfer(const abstract::AnalysisEnginePtr &,
+                                                           const PrimitivePtr &primitive,
+                                                           const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_SPARSE_APPLY_ADAGRAD_H_

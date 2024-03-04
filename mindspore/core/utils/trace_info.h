@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,7 +39,6 @@ class TraceInfo {
   virtual std::string full_name() const { return name(); }
   virtual TraceInfoPtr clone() { return std::make_shared<TraceInfo>(*this); }
   virtual std::string action_name() const { return ""; }
-  std::string GetActionBetweenNode(const DebugInfoPtr &info) const;
   void set_debug_info(const DebugInfoPtr &info) { debug_info_ = info; }
   const DebugInfoPtr &debug_info() const { return debug_info_; }
   template <typename T>
@@ -61,7 +60,7 @@ class TracePhi : public TraceInfo {
   ~TracePhi() override = default;
   // phi: Φ
 #ifdef _WIN32
-  MS_DECLARE_TRACE_NAME_SYMBOL("phi", "phi-");
+  MS_DECLARE_TRACE_NAME_SYMBOL("phi", "phi_");
 #else
   MS_DECLARE_TRACE_NAME_SYMBOL("phi", "\u0444");
 #endif
@@ -122,7 +121,7 @@ class TraceCopy : public TraceInfo {
   TraceCopy() : TraceInfo(nullptr) {}
   explicit TraceCopy(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceCopy() override = default;
-  std::string name() const override { return "copy"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("copy", "");
   TraceInfoPtr clone() override { return std::make_shared<TraceCopy>(*this); }
 };
 
@@ -183,7 +182,7 @@ class TraceForRolledBody : public TraceInfo {
  public:
   explicit TraceForRolledBody(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceForRolledBody() override = default;
-  MS_DECLARE_TRACE_NAME_SYMBOL("for_rolled_body", "R-");
+  MS_DECLARE_TRACE_NAME_SYMBOL("for_rolled_body", "R_");
   TraceInfoPtr clone() override { return std::make_shared<TraceForRolledBody>(*this); }
 };
 
@@ -209,7 +208,7 @@ class TraceEquiv : public TraceInfo {
  public:
   explicit TraceEquiv(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceEquiv() override = default;
-  MS_DECLARE_TRACE_NAME_SYMBOL("equiv", "equiv");
+  MS_DECLARE_TRACE_NAME_SYMBOL("equiv", "equiv_");
   TraceInfoPtr clone() override { return std::make_shared<TraceEquiv>(*this); }
 };
 
@@ -266,8 +265,7 @@ class TraceGradSens : public TraceInfo {
 class TraceSpecialize : public TraceInfo {
  public:
   explicit TraceSpecialize(int64_t counter) : TraceInfo(nullptr), counter_(counter) {}
-  std::string name() const override { return "specialize" + std::to_string(counter_); }
-  std::string symbol() const override { return std::to_string(counter_) + "_"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("specialize" + std::to_string(counter_), std::to_string(counter_) + "_");
   std::string full_name() const override { return "specialize" + std::to_string(counter_) + "_"; }
   ~TraceSpecialize() override = default;
   TraceInfoPtr clone() override { return std::make_shared<TraceSpecialize>(*this); }
@@ -280,7 +278,7 @@ class TraceGradOperation : public TraceInfo {
  public:
   explicit TraceGradOperation(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceGradOperation() override = default;
-  std::string name() const override { return "grad_ops"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("grad_ops", "grad_");
   TraceInfoPtr clone() override { return std::make_shared<TraceGradOperation>(*this); }
 };
 
@@ -288,7 +286,7 @@ class TraceVmapOperation : public TraceInfo {
  public:
   explicit TraceVmapOperation(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceVmapOperation() override = default;
-  std::string name() const override { return "vmap_ops"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("vmap_ops", "vmap_");
   TraceInfoPtr clone() override { return std::make_shared<TraceVmapOperation>(*this); }
 };
 
@@ -296,7 +294,7 @@ class TraceForceBool : public TraceInfo {
  public:
   explicit TraceForceBool(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceForceBool() override = default;
-  std::string name() const override { return "force_bool"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("force_bool", "force_bool_");
   TraceInfoPtr clone() override { return std::make_shared<TraceForceBool>(*this); }
 };
 
@@ -304,7 +302,7 @@ class TraceForceWhileCond : public TraceInfo {
  public:
   explicit TraceForceWhileCond(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceForceWhileCond() override = default;
-  std::string name() const override { return "force_while_cond"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("force_while_cond", "force_while_cond_");
   TraceInfoPtr clone() override { return std::make_shared<TraceForceWhileCond>(*this); }
 };
 
@@ -312,7 +310,7 @@ class TraceExpandJ : public TraceInfo {
  public:
   explicit TraceExpandJ(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceExpandJ() override = default;
-  std::string name() const override { return "expand_j"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("expand_j", "j_");
   TraceInfoPtr clone() override { return std::make_shared<TraceExpandJ>(*this); }
 };
 
@@ -320,7 +318,7 @@ class TraceGenMetaFuncGraph : public TraceInfo {
  public:
   explicit TraceGenMetaFuncGraph(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceGenMetaFuncGraph() override = default;
-  std::string name() const override { return "GenMetaFuncGraph"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("GenMetaFuncGraph", "meta_");
   TraceInfoPtr clone() override { return std::make_shared<TraceGenMetaFuncGraph>(*this); }
 };
 
@@ -328,15 +326,23 @@ class TraceEvaluatorGenGraph : public TraceInfo {
  public:
   explicit TraceEvaluatorGenGraph(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceEvaluatorGenGraph() override = default;
-  std::string name() const override { return "GenEvaluatorGraph"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("GenEvaluatorGraph", "gen_evaluator_graph_");
   TraceInfoPtr clone() override { return std::make_shared<TraceEvaluatorGenGraph>(*this); }
+};
+
+class TraceParse : public TraceInfo {
+ public:
+  explicit TraceParse(const DebugInfoPtr &info) : TraceInfo(info) {}
+  ~TraceParse() override = default;
+  MS_DECLARE_TRACE_NAME_SYMBOL("parse", "");
+  TraceInfoPtr clone() override { return std::make_shared<TraceParse>(*this); }
 };
 
 class TraceResolve : public TraceInfo {
  public:
   explicit TraceResolve(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceResolve() override = default;
-  std::string name() const override { return "resolve"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("resolve", "resolve_");
   TraceInfoPtr clone() override { return std::make_shared<TraceResolve>(*this); }
 };
 
@@ -345,9 +351,8 @@ class TraceTransform : public TraceInfo {
   TraceTransform() : TraceTransform("") {}
   explicit TraceTransform(const std::string &transform_name) : TraceInfo(nullptr), transform_name_(transform_name) {}
   ~TraceTransform() override = default;
-  std::string name() const override { return "transform"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("transform", transform_name_.empty() ? "" : (transform_name_ + "_"));
   std::string full_name() const override { return "transform" + transform_name_; }
-  std::string symbol() const override { return transform_name_.empty() ? "" : (transform_name_ + "_"); }
   TraceInfoPtr clone() override { return std::make_shared<TraceTransform>(*this); }
 
  private:
@@ -358,7 +363,7 @@ class TraceGenerateVarArg : public TraceInfo {
  public:
   explicit TraceGenerateVarArg(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceGenerateVarArg() override = default;
-  std::string name() const override { return "GenerateVarArg"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("GenerateVarArg", "gen_var_arg_");
   TraceInfoPtr clone() override { return std::make_shared<TraceGenerateVarArg>(*this); }
 };
 
@@ -366,23 +371,23 @@ class TraceGenerateKwArg : public TraceInfo {
  public:
   explicit TraceGenerateKwArg(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceGenerateKwArg() override = default;
-  std::string name() const override { return "GenerateKwArg"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("GenerateKwArg", "gen_kw_arg_");
   TraceInfoPtr clone() override { return std::make_shared<TraceGenerateKwArg>(*this); }
 };
 
-class TraceTrasformK : public TraceInfo {
+class TraceTransformK : public TraceInfo {
  public:
-  explicit TraceTrasformK(const DebugInfoPtr &info) : TraceInfo(info) {}
-  ~TraceTrasformK() override = default;
-  std::string name() const override { return "TraceTrasformK"; }
-  TraceInfoPtr clone() override { return std::make_shared<TraceTrasformK>(*this); }
+  explicit TraceTransformK(const DebugInfoPtr &info) : TraceInfo(info) {}
+  ~TraceTransformK() override = default;
+  MS_DECLARE_TRACE_NAME_SYMBOL("TraceTransformK", "k_");
+  TraceInfoPtr clone() override { return std::make_shared<TraceTransformK>(*this); }
 };
 
 class TracePartialTransform : public TraceInfo {
  public:
   explicit TracePartialTransform(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TracePartialTransform() override = default;
-  std::string name() const override { return "PartialTransform"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("PartialTransform", "partial_trans_");
   TraceInfoPtr clone() override { return std::make_shared<TracePartialTransform>(*this); }
 };
 
@@ -390,7 +395,7 @@ class TraceGetEnv : public TraceInfo {
  public:
   explicit TraceGetEnv(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceGetEnv() override = default;
-  std::string name() const override { return "get_env"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("get_env", "get_env_");
   TraceInfoPtr clone() override { return std::make_shared<TraceGetEnv>(*this); }
 };
 
@@ -398,7 +403,7 @@ class TraceDoSignature : public TraceInfo {
  public:
   explicit TraceDoSignature(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceDoSignature() override = default;
-  std::string name() const override { return "DoSignature"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("DoSignature", "");
   TraceInfoPtr clone() override { return std::make_shared<TraceDoSignature>(*this); }
 };
 
@@ -407,7 +412,7 @@ class TraceCombileLikeGraphs : public TraceInfo {
   TraceCombileLikeGraphs() : TraceInfo(nullptr) {}
   explicit TraceCombileLikeGraphs(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceCombileLikeGraphs() override = default;
-  MS_DECLARE_TRACE_NAME_SYMBOL("CombileLike", "L-");
+  MS_DECLARE_TRACE_NAME_SYMBOL("CombileLike", "L_");
   TraceInfoPtr clone() override { return std::make_shared<TraceCombileLikeGraphs>(*this); }
 };
 
@@ -416,7 +421,7 @@ class TraceGraphReusing : public TraceInfo {
   TraceGraphReusing() : TraceInfo(nullptr) {}
   explicit TraceGraphReusing(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceGraphReusing() override = default;
-  MS_DECLARE_TRACE_NAME_SYMBOL("CellReusing", "CR-");
+  MS_DECLARE_TRACE_NAME_SYMBOL("CellReusing", "CR_");
   TraceInfoPtr clone() override { return std::make_shared<TraceGraphReusing>(*this); }
 };
 
@@ -424,7 +429,7 @@ class TraceSegmentTransform : public TraceInfo {
  public:
   explicit TraceSegmentTransform(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceSegmentTransform() override = default;
-  std::string name() const override { return "segment_transform"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("segment_transform", "seg_trans_");
   TraceInfoPtr clone() override { return std::make_shared<TraceSegmentTransform>(*this); }
 };
 
@@ -432,7 +437,7 @@ class TraceOpt : public TraceInfo {
  public:
   explicit TraceOpt(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceOpt() override = default;
-  std::string name() const override { return "opt"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("opt", "");
   TraceInfoPtr clone() override { return std::make_shared<TraceOpt>(*this); }
 };
 
@@ -440,14 +445,22 @@ class TraceListComp : public TraceInfo {
  public:
   explicit TraceListComp(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceListComp() override = default;
-  MS_DECLARE_TRACE_NAME_SYMBOL("ListComp", "G-");
+  MS_DECLARE_TRACE_NAME_SYMBOL("ListComp", "G_");
   TraceInfoPtr clone() override { return std::make_shared<TraceListComp>(*this); }
+};
+
+class TraceDictComp : public TraceInfo {
+ public:
+  explicit TraceDictComp(const DebugInfoPtr &info) : TraceInfo(info) {}
+  ~TraceDictComp() override = default;
+  MS_DECLARE_TRACE_NAME_SYMBOL("DictComp", "GD_");
+  TraceInfoPtr clone() override { return std::make_shared<TraceDictComp>(*this); }
 };
 
 class TraceMixedPrecision : public TraceInfo {
  public:
   explicit TraceMixedPrecision(const DebugInfoPtr &info) : TraceInfo(info) {}
-  MS_DECLARE_TRACE_NAME_SYMBOL("MixedPrecision", "C-");
+  MS_DECLARE_TRACE_NAME_SYMBOL("MixedPrecision", "C_");
   ~TraceMixedPrecision() override = default;
   TraceInfoPtr clone() override { return std::make_shared<TraceMixedPrecision>(*this); }
 };
@@ -456,8 +469,16 @@ class TraceShard : public TraceInfo {
  public:
   explicit TraceShard(const DebugInfoPtr &info) : TraceInfo(info) {}
   ~TraceShard() override = default;
-  std::string name() const override { return "shard_ops"; }
+  MS_DECLARE_TRACE_NAME_SYMBOL("shard_ops", "shard_");
   TraceInfoPtr clone() override { return std::make_shared<TraceShard>(*this); }
+};
+
+class TraceAssert : public TraceInfo {
+ public:
+  explicit TraceAssert(const DebugInfoPtr &info) : TraceInfo(info) {}
+  MS_DECLARE_TRACE_NAME_SYMBOL("Assert", "assert_");
+  ~TraceAssert() override = default;
+  TraceInfoPtr clone() override { return std::make_shared<TraceAssert>(*this); }
 };
 }  // namespace mindspore
 

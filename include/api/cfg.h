@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@
 
 namespace mindspore {
 constexpr int iter_th = 1000;
-class MixPrecisionCfg {
+class MS_API MixPrecisionCfg {
  public:
   MixPrecisionCfg() {
     this->dynamic_loss_scale_ = false;
@@ -49,7 +49,7 @@ class MixPrecisionCfg {
   bool is_raw_mix_precision_ = false; /**< Is mix precision model export from mindspore  */
 };
 
-class TrainCfg {
+class MS_API TrainCfg {
  public:
   TrainCfg() = default;
   TrainCfg(const TrainCfg &rhs) {
@@ -59,11 +59,24 @@ class TrainCfg {
   }
   ~TrainCfg() = default;
 
+  /// \brief obtain part of the name that identify a loss kernel.
+  ///
+  /// \return loss_name.
+  inline std::vector<std::string> GetLossName() const;
+  /// \brief Set part of the name that identify a loss kernel.
+  ///
+  /// \param[in] loss_name define part of the name that identify a loss kernel.
+  inline void SetLossName(const std::vector<std::string> &loss_name);
+
   OptimizationLevel optimization_level_ = kO0;
-  std::vector<std::string> loss_name_ = {
-    "loss_fct", "_loss_fn", "SigmoidCrossEntropy"}; /**< Set part of the name that identify a loss kernel */
-  MixPrecisionCfg mix_precision_cfg_;               /**< Mix precision configuration */
+  MixPrecisionCfg mix_precision_cfg_; /**< Mix precision configuration */
   bool accumulate_gradients_ = false;
+
+ private:
+  std::vector<std::vector<char>> loss_name_ = VectorStringToChar({"loss_fct", "_loss_fn", "SigmoidCrossEntropy"});
 };
+
+std::vector<std::string> TrainCfg::GetLossName() const { return VectorCharToString(loss_name_); }
+void TrainCfg::SetLossName(const std::vector<std::string> &loss_name) { loss_name_ = VectorStringToChar(loss_name); }
 }  // namespace mindspore
 #endif  // MINDSPORE_INCLUDE_API_CFG_H

@@ -15,16 +15,18 @@
  */
 #include "backend/common/pass/common_subexpression_elimination.h"
 
-#include <memory>
-#include <vector>
 #include <map>
+#include <memory>
 #include <utility>
-#include "runtime/device/kernel_info.h"
-#include "mindspore/core/ops/core_ops.h"
-#include "utils/ms_context.h"
-#include "include/common/utils/utils.h"
+#include <vector>
+#include "include/backend/kernel_info.h"
+#include "include/backend/optimizer/helper.h"
 #include "include/common/utils/anfalgo.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/common/utils/utils.h"
+#include "ops/array_op_name.h"
+#include "ops/framework_ops.h"
+#include "ops/sequence_ops.h"
+#include "utils/ms_context.h"
 
 namespace mindspore {
 namespace opt {
@@ -118,8 +120,8 @@ bool BackendCSE::CheckEqualCnodeInputs(const AnfNodePtr &main, const AnfNodePtr 
     return false;
   }
   for (size_t j = 0; j < inp1.size(); j++) {
-    auto inp1_j = inp1[j];
-    auto inp2_j = inp2[j];
+    auto inp1_j = GetReplicatedNode(inp1[j]);
+    auto inp2_j = GetReplicatedNode(inp2[j]);
     MS_EXCEPTION_IF_NULL(inp1_j);
     MS_EXCEPTION_IF_NULL(inp2_j);
     if (!(*inp1_j == *inp2_j)) {
@@ -140,12 +142,15 @@ bool BackendCSE::CheckValueNode(const ValueNodePtr &main, const ValueNodePtr &no
   if (main_value->isa<Primitive>() && node_value->isa<Primitive>()) {
     return false;
   } else if (main_value->isa<tensor::Tensor>() && node_value->isa<tensor::Tensor>()) {
-    return (AbsOf(main) == AbsOf(node)) && CheckEqualKernelBuildInfo(main, node);
+    auto main_tensor = main_value->cast<tensor::TensorPtr>();
+    auto node_tensor = node_value->cast<tensor::TensorPtr>();
+    return (AbsOf(main) == AbsOf(node)) && CheckEqualKernelBuildInfo(main, node) &&
+           main_tensor->device_address() == node_tensor->device_address();
   }
   return (AbsOf(main) == AbsOf(node)) && (*main_value == *node_value);
 }
 
-bool BackendCSE::CheckCNode(const CNodePtr &main, const CNodePtr &node) const {
+bool BackendCSE::CheckCNode(const CNodePtr &main, const CNodePtr &node) {
   MS_EXCEPTION_IF_NULL(main);
   MS_EXCEPTION_IF_NULL(node);
 
@@ -163,7 +168,7 @@ bool BackendCSE::CheckCNode(const CNodePtr &main, const CNodePtr &node) const {
   return CheckEqualCnodeInputs(main, node);
 }
 
-bool BackendCSE::CheckReplace(const AnfNodePtr &main, const AnfNodePtr &node) const {
+bool BackendCSE::CheckReplace(const AnfNodePtr &main, const AnfNodePtr &node) {
   MS_EXCEPTION_IF_NULL(main);
   MS_EXCEPTION_IF_NULL(node);
 
@@ -182,10 +187,12 @@ bool BackendCSE::CheckReplace(const AnfNodePtr &main, const AnfNodePtr &node) co
   return false;
 }
 
-bool BackendCSE::Cse(const FuncGraphPtr graph, const FuncGraphManagerPtr manager) const {
+bool BackendCSE::Cse(const FuncGraphPtr graph, const FuncGraphManagerPtr manager) {
   MS_EXCEPTION_IF_NULL(manager);
-  auto ret = BuildOrderGroupAndDoReplaceForOneGraph(graph, manager);
+  Init();
+  auto ret = BuildOrderGroupForOneGraph(graph);
   if (ret) {
+    DoReplace(manager);
     EliminateDuplicatedTupleGetItem(graph, manager);
   }
   return ret;

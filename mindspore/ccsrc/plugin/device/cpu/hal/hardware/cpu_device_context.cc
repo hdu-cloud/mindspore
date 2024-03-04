@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,48 +22,80 @@
 #include "plugin/device/cpu/optimizer/reg_cpu_const_input_to_attr.h"
 #include "plugin/device/cpu/optimizer/print_value_type.h"
 #include "plugin/device/cpu/hal/hardware/cpu_somas.h"
+#include "plugin/device/cpu/hal/device/cpu_hash_table_util.h"
 #ifdef ENABLE_AKG
 #include "plugin/device/cpu/kernel/akg/akg_cpu_kernel_build.h"
 #endif
 #include "plugin/factory/ms_factory.h"
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
 #include "kernel/kernel_build_info.h"
+#include "kernel/framework_utils.h"
 #include "plugin/device/cpu/hal/device/kernel_select_cpu.h"
 #include "utils/trace_base.h"
-#include "common/graph_kernel/graph_kernel_flags.h"
-#include "backend/common/optimizer/optimizer.h"
-#include "backend/common/optimizer/pass_manager.h"
+#include "backend/common/graph_kernel/graph_kernel_flags.h"
+#include "include/backend/optimizer/optimizer.h"
+#include "include/backend/optimizer/pass_manager.h"
 #include "backend/common/optimizer/common_backend_optimization.h"
 #include "backend/common/optimizer/dynamic_shape/dynamic_shape_helper.h"
 #include "plugin/device/cpu/optimizer/insert_cast_cpu.h"
+#include "plugin/device/cpu/optimizer/insert_cast_to_pyexecute.h"
 #include "plugin/device/cpu/optimizer/insert_format_transform_op.h"
 #include "plugin/device/cpu/optimizer/softmax_grad_fusion.h"
+#include "plugin/device/cpu/optimizer/matmul_biasadd_fusion.h"
+#include "plugin/device/cpu/optimizer/matmul_biasadd_relu_fusion.h"
+#include "backend/common/pass/insert_type_transform_op.h"
 #include "backend/common/pass/communication_op_fusion.h"
 #include "backend/common/pass/replace_node_by_proxy.h"
 #include "backend/common/pass/erase_visit_attr.h"
 #include "backend/common/pass/add_training_attr.h"
 #include "backend/common/pass/insert_tensor_move_for_communication.h"
-#include "common/graph_kernel/adapter/graph_kernel_optimization.h"
-#include "common/graph_kernel/adapter/expander.h"
-#ifdef ENABLE_AKG
-#include "common/graph_kernel/value_graph_binder.h"
-#endif
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "backend/common/pass/dynamic_sequence_ops_adaptation.h"
+#include "backend/common/graph_kernel/adapter/graph_kernel_optimization.h"
+#include "backend/common/expander/fallback/expander_fallback.h"
+#include "backend/common/graph_kernel/value_graph_binder.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "plugin/device/cpu/hal/profiler/cpu_profiling.h"
 #if defined(__linux__) && defined(WITH_BACKEND)
 #include "plugin/device/cpu/hal/hardware/ms_collective_comm_lib.h"
 #endif
 #ifndef ENABLE_SECURITY
-#include "debug/data_dump/dump_json_parser.h"
+#include "include/backend/debug/data_dump/dump_json_parser.h"
 #endif
+#ifdef ENABLE_DUMP_IR
+#include "include/common/debug/anf_ir_dump.h"
+#endif
+#include "include/common/profiler.h"
+#include "plugin/device/cpu/hal/device/cpu_kernel_task.h"
 
 namespace mindspore {
 namespace device {
 namespace cpu {
+namespace {
+const char kModelNameCPU[] = "CPU";
+const char kEventOptimizeGraph[] = "OptimizeGraph";
+const char kStageSetKernelInfo[] = "SetKernelInfo";
+
+pynative::KernelTaskPtr GetTaskByTaskType(const pynative::KernelTaskType &task_type,
+                                          const std::shared_ptr<pynative::KernelTaskContext> &task_context) {
+  switch (task_type) {
+    case pynative::KernelTaskType::kCONTIGUOUS_TASK:
+      return std::make_shared<CpuContiguousKernelTask>(task_context);
+    case pynative::KernelTaskType::kCOPY_TASK:
+      return std::make_shared<CpuCopyWithSliceKernelTask>(task_context);
+    default:
+      MS_LOG(EXCEPTION) << "KernelTaskType is invalid, task_type:" << task_type;
+  }
+}
+}  // namespace
 using mindspore::kernel::KernelBuildInfo;
 
 void CPUDeviceContext::Initialize() {
+#ifdef __APPLE__
+  std::lock_guard<SpinLock> spin_lock(init_lock_);
+#else
+  std::lock_guard<std::mutex> lock(init_mutex_);
+#endif
   if (initialized_) {
     return;
   }
@@ -78,7 +110,14 @@ void CPUDeviceContext::Initialize() {
   json_parser.CopyDumpJsonToDir(rank_id);
   json_parser.CopyMSCfgJsonToDir(rank_id);
 #endif
-
+#ifdef __linux__
+  auto ms_context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context);
+  if (ms_context->IsDefaultDeviceTarget() && ms_context->get_param<std::string>(MS_CTX_DEVICE_TARGET) == kCPUDevice) {
+    MS_LOG(INFO)
+      << "No device_target set, set CPU as default. You can call mindspore.set_context(device_target=\"XXX\")";
+  }
+#endif  // __linux__
   initialized_ = true;
 }
 
@@ -116,6 +155,38 @@ std::vector<void *> CPUDeviceResManager::AllocateContinuousMemory(const std::vec
   return mem_manager_->MallocContinuousMemFromMemPool(size_list);
 }
 
+namespace {
+// Create user data content(such as CPU hash table) and set user data reference into device_address.
+void FillUserData(const UserDataPtr &user_data, DeviceAddress *device_address) {
+  MS_EXCEPTION_IF_NULL(user_data);
+  MS_EXCEPTION_IF_NULL(device_address);
+
+  // Save reference of user data in device address.
+  device_address->set_user_data(user_data);
+
+  const auto &user_data_type = user_data->get<UserDataType>(kUserDataType);
+  if (user_data_type == nullptr) {
+    return;
+  }
+  if (*user_data_type == UserDataType::kUserTypeHashTable) {
+    auto key_type = user_data->get<TypeId>(kHashTableKeyType);
+    auto value_type = user_data->get<TypeId>(kHashTableValueType);
+    MS_EXCEPTION_IF_NULL(key_type);
+    MS_EXCEPTION_IF_NULL(value_type);
+    const auto &iter = cpu_hash_table_funcs.find({*key_type, *value_type});
+    if (iter != cpu_hash_table_funcs.end()) {
+      // Create CPU hash table and set into `user_data`.
+      return std::get<kCreateFuncIndex>(iter->second)(user_data);
+    } else {
+      MS_LOG(EXCEPTION) << "Unsupported hash table type, key type:" << TypeIdLabel(*key_type)
+                        << ", value type:" << TypeIdLabel(*value_type);
+    }
+  } else {
+    MS_LOG(EXCEPTION) << "Invalid user data type:" << *user_data_type;
+  }
+}
+}  // namespace
+
 DeviceAddressPtr CPUDeviceResManager::CreateDeviceAddress(void *const device_ptr, size_t device_size,
                                                           const string &format, TypeId type_id,
                                                           const ShapeVector &shape,
@@ -124,6 +195,9 @@ DeviceAddressPtr CPUDeviceResManager::CreateDeviceAddress(void *const device_ptr
                                                            device_context_->device_context_key().device_name_,
                                                            device_context_->device_context_key().device_id_);
   device_address->set_host_shape(shape);
+  if (user_data != nullptr) {
+    FillUserData(user_data, device_address.get());
+  }
   return device_address;
 }
 
@@ -131,6 +205,13 @@ void CPUKernelExecutor::OptimizeGraph(const FuncGraphPtr &graph) const {
   MS_EXCEPTION_IF_NULL(graph);
   auto kernel_graph = graph->cast<KernelGraphPtr>();
   MS_EXCEPTION_IF_NULL(kernel_graph);
+  auto ms_context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context);
+  auto enable_lazy_inline = ms_context->CellReuseLevel() != CellReuseLevel::kNoCellReuse;
+  if (enable_lazy_inline) {
+    MS_LOG(EXCEPTION) << "CPU does not support the lazy_inline feature, "
+                      << "please do not mark @lazy_inline in cell's __init__ func.";
+  }
   if (kernel_graph->is_from_single_op()) {
     SetOperatorInfo(kernel_graph);
     SingleOpGraphOptimize(kernel_graph);
@@ -142,18 +223,24 @@ void CPUKernelExecutor::OptimizeGraph(const FuncGraphPtr &graph) const {
     opt::AddDynamicShapeAttrPass(kernel_graph);
 
     SetOperatorInfo(kernel_graph);
+    // SetOperatorInfo may generate new node, so need set kernel object type again.
+    kernel_graph->SetKernelObjectTypesForUnrealNodes();
+#ifdef ENABLE_DUMP_IR
+    if (ms_context->CanDump(kIntroductory)) {
+      DumpIR("hwopt_comm_after_kernel_select_" + graph->ToString() + ".ir", graph, true);
+    }
+#endif
+
     OptimizeGraphImpl(kernel_graph);
 
     // Run final optimization.
     opt::CommonFinalOptimization(kernel_graph);
 
-#ifdef ENABLE_AKG
     // Run graph kernel fusion optimization
     if (graphkernel::GraphKernelFlags::GetInstance().IsEnableGraphKernel()) {
       graphkernel::GraphKernelOptimize(kernel_graph);
       kernel_graph->SetExecOrderByDefault();
     }
-#endif
   }
 }
 
@@ -181,6 +268,9 @@ void CPUKernelExecutor::OptimizeMindIR(const KernelGraphPtr &graph) const {
   auto optimizer = std::make_shared<opt::GraphOptimizer>();
   auto pm = std::make_shared<opt::PassManager>();
   pm->AddPass(std::make_shared<opt::SoftmaxGradFusionCpu>("softmax_grad_fusion_cpu"));
+  // Match MatMul+BiasAdd+ReLU first, if no match, then match MatMul+BiasAdd
+  pm->AddPass(std::make_shared<opt::MatMulBiasAddReluFusionCPU>("matmul_biasadd_relu_fusion_cpu"));
+  pm->AddPass(std::make_shared<opt::DynamicSequenceOpsAdaptation>());
   optimizer->AddPassManager(pm);
   (void)optimizer->Optimize(graph);
   graph->SetExecOrderByDefault();
@@ -190,6 +280,7 @@ void CPUKernelExecutor::OptimizeGraphImpl(const KernelGraphPtr &graph) const {
   MS_EXCEPTION_IF_NULL(graph);
   auto optimizer = std::make_shared<opt::GraphOptimizer>();
   auto pm = std::make_shared<opt::PassManager>();
+  pm->AddPass(std::make_shared<opt::InsertTypeTransformOp>("insert_type_transform_op"));
   pm->AddPass(std::make_shared<opt::InsertFormatTransformOpCPU>("insert_format_transform_op_cpu"));
   pm->AddPass(std::make_shared<opt::AllReduceFusion>());
   pm->AddPass(std::make_shared<opt::InsertCastCPU>("insert_cast"));
@@ -197,6 +288,7 @@ void CPUKernelExecutor::OptimizeGraphImpl(const KernelGraphPtr &graph) const {
   pm->AddPass(std::make_shared<opt::InsertTensorMoveForCommunication>());
   pm->AddPass(std::make_shared<opt::AddTrainingAttr>());
   pm->AddPass(std::make_shared<opt::PrintValueType>("print_value_type"));
+  pm->AddPass(std::make_shared<opt::InsertCastToPyExecute>("insert_cast_for_pyexecute"));
   optimizer->AddPassManager(pm);
   (void)optimizer->Optimize(graph);
   graph->SetExecOrderByDefault();
@@ -206,6 +298,11 @@ void CPUKernelExecutor::SingleOpGraphOptimize(const KernelGraphPtr &graph) const
   MS_EXCEPTION_IF_NULL(graph);
   auto optimizer = std::make_shared<opt::GraphOptimizer>();
   auto pm = std::make_shared<opt::PassManager>();
+  if (graph->has_attr(kAttrPackFunction)) {
+    graph->SetKernelObjectTypesForUnrealNodes();
+    pm->AddPass(std::make_shared<opt::InsertTypeTransformOp>("insert_type_transform_op"));
+    pm->AddPass(std::make_shared<opt::InsertFormatTransformOpCPU>("insert_format_transform_op_cpu"));
+  }
   pm->AddPass(std::make_shared<opt::InsertCastCPU>("insert_cast"));
   optimizer->AddPassManager(pm);
   (void)optimizer->Optimize(graph);
@@ -224,7 +321,7 @@ void SetControlOpInfo(const CNodePtr &kernel_node) {
   }
   std::vector<std::string> outputs_format;
   std::vector<TypeId> outputs_type;
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(kernel_node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(kernel_node);
   for (size_t output_index = 0; output_index < output_num; ++output_index) {
     (void)outputs_format.emplace_back(kOpFormat_DEFAULT);
     outputs_type.push_back(common::AnfAlgo::GetOutputInferDataType(kernel_node, output_index));
@@ -249,10 +346,10 @@ void SetKernelInfoBeforeCreateKernel(const std::vector<CNodePtr> &nodes) {
     }
 
     // Kernel selection process for non control op.
-    if (!common::AnfAlgo::IsControlOpExecInBackend(node)) {
+    if (!common::AnfAlgo::IsBpropCutOpExecInBackend(node)) {
       auto [msg, etype] = SetKernelInfoWithMsg(node);
       if (!msg.empty()) {
-        MS_EXCEPTION(etype) << msg;
+        MS_EXCEPTION(etype) << "#umsg#Kernel select failed:#umsg#" << msg;
       }
     } else {
       // Kernel selection process for control op.
@@ -264,7 +361,7 @@ void SetKernelInfoBeforeCreateKernel(const std::vector<CNodePtr> &nodes) {
 
 void CPUKernelExecutor::SetOperatorInfo(const KernelGraphPtr &graph) const {
   MS_EXCEPTION_IF_NULL(graph);
-#ifdef ENABLE_AKG
+  (void)profiler::CollectHostInfo(kModelNameCPU, kEventOptimizeGraph, kStageSetKernelInfo, 1, 0, 0);
   bool do_expand = false;
   auto mng = graph->manager();
   if (mng == nullptr) {
@@ -272,42 +369,36 @@ void CPUKernelExecutor::SetOperatorInfo(const KernelGraphPtr &graph) const {
     MS_EXCEPTION_IF_NULL(mng);
     graph->set_manager(mng);
   }
-#endif
   auto &node_list = graph->execution_order();
   for (auto &node : node_list) {
-    if (!common::AnfAlgo::IsControlOpExecInBackend(node)) {
+    if (!common::AnfAlgo::IsBpropCutOpExecInBackend(node)) {
       auto [msg, etype] = SetKernelInfoWithMsg(node);
       if (msg.empty()) {
         continue;
       }
-#ifdef ENABLE_AKG
       auto f = [](const CNodePtr &n) {
         auto res = SetKernelInfoWithMsg(n);
         return res.first.empty();
       };
-      auto cnode = graphkernel::TryExpandCNode(node, f);
-      if (cnode == nullptr) {
-        MS_EXCEPTION(etype) << msg;
+      auto expand_ret = expander::TryExpandCNode(node, f);
+      if (!expand_ret) {
+        constexpr auto recursive_level = 2;
+        MS_EXCEPTION(etype) << "#umsg#Kernel select failed:#umsg#" << msg
+                            << "\nnode: " << node->DebugString(recursive_level);
       }
-      (void)mng->Replace(node, cnode);
       MS_LOG(INFO) << msg << " but expand success.";
-      auto expand_fg = GetCNodeFuncGraph(cnode);
-      graphkernel::InlineExpandFuncGraph(cnode, expand_fg);
       do_expand = true;
-#else
-      MS_EXCEPTION(etype) << msg;
-#endif
     } else {
       SetControlOpInfo(node);
     }
   }
-#ifdef ENABLE_AKG
   if (do_expand) {
     (void)graphkernel::BindValueToGraph().Run(graph);
     graph->SetExecOrderByDefault();
   }
-#endif
+  (void)profiler::CollectHostInfo(kModelNameCPU, kEventOptimizeGraph, kStageSetKernelInfo, 1, 0, 1);
 }
+
 void CPUKernelExecutor::CreateKernel(const std::vector<CNodePtr> &nodes) const {
   SetKernelInfoBeforeCreateKernel(nodes);
 
@@ -315,7 +406,7 @@ void CPUKernelExecutor::CreateKernel(const std::vector<CNodePtr> &nodes) const {
   std::vector<AnfNodePtr> akg_nodes;
   for (const auto &node : nodes) {
     MS_EXCEPTION_IF_NULL(node);
-    if (common::AnfAlgo::IsControlOpExecInBackend(node)) {
+    if (common::AnfAlgo::IsBpropCutOpExecInBackend(node)) {
       continue;
     }
     if (session::AnfRuntimeAlgorithm::GetKernelType(node) == KernelType::AKG_KERNEL) {
@@ -331,12 +422,13 @@ void CPUKernelExecutor::CreateKernel(const std::vector<CNodePtr> &nodes) const {
       kernel::Factory<kernel::NativeCpuKernelMod>::Instance().Create(kernel_name);
 
     if (cpu_kernel == nullptr) {
-      MS_LOG(EXCEPTION) << "Build cpu operator[" << node->fullname_with_scope() << "] failed";
+      MS_LOG(INTERNAL_EXCEPTION) << "#dmsg#Kernel build failed:#dmsg#Build cpu operator[" << node->fullname_with_scope()
+                                 << "] failed";
     }
 
     // This branch would be removed When KernelMode rectification is complete
     auto discard_cpu_kernel_mod = std::dynamic_pointer_cast<kernel::DeprecatedNativeCpuKernelMod>(cpu_kernel);
-    auto args = kernel::AbstractArgsFromCNode(node, discard_cpu_kernel_mod != nullptr);
+    auto args = kernel::AbstractArgsFromCNode(node);
     // inputs_tensor_map is ops's valueDepend input. if this input is const_value tensor,
     // we will put this tensor in args.inputs.data_.
     auto inputs_tensor_map = std::map<uint32_t, tensor::TensorPtr>();
@@ -352,13 +444,15 @@ void CPUKernelExecutor::CreateKernel(const std::vector<CNodePtr> &nodes) const {
       kernel::SetCpuRefMapToKernelInfo(node, kernel_attrs);
       auto thread_pool = kernel::GetActorMgrInnerThreadPool();
       cpu_kernel->SetThreadPool(thread_pool);
-      auto ret = cpu_kernel->Init(args.op, args.inputs, args.outputs);
+      auto op = kernel::CreateOperatorByCNode(node);
+      auto ret = cpu_kernel->Init_(op, args.inputs, args.outputs);
       if (!ret) {
         MS_LOG(EXCEPTION) << trace::DumpSourceLines(node);
       }
       if (!kernel::IfNeedSkipResize(node)) {
-        if (cpu_kernel->Resize(args.op, args.inputs, args.outputs, inputs_tensor_map) == kernel::KRET_RESIZE_FAILED) {
-          MS_LOG(EXCEPTION) << "CPU kernel op [" << node->fullname_with_scope() << "] Resize failed.";
+        if (cpu_kernel->Resize(args.inputs, args.outputs, inputs_tensor_map) == kernel::KRET_RESIZE_FAILED) {
+          MS_LOG(INTERNAL_EXCEPTION) << "#dmsg#Kernel build failed:#dmsg#CPU kernel op [" << node->fullname_with_scope()
+                                     << "] resize failed.";
         }
       }
 
@@ -367,7 +461,7 @@ void CPUKernelExecutor::CreateKernel(const std::vector<CNodePtr> &nodes) const {
   }
 #ifdef ENABLE_AKG
   kernel::AkgCpuKernelBuilder akg_cpu_kernel_builder;
-  (void)akg_cpu_kernel_builder.AkgKernelParallelBuild(akg_nodes);
+  (void)akg_cpu_kernel_builder.SingleOpParallelBuild(akg_nodes);
 #endif
 }
 
@@ -390,7 +484,7 @@ void CPUKernelExecutor::PreprocessBeforeRun(const FuncGraphPtr &graph) const {
     if (ret) {
       MS_LOG(INFO) << "Somas allocate success for graph " << kernel_graph->graph_id()
                    << " somas size: " << kernel_graph->somas_whole_block_size();
-    } else {
+    } else if (somas->IsSupportSomas(*kernel_graph)) {
       MS_LOG(WARNING) << "Somas allocate failed for graph " << kernel_graph->graph_id();
     }
   }
@@ -401,13 +495,11 @@ bool CPUKernelExecutor::LaunchKernel(const CNodePtr &kernel, const std::vector<A
                                      const std::vector<AddressPtr> &workspace, const std::vector<AddressPtr> &outputs,
                                      size_t /* stream_id */) const {
   MS_EXCEPTION_IF_NULL(kernel);
-  auto kernel_mod = AnfAlgo::GetKernelMod(kernel);
-  MS_EXCEPTION_IF_NULL(kernel_mod);
 
 #ifndef ENABLE_SECURITY
   const auto &profiler_inst = profiler::cpu::CPUProfiler::GetInstance();
   MS_EXCEPTION_IF_NULL(profiler_inst);
-  if (profiler_inst->GetEnableFlag()) {
+  if (profiler_inst->GetEnableFlag() && profiler_inst->GetOpTimeFlag()) {
     MS_LOG(DEBUG) << "Begin launch kernel: " << kernel->fullname_with_scope();
     auto ret = LaunchKernelWithProfiling(kernel, inputs, workspace, outputs);
     MS_LOG(DEBUG) << "End launch kernel: " << kernel->fullname_with_scope();
@@ -415,8 +507,24 @@ bool CPUKernelExecutor::LaunchKernel(const CNodePtr &kernel, const std::vector<A
   }
 #endif
   MS_LOG(DEBUG) << "Begin launch kernel: " << kernel->fullname_with_scope();
-  auto ret = DoLaunchKernel(kernel_mod, inputs, workspace, outputs);
+  auto ret = DoLaunchKernel(kernel, inputs, workspace, outputs);
   MS_LOG(DEBUG) << "End launch kernel: " << kernel->fullname_with_scope();
+  return ret;
+}
+
+bool CPUKernelExecutor::ExecuteKernelTask(const pynative::KernelTaskType &task_type,
+                                          const device::DeviceAddressPtrList &input_addr_list,
+                                          const TensorStorageInfoPtrList &input_storage_list,
+                                          const device::DeviceAddressPtrList &output_addr_list) const {
+  auto task_context = std::make_shared<pynative::KernelTaskContext>(device_context_, input_addr_list,
+                                                                    input_storage_list, output_addr_list, nullptr);
+  auto task = GetTaskByTaskType(task_type, task_context);
+  MS_EXCEPTION_IF_NULL(task);
+
+  auto ret = task->RunWithRet();
+  if (!ret) {
+    MS_LOG(EXCEPTION) << "Exec task failed, task_type:" << task_type;
+  }
   return ret;
 }
 
@@ -453,23 +561,63 @@ bool CPUKernelExecutor::LaunchKernelWithProfiling(const CNodePtr &kernel, const 
   auto profiler_inst = profiler::cpu::CPUProfiler::GetInstance();
   MS_EXCEPTION_IF_NULL(profiler_inst);
 
-  auto kernel_mod = AnfAlgo::GetKernelMod(kernel);
-  MS_EXCEPTION_IF_NULL(kernel_mod);
-
   uint32_t pid = IntToUint(getpid());
   // cpu support multi-thread with mindrt for profiling.
   profiler_inst->OpDataProducerBeginParallel(kernel->fullname_with_scope(), pid);
-  bool ret = DoLaunchKernel(kernel_mod, inputs, workspace, outputs);
+  bool ret = DoLaunchKernel(kernel, inputs, workspace, outputs);
   profiler_inst->OpDataProducerEndParallel(kernel->fullname_with_scope());
   profiler_inst->RecordFrameWorkInfo(kernel);
   return ret;
 }
 
-bool CPUKernelExecutor::DoLaunchKernel(KernelMod *const kernel_mod, const std::vector<AddressPtr> &inputs,
+bool CPUKernelExecutor::DoLaunchKernel(const CNodePtr &kernel, const std::vector<AddressPtr> &inputs,
                                        const std::vector<AddressPtr> &workspace,
                                        const std::vector<AddressPtr> &outputs) const {
+  MS_EXCEPTION_IF_NULL(kernel);
+  auto kernel_mod = AnfAlgo::GetKernelMod(kernel);
   MS_EXCEPTION_IF_NULL(kernel_mod);
-  return kernel_mod->Launch(inputs, workspace, outputs, nullptr);
+  uint64_t start_time = 0;
+  PROFILER_START(start_time);
+  auto ret = kernel_mod->Launch(inputs, workspace, outputs, nullptr);
+  PROFILER_END(start_time, runtime::ProfilerModule::kKernel, runtime::ProfilerEvent::kKernelLaunch,
+               kernel->fullname_with_scope(), false);
+  return ret;
+}
+
+void CPUKernelExecutor::RebuildKernelSelectBackoffOp(const std::vector<CNodePtr> &nodes) const {
+  for (auto &node : nodes) {
+    MS_EXCEPTION_IF_NULL(node);
+    if (!AnfAlgo::IsKernelSelectBackoffOp(node)) {
+      continue;
+    }
+    auto [failure_info, failure_type] = AnfAlgo::GetKernelSelectBackoffInfo(node);
+    if (IsVmapNotSupported(node)) {
+      MS_EXCEPTION(failure_type) << "#umsg#Kernel select failed:#umsg#" << failure_info;
+    }
+
+    // Judge whether match strictly between kernel build info and supported kernel attrs.
+    const auto &kernel_build_info = AnfAlgo::GetSelectKernelBuildInfo(node);
+    MS_EXCEPTION_IF_NULL(kernel_build_info);
+    const auto &kernel_attr = kernel::GetKernelAttrFromBuildInfo(kernel_build_info);
+    const auto &supported_kernel_attrs =
+      kernel::NativeCpuKernelMod::GetCpuSupportedList(common::AnfAlgo::GetCNodeName(node));
+    const auto &match_result = kernel::MatchKernelAttrStrict(kernel_attr, supported_kernel_attrs);
+    auto attr_info = kernel::FetchPrintInfoByKernelAttr(kernel_attr);
+    if (!match_result.first) {
+      MS_LOG(INFO) << "Backoff and rebuild kernel on CPU failed for node: " << node->fullname_with_scope()
+                   << ", node attr: " << attr_info;
+      MS_EXCEPTION(failure_type) << "#umsg#Kernel select failed:#umsg#" << failure_info;
+    } else {
+      // Set the CPU flag.
+      common::AnfAlgo::SetNodeAttr(kAttrPrimitiveTarget, MakeValue(kCPUDevice), node);
+      kernel_build_info->set_kernel_type(CPU_KERNEL);
+      kernel_build_info->set_processor(kernel::Processor::CPU);
+      MS_LOG(INFO) << "Backoff and rebuild kernel on CPU successfully for node: " << node->fullname_with_scope()
+                   << ", node attr: " << attr_info;
+    }
+
+    CreateKernel({node});
+  }
 }
 
 MS_REGISTER_DEVICE(kCPUDevice, CPUDeviceContext);
@@ -477,7 +625,7 @@ MS_REGISTER_DEVICE(kCPUDevice, CPUDeviceContext);
 MSCONTEXT_REGISTER_INIT_FUNC(kCPUDevice, [](MsContext *ctx) -> void {
   MS_EXCEPTION_IF_NULL(ctx);
   if (ctx->backend_policy() != "ms") {
-    ctx->set_backend_policy("ms");
+    (void)ctx->set_backend_policy("ms");
   }
 });
 #endif

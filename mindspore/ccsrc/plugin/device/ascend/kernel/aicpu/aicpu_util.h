@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,18 +24,23 @@
 #include <set>
 #include <string>
 #include "kernel/kernel.h"
+#include "ops/structure_op_name.h"
+#include "ops/nn_op_name.h"
+#include "ops/framework_op_name.h"
 namespace mindspore {
 namespace kernel {
 constexpr auto kLibAicpuKernelSoName = "libaicpu_kernels.so";
 constexpr auto kLibCpuKernelSoName = "libcpu_kernels.so";
-constexpr auto kFormat = "format";
 constexpr auto kDataFormat = "data_format";
 constexpr auto kDropoutGenMaskOpName = "DropoutGenMask";
 constexpr auto kInitDataSetQueue = "InitDataSetQueue";
 constexpr auto kInitData = "InitData";
+constexpr auto kCTCLossV2 = "CTCLossV2";
+constexpr auto kCTCLossV2Grad = "CTCLossV2Grad";
 constexpr auto kGetNext = "GetNext";
 constexpr auto kPrint = "Print";
 constexpr auto kPack = "Pack";
+constexpr auto kCumMax = "CumMax";
 constexpr auto kCumSum = "CumSum";
 constexpr auto kCumProd = "CumProd";
 constexpr auto kMeshgrid = "Meshgrid";
@@ -47,6 +52,7 @@ constexpr auto kShapes = "shapes";
 constexpr auto kTypes = "types";
 constexpr auto kQueueName = "queue_name";
 constexpr auto kNameRangeV2 = "RangeV2";
+constexpr auto kSparseTensorDenseMatmul = "SparseTensorDenseMatmul";
 constexpr auto kSeed = "seed";
 constexpr auto kSeed0 = "Seed0";
 constexpr auto kSeed1 = "Seed1";
@@ -64,9 +70,12 @@ constexpr auto kStridedSliceV2Grad = "StridedSliceV2Grad";
 constexpr auto kEditDistance = "EditDistance";
 constexpr auto kGatherD = "GatherD";
 constexpr auto kGather = "Gather";
+constexpr auto kReverseSequence = "ReverseSequence";
 constexpr auto kHistogram = "Histogram";
 constexpr auto kIdentity = "Identity";
 constexpr auto kIdentityN = "IdentityN";
+constexpr auto kIndexPut = "IndexPut";
+constexpr auto kInplaceIndexAdd = "InplaceIndexAdd";
 constexpr auto kConcatOffset = "ConcatOffset";
 constexpr auto kConcatOffsetV1 = "ConcatOffsetV1";
 constexpr auto kRandomChoiceWithMask = "RandomChoiceWithMask";
@@ -86,6 +95,7 @@ constexpr auto kNonMaxSuppressionV3 = "NonMaxSuppressionV3";
 constexpr auto kMaskedSelect = "MaskedSelect";
 constexpr auto kMaskedSelectGrad = "MaskedSelectGrad";
 constexpr auto kDynamicStitch = "DynamicStitch";
+constexpr auto kSort = "Sort";
 constexpr auto kSearchSorted = "SearchSorted";
 constexpr auto kLinSpace = "LinSpace";
 constexpr auto kResizeBilinear = "ResizeBilinear";
@@ -103,6 +113,12 @@ constexpr auto kEnvironDestroyAll = "EnvironDestroyAll";
 constexpr auto kKLDivLoss = "KLDivLoss";
 constexpr auto kKLDivLossGrad = "KLDivLossGrad";
 constexpr auto kSampleDistortedBoundingBoxV2 = "SampleDistortedBoundingBoxV2";
+constexpr auto kSequenceAdd = "SequenceAdd";
+constexpr auto kAbs = "Abs";
+constexpr auto kSequenceAddN = "SequenceAddN";
+constexpr auto kSequenceAddOffset = "SequenceAddOffset";
+constexpr auto kSequenceConcat = "SequenceConcat";
+constexpr auto kSequenceStack = "SequenceStack";
 constexpr auto kSparseToDenseV2 = "SparseToDenseV2";
 constexpr auto kSparseSoftmaxCrossEntropyWithLogitsV2 = "SparseSoftmaxCrossEntropyWithLogitsV2";
 constexpr auto kPriorityReplayBufferCreate = "PriorityReplayBufferCreate";
@@ -119,11 +135,10 @@ constexpr auto kReLUV3 = "ReLUV3";
 constexpr auto kNonZero = "NonZero";
 constexpr auto kMaxPoolV1 = "MaxPoolV1";
 constexpr auto kMaxPoolGradV1 = "MaxPoolGradV1";
+constexpr auto kAdaptiveMaxPool2D = "AdaptiveMaxPool2D";
 constexpr auto kAdaptiveMaxPool2DGrad = "AdaptiveMaxPool2DGrad";
 constexpr auto kAvgPoolV1 = "AvgPoolV1";
 constexpr auto kAvgPoolGradV1 = "AvgPoolGradV1";
-constexpr auto kAdaptiveAvgPool2DV1 = "AdaptiveAvgPool2DV1";
-constexpr auto kAdaptiveAvgPool2DGradV1 = "AdaptiveAvgPool2DGradV1";
 constexpr auto kAdaptiveAvgPool3D = "AdaptiveAvgPool3D";
 constexpr auto kAdaptiveAvgPool3DGrad = "AdaptiveAvgPool3DGrad";
 constexpr auto kUniqueConsecutive = "UniqueConsecutive";
@@ -142,9 +157,9 @@ constexpr auto kGridSampler3D = "GridSampler3D";
 constexpr auto kGridSampler3DGrad = "GridSampler3DGrad";
 constexpr auto kScatterNdMax = "ScatterNdMax";
 constexpr auto kScatterNdMin = "ScatterNdMin";
+constexpr auto kScatterAddWithAxis = "ScatterAddWithAxis";
 constexpr auto kTril = "Tril";
 constexpr auto kSub = "Sub";
-constexpr auto kMul = "Mul";
 constexpr auto kDiv = "Div";
 constexpr auto kNeg = "Neg";
 constexpr auto kNotEqual = "NotEqual";
@@ -159,7 +174,9 @@ constexpr auto kACos = "ACos";
 constexpr auto kAcosh = "Acosh";
 constexpr auto kAsin = "Asin";
 constexpr auto kAsinh = "Asinh";
+constexpr auto kLess = "Less";
 constexpr auto kAtanh = "Atanh";
+constexpr auto kAdaptiveMaxPool3DGrad = "AdaptiveMaxPool3DGrad";
 constexpr auto kCosh = "Cosh";
 constexpr auto kTan = "Tan";
 constexpr auto kTanhGrad = "TanhGrad";
@@ -168,8 +185,17 @@ constexpr auto kRightShift = "RightShift";
 constexpr auto kFloorDiv = "FloorDiv";
 constexpr auto kAddcdiv = "Addcdiv";
 constexpr auto kAddcmul = "Addcmul";
+constexpr auto kAdd = "Add";
 constexpr auto kTriu = "Triu";
+constexpr auto kUniform = "Uniform";
+constexpr auto kUniformCandidateSampler = "UniformCandidateSampler";
 constexpr auto kExpand = "Expand";
+constexpr auto kExpandDims = "ExpandDims";
+constexpr auto kCast = "Cast";
+constexpr auto kReshape = "Reshape";
+constexpr auto kFlatten = "Flatten";
+constexpr auto kSqueeze = "Squeeze";
+constexpr auto kMatrixBandPart = "MatrixBandPart";
 constexpr auto kMatrixDiagPartV3 = "MatrixDiagPartV3";
 constexpr auto kMatrixDiagV3 = "MatrixDiagV3";
 constexpr auto kBetainc = "Betainc";
@@ -178,26 +204,65 @@ constexpr auto kZeta = "Zeta";
 constexpr auto kSquaredDifference = "SquaredDifference";
 constexpr auto kZerosLike = "ZerosLike";
 constexpr auto kEqual = "Equal";
+constexpr auto kGreaterEqual = "GreaterEqual";
+constexpr auto kGreater = "Greater";
 constexpr auto kOnesLike = "OnesLike";
 constexpr auto kSign = "Sign";
+constexpr auto kFmax = "Fmax";
 constexpr auto kGLU = "GLU";
+constexpr auto kFmin = "Fmin";
+constexpr auto kFillV2 = "FillV2";
 constexpr auto kArgmax = "Argmax";
 constexpr auto kArgmin = "Argmin";
+constexpr auto kResizeV2 = "ResizeV2";
+constexpr auto kResizeV2Grad = "ResizeV2Grad";
 constexpr auto kRange = "Range";
 constexpr auto kSliceGrad = "SliceGrad";
 constexpr auto kStatelessDropOutGenMask = "StatelessDropOutGenMask";
 constexpr auto kRaggedTensorToTensor = "RaggedTensorToTensor";
+constexpr auto kRaggedTensorToSparse = "RaggedTensorToSparse";
 constexpr auto kAdaptiveMaxPool3D = "AdaptiveMaxPool3D";
+constexpr auto kRandpermV2 = "RandpermV2";
+constexpr auto kSmoothL1Loss = "SmoothL1Loss";
+constexpr auto kSmoothL1LossGrad = "SmoothL1LossGrad";
+constexpr auto kSparseCross = "SparseCross";
+constexpr auto kChannelShuffle = "ChannelShuffle";
+constexpr auto kQuantDTypeCast = "QuantDTypeCast";
+constexpr auto kFSEDecode = "FSEDecode";
+constexpr auto kSparseSegmentSum = "SparseSegmentSum";
+constexpr auto kRealDiv = "RealDiv";
+constexpr auto kMaskedFill = "MaskedFill";
+constexpr auto kDeformableOffsets = "DeformableOffsets";
+constexpr auto kDeformableOffsetsGrad = "DeformableOffsetsGrad";
+constexpr auto kAffineGrid = "AffineGrid";
+constexpr auto kSTFT = "STFT";
+constexpr auto kRandomCategorical = "RandomCategorical";
+constexpr auto kStandardNormal = "StandardNormal";
+constexpr auto kUniformInt = "UniformInt";
+constexpr auto kUniformReal = "UniformReal";
+constexpr auto kStandardLaplace = "StandardLaplace";
+constexpr auto kLogUniformCandidateSampler = "LogUniformCandidateSampler";
+constexpr auto kGamma = "Gamma";
 
 const std::set<std::string> kCpuKernelOps{kIdentity,
-                                          kMaskedSelect,
-                                          kMaskedSelectGrad,
+                                          kMaskedFill,
+                                          kGather,
+                                          kSTFT,
+                                          kGreater,
                                           kDynamicStitch,
+                                          kSort,
+                                          kCTCLossV2,
+                                          kCTCLossV2Grad,
                                           kSearchSorted,
+                                          kSparseSegmentSum,
+                                          kAdaptiveMaxPool2D,
                                           kResizeBilinear,
+                                          kReverseSequence,
+                                          kRandpermV2,
                                           kResizeBilinearGrad,
                                           kTensorScatterElements,
-                                          kUniqueConsecutive,
+                                          kAdd,
+                                          kLess,
                                           kLinSpace,
                                           kIsInf,
                                           kIsNan,
@@ -207,23 +272,23 @@ const std::set<std::string> kCpuKernelOps{kIdentity,
                                           kGridSampler2DGrad,
                                           kGridSampler3D,
                                           kGridSampler3DGrad,
+                                          kScatterAddWithAxis,
                                           kScatterNdMax,
                                           kScatterNdMin,
                                           kTril,
                                           kSub,
-                                          kMul,
                                           kDiv,
                                           kNeg,
                                           kNonZero,
                                           kNotEqual,
-                                          kConj,
                                           kConjugateTranspose,
                                           kCheckNumerics,
+                                          kCumMax,
                                           kCumSum,
+                                          kInplaceIndexAdd,
                                           kLog1p,
                                           kRsqrt,
                                           kSquare,
-                                          kSparseSegmentMeanGrad,
                                           kACos,
                                           kAcosh,
                                           kAsin,
@@ -233,12 +298,12 @@ const std::set<std::string> kCpuKernelOps{kIdentity,
                                           kTan,
                                           kTanhGrad,
                                           kRound,
-                                          kRightShift,
                                           kFloorDiv,
                                           kAddcdiv,
                                           kAddcmul,
                                           kTriu,
                                           kExpand,
+                                          kMatrixBandPart,
                                           kMatrixDiagPartV3,
                                           kMatrixDiagV3,
                                           kBetainc,
@@ -250,11 +315,20 @@ const std::set<std::string> kCpuKernelOps{kIdentity,
                                           kOnesLike,
                                           kStatelessDropOutGenMask,
                                           kTopK,
-                                          kSign};
+                                          kSign,
+                                          kRealDiv,
+                                          kGreaterEqual,
+                                          kAffineGrid};
 const std::set<std::string> kCacheKernelOps{kUpdateCache, kCacheSwapTable,      kSubAndFilter, kPadAndShift, kDropout3D,
                                             kDropout2D,   kNonMaxSuppressionV3, kGetNext,      kInitData,    kPrint};
 const std::set<std::string> kCpuKernelBaseOps{kDropoutGenMaskOpName,
+                                              kRandomCategorical,
                                               kRandomChoiceWithMask,
+                                              kStandardNormal,
+                                              kStandardLaplace,
+                                              kUniformInt,
+                                              kUniformReal,
+                                              kLogUniformCandidateSampler,
                                               kEnvironCreate,
                                               kEnvironSet,
                                               kEnvironGet,
@@ -268,12 +342,26 @@ const std::set<std::string> kCpuKernelBaseOps{kDropoutGenMaskOpName,
                                               kReservoirReplayBufferPush,
                                               kReservoirReplayBufferSample,
                                               kReservoirReplayBufferDestroy,
-                                              kGatherDGradV2,
                                               kConcatOffset,
-                                              kSliceGrad,
+                                              kSequenceAdd,
+                                              kSequenceAddN,
+                                              kSequenceAddOffset,
+                                              kSequenceConcat,
+                                              kSequenceStack,
                                               kRandomShuffle,
-                                              kRange};
+                                              kRange,
+                                              kQuantDTypeCast,
+                                              kFSEDecode,
+                                              kReshape,
+                                              kFlatten,
+                                              kSqueeze,
+                                              kUniformCandidateSampler,
+                                              kExpandDims,
+                                              kCast,
+                                              kGamma};
 const std::set<std::string> kDynamicInputOps{kRaggedTensorToTensor,
+                                             kSparseCross,
+                                             kRaggedTensorToSparse,
                                              kPrint,
                                              kPack,
                                              kMeshgrid,
@@ -287,6 +375,7 @@ const std::set<std::string> kDynamicInputOps{kRaggedTensorToTensor,
                                              kReservoirReplayBufferPush,
                                              kReservoirReplayBufferSample,
                                              kIdentityN,
+                                             kIndexPut,
                                              kSparseConcat,
                                              kConcatOffsetV1};
 const std::map<std::string, std::string> kOpNameToAicpuOpNameMap{
@@ -301,6 +390,8 @@ const std::map<std::string, std::string> kOpNameToAicpuOpNameMap{
   {kUpsampleNearest3DGrad, "UpsampleNearest3dGrad"},
   {kNameRangeV2, "Range"},
   {kReLUV3, "Relu"},
+  {kSparseTensorDenseMatmul, "SparseTensorDenseMatMul"},
+  {kFillV2, "Fill"},
   {kUpsampleTrilinear3D, "UpsampleTrilinear3d"},
   {kUpsampleTrilinear3DGrad, "UpsampleTrilinear3dGrad"},
   {kStack, "Pack"},
@@ -311,62 +402,33 @@ const std::map<std::string, std::string> kOpNameToAicpuOpNameMap{
   {kSampleDistortedBoundingBoxV2, "SampleDistortedBoundingBoxExt2"},
   {kSparseSoftmaxCrossEntropyWithLogitsV2, "SparseSoftmaxCrossEntropyWithLogits"},
   {kSparseToDenseV2, "SparseToDense"},
+  {kSmoothL1Loss, "SmoothL1LossV2"},
+  {kSmoothL1LossGrad, "SmoothL1LossGradV2"},
   {kAvgPoolV1, "AvgPool"},
   {kNonZero, "Where"},
   {kAvgPoolGradV1, "AvgPoolGrad"},
+  {kAdaptiveMaxPool2D, "AdaptiveMaxPool2d"},
   {kAdaptiveMaxPool2DGrad, "AdaptiveMaxPool2dGrad"},
   {kConcatOffsetV1, "ConcatOffset"},
-  {kAdaptiveAvgPool2DV1, "AdaptiveAvgPool2d"},
-  {kAdaptiveAvgPool2DGradV1, "AdaptiveAvgPool2dGrad"},
   {kAdaptiveAvgPool3D, "AdaptiveAvgPool3d"},
   {kAdaptiveAvgPool3DGrad, "AdaptiveAvgPool3dGrad"},
   {kTensorScatterElements, "ScatterElements"},
   {kACos, "Acos"},
   {kHSigmoid, "HardSigmoid"},
+  {kFmin, "Minimum"},
+  {kFmax, "Maximum"},
   {kHSigmoidGrad, "HardSigmoidGrad"},
   {kArgmax, "ArgMax"},
   {kArgmin, "ArgMin"},
+  {kResizeV2, "Resize"},
+  {kResizeV2Grad, "ResizeGrad"},
   {kGLU, "Glu"},
+  {kChannelShuffle, "ShuffleChannel"},
   {kStridedSliceV2, "StridedSlice"},
   {kAdaptiveMaxPool3D, "AdaptiveMaxPool3d"},
-  {kStridedSliceV2Grad, "StridedSliceGrad"}};
-struct AicpuParamHead {
-  uint32_t length;         // Total length: include cunstom message
-  uint32_t ioAddrNum;      // Input and output address number
-  uint32_t extInfoLength;  // extInfo struct Length
-  uint64_t extInfoAddr;    // extInfo address
-} __attribute__((packed));
-
-// Extent info ShapeAndType
-const uint32_t kMaxShapeDims = 8;
-struct ShapeAndType {
-  int32_t type;
-  int64_t dims[kMaxShapeDims];
-} __attribute__((packed));
-
-// Extend info structure for extInfoAddr
-const uint32_t kExtInfoHeadSize = 8;
-struct ExtInfo {
-  int32_t infoType;  // extend type
-  uint32_t infoLen;  // length for infoMsg
-  char infoMsg[0];   // extend value
-} __attribute__((packed));
-
-// Extend Info type for task
-enum FWKTaskExtInfoType {
-  FWK_ADPT_EXT_SHAPE_TYPE = 0,
-  FWK_ADPT_EXT_INPUT_SHAPE,
-  FWK_ADPT_EXT_OUTPUT_SHAPE,
-  FWK_ADPT_EXT_INVALID
-};
-
-// for unknown shape op type
-enum UnknowShapeOpType {
-  DEPEND_IN_SHAPE = 1,     // op out shape get by input shape
-  DEPEND_CONST_VALUE = 2,  // op out shape get by const op value
-  DEPEND_SHAPE_RANGE = 3,  // op out shape get by range
-  DEPEND_COMPUTE = 4       // op out shape get by totally computing
-};
+  {kRandpermV2, "StatelessRandperm"},
+  {kStridedSliceV2Grad, "StridedSliceGrad"},
+  {kAdaptiveMaxPool3DGrad, "AdaptiveMaxPool3dGrad"}};
 
 class AicpuOpUtil {
  public:

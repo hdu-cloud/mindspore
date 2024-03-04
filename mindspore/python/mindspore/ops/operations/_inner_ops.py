@@ -19,23 +19,28 @@ from collections.abc import Iterable
 import numpy as np
 
 from mindspore.common import Tensor
+from mindspore.common._stub_tensor import StubTensor
 from mindspore.ops import composite as C
 from mindspore.ops.operations.array_ops import Cast
+from mindspore.ops.operations._scalar_ops import bit_or, bit_and
+from mindspore.ops.operations.comm_ops import ReduceOp
 from mindspore.ops import signature as sig
 from mindspore.ops.operations.math_ops import _infer_shape_reduce
-from mindspore.ops.primitive import PrimitiveWithCheck, PrimitiveWithInfer, prim_attr_register, Primitive, _run_op
-from mindspore import context
-from mindspore._checkparam import Rel
-from mindspore._checkparam import Validator as validator
+from mindspore.ops.primitive import PrimitiveWithCheck, PrimitiveWithInfer, prim_attr_register, Primitive,\
+    _run_op, _check_contains_variable
+from mindspore._c_expression import Tensor as Tensor_
+from mindspore._c_expression import typing
+from mindspore import _checkparam as validator
 from mindspore.common import dtype as mstype
 from mindspore.common.parameter import Parameter
-from mindspore.communication.management import GlobalComm
+from mindspore.communication.management import GlobalComm, get_rank
 from mindspore.common.api import _pynative_executor
-
+from mindspore.common._register_for_adapter import ms_adapter_registry
+from mindspore import ops
 
 # Bit operation
-bit_and = Primitive("bit_and")
-bit_or = Primitive("bit_or")
+bit_and = bit_and()
+bit_or = bit_or()
 bit_xor = Primitive("bit_xor")
 bit_left_shift = Primitive("bit_left_shift")
 bit_right_shift = Primitive("bit_right_shift")
@@ -50,54 +55,10 @@ string_mul = Primitive("string_mul")
 string_getitem = Primitive("string_getitem")
 
 
-class FillV2(Primitive):
-    """
-    Creates a tensor filled with a scalar value.
-
-    Creates a tensor with shape described by the first argument and fills it with values in the second argument.
-
-    Inputs:
-        - **shape** (tensor) - The specified shape of output tensor. The shape of the input1 must be 1D and
-          the data type of the input1 must be int32 or int64.
-        - **value** (tensor) - Value to fill the returned tensor. The shape of the input2 must be 0D and
-          the data type of the input2 must be one of the following types:
-          bool, int8, int16, int32, int64, uint8, uint16, uint32, uint64, float16, float32, float64.
-
-    Outputs:
-        A tensor, has the same type and shape as input value.
-
-    Raises:
-        ValueError: If `shape` is not a 1D tensor.
-        TypeError: If the data type of `shape` is not int32 or int64.
-        ValueError: If `value` is not a 0D tensor.
-        ValueError: If the number of output elements is greater than 1000000.
-
-    Supported Platforms:
-        ``CPU``
-
-    Examples:
-        >>> fillV2 = ops.FillV2()
-        >>> output = fillV2(Tensor([2, 3], mindspore.int32), Tensor(1, mindspore.float32))
-        >>> print(output)
-        [[1. 1. 1.]
-         [1. 1. 1.]]
-        >>> output = fillV2(Tensor([3, 3], mindspore.int64), Tensor(0, mindspore.int32))
-        >>> print(output)
-        [[0 0 0]
-         [0 0 0]
-         [0 0 0]]
-    """
-
-    @prim_attr_register
-    def __init__(self):
-        """Initialize FillV2"""
-        self.add_prim_attr("max_length", 1000000)
-
-
 class ExtractImagePatches(Primitive):
-    """
+    r"""
     Extracts patches from images.
-    The input tensor must be a 4-D tensor and the data format is NHWC.
+    The input tensor must be a 4-D tensor and the data format is NCHW.
 
     Args:
         ksizes (Union[tuple[int], list[int]]): The size of sliding window, must be a tuple or a list of integers,
@@ -114,12 +75,31 @@ class ExtractImagePatches(Primitive):
             - valid: Means that the taken patch area must be completely covered in the original image.
 
     Inputs:
-        - **input_x** (Tensor) - A 4-D tensor whose shape is [in_batch, in_row, in_col, in_depth] and
-          data type is number.
+        - **input_x** (Tensor) - A 4-D tensor whose shape is :math:`(in\_batch, in\_depth, in\_row, in\_col)`.
 
     Outputs:
-        Tensor, a 4-D tensor whose data type is same as 'input_x',
-        and the shape is [out_batch, out_row, out_col, out_depth], the out_batch is the same as the in_batch.
+        Tensor, a 4-D tensor whose data type is same as 'input_x', and the shape
+        is :math:`(out\_batch, out\_depth, out\_row, out\_col)`,where the out_batch is the same as the in_batch
+        and
+
+        .. math::
+            out_depth=ksize\_row * ksize\_col * in\_depth
+
+        and
+        if 'padding' is "valid":
+
+        .. math::
+            out\_row=floor((in\_row - (ksize\_row + (ksize\_row - 1) * (rate\_row - 1))) / stride\_row) + 1
+            out\_col=floor((in\_col - (ksize\_col + (ksize\_col - 1) * (rate\_col - 1))) / stride\_col) + 1
+
+        if 'padding' is "same":
+
+        .. math::
+            out\_row=floor((in\_row - 1) / stride\_row) + 1
+            out\_col=floor((in\_col - 1) / stride\_col) + 1
+
+    Supported Platforms:
+        ``Ascend`` ``GPU``
     """
 
     @prim_attr_register
@@ -142,7 +122,6 @@ class ExtractImagePatches(Primitive):
         validator.check_value_type('padding', padding, [str], self.name)
         self.padding = validator.check_string(padding.upper(), ['VALID', 'SAME'], 'padding', self.name)
         self.add_prim_attr("padding", self.padding)
-        self.is_ge = context.get_context("enable_ge")
 
 
 class Quant(PrimitiveWithInfer):
@@ -165,7 +144,7 @@ class Quant(PrimitiveWithInfer):
     Args:
         scale (float) : Specifies the scaling ratio.
         offset (float): Specifies the offset.
-        sqrt_mode (bool) : Specifies whether to perform square root on `scale`. Default: False.
+        sqrt_mode (bool) : Specifies whether to perform square root on `scale`. Default: ``False``.
         round_mode (str): Specifies the way to round. Must be one of ["Round", "Floor", "Ceil", "Trunc"].
           Default: "Round".
 
@@ -193,7 +172,7 @@ class Quant(PrimitiveWithInfer):
         return x_shape
 
     def infer_dtype(self, x_type):
-        validator.check_subclass("input_x", x_type, mstype.tensor, self.name)
+        validator.check_subclass("input_x", x_type, mstype.tensor_type, self.name)
         validator.check_type_name("input_x", x_type, [mstype.float16, mstype.float32], self.name)
         return mstype.int8
 
@@ -223,12 +202,14 @@ class Lamb(PrimitiveWithInfer):
           Default: 0.0.
         - **global_step** (Tensor) - Tensor to record current global step.
         - **gradient** (Tensor) - Gradient, has the same shape and data type as `var`.
+
     Outputs:
         Tensor, the updated parameters.
+
         - **var** (Tensor) - The same shape and data type as `var`.
 
     Supported Platforms:
-        ``GPU`` ``Ascend``
+        ``Ascend````GPU``
     """
 
     @prim_attr_register
@@ -238,9 +219,9 @@ class Lamb(PrimitiveWithInfer):
 
     def infer_shape(self, var_shape, m_shape, v_shape, lr_shape, beta1_shape, beta2_shape,
                     epsilon_shape, decay_shape, global_step_shape, gradient_shape):
-        validator.check("var_shape", var_shape, "m_shape", m_shape, Rel.EQ, self.name)
-        validator.check("var_shape", var_shape, "v_shape", v_shape, Rel.EQ, self.name)
-        validator.check("var_shape", var_shape, "gradient_shape", gradient_shape, Rel.EQ, self.name)
+        validator.check("var_shape", var_shape, "m_shape", m_shape, validator.EQ, self.name)
+        validator.check("var_shape", var_shape, "v_shape", v_shape, validator.EQ, self.name)
+        validator.check("var_shape", var_shape, "gradient_shape", gradient_shape, validator.EQ, self.name)
         return var_shape
 
     def infer_dtype(self, var_dtype, m_dtype, v_dtype, lr_dtype, beta1_dtype, beta2_dtype,
@@ -273,8 +254,8 @@ class Dequant(PrimitiveWithInfer):
         This operation only support Ascend 310 inference environment.
 
     Args:
-        sqrt_mode (bool) : Specifies whether to perform square root on `scale`. Default: False.
-        relu_flag (bool): Specifies whether to perform ReLU. Default: False.
+        sqrt_mode (bool) : Specifies whether to perform square root on `scale`. Default: ``False``.
+        relu_flag (bool): Specifies whether to perform ReLU. Default: ``False``.
 
     Inputs:
         - **input_x** (Tensor) : Input tensor. Must be mindspore.int32.
@@ -300,7 +281,7 @@ class Dequant(PrimitiveWithInfer):
         return x_shape
 
     def infer_dtype(self, x_type, deq_scale_type):
-        validator.check_subclass("x", x_type, mstype.tensor, self.name)
+        validator.check_subclass("x", x_type, mstype.tensor_type, self.name)
         validator.check_type_name("x", x_type, [mstype.int32], self.name)
         validator.check_type_name("deq_scale", deq_scale_type, [mstype.float16, mstype.uint64], self.name)
         return mstype.float16
@@ -344,18 +325,18 @@ class MatrixDiag(PrimitiveWithInfer):
         return x_dtype
 
     def infer_shape(self, x_shape, assist_shape):
-        validator.check_int(len(assist_shape), 2, Rel.GE, "assist rank", self.name)
+        validator.check_int(len(assist_shape), 2, validator.GE, "assist rank", self.name)
         validator.check('rank of x', len(x_shape) + 1,
-                        'rank of assist', len(assist_shape), Rel.LE, self.name)
+                        'rank of assist', len(assist_shape), validator.LE, self.name)
         validator.check('assist\'s penultimate dimension', assist_shape[-2], 'assist\'s last dimension',
-                        assist_shape[-1], Rel.EQ, self.name)
+                        assist_shape[-1], validator.EQ, self.name)
 
         r_end_dim = -len(x_shape)
         r_idx = -1
         while r_idx >= r_end_dim:
             if x_shape[r_idx] != 1:
                 validator.check("reverse x dim %d" % r_idx, x_shape[r_idx], "reverse assist dim %d" %
-                                assist_shape[r_idx - 1], assist_shape[r_idx - 1], Rel.EQ, self.name)
+                                assist_shape[r_idx - 1], assist_shape[r_idx - 1], validator.EQ, self.name)
             r_idx = r_idx - 1
 
         return assist_shape
@@ -393,8 +374,8 @@ class MatrixDiagPart(PrimitiveWithInfer):
         return x_dtype
 
     def infer_shape(self, x_shape, assist_shape):
-        validator.check_int(len(x_shape), 2, Rel.GE, "x rank", self.name)
-        validator.check("x shape", x_shape, "assist shape", assist_shape, Rel.EQ, self.name)
+        validator.check_int(len(x_shape), 2, validator.GE, "x rank", self.name)
+        validator.check("x shape", x_shape, "assist shape", assist_shape, validator.EQ, self.name)
 
         if assist_shape[-2] < assist_shape[-1]:
             out_shape = assist_shape[:-1]
@@ -521,6 +502,109 @@ class Receive(PrimitiveWithInfer):
         return self.get_attr_dict()['dtype']
 
 
+class Reduce(PrimitiveWithInfer):
+    """
+    Reduces tensor across the processes in the specified communication group.
+
+    Note:
+        Only process with destination rank receives the reduced output.
+        Other processes only get a tensor with shape [1], which has no mathematical meaning.
+
+    Args:
+        dest_rank (int): Specifies the rank of the process that receives the reduced output.
+        op (str, optional): Specifies an operation used for element-wise reductions, like sum, prod, max, and min.
+                On the CPU, only 'sum' is supported. Default: ``ReduceOp.SUM`` .
+        group (str, optional): The communication group to work on.
+            Default: "hccl_world_group" on Ascend, "nccl_world_group" on GPU.
+
+    Inputs:
+        - **input_x** (Tensor) - The shape of tensor is :math:`(x_1, x_2, ..., x_R)`.
+
+    Examples:
+        >>> import mindspore.ops as ops
+        >>> import mindspore.nn as nn
+        >>> from mindspore.communication import init
+        >>> from mindspore import Tensor
+        >>> import numpy as np
+        >>> # Launch 4 processes.
+        >>> init()
+        >>> class ReduceNet(nn.Cell):
+        >>>     def __init__(self):
+        >>>         super(Net, self).__init__()
+        >>>         self.reduce = ops.Reduce(dest_rank=1)
+        >>>
+        >>>     def construct(self, x):
+        >>>         out = self.reduce(x)
+        >>>         return out
+        >>> input = Tensor(np.ones([2, 8]).astype(np.float32))
+        >>> net = ReduceNet()
+        >>> output = net(input)
+        >>> print(output)
+        Process with rank 1: [[4. 4. 4. 4. 4. 4. 4. 4.]
+                             [4. 4. 4. 4. 4. 4. 4. 4.]],
+        Other proesses: [0.].
+    """
+
+    @prim_attr_register
+    def __init__(self, dest_rank, op=ReduceOp.SUM, group=GlobalComm.WORLD_COMM_GROUP):
+        self.dest_rank = dest_rank
+        self.op = op
+        self.group = group
+
+    def infer_shape(self, x_shape):
+        # The process with dest_rank returns the reduced output.
+        # Other processes only gets a tensor with shape [1], which has no mathematical meaning.
+        if self.dest_rank == get_rank():
+            return x_shape
+        return [1]
+
+    def infer_dtype(self, x_dtype):
+        return x_dtype
+
+
+class Barrier(PrimitiveWithInfer):
+    """
+    Synchronizes all processes in the specified group.
+
+    Note:
+        After calling this collective operator,
+        this process will be blocked until all other processes in the group call this operator.
+
+    Args:
+        group (str, optional): The communication group to work on.
+            Default: "hccl_world_group" on Ascend, "nccl_world_group" on GPU.
+
+    Examples:
+        >>> import mindspore.ops as ops
+        >>> import mindspore.nn as nn
+        >>> from mindspore.communication import init
+        >>> from mindspore import Tensor
+        >>> import numpy as np
+        >>> # Launch 4 processes.
+        >>> init()
+        >>> class BarrierNet(nn.Cell):
+        >>>     def __init__(self):
+        >>>         super(Net, self).__init__()
+        >>>         self.barrier = ops.Barrier()
+        >>>
+        >>>     def construct(self):
+        >>>         self.barrier()
+        >>> net = BarrierNet()
+        >>> net()
+    """
+
+    @prim_attr_register
+    def __init__(self, group=GlobalComm.WORLD_COMM_GROUP):
+        self.group = group
+        self.add_prim_attr("side_effect_mem", True)
+
+    def infer_shape(self):
+        return [1]
+
+    def infer_dtype(self):
+        return mstype.float32
+
+
 class MatrixSetDiag(PrimitiveWithInfer):
     r"""
     Modifies the batched diagonal part of a batched tensor.
@@ -555,15 +639,15 @@ class MatrixSetDiag(PrimitiveWithInfer):
         return x_dtype
 
     def infer_shape(self, x_shape, diagonal_shape, assist_shape):
-        validator.check_int(len(x_shape), 2, Rel.GE, "x rank", self.name)
-        validator.check("x shape", x_shape, "assist shape", assist_shape, Rel.EQ, self.name)
+        validator.check_int(len(x_shape), 2, validator.GE, "x rank", self.name)
+        validator.check("x shape", x_shape, "assist shape", assist_shape, validator.EQ, self.name)
 
         if x_shape[-2] < x_shape[-1]:
             validator.check("diagonal shape", diagonal_shape, "x shape excluding the last dimension",
-                            x_shape[:-1], Rel.EQ, self.name)
+                            x_shape[:-1], validator.EQ, self.name)
         else:
             validator.check("diagonal shape", diagonal_shape, "x shape excluding the second last dimension",
-                            x_shape[:-2] + x_shape[-1:], Rel.EQ, self.name)
+                            x_shape[:-2] + x_shape[-1:], validator.EQ, self.name)
 
         return assist_shape
 
@@ -623,9 +707,9 @@ class ConfusionMulGrad(PrimitiveWithInfer):
         return outshape0, outshape1
 
     def infer_dtype(self, input0_dtype, input1_dtype, input2_dtype):
-        validator.check_subclass("input0_dtype", input0_dtype, mstype.tensor, self.name)
-        validator.check_subclass("input1_dtype", input1_dtype, mstype.tensor, self.name)
-        validator.check_subclass("input2_dtype", input2_dtype, mstype.tensor, self.name)
+        validator.check_subclass("input0_dtype", input0_dtype, mstype.tensor_type, self.name)
+        validator.check_subclass("input1_dtype", input1_dtype, mstype.tensor_type, self.name)
+        validator.check_subclass("input2_dtype", input2_dtype, mstype.tensor_type, self.name)
         return input0_dtype, input1_dtype
 
 
@@ -638,7 +722,7 @@ class ConvertToDynamic(PrimitiveWithCheck):
 
     Args:
         is_dynamic_rank (bool): If true, convert to dynamic rank.
-                                If false, convert to dynamic shape. Default: False.
+                                If false, convert to dynamic shape. Default: ``False``.
 
     Inputs:
         - **input** (Tensor) - The tensor used for testing.
@@ -680,10 +764,10 @@ class ConvertToDynamic(PrimitiveWithCheck):
         self.init_prim_io_names(inputs=["input"], outputs=["output"])
 
     def check_shape(self, input_shape):
-        validator.check("input_shape rank", len(input_shape), "", 0, Rel.GT, self.name)
+        validator.check("input_shape rank", len(input_shape), "", 0, validator.GT, self.name)
 
     def check_dtype(self, input_dtype):
-        validator.check_subclass("input_dtype", input_dtype, mstype.tensor, self.name)
+        validator.check_subclass("input_dtype", input_dtype, mstype.tensor_type, self.name)
 
 
 class GpuConvertToDynamicShape(PrimitiveWithCheck):
@@ -730,10 +814,10 @@ class GpuConvertToDynamicShape(PrimitiveWithCheck):
         self.init_prim_io_names(inputs=["input"], outputs=["output"])
 
     def check_shape(self, input_shape):
-        validator.check("input_shape rank", len(input_shape), "", 0, Rel.GT, self.name)
+        validator.check("input_shape rank", len(input_shape), "", 0, validator.GT, self.name)
 
     def check_dtype(self, input_dtype):
-        validator.check_subclass("input_dtype", input_dtype, mstype.tensor, self.name)
+        validator.check_subclass("input_dtype", input_dtype, mstype.tensor_type, self.name)
 
 
 class ErrorOnDynamicShapeInput(PrimitiveWithInfer):
@@ -785,7 +869,7 @@ class ErrorOnDynamicShapeInput(PrimitiveWithInfer):
 
     def infer_type(self, input_dtype):
         """Infer the dtype of input for ErrorOnDynamicShapeInput."""
-        validator.check_subclass("input_dtype", input_dtype, mstype.tensor, self.name)
+        validator.check_subclass("input_dtype", input_dtype, mstype.tensor_type, self.name)
         return input_dtype
 
     def infer_value(self, input_tensor):
@@ -811,7 +895,7 @@ class SequenceMask(PrimitiveWithCheck):
         One mask tensor of shape lengths.shape + (maxlen,).
 
     Supported Platforms:
-        ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
         >>> from mindspore import ops
@@ -831,11 +915,11 @@ class SequenceMask(PrimitiveWithCheck):
         self.init_prim_io_names(inputs=["lengths", "maxlen"], outputs=["mask"])
 
     def check_shape(self, lengths_shape, maxlen_shape):
-        validator.check("lengths_shape", len(lengths_shape), "", 0, Rel.GT, self.name)
-        validator.check("maxlen_shape", len(maxlen_shape), "", 0, Rel.EQ, self.name)
+        validator.check("lengths_shape", len(lengths_shape), "", 0, validator.GT, self.name)
+        validator.check("maxlen_shape", len(maxlen_shape), "", 0, validator.EQ, self.name)
 
     def check_dtype(self, lengths_dtype, maxlen_dtype):
-        validator.check_subclass("lengths_dtype", lengths_dtype, mstype.tensor, self.name)
+        validator.check_subclass("lengths_dtype", lengths_dtype, mstype.tensor_type, self.name)
         validator.check_subclass("maxlen", maxlen_dtype, mstype.number, self.name)
 
 
@@ -904,10 +988,10 @@ class SyncBatchNorm(Primitive):
 
     @prim_attr_register
     def __init__(self, epsilon=1e-5, momentum=0.1, group="sync_bn_group0", device_num=2):
-        validator.check_float_range(epsilon, 0, 1, Rel.INC_RIGHT, 'epsilon', self.name)
-        validator.check_float_range(momentum, 0, 1, Rel.INC_BOTH, 'momentum', self.name)
+        validator.check_float_range(epsilon, 0, 1, validator.INC_RIGHT, 'epsilon', self.name)
+        validator.check_float_range(momentum, 0, 1, validator.INC_BOTH, 'momentum', self.name)
         validator.check_isinstance("group", group, str)
-        validator.check_int(device_num, 2, Rel.GE, "device_num", self.name)
+        validator.check_int(device_num, 2, validator.GE, "device_num", self.name)
         self.init_prim_io_names(inputs=['x', 'scale', 'offset', 'mean', 'variance'],
                                 outputs=['y', 'batch_mean', 'batch_variance', 'reserve_space_1', 'reserve_space_2'])
         self.add_prim_attr('side_effect_mem', True)
@@ -970,7 +1054,7 @@ class Centralization(PrimitiveWithInfer):
         validator.check_value_type('axis', axis_v, [int, list, tuple], self.name)
 
         if isinstance(axis_v, int):
-            validator.check_int_range(axis_v, -rank, rank, Rel.INC_LEFT, 'axis', self.name)
+            validator.check_int_range(axis_v, -rank, rank, validator.INC_LEFT, 'axis', self.name)
         elif axis:
             for index, one_axis in enumerate(axis_v):
                 validator.check_value_type('axis[%d]' % index, one_axis, [int], self.name)
@@ -1071,9 +1155,9 @@ class StackPop(PrimitiveWithInfer):
         validator.check_value_type("index", index, [int], self.name)
 
         validator.check_value_type('shape type', shape, [list, tuple], self.name)
-        validator.check_int(len(np.array(shape).shape), 1, Rel.EQ, "dim of shape", self.name)
+        validator.check_int(len(np.array(shape).shape), 1, validator.EQ, "dim of shape", self.name)
         for elem in shape:
-            validator.check_int(elem, 1, Rel.GE, 'shape element', self.name)
+            validator.check_int(elem, 1, validator.GE, 'shape element', self.name)
             validator.check_value_type('type of shape element', elem, [int], self.name)
 
         validator.check_type_name("dtype", dtype, (mstype.bool_,) + mstype.number_type, self.name)
@@ -1154,22 +1238,22 @@ class DynamicStitch(PrimitiveWithCheck):
 
     def check_shape(self, indices_shape, data_shape):
         validator.check_value_type("shape of indices", indices_shape, [tuple, list], self.name)
-        validator.check_int(len(indices_shape), 1, Rel.GE, "len of indices_shape", self.name)
+        validator.check_int(len(indices_shape), 1, validator.GE, "len of indices_shape", self.name)
         indices_dim0 = len(indices_shape[0])
         indices_num = len(indices_shape)
 
         validator.check_value_type("shape of data", data_shape, [tuple, list], self.name)
-        validator.check_int(len(data_shape), 1, Rel.GE, "len of data_shape", self.name)
+        validator.check_int(len(data_shape), 1, validator.GE, "len of data_shape", self.name)
         data_dim0 = len(data_shape[0])
         data_num = len(indices_shape)
 
-        validator.check("size of indices", indices_num, 'size of data', data_num, Rel.EQ, self.name)
+        validator.check("size of indices", indices_num, 'size of data', data_num, validator.EQ, self.name)
 
         # shape of `data` must start with shape of `indices`
         for i in range(0, indices_num):
             indices_dim = len(indices_shape[i])
             data_dim = len(data_shape[i])
-            validator.check(f"dim of indices[{i}]", indices_dim, f"dim of data[{i}]", data_dim, Rel.LE, self.name)
+            validator.check(f"dim of indices[{i}]", indices_dim, f"dim of data[{i}]", data_dim, validator.LE, self.name)
             if data_shape[i][:indices_dim] != data_shape[i][:indices_dim]:
                 raise ValueError(f"data[{i}].shape: {data_shape} does not start with indices[{i}].shape: {data_shape}")
 
@@ -1180,23 +1264,24 @@ class DynamicStitch(PrimitiveWithCheck):
             data_dim = len(data_shape[i])
             extra = data_dim - indices_dim
             validator.check(f"extra dim of data[{i}]", extra,
-                            f"extra dim of data[0]", base_extra, Rel.EQ, self.name)
+                            f"extra dim of data[0]", base_extra, validator.EQ, self.name)
             validator.check(f"data[0].shape[{indices_dim0}:]", data_shape[0][indices_dim0:],
                             f"data[{i}].shape[{len(indices_shape[i])}:]",
-                            data_shape[i][indices_dim:], Rel.EQ, self.name)
+                            data_shape[i][indices_dim:], validator.EQ, self.name)
 
         out_shape = [-1] + data_shape[0][indices_dim0:]
         return out_shape
 
     def check_dtype(self, indices_type, data_type):
-        validator.check_subclass("indices[0]", indices_type[0], mstype.tensor, self.name)
-        validator.check_subclass("data[0]", data_type[0], mstype.tensor, self.name)
+        validator.check_subclass("indices[0]", indices_type[0], mstype.tensor_type, self.name)
+        validator.check_subclass("data[0]", data_type[0], mstype.tensor_type, self.name)
         indices_num = len(indices_type)
         for i in range(0, indices_num):
             validator.check_tensor_dtype_valid(f'indices[{i}]', indices_type[i], mstype.int32, self.name)
             validator.check_tensor_dtype_valid(f'data[{i}]', data_type[i],
                                                mstype.number_type + (mstype.bool_,), self.name)
-            validator.check(f"type of data[{i}]", data_type[i], f"type of data[0]", data_type[0], Rel.EQ, self.name)
+            validator.check(f"type of data[{i}]", data_type[i], f"type of data[0]",
+                            data_type[0], validator.EQ, self.name)
         return data_type[0]
 
 
@@ -1436,6 +1521,7 @@ class DecodeImage(PrimitiveWithInfer):
 
     Examples:
     """
+
     @prim_attr_register
     def __init__(self, channels=0, dtype=mstype.uint8, expand_animations=False, _op_max_shape="8192,8192,3",
                  _op_max_size=[8000000]):
@@ -1464,10 +1550,16 @@ class SliceGetItem(Primitive):
             raise TypeError(
                 "Primitive[SliceGetItem] only support to get a slice type element but got {}".format(slice_value))
         if value == "start":
+            if hasattr(slice_value.start, "ndim") and slice_value.start.ndim == 1:
+                return slice_value.start.item()
             return slice_value.start
         if value == "stop":
+            if hasattr(slice_value.stop, "ndim") and slice_value.stop.ndim == 1:
+                return slice_value.stop.item()
             return slice_value.stop
         if value == "step":
+            if hasattr(slice_value.step, "ndim") and slice_value.step.ndim == 1:
+                return slice_value.step.item()
             return slice_value.step
         raise AttributeError("\'slice\' object has no attribute {}".format(value))
 
@@ -1479,7 +1571,7 @@ class DynamicBroadcastTo(Primitive):
     Inputs:
         - **input_x** (Tensor) - The input tensor. The data type should be one of the following types:
           float16, float32, int32, int8, uint8.
-          The shape is :math:`(N,*)` where :math:`*` means,any number of additional dimensions.
+          The shape is :math:`(N,*)` where :math:`*` means any number of additional dimensions.
         - **shape** (Tensor): The target shape to broadcast.
 
     Outputs:
@@ -1489,7 +1581,7 @@ class DynamicBroadcastTo(Primitive):
         ValueError: if the target and input shapes are incompatible.
 
     Supported Platforms:
-        ``Ascend``
+        ``Ascend`` ``GPU`` ``CPU``
     """
 
     @prim_attr_register
@@ -1502,10 +1594,34 @@ class Cummin(Primitive):
     r"""
     Returns the cumulative minimum of elements and the index.
 
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
     Refer to :func:`mindspore.ops.cummin` for more detail.
+
+    Args:
+        axis (int): The axis to accumulate the tensor's value. Must be in the range [-rank(input), rank(input)).
+
+    Inputs:
+        - **input** (Tensor) - The input tensor.
+
+    Outputs:
+        A tuple of 2 Tensors(values, indices), containing the cumulative minimum of elements and the index,
+        The shape of each output tensor is the same as input `input`.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> from mindspore import Tensor, ops
+        >>> import mindspore
+        >>> a = Tensor([-0.2284, -0.6628,  0.0975,  0.2680, -1.3298, -0.4220], mindspore.float32)
+        >>> func = ops.Cummin(axis=0)
+        >>> output = func(a)
+        >>> print(output[0])
+        [-0.2284 -0.6628 -0.6628 -0.6628 -1.3298 -1.3298]
+        >>> print(output[1])
+        [0 1 1 1 4 4]
     """
 
     @prim_attr_register
@@ -1527,7 +1643,7 @@ class DynamicResizeNearestNeighbor(Primitive):
 
     Args:
         align_corners (bool): Whether the centers of the 4 corner pixels of the input
-                              and output tensors are aligned. Default: False.
+                              and output tensors are aligned. Default: ``False``.
 
     Inputs:
         - **input_x** (Tensor) - The input tensor. The shape of the tensor is :math:`(N, C, H, W)`.
@@ -1612,7 +1728,7 @@ class PsROIPooling(PrimitiveWithInfer):
         return output_shape, output_map_shape
 
     def infer_dtype(self, inputs_type, rois_type):
-        map_type = mstype.tensor_type(mstype.int32)
+        map_type = mstype.TensorType(mstype.int32)
         return inputs_type, map_type
 
 
@@ -1624,7 +1740,7 @@ class ParallelResizeBilinear(PrimitiveWithInfer):
         """Initialize ParallelResizeBilinear."""
         validator.check_value_type("ori_image_size", ori_image_size, [list, tuple], self.name)
         validator.check_value_type("split_size", split_size, [list, tuple], self.name)
-        validator.check_int(len(split_size), 2, Rel.EQ, "len of split_size", self.name)
+        validator.check_int(len(split_size), 2, validator.EQ, "len of split_size", self.name)
         validator.check_value_type("src_start_w", src_start_w, [int], self.name)
         validator.check_value_type("dst_start_w", dst_start_w, [int], self.name)
         validator.check_value_type("align_corners", align_corners, [bool], self.name)
@@ -1670,8 +1786,10 @@ class PartitionedCall(PrimitiveWithInfer):
 
     Examples:
     """
+
     @prim_attr_register
     def __init__(self, graph, executor_type=""):
+        super(PartitionedCall, self).__init__(self.__class__.__name__)
         self.add_prim_attr("executor_type", executor_type)
         self.graph = graph
 
@@ -1743,9 +1861,6 @@ class CellBackwardHook(PrimitiveWithInfer):
     def __call__(self, args):
         if not isinstance(args, tuple):
             args = (args,)
-        for arg in args:
-            if isinstance(arg, Parameter) and arg.has_init:
-                arg.init_data()
         return _run_op(self, self.name, args)
 
     def infer_shape(self, *inputs_shape):
@@ -1831,16 +1946,32 @@ class Format(PrimitiveWithInfer):
     def __init__(self):
         self.init_prim_io_names(inputs=['string', 'args'], outputs=['string'])
 
+
     def __infer__(self, str_, *var):
-        str_value = str_["value"]
+        def check_variable(str_, var):
+            if _check_contains_variable(str_['dtype'], str_['value']):
+                return True
+
+            for item in var:
+                if _check_contains_variable(item['dtype'], item['value']):
+                    return True
+            return False
+
+
+        if check_variable(str_, var):
+            return {'dtype': mstype.string, 'shape': [], 'value': None}
+
+
+        str_value = str_['value']
+        kwargs = dict()
         var_value = list()
-        if str_value is None and str_["dtype"] is not None:
-            raise ValueError("str.format not support to input a variable.")
+
         for item in var:
-            if item["value"] is None and item["dtype"] is not None:
-                raise ValueError("str.format not support to input a variable.")
+            if isinstance(item["dtype"], typing.Keyword):
+                kwargs.update(item["value"])
             var_value.append(item["value"])
-        value = str_value.format(*var_value)
+
+        value = str_value.format(*var_value, **kwargs)
         return {'dtype': mstype.string, 'shape': [], 'value': value}
 
 
@@ -1942,21 +2073,23 @@ class KMeansCentroids(PrimitiveWithInfer):
     def infer_shape(self, x_shape, y_shape, sum_square_y_shape, sum_square_x_shape):
         """infer shape of primitive"""
         expected_shape_size = 2
-        validator.check_int(len(x_shape), expected_shape_size, Rel.EQ, "dims of x", self.name)
-        validator.check_int(len(y_shape), expected_shape_size, Rel.EQ, "dims of y", self.name)
-        validator.check_int(len(sum_square_y_shape), expected_shape_size, Rel.EQ, "dims of sum_square_y", self.name)
-        validator.check_int(len(sum_square_x_shape), expected_shape_size, Rel.EQ, "dims of sum_square_x", self.name)
+        validator.check_int(len(x_shape), expected_shape_size, validator.EQ, "dims of x", self.name)
+        validator.check_int(len(y_shape), expected_shape_size, validator.EQ, "dims of y", self.name)
+        validator.check_int(len(sum_square_y_shape), expected_shape_size, validator.EQ,
+                            "dims of sum_square_y", self.name)
+        validator.check_int(len(sum_square_x_shape), expected_shape_size, validator.EQ,
+                            "dims of sum_square_x", self.name)
 
-        validator.check_int(x_shape[1], y_shape[1], Rel.EQ,
+        validator.check_int(x_shape[1], y_shape[1], validator.EQ,
                             "the second dim of x and the second dim of y", self.name)
-        validator.check_int(y_shape[0], sum_square_y_shape[1], Rel.EQ,
+        validator.check_int(y_shape[0], sum_square_y_shape[1], validator.EQ,
                             "the first dim of y and the second dim of sum_square_y", self.name)
-        validator.check_int(x_shape[0], sum_square_x_shape[0], Rel.EQ,
+        validator.check_int(x_shape[0], sum_square_x_shape[0], validator.EQ,
                             "the first dim of x and the first dim of sum_square_x", self.name)
-        validator.check_int(sum_square_y_shape[0], sum_square_x_shape[1], Rel.EQ,
+        validator.check_int(sum_square_y_shape[0], sum_square_x_shape[1], validator.EQ,
                             "the first dim of sum_square_y and the first dim of sum_square_x",
                             self.name)
-        validator.check_int(sum_square_y_shape[0], 1, Rel.EQ,
+        validator.check_int(sum_square_y_shape[0], 1, validator.EQ,
                             "the first dim of sum_square_y", self.name)
 
         k = y_shape[0]
@@ -1979,7 +2112,7 @@ class ClipByNorm(PrimitiveWithInfer):
 
     Args:
         axis (Union[None, int, tuple(int), list(int)]): Compute the `L_2`-norm along the specific dimension.
-                                                       Default: None, all dimensions to calculate.
+                                                       Default: ``None``, all dimensions to calculate.
 
     Inputs:
         - **x** (Tensor) - Tensor of shape N-D. The type must be float16 or float32.
@@ -2027,7 +2160,7 @@ class ClipByNorm(PrimitiveWithInfer):
         x_dim = len(x_shape)
         axis = self.axis if isinstance(self.axis, Iterable) else (self.axis,)
         for _, value in enumerate(axis):
-            validator.check_int_range(value, -x_dim, x_dim, Rel.INC_LEFT, 'axis', self.name)
+            validator.check_int_range(value, -x_dim, x_dim, validator.INC_LEFT, 'axis', self.name)
         return x_shape
 
     def infer_dtype(self, x_type, clip_norm_type):
@@ -2054,21 +2187,22 @@ class TopTypeof(Primitive):
     def __init__(self):
         self.prim = Primitive('TopTypeof')
         self.typeof_cache = {
-            'slice': _pynative_executor.constant_folding(self.prim, slice(None, None, None)),
-            'list': _pynative_executor.constant_folding(self.prim, []),
-            'tuple': _pynative_executor.constant_folding(self.prim, ()),
-            'Tensor': _pynative_executor.constant_folding(self.prim, Tensor(np.ones([1], dtype=np.float32))),
-            'NoneType': _pynative_executor.constant_folding(self.prim, None),
-            'int': _pynative_executor.constant_folding(self.prim, 0),
-            'bool': _pynative_executor.constant_folding(self.prim, False),
-            'ellipsis': _pynative_executor.constant_folding(self.prim, ...)
+            'slice': mstype.Slice(),
+            'list': mstype.List(),
+            'tuple': mstype.Tuple(),
+            'Tensor': mstype.tensor_type,
+            'NoneType': mstype.NoneType(),
+            'int': mstype.Int(),
+            'bool': mstype.Bool(),
+            'ellipsis': mstype.Ellipsis_(),
+            'dict': mstype.Dict()
         }
 
     def __call__(self, x):
         index_type = type(x).__name__
         if 'Tensor' in index_type:
             index_type = 'Tensor'
-        if index_type in ('slice', 'list', 'tuple', 'Tensor', 'NoneType', 'int', 'bool', 'ellipsis'):
+        if index_type in self.typeof_cache:
             return self.typeof_cache.get(index_type)
         return _pynative_executor.constant_folding(self.prim, x)
 
@@ -2094,7 +2228,7 @@ class MixedPrecisionCast(Primitive):
     Examples:
         >>> import numpy as np
         >>> from mindspore import Tensor
-        >>> from mindspore.common import dtype as mstype
+        >>> from mindspore import dtype as mstype
         >>> from mindspore.ops.operations import _inner_ops as inner
         >>> x = Tensor(np.ones([2, 3], dtype=np.float32))
         >>> out = inner.MixedPrecisionCast(mstype.float16, x)
@@ -2171,13 +2305,22 @@ class CheckBprop(PrimitiveWithInfer):
             raise ValueError(f"For {tips} the number of return values(gradients) must be equal to "
                              f"the number of input arguments except 'out' and 'dout', "
                              f"which is:{len(yshapes)} but got {len(xshapes)}.")
-        checking_range = len(yshapes)
-        for i in range(checking_range):
-            xshape = xshapes[i]
-            yshape = yshapes[i]
+
+        def shape_equal(shape1, shape2):
+            if len(shape1) != len(shape2):
+                return False
+            for shape_axis1, shape_axis2 in zip(shape1, shape2):
+                if shape_axis1 == -1 or shape_axis2 == -1:
+                    continue
+                if shape_axis1 != shape_axis2:
+                    return False
+            return True
+
+        for i, (xshape, yshape) in enumerate(zip(xshapes, yshapes)):
             if not xshape or not yshape:
                 continue
-            if xshape != yshape:
+
+            if not shape_equal(xshape, yshape):
                 raise ValueError(f"For {tips}, the {i}th return value(gradient of the {i}th argument) "
                                  f"should have the same shape as the {i}th argument, "
                                  f"which is:{yshape}, but got: {xshape}.")
@@ -2196,17 +2339,18 @@ class CheckBprop(PrimitiveWithInfer):
         for i in range(checking_range):
             xdtype = xdtypes[i]
             ydtype = ydtypes[i]
-            if isinstance(xdtype, mstype.anything_type) or isinstance(ydtype, mstype.anything_type):
+            if isinstance(xdtype, mstype.AnythingType) or isinstance(ydtype, mstype.AnythingType):
                 continue
-            if isinstance(ydtype, mstype.function_type):
-                if not isinstance(xdtype, mstype.env_type_type):
+            if isinstance(ydtype, mstype.FunctionType):
+                if not isinstance(xdtype, mstype.EnvType):
                     raise TypeError(f"For {tips}, the {i}th return value(gradient of the {i}th argument) type "
-                                    f"should be {mstype.env_type_type}, but got {xdtype}.")
+                                    f"should be {mstype.EnvType}, but got {xdtype}.")
             if xdtype != ydtype:
                 raise TypeError(f"For {tips}, the {i}th return value(gradient of the {i}th argument) "
                                 f"should have the same dtype as the {i}th argument, "
                                 f"which is:{ydtype}, but got: {xdtype}.")
         return xdtypes
+
 
 check_bprop = CheckBprop()
 
@@ -2237,18 +2381,25 @@ class SameTypeShape(PrimitiveWithInfer):
         """run in PyNative mode"""
         validator.check_value_type('x', x, Tensor, self.name)
         validator.check_value_type('y', y, Tensor, self.name)
-        validator.check('x dtype', x.dtype, 'y dtype', y.dtype, Rel.EQ, self.name, TypeError)
-        validator.check('x shape', x.shape, 'y shape', y.shape, Rel.EQ, self.name)
+        validator.check('x dtype', x.dtype, 'y dtype', y.dtype, validator.EQ, self.name, TypeError)
+        validator.check('x shape', x.shape, 'y shape', y.shape, validator.EQ, self.name)
         return x
 
     def __infer__(self, x, y):
-        validator.check_subclass('x', x['dtype'], mstype.tensor, self.name)
-        validator.check_subclass('y', y['dtype'], mstype.tensor, self.name)
-        validator.check('x dtype', x['dtype'], 'y dtype', y['dtype'], Rel.EQ, self.name, TypeError)
-        validator.check('x shape', x['shape'], 'y shape', y['shape'], Rel.EQ, self.name)
+        validator.check_subclass('x', x['dtype'], mstype.tensor_type, self.name)
+        validator.check_subclass('y', y['dtype'], mstype.tensor_type, self.name)
+        validator.check('x dtype', x['dtype'], 'y dtype', y['dtype'], validator.EQ, self.name, TypeError)
+        validator.check('x shape', x['shape'], 'y shape', y['shape'], validator.EQ, self.name)
         return x
 
+
 same_type_shape_ = SameTypeShape()
+
+
+def _is_subclass_(type_, dtype):
+    if not isinstance(type_, typing.Type):
+        return False
+    return typing.is_subclass(type_, dtype)
 
 
 class IsSubClass(PrimitiveWithInfer):
@@ -2285,7 +2436,7 @@ class IsSubClass(PrimitiveWithInfer):
         validator.check_value_type("sub_type", sub_type_t, [mstype.Type], self.name)
         validator.check_value_type("type_", type_v, [mstype.Type], self.name)
 
-        value = mstype._issubclass_(sub_type_t, type_v)  # pylint: disable=W0212
+        value = _is_subclass_(sub_type_t, type_v)
 
         out = {'shape': (),
                'dtype': mstype.type_type,
@@ -2335,9 +2486,306 @@ class IsInstance(PrimitiveWithInfer):
         elif type_v == mstype.tuple_:
             value = isinstance(sub_type_t, tuple)
         else:
-            value = mstype._issubclass_(sub_type_t, type_v)  # pylint: disable=W0212
+            value = _is_subclass_(sub_type_t, type_v)
 
         out = {'shape': (),
                'dtype': mstype.type_type,
                'value': value}
         return out
+
+
+class ConvertToAdapterTensor(Primitive):
+    """
+    Convert a tensor from MindSpore's Tensor type to MSAdapter's Tensor type,
+    where MSAdapter's Tensor is a subclass of MindSpore's Tensor.
+
+    Inputs:
+        - **x** (Tensor) - The input tensor.
+
+    Outputs:
+        A tensor, whose type is MSAdapter's Tensor.
+
+    Supported Platforms:
+        ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> x = Tensor([1, 2 ,3])
+        >>> x = ops.ConvertToAdapterTensor()(x)
+        >>> print(x)
+        [1 2 3]
+    """
+
+    @prim_attr_register
+    def __init__(self):
+        """Initialize"""
+
+    def __call__(self, x):
+        """Run in PyNative mode"""
+        return ms_adapter_registry.tensor(x, cast_tensor=True)
+
+
+convert_to_adapter_tensor = ConvertToAdapterTensor()
+
+
+class ConvertToMsTensor(Primitive):
+    """
+    Convert a tensor from MSAdapter's Tensor type to MindSpore's Tensor type,
+    where MSAdapter's Tensor is a subclass of MindSpore's Tensor.
+
+    Inputs:
+        - **x** (Tensor) - The input tensor.
+
+    Outputs:
+        A tensor, whose type is MindSpore's Tensor.
+
+    Supported Platforms:
+        ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> x = Tensor([1, 2 ,3])
+        >>> x = ops.ConvertToMsTensor()(x)
+        >>> print(x)
+        [1 2 3]
+    """
+
+    @prim_attr_register
+    def __init__(self):
+        """Initialize"""
+
+    def __call__(self, x):
+        """Run in PyNative mode"""
+        if isinstance(x, StubTensor):
+            return StubTensor(stub=x.stub, tensor=x.tensor)
+        return ops.deepcopy(x)
+
+
+convert_to_ms_tensor = ConvertToMsTensor()
+
+
+class GetGrad(Primitive):
+    """
+        Use the position id or Parameter object to get the gradient from the output
+        which returned by the :func:`mindspore.ops.grad`.
+    """
+
+    @prim_attr_register
+    def __init__(self):
+        """Initialize ScatterElements"""
+        self.init_prim_io_names(
+            inputs=['gradients', 'x'], outputs=['gradient'])
+
+    def __call__(self, gradients, x):
+        if not isinstance(x, int) and not isinstance(x, Parameter):
+            raise TypeError(
+                f"For `get_grad`, the `x` should be an integer or a Parameter, but got {x}")
+        hash_id = x
+        if isinstance(x, Parameter):
+            hash_id = x.name
+        output = None
+
+        def _get_grad(grads, identifier):
+            if isinstance(grads, tuple):
+                if len(grads) != 2 or identifier != grads[0]:
+                    for gradient in grads:
+                        _get_grad(gradient, identifier)
+                else:
+                    nonlocal output
+                    output = grads[1]
+                    return
+
+        _get_grad(gradients, hash_id)
+        if output is None:
+            raise RuntimeError(
+                f"Can not find the gradient for position or Parameter {x}")
+        return output
+
+
+class IsParameter(PrimitiveWithInfer):
+    """
+        Check if input is `Parameter`
+    """
+
+    @prim_attr_register
+    def __init__(self):
+        """Initialize IsParameter"""
+
+    def __call__(self, x):
+        return isinstance(x, Parameter)
+
+    def __infer__(self, x):
+        return {'shape': [],
+                'dtype': mstype.bool_,
+                'value': isinstance(x['dtype'], mstype.RefType)}
+
+
+class SiLU(Primitive):
+    r"""
+    Computes SiLU (Sigmoid Linear Unit activation function) of input tensors element-wise.
+
+    Refer to :func:`mindspore.ops.silu` for more details.
+
+    Supported Platforms:
+        ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> x = Tensor(np.array([-1, 2, -3, 2, -1]), mindspore.float16)
+        >>> output = ops.SiLU(x)
+        >>> print(output)
+        [-0.269  1.762  -0.1423  1.762  -0.269]
+    """
+
+    @prim_attr_register
+    def __init__(self):
+        """Initialize SiLU"""
+        self.init_prim_io_names(inputs=['x'], outputs=['output'])
+
+
+class TileSize(Primitive):
+    r"""
+        Tile size for matmul
+    """
+
+    @prim_attr_register
+    def __init__(self):
+        """Initialize TileSize"""
+        self.init_prim_io_names(inputs=['shape', 'out_shape', 'ndim'], outputs=['output'])
+
+    def __call__(self, shape, out_shape, ndim):
+        size = [1] * ndim
+        for idx, (i, j) in enumerate(zip(shape, out_shape)):
+            if i != j:
+                size[idx] = j
+        return tuple(size)
+
+
+class GetitemTensorIndexInfo(Primitive):
+    r"""
+        Get getitem tensor index info
+    """
+
+    @prim_attr_register
+    def __init__(self, is_ascend):
+        """Initialize GetitemTensorIndexInfo"""
+        self.init_prim_io_names(inputs=['data', 'index'],
+                                outputs=["new_index", "tensor_update_types", "tensor_update_args"])
+        validator.check_value_type('is_ascend', is_ascend, [bool], self.name)
+        self.is_ascend = is_ascend
+
+    def __call__(self, data, index):
+        return Tensor_.getitem_index_info(data, index, self.is_ascend)
+
+
+class SetitemTensorIndexInfo(Primitive):
+    r"""
+        Get setitem tensor index info
+    """
+
+    @prim_attr_register
+    def __init__(self, is_ascend):
+        """Initialize GetitemTensorIndexInfo"""
+        self.init_prim_io_names(
+            inputs=['data', 'index', 'value'], outputs=['new_index',
+                                                        'v_transfer_types',
+                                                        'v_transfer_args',
+                                                        'tensor_update_types',
+                                                        'tensor_update_args'])
+        validator.check_value_type('is_ascend', is_ascend, [bool], self.name)
+        self.is_ascend = is_ascend
+
+    def __call__(self, data, index, value):
+        return Tensor_.setitem_index_info(data, index, value, self.is_ascend)
+
+
+class IsConstant(Primitive):
+    r"""
+        Check if the input is constant
+    """
+
+    @prim_attr_register
+    def __init__(self):
+        """Initialize IsConstant"""
+
+    def __call__(self, x):
+        return True
+
+
+class SelectView(Primitive):
+    r"""
+        Select tensor of view
+    """
+
+    @prim_attr_register
+    def __init__(self):
+        self.init_prim_io_names(inputs=['input_tensor', 'input_indices', 'axis'], outputs=['output'])
+
+
+class CopyWithSlice(Primitive):
+    r"""
+        Copy data to discontinuous tensor
+    """
+    @prim_attr_register
+    def __init__(self):
+        self.add_prim_attr('side_effect_mem', True)
+        self.init_prim_io_names(inputs=['x', 'y'], outputs=['x'])
+
+
+class MoeFFN(Primitive):
+    r"""
+    The MoeFFN computation is similar to Feed-Forward Network, it contains matmul + gelu + matmul.
+
+    Args:
+        activation (string): The activation type, set to 'fastgelu' or 'gelu'.
+        Only support 'fastgelu' for now. Default: "fastgelu".
+
+    Inputs:
+        - **x** (Tensor) - The input tensor with data type of int8, float16.
+          Input tensor of shape :math:`(batch\_size * seq\_length, hidden\_size)`.
+        - **expert_tokens** (Tensor]) - The expert tokens tensor with data type of int64.
+          Expert tokens tensor of shape :math:`(16,)`. For example, `(2, 1, 0, .., 9)`
+          indicate that the 0th expert deals with 2 tokens, the 1th expert deals with 1 tokens,
+          the 2th expert do noting and so on.
+        - **weight1** (Tensor) - The weight1 tensor with data type of float16.
+          Weight1 tensor of shape :math:`(expert\_num, hidden\_size, ffn\_hidden\_size)`.
+        - **bias1** (Tensor) - The bias1 tensor with data type of float16.
+          Bias1 tensor of shape :math:`(expert\_num, ffn\_hidden\_size)`.
+        - **weight2** (Tensor) - The weight2 tensor with data type of float16.
+          Weight2 tensor of shape :math:`(expert\_num, ffn\_hidden\_size, hidden\_size)`.
+        - **bias2** (Tensor) - The bias2 tensor with data type of float16.
+          Bias2 tensor of shape :math:`(expert\_num, hidden\_size)`.
+        - **scale** (Tensor) - The scale tensor with data type of float16. Not enable now.
+        - **offset** (Tensor) - The offset tensor with data type of float16. Not enable now.
+        - **deq_scale1** (Tensor) - The deq_scale1 tensor with data type of float16. Not enable now.
+        - **deq_scale2** (Tensor) - The deq_scale2 tensor with data type of float16. Not enable now.
+
+    Outputs:
+        Tensor of shape :math:`(batch\_size * seq\_length, hidden\_size)`. With data type of float16.
+
+    Supported Platforms:
+        ``Ascend``
+
+    Examples:
+        >>> from mindspore.ops.operations import _inner_ops
+        >>> b = 4
+        >>> s = 128
+        >>> h = 1024
+        >>> h_f = 4 * h
+        >>> e = 16
+        >>> x = Tensor(np.random.randn(b * s, h).astype(np.float16))
+        >>> expert_tokens = Tensor(np.random.randn(e).astype(np.int64))
+        >>> w1 = Tensor(np.random.randn(e, h, h_f).astype(np.float16))
+        >>> bias1 = Tensor(np.random.randn(e, h_f).astype(np.float16))
+        >>> w2 = Tensor(np.random.randn(e, h_f, h).astype(np.float16))
+        >>> bias2 = Tensor(np.random.randn(e, h).astype(np.float16))
+        >>> moe_ffn = _inner_ops.MoeFFN("fastgelu")
+        >>> output = moe_ffn(x, w1, bias1, w2, bias2)
+        >>> print(output)
+    """
+
+    @prim_attr_register
+    def __init__(self, activation):
+        """Initialize MoeFFN."""
+        self.init_prim_io_names(inputs=["x", "expert_tokens", "weight1", "bias1",
+                                        "weight2", "bias2", "scale", "offset", "deq_scale1"
+                                        "deq_scale2"],
+                                outputs=["y"])
+        self.activation = activation

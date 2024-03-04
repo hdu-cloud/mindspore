@@ -19,8 +19,7 @@ from mindspore import ops
 from mindspore.ops import operations as P
 import mindspore.common.dtype as mstype
 from mindspore.common.api import jit
-from mindspore._checkparam import Validator as validator
-from mindspore._checkparam import Rel
+from mindspore import _checkparam as validator
 from mindspore.nn.optim.optimizer import Optimizer
 from mindspore.nn.optim.optimizer import opt_init_args_register
 
@@ -37,12 +36,12 @@ class Rprop(Optimizer):
     .. math::
         \begin{gather*}
             &\hspace{-10mm}  \textbf{if} \:   g_{t-1} g_t  > 0                                     \\
-            &\hspace{25mm}  \Delta_t \leftarrow \mathrm{min}(\Delta_{t-1} \eta_{+}, \Delta_{max}) \\
-            &\hspace{0mm}  \textbf{else if}  \:  g_{t-1} g_t < 0                                 \\
-            &\hspace{25mm}  \Delta_t \leftarrow \mathrm{max}(\Delta_{t-1} \eta_{-}, \Delta_{min}) \\
-            &\hspace{-25mm}  \textbf{else}  \:                                                      \\
-            &\hspace{-5mm}  \Delta_t \leftarrow \Delta_{t-1}                                      \\
-            &\hspace{15mm} w_{t} \leftarrow w_{t-1}- \Delta_{t} \mathrm{sign}(g_t)                \\
+            &\hspace{25mm}  \Delta_t \leftarrow \mathrm{min}(\Delta_{t-1} \eta_{+}, \Delta_{max})  \\
+            &\hspace{0mm}  \textbf{else if}  \:  g_{t-1} g_t < 0                                   \\
+            &\hspace{25mm}  \Delta_t \leftarrow \mathrm{max}(\Delta_{t-1} \eta_{-}, \Delta_{min})  \\
+            &\hspace{-25mm}  \textbf{else}  \:                                                     \\
+            &\hspace{-5mm}  \Delta_t \leftarrow \Delta_{t-1}                                       \\
+            &\hspace{15mm} w_{t} \leftarrow w_{t-1}- \Delta_{t} \mathrm{sign}(g_t)                 \\
         \end{gather*}
 
     :math:`\Delta_{min/max}` represents the min/max step size, :math:`\eta_{+/-}` represents the factors of
@@ -84,7 +83,7 @@ class Rprop(Optimizer):
               If `order_params` in the keys, other keys will be ignored and the element of 'order_params' must be in
               one group of `params`.
 
-        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Learning_rate. Default: 0.1.
+        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Learning_rate. Default: ``0.1`` .
 
             - float: The fixed learning rate value. Must be equal to or greater than 0.
 
@@ -99,10 +98,10 @@ class Rprop(Optimizer):
               LearningRateSchedule with step as the input to get the learning rate of current step.
 
         etas (tuple[float, float]): The factor of multiplicative increasing or
-            descreasing(etaminus, etaplus). Default: (0.5, 1.2).
+            descreasing(etaminus, etaplus). Default: ``(0.5, 1.2)`` .
         step_sizes(tuple[float, float]): The allowed minimal and maximal step size(min_step_sizes, max_step_size).
-            Default: (1e-6, 50.).
-        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: 0.0.
+            Default: ``(1e-6, 50.)`` .
+        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: ``0.0`` .
 
             - float: The fixed weight decay value. Must be equal to or greater than 0.
 
@@ -135,7 +134,9 @@ class Rprop(Optimizer):
         >>> import mindspore as ms
         >>> from mindspore import nn
         >>>
-        >>> net = Net()
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> #1) All parameters use the same learning rate and weight decay
         >>> optim = nn.Rprop(params=net.trainable_params())
         >>>
@@ -153,7 +154,7 @@ class Rprop(Optimizer):
         >>> # The final parameters order in which the optimizer will be followed is the value of 'order_params'.
         >>>
         >>> loss = nn.SoftmaxCrossEntropyWithLogits()
-        >>> model = ms.Model(net, loss_fn=loss, optimizer=optim)
+        >>> model = ms.train.Model(net, loss_fn=loss, optimizer=optim)
     """
 
     @opt_init_args_register
@@ -175,7 +176,7 @@ class Rprop(Optimizer):
             raise ValueError("For Rprop, maximal step size should not be less than minimal step size, "
                              "but got {} > {}.".format(step_sizes[0], step_sizes[1]))
 
-        validator.check_float_range(etas[0], 0.0, 1.0, Rel.INC_NEITHER, "etaminus", self.cls_name)
+        validator.check_float_range(etas[0], 0.0, 1.0, validator.INC_NEITHER, "etaminus", self.cls_name)
         validator.check_value_type("etaplus", etas[1], [float], self.cls_name)
         if etas[1] <= 1.0:
             raise ValueError("For Rprop, etaplus must be greater than 1.0, but got etaplus {}.".format(etas[1]))
@@ -188,8 +189,8 @@ class Rprop(Optimizer):
         self.prev = self._parameters.clone(prefix="prev", init='zeros')
         self.step_size = self._parameters.clone(prefix="step_size", init='zeros')
 
-        self.fill = P.Fill()
         self.sign = P.Sign()
+        self.fill = P.FillV2()
         self.assign = P.Assign()
         self.assignadd = P.AssignAdd()
         self.cast = P.Cast()
@@ -203,8 +204,7 @@ class Rprop(Optimizer):
         gradients = self.gradients_centralization(gradients)
         gradients = self.scale_grad(gradients)
         lrs = self.get_lr()
-        if not self._is_dynamic_lr_or_weight_decay():
-            self.assignadd(self.global_step, self.global_step_increase_tensor)
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
         success = True
 
         for index, (grad, param, prev, step_size) in enumerate(zip(gradients, self._parameters,
@@ -220,14 +220,26 @@ class Rprop(Optimizer):
             param_fp32 = self.cast(param, mstype.float32)
 
             sign = self.sign(gradient_fp32 * prev)
-            sign = self.select(sign > 0, self.fill(mstype.float32, sign.shape, self.etaplus), sign)
-            sign = self.select(sign < 0, self.fill(mstype.float32, sign.shape, self.etaminus), sign)
-            sign = self.select(sign == 0, self.fill(mstype.float32, sign.shape, 1.), sign)
+            sign = self.select(
+                sign > 0,
+                self.fill(sign.shape, self.cast(self.etaplus, mstype.float32)),
+                sign)
+            sign = self.select(
+                sign < 0,
+                self.fill(sign.shape, self.cast(self.etaminus,
+                                                mstype.float32)), sign)
+            sign = self.select(
+                sign == 0, self.fill(sign.shape,
+                                     self.cast(1., mstype.float32)), sign)
 
-            step_size_fp32 = ops.clip_by_value(step_size_fp32 * sign, self.step_size_min, self.step_size_max)
+            step_size_fp32 = ops.clip_by_value(step_size_fp32 * sign,
+                                               self.step_size_min,
+                                               self.step_size_max)
 
-            gradient_update = self.select(sign == self.etaminus, self.fill(mstype.float32, sign.shape, 0.),
-                                          gradient_fp32)
+            gradient_update = self.select(
+                sign == self.etaminus,
+                self.fill(sign.shape, self.cast(0., mstype.float32)),
+                gradient_fp32)
             next_param = param_fp32 - self.sign(gradient_update) * step_size_fp32
 
             self.assign(param, self.cast(next_param, param.dtype))

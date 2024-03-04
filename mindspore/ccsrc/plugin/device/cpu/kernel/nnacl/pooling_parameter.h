@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,21 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_POOLING_PARAMETER_H_
-#define MINDSPORE_NNACL_POOLING_PARAMETER_H_
+#ifndef NNACL_POOLING_PARAMETER_H_
+#define NNACL_POOLING_PARAMETER_H_
 
 #include "nnacl/op_base.h"
 
 typedef enum PoolMode { PoolMode_No, PoolMode_MaxPool, PoolMode_AvgPool } PoolMode;
 
-typedef enum RoundMode { RoundMode_No, RoundMode_Ceil, RoundMode_Floor } RoundMode;
+typedef enum RoundType { RoundType_No, RoundType_Ceil, RoundType_Floor } RoundType;
 
 typedef struct PoolingParameter {
-  // Primitive parameter
   OpParameter op_parameter_;
   PoolMode pool_mode_;
-  RoundMode round_mode_;
-  PadMode pad_mode_;
+  RoundType round_type_;
+  PadType pad_mode_;
   ActType act_type_;
   int avg_mode_;
   bool global_;
@@ -35,23 +34,10 @@ typedef struct PoolingParameter {
   int window_h_;
   int stride_w_;
   int stride_h_;
-  // shape correlative
-  int input_w_;
-  int input_h_;
-  int input_batch_;
-  int input_channel_;
-  int output_w_;
-  int output_h_;
-  int output_batch_;
-  int output_channel_;
   int pad_u_;
   int pad_d_;
   int pad_l_;
   int pad_r_;
-  // other parameter
-  int thread_num_;
-  QuantArg **quant_args_;
-  bool quantize_;
 } PoolingParameter;
 
 typedef struct Pooling3DParameter {
@@ -62,6 +48,8 @@ typedef struct Pooling3DParameter {
   int output_d_;
   int pad_f_;  // front
   int pad_b_;  // back
+  bool count_include_pad_;
+  int divisor_override_;
 } Pooling3DParameter;
 
-#endif  // MINDSPORE_NNACL_POOLING_PARAMETER_H_
+#endif  // NNACL_POOLING_PARAMETER_H_

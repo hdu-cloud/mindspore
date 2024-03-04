@@ -23,6 +23,7 @@
 #include "tools/converter/adapter/acl/mapper/primitive_mapper_register.h"
 #include "mindspore/core/ops/op_name.h"
 #include "src/common/common.h"
+#include "runtime/dev.h"
 
 namespace mindspore {
 static std::string AdjustCnodeName(const PrimitivePtr &prim) {
@@ -52,6 +53,7 @@ static Status RunPrimitiveMapper(const FuncGraphPtr &func_graph) {
   std::set<FuncGraphPtr> all_func_graphs = {};
   lite::GetAllFuncGraph(func_graph, &all_func_graphs);
   for (auto graph : all_func_graphs) {
+    MS_CHECK_TRUE_RET(graph != nullptr, kCoreFailed);
     auto node_list = TopoSort(graph->get_return());
     for (auto &node : node_list) {
       if (!utils::isa<CNodePtr>(node)) {
@@ -108,4 +110,39 @@ Status GeUtils::AdaptGraph(const FuncGraphPtr &func_graph) {
   }
   return kSuccess;
 }
+
+std::shared_ptr<AscendDeviceInfo> GeUtils::GetAscendDeviceInfo(const std::shared_ptr<mindspore::Context> &context) {
+  if (context == nullptr) {
+    MS_LOG(ERROR) << "Context cannot be nullptr";
+    return nullptr;
+  }
+  auto device_list = context->MutableDeviceInfo();
+  auto itr =
+    std::find_if(device_list.begin(), device_list.end(), [](const std::shared_ptr<DeviceInfoContext> &device_info) {
+      return device_info != nullptr && device_info->GetDeviceType() == DeviceType::kAscend;
+    });
+  if (itr == device_list.end()) {
+    MS_LOG(ERROR) << "Can not find ascend device context.";
+    return nullptr;
+  }
+  auto ascend_device_info = (*itr)->Cast<AscendDeviceInfo>();
+  return ascend_device_info;
+}
+
+std::string GetSocVersion() {
+  // Get default soc version.
+  static std::string version;
+  if (version.empty()) {
+    const int kSocVersionLen = 50;
+    char soc_version[kSocVersionLen] = {0};
+    auto ret = rtGetSocVersion(soc_version, kSocVersionLen);
+    if (ret != RT_ERROR_NONE) {
+      MS_LOG(ERROR) << "GetSocVersion failed.";
+      return "";
+    }
+    version = soc_version;
+  }
+  return version;
+}
+
 }  // namespace mindspore

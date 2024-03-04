@@ -17,8 +17,7 @@ import numpy as np
 
 import mindspore.nn as nn
 import mindspore.common.dtype as mstype
-from mindspore import Tensor, context, jit
-from . import test_graph_fallback
+from mindspore import Tensor, context
 
 context.set_context(mode=context.GRAPH_MODE)
 
@@ -114,18 +113,68 @@ def test_fallback_self_method():
     assert np.all(out.asnumpy() == expect)
 
 
-def test_fallback_import_modules():
+def test_fallback_self_method_2():
     """
     Feature: JIT Fallback
-    Description: Check whether the call to the third-party library is correct. It has nothing to do with class.
+    Description: Add with numpy array should be converted to PyInterpret node first.
     Expectation: No exception.
     """
-    @jit
-    def use_imported_module(x, y):
-        out = test_graph_fallback.add_func(x, y)
-        return out
+    class Network(nn.Cell):
+        def construct(self):
+            x = np.array([1, 2, 3])
+            y = np.array([3, 4, 5])
+            z = self.fn(x, y)
+            out = Tensor(z)
+            return out
 
-    x = Tensor(2, dtype=mstype.int32)
-    y = Tensor(3, dtype=mstype.int32)
-    out = use_imported_module(x, y)
-    print(out)
+        def fn(self, x, y):
+            return x + y
+
+    net = Network()
+    out = net()
+    expect = np.array([4, 6, 8])
+    assert np.all(out.asnumpy() == expect)
+
+
+def test_fallback_self_variable():
+    """
+    Feature: JIT Fallback
+    Description: Use self as variable name
+    Expectation: No exception
+    """
+    class Network(nn.Cell):
+        def __init__(self):
+            super(Network, self).__init__()
+            self.value = 5
+
+        def construct(self):
+            x = self.value
+            self = 10 # pylint: disable=W0642
+            return x, Tensor(self)
+
+    net = Network()
+    out_x, out_self = net()
+    assert out_x == 5
+    assert out_self == 10
+
+
+def test_fallback_self_variable_with_get_attr():
+    """
+    Feature: JIT Fallback
+    Description: Use self as variable name
+    Expectation: No exception
+    """
+    class Network(nn.Cell):
+        def __init__(self):
+            super(Network, self).__init__()
+            self.value = 5
+
+        def construct(self):
+            x = getattr(self, 'value')
+            self = 10 # pylint: disable=W0642
+            return x, Tensor(self)
+
+    net = Network()
+    out_x, out_self = net()
+    assert out_x == 5
+    assert out_self == 10

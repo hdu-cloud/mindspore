@@ -14,13 +14,16 @@
  * limitations under the License.
  */
 #include "common/common_test.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "frontend/parallel/step_parallel.h"
 #include "frontend/parallel/step_parallel_utils.h"
 #include "frontend/parallel/graph_util/generate_graph.h"
 #include "common/py_func_graph_fetcher.h"
 #include "include/common/debug/draw.h"
 #include "frontend/operator/ops.h"
-#include "pipeline/jit/static_analysis/static_analysis.h"
+#include "pipeline/jit/ps/static_analysis/static_analysis.h"
 #include "include/common/utils/convert_utils_py.h"
 #include "utils/ms_context.h"
 
@@ -313,7 +316,7 @@ TEST_F(TestStepParallel, CreateOpInstance) {
   OperatorParams operator_param;
   py::object context = py::module::import("mindspore.context");
   py::object set_context = context.attr("set_context");
-  set_context("mode"_a=kGraphMode);
+  set_context("mode"_a = kGraphMode);
   OperatorArgs args = std::make_pair(attrs, operator_param);
   auto op_instance = CreateOpInstance(args.first, op_name, "test");
   ASSERT_TRUE(op_instance);
@@ -325,8 +328,8 @@ TEST_F(TestStepParallel, CreateOpInstance) {
     std::vector<py::object> arglist;
     (void)std::transform(attrs.begin(), attrs.end(), std::back_inserter(arglist),
                          [](Attr attr) { return ValueToPyData(attr.second); });
-    py::object allreduce_pyobj = python_adapter::CallPyFn(
-      "mindspore.parallel._utils", "_get_python_op", "AllReduce", "mindspore.ops.operations", "test", arglist);
+    py::object allreduce_pyobj = python_adapter::CallPyFn("mindspore.parallel._utils", "_get_python_op", "AllReduce",
+                                                          "mindspore.ops.operations", "test", arglist);
     py::dict opAttr = py::getattr(allreduce_pyobj, "attrs");
     mindspore::HashMap<std::string, ValuePtr> attributes{};
     for (auto item : opAttr) {
@@ -454,7 +457,7 @@ TEST_F(TestStepParallel, ForwardCommunication1) {
   OperatorVector op_list = {op, op};
   py::object context = py::module::import("mindspore.context");
   py::object set_context = context.attr("set_context");
-  set_context("mode"_a=kGraphMode);
+  set_context("mode"_a = kGraphMode);
   FuncGraphManagerPtr manager = Make_Manager();
   FuncGraphSet graphs = manager->func_graphs();
   FuncGraphPtr graph = *graphs.begin();
@@ -584,5 +587,25 @@ TEST_F(TestStepParallel, GetTensorInLayout) {
   ASSERT_EQ(array, tensor_shape_test);
 }
 
+/// Feature: test update micro batch interleaved status
+/// Description:
+/// Expectation: the status is correct
+TEST_F(TestStepParallel, UpdateMicroBatchInterleavedStatus) {
+  std::vector<AnfNodePtr> inputs;
+  FuncGraphPtr func_graph = std::make_shared<FuncGraph>();
+
+  ValueNodePtr stridedSlicePtr = NewValueNode(prim::kPrimStridedSlice);
+  PrimitivePtr prim = stridedSlicePtr->value()->cast<PrimitivePtr>();
+  prim->AddAttr(FUNC_GRAPH_FLAG_STRIDED_SLICE, MakeValue(true));
+  prim->AddAttr(INTERLEAVED_NUM, MakeValue((int64_t(2))));
+
+  inputs.push_back(stridedSlicePtr);
+  CNodePtr node1 = func_graph->NewCNode(inputs);
+
+  inputs.push_back(node1);
+  UpdateMicroBatchInterleavedStatus(inputs);
+  EXPECT_EQ(inputs.back()->cast<CNodePtr>()->HasAttr(INTERLEAVED_NUM), true);
+  EXPECT_EQ(GetValue<int64_t>(inputs.back()->cast<CNodePtr>()->GetAttr(INTERLEAVED_NUM)), 2);
+}
 }  // namespace parallel
 }  // namespace mindspore

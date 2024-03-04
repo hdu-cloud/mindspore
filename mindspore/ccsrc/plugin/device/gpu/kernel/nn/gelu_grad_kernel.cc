@@ -66,7 +66,9 @@ bool GeLUGradGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, c
   T *x_addr = GetDeviceAddress<T>(inputs, 1);
   T *dx_addr = GetDeviceAddress<T>(outputs, 0);
 
-  GeluGradKernel(input_size_, dy_addr, x_addr, dx_addr, reinterpret_cast<cudaStream_t>(stream_ptr), GET_CTX_DEVICE_ID);
+  auto status = GeluGradKernel(input_size_, dy_addr, x_addr, dx_addr, reinterpret_cast<cudaStream_t>(stream_ptr),
+                               GET_CTX_DEVICE_ID);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -83,6 +85,12 @@ std::vector<std::pair<KernelAttr, GeLUGradGpuKernelMod::GeLUGradGpuLaunchFunc>> 
      .AddInputAttr(kNumberTypeFloat32)
      .AddOutputAttr(kNumberTypeFloat32),
    &GeLUGradGpuKernelMod::LaunchKernel<float>},
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeFloat64)
+     .AddInputAttr(kNumberTypeFloat64)
+     .AddInputAttr(kNumberTypeFloat64)
+     .AddOutputAttr(kNumberTypeFloat64),
+   &GeLUGradGpuKernelMod::LaunchKernel<double>},
 };
 
 std::vector<KernelAttr> GeLUGradGpuKernelMod::GetOpSupport() {

@@ -17,7 +17,7 @@
             w = w - m_{t+1}
         \end{array}
 
-    其中 :math:`w` 代表 `var` ， :math:`w` 将更新。
+    其中 :math:`w` 代表 `var` ，将会更新。
     :math:`g_{t+1}` 代表 `mean_gradient` ， :math:`g_{t}` 是上一步的 :math:`g_{t+1}` 。
     :math:`s_{t+1}` 代表 `mean_square` ， :math:`s_{t}` 是上一步的 :math:`s_{t+1}` ，
     :math:`m_{t+1}` 代表 `moment` ， :math:`m_{t}` 是上一步的 :math:`m_{t+1}` 。
@@ -32,10 +32,10 @@
         在此算法的密集实现中， `mean_gradient` 、 `mean_square` 和 `moment` 在 `grad` 为零时仍将被更新。但在稀疏实现中， `mean_gradient` 、 `mean_square` 和 `moment` 不会在 `grad` 为零的迭代中被更新。
 
     参数：
-        - **use_locking** (bool) - 是否对参数更新增加锁保护。默认值：False。
+        - **use_locking** (bool) - 是否对参数更新增加锁保护。默认值： ``False`` 。
 
     输入：
-        - **var** (Tensor) - 要更新的权重。
+        - **var** (Parameter) - 要更新的权重。
         - **mean_gradient** (Tensor) - 均值梯度，数据类型必须与 `var` 相同。
         - **mean_square** (Tensor) - 均方梯度，数据类型必须与 `var` 相同。
         - **moment** (Tensor) - `var` 的增量，数据类型必须与 `var` 相同。

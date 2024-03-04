@@ -21,7 +21,7 @@ from scipy.ndimage import morphology
 import numpy as np
 
 from mindspore.common.tensor import Tensor
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.train.metrics.metric import Metric, rearrange_inputs
 
 
@@ -78,20 +78,22 @@ class HausdorffDistance(Metric):
                 h(B, A) = \underset{b \in B}{\text{max}}\{\underset{a \in A}{\text{min}} \rVert b - a \rVert \}
         \end{array}
 
-    where h(A,B) is the maximum distance of a set A to the nearest point in the set B, h(B,A) is the maximum distance
+    where :math:`h(A, B)` is the maximum distance of a set A to the nearest point in the set B,
+    :math:`h(B, A)` is the maximum distance
     of a set B to the nearest point in the set A. The distance calculation is oriented, which means that most of times
-    :math:`h(A, B)` is not equal to :math:`h(B, A)`. H(A, B) is the two-way Hausdorff distance.
+    :math:`h(A, B)` is not equal to :math:`h(B, A)`. :math:`H(A, B)` is the two-way Hausdorff distance.
 
     Args:
-        distance_metric (string): Three distance measurement methods are supported: "euclidean", "chessboard" or
-                           "taxicab". Default: "euclidean".
+        distance_metric (string): Three distance measurement methods are supported:
+                    ``"euclidean"`` (Euclidean Distance) ,  ``"chessboard"`` (Chessboard Distance, Chebyshev Distance)
+                    or  ``"taxicab"`` (Taxicab Distance, Manhattan Distance). Default: ``"euclidean"`` .
         percentile (float): Floating point numbers between 0 and 100. Specify the percentile parameter to get the
-                            percentile of the Hausdorff distance. Default: None.
+                            percentile of the Hausdorff distance. Default: ``None`` .
         directed (bool): If True, it only calculates h(y_pred, y) distance, otherwise, max(h(y_pred, y), h(y, y_pred))
-                    will be returned. Default: False.
+                    will be returned. Default: ``False`` .
         crop (bool): Crop input images and only keep the foregrounds. In order to maintain two inputs' shapes,
                      here the bounding box is achieved by (y_pred | y) which represents the union set of two images.
-                     Default: True.
+                     Default: ``True`` .
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
@@ -110,6 +112,7 @@ class HausdorffDistance(Metric):
         >>> print(mean_average_distance)
         1.4142135623730951
     """
+
     def __init__(self, distance_metric="euclidean", percentile=None, directed=False, crop=True):
         super(HausdorffDistance, self).__init__()
         string_list = ["euclidean", "chessboard", "taxicab"]

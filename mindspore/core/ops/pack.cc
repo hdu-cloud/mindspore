@@ -15,13 +15,21 @@
  */
 
 #include "ops/pack.h"
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "ops/stack_comm.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
+class AGStackInfer;
+
 void Pack::set_axis(const int64_t &axis) { (void)AddAttr(kAxis, api::MakeValue(axis)); }
 
 int64_t Pack::get_axis() const { return GetValue<int64_t>(GetAttr(kAxis)); }
@@ -29,6 +37,6 @@ int64_t Pack::get_axis() const { return GetValue<int64_t>(GetAttr(kAxis)); }
 void Pack::Init(const int64_t &axis) { this->set_axis(axis); }
 
 MIND_API_OPERATOR_IMPL(Pack, BaseOperator);
-REGISTER_PRIMITIVE_C(kNamePack, Pack);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Pack, prim::kPrimPack, AGStackInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -15,15 +15,23 @@
  */
 
 #include "plugin/device/ascend/optimizer/enhancer/add_placeholder_for_dynamic_gru.h"
-#include "backend/common/optimizer/helper.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include <vector>
+#include <string>
+#include "ops/array_op_name.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/common/utils/utils.h"
 #include "abstract/abstract_value.h"
-#include "mindspore/core/ops/core_ops.h"
 
 namespace mindspore {
 namespace opt {
+std::vector<std::string> InsertPlaceholderForDynamicGRUV2::MustExistPrimitiveName() const {
+  std::vector<std::string> ret;
+  ret.emplace_back(kDynamicGRUV2OpName);
+  return ret;
+}
+
 const BaseRef InsertPlaceholderForDynamicGRUV2::DefinePattern() const {
   std::shared_ptr<Var> V = std::make_shared<CondVar>(UnVisited);
   std::shared_ptr<Var> Xs = std::make_shared<SeqVar>();
@@ -41,13 +49,12 @@ const AnfNodePtr InsertPlaceholderForDynamicGRUV2::Process(const FuncGraphPtr &f
     return nullptr;
   }
   common::AnfAlgo::SetNodeAttr(kAttrVisited, MakeValue(true), node);
-  auto kernel_graph = func_graph->cast<std::shared_ptr<session::KernelGraph>>();
-  MS_EXCEPTION_IF_NULL(kernel_graph);
   size_t input_num = common::AnfAlgo::GetInputTensorNum(node);
   if (input_num == 0) {
     return nullptr;
   }
 
+  auto kernel_graph = func_graph->cast<std::shared_ptr<session::KernelGraph>>();
   std::vector<AnfNodePtr> new_inputs = {common::AnfAlgo::GetCNodePrimitiveNode(cnode)};
   auto none_index = common::AnfAlgo::GetNodeAttr<std::vector<int64_t>>(cnode, kAttrPlaceHolderIndex);
   size_t real_input_index = 0;
@@ -58,9 +65,14 @@ const AnfNodePtr InsertPlaceholderForDynamicGRUV2::Process(const FuncGraphPtr &f
       auto value_node = NewValueNode(value);
       MS_EXCEPTION_IF_NULL(value_node);
       value_node->set_abstract(std::make_shared<abstract::AbstractNone>());
-      auto new_node = kernel_graph->NewValueNode(value_node);
-      kernel_graph->AddValueNodeToGraph(new_node);
-      new_inputs.push_back(new_node);
+      ValueNodePtr new_vnode = nullptr;
+      if (kernel_graph == nullptr) {
+        new_vnode = value_node;
+      } else {
+        new_vnode = kernel_graph->NewValueNode(value_node);
+        kernel_graph->AddValueNodeToGraph(new_vnode);
+      }
+      new_inputs.push_back(new_vnode);
     } else {
       auto input_node = common::AnfAlgo::GetInputNode(cnode, real_input_index);
       new_inputs.push_back(input_node);
@@ -71,6 +83,7 @@ const AnfNodePtr InsertPlaceholderForDynamicGRUV2::Process(const FuncGraphPtr &f
   CNodePtr new_node = nullptr;
   if (kernel_graph == nullptr) {
     new_node = std::make_shared<CNode>(*cnode);
+    new_node->CloneUserData(cnode);
   } else {
     new_node = NewCNode(cnode, kernel_graph);
   }

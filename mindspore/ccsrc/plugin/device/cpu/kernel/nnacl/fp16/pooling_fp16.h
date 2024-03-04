@@ -14,21 +14,23 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_FP16_POOLING_FP16_H_
-#define MINDSPORE_NNACL_FP16_POOLING_FP16_H_
+#ifndef NNACL_FP16_POOLING_FP16_H_
+#define NNACL_FP16_POOLING_FP16_H_
 
 #include <math.h>
 #include "nnacl/pooling_parameter.h"
 #include "nnacl/intrinsics/ms_simd_instructions_fp16.h"
+#include "nnacl/kernel/pooling.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 int AvgPoolingFp16(const float16_t *input_ptr, float16_t *output_ptr, const PoolingParameter *pooling_param,
-                   int task_id, float16_t min, float16_t max);
+                   const PoolingComputeParam *pooling_args, int task_id, int thread_num);
 
 void MaxPoolingFp16(const float16_t *input_ptr, float16_t *output_ptr, const PoolingParameter *pooling_param,
-                    int task_id, float16_t min, float16_t max);
+                    const PoolingComputeParam *pooling_args, int task_id, int thread_num);
 #ifdef __cplusplus
 }
 #endif
-#endif  // MINDSPORE_NNACL_FP16_POOLING_FP16_H_
+#endif  //  NNACL_FP16_POOLING_FP16_H_

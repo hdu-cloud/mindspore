@@ -20,11 +20,14 @@
 #include <vector>
 #include <string>
 
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/sequence_ops.h"
+#include "ops/nn_optimizer_ops.h"
+#include "ops/nn_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "plugin/device/gpu/hal/device/kernel_info_setter.h"
 #include "kernel/graph_kernel_info.h"
 
@@ -71,14 +74,14 @@ void SetShapeAndType(const CNodePtr &bn_add_relu_grad, const AnfNodePtr &bn_grad
   // set output shape and dtype
   std::vector<TypeId> outputs_type;
   std::vector<BaseShapePtr> outputs_shape;
-  auto output_num = common::AnfAlgo::GetOutputTensorNum(bn_grad);
+  auto output_num = AnfAlgo::GetOutputTensorNum(bn_grad);
   for (size_t i = 0; i < output_num; ++i) {
     outputs_type.push_back(common::AnfAlgo::GetOutputInferDataType(bn_grad, i));
-    outputs_shape.push_back(common::AnfAlgo::GetOutputDetailShape(bn_grad, i));
+    outputs_shape.push_back(AnfAlgo::GetOutputDetailShape(bn_grad, i));
   }
 
   outputs_type.push_back(common::AnfAlgo::GetOutputInferDataType(relu_grad, 0));
-  outputs_shape.push_back(common::AnfAlgo::GetOutputDetailShape(relu_grad, 0));
+  outputs_shape.push_back(AnfAlgo::GetOutputDetailShape(relu_grad, 0));
   common::AnfAlgo::SetOutputTypeAndDetailShape(outputs_type, outputs_shape, bn_add_relu_grad.get());
 }
 
@@ -88,7 +91,7 @@ void ReplaceOutput(const FuncGraphPtr &graph, const AnfNodePtr &bn_grad, const A
   std::vector<AnfNodePtr> bn_add_relu_grad_output;
   CreateMultipleOutputsOfAnfNode(graph, bn_add_relu_grad, kBNAddReluGradOutputNum, &bn_add_relu_grad_output);
   if (bn_add_relu_grad_output.size() != kBNAddReluGradOutputNum) {
-    MS_LOG(EXCEPTION) << "The output size of node " << kBatchNormGradWithAddAndActivation << " must be "
+    MS_LOG(EXCEPTION) << "The output size of node " << kBatchNormGradWithAddAndActivationOpName << " must be "
                       << kBNAddReluGradOutputNum << ", but it is " << bn_add_relu_grad_output.size();
   }
 
@@ -110,7 +113,9 @@ void ReplaceOutput(const FuncGraphPtr &graph, const AnfNodePtr &bn_grad, const A
     output_index++;
   }
 
-  manager->Replace(relu_grad, bn_add_relu_grad_output[kBNAddReluGradOutputNum - 1]);
+  if (!manager->Replace(relu_grad, bn_add_relu_grad_output[kBNAddReluGradOutputNum - 1])) {
+    MS_LOG(EXCEPTION) << "manager replace node failed in batchnorm add relu grad fusion.";
+  }
   return;
 }
 
@@ -143,7 +148,7 @@ bool PatternCheck(const FuncGraphPtr &graph, const AnfNodePtr &node) {
     return false;
   }
   auto forward_node = common::AnfAlgo::GetInputNode(utils::cast<CNodePtr>(tuple_getitem), 0);
-  if (common::AnfAlgo::GetCNodeName(forward_node) != kBatchNormWithAddAndActivation) {
+  if (common::AnfAlgo::GetCNodeName(forward_node) != kBatchNormWithAddAndActivationOpName) {
     return false;
   }
 
@@ -192,7 +197,7 @@ const AnfNodePtr BatchNormAddReluGradFusion::Process(const FuncGraphPtr &graph, 
   if (!GetValue<bool>(is_train)) {
     return nullptr;
   }
-  auto prim = std::make_shared<Primitive>(kBatchNormGradWithAddAndActivation);
+  auto prim = std::make_shared<Primitive>(kBatchNormGradWithAddAndActivationOpName);
   MS_EXCEPTION_IF_NULL(prim);
   std::vector<AnfNodePtr> inputs = {NewValueNode(prim), dy, x, scale, save_mean, save_var, reserve, bias, y};
   auto fused_batch_norm_add_relu_grad = graph->NewCNode(inputs);

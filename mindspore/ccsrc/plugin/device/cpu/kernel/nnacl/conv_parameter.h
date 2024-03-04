@@ -14,18 +14,16 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_CONV_PARAMETER_H_
-#define MINDSPORE_NNACL_CONV_PARAMETER_H_
+#ifndef NNACL_CONV_PARAMETER_H_
+#define NNACL_CONV_PARAMETER_H_
 
-#ifdef ENABLE_NEON
-#include <arm_neon.h>
-#endif
 #include "nnacl/op_base.h"
 #include "nnacl/int8/quantize.h"
 
 typedef struct ConvParameter {
   OpParameter op_parameter_;
   ConvQuantArg conv_quant_arg_;
+
   int kernel_h_;
   int kernel_w_;
   int stride_h_;
@@ -37,25 +35,54 @@ typedef struct ConvParameter {
   int pad_l_;
   int pad_r_;
   int group_;
-  int tile_num_;
-  int input_batch_;
-  int input_h_;
-  int input_w_;
+  int tile_num_;    /* # */
+  int input_batch_; /* # */
+  int input_h_;     /* # */
+  int input_w_;     /* # */
   int input_channel_;
-  int output_batch_;
-  int output_h_;
-  int output_w_;
+  int output_batch_; /* # */
+  int output_h_;     /* # */
+  int output_w_;     /* # */
   int output_channel_;
-  int thread_num_;
-  int input_unit_;
-  int output_unit_;
-  PadMode pad_mode_;
+  int thread_num_;  /* # */
+  int input_unit_;  /* # */
+  int output_unit_; /* # */
+  PadType pad_mode_;
   ActType act_type_;
-  int channel_multiplie_;
-  int output_padding_w_;
-  int output_padding_h_;
+  int channel_multiplie_; /* # */
+  int output_padding_w_;  /* # */
+  int output_padding_h_;  /* # */
   int out_format_;
+
+  bool dynamic_shape_;
 } ConvParameter;
+
+typedef struct ConvComputeParam {
+  int kernel_h_;
+  int kernel_w_;
+  int stride_h_;
+  int stride_w_;
+  int dilation_h_;
+  int dilation_w_;
+  int pad_u_;
+  int pad_d_;
+  int pad_l_;
+  int pad_r_;
+
+  int in_n_;
+  int in_h_;
+  int in_w_;
+  int in_c_;
+  int out_n_;
+  int out_h_;
+  int out_w_;
+  int out_c_;
+
+  int in_hw_;
+  int out_hw_;
+  int kernel_hw_;
+  int tile_num_;
+} ConvComputeParam;
 
 typedef struct SlidingWindowParam {
   int left_;
@@ -87,10 +114,10 @@ typedef struct ConvDwCalcParam {
 } ConvDwCalcParam;
 
 #define OUPUT_UNIT 2
-#define DECONV_WINOGRAD_DEFAULT_UNIT 3
-#define DECONV_WINOGRAD_DEFAULT_TILE 8
-#define DECONV_WINOGRAD_BUFFER_COUNT 8
-typedef struct DeConvWg {
+#define DECONV_WINOGRAD_DEFAULT_UNIT 3 /* # */
+#define DECONV_WINOGRAD_DEFAULT_TILE 8 /* # */
+#define DECONV_WINOGRAD_BUFFER_COUNT 8 /* # */
+typedef struct DeConvWg {              /* # */
   void *b_buffer_;
   void *AT_;
   void *BT_;
@@ -103,13 +130,13 @@ typedef struct DeConvWg {
   int o_;
 } DeConvWg;
 
-typedef struct DeConvWgABuffer {
+typedef struct DeConvWgABuffer { /* # */
   bool buf_init_;
   void *middle_buffer_;
   void *dest_buffer_;
 } DeConvWgABuffer;
 
-typedef struct DeConvComputeUnit {
+typedef struct DeConvComputeUnit { /* # */
   void *weight_;
   void *tmp_buffer_;
   int w_start_;
@@ -120,7 +147,7 @@ typedef struct DeConvComputeUnit {
   DeConvWg winograd_;
 } DeConvComputeUnit;
 
-typedef struct DeConvParam {
+typedef struct DeConvParam { /* # */
   DeConvComputeUnit *compute_units_;
   int compute_size_;
   DeConvWgABuffer a_buffer_[DECONV_WINOGRAD_BUFFER_COUNT];
@@ -139,4 +166,4 @@ typedef struct DeConvParam {
   int out_tile_w_;
 } DeConvParam;
 
-#endif  // MINDSPORE_NNACL_CONV_PARAMETER_H_
+#endif  // NNACL_CONV_PARAMETER_H_

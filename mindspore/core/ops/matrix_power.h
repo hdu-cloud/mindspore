@@ -21,9 +21,9 @@
 #include <string>
 #include <vector>
 #include "abstract/abstract_value.h"
-#include "ops/primitive_c.h"
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
+#include "ops/primitive_c.h"
 
 namespace mindspore {
 namespace ops {
@@ -34,11 +34,11 @@ class MIND_API MatrixPower : public BaseOperator {
   MatrixPower() : BaseOperator(kNameMatrixPower) { InitIOName({"x"}, {"y"}); }
   void Init(const int64_t exponent);
   void set_exponent(const int64_t exponent);
-  int64_t get_exponent();
+  int64_t get_exponent() const;
 };
 
-abstract::AbstractBasePtr MatrixPowerInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                           const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr MatrixPowerInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                    const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimMatrixPowerPtr = std::shared_ptr<MatrixPower>;
 }  // namespace ops
 }  // namespace mindspore

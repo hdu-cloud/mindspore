@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,236 +39,155 @@ const TensorParam MakeTensor(int64_t n, int64_t c, int64_t h, int64_t w) {
   return tensor;
 }
 
-const std::map<std::string, OperatorType> DictOpType{
-  {MATMUL, OperatorType::kRecMatMul},
-  {BATCH_MATMUL, OperatorType::kRecBatchMatMul},
-  {CONV2D, OperatorType::kRecConvolution},
-  {CONV2D_TRANSPOSE, OperatorType::kRecConvolution},
-  {MAXPOOL, OperatorType::kRecPooling},
-  {MAXPOOLV2, OperatorType::kRecPooling},
-  {POOLING, OperatorType::kRecPooling},
-  {MAX_POOL_WITH_ARGMAX, OperatorType::kRecPooling},
-  {SIMPLE_MEAN, OperatorType::kRecPooling},
-  {RESHAPE, OperatorType::kRecReshape},
-  {BIAS_ADD, OperatorType::kRecBiasAdd},
-  {BATCH_NORM, OperatorType::kRecBatchNorm},
-  {LAYER_NORM, OperatorType::kRecBatchNorm},
-  {SPARSE_SOFTMAX_CROSS_ENTROPY_WITH_LOGITS, OperatorType::kRecSparseSoftmaxCrossEntropyWithLogits},
-  {ONEHOT, OperatorType::kRecOneHot},
-  {SQUEEZE, OperatorType::kRecSqueeze},
-  {CAST, OperatorType::kRecCast},
-  {REDUCE_SUM, OperatorType::kRecReduce},
-  {REDUCE_MAX, OperatorType::kRecReduce},
-  {REDUCE_MIN, OperatorType::kRecReduce},
-  {REDUCE_MEAN, OperatorType::kRecReduce},
-  {GATHERV2, OperatorType::kRecGatherV2},
-  {EXPAND_DIMS, OperatorType::kRecExpandDims},
-  {STRIDEDSLICE, OperatorType::kRecStridedSlice},
-  {ARGMAXWITHVALUE, OperatorType::kRecArgWithValue},
-  {ARGMINWITHVALUE, OperatorType::kRecArgWithValue},
-  {UNSORTED_SEGMENT_SUM, OperatorType::kRecUnsortedSegmentOp},
-  {UNSORTED_SEGMENT_MAX, OperatorType::kRecUnsortedSegmentOp},
-  {UNSORTED_SEGMENT_MIN, OperatorType::kRecUnsortedSegmentOp},
-  // Activation OP
-  {ACTIVATION, OperatorType::kRecReLU},
-  {RELU, OperatorType::kRecReLU},
-  {"ReLU6", OperatorType::kRecReLU},
-  {"ReLUV2", OperatorType::kRecReLU},
-  {SIGMOID, OperatorType::kRecReLU},
-  {SIGMOID_CROSS_ENTROPY_WITH_LOGITS, OperatorType::kRecReLU},
-  {"HSigmoid", OperatorType::kRecReLU},
-  {GELU, OperatorType::kRecReLU},
-  {FAST_GELU, OperatorType::kRecReLU},
-  {TANH, OperatorType::kRecReLU},
-  {SOFTPLUS, OperatorType::kRecReLU},
-  {SOFTSIGN, OperatorType::kRecReLU},
-  {PRELU, OperatorType::kRecPReLU},
-  // Elm-wise OP
-  {TRANSPOSE, OperatorType::kRecElmWiseOp},
-  {L2_NORMALIZE, OperatorType::kRecElmWiseOp},
-  {ADD, OperatorType::kRecElmWiseOp},
-  {TENSOR_DOT, OperatorType::kRecElmWiseOp},
-  {SUB, OperatorType::kRecElmWiseOp},
-  {MUL, OperatorType::kRecElmWiseOp},
-  {DIV, OperatorType::kRecElmWiseOp},
-  {REAL_DIV, OperatorType::kRecElmWiseOp},
-  {SOFTMAX, OperatorType::kRecSoftmax},
-  {LOG_SOFTMAX, OperatorType::kRecSoftmax},
-  {SOFTMAX_CROSS_ENTROPY_WITH_LOGITS, OperatorType::kRecSoftmaxCrossEntropyWithLogits},
-  {SQRT, OperatorType::kRecElmWiseOp},
-  {NEG, OperatorType::kRecElmWiseOp},
-  {POW, OperatorType::kRecElmWiseOp},
-  {EXP, OperatorType::kRecElmWiseOp},
-  {LOG, OperatorType::kRecElmWiseOp},
-  {COS, OperatorType::kRecElmWiseOp},
-  {ACOS, OperatorType::kRecElmWiseOp},
-  {ASIN, OperatorType::kRecElmWiseOp},
-  {ASINH, OperatorType::kRecElmWiseOp},
-  {ATAN, OperatorType::kRecElmWiseOp},
-  {ATANH, OperatorType::kRecElmWiseOp},
-  {EXPM1, OperatorType::kRecElmWiseOp},
-  {LOG1P, OperatorType::kRecElmWiseOp},
-  {LOGICALNOT, OperatorType::kRecElmWiseOp},
-  {"LogicalAnd", OperatorType::kRecElmWiseOp},
-  {"LogicalOr", OperatorType::kRecElmWiseOp},
-  {SQUARE, OperatorType::kRecElmWiseOp},
-  {"Abs", OperatorType::kRecElmWiseOp},
-  {"Acosh", OperatorType::kRecElmWiseOp},
-  {"AddN", OperatorType::kRecElmWiseOp},
-  {"AccumulateNV2", OperatorType::kRecElmWiseOp},
-  {"Atan2", OperatorType::kRecElmWiseOp},
-  {ELU, OperatorType::kRecElmWiseOp},
-  {ERF, OperatorType::kRecElmWiseOp},
-  {ERFC, OperatorType::kRecElmWiseOp},
-  {MOD, OperatorType::kRecElmWiseOp},
-  {FLOOR, OperatorType::kRecElmWiseOp},
-  {CEIL, OperatorType::kRecElmWiseOp},
-  {FLOORDIV, OperatorType::kRecElmWiseOp},
-  {"FloorMod", OperatorType::kRecElmWiseOp},
-  {GREATER, OperatorType::kRecElmWiseOp},
-  {"GreaterEqual", OperatorType::kRecElmWiseOp},
-  {"HSwish", OperatorType::kRecElmWiseOp},
-  {"Less", OperatorType::kRecElmWiseOp},
-  {"LessEqual", OperatorType::kRecElmWiseOp},
-  {MAXIMUM, OperatorType::kRecElmWiseOp},
-  {MINIMUM, OperatorType::kRecElmWiseOp},
-  {EQUAL, OperatorType::kRecElmWiseOp},
-  {NOT_EQUAL, OperatorType::kRecElmWiseOp},
-  {APPROXIMATEEQUAL, OperatorType::kRecElmWiseOp},
-  {INV, OperatorType::kRecElmWiseOp},
-  {BESSELI0E, OperatorType::kRecElmWiseOp},
-  {BESSELI1E, OperatorType::kRecElmWiseOp},
-  {ZEROSLIKE, OperatorType::kRecElmWiseOp},
-  {ONESLIKE, OperatorType::kRecElmWiseOp},
-  {DIVNONAN, OperatorType::kRecElmWiseOp},
-  {"Reciprocal", OperatorType::kRecElmWiseOp},
-  {"Round", OperatorType::kRecElmWiseOp},
-  {"Rsqrt", OperatorType::kRecElmWiseOp},
-  {"Sign", OperatorType::kRecElmWiseOp},
-  {SIN, OperatorType::kRecElmWiseOp},
-  {SINH, OperatorType::kRecElmWiseOp},
-  {TAN, OperatorType::kRecElmWiseOp},
-  {ASSIGN, OperatorType::kRecElmWiseOp},
-  {ASSIGN_ADD, OperatorType::kRecElmWiseOp},
-  {ASSIGN_SUB, OperatorType::kRecElmWiseOp},
-  {"AssignAdd", OperatorType::kRecElmWiseOp},
-  {DROPOUT_DO_MASK, OperatorType::kRecElmWiseOp},
-  {DROPOUT, OperatorType::kRecElmWiseOp},
-  {STACK, OperatorType::kRecElmWiseOp}};
-
 Graph::NodeType MakeNewOperator(const std::vector<std::shared_ptr<OperatorInfo>> &ops, size_t iter_ops) {
   Graph::NodeType NewOp;
   NewOp.name = ops[iter_ops]->name();
   NewOp.info = InfoType::kApplication;
 
+  auto pos = ops[iter_ops]->name().find("Info");
+  auto name = ops[iter_ops]->name().substr(0, pos);
   auto op_type = ops[iter_ops]->type();
   auto idx = DictOpType.find(op_type);
-  if (idx == DictOpType.end()) {
-    NewOp.apply.op_type = OperatorType::kRecUnkownType;
-    MS_LOG(INFO) << ops[iter_ops]->name() << ": Unknown operator type " << op_type;
-  } else {
+  if (idx != DictOpType.end()) {
     NewOp.apply.op_type = DictOpType.at(op_type);
+  } else if (name == STAND_ALONE) {
+    MS_LOG(INFO) << ops[iter_ops]->type() << ": standalone operator.";
+    NewOp.apply.op_type = OperatorType::kRecStandAlone;
+  } else if (name == BATCH_PARALLEL) {
+    MS_LOG(INFO) << ops[iter_ops]->type() << ": batch parallel operator.";
+    NewOp.apply.op_type = OperatorType::kRecBatchParallel;
+  } else {
+    NewOp.apply.op_type = OperatorType::kRecUnknownType;
+    MS_LOG(INFO) << ops[iter_ops]->name() << ": Unknown operator type " << op_type;
   }
 
-  if (ops[iter_ops]->outputs_tensor_info().size() == 0) {
-    MS_LOG(EXCEPTION) << ops[iter_ops]->name() << " output tensor info is empty.";
+  if (ops[iter_ops]->outputs_shape().size() == SIZE_ZERO) {
+    MS_LOG(EXCEPTION) << ops[iter_ops]->name() << " outputs shape is empty.";
   }
 
-  if (ops[iter_ops]->outputs_tensor_info()[0].shape().size() == 4) {
-    NewOp.tensor_parm = MakeTensor(
-      ops[iter_ops]->outputs_tensor_info()[0].shape()[0], ops[iter_ops]->outputs_tensor_info()[0].shape()[1],
-      ops[iter_ops]->outputs_tensor_info()[0].shape()[2], ops[iter_ops]->outputs_tensor_info()[0].shape()[3]);
-  } else if (ops[iter_ops]->outputs_tensor_info()[0].shape().size() == 3) {
-    NewOp.tensor_parm = MakeTensor(1, ops[iter_ops]->outputs_tensor_info()[0].shape()[0],
-                                   ops[iter_ops]->outputs_tensor_info()[0].shape()[1],
-                                   ops[iter_ops]->outputs_tensor_info()[0].shape()[2]);
-  } else if (ops[iter_ops]->outputs_tensor_info()[0].shape().size() == 2) {
-    NewOp.tensor_parm = MakeTensor(1, 1, ops[iter_ops]->outputs_tensor_info()[0].shape()[0],
-                                   ops[iter_ops]->outputs_tensor_info()[0].shape()[1]);
-  } else if (ops[iter_ops]->outputs_tensor_info()[0].shape().size() == 1) {
-    NewOp.tensor_parm = MakeTensor(1, 1, 1, ops[iter_ops]->outputs_tensor_info()[0].shape()[0]);
-  } else if (ops[iter_ops]->outputs_tensor_info()[0].shape().size() == 0) {
+  if (ops[iter_ops]->outputs_shape()[0].size() == SIZE_FOUR) {
+    NewOp.tensor_parm = MakeTensor(ops[iter_ops]->outputs_shape()[0][0], ops[iter_ops]->outputs_shape()[0][1],
+                                   ops[iter_ops]->outputs_shape()[INDEX_ZERO][INDEX_TWO],
+                                   ops[iter_ops]->outputs_shape()[INDEX_ZERO][INDEX_THREE]);
+  } else if (ops[iter_ops]->outputs_shape()[0].size() == SIZE_THREE) {
+    NewOp.tensor_parm = MakeTensor(1, ops[iter_ops]->outputs_shape()[0][0], ops[iter_ops]->outputs_shape()[0][1],
+                                   ops[iter_ops]->outputs_shape()[INDEX_ZERO][INDEX_TWO]);
+  } else if (ops[iter_ops]->outputs_shape()[0].size() == SIZE_TWO) {
+    NewOp.tensor_parm = MakeTensor(1, 1, ops[iter_ops]->outputs_shape()[0][0], ops[iter_ops]->outputs_shape()[0][1]);
+  } else if (ops[iter_ops]->outputs_shape()[0].size() == SIZE_ONE) {
+    NewOp.tensor_parm = MakeTensor(1, 1, 1, ops[iter_ops]->outputs_shape()[0][0]);
+  } else if (ops[iter_ops]->outputs_shape()[0].size() == SIZE_ZERO) {
     NewOp.tensor_parm = MakeTensor(1, 1, 1, 1);
   } else {
     MS_LOG(ERROR) << ops[iter_ops]->name() << ": output tensor shape is unexpected.";
   }
 
-  NewOp.apply = CompleteOperatorInputs(ops, iter_ops, NewOp);
+  CompleteOperatorInputs(ops, iter_ops, &NewOp);
   return NewOp;
 }
 
-OperatorRec CompleteOperatorInputs(const std::vector<std::shared_ptr<OperatorInfo>> &ops, const size_t iter_ops,
-                                   Graph::NodeType NewTensor) {
-  size_t input_tensor_size = ops[iter_ops]->inputs_tensor_info().size();
+void CompleteOperatorInputs(const std::vector<std::shared_ptr<OperatorInfo>> &ops, const size_t iter_ops,
+                            Graph::NodeType *NewTensor) {
+  size_t input_tensor_size = ops[iter_ops]->inputs_shape().size();
   if (ops[iter_ops]->type() == STACK) {
     input_tensor_size = 1;
   }
   if (input_tensor_size > MAX_INPUT_NUM) {
-    MS_LOG(EXCEPTION) << ops[iter_ops]->name() << " input tensor num exceeds limit.";
+    MS_LOG(EXCEPTION) << ops[iter_ops]->name() << " input tensor " << input_tensor_size << " num exceeds limit("
+                      << MAX_INPUT_NUM << ").";
   }
 
   for (size_t iter_input_tensors = 0; iter_input_tensors < input_tensor_size; iter_input_tensors++) {
-    if (ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape().size() == 4) {
-      NewTensor.apply.arguments[iter_input_tensors] =
-        MakeTensor(ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape()[0],
-                   ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape()[1],
-                   ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape()[2],
-                   ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape()[3]);
-    } else if (ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape().size() == 3) {
-      NewTensor.apply.arguments[iter_input_tensors] =
-        MakeTensor(1, ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape()[0],
-                   ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape()[1],
-                   ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape()[2]);
-    } else if (ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape().size() == 2) {
-      NewTensor.apply.arguments[iter_input_tensors] = Complete2DInputs(ops, iter_ops, iter_input_tensors, NewTensor);
-    } else if (ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape().size() == 1) {
-      NewTensor.apply.arguments[iter_input_tensors] =
-        MakeTensor(1, 1, 1, ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape()[0]);
-    } else if (ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape().size() == 0) {
-      NewTensor.apply.arguments[iter_input_tensors] = MakeTensor(1, 1, 1, 1);
+    if (ops[iter_ops]->inputs_shape()[iter_input_tensors].size() == SIZE_FOUR) {
+      Complete4DInputs(ops, iter_ops, iter_input_tensors, NewTensor);
+    } else if (ops[iter_ops]->inputs_shape()[iter_input_tensors].size() == SIZE_THREE) {
+      NewTensor->apply.arguments[iter_input_tensors] =
+        MakeTensor(1, ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_ZERO],
+                   ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_ONE],
+                   ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_TWO]);
+    } else if (ops[iter_ops]->inputs_shape()[iter_input_tensors].size() == SIZE_TWO) {
+      Complete2DInputs(ops, iter_ops, iter_input_tensors, NewTensor);
+    } else if (ops[iter_ops]->inputs_shape()[iter_input_tensors].size() == SIZE_ONE) {
+      NewTensor->apply.arguments[iter_input_tensors] =
+        MakeTensor(1, 1, 1, ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_ZERO]);
+    } else if (ops[iter_ops]->inputs_shape()[iter_input_tensors].size() == 0) {
+      NewTensor->apply.arguments[iter_input_tensors] = MakeTensor(1, 1, 1, 1);
     } else {
       MS_LOG(ERROR) << ops[iter_ops]->name() << ": input tensor shape is unexpected.";
     }
   }
-  return NewTensor.apply;
 }
 
-TensorParam Complete2DInputs(const std::vector<std::shared_ptr<OperatorInfo>> &ops, const size_t iter_ops,
-                             const size_t iter_input_tensors, Graph::NodeType NewTensor) {
-  if (NewTensor.apply.op_type == OperatorType::kRecMatMul) {
+void Complete2DInputs(const std::vector<std::shared_ptr<OperatorInfo>> &ops, const size_t iter_ops,
+                      const size_t iter_input_tensors, Graph::NodeType *NewTensor) {
+  if (NewTensor->apply.op_type == OperatorType::kRecMatMul) {
     auto attrs = ops[iter_ops]->attrs();
     bool transpose_a = attrs[TRANSPOSE_A]->cast<BoolImmPtr>()->value();
     bool transpose_b = attrs[TRANSPOSE_B]->cast<BoolImmPtr>()->value();
     if (transpose_a && (iter_input_tensors == 0)) {
-      NewTensor.apply.arguments[iter_input_tensors] =
-        MakeTensor(1, 1, ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape()[1],
-                   ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape()[0]);
+      NewTensor->apply.arguments[iter_input_tensors] =
+        MakeTensor(1, 1, ops[iter_ops]->inputs_shape()[iter_input_tensors][1],
+                   ops[iter_ops]->inputs_shape()[iter_input_tensors][0]);
     } else if (transpose_b && (iter_input_tensors == 1)) {
-      NewTensor.apply.arguments[iter_input_tensors] =
-        MakeTensor(1, 1, ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape()[1],
-                   ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape()[0]);
+      NewTensor->apply.arguments[iter_input_tensors] =
+        MakeTensor(1, 1, ops[iter_ops]->inputs_shape()[iter_input_tensors][1],
+                   ops[iter_ops]->inputs_shape()[iter_input_tensors][0]);
     } else {
-      NewTensor.apply.arguments[iter_input_tensors] =
-        MakeTensor(1, 1, ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape()[0],
-                   ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape()[1]);
+      NewTensor->apply.arguments[iter_input_tensors] =
+        MakeTensor(1, 1, ops[iter_ops]->inputs_shape()[iter_input_tensors][0],
+                   ops[iter_ops]->inputs_shape()[iter_input_tensors][1]);
     }
   } else {
-    NewTensor.apply.arguments[iter_input_tensors] =
-      MakeTensor(1, 1, ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape()[0],
-                 ops[iter_ops]->inputs_tensor_info()[iter_input_tensors].shape()[1]);
+    NewTensor->apply.arguments[iter_input_tensors] = MakeTensor(
+      1, 1, ops[iter_ops]->inputs_shape()[iter_input_tensors][0], ops[iter_ops]->inputs_shape()[iter_input_tensors][1]);
   }
-  return NewTensor.apply.arguments[iter_input_tensors];
+}
+
+void Complete4DInputs(const std::vector<std::shared_ptr<OperatorInfo>> &ops, const size_t iter_ops,
+                      const size_t iter_input_tensors, Graph::NodeType *NewTensor) {
+  if (NewTensor->apply.op_type == OperatorType::kRecBatchMatMul) {
+    auto attrs = ops[iter_ops]->attrs();
+    bool transpose_a = attrs[TRANSPOSE_A]->cast<BoolImmPtr>()->value();
+    bool transpose_b = attrs[TRANSPOSE_B]->cast<BoolImmPtr>()->value();
+    if (transpose_a && (iter_input_tensors == 0)) {
+      NewTensor->apply.arguments[iter_input_tensors] =
+        MakeTensor(ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_ZERO],
+                   ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_ONE],
+                   ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_THREE],
+                   ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_TWO]);
+    } else if (transpose_b && (iter_input_tensors == 1)) {
+      NewTensor->apply.arguments[iter_input_tensors] =
+        MakeTensor(ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_ZERO],
+                   ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_ONE],
+                   ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_THREE],
+                   ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_TWO]);
+    } else {
+      NewTensor->apply.arguments[iter_input_tensors] =
+        MakeTensor(ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_ZERO],
+                   ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_ONE],
+                   ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_TWO],
+                   ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_THREE]);
+    }
+  } else {
+    NewTensor->apply.arguments[iter_input_tensors] =
+      MakeTensor(ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_ZERO],
+                 ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_ONE],
+                 ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_TWO],
+                 ops[iter_ops]->inputs_shape()[iter_input_tensors][INDEX_THREE]);
+  }
 }
 
 std::shared_ptr<Graph> ParseGraph(const std::vector<std::shared_ptr<OperatorInfo>> &ops,
                                   const std::vector<std::vector<std::string>> &input_tensor_names) {
   std::shared_ptr<Graph> graph = std::make_shared<Graph>();
-  if (ops.size() > SIZE_MAX / 2) {
-    MS_LOG(EXCEPTION) << "Total number of operators is bigger than " << SIZE_MAX / 2;
+  constexpr size_t MAX_OP_NUM = SIZE_MAX / 2;
+  if (ops.size() > MAX_OP_NUM) {
+    MS_LOG(EXCEPTION) << "Total number of operators is bigger than " << MAX_OP_NUM;
   }
 
   for (size_t iter_ops = 0; iter_ops < ops.size(); iter_ops++) {
     Graph::NodeType NewOp = MakeNewOperator(ops, iter_ops);
+    NewOp.param_name = ops[iter_ops]->get_involved_param_name();
     graph->nodes.push_back(NewOp);
   }
   MakeEdge(input_tensor_names, graph);
@@ -299,53 +218,216 @@ size_t GetIndexInInputTensorNames(const std::vector<std::vector<std::string>> &i
   return SIZE_MAX;
 }
 
-void Eliminate_Aux(const size_t node_index, const std::shared_ptr<Graph> &graph,
+void Eliminate_Aux(size_t node_index, const std::shared_ptr<Graph> &graph,
                    const std::shared_ptr<std::vector<std::vector<size_t>>> &eli_list) {
+  MS_EXCEPTION_IF_NULL(graph);
+  MS_EXCEPTION_IF_NULL(eli_list);
   std::vector<size_t> eli;
   eli.push_back(node_index);
   for (size_t i = 0; i < graph->nodes[node_index].node_out.size(); i++) {
-    eli.push_back(graph->nodes[node_index].node_out[i]);
+    auto outgoing_node_idx = graph->nodes[node_index].node_out[i];
+    eli.push_back(outgoing_node_idx);
+    if (!graph->nodes[node_index].param_name.empty() &&
+        graph->nodes[node_index].apply.op_type == OperatorType::kRecCast &&
+        (graph->nodes[outgoing_node_idx].apply.op_type == OperatorType::kRecMatMul ||
+         graph->nodes[outgoing_node_idx].apply.op_type == OperatorType::kRecBatchMatMul)) {
+      graph->nodes[outgoing_node_idx].param_name = graph->nodes[node_index].param_name;
+    }
   }
   eli_list->push_back(eli);
 
+  // Iterate over all input operators of the current node
   for (size_t i = 0; i < graph->nodes[node_index].node_in.size(); i++) {
     auto *incoming_outputs = &graph->nodes[graph->nodes[node_index].node_in[i]].node_out;
     auto it = find(incoming_outputs->begin(), incoming_outputs->end(), node_index);
     if (it != incoming_outputs->end()) {
       it = incoming_outputs->erase(it);
-      (void)incoming_outputs->insert(it, graph->nodes[node_index].node_out.cbegin(),
-                                     graph->nodes[node_index].node_out.cend());
+      for (auto outgoing_index : graph->nodes[node_index].node_out) {
+        it = find(incoming_outputs->begin(), incoming_outputs->end(), outgoing_index);
+        if (it == incoming_outputs->end()) {
+          incoming_outputs->push_back(outgoing_index);
+        }
+      }
     }
   }
 
+  // Iterate over all aux_input operators of the current node
   for (size_t i = 0; i < graph->nodes[node_index].node_in_aux.size(); i++) {
     auto *aux_incoming_outputs = &graph->nodes[graph->nodes[node_index].node_in_aux[i]].node_out;
     auto it = find(aux_incoming_outputs->begin(), aux_incoming_outputs->end(), node_index);
     if (it != aux_incoming_outputs->end()) {
       it = aux_incoming_outputs->erase(it);
-      (void)aux_incoming_outputs->insert(it, graph->nodes[node_index].node_out.cbegin(),
-                                         graph->nodes[node_index].node_out.cend());
+      for (auto outgoing_index : graph->nodes[node_index].node_out) {
+        it = find(aux_incoming_outputs->begin(), aux_incoming_outputs->end(), outgoing_index);
+        if (it == aux_incoming_outputs->end()) {
+          aux_incoming_outputs->push_back(outgoing_index);
+        }
+      }
     }
   }
 
-  for (size_t i = 0; i < graph->nodes[node_index].node_out.size(); i++) {
-    auto *outgoing_inputs = &graph->nodes[graph->nodes[node_index].node_out[i]].node_in;
-    auto it = find(outgoing_inputs->begin(), outgoing_inputs->end(), node_index);
-    if (it != outgoing_inputs->end()) {
-      if (graph->nodes[node_index].node_in.size() > 0) {
-        outgoing_inputs->at(LongToSize(std::distance(outgoing_inputs->begin(), it))) =
-          graph->nodes[node_index].node_in[0];
-        for (size_t j = 1; j < graph->nodes[node_index].node_in.size(); j++) {
+  // Iterate over all output operators of the current node
+  Eliminate_Aux_Outgoing(node_index, graph);
+}
+
+void EliminateAuxOutgoingInput(size_t node_index, const std::shared_ptr<Graph> &graph, size_t i) {
+  MS_EXCEPTION_IF_NULL(graph);
+  auto *outgoing_inputs = &graph->nodes[graph->nodes[node_index].node_out[i]].node_in;
+  MS_EXCEPTION_IF_NULL(outgoing_inputs);
+  // Check if the current node is the input operator of the current node's output operator
+  auto it = find(outgoing_inputs->begin(), outgoing_inputs->end(), node_index);
+  if (it != outgoing_inputs->end()) {
+    if (graph->nodes[node_index].node_in.size() > 0) {
+      // If the current node has input operator, then add input[0] of the current node to the input of the current
+      // node's output operator (if input[0] is also in the aux_input of the current node's output operator, then remove
+      // it from the aux_input and keep it only in the input)
+      auto exist_in_outgoing_auxinputs =
+        find(graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux.begin(),
+             graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux.end(), graph->nodes[node_index].node_in[0]);
+      if (exist_in_outgoing_auxinputs != graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux.end()) {
+        size_t index_remove_node = LongToSize(std::distance(
+          graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux.begin(), exist_in_outgoing_auxinputs));
+        if (graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux_idx.size() > index_remove_node) {
+          (void)graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux_idx.erase(
+            graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux_idx.begin() + index_remove_node);
+        } else {
+          MS_LOG(DEBUG) << "Trying to erase vector element at index " << index_remove_node << ", out of range!";
+        }
+        if (graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux.size() > index_remove_node) {
+          (void)graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux.erase(exist_in_outgoing_auxinputs);
+        } else {
+          MS_LOG(DEBUG) << "Trying to erase vector element at index " << index_remove_node
+                        << ", which is out of range!";
+        }
+      }
+      size_t idx = LongToSize(std::distance(outgoing_inputs->begin(), it));
+      if (outgoing_inputs->size() > idx) {
+        outgoing_inputs->at(idx) = graph->nodes[node_index].node_in[0];
+      } else {
+        MS_LOG(DEBUG) << "Trying to index vector element at index " << idx << ", out of range!";
+      }
+      // Then add the other input operators of the current node to the aux_input of the current node's output operator
+      for (size_t j = 1; j < graph->nodes[node_index].node_in.size(); j++) {
+        exist_in_outgoing_auxinputs = find(graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux.begin(),
+                                           graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux.end(),
+                                           graph->nodes[node_index].node_in[j]);
+        if (exist_in_outgoing_auxinputs == graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux.end()) {
+          size_t index_aux = LongToSize(std::distance(outgoing_inputs->begin(), it));
+          graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux_idx.push_back(index_aux);
           graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux.push_back(graph->nodes[node_index].node_in[j]);
         }
-        for (size_t j = 1; j < graph->nodes[node_index].node_in_aux.size(); j++) {
+      }
+      // Then add all the operators in the aux_input of the current node to the aux_input of the output operator of the
+      // current node
+      for (size_t j = 0; j < graph->nodes[node_index].node_in_aux.size(); j++) {
+        exist_in_outgoing_auxinputs = find(graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux.begin(),
+                                           graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux.end(),
+                                           graph->nodes[node_index].node_in_aux[j]);
+        if (exist_in_outgoing_auxinputs == graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux.end()) {
+          size_t index_aux = LongToSize(std::distance(outgoing_inputs->begin(), it));
+          graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux_idx.push_back(index_aux);
           graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux.push_back(
             graph->nodes[node_index].node_in_aux[j]);
         }
-      } else {
+      }
+    } else {
+      auto idx = LongToSize(std::distance(outgoing_inputs->begin(), it));
+      if (outgoing_inputs->size() > idx) {
         (void)outgoing_inputs->erase(it);
+      } else {
+        MS_LOG(DEBUG) << "Trying to erase vector element at index " << idx << ", out of range!";
       }
     }
+  }
+}
+
+void EliminateAuxOutgoingAuxInput(size_t node_index, const std::shared_ptr<Graph> &graph, size_t i) {
+  MS_EXCEPTION_IF_NULL(graph);
+  auto *outgoing_auxinputs = &graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux;
+  MS_EXCEPTION_IF_NULL(outgoing_auxinputs);
+  auto *outgoing_auxinputs_index = &graph->nodes[graph->nodes[node_index].node_out[i]].node_in_aux_idx;
+  // Check if the current node is the aux_input operator of the current node's output operator
+  auto it = find(outgoing_auxinputs->begin(), outgoing_auxinputs->end(), node_index);
+  size_t index_entree = LongToSize(std::distance(outgoing_auxinputs->begin(), it));
+  if (it != outgoing_auxinputs->end()) {
+    if (graph->nodes[node_index].node_in.size() > 0) {
+      // If the current node has input operator, and if the input[0] of the current node is in
+      // the input of the output operator of the current node, then delete it
+      // from the aux_input of the output of the current node, otherwise add the input[0]
+      // to the auxinput of the output of the current node
+      auto exist_in_outgoing_inputs =
+        find(graph->nodes[graph->nodes[node_index].node_out[i]].node_in.begin(),
+             graph->nodes[graph->nodes[node_index].node_out[i]].node_in.end(), graph->nodes[node_index].node_in[0]);
+      if (exist_in_outgoing_inputs != graph->nodes[graph->nodes[node_index].node_out[i]].node_in.end()) {
+        index_entree = LongToSize(std::distance(outgoing_auxinputs->begin(), it));
+        if (outgoing_auxinputs_index->size() > index_entree) {
+          (void)outgoing_auxinputs_index->erase(outgoing_auxinputs_index->begin() + index_entree);
+        } else {
+          MS_LOG(DEBUG) << "Trying to erase vector element at index " << index_entree << ", out of range!";
+        }
+        if (outgoing_auxinputs->size() > index_entree) {
+          (void)outgoing_auxinputs->erase(it);
+        } else {
+          MS_LOG(DEBUG) << "Trying to erase vector element at index " << index_entree << ", out of range!";
+        }
+      } else {
+        size_t idx = LongToSize(std::distance(outgoing_auxinputs->begin(), it));
+        if (outgoing_auxinputs->size() > idx) {
+          outgoing_auxinputs->at(idx) = graph->nodes[node_index].node_in[0];
+        } else {
+          MS_LOG(DEBUG) << "Trying to index vector element at index " << idx << ", out of range!";
+        }
+        index_entree = LongToSize(std::distance(
+          outgoing_auxinputs->begin(),
+          find(outgoing_auxinputs->begin(), outgoing_auxinputs->end(), graph->nodes[node_index].node_in[0])));
+      }
+      // Determine whether the other input operator of the current node is in the input of the output operator,
+      // and if not, add it to the aux_input of the output operator
+      for (size_t j = 1; j < graph->nodes[node_index].node_in.size(); j++) {
+        exist_in_outgoing_inputs =
+          find(graph->nodes[graph->nodes[node_index].node_out[i]].node_in.begin(),
+               graph->nodes[graph->nodes[node_index].node_out[i]].node_in.end(), graph->nodes[node_index].node_in[j]);
+        if (exist_in_outgoing_inputs == graph->nodes[graph->nodes[node_index].node_out[i]].node_in.end()) {
+          outgoing_auxinputs->push_back(graph->nodes[node_index].node_in[j]);
+          if (outgoing_auxinputs_index->size() > index_entree) {
+            outgoing_auxinputs_index->push_back(outgoing_auxinputs_index->at(index_entree));
+          } else {
+            MS_LOG(DEBUG) << "Trying to index vector element at index " << index_entree << ", out of range!";
+          }
+        }
+      }
+      // Determine if the aux_input operator of the current node is in the input of the output operator,
+      // and if not, add it to the aux_input of the output operator
+      for (size_t j = 0; j < graph->nodes[node_index].node_in_aux.size(); j++) {
+        exist_in_outgoing_inputs = find(graph->nodes[graph->nodes[node_index].node_out[i]].node_in.begin(),
+                                        graph->nodes[graph->nodes[node_index].node_out[i]].node_in.end(),
+                                        graph->nodes[node_index].node_in_aux[j]);
+        if (exist_in_outgoing_inputs == graph->nodes[graph->nodes[node_index].node_out[i]].node_in.end()) {
+          outgoing_auxinputs->push_back(graph->nodes[node_index].node_in_aux[j]);
+          outgoing_auxinputs_index->push_back(outgoing_auxinputs_index->at(index_entree));
+        }
+      }
+    } else {
+      if (outgoing_auxinputs_index->size() > index_entree) {
+        (void)outgoing_auxinputs_index->erase(outgoing_auxinputs_index->begin() + index_entree);
+      } else {
+        MS_LOG(DEBUG) << "Trying to erase vector element at index " << index_entree << ", out of range!";
+      }
+      if (outgoing_auxinputs->size() > index_entree) {
+        (void)outgoing_auxinputs->erase(it);
+      } else {
+        MS_LOG(DEBUG) << "Trying to erase vector element at index " << index_entree << ", which is out of range.";
+      }
+    }
+  }
+}
+
+void Eliminate_Aux_Outgoing(size_t node_index, const std::shared_ptr<Graph> &graph) {
+  for (size_t i = 0; i < graph->nodes[node_index].node_out.size(); i++) {
+    // Handle the output operator connected to the current node via main edge
+    EliminateAuxOutgoingInput(node_index, graph, i);
+    // Handle the output operator connected to the current node via auxiliary edge
+    EliminateAuxOutgoingAuxInput(node_index, graph, i);
   }
 }
 
@@ -355,7 +437,7 @@ std::shared_ptr<Graph> EliminateGraph(const std::shared_ptr<Graph> &graph,
   MS_EXCEPTION_IF_NULL(graph);
   for (size_t node_index = 0; node_index < graph->nodes.size(); node_index++) {
     auto type = graph->nodes[node_index].apply.op_type;
-    if (ElementWiseOpType.find(type) != ElementWiseOpType.end()) {
+    if (EliminateOpType.find(type) != EliminateOpType.end()) {
       Eliminate_Aux(node_index, graph, eli_list);
     }
   }
@@ -385,6 +467,15 @@ std::shared_ptr<Graph> EliminateGraph(const std::shared_ptr<Graph> &graph,
         (void)node_in->erase(node_in->cbegin() + SizeToLong(j) - 1);
       } else {
         node_in->at(j - 1) = index_list->at(node_in->at(j - 1));
+      }
+    }
+    auto *node_in_aux = &new_graph->nodes[index_list->at(i)].node_in_aux;
+    for (size_t j = node_in_aux->size(); j > 0; j--) {
+      bool IsEliminated = (index_list->at(node_in_aux->at(j - 1)) == SIZE_MAX);
+      if (IsEliminated) {
+        (void)node_in_aux->erase(node_in_aux->begin() + SizeToLong(j) - 1);
+      } else {
+        node_in_aux->at(j - 1) = index_list->at(node_in_aux->at(j - 1));
       }
     }
     auto *node_out = &new_graph->nodes[index_list->at(i)].node_out;

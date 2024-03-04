@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except i n compliance with the License.
@@ -17,10 +17,11 @@
 #include <vector>
 #include <memory>
 #include <string>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/conv_pool_op_name.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "frontend/optimizer/opt.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "utils/trace_base.h"
 
 namespace mindspore {
@@ -28,6 +29,7 @@ namespace opt {
 constexpr size_t kInputNum = 3;
 constexpr size_t kFloat16Len = 2;  // size of float16;
 constexpr size_t kKernelSizeNum = 5;
+constexpr int64_t kFloat16C0 = 16;
 namespace {
 tensor::TensorPtr CreateTensor(const AnfNodePtr &node) {
   // 1 get attr ksize
@@ -40,30 +42,34 @@ tensor::TensorPtr CreateTensor(const AnfNodePtr &node) {
     MS_LOG(ERROR) << "MaxPool3DGradGrad only support NCDHW format, but got " << data_format;
   }
   if (ksize.size() != kKernelSizeNum) {
-    MS_LOG(EXCEPTION) << "kernel_size of MaxPool3DGradGrad must be five, but got " << ksize
-                      << trace::DumpSourceLines(node);
+    MS_LOG(INTERNAL_EXCEPTION) << "kernel_size of MaxPool3DGradGrad must be five, but got " << ksize
+                               << trace::DumpSourceLines(node);
   }
   int64_t d = ksize[kDim2];
   int64_t h = ksize[kDim3];
   int64_t w = ksize[kDim4];
 
   // 1 create tensor
-  std::vector<int64_t> assist_shape = {1, 1, d, h, w};  // shape:NCDHW
+  std::vector<int64_t> assist_shape = {1, d, 1, h, w, kFloat16C0};  // shape:NDC1HWC0
   TensorTypePtr tensor_type = std::make_shared<TensorType>(kFloat16);
   MS_EXCEPTION_IF_NULL(tensor_type);
-  tensor::DeviceInfo device_info{kOpFormat_NDC1HWC0, tensor_type};
+  tensor::DeviceInfo device_info{kOpFormat_NDC1HWC0, tensor_type, kOpFormat_NDC1HWC0};
   tensor::TensorPtr assist_tensor = std::make_shared<tensor::Tensor>(kFloat16->type_id(), assist_shape);
   assist_tensor->set_device_info(device_info);
 
   // 2 set value of tensor
   auto data_ptr = assist_tensor->data_c();
   MS_EXCEPTION_IF_NULL(data_ptr);
-  std::vector<float16> half_data;
-  const int64_t dims = 1 * 1 * d * h * w;
-  int64_t counter = dims;
-  for (int64_t i = 0; i < dims; i++) {
-    half_data.emplace_back(float16(static_cast<float>(counter)));
-    counter--;
+  const int64_t dims = 1 * 1 * d * h * w * kFloat16C0;
+  std::vector<uint16_t> half_data(dims);
+  const int64_t maximum = d * h * w;
+  int64_t counter = 0;
+  for (int64_t i = 0; i < dims; i += kFloat16C0) {
+    int64_t base = i - i % kFloat16C0;
+    for (int64_t j = 0; j < kFloat16C0; j++) {
+      half_data[base + j] = static_cast<uint16_t>(maximum - counter);
+    }
+    counter++;
   }
 
   auto elem_num = LongToSize(dims) * kFloat16Len;
@@ -91,6 +97,7 @@ ValueNodePtr CreateValueNode(const AnfNodePtr &node) {
   kernel::KernelBuildInfo::KernelBuildInfoBuilder op_builder;
   op_builder.SetOutputsFormat({kOpFormat_NDC1HWC0});
   op_builder.SetOutputsDeviceType({kNumberTypeFloat16});
+  op_builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
   AnfAlgo::SetSelectKernelBuildInfo(op_builder.Build(), assist_const.get());
   return assist_const;
 }
@@ -98,7 +105,7 @@ ValueNodePtr CreateValueNode(const AnfNodePtr &node) {
 
 const BaseRef MaxPool3DGradGradFission::DefinePattern() const {
   VarPtr Xs = std::make_shared<SeqVar>();
-  auto max_pool3d_grad_grad_prim = std::make_shared<Primitive>(kMaxPool3DGradGradOpName);
+  auto max_pool3d_grad_grad_prim = std::make_shared<Primitive>(kMaxPool3DGradGradDOpName);
   return VectorRef({max_pool3d_grad_grad_prim, Xs});
 }
 
@@ -113,7 +120,7 @@ const AnfNodePtr MaxPool3DGradGradFission::Process(const FuncGraphPtr &graph, co
     MS_LOG(INFO) << "The node " << cnode->DebugString() << " is not equal to " << kInputNum << " inputs";
     return nullptr;
   }
-  std::vector<AnfNodePtr> new_inputs{NewValueNode(std::make_shared<Primitive>(kMaxPool3DGradGradOpName))};
+  std::vector<AnfNodePtr> new_inputs{NewValueNode(std::make_shared<Primitive>(kMaxPool3DGradGradDOpName))};
   auto assist_const = CreateValueNode(cnode);
   (void)new_inputs.insert(new_inputs.cend(), cnode->inputs().cbegin() + 1, cnode->inputs().cend());
   (void)new_inputs.emplace_back(assist_const);

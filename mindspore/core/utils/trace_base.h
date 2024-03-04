@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@
 #include <memory>
 #include <string>
 #include <vector>
-
 #include "utils/info.h"
 #include "ir/anf.h"
 #include "ir/func_graph.h"
@@ -30,18 +29,19 @@ namespace mindspore {
 namespace trace {
 constexpr auto kSectionPrefix = " - ";
 
-MS_CORE_API std::string GetDebugInfo(const DebugInfoPtr &info, SourceLineTip tip = kSourceLineTipNextLine);
-MS_CORE_API std::string GetDebugInfo(const DebugInfoPtr &info, const std::string &prefix,
-                                     SourceLineTip tip = kSourceLineTipNextLine);
+MS_CORE_API DebugInfoPtr GetSourceCodeDebugInfo(const DebugInfoPtr &info);
+MS_CORE_API std::string GetDebugInfoStr(const DebugInfoPtr &info, const std::string &prefix = std::string(""),
+                                        SourceLineTip tip = kSourceLineTipNextLine);
+// Generate the call stack of python source code with relevant trace info
+MS_CORE_API std::string GetTracedDebugInfoStr(const DebugInfoPtr &debug_info, bool is_debug = false);
 // Generate the call stack of python source code to a string
 MS_CORE_API std::string DumpSourceLines(const AnfNodePtr &node, bool has_title = true);
 MS_CORE_API std::string DumpSourceLines(AnfNode *node, bool has_title = true);
 // Generate the call stack of python source code to a vector
 MS_CORE_API std::vector<std::string> GetSourceLineList(const AnfNodePtr &node);
+MS_CORE_API std::vector<std::string> GetSourceLineList(const DebugInfoPtr &debug_info);
 // Get the locations of the call stack of python source code
 std::vector<LocationPtr> GetSourceLocationList(const AnfNodePtr &node);
-// Generate the call stack of python source code with relevant trace info
-std::string GetDebugTraceInfo(const AnfNodePtr &node, bool is_debug = false);
 }  // namespace trace
 }  // namespace mindspore
 

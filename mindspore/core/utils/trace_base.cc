@@ -28,11 +28,31 @@ namespace trace {
 namespace {
 std::vector<DebugInfoPtr> GetSourceCodeDebugInfoVec(DebugInfoPtr debug_info, bool is_debug = false) {
   std::vector<DebugInfoPtr> debug_with_loc_vec;
+  HashSet<DebugInfoPtr> visited;
   while (debug_info != nullptr) {
+    if (visited.find(debug_info) != visited.end()) {
+      int i = 0;
+      for (const auto &info : debug_with_loc_vec) {
+        auto loc = info->location();
+        MS_LOG(ERROR) << "[" << std::to_string(i) << "]:" << info.get()
+                      << ", loc:" << (loc == nullptr ? "null" : loc->ToString());
+        ++i;
+      }
+      auto loc = debug_info->location();
+      MS_LOG(INTERNAL_EXCEPTION) << "Find loop debug info: " << debug_info.get()
+                                 << ", loc:" << (loc == nullptr ? "null" : loc->ToString()) << ".\n"
+                                 << "Please set 'export MS_DEV_ENABLE_FIX_CODE_LINE=0' to avoid this problem.";
+    }
+    auto loc = debug_info->location();
+    MS_LOG(DEBUG) << "Visited Insert debug info: " << debug_info.get()
+                  << ", loc:" << (loc == nullptr ? "null" : loc->ToString());
+    (void)visited.insert(debug_info);
     if (is_debug || debug_info->location() != nullptr) {
       debug_with_loc_vec.push_back(debug_info);
+      MS_LOG(DEBUG) << "debug loc: " << debug_info->location()->DebugString();
     }
     if (debug_info->trace_info() != nullptr) {
+      MS_LOG(DEBUG) << "trace: " << debug_info->trace_info()->name();
       debug_info = debug_info->trace_info()->debug_info();
     } else {
       break;
@@ -76,67 +96,21 @@ DebugInfoPtr GetSourceCodeDebugInfo(const DebugInfoPtr &info) {
   }
 }
 
-std::string GetDebugInfo(const DebugInfoPtr &info, SourceLineTip tip) {
+std::string GetDebugInfoStr(const DebugInfoPtr &info, const std::string &prefix, SourceLineTip tip) {
   if (info == nullptr) {
     return "";
   }
-  auto src_info = GetSourceCodeDebugInfo(info);
-  if (src_info->location() != nullptr) {
-    return src_info->location()->ToString(tip);
-  }
-  return "";
-}
-
-// A trace info identifies a node transform, so we can trace the node transform through
-// A link of trace info and debug info
-std::string GetInfoWithAction(const std::vector<DebugInfoPtr> &info_vec, SourceLineTip tip) {
-  if (info_vec.empty()) {
+  const auto &src_info = GetSourceCodeDebugInfo(info);
+  if (src_info->location() == nullptr) {
     return "";
   }
-  if (info_vec.size() == 1) {
-    return info_vec[0]->location()->ToString(tip);
-  }
-  std::string traced_info = info_vec[0]->location()->ToString(tip);
-  for (size_t i = 1; i < info_vec.size(); i++) {
-    auto action_name = info_vec[i - 1]->trace_info()->GetActionBetweenNode(info_vec[i]);
-    if (action_name.empty()) {
-      break;
-    }
-    traced_info += action_name + info_vec[i]->location()->ToString(tip);
-  }
-  return traced_info;
-}
-
-std::string GetTracedDebugInfo(const DebugInfoPtr &info, SourceLineTip tip) {
-  if (info == nullptr) {
-    return "";
-  }
-  auto info_vec = GetSourceCodeDebugInfoVec(info);
-  if (info_vec.empty()) {
-    return "";
-  } else if (info_vec.size() == 1) {
-    return info_vec[0]->location()->ToString(tip);
-  } else if (info_vec.size() > 1) {
-    return GetInfoWithAction(info_vec, tip);
-  }
-  return "";
-}
-
-std::string GetDebugInfo(const DebugInfoPtr &info, const std::string &prefix, SourceLineTip tip) {
-  if (info == nullptr) {
-    return "";
-  }
-
-  auto debug_info = GetTracedDebugInfo(info, tip);
-  if (debug_info.empty()) {
-    return "";
-  }
+  auto line_str = src_info->location()->ToString(tip);
   if (tip == kSourceLineTipDiscard) {
-    ReplaceLinefeed(&debug_info);
+    ReplaceLinefeed(&line_str);
   }
-  std::ostringstream oss;
-  oss << prefix << debug_info;
-  return oss.str();
+  std::stringstream ss;
+  ss << prefix << line_str;
+  return ss.str();
 }
 
 std::string DumpSourceLines(const AnfNodePtr &node, bool has_title) {
@@ -151,7 +125,7 @@ std::string DumpSourceLines(const AnfNodePtr &node, bool has_title) {
   if (oss.str().empty()) {
     return "";
   }
-  const std::string prefix = has_title ? "#dmsg#The Function Call Stack:#dmsg#" : "\nThe function call stack:\n";
+  const std::string prefix = has_title ? "#dmsg#The Function Call Stack:#dmsg#" : "\n";
   return prefix + oss.str();
 }
 
@@ -170,6 +144,7 @@ void GetSourceLineFromDebugInfo(const DebugInfoPtr &debug_info, std::vector<std:
   auto info_vec = GetSourceCodeDebugInfoVec(debug_info);
   const std::string spaces(prefix.size(), ' ');
   bool first_line = true;
+  HashSet<std::string> exist_locations;
   for (const auto &info : info_vec) {
     MS_EXCEPTION_IF_NULL(info);
     auto loc = info->location();
@@ -177,12 +152,16 @@ void GetSourceLineFromDebugInfo(const DebugInfoPtr &debug_info, std::vector<std:
       continue;
     }
     auto loc_str = loc->ToString(kSourceLineTipDiscard);
+    if (exist_locations.find(loc_str) != exist_locations.cend()) {
+      continue;
+    }
+    (void)exist_locations.insert(loc_str);
     ReplaceLinefeed(&loc_str);
     if (first_line) {
-      result->push_back(prefix + loc_str + "\n");
+      result->push_back(std::string(prefix).append(loc_str).append("\n"));
       first_line = false;
     } else {
-      result->push_back(spaces + loc_str + "\n");
+      result->push_back(std::string(spaces).append(loc_str).append("\n"));
     }
   }
 }
@@ -220,6 +199,11 @@ void GetPrimalDebugInfos(const CNodePtr &cnode, std::vector<std::string> *result
       }
     }
   }
+}
+std::vector<std::string> GetSourceLineList(const DebugInfoPtr &debug_info) {
+  std::vector<std::string> result;
+  GetSourceLineFromDebugInfo(debug_info, &result);
+  return result;
 }
 
 std::vector<std::string> GetSourceLineList(const AnfNodePtr &node) {
@@ -259,27 +243,22 @@ std::vector<LocationPtr> GetSourceLocationList(const AnfNodePtr &node) {
   return result;
 }
 
-std::string GetDebugTraceInfo(const AnfNodePtr &node, bool is_debug) {
-  if (node == nullptr) {
-    MS_LOG(WARNING) << "Node is null";
+std::string GetTracedDebugInfoStr(const DebugInfoPtr &debug_info, bool is_debug) {
+  if (debug_info == nullptr) {
+    MS_LOG(WARNING) << "debug_info is null";
     return "";
   }
-  auto info_vec = GetSourceCodeDebugInfoVec(node->debug_info(), is_debug);
+  auto info_vec = GetSourceCodeDebugInfoVec(debug_info, is_debug);
   std::ostringstream oss;
-  for (const auto &info : info_vec) {
+  for (auto iter = info_vec.crbegin(); iter != info_vec.crend(); ++iter) {
+    const auto &info = *iter;
     MS_EXCEPTION_IF_NULL(info);
-    auto trace_info = info->trace_info();
-    if (trace_info != nullptr) {
-      oss << trace_info->symbol() << "(" << trace_info->full_name() << ") ";
-    }
     auto loc = info->location();
     if (loc == nullptr) {
       oss << "Location miss\n";
       continue;
     }
-    auto loc_str = loc->ToString(kSourceLineTipDiscard);
-    ReplaceLinefeed(&loc_str);
-    oss << loc_str << "\n";
+    oss << "# " << loc->ToString() << "\n";
   }
   return oss.str();
 }

@@ -16,9 +16,10 @@
 
 #include "ops/grad/avg_pool_grad_v1.h"
 #include <set>
-#include "ops/op_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -28,7 +29,8 @@ abstract::ShapePtr AvgPoolGradV1InferShape(const PrimitivePtr &primitive,
   std::vector<int64_t> kernel_size = GetValue<std::vector<int64_t>>(primitive->GetAttr(kKernelSize));
 
   auto pad_mode_value = (primitive->GetAttr(kPadMode));
-  auto pad_mode = PadMode(GetValue<int64_t>(pad_mode_value));
+  int64_t pad_mode;
+  CheckAndConvertUtils::GetPadModEnumValue(pad_mode_value, &pad_mode, true);
   if (format == NHWC) {
     std::vector<int64_t> ksize_NHWC = {kernel_size[0], kernel_size[1], kernel_size[2], kernel_size[3]};
     (void)primitive->AddAttr("ksize", MakeValue(ksize_NHWC));
@@ -40,22 +42,16 @@ abstract::ShapePtr AvgPoolGradV1InferShape(const PrimitivePtr &primitive,
     (void)primitive->DelAttr("data_format");
     (void)primitive->AddAttr("data_format", MakeValue("NCHW"));
   }
-  if (pad_mode == VALID) {
+  if (pad_mode == static_cast<int64_t>(VALID)) {
     (void)primitive->AddAttr("padding", MakeValue("VALID"));
-  } else if (pad_mode == SAME) {
+  } else if (pad_mode == static_cast<int64_t>(SAME)) {
     (void)primitive->AddAttr("padding", MakeValue("SAME"));
   }
 
-  auto orig_input_shape = input_args[0]->BuildValue();
-  auto orig_input_shape_tensor = orig_input_shape->cast<tensor::TensorPtr>();
-  auto orig_input_shape_tensor_data_ptr = orig_input_shape_tensor->data_c();
-  int32_t *orig_input_shape_ptr = static_cast<int32_t *>(orig_input_shape_tensor_data_ptr);
-
-  std::vector<int64_t> orig_shape = {orig_input_shape_ptr[0], orig_input_shape_ptr[1], orig_input_shape_ptr[2],
-                                     orig_input_shape_ptr[3]};
-
+  auto orig_shape = GetShapeValue(primitive, input_args[0]);
   return std::make_shared<abstract::Shape>(orig_shape);
 }
+
 TypePtr AvgPoolGradV1InferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
   auto name = prim->name();
   auto orig_input_shape_type = input_args[0]->BuildType();
@@ -79,6 +75,26 @@ AbstractBasePtr AvgPoolGradV1Infer(const abstract::AnalysisEnginePtr &, const Pr
   return std::make_shared<abstract::AbstractTensor>(avgpoolgradv1_infer_type, avgpoolgradv1_infer_shape);
 }
 MIND_API_OPERATOR_IMPL(AvgPoolGradV1, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(AvgPoolGradV1, prim::kPrimAvgPoolGradV1, AvgPoolGradV1Infer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGAvgPoolGradV1Infer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return AvgPoolGradV1InferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return AvgPoolGradV1InferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return AvgPoolGradV1Infer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(AvgPoolGradV1, prim::kPrimAvgPoolGradV1, AGAvgPoolGradV1Infer, false);
 }  // namespace ops
 }  // namespace mindspore

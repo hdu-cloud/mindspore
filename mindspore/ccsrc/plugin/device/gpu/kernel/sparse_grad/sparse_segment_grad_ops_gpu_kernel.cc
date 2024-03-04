@@ -40,8 +40,8 @@ bool SparseSegmentGradOpsGpuKernelMod::Init(const BaseOperatorPtr &base_operator
     return false;
   }
   kernel_func_ = kernel_attr_map_.at(kernel_type_)[index].second;
-  unit_grad_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  unit_idx_seg_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).first);
+  unit_grad_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  unit_idx_seg_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).dtype);
   return true;
 }
 
@@ -110,10 +110,14 @@ bool SparseSegmentGradOpsGpuKernelMod::LaunchKernel(const std::vector<AddressPtr
   segment_ids_host.resize(idx_seg_elements_);
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(indices_host.data(), indices_ptr, idx_seg_elements_ * sizeof(S), cudaMemcpyDeviceToHost, stream),
-    "cudaMemcpy failed.");
+    "For 'SparseSegmentGradOps', cudaMemcpy indices failed.");
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemcpyAsync(segment_ids_host.data(), segment_ids_ptr,
                                                      idx_seg_elements_ * sizeof(S), cudaMemcpyDeviceToHost, stream),
-                                     "cudaMemcpy failed.");
+                                     "For 'SparseSegmentGradOps', cudaMemcpy segment_ids failed.");
+  if (cudaStreamQuery(stream) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(stream),
+                                       "For 'SparseSegmentGradOps', cudaStreamSyncFailed");
+  }
   for (size_t i = 1; i < idx_seg_elements_; i++) {
     if (segment_ids_host[i] < segment_ids_host[i - 1]) {
       MS_EXCEPTION(ValueError) << "For '" << kernel_name_ << "', segment_ids should be sorted.";
@@ -128,8 +132,10 @@ bool SparseSegmentGradOpsGpuKernelMod::LaunchKernel(const std::vector<AddressPtr
     }
   }
   cudaMemset(y_ptr, 0, output_elements_ * unit_grad_size_);
-  CalSparseSegmentGradCombination(kernel_type_, grad_ptr, segment_ids_ptr, indices_ptr, segment_pos_ptr, outer_size_,
-                                  inner_size_, idx_seg_elements_, output_dim0_, y_ptr, device_id_, stream);
+  auto status =
+    CalSparseSegmentGradCombination(kernel_type_, grad_ptr, segment_ids_ptr, indices_ptr, segment_pos_ptr, outer_size_,
+                                    inner_size_, idx_seg_elements_, output_dim0_, y_ptr, device_id_, stream);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -225,9 +231,10 @@ std::map<std::string, std::vector<std::pair<KernelAttr, SparseSegmentGradOpsGpuK
 std::vector<KernelAttr> SparseSegmentGradOpsGpuKernelMod::GetOpSupport() {
   auto iter = kernel_attr_map_.find(kernel_type_);
   if (iter == kernel_attr_map_.end()) {
-    MS_LOG(ERROR) << "For 'SparseSegmentGradOpsOp', only support these types: "
-                  << kernel::Map2Str<std::map, std::vector<std::pair<KernelAttr, SSGLaunchFunc>>>(kernel_attr_map_)
-                  << " currently, but got " << kernel_name_;
+    MS_EXCEPTION(ValueError) << "For 'SparseSegmentGradOpsOp', only support these types: "
+                             << kernel::Map2Str<std::map, std::vector<std::pair<KernelAttr, SSGLaunchFunc>>>(
+                                  kernel_attr_map_)
+                             << " currently, but got " << kernel_name_;
   }
   std::vector<KernelAttr> support_list;
   (void)std::transform(

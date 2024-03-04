@@ -93,7 +93,7 @@ def test_kl_div_loss_grad():
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
-def test_kl_div_loss_grad_double():
+def test_kl_div_loss_grad_float64():
     """
     Feature: Test KLDivLossGrad.
     Description: Test KLDivLossGrad op with float inputs.

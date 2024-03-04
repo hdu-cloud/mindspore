@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,9 +33,9 @@ constexpr char kAdjustBrightnessOperation[] = "AdjustBrightness";
 
 class AdjustBrightnessOperation : public TensorOperation {
  public:
-  explicit AdjustBrightnessOperation(float brightness_factor);
+  explicit AdjustBrightnessOperation(float brightness_factor, const std::string &device_target = "CPU");
 
-  ~AdjustBrightnessOperation() = default;
+  ~AdjustBrightnessOperation() override = default;
 
   std::shared_ptr<TensorOp> Build() override;
 
@@ -47,8 +47,11 @@ class AdjustBrightnessOperation : public TensorOperation {
 
   static Status from_json(nlohmann::json op_params, std::shared_ptr<TensorOperation> *operation);
 
+  MapTargetDevice Type() override;
+
  private:
   float brightness_factor_;
+  std::string device_target_;  // CPU, Ascend
 };
 }  // namespace vision
 }  // namespace dataset

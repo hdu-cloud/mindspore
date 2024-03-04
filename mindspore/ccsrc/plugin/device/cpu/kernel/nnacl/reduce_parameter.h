@@ -14,21 +14,16 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_REDUCE_PARAMETER_H_
-#define MINDSPORE_NNACL_REDUCE_PARAMETER_H_
+#ifndef NNACL_REDUCE_PARAMETER_H_
+#define NNACL_REDUCE_PARAMETER_H_
 #include "nnacl/op_base.h"
 
 typedef struct ReduceParameter {
-  // primitive parameter
   OpParameter op_parameter_;
-  int axes_[MAX_SHAPE_SIZE];
   bool keep_dims_;
   int mode_;
   bool reduce_to_end_;
   float coeff;
-
-  // other parameter
-  int num_axes_;
 } ReduceParameter;
 
-#endif  // MINDSPORE_NNACL_REDUCE_PARAMETER_H_
+#endif  // NNACL_REDUCE_PARAMETER_H_

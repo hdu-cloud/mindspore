@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,14 +17,14 @@
 #include "plugin/device/ascend/optimizer/mindir/all_to_all_unify_mindir.h"
 #include <vector>
 #include <string>
-#include <algorithm>
+#include "ops/other_ops.h"
+#include "ops/array_ops.h"
 #include "utils/trace_base.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "plugin/device/ascend/hal/hccl_adapter/hccl_adapter.h"
 #include "include/common/utils/comm_manager.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "frontend/parallel/ops_info/ops_utils.h"
+#include "include/backend/anf_runtime_algorithm.h"
 
 namespace mindspore {
 namespace opt {
@@ -32,23 +32,19 @@ namespace {
 constexpr size_t kCNodePrimitiveIdx = 0;
 constexpr size_t kAllToAllInputIdx = 1;
 
-inline int64_t NormalizeDim(const ShapeVector &shape, int64_t dim) {
-  return dim < 0 ? SizeToLong(shape.size()) + dim : dim;
-}
-
 void ChangePrimitiveToAllToAllV(const AnfNodePtr &node) {
   MS_EXCEPTION_IF_NULL(node);
   auto neighbor_exchange = node->cast<CNodePtr>();
   MS_EXCEPTION_IF_NULL(neighbor_exchange);
 
   if (neighbor_exchange->size() == kCNodePrimitiveIdx) {
-    MS_LOG(EXCEPTION) << "Inputs should not be empty for cnode " << node->DebugString()
-                      << trace::DumpSourceLines(neighbor_exchange);
+    MS_LOG(INTERNAL_EXCEPTION) << "Inputs should not be empty for cnode " << node->DebugString()
+                               << trace::DumpSourceLines(neighbor_exchange);
   }
 
   auto prim = GetValueNode<PrimitivePtr>(neighbor_exchange->input(kCNodePrimitiveIdx));
   MS_EXCEPTION_IF_NULL(prim);
-  prim->Named::operator=(Named(kAllToAllVOpName));
+  prim->Named::operator=(Named(kAllToAllvOpName));
 }
 
 uint32_t GetRankSize(const std::string &group) {
@@ -77,36 +73,25 @@ CNodePtr AllToAllUnifyMindIR::CreateSplitNode(const FuncGraphPtr &graph, const C
   MS_EXCEPTION_IF_NULL(split_v);
   auto dtype = common::AnfAlgo::GetOutputInferDataType(all_to_all_input, 0);
   auto shape = common::AnfAlgo::GetOutputInferShape(all_to_all_input, 0);
-  split_dim = NormalizeDim(shape, split_dim);
-  if (SizeToLong(shape.size()) <= split_dim) {
-    MS_LOG(EXCEPTION) << "Invalid split dim " << split_dim << " is over the shape size " << shape.size()
-                      << trace::DumpSourceLines(all_to_all);
+  auto shape_size = SizeToLong(shape.size());
+  if (split_dim >= shape_size || split_dim < -shape_size) {
+    MS_LOG(INTERNAL_EXCEPTION) << "Invalid split dim " << split_dim << " is over the shape size " << shape.size()
+                               << trace::DumpSourceLines(all_to_all);
   }
-  if (split_count == 0 || shape[LongToSize(split_dim)] % split_count != 0) {
-    MS_LOG(EXCEPTION) << "Invalid split count " << split_count << " cannot be divisible by shape[" << split_dim
-                      << "] = " << shape[LongToSize(split_dim)] << trace::DumpSourceLines(all_to_all);
+  size_t split_idx = split_dim < 0 ? LongToSize(split_dim + shape_size) : LongToSize(split_dim);
+  if (split_count == 0 || shape[split_idx] % split_count != 0) {
+    MS_LOG(INTERNAL_EXCEPTION) << "Invalid split count " << split_count << " cannot be divisible by shape[" << split_idx
+                               << "] = " << shape[split_idx] << trace::DumpSourceLines(all_to_all);
   }
-  shape[LongToSize(split_dim)] /= split_count;
+  shape[split_idx] /= split_count;
   std::vector<TypeId> dtypes(split_count, dtype);
-  if (IsDynamic(shape)) {
-    auto min_shape = common::AnfAlgo::GetOutputMinShape(all_to_all_input, 0UL);
-    auto max_shape = common::AnfAlgo::GetOutputMaxShape(all_to_all_input, 0UL);
-    if (!min_shape.empty() && !max_shape.empty()) {
-      max_shape[LongToSize(split_dim)] /= split_count;
-      min_shape[LongToSize(split_dim)] /= split_count;
-    }
-
-    std::vector<BaseShapePtr> shapes(split_count, std::make_shared<abstract::Shape>(shape, min_shape, max_shape));
-    common::AnfAlgo::SetOutputTypeAndDetailShape(dtypes, shapes, split_v.get());
-  } else {
-    std::vector<ShapeVector> shapes(split_count, shape);
-    common::AnfAlgo::SetOutputInferTypeAndShape(dtypes, shapes, split_v.get());
-  }
+  std::vector<ShapeVector> shapes(split_count, shape);
+  common::AnfAlgo::SetOutputInferTypeAndShape(dtypes, shapes, split_v.get());
 
   common::AnfAlgo::SetNodeAttr(kAttrSplitDim, MakeValue<int64_t>(split_dim), split_v);
   common::AnfAlgo::SetNodeAttr(kAttrNumSplit, MakeValue<int64_t>(split_count), split_v);
-  common::AnfAlgo::SetNodeAttr(kAttrSizeSplits,
-                               MakeValue(std::vector<int64_t>(split_count, shape[LongToSize(split_dim)])), split_v);
+  common::AnfAlgo::SetNodeAttr(kAttrSizeSplits, MakeValue(std::vector<int64_t>(split_count, shape[split_idx])),
+                               split_v);
   common::AnfAlgo::SetNodeAttr("is_backend_insert", MakeValue(true), split_v);
   return split_v;
 }
@@ -125,14 +110,14 @@ CNodePtr AllToAllUnifyMindIR::CreateAllToAllvNode(const FuncGraphPtr &graph, con
   std::vector<AnfNodePtr> split_outputs;
   CreateMultipleOutputsOfAnfNode(graph, split, static_cast<size_t>(split_count), &split_outputs);
   if (split_outputs.empty()) {
-    MS_LOG(EXCEPTION) << "The node " << split->DebugString() << " should have at least one output, but got 0."
-                      << trace::DumpSourceLines(split);
+    MS_LOG(INTERNAL_EXCEPTION) << "The node " << split->DebugString() << " should have at least one output, but got 0."
+                               << trace::DumpSourceLines(split);
   }
-  std::vector<AnfNodePtr> all_to_all_v_input = {NewValueNode(std::make_shared<Primitive>(kAllToAllVOpName))};
+  std::vector<AnfNodePtr> all_to_all_v_input = {NewValueNode(std::make_shared<Primitive>(kAllToAllvOpName))};
   (void)all_to_all_v_input.insert(all_to_all_v_input.end(), split_outputs.begin(), split_outputs.end());
   auto all_to_all_v = NewCNode(all_to_all_v_input, graph);
   MS_EXCEPTION_IF_NULL(all_to_all_v);
-  auto single_shape = common::AnfAlgo::GetOutputDetailShape(split_outputs[0], 0UL);
+  auto single_shape = AnfAlgo::GetOutputDetailShape(split_outputs[0], 0UL);
   auto single_type = common::AnfAlgo::GetOutputInferDataType(split_outputs[0], 0UL);
   std::vector<TypeId> dtypes(split_count, single_type);
   std::vector<BaseShapePtr> shapes(split_count, single_shape);
@@ -169,41 +154,35 @@ CNodePtr AllToAllUnifyMindIR::CreateConcatNode(const FuncGraphPtr &graph, const 
   std::vector<AnfNodePtr> all_to_all_v_outputs;
   CreateMultipleOutputsOfAnfNode(graph, all_to_all_v, static_cast<size_t>(split_count), &all_to_all_v_outputs);
   if (all_to_all_v_outputs.empty()) {
-    MS_LOG(EXCEPTION) << "The node " << all_to_all_v->DebugString() << " should have at least one output, but got 0."
-                      << trace::DumpSourceLines(all_to_all_v);
+    MS_LOG(INTERNAL_EXCEPTION) << "The node " << all_to_all_v->DebugString()
+                               << " should have at least one output, but got 0."
+                               << trace::DumpSourceLines(all_to_all_v);
   }
-  std::vector<AnfNodePtr> concat_input = {NewValueNode(std::make_shared<Primitive>(kConcatOpName))};
-  (void)concat_input.insert(concat_input.end(), all_to_all_v_outputs.begin(), all_to_all_v_outputs.end());
+  std::vector<AnfNodePtr> concat_input = {NewValueNode(std::make_shared<Primitive>(kConcatDOpName)), all_to_all_v};
   auto concat = NewCNode(concat_input, graph);
   MS_EXCEPTION_IF_NULL(concat);
   auto single_shape = common::AnfAlgo::GetOutputInferShape(all_to_all_v_outputs[0], 0);
-  concat_dim = NormalizeDim(single_shape, concat_dim);
-  if (LongToSize(concat_dim) >= single_shape.size()) {
-    MS_LOG(EXCEPTION) << "Invalid concat dim " << concat_dim << " is greater than shape size " << single_shape.size()
-                      << trace::DumpSourceLines(all_to_all);
+  auto shape_size = SizeToLong(single_shape.size());
+  if (concat_dim >= shape_size || concat_dim < -shape_size) {
+    MS_LOG(INTERNAL_EXCEPTION) << "Invalid concat dim " << concat_dim << " is greater than shape size "
+                               << single_shape.size() << trace::DumpSourceLines(all_to_all);
   }
-  single_shape[LongToSize(concat_dim)] *= split_count;
-  if (IsDynamic(single_shape)) {
-    auto min_shape = common::AnfAlgo::GetOutputMinShape(all_to_all_v_outputs[0], 0UL);
-    auto max_shape = common::AnfAlgo::GetOutputMaxShape(all_to_all_v_outputs[0], 0UL);
-    if (!min_shape.empty() && !max_shape.empty()) {
-      max_shape[LongToSize(concat_dim)] *= split_count;
-      min_shape[LongToSize(concat_dim)] *= split_count;
-    }
-
-    common::AnfAlgo::SetOutputTypeAndDetailShape(
-      {common::AnfAlgo::GetOutputInferDataType(all_to_all_v_outputs[0], 0UL)},
-      {std::make_shared<abstract::Shape>(single_shape, min_shape, max_shape)}, concat.get());
-  } else {
-    common::AnfAlgo::SetOutputInferTypeAndShape({common::AnfAlgo::GetOutputInferDataType(all_to_all_v_outputs[0], 0UL)},
-                                                {single_shape}, concat.get());
-  }
+  size_t concat_idx = concat_dim < 0 ? LongToSize(concat_dim + shape_size) : LongToSize(concat_dim);
+  single_shape[concat_idx] *= split_count;
+  common::AnfAlgo::SetOutputInferTypeAndShape({common::AnfAlgo::GetOutputInferDataType(all_to_all_v_outputs[0], 0UL)},
+                                              {single_shape}, concat.get());
 
   common::AnfAlgo::SetNodeAttr(kAttrAxis, MakeValue<int64_t>(concat_dim), concat);
   common::AnfAlgo::SetNodeAttr(kAttrInputNums, MakeValue(split_count), concat);
   std::vector<int64_t> dyn_input_size{split_count};
   common::AnfAlgo::SetNodeAttr(kAttrDynInputSizes, MakeValue(dyn_input_size), concat);
   return concat;
+}
+
+std::vector<std::string> NeighborExchangeUnifyMindIR::MustExistPrimitiveName() const {
+  std::vector<std::string> ret;
+  ret.emplace_back(prim::kPrimNeighborExchange->name());
+  return ret;
 }
 
 const BaseRef NeighborExchangeUnifyMindIR::DefinePattern() const {
@@ -216,6 +195,12 @@ const AnfNodePtr NeighborExchangeUnifyMindIR::Process(const FuncGraphPtr &graph,
   MS_EXCEPTION_IF_NULL(node);
   ChangePrimitiveToAllToAllV(node);
   return node;
+}
+
+std::vector<std::string> AllToAllUnifyMindIR::MustExistPrimitiveName() const {
+  std::vector<std::string> ret;
+  ret.emplace_back(prim::kPrimAllToAll->name());
+  return ret;
 }
 
 const BaseRef AllToAllUnifyMindIR::DefinePattern() const {

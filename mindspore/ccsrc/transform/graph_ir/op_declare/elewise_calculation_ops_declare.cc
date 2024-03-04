@@ -16,8 +16,15 @@
 
 #include "transform/graph_ir/op_declare/elewise_calculation_ops_declare.h"
 #include <memory>
-#include <vector>
 #include <string>
+#include <vector>
+#include "transform/graph_ir/custom_op_proto/cust_elewise_calculation_ops.h"
+#include "ops/ascend_op_name.h"
+#include "ops/array_ops.h"
+#include "ops/arithmetic_ops.h"
+#include "ops/framework_ops.h"
+#include "ops/math_ops.h"
+#include "ops/nn_optimizer_ops.h"
 
 namespace mindspore::transform {
 INPUT_MAP(ClipByValue) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(clip_value_min)}, {3, INPUT_DESC(clip_value_max)}};
@@ -41,6 +48,13 @@ REG_ADPT_DESC(Add, prim::kPrimAdd->name(),
               std::make_shared<OpAdapterDesc>(
                 std::make_shared<OpAdapter<Add>>(ExtraAttr({{"mode", MakeValue(static_cast<int64_t>(1))}})),
                 std::make_shared<OpAdapter<Add>>(ExtraAttr({{"mode", MakeValue(static_cast<int64_t>(1))}}))))
+REG_ADPT_DESC(ScalarAdd, prim::kPrimScalarAdd->name(), ADPT_DESC(Add))
+
+// AddV2
+INPUT_MAP(AddV2) = {{1, INPUT_DESC(x1)}, {2, INPUT_DESC(x2)}};
+ATTR_MAP(AddV2) = EMPTY_ATTR_MAP;
+OUTPUT_MAP(AddV2) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(AddV2, prim::kPrimAddV2->name(), ADPT_DESC(AddV2))
 
 // AccumulateNV2
 INPUT_MAP(AccumulateNV2) = EMPTY_INPUT_MAP;
@@ -55,41 +69,6 @@ ATTR_MAP(ConfusionMulGrad) = {{"axes", ATTR_DESC(axes, AnyTraits<std::vector<int
                               {"keep_dims", ATTR_DESC(keep_dims, AnyTraits<bool>())}};
 OUTPUT_MAP(ConfusionMulGrad) = {{0, OUTPUT_DESC(output0)}, {1, OUTPUT_DESC(output1)}};
 REG_ADPT_DESC(ConfusionMulGrad, kNameConfusionMulGrad, ADPT_DESC(ConfusionMulGrad))
-
-// FakeQuantWithMinMaxVars
-INPUT_MAP(FakeQuantWithMinMaxVars) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(min)}, {3, INPUT_DESC(max)}};
-ATTR_MAP(FakeQuantWithMinMaxVars) = {{"num_bits", ATTR_DESC(num_bits, AnyTraits<int64_t>())},
-                                     {"narrow_range", ATTR_DESC(narrow_range, AnyTraits<bool>())}};
-OUTPUT_MAP(FakeQuantWithMinMaxVars) = {{0, OUTPUT_DESC(y)}};
-REG_ADPT_DESC(FakeQuantWithMinMaxVars, kNameFakeQuantWithMinMaxVars, ADPT_DESC(FakeQuantWithMinMaxVars))
-
-// FakeQuantWithMinMaxVarsGradient
-INPUT_MAP(FakeQuantWithMinMaxVarsGradient) = {
-  {1, INPUT_DESC(gradients)}, {2, INPUT_DESC(x)}, {3, INPUT_DESC(min)}, {4, INPUT_DESC(max)}};
-ATTR_MAP(FakeQuantWithMinMaxVarsGradient) = {{"num_bits", ATTR_DESC(num_bits, AnyTraits<int64_t>())},
-                                             {"narrow_range", ATTR_DESC(narrow_range, AnyTraits<bool>())}};
-OUTPUT_MAP(FakeQuantWithMinMaxVarsGradient) = {
-  {0, OUTPUT_DESC(backprops_wrt_x)}, {1, OUTPUT_DESC(backprops_wrt_min)}, {2, OUTPUT_DESC(backprops_wrt_max)}};
-REG_ADPT_DESC(FakeQuantWithMinMaxVarsGradient, kNameFakeQuantWithMinMaxVarsGradient,
-              ADPT_DESC(FakeQuantWithMinMaxVarsGradient))
-
-// FakeQuantWithMinMaxVarsPerChannel
-INPUT_MAP(FakeQuantWithMinMaxVarsPerChannel) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(min)}, {3, INPUT_DESC(max)}};
-ATTR_MAP(FakeQuantWithMinMaxVarsPerChannel) = {{"num_bits", ATTR_DESC(num_bits, AnyTraits<int64_t>())},
-                                               {"narrow_range", ATTR_DESC(narrow_range, AnyTraits<bool>())}};
-OUTPUT_MAP(FakeQuantWithMinMaxVarsPerChannel) = {{0, OUTPUT_DESC(y)}};
-REG_ADPT_DESC(FakeQuantWithMinMaxVarsPerChannel, kNameFakeQuantWithMinMaxVarsPerChannel,
-              ADPT_DESC(FakeQuantWithMinMaxVarsPerChannel))
-
-// FakeQuantWithMinMaxVarsPerChannelGradient
-INPUT_MAP(FakeQuantWithMinMaxVarsPerChannelGradient) = {
-  {1, INPUT_DESC(gradients)}, {2, INPUT_DESC(x)}, {3, INPUT_DESC(min)}, {4, INPUT_DESC(max)}};
-ATTR_MAP(FakeQuantWithMinMaxVarsPerChannelGradient) = {{"num_bits", ATTR_DESC(num_bits, AnyTraits<int64_t>())},
-                                                       {"narrow_range", ATTR_DESC(narrow_range, AnyTraits<bool>())}};
-OUTPUT_MAP(FakeQuantWithMinMaxVarsPerChannelGradient) = {
-  {0, OUTPUT_DESC(backprops_wrt_x)}, {1, OUTPUT_DESC(backprops_wrt_min)}, {2, OUTPUT_DESC(backprops_wrt_max)}};
-REG_ADPT_DESC(FakeQuantWithMinMaxVarsPerChannelGradient, kNameFakeQuantWithMinMaxVarsPerChannelGradient,
-              ADPT_DESC(FakeQuantWithMinMaxVarsPerChannelGradient))
 
 // GreaterEqual
 INPUT_MAP(GreaterEqual) = {{1, INPUT_DESC(x1)}, {2, INPUT_DESC(x2)}};
@@ -131,7 +110,8 @@ REG_ADPT_DESC(Acos, kNameACos, ADPT_DESC(Acos))
 INPUT_MAP(AcosGrad) = {{1, INPUT_DESC(y)}, {2, INPUT_DESC(dy)}};
 ATTR_MAP(AcosGrad) = EMPTY_ATTR_MAP;
 OUTPUT_MAP(AcosGrad) = {{0, OUTPUT_DESC(z)}};
-REG_ADPT_DESC(AcosGrad, kNameACosGrad, ADPT_DESC(AcosGrad))
+REG_ADPT_DESC(ACosGrad, kNameACosGrad, ADPT_DESC(AcosGrad))
+REG_ADPT_DESC(AcosGrad, kNameAcosGrad, ADPT_DESC(AcosGrad))
 
 // Acosh
 INPUT_MAP(Acosh) = {{1, INPUT_DESC(x)}};
@@ -302,25 +282,30 @@ ATTR_MAP(OnesLike) = EMPTY_ATTR_MAP;
 OUTPUT_MAP(OnesLike) = {{0, OUTPUT_DESC(y)}};
 REG_ADPT_DESC(OnesLike, kNameOnesLike, ADPT_DESC(OnesLike))
 
+// ArgMax
+CUST_INPUT_MAP(ArgMax) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(dimension)}};
+CUST_ATTR_INPUT_MAP(ArgMax) = {{"axis", "dimension"}};
+CUST_ATTR_MAP(ArgMax) = {{"output_type", ATTR_DESC(dtype, AnyTraits<GEType>())}};
+CUST_OUTPUT_MAP(ArgMax) = {{0, OUTPUT_DESC(y)}};
+
 // ArgMaxD
 INPUT_MAP(ArgMaxD) = {{1, INPUT_DESC(x)}};
 ATTR_MAP(ArgMaxD) = {{"axis", ATTR_DESC(dimension, AnyTraits<int64_t>())},
                      {"output_type", ATTR_DESC(dtype, AnyTraits<GEType>())}};
 OUTPUT_MAP(ArgMaxD) = {{0, OUTPUT_DESC(y)}};
-REG_ADPT_DESC(ArgMaxD, kNameArgmax, ADPT_DESC(ArgMaxD))
+REG_ADPT_DESC(ArgMaxD, kArgMaxDOpName, ADPT_DESC(ArgMaxD))
 
 // ArgMaxV2
 INPUT_MAP(ArgMaxV2) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(dimension)}};
+ATTR_INPUT_MAP(ArgMaxV2) = {{"axis", "dimension"}};
 ATTR_MAP(ArgMaxV2) = {{"output_type", ATTR_DESC(dtype, AnyTraits<GEType>())}};
 OUTPUT_MAP(ArgMaxV2) = {{0, OUTPUT_DESC(y)}};
 REG_ADPT_DESC(ArgMaxV2, kNameArgMaxV2, ADPT_DESC(ArgMaxV2))
-
-// ArgMinD
-INPUT_MAP(ArgMinD) = {{1, INPUT_DESC(x)}};
-ATTR_MAP(ArgMinD) = {{"axis", ATTR_DESC(dimension, AnyTraits<int64_t>())},
-                     {"output_type", ATTR_DESC(dtype, AnyTraits<GEType>())}};
-OUTPUT_MAP(ArgMinD) = {{0, OUTPUT_DESC(y)}};
-REG_ADPT_DESC(ArgMinD, kNameArgmin, ADPT_DESC(ArgMinD))
+#ifdef BUILD_LITE
+REG_ADPT_DESC(ArgMax, kNameArgmax, ADPT_DESC(ArgMaxV2));
+#else
+REG_ADPT_DESC(ArgMax, kNameArgmax, CUST_ADPT_DESC(ArgMax));
+#endif
 
 // ArgMaxWithValue
 INPUT_MAP(ArgMaxWithValue) = {{1, INPUT_DESC(x)}};
@@ -427,6 +412,7 @@ INPUT_ATTR_MAP(Cast) = {{2, ATTR_DESC(dst_type, AnyTraits<GEType>())}};
 ATTR_MAP(Cast) = {{"dst_type", ATTR_DESC(dst_type, AnyTraits<GEType>())}};
 OUTPUT_MAP(Cast) = {{0, OUTPUT_DESC(y)}};
 REG_ADPT_DESC(Cast, prim::kPrimCast->name(), ADPT_DESC(Cast))
+REG_ADPT_DESC(ScalarCast, prim::kPrimScalarCast->name(), ADPT_DESC(Cast))
 
 // Reciprocal
 INPUT_MAP(Reciprocal) = {{1, INPUT_DESC(x)}};
@@ -679,6 +665,7 @@ REG_ADPT_DESC(TensorMove, kNameTensorMove, ADPT_DESC(TensorMove))
 INPUT_MAP(KLDiv) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(target)}};
 ATTR_MAP(KLDiv) = {{"reduction", ATTR_DESC(reduction, AnyTraits<std::string>())}};
 OUTPUT_MAP(KLDiv) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(KLDivLoss, kNameKLDivLoss, ADPT_DESC(KLDiv))
 REG_ADPT_DESC(KLDiv, kNameKLDiv, ADPT_DESC(KLDiv))
 
 // Erfinv
@@ -686,4 +673,65 @@ INPUT_MAP(Erfinv) = {{1, INPUT_DESC(input_x)}};
 ATTR_MAP(Erfinv) = EMPTY_ATTR_MAP;
 OUTPUT_MAP(Erfinv) = {{0, OUTPUT_DESC(output_y)}};
 REG_ADPT_DESC(Erfinv, prim::kPrimErfinv->name(), ADPT_DESC(Erfinv))
+
+// ArgMin
+INPUT_MAP(ArgMin) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(dimension)}};
+ATTR_INPUT_MAP(ArgMin) = {{"axis", "dimension"}};
+ATTR_MAP(ArgMin) = {{"output_type", ATTR_DESC(dtype, AnyTraits<GEType>())}};
+OUTPUT_MAP(ArgMin) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(ArgMin, kArgMinOpName, ADPT_DESC(ArgMin))
+REG_ADPT_DESC(ArgMinD, kArgMinDOpName, ADPT_DESC(ArgMin))
+REG_ADPT_DESC(ArgMinV2, kArgminV2OpName, ADPT_DESC(ArgMin))
+REG_ADPT_DESC(Argmin, kArgminOpName, ADPT_DESC(ArgMin))
+
+// Threshold
+INPUT_MAP(Threshold) = {{1, INPUT_DESC(x)}};
+ATTR_MAP(Threshold) = {{"threshold", ATTR_DESC(threshold, AnyTraits<float>())}};
+OUTPUT_MAP(Threshold) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(Threshold, kNameThreshold, ADPT_DESC(Threshold))
+
+// Addcdiv
+INPUT_MAP(Addcdiv) = {{1, INPUT_DESC(input_data)}, {2, INPUT_DESC(x1)}, {3, INPUT_DESC(x2)}, {4, INPUT_DESC(value)}};
+ATTR_MAP(Addcdiv) = EMPTY_ATTR_MAP;
+OUTPUT_MAP(Addcdiv) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(Addcdiv, prim::kPrimAddcdiv->name(), ADPT_DESC(Addcdiv))
+
+// Addcmul
+INPUT_MAP(Addcmul) = {{1, INPUT_DESC(input_data)}, {2, INPUT_DESC(x1)}, {3, INPUT_DESC(x2)}, {4, INPUT_DESC(value)}};
+ATTR_MAP(Addcmul) = EMPTY_ATTR_MAP;
+OUTPUT_MAP(Addcmul) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(Addcmul, prim::kPrimAddcmul->name(), ADPT_DESC(Addcmul))
+
+// Lerp
+INPUT_MAP(Lerp) = {{1, INPUT_DESC(start)}, {2, INPUT_DESC(end)}, {3, INPUT_DESC(weight)}};
+ATTR_MAP(Lerp) = EMPTY_ATTR_MAP;
+OUTPUT_MAP(Lerp) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(Lerp, prim::kPrimLerp->name(), ADPT_DESC(Lerp))
+
+// IsClose
+INPUT_MAP(IsClose) = {{1, INPUT_DESC(x1)}, {2, INPUT_DESC(x2)}};
+ATTR_MAP(IsClose) = {{"rtol", ATTR_DESC(rtol, AnyTraits<float>())},
+                     {"atol", ATTR_DESC(atol, AnyTraits<float>())},
+                     {"equal_nan", ATTR_DESC(equal_nan, AnyTraits<bool>())}};
+OUTPUT_MAP(IsClose) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(IsClose, prim::kPrimIsClose->name(), ADPT_DESC(IsClose))
+
+// CosineSimilarity
+INPUT_MAP(CosineSimilarity) = {{1, INPUT_DESC(input_x1)}, {2, INPUT_DESC(input_x2)}};
+ATTR_MAP(CosineSimilarity) = {{"dim", ATTR_DESC(dim, AnyTraits<int64_t>())},
+                              {"eps", ATTR_DESC(eps, AnyTraits<float>())}};
+OUTPUT_MAP(CosineSimilarity) = {{0, OUTPUT_DESC(output_y)}};
+REG_ADPT_DESC(CosineSimilarity, kNameCosineSimilarity, ADPT_DESC(CosineSimilarity))
+
+// LeftShift
+INPUT_MAP(LeftShift) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(y)}};
+ATTR_MAP(LeftShift) = EMPTY_ATTR_MAP;
+OUTPUT_MAP(LeftShift) = {{0, OUTPUT_DESC(z)}};
+REG_ADPT_DESC(LeftShift, kNameLeftShift, ADPT_DESC(LeftShift))
+
+// RightShift
+INPUT_MAP(RightShift) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(y)}};
+ATTR_MAP(RightShift) = EMPTY_ATTR_MAP;
+OUTPUT_MAP(RightShift) = {{0, OUTPUT_DESC(z)}};
+REG_ADPT_DESC(RightShift, kNameRightShift, ADPT_DESC(RightShift))
 }  // namespace mindspore::transform

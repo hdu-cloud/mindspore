@@ -21,6 +21,8 @@
 #include <algorithm>
 #include <string>
 #include "frontend/optimizer/irpass.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "frontend/optimizer/optimizer.h"
 #include "frontend/optimizer/anf_visitor.h"
 #include "frontend/operator/ops.h"
@@ -64,7 +66,7 @@ class PynativeNoGradEliminater : public AnfVisitor {
 
         zeros_like_node->set_abstract(graph_inputs[i - 1]->abstract());
         if (!manager->Replace(node_inputs[i], zeros_like_node)) {
-          MS_LOG(EXCEPTION) << node_inputs[i]->DebugString() << ", replace node failed.";
+          MS_LOG(INTERNAL_EXCEPTION) << node_inputs[i]->DebugString() << ", replace node failed.";
         }
       }
     }

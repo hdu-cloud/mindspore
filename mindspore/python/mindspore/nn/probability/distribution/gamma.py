@@ -15,9 +15,10 @@
 """Gamma Distribution"""
 import numpy as np
 from mindspore.ops import operations as P
+from mindspore.ops import functional as F
 from mindspore.ops import composite as C
 import mindspore.nn as nn
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from mindspore.common import dtype as mstype
 from .distribution import Distribution
 from ._utils.utils import check_greater_zero, check_distribution_name
@@ -27,23 +28,23 @@ from ._utils.custom_ops import log_generic
 class Gamma(Distribution):
     r"""
     Gamma distribution.
-    A Gamma distributio is a continuous distribution with the range :math:`[0, 1]`
+    A Gamma distributio is a continuous distribution with the range :math:`(0, \inf)`
     and the probability density function:
 
     .. math::
         f(x, \alpha, \beta) = \beta^\alpha / \Gamma(\alpha) x^{\alpha - 1} \exp(-\beta x).
 
     where :math:`G` is the Gamma function,
-    and :math:`\alpha, \beta` are the concentration and the rate of the distribution respectively.
+    and :math:`\alpha` and :math:`\beta` are the concentration and the rate of the distribution respectively.
 
     Args:
         concentration (int, float, list, numpy.ndarray, Tensor): The concentration,
-          also know as alpha of the Gamma distribution. Default: None.
+          also know as alpha of the Gamma distribution. Default: ``None`` .
         rate (int, float, list, numpy.ndarray, Tensor): The rate, also know as
-          beta of the Gamma distribution. Default: None.
-        seed (int): The seed used in sampling. The global seed is used if it is None. Default: None.
-        dtype (mindspore.dtype): The type of the event samples. Default: mstype.float32.
-        name (str): The name of the distribution. Default: 'Gamma'.
+          beta of the Gamma distribution. Default: ``None`` .
+        seed (int): The seed used in sampling. The global seed is used if it is None. Default: ``None`` .
+        dtype (mindspore.dtype): The type of the event samples. Default: ``mstype.float32`` .
+        name (str): The name of the distribution. Default: ``'Gamma'`` .
 
     Note:
         `concentration` and `rate` must be greater than zero.
@@ -185,13 +186,12 @@ class Gamma(Distribution):
         self.squeeze = P.Squeeze(0)
         self.cast = P.Cast()
         self.dtypeop = P.DType()
-        self.fill = P.Fill()
         self.shape = P.Shape()
         self.select = P.Select()
         self.greater = P.Greater()
-        self.lgamma = nn.LGamma()
+        self.lgamma = P.Lgamma()
         self.digamma = nn.DiGamma()
-        self.igamma = nn.IGamma()
+        self.igamma = P.Igamma()
 
     def extend_repr(self):
         """Display instance object as string."""
@@ -265,8 +265,8 @@ class Gamma(Distribution):
         """
         concentration, rate = self._check_param_type(concentration, rate)
         mode = (concentration - 1.) / rate
-        nan = self.fill(self.dtypeop(concentration),
-                        self.shape(concentration), np.nan)
+        nan = F.fill(self.dtypeop(concentration), self.shape(concentration),
+                     np.nan)
         comp = self.greater(concentration, 1.)
         return self.select(comp, mode, nan)
 

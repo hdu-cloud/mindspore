@@ -17,6 +17,7 @@
 #define USE_DEPRECATED_API
 #include "tools/optimizer/fusion/matmul_activation_fusion.h"
 #include <memory>
+#include "mindspore/core/ops/lite_ops.h"
 #include "ops/fusion/activation.h"
 #include "ops/fusion/mat_mul_fusion.h"
 #include "include/common/utils/utils.h"
@@ -37,7 +38,7 @@ const BaseRef MatMulActivationFusion::DefinePattern() const {
 const AnfNodePtr MatMulActivationFusion::Process(const FuncGraphPtr &func_graph, const AnfNodePtr &node,
                                                  const EquivPtr &) const {
   // Int8 MatMul Kernel dont support matmul+activation
-  if (param_->commonQuantParam.quant_type == schema::QuantType_QUANT_ALL) {
+  if (param_->commonQuantParam.quant_type == lite::quant::QUANT_ALL) {
     return nullptr;
   }
   if (func_graph == nullptr || node == nullptr) {

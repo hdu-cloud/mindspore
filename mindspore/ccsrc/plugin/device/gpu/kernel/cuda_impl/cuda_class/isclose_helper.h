@@ -53,6 +53,19 @@ class IsCloseHelperGpuKernel : public GpuKernelHelperBase {
   }
 
   virtual ~IsCloseHelperGpuKernel() = default;
+
+  bool IsBroadcast(const std::vector<int64_t> &shapex, const std::vector<int64_t> &shapey) {
+    if (shapex.size() != shapey.size()) {
+      return true;
+    }
+    for (size_t i = 0; i < shapex.size(); i++) {
+      if (shapex[i] != shapey[i]) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   int CalMemSize(const std::vector<std::vector<int64_t>> &input_shapes,
                  const std::vector<std::vector<int64_t>> &output_shapes) override {
     ResetResource();
@@ -70,12 +83,11 @@ class IsCloseHelperGpuKernel : public GpuKernelHelperBase {
     auto inputx_shape = input_shapes[0];
     auto inputy_shape = input_shapes[1];
     auto output_shape = output_shapes[0];
-
-    for (size_t i = 0; i < inputx_shape.size(); i++) {
-      if (inputx_shape[i] != inputy_shape[i]) {
-        need_broadcast_ = true;
-      }
+    if (is_null_input_) {
+      return 0;
     }
+
+    need_broadcast_ = IsBroadcast(inputx_shape, inputy_shape);
 
     lhs_shape_.resize(MAX_DIMS, 1);
     rhs_shape_.resize(MAX_DIMS, 1);
@@ -131,15 +143,15 @@ class IsCloseHelperGpuKernel : public GpuKernelHelperBase {
     if (flag != 0) {
       return flag;
     }
-
+    cudaError_t status = cudaErrorNotReady;
     if (need_broadcast_) {
-      BroadcastIsClose(lhs_shape_, rhs_shape_, output_shape_, inputx, inputy, rtol, atol, equal_nan, output, device_id_,
-                       reinterpret_cast<cudaStream_t>(cuda_stream));
+      status = BroadcastIsClose(lhs_shape_, rhs_shape_, output_shape_, inputx, inputy, rtol, atol, equal_nan, output,
+                                device_id_, reinterpret_cast<cudaStream_t>(cuda_stream));
     } else {
-      IsClose(output_num_, inputx, inputy, rtol, atol, equal_nan, output, device_id_,
-              reinterpret_cast<cudaStream_t>(cuda_stream));
+      status = IsClose(output_num_, inputx, inputy, rtol, atol, equal_nan, output, device_id_,
+                       reinterpret_cast<cudaStream_t>(cuda_stream));
     }
-
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return 0;
   }
   TensorInfo GetOutputTensorInfo() override {

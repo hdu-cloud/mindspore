@@ -15,10 +15,10 @@
  */
 
 #include "plugin/device/cpu/kernel/resize_bilinear_grad_cpu_kernel.h"
-#include <utility>
 #include <functional>
+#include <utility>
+#include "kernel/ops_utils.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
-#include "kernel/common_utils.h"
 
 namespace mindspore {
 namespace kernel {
@@ -34,14 +34,14 @@ constexpr size_t kResizeBilinearGradNumThree = 3;
 
 using FuncVec = const std::vector<std::pair<KernelAttr, ResizeBilinearGradCpuKernelMod::KernelRunFunc>>;
 
-void ResizeBilinearGradFP16(float *float_dloss_addr, float *float_output_addr, float16 *output_addr, size_t *shape,
-                            size_t *size, float height_scale, float width_scale) {
+void ResizeBilinearGradFP16(float *float_dloss_addr, float *float_output_addr, float16 *output_addr,
+                            const size_t *shape, const size_t *size, float height_scale, float width_scale) {
   size_t batch_size = shape[kResizeBilinearGradNumZero];
   size_t channel = shape[kResizeBilinearGradNumOne];
   size_t in_height = shape[kResizeBilinearGradNumTwo];
   size_t in_width = shape[kResizeBilinearGradNumThree];
-  int out_height = size[kResizeBilinearGradNumTwo];
-  int out_width = size[kResizeBilinearGradNumThree];
+  size_t out_height = size[kResizeBilinearGradNumTwo];
+  size_t out_width = size[kResizeBilinearGradNumThree];
   size_t out_hw_size = out_height * out_width;
   size_t in_hw_size = in_height * in_width;
 
@@ -52,13 +52,13 @@ void ResizeBilinearGradFP16(float *float_dloss_addr, float *float_output_addr, f
       for (size_t h = 0; h < in_height; ++h) {
         const float in_y = static_cast<float>(h) * height_scale;
         const size_t top_y_index = std::max(static_cast<int>(floorf(in_y)), static_cast<int>(0));
-        const size_t bottom_y_index = std::min(static_cast<int>(ceilf(in_y)), out_height - 1);
+        const size_t bottom_y_index = std::min(static_cast<int>(ceilf(in_y)), static_cast<int>(out_height) - 1);
         const float y_lerp = in_y - floorf(in_y);
         const float inverse_y_lerp = 1.0 - y_lerp;
         for (size_t w = 0; w < in_width; ++w) {
           const float in_x = static_cast<float>(w) * width_scale;
           const size_t left_x_index = std::max(static_cast<int>(floorf(in_x)), static_cast<int>(0));
-          const size_t right_x_index = std::min(static_cast<int>(ceilf(in_x)), out_width - 1);
+          const size_t right_x_index = std::min(static_cast<int>(ceilf(in_x)), static_cast<int>(out_width) - 1);
           const float x_lerp = in_x - floorf(in_x);
           const float inverse_x_lerp = 1.0 - x_lerp;
           cur_output_addr[top_y_index * out_width + left_x_index] +=
@@ -86,14 +86,14 @@ void ResizeBilinearGradFP16(float *float_dloss_addr, float *float_output_addr, f
     }
   }
 }
-void ResizeBilinearGradFP16_HPC(float *float_dloss_addr, float *float_output_addr, float16 *output_addr, size_t *shape,
-                                size_t *size, float height_scale, float width_scale) {
+void ResizeBilinearGradFP16_HPC(float *float_dloss_addr, float *float_output_addr, float16 *output_addr,
+                                const size_t *shape, const size_t *size, float height_scale, float width_scale) {
   size_t batch_size = shape[kResizeBilinearGradNumZero];
   size_t channel = shape[kResizeBilinearGradNumOne];
   size_t in_height = shape[kResizeBilinearGradNumTwo];
   size_t in_width = shape[kResizeBilinearGradNumThree];
-  int out_height = size[kResizeBilinearGradNumTwo];
-  int out_width = size[kResizeBilinearGradNumThree];
+  size_t out_height = size[kResizeBilinearGradNumTwo];
+  size_t out_width = size[kResizeBilinearGradNumThree];
   size_t out_hw_size = out_height * out_width;
   size_t in_hw_size = in_height * in_width;
 
@@ -104,13 +104,13 @@ void ResizeBilinearGradFP16_HPC(float *float_dloss_addr, float *float_output_add
       for (size_t h = 0; h < in_height; ++h) {
         const float in_y = (static_cast<float>(h) + 0.5f) * height_scale - 0.5f;
         const size_t top_y_index = std::max(static_cast<int>(floorf(in_y)), static_cast<int>(0));
-        const size_t bottom_y_index = std::min(static_cast<int>(ceilf(in_y)), out_height - 1);
+        const size_t bottom_y_index = std::min(static_cast<int>(ceilf(in_y)), static_cast<int>(out_height) - 1);
         const float y_lerp = in_y - floorf(in_y);
         const float inverse_y_lerp = 1.0 - y_lerp;
         for (size_t w = 0; w < in_width; ++w) {
           const float in_x = (static_cast<float>(w) + 0.5f) * width_scale - 0.5f;
           const size_t left_x_index = std::max(static_cast<int>(floorf(in_x)), static_cast<int>(0));
-          const size_t right_x_index = std::min(static_cast<int>(ceilf(in_x)), out_width - 1);
+          const size_t right_x_index = std::min(static_cast<int>(ceilf(in_x)), static_cast<int>(out_width) - 1);
           const float x_lerp = in_x - floorf(in_x);
           const float inverse_x_lerp = 1.0 - x_lerp;
           cur_output_addr[top_y_index * out_width + left_x_index] +=
@@ -139,14 +139,14 @@ void ResizeBilinearGradFP16_HPC(float *float_dloss_addr, float *float_output_add
   }
 }
 template <typename T>
-void ResizeBilinearGrad(T *float_dloss_addr, T *float_output_addr, T *output_addr, size_t *shape, size_t *size,
-                        float height_scale, float width_scale) {
+void ResizeBilinearGrad(T *float_dloss_addr, T *float_output_addr, T *output_addr, const size_t *shape,
+                        const size_t *size, float height_scale, float width_scale) {
   size_t batch_size = shape[kResizeBilinearGradNumZero];
   size_t channel = shape[kResizeBilinearGradNumOne];
   size_t in_height = shape[kResizeBilinearGradNumTwo];
   size_t in_width = shape[kResizeBilinearGradNumThree];
-  int out_height = size[kResizeBilinearGradNumTwo];
-  int out_width = size[kResizeBilinearGradNumThree];
+  size_t out_height = size[kResizeBilinearGradNumTwo];
+  size_t out_width = size[kResizeBilinearGradNumThree];
   size_t out_hw_size = out_height * out_width;
   size_t in_hw_size = in_height * in_width;
 
@@ -157,13 +157,13 @@ void ResizeBilinearGrad(T *float_dloss_addr, T *float_output_addr, T *output_add
       for (size_t h = 0; h < in_height; ++h) {
         const T in_y = static_cast<T>(h) * height_scale;
         const size_t top_y_index = std::max(static_cast<int>(floorf(in_y)), static_cast<int>(0));
-        const size_t bottom_y_index = std::min(static_cast<int>(ceilf(in_y)), out_height - 1);
+        const size_t bottom_y_index = std::min(static_cast<int>(ceilf(in_y)), static_cast<int>(out_height) - 1);
         const T y_lerp = in_y - floorf(in_y);
         const T inverse_y_lerp = 1.0 - y_lerp;
         for (size_t w = 0; w < in_width; ++w) {
           const T in_x = static_cast<T>(w) * width_scale;
           const size_t left_x_index = std::max(static_cast<int>(floorf(in_x)), static_cast<int>(0));
-          const size_t right_x_index = std::min(static_cast<int>(ceilf(in_x)), out_width - 1);
+          const size_t right_x_index = std::min(static_cast<int>(ceilf(in_x)), static_cast<int>(out_width) - 1);
           const T x_lerp = in_x - floorf(in_x);
           const T inverse_x_lerp = 1.0 - x_lerp;
           cur_output_addr[top_y_index * out_width + left_x_index] +=
@@ -192,14 +192,14 @@ void ResizeBilinearGrad(T *float_dloss_addr, T *float_output_addr, T *output_add
   }
 }
 template <typename T>
-void ResizeBilinearGrad_HPC(T *float_dloss_addr, T *float_output_addr, T *output_addr, size_t *shape, size_t *size,
-                            float height_scale, float width_scale) {
+void ResizeBilinearGrad_HPC(T *float_dloss_addr, T *float_output_addr, T *output_addr, const size_t *shape,
+                            const size_t *size, float height_scale, float width_scale) {
   size_t batch_size = shape[kResizeBilinearGradNumZero];
   size_t channel = shape[kResizeBilinearGradNumOne];
   size_t in_height = shape[kResizeBilinearGradNumTwo];
   size_t in_width = shape[kResizeBilinearGradNumThree];
-  int out_height = size[kResizeBilinearGradNumTwo];
-  int out_width = size[kResizeBilinearGradNumThree];
+  size_t out_height = size[kResizeBilinearGradNumTwo];
+  size_t out_width = size[kResizeBilinearGradNumThree];
   size_t out_hw_size = out_height * out_width;
   size_t in_hw_size = in_height * in_width;
 
@@ -210,13 +210,13 @@ void ResizeBilinearGrad_HPC(T *float_dloss_addr, T *float_output_addr, T *output
       for (size_t h = 0; h < in_height; ++h) {
         const T in_y = (static_cast<float>(h) + 0.5f) * height_scale - 0.5f;
         const size_t top_y_index = std::max(static_cast<int>(floorf(in_y)), static_cast<int>(0));
-        const size_t bottom_y_index = std::min(static_cast<int>(ceilf(in_y)), out_height - 1);
+        const size_t bottom_y_index = std::min(static_cast<int>(ceilf(in_y)), static_cast<int>(out_height) - 1);
         const T y_lerp = in_y - floorf(in_y);
         const T inverse_y_lerp = 1.0 - y_lerp;
         for (size_t w = 0; w < in_width; ++w) {
           const T in_x = (static_cast<float>(w) + 0.5f) * width_scale - 0.5f;
           const size_t left_x_index = std::max(static_cast<int>(floorf(in_x)), static_cast<int>(0));
-          const size_t right_x_index = std::min(static_cast<int>(ceilf(in_x)), out_width - 1);
+          const size_t right_x_index = std::min(static_cast<int>(ceilf(in_x)), static_cast<int>(out_width) - 1);
           const T x_lerp = in_x - floorf(in_x);
           const T inverse_x_lerp = 1.0 - x_lerp;
           cur_output_addr[top_y_index * out_width + left_x_index] +=
@@ -256,6 +256,8 @@ bool ResizeBilinearGradCpuKernelMod::Init(const BaseOperatorPtr &base_operator,
                   << inputs.size() << " and " << outputs.size();
     return false;
   }
+  align_corners_ = GetValue<bool>(base_operator->GetAttr(kAttrAlignCorners));
+  half_pixel_centers_ = GetValue<bool>(base_operator->GetAttr(kAttrHalfPixelCenters));
   return MatchKernelFunc(base_operator, inputs, outputs);
 }
 
@@ -266,15 +268,12 @@ int ResizeBilinearGradCpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
   if (auto ret = KernelMod::Resize(base_operator, inputs, outputs, inputsOnHost); ret != KRET_OK) {
     return ret;
   }
-  shape_ = Convert2SizeTClipNeg(inputs[kIndex0]->GetShapeVector());
-  size_ = Convert2SizeTClipNeg(inputs[kIndex1]->GetShapeVector());
-  align_corners_ = GetValue<bool>(base_operator->GetAttr(kAttrAlignCorners));
-  half_pixel_centers_ = GetValue<bool>(base_operator->GetAttr(kAttrHalfPixelCenters));
+  shape_ = Convert2SizeTClipNeg(inputs.at(kIndex0)->GetShapeVector());
+  size_ = Convert2SizeTClipNeg(inputs.at(kIndex1)->GetShapeVector());
   is_null_input_ = (std::accumulate(shape_.begin(), shape_.end(), size_t(1), std::multiplies<size_t>()) == 0);
   if (is_null_input_) {
     return static_cast<int>(KRET_OK);
   }
-
   size_t in_height = shape_[2];
   size_t in_width = shape_[3];
   size_t out_height = size_[2];
@@ -288,11 +287,15 @@ template <typename T>
 bool ResizeBilinearGradCpuKernelMod::LaunchFloat16Kernel(const std::vector<kernel::AddressPtr> &inputs,
                                                          const std::vector<AddressPtr> &,
                                                          const std::vector<kernel::AddressPtr> &outputs) {
-  auto *output_addr = reinterpret_cast<float16 *>(outputs[0]->addr);
+  auto output_addr = GetDeviceAddress<float16>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(output_addr);
   if (memset_s(output_addr, outputs[0]->size, 0, outputs[0]->size) != EOK) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', output buffer memset failed.";
   }
-  auto *input_addr_T = reinterpret_cast<float16 *>(inputs[0]->addr);
+
+  auto input_addr_T = GetDeviceAddress<float16>(inputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(input_addr_T);
+
   size_t input_mem_size = inputs[0]->size / sizeof(float16) * sizeof(float);
   float *float_dloss_addr = reinterpret_cast<float *>(malloc(input_mem_size));
   if (float_dloss_addr == NULL) {
@@ -317,10 +320,6 @@ bool ResizeBilinearGradCpuKernelMod::LaunchFloat16Kernel(const std::vector<kerne
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', output buffer memset failed.";
   }
 
-  MS_EXCEPTION_IF_NULL(output_addr);
-  MS_EXCEPTION_IF_NULL(float_dloss_addr);
-  MS_EXCEPTION_IF_NULL(float_output_addr);
-
   if (half_pixel_centers_) {
     ResizeBilinearGradFP16_HPC(float_dloss_addr, float_output_addr, output_addr, shape_.data(), size_.data(),
                                height_scale, width_scale);
@@ -338,14 +337,13 @@ template <typename T>
 bool ResizeBilinearGradCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs,
                                                   const std::vector<AddressPtr> &,
                                                   const std::vector<kernel::AddressPtr> &outputs) {
-  auto *output_addr = reinterpret_cast<T *>(outputs[0]->addr);
+  auto output_addr = GetDeviceAddress<T>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(output_addr);
   if (memset_s(output_addr, outputs[0]->size, 0, outputs[0]->size) != EOK) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', output buffer memset failed.";
   }
-  auto *float_dloss_addr = reinterpret_cast<T *>(inputs[0]->addr);
-  auto *float_output_addr = reinterpret_cast<T *>(outputs[0]->addr);
-
-  MS_EXCEPTION_IF_NULL(output_addr);
+  auto float_dloss_addr = GetDeviceAddress<T>(inputs, kIndex0);
+  auto float_output_addr = GetDeviceAddress<T>(outputs, kIndex0);
   MS_EXCEPTION_IF_NULL(float_dloss_addr);
   MS_EXCEPTION_IF_NULL(float_output_addr);
 

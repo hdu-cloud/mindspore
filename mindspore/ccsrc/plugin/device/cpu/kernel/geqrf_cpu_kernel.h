@@ -21,6 +21,7 @@
 #include <vector>
 #include <utility>
 #include <algorithm>
+#include <map>
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
 #include "plugin/factory/ms_factory.h"
 
@@ -38,6 +39,9 @@ class GeqrfCpuKernelMod : public NativeCpuKernelMod {
               const std::vector<AddressPtr> &outputs) override {
     return kernel_func_(this, inputs, outputs);
   };
+
+  int Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+             const std::vector<KernelTensorPtr> &outputs, const std::map<uint32_t, tensor::TensorPtr> &) override;
 
  protected:
   std::vector<KernelAttr> GetOpSupport() override;
@@ -62,6 +66,8 @@ class GeqrfCpuKernelMod : public NativeCpuKernelMod {
   void Geqrf(size_t m, size_t n, T *x, T *tau);
   size_t num_m = 0;
   size_t num_n = 0;
+  size_t elem_num;
+  size_t batch_num;
 };
 }  // namespace kernel
 }  // namespace mindspore

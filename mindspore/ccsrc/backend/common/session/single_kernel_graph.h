@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@
 #include <string>
 #include <vector>
 #include <memory>
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 
 namespace mindspore {
 namespace session {

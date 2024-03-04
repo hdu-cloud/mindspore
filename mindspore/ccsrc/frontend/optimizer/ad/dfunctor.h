@@ -27,14 +27,14 @@
 #include <unordered_map>
 
 #include "utils/hash_map.h"
+#include "mindspore/core/ops/sequence_ops.h"
 #include "ir/anf.h"
 #include "ir/meta_func_graph.h"
 #include "ir/func_graph_cloner.h"
-#include "pipeline/jit/resource.h"
+#include "pipeline/jit/ps/resource.h"
 #include "frontend/optimizer/ad/adjoint.h"
-#include "frontend/optimizer/ad/pynative_dfunctor.h"
 #include "frontend/operator/ops.h"
-#include "pipeline/jit/debug/trace.h"
+#include "pipeline/jit/ps/debug/trace.h"
 #include "include/common/utils/utils.h"
 
 namespace mindspore {
@@ -51,7 +51,7 @@ extern bool lift_fv_before_grad;
 // D Functor's rules to map closure object and morphisms.
 class DFunctor : public std::enable_shared_from_this<DFunctor> {
  public:
-  DFunctor(const FuncGraphPtr &primal_graph, const pipeline::ResourceBasePtr &resources);
+  DFunctor(const FuncGraphPtr &primal_graph, const pipeline::ResourceBasePtr &resources, bool is_top);
   ~DFunctor() = default;
   // Map object in D category to K category.
   void MapObject();
@@ -147,17 +147,16 @@ class KPrim {
   FuncGraphPtr KUserDefinedCellBprop(const FuncGraphPtr &bprop_fg, const FuncGraphPtr &current_primal_fg);
 
   bool CheckCustomVjp(const FuncGraphPtr &bprop_fg) const;
-  FuncGraphPtr GetCustomVjpBprop(const FuncGraphPtr &bprop_fg);
+  FuncGraphPtr GetCustomVjpBprop(const FuncGraphPtr &bprop_fg) const;
   void clear() {
     bprop_registry_meta_.clear();
     bprop_registry_.clear();
   }
-  FuncGraphPtr GetPossibleBprop(const PrimitivePtr &prim);
 
  private:
   FuncGraphPtr GetFprop(const PrimitivePtr &prim) const;
   FuncGraphPtr GetPrimBprop(const PrimitivePtr &prim, const ValueNodePtr &value_node,
-                            const pipeline::ResourceBasePtr &resources);
+                            const pipeline::ResourceBasePtr &resources, const CNodePtr &cnode = nullptr);
   FuncGraphPtr FakeBprop(const ValueNodePtr &value_node, const pipeline::ResourceBasePtr &resources) const;
   FuncGraphPtr BpropCut(const ValueNodePtr &value_node, const pipeline::ResourceBasePtr &resources) const;
   // Given a bprop rule, do the K mapping.
@@ -193,7 +192,12 @@ FuncGraphPtr KPrim::BpropToK(const T &primal, const FuncGraphPtr &bprop_fg, cons
   {
     PrimalAttrGuard primal_attr_guard(primal_attrs);
     PrimalDebugInfoGuard primal_debug_info_guard(primal_debug_infos);
-    cloned_bprop_fg = BasicClone(bprop_fg);
+    if (bprop_fg->has_flag(mindspore::kFuncGraphFlagMetaFuncGraphBprop) &&
+        (cnode == nullptr || !cnode->primal_attrs().empty())) {
+      cloned_bprop_fg = BasicClone(bprop_fg, true);
+    } else {
+      cloned_bprop_fg = BasicClone(bprop_fg);
+    }
   }
   MS_EXCEPTION_IF_NULL(cloned_bprop_fg);
 
@@ -209,11 +213,12 @@ FuncGraphPtr KPrim::BpropToK(const T &primal, const FuncGraphPtr &bprop_fg, cons
   cloned_bprop_fg->debug_info()->set_trace_info(std::make_shared<TraceGradBprop>(debug_info));
 
   // Make sure (out, dout) provided.
-  if (cloned_bprop_fg->parameters().size() < 2) {
+  constexpr auto number_two = 2;
+  if (cloned_bprop_fg->parameters().size() < number_two) {
     MS_LOG(EXCEPTION)
       << "The function 'bprop' of Primitive or Cell requires at least 2 params 'out' and 'dout', but got only "
       << cloned_bprop_fg->parameters().size() << ".\n"
-      << trace::GetDebugInfo(cloned_bprop_fg->debug_info());
+      << trace::GetDebugInfoStr(cloned_bprop_fg->debug_info());
   }
   AnfNodePtr bout = BuildOutput(cloned_bprop_fg, current_primal_fg);
   cloned_bprop_fg->set_output(bout);
@@ -241,6 +246,10 @@ FuncGraphPtr KPrim::BpropToK(const T &primal, const FuncGraphPtr &bprop_fg, cons
 
   if constexpr (std::is_same<T, PrimitivePtr>::value) {
     PrimitivePtr primitive = primal;
+    auto prim_recompute_attr = primitive->GetAttr(kAttrRecompute);
+    if (prim_recompute_attr != nullptr && prim_recompute_attr->isa<BoolImm>() && GetValue<bool>(prim_recompute_attr)) {
+      cloned_bprop_fg->set_flag(FUNC_GRAPH_RECOMPUTE_GRAD_GRAPH, true);
+    }
     TransformArgsForPrimitive(mng, cloned_bprop_fg, primal, outer, &transf_args);
     (void)transf_args.insert(transf_args.cbegin(), NewValueNode(primal));
   } else {

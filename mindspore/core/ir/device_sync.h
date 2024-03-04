@@ -43,10 +43,6 @@ class DeviceSync {
   virtual bool SyncHostToDevice(const ShapeVector &shape, size_t size, TypeId type, const void *host_ptr) const {
     return SyncHostToDevice(shape, size, type, host_ptr, "DefaultFormat");
   }
-  virtual bool SyncDeviceToDevice(const DeviceSync *) const { return true; }
-  virtual bool AsyncDeviceToDevice(const ShapeVector &, size_t, TypeId type, const void *, const std::string &) const {
-    return true;
-  }
 
   virtual void *GetMutablePtr() const = 0;
   virtual void ClearDeviceMemory() = 0;
@@ -73,11 +69,14 @@ class DeviceSync {
 
   virtual UserDataPtr user_data() const { return user_data_; }
   virtual void set_user_data(const UserDataPtr &user_data) { user_data_ = user_data; }
+  void set_is_view(bool is_view) { is_view_ = is_view; }
+  bool is_view() const { return is_view_; }
 
  protected:
   mutable size_t original_ref_count_{1};
   // It will be decreased in the running, and reset by original_ref_count_ when it is zero.
   mutable size_t ref_count_{1};
+  bool is_view_{false};
   // User data is the extra data required by the kernel launch in addition to device ptr.
   UserDataPtr user_data_{nullptr};
 };

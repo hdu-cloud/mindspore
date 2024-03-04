@@ -16,8 +16,7 @@
 from __future__ import absolute_import
 
 from mindspore.ops import functional as F, composite as C, operations as P
-from mindspore._checkparam import Validator as validator
-from mindspore._checkparam import Rel
+from mindspore import _checkparam as validator
 from mindspore.common.tensor import Tensor
 from mindspore.nn.optim.optimizer import Optimizer
 from mindspore.nn.optim.optimizer import opt_init_args_register
@@ -37,7 +36,7 @@ def _check_param_value(rho, epsilon, prim_name=None):
     """Check inputs param."""
     validator.check_value_type("rho", rho, [float], prim_name)
     validator.check_value_type("epsilon", epsilon, [float], prim_name)
-    validator.check_float_range(rho, 0.0, 1.0, Rel.INC_BOTH, "rho", prim_name)
+    validator.check_float_range(rho, 0.0, 1.0, validator.INC_BOTH, "rho", prim_name)
     validator.check_non_negative_float(epsilon, "epsilon", prim_name)
 
 
@@ -85,8 +84,8 @@ class Adadelta(Optimizer):
               to get the weight decay value of current step.
 
             - grad_centralization: Optional. Must be Boolean. If "grad_centralization" is in the keys, the set value
-              will be used. If not, the `grad_centralization` is False by default. This configuration only works on the
-              convolution layer.
+              will be used. If not, the `grad_centralization` is ``False``  by default. This configuration only works
+              on the convolution layer.
 
             - order_params: Optional. When parameters is grouped, this usually is used to maintain the order of
               parameters that appeared in the network to improve performance. The value should be parameters whose
@@ -94,7 +93,7 @@ class Adadelta(Optimizer):
               If `order_params` in the keys, other keys will be ignored and the element of 'order_params' must be in
               one group of `params`.
 
-        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: 1.0.
+        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: ``1.0`` .
 
             - float: The fixed learning rate value. Must be equal to or greater than 0.
 
@@ -108,14 +107,14 @@ class Adadelta(Optimizer):
             - LearningRateSchedule: Learning rate is dynamic. During training, the optimizer calls the instance of
               LearningRateSchedule with step as the input to get the learning rate of current step.
 
-        rho (float): Decay rate, must be in range [0.0, 1.0]. Default: 0.9.
-        epsilon (float):  A small value added for numerical stability, must be non-negative. Default: 1e-6.
+        rho (float): Decay rate, must be in range [0.0, 1.0]. Default: ``0.9`` .
+        epsilon (float):  A small value added for numerical stability, must be non-negative. Default: ``1e-6`` .
         loss_scale (float): Value for the loss scale. It must be greater than 0.0. In general, use the default value.
             Only when `FixedLossScaleManager` is used for training and the `drop_overflow_update` in
-            `FixedLossScaleManager` is set to False, then this value needs to be the same as the `loss_scale` in
+            `FixedLossScaleManager` is set to ``False`` , then this value needs to be the same as the `loss_scale` in
             `FixedLossScaleManager`. Refer to class :class:`mindspore.amp.FixedLossScaleManager` for more details.
-            Default: 1.0.
-        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: 0.0.
+            Default: ``1.0`` .
+        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: ``0.0`` .
 
             - float: The fixed weight decay value. Must be equal to or greater than 0.
 
@@ -129,7 +128,7 @@ class Adadelta(Optimizer):
           the `params` in optimizer. With float16 or float32 data type.
 
     Outputs:
-        Tensor[bool], the value is True.
+        Tensor[bool], the value is ``True`` .
 
     Raises:
         TypeError: If `learning_rate` is not one of int, float, Tensor, Iterable, LearningRateSchedule.
@@ -144,7 +143,9 @@ class Adadelta(Optimizer):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> from mindspore import nn, Model
+        >>> import mindspore as ms
+        >>> import mindspore.nn as nn
+        >>>
         >>> class Net(nn.Cell):
         ...    def __init__(self):
         ...        super(Net, self).__init__()
@@ -172,7 +173,7 @@ class Adadelta(Optimizer):
         >>> # The final parameters order in which the optimizer will be followed is the value of 'order_params'.
         >>>
         >>> loss = nn.SoftmaxCrossEntropyWithLogits()
-        >>> model = Model(net, loss_fn=loss, optimizer=optim)
+        >>> model = ms.train.Model(net, loss_fn=loss, optimizer=optim)
     """
 
     @opt_init_args_register
@@ -193,6 +194,7 @@ class Adadelta(Optimizer):
         grads = self.gradients_centralization(grads)
         grads = self.scale_grad(grads)
         lr = self.get_lr()
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
         if self.is_group_lr:
             success = self.map_reverse(F.partial(_adadelta_opt, self.opt, self.rho, self.epsilon), lr, params,
                                        self.accum, self.accum_update, grads)

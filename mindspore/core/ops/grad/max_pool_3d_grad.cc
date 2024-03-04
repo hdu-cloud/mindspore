@@ -15,13 +15,29 @@
  */
 
 #include "ops/grad/max_pool_3d_grad.h"
+
 #include <memory>
 #include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -73,7 +89,7 @@ TypePtr MaxPool3DGradInferType(const PrimitivePtr &primitive, const std::vector<
     MS_EXCEPTION_IF_NULL(item);
   }
   auto x_dtype = input_args[0]->BuildType();
-  const std::set<TypePtr> valid_types = {kFloat16, kFloat32};
+  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64};
   return CheckAndConvertUtils::CheckTensorTypeValid("input", x_dtype, valid_types, op_name);
 }
 
@@ -85,6 +101,23 @@ AbstractBasePtr MaxPool3DGradInfer(const abstract::AnalysisEnginePtr &, const Pr
   return res;
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(MaxPool3DGrad, prim::kPrimMaxPool3DGrad, MaxPool3DGradInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGMaxPool3DGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPool3DGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPool3DGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPool3DGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MaxPool3DGrad, prim::kPrimMaxPool3DGrad, AGMaxPool3DGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

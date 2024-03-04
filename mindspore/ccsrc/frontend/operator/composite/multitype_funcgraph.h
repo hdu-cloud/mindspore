@@ -21,11 +21,13 @@
 
 #include <vector>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <map>
 #include <set>
 #include <memory>
-#include "pipeline/jit/static_analysis/static_analysis.h"
+#include <algorithm>
+#include "pipeline/jit/ps/static_analysis/static_analysis.h"
 #include "utils/misc.h"
 #include "ir/dtype.h"
 #include "ir/meta_func_graph.h"
@@ -44,14 +46,20 @@ class MultitypeFuncGraph : public MetaFuncGraph {
   virtual void Register(const TypePtrList &types, const py::function &py_fn);
   virtual void PyRegister(const py::tuple &tuple, const py::function &py_fn);
 
+  void set_doc_url(const std::string &doc_url) { doc_url_ = doc_url; }
+  void set_need_raise() { need_raise_ = true; }
   FuncGraphPtr GenerateFromTypes(const TypePtrList &types) override;
   size_t GetPyFnCacheSize() const { return fn_cache_py_.size(); }
   const TypeListMap<py::function> &GetPyFunctions() const { return fn_cache_py_; }
 
  private:
-  const std::pair<py::function, bool> SignMatch(const TypePtrList &types);
+  const std::tuple<py::function, bool, size_t> SignMatch(const TypePtrList &types);
+  const std::string PrintMatchFailLog(const TypeListMap<py::function>, const TypePtrList &types, size_t match_max_idx,
+                                      bool has_any);
   TypeListMap<specialize_fn> fn_cache_;
   TypeListMap<py::function> fn_cache_py_;
+  std::string doc_url_;
+  bool need_raise_ = false;
 };
 using MultitypeFuncGraphPtr = std::shared_ptr<MultitypeFuncGraph>;
 }  // namespace prim

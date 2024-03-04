@@ -16,13 +16,13 @@
 #include "debug/rdr/graph_recorder.h"
 #include <fstream>
 #include <utility>
+#include <optional>
+
 #include "mindspore/core/base/base.h"
-#include "backend/common/session/kernel_graph.h"
 #include "mindspore/core/utils/log_adapter.h"
 #include "include/common/debug/anf_ir_dump.h"
 #include "include/common/debug/anf_dump_utils.h"
 #include "include/common/debug/dump_proto.h"
-#include "include/common/debug/common.h"
 #include "include/common/debug/rdr/recorder_manager.h"
 #include "mindspore/core/utils/file_utils.h"
 
@@ -93,7 +93,10 @@ void GraphRecorder::Export() {
 namespace RDR {
 bool RecordAnfGraph(const SubModuleId module, const std::string &name, const FuncGraphPtr &graph,
                     const DumpGraphParams &info, const std::string &file_type) {
-  if (!mindspore::RecorderManager::Instance().RdrEnable()) {
+  auto ms_context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context);
+  if (!mindspore::RecorderManager::Instance().RdrEnable() ||
+      ms_context->get_param<int>(MS_CTX_EXECUTION_MODE) == kPynativeMode) {
     return false;
   }
   std::string submodule_name = std::string(GetSubModuleName(module));

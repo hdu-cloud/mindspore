@@ -95,17 +95,28 @@ void DuplexPipe::Write(const std::string &buf, bool flush) const {
       return;
     }
   }
-  DP_DEBUG << "<< [" << buf << "]";
 }
 
 std::string DuplexPipe::Read() {
   // Read the string from pipe
   std::string buf;
   // Read one line or multiple lines
+  const int max_try_times = 3;
+  int index = 0;
   while (1) {
     SetTimeOut();
     ssize_t size = read(fd2_[0], c_buf_, kBufferSize);  // MAYBE BLOCKED, Till reading something
     if (size <= 0) {
+      if (errno == EINTR) {
+        DP_WARNING << "Read was interrupted by system interrupt, retry: " << index;
+        ++index;
+        if (index == max_try_times) {
+          DP_ERROR << "Read from pipe failed, try " << max_try_times << " times, reason = " << strerror(errno);
+          break;
+        }
+        continue;
+      }
+      DP_ERROR << "Read from pipe failed, errno = " << errno << ", reason = " << strerror(errno);
       break;
     }
     CancelTimeOut();
@@ -115,7 +126,6 @@ std::string DuplexPipe::Read() {
       break;
     }
   }
-  DP_DEBUG << ">> [" << buf << "]";
   return buf;
 }
 
@@ -152,10 +162,8 @@ DuplexPipe &DuplexPipe::operator>>(std::string &buf) {
 }
 
 void DuplexPipe::Close() noexcept {
-  close(fd1_[0]);
   close(fd1_[1]);
   close(fd2_[0]);
-  close(fd2_[1]);
   pid_ = -1;
 }
 

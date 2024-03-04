@@ -13,10 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 #include "plugin/device/cpu/kernel/sparse_sparse_minimum_cpu_kernel.h"
-#include "plugin/device/cpu/hal/device/cpu_device_address.h"
+#include <utility>
 #include "Eigen/Core"
+#include "plugin/device/cpu/hal/device/cpu_device_address.h"
 
 namespace mindspore {
 namespace kernel {
@@ -62,9 +62,9 @@ bool SparseSparseMinimumCpuKernelMod::Init(const BaseOperatorPtr &base_operator,
   CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kSparseSparseMinimumOutputsNum, kernel_name_);
   dtype_ = inputs.at(kIndex1)->GetDtype();
   itype_ = inputs.at(kIndex0)->GetDtype();
-  value_size_ = abstract::TypeIdSize(dtype_);
-  indice_size_ = abstract::TypeIdSize(itype_);
-  shape_size_ = abstract::TypeIdSize(inputs.at(kIndex2)->GetDtype());
+  value_size_ = SizeToLong(abstract::TypeIdSize(dtype_));
+  indice_size_ = SizeToLong(abstract::TypeIdSize(itype_));
+  shape_size_ = SizeToLong(abstract::TypeIdSize(inputs.at(kIndex2)->GetDtype()));
   return true;
 }
 
@@ -77,21 +77,20 @@ int SparseSparseMinimumCpuKernelMod::Resize(const BaseOperatorPtr &base_operator
   }
   input_size_list_.clear();
   output_size_list_.clear();
-  outputs_ = outputs;
   auto x1_indice_shape = inputs.at(kIndex0)->GetShapeVector();
   auto x2_indice_shape = inputs.at(kIndex3)->GetShapeVector();
   x1_nnz_ = x1_indice_shape[0];
   x2_nnz_ = x2_indice_shape[0];
   num_dims_ = x1_indice_shape[1];
   auto max_nnz = x1_nnz_ + x2_nnz_;
-  input_size_list_.emplace_back(x1_nnz_ * num_dims_ * indice_size_);
-  input_size_list_.emplace_back(x1_nnz_ * value_size_);
-  input_size_list_.emplace_back(num_dims_ * shape_size_);
-  input_size_list_.emplace_back(x2_nnz_ * num_dims_ * indice_size_);
-  input_size_list_.emplace_back(x2_nnz_ * value_size_);
-  input_size_list_.emplace_back(num_dims_ * shape_size_);
-  output_size_list_.emplace_back(max_nnz * num_dims_ * indice_size_);
-  output_size_list_.emplace_back(max_nnz * value_size_);
+  (void)input_size_list_.emplace_back(x1_nnz_ * num_dims_ * indice_size_);
+  (void)input_size_list_.emplace_back(x1_nnz_ * value_size_);
+  (void)input_size_list_.emplace_back(num_dims_ * shape_size_);
+  (void)input_size_list_.emplace_back(x2_nnz_ * num_dims_ * indice_size_);
+  (void)input_size_list_.emplace_back(x2_nnz_ * value_size_);
+  (void)input_size_list_.emplace_back(num_dims_ * shape_size_);
+  (void)output_size_list_.emplace_back(max_nnz * num_dims_ * indice_size_);
+  (void)output_size_list_.emplace_back(max_nnz * value_size_);
   return KRET_OK;
 }
 
@@ -116,7 +115,8 @@ void SparseSparseMinimumCpuKernelMod::LaunchKernel(const std::vector<kernel::Add
   std::vector<std::pair<bool, int64_t>> entries_to_copy;
   (void)entries_to_copy.reserve(static_cast<size_t>(x1_nnz_ + x2_nnz_));
   std::vector<T> out_values;
-  size_t i = 0, j = 0;
+  size_t i = 0;
+  size_t j = 0;
   T s;
   while (i < static_cast<size_t>(x1_nnz_) && j < static_cast<size_t>(x2_nnz_)) {
     int64_t index_cmp = 0;
@@ -192,7 +192,7 @@ void SparseSparseMinimumCpuKernelMod::LaunchKernel(const std::vector<kernel::Add
   }
 }
 
-void SparseSparseMinimumCpuKernelMod::SyncData() {
+void SparseSparseMinimumCpuKernelMod::SyncOutputShape() {
   std::vector<int64_t> dims;
   (void)dims.emplace_back(y_nnz_);
   (void)dims.emplace_back(num_dims_);

@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "backend/common/optimizer/graph_optimizer.h"
+#include "include/backend/optimizer/graph_optimizer.h"
+#include "backend/common/optimizer/cache_manager.h"
 
 namespace mindspore {
 namespace opt {
@@ -25,14 +26,17 @@ void GraphOptimizer::AddPassManager(const PassManagerPtr &pass_manager) {
 
 FuncGraphPtr GraphOptimizer::Optimize(const FuncGraphPtr &func_graph, bool run_only_once) {
   run_only_once_ = (pass_managers_.size() == 1) ? true : run_only_once;
+  MS_EXCEPTION_IF_NULL(func_graph);
   // cppcheck-suppress *
   auto manager = Manage(func_graph, true);
+  MS_EXCEPTION_IF_NULL(manager);
 
   bool changed = true;
   while (changed) {
     changed = false;
     for (size_t i = 0; i < pass_managers_.size(); ++i) {
       const PassManagerPtr &pm = pass_managers_[i];
+      MS_EXCEPTION_IF_NULL(pm);
       if (pm != nullptr && pm->Run(func_graph)) {
         changed = true;
       }
@@ -45,6 +49,10 @@ FuncGraphPtr GraphOptimizer::Optimize(const FuncGraphPtr &func_graph, bool run_o
   std::vector<FuncGraphPtr> func_graphs;
   func_graphs.push_back(func_graph);
   (void)TopoSort(func_graph->get_return());
+  auto func_graph_index = manager->func_graph_index(func_graph);
+  MS_EXCEPTION_IF_NULL(func_graph_index);
+  func_graph_index->set_has_gen_index(false);
+
   return func_graph;
 }
 }  // namespace opt

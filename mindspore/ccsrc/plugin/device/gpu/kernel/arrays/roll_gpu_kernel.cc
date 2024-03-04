@@ -31,10 +31,13 @@ const std::vector<std::pair<KernelAttr, RollPtrCreatorFunc>> kernel_attr = {
   {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeFloat16), CreateRollKernelPtr<half>},
   {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32), CreateRollKernelPtr<float>},
   {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64), CreateRollKernelPtr<double>},
+  {KernelAttr().AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeInt64), CreateRollKernelPtr<int64_t>},
   {KernelAttr().AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt32), CreateRollKernelPtr<int32_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeInt16).AddOutputAttr(kNumberTypeInt16), CreateRollKernelPtr<int16_t>},
   {KernelAttr().AddInputAttr(kNumberTypeInt8).AddOutputAttr(kNumberTypeInt8), CreateRollKernelPtr<int8_t>},
   {KernelAttr().AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeUInt32), CreateRollKernelPtr<uint32_t>},
-  {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeUInt8), CreateRollKernelPtr<uint8_t>}};
+  {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeUInt8), CreateRollKernelPtr<uint8_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeBool).AddOutputAttr(kNumberTypeBool), CreateRollKernelPtr<bool>}};
 }  // namespace
 
 bool RollGpuKernelMod::Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
@@ -51,6 +54,7 @@ bool RollGpuKernelMod::Launch(const std::vector<AddressPtr> &inputs, const std::
 bool RollGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                             const std::vector<KernelTensorPtr> &outputs) {
   auto kernel_ptr = std::dynamic_pointer_cast<ops::Roll>(base_operator);
+  MS_ERROR_IF_NULL_W_RET_VAL(kernel_ptr, false);
   kernel_name_ = kernel_ptr->name();
   auto tensor_attr = GetKernelAttrFromTensors(inputs, outputs);
   auto [is_match, index] = MatchKernelAttr(tensor_attr, GetOpSupport());
@@ -58,6 +62,8 @@ bool RollGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vec
     return false;
   }
   helper_ptr_ = std::move(kernel_attr[index].second(kernel_name_, device_id_));
+  MS_EXCEPTION_IF_NULL(helper_ptr_);
+  MS_EXCEPTION_IF_NULL(attr_ptr_);
   attr_ptr_->axis = kernel_ptr->get_axis();
   attr_ptr_->shift = kernel_ptr->get_shift();
   helper_ptr_->SetKernelParam(attr_ptr_);
@@ -68,7 +74,10 @@ bool RollGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vec
 int RollGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                              const std::vector<KernelTensorPtr> &outputs,
                              const std::map<uint32_t, tensor::TensorPtr> &others) {
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), 1, kernel_name_);
+  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), 1, kernel_name_);
   for (const auto &input : inputs) {
+    MS_EXCEPTION_IF_NULL(input);
     auto input_shape = input->GetShapeVector();
     if (!IsValidShape(input_shape)) {
       return KRET_UNKNOWN_SHAPE;
@@ -78,6 +87,7 @@ int RollGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::ve
   std::vector<std::vector<int64_t>> input_shapes;
   std::vector<std::vector<int64_t>> output_shapes;
   std::vector<int64_t> inp_shape = inputs[0]->GetShapeVector();
+  MS_EXCEPTION_IF_NULL(outputs[0]);
   std::vector<int64_t> out_shape = outputs[0]->GetShapeVector();
   input_shapes.emplace_back(inp_shape);
   output_shapes.emplace_back(out_shape);

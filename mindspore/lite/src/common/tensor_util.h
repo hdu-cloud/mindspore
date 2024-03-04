@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,22 +26,20 @@
 #include "nnacl/infer/common_infer.h"
 #include "nnacl/tensorlist_c_utils.h"
 #include "src/litert/cxx_api/tensor/tensor_impl.h"
+#include "include/api/visible.h"
 
 namespace mindspore {
 namespace lite {
-int OutputTensor2TensorC(const std::vector<lite::Tensor *> &tensors, std::vector<TensorC *> *tensors_c,
-                         std::shared_ptr<Allocator> allocator = nullptr);
-void FreeAllTensorC(std::vector<TensorC *> *tensors_in, std::shared_ptr<Allocator> allocator = nullptr);
+void FreeInTensorC(std::vector<TensorC *> *tensors_in, const std::shared_ptr<Allocator> &allocator = nullptr);
+void FreeOutTensorC(std::vector<TensorC *> *tensors_in, const std::shared_ptr<Allocator> &allocator = nullptr);
 int Tensor2TensorC(const Tensor *src, TensorC *dst);
-int TensorC2Tensor(const TensorC *src, Tensor *dst, std::shared_ptr<Allocator> allocator = nullptr);
-void FreeTensorListC(TensorListC *tensorlist_c, std::shared_ptr<Allocator> allocator = nullptr);
-int TensorList2TensorListC(TensorList *src, TensorListC *dst, std::shared_ptr<Allocator> allocator = nullptr);
+int TensorC2Tensor(TensorC *src, Tensor *dst, std::shared_ptr<Allocator> allocator = nullptr);
 int TensorListC2TensorList(const TensorListC *src, TensorList *dst);
 int GenerateInTensorC(const std::vector<lite::Tensor *> &inputs, std::vector<TensorC *> *in_tensor_c,
                       const std::shared_ptr<Allocator> &allocator = nullptr);
 int GenerateOutTensorC(const OpParameter *const parameter, const std::vector<lite::Tensor *> &outputs,
-                       std::vector<TensorC *> *out_tensor_c, std::shared_ptr<Allocator> allocator = nullptr);
-int CheckTensorsInvalid(const std::vector<Tensor *> &tensors);
+                       std::vector<TensorC *> *out_tensor_c);
+MS_API int CheckTensorsInvalid(const std::vector<Tensor *> &tensors);
 int CheckGraphInputShapes(const std::vector<Tensor *> &inputs,
                           const std::unordered_map<Tensor *, std::vector<int>> &input_shape_map);
 std::vector<mindspore::MSTensor> LiteTensorsToMSTensors(const std::vector<lite::Tensor *> &lite_tensors);
@@ -66,6 +64,7 @@ bool IsSameDtype(const Tensor *input_1, const Tensor *input_2);
 bool IsUnKnownDtype(const Tensor *input);
 bool IsSameShape(const Tensor *input_1, const Tensor *input_2);
 int MallocTensorData(Tensor *tensor);
+int CastConstTensorData(Tensor *tensor, TypeId dst_data_type, bool support_fp16);
 }  // namespace lite
 }  // namespace mindspore
 

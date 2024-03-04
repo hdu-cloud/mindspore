@@ -7,8 +7,8 @@ mindspore.amp.DynamicLossScaler
 
     动态损失缩放管理器在保证梯度不溢出的情况下，尝试确定最大的损失缩放值 `scale_value`。在梯度不溢出的情况下，`scale_value` 将会每间隔 `scale_window` 步被扩大 `scale_factor` 倍，若存在溢出情况，则会将 `scale_value` 缩小 `scale_factor` 倍，并重置计数器。
 
-    .. note::
-        - 这是一个实验性接口，后续可能删除或修改。
+    .. warning::
+        这是一个实验性API，后续可能修改或删除。
 
     参数：
         - **scale_value** (Union(float, int)) - 初始梯度放大系数。
@@ -22,6 +22,10 @@ mindspore.amp.DynamicLossScaler
         参数：
             - **grads_finite** (Tensor) - bool类型的标量Tensor，表示梯度是否为有效值（无溢出）。
 
+        教程样例：
+            - `自动混合精度 - 损失缩放
+              <https://mindspore.cn/tutorials/zh-CN/master/advanced/mixed_precision.html#损失缩放>`_
+
     .. py:method:: scale(inputs)
 
         根据 `scale_value` 放大inputs。
@@ -32,6 +36,10 @@ mindspore.amp.DynamicLossScaler
         返回：
             Union(Tensor, tuple(Tensor))，scale后的值。
 
+        教程样例：
+            - `自动混合精度 - 损失缩放
+              <https://mindspore.cn/tutorials/zh-CN/master/advanced/mixed_precision.html#损失缩放>`_
+
     .. py:method:: unscale(inputs)
 
         对inputs进行unscale，`inputs /= scale_value`。
@@ -41,3 +49,7 @@ mindspore.amp.DynamicLossScaler
 
         返回：
             Union(Tensor, tuple(Tensor))，unscale后的值。
+
+        教程样例：
+            - `自动混合精度 - 损失缩放
+              <https://mindspore.cn/tutorials/zh-CN/master/advanced/mixed_precision.html#损失缩放>`_

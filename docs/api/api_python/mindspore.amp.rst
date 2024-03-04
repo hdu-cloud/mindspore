@@ -26,6 +26,9 @@ mindspore.amp
 
     mindspore.amp.auto_mixed_precision
     mindspore.amp.build_train_network
+    mindspore.amp.custom_mixed_precision
+    mindspore.amp.get_black_list
+    mindspore.amp.get_white_list
 
 溢出检测
 -----------
@@ -35,5 +38,4 @@ mindspore.amp
     :nosignatures:
     :template: classtemplate.rst
 
-    mindspore.amp.init_status
     mindspore.amp.all_finite

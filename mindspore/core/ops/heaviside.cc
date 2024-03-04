@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,14 +16,24 @@
 
 #include "ops/heaviside.h"
 
-#include <map>
+#include <memory>
 #include <set>
-#include <string>
+#include <vector>
 
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "ops/op_utils.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -41,21 +51,28 @@ TypePtr HeavisideType(const PrimitivePtr &primitive, const std::vector<AbstractB
   const std::set<TypePtr> valid_types = {kInt8,   kInt16,  kInt32,   kInt64,   kUInt8,  kUInt16,
                                          kUInt32, kUInt64, kFloat16, kFloat32, kFloat64};
   (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_dtype, valid_types, primitive->name());
+  auto values_dtype = input_args[1]->BuildType();
+  (void)CheckAndConvertUtils::CheckTensorTypeValid("values", values_dtype, valid_types, primitive->name());
   return x_dtype;
 }
 }  // namespace
 
-AbstractBasePtr HeavisideInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                               const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  const int64_t kInputNum = 2;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputNum, primitive->name());
-  auto infer_type = HeavisideType(primitive, input_args);
-  auto infer_shape = HeavisideShape(primitive, input_args);
-  return abstract::MakeAbstract(infer_shape, infer_type);
-}
-
 MIND_API_OPERATOR_IMPL(Heaviside, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(Heaviside, prim::kPrimHeaviside, HeavisideInfer, nullptr, true);
+class MIND_API HeavisideInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return HeavisideShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    MS_EXCEPTION_IF_NULL(primitive);
+    const int64_t kInputNum = 2;
+    CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputNum, primitive->name());
+    return HeavisideType(primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Heaviside, prim::kPrimHeaviside, HeavisideInfer, false);
 }  // namespace ops
 }  // namespace mindspore

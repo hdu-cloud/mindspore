@@ -21,6 +21,7 @@ import mindspore.ops.functional as F
 from mindspore import context
 from mindspore import set_seed
 from mindspore.common import dtype as mstype
+from mindspore.common.api import _pynative_executor
 
 from .utils import rand_int, rand_bool, match_array, match_res, match_meta, \
     match_all_arrays, run_multi_test, to_tensor
@@ -41,6 +42,8 @@ class Cases():
                            mnp.float32, 'float32', float,
                            mnp.uint32, 'uint32',
                            mnp.bool_, 'bool', bool]
+
+        self.empty_support_type = [mnp.int32, mnp.float32, mnp.uint32, mnp.bool_]
 
         self.array_sets = [1, 1.1, True, [1, 0, True], [1, 1.0, 2], (1,),
                            [(1, 2, 3), (4, 5, 6)], onp.random.random(  # pylint: disable=no-member
@@ -425,6 +428,8 @@ def test_empty():
     for shape in test_case.all_shapes:
         for mnp_dtype, onp_dtype in zip(test_case.mnp_dtypes,
                                         test_case.onp_dtypes):
+            if mnp_dtype not in test_case.empty_support_type:
+                continue
             actual = mnp.empty(shape, mnp_dtype).asnumpy()
             expected = onp.empty(shape, onp_dtype)
             match_meta(actual, expected)
@@ -445,6 +450,8 @@ def test_empty_like():
 
         for mnp_dtype, onp_dtype in zip(test_case.mnp_dtypes,
                                         test_case.onp_dtypes):
+            if mnp_dtype not in test_case.empty_support_type:
+                continue
             actual = mnp.empty_like(mnp_proto, dtype=mnp_dtype).asnumpy()
             expected = onp.empty_like(onp_proto, dtype=onp_dtype)
             match_meta(actual, expected)
@@ -769,21 +776,6 @@ def test_vander():
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
-def test_tensor_fill():
-    x = rand_int(2, 1, 4).astype(onp.float32)
-    mnp_x = to_tensor(x)
-    x.fill(6)
-    match_all_arrays(mnp_x.fill(6), x)
-    x.fill(None)
-    match_all_arrays(mnp_x.fill(None), x)
-
-
-@pytest.mark.level1
-@pytest.mark.platform_arm_ascend_training
-@pytest.mark.platform_x86_ascend_training
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.platform_x86_cpu
-@pytest.mark.env_onecard
 def test_bartlett():
     for i in [-3, -1, 0, 1, 5, 6, 10, 15]:
         match_all_arrays(mnp.bartlett(i), onp.bartlett(i), error=3)
@@ -912,16 +904,24 @@ def test_randn():
     set_seed(1)
     t1 = mnp.randn(1, 2, 3)
     t2 = mnp.randn(1, 2, 3)
-    assert (t1.asnumpy() == t2.asnumpy()).all()
+    assert onp.array_equal(t1.asnumpy(), t2.asnumpy()) is False
+
+    set_seed(1)
+    t3 = mnp.randn(1, 2, 3)
+    assert (t1.asnumpy() == t3.asnumpy()).all()
 
     with pytest.raises(ValueError):
         mnp.randn(dtype="int32")
+        _pynative_executor.sync()
     with pytest.raises(ValueError):
         mnp.randn(dtype=mstype.int32)
+        _pynative_executor.sync()
     with pytest.raises(TypeError):
         mnp.randn({1})
+        _pynative_executor.sync()
     with pytest.raises(TypeError):
         mnp.randn(1, 1.2, 2)
+        _pynative_executor.sync()
 
 
 
@@ -940,16 +940,24 @@ def test_rand():
     set_seed(1)
     t1 = mnp.rand(1, 2, 3)
     t2 = mnp.rand(1, 2, 3)
-    assert (t1.asnumpy() == t2.asnumpy()).all()
+    assert onp.array_equal(t1.asnumpy(), t2.asnumpy()) is False
+
+    set_seed(1)
+    t3 = mnp.rand(1, 2, 3)
+    assert (t1.asnumpy() == t3.asnumpy()).all()
 
     with pytest.raises(ValueError):
         mnp.rand(dtype="int32")
+        _pynative_executor.sync()
     with pytest.raises(ValueError):
         mnp.rand(dtype=mstype.int32)
+        _pynative_executor.sync()
     with pytest.raises(TypeError):
         mnp.rand({1})
+        _pynative_executor.sync()
     with pytest.raises(TypeError):
         mnp.rand(1, 1.2, 2)
+        _pynative_executor.sync()
 
 
 @pytest.mark.level1
@@ -967,20 +975,30 @@ def test_randint():
     set_seed(1)
     t1 = mnp.randint(1, 5, 3)
     t2 = mnp.randint(1, 5, 3)
-    assert (t1.asnumpy() == t2.asnumpy()).all()
+    assert onp.array_equal(t1.asnumpy(), t2.asnumpy()) is False
+
+    set_seed(1)
+    t3 = mnp.randint(1, 5, 3)
+    assert (t1.asnumpy() == t3.asnumpy()).all()
 
     with pytest.raises(TypeError):
         mnp.randint(1.2)
+        _pynative_executor.sync()
     with pytest.raises(ValueError):
         mnp.randint(0)
+        _pynative_executor.sync()
     with pytest.raises(TypeError):
         mnp.randint(1, 1.2)
+        _pynative_executor.sync()
     with pytest.raises(ValueError):
         mnp.randint(2, 1)
+        _pynative_executor.sync()
     with pytest.raises(ValueError):
         mnp.randint(1, dtype="float")
+        _pynative_executor.sync()
     with pytest.raises(ValueError):
         mnp.randint(1, dtype=mstype.float32)
+        _pynative_executor.sync()
 
 
 @pytest.mark.level1
@@ -1013,8 +1031,10 @@ def test_ops_arange():
 
     with pytest.raises(TypeError):
         F.arange([1])
+        _pynative_executor.sync()
     with pytest.raises(ValueError):
         F.arange(10, 1)
+        _pynative_executor.sync()
 
 
 @pytest.mark.level1
@@ -1026,6 +1046,7 @@ def test_ops_arange():
 def test_asarray_exception():
     with pytest.raises(TypeError):
         mnp.asarray({1, 2, 3})
+        _pynative_executor.sync()
 
 
 @pytest.mark.level1
@@ -1037,6 +1058,7 @@ def test_asarray_exception():
 def test_linspace_exception():
     with pytest.raises(TypeError):
         mnp.linspace(0, 1, num=2.5)
+        _pynative_executor.sync()
 
 
 @pytest.mark.level1
@@ -1048,6 +1070,7 @@ def test_linspace_exception():
 def test_empty_like_exception():
     with pytest.raises(ValueError):
         mnp.empty_like([[1, 2, 3], [4, 5]])
+        _pynative_executor.sync()
 
 
 @pytest.mark.level1

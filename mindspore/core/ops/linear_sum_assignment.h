@@ -16,10 +16,10 @@
 
 #ifndef MINDSPORE_CORE_OPS_LINEAR_SUM_ASSIGNMENT_H_
 #define MINDSPORE_CORE_OPS_LINEAR_SUM_ASSIGNMENT_H_
-#include <vector>
 #include <memory>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,8 +33,9 @@ class MIND_API LinearSumAssignment : public BaseOperator {
     InitIOName({"cost_matrix", "dimension_limit", "maximize"}, {"row_idx", "col_idx"});
   }
 };
-abstract::AbstractBasePtr LinearSumAssignmentInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                   const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr LinearSumAssignmentInfer(const abstract::AnalysisEnginePtr &,
+                                                            const PrimitivePtr &primitive,
+                                                            const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_LINEAR_SUM_ASSIGNMENT_H_

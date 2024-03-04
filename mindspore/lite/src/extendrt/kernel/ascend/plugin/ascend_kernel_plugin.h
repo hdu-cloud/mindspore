@@ -21,27 +21,29 @@
 #include <string>
 #include <memory>
 #include <mutex>
+#include <vector>
 #include "kernel/kernel.h"
+#include "include/api/status.h"
 
 namespace mindspore::kernel {
 using KernelModFunc = std::function<std::shared_ptr<kernel::KernelMod>()>;
 
 class AscendKernelPlugin {
  public:
-  static AscendKernelPlugin &GetInstance();
-
-  void Register();
-  void UpdateRegisterStatus(bool status);
-  void DestroyAscendKernelMap();
+  static Status TryRegister();
+  static bool Register();
 
  private:
   AscendKernelPlugin();
   ~AscendKernelPlugin();
+  Status TryRegisterInner();
+  void Unregister();
 
-  void *handle_;
-  std::map<std::string, KernelModFunc> *create_kernel_map_;
-  bool is_registered_;
-  std::mutex mutex_;
+  void *handle_ = nullptr;
+  std::map<std::string, KernelModFunc> *create_kernel_map_ = nullptr;
+  std::vector<std::string> register_kernels_;
+  bool is_registered_ = false;
+  static std::mutex mutex_;
 };
 }  // namespace mindspore::kernel
 #endif  // MINDSPORE_LITE_SRC_EXTENDRT_KERNEL_ASCEND_ASCEND_KERNEL_PLUGIN_H_

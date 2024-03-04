@@ -16,16 +16,27 @@
 
 #include "ops/grad/tanh_grad.h"
 
-#include <string>
-#include <algorithm>
 #include <map>
+#include <memory>
 #include <set>
+#include <string>
 #include <vector>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,6 +44,7 @@ namespace {
 const int64_t input_num = 2;
 
 TypePtr TanhGradInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
   std::map<std::string, TypePtr> types;
@@ -43,6 +55,7 @@ TypePtr TanhGradInferType(const PrimitivePtr &primitive, const std::vector<Abstr
 }
 
 abstract::ShapePtr TanhGradInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   (void)CheckAndConvertUtils::CheckArgs<abstract::AbstractTensor>(prim_name, input_args, 0);
   auto x = input_args[kInputIndex0]->BuildShape();
@@ -63,6 +76,23 @@ AbstractBasePtr TanhGradInfer(const abstract::AnalysisEnginePtr &, const Primiti
   return abstract::MakeAbstract(shapes, types);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(TanhGrad, prim::kPrimTanhGrad, TanhGradInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGTanhGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return TanhGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return TanhGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return TanhGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(TanhGrad, prim::kPrimTanhGrad, AGTanhGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

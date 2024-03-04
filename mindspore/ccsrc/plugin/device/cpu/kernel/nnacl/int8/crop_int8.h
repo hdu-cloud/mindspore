@@ -14,21 +14,18 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_INT8_CROP_INT8_H_
-#define MINDSPORE_NNACL_INT8_CROP_INT8_H_
+#ifndef NNACL_INT8_CROP_INT8_H_
+#define NNACL_INT8_CROP_INT8_H_
 #include "nnacl/op_base.h"
 #include "nnacl/crop_parameter.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-void Int8Crop(const int8_t *input, int8_t *output, int task_id, const CropParameter *para);
-void Int8Crop1D(const int8_t *input, int8_t *output, int task_id, const CropParameter *para);
-void Int8Crop2D(const int8_t *input, int8_t *output, int task_id, const CropParameter *para);
-void Int8Crop3D(const int8_t *input, int8_t *output, int task_id, const CropParameter *para);
-void Int8Crop4D(const int8_t *input, int8_t *output, int task_id, const CropParameter *para);
+void Int8Crop(const int8_t *input, int8_t *output, int *input_shape, int *output_shape, int64_t *in_offset,
+              int input_dim, int task_id, int thread_count, const CropQuantArg *quant);
 #ifdef __cplusplus
 }
 #endif
 
-#endif  // MINDSPORE_NNACL_INT8_CROP_INT8_H_
+#endif  // NNACL_INT8_CROP_INT8_H_

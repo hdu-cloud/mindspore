@@ -24,9 +24,10 @@
 #include "frontend/operator/composite/vmap.h"
 #include "frontend/operator/composite/multitype_funcgraph.h"
 #include "frontend/operator/composite/zip_operation.h"
+#include "frontend/operator/composite/tensor_index.h"
 namespace mindspore {
 namespace prim {
-void RegCompositeOpsGroup(py::module *m) {
+void RegCompositeOpsGroup(const py::module *m) {
   //  Reg HyperMap
   (void)py::class_<HyperMapPy, MetaFuncGraph, std::shared_ptr<HyperMapPy>>(*m, "HyperMap_")
     .def(py::init<bool, std::shared_ptr<MultitypeFuncGraph>>(), py::arg("reverse"), py::arg("ops"))
@@ -38,9 +39,9 @@ void RegCompositeOpsGroup(py::module *m) {
   // Reg GradOperation
   (void)py::class_<GradOperation, MetaFuncGraph, std::shared_ptr<GradOperation>>(*m, "GradOperation_")
     .def(py::init<std::string &>(), py::arg("fn"))
-    .def(py::init<std::string &, bool, bool, bool, bool, bool, bool>(), py::arg("fn"), py::arg("get_all"),
+    .def(py::init<std::string &, bool, bool, bool, bool, bool, bool, bool, bool>(), py::arg("fn"), py::arg("get_all"),
          py::arg("get_by_list"), py::arg("sens_param"), py::arg("get_by_position"), py::arg("has_aux"),
-         py::arg("get_value"));
+         py::arg("get_value"), py::arg("return_ids"), py::arg("merge_forward"));
 
   // Reg VmapOperation
   (void)py::class_<VmapOperation, MetaFuncGraph, std::shared_ptr<VmapOperation>>(*m, "VmapOperation_")
@@ -59,6 +60,9 @@ void RegCompositeOpsGroup(py::module *m) {
   // Reg TupleAdd
   (void)py::class_<TupleAdd, MetaFuncGraph, std::shared_ptr<TupleAdd>>(*m, "TupleAdd_").def(py::init<std::string &>());
 
+  // Reg ListAdd
+  (void)py::class_<ListAdd, MetaFuncGraph, std::shared_ptr<ListAdd>>(*m, "ListAdd_").def(py::init<std::string &>());
+
   // Reg TupleGetItemTensor
   (void)py::class_<TupleGetItemTensor, MetaFuncGraph, std::shared_ptr<TupleGetItemTensor>>(*m, "TupleGetItemTensor_")
     .def(py::init<std::string &>());
@@ -71,6 +75,10 @@ void RegCompositeOpsGroup(py::module *m) {
   (void)py::class_<SequenceSliceGetItem, MetaFuncGraph, std::shared_ptr<SequenceSliceGetItem>>(*m,
                                                                                                "SequenceSliceGetItem_")
     .def(py::init<std::string &, std::string &, std::string &>());
+
+  // Reg ZerosLike
+  (void)py::class_<ZerosLike, MetaFuncGraph, std::shared_ptr<ZerosLike>>(*m, "ZerosLike_")
+    .def(py::init<const std::string &, std::shared_ptr<MultitypeFuncGraph>>());
 
   // Reg Shard
   (void)py::class_<Shard, MetaFuncGraph, std::shared_ptr<Shard>>(*m, "Shard_")
@@ -100,8 +108,8 @@ void RegCompositeOpsGroup(py::module *m) {
   (void)py::class_<ListExtend, MetaFuncGraph, std::shared_ptr<ListExtend>>(*m, "ListExtend_")
     .def(py::init<const std::string &>());
 
-  // Reg ListCount
-  (void)py::class_<ListCount, MetaFuncGraph, std::shared_ptr<ListCount>>(*m, "ListCount_")
+  // Reg DictSetItem
+  (void)py::class_<DictSetItem, MetaFuncGraph, std::shared_ptr<DictSetItem>>(*m, "DictSetItem_")
     .def(py::init<const std::string &>());
 
   // Reg DictClear
@@ -127,8 +135,10 @@ void RegCompositeOpsGroup(py::module *m) {
 
   // Reg MultitypeFuncGraph
   (void)py::class_<MultitypeFuncGraph, MetaFuncGraph, std::shared_ptr<MultitypeFuncGraph>>(*m, "MultitypeFuncGraph_")
-    .def(py::init<std::string &>())
-    .def("register_fn", &MultitypeFuncGraph::PyRegister);
+    .def(py::init<const std::string &>())
+    .def("register_fn", &MultitypeFuncGraph::PyRegister)
+    .def("set_doc_url_", &MultitypeFuncGraph::set_doc_url)
+    .def("set_need_raise_", &MultitypeFuncGraph::set_need_raise);
 
   // Reg UnpackCall
   (void)py::class_<UnpackCall, MetaFuncGraph, std::shared_ptr<UnpackCall>>(*m, "UnpackCall_")
@@ -142,6 +152,31 @@ void RegCompositeOpsGroup(py::module *m) {
   (void)py::class_<VmapGeneralPreprocess, MetaFuncGraph, std::shared_ptr<VmapGeneralPreprocess>>(
     *m, "VmapGeneralPreprocess_")
     .def(py::init<std::string &>(), py::arg("fn"));
+
+  // Reg TensorIndexGetitem
+  (void)py::class_<TensorIndexGetitem, MetaFuncGraph, std::shared_ptr<TensorIndexGetitem>>(*m, "TensorIndexGetitem_")
+    .def(py::init<std::string &>());
+
+  // Reg TensorIndexSetitem
+  (void)py::class_<TensorIndexSetitem, MetaFuncGraph, std::shared_ptr<TensorIndexSetitem>>(*m, "TensorIndexSetitem_")
+    .def(py::init<std::string &>());
+
+  // Reg HandleEmptySlice
+  (void)py::class_<HandleEmptySlice, MetaFuncGraph, std::shared_ptr<HandleEmptySlice>>(*m, "HandleEmptySlice_")
+    .def(py::init<std::string &>());
+
+  // Reg HandleScalarTensorIndex
+  (void)py::class_<HandleScalarTensorIndex, MetaFuncGraph, std::shared_ptr<HandleScalarTensorIndex>>(
+    *m, "HandleScalarTensorIndex_")
+    .def(py::init<std::string &>());
+
+  // Reg HandleBoolTensor
+  (void)py::class_<HandleBoolTensor, MetaFuncGraph, std::shared_ptr<HandleBoolTensor>>(*m, "HandleBoolTensor_")
+    .def(py::init<std::string &>());
+
+  // Reg PreSetitemByTuple_
+  (void)py::class_<PreSetitemByTuple, MetaFuncGraph, std::shared_ptr<PreSetitemByTuple>>(*m, "PreSetitemByTuple_")
+    .def(py::init<std::string &>());
 }
 }  // namespace prim
 }  // namespace mindspore

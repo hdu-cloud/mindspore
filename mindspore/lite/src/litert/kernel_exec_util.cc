@@ -19,7 +19,7 @@
 #include <queue>
 #include <unordered_map>
 #include <set>
-#include "src/litert/sub_graph_kernel.h"
+#include "src/executor/sub_graph_kernel.h"
 #include "nnacl/call_parameter.h"
 #if GPU_OPENCL
 #include "src/litert/kernel/opencl/opencl_subgraph.h"
@@ -31,6 +31,54 @@
 namespace mindspore::kernel {
 using mindspore::lite::RET_ERROR;
 using mindspore::lite::RET_OK;
+
+int KernelExecUtil::TopologicalSortNodes(std::vector<KernelExec *> *nodes, std::vector<KernelExec *> in_nodes) {
+  auto old_nodes = *nodes;
+  if (in_nodes.empty()) {
+    in_nodes = KernelExecUtil::SubgraphInputNodes(old_nodes);
+  }
+  nodes->clear();
+  nodes->reserve(old_nodes.size());
+  std::queue<KernelExec *> kernel_queue;
+  for (auto kernel : in_nodes) {
+    if (std::all_of(kernel->in_kernels().begin(), kernel->in_kernels().end(),
+                    [&](KernelExec *in_kernel) { return (!lite::IsContain(old_nodes, in_kernel)); })) {
+      kernel_queue.push(kernel);
+    }
+  }
+
+  while (!kernel_queue.empty()) {
+    auto cur_kernel = kernel_queue.front();
+    (void)nodes->emplace_back(cur_kernel);
+    kernel_queue.pop();
+    if (cur_kernel == nullptr) {
+      MS_LOG(ERROR) << "TopologicalSortKernels failed, nullptr in nodes.";
+      return lite::RET_NULL_PTR;
+    }
+    auto next_kernels = cur_kernel->out_kernels();
+    for (auto next_kernel : next_kernels) {
+      if (!lite::IsContain(old_nodes, next_kernel)) {
+        continue;
+      }
+      if (lite::IsContain(*nodes, next_kernel)) {
+        MS_LOG(ERROR) << "TopologicalSortKernels failed, loop exist.";
+        return lite::RET_ERROR;
+      }
+      auto in_kernels = next_kernel->in_kernels();
+      if (std::all_of(in_kernels.begin(), in_kernels.end(), [&](KernelExec *in_kernel) {
+            return lite::IsContain(*nodes, in_kernel) || (!lite::IsContain(old_nodes, in_kernel));
+          })) {
+        kernel_queue.push(next_kernel);
+      }
+    }
+  }
+  if (nodes->size() != old_nodes.size()) {
+    MS_LOG(ERROR) << "TopologicalSortKernels failed, kernels size before sort: " << old_nodes.size()
+                  << ", kernels size after sort: " << nodes->size();
+    return lite::RET_ERROR;
+  }
+  return lite::RET_OK;
+}
 
 std::set<lite::Tensor *> KernelExecUtil::AllOutTensor(const std::vector<KernelExec *> &kernels) {
   std::set<lite::Tensor *> all_out_tensors{};
@@ -156,42 +204,6 @@ std::vector<lite::Tensor *> KernelExecUtil::SubgraphOutputTensors(const std::vec
   return output_tensors;
 }
 
-int KernelExecUtil::TopologicalSortKernels(std::vector<KernelExec *> *kernels) {
-  auto old_kernels = *kernels;
-  kernels->clear();
-  std::queue<KernelExec *> kernel_queue;
-  for (auto kernel : old_kernels) {
-    if (kernel->in_kernels().empty()) {
-      kernel_queue.push(kernel);
-      kernels->emplace_back(kernel);
-    }
-  }
-  while (!kernel_queue.empty()) {
-    auto cur_kernel = kernel_queue.front();
-    kernel_queue.pop();
-    MS_ASSERT(cur_kernel != nullptr);
-    auto next_kernels = cur_kernel->out_kernels();
-    for (auto next_kernel : next_kernels) {
-      auto in_kernels = next_kernel->in_kernels();
-      if (lite::IsContain(*kernels, const_cast<KernelExec *>(next_kernel))) {
-        MS_LOG(ERROR) << "TopologicalSortKernels failed, loop exist";
-        return RET_ERROR;
-      }
-      if (std::all_of(in_kernels.begin(), in_kernels.end(), [&](const KernelExec *in_kernel) {
-            return lite::IsContain(*kernels, const_cast<KernelExec *>(in_kernel));
-          })) {
-        kernel_queue.push(next_kernel);
-      }
-    }
-  }
-  if (kernels->size() != old_kernels.size()) {
-    MS_LOG(ERROR) << "TopologicalSortKernels failed, kernels size before sort: " << old_kernels.size()
-                  << ", kernels size after sort: " << kernels->size();
-    return RET_ERROR;
-  }
-  return RET_OK;
-}
-
 void KernelExecUtil::InitTensorInitRefCount(const std::vector<KernelExec *> &kernels) {
   for (auto *kernel : kernels) {
     kernel->InitOutTensorInitRefCount(&kernels);
@@ -276,12 +288,33 @@ KernelExec *KernelExecUtil::FindInKernelForInTensor(const KernelExec *kernel, li
 }
 
 std::vector<KernelExec *> KernelExecUtil::FindOutKernelsForOutTensor(const KernelExec *kernel, lite::Tensor *tensor) {
+  MS_CHECK_TRUE_RET(kernel != nullptr, {});
   std::vector<KernelExec *> out_kernels;
   for (auto out_kernel : kernel->out_kernels()) {
     if (lite::IsContain(out_kernel->in_tensors(), tensor)) {
       out_kernels.push_back(out_kernel);
     }
   }
+  return out_kernels;
+}
+
+KernelExec *KernelExecUtil::FindInKernelForTensorInSubGraph(lite::Tensor *tensor, SubGraphKernel *graph) {
+  MS_CHECK_TRUE_RET(graph != nullptr, nullptr);
+  auto iter = std::find_if(graph->nodes().begin(), graph->nodes().end(),
+                           [&tensor](const auto &node) { return lite::IsContain(node->out_tensors(), tensor); });
+  if (iter != graph->nodes().end()) {
+    return *iter;
+  }
+  return nullptr;
+}
+
+std::vector<KernelExec *> KernelExecUtil::FindOutKernelsForTensorInSubGraph(lite::Tensor *tensor,
+                                                                            SubGraphKernel *graph) {
+  MS_CHECK_TRUE_RET(graph != nullptr, {});
+  std::vector<KernelExec *> out_kernels(graph->nodes().size());
+  auto iter = std::copy_if(graph->nodes().begin(), graph->nodes().end(), out_kernels.begin(),
+                           [&tensor](const auto &node) { return lite::IsContain(node->in_tensors(), tensor); });
+  out_kernels.erase(iter, out_kernels.end());
   return out_kernels;
 }
 
@@ -312,6 +345,7 @@ int KernelExecUtil::SetKernelTensorDataType(const kernel::KernelExec *kernel) {
 }
 
 bool KernelExecUtil::IsOutputSubGraph(const KernelExec *subgraph_kernel) {
+  MS_CHECK_TRUE_RET(subgraph_kernel != nullptr, false);
   return !subgraph_kernel->out_tensors().empty() &&
          std::all_of(subgraph_kernel->out_tensors().begin(), subgraph_kernel->out_tensors().end(),
                      [](lite::Tensor *tensor) { return tensor->IsGraphOutput(); });
@@ -320,7 +354,7 @@ bool KernelExecUtil::IsOutputSubGraph(const KernelExec *subgraph_kernel) {
 namespace {
 SubGraphKernel *CreateCustomSubGraph(std::vector<KernelExec *> &&input_kernels,
                                      std::vector<KernelExec *> &&output_kernels,
-                                     const std::vector<KernelExec *> &kernels, Kernel *kernel) {
+                                     const std::vector<KernelExec *> &kernels, MSKernel *kernel) {
   auto sub_kernel = new (std::nothrow) CustomSubGraph(input_kernels, output_kernels, kernels, kernel);
   if (sub_kernel == nullptr) {
     MS_LOG(ERROR) << "create custom subgraph failed!";
@@ -348,6 +382,7 @@ SubGraphKernel *KernelExecUtil::CreateSubGraphKernel(const std::vector<KernelExe
   }
   auto lite_kernel = new (std::nothrow) LiteKernel(nullptr, input_tensors, output_tensors, &context);
   if (lite_kernel == nullptr) {
+    MS_LOG(ERROR) << "Create subgraph lite-kernel failed.";
     return nullptr;
   }
   std::vector<KernelExec *> input_kernels = SubgraphInputNodes(kernels);
@@ -380,6 +415,9 @@ SubGraphKernel *KernelExecUtil::CreateSubGraphKernel(const std::vector<KernelExe
     case kExitSubGraph: {
       sub_graph = lite::CreateControlSubgraph(type, lite_kernel);
     } break;
+    case kAclSubGraph: {
+      sub_graph = new (std::nothrow) AclSubGraph(input_kernels, output_kernels, kernels, lite_kernel);
+    } break;
     default: {
       MS_LOG(ERROR) << "not support subgraph type: " << type;
       delete lite_kernel;
@@ -398,6 +436,7 @@ SubGraphKernel *KernelExecUtil::CreateSubGraphKernel(const std::vector<KernelExe
 
 int KernelExecUtil::ReplaceSubGraphNodesInTensor(KernelExec *kernel, const lite::Tensor *old_tensor,
                                                  lite::Tensor *new_tensor) {
+  CHECK_NULL_RETURN(kernel);
   int ref_count = 0;
   /* set op input for calculate */
   if (kernel->desc().arch == kDelegate) {
@@ -417,12 +456,14 @@ int KernelExecUtil::ReplaceSubGraphNodesInTensor(KernelExec *kernel, const lite:
       }
     }
   }
+  CHECK_NULL_RETURN(new_tensor);
   new_tensor->set_init_ref_count(ref_count);
   return RET_OK;
 }
 
 int KernelExecUtil::ReplaceSubGraphNodesOutTensor(KernelExec *kernel, const lite::Tensor *old_tensor,
                                                   lite::Tensor *new_tensor) {
+  CHECK_NULL_RETURN(kernel);
   int ref_count = 0;
   /* set op output for calculate */
   if (kernel->desc().arch == kDelegate) {
@@ -442,6 +483,7 @@ int KernelExecUtil::ReplaceSubGraphNodesOutTensor(KernelExec *kernel, const lite
       }
     }
   }
+  CHECK_NULL_RETURN(new_tensor);
   new_tensor->set_init_ref_count(ref_count);
   return RET_OK;
 }
@@ -465,6 +507,9 @@ SubGraphKernel *KernelExecUtil::BelongToWhichSubGraph(const std::vector<KernelEx
 
 #ifndef CONTROLFLOW_TENSORLIST_CLIP
 bool KernelExecUtil::IsSwitchTypeCall(KernelExec *kernel) {
+  if (kernel == nullptr) {
+    return false;
+  }
   if (kernel->desc().arch == kDelegate) {
     return false;
   }
@@ -527,6 +572,9 @@ bool KernelExecUtil::IsTailCallSubGraph(KernelExec *kernel) {
 }
 
 std::vector<KernelExec *> KernelExecUtil::GetCallInputPartials(const KernelExec *call_node) {
+  if (call_node == nullptr) {
+    return {};
+  }
   if (call_node->type() != schema::PrimitiveType_Call) {
     MS_LOG(ERROR) << "input node is not call node.";
     return {};
@@ -539,7 +587,7 @@ std::vector<KernelExec *> KernelExecUtil::GetCallInputPartials(const KernelExec 
 
   std::vector<KernelExec *> partial_nodes{};
   auto call_input_node = call_inputs.front();
-  switch (call_input_node->type()) {
+  switch (SchemaType(call_input_node->type())) {
     case schema::PrimitiveType_PartialFusion: {
       partial_nodes.push_back(call_input_node);
       break;
@@ -584,6 +632,9 @@ std::vector<KernelExec *> KernelExecUtil::GetCallInputPartialsCorrespondingOutpu
 }
 
 KernelExec *KernelExecUtil::GetPartialOutputCall(const KernelExec *partial_node) {
+  if (partial_node == nullptr) {
+    return nullptr;
+  }
   if (partial_node->type() != schema::PrimitiveType_PartialFusion) {
     MS_LOG(ERROR) << "input node is not partial node.";
     return nullptr;
@@ -596,7 +647,7 @@ KernelExec *KernelExecUtil::GetPartialOutputCall(const KernelExec *partial_node)
 
   KernelExec *call_node = nullptr;
   auto partial_output_node = partial_outputs.front();
-  switch (partial_output_node->type()) {
+  switch (SchemaType(partial_output_node->type())) {
     case schema::PrimitiveType_Call: {
       call_node = partial_output_node;
       break;

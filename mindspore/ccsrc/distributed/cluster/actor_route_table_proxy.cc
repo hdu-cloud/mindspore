@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 #include "distributed/cluster/actor_route_table_proxy.h"
+#include "utils/convert_utils_base.h"
 
 namespace mindspore {
 namespace distributed {
@@ -62,7 +63,9 @@ topology::ActorAddress ActorRouteTableProxy::LookupRoute(const std::string &acto
   } while (!lookup_success && CURRENT_TIMESTAMP_MILLI <= timeout_ts);
 
   if (!lookup_success) {
-    MS_LOG(EXCEPTION) << "Failed to lookup actor address for " << actor_id;
+    MS_LOG(EXCEPTION) << "Failed to lookup actor address for " << actor_id
+                      << ".\nMaybe the distributed graph is not properly partitioned or training process is not "
+                         "launched with correct number. Please check python code or launching script.";
   }
   return lookup_route_rsp_msg;
 }

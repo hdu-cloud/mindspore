@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_RAGGED_TENSOR_TO_TENSOR_H_
 #define MINDSPORE_CORE_OPS_RAGGED_TENSOR_TO_TENSOR_H_
 #include <memory>
-#include <vector>
 #include <string>
-#include "ops/base_operator.h"
-#include "mindapi/base/types.h"
+#include <vector>
 #include "abstract/abstract_value.h"
+#include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 #include "ops/op_utils.h"
 #include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
@@ -41,8 +41,9 @@ class MIND_API RaggedTensorToTensor : public BaseOperator {
   }
   void Init() const {}
 };
-abstract::AbstractBasePtr RaggedTensorToTensorInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                    const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr RaggedTensorToTensorInfer(const abstract::AnalysisEnginePtr &,
+                                                             const PrimitivePtr &primitive,
+                                                             const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimRaggedTensorToTensorPtr = std::shared_ptr<RaggedTensorToTensor>;
 }  // namespace ops
 }  // namespace mindspore

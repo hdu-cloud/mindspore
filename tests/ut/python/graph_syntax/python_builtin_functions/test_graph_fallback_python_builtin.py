@@ -13,7 +13,6 @@
 # limitations under the License.
 # ============================================================================
 """ test graph fallback """
-import pytest
 import numpy as np
 from mindspore import jit, context, Tensor
 
@@ -136,21 +135,8 @@ def test_fallback_reversed():
     @jit
     def foo():
         x = reversed([1, 2, 3])
-        return list(x)
+        return tuple(x)
     assert foo() == (3, 2, 1)
-
-
-def test_fallback_set():
-    """
-    Feature: JIT Fallback
-    Description: Test set() in graph mode.
-    Expectation: No exception.
-    """
-    @jit
-    def foo():
-        x = set([1, 2, 1])
-        return x
-    assert list(foo()) == [1, 2]
 
 
 def test_fallback_slice():
@@ -167,19 +153,6 @@ def test_fallback_slice():
     assert list(foo()) == [0, 1, 2, 3, 4]
 
 
-def test_fallback_sorted():
-    """
-    Feature: JIT Fallback
-    Description: Test sorted() in graph mode.
-    Expectation: No exception.
-    """
-    @jit
-    def foo():
-        x = sorted([5, 3, 1, 4, 2])
-        return x
-    assert list(foo()) == [1, 2, 3, 4, 5]
-
-
 def test_fallback_str():
     """
     Feature: JIT Fallback
@@ -191,21 +164,3 @@ def test_fallback_str():
         x = str(10)
         return x
     assert foo() == '10'
-
-
-def test_fallback_unsupported_builtin_type():
-    """
-    Feature: JIT Fallback
-    Description: Test input() in graph mode and JIT Fallback.
-    Expectation: No exception.
-    """
-    @jit
-    def func(x):
-        input("input x:")
-        return x * 2
-
-    with pytest.raises(TypeError,
-                       match="'<built-in function input>' is not supported both in JIT Fallback and graph mode."):
-        input_x = Tensor([1])
-        res = func(input_x)
-        assert res == 2

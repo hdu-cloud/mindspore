@@ -8,7 +8,7 @@ mindspore.dataset
 
 大多数数据集可以通过指定参数 `cache` 启用缓存服务，以提升整体数据处理效率。
 请注意Windows平台上还不支持缓存服务，因此在Windows上加载和处理数据时，请勿使用。更多介绍和限制，
-请参考 `Single-Node Tensor Cache <https://www.mindspore.cn/tutorials/experts/zh-CN/r2.0.0-alpha/dataset/cache.html>`_ 。
+请参考 `Single-Node Tensor Cache <https://www.mindspore.cn/tutorials/experts/zh-CN/master/dataset/cache.html>`_ 。
 
 在API示例中，常用的模块导入方法如下：
 
@@ -38,9 +38,9 @@ mindspore.dataset
 - 数据集操作（filter/ skip）：用户通过数据集对象方法 `.shuffle` / `.filter` / `.skip` / `.split` /
   `.take` / … 来实现数据集的进一步混洗、过滤、跳过、最多获取条数等操作；
 - 数据集样本增强操作（map）：用户可以将数据增强操作
-  （`vision类 <https://mindspore.cn/docs/zh-CN/r2.0.0-alpha/api_python/mindspore.dataset.transforms.html#视觉>`_ ，
-  `nlp类 <https://mindspore.cn/docs/zh-CN/r2.0.0-alpha/api_python/mindspore.dataset.transforms.html#文本>`_ ，
-  `audio类 <https://mindspore.cn/docs/zh-CN/r2.0.0-alpha/api_python/mindspore.dataset.transforms.html#音频>`_ ）
+  （`vision类 <https://mindspore.cn/docs/zh-CN/master/api_python/mindspore.dataset.transforms.html#视觉>`_ ，
+  `nlp类 <https://mindspore.cn/docs/zh-CN/master/api_python/mindspore.dataset.transforms.html#文本>`_ ，
+  `audio类 <https://mindspore.cn/docs/zh-CN/master/api_python/mindspore.dataset.transforms.html#音频>`_ ）
   添加到map操作中执行，数据预处理过程中可以定义多个map操作，用于执行不同增强操作，数据增强操作也可以是
   用户自定义增强的 `PyFunc` ；
 - 批（batch）：用户在样本完成增强后，使用 `.batch` 操作将多个样本组织成batch，也可以通过batch的参数 `per_batch_map`
@@ -48,48 +48,10 @@ mindspore.dataset
 - 迭代器（create_dict_iterator）：最后用户通过数据集对象方法 `create_dict_iterator` 来创建迭代器，
   可以将预处理完成的数据循环输出。
 
-数据处理Pipeline示例如下，完整示例请参考
-`datasets_example.py <https://gitee.com/mindspore/mindspore/tree/r2.0.0-alpha/docs/api/api_python/datasets_example.py>`_ ：
+数据处理Pipeline快速上手
+-------------------------
 
-.. code-block:: python
-
-    import numpy as np
-    import mindspore as ms
-    import mindspore.dataset as ds
-    import mindspore.dataset.vision as vision
-    import mindspore.dataset.transforms as transforms
-
-    # 构造图像和标签
-    data1 = np.array(np.random.sample(size=(300, 300, 3)) * 255, dtype=np.uint8)
-    data2 = np.array(np.random.sample(size=(300, 300, 3)) * 255, dtype=np.uint8)
-    data3 = np.array(np.random.sample(size=(300, 300, 3)) * 255, dtype=np.uint8)
-    data4 = np.array(np.random.sample(size=(300, 300, 3)) * 255, dtype=np.uint8)
-
-    label = [1, 2, 3, 4]
-
-    # 加载数据集
-    dataset = ds.NumpySlicesDataset(([data1, data2, data3, data4], label), ["data", "label"])
-
-    # 对data数据增强
-    dataset = dataset.map(operations=vision.RandomCrop(size=(250, 250)), input_columns="data")
-    dataset = dataset.map(operations=vision.Resize(size=(224, 224)), input_columns="data")
-    dataset = dataset.map(operations=vision.Normalize(mean=[0.485 * 255, 0.456 * 255, 0.406 * 255],
-                                                      std=[0.229 * 255, 0.224 * 255, 0.225 * 255]),
-                          input_columns="data")
-    dataset = dataset.map(operations=vision.HWC2CHW(), input_columns="data")
-
-    # 对label变换类型
-    dataset = dataset.map(operations=transforms.TypeCast(ms.int32), input_columns="label")
-
-    # batch操作
-    dataset = dataset.batch(batch_size=2)
-
-    # 创建迭代器
-    epochs = 2
-    ds_iter = dataset.create_dict_iterator(output_numpy=True, num_epochs=epochs)
-    for _ in range(epochs):
-        for item in ds_iter:
-            print("item: {}".format(item), flush=True)
+如何快速使用Dataset Pipeline，可以将 `使用数据Pipeline加载 & 处理数据集 <https://www.mindspore.cn/docs/zh-CN/master/api_python/samples/dataset/dataset_gallery.html>`_ 下载到本地，按照顺序执行并观察输出结果。
 
 视觉
 -----
@@ -112,17 +74,24 @@ mindspore.dataset
     mindspore.dataset.FashionMnistDataset
     mindspore.dataset.FlickrDataset
     mindspore.dataset.Flowers102Dataset
+    mindspore.dataset.Food101Dataset
     mindspore.dataset.ImageFolderDataset
+    mindspore.dataset.KITTIDataset
     mindspore.dataset.KMnistDataset
+    mindspore.dataset.LFWDataset
+    mindspore.dataset.LSUNDataset
     mindspore.dataset.ManifestDataset
     mindspore.dataset.MnistDataset
+    mindspore.dataset.OmniglotDataset
     mindspore.dataset.PhotoTourDataset
     mindspore.dataset.Places365Dataset
     mindspore.dataset.QMnistDataset
+    mindspore.dataset.RenderedSST2Dataset
     mindspore.dataset.SBDataset
     mindspore.dataset.SBUDataset
     mindspore.dataset.SemeionDataset
     mindspore.dataset.STL10Dataset
+    mindspore.dataset.SUN397Dataset
     mindspore.dataset.SVHNDataset
     mindspore.dataset.USPSDataset
     mindspore.dataset.VOCDataset
@@ -145,8 +114,11 @@ mindspore.dataset
     mindspore.dataset.IMDBDataset
     mindspore.dataset.IWSLT2016Dataset
     mindspore.dataset.IWSLT2017Dataset
+    mindspore.dataset.Multi30kDataset
     mindspore.dataset.PennTreebankDataset
     mindspore.dataset.SogouNewsDataset
+    mindspore.dataset.SQuADDataset
+    mindspore.dataset.SST2Dataset
     mindspore.dataset.TextFileDataset
     mindspore.dataset.UDPOSDataset
     mindspore.dataset.WikiTextDataset
@@ -161,6 +133,9 @@ mindspore.dataset
     :nosignatures:
     :template: classtemplate_inherited.rst
 
+    mindspore.dataset.CMUArcticDataset
+    mindspore.dataset.GTZANDataset
+    mindspore.dataset.LibriTTSDataset
     mindspore.dataset.LJSpeechDataset
     mindspore.dataset.SpeechCommandsDataset
     mindspore.dataset.TedliumDataset
@@ -191,17 +166,6 @@ mindspore.dataset
     mindspore.dataset.NumpySlicesDataset
     mindspore.dataset.PaddedDataset
     mindspore.dataset.RandomDataset
-
-图
----
-
-.. mscnautosummary::
-    :toctree: dataset
-
-    mindspore.dataset.ArgoverseDataset
-    mindspore.dataset.Graph
-    mindspore.dataset.GraphData
-    mindspore.dataset.InMemoryGraphDataset
 
 采样器
 -------
@@ -255,6 +219,11 @@ config模块能够设置或获取数据处理的全局配置参数。
     mindspore.dataset.config.get_fast_recovery
     mindspore.dataset.config.set_multiprocessing_timeout_interval
     mindspore.dataset.config.get_multiprocessing_timeout_interval
+    mindspore.dataset.config.set_error_samples_mode
+    mindspore.dataset.config.get_error_samples_mode
+    mindspore.dataset.config.ErrorSamplesMode
+    mindspore.dataset.config.set_debug_mode
+    mindspore.dataset.config.get_debug_mode
 
 其他
 -----
@@ -267,14 +236,14 @@ config模块能够设置或获取数据处理的全局配置参数。
     mindspore.dataset.BatchInfo
     mindspore.dataset.DatasetCache
     mindspore.dataset.DSCallback
-    mindspore.dataset.SamplingStrategy
     mindspore.dataset.Schema
     mindspore.dataset.Shuffle
     mindspore.dataset.WaitedDSCallback
-    mindspore.dataset.OutputFormat
     mindspore.dataset.compare
+    mindspore.dataset.debug.DebugHook
     mindspore.dataset.deserialize
     mindspore.dataset.serialize
     mindspore.dataset.show
     mindspore.dataset.sync_wait_for_dataset
     mindspore.dataset.utils.imshow_det_bbox
+    mindspore.dataset.utils.LineReader

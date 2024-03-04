@@ -17,6 +17,9 @@
 #include "tools/converter/adapter/acl/mapper/resize_mapper.h"
 #include <memory>
 #include <vector>
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "tools/converter/adapter/acl/mapper/primitive_mapper_register.h"
 #include "tools/converter/adapter/acl/mapper/tbe_op_def.h"
 #include "tools/optimizer/common/gllo_utils.h"
@@ -24,11 +27,14 @@
 #include "ops/op_utils.h"
 #include "src/common/log_util.h"
 #include "mindspore/core/ops/op_name.h"
+#include "plugin/device/cpu/kernel/nnacl/op_base.h"
 
 namespace mindspore {
 namespace lite {
 namespace {
 constexpr auto kNameInputNum = 3;
+constexpr auto kResizeDataInputIndex = 1;
+constexpr auto kResizeShapeInputIndex = 2;
 constexpr auto kShapeFirstIdx = 0;
 constexpr auto kShapeSecondIdx = 1;
 constexpr auto kShapeThirdIdx = 2;
@@ -39,17 +45,18 @@ constexpr auto kNameSizeFour = 4;
 
 STATUS ResizeMapper::Mapper(const CNodePtr &cnode) {
   if (cnode->inputs().size() != kNameInputNum) {
-    MS_LOG(WARNING) << "Input of resize must be " << kNameInputNum << ", real size: " << cnode->inputs().size();
+    MS_LOG(WARNING) << "Input of resize must be " << kNameInputNum << ", real size: " << cnode->inputs().size()
+                    << ", cnode " << cnode->fullname_with_scope();
     return lite::RET_OK;
   }
   ValueNodePtr value_node = nullptr;
   PrimitivePtr src_prim = nullptr;
   if (GetValueNodeAndPrimFromCnode(cnode, &value_node, &src_prim) != lite::RET_OK) {
-    MS_LOG(ERROR) << "Get primitive from cnode failed.";
+    MS_LOG(ERROR) << "Get primitive from cnode failed, cnode " << cnode->fullname_with_scope();
     return lite::RET_ERROR;
   }
   if (ProcScaleInput(cnode, src_prim) != lite::RET_OK) {
-    MS_LOG(ERROR) << "Proc scale input failed.";
+    MS_LOG(ERROR) << "Proc scale input failed, cnode " << cnode->fullname_with_scope();
     return lite::RET_ERROR;
   }
   auto val_ptr = src_prim->GetAttr(ops::kMethod);
@@ -60,15 +67,39 @@ STATUS ResizeMapper::Mapper(const CNodePtr &cnode) {
     dst_prim = std::make_shared<acl::ResizeNearestNeighborV2>();
   } else if (method == static_cast<int64_t>(mindspore::ResizeMethod::LINEAR)) {
     dst_prim = std::make_shared<acl::ResizeBilinearV2>();
+  } else if (method == static_cast<int64_t>(mindspore::ResizeMethod::AREA)) {
+    dst_prim = std::make_shared<acl::AdaptiveAvgPool>();
+  } else if (method == static_cast<int64_t>(mindspore::ResizeMethod::CUBIC)) {
+    auto mode_ptr = src_prim->GetAttr(ops::kMode);
+    if (mode_ptr != nullptr && GetValue<std::string>(mode_ptr) == "bicubic") {
+      ops::Resize op_resize;
+      dst_prim = op_resize.GetPrim();
+      dst_prim->set_attr("coordinate_transformation_mode", MakeValue("pytorch_half_pixel"));
+      src_prim->set_attr("mode", MakeValue("cubic"));
+      auto func_graph = cnode->func_graph();
+      auto roi_node = opt::BuildFloatValueParameterNode(func_graph, 0, cnode->fullname_with_scope() + "_roi");
+      auto scales_node = opt::BuildFloatVecParameterNode(func_graph, {0}, cnode->fullname_with_scope() + "_scales");
+      auto inputs = cnode->inputs();
+      (void)inputs.insert(inputs.begin() + kNameSizeTwo, scales_node);
+      (void)inputs.insert(inputs.begin() + kNameSizeTwo, roi_node);
+      cnode->set_inputs(inputs);
+    } else {
+      dst_prim = std::make_shared<acl::ResizeBicubic>();
+    }
   } else {
-    MS_LOG(ERROR) << "Not support resize method " << method;
+    MS_LOG(ERROR) << "Not support resize method " << method << ", cnode " << cnode->fullname_with_scope();
     return RET_ERROR;
   }
   CHECK_NULL_RETURN(dst_prim);
-  auto pytorch_half_pixel_ptr = src_prim->GetAttr("coordinate_transform_mode");
-  if (pytorch_half_pixel_ptr != nullptr &&
-      GetValue<int64_t>(pytorch_half_pixel_ptr) == mindspore::CoordinateTransformMode::HALF_PIXEL) {
+  auto coordinate_transformation_mode_ptr = src_prim->GetAttr("coordinate_transform_mode");
+  if (coordinate_transformation_mode_ptr != nullptr &&
+      GetValue<int64_t>(coordinate_transformation_mode_ptr) == mindspore::CoordinateTransformMode::HALF_PIXEL) {
     dst_prim->set_attr("half_pixel_centers", MakeValue(true));
+  }
+  if (coordinate_transformation_mode_ptr != nullptr &&
+      GetValue<int64_t>(coordinate_transformation_mode_ptr) == mindspore::CoordinateTransformMode::ALIGN_CORNERS) {
+    dst_prim->set_attr("align_corners", MakeValue(true));
+    dst_prim->set_attr("coordinate_transformation_mode", MakeValue("align_corners"));
   }
   dst_prim->SetAttrs(src_prim->attrs());
   value_node->set_value(dst_prim);
@@ -107,15 +138,62 @@ STATUS ResizeMapper::ProcScaleInput(const CNodePtr &cnode, const PrimitivePtr &p
         new_width = static_cast<int32_t>(shape_vector[kShapeForthIdx]);
       }
     } else {
-      MS_LOG(ERROR) << "Size of shape must be two or four, real size: " << shape_vector.size();
-      return RET_ERROR;
+      MS_LOG(INFO) << "Failed to get shape of resize node " << cnode->fullname_with_scope()
+                   << ", shape value size: " << shape_vector.size();
+      return CalResizeShape(cnode, prim);
     }
     std::vector<int32_t> new_tensor_size = {new_height, new_width};
     auto func_graph = cnode->func_graph();
-    auto param_node = opt::BuildIntVecParameterNode(func_graph, new_tensor_size, scale_input->fullname_with_scope());
+    auto param_node =
+      opt::BuildIntVecParameterNode(func_graph, new_tensor_size, cnode->fullname_with_scope() + "_sizes");
     cnode->set_input(kNameInputNum - 1, param_node);
   }
   return lite::RET_OK;
+}
+
+STATUS ResizeMapper::CalResizeShape(const CNodePtr &cnode, const PrimitivePtr &prim) {
+  auto data_input = cnode->input(kResizeDataInputIndex);
+  CHECK_NULL_RETURN(data_input);
+  auto scale_input = cnode->input(kResizeShapeInputIndex);
+  CHECK_NULL_RETURN(scale_input);
+  auto func_graph = cnode->func_graph();
+  CHECK_NULL_RETURN(func_graph);
+  auto manager = func_graph->manager();
+  CHECK_NULL_RETURN(manager);
+  auto shape_node = NewCNode(cnode, prim::kPrimShape, {data_input}, {DIMENSION_4D}, kNumberTypeInt32,
+                             cnode->fullname_with_scope() + "_shape_shape");
+  if (!shape_node) {
+    MS_LOG(ERROR) << "Failed to create shape node for node " << cnode->fullname_with_scope();
+    return RET_ERROR;
+  }
+  std::vector<int> gather_indices = {kNCHW_H, kNCHW_W};  // fetch H and W dimension
+  auto gather_cnode =
+    opt::GenGatherNode(func_graph, shape_node, gather_indices, cnode->fullname_with_scope() + "_shape_gather");
+  if (gather_cnode == nullptr) {
+    MS_LOG(ERROR) << "Failed to create gather node for node " << cnode->fullname_with_scope();
+    return RET_ERROR;
+  }
+  auto gather_shape = std::make_shared<abstract::Shape>(ShapeVector{DIMENSION_2D});
+  auto gather_abstract = std::make_shared<abstract::AbstractTensor>(TypeIdToType(kNumberTypeInt32), gather_shape);
+  gather_cnode->set_abstract(gather_abstract);
+
+  auto cast_fp32_node = NewCNode(cnode, prim::kPrimCast, {gather_cnode, NewValueNode(TypeIdToType(kNumberTypeFloat32))},
+                                 {DIMENSION_2D}, kNumberTypeFloat32, cnode->fullname_with_scope() + "_shape_cast_fp32");
+  if (!cast_fp32_node) {
+    MS_LOG(ERROR) << "Failed to create cast node for node " << cnode->fullname_with_scope();
+    return RET_ERROR;
+  }
+
+  auto mul_node = NewCNode(cnode, prim::kPrimMul, {cast_fp32_node, scale_input}, {DIMENSION_2D}, kNumberTypeFloat32,
+                           cnode->fullname_with_scope() + "_shape_mul");
+  if (!mul_node) {
+    MS_LOG(ERROR) << "Failed to create mul node for node " << cnode->fullname_with_scope();
+    return RET_ERROR;
+  }
+  auto cast_int32_node = NewCNode(cnode, prim::kPrimCast, {mul_node, NewValueNode(TypeIdToType(kNumberTypeInt32))},
+                                  {DIMENSION_2D}, kNumberTypeInt32, cnode->fullname_with_scope() + "_shape_cast_int32");
+  cnode->set_input(kResizeShapeInputIndex, cast_int32_node);
+  return RET_OK;
 }
 
 REGISTER_PRIMITIVE_MAPPER(kNameResize, ResizeMapper)

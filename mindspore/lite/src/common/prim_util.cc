@@ -16,17 +16,24 @@
 
 #include "src/common/prim_util.h"
 #include <set>
+#include <vector>
 #include "nnacl/op_base.h"
+#include "src/common/log_util.h"
 #include "schema/model_generated.h"
 #include "src/common/log_adapter.h"
 
 namespace mindspore {
 namespace lite {
-static std::set<schema::PrimitiveType> tensor_list_ops = {
+static std::set<schema::PrimitiveType> kTensorListOps = {
   schema::PrimitiveType_TensorListFromTensor, schema::PrimitiveType_TensorListGetItem,
   schema::PrimitiveType_TensorListReserve, schema::PrimitiveType_TensorListSetItem,
   schema::PrimitiveType_TensorListStack};
 
+static const char *const kInnerOpNames[C10NUM] = {"Inner_ToFormat",         "Inner_GltextureToOpencl",
+                                                  "Inner_Identity",         "Inner_ShapeFusion",
+                                                  "Inner_GraphKernel",      "Inner_SplitReduceConcatFusion",
+                                                  "Inner_EncoderLayer",     "Inner_DecoderLayer",
+                                                  "Inner_UsePastEmbedding", "Inner_CustomGru"};
 int GetPrimitiveType(const void *primitive, int schema_version) {
   if (primitive == nullptr) {
     return -1;
@@ -42,7 +49,14 @@ const char *GetPrimitiveTypeName(const void *primitive, int schema_version) {
 }
 
 const char *PrimitiveCurVersionTypeName(int type) {
-  return schema::EnumNamePrimitiveType(static_cast<schema::PrimitiveType>(type));
+  if (type >= static_cast<int>(schema::PrimitiveType_MIN) && type < static_cast<int>(schema::PrimitiveType_MAX)) {
+    return schema::EnumNamePrimitiveType(static_cast<schema::PrimitiveType>(type));
+  } else if (type >= static_cast<int>(schema::PrimitiveType_MAX)) {
+    if (type >= PrimType_InnerOpMin && type < PrimType_InnerOpMax) {
+      return kInnerOpNames[type - PrimType_InnerOpMin];
+    }
+  }
+  return "";
 }
 
 int GenPrimVersionKey(int primitive_type, int schema_version) { return primitive_type * 1000 + schema_version; }
@@ -90,8 +104,8 @@ bool IsCustomNode(const void *primitive, int schema_version) {
 bool IsTensorListNode(const void *primitive, int schema_version) {
   MS_CHECK_TRUE_MSG(primitive != nullptr, false, "primtive cannot be nullptr");
   if (schema_version == SCHEMA_CUR) {
-    if (tensor_list_ops.find(reinterpret_cast<const schema::Primitive *>(primitive)->value_type()) !=
-        tensor_list_ops.end()) {
+    if (kTensorListOps.find(reinterpret_cast<const schema::Primitive *>(primitive)->value_type()) !=
+        kTensorListOps.end()) {
       return true;
     }
   }
@@ -109,6 +123,13 @@ int GetPartialGraphIndex(const void *primitive, int schema_version) {
     index = partial_fusion->sub_graph_index();
   }
   return index;
+}
+bool IsSharedThreadPoolOp(int op_type) {
+  std::vector<schema::PrimitiveType> shared_ops = {mindspore::schema::PrimitiveType_MatMulFusion};
+  if (find(shared_ops.begin(), shared_ops.end(), op_type) != shared_ops.end()) {
+    return true;
+  }
+  return false;
 }
 }  // namespace lite
 }  // namespace mindspore

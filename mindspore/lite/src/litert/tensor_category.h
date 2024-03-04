@@ -25,11 +25,12 @@ struct Tensor;
 }
 namespace lite {
 enum Category {
+  VAR,           // activation tensor
   CONST_TENSOR,  // weight tensor
   CONST_SCALAR,  // weight scalar
-  VAR,           // activation tensor
   GRAPH_INPUT,
   GRAPH_OUTPUT,
+  PARAMETER,
 };
 
 Category TensorCategory(const int node_type, const size_t shape_num, const TypeId data_type, const size_t data_size);

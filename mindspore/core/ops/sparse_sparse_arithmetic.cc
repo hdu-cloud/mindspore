@@ -13,22 +13,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <algorithm>
 #include <memory>
-#include <set>
 #include <string>
 #include <vector>
 
-#include "abstract/ops/primitive_infer_map.h"
-#include "utils/shape_utils.h"
-#include "mindapi/ir/common.h"
 #include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
 #include "ops/op_utils.h"
+#include "ops/primitive_c.h"
 #include "ops/sparse_sparse_arithmetic.h"
-#include "ops/sparsesparsemaximum.h"
 #include "ops/sparse_sparse_minimum.h"
+#include "ops/sparse_sparse_maximum.h"
 #include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -111,35 +123,22 @@ abstract::TupleShapePtr SparseSparseArithmeticInferShape(const PrimitivePtr &pri
   auto x2_indice_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[3]->BuildShape())[kShape];
   ShapeVector out_indice_shape = {-1, -1};
   ShapeVector out_value_shape = {-1};
-  ShapeVector min_out_indice_shape = {};
   ShapeVector max_out_indice_shape = {};
-  ShapeVector min_out_value_shape = {};
   ShapeVector max_out_value_shape = {};
   abstract::ShapePtr y_indices_shape;
   abstract::ShapePtr y_values_shape;
   if (IsDynamic(x1_indice_shape) || IsDynamic(x2_indice_shape)) {
-    min_out_indice_shape.push_back(-1);
-    min_out_indice_shape.push_back(-1);
     max_out_indice_shape.push_back(-1);
     max_out_indice_shape.push_back(-1);
-    min_out_value_shape.push_back(-1);
     max_out_value_shape.push_back(-1);
   } else {
-    if (x1_indice_shape[0] > x2_indice_shape[0]) {
-      min_out_indice_shape.push_back(x1_indice_shape[0]);
-      min_out_value_shape.push_back(x1_indice_shape[0]);
-    } else {
-      min_out_indice_shape.push_back(x2_indice_shape[0]);
-      min_out_value_shape.push_back(x2_indice_shape[0]);
-    }
-    min_out_indice_shape.push_back(x1_indice_shape[1]);
     max_out_indice_shape.push_back(x1_indice_shape[0] + x2_indice_shape[0]);
     max_out_indice_shape.push_back(x1_indice_shape[1]);
     out_indice_shape[1] = x1_indice_shape[1];
     max_out_value_shape.push_back(x1_indice_shape[0] + x2_indice_shape[0]);
   }
-  y_indices_shape = std::make_shared<abstract::Shape>(out_indice_shape, min_out_indice_shape, max_out_indice_shape);
-  y_values_shape = std::make_shared<abstract::Shape>(out_value_shape, min_out_value_shape, max_out_value_shape);
+  y_indices_shape = std::make_shared<abstract::Shape>(out_indice_shape, max_out_indice_shape);
+  y_values_shape = std::make_shared<abstract::Shape>(out_value_shape, max_out_value_shape);
   return std::make_shared<abstract::TupleShape>(std::vector<abstract::BaseShapePtr>{y_indices_shape, y_values_shape});
 }
 
@@ -175,9 +174,26 @@ AbstractBasePtr SparseSparseArithmeticInfer(const abstract::AnalysisEnginePtr &,
 MIND_API_OPERATOR_IMPL(SparseSparseMinimum, BaseOperator);
 MIND_API_OPERATOR_IMPL(SparseSparseMaximum, BaseOperator);
 
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseSparseMinimum, prim::kPrimSparseSparseMinimum, SparseSparseArithmeticInfer, nullptr,
-                             true);
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseSparseMaximum, prim::kPrimSparseSparseMaximum, SparseSparseArithmeticInfer, nullptr,
-                             true);
+// AG means auto generated
+class MIND_API AGSparseSparseArithmeticInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSparseArithmeticInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSparseArithmeticInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSparseArithmeticInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseSparseMinimum, prim::kPrimSparseSparseMinimum, AGSparseSparseArithmeticInfer,
+                                 false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseSparseMaximum, prim::kPrimSparseSparseMaximum, AGSparseSparseArithmeticInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

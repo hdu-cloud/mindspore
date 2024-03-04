@@ -25,7 +25,7 @@
 #include "frontend/parallel/strategy.h"
 #include "frontend/parallel/tensor_layout/tensor_redistribution.h"
 #include "include/common/utils/parallel_context.h"
-#include "pipeline/jit/resource.h"
+#include "pipeline/jit/ps/resource.h"
 
 namespace mindspore {
 namespace parallel {
@@ -152,9 +152,7 @@ std::shared_ptr<Strategies> SplitInfo::GenerateBatchStrategies() {
   Dimensions input_strategy(inputs_shape_[0].size(), 1);
   // axis can't split
   if (inputs_shape_[0].size() > 1) {
-    if (axis_ == 0) {
-      input_strategy[1] = stage_device_size_;
-    } else {
+    if (axis_ != 0) {
       input_strategy[0] = stage_device_size_;
     }
   }

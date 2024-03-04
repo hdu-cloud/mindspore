@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 #include <memory>
 #include <sstream>
 #include <utility>
-
 #include "base/base.h"
 #include "ir/anf.h"
 #include "ir/dtype.h"
@@ -191,6 +190,45 @@ ValuePtr MakeValue(const T &vec) {
   return std::make_shared<ValueTuple>(list);
 }
 
+/// \brief ValueNamedTuple defines a Value class whose type is Tuple but the object is namedtuple.
+class MS_CORE_API ValueNamedTuple : public ValueTuple {
+ public:
+  /// \brief Constructor of ValueNamedTuple.
+  ///
+  /// \param[in] elements Define the elements of the object.
+  ValueNamedTuple(const std::string &type_name, const std::vector<ValuePtr> &keys, const std::vector<ValuePtr> &values)
+      : ValueTuple(values), type_name_(type_name), keys_(keys) {}
+
+  /// \brief Destructor of ValueNamedTuple.
+  ~ValueNamedTuple() override = default;
+  MS_DECLARE_PARENT(ValueNamedTuple, ValueTuple)
+  // \brief Get abstract of the ValueNamedTuple object.
+  //
+  // \return The abstract of the ValueNamedTuple object.
+  abstract::AbstractBasePtr ToAbstract() override;
+  /// \brief Show the type name of namedtuple.
+  ///
+  /// \return The type name of the namedtuple object.
+  std::string name() const { return type_name_; }
+  /// \brief Show the label of namedtuple.
+  ///
+  /// \return The Label of the namedtuple object.
+  const std::vector<ValuePtr> &key() const { return keys_; }
+  /// \brief Show the ValueNamedTuple object.
+  ///
+  /// \return The description of the ValueNamedTuple object.
+  std::string ToString() const override;
+  /// \brief Show the ValueNamedTuple object DumpText.
+  ///
+  /// \return The description of the ValueNamedTuple object.
+  std::string DumpText() const override { return ToString(); }
+
+ private:
+  std::string type_name_;
+  std::vector<ValuePtr> keys_;
+};
+using ValueNamedTuplePtr = std::shared_ptr<ValueNamedTuple>;
+
 /// \brief ValueSlice defines a Value class whose type is Slice.
 class MS_CORE_API ValueSlice : public Value {
  public:
@@ -265,6 +303,10 @@ class MS_CORE_API KeywordArg : public Value {
   ///
   /// \return The hash value.
   std::size_t hash() const override;
+  /// \brief Get key of the KeywordArg object.
+  ///
+  /// \return The key of the KeywordArg object.
+  std::string get_key() const { return key_; }
   /// \brief Get value of the KeywordArg object.
   ///
   /// \return The value of the KeywordArg object.
@@ -438,67 +480,67 @@ class MS_CORE_API RefKey final : public StringImm {
   MS_DECLARE_PARENT(RefKey, StringImm)
 
   abstract::AbstractBasePtr ToAbstract() override {
-    MS_LOG(EXCEPTION) << "RefKey can't be converted to abstract, ref_key: " << ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "RefKey can't be converted to abstract, ref_key: " << ToString();
   }
 };
 using RefKeyPtr = std::shared_ptr<RefKey>;
 
-/// \brief AnyValue defines a Value class which can be any Value type.
-class MS_CORE_API AnyValue final : public Value {
+/// \brief ValueAny defines a Value class which can be any Value type.
+class MS_CORE_API ValueAny final : public Value {
  public:
-  /// \brief Constructor of AnyValue.
-  AnyValue() = default;
-  /// \brief Destructor of AnyValue.
-  ~AnyValue() override = default;
-  MS_DECLARE_PARENT(AnyValue, Value)
-  /// \brief The hash value of the AnyValue object.
+  /// \brief Constructor of ValueAny.
+  ValueAny() = default;
+  /// \brief Destructor of ValueAny.
+  ~ValueAny() override = default;
+  MS_DECLARE_PARENT(ValueAny, Value)
+  /// \brief The hash value of the ValueAny object.
   ///
   /// \return The hash value.
   std::size_t hash() const override { return tid(); }
-  /// \brief Check whether the input is the current AnyValue object.
+  /// \brief Check whether the input is the current ValueAny object.
   ///
   /// \param[in] other Define a Value object.
-  /// \return Whether the input is the current AnyValue object.
+  /// \return Whether the input is the current ValueAny object.
   bool operator==(const Value &other) const override;
-  /// \brief Get abstract of the AnyValue object.
+  /// \brief Get abstract of the ValueAny object.
   ///
-  /// \return The abstract of the AnyValue object.
+  /// \return The abstract of the ValueAny object.
   abstract::AbstractBasePtr ToAbstract() override;
 };
 
-GVAR_DEF(ValuePtr, kAnyValue, std::make_shared<AnyValue>());
+GVAR_DEF(ValuePtr, kValueAny, std::make_shared<ValueAny>());
 
-enum ErrorValueType : int { kDead = 0, kPoly = 1 };
+enum ValueProblemType : int { kDead = 0, kPoly = 1, kUndefined = 2 };
 
-/// \brief ErrorValue defines a class for DeadNode and PolyNode.
-class MS_CORE_API ErrorValue final : public Value {
+/// \brief ValueProblem defines a class for DeadNode and PolyNode.
+class MS_CORE_API ValueProblem final : public Value {
  public:
-  /// \brief Constructor of ErrorValue.
+  /// \brief Constructor of ValueProblem.
   ///
   /// \param[in] err_type Define the error value type.
-  explicit ErrorValue(ErrorValueType err_type) : err_type_(err_type) {}
+  explicit ValueProblem(ValueProblemType err_type) : err_type_(err_type) {}
   /// \brief Destructor of RefKey.
-  ~ErrorValue() override = default;
-  MS_DECLARE_PARENT(ErrorValue, Value)
-  /// \brief The hash value of the ErrorValue object.
+  ~ValueProblem() override = default;
+  MS_DECLARE_PARENT(ValueProblem, Value)
+  /// \brief The hash value of the ValueProblem object.
   ///
   /// \return The hash value.
   std::size_t hash() const override { return tid(); }
-  /// \brief Check whether the input is the current ErrorValue object.
+  /// \brief Check whether the input is the current ValueProblem object.
   ///
   /// \param[in] other Define a Value object.
-  /// \return Whether the input is the current ErrorValue object.
+  /// \return Whether the input is the current ValueProblem object.
   bool operator==(const Value &other) const override;
-  /// \brief Check whether the input is the current ErrorValue object.
+  /// \brief Check whether the input is the current ValueProblem object.
   ///
-  /// \param[in] other Define a ErrorValue object.
-  /// \return Whether the input is the current ErrorValue object.
-  bool operator==(const ErrorValue &other) const;
-  /// \brief Get abstract of the ErrorValue object.
+  /// \param[in] other Define a ValueProblem object.
+  /// \return Whether the input is the current ValueProblem object.
+  bool operator==(const ValueProblem &other) const;
+  /// \brief Get abstract of the ValueProblem object.
   ///
-  /// \return The abstract of the ErrorValue object.
+  /// \return The abstract of the ValueProblem object.
   abstract::AbstractBasePtr ToAbstract() override {
-    MS_LOG(EXCEPTION) << "ErrorValue(" << ToString() << ") can't be converted to abstract.";
+    MS_LOG(INTERNAL_EXCEPTION) << "ValueProblem(" << ToString() << ") can't be converted to abstract.";
   }
   /// \brief Check whether the value belongs to DeadNode.
   ///
@@ -508,15 +550,27 @@ class MS_CORE_API ErrorValue final : public Value {
   ///
   /// \return Whether the value belongs to PolyNode.
   bool IsPoly() const { return err_type_ == kPoly; }
-  /// \brief Show the ErrorValue object.
+  /// \brief Check whether the value belongs to UndefinedNode.
   ///
-  /// \return The description of the ErrorValue object.
-  std::string ToString() const override { return IsDead() ? "DeadNode" : "PolyNode"; }
+  /// \return Whether the value belongs to UndefinedNode.
+  bool IsUndefined() const { return err_type_ == kUndefined; }
+  /// \brief Show the ValueProblem object.
+  ///
+  /// \return The description of the ValueProblem object.
+  std::string ToString() const override {
+    if (IsDead()) {
+      return "DeadNode";
+    } else if (IsPoly()) {
+      return "PolyNode";
+    } else {
+      return "UndefinedNode";
+    }
+  }
 
  private:
-  ErrorValueType err_type_{kDead};
+  ValueProblemType err_type_{kDead};
 };
-using ErrorValuePtr = std::shared_ptr<ErrorValue>;
+using ValueProblemPtr = std::shared_ptr<ValueProblem>;
 
 /// \brief Monad defines a Value class which is used in side effect.
 class MS_CORE_API Monad : public Value {
@@ -596,12 +650,10 @@ MS_CORE_API extern const ValuePtr kIOMonad;
 
 template <>
 inline const char *GetValue(const ValuePtr &value) {
-  if (value == nullptr) {
-    MS_LOG(EXCEPTION) << "Value is nullptr";
-  }
+  MS_EXCEPTION_IF_NULL(value);
   auto imm = value->cast<StringImmPtr>();
   if (imm == nullptr) {
-    MS_LOG(EXCEPTION) << "GetValue:" << value->ToString() << ", Type:" << value->type_name();
+    MS_LOG(INTERNAL_EXCEPTION) << "GetValue:" << value->ToString() << ", Type:" << value->type_name();
   }
   return common::SafeCStr(imm->value());
 }
@@ -609,13 +661,11 @@ inline const char *GetValue(const ValuePtr &value) {
 template <typename T, typename S = typename std::decay<T>::type,
           typename U = typename std::enable_if<is_vector<S>::value, typename S::value_type>::type>
 std::vector<U> GetValue(const ValuePtr &value) {
-  if (value == nullptr) {
-    MS_LOG(EXCEPTION) << "Value is nullptr";
-  }
+  MS_EXCEPTION_IF_NULL(value);
 
   if (!value->isa<ValueSequence>()) {
-    MS_LOG(EXCEPTION) << "Error GetValue for value: " << value->ToString() << ", type: vector<" << typeid(U).name()
-                      << ">";
+    MS_LOG(INTERNAL_EXCEPTION) << "Error GetValue for value: " << value->ToString() << ", type: vector<"
+                               << typeid(U).name() << ">";
   }
   std::vector<U> rets;
   const std::vector<ValuePtr> &vals = value->cast<ValueSequencePtr>()->value();

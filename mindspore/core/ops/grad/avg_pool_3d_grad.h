@@ -18,12 +18,12 @@
 #define MINDSPORE_CORE_OPS_AVG_POOL_3D_GRAD_H_
 
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/grad/pool_grad.h"
-#include "mindapi/base/types.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/format.h"
+#include "mindapi/base/types.h"
+#include "ops/grad/pool_grad.h"
 
 namespace mindspore {
 namespace ops {
@@ -50,8 +50,9 @@ class MIND_API AvgPool3DGrad : public PoolGrad {
   int64_t get_divisor_override() const;
 };
 
-abstract::AbstractBasePtr AvgPool3DGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                             const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr AvgPool3DGradInfer(const abstract::AnalysisEnginePtr &,
+                                                      const PrimitivePtr &primitive,
+                                                      const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

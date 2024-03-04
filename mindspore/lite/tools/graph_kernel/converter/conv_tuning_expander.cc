@@ -20,11 +20,12 @@
 #include <string>
 #include <vector>
 
+#include "backend/common/graph_kernel/core/graph_kernel_callback.h"
+#include "backend/common/graph_kernel/core/graph_kernel_utils.h"
+#include "backend/common/graph_kernel/graph_kernel_flags.h"
+#include "mindspore/core/ops/lite_ops.h"
 #include "nlohmann/json.hpp"
-#include "common/graph_kernel/core/graph_kernel_callback.h"
-#include "common/graph_kernel/core/graph_kernel_utils.h"
-#include "common/graph_kernel/graph_kernel_flags.h"
-#include "tools/graph_kernel/converter/akg/akg_build.h"
+#include "tools/graph_kernel/converter/akg/utils.h"
 #include "utils/anf_utils.h"
 #include "utils/file_utils.h"
 #include "utils/hash_set.h"
@@ -35,11 +36,14 @@ bool IsSameNumberList(const std::vector<int64_t> &vec, int64_t n) {
   return std::all_of(vec.begin(), vec.end(), [n](int64_t i) { return i == n; });
 }
 
-bool InvalidConvAttr(const std::vector<int64_t> &kernel_size, const std::vector<int64_t> &stride,
-                     const std::vector<int64_t> &dilation) {
+bool InvalidConvAttr(const std::vector<int64_t> &kernel_size, const std::vector<int64_t> &pad,
+                     const std::vector<int64_t> &stride, const std::vector<int64_t> &dilation) {
   constexpr int64_t one_kernel_size = 1;
   constexpr int64_t two_kernel_size = 2;
   constexpr int64_t winograd_kernel_size = 3;
+  if (!IsSameNumberList(pad, 0LL)) {
+    return true;
+  }
   if ((IsSameNumberList(kernel_size, one_kernel_size) || IsSameNumberList(kernel_size, two_kernel_size) ||
        IsSameNumberList(kernel_size, winograd_kernel_size)) &&
       IsSameNumberList(stride, 1LL) && IsSameNumberList(dilation, 1LL)) {
@@ -57,9 +61,10 @@ bool IsInvalidConv(const AnfNodePtr &node) {
   auto prim = GetCNodePrimitive(node);
   MS_EXCEPTION_IF_NULL(prim);
   const auto kernel_size = GetValue<std::vector<int64_t>>(prim->GetAttr("kernel_size"));
+  const auto pad = GetValue<std::vector<int64_t>>(prim->GetAttr("pad"));
   const auto stride = GetValue<std::vector<int64_t>>(prim->GetAttr("stride"));
   const auto dilation = GetValue<std::vector<int64_t>>(prim->GetAttr("dilation"));
-  if (InvalidConvAttr(kernel_size, stride, dilation)) {
+  if (InvalidConvAttr(kernel_size, pad, stride, dilation)) {
     return true;
   }
   return false;
@@ -134,7 +139,7 @@ nlohmann::json GenTuneInfo(const AnfNodePtr &conv_node, const std::map<AnfNodePt
 void TuneProcess(const std::string &json_file_name, const std::string &res_file_name, const std::string &akg_path) {
   std::ostringstream py_cmd;
   const auto &flags = GraphKernelFlags::GetInstance();
-  py_cmd << kAddAkgPath;
+  py_cmd << kAddMSLiteAkg;
   py_cmd << "import auto_tune\n";
   py_cmd << "auto_tune.tune_layout(\'" << json_file_name << "\', \'" << res_file_name << "\', "
          << flags.cpu_refer_thread_num << ")\n";

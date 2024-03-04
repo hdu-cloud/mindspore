@@ -1,4 +1,4 @@
-# Copyright 2022 Huawei Technologies Co., Ltd
+# Copyright 2022-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,8 +29,11 @@ import atexit
 import glob
 import json
 import os
+import queue
 import signal
 import stat
+import subprocess
+import warnings
 
 import gc
 import time
@@ -59,8 +62,9 @@ import mindspore.dataset.transforms.py_transforms as py_transforms
 import mindspore.dataset.transforms as transforms
 from mindspore.dataset.text.utils import SentencePieceModel, DE_C_INTER_SENTENCEPIECE_MODE
 from mindspore.parallel._utils import _get_device_num
+from mindspore.dataset.debug import DebugHook
 
-from . import samplers
+from mindspore.dataset.engine import samplers
 from .iterators import DictIterator, TupleIterator, DummyIterator, check_iterator_cleanup, _set_iterator_cleanup, \
     ITERATORS_LIST, _unset_iterator_cleanup
 from .queue import _SharedQueue, _Queue
@@ -69,7 +73,7 @@ from .validators import check_batch, check_shuffle, check_map, check_filter, che
     check_sync_wait, check_zip_dataset, check_add_column, check_concat, check_split, check_bucket_batch_by_length, \
     check_save, check_tuple_iterator, check_dict_iterator, check_schema, check_to_device_send, check_padded_batch
 from ..core.config import get_callback_timeout, _init_device_info, get_enable_shared_mem, get_num_parallel_workers, \
-    get_enable_watchdog, get_seed, set_seed
+    get_enable_watchdog, get_seed, set_seed, get_debug_mode, get_multiprocessing_timeout_interval, _get_debug_hook_list
 from ..core.datatypes import mstype_to_detype
 from ..core.validator_helpers import replace_none
 from ..core.py_util_helpers import ExceptionHandler
@@ -114,17 +118,18 @@ def _get_training_dataset():
     return _train_dataset
 
 
-def _reset_training_dataset(step, epoch):
+def _reset_training_dataset(global_step, dataset_size):
     """
-    Reset the training dataset to the given step and epoch number.
+    Reset the training dataset to the given global step.
 
     Args:
-        step (int): Global step number.
-        epoch (int): Global epoch number
+        global_step (int): Number of global steps that have completed training.
+            Dataset will provide data from its next step after reset.
+        dataset_size (int): Number of steps per epoch.
     """
     dataset = _get_training_dataset()
     if dataset is not None:
-        dataset._reset(step, epoch)  # pylint: disable=W0212
+        dataset._reset(global_step, dataset_size)  # pylint: disable=protected-access
     else:
         raise RuntimeError("Training dataset is not set.")
 
@@ -132,9 +137,9 @@ def _reset_training_dataset(step, epoch):
 class Shuffle(str, Enum):
     """Specify the shuffle mode.
 
-    - Shuffle.GLOBAL: Shuffle both the files and samples.
-    - Shuffle.FILES: Shuffle files only.
-    - Shuffle.INFILE: Shuffle data within each file.
+    - ``Shuffle.GLOBAL`` : Shuffle both the files and samples.
+    - ``Shuffle.FILES`` : Shuffle files only.
+    - ``Shuffle.INFILE`` : Shuffle data within each file.
     """
     GLOBAL: str = "global"
     FILES: str = "files"
@@ -204,7 +209,7 @@ def zip(datasets):
             The number of datasets must be more than 1.
 
     Returns:
-        Dataset, dataset zipped.
+        Dataset, a new dataset with the above operation applied.
 
     Raises:
         ValueError: If the number of datasets is 1.
@@ -212,6 +217,10 @@ def zip(datasets):
 
     Examples:
             >>> # Create a dataset which is the combination of dataset_1 and dataset_2
+            >>> import mindspore.dataset as ds
+            >>>
+            >>> dataset_1 = ds.GeneratorDataset([1], "column1")
+            >>> dataset_2 = ds.GeneratorDataset([2], "column2")
             >>> dataset = ds.zip((dataset_1, dataset_2))
     """
     if len(datasets) <= 1:
@@ -312,7 +321,7 @@ class Dataset:
 
     Args:
         num_parallel_workers (int, optional): Number of workers to process the dataset in parallel.
-            Default: None.
+            Default: ``None``.
     """
 
     def __init__(self, children=None, num_parallel_workers=None, cache=None):
@@ -342,6 +351,7 @@ class Dataset:
         self._repeat_count = None
         self._class_indexing = None
         self._sync = False
+        self._global_step = None
 
     @staticmethod
     def _get_operator_id(dataset):
@@ -378,36 +388,42 @@ class Dataset:
             _OP_PROCESS.update(generator_process)
         return op_name
 
-    def create_ir_tree(self):
+    def create_ir_tree(self, getter_mode=False):
         """
         Internal method to build an IR tree.
 
+        Args:
+            getter_mode (bool, optional): Whether to build IR tree in pull mode. Default: ``False``.
+
         Returns:
-            DatasetNode, the root node of the IR tree.
-            Dataset, the root dataset of the IR tree.
+            Union[DatasetNode, Dataset], the root node of the IR tree and the root dataset of the IR tree.
         """
         parent = self.parent
         self.parent = []
         dataset = copy.deepcopy(self)
         global _OP_NAME
         _OP_NAME = Dataset._get_operator_id(dataset)
-        ir_tree = dataset.parse_tree()
+        ir_tree = dataset.parse_tree(getter_mode)
         self.parent = parent
         _init_device_info()
         return ir_tree, dataset
 
-    def parse_tree(self):
+    def parse_tree(self, getter_mode=False):
         """
         Internal method to parse the API tree into an IR tree.
+
+        Args:
+            getter_mode (bool, optional): Whether to build IR tree in pull mode. Default: ``False``.
 
         Returns:
             DatasetNode, the root node of the IR tree.
         """
         if len(self.parent) > 1:
             raise ValueError("The data pipeline is not a tree (i.e., one node has 2 consumers)")
-        ir_children = [d.parse_tree() for d in self.children]
+        ir_children = [d.parse_tree(getter_mode) for d in self.children]
         # Bootstrap can only be performed on a copy of the original dataset node.
         # Bootstrap on original dataset node will make all iterators share the same process pool
+        self.pre_parse(getter_mode)
         self.iterator_bootstrap()
         ir_node = self.parse(ir_children)
         ir_node = self.post_parse(ir_node)
@@ -446,10 +462,16 @@ class Dataset:
         Serialize a pipeline into JSON string and dump into file if filename is provided.
 
         Args:
-            filename (str): filename of JSON file to be saved as. Default: ''.
+            filename (str): filename of JSON file to be saved as. Default: ``""``.
 
         Returns:
             str, JSON string of the pipeline.
+
+        Examples:
+            >>> import mindspore.dataset as ds
+            >>> mnist_dataset_dir = "/path/to/mnist_dataset_directory"
+            >>> dataset = ds.MnistDataset(dataset_dir=mnist_dataset_dir)
+            >>> dataset_json = dataset.to_json("/path/to/mnist_dataset_pipeline.json")
         """
         ir_tree, _ = self.create_ir_tree()
         return json.loads(ir_tree.to_json(filename))
@@ -482,7 +504,7 @@ class Dataset:
             element_length_function (Callable, optional): A function that takes in
                 M arguments where M = len(column_names) and returns an integer. If no value
                 provided, parameter M the len(column_names) must be 1, and the size of the first
-                dimension of that column will be taken as the length. Default: None.
+                dimension of that column will be taken as the length. Default: ``None``.
             pad_info (dict, optional): The information about how to batch each column. The key
                 corresponds to the column name, and the value must be a tuple of 2 elements.
                 The first element corresponds to the shape to pad to, and the second
@@ -490,21 +512,22 @@ class Dataset:
                 specified, then that column will be padded to the longest in the current
                 batch, and 0 will be used as the padding value. Any None dimensions will
                 be padded to the longest in the current batch, unless if
-                pad_to_bucket_boundary is True. If no padding is wanted, set pad_info
-                to None. Default: None.
-            pad_to_bucket_boundary (bool, optional): If True, will pad each None
-                dimension in pad_info to the bucket_boundary minus 1. If there are any
+                `pad_to_bucket_boundary` is ``True``. If no padding is wanted, set `pad_info`
+                to ``None``. Default: ``None``.
+            pad_to_bucket_boundary (bool, optional): If ``True``, will pad each None
+                dimension in `pad_info` to the bucket_boundary minus 1. If there are any
                 elements that fall into the last bucket, an error will occur.
-                Default: False.
-            drop_remainder (bool, optional): If True, will drop the last batch for each
-                bucket if it is not a full batch. Default: False.
+                Default: ``False``.
+            drop_remainder (bool, optional): If ``True``, will drop the last batch for each
+                bucket if it is not a full batch. Default: ``False``.
 
         Returns:
-            Dataset, dataset bucketed and batched by length.
+            Dataset, a new dataset with the above operation applied.
 
         Examples:
             >>> # Create a dataset where certain counts rows are combined into a batch
             >>> # and drops the last incomplete batch if there is one.
+            >>> import mindspore.dataset as ds
             >>> import numpy as np
             >>> def generate_2_columns(n):
             ...     for i in range(n):
@@ -546,15 +569,16 @@ class Dataset:
             batch_size (Union[int, Callable]): The number of rows each batch is created with. An
                 int or callable object which takes exactly 1 parameter, BatchInfo.
             drop_remainder (bool, optional): Determines whether or not to drop the last block
-                whose data row number is less than batch size. Default: False. If True, and if there are less
-                than batch_size rows available to make the last batch, then those rows will
-                be dropped and not propagated to the child node.
+                whose data row number is less than batch size. Default: ``False`` . If ``True`` ,
+                and if there are less than `batch_size` rows available to make the last batch,
+                then those rows will be dropped and not propagated to the child node.
             num_parallel_workers (int, optional): Number of workers(threads) to process the dataset in parallel.
-                Default: None.
+                Default: ``None`` .
             **kwargs:
 
                 - per_batch_map (Callable[[List[numpy.ndarray], ..., List[numpy.ndarray], BatchInfo], \
-                  (List[numpy.ndarray], ..., List[numpy.ndarray])], optional): Per batch map callable. Default: None.
+                  (List[numpy.ndarray], ..., List[numpy.ndarray])], optional): Per batch map callable.
+                  Default: ``None``.
                   A callable which takes (List[numpy.ndarray], ..., List[numpy.ndarray], BatchInfo) as input parameters.
                   Each list[numpy.ndarray] represents a batch of numpy.ndarray on a given column. The number of lists
                   should match with the number of entries in input_columns. The last parameter of the callable should
@@ -563,30 +587,43 @@ class Dataset:
                   as the input. output_columns is required if the number of output lists is different from input.
 
                 - input_columns (Union[str, list[str]], optional): List of names of the input columns. The size of
-                  the list should match with signature of per_batch_map callable. Default: None.
+                  the list should match with signature of `per_batch_map` callable. Default: ``None`` .
 
                 - output_columns (Union[str, list[str]], optional): List of names assigned to the columns
                   outputted by the last operation. This parameter is mandatory if len(input_columns) !=
                   len(output_columns). The size of this list must match the number of output
-                  columns of the last operation. Default: None, output columns will have the same
+                  columns of the last operation. Default: ``None`` , output columns will have the same
                   name as the input columns, i.e., the columns will be replaced.
 
-                - python_multiprocessing (bool, optional): Parallelize Python function per_batch_map with
-                  multi-processing. This option could be beneficial if the function is computational heavy.
-                  Default: False.
+                - python_multiprocessing (bool, optional): Parallelize Python function `per_batch_map` with
+                  multi-processing or multi-threading mode, ``True`` means multi-processing,
+                  ``False`` means multi-threading If `per_batch_map` is a I/O bound task, use
+                  multi-threading mode. If `per_batch_map` is a CPU bound task, it is recommended to use
+                  multi-processing mode. Default: ``False`` , use python multi-threading mode.
 
-                - max_rowsize(int, optional): Maximum size of row in MB that is used for shared memory allocation to
-                  copy data between processes. This is only used if python_multiprocessing is set to True. Default: 16.
+                - max_rowsize(Union[int, list[int]], optional): Maximum size of row in MB that is used for shared memory
+                  allocation to copy data between processes, the total occupied shared memory will increase as
+                  ``num_parallel_workers`` and :func:`mindspore.dataset.config.set_prefetch_size` increase. This is only
+                  used if python_multiprocessing is set to True. If it is an int value, it represents
+                  ``input_columns`` and ``output_columns`` use this value as the unit to create shared memory.
+                  If it is a list, the first element represents the ``input_columns`` use this value as the unit to
+                  create shared memory, and the second element represents ``output_columns`` use this value as the unit
+                  to create shared memory. Default: 16.
 
         Returns:
-            BatchDataset, dataset batched.
+            Dataset, a new dataset with the above operation applied.
 
         Examples:
-            >>> # 1) Create a dataset where every 100 rows are combined into a batch
+            >>> # 1) Create a dataset where every 5 rows are combined into a batch
             >>> # and drops the last incomplete batch if there is one.
-            >>> dataset = dataset.batch(100, True)
+            >>> import mindspore.dataset as ds
+            >>> from PIL import Image
             >>>
-            >>> # 2）resize image according to its batch number, if it's 5-th batch, resize to (5^2, 5^2) = (25, 25)
+            >>> cifar10_dataset_dir = "/path/to/cifar10_dataset_directory"
+            >>> dataset = ds.Cifar10Dataset(dataset_dir=cifar10_dataset_dir, num_samples=10)
+            >>> dataset = dataset.batch(5, True)
+            >>>
+            >>> # 2) resize image according to its batch number, if it's 5-th batch, resize to (5^2, 5^2) = (25, 25)
             >>> def np_resize(col, BatchInfo):
             ...     output = col.copy()
             ...     s = (BatchInfo.get_batch_num() + 1) ** 2
@@ -599,7 +636,7 @@ class Dataset:
             ...     return (output,)
             >>> dataset = dataset.batch(batch_size=8, input_columns=["image"], per_batch_map=np_resize)
             >>>
-            >>> # 3）Create a dataset where its batch size is dynamic
+            >>> # 3) Create a dataset where its batch size is dynamic
             >>> # Define a callable batch size function and let batch size increase 1 each time.
             >>> def add_one(BatchInfo):
             ...     return BatchInfo.get_batch_num() + 1
@@ -624,11 +661,11 @@ class Dataset:
             batch_size (Union[int, Callable]): The number of rows each batch is created with. An
                 int or callable object which takes exactly 1 parameter, BatchInfo.
             drop_remainder (bool, optional): Determines whether or not to drop the last block
-                whose data row number is less than batch size. Default: False. If True, and if there are less
-                than batch_size rows available to make the last batch, then those rows will
+                whose data row number is less than batch size. Default: ``False``. If ``True``, and if there
+                are less than batch_size rows available to make the last batch, then those rows will
                 be dropped and not propagated to the child node.
             num_parallel_workers (int, optional): Number of workers(threads) to process the dataset in parallel.
-                Default: None.
+                Default: ``None``.
             pad_info (dict, optional): The information about how to batch each column. The key
                 corresponds to the column name, and the value must be a tuple of 2 elements.
                 The first element corresponds to the shape to pad to, and the second
@@ -636,21 +673,24 @@ class Dataset:
                 specified, then that column will be padded to the longest in the current
                 batch, and 0 will be used as the padding value. Any None dimensions will
                 be padded to the longest in the current batch, unless if
-                pad_to_bucket_boundary is True. If no padding is wanted, set pad_info
-                to None. Default: None.
+                pad_to_bucket_boundary is True. If no padding is wanted, set `pad_info`
+                to ``None``. Default: ``None``.
 
         Returns:
-            PaddedBatchDataset, dataset batched.
+            Dataset, a new dataset with the above operation applied.
 
         Examples:
             >>> # 1) Pad every sample to the largest sample's shape and batch the samples
-            >>> dataset = dataset.padded_batch(100, True, pad_info={})
+            >>> import mindspore.dataset as ds
+            >>> dataset = ds.NumpySlicesDataset([[1], [1, 2], [1, 2, 3], [1, 2, 3, 4]], "column1")
+            >>> dataset = dataset.padded_batch(2, True, pad_info={})
             >>>
-            >>> # 2) Create a dataset where every 100 rows are combined into a batch
+            >>> # 2) Create a dataset where every 3 rows are combined into a batch
             >>> # and drops the last incomplete batch if there is one.
-            >>> dataset = dataset.padded_batch(100, True)
+            >>> dataset = ds.NumpySlicesDataset([i for i in range(10)], "column1")
+            >>> dataset = dataset.padded_batch(3, True)
             >>>
-            >>> # 3）Create a dataset where its batch size is dynamic
+            >>> # 3) Create a dataset where its batch size is dynamic
             >>> # Define a callable batch size function and let batch size increase 1 each time.
             >>> def add_one(BatchInfo):
             ...     return BatchInfo.get_batch_num() + 1
@@ -665,16 +705,19 @@ class Dataset:
 
         Args:
             condition_name (str): The condition name that is used to toggle sending next row.
-            num_batch (int): the number of batches without blocking at the start of each epoch. Default: 1.
-            callback (function): The callback function that will be invoked when sync_update is called. Default: None.
+            num_batch (int): the number of batches without blocking at the start of each epoch.
+                Default: ``1``.
+            callback (function): The callback function that will be invoked when sync_update is called.
+                Default: ``None``.
 
         Returns:
-            SyncWaitDataset, dataset added a blocking condition.
+            Dataset, a new dataset with the above operation applied.
 
         Raises:
             RuntimeError: If condition name already exists.
 
         Examples:
+            >>> import mindspore.dataset as ds
             >>> import numpy as np
             >>> def gen():
             ...     for i in range(100):
@@ -726,15 +769,18 @@ class Dataset:
                 dataset will result in a global shuffle.
 
         Returns:
-            Dataset, dataset shuffled.
+            Dataset, a new dataset with the above operation applied.
 
         Raises:
             RuntimeError: If exist sync operations before shuffle.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
-            >>> # Optionally set the seed for the first epoch
+            >>> import mindspore.dataset as ds
+            >>> dataset = ds.GeneratorDataset([i for i in range(10)], "column1")
+            >>>
+            >>> # Optionally set the seed for fixed randomness
             >>> ds.config.set_seed(58)
+            >>>
             >>> # Create a shuffled dataset using a shuffle buffer of size 4
             >>> dataset = dataset.shuffle(4)
         """
@@ -749,9 +795,10 @@ class Dataset:
                 return a `Dataset` .
 
         Returns:
-            Dataset, dataset applied by the function.
+            Dataset, a new dataset with the above operation applied.
 
         Examples:
+            >>> import mindspore.dataset as ds
             >>> # 1) flat_map on one column dataset
             >>> dataset = ds.NumpySlicesDataset([[0, 1], [2, 3]], shuffle=False)
             >>>
@@ -811,11 +858,11 @@ class Dataset:
         `output_columns` , and if not specified, the column name of output column is same as that of `input_columns` .
 
         - If you use transformations (
-          `vision transform <https://mindspore.cn/docs/en/r2.0.0-alpha/api_python/mindspore.\
+          `vision transform <https://mindspore.cn/docs/en/master/api_python/mindspore.\
           dataset.transforms.html#module-mindspore.dataset.vision>`_ ,
-          `nlp transform <https://mindspore.cn/docs/en/r2.0.0-alpha/api_python/mindspore.\
+          `nlp transform <https://mindspore.cn/docs/en/master/api_python/mindspore.\
           dataset.transforms.html#module-mindspore.dataset.text>`_ ,
-          `audio transform <https://mindspore.cn/docs/en/r2.0.0-alpha/api_python/mindspore.\
+          `audio transform <https://mindspore.cn/docs/en/master/api_python/mindspore.\
           dataset.transforms.html#module-mindspore.dataset.audio>`_ )
           provided by mindspore dataset, please use the following parameters:
 
@@ -830,31 +877,37 @@ class Dataset:
                 applied on the dataset. Operations are applied in the order they appear in this list.
             input_columns (Union[str, list[str]], optional): List of the names of the columns that will be passed to
                 the first operation as input. The size of this list must match the number of
-                input columns expected by the first operation. Default: None, the first
+                input columns expected by the first operation. Default: ``None``, the first
                 operation will be passed however many columns that are required, starting from
                 the first column.
             output_columns (Union[str, list[str]], optional): List of names assigned to the columns outputted by
                 the last operation. This parameter is mandatory if len(input_columns) !=
                 len(output_columns). The size of this list must match the number of output
-                columns of the last operation. Default: None, output columns will have the same
+                columns of the last operation. Default: ``None``, output columns will have the same
                 name as the input columns, i.e., the columns will be replaced.
             num_parallel_workers (int, optional): Number of threads used to process the dataset in
-                parallel. Default: None, the value from the configuration will be used.
+                parallel. Default: ``None``, the value from the configuration will be used.
             **kwargs:
 
                 - python_multiprocessing (bool, optional): Parallelize Python operations with multiple worker processes.
-                  This option could be beneficial if the Python operation is computational heavy. Default: False.
+                  This option could be beneficial if the Python operation is computational heavy. Default: ``False``.
 
-                - max_rowsize (int, optional): Maximum size of row in MB that is used for shared memory allocation to
-                  copy data between processes.  This is only used if python_multiprocessing is set to True. Default: 16.
+                - max_rowsize (Union[int, list[int]], optional): Maximum size of row in MB that is used for shared
+                  memory allocation to copy data between processes, the total occupied shared memory will increase as
+                  ``num_parallel_workers`` and :func:`mindspore.dataset.config.set_prefetch_size` increase. This is only
+                  used if python_multiprocessing is set to True. If it is an int value, it represents
+                  ``input_columns`` and ``output_columns`` use this value as the unit to create shared memory.
+                  If it is a list, the first element represents the ``input_columns`` use this value as the unit to
+                  create shared memory, and the second element represents ``output_columns`` use this value as the unit
+                  to create shared memory. Default: 16.
 
                 - cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing.
-                  Default: None, which means no cache is used.
+                  Default: ``None``, which means no cache is used.
 
                 - callbacks (DSCallback, list[DSCallback], optional): List of Dataset callbacks to be called.
-                  Default: None.
+                  Default: ``None``.
 
-                - offload (bool, optional): Flag to indicate whether offload is used. Default: None.
+                - offload (bool, optional): Flag to indicate whether offload is used. Default: ``None``.
 
         Note:
             - Input `operations` accepts TensorOperations defined in mindspore.dataset part, plus user-defined
@@ -863,17 +916,21 @@ class Dataset:
               `operations` .
 
         Returns:
-            Dataset, dataset after mapping operation.
+            Dataset, a new dataset with the above operation applied.
 
         Examples:
+            >>> import mindspore.dataset as ds
+            >>> import mindspore.dataset.vision as vision
             >>> # dataset is an instance of Dataset which has 2 columns, "image" and "label".
             >>> # image is of type bytes type which can be decoded to RGB
             >>> # label is of type int32
+            >>> cifar10_dataset_dir = "/path/to/cifar10_dataset_directory"
+            >>> dataset = ds.Cifar10Dataset(dataset_dir=cifar10_dataset_dir)
             >>>
             >>> # Define two operations, where each operation accepts 1 input column and outputs 1 column.
-            >>> decode_op = c_vision.Decode(rgb=True)
-            >>> random_jitter_op = c_vision.RandomColorAdjust(brightness=(0.8, 0.8), contrast=(1, 1),
-            ...                                               saturation=(1, 1), hue=(0, 0))
+            >>> decode_op = vision.Decode(to_pil=False)
+            >>> random_jitter_op = vision.RandomColorAdjust(brightness=(0.8, 0.8), contrast=(1, 1),
+            ...                                             saturation=(1, 1), hue=(0, 0))
             >>>
             >>> # 1) Simple map example.
             >>>
@@ -939,16 +996,19 @@ class Dataset:
         Args:
             predicate (callable): Python callable which returns a boolean value. If False then filter the element.
             input_columns (Union[str, list[str]], optional): List of names of the input columns. If not provided
-                or provided with None, the predicate will be applied on all columns in the dataset. Default: None.
+                or provided with ``None``, the predicate will be applied on all columns in the dataset.
+                Default: ``None``.
             num_parallel_workers (int, optional): Number of workers to process the dataset
-                in parallel. Default: None.
+                in parallel. Default: ``None``.
 
         Returns:
-            Dataset, dataset filtered.
+            Dataset, a new dataset with the above operation applied.
 
         Examples:
-            >>> # generator data(0 ~ 63)
+            >>> # generator data(0 ~ 19)
             >>> # filter the data that greater than or equal to 11
+            >>> import mindspore.dataset as ds
+            >>> dataset = ds.GeneratorDataset([i for i in range(20)], "data")
             >>> dataset = dataset.filter(predicate=lambda data: data < 11, input_columns = ["data"])
         """
         return FilterDataset(self, predicate, input_columns, num_parallel_workers)
@@ -956,20 +1016,21 @@ class Dataset:
     @check_repeat
     def repeat(self, count=None):
         """
-        Repeat this dataset `count` times. Repeat infinitely if the count is None or -1.
+        Repeat this dataset `count` times. Repeat infinitely if the `count` is ``None`` or ``-1``.
 
         Note:
             The order of using repeat and batch reflects the number of batches. It is recommended that
             the repeat operation is used after the batch operation.
 
         Args:
-            count (int): Number of times the dataset is going to be repeated. Default: None.
+            count (int): Number of times the dataset is going to be repeated. Default: ``None``.
 
         Returns:
-            Dataset, dataset repeated.
+            Dataset, a new dataset with the above operation applied.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
+            >>> import mindspore.dataset as ds
+            >>> dataset = ds.GeneratorDataset([i for i in range(10)], "column1")
             >>>
             >>> # Create a dataset where the dataset is repeated for 50 epochs
             >>> dataset = dataset.repeat(50)
@@ -995,11 +1056,12 @@ class Dataset:
             count (int): Number of elements in the dataset to be skipped.
 
         Returns:
-            Dataset, dataset that containing rows like origin rows subtract skipped rows.
+            Dataset, a new dataset with the above operation applied.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
-            >>> # Create a dataset which skips first 3 elements from data
+            >>> import mindspore.dataset as ds
+            >>> dataset = ds.GeneratorDataset([i for i in range(10)], "column1")
+            >>> # Skip first 3 elements of dataset and retain 7 elements.
             >>> dataset = dataset.skip(3)
         """
         return SkipDataset(self, count)
@@ -1007,23 +1069,28 @@ class Dataset:
     @check_take
     def take(self, count=-1):
         """
-        Takes at most given numbers of elements from the dataset.
-
-        Note:
-            1. If count is greater than the number of elements in the dataset or equal to -1,
-               all the elements in dataset will be taken.
-            2. The order of using take and batch matters. If take is before batch operation,
-               then take the given number of rows; otherwise take the given number of batches.
+        Take the first specified number of samples from the dataset.
 
         Args:
-            count (int, optional): Number of elements to be taken from the dataset. Default: -1.
+            count (int, optional): The desired number of samples to take. If the value exceeds
+                the total number of samples in the dataset, all data will be returned.
+                Default: ``-1`` , will return all data.
+
+        Note:
+            When there are operations that will change the number of samples of the dataset in
+            the data pipeline, the location of the `take` operation can change its effect.
+            For example, `batch` operation will combine the successive samples of the specified
+            `batch_size` into 1 sample, so `.batch(batch_size).take(1)` will be equivalent to
+            `.take(batch_size).batch(batch_size)`.
 
         Returns:
-            Dataset, dataset taken.
+            Dataset, a new dataset with the above operation applied.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
-            >>> # Create a dataset where the dataset includes 50 elements.
+            >>> import mindspore.dataset as ds
+            >>> mnist_dataset_dir = "/path/to/mnist_dataset_directory"
+            >>> dataset = ds.MnistDataset(dataset_dir=mnist_dataset_dir)
+            >>> # Take 50 samples from MNIST dataset.
             >>> dataset = dataset.take(50)
         """
         return TakeDataset(self, count)
@@ -1104,7 +1171,7 @@ class Dataset:
                 - The sum of split sizes > K, the difference of sigma(round(fi * K)) - K will be removed from the first
                   large enough split such that it will have at least 1 row after removing the difference.
 
-            randomize (bool, optional): Determines whether or not to split the data randomly. Default: True.
+            randomize (bool, optional): Determines whether or not to split the data randomly. Default: ``True``.
                 If True, the data will be randomly split. Otherwise, each split will be created with
                 consecutive rows from the dataset.
 
@@ -1115,7 +1182,7 @@ class Dataset:
                will be different in each epoch.
 
         Returns:
-            tuple(Dataset), a tuple of datasets that have been split.
+            Tuple[Dataset], a tuple of new datasets split from the original one.
 
         Raises:
             RuntimeError: If get_dataset_size returns None or is not supported for this dataset.
@@ -1127,9 +1194,9 @@ class Dataset:
                 floats don't sum to 1.
 
         Examples:
-            >>> # TextFileDataset is not a mappable dataset, so this non-optimized split will be called.
-            >>> # Since many datasets have shuffle on by default, set shuffle to False if split will be called!
-            >>> dataset = ds.TextFileDataset(text_file_dataset_dir, shuffle=False)
+            >>> # Split the data into train part and test part.
+            >>> import mindspore.dataset as ds
+            >>> dataset = ds.GeneratorDataset([i for i in range(10)], "column1")
             >>> train_dataset, test_dataset = dataset.split([0.9, 0.1])
         """
         if self.is_shuffled():
@@ -1170,14 +1237,17 @@ class Dataset:
                 to be zipped together with this dataset.
 
         Returns:
-            Dataset, dataset zipped.
+            Dataset, a new dataset with the above operation applied.
 
         Raises:
             TypeError: The parameter is not dataset object or tuple of dataset objects.
 
         Examples:
-            >>> # Create a dataset which is the combination of dataset and dataset_1
-            >>> dataset = dataset.zip(dataset_1)
+            >>> # Create a dataset which is the combination of dataset_1 and dataset_2
+            >>> import mindspore.dataset as ds
+            >>> dataset_1 = ds.GeneratorDataset([1, 2, 3], "column1")
+            >>> dataset_2 = ds.GeneratorDataset([1, 2, 3], "column2")
+            >>> dataset = dataset_1.zip(dataset_2)
         """
         if isinstance(datasets, tuple):
             datasets = (self, *datasets)
@@ -1193,6 +1263,12 @@ class Dataset:
         Concatenate the dataset objects in the input list.
         Performing "+" operation on dataset objects can achieve the same effect.
 
+        For a dataset concatenated by many other dataset objects, it returns the data in the order of
+        datasets passed in. If you want to change the data order(such as random selection from each dataset
+        instead of in sequence), apply `use_sampler` method on the concatenated dataset object.
+        Currently `use_sampler` supports `dataset.DistributedSampler` for sharding selection from each dataset
+        or `dataset.RandomSampler` for random selection from each dataset, see examples below.
+
         Note:
             The column name, and rank and type of the column data must be the same in the input datasets.
 
@@ -1201,13 +1277,45 @@ class Dataset:
                 to be concatenated together with this dataset.
 
         Returns:
-            Dataset, dataset concatenated.
+            Dataset, a new dataset with the above operation applied.
 
         Examples:
+            >>> import mindspore.dataset as ds
+            >>> dataset_1 = ds.GeneratorDataset([1, 2, 3], "column1", shuffle=False)
+            >>> dataset_2 = ds.GeneratorDataset([4, 5, 6], "column1", shuffle=False)
+            >>>
             >>> # Create a dataset by concatenating dataset_1 and dataset_2 with "+" operator
             >>> dataset = dataset_1 + dataset_2
             >>> # Create a dataset by concatenating dataset_1 and dataset_2 with concat operation
             >>> dataset = dataset_1.concat(dataset_2)
+            >>>
+            >>> # Check the data order of dataset
+            >>> dataset_1 = ds.GeneratorDataset([1, 2, 3], "column1", shuffle=False)
+            >>> dataset_2 = ds.GeneratorDataset([4, 5, 6], "column1", shuffle=False)
+            >>> dataset = dataset_1 + dataset_2
+            >>> result = list(dataset)
+            >>> # [[Tensor(shape=[], dtype=Int64, value= 1)], [Tensor(shape=[], dtype=Int64, value= 2)],
+            >>> #  [Tensor(shape=[], dtype=Int64, value= 3)], [Tensor(shape=[], dtype=Int64, value= 4)],
+            >>> #  [Tensor(shape=[], dtype=Int64, value= 5)], [Tensor(shape=[], dtype=Int64, value= 6)]]
+            >>>
+            >>> # Change the data order of concatenated dataset with sharding selection
+            >>> dataset_1 = ds.GeneratorDataset([1, 2, 3], "column1", shuffle=False)
+            >>> dataset_2 = ds.GeneratorDataset([4, 5, 6], "column1", shuffle=False)
+            >>> dataset = dataset_1.concat(dataset_2)
+            >>> dataset.use_sampler(ds.DistributedSampler(num_shards=2, shard_id=1, shuffle=False))
+            >>> result = list(dataset)
+            >>> # [[Tensor(shape=[], dtype=Int64, value= 2)], [Tensor(shape=[], dtype=Int64, value= 4)],
+            >>> #  [Tensor(shape=[], dtype=Int64, value= 6)]]
+            >>>
+            >>> # Change the data order of concatenated dataset with random selection
+            >>> dataset_1 = ds.GeneratorDataset([1, 2, 3], "column1", shuffle=False)
+            >>> dataset_2 = ds.GeneratorDataset([4, 5, 6], "column1", shuffle=False)
+            >>> dataset = dataset_1.concat(dataset_2)
+            >>> dataset.use_sampler(ds.RandomSampler())
+            >>> result = list(dataset)
+            >>> # [[Tensor(shape=[], dtype=Int64, value= 1)], [Tensor(shape=[], dtype=Int64, value= 4)],
+            >>> #  [Tensor(shape=[], dtype=Int64, value= 2)], [Tensor(shape=[], dtype=Int64, value= 5)],
+            >>> #  [Tensor(shape=[], dtype=Int64, value= 6)], [Tensor(shape=[], dtype=Int64, value= 3)]]
         """
         if isinstance(datasets, Dataset):
             datasets = [self] + [datasets]
@@ -1227,16 +1335,17 @@ class Dataset:
             output_columns (Union[str, list[str]]): List of names of the output columns.
 
         Returns:
-            Dataset, dataset renamed.
+            Dataset, a new dataset with the above operation applied.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
+            >>> import mindspore.dataset as ds
             >>> input_columns = ["input_col1", "input_col2", "input_col3"]
             >>> output_columns = ["output_col1", "output_col2", "output_col3"]
             >>>
-            >>> # Create a dataset where input_col1 is renamed to output_col1, and
-            >>> # input_col2 is renamed to output_col2, and input_col3 is renamed
-            >>> # to output_col3.
+            >>> # Create a dataset with 3 columns
+            >>> dataset = ds.GeneratorDataset([(1, 2, 3), (3, 4, 5), (5, 6, 7)], column_names=input_columns)
+            >>>
+            >>> # Rename "input_col1" to "output_col1", "input_col2" to "output_col2", "input_col3" to "output_col3"
             >>> dataset = dataset.rename(input_columns=input_columns, output_columns=output_columns)
         """
 
@@ -1252,13 +1361,15 @@ class Dataset:
             columns(Union[str, list[str]]): List of names of the columns to project.
 
         Returns:
-            Dataset, dataset projected.
+            Dataset, a new dataset with the above operation applied.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
-            >>> columns_to_project = ["column3", "column1", "column2"]
+            >>> import mindspore.dataset as ds
+            >>> # Create a dataset with 3 columns
+            >>> input_columns = ["column1", "column2", "column3"]
+            >>> dataset = ds.GeneratorDataset([(1, 2, 3), (3, 4, 5), (5, 6, 7)], column_names=input_columns)
             >>>
-            >>> # Create a dataset that consists of column3, column1, column2
+            >>> columns_to_project = ["column3", "column1", "column2"]
             >>> # in that order, regardless of the original order of columns.
             >>> dataset = dataset.project(columns=columns_to_project)
         """
@@ -1274,10 +1385,11 @@ class Dataset:
                                    return a preprocessed `Dataset` .
 
         Returns:
-            Dataset, dataset applied by the function.
+            Dataset, a new dataset with the above operation applied.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
+            >>> import mindspore.dataset as ds
+            >>> dataset = ds.GeneratorDataset([i for i in range(10)], "column1")
             >>>
             >>> # Declare an apply_func function which returns a Dataset object
             >>> def apply_func(data):
@@ -1301,31 +1413,45 @@ class Dataset:
         return dataset
 
     @check_device_send
-    def device_que(self, send_epoch_end=True, create_data_info_queue=False):
+    def device_que(self, send_epoch_end=True, create_data_info_queue=False, queue_name=""):
         """
         Return a transferred Dataset that transfers data through a device.
 
         Args:
-            send_epoch_end (bool, optional): Whether to send end of sequence to device or not. Default: True.
+            send_epoch_end (bool, optional): Whether to send end of sequence to device or not.
+                Default: ``True``.
             create_data_info_queue (bool, optional): Whether to create queue which stores
-                types and shapes of data or not. Default: False.
+                types and shapes of data or not. Default: ``False``.
+            queue_name (str, optional): Name of queue which connects dataset processing and model
+                computing. Default: ``""``.
 
         Note:
             If device is Ascend, features of data will be transferred one by one. The limitation
             of data transmission per time is 256M.
 
         Returns:
-            Dataset, dataset for transferring.
+            Dataset, a new dataset with the above operation applied.
+
+        Examples:
+            >>> import mindspore.dataset as ds
+            >>> import time
+            >>>
+            >>> data = ds.TFRecordDataset('/path/to/TF_FILES', '/path/to/TF_SCHEMA_FILE', shuffle=ds.Shuffle.FILES)
+            >>> data = data.device_que()
+            >>> data.send()
+            >>> time.sleep(0.1)
+            >>> data.stop_send()
         """
-        return TransferDataset(self, send_epoch_end, create_data_info_queue)
+        return TransferDataset(self, send_epoch_end, create_data_info_queue, queue_name)
 
     @check_save
     def save(self, file_name, num_files=1, file_type='mindrecord'):
         """
         Save the dynamic data processed by the dataset pipeline in common dataset format.
-        Supported dataset formats: `mindrecord` only. And you can use `MindDataset` API to read the saved file(s).
+        Supported dataset formats: ``'mindrecord'`` only. And you can use
+        :class:`mindspore.dataset.MindDataset` API to read the saved file(s).
 
-        Implicit type casting exists when saving data as `mindrecord` . The transform table shows how to do
+        Implicit type casting exists when saving data as ``'mindrecord'`` . The transform table shows how to do
         type casting.
 
         .. list-table:: Implicit Type Casting when Saving as `mindrecord`
@@ -1376,19 +1502,30 @@ class Dataset:
              - Multi-dimensional string not supported
 
         Note:
-            1. To save the samples in order, set dataset's shuffle to False and num_files to 1.
+            1. To save the samples in order, set dataset's `shuffle` to ``False`` and `num_files` to ``1``.
             2. Before calling the function, do not use batch operation, repeat operation or data augmentation operations
                with random attribute in map operation.
             3. When array dimension is variable, one-dimensional arrays or
                multi-dimensional arrays with variable dimension 0 are supported.
-            4. Mindrecord does not support uint64, multi-dimensional uint8(drop dimension) nor
+            4. MindRecord does not support uint64, multi-dimensional uint8(drop dimension) nor
                multi-dimensional string.
 
         Args:
             file_name (str): Path to dataset file.
-            num_files (int, optional): Number of dataset files. Default: 1.
-            file_type (str, optional): Dataset format. Default: 'mindrecord'.
+            num_files (int, optional): Number of dataset files. Default: ``1`` .
+            file_type (str, optional): Dataset format. Default: ``'mindrecord'`` .
 
+        Examples:
+            >>> import mindspore.dataset as ds
+            >>> import numpy as np
+            >>>
+            >>> def generator_1d():
+            ...     for i in range(10):
+            ...         yield (np.array([i]),)
+            >>>
+            >>> # apply dataset operations
+            >>> d1 = ds.GeneratorDataset(generator_1d, ["data"], shuffle=False)
+            >>> d1.save('/path/to/save_file')
         """
         ir_tree, api_tree = self.create_ir_tree()
 
@@ -1412,19 +1549,21 @@ class Dataset:
 
         Args:
             columns (list[str], optional): List of columns to be used to specify the order of columns.
-                Default: None, means all columns.
+                Default: ``None``, means all columns.
             num_epochs (int, optional): Maximum number of epochs that iterator can be iterated.
-                Default: -1, iterator can be iterated infinite number of epochs.
+                Default: ``-1``, iterator can be iterated infinite number of epochs.
             output_numpy (bool, optional): Whether or not to output NumPy datatype.
-                If output_numpy=False, iterator will output MSTensor. Default: False.
-            do_copy (bool, optional): when output data type is mindspore.Tensor,
-                use this param to select the conversion method, only take False for better performance. Default: True.
+                If `output_numpy` is ``False``, iterator will output MSTensor. Default: ``False``.
+            do_copy (bool, optional): When output data type is :class:`mindspore.Tensor`,
+                use this param to select the conversion method, only take False for better performance.
+                Default: ``True``.
 
         Returns:
-            Iterator, tuple iterator over the dataset.
+            Iterator, a dataset iterator that returns data of type Tuple.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
+            >>> import mindspore.dataset as ds
+            >>> dataset = ds.GeneratorDataset([i for i in range(10)], "column1")
             >>> iterator = dataset.create_tuple_iterator()
             >>> for item in iterator:
             ...     # item is a list
@@ -1440,21 +1579,25 @@ class Dataset:
         return TupleIterator(self, columns, num_epochs, output_numpy, do_copy)
 
     @check_dict_iterator
-    def create_dict_iterator(self, num_epochs=-1, output_numpy=False):
+    def create_dict_iterator(self, num_epochs=-1, output_numpy=False, do_copy=True):
         """
         Create an iterator over the dataset. The data retrieved will be a dictionary datatype.
 
         Args:
             num_epochs (int, optional): Maximum number of epochs that iterator can be iterated.
-                Default: -1, iterator can be iterated infinite number of epochs.
+                Default: ``-1`` , iterator can be iterated infinite number of epochs.
             output_numpy (bool, optional): Whether or not to output NumPy datatype,
-                if output_numpy=False, iterator will output MSTensor. Default: False.
+                if `output_numpy` is ``False``, iterator will output MSTensor. Default: ``False`` .
+            do_copy (bool, optional): When output data type is :class:`mindspore.Tensor`,
+                use this param to select the conversion method, only take False for better performance.
+                Default: ``True`` .
 
         Returns:
-            Iterator, dictionary iterator over the dataset.
+            Iterator, a dataset iterator that returns data of type Dict.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
+            >>> import mindspore.dataset as ds
+            >>> dataset = ds.GeneratorDataset([i for i in range(10)], "column1")
             >>> iterator = dataset.create_dict_iterator()
             >>> for item in iterator:
             ...     # item is a dict
@@ -1467,7 +1610,7 @@ class Dataset:
 
         if Dataset._noop_mode():
             return DummyIterator(self, 'dict', output_numpy)
-        return DictIterator(self, num_epochs, output_numpy)
+        return DictIterator(self, num_epochs, output_numpy, do_copy)
 
     def __iter__(self):
         """Create an iterator over the dataset."""
@@ -1483,7 +1626,8 @@ class Dataset:
             int, tuple of the input index information.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
+            >>> import mindspore.dataset as ds
+            >>> dataset = ds.GeneratorDataset([i for i in range(10)], "column1")
             >>> # set input_indexs
             >>> dataset.input_indexs = 10
             >>> print(dataset.input_indexs)
@@ -1510,11 +1654,14 @@ class Dataset:
     def copy_batch_size(self, value):
         self._batch_size = value
 
-    def _init_tree_getters(self):
+    def _init_tree_getters(self, getter_mode=True):
         """
         Get pipeline information.
+
+        Args:
+            getter_mode (bool, optional): Whether to build IR tree in pull mode. Default: ``True``.
         """
-        ir_tree, api_tree = self.create_ir_tree()
+        ir_tree, api_tree = self.create_ir_tree(getter_mode)
 
         runtime_context = cde.PythonRuntimeContext()
         runtime_context.Init()
@@ -1544,8 +1691,12 @@ class Dataset:
             list, list of column names in the dataset.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
+            >>> import mindspore.dataset as ds
+            >>> dataset = ds.GeneratorDataset([i for i in range(10)], "column1")
             >>> col_names = dataset.get_col_names()
+            >>> print(col_names)
+            ['column1']
+
         """
         if self._col_names is None:
             runtime_getter = self._init_tree_getters()
@@ -1559,22 +1710,26 @@ class Dataset:
         Get the shapes of output data.
 
         Args:
-            estimate (bool): If `estimate` is False, will return the shapes of first data row.
+            estimate (bool): If `estimate` is ``False`` , will return the shapes of first data row.
                 Otherwise, will iterate the whole dataset and return the estimated shapes of data row,
-                where dynamic shape is marked as None (used in dynamic data shapes scenario). Default: False.
+                where dynamic shape is marked as None (used in dynamic data shapes scenario).
+                Default: ``False`` .
 
         Returns:
             list, list of shapes of each column.
 
         Examples:
+            >>> import mindspore.dataset as ds
             >>> import numpy as np
             >>>
             >>> def generator1():
             ...     for i in range(1, 100):
-            ...         yield np.ones((16, i, 83)), np.array(i)
+            ...         yield np.ones((16, 83, 83)), np.array([i])
             >>>
             >>> dataset = ds.GeneratorDataset(generator1, ["data1", "data2"])
             >>> output_shapes = dataset.output_shapes()
+            >>> print(output_shapes)
+            [[16, 83, 83], [1]]
         """
         # cache single shape
         if not estimate and self.saved_output_shapes is not None:
@@ -1609,8 +1764,17 @@ class Dataset:
             list, list of data types.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
+            >>> import mindspore.dataset as ds
+            >>> import numpy as np
+            >>>
+            >>> def generator1():
+            ...     for i in range(1, 100):
+            ...         yield np.ones((16, 83, 83)).astype(np.float32), np.array([i]).astype(np.int32)
+            >>>
+            >>> dataset = ds.GeneratorDataset(generator1, ["data1", "data2"])
             >>> output_types = dataset.output_types()
+            >>> print(output_types)
+            [dtype('float32'), dtype('int32')]
         """
         if self.saved_output_types is None:
             runtime_getter = self._init_tree_getters()
@@ -1634,8 +1798,18 @@ class Dataset:
             int, number of batches.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
+            >>> import mindspore.dataset as ds
+            >>> import numpy as np
+            >>>
+            >>> # A generator return 66 samples
+            >>> def generator1():
+            ...     for i in range(66):
+            ...         yield np.ones((16, 83, 83)), np.array([i])
+            >>>
+            >>> dataset = ds.GeneratorDataset(generator1, ["data1", "data2"])
             >>> dataset_size = dataset.get_dataset_size()
+            >>> print(dataset_size)
+            66
         """
         if self.dataset_size is None:
             runtime_getter = self.__init_size_getter()
@@ -1653,7 +1827,11 @@ class Dataset:
             int, number of classes.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
+            >>> import mindspore.dataset as ds
+            >>> # Read image files
+            >>> image_folder_dataset_dir = "/path/to/image_folder_dataset_directory"
+            >>> dataset = ds.ImageFolderDataset(dataset_dir=image_folder_dataset_dir)
+            >>> # Check how many classes exist in image folder
             >>> num_classes = dataset.num_classes()
         """
         if self._num_classes is None:
@@ -1686,9 +1864,40 @@ class Dataset:
         Args:
             condition_name (str): The condition name that is used to toggle sending next row.
             num_batch (Union[int, None]): The number of batches (rows) that are released.
-                When num_batch is None, it will default to the number specified by the
-                sync_wait operation. Default: None.
-            data (Any): The data passed to the callback, user defined. Default: None.
+                When `num_batch` is ``None``, it will default to the number specified by the
+                `sync_wait` operation. Default: ``None``.
+            data (Any): The data passed to the callback, user defined. Default: ``None``.
+
+        Examples:
+            >>> import numpy as np
+            >>> import mindspore.dataset as ds
+            >>>
+            >>> def gen():
+            ...     for i in range(100):
+            ...         yield (np.array(i),)
+            >>>
+            >>> class Augment:
+            ...     def __init__(self, loss):
+            ...         self.loss = loss
+            ...
+            ...     def preprocess(self, input_):
+            ...         return input_
+            ...
+            ...     def update(self, data):
+            ...         self.loss = data["loss"]
+            >>>
+            >>> batch_size = 10
+            >>> dataset = ds.GeneratorDataset(gen, column_names=["input"])
+            >>> aug = Augment(0)
+            >>> dataset = dataset.sync_wait(condition_name='', num_batch=1)
+            >>> dataset = dataset.map(input_columns=["input"], operations=[aug.preprocess])
+            >>> dataset = dataset.batch(batch_size)
+            >>>
+            >>> count = 0
+            >>> for data in dataset.create_dict_iterator(num_epochs=1, output_numpy=True):
+            ...     count += 1
+            ...     data = {"loss": count}
+            ...     dataset.sync_update(condition_name="", data=data)
         """
         if (not isinstance(num_batch, int) and num_batch is not None) or \
                 (isinstance(num_batch, int) and num_batch <= 0):
@@ -1712,11 +1921,15 @@ class Dataset:
         Return the size of batch.
 
         Returns:
-            int, the number of data in a batch.
+            int, the batch size of data.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
+            >>> import mindspore.dataset as ds
+            >>> dataset = ds.GeneratorDataset([i for i in range(10)], "column1")
+            >>> dataset = dataset.batch(2)
             >>> batch_size = dataset.get_batch_size()
+            >>> print(batch_size)
+            2
         """
         if self._batch_size is None:
             runtime_getter = self._init_tree_getters()
@@ -1727,14 +1940,18 @@ class Dataset:
 
     def get_repeat_count(self):
         """
-        Get the replication times in RepeatDataset. Default: 1.
+        Get the replication times in RepeatDataset. Default: ``1`` .
 
         Returns:
             int, the count of repeat.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
+            >>> import mindspore.dataset as ds
+            >>> dataset = ds.GeneratorDataset([i for i in range(10)], "column1")
+            >>> dataset = dataset.repeat(5)
             >>> repeat_count = dataset.get_repeat_count()
+            >>> print(repeat_count)
+            5
         """
         if self._repeat_count is None:
             runtime_getter = self._init_tree_getters()
@@ -1745,15 +1962,19 @@ class Dataset:
 
     def get_class_indexing(self):
         """
-        Return the class index.
+        Get the mapping dictionary from category names to category indexes.
+
+        This dictionary can be used to look up which category name corresponds to a particular category index.
 
         Returns:
-            dict, a str-to-int mapping from label name to index.
-            dict, a str-to-list<int> mapping from label name to index for Coco ONLY. The second number
-            in the list is used to indicate the super category.
+            Dict[str, int], the mappings from category names to category indexes.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
+            >>> import mindspore.dataset as ds
+            >>> # Read image files
+            >>> image_folder_dataset_dir = "/path/to/image_folder_dataset_directory"
+            >>> dataset = ds.ImageFolderDataset(dataset_dir=image_folder_dataset_dir)
+            >>> # Check how many classes exist in image folder
             >>> class_indexing = dataset.get_class_indexing()
         """
         if self.children:
@@ -1761,7 +1982,19 @@ class Dataset:
         return {}
 
     def reset(self):
-        """Reset the dataset for next epoch."""
+        """
+        Reset the dataset for next epoch.
+
+        Examples:
+            >>> import mindspore.dataset as ds
+            >>> mind_dataset_dir = ["/path/to/mind_dataset_file"]
+            >>> dataset = ds.MindDataset(dataset_files=mind_dataset_dir)
+            >>> for _ in range(5):
+            ...     num_iter = 0
+            ...     for data in dataset.create_tuple_iterator(num_epochs=1, output_numpy=True):
+            ...         num_iter += 1
+            ...     dataset.reset()
+        """
 
     def is_shuffled(self):
         """Returns True if the dataset or its children is shuffled."""
@@ -1782,6 +2015,15 @@ class Dataset:
     def parse(self, children=None):
         raise NotImplementedError("Dataset has to implement parse method.")
 
+    def __len__(self):
+        """
+        Get the length of dataset.
+
+        Returns:
+            int, the length of dataset.
+        """
+        return self.get_dataset_size()
+
     @staticmethod
     def _update_data_shard(num_shards, shard_id):
         """
@@ -1797,6 +2039,13 @@ class Dataset:
             shard_id = 0
         return num_shards, shard_id
 
+    def pre_parse(self, getter_mode):
+        if getter_mode:
+            if hasattr(self, "python_multiprocessing"):
+                self.python_multiprocessing = False
+            if hasattr(self, "num_parallel_workers"):
+                self.num_parallel_workers = 1
+
     def post_parse(self, ir_node):
         if self.cache:
             ir_node = ir_node.set_cache_client(self.cache.cache_client)
@@ -1804,6 +2053,18 @@ class Dataset:
             ir_node = ir_node.set_num_workers(self.num_parallel_workers)
 
         return ir_node
+
+    def set_init_step(self, init_step):
+        self._global_step = init_step
+
+    def get_init_step(self):
+        if self._global_step is not None:
+            return self._global_step
+        if len(self.children) == 1:
+            return self.children[0].get_init_step()
+        # When there are multiple children, we cannot tell from which child to get the initial step,
+        # so we initialize from the beginning
+        return 0
 
 
 class VisionBaseDataset(Dataset):
@@ -1837,6 +2098,10 @@ class TextBaseDataset(Dataset):
         Build a vocab from a dataset. This would collect all the unique words in a dataset and return a vocab
         which contains top_k most frequent words (if top_k is specified).
 
+        Note:
+            mindspore.dataset.Dataset.build_vocab is deprecated from version 2.0
+            and will be removed in a future version. Use mindspore.dataset.text.Vocab.from_dataset instead.
+
         Args:
             columns(Union[str, list[str]]): Column names to get words from.
             freq_range(tuple[int]): A tuple of integers (min_frequency, max_frequency). Words within the frequency
@@ -1851,22 +2116,60 @@ class TextBaseDataset(Dataset):
 
         Returns:
             Vocab, vocab built from the dataset.
+        """
+        warnings.warn("mindspore.dataset.Dataset.build_vocab is deprecated from version 2.0 "
+                      "and will be removed in a future version. "
+                      "Use mindspore.dataset.text.Vocab.from_dataset instead.", DeprecationWarning)
 
-        Examples:
-            >>> import numpy as np
-            >>>
-            >>> def gen_corpus():
-            ...     # key: word, value: number of occurrences, reason for using letters is so their order is apparent
-            ...     corpus = {"Z": 4, "Y": 4, "X": 4, "W": 3, "U": 3, "V": 2, "T": 1}
-            ...     for k, v in corpus.items():
-            ...         yield (np.array([k] * v, dtype='S'),)
-            >>> column_names = ["column1"]
-            >>> dataset = ds.GeneratorDataset(gen_corpus, column_names)
-            >>> dataset = dataset.build_vocab(columns=["column1"],
-            ...                               freq_range=(1, 10), top_k=5,
-            ...                               special_tokens=["<pad>", "<unk>"],
-            ...                               special_first=True)
+    def build_sentencepiece_vocab(self, columns, vocab_size, character_coverage, model_type, params):
+        """
+        Function to create a SentencePieceVocab from source dataset.
+        Desired source dataset is a text type dataset.
 
+        Note:
+            mindspore.dataset.Dataset.build_sentencepiece_vocab is deprecated from version 2.0
+            and will be removed in a future version. Use mindspore.dataset.text.SentencePieceVocab.from_dataset instead.
+
+        Args:
+            columns(list[str]): Column names to get words from.
+            vocab_size(int): Vocabulary size.
+            character_coverage(float): Percentage of characters covered by the model, must be between
+                0.98 and 1.0 Good defaults are: 0.9995 for languages with rich character sets like
+                Japanese or Chinese character sets, and 1.0 for other languages with small character sets
+                like English or Latin.
+            model_type(SentencePieceModel): Model type. Choose from unigram (default), bpe, char, or word.
+                The input sentence must be pretokenized when using word type.
+            params(dict): Any extra optional parameters of sentencepiece library according to your raw data
+
+        Returns:
+            SentencePieceVocab, vocab built from the dataset.
+        """
+        warnings.warn("mindspore.dataset.Dataset.build_sentencepiece_vocab is deprecated from version 2.0 "
+                      "and will be removed in a future version. "
+                      "Use mindspore.dataset.text.SentencePieceVocab.from_dataset instead.", DeprecationWarning)
+
+    def _build_vocab(self, columns, freq_range, top_k, special_tokens, special_first):
+        """
+        Function to create a Vocab from source dataset.
+        Desired source dataset is a text type dataset.
+
+        Build a vocab from a dataset. This would collect all the unique words in a dataset and return a vocab
+        which contains top_k most frequent words (if top_k is specified).
+
+        Args:
+            columns(Union[str, list[str]]): Column names to get words from.
+            freq_range(tuple[int]): A tuple of integers (min_frequency, max_frequency). Words within the frequency
+                range will be stored.
+                Naturally 0 <= min_frequency <= max_frequency <= total_words. min_frequency/max_frequency
+                can be set to default, which corresponds to 0/total_words separately.
+            top_k(int): Number of words to be built into vocab. top_k most frequent words are
+                taken. The top_k is taken after freq_range. If not enough top_k, all words will be taken
+            special_tokens(list[str]): A list of strings, each one is a special token.
+            special_first(bool): Whether special_tokens will be prepended/appended to vocab, If special_tokens
+                is specified and special_first is set to default, special_tokens will be prepended.
+
+        Returns:
+            Vocab, vocab built from the dataset.
         """
         vocab = cde.Vocab()
         columns = replace_none(columns, [])
@@ -1899,7 +2202,7 @@ class TextBaseDataset(Dataset):
 
         return vocab
 
-    def build_sentencepiece_vocab(self, columns, vocab_size, character_coverage, model_type, params):
+    def _build_sentencepiece_vocab(self, columns, vocab_size, character_coverage, model_type, params):
         """
         Function to create a SentencePieceVocab from source dataset.
         Desired source dataset is a text type dataset.
@@ -1917,13 +2220,6 @@ class TextBaseDataset(Dataset):
 
         Returns:
             SentencePieceVocab, vocab built from the dataset.
-
-        Examples:
-            >>> from mindspore.dataset.text import SentencePieceModel
-            >>>
-            >>> # You can construct any text dataset as source, take TextFileDataset as example.
-            >>> dataset = ds.TextFileDataset("/path/to/sentence/piece/vocab/file", shuffle=False)
-            >>> dataset = dataset.build_sentencepiece_vocab(["text"], 5000, 0.9995, SentencePieceModel.UNIGRAM, {})
         """
         if not isinstance(model_type, SentencePieceModel):
             raise TypeError("Argument model_type with value {0} is not of type SentencePieceModel, but got {1}." \
@@ -2073,8 +2369,11 @@ class MappableDataset(SourceDataset):
             new_sampler (Sampler): The child sampler to be added.
 
         Examples:
+            >>> import mindspore.dataset as ds
+            >>> dataset = ds.GeneratorDataset([i for i in range(10)], "column1")
+            >>>
             >>> new_sampler = ds.DistributedSampler(10, 2)
-            >>> dataset.add_sampler(new_sampler)  # dataset is an instance of Dataset
+            >>> dataset.add_sampler(new_sampler)
         """
         # Note: By adding a sampler, the sampled IDs will flow to the new_sampler
         # after first passing through the current samplers attached to this dataset.
@@ -2090,7 +2389,9 @@ class MappableDataset(SourceDataset):
             new_sampler (Sampler): The new sampler to replace with.
 
         Examples:
-            >>> # dataset is an instance object of Dataset
+            >>> import mindspore.dataset as ds
+            >>> dataset = ds.GeneratorDataset([i for i in range(10)], "column1")
+            >>>
             >>> # use a DistributedSampler instead
             >>> new_sampler = ds.DistributedSampler(10, 2)
             >>> dataset.use_sampler(new_sampler)
@@ -2131,24 +2432,25 @@ class MappableDataset(SourceDataset):
                 - The sum of split sizes > K, the difference will be removed from the first large
                   enough split such that it will have at least 1 row after removing the difference.
 
-            randomize (bool, optional): Determines whether or not to split the data randomly. Default: True.
-                If True, the data will be randomly split. Otherwise, each split will be created with
+            randomize (bool, optional): Determines whether or not to split the data randomly. Default: ``True``.
+                If ``True``, the data will be randomly split. Otherwise, each split will be created with
                 consecutive rows from the dataset.
 
         Note:
             1. There is an optimized split function, which will be called automatically when the dataset
                that calls this function is a MappableDataset.
             2. Dataset should not be sharded if split is going to be called. Instead, create a
-               DistributedSampler and specify a split to shard after splitting. If the dataset is
-               sharded after a split, it is strongly recommended setting the same seed in each instance
-               of execution, otherwise each shard may not be part of the same split (see Examples).
-            3. It is strongly recommended to not shuffle the dataset, but use randomize=True instead.
+               :class:`mindspore.dataset.DistributedSampler` and specify a split to shard after splitting.
+               If the dataset is sharded after a split, it is strongly recommended setting the same
+               seed in each instance of execution, otherwise each shard may not be part of the same
+               split (see Examples).
+            3. It is strongly recommended to not shuffle the dataset, but set `randomize` to ``True`` instead.
                Shuffling the dataset may not be deterministic, which means the data in each split
                will be different in each epoch. Furthermore, if sharding occurs after split, each
                shard may not be part of the same split.
 
         Returns:
-            tuple(Dataset), a tuple of datasets that have been split.
+            Tuple[Dataset], a tuple of new datasets split from the original one.
 
         Raises:
             RuntimeError: If get_dataset_size returns None or is not supported for this dataset.
@@ -2160,7 +2462,9 @@ class MappableDataset(SourceDataset):
                 floats don't sum to 1.
 
         Examples:
+            >>> import mindspore.dataset as ds
             >>> # Since many datasets have shuffle on by default, set shuffle to False if split will be called!
+            >>> image_folder_dataset_dir = "/path/to/image_folder_dataset_directory"
             >>> dataset = ds.ImageFolderDataset(image_folder_dataset_dir, shuffle=False)
             >>>
             >>> # Set the seed, and tell split to use this seed when randomizing.
@@ -2228,7 +2532,7 @@ class BucketBatchByLengthDataset(UnionBaseDataset):
                                            self.pad_to_bucket_boundary, self.drop_remainder)
 
 
-def _check_shm_usage(num_worker, queue_size, max_rowsize, num_queues=1):
+def _check_shm_usage(num_worker, queue_size, in_rowsize, out_rowsize):
     """
     Check sufficient shared memory is available for shared memory queues
     when training in parallel mode.
@@ -2238,10 +2542,10 @@ def _check_shm_usage(num_worker, queue_size, max_rowsize, num_queues=1):
         device_num = _get_device_num()
         # In the cluster, _get_device_num indicates the number of the entire cluster. The maximum number of cards
         # on the ascend server is 8.
-        if device_num > 1 and context.get_context("device_target") == "Ascend":
+        if device_num > 1:
             device_num = min(device_num, 8)
-        shm_estimate_usage = device_num * num_worker * num_queues * \
-                             (queue_size + 2) * max_rowsize * 1024 * 1024
+        shm_estimate_usage = device_num * num_worker * \
+                             (queue_size + 2) * (in_rowsize + out_rowsize) * 1024 * 1024
         try:
             shm_available = psutil.disk_usage('/dev/shm').free
             if shm_estimate_usage >= threshold_ratio * shm_available:
@@ -2265,10 +2569,10 @@ class BatchDataset(UnionBaseDataset):
         batch_size (Union[int, function]): The number of rows each batch is created with. An
             int or callable which takes exactly 1 parameter, BatchInfo.
         drop_remainder (bool, optional): Determines whether or not to drop the last
-            possibly incomplete batch. Default: False. If True, and if there are less
+            possibly incomplete batch. Default: ``False``. If True, and if there are less
             than batch_size rows available to make the last batch, then those rows will
             be dropped and not propagated to the child node.
-        num_parallel_workers (int, optional): Number of workers to process the dataset in parallel. Default: None.
+        num_parallel_workers (int, optional): Number of workers to process the dataset in parallel. Default: ``None``.
         per_batch_map (callable, optional): Per batch map callable. A callable which takes
             (list[Tensor], list[Tensor], ..., BatchInfo) as input parameters. Each list[Tensor] represents a batch of
             Tensors on a given column. The number of lists should match with number of entries in input_columns. The
@@ -2278,10 +2582,16 @@ class BatchDataset(UnionBaseDataset):
         output_columns (Union[str, list[str]], optional): List of names assigned to the columns outputted by
             the last operation. This parameter is mandatory if len(input_columns) !=
             len(output_columns). The size of this list must match the number of output
-            columns of the last operation. Default: None, output columns will have the same
+            columns of the last operation. Default: ``None``, output columns will have the same
             name as the input columns, i.e., the columns will be replaced.
-        max_rowsize(int, optional): Maximum size of row in MB that is used for shared memory allocation to copy
-            data between processes.  This is only used if python_multiprocessing is set to True. Default: 16.
+        max_rowsize(Union[int, list[int]], optional): Maximum size of row in MB that is used for shared memory
+            allocation to copy data between processes, the total occupied shared memory will increase as
+            ``num_parallel_workers`` and :func:`mindspore.dataset.config.set_prefetch_size` increase. This is only
+            used if python_multiprocessing is set to True. If it is an int value, it represents
+            ``input_columns`` and ``output_columns`` use this value as the unit to create shared memory.
+            If it is a list, the first element represents the ``input_columns`` use this value as the unit to
+            create shared memory, and the second element represents ``output_columns`` use this value as the unit
+            to create shared memory. Default: 16.
 
     """
 
@@ -2307,7 +2617,10 @@ class BatchDataset(UnionBaseDataset):
 
         self.python_multiprocessing = python_multiprocessing
         self.process_pool = None
-        self.max_rowsize = max_rowsize
+        if isinstance(max_rowsize, int):
+            self.max_rowsize = [max_rowsize * self.batch_size] * 2
+        else:
+            self.max_rowsize = [max_rowsize[0] * self.batch_size, max_rowsize[1] * self.batch_size]
 
     def __del__(self):
         if hasattr(self, "process_pool") and self.process_pool is not None:
@@ -2363,6 +2676,10 @@ class BatchDataset(UnionBaseDataset):
         """
         if self.python_multiprocessing and platform.system().lower() == 'windows':
             logger.warning("Python multiprocessing is not supported on Windows platform.")
+        if self.python_multiprocessing and get_debug_mode():
+            logger.warning("Python multiprocessing is not supported in debug mode."
+                           " Ignoring Python multiprocessing for batch operation.")
+            self.python_multiprocessing = False
         if self.python_multiprocessing and platform.system().lower() != 'windows':
             if self.per_batch_map is None:
                 logger.warning("per_batch_map is None so python_multiprocessing is ignored for batch.")
@@ -2373,7 +2690,7 @@ class BatchDataset(UnionBaseDataset):
                 self.num_parallel_workers = get_num_parallel_workers()
 
             self.process_pool = _PythonMultiprocessing(str(self), self.num_parallel_workers, [self.per_batch_map],
-                                                       self.max_rowsize * self.batch_size)
+                                                       self.max_rowsize)
             # Wrap per_batch_map into _PythonCallable
             self.per_batch_map = _PythonCallable(self.per_batch_map, 0, self.process_pool)
         else:
@@ -2383,19 +2700,53 @@ class BatchDataset(UnionBaseDataset):
 
 class BatchInfo(cde.CBatchInfo):
     """
-    Only the batch size function and per_batch_map of the batch operation can dynamically adjust parameters
-    based on the number of batches and epochs during training.
+    This class helps to get dataset information dynamically when the input of `batch_size` or `per_batch_map`
+    in `batch` operation is a callable object.
     """
 
     def get_batch_num(self):
         """
-        Return the batch number of the current batch.
+        Return the batch number being processed in current epoch, start from 0.
+
+        Examples:
+            >>> # Create a dataset where its batch size is dynamic
+            >>> # Define a callable batch size function and let batch size increase 1 each time.
+            >>> import mindspore.dataset as ds
+            >>> from mindspore.dataset import BatchInfo
+            >>>
+            >>> dataset = ds.GeneratorDataset([i for i in range(3)], "column1", shuffle=False)
+            >>> def add_one(BatchInfo):
+            ...     return BatchInfo.get_batch_num() + 1
+            >>> dataset = dataset.batch(batch_size=add_one)
+            >>> print(list(dataset))
+            [[Tensor(shape=[1], dtype=Int64, value= [0])], [Tensor(shape=[2], dtype=Int64, value= [1, 2])]]
         """
         return
 
     def get_epoch_num(self):
         """
-        Return the epoch number of the current batch.
+        Return the epoch number, start from 0.
+
+        Examples:
+            >>> # Create a dataset where its batch size is dynamic
+            >>> # Define a callable batch size function and let batch size increase 1 each epoch.
+            >>> import mindspore.dataset as ds
+            >>> from mindspore.dataset import BatchInfo
+            >>>
+            >>> dataset = ds.GeneratorDataset([i for i in range(4)], "column1", shuffle=False)
+            >>> def add_one_by_epoch(BatchInfo):
+            ...     return BatchInfo.get_epoch_num() + 1
+            >>> dataset = dataset.batch(batch_size=add_one_by_epoch)
+            >>>
+            >>> result = []
+            >>> epoch = 2
+            >>> iterator = dataset.create_tuple_iterator(num_epochs=epoch)
+            >>> for i in range(epoch):
+            ...    result.extend(list(iterator))
+            >>> # result:
+            >>> # [[Tensor(shape=[1], dtype=Int64, value= [0])], [Tensor(shape=[1], dtype=Int64, value= [1])],
+            >>> #  [Tensor(shape=[1], dtype=Int64, value= [2])], [Tensor(shape=[1], dtype=Int64, value= [3])],
+            >>> #  [Tensor(shape=[2], dtype=Int64, value= [0, 1])], [Tensor(shape=[2], dtype=Int64, value= [2, 3])]]
         """
         return
 
@@ -2406,7 +2757,7 @@ class BlockReleasePair:
 
     Args:
         init_release_rows (int): Number of lines to allow through the pipeline.
-        callback (function): The callback function that will be called when release is called. Default: None.
+        callback (function): The callback function that will be called when release is called. Default: ``None``.
     """
 
     def __init__(self, init_release_rows, callback=None):
@@ -2478,10 +2829,10 @@ class PaddedBatchDataset(UnionBaseDataset):
         batch_size (Union[int, function]): The number of rows each batch is created with. An
             int or callable which takes exactly 1 parameter, BatchInfo.
         drop_remainder (bool, optional): Determines whether or not to drop the last
-            possibly incomplete batch. Default: False. If True, and if there are less
+            possibly incomplete batch. Default: ``False``. If True, and if there are less
             than batch_size rows available to make the last batch, then those rows will
             be dropped and not propagated to the child node.
-        num_parallel_workers (int, optional): Number of workers to process the dataset in parallel. Default: None.
+        num_parallel_workers (int, optional): Number of workers to process the dataset in parallel. Default: ``None``.
         pad_info (dict, optional): Whether to perform padding on selected columns. pad_info={"col1":([224,224],0)}
             will pad column with name "col1" to a tensor of size [224,224] and fill the missing with 0.
     """
@@ -2551,7 +2902,7 @@ class SyncWaitDataset(UnionBaseDataset):
         input_dataset (Dataset): Input dataset to apply flow control.
         num_batch (int): Number of batches without blocking at the start of each epoch.
         condition_name (str): Condition name that is used to toggle sending next row.
-        callback (function): Callback function that will be invoked when sync_update is called. Default: None.
+        callback (function): Callback function that will be invoked when sync_update is called. Default: ``None``.
 
     Raises:
         RuntimeError: If condition name already exists.
@@ -2661,20 +3012,29 @@ class _PythonCallable:
 
     def __call__(self, *args):
         result = None
-        if self.pool.is_running() and check_iterator_cleanup() is False:
-            try:
-                result = self.pool.execute(self.idx, *args)
-            except multiprocessing.TimeoutError:
-                pass
-        if result is None:
-            # Invoke original Python callable in master process in case the pool is gone.
-            result = self.py_callable(*args)
+        get_data_from_worker_process = False
+        while get_data_from_worker_process is False:
+            if self.pool.is_running() and check_iterator_cleanup() is False:
+                try:
+                    result = self.pool.execute(self.idx, *args)
+                except multiprocessing.TimeoutError:
+                    continue
+                get_data_from_worker_process = True
+            else:
+                # worker process is stopped
+                logger.info("The worker process of map operation is stopped. "
+                            "So return None to main thread and break the main thread.")
+                return None
+        # got value from worker process
+        if not isinstance(result, tuple) and get_data_from_worker_process is True:
+            result = (result,)
         return result
 
     def to_json(self):
         return self.py_callable.to_json()
 
 
+# used when python_multiprocessing=True in map
 class Pipe:
     """
     Class to handle communication between the master process and the worker processes.
@@ -2684,28 +3044,33 @@ class Pipe:
         self.shared_memory = shared_memory
         self.eof = multiprocessing.Event()
         if self.shared_memory:
-            self.in_queue = _SharedQueue(1, warning_ctl, max_rowsize=max_rowsize)
-            self.res_queue = _SharedQueue(1, warning_ctl, max_rowsize=max_rowsize)
+            self.in_queue = _SharedQueue(1, warning_ctl, max_rowsize=max_rowsize[0])
+            self.res_queue = _SharedQueue(1, warning_ctl, max_rowsize=max_rowsize[1])
         else:
             self.in_queue = _Queue(1)
             self.res_queue = _Queue(1)
-        self.in_queue._joincancelled = True  # pylint: disable=W0212
-        self.res_queue._joincancelled = True  # pylint: disable=W0212
+        self.in_queue.cancel_join_thread()  # Ensure that the process does not hung when exiting
 
     def master_send(self, func_index, data):
         self.in_queue.put_nowait((func_index, *data))
 
     def master_receive(self):
-        return self.res_queue.get_until(timeout=1, exit_signal=self.eof)
+        if self.eof is None:
+            raise RuntimeError("EOF is none when get data from worker.")
+        if self.eof.is_set():
+            return None
+        return self.res_queue.get(timeout=1)
 
     def master_close(self):
         self.eof.set()
+        self.send_finish_signal_to_worker()
         self.send_finish_signal()
-        self.res_queue.cancel_join_thread()
-        self.in_queue.cancel_join_thread()
 
     def send_finish_signal(self):
         self.worker_send(None)
+
+    def send_finish_signal_to_worker(self):
+        self.master_send(0, "QUIT")
 
     def worker_send(self, data):
         self.res_queue.put_until(data, timeout=1, exit_signal=self.eof)
@@ -2718,10 +3083,6 @@ class Pipe:
             raise RuntimeError(f"Corrupted data. Worker received {len(result)} elements, it should be more than 1.")
         func_index, *data = result
         return func_index, tuple(data)
-
-    def worker_close(self):
-        self.res_queue.cancel_join_thread()
-        self.in_queue.cancel_join_thread()
 
 
 def _main_process_already_exit():
@@ -2740,6 +3101,8 @@ def _worker_loop(operations, pipe, seed=get_seed()):
     """
     Multiprocess worker process loop.
     """
+    # Ensure that the process does not hung when exiting
+    pipe.res_queue.cancel_join_thread()
 
     def _ignore_sigint():
         """
@@ -2755,16 +3118,21 @@ def _worker_loop(operations, pipe, seed=get_seed()):
 
         result = pipe.worker_receive()
         if result is None:
-            pipe.worker_close()
             return
         (idx, input_tensors) = result
+        if input_tensors == "QUIT":
+            break
         try:
             output_tensors = operations[idx](*input_tensors)
 
             pipe.worker_send(output_tensors)
         except Exception:
             pipe.worker_send(ExceptionHandler(where="in map(or batch) worker and execute Python function"))
-            return
+            # Do not return
+
+    # release the queue when stop the worker by master
+    del pipe.in_queue
+    del pipe.res_queue
 
 
 def worker_target(operations, seed=get_seed()):
@@ -2779,20 +3147,54 @@ class _MPWorker(multiprocessing.Process):
     def __init__(self, operations, warning_ctl, max_rowsize=16, seed=get_seed()):
         shared_memory = get_enable_shared_mem()
         self.pipe = Pipe(warning_ctl, shared_memory=shared_memory, max_rowsize=max_rowsize)
+        self.check_interval = get_multiprocessing_timeout_interval()
         super().__init__(target=worker_target(operations, seed), args=(self.pipe,), daemon=True)
 
     def execute(self, idx, *args):
+        """Acquiring data from a worker in an infinite loop"""
         self.pipe.master_send(idx, args)
-        res = self.pipe.master_receive()
-        if isinstance(res, ExceptionHandler):
-            res.reraise()
-        return res
+        time_s = time.time()
+        wait_count = 1
+        while True:
+            cost_time = time.time() - time_s
+            if cost_time / self.check_interval >= wait_count:
+                wait_count += 1
+                logger.warning("It has been waiting for " + "%.3f" % cost_time + "s because the sub-process "
+                               "worker of the map operation is hanging. "
+                               "Check whether the user defined data transform is too slow or the "
+                               "output data is too large. You can also set the timeout interval by "
+                               "ds.config.set_multiprocessing_timeout_interval to adjust the output frequency "
+                               "of this log.")
+                pid = self.pid
+                logger.warning("Map worker subprocess ID {} is stuck.".format(pid))
+                install_status, _ = subprocess.getstatusoutput("py-spy --version")
+                if install_status == 0:
+                    stack = subprocess.getoutput("py-spy dump -p {} -l".format(pid))
+                    logger.warning("Map worker subprocess stack:\n{}".format(stack))
+                else:
+                    logger.warning("Please `pip install py-spy` to get the stacks of the stuck process.")
+            try:
+                res = self.pipe.master_receive()
+            except queue.Empty:
+                continue
+            if res is None:
+                # receive finish signal
+                return None
+            if isinstance(res, ExceptionHandler):
+                res.reraise()
+            return res
 
     def close(self):
         try:
             if self.is_alive():
+                # release the eager executor which is used by current process
+                transforms.transforms.clean_unused_executors()
+
                 logger.info(f"Closing worker with PID: {self.pid}")
                 self.pipe.master_close()
+                # del the handle which hold by master
+                del self.pipe.in_queue
+                del self.pipe.res_queue
                 super().terminate()
                 super().join()
                 super().close()
@@ -2820,6 +3222,7 @@ class _PythonMultiprocessing(cde.PythonMultiprocessingRuntime):
         """
 
         def __init__(self):
+            self.origin_hook = sys.excepthook
             sys.excepthook = self.__handler_exception
 
         @staticmethod
@@ -2831,15 +3234,15 @@ class _PythonMultiprocessing(cde.PythonMultiprocessingRuntime):
                 time.sleep(3)
 
         def __handler_exception(self, ex_type, value, tb):
-            logger.critical("Uncaught exception: ", exc_info=(ex_type, value, tb))
+            self.origin_hook(ex_type, value, tb)
             self.mp_pool_exit_preprocess()
 
-    def __init__(self, op_name, num_parallel_workers, operations, max_row_size=16):
+    def __init__(self, op_name, num_parallel_workers, operations, max_rowsize=16):
         super(_PythonMultiprocessing, self).__init__()
         self.op_name = op_name
         self.num_parallel_workers = num_parallel_workers
         self.operations = operations
-        self.max_row_size = max_row_size
+        self.max_rowsize = max_rowsize
 
         self.workers = None
         self.pids = None
@@ -2911,6 +3314,9 @@ class _PythonMultiprocessing(cde.PythonMultiprocessingRuntime):
                                 "ds.config.set_enable_watchdog(False) to block this error.")
                 os.kill(os.getpid(), signal.SIGTERM)
 
+        # release the workers
+        del workers
+
     @staticmethod
     def _terminate_processes(processes):
         """Terminate subprocesses"""
@@ -2949,6 +3355,12 @@ class _PythonMultiprocessing(cde.PythonMultiprocessingRuntime):
                     # For kill -15, we still exit after 30s
                     if exit_code == -15:
                         return 30
+                # In some cases the subprocess has been killed but the exitcode is still None.
+                # So we use os.kill(pid, 0) to check if it is alive.
+                subprocess_alive = _PythonMultiprocessing.is_process_alive(w.pid)
+                if not subprocess_alive:
+                    # Like kill -15, we wait 30s before exit
+                    return 30
             except ValueError:
                 # process has been closed already
                 return 0
@@ -2990,15 +3402,26 @@ class _PythonMultiprocessing(cde.PythonMultiprocessingRuntime):
             time.sleep(0.1)
 
         _PythonMultiprocessing._terminate_processes(workers)
+        del workers
         os.kill(os.getpid(), signal.SIGTERM)
 
     def launch(self, op_id=-1):
+        """
+        Launch Python multiprocessing pool.
+
+        Args:
+            pop_id: ID for operation to have Python multiprocessing pool launched
+
+        Returns:
+            Python multiprocssing pool is launched.
+        """
         self.python_threads_to_workers = {}
         self.op_id = op_id
         logger.info("Launching new Python Multiprocessing pool for Op:" + str(self.op_id))
         if self.is_mp_enabled():
-            logger.warning('Launching a new Python multiprocessing pool while a pool already exists! \
-                The existing pool will be terminated first.')
+            message = "Launching a new Python multiprocessing pool while a pool already exists!" + \
+                " The existing pool will be terminated first."
+            logger.warning(message)
             self.terminate()
             self.reset()
         self.create_pool()
@@ -3010,7 +3433,7 @@ class _PythonMultiprocessing(cde.PythonMultiprocessingRuntime):
 
         """
         if get_enable_shared_mem():
-            self.check_shared_memory()
+            _check_shm_usage(self.num_parallel_workers, 1, self.max_rowsize[0], self.max_rowsize[1])
 
         if self.workers is not None:
             raise Exception("Pool was already created, close it first.")
@@ -3022,7 +3445,7 @@ class _PythonMultiprocessing(cde.PythonMultiprocessingRuntime):
         self.workers = []
         self.warning_ctl = multiprocessing.Value('i', 0)
         for i in range(self.num_parallel_workers):
-            worker = _MPWorker(self.operations, self.warning_ctl, self.max_row_size, i + get_seed())
+            worker = _MPWorker(self.operations, self.warning_ctl, self.max_rowsize, i + get_seed())
             worker.start()
             self.workers.append(worker)
 
@@ -3036,9 +3459,11 @@ class _PythonMultiprocessing(cde.PythonMultiprocessingRuntime):
         atexit.register(self.terminate)
 
     def terminate(self):
-        logger.info("Terminating Python Multiprocessing for Op:" + str(self.op_id))
-        self.close_all_workers()
+        # close watch dog first and then close all the workers
         self.abort_watchdog()
+        self.close_all_workers()
+        if hasattr(self, "warning_ctl"):
+            del self.warning_ctl
 
     def get_pids(self):
         """
@@ -3082,12 +3507,6 @@ class _PythonMultiprocessing(cde.PythonMultiprocessingRuntime):
     def is_mp_enabled(self):
         return self.workers is not None
 
-    def check_shared_memory(self):
-        """
-        Check if there is enough shared memory in the system.
-        """
-        _check_shm_usage(self.num_parallel_workers, 1, self.max_row_size, 2)
-
     def execute(self, idx, *args):
         """
         Execute
@@ -3113,6 +3532,7 @@ class _PythonMultiprocessing(cde.PythonMultiprocessingRuntime):
         if platform.system().lower() != 'windows':
             self.cleaning_process = multiprocessing.Process(target=self._clean_process,
                                                             args=(self.ppid, self.workers),
+                                                            name="OrphanCleaner",
                                                             daemon=True)
             self.cleaning_process.start()
 
@@ -3120,6 +3540,7 @@ class _PythonMultiprocessing(cde.PythonMultiprocessingRuntime):
                 self.eot = threading.Event()
                 self.watch_dog = threading.Thread(target=self._watch_dog,
                                                   args=(self.eot, self.workers + [self.cleaning_process]),
+                                                  name="WatchDog",
                                                   daemon=True)
                 self.watch_dog.start()
 
@@ -3132,6 +3553,7 @@ class _PythonMultiprocessing(cde.PythonMultiprocessingRuntime):
             self._abort_watchdog()
         if hasattr(self, 'cleaning_process') and self.cleaning_process is not None:
             _PythonMultiprocessing._terminate_processes([self.cleaning_process])
+            del self.cleaning_process
 
     def is_running(self):
         if hasattr(self, 'workers') and self.workers is not None:
@@ -3139,9 +3561,34 @@ class _PythonMultiprocessing(cde.PythonMultiprocessingRuntime):
         return False
 
     def close_all_workers(self):
+        """Close all the subprocess workers"""
         if hasattr(self, 'workers') and self.workers is not None:
             for w in self.workers:
                 w.close()
+            check_interval = get_multiprocessing_timeout_interval()
+            for w in self.workers:
+                try:
+                    subprocess_file_descriptor = w.sentinel
+                    st = time.time()
+                    while _PythonMultiprocessing.is_process_alive(w.pid):
+                        time.sleep(0.01)  # sleep 10ms, waiting for the subprocess exit
+                        if time.time() - st > check_interval:
+                            logger.warning("Waiting for the subprocess worker [{}] to exit.".format(w.pid))
+                            st += check_interval
+                except ValueError as e:
+                    if "process object is closed" in str(e):
+                        continue
+                    raise e
+                try:
+                    if w.is_alive():
+                        os.close(subprocess_file_descriptor)
+                except OSError as e:
+                    # Maybe the file descriptor had been released, so ignore the 'Bad file descriptor'
+                    if "Bad file descriptor" not in str(e):
+                        raise e
+
+            # use clear to release the handle which is better than self.workers = None
+            self.workers.clear()
             self.workers = None
             self.pids = None
 
@@ -3153,24 +3600,29 @@ class MapDataset(UnionBaseDataset):
     Args:
         input_dataset (Dataset): Input Dataset to be mapped.
         operations (Union[list[TensorOperation], list[functions]]): A function mapping a nested structure of tensors
-            to another nested structure of tensor. Default: None.
+            to another nested structure of tensor. Default: ``None``.
         input_columns (Union[str, list[str]]): List of names of the input columns.
-            Default: None, the operations will be applied on the first columns in the dataset.
+            Default: ``None``, the operations will be applied on the first columns in the dataset.
             The size of the list should match the number of inputs of the first operation.
         output_columns (Union[str, list[str]], optional): List of names of the output columns.
             The size of the list should match the number of outputs of the last operation.
-            Default: None, output columns will be the input columns, i.e., the columns will
+            Default: ``None``, output columns will be the input columns, i.e., the columns will
             be replaced.
         num_parallel_workers (int, optional): Number of workers to process the dataset
-            in parallel. Default: None.
+            in parallel. Default: ``None``.
         python_multiprocessing (bool, optional): Parallelize Python operations with multiple worker process. This
-            option could be beneficial if the Python operation is computational heavy. Default: False.
+            option could be beneficial if the Python operation is computational heavy. Default: ``False``.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing.
-            Default: None, which means no cache is used.
-        callbacks (DSCallback, list[DSCallback], optional): List of Dataset callbacks to be called. Default: None.
-        max_rowsize(int, optional): Maximum size of row in MB that is used for shared memory allocation to copy
-            data between processes. This is only used if python_multiprocessing is set to True. Default: 16.
-        offload (bool, optional): Flag to indicate whether offload is used. Default: None.
+            Default: ``None``, which means no cache is used.
+        callbacks (DSCallback, list[DSCallback], optional): List of Dataset callbacks to be called. Default: ``None``.
+        max_rowsize(Union[int, list[int]], optional): Maximum size of row in MB that is used for shared memory
+            allocation to copy data between processes, the total occupied shared memory will increase as
+            ``num_parallel_workers`` and :func:`mindspore.dataset.config.set_prefetch_size` increase. This is only
+            used if python_multiprocessing is set to True. If it is an int value, it represents ``input_columns`` and
+            ``output_columns`` use this value as the unit to create shared memory. If it is a list, the first element
+            represents the ``input_columns`` use this value as the unit to create shared memory, and the second element
+            represents ``output_columns`` use this value as the unit to create shared memory. Default: 16.
+        offload (bool, optional): Flag to indicate whether offload is used. Default: ``None``.
     """
 
     def __init__(self, input_dataset, operations=None, input_columns=None, output_columns=None,
@@ -3200,7 +3652,10 @@ class MapDataset(UnionBaseDataset):
         self.process_pool = None
 
         self.callbacks = to_list(callbacks)
-        self.max_rowsize = max_rowsize
+        if isinstance(max_rowsize, int):
+            self.max_rowsize = [max_rowsize] * 2
+        else:
+            self.max_rowsize = max_rowsize
         self.offload = offload
 
     def parse(self, children=None):
@@ -3212,14 +3667,23 @@ class MapDataset(UnionBaseDataset):
         if count_new_transforms + count_pyfunc == len(operations):
             prev_op = None
             for op in operations:
+                # skip user added DebugHook to avoid changing to Py-implementation.
+                if self.__is_debug_hook_op(op):
+                    if prev_op:
+                        # manually set previous_op_name
+                        prev_op_name = self.__parse_op_name(prev_op)
+                        op.set_previous_op_name(prev_op_name)
+                    continue
                 if op.implementation is None:
                     if prev_op and prev_op.implementation == Implementation.PY:
                         op.implementation = Implementation.PY
                     else:
                         op.implementation = Implementation.C
                 prev_op = op
+            operations = self.__insert_debug_wrapper(operations)
             operations = transforms.transforms.Compose.reduce(operations)
         elif count_old_transforms + count_pyfunc + count_non_data_vision_transforms == len(operations):
+            operations = self.__insert_debug_wrapper(operations)
             operations = transforms.py_transforms.Compose.reduce(operations)
         else:
             raise RuntimeError("Mixing old legacy c/py_transforms and new unified transforms is not allowed.")
@@ -3229,7 +3693,7 @@ class MapDataset(UnionBaseDataset):
 
         callbacks = [cb.create_runtime_obj() for cb in self.callbacks]
         return cde.MapNode(children[0], self.operations, self.input_columns, self.output_columns,
-                           callbacks, self.max_rowsize, OffloadToManualOffloadMode.get(self.offload), self.process_pool)
+                           callbacks, OffloadToManualOffloadMode.get(self.offload), self.process_pool)
 
     def __deepcopy__(self, memodict):
         return self.__safe_deepcopy__(memodict, exclude=("operations", "callbacks", "__transfer_dataset__"))
@@ -3238,6 +3702,50 @@ class MapDataset(UnionBaseDataset):
         if hasattr(self, "process_pool") and self.process_pool is not None:
             self.process_pool.terminate()
             del self.process_pool
+
+    @staticmethod
+    def __parse_op_name(op):
+        """
+        Utility method to get operation name.
+        """
+        op_name = ""
+        if isinstance(op, transforms.py_transforms_util.FuncWrapper):
+            try:
+                op_name = op.transform.__name__
+            except (AttributeError,):
+                op_name = op.transform.__class__.__name__
+        else:
+            op_name = op.__class__.__name__
+        return op_name
+
+    @staticmethod
+    def __construct_debug_hook(previous_op_name=None, is_first_op=False):
+        """
+        Wrap debug hook into FuncWrapper.
+        """
+        inserted_functions = []
+        debug_hook_list = _get_debug_hook_list()
+        if debug_hook_list:
+            for fn in debug_hook_list:
+                # making deep copy to allow each debug hook instance hold unique variables
+                new_fn = copy.deepcopy(fn)
+                new_fn.set_previous_op_name(previous_op_name)
+                new_fn.set_is_first(is_first_op)
+                inserted_func = transforms.py_transforms_util.FuncWrapper(new_fn)
+                inserted_func.implementation = Implementation.PY
+                inserted_functions.append(inserted_func)
+        return inserted_functions
+
+    @staticmethod
+    def __is_debug_hook_op(op):
+        """
+        Check if the op is user added DebugHook and skip it to avoid changing transforms implementation.
+        """
+        if isinstance(op, DebugHook):
+            if not get_debug_mode():
+                raise ValueError("It is not allowed to inject DebugHook object in non-debug mode.")
+            return True
+        return False
 
     @staticmethod
     def __count_pyfuncs(operations):
@@ -3304,6 +3812,10 @@ class MapDataset(UnionBaseDataset):
         if self.python_multiprocessing and platform.system().lower() == 'windows':
             logger.warning("Python multiprocessing is not supported on Windows platform.")
             return
+        if self.python_multiprocessing and get_debug_mode():
+            logger.warning("Python multiprocessing is not supported in debug mode."
+                           " Ignoring Python multiprocessing for map operation.")
+            return
         if self.python_multiprocessing:
             iter_specific_operations = []
             callable_list = []
@@ -3334,6 +3846,20 @@ class MapDataset(UnionBaseDataset):
                         iter_specific_operations.append(op)
                 self.operations = iter_specific_operations
 
+    def __insert_debug_wrapper(self, operations):
+        """
+        Insert DebuggerWrapper before and after each op if debug mode is on.
+        """
+        if not get_debug_mode():
+            return operations
+        first_op_name = self.__parse_op_name(operations[0])
+        inserted_operations = self.__construct_debug_hook(first_op_name, is_first_op=True)
+        for op in operations:
+            inserted_operations.append(op)
+            op_name = self.__parse_op_name(op)
+            inserted_operations.extend(self.__construct_debug_hook(op_name))
+        return inserted_operations
+
     def __decompose_callable_operations(self):
         """
         Decompose operations and build list of old legacy ops which are callable
@@ -3357,9 +3883,9 @@ class FilterDataset(UnionBaseDataset):
         input_dataset (Dataset): Input Dataset to be mapped.
         predicate (callable): Python callable which returns a boolean value. If False then filter the element.
         input_columns (Union[str, list[str]], optional): List of names of the input columns.
-            Default: None, the predicate will be applied to all columns in the dataset.
+            Default: ``None``, the predicate will be applied to all columns in the dataset.
         num_parallel_workers (int, optional): Number of workers to process the dataset
-            in parallel. Default: None.
+            in parallel. Default: ``None``.
     """
 
     def __init__(self, input_dataset, predicate, input_columns=None, num_parallel_workers=None):
@@ -3471,6 +3997,8 @@ class ConcatDataset(UnionBaseDataset):
                                  "valid samples in the dataset." % child_index)
             child_index += 1
 
+        self._children_sizes = self.children_sizes_.copy()
+
         # _children_flag_and_nums: A list of pair<int ,int>.The first element of pair is flag that characterizes
         # whether the dataset is mappable. The second element of pair is length of the dataset
         self._children_flag_and_nums = []
@@ -3494,7 +4022,8 @@ class ConcatDataset(UnionBaseDataset):
                 self._children_flag_and_nums.append((1, dataset_len))
 
     def parse(self, children=None):
-        return cde.ConcatNode(children, self._sampler, self._children_flag_and_nums, self._children_start_end_index_)
+        return cde.ConcatNode(children, self._sampler, self._children_flag_and_nums, self._children_start_end_index_,
+                              self._children_sizes)
 
     def use_sampler(self, sampler):
         """
@@ -3510,8 +4039,19 @@ class ConcatDataset(UnionBaseDataset):
             ValueError: If the parameter NumSamples of sampler is not None.
             ValueError: If num_shards <=0.
         """
-        if not isinstance(sampler, samplers.DistributedSampler):
-            raise TypeError("The parameter %s of concat must be DistributedSampler!" % sampler)
+        if not isinstance(sampler, (samplers.DistributedSampler, samplers.RandomSampler)):
+            raise TypeError("The parameter %s of concat must be DistributedSampler or RandomSampler!" % sampler)
+
+        if isinstance(sampler, samplers.RandomSampler):
+            if sampler.replacement:
+                raise ValueError("The parameter replacement of RandomSampler must be False!")
+
+            if sampler.get_num_samples() is not None:
+                raise ValueError("The parameter num_samples of RandomSampler is not support to be set!")
+
+            self._sampler = sampler
+            self._children_sizes = [c.get_dataset_size() for c in self.children]
+            return
 
         if sampler.is_shuffled():
             raise ValueError("The parameter shuffle of DistributedSampler must be False!")
@@ -3606,12 +4146,20 @@ class _ToDevice:
     """
 
     def __init__(self, dataset, num_epochs):
+        if get_debug_mode():
+            logger.error("MindData debugger cannot be used in dataset sink mode. Please manually turn off "
+                         "sink mode and try debugger again.")
         ir_tree, self.api_tree = dataset.create_ir_tree()
 
         self._runtime_context = cde.PythonRuntimeContext()
         self._runtime_context.Init()
         self._to_device = cde.ToDevice(num_epochs)
-        self._to_device.Init(ir_tree)
+        if dataset.get_init_step() != 0:
+            init_step = dataset.get_init_step()
+            dataset_size = dataset.get_dataset_size()
+            self._to_device.Init(ir_tree, init_step, dataset_size)
+        else:
+            self._to_device.Init(ir_tree, 0, -1)
         self._runtime_context.AssignConsumer(self._to_device)
 
         ITERATORS_LIST.append(weakref.ref(self))
@@ -3619,9 +4167,6 @@ class _ToDevice:
 
     def send(self):
         self._to_device.Send()
-
-    def _reset(self, step, epoch):
-        self._to_device.Reset(step, epoch)
 
     def stop_send(self):
         """
@@ -3640,6 +4185,14 @@ class _ToDevice:
         Get type and shape of current batch.
         """
         return self._to_device.GetDataInfo()
+
+    def get_send_info(self):
+        """
+        In sink mode, it returns the send information of dataset at this moment.
+        Send information includes number of send batches, time summary of fetching data on host
+        and time summary of sending data.
+        """
+        return self._to_device.GetSendInfo()
 
     def release(self):
         """
@@ -3661,6 +4214,9 @@ class _ToDevice:
         offload_model = GetOffloadModel(self._to_device, col_names)
         return offload_model
 
+    def _reset(self, step, dataset_size):
+        self._to_device.Reset(step, dataset_size)
+
 
 class TransferDataset(Dataset):
     """
@@ -3668,9 +4224,9 @@ class TransferDataset(Dataset):
 
     Args:
         input_dataset (Dataset): Input Dataset to be transferred.
-        send_epoch_end (bool, optional): Whether to send end of sequence to device or not. Default: True.
+        send_epoch_end (bool, optional): Whether to send end of sequence to device or not. Default: ``True``.
         create_data_info_queue (bool, optional): Whether to create queue which stores
-            types and shapes of data or not. Default: False.
+            types and shapes of data or not. Default: ``False``.
 
     Raises:
         TypeError: If device_type is empty.
@@ -3678,9 +4234,14 @@ class TransferDataset(Dataset):
         RuntimeError: If dataset is unknown.
     """
 
-    def __init__(self, input_dataset, send_epoch_end=True, create_data_info_queue=False):
+    def __init__(self, input_dataset, send_epoch_end=True, create_data_info_queue=False, queue_name=""):
         super().__init__(children=input_dataset)
-        self.queue_name = str(uuid.uuid1())
+        if queue_name == "":
+            self.queue_name = str(uuid.uuid1())
+            logger.info(f"queue_name is newly generated. value is {self.queue_name}")
+        else:
+            self.queue_name = queue_name
+            logger.info(f"queue_name is read from compile cache. value is {self.queue_name}")
         self.device_type = context.get_context("device_target") if context else "CPU"
         self.device_id = context.get_context("device_id") if context else 0
 
@@ -3731,11 +4292,6 @@ class TransferDataset(Dataset):
         if self._to_device is not None:
             self._to_device.continue_send()
 
-    def _reset(self, step, epoch):
-        if self._to_device is not None:
-            logger.info("Reset the dataset pipeline to step: " + str(step) + ", epoch: " + str(epoch))
-            self._to_device._reset(step, epoch)  # pylint: disable=W0212
-
     def get_data_info(self):
         """
         Get type and shape of current batch
@@ -3743,6 +4299,16 @@ class TransferDataset(Dataset):
         if self._to_device is not None:
             return self._to_device.get_data_info()
         raise RuntimeError("Calling get_data_info with bad state.")
+
+    def get_send_info(self):
+        """
+        In sink mode, it returns the send information of dataset at this moment.
+        Send information includes number of send batches, time summary of fetching data on host
+        and time summary of sending data.
+        """
+        if self._to_device is not None:
+            return self._to_device.get_send_info()
+        raise RuntimeError("Calling get_send_info with bad state, data queue is not initialized.")
 
     def get_offload_model(self):
         if self._to_device is not None:
@@ -3757,21 +4323,24 @@ class TransferDataset(Dataset):
         if self._to_device is not None:
             self._to_device.release()
 
+    def _reset(self, step, dataset_size):
+        if self._to_device is not None:
+            logger.info("Reset the dataset pipeline to step: " + str(step) + ", epoch: " + str(step // dataset_size))
+            self._to_device._reset(step, dataset_size)  # pylint: disable=protected-access
+
 
 class Schema:
     """
     Class to represent a schema of a dataset.
 
     Args:
-        schema_file(str): Path of the schema file. Default: None.
-
-    Returns:
-        Schema object, schema info about dataset.
+        schema_file (str): Path of the schema file. Default: ``None``.
 
     Raises:
         RuntimeError: If schema file failed to load.
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> from mindspore import dtype as mstype
         >>>
         >>> # Create schema; specify column name, mindspore.dtype and shape of the column
@@ -3793,10 +4362,17 @@ class Schema:
             name (str): The new name of the column.
             de_type (str): Data type of the column.
             shape (list[int], optional): Shape of the column.
-                Default: None, [-1] which is an unknown shape of rank 1.
+                Default: ``None``, [-1] which is an unknown shape of rank 1.
 
         Raises:
             ValueError: If column type is unknown.
+
+        Examples:
+            >>> import mindspore.dataset as ds
+            >>> from mindspore import dtype as mstype
+            >>>
+            >>> schema = ds.Schema()
+            >>> schema.add_column('col_1d', de_type=mstype.int64, shape=[2])
         """
         if isinstance(de_type, typing.Type):
             de_type = mstype_to_detype(de_type)
@@ -3841,6 +4417,14 @@ class Schema:
 
         Returns:
             str, JSON string of the schema.
+
+        Examples:
+            >>> from mindspore.dataset import Schema
+            >>> from mindspore import dtype as mstype
+            >>>
+            >>> schema = Schema()
+            >>> schema.add_column('col_1d', de_type=mstype.int64, shape=[2])
+            >>> json = schema.to_json()
         """
         return self.cpp_schema.to_json()
 
@@ -3855,6 +4439,15 @@ class Schema:
             RuntimeError: if there is unknown item in the object.
             RuntimeError: if dataset type is missing in the object.
             RuntimeError: if columns are missing in the object.
+
+        Examples:
+            >>> import json
+            >>> from mindspore.dataset import Schema
+            >>>
+            >>> with open("/path/to/schema_file", "r") as file:
+            ...     json_obj = json.load(file)
+            ...     schema = Schema()
+            ...     schema.from_json(json_obj)
         """
         self.cpp_schema.from_string(json.dumps(json_obj, indent=2))
 

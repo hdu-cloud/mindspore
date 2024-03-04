@@ -15,25 +15,55 @@
  */
 
 #include "ops/unique_with_pad.h"
-#include <functional>
+
 #include <algorithm>
-#include <map>
+#include <functional>
 #include <memory>
+#include <numeric>
 #include <set>
 #include <string>
 #include <vector>
+
 #include "abstract/abstract_value.h"
-#include "ops/op_utils.h"
-#include "ops/op_name.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/type_id.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
-constexpr size_t kUniqueWithPadInputsNum = 2;
-constexpr size_t kUniqueWithPadOutputsNum = 2;
+constexpr int64_t kUniqueWithPadInputsNum = 2;
+constexpr int64_t kUniqueWithPadEmptyDim = 0;
+
+void UniqueWithPadCheckEmptyTensor(const std::string &prim_name, const std::vector<ShapeVector> &shapes) {
+  for (auto &shape : shapes) {
+    if (IsDynamicRank(shape)) {
+      continue;
+    }
+    auto is_empty_tensor =
+      std::any_of(shape.begin(), shape.end(), [](int64_t x) -> bool { return x == kUniqueWithPadEmptyDim; });
+    if (is_empty_tensor) {
+      MS_EXCEPTION(ValueError) << "For [" << prim_name
+                               << "], empty tensor(at least one dimension is zero) is not supported.";
+    }
+  }
+  return;
+}
 
 abstract::TupleShapePtr UniqueWithPadInferShape(const PrimitivePtr &primitive,
                                                 const std::vector<AbstractBasePtr> &input_args) {
@@ -43,20 +73,24 @@ abstract::TupleShapePtr UniqueWithPadInferShape(const PrimitivePtr &primitive,
   auto pad_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
   auto is_dynamic = IsDynamic(x_shape) || IsDynamic(pad_shape);
 
+  UniqueWithPadCheckEmptyTensor(prim_name, {x_shape, pad_shape});
+
   size_t batch_rank = 0;
   if (primitive->HasAttr(ops::kBatchRank)) {
     auto value_ptr = primitive->GetAttr(ops::kBatchRank);
-    batch_rank = GetValue<int64_t>(value_ptr);
+    batch_rank = LongToSize(GetValue<int64_t>(value_ptr));
   }
 
   if (!IsDynamicRank(x_shape)) {
-    (void)CheckAndConvertUtils::CheckInteger("input_shape_size", x_shape.size(), kEqual, batch_rank + 1, prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("input_shape_size", SizeToLong(x_shape.size()), kEqual,
+                                             SizeToLong(batch_rank + static_cast<size_t>(1)), prim_name);
   }
 
   constexpr int64_t kNumZero = 0;
   if (!is_dynamic && batch_rank != kNumZero) {
     auto pad_num = std::accumulate(pad_shape.begin(), pad_shape.end(), 1, std::multiplies<int64_t>());
-    auto input_batch = std::accumulate(x_shape.begin(), x_shape.begin() + batch_rank, 1, std::multiplies<int64_t>());
+    auto input_batch =
+      std::accumulate(x_shape.begin(), x_shape.begin() + SizeToLong(batch_rank), 1, std::multiplies<int64_t>());
     (void)CheckAndConvertUtils::CheckInteger("elements num of input 'pad'", pad_num, kEqual, input_batch, prim_name);
   }
   auto x_shape_ptr = std::make_shared<abstract::Shape>(x_shape);
@@ -99,6 +133,24 @@ AbstractBasePtr UniqueWithPadInfer(const abstract::AnalysisEnginePtr &, const Pr
 }
 
 MIND_API_OPERATOR_IMPL(UniqueWithPad, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(UniqueWithPad, prim::kPrimUniqueWithPad, UniqueWithPadInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGUniqueWithPadInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return UniqueWithPadInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return UniqueWithPadInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return UniqueWithPadInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(UniqueWithPad, prim::kPrimUniqueWithPad, AGUniqueWithPadInfer, false);
 }  // namespace ops
 }  // namespace mindspore

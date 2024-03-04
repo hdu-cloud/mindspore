@@ -21,7 +21,6 @@
 #include <vector>
 #include <memory>
 #include <string>
-
 #include "base/base.h"
 #include "ir/param_info.h"
 #include "ir/dtype.h"
@@ -44,11 +43,15 @@ namespace tensor {
 // Includes the format, data type and host format of a tensor.
 struct DeviceInfo {
   explicit DeviceInfo(std::string format = "DefaultFormat", TypePtr data_type = nullptr,
-                      std::string host_format = "DefaultFormat")
-      : format_(std::move(format)), data_type_(std::move(data_type)), host_format_(std::move(host_format)) {}
+                      std::string host_format = "DefaultFormat", int32_t device_id = 0)
+      : format_(std::move(format)),
+        data_type_(std::move(data_type)),
+        host_format_(std::move(host_format)),
+        device_id_(device_id) {}
   std::string format_ = "DefaultFormat";
   TypePtr data_type_ = nullptr;
   std::string host_format_ = "DefaultFormat";
+  int32_t device_id_ = 0;
 };
 
 // brief Metadata of Tensor
@@ -85,7 +88,7 @@ class MS_CORE_API MetaTensor : public Value {
   ///
   /// \param[in] meta_tensor An existing MetaTensor object.
   /// \return A MetaTensor object.
-  virtual MetaTensor &operator=(const MetaTensor &meta_tensor);
+  MetaTensor &operator=(const MetaTensor &meta_tensor);
 
   /// \brief Compares two MetaTensor objects.
   /// The constructed MetaTensor object has the same type and shape with meta_tensor.
@@ -108,7 +111,6 @@ class MS_CORE_API MetaTensor : public Value {
   TypeId data_type() const { return data_type_; }
 
   std::string ToString() const override;
-  std::string DumpText() const override;
 
   /// \brief Set the data type of a tensor in its MetaTensor.
   ///
@@ -171,7 +173,7 @@ class MS_CORE_API MetaTensor : public Value {
   /// \brief Get total number of elements in a tensor.
   ///
   /// \return The total number of elements in a tensor.
-  int ElementsNum() const;
+  int64_t ElementsNum() const;
 
   std::size_t hash() const override {
     std::size_t hash_value = std::hash<int>{}(static_cast<int>(data_type_));
@@ -185,7 +187,7 @@ class MS_CORE_API MetaTensor : public Value {
   }
   bool operator==(const Value &other) const override {
     if (other.isa<MetaTensor>()) {
-      auto other_ = static_cast<const MetaTensor &>(other);
+      auto &other_ = static_cast<const MetaTensor &>(other);
       return *this == other_;
     } else {
       return false;

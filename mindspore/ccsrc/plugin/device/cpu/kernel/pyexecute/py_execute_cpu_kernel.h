@@ -17,6 +17,7 @@
 #ifndef MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_CPU_PYEXECUTE_KERNEL_H_
 #define MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_CPU_PYEXECUTE_KERNEL_H_
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -35,10 +36,11 @@ struct PyExecuteInputInfo {
   std::vector<int64_t> shape;
 };
 
-struct PyExecuteOutputData {
+struct PyExecuteOutputUserData {
   py::object obj;
-  constexpr static char key[] = "PyExecuteOutputData";
+  constexpr static char key[] = "PyExecuteOutputUserData";
 };
+using PyExecuteOutputUserDataPtr = std::shared_ptr<PyExecuteOutputUserData>;
 
 class PyExecuteCpuKernelMod : public DeprecatedNativeCpuKernelMod {
  public:
@@ -48,14 +50,21 @@ class PyExecuteCpuKernelMod : public DeprecatedNativeCpuKernelMod {
   void InitKernel(const CNodePtr &kernel_node) override;
   bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
               const std::vector<AddressPtr> &outputs) override;
+  bool need_user_data() const override { return true; }
+  // User data is the extra dat-a required when the kernel is launched, It will be set before launch by runtime.
+  void set_input_user_data(UserData *const user_data, size_t input_index) override {
+    input_user_data_[input_index] = user_data;
+  }
+  void set_output_user_data(UserData *const user_data, size_t output_index) override {
+    output_user_data_[output_index] = user_data;
+  }
 
  private:
   void AttachPyOutputData(const py::object &py_res);
-  py::object BuildLocalParameters(const std::vector<AddressPtr> &inputs);
-  py::object BuildLocalTupleParameters(const std::vector<AddressPtr> &inputs);
-
   CNodePtr kernel_node_{nullptr};
   std::vector<PyExecuteInputInfo> inputs_info_;
+  std::map<size_t, UserData *> input_user_data_;
+  std::map<size_t, UserData *> output_user_data_;
 };
 }  // namespace kernel
 }  // namespace mindspore

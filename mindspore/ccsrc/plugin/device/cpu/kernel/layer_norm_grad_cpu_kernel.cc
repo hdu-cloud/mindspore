@@ -48,6 +48,11 @@ bool LayerNormGradCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const
     return false;
   }
   kernel_func_ = func_list_[index].second;
+  auto kernel_ptr = std::dynamic_pointer_cast<ops::LayerNormGrad>(base_operator);
+  if (kernel_ptr == nullptr) {
+    MS_LOG(EXCEPTION) << "Cast ops::LayerNormGrad failed!";
+  }
+  eps_ = kernel_ptr->get_epsilon();
   return true;
 }
 
@@ -78,6 +83,7 @@ int LayerNormGradCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, cons
   block_num_ = 1;
   block_size_ = 1;
   param_num_ = 1;
+  param_size_ = 1;
   for (size_t i = 0; i < LongToSize(begin_norm_axis); i++) {
     block_num_ *= LongToUlong(x_shape[i]);
   }
@@ -92,7 +98,7 @@ int LayerNormGradCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, cons
   }
   if (block_num_ == 0 || block_size_ == 0) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the dimension of 'input_x' must be at least 1, but got "
-                      << Vector2Str(x_shape);
+                      << x_shape;
   }
   return ret;
 }

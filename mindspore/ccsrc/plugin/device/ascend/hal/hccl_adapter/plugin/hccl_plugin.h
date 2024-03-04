@@ -47,6 +47,8 @@ PLUGIN_METHOD(GetAllKernelBuilder, void, OpsKernelBuilderMap *);
 
 ORIGIN_METHOD(HcclBroadcast, HcclResult, void *, uint64_t, HcclDataType, uint32_t, HcclComm, aclrtStream);
 ORIGIN_METHOD(HcclAllReduce, HcclResult, void *, void *, uint64_t, HcclDataType, HcclReduceOp, HcclComm, aclrtStream);
+ORIGIN_METHOD(HcclReduce, HcclResult, void *, void *, uint64_t, HcclDataType, HcclReduceOp, uint32_t, HcclComm,
+              aclrtStream);
 ORIGIN_METHOD(HcclReduceScatter, HcclResult, void *, void *, uint64_t, HcclDataType, HcclReduceOp, HcclComm,
               aclrtStream);
 ORIGIN_METHOD(HcclAllGather, HcclResult, void *, void *, uint64_t, HcclDataType, HcclComm, aclrtStream);
@@ -54,6 +56,7 @@ ORIGIN_METHOD(HcclSend, HcclResult, void *, uint64_t, HcclDataType, uint32_t, Hc
 ORIGIN_METHOD(HcclRecv, HcclResult, void *, uint64_t, HcclDataType, uint32_t, HcclComm, aclrtStream);
 ORIGIN_METHOD(HcclAlltoAllV, HcclResult, const void *, const void *, const void *, HcclDataType, const void *,
               const void *, const void *, HcclDataType, HcclComm, aclrtStream);
+ORIGIN_METHOD(HcclBarrier, HcclResult, HcclComm, aclrtStream);
 
 ORIGIN_METHOD(HcclCommInitClusterInfo, HcclResult, const char *, uint32_t, HcclComm *);
 ORIGIN_METHOD(HcclCommDestroy, HcclResult, HcclComm);
@@ -72,4 +75,5 @@ ORIGIN_METHOD(HcomExecInitialize, HcclResult);
 ORIGIN_METHOD(HcomExecFinalize, HcclResult);
 ORIGIN_METHOD(HcomExecEnqueueOperation, HcclResult, ::HcomOperation, HExecCallBack);
 ORIGIN_METHOD(HcomExecEnqueueAllToAllV, HcclResult, ::HcomAllToAllVParams, HExecCallBack);
+ORIGIN_METHOD(HcomDestroy, HcclResult);
 #endif  // MINDSPORE_RUNTIME_HCCL_ADAPTER_PLUGIN_HCCL_PLUGIN_H

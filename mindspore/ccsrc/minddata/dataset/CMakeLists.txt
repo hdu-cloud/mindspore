@@ -97,7 +97,6 @@ add_dependencies(engine-datasetops-source-sampler core)
 add_dependencies(engine-datasetops core)
 add_dependencies(engine-datasetops-mapop core)
 add_dependencies(engine-opt core)
-add_dependencies(engine-gnn core)
 add_dependencies(engine core)
 add_dependencies(callback core)
 add_dependencies(audio-kernels core)
@@ -171,7 +170,6 @@ set(dataengine_submodules
         $<TARGET_OBJECTS:engine-datasetops-source>
         $<TARGET_OBJECTS:engine-datasetops-source-sampler>
         $<TARGET_OBJECTS:engine-datasetops-mapop>
-        $<TARGET_OBJECTS:engine-gnn>
         $<TARGET_OBJECTS:engine-datasetops>
         $<TARGET_OBJECTS:engine-opt>
         $<TARGET_OBJECTS:engine-cache-client>
@@ -254,9 +252,6 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 else()
     target_link_libraries(_c_dataengine PRIVATE _c_mindrecord)
     if(ENABLE_CPU AND NOT WIN32)
-        if(${ENABLE_IBVERBS} STREQUAL "ON")
-            target_link_libraries(_c_dataengine PRIVATE ibverbs rdmacm)
-        endif()
         target_link_libraries(_c_dataengine PRIVATE ps_cache)
     endif()
 endif()

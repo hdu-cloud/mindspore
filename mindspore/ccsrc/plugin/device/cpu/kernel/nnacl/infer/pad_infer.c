@@ -16,6 +16,7 @@
 
 #include "nnacl/infer/pad_infer.h"
 #include "nnacl/infer/infer_register.h"
+#include "nnacl/tensor_c_utils.h"
 
 int PadInferShape(const TensorC *const *inputs, size_t inputs_size, TensorC **outputs, size_t outputs_size,
                   OpParameter *parameter) {
@@ -45,7 +46,7 @@ int PadInferShape(const TensorC *const *inputs, size_t inputs_size, TensorC **ou
   }
   param->padding_length = size;
   for (int i = 0; i < size; ++i) {
-    MS_CHECK_TRUE_RET(((int *)paddings->data_)[i] >= 0, NNACL_INFER_INVALID);
+    NNACL_CHECK_TRUE_RET(((int *)paddings->data_)[i] >= 0, NNACL_INFER_INVALID);
     param->paddings_[i] = ((int *)paddings->data_)[i];
   }
 

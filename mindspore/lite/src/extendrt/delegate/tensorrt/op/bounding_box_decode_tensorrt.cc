@@ -68,10 +68,10 @@ int BoundingBoxDecodeTensorRT::AddInnerOp(TensorRTContext *ctx) {
   auto in_tensor1 = input(ctx, 0).trt_tensor_;
   auto in_tensor2 = input(ctx, 1).trt_tensor_;
   if (in_tensors_[0].DataType() == DataType::kNumberTypeFloat16) {
-    in_tensor1 = TRTTensorCast(ctx, in_tensor1, nvinfer1::DataType::kFLOAT, op_name_ + "_cast_in");
+    in_tensor1 = TRTTensorCast(ctx, in_tensor1, nvinfer1::DataType::kFLOAT, op_name_ + "_cast_in_0");
   }
   if (in_tensors_[1].DataType() == DataType::kNumberTypeFloat16) {
-    in_tensor2 = TRTTensorCast(ctx, in_tensor2, nvinfer1::DataType::kFLOAT, op_name_ + "_cast_in");
+    in_tensor2 = TRTTensorCast(ctx, in_tensor2, nvinfer1::DataType::kFLOAT, op_name_ + "_cast_in_1");
   }
   nvinfer1::ITensor *inputTensors[] = {in_tensor1, in_tensor2};
   nvinfer1::IPluginV2Layer *layer = ctx->network()->addPluginV2(inputTensors, INPUT_SIZE2, *plugin);
@@ -96,11 +96,12 @@ std::vector<nvinfer1::PluginField> TensorRTPluginCreater<T>::fields_;
 int BoundingBoxDecodePlugin::enqueue(const nvinfer1::PluginTensorDesc *inputDesc,
                                      const nvinfer1::PluginTensorDesc *outputDesc, const void *const *inputs,
                                      void *const *outputs, void *workspace, cudaStream_t stream) noexcept {
-  return RunCudaLogical(inputDesc, inputs, outputs, stream);
+  return RunCudaBoundingBoxDecode(inputDesc, inputs, outputs, stream);
 }
 
-int BoundingBoxDecodePlugin::RunCudaLogical(const nvinfer1::PluginTensorDesc *inputDesc, const void *const *inputs,
-                                            void *const *outputs, cudaStream_t stream) {
+int BoundingBoxDecodePlugin::RunCudaBoundingBoxDecode(const nvinfer1::PluginTensorDesc *inputDesc,
+                                                      const void *const *inputs, void *const *outputs,
+                                                      cudaStream_t stream) {
   BoundingBoxDecode<float>(GetDimsVolume(inputDesc[0].dims), static_cast<const float *>(inputs[0]),
                            static_cast<const float *>(inputs[1]), static_cast<float *>(outputs[0]), means_[0],
                            means_[1], means_[INPUT_SIZE2], means_[INPUT_SIZE3], stds_[0], stds_[1], stds_[INPUT_SIZE2],
@@ -120,7 +121,8 @@ size_t BoundingBoxDecodePlugin::getSerializationSize() const noexcept {
 
 bool BoundingBoxDecodePlugin::supportsFormatCombination(int pos, const nvinfer1::PluginTensorDesc *tensorsDesc,
                                                         int nbInputs, int nbOutputs) noexcept {
-  return tensorsDesc[pos].format == nvinfer1::TensorFormat::kLINEAR;
+  return tensorsDesc[pos].type == nvinfer1::DataType::kFLOAT &&
+         tensorsDesc[pos].format == nvinfer1::TensorFormat::kLINEAR;
 }
 
 void BoundingBoxDecodePlugin::serialize(void *buffer) const noexcept {

@@ -1,4 +1,4 @@
-# Copyright 2020-2022 Huawei Technologies Co., Ltd
+# Copyright 2020-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,12 +20,19 @@ from mindspore.ops.operations import _map_tensor_ops
 from mindspore.ops.composite.multitype_ops import _compile_utils as compile_utils
 from mindspore.ops.composite import base
 from mindspore.ops import functional as F
+from mindspore.ops.operations._inner_ops import SliceGetItem
+from ...operations._sequence_ops import SequenceSlice
 
-getitem = base.MultitypeFuncGraph('getitem', True)
+DOC_URL = "https://mindspore.cn/search/en?inputValue=Index%20values"
+
+getitem = base.MultitypeFuncGraph('getitem', False)
 """
 getitem is a metafuncgraph object which will get item from an object according to input type
 using ".register" decorator.
 """
+getitem.set_doc_url(DOC_URL)
+slice_getitem = SliceGetItem()
+sequence_slice = SequenceSlice()
 
 
 class _TupleSlice(base.SequenceSliceGetItem_):
@@ -42,7 +49,7 @@ class _TupleSlice(base.SequenceSliceGetItem_):
 
     def __init__(self, name):
         """Initialize _TupleSlice."""
-        base.SequenceSliceGetItem_.__init__(self, name, "MakeTuple", "TupleGetItem")
+        super(_TupleSlice, self).__init__(name, "MakeTuple", "TupleGetItem")
 
     def __call__(self, *args):
         pass
@@ -99,7 +106,26 @@ _tuple_get_item_tensor = _TupleGetItemTensor('tuple_get_item_tensor')
 """_tuple_get_item_tensor is an metafuncgraph object which will select indexed item."""
 
 
-@getitem.register("Tuple", "Number")
+@getitem.register("Tuple", "Bool")
+def _tuple_getitem_by_bool(data, number_index):
+    """
+    Getting item of tuple by bool index.
+
+    Inputs:
+        data (tuple): A tuple to be sliced.
+        number_index (Number): Index in scalar.
+
+    Outputs:
+        Type, is the same as the element type of data.
+    """
+    if number_index:
+        return F.tuple_getitem(data, 1)
+    return F.tuple_getitem(data, 0)
+
+
+@getitem.register("Tuple", "Int")
+@getitem.register("Tuple", "UInt")
+@getitem.register("Tuple", "Float")
 def _tuple_getitem_by_number(data, number_index):
     """
     Getting item of tuple by number index.
@@ -126,6 +152,17 @@ def _tuple_getitem_by_slice(data, slice_index):
     Outputs:
         Tuple, element type is the same as the element type of data.
     """
+    if F.is_sequence_shape_unknown(data) or not F.isconstant(slice_index):
+        start = slice_getitem(slice_index, "start")
+        stop = slice_getitem(slice_index, "stop")
+        step = slice_getitem(slice_index, "step")
+        if step is None:
+            step = 1
+        if start is None:
+            start = 0 if step >= 1 else -1
+        if stop is None:
+            stop = (2**31 - 1) if step >= 1 else -(2**31 - 1)
+        return sequence_slice(data, start, stop, step)
     return _tuple_slice(data, slice_index)
 
 
@@ -141,11 +178,29 @@ def _tuple_getitem_by_tensor(data, tensor_index):
     Outputs:
         Type, is the same as the element type of data.
     """
-    tensor_index = F.select(tensor_index >= 0, tensor_index, tensor_index + len(data))
     return _tuple_get_item_tensor(data, tensor_index)
 
 
-@getitem.register("List", "Number")
+@getitem.register("List", "Bool")
+def _list_getitem_by_bool(data, number_index):
+    """
+    Getting item of list by bool index.
+
+    Inputs:
+        data (tuple): A list to be sliced.
+        number_index (Bool): Index in scalar.
+
+    Outputs:
+        Type, is the same as the element type of data.
+    """
+    if number_index:
+        return F.list_getitem(data, 1)
+    return F.list_getitem(data, 0)
+
+
+@getitem.register("List", "Int")
+@getitem.register("List", "UInt")
+@getitem.register("List", "Float")
 def _list_getitem_by_number(data, number_index):
     """
     Getting item of list by number index.
@@ -172,6 +227,17 @@ def _list_getitem_by_slice(data, slice_index):
     Outputs:
         List, element type is the same as the element type of data.
     """
+    if F.is_sequence_shape_unknown(data) or not F.isconstant(slice_index):
+        start = slice_getitem(slice_index, "start")
+        stop = slice_getitem(slice_index, "stop")
+        step = slice_getitem(slice_index, "step")
+        if step is None:
+            step = 1
+        if start is None:
+            start = 0 if step >= 1 else -1
+        if stop is None:
+            stop = (2**31 - 1) if step >= 1 else -(2**31 - 1)
+        return sequence_slice(data, start, stop, step)
     return _list_slice(data, slice_index)
 
 

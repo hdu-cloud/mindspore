@@ -55,50 +55,37 @@ class OptParamMgrImpl : public OptParamMgr {
       opt_shard_group = dev_group[0].name();
       MS_LOG(INFO) << "create group success.";
     } else {
-      MS_LOG(ERROR) << "create group failed.";
+      MS_LOG(WARNING) << "create opt shard group for the parameter " << parameter->ToString() << " failed.";
     }
     return opt_shard_group;
   }
 
  private:
-  int64_t ComputeShapeSize(const AnfNodePtr &parameter) const {
+  size_t ComputeShapeSize(const AnfNodePtr &parameter) const {
     ShapeVector shape(parameter->Shape()->cast<abstract::ShapePtr>()->shape());
-    int64_t total_size =
-      std::accumulate(shape.begin(), shape.end(), static_cast<int64_t>(1), std::multiplies<int64_t>());
+    size_t total_size = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
     return total_size;
   }
 
-  // unit: KB
-  float ComputeMemorySize(const AnfNodePtr &parameter) const {
+  // unit: B
+  size_t ComputeMemorySize(const AnfNodePtr &parameter) const {
     // key, value: typeid, bytes
     const std::map<TypeId, size_t> dtype_size_map = {
-      {kNumberTypeBool, sizeof(bool)},       {kNumberTypeInt8, sizeof(int8_t)},
-      {kNumberTypeInt16, sizeof(int16_t)},   {kNumberTypeInt32, sizeof(int32_t)},
-      {kNumberTypeInt64, sizeof(int64_t)},   {kNumberTypeFloat16, sizeof(float16)},
-      {kNumberTypeFloat32, sizeof(float)},   {kNumberTypeFloat64, sizeof(double)},
-      {kNumberTypeUInt8, sizeof(uint8_t)},   {kNumberTypeUInt16, sizeof(uint16_t)},
-      {kNumberTypeUInt32, sizeof(uint32_t)}, {kNumberTypeUInt64, sizeof(uint64_t)}};
+      {kNumberTypeBool, sizeof(bool)},        {kNumberTypeInt8, sizeof(int8_t)},
+      {kNumberTypeInt16, sizeof(int16_t)},    {kNumberTypeInt32, sizeof(int32_t)},
+      {kNumberTypeInt64, sizeof(int64_t)},    {kNumberTypeFloat16, sizeof(float16)},
+      {kNumberTypeFloat32, sizeof(float)},    {kNumberTypeFloat64, sizeof(double)},
+      {kNumberTypeUInt8, sizeof(uint8_t)},    {kNumberTypeUInt16, sizeof(uint16_t)},
+      {kNumberTypeUInt32, sizeof(uint32_t)},  {kNumberTypeUInt64, sizeof(uint64_t)},
+      {kNumberTypeBFloat16, sizeof(bfloat16)}};
 
-    int64_t shape_size = ComputeShapeSize(parameter);
+    size_t shape_size = ComputeShapeSize(parameter);
     TypeId type_id = parameter->Type()->cast<mindspore::TensorTypePtr>()->element()->type_id();
     if (dtype_size_map.find(type_id) == dtype_size_map.end()) {
       MS_LOG(EXCEPTION) << "unsupported type of parameter: " << parameter->DebugString();
     }
     size_t type_size = dtype_size_map.find(type_id)->second;
-    return static_cast<float>(shape_size) * type_size / DIVISOR_K;
-  }
-
-  bool StageSharedParam(const AnfNodePtr &parameter) const {
-    MS_EXCEPTION_IF_NULL(root_);
-    FuncGraphManagerPtr manager = root_->manager();
-    auto user_set = manager->node_users()[parameter];
-    for (auto &param_pair : user_set) {
-      CNodePtr cnode = param_pair.first->cast<CNodePtr>();
-      if (cnode->HasPrimalAttr(PIPELINE_PARAM)) {
-        return true;
-      }
-    }
-    return false;
+    return shape_size * type_size;
   }
 
   int64_t GetThresholdFromUsrInput() const {
@@ -111,15 +98,9 @@ class OptParamMgrImpl : public OptParamMgr {
       return false;
     }
 
-    if (StageSharedParam(parameter)) {
-      MS_LOG(INFO) << "Parallel optimizer: " << parameter->ToString()
-                   << " is stage-shared in pipeline parallel. Skipped.";
-      return false;
-    }
-
-    if (!ParameterRequireGrad(parameter)) {
-      // only trainable parameters need parallel optimizer
-      MS_LOG(INFO) << "Parallel optimizer: " << parameter->ToString() << " is not trainable parameter.";
+    auto param_ptr = parameter->cast<ParameterPtr>();
+    if ((!param_ptr) || (!param_ptr->has_default())) {
+      MS_LOG(INFO) << "Parallel optimizer: " << parameter->ToString() << " is not a parameter.";
       return false;
     }
 
@@ -129,28 +110,29 @@ class OptParamMgrImpl : public OptParamMgr {
       return false;
     }
 
-    int64_t param_split_threshold = DEFAULT_VAL;
+    size_t param_split_threshold = DEFAULT_VAL * KB_SIZE;
     int64_t user_define_threshold = GetThresholdFromUsrInput();
     if (user_define_threshold != -1) {
       MS_LOG(INFO) << "Parallel optimizer: use user-define threshold = " << user_define_threshold << "KB.";
-      param_split_threshold = user_define_threshold;
+      param_split_threshold = user_define_threshold * KB_SIZE;
     } else {
       MS_LOG(INFO) << "Parallel optimizer: use DEFAULT threshold = " << DEFAULT_VAL << "KB.";
     }
 
-    float param_size = ComputeMemorySize(parameter);
-    MS_LOG(INFO) << "Parallel optimizer: " << parameter->ToString() << " size = " << param_size << "KB";
+    size_t param_size = ComputeMemorySize(parameter);
+    MS_LOG(INFO) << "Parallel optimizer: " << parameter->ToString() << " size = " << param_size << "B";
     if (param_size < param_split_threshold) {
       MS_LOG(INFO) << "Parallel optimizer: the size of " << parameter->ToString() << "(" << param_size
-                   << "KB) is smaller than the threshold(" << param_split_threshold << "KB). Skipped.";
+                   << "KB) is smaller than the threshold(" << param_split_threshold << "B). Skipped.";
+      parameter->cast<ParameterPtr>()->param_info()->set_parallel_optimizer(false);
       return false;
     }
     return true;
   }
 
   FuncGraphPtr root_;
-  int64_t DEFAULT_VAL = 64;  // unit: KB
-  int64_t DIVISOR_K = 1024;
+  size_t DEFAULT_VAL = 64;  // unit: KB
+  size_t KB_SIZE = 1024;
 };
 
 std::unique_ptr<OptParamMgr> createOptParamMgr(const FuncGraphPtr &root) {

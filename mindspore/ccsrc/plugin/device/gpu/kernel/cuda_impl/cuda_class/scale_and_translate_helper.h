@@ -134,8 +134,13 @@ class ScaleAndTranslateHelperGpuKernel : public GpuKernelHelperBase {
     size_t workspace_int64_size = INPUT_NUM * sizeof(int64_t);
     work_size_list_.emplace_back(workspace_int64_size);
     // starts
-    std::vector<std::vector<int64_t>> int32_shapes, weights_shapes, buffers_shape;
-    std::vector<int64_t> start_shape, weight_shape, spans_size_shape, buffer_shape;
+    std::vector<std::vector<int64_t>> int32_shapes;
+    std::vector<std::vector<int64_t>> weights_shapes;
+    std::vector<std::vector<int64_t>> buffers_shape;
+    std::vector<int64_t> start_shape;
+    std::vector<int64_t> weight_shape;
+    std::vector<int64_t> spans_size_shape;
+    std::vector<int64_t> buffer_shape;
     start_shape.push_back(output_height_ + output_width_);
     // span size
     spans_size_shape.push_back(ktwo);
@@ -196,8 +201,10 @@ class ScaleAndTranslateHelperGpuKernel : public GpuKernelHelperBase {
     kernel_type_ = attr_ptr_->kernel_type_;
     bool antialias = attr_ptr_->antialias_;
     int64_t *input_shape_ptr = nullptr;
-    int32_t *forward_starts_ptr = nullptr, *spans_size_ptr = nullptr;
-    float *forward_weights_ptr = nullptr, *intermediate_ptr = nullptr;
+    int32_t *forward_starts_ptr = nullptr;
+    int32_t *spans_size_ptr = nullptr;
+    float *forward_weights_ptr = nullptr;
+    float *intermediate_ptr = nullptr;
     flag = GetDeviceAddress<int64_t>(work_ptrs, kIndex0, kernel_name_, &input_shape_ptr);
     if (flag != 0) {
       return flag;
@@ -232,10 +239,12 @@ class ScaleAndTranslateHelperGpuKernel : public GpuKernelHelperBase {
     thread_num_[kIndex2] = image_batch_ * output_height_;
     thread_num_[kIndex3] = image_batch_ * output_height_ * output_width_;
     // call cuda kernel
-    CalScaleAndTranslate(thread_num_, images_ptr, scale_ptr, translation_ptr, image_batch_, image_height_, image_width_,
-                         depth_, output_height_, output_width_, kernel_type_, antialias, radius_, input_shape_ptr,
-                         size_ptr, spans_size_ptr, forward_starts_ptr, forward_weights_ptr, intermediate_ptr,
-                         output_ptr, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream));
+    auto status =
+      CalScaleAndTranslate(thread_num_, images_ptr, scale_ptr, translation_ptr, image_batch_, image_height_,
+                           image_width_, depth_, output_height_, output_width_, kernel_type_, antialias, radius_,
+                           input_shape_ptr, size_ptr, spans_size_ptr, forward_starts_ptr, forward_weights_ptr,
+                           intermediate_ptr, output_ptr, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return 0;
   }
 

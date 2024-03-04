@@ -40,7 +40,7 @@ bool DiagPartGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std:
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   return true;
 }
 
@@ -56,11 +56,11 @@ int DiagPartGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std
     }
   }
   ResetResource();
-  std::vector<int64_t> input_shape = std::vector<int64_t>(inputs.at(kIndex0)->GetDeviceShapeAdaptively().begin(),
-                                                          inputs.at(kIndex0)->GetDeviceShapeAdaptively().end());
+  std::vector<int64_t> input_shape = inputs[kIndex0]->GetShapeVector();
   int64_t input_dims = input_shape.size();
   int kNumberTwo = 2;
   output_dims = input_dims / kNumberTwo;
+  output_elements_ = 1;
   for (int i = 0; i < output_dims; i++) {
     output_elements_ *= input_shape[i];
   }
@@ -81,8 +81,8 @@ bool DiagPartGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, c
   T *input = GetDeviceAddress<T>(inputs, 0);
   T *output = GetDeviceAddress<T>(outputs, 0);
 
-  CalDiagPart(output_elements_, input, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
-
+  auto status = CalDiagPart(output_elements_, input, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

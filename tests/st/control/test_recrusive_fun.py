@@ -116,6 +116,7 @@ def test_recrusive_fun():
     expect = Tensor([3], mstype.int32)
     assert ret == expect
 
+
 def test_branch_value_compatible():
     """
     Feature: control flow
@@ -146,8 +147,11 @@ def test_branch_value_compatible():
 
     try:
         forward_net(x, y, i)
+    except RuntimeError as e:
+        assert 'limit' in str(e)
     except ValueError as e:
         assert 'Join Failed' in str(e)
+
 
 if __name__ == "__main__":
     test_endless()

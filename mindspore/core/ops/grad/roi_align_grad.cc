@@ -17,13 +17,13 @@
 #include "ops/grad/roi_align_grad.h"
 
 #include <algorithm>
-#include <memory>
+#include <set>
 #include <string>
 #include <vector>
-#include <set>
 
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
 
@@ -36,26 +36,45 @@ class ROIAlignGradInfer : public abstract::OpInferBase {
                           const std::vector<AbstractBasePtr> &input_args) const override {
     MS_EXCEPTION_IF_NULL(primitive);
     auto op_name = primitive->name();
-    constexpr size_t kInputNum = 3;
-    (void)CheckAndConvertUtils::CheckInteger("the number of inputs", input_args.size(), kEqual, kInputNum, op_name);
+    std::vector<int64_t> output_shape;
     auto feature_shape =
       CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
     auto rois_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
     if (!IsDynamicRank(feature_shape)) {
-      constexpr size_t kROIGradFeatureShapeSize = 4;
+      constexpr int64_t kROIGradFeatureShapeSize = 4;
       (void)CheckAndConvertUtils::CheckInteger("rank of feature shape", SizeToLong(feature_shape.size()), kLessEqual,
                                                kROIGradFeatureShapeSize, op_name);
     }
     if (!IsDynamicRank(rois_shape)) {
-      constexpr size_t kROIGradRoisShapeSize = 2;
+      constexpr int64_t kROIGradRoisShapeSize = 2;
       (void)CheckAndConvertUtils::CheckInteger("rank of rois shape", SizeToLong(rois_shape.size()), kEqual,
                                                kROIGradRoisShapeSize, op_name);
     }
-
-    auto input_shape = input_args[kInputIndex2];
-    ShapeVector out_shape = GetShapeValue(primitive, input_shape);
-
-    return std::make_shared<abstract::Shape>(out_shape);
+    constexpr size_t kInputNum = 3;
+    if (input_args.size() == kInputNum) {
+      auto input_shape = input_args[kInputIndex2];
+      output_shape = GetShapeValue(primitive, input_shape);
+      return std::make_shared<abstract::Shape>(output_shape);
+    } else if (input_args.size() == kInputNum - 1) {
+      auto input_shape = primitive->GetAttr("xdiff_shape");
+      MS_EXCEPTION_IF_NULL(input_shape);
+      auto input_shape_tuple = input_shape->cast<ValueTuplePtr>();
+      MS_EXCEPTION_IF_NULL(input_shape_tuple);
+      auto input_tuple = input_shape_tuple->value();
+      (void)std::transform(input_tuple.begin(), input_tuple.end(), std::back_inserter(output_shape),
+                           [&op_name, &input_shape](const ValuePtr &size_value) -> int64_t {
+                             if (!size_value->isa<Int64Imm>()) {
+                               MS_EXCEPTION(TypeError)
+                                 << "For primitive[" << op_name << "], the 'shape'"
+                                 << " must be a tuple with all Int elements, but got " << input_shape->ToString();
+                             }
+                             return GetValue<int64_t>(size_value);
+                           });
+    } else {
+      MS_EXCEPTION(TypeError) << "For primitive[" << op_name << "], the 'input num'"
+                              << " must be 2 or 3, but got " << input_args.size();
+    }
+    return std::make_shared<abstract::Shape>(output_shape);
   }
 
   TypePtr InferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) const override {
@@ -66,6 +85,8 @@ class ROIAlignGradInfer : public abstract::OpInferBase {
                                                      prim->name());
     return input_args[kInputIndex0]->BuildType();
   }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {2}; }
 };
 
 void ROIAlignGrad::set_pooled_height(const int64_t pooled_height) {
@@ -99,7 +120,6 @@ void ROIAlignGrad::Init(const int64_t pooled_height, const int64_t pooled_width,
   this->set_spatial_scale(spatial_scale);
   this->set_sample_num(sample_num);
 }
-REGISTER_HOST_DEPENDS(kNameROIAlignGrad, {2});
 REGISTER_PRIMITIVE_OP_INFER_IMPL(ROIAlignGrad, prim::kPrimROIAlignGrad, ROIAlignGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

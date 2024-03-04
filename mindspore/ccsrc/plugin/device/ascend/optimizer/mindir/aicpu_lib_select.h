@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,15 +16,14 @@
 #ifndef MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_MINDIR_AICPU_LIB_SELECT_H_
 #define MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_MINDIR_AICPU_LIB_SELECT_H_
 
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/inplace_node_pass.h"
 
 namespace mindspore {
 namespace opt {
-class AICpuLibSelectPass : public PatternProcessPass {
+class AICpuLibSelectPass : public InplaceNodePass {
  public:
-  explicit AICpuLibSelectPass(bool multigraph = true) : PatternProcessPass("env_op_attr_update", multigraph) {}
-  ~AICpuLibSelectPass() override = default;
-  const AnfNodePtr Process(const FuncGraphPtr &, const AnfNodePtr &, const EquivPtr &) const override;
+  AICpuLibSelectPass() : InplaceNodePass("env_op_attr_update") {}
+  bool Process(const AnfNodePtr &node) const override;
 };
 }  // namespace opt
 }  // namespace mindspore

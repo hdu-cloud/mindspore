@@ -23,13 +23,12 @@ import numbers
 import random
 
 import numpy as np
-from PIL import Image
 
 import mindspore.dataset.transforms.py_transforms as py_transforms
 from . import py_transforms_util as util
 from .c_transforms import parse_padding
 from .py_transforms_util import is_pil
-from .utils import Border, Inter
+from .utils import Border, Inter, ANTIALIAS, CUBIC, LINEAR, NEAREST
 from .validators import check_adjust_gamma, check_alpha, check_auto_contrast, check_center_crop, check_cutout, \
     check_five_crop, check_hsv_to_rgb, check_linear_transform, check_mix_up, check_normalize_py, \
     check_normalizepad_py, check_num_channels, check_pad, check_positive_degrees, check_prob, check_random_affine, \
@@ -42,16 +41,10 @@ DE_PY_BORDER_TYPE = {Border.CONSTANT: 'constant',
                      Border.REFLECT: 'reflect',
                      Border.SYMMETRIC: 'symmetric'}
 
-if Image.__version__ >= "9.1.0":
-    DE_PY_INTER_MODE = {Inter.NEAREST: Image.Resampling.NEAREST,
-                        Inter.ANTIALIAS: Image.Resampling.LANCZOS,
-                        Inter.LINEAR: Image.Resampling.BILINEAR,
-                        Inter.CUBIC: Image.Resampling.BICUBIC}
-else:
-    DE_PY_INTER_MODE = {Inter.NEAREST: Image.NEAREST,
-                        Inter.ANTIALIAS: Image.ANTIALIAS,
-                        Inter.LINEAR: Image.LINEAR,
-                        Inter.CUBIC: Image.CUBIC}
+DE_PY_INTER_MODE = {Inter.NEAREST: NEAREST,
+                    Inter.ANTIALIAS: ANTIALIAS,
+                    Inter.LINEAR: LINEAR,
+                    Inter.CUBIC: CUBIC}
 
 
 class AdjustGamma(py_transforms.PyTensorOperation):
@@ -60,7 +53,7 @@ class AdjustGamma(py_transforms.PyTensorOperation):
 
     Args:
         gamma (float): The gamma parameter in correction equation, must be non negative.
-        gain (float, optional): The constant multiplier. Default: 1.0.
+        gain (float, optional): The constant multiplier. Default: ``1.0``.
 
     Raises:
         TypeError: If `gain` is not of type float.
@@ -113,9 +106,9 @@ class AutoContrast(py_transforms.PyTensorOperation):
 
     Args:
         cutoff (float, optional): Percent to cut off from the histogram on the low and
-            high ends, must be in range of [0.0, 50.0]. Default: 0.0.
+            high ends, must be in range of [0.0, 50.0]. Default: ``0.0``.
         ignore (Union[int, Sequence[int]], optional): Background pixel value, which will be
-            directly remapped to white. Default: None, means no background.
+            directly remapped to white. Default: ``None``, means no background.
 
     Raises:
         TypeError: If `cutoff` is not of type float.
@@ -214,7 +207,7 @@ class Cutout(py_transforms.PyTensorOperation):
 
     Args:
         length (int): The side length of square patches to be cut out.
-        num_patches (int, optional): The number of patches to be cut out. Default: 1.
+        num_patches (int, optional): The number of patches to be cut out. Default: ``1``.
 
     Raises:
         TypeError: If `length` is not of type int.
@@ -409,12 +402,12 @@ class Grayscale(py_transforms.PyTensorOperation):
     Convert the input PIL Image to grayscale.
 
     Args:
-        num_output_channels (int): The number of channels desired for the output image, must be 1 or 3.
-            If 3 is provided, the returned image will have 3 identical RGB channels. Default: 1.
+        num_output_channels (int): The number of channels desired for the output image, must be ``1`` or ``3``.
+            If ``3`` is provided, the returned image will have 3 identical RGB channels. Default: ``1``.
 
     Raises:
         TypeError: If `num_output_channels` is not of type int.
-        ValueError: If `num_output_channels` is not 1 or 3.
+        ValueError: If `num_output_channels` is not ``1`` or ``3``.
 
     Supported Platforms:
         ``CPU``
@@ -454,8 +447,8 @@ class HsvToRgb(py_transforms.PyTensorOperation):
     Convert the input numpy.ndarray images from HSV to RGB.
 
     Args:
-        is_hwc (bool): If True, means the input image is in shape of (H, W, C) or (N, H, W, C).
-            Otherwise, it is in shape of (C, H, W) or (N, C, H, W). Default: False.
+        is_hwc (bool): If ``True``, means the input image is in shape of (H, W, C) or (N, H, W, C).
+            Otherwise, it is in shape of (C, H, W) or (N, C, H, W). Default: ``False``.
 
     Raises:
         TypeError: If `is_hwc` is not of type bool.
@@ -636,9 +629,9 @@ class MixUp(py_transforms.PyTensorOperation):
     Args:
         batch_size (int): The number of images in a batch.
         alpha (float): The alpha and beta parameter for the Beta distribution.
-        is_single (bool, optional): If True, it will randomly mix up [img0, ..., img(n-1), img(n)] with
+        is_single (bool, optional): If ``True``, it will randomly mix up [img0, ..., img(n-1), img(n)] with
             [img1, ..., img(n), img0] in each batch. Otherwise, it will randomly mix up images with the
-            output of the previous batch. Default: True.
+            output of the previous batch. Default: ``True``.
 
     Raises:
         TypeError: If `batch_size` is not of type int.
@@ -783,7 +776,8 @@ class NormalizePad(py_transforms.PyTensorOperation):
             If float is provided, it will be applied to each channel.
             If Sequence[float] is provided, it should have the same length with channel
             and be arranged in channel order.
-        dtype (str): The dtype of the output image. Only "float32" and "float16" are supported. Default: "float32".
+        dtype (str): The dtype of the output image. Only ``"float32"`` and ``"float16"`` are supported.
+            Default: ``"float32"``.
 
     Raises:
         TypeError: If the input image is not of type :class:`numpy.ndarray` .
@@ -840,16 +834,16 @@ class Pad(py_transforms.PyTensorOperation):
             first value and the right and bottom borders with the second value.
             If Sequence[int, int, int, int] is provided, pad the left, top, right and bottom borders respectively.
         fill_value (Union[int, tuple[int, int, int]], optional): Pixel value used to pad the borders,
-            only valid when `padding_mode` is Border.CONSTANT.
+            only valid when `padding_mode` is ``Border.CONSTANT``.
             If int is provided, it will be used for all RGB channels.
-            If tuple[int, int, int] is provided, it will be used for R, G, B channels respectively. Default: 0.
-        padding_mode (Border, optional): Method of padding. It can be Border.CONSTANT, Border.EDGE, Border.REFLECT
-            or Border.SYMMETRIC. Default: Border.CONSTANT. Default: Border.CONSTANT.
+            If tuple[int, int, int] is provided, it will be used for R, G, B channels respectively. Default: ``0``.
+        padding_mode (Border, optional): Method of padding. It can be ``Border.CONSTANT``, ``Border.EDGE``,
+            ``Border.REFLECT`` or ``Border.SYMMETRIC``. Default: ``Border.CONSTANT``.
 
-            - Border.CONSTANT, pads with a constant value.
-            - Border.EDGE, pads with the last value at the edge of the image.
-            - Border.REFLECT, pads with reflection of the image omitting the last value on the edge.
-            - Border.SYMMETRIC, pads with reflection of the image repeating the last value on the edge.
+            - ``Border.CONSTANT`` , pads with a constant value.
+            - ``Border.EDGE`` , pads with the last value at the edge of the image.
+            - ``Border.REFLECT`` , pads with reflection of the image omitting the last value on the edge.
+            - ``Border.SYMMETRIC`` , pads with reflection of the image repeating the last value on the edge.
 
     Note:
         The behavior when `padding` is a sequence of length 2 will change from padding left/top with
@@ -912,9 +906,9 @@ class RandomAffine(py_transforms.PyTensorOperation):
         translate (Sequence[float, float], optional): Maximum absolute fraction sequence in shape of (tx, ty)
             for horizontal and vertical translations. The horizontal and vertical shifts are randomly
             selected from (-tx * width, tx * width) and (-ty * height, ty * height) respectively.
-            Default: None, means no translation.
+            Default: ``None``, means no translation.
         scale (Sequence[float, float], optional): Range of scaling factor to select from.
-            Default: None, means to keep the original scale.
+            Default: ``None``, means to keep the original scale.
         shear (Union[float, Sequence[float, float], Sequence[float, float, float, float]], optional):
             Range of shear factor to select from.
             If float is provided, a shearing parallel to X axis with a factor selected from
@@ -923,19 +917,19 @@ class RandomAffine(py_transforms.PyTensorOperation):
             from ( `shear` [0], `shear` [1]) will be applied.
             If Sequence[float, float, float, float] is provided, a shearing parallel to X axis with a factor selected
             from ( `shear` [0], `shear` [1]) and a shearing parallel to Y axis with a factor selected from
-            ( `shear` [2], `shear` [3]) will be applied. Default: None, means no shearing.
-        resample (Inter, optional): Method of interpolation. It can be Inter.BILINEAR, Inter.NEAREST
-            or Inter.BICUBIC. If the input PIL Image is in mode of "1" or "P", Inter.NEAREST will be
-            used directly. Default: Inter.NEAREST.
+            ( `shear` [2], `shear` [3]) will be applied. Default: ``None``, means no shearing.
+        resample (Inter, optional): Method of interpolation. It can be ``Inter.BILINEAR``, ``Inter.NEAREST``
+            or ``Inter.BICUBIC``. If the input PIL Image is in mode of "1" or "P", ``Inter.NEAREST`` will be
+            used directly. Default: ``Inter.NEAREST``.
 
-            - Inter.BILINEAR, bilinear interpolation.
-            - Inter.NEAREST, nearest-neighbor interpolation.
-            - Inter.BICUBIC, bicubic interpolation.
+            - ``Inter.BILINEA`` , bilinear interpolation.
+            - ``Inter.NEAREST`` , nearest-neighbor interpolation.
+            - ``Inter.BICUBIC`` , bicubic interpolation.
 
         fill_value (Union[int, tuple[int, int, int]], optional): Pixel value for areas outside the transform image.
             If int is provided, it will be used for all RGB channels.
             If tuple[int, int, int] is provided, it will be used for R, G, B channels respectively.
-            Only supported with Pillow 5.0.0 and above. Default: 0.
+            Only supported with Pillow 5.0.0 and above. Default: ``0``.
 
     Raises:
         TypeError: If `degrees` is not of type float or Sequence[float, float].
@@ -983,7 +977,7 @@ class RandomAffine(py_transforms.PyTensorOperation):
         self.translate = translate
         self.scale_ranges = scale
         self.shear = shear
-        self.resample = DE_PY_INTER_MODE[resample]
+        self.resample = DE_PY_INTER_MODE.get(resample)
         self.fill_value = fill_value
 
     def __call__(self, img):
@@ -1013,8 +1007,8 @@ class RandomColor(py_transforms.PyTensorOperation):
     Args:
         degrees (Sequence[float, float]): Range of color adjustment degree to select from,
             must be a Sequence of length 2, arranged in order of (min, max).
-            A degree of 1.0 gives the original image, a degree of 0.0 gives a black and white image
-            and higher degrees mean more brightness, contrast, etc. Default: (0.1, 1.9).
+            A degree of 1.0 gives the original image, a degree of ``0.0`` gives a black and white image
+            and higher degrees mean more brightness, contrast, etc. Default: ``(0.1, 1.9)``.
 
     Raises:
         TypeError: If `degrees` is not of type Sequence[float, float].
@@ -1063,21 +1057,21 @@ class RandomColorAdjust(py_transforms.PyTensorOperation):
             to select from, must be non negative.
             If float is provided, the factor will be uniformly selected from
             [max(0, 1 - `brightness` ), 1 + `brightness` ).
-            If Sequence[float, float] is provided, it should be arranged in order of (min, max). Default: (1, 1).
+            If Sequence[float, float] is provided, it should be arranged in order of (min, max). Default: ``(1, 1)``.
         contrast (Union[float, Sequence[float, float]], optional): Range of contrast adjustment factor
             to select from, must be non negative.
             If float is provided, the factor will be uniformly selected from [max(0, 1 - `contrast` ), 1 + `contrast` ).
-            If Sequence[float, float] is provided, it should be arranged in order of (min, max). Default: (1, 1).
+            If Sequence[float, float] is provided, it should be arranged in order of (min, max). Default: ``(1, 1)``.
         saturation (Union[float, Sequence[float, float]], optional): Range of saturation adjustment factor
             to select from, must be non negative.
             If float is provided, the factor will be uniformly selected from
             [max(0, 1 - `saturation` ), 1 + `saturation` ).
-            If Sequence[float, float] is provided, it should be arranged in order of (min, max). Default: (1, 1).
+            If Sequence[float, float] is provided, it should be arranged in order of (min, max). Default: ``(1, 1)``.
         hue (Union[float, Sequence[float, float]], optional): Range of hue adjustment factor to select from.
             If float is provided, it must be in range of [0, 0.5], and the factor will be uniformly
             selected from [ `-hue` , `hue` ).
             If Sequence[float, float] is provided, the elements must be in range of [-0.5, 0.5] and arranged in
-            order of (min, max). Default: (0, 0).
+            order of (min, max). Default: ``(0, 0)``.
 
     Raises:
         TypeError: If `brightness` is not of type float or Sequence[float, float].
@@ -1138,20 +1132,20 @@ class RandomCrop(py_transforms.PyTensorOperation):
             If Sequence[int, int] is provided, pad the left and top borders with the
             first value and the right and bottom borders with the second value.
             If Sequence[int, int, int, int] is provided, pad the left, top, right and bottom borders respectively.
-            Default: None, means not to pad.
+            Default: ``None``, means not to pad.
         pad_if_needed (bool, optional): Whether to pad the image if either side is shorter than
-            the given cropping size. Default: False, means not to pad.
+            the given cropping size. Default: ``False``, means not to pad.
         fill_value (Union[int, tuple[int, int, int]], optional): Pixel value used to pad the borders,
-            only valid when `padding_mode` is Border.CONSTANT.
+            only valid when `padding_mode` is ``Border.CONSTANT``.
             If int is provided, it will be used for all RGB channels.
-            If tuple[int, int, int] is provided, it will be used for R, G, B channels respectively. Default: 0.
-        padding_mode (Border, optional): Method of padding. It can be Border.CONSTANT, Border.EDGE, Border.REFLECT
-            or Border.SYMMETRIC. Default: Border.CONSTANT.
+            If tuple[int, int, int] is provided, it will be used for R, G, B channels respectively. Default: ``0``.
+        padding_mode (Border, optional): Method of padding. It can be ``Border.CONSTANT``, ``Border.EDGE``,
+            ``Border.REFLECT`` or ``Border.SYMMETRIC``. Default: ``Border.CONSTANT``.
 
-            - Border.CONSTANT, pads with a constant value.
-            - Border.EDGE, pads with the last value at the edge of the image.
-            - Border.REFLECT, pads with reflection of the image omitting the last value on the edge.
-            - Border.SYMMETRIC, pads with reflection of the image repeating the last value on the edge.
+            - ``Border.CONSTANT`` , pads with a constant value.
+            - ``Border.EDGE`` , pads with the last value at the edge of the image.
+            - ``Border.REFLECT`` , pads with reflection of the image omitting the last value on the edge.
+            - ``Border.SYMMETRIC`` , pads with reflection of the image repeating the last value on the edge.
 
     Note:
         The behavior when `padding` is a sequence of length 2 will change from padding left/top with
@@ -1217,20 +1211,20 @@ class RandomErasing(py_transforms.PyTensorOperation):
     See `Random Erasing Data Augmentation <https://arxiv.org/pdf/1708.04896.pdf>`_ .
 
     Args:
-        prob (float, optional): Probability of performing erasing. Default: 0.5.
+        prob (float, optional): Probability of performing erasing. Default: ``0.5``.
         scale (Sequence[float, float], optional): Range of area scale of the erased area relative
             to the original image to select from, arranged in order of (min, max).
-            Default: (0.02, 0.33).
+            Default: ``(0.02, 0.33)``.
         ratio (Sequence[float, float], optional): Range of aspect ratio of the erased area to select
-            from, arraged in order of (min, max). Default: (0.3, 3.3).
+            from, arraged in order of (min, max). Default: ``(0.3, 3.3)``.
         value (Union[int, str, Sequence[int, int, int]]): Pixel value used to pad the erased area.
             If int is provided, it will be used for all RGB channels.
             If Sequence[int, int, int] is provided, it will be used for R, G, B channels respectively.
-            If a string of 'random' is provided, each pixel will be erased with a random value obtained
-            from a standard normal distribution. Default: 0.
-        inplace (bool, optional): Whether to apply erasing inplace. Default: False.
+            If a string of ``'random'`` is provided, each pixel will be erased with a random value obtained
+            from a standard normal distribution. Default: ``0``.
+        inplace (bool, optional): Whether to apply erasing inplace. Default: ``False``.
         max_attempts (int, optional): The maximum number of attempts to propose a valid
-            erased area, beyond which the original image will be returned. Default: 10.
+            erased area, beyond which the original image will be returned. Default: ``10``.
 
     Raises:
         TypeError: If `prob` is not of type float.
@@ -1292,7 +1286,7 @@ class RandomGrayscale(py_transforms.PyTensorOperation):
     Randomly convert the input PIL Image to grayscale.
 
     Args:
-        prob (float, optional): Probability of performing grayscale conversion. Default: 0.1.
+        prob (float, optional): Probability of performing grayscale conversion. Default: ``0.1``.
 
     Raises:
         TypeError: If `prob` is not of type float.
@@ -1345,7 +1339,7 @@ class RandomHorizontalFlip(py_transforms.PyTensorOperation):
     Randomly flip the input PIL Image horizontally with a given probability.
 
     Args:
-        prob (float, optional): Probability of performing horizontally flip. Default: 0.5.
+        prob (float, optional): Probability of performing horizontally flip. Default: ``0.5``.
 
     Raises:
         TypeError: If `prob` is not of type float.
@@ -1389,7 +1383,7 @@ class RandomLighting(py_transforms.PyTensorOperation):
     Add AlexNet-style PCA-based noise to the input PIL Image.
 
     Args:
-        alpha (float, optional): Intensity of the noise. Default: 0.05.
+        alpha (float, optional): Intensity of the noise. Default: ``0.05``.
 
     Raises:
         TypeError: If `alpha` is not of type float.
@@ -1434,14 +1428,14 @@ class RandomPerspective(py_transforms.PyTensorOperation):
     Randomly apply perspective transformation to the input PIL Image with a given probability.
 
     Args:
-        distortion_scale (float, optional): Scale of distortion, in range of [0, 1]. Default: 0.5.
-        prob (float, optional): Probability of performing perspective transformation. Default: 0.5.
-        interpolation (Inter, optional): Method of interpolation. It can be Inter.BILINEAR,
-            Inter.NEAREST or Inter.BICUBIC. Default: Inter.BICUBIC.
+        distortion_scale (float, optional): Scale of distortion, in range of [0, 1]. Default: ``0.5``.
+        prob (float, optional): Probability of performing perspective transformation. Default: ``0.5``.
+        interpolation (Inter, optional): Method of interpolation. It can be ``Inter.BILINEAR``,
+            ``Inter.NEAREST`` or ``Inter.BICUBIC``. Default: ``Inter.BICUBIC``.
 
-            - Inter.BILINEAR, bilinear interpolation.
-            - Inter.NEAREST, nearest-neighbor interpolation.
-            - Inter.BICUBIC, bicubic interpolation.
+            - ``Inter.BILINEA`` , bilinear interpolation.
+            - ``Inter.NEAREST`` , nearest-neighbor interpolation.
+            - ``Inter.BICUBIC`` , bicubic interpolation.
 
     Raises:
         TypeError: If `distortion_scale` is not of type float.
@@ -1469,7 +1463,7 @@ class RandomPerspective(py_transforms.PyTensorOperation):
     def __init__(self, distortion_scale=0.5, prob=0.5, interpolation=Inter.BICUBIC):
         self.distortion_scale = distortion_scale
         self.prob = prob
-        self.interpolation = DE_PY_INTER_MODE[interpolation]
+        self.interpolation = DE_PY_INTER_MODE.get(interpolation)
 
     def __call__(self, img):
         """
@@ -1499,19 +1493,19 @@ class RandomResizedCrop(py_transforms.PyTensorOperation):
             If int is provided, a square of size `(size, size)` will be cropped with this value.
             If Sequence[int, int] is provided, its two elements will be taken as the cropped height and width.
         scale (Sequence[float, float], optional): Range of area scale of the cropped area relative
-            to the original image to select from, arraged in order or (min, max). Default: (0.08, 1.0).
+            to the original image to select from, arraged in order or (min, max). Default: ``(0.08, 1.0)``.
         ratio (Sequence[float, float], optional): Range of aspect ratio of the cropped area to select
-            from, arraged in order of (min, max). Default: (3./4., 4./3.).
-        interpolation (Inter, optional): Method of interpolation. It can be Inter.NEAREST,
-            Inter.ANTIALIAS, Inter.BILINEAR or Inter.BICUBIC. Default: Inter.BILINEAR.
+            from, arraged in order of (min, max). Default: ``(3./4., 4./3.)``.
+        interpolation (Inter, optional): Method of interpolation. It can be ``Inter.NEAREST``,
+            ``Inter.ANTIALIAS``, ``Inter.BILINEAR`` or ``Inter.BICUBIC``. Default: ``Inter.BILINEAR``.
 
-            - Inter.NEAREST, nearest-neighbor interpolation.
-            - Inter.ANTIALIAS, antialias interpolation.
-            - Inter.BILINEAR, bilinear interpolation.
-            - Inter.BICUBIC, bicubic interpolation.
+            - ``Inter.NEAREST`` , nearest-neighbor interpolation.
+            - ``Inter.ANTIALIAS`` , antialias interpolation.
+            - ``Inter.BILINEA`` , bilinear interpolation.
+            - ``Inter.BICUBIC`` , bicubic interpolation.
 
         max_attempts (int, optional): The maximum number of attempts to propose a valid
-            crop area, beyond which it will fall back to use center crop instead. Default: 10.
+            crop area, beyond which it will fall back to use center crop instead. Default: ``10``.
 
     Raises:
         TypeError: If `size` is not of type int or Sequence[int, int].
@@ -1545,7 +1539,7 @@ class RandomResizedCrop(py_transforms.PyTensorOperation):
         self.size = size
         self.scale = scale
         self.ratio = ratio
-        self.interpolation = DE_PY_INTER_MODE[interpolation]
+        self.interpolation = DE_PY_INTER_MODE.get(interpolation)
         self.max_attempts = max_attempts
 
     def __call__(self, img):
@@ -1570,25 +1564,25 @@ class RandomRotation(py_transforms.PyTensorOperation):
         degrees (Union[float, Sequence[float, float]]): Range of rotation degree to select from.
             If int is provided, the rotation degree will be randomly selected from ( `-degrees` , `degrees` ).
             If Sequence[float, float] is provided, it should be arranged in order of (min, max).
-        resample (Inter, optional): Method of interpolation. It can be Inter.NEAREST,
-            Inter.BILINEAR or Inter.BICUBIC. If the input PIL Image is in mode of "1" or "P",
-            Inter.NEAREST will be used directly. Default: Inter.NEAREST.
+        resample (Inter, optional): Method of interpolation. It can be ``Inter.NEAREST``,
+            ``Inter.BILINEAR`` or ``Inter.BICUBIC``. If the input PIL Image is in mode of "1" or "P",
+            ``Inter.NEAREST`` will be used directly. Default: ``Inter.NEAREST``.
 
-            - Inter.NEAREST, nearest-neighbor interpolation.
+            - ``Inter.NEAREST`` , nearest-neighbor interpolation.
 
-            - Inter.BILINEAR, bilinear interpolation.
+            - ``Inter.BILINEA`` , bilinear interpolation.
 
-            - Inter.BICUBIC, bicubic interpolation.
+            - ``Inter.BICUBIC`` , bicubic interpolation.
 
-        expand (bool, optional): If True, it will expand the image to make it large enough to hold the entire
-            rotated image. If False, keep the image the same size as the input. Please note that the expansion
-            assumes rotation around the center and no translation. Default: False.
+        expand (bool, optional): If ``True``, it will expand the image to make it large enough to hold the entire
+            rotated image. If ``False``, keep the image the same size as the input. Please note that the expansion
+            assumes rotation around the center and no translation. Default: ``False``.
         center (Sequence[int, int], optional): The position of the rotation center, taking the upper left corner
-            as the origin. It should be arranged in order of (width, height). Default: None, means to set the
+            as the origin. It should be arranged in order of (width, height). Default: ``None``, means to set the
             center of the image.
         fill_value (Union[int, tuple[int, int, int]], optional): Pixel value for areas outside the rotated image.
             If int is provided, it will be used for all RGB channels.
-            If tuple[int, int, int] is provided, it will be used for R, G, B channels respectively. Default: 0.
+            If tuple[int, int, int] is provided, it will be used for R, G, B channels respectively. Default: ``0``.
 
     Raises:
         TypeError: If `degrees` is not of type float or Sequence[float, float].
@@ -1617,7 +1611,7 @@ class RandomRotation(py_transforms.PyTensorOperation):
     @check_random_rotation
     def __init__(self, degrees, resample=Inter.NEAREST, expand=False, center=None, fill_value=0):
         self.degrees = degrees
-        self.resample = DE_PY_INTER_MODE[resample]
+        self.resample = DE_PY_INTER_MODE.get(resample)
         self.expand = expand
         self.center = center
         self.fill_value = fill_value
@@ -1641,9 +1635,9 @@ class RandomSharpness(py_transforms.PyTensorOperation):
 
     Args:
         degrees (Sequence[float, float], optional): Range of sharpness adjustment degree to select from, arranged
-            in order of (min, max). A degree of 0.0 gives a blurred image, a degree of 1.0
-            gives the original image and a degree of 2.0 gives a sharpened image.
-            Default: (0.1, 1.9).
+            in order of (min, max). A degree of ``0.0`` gives a blurred image, a degree of ``1.0``
+            gives the original image and a degree of ``2.0`` gives a sharpened image.
+            Default: ``(0.1, 1.9)``.
 
     Raises:
         TypeError : If `degrees` is not of type Sequence[float, float].
@@ -1688,7 +1682,7 @@ class RandomVerticalFlip(py_transforms.PyTensorOperation):
     Randomly flip the input PIL Image vertically with a given probability.
 
     Args:
-        prob (float, optional): Probability of performing vertically flip. Default: 0.5.
+        prob (float, optional): Probability of performing vertically flip. Default: ``0.5``.
 
     Raises:
         TypeError: If `prob` is not of type float.
@@ -1736,13 +1730,13 @@ class Resize(py_transforms.PyTensorOperation):
             If int is provided, resize the smaller edge of the image to this
             value, keeping the image aspect ratio the same.
             If Sequence[int, int] is provided, its two elements will be taken as the resized height and width.
-        interpolation (Inter, optional): Method of interpolation. It can be Inter.NEAREST,
-            Inter.ANTIALIAS, Inter.BILINEAR or Inter.BICUBIC. Default: Inter.BILINEAR.
+        interpolation (Inter, optional): Method of interpolation. It can be ``Inter.NEAREST``,
+            ``Inter.ANTIALIAS``, ``Inter.BILINEAR`` or ``Inter.BICUBIC``. Default: ``Inter.BILINEAR``.
 
-            - Inter.NEAREST, nearest-neighbor interpolation.
-            - Inter.ANTIALIAS, antialias interpolation.
-            - Inter.BILINEAR, bilinear interpolation.
-            - Inter.BICUBIC, bicubic interpolation.
+            - ``Inter.NEAREST`` , nearest-neighbor interpolation.
+            - ``Inter.ANTIALIAS`` , antialias interpolation.
+            - ``Inter.BILINEA`` , bilinear interpolation.
+            - ``Inter.BICUBIC`` , bicubic interpolation.
 
     Raises:
         TypeError: If `size` is not of type int or Sequence[int, int].
@@ -1767,7 +1761,7 @@ class Resize(py_transforms.PyTensorOperation):
     @check_resize_interpolation
     def __init__(self, size, interpolation=Inter.BILINEAR):
         self.size = size
-        self.interpolation = DE_PY_INTER_MODE[interpolation]
+        self.interpolation = DE_PY_INTER_MODE.get(interpolation)
         self.random = False
 
     def __call__(self, img):
@@ -1788,8 +1782,8 @@ class RgbToBgr(py_transforms.PyTensorOperation):
     Convert the input numpy.ndarray images from RGB to BGR.
 
     Args:
-        is_hwc (bool): If True, means the input image is in shape of (H, W, C) or (N, H, W, C).
-            Otherwise, it is in shape of (C, H, W) or (N, C, H, W). Default: False.
+        is_hwc (bool): If ``True``, means the input image is in shape of (H, W, C) or (N, H, W, C).
+            Otherwise, it is in shape of (C, H, W) or (N, C, H, W). Default: ``False``.
 
     Raises:
         TypeError: If `is_hwc` is not of type bool.
@@ -1833,8 +1827,8 @@ class RgbToHsv(py_transforms.PyTensorOperation):
     Convert the input numpy.ndarray images from RGB to HSV.
 
     Args:
-        is_hwc (bool): If True, means the input image is in shape of (H, W, C) or (N, H, W, C).
-            Otherwise, it is in shape of (C, H, W) or (N, C, H, W). Default: False.
+        is_hwc (bool): If ``True``, means the input image is in shape of (H, W, C) or (N, H, W, C).
+            Otherwise, it is in shape of (C, H, W) or (N, C, H, W). Default: ``False``.
 
     Raises:
         TypeError: If `is_hwc` is not of type bool.
@@ -1881,8 +1875,8 @@ class TenCrop(py_transforms.PyTensorOperation):
         size (Union[int, Sequence[int, int]]): The size of the cropped image.
             If int is provided, a square of size `(size, size)` will be cropped with this value.
             If Sequence[int, int] is provided, its two elements will be taken as the cropped height and width.
-        use_vertical_flip (bool, optional): If True, flip the images vertically. Otherwise, flip them
-            horizontally. Default: False.
+        use_vertical_flip (bool, optional): If ``True``, flip the images vertically. Otherwise, flip them
+            horizontally. Default: ``False``.
 
     Raises:
         TypeError: If `size` is not of type int or Sequence[int, int].
@@ -1933,10 +1927,10 @@ class ToPIL(py_transforms.PyTensorOperation):
     Convert the input decoded numpy.ndarray image to PIL Image.
 
     Note:
-        The conversion mode will be determined by the data type using :class:`PIL.Image.fromarray` .
+        The conversion mode will be determined by the data type using `PIL.Image.fromarray` .
 
     Raises:
-        TypeError: If the input image is not of type :class:`numpy.ndarray` or :class:`PIL.Image.Image` .
+        TypeError: If the input image is not of type :class:`numpy.ndarray` or `PIL.Image.Image` .
 
     Supported Platforms:
         ``CPU``
@@ -1977,10 +1971,10 @@ class ToTensor(py_transforms.PyTensorOperation):
     from (H, W, C) to (C, H, W).
 
     Args:
-        output_type (numpy.dtype, optional): The desired dtype of the output image. Default: :class:`numpy.float32` .
+        output_type (numpy.dtype, optional): The desired dtype of the output image. Default: ``numpy.float32`` .
 
     Raises:
-        TypeError: If the input image is not of type :class:`PIL.Image.Image` or :class:`numpy.ndarray` .
+        TypeError: If the input image is not of type `PIL.Image.Image` or :class:`numpy.ndarray` .
         TypeError: If dimension of the input image is not 2 or 3.
 
     Supported Platforms:
@@ -2021,7 +2015,7 @@ class ToType(py_transforms.PyTensorOperation):
     Convert the input numpy.ndarray image to the desired dtype.
 
     Args:
-        output_type (numpy.dtype): The desired dtype of the output image, e.g. :class:`numpy.float32` .
+        output_type (numpy.dtype): The desired dtype of the output image, e.g. ``numpy.float32`` .
 
     Raises:
         TypeError: If the input image is not of type :class:`numpy.ndarray` .
@@ -2071,7 +2065,8 @@ class UniformAugment(py_transforms.PyTensorOperation):
 
     Args:
          transforms (Sequence): Sequence of transformations to select from.
-         num_ops (int, optional): Number of transformations to be sequentially and randomly applied. Default: 2.
+         num_ops (int, optional): Number of transformations to be sequentially and randomly applied.
+            Default: ``2``.
 
     Raises:
         TypeError: If `transforms` is not a sequence of data processing operations.

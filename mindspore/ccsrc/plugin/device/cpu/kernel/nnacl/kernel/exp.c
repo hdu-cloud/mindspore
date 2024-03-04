@@ -17,88 +17,69 @@
 #include "nnacl/kernel/exp.h"
 #include <math.h>
 #include "nnacl/exp_parameter.h"
-#include "nnacl/tensor_c.h"
 #include "nnacl/op_base.h"
+#include "nnacl/fp32/exp_fp32.h"
+#include "nnacl/kernel/default_kernel_base.h"
+#include "nnacl/tensor_c_utils.h"
+#ifdef ENABLE_FP16
+#include "nnacl/fp16/exp_fp16.h"
+#endif
 
-int exp_resize(struct KernelBase *self) {
-  ExpStru *exp = (ExpStru *)self;
+int ExpRunImpl(void *cdata, int task_id, float l, float r) {
+  ExpStruct *exp = (ExpStruct *)cdata;
+  return exp->Exp(exp->base_.in_[FIRST_INPUT]->data_, exp->base_.out_[OUTPUT_INDEX]->data_, exp, task_id);
+}
+
+int ExpResize(struct KernelBase *self) {
+  ExpStruct *exp = (ExpStruct *)self;
   NNACL_CHECK_NULL_RETURN_ERR(exp);
-  ExpParameter *param = (ExpParameter *)exp->base.param;
+  ExpParameter *param = (ExpParameter *)exp->base_.param_;
   NNACL_CHECK_NULL_RETURN_ERR(param);
-  if (self->insize < 1 || self->outsize < 1) {
-    return NNACL_ERR;
-  }
-  param->element_num_ = GetElementNum(&(self->in[0]));
+  exp->element_num_ = GetElementNum(exp->base_.in_[FIRST_INPUT]);
   return NNACL_OK;
 }
 
-int exp_prepare(struct KernelBase *self) {
-  ExpStru *exp = (ExpStru *)self;
+int ExpPrepare(struct KernelBase *self) {
+  ExpStruct *exp = (ExpStruct *)self;
   NNACL_CHECK_NULL_RETURN_ERR(exp);
-  ExpParameter *param = (ExpParameter *)exp->base.param;
+  ExpParameter *param = (ExpParameter *)exp->base_.param_;
   NNACL_CHECK_NULL_RETURN_ERR(param);
+  NNACL_CHECK_FALSE(self->in_size_ < 1 || self->out_size_ < 1, NNACL_TENSOR_SIZE_INVALID);
 
   float log_base = (param->base_ == -1) ? 1 : logf(param->base_);
-  param->in_scale_ = param->scale_ * log_base;
+  exp->in_scale_ = param->scale_ * log_base;
   if (param->shift_ == 0) {
-    param->out_scale_ = 1;
+    exp->out_scale_ = 1;
   } else {
     if (log_base == 1) {
-      param->out_scale_ = expf(param->shift_);
+      exp->out_scale_ = expf(param->shift_);
     } else {
-      param->out_scale_ = powf(param->base_, param->shift_);
+      exp->out_scale_ = powf(param->base_, param->shift_);
     }
   }
 
   return NNACL_OK;
 }
 
-int exp_release(struct KernelBase *self) { return NNACL_OK; }
+int ExpCompute(struct KernelBase *self) {
+  return self->env_->ParallelLaunch(self->env_->thread_pool_, ExpRunImpl, self, self->thread_nr_);
+}
 
-int exp_do_compute(void *param, int task_id, float lhs_scale, float rhs_scale) {
-  if (param == NULL) {
-    return NNACL_ERR;
+KernelBase *CreateExp(OpParameter *param, int data_type) {
+  ExpStruct *exp = (ExpStruct *)malloc(sizeof(ExpStruct));
+  NNACL_MALLOC_CHECK_NULL_RETURN_NULL(exp);
+  exp->base_.Prepare = ExpPrepare;
+  exp->base_.Resize = ExpResize;
+  exp->base_.Release = DefaultRelease;
+  exp->base_.Compute = ExpCompute;
+  exp->Exp = ExpFusionFp32;
+#ifdef ENABLE_FP16
+  if (data_type == kNumberTypeFloat16) {
+    exp->Exp = ExpFusionFp16;
   }
-
-  ExpStru *exp_stru = (ExpStru *)param;
-  ExpParameter *exp_param = (ExpParameter *)exp_stru->base.param;
-  NNACL_CHECK_NULL_RETURN_ERR(exp_param);
-
-  const void *input_data = exp_stru->base.in[0].data_;
-  NNACL_CHECK_NULL_RETURN_ERR(input_data);
-  void *output_data = exp_stru->base.out[0].data_;
-  NNACL_CHECK_NULL_RETURN_ERR(output_data);
-  int ret = exp_stru->base.funcs->ExpFusion(input_data, output_data, exp_param, task_id);
-  return ret;
-}
-
-int exp_compute(struct KernelBase *self) {
-  return self->env->parallelLaunch(self->env->threadPool, exp_do_compute, self, self->param->thread_num_);
-}
-
-KernelBase *CreateExp(OpParameter *param, TensorC *in, size_t insize, TensorC *out, size_t outsize, int data_type,
-                      FormatC format) {
-  MS_CHECK_TRUE_RET(insize == 1, NULL);
-  MS_CHECK_TRUE_RET(outsize == 1, NULL);
-  ExpStru *exp = (ExpStru *)malloc(sizeof(ExpStru));
-  NNACL_CHECK_NULL_RETURN_NULL(exp);
-  exp->base.param = param;
-  exp->base.in = in;
-  exp->base.insize = insize;
-  exp->base.out = out;
-  exp->base.outsize = outsize;
-  exp->base.env = GetExecEnv();
-  exp->base.prepare = exp_prepare;
-  exp->base.resize = exp_resize;
-  exp->base.release = exp_release;
-  exp->base.compute = exp_compute;
-  exp->base.funcs = GetCoreFuncs(data_type == kNumberTypeFloat16);
+#endif
   return (KernelBase *)exp;
 }
 
-// REG_KERNEL_CREATOR(PrimType_ExpFusion, Format_NHWC, kNumberTypeFloat32, CreateExp);
-// REG_KERNEL_CREATOR(PrimType_ExpFusion, Format_NHWC, kNumberTypeFloat16, CreateExp);
-// REG_KERNEL_CREATOR(PrimType_ExpFusion, Format_NCHW, kNumberTypeFloat32, CreateExp);
-// REG_KERNEL_CREATOR(PrimType_ExpFusion, Format_NCHW, kNumberTypeFloat16, CreateExp);
-// REG_KERNEL_CREATOR(PrimType_ExpFusion, Format_NC4HW4, kNumberTypeFloat32, CreateExp);
-// REG_KERNEL_CREATOR(PrimType_ExpFusion, Format_NC8HW8, kNumberTypeFloat16, CreateExp);
+REG_KERNEL_CREATOR(PrimType_ExpFusion, kNumberTypeFloat32, CreateExp)
+REG_KERNEL_CREATOR(PrimType_ExpFusion, kNumberTypeFloat16, CreateExp)

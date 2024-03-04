@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,25 +14,29 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/optimizer/buffer_fusion/conv_single_in_fusion_pass.h"
+#include <memory>
+#include <string>
+#include <vector>
+#include "mindspore/core/ops/framework_ops.h"
 #include "utils/hash_set.h"
-#include "kernel/kernel_fusion.h"
-#include "include/common/debug/anf_ir_dump.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "mindspore/core/ops/core_ops.h"
-#include "utils/ms_context.h"
-#include "backend/common/optimizer/fusion_id_allocator.h"
-#include "plugin/device/ascend/optimizer/platform.h"
+#include "plugin/device/ascend/optimizer/fusion_id_allocator.h"
+#include "plugin/device/ascend/hal/common/platform_info_util.h"
 
 namespace mindspore {
 namespace opt {
+namespace {
+constexpr auto kPatternConvolution = "Convolution";
+}
+
 void ConvSingleInFusionPass::MatchConvSingleInEltwise(const CNodePtr &cnode, const session::KernelGraph &kernel_graph,
                                                       FusedNodeRecord *candidate_fusion) {
   MS_EXCEPTION_IF_NULL(cnode);
   MS_EXCEPTION_IF_NULL(candidate_fusion);
   mindspore::HashSet<AnfNodePtr> record{cnode};
   auto eltwise_input = cnode->input(kIndex1);
-  while (CheckEltWiseNode(kernel_graph, eltwise_input)) {
+  while (CheckSingleInEltWiseNode(kernel_graph, eltwise_input)) {
     (void)record.insert(eltwise_input);
     auto input_cnode = eltwise_input->cast<CNodePtr>();
     MS_EXCEPTION_IF_NULL(input_cnode);
@@ -47,7 +51,7 @@ void ConvSingleInFusionPass::MatchConvSingleInEltwise(const CNodePtr &cnode, con
     return;
   }
   if (AnfAlgo::GetKernelType(eltwise_input) == KernelType::TBE_KERNEL &&
-      AnfAlgo::GetFusionType(eltwise_input) == kernel::FusionType::CONV) {
+      AnfAlgo::GetFusionType(eltwise_input) == kPatternConvolution) {
     (void)record.insert(eltwise_input);
     candidate_fusion->push_back(record);
     SetRecordFusionId(record);
@@ -66,8 +70,8 @@ void ConvSingleInFusionPass::MatchSingleFusionPattern(const session::KernelGraph
     }
     auto cnode = node->cast<CNodePtr>();
     MS_EXCEPTION_IF_NULL(cnode);
-    if (AnfAlgo::GetKernelType(cnode) == KernelType::TBE_KERNEL &&
-        AnfAlgo::GetFusionType(cnode) == kernel::FusionType::ELEMWISE && cnode->inputs().size() == ELTWISE_INPUT_SIZE) {
+    if (AnfAlgo::GetKernelType(cnode) == KernelType::TBE_KERNEL && AnfAlgo::GetFusionType(cnode) == kPatternElemWise &&
+        cnode->inputs().size() == ELTWISE_INPUT_SIZE) {
       MatchConvSingleInEltwise(cnode, kernel_graph, candidate_fusion);
     }
   }

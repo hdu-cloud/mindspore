@@ -14,22 +14,38 @@
  * limitations under the License.
  */
 #include "ops/resize_area.h"
-#include <cmath>
-#include <algorithm>
 #include <memory>
 #include <set>
-#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/image_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
+constexpr size_t kDimension4 = 4;
+
 abstract::ShapePtr ResizeAreaInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
-  std::vector<int64_t> output_shape(4, -1);
+  std::vector<int64_t> output_shape(kDimension4, -1);
   auto images_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
   if (!IsDynamicRank(images_shape)) {
     constexpr int64_t image_shape_size = 4;
@@ -46,19 +62,17 @@ abstract::ShapePtr ResizeAreaInferShape(const PrimitivePtr &primitive, const std
     (void)CheckAndConvertUtils::CheckInteger("input1 num", size_shape[0], kEqual, size_num, primitive->name());
   }
 
-  if (!input_args[1]->BuildValue()->isa<AnyValue>() && !input_args[1]->BuildValue()->isa<None>()) {
-    auto input1_value = input_args[1]->BuildValue();
-    if (!input1_value->isa<tensor::Tensor>()) {
-      MS_LOG(EXCEPTION) << "For ResizeArea, the inputs[1] must be a tensor, but got: " << input1_value->ToString()
-                        << ".";
+  auto input_size_value = input_args[1]->BuildValue();
+  MS_EXCEPTION_IF_NULL(input_size_value);
+  auto input_size = GetShapeValue(primitive, input_args[1]);
+  if (IsValueKnown(input_size_value)) {
+    if (std::any_of(input_size.begin(), input_size.end(), [](int64_t x) { return x <= 0; })) {
+      MS_EXCEPTION(ValueError) << "For '" << primitive->name() << "', 'size' should only contain positive number.";
     }
-    auto input1_shape_ptr = static_cast<int32_t *>(input1_value->cast<tensor::TensorPtr>()->data_c());
-    if (input1_shape_ptr[0] <= 0 || input1_shape_ptr[1] <= 0) {
-      MS_EXCEPTION(ValueError) << "For '" << primitive->name() << "', the size must be positive "
-                               << ", but got " << input1_shape_ptr[0] << " , " << input1_shape_ptr[1];
-    }
-    output_shape[kInputIndex1] = input1_shape_ptr[kInputIndex0];
-    output_shape[kInputIndex2] = input1_shape_ptr[kInputIndex1];
+  }
+  if (!IsDynamic(input_size)) {
+    output_shape[kInputIndex1] = input_size[kInputIndex0];
+    output_shape[kInputIndex2] = input_size[kInputIndex1];
   }
   return std::make_shared<abstract::Shape>(output_shape);
 }
@@ -89,6 +103,25 @@ AbstractBasePtr ResizeAreaInfer(const abstract::AnalysisEnginePtr &, const Primi
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(ResizeArea, prim::kPrimResizeArea, ResizeAreaInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGResizeAreaInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ResizeAreaInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ResizeAreaInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ResizeAreaInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ResizeArea, prim::kPrimResizeArea, AGResizeAreaInfer, false);
 }  // namespace ops
 }  // namespace mindspore

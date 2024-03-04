@@ -20,7 +20,7 @@ import numpy as np
 from utils import get_data, get_nlp_data
 
 from mindspore import log as logger
-from mindspore.mindrecord import FileWriter, FileReader, MindPage, SUCCESS
+from mindspore.mindrecord import FileWriter, FileReader, MindPage
 
 FILES_NUM = 4
 
@@ -306,12 +306,11 @@ def test_cv_page_reader_tutorial():
     test_cv_file_writer_tutorial(mindrecord_file_name, remove_file=False)
 
     reader = MindPage(mindrecord_file_name + "0")
-    fields = reader.get_category_fields()
+    fields = reader.candidate_fields
     assert fields == ['file_name', 'label'], \
         'failed on getting candidate category fields.'
 
-    ret = reader.set_category_field("label")
-    assert ret == SUCCESS, 'failed on setting category field.'
+    reader.category_field = "label"
 
     info = reader.read_category_info()
     logger.info("category info: {}".format(info))
@@ -336,12 +335,11 @@ def test_cv_page_reader_tutorial_by_file_name():
     test_cv_file_writer_tutorial(mindrecord_file_name, remove_file=False)
 
     reader = MindPage(mindrecord_file_name + "0")
-    fields = reader.get_category_fields()
+    fields = reader.candidate_fields
     assert fields == ['file_name', 'label'], \
         'failed on getting candidate category fields.'
 
-    ret = reader.set_category_field("file_name")
-    assert ret == SUCCESS, 'failed on setting category field.'
+    reader.category_field = "file_name"
 
     info = reader.read_category_info()
     logger.info("category info: {}".format(info))
@@ -441,12 +439,11 @@ def test_nlp_page_reader_tutorial():
     test_nlp_file_writer_tutorial(mindrecord_file_name, remove_file=False)
 
     reader = MindPage(mindrecord_file_name + "0")
-    fields = reader.get_category_fields()
+    fields = reader.candidate_fields
     assert fields == ['id', 'rating'], \
         'failed on getting candidate category fields.'
 
-    ret = reader.set_category_field("rating")
-    assert ret == SUCCESS, 'failed on setting category field.'
+    reader.category_field = "rating"
 
     info = reader.read_category_info()
     logger.info("category info: {}".format(info))
@@ -456,7 +453,7 @@ def test_nlp_page_reader_tutorial():
     assert len(row[0]) == 6
     logger.info("row[0]: {}".format(row[0]))
 
-    row1 = reader.read_at_page_by_name("7", 0, 1)
+    row1 = reader.read_at_page_by_name("7.0", 0, 1)
     assert len(row1) == 1
     assert len(row1[0]) == 6
     logger.info("row1[0]: {}".format(row1[0]))
@@ -1270,3 +1267,216 @@ def test_cv_file_overwrite_exception_02():
         writer.write_raw_data(data)
     assert 'Invalid file, mindrecord files already exist. Please check file path:' in str(err.value)
     remove_multi_files(mindrecord_file_name, FILES_NUM)
+
+
+def test_file_writer_schema_len(file_name=None, remove_file=True):
+    """
+    Feature: FileWriter
+    Description: writer for schema and len
+    Expectation: SUCCESS
+    """
+    if not file_name:
+        file_name = os.environ.get('PYTEST_CURRENT_TEST').split(':')[-1].split(' ')[0]
+
+    ## single mindrecord file
+    # 1. empty file
+    remove_one_file(file_name)
+    remove_one_file(file_name + ".db")
+    writer = FileWriter(file_name, 1)
+    cv_schema_json = {"file_name": {"type": "string"},
+                      "label": {"type": "int64"}, "data": {"type": "bytes"}}
+    writer.add_schema(cv_schema_json, "img_schema")
+    writer.commit()
+
+    # get the schema & len
+    reader = FileReader(file_name)
+    assert cv_schema_json == reader.schema()
+    assert reader.len() == 0
+    if remove_file:
+        remove_one_file(file_name)
+        remove_one_file(file_name + ".db")
+
+    # 2. with 10 samples
+    remove_one_file(file_name)
+    remove_one_file(file_name + ".db")
+    writer = FileWriter(file_name, 1)
+    cv_schema_json = {"file_name": {"type": "string"},
+                      "label": {"type": "int64"}, "data": {"type": "bytes"}}
+    data = get_data("../data/mindrecord/testImageNetData/")
+    writer.add_schema(cv_schema_json, "img_schema")
+    writer.write_raw_data(data)
+    writer.commit()
+
+    # get the schema & len
+    reader = FileReader(file_name)
+    assert cv_schema_json == reader.schema()
+    assert reader.len() == 10
+    if remove_file:
+        remove_one_file(file_name)
+        remove_one_file(file_name + ".db")
+
+    ## multi mindrecord file
+    # 1. empty file
+    remove_multi_files(file_name, FILES_NUM)
+    writer = FileWriter(file_name, FILES_NUM)
+    cv_schema_json = {"file_name": {"type": "string"},
+                      "label": {"type": "int64"}, "data": {"type": "bytes"}}
+    writer.add_schema(cv_schema_json, "img_schema")
+    writer.commit()
+
+    # get the schema & len
+    reader = FileReader(file_name + "0")
+    assert cv_schema_json == reader.schema()
+    assert reader.len() == 0
+    if remove_file:
+        remove_multi_files(file_name, FILES_NUM)
+
+    # 2. with samples
+    remove_multi_files(file_name, FILES_NUM)
+    writer = FileWriter(file_name, FILES_NUM)
+    cv_schema_json = {"file_name": {"type": "string"},
+                      "label": {"type": "int64"}, "data": {"type": "bytes"}}
+    data = get_data("../data/mindrecord/testImageNetData/")
+    writer.add_schema(cv_schema_json, "img_schema")
+    writer.write_raw_data(data)
+    writer.commit()
+
+    # get the schema & len
+    reader = FileReader(file_name + "0")
+    assert cv_schema_json == reader.schema()
+    assert reader.len() == 10
+    if remove_file:
+        remove_multi_files(file_name, FILES_NUM)
+
+
+def test_file_writer_parallel(file_name=None, remove_file=True):
+    """
+    Feature: FileWriter
+    Description: parallel for writer
+    Expectation: generated mindrecord file
+    """
+    if not file_name:
+        file_name = os.environ.get('PYTEST_CURRENT_TEST').split(':')[-1].split(' ')[0]
+
+    # single file
+    remove_one_file(file_name)
+    remove_one_file(file_name + ".db")
+    writer = FileWriter(file_name)
+    data = get_data("../data/mindrecord/testImageNetData/")
+    cv_schema_json = {"file_name": {"type": "string"},
+                      "label": {"type": "int64"}, "data": {"type": "bytes"}}
+    writer.add_schema(cv_schema_json, "img_schema")
+    writer.add_index(["file_name", "label"])
+    for _ in range(5):
+        writer.write_raw_data(data, True)
+    writer.commit()
+    reader = FileReader(file_name)
+    assert reader.len() == 50
+    if remove_file:
+        remove_one_file(file_name)
+        remove_one_file(file_name + ".db")
+
+    # write_raw_data with empty
+    remove_one_file(file_name)
+    remove_one_file(file_name + ".db")
+    writer = FileWriter(file_name)
+    data = get_data("../data/mindrecord/testImageNetData/")
+    cv_schema_json = {"file_name": {"type": "string"},
+                      "label": {"type": "int64"}, "data": {"type": "bytes"}}
+    writer.add_schema(cv_schema_json, "img_schema")
+    writer.add_index(["file_name", "label"])
+    with pytest.raises(RuntimeError):
+        writer.write_raw_data([])
+
+    # multi files
+    # len(data) > FILES_NUM which is parallel size
+    remove_multi_files(file_name, FILES_NUM)
+    writer = FileWriter(file_name, FILES_NUM)
+    data = get_data("../data/mindrecord/testImageNetData/")
+    cv_schema_json = {"file_name": {"type": "string"},
+                      "label": {"type": "int64"}, "data": {"type": "bytes"}}
+    writer.add_schema(cv_schema_json, "img_schema")
+    writer.add_index(["file_name", "label"])
+    for _ in range(10):
+        writer.write_raw_data(data, True)
+    writer.commit()
+    reader = FileReader([file_name + '0',
+                         file_name + '1',
+                         file_name + '2',
+                         file_name + '3'])
+    assert reader.len() == 100
+    if remove_file:
+        remove_multi_files(file_name, FILES_NUM)
+
+    # len(data) < FILES_NUM which is parallel size
+    remove_multi_files(file_name, FILES_NUM)
+    writer = FileWriter(file_name, FILES_NUM)
+    data = get_data("../data/mindrecord/testImageNetData/")
+    cv_schema_json = {"file_name": {"type": "string"},
+                      "label": {"type": "int64"}, "data": {"type": "bytes"}}
+    writer.add_schema(cv_schema_json, "img_schema")
+    writer.add_index(["file_name", "label"])
+    for _ in range(2):
+        writer.write_raw_data(data[0:2], True)
+    writer.commit()
+    reader = FileReader([file_name + '0',
+                         file_name + '1',
+                         file_name + '2',
+                         file_name + '3'])
+    assert reader.len() == 4
+    if remove_file:
+        remove_multi_files(file_name, FILES_NUM)
+
+    # write_raw_data(.., True) and write_raw_data(.., False)
+    remove_multi_files(file_name, FILES_NUM)
+    writer = FileWriter(file_name, FILES_NUM)
+    data = get_data("../data/mindrecord/testImageNetData/")
+    cv_schema_json = {"file_name": {"type": "string"},
+                      "label": {"type": "int64"}, "data": {"type": "bytes"}}
+    writer.add_schema(cv_schema_json, "img_schema")
+    writer.add_index(["file_name", "label"])
+    with pytest.raises(RuntimeError) as e:
+        writer.write_raw_data(data[0:2], True)
+        writer.write_raw_data(data[0:2])
+    assert "The parameter `parallel_writer` must be consistent during use" in str(e)
+
+    # without write_raw_data
+    remove_multi_files(file_name, FILES_NUM)
+    writer = FileWriter(file_name, FILES_NUM)
+    data = get_data("../data/mindrecord/testImageNetData/")
+    cv_schema_json = {"file_name": {"type": "string"},
+                      "label": {"type": "int64"}, "data": {"type": "bytes"}}
+    writer.add_schema(cv_schema_json, "img_schema")
+    writer.add_index(["file_name", "label"])
+    writer.commit()
+    reader = FileReader([file_name + '0',
+                         file_name + '1',
+                         file_name + '2',
+                         file_name + '3'])
+    assert reader.len() == 0
+    if remove_file:
+        remove_multi_files(file_name, FILES_NUM)
+
+    # write_raw_data with empty
+    remove_multi_files(file_name, FILES_NUM)
+    writer = FileWriter(file_name, FILES_NUM)
+    data = get_data("../data/mindrecord/testImageNetData/")
+    cv_schema_json = {"file_name": {"type": "string"},
+                      "label": {"type": "int64"}, "data": {"type": "bytes"}}
+    writer.add_schema(cv_schema_json, "img_schema")
+    writer.add_index(["file_name", "label"])
+    with pytest.raises(RuntimeError):
+        writer.write_raw_data([], True)
+        writer.commit()
+
+    # write_raw_data parameter parallel_writers is not bool
+    remove_multi_files(file_name, FILES_NUM)
+    writer = FileWriter(file_name, FILES_NUM)
+    data = get_data("../data/mindrecord/testImageNetData/")
+    cv_schema_json = {"file_name": {"type": "string"},
+                      "label": {"type": "int64"}, "data": {"type": "bytes"}}
+    writer.add_schema(cv_schema_json, "img_schema")
+    writer.add_index(["file_name", "label"])
+    with pytest.raises(TypeError) as e:
+        writer.write_raw_data([], 18)
+    assert "The parameter `parallel_writer` must be bool." in str(e)

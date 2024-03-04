@@ -27,7 +27,7 @@ __all__ = ["GroupLossScaleManager"]
 
 
 class GroupLossScaleManager(Cell):
-    """
+    r"""
     Enhanced hybrid precision algorithm supports multi-layer application of different loss scales and
     dynamic updating of loss scales.
 
@@ -41,7 +41,8 @@ class GroupLossScaleManager(Cell):
         - **layer2** (Int) - Last network layer value.
 
     Outputs:
-        - **x** (Tensor) - The output of `_DynamicLossScale` operator.
+        - **out** (Tensor) - A tensor with a group of loss scale tags that marks
+          the loss scale group number of the current tensor.
 
     Supported Platforms:
         ``Ascend``
@@ -80,21 +81,21 @@ class GroupLossScaleManager(Cell):
         >>> param_group1 = []
         >>> param_group2 = []
         >>> for param in net.trainable_params():
-        >>>     if 'conv' in param.name:
-        >>>         param_group1.append(param)
-        >>>     else:
-        >>>         param_group2.append(param)
+        ...     if 'conv' in param.name:
+        ...         param_group1.append(param)
+        ...     else:
+        ...         param_group2.append(param)
         >>> loss_scale_manager.loss_scale_groups = [param_group1, param_group2]
         >>> loss = nn.SoftmaxCrossEntropyWithLogits()
         >>> optim = nn.Momentum(params=net.trainable_params(), learning_rate=0.1, momentum=0.9)
-        >>> boost_config_dict = {"boost": {"mode": "manual", "less_bn": False, "grad_freeze": False, "adasum": False, \
-        >>>                      "grad_accumulation": False, "dim_reduce": False, "loss_scale_group": True}}
-        >>> model = ms.Model(net, loss_fn=loss, optimizer=optim, metrics=None, loss_scale_manager=loss_scale_manager, \
-        >>>               boost_level="O1", boost_config_dict=boost_config_dict)
-        >>> # For details about how to build the dataset, please refer to the variable `dataset_train` in tutorial
-        >>> # document on the official website:
-        >>> # https://www.mindspore.cn/tutorials/zh-CN/r2.0.0-alpha/beginner/quick_start.html
-        >>> dataset = create_custom_dataset()
+        >>> boost_config_dict = {"boost": {"mode": "manual", "less_bn": False, "grad_freeze": False, "adasum": False,
+        ...                      "grad_accumulation": False, "dim_reduce": False, "loss_scale_group": True}}
+        >>> model = ms.train.Model(net, loss_fn=loss, optimizer=optim, metrics=None,
+        ...                        loss_scale_manager=loss_scale_manager,
+        ...                        boost_level="O1", boost_config_dict=boost_config_dict)
+        >>> # Create the dataset taking MNIST as an example. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/mnist.py
+        >>> dataset = create_dataset()
         >>> model.train(2, dataset)
     """
     def __init__(self, init_loss_scale, loss_scale_groups):

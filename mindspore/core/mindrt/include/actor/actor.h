@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 #include <string>
 #include <utility>
 #include "thread/hqueue.h"
+#include "thread/semaphore.h"
 #include "actor/msg.h"
 #include "actor/mailbox.h"
 
@@ -205,11 +206,11 @@ class MS_CORE_API ActorBase {
   void Spawn(const std::shared_ptr<ActorBase>, std::unique_ptr<MailBox> mailbox);
 
   std::unique_ptr<MailBox> mailbox;
-  std::atomic_bool terminating_ = false;
+  std::atomic_bool terminating_{false};
 
   AID id;
   std::map<std::string, ActorFunction> actionFunctions;
-  std::mutex waiterLock;
+  Semaphore waiterLock{1};
   std::string msgRecords[MAX_ACTOR_RECORD_SIZE];
   uint32_t recordNextPoint = 0;
 

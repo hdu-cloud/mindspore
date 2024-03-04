@@ -14,18 +14,22 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/optimizer/buffer_fusion/batchmatmul_reducesum_fusion_pass.h"
+#include "ops/lite_op_name.h"
+#include "ops/math_ops.h"
+#include "ops/framework_ops.h"
 #include "kernel/kernel_fusion.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "utils/ms_context.h"
-#include "backend/common/optimizer/fusion_id_allocator.h"
+#include "plugin/device/ascend/optimizer/fusion_id_allocator.h"
 
 namespace mindspore {
 namespace opt {
 namespace {
 constexpr size_t kHWSize = 2;
-}
+constexpr auto kPatternBatchMatmul = "BatchMatmul";
+constexpr auto kPatternCommReduce = "CommReduce";
+}  // namespace
 
 void BatchMatmulReduceSumFusionPass::MatchBatchMatmulReduceSum(const CNodePtr &reduce_sum, const session::KernelGraph &,
                                                                FusedNodeRecord *candidate_fusion) {
@@ -34,7 +38,7 @@ void BatchMatmulReduceSumFusionPass::MatchBatchMatmulReduceSum(const CNodePtr &r
   auto batch_matmul = reduce_sum->input(kIndex1);
   MS_EXCEPTION_IF_NULL(batch_matmul);
   const PrimitiveSet batch_matmul_prims{prim::kPrimBatchMatMul, prim::kPrimBatchMatMulV2};
-  if (!batch_matmul->isa<CNode>() || AnfAlgo::GetFusionType(batch_matmul) != kernel::FusionType::BATCH_MATMUL ||
+  if (!batch_matmul->isa<CNode>() || AnfAlgo::GetFusionType(batch_matmul) != kPatternBatchMatmul ||
       !IsOneOfPrimitiveCNode(batch_matmul, batch_matmul_prims)) {
     return;
   }
@@ -84,8 +88,8 @@ void BatchMatmulReduceSumFusionPass::MatchSingleFusionPattern(const session::Ker
     MS_EXCEPTION_IF_NULL(cnode);
 
     if (AnfAlgo::GetKernelType(cnode) == KernelType::TBE_KERNEL &&
-        AnfAlgo::GetFusionType(cnode) == kernel::FusionType::COMMREDUCE &&
-        common::AnfAlgo::GetCNodeName(cnode) == kReduceSumOpName) {
+        AnfAlgo::GetFusionType(cnode) == kPatternCommReduce &&
+        common::AnfAlgo::GetCNodeName(cnode) == kReduceSumDOpName) {
       MatchBatchMatmulReduceSum(cnode, kernel_graph, candidate_fusion);
     }
   }

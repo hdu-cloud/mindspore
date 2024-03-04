@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_DROPOUTND_H_
 #define MINDSPORE_CORE_OPS_DROPOUTND_H_
-#include <vector>
 #include <memory>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/types.h"
-#include "mindspore/core/ops/core_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -28,7 +28,7 @@ class MIND_API Dropout2D : public BaseOperator {
  public:
   MIND_API_BASE_MEMBER(Dropout2D);
   /// \brief Constructor.
-  Dropout2D() : BaseOperator(prim::kDropout2D) { InitIOName({"input_x"}, {"output"}); }
+  Dropout2D() : BaseOperator(kDropout2DOpName) { InitIOName({"input_x"}, {"output"}); }
 
   void Init(float keep_prob = 0.0);
 
@@ -41,7 +41,7 @@ class MIND_API Dropout3D : public BaseOperator {
  public:
   MIND_API_BASE_MEMBER(Dropout3D);
   /// \brief Constructor.
-  Dropout3D() : BaseOperator(prim::kDropout3D) { InitIOName({"input_x"}, {"output"}); }
+  Dropout3D() : BaseOperator(kDropout3DOpName) { InitIOName({"input_x"}, {"output"}); }
 
   void Init(float keep_prob = 0.0);
 
@@ -50,11 +50,11 @@ class MIND_API Dropout3D : public BaseOperator {
   float get_keep_prob() const;
 };
 
-abstract::AbstractBasePtr Dropout2DInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                         const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr Dropout2DInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                  const std::vector<abstract::AbstractBasePtr> &input_args);
 
-abstract::AbstractBasePtr Dropout3DInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                         const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr Dropout3DInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                  const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_DROPOUTND_H_

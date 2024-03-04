@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,8 @@
 
 #include <memory>
 #include <string>
+#include <vector>
+#include <map>
 #include "include/converter.h"
 #include "include/registry/model_parser.h"
 #include "schema/inner/model_generated.h"
@@ -47,39 +49,29 @@ int RunConverter(const std::shared_ptr<ConverterPara> &param, void **model_data 
 class ConverterImpl {
  public:
   ConverterImpl() = default;
-  ~ConverterImpl() {
-    delete model_parser_;
-    this->model_parser_ = nullptr;
-  }
-  int Convert(const std::shared_ptr<ConverterPara> &param, schema::MetaGraphT **meta_graph);
-  int Convert(const std::shared_ptr<ConverterPara> &param, schema::MetaGraphT **meta_graph, const void *buff,
-              const size_t &size, void **dst_buff, size_t *dst_size) {
-    auto graph = BuildFuncGraph(param, buff, size);
-    return FuncGraphConvert(param, graph, meta_graph, true, dst_buff, dst_size);
-  }
-  int Convert(const std::shared_ptr<ConverterPara> &param, schema::MetaGraphT **meta_graph, FuncGraphPtr func_graph);
-  FuncGraphPtr Convert(const std::shared_ptr<ConverterPara> &param, const void *buff, const size_t &size);
+  ~ConverterImpl() {}
+
+  int Convert(const std::shared_ptr<ConverterPara> &param, void **model_data, size_t *data_size, bool not_save);
 
  private:
-  FuncGraphPtr BuildFuncGraph(const std::shared_ptr<ConverterPara> &param);
-  FuncGraphPtr BuildFuncGraph(const std::shared_ptr<ConverterPara> &param, const void *buf, const size_t &size);
-  int FuncGraphConvert(const std::shared_ptr<ConverterPara> &param, FuncGraphPtr graph, schema::MetaGraphT **meta_graph,
-                       bool isRuntimeConvert, void **buff, size_t *size);
-
-  schema::MetaGraphT *TransferFuncGraph(const std::shared_ptr<ConverterPara> &param, FuncGraphPtr func_graph);
-
-  int InitConfigParam(const std::shared_ptr<ConverterPara> &param);
+  int InitConfigParam(const std::shared_ptr<ConverterPara> &param,
+                      std::map<int, std::map<std::string, std::string>> *model_param_infos);
+  int ParseParam(lite::ConfigFileParser *config_parser, const std::shared_ptr<ConverterPara> &param,
+                 const std::map<int, std::map<std::string, std::string>> *model_param_infos,
+                 const std::map<std::string, std::map<std::string, std::string>> maps);
   int InitExtendedIntegrationInfo(const std::shared_ptr<ConverterPara> &param,
                                   const lite::ConfigFileParser &config_file_parser);
   bool CheckOfflineParallelConfig(const std::string &file, ParallelSplitConfig *parallel_split_config);
   std::string GetStrFromConfigFile(const std::string &file, const std::string &target_key);
-  int ReplaceShapeWithDynamicShape(const FuncGraphPtr &graph);
-  int SaveOutputNames(const FuncGraphPtr &graph);
-
- protected:
-  converter::ModelParser *model_parser_ = nullptr;
-  std::unique_ptr<GraphDefTransform> metagraph_transform_ = std::make_unique<GraphDefTransform>();
-  std::unique_ptr<AnfTransform> funcgraph_transform_ = std::make_unique<AnfTransform>();
+  int SaveGraph(FuncGraphPtr graph, const std::shared_ptr<ConverterPara> &param, void **model_data, size_t *data_size,
+                bool not_save, bool is_multi_model);
+  int SaveMindIRModel(FuncGraphPtr graph, const std::shared_ptr<ConverterPara> &param, void **model_data,
+                      size_t *data_size);
+  int LoadPluginLib(const std::shared_ptr<ConverterPara> &param);
+  int HandleGraphCommon(const std::shared_ptr<ConverterPara> &param, void **model_data, size_t *data_size,
+                        bool not_save, bool is_multi_model);
+  int ExecuteMicro(const schema::MetaGraphT *meta_graph, const std::shared_ptr<ConverterPara> &param,
+                   bool is_multi_model);
 };
 }  // namespace lite
 }  // namespace mindspore

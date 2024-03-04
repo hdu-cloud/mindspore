@@ -14,17 +14,13 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_PRELU_PARAMETER_H_
-#define MINDSPORE_NNACL_PRELU_PARAMETER_H_
+#ifndef NNACL_PRELU_PARAMETER_H_
+#define NNACL_PRELU_PARAMETER_H_
 
 #include "nnacl/op_base.h"
 typedef struct PReluParameter {
-  // Primitive parameter
   OpParameter op_parameter_;
-  // other parameter
-  bool channelShared;
-  int channel_num_;
-  int input_num_;
+  bool channel_shared_;
 } PReluParameter;
 
-#endif  // MINDSPORE_NNACL_PRELU_PARAMETER_H_
+#endif  // NNACL_PRELU_PARAMETER_H_

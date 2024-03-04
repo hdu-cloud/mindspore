@@ -1,4 +1,4 @@
-# Copyright 2021-2022 Huawei Technologies Co., Ltd
+# Copyright 2021-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,8 +17,7 @@
 
 from functools import reduce
 import mindspore.context as context
-from ..._checkparam import Validator as validator
-from ..._checkparam import Rel
+from mindspore import _checkparam as validator
 from ...common import dtype as mstype
 from ..primitive import prim_attr_register, PrimitiveWithInfer
 
@@ -30,17 +29,17 @@ class BufferSample(PrimitiveWithInfer):
     Returns the tuple tensor with the given shape, decided by the given batchsize.
 
     .. warning::
-            This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Args:
         capacity (int64): Capacity of the buffer, must be non-negative.
         batch_size (int64): The size of the sampled data, lessequal to `capacity`.
         buffer_shape (tuple(shape)): The shape of an buffer.
         buffer_dtype (tuple(type)): The type of an buffer.
-        seed (int64): Random seed for sample. Default: 0. If use the default seed, it will generate a ramdom
-        one in kernel. Set a number other than `0` to keep a specific seed. Default: 0.
+        seed (int64): Random seed for sample. Default: ``0`` . If use the default seed, it will generate a ramdom
+        one in kernel. Set a number other than `0` to keep a specific seed. Default: ``0`` .
         unique (bool): Whether the sampled data is strictly unique. Setting it to False has a better performance.
-            Default: False
+            Default: ``False`` .
 
     Inputs:
         - **data** (tuple(Parameter(Tensor))) - The tuple(Tensor) represents replaybuffer,
@@ -105,12 +104,12 @@ class BufferSample(PrimitiveWithInfer):
         """Initialize BufferSample."""
         self.init_prim_io_names(inputs=["buffer"], outputs=["sample"])
         validator.check_value_type("shape of init data", buffer_shape, [tuple, list], self.name)
-        validator.check_int(capacity, 1, Rel.GE, "capacity", self.name)
+        validator.check_int(capacity, 1, validator.GE, "capacity", self.name)
         self._batch_size = batch_size
         self._buffer_shape = buffer_shape
         self._buffer_dtype = buffer_dtype
         self._n = len(buffer_shape)
-        validator.check_int(self._batch_size, capacity, Rel.LE, "batchsize", self.name)
+        validator.check_int(self._batch_size, capacity, validator.LE, "batchsize", self.name)
         self.add_prim_attr('capacity', capacity)
         self.add_prim_attr('seed', seed)
         self.add_prim_attr('unique', unique)
@@ -142,7 +141,7 @@ class BufferAppend(PrimitiveWithInfer):
     push data to the bottom of buffer under the First-In-First-Out rule.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Args:
         capacity (int64): Capacity of the buffer, must be non-negative.
@@ -195,7 +194,7 @@ class BufferAppend(PrimitiveWithInfer):
     @prim_attr_register
     def __init__(self, capacity, buffer_shape, buffer_dtype):
         """Initialize BufferAppend."""
-        validator.check_int(capacity, 1, Rel.GE, "capacity", self.name)
+        validator.check_int(capacity, 1, validator.GE, "capacity", self.name)
         self.add_prim_attr('capacity', capacity)
         buffer_elements = []
         for shape in buffer_shape:
@@ -206,45 +205,13 @@ class BufferAppend(PrimitiveWithInfer):
         if context.get_context('device_target') == "Ascend":
             self.add_prim_attr('device_target', "CPU")
 
-    def infer_shape(self, data_shape, exp_shape, count_shape, head_shape):
-        validator.check_equal_int(len(data_shape), len(exp_shape), "exp elements", self.name)
-        exp_batch = 1
-        if len(data_shape[0]) == len(exp_shape[0]):
-            exp_batch = exp_shape[0][0]
-            for i in range(len(data_shape)):
-                if len(data_shape[i]) != len(exp_shape[i]):
-                    raise ValueError(f"For '{self.name}', the dimension of {i}th 'exp_shape' must be equal to "
-                                     f"the dimension of {i}th 'data_shape', but got the {i}th 'exp_shape': "
-                                     f"{exp_shape[i]}, the {i}th 'data_shape': {data_shape[i]}.")
-                if data_shape[i][0] < exp_shape[i][0]:
-                    raise ValueError(f"For '{self.name}', the first dimension of {i}th 'data_shape' must be greater "
-                                     f"than or equal to the first dimension of {i}th 'exp_shape', but got the {i}th "
-                                     f"'exp_shape': {exp_shape[i]}, the {i}th 'data_shape': {data_shape[i]}.")
-        else:
-            for i in range(len(data_shape)):
-                if data_shape[i][1:] != exp_shape[i]:
-                    raise ValueError(f"For '{self.name}', the {i}th 'exp_shape' must be equal to the {i}th 'data_shape'"
-                                     f"which excepts the first dimension. but got the {i}th 'exp_shape': "
-                                     f"{exp_shape[i]}, the {i}th 'data_shape': {data_shape[i]}.")
-        self.add_prim_attr('exp_batch', exp_batch)
-        return count_shape
-
-    def infer_dtype(self, data_type, exp_type, count_type, head_type):
-        for i in range(len(data_type)):
-            if data_type[i] != exp_type[i]:
-                raise TypeError(f"For '{self.name}', each tensor in 'exp' must has the same type with 'data', but got "
-                                f"'data_type': {data_type}, 'exp_type': {exp_type}.")
-        validator.check_type_name("count type", count_type, (mstype.int32), self.name)
-        validator.check_type_name("head type", head_type, (mstype.int32), self.name)
-        return count_type
-
 
 class BufferGetItem(PrimitiveWithInfer):
     r"""
     Get the data from buffer in the position of input index.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Args:
         capacity (int64): Capacity of the buffer, must be non-negative.
@@ -296,7 +263,7 @@ class BufferGetItem(PrimitiveWithInfer):
     def __init__(self, capacity, buffer_shape, buffer_dtype):
         """Initialize BufferGetItem."""
         self.init_prim_io_names(inputs=["buffer"], outputs=["item"])
-        validator.check_int(capacity, 1, Rel.GE, "capacity", self.name)
+        validator.check_int(capacity, 1, validator.GE, "capacity", self.name)
         self._buffer_shape = buffer_shape
         self._buffer_dtype = buffer_dtype
         self._n = len(buffer_shape)

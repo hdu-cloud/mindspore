@@ -17,14 +17,14 @@
 #ifndef MINDSPORE_CORE_OPS_NON_MAX_SUPPRESSION_H_
 #define MINDSPORE_CORE_OPS_NON_MAX_SUPPRESSION_H_
 
-#include <map>
-#include <vector>
-#include <string>
-#include <memory>
 #include <algorithm>
+#include <map>
+#include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -53,8 +53,9 @@ class MIND_API NonMaxSuppression : public BaseOperator {
   /// \return an integer value.
   int64_t get_center_point_box() const;
 };
-abstract::AbstractBasePtr NonMaxSuppressionInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr NonMaxSuppressionInfer(const abstract::AnalysisEnginePtr &,
+                                                          const PrimitivePtr &primitive,
+                                                          const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimNonMaxSuppressionPtr = std::shared_ptr<NonMaxSuppression>;
 }  // namespace ops
 }  // namespace mindspore

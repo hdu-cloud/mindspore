@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,8 @@ class MIND_API MakeTuple : public BaseOperator {
   MIND_API_BASE_MEMBER(MakeTuple);
   /// \brief Constructor.
   MakeTuple() : BaseOperator(kNameMakeTuple) {}
+  /// \brief Init.
+  void Init() const {}
 };
 }  // namespace ops
 }  // namespace mindspore

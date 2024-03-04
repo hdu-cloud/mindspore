@@ -17,9 +17,10 @@
 #include "tools/converter/quantizer/quant_helper/quant_type_determiner.h"
 #include <utility>
 #include <set>
+#include "mindspore/core/ops/framework_ops.h"
 #include "tools/optimizer/common/gllo_utils.h"
 #include "tools/converter/quantizer/quantize_util.h"
-#include "src/litert/kernel_exec.h"
+#include "src/executor/kernel_exec.h"
 #include "src/litert/kernel_registry.h"
 #include "src/common/ops/anf_utils.h"
 #include "tools/optimizer/common/format_utils.h"
@@ -50,8 +51,8 @@ bool QuantTypeDeterminer::DetermineQuantAll(const CNodePtr &cnode) {
   }
 
   // Get CNode QuantType directly.
-  if (quant_holder->quant_type() != schema::QuantType_QUANT_NONE) {
-    return quant_holder->quant_type() == schema::QuantType_QUANT_ALL;
+  if (quant_holder->quant_type() != QUANT_NONE) {
+    return quant_holder->quant_type() == QUANT_ALL;
   }
   // if DTypeCastNode is graph input or output, set QuantType_QUANT_NONE
   if (opt::CheckPrimitiveType(cnode, prim::kPrimQuantDTypeCast)) {
@@ -88,8 +89,8 @@ bool QuantTypeDeterminer::DetermineQuantWeight(const CNodePtr &cnode) {
   }
 
   // Get CNode QuantType directly.
-  if (quant_holder->quant_type() != schema::QuantType_QUANT_NONE) {
-    return quant_holder->quant_type() == schema::QuantType_QUANT_WEIGHT;
+  if (quant_holder->quant_type() != QUANT_NONE) {
+    return quant_holder->quant_type() == QUANT_WEIGHT;
   }
 
   // Weight quantization, the output does not contain quantization information.
@@ -136,10 +137,10 @@ int QuantTypeDeterminer::Determine() {
       quant_holder->ClearQuantParams();
     } else if (DetermineQuantWeight(cnode)) {
       MS_LOG(INFO) << cnode->fullname_with_scope() << " set QuantType_QUANT_WEIGHT";
-      quant_holder->set_quant_type(schema::QuantType_QUANT_WEIGHT);
+      quant_holder->set_quant_type(QUANT_WEIGHT);
     } else if (DetermineQuantAll(cnode)) {
       MS_LOG(INFO) << cnode->fullname_with_scope() << " set QuantType_QUANT_ALL";
-      quant_holder->set_quant_type(schema::QuantType_QUANT_ALL);
+      quant_holder->set_quant_type(QUANT_ALL);
     } else {
       MS_LOG(INFO) << cnode->fullname_with_scope() << " default quant type: QuantType_QUANT_NONE";
     }

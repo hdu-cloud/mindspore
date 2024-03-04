@@ -16,14 +16,28 @@
 
 #include "ops/grad/scale_and_translate_grad.h"
 
-#include <algorithm>
+#include <map>
+#include <memory>
 #include <set>
 
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/image_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,6 +51,16 @@ abstract::ShapePtr ScaleAndTranslateGradInferShape(const PrimitivePtr &primitive
   auto scale_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->BuildShape())[kShape];
   auto translation_shape =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex3]->BuildShape())[kShape];
+  // support dynamic rank
+  if (IsDynamicRank(grads_shape) || IsDynamicRank(original_image_shape) || IsDynamicRank(scale_shape) ||
+      IsDynamicRank(translation_shape)) {
+    return std::make_shared<abstract::Shape>(original_image_shape);
+  }
+  // support dynamic shape
+  if (IsDynamicShape(grads_shape) || IsDynamicShape(original_image_shape) || IsDynamicShape(scale_shape) ||
+      IsDynamicShape(translation_shape)) {
+    return std::make_shared<abstract::Shape>(original_image_shape);
+  }
   const int64_t kShapeSize1 = 1;
   const int64_t kShapeSize2 = 4;
   const int64_t kElementsNumber = 2;
@@ -122,7 +146,24 @@ AbstractBasePtr ScaleAndTranslateGradInfer(const abstract::AnalysisEnginePtr &, 
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(ScaleAndTranslateGrad, prim::kPrimScaleAndTranslateGrad, ScaleAndTranslateGradInfer,
-                             nullptr, true);
+// AG means auto generated
+class MIND_API AGScaleAndTranslateGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScaleAndTranslateGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScaleAndTranslateGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScaleAndTranslateGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScaleAndTranslateGrad, prim::kPrimScaleAndTranslateGrad, AGScaleAndTranslateGradInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

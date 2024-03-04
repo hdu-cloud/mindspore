@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_FAST_GELU_GRAD_H_
 #define MINDSPORE_CORE_OPS_FAST_GELU_GRAD_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -32,6 +32,8 @@ class MIND_API FastGeLUGrad : public BaseOperator {
   MIND_API_BASE_MEMBER(FastGeLUGrad);
   FastGeLUGrad() : BaseOperator(kNameFastGeLUGrad) { InitIOName({"x"}, {"output"}); }
 };
+MIND_API abstract::AbstractBasePtr FastGeLUGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                     const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

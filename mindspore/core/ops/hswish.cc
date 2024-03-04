@@ -15,18 +15,36 @@
  */
 #include "ops/hswish.h"
 
-#include <set>
 #include <map>
-#include <string>
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
+#include <memory>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore::ops {
 namespace {
 TypePtr HSwishInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(prim);
-  const std::set<TypePtr> valid_types = {kFloat16, kFloat32};
+  constexpr int64_t kInputSize = 1;
+  (void)CheckAndConvertUtils::CheckInteger("input numbers", SizeToLong(input_args.size()), kEqual, kInputSize,
+                                           prim->name());
+
+  const std::set<TypePtr> valid_types = {kInt8, kInt16, kInt32, kInt64, kFloat16, kFloat32, kFloat64};
   auto x_dtype = input_args[0]->BuildType();
   (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_dtype, valid_types, prim->name());
   return x_dtype;
@@ -54,5 +72,23 @@ AbstractBasePtr HSwishInfer(const abstract::AnalysisEnginePtr &, const Primitive
   }
   return abstract::MakeAbstract(HSwishInferShape(primitive, input_args), HSwishInferType(primitive, input_args));
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(HSwish, prim::kPrimHSwish, HSwishInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGHSwishInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return HSwishInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return HSwishInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return HSwishInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(HSwish, prim::kPrimHSwish, AGHSwishInfer, false);
 }  // namespace mindspore::ops

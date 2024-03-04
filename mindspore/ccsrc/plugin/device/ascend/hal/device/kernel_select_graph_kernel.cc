@@ -15,11 +15,13 @@
  */
 
 #include "plugin/device/ascend/hal/device/kernel_select_ascend.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/kernel_info.h"
 #include "ir/func_graph.h"
-#include "kernel/common_utils.h"
+#include "kernel/framework_utils.h"
 #include "plugin/device/ascend/kernel/kernel_query.h"
 #include "kernel/kernel_build_info.h"
 
@@ -27,6 +29,7 @@ namespace mindspore {
 namespace device {
 namespace ascend {
 namespace {
+constexpr auto kPatternOpaque = "Opaque";
 // sort format according the number of occurrences.
 bool cmp_format_num(const std::pair<std::string, size_t> &a, const std::pair<std::string, size_t> &b) {
   if (a.second != b.second) {
@@ -72,6 +75,7 @@ void ResetKernelBuildInfo(const CNodePtr &kernel_node) {
     kernel::KernelBuildInfo::KernelBuildInfoBuilder builder;
     builder.SetOutputsFormat(std::vector<std::string>{kOpFormat_DEFAULT});
     builder.SetOutputsDeviceType(std::vector<TypeId>{kTypeUnknown});
+    builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
     AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), input_kernel_node.get());
   }
 }
@@ -106,7 +110,7 @@ void UpdateKernelInfo(const std::vector<AnfNodePtr> &node_list) {
 
 bool CanConvertDefaultShapeToNZ(const ShapeVector &shape) {
   for (size_t i = 1; i <= shape.size(); ++i) {
-    if (i > 2) {
+    if (i > kIndex2) {
       break;
     }
     if (LongToInt(shape[shape.size() - i]) != 1 && shape[shape.size() - i] % SizeToLong(kCubeSize) != 0) {
@@ -283,6 +287,7 @@ void UpdateInputsKernelInfo(const CNodePtr &kernel_node, const std::vector<AnfNo
     std::vector<TypeId> outputs_device_type = {(*graph_input_type)[i]};
     builder.SetOutputsFormat(outputs_format);
     builder.SetOutputsDeviceType(outputs_device_type);
+    builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
     AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), input_list[i].get());
   }
 }
@@ -403,6 +408,7 @@ void UpdateFormatsAndDtypes(const CNodePtr &kernel_node, const std::vector<AnfNo
     std::vector<TypeId> outputs_device_type = {graph_input_type[i]};
     builder.SetOutputsFormat(outputs_format);
     builder.SetOutputsDeviceType(outputs_device_type);
+    builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
     AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), input_list[i].get());
   }
 
@@ -436,6 +442,7 @@ void SetGraphKernelInfo(const CNodePtr &kernel_node, const std::vector<std::pair
   MS_EXCEPTION_IF_NULL(kernel_node);
   std::vector<std::string> graph_output_format;
   std::vector<TypeId> graph_output_type;
+  std::vector<kernel::KernelObjectType> graph_output_object_type;
   for (size_t i = 0; i < output_index.size(); ++i) {
     auto const &output = output_index[i];
     graph_output_format.push_back(AnfAlgo::GetOutputFormat(output.first, output.second));
@@ -447,16 +454,24 @@ void SetGraphKernelInfo(const CNodePtr &kernel_node, const std::vector<std::pair
       output_type = AnfAlgo::GetOutputDeviceDataType(output.first, output.second);
     }
     graph_output_type.push_back(output_type);
+    graph_output_object_type.push_back(kernel::KernelObjectType::TENSOR);
+  }
+
+  std::vector<kernel::KernelObjectType> graph_input_object_type;
+  for (size_t i = 0; i < graph_input_type.size(); ++i) {
+    graph_input_object_type.push_back(kernel::KernelObjectType::TENSOR);
   }
 
   kernel::KernelBuildInfo::KernelBuildInfoBuilder graph_info_builder;
   graph_info_builder.SetInputsFormat(graph_input_format);
   graph_info_builder.SetInputsDeviceType(graph_input_type);
+  graph_info_builder.SetInputsKernelObjectType(graph_input_object_type);
   graph_info_builder.SetOutputsFormat(graph_output_format);
   graph_info_builder.SetOutputsDeviceType(graph_output_type);
+  graph_info_builder.SetOutputsKernelObjectType(graph_output_object_type);
   graph_info_builder.SetProcessor(kernel::Processor::AICORE);
   graph_info_builder.SetKernelType(KernelType::AKG_KERNEL);
-  graph_info_builder.SetFusionType(kernel::FusionType::OPAQUE);
+  graph_info_builder.SetFusionType(kPatternOpaque);
   auto graph_selected_info = graph_info_builder.Build();
   MS_EXCEPTION_IF_NULL(graph_selected_info);
   AnfAlgo::SetSelectKernelBuildInfo(graph_selected_info, kernel_node.get());
@@ -511,6 +526,19 @@ void SelectGraphKernelInfo(const CNodePtr &kernel_node, const FuncGraphPtr &func
   auto output_index = kernel::GetOutputIndex(node_list, input_list, output_list);
   SetGraphKernelInfo(kernel_node, output_index, graph_input_format, graph_input_type);
 }
+
+class AscendGraphKernelInfo : public GraphKernelInfo {
+ public:
+  AscendGraphKernelInfo() = default;
+  virtual ~AscendGraphKernelInfo() = default;
+  void SetKernelInfo(const CNodePtr &kernel_node, KernelType kernel_type) override {
+#ifndef ENABLE_ACL
+    SetAscendKernelInfo(kernel_node, kernel_type);
+#endif
+  }
+};
+
+REG_GRAPH_KERNEL_INFO(kAscendDevice, AscendGraphKernelInfo);
 }  // namespace ascend
 }  // namespace device
 }  // namespace mindspore

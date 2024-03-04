@@ -25,7 +25,6 @@
 #include <unordered_map>
 #include "base/base.h"
 #include "ir/named.h"
-
 #include "ir/dtype/type.h"
 #include "ir/dtype/number.h"
 #include "ir/dtype/container.h"
@@ -79,7 +78,7 @@ class MS_CORE_API Keyword final : public Object {
   /// \brief The constructor of Keyword.
   ///
   /// \return The instance of Keyword.
-  Keyword() : Object(kObjectTypeKeyword, false), key_(""), value_(nullptr) {}
+  Keyword() : Object(kObjectTypeKeyword), key_(""), value_(nullptr) {}
 
   /// \brief The constructor of Keyword with some parameters.
   ///
@@ -419,6 +418,7 @@ MS_CORE_API bool IsSubType(TypePtr const &t1, TypePtr const &t2 = nullptr);
 GVAR_DEF(TypePtr, kTypeExternal, std::make_shared<External>());
 GVAR_DEF(TypePtr, kTypeEnv, std::make_shared<EnvType>());
 GVAR_DEF(TypePtr, kTypeType, std::make_shared<TypeType>());
+GVAR_DEF(TypePtr, kClassType, std::make_shared<MsClassType>());
 GVAR_DEF(TypePtr, kString, std::make_shared<String>());
 GVAR_DEF(TypePtr, kList, std::make_shared<List>());
 GVAR_DEF(TypePtr, kTuple, std::make_shared<Tuple>());
@@ -429,6 +429,7 @@ GVAR_DEF(TypePtr, kTensorType, std::make_shared<TensorType>());
 GVAR_DEF(TypePtr, kTensorTypeFP16, std::make_shared<TensorType>(std::make_shared<Float>(16)));
 GVAR_DEF(TypePtr, kTensorTypeFP32, std::make_shared<TensorType>(std::make_shared<Float>(32)));
 GVAR_DEF(TypePtr, kTensorTypeFP64, std::make_shared<TensorType>(std::make_shared<Float>(64)));
+GVAR_DEF(TypePtr, kTensorTypeBF16, std::make_shared<TensorType>(std::make_shared<BFloat>(16)));
 GVAR_DEF(TypePtr, kCSRTensorType, std::make_shared<CSRTensorType>());
 GVAR_DEF(TypePtr, kCOOTensorType, std::make_shared<COOTensorType>());
 GVAR_DEF(TypePtr, kRowTensorType, std::make_shared<RowTensorType>());

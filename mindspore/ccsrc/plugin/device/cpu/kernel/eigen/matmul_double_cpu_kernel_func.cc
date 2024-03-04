@@ -18,6 +18,7 @@
 #include <Eigen/Dense>
 #include <vector>
 #include <map>
+#include "mindspore/core/ops/math_ops.h"
 #include "mindspore/core/ops/mat_mul.h"
 
 namespace mindspore {
@@ -40,18 +41,36 @@ void MatmulDoubleCpuKernelFunc::ComputeMatMulOutput(T *a_addr, T *b_addr, T *out
   MatrixMap input0(a_addr, a_row_, a_col_);
   MatrixMap input1(b_addr, b_row_, b_col_);
   MatrixMap output(output_addr, out_row_, out_col_);
-  if (trans_a_) {
-    if (trans_b_) {
-      output.noalias() = input0.transpose() * input1.transpose();
+  if (kernel_name_ == prim::kPrimMatMul->name()) {
+    if (trans_a_) {
+      if (trans_b_) {
+        output.noalias() = input0.transpose() * input1.transpose();
+      } else {
+        output.noalias() = input0.transpose() * input1;
+      }
     } else {
-      output.noalias() = input0.transpose() * input1;
+      if (trans_b_) {
+        output.noalias() = input0 * input1.transpose();
+      } else {
+        output.noalias() = input0 * input1;
+      }
+    }
+  } else if (kernel_name_ == prim::kPrimBatchMatMul->name()) {
+    if (trans_a_) {
+      if (trans_b_) {
+        output.noalias() = input0.adjoint() * input1.adjoint();
+      } else {
+        output.noalias() = input0.adjoint() * input1;
+      }
+    } else {
+      if (trans_b_) {
+        output.noalias() = input0 * input1.adjoint();
+      } else {
+        output.noalias() = input0 * input1;
+      }
     }
   } else {
-    if (trans_b_) {
-      output.noalias() = input0 * input1.transpose();
-    } else {
-      output.noalias() = input0 * input1;
-    }
+    MS_LOG(EXCEPTION) << "MatmulDoubleCpuKernelFunc support MatMul and BatchMatMul, but got " << kernel_name_ << ".";
   }
 }
 
@@ -81,7 +100,7 @@ void MatmulDoubleCpuKernelFunc::InitFunc(const BaseOperatorPtr &base_operator,
   kernel_name_ = base_operator->name();
   auto kernel_ptr = std::dynamic_pointer_cast<ops::MatMul>(base_operator);
   if (!kernel_ptr) {
-    MS_LOG(ERROR) << "cast MatMul ops failed!";
+    MS_LOG(EXCEPTION) << "cast MatMul ops failed!";
   }
 
   trans_a_ = kernel_ptr->get_transpose_a();

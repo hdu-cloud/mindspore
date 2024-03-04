@@ -25,8 +25,7 @@ from mindspore.ops import composite as C
 from mindspore.ops import functional as F
 from mindspore.common.parameter import Parameter, ParameterTuple
 from mindspore.common.tensor import Tensor
-from mindspore._checkparam import Validator as validator
-from mindspore._checkparam import Rel
+from mindspore import _checkparam as validator
 from mindspore.nn.optim.optimizer import opt_init_args_register
 from mindspore.nn.optim.optimizer import Optimizer
 
@@ -153,7 +152,7 @@ class AdaFactor(Optimizer):
     Cost <https://arxiv.org/abs/1804.04235>`_.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Adafactor for weight vector are as follows,
 
@@ -217,27 +216,29 @@ class AdaFactor(Optimizer):
 
         learning_rate (Union[float, Tensor]): A value or a graph for the learning rate.
             When the learning_rate is a Tensor in a 1D dimension.
-            If the type of `learning_rate` is int, it will be converted to float. Default: None.
+            If the type of `learning_rate` is int, it will be converted to float. Default: ``None`` .
         eps (tuple): The regularization constans for square gradient and parameter scale respectively.
-            default: (1e-30, 1e-3)
-        clip_threshold (Union[float, Tensor]): The threshold of root mean square of final gradient update. default: 1.0
+            default: ``(1e-30, 1e-3)`` .
+        clip_threshold (Union[float, Tensor]): The threshold of root mean square of final gradient update.
+            default: ``1.0``.
         decay_rate (Union[float, Tensor]): The coefficient used to compute running averages of square gradient.
-            default: 0.8
+            default: ``0.8`` .
         beta1 (float): The coefficient to computing running averages of gradient. Should be in range (0.0, 1.0).
-               Default: None.
-        weight_decay (float): Weight decay (L2 penalty). It must be equal to or greater than 0. Default: 0.0.
-        scale_parameter (bool): If True, learning rate is scaled by root mean square of parameter. default: True
+            Default: ``None`` .
+        weight_decay (float): Weight decay (L2 penalty). It must be equal to or greater than 0. Default: ``0.0`` .
+        scale_parameter (bool): If True, learning rate is scaled by root mean square of parameter.
+            default: ``True`` .
         relative_step (bool): If True, time-dependent learning rate is computed instead of external learning rate.
-            default: True
+            default: ``True`` .
         warmup_init (bool): The time-dependent learning rate computation depends on whether warm-up
-            initialization is being used. default: False
+            initialization is being used. default: ``False`` .
         compression (bool): If True, the data type of the running averages exponent will be compression to float16.
-            default: False
+            default: ``False`` .
         loss_scale (float): A floating point value for the loss scale. Should be greater than 0. In general, use the
             default value. Only when `FixedLossScaleManager` is used for training and the `drop_overflow_update` in
-            `FixedLossScaleManager` is set to False, then this value needs to be the same as the `loss_scale` in
+            `FixedLossScaleManager` is set to ``False`` , then this value needs to be the same as the `loss_scale` in
             `FixedLossScaleManager`. Refer to class :class:`mindspore.amp.FixedLossScaleManager` for more details.
-            Default: 1.0.
+            Default: ``1.0`` .
 
     Inputs:
         - **gradients** (tuple[Tensor]) - The gradients of `params`, the shape is the same as `params`.
@@ -262,7 +263,9 @@ class AdaFactor(Optimizer):
         >>> import mindspore as ms
         >>> from mindspore import nn
         >>>
-        >>> net = Net()
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> #1) Parameters use the default learning rate with None and weight decay with 0.
         >>> optim = nn.AdaFactor(params=net.trainable_params())
         >>>
@@ -316,8 +319,8 @@ class AdaFactor(Optimizer):
         validator.check_value_type("clip_threshold", clip_threshold, [float], self.cls_name)
         validator.check_non_negative_float(clip_threshold, "clip_threshold", self.cls_name)
         validator.check_value_type("decay_rate", decay_rate, [float], self.cls_name)
-        validator.check_float_range(decay_rate, 0, 1, Rel.INC_NEITHER, "decay_rate", self.cls_name)
-        validator.check_float_range(weight_decay, 0, 1, Rel.INC_LEFT, "weight_decay", self.cls_name)
+        validator.check_float_range(decay_rate, 0, 1, validator.INC_NEITHER, "decay_rate", self.cls_name)
+        validator.check_float_range(weight_decay, 0, 1, validator.INC_LEFT, "weight_decay", self.cls_name)
         validator.check_value_type("scale_parameter", scale_parameter, [bool], self.cls_name)
         validator.check_value_type("relative_step", relative_step, [bool], self.cls_name)
         validator.check_value_type("compression", compression, [bool], self.cls_name)
@@ -330,7 +333,6 @@ class AdaFactor(Optimizer):
         self.weight_decay = trans_to_tensor(weight_decay)
         self.weight_decay_flag = bool(weight_decay)
 
-        self.step = Parameter(Tensor(0, dtype=mstype.float32), name="train_step")
         self.scale_parameter = scale_parameter
         self.relative_step = relative_step
         self.warmup_init = warmup_init
@@ -408,8 +410,8 @@ class AdaFactor(Optimizer):
     def construct(self, gradients):
         gradients = self.flatten_gradients(gradients)
         lr = self.get_lr()
-        F.assign_add(self.step, 1)
-        step = self.step
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
+        step = F.assign_add(self.step, 1)
         if self.scale_lr and self.relative_step:
             if self.warmup_init:
                 min_step = 1e-6 * step

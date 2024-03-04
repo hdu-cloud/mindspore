@@ -20,7 +20,7 @@
 #include "include/common/utils/python_adapter.h"
 #include "include/common/utils/utils.h"
 #include "include/common/utils/convert_utils_py.h"
-#include "pipeline/jit/parse/data_converter.h"
+#include "pipeline/jit/ps/parse/data_converter.h"
 #include "frontend/operator/ops.h"
 #include "pipeline/pynative/pynative_execute.h"
 #include "pipeline/pynative/forward/do_infer.h"
@@ -118,17 +118,17 @@ TEST_F(TestPynativeExecute, TestInferOperator) {
   // Get run op info.
   auto op_run_info = std::make_shared<FrontendOpRunInfo>();
   op_run_info->base_op_run_info.op_name = "MatMul";
-  op_run_info->op_prim = conv_obj->cast<PrimitivePyPtr>();
-  ASSERT_NE(op_run_info->op_prim, nullptr);
-  (void)op_run_info->input_value.emplace_back(t1);
-  (void)op_run_info->input_value.emplace_back(t2);
+  op_run_info->op_grad_info->op_prim = conv_obj->cast<PrimitivePyPtr>();
+  ASSERT_NE(op_run_info->op_grad_info->op_prim, nullptr);
+  (void)op_run_info->op_grad_info->input_value.emplace_back(t1);
+  (void)op_run_info->op_grad_info->input_value.emplace_back(t2);
   op_run_info->input_size = 2;
   // call infer operator.
   auto infer_operator = std::make_shared<InferOperation>();
   infer_operator->DoInfer(op_run_info);
   // Check abstract.
-  ASSERT_NE(op_run_info->out_value, nullptr);
-  ASSERT_EQ(op_run_info->out_value->isa<AnyValue>(), true);
+  ASSERT_NE(op_run_info->real_out, nullptr);
+  ASSERT_EQ(op_run_info->real_out->isa<ValueAny>(), true);
   auto output_abs = op_run_info->base_op_run_info.abstract;
   ASSERT_NE(output_abs, nullptr);
   ASSERT_EQ(output_abs->isa<abstract::AbstractTensor>(), true);

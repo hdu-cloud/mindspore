@@ -19,8 +19,10 @@
 #endif
 #include <fstream>
 #include <iomanip>
+#include "mindspore/core/ops/structure_ops.h"
 #include "utils/label.h"
 #include "utils/hash_map.h"
+#include "utils/symbolic.h"
 #include "ir/primitive.h"
 #include "ir/func_graph.h"
 #include "ir/graph_utils.h"
@@ -29,8 +31,209 @@
 #include "include/common/utils/anfalgo.h"
 #include "include/common/debug/anf_dump_utils.h"
 #include "mindspore/core/utils/file_utils.h"
+#include "ir/meta_func_graph.h"
+#include "pipeline/jit/ps/parse/resolve.h"
+#include "frontend/operator/composite/composite.h"
+#include "frontend/expander/bprop/bprop_meta_func_graph.h"
+#include "frontend/operator/composite/vmap.h"
+#include "frontend/operator/composite/map.h"
 
+using MetaFuncGraph = mindspore::MetaFuncGraph;
+using MetaFuncGraphPtr = std::shared_ptr<MetaFuncGraph>;
 namespace mindspore {
+std::string GetMultitypeFuncGraphText(const prim::MultitypeFuncGraphPtr &mt_func_graph) {
+  auto py_funcs = mt_func_graph->GetPyFunctions();
+  if (py_funcs.empty()) {
+    return "";
+  }
+
+  std::ostringstream oss;
+
+  oss << "{";
+  bool is_first = true;
+  for (const auto &py_func : py_funcs) {
+    if (is_first) {
+      is_first = false;
+    } else {
+      oss << ", ";
+    }
+    oss << "(";
+    for (size_t i = 0; i < py_func.first.size(); ++i) {
+      if (i > 0) {
+        oss << ", ";
+      }
+      oss << py_func.first[i]->DumpText();
+    }
+    oss << ")";
+  }
+  oss << "}";
+
+  return oss.str();
+}
+
+inline bool Skip(const MetaFuncGraphPtr &meta_func_graph) {
+  return meta_func_graph->isa<prim::Tail>() || meta_func_graph->isa<prim::MakeTupleGradient>() ||
+         meta_func_graph->isa<prim::MakeListGradient>() || meta_func_graph->isa<prim::MakeDictGradient>() ||
+         meta_func_graph->isa<prim::TupleAdd>() || meta_func_graph->isa<prim::SequenceSliceGetItem>() ||
+         meta_func_graph->isa<prim::ListSliceSetItem>() || meta_func_graph->isa<prim::UnpackCall>() ||
+         meta_func_graph->isa<prim::ZipOperation>() || meta_func_graph->isa<prim::ListAppend>() ||
+         meta_func_graph->isa<prim::ListInsert>() || meta_func_graph->isa<prim::DoSignatureMetaFuncGraph>() ||
+         meta_func_graph->isa<prim::VmapMatchOutAxis>() || meta_func_graph->isa<prim::VmapGeneralPreprocess>() ||
+         meta_func_graph->isa<prim::GradAux>() || meta_func_graph->isa<prim::PyExecuteGradient>() ||
+         meta_func_graph->isa<prim::MutableGradient>() || meta_func_graph->isa<prim::ZerosLike>() ||
+         meta_func_graph->isa<prim::ListAdd>();
+}
+
+std::string GetMetaFuncGraphText(const MetaFuncGraphPtr &meta_func_graph) {
+  if (meta_func_graph == nullptr) {
+    return "";
+  }
+
+  std::ostringstream oss;
+  oss << meta_func_graph->type_name() << "_" << meta_func_graph->name();
+
+  if (meta_func_graph->isa<prim::MultitypeFuncGraph>()) {
+    prim::MultitypeFuncGraphPtr mt_func_graph = meta_func_graph->cast<prim::MultitypeFuncGraphPtr>();
+    oss << GetMultitypeFuncGraphText(mt_func_graph);
+  } else if (meta_func_graph
+               ->isa<prim::HyperMapPy>()) {  // This statement must before 'meta_graph->isa<prim::HyperMap>()'
+    auto hyper_map = meta_func_graph->cast<prim::HyperMapPyPtr>();
+    if (hyper_map->GetFnLeaf() != nullptr) {
+      oss << "{fn_leaf: " << GetMetaFuncGraphText(hyper_map->GetFnLeaf()) << "}";
+    }
+  } else if (meta_func_graph->isa<prim::HyperMap>()) {
+    auto hyper_map = meta_func_graph->cast<prim::HyperMapPtr>();
+    if (hyper_map->GetFnLeaf() != nullptr) {
+      oss << "{fn_leaf: " << GetMetaFuncGraphText(hyper_map->GetFnLeaf()) << "}";
+    }
+  } else if (meta_func_graph->isa<prim::MapPy>()) {  // This statement must before 'meta_graph->isa<prim::Map>()'
+    auto map = meta_func_graph->cast<prim::MapPyPtr>();
+    if (map->GetFnLeaf() != nullptr) {
+      oss << "{fn_leaf: " << GetMetaFuncGraphText(map->GetFnLeaf()) << "}";
+    }
+  } else if (meta_func_graph->isa<prim::Map>()) {
+    auto map = meta_func_graph->cast<prim::MapPtr>();
+    if (map->GetFnLeaf() != nullptr) {
+      oss << "{fn_leaf: " << GetMetaFuncGraphText(map->GetFnLeaf()) << "}";
+    }
+  } else if (meta_func_graph->isa<prim::GradOperation>()) {
+    prim::GradOperationPtr grad_op = meta_func_graph->cast<prim::GradOperationPtr>();
+    oss << "{get_all: " << grad_op->get_all_ << ", get_by_list: " << grad_op->get_by_list_
+        << ", sens_param: " << grad_op->sens_param_ << "}";
+  } else if (meta_func_graph->isa<prim::VmapGeneralRule>()) {
+    prim::VmapGeneralRulePtr general_rule_fg = meta_func_graph->cast<prim::VmapGeneralRulePtr>();
+    oss << "{prim: " << general_rule_fg->prim_name() << ", axis_size: " << general_rule_fg->axis_size() << "}";
+  } else if (meta_func_graph->isa<expander::bprop::BpropMetaFuncGraph>()) {
+    oss << "{" << meta_func_graph->name() << "}";
+  } else if (Skip(meta_func_graph)) {
+    // Do nothing.
+  } else {
+    MS_LOG(INTERNAL_EXCEPTION) << "Unknown MetaFuncGraph type " << meta_func_graph->type_name();
+  }
+
+  return oss.str();
+}
+
+std::string GetPrimitiveText(const PrimitivePtr &prim) {
+  std::ostringstream oss;
+  if (!prim->instance_name().empty()) {
+    oss << " {";
+    oss << "instance name"
+        << ": ";
+    oss << prim->instance_name();
+    oss << "}";
+  }
+  auto attrs = prim->attrs();
+  if (!attrs.empty()) {
+    oss << " primitive_attrs: {";
+    oss << prim->GetAttrsText();
+    oss << "}";
+  }
+
+  if (prim->isa<prim::DoSignaturePrimitive>()) {
+    auto do_signature = dyn_cast<prim::DoSignaturePrimitive>(prim);
+    auto &func = do_signature->function();
+    if (func->isa<Primitive>()) {
+      auto sig_prim = dyn_cast<Primitive>(func);
+      oss << sig_prim->GetAttrsText();
+    }
+  }
+
+  return oss.str();
+}
+
+std::string GetSequenceText(const ValuePtr &value, const std::shared_ptr<SubGraphIRInfo> &gsub) {
+  std::ostringstream oss;
+  // Output ValueList, ValueTuple
+  ValueSequencePtr seq = dyn_cast<ValueSequence>(value);
+  MS_EXCEPTION_IF_NULL(seq);
+  MS_EXCEPTION_IF_NULL(value);
+  bool is_tuple = value->isa<ValueTuple>();
+  oss << (is_tuple ? "(" : "[");
+  bool first_flag = true;
+  for (auto elem : seq->value()) {
+    if (first_flag) {
+      first_flag = false;
+    } else {
+      oss << ", ";
+    }
+    oss << GetValueText(elem, gsub);
+  }
+  oss << (is_tuple ? ")" : "]");
+  return oss.str();
+}
+
+std::string GetDictText(const ValuePtr &value, const std::shared_ptr<SubGraphIRInfo> &gsub) {
+  std::ostringstream oss;
+  ValueDictionaryPtr dict = value->cast<ValueDictionaryPtr>();
+  oss << "{";
+  bool first_flag = true;
+  for (const auto &elem : dict->value()) {
+    if (first_flag) {
+      first_flag = false;
+    } else {
+      oss << ", ";
+    }
+    oss << "\"" << elem.first->ToString() << "\": " << GetValueText(elem.second, gsub);
+  }
+  oss << "}";
+  return oss.str();
+}
+
+std::string GetOtherValueText(const ValuePtr &value) {
+  std::ostringstream oss;
+  oss << value->type_name() << "[" << value->ToString() << "]";
+  return oss.str();
+}
+
+static bool CanUseDumpText(const ValuePtr &value) {
+  return (value->isa<RefKey>() || value->isa<Scalar>() || value->isa<StringImm>() || value->isa<tensor::Tensor>() ||
+          value->isa<parse::Symbol>() || value->isa<None>() || value->isa<Null>() || value->isa<ValueSlice>() ||
+          value->isa<Type>() || value->isa<KeywordArg>() || value->isa<SymbolicKeyInstance>());
+}
+
+std::string GetValueText(const ValuePtr &value, const std::shared_ptr<SubGraphIRInfo> &gsub) {
+  MS_EXCEPTION_IF_NULL(value);
+  if (value->isa<Primitive>()) {
+    return GetPrimitiveText(value->cast<PrimitivePtr>());
+  }
+  if (value->isa<MetaFuncGraph>()) {
+    MetaFuncGraphPtr meta_func_graph = value->cast<MetaFuncGraphPtr>();
+    return GetMetaFuncGraphText(meta_func_graph);
+  }
+  if (value->isa<ValueSequence>()) {
+    return GetSequenceText(value, gsub);
+  }
+  if (value->isa<ValueDictionary>()) {
+    return GetDictText(value, gsub);
+  }
+  if (CanUseDumpText(value)) {
+    return value->DumpText();
+  } else {
+    return GetOtherValueText(value);
+  }
+}
+
 void PrintTupleNodeUsedFlags(std::ostringstream &buffer, const abstract::AbstractSequencePtr &sequence_abs) {
   if (sequence_abs == nullptr || sequence_abs->sequence_nodes() == nullptr || sequence_abs->sequence_nodes()->empty()) {
     return;
@@ -82,7 +285,7 @@ void PrintNodeOutputType(std::ostringstream &buffer, const AnfNodePtr &node) {
   TypePtr type = dyn_cast<Type>(node->Type());
   if ((shape != nullptr) && (type != nullptr)) {
     buffer << "<" << type << ", " << shape->ToString();
-    if (tensor_value != nullptr && tensor_value != kAnyValue) {
+    if (tensor_value != nullptr && tensor_value != kValueAny) {
       buffer << ", value=...";
     }
     if (ref_key != nullptr) {
@@ -92,7 +295,7 @@ void PrintNodeOutputType(std::ostringstream &buffer, const AnfNodePtr &node) {
     buffer << ">";
   } else if (type != nullptr) {
     buffer << "<" << type;
-    if (tensor_value != nullptr && tensor_value != kAnyValue) {
+    if (tensor_value != nullptr && tensor_value != kValueAny) {
       buffer << ", value=...";
     }
     if (ref_key != nullptr) {
@@ -132,25 +335,37 @@ void GatherInputAndOutputInferType(std::ostringstream &buffer, const AnfNodePtr 
   buffer << ")";
 }
 
-void DumpGlobalInfoEntry(const FuncGraphPtr &graph, std::ostringstream &buffer,
-                         const OrderedMap<FuncGraphPtr, std::shared_ptr<SubGraphIRInfo>> &sub_graphs) {
+void DumpGlobalInfoEntry(const FuncGraphPtr &graph, std::ostringstream &buffer, size_t sub_graphs_size) {
   if (graph == nullptr) {
     return;
   }
 
-  buffer << "#IR entry      : @" << graph->ToString() << std::endl;
-  buffer << "#Total subgraph: " << sub_graphs.size() << std::endl;
+  buffer << "# IR entry: @" << graph->ToString() << std::endl;
+  buffer << "# Total subgraphs: " << sub_graphs_size << std::endl;
   buffer << std::endl;
-  buffer << "#attrs         :" << std::endl;
-  for (const auto &attr : graph->attrs()) {
-    buffer << attr.first << " : ";
-    if (attr.second->isa<BoolImm>()) {
-      buffer << GetValue<bool>(attr.second);
-    } else if (attr.second->isa<StringImm>()) {
-      buffer << GetValue<std::string>(attr.second);
+
+  if (!graph->attrs().empty()) {
+    buffer << "# Attrs:" << std::endl;
+    for (const auto &attr : graph->attrs()) {
+      buffer << attr.first << " : ";
+      if (attr.second->isa<BoolImm>()) {
+        buffer << GetValue<bool>(attr.second);
+      } else if (attr.second->isa<StringImm>()) {
+        buffer << GetValue<std::string>(attr.second);
+      }
+      buffer << std::endl;
     }
     buffer << std::endl;
   }
+}
+
+void DumpKernelObjectType(const CNodePtr &node, const std::shared_ptr<SubGraphIRInfo> &gsub) {
+  auto inputs_str = AnfDumpHandler::PrintInputKernelObjectTypes(node);
+  auto outputs_str = AnfDumpHandler::PrintOutputKernelObjectTypes(node);
+  if (inputs_str.empty() && outputs_str.empty()) {
+    return;
+  }
+  gsub->buffer << "      : (" << inputs_str << ") -> (" << outputs_str << ")" << std::endl;
 }
 
 void DumpKernelInfo(const CNodePtr &node, const std::shared_ptr<SubGraphIRInfo> &gsub) {
@@ -161,25 +376,18 @@ void DumpKernelInfo(const CNodePtr &node, const std::shared_ptr<SubGraphIRInfo> 
   if (kernel_info == nullptr || !kernel_info->has_build_info()) {
     return;
   }
+  if (!AnfUtils::IsRealKernel(node)) {
+    DumpKernelObjectType(node, gsub);
+    return;
+  }
 
   gsub->buffer << "      : (";
-  size_t input_num = common::AnfAlgo::GetInputTensorNum(node);
-  for (size_t i = 0; i < input_num; ++i) {
-    if (i != 0) {
-      gsub->buffer << ", ";
-    }
-    gsub->buffer << AnfDumpHandler::PrintInputTypeShapeFormat(node, i);
-  }
+  gsub->buffer << AnfDumpHandler::PrintInputTypeShapeFormat(node);
   gsub->buffer << ") -> (";
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(node);
-  for (size_t i = 0; i < output_num; ++i) {
-    if (i != 0) {
-      gsub->buffer << ", ";
-    }
-    gsub->buffer << AnfDumpHandler::PrintOutputTypeShapeFormat(node, i);
-  }
+  gsub->buffer << AnfDumpHandler::PrintOutputTypeShapeFormat(node);
   gsub->buffer << ")";
   gsub->buffer << std::endl;
+  DumpKernelObjectType(node, gsub);
 }
 
 int32_t DumpParams(const FuncGraphPtr &graph, std::ostringstream &buffer, OrderedMap<AnfNodePtr, int32_t> *para_map) {
@@ -188,9 +396,12 @@ int32_t DumpParams(const FuncGraphPtr &graph, std::ostringstream &buffer, Ordere
     return 0;
   }
   std::vector<AnfNodePtr> parameters = graph->parameters();
-  buffer << "#Total params  : " << parameters.size() << std::endl;
-  buffer << std::endl;
+  buffer << "# Total params: " << parameters.size() << std::endl;
 
+  if (parameters.empty()) {
+    return 0;
+  }
+  buffer << "# Params:" << std::endl;
   // Dump parameters
   int32_t para_num = 1;
   for (const auto &param : parameters) {
@@ -199,7 +410,7 @@ int32_t DumpParams(const FuncGraphPtr &graph, std::ostringstream &buffer, Ordere
     }
     auto parameter_ptr = param->cast<ParameterPtr>();
     if (parameter_ptr == nullptr) {
-      MS_LOG(EXCEPTION) << "param cannot cast to ParameterPtr";
+      MS_LOG(INTERNAL_EXCEPTION) << "param cannot cast to ParameterPtr";
     }
     buffer << "%para" << para_num << "_" << parameter_ptr->name() << " : ";
     // Print parameters' type and shape
@@ -210,7 +421,7 @@ int32_t DumpParams(const FuncGraphPtr &graph, std::ostringstream &buffer, Ordere
     auto kernel_info = param->kernel_info();
     if (kernel_info != nullptr && kernel_info->has_build_info()) {
       buffer << "  :  ";
-      buffer << AnfDumpHandler::PrintOutputTypeShapeFormat(param, 0);
+      buffer << AnfDumpHandler::PrintOutputTypeShapeFormat(param);
       buffer << "  :  IsWeight: " << std::boolalpha << common::AnfAlgo::IsParameterWeight(parameter_ptr);
     }
     buffer << std::endl;
@@ -218,9 +429,26 @@ int32_t DumpParams(const FuncGraphPtr &graph, std::ostringstream &buffer, Ordere
     if (para_map != nullptr) {
       (*para_map)[param] = para_num++;
     }
+    if (param->func_graph() == nullptr) {
+      MS_LOG(EXCEPTION) << "Get func graph nullptr, node " << param->DebugString();
+    }
     MS_LOG(DEBUG) << "Record param: " << param->ToString() << " graph belong : " << param->func_graph()->ToString();
   }
   return para_num;
+}
+
+void DumpParameterOperator(const AnfNodePtr &node, const std::shared_ptr<SubGraphIRInfo> &gsub, const AnfNodePtr &op) {
+  if (op->func_graph() != nullptr && op->func_graph() != node->func_graph()) {
+    gsub->buffer << "$(@" << op->func_graph()->ToString() << ":";
+  }
+  gsub->buffer << op->ToString();
+  if (op->func_graph() != nullptr && op->func_graph() != node->func_graph()) {
+    gsub->buffer << ")";
+  }
+  std::string func_str = GetNodeFuncStr(op);
+  if (!func_str.empty()) {
+    gsub->buffer << "[@" << func_str << "]";
+  }
 }
 
 void DumpOperator(const AnfNodePtr &node, const std::shared_ptr<SubGraphIRInfo> &gsub) {
@@ -230,7 +458,7 @@ void DumpOperator(const AnfNodePtr &node, const std::shared_ptr<SubGraphIRInfo> 
   }
   auto cnode = dyn_cast<CNode>(node);
   if (cnode == nullptr) {
-    MS_LOG(EXCEPTION) << "Parameter \'node\' should be a CNode";
+    MS_LOG(INTERNAL_EXCEPTION) << "Parameter \'node\' should be a CNode";
   }
   AnfNodePtr op = cnode->input(0);
   MS_EXCEPTION_IF_NULL(op);
@@ -246,6 +474,9 @@ void DumpOperator(const AnfNodePtr &node, const std::shared_ptr<SubGraphIRInfo> 
     } else {
       auto input = op->cast<CNodePtr>();
       auto fg = input->func_graph();
+      if (fg == nullptr) {
+        MS_LOG(EXCEPTION) << "Get func graph nullptr, node " << node->DebugString();
+      }
       gsub->buffer << "$(@" << fg->ToString() << ":" << input->ToString() << ")";
     }
     if (!func_str.empty()) {
@@ -254,21 +485,15 @@ void DumpOperator(const AnfNodePtr &node, const std::shared_ptr<SubGraphIRInfo> 
   } else if (op->isa<ValueNode>()) {
     auto value = GetValueNode(op);
     if (value != nullptr) {
-      gsub->buffer << value->ToString();
+      if (value->isa<Primitive>()) {
+        gsub->buffer << value->ToString();
+      } else {
+        gsub->buffer << GetValueText(value, gsub);
+      }
     }
   } else {
     // It's Parameter.
-    if (op->func_graph() != nullptr && op->func_graph() != node->func_graph()) {
-      gsub->buffer << "$(@" << op->func_graph()->ToString() << ":";
-    }
-    gsub->buffer << op->ToString();
-    if (op->func_graph() != nullptr && op->func_graph() != node->func_graph()) {
-      gsub->buffer << ")";
-    }
-    std::string func_str = GetNodeFuncStr(op);
-    if (!func_str.empty()) {
-      gsub->buffer << "[@" << func_str << "]";
-    }
+    DumpParameterOperator(node, gsub, op);
   }
 }
 
@@ -280,7 +505,7 @@ void DumpParamterInOperand(const AnfNodePtr &node, const AnfNodePtr &in,
   MS_EXCEPTION_IF_NULL(in);
   MS_EXCEPTION_IF_NULL(gsub);
   if (in->func_graph() == nullptr) {
-    MS_LOG(ERROR) << "Parameter should belong to a func graph. Check func graph: " << node->func_graph();
+    MS_LOG(INFO) << "Parameter should belong to a func graph. Check func graph: " << node->func_graph();
   }
   if (in->func_graph() != nullptr && in->func_graph() != node->func_graph()) {
     gsub->buffer << "$(@" << in->func_graph()->ToString() << ":";
@@ -324,13 +549,19 @@ void DumpOperands(const AnfNodePtr &node, const OrderedMap<AnfNodePtr, int32_t> 
         } else {
           auto input = in->cast<CNodePtr>();
           auto fg = input->func_graph();
+          if (fg == nullptr) {
+            MS_LOG(EXCEPTION) << "Get func graph nullptr, node " << input->DebugString();
+          }
           gsub->buffer << "$(@" << fg->ToString() << ":" << input->ToString() << ")";
         }
       } else if (in->isa<ValueNode>() && !IsValueNode<FuncGraph>(in)) {
         // ValueNode except FuncGraph.
-        gsub->buffer << GetValueNode(in)->ToString();
+        gsub->buffer << GetValueText(GetValueNode(in), gsub);
       } else if (IsValueNode<FuncGraph>(in)) {
         FuncGraphPtr fg = GetValueNode<FuncGraphPtr>(in);
+        if (fg == nullptr) {
+          MS_LOG(EXCEPTION) << "Get func graph nullptr, node " << in->DebugString();
+        }
         gsub->buffer << "@" << fg->ToString();
       } else if (AnfUtils::IsCustomActorNode(in)) {
         gsub->buffer << "%" << AnfUtils::GetCustomActorName(in);
@@ -377,7 +608,11 @@ void DumpAttrs(const mindspore::HashMap<std::string, ValuePtr> &attrs, const std
     if (attr.second == nullptr) {
       gsub->buffer << "null";
     } else {
-      gsub->buffer << attr.second->ToString();
+      if (CanUseDumpText(attr.second)) {
+        gsub->buffer << attr.second->DumpText();
+      } else {
+        gsub->buffer << attr.second->ToString();
+      }
     }
   }
 }
@@ -453,20 +688,43 @@ void DumpShape(const AnfNodePtr &node, const FuncGraphPtr &sub_graph, const std:
   gsub->buffer << std::endl;
 }
 
+void DumpLocationInCurrentScope(const DebugInfoPtr &debug_info, const std::shared_ptr<SubGraphIRInfo> &gsub) {
+  auto dump_debug_info = debug_info;
+  std::list<DebugInfoPtr> need_dump_debug_infos;
+  while (dump_debug_info != nullptr) {
+    need_dump_debug_infos.push_front(dump_debug_info);
+    if (dump_debug_info->trace_info() == nullptr) {
+      break;
+    }
+    dump_debug_info = dump_debug_info->trace_info()->debug_info();
+  }
+  HashSet<std::string> visited_locations;
+  for (const auto &cur_debug_info : need_dump_debug_infos) {
+    if (cur_debug_info->location() != nullptr) {
+      auto prefix = cur_debug_info->inlined() ? "      # inlined:" : "      # ";
+      auto debug_info_str = trace::GetDebugInfoStr(cur_debug_info, "", kSourceLineTipDiscard);
+      if (visited_locations.find(debug_info_str) == visited_locations.cend()) {
+        gsub->buffer << prefix << debug_info_str << "\n";
+        (void)visited_locations.insert(debug_info_str);
+      }
+    }
+  }
+}
+
 void DumpPrimalDebugInfos(const CNodePtr &node, const std::shared_ptr<SubGraphIRInfo> &gsub) {
   MS_EXCEPTION_IF_NULL(node);
   auto primal_debug_infos = node->primal_debug_infos();
   if (!primal_debug_infos.empty()) {
-    std::string lines;
     for (const auto &primal_debug_info : primal_debug_infos) {
-      auto debug_info_str = trace::GetDebugInfo(primal_debug_info, "      # ", kSourceLineTipDiscard);
+      std::string lines;
+      auto debug_info_str = trace::GetDebugInfoStr(primal_debug_info, "      # ", kSourceLineTipDiscard);
       if (!debug_info_str.empty()) {
         lines += debug_info_str + "\n";
       }
-    }
-    if (!lines.empty()) {
       gsub->buffer << "      # Corresponding forward node candidate:\n";
-      gsub->buffer << lines;
+      if (!lines.empty()) {
+        gsub->buffer << lines;
+      }
     }
   }
 }
@@ -474,32 +732,59 @@ void DumpPrimalDebugInfos(const CNodePtr &node, const std::shared_ptr<SubGraphIR
 void DumpDebugInfo(const CNodePtr &node, const std::shared_ptr<SubGraphIRInfo> &gsub,
                    const LocDumpMode &dump_location) {
   MS_EXCEPTION_IF_NULL(node);
+  // Dump comments firstly.
+  if (node->debug_info() != nullptr) {
+    const auto &debug_info = trace::GetSourceCodeDebugInfo(node->debug_info());
+    if (debug_info->location() != nullptr) {
+      const auto &comments = debug_info->location()->comments();
+      if (!comments.empty()) {
+        gsub->buffer << "      # Comment:\n";
+        for (auto &comment : comments) {
+          gsub->buffer << "        " << comment << '\n';
+        }
+      }
+    }
+  }
+
+  // Dump line info.
   if (dump_location == kTopStack) {
     auto fused_debug_infos = node->fused_debug_infos();
     if (!fused_debug_infos.empty()) {
-      std::string lines;
       for (const auto &debug_info : fused_debug_infos) {
-        auto debug_info_str = trace::GetDebugInfo(debug_info, "      # ", kSourceLineTipDiscard);
+        std::string lines;
+        gsub->buffer << "      # Corresponding code candidate:\n";
+        auto debug_info_str = trace::GetDebugInfoStr(debug_info, "      # ", kSourceLineTipDiscard);
         if (!debug_info_str.empty()) {
           lines += debug_info_str + "\n";
         }
-      }
-      if (!lines.empty()) {
-        gsub->buffer << "      # Corresponding code candidate:\n";
-        gsub->buffer << lines;
+        if (!lines.empty()) {
+          gsub->buffer << lines;
+        }
       }
     } else {
-      auto debug_info_str = trace::GetDebugInfo(node->debug_info(), "      # ", kSourceLineTipDiscard);
+      auto debug_info_str = trace::GetDebugInfoStr(node->debug_info(), "      # ", kSourceLineTipDiscard);
       if (!debug_info_str.empty()) {
         gsub->buffer << debug_info_str << "\n";
       }
     }
-
     DumpPrimalDebugInfos(node, gsub);
   } else if (dump_location == kWholeStack) {
-    auto traces = mindspore::trace::GetSourceLineList(node);
-    for (auto &trace : traces) {
-      gsub->buffer << "      # " << trace;
+    auto fused_debug_infos = node->fused_debug_infos();
+    if (!fused_debug_infos.empty()) {
+      for (const auto &debug_info : fused_debug_infos) {
+        gsub->buffer << "      # Corresponding code candidate:\n";
+        DumpLocationInCurrentScope(debug_info, gsub);
+      }
+    } else {
+      DumpLocationInCurrentScope(node->debug_info(), gsub);
+    }
+    // Print whole stack primal infos
+    auto primal_debug_infos = node->primal_debug_infos();
+    if (!primal_debug_infos.empty()) {
+      for (const auto &primal_debug_info : primal_debug_infos) {
+        gsub->buffer << "      # Corresponding forward node candidate:\n";
+        DumpLocationInCurrentScope(primal_debug_info, gsub);
+      }
     }
   }
 }
@@ -519,7 +804,7 @@ void DumpCNode(const CNodePtr &node, const FuncGraphPtr &sub_graph, const Ordere
   }
 
   if (node->inputs().empty()) {
-    MS_LOG(EXCEPTION) << "Input of apply node is empty";
+    MS_LOG(INTERNAL_EXCEPTION) << "Input of CNode is empty";
   }
 
   // Print operator
@@ -548,9 +833,9 @@ void DumpCNode(const CNodePtr &node, const FuncGraphPtr &sub_graph, const Ordere
   DumpKernelInfo(node, gsub);
 
   if (dump_full_name) {
-    gsub->buffer << "      # fullname_with_scope: (" << node->fullname_with_scope() << ")" << std::endl;
+    gsub->buffer << "      # Fullname with scope: (" << node->fullname_with_scope() << ")" << std::endl;
   } else {
-    gsub->buffer << "      # scope: (" << node->scope()->name() << ")" << std::endl;
+    gsub->buffer << "      # Scope: (" << node->scope()->name() << ")" << std::endl;
   }
 
   // Print debug info
@@ -563,9 +848,10 @@ void OutputOrderList(const FuncGraphPtr &sub_graph, std::ostringstream &oss) {
     return;
   }
   constexpr int width = 4;
-  oss << "# order:\n";
+  oss << "# Order:\n";
   int i = 1;
   for (auto &node : order_list) {
+    MS_EXCEPTION_IF_NULL(node);
     oss << '#' << std::setw(width) << i << ": " << node->DebugString() << '\n';
     ++i;
   }
@@ -618,11 +904,8 @@ void DumpSubgraph(const OrderedMap<FuncGraphPtr, std::shared_ptr<SubGraphIRInfo>
   }
   for (const auto &sg : *sub_graphs) {
     MS_EXCEPTION_IF_NULL(sg.first);
-    if (*(sg.first->switch_input())) {
-      oss << "switch_input: " << *(sg.first->switch_input()) << "\n";
-    }
-    if (*(sg.first->switch_layer_input())) {
-      oss << "switch_layer_input: " << *(sg.first->switch_layer_input()) << "\n";
+    if (*(sg.first->indirect())) {
+      oss << "indirect: " << *(sg.first->indirect()) << "\n";
     }
     oss << "subgraph attr:" << std::endl;
     for (const auto &attr : sg.first->attrs()) {
@@ -635,11 +918,11 @@ void DumpSubgraph(const OrderedMap<FuncGraphPtr, std::shared_ptr<SubGraphIRInfo>
       oss << std::endl;
     }
     oss << "subgraph instance: " << sg.first->ToString() << " : " << sg.first.get() << std::endl;
-    if (label_manage::GetGlobalTraceLabelType() == label_manage::TraceLabelType::kWithUniqueId) {
-      oss << trace::GetDebugInfo(sg.first->debug_info(), "# ", kSourceLineTipDiscard) << "#"
-          << label_manage::Label(sg.first->debug_info()) << "\n";
+    if (trace::GetGlobalTraceLabelType() == trace::TraceLabelType::kWithUniqueId) {
+      oss << trace::GetDebugInfoStr(sg.first->debug_info(), "# ", kSourceLineTipDiscard) << "#"
+          << trace::Label(sg.first->debug_info()) << "\n";
     } else {
-      oss << trace::GetDebugInfo(sg.first->debug_info(), "# ", kSourceLineTipDiscard) << "\n";
+      oss << trace::GetDebugInfoStr(sg.first->debug_info(), "# ", kSourceLineTipDiscard) << "\n";
     }
     oss << "subgraph @" << sg.first->ToString();
     if (sg.first->manager() != nullptr && sg.first->parent() != nullptr) {
@@ -817,7 +1100,7 @@ void DumpIR(const std::string &filename, const FuncGraphPtr &graph, bool dump_fu
   // Dump ir in each sub graph
   DumpIRInSubgraph(nodes, &para_map, &sub_graphs, total_para, dump_full_name, dump_location);
 
-  DumpGlobalInfoEntry(graph, buffer, sub_graphs);
+  DumpGlobalInfoEntry(graph, buffer, sub_graphs.size());
   buffer << oss.str();
   // Output global info
   fout << buffer.str() << std::endl;
@@ -831,6 +1114,14 @@ void DumpIR(const std::string &filename, const FuncGraphPtr &graph, bool dump_fu
   fout.close();
   // Set file mode to read only by user
   ChangeFileMode(realpath.value(), S_IRUSR);
+}
+
+void DumpIRHead(const FuncGraphPtr &top_func, std::ostringstream &ofs) {
+  auto sub_graphs = top_func->func_graphs_used_total();
+  DumpGlobalInfoEntry(top_func, ofs, sub_graphs.size());
+  OrderedMap<AnfNodePtr, int32_t> para_map;
+  (void)DumpParams(top_func, ofs, &para_map);
+  ofs << std::endl;
 }
 
 void DumpIR(std::ostringstream &graph_buffer, const FuncGraphPtr &graph, bool dump_full_name,
@@ -851,7 +1142,7 @@ void DumpIR(std::ostringstream &graph_buffer, const FuncGraphPtr &graph, bool du
   DumpIRInSubgraph(nodes, &para_map, &sub_graphs, total_para, dump_full_name, dump_location);
 
   // Dump global info
-  DumpGlobalInfoEntry(graph, graph_buffer, sub_graphs);
+  DumpGlobalInfoEntry(graph, graph_buffer, sub_graphs.size());
   graph_buffer << oss.str();
   // Output each sub graph
   DumpSubgraph(&sub_graphs, graph, &para_map, graph_buffer);
@@ -885,7 +1176,7 @@ void DumpIRForRDR(const std::string &filename, const FuncGraphPtr &graph, bool d
   // Dump ir in each sub graph
   DumpIRInSubgraph(nodes, &para_map, &sub_graphs, total_para, dump_full_name, dump_location);
   // Dump global info
-  DumpGlobalInfoEntry(graph, buffer, sub_graphs);
+  DumpGlobalInfoEntry(graph, buffer, sub_graphs.size());
   // Output global info
   fout << buffer.str() << std::endl;
   buffer.str(std::string());

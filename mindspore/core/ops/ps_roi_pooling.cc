@@ -14,13 +14,27 @@
  * limitations under the License.
  */
 #include "ops/ps_roi_pooling.h"
-#include <set>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include <memory>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -51,22 +65,29 @@ abstract::ShapePtr PSROIPoolingInferShape(const PrimitivePtr &primitive,
   auto output_dim = GetValue<int64_t>(output_dim_ptr);
 
   auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
+  auto rois_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->BuildShape())[kShape];
+  if (x_shape[0] != rois_shape[0]) {
+    MS_LOG(EXCEPTION) << "For '" << primitive->name()
+                      << "', the batch number of input 'features' and 'rois' must be equal, but got: " << x_shape[0]
+                      << " and " << rois_shape[0] << "respectively.";
+  }
+
   constexpr size_t x_out_shape_dim = 4;
   if (!IsDynamicRank(x_shape)) {
     if (x_shape.size() != x_out_shape_dim) {
       MS_LOG(EXCEPTION) << "For '" << primitive->name()
-                        << "', input x shape must be 4d(NCHW), but got: " << x_shape.size();
+                        << "', input 'features' shape must be 4d(NCHW), but got: " << x_shape.size();
     }
     if (x_shape[1] != abstract::Shape::kShapeDimAny) {
       // the first dimension of the input data should be equal group_size * group_size * output_dim
       if (x_shape[1] / (group_size * group_size) != output_dim) {
         MS_LOG(EXCEPTION) << "For '" << primitive->name() << "', the second dimension(" << x_shape[1]
-                          << ") of the input x is illegal, it is not equal to group_size(" << group_size
+                          << ") of the input 'features' is illegal, it is not equal to group_size(" << group_size
                           << ") * group_size(" << group_size << ") * output_dim(" << output_dim << ").";
       }
     }
   }
-  auto rois_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->BuildShape())[kShape];
+
   std::vector<int64_t> ret_shape(x_out_shape_dim);
   if (IsDynamicRank(rois_shape)) {
     ret_shape = {-1, output_dim, group_size, group_size};
@@ -87,6 +108,14 @@ abstract::ShapePtr PSROIPoolingInferShape(const PrimitivePtr &primitive,
 }
 
 TypePtr PSROIPoolingInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  for (const auto &item : input_args) {
+    MS_EXCEPTION_IF_NULL(item);
+  }
+  MS_EXCEPTION_IF_NULL(prim);
+  auto prim_name = prim->name();
+  const int64_t kInputNum = 2;
+  (void)CheckAndConvertUtils::CheckInteger("input numbers", SizeToLong(input_args.size()), kGreaterEqual, kInputNum,
+                                           prim_name);
   (void)CheckAndConvertUtils::CheckTensorTypeValid("x", input_args[0]->BuildType(), {kFloat64, kFloat32, kFloat16},
                                                    prim->name());
   (void)CheckAndConvertUtils::CheckTensorTypeValid("rois", input_args[1]->BuildType(), {kFloat64, kFloat32, kFloat16},
@@ -98,10 +127,6 @@ TypePtr PSROIPoolingInferType(const PrimitivePtr &prim, const std::vector<Abstra
     MS_EXCEPTION(TypeError) << "For '" << prim->name()
                             << "', input[features] is expected to have the same type with input[rois], but got type ("
                             << input_type << ", " << rois_type << ").";
-  }
-
-  for (const auto &item : input_args) {
-    MS_EXCEPTION_IF_NULL(item);
   }
   return input_args[0]->BuildType();
 }
@@ -115,6 +140,24 @@ AbstractBasePtr PSROIPoolingInfer(const abstract::AnalysisEnginePtr &, const Pri
   auto infershape = PSROIPoolingInferShape(primitive, input_args);
   return abstract::MakeAbstract(infershape, infertype);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(PSROIPooling, prim::kPrimPSROIPooling, PSROIPoolingInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGPSROIPoolingInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return PSROIPoolingInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return PSROIPoolingInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return PSROIPoolingInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(PSROIPooling, prim::kPrimPSROIPooling, AGPSROIPoolingInfer, false);
 }  // namespace ops
 }  // namespace mindspore

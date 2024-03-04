@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,24 +17,22 @@
 
 #include <algorithm>
 
-#include "minddata/dataset/kernels/image/dvpp/dvpp_crop_jpeg_op.h"
-#include "minddata/dataset/kernels/image/dvpp/dvpp_decode_jpeg_op.h"
-#include "minddata/dataset/kernels/image/dvpp/dvpp_decode_png_op.h"
-#include "minddata/dataset/kernels/image/dvpp/dvpp_decode_resize_crop_jpeg_op.h"
-#include "minddata/dataset/kernels/image/dvpp/dvpp_decode_resize_jpeg_op.h"
-#include "minddata/dataset/kernels/image/dvpp/dvpp_decode_video_op.h"
-#include "minddata/dataset/kernels/image/dvpp/dvpp_normalize_op.h"
-#include "minddata/dataset/kernels/image/dvpp/dvpp_resize_jpeg_op.h"
+#include "minddata/dataset/kernels/image/dvpp/ascend310/dvpp_crop_jpeg_op.h"
+#include "minddata/dataset/kernels/image/dvpp/ascend310/dvpp_decode_jpeg_op.h"
+#include "minddata/dataset/kernels/image/dvpp/ascend310/dvpp_decode_png_op.h"
+#include "minddata/dataset/kernels/image/dvpp/ascend310/dvpp_decode_resize_crop_jpeg_op.h"
+#include "minddata/dataset/kernels/image/dvpp/ascend310/dvpp_decode_resize_jpeg_op.h"
+#include "minddata/dataset/kernels/image/dvpp/ascend310/dvpp_decode_video_op.h"
+#include "minddata/dataset/kernels/image/dvpp/ascend310/dvpp_normalize_op.h"
+#include "minddata/dataset/kernels/image/dvpp/ascend310/dvpp_resize_jpeg_op.h"
 #include "minddata/dataset/util/path.h"
 #include "minddata/dataset/util/validators.h"
 
 namespace mindspore {
 namespace dataset {
-
 // Transform operations for computer vision
 namespace vision {
 /* ####################################### Derived TensorOperation classes ################################# */
-
 // DvppCropOperation
 DvppCropJpegOperation::DvppCropJpegOperation(const std::vector<uint32_t> &crop) : crop_(crop) {}
 
@@ -60,7 +58,8 @@ Status DvppCropJpegOperation::ValidateParams() {
 std::shared_ptr<TensorOp> DvppCropJpegOperation::Build() {
   // If size is a single value, the smaller edge of the image will be
   // resized to this value with the same image aspect ratio.
-  uint32_t cropHeight, cropWidth;
+  uint32_t cropHeight;
+  uint32_t cropWidth;
   // User specified the width value.
   if (crop_.size() == 1) {
     cropHeight = crop_[0];
@@ -74,6 +73,7 @@ std::shared_ptr<TensorOp> DvppCropJpegOperation::Build() {
 }
 
 Status DvppCropJpegOperation::to_json(nlohmann::json *out_json) {
+  RETURN_UNEXPECTED_IF_NULL(out_json);
   nlohmann::json args;
   args["size"] = crop_;
   *out_json = args;
@@ -81,6 +81,7 @@ Status DvppCropJpegOperation::to_json(nlohmann::json *out_json) {
 }
 
 Status DvppCropJpegOperation::from_json(nlohmann::json op_params, std::shared_ptr<TensorOperation> *operation) {
+  RETURN_UNEXPECTED_IF_NULL(operation);
   RETURN_IF_NOT_OK(ValidateParamInJson(op_params, "size", kDvppCropJpegOperation));
   std::vector<uint32_t> resize = op_params["size"];
   *operation = std::make_shared<vision::DvppCropJpegOperation>(resize);
@@ -113,7 +114,8 @@ Status DvppDecodeResizeOperation::ValidateParams() {
 std::shared_ptr<TensorOp> DvppDecodeResizeOperation::Build() {
   // If size is a single value, the smaller edge of the image will be
   // resized to this value with the same image aspect ratio.
-  uint32_t resizeHeight, resizeWidth;
+  uint32_t resizeHeight;
+  uint32_t resizeWidth;
   // User specified the width value.
   if (resize_.size() == 1) {
     resizeHeight = resize_[0];
@@ -128,6 +130,7 @@ std::shared_ptr<TensorOp> DvppDecodeResizeOperation::Build() {
 }
 
 Status DvppDecodeResizeOperation::to_json(nlohmann::json *out_json) {
+  RETURN_UNEXPECTED_IF_NULL(out_json);
   nlohmann::json args;
   args["size"] = resize_;
   *out_json = args;
@@ -135,6 +138,7 @@ Status DvppDecodeResizeOperation::to_json(nlohmann::json *out_json) {
 }
 
 Status DvppDecodeResizeOperation::from_json(nlohmann::json op_params, std::shared_ptr<TensorOperation> *operation) {
+  RETURN_UNEXPECTED_IF_NULL(operation);
   RETURN_IF_NOT_OK(ValidateParamInJson(op_params, "size", kDvppDecodeResizeOperation));
   std::vector<uint32_t> resize = op_params["size"];
   *operation = std::make_shared<vision::DvppDecodeResizeOperation>(resize);
@@ -148,13 +152,15 @@ DvppDecodeVideoOperation::DvppDecodeVideoOperation(const std::vector<uint32_t> &
 
 Status DvppDecodeVideoOperation::ValidateParams() {
   // check size_
-  if (size_.empty() || size_.size() > 2) {
+  constexpr auto kTwoElements = 2;
+  if (size_.size() != kTwoElements) {
     std::string err_msg =
-      "DvppDecodeVideo: Video frame size must be a vector of one or two elements, got: " + std::to_string(size_.size());
+      "DvppDecodeVideo: Video frame size must be a vector of two elements, got: " + std::to_string(size_.size());
     LOG_AND_RETURN_STATUS_SYNTAX_ERROR(err_msg);
   }
   // check height and width
-  uint32_t height, width;
+  uint32_t height;
+  uint32_t width;
   height = size_[0];
   width = size_[1];
 
@@ -195,7 +201,8 @@ Status DvppDecodeVideoOperation::ValidateParams() {
 }
 
 std::shared_ptr<TensorOp> DvppDecodeVideoOperation::Build() {
-  uint32_t height, width;
+  uint32_t height;
+  uint32_t width;
   height = size_[0];
   width = size_[1];
   auto tensor_op = std::make_shared<DvppDecodeVideoOp>(width, height, en_type_, format_, output_);
@@ -203,6 +210,7 @@ std::shared_ptr<TensorOp> DvppDecodeVideoOperation::Build() {
 }
 
 Status DvppDecodeVideoOperation::to_json(nlohmann::json *out_json) {
+  RETURN_UNEXPECTED_IF_NULL(out_json);
   nlohmann::json args;
   args["size"] = size_;
   args["en_type"] = en_type_;
@@ -213,14 +221,15 @@ Status DvppDecodeVideoOperation::to_json(nlohmann::json *out_json) {
 }
 
 Status DvppDecodeVideoOperation::from_json(nlohmann::json op_params, std::shared_ptr<TensorOperation> *operation) {
+  RETURN_UNEXPECTED_IF_NULL(operation);
   RETURN_IF_NOT_OK(ValidateParamInJson(op_params, "size", kDvppDecodeVideoOperation));
   RETURN_IF_NOT_OK(ValidateParamInJson(op_params, "en_type", kDvppDecodeVideoOperation));
   RETURN_IF_NOT_OK(ValidateParamInJson(op_params, "out_format", kDvppDecodeVideoOperation));
   RETURN_IF_NOT_OK(ValidateParamInJson(op_params, "output", kDvppDecodeVideoOperation));
 
   std::vector<uint32_t> size = op_params["size"];
-  VdecStreamFormat type = static_cast<VdecStreamFormat>(op_params["en_type"]);
-  VdecOutputFormat out_format = static_cast<VdecOutputFormat>(op_params["out_format"]);
+  auto type = static_cast<VdecStreamFormat>(op_params["en_type"]);
+  auto out_format = static_cast<VdecOutputFormat>(op_params["out_format"]);
   std::string output = op_params["output"];
 
   *operation = std::make_shared<vision::DvppDecodeVideoOperation>(size, type, out_format, output);
@@ -295,7 +304,10 @@ Status DvppDecodeResizeCropOperation::ValidateParams() {
 std::shared_ptr<TensorOp> DvppDecodeResizeCropOperation::Build() {
   // If size is a single value, the smaller edge of the image will be
   // resized to this value with the same image aspect ratio.
-  uint32_t cropHeight, cropWidth, resizeHeight, resizeWidth;
+  uint32_t cropHeight;
+  uint32_t cropWidth;
+  uint32_t resizeHeight;
+  uint32_t resizeWidth;
   if (crop_.size() == 1) {
     cropHeight = crop_[0];
     cropWidth = crop_[0];
@@ -317,6 +329,7 @@ std::shared_ptr<TensorOp> DvppDecodeResizeCropOperation::Build() {
 }
 
 Status DvppDecodeResizeCropOperation::to_json(nlohmann::json *out_json) {
+  RETURN_UNEXPECTED_IF_NULL(out_json);
   nlohmann::json args;
   args["crop_size"] = crop_;
   args["resize_size"] = resize_;
@@ -325,6 +338,7 @@ Status DvppDecodeResizeCropOperation::to_json(nlohmann::json *out_json) {
 }
 
 Status DvppDecodeResizeCropOperation::from_json(nlohmann::json op_params, std::shared_ptr<TensorOperation> *operation) {
+  RETURN_UNEXPECTED_IF_NULL(operation);
   RETURN_IF_NOT_OK(ValidateParamInJson(op_params, "crop_size", kDvppDecodeResizeCropOperation));
   RETURN_IF_NOT_OK(ValidateParamInJson(op_params, "resize_size", kDvppDecodeResizeCropOperation));
   std::vector<uint32_t> crop = op_params["crop_size"];
@@ -338,16 +352,29 @@ Status DvppDecodeJpegOperation::ValidateParams() { return Status::OK(); }
 
 std::shared_ptr<TensorOp> DvppDecodeJpegOperation::Build() { return std::make_shared<DvppDecodeJpegOp>(); }
 
+Status DvppDecodeJpegOperation::from_json(nlohmann::json op_params, std::shared_ptr<TensorOperation> *operation) {
+  RETURN_UNEXPECTED_IF_NULL(operation);
+  *operation = std::make_shared<vision::DvppDecodeJpegOperation>();
+  return Status::OK();
+}
+
 // DvppDecodePNG
 Status DvppDecodePngOperation::ValidateParams() { return Status::OK(); }
 
 std::shared_ptr<TensorOp> DvppDecodePngOperation::Build() { return std::make_shared<DvppDecodePngOp>(); }
+
+Status DvppDecodePngOperation::from_json(nlohmann::json op_params, std::shared_ptr<TensorOperation> *operation) {
+  RETURN_UNEXPECTED_IF_NULL(operation);
+  *operation = std::make_shared<vision::DvppDecodePngOperation>();
+  return Status::OK();
+}
 
 // DvppNormalize
 DvppNormalizeOperation::DvppNormalizeOperation(const std::vector<float> &mean, const std::vector<float> &std)
     : mean_(mean), std_(std) {}
 
 Status DvppNormalizeOperation::ValidateParams() {
+  constexpr auto kMaxElement = 256.0;
   if (mean_.size() != 3) {
     std::string err_msg = "DvppNormalization:: mean expecting size 3, got size: " + std::to_string(mean_.size());
     LOG_AND_RETURN_STATUS_SYNTAX_ERROR(err_msg);
@@ -356,14 +383,14 @@ Status DvppNormalizeOperation::ValidateParams() {
     std::string err_msg = "DvppNormalization: std expecting size 3, got size: " + std::to_string(std_.size());
     LOG_AND_RETURN_STATUS_SYNTAX_ERROR(err_msg);
   }
-  if (*min_element(mean_.begin(), mean_.end()) < 0 || *max_element(mean_.begin(), mean_.end()) > 256) {
+  if (*min_element(mean_.begin(), mean_.end()) < 0.0 || *max_element(mean_.begin(), mean_.end()) > kMaxElement) {
     std::string err_msg =
       "Normalization can take parameters in range [0, 256] according to math theory of mean and sigma, got mean "
       "vector" +
       std::to_string(std_.size());
     LOG_AND_RETURN_STATUS_SYNTAX_ERROR(err_msg);
   }
-  if (*min_element(std_.begin(), std_.end()) < 0 || *max_element(std_.begin(), std_.end()) > 256) {
+  if (*min_element(std_.begin(), std_.end()) < 0.0 || *max_element(std_.begin(), std_.end()) > kMaxElement) {
     std::string err_msg =
       "Normalization can take parameters in range [0, 256] according to math theory of mean and sigma, got mean "
       "vector" +
@@ -379,13 +406,15 @@ std::shared_ptr<TensorOp> DvppNormalizeOperation::Build() {
 }
 
 Status DvppNormalizeOperation::to_json(nlohmann::json *out_json) {
+  RETURN_UNEXPECTED_IF_NULL(out_json);
   nlohmann::json args;
   std::vector<uint32_t> enlarge_mean_;
   std::vector<uint32_t> enlarge_std_;
-  std::transform(mean_.begin(), mean_.end(), std::back_inserter(enlarge_mean_),
-                 [](float i) -> uint32_t { return static_cast<uint32_t>(10000 * i); });
-  std::transform(std_.begin(), std_.end(), std::back_inserter(enlarge_std_),
-                 [](float j) -> uint32_t { return static_cast<uint32_t>(10000 * j); });
+  constexpr auto kEnlarge = 10000.;
+  (void)std::transform(mean_.begin(), mean_.end(), std::back_inserter(enlarge_mean_),
+                       [&kEnlarge](float i) -> uint32_t { return static_cast<uint32_t>(kEnlarge * i); });
+  (void)std::transform(std_.begin(), std_.end(), std::back_inserter(enlarge_std_),
+                       [&kEnlarge](float j) -> uint32_t { return static_cast<uint32_t>(kEnlarge * j); });
   args["mean"] = enlarge_mean_;
   args["std"] = enlarge_std_;
   *out_json = args;
@@ -393,6 +422,7 @@ Status DvppNormalizeOperation::to_json(nlohmann::json *out_json) {
 }
 
 Status DvppNormalizeOperation::from_json(nlohmann::json op_params, std::shared_ptr<TensorOperation> *operation) {
+  RETURN_UNEXPECTED_IF_NULL(operation);
   RETURN_IF_NOT_OK(ValidateParamInJson(op_params, "mean", kDvppNormalizeOperation));
   RETURN_IF_NOT_OK(ValidateParamInJson(op_params, "std", kDvppNormalizeOperation));
   std::vector<float> mean = op_params["mean"];
@@ -406,7 +436,8 @@ DvppResizeJpegOperation::DvppResizeJpegOperation(const std::vector<uint32_t> &re
 
 Status DvppResizeJpegOperation::ValidateParams() {
   // size
-  if (resize_.empty() || resize_.size() > 2) {
+  constexpr int32_t kValidResizeSize = 2;
+  if (resize_.size() != 1 && resize_.size() != kValidResizeSize) {
     std::string err_msg = "DvppResizeJpeg: resize resolution must be a vector of one or two elements, got: " +
                           std::to_string(resize_.size());
     LOG_AND_RETURN_STATUS_SYNTAX_ERROR(err_msg);
@@ -427,7 +458,8 @@ Status DvppResizeJpegOperation::ValidateParams() {
 std::shared_ptr<TensorOp> DvppResizeJpegOperation::Build() {
   // If size is a single value, the smaller edge of the image will be
   // resized to this value with the same image aspect ratio.
-  uint32_t resizeHeight, resizeWidth;
+  uint32_t resizeHeight;
+  uint32_t resizeWidth;
   // User specified the width value.
   if (resize_.size() == 1) {
     resizeHeight = resize_[0];
@@ -441,6 +473,7 @@ std::shared_ptr<TensorOp> DvppResizeJpegOperation::Build() {
 }
 
 Status DvppResizeJpegOperation::to_json(nlohmann::json *out_json) {
+  RETURN_UNEXPECTED_IF_NULL(out_json);
   nlohmann::json args;
   args["size"] = resize_;
   *out_json = args;
@@ -448,6 +481,7 @@ Status DvppResizeJpegOperation::to_json(nlohmann::json *out_json) {
 }
 
 Status DvppResizeJpegOperation::from_json(nlohmann::json op_params, std::shared_ptr<TensorOperation> *operation) {
+  RETURN_UNEXPECTED_IF_NULL(operation);
   RETURN_IF_NOT_OK(ValidateParamInJson(op_params, "size", kDvppResizeJpegOperation));
   std::vector<uint32_t> resize = op_params["size"];
   *operation = std::make_shared<vision::DvppResizeJpegOperation>(resize);

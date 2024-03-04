@@ -16,16 +16,18 @@
 #include "backend/common/pass/convert_const_scalar_to_tensor.h"
 #include <memory>
 #include <utility>
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "include/common/utils/convert_utils.h"
-#include "backend/common/optimizer/helper.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 
 namespace mindspore {
 namespace opt {
 namespace {
-AnfNodePtr CreateTensorInput(const KernelGraphPtr &kernel_graph, const AnfNodePtr &input_node) {
+AnfNodePtr ConvertTensorInput(const KernelGraphPtr &kernel_graph, const AnfNodePtr &input_node) {
   MS_EXCEPTION_IF_NULL(input_node);
   if (!input_node->isa<ValueNode>()) {
     return nullptr;
@@ -48,6 +50,7 @@ AnfNodePtr CreateTensorInput(const KernelGraphPtr &kernel_graph, const AnfNodePt
   if (kernel_graph != nullptr) {
     tensor_input = kernel_graph->NewValueNode(tensor_input);
     kernel_graph->AddValueNodeToGraph(tensor_input);
+    kernel_graph->FrontBackendlMapUpdate(input_node, tensor_input);
   } else {
     tensor_input = MakeValueNode(tensor_input);
   }
@@ -58,12 +61,13 @@ AnfNodePtr CreateTensorInput(const KernelGraphPtr &kernel_graph, const AnfNodePt
 
 const AnfNodePtr ConvertConstScalarToTensor::Process(const FuncGraphPtr &func_graph, const AnfNodePtr &node,
                                                      const EquivPtr &) const {
-  if (node == nullptr || func_graph == nullptr || common::AnfAlgo::CheckPrimitiveType(node, prim::kPrimTupleGetItem)) {
+  if (node == nullptr || func_graph == nullptr || common::AnfAlgo::CheckPrimitiveType(node, prim::kPrimTupleGetItem) ||
+      common::AnfAlgo::CheckPrimitiveType(node, prim::kPrimPyExecute)) {
     return nullptr;
   }
   // input is scalar, and link to graph return
   if (node->isa<ValueNode>() && node == func_graph->output()) {
-    return CreateTensorInput(func_graph->cast<KernelGraphPtr>(), node);
+    return ConvertTensorInput(func_graph->cast<KernelGraphPtr>(), node);
   }
   if (!node->isa<CNode>()) {
     return nullptr;
@@ -72,7 +76,10 @@ const AnfNodePtr ConvertConstScalarToTensor::Process(const FuncGraphPtr &func_gr
   MS_EXCEPTION_IF_NULL(cnode);
   bool input_changed = false;
   for (size_t i = 0; i < cnode->inputs().size(); ++i) {
-    auto new_input = CreateTensorInput(func_graph->cast<KernelGraphPtr>(), cnode->inputs()[i]);
+    if (!AnfAlgo::IsScalarConvertToTensor(cnode->inputs()[i], cnode)) {
+      continue;
+    }
+    auto new_input = ConvertTensorInput(func_graph->cast<KernelGraphPtr>(), cnode->inputs()[i]);
     if (new_input != nullptr) {
       cnode->set_input(i, new_input);
       input_changed = true;

@@ -28,17 +28,22 @@ add_library(audio-kernels OBJECT
         griffin_lim_op.cc
         highpass_biquad_op.cc
         inverse_mel_scale_op.cc
+        inverse_spectrogram_op.cc
+        lfcc_op.cc
         lfilter_op.cc
         lowpass_biquad_op.cc
         magphase_op.cc
         mask_along_axis_iid_op.cc
         mask_along_axis_op.cc
         mel_scale_op.cc
+        mel_spectrogram_op.cc
+        mfcc_op.cc
         mu_law_decoding_op.cc
         mu_law_encoding_op.cc
         overdrive_op.cc
         phase_vocoder_op.cc
         phaser_op.cc
+        pitch_shift_op.cc
         resample_op.cc
         riaa_biquad_op.cc
         sliding_window_cmn_op.cc

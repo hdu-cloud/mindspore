@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 #include <string>
 #include "runtime/stream.h"
 #include "plugin/device/ascend/hal/device/ge_runtime/task_info.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 
 using mindspore::ge::model_runner::LabelSwitchTaskInfo;
@@ -35,7 +35,7 @@ bool LabelSwitchKernel::Init(const AnfNodePtr &anf_node) {
   MS_LOG(INFO) << "LabelSwitchKernel init";
   auto cnode = anf_node->cast<CNodePtr>();
   if (!common::AnfAlgo::HasNodeAttr(kAttrLabelSwitchList, cnode)) {
-    MS_LOG(EXCEPTION) << "LabelSwitchKernel has no attr label_switch_list";
+    MS_LOG(INTERNAL_EXCEPTION) << "LabelSwitchKernel has no attr label_switch_list";
   }
   auto primitive = common::AnfAlgo::GetCNodePrimitive(anf_node);
   MS_EXCEPTION_IF_NULL(primitive);
@@ -60,7 +60,7 @@ std::vector<TaskInfoPtr> LabelSwitchKernel::GenTask(const std::vector<AddressPtr
   MS_LOG(INFO) << "LabelSwitchKernel GenTask label size:" << label_size_ << ", stream id:" << stream_id;
   std::vector<TaskInfoPtr> task_info_list;
   if (inputs.empty()) {
-    MS_LOG(EXCEPTION) << "LabelSwitchKernel is empty";
+    MS_LOG(INTERNAL_EXCEPTION) << "LabelSwitchKernel is empty";
   }
   MS_EXCEPTION_IF_NULL(inputs[0]);
   cond_ = inputs[0]->addr;
@@ -84,10 +84,12 @@ std::vector<std::shared_ptr<kernel::KernelBuildInfo>> LabelSwitchDesc::GetKernel
     builder.SetInputsDeviceType({input_type[i]});
     builder.SetProcessor(AICORE);
     builder.SetKernelType(RT_KERNEL);
-    builder.SetFusionType(OPAQUE);
+    builder.SetFusionType(kPatternOpaque);
     // LabelSwitch always return UMonad.
     builder.SetOutputsFormat({kOpFormat_DEFAULT});
     builder.SetOutputsDeviceType({TypeId::kObjectTypeUMonad});
+    builder.SetInputsKernelObjectType({KernelObjectType::TENSOR});
+    builder.SetOutputsKernelObjectType({KernelObjectType::TENSOR});
     label_switch_build_info.emplace_back(builder.Build());
   }
   return label_switch_build_info;

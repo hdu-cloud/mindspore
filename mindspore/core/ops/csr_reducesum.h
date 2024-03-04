@@ -22,8 +22,8 @@
 #include <string>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,8 +37,8 @@ class MIND_API CSRReduceSum : public BaseOperator {
     InitIOName({"indptr", "indices", "values", "dense_shape", "axis"}, {"output"});
   }
 };
-abstract::AbstractBasePtr CSRReduceSumInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                            const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr CSRReduceSumInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                     const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

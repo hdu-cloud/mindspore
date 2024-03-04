@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -187,6 +187,7 @@ void FootPrint::addTensorsInfo(BlockTensor *elemIndex) {
 }
 
 void FootPrint::addElem(BlockTensor *block, const size_t &offset) {
+  MS_EXCEPTION_IF_NULL(block);
   if (m_foot_print_next_ == nullptr) {
     m_foot_print_next_ = std::make_shared<FootPrint>();
     size_t newoffset = m_offset_ + block->m_size_;
@@ -200,6 +201,7 @@ void FootPrint::addElem(BlockTensor *block, const size_t &offset) {
 
   size_t offset1 = offset;
   SomasSolverTensorDescPtr tensor = block->m_start_tensor_;
+  MS_EXCEPTION_IF_NULL(tensor);
   MS_LOG(DEBUG) << "Allocating block: " << tensor->index_ << " in offset: " << offset;
   auto sol_id = block->m_current_sol_;
   if (block->offsets_.find(sol_id) != block->offsets_.end()) {

@@ -498,21 +498,26 @@ Status CsvOp::LoadFile(const std::string &file, int64_t start_offset, int64_t en
       if (err != 0) {
         // if error code is -2, the returned error is interrupted
         if (err == -2) {
+          ifs.close();
           return Status(kMDInterrupted);
         }
+        ifs.close();
         RETURN_STATUS_UNEXPECTED("Invalid file, failed to parse csv file: " + file + " at line " +
                                  std::to_string(csv_parser.GetTotalRows() + 1) +
                                  ". Error message: " + csv_parser.GetErrorMessage());
       }
     }
   } catch (std::invalid_argument &ia) {
+    ifs.close();
     std::string err_row = std::to_string(csv_parser.GetTotalRows() + 1);
     RETURN_STATUS_UNEXPECTED("Invalid csv, csv file: " + file + " parse failed at line " + err_row +
                              ", type does not match.");
   } catch (std::out_of_range &oor) {
+    ifs.close();
     std::string err_row = std::to_string(csv_parser.GetTotalRows() + 1);
     RETURN_STATUS_UNEXPECTED("Invalid csv, " + file + " parse failed at line " + err_row + " : value out of range.");
   }
+  ifs.close();
   return Status::OK();
 }
 
@@ -548,7 +553,7 @@ Status CsvOp::FillIOBlockQueue(const std::vector<int64_t> &i_keys) {
     if (!i_keys.empty()) {
       for (auto it = i_keys.begin(); it != i_keys.end(); ++it) {
         {
-          if (!load_io_block_queue_) {
+          if (!GetLoadIoBlockQueue()) {
             break;
           }
         }
@@ -557,7 +562,7 @@ Status CsvOp::FillIOBlockQueue(const std::vector<int64_t> &i_keys) {
     } else {
       for (auto it = filename_index_->begin(); it != filename_index_->end(); ++it) {
         {
-          if (!load_io_block_queue_) {
+          if (!GetLoadIoBlockQueue()) {
             break;
           }
         }
@@ -566,8 +571,7 @@ Status CsvOp::FillIOBlockQueue(const std::vector<int64_t> &i_keys) {
     }
     for (auto file_info : file_index) {
       if (NeedPushFileToBlockQueue(file_info.first, &start_offset, &end_offset, pre_count)) {
-        auto ioBlock =
-          std::make_unique<FilenameBlock>(file_info.second, start_offset, end_offset, IOBlock::kDeIoBlockNone);
+        auto ioBlock = std::make_unique<FilenameBlock>(file_info.second, start_offset, end_offset, IOBlock::kFlagNone);
         RETURN_IF_NOT_OK(PushIoBlockQueue(queue_index, std::move(ioBlock)));
         queue_index = (queue_index + 1) % num_workers_;
       }
@@ -639,11 +643,13 @@ int64_t CsvOp::CountTotalRows(const std::string &file) {
       break;
     }
   }
+  ifs.close();
 
   return csv_parser.GetTotalRows();
 }
 
 Status CsvOp::CountAllFileRows(const std::vector<std::string> &files, bool csv_header, int64_t *count) {
+  RETURN_UNEXPECTED_IF_NULL(count);
   int32_t num_workers = GlobalContext::config_manager()->num_parallel_workers();
   int32_t op_connector_size = GlobalContext::config_manager()->op_connector_size();
   int32_t worker_connector_size = GlobalContext::config_manager()->worker_connector_size();
@@ -729,7 +735,7 @@ Status CsvOp::ColMapAnalyse(const std::string &csv_file_name) {
       }
 
       std::string line;
-      std::ifstream handle(realpath.value());
+      std::ifstream handle(realpath.value(), std::ios::in);
 
       getline(handle, line);
       std::vector<std::string> col_names = split(line, field_delim_);
@@ -741,11 +747,13 @@ Status CsvOp::ColMapAnalyse(const std::string &csv_file_name) {
         if (column_name_id_map_.find(col_names[i]) == column_name_id_map_.end()) {
           column_name_id_map_[col_names[i]] = i;
         } else {
+          handle.close();
           MS_LOG(ERROR) << "Invalid parameter, duplicate column " << col_names[i] << " for csv file: " << csv_file_name;
           RETURN_STATUS_UNEXPECTED("Invalid parameter, duplicate column " + col_names[i] +
                                    " for csv file: " + csv_file_name);
         }
       }
+      handle.close();
       check_flag_ = true;
     }
   } else {
@@ -786,7 +794,7 @@ bool CsvOp::ColumnNameValidate() {
     }
 
     std::string line;
-    std::ifstream handle(realpath.value());
+    std::ifstream handle(realpath.value(), std::ios::in);
 
     // Parse the csv_file into column name set
     getline(handle, line);
@@ -798,11 +806,13 @@ bool CsvOp::ColumnNameValidate() {
       match_file = csv_file;
     } else {  // Case the other files
       if (col_names != record) {
+        handle.close();
         MS_LOG(ERROR) << "Invalid parameter, every column name should be equal the record from csv, but got column: "
                       << col_names << ", csv record: " << record << ". Check " + match_file + " and " + csv_file + ".";
         return false;
       }
     }
+    handle.close();
   }
   return true;
 }

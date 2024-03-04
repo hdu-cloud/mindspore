@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@
 #include "ir/func_graph.h"
 #include "nnacl/op_base.h"
 #include "tools/common/node_util.h"
+#include "tools/converter/cxx_api/converter_para.h"
 
 namespace mindspore {
 namespace lite {
@@ -90,11 +91,17 @@ STATUS UpdateFuncGraphInputsAndOutputsDtype(const FuncGraphPtr &func_graph);
 STATUS GetFuncGraphOutputsInfo(const FuncGraphPtr &func_graph, std::vector<std::pair<AnfNodePtr, int64_t>> *outputs,
                                std::vector<std::string> *output_names, std::vector<std::vector<int64_t>> *output_dims);
 
-STATUS UpdateFuncGraphInputAndOutputNames(const FuncGraphPtr &func_graph);
-
 STATUS UpdateGraphOutputName(schema::MetaGraphT *meta_graph);
 
 int TransferMetaGraph(const schema::MetaGraphT &graph, void **model_buf, size_t *size);
+
+STATUS GetShapeVectorAndIdxFromCNode(const CNodePtr &cnode, std::vector<int64_t> *shape_vector, size_t *idx = nullptr);
+
+STATUS GetShapeVectorFromParameter(const mindspore::ParameterPtr &param_node, std::vector<int64_t> *shape_vector);
+
+STATUS GetCNodeOrParameterShapeVec(const AnfNodePtr &anf_node, std::vector<int> *shape);
+
+int InitEncryptKey(const std::shared_ptr<ConverterPara> &param, unsigned char *encKey, size_t *keyLen);
 }  // namespace lite
 }  // namespace mindspore
 

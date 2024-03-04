@@ -29,6 +29,7 @@ const int64_t kTwo = 2;
 const int64_t kThree = 3;
 const int64_t kFour = 4;
 const size_t DIM_SIZE_1 = 1;
+const size_t DIM_SIZE_3 = 3;
 const size_t DIM_SIZE_5 = 5;
 }  // namespace
 
@@ -47,6 +48,21 @@ bool MaxPool3DWithArgmaxCpuKernelMod::Init(const BaseOperatorPtr &base_operator,
   strides_list_ = kernel_ptr->get_strides();
   pads_list_ = kernel_ptr->get_pads();
   dilation_list_ = kernel_ptr->get_dilation();
+  if (ksize_list_.size() != DIM_SIZE_1 && ksize_list_.size() != DIM_SIZE_3) {
+    MS_EXCEPTION(ValueError) << "For '" << kernel_name_ << "', the ksize size must be 1 or 3, but got " << ksize_list_;
+  }
+  if (strides_list_.size() != DIM_SIZE_1 && strides_list_.size() != DIM_SIZE_3) {
+    MS_EXCEPTION(ValueError) << "For '" << kernel_name_ << "', the strides size must be 1 or 3, but got "
+                             << strides_list_;
+  }
+  if (pads_list_.size() != DIM_SIZE_1 && pads_list_.size() != DIM_SIZE_3) {
+    MS_EXCEPTION(ValueError) << "For '" << kernel_name_ << "', the strides size must be 1 or 3, but got " << pads_list_;
+  }
+  if (dilation_list_.size() != DIM_SIZE_1 && dilation_list_.size() != DIM_SIZE_3 &&
+      dilation_list_.size() != DIM_SIZE_5) {
+    MS_EXCEPTION(ValueError) << "For '" << kernel_name_ << "', the strides size must be 1 or 3 or 5, but got "
+                             << dilation_list_;
+  }
 
   auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
   auto [is_match, index] = MatchKernelAttr(kernel_attr, GetOpSupport());
@@ -77,7 +93,9 @@ void MaxPool3DWithArgmaxCpuKernelMod::MaxPool3DWithArgmaxSingleCompute(
   DATA_T *input, DATA_T *output_y, INDICES_T *output_argmax, int64_t iD, int64_t iH, int64_t iW, int64_t oD, int64_t oH,
   int64_t oW, int64_t kD, int64_t kH, int64_t kW, int64_t sD, int64_t sH, int64_t sW, int64_t pD, int64_t pH,
   int64_t pW, int64_t dD, int64_t dH, int64_t dW) const {
-  int64_t i, j, ti;
+  int64_t i;
+  int64_t j;
+  int64_t ti;
   DATA_T *ip = input;
   for (ti = 0; ti < oD; ti++) {
     for (i = 0; i < oH; i++) {
@@ -158,21 +176,11 @@ bool MaxPool3DWithArgmaxCpuKernelMod::CheckIfLessZero(const std::vector<DATA_T> 
 
 void MaxPool3DWithArgmaxCpuKernelMod::CheckPadsValue(size_t k_width, size_t p_width, size_t k_height, size_t p_height,
                                                      size_t k_depth, size_t p_depth) const {
-  if (k_width / kTwo < p_width && k_height / kTwo < p_height && k_depth / kTwo < p_depth) {
+  if (k_width / kTwo < p_width || k_height / kTwo < p_height || k_depth / kTwo < p_depth) {
     MS_EXCEPTION(ValueError) << "for " << kernel_name_
                              << ", pads should be smaller than or equal to half of kernel size, but the pads is ["
                              << p_depth << ", " << p_height << ", " << p_width << "], the kernel size is [" << k_depth
                              << ", " << k_height << ", " << k_width << "].";
-  }
-}
-
-void MaxPool3DWithArgmaxCpuKernelMod::CheckDilationValue(size_t d_width, size_t in_width, size_t d_height,
-                                                         size_t in_height, size_t d_depth, size_t in_depth) const {
-  if (d_width >= in_width && d_height >= in_height && d_depth >= in_depth) {
-    MS_EXCEPTION(ValueError) << "for " << kernel_name_
-                             << ", dilation should be smaller than or equal to input, but the dilation is [" << d_depth
-                             << ", " << d_height << ", " << d_width << "], the size of input is [" << in_depth << ", "
-                             << in_height << ", " << in_width << "].";
   }
 }
 
@@ -254,12 +262,11 @@ bool MaxPool3DWithArgmaxCpuKernelMod::LaunchKernel(const std::vector<AddressPtr>
   const int64_t d_width = dilation_temp_list[kTwo];
   const int64_t d_height = dilation_temp_list[kOne];
   const int64_t d_depth = dilation_temp_list[kZero];
-  CheckIfLessOne(strides_temp_list);
-  CheckIfLessOne(dilation_temp_list);
-  CheckIfLessOne(ksize_temp_list);
-  CheckIfLessZero(pads_temp_list);
+  (void)CheckIfLessOne(strides_temp_list);
+  (void)CheckIfLessOne(dilation_temp_list);
+  (void)CheckIfLessOne(ksize_temp_list);
+  (void)CheckIfLessZero(pads_temp_list);
   CheckPadsValue(k_width, p_width, k_height, p_height, k_depth, p_depth);
-  CheckDilationValue(d_width, in_width, d_height, in_height, d_depth, in_depth);
   // attributes limitations
   for (int64_t i = 0; i < batch; i++) {
     MaxPool3DWithArgmaxSingleCompute(input_x + i * in_stride, output_y + i * out_stride, output_argmax + i * out_stride,

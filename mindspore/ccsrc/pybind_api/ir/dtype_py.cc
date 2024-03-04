@@ -109,6 +109,22 @@ void RegTyping(py::module *m) {
         Float data(t[0].cast<py::int_>());
         return data;
       }));
+  (void)py::class_<BFloat, Number, std::shared_ptr<BFloat>>(m_sub, "BFloat")
+    .def(py::init())
+    .def(py::init<int>(), py::arg("nbits"))
+    .def(py::pickle(
+      [](const BFloat &t) {  // __getstate__
+        /* Return a tuple that fully encodes the state of the object */
+        return py::make_tuple(py::int_(t.nbits()));
+      },
+      [](const py::tuple &t) {  // __setstate__
+        if (t.size() != 1) {
+          throw std::runtime_error("Invalid state!");
+        }
+        /* Create a new C++ instance */
+        BFloat data(t[0].cast<py::int_>());
+        return data;
+      }));
   (void)py::class_<Complex, Number, std::shared_ptr<Complex>>(m_sub, "Complex")
     .def(py::init())
     .def(py::init<int>(), py::arg("nbits"))
@@ -133,7 +149,7 @@ void RegTyping(py::module *m) {
     .def(py::init<std::vector<TypePtr>>(), py::arg("elements"));
   (void)py::class_<Dictionary, Type, std::shared_ptr<Dictionary>>(m_sub, "Dict")
     .def(py::init())
-    .def(py::init<std::vector<std::pair<TypePtr, TypePtr>>>(), py::arg("key_values"));
+    .def(py::init<std::vector<std::pair<ValuePtr, TypePtr>>>(), py::arg("key_values"));
   (void)py::class_<TensorType, Type, std::shared_ptr<TensorType>>(m_sub, "TensorType")
     .def(py::init())
     .def(py::init<TypePtr>(), py::arg("element"))
@@ -172,10 +188,11 @@ void RegTyping(py::module *m) {
   (void)py::class_<String, Type, std::shared_ptr<String>>(m_sub, "String").def(py::init());
   (void)py::class_<RefKeyType, Type, std::shared_ptr<RefKeyType>>(m_sub, "RefKeyType").def(py::init());
   (void)py::class_<RefType, TensorType, Type, std::shared_ptr<RefType>>(m_sub, "RefType").def(py::init());
-  (void)py::class_<TypeAnything, Type, std::shared_ptr<TypeAnything>>(m_sub, "TypeAnything").def(py::init());
+  (void)py::class_<TypeAny, Type, std::shared_ptr<TypeAny>>(m_sub, "TypeAny").def(py::init());
   (void)py::class_<Slice, Type, std::shared_ptr<Slice>>(m_sub, "Slice").def(py::init());
   (void)py::class_<TypeEllipsis, Type, std::shared_ptr<TypeEllipsis>>(m_sub, "TypeEllipsis").def(py::init());
   (void)py::class_<MsClassType, Type, std::shared_ptr<MsClassType>>(m_sub, "TypeMsClassType").def(py::init());
   (void)py::class_<TypeNull, Type, std::shared_ptr<TypeNull>>(m_sub, "TypeNull").def(py::init());
+  (void)py::class_<Keyword, Type, std::shared_ptr<Keyword>>(m_sub, "Keyword").def(py::init());
 }
 }  // namespace mindspore

@@ -16,6 +16,7 @@
 This module is to read data from MindRecord.
 """
 import platform
+from mindspore import log as logger
 
 from .shardreader import ShardReader
 from .shardheader import ShardHeader
@@ -34,13 +35,14 @@ class FileReader:
         If `file_name` is a file path, it tries to load all MindRecord files generated \
         in a conversion, and throws an exception if a MindRecord file is missing.
         If `file_name` is file path list, only the MindRecord files in the list are loaded.
+        The parameter `operator` has no effect and will be deprecated in a future version.
 
     Args:
         file_name (str, list[str]): One of MindRecord file path or file path list.
-        num_consumer (int, optional): Number of reader workers which load data. Default: 4.
+        num_consumer (int, optional): Number of reader workers which load data. Default: ``4`` .
             It should not be smaller than 1 or larger than the number of processor cores.
-        columns (list[str], optional): A list of fields where corresponding data would be read. Default: None.
-        operator (int, optional): Reserved parameter for operators. Default: None.
+        columns (list[str], optional): A list of fields where corresponding data would be read. Default: ``None`` .
+        operator (int, optional): Reserved parameter for operators. Default: ``None`` .
 
     Raises:
         ParamValueError: If `file_name` , `num_consumer` or `columns` is invalid.
@@ -59,6 +61,9 @@ class FileReader:
 
     @check_parameter
     def __init__(self, file_name, num_consumer=4, columns=None, operator=None):
+        if operator is not None:
+            logger.warning("The parameter 'operator' will be deprecated in a future version.")
+
         if columns:
             if isinstance(columns, list):
                 self._columns = columns
@@ -85,6 +90,9 @@ class FileReader:
         """
         Yield a batch of data according to columns at a time.
 
+        Note:
+            Please refer to the Examples of :class:`mindspore.mindrecord.FileReader` .
+
         Returns:
             dict, a batch whose keys are the same as columns.
 
@@ -98,5 +106,44 @@ class FileReader:
             iterator = self._reader.get_next()
 
     def close(self):
-        """Stop reader worker and close file."""
+        """
+        Stop reader worker and close file.
+
+        Note:
+            Please refer to the Examples of :class:`mindspore.mindrecord.FileReader` .
+        """
         self._reader.close()
+
+    def schema(self):
+        """
+        Get the schema of the MindRecord.
+
+        Returns:
+            dict, the schema info.
+
+        Examples:
+            >>> from mindspore.mindrecord import FileReader
+            >>>
+            >>> mindrecord_file = "/path/to/mindrecord/file"
+            >>> reader = FileReader(file_name=mindrecord_file)
+            >>> schema = reader.schema()
+            >>> reader.close()
+        """
+        return self._header.schema
+
+    def len(self):
+        """
+        Get the number of the samples in MindRecord.
+
+        Returns:
+            int, the number of the samples in MindRecord.
+
+        Examples:
+            >>> from mindspore.mindrecord import FileReader
+            >>>
+            >>> mindrecord_file = "/path/to/mindrecord/file"
+            >>> reader = FileReader(file_name=mindrecord_file)
+            >>> length = reader.len()
+            >>> reader.close()
+        """
+        return self._reader.len()

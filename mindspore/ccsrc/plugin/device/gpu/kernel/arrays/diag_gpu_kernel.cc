@@ -110,6 +110,10 @@ int DiagGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::ve
   for (size_t i = LongToSize(batch_rank_); i < input_shape.size(); ++i) {
     input_size_ *= LongToSize(input_shape[i]);
   }
+  if (input_size_ == 0) {
+    MS_LOG(ERROR) << kernel_name_ << "input size should should be larger than 0, but got: " << input_size_;
+    return KRET_RESIZE_FAILED;
+  }
 
   // Get the output size of each batch.
   auto output = outputs.at(kIndex0);
@@ -144,7 +148,8 @@ bool DiagGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const
   for (size_t i = 0; i < batch_size_; ++i) {
     auto input_ptr = input_begin_ptr + i * input_size_;
     auto output_ptr = output_begin_ptr + i * output_size_;
-    CalDiag(input_ptr, output_ptr, input_size_, output_size_, reinterpret_cast<cudaStream_t>(stream_ptr));
+    auto status = CalDiag(input_ptr, output_ptr, input_size_, output_size_, reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
   }
   return true;
 }

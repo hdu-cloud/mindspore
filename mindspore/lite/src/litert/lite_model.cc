@@ -31,6 +31,7 @@
 #include "src/common/file_utils.h"
 #include "src/tensor.h"
 #include "extendrt/mindir_loader/model_loader.h"
+#include "src/common/mmap_utils.h"
 
 namespace mindspore::lite {
 namespace {
@@ -38,7 +39,11 @@ constexpr size_t kMaxModelBufferSize = static_cast<size_t>(1024) * 1024 * 1024 *
 }
 
 void LiteModel::Free() {
-  if (this->buf != nullptr) {
+  if (this->model_buf_by_mmap_) {
+    UnmapMmapBuffer(static_cast<void *>(this->buf), this->buf_size_);
+    this->buf = nullptr;
+  }
+  if (this->buf != nullptr && !this->model_buf_by_mmap_) {
     delete[](this->buf);
     this->buf = nullptr;
   }
@@ -285,6 +290,7 @@ int LiteModel::GraphInOutVerify() const {
 }
 
 int LiteModel::SubGraphInOutVerify(const LiteGraph::SubGraph *graph) const {
+  MS_CHECK_TRUE_RET(graph != nullptr, RET_ERROR);
   auto from_node = [&, this](uint32_t cur_idx) -> bool {
     for (auto node_idx : graph->node_indices_) {
       auto node = this->graph_.all_nodes_.at(node_idx);

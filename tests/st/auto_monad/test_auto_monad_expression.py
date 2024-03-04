@@ -13,13 +13,15 @@
 # limitations under the License.
 # ==============================================================================
 import pytest
+import numpy as np
 from mindspore.nn import Cell
 from mindspore import context, Tensor, Parameter
 import mindspore.ops.operations as P
+import mindspore.ops as ops
 from mindspore.ops import functional as F
 from mindspore.ops import composite as C
 import mindspore as ms
-import numpy as np
+from mindspore import jit
 
 context.set_context(mode=context.GRAPH_MODE)
 
@@ -165,7 +167,7 @@ class BackwardNet(Cell):
         return grads
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
@@ -215,7 +217,7 @@ def test_load_convert_tensormove_2():
     assert forward_res == 3
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
@@ -246,7 +248,7 @@ def test_load_eliminate():
     assert out == 5
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
@@ -276,7 +278,7 @@ def test_parameter_tuple_assign():
     assert out[1] == 0
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.platform_x86_gpu_training
@@ -312,7 +314,7 @@ def test_parameter_tuple_assign_addn():
     assert out == (3, 5, 9, 9)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.platform_x86_gpu_training
@@ -406,7 +408,7 @@ def test_parameter_tuple_assign_addn_inner_net_control_flow():
     assert out == (9, 15)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.platform_x86_gpu_training
@@ -450,3 +452,44 @@ def test_parameter_value_control_flow_ascend():
     context.set_context(mode=context.GRAPH_MODE)
     graph_out = net(input_x, input_y)
     assert graph_out == (9, 4)
+
+
+@pytest.mark.level0
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.env_onecard
+def test_control_while_for_if_break_parameter():
+    """
+    Feature: UpdateState grad in pynative mode.
+    Description: UpdateState grad with multi inputs.
+    Expectation: No exception.
+    """
+    class Net30(Cell):
+        def __init__(self):
+            super().__init__()
+            self.relu = P.ReLU()
+            self.add = P.Add()
+            add_np = np.full((4, 4, 4), 0.5, dtype=np.float32)
+            self.add_weight = Parameter(Tensor(add_np), name="add_weight")
+
+        @jit
+        def construct(self, x, y, z):
+            out = z
+            while x < y:
+                if 2 * x < y:
+                    out = self.add(out, self.add_weight)
+                elif 3 * x < y:
+                    out = self.relu(out)
+                    x = x + 1
+                else:
+                    break
+                x = x + 1
+
+            out = self.relu(out)
+            return out
+
+    context.set_context(mode=context.PYNATIVE_MODE)
+    net = Net30()
+    ms_grad = ops.GradOperation(get_all=True, get_by_list=True, sens_param=False)
+    ms_grad(net)(Tensor(2), Tensor(20), Tensor(np.random.rand(4, 4, 4), dtype=ms.float32))

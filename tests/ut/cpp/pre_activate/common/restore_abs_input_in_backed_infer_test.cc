@@ -23,8 +23,8 @@
 #include "include/common/utils/utils.h"
 #include "abstract/abstract_value.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "backend/common/optimizer/const_input_to_attr.h"
-#include "backend/common/optimizer/helper.h"
+#include "backend/common/pass/const_input_to_attr.h"
+#include "include/backend/optimizer/helper.h"
 #include "common/common_test.h"
 
 namespace mindspore {
@@ -45,9 +45,10 @@ inline const PrimitivePtr kPrimAttrConvertTest = std::make_shared<Primitive>(kAt
 inline const PrimitivePtr kPrimDynamicInputTest = std::make_shared<Primitive>("dynamic_input_test");
 AbstractBasePtr InferImplAttrTest(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                   const AbstractBasePtrList &args_spec_list) {
-  EXPECT_EQ(args_spec_list.size(), 3);
+  // CppInferShapeAndType does not convert attr to input
+  EXPECT_EQ(args_spec_list.size(), 2);
   EXPECT_NE(args_spec_list[1], nullptr);
-  EXPECT_EQ(args_spec_list[1]->isa<abstract::AbstractTuple>(), true);
+  EXPECT_EQ(args_spec_list[1]->isa<abstract::AbstractTensor>(), true);
   return args_spec_list[0];
 }
 REGISTER_PRIMITIVE_EVAL_IMPL(TestAttr, kPrimAttrConvertTest, InferImplAttrTest, nullptr, true);
@@ -78,7 +79,13 @@ TEST_F(TestAttrAndDynamicBackendInfer, test_attr_and_dynamic_input_infer) {
   auto input_names = std::vector<std::string>{"a", "b", "c"};
   auto attr_name = "b";
   auto attr = MakeValue(std::vector<int>{1, 2, 3});
+  auto tuple_struc_attr = std::make_shared<ValueTuple>(std::vector<ValuePtr>{
+    MakeValue<int64_t>(-1),
+    std::make_shared<ValueTuple>(std::vector<ValuePtr>{MakeValue<int64_t>(-1), MakeValue<int64_t>(-1)}),
+    MakeValue<int64_t>(-1)});
+  prim_dynamic_input_test->AddAttr(kAttrTupleInputStructural, tuple_struc_attr);
   prim_attr_test->AddAttr(kAttrInputNames, MakeValue(input_names));
+
   prim_attr_test->AddAttr(attr_name, attr);
   // set dynameic input list for primtive
   std::vector<int64_t> dynamic_input_list = {-1, 2, -1};

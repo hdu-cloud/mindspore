@@ -15,14 +15,27 @@
  */
 
 #include "ops/fused_ada_factor.h"
-#include <string>
+
 #include <memory>
 #include <vector>
-#include <algorithm>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -34,12 +47,14 @@ auto constexpr kEnableFirstMoment = "enable_first_moment";
 auto constexpr kEnableWeightDecay = "enable_weight_decay";
 abstract::TupleShapePtr FusedAdaFactorInferShape(const PrimitivePtr &primitive,
                                                  const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto param_shape_r = input_args[kParamIndex]->Broaden()->BuildShape();
   auto outputs = std::make_shared<abstract::TupleShape>(std::vector<abstract::BaseShapePtr>({param_shape_r}));
   return outputs;
 }
 
-TypePtr FusedAdaFactorInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+TypePtr FusedAdaFactorInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto type = input_args[kParamIndex]->BuildType();
   return std::make_shared<Tuple>(std::vector<TypePtr>{type});
 }
@@ -88,8 +103,25 @@ AbstractBasePtr FusedAdaFactorInfer(const abstract::AnalysisEnginePtr &, const P
   return abstract::MakeAbstract(shapes, types);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(FusedAdaFactor, prim::kPrimFusedAdaFactor, FusedAdaFactorInfer, nullptr, true)
-REGISTER_PRIMITIVE_EVAL_IMPL(FusedAdaFactorWithGlobalNorm, prim::kPrimFusedAdaFactorWithGlobalNorm, FusedAdaFactorInfer,
-                             nullptr, true)
+// AG means auto generated
+class MIND_API AGFusedAdaFactorInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return FusedAdaFactorInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return FusedAdaFactorInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return FusedAdaFactorInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(FusedAdaFactor, prim::kPrimFusedAdaFactor, AGFusedAdaFactorInfer, false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(FusedAdaFactorWithGlobalNorm, prim::kPrimFusedAdaFactorWithGlobalNorm,
+                                 AGFusedAdaFactorInfer, false);
 }  // namespace ops
 }  // namespace mindspore

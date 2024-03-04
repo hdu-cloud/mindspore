@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@
 #include <vector>
 #include <unordered_set>
 
+#include "mindspore/core/ops/framework_ops.h"
 #include "kernel/oplib/opinfo.h"
 #include "kernel/oplib/oplib.h"
 #include "include/common/utils/anfalgo.h"
@@ -27,6 +28,10 @@
 namespace mindspore {
 namespace opt {
 namespace {
+constexpr auto kXs = "Xs";
+constexpr auto kMCustom = "m_custom";
+constexpr auto kRCustom = "r_custom";
+
 void ParseAttrDefaultValue(const std::string &op_name, const std::string &attr_name, const std::string &attr_value,
                            const std::string &attr_type, const PrimitivePtr &prim) {
   MS_EXCEPTION_IF_NULL(prim);
@@ -95,52 +100,38 @@ void AddMissingAttrs(const CNodePtr &cnode, kernel::OpImplyType imply_type,
   MS_EXCEPTION_IF_NULL(op_info_ptr);
   auto all_attrs = op_info_ptr->attrs_ptr();
   bool need_update = false;
+  std::vector<std::string> missing_optional_attrs;
   for (const auto &attr : all_attrs) {
     auto attr_name = attr->name();
     if (missing_attrs.find(attr_name) == missing_attrs.end()) {
       continue;
     }
-    // If attr's param_type is required, it should have default value.
-    // If attr have default value, we should parse it no matter whether its param_type is required or not.
     auto default_value = attr->default_value();
-    if (default_value.empty() && attr->param_type() != "required") {
+    if (default_value.empty()) {
+      if (attr->param_type() == "optional") {
+        missing_optional_attrs.push_back(attr_name);
+      }
       continue;
     }
-    if (default_value.empty()) {
-      MS_LOG(EXCEPTION) << "attr [" << attr_name << "] in the registration information of op [" << op_name
-                        << "] does not have a value." << trace::DumpSourceLines(cnode);
-    }
     ParseAttrDefaultValue(op_name, attr_name, default_value, attr->type(), primitive);
+    need_update = true;
+  }
+  if (!missing_optional_attrs.empty()) {
+    primitive->set_attr("missing_optional_attrs", MakeValue(missing_optional_attrs));
     need_update = true;
   }
   if (need_update) {
     cnode->set_input(kAnfPrimitiveIndex, NewValueNode(primitive));
   }
 }
-}  // namespace
 
-const AnfNodePtr CustomOpRegInfoToAttr::Process(const FuncGraphPtr &, const AnfNodePtr &node, const EquivPtr &) const {
-  if (node == nullptr || !AnfUtils::IsRealCNodeKernel(node)) {
-    return nullptr;
-  }
-  auto cnode = node->cast<CNodePtr>();
+AnfNodePtr BuildCustom(const PatternMap &m, const AnfNodePtr &) {
+  auto cnode = m.Get(kMCustom)->cast<CNodePtr>();
   MS_EXCEPTION_IF_NULL(cnode);
-  if (!IsPrimitiveCNode(cnode, prim::kPrimCustom)) {
-    return nullptr;
-  }
-
   auto primitive = common::AnfAlgo::GetCNodePrimitive(cnode);
   MS_EXCEPTION_IF_NULL(primitive);
   auto func_type = common::AnfAlgo::GetNodeAttr<std::string>(cnode, kAttrFuncType);
-  // AKG/AICPU need to process attr, TBE will process later in the json creating phase.
-  if (!IsOneOfCustomAkgType(func_type) || func_type == kCustomTypeAICPU) {
-    return nullptr;
-  }
-  // Early return if current node does not have attr
   auto attr_names = primitive->GetAttr(kAttrAttrNames);
-  if (attr_names == nullptr) {
-    return nullptr;
-  }
   // Early return if all attr in reg info exist in the node's attr
   std::unordered_set<std::string> missing_attrs;
   auto attr_names_vec = GetValue<std::vector<std::string>>(attr_names);
@@ -150,13 +141,41 @@ const AnfNodePtr CustomOpRegInfoToAttr::Process(const FuncGraphPtr &, const AnfN
     }
   }
   if (missing_attrs.empty()) {
-    return nullptr;
+    return cnode;
   }
-  kernel::OpImplyType imply_type =
-    func_type == kCustomTypeAICPU ? kernel::OpImplyType::kImplyAICPU : kernel::OpImplyType::kImplyAKG;
+  kernel::OpImplyType imply_type = kernel::OpImplyType::kImplyAKG;
+  if (func_type == kCustomTypeAICPU) {
+    imply_type = kernel::OpImplyType::kImplyAICPU;
+  } else if (func_type == kCustomTypeTbe) {
+    imply_type = kernel::OpImplyType::kImplyTBE;
+  }
+  // Fetch attr value form reg info and set it to node's attr
   AddMissingAttrs(cnode, imply_type, missing_attrs);
 
-  return node;
+  return cnode;
+}
+}  // namespace
+
+bool CustomOpRegInfoToAttr::CheckMatchedDAG(const PatternMap &, const FuncGraphPtr &, const AnfNodePtr &node) const {
+  auto cnode = node->cast<CNodePtr>();
+  MS_EXCEPTION_IF_NULL(cnode);
+  auto primitive = common::AnfAlgo::GetCNodePrimitive(cnode);
+  MS_EXCEPTION_IF_NULL(primitive);
+  auto func_type = common::AnfAlgo::GetNodeAttr<std::string>(cnode, kAttrFuncType);
+  if (!IsOneOfCustomAkgType(func_type) && func_type != kCustomTypeAICPU && func_type != kCustomTypeTbe) {
+    return false;
+  }
+  // Early return if current node does not have attr
+  auto attr_names = primitive->GetAttr(kAttrAttrNames);
+  return (attr_names != nullptr);
+}
+
+void CustomOpRegInfoToAttr::DefineSrcPattern(SrcPattern *src_pattern) {
+  (void)(*src_pattern).AddSeqVar(kXs).AddCNode(kMCustom, {prim::kPrimCustom, kXs});
+}
+
+void CustomOpRegInfoToAttr::DefineDstPattern(DstPattern *dst_pattern) {
+  (void)(*dst_pattern).AddCNode(kRCustom, {prim::kPrimCustom, kXs}, BuildCustom);
 }
 }  // namespace opt
 }  // namespace mindspore

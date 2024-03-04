@@ -14,14 +14,26 @@
  * limitations under the License.
  */
 #include <map>
+#include <memory>
 #include <string>
-#include <algorithm>
 
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/primitive.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/comparison_ops.h"
 #include "ops/less_equal.h"
 #include "ops/op_utils.h"
-#include "abstract/ops/primitive_infer_map.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/src/helper.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -39,7 +51,7 @@ TypePtr LessEqualInferType(const PrimitivePtr &prim, const std::vector<AbstractB
   std::map<std::string, TypePtr> types;
   (void)types.emplace("x", input_args[0]->BuildType());
   (void)types.emplace("y", input_args[1]->BuildType());
-  (void)CheckAndConvertUtils::CheckTensorTypeSame(types, common_valid_types, prim->name());
+  (void)CheckAndConvertUtils::CheckTensorTypeSame(types, common_valid_types_with_bool, prim->name());
   return std::make_shared<TensorType>(kBool);
 }
 }  // namespace
@@ -51,6 +63,24 @@ AbstractBasePtr LessEqualInfer(const abstract::AnalysisEnginePtr &, const Primit
   auto infer_shape = LessEqualInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(LessEqual, prim::kPrimLessEqual, LessEqualInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGLessEqualInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return LessEqualInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return LessEqualInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return LessEqualInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(LessEqual, prim::kPrimLessEqual, AGLessEqualInfer, false);
 }  // namespace ops
 }  // namespace mindspore

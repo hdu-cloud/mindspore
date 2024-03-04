@@ -17,29 +17,28 @@
 #include "abstract/ops/infer_functions.h"
 #include "abstract/utils.h"
 #include "abstract/param_validator.h"
-#include "utils/ms_utils.h"
 #include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace abstract {
 AbstractBasePtr InferImplSqrt(const AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                              const AbstractBasePtrList &args_spec_list) {
+                              const AbstractBasePtrList &args_abs_list) {
   // Inputs: three tensors.
   constexpr auto kSqrtInputNum = 1;
   const std::string op_name = primitive->name();
-  CheckArgsSize(op_name, args_spec_list, kSqrtInputNum);
-  auto inp = CheckArg<AbstractTensor>(op_name, args_spec_list, 0);
+  CheckArgsSize(op_name, args_abs_list, kSqrtInputNum);
+  auto inp = CheckArg<AbstractTensor>(op_name, args_abs_list, 0);
   return inp->Clone()->Broaden();
 }
 
 AbstractBasePtr InferImplSqrtGrad(const AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                  const AbstractBasePtrList &args_spec_list) {
+                                  const AbstractBasePtrList &args_abs_list) {
   // Inputs: two tensors.
   constexpr auto kSqrtGradInputNum = 2;
   const std::string op_name = primitive->name();
-  CheckArgsSize(op_name, args_spec_list, kSqrtGradInputNum);
-  auto out = CheckArg<AbstractTensor>(op_name, args_spec_list, 0);
-  auto dout = CheckArg<AbstractTensor>(op_name, args_spec_list, 1);
+  CheckArgsSize(op_name, args_abs_list, kSqrtGradInputNum);
+  auto out = CheckArg<AbstractTensor>(op_name, args_abs_list, 0);
+  auto dout = CheckArg<AbstractTensor>(op_name, args_abs_list, 1);
   (void)CheckDtypeSame(op_name, out, dout);
   CheckShapeSame(op_name, out, dout);
 
@@ -105,15 +104,15 @@ void InferImplReduceFuncCalShape(ShapeVector *shape, const ShapeVector &x_shape,
 }
 
 AbstractBasePtr InferImplBinaryBase(const AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                    const AbstractBasePtrList &args_spec_list) {
+                                    const AbstractBasePtrList &args_abs_list) {
   constexpr auto kBinaryBaseInputNum = 2;
   const std::string op_name = primitive->name();
-  CheckArgsSize(op_name, args_spec_list, kBinaryBaseInputNum);
-  auto input_x = CheckArg<AbstractTensor>(op_name, args_spec_list, 0);
+  CheckArgsSize(op_name, args_abs_list, kBinaryBaseInputNum);
+  auto input_x = CheckArg<AbstractTensor>(op_name, args_abs_list, 0);
   MS_EXCEPTION_IF_NULL(input_x);
   MS_EXCEPTION_IF_NULL(input_x->shape());
 
-  auto input_y = CheckArg<AbstractTensor>(op_name, args_spec_list, 1);
+  auto input_y = CheckArg<AbstractTensor>(op_name, args_abs_list, 1);
   MS_EXCEPTION_IF_NULL(input_y);
   MS_EXCEPTION_IF_NULL(input_y->shape());
 
@@ -153,35 +152,33 @@ AbstractBasePtr InferImplBinaryBase(const AnalysisEnginePtr &, const PrimitivePt
 }
 
 AbstractBasePtr InferImplMinimum(const AnalysisEnginePtr &engine_ptr, const PrimitivePtr &primitive,
-                                 const AbstractBasePtrList &args_spec_list) {
-  return InferImplBinaryBase(engine_ptr, primitive, args_spec_list);
+                                 const AbstractBasePtrList &args_abs_list) {
+  return InferImplBinaryBase(engine_ptr, primitive, args_abs_list);
 }
 
 AbstractBasePtr InferImplDivNoNan(const AnalysisEnginePtr &engine_ptr, const PrimitivePtr &primitive,
-                                  const AbstractBasePtrList &args_spec_list) {
-  return InferImplBinaryBase(engine_ptr, primitive, args_spec_list);
+                                  const AbstractBasePtrList &args_abs_list) {
+  return InferImplBinaryBase(engine_ptr, primitive, args_abs_list);
 }
 
 AbstractBasePtr InferImplLinSpace(const AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                  const AbstractBasePtrList &args_spec_list) {
+                                  const AbstractBasePtrList &args_abs_list) {
   constexpr auto kLinSpaceInputNum = 3;
   const std::string op_name = primitive->name();
-  CheckArgsSize(op_name, args_spec_list, kLinSpaceInputNum);
-  auto start = CheckArg<AbstractTensor>(op_name, args_spec_list, 0);
+  CheckArgsSize(op_name, args_abs_list, kLinSpaceInputNum);
+  auto start = CheckArg<AbstractTensor>(op_name, args_abs_list, 0);
   MS_EXCEPTION_IF_NULL(start);
   MS_EXCEPTION_IF_NULL(start->shape());
-  auto stop = CheckArg<AbstractTensor>(op_name, args_spec_list, 1);
+  auto stop = CheckArg<AbstractTensor>(op_name, args_abs_list, 1);
   MS_EXCEPTION_IF_NULL(stop);
   MS_EXCEPTION_IF_NULL(stop->shape());
   (void)CheckTensorDType(start, {kFloat32}, "Input 0 (start) for LinSpace should be %s");
   (void)CheckTensorDType(stop, {kFloat32}, "Input 1 (stop) for LinSpace should be %s");
   ShapeVector shape;
-  ShapeVector max_shape;
-  ShapeVector min_shape;
   int64_t num_val = 0;
   // 3rd input is a Tensor when LinSpace is a dynamic shape operator
   const size_t tensor_index = 2;
-  auto abs_num = args_spec_list[tensor_index];
+  auto abs_num = args_abs_list[tensor_index];
   if (abs_num->isa<AbstractTensor>()) {
     auto num = abs_num->cast<AbstractTensorPtr>();
     MS_EXCEPTION_IF_NULL(num);
@@ -200,23 +197,20 @@ AbstractBasePtr InferImplLinSpace(const AnalysisEnginePtr &, const PrimitivePtr 
   if (shape[0] < 0) {
     MS_LOG(EXCEPTION) << "num must be >= 0 in LinSpace";
   }
-  max_shape.emplace_back(num_val);
-  min_shape.emplace_back(num_val);
-  AbstractTensorPtr ret =
-    std::make_shared<AbstractTensor>(start->element(), std::make_shared<Shape>(shape, min_shape, max_shape));
+  AbstractTensorPtr ret = std::make_shared<AbstractTensor>(start->element(), std::make_shared<Shape>(shape));
   return ret;
 }
 
 AbstractBasePtr InferImplMatMul(const AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                const AbstractBasePtrList &args_spec_list) {
+                                const AbstractBasePtrList &args_abs_list) {
   constexpr auto kMatMulInputNum = 2;
   const std::string op_name = primitive->name();
-  (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(args_spec_list.size()), kGreaterEqual,
+  (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(args_abs_list.size()), kGreaterEqual,
                                            kMatMulInputNum, op_name);
-  auto x = CheckArg<AbstractTensor>(op_name, args_spec_list, 0);
+  auto x = CheckArg<AbstractTensor>(op_name, args_abs_list, 0);
   MS_EXCEPTION_IF_NULL(x);
   MS_EXCEPTION_IF_NULL(x->shape());
-  auto y = CheckArg<AbstractTensor>(op_name, args_spec_list, 1);
+  auto y = CheckArg<AbstractTensor>(op_name, args_abs_list, 1);
   MS_EXCEPTION_IF_NULL(y);
   MS_EXCEPTION_IF_NULL(y->shape());
   auto x_shp = x->shape()->shape();
@@ -239,10 +233,6 @@ AbstractBasePtr InferImplMatMul(const AnalysisEnginePtr &, const PrimitivePtr &p
   ValuePtr transpose_b_ptr = primitive->GetAttr("transpose_b");
   bool transpose_a = GetValue<bool>(transpose_a_ptr);
   bool transpose_b = GetValue<bool>(transpose_b_ptr);
-  ShapeVector x_min_shape = x->shape()->min_shape();
-  ShapeVector x_max_shape = x->shape()->max_shape();
-  ShapeVector y_min_shape = y->shape()->min_shape();
-  ShapeVector y_max_shape = y->shape()->max_shape();
 
   if (IsDynamicRank(x_shp) || IsDynamicRank(y_shp)) {
     ShapeVector ret_shape{Shape::kShapeRankAny};
@@ -261,8 +251,6 @@ AbstractBasePtr InferImplMatMul(const AnalysisEnginePtr &, const PrimitivePtr &p
   }
 
   ShapeVector ret_shape;
-  ShapeVector ret_min_shape;
-  ShapeVector ret_max_shape;
   auto make_shape = [&transpose_a, &transpose_b](ShapeVector &output, const ShapeVector xshp,
                                                  const ShapeVector yshp) -> void {
     if (!xshp.empty() && !yshp.empty()) {
@@ -272,45 +260,36 @@ AbstractBasePtr InferImplMatMul(const AnalysisEnginePtr &, const PrimitivePtr &p
     return;
   };
   make_shape(ret_shape, x_shp, y_shp);
-  make_shape(ret_min_shape, x_min_shape, y_min_shape);
-  make_shape(ret_max_shape, x_max_shape, y_max_shape);
-  return std::make_shared<AbstractTensor>(x_type, std::make_shared<Shape>(ret_shape, ret_min_shape, ret_max_shape));
+  return std::make_shared<AbstractTensor>(x_type, std::make_shared<Shape>(ret_shape));
 }
 
 AbstractBasePtr InferImplLess(const AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                              const AbstractBasePtrList &args_spec_list) {
+                              const AbstractBasePtrList &args_abs_list) {
   constexpr auto kLessInputNum = 2;
   const std::string op_name = primitive->name();
-  CheckArgsSize(op_name, args_spec_list, kLessInputNum);
-  auto x = CheckArg<AbstractTensor>(op_name, args_spec_list, 0);
+  CheckArgsSize(op_name, args_abs_list, kLessInputNum);
+  auto x = CheckArg<AbstractTensor>(op_name, args_abs_list, 0);
   MS_EXCEPTION_IF_NULL(x);
   MS_EXCEPTION_IF_NULL(x->shape());
   ShapeVector x_shape = x->shape()->shape();
-  ShapeVector x_shape_min = x->shape()->min_shape().empty() ? x_shape : x->shape()->min_shape();
-  ShapeVector x_shape_max = x->shape()->max_shape().empty() ? x_shape : x->shape()->max_shape();
 
-  auto y = CheckArg<AbstractTensor>(op_name, args_spec_list, 1);
+  auto y = CheckArg<AbstractTensor>(op_name, args_abs_list, 1);
   MS_EXCEPTION_IF_NULL(y);
   MS_EXCEPTION_IF_NULL(y->shape());
   ShapeVector y_shape = y->shape()->shape();
-  ShapeVector y_shape_min = y->shape()->min_shape().empty() ? y_shape : y->shape()->min_shape();
-  ShapeVector y_shape_max = y->shape()->max_shape().empty() ? y_shape : y->shape()->max_shape();
 
   auto out_shape = BroadcastShape(x_shape, y_shape);
-  auto out_shape_min = BroadcastShape(x_shape_min, y_shape_min);
-  auto out_shape_max = BroadcastShape(x_shape_max, y_shape_max);
   auto output_type = std::make_shared<Bool>();
-  return std::make_shared<AbstractTensor>(output_type,
-                                          std::make_shared<Shape>(out_shape, out_shape_min, out_shape_max));
+  return std::make_shared<AbstractTensor>(output_type, std::make_shared<Shape>(out_shape));
 }
 
-AbstractBasePtr InferImplReal(const AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                              const AbstractBasePtrList &args_spec_list) {
+AbstractBasePtr InferImplRealInner(const AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                   const AbstractBasePtrList &args_abs_list) {
   // Inputs: one tensors.
   constexpr auto kRealInputNum = 1;
   const std::string op_name = primitive->name();
-  CheckArgsSize(op_name, args_spec_list, kRealInputNum);
-  AbstractBasePtr input_abs = args_spec_list[0];
+  CheckArgsSize(op_name, args_abs_list, kRealInputNum);
+  AbstractBasePtr input_abs = args_abs_list[0];
   auto input = dyn_cast<AbstractTensor>(input_abs);
   if (input == nullptr) {
     return input_abs->Clone();

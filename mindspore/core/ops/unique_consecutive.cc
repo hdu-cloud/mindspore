@@ -19,8 +19,11 @@
 #include <functional>
 #include <iostream>
 
+#include "abstract/dshape.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "ops/op_utils.h"
 #include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
@@ -52,47 +55,50 @@ abstract::BaseShapePtr UniqueConsecutiveInferShape(const PrimitivePtr &primitive
 
   auto axis_ptr = primitive->GetAttr(kAxis);
   MS_EXCEPTION_IF_NULL(axis_ptr);
-  abstract::ShapePtr output_shape, idx_shape, counts_shape;
-  ShapeVector output_vec, output_min_vec, output_max_vec;
+  abstract::ShapePtr output_shape;
+  abstract::ShapePtr idx_shape;
+  abstract::ShapePtr counts_shape;
+  ShapeVector output_vec;
+  ShapeVector output_max_vec;
   ShapeVector idx_shape_vec;
-  ShapeVector counts_shape_vec, counts_min_vec, counts_max_vec;
+  ShapeVector counts_shape_vec;
+  ShapeVector counts_max_vec;
   // dynamic shape, the infershape function will be called two times. In the second time, the attribute
   // axis may be deleted so as to axis_ptr is nullptr.
   if (axis_ptr->isa<None>() || GetValue<int64_t>(axis_ptr) == kAxisIsNone) {
     MS_LOG(INFO) << "node:" << op_name << " has no axis attribute or axis id None! Deal as flatten";
     (void)primitive->SetAttrs({{"axis", MakeValue(kAxisIsNone)}});
-    auto input_total = std::accumulate(input_shape_vec.begin(), input_shape_vec.end(), 1, std::multiplies<int64_t>());
     output_vec = {abstract::Shape::kShapeDimAny};
-    output_min_vec = {1};
-    output_max_vec = {input_total};
-
-    idx_shape_vec = input_shape_vec;
-
     counts_shape_vec = {abstract::Shape::kShapeDimAny};
-    counts_min_vec = {1};
+    idx_shape_vec = input_shape_vec;
+    auto input_total = std::accumulate(input_shape_vec.begin(), input_shape_vec.end(), 1, std::multiplies<int64_t>());
+    output_max_vec = {input_total};
     counts_max_vec = {input_total};
   } else {
     int64_t axis = GetValue<int64_t>(axis_ptr);
     int64_t ndims = SizeToLong(input_shape_vec.size());
     if (axis >= ndims || axis < -ndims) {
-      MS_LOG(EXCEPTION) << "For " << op_name << ", the axis must be in the range [-" << ndims << "," << ndims << ")"
-                        << "but got " << axis << ".";
+      MS_EXCEPTION(ValueError) << "For " << op_name << ", the axis must be in the range [-" << ndims << "," << ndims
+                               << "), but got " << axis << ".";
     }
     if (axis < 0) {
       axis = axis + ndims;
     }
-    size_t axis_size = LongToSize(axis);
-    output_vec = input_shape_vec;
-    output_vec[axis_size] = abstract::Shape::kShapeDimAny;
-    output_min_vec = input_shape_vec;
-    output_min_vec[axis_size] = 1;
-    output_max_vec = input_shape_vec;
+    if (IsDynamicRank(input_shape_vec) || IsDynamicShape(input_shape_vec)) {
+      output_vec = {abstract::Shape::kShapeRankAny};
+      counts_shape_vec = {abstract::Shape::kShapeRankAny};
+      idx_shape_vec = {abstract::Shape::kShapeRankAny};
+    } else {
+      size_t axis_size = LongToSize(axis);
+      output_vec = input_shape_vec;
+      output_vec[axis_size] = abstract::Shape::kShapeDimAny;
+      output_max_vec = input_shape_vec;
 
-    idx_shape_vec = {input_shape_vec[axis_size]};
+      idx_shape_vec = {input_shape_vec[axis_size]};
 
-    counts_shape_vec = {abstract::Shape::kShapeDimAny};
-    counts_min_vec = {1};
-    counts_max_vec = {input_shape_vec[axis_size]};
+      counts_shape_vec = {abstract::Shape::kShapeDimAny};
+      counts_max_vec = {input_shape_vec[axis_size]};
+    }
   }
 
   auto idx_ptr = primitive->GetAttr("return_idx");
@@ -108,9 +114,14 @@ abstract::BaseShapePtr UniqueConsecutiveInferShape(const PrimitivePtr &primitive
     counts_shape_vec = {0};
   }
 
-  output_shape = std::make_shared<abstract::Shape>(output_vec, output_min_vec, output_max_vec);
+  if (IsDynamicRank(input_shape_vec) || IsDynamicShape(input_shape_vec)) {
+    output_shape = std::make_shared<abstract::Shape>(output_vec);
+    counts_shape = std::make_shared<abstract::Shape>(counts_shape_vec);
+  } else {
+    output_shape = std::make_shared<abstract::Shape>(output_vec, output_max_vec);
+    counts_shape = std::make_shared<abstract::Shape>(counts_shape_vec, counts_max_vec);
+  }
   idx_shape = std::make_shared<abstract::Shape>(idx_shape_vec);
-  counts_shape = std::make_shared<abstract::Shape>(counts_shape_vec, counts_min_vec, counts_max_vec);
 
   auto ret_shape_vec = std::vector<abstract::BaseShapePtr>{output_shape};
   (void)ret_shape_vec.emplace_back(idx_shape);
@@ -121,7 +132,8 @@ abstract::BaseShapePtr UniqueConsecutiveInferShape(const PrimitivePtr &primitive
 TypePtr UniqueConsecutiveInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto name = primitive->name();
-  const std::set valid_types = {kInt32, kInt64, kFloat16, kFloat, kFloat64};
+  const std::set<TypePtr> valid_types = {kComplex64, kComplex128, kFloat16, kFloat,  kFloat64, kInt8,  kInt16,
+                                         kInt32,     kInt64,      kUInt8,   kUInt16, kUInt32,  kUInt64};
   auto input_type = CheckAndConvertUtils::CheckTypeValid("input", input_args[0]->BuildType(), valid_types, name);
   std::vector<TypePtr> ret_type_vec = {input_type, std::make_shared<TensorType>(kInt32),
                                        std::make_shared<TensorType>(kInt32)};
@@ -139,6 +151,24 @@ AbstractBasePtr UniqueConsecutiveInfer(const abstract::AnalysisEnginePtr &, cons
 }
 
 MIND_API_OPERATOR_IMPL(UniqueConsecutive, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(UniqueConsecutive, prim::kPrimUniqueConsecutive, UniqueConsecutiveInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGUniqueConsecutiveInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return UniqueConsecutiveInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return UniqueConsecutiveInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return UniqueConsecutiveInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(UniqueConsecutive, prim::kPrimUniqueConsecutive, AGUniqueConsecutiveInfer, false);
 }  // namespace ops
 }  // namespace mindspore

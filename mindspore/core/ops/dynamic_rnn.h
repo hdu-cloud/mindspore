@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_DYNAMIC_RNN_H_
 #define MINDSPORE_CORE_OPS_DYNAMIC_RNN_H_
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,11 +33,11 @@ class MIND_API DynamicRNN : public BaseOperator {
     InitIOName({"x", "w", "b", "seq_length", "init_h", "init_c"},
                {"y", "output_h", "output_c", "i", "j", "f", "o", "tanhc"});
   }
-  void Init() {}
+  void Init() const {}
 };
 
-abstract::AbstractBasePtr DynamicRNNInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                          const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr DynamicRNNInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                   const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

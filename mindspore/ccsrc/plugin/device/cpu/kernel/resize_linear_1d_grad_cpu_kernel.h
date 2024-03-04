@@ -59,7 +59,7 @@ class ResizeLinear1DGradCpuKernelMod : public NativeCpuKernelMod,
   bool LaunchKernel(const std::vector<kernel::AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
                     const std::vector<kernel::AddressPtr> &outputs);
 
-  enum CoordinateTransformationMode { ALIGN_CORNERS = 0, HALF_PIXEL = 1, ASYMMETRIC = 2, INVALID_MODE = 255 };
+  enum CoordinateTransformationMode { ALIGN_CORNERS = 0, HALF_PIXEL = 1, INVALID_MODE = 255 };
 
   template <typename T>
   using CoordinateTransformationFunc = std::function<T(const T &new_x, const int &old_length, const int &new_length)>;
@@ -76,6 +76,7 @@ class ResizeLinear1DGradCpuKernelMod : public NativeCpuKernelMod,
   std::string kernel_type_{kUnknown};
   bool align_corners_{false};
   bool half_pixel_center_{false};
+  TypeId type_{kTypeUnknown};
   size_t batch_{0};
   size_t channel_{0};
   size_t input_width_{0};

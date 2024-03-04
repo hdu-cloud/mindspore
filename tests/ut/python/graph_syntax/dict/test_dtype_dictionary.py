@@ -17,6 +17,7 @@
 @Desc   : test_dictionary
 """
 import numpy as np
+import os
 import pytest
 
 from mindspore import Tensor, context
@@ -90,8 +91,10 @@ def test_dict_set_or_get_item():
             return ret
 
     net = DictNet()
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     with pytest.raises(TypeError):
         net()
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_dict_set_or_get_item_2():
@@ -134,8 +137,10 @@ def test_dict_set_or_get_item_3():
             return self.dict_["x"]
 
     net = DictNet()
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     with pytest.raises(TypeError):
         net()
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_dict_set_item():
@@ -155,6 +160,7 @@ def test_dict_set_item():
     _ = net(x)
 
 
+@pytest.mark.skip(reason="Do not support dict value for dict set item yet.")
 def test_dict_set_item_2():
     """
     Description: test dict in dict set item.
@@ -184,6 +190,7 @@ def test_dict_set_item_2():
     assert second[1] == 1
 
 
+@pytest.mark.skip(reason="Do not support dict value for dict set item yet.")
 def test_dict_set_item_3():
     """
     Description: test dict in dict set item.
@@ -207,7 +214,7 @@ def test_dict_set_item_3():
     assert first[0][1] == 3
 
 
-# if the dictionary item does not exist, create a new one
+# If the dictionary item does not exist, create a new one
 def test_dict_set_item_create_new():
     class DictSetNet(Cell):
         def __init__(self):

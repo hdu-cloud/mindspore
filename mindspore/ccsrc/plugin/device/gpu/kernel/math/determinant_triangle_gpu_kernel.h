@@ -41,14 +41,18 @@ class DetTriangleGpuKernelMod : public DeprecatedNativeGpuKernelMod {
     T *input_addr = GetDeviceAddress<T>(inputs, 0);
     T *output_addr = GetDeviceAddress<T>(outputs, 0);
 
-    if (!CheckTriangle(input_addr, fill_mode_, matrix_n_, outputs[0]->size / sizeof(T),
-                       reinterpret_cast<cudaStream_t>(stream_ptr))) {
+    bool host_error_res = false;
+    auto status = CheckTriangle(input_addr, fill_mode_, matrix_n_, outputs[0]->size / sizeof(T),
+                                reinterpret_cast<cudaStream_t>(stream_ptr), &host_error_res);
+    CHECK_CUDA_STATUS(status, kernel_name_);
+    if (!host_error_res) {
       MS_LOG(ERROR) << "For '" << kernel_name_
                     << "', the elements in the upper half of the matrix should be all 0, fill mode is: " << fill_mode_;
       return false;
     }
     DetTriangle(input_addr, output_addr, matrix_n_, outputs[0]->size / sizeof(T),
                 reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return true;
   }
 
@@ -59,7 +63,7 @@ class DetTriangleGpuKernelMod : public DeprecatedNativeGpuKernelMod {
     if (input_num != 1) {
       MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the number of inputs should be 1, but got " << input_num;
     }
-    size_t output_num = common::AnfAlgo::GetOutputTensorNum(kernel_node);
+    size_t output_num = AnfAlgo::GetOutputTensorNum(kernel_node);
     if (output_num != 1) {
       MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the number of outputs should be 1, but got " << output_num;
     }

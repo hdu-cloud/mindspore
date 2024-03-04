@@ -17,6 +17,8 @@ import os
 import re
 import pytest
 import numpy as np
+import mindspore as ms
+from mindspore.amp import auto_mixed_precision
 from mindspore.common import dtype
 from mindspore import nn
 from mindspore import ops
@@ -24,7 +26,7 @@ from mindspore import amp
 from mindspore import Tensor
 from mindspore import context
 from mindspore.train.loss_scale_manager import FixedLossScaleManager
-from mindspore.train.model import Model
+from mindspore.train import Model
 from utils import FakeData
 from utils import allclose_nparray
 from utils import FakeDataInitMode
@@ -120,7 +122,7 @@ def test_sit_auto_mix_precision_model_o0():
     dataset1.set_label_data_type(np.float16)
     # graph mode
     context.set_context(mode=context.GRAPH_MODE)
-    context.set_context(save_graphs=True, save_graphs_path='./test_amp_o0')
+    context.set_context(save_graphs=3, save_graphs_path='./test_amp_o0')
     net = Net(3, 10)
     net.to_float(dtype.float16)
     opt = nn.Momentum(params=net.trainable_params(), learning_rate=0.001, momentum=0.0009)
@@ -158,7 +160,7 @@ def test_sit_auto_mix_precision_model_o2():
                         fakedata_mode=FakeDataInitMode.OnesInit)
     # graph mode
     context.set_context(mode=context.GRAPH_MODE)
-    context.set_context(save_graphs=True, save_graphs_path='./test_amp_o2')
+    context.set_context(save_graphs=3, save_graphs_path='./test_amp_o2')
     net = Net(3, 10)
     opt = nn.Momentum(params=net.trainable_params(), learning_rate=0.001, momentum=0.0009)
     loss = nn.SoftmaxCrossEntropyWithLogits(sparse=False)
@@ -181,7 +183,7 @@ def test_sit_auto_mix_precision_model_o2():
     allclose_nparray(out_graph.asnumpy(), out_pynative.asnumpy(), 0.001, 0.001)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.platform_x86_gpu_training
@@ -206,7 +208,7 @@ def test_sit_auto_mix_precision_model_o1():
                         fakedata_mode=FakeDataInitMode.OnesInit)
     # graph mode
     context.set_context(mode=context.GRAPH_MODE)
-    context.set_context(save_graphs=True, save_graphs_path='./test_amp_o1')
+    context.set_context(save_graphs=3, save_graphs_path='./test_amp_o1')
     net = Net(3, 10)
     opt = nn.Momentum(params=net.trainable_params(), learning_rate=0.001, momentum=0.0009)
     loss = nn.SoftmaxCrossEntropyWithLogits(sparse=False)
@@ -224,3 +226,140 @@ def test_sit_auto_mix_precision_model_o1():
     model_pynative.train(1, dataset2, dataset_sink_mode=False)
     out_pynative = model_pynative.predict(Tensor(input_data))
     allclose_nparray(out_graph.asnumpy(), out_pynative.asnumpy(), 0.001, 0.001)
+
+
+@pytest.mark.level0
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.env_onecard
+@security_off_wrap
+def test_custom_mix_precision():
+    """
+    Feature: Test custom mixed precision
+    Description: Test custom mixed precision
+    Expectation: success.
+    """
+    input_data = np.random.randn(32, 3, 224, 224).astype(np.float32)
+    dataset1 = FakeData(size=32,
+                        batch_size=32,
+                        image_size=(3, 224, 224),
+                        num_classes=10,
+                        fakedata_mode=FakeDataInitMode.OnesInit)
+    dataset2 = FakeData(size=32,
+                        batch_size=32,
+                        image_size=(3, 224, 224),
+                        num_classes=10,
+                        fakedata_mode=FakeDataInitMode.OnesInit)
+    # graph mode
+    context.set_context(mode=context.GRAPH_MODE)
+    net = Net(3, 10)
+    white_list = amp.get_white_list()
+    white_list.clear()
+    white_list.append(nn.ReLU)
+    white_list.append(nn.Conv2d)
+    net = amp.custom_mixed_precision(net, white_list=white_list)
+
+    opt = nn.Momentum(params=net.trainable_params(), learning_rate=0.001, momentum=0.0009)
+    loss = nn.SoftmaxCrossEntropyWithLogits(sparse=False)
+    model = Model(net, loss, opt, amp_level="O0")
+    model.train(1, dataset1, dataset_sink_mode=False)
+    out_graph = model.predict(Tensor(input_data))
+
+    # pynative mode
+    context.set_context(mode=context.PYNATIVE_MODE)
+    net_pynative = Net(3, 10)
+    white_list = amp.get_white_list()
+    white_list.clear()
+    white_list.append(nn.ReLU)
+    white_list.append(nn.Conv2d)
+    net_pynative = amp.custom_mixed_precision(net_pynative, white_list=white_list)
+    opt_pynative = nn.Momentum(params=net_pynative.trainable_params(), learning_rate=0.001, momentum=0.0009)
+    loss_pynative = nn.SoftmaxCrossEntropyWithLogits(sparse=False)
+    model_pynative = Model(net_pynative, loss_pynative, opt_pynative, amp_level="O0")
+    model_pynative.train(1, dataset2, dataset_sink_mode=False)
+    out_pynative = model_pynative.predict(Tensor(input_data))
+    allclose_nparray(out_graph.asnumpy(), out_pynative.asnumpy(), 0.001, 0.001)
+
+
+class TestOp(ms.nn.Cell):
+    def __init__(self):
+        super(TestOp, self).__init__()
+        self.weight = ms.Parameter(ms.Tensor(np.ones([32, 32, 3, 3]), ms.float32))
+
+    def construct(self, x):
+        ndim = x.ndim
+        if ndim == 3:
+            x = x.expand_dims(0)
+            output = ms.ops.conv2d(x, self.weight)
+            output = output.squeeze(0)
+        else:
+            output = ms.ops.conv2d(x, self.weight)
+        return output
+
+
+class TestNet(ms.nn.Cell):
+    def __init__(self):
+        super(TestNet, self).__init__()
+        self.op = TestOp()
+
+    def construct(self, x):
+        out = self.op(x)
+        return out
+
+
+@pytest.mark.level1
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.env_onecard
+@security_off_wrap
+def test_all_subgraph_mix_precision():
+    """
+    Feature: Test all subgraph mixed precision
+    Description: Test all subgraph mixed precision
+    Expectation: success.
+    """
+    test_net = TestNet()
+    mix_net = auto_mixed_precision(test_net, 'O2')
+    x = ms.Tensor(np.ones([10, 32, 32, 32]), ms.float32)
+
+    # graph mode
+    context.set_context(mode=context.GRAPH_MODE)
+    os.environ['MS_DEV_AMP_ENABLE_ALL_FG'] = '1'
+    out_graph = mix_net(x)
+    os.environ['MS_DEV_AMP_ENABLE_ALL_FG'] = ''
+
+    # pynative mode
+    context.set_context(mode=context.PYNATIVE_MODE)
+    out_pynative = mix_net(x)
+    allclose_nparray(out_graph.asnumpy(), out_pynative.asnumpy(), 0.001, 0.001)
+
+
+class AddNet(ms.nn.Cell):
+    def __init__(self):
+        super(AddNet, self).__init__()
+        self.add = ops.Add()
+
+    def construct(self, x):
+        out = self.add(x, x)
+        return out
+
+
+@pytest.mark.level0
+@pytest.mark.platform_x86_cpu
+@pytest.mark.platform_arm_cpu
+@pytest.mark.env_onecard
+@pytest.mark.parametrize('mode', [ms.GRAPH_MODE, ms.PYNATIVE_MODE])
+@pytest.mark.parametrize('dst_type', [ms.float16, ms.bfloat16])
+def test_to_float(mode, dst_type):
+    """
+    Feature: to_float
+    Description: Verify the result of to_float
+    Expectation: success
+    """
+    ms.set_context(mode=mode)
+    x = Tensor(np.array([-1.0, 1.0, 0.0]), ms.float32)
+    net = AddNet().to_float(dst_type)
+    output = net(x)
+    assert output.dtype == dst_type

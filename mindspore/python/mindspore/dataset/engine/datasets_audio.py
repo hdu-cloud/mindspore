@@ -1,4 +1,4 @@
-# Copyright 2019-2022 Huawei Technologies Co., Ltd
+# Copyright 2019-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -34,9 +34,9 @@ from ..core.validator_helpers import replace_none
 
 class CMUArcticDataset(MappableDataset, AudioBaseDataset):
     """
-    A source dataset that reads and parses CMUArctic dataset.
+    CMU Arctic dataset.
 
-    The generated dataset has four columns: :py:obj:`["waveform", "sample_rate", "transcript", "utterance_id"]` .
+    The generated dataset has four columns: :py:obj:`[waveform, sample_rate, transcript, utterance_id]` .
     The tensor of column :py:obj:`waveform` is of the float32 type.
     The tensor of column :py:obj:`sample_rate` is of a scalar of uint32 type.
     The tensor of column :py:obj:`transcript` is of a scalar of string type.
@@ -44,67 +44,50 @@ class CMUArcticDataset(MappableDataset, AudioBaseDataset):
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        name (str, optional): Part of this dataset, can be 'aew', 'ahw', 'aup', 'awb', 'axb', 'bdl',
-            'clb', 'eey', 'fem', 'gka', 'jmk', 'ksp', 'ljm', 'lnh', 'rms', 'rxr', 'slp' or 'slt'.
-            Default: None, equal 'aew'.
+        name (str, optional): Part of this dataset, can be ``'aew'``, ``'ahw'``, ``'aup'``,
+            ``'awb'``, ``'axb'``, ``'bdl'``, ``'clb'``, ``'eey'``, ``'fem'``, ``'gka'``, ``'jmk'``,
+            ``'ksp'``, ``'ljm'``, ``'lnh'``, ``'rms'``, ``'rxr'``, ``'slp'`` or ``'slt'``.
+            Default: ``None``, means ``'aew'``.
         num_samples (int, optional): The number of audio to be included in the dataset.
-            Default: None, will read all audio.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, will use value set in the config.
+            Default: ``None``, will read all audio.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None``, will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         shuffle (bool, optional): Whether or not to perform shuffle on the dataset.
-            Default: None, expected order behavior shown in the table below.
+            Default: ``None``, expected order behavior shown in the table below.
         sampler (Sampler, optional): Object used to choose samples from the
-            dataset. Default: None, expected order behavior shown in the table below.
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
-            When this argument is specified, `num_samples` reflects the max sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+            dataset. Default: ``None``, expected order behavior shown in the table below.
+        num_shards (int, optional): Number of shards that the dataset will be divided into.
+            Default: ``None``, no dividing. When this argument is specified, `num_samples`
+            reflects the max sample number of per shard.
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None``, will use ``0``. This
             argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None``, which means no cache is used.
 
     Raises:
-        RuntimeError: If source raises an exception during execution.
         RuntimeError: If `dataset_dir` does not contain data files.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
         RuntimeError: If `sampler` and `shuffle` are specified at the same time.
         RuntimeError: If `sampler` and `num_shards`/`shard_id` are specified at the same time.
         RuntimeError: If `num_shards` is specified but `shard_id` is None.
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
-        ValueError: If `shard_id` is invalid (< 0 or >= `num_shards`).
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
+
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
 
     Note:
-        - CMUArctic dataset doesn't support PKSampler.
-        - This dataset can take in a `sampler` . `sampler` and `shuffle` are mutually exclusive.
-          The table below shows what input arguments are allowed and their expected behavior.
+        - Not support :class:`mindspore.dataset.PKSampler` for `sampler` parameter yet.
+        - The parameters `num_samples` , `shuffle` , `num_shards` , `shard_id` can be used to control the sampler
+          used in the dataset, and their effects when combined with parameter `sampler` are as follows.
 
-    .. list-table:: Expected Order Behavior of Using 'sampler' and 'shuffle'
-       :widths: 25 25 50
-       :header-rows: 1
-
-        * - Parameter `sampler`
-          - Parameter `shuffle`
-          - Expected Order Behavior
-        * - None
-          - None
-          - random order
-        * - None
-          - True
-          - random order
-        * - None
-          - False
-          - sequential order
-        * - Sampler object
-          - None
-          - order defined by sampler
-        * - Sampler object
-          - True
-          - not allowed
-        * - Sampler object
-          - False
-          - not allowed
+    .. include:: mindspore.dataset.sampler.txt
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> cmu_arctic_dataset_directory = "/path/to/cmu_arctic_dataset_directory"
         >>>
         >>> # 1) Read 500 samples (audio files) in cmu_arctic_dataset_directory
@@ -115,7 +98,7 @@ class CMUArcticDataset(MappableDataset, AudioBaseDataset):
 
     About CMUArctic dataset:
 
-    The CMU arctic databases are designed for the purpose of speech synthesis research.
+    The CMU Arctic databases are designed for the purpose of speech synthesis research.
     These single speaker speech databases have been carefully recorded under studio conditions
     and consist of approximately 1200 phonetically balanced English utterances. In addition to wavefiles,
     the databases provide complete support for the Festival Speech Synthesis System, including pre-built
@@ -172,9 +155,9 @@ class CMUArcticDataset(MappableDataset, AudioBaseDataset):
 
 class GTZANDataset(MappableDataset, AudioBaseDataset):
     """
-    A source dataset that reads and parses GTZAN dataset.
+    GTZAN dataset.
 
-    The generated dataset has three columns: :py:obj:`["waveform", "sample_rate", "label"]` .
+    The generated dataset has three columns: :py:obj:`[waveform, sample_rate, label]` .
     The tensor of column :py:obj:`waveform` is of the float32 type.
     The tensor of column :py:obj:`sample_rate` is of a scalar of uint32 type.
     The tensor of column :py:obj:`label` is of a scalar of string type.
@@ -182,65 +165,46 @@ class GTZANDataset(MappableDataset, AudioBaseDataset):
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
         usage (str, optional): Usage of this dataset, can be 'train', 'valid', 'test' or 'all'.
-            Default: None, all samples.
+            Default: ``None`` , will read all samples.
         num_samples (int, optional): The number of audio to be included in the dataset.
-            Default: None, will read all audio.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, will use value set in the config.
+            Default: ``None`` , will read all audio.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         shuffle (bool, optional): Whether or not to perform shuffle on the dataset.
-            Default: None, expected order behavior shown in the table below.
+            Default: ``None`` , expected order behavior shown in the table below.
         sampler (Sampler, optional): Object used to choose samples from the
-            dataset. Default: None, expected order behavior shown in the table below.
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+            dataset. Default: ``None`` , expected order behavior shown in the table below.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the max sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
-        RuntimeError: If source raises an exception during execution.
         RuntimeError: If `dataset_dir` does not contain data files.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
         RuntimeError: If `sampler` and `shuffle` are specified at the same time.
         RuntimeError: If `sampler` and `num_shards`/`shard_id` are specified at the same time.
         RuntimeError: If `num_shards` is specified but `shard_id` is None.
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
-        ValueError: If `shard_id` is invalid (< 0 or >= `num_shards`).
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
+
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
 
     Note:
-        - GTZAN doesn't support PKSampler.
-        - This dataset can take in a `sampler` . `sampler` and `shuffle` are mutually exclusive.
-          The table below shows what input arguments are allowed and their expected behavior.
+        - Not support :class:`mindspore.dataset.PKSampler` for `sampler` parameter yet.
+        - The parameters `num_samples` , `shuffle` , `num_shards` , `shard_id` can be used to control the sampler
+          used in the dataset, and their effects when combined with parameter `sampler` are as follows.
 
-    .. list-table:: Expected Order Behavior of Using 'sampler' and 'shuffle'
-       :widths: 25 25 50
-       :header-rows: 1
-
-       * - Parameter `sampler`
-         - Parameter `shuffle`
-         - Expected Order Behavior
-       * - None
-         - None
-         - random order
-       * - None
-         - True
-         - random order
-       * - None
-         - False
-         - sequential order
-       * - Sampler object
-         - None
-         - order defined by sampler
-       * - Sampler object
-         - True
-         - not allowed
-       * - Sampler object
-         - False
-         - not allowed
+    .. include:: mindspore.dataset.sampler.txt
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> gtzan_dataset_directory = "/path/to/gtzan_dataset_directory"
         >>>
         >>> # 1) Read 500 samples (audio files) in gtzan_dataset_directory
@@ -254,7 +218,7 @@ class GTZANDataset(MappableDataset, AudioBaseDataset):
     The GTZAN dataset appears in at least 100 published works and is the most commonly used
     public dataset for evaluation in machine listening research for music genre recognition.
     It consists of 1000 audio tracks, each of which is 30 seconds long. It contains 10 genres (blues,
-    classical, country, disco, hiphop, jazz, metal, pop, reggae and reggae), each of which is
+    classical, country, disco, hiphop, jazz, metal, pop, reggae and rock), each of which is
     represented by 100 tracks. The tracks are all 22050Hz Mono 16-bit audio files in .wav format.
 
     You can construct the following directory structure from GTZAN dataset and read by MindSpore's API.
@@ -303,10 +267,10 @@ class GTZANDataset(MappableDataset, AudioBaseDataset):
 
 class LibriTTSDataset(MappableDataset, AudioBaseDataset):
     """
-    A source dataset that reads and parses the LibriTTS dataset.
+    LibriTTS dataset.
 
-    The generated dataset has seven columns :py:obj:`['waveform', 'sample_rate', 'original_text', 'normalized_text',
-    'speaker_id', 'chapter_id', 'utterance_id']` .
+    The generated dataset has seven columns :py:obj:`[waveform, sample_rate, original_text, normalized_text,
+    speaker_id, chapter_id, utterance_id]` .
     The tensor of column :py:obj:`waveform` is of the float32 type.
     The tensor of column :py:obj:`sample_rate` is of a scalar of uint32 type.
     The tensor of column :py:obj:`original_text` is of a scalar of string type.
@@ -317,66 +281,48 @@ class LibriTTSDataset(MappableDataset, AudioBaseDataset):
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        usage (str, optional): Part of this dataset, can be 'dev-clean', 'dev-other', 'test-clean', 'test-other',
-            'train-clean-100', 'train-clean-360', 'train-other-500', or 'all'. Default: None, equal 'all'.
+        usage (str, optional): Part of this dataset, can be ``'dev-clean'``, ``'dev-other'``, ``'test-clean'``,
+            ``'test-other'``, ``'train-clean-100'``, ``'train-clean-360'``, ``'train-other-500'``, or ``'all'``.
+            Default: ``None`` , means ``'all'``.
         num_samples (int, optional): The number of images to be included in the dataset.
-            Default: None, will read all audio.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, will use value set in the config.
+            Default: ``None`` , will read all audio.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         shuffle (bool, optional): Whether or not to perform shuffle on the dataset.
-            Default: None, expected order behavior shown in the table below.
+            Default: ``None`` , expected order behavior shown in the table below.
         sampler (Sampler, optional): Object used to choose samples from the
-            dataset. Default: None, expected order behavior shown in the table below.
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+            dataset. Default: ``None`` , expected order behavior shown in the table below.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the max sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
-        RuntimeError: If source raises an exception during execution.
         RuntimeError: If `dataset_dir` does not contain data files.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
         RuntimeError: If `sampler` and `shuffle` are specified at the same time.
         RuntimeError: If `sampler` and `num_shards`/`shard_id` are specified at the same time.
         RuntimeError: If `num_shards` is specified but `shard_id` is None.
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
-        ValueError: If `shard_id` is invalid (< 0 or >= `num_shards`).
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
+
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
 
     Note:
-        - LibriTTS dataset doesn't support PKSampler.
-        - This dataset can take in a `sampler` . `sampler` and `shuffle` are mutually exclusive.
-          The table below shows what input arguments are allowed and their expected behavior.
+        - Not support :class:`mindspore.dataset.PKSampler` for `sampler` parameter yet.
+        - The parameters `num_samples` , `shuffle` , `num_shards` , `shard_id` can be used to control the sampler
+          used in the dataset, and their effects when combined with parameter `sampler` are as follows.
 
-    .. list-table:: Expected Order Behavior of Using 'sampler' and 'shuffle'
-       :widths: 25 25 50
-       :header-rows: 1
-
-       * - Parameter `sampler`
-         - Parameter `shuffle`
-         - Expected Order Behavior
-       * - None
-         - None
-         - random order
-       * - None
-         - True
-         - random order
-       * - None
-         - False
-         - sequential order
-       * - Sampler object
-         - None
-         - order defined by sampler
-       * - Sampler object
-         - True
-         - not allowed
-       * - Sampler object
-         - False
-         - not allowed
+    .. include:: mindspore.dataset.sampler.txt
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> libri_tts_dataset_dir = "/path/to/libri_tts_dataset_directory"
         >>>
         >>> # 1) Read 500 samples (audio files) in libri_tts_dataset_directory
@@ -454,7 +400,7 @@ class LibriTTSDataset(MappableDataset, AudioBaseDataset):
 
 class LJSpeechDataset(MappableDataset, AudioBaseDataset):
     """
-    A source dataset that reads and parses LJSpeech dataset.
+    LJSpeech dataset.
 
     The generated dataset has four columns :py:obj:`[waveform, sample_rate, transcription, normalized_transcript]` .
     The column :py:obj:`waveform` is a tensor of the float32 type.
@@ -465,21 +411,22 @@ class LJSpeechDataset(MappableDataset, AudioBaseDataset):
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
         num_samples (int, optional): The number of audios to be included in the dataset.
-            Default: None, all audios.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the mindspore.dataset.config.
-        shuffle (bool, optional): Whether to perform shuffle on the dataset. Default: None, expected
+            Default: ``None`` , all audios.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
+        shuffle (bool, optional): Whether to perform shuffle on the dataset. Default: ``None`` , expected
             order behavior shown in the table below.
         sampler (Sampler, optional): Object used to choose samples from the dataset.
-            Default: None, expected order behavior shown in the table below.
+            Default: ``None`` , expected order behavior shown in the table below.
         num_shards (int, optional): Number of shards that the dataset will be divided into.
-            Default: None. When this argument is specified, `num_samples` reflects
+            Default: ``None`` . When this argument is specified, `num_samples` reflects
             the maximum sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
@@ -488,39 +435,20 @@ class LJSpeechDataset(MappableDataset, AudioBaseDataset):
         RuntimeError: If `num_shards` is specified but `shard_id` is None.
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
-        ValueError: If `shard_id` is invalid (< 0 or >= `num_shards`).
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
+
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
 
     Note:
-        - This dataset can take in a `sampler` . `sampler` and `shuffle` are mutually exclusive.
-          The table below shows what input arguments are allowed and their expected behavior.
+        - The parameters `num_samples` , `shuffle` , `num_shards` , `shard_id` can be used to control the sampler
+          used in the dataset, and their effects when combined with parameter `sampler` are as follows.
 
-    .. list-table:: Expected Order Behavior of Using `sampler` and `shuffle`
-       :widths: 25 25 50
-       :header-rows: 1
-
-       * - Parameter `sampler`
-         - Parameter `shuffle`
-         - Expected Order Behavior
-       * - None
-         - None
-         - random order
-       * - None
-         - True
-         - random order
-       * - None
-         - False
-         - sequential order
-       * - Sampler object
-         - None
-         - order defined by sampler
-       * - Sampler object
-         - True
-         - not allowed
-       * - Sampler object
-         - False
-         - not allowed
+    .. include:: mindspore.dataset.sampler.txt
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> lj_speech_dataset_dir = "/path/to/lj_speech_dataset_directory"
         >>>
         >>> # 1) Get all samples from LJSPEECH dataset in sequence
@@ -591,7 +519,7 @@ class LJSpeechDataset(MappableDataset, AudioBaseDataset):
 
 class SpeechCommandsDataset(MappableDataset, AudioBaseDataset):
     """
-    A source dataset that reads and parses the SpeechCommands dataset.
+    Speech Commands dataset.
 
     The generated dataset has five columns :py:obj:`[waveform, sample_rate, label, speaker_id, utterance_number]` .
     The tensor of column :py:obj:`waveform` is a vector of the float32 type.
@@ -602,24 +530,26 @@ class SpeechCommandsDataset(MappableDataset, AudioBaseDataset):
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        usage (str, optional): Usage of this dataset, can be 'train', 'test', 'valid' or 'all'. 'train'
-            will read from 84,843 samples, 'test' will read from 11,005 samples, 'valid' will read from 9,981
-            test samples and 'all' will read from all 105,829 samples. Default: None, will read all samples.
+        usage (str, optional): Usage of this dataset, can be ``'train'``, ``'test'``, ``'valid'`` or ``'all'``.
+            ``'train'`` will read from 84,843 samples, ``'test'`` will read from 11,005 samples, ``'valid'``
+            will read from 9,981 test samples and ``'all'`` will read from all 105,829 samples.
+            Default: ``None`` , will read all samples.
         num_samples (int, optional): The number of samples to be included in the dataset.
-            Default: None, will read all samples.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, will use value set in the config.
+            Default: ``None`` , will read all samples.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         shuffle (bool, optional): Whether or not to perform shuffle on the dataset.
-            Default: None, expected order behavior shown in the table below.
+            Default: ``None`` , expected order behavior shown in the table below.
         sampler (Sampler, optional): Object used to choose samples from the dataset.
-            Default: None, expected order behavior shown in the table below.
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+            Default: ``None`` , expected order behavior shown in the table below.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the maximum sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This argument can only be specified
-            when `num_shards` is also specified.
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` .
+            This argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
@@ -628,39 +558,20 @@ class SpeechCommandsDataset(MappableDataset, AudioBaseDataset):
         RuntimeError: If `num_shards` is specified but `shard_id` is None.
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
-        ValueError: If `shard_id` is invalid (< 0 or >= `num_shards`).
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
+
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
 
     Note:
-        - This dataset can take in a `sampler` . `sampler` and `shuffle` are mutually exclusive.
-          The table below shows what input arguments are allowed and their expected behavior.
+        - The parameters `num_samples` , `shuffle` , `num_shards` , `shard_id` can be used to control the sampler
+          used in the dataset, and their effects when combined with parameter `sampler` are as follows.
 
-    .. list-table:: Expected Order Behavior of Using `sampler` and `shuffle`
-       :widths: 25 25 50
-       :header-rows: 1
-
-       * - Parameter `sampler`
-         - Parameter `shuffle`
-         - Expected Order Behavior
-       * - None
-         - None
-         - random order
-       * - None
-         - True
-         - random order
-       * - None
-         - False
-         - sequential order
-       * - Sampler object
-         - None
-         - order defined by sampler
-       * - Sampler object
-         - True
-         - not allowed
-       * - Sampler object
-         - False
-         - not allowed
+    .. include:: mindspore.dataset.sampler.txt
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> speech_commands_dataset_dir = "/path/to/speech_commands_dataset_directory"
         >>>
         >>> # Read 3 samples from SpeechCommands dataset
@@ -714,7 +625,7 @@ class SpeechCommandsDataset(MappableDataset, AudioBaseDataset):
 
 class TedliumDataset(MappableDataset, AudioBaseDataset):
     """
-    A source dataset that reads and parses Tedlium dataset.
+    Tedlium dataset.
     The columns of generated dataset depend on the source SPH files and the corresponding STM files.
 
     The generated dataset has six columns :py:obj:`[waveform, sample_rate, transcript, talk_id, speaker_id,
@@ -725,32 +636,33 @@ class TedliumDataset(MappableDataset, AudioBaseDataset):
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        release (str): Release of the dataset, can be 'release1', 'release2', 'release3'.
+        release (str): Release of the dataset, can be ``'release1'``, ``'release2'``, ``'release3'``.
         usage (str, optional): Usage of this dataset.
-            For release1 or release2, can be 'train', 'test', 'dev' or 'all'.
-            'train' will read from train samples,
-            'test' will read from test samples,
-            'dev' will read from dev samples,
-            'all' will read from all samples.
-            For release3, can only be 'all', it will read from data samples. Default: None, all samples.
-        extensions (str, optional): Extensions of the SPH files, only '.sph' is valid.
-            Default: None, ".sph".
+            For release1 or release2, can be ``'train'``, ``'test'``, ``'dev'`` or ``'all'``.
+            ``'train'`` will read from train samples,
+            ``'test'`` will read from test samples,
+            ``'dev'`` will read from dev samples,
+            ``'all'`` will read from all samples.
+            For `release3`, can only be ``'all'``, it will read from data samples. Default: ``None`` , all samples.
+        extensions (str, optional): Extensions of the SPH files, only ``'.sph'`` is valid.
+            Default: ``None`` , set to ``".sph"``.
         num_samples (int, optional): The number of audio samples to be included in the dataset.
-            Default: None, all samples.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the config.
-        shuffle (bool, optional): Whether to perform shuffle on the dataset. Default: None, expected
+            Default: ``None`` , all samples.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
+        shuffle (bool, optional): Whether to perform shuffle on the dataset. Default: ``None`` , expected
             order behavior shown in the table below.
         sampler (Sampler, optional): Object used to choose samples from the
-            dataset. Default: None, expected order behavior shown in the table below.
+            dataset. Default: ``None`` , expected order behavior shown in the table below.
         num_shards (int, optional): Number of shards that the dataset will be divided
-            into. Default: None. When this argument is specified, `num_samples` reflects
+            into. Default: ``None`` . When this argument is specified, `num_samples` reflects
             the maximum sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain stm files.
@@ -759,39 +671,20 @@ class TedliumDataset(MappableDataset, AudioBaseDataset):
         RuntimeError: If `num_shards` is specified but `shard_id` is None.
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
-        ValueError: If `shard_id` is invalid (< 0 or >= `num_shards`).
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
+
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
 
     Note:
-        - This dataset can take in a `sampler` . `sampler` and `shuffle` are mutually exclusive.
-          The table below shows what input arguments are allowed and their expected behavior.
+        - The parameters `num_samples` , `shuffle` , `num_shards` , `shard_id` can be used to control the sampler
+          used in the dataset, and their effects when combined with parameter `sampler` are as follows.
 
-    .. list-table:: Expected Order Behavior of Using `sampler` and `shuffle`
-       :widths: 25 25 50
-       :header-rows: 1
-
-       * - Parameter `sampler`
-         - Parameter `shuffle`
-         - Expected Order Behavior
-       * - None
-         - None
-         - random order
-       * - None
-         - True
-         - random order
-       * - None
-         - False
-         - sequential order
-       * - Sampler object
-         - None
-         - order defined by sampler
-       * - Sampler object
-         - True
-         - not allowed
-       * - Sampler object
-         - False
-         - not allowed
+    .. include:: mindspore.dataset.sampler.txt
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> # 1) Get all train samples from TEDLIUM_release1 dataset in sequence.
         >>> dataset = ds.TedliumDataset(dataset_dir="/path/to/tedlium1_dataset_directory",
         ...                             release="release1", shuffle=False)
@@ -925,7 +818,7 @@ class TedliumDataset(MappableDataset, AudioBaseDataset):
 
 class YesNoDataset(MappableDataset, AudioBaseDataset):
     """
-    A source dataset that reads and parses the YesNo dataset.
+    YesNo dataset.
 
     The generated dataset has three columns :py:obj:`[waveform, sample_rate, labels]` .
     The tensor of column :py:obj:`waveform` is a vector of the float32 type.
@@ -935,20 +828,21 @@ class YesNoDataset(MappableDataset, AudioBaseDataset):
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
         num_samples (int, optional): The number of images to be included in the dataset.
-            Default: None, will read all images.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, will use value set in the config.
+            Default: ``None`` , will read all images.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         shuffle (bool, optional): Whether or not to perform shuffle on the dataset.
-            Default: None, expected order behavior shown in the table below.
+            Default: ``None`` , expected order behavior shown in the table below.
         sampler (Sampler, optional): Object used to choose samples from the
-            dataset. Default: None, expected order behavior shown in the table below.
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+            dataset. Default: ``None`` , expected order behavior shown in the table below.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the maximum sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This argument can only
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This argument can only
             be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
@@ -957,39 +851,20 @@ class YesNoDataset(MappableDataset, AudioBaseDataset):
         RuntimeError: If `sampler` and `num_shards`/`shard_id` are specified at the same time.
         RuntimeError: If `num_shards` is specified but `shard_id` is None.
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
-        ValueError: If `shard_id` is invalid (< 0 or >= `num_shards`).
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
+
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
 
     Note:
-        - This dataset can take in a `sampler` . `sampler` and `shuffle` are mutually exclusive.
-          The table below shows what input arguments are allowed and their expected behavior.
+        - The parameters `num_samples` , `shuffle` , `num_shards` , `shard_id` can be used to control the sampler
+          used in the dataset, and their effects when combined with parameter `sampler` are as follows.
 
-    .. list-table:: Expected Order Behavior of Using `sampler` and `shuffle`
-       :widths: 25 25 50
-       :header-rows: 1
-
-       * - Parameter `sampler`
-         - Parameter `shuffle`
-         - Expected Order Behavior
-       * - None
-         - None
-         - random order
-       * - None
-         - True
-         - random order
-       * - None
-         - False
-         - sequential order
-       * - Sampler object
-         - None
-         - order defined by sampler
-       * - Sampler object
-         - True
-         - not allowed
-       * - Sampler object
-         - False
-         - not allowed
+    .. include:: mindspore.dataset.sampler.txt
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> yes_no_dataset_dir = "/path/to/yes_no_dataset_directory"
         >>>
         >>> # Read 3 samples from YesNo dataset

@@ -20,63 +20,51 @@
 #include "nnacl/op_base.h"
 #include "nnacl/errorcode.h"
 #include "nnacl/tensor_c.h"
+#include "nnacl/tensor_c_utils.h"
 
-static int groupnorm_resize(struct KernelBase *self);
-static int groupnorm_prepare(struct KernelBase *self);
-static int groupnorm_release(struct KernelBase *self);
-static int groupnorm_compute(struct KernelBase *self);
-typedef struct GroupNormStru {
-  KernelBase base;
-} GroupNormStru;
-
-static int groupnorm_resize(struct KernelBase *self) {
+int GroupNormResize(struct KernelBase *self) {
   GroupNormStru *groupnorm = (GroupNormStru *)self;
   NNACL_CHECK_NULL_RETURN_ERR(groupnorm);
-  GroupNormParameter *param = (GroupNormParameter *)groupnorm->base.param;
+  GroupNormParameter *param = (GroupNormParameter *)groupnorm->base.param_;
   NNACL_CHECK_NULL_RETURN_ERR(param);
-  if (self->insize < kInputSize2 || self->outsize < 1) {
-    return NNACL_ERR;
-  }
-  groupnorm_release(self);
+  NNACL_CHECK_FALSE(self->in_size_ < kInputSize2, NNACL_TENSOR_SIZE_INVALID);
+  NNACL_CHECK_FALSE(self->out_size_ < 1, NNACL_TENSOR_SIZE_INVALID);
 
-  TensorC *in0 = &(self->in[0]);
-  if (in0->shape_size_ < C1NUM) {
-    return NNACL_ERR;
-  }
-  if (in0->format_ != NCHW) {
-    return NNACL_ERR;
-  }
+  self->Release(self);
+
+  TensorC *in0 = self->in_[0];
+  NNACL_CHECK_FALSE(in0->shape_size_ < C1NUM, NNACL_GROUP_NORM_SHAPE_SIZE_INVALID);
+  NNACL_CHECK_FALSE(in0->format_ != Format_NCHW, NNACL_GROUP_NORM_FORMAT_INVALID);
 
   param->unit_ = GetHeight(in0) * GetWidth(in0);
   param->batch_ = GetBatch(in0);
   param->channel_ = GetChannel(in0);
-  return groupnorm_prepare(self);
+  return self->Prepare(self);
 }
 
-static int groupnorm_prepare(struct KernelBase *self) {
+int GroupNormPrepare(struct KernelBase *self) {
   GroupNormStru *groupnorm = (GroupNormStru *)self;
   NNACL_CHECK_NULL_RETURN_ERR(groupnorm);
-  GroupNormParameter *param = (GroupNormParameter *)groupnorm->base.param;
+  GroupNormParameter *param = (GroupNormParameter *)groupnorm->base.param_;
   NNACL_CHECK_NULL_RETURN_ERR(param);
+  NNACL_CHECK_FALSE(param->num_groups_ < 0, NNACL_GROUP_NORM_NUM_GROUPS_INVALID);
+  NNACL_CHECK_FALSE(param->channel_ % param->num_groups_, NNACL_GROUP_NORM_NUM_GROUPS_INVALID);
+  NNACL_CHECK_FALSE(param->num_groups_ == 0, NNACL_GROUP_NORM_NUM_GROUPS_INVALID);
 
-  if ((param->num_groups_ < 0) || (param->channel_ % param->num_groups_)) {
-    return NNACL_ERR;
-  }
   size_t mean_var_elem_num = param->num_groups_;
-  MS_CHECK_FALSE(mean_var_elem_num == 0, NNACL_ERR);
   param->mean_ = malloc(mean_var_elem_num * sizeof(float));
   param->variance_ = malloc(mean_var_elem_num * sizeof(float));
   if (param->mean_ == NULL || param->variance_ == NULL) {
-    groupnorm_release(self);
-    return NNACL_ERR;
+    self->Release(self);
+    return NNACL_MALLOC_BUFFER_FAILED;
   }
   return NNACL_OK;
 }
 
-static int groupnorm_release(struct KernelBase *self) {
+int GroupNormRelease(struct KernelBase *self) {
   GroupNormStru *groupnorm = (GroupNormStru *)self;
   NNACL_CHECK_NULL_RETURN_ERR(groupnorm);
-  GroupNormParameter *param = (GroupNormParameter *)groupnorm->base.param;
+  GroupNormParameter *param = (GroupNormParameter *)groupnorm->base.param_;
   NNACL_CHECK_NULL_RETURN_ERR(param);
 
   if (param->mean_ != NULL) {
@@ -91,22 +79,19 @@ static int groupnorm_release(struct KernelBase *self) {
   return NNACL_OK;
 }
 
-static int groupnorm_do_compute(void *param, int task_id, float lhs_scale, float rhs_scale) {
-  if (param == NULL) {
-    return NNACL_ERR;
-  }
-
+int GroupNormImpl(void *param, int task_id, float l, float r) {
+  NNACL_CHECK_NULL_RETURN_ERR(param);
   GroupNormStru *groupnorm_stru = (GroupNormStru *)param;
-  GroupNormParameter *groupnorm_param = (GroupNormParameter *)groupnorm_stru->base.param;
+  GroupNormParameter *groupnorm_param = (GroupNormParameter *)groupnorm_stru->base.param_;
   NNACL_CHECK_NULL_RETURN_ERR(groupnorm_param);
 
-  const void *input_data = groupnorm_stru->base.in[0].data_;
+  const void *input_data = groupnorm_stru->base.in_[0]->data_;
   NNACL_CHECK_NULL_RETURN_ERR(input_data);
-  const void *scale_data = groupnorm_stru->base.in[C1NUM].data_;
+  const void *scale_data = groupnorm_stru->base.in_[C1NUM]->data_;
   NNACL_CHECK_NULL_RETURN_ERR(scale_data);
-  const void *offset_data = groupnorm_stru->base.in[C2NUM].data_;
+  const void *offset_data = groupnorm_stru->base.in_[C2NUM]->data_;
   NNACL_CHECK_NULL_RETURN_ERR(offset_data);
-  void *output_data = groupnorm_stru->base.out[0].data_;
+  void *output_data = groupnorm_stru->base.out_[0]->data_;
   NNACL_CHECK_NULL_RETURN_ERR(output_data);
 
   NNACL_CHECK_NULL_RETURN_ERR(groupnorm_param->mean_);
@@ -118,28 +103,20 @@ static int groupnorm_do_compute(void *param, int task_id, float lhs_scale, float
   return ret;
 }
 
-static int groupnorm_compute(struct KernelBase *self) {
-  return self->env->parallelLaunch(self->env->threadPool, groupnorm_do_compute, self, self->param->thread_num_);
+int GroupNormCompute(struct KernelBase *self) {
+  return self->env_->ParallelLaunch(self->env_->thread_pool_, GroupNormImpl, self, self->param_->thread_num_);
 }
 
-KernelBase *CreateGroupNorm(OpParameter *param, TensorC *in, size_t insize, TensorC *out, size_t outsize, int data_type,
-                            FormatC format) {
+KernelBase *CreateGroupNorm(OpParameter *param, int data_type) {
   GroupNormStru *groupnorm = (GroupNormStru *)malloc(sizeof(GroupNormStru));
-  if (groupnorm == NULL) {
-    return NULL;
-  }
-  groupnorm->base.param = param;
-  groupnorm->base.in = in;
-  groupnorm->base.insize = insize;
-  groupnorm->base.out = out;
-  groupnorm->base.outsize = outsize;
-  groupnorm->base.env = GetExecEnv();
-  groupnorm->base.prepare = groupnorm_prepare;
-  groupnorm->base.resize = groupnorm_resize;
-  groupnorm->base.release = groupnorm_release;
-  groupnorm->base.compute = groupnorm_compute;
+  NNACL_MALLOC_CHECK_NULL_RETURN_NULL(groupnorm);
+
+  groupnorm->base.Prepare = GroupNormPrepare;
+  groupnorm->base.Resize = GroupNormResize;
+  groupnorm->base.Release = GroupNormRelease;
+  groupnorm->base.Compute = GroupNormCompute;
 
   return (void *)groupnorm;
 }
 
-REG_KERNEL_CREATOR(PrimType_GroupNormFusion, Format_NCHW, kNumberTypeFloat32, CreateGroupNorm);
+REG_KERNEL_CREATOR(PrimType_GroupNormFusion, kNumberTypeFloat32, CreateGroupNorm);

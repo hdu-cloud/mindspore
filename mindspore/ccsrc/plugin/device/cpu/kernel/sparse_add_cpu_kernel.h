@@ -39,7 +39,6 @@ class SparseAddCpuKernelMod : public NativeCpuKernelMod, public MatchKernelHelpe
   int Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
              const std::vector<KernelTensorPtr> &outputs,
              const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost) override;
-  std::vector<KernelTensorPtr> GetOutputs() override { return outputs_; }
 
   const std::vector<std::pair<KernelAttr, KernelRunFunc>> &GetFuncList() const override;
 
@@ -56,9 +55,9 @@ class SparseAddCpuKernelMod : public NativeCpuKernelMod, public MatchKernelHelpe
   float thresh_ = 0;
   size_t row_ = 0;
   size_t dense_size_ = 0;
+  size_t indices_column_ = 0;
   std::vector<TypeId> types_;
   ShapeVector dense_shape_;
-  std::vector<KernelTensorPtr> outputs_ = {};
 };
 }  // namespace kernel
 }  // namespace mindspore

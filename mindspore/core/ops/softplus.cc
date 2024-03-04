@@ -15,13 +15,24 @@
  */
 
 #include "ops/softplus.h"
+
 #include <memory>
 #include <set>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -42,7 +53,9 @@ class SoftplusInfer : public abstract::OpInferBase {
     MS_EXCEPTION_IF_NULL(prim);
     auto prim_name = prim->name();
     // check
-    std::set<TypePtr> valid_index_types = {kFloat16, kFloat32};
+    (void)CheckAndConvertUtils::CheckInteger("input numbers", SizeToLong(input_args.size()), kEqual, 1, prim_name);
+    MS_EXCEPTION_IF_NULL(input_args[0]);
+    std::set<TypePtr> valid_index_types = {kFloat16, kFloat32, kFloat64};
     auto x_type = input_args[0]->BuildType();
     (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_type, valid_index_types, prim_name);
     return x_type;

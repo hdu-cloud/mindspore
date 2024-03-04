@@ -18,11 +18,12 @@ from __future__ import absolute_import
 from mindspore.ops import functional as F
 from mindspore.common import dtype as mstype
 from mindspore.common import Tensor
+from mindspore.ops import operations as P
 
-from mindspore.numpy.math_ops import _apply_tensor_op, absolute
-from mindspore.numpy.array_creations import zeros, ones, empty, asarray
+from mindspore.numpy.math_ops import _apply_tensor_op
+from mindspore.numpy.array_creations import zeros, ones, asarray
 from mindspore.numpy.utils import _check_input_tensor, _to_tensor, _isnan
-from mindspore.numpy.utils_const import _raise_type_error, _is_shape_empty, _infer_out_shape, _check_same_type, \
+from mindspore.numpy.utils_const import _raise_type_error, _check_same_type, \
     _check_axis_type, _canonicalize_axis, _can_broadcast, _isscalar
 
 
@@ -37,7 +38,7 @@ def not_equal(x1, x2, dtype=None):
     Args:
         x1 (Tensor): First input tensor to be compared.
         x2 (Tensor): Second input tensor to be compared.
-        dtype (:class:`mindspore.dtype`, optional): Defaults to None. Overrides the dtype of the
+        dtype (:class:`mindspore.dtype`, optional): Default: ``None`` . Overrides the dtype of the
             output Tensor.
 
     Returns:
@@ -75,7 +76,7 @@ def less_equal(x1, x2, dtype=None):
         x1 (Tensor): Input array.
         x2 (Tensor): Input array. If ``x1.shape != x2.shape``, they must be
             broadcastable to a common shape (which becomes the shape of the output).
-        dtype (:class:`mindspore.dtype`, optional): Defaults to None. Overrides the dtype of the
+        dtype (:class:`mindspore.dtype`, optional): Default: ``None`` . Overrides the dtype of the
             output Tensor.
 
     Returns:
@@ -108,7 +109,7 @@ def less(x1, x2, dtype=None):
         x1 (Tensor): input array.
         x2 (Tensor): Input array. If ``x1.shape != x2.shape``, they must be
             broadcastable to a common shape (which becomes the shape of the output).
-        dtype (:class:`mindspore.dtype`, optional): Defaults to None. Overrides the dtype of the
+        dtype (:class:`mindspore.dtype`, optional): Default: ``None`` . Overrides the dtype of the
             output Tensor.
 
     Returns:
@@ -140,7 +141,7 @@ def greater_equal(x1, x2, dtype=None):
         x1 (Tensor): Input array.
         x2 (Tensor): Input array. If ``x1.shape != x2.shape``, they must be
             broadcastable to a common shape (which becomes the shape of the output).
-        dtype (:class:`mindspore.dtype`, optional): Defaults to None. Overrides the dtype of the
+        dtype (:class:`mindspore.dtype`, optional): Default: ``None`` . Overrides the dtype of the
             output Tensor.
 
     Returns:
@@ -172,7 +173,7 @@ def greater(x1, x2, dtype=None):
         x1 (Tensor): Input array.
         x2 (Tensor): Input array. If ``x1.shape != x2.shape``, they must be
             broadcastable to a common shape (which becomes the shape of the output).
-        dtype (:class:`mindspore.dtype`, optional): Defaults to None. Overrides the dtype of the
+        dtype (:class:`mindspore.dtype`, optional): Default: ``None`` . Overrides the dtype of the
             output Tensor.
 
     Returns:
@@ -204,7 +205,7 @@ def equal(x1, x2, dtype=None):
         x1 (Tensor): Input array.
         x2 (Tensor): Input array. If ``x1.shape != x2.shape``, they must be
             broadcastable to a common shape (which becomes the shape of the output).
-        dtype (:class:`mindspore.dtype`, optional): Defaults to None. Overrides the dtype of the
+        dtype (:class:`mindspore.dtype`, optional): Default: ``None`` . Overrides the dtype of the
             output Tensor.
 
     Returns:
@@ -237,7 +238,7 @@ def isfinite(x, dtype=None):
 
     Args:
         x (Tensor): Input values.
-        dtype (:class:`mindspore.dtype`, optional): Defaults to None. Overrides the dtype of the
+        dtype (:class:`mindspore.dtype`, optional): Default: ``None`` . Overrides the dtype of the
             output Tensor.
 
     Returns:
@@ -267,7 +268,7 @@ def isnan(x, dtype=None):
 
     Args:
         x (Tensor): Input values.
-        dtype (:class:`mindspore.dtype`, optional): Defaults to None. Overrides the dtype of the
+        dtype (:class:`mindspore.dtype`, optional): Default: ``None`` . Overrides the dtype of the
             output Tensor.
 
     Returns:
@@ -314,7 +315,7 @@ def isinf(x, dtype=None):
 
     Args:
         x (Tensor): Input values.
-        dtype (:class:`mindspore.dtype`, optional): Defaults to None. Overrides the dtype of the
+        dtype (:class:`mindspore.dtype`, optional): Default: ``None`` . Overrides the dtype of the
             output Tensor.
 
     Returns:
@@ -470,7 +471,7 @@ def isclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
         atol (numbers.Number): The absolute tolerance parameter (see Note).
         equal_nan (bool): Whether to compare ``NaN`` as equal. If True, ``NaN`` in
             `a` will be considered equal to ``NaN`` in `b` in the output tensor.
-            Default: `False`.
+            Default: ``False`` .
 
     Returns:
         A ``bool`` tensor of where `a` and `b` are equal within the given tolerance.
@@ -482,6 +483,7 @@ def isclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore.numpy as np
         >>> a = np.array([0,1,2,float('inf'),float('inf'),float('nan')])
         >>> b = np.array([0,1,-2,float('-inf'),float('inf'),float('nan')])
         >>> print(np.isclose(a, b))
@@ -490,30 +492,8 @@ def isclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
         [ True  True False False  True  True]
     """
     a, b = _to_tensor(a, b)
-    if not isinstance(rtol, (int, float, bool)) or not isinstance(atol, (int, float, bool)):
-        _raise_type_error("rtol and atol are expected to be numbers.")
-    if not isinstance(equal_nan, bool):
-        _raise_type_error("equal_nan is expected to be bool.")
-
-    if _is_shape_empty(a.shape) or _is_shape_empty(b.shape):
-        return empty(_infer_out_shape(a.shape, b.shape), dtype=mstype.bool_)
-    rtol = _to_tensor(rtol).astype("float32")
-    atol = _to_tensor(atol).astype("float32")
-    res = absolute(a - b) <= (atol + rtol * absolute(b))
-    # infs are treated as equal
-    a_posinf = isposinf(a)
-    b_posinf = isposinf(b)
-    a_neginf = isneginf(a)
-    b_neginf = isneginf(b)
-    same_inf = F.logical_or(F.logical_and(a_posinf, b_posinf), F.logical_and(a_neginf, b_neginf))
-    diff_inf = F.logical_or(F.logical_and(a_posinf, b_neginf), F.logical_and(a_neginf, b_posinf))
-    res = F.logical_and(F.logical_or(res, same_inf), F.logical_not(diff_inf))
-    both_nan = F.logical_and(_isnan(a), _isnan(b))
-    if equal_nan:
-        res = F.logical_or(both_nan, res)
-    else:
-        res = F.logical_and(F.logical_not(both_nan), res)
-    return res
+    is_close = P.IsClose(rtol=rtol, atol=atol, equal_nan=equal_nan)
+    return is_close(a, b)
 
 
 def in1d(ar1, ar2, invert=False):
@@ -533,7 +513,7 @@ def in1d(ar1, ar2, invert=False):
             to test each value of `ar1`.
         invert (boolean, optional): If True, the values in the returned array are
             inverted (that is, False where an element of `ar1` is in `ar2` and True
-            otherwise). Default is False.
+            otherwise). Default: ``False`` .
 
     Returns:
        Tensor, with shape `(M,)`. The values ``ar1[in1d]`` are in `ar2`.
@@ -542,6 +522,7 @@ def in1d(ar1, ar2, invert=False):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore.numpy as np
         >>> test = np.array([0, 1, 2, 5, 0])
         >>> states = [0, 2]
         >>> mask = np.in1d(test, states)
@@ -577,7 +558,7 @@ def isin(element, test_elements, invert=False):
         test_elements (Union[int, float, bool, list, tuple, Tensor]): The values against
             which to test each value of `element`.
         invert (boolean, optional): If True, the values in the returned array are
-            inverted, as if calculating `element` not in `test_elements`. Default is False.
+            inverted, as if calculating `element` not in `test_elements`. Default: ``False`` .
 
     Returns:
        Tensor, has the same shape as `element`. The values ``element[isin]`` are in
@@ -587,6 +568,7 @@ def isin(element, test_elements, invert=False):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore.numpy as np
         >>> element = 2*np.arange(4).reshape((2, 2))
         >>> test_elements = [1, 2, 4, 8]
         >>> mask = np.isin(element, test_elements)
@@ -613,7 +595,7 @@ def logical_not(a, dtype=None):
 
     Args:
         a (Tensor): The input tensor whose dtype is bool.
-        dtype (:class:`mindspore.dtype`, optional): Default: :class:`None`. Overrides the dtype of the
+        dtype (:class:`mindspore.dtype`, optional): Default: ``None``. Overrides the dtype of the
             output Tensor.
 
     Returns:
@@ -649,7 +631,7 @@ def logical_or(x1, x2, dtype=None):
         x1 (Tensor): Input tensor.
         x2 (Tensor): Input tensor. If ``x1.shape != x2.shape``, they must be
             broadcastable to a common shape (which becomes the shape of the output).
-        dtype (:class:`mindspore.dtype`, optional): Defaults to None. Overrides the dtype of the
+        dtype (:class:`mindspore.dtype`, optional): Default: ``None`` . Overrides the dtype of the
             output Tensor.
 
     Returns:
@@ -683,7 +665,7 @@ def logical_and(x1, x2, dtype=None):
         x1 (Tensor): Input tensor.
         x2 (Tensor): Input tensor. If ``x1.shape != x2.shape``, they must be
             broadcastable to a common shape (which becomes the shape of the output).
-        dtype (:class:`mindspore.dtype`, optional): Defaults to None. Overrides the dtype of the
+        dtype (:class:`mindspore.dtype`, optional): Default: ``None`` . Overrides the dtype of the
             output Tensor.
 
     Returns:
@@ -717,7 +699,7 @@ def logical_xor(x1, x2, dtype=None):
         x1 (Tensor): Input tensor.
         x2 (Tensor): Input tensor. If ``x1.shape != x2.shape``, they must be
             broadcastable to a common shape (which becomes the shape of the output).
-        dtype (:class:`mindspore.dtype`, optional): Defaults to None. Overrides the dtype of the
+        dtype (:class:`mindspore.dtype`, optional): Default: ``None`` . Overrides the dtype of the
             output Tensor.
 
     Returns:
@@ -756,7 +738,7 @@ def array_equal(a1, a2, equal_nan=False):
 
     Args:
         a1/a2 (Union[int, float, bool, list, tuple, Tensor]): Input arrays.
-        equal_nan (bool): Whether to compare NaN's as equal. Default: `False`.
+        equal_nan (bool): Whether to compare NaN's as equal. Default: ``False`` .
 
     Returns:
         Scalar bool tensor, value is `True` if inputs are equal, `False` otherwise.
@@ -833,7 +815,7 @@ def signbit(x, dtype=None):
 
     Args:
         x (Union[int, float, bool, list, tuple, Tensor]): The input value(s).
-        dtype (:class:`mindspore.dtype`, optional): Defaults to None. Overrides the dtype of the
+        dtype (:class:`mindspore.dtype`, optional): Default: ``None`` . Overrides the dtype of the
             output Tensor.
 
     Returns:
@@ -870,12 +852,12 @@ def sometrue(a, axis=None, keepdims=False):
     Args:
         a (Union[int, float, bool, list, tuple, Tensor]): Input tensor or object that can be converted to an array.
         axis (Union[None, int, tuple(int)]): Axis or axes along which a logical OR reduction is
-            performed. Default: None.
+            performed. Default: ``None`` .
             If None, perform a logical OR over all the dimensions of the input array.
             If negative, it counts from the last to the first axis.
             If tuple of integers, a reduction is performed on multiple axes, instead of a single axis or
             all the axes as before.
-        keepdims (bool): Default: False.
+        keepdims (bool): Default: ``False`` .
             If True, the axes which are reduced are left in the result as dimensions with size one.
             With this option, the result will broadcast correctly against the input array.
             If the default value is passed, then keepdims will not be passed through to the any method of
@@ -908,3 +890,46 @@ def sometrue(a, axis=None, keepdims=False):
     a = _to_tensor(a)
     keepdims = keepdims not in (0, False)
     return F.not_equal(a, 0).any(axis, keepdims)
+
+
+def setdiff1d(ar1, ar2, assume_unique=False):
+    """
+    Find the set difference of two Tensors.
+    Return the unique values in `ar1` that are not in `ar2`.
+
+    Args:
+        ar1 (Union[int, float, bool, list, tuple, Tensor]): Input tensor.
+        ar2 (Union[int, float, bool, list, tuple, Tensor]): Input tensor.
+        assume_unique (bool): If `True`, the input Tensors are assumed to be unique, which can speed up the calculation.
+                              If `True` but `ar1` or `ar2` are not unique,
+                              incorrect results and out-of-bounds indices could result.
+                              Default: ``False``.
+
+    Returns:
+        1D Tensor of values in `ar1` that are not in `ar2`.
+        The result is sorted when `assume_unique` = ``False`` , but otherwise only sorted if the input is sorted.
+
+    Raises:
+        TypeError: If input `ar1` or `ar2` is not array_like.
+        TypeError: If `assume_unique` is not bool.
+
+    Supported Platforms:
+        ``Ascend`` ``GPU`` ``CPU``
+
+    Examples:
+        >>> import mindspore.numpy as np
+        >>> a = np.array([1, 2, 3, 2, 4, 1])
+        >>> b = np.array([3, 4, 5, 6])
+        >>> np.setdiff1d(a, b)
+        Tensor(shape=[2], dtype=Int32, value=[1, 2])
+    """
+    if not isinstance(assume_unique, bool):
+        _raise_type_error("assume_unique is not bool type.")
+    ar1, ar2 = _to_tensor(ar1, ar2)
+    if assume_unique:
+        ar1 = ar1.ravel()
+    else:
+        ar1 = F.unique(ar1)[0].sort()[0]
+        ar2 = F.unique(ar2)[0].sort()[0]
+    mask = in1d(ar1, ar2, invert=True)
+    return F.masked_select(ar1, mask)

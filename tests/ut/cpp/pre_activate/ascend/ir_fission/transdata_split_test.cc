@@ -15,9 +15,10 @@
  */
 
 #include "common/backend_common_test.h"
+#include "ops/array_op_name.h"
 #include "common/py_func_graph_fetcher.h"
-#include "runtime/device/kernel_info.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/kernel_info.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "kernel/oplib/oplib.h"
 #include "include/common/debug/anf_ir_dump.h"
 #include "utils/ms_context.h"
@@ -32,6 +33,10 @@
 
 namespace mindspore {
 namespace opt {
+namespace {
+constexpr auto kPatternElemWise = "ElemWise";
+}
+
 using KernelBuildInfoBuilder = kernel::KernelBuildInfo::KernelBuildInfoBuilder;
 class TestHWTransdataSplit : public BackendCommon {
  public:
@@ -54,6 +59,8 @@ class MockInsertTransOpKernelSelectTrans4Dto5D : public KernelSelect {
       builder.SetOutputsDeviceType({kFloat16->type_id()});
       builder.SetInputsReshapeType({""});
       builder.SetOutputsReshapeType({""});
+      builder.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR});
+      builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
       AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), cnode.get());
     } else {
       KernelBuildInfoBuilder builder;
@@ -63,8 +70,9 @@ class MockInsertTransOpKernelSelectTrans4Dto5D : public KernelSelect {
       builder.SetOutputsDeviceType({kFloat16->type_id()});
       builder.SetInputsReshapeType({""});
       builder.SetOutputsReshapeType({""});
+      builder.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR});
+      builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
       AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), cnode.get());
-
     }
   }
 };
@@ -82,6 +90,8 @@ class MockTransdataSplitKernelSelect : public KernelSelect {
       builder.SetOutputsDeviceType({kFloat16->type_id()});
       builder.SetInputsReshapeType({""});
       builder.SetOutputsReshapeType({""});
+      builder.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR});
+      builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
       AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), cnode.get());
     } else {
       KernelBuildInfoBuilder builder;
@@ -91,6 +101,8 @@ class MockTransdataSplitKernelSelect : public KernelSelect {
       builder.SetOutputsDeviceType({kFloat16->type_id()});
       builder.SetInputsReshapeType({""});
       builder.SetOutputsReshapeType({""});
+      builder.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR});
+      builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
       AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), cnode.get());
     }
   }
@@ -124,10 +136,12 @@ TEST_F(TestHWTransdataSplit, test_transdata_split_fraz_nchw) {
   builder.SetOutputsFormat({kOpFormat_C1HWNCoC0});
   builder.SetOutputsDeviceType({kFloat16->type_id()});
   builder.SetKernelType(KernelType::TBE_KERNEL);
-  builder.SetFusionType(kernel::FusionType::ELEMWISE);
+  builder.SetFusionType(kPatternElemWise);
   builder.SetProcessor(kernel::Processor::AICORE);
   builder.SetInputsReshapeType({""});
   builder.SetOutputsReshapeType({""});
+  builder.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR});
+  builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
   auto kernel_info = std::make_shared<device::KernelInfo>();
   kernel_info->set_select_kernel_build_info(builder.Build());
   transpose->set_kernel_info(kernel_info);
@@ -172,10 +186,12 @@ TEST_F(TestHWTransdataSplit, test_transdata_split_nchw_fraz) {
   builder.SetOutputsFormat({"NCHW"});
   builder.SetOutputsDeviceType({kFloat16->type_id()});
   builder.SetKernelType(KernelType::TBE_KERNEL);
-  builder.SetFusionType(kernel::FusionType::ELEMWISE);
+  builder.SetFusionType(kPatternElemWise);
   builder.SetProcessor(kernel::Processor::AICORE);
   builder.SetInputsReshapeType({""});
   builder.SetOutputsReshapeType({""});
+  builder.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR});
+  builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
   auto kernel_info = std::make_shared<device::KernelInfo>();
   kernel_info->set_select_kernel_build_info(builder.Build());
   transpose->set_kernel_info(kernel_info);

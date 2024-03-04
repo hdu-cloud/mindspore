@@ -23,6 +23,7 @@ set(DATASET_ENGINE_IR_DATASETOPS_SOURCE_SRC_FILES
         fake_image_node.cc
         fashion_mnist_node.cc
         flickr_node.cc
+        food101_node.cc
         gtzan_node.cc
         image_folder_node.cc
         imdb_node.cc
@@ -44,12 +45,15 @@ set(DATASET_ENGINE_IR_DATASETOPS_SOURCE_SRC_FILES
         places365_node.cc
         qmnist_node.cc
         random_node.cc
+        rendered_sst2_node.cc
         sbu_node.cc
         semeion_node.cc
         sogou_news_node.cc
         speech_commands_node.cc
         squad_node.cc
+        sst2_node.cc
         stl10_node.cc
+        sun397_node.cc
         tedlium_node.cc
         text_file_node.cc
         tf_record_node.cc

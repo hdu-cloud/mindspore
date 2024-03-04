@@ -1,5 +1,6 @@
+
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +16,7 @@
  */
 #include "runtime/device/ms_device_shape_transfer.h"
 #include <functional>
+#include <unordered_map>
 #include <numeric>
 #include <utility>
 #include <algorithm>
@@ -133,7 +135,7 @@ RangePair PaddingRangeTo5dDefault(const RangePair &ori_range) {
       dst_range[W_ncdhw] = ori_range[H_ncdhw];
       break;
     default:
-      MS_LOG(EXCEPTION) << "Unexpected shape size: " << ori_range.size();
+      MS_LOG(INTERNAL_EXCEPTION) << "Unexpected shape size: " << ori_range.size();
   }
   return dst_range;
 }
@@ -141,12 +143,12 @@ RangePair PaddingRangeTo5dDefault(const RangePair &ori_range) {
 RangePair PaddingRangeTo5D(const RangePair &ori_range, const std::string &padding_str = {""}) {
   std::vector<Axis5D> padding_axis;
   StringToAxisVector5D(padding_str, &padding_axis);
-  if (padding_axis.empty() || ori_range.size() != padding_axis.size()) {
+  if (padding_axis.empty() || ori_range.size() > padding_axis.size()) {
     return PaddingRangeTo5dDefault(ori_range);
   }
 
   RangePair dst_range(kNcdhw, std::pair<int64_t, int64_t>(1, 1));
-  for (size_t index = 0; index < padding_axis.size(); index++) {
+  for (size_t index = 0; index < ori_range.size(); index++) {
     dst_range[padding_axis[index]] = ori_range[index];
   }
   return dst_range;
@@ -172,7 +174,7 @@ RangePair PaddingRangeTo4dDefault(const RangePair &ori_range) {
     case kNchwDims:
       return ori_range;
     default:
-      MS_LOG(EXCEPTION) << "Unexpected range size: " << ori_range.size();
+      MS_LOG(INTERNAL_EXCEPTION) << "Unexpected range size: " << ori_range.size();
   }
   return dst_range;
 }
@@ -180,12 +182,12 @@ RangePair PaddingRangeTo4dDefault(const RangePair &ori_range) {
 RangePair PaddingRangeTo4D(const RangePair &ori_range, const std::string &padding_str = {""}) {
   std::vector<Axis> padding_axis;
   StringToAxisVector4D(padding_str, &padding_axis);
-  if (padding_axis.empty() || ori_range.size() != padding_axis.size()) {
+  if (padding_axis.empty() || ori_range.size() > padding_axis.size()) {
     return PaddingRangeTo4dDefault(ori_range);
   }
 
   RangePair dst_range(kNchwDims, std::pair<int64_t, int64_t>(1, 1));
-  for (size_t index = 0; index < padding_axis.size(); index++) {
+  for (size_t index = 0; index < ori_range.size(); index++) {
     dst_range[padding_axis[index]] = ori_range[index];
   }
   return dst_range;
@@ -213,7 +215,7 @@ void StringToAxisVector4D(const std::string &reshape_type_str, std::vector<Axis>
         reshape_type_vec->push_back(W);
         break;
       default:
-        MS_LOG(EXCEPTION) << "Unknown axis " << c << "in reshape type.";
+        MS_LOG(INTERNAL_EXCEPTION) << "Unknown axis " << c << "in reshape type.";
     }
   }
 }
@@ -242,18 +244,21 @@ void StringToAxisVector5D(const std::string &reshape_type_str, std::vector<Axis5
         reshape_type_vec->push_back(W_ncdhw);
         break;
       default:
-        MS_LOG(EXCEPTION) << "Unknown axis " << c << "in reshape type.";
+        MS_LOG(INTERNAL_EXCEPTION) << "Unknown axis " << c << "in reshape type.";
     }
   }
 }
 
-bool IsNeedPadding(const std::string &format, size_t shape_size) {
-  if (shape_size == 0) {
+bool IsNeedPadding(const std::string &format, const ShapeVector &shape) {
+  if (shape.empty()) {
+    return false;
+  }
+  if (IsDynamicRank(shape) && !IsOneOfDynRankNeedPadShape(format)) {
     return false;
   }
   if (format == kOpFormat_DEFAULT || format == kOpFormat_NCHW || IsOneOfNoPaddingFormat(format)) {
     return false;
-  } else if (shape_size < kDim4) {
+  } else if (shape.size() < kDim4) {
     return true;
   }
   return false;
@@ -267,30 +272,30 @@ ShapeVector GetRuntimePaddingShape(const AnfNodePtr &node, size_t index) {
     MS_EXCEPTION_IF_NULL(value_node);
     auto node_value = value_node->value();
     MS_EXCEPTION_IF_NULL(node_value);
+    // Scalar has no shape.
+    if (node_value->isa<Scalar>()) {
+      return {};
+    }
+    if (node_value->isa<StringImm>()) {
+      auto string_value = node_value->cast<StringImmPtr>();
+      MS_EXCEPTION_IF_NULL(string_value);
+      return {SizeToLong(string_value->ToString().size())};
+    }
+    if (node_value->isa<ValueSequence>()) {
+      MS_LOG(INFO) << "GetRuntimePaddingShape does not support the value sequence for value node:"
+                   << node->fullname_with_scope() << ", debug name:" << node->DebugString();
+      return {0};
+    }
     auto tensor = node_value->cast<tensor::TensorPtr>();
     if (tensor == nullptr) {
-      MS_LOG(EXCEPTION) << " The node[ " << node->DebugString() << "]'s cannot convert ";
+      MS_LOG(INTERNAL_EXCEPTION) << " The node[ " << node->DebugString() << "]'s cannot convert ";
     }
-    auto shape_temp = tensor->shape();
-    if (IsDynamic(shape_temp)) {
-      auto base_shape = tensor->base_shape_ptr();
-      MS_EXCEPTION_IF_NULL(base_shape);
-      if (base_shape->cast<abstract::ShapePtr>() == nullptr) {
-        MS_LOG(EXCEPTION) << "Tensor with dynamic shape should be ShapePtr type.";
-      }
-      host_shape = base_shape->cast<abstract::ShapePtr>()->shape();
-    } else {
-      host_shape = shape_temp;
-    }
-
-    if (host_shape.empty()) {
-      host_shape.push_back(1);
-    }
+    host_shape = tensor->shape();
   } else {
     host_shape = common::AnfAlgo::GetOutputInferShape(node, index);
   }
   auto format = AnfAlgo::GetOutputFormat(node, index);
-  if (IsNeedPadding(format, host_shape.size())) {
+  if (IsNeedPadding(format, host_shape)) {
     host_shape = PaddingShape(host_shape, format, AnfAlgo::GetOutputReshapeType(node, index), node);
   }
   return host_shape;
@@ -321,12 +326,12 @@ void CheckMemSize(const TypeIdArgs &args) {
   auto src_type_size = abstract::TypeIdSize(args.src_data_type);
   auto dst_type_size = abstract::TypeIdSize(args.dst_data_type);
   if (src_type_size < 1 || dst_type_size < 1) {
-    MS_LOG(EXCEPTION) << "Invalid src or dst data type. Src type: " << TypeIdLabel(args.src_data_type)
-                      << ", dst type: " << TypeIdLabel(args.dst_data_type);
+    MS_LOG(INTERNAL_EXCEPTION) << "Invalid src or dst data type. Src type: " << TypeIdLabel(args.src_data_type)
+                               << ", dst type: " << TypeIdLabel(args.dst_data_type);
   }
   if (SizeToLong(args.data_size / src_type_size) != args.src_shape_size) {
-    MS_LOG(EXCEPTION) << "Invalid src or dst data  shape size. Src shape size: " << args.src_shape_size
-                      << ", dst shape size: " << args.data_size / src_type_size;
+    MS_LOG(INTERNAL_EXCEPTION) << "Invalid src or dst data  shape size. Src shape size: " << args.src_shape_size
+                               << ", dst shape size: " << args.data_size / src_type_size;
   }
 }
 
@@ -362,12 +367,17 @@ bool DataTypeTransfer::CastKernel(const TypeIdArgs &args, void *dst, int64_t dat
     {DataTypeTransMode::FROM_UINT8_TO_FLOAT16, TransDataSrc2Fp16<uint8_t>},
     {DataTypeTransMode::FROM_UINT8_TO_FLOAT, TransDataSrc2Dst<uint8_t, float>},
     {DataTypeTransMode::FROM_UINT16_TO_INT32, TransDataSrc2Dst<uint16_t, int32_t>},
+    {DataTypeTransMode::FROM_INT16_TO_INT32, TransDataSrc2Dst<int16_t, int32_t>},
+    {DataTypeTransMode::FROM_INT16_TO_INT64, TransDataSrc2Dst<int16_t, int64_t>},
     {DataTypeTransMode::FROM_INT32_TO_BOOL, TransDataSrc2Dst<int32_t, int8_t>},
     {DataTypeTransMode::FROM_INT32_TO_INT8, TransDataSrc2Dst<int32_t, int8_t>},
     {DataTypeTransMode::FROM_INT32_TO_UINT8, TransDataSrc2Dst<int32_t, uint8_t>},
+    {DataTypeTransMode::FROM_INT32_TO_INT16, TransDataSrc2Dst<int32_t, int16_t>},
+    {DataTypeTransMode::FROM_INT32_TO_UINT16, TransDataSrc2Dst<int32_t, uint16_t>},
     {DataTypeTransMode::FROM_INT32_TO_FLOAT16, TransDataSrc2Fp16<int32_t>},
     {DataTypeTransMode::FROM_INT32_TO_FLOAT, TransDataSrc2Dst<int32_t, float>},
     {DataTypeTransMode::FROM_INT32_TO_INT64, TransDataSrc2Dst<int32_t, int64_t>},
+    {DataTypeTransMode::FROM_INT64_TO_INT16, TransDataSrc2Dst<int64_t, int16_t>},
     {DataTypeTransMode::FROM_INT64_TO_INT32, TransDataSrc2Dst<int64_t, int32_t>},
     {DataTypeTransMode::FROM_FLOAT16_TO_UINT8, TransDataSrc2Dst<float16, uint8_t>},
     {DataTypeTransMode::FROM_FLOAT16_TO_INT32, TransDataSrc2Dst<float16, int32_t>},
@@ -463,8 +473,8 @@ std::optional<ShapeVector> DeviceShapeTransfer::GetFixedDeviceShape(const ShapeV
 
 ShapeVector DeviceShapeTransfer::TransCore(const ShapeVector &shape, const std::string &format, const TypeId &type,
                                            int64_t groups, const ShapeVector &input_hidden_size) const {
-  using DeviceShapeTransfer = std::function<ShapeVector(const ShapeVector &, const TypeId &)>;
-  const std::map<std::string, DeviceShapeTransfer> device_shape_map = {
+  using DeviceShapeTransferFunc = std::function<ShapeVector(const ShapeVector &, const TypeId &)>;
+  static const mindspore::HashMap<std::string, DeviceShapeTransferFunc> device_shape_map = {
     {kOpFormat_NCHW, NCHWDeviceShape},
     {kOpFormat_NHWC, NHWCDeviceShape},
     {kOpFormat_HWCN, HWCNDeviceShape},
@@ -494,7 +504,7 @@ ShapeVector DeviceShapeTransfer::TransCore(const ShapeVector &shape, const std::
   auto temp_shape = shape;
   if (!IsOneOfNoPaddingFormat(format) && format != kOpFormat_FRACTAL_ZN_LSTM && shape.size() < kDim4 &&
       !IsOneOf3DFormat(format)) {
-    MS_LOG(WARNING) << "Origin shape size is less than 4, should be Padding shape by Default firstly";
+    MS_LOG(INFO) << "Origin shape size is less than 4, should be Padding shape by Default firstly";
     temp_shape = PaddingShapeTo4dDefault(shape);
   }
   if (shape.size() != kDim5 && IsOneOf3DFormat(format)) {
@@ -502,21 +512,21 @@ ShapeVector DeviceShapeTransfer::TransCore(const ShapeVector &shape, const std::
   }
   auto iter = device_shape_map.find(format);
   if (iter == device_shape_map.end()) {
-    MS_LOG(EXCEPTION) << "Unexpected format[" << format << "]";
+    MS_LOG(INTERNAL_EXCEPTION) << "Unexpected format[" << format << "]";
   }
   return iter->second(temp_shape, type);
 }
 
 ShapeVector DeviceShapeTransfer::NCHWDeviceShape(const ShapeVector &shape, const TypeId &) {
   if (!CheckDims(shape)) {
-    MS_LOG(EXCEPTION) << "Check dims failed.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Check dims failed.";
   }
   return shape;
 }
 
 ShapeVector DeviceShapeTransfer::NHWCDeviceShape(const ShapeVector &shape, const TypeId &) {
   if (!CheckDims(shape)) {
-    MS_LOG(EXCEPTION) << "Check dims failed.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Check dims failed.";
   }
   ShapeVector device_shape;
   device_shape.push_back(shape[kN]);
@@ -528,7 +538,7 @@ ShapeVector DeviceShapeTransfer::NHWCDeviceShape(const ShapeVector &shape, const
 
 ShapeVector DeviceShapeTransfer::HWCNDeviceShape(const ShapeVector &shape, const TypeId &) {
   if (!CheckDims(shape)) {
-    MS_LOG(EXCEPTION) << "Check dims failed.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Check dims failed.";
   }
   ShapeVector device_shape;
   device_shape.push_back(shape[kH]);
@@ -540,7 +550,7 @@ ShapeVector DeviceShapeTransfer::HWCNDeviceShape(const ShapeVector &shape, const
 
 ShapeVector DeviceShapeTransfer::FRAC_ZDeviceShape(const ShapeVector &shape, const TypeId &type) {
   if (!CheckDims(shape)) {
-    MS_LOG(EXCEPTION) << "Check dims failed.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Check dims failed.";
   }
   ShapeVector device_shape;
   auto c0 = GetCubeSizeByType(type);
@@ -563,7 +573,7 @@ ShapeVector DeviceShapeTransfer::FRAC_ZDeviceShape(const ShapeVector &shape, con
 
 ShapeVector DeviceShapeTransfer::NC1HWC0DeviceShape(const ShapeVector &shape, const TypeId &type) {
   if (!CheckDims(shape)) {
-    MS_LOG(EXCEPTION) << "Check dims failed.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Check dims failed.";
   }
   ShapeVector device_shape;
   auto c0 = GetCubeSizeByType(type);
@@ -577,8 +587,11 @@ ShapeVector DeviceShapeTransfer::NC1HWC0DeviceShape(const ShapeVector &shape, co
 }
 
 ShapeVector DeviceShapeTransfer::NDC1HWC0DeviceShape(const ShapeVector &shape, const TypeId &type) {
+  if (shape.size() == kDim6) {
+    return shape;
+  }
   if (shape.size() != kDim5) {
-    MS_LOG(EXCEPTION) << "Check dims failed, expect shape dim 5, but got shape dim : " << shape.size();
+    MS_LOG(INTERNAL_EXCEPTION) << "Check dims failed, expect shape dim 5, but got shape dim : " << shape.size();
   }
   ShapeVector device_shape;
   auto c0 = GetCubeSizeByType(type);
@@ -594,7 +607,7 @@ ShapeVector DeviceShapeTransfer::NDC1HWC0DeviceShape(const ShapeVector &shape, c
 
 ShapeVector DeviceShapeTransfer::FRAC_Z3DDeviceShape(const ShapeVector &shape, const TypeId &type) {
   if (shape.size() != kDim5) {
-    MS_LOG(EXCEPTION) << "Check dims failed, expect shape dim 5, but got shape dim : " << shape.size();
+    MS_LOG(INTERNAL_EXCEPTION) << "Check dims failed, expect shape dim 5, but got shape dim : " << shape.size();
   }
   ShapeVector device_shape;
   auto c0 = GetCubeSizeByType(type);
@@ -614,7 +627,7 @@ ShapeVector DeviceShapeTransfer::FRAC_Z3DDeviceShape(const ShapeVector &shape, c
 
 ShapeVector DeviceShapeTransfer::C1HWNCOC0DeviceShape(const ShapeVector &shape, const TypeId &type) {
   if (!CheckDims(shape)) {
-    MS_LOG(EXCEPTION) << "Check dims failed.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Check dims failed.";
   }
   ShapeVector device_shape;
   auto c0 = GetCubeSizeByType(type);
@@ -633,7 +646,7 @@ ShapeVector DeviceShapeTransfer::C1HWNCOC0DeviceShape(const ShapeVector &shape, 
 
 ShapeVector DeviceShapeTransfer::FRAC_ZC04DeviceShape(const ShapeVector &shape, const TypeId &) {
   if (!CheckDims(shape)) {
-    MS_LOG(EXCEPTION) << "Check dims failed.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Check dims failed.";
   }
   ShapeVector device_shape;
   const int64_t C04 = 4;
@@ -654,7 +667,7 @@ ShapeVector DeviceShapeTransfer::FRAC_ZC04DeviceShape(const ShapeVector &shape, 
 
 ShapeVector DeviceShapeTransfer::NC1HWC04DeviceShape(const ShapeVector &shape, const TypeId &) {
   if (!CheckDims(shape)) {
-    MS_LOG(EXCEPTION) << "Check dims failed.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Check dims failed.";
   }
   ShapeVector device_shape;
   const int64_t C04 = 4;
@@ -670,7 +683,7 @@ ShapeVector DeviceShapeTransfer::NC1HWC04DeviceShape(const ShapeVector &shape, c
 
 ShapeVector DeviceShapeTransfer::NCDHWDeviceShape(const ShapeVector &shape, const TypeId &) {
   if (shape.size() < kDim5) {
-    MS_LOG(EXCEPTION) << "Shape dims must be 5 when format is ndhwc.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Shape dims must be 5 when format is ndhwc.";
   }
   return shape;
 }
@@ -695,8 +708,12 @@ ShapeVector DeviceShapeTransfer::FRAC_NZDeviceShape(const ShapeVector &shape, co
     // For [1] and [1024] shape we can trait it as NZ shape
     return shape;
   }
-  if (shape.size() < kShape2dDims) {
-    MS_LOG(EXCEPTION) << "Format FRACTAL_NZ don't support shape with " << shape.size() << " dims";
+  if (shape.size() == 1) {
+    device_shape.push_back(DivCeil(shape[0], c0));
+    device_shape.push_back(1);
+    device_shape.push_back(kCubeSize);
+    device_shape.push_back(c0);
+    return device_shape;
   } else {
     const auto remove_dim = 2;
     (void)std::copy(shape.begin(), shape.end() - remove_dim, std::back_inserter(device_shape));
@@ -735,15 +752,18 @@ ShapeVector DeviceShapeTransfer::FRAC_ZN_LSTMDeviceShape(const ShapeVector &shap
 ShapeVector DeviceShapeTransfer::FRAC_ZDeviceShapeWithGroups(const ShapeVector &shape, const TypeId &type,
                                                              int64_t groups) {
   if (!CheckDims(shape)) {
-    MS_LOG(EXCEPTION) << "Check dims failed.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Check dims failed.";
   }
   if (groups <= 0) {
-    MS_LOG(EXCEPTION) << "The value of groups should be greater than 0, but got " << groups;
+    MS_LOG(INTERNAL_EXCEPTION) << "The value of groups should be greater than 0, but got " << groups;
   }
   auto cube_size = GetCubeSizeByType(type);
   auto c1_dim = abstract::Shape::kShapeDimAny;
   auto g_dim = abstract::Shape::kShapeDimAny;
   auto n1 = abstract::Shape::kShapeDimAny;
+  if (shape.size() < kShape2dDims) {
+    MS_LOG(INTERNAL_EXCEPTION) << "Format FRAC_ZDeviceShape don't support shape with " << shape.size() << " dims";
+  }
   if (!HasShapeDynamic({shape[kC], shape[kN]})) {
     auto group_size = groups;
     auto cin_ori_tmp = static_cast<int64_t>(shape[kC]);
@@ -770,7 +790,7 @@ ShapeVector DeviceShapeTransfer::FRAC_ZDeviceShapeWithGroups(const ShapeVector &
 ShapeVector DeviceShapeTransfer::FRAC_ZN_RNNDeviceShape(const ShapeVector &shape, const TypeId &type,
                                                         const ShapeVector &input_hidden_size) {
   if (shape.size() < kShape2dDims) {
-    MS_LOG(EXCEPTION) << "Format FRACTAL_NZ_RNN don't support shape with " << shape.size() << " dims";
+    MS_LOG(INTERNAL_EXCEPTION) << "Format FRACTAL_NZ_RNN don't support shape with " << shape.size() << " dims";
   }
   auto C0 = GetCubeSizeByType(type);
   auto input_size = input_hidden_size[0];
@@ -787,13 +807,14 @@ ShapeVector DeviceShapeTransfer::FRAC_ZN_RNNDeviceShape(const ShapeVector &shape
   } else if (dim_last2 == input_size + hidden_size) {
     device_shape[shape.size() - kDim2] = DivCeil(input_size, NUM16) + DivCeil(hidden_size, NUM16);
   } else {
-    MS_LOG(EXCEPTION) << "The second-last dim value of shape is invalid.";
+    MS_LOG(INTERNAL_EXCEPTION) << "The second-last dim value of shape is invalid.";
   }
   if (dim_last1 == abstract::Shape::kShapeDimAny) {
     device_shape[shape.size() - kDim1] = abstract::Shape::kShapeDimAny;
   } else {
     if (dim_last1 % hidden_size != 0) {
-      MS_LOG(EXCEPTION) << "Last dim of shape " << shape << " should be multiple of hidden_size " << hidden_size;
+      MS_LOG(INTERNAL_EXCEPTION) << "Last dim of shape " << shape << " should be multiple of hidden_size "
+                                 << hidden_size;
     }
     int64_t n_num = shape[shape.size() - 1] / hidden_size;
     device_shape[shape.size() - kDim1] = n_num * DivCeil(hidden_size, C0);
@@ -806,7 +827,7 @@ ShapeVector DeviceShapeTransfer::FRAC_ZN_RNNDeviceShape(const ShapeVector &shape
 ShapeVector DeviceShapeTransfer::NDRNNBiasDeviceShape(const ShapeVector &shape, const TypeId &type,
                                                       int64_t hidden_size) {
   if (shape.empty()) {
-    MS_LOG(EXCEPTION) << "Format ND_RNN_BIAS don't support empty shape.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Format ND_RNN_BIAS don't support empty shape.";
   }
   auto C0 = GetCubeSizeByType(type);
   ShapeVector device_shape = shape;
@@ -816,7 +837,8 @@ ShapeVector DeviceShapeTransfer::NDRNNBiasDeviceShape(const ShapeVector &shape, 
     device_shape[shape.size() - 1] = abstract::Shape::kShapeDimAny;
   } else {
     if (hidden_size <= 0 || dim_last1 % hidden_size != 0) {
-      MS_LOG(EXCEPTION) << "Last dim of shape " << shape << " should be multiple of hidden_size " << hidden_size;
+      MS_LOG(INTERNAL_EXCEPTION) << "Last dim of shape " << shape << " should be multiple of hidden_size "
+                                 << hidden_size;
     }
     int64_t n_num = shape[shape.size() - 1] / hidden_size;
     device_shape[shape.size() - 1] = n_num * DivCeil(hidden_size, C0) * C0;
@@ -839,7 +861,7 @@ ShapeVector DeviceShapeTransfer::GetAttrInputAndHiddenSize(const AnfNodePtr &nod
     CNodePtr cnode = node->cast<CNodePtr>();
     if (cnode == nullptr || !common::AnfAlgo::HasNodeAttr(kAttrHiddenSize, cnode) ||
         !common::AnfAlgo::HasNodeAttr(kAttrInputSize, cnode)) {
-      MS_LOG(EXCEPTION)
+      MS_LOG(INTERNAL_EXCEPTION)
         << "Node with format FRACTAL_ZN_RNN or ND_RNN_BIAS should have hidden_size or input_size attr. Node info:"
         << node->DebugString();
     }
@@ -889,11 +911,11 @@ bool FormatTransfer::TransDataForwardCore(const FormatArgs &args, void *result, 
     return false;
   }
   if (groups > 1 && args.device_format == kOpFormat_FRAC_Z) {
-    return NCHW_TO_FRAC_Z_WITH_GROPUS(args, result, true, groups);
+    return NCHW_TO_FRAC_Z_WITH_GROUPS(args, result, true, groups);
   }
   auto iter = format_trans_fp_map.find(args.device_format);
   if (iter == format_trans_fp_map.end()) {
-    MS_LOG(EXCEPTION) << "Unexpected format[" << args.device_format << "]";
+    MS_LOG(INTERNAL_EXCEPTION) << "Unexpected format[" << args.device_format << "]";
   }
   return iter->second(args, result);
 }
@@ -909,7 +931,7 @@ bool FormatTransfer::TransDataBackwordCore(const FormatArgs &args, void *result,
   }
   auto iter = format_trans_bp_map.find(args.device_format);
   if (iter == format_trans_bp_map.end()) {
-    MS_LOG(EXCEPTION) << "Unexpected format[" << args.device_format << "]";
+    MS_LOG(INTERNAL_EXCEPTION) << "Unexpected format[" << args.device_format << "]";
   }
   return iter->second(args, result);
 }
@@ -1388,7 +1410,7 @@ bool FormatTransfer::NCDHW_TO_FRAC_Z3D(const FormatArgs &args, void *result) {
   return true;
 }
 
-bool FormatTransfer::NCHW_TO_FRAC_Z_WITH_GROPUS(const FormatArgs &args, void *result, bool to_device, int64_t groups) {
+bool FormatTransfer::NCHW_TO_FRAC_Z_WITH_GROUPS(const FormatArgs &args, void *result, bool to_device, int64_t groups) {
   MS_EXCEPTION_IF_NULL(result);
   auto size = Common4DCheck(args);
   auto n_dim = args.host_shape[kN];
@@ -1398,7 +1420,7 @@ bool FormatTransfer::NCHW_TO_FRAC_Z_WITH_GROPUS(const FormatArgs &args, void *re
   auto d_dim = 1;
   auto cin_ori = c_dim;
   if (groups <= 0) {
-    MS_LOG(EXCEPTION) << "The value of groups should be greater than 0, but got " << groups;
+    MS_LOG(INTERNAL_EXCEPTION) << "The value of groups should be greater than 0, but got " << groups;
   }
   // cppcheck-suppress *
   auto cout_ori = n_dim / groups;
@@ -1409,7 +1431,7 @@ bool FormatTransfer::NCHW_TO_FRAC_Z_WITH_GROPUS(const FormatArgs &args, void *re
   auto cube_k = GetCubeSizeByType(args.src_data_type);
   auto e_mult = std::min(Lcm(Lcm(cin_ori, cube_k) / cin_ori, Lcm(cout_ori, kCubeSize) / cout_ori), groups);
   if (e_mult == 0) {
-    MS_LOG(EXCEPTION) << "The value of e_mult should be greater than 0, but got " << e_mult;
+    MS_LOG(INTERNAL_EXCEPTION) << "The value of e_mult should be greater than 0, but got " << e_mult;
   }
   auto cin_opt = DivCeil(e_mult * cin_ori, cube_k) * cube_k;
   auto cout_opt = DivCeil(e_mult * cout_ori, kCubeSize) * kCubeSize;
@@ -1761,17 +1783,17 @@ bool FormatTransfer::NDC1HWC0_TO_NCDHW(const FormatArgs &args, void *result) {
 
 bool FormatTransfer::FRAC_Z_TO_NCHW_WITH_GROUPS(const FormatArgs &args, void *result, int64_t groups) {
   MS_LOG(DEBUG) << "Trans format from frac_z to nchw with groups=" << groups;
-  return NCHW_TO_FRAC_Z_WITH_GROPUS(args, result, false, groups);
+  return NCHW_TO_FRAC_Z_WITH_GROUPS(args, result, false, groups);
 }
 
 int64_t FormatTransfer::Common4DCheck(const FormatArgs &args) {
   if (args.host_shape.size() != kDim4) {
-    MS_LOG(EXCEPTION) << "Invalid host shape, host shape dims:" << args.host_shape.size()
-                      << ", expect dims:" << kNchwDims;
+    MS_LOG(INTERNAL_EXCEPTION) << "Invalid host shape, host shape dims:" << args.host_shape.size()
+                               << ", expect dims:" << kNchwDims;
   }
   auto size = SizeToLong(abstract::TypeIdSize(args.src_data_type));
   if (size < 1) {
-    MS_LOG(EXCEPTION) << "Illegal dtype: " << args.src_data_type;
+    MS_LOG(INTERNAL_EXCEPTION) << "Illegal dtype: " << args.src_data_type;
   }
   return size;
 }
@@ -2004,5 +2026,52 @@ RangePair ShapeRangeTransfer::FRAC_Z_3DRange(const RangePair &ori_range, const T
   dst_range.push_back(c0);
   return dst_range;
 }
+void FormatHelper::InitInfo() {
+  info = {{kOpFormat_DEFAULT, FormatInfo(kOpFormat_DEFAULT, false)},
+          {kOpFormat_NC1HWC0, FormatInfo(kOpFormat_NCHW, true)},
+          {kOpFormat_ND, FormatInfo(kOpFormat_ND, false)},
+          {kOpFormat_NCHW, FormatInfo(kOpFormat_NCHW, false)},
+          {kOpFormat_NHWC, FormatInfo(kOpFormat_NHWC, false)},
+          {kOpFormat_FRAC_NZ, FormatInfo(kOpFormat_ND, true)},
+          {kOpFormat_FRAC_Z, FormatInfo(kOpFormat_NCHW, true)},
+          {kOpFormat_NDHWC, FormatInfo(kOpFormat_NCDHW, false)},
+          {kOpFormat_NCDHW, FormatInfo(kOpFormat_NCDHW, false)},
+          {kOpFormat_NDC1HWC0, FormatInfo(kOpFormat_NCDHW, true)},
+          {kOpFormat_FRACTAL_Z_3D, FormatInfo(kOpFormat_NCDHW, true)}};
+}
+
+FormatHelper &FormatHelper::GetInstance() noexcept {
+  static FormatHelper instance{};
+  return instance;
+}
+
+const std::string FormatHelper::GetBaseFormat(const std::string &format) {
+  const auto &iter = info.find(format);
+  if (iter != info.end()) {
+    return iter->second.baseFormat;
+  } else {
+    return "";
+  }
+}
+
+bool FormatHelper::IsBaseFormatType(const std::string &format) {
+  const auto &iter = info.find(format);
+  if (iter == info.end()) {
+    return false;
+  }
+
+  return iter->first == iter->second.baseFormat;
+}
+
+bool FormatHelper::IsPadded(const std::string &format) {
+  auto itr = info.find(format);
+  if (itr != info.end()) {
+    return itr->second.isPadded;
+  }
+  MS_LOG(INFO) << "unknown format type:" << format;
+  return true;
+}
+
+void FormatHelper::Clear() { info.clear(); }
 }  // namespace trans
 }  // namespace mindspore

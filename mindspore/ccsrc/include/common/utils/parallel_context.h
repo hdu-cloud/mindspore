@@ -22,7 +22,6 @@
 #include <memory>
 #include <string>
 #include <vector>
-
 #include "abstract/abstract_value.h"
 #include "ir/anf.h"
 #include "ir/func_graph.h"
@@ -41,14 +40,12 @@ constexpr char kDynamicProgramming[] = "dynamic_programming";
 constexpr char kRecursiveProgramming[] = "recursive_programming";
 constexpr char kShardingPropagation[] = "sharding_propagation";
 
-constexpr char kTraining[] = "training";
 constexpr char kAccumulation[] = "accumulation";
 
 constexpr char kAllGroupParallel[] = "all_group_parallel";
 constexpr char kSameServerGroupParallel[] = "same_server_group_parallel";
 constexpr char kNoGroupParallel[] = "no_group_parallel";
 
-constexpr char kIsFirstIteration[] = "is_first_iteration";
 constexpr char kPynativeShard[] = "pynative_shard";
 constexpr char kSkipAutoParallelCompile[] = "skip_auto_parallel_compile";
 constexpr char kKeepInputUnchanged[] = "keep_input_unchanged";
@@ -142,10 +139,16 @@ class COMMON_EXPORT ParallelContext {
     enable_all_gather_fusion_ = enable_all_gather_fusion;
   }
   bool enable_all_gather_fusion() const { return enable_all_gather_fusion_; }
+
   void set_enable_reduce_scatter_fusion(bool enable_reduce_scatter_fusion) {
     enable_reduce_scatter_fusion_ = enable_reduce_scatter_fusion;
   }
   bool enable_reduce_scatter_fusion() const { return enable_reduce_scatter_fusion_; }
+
+  void set_ops_strategy_json_config(const std::string &type, const std::string &path, const std::string &mode);
+  std::string strategy_json_config_file_type() const { return strategy_json_config_file_type_; }
+  std::string strategy_json_config_file_path() const { return strategy_json_config_file_path_; }
+  std::string strategy_json_config_file_mode() const { return strategy_json_config_file_mode_; }
 
   void set_strategy_ckpt_load_file(const std::string &strategy_ckpt_load_file);
   std::string strategy_ckpt_load_file() const { return strategy_ckpt_load_file_; }
@@ -158,6 +161,11 @@ class COMMON_EXPORT ParallelContext {
     enable_parallel_optimizer_ = enable_parallel_optimizer;
   }
   bool enable_parallel_optimizer() const { return enable_parallel_optimizer_; }
+
+  bool enable_fold_pipeline() const { return pipeline_segment_split_num_ > 1; }
+
+  void set_pipeline_segment_split_num(const int64_t segments);
+  int64_t pipeline_segment_split_num() const { return pipeline_segment_split_num_; }
 
   void set_hccl_test_available(bool hccl_test_available) { hccl_test_available_ = hccl_test_available; }
   bool hccl_test_available() const { return hccl_test_available_; }
@@ -179,24 +187,30 @@ class COMMON_EXPORT ParallelContext {
   }
   bool dataset_repeat_dim_right() const { return dataset_repeat_dim_right_; }
 
+  void set_direct_split(const bool direct_split) { direct_split_ = direct_split; }
+  bool direct_split() const { return direct_split_; }
+
   void Reset();
-  void ParallelParameterContextInitShape(const FuncGraphPtr &func_graph);
   void ParallelParameterContextRestoreShape(const FuncGraphPtr &func_graph, const ParameterPtr &param_node,
                                             const AbstractBasePtr &ptr) const;
-  void ParallelParameterContextCkptShape(const FuncGraphPtr &func_graph, const ParameterPtr &param_node,
-                                         const AbstractBasePtr &ptr) const;
   void set_sharding_propagation(const bool stra_pto);
   bool sharding_propagation() const { return sharding_propagation_; }
 
   void set_enable_micro_interleaved(const bool);
   bool enable_micro_interleaved() const { return enable_micro_interleaved_; }
 
+  void set_pipeline_micro_size(const size_t);
+  size_t pipeline_micro_size() const { return pipeline_micro_size_; }
+
   void set_do_transform(const bool);
   bool do_transform() const { return do_transform_; }
 
+  void set_stra_file_only_trainable_params(const bool);
+  bool stra_file_only_trainable_params() const { return stra_file_only_trainable_params_; }
+
  private:
   ParallelContext();
-  bool IsAutoParallelCareGraph(const FuncGraphPtr &func_graph) const;
+  bool ParallelContextCareGraph(const FuncGraphPtr &func_graph) const;
 
   bool gradients_mean_;
   bool full_batch_;
@@ -213,6 +227,8 @@ class COMMON_EXPORT ParallelContext {
   std::string parallel_mode_;
   std::string strategy_search_mode_;
   int64_t pipeline_stage_split_num_;
+  int64_t pipeline_segment_split_num_;
+  size_t pipeline_micro_size_;
   bool parameter_broadcast_;
   bool device_num_is_set_;
   bool fusion_threshold_is_set_;
@@ -221,13 +237,17 @@ class COMMON_EXPORT ParallelContext {
   bool enable_all_reduce_fusion_;
   bool enable_all_gather_fusion_;
   bool enable_reduce_scatter_fusion_;
+
   std::map<std::string, std::vector<uint32_t>> all_reduce_fusion_split_indices_;
   std::map<std::string, std::vector<uint32_t>> all_reduce_fusion_split_sizes_;
+  std::string strategy_json_config_file_type_;
+  std::string strategy_json_config_file_path_;
+  std::string strategy_json_config_file_mode_;
   std::string strategy_ckpt_load_file_;
   std::string strategy_ckpt_save_file_;
   std::string group_ckpt_save_file_;
   bool enable_parallel_optimizer_;
-  bool init_param_shape_;
+  bool enable_fold_pipeline_;
   std::string communi_parallel_mode_;
   int64_t optimizer_weight_shard_size_;
   bool optimizer_weight_shard_aggregated_save_;
@@ -241,7 +261,9 @@ class COMMON_EXPORT ParallelContext {
   bool sharding_propagation_;
   bool enable_micro_interleaved_ = false;
   bool do_transform_ = false;
+  bool stra_file_only_trainable_params_ = true;
   std::string fusion_mode_;
+  bool direct_split_ = false;
 };
 }  // namespace mindspore::parallel
 #endif  // MINDSPORE_CCSRC_INCLUDE_COMMON_UTILS_PARALLEL_CONTEXT_H_

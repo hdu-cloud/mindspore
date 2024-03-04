@@ -94,12 +94,12 @@ class PersistentData : public Data<T> {
   std::thread persist_thread_;
 
   // The file storage handle used to persist data.
-  std::shared_ptr<storage::StorageBase> storage_;
+  std::shared_ptr<storage::StorageBase<int, T>> storage_;
 };
 
 template <typename T>
 void PersistentData<T>::Initialize(const std::map<std::string, std::string> &storage_config) {
-  storage_ = std::make_shared<storage::LocalFile>(storage_config);
+  storage_ = std::make_shared<storage::LocalFile<int, T>>(storage_config);
 }
 
 template <typename T>

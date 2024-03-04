@@ -20,6 +20,8 @@
 namespace mindspore {
 namespace kernel {
 namespace {
+constexpr size_t kAdamInputsNum = 10;
+constexpr size_t kAdamOutputsNum = 3;
 constexpr size_t kIndexVar = 0;
 constexpr size_t kIndexM = 1;
 constexpr size_t kIndexV = 2;
@@ -34,7 +36,17 @@ constexpr size_t kIndexGrad = 9;
 
 bool AdamGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                             const std::vector<KernelTensorPtr> &outputs) {
-  kernel_name_ = base_operator->GetPrim()->name();
+  auto prim = base_operator->GetPrim();
+  MS_EXCEPTION_IF_NULL(prim);
+
+  if (prim->HasAttr("use_locking")) {
+    use_locikng_ = GetValue<bool>(prim->GetAttr("use_locking"));
+  }
+  if (prim->HasAttr("use_nesterov")) {
+    use_nesterov_ = GetValue<bool>(prim->GetAttr("use_nesterov"));
+  }
+
+  kernel_name_ = prim->name();
   batch_rank_ = base_operator->get_batch_rank();
   constexpr size_t input_num = 10;
   constexpr size_t output_num = 3;
@@ -58,6 +70,7 @@ int AdamGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::ve
     return ret;
   }
   input_elements_ = 0;
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kAdamInputsNum, kernel_name_);
 
   std::vector<int64_t> var_shape = inputs[kIndexVar]->GetShapeVector();
   std::vector<int64_t> beta1_power_shape = inputs[kIndexBeta1Power]->GetShapeVector();
@@ -66,8 +79,8 @@ int AdamGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::ve
 
   if (!IsSameShape(beta1_power_shape, beta2_power_shape)) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', the shapes of 'beta1_power' and 'beta2_power' must be the same, "
-                  << "but get the shapes of 'beta1_power': " << Vector2Str(beta1_power_shape)
-                  << " and 'beta2_power': " << Vector2Str(beta2_power_shape);
+                  << "but get the shapes of 'beta1_power': " << beta1_power_shape
+                  << " and 'beta2_power': " << beta2_power_shape;
     return KRET_RESIZE_FAILED;
   }
 
@@ -75,7 +88,7 @@ int AdamGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::ve
     MS_LOG(ERROR) << "For '" << kernel_name_
                   << "', the shape size of 'lr' must be equal to 'batch_rank', "
                      "but got the shape of 'lr': "
-                  << Vector2Str(lr_shape) << " and 'batch_rank': " << batch_rank_;
+                  << lr_shape << " and 'batch_rank': " << batch_rank_;
     return KRET_RESIZE_FAILED;
   }
 
@@ -95,7 +108,7 @@ int AdamGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::ve
     if (var_shape.size() < lr_shape.size()) {
       MS_LOG(ERROR) << "For '" << kernel_name_
                     << "', the shape size of 'var' must be greater than 'lr_shape', but got the shape of 'var': "
-                    << Vector2Str(var_shape) << " and 'lr_shape': " << Vector2Str(lr_shape);
+                    << var_shape << " and 'lr_shape': " << lr_shape;
       return KRET_RESIZE_FAILED;
     }
     std::vector<int64_t> var_batch_shape(var_shape.begin(), var_shape.begin() + batch_rank_);
@@ -103,7 +116,7 @@ int AdamGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::ve
       MS_LOG(ERROR) << "For '" << kernel_name_
                     << "', the batch shape of 'var' must be the same as the shape of 'lr', "
                        "but got the batch shape of 'var': "
-                    << Vector2Str(var_batch_shape) << " and the shape of 'lr': " << Vector2Str(lr_shape);
+                    << var_batch_shape << " and the shape of 'lr': " << lr_shape;
       return KRET_RESIZE_FAILED;
     }
   }
@@ -124,8 +137,9 @@ bool AdamGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const
   T *beta2 = GetDeviceAddress<T>(inputs, kIndex7);
   T *epsilon = GetDeviceAddress<T>(inputs, kIndex8);
   T *gradient = GetDeviceAddress<T>(inputs, kIndex9);
-  ApplyAdam(input_elements_, batch_size_, gradient, beta1_power, beta2_power, learning_rate, beta1, beta2, epsilon,
-            variable, m, v, reinterpret_cast<cudaStream_t>(stream_ptr));
+  auto status = ApplyAdam(input_elements_, batch_size_, gradient, beta1_power, beta2_power, learning_rate, beta1, beta2,
+                          epsilon, variable, m, v, use_nesterov_, reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

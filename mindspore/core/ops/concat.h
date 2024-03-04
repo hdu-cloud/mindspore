@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_CONCAT_H_
 #define MINDSPORE_CORE_OPS_CONCAT_H_
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -41,8 +41,8 @@ class MIND_API Concat : public BaseOperator {
   /// \return axis.
   int64_t get_axis() const;
 };
-abstract::AbstractBasePtr ConcatInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                      const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr ConcatInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                               const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_CONCAT_H_

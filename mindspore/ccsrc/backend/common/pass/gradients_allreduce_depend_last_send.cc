@@ -16,6 +16,9 @@
 
 #include "backend/common/pass/gradients_allreduce_depend_last_send.h"
 #include <algorithm>
+#include "mindspore/core/ops/other_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/common/utils/parallel_context.h"
 
@@ -29,6 +32,13 @@ bool GradientsAllReduceDependLastSend::Run(const FuncGraphPtr &graph) {
   }
   int32_t split_stage_num = parallel::ParallelContext::GetInstance()->pipeline_stage_split_num();
   if (split_stage_num <= 1) {
+    return false;
+  }
+  auto enable_fold_pipeline = parallel::ParallelContext::GetInstance()->enable_fold_pipeline();
+  if (enable_fold_pipeline) {
+    return false;
+  }
+  if (common::GetEnv("MS_ENABLE_FRONTEND_SCHEDULING_OPTIMIZATION") == "1") {
     return false;
   }
   std::vector<AnfNodePtr> node_list = TopoSort(graph->get_return());
@@ -66,6 +76,10 @@ bool GradientsAllReduceDependLastSend::InsertDependBetweenAllReduceAndSend(const
                                                                            const std::vector<CNodePtr> &addn_list,
                                                                            const CNodePtr &last_send) const {
   bool changed = false;
+  if (last_send == nullptr) {
+    MS_LOG(DEBUG) << "last depend is null " << graph->ToString();
+    return false;
+  }
   FuncGraphManagerPtr manager = graph->manager();
   MS_EXCEPTION_IF_NULL(manager);
   for (auto &addn : addn_list) {

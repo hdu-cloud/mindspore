@@ -88,15 +88,16 @@ class ReshapeInfo : public OperatorInfo {
   Status InferTensorInfo() override;
   Status InferDevMatrixShape() override;
   Status InferTensorLayout(TensorLayouts *inputs_layout, TensorLayouts *outputs_layout);
-  Status GetAttrs() override;
-  Strategies GetOutputsStrategy();
+  Status GetAttrs() override { return SUCCESS; }
 
  private:
-  Status GetParameterInput();
   Status ComputeReplaceOp();
+  Status ComputeReplaceOpForDynamicShape();
   void InferTensorInfoByLayout();
   void device_number();
   Status InferDefaultLayout(const Shape &shape, TensorLayout *const layout);
+  std::vector<int64_t> GetInputShape(const AnfNodePtr &shape_input_node);
+  void ChangeDynamicDstShapeForSkipRedistribution(const AnfNodePtr &shape_input_node);
 
   int64_t dev_num_;
   int64_t pre_operator_index_;

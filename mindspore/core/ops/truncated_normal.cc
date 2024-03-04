@@ -14,15 +14,37 @@
  * limitations under the License.
  */
 #include "ops/truncated_normal.h"
-#include <string>
-#include <algorithm>
+
+#include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/named.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/base/type_id.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/random_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -61,7 +83,7 @@ abstract::ShapePtr TruncatedNormalInferShape(const PrimitivePtr &primitive,
   if (shape_v.size() != kInpuDims) {
     MS_EXCEPTION(ValueError) << "The input tensor must be a 1-D tensor.";
   }
-  if (!input_args[0]->BuildValue()->isa<AnyValue>() && !input_args[0]->BuildValue()->isa<None>()) {
+  if (!input_args[0]->BuildValue()->isa<ValueAny>() && !input_args[0]->BuildValue()->isa<None>()) {
     std::vector<int64_t> out_shape;
     int64_t shape_m = 1;
     if (input_type_element->type_id() == kNumberTypeInt32) {
@@ -92,16 +114,11 @@ abstract::ShapePtr TruncatedNormalInferShape(const PrimitivePtr &primitive,
     }
     return std::make_shared<abstract::Shape>(out_shape);
   } else {
-    const uint32_t input_shapes = static_cast<uint32_t>(std::pow(max_length, 1.0 / shape_v[0]));
     std::vector<int64_t> output_shape;
-    ShapeVector shape_min;
-    ShapeVector shape_max;
     for (int i = 0; i < shape_v[0]; i++) {
       output_shape.push_back(abstract::Shape::kShapeDimAny);
-      shape_min.push_back(0);
-      shape_max.push_back(input_shapes);
     }
-    return std::make_shared<abstract::Shape>(output_shape, shape_min, shape_max);
+    return std::make_shared<abstract::Shape>(output_shape);
   }
 }
 
@@ -112,6 +129,7 @@ TypePtr TruncatedNormalInferType(const PrimitivePtr &prim, const std::vector<Abs
   const std::set<TypePtr> valid_input_types = {kInt32, kInt64};
   (void)CheckAndConvertUtils::CheckTensorTypeValid("shape", input_args[0]->BuildType(), valid_input_types, prim_name);
   auto dtype_value = prim->GetAttr("dtype");
+  MS_EXCEPTION_IF_NULL(dtype_value);
   if (!dtype_value->isa<Type>()) {
     MS_EXCEPTION(TypeError) << "The dtype of " + prim_name + " is invalid!";
   }
@@ -147,8 +165,28 @@ AbstractBasePtr TruncatedNormalInfer(const abstract::AnalysisEnginePtr &, const 
   CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterEqual, kInputNum, primitive->name());
   auto infer_type = TruncatedNormalInferType(primitive, input_args);
   auto infer_shape = TruncatedNormalInferShape(primitive, input_args);
-  return abstract::MakeAbstract(infer_shape, infer_type);
+  return abstract::MakeAbstractTensor(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(TruncatedNormal, prim::kPrimTruncatedNormal, TruncatedNormalInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGTruncatedNormalInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return TruncatedNormalInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return TruncatedNormalInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return TruncatedNormalInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(TruncatedNormal, prim::kPrimTruncatedNormal, AGTruncatedNormalInfer, false);
 }  // namespace ops
 }  // namespace mindspore

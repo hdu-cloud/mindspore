@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 #ifndef MINDSPORE_CCSRC_RUNTIME_HARDWARE_DEVICE_CONTEXT_MANAGER_H_
 #define MINDSPORE_CCSRC_RUNTIME_HARDWARE_DEVICE_CONTEXT_MANAGER_H_
 
+#include <set>
 #include <map>
 #include <string>
 #include <memory>
@@ -44,6 +45,8 @@ class PluginLoader {
 namespace device {
 using DeviceContextCreator = std::function<std::shared_ptr<DeviceContext>(const DeviceContextKey &)>;
 
+const DeviceContext *FetchRealDeviceContext(const AnfNodePtr &node, const DeviceContext *device_context);
+
 class BACKEND_EXPORT DeviceContextManager {
  public:
   static DeviceContextManager &GetInstance();
@@ -54,12 +57,14 @@ class BACKEND_EXPORT DeviceContextManager {
   void WaitTaskFinishOnDevice() const;
   void UnloadPlugin();
   std::string GetErrorMsg() const;
+  void BindDeviceCtx() const;
 
  private:
   DeviceContextManager() = default;
   ~DeviceContextManager() = default;
   DISABLE_COPY_AND_ASSIGN(DeviceContextManager);
   void LoadPlugin();
+  void SelectGpuPlugin(const std::string &cuda_home, const std::set<std::string> &file_names);
 
   std::map<std::string, void *> plugin_maps_;
   bool load_init_;

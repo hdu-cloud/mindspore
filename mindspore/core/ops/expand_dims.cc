@@ -14,19 +14,19 @@
  * limitations under the License.
  */
 
-#include <string>
+#include "ops/expand_dims.h"
 #include <algorithm>
 #include <memory>
+#include <set>
+#include <string>
 #include <vector>
-#include "ops/expand_dims.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "utils/log_adapter.h"
 #include "mindapi/src/helper.h"
-#include "include/common/utils/utils.h"
-
-#include "ops/primitive_c.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -46,45 +46,41 @@ abstract::ShapePtr ExpandDimsInferShape(const PrimitivePtr &primitive, const std
   const int64_t rank = SizeToLong(x_shape.size());
 
   constexpr auto kExpandDimsInputsNum = 2;
-  int64_t axis = 0;
+  std::vector<int64_t> axis;
   if (input_args.size() == kExpandDimsInputsNum) {
     auto input_value = input_args[kInputIndex1]->BuildValue();
-    if (input_args[kInputIndex1]->isa<abstract::AbstractScalar>()) {
-      axis = GetValue<int64_t>(input_value);
-    } else if (input_args[kInputIndex1]->isa<abstract::AbstractTensor>()) {
-      if (input_value->isa<tensor::Tensor>()) {
-        auto axis_vec = CheckAndConvertUtils::CheckTensorIntValue("axis", input_value, prim_name);
-        if (axis_vec.size() != 1) {
-          MS_LOG(EXCEPTION) << " The input number of ExpandDims axis must be int, but got " << axis_vec;
-        }
-        axis = axis_vec[0];
-      } else {
-        ShapeVector out_shape;
-        (void)out_shape.insert(out_shape.end(), x_shape.size() + 1, -1);
-        return std::make_shared<abstract::Shape>(out_shape);
-      }
+    if (input_value->isa<tensor::Tensor>()) {
+      axis = CheckAndConvertUtils::CheckTensorIntValue("axis", input_value, prim_name);
+    } else if (input_value->isa<Int64Imm>()) {
+      (void)axis.emplace_back(GetValue<int64_t>(input_value));
+    } else if (input_value->isa<Int32Imm>()) {
+      (void)axis.emplace_back(static_cast<int64_t>(GetValue<int32_t>(input_value)));
+    } else if (input_value->isa<ValueAny>()) {
+      ShapeVector out_shape = {abstract::Shape::kShapeRankAny};
+      return std::make_shared<abstract::Shape>(out_shape);
+    } else {
+      MS_EXCEPTION(TypeError) << "For " << primitive->name()
+                              << ", the type of axis must be Tensor/Int64Imm/Int32Imm, which got "
+                              << input_value->ToString();
     }
   } else if (input_args.size() == 1) {
     auto value_ptr = primitive->GetAttr(kAxis);
     if (value_ptr->isa<tensor::Tensor>()) {
-      auto axis_vec = CheckAndConvertUtils::CheckTensorIntValue("axis", value_ptr, prim_name);
-      if (axis_vec.size() != 1) {
-        MS_LOG(EXCEPTION) << " The input number of ExpandDims axis must be int, but got " << axis_vec;
-      }
-      axis = axis_vec[0];
+      axis = CheckAndConvertUtils::CheckTensorIntValue("axis", value_ptr, prim_name);
     } else {
-      axis = GetValue<int64_t>(primitive->GetAttr(kAxis));
+      (void)axis.emplace_back(GetValue<int64_t>(primitive->GetAttr(kAxis)));
     }
   } else {
-    MS_LOG(EXCEPTION) << " The input number of ExpandDims must be 1 or 2, but got " << input_args.size();
+    MS_EXCEPTION(ValueError) << " The input number of ExpandDims must be 1 or 2, but got " << input_args.size();
   }
-
-  CheckAndConvertUtils::CheckInRange<int64_t>("axis", axis, kIncludeBoth, {-rank - 1, rank}, prim_name);
-  if (axis < 0) {
-    axis += rank + 1;
+  for (size_t idx = 0; idx < axis.size(); ++idx) {
+    if (axis[idx] > rank || axis[idx] < -rank - 1) {
+      MS_EXCEPTION(ValueError) << "For " << primitive->name() << ", the value of axis should be in range of ["
+                               << -rank - 1 << ", " << rank << "], but got axis: " << axis;
+    }
+    axis[idx] = axis[idx] < 0 ? axis[idx] + rank + 1 : axis[idx];
+    (void)x_shape.insert(x_shape.begin() + axis[idx], 1);
   }
-
-  (void)x_shape.insert(x_shape.begin() + axis, 1);
   return std::make_shared<abstract::Shape>(x_shape);
 }
 
@@ -109,7 +105,7 @@ TypePtr ExpandDimsInferType(const PrimitivePtr &prim, const std::vector<Abstract
                               << num_value->ToString();
     }
   } else {
-    MS_LOG(EXCEPTION) << " The num of ExpandDims must be 1 or 2, but got " << input_args.size();
+    MS_EXCEPTION(ValueError) << " The num of ExpandDims must be 1 or 2, but got " << input_args.size();
   }
 
   return input_args[kInputIndex0]->BuildType();
@@ -122,7 +118,7 @@ AbstractBasePtr ExpandDimsInfer(const abstract::AnalysisEnginePtr &, const Primi
   MS_EXCEPTION_IF_NULL(primitive);
   constexpr size_t input_num = 2;
   if (input_args.size() > input_num) {
-    MS_EXCEPTION(ValueError) << "For primitive[" << primitive->name() << "], the input numbe must be 1 or 2, but got "
+    MS_EXCEPTION(ValueError) << "For primitive[" << primitive->name() << "], the input number must be 1 or 2, but got "
                              << input_args.size();
   }
   // Only for checking nullptr
@@ -131,7 +127,26 @@ AbstractBasePtr ExpandDimsInfer(const abstract::AnalysisEnginePtr &, const Primi
   auto infer_shape = ExpandDimsInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_HOST_DEPENDS(kNameExpandDims, {1});
-REGISTER_PRIMITIVE_EVAL_IMPL(ExpandDims, prim::kPrimExpandDims, ExpandDimsInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGExpandDimsInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ExpandDimsInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ExpandDimsInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ExpandDimsInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ExpandDims, prim::kPrimExpandDims, AGExpandDimsInfer, false);
 }  // namespace ops
 }  // namespace mindspore

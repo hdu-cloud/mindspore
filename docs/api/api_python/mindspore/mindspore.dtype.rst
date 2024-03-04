@@ -29,6 +29,7 @@ mindspore.dtype
       ``mindspore.float16`` ,  ``mindspore.half``      16位浮点数
       ``mindspore.float32`` ,  ``mindspore.single``    32位浮点数
       ``mindspore.float64`` ,  ``mindspore.double``    64位浮点数
+      ``mindspore.bfloat16``                           16位脑浮点数
       ``mindspore.complex64``                          64位复数
       ``mindspore.complex128``                         128位复数
       ==============================================   =============================
@@ -40,7 +41,7 @@ mindspore.dtype
       ============================   =================
       类型                            描述
       ============================   =================
-      ``Tensor``                      MindSpore中的张量类型。数据格式采用NCHW。详情请参考 `tensor <https://www.gitee.com/mindspore/mindspore/blob/r2.0.0-alpha/mindspore/python/mindspore/common/tensor.py>`_ 。
+      ``Tensor``                      MindSpore中的张量类型。数据格式采用NCHW。详情请参考 `tensor <https://www.gitee.com/mindspore/mindspore/blob/master/mindspore/python/mindspore/common/tensor.py>`_ 。
       ``bool_``                       布尔型，值为 ``True`` 或者 ``False`` 。
       ``int_``                        整数标量。
       ``uint``                        无符号整数标量。
@@ -55,46 +56,3 @@ mindspore.dtype
       ``symbolic_key``                在 ``env_type`` 中用作变量的键的变量的值。
       ``env_type``                    用于存储函数的自由变量的梯度，其中键是自由变量节点的 `symbolic_key` ，值是梯度。
       ============================   =================
-
-    - **树形拓扑**
-
-      以上定义的数据类型遵从如下的树形拓扑结构：
-
-      .. code-block::
-
-          └─────── number
-              │   ├─── bool_
-              │   ├─── int_
-              │   │   ├─── int8, byte
-              │   │   ├─── int16, short
-              │   │   ├─── int32, intc
-              │   │   └─── int64, intp
-              │   ├─── uint
-              │   │   ├─── uint8, ubyte
-              │   │   ├─── uint16, ushort
-              │   │   ├─── uint32, uintc
-              │   │   └─── uint64, uintp
-              │   ├─── float_
-              │   │    ├─── float16
-              │   │    ├─── float32
-              │   │    └─── float64
-              │   └─── complex
-              │       ├─── complex64
-              │       └─── complex128
-              ├─── tensor
-              │   ├─── Array[Float32]
-              │   └─── ...
-              ├─── list_
-              │   ├─── List[Int32,Float32]
-              │   └─── ...
-              ├─── tuple_
-              │   ├─── Tuple[Int32,Float32]
-              │   └─── ...
-              ├─── function
-              │   ├─── Func
-              │   ├─── Func[(Int32, Float32), Int32]
-              │   └─── ...
-              ├─── type_type
-              ├─── type_none
-              ├─── symbolic_key
-              └─── env_type

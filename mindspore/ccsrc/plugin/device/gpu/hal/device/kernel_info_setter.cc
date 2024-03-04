@@ -19,6 +19,15 @@
 #include <memory>
 #include <tuple>
 #include <string>
+#include <set>
+#include "kernel/framework_utils.h"
+#include "ops/random_op_name.h"
+#include "ops/nn_optimizer_op_name.h"
+#include "ops/sparse_ops.h"
+#include "ops/conv_pool_ops.h"
+#include "ops/nn_ops.h"
+#include "ops/array_ops.h"
+#include "ops/framework_ops.h"
 #include "kernel/common_utils.h"
 #include "plugin/factory/ms_factory.h"
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
@@ -26,15 +35,15 @@
 #include "kernel/kernel_build_info.h"
 #include "kernel/oplib/opinfo.h"
 #include "kernel/oplib/oplib.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "plugin/device/gpu/kernel/custom/custom_aot_gpu_kernel.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/cuda_common.h"
 #include "utils/ms_context.h"
 #include "utils/ms_utils.h"
 #include "include/common/utils/utils.h"
-#include "mindspore/core/ops/core_ops.h"
-#include "mindspore/core/ops/op_name.h"
+#include "ops/op_name.h"
+#include "plugin/device/cpu/kernel/cpu_kernel.h"
 
 namespace mindspore {
 namespace device {
@@ -42,26 +51,27 @@ namespace gpu {
 using AnfAlgo = mindspore::session::AnfRuntimeAlgorithm;
 using mindspore::kernel::KernelBuildInfo;
 namespace {
+constexpr auto kPatternOpaque = "Opaque";
 static const std::set<std::string> kVmapGPUWhiteList = {kUnsortedSegmentSumOpName,
                                                         kUnsortedSegmentProdOpName,
                                                         kUniqueWithPadOpName,
                                                         kMaskedFillOpName,
                                                         kDataFormatDimMapOpName,
-                                                        kInstanceNorm,
+                                                        kInstanceNormOpName,
                                                         kInstanceNormGradOpName,
                                                         kRandomChoiceWithMaskOpName,
-                                                        kUniformCandidateSamplerOpName,
-                                                        kApplyAdamOpName,
+                                                        kAdamOpName,
                                                         kSplitOpName,
                                                         kApplyAdagradDAOpName,
                                                         kApplyRMSPropOpName,
                                                         kApplyCenteredRMSPropOpName,
                                                         kRandomShuffleOpName,
                                                         kApplyAdamWithAmsgradOpName,
+                                                        kApplyAdamWithAmsgradV2OpName,
                                                         kApplyProximalAdagradOpName,
-                                                        prim::kMatrixBandPart,
-                                                        prim::kDiag,
-                                                        prim::kSparseSegmentMean};
+                                                        kMatrixBandPartOpName,
+                                                        kDiagOpName,
+                                                        kSparseSegmentMeanOpName};
 
 kernel::OpImplyType GetImplyType(KernelType kernel_type) {
   kernel::OpImplyType imply_type =
@@ -120,12 +130,12 @@ std::string GetSupportedTypesStr(const CNodePtr &kernel_node, KernelType kernel_
           std::string type_list = "input[";
           auto attr = kernel_attr_list[attr_index];
           for (size_t input_index = 0; input_index < attr.GetInputSize(); ++input_index) {
-            type_list = type_list + TypeIdToString(attr.GetInputAttr(input_index).first) +
+            type_list = type_list + TypeIdToString(attr.GetInputAttr(input_index).dtype) +
                         ((input_index == (attr.GetInputSize() - 1)) ? "" : " ");
           }
           type_list = type_list + "], output[";
           for (size_t input_index = 0; input_index < attr.GetOutputSize(); ++input_index) {
-            type_list = type_list + TypeIdToString(attr.GetOutputAttr(input_index).first) +
+            type_list = type_list + TypeIdToString(attr.GetOutputAttr(input_index).dtype) +
                         ((input_index == (attr.GetOutputSize() - 1)) ? "" : " ");
           }
           supported_type_lists = supported_type_lists + type_list + "]; ";
@@ -239,7 +249,6 @@ bool SelectCustomKernel(const CNodePtr &kernel_node, const std::shared_ptr<Kerne
   if (kernel_info_list.empty()) {
     MS_LOG(EXCEPTION) << "Not find valid metadata of op[" << op_name << "].";
   }
-
   bool match = std::any_of(kernel_info_list.begin(), kernel_info_list.end(),
                            [&](const std::shared_ptr<KernelBuildInfo> &alternative_kernel_info) {
                              return CheckKernelInfo(alternative_kernel_info, selected_kernel_info, true);
@@ -347,7 +356,7 @@ bool IsNeedProcessFormatInfo(const CNodePtr &kernel_node, const std::vector<Type
   }
 
   auto outputs_format_position = iter->second.second;
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(kernel_node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(kernel_node);
   TransformFormatPosition(&outputs_format_position, output_num);
   for (const auto &output_format_position : outputs_format_position) {
     auto output_shape = common::AnfAlgo::GetOutputInferShape(kernel_node, output_format_position);
@@ -384,7 +393,7 @@ void UpdateKernelFormatInfo(const CNodePtr &kernel_node, const std::vector<TypeI
   }
 
   auto outputs_format_position = iter->second.second;
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(kernel_node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(kernel_node);
   TransformFormatPosition(&outputs_format_position, output_num);
   for (const auto &output_format_position : outputs_format_position) {
     if (output_format_position >= outputs_format->size()) {
@@ -403,7 +412,9 @@ void UpdateKernelFormatInfo(const CNodePtr &kernel_node, const std::vector<TypeI
 void SetGraphKernelInfo(const CNodePtr &kernel_node, const FuncGraphPtr &func_graph) {
   MS_EXCEPTION_IF_NULL(kernel_node);
   MS_EXCEPTION_IF_NULL(func_graph);
-  std::vector<AnfNodePtr> node_list, input_list, output_list;
+  std::vector<AnfNodePtr> node_list;
+  std::vector<AnfNodePtr> input_list;
+  std::vector<AnfNodePtr> output_list;
   kernel::GetValidKernelNodes(func_graph, &node_list, &input_list, &output_list);
 
   std::vector<std::string> graph_input_format;
@@ -453,7 +464,7 @@ void SetGraphKernelInfo(const CNodePtr &kernel_node, const FuncGraphPtr &func_gr
   graph_info_builder.SetOutputsDeviceType(graph_output_type);
   graph_info_builder.SetProcessor(kernel::Processor::CUDA);
   graph_info_builder.SetKernelType(KernelType::AKG_KERNEL);
-  graph_info_builder.SetFusionType(kernel::FusionType::OPAQUE);
+  graph_info_builder.SetFusionType(kPatternOpaque);
   auto graph_selected_info = graph_info_builder.Build();
   MS_EXCEPTION_IF_NULL(graph_selected_info);
   AnfAlgo::SetSelectKernelBuildInfo(graph_selected_info, kernel_node.get());
@@ -468,7 +479,7 @@ std::pair<std::string, ExceptionType> PrintUnsupportedTypeWarning(const CNodePtr
   std::string build_type = "input[";
   std::for_each(std::begin(inputs_type), std::end(inputs_type),
                 [&build_type](auto i) { build_type += TypeIdToString(i) + " "; });
-  build_type += "] output[";
+  build_type += "] and output[";
   std::for_each(std::begin(outputs_type), std::end(outputs_type),
                 [&build_type](auto i) { build_type += TypeIdToString(i) + " "; });
   build_type += "]";
@@ -477,11 +488,12 @@ std::pair<std::string, ExceptionType> PrintUnsupportedTypeWarning(const CNodePtr
   ExceptionType etype;
   if (supported_type_lists.empty()) {
     ss << "Unsupported op [" << kernel_name << "] on GPU, Please confirm whether the device target setting is correct, "
-       << "or refer to 'mindspore.ops' at https://www.mindspore.cn to query the operator support list.";
+       << "or refer to 'mindspore.ops' at https://www.mindspore.cn to query the operator support list."
+       << trace::DumpSourceLines(kernel_node);
     etype = NotSupportError;
   } else {
     ss << "Select GPU operator[" << kernel_name << "] fail! Unsupported data type!\nThe supported data types are "
-       << supported_type_lists << ", but get " << build_type;
+       << supported_type_lists << ", but get " << build_type << trace::DumpSourceLines(kernel_node);
     etype = TypeError;
   }
   return {ss.str(), etype};
@@ -498,6 +510,12 @@ void FormatTransformChecker::CheckSupportFormatTransform(const std::shared_ptr<s
     return;
   }
   if (ms_context->get_param<int>(MS_CTX_EXECUTION_MODE) == kPynativeMode) {
+    format_transform_ = false;
+    return;
+  }
+  // Format transform will case the different infer shape and device shape, so the dynamic shape graph can't be support.
+  if (kernel_graph->is_dynamic_shape()) {
+    MS_LOG(INFO) << "Dynamic shape doesn't support the automatic format transform function.";
     format_transform_ = false;
     return;
   }
@@ -541,6 +559,9 @@ bool GetSelectKernelResult(const CNodePtr &kernel_node,
                            const std::shared_ptr<KernelBuildInfo::KernelBuildInfoBuilder> &builder,
                            KernelType *kernel_type,
                            std::vector<std::tuple<size_t, TypeId, TypeId>> *input_reduce_index) {
+  MS_EXCEPTION_IF_NULL(builder);
+  MS_EXCEPTION_IF_NULL(kernel_type);
+  MS_EXCEPTION_IF_NULL(input_reduce_index);
   bool result = false;
   std::vector<std::tuple<size_t, TypeId, TypeId>> output_reduce_index;
   if (IsPrimitiveCNode(kernel_node, prim::kPrimCustom)) {
@@ -577,7 +598,7 @@ bool GetSelectKernelResult(const CNodePtr &kernel_node,
       }
     }
 
-    if (!result && (!common::AnfAlgo::IsControlOpExecInBackend(kernel_node))) {
+    if (!result && (!common::AnfAlgo::IsBpropCutOpExecInBackend(kernel_node))) {
       result = SelectAkgKernel(kernel_node, builder->Build());
       *kernel_type = AKG_KERNEL;
     }
@@ -585,6 +606,53 @@ bool GetSelectKernelResult(const CNodePtr &kernel_node,
     result = SelectAkgKernel(kernel_node, builder->Build());
   }
   return result;
+}
+
+std::pair<bool, std::pair<std::string, ExceptionType>> GetSelectKernelObjectTypeResult(const CNodePtr &kernel_node,
+                                                                                       KernelType kernel_type) {
+  auto kernel_name = common::AnfAlgo::GetCNodeName(kernel_node);
+  // Only the kernel nodes that register kernel attr can support the backoff.
+  bool backoff_support_condition =
+    ((kernel_type == UNKNOWN_KERNEL_TYPE) && !IsPrimitiveCNode(kernel_node, prim::kPrimCustom) &&
+     !common::AnfAlgo::IsGraphKernel(kernel_node));
+  std::vector<kernel::KernelAttr> kernel_attrs;
+  if (kernel::NativeGpuKernelModFactory::GetInstance().IsRegistered(kernel_name)) {
+    kernel_attrs = kernel::NativeGpuKernelModFactory::GetInstance().GetGpuSupportedList(kernel_name);
+  } else if (backoff_support_condition) {
+    // Kernel that is not supported can try to backed off on CPU and use the CPU kernel attrs to set object type.
+    kernel_attrs = kernel::NativeCpuKernelMod::GetCpuSupportedList(kernel_name);
+  }
+
+  // Some dynamic kernels may not set the kernel attrs on GPU. Skip check only supports the tuple fold.
+  if (kernel_attrs.empty() || kernel_attrs[0].GetSkipCheck()) {
+    auto input_object_types =
+      kernel::TypeIdToKernelObjectTypeForTupleUnfold(AnfAlgo::GetAllInputObjectType(kernel_node));
+    auto output_object_types =
+      kernel::TypeIdToKernelObjectTypeForTupleUnfold(AnfAlgo::GetAllOutputObjectType(kernel_node));
+    kernel::SetKernelObjectTypeBuildInfo(kernel_node, input_object_types, output_object_types);
+    if (!kernel_attrs.empty()) {
+      auto kernel_build_info = AnfAlgo::GetSelectKernelBuildInfo(kernel_node);
+      kernel_build_info->SetOpType(kernel::OpType::SKIP);
+    }
+    return {true, {}};
+  }
+
+  std::vector<kernel::KernelAttr> object_selected_kernel_attrs;
+  if (!kernel::SelectKernelByObjectType(kernel_node, kernel_attrs, &object_selected_kernel_attrs, true) &&
+      !kernel::SelectKernelByObjectType(kernel_node, kernel_attrs, &object_selected_kernel_attrs, false)) {
+    return {false, kernel::KernelObjectTypeNotSupportWarning(kernel_node)};
+  }
+
+  if (IsTupleNestedOutputKernelAttr(object_selected_kernel_attrs[0])) {
+    return {false,
+            {kernel::KernelObjectTypeNotSupportWarning(kernel_node).first +
+               " Multiple tuple outputs is not supported for registered kernel attr: " +
+               kernel::FetchPrintInfoByKernelAttr(object_selected_kernel_attrs[0]),
+             TypeError}};
+  }
+
+  kernel::SetKernelObjectTypeWithSelectedAttr(kernel_node, object_selected_kernel_attrs[0]);
+  return {true, {}};
 }
 
 std::pair<std::string, ExceptionType> SetKernelInfoWithMsg(const CNodePtr &kernel_node, KernelType kernel_type) {
@@ -595,47 +663,72 @@ std::pair<std::string, ExceptionType> SetKernelInfoWithMsg(const CNodePtr &kerne
     SetGraphKernelInfo(kernel_node, func_graph);
     return {};
   }
+  auto builder = std::make_shared<KernelBuildInfo::KernelBuildInfoBuilder>();
+  AnfAlgo::SetSelectKernelBuildInfo(builder->Build(), kernel_node.get());
+  auto selected = GetSelectKernelObjectTypeResult(kernel_node, kernel_type);
+  if (!selected.first) {
+    return selected.second;
+  }
+  std::vector<std::string> inputs_format;
+  std::vector<TypeId> inputs_type;
+  size_t input_num = common::AnfAlgo::GetInputTensorNum(kernel_node);
+  for (size_t input_index = 0; input_index < input_num; ++input_index) {
+    (void)inputs_format.emplace_back(kOpFormat_DEFAULT);
+    inputs_type.push_back(common::AnfAlgo::GetPrevNodeOutputInferDataType(kernel_node, input_index));
+  }
+
+  std::vector<std::string> outputs_format;
+  std::vector<TypeId> outputs_type;
+  auto output_kernel_object_types = builder->Build()->GetAllOutputKernelObjectTypes();
+  if (output_kernel_object_types.size() == 1 && output_kernel_object_types[0] == kernel::KernelObjectType::TUPLE) {
+    outputs_type = {common::AnfAlgo::GetOutputInferDataType(kernel_node, 0)};
+    outputs_format = {kOpFormat_DEFAULT};
+  } else {
+    size_t output_num = AnfAlgo::GetOutputElementNum(kernel_node);
+    for (size_t output_index = 0; output_index < output_num; ++output_index) {
+      (void)outputs_format.emplace_back(kOpFormat_DEFAULT);
+      outputs_type.push_back(common::AnfAlgo::GetOutputInferDataType(kernel_node, output_index));
+    }
+  }
+  std::string origin_data_format = kOpFormat_DEFAULT;
+  if (IsNeedProcessFormatInfo(kernel_node, inputs_type)) {
+    UpdateKernelFormatInfo(kernel_node, inputs_type, &inputs_format, &outputs_format, &origin_data_format);
+  }
+  builder->SetOriginDataFormat(origin_data_format);
+  builder->SetInputsFormat(inputs_format);
+  builder->SetInputsDeviceType(inputs_type);
+  builder->SetOutputsFormat(outputs_format);
+  builder->SetOutputsDeviceType(outputs_type);
+  kernel::UnfoldKernelBuildInfo(kernel_node);
+  if (!common::AnfAlgo::HasNodeAttr(kAttrDynInputSizes, kernel_node)) {
+    kernel::SetDynamicInputSizeAttr(kernel_node);
+  }
+  MS_LOG(INFO) << kernel_node->fullname_with_scope() << " kernel attr info: "
+               << kernel::FetchPrintInfoByKernelAttr(kernel::GetKernelAttrFromBuildInfo(builder->Build()));
+
+  std::vector<std::tuple<size_t, TypeId, TypeId>> input_reduce_index;
+  bool result = GetSelectKernelResult(kernel_node, builder, &kernel_type, &input_reduce_index);
+  SetTensorDeviceInfo(*(builder->Build()), kernel_node, input_reduce_index);
+
+  // Return the kernel select failure info.
   if (common::AnfAlgo::HasNodeAttr(ops::kBatchRank, kernel_node) &&
       !kVmapGPUWhiteList.count(common::AnfAlgo::GetCNodeName(kernel_node))) {
+    builder->SetKernelType(UNKNOWN_KERNEL_TYPE);
+    builder->SetProcessor(kernel::Processor::UNKNOWN);
     std::stringstream ss;
     ss << common::AnfAlgo::GetCNodeName(kernel_node)
        << " does not support 'batch_rank' on GPU, which means that 'vmap' cannot support "
        << common::AnfAlgo::GetCNodeName(kernel_node) << " on GPU currently.";
     return {ss.str(), NotSupportError};
   }
-  std::vector<std::string> inputs_format;
-  std::vector<TypeId> inputs_type;
-  size_t input_num = common::AnfAlgo::GetInputTensorNum(kernel_node);
-  for (size_t input_index = 0; input_index < input_num; ++input_index) {
-    inputs_format.emplace_back(kOpFormat_DEFAULT);
-    inputs_type.push_back(common::AnfAlgo::GetPrevNodeOutputInferDataType(kernel_node, input_index));
-  }
-  std::vector<std::string> outputs_format;
-  std::vector<TypeId> outputs_type;
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(kernel_node);
-  for (size_t output_index = 0; output_index < output_num; ++output_index) {
-    outputs_format.emplace_back(kOpFormat_DEFAULT);
-    outputs_type.push_back(common::AnfAlgo::GetOutputInferDataType(kernel_node, output_index));
-  }
-  std::string origin_data_format = kOpFormat_DEFAULT;
-  if (IsNeedProcessFormatInfo(kernel_node, inputs_type)) {
-    UpdateKernelFormatInfo(kernel_node, inputs_type, &inputs_format, &outputs_format, &origin_data_format);
-  }
-  auto builder = std::make_shared<KernelBuildInfo::KernelBuildInfoBuilder>();
-  builder->SetOriginDataFormat(origin_data_format);
-  builder->SetInputsFormat(inputs_format);
-  builder->SetInputsDeviceType(inputs_type);
-  builder->SetOutputsFormat(outputs_format);
-  builder->SetOutputsDeviceType(outputs_type);
-  std::vector<std::tuple<size_t, TypeId, TypeId>> input_reduce_index;
-  bool result = GetSelectKernelResult(kernel_node, builder, &kernel_type, &input_reduce_index);
-  if (!result && (!common::AnfAlgo::IsControlOpExecInBackend(kernel_node))) {
+  if (!result && (!common::AnfAlgo::IsBpropCutOpExecInBackend(kernel_node))) {
+    builder->SetKernelType(UNKNOWN_KERNEL_TYPE);
+    builder->SetProcessor(kernel::Processor::UNKNOWN);
     return PrintUnsupportedTypeWarning(kernel_node, inputs_type, outputs_type, kernel_type);
   }
+
   builder->SetKernelType(kernel_type);
   builder->SetProcessor(kernel::Processor::CUDA);
-  AnfAlgo::SetSelectKernelBuildInfo(builder->Build(), kernel_node.get());
-  SetTensorDeviceInfo(*(builder->Build()), kernel_node, input_reduce_index);
   return {};
 }
 
@@ -644,7 +737,7 @@ void GPUGraphKernelInfo::SetKernelInfo(const CNodePtr &kernel_node, KernelType k
   if (msg.empty()) {
     return;
   }
-  MS_EXCEPTION(etype) << msg;
+  MS_EXCEPTION(etype) << "#umsg#Kernel select failed:#umsg#" << msg;
 }
 }  // namespace gpu
 }  // namespace device

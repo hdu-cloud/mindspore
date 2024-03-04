@@ -23,16 +23,19 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <algorithm>
 #include "src/tensor.h"
 
 namespace mindspore::lite::micro {
 class CoderContext {
  public:
-  CoderContext();
+  explicit CoderContext(int model_index);
 
   ~CoderContext() = default;
 
   std::vector<std::string> init_contents() const { return initialContent_; }
+
+  void set_model_name(const std::string &model_name) { model_name_ = model_name; }
 
   void set_code_blocks(const std::vector<std::string> &code_block) { code_blocks_ = code_block; }
   std::vector<std::string> code_blocks() const { return code_blocks_; }
@@ -69,7 +72,29 @@ class CoderContext {
   void set_saved_weights(const std::map<std::string, Tensor *> &saved_weights) { saved_weights_ = saved_weights; }
   std::map<std::string, Tensor *> saved_weights() const { return saved_weights_; }
 
-  void set_total_buffer_size(size_t size) { total_buffer_size_ = size; }
+  void set_origin_weights(const std::vector<Tensor *> &origin_weights) { origin_weights_ = origin_weights; }
+  const std::vector<Tensor *> &origin_weights() const { return origin_weights_; }
+
+  void set_auxiliary_weights(const std::map<Tensor *, std::pair<Tensor *, std::string>> &auxiliary_weights) {
+    auxiliary_weights_ = auxiliary_weights;
+  }
+  const std::map<Tensor *, std::pair<Tensor *, std::string>> &auxiliary_weights() const { return auxiliary_weights_; }
+
+  bool JudgeIsValid(bool keep_origin_weight) {
+    if (!keep_origin_weight) {
+      return true;
+    }
+    return std::all_of(saved_weights_.begin(), saved_weights_.end(),
+                       [this](const std::pair<std::string, Tensor *> &item) {
+                         return std::find(this->origin_weights_.begin(), this->origin_weights_.end(), item.second) !=
+                                this->origin_weights_.end();
+                       });
+  }
+
+  void set_total_buffer_size(size_t size) {
+    total_buffer_size_ = size;
+    max_buffer_size_ = std::max(max_buffer_size_, size);
+  }
   size_t total_buffer_size() const { return total_buffer_size_; }
 
   void set_graph_inputs(const std::vector<Tensor *> &graph_inputs) { graph_inputs_ = graph_inputs; }
@@ -81,6 +106,9 @@ class CoderContext {
     graph_train_outputs_ = graph_train_outputs;
   }
 
+  void set_end_flag(bool end_flag) { end_flag_ = end_flag; }
+
+  std::string model_name() const { return model_name_; }
   std::vector<Tensor *> graph_inputs() const { return graph_inputs_; }
   std::vector<Tensor *> graph_outputs() const { return graph_outputs_; }
   std::vector<Tensor *> graph_eval_outputs() const { return graph_eval_outputs_; }
@@ -103,6 +131,8 @@ class CoderContext {
 
   std::vector<std::string> GetInitWeightSizeCode() const;
 
+  int GetCurModelIndex() { return model_index_; }
+
   std::set<std::string> c_files() const { return c_files_; }
   void set_c_files(const std::set<std::string> &files) { c_files_.insert(files.begin(), files.end()); }
 
@@ -112,12 +142,21 @@ class CoderContext {
   std::set<std::string> asm_files() const { return asm_files_; }
   void set_asm_files(const std::set<std::string> &files) { asm_files_.insert(files.begin(), files.end()); }
 
+  size_t max_buffer_size() { return max_buffer_size_; }
+
+  bool end_flag() { return end_flag_; }
+
  private:
+  std::string model_name_;
   std::vector<Tensor *> graph_inputs_;
   std::vector<Tensor *> graph_outputs_;
   std::vector<Tensor *> graph_eval_outputs_;
   std::vector<Tensor *> graph_train_outputs_;
-  // primitive const tensors, parsed from model, without packed.
+  // primitive const tensors, parsed from model, without packed. Maybe exist tensor is not used.
+  std::vector<Tensor *> origin_weights_;
+  // assistant content for origin-weights if needed.
+  std::map<Tensor *, std::pair<Tensor *, std::string>> auxiliary_weights_;
+  // primitive const tensors, parsed from model, with packed. Tensors are all real used.
   std::map<std::string, Tensor *> saved_weights_;
   // all tensors, include parsed from model and packed tensors.
   std::map<Tensor *, std::string> tensors_map_;
@@ -137,8 +176,6 @@ class CoderContext {
   std::string pack_weight_size_name_;
   // code blocks store the tensor will be packed runtime
   std::vector<std::string> initialContent_;
-  // operator C Lang files list, depended by the net.c. it will be add to CMakeLists.txt
-  std::set<std::string> c_files_;
   // when codegen generate the code for ARM64 OR ARM32, we provide server optimized artimetic used the assembly
   // instructions. asm_files store the assembly file names
   std::set<std::string> asm_files_;
@@ -153,6 +190,11 @@ class CoderContext {
   std::vector<std::string> after_inference_code_blocks_;
   std::vector<std::string> weight_buffer_size_code_blocks_;
   std::size_t weight_buffer_size_ = 0;
+  int model_index_;
+  bool end_flag_{false};
+  // operator C Lang files list, depended by the net.c. it will be add to CMakeLists.txt
+  static std::set<std::string> c_files_;
+  static size_t max_buffer_size_;
 };
 }  // namespace mindspore::lite::micro
 #endif  // MINDSPORE_LITE_MICRO_CODER_CONTEXT_H_

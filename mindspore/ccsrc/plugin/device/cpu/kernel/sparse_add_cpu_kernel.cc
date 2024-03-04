@@ -27,7 +27,6 @@ namespace kernel {
 // Value check constant
 constexpr size_t kInputNum = 7;
 constexpr size_t kOutputNum = 3;
-constexpr size_t kNumOfColumn = 2;
 // Input idx constant
 constexpr size_t kAIndicesIdx = 0;
 constexpr size_t kAValuesIdx = 1;
@@ -43,7 +42,6 @@ constexpr size_t kSumShapeIdx = 2;
 
 bool SparseAddCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                  const std::vector<KernelTensorPtr> &outputs) {
-  outputs_ = outputs;
   auto kernel_ptr = std::dynamic_pointer_cast<ops::SparseAdd>(base_operator);
   MS_EXCEPTION_IF_NULL(kernel_ptr);
   kernel_name_ = kernel_ptr->name();
@@ -69,7 +67,6 @@ bool SparseAddCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std
 int SparseAddCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                   const std::vector<KernelTensorPtr> &outputs,
                                   const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost) {
-  outputs_ = outputs;
   dense_shape_ = inputs.at(kAShapeIdx)->GetShapeVector();
   auto ret = KernelMod::Resize(base_operator, inputs, outputs, inputsOnHost);
   if (ret == KRET_UNKNOWN_OUT_SHAPE) {
@@ -83,6 +80,10 @@ int SparseAddCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const st
     output_size_list_[kSumValuesIdx] = max_value_out_size;
     output_size_list_[kSumShapeIdx] = input_size_list_[kAShapeIdx];
   }
+  auto dims = inputs.at(0)->GetShapeVector()[1];
+  if (dims >= 0) {
+    indices_column_ = LongToSize(dims);
+  }
   return ret;
 }
 
@@ -90,8 +91,8 @@ template <typename T>
 int SparseAddCpuKernelMod::CompareTwoIndices(const T &a_indices, const T &b_indices, const int64_t a_row,
                                              const int64_t b_row, const size_t dims) const {
   for (int64_t dim = 0; dim < SizeToLong(dims); dim++) {
-    auto a_idx = a_indices[a_row * 2 + dim];
-    auto b_idx = b_indices[b_row * 2 + dim];
+    auto a_idx = a_indices[a_row * dims + dim];
+    auto b_idx = b_indices[b_row * dims + dim];
     if (a_idx < b_idx) {
       return -1;
     } else if (a_idx > b_idx) {
@@ -105,7 +106,7 @@ template <typename T, typename S, typename K>
 bool SparseAddCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs, const std::vector<AddressPtr> &,
                                          const std::vector<kernel::AddressPtr> &outputs) {
   if (inputs.size() != kInputNum) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the number of inputs should be231 " << kInputNum << ", but got "
+    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the number of inputs should be " << kInputNum << ", but got "
                       << inputs.size() << " input(s).";
   }
   if (outputs.size() != kOutputNum) {
@@ -124,17 +125,18 @@ bool SparseAddCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &
   auto sum_values = static_cast<S *>(outputs[kSumValuesIdx]->addr);
   auto sum_shape = static_cast<T *>(outputs[kSumShapeIdx]->addr);
 
-  const int64_t a_indices_num = SizeToLong(inputs[kAIndicesIdx]->size) / SizeToLong((sizeof(T)) * 2);
-  const int64_t b_indices_num = SizeToLong(inputs[kBIndicesIdx]->size) / SizeToLong((sizeof(T)) * 2);
+  const int64_t a_indices_num = SizeToLong(inputs[kAIndicesIdx]->size) / SizeToLong((sizeof(T)) * indices_column_);
+  const int64_t b_indices_num = SizeToLong(inputs[kBIndicesIdx]->size) / SizeToLong((sizeof(T)) * indices_column_);
 
   // Use double pointer to calculate the sum of two inputs
-  T i = 0, j = 0;
+  T i = 0;
+  T j = 0;
   S sum_ab = 0;
   std::vector<std::pair<bool, T>> whole_indices;
   std::vector<S> whole_values;
   whole_indices.reserve(LongToSize(a_indices_num + b_indices_num));
   while (i < a_indices_num && j < b_indices_num) {
-    switch (CompareTwoIndices(a_indices, b_indices, i, j, kNumOfColumn)) {
+    switch (CompareTwoIndices(a_indices, b_indices, i, j, indices_column_)) {
       case -1:
         (void)whole_indices.emplace_back(true, i);
         whole_values.push_back(a_values[i]);
@@ -175,18 +177,20 @@ bool SparseAddCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &
     auto copy_from_a = whole_indices[num].first;
     auto index_from_input = whole_indices[num].second;
     if (copy_from_a) {
-      for (size_t column = 0; column < kNumOfColumn; column++) {
-        sum_indices[num * kNumOfColumn + column] = a_indices[LongToSize(index_from_input) * kNumOfColumn + column];
+      for (size_t column = 0; column < indices_column_; column++) {
+        sum_indices[num * indices_column_ + column] =
+          a_indices[LongToSize(index_from_input) * indices_column_ + column];
       }
     } else {
-      for (size_t column = 0; column < kNumOfColumn; column++) {
-        sum_indices[num * kNumOfColumn + column] = b_indices[LongToSize(index_from_input) * kNumOfColumn + column];
+      for (size_t column = 0; column < indices_column_; column++) {
+        sum_indices[num * indices_column_ + column] =
+          b_indices[LongToSize(index_from_input) * indices_column_ + column];
       }
     }
     sum_values[num] = whole_values[num];
   }
 
-  for (size_t num_out = 0; num_out < kNumOfColumn; num_out++) {
+  for (size_t num_out = 0; num_out < indices_column_; num_out++) {
     sum_shape[num_out] = a_shape[num_out];
   }
 
@@ -194,7 +198,7 @@ bool SparseAddCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &
   std::vector<int64_t> out_indices_shape;
   std::vector<int64_t> out_values_shape;
   (void)out_indices_shape.emplace_back(SizeToLong(whole_indices.size()));
-  (void)out_indices_shape.emplace_back(SizeToLong(kNumOfColumn));
+  (void)out_indices_shape.emplace_back(SizeToLong(indices_column_));
   (void)out_values_shape.emplace_back(SizeToLong(whole_values.size()));
   outputs_[kSumIndicesIdx]->SetShapeVector(out_indices_shape);
   outputs_[kSumValuesIdx]->SetShapeVector(out_values_shape);

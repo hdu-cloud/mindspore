@@ -15,11 +15,12 @@
 """Communication management API"""
 import os
 from mindspore import context
+from mindspore import log as logger
 from mindspore.parallel._ps_context import _is_ps_mode, _is_role_pserver, _is_role_sched, _get_ps_context
 from mindspore.communication._comm_helper import Backend, _get_rank_helper, _get_size_helper, \
     _get_world_rank_from_group_rank_helper, _get_group_rank_from_world_rank_helper, \
     _create_group_helper, _destroy_group_helper, HCCL_WORLD_COMM_GROUP, NCCL_WORLD_COMM_GROUP, \
-    MCCL_WORLD_COMM_GROUP, _get_local_rank_helper, _get_local_size_helper, GlobalComm, \
+    MCCL_WORLD_COMM_GROUP, DEVICE_TO_BACKEND, _get_local_rank_helper, _get_local_size_helper, GlobalComm, \
     _check_mpi_envs, _set_elegant_exit_handle
 from mindspore._c_expression import init_hccl, finalize_hccl, init_cluster, MSContext, ms_ctx_param
 
@@ -37,6 +38,9 @@ def _set_rank_from_mpi():
     ompi_rank_id = os.getenv("OMPI_COMM_WORLD_RANK")
     ompi_device_id = os.getenv("OMPI_COMM_WORLD_LOCAL_RANK")
     ompi_rank_size = os.getenv("OMPI_COMM_WORLD_SIZE")
+    if ompi_rank_id and os.getenv("MS_ROLE"):
+        logger.warning("Launching distributed job using both dynamic cluster and OpenMPI at the same time. "
+                       "MindSpore will prioritize the use of dynamic cluster. Do not set env from OpenMPI.")
     if ompi_rank_id:
         os.environ["RANK_ID"] = ompi_rank_id
     if ompi_device_id:
@@ -89,18 +93,20 @@ def _check_parallel_envs():
 
 def init(backend_name=None):
     """
-    Initialize distributed backends required by communication services, e.g. HCCL/NCCL. It is usually used in
-    distributed parallel scenarios and set before using communication services.
+    Initialize distributed backends required by communication services, e.g. ``"hccl"`` / ``"nccl"`` / ``"mccl"``.
+    It is usually used in distributed parallel scenarios and set before using communication services.
 
     Note:
-        - The full name of HCCL is Huawei Collective Communication Library.
-        - The full name of NCCL is NVIDIA Collective Communication Library.
-        - The full name of MCCL is MindSpore Collective Communication Library.
+        - The full name of ``"hccl"`` is Huawei Collective Communication Library(HCCL).
+        - The full name of ``"nccl"`` is NVIDIA Collective Communication Library(NCCL).
+        - The full name of ``"mccl"`` is MindSpore Collective Communication Library(MCCL).
 
     Args:
-        backend_name (str): Backend, using HCCL/NCCL/MCCL. HCCL should be used for Ascend hardware platforms and
-                            NCCL for GPU hardware platforms. If not set, inference is automatically made based on the
-                            hardware platform type (device_target). Default: None.
+        backend_name (str): Backend, using ``"hccl"`` / ``"nccl"`` / ``"mccl"``.
+                            ``"hccl"`` should be used for Ascend hardware platforms,
+                            ``"nccl"`` for GPU hardware platforms and ``"mccl"`` for CPU hardware platforms.
+                            If not set, inference is automatically made based on the hardware
+                            platform type (device_target). Default: ``None`` .
 
     Raises:
         TypeError: If `backend_name` is not a string.
@@ -109,19 +115,22 @@ def init(backend_name=None):
                       have not been exported when backend is HCCL.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         .. note::
             Before running the following examples, you need to configure the communication environment variables.
 
             For the Ascend devices, users need to prepare the rank table, set rank_id and device_id.
-            Please see the `Ascend tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_ascend.html#preparations>`_
+            Please see the `rank table Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/rank_table.html>`_
             for more details.
 
-            For the GPU devices, users need to prepare the host file and mpi, please see the `GPU tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_gpu.html#preparation>`_ .
+            For the GPU devices, users need to prepare the host file and mpi, please see the `mpirun Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/mpirun.html>`_ .
+
+            For the CPU device, users need to write a dynamic cluster startup script, please see the `Dynamic Cluster
+            Startup <https://www.mindspore.cn/tutorials/experts/en/master/parallel/dynamic_cluster.html>`_ .
 
         >>> from mindspore.communication import init
         >>> init()
@@ -151,31 +160,38 @@ def init(backend_name=None):
                 raise RuntimeError("Parameter server and scheduler should use 'CPU' as backend instead of 'Ascend'")
             if _get_ps_context("worker_num") == 1:
                 GlobalComm.INITED = True
+                _set_elegant_exit_handle()
                 return
         if device_target != "Ascend":
-            raise RuntimeError("For 'init', the argument  'backend_name' should be 'Ascend' to init hccl, "
-                               "but got {}".format(device_target))
+            raise RuntimeError("For 'init', the argument 'backend_name' should be '{}' to init '{}', "
+                               "but got 'hccl'.".format(DEVICE_TO_BACKEND[device_target], device_target))
         if not host_init:
             _check_parallel_envs()
         GlobalComm.BACKEND = Backend("hccl")
         init_hccl()
         GlobalComm.WORLD_COMM_GROUP = HCCL_WORLD_COMM_GROUP
     elif backend_name == "nccl":
+        if device_target != "GPU":
+            raise RuntimeError("For 'init', the argument 'backend_name' should be '{}' to init '{}', "
+                               "but got 'nccl'.".format(DEVICE_TO_BACKEND[device_target], device_target))
         init_cluster()
+        GlobalComm.BACKEND = Backend("nccl")
         GlobalComm.WORLD_COMM_GROUP = NCCL_WORLD_COMM_GROUP
     elif backend_name == "mccl":
         init_cluster()
+        GlobalComm.BACKEND = Backend("mccl")
         GlobalComm.WORLD_COMM_GROUP = MCCL_WORLD_COMM_GROUP
     else:
-        raise RuntimeError("For 'init', the argument 'backend_name' must be nccl while 'device_target' is GPU, "
-                           "but got the 'backend_name' : hccl.")
+        raise RuntimeError("For 'init', the argument 'backend_name' must be one of 'hccl', 'nccl' and 'mccl', "
+                           "but got 'backend_name' : {}".format(backend_name))
+
     GlobalComm.INITED = True
     _set_elegant_exit_handle()
 
 
 def release():
     """
-    Release distributed resource. e.g. HCCL/NCCL.
+    Release distributed resource. e.g. HCCL/NCCL/MCCL.
 
     Note:
         This method should be used after init().
@@ -184,19 +200,22 @@ def release():
         RuntimeError: If failed to release distributed resource.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         .. note::
             Before running the following examples, you need to configure the communication environment variables.
 
             For the Ascend devices, users need to prepare the rank table, set rank_id and device_id.
-            Please see the `Ascend tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_ascend.html#preparations>`_
+            Please see the `rank table Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/rank_table.html>`_
             for more details.
 
-            For the GPU devices, users need to prepare the host file and mpi, please see the `GPU tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_gpu.html#preparation>`_ .
+            For the GPU devices, users need to prepare the host file and mpi, please see the `mpirun Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/mpirun.html>`_ .
+
+            For the CPU device, users need to write a dynamic cluster startup script, please see the `Dynamic Cluster
+            Startup <https://www.mindspore.cn/tutorials/experts/en/master/parallel/dynamic_cluster.html>`_ .
 
         >>> from mindspore.communication import init, release
         >>> init()
@@ -214,7 +233,7 @@ def get_rank(group=GlobalComm.WORLD_COMM_GROUP):
 
     Args:
         group (str): The communication group to work on. Normally, the group should be created by create_group,
-                     otherwise, using the default group. Default: WORLD_COMM_GROUP.
+                     otherwise, using the default group. Default: ``GlobalComm.WORLD_COMM_GROUP`` .
 
     Returns:
         int, the rank ID of the calling process within the group.
@@ -222,22 +241,25 @@ def get_rank(group=GlobalComm.WORLD_COMM_GROUP):
     Raises:
         TypeError: If group is not a string.
         ValueError: If backend is invalid.
-        RuntimeError: If HCCL/NCCL is not available.
+        RuntimeError: If HCCL/NCCL/MCCL is not available.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         .. note::
             Before running the following examples, you need to configure the communication environment variables.
 
             For the Ascend devices, users need to prepare the rank table, set rank_id and device_id.
-            Please see the `Ascend tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_ascend.html#preparations>`_
+            Please see the `rank table Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/rank_table.html>`_
             for more details.
 
-            For the GPU devices, users need to prepare the host file and mpi, please see the `GPU tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_gpu.html#preparation>`_ .
+            For the GPU devices, users need to prepare the host file and mpi, please see the `mpirun Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/mpirun.html>`_ .
+
+            For the CPU device, users need to write a dynamic cluster startup script, please see the `Dynamic Cluster
+            Startup <https://www.mindspore.cn/tutorials/experts/en/master/parallel/dynamic_cluster.html>`_ .
 
         >>> from mindspore.communication import init, get_rank
         >>> init()
@@ -256,12 +278,12 @@ def get_local_rank(group=GlobalComm.WORLD_COMM_GROUP):
     Gets local rank ID for current device in specified collective communication group.
 
     Note:
-        GPU version of MindSpore doesn't support this method.
+        This method isn't supported in GPU and CPU versions of MindSpore.
         This method should be used after init().
 
     Args:
         group (str): The communication group to work on. Normally, the group should be created by create_group,
-                     otherwise, using the default group. Default: WORLD_COMM_GROUP.
+                     otherwise, using the default group. Default: ``GlobalComm.WORLD_COMM_GROUP``.
 
     Returns:
         int, the local rank ID of the calling process within the group.
@@ -269,7 +291,7 @@ def get_local_rank(group=GlobalComm.WORLD_COMM_GROUP):
     Raises:
         TypeError: If group is not a string.
         ValueError: If backend is invalid.
-        RuntimeError: If HCCL is not available or MindSpore is GPU version.
+        RuntimeError: If HCCL is not available or MindSpore is GPU/CPU version.
 
     Supported Platforms:
         ``Ascend``
@@ -279,15 +301,18 @@ def get_local_rank(group=GlobalComm.WORLD_COMM_GROUP):
             Before running the following examples, you need to configure the communication environment variables.
 
             For the Ascend devices, users need to prepare the rank table, set rank_id and device_id.
-            Please see the `Ascend tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_ascend.html#preparations>`_
+            Please see the `rank table Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/rank_table.html>`_
             for more details.
 
-            For the GPU devices, users need to prepare the host file and mpi, please see the `GPU tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_gpu.html#preparation>`_ .
+            For the GPU devices, users need to prepare the host file and mpi, please see the `mpirun Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/mpirun.html>`_ .
+
+            For the CPU device, users need to write a dynamic cluster startup script, please see the `Dynamic Cluster
+            Startup <https://www.mindspore.cn/tutorials/experts/en/master/parallel/dynamic_cluster.html>`_ .
 
         >>> import mindspore as ms
-        >>> from mindspore.communication.management import init, get_rank, get_local_rank
+        >>> from mindspore.communication import init, get_rank, get_local_rank
         >>> ms.set_context(device_target="Ascend")
         >>> ms.set_auto_parallel_context(device_num=16) # 2 server, each server with 8 NPU.
         >>> init()
@@ -311,7 +336,7 @@ def get_group_size(group=GlobalComm.WORLD_COMM_GROUP):
 
     Args:
         group (str): The communication group to work on. Normally, the group should be created by create_group,
-                     otherwise, using the default group. Default: WORLD_COMM_GROUP.
+                     otherwise, using the default group. Default: ``GlobalComm.WORLD_COMM_GROUP``.
 
     Returns:
         int, the rank size of the group.
@@ -319,25 +344,28 @@ def get_group_size(group=GlobalComm.WORLD_COMM_GROUP):
     Raises:
         TypeError: If group is not a string.
         ValueError: If backend is invalid.
-        RuntimeError: If HCCL/NCCL is not available.
+        RuntimeError: If HCCL/NCCL/MCCL is not available.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         .. note::
             Before running the following examples, you need to configure the communication environment variables.
 
             For the Ascend devices, users need to prepare the rank table, set rank_id and device_id.
-            Please see the `Ascend tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_ascend.html#preparations>`_
+            Please see the `rank table Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/rank_table.html>`_
             for more details.
 
-            For the GPU devices, users need to prepare the host file and mpi, please see the `GPU tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_gpu.html#preparation>`_ .
+            For the GPU devices, users need to prepare the host file and mpi, please see the `mpirun Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/mpirun.html>`_ .
+
+            For the CPU device, users need to write a dynamic cluster startup script, please see the `Dynamic Cluster
+            Startup <https://www.mindspore.cn/tutorials/experts/en/master/parallel/dynamic_cluster.html>`_ .
 
         >>> import mindspore as ms
-        >>> from mindspore.communication.management import init, get_group_size
+        >>> from mindspore.communication import init, get_group_size
         >>> ms.set_auto_parallel_context(device_num=8)
         >>> init()
         >>> group_size = get_group_size()
@@ -355,12 +383,12 @@ def get_local_rank_size(group=GlobalComm.WORLD_COMM_GROUP):
     Gets local rank size of the specified collective communication group.
 
     Note:
-        GPU version of MindSpore doesn't support this method.
+        This method isn't supported in GPU and CPU versions of MindSpore.
         This method should be used after init().
 
     Args:
         group (str): The communication group to work on. The group is created by create_group
-                     or the default world communication group. Default: WORLD_COMM_GROUP.
+                     or the default world communication group. Default: ``GlobalComm.WORLD_COMM_GROUP`` .
 
     Returns:
         int, the local rank size where the calling process is within the group.
@@ -368,7 +396,7 @@ def get_local_rank_size(group=GlobalComm.WORLD_COMM_GROUP):
     Raises:
         TypeError: If group is not a string.
         ValueError: If backend is invalid.
-        RuntimeError: If HCCL is not available or MindSpore is GPU version.
+        RuntimeError: If HCCL is not available or MindSpore is GPU/CPU version.
 
     Supported Platforms:
         ``Ascend``
@@ -378,15 +406,18 @@ def get_local_rank_size(group=GlobalComm.WORLD_COMM_GROUP):
             Before running the following examples, you need to configure the communication environment variables.
 
             For the Ascend devices, users need to prepare the rank table, set rank_id and device_id.
-            Please see the `Ascend tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_ascend.html#preparations>`_
+            Please see the `rank table Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/rank_table.html>`_
             for more details.
 
-            For the GPU devices, users need to prepare the host file and mpi, please see the `GPU tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_gpu.html#preparation>`_ .
+            For the GPU devices, users need to prepare the host file and mpi, please see the `mpirun Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/mpirun.html>`_ .
+
+            For the CPU device, users need to write a dynamic cluster startup script, please see the `Dynamic Cluster
+            Startup <https://www.mindspore.cn/tutorials/experts/en/master/parallel/dynamic_cluster.html>`_ .
 
         >>> import mindspore as ms
-        >>> from mindspore.communication.management import init, get_local_rank_size
+        >>> from mindspore.communication import init, get_local_rank_size
         >>> ms.set_context(device_target="Ascend")
         >>> ms.set_auto_parallel_context(device_num=16) # 2 server, each server with 8 NPU.
         >>> init()
@@ -406,7 +437,7 @@ def get_world_rank_from_group_rank(group, group_rank_id):
     the rank ID in the specified user communication group.
 
     Note:
-        GPU version of MindSpore doesn't support this method.
+        This method isn't supported in GPU and CPU versions of MindSpore.
         The parameter group should not be "hccl_world_group".
         This method should be used after init().
 
@@ -420,7 +451,7 @@ def get_world_rank_from_group_rank(group, group_rank_id):
     Raises:
         TypeError: If `group_rank_id` is not an integer or the group is not a string.
         ValueError: If group is 'hccl_world_group' or backend is invalid.
-        RuntimeError: If HCCL is not available or MindSpore is GPU version.
+        RuntimeError: If HCCL is not available or MindSpore is GPU/CPU version.
 
     Supported Platforms:
         ``Ascend``
@@ -430,22 +461,27 @@ def get_world_rank_from_group_rank(group, group_rank_id):
             Before running the following examples, you need to configure the communication environment variables.
 
             For the Ascend devices, users need to prepare the rank table, set rank_id and device_id.
-            Please see the `Ascend tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_ascend.html#preparations>`_
+            Please see the `rank table Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/rank_table.html>`_
             for more details.
 
-            For the GPU devices, users need to prepare the host file and mpi, please see the `GPU tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_gpu.html#preparation>`_ .
+            For the GPU devices, users need to prepare the host file and mpi, please see the `mpirun Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/mpirun.html>`_
 
+            For the CPU device, users need to write a dynamic cluster startup script, please see the `Dynamic Cluster
+            Startup <https://www.mindspore.cn/tutorials/experts/en/master/parallel/dynamic_cluster.html>`_ .
+
+        >>> import mindspore as ms
         >>> from mindspore import set_context
-        >>> from mindspore.communication.management import init, create_group, get_world_rank_from_group_rank
-        >>> set_context(device_target="Ascend")
+        >>> from mindspore.communication import init, create_group, get_world_rank_from_group_rank, get_rank
+        >>> set_context(mode=ms.GRAPH_MODE, device_target="Ascend")
         >>> init()
         >>> group = "0-4"
         >>> rank_ids = [0,4]
-        >>> create_group(group, rank_ids)
-        >>> world_rank_id = get_world_rank_from_group_rank(group, 1)
-        >>> print("world_rank_id is: ", world_rank_id)
+        >>> if get_rank() in rank_ids:
+        ...     create_group(group, rank_ids)
+        ...     world_rank_id = get_world_rank_from_group_rank(group, 1)
+        ...     print("world_rank_id is: ", world_rank_id)
         world_rank_id is: 4
     """
     if not isinstance(group, str):
@@ -460,7 +496,7 @@ def get_group_rank_from_world_rank(world_rank_id, group):
     the rank ID in the world communication group.
 
     Note:
-        GPU version of MindSpore doesn't support this method.
+        This method isn't supported in GPU and CPU versions of MindSpore.
         The parameter group should not be "hccl_world_group".
         This method should be used after init().
 
@@ -474,7 +510,7 @@ def get_group_rank_from_world_rank(world_rank_id, group):
     Raises:
         TypeError: If world_rank_id is not an integer or the group is not a string.
         ValueError: If group is 'hccl_world_group' or backend is invalid.
-        RuntimeError: If HCCL is not available or MindSpore is GPU version.
+        RuntimeError: If HCCL is not available or MindSpore is GPU/CPU version.
 
     Supported Platforms:
         ``Ascend``
@@ -484,22 +520,27 @@ def get_group_rank_from_world_rank(world_rank_id, group):
             Before running the following examples, you need to configure the communication environment variables.
 
             For the Ascend devices, users need to prepare the rank table, set rank_id and device_id.
-            Please see the `Ascend tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_ascend.html#preparations>`_
+            Please see the `rank table Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/rank_table.html>`_
             for more details.
 
-            For the GPU devices, users need to prepare the host file and mpi, please see the `GPU tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_gpu.html#preparation>`_ .
+            For the GPU devices, users need to prepare the host file and mpi, please see the `mpirun Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/mpirun.html>`_
 
+            For the CPU device, users need to write a dynamic cluster startup script, please see the `Dynamic Cluster
+            Startup <https://www.mindspore.cn/tutorials/experts/en/master/parallel/dynamic_cluster.html>`_ .
+
+        >>> import mindspore as ms
         >>> from mindspore import set_context
-        >>> from mindspore.communication.management import init, create_group, get_group_rank_from_world_rank
-        >>> set_context(device_target="Ascend")
+        >>> from mindspore.communication import init, create_group, get_group_rank_from_world_rank, get_rank
+        >>> set_context(mode=ms.GRAPH_MODE, device_target="Ascend")
         >>> init()
         >>> group = "0-4"
         >>> rank_ids = [0,4]
-        >>> create_group(group, rank_ids)
-        >>> group_rank_id = get_group_rank_from_world_rank(4, group)
-        >>> print("group_rank_id is: ", group_rank_id)
+        >>> if get_rank() in rank_ids:
+        ...     create_group(group, rank_ids)
+        ...     group_rank_id = get_group_rank_from_world_rank(4, group)
+        ...     print("group_rank_id is: ", group_rank_id)
         group_rank_id is: 1
     """
     if not isinstance(group, str):
@@ -513,7 +554,7 @@ def create_group(group, rank_ids):
     Create a user collective communication group.
 
     Note:
-        GPU version of MindSpore doesn't support this method.
+        This method isn't supported in GPU and CPU versions of MindSpore.
         The size of rank_ids should be larger than 1, rank_ids should not have duplicate data.
         This method should be used after init().
         Only support global single communication group in PyNative mode if you do not start with mpirun.
@@ -525,7 +566,7 @@ def create_group(group, rank_ids):
     Raises:
         TypeError: If group is not a string or `rank_ids` is not a list.
         ValueError: If `rank_ids` size is not larger than 1, or `rank_ids` has duplicate data, or backend is invalid.
-        RuntimeError: If HCCL is not available or MindSpore is GPU version.
+        RuntimeError: If HCCL is not available or MindSpore is GPU/CPU version.
 
     Supported Platforms:
         ``Ascend``
@@ -535,22 +576,27 @@ def create_group(group, rank_ids):
             Before running the following examples, you need to configure the communication environment variables.
 
             For the Ascend devices, users need to prepare the rank table, set rank_id and device_id.
-            Please see the `Ascend tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_ascend.html#preparations>`_
+            Please see the `rank table Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/rank_table.html>`_
             for more details.
 
-            For the GPU devices, users need to prepare the host file and mpi, please see the `GPU tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_gpu.html#preparation>`_ .
+            For the GPU devices, users need to prepare the host file and mpi, please see the `mpirun Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/mpirun.html>`_ .
 
+            For the CPU device, users need to write a dynamic cluster startup script, please see the `Dynamic Cluster
+            Startup <https://www.mindspore.cn/tutorials/experts/en/master/parallel/dynamic_cluster.html>`_ .
+
+        >>> import mindspore as ms
         >>> from mindspore import set_context
         >>> import mindspore.ops as ops
-        >>> from mindspore.communication.management import init, create_group
-        >>> set_context(device_target="Ascend")
+        >>> from mindspore.communication import init, create_group, get_rank
+        >>> set_context(mode=ms.GRAPH_MODE, device_target="Ascend")
         >>> init()
-        >>> group = "0-8"
-        >>> rank_ids = [0,8]
-        >>> create_group(group, rank_ids)
-        >>> allreduce = ops.AllReduce(group)
+        >>> group = "0-7"
+        >>> rank_ids = [0,7]
+        >>> if get_rank() in rank_ids:
+        ...     create_group(group, rank_ids)
+        ...     allreduce = ops.AllReduce(group)
     """
     if not isinstance(group, str):
         raise TypeError("For 'create_group', the argument 'group' must be type of string, "
@@ -563,7 +609,7 @@ def destroy_group(group):
     Destroy the user collective communication group.
 
     Note:
-        GPU version of MindSpore doesn't support this method.
+        This method isn't supported in GPU and CPU versions of MindSpore.
         The parameter group should not be "hccl_world_group".
         This method should be used after init().
 
@@ -573,10 +619,37 @@ def destroy_group(group):
     Raises:
         TypeError: If group is not a string.
         ValueError: If group is "hccl_world_group" or backend is invalid.
-        RuntimeError: If HCCL is not available or MindSpore is GPU version.
+        RuntimeError: If HCCL is not available or MindSpore is GPU/CPU version.
 
     Supported Platforms:
         ``Ascend``
+
+    Examples:
+        .. note::
+            Before running the following examples, you need to configure the communication environment variables.
+
+            For the Ascend devices, users need to prepare the rank table, set rank_id and device_id.
+            Please see the `rank table startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/rank_table.html>`_
+            for more details.
+
+            For the GPU devices, users need to prepare the host file and mpi, please see the `mpirun startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/mpirun.html>`_ .
+
+            For the CPU device, users need to write a dynamic cluster startup script, please see the `Dynamic Cluster
+            Startup <https://www.mindspore.cn/tutorials/experts/en/master/parallel/dynamic_cluster.html>`_ .
+
+        >>> import mindspore as ms
+        >>> from mindspore import set_context
+        >>> import mindspore.ops as ops
+        >>> from mindspore.communication import init, create_group, destroy_group, get_rank
+        >>> set_context(mode=ms.GRAPH_MODE, device_target="Ascend")
+        >>> init()
+        >>> group = "0-2"
+        >>> rank_ids = [0,2]
+        >>> if get_rank() in rank_ids:
+        ...     create_group(group, rank_ids)
+        ...     destroy_group(group)
     """
     if not isinstance(group, str):
         raise TypeError("For 'destroy_group', the argument 'group' must be type of string, "

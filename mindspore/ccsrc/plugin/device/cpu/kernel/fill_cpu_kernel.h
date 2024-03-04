@@ -43,6 +43,7 @@ class FillCpuKernelMod : public NativeCpuKernelMod, public MatchKernelHelper<Fil
   }
 
   const std::vector<std::pair<KernelAttr, KernelRunFunc>> &GetFuncList() const override;
+  std::vector<size_t> GetLaunchIgnoredInputAddressIdx() const override { return {kShapeIndex_}; }
 
  protected:
   std::vector<KernelAttr> GetOpSupport() override { return OpSupport(); }
@@ -58,6 +59,8 @@ class FillCpuKernelMod : public NativeCpuKernelMod, public MatchKernelHelper<Fil
  private:
   TypeId output_dtype_{kTypeUnknown};
   TypeId input0_dtype_{kTypeUnknown};
+  TypeId x_type_id_;
+  static constexpr size_t kShapeIndex_{0};
 };
 }  // namespace kernel
 }  // namespace mindspore

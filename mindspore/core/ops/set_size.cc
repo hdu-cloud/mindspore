@@ -21,6 +21,7 @@
 #include "abstract/abstract_value.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
 
@@ -70,7 +71,7 @@ abstract::ShapePtr SetSizeInferShape(const PrimitivePtr &primitive, const std::v
                                                      output_size_valid_types, op_name);
     auto set_shape_value = set_shape_tensor->BuildValue();
     MS_EXCEPTION_IF_NULL(set_shape_value);
-    if (!set_shape_value->isa<None>() && !set_shape_value->isa<AnyValue>()) {
+    if (!set_shape_value->isa<None>() && !set_shape_value->isa<ValueAny>()) {
       auto set_shape_value_tensor = set_shape_value->cast<tensor::TensorPtr>();
       auto value = static_cast<int64_t *>(set_shape_value_tensor->data_c());
       MS_EXCEPTION_IF_NULL(value);
@@ -82,16 +83,16 @@ abstract::ShapePtr SetSizeInferShape(const PrimitivePtr &primitive, const std::v
   }
   if (!gen_value_succ) {
     auto dense_size = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[2]->BuildShape())[kShape];
-    ShapeVector dynamic_shape(dense_size[0] - 1), min_shape(dense_size[0] - 1), max_shape(dense_size[0] - 1);
+    ShapeVector dynamic_shape(dense_size[0] - 1);
+    ShapeVector max_shape(dense_size[0] - 1);
     auto max_length_ptr = primitive->GetAttr("max_length");
     MS_EXCEPTION_IF_NULL(max_length_ptr);
     int64_t max_length = GetValue<int64_t>(max_length_ptr);
     for (int64_t i = 1; i <= dense_size[0] - 1; ++i) {
       dynamic_shape.end()[-i] = abstract::Shape::kShapeDimAny;
-      min_shape.end()[-i] = 0;
       max_shape.end()[-i] = max_length;
     }
-    return std::make_shared<abstract::Shape>(dynamic_shape, min_shape, max_shape);
+    return std::make_shared<abstract::Shape>(dynamic_shape, max_shape);
   } else {
     ShapeVector output_shape;
     auto set_values_index = 2;
@@ -147,6 +148,26 @@ AbstractBasePtr SetSizeInfer(const abstract::AnalysisEnginePtr &, const Primitiv
   auto infer_shape = SetSizeInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(SetSize, prim::kPrimSetSize, SetSizeInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSetSizeInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SetSizeInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SetSizeInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SetSizeInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SetSize, prim::kPrimSetSize, AGSetSizeInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -25,6 +25,9 @@
 #include "src/common/file_utils.h"
 #include "utils/file_utils.h"
 #include "src/common/utils.h"
+#include "utils/anf_utils.h"
+#include "include/backend/anf_runtime_algorithm.h"
+#include "tools/graph_kernel/common/utils.h"
 
 namespace mindspore::graphkernel {
 namespace dumpir {
@@ -64,13 +67,13 @@ void PrintNodeOutputType(std::ostringstream &dumpbuf, const AnfNodePtr &nd) {
   TypePtr type = dyn_cast<Type>(nd->Type());
   if ((shape != nullptr) && (type != nullptr)) {
     dumpbuf << "<" << type << ", " << shape->ToString();
-    if (tensor_value != nullptr && tensor_value != kAnyValue) {
+    if (tensor_value != nullptr && tensor_value != kValueAny) {
       dumpbuf << ", value=...";
     }
     dumpbuf << ">";
   } else if (type != nullptr) {
     dumpbuf << "<" << type;
-    if (tensor_value != nullptr && tensor_value != kAnyValue) {
+    if (tensor_value != nullptr && tensor_value != kValueAny) {
       dumpbuf << ", value=...";
     }
     dumpbuf << ">";
@@ -287,6 +290,53 @@ void DumpShape(const AnfNodePtr &nd, const FuncGraphPtr &sub_graph, const std::s
   gsub->dumpbuf << std::endl;
 }
 
+std::string PrintKernelFormatAndType(const std::string &fmt, const TypeId &type, const std::vector<int64_t> &shape) {
+  std::ostringstream buffer;
+  buffer << "<" << TypeIdLabel(type);
+  if (!fmt.empty()) {
+    buffer << "x" << fmt << shape;
+  }
+  buffer << ">";
+  return buffer.str();
+}
+
+std::string PrintOutputTypeShapeFormat(const std::shared_ptr<AnfNode> &node) {
+  if (node == nullptr) {
+    return "";
+  }
+  std::ostringstream buffer;
+  auto kernel_build_info = GetKernelInfo(node);
+  if (kernel_build_info == nullptr) {
+    return "";
+  }
+  size_t output_num = kernel_build_info->GetOutputNum();
+  buffer << "OutputFormats:";
+  for (size_t i = 0; i < output_num; ++i) {
+    if (i != 0) {
+      buffer << ", ";
+    }
+    auto format = GetOutputFormatFromAnfNode(node, i);
+    if (!format.empty()) {
+      buffer << format;
+    }
+  }
+  return buffer.str();
+}
+
+void DumpKernelInfo(const CNodePtr &node, const std::shared_ptr<SubGraphIRInfo> &gsub) {
+  if (node == nullptr || gsub == nullptr) {
+    return;
+  }
+  auto kernel_info = node->kernel_info();
+  if (kernel_info == nullptr || !kernel_info->has_build_info()) {
+    return;
+  }
+  gsub->dumpbuf << "      : (";
+  gsub->dumpbuf << PrintOutputTypeShapeFormat(node);
+  gsub->dumpbuf << ")";
+  gsub->dumpbuf << std::endl;
+}
+
 void DumpCNode(const CNodePtr &nd, const FuncGraphPtr &sub_graph, OrderedMap<AnfNodePtr, int32_t> *const para_map,
                const std::shared_ptr<SubGraphIRInfo> &gsub, bool dump_full_name = false) {
   if (nd == nullptr || sub_graph == nullptr || para_map == nullptr || gsub == nullptr) {
@@ -304,7 +354,6 @@ void DumpCNode(const CNodePtr &nd, const FuncGraphPtr &sub_graph, OrderedMap<Anf
   if (nd->inputs().empty()) {
     MS_LOG(EXCEPTION) << "Input of apply node is empty";
   }
-
   AnfNodePtr op = nd->input(0);
   DumpOperator(op, gsub);
   DumpOperands(nd, para_map, gsub);
@@ -312,6 +361,7 @@ void DumpCNode(const CNodePtr &nd, const FuncGraphPtr &sub_graph, OrderedMap<Anf
   DumpCNodeAttrs(nd, gsub);
   DumpCNodePrimalAttrs(nd, gsub);
   DumpShape(nd, sub_graph, gsub);
+  DumpKernelInfo(nd, gsub);
   if (dump_full_name) {
     gsub->dumpbuf << "      : (" << nd->fullname_with_scope() << ")" << std::endl;
   }
@@ -463,8 +513,15 @@ void DumpIR(const std::string &filename, const FuncGraphPtr &graph, bool dump_fu
 }  // namespace dumpir
 
 void GraphKernelPassManagerLite::DumpPassIR(const FuncGraphPtr &func_graph, const std::string &pass_fullname) const {
-  if (dump_ir_) {
-    std::string filename = "verbose_ir_files/" + pass_fullname + ".ir";
+  static bool dump_ir = (common::GetEnv("MS_DEV_DUMP_GRAPH_KERNEL_IR") == "on");
+  if (dump_ir) {
+    static std::string rank_id = common::GetEnv("RANK_ID");
+    std::string filename;
+    if (rank_id.empty()) {
+      filename = "verbose_ir_files/" + pass_fullname + ".ir";
+    } else {
+      filename = "rank_" + rank_id + "/verbose_ir_files/" + pass_fullname + ".ir";
+    }
     dumpir::DumpIR(filename, func_graph, true);
   }
 }

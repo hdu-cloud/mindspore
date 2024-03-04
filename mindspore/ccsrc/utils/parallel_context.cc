@@ -24,8 +24,6 @@
 
 namespace mindspore::parallel {
 namespace {
-std::map<std::string, std::vector<int64_t>> param_shapes;
-
 std::vector<std::string> kParallelModeList = {kStandalone, kDataParallel, kHybridParallel, kSemiAutoParallel,
                                               kAutoParallel};
 std::vector<std::string> kStrategySearchModeList = {kDynamicProgramming, kRecursiveProgramming, kShardingPropagation};
@@ -43,7 +41,6 @@ std::shared_ptr<ParallelContext> ParallelContext::GetInstance() {
 ParallelContext::ParallelContext() { Reset(); }
 
 void ParallelContext::Reset() {
-  init_param_shape_ = true;
   gradients_mean_ = false;
   full_batch_ = false;
   full_batch_is_set_ = false;
@@ -59,19 +56,23 @@ void ParallelContext::Reset() {
   enable_all_reduce_fusion_ = true;
   enable_all_gather_fusion_ = true;
   enable_reduce_scatter_fusion_ = true;
+  strategy_json_config_file_type_ = "";
+  strategy_json_config_file_path_ = "";
+  strategy_json_config_file_mode_ = "";
   strategy_ckpt_load_file_ = "";
   strategy_ckpt_save_file_ = "";
   enable_parallel_optimizer_ = false;
   all_reduce_fusion_split_indices_.clear();
   all_reduce_fusion_split_sizes_.clear();
-  strategy_search_mode_ = kDynamicProgramming;
+  strategy_search_mode_ = kRecursiveProgramming;
   pipeline_stage_split_num_ = 1;
+  pipeline_segment_split_num_ = 1;
   grad_accumulation_step_ = 1;
   communi_parallel_mode_ = kAllGroupParallel;
   optimizer_weight_shard_size_ = -1;
   optimizer_weight_shard_aggregated_save_ = false;
   enable_all2all_ = false;
-  grad_accumulation_shard_ = true;
+  grad_accumulation_shard_ = false;
   parallel_optimizer_threshold_ = -1;
   sharding_propagation_ = false;
   dataset_strategy_.clear();
@@ -81,6 +82,7 @@ void ParallelContext::Reset() {
   reducescatter_fusion_threshold_mb_ = kFusionThreshold;
   fusion_threshold_is_set_ = true;
   fusion_mode_ = kFusionAuto;
+  stra_file_only_trainable_params_ = true;
 }
 
 void ParallelContext::set_device_num(int64_t device_num) {
@@ -141,6 +143,10 @@ void ParallelContext::set_loss_repeated_mean(bool loss_repeated_mean) { loss_rep
 
 void ParallelContext::set_pipeline_stage_split_num(const int64_t stage_num) { pipeline_stage_split_num_ = stage_num; }
 
+void ParallelContext::set_pipeline_segment_split_num(const int64_t segment_num) {
+  pipeline_segment_split_num_ = segment_num;
+}
+
 bool ParallelContext::set_parallel_mode(const std::string &parallel_mode) {
   auto iter = std::find(kParallelModeList.begin(), kParallelModeList.end(), parallel_mode);
   if (iter == kParallelModeList.end()) {
@@ -164,6 +170,13 @@ bool ParallelContext::set_strategy_search_mode(const std::string &strategy_searc
 void ParallelContext::set_parameter_broadcast(bool parameter_broadcast) {
   parameter_broadcast_ = parameter_broadcast;
   parameter_broadcast_is_set_ = true;
+}
+
+void ParallelContext::set_ops_strategy_json_config(const std::string &type, const std::string &path,
+                                                   const std::string &mode) {
+  strategy_json_config_file_type_ = type;
+  strategy_json_config_file_path_ = path;
+  strategy_json_config_file_mode_ = mode;
 }
 
 void ParallelContext::set_strategy_ckpt_load_file(const std::string &strategy_ckpt_load_file) {
@@ -235,34 +248,6 @@ bool ParallelContext::set_communi_parallel_mode(const std::string &communi_paral
   return true;
 }
 
-// Clear param_shapes before training in auto-parallel or semi-auto-parallel mode
-void ParallelContext::ParallelParameterContextInitShape(const FuncGraphPtr &func_graph) {
-  MS_EXCEPTION_IF_NULL(func_graph);
-  if (!IsAutoParallelCareGraph(func_graph)) {
-    return;
-  }
-  if (func_graph->has_flag(kIsFirstIteration)) {
-    param_shapes.clear();
-    init_param_shape_ = true;
-    MS_LOG(INFO) << "Init the parameter shape dict in increment predict with two graph";
-    return;
-  }
-  if (!func_graph->has_flag(kTraining)) {
-    init_param_shape_ = false;
-    MS_LOG(INFO) << "In parallel evaluation or prediction, may be need to restore the parameter shape";
-    return;
-  }
-
-  if ((ParallelContext::GetInstance()->grad_accumulation_step() > 1) && !func_graph->has_flag(kAccumulation)) {
-    init_param_shape_ = false;
-    MS_LOG(INFO) << "In parallel grad accumulation second graph, need to restore the parameter shape";
-  } else {
-    param_shapes.clear();
-    init_param_shape_ = true;
-    MS_LOG(INFO) << "Init the parameter shape dict";
-  }
-}
-
 // Restore the parameters' shape for evaluation/prediction in auto-parallel or semi-auto-parallel mode
 void ParallelContext::ParallelParameterContextRestoreShape(const FuncGraphPtr &func_graph,
                                                            const ParameterPtr &param_node,
@@ -270,13 +255,10 @@ void ParallelContext::ParallelParameterContextRestoreShape(const FuncGraphPtr &f
   MS_EXCEPTION_IF_NULL(func_graph);
   MS_EXCEPTION_IF_NULL(param_node);
   MS_EXCEPTION_IF_NULL(ptr);
-  if (!IsAutoParallelCareGraph(func_graph)) {
+  if (!ParallelContextCareGraph(func_graph)) {
     return;
   }
 
-  if (init_param_shape_) {
-    return;
-  }
   auto param_info = param_node->param_info();
   if (!param_info) {
     return;
@@ -291,30 +273,7 @@ void ParallelContext::ParallelParameterContextRestoreShape(const FuncGraphPtr &f
   MS_LOG(INFO) << "The parameter name is " << param_node->name() << ", the shape is " << shape;
 }
 
-// Clear param_shapes before training in auto-parallel or semi-auto-parallel mode
-// Checkpoint the parameters' shape for training in auto-parallel or semi-auto-parallel mode
-void ParallelContext::ParallelParameterContextCkptShape(const FuncGraphPtr &func_graph, const ParameterPtr &param_node,
-                                                        const AbstractBasePtr &ptr) const {
-  MS_EXCEPTION_IF_NULL(func_graph);
-  MS_EXCEPTION_IF_NULL(param_node);
-  MS_EXCEPTION_IF_NULL(ptr);
-  if (!IsAutoParallelCareGraph(func_graph)) {
-    return;
-  }
-
-  if (!init_param_shape_) {
-    return;
-  }
-  std::vector<int64_t> shape = dyn_cast<abstract::Shape>(ptr->GetShapeTrack())->shape();
-  auto ret = param_shapes.try_emplace(param_node->name(), shape);
-  if (!ret.second) {
-    MS_LOG(EXCEPTION) << "The shape for parameter name " << param_node->name() << " is existed";
-  }
-
-  MS_LOG(DEBUG) << "The parameter name is " << param_node->name() << ", the shape is " << shape;
-}
-
-bool ParallelContext::IsAutoParallelCareGraph(const FuncGraphPtr &func_graph) const {
+bool ParallelContext::ParallelContextCareGraph(const FuncGraphPtr &func_graph) const {
   MS_EXCEPTION_IF_NULL(func_graph);
   if (func_graph->has_flag(kSkipAutoParallelCompile)) {
     return false;
@@ -334,7 +293,15 @@ void ParallelContext::set_enable_micro_interleaved(const bool enable_micro_inter
   enable_micro_interleaved_ = enable_micro_interleaved;
 }
 
+void ParallelContext::set_pipeline_micro_size(const size_t pipeline_micro_size) {
+  pipeline_micro_size_ = pipeline_micro_size;
+}
+
 void ParallelContext::set_do_transform(const bool do_transform) { do_transform_ = do_transform; }
+
+void ParallelContext::set_stra_file_only_trainable_params(const bool stra_file_only_trainable_params) {
+  stra_file_only_trainable_params_ = stra_file_only_trainable_params;
+}
 
 void ParallelContext::set_sharding_propagation(const bool stra_pto) { sharding_propagation_ = stra_pto; }
 }  // namespace mindspore::parallel

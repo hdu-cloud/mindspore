@@ -29,7 +29,6 @@ namespace mindspore {
 static const int MAX_DIRECTORY_LENGTH = 1024;
 static const int MAX_FILENAME_LENGTH = 128;
 static const int MAX_OS_FILENAME_LENGTH = 255;
-static const char kCOMPILER_CACHE_PATH[] = "MS_COMPILER_CACHE_PATH";
 
 class COMMON_EXPORT Common {
  public:
@@ -37,6 +36,7 @@ class COMMON_EXPORT Common {
   ~Common() = default;
   static bool NeedMapping(const std::string &origin_name);
   static std::string GetRandomStr();
+  static std::string GetRandomStr(size_t str_len);
   static bool MappingName(const std::string &input_path, std::optional<std::string> *prefix_path,
                           std::optional<std::string> *origin_name, std::optional<std::string> *mapped_name);
   static std::optional<std::string> CreatePrefixPath(const std::string &input_path,
@@ -73,7 +73,7 @@ inline std::string GetSaveGraphsPathName(const std::string &file_name, const std
   if (save_path.empty()) {
     auto ms_context = MsContext::GetInstance();
     MS_EXCEPTION_IF_NULL(ms_context);
-    save_graphs_path = ms_context->get_param<std::string>(MS_CTX_SAVE_GRAPHS_PATH);
+    save_graphs_path = ms_context->GetSaveGraphsPath();
     if (save_graphs_path.empty()) {
       save_graphs_path = ".";
     }

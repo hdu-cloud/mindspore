@@ -17,10 +17,11 @@
 #include <map>
 #include <string>
 
-#include "ops/greater_equal.h"
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/comparison_ops.h"
+#include "ops/greater_equal.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -51,6 +52,24 @@ AbstractBasePtr GreaterEqualInfer(const abstract::AnalysisEnginePtr &, const Pri
   auto infer_shape = GreaterEqualInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(GreaterEqual, prim::kPrimGreaterEqual, GreaterEqualInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGGreaterEqualInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return GreaterEqualInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return GreaterEqualInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return GreaterEqualInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(GreaterEqual, prim::kPrimGreaterEqual, AGGreaterEqualInfer, false);
 }  // namespace ops
 }  // namespace mindspore

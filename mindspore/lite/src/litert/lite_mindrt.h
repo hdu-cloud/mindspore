@@ -23,11 +23,11 @@
 #include <set>
 #include <utility>
 #include "actor/op_actor.h"
-#include "src/litert/kernel_exec.h"
+#include "src/executor/kernel_exec.h"
 #include "actor/actor.h"
 #include "async/uuid_base.h"
 #include "async/future.h"
-#include "src/litert/sub_graph_kernel.h"
+#include "src/executor/sub_graph_kernel.h"
 #include "src/litert/cpu_info.h"
 #include "src/tensorlist.h"
 
@@ -58,13 +58,16 @@ class LiteOpActor : public OpActor<lite::Tensor> {
     }
     return ret;
   }
+  void set_isolate_input_map(std::unordered_map<Tensor *, Tensor *> *input_map) {
+    this->isolate_input_map_ = input_map;
+  }
   virtual int PreInit(std::vector<std::shared_ptr<LiteOpActor>> *actors,
                       std::unordered_map<Tensor *, Tensor *> *input_map);
   virtual int PostInit();
   int ResizeGraphInput(const std::vector<mindspore::lite::Tensor *> &inputs, const std::vector<std::vector<int>> &dims);
 
  public:
-  void AddResultIndex(size_t index);
+  void AddResultIndex(size_t index, size_t tensor_index);
   const kernel::KernelExec *GetKernel() const { return kernel_; }
   // call this function after CompileArrow
   virtual std::set<kernel::KernelExec *> GetPartialKernels() const {
@@ -92,6 +95,7 @@ class LiteOpActor : public OpActor<lite::Tensor> {
 
   kernel::KernelExec *kernel_;
   std::vector<size_t> results_index_{};
+  std::vector<size_t> results_tensor_index_{};
   std::vector<OpDataPtr<Tensor>> outputs_data_{};
   std::vector<Tensor *> inputs_data_{};
   std::unordered_map<Tensor *, Tensor *> *isolate_input_map_ = nullptr; /* real obj in session */

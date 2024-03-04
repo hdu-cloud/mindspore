@@ -41,7 +41,7 @@ void LUSolverCpuKernelMod::InitKernel(const CNodePtr &kernel_node) {
   dtype_ = AnfAlgo::GetInputDeviceDataType(kernel_node, 0);
   size_t input_num = common::AnfAlgo::GetInputTensorNum(kernel_node);
   CHECK_KERNEL_INPUTS_NUM(input_num, kLUInputsNum, kernel_name_);
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(kernel_node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(kernel_node);
   CHECK_KERNEL_OUTPUTS_NUM(output_num, kLUOutputsNum, kernel_name_);
   auto a_shape = Convert2SizeTClipNeg(common::AnfAlgo::GetPrevNodeOutputInferShape(kernel_node, kLUaIndex));
   auto b_shape = Convert2SizeTClipNeg(common::AnfAlgo::GetPrevNodeOutputInferShape(kernel_node, kLUbIndex));
@@ -84,12 +84,16 @@ template <typename T>
 bool LUSolverCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs,
                                         const std::vector<kernel::AddressPtr> &,
                                         const std::vector<kernel::AddressPtr> &outputs) {
-  T *a_value = reinterpret_cast<T *>(inputs[kLUaIndex]->addr);
+  T *a_value = GetDeviceAddress<T>(inputs, kLUaIndex);
+  MS_EXCEPTION_IF_NULL(a_value);
   Map<Matrix<T, RowMajor>> input_a(a_value, a_row_, a_col_);
 
-  T *b_value = reinterpret_cast<T *>(inputs[kLUbIndex]->addr);
+  T *b_value = GetDeviceAddress<T>(inputs, kLUbIndex);
+  MS_EXCEPTION_IF_NULL(b_value);
   Map<Matrix<T, RowMajor>> input_b(b_value, b_row_, b_col_);
-  T *output_lu_value = reinterpret_cast<T *>(outputs[kLuIndex]->addr);
+
+  T *output_lu_value = GetDeviceAddress<T>(outputs, kLuIndex);
+  MS_EXCEPTION_IF_NULL(output_lu_value);
   Map<Matrix<T, RowMajor>> output_lu(output_lu_value, out_row_, out_col_);
   if (trans_ == "N") {
     output_lu.noalias() = input_a.template triangularView<UnitLower>().solve(input_b);

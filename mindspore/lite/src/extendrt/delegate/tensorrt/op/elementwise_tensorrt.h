@@ -38,8 +38,11 @@ class ElementWiseTensorRT : public TensorRTOp {
   nvinfer1::ITensor *AddActivation(TensorRTContext *ctx, nvinfer1::ITensor *in_tensor);
 
   nvinfer1::IElementWiseLayer *AddFoorMod(TensorRTContext *ctx, nvinfer1::ITensor *x0_trt, nvinfer1::ITensor *x1_trt);
+  void LogicalOpChangeInputType(TensorRTContext *ctx, ITensorHelper *x_input, ITensorHelper *y_input);
 
   int AddConstTensor(TensorRTContext *ctx);
+
+  int BroadcastInputTensors(TensorRTContext *ctx, ITensorHelper *x_input, ITensorHelper *y_input);
 
   bool SameTensor(nvinfer1::ITensor *trt_tensor, TensorInfo *ms_tensor);
 

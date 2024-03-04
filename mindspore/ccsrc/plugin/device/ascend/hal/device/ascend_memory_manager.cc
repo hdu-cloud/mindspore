@@ -45,15 +45,23 @@ uint64_t AscendMemoryManager::GetMsMaxMemSize() const { return AscendMemAdapter:
 
 uint64_t AscendMemoryManager::GetMsUsedHbmSize() const { return AscendMemAdapter::GetInstance().GetMsUsedHbmSize(); }
 
-void *AscendMemoryManager::MallocMemFromMemPool(size_t size, bool from_persistent_mem) {
+void *AscendMemoryManager::MallocMemFromMemPool(size_t size, bool from_persistent_mem, bool need_recycle) {
   auto align_size = GetCommonAlignSize(size);
-  const auto device_addr = AscendMemoryPool::GetInstance().AllocTensorMem(align_size, from_persistent_mem);
+  const auto device_addr =
+    AscendMemoryPool::GetInstance().AllocTensorMem(align_size, from_persistent_mem, need_recycle);
+  return device_addr;
+}
+
+void *AscendMemoryManager::MallocOverflowMemFromMemFromMemPool(size_t size, bool from_persistent_mem) const {
+  const auto device_addr = AscendMemoryPool::GetInstance().AllocOverflowTensorMem(size, from_persistent_mem);
   return device_addr;
 }
 
 void AscendMemoryManager::FreeMemFromMemPool(void *device_ptr) {
   AscendMemoryPool::GetInstance().FreeTensorMem(device_ptr);
 }
+
+size_t AscendMemoryManager::GetMaxUsedMemorySize() const { return AscendMemoryPool::GetInstance().GetMaxUsedMemSize(); }
 
 uint8_t *AscendMemoryManager::MallocStaticMem(size_t size, bool communication_mem, uint32_t graph_id) {
   size_t align_size = 0;
@@ -82,7 +90,7 @@ uint8_t *AscendMemoryManager::MallocStaticMem(size_t size, bool communication_me
     return communication_mem ? alloc_address + kMemAlignSize : alloc_address;
   }
   MS_LOG(EXCEPTION) << "#umsg#Framework Error Message:#umsg#Fail to alloc memory, size: " << align_size
-                    << ", memory statistics:" << AscendMemAdapter::GetInstance().DevMemStatistics();
+                    << "B, memory statistics:" << AscendMemAdapter::GetInstance().DevMemStatistics();
 }
 
 uint8_t *AscendMemoryManager::MallocDynamicMem(size_t size, bool communication_mem) {
@@ -109,7 +117,7 @@ uint8_t *AscendMemoryManager::MallocCommunicationMemFromMemPool(size_t size) {
     return base_ptr + kMemAlignSize;
   }
   MS_LOG(EXCEPTION) << "#umsg#Framework Error Message:#umsg#Fail to alloc memory, size: " << align_size
-                    << ", memory statistics:" << AscendMemAdapter::GetInstance().DevMemStatistics();
+                    << "B, memory statistics:" << AscendMemAdapter::GetInstance().DevMemStatistics();
 }
 
 bool AscendMemoryManager::MallocContinuousMemFromMemPool(const DeviceAddressPtrList &addr_list, size_t /* total_size */,
@@ -149,8 +157,8 @@ void AscendMemoryManager::SwapIn(const void *host_ptr, void *device_ptr, size_t 
     if (ret_rt_memcpy != RT_ERROR_NONE) {
       MS_EXCEPTION(DeviceProcessError) << "SwapIn aclrtMemcpyAsync failed.";
     }
-    if (rtStreamSynchronize(stream) != RT_ERROR_NONE) {
-      MS_LOG(ERROR) << "Call runtime rtStreamSynchronize error.";
+    if (aclrtSynchronizeStreamWithTimeout(stream, -1) != ACL_ERROR_NONE) {
+      MS_EXCEPTION(DeviceProcessError) << "Call runtime aclrtSynchronizeStreamWithTimeout error.";
     }
   }
 }
@@ -158,16 +166,16 @@ void AscendMemoryManager::SwapIn(const void *host_ptr, void *device_ptr, size_t 
 void AscendMemoryManager::SwapOut(const void *device_ptr, void *host_ptr, size_t mem_size, void *stream) {
   if (stream == nullptr) {
     auto ret_rt_memcpy = aclrtMemcpy(host_ptr, mem_size, device_ptr, mem_size, ACL_MEMCPY_DEVICE_TO_HOST);
-    if (ret_rt_memcpy != RT_ERROR_NONE) {
+    if (ret_rt_memcpy != ACL_ERROR_NONE) {
       MS_EXCEPTION(DeviceProcessError) << "SwapOut aclrtMemcpy failed.";
     }
   } else {
     auto ret_rt_memcpy = aclrtMemcpyAsync(host_ptr, mem_size, device_ptr, mem_size, ACL_MEMCPY_DEVICE_TO_HOST, stream);
-    if (ret_rt_memcpy != RT_ERROR_NONE) {
+    if (ret_rt_memcpy != ACL_ERROR_NONE) {
       MS_EXCEPTION(DeviceProcessError) << "SwapOut aclrtMemcpyAsync failed.";
     }
-    if (rtStreamSynchronize(stream) != RT_ERROR_NONE) {
-      MS_LOG(ERROR) << "Call runtime rtStreamSynchronize error.";
+    if (aclrtSynchronizeStreamWithTimeout(stream, -1) != ACL_ERROR_NONE) {
+      MS_EXCEPTION(DeviceProcessError) << "Call runtime aclrtSynchronizeStreamWithTimeout error.";
     }
   }
 }

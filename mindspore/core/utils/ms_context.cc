@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,10 @@
 #include <fstream>
 #include <algorithm>
 #include <utility>
-#include "ir/tensor.h"
 #include "utils/ms_utils.h"
 #include "include/common/utils/utils.h"
+#include "utils/convert_utils_base.h"
+
 #if defined(_WIN32) || defined(_WIN64)
 #include <windows.h>
 #else
@@ -31,33 +32,54 @@
 
 namespace mindspore {
 namespace {
-std::map<std::string, MsBackendPolicy> kPolicyMap = {{"ge", kMsBackendGePrior},
-                                                     {"vm", kMsBackendVmOnly},
-                                                     {"ms", kMsBackendMsPrior},
-                                                     {"ge_only", kMsBackendGeOnly},
-                                                     {"vm_prior", kMsBackendVmPrior}};
+std::map<std::string, MsBackendPolicy> kPolicyMap = {{"ge", kMsBackendGePrior},     {"bisheng", kMsBackendBishengPrior},
+                                                     {"vm", kMsBackendVmOnly},      {"ms", kMsBackendMsPrior},
+                                                     {"ge_only", kMsBackendGeOnly}, {"vm_prior", kMsBackendVmPrior}};
+std::map<std::string, AscendSocVersion> kAscendSocVersion = {{"ascend910", k910AAscendVersion},
+                                                             {"ascend910b", k910BAscendVersion}};
+
+constexpr auto kDeviceTargetSize2 = 2;
 }  // namespace
 std::atomic<bool> thread_1_must_end(false);
 
 MsContext::DeviceSeter MsContext::seter_ = nullptr;
+MsContext::LoadPluginError MsContext::load_plugin_error_ = nullptr;
+std::shared_ptr<MsContext> MsContext::inst_context_ = nullptr;
+
+std::map<MsCtxParam, std::string> kUnresetParamCheckList = {
+  {MsCtxParam::MS_CTX_DEVICE_ID, "device_id"},
+  {MsCtxParam::MS_CTX_VARIABLE_MEMORY_MAX_SIZE, "variable_memory_max_size"},
+  {MsCtxParam::MS_CTX_MAX_DEVICE_MEMORY, "max_device_memory"},
+  {MsCtxParam::MS_CTX_MEMPOOL_BLOCK_SIZE, "mempool_block_size"}};
 
 MsContext::MsContext(const std::string &policy, const std::string &target) {
 #ifndef ENABLE_SECURITY
-  set_param<bool>(MS_CTX_SAVE_GRAPHS_FLAG, false);
+  set_param<int>(MS_CTX_SAVE_GRAPHS_FLAG, 0);
   set_param<std::string>(MS_CTX_SAVE_GRAPHS_PATH, ".");
+  set_param<bool>(MS_CTX_ENABLE_COMPILE_CACHE, false);
   set_param<std::string>(MS_CTX_COMPILE_CACHE_PATH, "");
 #else
   // Need set a default value for arrays even if running in the security mode.
-  bool_params_[MS_CTX_SAVE_GRAPHS_FLAG - MS_CTX_TYPE_BOOL_BEGIN] = false;
+  int_params_[MS_CTX_SAVE_GRAPHS_FLAG - MS_CTX_TYPE_BOOL_BEGIN] = 0;
   string_params_[MS_CTX_SAVE_GRAPHS_PATH - MS_CTX_TYPE_STRING_BEGIN] = ".";
 #endif
   set_param<std::string>(MS_CTX_PYTHON_EXE_PATH, "python");
   set_param<std::string>(MS_CTX_KERNEL_BUILD_SERVER_DIR, "");
   set_param<bool>(MS_CTX_ENABLE_DUMP, false);
   set_param<std::string>(MS_CTX_SAVE_DUMP_PATH, ".");
+  set_param<std::string>(MS_CTX_DETERMINISTIC, "OFF");
+  set_param<std::string>(MS_CTX_PRECISION_MODE, "");
+  set_param<std::string>(MS_CTX_ENABLE_JIT_COMPILE, "");
+  set_param<std::string>(MS_CTX_ATOMIC_CLEAN_POLICY, "");
+  set_param<std::string>(MS_CTX_MATMUL_ALLOW_HF32, "");
+  set_param<std::string>(MS_CTX_CONV_ALLOW_HF32, "");
+  set_param<std::string>(MS_CTX_OP_PRECISION_MODE, "");
   set_param<std::string>(MS_CTX_ENV_CONFIG_PATH, "");
   set_param<std::string>(MS_CTX_TUNE_MODE, "NO_TUNE");
+  set_param<std::string>(MS_CTX_AOE_TUNE_MODE, "");
+  set_param<std::string>(MS_CTX_AOE_JOB_TYPE, "2");
   set_param<std::string>(MS_CTX_GRAPH_KERNEL_FLAGS, "");
+
   set_param<uint32_t>(MS_CTX_TSD_REF, 0);
   set_param<uint32_t>(MS_CTX_GE_REF, 0);
 
@@ -108,9 +130,20 @@ MsContext::MsContext(const std::string &policy, const std::string &target) {
   set_param<bool>(MS_CTX_ENABLE_RECOVERY, false);
   set_param<bool>(MS_CTX_ENABLE_GE_HETEROGENOUS, false);
   set_param<bool>(MS_CTX_DISABLE_FORMAT_TRANSFORM, false);
-  set_param<bool>(MS_CTX_SAVE_GRAPH_DOT, false);
+  set_param<bool>(MS_CTX_RECOMPUTE_COMM_OVERLAP, false);
+  set_param<bool>(MS_CTX_GRAD_COMM_OVERLAP, false);
+  set_param<bool>(MS_CTX_ENABLE_TASK_OPT, false);
+  set_param<bool>(MS_CTX_ENABLE_GRAD_COMM_OPT, false);
+  set_param<bool>(MS_CTX_INTERLEAVED_MATMUL_COMM, false);
+  set_param<bool>(MS_CTX_INTERLEAVED_LAYERNORM_COMM, false);
   set_param<int>(MS_CTX_MEMORY_OPTIMIZE_LEVEL, kOptimizeO0);
   set_param<uint32_t>(MS_CTX_OP_TIMEOUT, kOpTimeout);
+  set_param<int>(MS_CTX_JIT_SYNTAX_LEVEL, kLax);
+  set_param<std::string>(MS_CTX_CONV_FPROP_ALGO, "normal");
+  set_param<std::string>(MS_CTX_CONV_DGRAD_ALGO, "normal");
+  set_param<std::string>(MS_CTX_CONV_WGRAD_ALGO, "normal");
+  set_param<bool>(MS_CTX_CONV_ALLOW_TF32, true);
+  set_param<bool>(MS_CTX_MATMUL_ALLOW_TF32, false);
 
   uint32_t kDefaultInterOpParallelThreads = 0;
   uint32_t kDefaultRuntimeNumThreads = 30;
@@ -121,9 +154,16 @@ MsContext::MsContext(const std::string &policy, const std::string &target) {
   set_param<uint32_t>(MS_CTX_INTER_OP_PARALLEL_NUM, inter_op_parallel_num_default);
 
   backend_policy_ = kPolicyMap[policy];
+  ascend_soc_version_ = kNotAscend;
+
+  params_read_status_ = std::vector<bool>(
+    static_cast<size_t>(MsCtxParam::NUM_BOOL_PARAMS + MsCtxParam::NUM_UINT32_PARAMS + MsCtxParam::NUM_INT_PARAMS +
+                        MsCtxParam::NUM_FLOAT_PARAMS + MsCtxParam::NUM_STRING_PARAMS),
+    false);
 }
 
 std::shared_ptr<MsContext> MsContext::GetInstance() {
+  static std::once_flag inst_context_init_flag_ = {};
   std::call_once(inst_context_init_flag_, [&]() {
     if (inst_context_ == nullptr) {
       MS_LOG(DEBUG) << "Create new mindspore context";
@@ -163,8 +203,8 @@ void MsContext::RefreshMemoryOffload() {
   }
   if (target == kAscendDevice && get_param<int>(MS_CTX_EXECUTION_MODE) != kPynativeMode &&
       common::GetEnv(kGraphOpRun) != "1") {
-    MS_LOG(WARNING) << "Memory offload is not available when GRAPH_OP_RUN is not set to 1.";
-    set_param(MS_CTX_ENABLE_MEM_OFFLOAD, false);
+    MS_LOG(WARNING) << "Run graph mode with kernel by kernel because memory offload is ON.";
+    set_param<bool>(MS_CTX_ENABLE_TASK_SINK, false);
     return;
   }
   if (get_param<int>(MS_CTX_MEMORY_OPTIMIZE_LEVEL) == kOptimizeO1) {
@@ -173,7 +213,7 @@ void MsContext::RefreshMemoryOffload() {
     return;
   }
   MS_LOG(INFO) << "Set memory pool block size to max device memory size for memory offload.";
-  set_param(MS_CTX_MEMPOOL_BLOCK_SIZE, get_param<float>(MS_CTX_MAX_DEVICE_MEMORY));
+  set_param_inner(MS_CTX_MEMPOOL_BLOCK_SIZE, get_param<float>(MS_CTX_MAX_DEVICE_MEMORY));
 }
 
 bool MsContext::set_backend_policy(const std::string &policy) {
@@ -192,6 +232,26 @@ std::string MsContext::backend_policy() const {
     kPolicyMap.begin(), kPolicyMap.end(),
     [&, this](const std::pair<std::string, MsBackendPolicy> &item) { return item.second == backend_policy_; });
   if (res != kPolicyMap.end()) {
+    return res->first;
+  }
+  return "unknown";
+}
+
+bool MsContext::set_ascend_soc_version(const std::string &soc_version) {
+  auto iter = kAscendSocVersion.find(soc_version);
+  if (iter == kAscendSocVersion.end()) {
+    MS_LOG(ERROR) << "invalid ascend soc version: " << soc_version;
+    return false;
+  }
+  ascend_soc_version_ = iter->second;
+  return true;
+}
+
+std::string MsContext::ascend_soc_version() const {
+  auto res = std::find_if(
+    kAscendSocVersion.begin(), kAscendSocVersion.end(),
+    [&, this](const std::pair<std::string, AscendSocVersion> &item) { return item.second == ascend_soc_version_; });
+  if (res != kAscendSocVersion.end()) {
     return res->first;
   }
   return "unknown";
@@ -216,7 +276,7 @@ std::map<std::string, std::string> &MsContext::PluginPathMap() {
 }
 
 void MsContext::RegisterInitFunc(const std::string &name, MsContext::InitDeviceTargetAndPolicy func) {
-  InitFuncMap().emplace(name, func);
+  (void)InitFuncMap().emplace(name, func);
   if (GetInstance() != nullptr) {
     GetInstance()->SetDefaultDeviceTarget();
   }
@@ -239,7 +299,7 @@ void MsContext::RegisterInitFunc(const std::string &name, MsContext::InitDeviceT
   }
   plugin_path = std::string(sz_path);
 #endif
-  PluginPathMap().emplace(name, plugin_path);
+  (void)PluginPathMap().emplace(name, plugin_path);
 }
 
 void MsContext::ResisterLoadPluginErrorFunc(MsContext::LoadPluginError func) { load_plugin_error_ = func; }
@@ -261,7 +321,7 @@ void MsContext::SetDefaultDeviceTarget() {
   if (InitFuncMap().size() == 1) {
     // when only cpu in map
     cpu_iter->second(inst_context_.get());
-  } else if (InitFuncMap().size() == 2) {
+  } else if (InitFuncMap().size() == kDeviceTargetSize2) {
     // when cpu and another in map
     for (auto [name, func] : InitFuncMap()) {
       if (name != kCPUDevice) {
@@ -336,9 +396,7 @@ void MsContext::SetEnv(const std::string &device) {
 
   if (auto iter = PluginPathMap().find(device); iter != PluginPathMap().end()) {
     const auto &library_path = iter->second;
-    if (set_env_ != nullptr) {
-      set_env_(device, library_path);
-    }
+    set_env_(device, library_path);
   }
 }
 
@@ -347,11 +405,104 @@ void MsContext::CheckEnv(const std::string &device) {
     return;
   }
 
-  if (auto iter = PluginPathMap().find(device); iter != PluginPathMap().end()) {
-    const auto &library_path = iter->second;
-    if (check_env_ != nullptr) {
-      check_env_(device, library_path);
-    }
+  check_env_(device, "");
+}
+
+std::string MsContext::GetSaveGraphsPath() const {
+  std::string path = common::GetEnv("MS_DEV_SAVE_GRAPHS_PATH");
+  if (!path.empty()) {
+    return path;
+  } else {
+    return MsContext::GetInstance()->get_param<std::string>(MS_CTX_SAVE_GRAPHS_PATH);
   }
 }
+
+bool MsContext::CanDump(const DumpLevel &level) const {
+  int save_graphs = MsContext::GetInstance()->get_param<int>(MS_CTX_SAVE_GRAPHS_FLAG);
+  static std::string save_env = common::GetEnv("MS_DEV_SAVE_GRAPHS");
+  if (save_env.size() == 1) {
+    int save_graphs_by_env = -1;
+    try {
+      save_graphs_by_env = std::stoi(save_env);
+    } catch (const std::invalid_argument &ia) {
+      MS_LOG(EXCEPTION) << "Invalid argument: " << ia.what() << " when parse " << save_env;
+    }
+    if (save_graphs_by_env < 0 || save_graphs_by_env > kFully) {
+      MS_LOG(EXCEPTION) << "Dump level can only be from 0 to 3";
+    }
+    if (save_graphs_by_env >= level) {
+      return true;
+    } else {
+      return false;
+    }
+  } else if (save_env.size() > 1) {
+    MS_LOG(EXCEPTION) << "MS_DEV_SAVE_GRAPHS should be a single number with one digit.";
+  }
+  if (save_graphs >= level) {
+    return true;
+  }
+  return false;
+}
+
+void MsContext::MarkReadStatus(MsCtxParam param) const {
+#if !(defined(ENABLE_TEST) || defined(ENABLE_TESTCASES) || defined(BUILD_LITE))
+  // unit tests will set device_id many times in one process
+  if (static_cast<size_t>(param) < params_read_status_.size()) {
+    params_read_status_[static_cast<size_t>(param)] = true;
+  }
+#endif
+}
+
+template <typename T>
+void MsContext::CheckReadStatus(MsCtxParam param, const T &value) const {
+#if !(defined(ENABLE_TEST) || defined(ENABLE_TESTCASES) || defined(BUILD_LITE))
+  // unit tests will set device_id many times in one process
+  if (static_cast<size_t>(param) >= params_read_status_.size()) {
+    return;
+  }
+  auto iter = kUnresetParamCheckList.find(param);
+  if (iter == kUnresetParamCheckList.end()) {
+    return;
+  }
+  auto origin_status = params_read_status_;
+  T origin_value = get_param<T>(param);
+  params_read_status_ = origin_status;
+  if (params_read_status_[static_cast<size_t>(param)] && value != origin_value) {
+    MS_EXCEPTION(TypeError) << "For 'set_context', the parameter " << iter->second
+                            << " can not be set repeatedly, origin value [" << origin_value << "] has been in effect.";
+  }
+#endif
+}
+
+// Reset ms context. Only called in child process after fork occurs.
+void MsContext::ResetContext() {
+  MS_LOG(DEBUG) << "Reset context after fork.";
+  // configs can be modified again.
+  params_read_status_ = std::vector<bool>(
+    static_cast<size_t>(MsCtxParam::NUM_BOOL_PARAMS + MsCtxParam::NUM_UINT32_PARAMS + MsCtxParam::NUM_INT_PARAMS +
+                        MsCtxParam::NUM_FLOAT_PARAMS + MsCtxParam::NUM_STRING_PARAMS),
+    false);
+  std::string device_target_ = get_param<std::string>(MS_CTX_DEVICE_TARGET);
+  if (device_target_ != kCPUDevice) {
+    // set device_target to 'CPU' as default.
+    MS_LOG(INFO) << "Process " << getpid() << " config changed: 'device_target' is reset to 'CPU'.";
+    SetDeviceTargetFromUser("CPU");
+  }
+}
+
+bool MsContext::EnableAoeOnline() const {
+  std::string aoe_tune_mode = MsContext::GetInstance()->get_param<std::string>(MS_CTX_AOE_TUNE_MODE);
+  return aoe_tune_mode == "online";
+}
+
+bool MsContext::EnableAoeOffline() const {
+  std::string aoe_tune_mode = MsContext::GetInstance()->get_param<std::string>(MS_CTX_AOE_TUNE_MODE);
+  return aoe_tune_mode == "offline";
+}
+
+template MS_CORE_API void MsContext::CheckReadStatus<bool>(MsCtxParam, const bool &) const;
+template MS_CORE_API void MsContext::CheckReadStatus<uint32_t>(MsCtxParam, const uint32_t &) const;
+template MS_CORE_API void MsContext::CheckReadStatus<int>(MsCtxParam, const int &) const;
+template MS_CORE_API void MsContext::CheckReadStatus<float>(MsCtxParam, const float &) const;
+template MS_CORE_API void MsContext::CheckReadStatus<std::string>(MsCtxParam, const std::string &) const;
 }  // namespace mindspore

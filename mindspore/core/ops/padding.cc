@@ -15,14 +15,27 @@
  */
 
 #include "ops/padding.h"
-#include <vector>
-#include <algorithm>
+
+#include <memory>
 #include <set>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include <string>
+#include <vector>
+
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 #include "utils/ms_context.h"
 
 namespace mindspore {
@@ -31,6 +44,9 @@ namespace {
 TypePtr PaddingInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto name = primitive->name();
+  for (const auto &item : input_args) {
+    MS_EXCEPTION_IF_NULL(item);
+  }
   auto context = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(context);
   bool is_gpu = (context->get_param<std::string>(MS_CTX_DEVICE_TARGET) == kGPUDevice);
@@ -90,10 +106,28 @@ int64_t Padding::get_pad_dim_size() const {
 
 AbstractBasePtr PaddingInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                              const std::vector<AbstractBasePtr> &input_args) {
-  TypePtr output_type = PaddingInferType(primitive, input_args);
   abstract::ShapePtr output_shape = PaddingInferShape(primitive, input_args);
+  TypePtr output_type = PaddingInferType(primitive, input_args);
   return abstract::MakeAbstract(output_shape, output_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Padding, prim::kPrimPadding, PaddingInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGPaddingInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return PaddingInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return PaddingInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return PaddingInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Padding, prim::kPrimPadding, AGPaddingInfer, false);
 }  // namespace ops
 }  // namespace mindspore

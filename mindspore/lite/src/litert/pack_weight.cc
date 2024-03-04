@@ -17,7 +17,8 @@
 #include "src/litert/pack_weight.h"
 #include "src/extendrt/dynamic_mem_allocator.h"
 namespace mindspore::lite {
-STATUS PackWeight::InitPackWeight(const void *model_buf, size_t model_size, std::string id, int numa_id) {
+STATUS PackWeight::InitPackWeight(const void *model_buf, size_t model_size, std::string id, int numa_id,
+                                  bool need_copy_buf) {
   std::lock_guard<std::mutex> lock(mtx_weight_);
   if (model_buf == nullptr || model_weights_.size() != shared_bufs_.size()) {
     MS_LOG(ERROR) << "model buf is nullptr in pack weight manager.";
@@ -42,12 +43,16 @@ STATUS PackWeight::InitPackWeight(const void *model_buf, size_t model_size, std:
     MS_LOG(ERROR) << "model const weight is nullptr.";
     return RET_ERROR;
   }
-  auto new_model_buf = static_cast<char *>(allocator->Malloc(model_size));
-  if (new_model_buf == nullptr) {
-    MS_LOG(ERROR) << "new model buf is nullptr in pack weight manager.";
-    return RET_ERROR;
+  void *new_model_buf = const_cast<void *>(model_buf);
+  if (need_copy_buf) {
+    new_model_buf = allocator->Malloc(model_size);
+    if (new_model_buf == nullptr) {
+      MS_LOG(ERROR) << "new model buf is nullptr in pack weight manager.";
+      return RET_ERROR;
+    }
+    memcpy(new_model_buf, model_buf, model_size);
+    model_const_weight->copy_buf = need_copy_buf;
   }
-  memcpy(new_model_buf, model_buf, model_size);
   model_const_weight->allocator = allocator;
   model_const_weight->numa_id = numa_id;
   if (model_weights_.find(id) != model_weights_.end()) {
@@ -236,7 +241,7 @@ void PackWeight::FreeFp16ToFp32Data(ModelConstWeight *weight) {
   weight->fp16_fp32_data.clear();
 }
 
-void PackWeight::FreePackWeight(std::string id) {
+void PackWeight::FreePackWeight(std::string id, bool free_all) {
   std::lock_guard<std::mutex> lock(mtx_weight_);
   MS_LOG(INFO) << "model weight size: " << model_weights_.size() << " | shared buf size: " << shared_bufs_.size();
   if (model_weights_.find(id) == model_weights_.end() || shared_bufs_.find(id) == shared_bufs_.end()) {
@@ -254,23 +259,32 @@ void PackWeight::FreePackWeight(std::string id) {
     FreePackedWeight(model_weight);
     FreeFp16ToFp32Data(model_weight);
     FreeTensorData(model_weight);
-    auto &allocator = model_weight->allocator;
-    allocator->Free(model_buf);
-    model_buf = nullptr;
+    if (model_weight->copy_buf) {
+      auto &allocator = model_weight->allocator;
+      allocator->Free(model_buf);
+      model_buf = nullptr;
+    }
     delete model_weight;
     model_weight = nullptr;
   }
-  model_weights_.erase(id);
+  if (!free_all) {
+    model_weights_.erase(id);
+  }
   shared_bufs_.erase(id);
+  MS_LOG(INFO) << "FreePackWeight done.";
 }
 
 PackWeight::~PackWeight() {
+  MS_LOG(INFO) << "~PackWeight() begin";
   if (model_weights_.empty()) {
+    MS_LOG(INFO) << "~PackWeight() empty end";
     return;
   }
   for (auto &numa_item : model_weights_) {
     std::string id = numa_item.first;
-    FreePackWeight(id);
+    FreePackWeight(id, true);
   }
+  model_weights_.clear();
+  MS_LOG(INFO) << "~PackWeight() end";
 }
 }  // namespace mindspore::lite

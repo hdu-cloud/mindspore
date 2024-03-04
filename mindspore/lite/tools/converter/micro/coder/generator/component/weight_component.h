@@ -27,16 +27,17 @@
 #include "tools/converter/micro/coder/context.h"
 
 namespace mindspore::lite::micro {
-void CodeWeightFileHeader(std::ofstream &ofs, const std::unique_ptr<CoderContext> &ctx, const Configurator &config);
+void CodeWeightFileHeader(std::ofstream &ofs, const std::unique_ptr<CoderContext> &ctx);
 void CodeModelParamsState(std::ofstream &ofs, const std::map<std::string, Tensor *> &weights);
 void CodeModelParamsData(std::ofstream &ofs, const std::map<std::string, Tensor *> &weights);
 
-void SaveDataToNet(const std::map<std::string, Tensor *> &saved_weights, const std::string &net_file);
+void SaveDataToNet(const std::unique_ptr<CoderContext> &ctx, const std::string &net_file, bool keep_weight,
+                   size_t *weight_size);
 void CodeModelParamsForNet(std::ofstream &hofs, std::ofstream &cofs, const std::unique_ptr<CoderContext> &ctx,
                            const Configurator &config);
 
-void CodeInitWeightState(std::ofstream &ofs, const Configurator &config);
-void CodeExportWeightState(std::ofstream &ofs, const Configurator &config);
+void CodeInitWeightState(std::ofstream &ofs, const int model_index);
+void CodeExportWeightState(std::ofstream &ofs, const int model_index);
 void CodeWeightInitFunc(std::ofstream &ofs, const std::unique_ptr<CoderContext> &ctx, const Configurator &config);
 void CodeWeightExportFunc(std::ofstream &ofs, const std::unique_ptr<CoderContext> &ctx, const Configurator &config);
 }  // namespace mindspore::lite::micro

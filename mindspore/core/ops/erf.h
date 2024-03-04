@@ -16,10 +16,10 @@
 
 #ifndef MINDSPORE_CORE_OPS_ERF_H_
 #define MINDSPORE_CORE_OPS_ERF_H_
-#include <vector>
 #include <memory>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,8 +31,8 @@ class MIND_API Erf : public BaseOperator {
   Erf() : BaseOperator(kNameErf) { InitIOName({"x"}, {"y"}); }
 };
 
-abstract::AbstractBasePtr ErfInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                   const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr ErfInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                            const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimErf = std::shared_ptr<Erf>;
 }  // namespace ops
 }  // namespace mindspore

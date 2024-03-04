@@ -24,13 +24,17 @@ bool TbeKernelCompileManager::TbeOpCheckSupported(const CNodePtr &node, nlohmann
   return true;
 }
 TbeKernelCompileManager::~TbeKernelCompileManager() {}
-bool TbeKernelCompileManager::tbe_init_flag_ = true;
 
 void TbeKernelCompileManager::TbeInitialize() {}
 // pre build
 void TbeKernelCompileManager::TbePreBuild(const std::shared_ptr<session::KernelGraph> &kernel_graph) {}
 // single op compile
-void TbeKernelCompileManager::TbeSingleOpCompile(const std::vector<CNodePtr> &anf_nodes) {}
+std::pair<std::vector<CNodePtr>, std::vector<CNodePtr>> TbeKernelCompileManager::TbeSingleOpCompile(
+  const std::vector<CNodePtr> &anf_nodes) {
+  std::vector<CNodePtr> success_node;
+  std::vector<CNodePtr> failed_node;
+  return std::make_pair(success_node, failed_node);
+}
 // fusion op compile
 JsonNameMap TbeKernelCompileManager::TbeFusionOpCompile(const std::vector<FusionScopeInfo> &fusion_scopes) {
   JsonNameMap json_name_map;
@@ -40,5 +44,8 @@ JsonNameMap TbeKernelCompileManager::TbeFusionOpCompile(const std::vector<Fusion
   return json_name_map;
 }
 }  // namespace ascend
+std::string GetPyTeVersion() {
+  return "";
+}
 }  // namespace kernel
 }  // namespace mindspore

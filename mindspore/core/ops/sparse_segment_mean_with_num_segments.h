@@ -16,13 +16,13 @@
 
 #ifndef MINDSPORE_CORE_OPS_SPARSE_SEGMENT_MEAN_WITH_NUM_SEGMENTS_H_
 #define MINDSPORE_CORE_OPS_SPARSE_SEGMENT_MEAN_WITH_NUM_SEGMENTS_H_
-#include <set>
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <set>
+#include <string>
+#include <vector>
 #include "abstract/abstract_value.h"
+#include "ops/base_operator.h"
 #include "utils/check_convert_utils.h"
 
 namespace mindspore {
@@ -39,7 +39,7 @@ class MIND_API SparseSegmentMeanWithNumSegments : public BaseOperator {
   }
 };
 
-abstract::AbstractBasePtr SparseSegmentMeanWithNumSegmentsInfer(
+MIND_API abstract::AbstractBasePtr SparseSegmentMeanWithNumSegmentsInfer(
   const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
   const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimSparseSegmentMeanWithNumSegmentsPtr = std::shared_ptr<SparseSegmentMeanWithNumSegments>;

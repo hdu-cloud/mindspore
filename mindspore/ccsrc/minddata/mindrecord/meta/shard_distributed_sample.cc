@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -52,7 +52,7 @@ int64_t ShardDistributedSample::GetNumSamples(int64_t dataset_size, int64_t num_
 }
 
 Status ShardDistributedSample::PreExecute(ShardTaskList &tasks) {
-  auto total_no = tasks.Size();
+  int64_t total_no = tasks.Size();
   if (no_of_padded_samples_ > 0 && first_epoch_) {
     CHECK_FAIL_RETURN_UNEXPECTED_MR(
       total_no % denominator_ == 0,
@@ -66,7 +66,7 @@ Status ShardDistributedSample::PreExecute(ShardTaskList &tasks) {
   } else {
     tasks = task_;
   }
-  if (shuffle_ == true) {
+  if (shuffle_) {
     shuffle_op_->SetShardSampleCount(GetShardSampleCount());
     shuffle_op_->UpdateShuffleMode(GetShuffleMode());
     RETURN_IF_NOT_OK_MR((*shuffle_op_)(tasks));

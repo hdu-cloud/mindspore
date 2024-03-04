@@ -64,8 +64,13 @@ endif()
 function(__download_pkg pkg_name pkg_url pkg_sha256)
 
     if(LOCAL_LIBS_SERVER)
+        set(REGEX_IP_ADDRESS "^([0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+)$")
         get_filename_component(_URL_FILE_NAME ${pkg_url} NAME)
-        set(pkg_url "http://${LOCAL_LIBS_SERVER}:8081/libs/${pkg_name}/${_URL_FILE_NAME}" ${pkg_url})
+        if(${LOCAL_LIBS_SERVER} MATCHES ${REGEX_IP_ADDRESS})
+            set(pkg_url "http://${LOCAL_LIBS_SERVER}:8081/libs/${pkg_name}/${_URL_FILE_NAME}" ${pkg_url})
+        else()
+            set(pkg_url "https://${LOCAL_LIBS_SERVER}/libs/${pkg_name}/${_URL_FILE_NAME}" ${pkg_url})
+        endif()
     endif()
 
     FetchContent_Declare(
@@ -108,6 +113,10 @@ endfunction()
 
 
 function(__find_pkg_then_add_target pkg_name pkg_exe lib_path)
+    set(options)
+    set(oneValueArgs PATH)
+    set(multiValueArgs SUFFIXES_PATH NAMES)
+    cmake_parse_arguments(LIB "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     unset(${pkg_name}_LIBS)
 
@@ -126,7 +135,7 @@ function(__find_pkg_then_add_target pkg_name pkg_exe lib_path)
         message("found ${${pkg_exe}_EXE}")
     endif()
 
-    foreach(_LIB_NAME ${ARGN})
+    foreach(_LIB_NAME ${LIB_NAMES})
         set(_LIB_SEARCH_NAME ${_LIB_NAME})
         if(MSVC AND ${pkg_name}_Debug)
             set(_LIB_SEARCH_NAME ${_LIB_SEARCH_NAME}d)
@@ -139,10 +148,10 @@ function(__find_pkg_then_add_target pkg_name pkg_exe lib_path)
         set(${_LIB_NAME}_LIB ${_LIB_NAME}_LIB-NOTFOUND)
         if(APPLE)
             find_library(${_LIB_NAME}_LIB ${_LIB_SEARCH_NAME} PATHS ${${pkg_name}_BASE_DIR}/${lib_path}
-                    NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+                    PATH_SUFFIXES ${LIB_SUFFIXES_PATH} NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
         else()
             find_library(${_LIB_NAME}_LIB ${_LIB_SEARCH_NAME} PATHS ${${pkg_name}_BASE_DIR}/${lib_path}
-                    NO_DEFAULT_PATH)
+                    PATH_SUFFIXES ${LIB_SUFFIXES_PATH} NO_DEFAULT_PATH)
         endif()
         if(NOT ${_LIB_NAME}_LIB)
             message("not find ${_LIB_SEARCH_NAME} in path: ${${pkg_name}_BASE_DIR}/${lib_path}")
@@ -218,10 +227,12 @@ set(MS_FIND_NO_DEFAULT_PATH NO_CMAKE_PATH NO_CMAKE_ENVIRONMENT_PATH NO_SYSTEM_EN
 function(mindspore_add_pkg pkg_name)
 
     set(options)
-    set(oneValueArgs URL SHA256 GIT_REPOSITORY GIT_TAG VER EXE DIR HEAD_ONLY CMAKE_PATH RELEASE LIB_PATH CUSTOM_CMAKE)
+    set(oneValueArgs URL SHA256 GIT_REPOSITORY GIT_TAG VER EXE DIR HEAD_ONLY CMAKE_PATH RELEASE
+            LIB_PATH CUSTOM_CMAKE)
     set(multiValueArgs
             CMAKE_OPTION LIBS PRE_CONFIGURE_COMMAND CONFIGURE_COMMAND BUILD_OPTION INSTALL_INCS
-            INSTALL_LIBS PATCHES SUBMODULES SOURCEMODULES ONLY_MAKE ONLY_MAKE_INCS ONLY_MAKE_LIBS)
+            INSTALL_LIBS PATCHES SUBMODULES SOURCEMODULES ONLY_MAKE ONLY_MAKE_INCS ONLY_MAKE_LIBS
+            LIB_SUFFIXES_PATH)
     cmake_parse_arguments(PKG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if(NOT PKG_LIB_PATH)
@@ -266,7 +277,9 @@ function(mindspore_add_pkg pkg_name)
         add_library(${pkg_name} INTERFACE)
         target_include_directories(${pkg_name} INTERFACE ${${pkg_name}_INC})
         if(${PKG_RELEASE})
-            __find_pkg_then_add_target(${pkg_name} ${PKG_EXE} ${PKG_LIB_PATH} ${PKG_LIBS})
+            __find_pkg_then_add_target(${pkg_name} ${PKG_EXE} ${PKG_LIB_PATH}
+                    SUFFIXES_PATH ${PKG_LIB_SUFFIXES_PATH}
+                    NAMES ${PKG_LIBS})
         endif()
         return()
     endif()
@@ -275,7 +288,9 @@ function(mindspore_add_pkg pkg_name)
     set(${__FIND_PKG_NAME}_ROOT ${${pkg_name}_BASE_DIR} PARENT_SCOPE)
 
     if(PKG_LIBS)
-        __find_pkg_then_add_target(${pkg_name} ${PKG_EXE} ${PKG_LIB_PATH} ${PKG_LIBS})
+        __find_pkg_then_add_target(${pkg_name} ${PKG_EXE} ${PKG_LIB_PATH}
+                SUFFIXES_PATH ${PKG_LIB_SUFFIXES_PATH}
+                NAMES ${PKG_LIBS})
         if(${pkg_name}_LIBS)
             set(${pkg_name}_INC ${${pkg_name}_BASE_DIR}/include PARENT_SCOPE)
             message("Found libs: ${${pkg_name}_LIBS}")
@@ -446,7 +461,9 @@ function(mindspore_add_pkg pkg_name)
     endif()
 
     if(PKG_LIBS)
-        __find_pkg_then_add_target(${pkg_name} ${PKG_EXE} ${PKG_LIB_PATH} ${PKG_LIBS})
+        __find_pkg_then_add_target(${pkg_name} ${PKG_EXE} ${PKG_LIB_PATH}
+                SUFFIXES_PATH ${PKG_LIB_SUFFIXES_PATH}
+                NAMES ${PKG_LIBS})
         set(${pkg_name}_INC ${${pkg_name}_BASE_DIR}/include PARENT_SCOPE)
         if(NOT ${pkg_name}_LIBS)
             message(FATAL_ERROR "Can not find pkg: ${pkg_name}")
@@ -484,4 +501,61 @@ function(src_separate_compile)
     endwhile()
     set(${STUDENT_OBJECT_SIZE} "${OBJECT_COUNT}" PARENT_SCOPE)
     message("${STUDENT_OBJECT_SIZE} object count is ${OBJECT_COUNT}")
+endfunction()
+
+function(enable_target_when_only_build_plugins target)
+    if(ONLY_BUILD_DEVICE_PLUGINS)
+        set_target_properties(${target} PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    endif()
+endfunction()
+
+function(disable_target_when_only_build_plugins target)
+    if(ONLY_BUILD_DEVICE_PLUGINS)
+        get_property(is_set TARGET ${target} PROPERTY EXCLUDE_FROM_ALL)
+        if(NOT DEFINED is_set)
+            set_target_properties(${target} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+        endif()
+    endif()
+endfunction()
+
+function(enable_directory_when_only_build_plugins dir)
+    get_property(targets DIRECTORY ${dir} PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(target ${targets})
+        enable_target_when_only_build_plugins(${target})
+    endforeach()
+    get_property(items DIRECTORY ${dir} PROPERTY SUBDIRECTORIES)
+    foreach(item ${items})
+        enable_directory_when_only_build_plugins(${item})
+    endforeach()
+endfunction()
+
+function(disable_directory_when_only_build_plugins dir)
+    get_property(targets DIRECTORY ${dir} PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(target ${targets})
+        disable_target_when_only_build_plugins(${target})
+    endforeach()
+    get_property(items DIRECTORY ${dir} PROPERTY SUBDIRECTORIES)
+    foreach(item ${items})
+        disable_directory_when_only_build_plugins(${item})
+    endforeach()
+endfunction()
+
+function(add_subdirectory_with_faster_option dir)
+    if(ONLY_BUILD_DEVICE_PLUGINS)
+        add_subdirectory(${dir})
+        disable_directory_when_only_build_plugins(${dir})
+    else()
+        add_subdirectory(${dir})
+    endif()
+endfunction()
+
+function(find_and_use_mold)
+    find_program(MOLD_LINKER mold)
+    if(MOLD_LINKER)
+        message(STATUS "using mold to speed linking libraries")
+        get_filename_component(MOLD_LINKER_PATH ${MOLD_LINKER} DIRECTORY)
+        file(GLOB MOLD_LINKER_PATH "${MOLD_LINKER_PATH}/../libexec/mold")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -B${MOLD_LINKER_PATH}")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -B${MOLD_LINKER_PATH}")
+    endif()
 endfunction()

@@ -15,14 +15,30 @@
  */
 
 #include "ops/lrn.h"
-#include <string>
-#include <algorithm>
+
+#include <map>
 #include <memory>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -51,6 +67,7 @@ TypePtr LrnInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr
   for (const auto &item : input_args) {
     MS_EXCEPTION_IF_NULL(item);
   }
+  MS_EXCEPTION_IF_NULL(prim);
   auto op_name = prim->name();
   const int64_t input_num = 1;
   (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_num, op_name);
@@ -117,6 +134,24 @@ AbstractBasePtr LrnInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr
   abstract::ShapePtr output_shape = LrnInferShape(primitive, input_args);
   return std::make_shared<abstract::AbstractTensor>(output_type, output_shape->shape());
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(LRN, prim::kPrimLrn, LrnInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGLrnInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return LrnInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return LrnInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return LrnInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(LRN, prim::kPrimLrn, AGLrnInfer, false);
 }  // namespace ops
 }  // namespace mindspore

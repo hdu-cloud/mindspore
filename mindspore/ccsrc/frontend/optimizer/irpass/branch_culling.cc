@@ -20,6 +20,13 @@
 #include <utility>
 #include <queue>
 
+#include "mindspore/core/ops/structure_ops.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "utils/hash_map.h"
 #include "ir/func_graph.h"
 #include "frontend/operator/ops.h"
@@ -139,8 +146,10 @@ void RunSwitchNodeReplace(const FuncGraphManagerPtr &manager, std::vector<std::p
     if (IsPrimitiveCNode(item.second, prim::kPrimReturn)) {
       func_graph->set_output(item.second->cast<CNodePtr>()->input(1));
     } else if (!manager->Replace(item.first, item.second)) {
-      MS_LOG(EXCEPTION) << "TransformGraphDependNode replace node failed original:" << item.first->DebugString(2)
-                        << " to new: " << item.second->DebugString(2);
+      constexpr auto kDebugStrDepth = 2;
+      MS_LOG(INTERNAL_EXCEPTION) << "TransformGraphDependNode replace node failed original:"
+                                 << item.first->DebugString(kDebugStrDepth)
+                                 << " to new: " << item.second->DebugString(kDebugStrDepth);
     }
   }
 }
@@ -226,7 +235,7 @@ FuncGraphPtr TransformGraphCondBranchNodes(
       }
 
       if (input_node == nullptr) {
-        MS_LOG(EXCEPTION) << "generate switch node failed";
+        MS_LOG(INTERNAL_EXCEPTION) << "generate switch node failed";
       }
     }
     if (should_replace) {
@@ -402,7 +411,7 @@ void GenerateRepDepend(
 
   auto inputs = node->inputs();
   if (inputs.size() != kDependInputSize) {
-    MS_LOG(EXCEPTION) << "Inputs should be [depend, actual_value, depended_node].";
+    MS_LOG(EXCEPTION) << "For 'Depend', the inputs should be [depend_prim, actual_value, depended_node].";
   }
 
   std::vector<AnfNodePtr> new_depened_inputs;
@@ -444,7 +453,8 @@ FuncGraphPtr TransformGraphDependNode(
     if (IsPrimitiveCNode(node, prim::kPrimDepend)) {
       auto cnode = node->cast<CNodePtr>();
       if (cnode->size() != kDependInputSize) {
-        MS_LOG(EXCEPTION) << "Dependnode input size != " << kDependInputSize;
+        MS_LOG(EXCEPTION) << "For primitive 'Depend', the input size must be " << kDependInputSize << ", but got "
+                          << cnode->size();
       }
       auto depended_node = cnode->input(kDependAttachNodeIndex);
       MS_EXCEPTION_IF_NULL(depended_node);
@@ -461,7 +471,7 @@ FuncGraphPtr TransformGraphDependNode(
 
   for (auto &item : *repl_node) {
     if (!manager->Replace(item.first, item.second)) {
-      MS_LOG(EXCEPTION) << "TransformGraphDependNode replace node failed";
+      MS_LOG(INTERNAL_EXCEPTION) << "TransformGraphDependNode replace node failed";
     }
   }
 
@@ -478,7 +488,7 @@ FuncGraphPtr TransformGraphCondFalseBranchNodes(const FuncGraphPtr &graph, const
   return TransformGraphDependNode(graph, cond, GenerateSwitchDependFalseNode);
 }
 
-// judge if the true and false graph output is compatible(they shall have same tuple size)
+// Judge if the true and false graph output is compatible(they shall have same tuple size)
 bool GraphOutputCompatible(const AbstractBasePtr &true_branch_abs, const AbstractBasePtr &false_branch_abs) {
   MS_EXCEPTION_IF_NULL(true_branch_abs);
   MS_EXCEPTION_IF_NULL(false_branch_abs);

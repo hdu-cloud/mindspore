@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,6 +46,7 @@ constexpr int32_t kY2GB = -1160;
 constexpr int32_t kB2B = kU2B * 128 + kY2GB;
 constexpr int32_t kB2G = kU2G * 128 + kV2G * 128 + kY2GB;
 constexpr int32_t kB2R = kV2R * 128 + kY2GB;
+constexpr int32_t kChannelThree = 3;
 
 static bool Equal(const float &a, const float &b) { return std::fabs(a - b) < 1e-6; }
 
@@ -60,7 +61,7 @@ static inline bool InitBilinearWeight(int *data_ptr, int16_t *weight_ptr, double
   int16_t *weight_start_ptr = weight_ptr;
 
   for (unsigned int i = 0; i < dst_length; i++) {
-    float src_f_x = static_cast<float>((i + 0.5) * scale - 0.5);
+    auto src_f_x = static_cast<float>((i + 0.5) * scale - 0.5);
     int src_u_x = static_cast<int>(floor(src_f_x));
     src_f_x -= src_u_x;
     if (src_u_x < 0) {
@@ -105,8 +106,8 @@ static bool ResizeBilinear3C(const unsigned char *src, int src_width, int src_he
   int *x_offset = data_buf;
   int *y_offset = data_buf + dst_width + dst_width;
 
-  int16_t *x_weight = reinterpret_cast<int16_t *>(data_buf + dst_width);
-  int16_t *y_weight = reinterpret_cast<int16_t *>(data_buf + dst_width + dst_width + dst_height);
+  auto *x_weight = reinterpret_cast<int16_t *>(data_buf + dst_width);
+  auto *y_weight = reinterpret_cast<int16_t *>(data_buf + dst_width + dst_width + dst_height);
 
   if (!InitBilinearWeight(x_offset, x_weight, scale_width, dst_width, src_width, 3)) {
     delete[] data_buf;
@@ -171,8 +172,8 @@ static bool ResizeBilinear3C(const unsigned char *src, int src_width, int src_he
     unsigned char *dst_ptr = dst + dst_width * 3 * (y);
 
     for (int k = 0; k < dst_width * 3; k++) {
-      int16_t t0 = (int16_t)((y_weight[0] * (int16_t)(*row0_ptr0++)) >> 16);
-      int16_t t1 = (int16_t)((y_weight[1] * (int16_t)(*row1_ptr1++)) >> 16);
+      auto t0 = static_cast<int16_t>((y_weight[0] * static_cast<int16_t>(*row0_ptr0++)) >> 16);
+      auto t1 = static_cast<int16_t>((y_weight[1] * static_cast<int16_t>(*row1_ptr1++)) >> 16);
       *dst_ptr++ = static_cast<unsigned char>((t0 + t1 + 2) >> 2);
     }
     y_weight += 2;
@@ -205,8 +206,8 @@ static bool ResizeBilinear1C(const unsigned char *src, int src_width, int src_he
   int *x_offset = data_buf;
   int *y_offset = data_buf + dst_width + dst_width;
 
-  int16_t *x_weight = reinterpret_cast<int16_t *>(data_buf + dst_width);
-  int16_t *y_weight = reinterpret_cast<int16_t *>(data_buf + dst_width + dst_width + dst_height);
+  auto *x_weight = reinterpret_cast<int16_t *>(data_buf + dst_width);
+  auto *y_weight = reinterpret_cast<int16_t *>(data_buf + dst_width + dst_width + dst_height);
 
   if (!InitBilinearWeight(x_offset, x_weight, scale_width, dst_width, src_width, 1)) {
     delete[] data_buf;
@@ -267,8 +268,8 @@ static bool ResizeBilinear1C(const unsigned char *src, int src_width, int src_he
     unsigned char *dst_ptr = dst + dst_width * (y);
 
     for (int k = 0; k < dst_width; k++) {
-      int16_t t0 = (int16_t)((y_weight[0] * (int16_t)(*row0_ptr0++)) >> 16);
-      int16_t t1 = (int16_t)((y_weight[1] * (int16_t)(*row1_ptr1++)) >> 16);
+      auto t0 = static_cast<int16_t>((y_weight[0] * static_cast<int16_t>(*row0_ptr0++)) >> 16);
+      auto t1 = static_cast<int16_t>((y_weight[1] * static_cast<int16_t>(*row1_ptr1++)) >> 16);
       *dst_ptr++ = static_cast<unsigned char>((t0 + t1 + 2) >> 2);
     }
 
@@ -279,7 +280,7 @@ static bool ResizeBilinear1C(const unsigned char *src, int src_width, int src_he
 }
 
 static inline uint8_t clip(float value) {
-  int int_val = roundf(value);
+  int int_val = static_cast<int>(roundf(value));
   return std::max<int32_t>(std::numeric_limits<uint8_t>::min(),
                            std::min<int32_t>(std::numeric_limits<uint8_t>::max(), int_val));
 }
@@ -300,6 +301,7 @@ static bool Conv2DImplement(const LiteMat &src, const LiteMat &kernel, T2 *dst, 
   }
 
   pad_mat.Init(src.width_ + 2 * border_x, src.height_ + 2 * border_y, src.channel_, src.data_type_);
+  RETURN_FALSE_IF_LITEMAT_EMPTY(pad_mat);
 
   if (!Pad(src, pad_mat, border_y, border_y, border_x, border_x, pad_type)) {
     return false;
@@ -371,6 +373,7 @@ bool Conv2D(const LiteMat &src, const LiteMat &kernel, LiteMat &dst, LDataType d
   if (dst.IsEmpty() || dst.width_ != src.width_ || dst.height_ != src.height_ || dst.channel_ != src.channel_ ||
       dst.data_type_ != dst_type) {
     dst.Init(src.width_, src.height_, src.channel_, dst_type);
+    RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
   }
 
   if (src.data_type_ == LDataType::UINT8 && dst.data_type_ == LDataType::UINT8) {
@@ -397,6 +400,7 @@ bool ConvRowCol(const LiteMat &src, const LiteMat &kx, const LiteMat &ky, LiteMa
   if (dst.IsEmpty() || dst.width_ != src.width_ || dst.height_ != src.height_ || dst.channel_ != src.channel_ ||
       dst.data_type_ != dst_type) {
     dst.Init(src.width_, src.height_, src.channel_, dst_type);
+    RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
   }
 
   LiteMat mid;
@@ -405,6 +409,7 @@ bool ConvRowCol(const LiteMat &src, const LiteMat &kx, const LiteMat &ky, LiteMa
 }
 
 bool ResizeBilinear(const LiteMat &src, LiteMat &dst, int dst_w, int dst_h) {
+  RETURN_FALSE_IF_LITEMAT_EMPTY(src);
   if (dst_h <= 0 || dst_w <= 0) {
     return false;
   }
@@ -419,11 +424,12 @@ bool ResizeBilinear(const LiteMat &src, LiteMat &dst, int dst_w, int dst_h) {
     if (dst.IsEmpty()) {
       return false;
     }
-  } else if (dst.height_ != dst_h || dst.width_ != dst_w || dst.channel_ != src.channel_) {
+  }
+  if (dst.height_ != dst_h || dst.width_ != dst_w || dst.channel_ != src.channel_) {
     return false;
-  } else if (dst.data_type_ != LDataType::UINT8) {
+  }
+  if (dst.data_type_ != LDataType::UINT8) {
     return false;
-  } else {
   }
 
   if (src.channel_ == 3) {
@@ -439,10 +445,11 @@ bool ResizeBilinear(const LiteMat &src, LiteMat &dst, int dst_w, int dst_h) {
 
 static bool ConvertBGR(const unsigned char *data, LDataType data_type, int w, int h, LiteMat &mat) {
   if (data_type == LDataType::UINT8) {
-    mat.Init(w, h, 3, LDataType::UINT8);
+    mat.Init(w, h, kChannelThree, LDataType::UINT8);
+    RETURN_FALSE_IF_LITEMAT_EMPTY(mat);
     unsigned char *dst_ptr = mat;
     // mindspore lite version, there is no securec lib
-    (void)memcpy(dst_ptr, data, w * h * 3 * sizeof(unsigned char));
+    memcpy(dst_ptr, data, w * h * kChannelThree * sizeof(unsigned char));
   } else {
     return false;
   }
@@ -451,7 +458,8 @@ static bool ConvertBGR(const unsigned char *data, LDataType data_type, int w, in
 
 static bool ConvertRGBAToBGR(const unsigned char *data, LDataType data_type, int w, int h, LiteMat &mat) {
   if (data_type == LDataType::UINT8) {
-    mat.Init(w, h, 3, LDataType::UINT8);
+    mat.Init(w, h, kChannelThree, LDataType::UINT8);
+    RETURN_FALSE_IF_LITEMAT_EMPTY(mat);
     unsigned char *ptr = mat;
     const unsigned char *data_ptr = data;
     for (int y = 0; y < h; y++) {
@@ -471,7 +479,8 @@ static bool ConvertRGBAToBGR(const unsigned char *data, LDataType data_type, int
 
 static bool ConvertRGBAToRGB(const unsigned char *data, LDataType data_type, int w, int h, LiteMat &mat) {
   if (data_type == LDataType::UINT8) {
-    mat.Init(w, h, 3, LDataType::UINT8);
+    mat.Init(w, h, kChannelThree, LDataType::UINT8);
+    RETURN_FALSE_IF_LITEMAT_EMPTY(mat);
     unsigned char *ptr = mat;
     const unsigned char *data_ptr = data;
     for (int y = 0; y < h; y++) {
@@ -494,7 +503,8 @@ static bool ConvertYUV420SPToBGR(const uint8_t *data, LDataType data_type, bool 
     return false;
   }
   if (data_type == LDataType::UINT8) {
-    mat.Init(w, h, 3, LDataType::UINT8);
+    mat.Init(w, h, kChannelThree, LDataType::UINT8);
+    RETURN_FALSE_IF_LITEMAT_EMPTY(mat);
     const uint8_t *y_ptr = data;
     const uint8_t *uv_ptr = y_ptr + w * h;
     uint8_t *bgr_ptr = mat;
@@ -611,6 +621,7 @@ bool InitFromPixel(const unsigned char *data, LPixelType pixel_type, LDataType d
 }
 
 bool ConvertTo(const LiteMat &src, LiteMat &dst, double scale) {
+  RETURN_FALSE_IF_LITEMAT_EMPTY(src);
   if (src.data_type_ != LDataType::UINT8) {
     return false;
   }
@@ -621,13 +632,14 @@ bool ConvertTo(const LiteMat &src, LiteMat &dst, double scale) {
 
   if (dst.IsEmpty()) {
     dst.Init(src.width_, src.height_, src.channel_, LDataType::FLOAT32);
+    RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
   } else if (src.width_ != dst.width_ || src.height_ != dst.height_ || src.channel_ != dst.channel_ ||
              dst.data_type_ != LDataType::FLOAT32) {
     return false;
   }
 
-  const uint8_t *src_ptr = reinterpret_cast<const uint8_t *>(src.data_ptr_);
-  float *dst_ptr = reinterpret_cast<float *>(dst.data_ptr_);
+  const auto *src_ptr = reinterpret_cast<const uint8_t *>(src.data_ptr_);
+  auto *dst_ptr = reinterpret_cast<float *>(dst.data_ptr_);
   int64_t total_size = src.height_ * src.width_ * src.channel_;
   int64_t x = 0;
 #ifdef ENABLE_NEON
@@ -672,14 +684,18 @@ bool ConvertTo(const LiteMat &src, LiteMat &dst, double scale) {
 
 template <typename T>
 static bool CropInternal(const LiteMat &src, LiteMat &dst, int x, int y, int w, int h) {
+  RETURN_FALSE_IF_LITEMAT_EMPTY(src);
   int dst_h = h;
   int dst_w = w;
   int dst_c = src.channel_;
   if (dst.IsEmpty()) {
     dst.Init(dst_w, dst_h, dst_c, src.data_type_);
-  } else if (dst.height_ != h || dst.width_ != w || dst.channel_ != src.channel_) {
+    RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
+  }
+  if (dst.height_ != h || dst.width_ != w || dst.channel_ != src.channel_) {
     return false;
-  } else if (dst.data_type_ != src.data_type_) {
+  }
+  if (dst.data_type_ != src.data_type_) {
     return false;
   }
   const T *src_start_p = src;
@@ -688,12 +704,13 @@ static bool CropInternal(const LiteMat &src, LiteMat &dst, int x, int y, int w, 
     const T *src_index_p = src_start_p + (y + i_h) * src.width_ * dst_c + x * dst_c;
     T *dst_index_p = dst_start_p + i_h * dst_w * dst_c;
     // mindspore lite version, there is no securec lib
-    (void)memcpy(dst_index_p, src_index_p, dst_w * dst_c * sizeof(T));
+    memcpy(dst_index_p, src_index_p, dst_w * dst_c * sizeof(T));
   }
   return true;
 }
 
 bool Crop(const LiteMat &src, LiteMat &dst, int x, int y, int w, int h) {
+  RETURN_FALSE_IF_LITEMAT_EMPTY(src);
   if (x < 0 || y < 0 || w <= 0 || h <= 0) {
     return false;
   }
@@ -726,12 +743,12 @@ static bool CheckMeanAndStd(const LiteMat &src, LiteMat &dst, int channel, const
   if (src.data_type_ != LDataType::FLOAT32 && src.data_type_ != LDataType::UINT8) {
     return false;
   }
-  if (mean.size() > 0) {
+  if (!mean.empty()) {
     if (mean.size() != channel) {
       return false;
     }
   }
-  if (std.size() > 0) {
+  if (!std.empty()) {
     if (CheckZero(std)) {
       return false;
     }
@@ -741,9 +758,12 @@ static bool CheckMeanAndStd(const LiteMat &src, LiteMat &dst, int channel, const
   }
   if (dst.IsEmpty()) {
     dst.Init(src.width_, src.height_, src.channel_, LDataType::FLOAT32);
-  } else if (dst.height_ != src.height_ || dst.width_ != src.width_ || dst.channel_ != src.channel_) {
+    RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
+  }
+  if (dst.height_ != src.height_ || dst.width_ != src.width_ || dst.channel_ != src.channel_) {
     return false;
-  } else if (dst.data_type_ != LDataType::FLOAT32) {
+  }
+  if (dst.data_type_ != LDataType::FLOAT32) {
     return false;
   }
   return true;
@@ -751,6 +771,7 @@ static bool CheckMeanAndStd(const LiteMat &src, LiteMat &dst, int channel, const
 
 bool SubStractMeanNormalize(const LiteMat &src, LiteMat &dst, const std::vector<float> &mean,
                             const std::vector<float> &std) {
+  RETURN_FALSE_IF_LITEMAT_EMPTY(src);
   if (!CheckMeanAndStd(src, dst, src.channel_, mean, std)) {
     return false;
   }
@@ -819,8 +840,8 @@ static void PadWithConstant(const LiteMat &src, LiteMat &dst, const int top, con
     }
   }
 
-  uint8_t *dst_ptr = reinterpret_cast<uint8_t *>(dst.data_ptr_);
-  uint8_t *src_ptr = reinterpret_cast<uint8_t *>(src.data_ptr_);
+  auto *dst_ptr = reinterpret_cast<uint8_t *>(dst.data_ptr_);
+  auto *src_ptr = reinterpret_cast<uint8_t *>(src.data_ptr_);
   for (int i = 0; i < top; i++) {
     // mindspore lite version, there is no securec lib
     memcpy(dst_ptr + i * dst_step, const_ptr, dst_step);
@@ -828,7 +849,7 @@ static void PadWithConstant(const LiteMat &src, LiteMat &dst, const int top, con
 
   int left_size = left * dst.channel_ * dst.elem_size_;
   int right_size = right * dst.channel_ * dst.elem_size_;
-  uint8_t *dst_raw_data = dst_ptr + top * dst_step + left_size;
+  uint8_t *dst_raw_data = dst_ptr + static_cast<ptrdiff_t>(top * dst_step + left_size);
   for (int i = 0; i < src.height_; i++, dst_raw_data += dst_step, src_ptr += src_step) {
     // mindspore lite version, there is no securec lib
     memcpy(dst_raw_data, src_ptr, src_step);
@@ -843,6 +864,7 @@ static void PadWithConstant(const LiteMat &src, LiteMat &dst, const int top, con
 }
 
 static int PadFromPos(int p, int len, PaddBorderType pad_type) {
+  constexpr auto pixel_factor = 2;
   if (p >= 0 && p < len) {
     return p;
   }
@@ -850,7 +872,14 @@ static int PadFromPos(int p, int len, PaddBorderType pad_type) {
     return p < 0 ? 0 : len - 1;
   } else {
     // calculate the position of pixel in reflect mode like edcb|abcdef|edcb
-    return p < 0 ? -p : 2 * len - p - 2;
+    while (p < 0 || p >= len) {
+      if (p < 0) {
+        p = -p;
+      } else {
+        p = pixel_factor * len - p - pixel_factor;
+      }
+    }
+    return p;
   }
 }
 
@@ -860,8 +889,8 @@ static void PadImplement(const LiteMat &src, LiteMat &dst, const int top, const 
   int src_step = src.width_ * src.channel_;
   int dst_step = dst.width_ * dst.channel_;
 
-  uint8_t *src_data_ptr = reinterpret_cast<uint8_t *>(src.data_ptr_);
-  uint8_t *dst_data_ptr = reinterpret_cast<uint8_t *>(dst.data_ptr_);
+  auto *src_data_ptr = reinterpret_cast<uint8_t *>(src.data_ptr_);
+  auto *dst_data_ptr = reinterpret_cast<uint8_t *>(dst.data_ptr_);
   for (int i = 0; i < src.height_; i++) {
     // mindspore lite version, there is no securec lib
     memcpy(dst_data_ptr + (i + top) * dst.steps_[0] + left * dst.steps_[1], src_data_ptr + i * src.steps_[0],
@@ -902,6 +931,7 @@ bool ExtractChannel(LiteMat &src, LiteMat &dst, int col) {
     if (dst.IsEmpty() || dst.width_ != src.width_ || dst.height_ != src.height_ || dst.channel_ != 1 ||
         dst.data_type_ != src.data_type_) {
       dst.Init(src.width_, src.height_, 1, src.data_type_);
+      RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
     }
   }
 
@@ -916,11 +946,13 @@ bool ExtractChannel(LiteMat &src, LiteMat &dst, int col) {
 }
 
 bool Split(const LiteMat &src, std::vector<LiteMat> &mv) {
+  RETURN_FALSE_IF_LITEMAT_EMPTY(src);
   if (src.data_type_ == LDataType::FLOAT32) {
     const float *src_start_p = src;
     for (int c = 0; c < src.channel_; c++) {
       LiteMat dst;
-      (void)dst.Init(src.width_, src.height_, 1, src.data_type_);
+      dst.Init(src.width_, src.height_, 1, src.data_type_);
+      RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
       float *dst_start_p = dst;
       for (int h = 0; h < src.height_; h++) {
         uint32_t src_start = h * src.width_ * src.channel_;
@@ -938,7 +970,8 @@ bool Split(const LiteMat &src, std::vector<LiteMat> &mv) {
     const uint8_t *src_start_p = src;
     for (int c = 0; c < src.channel_; c++) {
       LiteMat dst;
-      (void)dst.Init(src.width_, src.height_, 1, src.data_type_);
+      dst.Init(src.width_, src.height_, 1, src.data_type_);
+      RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
       uint8_t *dst_start_p = dst;
       for (int h = 0; h < src.height_; h++) {
         uint32_t src_start = h * src.width_ * src.channel_;
@@ -974,17 +1007,19 @@ inline void MergeImpl(const std::vector<LiteMat> &mv, T *dst_ptr, int height, in
 }
 
 bool Merge(const std::vector<LiteMat> &mv, LiteMat &dst) {
-  if (mv.size() != 1 && mv.size() != 3 && mv.size() != 4) {
+  constexpr int64_t mv_size_three = 3;
+  constexpr int64_t mv_size_four = 4;
+  if (mv.size() != 1 && mv.size() != mv_size_three && mv.size() != mv_size_four) {
     return false;
   }
 
   int width = mv[0].width_;
   int height = mv[0].height_;
-  int channel = mv.size();
+  int channel = static_cast<int>(mv.size());
   LDataType data_type = mv[0].data_type_;
 
   // The arrays in list must be single-channel
-  if (std::any_of(mv.begin(), mv.end(), [](const LiteMat &m) { return m.channel_ != 1; })) {
+  if (std::any_of(mv.begin(), mv.end(), [](const LiteMat &m) { return m.IsEmpty() || m.channel_ != 1; })) {
     return false;
   }
 
@@ -997,6 +1032,7 @@ bool Merge(const std::vector<LiteMat> &mv, LiteMat &dst) {
   if (dst.IsEmpty() || dst.width_ != width || dst.height_ != height || dst.channel_ != channel ||
       dst.data_type_ != data_type) {
     dst.Init(width, height, channel, data_type);
+    RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
   }
 
   if (dst.data_type_ == LDataType::FLOAT32) {
@@ -1035,9 +1071,11 @@ bool Pad(const LiteMat &src, LiteMat &dst, int top, int bottom, int left, int ri
   if (dst.IsEmpty()) {
     dst.Init(dst_width, dst_height, src.channel_, src.data_type_);
     RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
-  } else if (dst.width_ != dst_width || dst.height_ != dst_height || src.channel_ != dst.channel_) {
+  }
+  if (dst.width_ != dst_width || dst.height_ != dst_height || src.channel_ != dst.channel_) {
     return false;
-  } else if (src.data_type_ != dst.data_type_) {
+  }
+  if (src.data_type_ != dst.data_type_) {
     return false;
   }
   if (pad_type == PADD_BORDER_CONSTANT && src.data_type_ == LDataType::FLOAT32) {
@@ -1054,7 +1092,7 @@ bool Pad(const LiteMat &src, LiteMat &dst, int top, int bottom, int left, int ri
   return true;
 }
 
-std::vector<std::vector<float>> GetDefaultBoxes(const BoxesConfig config) {
+std::vector<std::vector<float>> GetDefaultBoxes(const BoxesConfig &config) {
   size_t size = config.num_default.size();
   if (size <= 1 || config.feature_size.size() != size || config.steps.size() != size ||
       config.aspect_rations.size() != size) {
@@ -1064,35 +1102,39 @@ std::vector<std::vector<float>> GetDefaultBoxes(const BoxesConfig config) {
     return {};
   }
   std::vector<float> fk;
-  float num = static_cast<float>(config.img_shape[0]);
-  for (int i = 0; i < config.steps.size(); i++) {
-    if (config.steps[i] == 0) {
+  auto num = static_cast<float>(config.img_shape[0]);
+  for (auto step : config.steps) {
+    if (step == 0) {
       return {};
     }
-    fk.push_back(num / config.steps[i]);
+    fk.push_back(num / static_cast<float>(step));
   }
-  float scale_rate = (config.max_scale - config.min_scale) / (config.num_default.size() - 1);
+  float scale_rate = (config.max_scale - config.min_scale) / static_cast<float>(config.num_default.size() - 1);
   std::vector<float> scales(config.num_default.size());
   for (int i = 0; i < scales.size(); i++) {
-    scales[i] = config.min_scale + scale_rate * i;
+    scales[i] = config.min_scale + scale_rate * static_cast<float>(i);
   }
   scales.push_back(1.0f);
   std::vector<std::vector<float>> default_boxes;
   for (auto i = 0; i < config.feature_size.size(); i++) {
     float sk1 = scales[i];
     float sk2 = scales[i + 1];
-    float sk3 = sqrt(sk1 * sk2);
+    float sk3 = std::sqrt(sk1 * sk2);
     std::vector<std::vector<float>> all_sizes;
-    float w, h;
+    float w;
+    float h;
+    constexpr int32_t kRation = 2;
     if (i == 0) {
-      w = sk1 * sqrt(2);
-      h = sk1 / sqrt(2);
+      // Multiplying the square root by sk1
+      w = sk1 * sqrtf(kRation);
+      // Divide sk2 by the square root
+      h = sk1 / sqrtf(kRation);
       all_sizes = {{0.1, 0.1}, {w, h}, {h, w}};
     } else {
       all_sizes = {{sk1, sk1}};
-      for (int j = 0; j < config.aspect_rations[i].size(); j++) {
-        w = sk1 * sqrt(config.aspect_rations[i][j]);
-        h = sk1 / sqrt(config.aspect_rations[i][j]);
+      for (float ration : config.aspect_rations[i]) {
+        w = sk1 * sqrtf(ration);
+        h = sk1 / sqrtf(ration);
         all_sizes.push_back({w, h});
         all_sizes.push_back({h, w});
       }
@@ -1101,10 +1143,10 @@ std::vector<std::vector<float>> GetDefaultBoxes(const BoxesConfig config) {
 
     for (int j = 0; j < config.feature_size[i]; j++) {
       for (int k = 0; k < config.feature_size[i]; k++) {
-        for (int m = 0; m < all_sizes.size(); m++) {
-          float cx = (k + 0.5) / fk[i];
-          float cy = (j + 0.5) / fk[i];
-          default_boxes.push_back({cy, cx, all_sizes[m][1], all_sizes[m][0]});
+        for (auto &all_size : all_sizes) {
+          float cx = (static_cast<float>(k) + 0.5F) / fk[i];
+          float cy = (static_cast<float>(j) + 0.5F) / fk[i];
+          default_boxes.push_back({cy, cx, all_size[1], all_size[0]});
         }
       }
     }
@@ -1113,8 +1155,9 @@ std::vector<std::vector<float>> GetDefaultBoxes(const BoxesConfig config) {
 }
 
 void ConvertBoxes(std::vector<std::vector<float>> &boxes, const std::vector<std::vector<float>> &default_boxes,
-                  const BoxesConfig config) {
-  if (boxes.size() != default_boxes.size() || config.prior_scaling.size() != 2) {
+                  const BoxesConfig &config) {
+  constexpr int64_t prior_scaling_size = 2;
+  if (boxes.size() != default_boxes.size() || config.prior_scaling.size() != prior_scaling_size) {
     boxes = {};
     return;
   }
@@ -1123,10 +1166,11 @@ void ConvertBoxes(std::vector<std::vector<float>> &boxes, const std::vector<std:
       boxes = {};
       return;
     }
+    // 0, 1, 2, 3 is the vector index of boxes and default_boxes
     boxes[i][0] = boxes[i][0] * config.prior_scaling[0] * default_boxes[i][2] + default_boxes[i][0];
     boxes[i][1] = boxes[i][1] * config.prior_scaling[0] * default_boxes[i][3] + default_boxes[i][1];
-    boxes[i][2] = exp(boxes[i][2] * config.prior_scaling[1]) * default_boxes[i][2];
-    boxes[i][3] = exp(boxes[i][3] * config.prior_scaling[1]) * default_boxes[i][3];
+    boxes[i][2] = expf(boxes[i][2] * config.prior_scaling[1]) * default_boxes[i][2];
+    boxes[i][3] = expf(boxes[i][3] * config.prior_scaling[1]) * default_boxes[i][3];
   }
 }
 
@@ -1149,13 +1193,13 @@ std::vector<int> ApplyNms(const std::vector<std::vector<float>> &all_boxes, std:
   std::sort(order.begin(), order.end(),
             [&all_scores](int pos1, int pos2) { return (all_scores[pos1] > all_scores[pos2]); });
   std::vector<int> keep;
-  while (order.size() > 0) {
+  while (!order.empty()) {
     int i = order[0];
     keep.push_back(i);
     if (keep.size() >= max_boxes) {
       break;
     }
-    int len = order.size() - 1;
+    int len = static_cast<int>(order.size() - 1);
     std::vector<float> ovr(len);
     for (int j = 0; j < len; j++) {
       float xx1 = std::max(all_boxes[i][1], all_boxes[order[j + 1]][1]);
@@ -1176,9 +1220,8 @@ std::vector<int> ApplyNms(const std::vector<std::vector<float>> &all_boxes, std:
     }
     std::vector<int> new_order;
     new_order.reserve(inds.size());
-    for (int k = 0; k < inds.size(); k++) {
-      new_order.push_back(order[inds[k]]);
-    }
+    (void)std::transform(inds.begin(), inds.end(), std::back_inserter(new_order),
+                         [&order](int index) -> int { return order[index]; });
     order = new_order;
   }
   return keep;
@@ -1187,7 +1230,7 @@ std::vector<int> ApplyNms(const std::vector<std::vector<float>> &all_boxes, std:
 template <typename Pixel_Type>
 bool ImplementAffine(LiteMat &src, LiteMat &out_img, const double M[6], std::vector<size_t> &dsize,
                      Pixel_Type borderValue) {
-  if (dsize.size() != 2 || CheckZero(dsize)) {
+  if (src.IsEmpty() || dsize.size() != 2 || CheckZero(dsize)) {
     return false;
   }
 
@@ -1208,7 +1251,8 @@ bool ImplementAffine(LiteMat &src, LiteMat &out_img, const double M[6], std::vec
   IM[2] = b1;
   IM[5] = b2;
   if (out_img.IsEmpty()) {
-    out_img.Init(dsize[0], dsize[1], sizeof(Pixel_Type), src.data_type_);
+    out_img.Init(static_cast<int>(dsize[0]), static_cast<int>(dsize[1]), sizeof(Pixel_Type), src.data_type_);
+    RETURN_FALSE_IF_LITEMAT_EMPTY(out_img);
   } else if (out_img.height_ != dsize[1] || out_img.width_ != dsize[0] || out_img.channel_ != src.channel_) {
     return false;
   } else if (out_img.data_type_ != src.data_type_) {
@@ -1256,7 +1300,8 @@ bool Affine(LiteMat &src, LiteMat &out_img, const double M[6], std::vector<size_
 }
 
 bool Affine(LiteMat &src, LiteMat &out_img, const double M[6], std::vector<size_t> dsize, FLOAT32_C3 borderValue) {
-  if (src.channel_ == 3 && src.data_type_ == LDataType::FLOAT32) {
+  constexpr int64_t channel = 3;
+  if (src.channel_ == channel && src.data_type_ == LDataType::FLOAT32) {
     return ImplementAffine(src, out_img, M, dsize, borderValue);
   } else {
     return false;
@@ -1278,6 +1323,7 @@ inline void RotationMatrix2DImpl(float x, float y, double angle, double scale, L
 
 bool GetRotationMatrix2D(float x, float y, double angle, double scale, LiteMat &M) {
   M.Init(3, 2, LDataType(LDataType::DOUBLE));
+  RETURN_FALSE_IF_LITEMAT_EMPTY(M);
   RotationMatrix2DImpl(x, y, angle, scale, M);
   return true;
 }
@@ -1288,6 +1334,7 @@ bool TransposeImpl(const LiteMat &src, LiteMat &dst) {
   int n = src.height_;
 
   dst.Init(n, m, src.data_type_);
+  RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
   for (int i = 0; i < m; i++) {
     for (int j = 0; j < n; j++) {
       dst.ptr<T>(i)[j] = src.ptr<T>(j)[i];
@@ -1539,7 +1586,7 @@ void SVBkSb(int m, int n, LiteMat w, LiteMat u, LiteMat v, const LiteMat src2, L
   }
 }
 
-bool GetPerspectiveTransformImpl(const LiteMat &src1, const LiteMat &src2, LiteMat dst) {
+bool GetPerspectiveTransformImpl(const LiteMat &src1, const LiteMat &src2, const LiteMat &dst) {
   LDataType type = src1.data_type_;
   int m = src1.height_;
   int m_ = m;
@@ -1588,6 +1635,7 @@ bool GetPerspectiveTransform(std::vector<Point> src_point, std::vector<Point> ds
   }
 
   M.Init(3, 3, LDataType(LDataType::DOUBLE));
+  RETURN_FALSE_IF_LITEMAT_EMPTY(M);
   LiteMat dst(1, 8, M.data_ptr_, LDataType(LDataType::DOUBLE));
 
   GetPerspectiveTransformImpl(src1, src2, dst);
@@ -1608,6 +1656,7 @@ bool GetAffineTransformImpl(LiteMat &src, LiteMat &dst) {
 
     if (std::abs(src.ptr<double>(k)[i]) < DBL_EPSILON * 100) {
       dst.Init(1, 6, LDataType(LDataType::DOUBLE));
+      RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
       (void)memset(dst.data_ptr_, 0, 6 * sizeof(double));
       RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
       return false;
@@ -1662,6 +1711,8 @@ bool GetAffineTransform(std::vector<Point> src_point, std::vector<Point> dst_poi
   double n[6];
   LiteMat src1(6, 6, m, LDataType(LDataType::DOUBLE));
   LiteMat src2(1, 6, n, LDataType(LDataType::DOUBLE));
+  RETURN_FALSE_IF_LITEMAT_EMPTY(src1);
+  RETURN_FALSE_IF_LITEMAT_EMPTY(src2);
 
   for (int i = 0; i < 3; i++) {
     int j = i * 12;
@@ -1677,6 +1728,7 @@ bool GetAffineTransform(std::vector<Point> src_point, std::vector<Point> dst_poi
 
   GetAffineTransformImpl(src1, src2);
   M.Init(3, 2, 1, LDataType(LDataType::DOUBLE));
+  RETURN_FALSE_IF_LITEMAT_EMPTY(M);
   for (int i = 0; i < M.height_; i++) {
     for (int j = 0; j < M.width_; j++) {
       M.ptr<double>(i)[j] = src2.ptr<double>(i * M.width_ + j)[0];
@@ -1686,12 +1738,14 @@ bool GetAffineTransform(std::vector<Point> src_point, std::vector<Point> dst_poi
 }
 
 bool ConvertRgbToBgr(const LiteMat &src, const LDataType &data_type, int w, int h, LiteMat &mat) {
+  RETURN_FALSE_IF_LITEMAT_EMPTY(src);
   if (data_type == LDataType::UINT8) {
     if (src.IsEmpty()) {
       return false;
     }
     if (mat.IsEmpty()) {
       mat.Init(w, h, 3, LDataType::UINT8);
+      RETURN_FALSE_IF_LITEMAT_EMPTY(mat);
     }
     if (mat.channel_ != 3) {
       return false;
@@ -1718,12 +1772,14 @@ bool ConvertRgbToBgr(const LiteMat &src, const LDataType &data_type, int w, int 
 }
 
 bool ConvertRgbToGray(const LiteMat &src, LDataType data_type, int w, int h, LiteMat &mat) {
+  RETURN_FALSE_IF_LITEMAT_EMPTY(src);
   if (data_type == LDataType::UINT8) {
     if (src.IsEmpty()) {
       return false;
     }
     if (mat.IsEmpty()) {
       mat.Init(w, h, 1, LDataType::UINT8);
+      RETURN_FALSE_IF_LITEMAT_EMPTY(mat);
     }
     if (mat.channel_ != 1) {
       return false;
@@ -1750,21 +1806,22 @@ void UpdateOrientationAfineMat(const LiteMat &src, int *rotationDstWidth, int *r
                                int img_orientation) {
   int srcOrientation = img_orientation;
   if (IM_TOOL_EXIF_ORIENTATION_0_DEG_MIRROR == srcOrientation) {
+    // 0, 2 is the matrix index of varM
     (*varM)[0][0] *= -1;
-    (*varM)[0][2] += *rotationDstWidth - 1;
+    (*varM)[0][2] += static_cast<float>(*rotationDstWidth - 1);
   } else if ((IM_TOOL_EXIF_ORIENTATION_180_DEG == srcOrientation) ||
              (IM_TOOL_EXIF_ORIENTATION_180_DEG_MIRROR == srcOrientation)) {
     // 0, 1, 2 is the matrix index of varM
     (*varM)[0][0] = -1;
     (*varM)[0][1] = 0;
-    (*varM)[0][2] = *rotationDstWidth - 1;
+    (*varM)[0][2] = static_cast<float>(*rotationDstWidth - 1);
     (*varM)[1][0] = 0;
     (*varM)[1][1] = -1;
-    (*varM)[1][2] = *rotationDstHeight - 1;
+    (*varM)[1][2] = static_cast<float>(*rotationDstHeight - 1);
     if (IM_TOOL_EXIF_ORIENTATION_180_DEG_MIRROR == srcOrientation) {
       /* with (*varM)irror */
       (*varM)[0][0] *= -1;
-      (*varM)[0][2] -= *rotationDstWidth - 1;
+      (*varM)[0][2] -= static_cast<float>(*rotationDstWidth - 1);
     }
   } else if ((IM_TOOL_EXIF_ORIENTATION_90_DEG_MIRROR == srcOrientation) ||
              (IM_TOOL_EXIF_ORIENTATION_90_DEG == srcOrientation)) {
@@ -1773,14 +1830,14 @@ void UpdateOrientationAfineMat(const LiteMat &src, int *rotationDstWidth, int *r
     *rotationDstHeight = src.width_;
     (*varM)[0][0] = 0;
     (*varM)[0][1] = -1;
-    (*varM)[0][2] = *rotationDstWidth - 1;
+    (*varM)[0][2] = static_cast<float>(*rotationDstWidth - 1);
     (*varM)[1][0] = 1;
     (*varM)[1][1] = 0;
     (*varM)[1][2] = 0;
     if (IM_TOOL_EXIF_ORIENTATION_90_DEG_MIRROR == srcOrientation) {
       /* with Mirror */
       (*varM)[0][1] *= -1;
-      (*varM)[0][2] -= *rotationDstWidth - 1;
+      (*varM)[0][2] -= static_cast<float>(*rotationDstWidth - 1);
     }
   } else if ((IM_TOOL_EXIF_ORIENTATION_270_DEG_MIRROR == srcOrientation) ||
              (IM_TOOL_EXIF_ORIENTATION_270_DEG == srcOrientation)) {
@@ -1792,11 +1849,11 @@ void UpdateOrientationAfineMat(const LiteMat &src, int *rotationDstWidth, int *r
     (*varM)[0][2] = 0;
     (*varM)[1][0] = -1;
     (*varM)[1][1] = 0;
-    (*varM)[1][2] = *rotationDstHeight - 1;
+    (*varM)[1][2] = static_cast<float>(*rotationDstHeight - 1);
     if (IM_TOOL_EXIF_ORIENTATION_270_DEG_MIRROR == srcOrientation) {
       /* with Mirror */
       (*varM)[0][1] *= -1;
-      (*varM)[0][2] += *rotationDstWidth - 1;
+      (*varM)[0][2] += static_cast<float>(*rotationDstWidth - 1);
     }
   }
 }
@@ -1842,9 +1899,9 @@ static void ImageWarpAffineHWCFloat(imageToolsImage_t image, imageToolsImage_t w
   warped_image.stride *= 3;
   image.stride *= 3;
 
-  float *warped_image_buff = reinterpret_cast<float *>(warped_image.image_buff);
+  auto *warped_image_buff = reinterpret_cast<float *>(warped_image.image_buff);
 
-  float *image_buff = reinterpret_cast<float *>(image.image_buff);
+  auto *image_buff = reinterpret_cast<float *>(image.image_buff);
   for (int y0 = 0; y0 < warped_image.h; y0++) {
     // Init pointers to start of rows
     float *dst = warped_image_buff + y0 * warped_image.stride;
@@ -1859,8 +1916,8 @@ static void ImageWarpAffineHWCFloat(imageToolsImage_t image, imageToolsImage_t w
         dst = CalDst(dst, 0.0f, 0.0f, 0.0f);
         continue;
       }
-      float fRsiduy = fPosy - iPosy;
-      float fRsidux = fPosx - iPosx;
+      float fRsiduy = fPosy - static_cast<float>(iPosy);
+      float fRsidux = fPosx - static_cast<float>(iPosx);
       float fOut0 = 0;
       float fOut1 = 0;
       float fOut2 = 0;
@@ -1904,9 +1961,9 @@ static void ImageWarpAffineHWCUint8(imageToolsImage_t image, imageToolsImage_t w
   // 3 is r, g, b
   warped_image.stride *= 3;
   image.stride *= 3;
-  float *warped_image_buff = reinterpret_cast<float *>(warped_image.image_buff);
+  auto *warped_image_buff = reinterpret_cast<float *>(warped_image.image_buff);
 
-  uint8_t *image_buff = reinterpret_cast<uint8_t *>(image.image_buff);
+  auto *image_buff = reinterpret_cast<uint8_t *>(image.image_buff);
   for (int y0 = 0; y0 < warped_image.h; y0++) {
     // Init pointers to start of rows
     float *dst = warped_image_buff + y0 * warped_image.stride;
@@ -1921,8 +1978,8 @@ static void ImageWarpAffineHWCUint8(imageToolsImage_t image, imageToolsImage_t w
         dst = CalDst(dst, 0.0f, 0.0f, 0.0f);
         continue;
       }
-      float fRsiduy = fPosy - iPosy;
-      float fRsidux = fPosx - iPosx;
+      float fRsiduy = fPosy - static_cast<float>(iPosy);
+      float fRsidux = fPosx - static_cast<float>(iPosx);
       float fOut0 = 0;
       float fOut1 = 0;
       float fOut2 = 0;
@@ -1995,6 +2052,7 @@ bool ResizePreserveARWithFiller(LiteMat &src, LiteMat &dst, int h, int w, float 
   }
   if (dst.IsEmpty()) {
     dst.Init(w, h, src.channel_, LDataType::FLOAT32);
+    RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
   }
 
   float varM[2][3] = {{1.0, 0, 0}, {0, 1.0, 0}};
@@ -2073,6 +2131,7 @@ bool HWC2CHW(LiteMat &src, LiteMat &dst) {
   if (dst.IsEmpty() || dst.width_ != src.height_ || dst.height_ != src.channel_ || dst.channel_ != src.width_ ||
       dst.data_type_ != src.data_type_) {
     dst.Init(src.height_, src.channel_, src.width_, src.data_type_);
+    RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
   }
   if (src.data_type_ == LDataType::FLOAT32) {
     HWC2CHWImpl<float>(src, dst, src.height_, src.width_, src.channel_);
@@ -2097,6 +2156,5 @@ bool HWC2CHW(LiteMat &src, LiteMat &dst) {
   }
   return true;
 }
-
 }  // namespace dataset
 }  // namespace mindspore

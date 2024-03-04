@@ -25,18 +25,14 @@
 #include <utility>
 #include <deque>
 #include <algorithm>
-#include "debug/tensor_data.h"
-#ifdef ONLINE_DBG_MODE
-#include "debug/data_dump/dump_json_parser.h"
+#include "include/backend/debug/tensor_data.h"
+#ifndef OFFLINE_DBG_MODE
+#include "include/backend/debug/data_dump/dump_json_parser.h"
 #endif
 namespace mindspore {
 class TensorLoader {
  public:
-#ifndef __APPLE__
-  TensorLoader() : iter_num_(-1), mem_total_(0), mem_usage_(0) {}
-#else
   TensorLoader() : mem_total_(0), mem_usage_(0) {}
-#endif
 
   ~TensorLoader() { EmptyTensor(); }
 
@@ -90,7 +86,7 @@ class TensorLoader {
    * the previous tensor's name to avoid segfault caused by wrongly evicting the tensor when memory limit is enabled.
    */
   bool LoadNewTensor(const std::shared_ptr<TensorData> &tensor, bool keep_prev) {
-    lock_.lock();
+    std::lock_guard<std::mutex> lg(lock_);
     auto tensor_name = tensor->GetName();
     if (keep_prev) {
       // add prev step tensor into current step map with ":prev" suffix
@@ -111,7 +107,6 @@ class TensorLoader {
     }
 #endif
     tensor_list_map_[key_name] = tensor;  // use [] instead of insert to ensure latest value
-    lock_.unlock();
     return true;
   }
 
@@ -222,7 +217,6 @@ class TensorLoader {
       candidate_name = cache_evict_queue_.front();
       cache_evict_queue_.pop_front();
       // evict candidate tensor
-      lock_.lock();
       auto tensor = GetTensor(candidate_name);
       if (tensor == nullptr) {
         MS_LOG(INFO) << "Tensor: " << candidate_name << " has already been evicted.";
@@ -231,7 +225,6 @@ class TensorLoader {
       }
       candidates_size = tensor->GetByteSize();
       tensor_list_map_.erase(candidate_name);
-      lock_.unlock();
       mem_usage_ = std::max(uint64_t(0), mem_usage_ - candidates_size);
       MS_LOG(INFO) << "Evict tensor: " << candidate_name;
     }
@@ -242,7 +235,7 @@ class TensorLoader {
 
   void SetMemTotal(uint64_t total_mem_size) { this->mem_total_ = total_mem_size; }
 
-#ifdef ONLINE_DBG_MODE
+#ifndef OFFLINE_DBG_MODE
   /*
    * Feature group: Dump.
    * Target device group: GPU, Ascend.
@@ -261,7 +254,10 @@ class TensorLoader {
     if (iter != tensor_list_map_.cend()) {
       std::shared_ptr<TensorData> node = iter->second;
       std::string path = filepath + '.' + node->GetFormat();
-
+      if (node->GetByteSize() == 0) {
+        MS_LOG(INFO) << "The byte size is 0 for tensor: " << tensor_loader_name;
+        return false;
+      }
       return DumpJsonParser::DumpToFile(path, node->GetDataPtr(), node->GetByteSize(), node->GetShape(),
                                         StringToTypeId(node->GetTypeString()));
     }
@@ -274,9 +270,6 @@ class TensorLoader {
   // the pair is (device_id, iteration)
   std::map<std::string, std::shared_ptr<TensorData>> tensor_list_map_;
   std::map<std::string, std::shared_ptr<TensorData>> prev_tensor_list_map_;
-#ifndef __APPLE__
-  uint32_t iter_num_;
-#endif
   std::mutex lock_;
   std::mutex mem_lock_;
   uint64_t mem_total_;

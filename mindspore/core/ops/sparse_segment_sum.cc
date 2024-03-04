@@ -15,9 +15,15 @@
  */
 
 #include "ops/sparse_segment_sum.h"
+
+#include <map>
+#include <memory>
+#include <set>
+
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
 
 namespace mindspore {
 namespace ops {
@@ -34,10 +40,10 @@ abstract::ShapePtr SparseSegmentSumInferShape(const PrimitivePtr &prim,
   if (IsDynamicRank(x_shape) || IsDynamicRank(indices_shape) || IsDynamicRank(segment_ids_shape)) {
     return std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeRankAny}));
   }
-  (void)CheckAndConvertUtils::CheckInteger("indices_shape", SizeToLong(indices_shape.size()), kEqual, kInputIndex1,
-                                           prim->name());
+  (void)CheckAndConvertUtils::CheckInteger("indices_shape", SizeToLong(indices_shape.size()), kEqual,
+                                           SizeToLong(kInputIndex1), prim->name());
   (void)CheckAndConvertUtils::CheckInteger("segment_ids_shape", SizeToLong(segment_ids_shape.size()), kEqual,
-                                           kInputIndex1, prim->name());
+                                           SizeToLong(kInputIndex1), prim->name());
   if (x_shape.size() < kInputIndex1) {
     MS_EXCEPTION(ValueError) << "For '" << prim_name << "', "
                              << "x's rank must be greater than 1, but got [" << x_shape.size() << "].";
@@ -48,7 +54,12 @@ abstract::ShapePtr SparseSegmentSumInferShape(const PrimitivePtr &prim,
                              << "but got indices [" << indices_shape[kInputIndex0] << "] "
                              << "and segment_ids [" << segment_ids_shape[kInputIndex0] << "].";
   }
-  if (!input_args[kInputIndex2]->BuildValue()->isa<AnyValue>() &&
+  if ((indices_shape[kInputIndex0] == kInputIndex0) || (segment_ids_shape[kInputIndex0] == kInputIndex0)) {
+    MS_EXCEPTION(ValueError) << "For '" << prim_name << "', the rank of indices and segment_ids must greater than 0, "
+                             << "but got indices [" << indices_shape[kInputIndex0] << "] "
+                             << "and segment_ids [" << segment_ids_shape[kInputIndex0] << "].";
+  }
+  if (!input_args[kInputIndex2]->BuildValue()->isa<ValueAny>() &&
       !input_args[kInputIndex2]->BuildValue()->isa<None>()) {
     auto segment_ids_value_ptr = input_args[kInputIndex2]->BuildValue();
     MS_EXCEPTION_IF_NULL(segment_ids_value_ptr);
@@ -98,7 +109,26 @@ AbstractBasePtr SparseSegmentSumInfer(const abstract::AnalysisEnginePtr &, const
   auto shapes = SparseSegmentSumInferShape(prim, input_args);
   return abstract::MakeAbstract(shapes, types);
 }
-REGISTER_HOST_DEPENDS(kNameSparseSegmentSum, {2});
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseSegmentSum, prim::kPrimSparseSegmentSum, SparseSegmentSumInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSparseSegmentSumInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentSumInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentSumInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentSumInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseSegmentSum, prim::kPrimSparseSegmentSum, AGSparseSegmentSumInfer, false);
 }  // namespace ops
 }  // namespace mindspore

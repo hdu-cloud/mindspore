@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,15 +14,14 @@
  * limitations under the License.
  */
 #include "minddata/dataset/kernels/image/invert_op.h"
-#include "minddata/dataset/kernels/image/image_utils.h"
+
 #include "minddata/dataset/core/cv_tensor.h"
+#include "minddata/dataset/kernels/image/image_utils.h"
 #include "minddata/dataset/util/status.h"
 
 namespace mindspore {
 namespace dataset {
-
 // only supports RGB images
-
 Status InvertOp::Compute(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output) {
   IO_CHECK(input, output);
 
@@ -36,7 +35,7 @@ Status InvertOp::Compute(const std::shared_ptr<Tensor> &input, std::shared_ptr<T
     if (input_cv->Rank() != 3) {
       RETURN_STATUS_UNEXPECTED("Invert: image shape is not <H,W,C>, got rank: " + std::to_string(input_cv->Rank()));
     }
-    int num_channels = input_cv->shape()[2];
+    auto num_channels = input_cv->shape()[2];
     if (num_channels != 3) {
       RETURN_STATUS_UNEXPECTED(
         "Invert: image shape is incorrect, expected num of channels is 3, "
@@ -47,11 +46,10 @@ Status InvertOp::Compute(const std::shared_ptr<Tensor> &input, std::shared_ptr<T
     RETURN_IF_NOT_OK(CVTensor::CreateEmpty(input_cv->shape(), input_cv->type(), &output_cv));
     RETURN_UNEXPECTED_IF_NULL(output_cv);
 
-    output_cv->mat() = cv::Scalar::all(255) - input_img;
+    constexpr auto kMaxPixel = 255.0;
+    output_cv->mat() = cv::Scalar::all(kMaxPixel) - input_img;
     *output = std::static_pointer_cast<Tensor>(output_cv);
-  }
-
-  catch (const cv::Exception &e) {
+  } catch (const cv::Exception &e) {
     RETURN_STATUS_UNEXPECTED("Invert: " + std::string(e.what()));
   }
   return Status::OK();

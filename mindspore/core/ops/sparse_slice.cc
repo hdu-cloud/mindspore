@@ -15,14 +15,15 @@
  */
 #include "ops/sparse_slice.h"
 
-#include <map>
-#include <set>
-#include <string>
+#include <memory>
+#include <vector>
 
-#include "mindapi/src/helper.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -47,10 +48,10 @@ class SparseSliceInfer : public abstract::OpInferBase {
     int64_t nnz = indices_shape[0];
     int64_t rank = indices_shape[1];
 
-    auto y_indices_shape = std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeDimAny, rank}),
-                                                             ShapeVector({0, rank}), ShapeVector({nnz, rank}));
-    auto y_value_shape = std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeDimAny}),
-                                                           ShapeVector({0}), ShapeVector({nnz}));
+    auto y_indices_shape =
+      std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeDimAny, rank}), ShapeVector({nnz, rank}));
+    auto y_value_shape =
+      std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeDimAny}), ShapeVector({nnz}));
     auto y_shape_shape = std::make_shared<abstract::Shape>(ShapeVector({rank}));
 
     return std::make_shared<abstract::TupleShape>(
@@ -71,10 +72,10 @@ class SparseSliceInfer : public abstract::OpInferBase {
     (void)CheckAndConvertUtils::CheckTensorTypeValid("shape", shape_type, {kInt64}, op_name);
     (void)CheckAndConvertUtils::CheckTensorTypeValid("start", start_type, {kInt64}, op_name);
     (void)CheckAndConvertUtils::CheckTensorTypeValid("size", size_type, {kInt64}, op_name);
-    (void)CheckAndConvertUtils::CheckTensorTypeValid(
-      "values", value_type,
-      {kUInt8, kUInt16, kInt8, kInt16, kInt32, kInt64, kFloat16, kFloat32, kFloat64, kComplex64, kComplex128, kBool},
-      op_name);
+    (void)CheckAndConvertUtils::CheckTensorTypeValid("values", value_type,
+                                                     {kUInt8, kUInt16, kUInt32, kUInt64, kInt8, kInt16, kInt32, kInt64,
+                                                      kFloat16, kFloat32, kFloat64, kComplex64, kComplex128, kBool},
+                                                     op_name);
     auto y_indices_type = std::make_shared<TensorType>(kInt64);
     auto y_shape_type = std::make_shared<TensorType>(kInt64);
     return std::make_shared<Tuple>(std::vector<TypePtr>{y_indices_type, value_type, y_shape_type});

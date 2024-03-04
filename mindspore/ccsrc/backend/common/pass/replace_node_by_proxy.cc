@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,10 @@
 #include "backend/common/pass/replace_node_by_proxy.h"
 #include <vector>
 #include <memory>
-#include "runtime/device/kernel_info.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/ascend_op_name.h"
+#include "ops/nn_op_name.h"
+#include "include/backend/kernel_info.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "kernel/kernel_build_info.h"
 
@@ -35,7 +37,7 @@ kernel::KernelBuildInfoPtr ReplaceNodeByProxy::GenerateKernelBuildInfo(const CNo
     inputs_device_format.push_back(AnfAlgo::GetInputFormat(cnode, input_index));
     inputs_device_type.push_back(AnfAlgo::GetInputDeviceDataType(cnode, input_index));
   }
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(cnode);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(cnode);
   for (size_t output_index = 0; output_index < output_num; ++output_index) {
     outputs_device_format.push_back(AnfAlgo::GetOutputFormat(cnode, output_index));
     outputs_device_type.push_back(AnfAlgo::GetOutputDeviceDataType(cnode, output_index));
@@ -84,7 +86,7 @@ bool ReplaceNodeByProxy::Run(const FuncGraphPtr &func_graph) {
       AnfAlgo::SetSelectKernelBuildInfo(kernel_build_info, proxy_node.get());
 
       if (!manager->Replace(cnode, proxy_node)) {
-        MS_LOG(EXCEPTION) << "Replace node by proxy node failed.";
+        MS_LOG(INTERNAL_EXCEPTION) << "Replace node by proxy node failed.";
       }
     }
   }

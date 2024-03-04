@@ -15,15 +15,33 @@
  */
 
 #include "ops/grad/strided_slice_v2_grad.h"
-#include <string>
-#include <memory>
-#include <set>
+
 #include <bitset>
+#include <memory>
+#include <ostream>
+#include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/other_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -47,57 +65,9 @@ abstract::ShapePtr StridedSliceV2GradInferShape(const PrimitivePtr &primitive,
   auto prim_name = primitive->name();
   auto shapex = input_args[shape_index];
   CheckSliceV2Type(shapex, "shapex", prim_name);
-  auto shape_value = shapex->BuildValue();
-  MS_EXCEPTION_IF_NULL(shape_value);
 
-  ShapeVector out_shape;
-
-  if (shapex->isa<abstract::AbstractTuple>()) {
-    out_shape = CheckAndConvertUtils::CheckTupleInt("input[shapex]", shape_value, prim_name);
-    return std::make_shared<abstract::Shape>(out_shape);
-  }
-
-  if (!shapex->isa<abstract::AbstractTensor>()) {
-    MS_EXCEPTION(TypeError) << "For 'StridedSliceV2Grad', 'shapex' must be tuple or Tensor.";
-  }
-
-  if (shape_value->isa<tensor::Tensor>()) {
-    out_shape = CheckAndConvertUtils::CheckTensorIntValue("shapex", shape_value, prim_name);
-    return std::make_shared<abstract::Shape>(out_shape);
-  }
-  // shape_value is AnyValue
-  auto shapex_shape = CheckAndConvertUtils::GetTensorInputShape(prim_name, input_args, shape_index);
-  if (shapex_shape->shape().size() != 1) {
-    MS_EXCEPTION(ValueError) << "For 'StridedSliceV2Grad', 'shapex' must be 1-D, but got: "
-                             << shapex_shape->shape().size() << "-D.";
-  }
-  auto shapex_len = LongToSize(shapex_shape->shape()[0]);
-  auto abstract_tensor = shapex->cast<abstract::AbstractTensorPtr>();
-  auto shape_min_value = abstract_tensor->get_min_value();
-  auto shape_max_value = abstract_tensor->get_max_value();
-  if (shape_min_value == nullptr || shape_max_value == nullptr) {
-    for (size_t i = 0; i < shapex_len; i++) {
-      out_shape.push_back(abstract::Shape::kShapeDimAny);
-    }
-    return std::make_shared<abstract::Shape>(out_shape);
-  }
-
-  auto shape_max = GetValue<std::vector<int64_t>>(shape_max_value);
-  auto shape_min = GetValue<std::vector<int64_t>>(shape_min_value);
-  if (shape_max.size() != shapex_len || shape_min.size() != shapex_len) {
-    MS_LOG(EXCEPTION)
-      << "For '" << prim_name
-      << "', 'shapex' min value size and max value size must match with 'shapex' size. But got min value size: "
-      << shape_min.size() << ",  max value size: " << shape_max.size() << ", 'shapex' size: " << shapex_len << ".";
-  }
-  for (size_t i = 0; i < shapex_len; i++) {
-    if (shape_min[i] == shape_max[i]) {
-      out_shape.push_back(shape_min[i]);
-    } else {
-      out_shape.push_back(abstract::Shape::kShapeDimAny);
-    }
-  }
-  return std::make_shared<abstract::Shape>(out_shape, shape_min, shape_max);
+  auto out_shape = GetShapeValue(primitive, shapex);
+  return std::make_shared<abstract::Shape>(out_shape);
 }
 
 TypePtr StridedSliceV2GradInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
@@ -189,6 +159,25 @@ void StridedSliceV2Grad::Init(int64_t begin_mask, int64_t end_mask, int64_t elli
   this->set_shrink_axis_mask(shrink_axis_mask);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(StridedSliceV2Grad, prim::kPrimStridedSliceV2Grad, StridedSliceV2GradInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGStridedSliceV2GradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return StridedSliceV2GradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return StridedSliceV2GradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return StridedSliceV2GradInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(StridedSliceV2Grad, prim::kPrimStridedSliceV2Grad, AGStridedSliceV2GradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

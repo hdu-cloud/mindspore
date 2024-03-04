@@ -18,6 +18,7 @@
 #define MINDSPORE_CORE_MINDRT_RUNTIME_THREADPOOL_H_
 
 #include <queue>
+#include <string>
 #include <new>
 #include <vector>
 #include <unordered_map>
@@ -35,7 +36,7 @@
 #include <pmmintrin.h>
 #endif
 #endif
-#include "utils/macros.h"
+#include "mindapi/base/macros.h"
 #include "thread/hqueue.h"
 
 #define USE_HQUEUE
@@ -77,7 +78,9 @@ typedef struct TaskSplit {
 class ThreadPool;
 class Worker {
  public:
-  explicit Worker(ThreadPool *pool, size_t index) : pool_(pool), worker_id_(index) {}
+  explicit Worker(ThreadPool *pool, size_t index) : pool_(pool), worker_id_(index) {
+    cond_var_ = std::make_unique<std::condition_variable>();
+  }
   virtual ~Worker();
   // create thread and start running at the same time
   virtual void CreateThread();
@@ -106,16 +109,23 @@ class Worker {
   float rhs_scale() const { return rhs_scale_; }
   HQueue<TaskSplit> *local_task_queue() { return local_task_queue_; }
 
-  std::thread::id thread_id() const { return thread_.get_id(); }
+  std::thread::id thread_id() const {
+    THREAD_TEST_TRUE(thread_ == nullptr);
+    return thread_->get_id();
+  }
 
 #ifdef _WIN32
   uint64_t core_id() { return core_id_; }
 #elif defined(BIND_CORE)
   void set_mask(const cpu_set_t &mask) { mask_ = mask; }
-  pthread_t handle() { return thread_.native_handle(); }
+  pthread_t handle() {
+    THREAD_TEST_TRUE(thread_ == nullptr);
+    return thread_->native_handle();
+  }
 #endif
   inline void set_alive(bool flag) { alive_ = flag; }
   inline bool alive() const { return alive_; }
+  void ReinitAfterFork();
 
  protected:
   void SetAffinity();
@@ -123,7 +133,7 @@ class Worker {
   virtual void WaitUntilActive();
 
   bool alive_{true};
-  std::thread thread_;
+  std::unique_ptr<std::thread> thread_{nullptr};
 #ifdef _WIN32
   uint64_t core_id_;
 #elif defined(BIND_CORE)
@@ -133,7 +143,7 @@ class Worker {
   std::atomic_int active_num_{0};
 
   std::mutex mutex_;
-  std::condition_variable cond_var_;
+  std::unique_ptr<std::condition_variable> cond_var_{nullptr};
 
   std::atomic<Task *> task_{nullptr};
   std::atomic_int task_id_{0};
@@ -141,9 +151,9 @@ class Worker {
   float rhs_scale_{kMaxScale};
   int frequency_{kDefaultFrequency};
   int spin_count_{0};
-  int max_spin_count_{kMinSpinCount};
+  std::atomic_int max_spin_count_{kMinSpinCount};
   ThreadPool *pool_{nullptr};
-  HQueue<TaskSplit> *local_task_queue_;
+  HQueue<TaskSplit> *local_task_queue_{nullptr};
   size_t worker_id_{0};
   std::vector<int> core_list_;
 
@@ -181,9 +191,11 @@ class MS_CORE_API ThreadPool {
   void SetWorkerIdMap();
   // init task queues
   int TaskQueuesInit(size_t thread_num);
+  void ReinitAfterFork();
   const std::unordered_map<std::thread::id, size_t> &GetWorkerIdMap() const { return worker_ids_; }
   float GetServerCpuFrequence() const { return server_cpu_frequence; }
   inline size_t actor_thread_num() const { return actor_thread_num_; }
+  virtual bool SetRunnerID(const std::string &runner_id) { return false; }
   template <typename T = Worker>
   int CreateThreads(size_t thread_num, const std::vector<int> &core_list) {
     size_t core_num = std::thread::hardware_concurrency();
@@ -215,7 +227,7 @@ class MS_CORE_API ThreadPool {
   }
 
  protected:
-  ThreadPool() = default;
+  ThreadPool();
 
   int InitAffinityInfo();
 
@@ -232,11 +244,11 @@ class MS_CORE_API ThreadPool {
   std::vector<std::unique_ptr<HQueue<TaskSplit>>> task_queues_;
   std::unordered_map<std::thread::id, size_t> worker_ids_;
   CoreAffinity *affinity_{nullptr};
-  size_t actor_thread_num_{0};
-  size_t kernel_thread_num_{0};
+  std::atomic<size_t> actor_thread_num_{0};
+  std::atomic<size_t> kernel_thread_num_{0};
   bool occupied_actor_thread_{true};
-  int max_spin_count_{kDefaultSpinCount};
-  int min_spin_count_{kMinSpinCount};
+  std::atomic_int max_spin_count_{kDefaultSpinCount};
+  std::atomic_int min_spin_count_{kMinSpinCount};
   float server_cpu_frequence = -1.0f;  // Unit : GHz
   static std::mutex create_thread_pool_muntex_;
 };

@@ -13,22 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_FP16_RANGE_FP16_H_
-#define MINDSPORE_NNACL_FP16_RANGE_FP16_H_
+#ifndef NNACL_FP16_RANGE_FP16_H_
+#define NNACL_FP16_RANGE_FP16_H_
 
 #include "nnacl/op_base.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-inline void RangeFp16(float16_t *output_ptr, float16_t start, float16_t delta, int nums) {
+void RangeFp16(float16_t *output_ptr, float16_t start, float16_t delta, int nums) {
   for (int i = 0; i < nums; ++i, start += delta) {
     output_ptr[i] = start;
   }
 }
 
-#ifdef __cplusplus
-}
-#endif
-
-#endif  // MINDSPORE_NNACL_FP16_RANGE_FP16_H_
+#endif  //  NNACL_FP16_RANGE_FP16_H_

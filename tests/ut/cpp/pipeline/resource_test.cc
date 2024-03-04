@@ -17,8 +17,9 @@
 #include <memory>
 
 #include "common/common_test.h"
+#include "mindspore/core/ops/arithmetic_ops.h"
 #include "utils/log_adapter.h"
-#include "pipeline/jit/resource.h"
+#include "pipeline/jit/ps/resource.h"
 #include "ir/primitive.h"
 #include "frontend/operator/ops.h"
 
@@ -27,7 +28,7 @@ namespace pipeline {
 
 using MethodMap = mindspore::HashMap<int64_t, mindspore::HashMap<std::string, Any>>;
 
-extern MethodMap& GetMethodMap();
+extern MethodMap &GetMethodMap();
 
 class TestResource : public UT::Common {
  public:
@@ -54,9 +55,9 @@ TEST_F(TestResource, test_built_in_type_map) {
   ASSERT_TRUE(true == Resource::IsTypeInBuiltInMap(kObjectTypeList));
   ASSERT_TRUE(true == Resource::IsTypeInBuiltInMap(kObjectTypeTensorType));
 
-  MethodMap& map = GetMethodMap();
-  for (auto& iter : map) {
-    for (auto& iter_map : iter.second) {
+  MethodMap &map = GetMethodMap();
+  for (auto &iter : map) {
+    for (auto &iter_map : iter.second) {
       Any value = iter_map.second;
       ASSERT_TRUE(value.is<std::string>() || value.is<PrimitivePtr>());
     }

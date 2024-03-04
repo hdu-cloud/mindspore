@@ -213,7 +213,11 @@ void *OpenCLAllocator::_Malloc(MemType mem_type, void *data, size_t size, const 
 
   total_size_ += size;
   const uint64_t max_size = ocl_runtime_->GetGlobalMemSize() * 0.8;
-  UNLOCK_AND_RETURN_NULL(total_size_ >= max_size, nullptr);
+  if (total_size_ >= max_size) {
+    is_oversize_ = true;
+  } else {
+    is_oversize_ = false;
+  }
 
   cl::Buffer *buffer = nullptr;
   cl::Image2D *image = nullptr;
@@ -298,7 +302,7 @@ void OpenCLAllocator::Free(void *buf) {
 }
 int OpenCLAllocator::RefCount(void *buf) {
   if (buf == nullptr) {
-    return -1;
+    return OPENCL_ALLOCATOR_REFCOUNT;
   }
   Lock();
   auto iter = allocated_list_.find(buf);

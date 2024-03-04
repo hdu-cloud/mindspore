@@ -34,8 +34,8 @@ bool BartlettWindowGpuKernelMod::Init(const BaseOperatorPtr &base_operator, cons
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  unit_input_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  unit_output_size_ = abstract::TypeIdSize(kernel_attr.GetOutputAttr(kIndex0).first);
+  unit_input_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  unit_output_size_ = abstract::TypeIdSize(kernel_attr.GetOutputAttr(kIndex0).dtype);
   periodic_ = kernel_ptr_->get_periodic();
   return true;
 }
@@ -76,8 +76,9 @@ bool BartlettWindowGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inp
                                               const std::vector<AddressPtr> &outputs) {
   T *input = GetDeviceAddress<T>(inputs, 0);
   S *output = GetDeviceAddress<S>(outputs, 0);
-  CalBartlettWindow(output_elements_, input, periodic_, output, device_id_,
-                    reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = CalBartlettWindow(output_elements_, input, periodic_, output, device_id_,
+                                  reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

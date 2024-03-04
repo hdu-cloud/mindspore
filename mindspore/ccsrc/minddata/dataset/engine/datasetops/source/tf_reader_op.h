@@ -47,9 +47,9 @@ class BytesList;
 
 namespace mindspore {
 namespace dataset {
-const int kTFRecordRecLenSize = sizeof(int64_t);
-const int kTFRecordHeadFootSize = sizeof(int32_t);  // header has same size with footer
-const int kZLIBChunkSize = 16384;
+const std::streamsize kTFRecordRecLenSize = sizeof(int64_t);
+const std::streamsize kTFRecordHeadFootSize = sizeof(int32_t);  // header has same size with footer
+const std::streamsize kZLIBChunkSize = 16384;
 
 template <typename T>
 class Queue;
@@ -80,30 +80,36 @@ class TFReaderOp : public NonMappableLeafOp {
              std::vector<std::string> dataset_files_list, std::unique_ptr<DataSchema> data_schema,
              int32_t op_connector_size, std::vector<std::string> columns_to_load, bool shuffle_files,
              int32_t num_devices, int32_t device_id, bool equal_rows_per_shard,
-             const CompressionType &compression_type = CompressionType::None);
+             const CompressionType &compression_type = CompressionType::NONE);
 
   /// Default destructor
-  ~TFReaderOp() = default;
+  ~TFReaderOp() override = default;
 
   /// A print method typically used for debugging
   /// @param out - The output stream to write output to
   /// @param show_all - A bool to control if you want to show all info or just a summary
   void Print(std::ostream &out, bool show_all) const override;
 
-  // Instantiates the internal queues and connectors.
-  // @return Status - the error code returned.
+  /// Instantiates the internal queues and connectors.
+  /// @return Status - the error code returned.
   Status Init() override;
+
+  /// \brief Implement the operator() method of this class for workers to run with.
+  /// \return Status code.
+  Status operator()() override;
 
   /// Reads all the provided TFRecord files and counts the total number of rows. filenames will
   /// first be sectioned into equal parts, then sections are read in parallel. If threads is
   /// greater than the number of files, threads will be clamped to the number of files.
+  /// When compression_type is provided, this should only be called when num_samples == 0.
   /// @param out_total_rows - output parameter which contains the total number of rows
   /// @param filenames - a list of TFRecord filenames.
   /// @param threads - number of threads to use to read the TFRecord files.
   /// @param estimate - estimate mode, under this mode each threads will sample a single file from each chunk
+  /// @param compression_type - compression type of the TFRecord files
   /// @return Status - the error code returned.
   static Status CountTotalRows(int64_t *out_total_rows, const std::vector<std::string> &filenames, int64_t threads = 1,
-                               bool estimate = false);
+                               bool estimate = false, CompressionType compression_type = CompressionType::NONE);
 
   /// Op name getter
   /// @return Name of the current Op
@@ -113,7 +119,30 @@ class TFReaderOp : public NonMappableLeafOp {
   /// @return Vector of the input file names
   std::vector<std::string> FileNames() { return dataset_files_list_; }
 
+  /// \brief Get the next row in pull mode.
+  /// \param[in] row Fetched TensorRow.
+  /// \return Status code.
+  Status GetNextRowPullMode(TensorRow *const row) override;
+
+ protected:
+  Status FillIOBlockQueue(const std::vector<int64_t> &i_keys) override;
+
  private:
+  /// \brief Register queues and launch workers.
+  /// \return Status code.
+  Status RegisterAndLaunchThreads() override;
+
+  /// \brief The method for parsing workers to run with.
+  /// \param[in] worker_id Which worker to run.
+  /// \return Status code.
+  Status ParsingWorkerEntry(int32_t worker_id);
+
+  /// \brief Parse the raw record bytes.
+  /// \param[in] raw_bytes The raw record bytes tensor row.
+  /// \param[out] parsed_row The parsed record tensor row.
+  /// \return Status code.
+  Status ParseExample(const TensorRow &raw_bytes, TensorRow *parsed_row);
+
   // Reads a TFRecord file and loads the data into multiple TensorRows.
   // @param filename - the TFRecord file to read.
   // @param start_offset - the start offset of file.
@@ -121,6 +150,13 @@ class TFReaderOp : public NonMappableLeafOp {
   // @param worker_id - the id of the worker that is executing this function.
   // @return Status - the error code returned.
   Status LoadFile(const std::string &filename, int64_t start_offset, int64_t end_offset, int32_t worker_id) override;
+
+  /// \brief Create a TensorRow with the given example string and send it to parsing workers.
+  /// \param[in] filename The file from which the example string originated.
+  /// \param[in] serialized_example The example string.
+  /// \param[in] worker_id Which worker to send to.
+  /// \return Status code.
+  Status SendRecordBytesRow(const std::string &filename, const std::string &serialized_example, int32_t worker_id);
 
   // Helper function to read a non-compressed TFRecord file and loads the data into multiple TensorRows.
   // @param filename - the TFRecord file to read.
@@ -134,7 +170,7 @@ class TFReaderOp : public NonMappableLeafOp {
 
 #if !defined(_WIN32) && !defined(_WIN64)
   // ZLIBStream struct to initial ZLIB stream
-  typedef struct ZLIBStreamInf {
+  typedef struct ZLIBStreamInflate {
     z_stream strm;
     char input_stream[kZLIBChunkSize];               // instream
     unsigned char record_size[kTFRecordRecLenSize];  // in order to get record_length
@@ -145,16 +181,17 @@ class TFReaderOp : public NonMappableLeafOp {
     int64_t left_to_read;                            // number of bytes left to read for particular read_flag
     int inflate_status;                              // in order to keep track of inflate status
 
-    ZLIBStreamInf() {
+    ZLIBStreamInflate()
+        : record_length(0),
+          read_flag(static_cast<int>(ZLIBReadFlag::RecordLength)),
+          left_to_read(0),
+          inflate_status(static_cast<int>(Z_OK)) {
       // allocate inflate state
       strm.zalloc = Z_NULL;
       strm.zfree = Z_NULL;
       strm.opaque = Z_NULL;
       strm.avail_in = 0;
       strm.next_in = Z_NULL;
-
-      read_flag = ZLIBReadFlag::RecordLength;
-      left_to_read = 0;
     }
   } ZLIBStreamInf;
 
@@ -182,13 +219,13 @@ class TFReaderOp : public NonMappableLeafOp {
   // @param str_record_size - the binary data stored in string.
   // @param str_size - length of binary data stored in string.
   // @return int64_t - the integer.
-  int64_t HelperBinDataToInt(unsigned char *str_record_size, size_t str_size);
+  static int64_t HelperBinDataToInt(const unsigned char *str_record_size, size_t str_size);
 
   // Helper function to inflate ZLIB stream
   // @param zlib_stream - ZLIB stream.
   // @param filename - TFRecord file name (for throwing error purposes)
   // @return Status - the error code returned.
-  Status HelperInflateZLIB(ZLIBStreamInf *zlib_stream, const std::string &filename);
+  Status HelperInflateZLIB(ZLIBStreamInf *zlib_stream, const std::string &filename) const;
 
   // Helper function to process ZLIB data depending on the flag.
   // @param zlib_stream - ZLIB stream.
@@ -202,15 +239,37 @@ class TFReaderOp : public NonMappableLeafOp {
   Status HelperProcessZLIBData(ZLIBStreamInf *zlib_stream, int64_t *rows_read, int64_t *rows_total,
                                const std::string &filename, int64_t start_offset, int64_t end_offset,
                                int32_t worker_id);
+
+  // Helper function to count rows for GZIP compressed TFRecord file.
+  // @param realpath_value - the path for the file.
+  // @param filename - the TFRecord file to read.
+  // @param rows_read - number of rows that have been read (content only).
+  // @return void
+  static void HelperCountGZIPRows(const std::string &realpath_value, const std::string &filename, int64_t *rows_read);
+
+  // Helper function to count rows for ZLIB compressed TFRecord file.
+  // @param realpath_value - the path for the file.
+  // @param filename - the TFRecord file to read.
+  // @param rows_read - number of rows that have been read (content only).
+  // @return void
+  static void HelperCountZLIBRows(const std::string &realpath_value, const std::string &filename, int64_t *rows_read);
 #endif
+
+  // Helper function to count rows for uncompressed TFRecord file.
+  // @param realpath_value - the path for the file.
+  // @param filename - the TFRecord file to read.
+  // @param rows_read - number of rows that have been read (content only).
+  // @return void
+  static void HelperCountNonCompRows(const std::string &realpath_value, const std::string &filename,
+                                     int64_t *rows_read);
 
   // Helper function to get serialized example for Schema.
   // @param serialized_example - container to store the serialized_example.
   // @param realpath_value - the path for the file.
   // @param filename - TFRecord file name (for throwing error purposes)
   // @return Status - the error code returned.
-  Status HelperGetExampleSchema(std::string *serialized_example, const std::string &realpath_value,
-                                const std::string &filename);
+  Status HelperGetExampleSchema(std::string *const serialized_example, const std::string &realpath_value,
+                                const std::string &filename) const;
 
   // Parses a single row and puts the data into a tensor table.
   // @param tf_record_file - the row to be parsed.
@@ -266,20 +325,18 @@ class TFReaderOp : public NonMappableLeafOp {
 
   /// Reads one row of data from a tf file and creates a schema based on that row
   /// @return Status - the error code returned.
-  Status CreateSchema(const std::string tf_record_file, std::vector<std::string> columns_to_load);
+  Status CreateSchema(const std::string &tf_record_file, std::vector<std::string> columns_to_load);
 
   /// Meant to be called async. Will read files in the range [begin, end) and return the total rows
+  /// When compression_type is provided, this should only be called when num_samples == 0.
   /// @param filenames - a list of tf data filenames.
   /// @param begin - index of first file to read.
   /// @param end - one greater than the index of the last file to read.
+  /// @param compression_type - compression type of the TFRecord files
   /// @return int63_t - the total number of rows of files read.
   static int64_t CountTotalRowsSectioned(const std::vector<std::string> &filenames, const int64_t begin,
-                                         const int64_t end);
+                                         const int64_t end, CompressionType compression_type = CompressionType::NONE);
 
- protected:
-  Status FillIOBlockQueue(const std::vector<int64_t> &i_keys) override;
-
- private:
   enum ZLIBReadFlag { RecordLength = 0, Header = 1, Content = 2, Footer = 3 };
 
   // Helper to fill IO block queue

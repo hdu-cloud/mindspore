@@ -15,17 +15,18 @@
  */
 
 #include "ops/exp.h"
-#include <string>
-#include <vector>
-#include <set>
+#include <cmath>
+#include <complex>
 #include <map>
 #include <memory>
-#include <complex>
-#include <cmath>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <set>
+#include <string>
+#include <vector>
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -84,7 +85,7 @@ TypePtr ExpInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr
     MS_EXCEPTION(TypeError) << "For '" << prim->name() << "', the input x only support tensor!";
   }
   (void)CheckAndConvertUtils::CheckSubClass("x_type", input_args[0]->BuildType(), valid_params_types, prim->name());
-  (void)CheckAndConvertUtils::CheckTensorTypeSame(types, common_valid_types_with_complex, prim->name());
+  (void)CheckAndConvertUtils::CheckTensorTypeSame(types, common_valid_types_with_complex_and_bool, prim->name());
   return input_args[0]->BuildType();
 }
 
@@ -185,6 +186,27 @@ AbstractBasePtr ExpInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr
                          const std::vector<AbstractBasePtr> &input_args) {
   return abstract::MakeAbstract(ExpInferShape(primitive, input_args), ExpInferType(primitive, input_args));
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Exp, prim::kPrimExp, ExpInfer, ExpInferValue, true);
+
+// AG means auto generated
+class MIND_API AGExpInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ExpInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ExpInferType(primitive, input_args);
+  }
+  ValuePtr InferValue(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ExpInferValue(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ExpInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Exp, prim::kPrimExp, AGExpInfer, true);
 }  // namespace ops
 }  // namespace mindspore

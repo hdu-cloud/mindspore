@@ -24,9 +24,10 @@
 #include <utility>
 #include <vector>
 
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "utils/hash_map.h"
 #include "utils/ordered_map.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "abstract/abstract_value.h"
 
 namespace mindspore {
@@ -214,7 +215,7 @@ void DeleteLoadUserMakeTuple(const FuncGraphManagerPtr &manager, const CNodePtr 
     }
   }
   MS_EXCEPTION_IF_NULL(other_input);
-  manager->Replace(make_tuple, other_input);
+  (void)manager->Replace(make_tuple, other_input);
 }
 
 // Pattern3======================================
@@ -243,7 +244,7 @@ void ReplaceLoadUserMakeTuple(const FuncGraphManagerPtr &manager, const CNodePtr
                        std::back_inserter(element_abstracts),
                        [](const AnfNodePtr &input) { return input->abstract(); });
   new_make_tuple->set_abstract(std::make_shared<abstract::AbstractTuple>(element_abstracts));
-  manager->Replace(make_tuple, new_make_tuple);
+  (void)manager->Replace(make_tuple, new_make_tuple);
 }
 
 bool ReplaceLoadUser(const FuncGraphManagerPtr &manager, const AnfNodePtr &load) {
@@ -290,7 +291,7 @@ bool ReplaceSameGroupLoad(const FuncGraphManagerPtr &manager, const std::vector<
   const auto &main = toposet[group[0]];
   for (size_t i = 1; i < group.size(); i++) {
     change = ReplaceLoadUser(manager, toposet[group[i]]);
-    manager->Replace(toposet[group[i]], main);
+    (void)manager->Replace(toposet[group[i]], main);
   }
   return change;
 }
@@ -430,7 +431,7 @@ bool AutoMonadEliminator::EliminateAutoMonadNode(const FuncGraphManagerPtr &mana
     auto &node_users = manager->node_users();
     auto iter = node_users.find(attach);
     if (iter == node_users.end()) {
-      MS_LOG(EXCEPTION) << "No user of node: " << attach->DebugString();
+      MS_LOG(INTERNAL_EXCEPTION) << "No user of node: " << attach->DebugString();
     }
     auto &users = iter->second;
     if (users.size() <= 1) {

@@ -26,14 +26,18 @@
 #include "nnacl/int8/arithmetic_int8.h"
 #include "nnacl/conv_parameter.h"
 #include "nnacl/matmul_parameter.h"
+#include "wrapper/base/micro_parameter.h"
 #include "nnacl/int8/concat_int8.h"
 #include "nnacl/int8/quantize.h"
 #include "nnacl/reshape_parameter.h"
 #include "nnacl/slice_parameter.h"
 #include "nnacl/batchnorm_parameter.h"
 #include "nnacl/pad_parameter.h"
-#include "nnacl/transpose.h"
+#include "nnacl/transpose_parameter.h"
 #include "nnacl/int8/relux_int8.h"
+#include "wrapper/int8/concat_int8_wrapper.h"
+#include "nnacl/kernel/pooling.h"
+#include "nnacl/kernel/batch_norm.h"
 
 namespace mindspore::lite::micro::nnacl {
 class NNaclInt8Serializer : public Serializer {
@@ -41,16 +45,17 @@ class NNaclInt8Serializer : public Serializer {
   NNaclInt8Serializer() = default;
   ~NNaclInt8Serializer() override = default;
   void CodeStruct(const std::string &name, const ConvParameter &conv_parameter);
-  void CodeStruct(const std::string &name, const MatMulParameter &matmul_parameter);
+  void CodeStruct(const std::string &name, const MicroMatmulParameter &matmul_parameter);
   void CodeStruct(const std::string &name, const TransposeParameter &transpose_parameter);
   void CodeStruct(const std::string &name, const AddQuantParameter &add_quant_parameter);
   void CodeStruct(const std::string &name, const ArithmeticParameter &arithmetic_parameter);
   void CodeStruct(const std::string &name, const PoolingParameter &pooling_parameter);
+  void CodeStruct(const std::string &name, const PoolingComputeParam &pooling_parameter);
+  void CodeStruct(const std::string &name, const QuantArg &in_quant, const QuantArg &out_quant);
   void CodeStruct(const std::string &name, const SoftmaxParameter &softmax_parameter);
-  void CodeStruct(const std::string &name, const SliceParameter &slice_parameter);
-  void CodeStruct(const std::string &name, const BatchNormParameter &batchnorm_parameter);
+  void CodeStruct(const std::string &name, const BatchNormStruct &bn_struct);
   void CodeStruct(const std::string &name, const SoftmaxQuantArg &softmax_quant_parameter);
-  void CodeStruct(const std::string &name, const ConcatParameter &concat_parameter, int input_tensors, int in_shape,
+  void CodeStruct(const std::string &name, const ConcatInt8Args &ConcatInt8Args, int input_tensors, int in_shape,
                   int out_shape);
   void CodeStruct(const std::string &name, const ::QuantArg &quant_arg);
   void CodeStruct(const std::string &name, const ::QuantMulArg &quant_mul_arg);
@@ -65,6 +70,7 @@ class NNaclInt8Serializer : public Serializer {
   void CodeStruct(const std::string &name, const PadParameter &batchnorm_parameter);
   void CodeStruct(const std::string &name, const GatherQuantArg &batchnorm_parameter);
   void CodeStruct(const std::string &name, const SpliceWrapperParam &splice_param);
+  void CodeStruct(const std::string &name, const int *list, int size);
 };
 }  // namespace mindspore::lite::micro::nnacl
 #endif  // MINDSPORE_LITE_TOOLS_CONVERTER_MICRO_CODER_OPCODERS_SERIALIZERS_NNACL_SERIALIZER_NNACL_INT8_SERIALIZER_H_

@@ -20,7 +20,9 @@ namespace mindspore {
 namespace kernel {
 bool TrilIndicesGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                    const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
   auto kernel_ptr_ = std::dynamic_pointer_cast<ops::TrilIndices>(base_operator);
+  MS_EXCEPTION_IF_NULL(kernel_ptr_);
   kernel_name_ = kernel_ptr_->name();
   if (outputs.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "' got empty outputs, which is invalid.";
@@ -43,6 +45,7 @@ bool TrilIndicesGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const s
 int TrilIndicesGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                     const std::vector<KernelTensorPtr> &outputs,
                                     const std::map<uint32_t, tensor::TensorPtr> &) {
+  MS_EXCEPTION_IF_NULL(outputs[kIndex0]);
   ResetResource();
   auto ret = KRET_OK;
   size_t tensor_size = 0;
@@ -71,6 +74,7 @@ bool TrilIndicesGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs
                                            const std::vector<AddressPtr> &workspace,
                                            const std::vector<AddressPtr> &outputs) {
   T *output = GetDeviceAddress<T>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(output);
   if (tril_size_ > 0) {
     auto m_first_row = offset_ > 0 ? std::min<int64_t>(col_, 1 + offset_) : row_ + offset_ > 0;
     auto trapezoid_row_offset = std::max<int64_t>(0, -offset_);
@@ -79,8 +83,10 @@ bool TrilIndicesGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs
     if (rectangle_row_offset < row_) {
       rectangle_size = (row_ - rectangle_row_offset) * col_;
     }
-    CalTrilIndices(trapezoid_row_offset, m_first_row, col_, static_cast<int64_t>(tril_size_) - rectangle_size,
-                   tril_size_, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+    auto status =
+      CalTrilIndices(trapezoid_row_offset, m_first_row, col_, static_cast<int64_t>(tril_size_) - rectangle_size,
+                     tril_size_, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+    CHECK_CUDA_STATUS(status, kernel_name_);
   }
   return true;
 }

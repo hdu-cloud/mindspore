@@ -19,7 +19,6 @@
 #include <memory>
 #include <set>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
@@ -43,8 +42,7 @@ class SparseSparseMaximumCpuKernelMod : public NativeCpuKernelMod {
 
  protected:
   std::vector<KernelAttr> GetOpSupport() override;
-  void SyncData() override;
-  std::vector<KernelTensorPtr> GetOutputs() override { return outputs_; }
+  void SyncOutputShape() override;
 
  private:
   template <typename T>
@@ -53,7 +51,6 @@ class SparseSparseMaximumCpuKernelMod : public NativeCpuKernelMod {
                        const int64_t num_dims);
   void CheckShapeMatch(const std::vector<AddressPtr> &inputs);
 
-  std::vector<KernelTensorPtr> outputs_;
   TypeId dtype_{kTypeUnknown};
   TypeId itype_{kTypeUnknown};
   int64_t indice_size_;

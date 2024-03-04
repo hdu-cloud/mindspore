@@ -16,7 +16,7 @@
 
 #include <memory>
 
-#include "common/graph_kernel/expanders/op_desc_registry.h"
+#include "backend/common/graph_kernel/expanders/op_desc_registry.h"
 #include "tools/graph_kernel/converter/conv_tuning_expander.h"
 #include "tools/graph_kernel/converter/expanders/activation.h"
 #include "mindapi/base/types.h"
@@ -27,9 +27,10 @@ class CheckValidAttr : public Validator {
  public:
   bool Check(const OpDesc &e) override {
     const auto kernel_size = GetValue<std::vector<int64_t>>(e.Attrs().find("kernel_size")->second);
+    const auto pad = GetValue<std::vector<int64_t>>(e.Attrs().find("pad")->second);
     const auto stride = GetValue<std::vector<int64_t>>(e.Attrs().find("stride")->second);
     const auto dilation = GetValue<std::vector<int64_t>>(e.Attrs().find("dilation")->second);
-    if (InvalidConvAttr(kernel_size, stride, dilation)) {
+    if (InvalidConvAttr(kernel_size, pad, stride, dilation)) {
       return false;
     }
     return true;

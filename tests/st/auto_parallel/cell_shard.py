@@ -26,8 +26,7 @@ from mindspore.communication.management import init
 from mindspore.nn.loss.loss import LossBase
 from mindspore.nn.optim.momentum import Momentum
 from mindspore.ops import operations as P
-from mindspore.train.callback import Callback
-from mindspore.train.model import Model
+from mindspore.train import Callback, Model
 from mindspore.context import ParallelMode
 import mindspore.dataset as ds
 
@@ -391,7 +390,7 @@ def test_train_feed_ascend():
                                       dataset_strategy="data_parallel")
     np.random.seed(42)
     set_seed(42)
-    train_feed(num_classes=65536, expect_out=[11.275135, 8.742238])
+    train_feed(num_classes=65536, expect_out=[11.275127, 8.720392])
 
 
 def test_train_feed_gpu():

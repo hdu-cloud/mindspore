@@ -17,6 +17,8 @@
 #define USE_DEPRECATED_API
 #include "tools/optimizer/fusion/batchnorm_to_scale_fusion.h"
 #include <memory>
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
 #include "ops/batch_norm.h"
 #include "ops/fused_batch_norm.h"
 #include "include/common/utils/utils.h"
@@ -239,7 +241,7 @@ bool BatchNormToScaleFusion::CheckBNCanFused(const AnfNodePtr &node) {
     MS_LOG(ERROR) << "Get abstract failed.";
     return false;
   }
-  if (FetchShapeFromAbstract(abstract, &input_shape_) != lite::RET_OK || input_shape_.empty()) {
+  if (FetchShapeFromAbstract(abstract, &input_shape_) != lite::RET_OK || lite::JudgeDynamicShape(input_shape_)) {
     return false;
   }
   return true;
@@ -325,7 +327,7 @@ bool BatchNormToScaleFusion::Run(const FuncGraphPtr &func_graph) {
       MS_LOG(ERROR) << "new scale primitive failed";
       return false;
     }
-    MS_CHECK_TRUE_RET(!input_shape_.empty(), false);
+    MS_CHECK_TRUE_RET(!lite::JudgeDynamicShape(input_shape_), false);
     int64_t axis = input_shape_.size() == DIMENSION_4D ? -1 : 1;
     scale_primitive->set_axis(axis);
     scale_primitive->set_activation_type(ActivationType::NO_ACTIVATION);

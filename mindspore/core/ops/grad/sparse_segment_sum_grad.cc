@@ -15,12 +15,30 @@
  */
 
 #include "ops/grad/sparse_segment_sum_grad.h"
+
+#include <map>
+#include <set>
+
+#include "abstract/abstract_value.h"
 #include "abstract/dshape.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/named.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -40,10 +58,10 @@ abstract::ShapePtr SparseSegmentSumGradInferShape(const PrimitivePtr &prim,
       IsDynamicRank(output_dim0_shape)) {
     return std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeRankAny}));
   }
-  (void)CheckAndConvertUtils::CheckInteger("indices_shape", SizeToLong(indices_shape.size()), kEqual, kInputIndex1,
-                                           prim->name());
+  (void)CheckAndConvertUtils::CheckInteger("indices_shape", SizeToLong(indices_shape.size()), kEqual,
+                                           SizeToLong(kInputIndex1), prim->name());
   (void)CheckAndConvertUtils::CheckInteger("segment_ids_shape", SizeToLong(segment_ids_shape.size()), kEqual,
-                                           kInputIndex1, prim->name());
+                                           SizeToLong(kInputIndex1), prim->name());
   if (grad_shape.size() < kInputIndex1) {
     MS_EXCEPTION(ValueError) << "For '" << prim_name << "', "
                              << "tensor grad's rank must be greater than 1, but got [" << grad_shape.size() << "].";
@@ -58,7 +76,7 @@ abstract::ShapePtr SparseSegmentSumGradInferShape(const PrimitivePtr &prim,
                              << "but got indices [" << indices_shape[kInputIndex0] << "] "
                              << "and segment_ids [" << segment_ids_shape[kInputIndex0] << "].";
   }
-  if (!input_args[kInputIndex3]->BuildValue()->isa<AnyValue>() &&
+  if (!input_args[kInputIndex3]->BuildValue()->isa<ValueAny>() &&
       !input_args[kInputIndex3]->BuildValue()->isa<None>()) {
     auto output_dim0_value = input_args[kInputIndex3]->cast<abstract::AbstractTensorPtr>();
     MS_EXCEPTION_IF_NULL(output_dim0_value);
@@ -111,8 +129,27 @@ AbstractBasePtr SparseSegmentSumGradInfer(const abstract::AnalysisEnginePtr &, c
   auto shapes = SparseSegmentSumGradInferShape(prim, input_args);
   return abstract::MakeAbstract(shapes, types);
 }
-REGISTER_HOST_DEPENDS(kNameSparseSegmentSumGrad, {3});
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseSegmentSumGrad, prim::kPrimSparseSegmentSumGrad, SparseSegmentSumGradInfer, nullptr,
-                             true);
+
+// AG means auto generated
+class MIND_API AGSparseSegmentSumGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentSumGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentSumGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentSumGradInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {3}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseSegmentSumGrad, prim::kPrimSparseSegmentSumGrad, AGSparseSegmentSumGradInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

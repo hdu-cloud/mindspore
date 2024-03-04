@@ -15,8 +15,7 @@
  */
 
 #include "plugin/device/ascend/kernel/tbe/tbe_json/tbe_json_utils.h"
-#include "mindspore/core/ops/core_ops.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_convert_utils.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_dynamic_shape_util.h"
@@ -54,8 +53,10 @@ bool TbeJsonUtils::GetInputsRealNum(const AnfNodePtr &anf_node, const std::vecto
 bool TbeJsonUtils::GetOutputsRealNum(const AnfNodePtr &anf_node, const std::vector<OpIOInfoPtr> &outputs_ptr,
                                      std::vector<size_t> *outputs_num) {
   MS_EXCEPTION_IF_NULL(anf_node);
-  size_t real_output_num = common::AnfAlgo::GetOutputTensorNum(anf_node);
+  MS_EXCEPTION_IF_NULL(outputs_num);
+  size_t real_output_num = AnfAlgo::GetOutputElementNum(anf_node);
   for (const auto &output_ptr : outputs_ptr) {
+    MS_EXCEPTION_IF_NULL(output_ptr);
     if (output_ptr->param_type() == kJParamDynamic) {
       if (outputs_ptr.size() > 1) {
         MS_LOG(ERROR) << "Dynamic output is unsupported multi output, node [ "
@@ -97,7 +98,7 @@ std::vector<int64_t> TbeJsonUtils::GetInputDeviceShapeForTbeBuild(const AnfNodeP
 std::vector<int64_t> TbeJsonUtils::GetOutputOriShapeForTbeBuild(const AnfNodePtr &anf_node, size_t real_idx) {
   MS_EXCEPTION_IF_NULL(anf_node);
   std::vector<int64_t> shape;
-  auto out_shape = common::AnfAlgo::GetOutputDetailShape(anf_node, real_idx);
+  auto out_shape = AnfAlgo::GetOutputDetailShape(anf_node, real_idx);
   MS_EXCEPTION_IF_NULL(out_shape);
   if (out_shape->isa<abstract::Shape>()) {
     auto shape_ptr = out_shape->cast<abstract::ShapePtr>();

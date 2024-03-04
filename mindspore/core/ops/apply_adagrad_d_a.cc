@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,14 +16,28 @@
 
 #include "ops/apply_adagrad_d_a.h"
 
-#include <algorithm>
+#include <map>
+#include <memory>
 #include <set>
+#include <utility>
 
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,9 +51,20 @@ abstract::TupleShapePtr ApplyAdagradDAInferShape(const PrimitivePtr &primitive,
   for (const auto &item : input_args) {
     MS_EXCEPTION_IF_NULL(item);
   }
-  auto var_shape = input_args[0]->BuildShape();
-  auto gradient_accumulator_shape = input_args[kInputIndex1]->BuildShape();
-  auto gradient_squared_accumulator_shape = input_args[kInputIndex2]->BuildShape();
+  auto prim_name = primitive->name();
+  auto var_shape_ptr = input_args[kInputIndex0]->BuildShape();
+  auto gradient_accumulator_shape_ptr = input_args[kInputIndex1]->BuildShape();
+  auto gradient_squared_accumulator_shape_ptr = input_args[kInputIndex2]->BuildShape();
+  auto var_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
+  auto gradient_accumulator_shape =
+    CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
+  auto gradient_squared_accumulator_shape =
+    CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->BuildShape())[kShape];
+  auto grad_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex3]->BuildShape())[kShape];
+  CheckAndConvertUtils::Check("var_shape", var_shape, kEqual, gradient_accumulator_shape, prim_name);
+  CheckAndConvertUtils::Check("var_shape", var_shape, kEqual, gradient_squared_accumulator_shape, prim_name);
+  CheckAndConvertUtils::Check("var_shape", var_shape, kEqual, grad_shape, prim_name);
+
   auto lr_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex4]->BuildShape())[kShape];
   auto l1_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex5]->BuildShape())[kShape];
   auto l2_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex6]->BuildShape())[kShape];
@@ -50,6 +75,9 @@ abstract::TupleShapePtr ApplyAdagradDAInferShape(const PrimitivePtr &primitive,
     auto value_ptr = primitive->GetAttr(kBatchRank);
     batch_rank = GetValue<int64_t>(value_ptr);
   }
+  if (batch_rank < 0) {
+    MS_EXCEPTION(ValueError) << "batch_rank is" << batch_rank;
+  }
   auto lr_shape_rank = SizeToLong(lr_shape.size());
   auto l1_shape_rank = SizeToLong(l1_shape.size());
   auto l2_shape_rank = SizeToLong(l2_shape.size());
@@ -58,8 +86,8 @@ abstract::TupleShapePtr ApplyAdagradDAInferShape(const PrimitivePtr &primitive,
   (void)CheckAndConvertUtils::CheckInteger("l2_shape size", l2_shape_rank, kEqual, batch_rank, primitive->name());
   (void)CheckAndConvertUtils::CheckInteger("global_step_shape size", global_step_shape.size(), kEqual, batch_rank,
                                            primitive->name());
-  return std::make_shared<abstract::TupleShape>(
-    std::vector<abstract::BaseShapePtr>{var_shape, gradient_accumulator_shape, gradient_squared_accumulator_shape});
+  return std::make_shared<abstract::TupleShape>(std::vector<abstract::BaseShapePtr>{
+    var_shape_ptr, gradient_accumulator_shape_ptr, gradient_squared_accumulator_shape_ptr});
 }
 
 TuplePtr ApplyAdagradDAInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
@@ -114,6 +142,23 @@ AbstractBasePtr ApplyAdagradDAInfer(const abstract::AnalysisEnginePtr &, const P
                                 ApplyAdagradDAInferType(primitive, input_args));
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(ApplyAdagradDA, prim::kPrimApplyAdagradDA, ApplyAdagradDAInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGApplyAdagradDAInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyAdagradDAInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyAdagradDAInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyAdagradDAInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ApplyAdagradDA, prim::kPrimApplyAdagradDA, AGApplyAdagradDAInfer, false);
 }  // namespace ops
 }  // namespace mindspore

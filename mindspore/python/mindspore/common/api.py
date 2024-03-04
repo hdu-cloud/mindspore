@@ -1,6 +1,6 @@
 # This is the Python adaptation and derivative work of Myia (https://github.com/mila-iqia/myia/).
 #
-# Copyright 2020-2021 Huawei Technologies Co., Ltd
+# Copyright 2020-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,31 +24,40 @@ import time
 import ast
 import inspect
 import importlib
-from collections import OrderedDict
+import hashlib
+import contextlib
+from collections import OrderedDict, namedtuple
 from functools import wraps
 import numpy as np
 import mindspore as ms
 from mindspore import context
 from mindspore import log as logger
 from mindspore._extends.remote import kernel_build_server
+from mindspore.common.jit_config import JitConfig
 from mindspore.common.tensor import Tensor as PythonTensor
 from mindspore.common.sparse_tensor import CSRTensor as PythonCSRTensor
 from mindspore.common.sparse_tensor import COOTensor as PythonCOOTensor
 from mindspore.common.sparse_tensor import RowTensor as PythonRowTensor
-from mindspore._c_expression import GraphExecutor_, Tensor, MetaTensor, CSRTensor, RowTensor, COOTensor, \
+from mindspore._c_expression import GraphExecutor_, Tensor, CSRTensor, RowTensor, COOTensor, \
     PyNativeExecutor_, verify_inputs_signature, init_exec_dataset, _set_dataset_mode_config, init_pipeline, \
-    _ms_memory_recycle
+    _ms_memory_recycle, _bind_device_ctx
 from mindspore.parallel._ps_context import _is_role_sched
 from mindspore.parallel._utils import _check_full_batch, _get_parameter_broadcast, _is_pynative_parallel, \
-    _get_pipeline_stages, _is_in_auto_parallel_mode
-from mindspore._checkparam import Validator
+    _is_in_auto_parallel_mode
+from mindspore import _checkparam as Validator
+from mindspore._checkparam import is_stub_tensor
 from mindspore.common._utils import is_shape_unknown
 from mindspore.common.mutable import mutable
+from mindspore.common._register_for_adapter import ms_adapter_registry
+from mindspore.common.auto_dynamic_shape import get_auto_dynamic_shape_args, update_auto_dynamic_shape_phase, \
+    get_auto_dynamic_shape_args_with_check_input_signature, update_auto_dynamic_shape_phase_with_check_input_signature
 
-# store ms_function class compiled pipeline cache
+# Store ms_function class compiled pipeline cache.
 ms_compile_cache = set()
-# store cell compiled pipeline cache,
+# Store cell compiled pipeline cache.
 cells_compile_cache = {}
+# Store function compiled times information.
+function_phases = dict()
 
 BROADCAST_PHASE = "_broadcast_"
 _PYNATIVE_PARALLEL_FUNC_NAME = "after_shard"
@@ -64,6 +73,8 @@ def _convert_python_data(data):
     Returns:
         data, a data convert C++ to python
     """
+    if isinstance(data, Tensor) and data.adapter_flag:
+        return ms_adapter_registry.tensor(data)
     if isinstance(data, Tensor) and not isinstance(data, PythonTensor):
         return PythonTensor(data, internal=True)
     if isinstance(data, CSRTensor) and not isinstance(data, PythonCSRTensor):
@@ -73,11 +84,24 @@ def _convert_python_data(data):
     if isinstance(data, RowTensor) and not isinstance(data, PythonRowTensor):
         return PythonRowTensor(row_tensor=data)
     if isinstance(data, tuple):
+        # Handle namedtuple since its type is tuple.
+        if hasattr(data, "_fields"):
+            type_name = data.__class__.__name__
+            data_dict = data._asdict()
+            fields = data_dict.keys()
+            return namedtuple(type_name, fields)(**_convert_python_data(data_dict))
         return tuple(_convert_python_data(x) for x in data)
     if isinstance(data, list):
-        return list(_convert_python_data(x) for x in data)
+        # Keep list object not change for inplace operation.
+        for i in range(len(data)):
+            data[i] = _convert_python_data(data[i])
+        return data
     if isinstance(data, dict):
-        return dict((_convert_python_data(key), _convert_python_data(value)) for key, value in data.items())
+        # Keep the dict object not change.
+        keys = tuple(data.keys())
+        for key in keys:
+            data[_convert_python_data(key)] = _convert_python_data(data.pop(key))
+        return data
     return data
 
 
@@ -102,7 +126,8 @@ def _wrap_func(fn):
 
 def _check_all_tensor(sequence):
     for element in sequence:
-        if not isinstance(element, Tensor) and not (isinstance(element, tuple) and _check_all_tensor(element)):
+        if not isinstance(element, Tensor) and not is_stub_tensor(element) and not (isinstance(element, tuple)
+                                                                                    and _check_all_tensor(element)):
             return False
     return True
 
@@ -116,28 +141,28 @@ def _handle_func_args(func, *args, **kwargs):
         bound_arguments.apply_defaults()
         args = bound_arguments.args
         kwargs = bound_arguments.kwargs
-        # After apply_defaults, kwargs should be empty here.
-        if kwargs:
-            raise ValueError(f"Failed to handle kwargs of {func.__name__}. Maybe you pass wrong arguments, "
-                             f"or there is a key in kwargs that is not used as a function argument, "
-                             f"args: {args}, kwargs: {kwargs}")
 
     positional_args = 0
     default_args = 0
+    has_var = False
     for value in inspect.signature(func).parameters.values():
         if value.kind is inspect.Parameter.VAR_POSITIONAL or value.kind is inspect.Parameter.VAR_KEYWORD:
-            return args
+            has_var = True
         if value.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD:
             if value.default is inspect.Parameter.empty:
                 positional_args += 1
             else:
                 default_args += 1
+
+    if has_var:
+        return args, kwargs
+
     if len(args) < positional_args:
         raise TypeError(f"Function {func.__name__} needs {positional_args} positional argument, but got {len(args)}.")
     if len(args) > positional_args + default_args:
         raise TypeError(f"Function {func.__name__} needs {positional_args} positional argument and {default_args} "
                         f"default argument, total {positional_args + default_args}, but got {len(args)}.")
-    return args
+    return args, kwargs
 
 
 sys_path = list(sys.path)
@@ -163,9 +188,9 @@ def __get_compile_cache_dep_files(file_path, compile_cache_dep_files, pkg):
     for node in ast.iter_child_nodes(root):
         module_name = ""
         if isinstance(node, ast.ImportFrom):
-            module_name = node.module
-            if node.level == 1:
-                module_name = "." + module_name
+            if node.module is not None:
+                module_name = node.module
+            module_name = "." * node.level + module_name
         elif not isinstance(node, ast.Import):
             continue
         # Do not care the files in mindspore package
@@ -235,25 +260,42 @@ def _get_parameter_layout():
     return layout
 
 
-def _get_args_for_run(obj, args_list):
-    """Get the actual input args for runtime."""
-    inputs = []
-    for i in args_list:
-        if isinstance(i, PythonTensor):
-            if i.has_init:
-                i.init_data()
-            if not i.const_arg:
-                inputs.append(i)
-        elif isinstance(i, (Tensor, CSRTensor, COOTensor)):
-            inputs.append(i)
-        elif hasattr(i, "__ms_mutable__") and getattr(i, "__ms_mutable__"):
-            inputs.append(i)
-        elif context.get_context("grad_for_scalar") and isinstance(i, (int, float)):
-            inputs.append(i)
-        elif hasattr(obj, "enable_tuple_broaden") and obj.enable_tuple_broaden and isinstance(i, tuple) and \
-                _check_all_tensor(i):
-            inputs.append(i)
-    return inputs
+def _handle_arg(obj, arg):
+    """Handle arg for runtime .If need handle the arg, return True"""
+    if isinstance(arg, PythonTensor):
+        if arg.has_init:
+            arg.init_data()
+        if not arg.const_arg:
+            return arg
+    elif isinstance(arg, (Tensor, CSRTensor, COOTensor)):
+        return arg
+    elif hasattr(arg, "__ms_mutable__") and getattr(arg, "__ms_mutable__"):
+        # mutable([]) will be eliminated by FuncGraphSpecializer, and empty list is not supported by backend.
+        if isinstance(arg, list) and not arg:
+            return None
+        return arg
+    elif context.get_context("grad_for_scalar") and isinstance(arg, (int, float)):
+        return arg
+    elif hasattr(obj, "enable_tuple_broaden") and obj.enable_tuple_broaden and isinstance(arg, tuple) and \
+            _check_all_tensor(arg):
+        return arg
+    return None
+
+
+def _get_args_for_run(obj, args, kwargs):
+    """Get the actual input args and kwargs for runtime."""
+    new_args = []
+    for arg in args:
+        new_arg = _handle_arg(obj, arg)
+        if new_arg is not None:
+            new_args.append(new_arg)
+
+    for _, value in kwargs.items():
+        new_value = _handle_arg(obj, value)
+        if new_value is not None:
+            new_args.append(new_value)
+
+    return new_args
 
 
 class _MindsporeFunctionExecutor:
@@ -273,7 +315,6 @@ class _MindsporeFunctionExecutor:
     Returns:
         The result of pipeline running in graph mode.
     """
-
     def __init__(self, fn, ms_create_time, input_signature=None, obj=None, jit_config=None):
         init_pipeline()
         if not isinstance(fn, (types.FunctionType, types.MethodType)):
@@ -290,25 +331,36 @@ class _MindsporeFunctionExecutor:
         self._create_time = ms_create_time
         self.jit_config_dict = jit_config.jit_config_dict if jit_config else None
 
+
     @_wrap_func
-    def __call__(self, *args):
+    def __call__(self, *args, **kwargs):
         args_list = args
         if self.obj is not None:
             args_list = args_list[1:]
-        _pynative_executor.set_ms_function_compile_status(True)
-        phase = self.compile(args_list, self.fn.__name__)
-        _pynative_executor.set_ms_function_compile_status(False)
+        phase = ""
+        try:
+            if context.get_context("mode") == context.PYNATIVE_MODE:
+                _pynative_executor.set_jit_compile_status(True, phase)
+                phase = self.compile(self.fn.__name__, *args_list, **kwargs)
+                _pynative_executor.set_jit_compile_status(False, phase)
+            else:
+                phase = self.compile(self.fn.__name__, *args_list, **kwargs)
+        except Exception as err:
+            _pynative_executor.clear_res()
+            raise err
+
         if context.get_context("precompile_only"):
             return None
-        new_inputs = self._generate_run_args(args_list)
+
+        new_inputs = self._generate_run_args(args_list, kwargs)
         output = self._graph_executor(tuple(new_inputs), phase)
         if context.get_context("mode") == context.PYNATIVE_MODE:
-            _pynative_executor.set_graph_phase(phase)
-            output = _pynative_executor.grad_ms_function(output, *new_inputs)
+            output = _pynative_executor.grad_jit(output, *new_inputs)
 
         return output
 
-    def compile(self, args_list, method_name):
+
+    def compile(self, method_name, *args, **kwargs):
         """Returns pipeline for the given args."""
         # Check whether hook function registered on Cell object.
         if self.obj and hasattr(self.obj, "_hook_fn_registered"):
@@ -317,58 +369,109 @@ class _MindsporeFunctionExecutor:
                                f"If you want to use hook function, please use context.set_context to set "
                                f"pynative mode and remove 'jit' decorator.")
         # Chose dynamic shape tensors or actual input tensors as compile args.
-        compile_args = self._generate_compile_args(args_list)
-        # Restore the mutable attr for every arg.
-        compile_args = _restore_mutable_attr(args_list, compile_args)
+        compile_args = self._generate_compile_args(args)
+        key_id = self._get_key_id()
+        compile_args = get_auto_dynamic_shape_args_with_check_input_signature(compile_args, key_id,
+                                                                              self.input_signature)
 
-        generate_name = self.fn.__module__ + "." + self.fn.__name__ + "." + self.fn.__code__.co_filename + "." + \
-                        str(self.fn.__code__.co_firstlineno) + '.' + str(id(self.fn))
-        if _pynative_executor.grad_flag():
-            generate_name = generate_name + ".grad"
-        if _is_pynative_parallel():
-            generate_name = generate_name[:generate_name.rfind(str(id(self.fn)))] + str(id(self.shard_parent_obj))
+        # Restore the mutable attr for every arg.
+        compile_args = _restore_mutable_attr(args, compile_args)
+        generate_name, echo_function_name = self._get_generate_name()
+        # The full Function name
+        full_function_name = generate_name
+        create_time = ''
 
         # Add key with obj
         if self.obj is not None:
             if self.obj.__module__ != self.fn.__module__:
-                logger.info(f'`obj` module not equal to `fn` module: {self.obj.__module__}, {self.fn.__module__}')
+                logger.info(
+                    f'The module of `self.obj`: `{self.obj.__module__}` is not same with the module of `self.fn`: '
+                    f'`{self.fn.__module__}`')
             self.obj.__parse_method__ = method_name
             if isinstance(self.obj, ms.nn.Cell):
                 generate_name = generate_name + '.' + str(self.obj.create_time)
+                create_time = str(self.obj.create_time)
             else:
                 generate_name = generate_name + '.' + str(self._create_time)
+                create_time = str(self._create_time)
+
             generate_name = generate_name + '.' + str(id(self.obj))
+            full_function_name = generate_name
         else:
             # Different instance of same class may use same memory(means same obj_id) at diff times.
             # To avoid unexpected phase matched, add create_time to generate_name.
             generate_name = generate_name + '.' + str(self._create_time)
+            create_time = str(self._create_time)
 
         self.enable_tuple_broaden = False
         if hasattr(self.obj, "enable_tuple_broaden"):
             self.enable_tuple_broaden = self.obj.enable_tuple_broaden
 
         self._graph_executor.set_enable_tuple_broaden(self.enable_tuple_broaden)
-        key = self._graph_executor.generate_arguments_key(compile_args, self.enable_tuple_broaden)
+        key = self._graph_executor.generate_arguments_key(self.fn, compile_args, kwargs, self.enable_tuple_broaden)
         phase = generate_name + '.' + str(key)
+
+        update_auto_dynamic_shape_phase_with_check_input_signature(compile_args, key_id, phase, self.input_signature)
+
         if phase in ms_compile_cache:
             return phase
+
+        self._check_recompile(full_function_name, create_time, echo_function_name)
 
         # If enable compile cache, get the dependency files list and set to graph executor.
         self._set_compile_cache_dep_files()
         if self.jit_config_dict:
             self._graph_executor.set_jit_config(self.jit_config_dict)
+        else:
+            jit_config_dict = JitConfig().jit_config_dict
+            self._graph_executor.set_jit_config(jit_config_dict)
 
         if self.obj is None:
-            is_compile = self._graph_executor.compile(self.fn, compile_args, phase, True)
+            # Set an attribute to fn as an identifier.
+            if isinstance(self.fn, types.MethodType):
+                setattr(self.fn.__func__, "__jit_function__", True)
+            else:
+                setattr(self.fn, "__jit_function__", True)
+            is_compile = self._graph_executor.compile(self.fn, compile_args, kwargs, phase, True)
+            if isinstance(self.fn, types.MethodType):
+                delattr(self.fn.__func__, "__jit_function__")
+            else:
+                delattr(self.fn, "__jit_function__")
         else:
             if isinstance(self.obj, ms.nn.Cell):
                 self._graph_executor.set_weights_values(self.obj.parameters_dict())
-            is_compile = self._graph_executor.compile(self.obj, compile_args, phase, True)
+            is_compile = self._graph_executor.compile(self.obj, compile_args, kwargs, phase, True)
 
         if not is_compile:
             raise RuntimeError("Executor compile failed.")
         ms_compile_cache.add(phase)
+
         return phase
+
+
+    @staticmethod
+    def _check_recompile(full_function_name, create_time, echo_function_name):
+        """Warning when the function has been compiled."""
+        ignore_dirs = ["mindspore/ops", "mindspore/nn"]
+        if any((lambda x: x in full_function_name)(x) for x in ignore_dirs):
+            return
+
+        if full_function_name in function_phases:
+            warning_times = 1
+            if len(function_phases[full_function_name]) >= warning_times \
+                    and create_time not in function_phases[full_function_name]:
+                tips = "Try to decorate the function with @jit(hash_args=...) " \
+                       "or @jit(compile_once=True) to reduce the compile time. " \
+                       "For more details, get instructions about `jit` at " \
+                       "https://www.mindspore.cn/search?inputValue=jit."
+
+                logger.warning(f"The {echo_function_name} has been compiled again. "
+                               f"{tips} ")
+        else:
+            function_phases[full_function_name] = set()
+
+        function_phases[full_function_name].add(create_time)
+
 
     @staticmethod
     def _optimizer_state_init(opt_states):
@@ -380,60 +483,94 @@ class _MindsporeFunctionExecutor:
             if opt_param.has_init and (prefix in prefix_list or opt_param.name == "global_step"):
                 opt_param.init_data()
 
+
+    def _get_key_id(self):
+        """get key id."""
+        if isinstance(self.obj, ms.nn.Cell):
+            key_id = str(id(self.obj)) + str(self.obj.create_time)
+        else:
+            key_id = str(id(self.obj)) + str(self._create_time)
+
+        if _pynative_executor.grad_flag():
+            key_id = key_id + ".grad"
+        return key_id
+
+
+    def _get_generate_name(self):
+        """get generate name."""
+        generate_name = self.fn.__module__ + "." + self.fn.__name__ + "." + self.fn.__code__.co_filename + "." + str(
+            self.fn.__code__.co_firstlineno)
+        echo_function_name = "function \"" + self.fn.__name__ + "\" at the file \"" + self.fn.__code__.co_filename \
+                             + "\", line " + str(self.fn.__code__.co_firstlineno)
+        if _pynative_executor.grad_flag():
+            generate_name = generate_name + ".grad"
+        if _is_pynative_parallel():
+            generate_name = generate_name[:generate_name.rfind(str(id(self.fn)))] + str(id(self.shard_parent_obj))
+        return generate_name, echo_function_name
+
+
     def _set_compile_cache_dep_files(self):
         # If enable compile cache, get the dependency files list
         enable_compile_cache = context.get_context("enable_compile_cache")
-        if enable_compile_cache is None:
+        if enable_compile_cache is not True and enable_compile_cache != "1":
             enable_compile_cache = os.getenv('MS_COMPILER_CACHE_ENABLE')
         if enable_compile_cache is True or enable_compile_cache == "1":
             self._graph_executor.set_compile_cache_dep_files(_get_compile_cache_dep_files())
 
+
     def _generate_compile_args(self, args_list):
         """Chose dynamic shape tensors or actual input tensors as compile args."""
         # Case: If the shape of input args is dynamic, get dynamic shape tensor from context and use it to compile.
-        compile_args = args_list
+        compile_args = _pynative_executor.get_dynamic_input(args_list)
         # Case: The `set_inputs()` of Cell object has been set, using these dynamic shape args as compile args.
-        if isinstance(self.obj, ms.nn.Cell) and self.obj.get_inputs():
+        if self.fn.__name__ == 'construct' and isinstance(self.obj, ms.nn.Cell) and self.obj.get_inputs():
             compile_args = self.obj.get_inputs()
-            for args in compile_args:
-                Validator.check_isinstance("args set in `set_inputs()` of Cell", args, PythonTensor)
-            Validator.check_dynamic_shape(compile_args, args_list)
+            if len(compile_args) != len(args_list):
+                raise ValueError(f"The number of actual input tensors: {len(args_list)} is not equal to the number of "
+                                 f"dynamic shape tensors: {len(compile_args)}.")
+            for i, elem in enumerate(compile_args):
+                if isinstance(elem, PythonTensor):
+                    Validator.check_dynamic_shape(compile_args[i], args_list[i], i)
+
         # Case: If dynamic shape tensors have been assigned to `input_signature`, they are preferred as compile args.
         if self.input_signature is not None:
             if not isinstance(self.input_signature, (tuple, list)):
                 self.input_signature = (self.input_signature,)
             self.input_signature = list(self.input_signature)
             dyn_shape = False
-            for sig_args in self.input_signature:
-                Validator.check_isinstance("args in `input_signature` of `jit` decorator", sig_args, MetaTensor)
-                if is_shape_unknown(sig_args.shape):
+            for i, elem in enumerate(self.input_signature):
+                if isinstance(elem, PythonTensor) and is_shape_unknown(elem.shape):
+                    Validator.check_dynamic_shape(self.input_signature[i], args_list[i], i)
                     dyn_shape = True
-            if not dyn_shape:
-                if not verify_inputs_signature(self.input_signature, args_list):
-                    raise ValueError("The input args is incompatible with the args in `input_signature`!")
-            else:
+            if dyn_shape:
                 # Checkout whether the `sens` has been added to args_list.
                 if len(self.input_signature) == len(args_list) - 1:
-                    logger.warning(f"The number of actual input args `{len(args_list)}` is one more than the number "
-                                   f"of input_signature args `{len(self.input_signature)}`. The last actual args may "
-                                   f"be `sens` and added it to compile args.")
+                    logger.warning(f"The number of actual input args '{len(args_list)}' is one more than the number "
+                                   f"of input_signature args '{len(self.input_signature)}'. The last actual args may "
+                                   f"be 'sens' and added it to compile args.")
                     self.input_signature.append(args_list[-1])
-                Validator.check_dynamic_shape(self.input_signature, args_list)
                 compile_args = tuple(self.input_signature)
-                _pynative_executor.set_dynamic_input(self.obj, *compile_args)
+                if self.obj is not None:
+                    _pynative_executor.set_dynamic_input(self.obj, *compile_args)
+                else:
+                    _pynative_executor.set_dynamic_input(self.fn, *compile_args)
+            else:
+                if not verify_inputs_signature(self.input_signature, args_list):
+                    raise ValueError("The input args is incompatible with the args in `input_signature`!")
         return compile_args
 
-    def _generate_run_args(self, args_list):
+    def _generate_run_args(self, args_list, kwargs):
         """
         Generate input args, which are required for running.
 
         Args:
             args_list (Tuple): Actual input args.
+            kwargs (Dict): Actual input kwargs.
 
         Returns:
             new_inputs, new input args, which are required for running.
         """
-        return _get_args_for_run(self, args_list)
+        return _get_args_for_run(self, args_list, kwargs)
 
 
 # The attributes used to identify a given object.
@@ -454,14 +591,14 @@ def _get_obj_id(input_obj):
     return obj_id + str(id(input_obj))
 
 
-def _get_ms_function_hash(hash_input):
+def _get_jit_hash(hash_input):
     """Get hash value of single object or list of objects."""
     if isinstance(list, tuple):
         return ".".join(map(_get_obj_id, hash_input))
     return _get_obj_id(hash_input)
 
 
-def jit(fn=None, input_signature=None, hash_args=None, jit_config=None):
+def jit(fn=None, input_signature=None, hash_args=None, jit_config=None, compile_once=False):
     """
     Create a callable MindSpore graph from a Python function.
 
@@ -472,15 +609,19 @@ def jit(fn=None, input_signature=None, hash_args=None, jit_config=None):
         will not accept `**kwargs`.
 
     Args:
-        fn (Function): The Python function that will be run as a graph. Default: None.
+        fn (Function): The Python function that will be run as a graph. Default: ``None`` .
         input_signature (Tensor): The Tensor which describes the input arguments. The shape and dtype of the Tensor
             will be supplied to this function. If input_signature is specified, each input to `fn` must be a `Tensor`.
             And the input parameters of `fn` cannot accept `**kwargs`. The shape and dtype of actual inputs should
-            keep the same as input_signature. Otherwise, TypeError will be raised. Default: None.
+            keep the same as input_signature. Otherwise, TypeError will be raised. Default: ``None`` .
         hash_args (Union[Object, List or Tuple of Objects]): The local free variables used inside `fn`,
             like functions or objects of class defined outside `fn`. Calling `fn` again with change of `hash_args`
-            will trigger recompilation.
-        jit_config (JitConfig): Jit config for compile. Default: None.
+            will trigger recompilation. Default: ``None`` .
+        jit_config (JitConfig): Jit config for compile. Default: ``None`` .
+        compile_once(bool): ``True``: The function would be compiled once when it was created many times.
+            But it may be wrong if the free variables were changed. ``False`` : It would be recompiled when
+            it was created again
+            Default: ``False`` .
 
     Returns:
         Function, if `fn` is not None, returns a callable function that will execute the compiled function; If `fn` is
@@ -524,7 +665,7 @@ def jit(fn=None, input_signature=None, hash_args=None, jit_config=None):
         ...
         >>> out = tensor_add_with_sig(x, y)
         ...
-        ... # Set hash_args as fn, otherwise cache of compiled `closure_fn` will not be reused.
+        ... # Set hash_args as fn, otherwise cache of compiled closure_fn will not be reused.
         ... # While fn differs during calling again, recompilation will be triggered.
         >>> def func(x):
         ...     return ops.exp(x)
@@ -538,11 +679,28 @@ def jit(fn=None, input_signature=None, hash_args=None, jit_config=None):
         >>> inputs = Tensor(np.ones([10, 10, 10]).astype(np.float32))
         >>> for i in range(10):
         ...     closure_fn(inputs, func)
+        ...
+        ... # Set compile_once = True, otherwise the train_step will be compiled again.
+        >>> def train(x):
+        ...     @jit(compile_once = True)
+        ...     def train_step(x):
+        ...         return ops.exp(x)
+        ...     for i in range(10):
+        ...         train_step(x)
+        ...
+        >>> inputs = Tensor(np.ones([10, 10, 10]).astype(np.float32))
+        >>> for i in range(10):
+        ...     train(inputs)
     """
 
     def wrap_mindspore(func):
+        if not isinstance(compile_once, bool):
+            logger.warning(f"The parameter `compile_once` of jit should be a bool, "
+                           f"but got {type(compile_once)}.")
         if hash_args:
-            hash_obj = _get_ms_function_hash(hash_args)
+            hash_obj = _get_jit_hash(hash_args)
+        elif compile_once:
+            hash_obj = 0
         else:
             hash_obj = int(time.time() * 1e9)
 
@@ -551,14 +709,15 @@ def jit(fn=None, input_signature=None, hash_args=None, jit_config=None):
             if os.getenv("MS_JIT") == '0':
                 return func(*args, **kwargs)
 
-            args = _handle_func_args(func, *args, **kwargs)
+            args, kwargs = _handle_func_args(func, *args, **kwargs)
+
             process_obj = None
             if args and not isinstance(args[0], PythonTensor) and hasattr(args[0], func.__name__):
                 process_obj = args[0]
             # only the function or cell instance wrapped by shard will fall into this branch
             if _is_pynative_parallel() and func.__name__ == _PYNATIVE_PARALLEL_FUNC_NAME:
                 process_obj = hash_args
-            out = _MindsporeFunctionExecutor(func, hash_obj, input_signature, process_obj, jit_config)(*args)
+            out = _MindsporeFunctionExecutor(func, hash_obj, input_signature, process_obj, jit_config)(*args, **kwargs)
             return out
 
         return staging_specialize
@@ -580,15 +739,15 @@ def ms_function(fn=None, input_signature=None, hash_args=None, jit_config=None):
         will not accept `**kwargs`.
 
     Args:
-        fn (Function): The Python function that will be run as a graph. Default: None.
+        fn (Function): The Python function that will be run as a graph. Default: ``None`` .
         input_signature (Tensor): The Tensor which describes the input arguments. The shape and dtype of the Tensor
             will be supplied to this function. If input_signature is specified, each input to `fn` must be a `Tensor`.
             And the input parameters of `fn` cannot accept `**kwargs`. The shape and dtype of actual inputs should
-            keep the same as input_signature. Otherwise, TypeError will be raised. Default: None.
+            keep the same as input_signature. Otherwise, TypeError will be raised. Default: ``None`` .
         hash_args (Union[Object, List or Tuple of Objects]): The local free variables used inside `fn`,
             like functions or objects of class defined outside `fn`. Calling `fn` again with change of `hash_args`
-            will trigger recompilation.
-        jit_config (JitConfig): Jit config for compile. Default: None.
+            will trigger recompilation. Default: ``None`` .
+        jit_config (JitConfig): Jit config for compile. Default: ``None`` .
 
     Returns:
         Function, if `fn` is not None, returns a callable function that will execute the compiled function; If `fn` is
@@ -648,7 +807,7 @@ def ms_function(fn=None, input_signature=None, hash_args=None, jit_config=None):
         ...     closure_fn(inputs, func)
     """
 
-    logger.warning("'mindspore.ms_function' will be deprecated and removed in a future version. " \
+    logger.warning("'mindspore.ms_function' will be deprecated and removed in a future version. "
                    "Please use 'mindspore.jit' instead.")
     return jit(fn=fn, input_signature=input_signature, hash_args=hash_args, jit_config=jit_config)
 
@@ -661,9 +820,9 @@ def _core(fn=None, **flags):
     set flag to a graph.
 
     Args:
-        fn (Function): Function to add flag. Default: None.
+        fn (Function): Function to add flag. Default: ``None``.
         flags (dict): The following flags can be set core, which indicates that this is a core function or
-                      other flag. Default: None.
+                      other flag. Default: ``None``.
 
     Returns:
         Function, the function with core flag.
@@ -695,8 +854,8 @@ def _add_flags(fn=None, **flags):
         Only supports bool value.
 
     Args:
-        fn (Function): Function or cell to add flag. Default: None.
-        flags (dict): Flags use kwargs. Default: None.
+        fn (Function): Function or cell to add flag. Default: ``None``.
+        flags (dict): Flags use kwargs. Default: ``None``.
 
     Returns:
         Function, the function with added flags.
@@ -719,7 +878,7 @@ def _add_flags(fn=None, **flags):
     return ret
 
 
-def no_recursive(callable_obj):
+def _no_recursive(callable_obj):
     """
     Method or function decorator for ignoring recursive check.
 
@@ -738,8 +897,8 @@ def no_recursive(callable_obj):
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
     """
-    isCellSubClass = inspect.isclass(callable_obj) and issubclass(callable_obj, ms.nn.Cell)
-    if not isCellSubClass and not inspect.ismethod(callable_obj) and not inspect.isfunction(callable_obj):
+    is_cell_subclass = inspect.isclass(callable_obj) and issubclass(callable_obj, ms.nn.Cell)
+    if not is_cell_subclass and not inspect.ismethod(callable_obj) and not inspect.isfunction(callable_obj):
         raise TypeError(f"Decorator no_recursive is used for callable object, but got {callable_obj}.")
     _add_flags(callable_obj, no_recursive=True)
     return callable_obj
@@ -794,7 +953,7 @@ def ms_class(cls):
         20
     """
 
-    logger.warning("'mindspore.ms_class' will be deprecated and removed in a future version. " \
+    logger.warning("'mindspore.ms_class' will be deprecated and removed in a future version. "
                    "Please use 'mindspore.jit_class' instead.")
 
     # Check if cls is of type class.
@@ -821,8 +980,8 @@ def jit_class(cls):
         Class.
 
     Raises:
-        TypeError: If jit_class is used for non-class types or nn.Cell.
-        AttributeError: If the private attributes or magic methods of the class decorated with jit_class is called.
+        TypeError: If `jit_class` is used for non-class types or nn.Cell.
+        AttributeError: If the private attributes or magic methods of the class decorated with `jit_class` is called.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
@@ -853,15 +1012,35 @@ def jit_class(cls):
         >>> print(out)
         20
     """
-
+    from mindspore import nn
     # Check if cls is of type class.
     if not inspect.isclass(cls):
         raise TypeError(f'Decorator jit_class can only be used for class type, but got {cls}.')
     # Check if cls is nn.Cell.
-    if issubclass(cls, ms.nn.Cell):
+    if issubclass(cls, nn.Cell):
         raise TypeError(f"Decorator jit_class is used for user-defined classes and cannot be used for nn.Cell: {cls}.")
     setattr(cls, '__ms_class__', True)
     return cls
+
+
+def set_adapter_config(config):
+    """
+    Register configuration information for MSAdapter.
+
+    Args:
+        config (dict): Configuration information.
+    """
+    if not isinstance(config, dict):
+        raise TypeError(f"The input argument of 'set_adapter_config' should be a dict, but got {config}.")
+    for key, value in config.items():
+        if key == "Tensor":
+            ms_adapter_registry.register_tensor(value)
+        elif key == "Parameter":
+            ms_adapter_registry.register_parameter(value)
+        elif key == "convert_object_map":
+            ms_adapter_registry.register_convert_map(value)
+        else:
+            raise ValueError(f"Unsupported key in adapter config: {key}")
 
 
 def _function_forbid_reuse(func):
@@ -916,6 +1095,27 @@ def _parameter_broadcast(obj):
     _build_broadcast_graph(broadcast_params_dict, broadcast_phase)
 
 
+class _no_grad(contextlib.ContextDecorator):
+    """
+    Context Manager to disable gradient calculation. When enter this context, we will disable calculate
+    gradient. When exit this context, we will resume its prev state.
+    Currently, it can only use in Pynative mode. It also can be used as decorator.
+    """
+
+    def __init__(self):
+        self.prev_state = False
+
+    def __enter__(self):
+        if context.get_context("mode") == context.GRAPH_MODE:
+            raise RuntimeError("For no_grad feature, currently only support Pynative mode, but got Graph mode.")
+        self.prev_state = _pynative_executor.enable_grad()
+        _pynative_executor.set_enable_grad(False)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        _pynative_executor.set_enable_grad(self.prev_state)
+        return False
+
+
 class _PyNativeExecutor:
     """
     A pynative executor used to compile/manage/run single op.
@@ -937,7 +1137,6 @@ class _PyNativeExecutor:
         self._executor = PyNativeExecutor_.get_instance()
         self._executor.set_py_exe_path(sys.executable)
         self._executor.set_kernel_build_server_dir(os.path.split(kernel_build_server.__file__)[0] + os.sep)
-        self._optimizer = None
         self._top_cell = None
 
     def __call__(self):
@@ -976,6 +1175,18 @@ class _PyNativeExecutor:
         """
         return self._executor.real_run_op(*args)
 
+    def run_op_async(self, *args):
+        """
+        Run single op async.
+
+        Args:
+            args (tuple): Op prim and input arguments.
+
+        Return:
+            StubNode, result of run op.
+        """
+        return self._executor.run_op_async(*args)
+
     def new_graph(self, obj, *args, **kwargs):
         """
         Initialize resources for building forward and backward graph.
@@ -1005,7 +1216,7 @@ class _PyNativeExecutor:
         """
         self._executor.end_graph(obj, output, *args, *(kwargs.values()))
 
-    def check_run(self, grad, obj, grad_hash_id, *args, **kwargs):
+    def check_run(self, grad, obj, weights, grad_hash_id, *args, **kwargs):
         """
         Whether the forward graph need to construct.
 
@@ -1019,7 +1230,7 @@ class _PyNativeExecutor:
         Return:
             bool, specifies whether the forward graph need to construct.
         """
-        return self._executor.check_run(grad, obj, grad_hash_id, *args, *(kwargs.values()))
+        return self._executor.check_run(grad, obj, weights, grad_hash_id, *args, *(kwargs.values()))
 
     def grad(self, obj, grad, weights, grad_position, *args, **kwargs):
         """
@@ -1057,42 +1268,18 @@ class _PyNativeExecutor:
         """
         self._executor.sync()
 
-    def set_lazy_build(self, enable):
+    def grad_jit(self, output, *args):
         """
-        The switch of lazy build.
+        Building grad graph decorated by jit.
 
         Args:
-            enable (bool): Specifies whether the lazy build is enable.
+            output (tuple): The function or cell decorated by jit output object.
+            args (tuple): Function or cell decorated by jit input arguments.
 
         Return:
             None.
         """
-        self._executor.set_lazy_build(enable)
-
-    def grad_ms_function(self, output, *args):
-        """
-        Building grad graph decorated by ms_function.
-
-        Args:
-            output (tuple): The function or cell decorated by ms_function output object.
-            args (tuple): Function or cell decorated by ms_function input arguments.
-
-        Return:
-            None.
-        """
-        return self._executor.grad_ms_function(output, *args)
-
-    def set_graph_phase(self, phase):
-        """
-        Set the phase of cell/function instance.
-
-        Args:
-            phase (str): The phase of cell/function instance.
-
-        Return:
-            None.
-        """
-        self._executor.set_graph_phase(phase)
+        return self._executor.grad_jit(output, *args)
 
     def grad_flag(self):
         """
@@ -1115,16 +1302,38 @@ class _PyNativeExecutor:
         """
         self._executor.set_grad_flag(flag)
 
-    def set_ms_function_compile_status(self, status):
+    def enable_grad(self):
         """
-        Set ms_function is compiling
+        The global flag whether needing to calculate gradient.
+
+        Return:
+            bool, whether needing to calculate gradient.
+        """
+        return self._executor.enable_grad()
+
+    def set_enable_grad(self, flag):
+        """
+        Set the flag of calculating gradient.
 
         Args:
-            status(bool): ms_function compile status
+            flag (bool): Specifying whether calculating gradient.
+
         Return:
             None.
         """
-        self._executor.set_ms_function_compile_status(status)
+        self._executor.set_enable_grad(flag)
+
+    def set_jit_compile_status(self, status, phase):
+        """
+        Set jit is compiling
+
+        Args:
+            status(bool): jit compile status
+            phase (str): The phase of cell/function instance.
+        Return:
+            None.
+        """
+        self._executor.set_jit_compile_status(status, phase)
 
     def set_dynamic_input(self, obj, *args):
         """
@@ -1138,6 +1347,18 @@ class _PyNativeExecutor:
             None.
         """
         self._executor.set_dynamic_input(obj, *args)
+
+    def get_dynamic_input(self, *actual_args):
+        """
+        Get dynamic shape arguments according to actual input arguments.
+
+        Args:
+            actual_args(tuple): Actual input arguments of Function or Cell.
+
+        Return:
+            dynamic_shape_args(tuple): Dynamic shape arguments of Function or Cell.
+        """
+        return self._executor.get_dynamic_input(*actual_args)
 
     def is_first_cell(self):
         """
@@ -1161,15 +1382,6 @@ class _PyNativeExecutor:
         """
         self._executor.set_hook_changed(cell)
 
-    def get_optimizer(self):
-        """
-        Get the optimizer.
-
-        Return:
-            The optimizer.
-        """
-        return self._optimizer
-
     def get_top_cell(self):
         """
         Get the top cell object.
@@ -1178,18 +1390,6 @@ class _PyNativeExecutor:
             The top cell object.
         """
         return self._top_cell
-
-    def get_shape(self, *args):
-        """
-        Get shape of input arguments.
-
-        Args:
-            args (Tensor/tuple(Tensor)): Input arguments.
-
-        Return:
-            tuple(int), the shape of input arguments.
-        """
-        return self._executor.get_shape(*args)
 
     def constant_folding(self, *args):
         """
@@ -1264,11 +1464,18 @@ class _CellGraphExecutor:
         """
         self._graph_executor.set_queue_name(queue_name)
 
-    def _set_dataset_mode(self, args_list):
+    def get_queue_name(self, dataset_phase):
+        """
+        Get cached queue name for the graph loaded from compile cache.
+        :return: cached queue name
+        """
+        return self._graph_executor.get_queue_name(dataset_phase)
+
+    @staticmethod
+    def _set_dataset_mode(obj):
         """set dataset mode."""
-        # decide whether to sink based on whether the inputs is virtual or args_list is ()
-        if (args_list and isinstance(args_list[0], Tensor) and args_list[0].virtual_flag) or \
-                (args_list is not None and args_list == ()):
+        # decide whether to sink based on the sink_mode flag which is set in connect_network_with_dataset
+        if 'sink_mode' in obj.get_flags().keys() and obj.get_flags()['sink_mode'] is True:
             _set_dataset_mode_config('sink')
         else:
             _set_dataset_mode_config('normal')
@@ -1286,21 +1493,22 @@ class _CellGraphExecutor:
     def _set_compile_cache_dep_files(self, phase):
         # If enable compile cache, get the dependency files list
         enable_compile_cache = context.get_context("enable_compile_cache")
-        if enable_compile_cache is None:
+        if enable_compile_cache is not True and enable_compile_cache != "1":
             enable_compile_cache = os.getenv('MS_COMPILER_CACHE_ENABLE')
         if "train" in phase and (enable_compile_cache is True or enable_compile_cache == "1"):
             self._graph_executor.set_compile_cache_dep_files(_get_compile_cache_dep_files())
 
-    def compile(self, obj, *args, phase='predict', do_convert=True, jit_config_dict=None):
+    def compile(self, obj, *args, phase='predict', do_convert=True, jit_config_dict=None, **kwargs):
         """
         Compiles graph.
 
         Args:
             obj (Function/Cell): The function or cell instance need compile.
-            args (tuple): Function or cell input arguments.
             phase (str): The name of compile phase. Default: 'predict'.
             do_convert (bool): When set to True, convert ME graph to GE graph after compiling graph.
-            jit_config_dict (dict): Jit config for compile. Default: None.
+            jit_config_dict (dict): Jit config for compile. Default: ``None``.
+            args (tuple): Args of the Cell object.
+            kwargs (dict): Kwargs of the Cell object.
 
         Return:
             Str, the full phase of the cell.
@@ -1310,16 +1518,18 @@ class _CellGraphExecutor:
         if not hasattr(obj, obj.__parse_method__):
             raise AttributeError(
                 'The class {} dose not have method {}'.format(obj.__class__.__name__, obj.__parse_method__))
-        args_list = args
+        key_id = str(id(obj)) + str(obj.create_time)
+        args = get_auto_dynamic_shape_args(args, key_id)
 
         self.enable_tuple_broaden = False
         if hasattr(obj, "enable_tuple_broaden"):
             self.enable_tuple_broaden = obj.enable_tuple_broaden
-
+        logger.debug("Convert the network.", do_convert)
         self._graph_executor.set_enable_tuple_broaden(self.enable_tuple_broaden)
-        key = self._graph_executor.generate_arguments_key(args_list, self.enable_tuple_broaden)
+        key = self._graph_executor.generate_arguments_key(obj, args, kwargs, self.enable_tuple_broaden)
         obj.arguments_key = str(key)
         phase = phase + '.' + str(obj.create_time) + '.' + str(id(obj)) + '.' + obj.arguments_key
+        update_auto_dynamic_shape_phase(args, key_id, phase)
 
         if phase in obj.compile_cache and self.has_compiled(phase):
             logger.debug("%r graph has existed.", phase)
@@ -1327,14 +1537,16 @@ class _CellGraphExecutor:
 
         obj.check_names()
         _check_full_batch()
-        self._set_dataset_mode(args_list)
+        self._set_dataset_mode(obj)
         self._set_compile_cache_dep_files(phase)
 
-        enable_ge = context.get_context("enable_ge")
         self._graph_executor.set_weights_values(obj.parameters_dict())
         if jit_config_dict:
             self._graph_executor.set_jit_config(jit_config_dict)
-        result = self._graph_executor.compile(obj, args_list, phase, self._use_vm_mode())
+        else:
+            jit_config_dict = JitConfig().jit_config_dict
+            self._graph_executor.set_jit_config(jit_config_dict)
+        result = self._graph_executor.compile(obj, args, kwargs, phase, self._use_vm_mode())
         obj.compile_cache.add(phase)
         if not result:
             raise RuntimeError("Executor compile failed.")
@@ -1350,20 +1562,11 @@ class _CellGraphExecutor:
         elif 'skip_auto_parallel_compile' not in obj.get_flags().keys():
             obj.parameter_layout_dict = self._graph_executor.get_parameter_layout(phase)
             obj.parallel_parameter_name_list = self._graph_executor.get_parallel_parameter_name_list(phase)
-            if _get_pipeline_stages() > 1 and (not hasattr(obj, "is_first_iteration") or not obj.is_first_iteration):
-                obj.remove_redundant_parameters()
 
-        if not do_convert:
-            return phase, True
-
-        # the following GE init process is not needed when use vm or ms backend
-        if enable_ge:
-            pass
-        elif "export" in phase:
+        if "export.air" in phase:
             self._build_data_graph(obj, phase)
         elif BROADCAST_PHASE not in phase and _get_parameter_broadcast():
             _parameter_broadcast(obj)
-
         return phase, True
 
     def _update_param_node_default_input(self, phase, replace):
@@ -1411,6 +1614,8 @@ class _CellGraphExecutor:
         Run the specific graph.
 
         Args:
+            obj (Cell): The cell object.
+            args (tuple): Args of the Cell object.
             phase (str): The phase name. Default: 'predict'.
 
         Returns:
@@ -1425,31 +1630,43 @@ class _CellGraphExecutor:
             return self._exec_pip(obj, *args, phase=phase_real)
         raise KeyError('{} graph is not exist.'.format(phase_real))
 
-    def del_net_res(self, net_id):
-        self._graph_executor.del_net_res(net_id)
+    def del_net_res(self, obj, net_id):
+        """Clear the memory resource of a network."""
+        self._graph_executor.del_net_res(obj, net_id)
 
-    def _get_func_graph_proto(self, obj, exec_id, ir_type="onnx_ir", use_prefix=False):
+    def _get_branch_control_input(self):
+        if ('obf_ratio' not in self.obfuscate_config.keys()) or (
+                'obf_random_seed' not in self.obfuscate_config.keys()):
+            raise ValueError("'obf_ratio' and 'obf_random_seed' must be in obfuscate_config.")
+        obf_random_seed = self.obfuscate_config.get('obf_random_seed')
+        if obf_random_seed == 0:
+            branch_control_input = 0
+        else:
+            branch_control_input = _generate_branch_control_input(obf_random_seed)
+        return branch_control_input
+
+    def _get_func_graph(self, obj, exec_id, use_prefix=False):
+        """Get func graph from pipeline."""
+        if use_prefix:
+            exec_id = exec_id + '.' + obj.arguments_key
+        if self._graph_executor.has_compiled(exec_id) is False:
+            return None
+        if self.obfuscate_config is not None:
+            raise ValueError('For get func graph, obfuscate_config is currently not supported now.')
+        return self._graph_executor.get_func_graph(exec_id)
+
+    def _get_func_graph_proto(self, obj, exec_id, ir_type="onnx_ir", use_prefix=False, incremental=False):
         """Get graph proto from pipeline."""
         if use_prefix:
             exec_id = exec_id + '.' + obj.arguments_key
         if self._graph_executor.has_compiled(exec_id) is False:
             return None
         if self.obfuscate_config is not None:
-            if ('obf_ratio' not in self.obfuscate_config.keys()) or (
-                    'obf_password' not in self.obfuscate_config.keys()):
-                raise ValueError("'obf_ratio' and 'obf_password' must be in obfuscate_config.")
-            obf_password = self.obfuscate_config.get('obf_password')
-            if obf_password == 0:
-                append_password = 0
-            else:
-                seed_max = 2 ** 32 - 1
-                int_max = 2 ** 31 - 1
-                np.random.seed(obf_password % seed_max)
-                append_password = np.random.randint(int_max)
-                obf_password %= int_max
-            return self._graph_executor.get_obfuscate_func_graph_proto(exec_id, self.obfuscate_config['obf_ratio'],
-                                                                       obf_password, append_password)
-        return self._graph_executor.get_func_graph_proto(exec_id, ir_type)
+            branch_control_input = self._get_branch_control_input()
+            return self._graph_executor.get_obfuscate_func_graph_proto(exec_id, incremental,
+                                                                       self.obfuscate_config['obf_ratio'],
+                                                                       branch_control_input)
+        return self._graph_executor.get_func_graph_proto(exec_id, ir_type, incremental)
 
     def get_optimize_graph_proto(self, obj):
         """Return optimize graph binary proto."""
@@ -1472,12 +1689,6 @@ class _CellGraphExecutor:
         """
         self._graph_executor.export_graph(file_name, graph_id, encrypt_func, enc_key)
 
-    def fetch_info_for_quant_export(self, exec_id):
-        """Get graph proto from pipeline."""
-        if self._graph_executor.has_compiled(exec_id) is False:
-            return None
-        return self._graph_executor.fetch_info_for_quant_export(exec_id)
-
 
 def ms_memory_recycle():
     """
@@ -1485,15 +1696,48 @@ def ms_memory_recycle():
     When train multi Neural network models in one process, memory used by MindSpore is very large,
     this is because MindSpore cached runtime memory for every model.
     To recycle these cached memory, users can call this function after training of one model.
+
+    Examples:
+        >>> import mindspore as ms
+        >>> ms.ms_memory_recycle()
     """
     if ms_compile_cache:
-        _cell_graph_executor.del_net_res(ms_compile_cache)
+        _cell_graph_executor.del_net_res(None, ms_compile_cache)
         ms_compile_cache.clear()
     for cell_cache in cells_compile_cache.values():
         if cell_cache:
-            _cell_graph_executor.del_net_res(cell_cache)
+            _cell_graph_executor.del_net_res(None, cell_cache)
             cell_cache.clear()
     _ms_memory_recycle()
+
+
+def _generate_branch_control_input(obf_random_seed):
+    """Generate append network input for dynamic obfuscation in random seed mode."""
+    seed_max = 2 ** 32 - 1
+    int_max = 2 ** 31 - 1
+    np.random.seed(obf_random_seed % seed_max)
+    # generate a string as hash function inputs
+    word_repo = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" + "abcdefghigklmnopqrstuvwxyz" + "0123456789"
+    repo_len = len(word_repo)
+    sha_string = ''
+    string_len = 1024 * 1024
+    for _ in range(string_len):
+        rand_index = np.random.randint(0, repo_len)
+        sha_string += word_repo[rand_index]
+    # get hash result
+    sha_result = hashlib.sha256(sha_string.encode('utf-8')).hexdigest()  # len is 64
+    branch_control_input = 1
+    hex_base = 16
+    for item in sha_result:
+        if int(item, hex_base) > 0:
+            branch_control_input *= int(item, hex_base)
+    branch_control_input %= int_max
+    return branch_control_input
+
+
+def _bind_device_context():
+    """Bind device context to current thread"""
+    _bind_device_ctx()
 
 
 _cell_graph_executor = _CellGraphExecutor()

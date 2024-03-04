@@ -23,7 +23,6 @@
 #include "runtime/hardware/device_context.h"
 #include "runtime/hardware/device_context_manager.h"
 #include "runtime/device/memory_manager.h"
-#include "runtime/device/auto_mem_offload.h"
 #include "plugin/device/gpu/hal/hardware/gpu_deprecated_interface.h"
 
 namespace mindspore {
@@ -41,7 +40,7 @@ class GPUDeviceResManager : public DeviceResManager {
   // Release device memory, stream, cudnn and cublas handle, etc.
   void Destroy() override;
 
-  bool BindDeviceToCurrentThread() const override;
+  bool BindDeviceToCurrentThread(bool force_bind) const override;
 
   std::shared_ptr<void> AllocateHostMemory(size_t size) const override;
 
@@ -71,16 +70,15 @@ class GPUDeviceResManager : public DeviceResManager {
   friend class GPUKernelExecutor;
   bool InitDevice();
   std::shared_ptr<MemoryManager> mem_manager_;
-  std::shared_ptr<MindRTAutoOffloadAdapter> auto_mem_offload_{nullptr};
 };
 
-class GPUKernelExecutor : public DeprecatedKernelExecutor {
+class GPUKernelExecutor : public KernelExecutor {
  public:
   GPUKernelExecutor() = default;
   ~GPUKernelExecutor() override = default;
 
-  void Initialize();
-  void Destroy();
+  void Initialize() override;
+  void Destroy() override;
 
   // Optimize the kernel graph for graph mode.
   void OptimizeGraph(const FuncGraphPtr &graph) const override;
@@ -94,6 +92,10 @@ class GPUKernelExecutor : public DeprecatedKernelExecutor {
                     size_t stream_id) const override;
 
   uint32_t GetRankID() const override;
+
+  bool ExecuteKernelTask(const pynative::KernelTaskType &task_type, const device::DeviceAddressPtrList &input_addr_list,
+                         const TensorStorageInfoPtrList &input_storage_list,
+                         const device::DeviceAddressPtrList &output_addr_list) const override;
 
  private:
   // Select the matching backend kernels according to the data type and format of input and output for all
@@ -127,6 +129,7 @@ class GPUKernelExecutor : public DeprecatedKernelExecutor {
   // cublas handle at the same time, so need the launch mutex when multiple threads launch the cublas kernels.
   mutable std::mutex launch_mutex_;
   GPUDeviceResManager *res_manager_{nullptr};
+  bool initialized_ = false;
 };
 
 class GPUDeviceContext : public DeviceInterface<GPUKernelExecutor, GPUDeviceResManager> {

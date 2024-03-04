@@ -20,7 +20,6 @@
 #include "plugin/device/cpu/kernel/nnacl/errorcode.h"
 #include "plugin/device/cpu/kernel/nnacl/fp32/adam_fp32.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
-#include "utils/ms_utils.h"
 
 namespace mindspore {
 namespace kernel {
@@ -44,16 +43,17 @@ constexpr float kAdamBlock = 1000;
 template <typename T>
 void AdamCpuKernelMod::LaunchAdam(const std::vector<kernel::AddressPtr> &inputs,
                                   const std::vector<kernel::AddressPtr> &) {
-  T *var = reinterpret_cast<T *>(inputs[kIndexVar]->addr);
-  T *m = reinterpret_cast<T *>(inputs[kIndexM]->addr);
-  T *v = reinterpret_cast<T *>(inputs[kIndexV]->addr);
-  float *beta1_power = reinterpret_cast<float *>(inputs[kIndexBeta1Power]->addr);
-  float *beta2_power = reinterpret_cast<float *>(inputs[kIndexBeta2Power]->addr);
-  float *lr = reinterpret_cast<float *>(inputs[kIndexLr]->addr);
-  T beta1 = static_cast<T>(reinterpret_cast<float *>(inputs[kIndexBeta1]->addr)[kScalarIndex]);
-  T beta2 = static_cast<T>(reinterpret_cast<float *>(inputs[kIndexBeta2]->addr)[kScalarIndex]);
-  T epsilon = static_cast<T>(reinterpret_cast<float *>(inputs[kIndexEpsilon]->addr)[kScalarIndex]);
-  T *gradient = reinterpret_cast<T *>(inputs[kIndexGrad]->addr);
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kAdamInputsNum, kernel_name_);
+  T *var = static_cast<T *>(inputs[kIndexVar]->addr);
+  T *m = static_cast<T *>(inputs[kIndexM]->addr);
+  T *v = static_cast<T *>(inputs[kIndexV]->addr);
+  float *beta1_power = static_cast<float *>(inputs[kIndexBeta1Power]->addr);
+  float *beta2_power = static_cast<float *>(inputs[kIndexBeta2Power]->addr);
+  float *lr = static_cast<float *>(inputs[kIndexLr]->addr);
+  T beta1 = static_cast<T>(static_cast<float *>(inputs[kIndexBeta1]->addr)[kScalarIndex]);
+  T beta2 = static_cast<T>(static_cast<float *>(inputs[kIndexBeta2]->addr)[kScalarIndex]);
+  T epsilon = static_cast<T>(static_cast<float *>(inputs[kIndexEpsilon]->addr)[kScalarIndex]);
+  T *gradient = static_cast<T *>(inputs[kIndexGrad]->addr);
   constexpr float ONE = 1.0;
 
   for (int64_t b = 0; b < batch_size_; b++) {
@@ -82,12 +82,13 @@ void AdamCpuKernelMod::LaunchAdam(const std::vector<kernel::AddressPtr> &inputs,
 
 void AdamCpuKernelMod::LaunchAdamNnacl(const std::vector<kernel::AddressPtr> &inputs,
                                        const std::vector<kernel::AddressPtr> &) {
-  float *var = reinterpret_cast<float *>(inputs[kIndexVar]->addr);
-  float *m = reinterpret_cast<float *>(inputs[kIndexM]->addr);
-  float *v = reinterpret_cast<float *>(inputs[kIndexV]->addr);
-  float *beta1_power = reinterpret_cast<float *>(inputs[kIndexBeta1Power]->addr);
-  float *beta2_power = reinterpret_cast<float *>(inputs[kIndexBeta2Power]->addr);
-  float *lr = reinterpret_cast<float *>(inputs[kIndexLr]->addr);
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kAdamInputsNum, kernel_name_);
+  float *var = static_cast<float *>(inputs[kIndexVar]->addr);
+  float *m = static_cast<float *>(inputs[kIndexM]->addr);
+  float *v = static_cast<float *>(inputs[kIndexV]->addr);
+  float *beta1_power = static_cast<float *>(inputs[kIndexBeta1Power]->addr);
+  float *beta2_power = static_cast<float *>(inputs[kIndexBeta2Power]->addr);
+  float *lr = static_cast<float *>(inputs[kIndexLr]->addr);
   float beta1 = reinterpret_cast<float *>(inputs[kIndexBeta1]->addr)[kScalarIndex];
   float beta2 = reinterpret_cast<float *>(inputs[kIndexBeta2]->addr)[kScalarIndex];
   float epsilon = reinterpret_cast<float *>(inputs[kIndexEpsilon]->addr)[kScalarIndex];
@@ -112,13 +113,21 @@ void AdamCpuKernelMod::LaunchAdamNnacl(const std::vector<kernel::AddressPtr> &in
 
 bool AdamCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                             const std::vector<KernelTensorPtr> &outputs) {
+  auto prim = base_operator->GetPrim();
+  MS_EXCEPTION_IF_NULL(prim);
+
+  if (prim->HasAttr("use_locking")) {
+    use_locking_ = GetValue<bool>(prim->GetAttr("use_locking"));
+  }
+  if (prim->HasAttr("use_nesterov")) {
+    use_nesterov_ = GetValue<bool>(prim->GetAttr("use_nesterov"));
+  }
+
   dtype_ = inputs.at(kIndex0)->GetDtype();
-  kernel_name_ = base_operator->GetPrim()->name();
+  kernel_name_ = prim->name();
   batch_rank_ = base_operator->get_batch_rank();
   CHECK_KERNEL_INPUTS_NUM(inputs.size(), kAdamInputsNum, kernel_name_);
   CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kAdamOutputsNum, kernel_name_);
-  auto kernel_ptr_ = std::dynamic_pointer_cast<ops::Adam>(base_operator);
-  use_nesterov_ = kernel_ptr_->get_use_nesterov();
   auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
   auto [is_match, index] = MatchKernelAttr(kernel_attr, GetOpSupport());
   if (!is_match) {
@@ -138,6 +147,7 @@ int AdamCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::ve
   }
   input_elements_ = 0;
 
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kAdamInputsNum, kernel_name_);
   std::vector<int64_t> var_shape = inputs[kIndexVar]->GetShapeVector();
   std::vector<int64_t> beta1_power_shape = inputs[kIndexBeta1Power]->GetShapeVector();
   std::vector<int64_t> beta2_power_shape = inputs[kIndexBeta2Power]->GetShapeVector();
@@ -145,16 +155,15 @@ int AdamCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::ve
 
   if (!IsSameShape(beta1_power_shape, beta2_power_shape)) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', the shapes of 'beta1_power' and 'beta2_power' must be the same, "
-                  << "but get the shapes of 'beta1_power': " << Vector2Str(beta1_power_shape)
-                  << " and 'beta2_power': " << Vector2Str(beta2_power_shape);
+                  << "but get the shapes of 'beta1_power': " << beta1_power_shape
+                  << " and 'beta2_power': " << beta2_power_shape;
     return KRET_RESIZE_FAILED;
   }
 
   if (batch_rank_ > 0 && lr_shape.size() != static_cast<size_t>(batch_rank_)) {
     MS_LOG(ERROR) << "For '" << kernel_name_
-                  << "', the shape size of 'lr' must be equal to 'batch_rank', "
-                     "but got the shape of 'lr': "
-                  << Vector2Str(lr_shape) << " and 'batch_rank': " << batch_rank_;
+                  << "', the shape size of 'lr' must be equal to 'batch_rank', but got the shape of 'lr': " << lr_shape
+                  << " and 'batch_rank': " << batch_rank_;
     return KRET_RESIZE_FAILED;
   }
 
@@ -168,21 +177,20 @@ int AdamCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::ve
     return KRET_RESIZE_FAILED;
   }
 
-  input_elements_ = std::accumulate(var_shape.begin(), var_shape.end(), 1, std::multiplies<int64_t>());
-  input_elements_ = input_elements_ / batch_size_;
+  input_elements_ = IntToSize(std::accumulate(var_shape.begin(), var_shape.end(), 1, std::multiplies<int64_t>()));
+  input_elements_ = input_elements_ / LongToSize(batch_size_);
   if (batch_rank_ > 1) {
     if (var_shape.size() < lr_shape.size()) {
       MS_LOG(ERROR) << "For '" << kernel_name_
                     << "', the shape size of 'var' must be greater than 'lr_shape', but got the shape of 'var': "
-                    << Vector2Str(var_shape) << " and 'lr_shape': " << Vector2Str(lr_shape);
+                    << var_shape << " and 'lr_shape': " << lr_shape;
       return KRET_RESIZE_FAILED;
     }
     std::vector<int64_t> var_batch_shape(var_shape.begin(), var_shape.begin() + batch_rank_);
     if (!IsSameShape(lr_shape, var_batch_shape)) {
       MS_LOG(ERROR) << "For '" << kernel_name_
-                    << "', the batch shape of 'var' must be the same as the shape of 'lr', "
-                       "but got the batch shape of 'var': "
-                    << Vector2Str(var_batch_shape) << " and the shape of 'lr': " << Vector2Str(lr_shape);
+                    << "', the batch shape of 'var' must be the same as the shape of 'lr', but got the batch shape of "
+                    << "'var': " << var_batch_shape << " and the shape of 'lr': " << lr_shape;
       return KRET_RESIZE_FAILED;
     }
   }
@@ -194,42 +202,6 @@ template <typename T>
 bool AdamCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs,
                                     const std::vector<kernel::AddressPtr> &workspace,
                                     const std::vector<kernel::AddressPtr> &outputs) {
-  if (inputs[kIndexVar]->size != inputs[kIndexM]->size) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_
-                      << "', the shape and dtype of 'm' and 'var' must be the same, but got the memory size of 'm': "
-                      << inputs[kIndexM]->size << " and 'var': " << inputs[kIndexVar]->size;
-  }
-  if (inputs[kIndexVar]->size != inputs[kIndexV]->size) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_
-                      << "', the shape and dtype of 'v' and 'var' must be the same, but got the memory size of 'v': "
-                      << inputs[kIndexV]->size << " and 'var': " << inputs[kIndexVar]->size;
-  }
-
-  size_t f_size = sizeof(float) * batch_size_;
-  if (inputs[kIndexBeta1Power]->size != f_size) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_
-                      << "', the 'beta1_power' must be float, but got 'beta1_power': " << inputs[kIndexBeta1Power];
-  }
-  if (inputs[kIndexBeta2Power]->size != f_size) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_
-                      << "', the 'beta2_power' must be float, but got 'beta2_power': " << inputs[kIndexBeta2Power];
-  }
-  if (inputs[kIndexLr]->size != f_size) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the 'lr' must be float, but got 'lr': " << inputs[kIndexLr];
-  }
-  if (inputs[kIndexBeta1]->size != f_size) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_
-                      << "', the 'beta1' must be float, but got 'beta1': " << inputs[kIndexBeta1];
-  }
-  if (inputs[kIndexBeta2]->size != f_size) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_
-                      << "', the 'beta2' must be float, but got 'beta2': " << inputs[kIndexBeta2];
-  }
-  if (inputs[kIndexEpsilon]->size != f_size) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_
-                      << "', the 'epsilon' must be float, but got 'epsilon': " << inputs[kIndexEpsilon];
-  }
-
   if (dtype_ == kNumberTypeFloat32) {
     LaunchAdamNnacl(inputs, outputs);
   } else if (dtype_ == kNumberTypeFloat16) {

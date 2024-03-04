@@ -15,18 +15,23 @@
  */
 #include "ops/getnext.h"
 
-#include <set>
-#include <string>
-#include <vector>
-#include <memory>
 #include <algorithm>
+#include <iterator>
+#include <memory>
+#include <vector>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
-#include "utils/shape_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/structure_ops.h"
+#include "ops/primitive_c.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -49,36 +54,18 @@ void GetShapeVector(const ValuePtr &shape_attr, std::vector<std::vector<int64_t>
   }
 }
 
-bool IsShapesDynamic(const std::vector<ShapeVector> &shape) {
-  for (auto shape_vec : shape) {
-    if (IsDynamic(shape_vec)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-abstract::AbstractBasePtr GetnextInferShape(const PrimitivePtr &primitive) {
+abstract::AbstractBasePtr GetnextInferShapeInner(const PrimitivePtr &primitive) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto types = GetValue<std::vector<TypePtr>>(primitive->GetAttr("types"));
   ValuePtr shape_attr = primitive->GetAttr("shapes");
-  ValuePtr min_shape_attr = primitive->GetAttr("min_shapes");
-  ValuePtr max_shape_attr = primitive->GetAttr("max_shapes");
 
   std::vector<ShapeVector> shape;
-  std::vector<ShapeVector> min_shape;
-  std::vector<ShapeVector> max_shape;
   GetShapeVector(shape_attr, &shape);
-  GetShapeVector(min_shape_attr, &min_shape);
-  GetShapeVector(max_shape_attr, &max_shape);
 
-  bool is_dynamic = IsShapesDynamic(shape);
   AbstractBasePtrList output;
   for (size_t i = 0; i < shape.size(); ++i) {
-    auto ret_shape = !min_shape.empty() && !max_shape.empty() && is_dynamic
-                       ? std::make_shared<abstract::Shape>(shape[i], min_shape[i], max_shape[i])
-                       : std::make_shared<abstract::Shape>(shape[i]);
-    auto element = std::make_shared<abstract::AbstractScalar>(kAnyValue, types[i]);
+    auto ret_shape = std::make_shared<abstract::Shape>(shape[i]);
+    auto element = std::make_shared<abstract::AbstractScalar>(kValueAny, types[i]);
     auto tensor = std::make_shared<abstract::AbstractTensor>(element, ret_shape);
     output.push_back(tensor);
   }
@@ -87,10 +74,44 @@ abstract::AbstractBasePtr GetnextInferShape(const PrimitivePtr &primitive) {
 }  // namespace
 
 MIND_API_OPERATOR_IMPL(GetNext, BaseOperator);
+AbstractBasePtr GetNextInferInner(const PrimitivePtr &primitive) { return GetnextInferShapeInner(primitive); }
+
+abstract::BaseShapePtr GetnextInferShape(const PrimitivePtr &prim) {
+  auto abs = GetNextInferInner(prim);
+  auto shape = abs->BuildShape();
+  MS_EXCEPTION_IF_NULL(shape);
+  return shape;
+}
+
+TypePtr GetnextInferType(const PrimitivePtr &prim) {
+  auto abs = GetNextInferInner(prim);
+  auto type = abs->BuildType();
+  MS_EXCEPTION_IF_NULL(type);
+  return type;
+}
+
 AbstractBasePtr GetNextInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                              const std::vector<AbstractBasePtr> &input_args) {
-  return GetnextInferShape(primitive);
+  return GetNextInferInner(primitive);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(GetNext, prim::kPrimGetNext, GetNextInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGGetnextInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &) const override {
+    return GetnextInferShape(primitive);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &) const override {
+    return GetnextInferType(primitive);
+  }
+
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return GetNextInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(GetNext, prim::kPrimGetNext, AGGetnextInfer, false);
 }  // namespace ops
 }  // namespace mindspore

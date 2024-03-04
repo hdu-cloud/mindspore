@@ -19,8 +19,10 @@
 #include <exception>
 #include <set>
 #include <mutex>
+#include <string>
 #include "utils/ms_utils.h"
-#include "utils/macros.h"
+#include "utils/log_adapter.h"
+#include "mindapi/base/macros.h"
 namespace mindspore {
 class ExceptionListener {
  public:
@@ -45,6 +47,7 @@ class MS_CORE_API MsException {
     if (exception_ptr_ != nullptr) {
       auto exception_ptr = exception_ptr_;
       exception_ptr_ = nullptr;
+      MS_LOG(DEBUG) << "Find exception and rethrow";
       std::rethrow_exception(exception_ptr);
     }
   }
@@ -65,6 +68,7 @@ class MS_CORE_API StaticAnalysisException {
 
   void ClearException() {
     std::lock_guard<std::mutex> lock(lock_);
+    msg_ = "";
     exception_ptr_ = nullptr;
   }
 
@@ -79,6 +83,14 @@ class MS_CORE_API StaticAnalysisException {
       return;
     }
     exception_ptr_ = std::current_exception();
+  }
+  void AppendMsg(const std::string &msg) {
+    std::lock_guard<std::mutex> lock(lock_);
+    msg_ += msg;
+  }
+  std::string msg() {
+    std::lock_guard<std::mutex> lock(lock_);
+    return msg_;
   }
 
   void SetAndRethrowException() {
@@ -101,6 +113,7 @@ class MS_CORE_API StaticAnalysisException {
   DISABLE_COPY_AND_ASSIGN(StaticAnalysisException)
 
   std::exception_ptr exception_ptr_{nullptr};
+  std::string msg_;
   std::mutex lock_;
 };
 }  // namespace mindspore

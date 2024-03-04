@@ -120,6 +120,7 @@ def test_setitem_by_tuple_with_int():
         x[0, True, 0, None, True] = -2
         x[0, ..., None] = -3
         x[..., 0, None, 1, True, True, None] = -4
+        x[Tensor(-1), 0:1] = -5
         return x
     setup_testcase(x, cases)
 
@@ -236,9 +237,10 @@ class TensorItemSetWithNumber(Cell):
         return ret
 
 
-@pytest.mark.level1
+@pytest.mark.level0
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
+@pytest.mark.platform_arm_ascend910b_training
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_itemset_with_number():

@@ -70,6 +70,7 @@
 #include "ops/fft_imag.h"
 #include "ops/fft_real.h"
 #include "ops/fill.h"
+#include "ops/fill_v2.h"
 #include "ops/flatten.h"
 #include "ops/floor.h"
 #include "ops/floor_div.h"
@@ -147,6 +148,9 @@
 #include "ops/space_to_depth.h"
 #include "ops/sparse_softmax_cross_entropy_with_logits.h"
 #include "ops/sparse_to_dense.h"
+#include "ops/sparse_fill_empty_rows.h"
+#include "ops/sparse_reshape.h"
+#include "ops/sparse_segment_sum.h"
 #include "ops/split.h"
 #include "ops/square.h"
 #include "ops/squeeze.h"
@@ -260,6 +264,12 @@
 #include "ops/format_transpose.h"
 #include "ops/gather_d.h"
 #include "ops/tensor_scatter_add.h"
+#include "ops/decoder_layer.h"
+#include "ops/encoder_layer.h"
+#include "ops/scatter_elements.h"
+#include "ops/triu.h"
+#include "ops/tril.h"
+#include "ops/adam_weight_decay.h"
 
 namespace mindspore::lite::ops {
 #define FUNC_MSOP2SCHEMAOP_DECLARE(OP) std::unique_ptr<schema::PrimitiveT> MSOp2SchemaOp(const mindspore::ops::OP *op);
@@ -330,6 +340,7 @@ FUNC_MSOP2SCHEMAOP_DECLARE(FakeQuantWithMinMaxVarsPerChannel)
 FUNC_MSOP2SCHEMAOP_DECLARE(FftImag)
 FUNC_MSOP2SCHEMAOP_DECLARE(FftReal)
 FUNC_MSOP2SCHEMAOP_DECLARE(Fill)
+FUNC_MSOP2SCHEMAOP_DECLARE(FillV2)
 FUNC_MSOP2SCHEMAOP_DECLARE(Flatten)
 FUNC_MSOP2SCHEMAOP_DECLARE(FlattenGrad)
 FUNC_MSOP2SCHEMAOP_DECLARE(Floor)
@@ -488,6 +499,13 @@ FUNC_MSOP2SCHEMAOP_DECLARE(GatherD)
 FUNC_MSOP2SCHEMAOP_DECLARE(GroupNormFusion)
 FUNC_MSOP2SCHEMAOP_DECLARE(Log1p)
 FUNC_MSOP2SCHEMAOP_DECLARE(TensorScatterAdd)
+FUNC_MSOP2SCHEMAOP_DECLARE(SparseFillEmptyRows)
+FUNC_MSOP2SCHEMAOP_DECLARE(SparseReshape)
+FUNC_MSOP2SCHEMAOP_DECLARE(SparseSegmentSum)
+FUNC_MSOP2SCHEMAOP_DECLARE(ScatterElements)
+FUNC_MSOP2SCHEMAOP_DECLARE(Triu)
+FUNC_MSOP2SCHEMAOP_DECLARE(Tril)
+FUNC_MSOP2SCHEMAOP_DECLARE(AdamWeightDecay)
 #endif
 }  // namespace mindspore::lite::ops
 #else

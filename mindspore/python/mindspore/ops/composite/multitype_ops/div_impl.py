@@ -20,7 +20,7 @@ from mindspore.ops.composite.multitype_ops import _compile_utils as utils
 from mindspore.ops.composite.multitype_ops._constexpr_utils import log_warning, check_equal
 from mindspore.ops.composite import base
 from mindspore.ops import functional as F
-from mindspore.common import CSRTensor, COOTensor
+from mindspore.common import COOTensor
 
 
 div = base.MultitypeFuncGraph("div", True)
@@ -28,6 +28,7 @@ div = base.MultitypeFuncGraph("div", True)
 div is a metafuncgraph object which will div two objects according to input type
 using ".register" decorator
 """
+div.set_need_raise()
 
 
 @div.register("CSRTensor", "Tensor")
@@ -39,8 +40,7 @@ def _csrtensor_div_tensor(x, y):
        CSRTensor, equal to x / y.
     """
     log_warning("For CSR divide, zero values in the dense tensor are ignored.")
-    data = F.csr_div(x, y)
-    return CSRTensor(x.indptr, x.indices, data, x.shape)
+    return F.csr_div(x, y)
 
 
 @div.register("COOTensor", "Tensor")

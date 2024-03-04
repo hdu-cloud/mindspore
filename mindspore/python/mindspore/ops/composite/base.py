@@ -1,6 +1,6 @@
 # This is the Python adaptation and derivative work of Myia (https://github.com/mila-iqia/myia/).
 #
-# Copyright 2020-2022 Huawei Technologies Co., Ltd
+# Copyright 2020-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ from __future__ import absolute_import
 from functools import partial
 
 from types import FunctionType, MethodType
+import numpy as np
 import mindspore as ms
 from mindspore import context
 from mindspore.common.parameter import Parameter, ParameterTuple
@@ -27,15 +28,18 @@ from mindspore.parallel._utils import _grads_divided_by_device_num_if_recomputat
 from mindspore._c_expression import GradOperation_, HyperMap_, Map_, MultitypeFuncGraph_, Tail_, \
     TupleAdd_, UnpackCall_, ZipOperation_, ListAppend_, TupleGetItemTensor_, ListInsert_, \
     SequenceSliceGetItem_, ListSliceSetItem_, VmapOperation_, TaylorOperation_, ListPop_, \
-    ListClear_, ListReverse_, ListExtend_, ListCount_, DictClear_, DictHasKey_, DictUpdate_, \
-    DictFromKeys_
+    ListClear_, ListReverse_, ListExtend_, DictClear_, DictHasKey_, DictUpdate_, DictFromKeys_, \
+    ZerosLike_, TensorIndexGetitem_, TensorIndexSetitem_, ListAdd_, DictSetItem_, \
+    HandleBoolTensor_, HandleEmptySlice_, PreSetitemByTuple_, HandleScalarTensorIndex_
 from mindspore.common import dtype as mstype
 from mindspore.common.api import jit, _pynative_executor, _wrap_func
 from mindspore.common.api import _add_flags, _core
 from mindspore.ops.primitive import Primitive
 from mindspore.ops import signature as sig
 
-__all__ = [TupleAdd_, UnpackCall_, TupleGetItemTensor_, SequenceSliceGetItem_, ListSliceSetItem_]
+__all__ = [TupleAdd_, ListAdd_, UnpackCall_, TupleGetItemTensor_, SequenceSliceGetItem_,
+           ListSliceSetItem_, ZerosLike_, TensorIndexGetitem_, TensorIndexSetitem_,
+           HandleBoolTensor_, HandleEmptySlice_, PreSetitemByTuple_, HandleScalarTensorIndex_]
 
 
 def add_flags(fn=None, **flags):
@@ -46,8 +50,8 @@ def add_flags(fn=None, **flags):
         Only supports bool value.
 
     Args:
-        fn (Function): Function or cell to add flag. Default: None.
-        flags (dict): Flags use kwargs. Default: None.
+        fn (Function): Function or cell to add flag. Default: ``None`` .
+        flags (dict): Flags use kwargs. Default: ``None`` .
 
     Returns:
         Function, the function with added flags.
@@ -70,9 +74,9 @@ def core(fn=None, **flags):
     set flag to a graph.
 
     Args:
-        fn (Function, optional): Function to add flag. Default: None.
+        fn (Function, optional): Function to add flag. Default: ``None`` .
         flags (dict, optional): The following flags can be set core, which indicates that this is a core function or
-                      other flag. Default: None.
+                      other flag. Default: ``None`` .
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
@@ -187,16 +191,16 @@ class GradOperation(GradOperation_):
         - Return an empty tuple for no result.
 
     Args:
-        get_all (bool): If True, get all the gradients with respect to inputs. Default: False.
-        get_by_list (bool): If True, get all the gradients with respect to Parameter free variables.
-            If get_all and get_by_list are both False, get the gradient with respect to first input.
-            If get_all and get_by_list are both True, get the gradients with respect to inputs and
+        get_all (bool): If ``True`` , get all the gradients with respect to inputs. Default: ``False`` .
+        get_by_list (bool): If ``True`` , get all the gradients with respect to Parameter free variables.
+            If get_all and get_by_list are both ``False`` , get the gradient with respect to first input.
+            If get_all and get_by_list are both ``True`` , get the gradients with respect to inputs and
             Parameter free variables at the same time in the form of ("gradients with respect to inputs",
-            "gradients with respect to parameter free variables"). Default: False.
+            "gradients with respect to parameter free variables"). Default: ``False`` .
         sens_param (bool): Whether to append sensitivity (gradient with respect to output) as input.
-            If sens_param is False, a 'ones_like(outputs)' sensitivity will be attached automatically.
-            Default: False.
-            If the sensor_param is True, a sensitivity (gradient with respect to output) needs to be transferred
+            If sens_param is ``False`` , a 'ones_like(outputs)' sensitivity will be attached automatically.
+            Default: ``False`` .
+            If the sensor_param is ``True`` , a sensitivity (gradient with respect to output) needs to be transferred
             through the location parameter or key-value pair parameter. If the value is transferred through
             the key-value pair parameter, the key must be sens.
 
@@ -210,6 +214,10 @@ class GradOperation(GradOperation_):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import dtype as mstype
+        >>> from mindspore import Tensor, ops, nn, Parameter
         >>> class Net(nn.Cell):
         ...     def __init__(self):
         ...         super(Net, self).__init__()
@@ -329,7 +337,7 @@ class GradOperation(GradOperation_):
         self.get_all = get_all
         self.get_by_list = get_by_list
         self.sens_param = sens_param
-        GradOperation_.__init__(self, 'grad', get_all, get_by_list, sens_param, False, False, False)
+        GradOperation_.__init__(self, 'grad', get_all, get_by_list, sens_param, False, False, False, False, False)
         self.grad_fn = None
         self.fn = None
         self.weights_id = None
@@ -353,22 +361,27 @@ class GradOperation(GradOperation_):
                 fn.grad_ops_label = True
             if self.get_by_list:
                 @jit(input_signature=dynamic_shape_inputs)
-                def after_grad(*args):
-                    return grad_(fn, weights)(*args)
+                def after_grad(*args, **kwargs):
+                    return grad_(fn, weights)(*args, **kwargs)
             else:
                 @jit(input_signature=dynamic_shape_inputs)
-                def after_grad(*args):
-                    return grad_(fn)(*args)
+                def after_grad(*args, **kwargs):
+                    return grad_(fn)(*args, **kwargs)
         elif self.pynative_:
+            if not _pynative_executor.enable_grad():
+                raise RuntimeError("In no_grad context, you can not calculate gradient")
+
             @_wrap_func
             def after_grad(*args, **kwargs):
-                self._pynative_forward_run(fn, grad_, args, kwargs)
+                self._pynative_forward_run(fn, grad_, weights, args, kwargs)
                 _pynative_executor.grad(fn, grad_, weights, self.grad_position, *args, **kwargs)
                 out = _pynative_executor()
                 out = _grads_divided_by_device_num_if_recomputation(out)
                 return out
         else:
             grad_.pynative_ = True
+            if not _pynative_executor.enable_grad():
+                raise RuntimeError("In no_grad context, you can not calculate gradient")
             # after_grad of this branch can't use @jit, just directly call grad_
             if self.get_by_list:
                 def after_grad(*args, **kwargs):
@@ -382,7 +395,7 @@ class GradOperation(GradOperation_):
         self.weights_id = weights_id
         return self.grad_fn
 
-    def _pynative_forward_run(self, fn, grad, args, kwargs):
+    def _pynative_forward_run(self, fn, grad, weights, args, kwargs):
         """ Pynative forward run to build grad graph. """
         new_kwargs = kwargs
         if self.sens_param:
@@ -392,14 +405,14 @@ class GradOperation(GradOperation_):
                 new_kwargs = kwargs.copy()
                 new_kwargs.pop('sens')
         if isinstance(fn, (FunctionType, MethodType)):
-            if not _pynative_executor.check_run(grad, fn, self.weights_id, *args, **new_kwargs):
+            if not _pynative_executor.check_run(grad, fn, weights, None, *args, **new_kwargs):
                 _pynative_executor.set_grad_flag(True)
                 _pynative_executor.new_graph(fn, *args, **new_kwargs)
                 output = fn(*args, **new_kwargs)
                 _pynative_executor.end_graph(fn, output, *args, **new_kwargs)
         else:
             # Check if fn have run already
-            if not _pynative_executor.check_run(grad, fn, self.weights_id, *args, **new_kwargs):
+            if not _pynative_executor.check_run(grad, fn, weights, None, *args, **new_kwargs):
                 fn.set_grad()
                 fn(*args, **new_kwargs)
                 fn.set_grad(False)
@@ -432,12 +445,77 @@ class _TaylorOperation(TaylorOperation_):
         return self.grad_fn
 
 
+def _combine_weight(grad_position, weights, out, out_with_ids):
+    """ Making resulting tuple for weight, when return_ids is set to True. """
+    weight_tuple = []
+    position = 0
+    if isinstance(weights, (list, ParameterTuple, tuple)) and grad_position:
+        for weight in weights:
+            weight_tuple.append((weight.name, out[1][position]))
+            position += 1
+    elif isinstance(weights, (list, ParameterTuple, tuple)):
+        for weight in weights:
+            weight_tuple.append((weight.name, out[position]))
+            position += 1
+    elif grad_position:
+        weight_tuple.append(weights.name)
+        weight_tuple.append(out[1])
+    else:
+        weight_tuple.append(weights.name)
+        weight_tuple.append(out)
+    if grad_position:
+        out_with_ids.append(tuple(weight_tuple))
+    else:
+        out_with_ids = weight_tuple
+    return out_with_ids
+
+
+def _combine_position(grad_position, weights, out, out_with_ids):
+    """ Making resulting tuple for position, when return_ids is set to True. """
+    position_tuple = []
+    position = 0
+    if grad_position == (0,) and weights is not None:
+        position_tuple.append(0)
+        position_tuple.append(out[0])
+    elif grad_position == (0,):
+        position_tuple.append(0)
+        position_tuple.append(out)
+    elif weights is not None:
+        for index in grad_position:
+            position_tuple.append((index, out[0][position]))
+            position += 1
+    else:
+        for index in grad_position:
+            position_tuple.append((index, out[position]))
+            position += 1
+    if weights:
+        out_with_ids.append(tuple(position_tuple))
+    else:
+        out_with_ids = position_tuple
+    return out_with_ids
+
+
+def _combine_with_ids(grad_position, weights, out):
+    """ Making resulting tuple, when return_ids is set to True. """
+    out_with_ids = []
+    if grad_position:
+        out_with_ids = _combine_position(
+            grad_position, weights, out, out_with_ids)
+    if weights is not None:
+        out_with_ids = _combine_weight(
+            grad_position, weights, out, out_with_ids)
+    if not out_with_ids:
+        raise ValueError(f"output tuple should not be a empty tuple.")
+    return tuple(out_with_ids)
+
+
 class _Grad(GradOperation_):
     """
     A higher-order function which is used to generate the gradient function by position for the input function.
     """
 
-    def __init__(self, get_by_list=False, sens_param=False, get_by_position=False, has_aux=False, get_value=False):
+    def __init__(self, get_all=False, get_by_list=False, sens_param=False, get_by_position=False, has_aux=False,
+                 get_value=False, return_ids=False, merge_forward=False):
         """Initialize _Grad."""
         if not isinstance(get_by_position, bool):
             raise TypeError(f"For '_Grad', the 'get_by_position' should be bool, "
@@ -454,18 +532,24 @@ class _Grad(GradOperation_):
         if not isinstance(get_value, bool):
             raise TypeError(f"For '_Grad', the 'get_value' should be bool, "
                             f"but got {type(get_value).__name__}")
+        if not isinstance(return_ids, bool):
+            raise TypeError(f"For '_Grad', the 'return_ids' should be bool, "
+                            f"but got {type(return_ids).__name__}")
+        self.get_all = get_all
         self.get_by_position = get_by_position
         self.get_by_list = get_by_list
         self.sens_param = sens_param
         self.has_aux = has_aux
         self.get_value = get_value
-        GradOperation_.__init__(self, 'grad', False, get_by_list, sens_param, get_by_position, has_aux, get_value)
+        self.return_ids = return_ids
+        self.merge_forward = merge_forward
+        GradOperation_.__init__(self, 'grad', get_all, get_by_list, sens_param, get_by_position, has_aux, get_value,
+                                return_ids, merge_forward)
         self.grad_fn = None
         self.fn = None
         self.pynative_ = False
         self.grad_position = None
         self.weights_id = None
-        self.grad_hash_id = None
 
     def __call__(self, fn, weights=None, grad_position=0):
         weights_id = _get_grad_weights_id(weights)
@@ -483,7 +567,8 @@ class _Grad(GradOperation_):
                 res += (stop_gradient(item),)
             return res
 
-        grad_ = _Grad(self.get_by_list, self.sens_param, self.get_by_position, self.has_aux, self.get_value)
+        grad_ = _Grad(self.get_all, self.get_by_list, self.sens_param, self.get_by_position, self.has_aux,
+                      self.get_value, self.return_ids, self.merge_forward)
         # If calling Grad in GRAPH_MODE or calling Grad in functions decorated with 'jit', do grad in GRAPH_MODE
         # If calling Grad in pure PYNATIVE_MODE do grad in PYNATIVE_MODE
         #   In pure PYNATIVE_MODE the out layer after_grad just used to set pynative flag for inner GradOperation.
@@ -507,18 +592,25 @@ class _Grad(GradOperation_):
                     def after_grad(*args):
                         return grad_(fn)(*args)
         elif self.pynative_:
+            if not _pynative_executor.enable_grad():
+                raise RuntimeError("In no_grad context, you can not calculate gradient")
+
             @_wrap_func
             def after_grad(*args, **kwargs):
-                res = self._pynative_forward_run(fn, grad_, args, kwargs)
+                res = self._pynative_forward_run(fn, grad_, weights, args, kwargs)
                 _pynative_executor.grad(fn, grad_, weights, grad_position, *args, **kwargs)
                 out = _pynative_executor()
                 out = _grads_divided_by_device_num_if_recomputation(out)
+                if self.return_ids and out:
+                    out = _combine_with_ids(grad_position, weights, out)
                 if self.get_value:
                     return res, out
                 if self.has_aux:
                     return out, res[1:]
                 return out
         else:
+            if not _pynative_executor.enable_grad():
+                raise RuntimeError("In no_grad context, you can not calculate gradient")
             grad_.pynative_ = True
             fn_ = fn
             if self.has_aux:
@@ -539,10 +631,9 @@ class _Grad(GradOperation_):
         self.fn = fn
         self.grad_position = grad_position
         self.weights_id = weights_id
-        self.grad_hash_id = (grad_position, weights_id)
         return self.grad_fn
 
-    def _pynative_forward_run(self, fn, grad, args, kwargs):
+    def _pynative_forward_run(self, fn, grad, weights, args, kwargs):
         """ Pynative forward runs to build grad graph. """
         new_kwargs = kwargs
         outputs = ()
@@ -553,7 +644,7 @@ class _Grad(GradOperation_):
             else:
                 args = args[:-1]
         if isinstance(fn, (FunctionType, MethodType)):
-            if not _pynative_executor.check_run(grad, fn, self.grad_hash_id, *args, **new_kwargs):
+            if not _pynative_executor.check_run(grad, fn, weights, self.grad_position, *args, **new_kwargs):
                 _pynative_executor.set_grad_flag(True)
                 _pynative_executor.new_graph(fn, *args, **new_kwargs)
                 outputs = fn(*args, **new_kwargs)
@@ -561,7 +652,7 @@ class _Grad(GradOperation_):
                 return outputs
         else:
             # Check if fn has run already.
-            if not _pynative_executor.check_run(grad, fn, self.grad_hash_id, *args, **new_kwargs):
+            if not _pynative_executor.check_run(grad, fn, weights, self.grad_position, *args, **new_kwargs):
                 fn.set_grad()
                 outputs = fn(*args, **new_kwargs)
                 fn.set_grad(False)
@@ -591,8 +682,8 @@ class _Vmap(VmapOperation_):
         vmap_ = self
 
         @jit
-        def after_vmap(*args):
-            return vmap_(fn, in_axes, out_axes)(*args)
+        def after_vmap(*args, **kwargs):
+            return vmap_(fn, in_axes, out_axes)(*args, **kwargs)
 
         self.vmap_fn = after_vmap
         self.fn = fn
@@ -611,7 +702,7 @@ class MultitypeFuncGraph(MultitypeFuncGraph_):
     Args:
         name (str): Operator name.
         read_value (bool, optional): If the registered function do not need to set value on Parameter,
-            and all inputs will pass by value, set `read_value` to True. Default: False.
+            and all inputs will pass by value, set `read_value` to ``True`` . Default: ``False`` .
 
     Raises:
         ValueError: If failed to find a matching function for the given arguments.
@@ -652,6 +743,9 @@ class MultitypeFuncGraph(MultitypeFuncGraph_):
                 sig.make_sig('args', sig.sig_rw.RW_READ, sig.sig_kind.KIND_VAR_POSITIONAL),))
 
     def __call__(self, *args):
+        for arg in args:
+            if isinstance(arg, np.ndarray):
+                raise TypeError("For 'MultitypeFuncGraph', the input can not be numpy.ndarray")
         if len(self.entries) == 1:
             output = self.entries[0][1](*args)
             return output
@@ -694,6 +788,13 @@ class MultitypeFuncGraph(MultitypeFuncGraph_):
 
         return deco
 
+    # pylint: disable=missing-docstring
+    def set_doc_url(self, doc_url):
+        self.set_doc_url_(doc_url)
+
+    def set_need_raise(self):
+        self.set_need_raise_()
+
 
 class HyperMap(HyperMap_):
     """
@@ -710,10 +811,11 @@ class HyperMap(HyperMap_):
           Only supported in graph mode. Default is False.
 
     Inputs:
-        - **args** (Tuple[sequence]) - If `ops` is not `None`, all the inputs should be sequences with the same length.
-          And each row of the sequences will be the inputs of the operation.
+        - **args** (Tuple[sequence]) -
 
-          If `ops` is `None`, the first input is the operation, and the others are inputs.
+          - If `ops` is not `None`, all the inputs should be sequences with the same length.
+            And each row of the sequences will be the inputs of the operation.
+          - If `ops` is `None`, the first input is the operation, and the others are inputs.
 
     Note:
         Except for the operation input, the number of inputs should be equal to the number of inputs to `ops`.
@@ -783,10 +885,10 @@ class Map(Map_):
 
     Args:
         ops (Union[MultitypeFuncGraph, None]): `ops` is the operation to apply. If `ops` is `None`,
-            the operations should be put in the first input of the instance. Default: None
+            the operations should be put in the first input of the instance. Default: ``None`` .
         reverse (bool): The optimizer needs to be inverted in some scenarios to improve parallel performance,
           general users please ignore. `Reverse` is the flag to decide if apply the operation reversely.
-          Only supported in graph mode. Default is False.
+          Only supported in graph mode. Default is ``False`` .
 
     Inputs:
         - **args** (Tuple[sequence]) - If `ops` is not `None`, all the inputs should be the same length sequences,
@@ -796,7 +898,7 @@ class Map(Map_):
           If `ops` is `None`, the first input is the operation, and the other is inputs.
 
     Outputs:
-        Sequence, the sequence of output after applying the function. e.g. `operation(args[0][i], args[1][i])`.
+        Sequence, the sequence of output after applying the ops function. e.g. `ops(args[0][i], args[1][i])`.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
@@ -849,11 +951,7 @@ class _ListAppend(ListAppend_):
     Args:
         name (str): The name of the metafuncgraph object.
     """
-
-    def __init__(self, name):
-        """Initialize _ListAppend."""
-        ListAppend_.__init__(self, name)
-
+    # `__init__` method removed entirely
     def __call__(self, *args):
         pass
 
@@ -956,23 +1054,23 @@ class _ListExtend(ListExtend_):
 _extend = _ListExtend("extend")
 
 
-class _ListCount(ListCount_):
+class _DictSetItem(DictSetItem_):
     """
-    A metafuncgraph class that count the number of times an element appears in list.
+    A metafuncgraph class that setitem for the dict.
 
     Args:
         name (str): The name of the metafuncgraph object.
     """
 
     def __init__(self, name):
-        """Initialize _ListCount."""
-        ListCount_.__init__(self, name)
+        """Initialize _DictClear."""
+        DictSetItem_.__init__(self, name)
 
     def __call__(self, *args):
         pass
 
 
-_count = _ListCount("count")
+_dict_setitem = _DictSetItem("setitem")
 
 
 class _DictClear(DictClear_):

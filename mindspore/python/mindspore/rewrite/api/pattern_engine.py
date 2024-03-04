@@ -20,7 +20,7 @@ import abc
 from mindspore.nn import Cell
 from mindspore.ops.primitive import Primitive
 from mindspore import log as logger
-from ..._checkparam import Validator
+from mindspore import _checkparam as Validator
 from .node_type import NodeType
 from .node import Node
 from .symbol_tree import SymbolTree
@@ -31,10 +31,13 @@ class PatternNode:
     """
     `PatternNode` is defined as a node while defining pattern.
 
+    .. warning::
+        This is a set of experimental APIs that is subject to change or deletion.
+
     Args:
         pattern_node_name (str): Name of current node.
-        match_type (Type): A type represents what type would be matched of current node. Default: None.
-        inputs (list[PatternNode]): Input nodes of current node. Default: None.
+        match_type (Type): A type represents what type would be matched of current node. Default: ``Type[None]`` .
+        inputs (list[PatternNode]): Input nodes of current node. Default: ``None`` .
     """
 
     def __init__(self, pattern_node_name: str, match_type: Type = Type[None], inputs: ['PatternNode'] = None):
@@ -180,6 +183,9 @@ class PatternNode:
 class VarNode(PatternNode):
     """
     VarNode is a subclass of `PatternNode` whose `match` method is always return True.
+
+    .. warning::
+        This is a set of experimental APIs that is subject to change or deletion.
     """
 
     def __init__(self):
@@ -193,9 +199,12 @@ class Replacement(abc.ABC):
     """
     Interface of replacement function.
 
+    .. warning::
+        This is a set of experimental APIs that is subject to change or deletion.
+
     Examples:
         >>> from mindspore.rewrite import Replacement, Node
-        >>> from mindspore.nn import nn
+        >>> import mindspore.nn as nn
         >>> class BnReplacement(Replacement):
         ...     def build(self, pattern, is_chain_pattern: bool, matched):
         ...         bn_node: Node = matched.get(pattern.name())
@@ -232,10 +241,13 @@ class PatternEngine:
     """
     `PatternEngine` is defined how to transform a `SymbolTree` by `PattenNode`.
 
+    .. warning::
+        This is a set of experimental APIs that is subject to change or deletion.
+
     Args:
         pattern (Union[PatternNode, List]): An instance of `PatternNode` or a cell-type-list to construct `PatternNode`
             as root of a pattern.
-        replacement (callable): A callable define how to generate new_node.
+        replacement (callable): A callable define how to generate new_node. Default: ``None`` .
     """
 
     def __init__(self, pattern: Union[PatternNode, List], replacement: Replacement = None):
@@ -285,28 +297,25 @@ class PatternEngine:
                 is the matched node.
             new_nodes (list[Node]): A list of instance of Node as replacement.
         """
-        to_erase_list = matched_dict.values()
-        # keep all old nodes' inputs
-        inputs_dict = {}
-        for node in to_erase_list:
-            inputs_dict[node.get_name()] = (node.get_inputs())
         # call replace of SymbolTree
         new_root = stree.replace(old_root, new_nodes)
         # replace only support one-to-one replace or one-to-multi replace, we need to erase nodes except
         # cur_node manually
-        queue: [Node] = [old_root]
-        while queue:
-            cur_node: Node = queue.pop(0)
-            if cur_node in to_erase_list:
-                if cur_node.get_users():
-                    # if cur_node is depended on by other node, skip now.
-                    # cur_node will be push into queue and be erased later
-                    continue
-                if stree.get_node(cur_node.get_name()) is not None:
-                    # cur_node is not erased before
-                    stree.erase_node(cur_node)
-                queue.extend(inputs_dict.get(cur_node.get_name()))
+        to_erase_list = matched_dict.values()
+        for node in reversed(to_erase_list):
+            if node != old_root:
+                stree.erase(node)
         return new_root
+
+    @staticmethod
+    def _multi_replace_cellcontainer(stree, cellcontainer, node, matched_dict, new_nodes):
+        """Replace node in CellContainer."""
+        to_erase_list = list(matched_dict.values())
+        stree.replace(Node(node), new_nodes)
+        for n in reversed(to_erase_list):
+            if n.get_handler() is node:
+                continue
+            stree.erase(n)
 
     def apply(self, stree: SymbolTree) -> bool:
         """
@@ -344,7 +353,7 @@ class PatternEngine:
         #  2. Visit b, b does not match pattern, add a to queue.
         #  3. Visit d, d does not match pattern, add c to queue.
         #  4. Visit a, a matches pattern and erased from SymbolTree, add xx to queue.
-        #  5. Visit c, d does not match pattern, add a to queue.
+        #  5. Visit c, c does not match pattern, add a to queue.
         #  At step 5, a is visited at second time but a is erased from SymbolTree at step 4.
         visited: [Node] = []
         while queue:
@@ -358,6 +367,9 @@ class PatternEngine:
                 self.apply(subtree)
                 visited.append(cur_node)
                 queue.extend(cur_node.get_users())
+                continue
+            if cur_node.get_node_type() == NodeType.CellContainer:
+                self._process_cellcontainer(stree, cur_node.get_handler())
                 continue
             visited.append(cur_node)
             matched, matched_dict = self._match(self._pattern, cur_node)
@@ -460,3 +472,20 @@ class PatternEngine:
                     logger.debug("Check match failed, pattern leaked")
                     return False
         return True
+
+    def _process_cellcontainer(self, stree, cellcontainer):
+        """Process CellContainer node."""
+        for node in cellcontainer.nodes():
+            if node.get_node_type() == NodeType.Tree:
+                subtree = node.symbol_tree
+                self.apply(SymbolTree(subtree))
+                continue
+            matched, matched_dict = self._match(self._pattern, Node(node))
+            if not matched:
+                continue
+            new_nodes = []
+            if self._replacement is not None:
+                new_nodes = self._replacement(self._pattern, self._is_chain, matched_dict)
+            if not new_nodes:  # if replacement is empty, do nothing
+                continue
+            PatternEngine._multi_replace_cellcontainer(stree, cellcontainer, node, matched_dict, new_nodes)

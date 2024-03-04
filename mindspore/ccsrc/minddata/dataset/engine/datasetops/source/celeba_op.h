@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,11 +32,11 @@
 #include "minddata/dataset/util/queue.h"
 #include "minddata/dataset/engine/datasetops/source/io_block.h"
 
-#define CLOSE_FILE(attr_file, pairition_file) \
+#define CLOSE_FILE(attr_file, partition_file) \
   do {                                        \
-    attr_file.close();                        \
-    if (pairition_file.is_open()) {           \
-      pairition_file.close();                 \
+    (attr_file).close();                      \
+    if ((partition_file).is_open()) {         \
+      (partition_file).close();               \
     }                                         \
   } while (false)
 
@@ -83,6 +83,11 @@ class CelebAOp : public MappableLeafOp {
   // Op name getter
   // @return Name of the current Op
   std::string Name() const override { return "CelebAOp"; }
+
+ protected:
+  /// Initialize pull mode, calls PrepareData() within
+  /// @return Status The status code returned
+  Status InitPullMode() override;
 
  private:
   // Called first when function is called

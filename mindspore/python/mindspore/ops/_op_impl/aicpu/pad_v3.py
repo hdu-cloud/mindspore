@@ -20,7 +20,7 @@ pad_v3_op_info = AiCPURegOp("PadV3")                                            
     .fusion_type("OPAQUE")                                                                                   \
     .input(0, "x", "required")                                                                               \
     .input(1, "paddings", "required")                                                                        \
-    .input(2, "constant_values", "required")                                                                 \
+    .input(2, "constant_values", "optional")                                                                 \
     .output(0, "y", "required")                                                                              \
     .attr("mode", "str")                                                                                     \
     .attr("paddings_contiguous", "bool")                                                                     \
@@ -37,6 +37,7 @@ pad_v3_op_info = AiCPURegOp("PadV3")                                            
     .dtype_format(DataType.F64_Default, DataType.I32_Default, DataType.F64_Default, DataType.F64_Default)    \
     .dtype_format(DataType.C64_Default, DataType.I32_Default, DataType.C64_Default, DataType.C64_Default)    \
     .dtype_format(DataType.C128_Default, DataType.I32_Default, DataType.C128_Default, DataType.C128_Default) \
+    .dtype_format(DataType.BOOL_Default, DataType.I32_Default, DataType.BOOL_Default, DataType.BOOL_Default)    \
     .dtype_format(DataType.I8_Default, DataType.I64_Default, DataType.I8_Default, DataType.I8_Default)       \
     .dtype_format(DataType.I16_Default, DataType.I64_Default, DataType.I16_Default, DataType.I16_Default)    \
     .dtype_format(DataType.I32_Default, DataType.I64_Default, DataType.I32_Default, DataType.I32_Default)    \
@@ -50,6 +51,7 @@ pad_v3_op_info = AiCPURegOp("PadV3")                                            
     .dtype_format(DataType.F64_Default, DataType.I64_Default, DataType.F64_Default, DataType.F64_Default)    \
     .dtype_format(DataType.C64_Default, DataType.I64_Default, DataType.C64_Default, DataType.C64_Default)    \
     .dtype_format(DataType.C128_Default, DataType.I64_Default, DataType.C128_Default, DataType.C128_Default) \
+    .dtype_format(DataType.BOOL_Default, DataType.I64_Default, DataType.BOOL_Default, DataType.BOOL_Default)    \
     .get_op_info()
 
 

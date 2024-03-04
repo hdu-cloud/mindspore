@@ -147,6 +147,9 @@ bool SparseMatrixTransposeGpuKernelMod::LaunchKernel(const std::vector<AddressPt
   if (is_null_input_) {
     return true;
   }
+  MS_EXCEPTION_IF_NULL(stream_ptr);
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kSparseMatrixTransposeInputsNum, kernel_name_);
+  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kSparseMatrixTransposeOutputsNum, kernel_name_);
   S *csr_dense_shape_addr = GetDeviceAddress<S>(inputs, kIndex0);
   S *csr_batch_pointers_addr = GetDeviceAddress<S>(inputs, kIndex1);
   S *csr_row_pointers_addr = GetDeviceAddress<S>(inputs, kIndex2);
@@ -214,20 +217,25 @@ bool SparseMatrixTransposeGpuKernelMod::LaunchKernel(const std::vector<AddressPt
                                                       sizeof(S) * (num_batches + 1),
                                                       reinterpret_cast<cudaStream_t>(stream_ptr));
   // copy shape to y
-  int kOne = 1, kTwo = 2;
+  int kOne = 1;
+  int kTwo = 2;
   std::swap(host_shape_pointers[rank_ - kOne], host_shape_pointers[rank_ - kTwo]);
   device::gpu::CudaDriver::CopyHostMemToDeviceAsync(csc_dense_shape_addr, host_shape_pointers.data(), sizeof(S) * rank_,
                                                     reinterpret_cast<cudaStream_t>(stream_ptr));
 
   if constexpr (std::is_same<T, std::complex<float>>::value) {
-    if (conjugate)
-      Conj(output_values_size_, reinterpret_cast<cuComplex *>(csc_values_addr),
-           reinterpret_cast<cudaStream_t>(stream_ptr));
+    if (conjugate) {
+      auto status = Conj(output_values_size_, reinterpret_cast<cuComplex *>(csc_values_addr),
+                         reinterpret_cast<cudaStream_t>(stream_ptr));
+      CHECK_CUDA_STATUS(status, kernel_name_);
+    }
   }
   if constexpr (std::is_same<T, std::complex<double>>::value) {
-    if (conjugate)
-      Conj(output_values_size_, reinterpret_cast<cuDoubleComplex *>(csc_values_addr),
-           reinterpret_cast<cudaStream_t>(stream_ptr));
+    if (conjugate) {
+      auto status = Conj(output_values_size_, reinterpret_cast<cuDoubleComplex *>(csc_values_addr),
+                         reinterpret_cast<cudaStream_t>(stream_ptr));
+      CHECK_CUDA_STATUS(status, kernel_name_);
+    }
   }
   return true;
 }

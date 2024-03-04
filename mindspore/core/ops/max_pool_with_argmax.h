@@ -17,12 +17,12 @@
 #ifndef MINDSPORE_CORE_OPS_MAX_POOL_WITH_ARGMAX_H_
 #define MINDSPORE_CORE_OPS_MAX_POOL_WITH_ARGMAX_H_
 
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
-#include "mindapi/base/types.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/format.h"
+#include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -58,8 +58,9 @@ class MIND_API MaxPoolWithArgmax : public BaseOperator {
   Format get_format() const;
 };
 
-abstract::AbstractBasePtr MaxPoolWithArgmaxInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr MaxPoolWithArgmaxInfer(const abstract::AnalysisEnginePtr &,
+                                                          const PrimitivePtr &primitive,
+                                                          const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

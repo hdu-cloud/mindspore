@@ -23,6 +23,8 @@ from mindspore.ops.operations import _inner_ops as inner
 # using ".register" decorator
 bitwise_xor = base.MultitypeFuncGraph("bitwise_xor", True)
 
+bitwise_xor.set_need_raise()
+
 
 @bitwise_xor.register("Number", "Number")
 def _bitwise_xor_scalar(x, y):

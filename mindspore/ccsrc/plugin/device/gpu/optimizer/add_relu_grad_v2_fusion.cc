@@ -15,15 +15,16 @@
  */
 #include "plugin/device/gpu/optimizer/add_relu_grad_v2_fusion.h"
 
-#include <memory>
 #include <vector>
 #include <string>
 
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/nn_optimizer_ops.h"
+#include "ops/math_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -40,7 +41,7 @@ kernel::KernelBuildInfoPtr GenerateKernelBuildInfo(CNodePtr node) {
     inputs_type.push_back(common::AnfAlgo::GetPrevNodeOutputInferDataType(node, input_index));
     inputs_format.push_back(kOpFormat_DEFAULT);
   }
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(node);
   for (size_t output_index = 0; output_index < output_num; ++output_index) {
     outputs_type.push_back(common::AnfAlgo::GetOutputInferDataType(node, output_index));
     outputs_format.push_back(kOpFormat_DEFAULT);
@@ -83,13 +84,13 @@ const AnfNodePtr AddReluGradV2Fusion::Process(const FuncGraphPtr &graph, const A
     return nullptr;
   }
 
-  auto prim = std::make_shared<Primitive>(kFusedAddReluGradV2Name);
+  auto prim = std::make_shared<Primitive>(kFusedAddReluGradV2OpName);
   MS_EXCEPTION_IF_NULL(prim);
   std::vector<AnfNodePtr> inputs = {NewValueNode(prim), x1, x2, mask};
   auto add_relugrad = graph->NewCNode(inputs);
   MS_EXCEPTION_IF_NULL(add_relugrad);
   auto types = {common::AnfAlgo::GetOutputInferDataType(node, 0)};
-  auto shapes = {common::AnfAlgo::GetOutputDetailShape(node, 0)};
+  auto shapes = {AnfAlgo::GetOutputDetailShape(node, 0)};
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, add_relugrad.get());
   add_relugrad->set_scope(node->scope());
 

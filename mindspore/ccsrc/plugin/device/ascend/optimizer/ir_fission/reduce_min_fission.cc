@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,15 +16,16 @@
 #include "plugin/device/ascend/optimizer/ir_fission/reduce_min_fission.h"
 #include <memory>
 #include <vector>
+#include "mindspore/core/ops/math_ops.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
 namespace opt {
 namespace {
-constexpr auto m_reduce_min = "m_reduce_min";
-constexpr auto r_reduce_min1 = "r_reduce_min1";
-constexpr auto r_reduce_min2 = "r_reduce_min2";
-constexpr auto X = "X";
+constexpr auto kMReduceMin = "m_reduce_min";
+constexpr auto kRReduceMin1 = "r_reduce_min1";
+constexpr auto kRReduceMin2 = "r_reduce_min2";
+constexpr auto kX1 = "X1";
 
 bool NeedOptimize(const TypeId &dtype, const ShapeVector &shape, const std::vector<int64_t> &axis) {
   if (dtype != kNumberTypeFloat32) {
@@ -63,7 +64,7 @@ std::vector<int64_t> CalFirstAxis(const ShapeVector &shape, const std::vector<in
 
   for (size_t i = 0; i < axis_fisrt.size(); ++i) {
     if (axis_fisrt[i] < -dim_size || axis_fisrt[i] > dim_size - 1) {
-      MS_LOG(EXCEPTION) << "The axis of ReduceMin verify failed, quit optimizing";
+      MS_LOG(INTERNAL_EXCEPTION) << "The axis of ReduceMin verify failed, quit optimizing";
     }
     if (axis_fisrt[i] < 0) {
       axis_fisrt[i] = dim_size + axis_fisrt[i];
@@ -129,7 +130,7 @@ bool ReduceMinFission::CheckMatchedDAG(const PatternMap &, const FuncGraphPtr &g
 }
 
 AnfNodePtr BuildReduceMin1(const PatternMap &m, const AnfNodePtr &default_node) {
-  auto cnode = m.Get(m_reduce_min)->cast<CNodePtr>();
+  auto cnode = m.Get(kMReduceMin)->cast<CNodePtr>();
   CNodePtr reduce_min1 = InitReduceMin(default_node->cast<CNodePtr>(), cnode);
   auto shape = common::AnfAlgo::GetPrevNodeOutputInferShape(cnode, 0);
   auto dtype = common::AnfAlgo::GetPrevNodeOutputInferDataType(cnode, 0);
@@ -143,7 +144,7 @@ AnfNodePtr BuildReduceMin1(const PatternMap &m, const AnfNodePtr &default_node) 
 }
 
 AnfNodePtr BuildReduceMin2(const PatternMap &m, const AnfNodePtr &default_node) {
-  auto cnode = m.Get(m_reduce_min)->cast<CNodePtr>();
+  auto cnode = m.Get(kMReduceMin)->cast<CNodePtr>();
   CNodePtr reduce_min2 = InitReduceMin(default_node->cast<CNodePtr>(), cnode);
   reduce_min2->set_abstract(cnode->abstract());
   std::vector<int64_t> axis_last = {-1};
@@ -152,13 +153,13 @@ AnfNodePtr BuildReduceMin2(const PatternMap &m, const AnfNodePtr &default_node) 
 }
 
 void ReduceMinFission::DefineSrcPattern(SrcPattern *src_pattern) {
-  (void)(*src_pattern).AddVar(X).AddCNode(m_reduce_min, {prim::kPrimReduceMin, X});
+  (void)(*src_pattern).AddVar(kX1).AddCNode(kMReduceMin, {prim::kPrimReduceMinD, kX1});
 }
 
 void ReduceMinFission::DefineDstPattern(DstPattern *dst_pattern) {
   (void)(*dst_pattern)
-    .AddCNode(r_reduce_min1, {prim::kPrimReduceMin, X}, BuildReduceMin1)
-    .AddCNode(r_reduce_min2, {prim::kPrimReduceMin, r_reduce_min1}, BuildReduceMin2);
+    .AddCNode(kRReduceMin1, {prim::kPrimReduceMinD, kX1}, BuildReduceMin1)
+    .AddCNode(kRReduceMin2, {prim::kPrimReduceMinD, kRReduceMin1}, BuildReduceMin2);
 }
 }  // namespace opt
 }  // namespace mindspore

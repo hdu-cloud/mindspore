@@ -21,6 +21,7 @@
 #include <utility>
 #include <unordered_map>
 
+#include "ops/framework_ops.h"
 #include "abstract/abstract_function.h"
 #include "include/common/utils/utils.h"
 #include "utils/anf_utils.h"
@@ -80,7 +81,7 @@ abstract::AbstractBasePtr TransformAbstractRecursively(const abstract::AbstractB
     } else if (abs_seq->isa<abstract::AbstractList>()) {
       new_abs = std::make_shared<abstract::AbstractList>(new_elements);
     } else {
-      MS_LOG(EXCEPTION) << "abs_seq is not AbstractTuple or AbstractList, but: " << abs_seq->ToString();
+      MS_LOG(INTERNAL_EXCEPTION) << "abs_seq is not AbstractTuple or AbstractList, but: " << abs_seq->ToString();
     }
     return new_abs;
   }
@@ -99,12 +100,12 @@ TypeId GetValueType(const CNodePtr &cnode) {
   // (EnvironSet/EnvironGet, environ, key, value/default)
   constexpr size_t environ_input_size = 4;
   if (cnode->size() != environ_input_size) {
-    MS_LOG(EXCEPTION) << "EnvrionSet/EnvironGet cnode should have 4 inputs, but: " << cnode->DebugString();
+    MS_LOG(INTERNAL_EXCEPTION) << "EnvrionSet/EnvironGet cnode should have 4 inputs, but: " << cnode->DebugString();
   }
   const auto &value_abstract = cnode->input(3)->abstract();
   if (value_abstract == nullptr) {
-    MS_LOG(EXCEPTION) << "4th input of EnvironSet/EnvironGet cnode should abstract, but not set, node: "
-                      << cnode->DebugString();
+    MS_LOG(INTERNAL_EXCEPTION) << "The 4th input of EnvironSet/EnvironGet cnode should abstract, but not set, node: "
+                               << cnode->DebugString();
   }
   if (IsAbstractEnvType(value_abstract)) {
     return kObjectTypeEnvType;
@@ -141,7 +142,7 @@ void InsertEnvironDestroyAll(const FuncGraphPtr &func_graph) {
   auto depend1 = func_graph->NewCNode({NewValueNode(prim::kPrimDepend), u, output});
   depend1->set_abstract(kUMonad->ToAbstract());
   auto environ_destroy_all = func_graph->NewCNode({NewValueNode(prim::kPrimEnvironDestroyAll), depend1});
-  environ_destroy_all->set_abstract(std::make_shared<abstract::AbstractScalar>(kAnyValue, std::make_shared<Bool>()));
+  environ_destroy_all->set_abstract(std::make_shared<abstract::AbstractScalar>(kValueAny, std::make_shared<Bool>()));
   auto depend2 = func_graph->NewCNode({NewValueNode(prim::kPrimDepend), output, environ_destroy_all});
   depend2->set_abstract(output->abstract());
   func_graph->set_output(depend2);
@@ -150,7 +151,7 @@ void InsertEnvironDestroyAll(const FuncGraphPtr &func_graph) {
 
 bool EnvironConversion(const pipeline::ResourcePtr &resource) {
   SymbolicKeyConversionMap symbolic_key_map;
-  static AbstractBasePtr scalar_abs = std::make_shared<abstract::AbstractScalar>(kAnyValue, kInt64);
+  static AbstractBasePtr scalar_abs = std::make_shared<abstract::AbstractScalar>(kValueAny, kInt64);
   static const AbstractBasePtr tensor_abs = std::make_shared<abstract::AbstractTensor>(scalar_abs);
   static const std::string attr_name = "value_type";
   const int kPrimitiveOffset = 0;
@@ -187,9 +188,9 @@ bool EnvironConversion(const pipeline::ResourcePtr &resource) {
       const auto old_attr_value = GetValue<int>(old_attr);
       if (old_attr_value != type_id) {
         if (IsPrimitiveCNode(node, prim::kPrimEnvironSet)) {
-          prim = std::make_shared<Primitive>(prim::kEnvironSet);
+          prim = std::make_shared<Primitive>(kEnvironSetOpName);
         } else {
-          prim = std::make_shared<Primitive>(prim::kEnvironGet);
+          prim = std::make_shared<Primitive>(kEnvironGetOpName);
         }
         MS_EXCEPTION_IF_NULL(prim);
         prim->set_attr(attr_name, MakeValue(static_cast<int>(type_id)));
@@ -202,7 +203,7 @@ bool EnvironConversion(const pipeline::ResourcePtr &resource) {
     // Abstract of Environ & Value will be set by later TransformNodeAbstract function.
     // Key
     if (!IsValueNode<SymbolicKeyInstance>(cnode->input(kSymbolicKeyOffset))) {
-      MS_LOG(EXCEPTION) << "should be SymbolicKey, but: " << cnode->input(kSymbolicKeyOffset)->ToString();
+      MS_LOG(INTERNAL_EXCEPTION) << "should be SymbolicKey, but: " << cnode->input(kSymbolicKeyOffset)->ToString();
     }
     const auto &transformed_key_node = GetTransformedKeyNode(cnode->input(kSymbolicKeyOffset), &symbolic_key_map);
     txn.SetEdge(node, kSymbolicKeyOffset, transformed_key_node);

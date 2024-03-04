@@ -3095,3 +3095,233 @@ TEST_F(MindDataTestPipeline, TestResampleWithInvalidArg) {
   // Expect failure, new_freq can not be negative.
   EXPECT_EQ(iter_02, nullptr);
 }
+
+/// Feature: LFCC op
+/// Description: Test pipeline for LFCC op
+/// Expectation: Output is equal to the expected output
+TEST_F(MindDataTestPipeline, TestLFCCPipeline) {
+  MS_LOG(INFO) << "Doing MindDataTestPipeline-TestLFCCPipeline.";
+  // Original waveform
+  std::shared_ptr<SchemaObj> schema = Schema();
+  ASSERT_OK(schema->add_column("waveform", mindspore::DataType::kNumberTypeFloat32, {1, 1, 300}));
+  std::shared_ptr<Dataset> ds = RandomData(10, schema);
+  EXPECT_NE(ds, nullptr);
+
+  ds = ds->SetNumWorkers(4);
+  EXPECT_NE(ds, nullptr);
+  auto lfcc_op1 = audio::LFCC(16000, 128, 40, 0.0, 10000.0, 2, NormMode::kOrtho, true);
+  ds = ds->Map({lfcc_op1});
+  EXPECT_NE(ds, nullptr);
+  std::shared_ptr<Iterator> iter = ds->CreateIterator();
+  EXPECT_NE(ds, nullptr);
+  std::unordered_map<std::string, mindspore::MSTensor> row;
+  ASSERT_OK(iter->GetNextRow(&row));
+  std::vector<int64_t> expected = {1, 1, 40, 2};
+  int i = 0;
+  while (row.size() != 0) {
+    auto col = row["waveform"];
+    ASSERT_EQ(col.Shape(), expected);
+    ASSERT_EQ(col.Shape().size(), 4);
+    ASSERT_EQ(col.DataType(), mindspore::DataType::kNumberTypeFloat32);
+    ASSERT_OK(iter->GetNextRow(&row));
+    i++;
+  }
+  EXPECT_EQ(i, 10);
+  iter->Stop();
+}
+
+/// Feature: LFCC op
+/// Description: Test wrong arguments for LFCC op
+/// Expectation: Error message is logged, and CreateIterator() for invalid pipeline returns nullptr
+TEST_F(MindDataTestPipeline, TestLFCCWrongArgs) {
+  MS_LOG(INFO) << "Doing MindDataTestPipeline-TestLFCCWrongArgs.";
+  // LFCC: negative sample_rate.
+  std::shared_ptr<SchemaObj> schema = Schema();
+  ASSERT_OK(schema->add_column("waveform", mindspore::DataType::kNumberTypeFloat32, {1, 1, 300}));
+  std::shared_ptr<Dataset> ds = RandomData(10, schema);
+  EXPECT_NE(ds, nullptr);
+  ds = ds->SetNumWorkers(4);
+  EXPECT_NE(ds, nullptr);
+  auto lfcc_op0 = audio::LFCC(-1);
+  ds = ds->Map({lfcc_op0});
+  EXPECT_NE(ds, nullptr);
+  std::shared_ptr<Iterator> iter = ds->CreateIterator();
+  EXPECT_EQ(iter, nullptr);
+}
+
+/// Feature: MFCC op
+/// Description: Test pipeline for MFCC op
+/// Expectation: Generate expected output after cases were executed
+TEST_F(MindDataTestPipeline, TestMFCCPipeline) {
+  MS_LOG(INFO) << "Doing MindDataTestPipeline-TestMFCCPipeline.";
+  // Original waveform
+  std::shared_ptr<SchemaObj> schema = Schema();
+  ASSERT_OK(schema->add_column("waveform", mindspore::DataType::kNumberTypeFloat32, {1, 1, 300}));
+  std::shared_ptr<Dataset> ds = RandomData(10, schema);
+  EXPECT_NE(ds, nullptr);
+
+  ds = ds->SetNumWorkers(4);
+  EXPECT_NE(ds, nullptr);
+  auto mfcc_op1 = audio::MFCC(16000, 40, 2, NormMode::kOrtho, true);
+  ds = ds->Map({mfcc_op1});
+  EXPECT_NE(ds, nullptr);
+  std::shared_ptr<Iterator> iter = ds->CreateIterator();
+  EXPECT_NE(ds, nullptr);
+  std::unordered_map<std::string, mindspore::MSTensor> row;
+  ASSERT_OK(iter->GetNextRow(&row));
+  std::vector<int64_t> expected = {1, 1, 40, 2};
+  int i = 0;
+  while (row.size() != 0) {
+    auto col = row["waveform"];
+    ASSERT_EQ(col.Shape(), expected);
+    ASSERT_EQ(col.Shape().size(), 4);
+    ASSERT_EQ(col.DataType(), mindspore::DataType::kNumberTypeFloat32);
+    ASSERT_OK(iter->GetNextRow(&row));
+    i++;
+  }
+  EXPECT_EQ(i, 10);
+  iter->Stop();
+}
+
+/// Feature: MFCC op
+/// Description: Test wrong arguments for MFCC op
+/// Expectation: Error message is logged, and CreateIterator() for invalid pipeline returns nullptr
+TEST_F(MindDataTestPipeline, TestMFCCWrongArgs) {
+  MS_LOG(INFO) << "Doing MindDataTestPipeline-TestInverseMelScaleWrongArgs.";
+  // MFCC: negative sample_rate.
+  std::shared_ptr<SchemaObj> schema = Schema();
+  ASSERT_OK(schema->add_column("waveform", mindspore::DataType::kNumberTypeFloat32, {1, 1, 300}));
+  std::shared_ptr<Dataset> ds = RandomData(10, schema);
+  EXPECT_NE(ds, nullptr);
+  ds = ds->SetNumWorkers(4);
+  EXPECT_NE(ds, nullptr);
+  auto mfcc_op0 = audio::MFCC(-1);
+  ds = ds->Map({mfcc_op0});
+  EXPECT_NE(ds, nullptr);
+  std::shared_ptr<Iterator> iter = ds->CreateIterator();
+  EXPECT_EQ(iter, nullptr);
+}
+
+/// Feature: MelSpectrogram op
+/// Description: Test input MelSpectrogram op
+/// Expectation: Output is equal to the expected output
+TEST_F(MindDataTestPipeline, TestMelSpectrogramPipeline) {
+  // 3 dimension
+  std::shared_ptr<SchemaObj> schema3 = Schema();
+  ASSERT_OK(schema3->add_column("waveform", mindspore::DataType::kNumberTypeFloat32, {1, 1, 30}));
+  std::shared_ptr<Dataset> ds3 = RandomData(10, schema3);
+  EXPECT_NE(ds3, nullptr);
+
+  ds3 = ds3->SetNumWorkers(4);
+  EXPECT_NE(ds3, nullptr);
+
+  auto mel_spectrogram_op3 = audio::MelSpectrogram(16000, 16, 16, 8, 0.0, 10000.0, 0, 8, WindowType::kHann, 2.0, false,
+                                                   true, BorderType::kReflect, true, NormType::kNone, MelType::kHtk);
+  ds3 = ds3->Map({mel_spectrogram_op3});
+  EXPECT_NE(ds3, nullptr);
+  std::shared_ptr<Iterator> iter3 = ds3->CreateIterator();
+  EXPECT_NE(ds3, nullptr);
+  std::unordered_map<std::string, mindspore::MSTensor> row3;
+  ASSERT_OK(iter3->GetNextRow(&row3));
+  std::vector<int64_t> expected3 = {1, 1, 8, 4};
+  int i = 0;
+  while (row3.size() != 0) {
+    auto col = row3["waveform"];
+    ASSERT_EQ(col.Shape(), expected3);
+    ASSERT_EQ(col.Shape().size(), 4);
+    ASSERT_EQ(col.DataType(), mindspore::DataType::kNumberTypeFloat32);
+    ASSERT_OK(iter3->GetNextRow(&row3));
+    i++;
+  }
+  EXPECT_EQ(i, 10);
+  iter3->Stop();
+}
+
+/// Feature: InverseSpectrogram op
+/// Description: Test input InverseSpectrogram op
+/// Expectation: Output is equal to the expected output
+TEST_F(MindDataTestPipeline, TestInverseSpectrogramPipeline) {
+  // 4 dimension
+  std::shared_ptr<SchemaObj> schema4 = Schema();
+  ASSERT_OK(schema4->add_column("spectrogram", mindspore::DataType::kNumberTypeFloat32, {1, 9, 10, 2}));
+  std::shared_ptr<Dataset> ds4 = RandomData(10, schema4);
+  EXPECT_NE(ds4, nullptr);
+
+  ds4 = ds4->SetNumWorkers(4);
+  EXPECT_NE(ds4, nullptr);
+
+  auto inverse_spectrogram_op4 = audio::InverseSpectrogram(1, 16, 16, 8, 0, WindowType::kHann, false,
+                                                           true, BorderType::kReflect, true);
+  ds4 = ds4->Map({inverse_spectrogram_op4});
+  EXPECT_NE(ds4, nullptr);
+  std::shared_ptr<Iterator> iter4 = ds4->CreateIterator();
+  EXPECT_NE(ds4, nullptr);
+  std::unordered_map<std::string, mindspore::MSTensor> row4; 
+  ASSERT_OK(iter4->GetNextRow(&row4));
+  std::vector<int64_t> expected4 = {1, 1};
+  int i = 0;
+  while (row4.size() != 0) {
+    auto col = row4["spectrogram"];
+    ASSERT_EQ(col.Shape(), expected4);
+    ASSERT_EQ(col.Shape().size(), 2);
+    ASSERT_EQ(col.DataType(), mindspore::DataType::kNumberTypeFloat32);
+    ASSERT_OK(iter4->GetNextRow(&row4));
+    i++;
+  }
+  EXPECT_EQ(i, 10);
+  iter4->Stop();
+}
+
+/// Feature: PitchShift op
+/// Description: Test input 1d of PitchShift op
+/// Expectation: Output is equal to the expected output
+TEST_F(MindDataTestPipeline, TestPitchShiftPipeline1D) {
+  MS_LOG(INFO) << "Doing MindDataTestPipeline-TestPitchShiftPipeline.";
+  // 1 dimension
+  std::shared_ptr<SchemaObj> schema1 = Schema();
+  ASSERT_OK(schema1->add_column("waveform", mindspore::DataType::kNumberTypeFloat32, {30}));
+  std::shared_ptr<Dataset> ds1 = RandomData(10, schema1);
+  EXPECT_NE(ds1, nullptr);
+
+  ds1 = ds1->SetNumWorkers(4);
+  EXPECT_NE(ds1, nullptr);
+
+  auto PitchShift_op1 = audio::PitchShift(16000, 4, 12, 16, 16, 4, WindowType::kHann);
+  ds1 = ds1->Map({PitchShift_op1});
+  EXPECT_NE(ds1, nullptr);
+  std::shared_ptr<Iterator> iter1 = ds1->CreateIterator();
+  EXPECT_NE(ds1, nullptr);
+  std::unordered_map<std::string, mindspore::MSTensor> row1;
+  ASSERT_OK(iter1->GetNextRow(&row1));
+  std::vector<int64_t> expected1 = {30};
+  int i = 0;
+  while (row1.size() != 0) {
+    auto col = row1["waveform"];
+    ASSERT_EQ(col.Shape(), expected1);
+    ASSERT_EQ(col.Shape().size(), 1);
+    ASSERT_EQ(col.DataType(), mindspore::DataType::kNumberTypeFloat32);
+    ASSERT_OK(iter1->GetNextRow(&row1));
+    i++;
+  }
+  EXPECT_EQ(i, 10);
+  iter1->Stop();
+}
+
+/// Feature: PitchShift op
+/// Description: Test PitchShift op with wrong input
+/// Expectation: Throw exception as expected
+TEST_F(MindDataTestPipeline, TestPitchShiftWrongArgsHopLength) {
+  MS_LOG(INFO) << "Doing MindDataTestPipeline-TestPitchShiftWrongArgs.";
+  std::shared_ptr<SchemaObj> schema = Schema();
+  ASSERT_OK(schema->add_column("waveform", mindspore::DataType::kNumberTypeFloat32, {1, 1, 30}));
+  ;
+  std::shared_ptr<Dataset> ds = RandomData(10, schema);
+  EXPECT_NE(ds, nullptr);
+  ds = ds->SetNumWorkers(4);
+  EXPECT_NE(ds, nullptr);
+  auto PitchShift_op = audio::PitchShift(16000, 4, 12, 16, 16, -4, WindowType::kHann);
+  ds = ds->Map({PitchShift_op});
+  EXPECT_NE(ds, nullptr);
+  std::shared_ptr<Iterator> iter = ds->CreateIterator();
+  EXPECT_EQ(iter, nullptr);
+}

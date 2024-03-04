@@ -14,12 +14,16 @@
  * limitations under the License.
  */
 
+#include "include/backend/distributed/rpc/tcp/tcp_client.h"
 #include "ps/core/communicator/ssl_client.h"
-#include "distributed/rpc/tcp/tcp_client.h"
+#include "distributed/rpc/tcp/tcp_comm.h"
 
 namespace mindspore {
 namespace distributed {
 namespace rpc {
+TCPClient::TCPClient(bool enable_ssl) : RPCClientBase(enable_ssl), tcp_comm_(nullptr), received_message_(nullptr) {}
+TCPClient::~TCPClient() {}
+
 bool TCPClient::Initialize() {
   bool rt = false;
   if (tcp_comm_ == nullptr) {
@@ -127,6 +131,10 @@ MessageBase *TCPClient::ReceiveSync(std::unique_ptr<MessageBase> &&msg, uint32_t
 }
 
 bool TCPClient::Flush(const std::string &dst_url) { return tcp_comm_->Flush(dst_url); }
+
+std::string TCPClient::GetClientIPByDstUrl(const std::string &dst_url) const {
+  return tcp_comm_->GetClientSrcIP(dst_url);
+}
 }  // namespace rpc
 }  // namespace distributed
 }  // namespace mindspore

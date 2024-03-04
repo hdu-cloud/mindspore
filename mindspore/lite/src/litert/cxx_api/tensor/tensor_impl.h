@@ -31,6 +31,9 @@
 #include "src/common/log_adapter.h"
 #include "ir/api_tensor_impl.h"
 #include "common/mutable_tensor_impl.h"
+#if defined(ENABLE_CLOUD_FUSION_INFERENCE) || defined(ENABLE_CLOUD_INFERENCE)
+#include "src/extendrt/kernel/ascend/plugin/ascend_allocator_plugin.h"
+#endif
 
 namespace mindspore {
 using mindspore::lite::RET_OK;
@@ -43,6 +46,13 @@ class LiteTensorImpl : public MutableTensorImpl {
     if (lite_tensor_ == nullptr) {
       return;
     }
+#if defined(ENABLE_CLOUD_FUSION_INFERENCE) || defined(ENABLE_CLOUD_INFERENCE)
+    if (GetDeviceData() != nullptr && own_data_) {
+      MS_LOG(INFO) << "free device data in tensor impl.";
+      kernel::AscendAllocatorPlugin::GetInstance().Free(GetDeviceData(), GetDeviceId());
+      lite_tensor_->set_device_data(nullptr);
+    }
+#endif
     if (!from_session_) {
       if (!own_data_) {
         lite_tensor_->set_data(nullptr);
@@ -106,7 +116,7 @@ class LiteTensorImpl : public MutableTensorImpl {
     lite_tensor_->set_data_type(static_cast<enum TypeId>(data_type));
   }
 
-  int64_t ElementNum() const {
+  int64_t ElementNum() const override {
     if (lite_tensor_ == nullptr) {
       MS_LOG(ERROR) << "Invalid tensor.";
       return -1;
@@ -125,6 +135,24 @@ class LiteTensorImpl : public MutableTensorImpl {
     std::transform(shape.begin(), shape.end(), lite_shape_.begin(), [](int c) { return static_cast<int64_t>(c); });
     return lite_shape_;
   }
+
+  std::string GetDevice() const override { return lite_tensor_->get_device(); }
+
+  void SetDevice(const std::string &device) override {
+#if defined(ENABLE_CLOUD_FUSION_INFERENCE) || defined(ENABLE_CLOUD_INFERENCE)
+    void *device_data = GetDeviceData();
+    if (device_data != nullptr && own_data_) {
+      MS_LOG(INFO) << "free device data in tensor impl.";
+      kernel::AscendAllocatorPlugin::GetInstance().Free(device_data, GetDeviceId());
+    }
+#endif
+    lite_tensor_->set_device(device);
+    own_data_ = false;
+  }
+
+  int GetDeviceId() const override { return lite_tensor_->get_device_id(); }
+
+  void SetDeviceId(int device_id) override { lite_tensor_->set_device_id(device_id); }
 
   std::shared_ptr<mindspore::MSTensor::Impl> Clone() const override { return nullptr; }
 
@@ -245,7 +273,13 @@ class LiteTensorImpl : public MutableTensorImpl {
     lite_tensor_->set_quant_params(lite_quant_params);
   }
 
-  bool IsDevice() const override { return false; }
+  bool IsDevice() const override {
+    if (lite_tensor_ == nullptr) {
+      MS_LOG(ERROR) << "Invalid tensor.";
+      return false;
+    }
+    return lite_tensor_->is_device();
+  }
 
   lite::Tensor *lite_tensor() const { return lite_tensor_; }
 

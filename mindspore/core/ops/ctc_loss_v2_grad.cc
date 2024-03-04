@@ -15,16 +15,33 @@
  */
 
 #include "ops/ctc_loss_v2_grad.h"
-#include <vector>
-#include <string>
-#include <memory>
+
 #include <map>
+#include <memory>
 #include <set>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <string>
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "mindapi/src/helper.h"
+#include "abstract/utils.h"
+#include "base/base.h"
 #include "include/common/utils/utils.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -72,6 +89,24 @@ AbstractBasePtr CTCLossV2GradInfer(const abstract::AnalysisEnginePtr &, const Pr
   auto infer_type = CTCLossV2GradInferType(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(CTCLossV2Grad, prim::kPrimCTCLossV2Grad, CTCLossV2GradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGCTCLossV2GradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return CTCLossV2GradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return CTCLossV2GradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return CTCLossV2GradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(CTCLossV2Grad, prim::kPrimCTCLossV2Grad, AGCTCLossV2GradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

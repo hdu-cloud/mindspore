@@ -15,21 +15,36 @@
  */
 
 #include "ops/grad/fractional_max_pool3d_grad_with_fixed_ksize.h"
-#include <string>
-#include <algorithm>
+
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 constexpr size_t DIM_SIZE4 = 4;
 constexpr size_t DIM_SIZE5 = 5;
+constexpr size_t kOutputDim = 5;
 constexpr int64_t kInputsSize = 3;
 constexpr size_t kDim4FormatNCDHWIndexC = 0;
 constexpr size_t kDim4FormatNCDHWIndexD = 1;
@@ -69,6 +84,9 @@ abstract::ShapePtr FractionalMaxPool3DGradWithFixedKsizeInferShape(const Primiti
   auto origin_input_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->GetShapeTrack())[kShape];
   auto out_backprop_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->GetShapeTrack())[kShape];
   auto argmax_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[2]->GetShapeTrack())[kShape];
+  if (IsDynamicRank(origin_input_shape)) {
+    return std::make_shared<abstract::Shape>(ShapeVector(kOutputDim, -1));
+  }
   if (origin_input_shape.size() != DIM_SIZE4 && origin_input_shape.size() != DIM_SIZE5) {
     MS_EXCEPTION(TypeError) << "For '" << op_name
                             << "', the dimension of 'origin_input' must be equal to 4 or 5, but got "
@@ -79,7 +97,7 @@ abstract::ShapePtr FractionalMaxPool3DGradWithFixedKsizeInferShape(const Primiti
                             << "', the dimension of 'out_backprop' must be equal to 4 or 5, but got "
                             << std::to_string(out_backprop_shape.size()) << ".";
   }
-  if (argmax_shape.size() != DIM_SIZE4 && argmax_shape.size() != DIM_SIZE5) {
+  if (!IsDynamicRank(argmax_shape) && argmax_shape.size() != DIM_SIZE4 && argmax_shape.size() != DIM_SIZE5) {
     MS_EXCEPTION(TypeError) << "For '" << op_name << "', the dimension of 'argmax' must be equal to 4 or 5, but got "
                             << std::to_string(argmax_shape.size()) << ".";
   }
@@ -179,7 +197,25 @@ std::string FractionalMaxPool3DGradWithFixedKsize::get_data_format() const {
   return GetValue<std::string>(GetAttr(kFormat));
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(FractionalMaxPool3DGradWithFixedKsize, prim::kPrimFractionalMaxPool3DGradWithFixedKsize,
-                             FractionalMaxPool3DGradWithFixedKsizeInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGFractionalMaxPool3DGradWithFixedKsizeInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return FractionalMaxPool3DGradWithFixedKsizeInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return FractionalMaxPool3DGradWithFixedKsizeInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return FractionalMaxPool3DGradWithFixedKsizeInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(FractionalMaxPool3DGradWithFixedKsize,
+                                 prim::kPrimFractionalMaxPool3DGradWithFixedKsize,
+                                 AGFractionalMaxPool3DGradWithFixedKsizeInfer, false);
 }  // namespace ops
 }  // namespace mindspore

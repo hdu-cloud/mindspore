@@ -16,7 +16,7 @@
 from __future__ import absolute_import
 
 from mindspore.ops import functional as F, composite as C, operations as P
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.common.api import jit
 from mindspore.nn.optim.optimizer import Optimizer
 from mindspore.nn.optim.optimizer import opt_init_args_register
@@ -53,7 +53,7 @@ class Adagrad(Optimizer):
     The updating Pseudo codes are as follows:
 
     .. math::
-       \begin{aligned} \\
+        \begin{aligned} \\
             &\newline
             &\hline \\
             &\textbf{Parameters}: \text{learning rate } \gamma, \:  \text{ params } w_0, \:
@@ -73,7 +73,7 @@ class Adagrad(Optimizer):
             &\bf{return} \:  w_t \\[-1.ex]
             &\newline
             &\hline \\
-       \end{aligned}
+        \end{aligned}
 
     :math:`state\_sum` stands for the accumulated squared sum of the gradients :math:`accum`.
     :math:`g` stands for `grads`, :math:`\lambda` stands for `weight_decay`.
@@ -112,8 +112,8 @@ class Adagrad(Optimizer):
               If `order_params` in the keys, other keys will be ignored and the element of 'order_params' must be in
               one group of `params`.
 
-        accum (float): The starting value for `h`, must be zero or positive values. Default: 0.1.
-        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: 0.001.
+        accum (float): The starting value for :math:`h`, must be zero or positive values. Default: ``0.1`` .
+        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: ``0.001`` .
 
             - float: The fixed learning rate value. Must be equal to or greater than 0.
 
@@ -127,13 +127,13 @@ class Adagrad(Optimizer):
             - LearningRateSchedule: Learning rate is dynamic. During training, the optimizer calls the instance of
               LearningRateSchedule with step as the input to get the learning rate of current step.
 
-        update_slots (bool): Whether the `h` will be updated. Default: True.
+        update_slots (bool): Whether the :math:`h` will be updated. Default: ``True`` .
         loss_scale (float): Value for the loss scale. It must be greater than 0.0. In general, use the default value.
             Only when `FixedLossScaleManager` is used for training and the `drop_overflow_update` in
             `FixedLossScaleManager` is set to False, then this value needs to be the same as the `loss_scale` in
             `FixedLossScaleManager`. Refer to class :class:`mindspore.amp.FixedLossScaleManager` for more details.
-            Default: 1.0.
-        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: 0.0.
+            Default: ``1.0`` .
+        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: ``0.0`` .
 
             - float: The fixed weight decay value. Must be equal to or greater than 0.
 
@@ -147,7 +147,7 @@ class Adagrad(Optimizer):
           in optimizer.
 
     Outputs:
-        Tensor[bool], the value is True.
+        Tensor[bool], the value is ``True`` .
 
     Raises:
         TypeError: If `learning_rate` is not one of int, float, Tensor, Iterable, LearningRateSchedule.
@@ -159,13 +159,15 @@ class Adagrad(Optimizer):
         ValueError: If `accum` or `weight_decay` is less than 0.
 
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> import mindspore as ms
-        >>> from mindspore import nn
+        >>> import mindspore
+        >>> import mindspore.nn as nn
         >>>
-        >>> net = Net()
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> #1) All parameters use the same learning rate and weight decay
         >>> optim = nn.Adagrad(params=net.trainable_params())
         >>>
@@ -203,6 +205,7 @@ class Adagrad(Optimizer):
         grads = self.gradients_centralization(grads)
         grads = self.scale_grad(grads)
         lr = self.get_lr()
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
         if self.is_group_lr:
             success = self.map_reverse(F.partial(_ada_grad_opt, self.opt), lr, params, accum,
                                        grads)

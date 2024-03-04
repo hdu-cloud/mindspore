@@ -16,6 +16,7 @@
 
 #include "plugin/device/gpu/kernel/math/addn_gpu_kernel.h"
 
+#include "mindspore/core/ops/math_ops.h"
 namespace mindspore {
 namespace kernel {
 bool AddNFwdGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
@@ -32,6 +33,14 @@ bool AddNFwdGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::
   }
   constexpr size_t output_num = 1;
   CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), output_num, kernel_name_);
+  for (const auto &input : inputs) {
+    const auto &input_shape = input->GetShapeVector();
+    if (std::any_of(input_shape.cbegin(), input_shape.cend(), [](ShapeValueDType shape) { return (shape == 0); })) {
+      empty_tensor_input_ = true;
+      return true;
+    }
+  }
+  empty_tensor_input_ = false;
   return MatchKernelFunc(base_operator, inputs, outputs);
 }
 
@@ -41,7 +50,6 @@ int AddNFwdGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std:
   if (auto ret = KernelMod::Resize(base_operator, inputs, outputs, inputsOnHost); ret != KRET_OK) {
     return ret;
   }
-  workspace_size_list_.push_back(input_size_list_.front());
   return KRET_OK;
 }
 
@@ -49,30 +57,17 @@ template <typename T>
 bool AddNFwdGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
                                        const std::vector<AddressPtr> &outputs) {
   T *output_addr = GetDeviceAddress<T>(outputs, 0);
-  auto work_addr = output_addr;
-  for (size_t i = 0; i < num_input_; i++) {
-    if (output_addr == GetDeviceAddress<T>(inputs, i)) {
-      work_addr = GetDeviceAddress<T>(workspace, 0);
-      break;
-    }
-  }
-  FillDeviceArray(outputs[0]->size / sizeof(T), output_addr, 0.0f, reinterpret_cast<cudaStream_t>(stream_ptr_));
-  FillDeviceArray(outputs[0]->size / sizeof(T), work_addr, 0.0f, reinterpret_cast<cudaStream_t>(stream_ptr_));
+  cudaError_t status = cudaErrorNotReady;
+  status =
+    FillDeviceArray(outputs[0]->size / sizeof(T), output_addr, 0.0f, reinterpret_cast<cudaStream_t>(stream_ptr_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
+  std::vector<int64_t> ele_shape = {static_cast<int64_t>(outputs[0]->size / sizeof(T))};
   for (size_t i = 0; i < num_input_; i++) {
     T *input_addr = GetDeviceAddress<T>(inputs, i);
-    if constexpr (std::is_same<T, Complex<float>>::value || std::is_same<T, Complex<double>>::value) {
-      ElewiseComplexArith(outputs[0]->size / sizeof(T), BROADCAST_TYPE_ADD, input_addr, work_addr, work_addr,
-                          reinterpret_cast<cudaStream_t>(stream_ptr_));
-    } else {
-      ElewiseArith(outputs[0]->size / sizeof(T), BROADCAST_TYPE_ADD, input_addr, work_addr, work_addr,
-                   reinterpret_cast<cudaStream_t>(stream_ptr_));
-    }
-  }
-  if (work_addr != output_addr) {
-    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-      cudaMemcpyAsync(output_addr, work_addr, outputs[0]->size, cudaMemcpyDeviceToDevice,
-                      reinterpret_cast<cudaStream_t>(stream_ptr_)),
-      "Addn cudaMemcpyAsync outputs failed");
+    status = BinaryOpWithBroadcastCudaFunc<BinaryOpType::kAdd, T, T, T>(
+      false, ele_shape, ele_shape, ele_shape, input_addr, output_addr, output_addr, device_id_,
+      reinterpret_cast<cudaStream_t>(stream_ptr_));
+    CHECK_CUDA_STATUS(status, kernel_name_);
   }
   return true;
 }

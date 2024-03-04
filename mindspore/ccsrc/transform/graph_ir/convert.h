@@ -29,11 +29,10 @@
 #include <stack>
 #include <fstream>
 #include <sstream>
-
 #include "include/common/utils/config_manager.h"
+#include "mindspore/core/ops/structure_ops.h"
 #include "utils/hash_map.h"
 #include "utils/ms_context.h"
-#include "ops/core_ops.h"
 #include "ir/anf.h"
 #include "ir/func_graph.h"
 #include "ir/tensor.h"
@@ -53,8 +52,19 @@ using HcomBroadcast = ::ge::op::HcomBroadcast;
 using ParamIndexMap = std::map<std::size_t, std::size_t>;
 enum class GraphType { kNormal, kCond, kBody, kAfter, kBranch };
 enum class DfsVisitFlag { kUnVisited, kVisiting, kVisited };
-constexpr char kFuncGraphTypeName[] = "FuncGraph";
-constexpr char kKernelGraphTypeName[] = "KernelGraph";
+enum class RefModeFlag {
+  kRefModeNone,
+  kRefModeVariable,  // Only Variables will be treated as RefData
+  kRefModeAll,       // All Parameter including Variables and Constants will be treated as RefData
+  kRefModeEnv        // depend on REF_MODE, default value is on, ref mode type will be kRefModeAll
+};
+constexpr char kGraphFlagHasGetNext[] = "graph_has_getnext";
+constexpr char kGraphNeedIteration[] = "graph_need_iteration";
+
+struct InputDataList {
+  std::vector<OperatorPtr> input_datas;
+  constexpr static char key[] = "RefDataList";
+};
 
 class GeOpConvertor {
  public:
@@ -66,23 +76,44 @@ class GeOpConvertor {
                                                      const std::string &dev_format, const ShapeVector &ori_shape,
                                                      const std::string &ori_format);
 
-  static mindspore::HashSet<size_t> GetNeedRemoveInput(const AnfNodePtr &node, const bool training);
+  static mindspore::HashMap<std::string, std::string> GetNeedAddInput(const AnfNodePtr &node, const bool training);
 
-  static std::map<std::string, unsigned int> GetNeedAddInput(const AnfNodePtr &node, const bool training);
   static bool IsDynamicInput(const AnfNodePtr &node, const size_t idx);
-  static size_t GetAclInputSize(const AnfNodePtr &node);
-  static size_t GetAclOutputSize(const AnfNodePtr &node);
-  // TODO(lby): need fix
-  static OpAdapterPtr GetForReduceAdapter(const AnfNodePtr &node, const OpAdapterPtr &adapter);
+
+  static std::map<int, std::string> GetAclInputNames(const AnfNodePtr &node);
+
+  static std::map<int, std::string> GetAclOutputNames(const AnfNodePtr &node);
+
+  static std::map<int, std::string> GetAclDynamicInputNames(const AnfNodePtr &node);
+
+  static std::map<int, std::string> GetAclDynamicOutputNames(const AnfNodePtr &node);
 };
+
+DfGraphPtr GenExampleGraph(const std::string &name);
 
 class DfGraphConvertor {
  public:
-  explicit DfGraphConvertor(const AnfGraphPtr &anf_graph) : anf_graph_(anf_graph) {
+  explicit DfGraphConvertor(const AnfGraphPtr &anf_graph, const std::string &phase_prefix,
+                            RefModeFlag ref_mode_type = RefModeFlag::kRefModeEnv,
+                            const std::vector<std::string> &extra_variables_names = {})
+      : anf_graph_(anf_graph), extra_variables_names_(extra_variables_names), phase_prefix_(phase_prefix) {
     MS_EXCEPTION_IF_NULL(anf_graph);
-    auto env_ge = mindspore::common::GetEnv("MS_ENABLE_GE");
-    auto env_training = mindspore::common::GetEnv("MS_GE_TRAIN");
-    if (env_ge == "1" && env_training == "1") {
+    if (ref_mode_type == RefModeFlag::kRefModeEnv) {
+      ref_mode_ = IsEnableRefMode();
+      ref_mode_type_ = RefModeFlag::kRefModeAll;
+    } else {
+      ref_mode_ = (ref_mode_type != RefModeFlag::kRefModeNone);
+      ref_mode_type_ = ref_mode_type;
+    }
+    auto context = MsContext::GetInstance();
+    MS_EXCEPTION_IF_NULL(context);
+    bool enable_ge = context->backend_policy() == "ge";
+    bool enable_training = phase_prefix_ == "train";
+    static bool is_training = false;
+    if (enable_ge && enable_training) {
+      is_training = true;
+    }
+    if (is_training) {
       training_ = true;
     } else {
       training_ = anf_graph->has_flag("training");
@@ -95,10 +126,14 @@ class DfGraphConvertor {
     }
     is_kernel_graph_ = anf_graph_->type_name() == kKernelGraphTypeName;
     df_graph_ = std::make_shared<DfGraph>(anf_graph_->ToString());
+
     std::string graph_type = is_kernel_graph_ ? "kernel_graph" : "func_graph";
     std::string graph_name = anf_graph_->ToString();
+    graph_manager_ = Manage(anf_graph_, true);
+    MS_EXCEPTION_IF_NULL(graph_manager_);
     MS_LOG(INFO) << "Create DfGraphConvertor with graph: " << graph_name << "(type: " << graph_type << ")"
-                 << ", training: " << training_ << ", distribute: " << distribute_;
+                 << ", training: " << training_ << ", dynamic input: " << dynamic_shape_inputs_
+                 << ", distribute: " << distribute_;
   }
 
   ~DfGraphConvertor() {}
@@ -141,33 +176,42 @@ class DfGraphConvertor {
   }
 
   DfGraphConvertor &ConvertAllNode();
-  DfGraphConvertor &BuildGraph();
+  DfGraphConvertor &GenFakeComputeGraph(const std::string &name);
+  DfGraphConvertor &BuildGraph(const std::string &name);
   DfGraphConvertor &InitParam(const TensorOrderMap &tensors);
   DfGraphConvertor &GenerateCheckpointGraph();
   DfGraphConvertor &GenerateBroadcastGraph(const TensorOrderMap &tensors);
-  void InitParamWithConst(const TensorOrderMap &tensors);
+  void InitParamWithData(const TensorOrderMap &tensors);
+  bool NodeInputKeepUpdate(const FuncGraphManagerPtr &manager, const AnfNodePtr &node);
   OutHandler GetNormalOpInput(const AnfNodePtr &node, const AnfNodePtr &pred);
   void DrawOpInput(const AnfNodePtr &node, const AnfNodePtr &pred, size_t i);
   void SetOpInput(const OpAdapterPtr &adpt, const CNodePtr &node);
+  void SetOpAttrToInput(const OpAdapterPtr &adpt, const CNodePtr &node);
   void SetupBroadcast(const std::shared_ptr<HcomBroadcast> &broadcast, const std::vector<GeTensorDesc> &broadcast_desc,
                       const DfGraphPtr &broadcast_graph, std::vector<::ge::Operator> broadcast_input);
-  void MakeDatasetHandler(const std::string &name, const size_t &input_idx, const AnfNodePtr &it);
-  void SetupParamInitSubGraph(const TensorOrderMap &tensors, const std::vector<::ge::Operator> *init_input);
+  void SetupParamInitSubGraph(const TensorOrderMap &tensors, const std::vector<::ge::Operator> *init_input,
+                              bool is_sink_size_repeat);
+  void SetupParamInitSubGraph();
   void DrawParamInitSubGraph(const std::string &name, const AnfNodePtr &it);
 
   DfGraphPtr GetComputeGraph();
   DfGraphPtr GetInitGraph();
+  std::vector<std::string> GetInitDataNames() const { return init_data_names_; }
+  std::vector<std::string> GetRefDataNames() const { return ref_data_names_; }
   DfGraphPtr GetSaveCheckpointGraph();
   DfGraphPtr GetBroadcastGraph();
   int ErrCode() const { return static_cast<int>(error_); }
 
   bool is_training() const { return training_; }
   void set_training(bool is_training) { training_ = is_training; }
+
+  bool export_air() const { return export_air_; }
+  void set_export_air(bool export_air) { export_air_ = export_air; }
   bool dynamic_shape_inputs() const { return dynamic_shape_inputs_; }
   std::vector<ShapeVector> input_shapes() { return input_shapes_; }
 
  protected:
-  void InitLoopVar(std::vector<::ge::Operator> *init_input);
+  bool InitLoopVar(std::vector<::ge::Operator> *init_input);
 
  private:
   std::ostringstream compute_sout_;
@@ -177,7 +221,6 @@ class DfGraphConvertor {
   mindspore::HashMap<AnfNode *, std::string> op_draw_name_;
   std::map<std::string, std::string> param_format_;
 
-  AnfNodePtr TraceTupleGetItem(const CNodePtr &node, uint64_t *index);
   OutHandler GetHandler(const AnfNodePtr &node);
   OperatorPtr Convert(AnfNodePtr node);
   OperatorPtr ConvertCNode(CNodePtr node);
@@ -188,16 +231,24 @@ class DfGraphConvertor {
   void SaveParamFormat(CNodePtr node);
   void GetBranchNodeInput(const CNodePtr node);
   void ConvertTopK(const CNodePtr &node);
-  void ConvertResizeBilinear(const FuncGraphPtr anf_graph) const;
   void ConvertSpaceBatchNd(const FuncGraphPtr anf_graph) const;
-  void ConvertTile(const FuncGraphPtr anf_graph) const;
   AnfNodePtr CreateCast(const AnfNodePtr &input, const TypePtr &dst_type) const;
   void ConvertReshape(const CNodePtr &node);
-  void ConvertAllReduce(const CNodePtr &node);
+  void ConvertPrint(const CNodePtr &node);
+  void ConvertLoad(const CNodePtr &node);
+  void ConvertHcomFusionId(const CNodePtr &node);
+  void ConvertHcclNode(const CNodePtr &node);
+  void ConvertAllToAllv(const CNodePtr &node);
+  void ConvertUniformReal(const CNodePtr &node);
+  void AddCommAttrForHcclNode(const CNodePtr &node, const OperatorPtr &converted_op) const;
   void ConvertOCRRecPreHandle(const CNodePtr &node);
   void ConvertConv2D(const CNodePtr &node);
   void ConvertDynamicStitch(const CNodePtr &node);
+  void ConvertParallelGroupToHcom(const CNodePtr &node);
   std::vector<int64_t> CastToInt(const ValuePtr &value) const;
+  void TransDataType(const FuncGraphPtr &anf_graph) const;
+  void TransInputDataType(const CNodePtr &node, const std::string &node_name) const;
+  void TransAttrDataType(const CNodePtr &node, const std::string &node_name) const;
   bool CheckCNode(const std::string &name, const CNodePtr node);
   void SetNodeInput(AnfNodePtr node);
   void UpdateOpDesc(AnfNodePtr node);
@@ -208,12 +259,11 @@ class DfGraphConvertor {
   void UpdateDataOpDesc(const AnfNodePtr &it, const OperatorPtr &op) const;
   void UpdateConstOpDesc(const AnfNodePtr &it, const OperatorPtr &op) const;
   void AddGraphConstInput(const OperatorPtr &op);
-  void AddGraphDynamicInput(const ParameterPtr &param);
   AnfNodePtr ParseLoadInput(const CNodePtr &cnode) const;
   void SetGraphInputs(std::vector<Operator> *inputs);
+  void SetGraphInputs(std::vector<Operator> *inputs, std::vector<OperatorPtr> *input_datas);
   void TransformConstOp(const CNodePtr &node, const AnfNodePtr &pred);
   AnfNodePtr GetRealInputNode(const CNodePtr &node, const AnfNodePtr &input);
-  void SetupDatasetIterGetNextNode();
 
   void ConvertWhileNode(const CNodePtr &node);
   void CacheWhileGraph(const CNodePtr &cnode);
@@ -223,6 +273,7 @@ class DfGraphConvertor {
   void ConvertWhileCond(const AnfNodePtr &node);
   void ConvertWhileAfter(const AnfNodePtr &node);
   void BuildWhileAfterSubGraph();
+  void BuildCallSubGraphs(const AnfNodePtr &node);
   void GetCallNodeInputs(const CNodePtr &node);
   std::vector<Operator> GetWhileBodyOutputs();
   bool IsSubGraph() const { return graph_type_ == GraphType::kCond || graph_type_ == GraphType::kBody; }
@@ -235,15 +286,22 @@ class DfGraphConvertor {
   void SetWhileOutputHandle(const OperatorPtr &prev_while_op);
   void GetWhileUsedInputIndex(const std::vector<AnfNodePtr> &graphs);
 
-  bool IsDataInput(const AnfNodePtr &node, const AnfNodePtr &input, size_t input_index) const;
+  bool IsDataInput(const AnfNodePtr &node, const AnfNodePtr &input, size_t input_index);
   void SetMakeTupleInput(const OpAdapterPtr &adpt, const CNodePtr &make_tuple_node);
   void SetMergeInput(const OpAdapterPtr &adpt, const CNodePtr &merge_node);
   bool IsMergeOrSwitchLayerInput(const CNodePtr &node) const;
   void SetDynamicInputHandleByMultiInput(const OpAdapterPtr &adpt, const CNodePtr &node,
                                          const CNodePtr &from_node_input);
   void SetNodeControlInput(const AnfNodePtr &node, const AnfNodePtr &input);
-  void SetGraphOutputs();
+  void SetGraphOutputs(bool is_main_graph = false);
   std::vector<OutHandler> GetInputHandles(const AnfNodePtr &node, const AnfNodePtr &input);
+  void FillEmptyInputsWithNoInputOp(std::vector<Operator> *);
+  bool IsDynamicInputBeforeNormalInput(const OpAdapterPtr &adpt, int *ge_input_size,
+                                       mindspore::HashMap<int, int> *ge_input_to_ms_input);
+  void SetDynamicInputBeforeNormalInput(const OpAdapterPtr &adpt, const CNodePtr &node,
+                                        const std::vector<AnfNodePtr> &inputs, const int &ge_input_size,
+                                        const mindspore::HashMap<int, int> &ge_input_to_ms_input,
+                                        std::vector<int64_t> *dyn_input_sizes);
 
   // Identity Optimization
   void IdentityOptimization();
@@ -255,8 +313,16 @@ class DfGraphConvertor {
   bool IsNoOpRedundant(const ::ge::GNode &node) const;
   void RemoveNoOp(::ge::GNode noop);
   std::shared_ptr<std::vector<DfGraph>> BuildBranchGraphs(const CNodePtr &cnode);
+  void BuildInitDataGraph(const std::string &name);
+  bool IsConstantOp(const OperatorPtr &op) const;
 
   std::shared_ptr<AnfGraph> anf_graph_{nullptr};
+  FuncGraphManagerPtr graph_manager_{nullptr};
+  RefModeFlag ref_mode_type_ = RefModeFlag::kRefModeNone;
+  bool ref_mode_ = false;
+  std::vector<std::string> extra_variables_names_;
+  std::vector<std::string> ref_data_names_;
+
   std::shared_ptr<DfGraph> df_graph_{nullptr};
   std::shared_ptr<DfGraph> init_graph_{nullptr};
   std::shared_ptr<DfGraph> save_ckp_graph_{nullptr};
@@ -271,25 +337,25 @@ class DfGraphConvertor {
   mindspore::HashMap<AnfNode *, std::shared_ptr<std::vector<AnfNodePtr>>> branch_input_handle_cache_;
   mindspore::HashMap<std::string, AnfNodePtr> params_;
   mindspore::HashMap<std::string, OperatorPtr> vars_;
+  std::vector<OperatorPtr> ref_datas_;
   std::vector<std::pair<::ge::Operator, std::string>> graph_outputs_;
   std::vector<AnfNodePtr> graph_anf_outputs_;
   std::vector<OperatorPtr> graph_const_inputs_;
   std::vector<OperatorPtr> init_ops_;
+  std::vector<std::string> init_data_names_;
   std::vector<OperatorPtr> broadcast_ops_;
   std::vector<AnfNodePtr> inputs_;
   ShapeArray input_shapes_;
-  OperatorPtr dataset_iter_getnext_;
-  OperatorPtr queue_data_;
-  OperatorPtr get_next_from_queue_;
   Status error_ = SUCCESS;
   bool training_ = false;
+  bool export_air_ = false;
   bool distribute_ = false;
   bool use_inputs_ = false;
   bool dynamic_shape_inputs_ = false;
 
   AnfNodePtr while_cond_node_ = nullptr;
   mindspore::HashMap<AnfNodePtr, std::shared_ptr<std::vector<DfGraph>>> while_dfgraph_cache_;
-
+  mindspore::HashMap<AnfNodePtr, std::shared_ptr<std::vector<DfGraph>>> call_dfgraph_cache_;
   CNodePtr cur_while_node_ = nullptr;
   size_t cur_while_node_out_size_ = 0;
   mindspore::HashMap<size_t, OutHandler> while_const_input_index_;
@@ -317,6 +383,9 @@ class DfGraphConvertor {
   mindspore::HashMap<size_t, OutHandler> bypass_node_handle_cache_;
   size_t case_call_input_size_ = 0;
   bool is_kernel_graph_ = false;
+
+  std::string phase_prefix_;
+  void AddInputInDataSink(vector<Operator> *inputs);
 };
 }  // namespace transform
 }  // namespace mindspore

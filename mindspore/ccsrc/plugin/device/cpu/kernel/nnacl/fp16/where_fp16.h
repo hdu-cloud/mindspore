@@ -13,19 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_FP16_WHERE_FP16_H_
-#define MINDSPORE_NNACL_FP16_WHERE_FP16_H_
+#ifndef NNACL_FP16_WHERE_FP16_H_
+#define NNACL_FP16_WHERE_FP16_H_
 
 #include "nnacl/op_base.h"
 #include "nnacl/where_parameter.h"
+#include "nnacl/kernel/where.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-void WhereWithTripleInputsFp16(const bool *condition, const float16_t *x, const float16_t *y, float16_t *output,
-                               const WhereParameter *param, int task_id);
+void WhereWithTripleInputsFp16(const float16_t *x, const float16_t *y, float16_t *output, const WhereArgs *param,
+                               int task_id, int thread_num);
 #ifdef __cplusplus
 }
 #endif
 
-#endif  // MINDSPORE_NNACL_FP16_WHERE_FP16_H_
+#endif  //  NNACL_FP16_WHERE_FP16_H_

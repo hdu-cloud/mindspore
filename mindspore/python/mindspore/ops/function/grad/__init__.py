@@ -26,7 +26,8 @@ from .grad_func import (
     jvp,
     vjp,
     linearize,
-    stop_gradient
+    stop_gradient,
+    get_grad
 )
 
 __all__ = []

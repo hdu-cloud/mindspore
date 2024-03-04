@@ -15,10 +15,29 @@
  */
 
 #include "ops/stack.h"
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
+
+#include <memory>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "ops/stack_comm.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,20 +56,15 @@ abstract::ShapePtr StackInferShape(const PrimitivePtr &primitive, const std::vec
   if (input_args.size() < 1) {
     MS_LOG(ERROR) << "Invalid input size " << input_args.size();
   }
-  for (const auto &item : input_args) {
-    MS_EXCEPTION_IF_NULL(item);
+  const auto &prim_name = primitive->name();
+  AbstractBasePtrList elements = input_args;
+  if (input_args.size() == 1) {
+    if (!input_args[0]->isa<abstract::AbstractSequence>()) {
+      MS_EXCEPTION(TypeError) << "For '" << prim_name << "', the input data type must be list or tuple of tensors.";
+    }
+    elements = input_args[0]->cast<abstract::AbstractSequencePtr>()->elements();
   }
-  if (!input_args[0]->isa<abstract::AbstractTuple>() && !input_args[0]->isa<abstract::AbstractList>() &&
-      !input_args[0]->isa<abstract::AbstractTensor>()) {
-    MS_EXCEPTION(TypeError) << "The input of Stack must be list or tuple of tensors.";
-  }
-  auto elements =
-    input_args[0]->isa<abstract::AbstractTensor>()
-      ? input_args
-      : (input_args[0]->isa<abstract::AbstractTuple>() ? input_args[0]->cast<abstract::AbstractTuplePtr>()->elements()
-                                                       : input_args[0]->cast<abstract::AbstractListPtr>()->elements());
-  const int64_t kOneNum = 1;
-  (void)CheckAndConvertUtils::CheckInteger("stack element num", SizeToLong(elements.size()), kGreaterEqual, kOneNum,
+  (void)CheckAndConvertUtils::CheckInteger("stack element num", SizeToLong(elements.size()), kGreaterEqual, 1,
                                            primitive->name());
 
   bool has_rank_valid_shape = false;
@@ -89,7 +103,7 @@ abstract::ShapePtr StackInferShape(const PrimitivePtr &primitive, const std::vec
   std::vector<int64_t> infer_shape = input_shape;
   auto axis_temp = GetValue<int64_t>(primitive->GetAttr(kAxis));
   CheckAndConvertUtils::CheckInRange<int64_t>("Stack axis", axis_temp, kIncludeBoth,
-                                              {-SizeToLong(element_rank) - kOneNum, SizeToLong(element_rank)},
+                                              {-SizeToLong(element_rank) - 1, SizeToLong(element_rank)},
                                               primitive->name());
   auto axis = axis_temp < 0 ? static_cast<size_t>(axis_temp) + element_rank + 1 : LongToSize(axis_temp);
   (void)infer_shape.insert(infer_shape.begin() + axis, elements.size());
@@ -97,29 +111,28 @@ abstract::ShapePtr StackInferShape(const PrimitivePtr &primitive, const std::vec
 }
 
 TypePtr StackInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
-  if (!input_args[0]->isa<abstract::AbstractTuple>() && !input_args[0]->isa<abstract::AbstractList>() &&
-      !input_args[0]->isa<abstract::AbstractTensor>()) {
-    MS_EXCEPTION(TypeError) << "The input of Stack must be list or tuple of tensors.";
+  const auto &prim_name = primitive->name();
+  AbstractBasePtrList elements = input_args;
+  if (input_args.size() == 1) {
+    if (!input_args[0]->isa<abstract::AbstractSequence>()) {
+      MS_EXCEPTION(TypeError) << "For '" << prim_name << "', the input data type must be list or tuple of tensors.";
+    }
+    elements = input_args[0]->cast<abstract::AbstractSequencePtr>()->elements();
   }
-  auto elements =
-    input_args[0]->isa<abstract::AbstractTensor>()
-      ? input_args
-      : (input_args[0]->isa<abstract::AbstractTuple>() ? input_args[0]->cast<abstract::AbstractTuplePtr>()->elements()
-                                                       : input_args[0]->cast<abstract::AbstractListPtr>()->elements());
-  const int64_t kOneNum = 1;
-  (void)CheckAndConvertUtils::CheckInteger("stack element num", SizeToLong(elements.size()), kGreaterEqual, kOneNum,
+  (void)CheckAndConvertUtils::CheckInteger("stack element num", SizeToLong(elements.size()), kGreaterEqual, 1,
                                            primitive->name());
   primitive->AddAttr("num", MakeValue(SizeToLong(elements.size())));
   auto element0 = elements[0]->cast<abstract::AbstractTensorPtr>();
-  MS_EXCEPTION_IF_NULL(element0);
+  if (element0 == nullptr) {
+    MS_EXCEPTION(TypeError) << "Infer type failed.";
+  }
   auto infer_type0 = element0->BuildType();
-  MS_EXCEPTION_IF_NULL(infer_type0);
   for (size_t i = 1; i < elements.size(); i++) {
     auto elementi = elements[i]->cast<abstract::AbstractTensorPtr>();
     MS_EXCEPTION_IF_NULL(elementi);
     auto infer_typei = elementi->BuildType();
     MS_EXCEPTION_IF_NULL(infer_typei);
-    if (infer_typei == infer_type0) {
+    if (infer_typei->ToString() != infer_type0->ToString()) {
       MS_EXCEPTION(TypeError) << "All input must have the same data type!input[" << i << "] data type = " << infer_typei
                               << "infer_type0= " << infer_type0;
     }
@@ -135,6 +148,21 @@ AbstractBasePtr StackInfer(const abstract::AnalysisEnginePtr &, const PrimitiveP
   auto infer_type = StackInferType(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_C(kNameStack, Stack);
+
+BaseShapePtr AGStackInfer::InferShape(const PrimitivePtr &primitive,
+                                      const std::vector<AbstractBasePtr> &input_args) const {
+  return StackInferShape(primitive, input_args);
+}
+
+TypePtr AGStackInfer::InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const {
+  return StackInferType(primitive, input_args);
+}
+AbstractBasePtr AGStackInfer::InferShapeAndType(const abstract::AnalysisEnginePtr &engine,
+                                                const PrimitivePtr &primitive,
+                                                const std::vector<AbstractBasePtr> &input_args) const {
+  return StackInfer(engine, primitive, input_args);
+}
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Stack, prim::kPrimStack, AGStackInfer, false);
 }  // namespace ops
 }  // namespace mindspore

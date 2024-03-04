@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,12 +18,12 @@
 
 #include <memory>
 #include <random>
-#include <vector>
 #include <string>
+#include <vector>
 
 #include "minddata/dataset/core/tensor.h"
-#include "minddata/dataset/kernels/tensor_op.h"
 #include "minddata/dataset/kernels/image/image_utils.h"
+#include "minddata/dataset/kernels/tensor_op.h"
 #include "minddata/dataset/util/status.h"
 
 namespace mindspore {
@@ -73,7 +73,7 @@ class RandomCropOp : public TensorOp {
                       int32_t *padded_image_h, bool *crop_further);
 
   // Function breaks X,Y generation functionality out of original compute function and makes available to other Ops
-  void GenRandomXY(int *x, int *y, const int32_t &padded_image_w, const int32_t &padded_image_h);
+  void GenRandomXY(int32_t *x, int32_t *y, int32_t padded_image_w, int32_t padded_image_h);
 
   Status OutputShape(const std::vector<TensorShape> &inputs, std::vector<TensorShape> &outputs) override;
 
@@ -88,6 +88,11 @@ class RandomCropOp : public TensorOp {
   int32_t crop_width_ = 0;
 
  private:
+  Status RandomCropImg(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, int32_t *x, int32_t *y,
+                       int32_t index);
+
+  Status ConstructShape(const TensorShape &in_shape, std::shared_ptr<TensorShape> *out_shape) const;
+
   int32_t pad_top_ = 0;
   int32_t pad_bottom_ = 0;
   int32_t pad_left_ = 0;
@@ -101,5 +106,4 @@ class RandomCropOp : public TensorOp {
 };
 }  // namespace dataset
 }  // namespace mindspore
-
 #endif  // MINDSPORE_CCSRC_MINDDATA_DATASET_KERNELS_IMAGE_RANDOM_CROP_OP_H_

@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,76 +18,44 @@
 #include "common/common_test.h"
 #include "ops/prelu.h"
 #include "ir/dtype/type.h"
-#include "ir/value.h"
 #include "abstract/dshape.h"
 #include "utils/tensor_construct_utils.h"
+#include "ir/primitive.h"
+#include "abstract/abstract_value.h"
+#include "utils/ms_context.h"
+#include "ops/test_ops.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace ops {
-class TestPReLU : public UT::Common {
- public:
-  TestPReLU() {}
-  void SetUp() {}
-  void TearDown() {}
+struct PReLUParams {
+  ShapeVector x_shape;
+  TypePtr x_type;
+  ShapeVector weight_shape;
+  TypePtr weight_type;
+  ShapeVector out_shape;
+  TypePtr out_type;
 };
 
-TEST_F(TestPReLU, test_ops_prelu1) {
-  auto prelu = std::make_shared<PReLU>();
-  auto tensor_x = TensorConstructUtils::CreateOnesTensor(kNumberTypeFloat32, std::vector<int64_t>{2, 3, 4});
-  auto tensor_w = TensorConstructUtils::CreateOnesTensor(kNumberTypeFloat32, std::vector<int64_t>{3});
-  MS_EXCEPTION_IF_NULL(tensor_x);
-  MS_EXCEPTION_IF_NULL(tensor_w);
-  auto abstract = prelu->Infer({tensor_x->ToAbstract(), tensor_w->ToAbstract()});
-  MS_EXCEPTION_IF_NULL(abstract);
-  EXPECT_EQ(abstract->isa<abstract::AbstractTensor>(), true);
-  auto shape_ptr = abstract->BuildShape();
-  MS_EXCEPTION_IF_NULL(shape_ptr);
-  EXPECT_EQ(shape_ptr->isa<abstract::Shape>(), true);
-  auto shape = shape_ptr->cast<abstract::ShapePtr>();
-  MS_EXCEPTION_IF_NULL(shape);
-  auto shape_vec = shape->shape();
-  auto type = abstract->BuildType();
-  MS_EXCEPTION_IF_NULL(type);
-  EXPECT_EQ(type->isa<TensorType>(), true);
-  auto tensor_type = type->cast<TensorTypePtr>();
-  MS_EXCEPTION_IF_NULL(tensor_type);
-  auto data_type = tensor_type->element();
-  MS_EXCEPTION_IF_NULL(data_type);
-  EXPECT_EQ(data_type->type_id(), kNumberTypeFloat32);
-  EXPECT_EQ(shape_vec.size(), 3);
-  EXPECT_EQ(shape_vec[0], 2);
-  EXPECT_EQ(shape_vec[1], 3);
-  EXPECT_EQ(shape_vec[2], 4);
+class TestPReLU : public TestOps, public testing::WithParamInterface<PReLUParams> {};
+
+TEST_P(TestPReLU, dyn_shape) {
+  const auto &param = GetParam();
+  auto x = std::make_shared<abstract::AbstractTensor>(param.x_type, param.x_shape);
+  auto weight = std::make_shared<abstract::AbstractTensor>(param.weight_type, param.weight_shape);
+  auto expect = std::make_shared<abstract::AbstractTensor>(param.out_type, param.out_shape);
+  ASSERT_NE(x, nullptr);
+  ASSERT_NE(weight, nullptr);
+  auto prim = std::make_shared<Primitive>(kNamePReLU);
+  auto out_abstract = opt::CppInferShapeAndType(prim, {x, weight});
+  ASSERT_NE(out_abstract, nullptr);
+  ASSERT_TRUE(*out_abstract == *expect);
 }
 
-TEST_F(TestPReLU, test_ops_prelu2) {
-  auto prelu = std::make_shared<PReLU>();
-  auto tensor_x = TensorConstructUtils::CreateOnesTensor(kNumberTypeFloat16, std::vector<int64_t>{5, 6, 7, 8});
-  auto tensor_w = TensorConstructUtils::CreateOnesTensor(kNumberTypeFloat16, std::vector<int64_t>{1});
-  MS_EXCEPTION_IF_NULL(tensor_x);
-  MS_EXCEPTION_IF_NULL(tensor_w);
-  auto abstract = prelu->Infer({tensor_x->ToAbstract(), tensor_w->ToAbstract()});
-  MS_EXCEPTION_IF_NULL(abstract);
-  EXPECT_EQ(abstract->isa<abstract::AbstractTensor>(), true);
-  auto shape_ptr = abstract->BuildShape();
-  MS_EXCEPTION_IF_NULL(shape_ptr);
-  EXPECT_EQ(shape_ptr->isa<abstract::Shape>(), true);
-  auto shape = shape_ptr->cast<abstract::ShapePtr>();
-  MS_EXCEPTION_IF_NULL(shape);
-  auto shape_vec = shape->shape();
-  auto type = abstract->BuildType();
-  MS_EXCEPTION_IF_NULL(type);
-  EXPECT_EQ(type->isa<TensorType>(), true);
-  auto tensor_type = type->cast<TensorTypePtr>();
-  MS_EXCEPTION_IF_NULL(tensor_type);
-  auto data_type = tensor_type->element();
-  MS_EXCEPTION_IF_NULL(data_type);
-  EXPECT_EQ(data_type->type_id(), kNumberTypeFloat16);
-  EXPECT_EQ(shape_vec.size(), 4);
-  EXPECT_EQ(shape_vec[0], 5);
-  EXPECT_EQ(shape_vec[1], 6);
-  EXPECT_EQ(shape_vec[2], 7);
-  EXPECT_EQ(shape_vec[3], 8);
-}
+INSTANTIATE_TEST_CASE_P(TestPReLUGroup, TestPReLU,
+                        testing::Values(
+                          PReLUParams{{2, 3}, kFloat32, {3}, kFloat32, {2, 3}, kFloat32},
+                          PReLUParams{{-1, -1}, kFloat32, {-1}, kFloat32, {-1, -1}, kFloat32},
+                          PReLUParams{{-2}, kFloat32, {-1}, kFloat32, {-2}, kFloat32}));
 }  // namespace ops
 }  // namespace mindspore

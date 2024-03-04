@@ -23,13 +23,15 @@
 #include <algorithm>
 #include <functional>
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/avg_pool3d_helper_impl.cuh"
-#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/broadcast_impl.cuh"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/binary_ops_impl.cuh"
 #include "plugin/device/gpu/kernel/kernel_constants.h"
 
 namespace mindspore {
 namespace kernel {
+constexpr auto kNumberFive = 5;
 constexpr auto kAvgPool = "AvgPool";
 constexpr auto kAvgPool3D = "AvgPool3D";
 
@@ -72,14 +74,21 @@ class PoolingFwdGpuKernelMod : public NativeGpuKernelMod {
     }
     T *input_addr = GetDeviceAddress<T>(inputs, 0);
     T *output_addr = GetDeviceAddress<T>(outputs, 0);
-    const float alpha = 1;
-    const float beta = 0;
-
-    CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
-      cudnnPoolingForward(cudnn_handle_, pooling_descriptor_, &alpha, input_descriptor_, input_addr, &beta,
-                          output_descriptor_, output_addr),
-      "cudnnPoolingForward failed");
-
+    T alpha = static_cast<T>(1.0f);
+    T beta = static_cast<T>(0.0f);
+    if (cudnn_data_type_ == CUDNN_DATA_DOUBLE) {
+      CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
+        cudnnPoolingForward(cudnn_handle_, pooling_descriptor_, &alpha, input_descriptor_, input_addr, &beta,
+                            output_descriptor_, output_addr),
+        "cudnnPoolingForward failed");
+    } else {
+      const float alphaf = static_cast<float>(alpha);
+      const float betaf = static_cast<float>(beta);
+      CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
+        cudnnPoolingForward(cudnn_handle_, pooling_descriptor_, &alphaf, input_descriptor_, input_addr, &betaf,
+                            output_descriptor_, output_addr),
+        "cudnnPoolingForward failed");
+    }
     if (divisor_override_ != 0) {
       T *work_addr = GetDeviceAddress<T>(workspace, 0);
       size_t output_num = output_size_ / sizeof(T);
@@ -91,11 +100,15 @@ class PoolingFwdGpuKernelMod : public NativeGpuKernelMod {
                         reinterpret_cast<cudaStream_t>(stream_ptr)),
         "cudaMemcpyAsync failed.");
       if (ceil_mode_) {
-        CalRealKernelSize(output_shape_exclude_nc_, kernel_size_, edge_kernel_, work_addr, 0,
-                          reinterpret_cast<cudaStream_t>(stream_ptr));
+        auto status = CalRealKernelSize(output_shape_exclude_nc_, kernel_size_, edge_kernel_, work_addr, 0,
+                                        reinterpret_cast<cudaStream_t>(stream_ptr));
+        CHECK_CUDA_STATUS(status, kernel_name_);
       }
-      ElewiseArith(output_num, BROADCAST_TYPE_MUL, output_addr, work_addr, output_addr,
-                   reinterpret_cast<cudaStream_t>(stream_ptr));
+      std::vector<int64_t> shape = {static_cast<int64_t>(output_num)};
+      auto status = BinaryOpWithBroadcastCudaFunc<BinaryOpType::kMul, T, T, T>(
+        false, shape, shape, shape, output_addr, work_addr, output_addr, device_id_,
+        reinterpret_cast<cudaStream_t>(stream_ptr));
+      CHECK_CUDA_STATUS(status, kernel_name_);
     }
     return true;
   }
@@ -113,6 +126,7 @@ class PoolingFwdGpuKernelMod : public NativeGpuKernelMod {
     if (kernel_name_ == kAvgPool3D) {
       divisor_override_ = GetValue<int64_t>(prim->GetAttr("divisor_override"));
       ceil_mode_ = GetValue<bool>(prim->GetAttr("ceil_mode"));
+      AvgPool3DPadListCheck(base_operator);
     }
     cudnn_data_type_ = GetCudnnDataType(TypeIdLabel(inputs[0]->GetDtype()));
     data_format_ = mindspore::FormatEnumToString(inputs[0]->GetFormat());
@@ -299,7 +313,7 @@ class PoolingFwdGpuKernelMod : public NativeGpuKernelMod {
                          [](const int64_t &value) { return static_cast<int>(value); });
     int windowDimA[3] = {window_depth, window_height, window_width};
     int paddingA[3] = {0, 0, 0};
-    if (stride_.size() < 5) {
+    if (stride_.size() < kNumberFive) {
       MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the length of 'strides' cannot be less than 5, but got "
                         << stride_.size();
     }
@@ -389,6 +403,32 @@ class PoolingFwdGpuKernelMod : public NativeGpuKernelMod {
       }
     }
     return edge_kernel;
+  }
+
+  void AvgPool3DPadListCheck(const BaseOperatorPtr &base_operator) {
+    auto prim = base_operator->GetPrim();
+    auto pad_mode = GetValue<std::string>(prim->GetAttr("pad_mode"));
+    if (pad_mode == kSamePadModeUpperCase || pad_mode == kSamePadModeLowerCase || pad_mode == kValidPadModeUpperCase ||
+        pad_mode == kValidPadModeLowerCase) {
+      return;
+    }
+
+    const std::vector<int64_t> &pad_list = GetValue<std::vector<int64_t>>(prim->GetAttr("pad_list"));
+    if (prim->HasAttr("count_include_pad") && !GetValue<bool>(prim->GetAttr("count_include_pad")) &&
+        base_operator->HasAttr("divisor_override") &&
+        GetValue<int64_t>(base_operator->GetAttr("divisor_override")) != 0 &&
+        std::any_of(pad_list.begin(), pad_list.end(), [](int64_t pad) { return pad > 0; })) {
+      MS_LOG(EXCEPTION) << kernel_name_ << "does not support the scenes while padmode == " << pad_mode
+                        << " && padding > 0 && count_include_pad == False && divisor_override != None";
+    }
+
+    const size_t kPadScale = 2;
+    for (size_t idx = 0; idx < pad_list.size(); idx += kPadScale) {
+      if (pad_list[idx] != pad_list[idx + 1]) {
+        MS_LOG(EXCEPTION) << "For " << kernel_name_ << ", pad[" << idx << "] and pad[" << (idx + 1)
+                          << "] must be equal, but got " << pad_list[idx] << " and " << pad_list[idx + 1];
+      }
+    }
   }
 
   cudnnHandle_t cudnn_handle_;

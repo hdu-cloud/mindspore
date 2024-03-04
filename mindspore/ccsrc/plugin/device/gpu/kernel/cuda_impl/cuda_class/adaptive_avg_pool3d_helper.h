@@ -58,16 +58,16 @@ class AdaptiveAvgPool3DHelperGpuKernel : public GpuKernelHelperBase {
     }
     is_null_input_ = (inp_flag == 1 || out_flag == 1);
 
-    constexpr int INPUT_SHAPE_SIZE = 3;
-    constexpr int OUTPUT_SHAPE_SIZE = 3;
+    constexpr size_t kInputShapeSize = 3;
+    constexpr size_t kOutputShapeSize = 3;
     auto input_rank = input_shapes[0].size();
     auto output_rank = output_shapes[0].size();
-    if (input_rank < INPUT_SHAPE_SIZE) {
+    if (input_rank < kInputShapeSize) {
       MS_LOG(ERROR) << "For '" << kernel_name_ << "', the dimension of input cannot be less than 3, but got "
                     << input_rank;
       return -1;
     }
-    if (output_rank < OUTPUT_SHAPE_SIZE) {
+    if (output_rank < kOutputShapeSize) {
       MS_LOG(ERROR) << "For '" << kernel_name_ << "', the dimension of output cannot be less than 3, but got "
                     << output_rank;
       return -1;
@@ -112,9 +112,11 @@ class AdaptiveAvgPool3DHelperGpuKernel : public GpuKernelHelperBase {
     }
 
     // call cuda kernel
-    ApplyAdaptiveAvgPool3D((uint)out_size_, (uint)input_channel_, (uint)input_height_, (uint)input_width_,
-                           (uint)input_depth_, (uint)output_channel_, (uint)output_height_, (uint)output_width_,
-                           (uint)output_depth_, input_ptr, output_ptr, reinterpret_cast<cudaStream_t>(cuda_stream));
+    auto status =
+      ApplyAdaptiveAvgPool3D((uint)out_size_, (uint)input_channel_, (uint)input_height_, (uint)input_width_,
+                             (uint)input_depth_, (uint)output_channel_, (uint)output_height_, (uint)output_width_,
+                             (uint)output_depth_, input_ptr, output_ptr, reinterpret_cast<cudaStream_t>(cuda_stream));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return 0;
   }
 

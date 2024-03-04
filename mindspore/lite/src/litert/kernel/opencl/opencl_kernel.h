@@ -24,7 +24,7 @@
 #include <string>
 #include <cfloat>
 #include "src/litert/lite_kernel.h"
-#include "src/litert/kernel_exec.h"
+#include "src/executor/kernel_exec.h"
 #include "include/errorcode.h"
 #include "src/litert/kernel/gpu/opencl/opencl_runtime.h"
 #include "mindspore/lite/src/litert/tensor_category.h"
@@ -41,6 +41,7 @@ constexpr int INPUT_TENSOR_SIZE_3 = 3;
 constexpr int INPUT_TENSOR_SIZE_4 = 4;
 constexpr int INPUT_TENSOR_SIZE_5 = 5;
 constexpr int INPUT_TENSOR_SIZE_6 = 6;
+constexpr int INPUT_TENSOR_SIZE_16 = 16;
 constexpr int OUTPUT_TENSOR_SIZE_1 = 1;
 constexpr int OUTPUT_TENSOR_SIZE_2 = 2;
 constexpr int OUTPUT_TENSOR_SIZE_3 = 3;
@@ -107,6 +108,8 @@ int Broadcast2GpuShape(const SrcT *src, int src_num, DstT *dst, int dsc_num, Dst
   return Broadcast2GpuShape(src, src_num, dst, dsc_num);
 }
 
+int CpuAxis2GpuAxis(size_t ndim, int cpu_axis, int *gpu_axis);
+
 struct GpuTensorInfo {
   GpuTensorInfo() = default;
   explicit GpuTensorInfo(const lite::Tensor *tensor) {
@@ -139,7 +142,7 @@ struct GpuTensorInfo {
     Slice = UP_DIV(C, C4NUM);
 
     FLT_size = tensor->data_type() == kNumberTypeFloat16 ? sizeof(cl_half) : sizeof(cl_float);
-    FLT4_size = FLT_size * 4;
+    FLT4_size = FLT_size * C4NUM;
     if (W * Slice <= ocl_runtime_wrap_.GetInstance()->GetMaxImage2DWidth()) {
       height = N * D * H;
       width = W * Slice;
@@ -228,14 +231,15 @@ struct GpuTensorInfo {
   }
 
   int AlignAxis(int oriAxis) const {
+    const int axis = 3;
     if (NDim == 0 || NDim == 1) {
-      return 3;
+      return axis;
     }
     int no_neg_axis = static_cast<int>((oriAxis + NDim) % NDim);
     if (no_neg_axis == 0) {
       return 0;
     }
-    return static_cast<int>(no_neg_axis + 4 - NDim);
+    return static_cast<int>(no_neg_axis + C4NUM - NDim);
   }
 
   bool IsImageSizeValid() { return width > 0 && height > 0; }
@@ -281,6 +285,15 @@ class OpenCLKernel : public LiteKernel {
   int PreProcess() override;
   int ReSize() override;
   int Run() override { return RET_ERROR; }
+  int PostProcess() override {
+    if (is_oversize_kernel_) {
+      return FreeInWorkTensor();
+    }
+    return RET_OK;
+  }
+
+  bool MallocDataDone();
+  std::string OpenCLKernelHeader();
 
   virtual int CheckSpecs();
   virtual int CheckSpecsWithoutShape() { return RET_OK; }
@@ -295,6 +308,7 @@ class OpenCLKernel : public LiteKernel {
   virtual int AssignTuningParam(const BaseTuningParameter &param);
   virtual int Tune();
   virtual int StoreConstData() { return RET_OK; }
+  virtual std::string DumpCode() { return "No source code generated!"; }
 
   int GetImageSize(size_t idx, lite::opencl::ImageSize *img_size);
   void PrintOutput(int print_num = 10, const std::string &out_file = "");
@@ -302,7 +316,7 @@ class OpenCLKernel : public LiteKernel {
   void SetMemType(lite::opencl::MemType mem_type) { out_mem_type_ = mem_type; }
   OpParameter *GetParameter() { return op_parameter_; }
   virtual double GetProfilingTimeMs();
-  virtual int InferShape();
+  int InferShape() override;
 
  protected:
   void PrintShape(lite::Tensor *output_tensor);
@@ -328,6 +342,7 @@ class OpenCLKernel : public LiteKernel {
   cl::Event event_;
   void *restore_quant_data_{nullptr};
   bool dequant_flag_{false};
+  bool is_oversize_kernel_{false};
 
  private:
   lite::opencl::OpenCLRuntimeInnerWrapper ocl_runtime_wrap_;
@@ -341,7 +356,6 @@ kernel::LiteKernel *OpenCLKernelCreator(const std::vector<lite::Tensor *> &input
   auto *kernel = new (std::nothrow) T(reinterpret_cast<OpParameter *>(opParameter), inputs, outputs, ctx);
   if (kernel == nullptr) {
     MS_LOG(WARNING) << "kernel " << opParameter->name_ << "is nullptr.";
-    free(opParameter);
     return nullptr;
   }
 

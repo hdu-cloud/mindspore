@@ -71,7 +71,8 @@ class MishHelperGpuKernel : public GpuKernelHelperBase {
     }
 
     // call cuda kernel
-    Mish(input_size_, input_ptr, output_ptr, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream));
+    auto status = Mish(input_size_, input_ptr, output_ptr, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return 0;
   }
 

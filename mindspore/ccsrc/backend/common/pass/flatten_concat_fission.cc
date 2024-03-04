@@ -20,7 +20,12 @@
 #include <utility>
 #include <functional>
 #include <memory>
+#include <string>
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "include/common/utils/anfalgo.h"
+#include "include/backend/anf_runtime_algorithm.h"
 
 namespace mindspore {
 namespace opt {
@@ -104,7 +109,44 @@ size_t GetFusionSize(const AnfNodePtr &node) {
   }
   return 0;
 }
+
+void ExpandFlattenConcatTupleInput(const FuncGraphPtr &graph, const CNodePtr &cnode_ptr) {
+  MS_EXCEPTION_IF_NULL(cnode_ptr);
+  MS_EXCEPTION_IF_NULL(graph);
+  if (!common::AnfAlgo::CheckPrimitiveType(cnode_ptr, prim::kPrimFlattenConcat)) {
+    return;
+  }
+  std::vector<AnfNodePtr> plant_inputs;
+  std::vector<int64_t> dyn_input_sizes;
+  plant_inputs.push_back(common::AnfAlgo::GetCNodePrimitiveNode(cnode_ptr));
+  size_t input_num = cnode_ptr->inputs().size() - 1;
+  for (size_t i = 0; i < input_num; ++i) {
+    auto input_node = common::AnfAlgo::GetInputNode(cnode_ptr, i);
+    MS_EXCEPTION_IF_NULL(input_node);
+    bool output_is_tuple = common::AnfAlgo::IsTupleOutput(input_node);
+    if (output_is_tuple) {
+      auto dyn_input_size = SplitTupleInputs(graph, input_node, &plant_inputs);
+      if (dyn_input_size == 0) {
+        dyn_input_sizes.push_back(-1);
+        plant_inputs.push_back(input_node);
+      } else {
+        (void)dyn_input_sizes.emplace_back(dyn_input_size);
+      }
+    } else {
+      dyn_input_sizes.push_back(-1);
+      plant_inputs.push_back(input_node);
+    }
+  }
+  // Expand the inputs and replace the original inputs.
+  cnode_ptr->set_inputs(plant_inputs);
+}
 }  // namespace
+
+std::vector<std::string> FlattenConcatFission::MustExistPrimitiveName() const {
+  std::vector<std::string> ret;
+  (void)ret.emplace_back(prim::kPrimFlattenConcat->name());
+  return ret;
+}
 
 const BaseRef FlattenConcatFission::DefinePattern() const {
   VarPtr Xs = std::make_shared<SeqVar>();
@@ -117,6 +159,10 @@ const AnfNodePtr FlattenConcatFission::Process(const FuncGraphPtr &func_graph, c
   MS_EXCEPTION_IF_NULL(node);
   auto cnode = node->cast<CNodePtr>();
   MS_EXCEPTION_IF_NULL(cnode);
+
+  // After ConvertTupleInputToDynamicInput pass is removed, we need to expand tuple inputs for FlattenConcat op here.
+  ExpandFlattenConcatTupleInput(func_graph, cnode);
+
   std::unordered_map<TypeId, std::pair<std::vector<AnfNodePtr>, int64_t>> type_id_to_node_info;
   std::vector<TypeId> output_type_id_order;
   size_t block_size = GetFusionSize(node);

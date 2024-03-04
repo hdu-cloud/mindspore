@@ -16,14 +16,14 @@
 #ifndef MINDSPORE_CORE_OPS_RESIZE_NEAREST_NEIGHBOR_V2_H_
 #define MINDSPORE_CORE_OPS_RESIZE_NEAREST_NEIGHBOR_V2_H_
 
-#include <string>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "abstract/abstract_value.h"
+#include "mindapi/base/types.h"
 #include "ops/base_operator.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/base/types.h"
 
 namespace mindspore {
 namespace ops {
@@ -41,9 +41,6 @@ class MIND_API ResizeNearestNeighborV2 : public BaseOperator {
   bool get_half_pixel_centers() const;
   std::string get_data_format() const;
 };
-
-AbstractBasePtr ResizeNearestNeighborV2Infer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                             const std::vector<AbstractBasePtr> &input_args);
 using PrimResizeNearestNeighborV2Ptr = std::shared_ptr<ResizeNearestNeighborV2>;
 }  // namespace ops
 }  // namespace mindspore

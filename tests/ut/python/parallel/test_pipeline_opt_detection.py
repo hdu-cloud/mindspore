@@ -20,8 +20,9 @@ from mindspore import Tensor
 from mindspore.ops import operations as P
 from mindspore.common.parameter import Parameter
 from mindspore.common.initializer import initializer
-from mindspore.train.model import Model
+from mindspore.train import Model
 from mindspore.nn.wrap.cell_wrapper import PipelineCell, MicroBatchInterleaved
+
 
 class DatasetLenet():
     def __init__(self, data, label, length=3):

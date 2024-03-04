@@ -95,7 +95,7 @@ def compare_tensor(acu_output, exp_output, rtol=1.e-5, atol=1.e-8, equal_nan=Fal
 
 def get_rtol_atol(op_name, dtype, rtol=5e-03, atol=5e-03):
     run_mode = os.environ.get('RUNTIME_MODE')
-    if run_mode in ("rpc_cloud", "air_cloud"):
+    if run_mode in ("air_cloud",):
         if dtype == "float16":
             rtol = atol = 1e-03
         else:
@@ -272,11 +272,7 @@ def _gen_uniq_file_name(op_name):
 
 def _collect_inplace_assign_infos(op, infos, sum_out):
     """Collect inplace assign infos."""
-    if op["name"] != "InplaceAssign":
-        return
-    fake_output = get_attr(op["attr"], "fake_output")
-    if fake_output:
-        infos["fake_output_tensors"].append(op["output_desc"][0]["tensor_name"])
+    infos["fake_output_tensors"].append(op["output_desc"][0]["tensor_name"])
     input0, input1 = op["input_desc"][0][0], op["input_desc"][1][0]
     if input1["tensor_name"] in sum_out:
         infos["clean_input"].append(input0["tensor_name"])
@@ -302,9 +298,8 @@ def _collect_infos(desc, infos):
                                                                         indices_shape=input1["shape"],
                                                                         indices_dtype=input1["data_type"],
                                                                         attrs=get_attr(op["attr"], "num_segments"))
-        elif op["name"] in ["InplaceAssign", "Assign"]:
-            if op["name"] == "InplaceAssign":
-                _collect_inplace_assign_infos(op, infos, sum_out)
+        elif op["name"] == "Assign":
+            _collect_inplace_assign_infos(op, infos, sum_out)
             infos["inplace_assign_write"].append(op["input_desc"][0][0]["tensor_name"])
         elif op["name"] in ["TensorScatterAdd", "Gather", "GatherNd"]:
             input0, input1 = op["input_desc"][0][0], op["input_desc"][1][0]
@@ -543,7 +538,11 @@ def _update_workspace_data(kernel_name, input_for_mod, output_indexes):
 def gen_json_data(op_desc, with_compute=True, input_for_mod=None):
     """Generating test data for composite json"""
     desc = json.loads(op_desc)
-
+    from akg.ms.info_version_adapt import InfoVersionAdapt
+    info_adapter = InfoVersionAdapt(desc)
+    ret = info_adapter.run()
+    if not ret:
+        raise RuntimeError(info_adapter.msg)
     output_indexes = []
     expect = []
     infos = {"gen_data": False,

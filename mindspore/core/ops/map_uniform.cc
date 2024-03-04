@@ -15,25 +15,36 @@
  */
 
 #include "ops/map_uniform.h"
-#include <algorithm>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
-constexpr size_t kMapUniformInputsNum = 3;
-constexpr size_t kHashMapDim = 2;
 abstract::ShapePtr MapUniformInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   return input_args[kInputIndex0]->BuildShape()->cast<abstract::ShapePtr>();
 }
 
 TypePtr MapUniformInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
-  auto prim_name = prim->name();
   MS_EXCEPTION_IF_NULL(prim);
+  auto prim_name = prim->name();
   auto input_type = input_args[kInputIndex0]->BuildType();
   auto per_group_size_type = input_args[kInputIndex1]->BuildType();
   auto group_num_type = input_args[kInputIndex2]->BuildType();
@@ -52,13 +63,32 @@ TypePtr MapUniformInferType(const PrimitivePtr &prim, const std::vector<Abstract
 AbstractBasePtr MapUniformInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                 const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kMapUniformInputsNum, primitive->name());
+  const int64_t input_num = 3;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
   auto infer_type = MapUniformInferType(primitive, input_args);
   auto infer_shape = MapUniformInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
 MIND_API_OPERATOR_IMPL(MapUniform, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(MapUniform, prim::kPrimMapUniform, MapUniformInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMapUniformInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MapUniformInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MapUniformInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MapUniformInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MapUniform, prim::kPrimMapUniform, AGMapUniformInfer, false);
 }  // namespace ops
 }  // namespace mindspore

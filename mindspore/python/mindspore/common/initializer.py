@@ -13,6 +13,7 @@
 # limitations under the License.
 # ============================================================================
 """Initializer for cell parameters."""
+
 from __future__ import absolute_import
 
 import numbers
@@ -31,6 +32,13 @@ _INITIALIZER_ALIAS = dict()
 class Initializer:
     """
     The abstract base class of the initializer.
+
+    Note:
+        Initializers are intended to be used for delayed initialization in parallel mode rather than Tensor
+        initialization. If you have to use Initializers to create a Tensor, :func:`mindspore.Tensor.init_data` should be
+        followed in most of the cases. For more information, please refer to `mindspore.Tensor.init_data
+        <https://www.mindspore.cn/docs/en/master/api_python/mindspore/Tensor/mindspore.Tensor.init_data.html#
+        mindspore-tensor-init-data>`_ .
 
     Args:
         kwargs (dict): Keyword arguments for Initializer.
@@ -125,8 +133,9 @@ class Zero(Initializer):
     Examples:
         >>> import mindspore
         >>> from mindspore.common.initializer import initializer, Zero
-        >>> tensor1 = initializer(Zero(), [1, 2, 3], mindspore.float32)
-        >>> tensor2 = initializer('zeros', [1, 2, 3], mindspore.float32)
+        >>> from mindspore import Parameter
+        >>> w1 = Parameter(initializer(Zero(), [1, 2, 3], mindspore.float32))
+        >>> w2 = Parameter(initializer('zeros', [1, 2, 3], mindspore.float32))
     """
 
     def _initialize(self, arr):
@@ -141,8 +150,9 @@ class One(Initializer):
     Examples:
         >>> import mindspore
         >>> from mindspore.common.initializer import initializer, One
-        >>> tensor1 = initializer(One(), [1, 2, 3], mindspore.float32)
-        >>> tensor2 = initializer('ones', [1, 2, 3], mindspore.float32)
+        >>> from mindspore import Parameter
+        >>> w1 = Parameter(initializer(One(), [1, 2, 3], mindspore.float32))
+        >>> w2 = Parameter(initializer('ones', [1, 2, 3], mindspore.float32))
     """
 
     def _initialize(self, arr):
@@ -262,7 +272,7 @@ def _calculate_in_and_out(arr):
 class XavierNormal(Initializer):
     r"""
     Generates an array with values sampled from Xavier normal distribution
-    :math:`\mathcal{N}(0, \text{sigma}^2)` in order to initialize a tensor, where
+    :math:`{N}(0, \text{sigma}^2)` in order to initialize a tensor, where
 
     .. math::
         sigma = gain * \sqrt{\frac{2}{n_{in} + n_{out}}}
@@ -271,13 +281,14 @@ class XavierNormal(Initializer):
     :math:`n_{out}` is the number of output units in the weight tensor.
 
     Args:
-        gain (float): An optional scaling factor. Default: 1.
+        gain (float): An optional scaling factor. Default: ``1`` .
 
     Examples:
         >>> import mindspore
         >>> from mindspore.common.initializer import initializer, XavierNormal
-        >>> tensor1 = initializer(XavierNormal(), [1, 2, 3], mindspore.float32)
-        >>> tensor2 = initializer('xavier_normal', [1, 2, 3], mindspore.float32)
+        >>> from mindspore import Parameter
+        >>> w1 = Parameter(initializer(XavierNormal(), [1, 2, 3], mindspore.float32))
+        >>> w2 = Parameter(initializer('xavier_normal', [1, 2, 3], mindspore.float32))
     """
     def __init__(self, gain=1):
         super().__init__(gain=gain)
@@ -308,14 +319,15 @@ class XavierUniform(Initializer):
     `<http://proceedings.mlr.press/v9/glorot10a.html>`_.
 
     Args:
-        gain (float): An optional scaling factor. Default: 1.
+        gain (float): An optional scaling factor. Default: ``1`` .
 
 
     Examples:
         >>> import mindspore
         >>> from mindspore.common.initializer import initializer, XavierUniform
-        >>> tensor1 = initializer(XavierUniform(), [1, 2, 3], mindspore.float32)
-        >>> tensor2 = initializer('xavier_uniform', [1, 2, 3], mindspore.float32)
+        >>> from mindspore import Parameter
+        >>> w1 = Parameter(initializer(XavierUniform(), [1, 2, 3], mindspore.float32))
+        >>> w2 = Parameter(initializer('xavier_uniform', [1, 2, 3], mindspore.float32))
     """
 
     def __init__(self, gain=1):
@@ -338,8 +350,8 @@ class HeUniform(Initializer):
     .. math::
         boundary = \text{gain} \times \sqrt{\frac{3}{fan\_mode}}
 
-    where :math:`gain` is an optional scaling factor. If :math:`fan\_mode` is 'fan_in', it is the number of input units
-    of the weight tensor. If :math:`fan\_mode` is 'fan_out',
+    where :math:`gain` is an optional scaling factor. If :math:`fan\_mode` is ``'fan_in'``,
+    it is the number of input units of the weight tensor. If :math:`fan\_mode` is ``'fan_out'``,
     it is the number of output units of the weight tensor.
 
     For details of HeUniform algorithm, please check
@@ -347,19 +359,20 @@ class HeUniform(Initializer):
 
     Args:
         negative_slope (int, float, bool): The negative slope of the rectifier used after this layer
-            (only used when `nonlinearity` is 'leaky_relu'). Default: 0.
-        mode (str): Either 'fan_in' or 'fan_out'. Choosing 'fan_in' preserves the magnitude of the
-            variance of the weights in the forward pass. Choosing 'fan_out' preserves the magnitudes
-            in the backwards pass. Default: 'fan_in'.
-        nonlinearity (str): The non-linear function, recommended to use only with 'relu' or 'leaky_relu'.
-            Default: 'leaky_relu'.
+            (only used when `nonlinearity` is 'leaky_relu'). Default: ``0`` .
+        mode (str): Either ``'fan_in'`` or ``'fan_out'`` . Choosing ``'fan_in'`` preserves the magnitude of the
+            variance of the weights in the forward pass. Choosing ``'fan_out'`` preserves the magnitudes
+            in the backwards pass. Default: ``'fan_in'`` .
+        nonlinearity (str): The non-linear function, recommended to use only with ``'relu'`` or ``'leaky_relu'`` .
+            Default: ``'leaky_relu'`` .
 
 
     Examples:
         >>> import mindspore
         >>> from mindspore.common.initializer import initializer, HeUniform
-        >>> tensor1 = initializer(HeUniform(), [1, 2, 3], mindspore.float32)
-        >>> tensor2 = initializer('he_uniform', [1, 2, 3], mindspore.float32)
+        >>> from mindspore import Parameter
+        >>> w1 = Parameter(initializer(HeUniform(), [1, 2, 3], mindspore.float32))
+        >>> w2 = Parameter(initializer('he_uniform', [1, 2, 3], mindspore.float32))
     """
 
     def __init__(self, negative_slope=0, mode='fan_in', nonlinearity='leaky_relu'):
@@ -393,19 +406,20 @@ class HeNormal(Initializer):
 
     Args:
         negative_slope (int, float): The negative slope of the rectifier used after this layer
-            (only used when `nonlinearity` is 'leaky_relu'). Default: 0.
-        mode (str): Either 'fan_in' or 'fan_out'. Choosing 'fan_in' preserves the magnitude of the
-            variance of the weights in the forward pass. Choosing 'fan_out' preserves the magnitudes
-            in the backwards pass. Default: 'fan_in'.
-        nonlinearity (str): The non-linear function, recommended to use only with 'relu' or 'leaky_relu'.
-            Default: 'leaky_relu'.
+            (only used when `nonlinearity` is 'leaky_relu'). Default: ``0`` .
+        mode (str): Either ``'fan_in'`` or ``'fan_out'`` . Choosing ``'fan_in'`` preserves the magnitude of the
+            variance of the weights in the forward pass. Choosing ``'fan_out'`` preserves the magnitudes
+            in the backwards pass. Default: ``'fan_in'`` .
+        nonlinearity (str): The non-linear function, recommended to use only with ``'relu'`` or ``'leaky_relu'`` .
+            Default: ``'leaky_relu'`` .
 
 
     Examples:
         >>> import mindspore
         >>> from mindspore.common.initializer import initializer, HeNormal
-        >>> tensor1 = initializer(HeNormal(), [1, 2, 3], mindspore.float32)
-        >>> tensor2 = initializer('he_normal', [1, 2, 3], mindspore.float32)
+        >>> from mindspore import Parameter
+        >>> w1 = Parameter(initializer(HeNormal(), [1, 2, 3], mindspore.float32))
+        >>> w2 = Parameter(initializer('he_normal', [1, 2, 3], mindspore.float32))
     """
 
     def __init__(self, negative_slope=0, mode='fan_in', nonlinearity='leaky_relu'):
@@ -433,7 +447,8 @@ class Constant(Initializer):
     Examples:
         >>> import mindspore
         >>> from mindspore.common.initializer import initializer, Constant
-        >>> tensor1 = initializer(Constant(3), [1, 2, 3], mindspore.float32)
+        >>> from mindspore import Parameter
+        >>> w1 = Parameter(initializer(Constant(3), [1, 2, 3], mindspore.float32))
     """
 
     def __init__(self, value):
@@ -455,8 +470,9 @@ class Identity(Initializer):
     Examples:
         >>> import mindspore
         >>> from mindspore.common.initializer import initializer, Identity
-        >>> tensor1 = initializer(Identity(), [2, 3], mindspore.float32)
-        >>> tensor2 = initializer('identity', [2, 3], mindspore.float32)
+        >>> from mindspore import Parameter
+        >>> w1 = initializer(Identity(), [2, 3], mindspore.float32)
+        >>> w2 = initializer('identity', [2, 3], mindspore.float32)
     """
 
     def _initialize(self, arr):
@@ -471,11 +487,11 @@ class Identity(Initializer):
 class Sparse(Initializer):
     """
     Generates a 2 dimension sparse matrix array in order to initialize a tensor. The non-zero positions
-    will be filled with the value sampled from the normal distribution :math:`{N}(0, 0.01)`.
+    will be filled with the value sampled from the normal distribution :math:`{N}(0, sigma)`.
 
     Args:
          sparsity (float): The fraction of elements being set to zero in each column.
-         sigma (float): The standard deviation of the normal distribution. Default: 0.01.
+         sigma (float): The standard deviation of the normal distribution. Default: ``0.01`` .
 
     Raises:
         ValueError: If the dimension of input tensor is not equal to 2.
@@ -483,7 +499,8 @@ class Sparse(Initializer):
     Examples:
         >>> import mindspore
         >>> from mindspore.common.initializer import initializer, Sparse
-        >>> tensor1 = initializer(Sparse(sparsity=0.1, sigma=0.01), [5, 8], mindspore.float32)
+        >>> from mindspore import Parameter
+        >>> w1 = Parameter(initializer(Sparse(sparsity=0.1, sigma=0.01), [5, 8], mindspore.float32))
     """
 
     def __init__(self, sparsity, sigma=0.01):
@@ -508,11 +525,11 @@ class Sparse(Initializer):
 class Dirac(Initializer):
     """
     Generates an array with the Dirac delta function in order to initialize a tensor.
-    It tries to preserves the identity of input for convolution layers.
-    For group convolution, each group of channels will be preserved respectively.
+    It's usually used in convolution layers, preserves as many identities of the inputs as possible.
 
     Args:
-        groups (int): The number of group in convolution layer. Default: 1.
+        groups (int): The number of groups in convolution layer. Each group applies the same initialization.
+            Default: ``1`` .
 
     Raises:
         ValueError: If the dimension of the initialized tensor is not in [3, 4, 5].
@@ -521,8 +538,9 @@ class Dirac(Initializer):
     Examples:
         >>> import mindspore
         >>> from mindspore.common.initializer import initializer, Dirac
-        >>> tensor1 = initializer(Dirac(groups=2), [6, 4, 3, 3], mindspore.float32)
-        >>> tensor2 = initializer("dirac", [6, 4, 3, 3], mindspore.float32)
+        >>> from mindspore import Parameter
+        >>> w1 = Parameter(initializer(Dirac(groups=2), [6, 4, 3, 3], mindspore.float32))
+        >>> w2 = Parameter(initializer("dirac", [6, 4, 3, 3], mindspore.float32))
     """
 
     def __init__(self, groups=1):
@@ -548,7 +566,7 @@ class Dirac(Initializer):
         for group in range(self.groups):
             for dim in range(min_dim):
                 if dimension == 3:
-                    data[group * out_channel_per_group + dim, dim, shapes[2]//2] = 1
+                    data[group * out_channel_per_group + dim, dim, shapes[2] // 2] = 1
                 elif dimension == 4:
                     data[group * out_channel_per_group + dim, dim, shapes[2] // 2, shapes[3] // 2] = 1
                 else:
@@ -564,7 +582,7 @@ class Orthogonal(Initializer):
     If the dimension is greater than 2, the trailing dimensions will be flattened.
 
     Args:
-         gain (float): An optional scaling factor. Default: 1.
+         gain (float): An optional scaling factor. Default: ``1.0`` .
 
     Raises:
         ValueError: If the dimension of input tensor is less than 2.
@@ -572,8 +590,9 @@ class Orthogonal(Initializer):
     Examples:
         >>> import mindspore
         >>> from mindspore.common.initializer import initializer, Orthogonal
-        >>> tensor1 = initializer(Orthogonal(gain=2.), [2, 3, 4], mindspore.float32)
-        >>> tensor2 = initializer('orthogonal', [2, 3, 4], mindspore.float32)
+        >>> from mindspore import Parameter
+        >>> w1 = Parameter(initializer(Orthogonal(gain=2.), [2, 3, 4], mindspore.float32))
+        >>> w2 = Parameter(initializer('orthogonal', [2, 3, 4], mindspore.float32))
     """
 
     def __init__(self, gain=1.):
@@ -609,28 +628,31 @@ class VarianceScaling(Initializer):
     Generates an random array with scaling in order to initialize a tensor.
     When `distribution` is 'truncated_normal' or 'untruncated_normal', the value will be sampled from truncated or
     untruncated normal distribution with a mean of 0 and a scaled standard deviation
-    :math:`stddev = \sqrt{\frac{scale}{n}}`. :math:`n` will be the number of input units if `mode` is 'fan_in',
-    the number of output units if `mode` is 'fan_out', the average of 'fan_in' and 'fan_out' if `mode` is 'fan_avg'.
-    When `distribution` is 'uniform', the value will be sampled from a uniform distribution within the limit of
+    :math:`stddev = \sqrt{\frac{scale}{n}}`. :math:`n` will be the number of input units if `mode` is ``'fan_in'``,
+    while :math:`n` will be
+    the number of output units if `mode` is ``'fan_out'``. :math:`n` will be the average of ``'fan_in'``
+    and ``'fan_out'`` if `mode` is ``'fan_avg'``.
+    When `distribution` is ``'uniform'``, the value will be sampled from a uniform distribution within the limit of
     :math:`[-\sqrt{\frac{3*scale}{n}}, \sqrt{\frac{3*scale}{n}}]`.
 
     Args:
-        scale (float): The scaling factor. Default: 1.0.
-        mode (str): Should be 'fan_in', 'fan_out' or 'fan_avg'. Default: 'fan_in'.
+        scale (float): The scaling factor. Default: ``1.0`` .
+        mode (str): Should be ``'fan_in'`` , ``'fan_out'`` or ``'fan_avg'`` . Default: ``'fan_in'`` .
         distribution(str): The type of distribution chose to sample values. It should be
-            'uniform', 'truncated_normal' or 'untruncated_normal'. Default: 'truncated_normal'.
+            ``'uniform'`` , ``'truncated_normal'`` or ``'untruncated_normal'`` . Default: ``'truncated_normal'`` .
 
     Raises:
         ValueError: If `scale` is not greater than 0.
-        ValueError: If `mode` is not 'fan_in', 'fan_out' or 'fan_avg'.
-        ValueError: If `distribution` is not 'uniform', 'truncated_normal' or 'untruncated_normal'.
+        ValueError: If `mode` is not ``'fan_in'``, ``'fan_out'`` or ``'fan_avg'``.
+        ValueError: If `distribution` is not ``'uniform'``, ``'truncated_normal'`` or ``'untruncated_normal'``.
 
     Examples:
         >>> import mindspore
         >>> from mindspore.common.initializer import initializer, VarianceScaling
-        >>> tensor1 = initializer(VarianceScaling(scale=1.0, mode='fan_out',
-        ...                                       distribution='untruncated_normal'), [2, 3], mindspore.float32)
-        >>> tensor2 = initializer('varianceScaling', [2, 3], mindspore.float32)
+        >>> from mindspore import Parameter
+        >>> w1 = Parameter(initializer(VarianceScaling(scale=1.0, mode='fan_out',
+        ...                                            distribution='untruncated_normal'), [2, 3], mindspore.float32))
+        >>> w2 = Parameter(initializer('varianceScaling', [2, 3], mindspore.float32))
     """
 
     def __init__(self, scale=1.0, mode='fan_in', distribution='truncated_normal'):
@@ -680,14 +702,15 @@ class Uniform(Initializer):
     to initialize a tensor.
 
     Args:
-        scale (float): The bound of the Uniform distribution. Default: 0.07.
+        scale (float): The bound of the Uniform distribution. Default: ``0.07`` .
 
 
     Examples:
         >>> import mindspore
         >>> from mindspore.common.initializer import initializer, Uniform
-        >>> tensor1 = initializer(Uniform(), [1, 2, 3], mindspore.float32)
-        >>> tensor2 = initializer('uniform', [1, 2, 3], mindspore.float32)
+        >>> from mindspore import Parameter
+        >>> w1 = Parameter(initializer(Uniform(), [1, 2, 3], mindspore.float32))
+        >>> w2 = Parameter(initializer('uniform', [1, 2, 3], mindspore.float32))
     """
 
     def __init__(self, scale=0.07):
@@ -709,14 +732,15 @@ class Normal(Initializer):
         f(x) =  \frac{1} {\sqrt{2*π} * sigma}exp(-\frac{(x - mean)^2} {2*{sigma}^2})
 
     Args:
-        sigma (float): The standard deviation of Normal distribution. Default: 0.01.
-        mean (float): The mean of Normal distribution. Default: 0.0.
+        sigma (float): The standard deviation of Normal distribution. Default: ``0.01`` .
+        mean (float): The mean of Normal distribution. Default: ``0.0`` .
 
     Examples:
         >>> import mindspore
         >>> from mindspore.common.initializer import initializer, Normal
-        >>> tensor1 = initializer(Normal(), [1, 2, 3], mindspore.float32)
-        >>> tensor2 = initializer('normal', [1, 2, 3], mindspore.float32)
+        >>> from mindspore import Parameter
+        >>> w1 = Parameter(initializer(Normal(), [1, 2, 3], mindspore.float32))
+        >>> w2 = Parameter(initializer('normal', [1, 2, 3], mindspore.float32))
     """
 
     def __init__(self, sigma=0.01, mean=0.0):
@@ -735,22 +759,28 @@ class TruncatedNormal(Initializer):
     Generates an array with values sampled from Truncated Normal distribution in order to initialize a tensor.
 
     Args:
-        sigma (float): The standard deviation of Truncated Normal distribution. Default: 0.01.
-
+        sigma (float): The standard deviation of Truncated Normal distribution. Default: ``0.01`` .
+        mean (float): The mean of Truncated Normal distribution. Default: ``0.0`` .
+        a (float): The lower bound of the truncated interval. Default: ``-2.0`` .
+        b (float): The upper bound of the truncated interval. Default: ``2.0`` .
 
     Examples:
         >>> import mindspore
         >>> from mindspore.common.initializer import initializer, TruncatedNormal
-        >>> tensor1 = initializer(TruncatedNormal(), [1, 2, 3], mindspore.float32)
-        >>> tensor2 = initializer('truncatedNormal', [1, 2, 3], mindspore.float32)
+        >>> from mindspore import Parameter
+        >>> w1 = Parameter(initializer(TruncatedNormal(), [1, 2, 3], mindspore.float32))
+        >>> w2 = Parameter(initializer('truncatedNormal', [1, 2, 3], mindspore.float32))
     """
 
-    def __init__(self, sigma=0.01):
-        super(TruncatedNormal, self).__init__(sigma=sigma)
+    def __init__(self, sigma=0.01, mean=0.0, a=-2.0, b=2.0):
+        super(TruncatedNormal, self).__init__(sigma=sigma, mean=mean, a=a, b=b)
         self.sigma = sigma
+        self.mean = mean
+        self.a = a
+        self.b = b
 
     def _initialize(self, arr):
-        tmp = _init_truncated_normal(-2, 2, 0, self.sigma, arr.shape)
+        tmp = _init_truncated_normal(self.a, self.b, self.mean, self.sigma, arr.shape)
         _assignment(arr, tmp)
 
 
@@ -762,7 +792,8 @@ def initializer(init, shape=None, dtype=mstype.float32):
         init (Union[Tensor, str, Initializer, numbers.Number]): Initialize value.
 
             - `str`: The `init` should be the alias of the class inheriting from `Initializer` and the corresponding
-              class will be called in practice. The value of 'init' can be "normal", "ones" or "zeros", etc.
+              class will be called in practice. The value of `init` can be ``"normal"``, ``"ones"`` or
+              ``"zeros"``, etc.
 
             - `Initializer`: The `init` should be the class inheriting from `Initializer` to initialize tensor.
 
@@ -770,8 +801,8 @@ def initializer(init, shape=None, dtype=mstype.float32):
 
             - `Tensor`: The tensor will be called to initialize tensor.
 
-        shape (Union[tuple, list, int]): The shape of the initialized tensor. Default: None.
-        dtype (:class:`mindspore.dtype`): The type of data in initialized tensor. Default: mindspore.float32.
+        shape (Union[tuple, list, int]): The shape of the initialized tensor. Default: ``None`` .
+        dtype (:class:`mindspore.dtype`): The type of data in initialized tensor. Default: ``mstype.float32`` .
 
     Returns:
         Tensor, return is Tensor object.
@@ -786,11 +817,12 @@ def initializer(init, shape=None, dtype=mstype.float32):
         >>> import mindspore
         >>> from mindspore import Tensor
         >>> from mindspore.common.initializer import initializer, One
+        >>> from mindspore import Parameter
         >>> data = Tensor(np.zeros([1, 2, 3]), mindspore.float32)
-        >>> tensor1 = initializer(data, [1, 2, 3], mindspore.float32)
-        >>> tensor2 = initializer('ones', [1, 2, 3], mindspore.float32)
-        >>> tensor3 = initializer(One(), [1, 2, 3], mindspore.float32)
-        >>> tensor4 = initializer(0, [1, 2, 3], mindspore.float32)
+        >>> w1 = Parameter(initializer(data, [1, 2, 3], mindspore.float32))
+        >>> w2 = Parameter(initializer('ones', [1, 2, 3], mindspore.float32))
+        >>> w3 = Parameter(initializer(One(), [1, 2, 3], mindspore.float32))
+        >>> w4 = Parameter(initializer(0, [1, 2, 3], mindspore.float32))
     """
     if not isinstance(init, (Tensor, numbers.Number, str, Initializer)):
         raise TypeError("For 'initializer', the type of the 'init' argument should be 'Tensor', 'number', 'string' "

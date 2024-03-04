@@ -21,6 +21,7 @@
 #include <map>
 #include <complex>
 #include <utility>
+#include "mindspore/core/ops/array_ops.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 #include "ir/primitive.h"
 #include "ir/dtype/type.h"
@@ -120,6 +121,12 @@ int SliceGradCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const st
       return static_cast<int>(KRET_RESIZE_FAILED);
     }
     get_attr_value_ = got_begin.first && got_size.first;
+  }
+
+  for (auto s : size_) {
+    if (s < 0) {
+      MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the value of size can not be negative.";
+    }
   }
 
   if (get_attr_value_) {
@@ -299,7 +306,7 @@ bool SliceGradCpuKernelMod::SliceGrad8D(const std::vector<kernel::AddressPtr> &i
           }
           size_t in_4_offset = 0;
           size_t out_4_offset = out_start_offset[4];
-          for (int m = begin_[kIndex]; stride_signs[kIndex] * m < stride_signs[kIndex] * end_[kIndex];
+          for (int m = begin_[kIndex4]; stride_signs[kIndex4] * m < stride_signs[kIndex4] * end_[kIndex4];
                m += strides_[4], in_4_offset += input_element_num_[4], out_4_offset += out_step_size[4]) {
             if (can_copy_memory[4]) {
               CopyDataToOutput<T>(inputs, in_n_offset + in_c_offset + in_h_offset + in_w_offset + in_4_offset, outputs,

@@ -15,6 +15,7 @@
  */
 
 #include "mindspore/core/ops/sparse_apply_adagrad.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
 #include "plugin/device/gpu/kernel/nn/sparse_apply_adagrad_gpu_kernel.h"
 
 namespace mindspore {
@@ -53,7 +54,7 @@ bool SparseApplyAdagradGpuKernelMod::Init(const BaseOperatorPtr &base_operator,
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   if (inputs.empty() || outputs.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "' got empty inputs or outputs, which is invalid.";
     return false;
@@ -87,7 +88,7 @@ int SparseApplyAdagradGpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
     MS_LOG(ERROR) << "For '" << kernel_name_
                   << "', the shape of 'accum' must be the same as the shape of 'var', "
                      "but got the shape of 'accum': "
-                  << Vector2Str(accum_shape) << " and the shape of 'var': " << Vector2Str(var_shape);
+                  << accum_shape << " and the shape of 'var': " << var_shape;
     return KRET_RESIZE_FAILED;
   }
   if (var_shape.size() != grad_shape.size()) {
@@ -133,9 +134,9 @@ bool SparseApplyAdagradGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> 
   auto var_out = reinterpret_cast<T *>(outputs[kVarIndex]->addr);
   auto accum_out = reinterpret_cast<T *>(outputs[kAccIndex]->addr);
 
-  CalSparseApplyAdagrad(input_elements_, sizeof(S) / sizeof(int), lr_, update_slots_, grad, indices, var, accum,
-                        var_out, accum_out, reinterpret_cast<cudaStream_t>(cuda_stream_));
-
+  auto status = CalSparseApplyAdagrad(input_elements_, sizeof(S) / sizeof(int), lr_, update_slots_, grad, indices, var,
+                                      accum, var_out, accum_out, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

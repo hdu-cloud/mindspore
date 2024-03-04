@@ -21,7 +21,7 @@ from mindspore import Tensor
 from mindspore.ops import operations as P
 from mindspore.common.parameter import Parameter
 from mindspore.common.initializer import initializer
-from mindspore.train.model import Model
+from mindspore.train import Model
 from mindspore.nn.wrap.cell_wrapper import PipelineCell
 from mindspore.parallel._auto_parallel_context import auto_parallel_context
 from tests.ut.python.parallel.test_adafactor import compile_net
@@ -104,6 +104,7 @@ class PipelineSplit(nn.Cell):
         x = self.cell(x)
         return x
 
+
 def test_fusion_size():
     """
     Feature: test_fusion_auto in size mode
@@ -129,6 +130,7 @@ def test_fusion_size():
     assert auto_parallel_context().allgather_fusion_threshold_mb() == allgather_threshold
     assert auto_parallel_context().reducescatter_fusion_threshold_mb() == reducescatter_threshold
 
+
 def test_fusion_auto():
     """
     Feature: test_fusion_auto in auto mode
@@ -151,6 +153,7 @@ def test_fusion_auto():
     model.train(2, dataset, dataset_sink_mode=False)
     assert auto_parallel_context().allgather_fusion_threshold_mb() == 64
     assert auto_parallel_context().reducescatter_fusion_threshold_mb() == 64
+
 
 def test_fusion_optimizer_parallel():
     """
@@ -180,6 +183,7 @@ def test_fusion_optimizer_parallel():
                                       dataset_strategy="full_batch")
     net1 = Net2(_w0, _w1, _w2, strategy1, strategy2)
     compile_net(net1)
+
 
 def test_allgather_fusion_invalid_value_failed():
     """
@@ -215,6 +219,7 @@ def test_allgather_fusion_invalid_value_failed():
         comm_fusion_dict = {"allgather": {"mode": "size"}}
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", comm_fusion=comm_fusion_dict)
 
+
 def test_reducescatter_fusion_invalid_value_failed():
     """
     Feature: test_reducescatter_fusion with invalid value
@@ -241,3 +246,16 @@ def test_reducescatter_fusion_invalid_value_failed():
     with pytest.raises(KeyError):
         comm_fusion_dict = {"reducescatter": {"mode": "size"}}
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", comm_fusion=comm_fusion_dict)
+
+
+def test_openstate_comm_fusion():
+    """
+    Feature: test_openstate_comm_fusion
+    Description: test openstate in comm_fusion
+    Expectation: success
+    """
+    comm_fusion_dict = {"openstate": False}
+    context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", comm_fusion=comm_fusion_dict)
+    assert auto_parallel_context().get_enable_all_reduce_fusion() is False
+    assert auto_parallel_context().get_enable_all_gather_fusion() is False
+    assert auto_parallel_context().get_enable_reduce_scatter_fusion() is False

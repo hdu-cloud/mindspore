@@ -18,12 +18,12 @@
 #define MINDSPORE_CORE_OPS_AVG_POOL_H_
 
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
-#include "mindapi/base/types.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/format.h"
+#include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -78,8 +78,8 @@ class MIND_API AvgPool : public BaseOperator {
   RoundMode get_round_mode() const;
 };
 
-abstract::AbstractBasePtr AvgPoolInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                       const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr AvgPoolInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimAvgPoolPtr = std::shared_ptr<AvgPool>;
 }  // namespace ops
 }  // namespace mindspore

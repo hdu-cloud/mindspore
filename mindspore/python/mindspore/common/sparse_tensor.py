@@ -17,7 +17,7 @@ from __future__ import absolute_import, annotations
 
 __all__ = ['RowTensorInner', 'RowTensor', 'SparseTensor', 'COOTensor', 'CSRTensor']
 
-from typing import Tuple
+from typing import Tuple, Union
 
 from mindspore import log as logger
 from mindspore.common import dtype as mstype
@@ -27,7 +27,8 @@ from mindspore._c_expression import COOTensor as COOTensor_
 from mindspore._c_expression import CSRTensor as CSRTensor_
 from mindspore._c_expression import RowTensor as RowTensor_
 from mindspore._c_expression import Tensor as Tensor_
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
+from mindspore._checkparam import is_stub_tensor
 
 
 class RowTensorInner(RowTensor_):
@@ -47,6 +48,8 @@ class RowTensorInner(RowTensor_):
             RowTensor_.__init__(self, row_tensor)
         # Init a RowTensor from indices, values and shape
         else:
+            if is_stub_tensor(values):
+                values = values.stub_sync()
             RowTensor_.__init__(self, indices, values, shape)
         self.init_finished = True
 
@@ -76,17 +79,16 @@ class RowTensor(RowTensorInner):
     """
     A sparse representation of a set of tensor slices at given indices.
 
-    An RowTensor is typically used to represent a subset of a larger
-    tensor dense of shape [L0, D1, .. , DN] where L0 >> D0.
+    When the `values` of a RowTensor has a shape of :math:`(d_0, d_1, ..., d_n)`, then this RowTensor is used to
+    represent a subset of a larger dense tensor of shape :math:`(l_0, d_1, ..., d_n)`, where :math:`d_i` is the size of
+    i-th axis in RowTensor, :math:`l_0` is the size of 0-th axis of dense tensor and it satisfies :math:`l_0 > d_0`.
 
-    The values in indices are the indices in the first dimension of the slices
-    that have been extracted from the larger tensor.
-
-    The dense tensor dense represented by an RowTensor slices has
-    `dense[slices.indices[i], :, :, :, ...] = slices.values[i, :, :, :, ...]`.
+    The parameter `indices` is used to specify locations from which the `RowTensor` is sliced in the first dimension of
+    the dense tensor, which means the parameters `indices` and `values` have the following relationship
+    :math:`dense[indices[i], :, :, :, ...] = values[i, :, :, :, ...]`.
 
     For example, if indices is [0], values is [[1, 2]], shape is
-    (3, 2), then the dense representation of the row tensor will be:
+    :math:`(3, 2)` , then the dense representation of the row tensor will be:
 
     .. code-block::
 
@@ -94,15 +96,15 @@ class RowTensor(RowTensorInner):
          [0, 0],
          [0, 0]]
 
-    Note:
-        RowTensor is deprecated from version 2.0, and will be removed in future version.
+    .. warning::
+        This is an experimental API that is subjected to change or deletion.
 
     Args:
-        indices (Tensor): A 1-D integer Tensor of shape [D0]. Default: None.
-        values (Tensor): A Tensor of any dtype of shape [D0, D1, ..., Dn]. Default: None.
+        indices (Tensor): A 1-D integer Tensor of shape :math:`(d_0)` . Default: ``None``.
+        values (Tensor): A Tensor of any dtype of shape :math:`(d_0, d_1, ..., d_n)` . Default: ``None``.
         shape (tuple(int)): An integer tuple which contains the shape
-            of the corresponding dense tensor. Default: None.
-        row_tensor (RowTensor): A RowTensor object. Default: None.
+            of the corresponding dense tensor. Default: ``None``.
+        row_tensor (RowTensor): A RowTensor object. Default: ``None``.
 
     Returns:
         RowTensor, composed of `indices`, `values`, and `shape`.
@@ -121,6 +123,7 @@ class RowTensor(RowTensorInner):
         >>> print(x.dense_shape)
         (3, 2)
     """
+
     def __init__(self, indices=None, values=None, shape=None, row_tensor=None):
         """Init RowTensor"""
         logger.warning("'RowTensor' is deprecated from version 1.7 and will be removed in a future version.")
@@ -147,15 +150,15 @@ class SparseTensor(COOTensor_):
 
     Note:
         The interface is deprecated from version 1.7 and will be removed in a future version.
-        Please use 'COOTensor' instead.
+        Please use :class:`mindspore.COOTensor` instead.
 
     Args:
-        indices (Tensor): A 2-D integer Tensor of shape `[N, ndims]`,
+        indices (Tensor): A 2-D integer Tensor of shape :math:`(N, ndims)`,
             where N and ndims are the number of `values` and number of dimensions in
             the SparseTensor, respectively.
-        values (Tensor): A 1-D tensor of any type and shape `[N]`, which
+        values (Tensor): A 1-D tensor of any type and shape :math:`(N)`, which
             supplies the values for each element in `indices`.
-        shape (tuple(int)): A integer tuple of size `ndims`,
+        shape (tuple(int)): An integer tuple of size :math:`(ndims)`,
             which specifies the shape of the sparse tensor.
 
     Returns:
@@ -163,7 +166,6 @@ class SparseTensor(COOTensor_):
 
     Examples:
         >>> import mindspore as ms
-        >>> import mindspore.nn as nn
         >>> from mindspore import Tensor, SparseTensor
         >>> indices = Tensor([[0, 1], [1, 2]])
         >>> values = Tensor([1, 2], dtype=ms.float32)
@@ -184,18 +186,25 @@ class SparseTensor(COOTensor_):
                        "Please use 'COOTensor' instead.")
         if not (isinstance(indices, Tensor) and isinstance(values, Tensor) and isinstance(shape, tuple)):
             raise TypeError("Inputs must follow: COOTensor(indices, values, shape).")
+        if is_stub_tensor(indices):
+            indices = indices.stub_sync()
+        if is_stub_tensor(values):
+            values = values.stub_sync()
         COOTensor_.__init__(self, indices, values, shape)
 
     @property
     def indices(self):
+        """Return SparseTensor's indices."""
         return Tensor(self._indices)
 
     @property
     def values(self):
+        """Return SparseTensor's non-zero values."""
         return Tensor(self._values)
 
     @property
     def shape(self):
+        """Return SparseTensor's shape."""
         return self._shape
 
 
@@ -217,30 +226,29 @@ class COOTensor(COOTensor_):
 
     Common arithmetic operations include: addition (+), subtraction (-), multiplication (*),
     and division (/). For details about operations supported by `COOTensor`, see
-    `operators <https://www.mindspore.cn/docs/en/r2.0.0-alpha/note/static_graph_syntax_support.html#operators>`_.
+    `operators <https://www.mindspore.cn/docs/en/master/note/static_graph_syntax_support.html#operators>`_.
 
-    Note:
-        This is an experimental feature and is subjected to change.
-        Currently, duplicate coordinates in the indices will not be coalesced.
-        If the indices contain out-of-bound values, the result will be undefined.
+    .. warning::
+        - This is an experimental API that is subject to change or deletion.
+        - Currently, duplicate coordinates in the indices will not be coalesced.
+          If the indices contain out-of-bound values, the result will be undefined.
 
     Args:
-        indices (Tensor): A 2-D integer Tensor of shape `[N, ndims]`,
+        indices (Tensor): A 2-D integer Tensor of shape :math:`(N, ndims)`,
             where N and ndims are the number of `values` and number of dimensions in
-            the COOTensor, respectively. Currently, `ndims` must be 2.
+            the COOTensor, respectively. Currently, `ndims` must be 2. Default: ``None`` .
             Please make sure that the indices are in range of the given shape.
-        values (Tensor): A 1-D tensor of any type and shape `[N]`, which
-            supplies the values for each element in `indices`.
-        shape (tuple(int)): A integer tuple of size `ndims`,
-            which specifies the dense_shape of the sparse tensor.
-        coo_tensor (COOTensor): A COOTensor object.
+        values (Tensor): A 1-D tensor of any type and shape :math:`(N)`, which
+            supplies the values for each element in `indices`. Default: ``None`` .
+        shape (tuple(int)): An integer tuple of size `ndims`,
+            which specifies the dense_shape of the sparse tensor. Default: ``None`` .
+        coo_tensor (COOTensor): A COOTensor object. Default: ``None`` .
 
     Returns:
         COOTensor, composed of `indices`, `values`, and `shape`.
 
     Examples:
         >>> import mindspore as ms
-        >>> import mindspore.nn as nn
         >>> from mindspore import Tensor, COOTensor
         >>> indices = Tensor([[0, 1], [1, 2]], dtype=ms.int32)
         >>> values = Tensor([1, 2], dtype=ms.float32)
@@ -271,6 +279,10 @@ class COOTensor(COOTensor_):
             validator.check_coo_tensor_shape(indices.shape, values.shape, shape)
             validator.check_coo_tensor_dtype(indices.dtype)
             indices = tensor_operator_registry.get('stop_gradient')(indices)
+            if is_stub_tensor(indices):
+                indices = indices.stub_sync()
+            if is_stub_tensor(values):
+                values = values.stub_sync()
             COOTensor_.__init__(self, indices, values, shape)
         self.init_finished = True
 
@@ -369,7 +381,6 @@ class COOTensor(COOTensor_):
 
         Examples:
             >>> import mindspore as ms
-            >>> import mindspore.ops as ops
             >>> from mindspore import Tensor, COOTensor
             >>> x_indices = Tensor([[0, 0, 1], [1, 1, 2]], dtype=ms.int64)
             >>> x_values = Tensor([1, 5, 4], dtype=ms.float32)
@@ -507,7 +518,7 @@ class COOTensor(COOTensor_):
             TypeError: If (self/other)'s value's type is not matched with thresh's type
 
         Supported Platforms:
-            ``CPU`` ``GPU``
+            ``GPU`` ``CPU``
 
         Examples:
             >>> from mindspore import Tensor, COOTensor
@@ -523,9 +534,11 @@ class COOTensor(COOTensor_):
             >>> thres = Tensor(0, dtype=mstype.int32)
             >>> out = input0.add(input1, thres)
             >>> print(out)
-            COOTensor(shape = [3, 4], dtype = Int32, indices=Tensor(shape=[4, 2],
-            dtype = Int64, value=[[0 0], [0 1], [1 1], [1 2]]),  values=Tensor(shape[4],
-            dtype=Int32, value=[3 1 4 2]))
+            COOTensor(shape=[3, 4], dtype=Int32, indices=Tensor(shape=[4, 2], dtype=Int64, value=
+            [[0 0]
+             [0 1]
+             [1 1]
+             [1 2]]), values=Tensor(shape=[4], dtype=Int32, value=[3 1 4 2]))
         """
         return tensor_operator_registry.get('coo_add')(self, other, thresh)
 
@@ -547,27 +560,27 @@ class CSRTensor(CSRTensor_):
 
     Common arithmetic operations include: addition (+), subtraction (-), multiplication (*),
     and division (/). For details about operations supported by `CSRTensor`, see
-    `operators <https://www.mindspore.cn/docs/en/r2.0.0-alpha/note/static_graph_syntax_support.html#operators>`_.
+    `operators <https://www.mindspore.cn/docs/en/master/note/static_graph_syntax_support.html#operators>`_.
 
-    Note:
-        This is an experimental feature and is subjected to change.
-        If the values given by `indptr` or `indices` are invalid, the results may be undefined. Invalid values include
-    when the length of `values` or `indices` exceeds the range indicated by indptr, and when the columns indicated by
-    `indices` are repeated on the same row.
+    .. warning::
+        - This is an experimental API that is subjected to change.
+        - If the values given by `indptr` or `indices` are invalid, the results may be undefined. Invalid values include
+          when the length of `values` or `indices` exceeds the range indicated by indptr, and when the columns
+          indicated by `indices` are repeated on the same row.
 
     Args:
-        indptr (Tensor): 1-D Tensor of shape `[M]`, which equals to `shape[0] + 1`, which indicates the
-            start and end point for `values` in each row. Default: None. If provided,
-            must be :class:`mindspore.int16`, :class:`mindspore.int32` or :class:`mindspore.int64`.
-        indices (Tensor): 1-D Tensor of shape `[N]`, which has the same length as `values`. `indices`
-            indicates the which column `values` should be placed. Default: None. If provided,
-            must be :class:`mindspore.int16`, :class:`mindspore.int32` or :class:`mindspore.int64`.
+        indptr (Tensor): 1-D Tensor of shape :math:`(M)`, which equals to `shape[0] + 1`, which indicates the
+            start and end point for `values` in each row. Default: ``None``. If provided,
+            must be int16, int32 or int64.
+        indices (Tensor): 1-D Tensor of shape :math:`(N)`, which has the same length as `values`. `indices`
+            indicates the which column `values` should be placed. Default: ``None``. If provided,
+            must be int16, int32 or int64.
         values (Tensor): Tensor, which has the same length as `indices` (values.shape[0] == indices.shape[0]).
-            `values`  stores the data for CSRTensor. Default: None.
+            `values`  stores the data for CSRTensor. Default: ``None``.
         shape (tuple(int)): A tuple indicates the shape of the CSRTensor, and `shape[0]` must equal to `M - 1`,
-            which all equal to number of rows of the CSRTensor. Default: None.
+            which all equal to number of rows of the CSRTensor. Default: ``None``.
         csr_tensor (CSRTensor): A CSRTensor object.  Values' feature dimension should match with
-            CSRTensor's feature dimension (values.shape[1:] == csr_tensor.shape[2:]). Default: None.
+            CSRTensor's feature dimension (values.shape[1:] == csr_tensor.shape[2:]). Default: ``None``.
 
     Outputs:
         CSRTensor, with shape defined by `shape`, and dtype inferred from `value`.
@@ -604,6 +617,12 @@ class CSRTensor(CSRTensor_):
             validator.check_csr_tensor_dtype(indptr.dtype, indices.dtype)
             indptr = tensor_operator_registry.get('stop_gradient')(indptr)
             indices = tensor_operator_registry.get('stop_gradient')(indices)
+            if is_stub_tensor(indptr):
+                indptr = indptr.stub_sync()
+            if is_stub_tensor(values):
+                values = values.stub_sync()
+            if is_stub_tensor(indices):
+                indices = indices.stub_sync()
             CSRTensor_.__init__(self, indptr, indices, values, shape)
         self.init_finished = True
 
@@ -614,13 +633,11 @@ class CSRTensor(CSRTensor_):
         return ''
 
     def __mul__(self, other):
-        res = tensor_operator_registry.get('csr_mul')(self, other)
-        return CSRTensor(self.indptr, self.indices, res, self.shape)
+        return tensor_operator_registry.get('csr_mul')(self, other)
 
     def __div__(self, other):
         logger.warning("For CSR divide, zero values in the dense tensor are ignored.")
-        res = tensor_operator_registry.get('csr_div')(self, other)
-        return CSRTensor(self.indptr, self.indices, res, self.shape)
+        return tensor_operator_registry.get('csr_div')(self, other)
 
     def __truediv__(self, other):
         return self.__div__(other)
@@ -785,18 +802,18 @@ class CSRTensor(CSRTensor_):
             [[2.]
             [1.]]
         """
-        validator.check_value_type('dense_vector', dense_vector, (Tensor_,), 'CSRTensor.mv')
+        validator.check_value_type('dense_vector', dense_vector, (Tensor, Tensor_,), 'CSRTensor.mv')
         return tensor_operator_registry.get("csr_mv")(self, dense_vector)
 
     def mm(self, matrix: Union[Tensor, CSRTensor]) -> Union[Tensor, CSRTensor]:
         """
-        Return the matrix multiplication result of the right-multiply matrix（dense or CSRTensor） of the CSRTensor.
+        Return the matrix multiplication result of the right-multiply matrix(dense or CSRTensor) of the CSRTensor.
         The CSRTensor with shape `[M, N]` needs to adapt the right matrix with shape `[N, K]`
         to get the dense matrix or CSRTensor with result `[M, K]`.
 
         Note:
             If right matrix is CSRTensor, currently only supports GPU backend.
-            if right matrix is Tensor, currently supports CPU backend with LLVM 12.0.1 or GPU backend.
+            If right matrix is Tensor, currently supports CPU backend with LLVM no lower than 12.0.1, and GPU backend.
 
         Args:
             matrix (Tensor or CSRTensor): A dense Tensor or CSRTensor,
@@ -806,7 +823,7 @@ class CSRTensor(CSRTensor_):
             Tensor or CSRTensor.
 
         Supported Platforms:
-            ``CPU`` ``GPU``
+            ``GPU`` ``CPU``
 
         Examples:
             >>> from mindspore import Tensor, CSRTensor
@@ -823,7 +840,7 @@ class CSRTensor(CSRTensor_):
         """
         if isinstance(matrix, CSRTensor):
             return tensor_operator_registry.get("csr_mm")(self, matrix)
-        validator.check_value_type('matrix', matrix, (Tensor_,), 'CSRTensor.mm')
+        validator.check_value_type('matrix', matrix, (Tensor, Tensor_,), 'CSRTensor.mm')
         return tensor_operator_registry.get("csr_mm_akg")()(self.indptr, self.indices, self.values,
                                                             self.shape, matrix)
 
@@ -898,9 +915,9 @@ class CSRTensor(CSRTensor_):
             >>> a = CSRTensor(indptr, indices, values_a, dense_shape)
             >>> b = CSRTensor(indptr, indices, values_b, dense_shape)
             >>> print(a.add(b, alpha, beta))
-                CSRTensor(shape=[2,4], dtype=Float32,
-                          indptr=Tensor(shape=[3], dtype=Int32, value = [0, 1, 2]),
-                          indices=Tensor(shape=[2], dtype=Int32, value = [0, 1]),
-                          values=Tensor(shape=[2], dtype=Float32, value = [3.0, 3.0]))
+            CSRTensor(shape=[2, 4], dtype=Float32,
+                      indptr=Tensor(shape=[3], dtype=Int32, value=[0 1 2]),
+                      indices=Tensor(shape=[2], dtype=Int32, value=[0 1]),
+                      values=Tensor(shape=[2], dtype=Float32, value=[ 3.00000000e+00  3.00000000e+00]))
         """
         return tensor_operator_registry.get('csr_add')(self, b, alpha, beta)

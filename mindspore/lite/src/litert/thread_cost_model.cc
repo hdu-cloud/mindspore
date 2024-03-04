@@ -19,6 +19,7 @@
 #include "src/common/log_util.h"
 #include "src/litert/inner_context.h"
 #include "thread/threadpool.h"
+#include "nnacl/op_base.h"
 
 namespace mindspore::lite {
 const std::map<int32_t, float> kernel_compute_cost_map_ = {
@@ -26,6 +27,8 @@ const std::map<int32_t, float> kernel_compute_cost_map_ = {
   {TC_TYPE(schema::PrimitiveType_Activation, schema::ActivationType_RELU6), 1.806f},       // dataNum about 100k
   {TC_TYPE(schema::PrimitiveType_Activation, schema::ActivationType_LEAKY_RELU), 1.806f},  // dataNum about 100k
   {TC_TYPE(schema::PrimitiveType_Activation, schema::ActivationType_TANH), 41.65625},      // dataNum about 5k
+  {TC_TYPE(schema::PrimitiveType_Activation, schema::ActivationType_SIGMOID), 59.65625f},  // dataNum about 3.5k
+  {TC_TYPE(schema::PrimitiveType_Activation, schema::ActivationType_GELU), 83.65625f},     // dataNum about 2.5k
 
   {TC_TYPE(schema::PrimitiveType_Sqrt, 0), 1.806f},    // dataNum about 100k
   {TC_TYPE(schema::PrimitiveType_Split, 0), 21.573f},  // dataNum about 8k
@@ -52,6 +55,12 @@ const std::map<int32_t, float> kernel_compute_cost_map_ = {
   {TC_TYPE(schema::PrimitiveType_RealDiv, schema::ActivationType_RELU6), 13.65625f},         // dataNum about 15k
   {TC_TYPE(schema::PrimitiveType_RealDiv, schema::ActivationType_NO_ACTIVATION), 6.65625f},  // dataNum about 30k
 
+  {TC_TYPE(schema::PrimitiveType_Minimum, schema::ActivationType_NO_ACTIVATION), 6.65625f},  // dataNum about 30k
+  {TC_TYPE(schema::PrimitiveType_Maximum, schema::ActivationType_NO_ACTIVATION), 6.65625f},  // dataNum about 30k
+
+  {TC_TYPE(schema::PrimitiveType_GreaterEqual, schema::ActivationType_NO_ACTIVATION), 4.90625f},  // dataNum about 40k
+  {TC_TYPE(schema::PrimitiveType_LessEqual, schema::ActivationType_NO_ACTIVATION), 4.90625f},     // dataNum about 40k
+
   {TC_TYPE(schema::PrimitiveType_StridedSlice, 0), 38.027f},  // type 0 : parallel on outer tile, dataNum about 5.2k
   {TC_TYPE(schema::PrimitiveType_StridedSlice, 1), 42.042f},  // type 1 : parallel on split axis, dataNum about 4.5k
 
@@ -63,6 +72,18 @@ const std::map<int32_t, float> kernel_compute_cost_map_ = {
 
   {TC_TYPE(schema::PrimitiveType_LayerNormFusion, 0), 507.812f},  // dataNum about 0.5k
   {TC_TYPE(schema::PrimitiveType_OneHot, 0), 136.562f},           // dataNum about 1.5k
+  {TC_TYPE(schema::PrimitiveType_TileFusion, 0), 259.0625f},      // dataNum about 0.8k
+
+  {TC_TYPE(schema::PrimitiveType_ReduceFusion, schema::ReduceMode_ReduceAll), 66.5625f},         // dataNum about 3k
+  {TC_TYPE(schema::PrimitiveType_ReduceFusion, schema::ReduceMode_ReduceASum), 206.5625f},       // dataNum about 1k
+  {TC_TYPE(schema::PrimitiveType_ReduceFusion, schema::ReduceMode_ReduceL2), 259.0625f},         // dataNum about 0.8k
+  {TC_TYPE(schema::PrimitiveType_ReduceFusion, schema::ReduceMode_ReduceMax), 66.5625f},         // dataNum about 3k
+  {TC_TYPE(schema::PrimitiveType_ReduceFusion, schema::ReduceMode_ReduceMean), 259.0625f},       // dataNum about 0.8k
+  {TC_TYPE(schema::PrimitiveType_ReduceFusion, schema::ReduceMode_ReduceMin), 66.5625f},         // dataNum about 3k
+  {TC_TYPE(schema::PrimitiveType_ReduceFusion, schema::ReduceMode_ReduceProd), 206.5625f},       // dataNum about 1k
+  {TC_TYPE(schema::PrimitiveType_ReduceFusion, schema::ReduceMode_ReduceSum), 206.5625f},        // dataNum about 1k
+  {TC_TYPE(schema::PrimitiveType_ReduceFusion, schema::ReduceMode_ReduceSumSquare), 206.5625f},  // dataNum about 1k
+  {TC_TYPE(schema::PrimitiveType_ReduceFusion, (schema::ReduceMode_MAX + 1)), 259.0625f},        // dataNum about 0.8k
 };
 
 float ThreadCostModel::per_unit_load_cost_ = 1.0 / 64 * 11;   // 64: L2 cache size, 11 : L2 cache latency on Haswell

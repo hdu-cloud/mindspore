@@ -16,14 +16,33 @@
 
 #include "ops/scale_and_translate.h"
 
-#include <algorithm>
+#include <memory>
 #include <set>
 
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/named.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/image_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -40,6 +59,13 @@ abstract::ShapePtr ScaleAndTranslateInferShape(const PrimitivePtr &primitive,
   if (IsDynamicRank(images_shape) || IsDynamicRank(size_shape) || IsDynamicRank(scale_shape) ||
       IsDynamicRank(translation_shape)) {
     return std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeRankAny}));
+  }
+  // support dynamic shape
+  if (IsDynamicShape(images_shape) || IsDynamicShape(size_shape) || IsDynamicShape(scale_shape) ||
+      IsDynamicShape(translation_shape)) {
+    return std::make_shared<abstract::Shape>(
+      ShapeVector({abstract::Shape::kShapeDimAny, abstract::Shape::kShapeDimAny, abstract::Shape::kShapeDimAny,
+                   abstract::Shape::kShapeDimAny}));
   }
 
   const int64_t kShapeSize = 1;
@@ -67,7 +93,7 @@ abstract::ShapePtr ScaleAndTranslateInferShape(const PrimitivePtr &primitive,
   // check scale greater than zero
   auto scale_v = input_args[kInputIndex2]->BuildValue();
   MS_EXCEPTION_IF_NULL(scale_v);
-  if (!scale_v->isa<AnyValue>() && !scale_v->isa<None>()) {
+  if (!scale_v->isa<ValueAny>() && !scale_v->isa<None>()) {
     if (scale_v == nullptr) {
       MS_EXCEPTION(ValueError) << "For primitive[" << prim_name << "], the input argument[scale]"
                                << " value is nullptr.";
@@ -92,7 +118,7 @@ abstract::ShapePtr ScaleAndTranslateInferShape(const PrimitivePtr &primitive,
   auto size_v = input_args[kInputIndex1]->BuildValue();
   MS_EXCEPTION_IF_NULL(size_v);
   std::vector<int64_t> size_value;
-  if (!size_v->isa<AnyValue>() && !size_v->isa<None>()) {
+  if (!size_v->isa<ValueAny>() && !size_v->isa<None>()) {
     size_value = CheckAndConvertUtils::CheckTensorIntValue("size", size_v, prim_name);
     // check scale greater than zero
     (void)CheckAndConvertUtils::CheckPositiveVectorExcludeZero("size", size_value, prim_name);
@@ -161,7 +187,25 @@ AbstractBasePtr ScaleAndTranslateInfer(const abstract::AnalysisEnginePtr &, cons
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_HOST_DEPENDS(kNameScaleAndTranslate, {1, 2});
-REGISTER_PRIMITIVE_EVAL_IMPL(ScaleAndTranslate, prim::kPrimScaleAndTranslate, ScaleAndTranslateInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGScaleAndTranslateInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScaleAndTranslateInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScaleAndTranslateInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScaleAndTranslateInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1, 2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScaleAndTranslate, prim::kPrimScaleAndTranslate, AGScaleAndTranslateInfer, false);
 }  // namespace ops
 }  // namespace mindspore

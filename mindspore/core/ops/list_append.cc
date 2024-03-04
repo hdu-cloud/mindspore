@@ -16,44 +16,73 @@
 
 #include "ops/list_append.h"
 
+#include <memory>
+#include <string>
 #include <vector>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "include/common/utils/utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 AbstractBasePtr ListAppendInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                 const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
-  MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   constexpr size_t input_len = 2;
   constexpr size_t data_index = 0;
   constexpr size_t target_index = 1;
   (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_len, prim_name);
-  auto data_abs = dyn_cast<abstract::AbstractList>(input_args[data_index]);
+  auto data_abs = dyn_cast<abstract::AbstractSequence>(input_args[data_index]);
   MS_EXCEPTION_IF_NULL(data_abs);
-  if (!data_abs->dynamic_len()) {
-    MS_EXCEPTION(TypeError) << "The first input to ListAppend should be dynamic length sequence but got constant "
-                            << "length sequence. The abstract of input sequence is: " << data_abs->ToString();
-  }
   auto target_abs = input_args[target_index];
-  auto data_element_abs = data_abs->dynamic_len_element_abs();
-  if (data_element_abs == nullptr) {
-    // The element type of the dynamic length sequence is not determined before list append.
-    // Fix the element abstract as the target element
-    auto ret = data_abs->Clone();
-    ret->cast<abstract::AbstractListPtr>()->set_dynamic_len_element_abs(target_abs);
-    return ret;
+  if (!data_abs->isa<abstract::AbstractSequence>() ||
+      (!target_abs->isa<abstract::AbstractScalar>() && !target_abs->isa<abstract::AbstractTensor>())) {
+    MS_EXCEPTION(TypeError) << "The prim '" << prim_name
+                            << "', the input_data must be list and target must be scalar or tensor, but got "
+                            << data_abs->ToString() << " target is " << target_abs->ToString();
   }
-  // If abstract of element is fixed, the abstract of target should have the same shape and type with the
-  // abstract of element.
-  CheckAndConvertUtils::CheckAbstractTypeIdSame(data_element_abs, target_abs, prim_name, "list element", "target");
-  CheckAndConvertUtils::CheckAbstractShapeSame(data_element_abs, target_abs, prim_name, "list element", "target");
-  return data_abs->Clone();
+
+  if (data_abs->dynamic_len()) {
+    auto data_element_abs = data_abs->dynamic_len_element_abs();
+    if (data_element_abs == nullptr) {
+      // The element type of the dynamic length sequence is not determined before list append.
+      // Fix the element abstract as the target element
+      auto ret = data_abs->Clone();
+      ret->cast<abstract::AbstractListPtr>()->set_dynamic_len_element_abs(target_abs);
+      return ret;
+    }
+    // If abstract of element is fixed, the abstract of target should have the same shape and type with the
+    // abstract of element.
+    CheckAndConvertUtils::CheckAbstractTypeAndShapeSame({data_element_abs, target_abs},
+                                                        "For " + prim::kPrimListAppend->ToString(),
+                                                        "mutable list existing item", "new added item");
+    return data_abs->Clone();
+  }
+
+  const auto &elements = data_abs->elements();
+  abstract::AbstractBasePtrList abs;
+  if (elements.empty()) {
+    abs.push_back(target_abs);
+    return std::make_shared<abstract::AbstractList>(abs);
+  }
+  auto first_element = elements[0];
+  CheckAndConvertUtils::CheckAbstractTypeAndShapeSame(
+    {first_element, target_abs}, "For " + prim::kPrimListAppend->ToString(), "list existing item", "new added item");
+  for (size_t i = 0; i < data_abs->size(); ++i) {
+    abs.push_back(data_abs->elements()[i]);
+  }
+  abs.push_back(target_abs);
+  return std::make_shared<abstract::AbstractList>(abs);
 }
 MIND_API_OPERATOR_IMPL(ListAppend, BaseOperator);
 REGISTER_PRIMITIVE_EVAL_IMPL(ListAppend, prim::kPrimListAppend, ListAppendInfer, nullptr, true);

@@ -15,10 +15,11 @@
  */
 
 #include "plugin/device/gpu/kernel/nn/pad_v3_grad_gpu_kernel.h"
+#include "kernel/kernel_get_value.h"
 namespace mindspore {
 namespace kernel {
 namespace {
-const std::vector<std::string> mode_list = {ops::kReflect, ops::kEdge};
+const std::vector<std::string> mode_list = {ops::kReflect, ops::kEdge, ops::kCircular};
 template <typename T, typename S>
 std::unique_ptr<cukernel::GpuKernelHelperBase> CreatePadV3GradKernelPtr(const std::string &kernel_name,
                                                                         const uint32_t &device_id) {
@@ -52,6 +53,34 @@ const std::vector<std::pair<KernelAttr, PadV3GradPtrCreatorFunc>> kernel_attr = 
    CreatePadV3GradKernelPtr<uint8_t, int64_t>},
   {KernelAttr().AddInputAttr(kNumberTypeComplex64).AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeComplex64),
    CreatePadV3GradKernelPtr<Complex<float>, int64_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeComplex128).AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeComplex128),
+   CreatePadV3GradKernelPtr<Complex<double>, int64_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeFloat64),
+   CreatePadV3GradKernelPtr<double, int64_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeFloat32),
+   CreatePadV3GradKernelPtr<float, int64_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeFloat16),
+   CreatePadV3GradKernelPtr<half, int64_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeInt64).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt64),
+   CreatePadV3GradKernelPtr<int64_t, int64_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeInt32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt32),
+   CreatePadV3GradKernelPtr<int32_t, int64_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeInt16).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt16),
+   CreatePadV3GradKernelPtr<int16_t, int64_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeInt8).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt8),
+   CreatePadV3GradKernelPtr<int8_t, int64_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeUInt64).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeUInt64),
+   CreatePadV3GradKernelPtr<uint64_t, int64_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeUInt32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeUInt32),
+   CreatePadV3GradKernelPtr<uint32_t, int64_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeUInt16).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeUInt16),
+   CreatePadV3GradKernelPtr<uint16_t, int64_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeUInt8),
+   CreatePadV3GradKernelPtr<uint8_t, int64_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeComplex64).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeComplex64),
+   CreatePadV3GradKernelPtr<Complex<float>, int64_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeComplex128).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeComplex128),
+   CreatePadV3GradKernelPtr<Complex<double>, int64_t>},
 };
 }  // namespace
 
@@ -82,6 +111,7 @@ bool PadV3GradGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std
   if (!is_match) {
     return false;
   }
+  MS_ERROR_IF_NULL(attr_ptr_);
   attr_ptr_->mode = kernel_ptr->get_mode();
   const bool is_mode_available = std::find(mode_list.begin(), mode_list.end(), attr_ptr_->mode) != mode_list.end();
   if (is_mode_available == false) {
@@ -104,7 +134,32 @@ int PadV3GradGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const st
   MS_ERROR_IF_NULL(base_operator);
   auto kernel_ptr = std::dynamic_pointer_cast<ops::PadV3Grad>(base_operator);
   MS_ERROR_IF_NULL_W_RET_VAL(kernel_ptr, KRET_RESIZE_FAILED);
-  attr_ptr_->paddings = kernel_ptr->get_paddings();
+
+  std::vector<int64_t> paddings_arg;
+  std::vector<int64_t> paddings_val;
+  if (!TryGetIntValue(inputs, kIndex1, kernel_name_, &paddings_arg)) {
+    MS_LOG(EXCEPTION) << "Fot '" << kernel_name_ << "', can't get paddings value from input[1].";
+  }
+
+  int64_t paddings_size = SizeToLong(paddings_arg.size());
+  for (int64_t i = 0; i < paddings_size; ++i) {
+    paddings_val.push_back(int64_t(paddings_arg[LongToSize(i)]));
+  }
+
+  auto prim = base_operator->GetPrim();
+  MS_EXCEPTION_IF_NULL(prim);
+  if (!GetValue<bool>(prim->GetAttr("paddings_contiguous"))) {
+    constexpr int64_t nTwo = 2;
+    std::vector<int64_t> tmp = paddings_val;
+    for (int64_t i = 0; i < paddings_size; ++i) {
+      if (i % nTwo == 0) {
+        paddings_val[LongToSize(i)] = tmp[LongToSize(i) / nTwo];
+      } else {
+        paddings_val[LongToSize(i)] = tmp[LongToSize((i + paddings_size) / nTwo)];
+      }
+    }
+  }
+  attr_ptr_->paddings = paddings_val;
 
   std::vector<std::vector<int64_t>> input_shapes;
   std::vector<std::vector<int64_t>> output_shapes;

@@ -16,6 +16,7 @@
 
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
 #include "plugin/device/gpu/kernel/nn/roi_align_grad_gpu_kernel.h"
+#include "kernel/kernel_get_value.h"
 
 namespace mindspore {
 namespace kernel {
@@ -127,8 +128,10 @@ bool ROIAlignGradGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &input
   T *dx = GetDeviceAddress<T>(outputs, 0);
   T spatial_scale = static_cast<T>(spatial_scale_);
   int64_t roi_end_mode = 1;
-  ROIAlignGrad(dy, rois, batch_, roi_rows_, roi_cols_, dx, spatial_scale, sample_num_, roi_end_mode, channel_, height_,
-               width_, pooled_height_, pooled_width_, device_id_, reinterpret_cast<cudaStream_t>(stream_ptr_));
+  auto status = ROIAlignGrad(dy, rois, batch_, roi_rows_, roi_cols_, dx, spatial_scale, sample_num_, roi_end_mode,
+                             channel_, height_, width_, pooled_height_, pooled_width_, device_id_,
+                             reinterpret_cast<cudaStream_t>(stream_ptr_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

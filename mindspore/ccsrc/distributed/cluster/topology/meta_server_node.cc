@@ -18,13 +18,16 @@
 #include <algorithm>
 #include <string>
 #include <vector>
+#include <utility>
+#include <unordered_map>
 #include "utils/ms_exception.h"
 #include "proto/topology.pb.h"
-#include "ps/ps_context.h"
-#include "distributed/rpc/tcp/constants.h"
-#include "distributed/recovery/recovery_context.h"
+#include "include/backend/distributed/ps/ps_context.h"
+#include "include/backend/distributed/rpc/tcp/constants.h"
+#include "include/backend/distributed/recovery/recovery_context.h"
 #include "distributed/recovery/file_configuration.h"
 #include "distributed/cluster/topology/meta_server_node.h"
+#include "utils/convert_utils_base.h"
 
 namespace mindspore {
 namespace distributed {
@@ -156,8 +159,8 @@ MessageBase *const MetaServerNode::HandleMessage(MessageBase *const message) {
     const auto &result = (*message_handlers_[name])(message->Body());
     if (result.length() > 0) {
       auto rt_msg = CreateMessage(meta_server_addr_.GetUrl(), name, result);
-      MS_EXCEPTION_IF_NULL(rt_msg);
       delete message;
+      MS_EXCEPTION_IF_NULL(rt_msg);
       return rt_msg.release();
     } else {
       delete message;
@@ -175,20 +178,29 @@ MessageBase *const MetaServerNode::ProcessRegister(MessageBase *const message) {
   // Add the compute graph node into registered nodes.
   const auto &node_id = registration.node_id();
   const auto &host_name = registration.host_name();
+  const auto &host_ip = registration.host_ip();
   const auto &role = registration.role();
   std::unique_lock<std::shared_mutex> lock(nodes_mutex_);
   if (nodes_.find(node_id) == nodes_.end()) {
-    auto rank_id = AllocateRankId(role);
+    uint32_t rank_id;
+    if (common::IsStrNumeric(node_id)) {
+      // This means node id is not randomly generated. So directly convert to int.
+      rank_id = static_cast<uint32_t>(std::atoi(node_id.c_str()));
+    } else {
+      rank_id = AllocateRankId(role);
+    }
+
     std::shared_ptr<NodeInfo> node_info = std::make_shared<NodeInfo>(node_id);
     MS_ERROR_IF_NULL_W_RET_VAL(node_info, rpc::NULL_MSG);
     node_info->host_name = host_name;
+    node_info->host_ip = host_ip;
     node_info->role = role;
     node_info->rank_id = rank_id;
     node_info->state = NodeState::kRegistered;
     (void)time(&(node_info->last_update));
     nodes_[node_id] = node_info;
-    MS_LOG(INFO) << "The new node: " << node_id << "(role: " << role << ")"
-                 << " is registered successfully.";
+    MS_LOG(WARNING) << "The new node: " << node_id << "(role: " << role << ")"
+                    << ", rank id: " << rank_id << " is registered successfully.";
     (void)TransitionToInitialized();
 
     RegistrationRespMessage reg_resp_msg;
@@ -201,9 +213,12 @@ MessageBase *const MetaServerNode::ProcessRegister(MessageBase *const message) {
     MS_EXCEPTION_IF_NULL(message);
     return message.release();
   } else {
-    MS_LOG(INFO) << "The node: " << node_id << " have been recovered.";
     auto node_info = nodes_[node_id];
     MS_EXCEPTION_IF_NULL(node_info);
+    node_info->host_ip = host_ip;
+    MS_LOG(WARNING) << "The node: " << node_id << " have been recovered. IP address: " << host_ip
+                    << ", rank id: " << node_info->rank_id;
+    (void)metadata_.insert(std::make_pair(node_info->role + node_info->node_id, std::to_string(node_info->rank_id)));
 
     RegistrationRespMessage reg_resp_msg;
     reg_resp_msg.set_success(true);
@@ -446,6 +461,12 @@ void MetaServerNode::UpdateTopoState() {
 
 bool MetaServerNode::TransitionToInitialized() {
   if (nodes_.size() == total_node_num_) {
+    // After all nodes are successfully registered, reassign rank ids so they could be continuous.
+    ReassignNodeRank();
+
+    // Assign port range for each node after cluster is initialized.
+    AssignPortRange();
+
     // Persist the cluster metadata into storage through configuration.
     if (recovery::IsEnableRecovery() && configuration_ != nullptr && configuration_->Empty()) {
       if (!Persist()) {
@@ -453,15 +474,48 @@ bool MetaServerNode::TransitionToInitialized() {
       }
     }
     topo_state_ = TopoState::kInitialized;
-    MS_LOG(INFO) << "The cluster topology has been constructed successfully";
+    MS_LOG(INFO) << "The cluster topology has been constructed successfully.";
     return true;
   }
   return false;
 }
 
+void MetaServerNode::AssignPortRange() {
+  MS_LOG(DEBUG) << "Start assigning port range for nodes...";
+  std::unordered_map<std::string, uint32_t> each_host_node_num;
+  std::unordered_map<std::string, uint32_t> node_index_map;
+  // Assign computing graph nodes' port range according to their hosts.
+  for (const auto &n : nodes_) {
+    std::string node_id = n.first;
+    const auto &node_info = n.second;
+
+    uint32_t &host_node_num = each_host_node_num[node_info->host_name];
+    node_index_map[node_info->node_id] = host_node_num;
+    host_node_num++;
+  }
+
+  NodePortRanges node_ranges;
+  for (const auto &n : nodes_) {
+    std::string node_id = n.first;
+    const auto &node_info = n.second;
+    uint32_t node_index = node_index_map[node_id];
+    uint32_t each_node_range = kNodePortRangeNum / each_host_node_num[node_info->host_name];
+    uint32_t min_port = kStartPort + each_node_range * node_index;
+    uint32_t max_port = min_port + each_node_range - 1;
+    PortRange range;
+    range.set_min_port(min_port);
+    range.set_max_port(max_port);
+    (void)node_ranges.mutable_data()->insert({node_id, range});
+    MS_LOG(INFO) << "The port range for node " << node_id << ", rank id: " << node_info->rank_id
+                 << ", min port: " << min_port << ", max port: " << max_port;
+  }
+  (void)metadata_.insert({kNodePortRange, node_ranges.SerializeAsString()});
+}
+
 bool MetaServerNode::Recovery() {
   std::shared_lock<std::shared_mutex> lock(nodes_mutex_);
   std::string recovery_path = recovery::RecoveryPath();
+  RETURN_IF_FALSE_WITH_LOG(CheckFilePath(recovery_path), "Invalid recovery path: " << recovery_path);
   configuration_ = std::make_unique<recovery::FileConfiguration>(recovery_path + "/" + kRecoveryFileName);
   MS_EXCEPTION_IF_NULL(configuration_);
 
@@ -542,6 +596,50 @@ uint32_t MetaServerNode::AllocateRankId(const std::string &role) {
     next_rank_ids_[role] += 1;
   }
   return next_rank_ids_[role];
+}
+
+void MetaServerNode::ReassignNodeRank() {
+  if (common::GetEnv("MS_HCCL_CM_INIT") != "1" &&
+      std::all_of(nodes_.begin(), nodes_.end(), [](const auto &node) { return common::IsStrNumeric(node.first); })) {
+    MS_LOG(WARNING)
+      << "Rank ids are already set by numeric node ids, and this is not CM initialization. No need to reassign them.";
+    for (const auto &n : nodes_) {
+      const std::shared_ptr<NodeInfo> &node_info = n.second;
+      const std::string &role = node_info->role;
+      (void)metadata_.insert(std::make_pair(role + node_info->node_id, std::to_string(node_info->rank_id)));
+    }
+    return;
+  }
+
+  MS_LOG(INFO) << "Start sorting and reassiging rank ids for nodes according to node ips and node ids.";
+  std::map<std::string, std::map<NodeKey, uint32_t>> node_ranks;
+  for (auto &n : nodes_) {
+    std::shared_ptr<NodeInfo> &node_info = n.second;
+    NodeKey node_key = {node_info->host_ip, node_info->node_id};
+    (void)node_ranks[node_info->role].insert(std::make_pair(node_key, 0));
+  }
+
+  for (auto &n : node_ranks) {
+    std::map<NodeKey, uint32_t> &node_key_ranks = n.second;
+    uint32_t accum_rank_id = 0;
+    for (auto &node_rank : node_key_ranks) {
+      node_rank.second = accum_rank_id++;
+    }
+  }
+
+  for (auto &n : nodes_) {
+    std::shared_ptr<NodeInfo> &node_info = n.second;
+    const std::string &role = node_info->role;
+    NodeKey node_key = {node_info->host_ip, node_info->node_id};
+    uint32_t new_rank = node_ranks[role][node_key];
+
+    MS_LOG(WARNING) << "Assign rank id of node id: " << node_info->node_id << ", role: " << role
+                    << ", with host ip: " << node_info->host_ip << ", old rank id: " << node_info->rank_id
+                    << ", new rank id: " << new_rank;
+
+    node_info->rank_id = new_rank;
+    (void)metadata_.insert(std::make_pair(role + node_info->node_id, std::to_string(node_info->rank_id)));
+  }
 }
 
 TopoState MetaServerNode::TopologyState() const { return topo_state_; }

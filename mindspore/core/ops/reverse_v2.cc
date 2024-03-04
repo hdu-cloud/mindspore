@@ -16,10 +16,11 @@
 
 #include <set>
 
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "ops/op_utils.h"
 #include "ops/reverse_v2.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/src/helper.h"
 
 namespace mindspore {
 namespace ops {
@@ -30,9 +31,8 @@ abstract::ShapePtr ReverseV2InferShape(const PrimitivePtr &primitive, const std:
   auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
   auto axis_ptr = primitive->GetAttr("axis");
   auto input_axis = GetValue<std::vector<int64_t>>(axis_ptr);
-  auto axis_dims = SizeToLong(input_axis.size());
-  auto x_dims = SizeToLong(x_shape.size());
-  (void)primitive->AddAttr("axis", MakeValue(input_axis));
+  auto axis_dims = input_axis.size();
+  auto x_dims = x_shape.size();
   const int64_t input_max_dim = 8;
 
   auto input_x_shape_ptr = input_args[kInputIndex0]->BuildShape();
@@ -46,22 +46,24 @@ abstract::ShapePtr ReverseV2InferShape(const PrimitivePtr &primitive, const std:
   }
   if (x_dims != 0) {
     std::vector<bool> reverse_shape;
-    for (int64_t i = 0; i < x_dims; i++) {
+    for (size_t i = 0; i < x_dims; i++) {
       reverse_shape.push_back(false);
     }
-    for (int64_t i = 0; i < axis_dims; ++i) {
-      int64_t realdim = static_cast<int64_t>(input_axis[i] < 0 ? x_dims + input_axis[i] : input_axis[i]);
+    for (size_t i = 0; i < axis_dims; ++i) {
+      int64_t realdim = static_cast<int64_t>(input_axis[i] < 0 ? SizeToLong(x_dims) + input_axis[i] : input_axis[i]);
       input_axis[i] = realdim;
-      if (realdim < 0 || realdim >= x_dims) {
+      if (realdim < 0 || realdim >= SizeToLong(x_dims)) {
         MS_EXCEPTION(ValueError) << "For '" << prim_name << "', the 'axis[" << i << "]' must be in range of [-"
                                  << x_dims << ", " << x_dims << "), but got " << input_axis[i] << " with type 'int'.";
-      } else if (realdim >= 0 && reverse_shape[realdim] == true) {
+      } else if (realdim >= 0 && reverse_shape[LongToSize(realdim)] == true) {
         MS_EXCEPTION(ValueError) << "For " << prim_name << ", 'axis' cannot contain duplicate dimensions"
                                  << ", but got " << realdim;
-      } else if (realdim >= 0 && reverse_shape[realdim] == false) {
-        reverse_shape[realdim] = true;
+      } else if (realdim >= 0 && reverse_shape[LongToSize(realdim)] == false) {
+        reverse_shape[LongToSize(realdim)] = true;
       }
     }
+  } else {
+    MS_EXCEPTION(ValueError) << "For '" << prim_name << "', the dimension of input tensor is 0";
   }
   return std::make_shared<abstract::Shape>(x_shape);
 }
@@ -91,6 +93,24 @@ AbstractBasePtr ReverseV2Infer(const abstract::AnalysisEnginePtr &, const Primit
   auto infershape = ReverseV2InferShape(primitive, input_args);
   return abstract::MakeAbstract(infershape, infertype);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(ReverseV2, prim::kPrimReverseV2, ReverseV2Infer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGReverseV2Infer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ReverseV2InferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ReverseV2InferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ReverseV2Infer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ReverseV2, prim::kPrimReverseV2, AGReverseV2Infer, false);
 }  // namespace ops
 }  // namespace mindspore

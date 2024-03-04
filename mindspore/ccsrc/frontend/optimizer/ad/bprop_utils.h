@@ -14,24 +14,18 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_CCSRC_FRONTEND_OPTIMIZER_AD_BPROP_MANAGER_H_
-#define MINDSPORE_CCSRC_FRONTEND_OPTIMIZER_AD_BPROP_MANAGER_H_
+#ifndef MINDSPORE_CCSRC_FRONTEND_OPTIMIZER_AD_BPROP_UTILS_H_
+#define MINDSPORE_CCSRC_FRONTEND_OPTIMIZER_AD_BPROP_UTILS_H_
 
+#include "pybind11/pybind11.h"
 #include "include/common/utils/primitive_utils.h"
-#include "pipeline/jit/resource.h"
+#include "pipeline/jit/ps/resource.h"
 
 namespace mindspore {
 namespace ad {
-#ifndef _WIN32
-// For the bprop mindir generator.
-// Given an operator name, export a mindir file from its bprop defined in python.
-void ExportBpropToMindir(const py::object &obj, bool force_update);
-// For the bprop mindir check.
-// Given an operator name, check whether its mindir file can be loaded and up to date.
-bool CheckMindir(const py::object &obj);
-#endif
 // Get bprop function of a primitive.
-FuncGraphPtr GetBprop(const PrimitivePtr &prim, const pipeline::ResourceBasePtr &resources = nullptr);
+FuncGraphPtr GetBprop(const PrimitivePtr &prim, const pipeline::ResourceBasePtr &resources = nullptr,
+                      const CNodePtr &cnode = nullptr);
 }  // namespace ad
 }  // namespace mindspore
-#endif  // MINDSPORE_CCSRC_FRONTEND_OPTIMIZER_AD_BPROP_MANAGER_H_
+#endif  // MINDSPORE_CCSRC_FRONTEND_OPTIMIZER_AD_BPROP_UTILS_H_

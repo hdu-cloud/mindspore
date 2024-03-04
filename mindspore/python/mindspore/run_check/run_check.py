@@ -40,19 +40,21 @@ def _check_mul():
     input_y = ms.Tensor(np.array([4.0, 5.0, 6.0]), ms.float32)
     mul = ms.ops.Mul()
     mul(input_x, input_y)
-    print(f"The result of multiplication calculation is correct, MindSpore has been installed successfully!")
+    print("The result of multiplication calculation is correct, MindSpore has been installed on platform "
+          f"[{ms.get_context('device_target')}] successfully!")
 
 
 def run_check():
     """
     Provide a convenient API to check if the installation is successful or failed.
-    If there is no return value, the verification status will be displayed directly.
+    If the version in the check result is not what you expect, use :func:`mindspore.set_context` to set device_target
+    before run_check().
 
     Examples:
         >>> import mindspore
         >>> mindspore.run_check()
         MindSpore version: xxx
-        The result of multiplication calculation is correct, MindSpore has been installed successfully!
+        The result of multiplication calculation is correct, MindSpore has been installed on platform [XX] successfully!
     """
     try:
         _check_mul()

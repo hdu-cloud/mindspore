@@ -30,6 +30,8 @@
 #include "runtime/hardware/device_context.h"
 #include "backend/graph_compiler/segment_runner.h"
 #include "runtime/graph_scheduler/actor/actor_set.h"
+#include "include/common/profiler.h"
+#include "include/backend/py_execute_utils.h"
 
 namespace mindspore {
 namespace compile {
@@ -48,20 +50,6 @@ enum SwitchCondStatus {
   kCondAlreadyRun,
 };
 
-struct TopoSortNodeInfo {
-  PrimitivePtr prim{nullptr};
-  AbstractBasePtr abs{nullptr};
-  bool is_func_graph{false};
-  std::string func_graph_cell_id;
-};
-
-struct FuncGraphDynamicInfo {
-  std::vector<TopoSortNodeInfo> topo_node_list;
-  std::vector<std::pair<size_t, size_t>> graph_edge_list;
-  std::vector<std::pair<std::string, tensor::TensorPtr>> value_node_tensor_list;
-  bool is_dynamic{false};
-};
-
 class BACKEND_EXPORT Backend {
  public:
   explicit Backend(const std::string &name);
@@ -72,7 +60,7 @@ class BACKEND_EXPORT Backend {
   std::string name() { return name_; }
   virtual bool GetCond(const BaseRef &c, bool *value);
   virtual bool GetIndex(const BaseRef &c, int64_t *value);
-  virtual GraphId CompileGraph(NotNull<FuncGraphPtr> fg) { return kInvalidGraphId; }
+  virtual GraphId CompileGraph(const NotNull<FuncGraphPtr> &fg) { return kInvalidGraphId; }
   virtual void SetDebugger() {}
 
   bool is_multi_graph_sink() const { return is_multi_graph_sink_; }
@@ -84,9 +72,12 @@ class BACKEND_EXPORT Backend {
   bool is_multi_graph_sink_;
 };
 
-void PushInputTensor(const BaseRef &arg, std::vector<tensor::TensorPtr> *inputs);
+BACKEND_EXPORT void set_pydata_converter(const pyexecute::PyDataConverter &pydata_converter);
+
+void PushInputTensor(const BaseRef &arg, std::vector<tensor::TensorPtr> *inputs, const AnfNodePtr &node = nullptr);
 std::vector<std::vector<tensor::TensorPtr>> GetRunGraphInputs(const GraphCompilerInfo &graph_compiler_info,
                                                               const VectorRef &args);
+runtime::KernelMapPosition FetchOriginOutputOrder(const AnfNodePtr &root_output);
 
 class BACKEND_EXPORT MindRTBackendBase : public Backend {
  public:
@@ -104,37 +95,55 @@ class BACKEND_EXPORT MindRTBackendBase : public Backend {
   void SetDebuggerInit() const;
 #endif
 
+  // Get serialized random status of all random kernels in this graph
+  std::string GetRandomStatus(const ActorInfo &actor_info);
+
   // Get the device target.
   std::string GetDeviceTarget() { return device_name_; }
 
   virtual void WaitTaskFinish() const {}
   virtual void RunGraphByCondition(const ActorInfo &actor_info, const GraphCompilerInfo &graph_compiler_info,
                                    const VectorRef &args, VectorRef *outputs) {}
-  virtual bool IsFuncGraphDynamicShapeOrStruct(const FuncGraphPtr &func_graph, const std::string &cell_id) {
-    return true;
-  }
+  virtual void RunContiguousTask(const tensor::TensorPtr &tensor, bool enable_async) {}
 
  protected:
+  // Convert the nodes which are not supported in the backend.
+  void UnifyMindIR(const FuncGraphPtr &func_graph) const;
+
   // The parameter func_graph is a graph, it can be either a root graph or a sub graph,
   // The result of graph compiler is stored in graph_id_to_device_context_ and control_nodes_.
   void CompileGraph(const FuncGraphPtr &func_graph, device::RunMode run_mode);
 
   // Compile the kernel graph by the segment which is from the function graph partition.
-  void CompileGraph(const GraphSegmentPtr &segment, device::RunMode run_mode);
+  void CompileGraphFromSegment(const GraphSegmentPtr &segment, device::RunMode run_mode);
+
+  // Compile the kernel graph which generated directly from front end(PyNative), and no need do graph partition.
+  void CompileKernelGraph(const KernelGraphPtr &kernel_graph, const std::pair<AnfNodePtrList, AnfNodePtrList> &io_nodes,
+                          DeviceContext *device_context, device::RunMode run_mode);
+
+  void CacheFuncGraphWithKernelGraphId(const FuncGraphPtr &func_graph, const GraphId &graph_id,
+                                       DeviceContext *device_context);
 
   void ConstructOutputs(runtime::ActorSet *actor_set, VectorRef *outputs, const FuncGraphPtr &root_graph);
 
   // Restore the outputs tuple by the origin funcGraph output node and output tensors.
   void ConstructOutputs(const AnfNodePtr &output_node, const std::vector<tensor::TensorPtr> &output_tensors,
-                        size_t *output_position, VectorRef *outputs);
+                        size_t *output_position, VectorRef *outputs, std::vector<tensor::TensorPtr> *tuple_tensors);
+  // Spit the tuple tensor to multi tensors for restoring the tuple output.
+  void ConstructOutputByTupleTensor(tensor::TensorPtr output_tensor, const abstract::SequenceShapePtr &tensor_shape,
+                                    VectorRef *outputs, std::vector<tensor::TensorPtr> *tuple_tensors) const;
   // In the control flow, the output of the call node needs to be created by abstract.
   BaseRef ConstructOutputByAbstract(const abstract::AbstractBasePtr &abstract,
-                                    const std::vector<tensor::TensorPtr> &output_tensors, size_t *output_position);
+                                    const std::vector<tensor::TensorPtr> &output_tensors, size_t *output_position,
+                                    std::vector<tensor::TensorPtr> *tuple_tensors);
   // Construct the GraphCompilerInfo by the compilation results of graph, used in Graph mode.
   std::shared_ptr<GraphCompilerInfo> ConstructGraphCompilerInfo(const FuncGraphPtr &root_graph);
 
   void ParseControlNodes(const GraphCompilerInfo &graph_compile_info);
 
+  void UpdateGraphCompilerInfo(const ActorInfo &actor_info);
+
+  void ContiguousArgs(const VectorRef &args);
   // When compiling FuncGraph, it is divided according to the control nodes, and obtain the control nodes and several
   // node segments. Node segments will be compiled into kernelGraphs which are expressed as GraphId and bound to
   // the corresponding device_context.
@@ -148,10 +157,8 @@ class BACKEND_EXPORT MindRTBackendBase : public Backend {
   mindspore::HashMap<ActorInfo, std::shared_ptr<GraphCompilerInfo>> actor_to_graph_compiler_info_;
 
   // Save the mapping between cell id and actor info.
-  mindspore::HashMap<std::string, ActorInfo> graph_actor_infos_;
-  bool enable_backend_dynamic_detect_{false};
-  bool is_dynamic_{false};
   FuncGraphPtr root_graph_;
+  AnfNodePtr output_node_;
   GraphPartitionPtr graph_partition_;
   std::shared_ptr<GraphCompiler> graph_compiler_;
   std::string device_name_;

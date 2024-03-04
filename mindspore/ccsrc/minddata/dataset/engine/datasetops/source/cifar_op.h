@@ -77,6 +77,10 @@ class CifarOp : public MappableLeafOp {
   // @return
   Status PrepareData() override;
 
+  /// Initialize pull mode, calls PrepareData() within
+  /// @return Status The status code returned
+  Status InitPullMode() override;
+
  private:
   // Load a tensor row according to a pair
   // @param uint64_t index - index need to load

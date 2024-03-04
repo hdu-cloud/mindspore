@@ -15,22 +15,28 @@
  */
 
 #include "backend/graph_compiler/graph_partition.h"
-#include <string>
-#include <functional>
-#include <utility>
+#include <algorithm>
 #include <map>
 #include <queue>
-#include <stack>
 #include <set>
-#include <algorithm>
-#include "mindspore/core/ops/core_ops.h"
-#include "include/common/utils/utils.h"
-#include "utils/ms_context.h"
-#include "ps/ps_context.h"
+#include <stack>
+#include <string>
+#include <utility>
+#include "include/common/utils/anfalgo.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/structure_ops.h"
+#include "mindspore/ccsrc/runtime/hardware/device_context.h"
 #include "utils/anf_utils.h"
+#include "utils/ms_context.h"
 namespace mindspore {
 namespace compile {
 namespace {
+constexpr const char kOnlySupport2DiffTarget[] = "Only support two different target";
+const size_t kMaxDiffTargetNum = 2;
+
 std::string GetOtherTarget(const std::vector<AnfNodePtr> &nodes) {
   auto context_ptr = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(context_ptr);
@@ -46,6 +52,28 @@ std::string GetOtherTarget(const std::vector<AnfNodePtr> &nodes) {
     }
   }
   return "";
+}
+
+void CheckDiffTargetNum(const std::vector<AnfNodePtr> &nodes) {
+  auto context_ptr = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context_ptr);
+  std::string default_target = context_ptr->get_param<std::string>(MS_CTX_DEVICE_TARGET);
+  std::set<std::string> target_set;
+  (void)target_set.emplace(default_target);
+  for (auto &node : nodes) {
+    MS_EXCEPTION_IF_NULL(node);
+    if (!node->isa<CNode>()) {
+      continue;
+    }
+    std::string cur_target = GetCNodeTarget(node);
+    if (target_set.find(cur_target) == target_set.end()) {
+      (void)target_set.emplace(cur_target);
+    }
+  }
+
+  if (target_set.size() > kMaxDiffTargetNum) {
+    MS_LOG(EXCEPTION) << kOnlySupport2DiffTarget;
+  }
 }
 
 void CalcNodeRefCount(const FuncGraphPtr &graph, std::map<AnfNodePtr, size_t> *nodes_ref) {
@@ -206,7 +234,7 @@ std::vector<AnfNodePtr> SplitSort(const FuncGraphPtr &graph, const std::string &
         next_to_visit.push(input);
         next_target = input_target;
       } else {
-        MS_LOG(EXCEPTION) << "Only support two different target";
+        MS_LOG(EXCEPTION) << kOnlySupport2DiffTarget;
       }
     }
   }
@@ -603,7 +631,7 @@ void NodesToSegments(const std::vector<AnfNodePtr> &segment_nodes, std::vector<G
   for (auto &node : segment_nodes) {
     MS_EXCEPTION_IF_NULL(node);
     auto cnode = node->cast<CNodePtr>();
-    if (AnfUtils::IsNodeOutputDynamicShape(cnode)) {
+    if (common::AnfAlgo::IsNodeOutputDynamicShape(cnode)) {
       (void)dynamic_nodes_set.insert(node);
     }
   }
@@ -612,6 +640,72 @@ void NodesToSegments(const std::vector<AnfNodePtr> &segment_nodes, std::vector<G
     return;
   }
   SplitDynamicNodeSegment(segment_nodes, segments, node_to_segment, dynamic_nodes_set);
+}
+
+void ProcessCloseFollowing(const FuncGraphPtr &graph, const AnfNodePtr &cut_node,
+                           mindspore::HashMap<AnfNodePtr, std::vector<AnfNodePtr>> *close_following) {
+  auto context_ptr = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context_ptr);
+  static const bool is_enable_ge = context_ptr->backend_policy() == "ge";
+  auto context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  const auto is_cell_reuse = context->CellReuseLevel() != CellReuseLevel::kNoCellReuse;
+  if (!is_enable_ge || !is_cell_reuse) {
+    return;
+  }
+  auto cnode = dyn_cast_ptr<CNode>(cut_node);
+  if (cnode == nullptr || !cnode->HasPrimalAttr(kAttrNodeWithoutOutput)) {
+    return;
+  }
+
+  auto manager = graph->manager();
+  if (manager == nullptr) {
+    return;
+  }
+  auto &node_user = manager->node_users();
+  if (node_user[cut_node].size() != 1) {
+    MS_LOG(EXCEPTION) << "Error Node without output: " << cut_node->fullname_with_scope() << ", node user must be 1";
+  }
+
+  std::vector<AnfNodePtr> follow_set;
+  auto seen = NewSeenGeneration();
+  std::queue<AnfNodePtr> node_queue;
+  node_queue.push(cut_node);
+
+  while (!node_queue.empty()) {
+    auto top_node = node_queue.front();
+    node_queue.pop();
+    top_node->seen_ = seen;
+    follow_set.push_back(top_node);
+    for (auto &next : node_user[top_node]) {
+      auto next_node = next.first;
+      if (next_node->seen_ == seen) {
+        continue;
+      }
+      auto next_cnode = dyn_cast_ptr<CNode>(next_node);
+      if (next_cnode != nullptr && next_cnode->HasPrimalAttr(kAttrNodeCloseFollowing)) {
+        node_queue.push(next_node);
+      }
+    }
+    if (top_node == cut_node) {
+      continue;
+    }
+    auto top_cnode = dyn_cast_ptr<CNode>(top_node);
+    if (top_cnode == nullptr) {
+      continue;
+    }
+    const auto &inputs = top_cnode->inputs();
+    for (auto iter = inputs.begin() + 1; iter != inputs.end(); iter++) {
+      const auto &next = *iter;
+      MS_EXCEPTION_IF_NULL(next);
+      if (next->seen_ == seen) {
+        continue;
+      }
+      node_queue.push(next);
+    }
+  }
+
+  (*close_following)[cut_node] = follow_set;
 }
 }  // namespace
 
@@ -628,7 +722,17 @@ bool GraphPartition::IsCut(const AnfNodePtr &node) {
     }
     AnfNodePtr fn = inputs[0];
     if (!IsValueNode<Primitive>(fn)) {
+      // Call node not cut in pynative control for dynamic shape
+      if (common::AnfAlgo::HasNodeAttr(kAttrJitCallNode, cnode)) {
+        return false;
+      }
+      if (IsPrimitiveCNode(fn, prim::kPrimSwitch) && fn->cast<CNodePtr>()->HasPrimalAttr(kAttrNotCut)) {
+        return false;
+      }
       return true;
+    }
+    if (cnode->HasPrimalAttr(kAttrNotCut)) {
+      return false;
     }
     auto node_prim = GetValueNode<PrimitivePtr>(fn);
     for (auto &prim : cut_list_) {
@@ -639,7 +743,7 @@ bool GraphPartition::IsCut(const AnfNodePtr &node) {
           MS_EXCEPTION_IF_NULL(ms_context);
           ms_context->set_param<bool>(MS_CTX_ENABLE_PYNATIVE_HOOK, true);
         }
-        if (backend_name_ == kMsConvert && prim->name() == prim::kPrimMakeTuple->name()) {
+        if ((backend_name_ == kMsConvert || backend_name_ == kGeVm) && prim->name() == prim::kPrimMakeTuple->name()) {
           if (inputs.size() <= 1) {
             return false;
           }
@@ -652,6 +756,22 @@ bool GraphPartition::IsCut(const AnfNodePtr &node) {
   }
   return false;
 }
+
+namespace {
+bool IsAnyTypeCut(const AnfNodePtr &node) {
+  return common::AnfAlgo::CheckPrimitiveType(node, prim::kPrimPyExecute) && common::AnfAlgo::IsAnyTypeOutput(node);
+}
+
+void ProcessNodeToSegments(const std::string &cur_flag, const std::string &flag, std::vector<AnfNodePtr> *segment_nodes,
+                           std::vector<GraphSegmentPtr> *segments,
+                           std::map<AnfNodePtr, GraphSegmentPtr> *node_to_segment) {
+  if (!flag.empty() && cur_flag != flag) {
+    NodesToSegments(*segment_nodes, segments, node_to_segment);
+    segment_nodes->clear();
+  }
+}
+
+}  // namespace
 
 std::vector<GraphSegmentPtr> GraphPartition::Partition(const FuncGraphPtr &graph, bool *multi_target) {
   MS_EXCEPTION_IF_NULL(graph);
@@ -676,13 +796,39 @@ std::vector<GraphSegmentPtr> GraphPartition::Partition(const FuncGraphPtr &graph
     nodes = ReorderVirtualNode(nodes, prim::kPrimTupleGetItem);
     nodes = ReorderVirtualNode(nodes, prim::kPrimDepend);
   }
+  CheckDiffTargetNum(nodes);
   std::vector<GraphSegmentPtr> segments;
   std::vector<AnfNodePtr> segment_nodes;
   std::map<AnfNodePtr, GraphSegmentPtr> node_to_segment;
   std::string last_target;
+  std::string graph_group;
+  mindspore::HashSet<AnfNodePtr> has_cut;
+  mindspore::HashMap<AnfNodePtr, std::vector<AnfNodePtr>> close_following;
   for (auto &node : nodes) {
     MS_EXCEPTION_IF_NULL(node);
+    if (has_cut.find(node) != has_cut.end()) {
+      continue;
+    }
+    (void)has_cut.insert(node);
+    ProcessCloseFollowing(graph, node, &close_following);
     if (IsCut(node)) {
+      std::vector<AnfNodePtr> need_in_segement;
+      for (auto &seg_node : segment_nodes) {
+        auto iter = close_following.find(seg_node);
+        if (iter == close_following.end()) {
+          continue;
+        }
+        for (auto &succ : iter->second) {
+          if (has_cut.find(succ) == has_cut.end()) {
+            (void)has_cut.insert(succ);
+            need_in_segement.push_back(succ);
+          }
+        }
+      }
+      for (auto &succ : need_in_segement) {
+        MS_LOG(INFO) << "Find succ push to segment: " << succ->DebugString();
+        segment_nodes.push_back(succ);
+      }
       NodesToSegments(segment_nodes, &segments, &node_to_segment);
       segment_nodes.clear();
       segment_nodes.emplace_back(node);
@@ -690,15 +836,17 @@ std::vector<GraphSegmentPtr> GraphPartition::Partition(const FuncGraphPtr &graph
       segments.push_back(segment);
       segment_nodes.clear();
     } else if (node->isa<CNode>()) {
-      if (contain_multi_target) {
-        std::string cur_target = GetCNodeTarget(node);
-        if (cur_target != last_target && !last_target.empty()) {
-          NodesToSegments(segment_nodes, &segments, &node_to_segment);
-          segment_nodes.clear();
-        }
-        last_target = cur_target;
-      }
+      std::string cur_target = GetCNodeTarget(node);
+      std::string cur_graph_group = common::AnfAlgo::GetGraphSplitGroup(node);
+      ProcessNodeToSegments(cur_target, last_target, &segment_nodes, &segments, &node_to_segment);
+      ProcessNodeToSegments(cur_graph_group, graph_group, &segment_nodes, &segments, &node_to_segment);
+      graph_group = cur_graph_group;
+      last_target = cur_target;
       segment_nodes.emplace_back(node);
+      if (IsAnyTypeCut(node)) {
+        NodesToSegments(segment_nodes, &segments, &node_to_segment);
+        segment_nodes.clear();
+      }
     }
   }
   MS_LOG(DEBUG) << "Segment size:" << segments.size();

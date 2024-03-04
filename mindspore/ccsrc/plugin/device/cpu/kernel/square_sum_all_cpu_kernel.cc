@@ -70,8 +70,8 @@ int SquareSumAllCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const
   num_batch_ =
     std::accumulate(input_shape.begin(), input_shape.begin() + batch_rank_, size_t(1), std::multiplies<size_t>());
   x_size_ = std::accumulate(input_shape.begin() + batch_rank_, input_shape.end(), size_t(1), std::multiplies<size_t>());
-  workspace_size_list_.emplace_back(num_batch_ * sizeof(float));
-  workspace_size_list_.emplace_back(num_batch_ * sizeof(float));
+  (void)workspace_size_list_.emplace_back(num_batch_ * sizeof(float));
+  (void)workspace_size_list_.emplace_back(num_batch_ * sizeof(float));
   return KRET_OK;
 }
 
@@ -99,11 +99,17 @@ bool SquareSumAllCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr
                                             const std::vector<kernel::AddressPtr> &workspace,
                                             const std::vector<kernel::AddressPtr> &outputs) {
   const T *input_0_addr = reinterpret_cast<T *>(inputs[0]->addr);
+  MS_ERROR_IF_NULL_W_RET_VAL(input_0_addr, false);
   const T *input_1_addr = reinterpret_cast<T *>(inputs[1]->addr);
+  MS_ERROR_IF_NULL_W_RET_VAL(input_1_addr, false);
   T *output_0_addr = reinterpret_cast<T *>(outputs[0]->addr);
+  MS_ERROR_IF_NULL_W_RET_VAL(output_0_addr, false);
   T *output_1_addr = reinterpret_cast<T *>(outputs[1]->addr);
+  MS_ERROR_IF_NULL_W_RET_VAL(output_1_addr, false);
   float *workspace_0_addr = reinterpret_cast<float *>(workspace[0]->addr);
+  MS_ERROR_IF_NULL_W_RET_VAL(workspace_0_addr, false);
   float *workspace_1_addr = reinterpret_cast<float *>(workspace[1]->addr);
+  MS_ERROR_IF_NULL_W_RET_VAL(workspace_1_addr, false);
   for (size_t i = 0; i < num_batch_; ++i) {
     workspace_0_addr[i] = static_cast<float>(0.0);
     workspace_1_addr[i] = static_cast<float>(0.0);

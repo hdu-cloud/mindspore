@@ -17,12 +17,12 @@
 #ifndef MINDSPORE_CORE_OPS_FLOOR_H_
 #define MINDSPORE_CORE_OPS_FLOOR_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,8 +37,8 @@ class MIND_API Floor : public BaseOperator {
   /// \brief Init. Refer to the parameters of Python API @ref mindspore.ops.Floor for the inputs.
   void Init() const {}
 };
-abstract::AbstractBasePtr FloorInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                     const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr FloorInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                              const std::vector<abstract::AbstractBasePtr> &input_args);
 
 using PrimFloorPtr = std::shared_ptr<Floor>;
 }  // namespace ops

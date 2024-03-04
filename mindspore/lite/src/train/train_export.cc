@@ -30,6 +30,8 @@
 #include "src/train/graph_fusion.h"
 #include "src/train/graph_dropout.h"
 #include "src/litert/weight_decoder.h"
+#include "src/litert/kernel/cpu/fp16/fp16_op_handler.h"
+#include "base/float16.h"
 
 namespace mindspore {
 namespace lite {
@@ -124,8 +126,8 @@ int TrainExport::QuantTensorData(schema::TensorT *dest_tensor, const lite::Tenso
                                   &(quant_params), quant_max, quant_min, bit_num, &data, false, false);
   } else {
     ret = DoPerChannelQuant<int8_t>(reinterpret_cast<float *>(src_tensor->data()), src_tensor->ElementsNum(),
-                                    schema::QuantType_QUANT_WEIGHT, &(quant_params), quant_max, quant_min, bit_num,
-                                    &data, dest_tensor->dims, preferred_dim, false, false);
+                                    &(quant_params), quant_max, quant_min, bit_num, &data, dest_tensor->dims,
+                                    preferred_dim, true, false, false);
   }
   if (ret == RET_NO_CHANGE) {
     MS_LOG(DEBUG) << "No Need to quant per channel";
@@ -149,11 +151,18 @@ int TrainExport::QuantTensorData(schema::TensorT *dest_tensor, const lite::Tenso
   return RET_OK;
 }
 
-std::unique_ptr<schema::TensorT> TrainExport::CreateTensor(const mindspore::lite::Tensor *tensor,
-                                                           schema::Tensor *scTensor, int preferred_dim,
-                                                           const int tensor_quant_type) {
+std::unique_ptr<schema::TensorT> TrainExport::CreateTensor(
+  const mindspore::lite::Tensor *tensor, const std::vector<mindspore::lite::Tensor *> const_folded_output,
+  schema::Tensor *scTensor, int preferred_dim, const int tensor_quant_type) {
   auto tensorT = std::make_unique<schema::TensorT>();
-  tensorT->nodeType = scTensor->nodeType();
+  bool const_fold = false;
+  if (quant_type_ == QT_NONE && !const_folded_output.empty() &&
+      std::find(const_folded_output.begin(), const_folded_output.end(), tensor) != const_folded_output.end()) {
+    tensorT->nodeType = NodeType_ValueNode;
+    const_fold = true;
+  } else {
+    tensorT->nodeType = scTensor->nodeType();
+  }
   tensorT->dims = tensor->shape();
   tensorT->format = static_cast<schema::Format>(tensor->format());
   tensorT->name = tensor->tensor_name();
@@ -161,7 +170,8 @@ std::unique_ptr<schema::TensorT> TrainExport::CreateTensor(const mindspore::lite
   tensorT->offset = 0;
   tensorT->dataType = tensor->data_type();
   tensorT->enableHuffmanCode = false;
-  if ((tensorT->nodeType == NodeType_ValueNode) && (scTensor->data() != nullptr) && (scTensor->data()->size() > 0)) {
+  if (((tensorT->nodeType == NodeType_ValueNode) && (scTensor->data() != nullptr) && (scTensor->data()->size() > 0)) ||
+      const_fold) {
     if (NeedQuantization(tensor, tensor_quant_type)) {
       auto ret = QuantTensorData(tensorT.get(), tensor, preferred_dim);
       if (ret != RET_OK) {
@@ -383,13 +393,12 @@ int TrainExport::KeepGraphInputsInOrder(const Model *model) {
   }
   meta_graph_->inputIndex = origin_inputs_order;
   if (!meta_graph_->subGraph.empty()) {
-    MS_CHECK_TRUE_MSG(meta_graph_->subGraph[0]->inputIndices.size() == origin_inputs_order.size(), RET_ERROR,
-                      "metagraph's subgraph input indices size is invalid.");
     meta_graph_->subGraph[0]->inputIndices = origin_inputs_order;
   }
   return RET_OK;
 }
 int TrainExport::ExportTensor(const Model *model, const std::vector<mindspore::lite::Tensor *> &tensors, int offset,
+                              const std::vector<mindspore::lite::Tensor *> const_folded_output,
                               const std::vector<std::pair<size_t, tensor_info>> &map_index,
                               const std::vector<std::string> &output_names, const std::set<size_t> &out_set) {
   std::vector<mindspore::lite::Tensor *> in_tensors;
@@ -406,7 +415,8 @@ int TrainExport::ExportTensor(const Model *model, const std::vector<mindspore::l
     schema::Tensor *scTensor = model->graph_.all_tensors_.at(pid);
     auto preferred_dim = WeightDecoder::GetPreferredDim(in_tensors, index.second.op_parameter, index.second.input_index,
                                                         tensor->shape(), model->graph_.version_);
-    auto tensorT = CreateTensor(tensor, scTensor, preferred_dim, index.second.op_parameter->quant_type_);
+    auto tensorT =
+      CreateTensor(tensor, const_folded_output, scTensor, preferred_dim, index.second.op_parameter->quant_type_);
     if (tensorT == nullptr) {
       MS_LOG(ERROR) << "error in tensor creation";
       return RET_ERROR;
@@ -436,6 +446,7 @@ int TrainExport::ExportTensor(const Model *model, const std::vector<mindspore::l
 
 int TrainExport::ExportNet(const std::vector<mindspore::kernel::KernelExec *> &kernels,
                            const std::vector<mindspore::lite::Tensor *> &tensors,
+                           const std::vector<mindspore::lite::Tensor *> const_folded_output,
                            const std::vector<std::string> &output_names, const Model *model,
                            QuantizationType quant_type, const Model *bb_model) {
   std::vector<std::pair<size_t, tensor_info>> map_index;
@@ -496,7 +507,7 @@ int TrainExport::ExportNet(const std::vector<mindspore::kernel::KernelExec *> &k
     }
   }
 
-  auto status = ExportTensor(model, tensors, offset, map_index, output_names, out_set);
+  auto status = ExportTensor(model, tensors, offset, const_folded_output, map_index, output_names, out_set);
   if (status != RET_OK) {
     MS_LOG(ERROR) << "ExportTensor failed.";
     return RET_ERROR;
@@ -612,7 +623,94 @@ int TrainExport::SaveModel(lite::Model *model, const std::string &file_name) {
   return status;
 }
 
+int TrainExport::SaveModel(lite::Model *model, Buffer *model_buffer) {
+  MS_CHECK_FALSE_MSG(model == nullptr, RET_ERROR, "model cannot be empty.");
+  MS_CHECK_FALSE_MSG(model_buffer == nullptr, RET_ERROR, "model_buffer cannot be empty.");
+  auto *liteModel = reinterpret_cast<LiteModel *>(model);
+  auto size = liteModel->buf_size_;
+  model_buffer->ResizeData(size);
+
+  size_t out_size = model_buffer->DataSize();
+  int status = mindspore::lite::Model::Export(model, static_cast<char *>(model_buffer->MutableData()), &out_size);
+  if (out_size != size) {
+    MS_LOG(ERROR) << "model_buffer resize failed.";
+    return RET_ERROR;
+  }
+
+  return status;
+}
+
 int TrainExport::SaveToFile() { return Storage::Save(*meta_graph_, file_name_); }
+
+int TrainExport::SaveToBuffer() {
+  constexpr size_t kFbBuilderInitSize = 1024;
+  flatbuffers::FlatBufferBuilder builder(kFbBuilderInitSize);
+  auto offset = schema::MetaGraph::Pack(builder, meta_graph_);
+  builder.Finish(offset);
+  schema::FinishMetaGraphBuffer(builder, offset);
+  size_t size = builder.GetSize();
+  auto content = builder.GetBufferPointer();
+  MS_CHECK_FALSE_MSG(content == nullptr, RET_ERROR, "context cannot be empty.");
+  MS_CHECK_FALSE_MSG(model_buffer_ == nullptr, RET_ERROR, "context cannot be empty.");
+  model_buffer_->SetData(content, size);
+  return RET_OK;
+}
+int TrainExport::SaveWeightsToFile(bool enable_fp16, const std::vector<std::string> &changeable_weights_name) {
+  const auto &all_tensors = meta_graph_->allTensors;
+  std::ofstream weights(file_name_, std::ios::out | std::ios::trunc | std::ios::binary);
+  if (!weights.is_open()) {
+    MS_LOG(ERROR) << "Can not open weight file: " << file_name_;
+    return RET_ERROR;
+  }
+  for (auto &tensor : all_tensors) {
+    MS_CHECK_TRUE_MSG(tensor != nullptr, RET_NULL_PTR, "Exist tensor is a nullptr.");
+    if (tensor->data.empty()) {
+      continue;
+    }
+    if (std::find(changeable_weights_name.begin(), changeable_weights_name.end(), tensor->name) !=
+        changeable_weights_name.end()) {
+      auto shape = tensor->dims;
+      weights.write(reinterpret_cast<const char *>(shape.data()), shape.size() * sizeof(uint32_t));
+      if (weights.fail()) {
+        MS_LOG(ERROR) << "Write weights failed, weight file: " << file_name_;
+        weights.close();
+        return RET_ERROR;
+      }
+    }
+    if (!enable_fp16 || tensor->dataType != kNumberTypeFloat32) {
+      weights.write(reinterpret_cast<const char *>(tensor->data.data()), tensor->data.size());
+      if (weights.fail()) {
+        MS_LOG(ERROR) << "Write weights failed, weight file: " << file_name_;
+        weights.close();
+        return RET_ERROR;
+      }
+    } else {
+      std::vector<uint16_t> data_fp16(tensor->data.size() / sizeof(float));
+#ifndef ENABLE_ARM
+      auto fp32_data = reinterpret_cast<const float *>(tensor->data.data());
+      auto fp16_data = reinterpret_cast<float16 *>(data_fp16.data());
+      CHECK_NULL_RETURN(fp32_data);
+      CHECK_NULL_RETURN(fp16_data);
+      for (size_t j = 0; j < data_fp16.size(); ++j) {
+        fp16_data[j] = float16(fp32_data[j]);
+      }
+#else
+      Float32ToFloat16_fp16_handler(tensor->data.data(), data_fp16.data(), data_fp16.size(), true);
+#endif
+      weights.write(reinterpret_cast<const char *>(data_fp16.data()), data_fp16.size() * sizeof(uint16_t));
+      if (weights.fail()) {
+        MS_LOG(ERROR) << "Write weights failed, weight file: " << file_name_;
+        weights.close();
+        return RET_ERROR;
+      }
+    }
+  }
+  weights.close();
+#ifndef _MSC_VER
+  chmod(file_name_.c_str(), S_IRUSR | S_IWUSR);
+#endif
+  return RET_OK;
+}
 
 bool TrainExport::IsInputTensor(const schema::TensorT &t) {
   int total_dims = std::accumulate(t.dims.begin(), t.dims.end(), 1, std::multiplies<int>());

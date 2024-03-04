@@ -17,15 +17,16 @@
 #define MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_BUFFER_FUSION_UB_PATTERN_FUSION_H_
 #include <string>
 #include <map>
+#include <vector>
 #include "utils/hash_map.h"
 #include "utils/hash_set.h"
 #include "plugin/device/ascend/optimizer/buffer_fusion/fusion_base_pass.h"
 #include "ir/anf.h"
-#include "backend/common/optimizer/pass.h"
-#include "backend/common/optimizer/fusion_id_allocator.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/optimizer/pass.h"
+#include "plugin/device/ascend/optimizer/fusion_id_allocator.h"
+#include "include/backend/kernel_info.h"
 #include "kernel/kernel.h"
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 
 namespace mindspore {
 namespace opt {
@@ -38,8 +39,10 @@ class UbPatternFusion : public PassWithSwitch {
   bool RunPass(const FuncGraphPtr &graph) override;
 
  private:
-  void GetBufferFusionInfo(session::KernelGraph *kernel_graph,
-                           mindspore::HashMap<int64_t, BufferFusionInfo_t> *buffer_fusion_infos) const;
+  void GetBufferFusionInfo(
+    session::KernelGraph *kernel_graph, mindspore::HashMap<int64_t, BufferFusionInfo_t> *buffer_fusion_infos,
+    mindspore::HashMap<int64_t, RemovedUpdateStateInfo> *removed_updatestate_infos,
+    mindspore::HashMap<AnfNodePtr, std::vector<int64_t>> *newest_updatestate_related_fusion_ids) const;
   bool ReplaceFusionOp(mindspore::HashMap<int64_t, BufferFusionInfo_t> *buffer_fusion_infos, int64_t fusion_id,
                        session::KernelGraph *kernel_graph) const;
   bool FuseBufferFusionPattern(session::KernelGraph *kernel_graph) const;

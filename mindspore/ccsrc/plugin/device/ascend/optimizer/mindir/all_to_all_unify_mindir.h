@@ -17,7 +17,9 @@
 #define MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_MINDIR_ALL_TO_ALL_UNIFY_MINDIR_H_
 
 #include <memory>
-#include "backend/common/optimizer/optimizer.h"
+#include <string>
+#include <vector>
+#include "include/backend/optimizer/optimizer.h"
 
 namespace mindspore {
 namespace opt {
@@ -28,6 +30,9 @@ class NeighborExchangeUnifyMindIR : public PatternProcessPass {
   ~NeighborExchangeUnifyMindIR() override = default;
   const BaseRef DefinePattern() const override;
   const AnfNodePtr Process(const FuncGraphPtr &, const AnfNodePtr &, const EquivPtr &) const override;
+
+ private:
+  std::vector<std::string> MustExistPrimitiveName() const override;
 };
 
 class AllToAllUnifyMindIR : public PatternProcessPass {
@@ -41,6 +46,7 @@ class AllToAllUnifyMindIR : public PatternProcessPass {
   CNodePtr CreateSplitNode(const FuncGraphPtr &graph, const CNodePtr &all_to_all) const;
   CNodePtr CreateAllToAllvNode(const FuncGraphPtr &graph, const CNodePtr &all_to_all, const CNodePtr &split) const;
   CNodePtr CreateConcatNode(const FuncGraphPtr &graph, const CNodePtr &all_to_all, const CNodePtr &all_to_all_v) const;
+  std::vector<std::string> MustExistPrimitiveName() const override;
 };
 }  // namespace opt
 }  // namespace mindspore

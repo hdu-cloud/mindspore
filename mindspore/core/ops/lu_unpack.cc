@@ -15,11 +15,28 @@
  */
 
 #include "ops/lu_unpack.h"
+
 #include <algorithm>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <map>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -34,7 +51,8 @@ abstract::TupleShapePtr LuUnpackInferShape(const PrimitivePtr &primitive,
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   int64_t input_size = static_cast<int64_t>(input_args.size());
-  (void)CheckAndConvertUtils::CheckInteger("input number", input_size, kEqual, kLuUnpackInputsNum, prim_name);
+  (void)CheckAndConvertUtils::CheckInteger("input number", input_size, kEqual, SizeToLong(kLuUnpackInputsNum),
+                                           prim_name);
   for (const auto &i : input_args) {
     MS_EXCEPTION_IF_NULL(i);
   }
@@ -42,6 +60,7 @@ abstract::TupleShapePtr LuUnpackInferShape(const PrimitivePtr &primitive,
   auto LU_data_shape = LU_data_shape_map[kShape];
   auto LU_pivots_shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->BuildShape());
   auto LU_pivots_shape = LU_pivots_shape_map[kShape];
+
   if (IsDynamicRank(LU_data_shape)) {
     auto output_shpe = std::make_shared<abstract::Shape>(LU_data_shape);
     return std::make_shared<abstract::TupleShape>(
@@ -104,7 +123,8 @@ TuplePtr LuUnpackInferType(const PrimitivePtr &prim, const std::vector<AbstractB
   auto prim_name = prim->name();
   MS_EXCEPTION_IF_NULL(prim);
   int64_t input_size = static_cast<int64_t>(input_args.size());
-  (void)CheckAndConvertUtils::CheckInteger("input number", input_size, kEqual, kLuUnpackInputsNum, prim_name);
+  (void)CheckAndConvertUtils::CheckInteger("input number", input_size, kEqual, SizeToLong(kLuUnpackInputsNum),
+                                           prim_name);
   for (const auto &i : input_args) {
     MS_EXCEPTION_IF_NULL(i);
   }
@@ -125,15 +145,30 @@ TuplePtr LuUnpackInferType(const PrimitivePtr &prim, const std::vector<AbstractB
 
 AbstractBasePtr LuUnpackInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                               const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  const int64_t input_num = 2;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
   auto infer_type = LuUnpackInferType(primitive, input_args);
   auto infer_shape = LuUnpackInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
 MIND_API_OPERATOR_IMPL(LuUnpack, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(LuUnpack, prim::kPrimLuUnpack, LuUnpackInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGLuUnpackInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return LuUnpackInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return LuUnpackInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return LuUnpackInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(LuUnpack, prim::kPrimLuUnpack, AGLuUnpackInfer, false);
 }  // namespace ops
 }  // namespace mindspore

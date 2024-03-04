@@ -15,6 +15,7 @@
  */
 
 #include "runtime/graph_scheduler/actor/actor_dump.h"
+#include "runtime/graph_scheduler/scheduler_helper.h"
 
 namespace mindspore {
 namespace runtime {
@@ -142,7 +143,8 @@ void DumpAbstractActor(const AbstractActor *actor, std::ofstream &ofs) {
       for (auto &internal_parameter_weakptr : internal_parameter_iter.second) {
         auto internal_parameter = internal_parameter_weakptr.lock();
         MS_EXCEPTION_IF_NULL(internal_parameter);
-        ofs << "\t\t\toutput_index:" << internal_parameter_iter.first
+        ofs << "\t\t\toutput_node:" << internal_parameter_iter.first.first->fullname_with_scope()
+            << "\toutput_index:" << internal_parameter_iter.first.second
             << "\tinternal_parameter:" << internal_parameter->DebugString() << "\n";
       }
     }
@@ -178,13 +180,14 @@ void DumpDSActor(const DataSourceActor *actor, std::ofstream &ofs) {
     MS_EXCEPTION_IF_NULL(data_kernel);
     ofs << "\t\tdata_kernel_name:" << data_kernel->fullname_with_scope()
         << "\tinput_number:" << common::AnfAlgo::GetInputTensorNum(data_kernel)
-        << "\toutput_number:" << common::AnfAlgo::GetOutputTensorNum(data_kernel) << "\n";
-    for (size_t i = 0; i < common::AnfAlgo::GetOutputTensorNum(data_kernel); ++i) {
+        << "\toutput_number:" << AnfAlgo::GetOutputTensorNum(data_kernel) << "\n";
+    for (size_t i = 0; i < AnfAlgo::GetOutputTensorNum(data_kernel); ++i) {
       const auto &device_tensor = AnfAlgo::GetMutableOutputAddr(data_kernel, i, false);
       MS_EXCEPTION_IF_NULL(device_tensor);
       ofs << "\t\t\toutput_index:" << i << "\tptr:" << device_tensor->GetPtr() << "\tsize:" << device_tensor->GetSize()
           << "\toriginal_ref_count:" << device_tensor->original_ref_count()
-          << "\tdynamic_ref_count:" << device_tensor->dynamic_ref_count() << "\n ";
+          << "\tdynamic_ref_count:" << device_tensor->dynamic_ref_count() << "\tflag:" << device_tensor->flag()
+          << "\n ";
     }
   } else if (actor->type() == KernelTransformType::kHostDataSourceActor) {
     // Dump the member info of host queue data source actor.
@@ -196,10 +199,12 @@ void DumpDSActor(const DataSourceActor *actor, std::ofstream &ofs) {
       MS_EXCEPTION_IF_NULL(data_node.first);
       const auto &device_tensor = AnfAlgo::GetMutableOutputAddr(data_node.first, data_node.second, false);
       MS_EXCEPTION_IF_NULL(device_tensor);
-      ofs << "\t\t\tnode_order_number:" << i << "\tnode_name:" << data_node.first->DebugString()
-          << "\tindex:" << data_node.second << "\tptr:" << device_tensor->GetPtr()
-          << "\tsize:" << device_tensor->GetSize() << "\toriginal_ref_count:" << device_tensor->original_ref_count()
-          << "\tdynamic_ref_count:" << device_tensor->dynamic_ref_count() << "\n ";
+      ofs << "\t\t\tnode_order_number:" << i << "\tnode_name:" << data_node.first->fullname_with_scope()
+          << "\tdebug_name:" << data_node.first->DebugString() << "\tindex:" << data_node.second
+          << "\tptr:" << device_tensor->GetPtr() << "\tsize:" << device_tensor->GetSize()
+          << "\toriginal_ref_count:" << device_tensor->original_ref_count()
+          << "\tdynamic_ref_count:" << device_tensor->dynamic_ref_count() << "\tflag:" << device_tensor->flag()
+          << "\n ";
     }
   }
 
@@ -217,16 +222,16 @@ void DumpKernelActor(const KernelActor *actor, std::ofstream &ofs) {
   MS_EXCEPTION_IF_NULL(kernel_info);
   ofs << "\t\tkernel_name:" << kernel->fullname_with_scope()
       << "\tinputs_num:" << common::AnfAlgo::GetInputTensorNum(kernel)
-      << "\toutputs_num:" << common::AnfAlgo::GetOutputTensorNum(kernel)
-      << "\tis_dynamic_shape:" << actor->is_dynamic_shape() << "\tis_launch_skipped:" << actor->is_launch_skipped()
-      << "\n";
+      << "\tignored_inputs_num:" << SchedulerHelper::GetIgnoredInputAddressCount(kernel)
+      << "\toutputs_num:" << AnfAlgo::GetOutputTensorNum(kernel) << "\tis_dynamic_shape:" << actor->is_dynamic_shape()
+      << "\tis_launch_skipped:" << actor->is_launch_skipped() << "\n";
   const auto &somas_outputs = kernel_info->somas_output_result();
-  for (size_t i = 0; i < common::AnfAlgo::GetOutputTensorNum(kernel); ++i) {
+  for (size_t i = 0; i < AnfAlgo::GetOutputTensorNum(kernel); ++i) {
     const auto &device_tensor = AnfAlgo::GetMutableOutputAddr(kernel, i, false);
     MS_EXCEPTION_IF_NULL(device_tensor);
     ofs << "\t\t\toutput_index:" << i << "\tptr:" << device_tensor->GetPtr() << "\tsize:" << device_tensor->GetSize()
         << "\toriginal_ref_count:" << device_tensor->original_ref_count()
-        << "\tdynamic_ref_count:" << device_tensor->dynamic_ref_count()
+        << "\tdynamic_ref_count:" << device_tensor->dynamic_ref_count() << "\tflag:" << device_tensor->flag()
         << "\tis_somas_enable:" << kernel_info->IsTensorEnableSomas(somas_outputs, i)
         << "\tsomas_offset:" << kernel_info->GetTensorSomasOffset(somas_outputs, i)
         << "\tsomas_aligned_size:" << kernel_info->GetTensorSomasAlignedSize(somas_outputs, i) << "\n ";
@@ -238,7 +243,7 @@ void DumpKernelActor(const KernelActor *actor, std::ofstream &ofs) {
     MS_EXCEPTION_IF_NULL(device_tensor);
     ofs << "\t\t\tworkspace_index:" << i << "\tptr:" << device_tensor->GetPtr() << "\tsize:" << device_tensor->GetSize()
         << "\toriginal_ref_count:" << device_tensor->original_ref_count()
-        << "\tdynamic_ref_count:" << device_tensor->dynamic_ref_count()
+        << "\tdynamic_ref_count:" << device_tensor->dynamic_ref_count() << "\tflag:" << device_tensor->flag()
         << "\tis_somas_enable:" << kernel_info->IsTensorEnableSomas(somas_workspace, i)
         << "\tsomas_offset:" << kernel_info->GetTensorSomasOffset(somas_workspace, i)
         << "\tsomas_aligned_size:" << kernel_info->GetTensorSomasAlignedSize(somas_workspace, i) << "\n ";
@@ -292,6 +297,20 @@ void DumpSuperKernelActor(const SuperKernelActor *actor, std::ofstream &ofs) {
   ofs << "\n";
 }
 
+void DumpAnyTypeKernelActor(const AnyTypeKernelActor *actor, std::ofstream &ofs) {
+  MS_EXCEPTION_IF_NULL(actor);
+  ofs << "\tactor_name:" << actor->GetAID().Name() << "\n";
+  const auto &graph = actor->graph();
+  MS_EXCEPTION_IF_NULL(graph);
+  ofs << "\t\tgraph_id:" << graph->graph_id() << "\tgraphl_name:" << graph->ToString()
+      << "\tis_graph_run_mode:" << graph->is_graph_run_mode() << "\tis_loop_count_sink:" << graph->is_loop_count_sink()
+      << "\tinputs_num:" << (graph->input_nodes()).size() << "\tkernels_num:" << (graph->execution_order()).size()
+      << "\tis enable zero copy:" << graph->has_flag(kFlagEnableZeroCopyInGraph) << "\n";
+
+  DumpAbstractActor(actor, ofs);
+  ofs << "\n";
+}
+
 void DumpMemoryActor(const MemoryAwareActor *actor, std::ofstream &ofs) {
   MS_EXCEPTION_IF_NULL(actor);
   ofs << "\tactor_name:" << actor->GetAID().Name() << "\n";
@@ -319,11 +338,11 @@ void DumpCopyActor(const CopyActor *actor, std::ofstream &ofs) {
   MS_EXCEPTION_IF_NULL(actor);
   ofs << "\tactor_name:" << actor->GetAID().Name() << "\n";
 
-  auto device_tensor = actor->output();
+  auto &device_tensor = actor->output();
   if (device_tensor != nullptr) {
     ofs << "\t\toutput_index:" << 0 << "\tptr:" << device_tensor->GetPtr() << "\tsize:" << device_tensor->GetSize()
         << "\toriginal_ref_count:" << device_tensor->original_ref_count()
-        << "\tdynamic_ref_count:" << device_tensor->dynamic_ref_count() << "\n ";
+        << "\tdynamic_ref_count:" << device_tensor->dynamic_ref_count() << "\tflag:" << device_tensor->flag() << "\n ";
   }
 
   DumpAbstractActor(actor, ofs);
@@ -464,6 +483,22 @@ void DumpGatherActor(const GatherActor *actor, std::ofstream &ofs) {
   ofs << "\t\tbranch id:" << actor->branch_id() << '\n';
   DumpControlActor(actor, ofs);
 
+  ofs << "\t\toutput index:" << '\n';
+  const auto &dynamic_len_index = actor->dynamic_len_index();
+  for (const auto &func_to_index : dynamic_len_index) {
+    const auto &func_graph = func_to_index.first;
+    MS_EXCEPTION_IF_NULL(func_graph);
+    ofs << "\t\t\tfunc_graph:" << func_graph->ToString() << '\n';
+    const auto &index_list = func_to_index.second;
+    for (size_t i = 0; i < index_list.size(); ++i) {
+      ofs << "\t\t\t\treal index:" << i << "  is dynamic len:" << index_list[i].second << " relative index:";
+      for (const auto &index : index_list[i].first) {
+        ofs << index << " ";
+      }
+      ofs << '\n';
+    }
+  }
+
   const auto &output_data_with_branch_id_arrows = actor->output_data_with_branch_id_arrows();
   if (output_data_with_branch_id_arrows.size() > 0) {
     ofs << "\t\toutput_data_with_branch_id_arrows:" << output_data_with_branch_id_arrows.size() << "\n ";
@@ -494,6 +529,21 @@ void DumpExitActor(const ExitActor *actor, std::ofstream &ofs) {
   MS_EXCEPTION_IF_NULL(actor);
   ofs << "\tactor_name:" << actor->GetAID().Name() << '\n';
   DumpControlActor(actor, ofs);
+
+  ofs << "\t\toutput index:" << '\n';
+  const auto &dynamic_len_index = actor->output_branch_dynamic_len_index();
+  for (const auto &func_to_index : dynamic_len_index) {
+    const auto &branch_id = func_to_index.first;
+    ofs << "\t\t\tbranch_id:" << branch_id << '\n';
+    const auto &index_list = func_to_index.second;
+    for (size_t i = 0; i < index_list.size(); ++i) {
+      ofs << "\t\t\t\treal index:" << i << "  is dynamic len:" << index_list[i].second << " relative index:";
+      for (const auto &index : index_list[i].first) {
+        ofs << index << " ";
+      }
+      ofs << '\n';
+    }
+  }
 
   const auto &output_branch_data_arrows = actor->output_branch_data_arrows();
   if (output_branch_data_arrows.size() > 0) {
@@ -680,6 +730,13 @@ void DumpSuperKernelActors(const std::vector<SuperKernelActorPtr> &actors, std::
   }
 }
 
+void DumpAnyTypeKernelActors(const std::vector<AnyTypeKernelActorPtr> &actors, std::ofstream &ofs) {
+  ofs << "\n\n[Any Type kernel actors:" << actors.size() << "]\n";
+  for (const auto &actor : actors) {
+    DumpAnyTypeKernelActor(actor.get(), ofs);
+  }
+}
+
 void DumpNoInputKernelActors(const std::vector<AbstractActorPtr> &actors, std::ofstream &ofs) {
   ofs << "\n\n[No input kernel actors:" << actors.size() << "]\n";
   for (const auto &actor : actors) {
@@ -692,6 +749,10 @@ void DumpNoInputKernelActors(const std::vector<AbstractActorPtr> &actors, std::o
       auto super_kernel_actor = dynamic_cast<const SuperKernelActor *>(actor.get());
       MS_EXCEPTION_IF_NULL(super_kernel_actor);
       DumpSuperKernelActor(super_kernel_actor, ofs);
+    } else if (actor->type() == KernelTransformType::kCustomActor) {
+      auto custom_actor = dynamic_cast<const CustomActor *>(actor.get());
+      MS_EXCEPTION_IF_NULL(custom_actor);
+      DumpCustomActor(custom_actor, ofs);
     }
   }
 }

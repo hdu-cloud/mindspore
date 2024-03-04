@@ -37,7 +37,7 @@ bool AssignSubFwdGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const 
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  input_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  input_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   std::vector<int64_t> input_shape_ = std::vector<int64_t>(inputs.at(kIndex0)->GetDeviceShapeAdaptively().begin(),
                                                            inputs.at(kIndex0)->GetDeviceShapeAdaptively().end());
   input_elements_ = std::accumulate(input_shape_.begin(), input_shape_.end(), 1, std::multiplies<int64_t>());
@@ -64,7 +64,7 @@ int AssignSubFwdGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const
                                                            inputs.at(kIndex0)->GetDeviceShapeAdaptively().end());
   ResetResource();
   auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
-  input_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  input_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   for (int64_t i = 0; i < static_cast<int64_t>(input_shape_.size()); i++) {
     input_size_ *= input_shape_[i];
   }
@@ -79,7 +79,9 @@ bool AssignSubFwdGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &input
   T *ref = GetDeviceAddress<T>(inputs, kIndex0);
   T *value = GetDeviceAddress<T>(inputs, kIndex1);
   T *output = GetDeviceAddress<T>(outputs, kIndex0);
-  CalAssignSub(input_size_ / sizeof(T), ref, value, output, device_id_, reinterpret_cast<cudaStream_t>(stream_ptr_));
+  auto status =
+    CalAssignSub(input_size_ / sizeof(T), ref, value, output, device_id_, reinterpret_cast<cudaStream_t>(stream_ptr_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

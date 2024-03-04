@@ -15,42 +15,42 @@
  */
 
 #include "transform/graph_ir/op_declare/pad_ops_declare.h"
-#include <vector>
 #include <string>
+#include <vector>
+#include "ops/array_ops.h"
 
 namespace mindspore::transform {
 // Pad
 INPUT_MAP(Pad) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(paddings)}};
-ATTR_INPUT_MAP(Pad) = {{"paddings", 2}};
+ATTR_INPUT_MAP(Pad) = {{"paddings", "paddings"}};
 ATTR_MAP(Pad) = EMPTY_ATTR_MAP;
 OUTPUT_MAP(Pad) = {{0, OUTPUT_DESC(y)}};
-REG_ADPT_DESC(Pad, kNamePadD, ADPT_DESC(Pad))
+REG_ADPT_DESC(Pad, kPadOpName, ADPT_DESC(Pad))
+REG_ADPT_DESC(PadD, kPadDOpName, ADPT_DESC(Pad))
 
 // BroadcastTo
 INPUT_MAP(BroadcastTo) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(shape)}};
-ATTR_INPUT_MAP(BroadcastTo) = {{"shape", 2}};
+ATTR_INPUT_MAP(BroadcastTo) = {{"shape", "shape"}};
 OUTPUT_MAP(BroadcastTo) = {{0, OUTPUT_DESC(y)}};
 ATTR_MAP(BroadcastTo) = EMPTY_ATTR_MAP;
-REG_ADPT_DESC(BroadcastTo, kNameBroadcastTo, ADPT_DESC(BroadcastTo))
+REG_ADPT_DESC(BroadcastToD, kNameBroadcastToD, ADPT_DESC(BroadcastTo))
 REG_ADPT_DESC(DynamicBroadcastTo, kDynamicBroadcastToOpName, ADPT_DESC(BroadcastTo))
+REG_ADPT_DESC(BroadcastTo, kNameBroadcastTo, ADPT_DESC(BroadcastTo))
 
 // Diag
 INPUT_MAP(Diag) = {{1, INPUT_DESC(x)}};
 ATTR_MAP(Diag) = EMPTY_ATTR_MAP;
 OUTPUT_MAP(Diag) = {{0, OUTPUT_DESC(y)}};
 REG_ADPT_DESC(Diag, kNameDiag, ADPT_DESC(Diag))
-
-// FillD
-INPUT_MAP(FillD) = {{1, INPUT_DESC(value)}};
-ATTR_MAP(FillD) = {{"dims", ATTR_DESC(dims, AnyTraits<std::vector<int64_t>>())}};
-OUTPUT_MAP(FillD) = {{0, OUTPUT_DESC(y)}};
-REG_ADPT_DESC(FillD, kNameFillD, ADPT_DESC(FillD))
+REG_ADPT_DESC(DiagD, prim::kPrimDiagD->name(), ADPT_DESC(Diag))
 
 // Fill
 INPUT_MAP(Fill) = {{1, INPUT_DESC(dims)}, {2, INPUT_DESC(value)}};
 ATTR_MAP(Fill) = EMPTY_ATTR_MAP;
 OUTPUT_MAP(Fill) = {{0, OUTPUT_DESC(y)}};
-REG_ADPT_DESC(Fill, kNameFillV1, ADPT_DESC(Fill))
+REG_ADPT_DESC(Fill, kFillOpName, ADPT_DESC(Fill))
+REG_ADPT_DESC(FillV1, kNameFillV1, ADPT_DESC(Fill))
+REG_ADPT_DESC(FillV2, kFillV2OpName, ADPT_DESC(Fill))
 
 // PadV3
 INPUT_MAP(PadV3) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(paddings)}, {3, INPUT_DESC(constant_values)}};
@@ -64,4 +64,11 @@ INPUT_MAP(PadV2) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(paddings)}, {3, INPUT_DES
 ATTR_MAP(PadV2) = EMPTY_ATTR_MAP;
 OUTPUT_MAP(PadV2) = {{0, OUTPUT_DESC(y)}};
 REG_ADPT_DESC(PadV2, kNamePadV2, ADPT_DESC(PadV2))
+
+// PadV3Grad
+INPUT_MAP(PadV3Grad) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(paddings)}};
+ATTR_MAP(PadV3Grad) = {{"mode", ATTR_DESC(mode, AnyTraits<std::string>())},
+                       {"paddings_contiguous", ATTR_DESC(paddings_contiguous, AnyTraits<bool>())}};
+OUTPUT_MAP(PadV3Grad) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(PadV3Grad, kNamePadV3Grad, ADPT_DESC(PadV3Grad));
 }  // namespace mindspore::transform

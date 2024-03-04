@@ -18,12 +18,12 @@
 #define MINDSPORE_CORE_OPS_MEDIAN_H_
 
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,11 +35,14 @@ class MIND_API Median : public BaseOperator {
   /// \brief Constructor.
   Median() : BaseOperator(kNameMedian) { InitIOName({"x"}, {"y", "indices"}); }
   /// \brief Init. Refer to the parameters of Python API @ref mindspore.ops.Median for the inputs.
-  void Init(const bool global_median = false, const int64_t axis = 0, const bool keep_dims = false);
+  void Init(const bool global_median = false, const int64_t axis = 0, const bool keep_dims = false,
+            const bool ignore_nan = false);
   /// \brief Set global_median.
   void set_global_median(const bool global_median);
   /// \brief Set keep_dims.
   void set_keep_dims(const bool keep_dims);
+  /// \brief Set ignore_nan.
+  void set_ignore_nan(const bool ignore_nan);
   /// \brief Set axis.
   void set_axis(const int64_t &axis);
   /// \brief Get global_median.
@@ -50,14 +53,18 @@ class MIND_API Median : public BaseOperator {
   ///
   /// \return keep_dims.
   bool get_keep_dims() const;
+  /// \brief Get ignore_nan.
+  ///
+  /// \return ignore_nan.
+  bool get_ignore_nan() const;
   /// \brief Get axis.
   ///
   /// \return axis.
   int64_t get_axis() const;
 };
 
-abstract::AbstractBasePtr MedianInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                      const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr MedianInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                               const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

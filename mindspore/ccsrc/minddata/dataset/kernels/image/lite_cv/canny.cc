@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -74,7 +74,7 @@ static void GetSobelKernel(float *kernel, int flag, int ksize, double scale) {
 
   scale = flag == 0 ? scale : 1.0;
   for (int i = 0; i < ksize; i++) {
-    kernel[i] = buffer[i] * scale;
+    kernel[i] = buffer[i] * static_cast<float>(scale);
   }
 }
 
@@ -90,11 +90,14 @@ bool Sobel(const LiteMat &src, LiteMat &dst, int flag_x, int flag_y, int ksize, 
   if (dst.IsEmpty() || dst.width_ != src.width_ || dst.height_ != src.height_ || dst.channel_ != src.channel_ ||
       dst.data_type_ != LDataType::FLOAT32) {
     dst.Init(src.width_, src.height_, src.channel_, LDataType::FLOAT32);
+    RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
   }
 
   LiteMat kx, ky;
   kx.Init(ksize, 1, 1, LDataType::FLOAT32);
   ky.Init(1, ksize, 1, LDataType::FLOAT32);
+  RETURN_FALSE_IF_LITEMAT_EMPTY(kx);
+  RETURN_FALSE_IF_LITEMAT_EMPTY(ky);
 
   GetSobelKernel(kx, flag_x, ksize, scale);
   GetSobelKernel(ky, flag_y, ksize, scale);
@@ -113,9 +116,9 @@ static float GetEdge(const std::vector<float> &temp, int width, int height, int 
 static float Round(float value) {
   // rounding if the result is even
   // eg. 1.5 -> 2, 2.5 -> 2
-  float rnd = round(value);
-  float rnd_l = floor(value);
-  float rnd_h = ceil(value);
+  float rnd = roundf(value);
+  float rnd_l = floorf(value);
+  float rnd_h = ceilf(value);
   if (std::fabs(value - rnd_l - kHalf) <= std::numeric_limits<float>::epsilon()) {
     if (fmod(rnd, 2) == 0) {
       return rnd;
@@ -128,8 +131,9 @@ static float Round(float value) {
   return rnd;
 }
 
-static void NonMaximumSuppression(const LiteMat &gx, const LiteMat &gy, LiteMat &edges, bool L2gradient) {  // NOLINT
+static bool NonMaximumSuppression(const LiteMat &gx, const LiteMat &gy, LiteMat &edges, bool L2gradient) {  // NOLINT
   edges.Init(gx.width_, gx.height_, gx.channel_, gx.data_type_);
+  RETURN_FALSE_IF_LITEMAT_EMPTY(edges);
 
   const float *gx_ptr = gx;
   const float *gy_ptr = gy;
@@ -141,9 +145,9 @@ static void NonMaximumSuppression(const LiteMat &gx, const LiteMat &gy, LiteMat 
     float gx_value = Round(gx_ptr[i]);
     float gy_value = Round(gy_ptr[i]);
     if (L2gradient) {
-      temp[i] = sqrt(gx_value * gx_value + gy_value * gy_value);
+      temp[i] = sqrtf(gx_value * gx_value + gy_value * gy_value);
     } else {
-      temp[i] = abs(gx_value) + abs(gy_value);
+      temp[i] = std::abs(gx_value) + std::abs(gy_value);
     }
   }
 
@@ -154,7 +158,7 @@ static void NonMaximumSuppression(const LiteMat &gx, const LiteMat &gy, LiteMat 
 
       float gx_value_abs = std::abs(gx_value);
       float gy_value_abs = std::abs(gy_value);
-      float angle_value = atan2(gy_value_abs, gx_value_abs);
+      float angle_value = atan2f(gy_value_abs, gx_value_abs);
       float edge_value = temp[y * gx.width_ + x];
       float edge_pre, edge_nex;
       if (angle_value < kAngle22_5 || angle_value > kAngle67_5) {
@@ -186,6 +190,7 @@ static void NonMaximumSuppression(const LiteMat &gx, const LiteMat &gy, LiteMat 
       }
     }
   }
+  return true;
 }
 
 static void Hysteresis(const LiteMat &edges, uint8_t *dst, double low_thresh, double high_thresh) {
@@ -255,6 +260,7 @@ bool Canny(const LiteMat &src, LiteMat &dst, double low_thresh, double high_thre
   if (dst.IsEmpty() || dst.width_ != src.width_ || dst.height_ != src.height_ || dst.channel_ != src.channel_ ||
       dst.data_type_ != src.data_type_) {
     dst.Init(src.width_, src.height_, src.channel_, src.data_type_);
+    RETURN_FALSE_IF_LITEMAT_EMPTY(dst);
   }
 
   double scale = ksize == 7 ? 1 / 16.0 : 1.0;
@@ -266,7 +272,10 @@ bool Canny(const LiteMat &src, LiteMat &dst, double low_thresh, double high_thre
   Sobel(src, gy, 0, 1, ksize, scale, PaddBorderType::PADD_BORDER_REPLICATE);
 
   LiteMat edges;
-  NonMaximumSuppression(gx, gy, edges, L2gradient);
+  bool status = NonMaximumSuppression(gx, gy, edges, L2gradient);
+  if (!status) {
+    return false;
+  }
 
   Hysteresis(edges, dst, low_thresh, high_thresh);
   return true;

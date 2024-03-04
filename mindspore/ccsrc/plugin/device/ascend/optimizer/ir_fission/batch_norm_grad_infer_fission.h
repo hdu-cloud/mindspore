@@ -17,7 +17,9 @@
 #define MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_IR_FISSION_BATCH_NORM_GRAD_INFER_FISSION_H_
 
 #include <memory>
-#include "backend/common/optimizer/optimizer.h"
+#include <string>
+#include <vector>
+#include "include/backend/optimizer/optimizer.h"
 
 namespace mindspore {
 namespace opt {
@@ -39,6 +41,7 @@ class BatchNormGradInferFission : public PatternProcessPass {
   AnfNodePtr CreateBNInferGrad(const FuncGraphPtr &func_graph, const AnfNodePtr &bn_grad, const EquivPtr &equiv) const;
   AnfNodePtr CreateBNTrainingUpdateGrad(const FuncGraphPtr &func_graph, const AnfNodePtr &bn_grad,
                                         const EquivPtr &equiv) const;
+  std::vector<std::string> MustExistPrimitiveName() const override;
 
   VarPtr input0_var_;
   VarPtr input1_var_;

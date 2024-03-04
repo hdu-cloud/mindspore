@@ -48,27 +48,6 @@ int BCEWithLogitsLossKernelMod::Resize(const BaseOperatorPtr &base_operator, con
   input_shape_ = inputs[kIndex0]->GetShapeVector();
   weight_shape_ = inputs[kIndex2]->GetShapeVector();
   pos_weight_shape_ = inputs[kIndex3]->GetShapeVector();
-
-  if (input_shape_.size() < 1) {
-    MS_LOG(ERROR) << "For '" << kernel_name_ << "', the dimension of logits cannot be less than 1, but got "
-                  << input_shape_.size();
-    return KRET_RESIZE_FAILED;
-  }
-  if (weight_shape_.size() < 1) {
-    MS_LOG(ERROR) << "For '" << kernel_name_ << "', the dimension of weight cannot be less than 1, but got "
-                  << weight_shape_.size();
-    return KRET_RESIZE_FAILED;
-  }
-  if (pos_weight_shape_.size() < 1) {
-    MS_LOG(ERROR) << "For '" << kernel_name_ << "', the dimension of pos_weight cannot be less than 1, but got "
-                  << pos_weight_shape_.size();
-    return KRET_RESIZE_FAILED;
-  }
-  if (input_shape_.size() > MAX_LOGITS_DIMENSION) {
-    MS_LOG(ERROR) << "For '" << kernel_name_ << "', the dimension of logits cannot be greater than "
-                  << MAX_LOGITS_DIMENSION << ", but got " << input_shape_.size();
-    return KRET_RESIZE_FAILED;
-  }
   input_size_ = SizeOf(input_shape_);
   // weight shape
   weight_size_ = SizeOf(weight_shape_);
@@ -76,7 +55,9 @@ int BCEWithLogitsLossKernelMod::Resize(const BaseOperatorPtr &base_operator, con
   // pos_weight shape
   pos_weight_size_ = SizeOf(pos_weight_shape_);
   pos_weight_need_broadcast_ = NeedBroadcast(&pos_weight_shape_, input_shape_);
-  InitWorkSpaceSizeLists();
+  // extra space for holding extra array shape of input, for broadcasted
+  // weight and pos_weight
+  workspace_size_list_.push_back(input_size_ * type_id_size_);
   return KRET_OK;
 }
 
@@ -88,26 +69,13 @@ bool BCEWithLogitsLossKernelMod::LaunchKernel(const std::vector<AddressPtr> &inp
   T *target = GetDeviceAddress<T>(inputs, kIndex1);
   T *weight = GetDeviceAddress<T>(inputs, kIndex2);
   T *pos_weight = GetDeviceAddress<T>(inputs, kIndex3);
-  size_t *input_shape = GetDeviceAddress<size_t>(workspace, kIndex0);
-  size_t *weight_shape = GetDeviceAddress<size_t>(workspace, kIndex1);
-  size_t *pos_weight_shape = GetDeviceAddress<size_t>(workspace, kIndex2);
-  T *shape_broadcasted = GetDeviceAddress<T>(workspace, kIndex3);
+  T *shape_broadcasted = GetDeviceAddress<T>(workspace, kIndex0);
   T *output = GetDeviceAddress<T>(outputs, kIndex0);
-  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-    cudaMemcpyAsync(input_shape, &input_shape_[0], input_shape_.size() * sizeof(size_t), cudaMemcpyHostToDevice,
-                    reinterpret_cast<cudaStream_t>(stream_ptr)),
-    kernel_name_ + " cudaMemcpyAsync input_shape_ failed");
-  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-    cudaMemcpyAsync(weight_shape, &weight_shape_[0], weight_shape_.size() * sizeof(size_t), cudaMemcpyHostToDevice,
-                    reinterpret_cast<cudaStream_t>(stream_ptr)),
-    kernel_name_ + " cudaMemcpyAsync weight_shape_ failed");
-  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-    cudaMemcpyAsync(pos_weight_shape, &pos_weight_shape_[0], pos_weight_shape_.size() * sizeof(size_t),
-                    cudaMemcpyHostToDevice, reinterpret_cast<cudaStream_t>(stream_ptr)),
-    kernel_name_ + " cudaMemcpyAsync pos_weight_shape_ failed");
-  CalBCEWithLogitsLoss(input_size_, predict, target, input_shape, input_shape_.size(), weight, weight_shape,
-                       weight_need_broadcast_, pos_weight, pos_weight_shape, pos_weight_need_broadcast_,
-                       shape_broadcasted, output, reinterpret_cast<cudaStream_t>(stream_ptr));
+  auto status =
+    CalBCEWithLogitsLoss(input_size_, predict, target, input_shape_, input_shape_.size(), weight, weight_shape_,
+                         weight_need_broadcast_, pos_weight, pos_weight_shape_, pos_weight_need_broadcast_,
+                         shape_broadcasted, output, reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

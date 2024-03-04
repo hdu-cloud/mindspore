@@ -17,13 +17,13 @@
 from __future__ import absolute_import
 
 from mindspore.common.tensor import Tensor
-from mindspore._checkparam import Validator as validator
-from mindspore._checkparam import Rel
+from mindspore import _checkparam as validator
 from mindspore.common import dtype as mstype
-from mindspore.ops.primitive import constexpr
+from mindspore.ops.primitive import _primexpr
+from mindspore.common._utils import is_dim_unknown
 
 
-def get_broadcast_shape(x_shape, y_shape, prim_name, shape_type="", arg_name1="x", arg_name2="y"):
+def get_broadcast_shape(x_shape, y_shape, prim_name, arg_name1="x", arg_name2="y"):
     """
     Doing broadcast between tensor x and tensor y.
 
@@ -31,7 +31,6 @@ def get_broadcast_shape(x_shape, y_shape, prim_name, shape_type="", arg_name1="x
         x_shape (list): The shape of tensor x.
         y_shape (list): The shape of tensor y.
         prim_name (str): Primitive name.
-        shape_type (str): The type of shape, optional values are "", "min_shape" and "max_shape".
         arg_name1 (str): The arg name of x_shape.
         arg_name2 (str): The arg name of y_shape.
 
@@ -68,34 +67,33 @@ def get_broadcast_shape(x_shape, y_shape, prim_name, shape_type="", arg_name1="x
         elif x_shape[i] == -1 or y_shape[i] == -1:
             broadcast_shape_back.append(-1)
         else:
-            if shape_type == "min_shape":
-                broadcast_shape_back.append(max(x_shape[i], y_shape[i]))
-            elif shape_type == "max_shape":
-                broadcast_shape_back.append(min(x_shape[i], y_shape[i]))
-            else:
-                raise ValueError(f"For '{prim_name}', {arg_name1}.shape and {arg_name2}.shape need to "
-                                 f"broadcast. The value of {arg_name1}.shape[{i}] or {arg_name2}.shape[{i}]"
-                                 f" must be 1 or -1 when they are not the same, "
-                                 f"but got {arg_name1}.shape = {x_shape} "
-                                 f"and {arg_name2}.shape = {y_shape}.")
+            raise ValueError(f"For '{prim_name}', {arg_name1}.shape and {arg_name2}.shape need to "
+                             f"broadcast. The value of {arg_name1}.shape[{i}] or {arg_name2}.shape[{i}]"
+                             f" must be 1 or -1 when they are not the same, "
+                             f"but got {arg_name1}.shape = {x_shape} "
+                             f"and {arg_name2}.shape = {y_shape}.")
 
     broadcast_shape_front = y_shape[0: y_len - length] if length == x_len else x_shape[0: x_len - length]
     broadcast_shape = list(broadcast_shape_front) + broadcast_shape_back
     return broadcast_shape
 
+def dim_not_equal(dim1, dim2):
+    """Compare dim in shape"""
+    return dim1 != dim2 and dim1 >= 0 and dim2 >= 0
 
 def get_concat_offset(x_shp, x_type, axis, prim_name):
     """for concat and concatoffset check args and compute offset"""
     validator.check_value_type("shape", x_shp, [tuple, list], prim_name)
     validator.check_positive_int(len(x_shp), "input_x rank", prim_name)
-    validator.check_subclass("shape0", x_type[0], mstype.tensor, prim_name)
+    validator.check_subclass("shape0", x_type[0], mstype.tensor_type, prim_name)
     validator.check_positive_int(len(x_shp[0]), "len of x_shp[0]", prim_name)
     rank_base = len(x_shp[0])
     for i in range(1, len(x_shp)):
-        validator.check('len of x_shp[%d]' % i, len(x_shp[i]), 'len of x_shp[0]', len(x_shp[0]), Rel.EQ, prim_name)
-        validator.check('x_type[%d]' % i, x_type[i], 'x_type[0]', x_type[0], Rel.EQ, prim_name)
+        validator.check('len of x_shp[%d]' % i, len(x_shp[i]), 'len of x_shp[0]',
+                        len(x_shp[0]), validator.EQ, prim_name)
+        validator.check('x_type[%d]' % i, x_type[i], 'x_type[0]', x_type[0], validator.EQ, prim_name)
 
-    validator.check_int_range(axis, -rank_base, rank_base - 1, Rel.INC_BOTH, 'axis', prim_name)
+    validator.check_int_range(axis, -rank_base, rank_base - 1, validator.INC_BOTH, 'axis', prim_name)
     if axis < 0:
         axis = axis + rank_base
     all_shp = x_shp[0][axis]
@@ -103,7 +101,7 @@ def get_concat_offset(x_shp, x_type, axis, prim_name):
     for i in range(1, len(x_shp)):
         v = x_shp[i]
         for j in range(rank_base):
-            if j != axis and v[j] != x_shp[0][j] and v[j] >= 0 and x_shp[0][j] >= 0:
+            if j != axis and dim_not_equal(v[j], x_shp[0][j]):
                 raise ValueError(f"The shape of the two input elements of the Concat operator do not match:"
                                  f"shape[0] = {x_shp[0]} and shape[{i}] = {x_shp[i]}.")
         offset.append(all_shp)
@@ -114,14 +112,14 @@ def get_concat_offset(x_shp, x_type, axis, prim_name):
     return offset, all_shp, axis
 
 
-@constexpr
+@_primexpr
 def range_op(start, limit, delta, dtype):
     """helper function to get tensor in specified range."""
     output_tensor = Tensor(list(range(start, limit, delta)), dtype)
     return output_tensor
 
 
-@constexpr
+@_primexpr
 def get_1d_shape(in_shape):
     """helper function to get 1d shape."""
     out_shape = 1
@@ -130,29 +128,18 @@ def get_1d_shape(in_shape):
     return (out_shape,)
 
 
-@constexpr
-def generate_shape_index(out_shape, indices_shape, axis):
+@_primexpr
+def generate_shape_index(out_shape, indices_shape, axis, batch_dims=0):
     out_rank = len(out_shape)
     ind_rank = len(indices_shape)
     if axis < 0:
         axis += out_rank - ind_rank + 1
-    perm_part1 = tuple(range(axis, axis + ind_rank))
+    perm_part1 = tuple(range(axis, axis + ind_rank - batch_dims))
     index = tuple(range(out_rank))
-    perm = perm_part1 + index[:axis] + index[axis + ind_rank:]
+    perm = index[:batch_dims] + perm_part1 + index[batch_dims:axis] + index[axis + ind_rank - batch_dims:]
     return perm
 
 
-@constexpr
-def is_shape_unknown(shape):
-    for i in shape:
-        if i < 0:
-            return True
-    return False
-
-
-@constexpr
-def is_dim_unknown(shape):
-    for i in shape:
-        if i == -2:
-            return True
-    return False
+def ms_arrange(x):
+    out = [i for i in range(x)]
+    return out

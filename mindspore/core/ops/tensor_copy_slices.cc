@@ -15,21 +15,29 @@
  */
 
 #include "ops/tensor_copy_slices.h"
-#include <functional>
-#include <iostream>
-#include <set>
+
 #include <map>
+#include <set>
 #include <string>
+
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "ops/primitive_c.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
-constexpr size_t kTensorCopySlicesInputnDim = 5;
+constexpr int64_t kTensorCopySlicesInputnDim = 5;
 
 abstract::ShapePtr TensorCopySlicesInferShape(const PrimitivePtr &primitive,
                                               const std::vector<AbstractBasePtr> &input_args) {
@@ -65,6 +73,26 @@ AbstractBasePtr TensorCopySlicesInfer(const abstract::AnalysisEnginePtr &, const
 }
 
 MIND_API_OPERATOR_IMPL(TensorCopySlices, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(TensorCopySlices, prim::kPrimTensorCopySlices, TensorCopySlicesInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGTensorCopySlicesInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return TensorCopySlicesInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return TensorCopySlicesInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return TensorCopySlicesInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {2, 3, 4}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(TensorCopySlices, prim::kPrimTensorCopySlices, AGTensorCopySlicesInfer, false);
 }  // namespace ops
 }  // namespace mindspore

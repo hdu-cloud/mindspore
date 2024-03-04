@@ -18,14 +18,23 @@
 #include <set>
 #include "runtime/kernel.h"
 #include "runtime/rt_model.h"
-#include "graphengine/inc/external/runtime/rt_error_codes.h"
+#include "acl/acl.h"
+#include "acl/acl_rt.h"
+#include "external/runtime/rt_error_codes.h"
 #include "plugin/device/ascend/hal/device/ge_runtime/model_context.h"
 #include "plugin/device/ascend/hal/device/ge_runtime/task/task.h"
 #include "plugin/device/ascend/hal/device/ge_runtime/task/task_factory.h"
 #include "mindspore/core/utils/log_adapter.h"
+#include "ops/ascend_op_name.h"
 #include "include/common/utils/utils.h"
 #ifdef ENABLE_DUMP_IR
 #include "include/common/debug/rdr/recorder_manager.h"
+#endif
+#ifndef ENABLE_SECURITY
+#include "plugin/device/ascend/hal/device/profiling/profiling_utils.h"
+#include "plugin/device/ascend/hal/device/profiling/profiling_manager.h"
+using mindspore::device::ascend::ProfilingManager;
+using mindspore::device::ascend::ProfilingUtils;
 #endif
 
 namespace mindspore::ge::model_runner {
@@ -98,9 +107,9 @@ void RuntimeModel::InitEvent(uint32_t event_num) {
   MS_LOG(INFO) << "Event number: " << event_num;
   for (uint32_t i = 0; i < event_num; ++i) {
     rtEvent_t rt_event;
-    rtError_t rt_ret = rtEventCreateWithFlag(&rt_event, RT_EVENT_WITH_FLAG);
-    if (rt_ret != RT_ERROR_NONE) {
-      MS_LOG(EXCEPTION) << "Call rt api rtEventCreate failed, ret: " << rt_ret;
+    auto rt_ret = aclrtCreateEventWithFlag(&rt_event, RT_EVENT_WITH_FLAG);
+    if (rt_ret != ACL_ERROR_NONE) {
+      MS_LOG(EXCEPTION) << "Call rt api aclrtCreateEvent failed, ret: " << rt_ret;
     }
     event_list_.push_back(rt_event);
   }
@@ -125,7 +134,10 @@ void RuntimeModel::InitLabel(const std::shared_ptr<DavinciModel> &davinci_model)
     rtLabel_t rt_label = nullptr;
     rtError_t rt_ret = rtLabelCreateExV2(&rt_label, rt_model_handle_, stream_list_[label_set_task_info->stream_id()]);
     if (rt_ret != RT_ERROR_NONE) {
-      MS_LOG(EXCEPTION) << "Call rt api rtLabelCreate failed, ret: " << rt_ret;
+      MS_LOG(EXCEPTION) << "Call rt api rtLabelCreate failed, ret: " << rt_ret
+                        << "\nIf you have set MS_COMM_COMPILER_OPT, notice that it will increase labels used and "
+                        << "may exceed the maximum label number: 1024. For more details, please refer to"
+                        << " 'MS_COMM_COMPILER_OPT' at https://www.mindspore.cn .";
     }
     label_list_[label_set_task_info->label_id()] = rt_label;
   }
@@ -186,10 +198,24 @@ void RuntimeModel::Load(uint32_t device_id, uint64_t session_id, const std::shar
 
 void RuntimeModel::DistributeTask() {
   MS_LOG(INFO) << "DistributeTask start.";
+
+#ifndef ENABLE_SECURITY
+  if (ProfilingManager::GetInstance().IsProfilingInitialized()) {
+    ProfilingUtils::RecordModelLoad(rt_model_handle_);
+  }
+#endif
+
   for (auto &task : task_list_) {
     MS_EXCEPTION_IF_NULL(task);
+
+#ifndef ENABLE_SECURITY
+    if (ProfilingManager::GetInstance().IsProfilingInitialized()) {
+      ProfilingUtils::RecordLaunchTaskBegin(task->task_name(), false);
+    }
+#endif
     task->set_model_handle(rt_model_handle_);
     task->Distribute();
+    std::string task_info = task->DebugString();
 
     uint32_t task_id = 0;
     uint32_t stream_id = 0;
@@ -199,22 +225,31 @@ void RuntimeModel::DistributeTask() {
     }
     task_id_list_.push_back(task_id);
     stream_id_list_.push_back(stream_id);
-    if (task->Args() != nullptr) {
-      std::shared_ptr<RuntimeInfo> runtime_tuple = std::make_shared<RuntimeInfo>(task_id, stream_id, task->Args());
-      auto emplace_ret = runtime_info_map_.emplace(task->task_name(), runtime_tuple);
-      if (!emplace_ret.second) {
-        // The task_name is (fullname_with_scope + UniqueId). There should be no duplication.
-        MS_LOG(EXCEPTION) << "Task name exist: " << task->task_name();
-      }
+    std::shared_ptr<RuntimeInfo> runtime_tuple =
+      std::make_shared<RuntimeInfo>(task_id, stream_id, task->Args(), task_info);
+    auto emplace_ret = runtime_info_map_.emplace(task->task_name(), runtime_tuple);
+    if (!emplace_ret.second) {
+      // The task_name is (fullname_with_scope + UniqueId). There should be no duplication.
+      MS_LOG(EXCEPTION) << "Task name exist: " << task->task_name();
     }
     if (task->task_name() == kEndGraph) {
       (void)end_graph_info_map_.emplace(task_id, stream_id);
     }
+
+#ifndef ENABLE_SECURITY
+    if (ProfilingManager::GetInstance().IsProfilingInitialized()) {
+      ProfilingUtils::ReportTask(task->task_name(), false);
+    }
+#endif
   }
   if (task_list_.empty()) {
     MS_LOG(EXCEPTION) << "Task list is empty";
   }
-
+#ifndef ENABLE_SECURITY
+  if (ProfilingManager::GetInstance().IsProfilingInitialized()) {
+    ProfilingUtils::RecordModelLoad(rt_model_handle_);
+  }
+#endif
   MS_LOG(INFO) << "DistributeTask success.";
 }
 
@@ -228,9 +263,9 @@ void RuntimeModel::Run() const {
     MS_LOG(EXCEPTION) << "Call rt api rtModelLoadComplete failed, ret: " << ret;
   }
 
-  MS_LOG(INFO) << "Run rtModelExecute success, start to rtStreamSynchronize.";
-  ret = rtStreamSynchronize(rt_model_stream_);
-  if (ret != RT_ERROR_NONE) {
+  MS_LOG(INFO) << "Run rtModelExecute success, start to aclrtSynchronizeStreamWithTimeout.";
+  ret = aclrtSynchronizeStreamWithTimeout(rt_model_stream_, -1);
+  if (ret != ACL_ERROR_NONE) {
     if (ret == ACL_ERROR_RT_END_OF_SEQUENCE) {
       MS_LOG(INFO) << "Model stream ACL_ERROR_RT_END_OF_SEQUENCE signal received.";
       return;
@@ -238,7 +273,7 @@ void RuntimeModel::Run() const {
 #ifdef ENABLE_DUMP_IR
     mindspore::RDR::TriggerAll();
 #endif
-    MS_LOG(EXCEPTION) << "Call rt api rtStreamSynchronize failed, ret: " << ret;
+    MS_LOG(EXCEPTION) << "Call rt api aclrtSynchronizeStreamWithTimeout failed, ret: " << ret;
   }
 
   MS_LOG(INFO) << "Davinci task run success.";
@@ -255,7 +290,7 @@ void RuntimeModel::RtModelUnbindStream() noexcept {
 
 void RuntimeModel::RtStreamDestory() noexcept {
   for (size_t i = 0; i < stream_list_.size(); i++) {
-    if (rtStreamDestroy(stream_list_[i]) != RT_ERROR_NONE) {
+    if (aclrtDestroyStream(stream_list_[i]) != ACL_ERROR_NONE) {
       MS_LOG(ERROR) << "Destroy stream failed! Index: " << i;
       return;
     }
@@ -284,7 +319,7 @@ void RuntimeModel::RtModelDestory() const noexcept {
 
 void RuntimeModel::RtEventDestory() noexcept {
   for (size_t i = 0; i < event_list_.size(); i++) {
-    if (rtEventDestroy(event_list_[i]) != RT_ERROR_NONE) {
+    if (aclrtDestroyEvent(event_list_[i]) != ACL_ERROR_NONE) {
       MS_LOG(ERROR) << "Destroy event failed! Index: " << i;
       return;
     }

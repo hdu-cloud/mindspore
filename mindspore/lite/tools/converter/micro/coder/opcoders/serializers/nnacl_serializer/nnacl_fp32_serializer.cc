@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,30 +18,29 @@
 #include "src/common/log_adapter.h"
 #include "coder/log.h"
 #include "coder/opcoders/parallel.h"
-#include "nnacl/pooling_parameter.h"
 
 namespace mindspore::lite::micro::nnacl {
 int NNaclFp32Serializer::count = 0;
 void NNaclFp32Serializer::CodeStruct(const std::string &name, const PoolingParameter &pooling_parameter) {
-  CodeBaseStruct<false>("PoolingParameter", name,
-                        // Primitive parameter
-                        pooling_parameter.op_parameter_, pooling_parameter.pool_mode_, pooling_parameter.round_mode_,
-                        pooling_parameter.pad_mode_, pooling_parameter.act_type_, pooling_parameter.avg_mode_,
-                        pooling_parameter.global_, pooling_parameter.window_w_, pooling_parameter.window_h_,
-                        pooling_parameter.stride_w_, pooling_parameter.stride_h_,
-                        // shape correlative
-                        pooling_parameter.input_w_, pooling_parameter.input_h_, pooling_parameter.input_batch_,
-                        pooling_parameter.input_channel_, pooling_parameter.output_w_, pooling_parameter.output_h_,
-                        pooling_parameter.output_batch_, pooling_parameter.output_channel_, pooling_parameter.pad_u_,
-                        pooling_parameter.pad_d_, pooling_parameter.pad_l_, pooling_parameter.pad_r_,
-                        // other parameter
-                        gThreadNum, nullptr, pooling_parameter.quantize_);
+  CodeBaseStruct<false>("PoolingParameter", name, pooling_parameter.op_parameter_, pooling_parameter.pool_mode_,
+                        pooling_parameter.round_type_, pooling_parameter.pad_mode_, pooling_parameter.act_type_,
+                        pooling_parameter.avg_mode_, pooling_parameter.global_, pooling_parameter.window_w_,
+                        pooling_parameter.window_h_, pooling_parameter.stride_w_, pooling_parameter.stride_h_,
+                        pooling_parameter.pad_u_, pooling_parameter.pad_d_, pooling_parameter.pad_l_,
+                        pooling_parameter.pad_r_);
 }
 
-void NNaclFp32Serializer::CodeStruct(const std::string &name, const BatchNormParameter &batch_norm_parameter) {
-  CodeBaseStruct("BatchNormParameter", name, batch_norm_parameter.op_parameter_, batch_norm_parameter.epsilon_,
-                 batch_norm_parameter.momentum_, batch_norm_parameter.unit_, batch_norm_parameter.units_,
-                 batch_norm_parameter.channel_, batch_norm_parameter.fused_);
+void NNaclFp32Serializer::CodeStruct(const std::string &name, const PoolingComputeParam &pooling_compute) {
+  CodeBaseStruct<false>("PoolingComputeParam", name, pooling_compute.input_w_, pooling_compute.input_h_,
+                        pooling_compute.input_batch_, pooling_compute.input_channel_, pooling_compute.output_w_,
+                        pooling_compute.output_h_, pooling_compute.output_batch_, pooling_compute.output_channel_,
+                        pooling_compute.window_w_, pooling_compute.window_h_, pooling_compute.minf,
+                        pooling_compute.maxf);
+}
+
+void NNaclFp32Serializer::CodeStruct(const std::string &name, const BatchNormStruct &bn_struct) {
+  CodeBaseStruct<false>("BatchNormStruct", name, "{}", "{}", "{}", "{}", bn_struct.momentum_, bn_struct.unit_,
+                        bn_struct.channel_, bn_struct.epsilon_);
 }
 
 void NNaclFp32Serializer::CodeStruct(const std::string &name, const InstanceNormParameter &param) {
@@ -61,9 +60,15 @@ void NNaclFp32Serializer::CodeStruct(const std::string &name, const ArithmeticPa
 }
 
 void NNaclFp32Serializer::CodeStruct(const std::string &name, const SoftmaxParameter &softmax_parameter) {
-  CodeBaseStruct<false>("SoftmaxParameter", name, softmax_parameter.op_parameter_, softmax_parameter.axis_,
-                        ToString(softmax_parameter.input_shape_), softmax_parameter.element_size_,
-                        softmax_parameter.n_dim_);
+  CodeBaseStruct<false>("SoftmaxParameter", name, softmax_parameter.op_parameter_, softmax_parameter.axis_);
+}
+
+void NNaclFp32Serializer::CodeStruct(const std::string &name, const int *list, int size) {
+  code << "int32_t " << name << "[] = {";
+  for (int i = 0; i < size - 1; i++) {
+    code << list[i] << ",";
+  }
+  code << list[size - 1] << "};\n";
 }
 
 void NNaclFp32Serializer::CodeStruct(const std::string &name, const ConvParameter &conv_parameter) {
@@ -79,27 +84,21 @@ void NNaclFp32Serializer::CodeStruct(const std::string &name, const ConvParamete
     conv_parameter.output_padding_w_, conv_parameter.output_padding_h_);
 }
 
-void NNaclFp32Serializer::CodeStruct(const std::string &name, const MatMulParameter &mat_mul_parameter) {
+void NNaclFp32Serializer::CodeStruct(const std::string &name, const MicroMatmulParameter &micro_matmul_parameter) {
   CodeBaseStruct<false>(
-    "MatMulParameter", name, mat_mul_parameter.op_parameter_, mat_mul_parameter.has_bias_, mat_mul_parameter.row_,
-    mat_mul_parameter.col_, mat_mul_parameter.row_4_, mat_mul_parameter.row_6_, mat_mul_parameter.row_12_,
-    mat_mul_parameter.row_16_, mat_mul_parameter.row_align_, mat_mul_parameter.col_4_, mat_mul_parameter.col_8_,
-    mat_mul_parameter.col_align_, mat_mul_parameter.deep_, mat_mul_parameter.deep_4_, mat_mul_parameter.deep_16_,
-    mat_mul_parameter.deep_align_, mat_mul_parameter.batch, mat_mul_parameter.a_transpose_,
-    mat_mul_parameter.b_transpose_, mat_mul_parameter.a_const_, mat_mul_parameter.b_const_, mat_mul_parameter.act_type_,
-    mat_mul_parameter.use_axis_, mat_mul_parameter.axis_);
+    "MicroMatmulParameter", name, micro_matmul_parameter.act_type_, micro_matmul_parameter.thread_num_,
+    micro_matmul_parameter.row_, micro_matmul_parameter.col_, micro_matmul_parameter.row_4_,
+    micro_matmul_parameter.row_6_, micro_matmul_parameter.row_12_, micro_matmul_parameter.row_16_,
+    micro_matmul_parameter.row_align_, micro_matmul_parameter.col_4_, micro_matmul_parameter.col_8_,
+    micro_matmul_parameter.col_align_, micro_matmul_parameter.deep_, micro_matmul_parameter.deep_4_,
+    micro_matmul_parameter.deep_16_, micro_matmul_parameter.deep_align_, micro_matmul_parameter.a_batch_,
+    micro_matmul_parameter.b_batch_, micro_matmul_parameter.batch, micro_matmul_parameter.a_transpose_,
+    micro_matmul_parameter.b_transpose_, micro_matmul_parameter.a_const_, micro_matmul_parameter.b_const_);
 }
 
-void NNaclFp32Serializer::CodeStruct(const std::string &name, const ScaleParameter &scale_parameter) {
-  CodeBaseStruct("ScaleParameter", name, scale_parameter.op_parameter_, scale_parameter.axis_,
-                 scale_parameter.activation_type_, scale_parameter.outer_size_, scale_parameter.axis_size_,
-                 scale_parameter.inner_size_, scale_parameter.const_scale_, scale_parameter.const_offset_);
-}
-
-void NNaclFp32Serializer::CodeStruct(const std::string &name, const SliceParameter &slice_parameter) {
-  CodeBaseStruct("SliceParameter", name, slice_parameter.op_parameter_, ToString(slice_parameter.shape_),
-                 ToString(slice_parameter.begin_), ToString(slice_parameter.end_), ToString(slice_parameter.size_),
-                 "{0}", slice_parameter.param_length_);
+void NNaclFp32Serializer::CodeStruct(const std::string &name, const ScaleStruct &scale_struct) {
+  CodeBaseStruct<false>("ScaleStruct", name, "{}", scale_struct.axis_, scale_struct.data_type_, scale_struct.axis_size_,
+                        scale_struct.outer_size_, scale_struct.inner_size_);
 }
 
 void NNaclFp32Serializer::CodeStruct(const std::string &name, const SplitParameter &split_parameter) {
@@ -108,10 +107,11 @@ void NNaclFp32Serializer::CodeStruct(const std::string &name, const SplitParamet
                  split_parameter.split_count_);
 }
 
-void NNaclFp32Serializer::CodeStruct(const std::string &name, const TileParameter &tile_parameter) {
-  CodeBaseStruct("TileParameter", name, tile_parameter.op_parameter_, ToString(tile_parameter.multiples_),
-                 ToString(tile_parameter.in_shape_), ToString(tile_parameter.out_shape_),
-                 ToString(tile_parameter.in_strides_), ToString(tile_parameter.out_strides_), tile_parameter.in_dim_);
+void NNaclFp32Serializer::CodeStruct(const std::string &name, const TileStruct &tile_struct) {
+  CodeBaseStruct<false>(
+    "TileStruct", name, "{}", tile_struct.one_dim_tile_, tile_struct.resize_done_, ToString(tile_struct.dims_),
+    tile_struct.dims_size_, "NULL", "NULL", ToString(tile_struct.multiples_), ToString(tile_struct.in_shape_),
+    ToString(tile_struct.out_shape_), ToString(tile_struct.in_strides_), ToString(tile_struct.out_strides_));
 }
 
 void NNaclFp32Serializer::CodeStruct(const std::string &name, const TransposeParameter &transpose_parameter) {
@@ -121,12 +121,21 @@ void NNaclFp32Serializer::CodeStruct(const std::string &name, const TransposePar
     ToString(transpose_parameter.out_strides_), transpose_parameter.num_axes_, transpose_parameter.data_num_);
 }
 
+void NNaclFp32Serializer::CodeStruct(const std::string &name, const TransposeParameter &transpose_param,
+                                     const TransposeDynamicParameter &dynamic_transpose_param) {
+  CodeBaseStruct<false>("TransposeParameter", name, transpose_param.op_parameter_, ToString(transpose_param.perm_),
+                        transpose_param.perm_size_, transpose_param.conjugate_, dynamic_transpose_param.strides_,
+                        dynamic_transpose_param.out_strides_, transpose_param.num_axes_,
+                        dynamic_transpose_param.data_num_);
+}
+
 void NNaclFp32Serializer::CodeStruct(const std::string &name, const LstmParameter &lstm_parameter) {
   CodeBaseStruct("LstmParameter", name, lstm_parameter.op_parameter_, lstm_parameter.input_size_,
-                 lstm_parameter.hidden_size_, lstm_parameter.seq_len_, lstm_parameter.batch_,
-                 lstm_parameter.output_step_, lstm_parameter.bidirectional_, lstm_parameter.zoneout_cell_,
-                 lstm_parameter.zoneout_hidden_, lstm_parameter.input_row_align_, lstm_parameter.input_col_align_,
-                 lstm_parameter.state_row_align_, lstm_parameter.state_col_align_);
+                 lstm_parameter.hidden_size_, lstm_parameter.project_size_, lstm_parameter.output_size_,
+                 lstm_parameter.seq_len_, lstm_parameter.batch_, lstm_parameter.output_step_,
+                 lstm_parameter.bidirectional_, lstm_parameter.zoneout_cell_, lstm_parameter.zoneout_hidden_,
+                 lstm_parameter.input_row_align_, lstm_parameter.input_col_align_, lstm_parameter.state_row_align_,
+                 lstm_parameter.state_col_align_, lstm_parameter.proj_col_align_, lstm_parameter.has_bias_);
 }
 
 void NNaclFp32Serializer::CodeStruct(const std::string &name, const DeQuantArg &de_quant_arg) {
@@ -137,14 +146,16 @@ void NNaclFp32Serializer::CodeStruct(const std::string &name, const DeQuantArg &
 void NNaclFp32Serializer::CodeStruct(const std::string &name, const SpliceParameter &splice_parameter) {
   CodeArray("splice_context", splice_parameter.context_, splice_parameter.context_dim_, false);
   CodeBaseStruct("SpliceParameter", name, splice_parameter.op_parameter_, splice_parameter.context_dim_,
-                 splice_parameter.forward_indexes_dim_, splice_parameter.src_to_dst_row_offset_, "splice_context",
-                 nullptr, splice_parameter.output_dim_);
+                 splice_parameter.forward_indexes_dim_, "splice_context", nullptr, splice_parameter.output_dim_);
 }
 
-void NNaclFp32Serializer::CodeStruct(const std::string &name, const ExpParameter &exp_parameter) {
-  CodeBaseStruct("ExpParameter", name, exp_parameter.op_parameter_, exp_parameter.base_, exp_parameter.scale_,
-                 exp_parameter.shift_, exp_parameter.op_parameter_.thread_num_, exp_parameter.in_scale_,
-                 exp_parameter.out_scale_, exp_parameter.element_num_);
+void NNaclFp32Serializer::CodeStruct(const std::string &name, const ExpStruct &exp_struct) {
+  CodeBaseStruct("ExpParameter", "exp_param", reinterpret_cast<ExpParameter *>(exp_struct.base_.param_)->op_parameter_,
+                 reinterpret_cast<ExpParameter *>(exp_struct.base_.param_)->base_,
+                 reinterpret_cast<ExpParameter *>(exp_struct.base_.param_)->scale_,
+                 reinterpret_cast<ExpParameter *>(exp_struct.base_.param_)->shift_);
+  CodeBaseStruct("ExpStruct", name, "{}", exp_struct.in_scale_, exp_struct.out_scale_, exp_struct.element_num_);
+  code << "    " << name << ".base_.param_ = &exp_param;\n";
 }
 
 void NNaclFp32Serializer::CodeStruct(const std::string &name, const StridedSliceParameter &strided_slice_parameter) {
@@ -155,6 +166,11 @@ void NNaclFp32Serializer::CodeStruct(const std::string &name, const StridedSlice
                  strided_slice_parameter.num_axes_, strided_slice_parameter.data_type,
                  strided_slice_parameter.begins_mask_, strided_slice_parameter.ellipsisMask_,
                  strided_slice_parameter.newAxisMask_, strided_slice_parameter.shrinkAxisMask_);
+}
+
+void NNaclFp32Serializer::CodeStruct(const std::string &name, const SliceStruct &param) {
+  CodeBaseStruct("SliceStruct", name, "{}", param.data_type_size_, ToString(param.begin_), ToString(param.size_),
+                 ToString(param.shape_), ToString(param.end_), param.param_length_);
 }
 
 void NNaclFp32Serializer::CodeStruct(const std::string &name, const ArithmeticWrapperInfo &arithmetic_wrapper_info) {
@@ -188,13 +204,46 @@ void NNaclFp32Serializer::CodeStruct(const std::string &name, const OpParameter 
                         op_param.is_train_session_, op_param.is_zero_shape_);
 }
 
+void NNaclFp32Serializer::CodeStruct(const std::string &name, const LayerNormComputeParam &op_param) {
+  CodeBaseStruct<false>("LayerNormComputeParam", name, op_param.epsilon_, op_param.elementwise_affine_,
+                        op_param.begin_norm_axis_, op_param.begin_params_axis_, op_param.norm_inner_size_,
+                        op_param.norm_outer_size_, op_param.params_inner_size_, op_param.params_outer_size_);
+}
+
+void NNaclFp32Serializer::CodeStruct(const std::string &name, const BroadcastShapeInfo &param) {
+  CodeBaseStruct<false>("BroadcastShapeInfo", name, ToString(param.input_shape_), param.input_shape_size_,
+                        ToString(param.output_shape_), param.output_shape_size_);
+}
+
+void NNaclFp32Serializer::CodeStruct(const std::string &name, const CustomGruParameter &op_param) {
+  CodeBaseStruct<false>("CustomGruParameter", name, op_param.op_parameter_, op_param.num_step, op_param.batch_size,
+                        op_param.input_size, op_param.hidden_size);
+}
+
+void NNaclFp32Serializer::CodeStruct(const std::string &name, const SlidingWindowParam &param) {
+  CodeBaseStruct<false>("SlidingWindowParam", name, param.left_, param.right_, param.top_, param.bottom_,
+                        param.c_block_, param.block_channel_, param.ic_align_, param.out_step_, param.out_h_step_,
+                        param.out_c_step_, param.out_w_step_, param.out_block_step_, param.in_step_, param.in_h_step_,
+                        param.in_sh_step_, param.in_sw_step_, param.in_kh_step_, param.in_kw_step_, param.kernel_step_);
+}
+
+void NNaclFp32Serializer::CodeStruct(const std::string &name, const UnstackParameter &param) {
+  CodeBaseStruct<false>("UnstackParameter", name, param.op_parameter_, param.num_, param.axis_, param.pre_dims_,
+                        param.axis_dim_, param.after_dims_);
+}
+
+void NNaclFp32Serializer::CodeStruct(const std::string &name, const FillStruct &param) {
+  CodeBaseStruct<false>("FillParameter", name, "{}", param.thread_sz_count_, param.thread_sz_stride_, param.data_size_,
+                        param.src_data_, param.out_ptr_, param.thread_count_);
+}
+
 void NNaclFp32Serializer::CodeArrayStruct(const std::string &name, TensorC *tensorC, std::vector<Tensor *> tensor) {
   std::vector<std::string> tensor_names;
   int size = tensor.size();
   for (int i = 0; i < size; ++i) {
     std::string tensor_name = "tensor" + std::to_string(count++);
-    CodeBaseStruct<false>("TensorC", name, tensor_name, tensorC[i].is_ready_, tensorC[i].data_type_, tensorC[i].format_,
-                          tensor[i], tensorC[i].shape_size_, ToString(tensorC[i].shape_));
+    CodeBaseStruct<false>("TensorC", name, tensorC[i].shape_changed_, tensorC[i].data_type_, tensorC[i].format_,
+                          tensor[i], tensorC[i].shape_size_, ToString(tensorC[i].shape_), tensor_name);
     tensor_names.emplace_back(tensor_name);
   }
   code << "    TensorC"

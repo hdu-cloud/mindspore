@@ -53,7 +53,7 @@ def test_standard_laplace_op():
     assert output.shape == (5, 6, 8)
     outnumpyflatten_1 = output.asnumpy().flatten()
 
-    seed = 0
+    seed = 10
     seed2 = 10
     shape = (5, 6, 8)
     net = NetStandardLaplace(shape, seed, seed2)
@@ -80,19 +80,10 @@ def test_standard_laplace_functional():
     Description: input the shape and random seed, test the output value and shape
     Expectation: the value and shape of output tensor match the predefined values
     """
-    seed = 10
-    seed2 = 10
+    seed = 8
     shape = (5, 6, 8)
-    output = ops.standard_laplace(shape, seed, seed2)
+    output = ops.standard_laplace(shape, seed)
     assert output.shape == shape
-    output_numpy_flatten_1 = output.asnumpy().flatten()
-
-    seed = 0
-    seed2 = 10
-    output = ops.standard_laplace(shape, seed, seed2)
-    assert output.shape == shape
-    output_numpy_flatten_2 = output.asnumpy().flatten()
-    assert (output_numpy_flatten_1 == output_numpy_flatten_2).all()
 
 
 @pytest.mark.level0

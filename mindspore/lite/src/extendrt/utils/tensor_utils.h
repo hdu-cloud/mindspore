@@ -26,16 +26,22 @@
 
 #include "include/api/types.h"
 #include "ir/tensor.h"
-#include "runtime/device/device_address.h"
+#include "include/backend/device_address.h"
 #include "common/utils.h"
 #include "common/mutable_tensor_impl.h"
 #include "mindspore/core/ir/tensor.h"
-
+#include "kernel/kernel.h"
+#include "src/tensor.h"
+#include "infer/tensor.h"
+#ifdef ENABLE_CLOUD_INFERENCE
+#include "src/extendrt/kernel/ascend/plugin/ascend_allocator_plugin.h"
+#endif
 namespace mindspore {
 class TensorRefData : public tensor::TensorData {
  public:
-  TensorRefData(void *data, size_t elem_count, size_t data_size, size_t ndim);
-  ~TensorRefData() = default;
+  TensorRefData(void *data, size_t elem_count, size_t data_size, size_t ndim,
+                const std::function<void(uint8_t *)> &deleter = nullptr);
+  ~TensorRefData();
 
   ssize_t size() const override;
   ssize_t itemsize() const override;
@@ -52,6 +58,7 @@ class TensorRefData : public tensor::TensorData {
   size_t elem_count_ = 0;
   size_t data_size_ = 0;
   size_t ndim_ = 0;
+  std::function<void(uint8_t *)> deleter_ = nullptr;
 };
 
 constexpr auto kLiteDeviceName = "LiteDevice";
@@ -86,6 +93,26 @@ class TensorTensorImpl : public MutableTensorImpl {
     return std::shared_ptr<const void>(tensor_->data_c(), [](const void *) {});
   }
 
+  void SetDeviceId(int device_id) override {
+    MS_EXCEPTION_IF_NULL(tensor_);
+    device_id_ = device_id;
+  }
+
+  void SetDevice(const std::string &device) override {
+    MS_EXCEPTION_IF_NULL(tensor_);
+    device_ = device;
+  }
+
+  int GetDeviceId() const override {
+    MS_EXCEPTION_IF_NULL(tensor_);
+    return device_id_;
+  }
+
+  std::string GetDevice() const override {
+    MS_EXCEPTION_IF_NULL(tensor_);
+    return device_;
+  }
+
   void *MutableData() override {
     MS_EXCEPTION_IF_NULL(tensor_);
     return tensor_->data_c();
@@ -93,9 +120,17 @@ class TensorTensorImpl : public MutableTensorImpl {
 
   void SetDeviceData(void *data) override {
     MS_EXCEPTION_IF_NULL(tensor_);
+    auto old_device_data = GetDeviceData();
+    MS_LOG(ERROR) << "set device data in tensor utils.";
+#ifdef ENABLE_CLOUD_INFERENCE
+    if (old_device_data != nullptr && device_own_data_) {
+      kernel::AscendAllocatorPlugin::GetInstance().Free(old_device_data, GetDeviceId());
+    }
+#endif
     auto data_size = DataSize();
     auto device_address = std::make_shared<LiteDeviceAddress>(data, data_size);
     tensor_->set_device_address(device_address);
+    device_own_data_ = false;
   }
   void *GetDeviceData() override {
     MS_EXCEPTION_IF_NULL(tensor_);
@@ -157,16 +192,21 @@ class TensorTensorImpl : public MutableTensorImpl {
     tensor_->set_user_data("quant_param", std::make_shared<std::vector<QuantParam>>(quant_param));
   }
 
-  int64_t ElementNum() const {
-    auto &shape = Shape();
-    return std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<int64_t>());
+  size_t DataSize() const override {
+    auto elem_num = ElementNum();
+    if (elem_num <= 0) {
+      return 0;
+    }
+    return LongToSize(elem_num) * lite::DataTypeSize(static_cast<enum TypeId>(DataType()));
   }
-  size_t DataSize() const override { return ElementNum() * lite::DataTypeSize(static_cast<enum TypeId>(DataType())); }
 
   std::shared_ptr<Impl> Clone() const override { return std::make_shared<TensorTensorImpl>(tensor_); }
 
  private:
   std::shared_ptr<tensor::Tensor> tensor_ = nullptr;
+  std::string device_ = "";
+  int device_id_ = -1;
+  bool device_own_data_ = true;
 };
 
 class TensorUtils {
@@ -185,6 +225,26 @@ class TensorUtils {
     const std::vector<mindspore::tensor::Tensor> &tensors);
   static std::vector<mindspore::tensor::Tensor> TensorPtrToTensor(
     const std::vector<mindspore::tensor::TensorPtr> &tensor_ptrs);
+};
+
+class CloudTensorUtils {
+ public:
+  /* lite tensor ---> Address */
+  static kernel::AddressPtr LiteTensorToAddressPtr(const lite::Tensor *lite_tensor);
+  static std::vector<mindspore::kernel::AddressPtr> LiteTensorToAddressPtrVec(
+    const std::vector<lite::Tensor *> &lite_tensors);
+
+  /* lite tensor ---> kernel tensor */
+  static kernel::KernelTensorPtr LiteTensorToKernelTensorPtr(const lite::Tensor *lite_tensor);
+  static std::vector<kernel::KernelTensorPtr> LiteTensorToKernelTensorPtrVec(
+    const std::vector<lite::Tensor *> &lite_tensors);
+};
+
+class AbstractTensorUtils {
+ public:
+  static std::vector<std::vector<int64_t>> GetTensorListShapes(const std::vector<infer::abstract::Tensor *> &tensors);
+  static bool SetTensorListShapse(const std::vector<infer::abstract::Tensor *> &tensors,
+                                  const std::vector<std::vector<int64_t>> &shapes);
 };
 }  // namespace mindspore
 

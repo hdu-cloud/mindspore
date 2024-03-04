@@ -248,6 +248,7 @@ Array操作
     mindspore.numpy.append
     mindspore.numpy.apply_along_axis
     mindspore.numpy.apply_over_axes
+    mindspore.numpy.argwhere
     mindspore.numpy.array_split
     mindspore.numpy.array_str
     mindspore.numpy.atleast_1d
@@ -266,6 +267,7 @@ Array操作
     mindspore.numpy.flipud
     mindspore.numpy.hsplit
     mindspore.numpy.hstack
+    mindspore.numpy.intersect1d
     mindspore.numpy.moveaxis
     mindspore.numpy.piecewise
     mindspore.numpy.ravel
@@ -275,6 +277,7 @@ Array操作
     mindspore.numpy.rollaxis
     mindspore.numpy.rot90
     mindspore.numpy.select
+    mindspore.numpy.setdiff1d
     mindspore.numpy.size
     mindspore.numpy.split
     mindspore.numpy.squeeze
@@ -612,7 +615,7 @@ mindspore.numpy能够充分利用MindSpore的强大功能，实现算子的自�
 
       from mindspore import ops
 
-      grad_all = ops.composite.GradOperation(get_all=True)
+      grad_all = ops.GradOperation(get_all=True)
       print(grad_all(forward)(x, w1, b1, w2, b2, w3, b3))
 
   运行结果如下：
@@ -634,10 +637,10 @@ mindspore.numpy能够充分利用MindSpore的强大功能，实现算子的自�
 
   .. code-block:: python
 
-      from mindspore import jit, set_context, GRAPH_MODE
+      from mindspore import jit, set_context, GRAPH_MODE, ops
 
       set_context(mode=GRAPH_MODE)
-      grad_all = ops.composite.GradOperation(get_all=True)
+      grad_all = ops.GradOperation(get_all=True)
       print(grad_all(jit(forward))(x, w1, b1, w2, b2, w3, b3))
 
   运行结果如下：
@@ -655,7 +658,7 @@ mindspore.numpy能够充分利用MindSpore的强大功能，实现算子的自�
         ...
        Tensor(shape=[4], dtype=Float32, value= [ 2.00000000e+00,  2.00000000e+00,  2.00000000e+00,  2.00000000e+00]))
 
-  更多细节可参考 `API GradOperation <https://www.mindspore.cn/docs/zh-CN/r2.0.0-alpha/api_python/ops/mindspore.ops.GradOperation.html>`_ 。
+  更多细节可参考 `API GradOperation <https://www.mindspore.cn/docs/zh-CN/master/api_python/ops/mindspore.ops.GradOperation.html>`_ 。
 
 - mindspore.set_context使用示例
 
@@ -665,23 +668,23 @@ mindspore.numpy能够充分利用MindSpore的强大功能，实现算子的自�
 
       from mindspore import set_context, GRAPH_MODE, PYNATIVE_MODE
 
-      # Execucation in static graph mode
+      # Execution in static graph mode
       set_context(mode=GRAPH_MODE)
 
-      # Execucation in PyNative mode
+      # Execution in PyNative mode
       set_context(mode=PYNATIVE_MODE)
 
-      # Execucation on CPU backend
+      # Execution on CPU backend
       set_context(device_target="CPU")
 
-      # Execucation on GPU backend
+      # Execution on GPU backend
       set_context(device_target="GPU")
 
-      # Execucation on Ascend backend
+      # Execution on Ascend backend
       set_context(device_target="Ascend")
       ...
 
-  更多细节可参考 `API mindspore.set_context <https://www.mindspore.cn/docs/zh-CN/r2.0.0-alpha/api_python/mindspore/mindspore.set_context.html#mindspore.set_context>`_ 。
+  更多细节可参考 `API mindspore.set_context <https://www.mindspore.cn/docs/zh-CN/master/api_python/mindspore/mindspore.set_context.html#mindspore.set_context>`_ 。
 
 - mindspore.numpy使用示例
 

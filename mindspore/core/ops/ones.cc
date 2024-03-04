@@ -15,13 +15,29 @@
  */
 
 #include "ops/ones.h"
+
 #include <memory>
 #include <set>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include <string>
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/tensor_construct_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -69,6 +85,10 @@ ValuePtr OnesInferValue(const PrimitivePtr &prim, const std::vector<AbstractBase
   auto abs = OnesInfer(nullptr, prim, input_args);
   // check
   auto out_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(abs->BuildShape())[kShape];
+  if (SizeOf(out_shape) > INT_MAX) {
+    MS_LOG(EXCEPTION) << "For '" << prim->name() << "', the output elements num can not larger than " << INT_MAX
+                      << "(INT_MAX), but got " << SizeOf(out_shape);
+  }
   auto out_type = abs->BuildType();
   MS_EXCEPTION_IF_NULL(out_type);
   return TensorConstructUtils::CreateOnesTensor(out_type, out_shape);
@@ -76,6 +96,7 @@ ValuePtr OnesInferValue(const PrimitivePtr &prim, const std::vector<AbstractBase
 }  // namespace
 
 MIND_API_OPERATOR_IMPL(Ones, BaseOperator);
+
 REGISTER_PRIMITIVE_EVAL_IMPL(Ones, prim::kPrimOnes, OnesInfer, OnesInferValue, false);
 }  // namespace ops
 }  // namespace mindspore

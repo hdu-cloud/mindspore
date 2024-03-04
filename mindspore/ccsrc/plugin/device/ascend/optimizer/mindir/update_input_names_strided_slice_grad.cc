@@ -17,37 +17,53 @@
 #include <memory>
 #include <vector>
 #include <string>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/array_op_name.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
-const BaseRef StridedSliceGradUpdateInputNames::DefinePattern() const {
-  VarPtr Xs = std::make_shared<SeqVar>();
-  auto strided_slice_grad_prim = std::make_shared<Primitive>(kStridedSliceGradOpName);
-  return VectorRef({strided_slice_grad_prim, Xs});
-}
+namespace {
+constexpr auto kXs = "Xs";
+constexpr auto kMSliceGrad = "m_slice_grad";
+constexpr auto kRSliceGrad = "r_slice_grad";
 
-const AnfNodePtr StridedSliceGradUpdateInputNames::Process(const FuncGraphPtr &graph, const AnfNodePtr &node,
-                                                           const EquivPtr &) const {
-  MS_EXCEPTION_IF_NULL(graph);
+AnfNodePtr BuildSliceGrad(const PatternMap &m, const AnfNodePtr &) {
+  auto node = m.Get(kMSliceGrad);
   MS_EXCEPTION_IF_NULL(node);
   auto strided_slice_grad = node->cast<CNodePtr>();
   MS_EXCEPTION_IF_NULL(strided_slice_grad);
 
   const size_t shapex_index = 1;
+  auto primitive = common::AnfAlgo::GetCNodePrimitive(strided_slice_grad);
+  MS_EXCEPTION_IF_NULL(primitive);
+  auto input_names_ptr = primitive->GetAttr(kAttrInputNames);
+  MS_EXCEPTION_IF_NULL(input_names_ptr);
+  auto input_names_vec = GetValue<std::vector<std::string>>(input_names_ptr);
+  input_names_vec[shapex_index] = "shape";
+  common::AnfAlgo::SetNodeAttr(kAttrInputNames, MakeValue(input_names_vec), strided_slice_grad);
+  return strided_slice_grad;
+}
+}  // namespace
+
+bool StridedSliceGradUpdateInputNames::CheckMatchedDAG(const PatternMap &, const FuncGraphPtr &,
+                                                       const AnfNodePtr &node) const {
+  auto strided_slice_grad = node->cast<CNodePtr>();
+  MS_EXCEPTION_IF_NULL(strided_slice_grad);
   if (common::AnfAlgo::IsDynamicShape(strided_slice_grad)) {
-    auto primitive = common::AnfAlgo::GetCNodePrimitive(strided_slice_grad);
-    MS_EXCEPTION_IF_NULL(primitive);
-    auto input_names_ptr = primitive->GetAttr(kAttrInputNames);
-    MS_EXCEPTION_IF_NULL(input_names_ptr);
-    auto input_names_vec = GetValue<std::vector<std::string>>(input_names_ptr);
-    input_names_vec[shapex_index] = "shape";
-    common::AnfAlgo::SetNodeAttr(kAttrInputNames, MakeValue(input_names_vec), strided_slice_grad);
+    return true;
   }
-  return nullptr;
+  return false;
+}
+
+void StridedSliceGradUpdateInputNames::DefineSrcPattern(SrcPattern *src_pattern) {
+  (*src_pattern).AddSeqVar(kXs).AddCNode(kMSliceGrad, {std::make_shared<Primitive>(kStridedSliceGradOpName), kXs});
+}
+
+void StridedSliceGradUpdateInputNames::DefineDstPattern(DstPattern *dst_pattern) {
+  (*dst_pattern).AddCNode(kRSliceGrad, {std::make_shared<Primitive>(kStridedSliceGradOpName), kXs}, BuildSliceGrad);
 }
 }  // namespace opt
 }  // namespace mindspore

@@ -24,6 +24,7 @@
 #include "include/api/cfg.h"
 #include "include/train/train_cfg.h"
 #include "src/litert/inner_context.h"
+#include "src/common/log_adapter.h"
 
 namespace mindspore {
 class ContextUtils {
@@ -31,9 +32,8 @@ class ContextUtils {
   static std::shared_ptr<lite::InnerContext> Convert(Context *context);
 
  private:
-  static void SetContextAttr(int32_t thread_num, int32_t inter_op_parallel_num, bool enable_parallel,
-                             const std::vector<int32_t> &affinity_core_list, const std::shared_ptr<Delegate> &delegate,
-                             lite::InnerContext *inner_context, bool float_mode = false);
+  static void SetContextAttr(int32_t thread_num, int32_t inter_op_parallel_num,
+                             const std::vector<int32_t> &affinity_core_list, lite::InnerContext *inner_context);
   static Status AddCpuDevice(const std::shared_ptr<Allocator> &allocator, int affinity_mode, bool enable_fp16,
                              const std::string &provider, const std::string &provider_device,
                              lite::InnerContext *inner_context);
@@ -46,7 +46,7 @@ class ContextUtils {
   static bool IsAffinityModeValid(int affinity_mode) {
     return affinity_mode >= lite::NO_BIND && affinity_mode <= lite::MID_CPU;
   }
-  static void ResetDefaultThreadNum(Context *context);
+  static void ResetContextDefaultParam(Context *context);
 };
 
 inline lite::QuantizationType A2L_ConvertQT(mindspore::QuantizationType qt) {
@@ -55,6 +55,9 @@ inline lite::QuantizationType A2L_ConvertQT(mindspore::QuantizationType qt) {
   }
   if (qt == kWeightQuant) {
     return lite::QT_WEIGHT;
+  }
+  if (qt == kFullQuant || qt == kUnknownQuantType) {
+    MS_LOG(WARNING) << "QuantizationType " << qt << " does not support, set the quantizationType to default.";
   }
   return lite::QT_DEFAULT;
 }

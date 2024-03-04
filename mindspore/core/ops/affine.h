@@ -16,10 +16,10 @@
 
 #ifndef MINDSPORE_CORE_OPS_AFFINE_H_
 #define MINDSPORE_CORE_OPS_AFFINE_H_
-#include <vector>
 #include <string>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -46,7 +46,7 @@ class MIND_API Affine : public BaseOperator {
   void set_output_dim(int64_t output_dim);
   /// \brief Method to set transpose_a attributes.
   ///
-  /// \param[in] transpose_b Define the if transpose a tensor.
+  /// \param[in] transpose_a Define the if transpose a tensor.
   void set_transpose_a(bool transpose_a);
   /// \brief Method to set transpose_b attributes.
   ///

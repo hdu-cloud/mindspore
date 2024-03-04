@@ -18,6 +18,7 @@
 #include <set>
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_ops.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
 #include "utils/tensor_construct_utils.h"
@@ -33,9 +34,6 @@ abstract::ShapePtr SparseToDenseV2InferShape(const PrimitivePtr &primitive,
   const int64_t OutShapeSize = 1;
   const int64_t ValuesSize = 1;
   const int64_t DefaultSize = 0;
-  auto max_length_ptr = primitive->GetAttr("max_length");
-  MS_EXCEPTION_IF_NULL(max_length_ptr);
-  int64_t max_length = GetValue<int64_t>(max_length_ptr);
   auto indices_shape_ptr = input_args[kInputIndex0]->BuildShape();
   auto output_shape_shape_ptr = input_args[kInputIndex1]->BuildShape();
   auto values_shape_ptr = input_args[kInputIndex2]->BuildShape();
@@ -44,6 +42,11 @@ abstract::ShapePtr SparseToDenseV2InferShape(const PrimitivePtr &primitive,
   auto output_shape_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(output_shape_shape_ptr)[kShape];
   auto values_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(values_shape_ptr)[kShape];
   auto default_value_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(default_value_shape_ptr)[kShape];
+  if (IsDynamic(indices_shape) || IsDynamic(output_shape_shape) || IsDynamic(values_shape) ||
+      IsDynamic(default_value_shape)) {
+    return std::make_shared<abstract::Shape>(ShapeVector{abstract::Shape::kShapeRankAny});
+  }
+
   (void)CheckAndConvertUtils::CheckInteger("indices dimension", static_cast<int64_t>(indices_shape.size()), kLessEqual,
                                            Indiceselement, prim_name);
   (void)CheckAndConvertUtils::CheckInteger("outshape dimension", static_cast<int64_t>(output_shape_shape.size()),
@@ -65,7 +68,7 @@ abstract::ShapePtr SparseToDenseV2InferShape(const PrimitivePtr &primitive,
   auto output_shape_type_element = output_shape_type_id->element();
   MS_EXCEPTION_IF_NULL(output_shape_type_element);
   std::vector<int64_t> y_shape;
-  if (!input_args[1]->BuildValue()->isa<AnyValue>() && !input_args[1]->BuildValue()->isa<None>()) {
+  if (!input_args[1]->BuildValue()->isa<ValueAny>() && !input_args[1]->BuildValue()->isa<None>()) {
     if (indices_shape.size() == 0) {
       if (values_shape.size() != 0 && values_shape[0] != 1) {
         MS_EXCEPTION(ValueError) << "For '" << prim_name << "', the indices_shape[0] is 1"
@@ -102,15 +105,10 @@ abstract::ShapePtr SparseToDenseV2InferShape(const PrimitivePtr &primitive,
     }
     return std::make_shared<abstract::Shape>(y_shape);
   } else {
-    const uint32_t input_shapes = static_cast<uint32_t>(std::pow(max_length, 1.0 / SizeToInt(output_shape_numelement)));
-    ShapeVector shape_min;
-    ShapeVector shape_max;
     for (size_t i = 0; i < output_shape_numelement; i++) {
       y_shape.push_back(abstract::Shape::kShapeDimAny);
-      shape_min.push_back(0);
-      shape_max.push_back(input_shapes);
     }
-    return std::make_shared<abstract::Shape>(y_shape, shape_min, shape_max);
+    return std::make_shared<abstract::Shape>(y_shape);
   }
 }
 
@@ -161,6 +159,26 @@ AbstractBasePtr SparseToDenseV2Infer(const abstract::AnalysisEnginePtr &, const 
   auto infershape = SparseToDenseV2InferShape(primitive, input_args);
   return abstract::MakeAbstract(infershape, infertype);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseToDenseV2, prim::kPrimSparseToDenseV2, SparseToDenseV2Infer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSparseToDenseV2Infer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseToDenseV2InferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseToDenseV2InferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseToDenseV2Infer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseToDenseV2, prim::kPrimSparseToDenseV2, AGSparseToDenseV2Infer, false);
 }  // namespace ops
 }  // namespace mindspore

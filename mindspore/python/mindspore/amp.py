@@ -1,4 +1,4 @@
-# Copyright 2020 Huawei Technologies Co., Ltd
+# Copyright 2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,18 +15,23 @@
 """ms function for mixed precision."""
 from __future__ import absolute_import
 
+import os
 from abc import ABC, abstractmethod
-
-from ._checkparam import Validator as validator
+from mindspore.common import mutable
+from mindspore.ops._primitive_cache import _get_cache_prim
+from mindspore.ops.operations.math_ops import NPUGetFloatStatusV2, NPUClearFloatStatusV2
+from mindspore import _checkparam as validator
+from mindspore._c_expression import MSContext
 from .common import dtype as mstype
 from . import context
 from . import ops
 from .ops import constexpr
-from .common.api import jit_class
+from .common.api import jit_class, jit
 from .common.parameter import Parameter
 from .common.tensor import Tensor
 from .train.loss_scale_manager import DynamicLossScaleManager, LossScaleManager, FixedLossScaleManager
-from .train.amp import build_train_network, auto_mixed_precision
+from .train.amp import build_train_network, auto_mixed_precision, custom_mixed_precision,\
+    get_white_list, get_black_list
 
 
 _hypermap = ops.HyperMap()
@@ -34,8 +39,13 @@ _partial = ops.Partial()
 
 
 @constexpr
-def _ascend_target():
-    return context.get_context("device_target") == "Ascend"
+def _ascend_910A_target():
+    return MSContext.get_instance().get_ascend_soc_version() == "ascend910"
+
+
+@constexpr
+def _ascend_910B_target():
+    return MSContext.get_instance().get_ascend_soc_version() == "ascend910b"
 
 
 @constexpr
@@ -51,46 +61,49 @@ def _grad_scale(scale, grad):
     return grad * scale.astype(grad.dtype)
 
 
-def _is_finite(inputs):
+@jit
+def _grad_scale_map(scale_value, inputs):
+    return _hypermap(_partial(_grad_scale, scale_value), inputs)
+
+
+@jit
+def _grad_unscale_map(scale_value, inputs):
+    return _hypermap(_partial(_grad_unscale, scale_value), inputs)
+
+
+def _overflow(inputs):
     if _gpu_target():
-        return ops.FloatStatus()(inputs)[0] == 0
+        return ops.FloatStatus()(inputs)
     status = ops.isfinite(inputs)
-    return status.all()
+    return 1 - status.all()
 
 
-def init_status():
-    r"""
-    Returns a Tensor indicating initialized status for overflow detection.
+@jit
+def _all_finite(inputs, check_overflow_mode):
+    """all finite check"""
+    if (_ascend_910A_target()) or \
+       (_ascend_910B_target() and check_overflow_mode != "INFNAN_MODE"):
+        status = Tensor([0] * 8, mstype.int32)
+        status = ops.depend(status, inputs)
+        get_status = _get_cache_prim(NPUGetFloatStatusV2)()(status)
+        status = ops.depend(status, get_status)
+        clear_status = _get_cache_prim(NPUClearFloatStatusV2)()(status)
+        get_status = ops.depend(get_status, clear_status)
+        status_finite = get_status.equal(Tensor(0, mstype.int32)).all()
+        return status_finite
 
-    Note:
-        Only Ascend need status to capture overflow status, you can also call
-        this function on GPU or CPU, but the return value is useless.
-
-    Returns:
-        Tensor, has the shape of `(8,)`.
-
-    Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU``
-
-    Examples:
-        >>> status = amp.init_status()
-    """
-    if _ascend_target():
-        status = ops.NPUAllocFloatStatus()()
-        clear_status = ops.NPUClearFloatStatus()(status)
-        status = ops.depend(status, clear_status)
-    else:
-        status = Tensor([0, 0, 0, 0, 0, 0, 0, 0], mstype.float32)
-
-    return status
+    outputs = _hypermap(_partial(_overflow), inputs)
+    flag_sum = ops.addn(outputs).reshape(())
+    status_finite = ops.less(flag_sum, 1)
+    return status_finite
 
 
-def all_finite(inputs, status=None):
+def all_finite(inputs):
     r"""
     Returns a scalar Tensor indicating whether the inputs are finite.
 
-    Note:
-        This is an experimental interface that is subject to change or deletion.
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
 
         The interface must be used in whole network training scenario to detect
         whether grads are finite, and the results may be different on different
@@ -98,8 +111,6 @@ def all_finite(inputs, status=None):
 
     Args:
         inputs (Union(tuple(Tensor), list(Tensor))): a iterable Tensor.
-        status (Tensor): the status Tensor for overflow detection, only required on
-            Ascend. Default: None.
 
     Returns:
         Tensor, a scalar Tensor and the dtype is bool.
@@ -108,20 +119,18 @@ def all_finite(inputs, status=None):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> x = (Tensor(np.array([np.log(-1), 1, np.log(0)])), Tensor(np.array([1.0]))
+        >>> from mindspore import amp, Tensor
+        >>> import numpy as np
+        >>> x = (Tensor(np.array([np.log(-1), 1, np.log(0)])), Tensor(np.array([1.0])))
         >>> output = amp.all_finite(x)
+
+    Tutorial Examples:
+        - `Automatic Mix Precision - Loss Scaling
+          <https://mindspore.cn/tutorials/en/master/advanced/mixed_precision.html#loss-scaling>`_
     """
-    if _ascend_target():
-        if status is None:
-            raise ValueError("The status must be initialized on Ascend, but get 'None'.")
-        status = ops.depend(status, inputs)
-        get_status = ops.NPUGetFloatStatus()(status)
-        status = ops.depend(status, get_status)
-        status_finite = status.sum() == 0
-        _ = ops.NPUClearFloatStatus()(status)
-        return status_finite
-    outputs = _hypermap(_partial(_is_finite), inputs)
-    return ops.stack(outputs).all()
+    inputs = mutable(inputs)
+    _check_overflow_mode = os.environ.get('MS_ASCEND_CHECK_OVERFLOW_MODE')
+    return _all_finite(inputs, _check_overflow_mode)
 
 
 @jit_class
@@ -133,8 +142,36 @@ class LossScaler(ABC):
     to scale and unscale the loss value and gradients to avoid overflow, `adjust` is used to update the
     loss scale value.
 
-    Note:
-        This is an experimental interface that is subject to change or deletion.
+    For more information, refer to the `tutorials  <https://mindspore.cn/tutorials/en/master/advanced/
+    mixed_precision.html#loss-scaling>`_.
+
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
+    Examples:
+        >>> from mindspore.amp import LossScaler, _grad_scale_map, _grad_unscale_map
+        >>> from mindspore import ops, Parameter, Tensor
+        >>> from mindspore.common import dtype as mstype
+        >>>
+        >>> class MyLossScaler(LossScaler):
+        ...     def __init__(self, scale_value):
+        ...         self.scale_value = Parameter(Tensor(scale_value, dtype=mstype.float32), name="scale_value")
+        ...
+        ...     def scale(self, inputs):
+        ...         inputs = mutable(inputs)
+        ...         return _grad_scale_map(self.scale_value, inputs)
+        ...
+        ...     def unscale(self, inputs):
+        ...         inputs = mutable(inputs)
+        ...         return _grad_unscale_map(self.scale_value, inputs)
+        ...
+        ...     def adjust(self, grads_finite):
+        ...         scale_mul_factor = self.scale_value * self.scale_factor
+        ...         scale_value = ops.select(grads_finite, scale_mul_factor, self.scale_value)
+        ...         ops.assign(self.scale_value, scale_value)
+        ...         return True
+        >>>
+        >>> loss_scaler = MyLossScaler(1024)
     """
     @abstractmethod
     def scale(self, inputs):
@@ -173,8 +210,8 @@ class StaticLossScaler(LossScaler):
 
     Scales and unscales loss or gradients by a fixed constant.
 
-    Note:
-        This is an experimental interface that is subject to change or deletion.
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
 
     Args:
         scale_value (Union(float, int)): The initial loss scale value.
@@ -183,6 +220,9 @@ class StaticLossScaler(LossScaler):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import amp, Tensor
+        >>> import numpy as np
         >>> loss_scaler = amp.StaticLossScaler(scale_value=2**10)
         >>> loss_value = Tensor([1.], mindspore.float32)
         >>> scaled_loss_value = loss_scaler.scale(loss_value)
@@ -211,7 +251,8 @@ class StaticLossScaler(LossScaler):
         Returns:
             Union(Tensor, tuple(Tensor)), the scaled value.
         """
-        return _hypermap(_partial(_grad_scale, self.scale_value), inputs)
+        inputs = mutable(inputs)
+        return _grad_scale_map(self.scale_value, inputs)
 
     def unscale(self, inputs):
         """
@@ -223,11 +264,13 @@ class StaticLossScaler(LossScaler):
         Returns:
             Union(Tensor, tuple(Tensor)), the unscaled value.
         """
-        return _hypermap(_partial(_grad_unscale, self.scale_value), inputs)
+        inputs = mutable(inputs)
+        return _grad_unscale_map(self.scale_value, inputs)
 
     def adjust(self, grads_finite):
         """
-        `scale_value` is fixed.
+        Adjust `scale_value` in `LossScaler`. `scale_value` is fixed in `StaticLossScaler`, so this method
+        return False directly.
 
         Args:
             grads_finite (Tensor): a scalar bool Tensor indicating whether the grads are finite.
@@ -244,8 +287,8 @@ class DynamicLossScaler(LossScaler):
     `scale_window` steps by `factor` if the grads remain finite, otherwise it reduces
     the loss scale by `1 / factor` and resets the counter.
 
-    Note:
-        This is an experimental interface that is subject to change or deletion.
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
 
     Args:
         scale_value (Union(float, int)): The initial loss scale value.
@@ -257,6 +300,9 @@ class DynamicLossScaler(LossScaler):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import amp, Tensor
+        >>> import numpy as np
         >>> loss_scaler = amp.DynamicLossScaler(scale_value=2**10, scale_factor=2, scale_window=1)
         >>> grads = (Tensor(np.array([np.log(-1), 1.0]), mindspore.float16),
         ...             Tensor(np.array([0.2]), mindspore.float16))
@@ -285,8 +331,13 @@ class DynamicLossScaler(LossScaler):
 
         Returns:
             Union(Tensor, tuple(Tensor)), the scaled value.
+
+        Tutorial Examples:
+            - `Automatic Mix Precision - Loss Scaling
+              <https://mindspore.cn/tutorials/en/master/advanced/mixed_precision.html#loss-scaling>`_
         """
-        return _hypermap(_partial(_grad_scale, self.scale_value), inputs)
+        inputs = mutable(inputs)
+        return _grad_scale_map(self.scale_value, inputs)
 
     def unscale(self, inputs):
         """
@@ -297,8 +348,13 @@ class DynamicLossScaler(LossScaler):
 
         Returns:
             Union(Tensor, tuple(Tensor)), the unscaled value.
+
+        Tutorial Examples:
+            - `Automatic Mix Precision - Loss Scaling
+              <https://mindspore.cn/tutorials/en/master/advanced/mixed_precision.html#loss-scaling>`_
         """
-        return _hypermap(_partial(_grad_unscale, self.scale_value), inputs)
+        inputs = mutable(inputs)
+        return _grad_unscale_map(self.scale_value, inputs)
 
     def adjust(self, grads_finite):
         """
@@ -306,6 +362,10 @@ class DynamicLossScaler(LossScaler):
 
         Args:
             grads_finite (Tensor): a scalar bool Tensor indicating whether the grads are finite.
+
+        Tutorial Examples:
+            - `Automatic Mix Precision - Loss Scaling
+              <https://mindspore.cn/tutorials/en/master/advanced/mixed_precision.html#loss-scaling>`_
         """
         one = ops.ones((), self.scale_value.dtype)
         scale_mul_factor = self.scale_value * self.scale_factor
@@ -313,7 +373,7 @@ class DynamicLossScaler(LossScaler):
             grads_finite,
             ops.select(
                 self.counter == (self.scale_window - 1),
-                ops.select(_is_finite(scale_mul_factor),
+                ops.select(ops.isfinite(scale_mul_factor),
                            scale_mul_factor,
                            self.scale_value),
                 self.scale_value),
@@ -327,5 +387,6 @@ class DynamicLossScaler(LossScaler):
 __all__ = [
     "DynamicLossScaleManager", "LossScaleManager", "FixedLossScaleManager",
     "build_train_network", "DynamicLossScaler", "StaticLossScaler", "LossScaler",
-    "auto_mixed_precision", "init_status", "all_finite"
+    "auto_mixed_precision", "all_finite", "custom_mixed_precision",
+    "get_white_list", "get_black_list"
 ]

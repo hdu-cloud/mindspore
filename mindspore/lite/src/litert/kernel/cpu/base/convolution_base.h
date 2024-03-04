@@ -70,6 +70,7 @@ class ConvolutionBaseCPUKernel : public LiteKernel {
   bool CheckParamsValid() const override;
 
   int CheckAndGetWeightParam(int32_t *batch, int32_t *height, int32_t *width) const;
+  void *GetConvPackWeightData(size_t data_size);
 
  protected:
   int InitConvWeightBias();
@@ -82,6 +83,7 @@ class ConvolutionBaseCPUKernel : public LiteKernel {
   std::unordered_map<uintptr_t, void *> addr_map;
   void *packed_weight_ = nullptr;
   bool weight_is_packed_ = false;
+  bool is_sharing_pack_ = true;
   void *bias_data_ = nullptr;
   const InnerContext *ctx_ = nullptr;
   ConvParameter *conv_param_ = nullptr;

@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_SSE_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
-#define MINDSPORE_NNACL_SSE_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
+#ifndef NNACL_SSE_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
+#define NNACL_SSE_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
 #include <math.h>
 
 #ifdef _MSC_VER
@@ -92,6 +92,8 @@
 #define MS_CMPLT128_F32(src1, src2) _mm_cmplt_ps(src1, src2)
 #define MS_CMPLE128_F32(src1, src2) _mm_cmple_ps(src1, src2)
 #define MS_CMPGT128_F32(src1, src2) _mm_cmpgt_ps(src1, src2)
+#define MS_CMPEQ128_F32(src1, src2) _mm_cmpeq_ps(src1, src2)
+#define MS_CMPUNORD128_F32(src1, src2) _mm_cmpunord_ps(src1, src2)
 #define MS_CMPGT128_EPI32(src1, src2) _mm_cmpgt_epi32(src1, src2)
 #define MS_BLEND128_F32(src1, src2, src3) _mm_blendv_ps(src1, src2, src3)
 #define MS_BLEND128_EPI32(src1, src2, src3) _mm_blendv_epi8(src1, src2, src3)
@@ -230,6 +232,15 @@ static inline MS_FLOAT32X4 MS128_LOG_F32(MS_FLOAT32X4 src) {
   MS_FLOAT32X4 tmp1 = MS_MUL128_F32(square, MS_ADD128_F32(MS_MUL128_F32(square, tmp), data4));
   MS_FLOAT32X4 res =
     MS_ADD128_F32(MS_MUL128_F32(ln2, expsPD), MS_MUL128_F32(MS_MUL128_F32(div, MS_ADD128_F32(tmp1, data5)), data6));
+  // if (src == 0) res = -inf;
+  MS_FLOAT32X4 mask = MS_CMPEQ128_F32(src, MS_MOV128_F32(0.0f));
+  res = MS_BLEND128_F32(res, MS_MOV128_F32(-INFINITY), mask);
+  // if (src == inf) res = inf;
+  mask = MS_CMPEQ128_F32(src, MS_MOV128_F32(INFINITY));
+  res = MS_BLEND128_F32(res, MS_MOV128_F32(INFINITY), mask);
+  // if (src < 0 || src == nan) res = nan;
+  mask = MS_OR128_F32(MS_CMPLT128_F32(src, MS_MOV128_F32(0.0f)), MS_CMPUNORD128_F32(src, MS_MOV128_F32(0.0f)));
+  res = MS_BLEND128_F32(res, MS_MOV128_F32(NAN), mask);
   return res;
 }
 
@@ -269,31 +280,34 @@ static inline float MS_GET_SUM128_F32(__m128 src) {
   MS_STQ_F32(output_ptr + 7 * num, dst##8);
 
 static inline MS_FLOAT32X4 VexpFp32(MS_FLOAT32X4 input) {
-  static MS_FLOAT32X4 param[] = {{0.693147f, 0.693147f, 0.693147f, 0.693147f},
-                                 {1.0f / 120, 1.0f / 120, 1.0f / 120, 1.0f / 120},
-                                 {1.0f / 24, 1.0f / 24, 1.0f / 24, 1.0f / 24},
-                                 {1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6},
-                                 {0.5f, 0.5f, 0.5f, 0.5f},
-                                 {1.0f, 1.0f, 1.0f, 1.0f}};
-  MS_INT32X4 integer = MS_CVTQPS_EPI32(MS_DIVQ_F32(input, param[0]));
+  static MS_FLOAT32X4 param[] = {
+    {0.693147f, 0.693147f, 0.693147f, 0.693147f},
+    {1.0f / 120, 1.0f / 120, 1.0f / 120, 1.0f / 120},
+    {1.0f / 24, 1.0f / 24, 1.0f / 24, 1.0f / 24},
+    {1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6},
+    {0.5f, 0.5f, 0.5f, 0.5f},
+    {1.0f, 1.0f, 1.0f, 1.0f},
+    {1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f},
+    {2.0f, 2.0f, 2.0f, 2.0f}};
+  MS_INT32X4 integer = MS_CVTQPS_EPI32(MS_FLOOR128_F32(MS_FMADD128_F32(input, param[6], param[4])));
   MS_FLOAT32X4 decimal = MS_SUBQ_F32(input, MS_MULQ_F32(MS_CVTQEPI32_PS(integer), param[0]));
-  MS_INT32X4 int_exp = MS_SLLIQ_EPI32(MS_ADDQ_EPI32(integer, MS_MOVQ_EPI32(127)), 23);
+  MS_INT32X4 int_exp = MS_SLLIQ_EPI32(MS_ADDQ_EPI32(integer, MS_MOVQ_EPI32(126)), 23);
   MS_FLOAT32X4 tmp = MS_MULQ_F32(decimal, (MS_ADDQ_F32(param[2], MS_MULQ_F32(decimal, param[1]))));
   tmp = MS_MULQ_F32(decimal, MS_ADDQ_F32(param[4], MS_MULQ_F32(decimal, MS_ADDQ_F32(param[3], tmp))));
   MS_FLOAT32X4 decimal_exp = MS_ADDQ_F32(param[5], MS_MULQ_F32(decimal, MS_ADDQ_F32(param[5], tmp)));
-  return MS_MULQ_F32(decimal_exp, MS_CAST128_F32_S32(int_exp));
+  return MS_MULQ_F32(param[7], MS_MULQ_F32(decimal_exp, MS_CAST128_F32_S32(int_exp)));
 }
 
 static inline void simd_exp128(MS_FLOAT32X4 input, float *dst) {
-  static MS_FLOAT32X4 maxv = {88.0f, 88.0f, 88.0f, 88.0f};
-  static MS_FLOAT32X4 minv = {-88.0f, -88.0f, -88.0f, -88.0f};
+  static MS_FLOAT32X4 maxv = {88.72283935546875f, 88.72283935546875f, 88.72283935546875f, 88.72283935546875f};
+  static MS_FLOAT32X4 minv = {-87.3365478515625f, -87.3365478515625f, -87.3365478515625f, -87.3365478515625f};
   input = MS_MAXQ_F32(minv, MS_MINQ_F32(input, maxv));
   MS_STQ_F32(dst, VexpFp32(input));
 }
 
 static inline MS_FLOAT32X4 simd_exp128_f32(MS_FLOAT32X4 input) {
-  static MS_FLOAT32X4 maxv = {88.0f, 88.0f, 88.0f, 88.0f};
-  static MS_FLOAT32X4 minv = {-88.0f, -88.0f, -88.0f, -88.0f};
+  static MS_FLOAT32X4 maxv = {88.72283935546875f, 88.72283935546875f, 88.72283935546875f, 88.72283935546875f};
+  static MS_FLOAT32X4 minv = {-87.3365478515625f, -87.3365478515625f, -87.3365478515625f, -87.3365478515625f};
   input = MS_MAXQ_F32(minv, MS_MINQ_F32(input, maxv));
   return VexpFp32(input);
 }
@@ -382,4 +396,4 @@ static inline MS_FLOAT32X4 MS128_ERF_F32(MS_FLOAT32X4 src) {
   MS_FLOAT32X4 dst##2 = MS_MOVQ_F32(0.0f); \
   MS_FLOAT32X4 dst##3 = MS_MOVQ_F32(0.0f); \
   MS_FLOAT32X4 dst##4 = MS_MOVQ_F32(0.0f);
-#endif  // MINDSPORE_NNACL_SSE_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
+#endif  // NNACL_SSE_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_

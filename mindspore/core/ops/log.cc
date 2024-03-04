@@ -15,40 +15,24 @@
  */
 
 #include "ops/log.h"
-#include <string>
-#include <vector>
-#include <set>
+#include <cmath>
+#include <complex>
 #include <map>
 #include <memory>
-#include <complex>
-#include <cmath>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <set>
+#include <string>
+#include <vector>
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 using complex64 = std::complex<float>;
 using complex128 = std::complex<double>;
-
-void SetDefaultAttrs(const PrimitivePtr &primitive) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  const std::string kBaseName = "base";
-  const std::string kScaleName = "scale";
-  const std::string kShiftName = "shift";
-  constexpr float value = 1.0;
-  if (primitive->GetAttr(kBaseName) == nullptr) {
-    primitive->set_attr(kBaseName, MakeValue(value));
-  }
-  if (primitive->GetAttr(kScaleName) == nullptr) {
-    primitive->set_attr(kScaleName, MakeValue(value));
-  }
-  if (primitive->GetAttr(kShiftName) == nullptr) {
-    primitive->set_attr(kShiftName, MakeValue(value));
-  }
-}
 
 template <typename T>
 void ImpleLog(void *origin, void *target, size_t size) {
@@ -90,13 +74,10 @@ TypePtr LogInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr
   for (const auto &item : input_args) {
     MS_EXCEPTION_IF_NULL(item);
   }
-  std::map<std::string, TypePtr> types;
-  (void)types.emplace("x", input_args[0]->BuildType());
-  std::set<TypePtr> valid_params_types = {kTensorType};
-  (void)CheckAndConvertUtils::CheckSubClass("x_type", input_args[0]->BuildType(), valid_params_types, op_name);
-  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
-  (void)CheckAndConvertUtils::CheckTensorTypeSame(types, valid_types, prim->name());
-  return input_args[0]->BuildType();
+  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64, kComplex64, kComplex128, kBFloat16};
+  auto x_type = input_args[kInputIndex0]->BuildType();
+  (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_type, valid_types, op_name);
+  return x_type;
 }
 ValuePtr LogInferValue(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(prim);
@@ -130,6 +111,10 @@ ValuePtr LogInferValue(const PrimitivePtr &prim, const std::vector<AbstractBaseP
       ImpleLog<float16>(x_datac, result_datac, data_size);
       break;
     }
+    case kNumberTypeBFloat16: {
+      ImpleLog<bfloat16>(x_datac, result_datac, data_size);
+      break;
+    }
     case kNumberTypeFloat32: {
       ImpleLog<float>(x_datac, result_datac, data_size);
       break;
@@ -149,7 +134,8 @@ ValuePtr LogInferValue(const PrimitivePtr &prim, const std::vector<AbstractBaseP
     default: {
       MS_EXCEPTION(TypeError)
         << "For '" << prim->name()
-        << "', the supported data types are ['float16', 'float32', 'float64', 'complex64', 'complex128'], but got "
+        << "', the supported data types are ['float16', 'float32', 'float64', 'complex64', 'complex128', 'bfloat16'], "
+           "but got "
         << x_tensor->ToString();
     }
   }
@@ -160,11 +146,31 @@ ValuePtr LogInferValue(const PrimitivePtr &prim, const std::vector<AbstractBaseP
 MIND_API_OPERATOR_IMPL(Log, BaseOperator);
 AbstractBasePtr LogInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                          const std::vector<AbstractBasePtr> &input_args) {
-  SetDefaultAttrs(primitive);
   auto type = LogInferType(primitive, input_args);
   auto shape = LogInferShape(primitive, input_args);
   return abstract::MakeAbstract(shape, type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Log, prim::kPrimLog, LogInfer, LogInferValue, true);
+
+// AG means auto generated
+class MIND_API AGLogInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return LogInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return LogInferType(primitive, input_args);
+  }
+  ValuePtr InferValue(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return LogInferValue(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return LogInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Log, prim::kPrimLog, AGLogInfer, true);
 }  // namespace ops
 }  // namespace mindspore

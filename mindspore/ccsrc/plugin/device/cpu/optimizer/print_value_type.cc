@@ -14,17 +14,16 @@
  * limitations under the License.
  */
 #include "plugin/device/cpu/optimizer/print_value_type.h"
-
 #include <memory>
 #include <vector>
 #include <string>
 #include <utility>
 #include <algorithm>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -40,7 +39,7 @@ kernel::KernelBuildInfoPtr GenerateKernelBuildInfo(CNodePtr node) {
     inputs_format.push_back(kOpFormat_DEFAULT);
     inputs_type.push_back(common::AnfAlgo::GetPrevNodeOutputInferDataType(node, input_index));
   }
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(node);
   for (size_t output_index = 0; output_index < output_num; output_index++) {
     outputs_format.push_back(kOpFormat_DEFAULT);
     outputs_type.push_back(common::AnfAlgo::GetOutputInferDataType(node, output_index));
@@ -67,6 +66,7 @@ bool GetOptList(const std::vector<AnfNodePtr> &node_list, std::vector<AnfNodePtr
     size_t input_num = common::AnfAlgo::GetInputTensorNum(node);
     for (size_t i = 0; i < input_num; i++) {
       auto current_node = common::AnfAlgo::GetInputNode(utils::cast<CNodePtr>(node), i);
+      MS_EXCEPTION_IF_NULL(current_node);
       // not tensor(tuple, scalar, string)
       if (current_node->cast<ValueNodePtr>() == nullptr) {
         continue;
@@ -88,6 +88,7 @@ bool GetOptList(const std::vector<AnfNodePtr> &node_list, std::vector<AnfNodePtr
       }
     }
     if (value_type.size() != 0) {
+      MS_EXCEPTION_IF_NULL(not_tensor_pos_vec);
       opt_list->push_back(node);
       not_tensor_pos_vec->push_back(value_type);
     }
@@ -128,10 +129,10 @@ bool PrintValueType::Run(const FuncGraphPtr &graph) {
     // set output type and shape
     std::vector<TypeId> types;
     std::vector<BaseShapePtr> shapes;
-    size_t output_num = common::AnfAlgo::GetOutputTensorNum(cnode);
+    size_t output_num = AnfAlgo::GetOutputTensorNum(cnode);
     for (size_t i = 0; i < output_num; i++) {
       types.push_back(common::AnfAlgo::GetOutputInferDataType(cnode, i));
-      shapes.push_back(common::AnfAlgo::GetOutputDetailShape(cnode, i));
+      shapes.push_back(AnfAlgo::GetOutputDetailShape(cnode, i));
     }
     common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, cnode.get());
     // add build info

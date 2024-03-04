@@ -11,11 +11,14 @@ mindspore.train.Callback
     自定义Callback场景下，在类方法中通过 `RunContext.original_args()` 方法可以获取模型训练或推理过程中已有
     的上下文信息，此信息为一个存储了已有属性的字典型变量。用户也可以在此信息中添加其他的自定义属性。此外，
     通过调用 `request_stop` 方法来停止训练过程。有关自定义Callback的具体用法，请查看
-    `Callback <https://www.mindspore.cn/tutorials/experts/zh-CN/r2.0.0-alpha/debug/custom_debug.html>`_。
+    `回调机制Callback <https://www.mindspore.cn/tutorials/zh-CN/master/advanced/model/callback.html#%E8%87%AA%E5%AE%9A%E4%B9%89%E5%9B%9E%E8%B0%83%E6%9C%BA%E5%88%B6>`_。
 
     .. py:method:: begin(run_context)
 
         在网络执行之前被调用一次。与 `on_train_begin` 和 `on_eval_begin` 方法具有兼容性。
+
+        .. note::
+            `begin` 接口将在后续版本中废弃，请使用 `on_train_begin` 和 `on_eval_begin`。
 
         参数：
             - **run_context** (RunContext) - 包含模型的一些基本信息。详情请参考 :class:`mindspore.train.RunContext`。
@@ -24,6 +27,9 @@ mindspore.train.Callback
 
         网络执行后被调用一次。与 `on_train_end` 和 `on_eval_end` 方法具有兼容性。
 
+        .. note::
+            `end` 接口将在后续版本中废弃，请使用 `on_train_end` 和 `on_eval_end`。
+
         参数：
             - **run_context** (RunContext) - 包含模型的一些基本信息。详情请参考 :class:`mindspore.train.RunContext`。
 
@@ -31,12 +37,18 @@ mindspore.train.Callback
 
         在每个epoch开始之前被调用。与 `on_train_epoch_begin` 和 `on_eval_epoch_begin` 方法具有兼容性。
 
+        .. note::
+            `epoch_begin` 接口将在后续版本中废弃，请使用 `on_train_epoch_begin` 和 `on_eval_epoch_begin`。
+
         参数：
             - **run_context** (RunContext) - 包含模型的一些基本信息。详情请参考 :class:`mindspore.train.RunContext`。
 
     .. py:method:: epoch_end(run_context)
 
         在每个epoch结束后被调用。与 `on_train_epoch_end` 和 `on_eval_epoch_end` 方法具有兼容性。
+
+        .. note::
+            `epoch_end` 接口将在后续版本中废弃，请使用 `on_train_epoch_end` 和 `on_eval_epoch_end`。
 
         参数：
             - **run_context** (RunContext) - 包含模型的一些基本信息。详情请参考 :class:`mindspore.train.RunContext`。
@@ -129,12 +141,18 @@ mindspore.train.Callback
 
         在每个step开始之前被调用。与 `on_train_step_begin` 和 `on_eval_step_begin` 方法具有兼容性。
 
+        .. note::
+            `step_begin` 接口将在后续版本中废弃，请使用 `on_train_step_begin` 和 `on_eval_step_begin`。
+
         参数：
             - **run_context** (RunContext) - 包含模型的一些基本信息。详情请参考 :class:`mindspore.train.RunContext`。
 
     .. py:method:: step_end(run_context)
 
         在每个step完成后被调用。与 `on_train_step_end` 和 `on_eval_step_end` 方法具有兼容性。
+
+        .. note::
+            `step_end` 接口将在后续版本中废弃，请使用 `on_train_step_end` 和 `on_eval_step_end`。
 
         参数：
             - **run_context** (RunContext) - 包含模型的一些基本信息。详情请参考 :class:`mindspore.train.RunContext`。

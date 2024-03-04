@@ -17,17 +17,17 @@
 #include <memory>
 
 #include "common/common_test.h"
+#include "ops/arithmetic_ops.h"
 #include "common/py_func_graph_fetcher.h"
 
 #include "ir/manager.h"
-#include "pipeline/jit/static_analysis/prim.h"
-#include "pipeline/jit/static_analysis/program_specialize.h"
+#include "pipeline/jit/ps/static_analysis/prim.h"
+#include "pipeline/jit/ps/static_analysis/program_specialize.h"
 #include "pipeline/static_analysis/helper.h"
 #include "utils/log_adapter.h"
 #include "ir/graph_utils.h"
 #include "utils/misc.h"
 #include "include/common/debug/draw.h"
-#include "mindspore/core/ops/core_ops.h"
 
 namespace mindspore {
 namespace abstract {
@@ -96,7 +96,7 @@ void TestSpecializeGraph::SetUp() {
   // build func_graph beta
   ParameterPtr x1 = graph_beta_->add_parameter();
   inputs.clear();
-  inputs.push_back(NewValueNode(std::make_shared<Primitive>(prim::kScalarAdd)));
+  inputs.push_back(NewValueNode(std::make_shared<Primitive>(kScalarAddOpName)));
   inputs.push_back(x1);
   inputs.push_back(y);
   CNodePtr cnode_add = graph_beta_->NewCNode(inputs);
@@ -159,11 +159,11 @@ class MetaScalarAdd : public MetaFuncGraph {
   /*
    * Generate a Graph for the given abstract arguments.
    */
-  FuncGraphPtr GenerateFromTypes(const TypePtrList& types) override {
+  FuncGraphPtr GenerateFromTypes(const TypePtrList &types) override {
     FuncGraphPtr graph_g = std::make_shared<FuncGraph>();
     ParameterPtr x = graph_g->add_parameter();
     ParameterPtr y = graph_g->add_parameter();
-    auto prim_scalar_add = std::make_shared<Primitive>(prim::kScalarAdd);
+    auto prim_scalar_add = std::make_shared<Primitive>(kScalarAddOpName);
     std::vector<AnfNodePtr> inputs;
     inputs.push_back(NewValueNode(prim_scalar_add));
     inputs.push_back(x);

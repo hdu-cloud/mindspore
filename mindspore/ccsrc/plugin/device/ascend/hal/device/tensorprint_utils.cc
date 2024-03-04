@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/hal/device/tensorprint_utils.h"
+#include <ctime>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -25,15 +26,15 @@
 #include "utils/file_utils.h"
 #include "utils/ms_context.h"
 #include "ir/dtype/type.h"
-#include "acl/acl_tdt.h"
 #include "proto/print.pb.h"
 #include "plugin/device/ascend/hal/device/ascend_data_queue.h"
 
 namespace py = pybind11;
 namespace mindspore::device::ascend {
 namespace {
-acltdtChannelHandle *g_acl_handle = nullptr;
 std::thread g_acl_tdt_print = {};
+const size_t kMbufCapacitySize = 128;
+const int32_t kMbufDestroyDelayTime = 500;
 
 const std::map<aclDataType, TypeId> kPrintAclDataTypeMap = {
   {ACL_INT8, TypeId::kNumberTypeInt8},       {ACL_UINT8, TypeId::kNumberTypeUInt8},
@@ -159,6 +160,7 @@ bool ConvertDataset2Tensor(acltdtDataset *acl_dataset) {
 
   for (size_t i = 0; i < acl_dataset_size; i++) {
     acltdtDataItem *item = acltdtGetDataItem(acl_dataset, i);
+    MS_EXCEPTION_IF_NULL(item);
     if (acltdtGetTensorTypeFromItem(item) == ACL_TENSOR_DATA_END_OF_SEQUENCE) {
       ret_end_sequence = true;
       MS_LOG(INFO) << "end of sequence" << std::endl;
@@ -170,7 +172,9 @@ bool ConvertDataset2Tensor(acltdtDataset *acl_dataset) {
     size_t acl_data_size = acltdtGetDataSizeFromItem(item);
     aclDataType acl_data_type = acltdtGetDataTypeFromItem(item);
     char *acl_data = reinterpret_cast<char *>(acl_addr);
-    acl_data = const_cast<char *>(reinterpret_cast<std::string *>(acl_data)->c_str());
+    if (AclHandle::GetInstance().GetChannelType() != ChannelType::kMbuf) {
+      acl_data = reinterpret_cast<std::string *>(acl_data)->data();
+    }
     MS_EXCEPTION_IF_NULL(acl_data);
 
     ShapeVector tensor_shape;
@@ -180,18 +184,17 @@ bool ConvertDataset2Tensor(acltdtDataset *acl_dataset) {
       MS_LOG(ERROR) << "ACL failed to get dim-size from acl channel data";
     }
 
-    if ((tensor_shape.size() == 1 && tensor_shape[0] == 0) || tensor_shape.size() == 0) {
-      if (!judgeLengthValid(acl_data_size, acl_data_type)) {
-        MS_LOG(EXCEPTION) << "Print op receive data length is invalid.";
-      }
-      ConvertDataItem2Scalar(reinterpret_cast<void *>(acl_data), acl_data_type, &buf);
-      continue;
-    }
-
     if (acl_data_type == ACL_STRING) {
       std::string data(reinterpret_cast<const char *>(acl_data), acl_data_size);
       buf << data << std::endl;
     } else {
+      if ((tensor_shape.size() == 1 && tensor_shape[0] == 0) || tensor_shape.size() == 0) {
+        if (!judgeLengthValid(acl_data_size, acl_data_type)) {
+          MS_LOG(EXCEPTION) << "Print op receive data length is invalid.";
+        }
+        ConvertDataItem2Scalar(reinterpret_cast<void *>(acl_data), acl_data_type, &buf);
+        continue;
+      }
       auto type_iter = kPrintAclDataTypeMap.find(acl_data_type);
       if (type_iter == kPrintAclDataTypeMap.end()) {
         MS_LOG(ERROR) << "type of tensor need to print is not support " << GetParseType(acl_data_type);
@@ -234,7 +237,9 @@ bool SaveDataset2File(acltdtDataset *acl_dataset, const std::string &print_file_
     size_t acl_data_size = acltdtGetDataSizeFromItem(item);
     aclDataType acl_data_type = acltdtGetDataTypeFromItem(item);
     char *acl_data = reinterpret_cast<char *>(acl_addr);
-    acl_data = const_cast<char *>(reinterpret_cast<std::string *>(acl_data)->c_str());
+    if (AclHandle::GetInstance().GetChannelType() != ChannelType::kMbuf) {
+      acl_data = reinterpret_cast<std::string *>(acl_data)->data();
+    }
     MS_EXCEPTION_IF_NULL(acl_data);
 
     ShapeVector tensor_shape;
@@ -244,17 +249,16 @@ bool SaveDataset2File(acltdtDataset *acl_dataset, const std::string &print_file_
       MS_LOG(ERROR) << "ACL failed to get dim-size from acl channel data";
     }
 
-    if ((tensor_shape.size() == 1 && tensor_shape[0] == 0) || tensor_shape.size() == 0) {
-      if (!judgeLengthValid(acl_data_size, acl_data_type)) {
-        MS_LOG(ERROR) << "Print op receive data length is invalid.";
-        ret_end_thread = true;
-      }
-    }
-
     if (acl_data_type == ACL_STRING) {
       std::string data(reinterpret_cast<const char *>(acl_data), acl_data_size);
       value->set_desc(data);
     } else {
+      if ((tensor_shape.size() == 1 && tensor_shape[0] == 0) || tensor_shape.size() == 0) {
+        if (!judgeLengthValid(acl_data_size, acl_data_type)) {
+          MS_LOG(ERROR) << "Print op receive data length is invalid.";
+          ret_end_thread = true;
+        }
+      }
       auto parse_type = GetParseType(acl_data_type);
       prntpb::TensorProto *tensor = value->mutable_tensor();
       if (tensor_shape.size() > 1 || (tensor_shape.size() == 1 && tensor_shape[0] != 1)) {
@@ -292,11 +296,15 @@ void TensorPrintStdOut(const acltdtChannelHandle *acl_handle) {
       }
       // no timeout
       ret = acltdtReceiveTensor(acl_handle, acl_dataset, -1);
-      if (ret != ACL_SUCCESS) {
-        MS_LOG(ERROR) << "AclHandle failed to receive tensor.";
+      if (AclHandle::GetInstance().GetChannelType() == ChannelType::kMbuf && ret == ACL_ERROR_RT_QUEUE_EMPTY) {
+        MS_LOG(DEBUG) << "queue is empty.";
         break;
       }
 
+      if (ret != ACL_SUCCESS) {
+        MS_LOG(ERROR) << "AclHandle failed to receive tensor.ret = " << ret;
+        break;
+      }
       if (ConvertDataset2Tensor(acl_dataset)) {
         ret = -1;
         break;
@@ -331,6 +339,10 @@ void TensorPrintOut2File(const acltdtChannelHandle *acl_handle, const std::strin
       }
       // no timeout
       ret = acltdtReceiveTensor(acl_handle, acl_dataset, -1);
+      if (AclHandle::GetInstance().GetChannelType() == ChannelType::kMbuf && ret == ACL_ERROR_RT_QUEUE_EMPTY) {
+        MS_LOG(INFO) << "queue is empty.";
+        break;
+      }
       if (ret != ACL_SUCCESS) {
         MS_LOG(ERROR) << "Acltdt failed to receive tensor.";
         break;
@@ -376,23 +388,39 @@ void TensorPrint::operator()() {
   }
 }
 
+AclHandle &AclHandle::GetInstance() {
+  static AclHandle instance;
+  return instance;
+}
+
+bool AclHandle::CreateChannel(uint32_t deviceId, std::string name, size_t capacity) {
+  acl_handle_ = acltdtCreateChannelWithCapacity(deviceId, name.c_str(), capacity);
+  if (acl_handle_ == nullptr) {
+    MS_LOG(INFO) << "For Print ops, select TDT channel.";
+    const std::string receive_prefix = "TF_RECEIVE_";
+    acl_handle_ = acltdtCreateChannel(deviceId, (receive_prefix + name).c_str());
+    channel_type_ = ChannelType::kTDT;
+  } else {
+    MS_LOG(INFO) << "For Print ops, select MBUF channel.";
+  }
+  return acl_handle_ != nullptr;
+}
+
 void CreateTensorPrintThread(const PrintThreadCrt &ctr) {
   MS_EXCEPTION_IF_NULL(MsContext::GetInstance());
   if (MsContext::GetInstance()->get_param<bool>(MS_CTX_ENABLE_GE_HETEROGENOUS)) {
     return;
   }
   uint32_t device_id = MsContext::GetInstance()->get_param<uint32_t>(MS_CTX_DEVICE_ID);
-  std::string kReceivePrefix = "TF_RECEIVE_";
   std::string channel_name = "_npu_log";
-  g_acl_handle = acltdtCreateChannel(device_id, (kReceivePrefix + channel_name).c_str());
-  if (g_acl_handle == nullptr) {
-    MS_LOG(EXCEPTION) << "Get acltdt handle failed";
+
+  if (!AclHandle::GetInstance().CreateChannel(device_id, channel_name, kMbufCapacitySize)) {
+    MS_LOG(EXCEPTION) << "create acl channel failed";
   }
-  MS_LOG(INFO) << "Success to create acltdt handle, tsd reference = "
+  MS_LOG(INFO) << "Success to create acl channel handle, tsd reference = "
                << MsContext::GetInstance()->get_param<uint32_t>(MS_CTX_TSD_REF) << ".";
   std::string print_file_path = MsContext::GetInstance()->get_param<std::string>(MS_CTX_PRINT_FILE_PATH);
-  g_acl_tdt_print = ctr(print_file_path, g_acl_handle);
-  tdt_handle::AddHandle(&g_acl_handle, &g_acl_tdt_print);
+  g_acl_tdt_print = ctr(print_file_path, AclHandle::GetInstance().Get());
 }
 
 void DestroyTensorPrintThread() {
@@ -400,26 +428,38 @@ void DestroyTensorPrintThread() {
   if (MsContext::GetInstance()->get_param<bool>(MS_CTX_ENABLE_GE_HETEROGENOUS)) {
     return;
   }
-  // if TdtHandle::DestroyHandle called at taskmanager, all g_acl_handle will be set to nullptr;
+  auto acl_handle = AclHandle::GetInstance().Get();
+  auto channel_type = AclHandle::GetInstance().GetChannelType();
+  if (channel_type == ChannelType::kMbuf) {
+    // avoid incorrect execution order in acl function
+    usleep(kMbufDestroyDelayTime);
+  }
+  // if TdtHandle::DestroyHandle called at taskmanager, all acl_handle will be set to nullptr;
   // but not joined the print thread, so add a protection to join the thread.
-  if (g_acl_handle == nullptr) {
+  if (acl_handle == nullptr) {
     MS_LOG(INFO) << "The acl handle has been destroyed and the point is nullptr";
     JoinAclPrintThread(&g_acl_tdt_print);
     return;
   }
-  aclError stop_status = acltdtStopChannel(g_acl_handle);
+  aclError stop_status = acltdtStopChannel(acl_handle);
   if (stop_status != ACL_SUCCESS) {
     MS_LOG(ERROR) << "Failed stop acl data channel and the stop_status is " << stop_status << std::endl;
     return;
   }
   MS_LOG(INFO) << "Succeed stop acl data channel for host queue ";
-  JoinAclPrintThread(&g_acl_tdt_print);
-  aclError destroyed_status = acltdtDestroyChannel(g_acl_handle);
+
+  if (channel_type != ChannelType::kMbuf) {
+    JoinAclPrintThread(&g_acl_tdt_print);
+  }
+  aclError destroyed_status = acltdtDestroyChannel(acl_handle);
   if (destroyed_status != ACL_SUCCESS) {
     MS_LOG(ERROR) << "Failed destroy acl channel and the destroyed_status is " << destroyed_status << std::endl;
     return;
   }
-  tdt_handle::DelHandle(&g_acl_handle);
+  if (channel_type == ChannelType::kMbuf) {
+    JoinAclPrintThread(&g_acl_tdt_print);
+  }
+  tdt_handle::DelHandle(&acl_handle);
   MS_LOG(INFO) << "Succeed destroy acl channel";
 }
 }  // namespace mindspore::device::ascend

@@ -14,19 +14,19 @@
  * limitations under the License.
  */
 #include "src/extendrt/cxx_api/model_pool/model_worker.h"
+#include <algorithm>
 #include "src/common/log_adapter.h"
 #include "src/extendrt/numa_adapter.h"
 #include "src/common/common.h"
 #include "nnacl/op_base.h"
 namespace mindspore {
 void ModelWorker::PrintWorkerInfo() {
-  MS_LOG(ERROR) << "worker id: " << worker_config_->worker_id << " | strategy: " << worker_config_->strategy
+  MS_LOG(ERROR) << "worker id: " << worker_config_->worker_id
                 << " | bind core mode: " << worker_config_->context->GetThreadAffinityMode()
                 << " | bind core id list: " << worker_config_->context->GetThreadAffinityCoreList()
                 << " | inter op parallel num: " << worker_config_->context->GetInterOpParallelNum()
                 << " | worker thread num: " << worker_config_->context->GetThreadNum()
-                << " | worker bind numa id: " << worker_config_->numa_id
-                << " | worker task queue id: " << worker_config_->task_queue_id;
+                << " | worker bind numa id: " << worker_config_->numa_id;
 }
 
 bool ModelWorker::IsAvailable() {
@@ -42,16 +42,21 @@ void ModelWorker::WaitCreateWorkerDone() {
   return;
 }
 
-void ModelWorker::CreateThreadWorker(const char *model_buf, size_t size,
-                                     const std::shared_ptr<WorkerConfig> &worker_config,
-                                     const std::shared_ptr<PredictTaskQueue> &predict_task_queue,
-                                     bool *create_success) {
+void ModelWorker::InitModelWorker(const char *model_buf, size_t size,
+                                  const std::shared_ptr<WorkerConfig> &worker_config,
+                                  const std::shared_ptr<PredictTaskQueue> &predict_task_queue, bool *create_success,
+                                  ModelType model_type) {
+  if (create_success == nullptr) {
+    MS_LOG(ERROR) << "create_success is nullptr.";
+    return;
+  }
   worker_config_ = worker_config;
-  MS_LOG(DEBUG) << "worker bind core id list: " << worker_config_->context->GetThreadAffinityCoreList();
-  MS_LOG(DEBUG) << "worker thread num: " << worker_config_->context->GetThreadNum();
+  MS_LOG(INFO) << "worker bind core id list: " << worker_config_->context->GetThreadAffinityCoreList();
+  MS_LOG(INFO) << "worker thread num: " << worker_config_->context->GetThreadNum();
+  worker_id_ = worker_config_->worker_id;
   predict_task_queue_ = predict_task_queue;
   numa::NUMAAdapter::GetInstance()->Bind(worker_config_->numa_id);
-  auto status = Init(model_buf, size);
+  auto status = Init(model_buf, size, model_type);
   if (status != kSuccess) {
     PrintWorkerInfo();
     MS_LOG(ERROR) << "init failed in model worker.";
@@ -62,21 +67,23 @@ void ModelWorker::CreateThreadWorker(const char *model_buf, size_t size,
     }
     create_work_done_condition_.notify_one();
   }
-  Run();
 }
 
 void ModelWorker::Run() {
-  int task_queue_id = worker_config_->task_queue_id;
+  auto numa_node_id = worker_config_->numa_id;
+  int task_queue_id = numa_node_id != -1 ? numa_node_id : 0;
   {
     // The scope of the lock is only for this variable
     std::unique_lock<std::mutex> create_work_lock(create_work_done_mutex_);
     create_work_done_ = true;
   }
   create_work_done_condition_.notify_one();
+  MS_LOG(INFO) << "model worker is initialized.";
   while (!predict_task_queue_->IsPredictTaskDone()) {
     auto task = predict_task_queue_->GetPredictTask(task_queue_id, this);
     if (task == nullptr) {
       MS_LOG(DEBUG) << "task queue is empty, wait task ...";
+      available_ = true;
       continue;
     }
     available_ = false;
@@ -95,21 +102,27 @@ void ModelWorker::Run() {
     task->ready = true;
     predict_task_queue_->ActiveTask(task);
   }
+  MS_LOG(INFO) << "task queue all tasks completed.";
+  delete model_;
+  model_ = nullptr;
+  model_is_nullptr_ = true;
+  MS_LOG(INFO) << "delete model.";
 }
 
-Status ModelWorker::Init(const char *model_buf, size_t size) {
+Status ModelWorker::Init(const char *model_buf, size_t size, ModelType model_type) {
   MS_CHECK_TRUE_MSG(model_buf != nullptr, kLiteError, "model_buf is nullptr in model worker.");
-  model_ = std::make_shared<Model>();
+  model_ = new Model();
   if (model_ == nullptr) {
     MS_LOG(ERROR) << "model is nullptr.";
     return kLiteNullptr;
   }
-  mindspore::ModelType model_type = kMindIR;
-
   if (!worker_config_->config_path.empty()) {
     auto status = model_->LoadConfig(worker_config_->config_path);
     if (status != kSuccess) {
       MS_LOG(ERROR) << "model load config failed.";
+      delete model_;
+      model_ = nullptr;
+      model_is_nullptr_ = true;
       return kLiteError;
     }
   }
@@ -118,19 +131,30 @@ Status ModelWorker::Init(const char *model_buf, size_t size) {
       auto status = model_->UpdateConfig(section.first, std::make_pair(config.first, config.second));
       if (status != kSuccess) {
         MS_LOG(ERROR) << "Update Config failed, status=" << status;
+        delete model_;
+        model_ = nullptr;
+        model_is_nullptr_ = true;
         return status;
       }
     }
   }
+  MS_LOG(INFO) << "ms model init.";
   auto status = model_->Build(model_buf, size, model_type, worker_config_->context);
   if (status != kSuccess) {
     MS_LOG(ERROR) << "model build failed in ModelPool Init";
+    delete model_;
+    model_ = nullptr;
+    model_is_nullptr_ = true;
     return status;
   }
+  MS_LOG(INFO) << "ms model init done.";
   origin_worker_inputs_ = model_->GetInputs();
   origin_worker_outputs_ = model_->GetOutputs();
-  if (origin_worker_outputs_.empty() || origin_worker_outputs_.empty()) {
+  if (origin_worker_outputs_.empty() || origin_worker_inputs_.empty()) {
     MS_LOG(ERROR) << "model worker get empty input/output.";
+    delete model_;
+    model_ = nullptr;
+    model_is_nullptr_ = true;
     return kLiteError;
   }
   return kSuccess;
@@ -175,7 +199,10 @@ Status ModelWorker::CopyOutputTensor(std::vector<MSTensor> model_outputs, std::v
       MS_LOG(ERROR) << "model thread copy output tensor failed.";
       return kLiteError;
     }
-    copy_tensor->SetDeviceData(user_output.GetDeviceData());
+    auto device_data = user_output.GetDeviceData();
+    if (device_data != nullptr) {
+      copy_tensor->SetDeviceData(device_data);
+    }
     new_outputs.push_back(*copy_tensor);
     delete copy_tensor;
   }
@@ -202,53 +229,42 @@ Status ModelWorker::Predict(const std::vector<MSTensor> &inputs, std::vector<MST
     auto status = model_->Resize(model_->GetInputs(), dims);
     if (status != kSuccess) {
       MS_LOG(ERROR) << "model pool resize failed.";
-      PrintWorkerInfo();
+      std::vector<std::vector<int64_t>> old_dims;
+      auto ins = model_->GetInputs();
+      (void)std::transform(ins.begin(), ins.end(), std::back_inserter(old_dims),
+                           [&](auto &tensor) { return tensor.Shape(); });
+      MS_LOG(INFO) << "Fallback wrong shape, resize shape: " << old_dims;
+      (void)model_->Resize(model_->GetInputs(), old_dims);
+      MS_LOG(INFO) << "Fallback wrong shape end.";
       available_ = true;
       return kLiteError;
     }
   }
-  bool need_copy_output = true;
-  auto model_output = model_->GetOutputs();
-  for (size_t i = 0; i < outputs->size(); i++) {
-    auto &output = outputs->at(i);
-    if (output.Data() != nullptr || output.GetDeviceData() != nullptr) {
-      /* user set graph-output-tensor from outside */
-      model_output[i].SetShape(output.Shape());
-      model_output[i].SetData(output.MutableData(), false);
-      model_output[i].SetDeviceData(output.GetDeviceData());
-      model_output[i].SetAllocator(nullptr);
-      need_copy_output = false;
-    }
+  auto model_outputs = model_->GetOutputs();
+  auto outputs_ptr = outputs->empty() ? &model_outputs : outputs;
+  auto status = model_->Predict(inputs, outputs_ptr, before, after);
+  for (size_t i = 0; i < model_input.size(); i++) {
+    model_input[i].SetData(nullptr);
   }
-  for (size_t i = 0; i < inputs.size(); i++) {
-    auto &input = inputs[i];
-    model_input[i].SetShape(input.Shape());
-    model_input[i].SetData(const_cast<MSTensor &>(input).MutableData(), false);
-    model_input[i].SetDeviceData(const_cast<MSTensor &>(input).GetDeviceData());
-  }
-  auto status = model_->Predict(model_input, &model_output, before, after);
   if (status != kSuccess) {
     MS_LOG(ERROR) << "model predict failed.";
     PrintWorkerInfo();
     available_ = true;
     return status;
   }
-  for (size_t i = 0; i < model_input.size(); i++) {
-    model_input[i].SetData(nullptr);
-  }
-  if (need_copy_output) {
-    status = CopyOutputTensor(model_output, outputs);
+  if (outputs->empty()) {
+    status = CopyOutputTensor(model_outputs, outputs);
     if (status != kSuccess) {
       available_ = true;
       return kLiteError;
     }
   } else {
-    model_output = model_->GetOutputs();
+    model_outputs = model_->GetOutputs();
     for (size_t i = 0; i < outputs->size(); i++) {
-      outputs->at(i).SetShape(model_output[i].Shape());
-      model_output[i].SetData(nullptr);
-      model_output[i].SetDeviceData(nullptr);
-      model_output[i].SetAllocator(nullptr);
+      // user's data, not belong to model.
+      model_outputs[i].SetData(nullptr, false);
+      model_outputs[i].SetDeviceData(nullptr);
+      model_outputs[i].SetAllocator(nullptr);
     }
   }
   available_ = true;

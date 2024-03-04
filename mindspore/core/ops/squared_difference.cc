@@ -14,14 +14,16 @@
  * limitations under the License.
  */
 
-#include <set>
-#include <map>
-#include <string>
 #include "ops/squared_difference.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <map>
+#include <set>
+#include <string>
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -76,6 +78,24 @@ AbstractBasePtr SquaredDifferenceInfer(const abstract::AnalysisEnginePtr &, cons
   auto infer_shape = SquaredDifferenceInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(SquaredDifference, prim::kPrimSquaredDifference, SquaredDifferenceInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSquaredDifferenceInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SquaredDifferenceInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SquaredDifferenceInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SquaredDifferenceInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SquaredDifference, prim::kPrimSquaredDifference, AGSquaredDifferenceInfer, false);
 }  // namespace ops
 }  // namespace mindspore

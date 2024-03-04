@@ -14,14 +14,15 @@
  * limitations under the License.
  */
 
+#include "ops/cumsum.h"
 #include <memory>
 #include <set>
 #include <string>
-#include "ops/cumsum.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 #include "utils/ms_context.h"
 
 namespace mindspore {
@@ -84,7 +85,13 @@ abstract::ShapePtr CumSumInferShape(const PrimitivePtr &primitive, const std::ve
   } else if (input_args[kInputIndex1]->isa<abstract::AbstractScalar>()) {
     auto axis_ptr = input_args[kInputIndex1]->cast<abstract::AbstractScalarPtr>();
     MS_EXCEPTION_IF_NULL(axis_ptr);
-    axis = GetValue<int64_t>(axis_ptr->BuildValue());
+    auto axis_value = axis_ptr->BuildValue();
+    MS_EXCEPTION_IF_NULL(axis_value);
+    if (IsValueKnown(axis_value)) {
+      axis = GetValue<int64_t>(axis_value);
+    } else {
+      return std::make_shared<abstract::Shape>(x_shape);
+    }
   } else {
     MS_LOG(EXCEPTION) << "For '" << primitive->name()
                       << "', the second input type should be tensor or scalar, but got invalid abstract type:"
@@ -125,6 +132,26 @@ abstract::AbstractBasePtr CumSumInfer(const abstract::AnalysisEnginePtr &, const
   auto shapes = CumSumInferShape(primitive, input_args);
   return abstract::MakeAbstract(shapes, types);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(CumSum, prim::kPrimCumSum, CumSumInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGCumSumInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return CumSumInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return CumSumInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return CumSumInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(CumSum, prim::kPrimCumSum, AGCumSumInfer, false);
 }  // namespace ops
 }  // namespace mindspore

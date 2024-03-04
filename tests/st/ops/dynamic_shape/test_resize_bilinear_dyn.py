@@ -41,7 +41,7 @@ class NetResizeBilinear(nn.Cell):
     def construct(self, inputs, size, indices_input, axis):
         unique_input_index, _ = ops.unique(indices_input)
         inputs_dyn = ops.gather(inputs, unique_input_index, axis)
-        return ops.interpolate(inputs_dyn, None, None, size, "asymmetric", "bilinear")
+        return ops.ResizeBilinearV2(align_corners=False, half_pixel_centers=False)(inputs_dyn, size)
 
 
 def case_input_dyn(mode, device_target, dtype="float32"):
@@ -69,7 +69,7 @@ def test_resize_bilinear_ascend():
     case_input_dyn(context.PYNATIVE_MODE, "Ascend")
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_resize_bilinear_gpu():
@@ -82,7 +82,7 @@ def test_resize_bilinear_gpu():
     case_input_dyn(context.PYNATIVE_MODE, "GPU")
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_resize_bilinear_cpu():
@@ -95,7 +95,7 @@ def test_resize_bilinear_cpu():
     case_input_dyn(context.PYNATIVE_MODE, "CPU")
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_resize_bilinear_gpu_fp64():
@@ -108,7 +108,7 @@ def test_resize_bilinear_gpu_fp64():
     case_input_dyn(context.PYNATIVE_MODE, "GPU", "float64")
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_resize_bilinear_cpu_fp64():
@@ -121,7 +121,7 @@ def test_resize_bilinear_cpu_fp64():
     case_input_dyn(context.PYNATIVE_MODE, "CPU", "float64")
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_resize_bilinear_gpu_fp16():
@@ -134,7 +134,7 @@ def test_resize_bilinear_gpu_fp16():
     case_input_dyn(context.PYNATIVE_MODE, "GPU", "float16")
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_resize_bilinear_cpu_fp16():

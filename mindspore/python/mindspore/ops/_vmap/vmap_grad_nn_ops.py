@@ -22,10 +22,11 @@ import mindspore.numpy as mnp
 from mindspore.ops.operations import _grad_ops as G
 from mindspore.ops import functional as F
 from mindspore.ops import constexpr
+from mindspore.ops.primitive import _primexpr
 from mindspore.ops.primitive import Primitive
-from mindspore.ops.composite import _VmapGeneralRule
+from mindspore.ops.function import _VmapGeneralRule
 from mindspore.ops._vmap.vmap_base import vmap_rules_getters, vmap_general_preprocess, _raise_value_error, \
-    _bdim_at_front, _vmap_clone_prim, _vmap_update_prim_attr, _bdim_at_any, _handle_broadcasting
+    _bdim_at_front, _vmap_clone_prim, _bdim_at_any, _handle_broadcasting
 
 
 @vmap_rules_getters.register(G.NLLLossGrad)
@@ -38,7 +39,7 @@ def get_nll_loss_grad_vmap_rule(prim, axis_size):
     2. And weight only support shape as (C,), while total_weight should be a scalar.
     """
 
-    @constexpr
+    @_primexpr
     def _get_reshape_shape(shape, keep_dim=0):
         new_batch_size = reduce(
             lambda x, y: x * y, shape if keep_dim == 0 else shape[:-keep_dim])
@@ -397,8 +398,9 @@ def get_batchnorm_grad_vmap_rule(prim, axis_size):
 
 @vmap_rules_getters.register(G.MaxPoolGradGrad)
 @vmap_rules_getters.register(G.MaxPoolGradGradWithArgmax)
+@vmap_rules_getters.register(G.MaxPoolGradWithArgmaxV2)
 def get_maxpool_grad_grad_vmap_rule(prim, axis_size):
-    """VmapRule for `MaxPoolGradGrad` and `MaxPoolGradGradWithArgmax`."""
+    """VmapRule for `MaxPoolGradGrad`, `MaxPoolGradGradWithArgmax` and `MaxPoolGradWithArgmaxV2`."""
     chw_reverse_index = -3
 
     def vmap_rule(in0_bdim, in1_bdim, in2_bdim):
@@ -557,7 +559,7 @@ def get_layernormgrad_vmap_rule(prim, axis_size):
             return prim_attr_axis
         return prim_attr_axis + 1
 
-    @constexpr
+    @_primexpr
     def get_batch_params_reduce_axes(begin_params_axis, x_shape):
         if begin_params_axis < 0:
             x_rank = len(x_shape)
@@ -565,7 +567,7 @@ def get_layernormgrad_vmap_rule(prim, axis_size):
         batch_params_reduce_axes = tuple(range(1, begin_params_axis))
         return batch_params_reduce_axes
 
-    @constexpr
+    @_primexpr
     def get_logical_shape(var_shape):
         return var_shape[1:]
 
@@ -663,9 +665,8 @@ def get_grid_sampler_grad_vmap_rule(prim, axis_size):
 def get_upsample_grad_vmap_rule(prim, axis_size):
     """VmapRule for `UpsampleNearest3DGrad` and `UpsampleTrilinear3DGrad`."""
     cdhw_reverse_index = -4
-    input_size = prim.input_size
 
-    def vmap_rule(grad_bdim):
+    def vmap_rule(grad_bdim, isize_bdim, osize_bdim, scales_bdim):
         is_all_none, result = vmap_general_preprocess(prim, grad_bdim)
         if is_all_none:
             return result
@@ -677,11 +678,17 @@ def get_upsample_grad_vmap_rule(prim, axis_size):
         grad = F.reshape(grad, input_shape)
         real_in_shape = F.shape(grad)
 
+        isize, isize_dim = isize_bdim
+        osize, osize_dim = osize_bdim
+        scales, scales_dim = scales_bdim
+        if isize_dim is not None or osize_dim is not None or scales_dim is not None:
+            _raise_value_error(
+                "The source axis of `input_size`, `output_size` and `scales` must be None, but got {0}, {1} and {2}."
+                .format(isize_dim, osize_dim, scales_dim))
         # update batch dimension of input_size
-        new_input_size = (real_in_shape[0],) + input_size[1:]
-        _vmap_update_prim_attr(prim, 'input_size', new_input_size)
+        new_isize = (real_in_shape[0],) + isize[1:]
 
-        out = prim(grad)
+        out = prim(grad, new_isize, osize, scales)
         out_shape = F.shape(out)
         real_out_shape = grad_shape[:cdhw_reverse_index] + out_shape[cdhw_reverse_index:]
         out = F.reshape(out, real_out_shape)

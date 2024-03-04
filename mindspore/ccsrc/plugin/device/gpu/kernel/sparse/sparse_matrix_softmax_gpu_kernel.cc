@@ -34,8 +34,8 @@ bool SparseMatrixSoftmaxGpuKernelMod::Init(const BaseOperatorPtr &base_operator,
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  index_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  data_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex4).first);
+  index_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  data_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex4).dtype);
 
   if (inputs.empty() || outputs.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "' got empty inputs or outputs, which is invalid.";
@@ -107,9 +107,11 @@ bool SparseMatrixSoftmaxGpuKernelMod::LaunchKernel(const std::vector<AddressPtr>
     MS_LOG(ERROR) << " NULL pointers. ";
     return false;
   }
-  SparseMatrixSoftmax(dense_shape_elements_, batch_pointers_elements_, row_pointers_elements_, col_indices_elements_,
-                      x_dense_shape, x_batch_pointers, x_row_pointers, x_col_indices, x_values, y_dense_shape,
-                      y_batch_pointers, y_row_pointers, y_col_indices, y_values, device_id_, cuda_stream);
+  auto status =
+    SparseMatrixSoftmax(dense_shape_elements_, batch_pointers_elements_, row_pointers_elements_, col_indices_elements_,
+                        x_dense_shape, x_batch_pointers, x_row_pointers, x_col_indices, x_values, y_dense_shape,
+                        y_batch_pointers, y_row_pointers, y_col_indices, y_values, device_id_, cuda_stream);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

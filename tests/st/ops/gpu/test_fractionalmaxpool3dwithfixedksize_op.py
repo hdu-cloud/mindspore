@@ -59,7 +59,7 @@ def test_fractionalmaxpool3dwithfixedksize():
                 x_np = np.array([i+1 for i in range(64)]).reshape([1, 1, 4, 4, 4]).astype(type_input1)
                 x_ms = Tensor(x_np)
                 random_samples = Tensor(np.array([0.5, 0.5, 0.8]).reshape([1, 1, 3]).astype(type_input2))
-                ksize = (1.0, 1.0, 1.0)
+                ksize = (1, 1, 1)
                 output_shape = (2, 2, 3)
                 net = NetFractionalMaxPool3DWithFixedKsize(ksize, output_shape)
                 output_ms, argmax = net(x_ms, random_samples)

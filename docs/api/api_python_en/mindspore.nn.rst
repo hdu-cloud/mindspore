@@ -5,7 +5,9 @@ Neural Network Cell
 
 For building predefined building blocks or computational units in neural networks.
 
-Compared with the previous version, the added, deleted and supported platforms change information of `mindspore.nn` operators in MindSpore, please refer to the link `API Updates <https://gitee.com/mindspore/docs/blob/r2.0.0-alpha/resource/api_updates/nn_api_updates.md>`_ .
+For more information about dynamic shape support status, please refer to `Dynamic Shape Support Status of nn Interface <https://mindspore.cn/docs/en/master/note/dynamic_shape_nn.html>`_ .
+
+Compared with the previous version, the added, deleted and supported platforms change information of `mindspore.nn` operators in MindSpore, please refer to the link `mindspore.nn API Interface Change <https://gitee.com/mindspore/docs/blob/master/resource/api_updates/nn_api_updates_en.md>`_ .
 
 Basic Block
 -----------
@@ -28,6 +30,7 @@ Container
     :nosignatures:
     :template: classtemplate.rst
 
+    mindspore.nn.CellDict
     mindspore.nn.CellList
     mindspore.nn.SequentialCell
 
@@ -51,10 +54,9 @@ Wrapper Layer
     mindspore.nn.TrainOneStepCell
     mindspore.nn.TrainOneStepWithLossScaleCell
     mindspore.nn.WithEvalCell
-    mindspore.nn.WithGradCell
     mindspore.nn.WithLossCell
 
-Convolutional Neural Network Layer
+Convolutional Layer
 ----------------------------------
 
 .. msplatformautosummary::
@@ -70,7 +72,7 @@ Convolutional Neural Network Layer
     mindspore.nn.Conv3dTranspose
     mindspore.nn.Unfold
 
-Recurrent Neural Network Layer
+Recurrent Layer
 ------------------------------
 
 .. msplatformautosummary::
@@ -85,6 +87,21 @@ Recurrent Neural Network Layer
     mindspore.nn.LSTM
     mindspore.nn.LSTMCell
 
+Transformer Layer
+---------------------------
+
+.. msplatformautosummary::
+    :toctree: nn
+    :nosignatures:
+    :template: classtemplate.rst
+
+    mindspore.nn.MultiheadAttention
+    mindspore.nn.TransformerEncoderLayer
+    mindspore.nn.TransformerDecoderLayer
+    mindspore.nn.TransformerEncoder
+    mindspore.nn.TransformerDecoder
+    mindspore.nn.Transformer
+
 Embedding Layer
 ---------------
 
@@ -97,7 +114,7 @@ Embedding Layer
     mindspore.nn.EmbeddingLookup
     mindspore.nn.MultiFieldEmbeddingLookup
 
-Nonlinear Activation Function Layer
+Nonlinear Activation Layer
 -----------------------------------
 
 .. msplatformautosummary::
@@ -195,7 +212,6 @@ Pooling Layer
     mindspore.nn.AvgPool1d
     mindspore.nn.AvgPool2d
     mindspore.nn.AvgPool3d
-    mindspore.nn.FractionalMaxPool2d
     mindspore.nn.FractionalMaxPool3d
     mindspore.nn.LPPool1d
     mindspore.nn.LPPool2d
@@ -220,6 +236,7 @@ Padding Layer
     mindspore.nn.ConstantPad3d
     mindspore.nn.ReflectionPad1d
     mindspore.nn.ReflectionPad2d
+    mindspore.nn.ReflectionPad3d
     mindspore.nn.ReplicationPad1d
     mindspore.nn.ReplicationPad2d
     mindspore.nn.ReplicationPad3d
@@ -248,12 +265,17 @@ Loss Function
     mindspore.nn.MarginRankingLoss
     mindspore.nn.MSELoss
     mindspore.nn.MultiClassDiceLoss
+    mindspore.nn.MultilabelMarginLoss
+    mindspore.nn.MultiLabelSoftMarginLoss
+    mindspore.nn.MultiMarginLoss
     mindspore.nn.NLLLoss
+    mindspore.nn.PoissonNLLLoss
     mindspore.nn.RMSELoss
     mindspore.nn.SampledSoftmaxLoss
     mindspore.nn.SmoothL1Loss
     mindspore.nn.SoftMarginLoss
     mindspore.nn.SoftmaxCrossEntropyWithLogits
+    mindspore.nn.TripletMarginLoss
 
 Optimizer
 ---------
@@ -362,6 +384,7 @@ Image Processing Layer
     mindspore.nn.PixelShuffle
     mindspore.nn.PixelUnshuffle
     mindspore.nn.ResizeBilinear
+    mindspore.nn.Upsample
 
 Tools
 -----
@@ -373,13 +396,5 @@ Tools
 
     mindspore.nn.ChannelShuffle
     mindspore.nn.Flatten
-
-Mathematical Operations
------------------------
-
-.. msplatformautosummary::
-    :toctree: nn
-    :nosignatures:
-    :template: classtemplate.rst
-
-    mindspore.nn.Moments
+    mindspore.nn.Identity
+    mindspore.nn.Unflatten

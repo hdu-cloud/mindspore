@@ -15,6 +15,8 @@
  */
 
 #include "plugin/device/cpu/kernel/geqrf_cpu_kernel.h"
+
+#include <functional>
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 
 namespace mindspore {
@@ -25,16 +27,15 @@ constexpr size_t kOutputsNum = 2;
 constexpr size_t kInputIndex0 = 0;
 constexpr size_t kOutputIndex0 = 0;
 constexpr size_t kOutputIndex1 = 1;
+constexpr int64_t kLastSecond = -2;
 }  // namespace
 
 bool GeqrfCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                              const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
   kernel_name_ = base_operator->name();
   CHECK_KERNEL_INPUTS_NUM(inputs.size(), kInputsNum, kernel_name_);
   CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kOutputsNum, kernel_name_);
-  std::vector<int64_t> input0_tensor_shape = inputs[0]->GetShapeVector();
-  num_m = static_cast<size_t>(input0_tensor_shape[0]);
-  num_n = static_cast<size_t>(input0_tensor_shape[1]);
   auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
   auto [is_match, index] = MatchKernelAttr(kernel_attr, GetOpSupport());
   if (!is_match) {
@@ -43,6 +44,22 @@ bool GeqrfCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::ve
   }
   kernel_func_ = func_list_[index].second;
   return true;
+}
+
+int GeqrfCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+                              const std::vector<KernelTensorPtr> &outputs,
+                              const std::map<uint32_t, tensor::TensorPtr> &) {
+  if (int ret = KernelMod::Resize(base_operator, inputs, outputs); ret != KRET_OK) {
+    return ret;
+  }
+  std::vector<int64_t> input0_tensor_shape = inputs[0]->GetShapeVector();
+  MS_EXCEPTION_IF_CHECK_FAIL(!input0_tensor_shape.empty(), "For Geqrf, input0_tensor_shape should not be empty.");
+  elem_num = static_cast<size_t>(
+    std::accumulate(input0_tensor_shape.begin(), input0_tensor_shape.end(), 1, std::multiplies<int64_t>()));
+  num_m = static_cast<size_t>(input0_tensor_shape.end()[kLastSecond]);
+  num_n = static_cast<size_t>(input0_tensor_shape.back());
+  batch_num = elem_num / (num_m * num_n);
+  return KRET_OK;
 }
 
 template <typename T>
@@ -101,32 +118,37 @@ std::unique_ptr<T[]> GeqrfCpuKernelMod::Larf(size_t m, size_t n, T *x, T *tau, s
 
 template <typename T>
 void GeqrfCpuKernelMod::Geqrf(size_t num_m_, size_t num_n_, T *x, T *tau) {
-  if (num_m_ < 0 || num_n_ < 0) {
-    return;
-  }
   size_t k = std::min(num_m_, num_n_);
   T one = static_cast<T>(1);
-  std::unique_ptr<T[]> workspace = std::make_unique<T[]>(num_n_);
-  for (size_t i = 0; i < k; i++) {
-    Larfg<T>(num_m_ - i, i, i, x, tau + i);
-    T aii = *(x + i * num_n_ + i);
-    *(x + i * num_n_ + i) = one;
-    workspace = Larf<T>(num_m_ - i, num_n_ - i - 1, x, tau + i, std::move(workspace), i, i + 1);
-    *(x + i * num_n_ + i) = aii;
-  }
+  auto x_origin = x;
+  auto tau_origin = tau;
+  auto geqrf_shard = [&](size_t start, size_t end) {
+    std::unique_ptr<T[]> workspace = std::make_unique<T[]>(num_n_);
+    for (size_t batch = start; batch < end; ++batch) {
+      x = x_origin + batch * num_m_ * num_n_;
+      tau = tau_origin + batch * k;
+      for (size_t i = 0; i < k; i++) {
+        Larfg<T>(num_m_ - i, i, i, x, tau + i);
+        T aii = *(x + i * num_n_ + i);
+        *(x + i * num_n_ + i) = one;
+        workspace = Larf<T>(num_m_ - i, num_n_ - i - 1, x, tau + i, std::move(workspace), i, i + 1);
+        *(x + i * num_n_ + i) = aii;
+      }
+    }
+  };
+  ParallelLaunchAutoSearch(geqrf_shard, batch_num, this, &parallel_search_info_);
 }
 
 template <typename T>
 bool GeqrfCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs,
                                      const std::vector<kernel::AddressPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(inputs[kInputIndex0]);
+  MS_EXCEPTION_IF_NULL(outputs[kOutputIndex0]);
+  MS_EXCEPTION_IF_NULL(outputs[kOutputIndex1]);
   T *x = static_cast<T *>(inputs[kInputIndex0]->addr);
   T *y = static_cast<T *>(outputs[kOutputIndex0]->addr);
   T *tau = static_cast<T *>(outputs[kOutputIndex1]->addr);
-  for (size_t i = 0; i < num_m; i++) {
-    for (size_t j = 0; j < num_n; j++) {
-      *(y + i * num_n + j) = *(x + i * num_n + j);
-    }
-  }
+  std::copy(x, x + elem_num, y);
   Geqrf<T>(num_m, num_n, y, tau);
   return true;
 }

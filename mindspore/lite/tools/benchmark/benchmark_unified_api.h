@@ -39,6 +39,7 @@
 #include "src/common/utils.h"
 #include "include/api/types.h"
 #include "include/api/model.h"
+#include "include/api/context.h"
 #include "tools/common/opengl_util.h"
 #ifdef PARALLEL_INFERENCE
 #include "include/api/model_parallel_runner.h"
@@ -55,7 +56,8 @@ class MS_API BenchmarkUnifiedApi : public BenchmarkBase {
 
  protected:
   int CompareDataGetTotalBiasAndSize(const std::string &name, mindspore::MSTensor *tensor, float *total_bias,
-                                     int *total_size);
+                                     int *total_size, float relative_tolerance = kRelativeTolerance,
+                                     float absolute_tolerance = kAbsoluteTolerance);
   int CompareDataGetTotalCosineDistanceAndSize(const std::string &name, mindspore::MSTensor *tensor,
                                                float *total_cosine_distance, int *total_size);
   void InitContext(const std::shared_ptr<mindspore::Context> &context);
@@ -137,6 +139,12 @@ class MS_API BenchmarkUnifiedApi : public BenchmarkBase {
   std::atomic<bool> runner_run_start_ = false;
   mindspore::ModelParallelRunner model_runner_;
 #endif
+
+  void InitMSContextForGPU(const std::shared_ptr<Context> &context,
+                           std::vector<std::shared_ptr<DeviceInfoContext>> *device_list);
+
+  void InitMSContextForAscend(const std::shared_ptr<Context> &context,
+                              std::vector<std::shared_ptr<DeviceInfoContext>> *device_list);
 };
 
 }  // namespace mindspore::lite

@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,25 +14,26 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/optimizer/ir_fission/seed_adapter.h"
-
+#include <set>
 #include <string>
 #include <vector>
 #include <memory>
-#include "backend/common/optimizer/helper.h"
+#include "ops/ascend_op_name.h"
+#include "ops/random_op_name.h"
+#include "ops/nn_op_name.h"
+#include "include/backend/optimizer/helper.h"
 #include "kernel/kernel_build_info.h"
 #include "include/common/utils/utils.h"
 #include "utils/trace_base.h"
-#include "backend/common/session/kernel_graph.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/kernel_graph.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/kernel_info.h"
 #include "kernel/oplib/oplib.h"
 
 namespace mindspore::opt {
 namespace {
-const std::set<std::string> kNodeWithSeedOperators = {kGammaOpName,          kPoissonOpName,    kStandardLaplaceOpName,
-                                                      kStandardNormalOpName, kUniformIntOpName, kUniformRealOpName,
-                                                      kDropoutGenMaskOpName};
+const std::set<std::string> kNodeWithSeedOperators = {kGammaOpName, kPoissonOpName};
 template <typename T>
 tensor::TensorPtr CreateTensor(T seed) {
   // 1 create seed tensor
@@ -70,6 +71,7 @@ ValueNodePtr CreateValueNode(T seed) {
   } else {
     builder.SetOutputsDeviceType({kNumberTypeUInt64});
   }
+  builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
   AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), value_node.get());
   return value_node;
 }
@@ -79,40 +81,28 @@ std::vector<ValueNodePtr> ConvertAttrToValueNode(const std::shared_ptr<kernel::O
   MS_EXCEPTION_IF_NULL(op_info);
   MS_EXCEPTION_IF_NULL(cnode);
   std::vector<ValueNodePtr> ret = {};
-  // DropoutGenMask only create offset
-  if (op_info->op_name() == kDropoutGenMaskOpName) {
-    uint64_t offset = 0;
-    auto offset0 = CreateValueNode(offset);
-    auto offset1 = CreateValueNode(offset);
-    if (offset0 == nullptr || offset1 == nullptr) {
-      MS_LOG(EXCEPTION) << "Create value node error, node: " << cnode->DebugString() << trace::DumpSourceLines(cnode);
+  // Get seed to create value node
+  auto attrs = op_info->attrs_ptr();
+  if (attrs.empty()) {
+    MS_LOG(INTERNAL_EXCEPTION) << "Node(" << cnode->DebugString() << ") doesn't have any attrs."
+                               << trace::DumpSourceLines(cnode);
+  }
+  for (const auto &attr : attrs) {
+    if (!common::AnfAlgo::HasNodeAttr(attr->name(), cnode)) {
+      MS_LOG(INTERNAL_EXCEPTION) << "Node(" << cnode->DebugString() << ") doesn't have attr(" << attr->name() << ")."
+                                 << trace::DumpSourceLines(cnode);
     }
-    (void)ret.emplace_back(offset0);
-    (void)ret.emplace_back(offset1);
-  } else {
-    // Get seed to create value node
-    auto attrs = op_info->attrs_ptr();
-    if (attrs.empty()) {
-      MS_LOG(EXCEPTION) << "Node(" << cnode->DebugString() << ") doesn't have any attrs."
-                        << trace::DumpSourceLines(cnode);
+    auto attr_value = common::AnfAlgo::GetNodeAttr<int64_t>(cnode, attr->name());
+    auto value_node = CreateValueNode(attr_value);
+    if (value_node == nullptr) {
+      MS_LOG(INTERNAL_EXCEPTION) << "Create value node error, node: " << cnode->DebugString()
+                                 << ", seed value: " << attr_value << trace::DumpSourceLines(cnode);
     }
-    for (const auto &attr : attrs) {
-      if (!common::AnfAlgo::HasNodeAttr(attr->name(), cnode)) {
-        MS_LOG(EXCEPTION) << "Node(" << cnode->DebugString() << ") doesn't have attr(" << attr->name() << ")."
-                          << trace::DumpSourceLines(cnode);
-      }
-      auto attr_value = common::AnfAlgo::GetNodeAttr<int64_t>(cnode, attr->name());
-      auto value_node = CreateValueNode(attr_value);
-      if (value_node == nullptr) {
-        MS_LOG(EXCEPTION) << "Create value node error, node: " << cnode->DebugString() << ", seed value: " << attr_value
-                          << trace::DumpSourceLines(cnode);
-      }
-      (void)ret.emplace_back(value_node);
-    }
-    if (ret.empty()) {
-      MS_LOG(EXCEPTION) << "Node(" << cnode->DebugString() << ") doesn't have any matched attrs."
-                        << trace::DumpSourceLines(cnode);
-    }
+    (void)ret.emplace_back(value_node);
+  }
+  if (ret.empty()) {
+    MS_LOG(INTERNAL_EXCEPTION) << "Node(" << cnode->DebugString() << ") doesn't have any matched attrs."
+                               << trace::DumpSourceLines(cnode);
   }
   return ret;
 }
@@ -143,7 +133,8 @@ const AnfNodePtr SeedAdapter::Process(const FuncGraphPtr &func_graph, const AnfN
   // 1. convert attr seed to value node
   auto op_info = kernel::OpLib::FindOp(cnode_type, kernel::OpImplyType::kImplyAICPU);
   if (!op_info) {
-    MS_LOG(EXCEPTION) << "Find op info failed, node type: " << cnode_type << ", node debug: " << cnode->DebugString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Find op info failed, node type: " << cnode_type
+                               << ", node debug: " << cnode->DebugString();
   }
   auto value_nodes = ConvertAttrToValueNode(op_info, cnode);
   for (auto &value_node : value_nodes) {

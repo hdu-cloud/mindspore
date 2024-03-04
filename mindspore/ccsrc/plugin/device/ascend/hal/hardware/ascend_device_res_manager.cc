@@ -1,6 +1,6 @@
 /**
  *
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@
 #include "runtime/rt.h"
 #include "include/common/utils/utils.h"
 #include "plugin/device/ascend/hal/device/ascend_stream_manager.h"
+#include "plugin/device/ascend/hal/device/ascend_pin_mem_pool.h"
 
 namespace mindspore {
 namespace device {
@@ -43,8 +44,8 @@ void AscendDeviceResManager::Initialize() {
     rank_id_ = GetRankId();
   }
   if (ms_context->get_param<bool>(MS_CTX_ENABLE_MEM_OFFLOAD)) {
-    auto_mem_offload_ =
-      std::make_shared<MindRTAutoOffloadAdapter>(&AscendMemoryPool::GetInstance(), kDefaultStreamIndex);
+    swap_manager_ = std::make_shared<SwapManager>(kDefaultStreamIndex, &AscendMemoryPool::GetInstance(),
+                                                  &AscendPinMemPool::GetInstance());
   }
   MS_LOG(INFO) << "Device resource manager Initialize success.";
 }
@@ -65,16 +66,26 @@ void AscendDeviceResManager::Destroy() {
   MS_LOG(INFO) << "Device resource manager Destroy success.";
 }
 
-bool AscendDeviceResManager::BindDeviceToCurrentThread() const {
-  MS_EXCEPTION_IF_NULL(runtime_instance_);
-  runtime_instance_->SetContext();
+bool AscendDeviceResManager::BindDeviceToCurrentThread(bool /* force_bind */) const {
+  if (runtime_instance_ != nullptr) {
+    runtime_instance_->SetContext();
+  }
   return true;
+}
+
+void AscendDeviceResManager::ResetStreamAndCtx() {
+  if (runtime_instance_ != nullptr) {
+    runtime_instance_->ResetStreamAndCtx();
+  }
 }
 
 void *AscendDeviceResManager::AllocateMemory(size_t size) const {
   MS_EXCEPTION_IF_NULL(runtime_instance_);
   MS_EXCEPTION_IF_NULL(mem_manager_);
   runtime_instance_->SetContext();
+  if (swap_manager_ != nullptr) {
+    return swap_manager_->AllocDeviceMemory(size);
+  }
   return mem_manager_->MallocMemFromMemPool(size, false);
 }
 
@@ -100,10 +111,12 @@ bool AscendDeviceResManager::AllocateMemory(DeviceAddress *const &address) const
   }
 
   runtime_instance_->SetContext();
-  if (auto_mem_offload_ != nullptr) {
-    return auto_mem_offload_->Malloc(address);
+  void *device_ptr;
+  if (swap_manager_ != nullptr) {
+    device_ptr = swap_manager_->AllocDeviceMemory(address->GetSize());
+  } else {
+    device_ptr = mem_manager_->MallocMemFromMemPool(address->GetSize(), address->from_persistent_mem());
   }
-  auto device_ptr = mem_manager_->MallocMemFromMemPool(address->GetSize(), address->from_persistent_mem());
   if (!device_ptr) {
     return false;
   }
@@ -122,8 +135,8 @@ std::vector<void *> AscendDeviceResManager::AllocateContinuousMemory(const std::
     auto align_size = device::MemoryManager::GetCommonAlignSize(size);
     align_size_list.emplace_back(align_size);
   }
-  if (auto_mem_offload_ != nullptr) {
-    return auto_mem_offload_->MallocContinuousMem(align_size_list);
+  if (swap_manager_ != nullptr) {
+    return swap_manager_->AllocDeviceContinuousMem(align_size_list);
   }
   return mem_manager_->MallocContinuousMemFromMemPool(align_size_list);
 }
@@ -143,19 +156,37 @@ DeviceAddressPtr AscendDeviceResManager::CreateDeviceAddress(void *const device_
 }
 
 bool AscendDeviceResManager::CreateStream(size_t *stream_id) const {
+  if (!BindDeviceToCurrentThread(false)) {
+    MS_LOG(ERROR) << "Bind context to current thread failed";
+    return false;
+  }
   AscendStreamMng::GetInstance().CreateStream(stream_id);
   return true;
 }
 
 bool AscendDeviceResManager::DestroyStream(size_t stream_id) const {
+  if (!BindDeviceToCurrentThread(false)) {
+    MS_LOG(ERROR) << "Bind context to current thread failed";
+    return false;
+  }
   return AscendStreamMng::GetInstance().DestroyStream(stream_id);
 }
 
 bool AscendDeviceResManager::SyncStream(size_t stream_id) const {
+  if (!BindDeviceToCurrentThread(false)) {
+    MS_LOG(ERROR) << "Bind context to current thread failed";
+    return false;
+  }
   return AscendStreamMng::GetInstance().SyncStream(stream_id);
 }
 
-bool AscendDeviceResManager::SyncAllStreams() const { return AscendStreamMng::GetInstance().SyncAllStreams(); }
+bool AscendDeviceResManager::SyncAllStreams() const {
+  if (runtime_instance_ == nullptr) {
+    return true;
+  }
+  runtime_instance_->SetContext();
+  return AscendStreamMng::GetInstance().SyncAllStreams();
+}
 }  // namespace ascend
 }  // namespace device
 }  // namespace mindspore

@@ -21,14 +21,11 @@
 #include "nnacl/errorcode.h"
 #include "nnacl/op_base.h"
 #include "nnacl/tensor_c.h"
-#include "nnacl/tensor_c_utils.h"
-#include "nnacl/tensorlist_c_utils.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+bool CheckShaleValid(TensorC **tensors, int tensors_size);
+bool CheckInferShapeDone(TensorC **in, int in_size, TensorC **out, int out_size);
 
-#define EPSILON 1e-6
+#define EPSILON_VALUE 1e-6
 
 enum NNACLLshProjectionType {
   LshProjectionType_UNKNOWN = 0,
@@ -38,24 +35,16 @@ enum NNACLLshProjectionType {
   LshProjectionType_MAX = LshProjectionType_DENSE
 };
 
-enum NNACLQuantType {
-  QuantType_QUANT_NONE = 0,
-  QuantType_AwareTraining = 1,
-  QuantType_WeightQuant = 2,
-  QuantType_PostTraining = 3,
-  QuantType_QUANT_WEIGHT = 4,
-  QuantType_QUANT_ALL = 5,
-  QuantType_QUANT_DYNAMIC = 6,
-  QuantType_MIN = QuantType_QUANT_NONE,
-  QuantType_MAX = QuantType_QUANT_DYNAMIC
-};
-
 typedef struct VectorC {
   int *data_;
   size_t size_;
   size_t max_size_;
   size_t per_malloc_size_;
 } VectorC;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 int CheckAugmentNull(const TensorC *const *inputs, size_t inputs_size, TensorC **outputs, size_t outputs_size,
                      const OpParameter *parameter);
@@ -75,7 +64,9 @@ void SetDataTypeFormat(TensorC *dst, const TensorC *src);
 void SetShapeTensor(TensorC *dst, const TensorC *src);
 void SetShapeArray(TensorC *dst, const int *src, size_t src_size);
 void ShapeSet(int *dst_shape, size_t *dst_shape_size, const int *src_shape, size_t src_shape_size);
+bool Int64ShapeSet(int *dst_shape, size_t *dst_shape_size, const int64_t *src_shape, size_t src_shape_size);
 void ShapePush(int *shape, size_t *shape_size, int value);
+int GetInt32DataFromTensor(const TensorC *tensor, int *result, size_t *result_size);
 int ShapeInsert(int *shape, size_t *shape_size, int index, int value);
 int ShapeErase(int *shape, size_t *shape_size, int index);
 bool ShapeEqual(const int *shape0, size_t shape0_size, const int *shape1, size_t shape1_size);

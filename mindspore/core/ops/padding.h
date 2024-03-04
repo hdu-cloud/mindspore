@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_PADDING_H_
 #define MINDSPORE_CORE_OPS_PADDING_H_
-#include <vector>
 #include <memory>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/types.h"
-#include "mindspore/core/ops/core_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -28,7 +28,7 @@ class MIND_API Padding : public BaseOperator {
  public:
   MIND_API_BASE_MEMBER(Padding);
   /// \brief Constructor.
-  Padding() : BaseOperator(prim::kPadding) { InitIOName({"x"}, {"y"}); }
+  Padding() : BaseOperator(kPaddingOpName) { InitIOName({"x"}, {"y"}); }
 
   void Init(int64_t pad_dim_size = 8);
 
@@ -36,8 +36,8 @@ class MIND_API Padding : public BaseOperator {
 
   void set_pad_dim_size(int64_t pad_dim_size);
 };
-abstract::AbstractBasePtr PaddingInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                       const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr PaddingInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_PADDING_H_

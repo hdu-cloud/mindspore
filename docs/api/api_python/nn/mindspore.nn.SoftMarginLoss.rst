@@ -8,12 +8,16 @@ mindspore.nn.SoftMarginLoss
     SoftMarginLoss用于计算输入Tensor :math:`x` 和目标值Tensor :math:`y` （包含1或-1）的二分类损失值。
 
     .. math::
-        \text{loss}(x, y) = \sum_i \frac{\log(1 + \exp(-y[i]*x[i]))}{\text{x.nelement}()}
+        \text{loss}(x, y) = \sum_i \frac{\log(1 + \exp(-y[i]*x[i]))}{x.nelement()}
 
     :math:`x.nelement()` 代表 `x` 中元素的个数。
 
     参数：
-        - **reduction** (str) - 指定应用于输出结果的计算方式。取值为"mean"，"sum"，或"none"。默认值："mean"。
+        - **reduction** (str，可选) - 指定应用于输出结果的规约计算方式，可选 ``'none'`` 、 ``'mean'`` 、 ``'sum'`` ，默认值： ``'mean'`` 。
+
+          - ``"none"``：不应用规约方法。
+          - ``"mean"``：计算输出元素的平均值。
+          - ``"sum"``：计算输出元素的总和。
 
     输入：
         - **logits** (Tensor) - 预测值，数据类型为float16或float32。

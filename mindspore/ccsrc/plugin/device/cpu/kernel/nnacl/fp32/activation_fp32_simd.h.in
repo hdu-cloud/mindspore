@@ -59,7 +59,7 @@ static inline int Fp32Clip@SIMD_INSTRUCTION@(int index, const float *src, int le
     return index;
 }
 
-static inline int Int32Clip@SIMD_INSTRUCTION@(int index, const int *src, int length, int *dst, int min, int max) {
+static inline int Int32Clip@SIMD_INSTRUCTION@(int index, const int32_t *src, int length, int32_t *dst, int min, int max) {
     SIMD_EPI32 min_val = SIMD_MOV_EPI32(min);
     SIMD_EPI32 max_val = SIMD_MOV_EPI32(max);
     for (int block_max_size = length - BLOCK_NUM + 1; index < block_max_size; index += BLOCK_NUM) {
@@ -83,6 +83,17 @@ static inline int Sigmoid@SIMD_INSTRUCTION@(int index, const float *src, int len
         SIMD_EXP_ST_F32(SIMD_SUB_F32(SIMD_SET0_F32, (SIMD_LD_F32(src + index))), dst + index);
         SIMD_ST_F32(dst + index,
                     SIMD_DIV_F32(SIMD_MOV_F32(1.0f), SIMD_ADD_F32(SIMD_MOV_F32(1.0f), SIMD_LD_F32(dst + index))));
+    }
+    return index;
+}
+
+static inline int Softplus@SIMD_INSTRUCTION@(int index, const float *src, int length, float *dst) {
+    SIMD_F32 log_max = SIMD_MOV_F32(88.7228);
+    for (int block_max_size = length - BLOCK_NUM + 1; index < block_max_size; index += BLOCK_NUM) {
+        SIMD_F32 src_tmp = SIMD_LD_F32(src + index);
+        SIMD_F32 dst_tmp = SIMD_EXP_F32(src_tmp);
+        dst_tmp = SIMD_LOG_F32(SIMD_ADD_F32(SIMD_MOV_F32(1.0f), dst_tmp));
+        SIMD_ST_F32(dst + index, SIMD_BLEND_F32(dst_tmp, src_tmp, SIMD_CMPGT_F32(src_tmp, log_max)));
     }
     return index;
 }

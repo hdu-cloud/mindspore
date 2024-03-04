@@ -1,4 +1,4 @@
-# Copyright 2020-2021 Huawei Technologies Co., Ltd
+# Copyright 2020-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ from __future__ import division
 
 import itertools
 import numbers
+import hashlib
 
 from mindspore.ops import operations as P
 from mindspore.ops import functional as F
@@ -25,21 +26,26 @@ from mindspore.ops.operations import _inner_ops as inner
 from mindspore.common.parameter import Parameter
 from mindspore.common.initializer import initializer, Initializer
 from mindspore.common.tensor import Tensor
-from mindspore.ops.primitive import constexpr
+from mindspore.ops.primitive import constexpr, _primexpr
 import mindspore.context as context
-from mindspore._checkparam import Rel
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore._extends import cell_attr_register
 from mindspore.communication.management import get_group_size, get_rank
 from mindspore.communication import management
 from mindspore.common import dtype as mstype
 from mindspore.parallel._utils import _is_in_auto_parallel_mode
 from mindspore.nn.cell import Cell
+from mindspore import log as logger
 
 __all__ = ['BatchNorm1d', 'BatchNorm2d', 'BatchNorm3d', 'LayerNorm', 'GroupNorm',
            'SyncBatchNorm', 'InstanceNorm1d', 'InstanceNorm2d', 'InstanceNorm3d']
 
-SYNC_BN_GROUP_NAME = ""
+
+def _check_dim(val, target, cls_name):
+    def _check(val, target, cls_name):
+        if val != target:
+            raise ValueError(f"For '{cls_name}', the in_shape must have {target} dims, but got {val}.")
+    _check(val, target, cls_name)
 
 
 class _BatchNorm(Cell):
@@ -56,7 +62,8 @@ class _BatchNorm(Cell):
                  moving_mean_init='zeros',
                  moving_var_init='ones',
                  use_batch_statistics=None,
-                 data_format='NCHW'):
+                 data_format='NCHW',
+                 dtype=mstype.float32):
         """Initialize _BatchNorm."""
         super(_BatchNorm, self).__init__()
         validator.check_value_type('num_features', num_features, [int], self.cls_name)
@@ -81,13 +88,13 @@ class _BatchNorm(Cell):
         self.moving_mean_init = moving_mean_init
         self.moving_var_init = moving_var_init
         self.moving_mean = Parameter(initializer(
-            moving_mean_init, num_features), name="mean", requires_grad=False)
+            moving_mean_init, num_features, dtype=dtype), name="mean", requires_grad=False)
         self.moving_variance = Parameter(initializer(
-            moving_var_init, num_features), name="variance", requires_grad=False)
+            moving_var_init, num_features, dtype=dtype), name="variance", requires_grad=False)
         self.gamma = Parameter(initializer(
-            gamma_init, num_features), name="gamma", requires_grad=affine)
+            gamma_init, num_features, dtype=dtype), name="gamma", requires_grad=affine)
         self.beta = Parameter(initializer(
-            beta_init, num_features), name="beta", requires_grad=affine)
+            beta_init, num_features, dtype=dtype), name="beta", requires_grad=affine)
 
         self.parallel_mode = context.get_auto_parallel_context("parallel_mode")
 
@@ -121,10 +128,12 @@ class _BatchNorm(Cell):
         self.assign_sub_mean = P.AssignSub().shard(data_parallel_strategy)
         self.assign_sub_var = P.AssignSub().shard(data_parallel_strategy)
 
+
     @staticmethod
-    @constexpr
+    @_primexpr
     def _check_input_dim(shape, cls_name):
         raise NotImplementedError
+
 
     def construct(self, x):
         self._check_input_dim(self.shape(x), self.cls_name)
@@ -164,7 +173,7 @@ class _BatchNorm(Cell):
 class BatchNorm1d(_BatchNorm):
     r"""
     This layer
-    applies Batch Normalization over a 2D input (a mini-batch of 1D inputs) to
+    applies Batch Normalization over a 2D or 3D input (a mini-batch of 1D or 2D inputs) to
     reduce internal covariate shift. Batch Normalization is widely used in convolutional networks.
     For the setailed contents, refer to `Batch Normalization: Accelerating Deep Network Training by
     Reducing Internal Covariate Shift <https://arxiv.org/abs/1502.03167>`_. It
@@ -179,31 +188,43 @@ class BatchNorm1d(_BatchNorm):
         recommended to be changed after net was initialized.
 
     Args:
-        num_features (int): `C` from an expected input of size (N, C).
-        eps (float): A value added to the denominator for numerical stability. Default: 1e-5.
+        num_features (int): number of features or channels `C` of the input `x` .
+        eps (float): :math:`\epsilon` added to the denominator for numerical stability. Default: ``1e-5`` .
         momentum (float): A floating hyperparameter of the momentum for the
-            running_mean and running_var computation. Default: 0.9.
-        affine (bool): A bool value. When set to True, gamma and beta can be learned. Default: True.
-        gamma_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the gamma weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc. Default: 'ones'.
-        beta_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the beta weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc. Default: 'zeros'.
+            running_mean and running_var computation. Default: ``0.9`` .
+        affine (bool): A bool value. When set to ``True`` , :math:`\gamma` and :math:`\beta` can be learned.
+            Default: ``True`` .
+        gamma_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the :math:`\gamma` weight.
+            The values of str refer to the function `mindspore.common.initializer
+            <https://www.mindspore.cn/docs/en/master/api_python/mindspore.common.initializer.html>`_
+            including ``'zeros'`` , ``'ones'`` , etc. Default: ``'ones'`` .
+        beta_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the :math:`\beta` weight.
+            The values of str refer to the function `mindspore.common.initializer
+            <https://www.mindspore.cn/docs/en/master/api_python/mindspore.common.initializer.html>`_
+            including ``'zeros'`` , ``'ones'``, etc. Default: ``'zeros'`` .
         moving_mean_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the moving mean.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc. Default: 'zeros'.
+            The values of str refer to the function `mindspore.common.initializer
+            <https://www.mindspore.cn/docs/en/master/api_python/mindspore.common.initializer.html>`_
+            including ``'zeros'`` , ``'ones'`` , etc. Default: ``'zeros'`` .
         moving_var_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the moving variance.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc. Default: 'ones'.
-        use_batch_statistics (bool): If true, use the mean value and variance value of current batch data. If false,
-            use the mean value and variance value of specified value. If None, the training process will use the mean
-            and variance of current batch data and track the running mean and variance, the evaluation process will use
-            the running mean and variance. Default: None.
-        data_format (str): The optional value for data format, is 'NHWC' or 'NCHW'.
-            Default: 'NCHW'.
+            The values of str refer to the function `mindspore.common.initializer
+            <https://www.mindspore.cn/docs/en/master/api_python/mindspore.common.initializer.html>`_
+            including ``'zeros'`` , ``'ones'`` , etc. Default: ``'ones'`` .
+        use_batch_statistics (bool): If ``true`` , use the mean value and variance value of current batch data. If
+            ``false`` , use the mean value and variance value of specified value. If ``None`` , the training process
+            will use the mean and variance of current batch data and track the running mean and variance, the
+            evaluation process will use the running mean and variance. Default: ``None`` .
+        data_format (str): The optional value for data format, is ``'NHWC'`` or ``'NCHW'`` .
+            Default: ``'NCHW'`` .
+        dtype (:class:`mindspore.dtype`): Dtype of Parameters. Default: ``mstype.float32`` .
 
     Inputs:
-        - **x** (Tensor) - Tensor of shape :math:`(N, C_{in})`.
+        - **x** (Tensor) - Tensor of shape :math:`(N, C)` or :math:`(N, C, L)` ,
+          where `N` is the batch size, `C` is the number of features or channels, and `L` is the sequence length.
+          Supported types: float16, float32.
 
     Outputs:
-        Tensor, the normalized, scaled, offset tensor, of shape :math:`(N, C_{out})`.
+        Tensor, the normalized, scaled, offset tensor, of shape :math:`(N, C)` or :math:`(N, C, L)` .
 
     Raises:
         TypeError: If `num_features` is not an int.
@@ -216,11 +237,10 @@ class BatchNorm1d(_BatchNorm):
 
     Examples:
         >>> import numpy as np
-        >>> import mindspore.nn as nn
-        >>> from mindspore import Tensor
-        >>> net = nn.BatchNorm1d(num_features=4)
-        >>> x = Tensor(np.array([[0.7, 0.5, 0.5, 0.6],
-        ...                      [0.5, 0.4, 0.6, 0.9]]).astype(np.float32))
+        >>> import mindspore as ms
+        >>> net = ms.nn.BatchNorm1d(num_features=4)
+        >>> x = ms.Tensor(np.array([[0.7, 0.5, 0.5, 0.6],
+        ...                         [0.5, 0.4, 0.6, 0.9]]).astype(np.float32))
         >>> output = net(x)
         >>> print(output)
         [[ 0.6999965   0.4999975  0.4999975  0.59999704 ]
@@ -228,11 +248,13 @@ class BatchNorm1d(_BatchNorm):
     """
 
     @staticmethod
-    @constexpr
+    @_primexpr
     def _check_input_dim(shape, cls_name):
+        def _check(dim):
+            if dim not in (2, 3):
+                raise ValueError(f"For '{cls_name}', the must have 2 dims or 3 dims, but got {dim}.")
         dim = len(shape)
-        if dim != 2:
-            raise ValueError(f"For '{cls_name}', the in_shape must have 2 dims, but got {dim}.")
+        _check(dim)
 
 
 class BatchNorm2d(_BatchNorm):
@@ -254,44 +276,54 @@ class BatchNorm2d(_BatchNorm):
         Note that the formula for updating the :math:`moving\_mean` and :math:`moving\_var` is
 
         .. math::
-            \text{moving_mean}=\text{moving_mean∗momentum}+μ_β\text{∗(1−momentum)}\\
-            \text{moving_var}=\text{moving_var∗momentum}+σ^2_β\text{∗(1−momentum)}
+            \text{moving_mean}=\text{moving_mean*momentum}+μ_β\text{*(1−momentum)}\\
+            \text{moving_var}=\text{moving_var*momentum}+σ^2_β\text{*(1−momentum)}
 
         where :math:`moving\_mean` is the updated mean, :math:`moving\_var` is the updated variance,
         :math:`μ_β, σ^2_β` are the observed value (mean and variance) of each batch of data.
 
     Args:
-        num_features (int): The number of channels of the input tensor. Expected input size is (N, C, H, W),
+        num_features (int): The number of channels of the input tensor. Expected input size is :math:`(N, C, H, W)`,
             `C` represents the number of channels.
-        eps (float): A value added to the denominator for numerical stability. Default: 1e-5.
+        eps (float): :math:`\epsilon` added to the denominator for numerical stability. Default: ``1e-5`` .
         momentum (float): A floating hyperparameter of the momentum for the
-            running_mean and running_var computation. Default: 0.9.
-        affine (bool): A bool value. When set to True, gamma and beta can be learned. Default: True.
-        gamma_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the gamma weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc. Default: 'ones'.
-        beta_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the beta weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc. Default: 'zeros'.
+            running_mean and running_var computation. Default: ``0.9`` .
+        affine (bool): A bool value. When set to ``True`` , :math:`\gamma` and :math:`\beta` can be learned.
+            Default: ``True`` .
+        gamma_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the :math:`\gamma` weight.
+            The values of str refer to the function `mindspore.common.initializer
+            <https://www.mindspore.cn/docs/en/master/api_python/mindspore.common.initializer.html>`_
+            including ``'zeros'`` , ``'ones'`` , etc. Default: ``'ones'`` .
+        beta_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the :math:`\beta` weight.
+            The values of str refer to the function `mindspore.common.initializer
+            <https://www.mindspore.cn/docs/en/master/api_python/mindspore.common.initializer.html>`_
+            including ``'zeros'`` , ``'ones'`` , etc. Default: ``'zeros'`` .
         moving_mean_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the moving mean.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc. Default: 'zeros'.
+            The values of str refer to the function `mindspore.common.initializer
+            <https://www.mindspore.cn/docs/en/master/api_python/mindspore.common.initializer.html>`_
+            including ``'zeros'`` , ``'ones'`` , etc. Default: ``'zeros'`` .
         moving_var_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the moving variance.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc. Default: 'ones'.
-        use_batch_statistics (bool):
+            The values of str refer to the function `mindspore.common.initializer
+            <https://www.mindspore.cn/docs/en/master/api_python/mindspore.common.initializer.html>`_
+            including ``'zeros'`` , ``'ones'`` , etc. Default: ``'ones'`` .
+        use_batch_statistics (bool): Default: ``None`` .
 
-            - If true, use the mean value and variance value of current batch data and track running mean
+            - If ``true`` , use the mean value and variance value of current batch data and track running mean
               and running variance.
-            - If false, use the mean value and variance value of specified value, and not track statistical value.
-            - If None, the use_batch_statistics is automatically set to true or false according to the training
-              and evaluation mode. During training, the parameter is set to true, and during evaluation, the
-              parameter is set to false. Default: None.
+            - If ``false`` , use the mean value and variance value of specified value, and not track statistical value.
+            - If ``None`` , the use_batch_statistics is automatically set to ``true`` or ``false`` according to the
+              training and evaluation mode. During training, the parameter is set to true, and during evaluation, the
+              parameter is set to false.
 
-        data_format (str): The optional value for data format, is 'NHWC' or 'NCHW'.
-            Default: 'NCHW'.
+        data_format (str): The optional value for data format, is ``'NHWC'`` or ``'NCHW'`` .
+            Default: ``'NCHW'`` .
+        dtype (:class:`mindspore.dtype`): Dtype of Parameters. Default: ``mstype.float32`` .
 
     Inputs:
-        - **x** (Tensor) - Tensor of shape :math:`(N, C_{in}, H_{in}, W_{in})`.
+        - **x** (Tensor) - Tensor of shape :math:`(N, C, H, W)`. Supported types: float16, float32.
 
     Outputs:
-        Tensor, the normalized, scaled, offset tensor, of shape :math:`(N, C_{out}, H_{out}, W_{out})`.
+        Tensor, the normalized, scaled, offset tensor, of shape :math:`(N, C, H, W)`.
 
     Raises:
         TypeError: If `num_features` is not an int.
@@ -305,10 +337,9 @@ class BatchNorm2d(_BatchNorm):
 
     Examples:
         >>> import numpy as np
-        >>> import mindspore.nn as nn
-        >>> from mindspore import Tensor
-        >>> net = nn.BatchNorm2d(num_features=3)
-        >>> x = Tensor(np.ones([1, 3, 2, 2]).astype(np.float32))
+        >>> import mindspore as ms
+        >>> net = ms.nn.BatchNorm2d(num_features=3)
+        >>> x = ms.Tensor(np.ones([1, 3, 2, 2]).astype(np.float32))
         >>> output = net(x)
         >>> print(output)
         [[[[ 0.999995 0.999995 ]
@@ -320,11 +351,10 @@ class BatchNorm2d(_BatchNorm):
     """
 
     @staticmethod
-    @constexpr
+    @_primexpr
     def _check_input_dim(shape, cls_name):
         dim = len(shape)
-        if dim != 4:
-            raise ValueError(f"For '{cls_name}', the in_shape must have 4 dims, but got {dim}.")
+        _check_dim(dim, 4, cls_name)
 
 
 class BatchNorm3d(Cell):
@@ -344,26 +374,36 @@ class BatchNorm3d(Cell):
         where :math:`\hat{x}` is the estimated statistic and :math:`x_t` is the new observed value.
 
     Args:
-        num_features (int): `C` from an expected input of size (N, C, D, H, W).
-        eps (float): A value added to the denominator for numerical stability. Default: 1e-5.
+        num_features (int): `C` from an expected input of size :math:`(N, C, D, H, W)` .
+        eps (float): A value added to the denominator for numerical stability. Default: ``1e-5`` .
         momentum (float): A floating hyperparameter of the momentum for the
-            running_mean and running_var computation. Default: 0.9.
-        affine (bool): A bool value. When set to True, gamma and beta can be learned. Default: True.
+            running_mean and running_var computation. Default: ``0.9`` .
+        affine (bool): A bool value. When set to ``True`` , gamma and beta can be learned. Default: ``True`` .
         gamma_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the gamma weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc. Default: 'ones'.
+            The values of str refer to the function `mindspore.common.initializer
+            <https://www.mindspore.cn/docs/en/master/api_python/mindspore.common.initializer.html>`_
+            including ``'zeros'`` , ``'ones'`` , etc. Default: ``'ones'`` .
         beta_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the beta weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc. Default: 'zeros'.
+            The values of str refer to the function `mindspore.common.initializer
+            <https://www.mindspore.cn/docs/en/master/api_python/mindspore.common.initializer.html>`_
+            including ``'zeros'`` , ``'ones'`` , etc. Default: ``'zeros'`` .
         moving_mean_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the moving mean.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc. Default: 'zeros'.
+            The values of str refer to the function `mindspore.common.initializer
+            <https://www.mindspore.cn/docs/en/master/api_python/mindspore.common.initializer.html>`_
+            including ``'zeros'`` , ``'ones'`` , etc. Default: ``'zeros'`` .
         moving_var_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the moving variance.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc. Default: 'ones'.
-        use_batch_statistics (bool): If true, use the mean value and variance value of current batch data. If false,
-            use the mean value and variance value of specified value. If None, the training process will use the mean
-            and variance of current batch data and track the running mean and variance, the evaluation process will use
-            the running mean and variance. Default: None.
+            The values of str refer to the function `mindspore.common.initializer
+            <https://www.mindspore.cn/docs/en/master/api_python/mindspore.common.initializer.html>`_
+            including ``'zeros'`` , ``'ones'`` , etc. Default: ``'ones'`` .
+        use_batch_statistics (bool): If true, use the mean value and variance value of current batch data. If
+            ``false``, use the mean value and variance value of specified value. If ``None`` , the training process
+            will use the mean and variance of current batch data and track the running mean and variance, the
+            evaluation process will use the running mean and variance. Default: ``None`` .
+        dtype (:class:`mindspore.dtype`): Dtype of Parameters. Default: ``mstype.float32`` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(N, C_{in}, D_{in}, H_{in}, W_{in})`.
+          Supported types: float16, float32.
 
     Outputs:
         Tensor, the normalized, scaled, offset tensor, of shape :math:`(N, C_{out}, D_{out},H_{out}, W_{out})`.
@@ -379,10 +419,9 @@ class BatchNorm3d(Cell):
 
     Examples:
         >>> import numpy as np
-        >>> import mindspore.nn as nn
-        >>> from mindspore import Tensor
-        >>> net = nn.BatchNorm3d(num_features=3)
-        >>> x = Tensor(np.ones([16, 3, 10, 32, 32]).astype(np.float32))
+        >>> import mindspore as ms
+        >>> net = ms.nn.BatchNorm3d(num_features=3)
+        >>> x = ms.Tensor(np.ones([16, 3, 10, 32, 32]).astype(np.float32))
         >>> output = net(x)
         >>> print(output.shape)
         (16, 3, 10, 32, 32)
@@ -397,7 +436,8 @@ class BatchNorm3d(Cell):
                  beta_init='zeros',
                  moving_mean_init='zeros',
                  moving_var_init='ones',
-                 use_batch_statistics=None):
+                 use_batch_statistics=None,
+                 dtype=mstype.float32):
         """Initialize BatchNorm3d."""
         super(BatchNorm3d, self).__init__()
         self.bn2d = BatchNorm2d(num_features=num_features,
@@ -409,16 +449,17 @@ class BatchNorm3d(Cell):
                                 moving_mean_init=moving_mean_init,
                                 moving_var_init=moving_var_init,
                                 use_batch_statistics=use_batch_statistics,
-                                data_format="NCHW")
+                                data_format="NCHW",
+                                dtype=dtype)
         self.shape = P.Shape()
         self.reshape = P.Reshape()
 
     @staticmethod
-    @constexpr
+    @_primexpr
     def _check_input_dim(shape, cls_name):
         dim = len(shape)
-        if dim != 5:
-            raise ValueError(f"For '{cls_name}', the in_shape must have 5 dims, but got {dim}.")
+        _check_dim(dim, 5, cls_name)
+
 
     def construct(self, x):
         x_shape = self.shape(x)
@@ -427,6 +468,16 @@ class BatchNorm3d(Cell):
         bn2d_out = self.bn2d(x)
         bn3d_out = self.reshape(bn2d_out, x_shape)
         return bn3d_out
+
+
+SYNCBN_GROUP_DICT = None
+
+
+def _syncbatchnorm_group_dict():
+    global SYNCBN_GROUP_DICT
+    if SYNCBN_GROUP_DICT is None:
+        SYNCBN_GROUP_DICT = dict()
+    return SYNCBN_GROUP_DICT
 
 
 class SyncBatchNorm(_BatchNorm):
@@ -444,33 +495,36 @@ class SyncBatchNorm(_BatchNorm):
 
     Note:
         Currently, SyncBatchNorm only supports 2D and 4D inputs.
+        :math:`\gamma` and :math:`\beta` are trainable scale and shift.
 
     Args:
-        num_features (int): `C` from an expected input of size (N, C, H, W).
-        eps (float): A value added to the denominator for numerical stability. Default: 1e-5.
+        num_features (int): `C` from an expected input of size :math:`(N, C, H, W)`.
+        eps (float): :math:`\epsilon`, a value added to the denominator for numerical stability. Default: ``1e-5`` .
         momentum (float): A floating hyperparameter of the momentum for the
-            running_mean and running_var computation. Default: 0.9.
-        affine (bool): A bool value. When set to True, gamma and beta can be learned. Default: True.
-        gamma_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the gamma weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', 'xavier_uniform',
-            'he_uniform', etc. Default: 'ones'.
-        beta_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the beta weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', 'xavier_uniform',
-            'he_uniform', etc. Default: 'zeros'.
+            running_mean and running_var computation. Default: ``0.9`` .
+        affine (bool): A bool value. When set to ``True`` , :math:`\gamma` and :math:`\beta` can be learned.
+            Default: ``True`` .
+        gamma_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the :math:`\gamma` weight.
+            The values of str refer to the function `initializer` including ``'zeros'`` , ``'ones'`` ,
+            ``'xavier_uniform'`` , ``'he_uniform'`` , etc. Default: ``'ones'`` .
+        beta_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the :math:`\beta` weight.
+            The values of str refer to the function `initializer` including ``'zeros'`` , ``'ones'`` ,
+            ``'xavier_uniform'`` , ``'he_uniform'`` , etc. Default: ``'zeros'`` .
         moving_mean_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the moving mean.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', 'xavier_uniform',
-            'he_uniform', etc. Default: 'zeros'.
+            The values of str refer to the function `initializer` including ``'zeros'`` , ``'ones'`` ,
+            ``'xavier_uniform'`` , ``'he_uniform'`` , etc. Default: ``'zeros'`` .
         moving_var_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the moving variance.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', 'xavier_uniform',
-            'he_uniform', etc. Default: 'ones'.
-        use_batch_statistics (bool): If true, use the mean value and variance value of current batch data. If false,
-            use the mean value and variance value of specified value. If None, training process will use the mean and
-            variance of current batch data and track the running mean and variance, eval process will use the running
-            mean and variance. Default: None.
+            The values of str refer to the function `initializer` including ``'zeros'`` , ``'ones'`` ,
+            ``'xavier_uniform'`` , ``'he_uniform'`` , etc. Default: ``'ones'`` .
+        use_batch_statistics (bool): If ``true`` , use the mean value and variance value of current batch data. If
+            ``false`` , use the mean value and variance value of specified value. If ``None`` , training process will
+            use the mean and variance of current batch data and track the running mean and variance, eval process will
+            use the running mean and variance. Default: ``None`` .
         process_groups (list): A list to divide devices into different sync groups, containing N subtraction lists.
             Each subtraction list contains int numbers identifying rank ids which need to be synchronized in the same
-            group. All int values must be in [0, rank_size) and different from each other. Default: None, indicating
-            synchronization across all devices.
+            group. All int values must be in [0, rank_size) and different from each other. Default: ``None`` ,
+            indicating synchronization across all devices.
+        dtype (:class:`mindspore.dtype`): Dtype of Parameters. Default: ``mstype.float32`` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(N, C_{in}, H_{in}, W_{in})`.
@@ -495,27 +549,27 @@ class SyncBatchNorm(_BatchNorm):
 
             For the Ascend devices, users need to prepare the rank table, set rank_id and device_id.
             Please see the `Ascend tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_ascend.html#preparations>`_
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/rank_table.html>`_
             for more details.
 
-            For the GPU devices, users need to prepare the host file and mpi, please see the `GPU tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_gpu.html#preparation>`_ .
+            For the GPU devices, users need to prepare the host file and mpi, please see the `mpirun Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/mpirun.html>`_ .
+
+            For the CPU device, users need to write a dynamic cluster startup script, please see the `Dynamic Cluster
+            Startup <https://www.mindspore.cn/tutorials/experts/en/master/parallel/dynamic_cluster.html>`_ .
 
             This example should be run with multiple devices.
 
         >>> import numpy as np
         >>> import mindspore as ms
         >>> from mindspore.communication import init
-        >>> from mindspore import Tensor
-        >>> from mindspore import nn
-        >>> from mindspore import dtype as mstype
         >>>
         >>> ms.set_context(mode=ms.GRAPH_MODE)
         >>> init()
         >>> ms.reset_auto_parallel_context()
         >>> ms.set_auto_parallel_context(parallel_mode=ms.ParallelMode.DATA_PARALLEL)
-        >>> sync_bn_op = nn.SyncBatchNorm(num_features=3, process_groups=[[0, 1], [2, 3]])
-        >>> x = Tensor(np.ones([1, 3, 2, 2]), mstype.float32)
+        >>> sync_bn_op = ms.nn.SyncBatchNorm(num_features=3, process_groups=[[0, 1], [2, 3]])
+        >>> x = ms.Tensor(np.ones([1, 3, 2, 2]), ms.float32)
         >>> output = sync_bn_op(x)
         >>> print(output)
         [[[[ 0.999995 0.999995 ]
@@ -525,7 +579,7 @@ class SyncBatchNorm(_BatchNorm):
           [[ 0.999995 0.999995 ]
            [ 0.999995 0.999995 ]]]]
     """
-
+    @cell_attr_register(attrs=['num_features', 'process_groups'])
     def __init__(self,
                  num_features,
                  eps=1e-5,
@@ -536,7 +590,8 @@ class SyncBatchNorm(_BatchNorm):
                  moving_mean_init='zeros',
                  moving_var_init='ones',
                  use_batch_statistics=None,
-                 process_groups=None):
+                 process_groups=None,
+                 dtype=mstype.float32):
         """Initialize SyncBatchNorm."""
         super(SyncBatchNorm, self).__init__(num_features,
                                             eps,
@@ -546,9 +601,10 @@ class SyncBatchNorm(_BatchNorm):
                                             beta_init,
                                             moving_mean_init,
                                             moving_var_init,
-                                            use_batch_statistics)
+                                            use_batch_statistics,
+                                            dtype=dtype)
         self.is_global = False
-        global SYNC_BN_GROUP_NAME
+        self.group_name = None
         self.process_groups = process_groups
         if self.process_groups != 0:
             self.rank_id = get_rank()
@@ -560,43 +616,53 @@ class SyncBatchNorm(_BatchNorm):
             elif self.rank_size > 1:
                 self.is_global = True
                 self.group_device_num = self.rank_size
-                self.device_list = [i for i in range(0, self.rank_size)]
                 if context.get_context("device_target") == "Ascend":
-                    if SYNC_BN_GROUP_NAME == "":
-                        SYNC_BN_GROUP_NAME = "sync_bn_group0"
-                        management.create_group(SYNC_BN_GROUP_NAME, self.device_list)
+                    self.group_name = "hccl_world_group"
                 elif context.get_context("device_target") == "GPU":
-                    if SYNC_BN_GROUP_NAME == "":
-                        SYNC_BN_GROUP_NAME = "nccl_world_group"
+                    self.group_name = "nccl_world_group"
 
         if self.is_global:
             self.bn_train = inner.SyncBatchNorm(epsilon=self.eps,
                                                 momentum=self.momentum,
-                                                group=SYNC_BN_GROUP_NAME,
+                                                group=self.group_name,
                                                 device_num=self.group_device_num)
 
     def _create_sync_groups(self):
-        for i in range(len(self.process_groups)):
-            validator.check_isinstance("process_groups[%d]" % i, self.process_groups[i], list)
-            self.group_device_num = len(self.process_groups[i])
-            if self.rank_id in self.process_groups[i] and self.group_device_num > 1:
+        """ create groups by process groups. """
+        for sub_group in self.process_groups:
+            validator.check_isinstance("sub group", sub_group, list)
+            self.group_device_num = len(sub_group)
+            if self.rank_id in sub_group and self.group_device_num > 1:
                 self.is_global = True
-                global SYNC_BN_GROUP_NAME
-                if SYNC_BN_GROUP_NAME == "":
-                    SYNC_BN_GROUP_NAME = "sync_bn_group%d" % i
-                    management.create_group(SYNC_BN_GROUP_NAME, self.process_groups[i])
+                rank_list_name = '_'.join('%s' % id for id in sub_group)
+                group_dict = _syncbatchnorm_group_dict()
+                if rank_list_name not in group_dict:
+                    md5 = hashlib.md5()
+                    md5.update(rank_list_name.encode('utf-8'))
+                    hash_name = md5.hexdigest()
+                    self.group_name = str(self.group_device_num) + '_' + hash_name
+                    group_dict[rank_list_name] = self.group_name
+                    management.create_group(self.group_name, sub_group)
+                    logger.info("create group for sync batchnorm, the rank list is {}, the group name is {}".format(
+                        rank_list_name, self.group_name))
+                else:
+                    self.group_name = group_dict[rank_list_name]
+                    logger.info("the group for {} already exists, no need to create".format(rank_list_name))
 
     @staticmethod
-    @constexpr
+    @_primexpr
     def _check_input_dim(shape, cls_name):
+        def _check(dim):
+            if dim not in (2, 4):
+                raise ValueError(f"For '{cls_name}', the must have 2 dims or 4 dims, but got {dim}.")
         dim = len(shape)
-        if dim not in (2, 4):
-            raise ValueError(f"For '{cls_name}', the must have 2 dims or 4 dims, but got {dim}.")
+        _check(dim)
+
 
     def _check_rank_ids(self, process_groups, rank_size):
         seen = set()
         for rid in itertools.chain(*process_groups):
-            validator.check_int_range(rid, 0, rank_size, Rel.INC_LEFT, "rank id in process_groups", self.cls_name)
+            validator.check_int_range(rid, 0, rank_size, validator.INC_LEFT, "rank id in process_groups", self.cls_name)
             if rid in seen:
                 raise ValueError(f"For '{self.cls_name}', rank id in 'process_groups' must not be duplicated, "
                                  f"but got {process_groups}.")
@@ -611,27 +677,28 @@ class LayerNorm(Cell):
     normalization on a mini-batch of inputs for each single training case as described
     in the paper `Layer Normalization <https://arxiv.org/pdf/1607.06450.pdf>`_. Unlike Batch
     Normalization, Layer Normalization performs exactly the same computation at training and
-    testing time. It is applied across all channels
-    and pixel but only one batch size. It can be described using the following formula:
+    testing time. It is applied across all channels and pixel but only one batch size.
+    :math:`\gamma` and :math:`\beta` are trainable scale and shift.
+    It can be described using the following formula:
 
     .. math::
         y = \frac{x - \mathrm{E}[x]}{\sqrt{\mathrm{Var}[x] + \epsilon}} * \gamma + \beta
 
     Args:
         normalized_shape (Union(tuple[int], list[int])): The normalization is performed over axis
-            `begin_norm_axis ... R - 1`.
+            `begin_norm_axis ... R - 1`. R is the dimension size of input `x`.
         begin_norm_axis (int): The first normalization dimension: normalization will be performed along dimensions
-            `begin_norm_axis: rank(inputs)`, the value should be in [-1, rank(input)). Default: -1.
-        begin_params_axis (int): The first parameter(beta, gamma)dimension: scale and centering parameters
-            will have dimensions `begin_params_axis: rank(inputs)` and will be broadcast with
-            the normalized inputs accordingly, the value should be in [-1, rank(input)). Default: -1.
-        gamma_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the gamma weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', 'xavier_uniform',
-            'he_uniform', etc. Default: 'ones'.
-        beta_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the beta weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', 'xavier_uniform',
-            'he_uniform', etc. Default: 'zeros'.
-        epsilon (float): A value added to the denominator for numerical stability. Default: 1e-7.
+            `begin_norm_axis: R`, the value should be in [-1, R). Default: ``-1`` .
+        begin_params_axis (int): The begin axis of the parameter input :math:`(\gamma, \beta)` to
+            apply LayerNorm, the value should be in [-1, R). Default: ``-1`` .
+        gamma_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the :math:`\gamma` weight.
+            The values of str refer to the function `initializer` including ``'zeros'`` , ``'ones'`` ,
+            ``'xavier_uniform'`` , ``'he_uniform'`` , etc. Default: ``'ones'`` .
+        beta_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the :math:`\beta` weight.
+            The values of str refer to the function `initializer` including ``'zeros'`` , ``'ones'`` ,
+            ``'xavier_uniform'`` , ``'he_uniform'`` , etc. Default: ``'zeros'`` .
+        epsilon (float): A value added to the denominator for numerical stability(:math:`\epsilon`). Default: ``1e-7`` .
+        dtype (:class:`mindspore.dtype`): Dtype of Parameters. Default: ``mstype.float32`` .
 
     Inputs:
         - **x** (Tensor) - The shape of `x` is :math:`(x_1, x_2, ..., x_R)`,
@@ -649,9 +716,11 @@ class LayerNorm(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> x = Tensor(np.ones([20, 5, 10, 10]), mindspore.float32)
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> x = ms.Tensor(np.ones([20, 5, 10, 10]), ms.float32)
         >>> shape1 = x.shape[1:]
-        >>> m = nn.LayerNorm(shape1,  begin_norm_axis=1, begin_params_axis=1)
+        >>> m = ms.nn.LayerNorm(shape1,  begin_norm_axis=1, begin_params_axis=1)
         >>> output = m(x).shape
         >>> print(output)
         (20, 5, 10, 10)
@@ -663,21 +732,27 @@ class LayerNorm(Cell):
                  begin_params_axis=-1,
                  gamma_init='ones',
                  beta_init='zeros',
-                 epsilon=1e-7
+                 epsilon=1e-7,
+                 dtype=mstype.float32
                  ):
         """Initialize LayerNorm."""
         super(LayerNorm, self).__init__()
         if not isinstance(normalized_shape, (tuple, list)):
             raise TypeError(f"For '{self.cls_name}', the type of 'normalized_shape' must be tuple[int] or list[int], "
                             f"but got {normalized_shape} and the type is {type(normalized_shape)}.")
+        if not normalized_shape:
+            raise ValueError(
+                f"Expected normalized_shape to be at least 1-dimensional, i.e., containing at "
+                f"least one element, but got normalized_shape = {normalized_shape}"
+            )
         self.normalized_shape = normalized_shape
         self.begin_norm_axis = begin_norm_axis
         self.begin_params_axis = begin_params_axis
         self.epsilon = epsilon
         self.gamma = Parameter(initializer(
-            gamma_init, normalized_shape), name="gamma")
+            gamma_init, normalized_shape, dtype=dtype), name="gamma")
         self.beta = Parameter(initializer(
-            beta_init, normalized_shape), name="beta")
+            beta_init, normalized_shape, dtype=dtype), name="beta")
         self.layer_norm = P.LayerNorm(begin_norm_axis=self.begin_norm_axis,
                                       begin_params_axis=self.begin_params_axis,
                                       epsilon=self.epsilon)
@@ -700,7 +775,8 @@ class _InstanceNorm(Cell):
                  momentum=0.1,
                  affine=True,
                  gamma_init='ones',
-                 beta_init='zeros'):
+                 beta_init='zeros',
+                 dtype=mstype.float32):
         """Initialize Normalization base class."""
         super(_InstanceNorm, self).__init__()
         validator.check_value_type('num_features', num_features, [int], self.cls_name)
@@ -717,12 +793,13 @@ class _InstanceNorm(Cell):
                              f"but got {momentum}.")
         self.num_features = num_features
         self.eps = eps
-        self.moving_mean = Parameter(initializer('zeros', num_features), name="mean", requires_grad=False)
-        self.moving_variance = Parameter(initializer('ones', num_features), name="variance", requires_grad=False)
+        self.moving_mean = Parameter(initializer('zeros', num_features, dtype=dtype), name="mean", requires_grad=False)
+        self.moving_variance = Parameter(initializer('ones', num_features, dtype=dtype), name="variance",
+                                         requires_grad=False)
         self.gamma = Parameter(initializer(
-            gamma_init, num_features), name="gamma", requires_grad=affine)
+            gamma_init, num_features, dtype=dtype), name="gamma", requires_grad=affine)
         self.beta = Parameter(initializer(
-            beta_init, num_features), name="beta", requires_grad=affine)
+            beta_init, num_features, dtype=dtype), name="beta", requires_grad=affine)
 
         self.shape = P.Shape()
         self.momentum = momentum
@@ -775,17 +852,18 @@ class InstanceNorm1d(_InstanceNorm):
         where :math:`\hat{x}` is the estimated statistic and :math:`x_t` is the new observed value.
 
     Args:
-        num_features (int): `C` from an expected input of size (N, C, L).
-        eps (float): A value added to the denominator for numerical stability. Default: 1e-5.
+        num_features (int): `C` from an expected input of size :math:`(N, C, L)`.
+        eps (float): A value added to the denominator for numerical stability. Default: ``1e-5`` .
         momentum (float): A floating hyperparameter of the momentum for the
-            running_mean and running_var computation. Default: 0.1.
-        affine (bool): A bool value. When set to True, gamma and beta can be learned. Default: True.
+            running_mean and running_var computation. Default: ``0.1`` .
+        affine (bool): A bool value. When set to True, gamma and beta can be learned. Default: ``True`` .
         gamma_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the gamma weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc.
-            When initialized with Tensor, the shape should be :math:`(C)`. Default: 'zeros'.
+            The values of str refer to the function `initializer` including ``'zeros'`` , ``'ones'`` , etc.
+            When initialized with Tensor, the shape should be :math:`(C)`. Default: ``'ones'`` .
         beta_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the beta weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc.
-            When initialized with Tensor, the shape should be :math:`(C)`. Default: 'zeros'.
+            The values of str refer to the function `initializer` including ``'zeros'`` , ``'ones'`` , etc.
+            When initialized with Tensor, the shape should be :math:`(C)`. Default: ``'zeros'`` .
+        dtype (:class:`mindspore.dtype`): Dtype of Parameters. Default: ``mstype.float32`` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(N, C, L)`. Data type: float16 or float32.
@@ -811,23 +889,21 @@ class InstanceNorm1d(_InstanceNorm):
         ``GPU``
 
     Examples:
-        >>> import mindspore
+        >>> import mindspore as ms
         >>> import numpy as np
-        >>> import mindspore.nn as nn
-        >>> from mindspore import Tensor
-        >>> net = nn.InstanceNorm1d(3)
-        >>> x = Tensor(np.ones([2, 3, 5]), mindspore.float32)
+        >>> net = ms.nn.InstanceNorm1d(3)
+        >>> x = ms.Tensor(np.ones([2, 3, 5]), ms.float32)
         >>> output = net(x)
         >>> print(output.shape)
         (2, 3, 5)
     """
 
     @staticmethod
-    @constexpr
+    @_primexpr
     def _check_input_dim(shape, cls_name):
         dim = len(shape)
-        if dim != 3:
-            raise ValueError(f"For '{cls_name}', the in_shape must have 3 dims, but got {dim}.")
+        _check_dim(dim, 3, cls_name)
+
 
 
 class InstanceNorm2d(_InstanceNorm):
@@ -854,17 +930,18 @@ class InstanceNorm2d(_InstanceNorm):
         where :math:`\hat{x}` is the estimated statistic and :math:`x_t` is the new observed value.
 
     Args:
-        num_features (int): `C` from an expected input of size (N, C, H, W).
-        eps (float): A value added to the denominator for numerical stability. Default: 1e-5.
+        num_features (int): `C` from an expected input of size :math:`(N, C, H, W)`.
+        eps (float): A value added to the denominator for numerical stability. Default: ``1e-5`` .
         momentum (float): A floating hyperparameter of the momentum for the
-            running_mean and running_var computation. Default: 0.1.
-        affine (bool): A bool value. When set to True, gamma and beta can be learned. Default: True.
+            running_mean and running_var computation. Default: ``0.1`` .
+        affine (bool): A bool value. When set to ``True`` , gamma and beta can be learned. Default: ``True`` .
         gamma_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the gamma weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc.
-            When initialized with Tensor, the shape should be :math:`(C)`. Default: 'zeros'.
+            The values of str refer to the function `initializer` including ``'zeros'`` , ``'ones'`` , etc.
+            When initialized with Tensor, the shape should be :math:`(C)`. Default: ``'ones'`` .
         beta_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the beta weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc.
-            When initialized with Tensor, the shape should be :math:`(C)`. Default: 'zeros'.
+            The values of str refer to the function `initializer` including ``'zeros'`` , ``'ones'`` , etc.
+            When initialized with Tensor, the shape should be :math:`(C)`. Default: ``'zeros'`` .
+        dtype (:class:`mindspore.dtype`): Dtype of Parameters. Default: ``mstype.float32`` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(N, C, H, W)`. Data type: float16 or float32.
@@ -890,23 +967,20 @@ class InstanceNorm2d(_InstanceNorm):
         ``GPU``
 
     Examples:
-        >>> import mindspore
+        >>> import mindspore as ms
         >>> import numpy as np
-        >>> import mindspore.nn as nn
-        >>> from mindspore import Tensor
-        >>> net = nn.InstanceNorm2d(3)
-        >>> x = Tensor(np.ones([2, 3, 2, 2]), mindspore.float32)
+        >>> net = ms.nn.InstanceNorm2d(3)
+        >>> x = ms.Tensor(np.ones([2, 3, 2, 2]), ms.float32)
         >>> output = net(x)
         >>> print(output.shape)
         (2, 3, 2, 2)
     """
 
     @staticmethod
-    @constexpr
+    @_primexpr
     def _check_input_dim(shape, cls_name):
         dim = len(shape)
-        if dim != 4:
-            raise ValueError(f"For '{cls_name}', the in_shape must have 4 dims, but got {dim}.")
+        _check_dim(dim, 4, cls_name)
 
 
 class InstanceNorm3d(_InstanceNorm):
@@ -933,17 +1007,18 @@ class InstanceNorm3d(_InstanceNorm):
         where :math:`\hat{x}` is the estimated statistic and :math:`x_t` is the new observed value.
 
     Args:
-        num_features (int): `C` from an expected input of size (N, C, D, H, W).
-        eps (float): A value added to the denominator for numerical stability. Default: 1e-5.
+        num_features (int): `C` from an expected input of size :math:`(N, C, D, H, W)`.
+        eps (float): A value added to the denominator for numerical stability. Default: ``1e-5`` .
         momentum (float): A floating hyperparameter of the momentum for the
-            running_mean and running_var computation. Default: 0.1.
-        affine (bool): A bool value. When set to True, gamma and beta can be learned. Default: True.
+            running_mean and running_var computation. Default: ``0.1`` .
+        affine (bool): A bool value. When set to ``True`` , gamma and beta can be learned. Default: ``True`` .
         gamma_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the gamma weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc.
-            When initialized with Tensor, the shape should be :math:`(C)`. Default: 'zeros'.
+            The values of str refer to the function `initializer` including ``'zeros'`` , ``'ones'`` , etc.
+            When initialized with Tensor, the shape should be :math:`(C)`. Default: ``'ones'`` .
         beta_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the beta weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', etc.
-            When initialized with Tensor, the shape should be :math:`(C)`. Default: 'zeros'.
+            The values of str refer to the function `initializer` including ``'zeros'`` , ``'ones'`` , etc.
+            When initialized with Tensor, the shape should be :math:`(C)`. Default: ``'zeros'`` .
+        dtype (:class:`mindspore.dtype`): Dtype of Parameters. Default: ``mstype.float32`` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(N, C, D, H, W)`. Data type: float16 or float32.
@@ -969,22 +1044,20 @@ class InstanceNorm3d(_InstanceNorm):
         ``GPU``
 
     Examples:
-        >>> import mindspore
+        >>> import mindspore as ms
         >>> import numpy as np
-        >>> import mindspore.nn as nn
-        >>> from mindspore import Tensor
-        >>> net = nn.InstanceNorm3d(3)
-        >>> x = Tensor(np.ones([2, 3, 5, 2, 2]), mindspore.float32)
+        >>> net = ms.nn.InstanceNorm3d(3)
+        >>> x = ms.Tensor(np.ones([2, 3, 5, 2, 2]), ms.float32)
         >>> output = net(x)
         >>> print(output.shape)
         (2, 3, 5, 2, 2)
     """
+
     @staticmethod
-    @constexpr
+    @_primexpr
     def _check_input_dim(shape, cls_name):
         dim = len(shape)
-        if dim != 5:
-            raise ValueError(f"For '{cls_name}', the in_shape must have 5 dims, but got {dim}.")
+        _check_dim(dim, 5, cls_name)
 
 
 class GroupNorm(Cell):
@@ -995,7 +1068,9 @@ class GroupNorm(Cell):
     normalization on a mini-batch of inputs for each single training case as described
     in the paper `Group Normalization <https://arxiv.org/pdf/1803.08494.pdf>`_. Group Normalization
     divides the channels into groups and computes within each group the mean and variance for normalization,
-    and it performs very stable over a wide range of batch size. It can be described using the following formula:
+    and it performs very stable over a wide range of batch size. :math:`\gamma` and :math:`\beta` are trainable scale
+    and shift.
+    It can be described using the following formula:
 
     .. math::
         y = \frac{x - \mathrm{E}[x]}{\sqrt{\mathrm{Var}[x] + \epsilon}} * \gamma + \beta
@@ -1003,14 +1078,18 @@ class GroupNorm(Cell):
     Args:
         num_groups (int): The number of groups to be divided along the channel dimension.
         num_channels (int): The number of input channels.
-        eps (float): A value added to the denominator for numerical stability. Default: 1e-5.
-        affine (bool): A bool value, this layer will have learnable affine parameters when set to true. Default: True.
+        eps (float): A value added to the denominator for numerical stability. Default: ``1e-05`` .
+        affine (bool): A bool value, this layer will have learnable affine parameters when set to ``true`` .
+            Default: ``True`` .
         gamma_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the gamma weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', 'xavier_uniform',
-            'he_uniform', etc. Default: 'ones'. If gamma_init is a Tensor, the shape must be [num_channels].
+            The values of str refer to the function `initializer` including ``'zeros'`` , ``'ones'`` ,
+            ``'xavier_uniform'`` , ``'he_uniform'`` , etc. Default: ``'ones'`` . If gamma_init is a Tensor, the shape
+            must be :math:`(num\_channels)`.
         beta_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the beta weight.
-            The values of str refer to the function `initializer` including 'zeros', 'ones', 'xavier_uniform',
-            'he_uniform', etc. Default: 'zeros'. If beta_init is a Tensor, the shape must be [num_channels].
+            The values of str refer to the function `initializer` including ``'zeros'`` , ``'ones'`` ,
+            ``'xavier_uniform'`` , ``'he_uniform'`` , etc. Default: ``'zeros'`` . If beta_init is a Tensor, the shape
+            must be :math:`(num\_channels)`.
+        dtype (:class:`mindspore.dtype`): Dtype of Parameters. Default: ``mstype.float32`` .
 
     Inputs:
         - **x** (Tensor) - The input feature with shape :math:`(N, C, H, W)` .
@@ -1029,8 +1108,10 @@ class GroupNorm(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> group_norm_op = nn.GroupNorm(2, 2)
-        >>> x = Tensor(np.ones([1, 2, 4, 4], np.float32))
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> group_norm_op = ms.nn.GroupNorm(2, 2)
+        >>> x = ms.Tensor(np.ones([1, 2, 4, 4], np.float32))
         >>> output = group_norm_op(x)
         >>> print(output)
         [[[[0. 0. 0. 0.]
@@ -1043,7 +1124,8 @@ class GroupNorm(Cell):
            [0. 0. 0. 0.]]]]
     """
 
-    def __init__(self, num_groups, num_channels, eps=1e-05, affine=True, gamma_init='ones', beta_init='zeros'):
+    def __init__(self, num_groups, num_channels, eps=1e-05, affine=True, gamma_init='ones', beta_init='zeros',
+                 dtype=mstype.float32):
         """Initialize GroupNorm."""
         super(GroupNorm, self).__init__()
         self.num_groups = validator.check_positive_int(num_groups, "num_groups", self.cls_name)
@@ -1055,43 +1137,44 @@ class GroupNorm(Cell):
         self.affine = validator.check_bool(affine, arg_name="affine", prim_name=self.cls_name)
 
         self.gamma = Parameter(initializer(
-            gamma_init, num_channels), name="gamma", requires_grad=affine)
+            gamma_init, num_channels, dtype=dtype), name="gamma", requires_grad=affine)
         self.beta = Parameter(initializer(
-            beta_init, num_channels), name="beta", requires_grad=affine)
+            beta_init, num_channels, dtype=dtype), name="beta", requires_grad=affine)
+        self.reduce_mean = P.ReduceMean(keep_dims=True)
+        self.reduce_sum = P.ReduceSum(keep_dims=True)
         self.shape = F.shape
         self.reshape = F.reshape
-        self.reduce_mean = P.ReduceMean(keep_dims=True)
         self.square = F.square
-        self.reduce_sum = P.ReduceSum(keep_dims=True)
         self.sqrt = P.Sqrt()
 
     def _cal_output(self, x):
         """calculate groupnorm output"""
-        batch, channel, height, width = self.shape(x)
+        batch, channel, height, width = F.shape(x)
         self._channel_check(channel, self.num_channels, self.cls_name)
-        x = self.reshape(x, (batch, self.num_groups, -1))
+        x = F.reshape(x, (batch, self.num_groups, -1))
         mean = self.reduce_mean(x, 2)
-        var = self.reduce_sum(self.square(x - mean), 2) / (channel * height * width / self.num_groups)
+        var = F.div(self.reduce_sum(F.square(F.sub(x, mean)), 2), (channel * height * width / self.num_groups))
         std = self.sqrt(var + self.eps)
-        x = (x - mean) / std
-        x = self.reshape(x, (batch, channel, height, width))
-        output = x * self.reshape(self.gamma, (-1, 1, 1)) + self.reshape(self.beta, (-1, 1, 1))
+        x = F.div(F.sub(x, mean), std)
+        x = F.reshape(x, (batch, channel, height, width))
+        output = F.add(x * F.reshape(self.gamma, (-1, 1, 1)), F.reshape(self.beta, (-1, 1, 1)))
         return output
 
     @staticmethod
-    @constexpr
+    @_primexpr
     def _check_input_dim(shape, cls_name):
         dim = len(shape)
-        if dim != 4:
-            raise ValueError(f"For '{cls_name}', the in_shape must have 4 dims, but got {dim}.")
+        _check_dim(dim, 4, cls_name)
 
     @staticmethod
-    @constexpr
+    @_primexpr
     def _channel_check(channel, num_channel, prim_name=None):
-        msg_prefix = f"For '{prim_name}', the" if prim_name else "The"
-        if channel != num_channel:
-            raise ValueError(f"{msg_prefix} channel(the second dim of the input 'x') must be equal to num_channels, "
-                             f"but got channel: {channel}, num_channels: {num_channel}.")
+        def _check():
+            msg_prefix = f"For '{prim_name}', the" if prim_name else "The"
+            if channel != num_channel:
+                raise ValueError(f"{msg_prefix} channel(the second dim of the input 'x') must be equal to "
+                                 f"num_channels, but got channel: {channel}, num_channels: {num_channel}.")
+        _check()
 
     @staticmethod
     @constexpr
@@ -1102,7 +1185,7 @@ class GroupNorm(Cell):
         return 'num_groups={}, num_channels={}'.format(self.num_groups, self.num_channels)
 
     def construct(self, x):
-        self._check_input_dim(self.shape(x), self.cls_name)
+        self._check_input_dim(F.shape(x), self.cls_name)
         self._check_dtype(x.dtype, [mstype.float16, mstype.float32], self.cls_name)
         output = self._cal_output(x)
         return output

@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_APPLY_ADA_MAX_H_
 #define MINDSPORE_CORE_OPS_APPLY_ADA_MAX_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,8 +33,8 @@ class MIND_API ApplyAdaMax : public BaseOperator {
     InitIOName({"var", "m", "v", "beta1_power", "lr", "beta1", "beta2", "epsilon", "grad"}, {"var", "m", "v"});
   }
 };
-abstract::AbstractBasePtr ApplyAdaMaxInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                           const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr ApplyAdaMaxInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                    const std::vector<abstract::AbstractBasePtr> &input_args);
 
 using kPrimApplyAdaMaxPtr = std::shared_ptr<ApplyAdaMax>;
 }  // namespace ops

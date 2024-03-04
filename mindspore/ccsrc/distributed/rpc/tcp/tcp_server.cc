@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "distributed/rpc/tcp/tcp_server.h"
+#include "include/backend/distributed/rpc/tcp/tcp_server.h"
 
 namespace mindspore {
 namespace distributed {
@@ -33,7 +33,7 @@ void TCPServer::Finalize() {
   }
 }
 
-void TCPServer::SetMessageHandler(const MessageHandler &handler) { tcp_comm_->SetMessageHandler(handler); }
+void TCPServer::SetMessageHandler(const MessageHandler &handler, uint32_t) { tcp_comm_->SetMessageHandler(handler); }
 
 std::string TCPServer::GetIP() const { return ip_; }
 
@@ -48,10 +48,10 @@ bool TCPServer::InitializeImpl(const std::string &url, const MemAllocateCallback
       MS_LOG(EXCEPTION) << "Failed to initialize tcp comm";
     }
     if (url != "") {
-      rt = tcp_comm_->StartServerSocket(url, allocate_cb);
+      rt = (tcp_comm_->StartServerSocket(url, allocate_cb) == 0) ? true : false;
       ip_ = SocketOperation::GetIP(url);
     } else {
-      rt = tcp_comm_->StartServerSocket(allocate_cb);
+      rt = StartSocketWithinPortRange(allocate_cb);
       ip_ = SocketOperation::GetLocalIP();
     }
     auto server_fd = tcp_comm_->GetServerFd();
@@ -61,6 +61,36 @@ bool TCPServer::InitializeImpl(const std::string &url, const MemAllocateCallback
   } else {
     return true;
   }
+}
+
+bool TCPServer::StartSocketWithinPortRange(const MemAllocateCallback &allocate_cb) {
+  uint32_t current_port = port_range_.first;
+  int result;
+  std::string new_url;
+  do {
+    if (port_range_.first > port_range_.second) {
+      MS_LOG(EXCEPTION) << "The port range " << port_range_.first << " to " << port_range_.second << " is invalid.";
+    }
+    new_url = SocketOperation::GetLocalIP() + ":" + std::to_string(current_port);
+    result = tcp_comm_->StartServerSocket(new_url, allocate_cb);
+
+    // Return value kAddressInUseError means this port is in use, so we increase the port by 1 and retry.
+    if (result == kAddressInUseError) {
+      current_port++;
+      MS_LOG(WARNING) << "The address " << new_url
+                      << " is already in use. Select another url and increase port to: " << current_port;
+      if (current_port > port_range_.second) {
+        MS_LOG(EXCEPTION) << "Port range " << port_range_.first << " to " << port_range_.second
+                          << " are all in use already. You can run 'netstat -anp|grep <port number>' command to check "
+                             "which process occupies the port.";
+      }
+    } else if (result == -1) {
+      return false;
+    } else {
+      return true;
+    }
+  } while (result == kAddressInUseError);
+  return true;
 }
 }  // namespace rpc
 }  // namespace distributed

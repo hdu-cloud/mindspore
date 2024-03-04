@@ -32,20 +32,49 @@ class DSCallback:
 
     Args:
         step_size (int, optional): The number of steps between adjacent `ds_step_begin`/`ds_step_end`
-            calls. Default: 1, will be called at each step.
+            calls. Default: ``1``, will be called at each step.
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> from mindspore.dataset import DSCallback
-        >>> from mindspore.dataset.transforms import transforms
         >>>
         >>> class PrintInfo(DSCallback):
+        ...     def ds_begin(self, ds_run_context):
+        ...         print("callback: start dataset pipeline", flush=True)
+        ...
+        ...     def ds_epoch_begin(self, ds_run_context):
+        ...         print("callback: epoch begin, we are in epoch", ds_run_context.cur_epoch_num, flush=True)
+        ...
         ...     def ds_epoch_end(self, ds_run_context):
-        ...         print(ds_run_context.cur_epoch_num)
-        ...         print(ds_run_context.cur_step_num)
+        ...         print("callback: epoch end, we are in epoch", ds_run_context.cur_epoch_num, flush=True)
+        ...
+        ...     def ds_step_begin(self, ds_run_context):
+        ...         print("callback: step begin, step", ds_run_context.cur_step_num_in_epoch, flush=True)
+        ...
+        ...     def ds_step_end(self, ds_run_context):
+        ...         print("callback: step end, step", ds_run_context.cur_step_num_in_epoch, flush=True)
         >>>
-        >>> dataset = ds.MnistDataset(mnist_dataset_dir, num_samples=100)
-        >>> op = transforms.OneHot(10)
-        >>> dataset = dataset.map(operations=op, callbacks=PrintInfo())
+        >>> dataset = ds.GeneratorDataset([1, 2], "col1", shuffle=False, num_parallel_workers=1)
+        >>> dataset = dataset.map(operations=lambda x: x, callbacks=PrintInfo())
+        >>>
+        >>> # Start dataset pipeline
+        >>> iterator = dataset.create_tuple_iterator(num_epochs=2)
+        >>> for i in range(2):
+        ...     for d in iterator:
+        ...         pass
+        callback: start dataset pipeline
+        callback: epoch begin, we are in epoch 1
+        callback: step begin, step 1
+        callback: step begin, step 2
+        callback: step end, step 1
+        callback: step end, step 2
+        callback: epoch end, we are in epoch 1
+        callback: epoch begin, we are in epoch 2
+        callback: step begin, step 1
+        callback: step begin, step 2
+        callback: step end, step 1
+        callback: step end, step 2
+        callback: epoch end, we are in epoch 2
     """
 
     @check_callback
@@ -131,7 +160,7 @@ class WaitedDSCallback(Callback, DSCallback):
     r"""
     Abstract base class used to build dataset callback classes that are synchronized with the training callback class
     `mindspore.train.Callback \
-    <https://www.mindspore.cn/docs/en/r2.0.0-alpha/api_python/train/
+    <https://www.mindspore.cn/docs/en/master/api_python/train/
     mindspore.train.Callback.html#mindspore.train.Callback>`_ .
 
     It can be used to execute a custom callback method before a step or an epoch, such as
@@ -142,7 +171,7 @@ class WaitedDSCallback(Callback, DSCallback):
     `device_number` , `list_callback` , `cur_epoch_num` , `cur_step_num` , `dataset_sink_mode` ,
     `net_outputs` , etc., see
     `mindspore.train.Callback \
-    <https://www.mindspore.cn/docs/en/r2.0.0-alpha/api_python/train/
+    <https://www.mindspore.cn/docs/en/master/api_python/train/
     mindspore.train.Callback.html#mindspore.train.Callback>`_ .
 
     Users can obtain the dataset pipeline context through `ds_run_context` , including
@@ -152,13 +181,13 @@ class WaitedDSCallback(Callback, DSCallback):
         Note that the call is triggered only at the beginning of the second step or epoch.
 
     Args:
-       step_size (int, optional): The number of rows in each step, usually set equal to the batch size. Default: 1.
+       step_size (int, optional): The number of rows in each step, usually set equal to the batch size. Default: ``1``.
 
     Examples:
-        >>> import mindspore.nn as nn
         >>> import mindspore as ms
-        >>> from mindspore.dataset import WaitedDSCallback
         >>> import mindspore.dataset as ds
+        >>> import mindspore.nn as nn
+        >>> from mindspore.dataset import WaitedDSCallback
         >>>
         >>> ms.set_context(mode=ms.GRAPH_MODE, device_target="CPU")
         >>>
@@ -214,7 +243,7 @@ class WaitedDSCallback(Callback, DSCallback):
         >>> data = data.map(operations=(lambda x: x), callbacks=my_cb1)
         >>>
         >>> net = Net()
-        >>> model = ms.Model(net)
+        >>> model = ms.train.Model(net)
         >>>
         >>> # add the data and network callback objects to the model training callback list
         >>> model.train(2, data, dataset_sink_mode=False, callbacks=[my_cb2, my_cb1])

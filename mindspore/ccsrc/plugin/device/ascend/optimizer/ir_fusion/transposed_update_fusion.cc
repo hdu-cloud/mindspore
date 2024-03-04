@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,21 +17,24 @@
 #include <set>
 #include <vector>
 #include <algorithm>
+#include "ops/array_op_name.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "plugin/device/ascend/optimizer/ascend_helper.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/common/debug/anf_ir_dump.h"
 #include "utils/trace_base.h"
 
-namespace mindspore {
-namespace opt {
+namespace mindspore::opt {
 namespace {
 constexpr size_t kInt32Len = 4;
 
 tensor::TensorPtr CreatePermTensor(const CNodePtr &transposed) {
   auto perm_attr = common::AnfAlgo::GetNodeAttr<std::vector<int64_t>>(transposed, kAttrPerm);
   std::vector<int32_t> perm;
-  (void)std::transform(perm_attr.begin(), perm_attr.end(), std::back_inserter(perm), LongToInt);
+  (void)std::transform(perm_attr.begin(), perm_attr.end(), std::back_inserter(perm), [&perm_attr](auto v) {
+    return v < 0 ? SizeToInt(perm_attr.size()) + LongToInt(v) : LongToInt(v);
+  });
   std::vector<int64_t> perm_shape = {SizeToLong(perm.size())};
   TensorTypePtr tensor_type = std::make_shared<TensorType>(kInt32);
   tensor::DeviceInfo device_info{kOpFormat_DEFAULT, tensor_type};
@@ -69,7 +72,7 @@ ValueNodePtr CreatePermValueNode(const CNodePtr &transposed) {
 
 const BaseRef TransposedUpdateFusion::DefinePattern() const {
   VarPtr X = std::make_shared<Var>();
-  return VectorRef({prim::kPrimTranspose, X});
+  return VectorRef({prim::kPrimTransposeD, X});
 }
 
 const AnfNodePtr TransposedUpdateFusion::Process(const FuncGraphPtr &func_graph, const AnfNodePtr &node,
@@ -87,9 +90,10 @@ const AnfNodePtr TransposedUpdateFusion::Process(const FuncGraphPtr &func_graph,
   }
 
   auto perm_vnode = CreatePermValueNode(transposed);
-  std::vector<AnfNodePtr> transpose_inputs = {NewValueNode(std::make_shared<Primitive>(kTransposeNODOpName)),
+  std::vector<AnfNodePtr> transpose_inputs = {NewValueNode(std::make_shared<Primitive>(kTransposeOpName)),
                                               transposed->input(1), perm_vnode};
   auto transpose = NewCNode(transpose_inputs, kernel_graph);
+  MS_EXCEPTION_IF_NULL(transpose);
   transpose->set_scope(transposed->scope());
   transpose->set_abstract(transposed->abstract());
 
@@ -99,9 +103,9 @@ const AnfNodePtr TransposedUpdateFusion::Process(const FuncGraphPtr &func_graph,
 
   MS_EXCEPTION_IF_NULL(kernel_select_);
   kernel_select_->SelectKernel(transpose);
-  auto ori_build_info = AnfAlgo::GetSelectKernelBuildInfo(transpose);
-  MS_EXCEPTION_IF_NULL(ori_build_info);
-  auto builder = std::make_shared<kernel::KernelBuildInfo::KernelBuildInfoBuilder>(ori_build_info);
+  auto selected_build_info = AnfAlgo::GetSelectKernelBuildInfo(transpose);
+  MS_EXCEPTION_IF_NULL(selected_build_info);
+  auto builder = std::make_shared<kernel::KernelBuildInfo::KernelBuildInfoBuilder>(selected_build_info);
   MS_EXCEPTION_IF_NULL(builder);
   auto input_format = AnfAlgo::GetInputFormat(node, 0);
   auto output_format = AnfAlgo::GetOutputFormat(node, 0);
@@ -109,9 +113,11 @@ const AnfNodePtr TransposedUpdateFusion::Process(const FuncGraphPtr &func_graph,
   builder->SetOutputsFormat({output_format});
   AnfAlgo::SetSelectKernelBuildInfo(builder->Build(), transpose.get());
   kernel_graph->AddValueNodeToGraph(perm_vnode);
+  if (common::AnfAlgo::HasNodeAttr(kAttrIsKernelDynamicImpl, transposed)) {
+    common::AnfAlgo::EraseNodeAttr(kAttrIsKernelDynamicImpl, transposed);
+  }
   common::AnfAlgo::CopyNodeAttrs(transposed, transpose);
   kernel_graph->ReplaceRefPair({transposed, 0}, {transpose, 0});
   return transpose;
 }
-}  // namespace opt
-}  // namespace mindspore
+}  // namespace mindspore::opt

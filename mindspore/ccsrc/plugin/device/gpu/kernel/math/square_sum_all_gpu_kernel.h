@@ -39,15 +39,19 @@ class SquareSumAllFwdGpuKernelMod : public NativeGpuKernelMod {
     if (is_null_input_) {
       return true;
     }
+    constexpr size_t kSquareSumAllInputsNum = 2;
+    constexpr size_t kSquareSumAllOutputsNum = 2;
+    CHECK_KERNEL_INPUTS_NUM(inputs.size(), kSquareSumAllInputsNum, kernel_name_);
+    CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kSquareSumAllOutputsNum, kernel_name_);
     T *input_addr_0 = GetDeviceAddress<T>(inputs, 0);
     T *input_addr_1 = GetDeviceAddress<T>(inputs, 1);
     T *output_addr_0 = GetDeviceAddress<T>(outputs, 0);
     T *output_addr_1 = GetDeviceAddress<T>(outputs, 1);
     float *ws_addr_0 = GetDeviceAddress<float>(workspace, 0);
     float *ws_addr_1 = GetDeviceAddress<float>(workspace, 1);
-    SquareSumAll(input_size_, input_addr_0, input_addr_1, output_addr_0, output_addr_1, ws_addr_0, ws_addr_1,
-                 reinterpret_cast<cudaStream_t>(stream_ptr));
-
+    auto status = SquareSumAll(input_size_, input_addr_0, input_addr_1, output_addr_0, output_addr_1, ws_addr_0,
+                               ws_addr_1, reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return true;
   }
 

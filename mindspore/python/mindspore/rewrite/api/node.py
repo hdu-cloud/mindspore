@@ -14,12 +14,13 @@
 # ============================================================================
 """Rewrite module api: Node."""
 
-from typing import Union, Optional
+from typing import Union, Optional, List, Dict
+from types import FunctionType
 
 from mindspore.nn import Cell
 from mindspore.ops.primitive import Primitive
-from ..._checkparam import Validator
-from ..node import Node as NodeImpl
+from mindspore import _checkparam as Validator
+from ..node.node import Node as NodeImpl
 from ..symbol_tree import SymbolTree as SymbolTreeImpl
 from .node_type import NodeType
 from .scoped_value import ScopedValue
@@ -27,16 +28,17 @@ from .scoped_value import ScopedValue
 
 class Node:
     """
-    Node is a data structure represents a source code line in network.
+    A node is a data structure that expresses source code statements in a network.
 
-    For the most part, Node represents an operator invoking in forward which could be an instance of `Cell`, an instance
-    of `Primitive` or a callable method.
+    Each node usually corresponds to a statement in expanded forward evaluation process.
+
+    Nodes can express a ``Cell`` call statement, a ``Primitive`` call statement, an arithmetic operation statement, a
+    return statements, etc. of the forward calculation process.
 
     Args:
-        node (NodeImpl): A handler of `NodeImpl`. `NodeImpl` mentioned below is implementation of `Node` which is not
-            an interface of Rewrite. Rewrite recommend invoking specific create method of `Node`
-            to instantiate an instance of Node such as `create_call_cell` rather than invoking constructor of `Node`
-            directly, so don't care about what is `NodeImpl` and use its instance just as a handler.
+        node (NodeImpl): A handler of `NodeImpl`. It is recommended to call the specific methods in Node to create
+            a Node, such as 'create_call_cell', rather than calling the Node's constructor directly.
+            Don't care what `NodeImpl` is, just treat it as a handle.
     """
 
     def __init__(self, node: NodeImpl):
@@ -49,8 +51,8 @@ class Node:
         return self._node == other._node
 
     @staticmethod
-    def create_call_cell(cell: Cell, targets: [Union[ScopedValue, str]], args: [ScopedValue] = None,
-                         kwargs: {str: ScopedValue}=None, name: str = "", is_sub_net: bool = False) -> 'Node':
+    def create_call_cell(cell: Cell, targets: List[Union[ScopedValue, str]], args: List[ScopedValue] = None,
+                         kwargs: Dict[str, ScopedValue] = None, name: str = "", is_sub_net: bool = False) -> 'Node':
         """
         Create a node. Only support create from a `Cell` now.
 
@@ -62,20 +64,18 @@ class Node:
 
         Args:
             cell (Cell): Cell-operator of this forward-layer.
-            targets (list[ScopedValue]): Indicate output names. Used as targets of an assign statement in source code.
-                Rewrite will check and ensure the uniqueness of each target while node being inserted.
-            args (list[ScopedValue]): Indicate input names. Used as args of a call expression of an assign statement in
-                source code. Default is None indicate the `cell` has no args inputs. Rewrite will check and ensure the
-                uniqueness of each arg while node being inserted.
-            kwargs (dict): Type of key must be `str` and type of value must be `ScopedValue`.
-                Indicate keyword input names. Used as kwargs of a call expression of an assign statement in source code.
-                Default is None indicate the `cell` has no kwargs inputs. Rewrite will check and ensure the uniqueness
-                of each kwarg while node being inserted.
+            targets (List[Union[ScopedValue, str]]): Indicate output names. Used as targets of an assign statement in
+                source code.
+            args (List[ScopedValue]): Indicate input names. Used as args of a call expression of an assign statement in
+                source code. Default: ``None`` , which indicates the `cell` has no args inputs.
+            kwargs (Dict[str, ScopedValue]): Type of key must be `str` and type of value must be `ScopedValue`.
+                Indicate keyword input names. Used as kwargs of a call expression of an assign statement in source
+                code. Default: ``None`` , which indicates the `cell` has no kwargs inputs.
             name (str): Indicate the name of node. Used as field name in source code. Default is None. Rewrite will
-                generate name from `targets` when name is None. Rewrite will check and ensure the uniqueness of `name`
-                while node being inserted.
-            is_sub_net (bool): Indicate that is `cell` a network. If `is_sub_net` is true, Rewrite will try to parse the
-                `cell` to a TreeNode, else a CallCell Node. Default is a False.
+                generate name from `cell` when name is None. Rewrite will check and ensure the uniqueness of `name`
+                while node being inserted. Default: ``""`` .
+            is_sub_net (bool): Indicate that is `cell` a network. If `is_sub_net` is true, Rewrite will try to parse
+                the `cell` to a TreeNode, otherwise the `cell` is parsed to a CallCell node. Default: ``False`` .
 
         Returns:
             An instance of `Node`.
@@ -86,6 +86,21 @@ class Node:
             TypeError: If the type of `targets` is not in `[ScopedValue, str]`.
             TypeError: If arg in `args` is not a `ScopedValue`.
             TypeError: If key of `kwarg` is not a str or value of kwarg in `kwargs` is not a `ScopedValue`.
+
+        Examples:
+            >>> from mindspore.rewrite import SymbolTree, ScopedValue
+            >>> import mindspore.nn as nn
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
+            >>> stree = SymbolTree.create(net)
+            >>> node = stree.get_node("conv1")
+            >>> position = stree.after(node)
+            >>> new_node = node.create_call_cell(cell=nn.ReLU(), targets=['x'],
+            ...                                  args=[ScopedValue.create_naming_value('x')], name='new_relu')
+            >>> stree.insert(position, new_node)
+            >>> print(type(new_node))
+            <class 'mindspore.rewrite.api.node.Node'>
         """
         Validator.check_value_type("cell", cell, [Cell, Primitive], "Node")
         Validator.check_element_type_of_iterable("targets", targets, [ScopedValue, str], "Node")
@@ -95,41 +110,107 @@ class Node:
             Validator.check_element_type_of_iterable("args", args, [ScopedValue], "Node")
         if kwargs is not None:
             Validator.check_element_type_of_dict("kwargs", kwargs, [str], [ScopedValue], "Node")
-        return Node(NodeImpl.create_call_op(cell, None, targets, ScopedValue.create_naming_value(name, "self"),
-                                            args, kwargs, name, is_sub_net))
+        return Node(NodeImpl.create_call_op(cell, None, targets, args, kwargs, name, is_sub_net))
 
-    def get_handler(self) -> NodeImpl:
+    @staticmethod
+    def create_call_function(function: FunctionType, targets: List[Union[ScopedValue, str]],
+                             args: List[ScopedValue] = None, kwargs: Dict[str, ScopedValue] = None) -> 'Node':
         """
-        Get handler of node implementation.
+        Create a node that corresponds to a function call. The `function` object is saved into network, and used via
+        getting object from `self.` .
+
+        Args:
+            function (FunctionType): The function to be called.
+            targets (List[Union[ScopedValue, str]]): indicates output names. Used as targets of an assign statement in
+                source code.
+            args (List[ScopedValue]): Indicate input names. Used as args of a call expression of an assign statement in
+                source code. Default: ``None`` , which indicates the `function` has no args inputs.
+            kwargs (Dict[str, ScopedValue]): Type of key must be `str` and type of value must be `ScopedValue`.
+                Indicate keyword input names. Used as kwargs of a call expression of an assign statement in source
+                code. Default: ``None`` , which indicates the `function` has no kwargs inputs.
 
         Returns:
-            An instance of `NodeImpl`.
+            An instance of `Node`.
+
+        Raises:
+            TypeError: If `function` is not a `FunctionType`.
+            TypeError: If `targets` is not `list`.
+            TypeError: If the type of `targets` is not in `[ScopedValue, str]`.
+            TypeError: If arg in `args` is not a `ScopedValue`.
+            TypeError: If key of `kwarg` is not a str or value of kwarg in `kwargs` is not a `ScopedValue`.
+
+        Examples:
+            >>> from mindspore.rewrite import SymbolTree, ScopedValue
+            >>> import mindspore.nn as nn
+            >>> import mindspore.ops as ops
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
+            >>> stree = SymbolTree.create(net)
+            >>> node = stree.get_node("conv1")
+            >>> position = stree.after(node)
+            >>> new_node = node.create_call_function(function=ops.abs, targets=['x'],
+            ...                                      args=[ScopedValue.create_naming_value('x')])
+            >>> stree.insert(position, new_node)
+            >>> print(new_node.get_node_type())
+            NodeType.CallFunction
         """
+        Validator.check_value_type("function", function, [FunctionType, type], "create_call_function")
+        Validator.check_element_type_of_iterable("targets", targets, [ScopedValue, str], "create_call_function")
+        if args is not None:
+            Validator.check_element_type_of_iterable("args", args, [ScopedValue], "create_call_function")
+        if kwargs is not None:
+            Validator.check_element_type_of_dict("kwargs", kwargs, [str], [ScopedValue], "create_call_function")
+        return Node(NodeImpl._create_call_function(function, targets, args, kwargs))
+
+    @staticmethod
+    def create_input(param_name: str, default: Optional[ScopedValue] = None) -> 'Node':
+    # pylint: disable=missing-function-docstring
+        Validator.check_value_type("param_name", param_name, [str], "Node")
+        if default is not None:
+            Validator.check_value_type("default", default, [ScopedValue], "Node")
+        return Node(NodeImpl.create_input_node(None, param_name, default, name=f"input_{param_name}"))
+
+    def get_handler(self) -> NodeImpl:
         return self._node
 
     def get_inputs(self) -> ['Node']:
         """
-        Get input nodes of current node in topological order.
+        Gets a list of nodes whose output values are used as input values for the current node.
 
         Returns:
-            A list of instances of `Node` as input nodes.
+            A list of nodes.
+
+        Examples:
+            >>> from mindspore.rewrite import SymbolTree
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
+            >>> stree = SymbolTree.create(net)
+            >>> node = stree.get_node("conv2")
+            >>> inputs = node.get_inputs()
+            >>> print([input.get_name() for input in inputs])
+            ['max_pool2d']
         """
         return [Node(node_impl) for node_impl in self._node.get_inputs()]
 
     def get_users(self) -> ['Node']:
         """
-        Get output nodes of current node in topological order.
+        Get a list of nodes that use the output of the current node as input.
 
         Returns:
-            A list of nodes represents users.
+            A list of nodes.
 
         Examples:
             >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> stree = SymbolTree.create(net)
             >>> node = stree.get_node("conv1")
             >>> users = node.get_users()
+            >>> print([user.get_name() for user in users])
+            ['relu']
         """
         belong_symbol_tree: SymbolTreeImpl = self._node.get_belong_symbol_tree()
         if belong_symbol_tree is None:
@@ -155,11 +236,14 @@ class Node:
 
         Examples:
             >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> stree = SymbolTree.create(net)
-            >>> node = stree.get_node("conv1")
-            >>> node.set_arg(0, "x")
+            >>> node = stree.get_node("relu_3")
+            >>> node.set_arg(0, "fc1")
+            >>> print(node.get_args())
+            [fc1]
         """
         Validator.check_value_type("index", index, [int], "Node")
         Validator.check_value_type("arg", arg, [ScopedValue, str], "Node")
@@ -176,12 +260,12 @@ class Node:
         Args:
             arg_idx (int): Indicate which input being modified.
             src_node (Node): A `Node` as new input. Can be a node or name of node.
-            out_idx (int, optional): Indicate which output of `src_node` as new input of current node. Default is None
+            out_idx (int, optional): Indicate which output of `src_node` as new input of current node.
+                Default: ``None`` ,
                 which means use first output of `src_node` as new input.
 
         Raises:
             RuntimeError: If `src_node` is not belong to current `SymbolTree`.
-            RuntimeError: If current node and `src_node` is not belong to same `SymbolTree`.
             TypeError: If `arg_idx` is not a `int` number.
             ValueError: If `arg_idx` is out of range.
             TypeError: If `src_node` is not a `Node` instance.
@@ -191,12 +275,15 @@ class Node:
 
         Examples:
             >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> stree = SymbolTree.create(net)
-            >>> src_node = stree.get_node("conv1")
-            >>> dst_node = stree.get_node("conv2")
-            >>> dst_node.set_arg_by_node(0, src_node)
+            >>> src_node = stree.get_node("fc1")
+            >>> dst_node = stree.get_node("relu_3")
+            >>> dst_node.set_arg_by_node(0, src_node, 0)
+            >>> print(dst_node.get_args())
+            [fc1]
         """
         Validator.check_value_type("arg_idx", arg_idx, [int], "Node")
         Validator.check_value_type("src_node", src_node, [Node], "Node")
@@ -210,25 +297,10 @@ class Node:
 
     def get_targets(self) -> [ScopedValue]:
         """
-        Get targets of current node.
-
-        - When node_type of current node is `CallCell`, `CallPrimitive`, `CallMethod` or `Tree`, `targets` are strings
-          represents invoke result of the cell-op or primitive-op or function-call which are corresponding to targets of
-          ast.Assign.
-        - When node_type of current node is Input, `targets` should have only one element which is a string represents
-          parameter of function.
-        - When node_type of current node is `Python` or `Output`, `targets` are don't-care.
+        Gets a list of output values for the current node.
 
         Returns:
-            A list of instances of ScopedValue as targets of node.
-
-        Examples:
-            >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
-            >>> stree = SymbolTree.create(net)
-            >>> node = stree.get_node("conv1")
-            >>> targets = node.get_targets()
+            A list of outputs of type ``ScopedValue`` .
         """
         return self._node.get_targets()
 
@@ -243,147 +315,119 @@ class Node:
 
         Examples:
             >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> stree = SymbolTree.create(net)
             >>> node = stree.get_node("conv1")
             >>> name = node.get_name()
+            >>> print(name)
+            conv1
         """
         return self._node.get_name()
 
     def get_node_type(self) -> NodeType:
         """
-        Get the node_type of current node.
+        Get the node_type of current node. See :class:`mindspore.rewrite.NodeType` for details on node types.
 
         Returns:
             A NodeType as node_type of node.
 
         Examples:
             >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> stree = SymbolTree.create(net)
             >>> node = stree.get_node("conv1")
             >>> node_type = node.get_node_type()
+            >>> print(node_type)
+            NodeType.CallCell
         """
         return self._node.get_node_type()
 
     def get_instance_type(self) -> type:
         """
-        Get the instance_type of current node.
+        Gets the instance type called in the code corresponding to the current node.
 
-        - When node_type of current node is `CallCell`, instance_type is type of cell-op.
-        - When node_type of current node is `CallPrimitive`, instance_type is type of primitive-op.
-        - When node_type of current node is `Tree`, instance_type is type of network-cell.
-        - When node_type of current node is `Python`, `Input`, `Output` or `CallMethod`, instance_type should be
-          NoneType.
+        - When `node_type` of current node is `CallCell`, the code for that node calls an instance of type ``Cell`` .
+        - When `node_type` of current node is `CallPrimitive`, the code for that node calls an instance of
+          type ``Primitive`` .
+        - When `node_type` of current node is `Tree`, the code for that node calls an instance of network type.
+        - When `node_type` of current node is `Python`, `Input`, `Output` or `CallMethod`, the instance type
+          is ``NoneType`` .
 
         Returns:
-            A type object represents corresponding instance type of current node.
+            The type of instance called in the statement corresponding to the current node.
+
+        Examples:
+            >>> from mindspore.rewrite import SymbolTree
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
+            >>> stree = SymbolTree.create(net)
+            >>> node = stree.get_node("conv1")
+            >>> instance_type = node.get_instance_type()
+            >>> print(instance_type)
+            <class 'mindspore.nn.layer.conv.Conv2d'>
         """
         return self._node.get_instance_type()
 
     def get_instance(self):
-        """
-        Get the instance of current node.
-
-        - When node_type of current node is `CallCell`, instance is an instance of Cell.
-        - When node_type of current node is `CallPrimitive`, instance is an instance of primitive.
-        - When node_type of current node is `Tree`, instance is an instance of network-cell.
-        - When node_type of current node is `Python`, `Input`, `Output` or `CallMethod`, instance should be None.
-
-        Returns:
-            A object represents corresponding instance of current node.
-        """
         return self._node.get_instance()
 
     def get_args(self) -> [ScopedValue]:
         """
-        Get the arguments of current node.
-
-        - When `node_type` of current node is `CallCell`, `CallPrimitive` or `Tree`, arguments are corresponding to args
-          of ast.Call which represents arguments to invoke forward method of cell-op or primitive-op.
-        - When `node_type` of current node is `Input`, arguments represents default-value of argument of function.
-        - When `node_type` of current node is `Output`, arguments represents the return values of network.
-        - When `node_type` of current node is `Python`, arguments are don't-care.
+        Get arguments of current node.
 
         Returns:
-            A list of instances of `ScopedValue`.
+            A list of arguments of type ``ScopedValue`` .
 
         Examples:
             >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> stree = SymbolTree.create(net)
             >>> node = stree.get_node("conv1")
-            >>> args = node.get_args()
+            >>> print(node.get_args())
+            [x]
         """
         return self._node.get_args()
 
-    def get_kwargs(self) -> {str: ScopedValue}:
+    def get_symbol_tree(self) -> 'SymbolTree':
         """
-        Get the keyword arguments of current node.
-
-        - When node_type of current node is `CallCell`, `CallPrimitive` or `Tree`, keyword arguments are corresponding
-          to kwargs of ast.Call which represents arguments to invoke forward method of cell-op or primitive-op.
-        - When node_type of current node is `Python`, `Input` or `Output`, keyword arguments are don't-care.
+        Get the symbol tree which current node belongs to.
 
         Returns:
-            A dict of str to instance of `ScopedValue`.
+            SymbolTree, None if current node does not belong to any SymbolTree.
 
         Examples:
-            >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
-            >>> stree = SymbolTree.create(net)
-            >>> node = stree.get_node("conv1")
-            >>> kwargs = node.get_kwargs()
+        >>> from mindspore.rewrite import SymbolTree
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
+        >>> stree = SymbolTree.create(net)
+        >>> node = stree.get_node("conv1")
+        >>> print(type(node.get_symbol_tree()))
+        <class 'mindspore.rewrite.api.symbol_tree.SymbolTree'>
         """
+        from .symbol_tree import SymbolTree
+        stree_impl = self._node.get_belong_symbol_tree()
+        if not stree_impl:
+            return None
+        return SymbolTree(stree_impl)
+
+    def get_kwargs(self) -> {str: ScopedValue}:
         return self._node.get_kwargs()
 
     def set_attribute(self, key: str, value):
-        """
-        Set attribute of current node.
-
-        Args:
-            key (str): Key of attribute.
-            value (object): Value of attribute.
-
-        Raises:
-            TypeError: If `key` is not a `str`.
-
-        Examples:
-            >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
-            >>> stree = SymbolTree.create(net)
-            >>> node = stree.get_node("conv1")
-            >>> node.set_attribute("channel", 3)
-        """
         Validator.check_value_type("key", key, [str], "Node attribute")
         self._node.set_attribute(key, value)
 
     def get_attributes(self) -> {str: object}:
-        """
-        Get all attributes of current node.
-
-        Returns:
-            A dict of str to instance of object as attributes.
-        """
         return self._node.get_attributes()
 
     def get_attribute(self, key: str):
-        """
-        Get attribute of current node by key.
-
-        Args:
-            key (str): Key of attribute.
-
-        Returns:
-            A object as attribute, can be any type.
-
-        Raises:
-            TypeError: If `key` is not a `str`.
-        """
         Validator.check_value_type("key", key, [str], "Node attribute")
         return self._node.get_attribute(key)

@@ -532,7 +532,7 @@ class TruncatedNormal {
   static T eval_polynomial(const T (&arr)[N], T x) {
     T sum = arr[N - 1];
     if constexpr (N > 1) {
-      eval_polynomial_loop<N - 2>(arr, x, &sum);
+      eval_polynomial_loop<N - kIndex2>(arr, x, &sum);
     }
     return sum;
   }
@@ -545,6 +545,24 @@ class TruncatedNormal {
       eval_polynomial_loop<Index - 1>(arr, x, sum);
     }
   }
+};
+
+//
+// Constant distribution.
+//
+template <typename T>
+class ConstantDistribution {
+ public:
+  explicit ConstantDistribution(T value) : value_(value) {}
+  ~ConstantDistribution() = default;
+
+  template <typename Generator>
+  T operator()(Generator &&) const {
+    return value_;
+  }
+
+ private:
+  T value_;
 };
 }  // namespace mindspore::random
 

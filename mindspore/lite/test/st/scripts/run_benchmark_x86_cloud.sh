@@ -1,5 +1,46 @@
 #!/bin/bash
 source ./scripts/base_functions.sh
+source ./scripts/run_benchmark_python.sh
+echo "Running mslite test script : run_benchmark_x86_cloud.sh"
+
+# Run on x86 java platform:
+function Run_x86_java() {
+    local elapsed_time ret
+    cd ${x86_path} || exit 1
+    mkdir java || exit 1
+    cp ${x86_path}/mindspore-lite-${version}-linux-x64.tar.gz ./java/ || exit 1
+    cd ./java || exit 1
+    tar -zxf mindspore-lite-${version}-linux-x64.tar.gz || exit 1
+    # compile benchmark
+    cd mindspore-lite-${version}-linux-x64 || exit 1
+    echo "javac -cp ${x86_path}/java/mindspore-lite-${version}-linux-x64/runtime/lib/mindspore-lite-java.jar ${basepath}/java/src/main/java/Benchmark.java -d ."
+    javac -cp ${x86_path}/java/mindspore-lite-${version}-linux-x64/runtime/lib/mindspore-lite-java.jar ${basepath}/java/src/main/java/Benchmark.java -d .
+
+    # Run tflite converted models:
+    while read line; do
+        model_name=`echo ${line} | awk -F ';' '{print $1}'`
+        if [[ $model_name == \#* ]]; then
+          continue
+        fi
+        echo $LD_LIBRARY_PATH >> "${run_x86_java_log_file}"
+        echo ${model_name} >> "${run_x86_java_log_file}"
+        echo "java -classpath .:${x86_path}/java/mindspore-lite-${version}-linux-x64/runtime/lib/mindspore-lite-java.jar Benchmark ${ms_models_path}/${model_name}.ms '${models_path}'/input_output/input/${model_name}.ms.bin '${models_path}'/input_output/output/${model_name}.ms.out 1" >> "${run_x86_java_log_file}"
+        elapsed_time=$(date +%s.%N)
+        java -classpath .:${x86_path}/java/mindspore-lite-${version}-linux-x64/runtime/lib/mindspore-lite-java.jar Benchmark ${ms_models_path}/${model_name}.mindir ${models_path}/input_output/input/${model_name}.bin ${models_path}/input_output/output/${model_name}.out 1 "Runner" >> ${run_x86_java_log_file}
+        ret=$?
+        elapsed_time=$(printf %.2f "$(echo "$(date +%s.%N) - $elapsed_time" | bc)")
+        if [ ${ret} = 0 ]; then
+            run_result='x86_java: '${model_name}' '${elapsed_time}' pass'; echo ${run_result} >> ${run_java_result_file}
+        else
+            run_result='x86_java: '${model_name}' '${elapsed_time}' failed'; echo ${run_result} >> ${run_java_result_file}
+            cat ${run_x86_java_log_file}
+            Print_Benchmark_Result ${run_java_result_file}
+            exit 1
+        fi
+        sleep 1
+    done < ${models_java_config}
+}
+
 
 # Run converter on x86 platform:
 function Run_Converter() {
@@ -24,8 +65,9 @@ function Run_x86() {
     # $1:framework;
     echo 'cd  '${x86_path}'/mindspore-lite-'${version}'-linux-*' >> "${run_x86_log_file}"
     cd ${x86_path}/mindspore-lite-${version}-linux-*/ || exit 1
-    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:./runtime/lib:./runtime/third_party/glog
-    export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:./tools/converter/lib/:./runtime/third_party/glog
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:./runtime/lib:./tools/converter/lib/
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:./runtime/third_party/glog
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:./runtime/third_party/dnnl
     cp tools/benchmark/benchmark ./ || exit 1
     # Run converted models:
     # $1:cfgFileList; $2:modelPath; $3:dataPath; $4:logFile; $5:resultFile; $6:platform; $7:processor; $8:phoneId;
@@ -81,13 +123,21 @@ if [[ ${level} == "level1" ]]; then
 fi
 
 models_tf_config=${basepath}/../${config_folder}/models_tf_cloud.cfg
+models_tf_ms_config=${basepath}/../${config_folder}/models_tf_cloud_ms.cfg
 models_onnx_config=${basepath}/../${config_folder}/models_onnx_cloud.cfg
+models_posttraining_config=${basepath}/../${config_folder}/models_posttraining_cloud.cfg
+models_dynamic_quant_config=${basepath}/../${config_folder}/models_dynamic_quant_cloud.cfg
+
+models_onnx_reconstitution_config=${basepath}/../${config_folder}/models_onnx_reconstitution_cloud.cfg
+models_onnx_reconstitution_process_only_config=${basepath}/../${config_folder}/models_onnx_reconstitution_cloud_process_only.cfg
+models_tf_reconstitution_process_only_config=${basepath}/../${config_folder}/models_tf_reconstitution_cloud_process_only.cfg
+
 # Prepare the config file list
 x86_cfg_file_list=()
 if [[ $backend == "x86_cloud_tf" ]]; then
-  x86_cfg_file_list=("$models_tf_config")
+  x86_cfg_file_list=("$models_tf_config" "$models_tf_ms_config" "$models_tf_reconstitution_process_only_config")
 elif [[ $backend == "x86_cloud_onnx" ]]; then
-  x86_cfg_file_list=("$models_onnx_config")
+  x86_cfg_file_list=("$models_onnx_config" "$models_posttraining_config" "$models_dynamic_quant_config" "$models_onnx_reconstitution_config" "$models_onnx_reconstitution_process_only_config")
 fi
 
 ms_models_path=${basepath}/ms_models
@@ -149,9 +199,61 @@ if [[ $backend == "all" || $backend == "x86_cloud_onnx" || $backend == "x86_clou
         echo "Run_x86_cloud failed"
         cat ${run_x86_log_file}
         isFailed=1
+        exit ${isFailed}
+    fi
+fi
+
+if [[ $backend == "all_" || $backend == "x86_cloud_onnx_" ]]; then
+    # Run on x86 cloud
+    echo "start Run x86 renew-cloud $backend..."
+    # Unzip x86 runtime and converter
+    cd ${x86_path} || exit 1
+    tar -zxf mindspore-lite-${version}-linux-*.tar.gz || exit 1
+
+    rm -rf ${ms_models_path}
+    mkdir -p ${ms_models_path}
+    python ${basepath}/scripts/experimental/test_models.py --fmk onnx --model_dir ${models_path} --input_dir ${models_path}/input_output/input --output_dir ${models_path}/input_output/output --pkg_dir ${x86_path}/mindspore-lite-${version}-linux-x64/ --work_dir ${ms_models_path} --config_file ${basepath}/scripts/experimental/config/models_onnx.yaml --test_mode cp
+    ret=$?
+    # Check benchmark result and return value
+    if [[ ${ret} != 0 ]];then
+        echo "Run renew-cloud onnx test failed"
+        isFailed=1
+        exit ${isFailed}
     fi
 fi
 
 echo "Run_x86_cloud is ended"
 Print_Benchmark_Result $run_benchmark_result_file
+
+# run python ST
+if [[ $backend == "all" || $backend == "x86_cloud_onnx" ]]; then
+  models_python_config=${basepath}/../config_level0/models_python_cpu.cfg
+  models_python_cfg_file_list=("$models_python_config")
+  Run_python_ST ${basepath} ${x86_path} ${ms_models_path} ${models_path} "${models_python_cfg_file_list[*]}" "CPU"
+  Run_python_status=$?
+  if [[ ${Run_python_status} != 0 ]];then
+      echo "Run_python_status failed"
+      isFailed=1
+      exit ${isFailed}
+  fi
+fi
+
+# run Java ST
+if [[ $backend == "all" || $backend == "x86_cloud_onnx" ]]; then
+  run_x86_java_log_file=${basepath}/run_x86_java_log.txt
+  run_java_result_file=${basepath}/run_java_result.txt
+  echo ' ' > ${run_java_result_file}
+  echo 'run x86 java logs: ' > ${run_x86_java_log_file}
+  models_java_config=${basepath}/../config_level0/models_java_cpu_cloud.cfg
+  Run_x86_java
+  Run_java_status=$?
+  if [[ ${Run_java_status} != 0 ]];then
+    cat $run_x86_java_log_file
+    echo "Run_java_status failed"
+    isFailed=1
+  fi
+  Print_Benchmark_Result ${run_java_result_file}
+fi
+
+
 exit ${isFailed}

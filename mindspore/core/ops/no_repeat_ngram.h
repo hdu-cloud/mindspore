@@ -17,12 +17,12 @@
 #ifndef MINDSPORE_NO_REPEAT_NGRAM_H
 #define MINDSPORE_NO_REPEAT_NGRAM_H
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -43,8 +43,9 @@ class MIND_API NoRepeatNGram : public BaseOperator {
   int64_t get_ngram() const;
 };
 
-abstract::AbstractBasePtr NoRepeatNGramInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                             const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr NoRepeatNGramInfer(const abstract::AnalysisEnginePtr &,
+                                                      const PrimitivePtr &primitive,
+                                                      const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

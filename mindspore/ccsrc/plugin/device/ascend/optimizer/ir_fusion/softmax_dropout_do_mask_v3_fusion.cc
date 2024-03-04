@@ -15,12 +15,13 @@
  */
 #include "plugin/device/ascend/optimizer/ir_fusion/softmax_dropout_do_mask_v3_fusion.h"
 #include <vector>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/ascend_op_name.h"
+#include "ops/nn_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "mindspore/core/ops/core_ops.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -60,8 +61,8 @@ bool CheckSoftmax(const CNodePtr &softmax) {
 const BaseRef SoftmaxDropoutDoMaskV3Fusion::DefinePattern() const {
   VarPtr X = std::make_shared<Var>();
   VarPtr mask = std::make_shared<Var>();
-  VectorRef softmax({prim::kPrimSoftmax, X});
-  VectorRef pattern({prim::kPrimDropoutDoMaskV3, softmax, mask});
+  VectorRef softmax({prim::kPrimSoftmaxV2, X});
+  VectorRef pattern({prim::kPrimDropOutDoMaskV3D, softmax, mask});
   return pattern;
 }
 
@@ -77,13 +78,13 @@ const AnfNodePtr SoftmaxDropoutDoMaskV3Fusion::Process(const FuncGraphPtr &graph
 
   // create SoftmaxV2WithDropoutDoMaskV3D
   std::vector<AnfNodePtr> softmax_dropout_inputs = {
-    NewValueNode(std::make_shared<Primitive>(kSoftmaxV2WithDropoutDoMaskV3OpName)), softmax->input(kIndex1),
+    NewValueNode(std::make_shared<Primitive>(kSoftmaxV2WithDropOutDoMaskV3DOpName)), softmax->input(kIndex1),
     dropout->input(kIndex2)};
   auto softmax_dropout = NewCNode(softmax_dropout_inputs, graph);
   MS_EXCEPTION_IF_NULL(softmax_dropout);
   auto types = {common::AnfAlgo::GetOutputInferDataType(softmax, 0),
                 common::AnfAlgo::GetOutputInferDataType(dropout, 0)};
-  auto shapes = {common::AnfAlgo::GetOutputDetailShape(softmax, 0), common::AnfAlgo::GetOutputDetailShape(dropout, 0)};
+  auto shapes = {AnfAlgo::GetOutputDetailShape(softmax, 0), AnfAlgo::GetOutputDetailShape(dropout, 0)};
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, softmax_dropout.get());
   softmax_dropout->set_scope(softmax->scope());
   common::AnfAlgo::CopyNodeAttr(kAttrAxis, softmax, softmax_dropout);

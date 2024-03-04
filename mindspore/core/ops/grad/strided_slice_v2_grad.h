@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_STRIDED_SLICE_V2_GRAD_H_
 #define MINDSPORE_CORE_OPS_STRIDED_SLICE_V2_GRAD_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -48,8 +48,9 @@ class MIND_API StridedSliceV2Grad : public BaseOperator {
   int64_t get_shrink_axis_mask() const;
 };
 
-abstract::AbstractBasePtr StridedSliceV2GradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                  const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr StridedSliceV2GradInfer(const abstract::AnalysisEnginePtr &,
+                                                           const PrimitivePtr &primitive,
+                                                           const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimStridedSliceV2GradPtr = std::shared_ptr<StridedSliceV2Grad>;
 }  // namespace ops
 }  // namespace mindspore

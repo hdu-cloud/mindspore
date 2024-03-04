@@ -17,8 +17,9 @@ from __future__ import absolute_import
 
 import numpy as np
 
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from mindspore.train.callback._callback import Callback, _handle_loss
+from mindspore._c_expression import _collect_host_info
 
 
 class LossMonitor(Callback):
@@ -32,27 +33,24 @@ class LossMonitor(Callback):
 
     Args:
         per_print_times (int): How many steps to print once loss. During sink mode, it will print loss in the
-                               nearest step. Default: 1.
+                               nearest step. Default: ``1`` .
 
     Raises:
         ValueError: If per_print_times is not an integer or less than zero.
 
     Examples:
-        .. note::
-            Before running the following example, you need to customize the network LeNet5 and
-            dataset preparation function create_dataset. Refer to
-            `Building a Network <https://www.mindspore.cn/tutorials/en/r2.0.0-alpha/beginner/model.html>`_
-            and `Dataset <https://www.mindspore.cn/tutorials/en/r2.0.0-alpha/beginner/dataset.html>`_ .
-
         >>> from mindspore import nn
         >>> from mindspore.train import Model, LossMonitor
         >>>
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
         >>> net = LeNet5()
         >>> loss = nn.SoftmaxCrossEntropyWithLogits(sparse=True, reduction='mean')
         >>> optim = nn.Momentum(net.trainable_params(), 0.01, 0.9)
         >>> model = Model(net, loss_fn=loss, optimizer=optim)
-        >>> data_path = './MNIST_Data'
-        >>> dataset = create_dataset(data_path)
+        >>> # Create the dataset taking MNIST as an example. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/mnist.py
+        >>> dataset = create_dataset()
         >>> loss_monitor = LossMonitor()
         >>> model.train(10, dataset, callbacks=loss_monitor)
     """
@@ -72,7 +70,7 @@ class LossMonitor(Callback):
                     please refer to :class:`mindspore.train.RunContext`.
         """
         cb_params = run_context.original_args()
-
+        _collect_host_info("Callback", "LossMonitor", "step_end", level=1)
         cur_epoch_num = cb_params.get("cur_epoch_num", 1)
         loss = _handle_loss(cb_params.net_outputs)
 
@@ -103,6 +101,7 @@ class LossMonitor(Callback):
                     please refer to :class:`mindspore.train.RunContext`.
         """
         cb_params = run_context.original_args()
+        _collect_host_info("Callback", "LossMonitor", "train_epoch_end", level=1)
         metrics = cb_params.get("metrics")
         if metrics:
             print("Eval result: epoch %d, metrics: %s" % (cb_params.cur_epoch_num, metrics))

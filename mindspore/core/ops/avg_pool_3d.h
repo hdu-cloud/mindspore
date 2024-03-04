@@ -18,11 +18,11 @@
 #define MINDSPORE_CORE_OPS_AVG_POOL_3D_H_
 
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -36,8 +36,8 @@ class MIND_API AvgPool3D : public BaseOperator {
   AvgPool3D() : BaseOperator(kNameAvgPool3D) { InitIOName({"input"}, {"output"}); }
 };
 
-abstract::AbstractBasePtr AvgPool3DInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                         const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr AvgPool3DInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                  const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

@@ -16,12 +16,12 @@
 
 #ifndef MINDSPORE_CORE_OPS_TENSOR_SCATTER_ELEMENTS_H_
 #define MINDSPORE_CORE_OPS_TENSOR_SCATTER_ELEMENTS_H_
-#include <vector>
 #include <memory>
 #include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -50,8 +50,9 @@ class MIND_API TensorScatterElements : public BaseOperator {
   /// \return reduction.
   std::string get_reduction() const;
 };
-abstract::AbstractBasePtr TensorScatterElementsInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                     const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr TensorScatterElementsInfer(const abstract::AnalysisEnginePtr &,
+                                                              const PrimitivePtr &primitive,
+                                                              const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimTensorScatterElementsPtr = std::shared_ptr<TensorScatterElements>;
 }  // namespace ops
 }  // namespace mindspore

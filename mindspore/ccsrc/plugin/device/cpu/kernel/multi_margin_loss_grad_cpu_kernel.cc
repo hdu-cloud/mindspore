@@ -63,14 +63,14 @@ int MultiMarginLossGradCPUKernelMod::Resize(const BaseOperatorPtr &base_operator
 }
 
 bool MultiMarginLossGradCPUKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
-                                                   const std::vector<AddressPtr> &workspace,
+                                                   const std::vector<AddressPtr> &,
                                                    const std::vector<AddressPtr> &outputs) {
-  if (dtype_ == kNumberTypeFloat16) {
-    LaunchKernelFP16<float16>(inputs, outputs);
+  if (dtype_ == kNumberTypeFloat64) {
+    LaunchKernelFP32AndFP64<double>(inputs, outputs);
   } else if (dtype_ == kNumberTypeFloat32) {
     LaunchKernelFP32AndFP64<float>(inputs, outputs);
-  } else if (dtype_ == kNumberTypeFloat64) {
-    LaunchKernelFP32AndFP64<double>(inputs, outputs);
+  } else if (dtype_ == kNumberTypeFloat16) {
+    LaunchKernelFP16<float16>(inputs, outputs);
   } else {
     MS_EXCEPTION(TypeError) << "Data type is " << TypeIdLabel(dtype_) << " which is not supported.";
   }
@@ -124,11 +124,28 @@ const std::vector<std::pair<KernelAttr, MultiMarginLossGradCPUKernelMod::KernelR
 }
 
 template <typename T>
+void MultiMarginLossGradCPUKernelMod::LaunchKernelFromYGrad(T *x_grad_addr, T *y_grad_addr) {
+  T y_grad_value = static_cast<T>(1);
+  auto y_grad_data = (y_grad_addr == nullptr) ? &y_grad_value : y_grad_addr;
+  if (reduction != NONE || y_grad_dims == 0) {
+    for (size_t i = 0; i < batch_size * dims; i++) {
+      *(x_grad_addr + i) *= *(y_grad_data);
+    }
+  } else {
+    for (size_t i = 0; i < batch_size; i++) {
+      for (size_t j = 0; j < dims; j++) {
+        *(x_grad_addr + i * dims + j) *= *(y_grad_data + i);
+      }
+    }
+  }
+}
+
+template <typename T>
 void MultiMarginLossGradCPUKernelMod::LaunchKernelFP32AndFP64(const std::vector<kernel::AddressPtr> &inputs,
                                                               const std::vector<kernel::AddressPtr> &outputs) {
-  auto y_grad_addr = reinterpret_cast<T *>(inputs[kZero]->addr);
-  auto x_addr = reinterpret_cast<T *>(inputs[kOne]->addr);
-  auto target_addr = reinterpret_cast<int64_t *>(inputs[kTwo]->addr);
+  auto y_grad_addr = static_cast<T *>(inputs[kZero]->addr);
+  auto x_addr = static_cast<T *>(inputs[kOne]->addr);
+  auto target_addr = static_cast<int64_t *>(inputs[kTwo]->addr);
   for (size_t i = 0; i < batch_size; i++) {
     if (target_addr[i] < 0 || target_addr[i] >= SizeToLong(dims)) {
       MS_EXCEPTION(ValueError) << "Target out of range.";
@@ -137,9 +154,9 @@ void MultiMarginLossGradCPUKernelMod::LaunchKernelFP32AndFP64(const std::vector<
   T *weight_addr = nullptr;
   bool weight_defined_ = (input_num == 4);
   if (weight_defined_) {
-    weight_addr = reinterpret_cast<T *>(inputs[kThree]->addr);
+    weight_addr = static_cast<T *>(inputs[kThree]->addr);
   }
-  auto x_grad_addr = reinterpret_cast<T *>(outputs[kZero]->addr);
+  auto x_grad_addr = static_cast<T *>(outputs[kZero]->addr);
   auto task = [&](size_t start, size_t end) {
     start *= dims;
     end *= dims;
@@ -174,19 +191,7 @@ void MultiMarginLossGradCPUKernelMod::LaunchKernelFP32AndFP64(const std::vector<
     }
   };
   CPUKernelUtils::ParallelFor(task, batch_size);
-  T y_grad_value = static_cast<T>(1);
-  auto y_grad_data = (y_grad_addr == nullptr) ? &y_grad_value : y_grad_addr;
-  if (reduction != NONE || y_grad_dims == 0) {
-    for (size_t i = 0; i < batch_size * dims; i++) {
-      *(x_grad_addr + i) *= *(y_grad_data);
-    }
-  } else {
-    for (size_t i = 0; i < batch_size; i++) {
-      for (size_t j = 0; j < dims; j++) {
-        *(x_grad_addr + i * dims + j) *= *(y_grad_data + i);
-      }
-    }
-  }
+  LaunchKernelFromYGrad(x_grad_addr, y_grad_addr);
 }
 
 template <typename T>
@@ -262,7 +267,7 @@ void MultiMarginLossGradCPUKernelMod::CheckParam(const CNodePtr &kernel_node) co
   if (inputs_num != kMultiMarginLossGradInputNumWithoutWeight && inputs_num != kMultiMarginLossGradInputNumWithWeight) {
     MS_LOG(EXCEPTION) << "Invalid input numbers, expect input number 3 or 4, but actual input number " << inputs_num;
   }
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(kernel_node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(kernel_node);
   CHECK_KERNEL_OUTPUTS_NUM(output_num, kMultiMarginLossGradOutputsNum, kKernelName);
 }
 

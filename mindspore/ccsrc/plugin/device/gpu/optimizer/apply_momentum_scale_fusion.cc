@@ -15,15 +15,14 @@
  */
 #include "plugin/device/gpu/optimizer/apply_momentum_scale_fusion.h"
 
-#include <memory>
 #include <vector>
 #include <string>
 
-#include "backend/common/session/anf_runtime_algorithm.h"
-#include "include/common/utils/anfalgo.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -82,14 +81,14 @@ const AnfNodePtr ApplyMomentumScaleFusion::Process(const FuncGraphPtr &graph, co
   MS_EXCEPTION_IF_NULL(momentum);
   MS_EXCEPTION_IF_NULL(monad_state);
 
-  auto prim = std::make_shared<Primitive>(kFusedScaleApplyMomentum);
+  auto prim = std::make_shared<Primitive>(kFusedScaleApplyMomentumOpName);
   MS_EXCEPTION_IF_NULL(prim);
   std::vector<AnfNodePtr> inputs = {NewValueNode(prim), scale,    variable, accumulation,
                                     learning_rate,      gradient, momentum, monad_state};
   auto replace_node = graph->NewCNode(inputs);
   MS_EXCEPTION_IF_NULL(replace_node);
   auto types = {common::AnfAlgo::GetOutputInferDataType(node, 0)};
-  auto shapes = {common::AnfAlgo::GetOutputDetailShape(node, 0)};
+  auto shapes = {AnfAlgo::GetOutputDetailShape(node, 0)};
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, replace_node.get());
   replace_node->set_scope(node->scope());
   return replace_node;

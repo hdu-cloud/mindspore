@@ -16,15 +16,49 @@
 # ============================================================================
 """setup package."""
 import os
+import sys
+import re
 
 from setuptools import setup, find_packages
 
-TOP_DIR = os.getenv('TOP_DIR').replace("\n", "")
+TOP_DIR = sys.argv[-1]
+sys.argv = sys.argv[: -1]
 
 
 def _read_file(filename):
     with open(filename, encoding='UTF-8') as f:
         return f.read()
+
+
+def is_enable_akg():
+    """check if enable akg"""
+    enable_akg = os.getenv('ENABLE_AKG')
+    if enable_akg is not None and re.match('[Oo][Nn]', enable_akg) is not None:
+        return True
+    return False
+
+
+def _get_package_data():
+    """ get package data"""
+    pkg_data = [
+        '__init__.py', '_checkparam.py', 'base_model.py', 'context.py', 'converter.py', 'model.py', 'tensor.py',
+        'lite_split.py', 'lib/*.so*', '.commit_id', 'include/api/*', 'include/api/callback/*', 'include/api/metrics/*',
+        'include/mindapi/base/*', 'include/registry/converter_context.h', 'include/converter.h', 'custom_kernels/**'
+    ]
+    custom_ops_data = ['custom_kernels/*', 'custom_kernels/*/*', 'custom_kernels/*/*/*', 'custom_kernels/*/*/*/*',
+                       'custom_kernels/*/*/*/*/*', 'custom_kernels/*/*/*/*/*/*', 'custom_kernels/*/*/*/*/*/*/*',
+                       'custom_kernels/*/*/*/*/*/*/*/*', 'custom_kernels/*/*/*/*/*/*/*/*/*',
+                       'custom_kernels/*/*/*/*/*/*/*/*/*/*', 'custom_kernels/*/*/*/*/*/*/*/*/*/*/*',
+                       'custom_kernels/*/*/*/*/*/*/*/*/*/*/*/*', 'custom_kernels/*/*/*/*/*/*/*/*/*/*/*/*/*',
+                       'custom_kernels/*/*/*/*/*/*/*/*/*/*/*/*/*/*', 'custom_kernels/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*']
+    pkg_data.extend(custom_ops_data)
+    if os.getenv('MSLITE_ENABLE_CLOUD_INFERENCE') == "on":
+        pkg_data.append('lite_infer.py')
+    if is_enable_akg():
+        akg_data = ['akg/*.so*', 'akg/*.cuh', 'akg/config/*', 'akg/composite/*', 'akg/include/*', 'akg/include/*/*',
+                    'akg/include/*/*/*', 'akg/include/*/*/*/*']
+        pkg_data.extend(akg_data)
+    return pkg_data
 
 
 version = _read_file(TOP_DIR + '/version.txt').replace("\n", "")
@@ -46,9 +80,7 @@ setup(
     long_description=readme,
     long_description_content_type="text/markdown",
     packages=find_packages(),
-    package_data={'': ['*.py', 'lib/*.so*', '.commit_id', 'include/api/*', 'include/api/callback/*',
-                       'include/api/metrics/*', 'include/mindapi/base/*', 'include/registry/converter_context.h',
-                       'include/converter.h']},
+    package_data={'': _get_package_data()},
     include_package_data=True,
     cmdclass={},
     entry_points={},

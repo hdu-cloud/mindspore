@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,8 +19,9 @@
 #include <memory>
 #include <string>
 #include <algorithm>
+#include "mindspore/core/ops/conv_pool_ops.h"
 #include "plugin/device/ascend/optimizer/ir_fusion/avgpool_3d_fusion.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
@@ -35,22 +36,22 @@ void GetAttrs(const AnfNodePtr &node, std::vector<int64_t> *kernel_size, std::ve
   MS_EXCEPTION_IF_NULL(node);
   // attr kernel size
   if (!common::AnfAlgo::HasNodeAttr("kernel_size", node->cast<CNodePtr>())) {
-    MS_LOG(EXCEPTION) << "AvgPool3D should has attr kernel_size" << trace::DumpSourceLines(node);
+    MS_LOG(INTERNAL_EXCEPTION) << "AvgPool3D should has attr kernel_size" << trace::DumpSourceLines(node);
   }
   *kernel_size = common::AnfAlgo::GetNodeAttr<std::vector<int64_t>>(node, "kernel_size");
   // attr strides
   if (!common::AnfAlgo::HasNodeAttr("strides", node->cast<CNodePtr>())) {
-    MS_LOG(EXCEPTION) << "AvgPool3D should has attr strides" << trace::DumpSourceLines(node);
+    MS_LOG(INTERNAL_EXCEPTION) << "AvgPool3D should has attr strides" << trace::DumpSourceLines(node);
   }
   *strides = common::AnfAlgo::GetNodeAttr<std::vector<int64_t>>(node, "strides");
   // sttr pad_list
   if (!common::AnfAlgo::HasNodeAttr("pad_list", node->cast<CNodePtr>())) {
-    MS_LOG(EXCEPTION) << "AvgPool3D should has attr pad_list" << trace::DumpSourceLines(node);
+    MS_LOG(INTERNAL_EXCEPTION) << "AvgPool3D should has attr pad_list" << trace::DumpSourceLines(node);
   }
   *pad_list = common::AnfAlgo::GetNodeAttr<std::vector<int64_t>>(node, "pad_list");
   // attr origin input shape
   if (!common::AnfAlgo::HasNodeAttr("origin_input_shape", node->cast<CNodePtr>())) {
-    MS_LOG(EXCEPTION) << "AvgPool3D should has attr origin_input_shape" << trace::DumpSourceLines(node);
+    MS_LOG(INTERNAL_EXCEPTION) << "AvgPool3D should has attr origin_input_shape" << trace::DumpSourceLines(node);
   }
   *origin_input_shape = common::AnfAlgo::GetNodeAttr<std::vector<int64_t>>(node, "origin_input_shape");
   // attr count include pad
@@ -151,7 +152,7 @@ AnfNodePtr ConstructMultiplier(const FuncGraphPtr &func_graph, const ShapeVector
             }
             auto valid_data = valid_d * valid_h * valid_w;
             if (valid_data == 0) {
-              MS_LOG(EXCEPTION) << "Divisor 'valid_data' should not be 0.";
+              MS_LOG(INTERNAL_EXCEPTION) << "Divisor 'valid_data' should not be 0.";
             }
             float val = 1.0 / valid_data;
             *tensor_data = float16(val);
@@ -176,7 +177,7 @@ AnfNodePtr ConstructMultiplier(const FuncGraphPtr &func_graph, const ShapeVector
 
 const BaseRef AvgPool3DGradFusion::DefinePattern() const {
   VarPtr Xs = std::make_shared<SeqVar>();
-  return VectorRef({prim::kPrimAvgPool3DGrad, Xs});
+  return VectorRef({prim::kPrimAvgPool3DGradD, Xs});
 }
 
 const AnfNodePtr AvgPool3DGradFusion::Process(const FuncGraphPtr &func_graph, const AnfNodePtr &node,
@@ -208,7 +209,7 @@ const AnfNodePtr AvgPool3DGradFusion::Process(const FuncGraphPtr &func_graph, co
     MS_LOG(INFO) << "No need fusion";
     return nullptr;
   }
-  std::vector<AnfNodePtr> new_inputs{NewValueNode(std::make_shared<Primitive>(prim::kPrimAvgPool3DGrad->name()))};
+  std::vector<AnfNodePtr> new_inputs{NewValueNode(std::make_shared<Primitive>(prim::kPrimAvgPool3DGradD->name()))};
   (void)new_inputs.insert(new_inputs.cend(), avg_pool_3d_grad_node->inputs().cbegin() + 1,
                           avg_pool_3d_grad_node->inputs().cend());
   // assist node 1

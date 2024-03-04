@@ -15,16 +15,38 @@
  */
 
 #include "ops/max_pool_with_argmax.h"
-#include <string>
+
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 #include "utils/ms_context.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -112,7 +134,8 @@ std::vector<int64_t> GetOutShape(const string &op_name, const std::vector<int64_
     in_w = in_shape[kMaxPoolIdx2];
     channel = in_shape[kMaxPoolIdx3];
   }
-  int64_t out_h = abstract::Shape::kShapeDimAny, out_w = abstract::Shape::kShapeDimAny;
+  int64_t out_h = abstract::Shape::kShapeDimAny;
+  int64_t out_w = abstract::Shape::kShapeDimAny;
   if (pad_mode == VALID && in_h != abstract::Shape::kShapeDimAny) {
     out_h = static_cast<int64_t>(std::ceil((in_h - (kernel_h - 1)) / static_cast<float>(stride_h)));
   }
@@ -200,8 +223,9 @@ TypePtr MaxPoolWithArgmaxInferType(const PrimitivePtr &primitive, const std::vec
     MS_EXCEPTION(TypeError) << "For '" << primitive->name()
                             << "', the input args used for infer shape and type is necessary, but missing it.";
   }
-  const std::set<TypePtr> valid_types = {kFloat32, kFloat16};
-  auto input_type = input_args[kMaxPoolIdx0]->BuildType();
+  const std::set<TypePtr> valid_types = {kInt8,   kInt16,  kInt64,   kUInt8,   kUInt16,
+                                         kUInt32, kUInt64, kFloat16, kFloat32, kFloat64};
+  auto input_type = input_args[kDim0]->BuildType();
   (void)CheckAndConvertUtils::CheckTensorTypeValid("input", input_type, valid_types, primitive->name());
   std::vector<TypePtr> type_list = {input_type, kInt32};
   return std::make_shared<Tuple>(type_list);
@@ -218,6 +242,24 @@ AbstractBasePtr MaxPoolWithArgmaxInfer(const abstract::AnalysisEnginePtr &, cons
   auto infer_shape = MaxPoolWithArgmaxInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(MaxPoolWithArgmax, prim::kPrimMaxPoolWithArgmax, MaxPoolWithArgmaxInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMaxPoolWithArgmaxInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPoolWithArgmaxInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPoolWithArgmaxInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPoolWithArgmaxInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MaxPoolWithArgmax, prim::kPrimMaxPoolWithArgmax, AGMaxPoolWithArgmaxInfer, false);
 }  // namespace ops
 }  // namespace mindspore

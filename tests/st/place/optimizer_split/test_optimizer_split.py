@@ -15,9 +15,9 @@
 
 import mindspore.context as context
 from mindspore import set_seed
-from mindspore.train.metrics import Accuracy
+from mindspore.train import Accuracy
 from mindspore.train import Model
-from mindspore.train.callback import LossMonitor, TimeMonitor
+from mindspore.train import LossMonitor, TimeMonitor
 from mindspore.communication.management import init, get_rank
 
 from src.net import SplitRefWithoutOptimNet, SplitOptimNet, get_optimizer, get_loss, get_dataset
@@ -54,7 +54,7 @@ net_need_split_opt_map = {
 def run_dist():
     init()
     net = net_name_map.get(net_name)(dist=True)
-    opt = get_optimizer(net, net_need_split_opt_map.get(net_name))
+    opt = get_optimizer(net, dist=net_need_split_opt_map.get(net_name))
     criterion = get_loss()
     model = Model(net, criterion, opt, metrics={"Accuracy": Accuracy()})
 

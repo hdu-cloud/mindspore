@@ -40,6 +40,13 @@ class SchedulerHelper {
 
   static void AddDeviceTensorStore(const AnfNode *anf_node, const DeviceTensorPtr &device_tensor);
 
+  static void AddMonadDeviceTensorStore(AbstractActor *const to_actor, const CNodePtr &kernel,
+                                        const KernelGraphPtr &graph);
+
+  // Judge whether need ignore the input address that is not used in the kernel launch.
+  static bool IsIgnoredInputAddress(AbstractActor *const to_actor, size_t to_input_index);
+  static size_t GetIgnoredInputAddressCount(const AnfNodePtr &node);
+
   // Add the arrow between from actor and to actor.
   static void AddDataArrow(AbstractActor *const from_actor, AbstractActor *const to_actor, size_t from_output_index,
                            size_t to_input_index, const AnfNodePtr &from_kernel = nullptr);
@@ -82,7 +89,7 @@ class SchedulerHelper {
 
   // The interface of integration of dynamic and static memory.
   static void AddMemorySign(AbstractActor *const from_actor, AbstractActor *const to_actor);
-  static KernelGraphPtr FecthKernelGraphByActor(AbstractActor *const actor);
+  static KernelGraphPtr FetchKernelGraphByActor(AbstractActor *const actor);
   // Add the memory alloc sign for the head kernel actor of graph.
   static void AddMemoryAllocSign(AbstractActor *const from_actor, AbstractActor *const to_actor,
                                  const KernelGraphPtr &to_graph);

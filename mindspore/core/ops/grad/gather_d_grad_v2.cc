@@ -14,12 +14,26 @@
  * limitations under the License.
  */
 #include "ops/grad/gather_d_grad_v2.h"
+
 #include <memory>
 #include <string>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -69,6 +83,26 @@ AbstractBasePtr GatherDGradV2Infer(const abstract::AnalysisEnginePtr &, const Pr
 }
 
 MIND_API_OPERATOR_IMPL(GatherDGradV2, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(GatherDGradV2, prim::kPrimGatherDGradV2, GatherDGradV2Infer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGGatherDGradV2Infer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return GatherDGradV2InferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return GatherDGradV2InferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return GatherDGradV2Infer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(GatherDGradV2, prim::kPrimGatherDGradV2, AGGatherDGradV2Infer, false);
 }  // namespace ops
 }  // namespace mindspore

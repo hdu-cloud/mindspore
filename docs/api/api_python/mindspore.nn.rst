@@ -5,7 +5,9 @@ mindspore.nn
 
 用于构建神经网络中的预定义构建块或计算单元。
 
-MindSpore中 `mindspore.nn` 接口与上一版本相比，新增、删除和支持平台的变化信息请参考 `API Updates <https://gitee.com/mindspore/docs/blob/r2.0.0-alpha/resource/api_updates/ops_api_updates.md>`_ 。
+动态shape的支持情况详见 `nn接口动态shape支持情况 <https://mindspore.cn/docs/zh-CN/master/note/dynamic_shape_nn.html>`_ 。
+
+MindSpore中 `mindspore.nn` 接口与上一版本相比，新增、删除和支持平台的变化信息请参考 `mindspore.nn API接口变更 <https://gitee.com/mindspore/docs/blob/master/resource/api_updates/nn_api_updates_cn.md>`_ 。
 
 基本构成单元
 ------------
@@ -28,6 +30,7 @@ MindSpore中 `mindspore.nn` 接口与上一版本相比，新增、删除和支�
     :nosignatures:
     :template: classtemplate.rst
 
+    mindspore.nn.CellDict
     mindspore.nn.CellList
     mindspore.nn.SequentialCell
 
@@ -51,7 +54,6 @@ MindSpore中 `mindspore.nn` 接口与上一版本相比，新增、删除和支�
     mindspore.nn.TrainOneStepCell
     mindspore.nn.TrainOneStepWithLossScaleCell
     mindspore.nn.WithEvalCell
-    mindspore.nn.WithGradCell
     mindspore.nn.WithLossCell
 
 卷积神经网络层
@@ -84,6 +86,21 @@ MindSpore中 `mindspore.nn` 接口与上一版本相比，新增、删除和支�
     mindspore.nn.GRUCell
     mindspore.nn.LSTM
     mindspore.nn.LSTMCell
+
+Transformer层
+-----------------
+
+.. mscnplatformautosummary::
+    :toctree: nn
+    :nosignatures:
+    :template: classtemplate.rst
+
+    mindspore.nn.MultiheadAttention
+    mindspore.nn.TransformerEncoderLayer
+    mindspore.nn.TransformerDecoderLayer
+    mindspore.nn.TransformerEncoder
+    mindspore.nn.TransformerDecoder
+    mindspore.nn.Transformer
 
 嵌入层
 -----------------
@@ -195,7 +212,6 @@ Dropout层
     mindspore.nn.AvgPool1d
     mindspore.nn.AvgPool2d
     mindspore.nn.AvgPool3d
-    mindspore.nn.FractionalMaxPool2d
     mindspore.nn.FractionalMaxPool3d
     mindspore.nn.LPPool1d
     mindspore.nn.LPPool2d
@@ -220,6 +236,7 @@ Dropout层
     mindspore.nn.ConstantPad3d
     mindspore.nn.ReflectionPad1d
     mindspore.nn.ReflectionPad2d
+    mindspore.nn.ReflectionPad3d
     mindspore.nn.ReplicationPad1d
     mindspore.nn.ReplicationPad2d
     mindspore.nn.ReplicationPad3d
@@ -248,12 +265,17 @@ Dropout层
     mindspore.nn.MarginRankingLoss
     mindspore.nn.MSELoss
     mindspore.nn.MultiClassDiceLoss
+    mindspore.nn.MultilabelMarginLoss
+    mindspore.nn.MultiLabelSoftMarginLoss
+    mindspore.nn.MultiMarginLoss
     mindspore.nn.NLLLoss
+    mindspore.nn.PoissonNLLLoss
     mindspore.nn.RMSELoss
     mindspore.nn.SampledSoftmaxLoss
     mindspore.nn.SmoothL1Loss
     mindspore.nn.SoftMarginLoss
     mindspore.nn.SoftmaxCrossEntropyWithLogits
+    mindspore.nn.TripletMarginLoss
 
 优化器
 -------
@@ -359,6 +381,7 @@ Dynamic LR函数
     mindspore.nn.PixelShuffle
     mindspore.nn.PixelUnshuffle
     mindspore.nn.ResizeBilinear
+    mindspore.nn.Upsample
 
 工具
 -----
@@ -370,13 +393,5 @@ Dynamic LR函数
 
     mindspore.nn.ChannelShuffle
     mindspore.nn.Flatten
-
-数学运算
-----------
-
-.. mscnplatformautosummary::
-    :toctree: nn
-    :nosignatures:
-    :template: classtemplate.rst
-
-    mindspore.nn.Moments
+    mindspore.nn.Identity
+    mindspore.nn.Unflatten

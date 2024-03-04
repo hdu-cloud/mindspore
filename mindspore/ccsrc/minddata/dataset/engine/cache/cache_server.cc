@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -384,6 +384,9 @@ Status CacheServer::InternalCacheRow(CacheRequest *rq, CacheReply *reply) {
     // is a thread waiting on the completion of this request.
     try {
       constexpr int32_t kBatchWaitIdx = 3;
+      // Ensure we got 4 pieces of data coming in
+      constexpr int32_t kMinBufDataSize = 4;
+      CHECK_FAIL_RETURN_UNEXPECTED(rq->buf_data_size() >= kMinBufDataSize, "Incomplete data");
       // Fourth piece of the data is the address of the BatchWait ptr
       int64_t addr = strtol(rq->buf_data(kBatchWaitIdx).data(), nullptr, kDecimal);
       auto *bw = reinterpret_cast<BatchWait *>(addr);
@@ -412,6 +415,9 @@ Status CacheServer::InternalFetchRow(CacheRequest *rq) {
   }
   // First piece is a flatbuffer containing row fetch information, second piece is the address of the BatchWait ptr
   enum BufDataIndex : uint8_t { kFetchRowMsg = 0, kBatchWait = 1 };
+  // Ensure we got 2 pieces of data coming in
+  constexpr int32_t kMinBufDataSize = 2;
+  CHECK_FAIL_RETURN_UNEXPECTED(rq->buf_data_size() >= kMinBufDataSize, "Incomplete data");
   rc = cs->InternalFetchRow(flatbuffers::GetRoot<FetchRowMsg>(rq->buf_data(BufDataIndex::kFetchRowMsg).data()));
   // This is an internal request and is not tied to rpc. But need to post because there
   // is a thread waiting on the completion of this request.
@@ -432,6 +438,7 @@ Status CacheServer::InternalFetchRow(CacheRequest *rq) {
 Status CacheServer::BatchFetch(const std::shared_ptr<flatbuffers::FlatBufferBuilder> &fbb, WritableSlice *out) {
   RETURN_UNEXPECTED_IF_NULL(out);
   auto p = flatbuffers::GetRoot<BatchDataLocatorMsg>(fbb->GetBufferPointer());
+  RETURN_UNEXPECTED_IF_NULL(p);
   const auto num_elements = p->rows()->size();
   auto connection_id = p->connection_id();
   auto batch_wait = std::make_shared<BatchWait>(num_elements);
@@ -496,6 +503,7 @@ Status CacheServer::BatchFetchRows(CacheRequest *rq, CacheReply *reply) {
     CHECK_FAIL_RETURN_UNEXPECTED(!rq->buf_data().empty(), "Missing row id");
     auto &row_id_buf = rq->buf_data(0);
     auto p = flatbuffers::GetRoot<TensorRowIds>(row_id_buf.data());
+    RETURN_UNEXPECTED_IF_NULL(p);
     std::vector<row_id_type> row_id;
     auto sz = p->row_id()->size();
     row_id.reserve(sz);
@@ -1114,6 +1122,7 @@ session_id_type CacheServer::GenerateSessionID() {
 Status CacheServer::AllocateSharedMemory(CacheRequest *rq, CacheReply *reply) {
   auto client_id = rq->client_id();
   CHECK_FAIL_RETURN_UNEXPECTED(client_id != -1, "Client ID not set");
+  CHECK_FAIL_RETURN_UNEXPECTED(!rq->buf_data().empty(), "Missing requested size");
   try {
     auto requestedSz = strtoll(rq->buf_data(0).data(), nullptr, kDecimal);
     void *p = nullptr;
@@ -1132,6 +1141,7 @@ Status CacheServer::AllocateSharedMemory(CacheRequest *rq, CacheReply *reply) {
 Status CacheServer::FreeSharedMemory(CacheRequest *rq) {
   auto client_id = rq->client_id();
   CHECK_FAIL_RETURN_UNEXPECTED(client_id != -1, "Client ID not set");
+  CHECK_FAIL_RETURN_UNEXPECTED(!rq->buf_data().empty(), "Missing addr");
   auto *base = SharedMemoryBaseAddr();
   try {
     auto addr = strtoll(rq->buf_data(0).data(), nullptr, kDecimal);

@@ -34,32 +34,38 @@ void DynamicMemAllocator::Free(void *ptr) {
 }
 
 int DynamicMemAllocator::RefCount(void *ptr) {
-  if (ptr == nullptr) {
+  if (mem_oper_ == nullptr || ptr == nullptr) {
     return -1;
   }
   return mem_oper_->RefCount(ptr);
 }
 
 int DynamicMemAllocator::SetRefCount(void *ptr, int ref_count) {
-  if (ptr == nullptr) {
+  if (mem_oper_ == nullptr || ptr == nullptr) {
     return -1;
   }
   return mem_oper_->SetRefCount(ptr, ref_count);
 }
 
 int DynamicMemAllocator::IncRefCount(void *ptr, int ref_count) {
-  if (ptr == nullptr) {
+  if (mem_oper_ == nullptr || ptr == nullptr) {
     return -1;
   }
   return mem_oper_->IncRefCount(ptr, ref_count);
 }
 
 int DynamicMemAllocator::DecRefCount(void *ptr, int ref_count) {
-  if (ptr == nullptr) {
+  if (mem_oper_ == nullptr || ptr == nullptr) {
     return -1;
   }
   return mem_oper_->DecRefCount(ptr, ref_count);
 }
 
-DynamicMemAllocator::DynamicMemAllocator(int node_id) { mem_oper_ = mem_manager_.GetMemOperator(node_id); }
+DynamicMemAllocator::DynamicMemAllocator(int node_id) {
+  std::lock_guard<std::mutex> l(allocator_mutex_);
+  if (mem_manager_ == nullptr) {
+    mem_manager_ = std::make_shared<DynamicMemManager>();
+  }
+  mem_oper_ = mem_manager_->GetMemOperator(node_id);
+}
 }  // namespace mindspore

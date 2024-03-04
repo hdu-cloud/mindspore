@@ -18,12 +18,12 @@
 #define MINDSPORE_CORE_OPS_PS_ROI_POOLING_H_
 
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,8 +35,8 @@ class PSROIPooling : public BaseOperator {
   PSROIPooling() : BaseOperator(kNamePSROIPooling) { InitIOName({"input", "rois"}, {"output"}); }
 };
 
-abstract::AbstractBasePtr PSROIPoolingInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                            const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr PSROIPoolingInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                     const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

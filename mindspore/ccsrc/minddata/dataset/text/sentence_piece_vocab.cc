@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,28 +16,29 @@
 
 #include <sentencepiece_processor.h>
 #include <sentencepiece_trainer.h>
-
 #include <fstream>
-
-#include "include/common/utils/utils.h"
+#include <memory>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
 #include "minddata/dataset/include/dataset/constants.h"
 #include "minddata/dataset/include/dataset/text.h"
-#include "minddata/dataset/util/path.h"
 #include "minddata/dataset/util/status.h"
+#include "include/api/status.h"
 #ifndef BUILD_LITE
 #include "mindspore/core/utils/file_utils.h"
 #else
 #include "mindspore/lite/src/common/file_utils.h"
 #endif
-#include "utils/ms_utils.h"
 
 namespace mindspore {
 namespace dataset {
 
 SentencePieceVocab::SentencePieceVocab() : model_proto_("") {}
 
-Status SentencePieceVocab::BuildFromFile(const std::vector<std::string> &path_list, const int32_t vocab_size,
-                                         const float character_coverage, const SentencePieceModel model_type,
+Status SentencePieceVocab::BuildFromFile(const std::vector<std::string> &path_list, int32_t vocab_size,
+                                         float character_coverage, const SentencePieceModel &model_type,
                                          const std::unordered_map<std::string, std::string> &params,
                                          std::shared_ptr<SentencePieceVocab> *vocab) {
   if (vocab == nullptr) {
@@ -92,8 +93,8 @@ Status SentencePieceVocab::BuildFromFile(const std::vector<std::string> &path_li
   return Status::OK();
 }
 
-Status SentencePieceVocab::SaveModel(const std::shared_ptr<SentencePieceVocab> *vocab, const std::string path,
-                                     std::string filename) {
+Status SentencePieceVocab::SaveModel(const std::shared_ptr<SentencePieceVocab> *vocab, const std::string &path,
+                                     const std::string &filename) {
   if (vocab == nullptr) {
     RETURN_STATUS_UNEXPECTED("SentencePieceVocab::SaveModel: input vocab can not be null");
   }
@@ -117,7 +118,6 @@ Status SentencePieceVocab::SaveModel(const std::shared_ptr<SentencePieceVocab> *
 
 const std::string &SentencePieceVocab::model_proto() { return model_proto_; }
 
-void SentencePieceVocab::set_model_proto(const std::string model_proto) { model_proto_ = model_proto; }
-
+void SentencePieceVocab::set_model_proto(const std::string &model_proto) { model_proto_ = model_proto; }
 }  // namespace dataset
 }  // namespace mindspore

@@ -14,22 +14,22 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_SCALE_INT8_H_
-#define MINDSPORE_NNACL_SCALE_INT8_H_
+#ifndef NNACL_SCALE_INT8_H_
+#define NNACL_SCALE_INT8_H_
 
 #include "nnacl/op_base.h"
-#include "nnacl/scale.h"
+#include "nnacl/scale_parameter.h"
 #include "nnacl/nnacl_common.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-void DoScaleInt8(const int8_t *in_data, int8_t *out_data, const int8_t *scale, const ScaleParameter *scale_param,
+void DoScaleInt8(const int8_t *in_data, int8_t *out_data, const int8_t *scale, const ScaleQuantParameter *scale_param,
                  int real_dst_count);
 void DoScaleWithBiasInt8(const int8_t *in_data, int8_t *out_data, const int8_t *scale, const int8_t *offset,
-                         const ScaleParameter *scale_param, int real_dst_count);
+                         const ScaleQuantParameter *scale_param, int real_dst_count);
 #ifdef __cplusplus
 }
 #endif
 
-#endif  // MINDSPORE_NNACL_SCALE_INT8_H_
+#endif  // NNACL_SCALE_INT8_H_

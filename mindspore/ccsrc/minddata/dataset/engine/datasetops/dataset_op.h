@@ -26,6 +26,7 @@
 #include "minddata/dataset/callback/callback_manager.h"
 #include "minddata/dataset/include/dataset/constants.h"
 #include "minddata/dataset/engine/operator_connector.h"
+#include "minddata/dataset/engine/perf/info_collector.h"
 #include "minddata/dataset/util/status.h"
 
 namespace mindspore {
@@ -201,6 +202,12 @@ class DatasetOp : public std::enable_shared_from_this<DatasetOp> {
   //     before providing their own implementations.
   virtual Status PrepareOperator();
 
+  // \brief During tree prepare phase, operators may have specific post-operations to perform depending on
+  //     their role.
+  // \notes Derived versions of this function should always call its superclass version first
+  //     before providing their own implementations.
+  virtual Status PrepareOperatorPullBased();
+
   // \brief Getter function
   // \return The operator id
   int32_t id() const { return operator_id_; }
@@ -339,6 +346,8 @@ class DatasetOp : public std::enable_shared_from_this<DatasetOp> {
   // \return Status
   virtual Status WaitForWorkers() { return Status::OK(); }
 
+  virtual Status PostForWorkers() { return Status::OK(); }
+
   virtual int32_t NumWorkers() { return 0; }
 
   virtual Status SendQuitFlagToWorker(int32_t worker_id) { return Status::OK(); }
@@ -379,6 +388,11 @@ class DatasetOp : public std::enable_shared_from_this<DatasetOp> {
 
   // Launch the Op
   virtual Status Launch() { return Status::OK(); }
+
+  enum ImplementedPullMode { NotImplemented = 0, Implemented, DisabledDebugMode };
+  /// \brief Gets the implementation status for operator in pull mode
+  /// \return implementation status
+  virtual ImplementedPullMode PullModeImplementationStatus() const { return ImplementedPullMode::NotImplemented; }
 
   std::vector<std::shared_ptr<DatasetOp>> child_;                // Child nodes
   std::vector<DatasetOp *> parent_;                              // Parent nodes. No ownership

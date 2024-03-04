@@ -15,11 +15,35 @@
  */
 
 #include "ops/max_pool3d_with_argmax.h"
+
 #include <algorithm>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "mindapi/src/helper.h"
+#include <map>
+#include <set>
+#include <utility>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
 #include "include/common/utils/utils.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -139,6 +163,19 @@ TuplePtr MaxPool3DWithArgmaxInferType(const PrimitivePtr &prim, const std::vecto
   return std::make_shared<Tuple>(type_list);
 }
 
+void CheckKsizeAndPads(const std::vector<int64_t> &ksize, const std::vector<int64_t> &pads) {
+  const int64_t kTwo = 2;
+  const size_t kAttrD = 0;
+  const size_t kAttrH = 1;
+  const size_t kAttrW = 2;
+  if (ksize[kAttrD] / kTwo < pads[kAttrD] || ksize[kAttrH] / kTwo < pads[kAttrH] ||
+      ksize[kAttrW] / kTwo < pads[kAttrW]) {
+    MS_EXCEPTION(ValueError)
+      << "For Maxpool3DWithArgmax, pads should be less equal to the half of ksize, but got ksize is[" << ksize
+      << "], pads is[" << pads << "].";
+  }
+}
+
 abstract::TupleShapePtr MaxPool3DWithArgmaxInferShape(const PrimitivePtr &prim,
                                                       const std::vector<AbstractBasePtr> &input_args) {
   const size_t kAttrD = 0;
@@ -166,6 +203,7 @@ abstract::TupleShapePtr MaxPool3DWithArgmaxInferShape(const PrimitivePtr &prim,
                                            prim->name());
   auto pads = GetValue<std::vector<int64_t>>(prim->GetAttr("pads"));
   (void)CheckAndConvertUtils::CheckInteger("pads rank", SizeToLong(pads.size()), kEqual, kAttrsSize, prim->name());
+  CheckKsizeAndPads(ksize, pads);
   auto dilation = GetValue<std::vector<int64_t>>(prim->GetAttr("dilation"));
   (void)CheckAndConvertUtils::CheckInteger("dilation rank", SizeToLong(dilation.size()), kEqual, kAttrsSize,
                                            prim->name());
@@ -185,22 +223,33 @@ abstract::TupleShapePtr MaxPool3DWithArgmaxInferShape(const PrimitivePtr &prim,
   auto H_out = 0;
   auto W_out = 0;
   int64_t factor = 2;
+  // math: out = ((input + 2 * pad - dilation * (ksize - 1) - 1) / stride) + 1;
   if (GetValue<bool>(prim->GetAttr("ceil_mode")) == false) {
-    // math: out = ((input + 2 * pad - dilation * (ksize - 1) - 1) / stride) + 1;
-    D_out = ((D_in + factor * pads[kAttrD] - dilation[kAttrD] * (ksize[kAttrD] - 1) - 1) / strides[kAttrD]) + 1;
-    H_out = ((H_in + factor * pads[kAttrH] - dilation[kAttrH] * (ksize[kAttrH] - 1) - 1) / strides[kAttrH]) + 1;
-    W_out = ((W_in + factor * pads[kAttrW] - dilation[kAttrW] * (ksize[kAttrW] - 1) - 1) / strides[kAttrW]) + 1;
+    D_out = static_cast<int>(
+      std::floor(static_cast<float>(D_in + factor * pads[kAttrD] - dilation[kAttrD] * (ksize[kAttrD] - 1) - 1) /
+                   static_cast<float>(strides[kAttrD]) +
+                 1));
+    H_out = static_cast<int>(
+      std::floor(static_cast<float>(H_in + factor * pads[kAttrH] - dilation[kAttrH] * (ksize[kAttrH] - 1) - 1) /
+                   static_cast<float>(strides[kAttrH]) +
+                 1));
+    W_out = static_cast<int>(
+      std::floor(static_cast<float>(W_in + factor * pads[kAttrW] - dilation[kAttrW] * (ksize[kAttrW] - 1) - 1) /
+                   static_cast<float>(strides[kAttrW]) +
+                 1));
   } else {
-    // math: out = ((input + 2 * pad - dilation * (ksize - 1) - 1 + (stride - 1)) / stride) + 1;
-    D_out = ((D_in + factor * pads[kAttrD] - dilation[kAttrD] * (ksize[kAttrD] - 1) - 1 + (strides[kAttrD] - 1)) /
-             strides[kAttrD]) +
-            1;
-    H_out = ((H_in + factor * pads[kAttrH] - dilation[kAttrH] * (ksize[kAttrH] - 1) - 1 + (strides[kAttrH] - 1)) /
-             strides[kAttrH]) +
-            1;
-    W_out = ((W_in + factor * pads[kAttrW] - dilation[kAttrW] * (ksize[kAttrW] - 1) - 1 + (strides[kAttrW] - 1)) /
-             strides[kAttrW]) +
-            1;
+    D_out = static_cast<int>(
+      std::ceil(static_cast<float>(D_in + factor * pads[kAttrD] - dilation[kAttrD] * (ksize[kAttrD] - 1) - 1) /
+                  static_cast<float>(strides[kAttrD]) +
+                1));
+    H_out = static_cast<int>(
+      std::ceil(static_cast<float>(H_in + factor * pads[kAttrH] - dilation[kAttrH] * (ksize[kAttrH] - 1) - 1) /
+                  static_cast<float>(strides[kAttrH]) +
+                1));
+    W_out = static_cast<int>(
+      std::ceil(static_cast<float>(W_in + factor * pads[kAttrW] - dilation[kAttrW] * (ksize[kAttrW] - 1) - 1) /
+                  static_cast<float>(strides[kAttrW]) +
+                1));
     // The last pooling starts inside the image.
     if ((D_out - 1) * strides[kAttrD] >= D_in + pads[kAttrD]) {
       --D_out;
@@ -233,7 +282,25 @@ AbstractBasePtr MaxPool3DWithArgmaxInfer(const abstract::AnalysisEnginePtr &, co
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 MIND_API_OPERATOR_IMPL(MaxPool3DWithArgmax, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(MaxPool3DWithArgmax, prim::kPrimMaxPool3DWithArgmax, MaxPool3DWithArgmaxInfer, nullptr,
-                             true);
+
+// AG means auto generated
+class MIND_API AGMaxPool3DWithArgmaxInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPool3DWithArgmaxInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPool3DWithArgmaxInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPool3DWithArgmaxInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MaxPool3DWithArgmax, prim::kPrimMaxPool3DWithArgmax, AGMaxPool3DWithArgmaxInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

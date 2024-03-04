@@ -14,17 +14,32 @@
  * limitations under the License.
  */
 #include "ops/left_shift.h"
-#include <algorithm>
-#include <functional>
-#include <string>
-#include <vector>
+
 #include <memory>
 #include <set>
+#include <string>
+#include <vector>
 
-#include "ops/op_utils.h"
-#include "mindapi/src/helper.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/param_validator.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -70,6 +85,24 @@ AbstractBasePtr LeftShiftInfer(const abstract::AnalysisEnginePtr &, const Primit
   auto infer_shape = LeftShiftInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(LeftShift, prim::kPrimLeftShift, LeftShiftInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGLeftShiftInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return LeftShiftInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return LeftShiftInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return LeftShiftInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(LeftShift, prim::kPrimLeftShift, AGLeftShiftInfer, false);
 }  // namespace ops
 }  // namespace mindspore

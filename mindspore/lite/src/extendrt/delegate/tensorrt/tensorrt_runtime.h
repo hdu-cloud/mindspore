@@ -16,6 +16,7 @@
 #ifndef MINDSPORE_LITE_SRC_EXTENDRT_DELEGATE_TENSORRT_TENSORRT_RUNTIME_H_
 #define MINDSPORE_LITE_SRC_EXTENDRT_DELEGATE_TENSORRT_TENSORRT_RUNTIME_H_
 #include <NvInfer.h>
+#include <string>
 #include "include/errorcode.h"
 #include "src/extendrt/delegate/tensorrt/tensorrt_allocator.h"
 #include "src/extendrt/delegate/tensorrt/cuda_impl/cublas_utils.h"
@@ -29,7 +30,7 @@ namespace mindspore::lite {
 class TensorRTLogger : public nvinfer1::ILogger {
   void log(Severity severity, const char *msg) noexcept override {
     if (severity == Severity::kINTERNAL_ERROR || severity == Severity::kERROR) {
-      MS_LOG(ERROR) << msg;
+      MS_LOG(WARNING) << msg;
     } else if (severity == Severity::kWARNING) {
       MS_LOG(WARNING) << msg;
     } else if (severity == Severity::kINFO) {
@@ -64,9 +65,39 @@ class TensorRTRuntime {
 
   RuntimePrecisionMode GetRuntimePrecisionMode() { return runtime_percision_mode_; }
 
+  int GetTransformerEncoderInputIdx() { return transformer_encoder_input_idx_; }
+
+  int GetTransformerDecoderInputIdx() { return transformer_decoder_input_idx_; }
+
+  bool GetTransformerFfnFp16() { return transformer_ffn_fp16_; }
+
+  std::string GetTransformerOptimize() const { return optimize_transformer_; }
+
+  int GetVslEncoderPluginId() { return vsl_encoder_plugin_id_; }
+
+  int GetVslDecoderPluginId() { return vsl_decoder_plugin_id_; }
+
   void SetRuntimePrecisionMode(RuntimePrecisionMode runtime_percision_mode) {
     runtime_percision_mode_ = runtime_percision_mode;
   }
+
+  void SetTransformerEncoderInputIdx(int transformer_encoder_input_idx) {
+    transformer_encoder_input_idx_ = transformer_encoder_input_idx;
+  }
+
+  void SetTransformerDecoderInputIdx(int transformer_decoder_input_idx) {
+    transformer_decoder_input_idx_ = transformer_decoder_input_idx;
+  }
+  void SetTransformerFfnFp16(bool is_ffn_fp16) { transformer_ffn_fp16_ = is_ffn_fp16; }
+  void SetTransformerOptimize(const std::string &optimize_transformer) { optimize_transformer_ = optimize_transformer; }
+
+  bool IsTransformerOptimizeSigma() {
+    std::string pangu_sigma("pangu_sigma");
+    return (optimize_transformer_ == pangu_sigma) ? true : false;
+  }
+  void SetVslEncoderPluginId(int plugin_id) { vsl_encoder_plugin_id_ = plugin_id; }
+
+  void SetVslDecoderPluginId(int plugin_id) { vsl_decoder_plugin_id_ = plugin_id; }
 
   TensorRTAllocator *GetAllocator() { return this->allocator_; }
 
@@ -77,13 +108,19 @@ class TensorRTRuntime {
   cublasLtHandle_t GetCublasLtHandle() { return cublaslt_handle_; }
 
  private:
-  bool is_init_ = false;
+  bool is_init_{false};
   nvinfer1::IBuilder *builder_{nullptr};
   TensorRTLogger logger_;
   TensorRTAllocator *allocator_{nullptr};
   int batch_size_{0};
   uint32_t device_id_{0};
   RuntimePrecisionMode runtime_percision_mode_{RuntimePrecisionMode::RuntimePrecisionMode_FP32};
+  int transformer_encoder_input_idx_{-1};
+  int transformer_decoder_input_idx_{-1};
+  bool transformer_ffn_fp16_{true};
+  std::string optimize_transformer_{""};
+  int vsl_encoder_plugin_id_{-1};
+  int vsl_decoder_plugin_id_{-1};
   cublasHandle_t cublas_handle_{nullptr};
   cublasLtHandle_t cublaslt_handle_{nullptr};
 };

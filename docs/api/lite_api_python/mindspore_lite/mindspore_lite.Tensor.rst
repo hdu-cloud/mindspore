@@ -1,17 +1,21 @@
 mindspore_lite.Tensor
 =====================
 
-.. py:class:: mindspore_lite.Tensor(tensor=None)
+.. py:class:: mindspore_lite.Tensor(tensor=None, shape=None, dtype=None, device=None)
 
     `Tensor` 类，在Mindspore Lite中定义一个张量。
 
     参数：
-        - **tensor** (Tensor，可选) - 被存储在新Tensor中的数据，数据可以是来自其它Tensor。默认值：None。
+        - **tensor** (Tensor，可选) - 被存储在新Tensor中的数据，数据可以是来自其它Tensor。默认值： ``None`` 。
+        - **shape** (list，可选) - Tensor的shape信息。默认值： ``None`` 。
+        - **dtype** (DataType，可选) - Tensor的dtype信息。默认值： ``None`` 。
+        - **device** (str，可选) - Tensor的device信息。默认值： ``None`` 。
 
     异常：
-        - **TypeError** - `tensor` 既不是Tensor类型也不是None。
+        - **TypeError** - `tensor` 既不是Tensor类型也不是 ``None`` 。
 
-    .. py:method:: get_data_size()
+    .. py:method:: data_size
+        :property:
 
         获取Tensor的数据大小。
 
@@ -20,6 +24,38 @@ mindspore_lite.Tensor
         返回：
             int，Tensor的数据大小。
 
+    .. py:method:: device
+        :property:
+
+        获取Tensor的device信息。
+
+        返回：
+            str，Tensor的device信息。
+
+    .. py:method:: dtype
+        :property:
+
+        获取Tensor的数据类型。
+
+        返回：
+            DataType，Tensor的数据类型。
+
+    .. py:method:: element_num
+        :property:
+
+        获取Tensor的元素数。
+
+        返回：
+            int，Tensor数据的元素数。
+
+    .. py:method:: format
+        :property:
+
+        获取Tensor的格式。
+
+        返回：
+            Format，Tensor的格式。
+
     .. py:method:: get_data_to_numpy()
 
         从Tensor获取数据传给numpy对象。
@@ -27,35 +63,8 @@ mindspore_lite.Tensor
         返回：
             numpy.ndarray，Tensor数据中的numpy对象。
 
-    .. py:method:: get_data_type()
-
-        获取Tensor的数据类型。
-
-        返回：
-            DataType，Tensor的数据类型。
-
-    .. py:method:: get_element_num()
-
-        获取Tensor的元素数。
-
-        返回：
-            int，Tensor数据的元素数。
-
-    .. py:method:: get_format()
-
-        获取Tensor的格式。
-
-        返回：
-            Format，Tensor的格式。
-
-    .. py:method:: get_shape()
-
-        获取Tensor的shape。
-
-        返回：
-            list[int]，Tensor的shape。
-
-    .. py:method:: get_tensor_name()
+    .. py:method:: name
+        :property:
 
         获取Tensor的名称。
 
@@ -74,43 +83,10 @@ mindspore_lite.Tensor
             - **RuntimeError** - `numpy_obj` 的数据类型与Tensor的数据类型不等价。
             - **RuntimeError** - `numpy_obj` 的数据大小与Tensor的数据大小不相等。
 
-    .. py:method:: set_data_type(data_type)
+    .. py:method:: shape
+        :property:
 
-        设置Tensor的数据类型。
+        获取Tensor的shape。
 
-        参数：
-            - **data_type** (DataType) - Tensor的数据类型。
-
-        异常：
-            - **TypeError** - `data_type` 不是DataType类型。
-
-    .. py:method:: set_format(tensor_format)
-
-        设置Tensor的格式。
-
-        参数：
-            - **tensor_format** (Format) - Tensor的格式。
-
-        异常：
-            - **TypeError** - `tensor_format` 不是Format类型。
-
-    .. py:method:: set_shape(shape)
-
-        设置Tensor的shape。
-
-        参数：
-            - **shape** (list[int]) - Tensor的shape。
-
-        异常：
-            - **TypeError** - `shape` 不是list类型。
-            - **TypeError** - `shape` 是list类型，但元素不是int类型。
-
-    .. py:method:: set_tensor_name(tensor_name)
-
-        设置Tensor的名称。
-
-        参数：
-            - **tensor_name** (str) - Tensor的名称。
-
-        异常：
-            - **TypeError** - `tensor_name` 不是str类型。
+        返回：
+            list[int]，Tensor的shape。

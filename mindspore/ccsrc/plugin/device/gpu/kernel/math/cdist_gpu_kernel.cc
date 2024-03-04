@@ -40,7 +40,7 @@ bool CdistGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::ve
   }
   kernel_func_ = func_list_[index].second;
   batch_ = 0;
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   p_ = kernel_ptr_->get_p();
   return true;
 }
@@ -96,8 +96,9 @@ bool CdistGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, cons
   T *input_y = GetDeviceAddress<T>(inputs, 1);
   T *out_data = GetDeviceAddress<T>(outputs, 0);
 
-  CalCdist(out_elements_, input_x, input_y, out_data, x_row_, y_row_, x_col_, p_, batch_, device_id_,
-           reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = CalCdist(out_elements_, input_x, input_y, out_data, x_row_, y_row_, x_col_, p_, batch_, device_id_,
+                         reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

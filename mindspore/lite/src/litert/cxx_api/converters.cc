@@ -78,6 +78,14 @@ Status ContextUtils::AddAscendDevice(lite::InnerContext *inner_context, DeviceIn
   return kSuccess;
 }
 
+Status ContextUtils::AddCustomDevice(lite::InnerContext *inner_context,
+                                     const std::shared_ptr<DeviceInfoContext> &device) {
+  lite::DeviceInfo device_info;
+  device_info.custom_device_info_ = {device};
+  inner_context->device_list_.push_back({lite::DeviceType::DT_CUSTOM, device_info});
+  return kSuccess;
+}
+
 void ContextUtils::ResetContextDefaultParam(Context *context) {
   if (context->GetInterOpParallelNum() == 0) {
     context->SetInterOpParallelNum(kDefaultInterOpParallelNum);
@@ -119,9 +127,15 @@ std::shared_ptr<lite::InnerContext> ContextUtils::Convert(Context *context) {
                   << " | thread num: " << context->GetThreadNum();
     return nullptr;
   }
+#ifdef ENABLE_CLOUD_FUSION_INFERENCE
+  inner_context->thread_num_ = context->GetThreadNum();
+  inner_context->inter_op_parallel_num_ = context->GetInterOpParallelNum();
+  inner_context->affinity_core_list_ = context->GetThreadAffinityCoreList();
+#else
   SetContextAttr(context->GetThreadNum(), context->GetInterOpParallelNum(), context->GetEnableParallel(),
                  context->GetThreadAffinityCoreList(), static_cast<int>(context->GetBuiltInDelegate()),
                  context->GetDelegate(), inner_context.get(), context->GetMultiModalHW());
+#endif
   inner_context->device_list_.clear();
   Status ret = kLiteError;
   for (auto &device : device_list) {
@@ -147,6 +161,8 @@ std::shared_ptr<lite::InnerContext> ContextUtils::Convert(Context *context) {
       ret = AddNpuDevice(npu_context->GetEnableFP16(), npu_context->GetFrequency(), inner_context.get());
     } else if (device->GetDeviceType() == kAscend) {
       ret = AddAscendDevice(inner_context.get(), device.get());
+    } else if (device->GetDeviceType() == kCustomDevice) {
+      ret = AddCustomDevice(inner_context.get(), device);
     }
     if (ret != kSuccess) {
       MS_LOG(ERROR) << "Add device failed!";

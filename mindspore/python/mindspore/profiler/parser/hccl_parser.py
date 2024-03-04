@@ -36,9 +36,9 @@ class CommunicationInfo(Enum):
         RDMA: Communication link between servers in cluster training.
         SDMA: Communication link inside server in cluster training.
         LOCAL: The operation of this card has no transmission process.
-        RDMASEND：Communication operator of RDMA link.
-        REDUCE_INLINE：Communication operator of SDMA link.
-        MEMCPY：Communication operator of SDMA link.
+        RDMASEND: Communication operator of RDMA link.
+        REDUCE_INLINE: Communication operator of SDMA link.
+        MEMCPY: Communication operator of SDMA link.
         NOTIFY_RECORD: Communication operator of SDMA link.
         NOTIFY_WAIT: operator of LOCAL.
     """
@@ -269,15 +269,17 @@ class HcclParser:
 
             # index_0:step_num, index_1:start_point, index_2:end_point
             # The unit of time stamp is 10ns. To convert it to μs, you need to divide it by 100.
-            step_timestamps_info = [[info[0], float(info[1]) / 100, float(info[2]) / 100]
-                                    for info in csv_reader if info[0].isdigit()]
+            step_timestamps_info = [
+                [info[0], float(info[1]) / 100, float(info[2]) / 100]
+                for info in csv_reader if info[0].isdigit()
+            ]
 
         return [communication_operators_names, step_timestamps_info]
 
     def _get_communication_operator_name_mapping_info(self):
         """Get the name of communication operators mapping between hccl and step trace."""
         dir_path = self._validate_dir_path(self._source_dir)
-        # The name of the operator in hccl is like：operatorName_{Ordered_number}_xx_xx.
+        # The name of the operator in hccl is like: operatorName_{Ordered_number}_xx_xx.
         operators_names_in_hccl = [entry.name for entry in os.scandir(dir_path) if entry.is_dir()]
         operators_names_in_hccl_set = set({i.split('_')[0] for i in operators_names_in_hccl})
         op_names_in_hccl_dic = dict()
@@ -294,8 +296,10 @@ class HcclParser:
                                           for op_name in operators_names_in_step_trace})
         op_names_in_step_trace_dic = dict()
         for item in op_names_in_step_trace_set:
-            op_names_in_step_trace_dic[item] = [op_name for op_name in operators_names_in_step_trace
-                                                if op_name.split('/')[-1].split('-')[0].split('_')[-1] == item]
+            op_names_in_step_trace_dic[item] = [
+                op_name for op_name in operators_names_in_step_trace
+                if op_name.split('/')[-1].split('-')[0].split('_')[-1] == item
+            ]
 
         communication_operator_mapping_info = dict()
         for hccl_key, hccl_value in op_names_in_hccl_dic.items():
@@ -548,9 +552,9 @@ class HcclParser:
         """Validate file path."""
         try:
             file_path = validate_and_normalize_path(file_path)
-        except RuntimeError:
+        except RuntimeError as err:
             logger.warning('file path is invalid.')
-            raise ProfilerPathErrorException('file path is invalid.')
+            raise ProfilerPathErrorException('file path is invalid.') from err
         if not os.path.isfile(file_path):
             logger.warning('The file <%s> not found.', file_path)
             raise ProfilerFileNotFoundException(file_path)
@@ -560,9 +564,9 @@ class HcclParser:
         """Validate dir path."""
         try:
             dir_path = validate_and_normalize_path(dir_path)
-        except RuntimeError:
+        except RuntimeError as err:
             logger.warning('dir path is invalid.')
-            raise ProfilerPathErrorException('dir path is invalid.')
+            raise ProfilerPathErrorException('dir path is invalid.') from err
         if not os.path.isdir(dir_path):
             logger.warning('The  dir <%s> not found.', dir_path)
             raise ProfilerDirNotFoundException(dir_path)

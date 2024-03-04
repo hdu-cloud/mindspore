@@ -17,10 +17,11 @@
 #include <vector>
 #include <memory>
 #include <string>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/lite_op_name.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "frontend/optimizer/opt.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -86,6 +87,7 @@ ValueNodePtr CreateValueNode(const AnfNodePtr &node) {
   kernel::KernelBuildInfo::KernelBuildInfoBuilder op_builder;
   op_builder.SetOutputsFormat({kOpFormat_NC1HWC0});
   op_builder.SetOutputsDeviceType({kNumberTypeFloat16});
+  op_builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
   AnfAlgo::SetSelectKernelBuildInfo(op_builder.Build(), assist_const.get());
   return assist_const;
 }
@@ -103,6 +105,11 @@ const AnfNodePtr SpaceToDepthSplit::Process(const FuncGraphPtr &graph, const Anf
   auto kernel_graph = graph->cast<KernelGraphPtr>();
   auto cnode = node->cast<CNodePtr>();
   MS_EXCEPTION_IF_NULL(cnode);
+
+  if (common::AnfAlgo::IsDynamicShape(node)) {
+    return nullptr;
+  }
+
   if (cnode->size() != kSpaceToDepthInputNum + 1) {
     MS_LOG(INFO) << "The node " << cnode->DebugString() << " is not equal to " << kSpaceToDepthInputNum << " inputs";
     return nullptr;

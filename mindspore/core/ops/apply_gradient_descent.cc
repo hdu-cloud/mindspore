@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,16 +16,28 @@
 
 #include "ops/apply_gradient_descent.h"
 
-#include <algorithm>
-#include <functional>
+#include <map>
 #include <set>
 #include <utility>
 
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -80,7 +92,8 @@ TypePtr ApplyGradientDescentInferType(const PrimitivePtr &prim, const std::vecto
   auto var_type = input_args[kInputIndex0]->BuildType();
   auto alpha_type = input_args[kInputIndex1]->BuildType();
   auto delta_type = input_args[kInputIndex2]->BuildType();
-  const std::set<TypePtr> valid_types = {kFloat16, kFloat32};
+  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kInt8,   kUInt8,   kInt16,     kUInt16,    kInt32,
+                                         kUInt32,  kInt64,   kUInt64, kFloat64, kComplex64, kComplex128};
   // delta must have the same type as var
   std::map<std::string, TypePtr> args;
   (void)args.insert(std::make_pair("var_type", var_type));
@@ -109,7 +122,24 @@ AbstractBasePtr ApplyGradientDescentInfer(const abstract::AnalysisEnginePtr &, c
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(ApplyGradientDescent, prim::kPrimApplyGradientDescent, ApplyGradientDescentInfer, nullptr,
-                             true);
+// AG means auto generated
+class MIND_API AGApplyGradientDescentInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyGradientDescentInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyGradientDescentInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyGradientDescentInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ApplyGradientDescent, prim::kPrimApplyGradientDescent, AGApplyGradientDescentInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

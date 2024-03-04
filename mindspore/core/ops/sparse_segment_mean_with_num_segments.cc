@@ -13,14 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-#include <algorithm>
-
 #include "ops/sparse_segment_mean_with_num_segments.h"
-#include "utils/check_convert_utils.h"
+#include <map>
+#include <set>
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
+#include "abstract/utils.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,34 +43,36 @@ abstract::ShapePtr SparseSegmentMeanWithNumSegmentsInferShape(const PrimitivePtr
   constexpr size_t kDimOne = 1;
   constexpr size_t kShapeZero = 0;
   auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
+  if (IsDynamicRank(x_shape)) {
+    return std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
+  }
   auto indices_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
   auto segment_ids_shape =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->BuildShape())[kShape];
   auto num_segments_shape =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex3]->BuildShape())[kShape];
-  if (indices_shape.size() != kRankOne) {
-    MS_EXCEPTION(ValueError) << "For " << prim_name << ", rank of indices should be 1.";
-  }
-  if (segment_ids_shape.size() != kRankOne) {
-    MS_EXCEPTION(ValueError) << "For " << prim_name << ", rank of segment_ids should be 1.";
-  }
-  if (x_shape.size() < kRankOne) {
-    MS_EXCEPTION(ValueError) << "For " << prim_name << ", rank of x cannot be less than 1.";
-  }
-  if (!IsDynamic(indices_shape) && !IsDynamic(segment_ids_shape) &&
-      indices_shape[kShapeZero] != segment_ids_shape[kShapeZero]) {
-    MS_EXCEPTION(ValueError) << "For " << prim_name << ", indices and segment_ids's ranks mismatch.";
-  }
-  if (num_segments_shape.size() > kRankOne) {
-    MS_EXCEPTION(ValueError) << "For " << prim_name << ", rank of num_segments should be 0 or 1.";
-  }
-  if (!IsDynamic(num_segments_shape)) {
-    if (num_segments_shape.size() == kRankOne && num_segments_shape[kShapeZero] != static_cast<int64_t>(kDimOne)) {
-      MS_EXCEPTION(ValueError) << "For " << prim_name << ", the num element of num_segments should be 1.";
+  if (!IsDynamicRank(indices_shape) && !IsDynamicRank(segment_ids_shape) && !IsDynamicRank(num_segments_shape)) {
+    if (indices_shape.size() != kRankOne) {
+      MS_EXCEPTION(ValueError) << "For " << prim_name << ", rank of indices should be 1.";
     }
-  }
-  if (IsDynamicRank(x_shape)) {
-    return std::make_shared<abstract::Shape>(std::vector<int64_t>(abstract::Shape::kShapeRankAny));
+    if (segment_ids_shape.size() != kRankOne) {
+      MS_EXCEPTION(ValueError) << "For " << prim_name << ", rank of segment_ids should be 1.";
+    }
+    if (x_shape.size() < kRankOne) {
+      MS_EXCEPTION(ValueError) << "For " << prim_name << ", rank of x cannot be less than 1.";
+    }
+    if (!IsDynamic(indices_shape) && !IsDynamic(segment_ids_shape) &&
+        indices_shape[kShapeZero] != segment_ids_shape[kShapeZero]) {
+      MS_EXCEPTION(ValueError) << "For " << prim_name << ", indices and segment_ids's ranks mismatch.";
+    }
+    if (num_segments_shape.size() > kRankOne) {
+      MS_EXCEPTION(ValueError) << "For " << prim_name << ", rank of num_segments should be 0 or 1.";
+    }
+    if (!IsDynamic(num_segments_shape)) {
+      if (num_segments_shape.size() == kRankOne && num_segments_shape[kShapeZero] != static_cast<int64_t>(kDimOne)) {
+        MS_EXCEPTION(ValueError) << "For " << prim_name << ", the num element of num_segments should be 1.";
+      }
+    }
   }
   if (input_args[kInputIndex3]->isa<abstract::AbstractTensor>() &&
       input_args[kInputIndex3]->BuildValue()->isa<tensor::Tensor>()) {
@@ -70,7 +82,7 @@ abstract::ShapePtr SparseSegmentMeanWithNumSegmentsInferShape(const PrimitivePtr
     MS_EXCEPTION_IF_NULL(num_segments_value);
     auto num_segments_value_tensor =
       CheckAndConvertUtils::CheckTensorIntValue("num_segments", num_segments_value, prim_name);
-    size_t dim_zero = num_segments_value_tensor.back();
+    size_t dim_zero = LongToSize(num_segments_value_tensor.back());
     if (dim_zero < kInputIndex1) {
       MS_EXCEPTION(ValueError) << "For " << prim_name
                                << ", num_segments must bigger than the last number of segment_ids, "
@@ -110,14 +122,35 @@ TypePtr SparseSegmentMeanWithNumSegmentsInferType(const PrimitivePtr &prim,
 AbstractBasePtr SparseSegmentMeanWithNumSegmentsInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &prim,
                                                       const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(prim);
+  const int64_t kInputsNum = 4;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputsNum, prim->name());
   auto types = SparseSegmentMeanWithNumSegmentsInferType(prim, input_args);
   auto shapes = SparseSegmentMeanWithNumSegmentsInferShape(prim, input_args);
   return abstract::MakeAbstract(shapes, types);
 }
 
 MIND_API_OPERATOR_IMPL(SparseSegmentMeanWithNumSegments, BaseOperator);
-REGISTER_HOST_DEPENDS(kNameSparseSegmentMeanWithNumSegments, {3});
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseSegmentMeanWithNumSegments, prim::kPrimSparseSegmentMeanWithNumSegments,
-                             SparseSegmentMeanWithNumSegmentsInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSparseSegmentMeanWithNumSegmentsInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentMeanWithNumSegmentsInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentMeanWithNumSegmentsInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseSegmentMeanWithNumSegmentsInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {3}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseSegmentMeanWithNumSegments, prim::kPrimSparseSegmentMeanWithNumSegments,
+                                 AGSparseSegmentMeanWithNumSegmentsInfer, false);
 }  // namespace ops
 }  // namespace mindspore

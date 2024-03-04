@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,11 @@
 
 #include "runtime/graph_scheduler/actor/control_flow/switch_actor.h"
 #include "runtime/graph_scheduler/actor/control_flow/entrance_actor.h"
+#include "plugin/device/cpu/kernel/pyexecute/py_execute_cpu_kernel.h"
 #include "abstract/utils.h"
 #include "runtime/graph_scheduler/actor/output_actor.h"
 #include "utils/log_adapter.h"
+#include "include/common/utils/python_adapter.h"
 
 namespace mindspore {
 namespace runtime {
@@ -37,7 +39,13 @@ void SwitchActor::FetchInput(OpContext<DeviceTensor> *const context) {
 
   // Call the base class interface to get input data and input partial.
   ControlActor::FetchInput(context);
+
+  ProfilerRecorder profiler(ProfilerModule::kRuntime, ProfilerEvent::kPreLaunch, GetAID().Name());
   size_t index = GetIndex(context);
+  if (common::IsNeedProfileMemory()) {
+    // dry run switch index is always 0.
+    index = 0;
+  }
   if (!output_partial_arrows_.empty()) {
     if (index + kSwitchCondPos >= input_partials_.size()) {
       MS_EXCEPTION(IndexError) << "Given index " << std::to_string(index)
@@ -73,18 +81,32 @@ size_t SwitchActor::GetIndex(const OpContext<DeviceTensor> *const context) const
   int64_t index = 0;
   char buf[kMaxSwitchCondSize] = {0};
   ShapeVector host_shape;
+  if (device_tensor->user_data() != nullptr && device_tensor->sync_user_data_handler() != nullptr &&
+      device_tensor->user_data()->has(kernel::PyExecuteOutputUserData::key)) {
+    const auto &user_data_obj =
+      device_tensor->user_data()->get<kernel::PyExecuteOutputUserData>(kernel::PyExecuteOutputUserData::key);
+    MS_EXCEPTION_IF_NULL(user_data_obj);
+    const auto &obj = user_data_obj->obj;
+    py::gil_scoped_acquire gil_acquire;
+    if (py::isinstance<py::bool_>(obj)) {
+      MS_LOG(DEBUG) << "Index:" << py::cast<bool>(obj) << " for actor:" << GetAID();
+      return index = static_cast<int64_t>(py::cast<bool>(obj) ? 1 : 0);
+    }
+  }
   if (!device_tensor->SyncDeviceToHost(host_shape, size, type_id, static_cast<void *>(buf))) {
-    MS_LOG(ERROR) << GetAID().Name() << " get index from device address failed, type id:" << type_id
-                  << ", device type:" << std::to_string(static_cast<int>(device_contexts_[0]->GetDeviceType()));
+    MS_LOG(ERROR) << GetAID().Name() << " get index from device address failed, type id:" << type_id;
     return 0;
   }
 
   if (type_id == TypeId::kNumberTypeInt32) {
     index = static_cast<int64_t>((static_cast<int32_t *>(static_cast<void *>(buf)))[0]);
+    MS_LOG(DEBUG) << "Index:" << index << " for actor:" << GetAID();
   } else if (type_id == TypeId::kNumberTypeInt64) {
     index = (static_cast<int64_t *>(static_cast<void *>(buf)))[0];
+    MS_LOG(DEBUG) << "Index:" << index << " for actor:" << GetAID();
   } else if (type_id == TypeId::kNumberTypeBool) {
     bool cond = (static_cast<bool *>(static_cast<void *>(buf)))[0];
+    MS_LOG(DEBUG) << "Condition:" << cond << " for actor:" << GetAID();
     index = static_cast<int64_t>(cond ? 1 : 0);
   } else {
     MS_LOG(ERROR) << "Index must be Int type.";
@@ -93,7 +115,14 @@ size_t SwitchActor::GetIndex(const OpContext<DeviceTensor> *const context) const
 
   // SwitchLayer node support negative index range [-size, -1].
   if (index < 0) {
-    index += SizeToInt(formal_parameters_.size() - 1);
+    int64_t positive_index = index + SizeToLong(formal_parameters_.size() - 1);
+    if (positive_index < 0) {
+      MS_EXCEPTION(IndexError) << "Given index " << std::to_string(index)
+                               << " out of range. Please make sure the value of index in ["
+                               << std::to_string(1 - SizeToInt(input_partials_.size())) << ", "
+                               << std::to_string(input_partials_.size() - 1) + "), and the type is int32.";
+    }
+    index = positive_index;
   }
   return LongToSize(index);
 }

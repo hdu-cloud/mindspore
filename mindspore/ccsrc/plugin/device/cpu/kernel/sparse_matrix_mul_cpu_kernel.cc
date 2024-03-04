@@ -44,7 +44,6 @@ using KernelRunFunc = SparseMatrixMulCpuKernelMod::KernelRunFunc;
 }  // namespace
 bool SparseMatrixMulCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                        const std::vector<KernelTensorPtr> &outputs) {
-  outputs_ = outputs;
   auto kernel_ptr = std::dynamic_pointer_cast<ops::SparseMatrixMul>(base_operator);
   kernel_name_ = kernel_ptr->name();
   if (!MatchKernelFunc(base_operator, inputs, outputs)) {
@@ -65,17 +64,18 @@ int SparseMatrixMulCpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
   std::vector<int64_t> b_shape = inputs[kBDenseIdx]->GetShapeVector();
   size_t b_shape_num = b_shape.size();
   if (b_shape_num == bShapeNum1) {
-    col_ = b_shape[0];
+    col_ = LongToSize(b_shape[0]);
   } else if (b_shape_num == bShapeNum2) {
-    row_ = b_shape[0];
-    col_ = b_shape[1];
+    row_ = LongToSize(b_shape[0]);
+    col_ = LongToSize(b_shape[1]);
   }
   return ret;
 }
 
 template <typename T, typename S>
-bool SparseMatrixMulCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
-                                               const std::vector<AddressPtr> &outputs) {
+const bool SparseMatrixMulCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
+                                                     const std::vector<AddressPtr> &,
+                                                     const std::vector<AddressPtr> &outputs) {
   CHECK_KERNEL_INPUTS_NUM(inputs.size(), kInputNum, kernel_name_);
   CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kOutputNum, kernel_name_);
   const auto a_shape = reinterpret_cast<T *>(inputs[kAShapeIdx]->addr);
@@ -90,13 +90,17 @@ bool SparseMatrixMulCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &in
   auto c_indptr = reinterpret_cast<T *>(outputs[kOutIndptrIdx]->addr);
   auto c_indices = reinterpret_cast<T *>(outputs[kOutIndicesIdx]->addr);
   auto c_values = reinterpret_cast<S *>(outputs[kOutValuesIdx]->addr);
-  const int64_t a_indices_num = inputs[kAIndicesIdx]->size / (sizeof(T));
-  const int64_t b_dense_num = inputs[kBDenseIdx]->size / (sizeof(S));
+  const int64_t a_indices_num = SizeToLong(inputs[kAIndicesIdx]->size / (sizeof(T)));
+  const int64_t b_dense_num = SizeToLong(inputs[kBDenseIdx]->size / (sizeof(S)));
 
-  memcpy_s(c_batch_pointers, inputs[kABatchPointersIdx]->size, a_batch_pointers, inputs[kABatchPointersIdx]->size);
-  memcpy_s(c_shape, inputs[kAShapeIdx]->size, a_shape, inputs[kAShapeIdx]->size);
-  memcpy_s(c_indptr, inputs[kAIndptrIdx]->size, a_indptr, inputs[kAIndptrIdx]->size);
-  memcpy_s(c_indices, inputs[kAIndicesIdx]->size, a_indices, inputs[kAIndicesIdx]->size);
+  errno_t ret =
+    memcpy_s(c_batch_pointers, inputs[kABatchPointersIdx]->size, a_batch_pointers, inputs[kABatchPointersIdx]->size);
+  ret += memcpy_s(c_shape, inputs[kAShapeIdx]->size, a_shape, inputs[kAShapeIdx]->size);
+  ret += memcpy_s(c_indptr, inputs[kAIndptrIdx]->size, a_indptr, inputs[kAIndptrIdx]->size);
+  ret += memcpy_s(c_indices, inputs[kAIndicesIdx]->size, a_indices, inputs[kAIndicesIdx]->size);
+  if (ret != EOK) {
+    MS_LOG(ERROR) << kernel_name_ << "memcpy_s failed.";
+  }
 
   int64_t index = 0;
   for (int i = 0; i < a_indices_num; i++) {
@@ -110,11 +114,12 @@ bool SparseMatrixMulCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &in
         index++;
       }
     }
-    int64_t absIndex = row * col_ + col;
-    if (absIndex < b_dense_num)
+    int64_t absIndex = row * SizeToLong(col_) + col;
+    if (absIndex < b_dense_num) {
       c_values[i] = a_values[i] * b_dense[absIndex];
-    else
+    } else {
       c_values[i] = 0;
+    }
   }
   return true;
 }

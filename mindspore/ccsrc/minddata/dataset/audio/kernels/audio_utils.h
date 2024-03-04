@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,6 +38,7 @@ constexpr double PI = 3.141592653589793;
 constexpr int kMinAudioDim = 1;
 constexpr int kDefaultAudioDim = 2;
 constexpr int TWO = 2;
+constexpr float HALF = 0.5;
 
 namespace mindspore {
 namespace dataset {
@@ -89,6 +90,22 @@ Status AmplitudeToDB(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tenso
   return Status::OK();
 }
 
+/// \brief Use custom thread pools.
+/// \param task: Lambda functions to be processed.
+/// \param input_size: Size of the input.
+/// \param block_size: Customized size for each thread processing.
+/// \return Status code.
+Status AudioParallelLaunch(const std::function<void(size_t, size_t, size_t, size_t)> &task, size_t input_size,
+                           float block_size);
+
+/// \brief Compute the thread nums.
+/// \param input_size: Size of the input.
+/// \param block_size: Customized size for each thread processing.
+/// \param task_num: The final calculated number of threads.
+/// \param once_compute_size: The final calculated size for each thread processing.
+/// \return Status code.
+Status CountThreadNums(size_t input_size, float block_size, size_t *task_num, size_t *once_compute_size);
+
 /// \brief Calculate the angles of the complex numbers.
 /// \param input/output: Tensor of shape <..., time>.
 template <typename T>
@@ -96,21 +113,41 @@ Status Angle(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *outp
   TensorShape shape = input->shape();
   std::vector output_shape = shape.AsVector();
   output_shape.pop_back();
-  std::shared_ptr<Tensor> output_tensor;
-  std::vector<T> out;
-  T o;
-  T x;
-  T y;
-  for (auto itr = input->begin<T>(); itr != input->end<T>(); itr++) {
-    x = static_cast<T>(*itr);
-    itr++;
-    y = static_cast<T>(*itr);
-    o = std::atan2(y, x);
-    out.emplace_back(o);
-  }
-  // Generate multidimensional results corresponding to input
-  Tensor::CreateFromVector(out, TensorShape{output_shape}, &output_tensor);
-  *output = output_tensor;
+  std::shared_ptr<Tensor> out;
+  RETURN_IF_NOT_OK(Tensor::CreateEmpty(TensorShape(output_shape), input->type(), &out));
+
+  std::vector<std::thread> threads;
+  size_t input_size = input->Size();
+  float block_size = 30000;
+  auto task = [&input, &out, &input_size](size_t start, size_t end, size_t num, size_t task_num) {
+    T o;
+    T x;
+    T y;
+
+    if ((task_num - num) == 1) {
+      end = input_size;
+    }
+
+    auto itr_start = input->begin<T>();
+    itr_start += start;
+    auto itr_end = input->begin<T>();
+    itr_end += end;
+    auto itr_out = out->begin<T>();
+    size_t offset = start / TWO;
+    itr_out += offset;
+
+    // calculate norm, using: .pow(2.).sum(-1).pow(0.5 * power)
+    for (auto itr = itr_start; itr != itr_end; itr++) {
+      x = *itr;
+      itr++;
+      y = *itr;
+      o = std::atan2(y, x);
+      *itr_out = o;
+      itr_out++;
+    }
+  };
+  RETURN_IF_NOT_OK(AudioParallelLaunch(task, input_size, block_size));
+  *output = out;
   return Status::OK();
 }
 
@@ -150,14 +187,33 @@ Status Contrast(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *o
   TensorShape output_shape{input->shape()};
   std::shared_ptr<Tensor> out;
   RETURN_IF_NOT_OK(Tensor::CreateEmpty(output_shape, input->type(), &out));
-  auto itr_out = out->begin<T>();
-  for (auto itr_in = input->begin<T>(); itr_in != input->end<T>(); itr_in++) {
-    // PI / 2 is half of the constant PI
-    T temp1 = static_cast<T>(*itr_in) * (PI / TWO);
-    T temp2 = enhancement_amount_value * std::sin(temp1 * 4);
-    *itr_out = std::sin(temp1 + temp2);
-    itr_out++;
-  }
+
+  // Get the thread num and once compute size.
+  float block_size = 6000;
+  size_t input_size = input->Size();
+
+  auto task = [&input, &out, &input_size, &enhancement_amount_value](size_t start, size_t end, size_t num,
+                                                                     size_t task_num) {
+    if ((task_num - num) == 1) {
+      end = input_size;
+    }
+
+    auto itr_out = out->begin<T>();
+    itr_out += start;
+    auto tmp_start = input->begin<T>();
+    tmp_start += start;
+    auto tmp_end = input->begin<T>();
+    tmp_end += end;
+
+    for (auto itr_in = tmp_start; itr_in != tmp_end; itr_in++) {
+      // PI / 2 is half of the constant PI
+      T temp1 = (*itr_in) * (PI / TWO);
+      T temp2 = enhancement_amount_value * std::sin(temp1 * 4);
+      *itr_out = std::sin(temp1 + temp2);
+      itr_out++;
+    }
+  };
+  RETURN_IF_NOT_OK(AudioParallelLaunch(task, input_size, block_size));
   *output = out;
   return Status::OK();
 }
@@ -172,8 +228,10 @@ Status DBToAmplitude(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tenso
   std::shared_ptr<Tensor> out;
   RETURN_IF_NOT_OK(Tensor::CreateEmpty(input->shape(), input->type(), &out));
   auto itr_out = out->begin<T>();
+  constexpr int64_t pow_factor_x = 10;
+  constexpr double pow_factor_y = 0.1;
   for (auto itr_in = input->begin<T>(); itr_in != input->end<T>(); itr_in++) {
-    *itr_out = ref * pow(pow(10, (*itr_in) * 0.1), power);
+    *itr_out = ref * pow(pow(pow_factor_x, (*itr_in) * pow_factor_y), power);
     itr_out++;
   }
   *output = out;
@@ -266,8 +324,8 @@ Status LFilter(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *ou
     b_coeffs[i] /= a_coeffs[0];
   }
   // Sliding window
-  T *m_px = new T[m_num_order + 1];
-  T *m_py = new T[m_den_order + 1];
+  std::vector<T> m_px(m_num_order + 1, static_cast<T>(0));
+  std::vector<T> m_py(m_den_order + 1, static_cast<T>(0));
 
   // Tensor -> vector
   for (auto itr = input->begin<T>(); itr != input->end<T>();) {
@@ -318,10 +376,8 @@ Status LFilter(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *ou
     }
   }
   // unpack batch
-  Tensor::CreateFromVector(out_vect, input_shape, &out);
+  RETURN_IF_NOT_OK(Tensor::CreateFromVector(out_vect, input_shape, &out));
   *output = out;
-  delete[] m_px;
-  delete[] m_py;
   return Status::OK();
 }
 
@@ -424,7 +480,7 @@ Status CreateFbanks(std::shared_ptr<Tensor> *output, int32_t n_freqs, float f_mi
   // min_log_hz, min_log_mel, logstep and f_sp are the const of the mel value equation.
   const double min_log_hz = 1000.0;
   const double min_log_mel = 1000 / (200.0 / 3);
-  const double logstep = log2(6.4) / 27.0;
+  const double logstep = log(6.4) / 27.0;
   const double f_sp = 200.0 / 3;
 
   // hez_to_mel_c and mel_to_hz_c are the const coefficient of mel frequency cepstrum.
@@ -446,11 +502,11 @@ Status CreateFbanks(std::shared_ptr<Tensor> *output, int32_t n_freqs, float f_mi
   } else {
     m_min = (f_min - 0.0) / f_sp;
     m_max = (f_max - 0.0) / f_sp;
-    if (m_min >= min_log_hz) {
-      m_min = min_log_mel + log2(f_min / min_log_hz) / logstep;
+    if (f_min >= min_log_hz) {
+      m_min = min_log_mel + log(f_min / min_log_hz) / logstep;
     }
-    if (m_max >= min_log_hz) {
-      m_max = min_log_mel + log2(f_max / min_log_hz) / logstep;
+    if (f_max >= min_log_hz) {
+      m_max = min_log_mel + log(f_max / min_log_hz) / logstep;
     }
   }
 
@@ -562,39 +618,42 @@ Status MelScale(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *o
   TensorShape input_shape = input->shape();
   TensorShape input_reshape({input->Size() / input_shape[-1] / input_shape[-2], input_shape[-2], input_shape[-1]});
   RETURN_IF_NOT_OK(input->Reshape(input_reshape));
-  // gen freq bin mat
-  std::shared_ptr<Tensor> freq_bin_mat;
-  RETURN_IF_NOT_OK(CreateFbanks<T>(&freq_bin_mat, n_stft, f_min, f_max, n_mels, sample_rate, norm, mel_type));
-  auto data_ptr = &*freq_bin_mat->begin<T>();
-  Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>> matrix_fb(data_ptr, n_mels, n_stft);
 
-  // input vector
-  std::vector<T> in_vect(input->Size());
-  size_t ind = 0;
-  for (auto itr = input->begin<T>(); itr != input->end<T>(); itr++, ind++) {
-    in_vect[ind] = (*itr);
-  }
   int rows = input_reshape[1];
   int cols = input_reshape[2];
-
-  std::vector<T> mel_specgram;
-
-  for (int c = 0; c < input_reshape[0]; c++) {
-    std::vector<T> mat_c = std::vector<T>(in_vect.begin() + rows * cols * c, in_vect.begin() + rows * cols * (c + 1));
-    Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>> matrix_c(mat_c.data(), cols, rows);
-    Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> mat_res = (matrix_c * matrix_fb.transpose());
-    std::vector<T> vec_c(mat_res.data(), mat_res.data() + mat_res.size());
-    mel_specgram.insert(mel_specgram.end(), vec_c.begin(), vec_c.end());
-  }
 
   // unpack
   std::vector<int64_t> out_shape_vec = input_shape.AsVector();
   out_shape_vec[input_shape.Size() - 1] = cols;
   out_shape_vec[input_shape.Size() - TWO] = n_mels;
   TensorShape output_shape(out_shape_vec);
-  std::shared_ptr<Tensor> out;
-  RETURN_IF_NOT_OK(Tensor::CreateFromVector(mel_specgram, output_shape, &out));
-  *output = out;
+
+  RETURN_IF_NOT_OK(Tensor::CreateEmpty(output_shape, input->type(), output));
+  if (n_mels == 0) {
+    return Status::OK();
+  }
+  auto out_in = (*output)->GetMutableBuffer();
+  size_t t_size = sizeof(T);
+
+  // gen freq bin mat
+  std::shared_ptr<Tensor> freq_bin_mat;
+  RETURN_IF_NOT_OK(CreateFbanks<T>(&freq_bin_mat, n_stft, f_min, f_max, n_mels, sample_rate, norm, mel_type));
+  auto data_ptr = &*freq_bin_mat->begin<T>();
+  Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>> matrix_fb(data_ptr, n_mels, n_stft);
+  auto matrix_fb_t = matrix_fb.transpose();
+
+  for (size_t c = 0; c < input_reshape[0]; c++) {
+    Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>> matrix_c(
+      static_cast<T *>(&*input->begin<T>() + rows * cols * c), cols, rows);
+    auto mat_res = matrix_c * matrix_fb_t;
+    size_t mat_res_size = mat_res.size() * t_size;
+    size_t offset = mat_res_size * c;
+    int ret_code =
+      memcpy_s(reinterpret_cast<void *>(out_in + offset), mat_res_size, mat_res.eval().data(), mat_res_size);
+    CHECK_FAIL_RETURN_UNEXPECTED(ret_code == EOK,
+                                 "Failed to copy data into std::vector, ret code: " + std::to_string(ret_code) + ".");
+  }
+
   return Status::OK();
 }
 
@@ -757,6 +816,24 @@ Status InverseMelScale(const std::shared_ptr<Tensor> &input, std::shared_ptr<Ten
                        float tolerance_loss, float tolerance_change, float sgd_lr, float sgd_momentum, NormType norm,
                        MelType mel_type, std::mt19937 rnd);
 
+/// \brief Create InverseSpectrogram for a raw audio signal.
+/// \param[in] input Input tensor.
+/// \param[out] output Output tensor.
+/// \param[in] length The output length of the waveform.
+/// \param[in] n_fft Size of FFT, creates n_fft // 2 + 1 bins.
+/// \param[in] win_length Window size.
+/// \param[in] hop_length Length of hop between STFT windows.
+/// \param[in] pad Two sided padding of signal.
+/// \param[in] window A function to create a window tensor that is applied/multiplied to each frame/window.
+/// \param[in] normalized Whether to normalize by magnitude after stft.
+/// \param[in] center Whether the signal in spectrogram was padded on both sides.
+/// \param[in] pad_mode Controls the padding method used when center is True.
+/// \param[in] onesided Controls whether spectrogram was used to return half of results to avoid redundancy.
+/// \return Status return code.
+Status InverseSpectrogram(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, int32_t length,
+                          int32_t n_fft, int32_t win_length, int32_t hop_length, int32_t pad, WindowType window,
+                          bool normalized, bool center, BorderType pad_mode, bool onesided);
+
 /// \brief Decode mu-law encoded signal.
 /// \param input Tensor of shape <..., time>.
 /// \param output Tensor of shape <..., time>.
@@ -789,13 +866,15 @@ Status Overdrive(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *
   RETURN_IF_NOT_OK(input->Reshape(to_shape));
   // apply dB2Linear on gain, 20dB is expect to gain.
   float gain_ex = exp(gain * log(10) / 20.0);
-  color = color / 200;
+  constexpr int64_t translation_factor = 200;
+  color = color / translation_factor;
   // declare the array used to store the input.
   std::vector<T> input_vec;
   // out_vec is used to save the result of applying overdrive.
   std::vector<T> out_vec;
   // store intermediate results of input.
   std::vector<T> temp;
+  constexpr double temp_factor = 3.0;
   // scale and pan the input two-dimensional sound wave array to a certain extent.
   for (auto itr = input->begin<T>(); itr != input->end<T>(); itr++) {
     // store the value of traverse the input.
@@ -807,12 +886,12 @@ Status Overdrive(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *
     // 0.5 + 2/3 * 0.75 = 1, zoom and shift the sound.
     if (temp_fp2 < -1) {
       // -2.0 / 3.0 is -2/3 in the formula.
-      temp.push_back(-2.0 / 3.0);
+      temp.push_back(-2.0 / temp_factor);
     } else if (temp_fp2 > 1) {
       // 2.0 / 3.0 is 2/3 in the formula.
-      temp.push_back(2.0 / 3.0);
+      temp.push_back(2.0 / temp_factor);
     } else {
-      temp.push_back(temp_fp2 - temp_fp2 * temp_fp2 * temp_fp2 / 3.0);
+      temp.push_back(temp_fp2 - temp_fp2 * temp_fp2 * temp_fp2 / temp_factor);
     }
   }
   // last_in and last_out are the intermediate values for processing each moment.
@@ -1146,9 +1225,10 @@ Status Phaser(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *out
   Modulation modulation = sinusoidal ? Modulation::kSinusoidal : Modulation::kTriangular;
   // create and compute mod buffer
   std::shared_ptr<Tensor> mod_buf_tensor;
+  auto PI_factor = 2;
   RETURN_IF_NOT_OK(GenerateWaveTable(&mod_buf_tensor, DataType(DataType::DE_INT32), modulation, mod_buf_len,
                                      static_cast<float>(1.0f), static_cast<float>(delay_buf_len),
-                                     static_cast<float>(PI / 2)));
+                                     static_cast<float>(PI / PI_factor)));
   // tensor mod_buf convert to vector
   std::vector<int> mod_buf;
   for (auto itr = mod_buf_tensor->begin<int>(); itr != mod_buf_tensor->end<int>(); itr++) {
@@ -1320,7 +1400,8 @@ Status Flanger(const std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> *out
   delay_gain = delay_gain * (1 - abs(feedback_gain));
 
   int delay_buf_length = static_cast<int>((delay_min + delay_depth) * sample_rate + 0.5);
-  delay_buf_length = delay_buf_length + 2;
+  auto delay_buf_length_factor = 2;
+  delay_buf_length = delay_buf_length + delay_buf_length_factor;
 
   int lfo_length = static_cast<int>(sample_rate / speed);
 
@@ -1353,8 +1434,9 @@ Status Flanger(const std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> *out
   for (int i = 0; i < time; i++) {
     delay_buf_pos = (delay_buf_pos + delay_buf_length - 1) % delay_buf_length;
     for (int j = 0; j < n_channels; j++) {
+      auto channel_phase_factor = 0.5;
       // get current channel phase
-      cur_channel_phase[j] = static_cast<int>(j * lfo_length * channel_phase + 0.5);
+      cur_channel_phase[j] = static_cast<int>(j * lfo_length * channel_phase + channel_phase_factor);
       // through the current channel phase and lfo arrays to get the delay
       auto iter_lfo = lfo->begin<float>();
       delay_tensor[j] = *(iter_lfo + static_cast<ptrdiff_t>((lfo_pos + cur_channel_phase[j]) % lfo_length));
@@ -1619,13 +1701,13 @@ Status TensorRound(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor>
 
 template <typename T>
 Status ApplyProbabilityDistribution(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output,
-                                    DensityFunction density_function, std::mt19937 rnd) {
+                                    DensityFunction density_function, std::mt19937 *rnd) {
   int channel_size = input->shape()[0] - 1;
   int time_size = input->shape()[-1] - 1;
   std::uniform_int_distribution<> dis_channel(0, channel_size);
-  int random_channel = channel_size > 0 ? dis_channel(rnd) : 0;
+  int random_channel = channel_size > 0 ? dis_channel(*rnd) : 0;
   std::uniform_int_distribution<> dis_time(0, time_size);
-  int random_time = time_size > 0 ? dis_time(rnd) : 0;
+  int random_time = time_size > 0 ? dis_time(*rnd) : 0;
   int number_of_bits = 16;
   int up_scaling = static_cast<int>(pow(2, number_of_bits - 1) - 2);
   int down_scaling = static_cast<int>(pow(2, number_of_bits - 1));
@@ -1647,8 +1729,8 @@ Status ApplyProbabilityDistribution(const std::shared_ptr<Tensor> &input, std::s
     iter_in += (time_size + 1) * random_channel + random_time;
     auto gaussian = *(iter_in);
     for (int i = 0; i < num_rand_variables; i++) {
-      int rand_channel = channel_size > 0 ? dis_channel(rnd) : 0;
-      int rand_time = time_size > 0 ? dis_time(rnd) : 0;
+      int rand_channel = channel_size > 0 ? dis_channel(*rnd) : 0;
+      int rand_time = time_size > 0 ? dis_time(*rnd) : 0;
 
       auto iter_in_rand = input->begin<T>();
       iter_in_rand += (time_size + 1) * rand_channel + rand_time;
@@ -1712,7 +1794,7 @@ Status AddNoiseShaping(const std::shared_ptr<Tensor> &input, std::shared_ptr<Ten
 /// \return Status code.
 template <typename T>
 Status Dither(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, DensityFunction density_function,
-              bool noise_shaping, std::mt19937 rnd) {
+              bool noise_shaping, std::mt19937 *rnd) {
   TensorShape shape = input->shape();
   TensorShape new_shape({input->Size() / shape[-1], shape[-1]});
   RETURN_IF_NOT_OK(input->Reshape(new_shape));
@@ -2112,6 +2194,103 @@ Status Filtfilt(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *o
 /// \return Status return code.
 Status Resample(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, float orig_freq, float des_freq,
                 ResampleMethod resample_method, int32_t lowpass_filter_width, float rolloff, float beta);
+
+/// \brief Create LFCC for a raw audio signal.
+/// \param[in] input Input tensor.
+/// \param[out] output Output tensor.
+/// \param[in] sample_rate Sample rate of audio signal.
+/// \param[in] n_filter Number of linear filters to apply.
+/// \param[in] n_lfcc Number of lfc coefficients to retain.
+/// \param[in] dct_type Type of DCT (discrete cosine transform) to use.
+/// \param[in] log_lf Whether to use log-lf spectrograms instead of db-scaled.
+/// \param[in] n_fft Size of FFT, creates n_fft // 2 + 1 bins.
+/// \param[in] win_length Window size.
+/// \param[in] hop_length Length of hop between STFT windows.
+/// \param[in] f_min Minimum frequency.
+/// \param[in] f_max Maximum frequency.
+/// \param[in] pad Two sided padding of signal.
+/// \param[in] window A function to create a window tensor that is applied/multiplied to each frame/window.
+/// \param[in] power Exponent for the magnitude spectrogram, (must be > 0) e.g., 1 for energy, 2 for power, etc.
+/// \param[in] normalized Whether to normalize by magnitude after stft.
+/// \param[in] center Whether to pad waveform on both sides so that the tt-th frame is centered at time t
+///     t*hop_length.
+/// \param[in] pad_mode Controls the padding method used when center is True.
+/// \param[in] onesided Controls whether to return half of results to avoid redundancy.
+/// \param[in] norm Norm to use.
+/// \return Status code.
+Status LFCC(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, int32_t sample_rate,
+            int32_t n_filter, int32_t n_lfcc, int32_t dct_type, bool log_lf, int32_t n_fft, int32_t win_length,
+            int32_t hop_length, float f_min, float f_max, int32_t pad, WindowType window, float power, bool normalized,
+            bool center, BorderType pad_mode, bool onesided, NormMode norm);
+
+/// \brief Create MelSpectrogram for a raw audio signal.
+/// \param[in] input Input tensor.
+/// \param[out] output Output tensor.
+/// \param[in] sample_rate Sample rate of audio signal.
+/// \param[in] n_fft Size of FFT, creates n_fft // 2 + 1 bins.
+/// \param[in] win_length Window size.
+/// \param[in] hop_length Length of hop between STFT windows.
+/// \param[in] f_min Minimum frequency, which must be non negative.
+/// \param[in] f_max Maximum frequency, which must be positive.
+/// \param[in] pad Two sided padding of signal.
+/// \param[in] n_mels Number of mel filter, which must be positive.
+/// \param[in] window A function to create a window tensor that is applied/multiplied to each frame/window.
+/// \param[in] power Exponent for the magnitude spectrogram, (must be > 0) e.g., 1 for energy, 2 for power, etc.
+/// \param[in] normalized Whether to normalize by magnitude after stft.
+/// \param[in] center Whether to pad waveform on both sides.
+/// \param[in] pad_mode controls the padding method used when center is True.
+/// \param[in] onesided controls whether to return half of results to avoid redundancy.
+/// \param[in] norm If 'slaney', divide the triangular mel weights by the width of the mel band (area normalization).
+/// \param[in] mel_scale Scale to use: htk or slaney.
+/// \return Status return code.
+Status MelSpectrogram(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, int32_t sample_rate,
+                      int32_t n_fft, int32_t win_length, int32_t hop_length, float f_min, float f_max, int32_t pad,
+                      int32_t n_mels, WindowType window, float power, bool normalized, bool center, BorderType pad_mode,
+                      bool onesided, NormType norm, MelType mel_scale);
+
+/// \brief Create MFCC for a raw audio signal.
+/// \param[in] input Input tensor.
+/// \param[out] output Output tensor.
+/// \param[in] sample_rate Sample rate of audio signal.
+/// \param[in] n_mfcc Number of mfc coefficients to retain.
+/// \param[in] dct_type Type of DCT (discrete cosine transform) to use.
+/// \param[in] log_mels Whether to use log-mel spectrograms instead of db-scaled.
+/// \param[in] n_fft Size of FFT, creates n_fft // 2 + 1 bins.
+/// \param[in] win_length Window size.
+/// \param[in] hop_length Length of hop between STFT windows.
+/// \param[in] f_min Minimum frequency.
+/// \param[in] f_max Maximum frequency.
+/// \param[in] pad Two sided padding of signal.
+/// \param[in] n_mels Number of mel filterbanks.
+/// \param[in] window A function to create a window tensor that is applied/multiplied to each frame/window.
+/// \param[in] power Exponent for the magnitude spectrogram, (must be > 0) e.g., 1 for energy, 2 for power, etc.
+/// \param[in] normalized Whether to normalize by magnitude after stft.
+/// \param[in] center Whether to pad waveform on both sides.
+/// \param[in] pad_mode Controls the padding method used when center is True.
+/// \param[in] onesided Controls whether to return half of results to avoid redundancy.
+/// \param[in] norm Norm to use.
+/// \param[in] norm_M If 'slaney', divide the triangular mel weights by the width of the mel band (area normalization).
+/// \param[in] mel_scale Scale to use: htk or slaney.
+/// \return Status return code.
+Status MFCC(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, int32_t sample_rate, int32_t n_mfcc,
+            int32_t dct_type, bool log_mels, int32_t n_fft, int32_t win_length, int32_t hop_length, float f_min,
+            float f_max, int32_t pad, int32_t n_mels, WindowType window, float power, bool normalized, bool center,
+            BorderType pad_mode, bool onesided, NormType norm, NormMode norm_M, MelType mel_scale);
+
+/// \brief Shift the pitch of a waveform by steps.
+/// \param[in] input Input tensor.
+/// \param[out] output Output tensor.
+/// \param[in] sample_rate Sample rate of audio signal.
+/// \param[in] n_steps The steps to shift audio signal.
+/// \param[in] bins_per_octave The number of steps per octave
+/// \param[in] n_fft Size of FFT, creates n_fft // 2 + 1 bins.
+/// \param[in] win_length Window size.
+/// \param[in] hop_length Length of hop between STFT windows.
+/// \param[in] window A function to create a window tensor that is applied/multiplied to each frame/window.
+/// \return Status return code.
+Status PitchShift(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output, int32_t sample_rate,
+                  int32_t n_steps, int32_t bins_per_octave, int32_t n_fft, int32_t win_length, int32_t hop_length,
+                  WindowType window);
 }  // namespace dataset
 }  // namespace mindspore
 #endif  // MINDSPORE_CCSRC_MINDDATA_DATASET_AUDIO_KERNELS_AUDIO_UTILS_H_

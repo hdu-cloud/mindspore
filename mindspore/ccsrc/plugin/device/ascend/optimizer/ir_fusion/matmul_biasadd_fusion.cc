@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,8 +15,10 @@
  */
 #include "plugin/device/ascend/optimizer/ir_fusion/matmul_biasadd_fusion.h"
 #include <vector>
-#include "backend/common/optimizer/helper.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/common/utils/utils.h"
 #include "utils/trace_base.h"
@@ -27,7 +29,7 @@ AnfNodePtr MatmulBiasaddFusion::CreateMatmulWithBias(const FuncGraphPtr &graph, 
                                                      const EquivPtr &equiv) const {
   auto matmul = GetAnfNodeByVar(equiv, matmul_var_);
   if (matmul == nullptr || !matmul->isa<CNode>()) {
-    MS_LOG(EXCEPTION) << "Get CNode MatMul failed!" << trace::DumpSourceLines(node);
+    MS_LOG(INTERNAL_EXCEPTION) << "Get CNode MatMul failed!" << trace::DumpSourceLines(node);
   }
 
   // If there is a side-effect operator in the fusion, do not merge

@@ -14,21 +14,35 @@
  * limitations under the License.
  */
 
-#include <string>
-#include <set>
-#include <vector>
 #include <algorithm>
+#include <map>
 #include <memory>
-#include "ops/op_utils.h"
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "abstract/ops/primitive_infer_map.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/param_validator.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/named.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/type_id.h"
 #include "mindapi/src/helper.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
 #include "utils/shape_utils.h"
+
 namespace mindspore {
 namespace ops {
 std::vector<int64_t> CalBroadCastShape(std::vector<int64_t> x_shape, std::vector<int64_t> y_shape,
-                                       const std::string &op_name, const std::string &op_x_name,
-                                       const std::string &op_y_name) {
+                                       const std::string &op_name, const std::string &, const std::string &) {
   if (x_shape == y_shape) {
     return x_shape;
   }
@@ -54,12 +68,22 @@ std::vector<int64_t> CalBroadCastShape(std::vector<int64_t> x_shape, std::vector
       broadcast_shape.push_back(x_shape[LongToSize(x_length + i)]);
     } else if (x_shape[LongToSize(x_length + i)] == y_shape[LongToSize(y_length + i)]) {
       broadcast_shape.push_back(x_shape[LongToSize(x_length + i)]);
+    } else if ((x_shape[LongToSize(x_length + i)] == abstract::Shape::kShapeDimAny) &&
+               (y_shape[LongToSize(y_length + i)] > 1)) {
+      broadcast_shape.push_back(y_shape[LongToSize(y_length + i)]);
+    } else if ((x_shape[LongToSize(x_length + i)] > 1) &&
+               (y_shape[LongToSize(y_length + i)] == abstract::Shape::kShapeDimAny)) {
+      broadcast_shape.push_back(x_shape[LongToSize(x_length + i)]);
     } else if ((x_shape[LongToSize(x_length + i)] == abstract::Shape::kShapeDimAny) ||
                (y_shape[LongToSize(y_length + i)] == abstract::Shape::kShapeDimAny)) {
       broadcast_shape.push_back(abstract::Shape::kShapeDimAny);
     } else {
-      MS_EXCEPTION(ValueError) << "For '" << op_name << "', the two input '" << op_x_name << "' and '" << op_y_name
-                               << "' with shape: " << x_shape << " and " << y_shape << " can not broadcast.";
+      MS_EXCEPTION(ValueError) << "For '" << op_name
+                               << "', x.shape and y.shape need to broadcast. The value of x.shape["
+                               << std::to_string(LongToSize(x_length + i)) << "] or y.shape["
+                               << std::to_string(LongToSize(y_length + i))
+                               << "] must be 1 or -1 when they are not the same, but got x.shape = " << x_shape
+                               << " and y.shape = " << y_shape;
     }
   }
   return broadcast_shape;
@@ -105,7 +129,7 @@ void ReduceFuncCheckAxisInferImpl(const PrimitivePtr &prim, std::vector<int64_t>
   }
 }
 
-ShapeVector ReduceFuncCalShapeInferImpl(const PrimitivePtr &primitive, const ShapeVector &x_shape,
+ShapeVector ReduceFuncCalShapeInferImpl(const PrimitivePtr &, const ShapeVector &x_shape,
                                         const std::vector<int64_t> &axis, bool keep_dims_value) {
   ShapeVector out_shape;
   ShapeVector axis_value;
@@ -138,17 +162,83 @@ ShapeVector ReduceFuncCalShapeInferImpl(const PrimitivePtr &primitive, const Sha
   return out_shape;
 }
 
-ShapeVector ReduceFuncCalShapeAxisDyn(const ShapeVector &x_shape, const int64_t axis_shape, bool keep_dims) {
+ShapeVector ReduceFuncCalShapeAxisDyn(const ShapeVector &x_shape, bool keep_dims) {
   ShapeVector out_shape;
+  constexpr int dynamic_rank_value = -2;
   if (!keep_dims) {
-    if (SizeToLong(x_shape.size()) < axis_shape) {
-      return out_shape;
-    }
-    (void)out_shape.insert(out_shape.end(), x_shape.size() - axis_shape, -1LL);
+    out_shape.push_back(dynamic_rank_value);
   } else {
     (void)out_shape.insert(out_shape.end(), x_shape.size(), -1LL);
   }
   return out_shape;
+}
+
+void CheckAndGetAxisValueFromAttr(const PrimitivePtr &primitive, std::vector<int64_t> *axis_value, int64_t *) {
+  auto op_name = primitive->name();
+  auto axis_ptr = primitive->GetAttr("axis");
+  MS_EXCEPTION_IF_NULL(axis_ptr);
+  if (axis_ptr->isa<tensor::Tensor>()) {
+    *axis_value = CheckAndConvertUtils::CheckTensorIntValue("axis", axis_ptr, op_name);
+  } else {
+    *axis_value = CheckAndConvertUtils::CheckIntOrTupleInt("axis", axis_ptr, op_name);
+  }
+}
+
+bool CheckAndGetAxisValueFromScalar(const ValuePtr &input_value, const std::string &op_name,
+                                    std::vector<int64_t> *axis_value, int64_t *axis_shape_v) {
+  *axis_shape_v = 1;
+  bool is_dynamic = false;
+  if (IsValueKnown(input_value)) {
+    *axis_value = CheckAndConvertUtils::CheckIntOrTupleInt("axis", input_value, op_name);
+  } else {
+    is_dynamic = true;
+  }
+  return is_dynamic;
+}
+
+bool CheckAndGetAxisValueFromSequence(const abstract::AbstractBasePtr &abs, const ValuePtr &input_value,
+                                      const std::string &op_name, std::vector<int64_t> *axis_value,
+                                      int64_t *axis_shape_v) {
+  bool is_dynamic = false;
+  if (IsValueKnown(input_value)) {
+    *axis_value = CheckAndConvertUtils::CheckIntOrTupleInt("axis", input_value, op_name);
+    if (axis_value->empty()) {
+      *axis_shape_v = 0;
+    }
+  } else {
+    is_dynamic = true;
+    auto seq_abs = abs->cast<abstract::AbstractSequencePtr>();
+    MS_EXCEPTION_IF_NULL(seq_abs);
+    *axis_shape_v = seq_abs->dynamic_len() ? -1 : SizeToLong(seq_abs->size());
+  }
+
+  return is_dynamic;
+}
+
+bool CheckAndGetAxisValueFromTensor(const std::vector<abstract::AbstractBasePtr> &input_args,
+                                    const ValuePtr &input_value, const std::string &op_name,
+                                    std::vector<int64_t> *axis_value, int64_t *axis_shape_v) {
+  bool is_dynamic = false;
+  (void)CheckAndConvertUtils::CheckTensorTypeValid("axis", input_args[kInputIndex1]->BuildType(), {kInt32, kInt64},
+                                                   op_name);
+  if (input_value->isa<tensor::Tensor>()) {
+    *axis_value = CheckAndConvertUtils::CheckTensorIntValue("axis", input_value, op_name);
+    if (axis_value->empty()) {
+      *axis_shape_v = 0;
+    }
+  } else {
+    is_dynamic = true;
+    auto axis_shape = CheckAndConvertUtils::GetTensorInputShape(op_name, input_args, 1);
+    if (axis_shape->shape().size() > 1) {
+      MS_EXCEPTION(ValueError) << "For '" << op_name << "', the axis's shape length should be 1, but got '"
+                               << axis_shape->shape().size() << "'.";
+    } else if (axis_shape->shape().size() == 0) {
+      *axis_shape_v = 1;
+    } else {
+      *axis_shape_v = axis_shape->shape()[0];
+    }
+  }
+  return is_dynamic;
 }
 
 bool CheckAndGetAxisValue(const std::vector<abstract::AbstractBasePtr> &input_args, std::vector<int64_t> *axis_value,
@@ -158,45 +248,18 @@ bool CheckAndGetAxisValue(const std::vector<abstract::AbstractBasePtr> &input_ar
   bool is_dynamic = false;
   const std::string &op_name = primitive->name();
   if (input_args.size() == 1) {
-    auto axis_ptr = primitive->GetAttr("axis");
-    if (axis_ptr == nullptr) {
-      return is_dynamic;
-    }
-    if (axis_ptr->isa<tensor::Tensor>()) {
-      *axis_value = CheckAndConvertUtils::CheckTensorIntValue("axis", axis_ptr, op_name);
-    } else {
-      *axis_value = CheckAndConvertUtils::CheckIntOrTupleInt("axis", axis_ptr, op_name);
-    }
-    return is_dynamic;
+    CheckAndGetAxisValueFromAttr(primitive, axis_value, axis_shape_v);
+    return false;
   }
+  MS_EXCEPTION_IF_NULL(input_args[kInputIndex1]);
   auto input_value = input_args[kInputIndex1]->BuildValue();
-  if (input_args[kInputIndex1]->isa<abstract::AbstractScalar>() ||
-      input_args[kInputIndex1]->isa<abstract::AbstractTuple>() ||
-      input_args[kInputIndex1]->isa<abstract::AbstractList>()) {
-    *axis_value = CheckAndConvertUtils::CheckIntOrTupleInt("axis", input_value, op_name);
-    if (axis_value->empty()) {
-      *axis_shape_v = 0;
-    }
+  if (input_args[kInputIndex1]->isa<abstract::AbstractScalar>()) {
+    is_dynamic = CheckAndGetAxisValueFromScalar(input_value, op_name, axis_value, axis_shape_v);
+  } else if (input_args[kInputIndex1]->isa<abstract::AbstractSequence>()) {
+    is_dynamic =
+      CheckAndGetAxisValueFromSequence(input_args[kInputIndex1], input_value, op_name, axis_value, axis_shape_v);
   } else if (input_args[kInputIndex1]->isa<abstract::AbstractTensor>()) {
-    (void)CheckAndConvertUtils::CheckTensorTypeValid("axis", input_args[kInputIndex1]->BuildType(), {kInt32, kInt64},
-                                                     op_name);
-    if (input_value->isa<tensor::Tensor>()) {
-      *axis_value = CheckAndConvertUtils::CheckTensorIntValue("axis", input_value, op_name);
-      if (axis_value->empty()) {
-        *axis_shape_v = 0;
-      }
-    } else {
-      is_dynamic = true;
-      auto axis_shape = CheckAndConvertUtils::GetTensorInputShape(op_name, input_args, 1);
-      if (axis_shape->shape().size() > 1) {
-        MS_EXCEPTION(ValueError) << "For '" << op_name << "', the axis's shape length should be 1, but got '"
-                                 << axis_shape->shape().size() << "'.";
-      } else if (axis_shape->shape().size() == 0) {
-        *axis_shape_v = 1;
-      } else {
-        *axis_shape_v = axis_shape->shape()[0];
-      }
-    }
+    is_dynamic = CheckAndGetAxisValueFromTensor(input_args, input_value, op_name, axis_value, axis_shape_v);
   } else {
     MS_EXCEPTION(ValueError) << "For '" << op_name
                              << "', the second input type should be tensor or scalar, but got invalid abstract type:"
@@ -254,7 +317,7 @@ abstract::ShapePtr ReduceBaseInferShape(const PrimitivePtr &primitive,
   ReduceFuncCheckAxisInferImpl(primitive, &axis_value, x_shape.size());
 
   if (axis_is_dynamic) {
-    out_shape = ReduceFuncCalShapeAxisDyn(x_shape, axis_shape, keep_dims);
+    out_shape = ReduceFuncCalShapeAxisDyn(x_shape, keep_dims);
     return std::make_shared<abstract::Shape>(out_shape);
   }
   out_shape = ReduceFuncCalShapeInferImpl(primitive, x_shape, axis_value, keep_dims);
@@ -349,14 +412,18 @@ AbstractBasePtrList ConstructArgs(const std::vector<ShapeVector> &args_shape_lis
 
 ShapeVector RunCInferShapeValue(const PrimitivePtr &prim, const AbstractBasePtrList &args) {
   ShapeVector shape_value;
-  auto eval_impl = abstract::GetPrimitiveInferImpl(prim);
-  if (eval_impl.IsImplInferValue()) {
-    auto value = eval_impl.InferValue(prim, args);
-    if (value != nullptr) {
-      shape_value = CheckAndConvertUtils::CheckTensorIntValue("shape", value, prim->name());
-      MS_LOG(DEBUG) << "Inferred shape value: " << shape_value;
+  auto eval_impl_opt = abstract::GetPrimitiveInferImpl(prim);
+  if (eval_impl_opt.has_value()) {
+    auto eval_impl = eval_impl_opt.value();
+    if (eval_impl.IsImplInferValue()) {
+      auto value = eval_impl.InferValue(prim, args);
+      if (value != nullptr) {
+        shape_value = CheckAndConvertUtils::CheckTensorIntValue("shape", value, prim->name());
+        MS_LOG(DEBUG) << "Inferred shape value: " << shape_value;
+      }
     }
   }
+
   return shape_value;
 }
 
@@ -390,10 +457,14 @@ std::vector<ShapeVector> ConvertShape(const std::vector<ShapeVector> &shapes) {
 }
 
 bool HasInferValue(const PrimitivePtr &prim) {
-  auto eval_impl = abstract::GetPrimitiveInferImpl(prim);
-  if (eval_impl.IsImplInferValue()) {
-    return true;
+  auto eval_impl_opt = abstract::GetPrimitiveInferImpl(prim);
+  if (eval_impl_opt.has_value()) {
+    auto eval_impl = eval_impl_opt.value();
+    if (eval_impl.IsImplInferValue()) {
+      return true;
+    }
   }
+
   return false;
 }
 
@@ -424,18 +495,50 @@ ValuePtr EvalShapeTensorValue(const PrimitivePtr &prim, const AbstractBasePtrLis
 }
 }  // namespace
 
+std::vector<int64_t> GetSequenceValue(const std::string &arg_name, const AbstractBasePtr &abs,
+                                      const std::string &prim_name) {
+  MS_EXCEPTION_IF_NULL(abs);
+  auto abs_seq = dyn_cast<abstract::AbstractSequence>(abs);
+  MS_EXCEPTION_IF_NULL(abs_seq);
+  if (abs_seq->dynamic_len()) {
+    return std::vector<int64_t>{abstract::Shape::kShapeRankAny};
+  }
+  std::vector<int64_t> out_shape;
+  for (auto element : abs_seq->elements()) {
+    auto element_val = element->BuildValue();
+    if (element_val == kValueAny) {
+      out_shape.push_back(abstract::Shape::kShapeDimAny);
+    } else if (element_val->isa<Int64Imm>()) {
+      (void)out_shape.emplace_back(GetValue<ShapeValueDType>(element_val));
+    } else if (element_val->isa<Int32Imm>()) {
+      (void)out_shape.emplace_back(GetValue<int32_t>(element_val));
+    } else {
+      MS_EXCEPTION(TypeError) << "For primitive[" << prim_name << "], the " << arg_name
+                              << " must be one of ['tuple', 'list'] with all Int elements, but got " << abs->ToString();
+    }
+  }
+  return out_shape;
+}
+
 ShapeVector GetShapeValue(const PrimitivePtr &primitive, const AbstractBasePtr &arg) {
   auto abs_value = arg->BuildValue();
   MS_EXCEPTION_IF_NULL(abs_value);
-  if (arg->isa<abstract::AbstractTensor>()) {
-    auto abs_tensor = arg->cast<abstract::AbstractTensorPtr>();
+
+  if (IsValueKnown(abs_value)) {
     if (abs_value->isa<tensor::Tensor>()) {
       auto shape_value = CheckAndConvertUtils::CheckTensorIntValue("shape", abs_value, "");
-      MS_EXCEPTION_IF_CHECK_FAIL(!shape_value.empty(), "Data type of shape value must be int64_t or int32_t");
       return shape_value;
+    } else if (abs_value->isa<ValueSequence>()) {
+      auto out_shape = CheckAndConvertUtils::CheckIntOrTupleInt("input[shape]", abs_value, primitive->name());
+      return out_shape;
     }
+  } else if (arg->isa<abstract::AbstractTensor>()) {
+    auto abs_tensor = arg->cast<abstract::AbstractTensorPtr>();
     auto abs_tensor_shape = abs_tensor->shape()->shape();
-    MS_EXCEPTION_IF_CHECK_FAIL(abs_tensor_shape.size() == 1, "Shape of shape value only could be one-dimensional");
+    if (abs_tensor_shape.size() != 1) {
+      MS_EXCEPTION(ValueError) << "For Primitive[" << primitive->name()
+                               << "], Shape of shape value only could be one-dimensional";
+    }
     if (IsDynamic(abs_tensor_shape)) {
       return {abstract::Shape::kShapeRankAny};
     }
@@ -448,17 +551,14 @@ ShapeVector GetShapeValue(const PrimitivePtr &primitive, const AbstractBasePtr &
       MS_EXCEPTION_IF_CHECK_FAIL(LongToSize(shape_size) == shape_vector.size(), "Illegal shape of shape value");
       return shape_vector;
     }
-  } else if (arg->isa<abstract::AbstractTuple>()) {
-    auto elements = arg->cast<abstract::AbstractTuplePtr>()->elements();
-    MS_EXCEPTION_IF_CHECK_FAIL(!elements.empty() && !elements[0]->isa<abstract::AbstractTensor>(),
-                               "Input cannot be a tuple of tensor");
-    auto out_shape = CheckAndConvertUtils::CheckTupleInt("input[shape]", abs_value, primitive->name());
-    return out_shape;
+  } else if (arg->isa<abstract::AbstractSequence>()) {
+    auto shape = GetSequenceValue("input[shape]", arg, primitive->name());
+    return shape;
   }
 
   auto size_type = arg->BuildType();
   MS_EXCEPTION_IF_NULL(size_type);
-  MS_EXCEPTION(TypeError) << "For " << primitive->name() << "Input arg must be abstract tensor or tuple, but got"
+  MS_EXCEPTION(TypeError) << "For " << primitive->name() << ", the input type must be Tensor/Tuple/List , but got"
                           << size_type->ToString() << ".";
 }
 
@@ -536,15 +636,15 @@ ShapeVector ConvertToShapeVector(const abstract::AbstractTuplePtr &shape) {
 }
 
 template <typename T>
-std::shared_ptr<T> InferSparseAttr(const PrimitivePtr &primitive, const AbstractBasePtrList &args_spec_list) {
+std::shared_ptr<T> InferSparseAttr(const PrimitivePtr &primitive, const AbstractBasePtrList &args_abs_list) {
   MS_EXCEPTION_IF_NULL(primitive);
   constexpr size_t kSizeExpect = 1;
-  if (args_spec_list.size() != kSizeExpect) {
+  if (args_abs_list.size() != kSizeExpect) {
     MS_LOG(EXCEPTION) << "For '" << primitive->name() << "', the number of input should be " << kSizeExpect
-                      << ", but got " << args_spec_list.size() << ".";
+                      << ", but got " << args_abs_list.size() << ".";
   }
   constexpr size_t kIndex = 0;
-  auto abs = args_spec_list[kIndex];
+  auto abs = args_abs_list[kIndex];
   MS_EXCEPTION_IF_NULL(abs);
   // To avoid AbstractSparseTensors being generalized to AbstractTuple.
   if (dyn_cast<T>(abs) == nullptr) {
@@ -560,8 +660,219 @@ std::shared_ptr<T> InferSparseAttr(const PrimitivePtr &primitive, const Abstract
                           << abs->BuildType()->ToString() << ".";
 }
 template std::shared_ptr<abstract::AbstractCSRTensor> InferSparseAttr(const PrimitivePtr &primitive,
-                                                                      const AbstractBasePtrList &args_spec_list);
+                                                                      const AbstractBasePtrList &args_abs_list);
 template std::shared_ptr<abstract::AbstractCOOTensor> InferSparseAttr(const PrimitivePtr &primitive,
-                                                                      const AbstractBasePtrList &args_spec_list);
+                                                                      const AbstractBasePtrList &args_abs_list);
+
+template <typename T>
+AbstractBasePtr TensorToSequenceInfer(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
+  auto prim_name = primitive->name();
+  const int64_t input_len = 1;
+  constexpr size_t input_0_index = 0;
+  (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_len, prim_name);
+
+  auto shape_ptr = CheckAndConvertUtils::GetTensorInputShape(prim_name, input_args, 0);
+  MS_EXCEPTION_IF_NULL(shape_ptr);
+  auto x_shape = shape_ptr->shape();
+  if (x_shape.size() != 1) {
+    MS_EXCEPTION(ValueError) << "For Primitive[" << prim_name << "], the input shape size must be 1, but got "
+                             << x_shape << ".";
+  }
+
+  auto x_type = input_args[input_0_index]->BuildType();
+  MS_EXCEPTION_IF_NULL(x_type);
+  if (!x_type->isa<TensorType>()) {
+    MS_EXCEPTION(TypeError) << "For Primitive[" << prim_name << "], the input must be a Tensor but got "
+                            << x_type->ToString() << ".";
+  }
+  auto tensor_type = x_type->cast<TensorTypePtr>();
+  const auto &element_type = tensor_type->element();
+  MS_EXCEPTION_IF_NULL(element_type);
+  AbstractBasePtrList abs_list;
+  if (IsDynamic(x_shape)) {
+    abs_list.push_back(std::make_shared<abstract::AbstractScalar>(kValueAny, element_type));
+    auto abs = std::make_shared<T>(abs_list);
+    abs->CheckAndConvertToDynamicLenSequence();
+    return abs;
+  }
+  for (int64_t i = 0; i < x_shape[0]; i++) {
+    abs_list.push_back(std::make_shared<abstract::AbstractScalar>(kValueAny, element_type));
+  }
+  auto abs = std::make_shared<T>(abs_list);
+  return abs;
+}
+void CheckDynamicLengthSequenceSetItem(const std::string &op_name, const abstract::AbstractSequencePtr &queue,
+                                       const AbstractBasePtr &target) {
+  auto element_abs = queue->dynamic_len_element_abs();
+  if (element_abs == nullptr) {
+    MS_LOG(EXCEPTION) << "Empty variable len sequence can not setitem.";
+  }
+  const auto precondition_log = "For " + op_name + ", when the queue is dynamic length";
+  const auto standard_abs_description = "element within dynamic length sequence";
+  const auto differ_abs_description = "target element";
+  CheckAndConvertUtils::CheckAbstractTypeAndShapeSame(std::vector<AbstractBasePtr>{element_abs, target},
+                                                      precondition_log, standard_abs_description,
+                                                      differ_abs_description);
+}
+
+template <typename T>
+AbstractBasePtr InferSequenceSetItem(const PrimitivePtr &primitive, const AbstractBasePtrList &args_abs_list) {
+  // Inputs: a tuple or list, a scalar whose value is an int64 number and an object of a subclass of AbstractBase.
+  MS_EXCEPTION_IF_NULL(primitive);
+  auto op_name = primitive->name();
+  constexpr int args_spec_size = 3;
+  constexpr size_t kIndex2 = 2;
+  abstract::CheckArgsSize(op_name, args_abs_list, args_spec_size);
+  auto queue = abstract::CheckArg<T>(op_name, args_abs_list, 0);
+  auto index = abstract::CheckArg<abstract::AbstractScalar>(op_name, args_abs_list, 1);
+
+  auto index_type = index->BuildType();
+  MS_EXCEPTION_IF_NULL(index_type);
+  if (index_type->type_id() != kInt64->type_id()) {
+    MS_EXCEPTION(TypeError) << op_name << " evaluator index should be an int64 number, but got a "
+                            << index_type->ToString() << " number.";
+  }
+  ValuePtr index_value = index->BuildValue();
+  MS_EXCEPTION_IF_NULL(index_value);
+  auto target = args_abs_list[kIndex2];
+  MS_EXCEPTION_IF_NULL(target);
+  if (queue->dynamic_len()) {
+    CheckDynamicLengthSequenceSetItem(op_name, queue, target);
+    return queue->Clone();
+  }
+  if (index_value == kValueAny) {
+    // If the index is variable and the sequence is constant length, then all of the element within the sequence
+    // should have the same type and shape with the target input. The element within the return sequence should
+    // be all broadened.
+    const auto &elements = queue->elements();
+    if (elements.size() == 0) {
+      MS_LOG(EXCEPTION) << "Empty sequence can not setitem.";
+    }
+    const auto precondition_log = "For " + op_name + ", when the index is variable and the queue is constant length";
+    CheckAndConvertUtils::CheckAbstractTypeAndShapeSame(elements, precondition_log);
+    auto first_element = elements[0];
+    const auto standard_abs_description = "element within constant length sequence";
+    const auto differ_abs_description = "target element";
+    CheckAndConvertUtils::CheckAbstractTypeAndShapeSame(std::vector<AbstractBasePtr>{first_element, target},
+                                                        precondition_log, standard_abs_description,
+                                                        differ_abs_description);
+    return CheckAndConvertUtils::BroadenAllSequenceElements(queue);
+  }
+  auto index_int64_value = GetValue<int64_t>(index_value);
+  AbstractBasePtrList elements = queue->elements();
+  std::size_t nelems = elements.size();
+  if (nelems == 0) {
+    MS_EXCEPTION(ValueError) << "Can not setitem for an empty sequence.";
+  }
+  int64_t index_positive_value = index_int64_value >= 0 ? index_int64_value : index_int64_value + SizeToLong(nelems);
+  if (index_positive_value < 0 || index_positive_value >= SizeToLong(nelems)) {
+    MS_EXCEPTION(IndexError) << op_name << " evaluator the index: " << index_int64_value << " to set out of range: [-"
+                             << nelems << "," << (nelems - 1) << "].";
+  }
+  size_t index_unsigned_value = LongToSize(index_positive_value);
+  elements[index_unsigned_value] = args_abs_list[kIndex2];
+  MS_LOG(DEBUG) << "SetItem use flags, index: " << index_unsigned_value << ", for " << queue->ToString();
+  return std::make_shared<T>(elements, queue->sequence_nodes());
+}
+
+template AbstractBasePtr InferSequenceSetItem<abstract::AbstractList>(const PrimitivePtr &primitive,
+                                                                      const AbstractBasePtrList &args_abs_list);
+template AbstractBasePtr InferSequenceSetItem<abstract::AbstractTuple>(const PrimitivePtr &primitive,
+                                                                       const AbstractBasePtrList &args_abs_list);
+
+template AbstractBasePtr TensorToSequenceInfer<abstract::AbstractList>(const PrimitivePtr &primitive,
+                                                                       const std::vector<AbstractBasePtr> &input_args);
+
+template AbstractBasePtr TensorToSequenceInfer<abstract::AbstractTuple>(const PrimitivePtr &primitive,
+                                                                        const std::vector<AbstractBasePtr> &input_args);
+
+template <typename T>
+T GetScalarCastValue(const std::string &op_name, const ValuePtr &elem) {
+  T res;
+  MS_EXCEPTION_IF_NULL(elem);
+  if (elem->isa<Int64Imm>()) {
+    auto elem_value = GetValue<int64_t>(elem);
+    res = static_cast<T>(elem_value);
+  } else if (elem->isa<Int32Imm>()) {
+    auto elem_value = GetValue<int32_t>(elem);
+    res = static_cast<T>(elem_value);
+  } else if (elem->isa<Int16Imm>()) {
+    auto elem_value = GetValue<int16_t>(elem);
+    res = static_cast<T>(elem_value);
+  } else if (elem->isa<Int8Imm>()) {
+    auto elem_value = GetValue<int8_t>(elem);
+    res = static_cast<T>(elem_value);
+  } else if (elem->isa<UInt64Imm>()) {
+    auto elem_value = GetValue<uint64_t>(elem);
+    res = static_cast<T>(elem_value);
+  } else if (elem->isa<UInt32Imm>()) {
+    auto elem_value = GetValue<uint32_t>(elem);
+    res = static_cast<T>(elem_value);
+  } else if (elem->isa<UInt16Imm>()) {
+    auto elem_value = GetValue<uint16_t>(elem);
+    res = static_cast<T>(elem_value);
+  } else if (elem->isa<UInt8Imm>()) {
+    auto elem_value = GetValue<uint8_t>(elem);
+    res = static_cast<T>(elem_value);
+  } else if (elem->isa<FP64Imm>()) {
+    auto elem_value = GetValue<double>(elem);
+    res = static_cast<T>(elem_value);
+  } else if (elem->isa<FP32Imm>()) {
+    auto elem_value = GetValue<float>(elem);
+    res = static_cast<T>(elem_value);
+  } else if (elem->isa<BoolImm>()) {
+    auto elem_value = GetValue<bool>(elem);
+    res = static_cast<T>(elem_value);
+  } else {
+    MS_EXCEPTION(TypeError) << "For op '" << op_name
+                            << "' input must be [int32, int64, float32, float64, bool], but got " << elem->ToString();
+  }
+  return res;
+}
+
+template int64_t GetScalarCastValue(const std::string &op_name, const ValuePtr &elem);
+template int32_t GetScalarCastValue(const std::string &op_name, const ValuePtr &elem);
+template int16_t GetScalarCastValue(const std::string &op_name, const ValuePtr &elem);
+template int8_t GetScalarCastValue(const std::string &op_name, const ValuePtr &elem);
+template uint64_t GetScalarCastValue(const std::string &op_name, const ValuePtr &elem);
+template uint32_t GetScalarCastValue(const std::string &op_name, const ValuePtr &elem);
+template uint16_t GetScalarCastValue(const std::string &op_name, const ValuePtr &elem);
+template uint8_t GetScalarCastValue(const std::string &op_name, const ValuePtr &elem);
+template double GetScalarCastValue(const std::string &op_name, const ValuePtr &elem);
+template float GetScalarCastValue(const std::string &op_name, const ValuePtr &elem);
+template bool GetScalarCastValue(const std::string &op_name, const ValuePtr &elem);
+
+TypePtr HighPriorityType(const TypePtr &x_type, const TypePtr &y_type, const std::string &op_name) {
+  static std::map<TypeId, size_t> prio_map = {{kNumberTypeFloat64, 1},
+                                              {kNumberTypeFloat32, 2},
+                                              {kNumberTypeInt64, 3},
+                                              {kNumberTypeInt32, 4},
+                                              {kNumberTypeBool, 5}};
+  auto x_iter = prio_map.find(x_type->type_id());
+  auto y_iter = prio_map.find(y_type->type_id());
+  if (x_iter == prio_map.end() || y_iter == prio_map.end()) {
+    MS_EXCEPTION(ValueError) << "For '" << op_name
+                             << "', the x and y type should be int or float, but got x type: " << x_type
+                             << " y type: " << y_type;
+  }
+  if (x_iter->second < y_iter->second) {
+    return x_type;
+  }
+  if (x_iter->second == y_iter->second && x_iter->first == kNumberTypeBool) {
+    return kInt32;
+  }
+  return y_type;
+}
+
+bool IsValueKnown(const ValuePtr &value) {
+  // For now if the Abstract is a container of elements such as AbstractSequence and AbstractDictionary,
+  // the BuildValue returns ValueAny if any one of the elements' value is ValueAny
+  if (value->isa<ValueAny>() || value->isa<None>()) {
+    return false;
+  }
+
+  return true;
+}
 }  // namespace ops
 }  // namespace mindspore

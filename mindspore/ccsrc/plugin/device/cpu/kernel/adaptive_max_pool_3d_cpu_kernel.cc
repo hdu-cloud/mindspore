@@ -58,8 +58,6 @@ int AdaptiveMaxPool3DCpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
   dtype_ = inputs[kIndex0]->GetDtype();
   input_shape_ = inputs[kIndex0]->GetDeviceShapeAdaptively();
   input_num_dims_ = input_shape_.size();
-  outputs_ = outputs;
-
   if (!(input_num_dims_ == kInputNumDims5 || input_num_dims_ == kInputShapeDims4)) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', input data dimensions should be equal to 4 or 5, but got "
                   << input_num_dims_ << ".";
@@ -80,7 +78,7 @@ int AdaptiveMaxPool3DCpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
   return KRET_OK;
 }
 
-void AdaptiveMaxPool3DCpuKernelMod::SyncData() {
+void AdaptiveMaxPool3DCpuKernelMod::SyncOutputShape() {
   outputs_[kIndex0]->SetShapeVector(output_shape_);
   outputs_[kIndex1]->SetShapeVector(output_shape_);
 }
@@ -152,7 +150,7 @@ bool AdaptiveMaxPool3DCpuKernelMod::Launch(const std::vector<AddressPtr> &inputs
   if (input_num_dims_ == kInputNumDims5) {
     output_shape_.push_back(input_shape_[1]);
   }
-  auto output_size_ptr = reinterpret_cast<int32_t *>(inputs[1]->addr);
+  auto output_size_ptr = static_cast<int32_t *>(inputs[1]->addr);
   const size_t kOutputSizeDims = 3;
   for (size_t i = 0; i < kOutputSizeDims; ++i) {
     const int32_t elem = output_size_ptr[i];
@@ -182,7 +180,7 @@ bool AdaptiveMaxPool3DCpuKernelMod::Launch(const std::vector<AddressPtr> &inputs
   return true;
 }
 
-int64_t AdaptiveMaxPool3DCpuKernelMod::ComputeStride(const std::vector<int64_t> &shape, size_t index) {
+int64_t AdaptiveMaxPool3DCpuKernelMod::ComputeStride(const std::vector<int64_t> &shape, size_t index) const {
   if (index >= shape.size()) {
     MS_LOG(EXCEPTION) << "For AdaptiveMaxPool3D, input index must be less than shape dims.";
   }
@@ -194,7 +192,7 @@ int64_t AdaptiveMaxPool3DCpuKernelMod::ComputeStride(const std::vector<int64_t> 
 }
 template <typename T>
 void AdaptiveMaxPool3DCpuKernelMod::ComputeKernel(T *input_data, T *output_data, int32_t *indices_data, int64_t start_T,
-                                                  int64_t end_T) {
+                                                  int64_t end_T) const {
   auto start_index = [=](int64_t dim, int64_t output_range, int64_t input_range) {
     if (output_range == 0) {
       MS_LOG(EXCEPTION) << "For AdaptiveMaxPool3D, output range should not be zero.";
@@ -259,11 +257,11 @@ void AdaptiveMaxPool3DCpuKernelMod::ComputeKernel(T *input_data, T *output_data,
 template <typename T>
 void AdaptiveMaxPool3DCpuKernelMod::AdaptiveMaxPool3DCompute(const std::vector<AddressPtr> &inputs,
                                                              const std::vector<AddressPtr> &outputs) {
-  auto input_data = reinterpret_cast<T *>(inputs[0]->addr);
-  auto output_data = reinterpret_cast<T *>(outputs[0]->addr);
-  auto indices_data = reinterpret_cast<int32_t *>(outputs[1]->addr);
+  auto input_data = static_cast<T *>(inputs[0]->addr);
+  auto output_data = static_cast<T *>(outputs[0]->addr);
+  auto indices_data = static_cast<int32_t *>(outputs[1]->addr);
   if (input_shape_.size() == kInputShapeDims4) {
-    input_shape_.insert(input_shape_.begin(), 1);
+    (void)input_shape_.insert(input_shape_.begin(), 1);
   }
   size_B_ = input_shape_[dimB];
   size_D_ = input_shape_[dimD];

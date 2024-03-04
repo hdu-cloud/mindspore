@@ -19,11 +19,16 @@
 #include <vector>
 #include <string>
 
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -86,8 +91,9 @@ AnfNodePtr GetCastInput(const AnfNodePtr &node) {
 
 const BaseRef ApplyMomentumWeightDecayScaleFusion::DefinePattern() const {
   VectorRef load_para = VectorRef({prim::kPrimLoad, variable_, monad_});
-  VectorRef weight =
-    VectorRef({prim::kPrimAddN, VectorRef({prim::kPrimMul, load_para, weight_decay_}), cast_gradient_});
+  VectorRef weight = VectorRef(
+    {prim::kPrimAddN,
+     VectorRef({prim::kPrimMakeTuple, VectorRef({prim::kPrimMul, load_para, weight_decay_}), cast_gradient_})});
   VectorRef scale = VectorRef({prim::kPrimMul, weight, scale_});
   VectorRef apply_momentum =
     VectorRef({prim::kPrimApplyMomentum, variable_, accumulation_, learning_rate_, scale, momentum_, monad_state_});
@@ -117,7 +123,7 @@ const AnfNodePtr ApplyMomentumWeightDecayScaleFusion::Process(const FuncGraphPtr
   MS_EXCEPTION_IF_NULL(momentum);
   MS_EXCEPTION_IF_NULL(monad_state);
 
-  auto prim = std::make_shared<Primitive>(kFusedWeightScaleApplyMomentum);
+  auto prim = std::make_shared<Primitive>(kFusedWeightScaleApplyMomentumOpName);
   MS_EXCEPTION_IF_NULL(prim);
   auto gradient = GetCastInput(cast_gradient);
   MS_EXCEPTION_IF_NULL(gradient);
@@ -126,7 +132,7 @@ const AnfNodePtr ApplyMomentumWeightDecayScaleFusion::Process(const FuncGraphPtr
   auto replace_node = graph->NewCNode(inputs);
   MS_EXCEPTION_IF_NULL(replace_node);
   auto types = {common::AnfAlgo::GetOutputInferDataType(node, 0)};
-  auto shapes = {common::AnfAlgo::GetOutputDetailShape(node, 0)};
+  auto shapes = {AnfAlgo::GetOutputDetailShape(node, 0)};
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, replace_node.get());
   replace_node->set_scope(node->scope());
   return replace_node;

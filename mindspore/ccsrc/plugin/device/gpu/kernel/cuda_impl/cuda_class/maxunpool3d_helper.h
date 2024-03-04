@@ -105,8 +105,9 @@ class MaxUnpool3DHelperGpuKernel : public GpuKernelHelperBase {
     for (int64_t i = dims - 1; i >= 0; i--) {
       thread_size *= input_shape_[i];
     }
-    CalMaxUnpool3D(input_ptr, indices, input_shape_, output_shape_, output_ptr, outer_size, thread_size, data_format_,
-                   device_id_, reinterpret_cast<cudaStream_t>(cuda_stream));
+    auto status = CalMaxUnpool3D(input_ptr, indices, input_shape_, output_shape_, output_ptr, outer_size, thread_size,
+                                 data_format_, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return 0;
   }
 
@@ -201,7 +202,6 @@ class MaxUnpool3DGradHelperGpuKernel : public GpuKernelHelperBase {
     T *grad = nullptr;
     S *indices = nullptr;
     T *output_ptr = nullptr;
-    // int64_t *gpuflag = nullptr;
     int flag = GetDeviceAddress<T>(input_ptrs, kIndex0, kernel_name_, &input_ptr);
     if (flag != 0) {
       return flag;
@@ -224,8 +224,9 @@ class MaxUnpool3DGradHelperGpuKernel : public GpuKernelHelperBase {
     for (int64_t i = dims - 1; i >= 0; i--) {
       outer_size *= backprop_output_shape_[i];
     }
-    CalMaxUnpool3DGrad(grad, indices, backprop_input_shape_, grad_shape_, output_ptr, outer_size, grad_data_format_,
-                       device_id_, reinterpret_cast<cudaStream_t>(cuda_stream));
+    auto status = CalMaxUnpool3DGrad(grad, indices, backprop_input_shape_, grad_shape_, output_ptr, outer_size,
+                                     grad_data_format_, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return 0;
   }
 

@@ -22,13 +22,13 @@
 namespace mindspore {
 namespace lite {
 namespace acl {
-#define ADD_CONVERTER_TBE_OP(name)       \
-  constexpr auto kName##name = #name;    \
-  class name : public ops::PrimitiveC {  \
-   public:                               \
-    name() : PrimitiveC(kName##name) {}  \
-    ~name() = default;                   \
-    MS_DECLARE_PARENT(name, PrimitiveC); \
+#define ADD_CONVERTER_TBE_OP(name)            \
+  constexpr auto kName##name = #name;         \
+  class name : public ops::PrimitiveC {       \
+   public:                                    \
+    name() : ops::PrimitiveC(kName##name) {}  \
+    ~name() = default;                        \
+    MS_DECLARE_PARENT(name, ops::PrimitiveC); \
   };
 
 ADD_CONVERTER_TBE_OP(Pooling)
@@ -46,8 +46,11 @@ ADD_CONVERTER_TBE_OP(Upsample)
 ADD_CONVERTER_TBE_OP(Conv2DTransposeD)
 ADD_CONVERTER_TBE_OP(DepthwiseConv2dNative)
 ADD_CONVERTER_TBE_OP(ArgMaxV2)
+ADD_CONVERTER_TBE_OP(ArgMin)
 ADD_CONVERTER_TBE_OP(ResizeNearestNeighborV2)
 ADD_CONVERTER_TBE_OP(ResizeBilinearV2)
+ADD_CONVERTER_TBE_OP(ResizeArea)
+ADD_CONVERTER_TBE_OP(ResizeBicubic)
 ADD_CONVERTER_TBE_OP(Conv2DBackpropInputV2)
 ADD_CONVERTER_TBE_OP(ConcatV2)
 ADD_CONVERTER_TBE_OP(FillV1)
@@ -57,6 +60,28 @@ ADD_CONVERTER_TBE_OP(SpaceToBatchTF)
 ADD_CONVERTER_TBE_OP(BatchToSpaceTF)
 ADD_CONVERTER_TBE_OP(ClipByValue)
 ADD_CONVERTER_TBE_OP(SqueezeV3)
+ADD_CONVERTER_TBE_OP(DynamicReduceProd)
+ADD_CONVERTER_TBE_OP(TopKV2)
+ADD_CONVERTER_TBE_OP(CommonLSTM)
+ADD_CONVERTER_TBE_OP(BatchMatMulV2)
+ADD_CONVERTER_TBE_OP(MatMulV2)
+ADD_CONVERTER_TBE_OP(Swish)
+ADD_CONVERTER_TBE_OP(Where)
+ADD_CONVERTER_TBE_OP(SelectV2)
+ADD_CONVERTER_TBE_OP(ScatterNdUpdate)
+ADD_CONVERTER_TBE_OP(Triu)
+ADD_CONVERTER_TBE_OP(AscendAntiQuant)
+ADD_CONVERTER_TBE_OP(Shrink)
+ADD_CONVERTER_TBE_OP(ReduceLogSumExp)
+ADD_CONVERTER_TBE_OP(ReduceLogSum)
+ADD_CONVERTER_TBE_OP(SplitV)
+ADD_CONVERTER_TBE_OP(MVN)
+ADD_CONVERTER_TBE_OP(MVNV2)
+ADD_CONVERTER_TBE_OP(CommonGRU)
+ADD_CONVERTER_TBE_OP(Conv2DTransposeV2)
+ADD_CONVERTER_TBE_OP(NonZeroV2)
+ADD_CONVERTER_TBE_OP(AdaptiveAvgPool)
+ADD_CONVERTER_TBE_OP(Im2col)
 }  // namespace acl
 }  // namespace lite
 }  // namespace mindspore

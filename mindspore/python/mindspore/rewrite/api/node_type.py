@@ -23,12 +23,17 @@ class NodeType(Enum):
     - Unknown: Not inited NodeType.
     - CallCell: `CallCell` node represents invoking cell-op in forward method.
     - CallPrimitive: `CallPrimitive` node represents invoking primitive-op in forward method.
+    - CallFunction: `CallFunction` node represents invoking a function in forward method.
     - CallMethod: `CallMethod` node represents invoking of method in forward method which can not be mapped to
       cell-op or primitive-op in MindSpore.
     - Python: `Python` node holds unsupported-ast-node or unnecessary-to-parse-ast-node.
     - Input: `Input` node represents input of `SymbolTree` corresponding to arguments of forward method.
     - Output: `Output` node represents output of SymbolTree corresponding to return statement of forward method.
     - Tree: `Tree` node represents sub-network invoking in forward method.
+    - CellContainer: `CellContainer` node represents invoking method :class:`mindspore.nn.SequentialCell` in
+      forward method.
+    - MathOps: `MathOps` node represents a mathematical operation, such as adding or comparing in forward method.
+    - ControlFlow: `ControlFlow` node represents a control flow statement, such as if statement.
 
     """
     Unknown = 0
@@ -43,3 +48,6 @@ class NodeType(Enum):
     Input = 7
     Output = 8
     Tree = 9
+    CellContainer = 10
+    MathOps = 11
+    ControlFlow = 12

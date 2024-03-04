@@ -38,7 +38,7 @@ def serialize(dataset, json_filepath=""):
 
     Args:
         dataset (Dataset): The starting node.
-        json_filepath (str): The filepath where a serialized JSON file will be generated. Default: ''.
+        json_filepath (str): The filepath where a serialized JSON file will be generated. Default: ``''``.
 
     Returns:
        Dict, the dictionary contains the serialized dataset graph.
@@ -47,6 +47,10 @@ def serialize(dataset, json_filepath=""):
         OSError: Cannot open a file.
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.transforms as transforms
+        >>>
+        >>> mnist_dataset_dir = "/path/to/mnist_dataset_directory"
         >>> dataset = ds.MnistDataset(mnist_dataset_dir, num_samples=100)
         >>> one_hot_encode = transforms.OneHot(10)  # num_classes is input argument
         >>> dataset = dataset.map(operations=one_hot_encode, input_columns="label")
@@ -62,9 +66,9 @@ def deserialize(input_dict=None, json_filepath=None):
     Construct dataset pipeline from a JSON file produced by dataset serialize function.
 
     Args:
-        input_dict (dict): A Python dictionary containing a serialized dataset graph. Default: None.
+        input_dict (dict): A Python dictionary containing a serialized dataset graph. Default: ``None``.
         json_filepath (str): A path to the JSON file containing dataset graph.
-            User can obtain this file by calling API `mindspore.dataset.serialize()` . Default: None.
+            User can obtain this file by calling API `mindspore.dataset.serialize()` . Default: ``None``.
 
     Returns:
         de.Dataset or None if error occurs.
@@ -73,13 +77,19 @@ def deserialize(input_dict=None, json_filepath=None):
         OSError: Can not open the JSON file.
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.transforms as transforms
+        >>>
+        >>> mnist_dataset_dir = "/path/to/mnist_dataset_directory"
         >>> dataset = ds.MnistDataset(mnist_dataset_dir, num_samples=100)
         >>> one_hot_encode = transforms.OneHot(10)  # num_classes is input argument
         >>> dataset = dataset.map(operations=one_hot_encode, input_columns="label")
         >>> dataset = dataset.batch(batch_size=10, drop_remainder=True)
+        >>>
         >>> # Case 1: to/from JSON file
         >>> serialized_data = ds.serialize(dataset, json_filepath="/path/to/mnist_dataset_pipeline.json")
         >>> deserialized_dataset = ds.deserialize(json_filepath="/path/to/mnist_dataset_pipeline.json")
+        >>>
         >>> # Case 2: to/from Python dictionary
         >>> serialized_data = ds.serialize(dataset)
         >>> deserialized_dataset = ds.deserialize(input_dict=serialized_data)
@@ -109,9 +119,13 @@ def show(dataset, indentation=2):
     Args:
         dataset (Dataset): The starting node.
         indentation (int, optional): The indentation used by the JSON print.
-            Do not indent if indentation is None. Default: 2.
+            Do not indent if indentation is None. Default: ``2``, indent 2 space.
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.transforms as transforms
+        >>>
+        >>> mnist_dataset_dir = "/path/to/mnist_dataset_directory"
         >>> dataset = ds.MnistDataset(mnist_dataset_dir, num_samples=100)
         >>> one_hot_encode = transforms.OneHot(10)
         >>> dataset = dataset.map(operations=one_hot_encode, input_columns="label")
@@ -135,8 +149,10 @@ def compare(pipeline1, pipeline2):
         Whether pipeline1 is equal to pipeline2.
 
     Examples:
-        >>> pipeline1 = ds.MnistDataset(mnist_dataset_dir, num_samples=100)
-        >>> pipeline2 = ds.Cifar10Dataset(cifar10_dataset_dir, num_samples=100)
+        >>> import mindspore.dataset as ds
+        >>>
+        >>> pipeline1 = ds.MnistDataset("/path/to/mnist_dataset_directory", num_samples=100)
+        >>> pipeline2 = ds.Cifar10Dataset("/path/to/cifar10_dataset_directory", num_samples=100)
         >>> res = ds.compare(pipeline1, pipeline2)
     """
 

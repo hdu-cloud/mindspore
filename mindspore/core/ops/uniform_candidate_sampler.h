@@ -17,8 +17,8 @@
 #define MINDSPORE_CORE_OPS_UNIFORM_CANDIDATE_SAMPLER_H_
 
 #include <vector>
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -95,8 +95,9 @@ class MIND_API UniformCandidateSampler : public BaseOperator {
   bool get_remove_accidental_hits() const;
 };
 
-abstract::AbstractBasePtr UniformCandidateSamplerInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &,
-                                                       const std::vector<abstract::AbstractBasePtr> &);
+MIND_API abstract::AbstractBasePtr UniformCandidateSamplerInfer(const abstract::AnalysisEnginePtr &,
+                                                                const PrimitivePtr &,
+                                                                const std::vector<abstract::AbstractBasePtr> &);
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_UNIFORM_CANDIDATE_SAMPLER_H_

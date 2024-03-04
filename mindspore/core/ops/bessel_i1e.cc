@@ -14,15 +14,24 @@
  * limitations under the License.
  */
 #include "ops/bessel_i1e.h"
-#include <string>
-#include <algorithm>
-#include <map>
-#include <set>
+
+#include <memory>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -57,6 +66,24 @@ AbstractBasePtr BesselI1eInfer(const abstract::AnalysisEnginePtr &, const Primit
   auto infer_shape = BesselI1eInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(BesselI1e, prim::kPrimBesselI1e, BesselI1eInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGBesselI1eInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return BesselI1eInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return BesselI1eInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return BesselI1eInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(BesselI1e, prim::kPrimBesselI1e, AGBesselI1eInfer, false);
 }  // namespace ops
 }  // namespace mindspore

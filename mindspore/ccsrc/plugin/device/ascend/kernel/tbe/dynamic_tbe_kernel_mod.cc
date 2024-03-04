@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,19 +19,20 @@
 #include <algorithm>
 #include <stack>
 #include <utility>
+#include "ops/nn_op_name.h"
 #include "acl/acl_rt.h"
 #include "utils/ms_context.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "runtime/device/kernel_runtime.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "framework/common/debug/log.h"
 #include "utils/log_adapter.h"
 #include "utils/convert_utils_base.h"
 #include "runtime/device/kernel_runtime_manager.h"
 #include "runtime/kernel.h"
 #include "runtime/mem.h"
-#include "pipeline/jit/static_analysis/static_analysis.h"
+#include "pipeline/jit/ps/static_analysis/static_analysis.h"
 #include "plugin/device/ascend/kernel/tbe/tiling/op_tiling_adapter.h"
 #include "plugin/device/ascend/hal/device/ascend_memory_manager.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_utils.h"
@@ -40,9 +41,11 @@
 #include "register/op_tiling.h"
 #include "nlohmann/json.hpp"
 #include "runtime/device/memory_manager.h"
+#include "plugin/device/ascend/hal/common/platform_info_util.h"
+#include "common/op_tiling/op_tiling_rt2.h"
+#include "graph/utils/node_utils.h"
 
-namespace mindspore {
-namespace kernel {
+namespace mindspore::kernel {
 using TbeTaskInfoPtr = std::shared_ptr<mindspore::ge::model_runner::TbeTaskInfo>;
 using tbe::KernelManager;
 using AddressPtrList = std::vector<mindspore::kernel::AddressPtr>;
@@ -64,23 +67,23 @@ DynamicTbeKernelMod::~DynamicTbeKernelMod() {
   }
 }
 
-void DynamicTbeKernelMod::SyncData() {
+void DynamicTbeKernelMod::SyncOutputShape() {
   if (need_skip_execute_) {
-    AscendKernelMod::SyncData();
+    AscendKernelMod::SyncOutputShape();
   }
 }
 
 void DynamicTbeKernelMod::GenFuncStub() {
   if (func_stub_ == nullptr && handle_ == nullptr) {
     MS_EXCEPTION_IF_NULL(kernel_pack_);
-    auto func_stub = KernelManager::GenFuncStub(*kernel_pack_, false, &block_dim_, &handle_, &origin_key_);
+    auto func_stub = KernelManager::GenFuncStub(*kernel_pack_, false, &block_dim_, &handle_);
     if (kernel_pack_->kernel_json_info().has_kernel_list) {
       if (func_stub != 1) {
-        MS_LOG(EXCEPTION) << "GenFuncStub failed.";
+        MS_LOG(INTERNAL_EXCEPTION) << "GenFuncStub failed. Op:" << kernel_pack_->kernel_json_info().kernel_name;
       }
     } else {
       if (func_stub == 0) {
-        MS_LOG(EXCEPTION) << "GenFuncStub failed.";
+        MS_LOG(INTERNAL_EXCEPTION) << "GenFuncStub failed. Op:" << kernel_pack_->kernel_json_info().kernel_name;
       }
       func_stub_ = reinterpret_cast<void *>(func_stub);
     }
@@ -107,6 +110,9 @@ int DynamicTbeKernelMod::Resize(const BaseOperatorPtr &base_operator, const std:
   if (need_skip_execute_) {
     return 0;
   }
+  if (IsOutputAllEmptyTensor()) {
+    return 0;
+  }
 
   GenFuncStub();
   // start compute tiling
@@ -121,7 +127,14 @@ int DynamicTbeKernelMod::Resize(const BaseOperatorPtr &base_operator, const std:
   auto ge_node = converter.AnfNodeToGeNodeAdapter(cnode, &ge_graph, depend_tensor_map, op_compile_info_);
   MS_EXCEPTION_IF_NULL(ge_node);
   auto ge_op = converter.GeNodeToGeOperatorAdapter(ge_node);
-  auto ret = optiling::OpParaCalculateV2(ge_op, op_run_info_v2);
+  auto platform_infos = device::ascend::PlatformInfoUtil::GetInstance().platform_infos();
+  ::ge::graphStatus ret;
+  if (::optiling::EnableRt2Tiling(ge_node->GetOpDesc()) ||
+      common::AnfAlgo::GetCNodeName(cnode) == kSoftMarginLossOpName) {
+    ret = optiling::AicoreRtParseAndTiling(ge_op, platform_infos, op_run_info_v2);
+  } else {
+    ret = optiling::OpParaCalculateV2(ge_op, op_run_info_v2);
+  }
   if (ret != ::ge::GRAPH_SUCCESS) {
     MS_LOG(EXCEPTION) << "The node: " << cnode->fullname_with_scope() << " compute tiling failed!";
   }
@@ -143,7 +156,11 @@ int DynamicTbeKernelMod::Resize(const BaseOperatorPtr &base_operator, const std:
     converter.UpdateWorkspace(ge_node, workspace_size_list);
 
     optiling::utils::OpRunInfo atomic_op_info(-1, true, 0);
-    ret = optiling::OpAtomicCalculateV2(*ge_node, atomic_op_info);
+    if (::optiling::EnableAtomicRt2Tiling(ge_node->GetOpDesc())) {
+      ret = optiling::AtomicRtParseAndTiling(ge_op, platform_infos, atomic_op_info);
+    } else {
+      ret = optiling::OpAtomicCalculateV2(*ge_node, atomic_op_info);
+    }
     if (ret != ::ge::GRAPH_SUCCESS) {
       MS_LOG(EXCEPTION) << "The node: " << cnode->fullname_with_scope() << " compute atomic tiling failed!";
     }
@@ -170,13 +187,14 @@ std::string DynamicTbeKernelMod::ParseCompileJson(const CNodePtr &cnode) const {
 }
 
 void DynamicTbeKernelMod::InitTilingDataPtr() {
-  if (tiling_data_ptr_ != nullptr) {
+  if (tiling_data_ptr_ != nullptr || kernel_pack_ == nullptr) {
     return;
   }
   auto kernel_json_info = kernel_pack_->kernel_json_info();
   auto op_para_size = kernel_json_info.op_para_size;
   if (op_para_size > 0) {
     auto mem_manager = std::make_shared<device::ascend::AscendMemoryManager>();
+    MS_EXCEPTION_IF_NULL(mem_manager);
     tiling_data_ptr_ = mem_manager->MallocMemFromMemPool(op_para_size, false);
     if (tiling_data_ptr_ == nullptr) {
       MS_LOG(EXCEPTION) << "RtMalloc tiling data failed.";
@@ -245,6 +263,11 @@ bool DynamicTbeKernelMod::Launch(const std::vector<AddressPtr> &inputs, const st
     MS_LOG(INFO) << "Execute node:" << cnode->fullname_with_scope() << " success.";
     return true;
   }
+  // skip execute if all outputs are empty tensor
+  if (is_output_all_empty_tensor_) {
+    MS_LOG(INFO) << "Outputs are all empty tensors, skip launch node " << cnode->fullname_with_scope();
+    return true;
+  }
 
   if (!atomic_clean_nodes_.empty()) {
     for (const auto &atomic_clean_node : atomic_clean_nodes_) {
@@ -273,8 +296,13 @@ bool DynamicTbeKernelMod::Launch(const std::vector<AddressPtr> &inputs, const st
                          [](const AddressPtr &addr) { return addr->addr; });
   }
 
-  if (!tiling_data_.empty() && tiling_data_ptr_ != nullptr) {
-    runtimeargs.push_back(tiling_data_ptr_);
+  runtimeargs.push_back(tiling_data_ptr_);
+
+  AddressPtr overflow_address_ptr = GetOverflowAddress();
+  if (overflow_address_ptr != nullptr) {
+    runtimeargs.emplace_back(overflow_address_ptr->addr);
+    MS_LOG(DEBUG) << "Assign overflow memory for node " << node->fullname_with_scope() << ", addr is "
+                  << overflow_address_ptr->addr;
   }
 
   rtL2Ctrl_t *l2ctrl = nullptr;
@@ -319,5 +347,4 @@ void DynamicTbeKernelMod::InitAtomicOps(const optiling::utils::OpRunInfo &op_inf
   workspace_size_list_.resize(workspace_size_list.size());
   std::transform(workspace_size_list.begin(), workspace_size_list.end(), workspace_size_list_.begin(), LongToSize);
 }
-}  // namespace kernel
-}  // namespace mindspore
+}  // namespace mindspore::kernel

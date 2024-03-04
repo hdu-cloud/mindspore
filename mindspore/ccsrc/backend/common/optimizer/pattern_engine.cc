@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,12 +14,11 @@
  * limitations under the License.
  */
 
-#include "backend/common/optimizer/pattern_engine.h"
+#include "include/backend/optimizer/pattern_engine.h"
 #include "frontend/optimizer/opt.h"
 #include "ir/anf.h"
 #include "utils/convert_utils_base.h"
-#include "utils/overload.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 static int GetNextTag() {
@@ -124,6 +123,7 @@ static BaseRef GetVar(const BaseRef &x) {
 
 EquivPtr MatchOnVar(const BaseRef &pattern, const BaseRef &expr, EquivPtr equiv) {
   MS_LOG(DEBUG) << "MatchOnVar pattern " + pattern.ToString() + " expr: " + expr.ToString();
+
   MS_EXCEPTION_IF_NULL(equiv);
   if (utils::isa<VarPtr>(pattern)) {
     VarPtr var = utils::cast<VarPtr>(pattern);
@@ -221,7 +221,9 @@ EquivPtr PatternEngine::AlignSVar(const VectorRef &values_pattern, const VectorR
       return nullptr;
     }
   }
-  if ((values_expr_len == 0) && (values_pattern_len == 0)) return equiv;
+  if ((values_expr_len == 0) && (values_pattern_len == 0)) {
+    return equiv;
+  }
   if (values_expr_len < values_pattern_len - 1) {
     MS_LOG(DEBUG) << "invalid size: pattern len " << values_pattern_len << ", expr len " << values_expr_len;
     return nullptr;
@@ -255,7 +257,7 @@ EquivPtr PatternEngine::Match(const BaseRef &pattern, const BaseRef &expr, const
   BaseRef expr_ref = expr;
 
   if (equiv == nullptr) {
-    MS_LOG(EXCEPTION) << "Equiv pointer is null";
+    MS_LOG(INTERNAL_EXCEPTION) << "Equiv pointer is null";
   }
 
   MS_LOG(DEBUG) << "Pattern ref " + pattern_ref.ToString() + ", expr ref" + expr_ref.ToString();

@@ -20,7 +20,7 @@
 #include <string>
 #include <vector>
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "plugin/device/gpu/kernel/cuda_impl/rl/discounted_return_impl.cuh"
 
@@ -82,8 +82,9 @@ class DiscountedReturnGpuKernelMod : public DeprecatedNativeGpuKernelMod {
     T *last_value = GetDeviceAddress<T>(inputs, 2);
     T *result = GetDeviceAddress<T>(outputs, 0);
 
-    DiscountedReturn(timestep_, env_num_, element_per_env_, gamma_, reward, done, last_value, result,
-                     reinterpret_cast<cudaStream_t>(stream));
+    auto status = DiscountedReturn(timestep_, env_num_, element_per_env_, gamma_, reward, done, last_value, result,
+                                   reinterpret_cast<cudaStream_t>(stream));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return true;
   }
 

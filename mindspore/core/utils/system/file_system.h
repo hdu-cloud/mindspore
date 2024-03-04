@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 #ifndef MINDSPORE_CORE_UTILS_SYSTEM_FILE_SYSTEM_H_
 #define MINDSPORE_CORE_UTILS_SYSTEM_FILE_SYSTEM_H_
 
-#include <stdio.h>
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -38,7 +37,7 @@ class WriteFile;
 class PosixWriteFile;
 using WriteFilePtr = std::shared_ptr<WriteFile>;
 using PosixWriteFilePtr = std::shared_ptr<PosixWriteFile>;
-
+constexpr size_t kMaxFileRWLength = static_cast<size_t>(2047) * 1024 * 1024;
 // File system of create or delete directory
 class FileSystem {
  public:
@@ -187,25 +186,12 @@ class PosixWriteFile : public WriteFile {
 
   bool PWrite(const void *buf, size_t nbytes, size_t offset) override {
     MS_LOG(DEBUG) << "Write data(" << nbytes << ") at offset(" << offset << ")to file(" << file_name_ << ").";
-
-    size_t r = pwrite(fileno(file_), buf, nbytes, offset);
-    if (r != nbytes) {
-      MS_LOG(ERROR) << "File(" << file_name_ << ") IO ERROR. " << ErrnoToString(errno);
-      return false;
-    }
-
-    return true;
+    return POperate(buf, nullptr, nbytes, offset, false);
   }
 
   bool PRead(void *buf, size_t nbytes, size_t offset) override {
     MS_LOG(DEBUG) << "Read data(" << nbytes << ") at offset(" << offset << ")to file(" << file_name_ << ").";
-    size_t r = pread(fileno(file_), buf, nbytes, offset);
-    if (r != nbytes) {
-      MS_LOG(ERROR) << "File(" << file_name_ << ") IO ERROR. " << ErrnoToString(errno);
-      return false;
-    }
-
-    return true;
+    return POperate(nullptr, buf, nbytes, offset, true);
   }
 
   bool Trunc(size_t length) override {
@@ -248,6 +234,35 @@ class PosixWriteFile : public WriteFile {
   bool Sync() override { return Flush(); }
 
  private:
+  bool POperate(const void *write_buf, void *read_buf, size_t nbytes, size_t offset, bool read) {
+    size_t left = nbytes;
+    size_t buff_offset = 0;
+    auto fd = fileno(file_);
+    while (left > 0) {
+      size_t length = 0;
+      if (left > kMaxFileRWLength) {
+        length = kMaxFileRWLength;
+      } else {
+        length = left;
+      }
+      left -= length;
+      ssize_t r = 0;
+      if (read && read_buf != nullptr) {
+        auto buff_p = static_cast<uint8_t *>(read_buf) + buff_offset;
+        r = pread(fd, buff_p, length, SizeToLong(offset + buff_offset));
+      } else if (write_buf != nullptr) {
+        auto buff_p = static_cast<const uint8_t *>(write_buf) + buff_offset;
+        r = pwrite(fd, buff_p, length, SizeToLong(offset + buff_offset));
+      }
+      if (r >= 0 && LongToSize(r) != length) {
+        MS_LOG(ERROR) << "File(" << file_name_ << ") IO ERROR. " << ErrnoToString(errno);
+        return false;
+      }
+      buff_offset += length;
+    }
+    return true;
+  }
+
   FILE *file_;
 };
 #endif

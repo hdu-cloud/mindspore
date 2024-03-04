@@ -15,88 +15,63 @@
  */
 #include "extendrt/infer_session.h"
 
-#include "extendrt/session/single_op_session.h"
 #include "plugin/factory/ms_factory.h"
-#include "kernel/common_utils.h"
-#include "backend/graph_compiler/graph_partition.h"
-#include "plugin/device/cpu/kernel/cpu_kernel_mod.h"
-#include "extendrt/utils/kernel_graph_utils.h"
-#include "include/common/utils/anfalgo.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
 #include "extendrt/delegate/factory.h"
 #include "extendrt/session/factory.h"
 #include "extendrt/delegate/plugin/tensorrt_executor_plugin.h"
+#include "extendrt/delegate/plugin/litert_executor_plugin.h"
+#include "extendrt/delegate/plugin/ascend_ge_executor_plugin.h"
+#include "extendrt/delegate/plugin/ascend_native_executor_plugin.h"
+#include "extendrt/kernel/ascend/plugin/ascend_kernel_plugin.h"
+#include "plugin/device/cpu/kernel/nnacl/op_base.h"
 
 namespace mindspore {
-static const std::vector<PrimitivePtr> ms_infer_cut_list = {prim::kPrimReturn,   prim::kPrimPartial,
-                                                            prim::kPrimSwitch,   prim::kPrimMakeTuple,
-                                                            prim::kPrimBpropCut, prim::kPrimSwitchLayer};
-static bool is_infer_single_op = true;
-static bool is_use_lite_session = false;
+namespace {
+void AscendPluginRegistration(const std::shared_ptr<AscendDeviceInfo> &ascend_device, bool use_experimental_rts) {
+  constexpr auto default_npu_provider = "ge";
+  auto provider = ascend_device->GetProvider();
+  if (provider == default_npu_provider) {
+    if (!lite::AscendGeExecutorPlugin::GetInstance().Register()) {
+      MS_LOG(WARNING) << "Failed to register AscendGe plugin";
+      return;
+    }
+  }
+  if (use_experimental_rts) {
+    constexpr auto default_acl_provider = "acl";
+    constexpr auto default_ascend_native_provider = "ascend_native";
+    if (provider == default_ascend_native_provider) {
+      if (!lite::AscendNativeExecutorPlugin::GetInstance().Register()) {
+        MS_LOG(WARNING) << "Failed to register Ascend Native plugin";
+        return;
+      }
+    }
 
-/// \brief Default Infer Session Implementation, using kernelmod, not implemented now.
-class DefaultInferSession : public InferSession {
- public:
-  explicit DefaultInferSession(const std::shared_ptr<Context> &context) {}
-  virtual ~DefaultInferSession() = default;
-  Status Init(const std::shared_ptr<Context> &context) override;
-  Status CompileGraph(FuncGraphPtr graph, const void *data = nullptr, size_t size = 0) override;
-  Status RunGraph(const std::vector<tensor::Tensor> &inputs, std::vector<tensor::Tensor> *outputs) override;
-  Status RunGraph(const std::vector<tensor::Tensor> &inputs, std::vector<tensor::Tensor> *outputs,
-                  const MSKernelCallBack &before, const MSKernelCallBack &after) override;
-  std::vector<MutableTensorImplPtr> GetOutputs() override;
-  std::vector<MutableTensorImplPtr> GetInputs() override;
-  std::vector<std::string> GetOutputNames() override;
-  std::vector<std::string> GetInputNames() override;
-  MutableTensorImplPtr GetOutputByTensorName(const std::string &tensorName) override;
-  MutableTensorImplPtr GetInputByTensorName(const std::string &name) override;
-
- private:
-  KernelGraphUtilsPtr kernel_graph_utils_;
-  KernelGraphPtr kernel_graph_;
-  std::vector<KernelGraphPtr> kernel_graphs_;
-};
-
-Status DefaultInferSession::Init(const std::shared_ptr<Context> &context) {
-  MS_LOG(INFO) << "DefaultInferSession::Init";
-  kernel_graph_utils_ = std::make_shared<mindspore::KernelGraphUtils>();
-  partition_ = std::make_shared<compile::GraphPartition>(ms_infer_cut_list, "ms");
-  return kSuccess;
+    if (provider == default_acl_provider) {
+      if (!kernel::AscendKernelPlugin::Register()) {
+        MS_LOG(WARNING) << "Failed to register Ascend ACL plugin";
+        return;
+      }
+    }
+  }
 }
-Status DefaultInferSession::CompileGraph(FuncGraphPtr graph, const void *data, size_t size) {
-  MS_LOG(INFO) << "DefaultInferSession::CompileGraph";
-  return kSuccess;
-}
-
-Status DefaultInferSession::RunGraph(const std::vector<tensor::Tensor> &inputs, std::vector<tensor::Tensor> *outputs,
-                                     const MSKernelCallBack &before, const MSKernelCallBack &after) {
-  return kSuccess;
-}
-
-Status DefaultInferSession::RunGraph(const std::vector<tensor::Tensor> &inputs, std::vector<tensor::Tensor> *outputs) {
-  return kSuccess;
-}
-std::vector<MutableTensorImplPtr> DefaultInferSession::GetOutputs() { return {}; }
-std::vector<MutableTensorImplPtr> DefaultInferSession::GetInputs() { return {}; }
-std::vector<std::string> DefaultInferSession::GetOutputNames() { return std::vector<std::string>(); }
-std::vector<std::string> DefaultInferSession::GetInputNames() { return std::vector<std::string>(); }
-MutableTensorImplPtr DefaultInferSession::GetOutputByTensorName(const std::string &tensorName) { return nullptr; }
-MutableTensorImplPtr DefaultInferSession::GetInputByTensorName(const std::string &name) { return nullptr; }
-
+}  // namespace
 std::shared_ptr<InferSession> InferSession::CreateSession(const std::shared_ptr<Context> &context,
                                                           const ConfigInfos &config_info) {
-  HandleContext(context);
-  auto session_type = SelectSession(context);
+  static const char *const env = std::getenv("ENABLE_MULTI_BACKEND_RUNTIME");
+  bool use_experimental_rts = env != nullptr && strcmp(env, "on") == 0;
+  HandleContext(context, use_experimental_rts);
+  auto session_type = SelectSession(context, use_experimental_rts);
   MS_LOG(DEBUG) << "Session type " << static_cast<int64_t>(session_type);
   return SessionRegistry::GetInstance().GetSession(session_type, context, config_info);
 }
 
-void InferSession::HandleContext(const std::shared_ptr<Context> &context) {
+void InferSession::HandleContext(const std::shared_ptr<Context> &context, bool use_experimental_rts) {
   if (!context) {
     return;
   }
   constexpr auto default_gpu_provider = "tensorrt";
   constexpr auto default_cpu_provider = "litert";
+
   auto device_infos = context->MutableDeviceInfo();
   for (auto &device_info : device_infos) {
     if (!device_info) {
@@ -122,6 +97,8 @@ void InferSession::HandleContext(const std::shared_ptr<Context> &context) {
       if (!ascend_device) {
         continue;
       }
+      AscendPluginRegistration(ascend_device, use_experimental_rts);
+      continue;
     }
     if (device_info->GetDeviceType() == kCPU) {
       auto cpu_device = device_info->Cast<CPUDeviceInfo>();
@@ -129,45 +106,40 @@ void InferSession::HandleContext(const std::shared_ptr<Context> &context) {
         continue;
       }
       auto provider = cpu_device->GetProvider();
-      if (provider.empty()) {
+      if (provider.empty() || provider == default_cpu_provider) {
+        if (!infer::LiteRTExecutorPlugin::GetInstance().Register()) {
+          MS_LOG_WARNING << "Failed to register LiteRT plugin";
+          return;
+        }
         cpu_device->SetProvider(default_cpu_provider);
       }
+      continue;
+    }
+    if (device_info->GetDeviceType() == kAllDevice) {
+      // Auto Device: MSLite will detect available device and run graph/sub-graph on suitable device by its scheduler
       continue;
     }
   }
 }
 
-SessionType InferSession::SelectSession(const std::shared_ptr<Context> &context) {
+SessionType InferSession::SelectSession(const std::shared_ptr<Context> &context, bool use_experimental_rts) {
   if (context != nullptr) {
-    auto &device_contexts = context->MutableDeviceInfo();
-    for (auto device_context : device_contexts) {
-      MS_EXCEPTION_IF_NULL(device_context);
-      if (device_context->GetDeviceType() == kAscend) {
-        if (device_context->GetProvider() == "ge") {
-          return kDelegateSession;
+    if (MS_LIKELY((!use_experimental_rts))) {
+      auto &device_contexts = context->MutableDeviceInfo();
+      for (const auto &device_context : device_contexts) {
+        MS_EXCEPTION_IF_NULL(device_context);
+        if (device_context->GetDeviceType() == kAscend) {
+          if (device_context->GetProvider() == "ge") {
+            return kDelegateSession;
+          }
+          return kSingleOpSession;
         }
-        return kSingleOpSession;
-      }
-      if (device_context->GetDeviceType() == kGPU || device_context->GetDeviceType() == kCPU) {
         return kDelegateSession;
       }
+    } else {
+      return kDefaultSession;
     }
-  }
-
-  if (is_infer_single_op) {
-    return kSingleOpSession;
-  }
-  if (is_use_lite_session) {
-    return kLiteInferSession;
   }
   return kDefaultSession;
 }
-
-static std::shared_ptr<InferSession> DefaultSessionCreator(const std::shared_ptr<Context> &ctx,
-                                                           const ConfigInfos &config_infos) {
-  auto session = std::make_shared<DefaultInferSession>(ctx);
-  session->Init(ctx);
-  return session;
-}
-REG_SESSION(kDefaultSession, DefaultSessionCreator);
 }  // namespace mindspore

@@ -15,7 +15,6 @@
  */
 #include "minddata/dataset/util/task.h"
 #include "utils/os.h"
-#include "utils/ms_utils.h"
 #include "minddata/dataset/util/log_adapter.h"
 #include "minddata/dataset/util/task_manager.h"
 #if defined(__ANDROID__) || defined(ANDROID)
@@ -79,7 +78,7 @@ void Task::operator()() {
     ShutdownGroup();
   } catch (const std::exception &e) {
     rc_ = STATUS_ERROR(StatusCode::kMDUnexpectedError, e.what());
-    MS_LOG(ERROR) << rc_;
+    MS_LOG(INFO) << rc_;
     ShutdownGroup();
   }
 }
@@ -92,14 +91,22 @@ void Task::ShutdownGroup() {  // Wake up watch dog and shutdown the engine.
   TaskGroup *vg = MyTaskGroup();
   // If multiple threads hit severe errors in the same group. Keep the first one and
   // discard the rest.
-  if (vg->rc_.IsOk()) {
-    std::unique_lock<std::mutex> rcLock(vg->rc_mux_);
-    // Check again after we get the lock
+  std::unique_lock<std::mutex> rcLock(vg->rc_mux_);
+  {
     if (vg->rc_.IsOk()) {
-      vg->rc_ = rc_;
-      rcLock.unlock();
-      TaskManager::InterruptMaster(rc_);
-      TaskManager::InterruptGroup(*this);
+      // Check again after we get the lock
+      if (vg->rc_.IsOk()) {
+        vg->rc_ = rc_;
+        rcLock.unlock();
+        TaskManager::InterruptMaster(rc_);
+        TaskManager::InterruptGroup(*this);
+        if (vg->rc_.IsError()) {
+          // InterruptMaster miss sink pyfunc scenario, thus add print here.
+          if (vg->has_dataqueue_ && vg->rc_.StatusCode() == mindspore::StatusCode::kMDPyFuncException) {
+            MS_LOG(ERROR) << "MindSpore dataset is terminated with err msg: " << vg->rc_;
+          }
+        }
+      }
     }
   }
 }
@@ -134,8 +141,8 @@ Status Task::Run() {
   std::lock_guard<std::mutex> lk(mux_);
   if (running_ == false) {
     try {
-      thrd_ = std::async(std::launch::async, std::ref(*this));
       running_ = true;
+      thrd_ = std::async(std::launch::async, std::ref(*this));
       caught_severe_exception_ = false;
     } catch (const std::exception &e) {
       rc = STATUS_ERROR(StatusCode::kMDUnexpectedError, e.what());
@@ -162,15 +169,18 @@ Status Task::Join(WaitFlag blocking) {
         // join() will not come back. We need some timeout version of join such that if the thread
         // doesn't come back in a reasonable of time, we will send the interrupt again.
         uint32_t wait_times = 0;
+        const uint32_t kLogInterval = 5;
         while (thrd_.wait_for(std::chrono::seconds(1)) != std::future_status::ready) {
           // We can't tell which conditional_variable this thread is waiting on. So we may need
           // to interrupt everything one more time.
           std::stringstream ss;
           ss << get_id();
-          MS_LOG(WARNING) << "Task: " << my_name_ << " Thread ID " << ss.str()
-                          << " is not responding. Interrupt it again.";
-          interrupt_svc->InterruptAll();
           wait_times++;
+          if (wait_times % kLogInterval == 0) {
+            MS_LOG(WARNING) << "Task: " << my_name_ << " Thread ID " << ss.str()
+                            << " is not finished and cannot be joined. Try to interrupt again.";
+          }
+          interrupt_svc->InterruptAll();
 #ifdef WITH_BACKEND
           if (device_target == kAscendDevice) {
             // Because hostPush hung in DataQueueOp, wait 5 seconds and destroy the tdt

@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,42 +20,41 @@
 #include "ir/dtype/type.h"
 #include "abstract/dshape.h"
 #include "utils/tensor_construct_utils.h"
+#include "ir/primitive.h"
+#include "abstract/abstract_value.h"
+#include "ops/test_ops.h"
+
 namespace mindspore {
 namespace ops {
-class TestAdd : public UT::Common {
- public:
-  TestAdd() {}
-  void SetUp() {}
-  void TearDown() {}
+struct AddParams {
+  ShapeVector x_shape;
+  TypePtr x_type;
+  ShapeVector y_shape;
+  TypePtr y_type;
+  ShapeVector out_shape;
+  TypePtr out_type;
 };
 
-TEST_F(TestAdd, test_ops_add) {
+class TestAdd : public TestOps, public testing::WithParamInterface<AddParams> {};
+
+TEST_P(TestAdd, add_dyn_shape) {
+  const auto &param = GetParam();
+  auto x = std::make_shared<abstract::AbstractTensor>(param.x_type, param.x_shape);
+  auto y = std::make_shared<abstract::AbstractTensor>(param.y_type, param.y_shape);
+  auto expect = std::make_shared<abstract::AbstractTensor>(param.out_type, param.out_shape);
+  ASSERT_NE(x, nullptr);
+  ASSERT_NE(y, nullptr);
   auto add = std::make_shared<Add>();
   add->Init();
-  auto tensor_x = TensorConstructUtils::CreateOnesTensor(kNumberTypeFloat32, std::vector<int64_t>{1, 3});
-  auto tensor_y = TensorConstructUtils::CreateOnesTensor(kNumberTypeFloat32, std::vector<int64_t>{1, 3});
-  MS_EXCEPTION_IF_NULL(tensor_x);
-  MS_EXCEPTION_IF_NULL(tensor_y);
-  auto add_abstract = add->Infer({tensor_x->ToAbstract(), tensor_y->ToAbstract()});
-  MS_EXCEPTION_IF_NULL(add_abstract);
-  EXPECT_EQ(add_abstract->isa<abstract::AbstractTensor>(), true);
-  auto shape_ptr = add_abstract->BuildShape();
-  MS_EXCEPTION_IF_NULL(shape_ptr);
-  EXPECT_EQ(shape_ptr->isa<abstract::Shape>(), true);
-  auto add_shape = shape_ptr->cast<abstract::ShapePtr>();
-  MS_EXCEPTION_IF_NULL(add_shape);
-  auto shape_vec = add_shape->shape();
-  auto type = add_abstract->BuildType();
-  MS_EXCEPTION_IF_NULL(type);
-  EXPECT_EQ(type->isa<TensorType>(), true);
-  auto tensor_type = type->cast<TensorTypePtr>();
-  MS_EXCEPTION_IF_NULL(tensor_type);
-  auto elem_type = tensor_type->element();
-  EXPECT_EQ(elem_type->type_id(), kNumberTypeFloat32);
-  EXPECT_EQ(shape_vec.size(), 2);
-  EXPECT_EQ(shape_vec[0], 1);
-  EXPECT_EQ(shape_vec[1], 3);
+  auto prim = std::make_shared<Primitive>(kNameAdd);
+  auto out_abstract = AddInfer(nullptr, prim, {x, y});
+  ASSERT_NE(out_abstract, nullptr);
+  ASSERT_TRUE(*out_abstract == *expect);
 }
 
+INSTANTIATE_TEST_CASE_P(TestAdd, TestAdd,
+                        testing::Values(AddParams{{-1, -1}, kFloat32, {1, 1}, kFloat32, {-1, -1}, kFloat32},
+                                        AddParams{{-1, -1}, kFloat32, {2, 3}, kFloat32, {2, 3}, kFloat32},
+                                        AddParams{{-2}, kFloat32, {2, 3}, kFloat32, {-2}, kFloat32}));
 }  // namespace ops
 }  // namespace mindspore

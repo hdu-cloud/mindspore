@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,23 +17,25 @@
 #include "plugin/device/ascend/optimizer/enhancer/concat_outputs_for_all_gather.h"
 #include <utility>
 #include <algorithm>
+#include "ops/other_op_name.h"
+#include "ops/sequence_ops.h"
+#include "ops/array_ops.h"
 #include "include/common/utils/anfalgo.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/anf_runtime_algorithm.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore::opt {
 namespace {
+constexpr auto kPatternOpaque = "Opaque";
 OutputInfo GetNodeOutputInfo(const AnfNodePtr &node) {
   MS_EXCEPTION_IF_NULL(node);
   std::vector<TypeId> output_infer_dtype;
   std::vector<ShapeVector> output_infer_shape;
-  std::vector<ShapeVector> output_max_shape;
-  std::vector<ShapeVector> output_min_shape;
   std::vector<std::string> output_format;
   std::vector<TypeId> output_device_dtype;
   auto type_ptr = node->Type();
   auto shape_ptr = node->Shape();
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(node);
   auto kernel_info = dynamic_cast<device::KernelInfo *>(node->kernel_info());
   MS_EXCEPTION_IF_NULL(kernel_info);
   auto build_info = kernel_info->select_kernel_build_info();
@@ -41,21 +43,16 @@ OutputInfo GetNodeOutputInfo(const AnfNodePtr &node) {
   for (size_t i = 0; i < output_num; i++) {
     (void)output_infer_dtype.emplace_back(common::AnfAlgo::GetOutputInferDataType(type_ptr, i));
     (void)output_infer_shape.emplace_back(common::AnfAlgo::GetOutputInferShape(node, shape_ptr, i));
-    (void)output_min_shape.emplace_back(common::AnfAlgo::GetOutputMinShape(node, i));
-    (void)output_max_shape.emplace_back(common::AnfAlgo::GetOutputMaxShape(node, i));
     (void)output_format.emplace_back(build_info->GetOutputFormat(i));
     (void)output_device_dtype.emplace_back(build_info->GetOutputDeviceType(i));
   }
 
-  return {output_infer_dtype, output_infer_shape, output_min_shape,
-          output_max_shape,   output_format,      output_device_dtype};
+  return {output_infer_dtype, output_infer_shape, output_format, output_device_dtype};
 }
 
 OutputInfo GetNodesOutputInfo(const std::vector<AnfNodePtr> &nodes) {
   std::vector<TypeId> output_infer_dtype;
   std::vector<ShapeVector> output_infer_shape;
-  std::vector<ShapeVector> output_max_shape;
-  std::vector<ShapeVector> output_min_shape;
   std::vector<std::string> output_format;
   std::vector<TypeId> output_device_dtype;
   for (const auto &node : nodes) {
@@ -66,14 +63,11 @@ OutputInfo GetNodesOutputInfo(const std::vector<AnfNodePtr> &nodes) {
     MS_EXCEPTION_IF_NULL(build_info);
     (void)output_infer_dtype.emplace_back(common::AnfAlgo::GetOutputInferDataType(node, 0));
     (void)output_infer_shape.emplace_back(common::AnfAlgo::GetOutputInferShape(node, 0));
-    (void)output_min_shape.emplace_back(common::AnfAlgo::GetOutputMinShape(node, 0));
-    (void)output_max_shape.emplace_back(common::AnfAlgo::GetOutputMaxShape(node, 0));
     (void)output_format.emplace_back(build_info->GetOutputFormat(kernel_with_index.second));
     (void)output_device_dtype.emplace_back(build_info->GetOutputDeviceType(kernel_with_index.second));
   }
 
-  return {output_infer_dtype, output_infer_shape, output_min_shape,
-          output_max_shape,   output_format,      output_device_dtype};
+  return {output_infer_dtype, output_infer_shape, output_format, output_device_dtype};
 }
 
 void GetInputNodeInfoForOneRank(const OutputInfo &output_info, const std::vector<AnfNodePtr> &new_tuple_getitems,
@@ -81,22 +75,16 @@ void GetInputNodeInfoForOneRank(const OutputInfo &output_info, const std::vector
                                 std::vector<AnfNodePtr> *concat_input_nodes) {
   const auto &output_infer_dtype = std::get<kIndex0>(output_info);
   const auto &output_infer_shape = std::get<kIndex1>(output_info);
-  const auto &output_min_shape = std::get<kIndex2>(output_info);
-  const auto &output_max_shape = std::get<kIndex3>(output_info);
-  const auto &output_format = std::get<kIndex4>(output_info);
-  const auto &output_device_dtype = std::get<kIndex5>(output_info);
+  const auto &output_format = std::get<kIndex2>(output_info);
+  const auto &output_device_dtype = std::get<kIndex3>(output_info);
   auto &input_infer_dtype = std::get<kIndex0>(*concat_input_info);
   auto &input_infer_shape = std::get<kIndex1>(*concat_input_info);
-  auto &input_min_shape = std::get<kIndex2>(*concat_input_info);
-  auto &input_max_shape = std::get<kIndex3>(*concat_input_info);
-  auto &input_format = std::get<kIndex4>(*concat_input_info);
-  auto &input_device_dtype = std::get<kIndex5>(*concat_input_info);
+  auto &input_format = std::get<kIndex2>(*concat_input_info);
+  auto &input_device_dtype = std::get<kIndex3>(*concat_input_info);
   for (size_t j = 0; j < LongToSize(rank_size); ++j, index += input_size) {
     concat_input_nodes->push_back(new_tuple_getitems[index]);
     input_infer_dtype.push_back(output_infer_dtype[index]);
     input_infer_shape.push_back(output_infer_shape[index]);
-    input_min_shape.push_back(output_min_shape[index]);
-    input_max_shape.push_back(output_max_shape[index]);
     input_format.push_back(output_format[index]);
     input_device_dtype.push_back(output_device_dtype[index]);
   }
@@ -111,27 +99,28 @@ kernel::KernelBuildInfoPtr GenerateKernelBuildInfo(const AnfNodePtr &concat, con
   std::vector<TypeId> outputs_device_type;
   kernel::KernelBuildInfo::KernelBuildInfoBuilder builder;
   for (size_t i = begin_index; i < begin_index + offset; ++i) {
-    inputs_device_format.push_back(std::get<kIndex4>(concat_input_info)[i]);
-    inputs_device_type.push_back(std::get<kIndex5>(concat_input_info)[i]);
+    inputs_device_format.push_back(std::get<kIndex2>(concat_input_info)[i]);
+    inputs_device_type.push_back(std::get<kIndex3>(concat_input_info)[i]);
   }
   // Current only support default format & float16
   auto cmp_format = inputs_device_format.begin();
   auto format_iter = std::find_if(inputs_device_format.begin(), inputs_device_format.end(),
                                   [&](const auto &format) { return format != (*cmp_format); });
   if (format_iter != inputs_device_format.end()) {
-    MS_LOG(EXCEPTION) << "Input format is not same, value: " << (*format_iter) << ", need format: " << (*cmp_format);
+    MS_LOG(INTERNAL_EXCEPTION) << "Input format is not same, value: " << (*format_iter)
+                               << ", need format: " << (*cmp_format);
   }
   auto cmp_dtype = inputs_device_type.begin();
   auto dtype_iter = std::find_if(inputs_device_type.begin(), inputs_device_type.end(),
                                  [&](const auto &dtype) { return dtype != (*cmp_dtype); });
   if (dtype_iter != inputs_device_type.end()) {
-    MS_LOG(EXCEPTION) << "Input dtype is not same, value: " << TypeIdLabel(*dtype_iter)
-                      << ", need dtype: " << TypeIdLabel(*cmp_dtype);
+    MS_LOG(INTERNAL_EXCEPTION) << "Input dtype is not same, value: " << TypeIdLabel(*dtype_iter)
+                               << ", need dtype: " << TypeIdLabel(*cmp_dtype);
   }
   (void)outputs_device_format.emplace_back(*cmp_format);
   (void)outputs_device_type.emplace_back(*cmp_dtype);
 
-  builder.SetFusionType(kernel::FusionType::OPAQUE);
+  builder.SetFusionType(kPatternOpaque);
   builder.SetProcessor(kernel::Processor::AICORE);
   builder.SetKernelType(TBE_KERNEL);
   builder.SetInputsFormat(inputs_device_format);
@@ -146,7 +135,7 @@ CNodePtr ConcatOutputsForAllGather::CreateNewConcat(const FuncGraphPtr &func_gra
                                                     const std::vector<AnfNodePtr> &concat_input_nodes,
                                                     const OutputInfo &concat_input_info, size_t begin_index,
                                                     int64_t offset) const {
-  std::vector<AnfNodePtr> concat_inputs{NewValueNode(std::make_shared<Primitive>(prim::kPrimConcat->name()))};
+  std::vector<AnfNodePtr> concat_inputs{NewValueNode(std::make_shared<Primitive>(prim::kPrimConcatD->name()))};
   size_t end_index = begin_index + static_cast<size_t>(offset);
   for (size_t i = begin_index; i < end_index; ++i) {
     concat_inputs.emplace_back(concat_input_nodes[i]);
@@ -159,22 +148,8 @@ CNodePtr ConcatOutputsForAllGather::CreateNewConcat(const FuncGraphPtr &func_gra
   for (size_t i = begin_index + 1; i < end_index; ++i) {
     shape[0] += input_shapes[i][0];
   }
-  if (IsDynamic(shape)) {
-    const auto &min_shapes = std::get<kIndex2>(concat_input_info);
-    const auto &max_shapes = std::get<kIndex3>(concat_input_info);
-    auto min_shape = min_shapes[begin_index];
-    auto max_shape = max_shapes[begin_index];
-    if (!min_shape.empty() && !max_shape.empty()) {
-      for (size_t i = begin_index + 1; i < end_index; ++i) {
-        min_shape[0] += min_shapes[i][0];
-        max_shape[0] += max_shapes[i][0];
-      }
-    }
-    BaseShapePtr base_shape = std::make_shared<abstract::Shape>(shape, min_shape, max_shape);
-    common::AnfAlgo::SetOutputTypeAndDetailShape(dtypes, {base_shape}, concat.get());
-  } else {
-    common::AnfAlgo::SetOutputInferTypeAndShape(dtypes, {shape}, concat.get());
-  }
+
+  common::AnfAlgo::SetOutputInferTypeAndShape(dtypes, {shape}, concat.get());
   common::AnfAlgo::SetNodeAttr(kAttrAxis, MakeValue(static_cast<int64_t>(0)), concat);
   common::AnfAlgo::SetNodeAttr(kAttrInputNums, MakeValue(offset), concat);
   std::vector<int64_t> dyn_input_size{offset};
@@ -257,11 +232,11 @@ const AnfNodePtr ConcatOutputsForAllGather::Process(const FuncGraphPtr &func_gra
   auto rank_size = common::AnfAlgo::GetNodeAttr<int64_t>(node, kAttrRankSize);
   std::vector<AnfNodePtr> new_outputs;
   OutputInfo output_info = GetNodeOutputInfo(node);
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(node);
   for (size_t i = 0; i < output_num; ++i) {
     auto tuple_getitem = CreatTupleGetItemNode(func_graph, node, i);
     common::AnfAlgo::SetOutputTypeAndDetailShape({std::get<0>(output_info)[i]},
-                                                 {common::AnfAlgo::GetOutputDetailShape(node, i)}, tuple_getitem.get());
+                                                 {AnfAlgo::GetOutputDetailShape(node, i)}, tuple_getitem.get());
     (void)new_outputs.emplace_back(std::move(tuple_getitem));
   }
   return InsertConcatForOutput(func_graph, node, output_info, new_outputs, rank_size);

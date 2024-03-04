@@ -16,13 +16,13 @@
 #ifndef MINDSPORE_CORE_OPS_EINSUM_H_
 #define MINDSPORE_CORE_OPS_EINSUM_H_
 
-#include <vector>
 #include <memory>
-#include <unordered_map>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -45,8 +45,8 @@ class MIND_API Einsum : public BaseOperator {
   std::string get_equation() const;
 };
 
-abstract::AbstractBasePtr EinsumInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                      const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr EinsumInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                               const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

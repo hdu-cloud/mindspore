@@ -15,14 +15,28 @@
  */
 
 #include "ops/atan2.h"
-#include <string>
-#include <algorithm>
+
+#include <map>
 #include <memory>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 #include "utils/ms_context.h"
 
 namespace mindspore {
@@ -43,15 +57,24 @@ TypePtr Atan2InferType(const PrimitivePtr &prim, const std::vector<AbstractBaseP
   for (const auto &item : input_args) {
     MS_EXCEPTION_IF_NULL(item);
   }
+  MS_EXCEPTION_IF_NULL(prim);
   auto op_name = prim->name();
   const int64_t input_num = 2;
   (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kGreaterEqual, input_num,
                                            op_name);
   std::map<std::string, TypePtr> types;
-  (void)types.emplace("x", input_args[0]->BuildType());
-  (void)types.emplace("y", input_args[1]->BuildType());
-
+  auto x_type = input_args[0]->BuildType();
+  auto y_type = input_args[1]->BuildType();
+  (void)types.emplace("x", x_type);
+  (void)types.emplace("y", y_type);
+  if (!x_type->isa<TensorType>() && !y_type->isa<TensorType>()) {
+    MS_EXCEPTION(TypeError) << "For '" << prim->name()
+                            << "', the input must be either scalar or Tensor, and at least one of the input args "
+                            << "should be Tensor. But got " << x_type->ToString() << " and " << y_type->ToString()
+                            << ".";
+  }
   auto context_ptr = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context_ptr);
   auto is_gpu = (context_ptr->get_param<std::string>(MS_CTX_DEVICE_TARGET) == kGPUDevice);
   auto is_cpu = (context_ptr->get_param<std::string>(MS_CTX_DEVICE_TARGET) == kCPUDevice);
   if (is_gpu) {
@@ -69,8 +92,26 @@ AbstractBasePtr Atan2Infer(const abstract::AnalysisEnginePtr &, const PrimitiveP
                            const std::vector<AbstractBasePtr> &input_args) {
   auto base_type = Atan2InferType(primitive, input_args);
   auto base_shape = Atan2InferShape(primitive, input_args);
-  return abstract::MakeAbstract(base_shape, base_type);
+  return abstract::MakeAbstractTensor(base_shape, base_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Atan2, prim::kPrimAtan2, Atan2Infer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGAtan2Infer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return Atan2InferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return Atan2InferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return Atan2Infer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Atan2, prim::kPrimAtan2, AGAtan2Infer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -21,7 +21,7 @@
 #include <set>
 #include <string>
 #include <vector>
-#include "backend/common/optimizer/pass.h"
+#include "include/backend/optimizer/pass.h"
 #include "include/errorcode.h"
 #include "include/registry/pass_registry.h"
 #include "ir/func_graph.h"
@@ -35,6 +35,10 @@ class PassStorage {
     if (!access_for_outer) {
       (void)inaccessible_for_outer_.insert(pass_name);
     }
+  }
+  static void ClearPass() {
+    pass_storage_.clear();
+    inaccessible_for_outer_.clear();
   }
   static opt::PassPtr GetPassFromStorage(const std::string &pass_name) { return pass_storage_[pass_name]; }
   static bool IsAccessibleForOuter(const std::string &pass_name) {

@@ -231,6 +231,14 @@ OP_TYPE(GatherD)
 OP_TYPE(GroupNormFusion)
 OP_TYPE(Log1p)
 OP_TYPE(TensorScatterAdd)
+OP_TYPE(SparseFillEmptyRows)
+OP_TYPE(SparseReshape)
+OP_TYPE(SparseSegmentSum)
+OP_TYPE(ScatterElements)
+OP_TYPE(Triu)
+OP_TYPE(Tril)
+OP_TYPE(AdamWeightDecay)
+OP_TYPE(FillV2)
 OP_TYPE_DEF_END(PrimitiveType)
 
 OP_SCHEMA_DEF(Abs)
@@ -394,6 +402,7 @@ OP_SCHEMA_DEF(Attention)
 OP_ATTR(head_num, long)
 OP_ATTR(head_size, long);
 OP_ATTR(cross, bool)
+OP_ATTR(scale, float)
 OP_SCHEMA_DEF_END(Attention)
 
 OP_SCHEMA_DEF(Conv2DBackpropFilterFusion)
@@ -680,6 +689,7 @@ OP_ATTR(num_directions, long)
 OP_ATTR(dropout, float)
 OP_ATTR_WITH_VALUE(zoneout_cell, float, 0)
 OP_ATTR_WITH_VALUE(zoneout_hidden, float, 0)
+OP_ATTR_WITH_VALUE(proj_size, long, 0)
 OP_SCHEMA_DEF_END(LSTM)
 
 OP_SCHEMA_DEF(LSTMGrad)
@@ -1242,6 +1252,9 @@ OP_SCHEMA_DEF_END(ReduceScatter)
 OP_SCHEMA_DEF(DynamicQuant)
 OP_ATTR_WITH_VALUE(symmetric, bool, false)
 OP_ATTR_WITH_VALUE(dst_type, long, 32)
+OP_ATTR_WITH_VALUE(activation_channel, bool, false)
+OP_ATTR_WITH_VALUE(prefer_axis, long, 0)
+OP_ATTR_WITH_VALUE(transpose, bool, false)
 OP_SCHEMA_DEF_END(DynamicQuant)
 
 OP_SCHEMA_DEF(LSTMGradData)
@@ -1301,3 +1314,29 @@ OP_SCHEMA_DEF_END(Log1p)
 
 OP_SCHEMA_DEF(TensorScatterAdd)
 OP_SCHEMA_DEF_END(TensorScatterAdd)
+
+OP_SCHEMA_DEF(SparseFillEmptyRows)
+OP_SCHEMA_DEF_END(SparseFillEmptyRows)
+
+OP_SCHEMA_DEF(SparseReshape)
+OP_SCHEMA_DEF_END(SparseReshape)
+
+OP_SCHEMA_DEF(SparseSegmentSum)
+OP_SCHEMA_DEF_END(SparseSegmentSum)
+
+OP_SCHEMA_DEF(ScatterElements)
+OP_ATTR(axis, long)
+OP_SCHEMA_DEF_END(ScatterElements)
+
+OP_SCHEMA_DEF(Triu)
+OP_SCHEMA_DEF_END(Triu)
+
+OP_SCHEMA_DEF(Tril)
+OP_SCHEMA_DEF_END(Tril)
+
+OP_SCHEMA_DEF(AdamWeightDecay)
+OP_ATTR(use_locking, bool)
+OP_SCHEMA_DEF_END(AdamWeightDecay)
+
+OP_SCHEMA_DEF(FillV2)
+OP_SCHEMA_DEF_END(FillV2)

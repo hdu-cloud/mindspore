@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -87,8 +87,8 @@ void SvdGpuKernelMod::InitSizeLists() {
       output_size_list_.push_back(batch_size_ * n_ * p_ * unit_size_);
     }
   } else {
-    output_size_list_.push_back(0);
-    output_size_list_.push_back(0);
+    output_size_list_.push_back(1);
+    output_size_list_.push_back(1);
   }
   // for dev_info
   workspace_size_list_.push_back(batch_size_ * sizeof(int));
@@ -225,7 +225,11 @@ void SvdGpuKernelMod::CheckResult(int *dev_info) {
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(info_gpu.data(), dev_info, sizeof(int) * batch_size_, cudaMemcpyDeviceToHost,
                     reinterpret_cast<cudaStream_t>(cuda_stream_)),
-    "Copy to device result failed");
+    "For 'SVD', copy to device result failed");
+  if (cudaStreamQuery(reinterpret_cast<cudaStream_t>(cuda_stream_)) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(cuda_stream_)),
+                                       "For 'SVD', cudaStreamSyncFailed");
+  }
   for (size_t i = 0; i < info_gpu.size(); ++i) {
     if (info_gpu[i] < 0) {
       MS_LOG(INFO) << "For '" << kernel_name_ << "', the compute result has wrong value. The " << -info_gpu[i]
@@ -263,15 +267,11 @@ bool SvdGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const 
 
   T *input = GetDeviceAddress<T>(inputs, kIndex0);
   T *output_s = GetDeviceAddress<T>(outputs, kIndex0);
-  T *output_u = nullptr;
-  T *output_v = nullptr;
+  T *output_u = GetDeviceAddress<T>(outputs, kIndex1);
+  T *output_v = GetDeviceAddress<T>(outputs, kIndex2);
   T *d_output_u = nullptr;
   T *d_output_v = nullptr;
   if (compute_uv_ || batched_) {
-    if (compute_uv_) {
-      output_u = GetDeviceAddress<T>(outputs, kIndex1);
-      output_v = GetDeviceAddress<T>(outputs, kIndex2);
-    }
     // Store output u and v before transpose.
     d_output_u = GetDeviceAddress<T>(workspace, kIndex2);
     d_output_v = GetDeviceAddress<T>(workspace, kIndex3);
@@ -294,6 +294,15 @@ bool SvdGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const 
     LaunchSvd(n_, m_, d_input, output_s, output_v, output_u, d_output_v, d_output_u, dev_info);
   }
 
+  // Set 0 for u and v if not compute u and v.
+  if (!compute_uv_) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+      cudaMemsetAsync(output_u, static_cast<T>(0.0), sizeof(T), reinterpret_cast<cudaStream_t>(cuda_stream_)),
+      "cudaMemset failed");
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+      cudaMemsetAsync(output_v, static_cast<T>(0.0), sizeof(T), reinterpret_cast<cudaStream_t>(cuda_stream_)),
+      "cudaMemset failed");
+  }
   return true;
 }
 

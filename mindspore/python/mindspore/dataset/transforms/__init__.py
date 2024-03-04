@@ -31,13 +31,14 @@ Note: Legacy c_transforms and py_transforms are deprecated but can still be impo
     from mindspore.dataset.transforms import py_transforms
 
 See `Common Transforms
-<https://www.mindspore.cn/tutorials/en/r2.0.0-alpha/beginner/transforms.html#common-transforms>`_ tutorial
-for more details.
+<https://www.mindspore.cn/tutorials/en/master/beginner/transforms.html#common-transforms>`_ tutorial for more details.
 
 Descriptions of common data processing terms are as follows:
 
 - TensorOperation, the base class of all data processing operations implemented in C++.
 - PyTensorOperation, the base class of all data processing operations implemented in Python.
+
+Note: In eager mode, non-NumPy input is implicitly converted to NumPy format and sent to MindSpore.
 """
 from .. import vision
 from . import c_transforms

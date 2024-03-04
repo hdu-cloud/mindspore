@@ -13,8 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_LSTM_PARAMETER_H_
-#define MINDSPORE_NNACL_LSTM_PARAMETER_H_
+#ifndef NNACL_LSTM_PARAMETER_H_
+#define NNACL_LSTM_PARAMETER_H_
 
 #include "nnacl/op_base.h"
 
@@ -23,7 +23,9 @@ typedef struct LstmParameter {
   OpParameter op_parameter_;
   // shape correlative
   int input_size_;
-  int hidden_size_;  // output_size
+  int hidden_size_;
+  int project_size_;
+  int output_size_;
   int seq_len_;
   int batch_;
   // other parameter
@@ -35,6 +37,8 @@ typedef struct LstmParameter {
   int input_col_align_;
   int state_row_align_;
   int state_col_align_;
+  int proj_col_align_;
+  bool has_bias_;
 } LstmParameter;
 
-#endif  // MINDSPORE_NNACL_LSTM_PARAMETER_H_
+#endif  // NNACL_LSTM_PARAMETER_H_

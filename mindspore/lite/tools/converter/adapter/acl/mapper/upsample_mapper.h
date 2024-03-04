@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2022 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ class UpsampleMapper : public PrimitiveMapper {
   STATUS Mapper(const CNodePtr &cnode) override;
 
  private:
-  STATUS AttrAdjust(const PrimitivePtr &src_prim, const ValueNodePtr &val_node);
+  STATUS AttrAdjust(const PrimitivePtr &src_prim, const ValueNodePtr &val_node, const CNodePtr &cnode);
   STATUS RemoveConstInput(const CNodePtr &cnode);
 };
 }  // namespace lite

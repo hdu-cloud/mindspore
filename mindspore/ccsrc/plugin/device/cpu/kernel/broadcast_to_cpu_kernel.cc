@@ -16,16 +16,16 @@
 
 #include <algorithm>
 #include <utility>
+#include <complex>
 #include "plugin/device/cpu/kernel/nnacl/errorcode.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "plugin/device/cpu/kernel/broadcast_to_cpu_kernel.h"
 
 namespace mindspore {
 namespace kernel {
 namespace {
-#ifndef _MSC_VER
-using complex64 = __complex__ float;
-using complex128 = __complex__ double;
-#endif
+using complex64 = std::complex<float>;
+using complex128 = std::complex<double>;
 constexpr size_t kBroadcastToOutputsNum = 1;
 }  // namespace
 
@@ -54,21 +54,73 @@ std::map<std::string, std::vector<std::pair<KernelAttr, BroadcastToCpuKernelMod:
        &BroadcastToCpuKernelMod::LaunchKernel<float>},
       {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64),
        &BroadcastToCpuKernelMod::LaunchKernel<double>},
-#ifndef _MSC_VER
       {KernelAttr().AddInputAttr(kNumberTypeComplex64).AddOutputAttr(kNumberTypeComplex64),
        &BroadcastToCpuKernelMod::LaunchKernel<complex64>},
       {KernelAttr().AddInputAttr(kNumberTypeComplex128).AddOutputAttr(kNumberTypeComplex128),
        &BroadcastToCpuKernelMod::LaunchKernel<complex128>},
-#endif
       {KernelAttr().AddInputAttr(kNumberTypeBool).AddOutputAttr(kNumberTypeBool),
        &BroadcastToCpuKernelMod::LaunchKernel<bool>}}},
     {kDynamicBroadcastTo,
-     {{KernelAttr().AddInputAttr(kNumberTypeFloat32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeFloat32),
+     {{KernelAttr()
+         .AddInputAttr(kNumberTypeFloat32)
+         .AddInputAttr(kObjectTypeTuple, kNumberTypeInt32)
+         .AddOutputAttr(kNumberTypeFloat32),
        &BroadcastToCpuKernelMod::LaunchKernel<float>},
-      {KernelAttr().AddInputAttr(kNumberTypeInt32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt32),
+      {KernelAttr()
+         .AddInputAttr(kNumberTypeInt32)
+         .AddInputAttr(kObjectTypeTuple, kNumberTypeInt32)
+         .AddOutputAttr(kNumberTypeInt32),
        &BroadcastToCpuKernelMod::LaunchKernel<int>},
-      {KernelAttr().AddInputAttr(kNumberTypeBool).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeBool),
-       &BroadcastToCpuKernelMod::LaunchKernel<bool>}}}};
+      {KernelAttr()
+         .AddInputAttr(kNumberTypeBool)
+         .AddInputAttr(kObjectTypeTuple, kNumberTypeInt32)
+         .AddOutputAttr(kNumberTypeBool),
+       &BroadcastToCpuKernelMod::LaunchKernel<bool>},
+      {KernelAttr()
+         .AddInputAttr(kNumberTypeInt8)
+         .AddInputAttr(kObjectTypeTuple, kNumberTypeInt32)
+         .AddOutputAttr(kNumberTypeInt8),
+       &BroadcastToCpuKernelMod::LaunchKernel<int>},
+      {KernelAttr()
+         .AddInputAttr(kNumberTypeFloat32)
+         .AddInputAttr(kObjectTypeTuple, kNumberTypeInt64)
+         .AddOutputAttr(kNumberTypeFloat32),
+       &BroadcastToCpuKernelMod::LaunchKernel<float>},
+      {KernelAttr()
+         .AddInputAttr(kNumberTypeInt32)
+         .AddInputAttr(kObjectTypeTuple, kNumberTypeInt64)
+         .AddOutputAttr(kNumberTypeInt32),
+       &BroadcastToCpuKernelMod::LaunchKernel<int>},
+      {KernelAttr()
+         .AddInputAttr(kNumberTypeBool)
+         .AddInputAttr(kObjectTypeTuple, kNumberTypeInt64)
+         .AddOutputAttr(kNumberTypeBool),
+       &BroadcastToCpuKernelMod::LaunchKernel<bool>},
+      {KernelAttr()
+         .AddInputAttr(kNumberTypeInt8)
+         .AddInputAttr(kObjectTypeTuple, kNumberTypeInt64)
+         .AddOutputAttr(kNumberTypeInt8),
+       &BroadcastToCpuKernelMod::LaunchKernel<int>},
+      {KernelAttr()
+         .AddInputAttr(kNumberTypeUInt8)
+         .AddInputAttr(kObjectTypeTuple, kNumberTypeInt64)
+         .AddOutputAttr(kNumberTypeUInt8),
+       &BroadcastToCpuKernelMod::LaunchKernel<int>},
+      {KernelAttr()
+         .AddInputAttr(kNumberTypeUInt16)
+         .AddInputAttr(kObjectTypeTuple, kNumberTypeInt64)
+         .AddOutputAttr(kNumberTypeUInt16),
+       &BroadcastToCpuKernelMod::LaunchKernel<int>},
+      {KernelAttr()
+         .AddInputAttr(kNumberTypeUInt32)
+         .AddInputAttr(kObjectTypeTuple, kNumberTypeInt64)
+         .AddOutputAttr(kNumberTypeUInt32),
+       &BroadcastToCpuKernelMod::LaunchKernel<int>},
+      {KernelAttr()
+         .AddInputAttr(kNumberTypeUInt64)
+         .AddInputAttr(kObjectTypeTuple, kNumberTypeInt64)
+         .AddOutputAttr(kNumberTypeUInt64),
+       &BroadcastToCpuKernelMod::LaunchKernel<int>}}}};
 
 bool BroadcastToCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                    const std::vector<KernelTensorPtr> &outputs) {
@@ -142,7 +194,7 @@ void BroadcastToCpuKernelMod::CheckArgs() {
       MS_LOG(EXCEPTION)
         << "For '" << kernel_name_ << "', when the " << i
         << "'th, the shape of input must be 1 and equal to the shape of output, but got the shape of input: "
-        << Vector2Str(input_shape_) << ", and the shape of output: " << Vector2Str(output_shape_);
+        << input_shape_ << ", and the shape of output: " << output_shape_;
     }
   }
 }
@@ -185,12 +237,10 @@ bool BroadcastToCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs
     status = BroadcastToSize32(input_addr, &shape_info_, output_addr);
   } else if constexpr (std::is_same_v<T, double>) {
     status = BroadcastToSize64(input_addr, &shape_info_, output_addr);
-#ifndef _MSC_VER
   } else if constexpr (std::is_same_v<T, complex64>) {
     status = BroadcastToSize64(input_addr, &shape_info_, output_addr);
   } else if constexpr (std::is_same_v<T, complex128>) {
     status = BroadcastToSize128(input_addr, &shape_info_, output_addr);
-#endif
   } else {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_
                       << "', not supported data type, the dtype of input must be bool, int, complex, float or double";
@@ -201,8 +251,7 @@ bool BroadcastToCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs
                       << "', each dimension pair, 'input_x' shape and target shape, "
                          "must be either equal or input is one or the target dimension is -1. "
                          "But got 'input_x' shape: "
-                      << Vector2Str(input_shape_) << " and target shape: " << Vector2Str(output_shape_)
-                      << ". Error code: " << status;
+                      << input_shape_ << " and target shape: " << output_shape_ << ". Error code: " << status;
   }
   return true;
 }

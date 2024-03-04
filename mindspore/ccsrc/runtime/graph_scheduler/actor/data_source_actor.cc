@@ -130,6 +130,7 @@ void DeviceQueueDataSourceActor::SendMemoryFreeReq(OpContext<DeviceTensor> *cons
 void DeviceQueueDataSourceActor::OnMemoryAllocFinish(OpContext<DeviceTensor> *const context) {
   MS_EXCEPTION_IF_NULL(context);
   MS_EXCEPTION_IF_NULL(data_kernel_);
+  MS_EXCEPTION_IF_CHECK_FAIL((!device_contexts_.empty()), "The device context doesn't exist.");
   MS_EXCEPTION_IF_NULL(device_contexts_[0]);
   if (IsRunningFailed(context)) {
     return;
@@ -153,8 +154,11 @@ void DeviceQueueDataSourceActor::OnMemoryAllocFinish(OpContext<DeviceTensor> *co
   // Copy data from device queue by data kernel launching.
   MS_EXCEPTION_IF_NULL(kernel_info_);
   try {
-    auto ret = device_contexts_[0]->kernel_executor_->LaunchKernel(
+    uint64_t start_time = 0;
+    PROFILER_START(start_time);
+    auto ret = device_contexts_[0]->GetKernelExecutor(false)->LaunchKernel(
       data_kernel_, launch_info_.inputs_, launch_info_.workspaces_, launch_info_.outputs_, kernel_info_->stream_id());
+    PROFILER_END(start_time, ProfilerModule::kKernel, ProfilerEvent::kKernelLaunch, GetAID().Name(), false);
     if (!ret) {
       std::string error_info = "Launch kernel failed: " + data_kernel_->fullname_with_scope();
       SET_OPCONTEXT_FAIL_RET_WITH_ERROR((*context), error_info);
@@ -172,7 +176,8 @@ void DeviceQueueDataSourceActor::OnMemoryAllocFinish(OpContext<DeviceTensor> *co
   }
 
   if (common::AnfAlgo::IsDynamicShape(data_kernel_)) {
-    AnfAlgo::UpdateInternalParameterShape(internal_parameters_, data_kernel_);
+    ProfilerRecorder profiler(ProfilerModule::kKernel, ProfilerEvent::kKernelUpdate, GetAID().Name());
+    AnfAlgo::UpdateInternalParameterShape(internal_parameters_);
   }
   PostRun(context);
 }
@@ -275,31 +280,51 @@ void HostQueueDataSourceActor::OnMemoryAllocFinish(OpContext<DeviceTensor> *cons
   }
 
   // Copy data from host tensor to device tensor.
-  for (size_t i = 0; i < host_tensors.size(); ++i) {
-    auto &host_tensor = host_tensors[i];
-    auto &device_tensor = device_tensors[i];
-    MS_EXCEPTION_IF_NULL(device_tensor);
-    MS_EXCEPTION_IF_NULL(host_tensor);
-    auto tensor_device_address = std::dynamic_pointer_cast<DeviceTensor>(host_tensor->device_address());
-    // Sync data from host_tensor_device_address to device_tensor.
-    if (tensor_device_address != nullptr) {
-      if (tensor_device_address.get() == device_tensor) {
+  uint64_t start_time = 0;
+  PROFILER_START(start_time);
+  try {
+    for (size_t i = 0; i < host_tensors.size(); ++i) {
+      auto &host_tensor = host_tensors[i];
+      auto &device_tensor = device_tensors[i];
+      MS_EXCEPTION_IF_NULL(device_tensor);
+      MS_EXCEPTION_IF_NULL(host_tensor);
+      // No used device address need skip.
+      if (TEST_FLAG(device_tensor->flag(), device::kDeviceAddressFlagNotUsed)) {
+        MS_LOG(DEBUG) << GetAID().Name() << " input index " << i << " is not used.";
         continue;
       }
-      if (!Copy(device_tensor, tensor_device_address.get())) {
-        SET_OPCONTEXT_FAIL_RET_WITH_ERROR((*context), "Copy data failed.");
+      auto tensor_device_address = std::dynamic_pointer_cast<DeviceTensor>(host_tensor->device_address());
+      // Sync data from host_tensor_device_address to device_tensor.
+      if (tensor_device_address != nullptr) {
+        if (tensor_device_address.get() == device_tensor) {
+          continue;
+        }
+        if (!Copy(device_tensor, tensor_device_address.get())) {
+          SET_OPCONTEXT_FAIL_RET_WITH_ERROR((*context), "Copy data failed.");
+        }
+        continue;
       }
-      continue;
+      if (host_tensor->data_ptr() == nullptr && device_tensor->GetSize() == 0) {
+        MS_LOG(INFO) << "Empty tuple sync";
+        continue;
+      }
+      // Sync data from host_tensor to device_tensor.
+      if (!device_tensor->SyncHostToDevice(
+            trans::GetRuntimePaddingShape(data_node_with_indexs_[i].first, data_node_with_indexs_[i].second),
+            LongToSize(host_tensor->data().nbytes()), host_tensor->data_type(), host_tensor->data_c(),
+            host_tensor->device_info().host_format_)) {
+        SET_OPCONTEXT_FAIL_RET_WITH_ERROR((*context), "SyncHostToDevice failed.");
+      }
+      if (IsDynamic(device_tensor->host_shape())) {
+        device_tensor->set_host_shape(host_tensor->shape());
+      }
     }
-
-    // Sync data from host_tensor to device_tensor.
-    if (!device_tensor->SyncHostToDevice(
-          trans::GetRuntimePaddingShape(data_node_with_indexs_[i].first, data_node_with_indexs_[i].second),
-          LongToSize(host_tensor->data().nbytes()), host_tensor->data_type(), host_tensor->data_c(),
-          host_tensor->device_info().host_format_)) {
-      SET_OPCONTEXT_FAIL_RET_WITH_ERROR((*context), "SyncHostToDevice failed.");
-    }
+  } catch (const std::exception &e) {
+    MsException::Instance().SetException();
+    SET_OPCONTEXT_FAIL_RET_WITH_ERROR((*context), "Host data source actor run exception.");
   }
+  PROFILER_END(start_time, ProfilerModule::kRuntime, ProfilerEvent::kCopyData, GetAID().Name(), false);
+
   host_queue_->Pop();
 
   PostRun(context);
@@ -350,10 +375,13 @@ void HostQueueDataSourceActor::ReleaseDataNodeAddress() {
       auto new_address = device_context->device_res_manager_->CreateDeviceAddress(
         nullptr, old_address->GetSize(), old_address->format(), old_address->type_id(), old_address->host_shape());
       MS_EXCEPTION_IF_NULL(new_address);
+      MS_LOG(DEBUG) << "Create device tensor:" << new_address << " type:" << new_address->type_id();
       new_address->set_original_ref_count(old_address->original_ref_count());
       new_address->ResetRefCount();
+      new_address->set_flag(old_address->flag());
       auto [node, index] = old_address->GetNodeIndex();
       new_address->SetNodeIndex(node, index);
+      new_address->set_padding_type(old_address->padding_type());
       AnfAlgo::SetOutputAddr(new_address, data_node_with_index.second, data_node_with_index.first.get());
     }
   }

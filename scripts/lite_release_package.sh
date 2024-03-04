@@ -45,29 +45,18 @@ function linux_release_package()
 {
     mkdir -p ${output_path}/release/linux/nnie/
     mkdir -p ${output_path}/release/linux/x86_64/
-    mkdir -p ${output_path}/release/linux/x86_64/tensorrt/
     mkdir -p ${output_path}/release/linux/aarch64/
     mkdir -p ${output_path}/release/linux/x86_64/ascend/
     mkdir -p ${output_path}/release/linux/aarch64/ascend/
-    mkdir -p ${output_path}/release/linux/x86_64/server/
-    mkdir -p ${output_path}/release/linux/aarch64/server/
     mkdir -p ${output_path}/release/linux/x86_64/cloud_fusion/
     mkdir -p ${output_path}/release/linux/aarch64/cloud_fusion/
     mkdir -p ${output_path}/release/none/cortex_m7
 
     cp ${input_path}/none_cortex-m/mindspore*cortex-m7.tar.gz* ${output_path}/release/none/cortex_m7/
-    cp ${input_path}/centos_x86/avx/mindspore*.whl* ${output_path}/release/linux/x86_64/
     cp ${input_path}/centos_x86/avx/mindspore*.tar.gz* ${output_path}/release/linux/x86_64/
-    cp ${input_path}/linux_aarch64/mindspore*.whl* ${output_path}/release/linux/aarch64/
     cp ${input_path}/linux_aarch64/mindspore*.tar.gz* ${output_path}/release/linux/aarch64/
-    cp ${input_path}/centos_x86/ascend/mindspore*.whl* ${output_path}/release/linux/x86_64/ascend/
     cp ${input_path}/centos_x86/ascend/mindspore*.tar.gz* ${output_path}/release/linux/x86_64/ascend/
-    cp ${input_path}/linux_aarch64/ascend/mindspore*.whl* ${output_path}/release/linux/aarch64/ascend/
     cp ${input_path}/linux_aarch64/ascend/mindspore*.tar.gz* ${output_path}/release/linux/aarch64/ascend/
-    cp ${input_path}/centos_x86/tensorrt/mindspore*.whl* ${output_path}/release/linux/x86_64/tensorrt/
-    cp ${input_path}/centos_x86/tensorrt/mindspore*.tar.gz* ${output_path}/release/linux/x86_64/tensorrt/
-    cp -r ${input_path}/centos_x86/server/* ${output_path}/release/linux/x86_64/server/
-    cp -r ${input_path}/linux_aarch64/server/* ${output_path}/release/linux/aarch64/server/
     cp -r ${input_path}/centos_x86/cloud_fusion/* ${output_path}/release/linux/x86_64/cloud_fusion/
     cp -r ${input_path}/linux_aarch64/cloud_fusion/* ${output_path}/release/linux/aarch64/cloud_fusion/
 
@@ -81,12 +70,6 @@ function windows_release_package()
     mkdir -p ${output_path}/release/windows/
     cp ${input_path}/windows_x64/avx/*.zip* ${output_path}/release/windows/
     cp ${input_path}/windows_x32/sse/*.zip* ${output_path}/release/windows/
-}
-
-function openharmony_release_package()
-{
-    mkdir -p ${output_path}/release/openharmony/
-    cp ${input_path}/ohos_aarch32/*.tar.gz* ${output_path}/release/openharmony/
 }
 
 echo "============================== begin =============================="
@@ -104,7 +87,6 @@ android_release_package aarch64 gpu
 ios_release_package
 linux_release_package
 windows_release_package
-openharmony_release_package
 
 echo "Create release package success!"
 echo "=============================== end ==============================="

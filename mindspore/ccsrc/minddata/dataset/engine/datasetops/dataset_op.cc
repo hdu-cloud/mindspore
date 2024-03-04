@@ -255,6 +255,10 @@ void DatasetOp::Print(std::ostream &out, bool show_all) const {
 
 Status DatasetOp::GetNextRowPullMode(TensorRow *const row) {
   RETURN_UNEXPECTED_IF_NULL(row);
+  if (child_.empty()) {
+    MS_LOG(DEBUG) << "No child for operator [" << Name() << "].";
+    return Status::OK();
+  }
   RETURN_UNEXPECTED_IF_NULL(child_[0]);
   return child_[0]->GetNextRowPullMode(row);
 }
@@ -323,6 +327,31 @@ Status DatasetOp::PrepareOperator() {
   // Generate the column name map for the current op.
   RETURN_IF_NOT_OK(this->ComputeColMap());
 
+  return Status::OK();
+}
+
+// During tree prepare phase, operators may have specific post-operations to perform depending on their role.
+Status DatasetOp::PrepareOperatorPullBased() {
+  // Generate the column name map for the current op.
+  RETURN_IF_NOT_OK(this->ComputeColMap());
+
+  // check if operators are implemented in pull mode
+  std::string message = "";
+  ImplementedPullMode isImplemented = PullModeImplementationStatus();
+  if (isImplemented == ImplementedPullMode::NotImplemented) {
+    message = Name() + " is not implemented yet in pull mode.";
+    if (IsLeaf()) {
+      message = "Leaf node " + message;
+      if (GlobalContext::config_manager()->get_debug_mode()) {
+        RETURN_STATUS_UNEXPECTED(message);
+      }
+    }
+  } else if (isImplemented == ImplementedPullMode::DisabledDebugMode) {
+    message = "In debug mode, " + Name() + " is disabled for debugging purposes.";
+  }
+  if (message.size() > 0) {
+    MS_LOG(WARNING) << message;
+  }
   return Status::OK();
 }
 

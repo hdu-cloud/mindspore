@@ -42,20 +42,6 @@
 namespace mindspore::lite::quant {
 class WeightQuantizer : public Quantizer {
  public:
-  WeightQuantizer() {
-    quant_min_ = QuantMin(bit_num_, false, false);
-    quant_max_ = QuantMax(bit_num_, false);
-    symmetric_quant_min_ = QuantMin(bit_num_, false, true);
-    symmetric_quant_max_ = QuantMax(bit_num_, false);
-    // parse type_id_
-    MS_ASSERT(bit_num_ > 0 && bit_num_ <= k16Bit);
-    if (bit_num_ > 0 && bit_num_ <= k8Bit) {
-      type_id_ = kNumberTypeInt8;
-    } else if (bit_num_ <= k16Bit) {
-      type_id_ = kNumberTypeInt16;
-    }
-  }
-
   explicit WeightQuantizer(const std::shared_ptr<ConverterPara> &param, double init_scale = 0) : Quantizer(param) {
     bit_num_ = param_->commonQuantParam.bit_num;
     enable_encode_ = param_->commonQuantParam.enable_encode;
@@ -90,6 +76,16 @@ class WeightQuantizer : public Quantizer {
                 std::inserter(skip_quant_node_, skip_quant_node_.begin()));
     }
     quant_type_ = param_->commonQuantParam.quant_type;
+    dequant_strategy_ = param_->weightQuantParam.dequant_strategy;
+    max_segments_ = param_->weightQuantParam.max_segments;
+    ascend_backend_ = param_->device.find("Ascend") != std::string::npos;
+    per_channel_ = param_->weightQuantParam.per_channel;
+    bias_correction_ = param_->weightQuantParam.bias_correction;
+    if (per_channel_) {
+      weight_quant_type_ = WeightQuantType::FIXED_BIT_PER_CHANNEL;
+    } else {
+      weight_quant_type_ = WeightQuantType::FIXED_BIT_PER_LAYER;
+    }
   }
 
   ~WeightQuantizer() override = default;
@@ -98,7 +94,7 @@ class WeightQuantizer : public Quantizer {
 
   int WeightQuant(const FuncGraphPtr &func_graph, const std::set<PrimitivePtr> &support_weight_quant_types,
                   const std::set<PrimitivePtr> &per_layer_types, const std::set<PrimitivePtr> &symmetric_types,
-                  bool compression = true, bool check_quant_conditions = false, bool update_tensor = true);
+                  bool compression = true);
 
   std::set<tensor::TensorPtr> GetWeightQuantizedTensors() { return this->weight_quantized_tensors_; }
 
@@ -106,18 +102,21 @@ class WeightQuantizer : public Quantizer {
   int WeightQuantPerCNode(const FuncGraphPtr &func_graph, const CNodePtr &cnode,
                           const std::set<PrimitivePtr> &support_weight_quant_types,
                           const std::set<PrimitivePtr> &per_layer_types, const std::set<PrimitivePtr> &symmetric_types,
-                          bool compression = true, bool update_tensor = true);
+                          bool compression = true);
+  int PreLinearQuant(const CNodePtr &cnode, int idx, const AnfNodePtr &input, ParameterPtr *parameter,
+                     tensor::TensorPtr *tensor_info);
   int LinearQuant(const FuncGraphPtr &func_graph, const CNodePtr &cnode, const std::set<PrimitivePtr> &per_layer_types,
                   const std::set<PrimitivePtr> &symmetric_types, const std::vector<int> &weight_indices,
-                  bool compression = true, bool update_tensor = true);
+                  bool compression = true);
   int MarkGraphWeightQuantType(const FuncGraphPtr &func_graph);
-  int MarkCnodeWeightQuantType(const CNodePtr &cnode);
-  int DoCompression(const CNodePtr &cnode, const ParameterPtr &parameter, int idx);
+  int MarkCNodeWeightQuantType(const CNodePtr &cnode);
+  int DoCompression(const CNodePtr &cnode, const ParameterPtr &parameter, const tensor::TensorPtr &tensor);
   int DoMixBitQuant(const CNodePtr &cnode, const ParameterPtr &parameter, int idx, const tensor::TensorPtr &tensor_info,
-                    int preferred_dim, WeightQuantType weight_quant_type, bool symmetric = true,
-                    bool update_tensor = true);
-  bool CheckWeightQuantExist(const CNodePtr &cnode);
-  int InsertQuantDtypeNode(const FuncGraphPtr &func_graph);
+                    int preferred_dim, WeightQuantType weight_quant_type, bool symmetric = true);
+  int InsertDequantNode(const FuncGraphPtr &func_graph, const CNodePtr &cnode, const ParameterPtr &parameter, int idx,
+                        const tensor::TensorPtr &tensor_info);
+  int InsertAscendDequantNode(const FuncGraphPtr &func_graph, const CNodePtr &cnode, const ParameterPtr &parameter,
+                              int idx, const tensor::TensorPtr &tensor_info);
 
  private:
   bool is_auto_tune_{false};
@@ -132,10 +131,16 @@ class WeightQuantizer : public Quantizer {
   TypeId type_id_{kNumberTypeInt8};
   std::set<std::string> skip_quant_node_;
   std::unique_ptr<QuantStrategy> quant_strategy_;
-  schema::QuantType quant_type_{schema::QuantType_WeightQuant};
+  quant::QuantType quant_type_{quant::QUANT_WEIGHT};
   bool enable_encode_{true};
+  WeightQuantType weight_quant_type_ = WeightQuantType::FIXED_BIT_PER_CHANNEL;
+  DequantStrategy dequant_strategy_ = DEFAULT;
+  int max_segments_{1};
+  bool per_channel_{true};
+  bool bias_correction_{true};
   // Support for mark shared weight node.
   std::set<tensor::TensorPtr> weight_quantized_tensors_;
+  bool ascend_backend_ = false;
 };
 }  // namespace mindspore::lite::quant
 #endif  // MINDSPORE_LITE_TOOLS_CONVERTER_QUANTIZER_WEIGHT_QUANTIZER_H_

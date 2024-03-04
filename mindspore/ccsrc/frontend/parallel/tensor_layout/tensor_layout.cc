@@ -113,7 +113,7 @@ bool TensorLayout::TensorShapeDimensionIsDividedBySplitDeviceDimension() const {
         MS_LOG(ERROR) << "GetSliceNumByTensorDimensionIndex is 0";
         return false;
       }
-      if (tensor_shape_.GetDimByIdx(i) % divisor != 0) {
+      if (tensor_shape_.GetDimByIdx(i) != -1 && tensor_shape_.GetDimByIdx(i) % divisor != 0) {
         return false;
       }
     }
@@ -324,8 +324,8 @@ Arrangement TensorLayout::slice_shape() const {
   for (size_t index = 0; index < tensor_map_.GetDimSize(); index++) {
     int64_t dim = tensor_map_.GetDimByIdx(index);
     int64_t num = tensor_shape_.GetDimByIdx(index);
-    if (dim == -1) {
-      shape.push_back(num);
+    if (dim == -1 || num == -1) {
+      shape.push_back(num);  // num == -1 means dynamic shape
     } else {
       int64_t divisor = device_arrangement_.GetDimByReverseIdx(LongToUlong(dim));
       shape.push_back(num / divisor);
@@ -338,6 +338,20 @@ Arrangement TensorLayout::slice_shape() const {
   } else {
     return new_tensor_shape;
   }
+}
+
+Shape TensorLayout::shard_strategy() const {
+  Shape ret;
+  for (size_t index = 0; index < tensor_map_.GetDimSize(); index++) {
+    int64_t dim = tensor_map_.GetDimByIdx(index);
+    if (dim == -1) {
+      ret.push_back(1);
+    } else {
+      int64_t divisor = device_arrangement_.GetDimByReverseIdx(LongToUlong(dim));
+      ret.push_back(divisor);
+    }
+  }
+  return ret;
 }
 
 Status TensorLayout::UpdateTensorMap(size_t index, int64_t value) {
@@ -451,7 +465,7 @@ Status TensorLayout::GenerateOptShardSliceShape() {
     std::accumulate(repeated_dev.begin(), repeated_dev.end(), static_cast<int64_t>(1), std::multiplies<int64_t>());
   int64_t split_num;
   int64_t optimizer_weight_shard_size = ParallelContext::GetInstance()->optimizer_weight_shard_size();
-  if (optimizer_weight_shard_size != -1) {
+  if (optimizer_weight_shard_size != -1 && repeated_num >= optimizer_weight_shard_size) {
     repeated_num = optimizer_weight_shard_size;
   }
   if (tensor_map[0] == MAP_NONE) {

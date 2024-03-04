@@ -14,16 +14,34 @@
  * limitations under the License.
  */
 #include "ops/batch_to_space_nd.h"
-#include <string>
-#include <algorithm>
+
+#include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 #include "utils/ms_context.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -53,24 +71,26 @@ abstract::ShapePtr BatchToSpaceNDInferShape(const PrimitivePtr &primitive,
   auto block_shape = GetValue<std::vector<int64_t>>(primitive->GetAttr(kBlockShape));
   auto crops = GetValue<std::vector<std::vector<int64_t>>>(primitive->GetAttr(kCrops));
   size_t size = block_shape.size();
+  if (x_shape.size() <= size) {
+    MS_EXCEPTION(ValueError) << "For '" << prim_name
+                             << "', the rank of x_shape must be greater than the rank of `block_shape`.";
+  }
   size_t offset = x_shape.size() - size;
   for (size_t i = 0; i < size; i++) {
     block_shape_prod = block_shape_prod * block_shape[i];
     auto x_block_prod = out_shape[i + offset] * block_shape[i];
     auto crops_sum = crops[i][0] + crops[i][1];
-    if (out_shape[i + offset] >= 0)
-      CheckAndConvertUtils::Check("x block shape prod", x_block_prod, kGreaterThan, crops_sum, prim_name);
+    CheckAndConvertUtils::Check("x block shape prod", x_block_prod, kGreaterThan, crops_sum, prim_name);
     out_shape[i + offset] = x_block_prod - crops_sum;
   }
-  if (out_shape[0] >= 0) {
-    if (out_shape[0] % block_shape_prod != 0) {
-      MS_EXCEPTION(ValueError)
-        << "For '" << prim_name
-        << "', the first dim of 'input_x' must be divisible by 'block_shape_prod'. But got first dim of 'input_x': "
-        << out_shape[0] << ", 'block_shape_prod' with value: " << block_shape_prod << ".";
-    }
+  if (block_shape_prod <= 0 || out_shape[0] % block_shape_prod != 0) {
+    MS_EXCEPTION(ValueError)
+      << "For '" << prim_name
+      << "', the first dim of 'input_x' must be divisible by 'block_shape_prod'. But got first dim of 'input_x': "
+      << out_shape[0] << ", 'block_shape_prod' as the product of block shapes with value: " << block_shape_prod
+      << ", and block shapes being: " << block_shape << ".";
   }
-  out_shape[0] = int64_t(floor(out_shape[0] / static_cast<float>(block_shape_prod)));
+  out_shape[0] /= block_shape_prod;
   return std::make_shared<abstract::Shape>(out_shape);
 }
 
@@ -139,6 +159,26 @@ AbstractBasePtr BatchToSpaceNDInfer(const abstract::AnalysisEnginePtr &, const P
   auto infer_shape = BatchToSpaceNDInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(BatchToSpaceND, prim::kPrimBatchToSpaceND, BatchToSpaceNDInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGBatchToSpaceNDInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return BatchToSpaceNDInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &, const std::vector<AbstractBasePtr> &input_args) const override {
+    return BatchToSpaceNDInferType(input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return BatchToSpaceNDInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1, 2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(BatchToSpaceND, prim::kPrimBatchToSpaceND, AGBatchToSpaceNDInfer, false);
 }  // namespace ops
 }  // namespace mindspore

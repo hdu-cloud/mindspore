@@ -18,7 +18,8 @@
 
 #include <vector>
 #include <memory>
-#include "backend/common/optimizer/optimizer.h"
+#include <string>
+#include "include/backend/optimizer/optimizer.h"
 
 namespace mindspore {
 namespace opt {
@@ -36,6 +37,7 @@ class MaxPool2MaxPoolWithArgmax : public PatternProcessPass {
                                        const std::vector<AnfNodePtr> &maxpool_argmax_outputs) const;
   void SetNodeAttrs(const CNodePtr &maxpool, const CNodePtr &maxpool_grad, const CNodePtr &maxpool_argmax,
                     const CNodePtr &maxpool_grad_argmax) const;
+  std::vector<std::string> MustExistPrimitiveName() const override;
 };
 }  // namespace opt
 }  // namespace mindspore

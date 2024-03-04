@@ -35,9 +35,11 @@ using mindspore::device::DeviceContext;
 // -> OnMemoryAllocFinish -> Copy -> SendMemoryFreeReq -> SendOutput.
 class CopyActor : public MemoryAwareActor {
  public:
-  CopyActor(const std::string &name, AnfNode *from_kernel, const AID &memory_manager_aid)
+  CopyActor(const std::string &name, AnfNode *from_kernel, const KernelGraphPtr &from_graph,
+            const AID &memory_manager_aid)
       : MemoryAwareActor(name, KernelTransformType::kCopyActor, nullptr, memory_manager_aid),
         from_kernel_(from_kernel),
+        from_graph_(from_graph),
         output_(nullptr),
         is_need_update_output_size_(false) {}
   ~CopyActor() override = default;
@@ -48,7 +50,7 @@ class CopyActor : public MemoryAwareActor {
   // The copy processing after memory alloc finished.
   void OnMemoryAllocFinish(OpContext<DeviceTensor> *const context) override;
 
-  const DeviceTensor *output() const { return output_; }
+  const DeviceTensorPtr &output() const { return output_; }
   bool is_need_update_output_size() const { return is_need_update_output_size_; }
 
  protected:
@@ -67,13 +69,14 @@ class CopyActor : public MemoryAwareActor {
 
   // The copy source.
   AnfNode *from_kernel_;
+  KernelGraphPtr from_graph_;
 
   // The input device tensor is saved from the input data or fetched by device_tensor_store_keys_.
   std::vector<DeviceTensor *> input_device_tensor_;
   // The output device tensor is saved from the output or fetched by device_tensor_store_keys_.
   std::vector<DeviceTensor *> output_device_tensor_;
 
-  DeviceTensor *output_;
+  DeviceTensorPtr output_;
   // The output size needs to be updated in the dynamic shape scene.
   bool is_need_update_output_size_;
 };

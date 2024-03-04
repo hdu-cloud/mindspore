@@ -15,14 +15,27 @@
  */
 #include "ops/grad/sparse_slice_grad.h"
 
-#include <map>
-#include <set>
-#include <string>
+#include <memory>
+#include <vector>
 
-#include "mindapi/src/helper.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -48,9 +61,10 @@ class SparseSliceGradInfer : public abstract::OpInferBase {
     auto op_name = primitive->name();
     const int64_t input_num = 4;
     CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, op_name);
-    (void)CheckAndConvertUtils::CheckTensorTypeValid(
-      "backprop_val_grad", input_args[kInputIndex0]->BuildType(),
-      {kUInt8, kInt8, kUInt16, kInt16, kInt32, kInt64, kFloat16, kFloat32, kFloat64, kComplex64, kComplex128}, op_name);
+    (void)CheckAndConvertUtils::CheckTensorTypeValid("backprop_val_grad", input_args[kInputIndex0]->BuildType(),
+                                                     {kUInt8, kUInt16, kUInt32, kUInt64, kInt8, kInt16, kInt32, kInt64,
+                                                      kFloat16, kFloat32, kFloat64, kComplex64, kComplex128, kBool},
+                                                     op_name);
     (void)CheckAndConvertUtils::CheckTensorTypeValid("indices", input_args[kInputIndex1]->BuildType(), {kInt64},
                                                      op_name);
     (void)CheckAndConvertUtils::CheckTensorTypeValid("start", input_args[kInputIndex2]->BuildType(), {kInt64}, op_name);

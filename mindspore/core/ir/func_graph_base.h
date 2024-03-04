@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,6 +53,27 @@ class MS_CORE_API FuncGraphLoopBreaker {
   std::mutex func_mutex_;
 };
 
+class FuncGraphChecker {
+ public:
+  FuncGraphChecker() = default;
+  template <typename... Ts>
+  void AddCheckFunc(const std::shared_ptr<std::function<bool(const Ts &... args)>> &func) {
+    func_ = func;
+  }
+
+  template <typename... Ts>
+  bool Execute(const Ts &... args) const {
+    if (func_ == nullptr) {
+      return true;
+    }
+    auto func = reinterpret_cast<std::function<bool(const Ts &... args)> *>(func_.get());
+    return (*func)(args...);
+  }
+
+ private:
+  std::shared_ptr<void> func_{nullptr};
+};
+
 class FuncGraphBase : public Value {
  public:
   FuncGraphBase() {
@@ -70,10 +91,12 @@ class FuncGraphBase : public Value {
   // Clear the member of FuncGraph to break loop
   virtual void DoBreakLoop() = 0;
 
-  bool has_isolated_side_effect_node() const { return has_isolated_side_effect_node_; }
-  void set_has_isolated_side_effect_node(bool has_isolated_side_effect_node) {
-    has_isolated_side_effect_node_ = has_isolated_side_effect_node;
-  }
+  bool has_side_effect_node() const { return has_side_effect_node_; }
+  void set_has_side_effect_node(bool has_side_effect_node) { has_side_effect_node_ = has_side_effect_node; }
+
+  MS_CORE_API const FuncGraphChecker &GetChecker(const std::string &checker_name);
+
+  MS_CORE_API void AddChecker(const std::string &checker_name, const std::shared_ptr<FuncGraphChecker> &new_checker);
 
  protected:
   friend FuncGraphLoopBreaker;
@@ -83,7 +106,8 @@ class FuncGraphBase : public Value {
 
  private:
   // If the nodes or their callee's nodes contain Depend CNode with isolated side-effect node.
-  bool has_isolated_side_effect_node_{false};
+  bool has_side_effect_node_{false};
+  HashMap<std::string, std::shared_ptr<FuncGraphChecker>> checkers_;
 };
 }  // namespace mindspore
 #endif  // MINDSPORE_MINDSPORE_CORE_IR_FUNC_GRAPH_BASE_H_

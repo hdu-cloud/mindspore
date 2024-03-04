@@ -28,9 +28,13 @@
 #include "utils/ms_utils.h"
 #include "utils/ms_context.h"
 #include "plugin/device/ascend/hal/hccl_adapter/converter.h"
+#include "include/backend/distributed/constants.h"
+#include "include/common/utils/parallel_context.h"
+#include "include/common/utils/anfalgo.h"
+#include "ops/ascend_op_name.h"
+#include "ops/framework_op_name.h"
 
 static constexpr const auto kHcclPluginFileName = "libhccl_plugin.so";
-static constexpr const auto kHcclDeployModeEnv = "DEPLOY_MODE";
 static constexpr const auto kHcclAlgoEnv = "HCCL_ALGO";
 static constexpr const auto kHcclAlgoOption = "HCCL_algorithm";
 
@@ -40,23 +44,25 @@ static constexpr const auto kHcclAlgoOption = "HCCL_algorithm";
     return HcclResult::HCCL_E_RESERVED;                                              \
   }
 
+static std::string GenerateCMChiefWorkDevice() {
+  if (mindspore::common::GetEnv(mindspore::distributed::kEnvWorkerNum) == "1") {
+    // If only one device is used, use 'DEVICE_ID' env if it's set.
+    auto device_id_env = mindspore::common::GetEnv("DEVICE_ID");
+    return device_id_env.empty() ? "0" : device_id_env;
+  } else {
+    // If multiple device number is set, we need to find the smallest device id. Set to "0" for now.
+    return "0";
+  }
+}
+
 static std::map<std::string, std::string> GenHcclOptions(uint32_t device_id, std::string_view rank_id,
                                                          std::string_view rank_file = "") {
-  auto env_deploy_mode = mindspore::common::GetEnv(kHcclDeployModeEnv);
-  if (env_deploy_mode.empty()) {
-    MS_LOG(WARNING) << "The environment variable " << kHcclDeployModeEnv << " is not set. Now set to default value 0";
-    env_deploy_mode = "0";
-  }
-
-  std::map<std::string, std::string> default_options_map = {{ge::OPTION_EXEC_IS_USEHCOM, "1"},
-                                                            {ge::OPTION_EXEC_IS_USEHVD, "0"},
-                                                            {ge::OPTION_EXEC_HCCL_FLAG, "1"},
-                                                            {ge::OPTION_EXEC_DEVICE_ID, std::to_string(device_id)},
-                                                            {ge::OPTION_EXEC_RANK_ID, rank_id.data()},
-                                                            {ge::OPTION_EXEC_POD_NAME, rank_id.data()},
-                                                            {ge::OPTION_GRAPH_RUN_MODE, "1"},
-                                                            {ge::OPTION_EXEC_HCCL_FLAG, "1"},
-                                                            {ge::OPTION_EXEC_DEPLOY_MODE, env_deploy_mode}};
+  std::map<std::string, std::string> default_options_map = {
+    {ge::OPTION_EXEC_IS_USEHCOM, "1"},         {ge::OPTION_EXEC_IS_USEHVD, "0"},
+    {ge::OPTION_EXEC_HCCL_FLAG, "1"},          {ge::OPTION_EXEC_DEVICE_ID, std::to_string(device_id)},
+    {ge::OPTION_EXEC_RANK_ID, rank_id.data()}, {ge::OPTION_EXEC_POD_NAME, rank_id.data()},
+    {ge::OPTION_GRAPH_RUN_MODE, "1"},          {ge::OPTION_EXEC_HCCL_FLAG, "1"},
+    {ge::OPTION_EXEC_DEPLOY_MODE, "0"}};
 
   auto env_hccl_algo = mindspore::common::GetEnv(kHcclAlgoEnv);
   if (!env_hccl_algo.empty()) {
@@ -65,10 +71,19 @@ static std::map<std::string, std::string> GenHcclOptions(uint32_t device_id, std
   if (!rank_file.empty()) {
     default_options_map.emplace(ge::OPTION_EXEC_RANK_TABLE_FILE, rank_file.data());
   }
+  if (mindspore::hccl::HcclAdapter::GetInstance().UseHcclCM()) {
+    mindspore::hccl::HcclAdapter::AddCMEnvToHcclOption(&default_options_map);
+  }
+
   return default_options_map;
 }
 
 namespace mindspore::hccl {
+namespace {
+const char kDefaultGroup[] = "__default_group";
+constexpr uint32_t kDeviceNumOfServer = 8;
+}  // namespace
+
 HcclAdapter &HcclAdapter::GetInstance() {
   static HcclAdapter instance;
   return instance;
@@ -79,7 +94,7 @@ void HcclAdapter::InitPlugin() {
     return;
   }
 
-  plugin_handle_ = dlopen(kHcclPluginFileName, RTLD_NOW | RTLD_LOCAL);
+  plugin_handle_ = dlopen(kHcclPluginFileName, RTLD_DEEPBIND | RTLD_NOW | RTLD_LOCAL);
   if (plugin_handle_ == nullptr) {
     MS_LOG(EXCEPTION) << "Dlopen " << kHcclPluginFileName << " failed, result = " << GetDlErrorMsg();
   }
@@ -93,10 +108,12 @@ void HcclAdapter::InitPlugin() {
   single_op_hccl_get_rank_size_ = DlsymFuncObj(HcclGetRankSize, plugin_handle_);
   launch_hccl_broadcast_ = DlsymFuncObj(HcclBroadcast, plugin_handle_);
   launch_hccl_all_reduce_ = DlsymFuncObj(HcclAllReduce, plugin_handle_);
+  launch_hccl_reduce_ = DlsymFuncObj(HcclReduce, plugin_handle_);
   launch_hccl_reduce_scatter_ = DlsymFuncObj(HcclReduceScatter, plugin_handle_);
   launch_hccl_all_gather_ = DlsymFuncObj(HcclAllGather, plugin_handle_);
   launch_hccl_send_ = DlsymFuncObj(HcclSend, plugin_handle_);
   launch_hccl_recv_ = DlsymFuncObj(HcclRecv, plugin_handle_);
+  launch_hccl_barrier_ = DlsymFuncObj(HcclBarrier, plugin_handle_);
   hccl_create_group_ = DlsymFuncObj(HcomCreateGroup, plugin_handle_);
   hccl_destroy_group_ = DlsymFuncObj(HcomDestroyGroup, plugin_handle_);
   hccl_get_rank_id_ = DlsymFuncObj(HcomGetRankId, plugin_handle_);
@@ -110,6 +127,7 @@ void HcclAdapter::InitPlugin() {
   hccl_exec_enqueue_op_ = DlsymFuncObj(HcomExecEnqueueOperation, plugin_handle_);
   hccl_exec_enqueue_all_to_all_v_ = DlsymFuncObj(HcomExecEnqueueAllToAllV, plugin_handle_);
   launch_hccl_all_to_allv_ = DlsymFuncObj(HcclAlltoAllV, plugin_handle_);
+  hcom_destroy_ = DlsymFuncObj(HcomDestroy, plugin_handle_);
 }
 
 void HcclAdapter::FinalizePlugin() {
@@ -124,10 +142,12 @@ void HcclAdapter::FinalizePlugin() {
   finalize_hccl_comm_ = nullptr;
   launch_hccl_broadcast_ = nullptr;
   launch_hccl_all_reduce_ = nullptr;
+  launch_hccl_reduce_ = nullptr;
   launch_hccl_reduce_scatter_ = nullptr;
   launch_hccl_all_gather_ = nullptr;
   launch_hccl_send_ = nullptr;
   launch_hccl_recv_ = nullptr;
+  launch_hccl_barrier_ = nullptr;
   hccl_create_group_ = nullptr;
   hccl_destroy_group_ = nullptr;
   hccl_get_rank_id_ = nullptr;
@@ -141,6 +161,7 @@ void HcclAdapter::FinalizePlugin() {
   hccl_exec_enqueue_op_ = nullptr;
   hccl_exec_enqueue_all_to_all_v_ = nullptr;
   launch_hccl_all_to_allv_ = nullptr;
+  hcom_destroy_ = nullptr;
   (void)dlclose(plugin_handle_);
   plugin_handle_ = nullptr;
 }
@@ -161,7 +182,7 @@ HcclMode HcclAdapter::GetCurrentHcclMode() const {
 
 void HcclAdapter::CheckExcutionMode() const {
   auto hccl_mode = GetCurrentHcclMode();
-  if (hccl_mode != hccl_mode_ && !common::UseHostCollective()) {
+  if (hccl_mode != hccl_mode_ && (!common::UseHostCollective() || UseHcclCM())) {
     MS_LOG(EXCEPTION) << "HCCL is initialized in " << GetHcclModeString(hccl_mode_) << " but current execution mode is "
                       << GetHcclModeString(hccl_mode)
                       << ". Please set the execution mode before HCCL init(), and then do not change it in the "
@@ -244,6 +265,9 @@ bool HcclAdapter::FinalizeHccl() {
   (void)FinalizeHcclExec();
   (void)FinalizeKernelInfoStore();
   (void)FinalizeHcclComm();
+  if (hcom_destroy_ != nullptr) {
+    hcom_destroy_();
+  }
   FinalizePlugin();
   init_flag_ = false;
   MS_LOG(INFO) << "Destroy hccl adapter success.";
@@ -285,6 +309,7 @@ bool HcclAdapter::GenTask(const AnfNodePtr &node, HcclDataType datatype,
 }
 
 int64_t HcclAdapter::CalcWorkspaceSize(const AnfNodePtr &node, HcclDataType datatype) const {
+  MS_EXCEPTION_IF_NULL(node);
   if (ops_kernel_builder_ == nullptr) {
     MS_LOG(EXCEPTION) << "#umsg#Framework Error Message:#umsg#Hccl ops kernel builder is null, may not be inited. "
                          "Please call HCCL init() first.";
@@ -337,6 +362,14 @@ HcclResult HcclAdapter::HcclAllReduce(void *send_buf, void *recv_buf, uint64_t c
   return launch_hccl_all_reduce_(send_buf, recv_buf, count, dataType, op, hccl_comm, stream);
 }
 
+HcclResult HcclAdapter::HcclReduce(void *send_buf, void *recv_buf, uint64_t count, HcclDataType dataType,
+                                   HcclReduceOp op, uint32_t root, const aclrtStream stream, HcclComm hccl_comm) const {
+  CheckExcutionMode();
+  CHECK_SYMBOL_NULL(launch_hccl_reduce_);
+  MS_EXCEPTION_IF_NULL(hccl_comm);
+  return launch_hccl_reduce_(send_buf, recv_buf, count, dataType, op, root, hccl_comm, stream);
+}
+
 HcclResult HcclAdapter::HcclReduceScatter(void *send_buf, void *recv_buf, uint64_t count, HcclDataType dataType,
                                           const HcclReduceOp op, const aclrtStream stream, HcclComm hccl_comm) const {
   CheckExcutionMode();
@@ -367,6 +400,13 @@ HcclResult HcclAdapter::HcclRecv(void *recv_buf, uint64_t count, HcclDataType da
   CHECK_SYMBOL_NULL(launch_hccl_recv_);
   MS_EXCEPTION_IF_NULL(hccl_comm);
   return launch_hccl_recv_(recv_buf, count, dataType, srcRank, hccl_comm, stream);
+}
+
+HcclResult HcclAdapter::HcclBarrier(const aclrtStream stream, HcclComm hccl_comm) const {
+  CheckExcutionMode();
+  CHECK_SYMBOL_NULL(launch_hccl_barrier_);
+  MS_EXCEPTION_IF_NULL(hccl_comm);
+  return launch_hccl_barrier_(hccl_comm, stream);
 }
 
 bool HcclAdapter::InitKernelInfoStore(const std::map<std::string, std::string> options) {
@@ -606,6 +646,12 @@ HcclResult HcclAdapter::HcclExecAllToAllv(const ::HcomAllToAllVParams &params, c
   return hccl_exec_enqueue_all_to_all_v_(params, callback);
 }
 
+bool HcclAdapter::UseHcclCM() const {
+  // If environment variable 'MS_HCCL_CM_INIT' is set and using dynamic cluster, we consider this process should be
+  // launched by CM methods provided by HCCL.
+  return common::UseDynamicCluster() && !common::GetEnv("MS_HCCL_CM_INIT").empty();
+}
+
 HcclResult HcclAdapter::HcclAllToAll(void *send_buf, void *recv_buf, hccl::HcclAllToAllVParams params,
                                      HcclDataType dataType, aclrtStream stream, HcclComm hccl_comm) const {
   CheckExcutionMode();
@@ -613,5 +659,84 @@ HcclResult HcclAdapter::HcclAllToAll(void *send_buf, void *recv_buf, hccl::HcclA
   MS_EXCEPTION_IF_NULL(hccl_comm);
   return launch_hccl_all_to_allv_(send_buf, params.sendcounts.data(), params.sdispls.data(), dataType, recv_buf,
                                   params.recvcounts.data(), params.rdispls.data(), dataType, hccl_comm, stream);
+}
+
+bool HcclAdapter::IsSameServer(const std::vector<uint32_t> &rank_ids) const {
+  auto min_iter = min_element(rank_ids.begin(), rank_ids.end());
+  uint32_t min = (min_iter != rank_ids.end()) ? *min_iter : 0;
+  auto max_iter = max_element(rank_ids.begin(), rank_ids.end());
+  uint32_t max = (max_iter != rank_ids.end()) ? *max_iter : 0;
+  return ((max - min < kDeviceNumOfServer) && (min / kDeviceNumOfServer == max / kDeviceNumOfServer));
+}
+
+string HcclAdapter::GetHcomGroup(const CNodePtr &cnode) const {
+  MS_EXCEPTION_IF_NULL(cnode);
+  if (!common::AnfAlgo::HasNodeAttr(kAttrGroup, cnode)) {
+    MS_LOG(EXCEPTION) << "Hcom node " << cnode->fullname_with_scope() << " has no group attribute.";
+  }
+
+  auto group_name = common::AnfAlgo::GetNodeAttr<std::string>(cnode, kAttrGroup);
+  auto rank_ids = common::AnfAlgo::HasNodeAttr(kAttrGroupRankIds, cnode)
+                    ? common::AnfAlgo::GetNodeAttr<std::vector<uint32_t>>(cnode, kAttrGroupRankIds)
+                    : std::vector<uint32_t>();
+  auto new_group = DoGetHcomGroup(group_name, rank_ids);
+
+  MS_LOG(INFO) << "hcom node: " << cnode->fullname_with_scope() << ", old group: " << group_name
+               << ", new group: " << new_group;
+
+  if (cnode->HasAttr(parallel::FIRST_RECEIVE)) {
+    return new_group;
+  }
+  const auto &node_name = common::AnfAlgo::GetCNodeName(cnode);
+  static const auto send_recv_parallel = (common::GetEnv("SEND_RECV_PARALLEL") == "1");
+  if ((node_name == kSendOpName || node_name == kReceiveOpName) && !send_recv_parallel) {
+    MS_LOG(DEBUG) << "hcom node: " << cnode->fullname_with_scope() << "is set to group: -1.";
+    return "-1";
+  }
+
+  return new_group;
+}
+
+string HcclAdapter::DoGetHcomGroup(const string &original_group, const std::vector<uint32_t> &rank_ids) const {
+  string communi_parallel_mode = parallel::ParallelContext::GetInstance()->communi_parallel_mode();
+  if (communi_parallel_mode == parallel::kAllGroupParallel) {
+    return original_group;
+  }
+
+  if (communi_parallel_mode == parallel::kNoGroupParallel) {
+    return kDefaultGroup;
+  }
+
+  if (rank_ids.empty() || original_group == kHcclWorldGroup) {
+    return kDefaultGroup;
+  }
+
+  if (IsSameServer(rank_ids)) {
+    return original_group;
+  }
+
+  return kDefaultGroup;
+}
+
+void HcclAdapter::AddCMEnvToHcclOption(std::map<std::string, std::string> *hccl_opt_map) {
+  MS_EXCEPTION_IF_NULL(hccl_opt_map);
+  // Before hccl initialization, the validation of these environment variables is already verified.
+  hccl_opt_map->emplace(ge::OPTION_EXEC_CM_CHIEF_IP,
+                        mindspore::common::GetEnv(mindspore::distributed::kEnvSchedulerHost));
+
+  // We offset scheduler port by 1 as cm chief port.
+  std::string sched_port = mindspore::common::GetEnv(mindspore::distributed::kEnvSchedulerPort);
+  int sched_port_num = std::stoi(sched_port);
+  int cm_port_num = sched_port_num + 1;
+  hccl_opt_map->emplace(ge::OPTION_EXEC_CM_CHIEF_PORT, std::to_string(cm_port_num));
+  hccl_opt_map->emplace(ge::OPTION_EXEC_CM_CHIEF_DEVICE, GenerateCMChiefWorkDevice());
+  hccl_opt_map->emplace(ge::OPTION_EXEC_CM_WORKER_SIZE,
+                        mindspore::common::GetEnv(mindspore::distributed::kEnvWorkerNum));
+  hccl_opt_map->emplace(ge::OPTION_EXEC_CM_WORKER_IP, mindspore::common::GetEnv(mindspore::distributed::kEnvWorkerIp));
+  MS_LOG(INFO) << "Set CM options to hccl. OPTION_EXEC_CM_CHIEF_IP: " << hccl_opt_map->at(ge::OPTION_EXEC_CM_CHIEF_IP)
+               << ", OPTION_EXEC_CM_CHIEF_PORT: " << hccl_opt_map->at(ge::OPTION_EXEC_CM_CHIEF_PORT)
+               << ", OPTION_EXEC_CM_CHIEF_DEVICE: " << hccl_opt_map->at(ge::OPTION_EXEC_CM_CHIEF_DEVICE)
+               << ", OPTION_EXEC_CM_WORKER_SIZE: " << hccl_opt_map->at(ge::OPTION_EXEC_CM_WORKER_SIZE)
+               << ", OPTION_EXEC_CM_WORKER_IP: " << hccl_opt_map->at(ge::OPTION_EXEC_CM_WORKER_IP);
 }
 }  // namespace mindspore::hccl

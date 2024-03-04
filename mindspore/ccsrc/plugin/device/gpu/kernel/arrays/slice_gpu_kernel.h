@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <memory>
 #include <map>
+#include "kernel/kernel_get_value.h"
 #include "mindspore/core/ops/slice.h"
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
 #include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
@@ -46,6 +47,7 @@ class SliceGpuKernelMod : public NativeGpuKernelMod {
     const std::vector<KernelTensorPtr> &outputs,
     const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost = std::map<uint32_t, tensor::TensorPtr>()) override;
   std::vector<KernelAttr> GetOpSupport() override;
+  std::vector<size_t> GetLaunchIgnoredInputAddressIdx() const override { return {kBeginIndex_, kSizeIndex_}; }
 
  private:
   void CheckParam(const std::vector<KernelTensorPtr> &inputs, const std::vector<KernelTensorPtr> &outputs);

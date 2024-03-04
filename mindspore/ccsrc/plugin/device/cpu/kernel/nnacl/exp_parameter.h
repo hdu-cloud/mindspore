@@ -13,21 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_EXP_PARAMETER_H_
-#define MINDSPORE_NNACL_EXP_PARAMETER_H_
+#ifndef NNACL_EXP_PARAMETER_H_
+#define NNACL_EXP_PARAMETER_H_
 
 #include "nnacl/op_base.h"
 
 typedef struct ExpParameter {
-  // Primitive parameter
   OpParameter op_parameter_;
   float base_;
   float scale_;
   float shift_;
-  // other parameter
-  float in_scale_;
-  float out_scale_;
-  int element_num_;
 } ExpParameter;
 
-#endif  // MINDSPORE_NNACL_EXP_PARAMETER_H_
+#endif  // NNACL_EXP_PARAMETER_H_

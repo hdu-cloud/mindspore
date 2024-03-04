@@ -82,7 +82,9 @@ class HsvToRgbHelperGpuKernel : public GpuKernelHelperBase {
       return flag;
     }
 
-    CalHsvtorgb(in * ic * ih * iw, input_ptr, output_ptr, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream));
+    auto status =
+      CalHsvtorgb(in * ic * ih * iw, input_ptr, output_ptr, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return 0;
   }
 

@@ -15,12 +15,14 @@
  */
 
 #include "mindspore/core/ops/sparse_apply_centered_rms_prop.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
 #include "plugin/device/gpu/kernel/nn/sparse_apply_centered_rms_prop_gpu_kernel.h"
 
 namespace mindspore {
 namespace kernel {
 namespace {
 constexpr size_t kSparseApplyCenteredRMSPropInputsNum = 10;
+constexpr size_t kSparseApplyCenteredRMSPropOutputsNum = 1;
 constexpr size_t kVarIndex = 0;
 constexpr size_t kMgIndex = 1;
 constexpr size_t kMsIndex = 2;
@@ -59,7 +61,7 @@ bool SparseApplyCenteredRMSPropGpuKernelMod::Init(const BaseOperatorPtr &base_op
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   if (inputs.empty() || outputs.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "' got empty inputs or outputs, which is invalid.";
     return false;
@@ -114,7 +116,7 @@ int SparseApplyCenteredRMSPropGpuKernelMod::Resize(const BaseOperatorPtr &base_o
     MS_LOG(ERROR) << "For '" << kernel_name_
                   << "', the shape of 'mg' must be the same as the shape of 'var', "
                      "but got the shape of 'mg': "
-                  << Vector2Str(mg_shape) << " and the shape of 'var': " << Vector2Str(var_shape);
+                  << mg_shape << " and the shape of 'var': " << var_shape;
     return KRET_RESIZE_FAILED;
   }
   if (var_shape.size() != ms_shape.size()) {
@@ -149,7 +151,6 @@ int SparseApplyCenteredRMSPropGpuKernelMod::Resize(const BaseOperatorPtr &base_o
                   << indices_shape.size() << "-D.";
     return KRET_RESIZE_FAILED;
   }
-  // auto indices_size = indices_shape[0];
   auto indices_size = 1;
   for (size_t i = 0; i < indices_shape.size(); i++) {
     indices_size *= indices_shape[i];
@@ -169,6 +170,8 @@ template <typename T, typename S>
 bool SparseApplyCenteredRMSPropGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
                                                           const std::vector<AddressPtr> &workspace,
                                                           const std::vector<AddressPtr> &outputs) {
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kSparseApplyCenteredRMSPropInputsNum, kernel_name_);
+  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kSparseApplyCenteredRMSPropOutputsNum, kernel_name_);
   auto var = reinterpret_cast<T *>(inputs[kVarIndex]->addr);
   auto mg = reinterpret_cast<T *>(inputs[kMgIndex]->addr);
   auto ms = reinterpret_cast<T *>(inputs[kMsIndex]->addr);
@@ -181,9 +184,10 @@ bool SparseApplyCenteredRMSPropGpuKernelMod::LaunchKernel(const std::vector<Addr
   auto indices = reinterpret_cast<S *>(inputs[kIndicesIndex]->addr);
   auto var_out = reinterpret_cast<T *>(outputs[kVarIndex]->addr);
 
-  CalSparseApplyCenteredRMSProp(input_elements_, sizeof(S) / sizeof(int), use_locking_, lr, rho, epsilon, momentum,
-                                grad, indices, var, mg, ms, mom, var_out, reinterpret_cast<cudaStream_t>(cuda_stream_));
-
+  auto status = CalSparseApplyCenteredRMSProp(input_elements_, sizeof(S) / sizeof(int), use_locking_, lr, rho, epsilon,
+                                              momentum, grad, indices, var, mg, ms, mom, var_out,
+                                              reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

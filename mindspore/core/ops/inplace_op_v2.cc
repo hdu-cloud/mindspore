@@ -14,30 +14,76 @@
  * limitations under the License.
  */
 
-#include "ops/inplace_update_v2.h"
-#include <string>
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/macros.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/base_operator.h"
+#include "ops/inplace_update_v2.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/anf_utils.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+
 namespace mindspore {
 namespace ops {
 namespace {
+bool IsIndicesDynamic(const PrimitivePtr &, const AbstractBasePtr &indices_abs) {
+  if (indices_abs->isa<abstract::AbstractTensor>()) {
+    auto abs_tensor = indices_abs->cast<abstract::AbstractTensorPtr>();
+    MS_EXCEPTION_IF_NULL(abs_tensor);
+    ShapeVector indices_shape = abs_tensor->shape()->shape();
+    if (indices_shape.size() != kSizeOne) {
+      MS_LOG(EXCEPTION) << "Shape of indices only could be one-dimensional. But got " << indices_shape;
+    }
+    return IsDynamic(indices_shape);
+  } else if (indices_abs->isa<abstract::AbstractSequence>()) {
+    return indices_abs->cast<abstract::AbstractSequencePtr>()->dynamic_len();
+  } else if (indices_abs->isa<abstract::AbstractScalar>()) {
+    return false;
+  } else {
+    MS_EXCEPTION(TypeError) << "Input 'indices' should be scalar, tuple or Tensor.";
+  }
+}
+
+ShapeVector GetIndicesShape(const PrimitivePtr &primitive, const AbstractBasePtr &indices_abs) {
+  if (indices_abs->isa<abstract::AbstractTensor>() || indices_abs->isa<abstract::AbstractSequence>()) {
+    ShapeVector indices_shape = GetShapeValue(primitive, indices_abs);
+    return {SizeToLong(indices_shape.size())};
+  } else if (indices_abs->isa<abstract::AbstractScalar>()) {
+    return {1};
+  } else {
+    MS_EXCEPTION(TypeError) << "Input 'indices' should be scalar, tuple or Tensor.";
+  }
+}
+
 abstract::ShapePtr InplaceOpV2InferShape(const PrimitivePtr &primitive,
                                          const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
 
   auto x_shape_ptr = input_args[0]->BuildShape();
   MS_EXCEPTION_IF_NULL(x_shape_ptr);
-  auto indices_shape_ptr = input_args[1]->BuildShape();
-  MS_EXCEPTION_IF_NULL(indices_shape_ptr);
   auto v_shape_ptr = input_args[2]->BuildShape();
   MS_EXCEPTION_IF_NULL(v_shape_ptr);
-  if (x_shape_ptr->IsDynamic() || v_shape_ptr->IsDynamic() || indices_shape_ptr->IsDynamic()) {
+  if (x_shape_ptr->IsDynamic() || v_shape_ptr->IsDynamic() || IsIndicesDynamic(primitive, input_args[kInputIndex1])) {
     return x_shape_ptr->cast<abstract::ShapePtr>();
   }
 
@@ -54,11 +100,10 @@ abstract::ShapePtr InplaceOpV2InferShape(const PrimitivePtr &primitive,
                                                     primitive->name());
   }
 
-  auto indices = CheckAndConvertUtils::ConvertShapePtrToShapeMap(indices_shape_ptr)[kShape];
-
+  ShapeVector indices_shape = GetIndicesShape(primitive, input_args[kInputIndex1]);
   // check indices
-  (void)CheckAndConvertUtils::CheckValue<size_t>("size of indices", LongToSize(indices.at(0)), kEqual, "v.shape[0]",
-                                                 LongToSize(v_in_shape.at(0)), primitive->name());
+  (void)CheckAndConvertUtils::CheckValue<size_t>("size of indices", LongToSize(indices_shape.at(0)), kEqual,
+                                                 "v.shape[0]", LongToSize(v_in_shape.at(0)), primitive->name());
 
   return x_shape_ptr->cast<abstract::ShapePtr>();
 }
@@ -74,8 +119,21 @@ TypePtr InplaceOpV2InferType(const PrimitivePtr &prim, const std::vector<Abstrac
     {"v", input_args[2]->BuildType()},
   };
 
-  const std::set<TypePtr> indices_valid_types = {kInt32};
-  (void)CheckAndConvertUtils::CheckTypeValid("indices", input_args[1]->BuildType(), indices_valid_types, prim->name());
+  const auto &indices_abs = input_args[1];
+  const std::set<TypePtr> indices_valid_types = {kInt32, kInt64};
+  if (indices_abs->isa<abstract::AbstractTensor>() || indices_abs->isa<abstract::AbstractScalar>()) {
+    (void)CheckAndConvertUtils::CheckTypeValid("indices", indices_abs->BuildType(), indices_valid_types, prim->name());
+  } else if (indices_abs->isa<abstract::AbstractTuple>()) {
+    const auto &seq_ele = indices_abs->cast<abstract::AbstractSequencePtr>()->elements();
+    if (seq_ele.empty()) {
+      MS_EXCEPTION(ValueError) << "Input indices should not be empty: " << indices_abs->ToString();
+    }
+    const auto &element0 = seq_ele[kInputIndex0];
+    (void)CheckAndConvertUtils::CheckTypeValid("indices", element0->BuildType(), indices_valid_types, prim->name());
+  } else {
+    MS_EXCEPTION(TypeError) << "Input 'indices' should be int scalar, tuple or Tensor, but got "
+                            << indices_abs->ToString();
+  }
   return CheckAndConvertUtils::CheckTensorTypeSame(args, valid_types, prim->name());
 }
 }  // namespace
@@ -89,6 +147,26 @@ AbstractBasePtr InplaceOpV2Infer(const abstract::AnalysisEnginePtr &, const Prim
   auto shape = InplaceOpV2InferShape(primitive, input_args);
   return abstract::MakeAbstract(shape, dtype);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(InplaceUpdateV2, prim::kPrimInplaceUpdateV2, InplaceOpV2Infer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGInplaceOpV2Infer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return InplaceOpV2InferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return InplaceOpV2InferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return InplaceOpV2Infer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(InplaceUpdateV2, prim::kPrimInplaceUpdateV2, AGInplaceOpV2Infer, false);
 }  // namespace ops
 }  // namespace mindspore

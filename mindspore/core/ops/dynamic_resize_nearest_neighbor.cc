@@ -14,16 +14,30 @@
  * limitations under the License.
  */
 
-#include <string>
 #include <algorithm>
 #include <memory>
 #include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "ops/dynamic_resize_nearest_neighbor.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/image_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/dynamic_resize_nearest_neighbor.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -40,21 +54,10 @@ abstract::ShapePtr DynamicResizeNearestNeighborInferShape(const PrimitivePtr &pr
                                            prim_name);
   auto size = input_args[1];
   MS_EXCEPTION_IF_NULL(size);
-  auto size_v = size->BuildValue();
-  MS_EXCEPTION_IF_NULL(size_v);
-  std::vector<int64_t> size_value;
   std::vector<int64_t> output_shape;
-  if (size->isa<abstract::AbstractTensor>()) {
-    if (size_v->isa<tensor::Tensor>()) {
-      size_value = CheckAndConvertUtils::CheckTensorIntValue("size", size_v, prim_name);
-    } else {
-      size_value.push_back(-1);
-      size_value.push_back(-1);
-    }
-  } else if (size->isa<abstract::AbstractTuple>()) {
-    size_value = CheckAndConvertUtils::CheckIntOrTupleInt("size", size_v, prim_name);
-  } else if (size->isa<abstract::AbstractList>()) {
-    size_value = CheckAndConvertUtils::CheckListInt("size", size_v, prim_name);
+  auto size_value = GetShapeValue(primitive, size);
+  if (IsDynamic(size_value)) {
+    size_value = {abstract::Shape::kShapeDimAny, abstract::Shape::kShapeDimAny};
   }
   (void)CheckAndConvertUtils::CheckInteger("the dimension of size", SizeToLong(size_value.size()), kEqual, size_size,
                                            prim_name);
@@ -85,7 +88,25 @@ AbstractBasePtr DynamicResizeNearestNeighborInfer(const abstract::AnalysisEngine
                                     DynamicResizeNearestNeighborInferType(primitive, input_args));
   return res;
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(DynamicResizeNearestNeighbor, prim::kPrimDynamicResizeNearestNeighbor,
-                             DynamicResizeNearestNeighborInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGDynamicResizeNearestNeighborInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicResizeNearestNeighborInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicResizeNearestNeighborInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicResizeNearestNeighborInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(DynamicResizeNearestNeighbor, prim::kPrimDynamicResizeNearestNeighbor,
+                                 AGDynamicResizeNearestNeighborInfer, false);
 }  // namespace ops
 }  // namespace mindspore

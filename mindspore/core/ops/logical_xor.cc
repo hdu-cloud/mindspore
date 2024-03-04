@@ -16,12 +16,12 @@
 
 #include "ops/logical_xor.h"
 #include <map>
-#include <string>
 #include <set>
-#include "ops/op_utils.h"
-#include "mindspore/core/ops/core_ops.h"
-#include "utils/check_convert_utils.h"
+#include <string>
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/comparison_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,11 +33,28 @@ abstract::ShapePtr LogicalXorInferShape(const PrimitivePtr &primitive, const std
 }
 
 TypePtr LogicalXorInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
-  std::map<std::string, TypePtr> types;
-  const std::set<TypePtr> valid_types = {kBool};
-  (void)types.emplace("x", input_args[0]->BuildType());
-  (void)types.emplace("y", input_args[1]->BuildType());
-  return CheckAndConvertUtils::CheckTensorTypeSame(types, valid_types, prim->name());
+  auto x_dtype = input_args[0]->BuildType();
+  MS_EXCEPTION_IF_NULL(x_dtype);
+  auto y_dtype = input_args[1]->BuildType();
+  MS_EXCEPTION_IF_NULL(y_dtype);
+  const std::basic_string<char> kBool = "Tensor[Bool]";
+  std::ostringstream buffer;
+  buffer << "For primitive[LogicalXor], the input argument[x, y, ] must be a type of {Tensor[Bool], }, but got ";
+  string x_dtype_str = x_dtype->ToString();
+  string y_dtype_str = y_dtype->ToString();
+  if (!x_dtype->isa<TensorType>()) {
+    x_dtype_str = "Tensor[" + x_dtype_str + "]";
+  }
+  if (!y_dtype->isa<TensorType>()) {
+    y_dtype_str = "Tensor[" + y_dtype_str + "]";
+  }
+  if (x_dtype_str != kBool) {
+    MS_EXCEPTION(TypeError) << buffer.str() << x_dtype->ToString() << ".";
+  }
+  if (y_dtype_str != kBool) {
+    MS_EXCEPTION(TypeError) << buffer.str() << y_dtype->ToString() << ".";
+  }
+  return x_dtype;
 }
 }  // namespace
 
@@ -51,6 +68,24 @@ AbstractBasePtr LogicalXorInfer(const abstract::AnalysisEnginePtr &, const Primi
   auto infer_shape = LogicalXorInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(LogicalXor, prim::kPrimLogicalXor, LogicalXorInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGLogicalXorInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return LogicalXorInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return LogicalXorInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return LogicalXorInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(LogicalXor, prim::kPrimLogicalXor, AGLogicalXorInfer, false);
 }  // namespace ops
 }  // namespace mindspore

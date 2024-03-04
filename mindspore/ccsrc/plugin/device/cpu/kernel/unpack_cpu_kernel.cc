@@ -18,7 +18,6 @@
 #include <map>
 #include <tuple>
 #include "ops/unstack.h"
-#include "utils/ms_utils.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 
 namespace mindspore {
@@ -139,8 +138,8 @@ bool UnpackCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
   int cp_ret = EOK;
   auto task = [this, input, outputs_host, data_size, copy_size, &cp_ret](size_t start, size_t end) {
     for (size_t i = start; i < end; i++) {
-      int n = i / unstack_param_.axis_dim_;
-      int c = i % unstack_param_.axis_dim_;
+      int n = SizeToInt(i) / unstack_param_.axis_dim_;
+      int c = SizeToInt(i) % unstack_param_.axis_dim_;
       int in_offset = n * unstack_param_.axis_dim_ * unstack_param_.after_dims_ + c * unstack_param_.after_dims_;
       int out_offset = n * unstack_param_.after_dims_;
       auto ret =

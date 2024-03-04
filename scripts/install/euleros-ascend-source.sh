@@ -41,7 +41,7 @@ if [[ " ${available_py_version[*]} " != *" $PYTHON_VERSION "* ]]; then
     exit 1
 fi
 
-if ! (ls ${LOCAL_ASCEND}/ascend-toolkit/latest/fwkacllib/lib64/topi-*-py3-none-any.whl 1> /dev/null 2>&1); then
+if ! (ls ${LOCAL_ASCEND}/ascend-toolkit/latest/fwkacllib/lib64/te-*-py3-none-any.whl 1> /dev/null 2>&1); then
     echo "can not find whl packages in LOCAL_ASCEND=${LOCAL_ASCEND}, please check whether it is a valid path."
     exit 1
 fi
@@ -129,7 +129,6 @@ pip install wheel
 pip install -U setuptools
 
 pip install sympy
-pip install ${LOCAL_ASCEND}/ascend-toolkit/latest/fwkacllib/lib64/topi-*-py3-none-any.whl
 pip install ${LOCAL_ASCEND}/ascend-toolkit/latest/fwkacllib/lib64/te-*-py3-none-any.whl
 pip install ${LOCAL_ASCEND}/ascend-toolkit/latest/fwkacllib/lib64/hccl-*-py3-none-any.whl
 
@@ -150,14 +149,14 @@ if [[ X"$OPENMPI" == "Xon" ]]; then
     echo "installing openmpi"
     origin_wd=$PWD
     cd /tmp
-    curl -O https://download.open-mpi.org/release/open-mpi/v4.0/openmpi-4.0.3.tar.gz
-    tar xzf openmpi-4.0.3.tar.gz
-    cd openmpi-4.0.3
-    ./configure --prefix=$HOME/openmpi-4.0.3
+    curl -O https://download.open-mpi.org/release/open-mpi/v4.1/openmpi-4.1.4.tar.gz
+    tar xzf openmpi-4.1.4.tar.gz
+    cd openmpi-4.1.4
+    ./configure --prefix=$HOME/openmpi-4.1.4
     make
     sudo make install
-    add_env PATH $HOME/openmpi-4.0.3/bin
-    add_env LD_LIBRARY_PATH $HOME/openmpi-4.0.3/lib
+    add_env PATH $HOME/openmpi-4.1.4/bin
+    add_env LD_LIBRARY_PATH $HOME/openmpi-4.1.4/lib
     cd $origin_wd
 fi
 

@@ -18,17 +18,21 @@
 #include <set>
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/image_ops.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::ShapePtr RGBToHSVInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  const auto &build_shape = input_args[0]->BuildShape();
+  if (build_shape->IsDimZero()) {
+    MS_LOG(EXCEPTION) << "For '" << primitive->name() << "', the shape of input can not be empty.";
+  }
   auto input_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
-  auto input_shape_ptr = input_args[0]->BuildShape();
   if (IsDynamicRank(input_shape)) {
     return std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
   }
-  if (!input_shape_ptr->IsDynamic()) {
+  if (!build_shape->IsDynamic()) {
     const int64_t input_dims = SizeToLong(input_shape.size());
     const int64_t input_last_dims = input_shape.cend()[-1];
     const int64_t numberofRGB_3 = 3;
@@ -61,6 +65,23 @@ AbstractBasePtr RGBToHSVInfer(const abstract::AnalysisEnginePtr &, const Primiti
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(RGBToHSV, prim::kPrimRGBToHSV, RGBToHSVInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGRGBToHSVInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return RGBToHSVInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return RGBToHSVInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return RGBToHSVInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(RGBToHSV, prim::kPrimRGBToHSV, AGRGBToHSVInfer, false);
 }  // namespace ops
 }  // namespace mindspore

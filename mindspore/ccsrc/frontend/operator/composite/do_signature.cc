@@ -19,20 +19,22 @@
 #include <utility>
 
 #include "abstract/abstract_value.h"
-#include "ir/anf.h"
-#include "ir/dtype.h"
 #include "abstract/dshape.h"
 #include "abstract/param_validator.h"
 #include "frontend/operator/cc_implementations.h"
 #include "frontend/optimizer/opt.h"
 #include "include/common/pybind_api/api_register.h"
+#include "ir/anf.h"
+#include "ir/dtype.h"
+#include "mindspore/core/utils/flags.h"
 
 namespace mindspore {
 // namespace to support composite operators definition
 namespace prim {
-const std::map<TypeId, size_t> type_map = {{kNumberTypeBool, 1},    {kNumberTypeInt8, 2},    {kNumberTypeUInt8, 3},
-                                           {kNumberTypeInt16, 4},   {kNumberTypeInt32, 5},   {kNumberTypeInt64, 6},
-                                           {kNumberTypeFloat16, 7}, {kNumberTypeFloat32, 8}, {kNumberTypeFloat64, 9}};
+const std::map<TypeId, size_t> type_map = {{kNumberTypeBool, 1},    {kNumberTypeInt8, 2},     {kNumberTypeUInt8, 3},
+                                           {kNumberTypeInt16, 4},   {kNumberTypeInt32, 5},    {kNumberTypeInt64, 6},
+                                           {kNumberTypeFloat16, 7}, {kNumberTypeBFloat16, 8}, {kNumberTypeFloat32, 9},
+                                           {kNumberTypeFloat64, 10}};
 namespace {
 const std::vector<Signature> &GetSignature(const ValuePtr &function) {
   static const auto empty = std::vector<Signature>();
@@ -193,11 +195,9 @@ MaxTypeMap GetMaxDtype(const std::vector<SignatureEnumDType> &dtypes, const std:
 
 AnfNodePtr DoCast(const AnfNodePtr &param, const TypeId &type_id, const FuncGraphPtr &graph) {
   MS_EXCEPTION_IF_NULL(graph);
-  auto prim_cast_class = prim::GetPythonOps("Cast", "mindspore.ops.operations");
-  MS_EXCEPTION_IF_NULL(prim_cast_class);
+  const auto prim_cast = prim::GetPythonOps("cast", "mindspore.ops.functional");
   auto dtype_node = NewValueNode(TypeIdToType(type_id));
-  auto cast_node = NewCNode({NewValueNode(prim_cast_class)}, graph);
-  return graph->NewCNodeAfter(param, {cast_node, param, dtype_node});
+  return graph->NewCNodeAfter(param, {NewValueNode(prim_cast), param, dtype_node});
 }
 
 void DoAutoCast(const ValuePtr &func, const std::vector<Signature> &signature, const std::vector<TypePtr> &input_types,
@@ -247,21 +247,21 @@ void DoAutoCast(const ValuePtr &func, const std::vector<Signature> &signature, c
 }
 
 void CheckSigSize(const ValuePtr &function, const size_t &sig_size, const bool &has_var,
-                  const AbstractBasePtrList &args_spec_list, const std::string &func_name) {
+                  const AbstractBasePtrList &args_abs_list, const std::string &func_name) {
   if (sig_size > 0) {
     if (has_var) {
-      if (sig_size - 1 > args_spec_list.size()) {
+      if (sig_size - 1 > args_abs_list.size()) {
         MS_LOG(EXCEPTION) << "Function " << func_name
                           << "'s input length less than PositionalKeyword Signature length.";
       }
       return;
     }
-    // Consider the case where there are monads in primitive's args_spec_list.
-    size_t args_size = args_spec_list.size();
+    // Consider the case where there are monads in primitive's args_abs_list.
+    size_t args_size = args_abs_list.size();
     if (function->isa<Primitive>()) {
       auto prim = function->cast<PrimitivePyPtr>();
       if (prim->HasAttr(GRAPH_FLAG_SIDE_EFFECT_MEM) || prim->HasAttr(GRAPH_FLAG_SIDE_EFFECT_IO)) {
-        args_size -= GetAbstractMonadNum(args_spec_list);
+        args_size -= GetAbstractMonadNum(args_abs_list);
       }
     }
     if (args_size > sig_size) {
@@ -289,6 +289,8 @@ TypePtr GetMixedPrecisionTargetType(const FuncGraphPtr &func_graph) {
     return kFloat32;
   } else if (func_graph->has_flag(GRAPH_FLAG_MIX_PRECISION_FP16)) {
     return kFloat16;
+  } else if (func_graph->has_flag(GRAPH_FLAG_MIX_PRECISION_BF16)) {
+    return kBFloat16;
   } else {
     return nullptr;
   }
@@ -296,12 +298,12 @@ TypePtr GetMixedPrecisionTargetType(const FuncGraphPtr &func_graph) {
 }  // namespace
 
 AnfNodePtr BuildNewCNode(const FuncGraphPtr &func_graph, const std::string &func_name, const ValuePtr &function,
-                         const AbstractBasePtrList &args_spec_list, const std::vector<AnfNodePtr> &params_list) {
+                         const AbstractBasePtrList &args_abs_list, const std::vector<AnfNodePtr> &params_list) {
   // args: original inputs
   auto &signature = GetSignature(function);
   std::size_t sig_size = signature.size();
   auto has_var = (sig_size > 0 && signature[sig_size - 1].kind == SignatureEnumKind::kKindVarPositional);
-  CheckSigSize(function, sig_size, has_var, args_spec_list, func_name);
+  CheckSigSize(function, sig_size, has_var, args_abs_list, func_name);
   std::vector<AnfNodePtr> op_inputs;
   std::set<size_t> write_indices;
   std::vector<TypePtr> input_types;
@@ -309,24 +311,27 @@ AnfNodePtr BuildNewCNode(const FuncGraphPtr &func_graph, const std::string &func
   auto cast_type = GetMixedPrecisionTargetType(func_graph);
   // Assume, the write input of op is always the first input. We check if any write op,
   // and add cast op on other inputs to keep the same type with assigned parameter.
-  for (size_t i = 0; i < args_spec_list.size(); ++i) {
+  for (size_t i = 0; i < args_abs_list.size(); ++i) {
     AnfNodePtr param = params_list[i];
-    if (args_spec_list[i] == nullptr) {
+    if (args_abs_list[i] == nullptr) {
       op_inputs.push_back(param);
       continue;
     }
 
     SignatureEnumRW sig = GetSignatureEnumRW(i, signature, has_var);
-    TypePtr type = args_spec_list[i]->BuildType();
+    TypePtr type = args_abs_list[i]->BuildType();
     if (type && type->isa<RefType>()) {
       if (sig == SignatureEnumRW::kRWRead) {
         auto source_tensor_type = type->cast<TensorTypePtr>();
         if (source_tensor_type != nullptr) {
           auto source_element = source_tensor_type->element();
-          if (cast_type != nullptr && IsSubType(source_element, kFloat) && *source_element != *cast_type) {
+          if (cast_type != nullptr && (IsSubType(source_element, kFloat) || IsSubType(source_element, kBFloat)) &&
+              *source_element != *cast_type) {
             auto cast = prim::GetPythonOps("cast", "mindspore.ops.functional");
             param = func_graph->NewCNodeAfter(param, {NewValueNode(cast), param, NewValueNode(cast_type)});
-            type = cast_type->type_id() == kNumberTypeFloat16 ? kTensorTypeFP16 : kTensorTypeFP32;
+            type = cast_type->type_id() == kNumberTypeFloat16
+                     ? kTensorTypeFP16
+                     : (cast_type->type_id() == kNumberTypeBFloat16 ? kTensorTypeBF16 : kTensorTypeFP32);
           }
         }
       } else if (sig == SignatureEnumRW::kRWWrite) {
@@ -338,30 +343,30 @@ AnfNodePtr BuildNewCNode(const FuncGraphPtr &func_graph, const std::string &func
       RaiseExceptionForCheckParameter(func_name, i, type->ToString());
     }
     MS_LOG(DEBUG) << "Function " << func_name << "'s input " << i << " " << param->DebugString(2) << " abs "
-                  << args_spec_list[i]->ToString() << " type " << type->ToString() << ".";
+                  << args_abs_list[i]->ToString() << " type " << type->ToString() << ".";
     input_types.push_back(type);
     op_inputs.push_back(param);
   }
   // process default
-  ProcessDefault(func_name, args_spec_list.size(), signature, has_var, &op_inputs);
+  ProcessDefault(func_name, args_abs_list.size(), signature, has_var, &op_inputs);
   DoAutoCast(function, signature, input_types, func_graph, write_indices, &op_inputs);
   return func_graph->NewCNodeInOrder(op_inputs);
 }
 }  // namespace
 
 AnfNodePtr GenerateCNode(const FuncGraphPtr &func_graph, const std::string &func_name, const ValuePtr &function,
-                         const AbstractBasePtrList &args_spec_list, const AnfNodePtrList &old_node_inputs) {
-  auto new_cnode = BuildNewCNode(func_graph, func_name, function, args_spec_list, old_node_inputs);
+                         const AbstractBasePtrList &args_abs_list, const AnfNodePtrList &old_node_inputs) {
+  auto new_cnode = BuildNewCNode(func_graph, func_name, function, args_abs_list, old_node_inputs);
   return new_cnode;
 }
 
-FuncGraphPtr DoSignatureMetaFuncGraph::GenerateFuncGraph(const AbstractBasePtrList &args_spec_list) {
+FuncGraphPtr DoSignatureMetaFuncGraph::GenerateFuncGraph(const AbstractBasePtrList &args_abs_list) {
   FuncGraphPtr func_graph = std::make_shared<FuncGraph>();
 
-  for (size_t i = 0; i < args_spec_list.size(); ++i) {
+  for (size_t i = 0; i < args_abs_list.size(); ++i) {
     (void)func_graph->add_parameter();
   }
-  auto new_cnode = BuildNewCNode(func_graph, name_, function_, args_spec_list, func_graph->parameters());
+  auto new_cnode = BuildNewCNode(func_graph, name_, function_, args_abs_list, func_graph->parameters());
   func_graph->set_output(new_cnode);
   func_graph->set_flag(FUNC_GRAPH_FLAG_CORE, true);
   return func_graph;
@@ -383,10 +388,8 @@ void RaiseExceptionForConvertRefDtype(const ValuePtr &func, const std::string &r
   if (buffer.str().empty()) {
     buffer << " so data type ";
   }
-  MS_LOG(EXCEPTION) << "Data type conversion of 'Parameter' is not supported," << buffer.str() << ref_type
-                    << ", which cannot be converted to data type " << target_type << " automatically.\n"
-                    << "For more details, please refer at "
-                    << "https://www.mindspore.cn/docs/zh-CN/master/note/operator_list_implicit.html.";
+  MS_EXCEPTION(TypeError) << "Data type conversion of 'Parameter' is not supported," << buffer.str() << ref_type
+                          << ", which cannot be converted to data type " << target_type << " automatically.\n";
 }
 void RaiseExceptionForCheckParameter(const std::string &func_name, size_t i, const std::string &source_type) {
   MS_EXCEPTION(TypeError) << "Function " << func_name << "'s input " << i << " should be a Parameter, but "

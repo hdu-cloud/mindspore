@@ -16,10 +16,10 @@
 
 #ifndef MINDSPORE_CORE_OPS_CHECK_VALID_H_
 #define MINDSPORE_CORE_OPS_CHECK_VALID_H_
-#include <vector>
 #include <memory>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -34,8 +34,8 @@ class MIND_API CheckValid : public BaseOperator {
   /// \brief Init. Refer to the parameters of Python API @ref mindspore.ops.CheckValid for the inputs.
   void Init() const {}
 };
-abstract::AbstractBasePtr CheckValidInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                          const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr CheckValidInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                   const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

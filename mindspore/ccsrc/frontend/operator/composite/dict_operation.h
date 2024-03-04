@@ -27,6 +27,20 @@
 namespace mindspore {
 // namespace to support composite operators definition
 namespace prim {
+class DictSetItem : public MetaFuncGraph {
+ public:
+  explicit DictSetItem(const std::string &name) : MetaFuncGraph(name) {}
+  ~DictSetItem() override = default;
+  MS_DECLARE_PARENT(DictSetItem, MetaFuncGraph)
+  FuncGraphPtr GenerateFuncGraph(const abstract::AbstractBasePtrList &args_list) override;
+  friend std::ostream &operator<<(std::ostream &os, const DictSetItem &dict_setitem) {
+    os << dict_setitem.name_;
+    return os;
+  }
+  friend bool operator==(const DictSetItem &lhs, const DictSetItem &rhs) { return lhs.name_ == rhs.name_; }
+};
+using DictSetItemPtr = std::shared_ptr<DictSetItem>;
+
 class DictClear : public MetaFuncGraph {
  public:
   explicit DictClear(const std::string &name) : MetaFuncGraph(name) {}
@@ -67,7 +81,7 @@ class DictUpdate : public MetaFuncGraph {
   }
   friend bool operator==(const DictUpdate &lhs, const DictUpdate &rhs) { return lhs.name_ == rhs.name_; }
   void AddNodeToLists(const AbstractBasePtr &arg, const FuncGraphPtr &ret, AnfNodePtrList *keys, AnfNodePtrList *values,
-                      std::vector<std::pair<ValuePtr, size_t>> *key_place_map);
+                      std::vector<std::pair<ValuePtr, size_t>> *key_place_map) const;
 };
 using DictUpdatePtr = std::shared_ptr<DictUpdate>;
 
@@ -82,7 +96,7 @@ class DictFromKeys : public MetaFuncGraph {
     return os;
   }
   friend bool operator==(const DictFromKeys &lhs, const DictFromKeys &rhs) { return lhs.name_ == rhs.name_; }
-  abstract::AbstractBasePtrList ParseIterableObject(const abstract::AbstractBasePtr &arg_key);
+  abstract::AbstractBasePtrList ParseIterableObject(const abstract::AbstractBasePtr &arg_key) const;
 };
 using DictFromKeysPtr = std::shared_ptr<DictFromKeys>;
 }  // namespace prim

@@ -14,19 +14,21 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_INT8_DYNAMIC_QUANT_INT8_H_
-#define MINDSPORE_NNACL_INT8_DYNAMIC_QUANT_INT8_H_
+#ifndef NNACL_INT8_DYNAMIC_QUANT_INT8_H_
+#define NNACL_INT8_DYNAMIC_QUANT_INT8_H_
 
 #include "nnacl/op_base.h"
-#include "nnacl/power_parameter.h"
+#include "nnacl/pow_parameter.h"
 #include "nnacl/int8/quantize.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 void CalculateMinMaxFp32(const float *data, int count, float *real_min, float *real_max);
+void CalculateChannelRowMinMax(const float *data, int count, float *real_min, float *real_max, int row_length);
+void CalculateChannelColMinMax(const float *data, int count, float *real_min, float *real_max, int row_length);
 #ifdef __cplusplus
 }
 #endif
 
-#endif  // MINDSPORE_NNACL_INT8_DYNAMIC_QUANT_INT8_H_
+#endif  // NNACL_INT8_DYNAMIC_QUANT_INT8_H_

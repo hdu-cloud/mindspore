@@ -15,15 +15,21 @@
  */
 
 #include "ops/priority_replay_buffer.h"
-#include <string>
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <numeric>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "abstract/ops/primitive_infer_map.h"
+
+#include "ir/dtype/type.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {

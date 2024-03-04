@@ -28,7 +28,7 @@ from mindspore import context
 from mindspore.communication.management import get_rank
 from mindspore.communication.management import GlobalComm
 
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from mindspore.train.anf_ir_pb2 import DataType, ModelProto
 from mindspore.train.summary_pb2 import Event
 
@@ -175,7 +175,7 @@ def _nptype_to_prototype(np_value):
         np.uint32: 'DT_UINT32',
         np.uint64: 'DT_UINT64',
         np.float16: 'DT_FLOAT16',
-        np.float: 'DT_FLOAT64',
+        float: 'DT_FLOAT64',
         np.float32: 'DT_FLOAT32',
         np.float64: 'DT_FLOAT64',
         None: 'DT_UNDEFINED'
@@ -392,7 +392,7 @@ def _fill_image_summary(tag: str, np_value, summary_image, input_format='NCHW'):
     else:
         if max_value != min_value:
             # Mapping the value to range [0, 255] linearly.
-            scale_factor = 255/(max_value - min_value + 1)
+            scale_factor = 255 / (max_value - min_value + 1)
         shift = min_value
     tensor = tensor.astype(np.float32)
     tensor = ((tensor - shift) * scale_factor).astype(np.uint8)
@@ -421,7 +421,10 @@ def _make_image(tensor, rescale=1):
     scaled_height = int(height * rescale)
     scaled_width = int(width * rescale)
     image = Image.fromarray(tensor)
-    image = image.resize((scaled_width, scaled_height), Image.ANTIALIAS)
+    if hasattr(Image, 'ANTIALIAS'):
+        image = image.resize((scaled_width, scaled_height), Image.ANTIALIAS)
+    else:
+        image = image.resize((scaled_width, scaled_height), Image.LANCZOS)
     output = io.BytesIO()
     image.save(output, format='PNG')
     image_string = output.getvalue()

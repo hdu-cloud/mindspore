@@ -20,7 +20,7 @@
 #include <string.h>
 #include <vector>
 #include "src/litert/lite_kernel.h"
-#include "nnacl/scale.h"
+#include "nnacl/scale_parameter.h"
 #include "nnacl/int8/quantize.h"
 #include "nnacl/int8/arithmetic_int8.h"
 #include "nnacl/int8/scale_int8.h"
@@ -56,6 +56,9 @@ class ScaleInt8CPUKernel : public LiteKernel {
   bool has_bias_ = false;
   bool malloced_scale_ = false;
   bool malloced_offset_ = false;
+  bool const_scale_ = false;
+  bool const_offset_ = false;
+  ScaleQuantParameter quant_;
 
   int InitQuantArgs();
 };

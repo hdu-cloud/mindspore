@@ -18,7 +18,7 @@ import numpy as np
 from mindspore.train import Model
 from mindspore import Tensor
 import mindspore.dataset as ds
-from mindspore.train.callback import LossMonitor
+from mindspore.train import LossMonitor
 import mindspore as ms
 import mindspore.nn as nn
 import mindspore.communication as comm
@@ -46,7 +46,11 @@ def train_preprocess():
     if config.lr_scheduler == 'cosine_annealing' and config.max_epoch > config.T_max:
         config.T_max = config.max_epoch
 
-    ms.set_context(mode=ms.GRAPH_MODE, device_target=config.device_target)
+    ms.set_context(device_target=config.device_target)
+    if config.mode_name == "GRAPH":
+        ms.set_context(mode=ms.GRAPH_MODE)
+    else:
+        ms.set_context(mode=ms.PYNATIVE_MODE)
 
     if config.is_distributed:
         # init distributed
@@ -106,7 +110,7 @@ def run_train():
     loss_callback = LossMonitor(1)
     model = Model(network)
     sink_step = dataset.get_dataset_size()
-    model.train(sink_step, dataset, callbacks=loss_callback, sink_size=1)
+    model.train(sink_step, dataset, callbacks=loss_callback, sink_size=1, dataset_sink_mode=True)
 
 
 if __name__ == "__main__":

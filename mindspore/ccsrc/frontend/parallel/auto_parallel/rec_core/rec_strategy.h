@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,8 @@
 
 namespace mindspore {
 namespace parallel {
-constexpr size_t MAX_INPUT_NUM = 20;
+constexpr size_t MAX_INPUT_NUM = 50;
+constexpr size_t STR_DIM_NUM = 4;
 
 struct TensorStr4D {
   float str_n = 1;

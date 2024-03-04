@@ -14,16 +14,27 @@
  * limitations under the License.
  */
 #include "ops/grad/sigmoid_grad.h"
-#include <string>
-#include <algorithm>
-#include <map>
+
+#include <memory>
 #include <set>
 #include <vector>
-#include "abstract/param_validator.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/param_validator.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/lite_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -55,20 +66,26 @@ TypePtr SigmoidGradInfertype(const PrimitivePtr &prim, const std::vector<Abstrac
   (void)abstract::CheckDtypeSame(prim_name, y, dy);
   auto x_type = input_args[0]->BuildType();
   MS_EXCEPTION_IF_NULL(x_type);
-  const std::set<TypePtr> input_types = common_valid_types_with_complex;
-  (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_type, input_types, prim->name());
+  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
+  (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_type, valid_types, prim->name());
   return x_type;
 }
 }  // namespace
 
 MIND_API_OPERATOR_IMPL(SigmoidGrad, BaseOperator);
-AbstractBasePtr SigmoidGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                 const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  auto type = SigmoidGradInfertype(primitive, input_args);
-  auto shape = SigmoidGradInfershape(primitive, input_args);
-  return abstract::MakeAbstract(shape, type);
-}
-REGISTER_PRIMITIVE_EVAL_IMPL(SigmoidGrad, prim::kPrimSigmoidGrad, SigmoidGradInfer, nullptr, true);
+
+class MIND_API SigmoidGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SigmoidGradInfershape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SigmoidGradInfertype(primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SigmoidGrad, prim::kPrimSigmoidGrad, SigmoidGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -19,7 +19,7 @@
 #include <functional>
 #include <unordered_map>
 #include "abstract/utils.h"
-#include "kernel/common_utils.h"
+#include "kernel/ops_utils.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 
 namespace mindspore {
@@ -104,9 +104,12 @@ bool TensorCopySlicesCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> 
   auto update_addr = reinterpret_cast<uint8_t *>(inputs[1]->addr);
   auto output_addr = reinterpret_cast<uint8_t *>(outputs[0]->addr);
   if (!get_value_before_launch_) {
-    auto begin_ptr = reinterpret_cast<int64_t *>(inputs[2]->addr);
-    auto end_ptr = reinterpret_cast<int64_t *>(inputs[3]->addr);
-    auto strides_ptr = reinterpret_cast<int64_t *>(inputs[4]->addr);
+    auto begin_ptr = GetDeviceAddress<int64_t>(inputs, kIndex2);
+    MS_EXCEPTION_IF_NULL(begin_ptr);
+    auto end_ptr = GetDeviceAddress<int64_t>(inputs, kIndex3);
+    MS_EXCEPTION_IF_NULL(end_ptr);
+    auto strides_ptr = GetDeviceAddress<int64_t>(inputs, kIndex4);
+    MS_EXCEPTION_IF_NULL(strides_ptr);
     std::vector<int64_t> begin{begin_ptr, begin_ptr + begin_shape_[0]};
     std::vector<int64_t> end{end_ptr, end_ptr + end_shape_[0]};
     std::vector<int64_t> stride{strides_ptr, strides_ptr + stride_shape_[0]};

@@ -19,6 +19,7 @@ import mindspore.nn as nn
 from mindspore import ops
 from mindspore.ops.operations import random_ops
 from mindspore import Tensor, context
+from mindspore.common.api import _pynative_executor
 
 context.set_context(device_target="GPU")
 
@@ -34,7 +35,7 @@ class RandomShuffleNet(nn.Cell):
         return self.random_shuffle(x)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.env_onecard
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.parametrize('mode', [context.GRAPH_MODE, context.PYNATIVE_MODE])
@@ -56,7 +57,7 @@ def test_random_shuffle_op_dtype(mode, dtype):
     assert output.shape == expect_shape
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.env_onecard
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.parametrize('mode', [context.GRAPH_MODE, context.PYNATIVE_MODE])
@@ -77,7 +78,7 @@ def test_random_shuffle_op_tensor(mode, shape):
     assert output.shape == expect_shape
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.env_onecard
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.parametrize('mode', [context.GRAPH_MODE, context.PYNATIVE_MODE])
@@ -94,7 +95,7 @@ def test_random_shuffle_op_scalar(mode):
     assert output == x
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.env_onecard
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.parametrize('mode', [context.GRAPH_MODE, context.PYNATIVE_MODE])
@@ -115,7 +116,7 @@ def test_random_shuffle_op_dynamic_shape(mode):
     assert (output_dyn.asnumpy() == out.asnumpy()).all()
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.env_onecard
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.parametrize('mode', [context.GRAPH_MODE, context.PYNATIVE_MODE])
@@ -130,12 +131,16 @@ def test_random_shuffle_op_exception(mode):
 
     with pytest.raises(TypeError):
         ops.shuffle(2, seed=3)
+        _pynative_executor.sync()
 
     with pytest.raises(ValueError):
         ops.shuffle(x, seed=-3)
+        _pynative_executor.sync()
 
     with pytest.raises(TypeError):
         ops.shuffle(x, seed=1.6)
+        _pynative_executor.sync()
 
     with pytest.raises(TypeError):
         ops.shuffle(x, seed=True)
+        _pynative_executor.sync()

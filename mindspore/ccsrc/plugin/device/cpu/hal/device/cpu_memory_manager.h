@@ -19,9 +19,9 @@
 #include <vector>
 #include <map>
 #include <memory>
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 #include "backend/common/session/session_basic.h"
-#include "runtime/device/device_address.h"
+#include "include/backend/device_address.h"
 #include "runtime/device/memory_manager.h"
 #include "plugin/device/cpu/hal/device/cpu_simple_mem_plan.h"
 #include "plugin/device/cpu/hal/hardware/cpu_memory_pool.h"
@@ -46,7 +46,7 @@ class BACKEND_EXPORT CPUMemoryManager : public MemoryManager {
   void IncreaseSummaryRefCount(const session::NamedSummaryOutputs &summary_outputs) const;
   void DecreaseSummaryRefCount(const session::NamedSummaryOutputs &summary_outputs);
 
-  void *MallocMemFromMemPool(size_t size, bool from_persistent_mem) override {
+  void *MallocMemFromMemPool(size_t size, bool from_persistent_mem, bool need_recycle = false) override {
     return CPUMemoryPool::GetInstance().AllocTensorMem(size, from_persistent_mem);
   }
   void FreeMemFromMemPool(void *device_ptr) override { CPUMemoryPool::GetInstance().FreeTensorMem(device_ptr); }

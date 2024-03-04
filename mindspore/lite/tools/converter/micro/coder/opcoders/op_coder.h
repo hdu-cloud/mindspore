@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,11 +23,13 @@
 #include "tools/converter/micro/coder/context.h"
 #include "tools/converter/micro/coder/allocator/allocator.h"
 #include "include/errorcode.h"
-#include "src/litert/kernel_exec.h"
+#include "src/executor/kernel_exec.h"
 #include "src/common/version_manager.h"
 #include "securec/include/securec.h"
 #include "tools/converter/micro/coder/opcoders/op_coder_register.h"
 #include "tools/converter/micro/coder/log.h"
+#include "tools/converter/micro/coder/shape_info_container.h"
+#include "tools/converter/micro/coder/dynamic_mem_manager.h"
 
 namespace mindspore::lite::micro {
 constexpr int kPrecision = 19;
@@ -71,6 +73,8 @@ class OperatorCoder {
 
   void set_parameter(OpParameter *parameter);
 
+  OpParameter *get_parameter() { return parameter_; }
+
   const LiteGraph::Node *node() const { return this->node_; }
 
   void AddInitialParameters(Tensor *parameter) { initial_parameters_.push_back(parameter); }
@@ -88,6 +92,12 @@ class OperatorCoder {
 
   void set_thread_num(int thread_num);
 
+  void set_shape_info_container(ShapeInfoContainer *shape_info_container) {
+    shape_info_container_ = shape_info_container;
+  }
+
+  void set_dynamic_mem_manager(DynamicMemManager *dynamic_mem_manager) { dynamic_mem_manager_ = dynamic_mem_manager; }
+
  protected:
   std::vector<Tensor *> input_tensors_;
   std::vector<Tensor *> output_tensors_;
@@ -103,6 +113,8 @@ class OperatorCoder {
   bool support_parallel_{false};
   int thread_num_{1};
   int schema_version_ = lite::SCHEMA_VERSION::SCHEMA_CUR;
+  ShapeInfoContainer *shape_info_container_{nullptr};
+  DynamicMemManager *dynamic_mem_manager_{nullptr};
 
  private:
   size_t node_index_{0};

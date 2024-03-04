@@ -13,15 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 #include "ops/sparse_apply_adagrad_da.h"
 
 #include <algorithm>
 #include <set>
 
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -39,6 +39,8 @@ abstract::ShapePtr SparseApplyAdagradDAInferShape(const PrimitivePtr &primitive,
   auto l1_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[6]->GetShapeTrack())[kShape];
   auto l2_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[7]->GetShapeTrack())[kShape];
   auto global_step_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[8]->GetShapeTrack())[kShape];
+  auto grad_shape_ptr = input_args[3]->BuildShape();
+  auto indices_shape_ptr = input_args[4]->BuildShape();
 
   std::vector<ShapeVector> scalar_shapes = {lr_shape, l1_shape, l2_shape, global_step_shape};
   auto is_dynamic_scalar = std::any_of(scalar_shapes.begin(), scalar_shapes.end(), IsDynamic);
@@ -49,6 +51,12 @@ abstract::ShapePtr SparseApplyAdagradDAInferShape(const PrimitivePtr &primitive,
     (void)CheckAndConvertUtils::CheckInteger("l2_shape size", l2_shape.size(), kEqual, scalar_shape, prim_name);
     (void)CheckAndConvertUtils::CheckInteger("global_step_shape size", global_step_shape.size(), kEqual, scalar_shape,
                                              prim_name);
+  }
+
+  if (IsDynamicRank(var_shape) || IsDynamicRank(grad_accum_shape) || IsDynamicRank(grad_square_accum_shape) ||
+      IsDynamicRank(grad_shape)) {
+    std::cout << "dynamic rank" << std::endl;
+    return std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
   }
 
   std::vector<ShapeVector> check_tensor_shapes = {var_shape, grad_accum_shape, grad_square_accum_shape};
@@ -62,6 +70,10 @@ abstract::ShapePtr SparseApplyAdagradDAInferShape(const PrimitivePtr &primitive,
     }
   }
 
+  if (grad_shape_ptr->IsDynamic() || indices_shape_ptr->IsDynamic()) {
+    return std::make_shared<abstract::Shape>(var_shape);
+  }
+
   // Var dimension must be equal or greater than 1.
   (void)CheckAndConvertUtils::CheckInteger("var dimension", SizeToLong(var_shape.size()), kGreaterEqual, 1, prim_name);
   // Indices must be rank 1.
@@ -70,8 +82,9 @@ abstract::ShapePtr SparseApplyAdagradDAInferShape(const PrimitivePtr &primitive,
   if (!is_dynamic) {
     (void)CheckAndConvertUtils::CheckInteger("rank(grad) and rank(var)", SizeToLong(grad_shape.size()), kEqual,
                                              SizeToLong(var_shape.size()), prim_name);
-    (void)CheckAndConvertUtils::CheckInteger("grad.shape[0] and indices.shape[0]", SizeToLong(indices_shape[0]), kEqual,
-                                             SizeToLong(grad_shape[0]), prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("grad.shape[0] and indices.shape[0]",
+                                             SizeToLong(indices_shape[LongToSize(0)]), kEqual,
+                                             SizeToLong(grad_shape[LongToSize(0)]), prim_name);
     for (size_t i = 1; i < var_shape.size(); ++i) {
       if (var_shape[i] != grad_shape[i]) {
         MS_EXCEPTION(ValueError) << "For '" << prim_name << "', the shape of var and grad must equal in dimension " << i
@@ -127,7 +140,25 @@ AbstractBasePtr SparseApplyAdagradDAInfer(const abstract::AnalysisEnginePtr &, c
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 MIND_API_OPERATOR_IMPL(SparseApplyAdagradDA, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseApplyAdagradDA, prim::kPrimSparseApplyAdagradDA, SparseApplyAdagradDAInfer, nullptr,
-                             true);
+
+// AG means auto generated
+class MIND_API AGSparseApplyAdagradDAInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseApplyAdagradDAInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseApplyAdagradDAInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseApplyAdagradDAInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseApplyAdagradDA, prim::kPrimSparseApplyAdagradDA, AGSparseApplyAdagradDAInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

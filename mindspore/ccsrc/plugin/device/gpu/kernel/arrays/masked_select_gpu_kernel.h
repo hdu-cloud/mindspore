@@ -47,8 +47,7 @@ class MaskedSelectGpuKernelMod : public NativeGpuKernelMod {
   std::vector<KernelAttr> GetOpSupport() override;
 
  protected:
-  void SyncData() override;
-  std::vector<KernelTensorPtr> GetOutputs() override { return outputs_; }
+  void SyncOutputShape() override;
 
  private:
   void ResetResource() noexcept;
@@ -71,10 +70,9 @@ class MaskedSelectGpuKernelMod : public NativeGpuKernelMod {
   size_t real_output_size_;  // Dynamic shape related.
   bool input_broadcast_;
   bool mask_broadcast_;
-  std::vector<size_t> input_shape_ = {1, 1, 1, 1, 1, 1, 1};
-  std::vector<size_t> mask_shape_ = {1, 1, 1, 1, 1, 1, 1};
-  std::vector<size_t> broadcast_shape_ = {1, 1, 1, 1, 1, 1, 1};
-  std::vector<KernelTensorPtr> outputs_{};
+  std::vector<int64_t> input_shape_ = {1, 1, 1, 1, 1, 1, 1};
+  std::vector<int64_t> mask_shape_ = {1, 1, 1, 1, 1, 1, 1};
+  std::vector<int64_t> broadcast_shape_ = {1, 1, 1, 1, 1, 1, 1};
 };
 }  // namespace kernel
 }  // namespace mindspore

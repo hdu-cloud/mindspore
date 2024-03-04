@@ -16,21 +16,33 @@
 
 #include "ops/lgamma.h"
 
-#include <algorithm>
-#include <map>
 #include <set>
-#include <string>
 #include <vector>
 
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/type_id.h"
 #include "mindapi/src/helper.h"
-#include "ops/op_utils.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::ShapePtr LgammaInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   (void)CheckAndConvertUtils::CheckArgs<abstract::AbstractTensor>(prim_name, input_args, 0);
   auto x = input_args[0]->BuildShape();
@@ -41,25 +53,36 @@ abstract::ShapePtr LgammaInferShape(const PrimitivePtr &primitive, const std::ve
 }
 
 TypePtr LgammaInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
-  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64};
-  auto input = input_args[0]->BuildType();
-  (void)CheckAndConvertUtils::CheckTensorTypeValid("x", input, valid_types, prim_name);
-  return input;
+  const int64_t input_num = 1;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
+  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64, kInt32};
+  auto x_type = input_args[kInputIndex0]->BuildType();
+  TypeId tensor_type_id = CheckAndConvertUtils::CheckTensorTypeValid("x", x_type, valid_types, prim_name)->type_id();
+  if (tensor_type_id == kNumberTypeInt32) {
+    return std::make_shared<TensorType>(kFloat32);
+  } else {
+    return input_args[kInputIndex0]->BuildType();
+  }
 }
 }  // namespace
 
-AbstractBasePtr LgammaInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                            const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  const size_t input_num = 1;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
-  auto types = LgammaInferType(primitive, input_args);
-  auto shapes = LgammaInferShape(primitive, input_args);
-  return abstract::MakeAbstract(shapes, types);
-}
-
 MIND_API_OPERATOR_IMPL(Lgamma, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(Lgamma, prim::kPrimLgamma, LgammaInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGLgammaInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return LgammaInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return LgammaInferType(primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Lgamma, prim::kPrimLgamma, AGLgammaInfer, false);
 }  // namespace ops
 }  // namespace mindspore

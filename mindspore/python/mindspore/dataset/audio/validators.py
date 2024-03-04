@@ -23,7 +23,7 @@ from mindspore.dataset.core.validator_helpers import check_float32, check_float3
     check_int32_not_zero, check_list_same_size, check_non_negative_float32, check_non_negative_int32, \
     check_pos_float32, check_pos_int32, check_value, INT32_MAX, parse_user_args, type_check
 from mindspore.dataset.audio.utils import BorderType, DensityFunction, FadeShape, GainType, \
-    Interpolation, MelType, Modulation, NormType, ResampleMethod, ScaleType, WindowType
+    Interpolation, MelType, Modulation, NormMode, NormType, ResampleMethod, ScaleType, WindowType
 
 
 def check_amplitude_to_db(method):
@@ -361,6 +361,35 @@ def check_inverse_mel_scale(method):
             type_check(sgd_momentum, (int, float), "sgd_momentum")
             check_non_negative_float32(sgd_momentum, "sgd_momentum")
 
+        return method(self, *args, **kwargs)
+
+    return new_method
+
+
+def check_inverse_spectrogram(method):
+    """Wrapper method to check the parameters of InverseSpectrogram."""
+
+    @wraps(method)
+    def new_method(self, *args, **kwargs):
+        [length, n_fft, win_length, hop_length, pad, window, normalized, center, \
+         pad_mode, onesided], _ = parse_user_args(method, *args, **kwargs)
+        if length is not None:
+            check_non_negative_int32(length, "length")
+        check_pos_int32(n_fft, "n_fft")
+        type_check(window, (WindowType,), "window")
+        type_check(normalized, (bool,), "normalized")
+        type_check(center, (bool,), "center")
+        type_check(pad_mode, (BorderType,), "pad_mode")
+        type_check(onesided, (bool,), "onesided")
+        check_non_negative_int32(pad, "pad")
+        if hop_length is not None:
+            check_pos_int32(hop_length, "hop_length")
+        if win_length is not None:
+            check_pos_int32(win_length, "win_length")
+            if win_length > n_fft:
+                raise ValueError(
+                    "Input win_length should be no more than n_fft, but got win_length: {0} and n_fft: {1}.".format(
+                        win_length, n_fft))
         return method(self, *args, **kwargs)
 
     return new_method
@@ -925,6 +954,33 @@ def check_phase_vocoder(method):
     return new_method
 
 
+def check_pitch_shift(method):
+    """Wrapper method to check the parameters of PitchShift."""
+
+    @wraps(method)
+    def new_method(self, *args, **kwargs):
+        [sample_rate, n_steps, bins_per_octave, n_fft, win_length, hop_length, window], _ = parse_user_args(
+            method, *args, **kwargs)
+
+        check_non_negative_int32(sample_rate, "sample_rate")
+        check_int32(n_steps, "n_steps")
+        check_int32_not_zero(bins_per_octave, "bins_per_octave")
+        check_pos_int32(n_fft, "n_fft")
+        type_check(window, (WindowType,), "window")
+
+        if win_length is not None:
+            check_pos_int32(win_length, "win_length")
+            if win_length > n_fft:
+                raise ValueError(
+                    "Input win_length should be no more than n_fft, but got win_length: {0} and n_fft: {1}.".format(
+                        win_length, n_fft))
+        if hop_length is not None:
+            check_pos_int32(hop_length, "hop_length")
+        return method(self, *args, **kwargs)
+
+    return new_method
+
+
 def check_resample(method):
     """Wrapper method to check the parameters of Resample."""
 
@@ -945,6 +1001,172 @@ def check_resample(method):
 
         type_check(rolloff, (float,), "rolloff")
         check_value(rolloff, [0, 1.0], "rolloff", True, False)
+        return method(self, *args, **kwargs)
+
+    return new_method
+
+
+def check_lfcc(method):
+    """Wrapper method to check the parameters of LFCC."""
+
+    @wraps(method)
+    def new_method(self, *args, **kwargs):
+        [sample_rate, n_filter, n_lfcc, f_min, f_max, dct_type, norm, log_lf, speckwargs], _ = parse_user_args(
+            method, *args, **kwargs)
+        type_check(sample_rate, (int,), "sample_rate")
+        check_non_negative_int32(sample_rate, "sample_rate")
+        type_check(n_filter, (int,), "n_filter")
+        check_pos_int32(n_filter, "n_filter")
+        type_check(n_lfcc, (int,), "n_lfcc")
+        check_pos_int32(n_lfcc, "n_lfcc")
+        type_check(log_lf, (bool,), "log_lf")
+        type_check(norm, (NormMode,), "norm")
+        type_check(f_min, (int, float), "f_min")
+        check_non_negative_float32(f_min, "f_min")
+        if f_max is not None:
+            type_check(f_max, (int, float), "f_max")
+            check_non_negative_float32(f_max, "f_max")
+            if f_min > f_max:
+                raise ValueError(
+                    "f_max should be greater than or equal to f_min, but got f_min: {0} and f_max: {1}.".format(
+                        f_min, f_max))
+        else:
+            if f_min >= sample_rate // 2:
+                raise ValueError(
+                    "Input sample_rate // 2 should be greater than f_min when f_max is set to None, but got f_min: {0} "
+                    "and sample_rate: {1}.".format(f_min, sample_rate))
+        if dct_type != 2:
+            raise ValueError("Input dct_type must be 2, but got : {0}.".format(dct_type))
+        if speckwargs is not None:
+            type_check(speckwargs, (dict,), "speckwargs")
+            window = speckwargs["window"]
+            pad_mode = speckwargs["pad_mode"]
+            n_fft = speckwargs["n_fft"]
+            win_length = speckwargs["win_length"]
+            pad = speckwargs["pad"]
+            power = speckwargs["power"]
+            type_check(window, (WindowType,), "window")
+            type_check(pad_mode, (BorderType,), "pad_mode")
+            type_check(pad, (int,), "pad")
+            check_non_negative_int32(pad, "pad")
+            type_check(power, (float,), "power")
+            check_non_negative_float32(power, "power")
+            if n_fft < n_lfcc:
+                raise ValueError(
+                    "n_fft should be greater than or equal to n_lfcc, but got n_fft: {0} and n_lfcc: {1}.".format(
+                        n_fft, n_lfcc))
+            if win_length > n_fft:
+                raise ValueError(
+                    "win_length must be less than or equal to n_fft, but got win_length: {0} and n_fft: {1}.".format(
+                        win_length, n_fft))
+        return method(self, *args, **kwargs)
+
+    return new_method
+
+
+def check_mfcc(method):
+    """Wrapper method to check the parameters of MFCC."""
+
+    @wraps(method)
+    def new_method(self, *args, **kwargs):
+        [sample_rate, n_mfcc, dct_type, norm, log_mels, melkwargs], _ = parse_user_args(method, *args, **kwargs)
+        check_non_negative_int32(sample_rate, "sample_rate")
+        type_check(log_mels, (bool,), "log_mels")
+        type_check(norm, (NormMode,), "norm")
+        check_non_negative_int32(n_mfcc, "n_mfcc")
+        if dct_type != 2:
+            raise ValueError("Input dct_type must be 2, but got : {0}.".format(dct_type))
+
+        if melkwargs is not None:
+            type_check(melkwargs, (dict,), "melkwargs")
+            n_fft = melkwargs["n_fft"]
+            win_length = melkwargs["win_length"]
+            hop_length = melkwargs["hop_length"]
+            f_min = melkwargs["f_min"]
+            f_max = melkwargs["f_max"]
+            pad = melkwargs["pad"]
+            power = melkwargs["power"]
+            normalized = melkwargs["normalized"]
+            center = melkwargs["center"]
+            onesided = melkwargs["onesided"]
+            window = melkwargs["window"]
+            pad_mode = melkwargs["pad_mode"]
+            norm_mel = melkwargs["norm"]
+            mel_scale = melkwargs["mel_scale"]
+            n_mels = melkwargs["n_mels"]
+
+            check_pos_int32(n_fft, "n_fft")
+            check_mel_scale_n_mels(n_mels)
+            check_mel_scale_freq(f_min, f_max, sample_rate)
+            check_mel_scale_norm(norm_mel)
+            check_mel_scale_mel_type(mel_scale)
+            check_power(power)
+            type_check(window, (WindowType,), "window")
+            type_check(normalized, (bool,), "normalized")
+            type_check(center, (bool,), "center")
+            type_check(pad_mode, (BorderType,), "pad_mode")
+            type_check(onesided, (bool,), "onesided")
+            check_non_negative_int32(pad, "pad")
+            if hop_length is not None:
+                check_pos_int32(hop_length, "hop_length")
+            if f_max is not None:
+                check_non_negative_float32(f_max, "f_max")
+            if win_length is not None:
+                check_non_negative_int32(win_length, "win_length")
+            if n_mels < n_mfcc:
+                raise ValueError("Input n_mels should be greater than or equal to n_mfcc, but got n_mfcc: {0} and " \
+                                 "n_mels: {1}.".format(n_mfcc, n_mels))
+
+        return method(self, *args, **kwargs)
+
+    return new_method
+
+
+def check_mel_spectrogram_freq(f_min, f_max, sample_rate):
+    """Wrapper method to check the parameters of f_min and f_max."""
+    type_check(f_min, (float,), "f_min")
+
+    if f_max is not None:
+        check_non_negative_float32(f_max, "f_max")
+        if f_min > f_max:
+            raise ValueError("f_max should be greater than or equal to f_min, but got f_min: {0} and f_max: {1}."
+                             .format(f_min, f_max))
+    else:
+        if f_min >= sample_rate // 2:
+            raise ValueError(
+                "MelSpectrogram: sample_rate // 2 should be greater than f_min when f_max is set to None, "
+                "but got f_min: {0}.".format(f_min))
+
+
+def check_mel_spectrogram(method):
+    """Wrapper method to check the parameters of MelSpectrogram."""
+
+    @wraps(method)
+    def new_method(self, *args, **kwargs):
+        [sample_rate, n_fft, win_length, hop_length, f_min, f_max, pad, n_mels, window, power, normalized, center, \
+         pad_mode, onesided, norm, mel_scale], _ = parse_user_args(method, *args, **kwargs)
+        check_non_negative_int32(sample_rate, "sample_rate")
+        check_pos_int32(n_fft, "n_fft")
+        check_non_negative_int32(n_mels, "n_mels")
+        check_mel_spectrogram_freq(f_min, f_max, sample_rate)
+        check_mel_scale_norm(norm)
+        check_mel_scale_mel_type(mel_scale)
+        check_pos_float32(power, "power")
+        type_check(window, (WindowType,), "window")
+        type_check(normalized, (bool,), "normalized")
+        type_check(center, (bool,), "center")
+        type_check(pad_mode, (BorderType,), "pad_mode")
+        type_check(onesided, (bool,), "onesided")
+        check_non_negative_int32(pad, "pad")
+        if hop_length is not None:
+            check_pos_int32(hop_length, "hop_length")
+        if win_length is not None:
+            check_pos_int32(win_length, "win_length")
+            if win_length > n_fft:
+                raise ValueError(
+                    "Input win_length should be no more than n_fft, but got win_length: {0} and n_fft: {1}.".format(
+                        win_length, n_fft))
+
         return method(self, *args, **kwargs)
 
     return new_method

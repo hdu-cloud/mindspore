@@ -1,6 +1,6 @@
 option(AKG_USE_POLYTOPS "Use PolyTOPS polyhedral scheduler" OFF)
 
-if (NOT USE_CUDA AND NOT USE_LLVM)
+if ((NOT USE_CUDA AND NOT USE_LLVM) OR ENABLE_D)
   set(AKG_USE_POLYTOPS ON)
 endif()
 
@@ -43,6 +43,8 @@ if (AKG_USE_POLYTOPS)
       akg-untar-polytops
   )
 
+  add_dependencies(libpolytops akg-untar-polytops)
+  add_dependencies(libqiuqi-ip akg-untar-polytops)
   add_compile_definitions(AKG_USE_POLYTOPS)
   target_link_libraries(akg libpolytops)
   target_link_libraries(akg libqiuqi-ip)

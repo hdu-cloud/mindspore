@@ -32,6 +32,7 @@ enum class ResizeMethod : int64_t {
   LINEAR = 0,
   NEAREST = 1,
   CUBIC = 2,
+  AREA = 3,
 };
 
 enum class NearestMode : int64_t {
@@ -81,7 +82,10 @@ enum ReduceMode : int64_t {
   Reduce_Sum_Square = 5,
   Reduce_ASum = 6,
   Reduce_All = 7,
-  Reduce_L2 = 8
+  Reduce_L2 = 8,
+  Reduce_L1 = 9,
+  Reduce_Log_Sum = 10,
+  Reduce_Log_Sum_Exp = 11
 };
 
 enum EltwiseMode : int64_t {

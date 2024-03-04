@@ -33,7 +33,7 @@
 #include "utils/hash_set.h"
 #include "utils/ordered_set.h"
 #include "utils/ordered_map.h"
-#include "utils/macros.h"
+#include "mindapi/base/macros.h"
 #include "base/base_ref.h"
 #include "base/effect_info.h"
 #include "ir/anf.h"
@@ -72,23 +72,29 @@ struct CNodeIndexEqual {
   }
 };
 
-template <typename ValueT, class CounterHash = std::hash<ValueT>, class CounterEqual = std::equal_to<ValueT>>
-using CounterOrderedMap = OrderedMap<ValueT, int, CounterHash, CounterEqual>;
+template <typename KeyT, class CounterHash = std::hash<KeyT>, class CounterEqual = std::equal_to<KeyT>>
+using CounterOrderedMap = OrderedMap<KeyT, int, CounterHash, CounterEqual>;
 using AnfNodeCounterMap = CounterOrderedMap<AnfNodePtr>;
 using CNodeIndexCounterMap = CounterOrderedMap<CNodeIndexPairPtr, CNodeIndexHasher, CNodeIndexEqual>;
 
 using FuncGraphMap = OrderedMap<FuncGraphPtr, int>;
 
 const char FUNC_GRAPH_FLAG_IGNORE_VALUE[] = "ignore_value";
+const char FUNC_GRAPH_FLAG_VMAP_TRANSFORMED[] = "vmap_transformed";
 const char FUNC_GRAPH_FLAG_DEFER_INLINE[] = "defer_inline";
+const char FUNC_GRAPH_FLAG_PRIMAL_OF_BPROP[] = "primal_of_bprop";
 const char FUNC_GRAPH_FLAG_SPARSE_BPROP[] = "sparse_bprop";
 const char FUNC_GRAPH_FLAG_NO_INLINE[] = "no_inline";
+const char FUNC_GRAPH_FLAG_CELL_REUSE[] = "cell_reuse";
 const char FUNC_GRAPH_FLAG_AFTER_BLOCK[] = "after_block";
 const char FUNC_GRAPH_FLAG_CORE[] = "core";
 const char FUNC_GRAPH_FLAG_K_GRAPH[] = "k_graph";
 const char FUNC_GRAPH_ATTR_GRAPH_KERNEL[] = "graph_kernel";
 const char FUNC_GRAPH_FLAG_SPECIALIZE_PARAMETER[] = "spec_param";
 const char FUNC_GRAPH_OUTPUT_NO_RECOMPUTE[] = "output_no_recompute";
+const char FUNC_GRAPH_RECOMPUTE_K_GRAPH[] = "recompute_k_graph";
+const char FUNC_GRAPH_RECOMPUTE_GRAD_GRAPH[] = "recompute_grad_graph";
+const char FUNC_GRAPH_NOT_RECOMPUTE_K_GRAPH[] = "not_recompute_k_graph";
 const char FUNC_GRAPH_FLAG_FORCE_INLINE[] = "force_inline";
 const char FUNC_GRAPH_FLAG_DUMP[] = "dump";
 const char FUNC_GRAPH_FLAG_DYNAMIC_SHAPE[] = "dynamic_shape";
@@ -98,6 +104,7 @@ const char kFuncGraphFlagUndetermined[] = "undeterminate";
 const char kFuncGraphFlagBackPropEntry[] = "back_prop_entry";
 const char kFuncGraphFlagReAutoMonad[] = "re_auto_monad";
 const char kFuncGraphFlagRecursive[] = "recursive";
+const char kFuncGraphFlagMetaFuncGraphBprop[] = "meta_fg_bprop";
 
 class MS_CORE_API FuncGraph : public FuncGraphBase, public EffectInfoHolder {
  public:
@@ -105,7 +112,7 @@ class MS_CORE_API FuncGraph : public FuncGraphBase, public EffectInfoHolder {
 
   FuncGraph();
   explicit FuncGraph(GraphDebugInfoPtr &&debug_info);
-  ~FuncGraph() { subclass_destruct_flag_ = true; }
+  ~FuncGraph();
   MS_DECLARE_PARENT(FuncGraph, FuncGraphBase);
 
   void DoBreakLoop() override;
@@ -180,7 +187,7 @@ class MS_CORE_API FuncGraph : public FuncGraphBase, public EffectInfoHolder {
   int GetPositionalArgsCount() const;
   AnfNodePtr GetParameterByName(const std::string &name);
   bool NeedGenerate(const std::vector<abstract::AbstractKeywordArgPtr> &kwarg_list);
-  FuncGraphPtr GenerateGraph(const AbstractBasePtrList &args_spec_list);
+  FuncGraphPtr GenerateFuncGraph(const AbstractBasePtrList &args_abs_list);
   void set_is_generate(bool generated) { is_generated_ = generated; }
   bool is_generated() const { return is_generated_; }
 
@@ -214,7 +221,7 @@ class MS_CORE_API FuncGraph : public FuncGraphBase, public EffectInfoHolder {
   GraphDebugInfoPtr debug_info();
   void set_debug_info(const GraphDebugInfoPtr &info) {
     if (info == nullptr) {
-      MS_LOG(EXCEPTION) << "Graph set null debug info";
+      MS_LOG(INTERNAL_EXCEPTION) << "Graph set null debug info";
     }
     this->debug_info_ = info;
   }
@@ -301,7 +308,7 @@ class MS_CORE_API FuncGraph : public FuncGraphBase, public EffectInfoHolder {
                          mindspore::HashMap<AnfNodePtr, AnfNodePtr> *repl_nodes) const;
 
   void GenerateKwParams(const FuncGraphPtr &specialized_graph,
-                        const std::vector<abstract::AbstractKeywordArgPtr> &kwarg_list,
+                        const std::vector<abstract::AbstractKeywordArgPtr> &kwarg_list, int pos_args_input_count,
                         std::vector<AnfNodePtr> *specialized_parameter_list,
                         mindspore::HashMap<AnfNodePtr, AnfNodePtr> *repl_nodes) const;
 
@@ -309,8 +316,8 @@ class MS_CORE_API FuncGraph : public FuncGraphBase, public EffectInfoHolder {
                             const std::vector<AnfNodePtr> &specialized_parameter_list,
                             mindspore::HashMap<AnfNodePtr, AnfNodePtr> *repl_nodes) const;
 
-  const std::vector<AnfNodePtr> &paramter_obj_nodes() const { return paramter_obj_nodes_; }
-  void add_parameter_obj_node(const AnfNodePtr &p) { paramter_obj_nodes_.push_back(p); }
+  const std::vector<AnfNodePtr> &parameter_obj_nodes() const { return parameter_obj_nodes_; }
+  void add_parameter_obj_node(const AnfNodePtr &p) { parameter_obj_nodes_.push_back(p); }
 
   mindspore::HashMap<std::string, ValuePtr> attrs_;
   mindspore::HashMap<std::string, FuncGraphTransform> transforms_;
@@ -340,17 +347,23 @@ class MS_CORE_API FuncGraph : public FuncGraphBase, public EffectInfoHolder {
 
   bool stub() const { return stub_; }
   void set_stub(bool stub) { stub_ = stub; }
-  std::shared_ptr<bool> switch_input() const { return switch_input_; }
-  void set_switch_input(const std::shared_ptr<bool> &switch_input) { switch_input_ = switch_input; }
-  std::shared_ptr<bool> switch_layer_input() const { return switch_layer_input_; }
-  void set_switch_layer_input(const std::shared_ptr<bool> &switch_layer_input) {
-    switch_layer_input_ = switch_layer_input;
+
+  std::shared_ptr<bool> indirect() {
+    // Lazy initialization.
+    if (!indirect_) {
+      indirect_ = std::make_shared<bool>(false);
+    }
+    return indirect_;
   }
+  void set_indirect(std::shared_ptr<bool> indirect) { indirect_ = indirect; }
+
   void SetMultiTarget() const;
   bool exist_multi_target() const { return exist_multi_target_; }
   void set_exist_multi_target(bool exist_multi_target) { exist_multi_target_ = exist_multi_target; }
   int64_t stage() const { return stage_; }
   void set_stage(int64_t stage) { stage_ = stage; }
+  int64_t segment() const { return segment_; }
+  void set_segment(int64_t segment) { segment_ = segment; }
 
   bool dropped() const { return dropped_; }
   void set_dropped(bool dropped) { dropped_ = dropped; }
@@ -415,7 +428,7 @@ class MS_CORE_API FuncGraph : public FuncGraphBase, public EffectInfoHolder {
 
   // Parameters of this function.
   std::vector<AnfNodePtr> parameters_;
-  std::vector<AnfNodePtr> paramter_obj_nodes_;
+  std::vector<AnfNodePtr> parameter_obj_nodes_;
 
   // Whether there is a *args and **kwargs, and count kw_only_args'number.
   bool has_vararg_;
@@ -451,11 +464,12 @@ class MS_CORE_API FuncGraph : public FuncGraphBase, public EffectInfoHolder {
   // CNode order which relates to origin code order.
   OrderedSet<CNodePtr> order_;
   bool stub_;
-  // Design switch_input and switch_layer_input as a ptr to
-  // share between derived backpropagator and cloned graphs.
-  std::shared_ptr<bool> switch_input_;
-  std::shared_ptr<bool> switch_layer_input_;
+
+  // The graph is used as some input of Switch, SwitchLayer, or Partial.
+  std::shared_ptr<bool> indirect_;
+
   int64_t stage_;
+  int64_t segment_;
   std::unordered_map<AbstractBasePtrList, FuncGraphPtr, abstract::AbstractBasePtrListHasher,
                      abstract::AbstractBasePtrListEqual>
     func_graph_cache_;

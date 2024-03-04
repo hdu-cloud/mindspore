@@ -15,14 +15,29 @@
  */
 
 #include "ops/matrix_logarithm.h"
-#include <string>
-#include <algorithm>
+
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -38,9 +53,9 @@ abstract::ShapePtr MatrixLogarithmInferShape(const PrimitivePtr &primitive,
     (void)CheckAndConvertUtils::CheckInteger("x rank", SizeToLong(x_shape.size()), kGreaterEqual, kNumber2, prim_name);
   }
   if (!IsDynamic(x_shape)) {
-    const int64_t x_rank = x_shape.size();
-    auto column_size = x_shape[x_rank - kNumber1];
-    auto row_size = x_shape[x_rank - kNumber2];
+    const int64_t x_rank = SizeToLong(x_shape.size());
+    auto column_size = x_shape[LongToSize(x_rank - kNumber1)];
+    auto row_size = x_shape[LongToSize(x_rank - kNumber2)];
     if (column_size != row_size) {
       MS_EXCEPTION(ValueError) << "For " << prim_name << ", the last two dimensions of input 'x' must be equal"
                                << ", but got x.shape = " << build_shape->ToString() << ".";
@@ -70,6 +85,24 @@ AbstractBasePtr MatrixLogarithmInfer(const abstract::AnalysisEnginePtr &, const 
 }
 
 MIND_API_OPERATOR_IMPL(MatrixLogarithm, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(MatrixLogarithm, prim::kPrimMatrixLogarithm, MatrixLogarithmInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMatrixLogarithmInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MatrixLogarithmInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MatrixLogarithmInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MatrixLogarithmInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MatrixLogarithm, prim::kPrimMatrixLogarithm, AGMatrixLogarithmInfer, false);
 }  // namespace ops
 }  // namespace mindspore

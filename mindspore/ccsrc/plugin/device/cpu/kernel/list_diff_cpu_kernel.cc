@@ -80,11 +80,10 @@ int ListDiffCPUKernelMod::Resize(const BaseOperatorPtr &base_operator, const std
   auto y_shape = inputs[kIndex1]->GetShapeVector();
   x_size_ = x_shape[0];
   y_size_ = y_shape[0];
-  outputs_ = outputs;
-  input_size_list_.emplace_back(x_size_ * data_size_);
-  input_size_list_.emplace_back(y_size_ * data_size_);
-  output_size_list_.emplace_back(x_size_ * data_size_);
-  output_size_list_.emplace_back(x_size_ * index_size_);
+  (void)input_size_list_.emplace_back(x_size_ * data_size_);
+  (void)input_size_list_.emplace_back(y_size_ * data_size_);
+  (void)output_size_list_.emplace_back(x_size_ * data_size_);
+  (void)output_size_list_.emplace_back(x_size_ * index_size_);
   return KRET_OK;
 }
 
@@ -245,7 +244,7 @@ std::vector<KernelAttr> ListDiffCPUKernelMod::GetOpSupport() {
   return support_list;
 }
 
-void ListDiffCPUKernelMod::SyncData() {
+void ListDiffCPUKernelMod::SyncOutputShape() {
   // update out
   ShapeVector out_shape_ = {out_size_};
   ShapeVector idx_shape_ = {out_size_};

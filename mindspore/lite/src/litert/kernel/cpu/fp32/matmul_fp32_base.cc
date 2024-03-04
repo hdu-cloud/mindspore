@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,9 @@
 #include "nnacl/fp32/matmul_fp32.h"
 #include "nnacl/fp32/pack_fp32.h"
 #include "nnacl/fp32/pack_fp32_opt.h"
+#if defined(PARALLEL_INFERENCE) && defined(ENABLE_MINDRT)
+#include "thread/parallel_thread_pool_manager.h"
+#endif
 
 using mindspore::lite::kCHWDimNumber;
 using mindspore::lite::kHWDimNumber;
@@ -27,7 +30,6 @@ using mindspore::lite::RET_ERROR;
 using mindspore::lite::RET_NULL_PTR;
 using mindspore::lite::RET_OK;
 using mindspore::schema::PrimitiveType_MatMulFusion;
-
 namespace mindspore::kernel {
 int MatmulRun(void *cdata, int task_id, float, float) {
   CHECK_NULL_RETURN(cdata);
@@ -51,16 +53,27 @@ MatmulFp32BaseCPUKernel::~MatmulFp32BaseCPUKernel() {
     matrix_c_.pack_ptr = nullptr;
   }
   if (params_->a_const_) {
-    lite::PackWeightManager::GetInstance()->Free(matrix_a_.pack_ptr);
+    if (is_sharing_pack_) {
+      lite::PackWeightManager::GetInstance()->Free(matrix_a_.pack_ptr);
+    } else {
+      free(matrix_a_.pack_ptr);
+    }
   }
   if (params_->b_const_) {
-    lite::PackWeightManager::GetInstance()->Free(matrix_b_.pack_ptr);
+    if (!matrix_b_.need_pack && weight_is_packed_) {
+      return;
+    }
+    if (is_sharing_pack_) {
+      lite::PackWeightManager::GetInstance()->Free(matrix_b_.pack_ptr);
+    } else {
+      free(matrix_b_.pack_ptr);
+    }
   }
 }
 
 void MatmulFp32BaseCPUKernel::InitGlobalVariable() {
   matrix_a_.need_pack = true;
-  matrix_b_.need_pack = true;
+  matrix_b_.need_pack = !weight_is_packed_;
   matrix_a_pack_fun_ = params_->a_transpose_ ? RowMajor2Row12MajorParallel : RowMajor2Col12MajorParallel;
   matrix_b_pack_fun_ = params_->b_transpose_ ? RowMajor2Col8MajorParallel : RowMajor2Row8MajorParallel;
   row_tile_ = C12NUM;
@@ -105,13 +118,13 @@ int MatmulFp32BaseCPUKernel::ParallelRunByRow(int task_id) const {
 }
 
 int MatmulFp32BaseCPUKernel::ParallelRunByOC(int task_id) const {
-  if (task_id < 0 || task_id >= thread_count_) {
+  if (task_id < 0 || task_id >= thread_num_) {
     MS_LOG(ERROR) << "task_id " << task_id << " is out of range, node is " << name_;
     return RET_ERROR;
   }
   int start_oc = split_points_[task_id];
   int end_oc = col_step_;
-  if (task_id < (thread_count_ - 1)) {
+  if (task_id < (thread_num_ - 1)) {
     end_oc = split_points_[task_id + 1];
   }
   int compute_oc = end_oc - start_oc;
@@ -169,8 +182,13 @@ int MatmulFp32BaseCPUKernel::PackMatrixA() {
     }
   } else {
     bool is_packed = false;
-    void *data = lite::PackWeightManager::GetInstance()->GetPackData(
-      in_tensors()[FIRST_INPUT]->data(), static_cast<size_t>(matrix_a_.pack_size) * sizeof(float), &is_packed);
+    void *data = nullptr;
+    if (is_sharing_pack_) {
+      data = lite::PackWeightManager::GetInstance()->GetPackData(
+        in_tensors()[FIRST_INPUT]->data(), static_cast<size_t>(matrix_a_.pack_size) * sizeof(float), &is_packed);
+    } else {
+      data = malloc(static_cast<size_t>(matrix_a_.pack_size) * sizeof(float));
+    }
     matrix_a_.pack_ptr = reinterpret_cast<float *>(data);
     if (matrix_a_.pack_ptr == nullptr) {
       MS_LOG(ERROR) << "matrix a pack ptr is nullptr.";
@@ -224,9 +242,18 @@ int MatmulFp32BaseCPUKernel::PackMatrixB() {
         reinterpret_cast<float *>(ms_context_->allocator->Malloc(matrix_b_.pack_size * sizeof(float)));
     }
   } else {
+    if (!matrix_b_.need_pack && weight_is_packed_) {
+      matrix_b_.pack_ptr = reinterpret_cast<float *>(in_tensors_[SECOND_INPUT]->data());
+      return RET_OK;
+    }
     bool is_packed = false;
-    void *data = lite::PackWeightManager::GetInstance()->GetPackData(
-      in_tensors()[SECOND_INPUT]->data(), static_cast<size_t>(matrix_b_.pack_size) * sizeof(float), &is_packed);
+    void *data = nullptr;
+    if (is_sharing_pack_) {
+      data = lite::PackWeightManager::GetInstance()->GetPackData(
+        in_tensors()[SECOND_INPUT]->data(), static_cast<size_t>(matrix_b_.pack_size) * sizeof(float), &is_packed);
+    } else {
+      data = malloc(static_cast<size_t>(matrix_b_.pack_size) * sizeof(float));
+    }
     matrix_b_.pack_ptr = reinterpret_cast<float *>(data);
     if (matrix_b_.pack_ptr == nullptr) {
       MS_LOG(ERROR) << "matrix b pack ptr is nullptr.";
@@ -434,6 +461,11 @@ int MatmulFp32BaseCPUKernel::FullConnectionPrepare() {
 void MatmulFp32BaseCPUKernel::InitShapeA() {
   auto a_shape = in_tensors_[kInputIndex]->shape();
   int batch = 1;
+  if (a_shape.size() == C1NUM) {
+    params_->row_ = 1;
+    params_->deep_ = a_shape[Index0];
+    return;
+  }
   MS_CHECK_TRUE_RET_VOID(a_shape.size() >= C2NUM);
   for (size_t i = 0; i < a_shape.size() - C2NUM; ++i) {
     batch *= a_shape[i];
@@ -522,6 +554,7 @@ int MatmulFp32BaseCPUKernel::ReSize() {
   if (op_parameter_->is_train_session_) {
     set_workspace_size((matrix_a_.pack_size + matrix_b_.pack_size) * static_cast<int>(sizeof(float)));
   }
+  thread_num_ = op_parameter_->thread_num_;
   ret = GetThreadCuttingPolicy();
   if (ret != RET_OK) {
     MS_LOG(ERROR) << "ThreadCuttingPolicy error!";
@@ -719,10 +752,16 @@ int MatmulFp32BaseCPUKernel::InitTmpOutBuffer() {
 }
 
 int MatmulFp32BaseCPUKernel::GetThreadCuttingPolicy() {
-  if ((a_batch_ >= op_parameter_->thread_num_ && (b_batch_ == a_batch_ || !SupportMulBatchCuttingByRow())) ||
-      params_->col_ == 1) {
-    thread_count_ = op_parameter_->thread_num_;
-    batch_stride_ = UP_DIV(params_->batch, thread_count_);
+#if defined(PARALLEL_INFERENCE) && defined(ENABLE_MINDRT)
+  constexpr int kNumDeepThreshold = 512;
+  if (params_->deep_ < kNumDeepThreshold) {
+    auto num = ParallelThreadPoolManager::GetInstance()->GetThreadPoolSize(
+      static_cast<const lite::InnerContext *>(ms_context_)->thread_pool_);
+    params_->op_parameter_.thread_num_ = num != -1 ? num : params_->op_parameter_.thread_num_;
+  }
+#endif
+  if ((a_batch_ >= thread_num_ && (b_batch_ == a_batch_ || !SupportMulBatchCuttingByRow())) || params_->col_ == 1) {
+    batch_stride_ = UP_DIV(params_->batch, thread_num_);
     parallel_fun_ = &MatmulFp32BaseCPUKernel::ParallelRunByBatch;
     if (params_->col_ != 1 || params_->a_const_) {
       return RET_OK;
@@ -738,28 +777,28 @@ int MatmulFp32BaseCPUKernel::GetThreadCuttingPolicy() {
       }
     }
     return RET_OK;
-  } else if ((a_batch_ >= op_parameter_->thread_num_ && b_batch_ == 1) || CheckThreadCuttingByRow()) {
+  } else if ((a_batch_ >= thread_num_ && b_batch_ == 1) || CheckThreadCuttingByRow()) {
     parallel_fun_ = &MatmulFp32BaseCPUKernel::ParallelRunByRow;
     GetThreadCuttingInfoByRow();
   } else {
     int total_col_unit = UP_DIV(params_->col_align_, col_min_unit_);
-    thread_count_ = MSMIN(op_parameter_->thread_num_, total_col_unit);
-    int block_col_unit = UP_DIV(total_col_unit, thread_count_);
+    thread_num_ = MSMIN(thread_num_, total_col_unit);
+    int block_col_unit = UP_DIV(total_col_unit, thread_num_);
     split_points_.clear();
     int split_point = 0;
     while (split_point < total_col_unit) {
       split_points_.push_back(split_point * col_min_unit_);
       split_point += block_col_unit;
     }
-    thread_count_ = split_points_.size();
+    thread_num_ = split_points_.size();
     parallel_fun_ = &MatmulFp32BaseCPUKernel::ParallelRunByOC;
   }
   return RET_OK;
 }
 
 void MatmulFp32BaseCPUKernel::GetThreadCuttingInfoByRow() {
-  int row_step = MSMAX(row_num_ / op_parameter_->thread_num_, row_min_unit_);
-  int row_remaining = row_num_ - row_step * op_parameter_->thread_num_;
+  int row_step = MSMAX(row_num_ / thread_num_, row_min_unit_);
+  int row_remaining = row_num_ - row_step * thread_num_;
   split_points_.clear();
   int split_point = 0;
   while (split_point < row_num_) {
@@ -770,10 +809,14 @@ void MatmulFp32BaseCPUKernel::GetThreadCuttingInfoByRow() {
       --row_remaining;
     }
   }
-  thread_count_ = split_points_.size();
+  thread_num_ = split_points_.size();
 }
 
 int MatmulFp32BaseCPUKernel::Run() {
+  if (parallel_fun_ == nullptr) {
+    MS_LOG(ERROR) << "parallel_fun_ can not be nullptr";
+    return RET_ERROR;
+  }
   auto out_data = reinterpret_cast<float *>(out_tensors_.front()->data());
   CHECK_NULL_RETURN(out_data);
   if (!out_need_aligned_) {
@@ -790,7 +833,7 @@ int MatmulFp32BaseCPUKernel::Run() {
   MS_CHECK_TRUE_MSG(matrix_a_.pack_ptr != nullptr, RET_ERROR, "matrix-a pack ptr is a nullptr.");
   MS_CHECK_TRUE_MSG(matrix_b_.pack_ptr != nullptr, RET_ERROR, "matrix-b pack ptr is a nullptr.");
 
-  auto ret = ParallelLaunch(this->ms_context_, MatmulRun, this, thread_count_);
+  auto ret = ParallelLaunch(this->ms_context_, MatmulRun, this, thread_num_);
   if (ret != RET_OK) {
     MS_LOG(ERROR) << "MatmulRun failed in split by batch";
     return ret;

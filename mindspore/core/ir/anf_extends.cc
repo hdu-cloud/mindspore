@@ -18,11 +18,11 @@
 
 #include <sstream>
 
+#include "mindspore/core/ops/structure_ops.h"
 #include "utils/hash_map.h"
 #include "ir/visitor.h"
 #include "ir/func_graph.h"
 #include "utils/anf_utils.h"
-#include "mindspore/core/ops/core_ops.h"
 
 namespace mindspore {
 // namespace to support intermediate representation definition
@@ -38,9 +38,7 @@ BaseShapePtr AnfNode::Shape() const {
   return (abstract_ == nullptr) ? nullptr : abstract_->BuildShape();
 }
 
-std::string AnfNode::ToString() const {
-  return mindspore::label_manage::Label(const_cast<AnfNode *>(this)->shared_from_base<AnfNode>()->debug_info());
-}
+std::string AnfNode::ToString() const { return mindspore::trace::Label(const_cast<AnfNode *>(this)->debug_info()); }
 
 std::string CNode::fullname_with_scope() {
   // if full name is set, return its name immediately

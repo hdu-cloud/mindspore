@@ -16,22 +16,38 @@
 
 #include "ops/apply_adagrad_v2.h"
 
-#include <algorithm>
-#include <functional>
+#include <map>
 #include <set>
 #include <utility>
 
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::TupleShapePtr ApplyAdagradV2InferShape(const PrimitivePtr &primitive,
                                                  const std::vector<AbstractBasePtr> &input_args) {
+  const int64_t input_num = 4;
+  (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kGreaterEqual, input_num,
+                                           primitive->name());
   auto var_shape = input_args[kInputIndex0]->BuildShape();
   auto accum_shape = input_args[kInputIndex1]->BuildShape();
   auto lr_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->BuildShape())[kShape];
@@ -48,12 +64,11 @@ abstract::TupleShapePtr ApplyAdagradV2InferShape(const PrimitivePtr &primitive,
     // when batch dimension exists, the rank of `lr` must equal to batch_rank.
     (void)CheckAndConvertUtils::CheckInteger("lr's rank'", lr_shape_size, kEqual, batch_rank, primitive->name());
   } else {
-    (void)CheckAndConvertUtils::CheckInteger("lr's rank'", lr_shape_size, kLessEqual, kShapeSize_, primitive->name());
-    if (lr_shape_size == 1) {
-      (void)CheckAndConvertUtils::CheckInteger("lr_shape[0]", lr_shape[0], kEqual, kShapeSize_, primitive->name());
-    }
+    (void)CheckAndConvertUtils::CheckInteger("lr's rank'", SizeToLong(lr_shape_size), kLessEqual, kShapeSize_,
+                                             primitive->name());
   }
   // var, accum and grad must have the same shape
+  MS_EXCEPTION_IF_NULL(grad_shape_ptr);
   if (grad_shape_ptr->IsDynamic()) {
     return std::make_shared<abstract::TupleShape>(std::vector<abstract::BaseShapePtr>{var_shape, accum_shape});
   }
@@ -71,6 +86,9 @@ abstract::TupleShapePtr ApplyAdagradV2InferShape(const PrimitivePtr &primitive,
   return std::make_shared<abstract::TupleShape>(std::vector<abstract::BaseShapePtr>{var_shape, accum_shape});
 }
 TuplePtr ApplyAdagradV2InferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  const int64_t input_num = 4;
+  (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kGreaterEqual, input_num,
+                                           prim->name());
   auto var_type = input_args[kInputIndex0]->BuildType();
   auto accum_type = input_args[kInputIndex1]->BuildType();
   auto lr_type = input_args[kInputIndex2]->BuildType();
@@ -124,6 +142,23 @@ AbstractBasePtr ApplyAdagradV2Infer(const abstract::AnalysisEnginePtr &, const P
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(ApplyAdagradV2, prim::kPrimApplyAdagradV2, ApplyAdagradV2Infer, nullptr, true);
+// AG means auto generated
+class MIND_API AGApplyAdagradV2Infer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyAdagradV2InferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyAdagradV2InferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyAdagradV2Infer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ApplyAdagradV2, prim::kPrimApplyAdagradV2, AGApplyAdagradV2Infer, false);
 }  // namespace ops
 }  // namespace mindspore

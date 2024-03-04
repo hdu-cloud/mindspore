@@ -22,9 +22,11 @@
 #include <vector>
 #include <memory>
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
-#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/broadcast_impl.cuh"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/binary_ops_impl.cuh"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/l2normalize_impl.cuh"
+#include "plugin/device/gpu/kernel/math/broadcast_public.h"
 #include "plugin/device/gpu/kernel/kernel_constants.h"
 #include "mindspore/core/ops/l2_normalize.h"
 
@@ -62,8 +64,8 @@ class L2NormalizeGpuKernelMod : public NativeGpuKernelMod {
     T *reduce_workspace_addr = GetDeviceAddress<T>(workspace, 0);
     T *workspace_addr = GetPossiblyNullDeviceAddress<T>(workspace, 1);
 
-    const float alpha = 1;
-    const float beta = 0;
+    T alpha = static_cast<T>(1.0f);
+    T beta = static_cast<T>(0.0f);
 
     if (all_match_) {
       CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
@@ -71,19 +73,34 @@ class L2NormalizeGpuKernelMod : public NativeGpuKernelMod {
                         reinterpret_cast<cudaStream_t>(stream_ptr)),
         "cudaMemcpyAsync failed in L2Normalize::Launch.");
     } else {
-      CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
-        cudnnReduceTensor(cudnn_handle_, reduce_tensor_descriptor_, nullptr, 0, workspace_addr, workspace_size_, &alpha,
-                          inputA_descriptor_, input_addr, &beta, outputC_descriptor_, reduce_workspace_addr),
-        "cudnnReduceTensor failed.");
+      if (data_type_ == CUDNN_DATA_DOUBLE) {
+        CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
+          cudnnReduceTensor(cudnn_handle_, reduce_tensor_descriptor_, nullptr, 0, workspace_addr, workspace_size_,
+                            &alpha, inputA_descriptor_, input_addr, &beta, outputC_descriptor_, reduce_workspace_addr),
+          "cudnnReduceTensor failed.");
+      } else {
+        const float alphaf = static_cast<float>(alpha);
+        const float betaf = static_cast<float>(beta);
+        CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
+          cudnnReduceTensor(cudnn_handle_, reduce_tensor_descriptor_, nullptr, 0, workspace_addr, workspace_size_,
+                            &alphaf, inputA_descriptor_, input_addr, &betaf, outputC_descriptor_,
+                            reduce_workspace_addr),
+          "cudnnReduceTensor failed.");
+      }
     }
-    GetMaxWithEpsAndValue(workspace_size_list_[0] / sizeof(T), epsilon_, reduce_workspace_addr,
-                          reinterpret_cast<cudaStream_t>(stream_ptr));
-    auto lhs_shape_size = Convert2SizeTClipNeg(lhs_shape_);
-    auto rhs_shape_size = Convert2SizeTClipNeg(rhs_shape_);
-    auto output_shape_size = Convert2SizeTClipNeg(output_shape_);
-    BroadcastArith(lhs_shape_size, rhs_shape_size, output_shape_size, BROADCAST_TYPE_REALDIV, input_addr,
-                   reduce_workspace_addr, output_addr, reinterpret_cast<cudaStream_t>(stream_ptr));
-
+    auto status = GetMaxWithEpsAndValue(workspace_size_list_[0] / sizeof(T), epsilon_, reduce_workspace_addr,
+                                        reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
+    std::vector<int64_t> simplified_in0_shape;
+    std::vector<int64_t> simplified_in1_shape;
+    std::vector<int64_t> simplified_out_shape;
+    SimplifyBinaryBroadcastShape(lhs_shape_, rhs_shape_, output_shape_, &simplified_in0_shape, &simplified_in1_shape,
+                                 &simplified_out_shape);
+    bool is_broadcast = IsBinaryBroadcast(simplified_in0_shape, simplified_in1_shape);
+    status = BinaryOpWithBroadcastCudaFunc<BinaryOpType::kRealDiv, T, T, T>(
+      is_broadcast, simplified_in0_shape, simplified_in1_shape, simplified_out_shape, input_addr, reduce_workspace_addr,
+      output_addr, GET_CTX_DEVICE_ID, reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return true;
   }
   int Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
@@ -112,7 +129,7 @@ class L2NormalizeGpuKernelMod : public NativeGpuKernelMod {
     }
 
     ShapeVector outputC_shape = output_shape;
-    if ((size_t)axis_ >= output_shape.size()) {
+    if (static_cast<size_t>(axis_) >= output_shape.size()) {
       MS_LOG(EXCEPTION) << "For 'L2NormalizeGpuKernelMod', axis_ must be less than the rank of output "
                         << "but got axis_: " << axis_ << ", rank of output: " << output_shape.size();
     }
@@ -198,8 +215,9 @@ class L2NormalizeGpuKernelMod : public NativeGpuKernelMod {
                                        "cudnnDestroyTensorDescriptor failed.");
   }
   void InferArrayReduceType() {
+    cudnnDataType_t comp_type = (data_type_ == CUDNN_DATA_DOUBLE) ? CUDNN_DATA_DOUBLE : CUDNN_DATA_FLOAT;
     CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
-      cudnnSetReduceTensorDescriptor(reduce_tensor_descriptor_, CUDNN_REDUCE_TENSOR_NORM2, CUDNN_DATA_FLOAT, nan_prop_,
+      cudnnSetReduceTensorDescriptor(reduce_tensor_descriptor_, CUDNN_REDUCE_TENSOR_NORM2, comp_type, nan_prop_,
                                      reduce_indices_, CUDNN_32BIT_INDICES),
       "cudnnSetReduceTensorDescriptor failed");
   }

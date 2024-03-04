@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,18 +21,48 @@
 #include <string>
 #include <set>
 #include <algorithm>
+#include <iterator>
+#include <list>
+
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "utils/hash_map.h"
-#include "kernel/common_utils.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_kernel_compile.h"
-#include "plugin/device/ascend/kernel/tbe/tbe_utils.h"
-#include "include/common/debug/anf_ir_dump.h"
-#include "backend/common/optimizer/helper.h"
-#ifdef ENABLE_AKG
-#include "common/graph_kernel/graph_kernel_flags.h"
-#include "common/graph_kernel/adapter/graph_kernel_optimization.h"
-#endif
+#include "include/backend/optimizer/helper.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "include/backend/anf_runtime_algorithm.h"
+#include "include/backend/kernel_graph.h"
+#include "include/common/utils/anfalgo.h"
+#include "include/common/utils/utils.h"
+#include "include/robin_hood.h"
+#include "ir/anf.h"
+#include "ir/func_graph.h"
+#include "ir/graph_utils.h"
+#include "ir/manager.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "ir/value.h"
+#include "kernel/kernel.h"
+#include "kernel/kernel_build_info.h"
+#include "kernel/kernel_fusion.h"
+#include "utils/anf_utils.h"
+#include "utils/compact_set.h"
+#include "utils/convert_utils_base.h"
+#include "utils/hash_set.h"
+#include "utils/info.h"
+#include "utils/log_adapter.h"
+#include "utils/trace_info.h"
+#include "backend/common/graph_kernel/graph_kernel_flags.h"
+#include "backend/common/graph_kernel/adapter/graph_kernel_optimization.h"
 
 namespace mindspore {
+namespace kernel {
+namespace tbe {
+class TbeUtils;
+}  // namespace tbe
+}  // namespace kernel
+
 namespace opt {
 using mindspore::kernel::tbe::TbeUtils;
 namespace {
@@ -44,6 +74,7 @@ constexpr int8_t MULTI_ELTWISE_USE = 2;
 constexpr int8_t MAX_MULTI_ELTWISE_SIZE = 4;
 constexpr int8_t MAX_PURE_BUFFER_SUCC_SIZE = 3;
 constexpr size_t kFusionNodeNumThreshold = 2;
+constexpr size_t kUpdateStateBaseInputNum = 2;
 constexpr auto kOpAttrFusionId = "fusion_id";
 
 #ifdef DEBUG
@@ -166,7 +197,7 @@ AnfNodePtr CreateTupleGetItem(const AnfNodePtr &buffer_fusion_kernel, session::K
   MS_EXCEPTION_IF_NULL(tuple_item);
   common::AnfAlgo::SetOutputTypeAndDetailShape(
     {common::AnfAlgo::GetOutputInferDataType(buffer_fusion_kernel, output_index)},
-    {common::AnfAlgo::GetOutputDetailShape(buffer_fusion_kernel, output_index)}, tuple_item.get());
+    {AnfAlgo::GetOutputDetailShape(buffer_fusion_kernel, output_index)}, tuple_item.get());
   return tuple_item;
 }
 
@@ -224,7 +255,6 @@ void GetFusionScopeComputeNodeList(const session::KernelGraph *kernel_graph,
     }
   }
 
-#ifdef ENABLE_AKG
   // If Graph Kernel Fusion is enabled, we will let Graph Kernel fuse these nodes if it supports.
   if (graphkernel::GraphKernelFlags::GetInstance().IsEnableGraphKernel()) {
     auto iter = buffer_fusion_infos->begin();
@@ -237,7 +267,6 @@ void GetFusionScopeComputeNodeList(const session::KernelGraph *kernel_graph,
       }
     }
   }
-#endif
 }
 
 void GetFusionScopeInputNodeList(const session::KernelGraph &kernel_graph,
@@ -282,23 +311,27 @@ bool TupleGetitemNodeCompare(const AnfNodePtr &node1, const AnfNodePtr &node2) {
   MS_EXCEPTION_IF_NULL(getitem1);
   MS_EXCEPTION_IF_NULL(getitem2);
   if (getitem1->size() < kTupleGetItemInputSize) {
-    MS_LOG(EXCEPTION) << "Node's input size less than " << kTupleGetItemInputSize << ", getitem1["
-                      << getitem1->DebugString() << "]";
+    MS_LOG(INTERNAL_EXCEPTION) << "Node's input size less than " << kTupleGetItemInputSize << ", getitem1["
+                               << getitem1->DebugString() << "]";
   }
   if (getitem2->size() < kTupleGetItemInputSize) {
-    MS_LOG(EXCEPTION) << "Node's input size less than " << kTupleGetItemInputSize << ", getitem1["
-                      << getitem2->DebugString() << "]";
+    MS_LOG(INTERNAL_EXCEPTION) << "Node's input size less than " << kTupleGetItemInputSize << ", getitem1["
+                               << getitem2->DebugString() << "]";
   }
   auto output_idx1 = GetValue<int64_t>(GetValueNode(getitem1->input(kIndex2)));
   auto output_idx2 = GetValue<int64_t>(GetValueNode(getitem2->input(kIndex2)));
   return output_idx1 < output_idx2;
 }
 
-AnfNodePtr RemoveNodeFromUpdateState(session::KernelGraph *kernel_graph, const AnfNodePtr &node,
-                                     const AnfNodePtr &updatestate) {
+AnfNodePtr RemoveNodeFromUpdateState(
+  const int64_t &fusion_id, session::KernelGraph *kernel_graph, const AnfNodePtr &node, const AnfNodePtr &updatestate,
+  mindspore::HashMap<int64_t, RemovedUpdateStateInfo> *removed_updatestate_infos,
+  mindspore::HashMap<AnfNodePtr, std::vector<int64_t>> *newest_updatestate_related_fusion_ids) {
   MS_EXCEPTION_IF_NULL(kernel_graph);
   MS_EXCEPTION_IF_NULL(node);
   MS_EXCEPTION_IF_NULL(updatestate);
+  MS_EXCEPTION_IF_NULL(removed_updatestate_infos);
+  MS_EXCEPTION_IF_NULL(newest_updatestate_related_fusion_ids);
   auto updatestate_cnode = updatestate->cast<CNodePtr>();
   auto inputs = updatestate_cnode->inputs();
   std::vector<AnfNodePtr> new_inputs;
@@ -319,29 +352,57 @@ AnfNodePtr RemoveNodeFromUpdateState(session::KernelGraph *kernel_graph, const A
   MS_EXCEPTION_IF_NULL(new_updatestate);
   new_updatestate->set_scope(updatestate->scope());
   new_updatestate->set_abstract(updatestate->abstract());
+  // updatestate: origin_node, new_updatestate: new_node.
+  MS_LOG(DEBUG) << "Remove the inputs of updatestate, from node: " << updatestate->DebugString()
+                << ", to node: " << new_updatestate->DebugString();
+  if ((*removed_updatestate_infos).count(fusion_id) == 0) {
+    (*removed_updatestate_infos)[fusion_id][new_updatestate] = {node, inputs.size()};
+    if ((*newest_updatestate_related_fusion_ids).count(updatestate) == 0) {
+      (void)(*newest_updatestate_related_fusion_ids)[new_updatestate].push_back(fusion_id);
+    } else {
+      auto related_fusion_ids = (*newest_updatestate_related_fusion_ids)[updatestate];
+      (void)related_fusion_ids.push_back(fusion_id);
+      (*newest_updatestate_related_fusion_ids)[new_updatestate] = related_fusion_ids;
+      (void)(*newest_updatestate_related_fusion_ids).erase(updatestate);
+      for (const auto related_fusion_id : related_fusion_ids) {
+        if ((*removed_updatestate_infos).count(related_fusion_id) == 0 ||
+            ((*removed_updatestate_infos)[related_fusion_id]).count(updatestate) == 0) {
+          continue;
+        }
+        const auto remove_inputs = (*removed_updatestate_infos)[related_fusion_id][updatestate];
+        (void)(*removed_updatestate_infos)[related_fusion_id].erase(updatestate);
+        (*removed_updatestate_infos)[related_fusion_id][new_updatestate] = remove_inputs;
+      }
+    }
+  }
   return new_updatestate;
 }
 
-void GetFusionScopeOutputNodeList(session::KernelGraph *kernel_graph,
-                                  mindspore::HashMap<int64_t, BufferFusionInfo_t> *buffer_fusion_infos) {
+void GetFusionScopeOutputNodeList(
+  session::KernelGraph *kernel_graph, mindspore::HashMap<int64_t, BufferFusionInfo_t> *buffer_fusion_infos,
+  mindspore::HashMap<int64_t, RemovedUpdateStateInfo> *removed_updatestate_infos,
+  mindspore::HashMap<AnfNodePtr, std::vector<int64_t>> *newest_updatestate_related_fusion_ids) {
   MS_EXCEPTION_IF_NULL(kernel_graph);
   MS_EXCEPTION_IF_NULL(buffer_fusion_infos);
   auto manager = kernel_graph->manager();
   MS_EXCEPTION_IF_NULL(manager);
 
   for (auto &buffer_fusion_info : *buffer_fusion_infos) {
+    auto &fusion_id = buffer_fusion_info.first;
     auto &fusion_info = buffer_fusion_info.second;
     fusion_info.all_outputs_from_last_node = true;
     for (size_t node_idx = 0; node_idx < fusion_info.anf_nodes.size(); ++node_idx) {
       const auto &node = fusion_info.anf_nodes[node_idx];
       size_t old_output_num = fusion_info.outputs_list.size();
-      if (common::AnfAlgo::GetOutputTensorNum(node) == 1) {
+      if (AnfAlgo::GetOutputTensorNum(node) == 1) {
         auto use_nodes = manager->node_users()[node];
         for (const auto &use_node : use_nodes) {
           // Do not think of updatestate as real output,
           // Ensuring normal fusion requires eliminating the node of the updatestate
           if (common::AnfAlgo::CheckPrimitiveType(use_node.first, prim::kPrimUpdateState)) {
-            auto new_updatestate = RemoveNodeFromUpdateState(kernel_graph, node, use_node.first);
+            auto new_updatestate =
+              RemoveNodeFromUpdateState(fusion_id, kernel_graph, node, use_node.first, removed_updatestate_infos,
+                                        newest_updatestate_related_fusion_ids);
             (void)manager->Replace(use_node.first, new_updatestate);
             continue;
           }
@@ -357,7 +418,9 @@ void GetFusionScopeOutputNodeList(session::KernelGraph *kernel_graph,
         auto users = manager->node_users()[node];
         for (auto &user : users) {
           if (common::AnfAlgo::CheckPrimitiveType(user.first, prim::kPrimUpdateState)) {
-            auto new_updatestate = RemoveNodeFromUpdateState(kernel_graph, node, user.first);
+            auto new_updatestate =
+              RemoveNodeFromUpdateState(fusion_id, kernel_graph, node, user.first, removed_updatestate_infos,
+                                        newest_updatestate_related_fusion_ids);
             (void)manager->Replace(user.first, new_updatestate);
             continue;
           }
@@ -475,13 +538,16 @@ bool CheckCircle(const session::KernelGraph &kernel_graph, const BufferFusionInf
 }
 }  // namespace
 
-void UbPatternFusion::GetBufferFusionInfo(session::KernelGraph *kernel_graph,
-                                          mindspore::HashMap<int64_t, BufferFusionInfo_t> *buffer_fusion_infos) const {
+void UbPatternFusion::GetBufferFusionInfo(
+  session::KernelGraph *kernel_graph, mindspore::HashMap<int64_t, BufferFusionInfo_t> *buffer_fusion_infos,
+  mindspore::HashMap<int64_t, RemovedUpdateStateInfo> *removed_updatestate_infos,
+  mindspore::HashMap<AnfNodePtr, std::vector<int64_t>> *newest_updatestate_related_fusion_ids) const {
   MS_EXCEPTION_IF_NULL(buffer_fusion_infos);
   MS_EXCEPTION_IF_NULL(kernel_graph);
   GetFusionScopeComputeNodeList(kernel_graph, buffer_fusion_infos);
   GetFusionScopeInputNodeList(*kernel_graph, buffer_fusion_infos);
-  GetFusionScopeOutputNodeList(kernel_graph, buffer_fusion_infos);
+  GetFusionScopeOutputNodeList(kernel_graph, buffer_fusion_infos, removed_updatestate_infos,
+                               newest_updatestate_related_fusion_ids);
   SetOutputUsedNumAttr(*kernel_graph, *buffer_fusion_infos);
 
   for (auto &buffer_fusion_info : *buffer_fusion_infos) {
@@ -497,9 +563,16 @@ void UbPatternFusion::GetBufferFusionInfo(session::KernelGraph *kernel_graph,
 
 bool UbPatternFusion::FuseBufferFusionPattern(session::KernelGraph *kernel_graph) const {
   MS_EXCEPTION_IF_NULL(kernel_graph);
+  auto manager = kernel_graph->manager();
+  MS_EXCEPTION_IF_NULL(manager);
   bool change = false;
   mindspore::HashMap<int64_t, BufferFusionInfo_t> buffer_fusion_infos;
-  GetBufferFusionInfo(kernel_graph, &buffer_fusion_infos);
+  // removed_updatestate_infos: {fusion_id: {newest_updatestate_node:<removed_input, input_size>}}
+  mindspore::HashMap<int64_t, RemovedUpdateStateInfo> removed_updatestate_infos;
+  // newest_updatestate_related_fusion_ids: {newest_updatestate_node: {related_fusion_ids}}
+  mindspore::HashMap<AnfNodePtr, std::vector<int64_t>> newest_updatestate_related_fusion_ids;
+  GetBufferFusionInfo(kernel_graph, &buffer_fusion_infos, &removed_updatestate_infos,
+                      &newest_updatestate_related_fusion_ids);
 
   std::vector<mindspore::kernel::FusionScopeInfo> fusion_scope_infos;
   (void)std::transform(buffer_fusion_infos.begin(), buffer_fusion_infos.end(), std::back_inserter(fusion_scope_infos),
@@ -519,10 +592,12 @@ bool UbPatternFusion::FuseBufferFusionPattern(session::KernelGraph *kernel_graph
     fusion_ids.insert(buffer_fusion_info.first);
   }
   // Replace fusion op from return to head
+  std::vector<int64_t> failed_fusion_ids;
   for (auto &fusion_id : fusion_ids) {
     // Get kernel mod when supporting tbe
     if (id_names.find(fusion_id) == id_names.end()) {
       MS_LOG(DEBUG) << "Fusion id: " << fusion_id << ", fusion op compiling failed";
+      (void)failed_fusion_ids.push_back(fusion_id);
       continue;
     }
     if (CheckCircle(*kernel_graph, buffer_fusion_infos[fusion_id])) {
@@ -530,6 +605,49 @@ bool UbPatternFusion::FuseBufferFusionPattern(session::KernelGraph *kernel_graph
     } else {
       change = ReplaceFusionOp(&buffer_fusion_infos, fusion_id, kernel_graph);
     }
+  }
+  MS_LOG(DEBUG) << "Failed fusion ids: " << failed_fusion_ids;
+  mindspore::HashMap<AnfNodePtr, RemovedInputsInfo_t> need_addback_updatestates;
+  mindspore::HashMap<AnfNodePtr, size_t> updatestate_max_input_sizes;
+  for (const auto &failed_fusion_id : failed_fusion_ids) {
+    if (removed_updatestate_infos.count(failed_fusion_id) == 0) {
+      MS_LOG(DEBUG) << "Failed fusion id is not in removed_updatestate_infos.";
+      continue;
+    }
+    const auto &updatestate_remove_info = removed_updatestate_infos[failed_fusion_id];
+    for (const auto &updatestate_remove_info_item : updatestate_remove_info) {
+      const auto &updatestate = updatestate_remove_info_item.first;
+      const auto &input = updatestate_remove_info_item.second.first;
+      const auto &input_size = updatestate_remove_info_item.second.second;
+      if (updatestate_max_input_sizes.count(updatestate) == 0) {
+        need_addback_updatestates[updatestate].removed_inputs = {};
+        updatestate_max_input_sizes[updatestate] = 0;
+      }
+      (void)need_addback_updatestates[updatestate].removed_inputs.push_back(input);
+      updatestate_max_input_sizes[updatestate] = std::max(updatestate_max_input_sizes[updatestate], input_size);
+      need_addback_updatestates[updatestate].origin_input_size = updatestate_max_input_sizes[updatestate];
+    }
+  }
+  // Addback updatestate when ubfusion is failed.
+  for (const auto &need_addback_updatestate : need_addback_updatestates) {
+    const auto &new_updatestate_node = need_addback_updatestate.first;
+    const auto &remove_inputs = need_addback_updatestate.second.removed_inputs;
+    const auto &input_size = need_addback_updatestate.second.origin_input_size;
+    std::vector<AnfNodePtr> origin_updatestate_inputs;
+    if (remove_inputs.size() == input_size - kUpdateStateBaseInputNum) {
+      origin_updatestate_inputs = {NewValueNode(std::make_shared<Primitive>(prim::kPrimUpdateState->name()))};
+    } else {
+      const auto &new_updatestate_cnode = new_updatestate_node->cast<CNodePtr>();
+      MS_EXCEPTION_IF_NULL(new_updatestate_cnode);
+      origin_updatestate_inputs = new_updatestate_cnode->inputs();
+    }
+    (void)origin_updatestate_inputs.insert(origin_updatestate_inputs.end(), remove_inputs.begin(), remove_inputs.end());
+    auto origin_updatestate_node = kernel_graph->NewCNode(origin_updatestate_inputs);
+    origin_updatestate_node->set_scope(new_updatestate_node->scope());
+    origin_updatestate_node->set_abstract(new_updatestate_node->abstract());
+    (void)manager->Replace(new_updatestate_node, origin_updatestate_node);
+    MS_LOG(DEBUG) << "Addback removed inputs of updatestate, from node: " << new_updatestate_node->DebugString()
+                  << ", to node: " << origin_updatestate_node->DebugString();
   }
   MS_LOG(DEBUG) << "End Buffer Fusion";
   return change;
@@ -551,10 +669,10 @@ bool UbPatternFusion::ReplaceFusionOp(mindspore::HashMap<int64_t, BufferFusionIn
   std::vector<TypeId> types;
   std::vector<BaseShapePtr> shapes;
   for (const auto &out_node : buffer_fusion_info.outputs_list) {
-    size_t out_num = common::AnfAlgo::GetOutputTensorNum(out_node);
+    size_t out_num = AnfAlgo::GetOutputTensorNum(out_node);
     for (size_t idx = 0; idx < out_num; ++idx) {
       (void)types.emplace_back(common::AnfAlgo::GetOutputInferDataType(out_node, idx));
-      (void)shapes.emplace_back(common::AnfAlgo::GetOutputDetailShape(out_node, idx));
+      (void)shapes.emplace_back(AnfAlgo::GetOutputDetailShape(out_node, idx));
     }
   }
   if (types.empty() || shapes.empty()) {

@@ -25,7 +25,7 @@
 #include "frontend/parallel/dynamic_creator.h"
 #include "frontend/parallel/strategy.h"
 #include "frontend/parallel/tensor_layout/tensor_redistribution.h"
-#include "pipeline/jit/resource.h"
+#include "pipeline/jit/ps/resource.h"
 
 namespace mindspore {
 namespace parallel {
@@ -101,6 +101,7 @@ Status TileInfo::InferDevMatrixShape() {
     if (full_multiples_[i] == 1) {
       continue;
     }
+    MS_EXCEPTION_IF_ZERO("dev_matrix_shape_[i]", dev_matrix_shape_[i]);
     slice_multiples_[i] = slice_multiples_[i] / dev_matrix_shape_[i];
   }
   return SUCCESS;
@@ -174,7 +175,7 @@ void TileInfo::UpdateMultiples() {
 
     ValuePtr new_multiples = MakeValue(slice_multiples_);
     AnfNodePtr val = NewValueNode(new_multiples);
-    (void)manager->Replace(cnode->input(2), val);
+    cnode->set_input(kIndex2, val);
   }
 }
 

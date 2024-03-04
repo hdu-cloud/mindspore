@@ -20,7 +20,7 @@ import mindspore.common.dtype as mstype
 from mindspore.common.tensor import Tensor
 from mindspore.ops import operations as P
 from mindspore.ops import functional as F
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.ops.primitive import constexpr
 from mindspore.nn.layer.basic import ClipByNorm
 from mindspore.experimental import MapParameter
@@ -28,9 +28,8 @@ from mindspore.experimental import MapParameter
 from mindspore.nn import Cell, Flatten, Dense
 from mindspore.nn import SoftmaxCrossEntropyWithLogits
 from mindspore.nn import Adam
-from mindspore.train import Model
-from mindspore.train.callback import CheckpointConfig, ModelCheckpoint
-from mindspore.train.metrics import Accuracy
+from mindspore.train import Model, CheckpointConfig, ModelCheckpoint
+from mindspore.train import Accuracy
 from mindspore.common import set_seed
 
 
@@ -52,6 +51,8 @@ class HashEmbeddingLookup(Cell):
                                             default_value=param_init, name='embedding_table')
 
         # Ops for sparse mode.
+        # pylint: disable=W0212
+        self.map_tensor_get = P._map_tensor_ops.MapTensorGet(True)
         self.gather_revert = P.Gather()
         self.reshape_first = P.Reshape()
         self.reshape = P.Reshape()
@@ -71,7 +72,7 @@ class HashEmbeddingLookup(Cell):
             shp = self.shape(indices) + (self.embedding_size,)
             indices_flatten = self.reshape_first(indices, (-1,))
             unique_id, unique_idx = self.unique(indices_flatten)
-            weight_unique = self.embedding_table.get(unique_id)
+            weight_unique = self.map_tensor_get(self.embedding_table, unique_id)
             weight_flatten = self.gather_revert(weight_unique, unique_idx, 0)
             out = self.reshape(weight_flatten, shp)
         else:
@@ -122,6 +123,7 @@ class ModelExecutor:
         net = Net(self.in_channels, self.out_channels, self.embedding_size, self.sparse)
         net.set_train()
         loss = SoftmaxCrossEntropyWithLogits(reduction='mean')
+        # pylint: disable=E1123
         opt = Adam(params=filter(lambda x: x.requires_grad, net.get_parameters()), use_lazy=True)
 
         model = Model(net, loss, opt, metrics={"Accuracy": Accuracy()})

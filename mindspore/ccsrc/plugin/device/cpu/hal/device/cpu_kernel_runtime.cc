@@ -23,11 +23,12 @@
 #include <functional>
 #include <exception>
 #include "kernel/kernel.h"
+#include "kernel/framework_utils.h"
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 #include "plugin/device/cpu/hal/device/cpu_memory_manager.h"
 #include "utils/ms_context.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "backend/common/session/session_basic.h"
 #include "frontend/operator/ops.h"
@@ -38,7 +39,7 @@
 #include "debug/data_dump/cpu_e2e_dump.h"
 #include "include/common/debug/env_config_parser.h"
 #ifdef MEM_REUSE_DEBUG
-#include "common/mem_reuse/mem_reuse_checker.h"
+#include "backend/common/mem_reuse/mem_reuse_checker.h"
 #endif
 #ifdef ENABLE_DUMP_IR
 #include "include/common/debug/rdr/recorder_manager.h"
@@ -112,8 +113,8 @@ void CPUKernelRuntime::AssignValueNodeAddress(const session::KernelGraph *kernel
       size_t tensor_size = std::accumulate(data_shape.begin(), data_shape.end(), type_size, std::multiplies<size_t>());
       DeviceAddressPtr address = nullptr;
       address = CreateDeviceAddress(nullptr, tensor_size, kOpFormat_DEFAULT, output_type_id);
-      address->set_from_persistent_mem(tensor->is_parameter());
       MS_EXCEPTION_IF_NULL(address);
+      address->set_from_persistent_mem(tensor->is_parameter());
       if (tensor->data_type() == output_type_id) {
         address->ptr_ = tensor->data_c();
       } else {
@@ -134,7 +135,7 @@ void CPUKernelRuntime::AssignInputNodeAddress(const session::KernelGraph *kernel
   for (auto &item : kernel_graph->input_nodes()) {
     MS_EXCEPTION_IF_NULL(item);
     if (item->isa<Parameter>()) {
-      auto output_num = common::AnfAlgo::GetOutputTensorNum(item);
+      auto output_num = AnfAlgo::GetOutputTensorNum(item);
       for (size_t index = 0; index < output_num; index++) {
         TypeId output_type_id = AnfAlgo::GetOutputDeviceDataType(item, index);
         if (output_type_id == kTypeUnknown) {
@@ -188,7 +189,7 @@ tensor::TensorPtr CPUKernelRuntime::CreateTensorForOutput(session::KernelGraph *
   MS_EXCEPTION_IF_NULL(kernel_graph);
   MS_EXCEPTION_IF_NULL(node);
   MS_EXCEPTION_IF_NULL(bound_addresses);
-  size_t output_size = common::AnfAlgo::GetOutputTensorNum(node);
+  size_t output_size = AnfAlgo::GetOutputTensorNum(node);
   if (index >= output_size) {
     MS_LOG(EXCEPTION) << "For node " << node->DebugString() << ", index " << index << " exceed output size "
                       << output_size;
@@ -425,7 +426,7 @@ void CPUKernelRuntime::GetRuntimeAddressFromNode(const AnfNodePtr &node, std::ve
     MS_EXCEPTION_IF_NULL(device_address);
     AddRuntimeAddress(device_address, inputs);
   }
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(node);
   for (size_t i = 0; i < output_num; ++i) {
     auto device_address = AnfAlgo::GetMutableOutputAddr(node, i).get();
     MS_EXCEPTION_IF_NULL(device_address);
@@ -469,7 +470,8 @@ bool CPUKernelRuntime::Run(const session::KernelGraph &kernel_graph, bool) {
     if (common::AnfAlgo::IsDynamicShape(kernel)) {
       AnfAlgo::InferShape(kernel);
       auto args = kernel::GetArgsFromCNode(kernel);
-      if (cpu_kernel != nullptr && cpu_kernel->Resize(args->op, args->inputs, args->outputs, args->depend_tensor_map) ==
+      MS_EXCEPTION_IF_NULL(args);
+      if (cpu_kernel != nullptr && cpu_kernel->Resize(args->inputs, args->outputs, args->depend_tensor_map) ==
                                      static_cast<int>(kernel::KRET_RESIZE_FAILED)) {
         MS_LOG(EXCEPTION) << "Node " << kernel->fullname_with_scope() << " Resize failed!";
       }
@@ -482,10 +484,8 @@ bool CPUKernelRuntime::Run(const session::KernelGraph &kernel_graph, bool) {
 #ifndef ENABLE_SECURITY
     auto profiler_inst = profiler::cpu::CPUProfiler::GetInstance();
     MS_EXCEPTION_IF_NULL(profiler_inst);
-    if (profiler_inst->GetEnableFlag()) {
-      uint32_t pid = getpid();
-      profiler_inst->OpDataProducerBegin(kernel->fullname_with_scope(), pid);
-    }
+    uint32_t pid = getpid();
+    profiler_inst->OpDataProducerBegin(kernel->fullname_with_scope(), pid);
 #endif
 #ifdef ENABLE_DUMP_IR
     kernel::KernelLaunchInfo mem_info = {kernel_inputs, kernel_workspaces, kernel_outputs};
@@ -501,9 +501,7 @@ bool CPUKernelRuntime::Run(const session::KernelGraph &kernel_graph, bool) {
     if (iter_dump_flag) {
       CPUE2eDump::DumpCNodeData(kernel, graph_id);
     }
-    if (profiler_inst->GetEnableFlag()) {
-      profiler_inst->OpDataProducerEnd();
-    }
+    profiler_inst->OpDataProducerEnd();
 #endif
     if (!ret) {
 #ifdef ENABLE_DUMP_IR

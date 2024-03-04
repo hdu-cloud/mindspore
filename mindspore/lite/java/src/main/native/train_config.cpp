@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,7 +50,11 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_mindspore_config_TrainCfg_createTrai
     return (jlong) nullptr;
   }
   if (loss_name != nullptr) {
-    traincfg_ptr->loss_name_.emplace_back(env->GetStringUTFChars(loss_name, JNI_FALSE));
+    std::vector<std::string> traincfg_loss_name = traincfg_ptr->GetLossName();
+    auto c_loss_name = env->GetStringUTFChars(loss_name, JNI_FALSE);
+    traincfg_loss_name.emplace_back(c_loss_name);
+    traincfg_ptr->SetLossName(traincfg_loss_name);
+    env->ReleaseStringUTFChars(loss_name, c_loss_name);
   }
   traincfg_ptr->optimization_level_ = ol;
   traincfg_ptr->accumulate_gradients_ = accmulateGrads;

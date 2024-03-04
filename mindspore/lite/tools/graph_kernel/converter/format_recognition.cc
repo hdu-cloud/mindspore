@@ -16,21 +16,26 @@
 #include "tools/graph_kernel/converter/format_recognition.h"
 
 #include <algorithm>
-#include <vector>
-#include <utility>
 #include <string>
-#include "utils/anf_utils.h"
+#include <utility>
+#include <vector>
+#include "backend/common/graph_kernel/core/graph_kernel_utils.h"
 #include "include/common/utils/utils.h"
-#include "common/graph_kernel/core/graph_kernel_utils.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "utils/anf_utils.h"
+#include "mindspore/ccsrc/kernel/kernel_build_info.h"
+#include "include/backend/kernel_info.h"
+#include "tools/graph_kernel/common/utils.h"
 
 namespace mindspore::graphkernel {
 namespace {
 using KernelWithIndex = std::pair<AnfNodePtr, size_t>;
 
-std::pair<std::string, bool> GetLiteFormat(const CNodePtr &cnode) {
+std::pair<std::string, bool> GetLiteFormat(const CNodePtr &cnode, size_t idx = 0) {
   auto prim = GetCNodePrimitive(cnode);
   if (prim == nullptr || !prim->HasAttr("format")) {
-    return std::make_pair("unknown", false);
+    return std::make_pair(kOpFormat_DEFAULT, false);
   }
   auto format_attr = prim->GetAttr("format");
   MS_EXCEPTION_IF_NULL(format_attr);
@@ -38,7 +43,7 @@ std::pair<std::string, bool> GetLiteFormat(const CNodePtr &cnode) {
   if (format == 1) {
     return std::make_pair(kOpFormat_NHWC, false);
   } else {
-    return std::make_pair(kOpFormat_NCHW, false);
+    return std::make_pair(kOpFormat_DEFAULT, false);
   }
 }
 
@@ -48,6 +53,9 @@ std::pair<std::string, bool> GetTransposeFormat(const CNodePtr &cnode) {
   if (cnode->input(perm_idx)->isa<Parameter>()) {
     auto perm_para = cnode->input(perm_idx)->cast<ParameterPtr>();
     MS_EXCEPTION_IF_NULL(perm_para);
+    if (!perm_para->has_default()) {
+      return GetLiteFormat(cnode);
+    }
     auto perm_tensor = perm_para->default_param()->cast<tensor::TensorPtr>();
     auto perm = static_cast<int32_t *>(perm_tensor->data_ptr()->data());
     std::transform(perm, perm + perm_tensor->shape()[0], std::back_inserter(perm_list), IntToLong);
@@ -61,7 +69,7 @@ std::pair<std::string, bool> GetTransposeFormat(const CNodePtr &cnode) {
   if (perm_list == nh2nc_perm) {
     return std::make_pair(kOpFormat_NCHW, true);
   } else if (perm_list == nc2nh_perm) {
-    return std::make_pair(kOpFormat_NHWC, true);
+    return std::make_pair(kOpFormat_DEFAULT, true);
   } else {
     return GetLiteFormat(cnode);
   }
@@ -82,51 +90,62 @@ void SetOutputsFormat(const CNodePtr &cnode) {
     for (size_t i = 1; i < cnode->size(); i++) {
       if (cnode->input(i)->isa<CNode>()) {
         auto kernel_with_index = AnfUtils::VisitKernel(cnode->input(i), 0);
-        auto prev_cnode = kernel_with_index.first->cast<CNodePtr>();
-        if (prev_cnode != nullptr && prev_cnode->HasAttr(kOutputsFormat)) {
-          output_format =
-            GetValue<std::vector<std::string>>(prev_cnode->GetAttr(kOutputsFormat))[kernel_with_index.second];
+        auto prev_cnode = kernel_with_index.first;
+        auto kernel_build_info = GetKernelInfo(prev_cnode);
+        if (prev_cnode != nullptr && kernel_build_info) {
+          if (kernel_build_info->GetOutputNum() < kernel_with_index.second) {
+            MS_LOG(EXCEPTION) << "cnode output num is wrong, required " << kernel_with_index.second
+                              << ", but only have " << kernel_build_info->GetOutputNum()
+                              << "outputs. Cnode is: " << cnode->fullname_with_scope();
+          }
+          output_format = kernel_build_info->GetOutputFormat(kernel_with_index.second);
           break;
         }
       }
     }
   }
+  std::vector<std::string> outputs_format;
   if (IsPrimitiveCNode(cnode, prim::kPrimMakeTuple)) {
-    std::vector<std::string> outputs_format(cnode->size() - 1, output_format);
-    cnode->AddAttr(kOutputsFormat, MakeValue(outputs_format));
+    outputs_format = std::vector<std::string>(cnode->size() - 1, output_format);
   } else {
-    std::vector<std::string> outputs_format(AnfUtils::GetOutputTensorNum(cnode), output_format);
-    cnode->AddAttr(kOutputsFormat, MakeValue(outputs_format));
+    outputs_format = std::vector<std::string>(AnfUtils::GetOutputTensorNum(cnode), output_format);
   }
+  SetKernelInfoWithFormatToAnfNode(cnode, outputs_format);
 }
 
 void FixFormatsBeforeTranspose(const CNodePtr &cnode) {
+  auto current_cnode_kernel_build_info = GetKernelInfo(cnode);
+  if (current_cnode_kernel_build_info == nullptr) {
+    MS_LOG(INFO) << "The kernel build info of node " << cnode->fullname_with_scope() << " is nullptr.";
+    return;
+  }
+  if (current_cnode_kernel_build_info->GetOutputNum() == 0) {
+    MS_LOG(INFO) << "The outputs_format of node " << cnode->fullname_with_scope() << " is empty.";
+    return;
+  }
   for (size_t i = 1; i < cnode->size(); i++) {
     auto prev_node = cnode->input(i);
     if (IsPrimitiveCNode(prev_node, prim::kPrimTranspose)) {
       continue;
     }
-    auto outputs_format = GetValue<std::vector<std::string>>(cnode->GetAttr(kOutputsFormat));
-    if (outputs_format.empty()) {
-      MS_LOG(EXCEPTION) << "The outputs_format of node " << cnode->fullname_with_scope() << " is empty.";
-    }
     if (prev_node->isa<CNode>()) {
       auto prev_cnode = prev_node->cast<CNodePtr>();
       MS_EXCEPTION_IF_NULL(prev_cnode);
-      auto prev_format = outputs_format[0];
+      auto current_format = current_cnode_kernel_build_info->GetOutputFormat(0);
+      std::string prev_format = current_format;
       if (ExtractOutputFormat(cnode).second) {
         // input node need to fix format when current node is nhwc->nchw or nchw->nhwc
-        if (prev_format == kOpFormat_NCHW) {
+        if (current_format == kOpFormat_DEFAULT) {
           prev_format = kOpFormat_NHWC;
-        } else {
-          prev_format = kOpFormat_NCHW;
+        } else if (current_format == kOpFormat_NHWC) {
+          prev_format = kOpFormat_DEFAULT;
         }
       }
       std::vector<std::string> outputs_formats(AnfUtils::GetOutputTensorNum(prev_cnode), prev_format);
-      prev_cnode->AddAttr(kOutputsFormat, MakeValue(outputs_formats));
+      SetKernelInfoWithFormatToAnfNode(prev_cnode, outputs_formats);
     } else if (prev_node->isa<Parameter>()) {
       // save parameter's format in callback instance
-      inner::NodeBase nodebase = {{}, TypeId::kMetaTypeBegin, outputs_format[0]};
+      inner::NodeBase nodebase = {{}, TypeId::kMetaTypeBegin, current_cnode_kernel_build_info->GetOutputFormat(0)};
       Callback::Instance()->SetBasicNodeKernelInfo(prev_node, {nodebase});
     }
   }

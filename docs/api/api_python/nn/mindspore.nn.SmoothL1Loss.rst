@@ -26,21 +26,25 @@ mindspore.nn.SmoothL1Loss
     其中，:math:`{\beta}` 代表阈值 `beta` 。
 
     .. note::
-        - 在Ascend上，目前不支持 `logits` 的数据类型是float64。
+        - 在 Ascend 平台上，当 `logits` 的数据类型是 float64 时，算子性能会有明显下降。
         - SmoothL1Loss可以看成 :class:`mindspore.nn.L1Loss` 的修改版本，也可以看成 :class:`mindspore.nn.L1Loss` 和 :class:`mindspore.ops.L2Loss` 的组合。
         - :class:`mindspore.nn.L1Loss` 计算两个输入Tensor之间的绝对误差，而 :class:`mindspore.ops.L2Loss` 计算两个输入Tensor之间的平方误差。 
         - :class:`mindspore.ops.L2Loss` 通常更快收敛，但对离群值的鲁棒性较差。该损失函数具有较好的鲁棒性。
 
     参数：
-        - **beta** (float) - 损失函数计算在L1Loss和L2Loss间变换的阈值。默认值：1.0。
-        - **reduction** (str) - 缩减输出的方法。默认值：'none'。其他选项：'mean'和'sum'。
+        - **beta** (float) - 损失函数计算在L1Loss和L2Loss间变换的阈值。默认值： ``1.0`` 。
+        - **reduction** (str，可选) - 指定应用于输出结果的规约计算方式，可选 ``'none'`` 、 ``'mean'`` 、 ``'sum'`` ，默认值： ``'none'`` 。
+
+          - ``"none"``：不应用规约方法。
+          - ``"mean"``：计算输出元素的平均值。
+          - ``"sum"``：计算输出元素的总和。
 
     输入：
-        - **logits** (Tensor) - 预测值，任意维度Tensor。数据类型为float16或float32， CPU和GPU后端还支持float64。
+        - **logits** (Tensor) - 预测值，任意维度Tensor。数据类型为float16、float32或float64。
         - **labels** (Tensor) - 目标值，数据类型和shape与 `logits` 相同的Tensor。
 
     输出：
-        Tensor。如果 `reduction` 为'none'，则输出为Tensor且与 `logits` 的shape相同。否则shape为 `()`。
+        Tensor。如果 `reduction` 为'none'，则输出为Tensor且与 `logits` 的shape相同。否则shape为 :math:`()`。
 
     异常：
         - **TypeError** - `beta` 不是float。
@@ -50,4 +54,3 @@ mindspore.nn.SmoothL1Loss
         - **TypeError** - `logits` 的数据类型与 `labels` 不同。
         - **ValueError** - `beta` 小于0。
         - **ValueError** - `logits` 的shape与 `labels` 不同。
-        - **TypeError** - Ascend后端不支持数据类型是float64的 `logits` 输入。

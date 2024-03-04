@@ -18,11 +18,11 @@
 #define MINDSPORE_CORE_OPS_TANH_H_
 #include <map>
 #include <memory>
-#include <vector>
 #include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -36,8 +36,8 @@ class MIND_API Tanh : public BaseOperator {
   /// \brief Init.
   void Init() const {}
 };
-abstract::AbstractBasePtr TanhInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                    const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr TanhInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                             const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimTanhPtr = std::shared_ptr<Tanh>;
 }  // namespace ops
 }  // namespace mindspore

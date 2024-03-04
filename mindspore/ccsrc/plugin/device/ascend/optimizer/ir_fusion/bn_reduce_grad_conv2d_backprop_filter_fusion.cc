@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,17 @@
 #include <memory>
 #include <vector>
 #include <set>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/ascend_op_name.h"
+#include "ops/conv_pool_ops.h"
+#include "ops/nn_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
 #include "utils/trace_base.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "abstract/abstract_value.h"
-#include "backend/common/optimizer/helper.h"
-#include "plugin/device/ascend/optimizer/platform.h"
+#include "include/backend/optimizer/helper.h"
+#include "plugin/device/ascend/hal/common/platform_info_util.h"
 
 namespace mindspore {
 namespace opt {
@@ -41,9 +43,9 @@ bool CheckSupported(const CNodePtr &conv_back_filter) {
   auto x_shape = common::AnfAlgo::GetPrevNodeOutputInferShape(conv_back_filter, 1);
   auto out_shape = common::AnfAlgo::GetOutputInferShape(conv_back_filter, 0);
   if (y_shape.size() != kNCHWShapeSize || x_shape.size() != kNCHWShapeSize || out_shape.size() != kNCHWShapeSize) {
-    MS_LOG(EXCEPTION) << "The dim of Conv2dBackpropFilter's input and output should be 4, but got y_shape is "
-                      << y_shape.size() << "-D, x_shape is " << x_shape.size() << "-D, out_shape is "
-                      << out_shape.size() << trace::DumpSourceLines(conv_back_filter);
+    MS_LOG(INTERNAL_EXCEPTION) << "The dim of Conv2dBackpropFilter's input and output should be 4, but got y_shape is "
+                               << y_shape.size() << "-D, x_shape is " << x_shape.size() << "-D, out_shape is "
+                               << out_shape.size() << trace::DumpSourceLines(conv_back_filter);
   }
   const std::set<int64_t> kSupportedBatchSize = {32, 256};
   if (kSupportedBatchSize.find(x_shape[0]) == kSupportedBatchSize.end()) {
@@ -69,7 +71,7 @@ const BaseRef BNReduceGradConv2dBackpropFilterFusion::DefinePattern() const {
   VarPtr dbn_inputs = std::make_shared<SeqVar>();
   VarPtr X = std::make_shared<Var>();
   VectorRef bnreducegrad({prim::kPrimBNTrainingReduceGrad, dbn_inputs});
-  VectorRef pattern({prim::kPrimConv2DBackpropFilter, bnreducegrad, X});
+  VectorRef pattern({prim::kPrimConv2DBackpropFilterD, bnreducegrad, X});
   return pattern;
 }
 
@@ -95,8 +97,7 @@ const AnfNodePtr BNReduceGradConv2dBackpropFilterFusion::Process(const FuncGraph
   MS_EXCEPTION_IF_NULL(fused_dbn_dw);
   auto types = {common::AnfAlgo::GetOutputInferDataType(bnreduce_grad, 0),
                 common::AnfAlgo::GetOutputInferDataType(conv_back_filter, 0)};
-  auto shapes = {common::AnfAlgo::GetOutputDetailShape(bnreduce_grad, 0),
-                 common::AnfAlgo::GetOutputDetailShape(conv_back_filter, 0)};
+  auto shapes = {AnfAlgo::GetOutputDetailShape(bnreduce_grad, 0), AnfAlgo::GetOutputDetailShape(conv_back_filter, 0)};
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, fused_dbn_dw.get());
   fused_dbn_dw->set_scope(bnreduce_grad->scope());
   common::AnfAlgo::CopyNodeAttr(kAttrFilterSizes, conv_back_filter, fused_dbn_dw);

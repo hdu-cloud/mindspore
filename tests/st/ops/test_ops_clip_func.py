@@ -24,7 +24,22 @@ class NetWorkClipByValue(nn.Cell):
         return ops.clip_by_value(x, min_value, max_value)
 
 
-@pytest.mark.level0
+class NetWorkClipByNorm(nn.Cell):
+    def construct(self, x):
+        return ops.clip_by_norm(x, max_norm=1)
+
+
+class NetWorkClamp(nn.Cell):
+    def construct(self, x, min_value, max_value):
+        return ops.clamp(x, min_value, max_value)
+
+
+class NetWorkClip(nn.Cell):
+    def construct(self, x, min_value, max_value):
+        return ops.clip(x, min_value, max_value)
+
+
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_arm_cpu
 @pytest.mark.platform_x86_gpu_training
@@ -46,7 +61,7 @@ def test_ops_clip_by_value_tensor(mode):
     assert np.allclose(output.asnumpy(), expect_output)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_arm_cpu
 @pytest.mark.platform_x86_gpu_training
@@ -73,3 +88,79 @@ def test_clip_by_value_list_tensor(mode):
     assert np.allclose(output[0].asnumpy(), expect_output[0])
     assert np.allclose(output[1].asnumpy(), expect_output[1])
     assert np.allclose(output[2].asnumpy(), expect_output[2])
+
+
+@pytest.mark.level1
+@pytest.mark.platform_x86_cpu
+@pytest.mark.platform_arm_cpu
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.env_onecard
+@pytest.mark.parametrize('mode', [ms.GRAPH_MODE, ms.PYNATIVE_MODE])
+def test_ops_clamp(mode):
+    """
+    Feature: ops.clamp
+    Description: Verify the result of clamp
+    Expectation: success
+    """
+    ms.set_context(mode=mode)
+    x = Tensor(np.array([-0.5962, 0.4985, 0.2349, -0.4396, 0.4525]), ms.float32)
+    net = NetWorkClamp()
+    output_case_1 = net(x, -0.3, 0.4)
+    expect_output_case_1 = [-0.3, 0.4, 0.2349, -0.3, 0.4]
+    output_case_2 = net(x, 0.4, -0.3)
+    expect_output_case_2 = [-0.3, -0.3, -0.3, -0.3, -0.3]
+    assert np.allclose(output_case_1.asnumpy(), expect_output_case_1)
+    assert np.allclose(output_case_2.asnumpy(), expect_output_case_2)
+
+
+@pytest.mark.level1
+@pytest.mark.platform_x86_cpu
+@pytest.mark.platform_arm_cpu
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.env_onecard
+@pytest.mark.parametrize('mode', [ms.GRAPH_MODE, ms.PYNATIVE_MODE])
+def test_ops_clip(mode):
+    """
+    Feature: ops.clip
+    Description: Verify the result of clip
+    Expectation: success
+    """
+    ms.set_context(mode=mode)
+    x = Tensor(np.array([-0.5962, 0.4985, 0.2349, -0.4396, 0.4525]), ms.float32)
+    net = NetWorkClip()
+    output_case_1 = net(x, -0.3, 0.4)
+    expect_output_case_1 = [-0.3, 0.4, 0.2349, -0.3, 0.4]
+    output_case_2 = net(x, 0.4, -0.3)
+    expect_output_case_2 = [-0.3, -0.3, -0.3, -0.3, -0.3]
+    assert np.allclose(output_case_1.asnumpy(), expect_output_case_1)
+    assert np.allclose(output_case_2.asnumpy(), expect_output_case_2)
+
+
+@pytest.mark.level0
+@pytest.mark.platform_x86_cpu
+@pytest.mark.platform_arm_cpu
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.env_onecard
+@pytest.mark.parametrize('mode', [ms.GRAPH_MODE, ms.PYNATIVE_MODE])
+def test_ops_clip_by_norm(mode):
+    """
+    Feature: ops.clip_by_norm
+    Description: Verify the result of clip_by_norm
+    Expectation: success
+    """
+    ms.set_context(mode=mode)
+    x = ms.Tensor([[0.8748, 0.1425, 0.0076],
+                   [0.7721, 0.4084, 0.0552],
+                   [4.6376, 0.2914, 2.1120]])
+    net = NetWorkClipByNorm()
+    out = net(x)
+    expect_out = np.array([[0.16650201, 0.02712224, 0.00144652],
+                           [0.14695495, 0.07773139, 0.0105063],
+                           [0.8826814, 0.0554626, 0.40198016]])
+    assert np.allclose(out.asnumpy(), expect_out)

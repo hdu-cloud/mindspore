@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#ifdef _WIN32
 #include "src/litert/kernel/cpu/fp32/deconvolution_fp32.h"
 #include "src/litert/kernel/cpu/fp32/deconvolution_winograd_fp32.h"
 #include "src/litert/kernel/cpu/fp32/deconvolution_depthwise_fp32.h"
@@ -210,7 +211,7 @@ int DeConvolutionCPUKernel::Prepare() {
     MS_CHECK_INT_MUL_NOT_OVERFLOW(input_channel, kernel_hw, RET_ERROR);
     int kernel_chw = input_channel * kernel_hw;
     MS_CHECK_INT_MUL_NOT_OVERFLOW(kernel_chw, output_aligned_size, RET_ERROR);
-    size_t pack_weight_size = kernel_chw * output_aligned_size * sizeof(float);
+    size_t pack_weight_size = static_cast<size_t>(kernel_chw * output_aligned_size) * sizeof(float);
     set_workspace_size(pack_weight_size);
   }
   if (matmul_param_ == nullptr) {
@@ -391,3 +392,4 @@ kernel::LiteKernel *CpuDeConvFp32KernelCreator(const std::vector<lite::Tensor *>
 
 REG_KERNEL(kCPU, kNumberTypeFloat32, PrimitiveType_Conv2dTransposeFusion, CpuDeConvFp32KernelCreator)
 }  // namespace mindspore::kernel
+#endif

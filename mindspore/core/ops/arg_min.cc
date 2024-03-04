@@ -14,12 +14,33 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <set>
-#include "ops/arg_min.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
 #include "mindapi/ir/type.h"
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/arg_min.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -103,11 +124,32 @@ abstract::AbstractBasePtr ArgMinInfer(const abstract::AnalysisEnginePtr &, const
   const int64_t input_num = 1;
   (void)CheckAndConvertUtils::CheckInteger("input size", SizeToLong(input_args.size()), kEqual, input_num,
                                            primitive->name());
-  return abstract::MakeAbstract(ArgMinInferShape(primitive, input_args), ArgMinInferType(primitive, input_args));
+  auto type = ArgMinInferType(primitive, input_args);
+  auto shape = ArgMinInferShape(primitive, input_args);
+  return abstract::MakeAbstract(shape, type);
 }
 
 using Argmin = ArgMin;
 
-REGISTER_PRIMITIVE_EVAL_IMPL(Argmin, prim::kPrimArgmin, ArgMinInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGArgMinInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ArgMinInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ArgMinInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ArgMinInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Argmin, prim::kPrimArgmin, AGArgMinInfer, false);
 }  // namespace ops
 }  // namespace mindspore

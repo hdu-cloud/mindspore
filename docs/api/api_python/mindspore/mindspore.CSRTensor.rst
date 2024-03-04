@@ -13,18 +13,18 @@ mindspore.CSRTensor
          [0., 0., 2., 0.],
          [0., 0., 0., 0.]]
 
-    `CSRTensor` 的算术运算包括：加（+）、减（-）、乘（*）、除（/）。详细的算术运算支持请参考 `运算符 <https://www.mindspore.cn/docs/zh-CN/r2.0.0-alpha/note/static_graph_syntax_support.html#%E8%BF%90%E7%AE%97%E7%AC%A6>`_。
+    `CSRTensor` 的算术运算包括：加（+）、减（-）、乘（*）、除（/）。详细的算术运算支持请参考 `运算符 <https://www.mindspore.cn/docs/zh-CN/master/note/static_graph_syntax_support.html#%E8%BF%90%E7%AE%97%E7%AC%A6>`_。
 
-    .. note::
-        这是一个实验特性，在未来可能会发生API的变化。
-        如果 `indptr` 或 `indices` 的值不合法，行为将没有定义。不合法的值包括当 `values` 或 `indices` 的长度超出了 `indptr` 所指定的取值范围，以及当 `indices` 在同一行中出现重复的列。
+    .. warning::
+        - 这是一个实验性API，后续可能修改或删除。
+        - 如果 `indptr` 或 `indices` 的值不合法，行为将没有定义。不合法的值包括当 `values` 或 `indices` 的长度超出了 `indptr` 所指定的取值范围，以及当 `indices` 在同一行中出现重复的列。
 
     参数：
-        - **indptr** (Tensor) - shape为 :math:`(M)` 的一维整数Tensor，其中M等于 `shape[0] + 1` , 表示每行非零元素的在 `values` 中存储的起止位置。默认值：None。支持的数据类型为int16，int32和int64。
-        - **indices** (Tensor) - shape为 :math:`(N)` 的一维整数Tensor，其中N等于非零元素数量，表示每个元素的列索引值。默认值：None。支持的数据类型为int16， int32和int64。
-        - **values** (Tensor) - Tensor，values的零维长度必须与indices的零维长度相等(values.shape[0] == indices.shape[0])。values用来表示索引对应的数值。默认值：None。
-        - **shape** (tuple(int)) - shape为ndims的整数元组，用来指定稀疏矩阵的稠密shape。`shape[0]` 表示行数，因此必须和 `M - 1` 值相等。默认值：None。
-        - **csr_tensor** (CSRTensor) - CSRTensor对象，用来初始化新的CSRTensor。values的特征维度需要和csr_tensor的特征维度匹配(values.shape[1:] == csr_tensor.shape[2:])。默认值：None。
+        - **indptr** (Tensor) - shape为 :math:`(M)` 的一维整数Tensor，其中M等于 `shape[0] + 1` ，表示每行非零元素的在 `values` 中存储的起止位置。默认值： ``None`` 。支持的数据类型为int16，int32和int64。
+        - **indices** (Tensor) - shape为 :math:`(N)` 的一维整数Tensor，其中N等于非零元素数量，表示每个元素的列索引值。默认值： ``None`` 。支持的数据类型为int16， int32和int64。
+        - **values** (Tensor) - Tensor，values的零维长度必须与indices的零维长度相等(values.shape[0] == indices.shape[0])。values用来表示索引对应的数值。默认值： ``None`` 。
+        - **shape** (tuple(int)) - shape为 :math:`(ndims)` 的整数元组，用来指定稀疏矩阵的稠密shape。`shape[0]` 表示行数，因此必须和 `M - 1` 值相等。默认值： ``None`` 。
+        - **csr_tensor** (CSRTensor) - CSRTensor对象，用来初始化新的CSRTensor。values的特征维度需要和csr_tensor的特征维度匹配 :math:`(values.shape[1:] == csr\_tensor.shape[2:])` 。默认值： ``None`` 。
 
     输出：
         CSRTensor，稠密shape取决于传入的 `shape` ，数据类型由 `values` 决定。
@@ -38,7 +38,7 @@ mindspore.CSRTensor
 
     .. py:method:: add(b: CSRTensor, alpha: Tensor, beta: Tensor)
 
-        两个CSRTensor求和：C = alpha * a + beta * b
+        两个CSRTensor求和：C = alpha * a + beta * b。
 
         参数：
             - **b** (CSRTensor) - 稀疏CSRTensor。
@@ -84,13 +84,14 @@ mindspore.CSRTensor
         shape为 `[M, N]` 的CSRTensor，需要适配shape为 `[N, K]` 的稠密矩阵或稀疏矩阵，得到结果为 `[M, K]` 的稠密矩阵或稀疏矩阵。
 
         .. note::
-            如果运行后端是CPU，那么仅支持在安装了LLVM12.0.1的机器运行。
+            若右矩阵为Tensor，则仅支持安装了LLVM12.0.1及以上版本的CPU后端或GPU后端。
+            若右矩阵为CSRTensor，则仅支持GPU后端。
 
         参数：
             - **matrix** (Tensor or CSRTensor) - shape为 `[N，K]` 的二维矩阵，其中N等于CSRTensor的列数。
 
         返回：
-            Tensor or CSRTensor。
+            Tensor 或者 CSRTensor。
 
     .. py:method:: mv(dense_vector: Tensor)
 

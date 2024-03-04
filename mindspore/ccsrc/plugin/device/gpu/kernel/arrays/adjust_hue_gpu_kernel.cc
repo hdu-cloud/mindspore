@@ -57,7 +57,7 @@ bool AdjustHueGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  data_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  data_unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   return true;
 }
 
@@ -68,6 +68,7 @@ int AdjustHueGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const st
                                                   inputs[kIndex0]->GetDeviceShapeAdaptively().end());
   is_null_input_ = CHECK_SHAPE_NULL(shape, kernel_name_, "input");
   if (!is_null_input_) {
+    input_elements = 1;
     for (size_t i = 0; i < shape.size(); ++i) {
       input_elements *= shape[i];
     }
@@ -119,8 +120,9 @@ bool AdjustHueGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
   T *input_image = GetDeviceAddress<T>(inputs, kIndex0);
   float *hue_delta = GetDeviceAddress<float>(inputs, kIndex1);
   T *output_image = GetDeviceAddress<T>(outputs, kIndex0);
-  CalAdjusthue(input_elements, input_image, output_image, hue_delta, device_id_,
-               reinterpret_cast<cudaStream_t>(stream_ptr));
+  auto status = CalAdjusthue(input_elements, input_image, output_image, hue_delta, device_id_,
+                             reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

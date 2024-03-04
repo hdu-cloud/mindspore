@@ -1,4 +1,4 @@
-# Copyright 2019-2022 Huawei Technologies Co., Ltd
+# Copyright 2019-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,6 +21,9 @@ import pytest
 import mindspore.dataset as ds
 import mindspore.dataset.engine.iterators as it
 from mindspore import log as logger
+
+# Run these tests in separate processes since many tests update config parameters, like shared memory config
+pytestmark = pytest.mark.forked
 
 DATA_DIR = ["../data/dataset/testPyfuncMap/data.data"]
 SCHEMA_DIR = "../data/dataset/testPyfuncMap/schema.json"
@@ -391,7 +394,7 @@ def test_pyfunc_exception_multiprocess():
                           num_parallel_workers=4, python_multiprocessing=True)
         for _ in data1:
             pass
-        assert "MP Pyfunc Throw" in str(info.value)
+    assert "Exception thrown from user defined Python function in dataset" in str(info.value)
 
     ds.config.set_enable_shared_mem(mem_original)
 
@@ -405,7 +408,7 @@ def test_func_with_yield_manifest_dataset_01():
 
     def pass_func(_):
         for i in range(10):
-            yield (np.array([i]),)
+            yield (np.array([i], dtype=np.int32),)
 
     # Sometimes there are some ITERATORS left in ITERATORS_LIST when run all UTs together,
     # and cause core dump and blocking in this UT. Add cleanup() here to fix it.
@@ -416,11 +419,10 @@ def test_func_with_yield_manifest_dataset_01():
     data = data.map(operations=pass_func, input_columns=["image"], num_parallel_workers=1, python_multiprocessing=True,
                     max_rowsize=1)
     num_iter = 0
-    try:
+    with pytest.raises(RuntimeError) as info:
         for _ in data.create_dict_iterator(num_epochs=1, output_numpy=True):
             num_iter += 1
-    except RuntimeError as e:
-        assert " Cannot pickle <class 'generator'> object, please verify pyfunc return with numpy array" in str(e)
+    assert " Cannot pickle <class 'generator'> object, please verify pyfunc return with numpy array" in str(info.value)
 
 
 def test_func_mixed_with_ops():

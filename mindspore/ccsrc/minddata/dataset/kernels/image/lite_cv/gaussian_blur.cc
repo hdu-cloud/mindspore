@@ -34,7 +34,7 @@ static void GetGaussianKernel(float *kernel, int size, double sigma) {
   float sum = 0;
   for (int i = 0; i < n; i++) {
     int x = i - n;
-    float g = exp(-0.5 * x * x / (sigma * sigma));
+    float g = expf(-0.5 * x * x / (sigma * sigma));
     buffer[i] = g;
     sum += g;
   }
@@ -43,7 +43,7 @@ static void GetGaussianKernel(float *kernel, int size, double sigma) {
     sum += 1;
   }
 
-  const float scale = 1. / sum;
+  const float scale = 1.F / sum;
   for (int i = 0; i < n; i++) {
     float g = buffer[i] * scale;
     kernel[i] = g;
@@ -77,6 +77,8 @@ bool GaussianBlur(const LiteMat &src, LiteMat &dst, const std::vector<int> &ksiz
   LiteMat kx, ky;
   kx.Init(ksize[0], 1, 1, LDataType::FLOAT32);
   ky.Init(1, ksize[1], 1, LDataType::FLOAT32);
+  RETURN_FALSE_IF_LITEMAT_EMPTY(kx);
+  RETURN_FALSE_IF_LITEMAT_EMPTY(ky);
 
   GetGaussianKernel(kx, ksize[0], sigmaX);
   GetGaussianKernel(ky, ksize[1], sigmaY);

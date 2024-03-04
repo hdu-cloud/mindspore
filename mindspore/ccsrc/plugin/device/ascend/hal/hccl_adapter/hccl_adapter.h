@@ -17,6 +17,7 @@
 #ifndef MINDSPORE_RUNTIME_HCCL_ADAPTER_HCCL_ADAPTER_H
 #define MINDSPORE_RUNTIME_HCCL_ADAPTER_HCCL_ADAPTER_H
 
+#include "plugin/device/ascend/hal/hccl_adapter/plugin/hccl_plugin.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -24,7 +25,7 @@
 #include <mutex>
 #include "mindspore/core/ir/anf.h"
 #include "hccl/hccl_types.h"
-#include "plugin/device/ascend/hal/hccl_adapter/plugin/hccl_plugin.h"
+#include "include/common/utils/parallel_context.h"
 
 namespace ge {
 class OpsKernelInfoStore;
@@ -56,7 +57,7 @@ class HcclAdapter {
   bool InitHccl(uint32_t device_id, std::string_view rank_id);
   bool FinalizeHccl();
   const bool Inited() const { return init_flag_; }
-  HcclComm get_hccl_comm() const { return hccl_comm_; }
+  const HcclComm get_hccl_comm() const { return hccl_comm_; }
   HcclResult HcclCreateGroup(const std::string &group, uint32_t rank_num, uint32_t *rank_ids) const;
   HcclResult HcclDestroyGroup(const std::string &group) const;
   HcclResult HcclGetRankId(const std::string &group, uint32_t *rank_id) const;
@@ -77,6 +78,8 @@ class HcclAdapter {
                            HcclComm comm) const;
   HcclResult HcclAllReduce(void *send_buf, void *recv_buf, uint64_t count, HcclDataType dataType, HcclReduceOp op,
                            const aclrtStream stream, HcclComm comm) const;
+  HcclResult HcclReduce(void *send_buf, void *recv_buf, uint64_t count, HcclDataType dataType, HcclReduceOp op,
+                        uint32_t root, const aclrtStream stream, HcclComm comm) const;
   HcclResult HcclAllGather(void *send_buf, void *recv_buf, uint64_t count, HcclDataType dataType,
                            const aclrtStream stream, HcclComm comm) const;
   HcclResult HcclReduceScatter(void *send_buf, void *recv_buf, uint64_t count, HcclDataType dataType, HcclReduceOp op,
@@ -87,10 +90,19 @@ class HcclAdapter {
                       HcclComm comm) const;
   HcclResult HcclAllToAll(void *send_buf, void *recv_buf, hccl::HcclAllToAllVParams params, HcclDataType dataType,
                           const aclrtStream stream, HcclComm comm) const;
+  HcclResult HcclBarrier(const aclrtStream stream, HcclComm comm) const;
 
   // for enqueue op
   HcclResult HcclExecEnqueueOp(const ::HcomOperation &op_info, const HExecCallBack &callback) const;
   HcclResult HcclExecAllToAllv(const ::HcomAllToAllVParams &params, const HExecCallBack &callback) const;
+
+  // Return whether using CM to initialize HCCL.
+  bool UseHcclCM() const;
+  static void AddCMEnvToHcclOption(std::map<std::string, std::string> *hccl_opt_map);
+
+  bool IsSameServer(const std::vector<uint32_t> &rank_ids) const;
+
+  string GetHcomGroup(const CNodePtr &cnode) const;
 
  private:
   HcclAdapter() = default;
@@ -110,6 +122,7 @@ class HcclAdapter {
   HcclMode GetCurrentHcclMode() const;
   void CheckExcutionMode() const;
   static std::string GetHcclModeString(HcclMode hccl_mode);
+  string DoGetHcomGroup(const string &original_group, const std::vector<uint32_t> &rank_ids) const;
 
   void *plugin_handle_ = nullptr;
 
@@ -117,15 +130,18 @@ class HcclAdapter {
   FinalizeHcomGraphAdapterFunObj finalize_hcom_graph_adapter_ = nullptr;
   GetHcclKernelInfoStoreFunObj get_hccl_kernel_info_store_ = nullptr;
   GetAllKernelBuilderFunObj get_all_kernel_builder_ = nullptr;
+  HcomDestroyFunObj hcom_destroy_ = nullptr;
 
   HcclCommInitClusterInfoFunObj init_hccl_comm_ = nullptr;
   HcclCommDestroyFunObj finalize_hccl_comm_ = nullptr;
   HcclBroadcastFunObj launch_hccl_broadcast_ = nullptr;
   HcclAllReduceFunObj launch_hccl_all_reduce_ = nullptr;
+  HcclReduceFunObj launch_hccl_reduce_ = nullptr;
   HcclReduceScatterFunObj launch_hccl_reduce_scatter_ = nullptr;
   HcclAllGatherFunObj launch_hccl_all_gather_ = nullptr;
   HcclSendFunObj launch_hccl_send_ = nullptr;
   HcclRecvFunObj launch_hccl_recv_ = nullptr;
+  HcclBarrierFunObj launch_hccl_barrier_ = nullptr;
   HcclGetRankIdFunObj single_op_hccl_get_rank_id_ = nullptr;
   HcclGetRankSizeFunObj single_op_hccl_get_rank_size_ = nullptr;
   HcclAlltoAllVFunObj launch_hccl_all_to_allv_ = nullptr;

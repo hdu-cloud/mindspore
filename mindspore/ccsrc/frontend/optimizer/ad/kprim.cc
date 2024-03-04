@@ -1,7 +1,7 @@
 /**
  * This is the C++ adaptation and derivative work of Myia (https://github.com/mila-iqia/myia/).
  *
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,20 +23,24 @@
 #include <string>
 #include <utility>
 #include "ir/anf.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "pybind_api/ir/primitive_py.h"
 #include "ir/meta_func_graph.h"
 #include "ir/func_graph_cloner.h"
 #include "ir/manager.h"
-#include "pipeline/jit/resource.h"
+#include "pipeline/jit/ps/resource.h"
 #include "frontend/optimizer/ad/dfunctor.h"
 #include "frontend/operator/composite/composite.h"
+#include "frontend/expander/bprop/bprop.h"
 #include "include/common/utils/utils.h"
 #include "utils/symbolic.h"
 #include "utils/ms_context.h"
 #include "utils/info.h"
-#include "pipeline/jit/debug/trace.h"
+#include "pipeline/jit/ps/debug/trace.h"
 #include "utils/anf_utils.h"
 #include "frontend/optimizer/ad/bprop_utils.h"
+#include "frontend/expander/utils.h"
 
 namespace mindspore {
 namespace ad {
@@ -47,46 +51,27 @@ constexpr char kLiftedUserDataKey[] = "lifted_from_fv";
 }  // namespace
 
 FuncGraphPtr KPrim::GetPrimBprop(const PrimitivePtr &prim, const ValueNodePtr &value_node,
-                                 const pipeline::ResourceBasePtr &resources) {
+                                 const pipeline::ResourceBasePtr &resources, const CNodePtr &cnode) {
   MS_EXCEPTION_IF_NULL(prim);
   MS_EXCEPTION_IF_NULL(value_node);
-  FuncGraphPtr bprop_fg = nullptr;
   auto iter = bprop_registry_.find(prim);
   if (iter != bprop_registry_.end()) {
-    bprop_fg = iter->second;
+    return iter->second;
   }
 
-  if (bprop_fg == nullptr) {
-    bprop_fg = GetBprop(prim, resources);
-    if (bprop_fg != nullptr) {
-      // Set bprop_g graph cache
-      bprop_registry_[prim] = bprop_fg;
-    } else {
-      bprop_fg = FakeBprop(value_node, resources);
-    }
-  }
-  return bprop_fg;
-}
-
-FuncGraphPtr KPrim::GetPossibleBprop(const PrimitivePtr &prim) {
-  FuncGraphPtr bprop_fg = nullptr;
-  auto iter = bprop_registry_.find(prim);
-  if (iter != bprop_registry_.end()) {
-    bprop_fg = iter->second;
+  FuncGraphPtr bprop_fg = GetBprop(prim, resources, cnode);
+  if (bprop_fg != nullptr) {
+    // Set bprop_g graph cache
+    bprop_registry_[prim] = bprop_fg;
+  } else {
+    bprop_fg = FakeBprop(value_node, resources);
   }
 
-  if (bprop_fg == nullptr) {
-    bprop_fg = GetBprop(prim);
-    if (bprop_fg != nullptr) {
-      // Set bprop_g graph cache
-      bprop_registry_[prim] = bprop_fg;
-    }
-  }
   return bprop_fg;
 }
 
 FuncGraphPtr KPrim::GetFprop(const PrimitivePtr &prim) const {
-  static const std::string ad_module = "mindspore.ops._grad.grad_implementations";
+  static const std::string ad_module = "mindspore.ops._grad_experimental.grad_implementations";
   std::string func_name = "_fprop_" + prim->name();
   py::function fn = python_adapter::GetPyFn(ad_module, func_name);
   auto func_graph = parse::ParsePythonCode(fn);
@@ -102,21 +87,27 @@ MetaFuncGraphPtr KPrim::KMetaFuncGraph(const PrimitivePtr &prim) {
     return iter->second;
   }
 
-  if (prim->Hash() == prim::kPrimMakeTuple->Hash() && prim->name() == prim::kPrimMakeTuple->name()) {
+  if (IsPrimitiveEquals(prim, prim::kPrimMakeTuple)) {
     MetaFuncGraphPtr meta = std::make_shared<prim::MakeTupleGradient>("make_tuple_gradient");
     bprop_registry_meta_[prim::kPrimMakeTuple] = meta;
     return meta;
   }
 
-  if (prim->Hash() == prim::kPrimMakeList->Hash() && prim->name() == prim::kPrimMakeList->name()) {
+  if (IsPrimitiveEquals(prim, prim::kPrimMakeList)) {
     MetaFuncGraphPtr meta = std::make_shared<prim::MakeListGradient>("make_list_gradient");
     bprop_registry_meta_[prim::kPrimMakeList] = meta;
     return meta;
   }
 
-  if (IsPrimitiveEquals(prim, prim::kPrimPyExecute)) {
-    MetaFuncGraphPtr meta = std::make_shared<prim::PyExecuteGradient>("PyExecuteGradient");
-    bprop_registry_meta_[prim::kPrimPyExecute] = meta;
+  if (IsPrimitiveEquals(prim, prim::kPrimMakeDict)) {
+    MetaFuncGraphPtr meta = std::make_shared<prim::MakeDictGradient>("make_dict_gradient");
+    bprop_registry_meta_[prim::kPrimMakeDict] = meta;
+    return meta;
+  }
+
+  if (IsPrimitiveEquals(prim, prim::kPrimMutable)) {
+    MetaFuncGraphPtr meta = std::make_shared<prim::MutableGradient>("MutableGradient");
+    bprop_registry_meta_[prim::kPrimMutable] = meta;
     return meta;
   }
 
@@ -206,39 +197,44 @@ void SetDumpFlag(const PrimitivePtr &prim, const FuncGraphPtr &bprop_fg) {
     return;
   }
   auto attr = prim->GetAttr(kAttrDump);
-  if (attr != nullptr && attr->isa<StringImm>() && attr->cast_ptr<StringImm>()->value() == kValueTrue) {
-    bprop_fg->set_flag(FUNC_GRAPH_FLAG_DUMP, true);
+  if (attr != nullptr) {
+    if (attr->isa<StringImm>()) {
+      auto str_attr = attr->cast_ptr<StringImm>();
+      MS_EXCEPTION_IF_NULL(str_attr);
+      if (str_attr->value() == kValueTrue) {
+        bprop_fg->set_flag(FUNC_GRAPH_FLAG_DUMP, true);
+      }
+    }
   }
 }
 
 FuncGraphPtr KPrim::KPrimitive(const CNodePtr &cnode, const ValueNodePtr &value_node,
                                const pipeline::ResourceBasePtr &resources) {
   if (!IsValueNode<Primitive>(value_node)) {
-    MS_LOG(EXCEPTION) << "Primitive node is not valid.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Primitive node is not valid.";
   }
 
   auto prim = GetValueNode<PrimitivePtr>(value_node);
-  if (prim->Hash() == prim::kPrimSwitchLayer->Hash() && prim->name() == prim::kPrimSwitchLayer->name()) {
+  if (IsPrimitiveEquals(prim, prim::kPrimSwitchLayer)) {
     auto fprop = GetFprop(prim);
     fprop->transforms().emplace("primal", FuncGraphTransform(prim::kPrimSwitchLayer));
     return fprop;
   } else if (IsPrimitiveEquals(prim, prim::kPrimMakeTuple) || IsPrimitiveEquals(prim, prim::kPrimMakeList) ||
-             IsPrimitiveEquals(prim, prim::kPrimPyExecute)) {
+             IsPrimitiveEquals(prim, prim::kPrimMakeDict) || IsPrimitiveEquals(prim, prim::kPrimMutable)) {
     // Return null to use Meta bprop.
     return nullptr;
   }
 
   FuncGraphPtr bprop_fg = nullptr;
-  if ((prim->Hash() == prim::kPrimHookBackward->Hash() && prim->name() == prim::kPrimHookBackward->name()) ||
-      (prim->Hash() == prim::kPrimCellBackwardHook->Hash() && prim->name() == prim::kPrimCellBackwardHook->name())) {
+  if (IsPrimitiveEquals(prim, prim::kPrimHookBackward) || IsPrimitiveEquals(prim, prim::kPrimCellBackwardHook)) {
     if (MsContext::GetInstance()->get_param<int>(MsCtxParam::MS_CTX_EXECUTION_MODE) == kGraphMode) {
       MS_LOG(EXCEPTION)
         << "The Hook operation is not supported in graph mode, which is only supported in pynative mode.\n"
-        << trace::GetDebugInfo(cnode->debug_info());
+        << trace::GetDebugInfoStr(cnode->debug_info());
     }
     bprop_fg = BpropCut(value_node, resources);
   } else {
-    bprop_fg = GetPrimBprop(prim, value_node, resources);
+    bprop_fg = GetPrimBprop(prim, value_node, resources, cnode);
   }
 
   SetDumpFlag(prim, bprop_fg);
@@ -247,14 +243,16 @@ FuncGraphPtr KPrim::KPrimitive(const CNodePtr &cnode, const ValueNodePtr &value_
   std::vector<NodeDebugInfoPtr> primal_debug_infos = GeneratePrimalDebugInfo(value_node, resources);
   if (cnode != nullptr) {
     primal_attrs = cnode->primal_attrs();
+    cnode->AddPrimalAttr(kPrimalAttrUniqueId, MakeValue(cnode->UniqueId()));
     const auto forward_node_primal_attr = prim->name() + "_" + cnode->UniqueId();
     primal_attrs[kPrimalAttrForwardNodeName] = MakeValue(forward_node_primal_attr);
+    primal_attrs[kPrimalAttrForwardUniqueId] = MakeValue(cnode->UniqueId());
   }
   auto expanded_fg = BpropToK(prim, bprop_fg, nullptr, cnode, primal_attrs, primal_debug_infos);
   if (expanded_fg == nullptr) {
-    MS_LOG(EXCEPTION) << "Failed convert " << prim->name()
-                      << " prim bprop function to J expanded func graph. NodeInfo: "
-                      << trace::GetDebugInfo(bprop_fg->debug_info());
+    MS_LOG(INTERNAL_EXCEPTION) << "Failed convert " << prim->name()
+                               << " prim bprop function to J expanded func graph. NodeInfo: "
+                               << trace::GetDebugInfoStr(bprop_fg->debug_info());
   }
   if (lift_fv_before_grad && IsPrimitiveEquals(prim, prim::kPrimSwitch)) {
     // Inline fprop_switch before renormalize;
@@ -302,7 +300,7 @@ AnfNodePtr KPrim::BuildOutput(const FuncGraphPtr &bprop_fg, const FuncGraphPtr &
         MS_EXCEPTION(TypeError)
           << "The params of function 'bprop' of Primitive or Cell requires the forward inputs as well "
              "as the 'out' and 'dout'.\n"
-          << trace::GetDebugInfo(bprop_fg->debug_info());
+          << trace::GetDebugInfoStr(bprop_fg->debug_info());
       }
       extra_monad_args.push_back(extra_node);
       MS_LOG(DEBUG) << "Insert to bprop_fg for node: " << primal_node->DebugString();
@@ -331,8 +329,25 @@ AnfNodePtr KPrim::BuildOutput(const FuncGraphPtr &bprop_fg, const FuncGraphPtr &
   // Set bprop output as (env, dx)
   constexpr char model_name[] = "mindspore.ops.composite.multitype_ops.add_impl";
   constexpr char python_ops[] = "_tuple_add";
+  auto bprop_tuple_add_check_func = std::make_shared<std::function<bool(const std::vector<AbstractBasePtr> &args)>>(
+    [](const std::vector<AbstractBasePtr> &args) {
+      for (const auto &arg : args) {
+        if (!arg->isa<abstract::AbstractTuple>()) {
+          MS_EXCEPTION(TypeError) << "For bprop function, output should be a tuple, but got " << arg->ToString();
+        }
+      }
+      return true;
+    });
   auto tuple_env = NewCNode({NewValueNode(prim::kPrimMakeTuple), NewEnviron(bprop_fg)}, bprop_fg);
   auto tuple_add_ops = NewValueNode(prim::GetPythonOps(python_ops, model_name));
+  if (IsValueNode<FuncGraphBase>(tuple_add_ops)) {
+    auto tuple_add_func_graph = GetValueNode<FuncGraphBasePtr>(tuple_add_ops);
+    MS_LOG(DEBUG) << "Get tuple add func successful. Tuple add fg: " << tuple_add_func_graph->ToString();
+    auto checker = std::make_shared<FuncGraphChecker>();
+    checker->AddCheckFunc<const std::vector<AbstractBasePtr> &>(bprop_tuple_add_check_func);
+    tuple_add_func_graph->AddChecker("check_infer_inputs", checker);
+  }
+
   if (!extra_lifted_args.empty()) {
     (void)extra_lifted_args.insert(extra_lifted_args.cbegin(), NewValueNode(prim::kPrimMakeTuple));
     auto extra_tuple = NewCNode(extra_lifted_args, bprop_fg);
@@ -477,9 +492,9 @@ FuncGraphPtr KPrim::KUserDefinedCellBprop(const FuncGraphPtr &bprop_fg, const Fu
   auto primal_fg = bprop_fg->transforms().find("primal")->second.func_graph();
   auto expanded_fg = BpropToK(primal_fg, bprop_fg, current_primal_fg, nullptr, {}, {});
   if (expanded_fg == nullptr) {
-    MS_LOG(EXCEPTION) << "Failed convert " << primal_fg->ToString()
-                      << " Cell bprop function to K expanded func graph. NodeInfo: "
-                      << trace::GetDebugInfo(primal_fg->debug_info());
+    MS_LOG(INTERNAL_EXCEPTION) << "Failed convert " << primal_fg->ToString()
+                               << " Cell bprop function to K expanded func graph. NodeInfo: "
+                               << trace::GetDebugInfoStr(primal_fg->debug_info());
   }
   return expanded_fg;
 }
@@ -494,9 +509,11 @@ FuncGraphPtr KPrim::BpropCut(const ValueNodePtr &value_node, const pipeline::Res
     return IsPrimitiveCNode(user.first, prim);
   });
   if (cnode == users.end()) {
-    MS_LOG(EXCEPTION) << "Fail to find cnode.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Fail to find cnode.";
   }
-  auto inputs_num = cnode->first->cast_ptr<CNode>()->size() - 1;
+  auto cnode_first = cnode->first->cast_ptr<CNode>();
+  MS_EXCEPTION_IF_NULL(cnode_first);
+  auto inputs_num = cnode_first->size() - 1;
 
   auto func_graph = std::make_shared<FuncGraph>();
   std::vector<AnfNodePtr> outputs;
@@ -535,9 +552,11 @@ FuncGraphPtr KPrim::FakeBprop(const ValueNodePtr &value_node, const pipeline::Re
     return IsPrimitiveCNode(user.first, prim);
   });
   if (cnode == users.end()) {
-    MS_LOG(EXCEPTION) << "Fail to find user for " << prim->ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Fail to find user for " << prim->ToString();
   }
-  auto inputs_num = cnode->first->cast_ptr<CNode>()->inputs().size() - 1;
+  auto cnode_first = cnode->first->cast_ptr<CNode>();
+  MS_EXCEPTION_IF_NULL(cnode_first);
+  auto inputs_num = cnode_first->size() - 1;
   auto effect_info = GetPrimEffectInfo(prim);
   // Don't add U or IO monad parameters as it will be added later.
   size_t monad_params_size = 0;
@@ -548,8 +567,8 @@ FuncGraphPtr KPrim::FakeBprop(const ValueNodePtr &value_node, const pipeline::Re
     monad_params_size++;
   }
   if (inputs_num < monad_params_size) {
-    MS_LOG(EXCEPTION) << "Arguments number should be greater than or equal to " << monad_params_size
-                      << ", but the CNode is: " << cnode->first->DebugString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Arguments number should be greater than or equal to " << monad_params_size
+                               << ", but the CNode is: " << cnode->first->DebugString();
   }
   inputs_num -= monad_params_size;
 
@@ -564,7 +583,11 @@ FuncGraphPtr KPrim::FakeBprop(const ValueNodePtr &value_node, const pipeline::Re
     // Mock params for inputs
     auto param = func_graph->add_parameter();
     // Mock derivatives for each inputs
-    outputs.push_back(func_graph->NewCNode({NewValueNode(fake_bprop), param}));
+    if (IsPrimitiveEquals(prim, prim::kPrimUpdateState)) {
+      outputs.push_back(func_graph->NewCNode({NewValueNode(prim::GetPythonOps("zeros_like")), param}));
+    } else {
+      outputs.push_back(func_graph->NewCNode({NewValueNode(fake_bprop), param}));
+    }
   }
   // mock params for out and dout
   (void)func_graph->add_parameter();
@@ -575,14 +598,14 @@ FuncGraphPtr KPrim::FakeBprop(const ValueNodePtr &value_node, const pipeline::Re
 
 bool KPrim::CheckCustomVjp(const FuncGraphPtr &bprop_fg) const {
   MS_EXCEPTION_IF_NULL(bprop_fg);
-  int parameters_size = bprop_fg->parameters().size();
+  auto parameters_size = bprop_fg->parameters().size();
   if (bprop_fg->has_flag("custom_vjp") && parameters_size == 1) {
     return true;
   }
   return false;
 }
 
-FuncGraphPtr KPrim::GetCustomVjpBprop(const FuncGraphPtr &bprop_fg) {
+FuncGraphPtr KPrim::GetCustomVjpBprop(const FuncGraphPtr &bprop_fg) const {
   MS_EXCEPTION_IF_NULL(bprop_fg);
   auto bprop_fg_output = dyn_cast<CNode>(bprop_fg->output());
   MS_EXCEPTION_IF_NULL(bprop_fg_output);

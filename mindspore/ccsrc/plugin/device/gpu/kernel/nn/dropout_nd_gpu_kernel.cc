@@ -20,6 +20,7 @@
 #include <string>
 #include <algorithm>
 #include <memory>
+#include "mindspore/core/ops/nn_ops.h"
 #include "include/curand.h"
 #include "mindspore/core/ops/dropout_nd.h"
 #include "abstract/utils.h"
@@ -100,6 +101,7 @@ bool DropoutNDGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std
 int DropoutNDGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                   const std::vector<KernelTensorPtr> &outputs,
                                   const std::map<uint32_t, tensor::TensorPtr> &) {
+  input_shape_.clear();
   if (int ret = KernelMod::Resize(base_operator, inputs, outputs); ret != KRET_OK) {
     return ret;
   }
@@ -141,8 +143,9 @@ bool DropoutNDGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
   // To generate random float data for every channel.
   CHECK_CURAND_RET_WITH_EXCEPT(curandGenerateUniform(cu_rand_generator_, rand_f, channels_),
                                "For DropoutNDGpuKernelMod failed to generate uniform");
-  DropoutNDForward(input, mask, output, rand_f, input_elements_, keep_prob_, num_per_channel_, device_id_,
-                   reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = DropoutNDForward(input, mask, output, rand_f, input_elements_, keep_prob_, num_per_channel_, device_id_,
+                                 reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

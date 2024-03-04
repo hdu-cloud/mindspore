@@ -41,7 +41,7 @@ mindspore.nn.probability.distribution.Distribution
         重写Cell中的 `construct` 。
 
         .. note::
-            支持的函数包括：'prob'、 'log_prob'、 'cdf'、 'log_cdf'、 'survival_function'、 'log_survival'、 'var'、
+            支持的函数包括： 'prob'、 'log_prob'、 'cdf'、 'log_cdf'、 'survival_function'、 'log_survival'、 'var'、
             'sd'、 'mode'、 'mean'、 'entropy'、 'kl_loss'、 'cross_entropy'、 'sample'、 'get_dist_args'、 'get_dist_type'。
 
         参数：

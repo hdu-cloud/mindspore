@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_CORE_OPS_OP_NAME_H
-#define MINDSPORE_CORE_OPS_OP_NAME_H
+#ifndef MINDSPORE_CORE_OPS_OP_NAME_H_
+#define MINDSPORE_CORE_OPS_OP_NAME_H_
 #include <cstddef>
-
 namespace mindspore::ops {
 constexpr auto kAlpha = "alpha";
 constexpr auto kActivation = "activation";
 constexpr auto kActivationType = "activation_type";
+constexpr auto kActivationChannel = "activation_channel";
 constexpr auto kAttentionQActType = "attention_q_act_type";
 constexpr auto kAttentionKActType = "attention_k_act_type";
 constexpr auto kAttentionVActType = "attention_v_act_type";
@@ -71,6 +71,7 @@ constexpr auto kDepthRadius = "depth_radius";
 constexpr auto kDetectionsPerClass = "detections_per_class";
 constexpr auto kDescending = "descending";
 constexpr auto kDilation = "dilation";
+constexpr auto kDilationSize = "dilation_size";
 constexpr auto kDilations = "dilations";
 constexpr auto kDropout = "dropout";
 constexpr auto kDstT = "dst_t";
@@ -117,6 +118,7 @@ constexpr auto kIoFormat = "io_format";
 constexpr auto kIsScale = "is_scale";
 constexpr auto kIsTraining = "is_training";
 constexpr auto kKeepDims = "keep_dims";
+constexpr auto kIgnoreNan = "ignore_nan";
 constexpr auto kSkipMode = "skip_mode";
 constexpr auto kKeepProb = "keep_prob";
 constexpr auto kPadDimSize = "pad_dim_size";
@@ -156,8 +158,6 @@ constexpr auto kNumElements = "num_elements";
 constexpr auto kNumBits = "num_bits";
 constexpr auto kNumDirections = "num_directions";
 constexpr auto kNumProj = "num_proj";
-constexpr auto kAttentionNumHeads = "head_num";
-constexpr auto kAttentionSizePerHead = "head_size";
 constexpr auto kAttentionFromSeqLen = "from_seq_len";
 constexpr auto kAttentionToSeqLen = "to_seq_len";
 constexpr auto kOffset = "offset";
@@ -180,6 +180,7 @@ constexpr auto kOutQuantized = "out_quantized";
 constexpr auto kMvlgammaP = "mvlgamma_p";
 constexpr auto kP = "p";
 constexpr auto kMargin = "margin";
+constexpr auto kKeepdim = "keepdim";
 constexpr auto kPad = "pad";
 constexpr auto kPadding = "padding";
 constexpr auto kPaddingsElementSize = "paddings_element_size";
@@ -189,6 +190,7 @@ constexpr auto kPadList = "pad_list";
 constexpr auto kPadMode = "pad_mode";
 constexpr auto kPads = "pads";
 constexpr auto kPadSize = "pad_size";
+constexpr auto kPadsSize = "pads_size";
 constexpr auto kPeriodic = "periodic";
 constexpr auto kPooledH = "pooled_h";
 constexpr auto kPooledW = "pooled_w";
@@ -200,6 +202,7 @@ constexpr auto kDivisorOverride = "divisor_override";
 constexpr auto kPostNmsTopn = "post_nms_topn";
 constexpr auto kPower = "power";
 constexpr auto kPreNmsTopn = "pre_nms_topn";
+constexpr auto kPreferAxis = "prefer_axis";
 constexpr auto kRankSize = "rank_size";
 constexpr auto kRatio = "ratio";
 constexpr auto kReduction = "reduction";
@@ -265,6 +268,7 @@ constexpr auto kWindowSize = "window_size";
 constexpr auto kPaddings = "paddings";
 constexpr auto kInput_size = "input_size";
 constexpr auto kHidden_size = "hidden_size";
+constexpr auto kProjection_size = "proj_size";
 constexpr auto kChannelShared = "channel_shared";
 constexpr auto kSlope = "slope";
 constexpr auto kBase = "base";
@@ -281,6 +285,7 @@ constexpr auto kNewHeight = "new_height";
 constexpr auto kNewWidth = "new_width";
 constexpr auto kPreserveAspectRatio = "preserve_aspect_ratio";
 constexpr auto kCoordinateTransformMode = "coordinate_transform_mode";
+constexpr auto kCoordinateTransformationMode = "coordinate_transformation_mode";
 constexpr auto kCubicCoeff = "cubic_coeff";
 constexpr auto kExcludeOutside = "exclude_outside";
 constexpr auto kExtrapolationValue = "extrapolation_value";
@@ -338,6 +343,7 @@ constexpr auto kHalfPixelCenters = "half_pixel_centers";
 constexpr auto kConstant = "constant";
 constexpr auto kReflect = "reflect";
 constexpr auto kEdge = "edge";
+constexpr auto kCircular = "circular";
 constexpr auto kLr = "lr";
 constexpr auto kL1 = "l1";
 constexpr auto kL2 = "l2";
@@ -376,9 +382,36 @@ constexpr auto kSampleNum = "sample_num";
 constexpr auto kRoiEndMode = "roi_end_mode";
 constexpr auto kUpper = "upper";
 constexpr auto kConjugate = "conjugate";
+constexpr auto kScalar = "scalar";
+constexpr auto kNumHeads = "head_num";
+constexpr auto kSizePerHead = "head_size";
+constexpr auto kPostLayernorm = "post_layernorm";
+constexpr auto kFfnHiddenSize = "ffn_hidden_size";
+constexpr auto kExpertNum = "expert_num";
+constexpr auto kExpertOffsetId = "expert_offset_id";
+constexpr auto kCapacityFactor = "capacity_factor";
+constexpr auto kEpsLayerNorm1 = "eps_layernorm1";
+constexpr auto kEpsLayerNorm2 = "eps_layernorm2";
+constexpr auto kEpsLayerNorm3 = "eps_layernorm3";
+constexpr auto kEpsLayerNorm4 = "eps_layernorm4";
+constexpr auto kUsePast = "use_past";
+constexpr auto kQueryLayer = "query_layer";
+constexpr auto kMoe = "moe";
+constexpr auto kPositionBias1 = "position_bias1";
+constexpr auto kPositionBias2 = "position_bias2";
+constexpr auto kLayerNorm = "layer_norm";
+constexpr auto kScale1 = "scale1";
+constexpr auto kScale2 = "scale2";
+constexpr auto kEmbeddingLayer = "embedding_layer";
 constexpr auto KExclusive = "exclusive";
 constexpr auto KReverse = "reverse";
 constexpr auto KComputeEigenvectors = "compute_eigenvectors";
+constexpr auto KCurrChunk = "curr_chunk";
+constexpr auto KCurrChunkIndex = "curr_chunk_index";
+constexpr auto KCurrBitCount = "curr_bit_count";
+constexpr auto KTableLog = "table_log";
+constexpr auto kIgnoreIndex = "ignore_index";
+constexpr auto kLiteQuantAttrName = "quant_params";
 
 constexpr size_t kInputIndex0 = 0;
 constexpr size_t kInputIndex1 = 1;
@@ -406,6 +439,14 @@ constexpr size_t kFormatNC1HWC0IndexC1 = 1;
 constexpr size_t kFormatNC1HWC0IndexH = 2;
 constexpr size_t kFormatNC1HWC0IndexW = 3;
 constexpr size_t kFormatNC1HWC0IndexC0 = 4;
+constexpr int kSize0 = 0;
+constexpr int kSize1 = 1;
+constexpr int kSize2 = 2;
+constexpr int kSize3 = 3;
+constexpr int kSize4 = 4;
+constexpr int kSize5 = 5;
+constexpr int kSize6 = 6;
+constexpr int kSize7 = 7;
 enum Dims : size_t { kDim0 = 0, kDim1, kDim2, kDim3, kDim4, kDim5, kDim6, kDim7, kDim8 };
 }  // namespace mindspore::ops
-#endif  // MINDSPORE_CORE_OPS_OP_NAME_H
+#endif  // MINDSPORE_CORE_OPS_OP_NAME_H_

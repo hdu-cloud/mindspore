@@ -20,8 +20,10 @@
 #include <set>
 
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
 
 namespace mindspore {
@@ -32,7 +34,9 @@ abstract::ShapePtr TrilInferShape(const PrimitivePtr &primitive, const std::vect
   auto prim_name = primitive->name();
 
   const int64_t kShapeSize = 2;
-  auto shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape());
+  auto input_shape = input_args[0];
+  MS_EXCEPTION_IF_NULL(input_shape);
+  auto shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_shape->BuildShape());
   auto x_shape = shape_map[kShape];
   if (IsDynamicRank(x_shape)) {
     return std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
@@ -46,8 +50,10 @@ TypePtr TrilInferType(const PrimitivePtr &primitive, const std::vector<AbstractB
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
 
-  MS_EXCEPTION_IF_NULL(input_args[0]);
-  auto x_type = input_args[0]->BuildType();
+  auto input_shape = input_args[0];
+  MS_EXCEPTION_IF_NULL(input_shape);
+  auto x_type = input_shape->BuildType();
+  MS_EXCEPTION_IF_NULL(x_type);
   std::set<TypePtr> valid_x_types(common_valid_types);
   (void)valid_x_types.emplace(kBool);
   (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_type, valid_x_types, prim_name);
@@ -73,6 +79,24 @@ AbstractBasePtr TrilInfer(const abstract::AnalysisEnginePtr &, const PrimitivePt
 }
 
 MIND_API_OPERATOR_IMPL(Tril, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(Tril, prim::kPrimTril, TrilInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGTrilInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return TrilInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return TrilInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return TrilInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Tril, prim::kPrimTril, AGTrilInfer, false);
 }  // namespace ops
 }  // namespace mindspore

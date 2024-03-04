@@ -15,14 +15,15 @@
  */
 
 #include "ops/dynamic_stitch.h"
+#include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
-#include <map>
-#include <memory>
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/src/helper.h"
 
 namespace mindspore {
 namespace ops {
@@ -170,6 +171,26 @@ AbstractBasePtr DynamicStitchInfer(const abstract::AnalysisEnginePtr &, const Pr
   auto infer_shape = DynamicStitchInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(DynamicStitch, prim::kPrimDynamicStitch, DynamicStitchInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGDynamicStitchInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicStitchInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicStitchInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicStitchInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(DynamicStitch, prim::kPrimDynamicStitch, AGDynamicStitchInfer, false);
 }  // namespace ops
 }  // namespace mindspore

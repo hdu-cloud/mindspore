@@ -18,14 +18,14 @@
 #define MINDSPORE_CCSRC_PLUGIN_DEVICE_GPU_KERNEL_ARRAYS_TOPK_GPU_KERNEL_H_
 
 #include <limits>
-#include <vector>
 #include <map>
 #include <memory>
-#include "plugin/device/gpu/kernel/gpu_kernel.h"
-#include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
+#include <vector>
 #include "ops/topk.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/cast_impl.cuh"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/topk_impl.cuh"
+#include "plugin/device/gpu/kernel/gpu_kernel.h"
+#include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
 
 namespace mindspore {
 namespace kernel {
@@ -43,16 +43,12 @@ class TopKGpuKernelMod : public NativeGpuKernelMod {
     }
 
     T *input_addr = GetDeviceAddress<T>(inputs, 0);
-    S *k = GetDeviceAddress<S>(inputs, 1);
     T *output_addr = GetDeviceAddress<T>(outputs, 0);
     S *indices = GetDeviceAddress<S>(outputs, 1);
 
-    S k_cut = 0;
-    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-      cudaMemcpyAsync(&k_cut, k, sizeof(S), cudaMemcpyDeviceToHost, reinterpret_cast<cudaStream_t>(stream_ptr)),
-      "cudaMemcpyAsync k_cut failed");
-    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaDeviceSynchronize(), "cudaDeviceSyncFailed - TopK");
+    S k_cut = static_cast<S>(k_);
 
+    cudaError_t status = cudaErrorNotReady;
     if (std::is_same<T, half>::value) {
       // remove later! urgent fix for bug: topk has incorrect output for float16
       float init_k = std::numeric_limits<float>::lowest();
@@ -60,24 +56,23 @@ class TopKGpuKernelMod : public NativeGpuKernelMod {
       // cast to float32
       float *casted_float32_input = GetDeviceAddress<float>(workspaces, 0);
       float *casted_float32_top_k_output = GetDeviceAddress<float>(workspaces, 1);
-      Cast(outer_size_ * inner_size_, input_addr, casted_float32_input, reinterpret_cast<cudaStream_t>(stream_ptr),
-           GET_CTX_DEVICE_ID);
+      status =
+        Cast(outer_size_ * inner_size_, input_addr, casted_float32_input, reinterpret_cast<cudaStream_t>(stream_ptr));
+      CHECK_CUDA_STATUS(status, kernel_name_);
 
       // call FastTopK with workspace[n], workspace[n+1] as input, output
-      FastTopK(outer_size_, inner_size_, casted_float32_input, k_cut, casted_float32_top_k_output, indices, init_k,
-               reinterpret_cast<cudaStream_t>(stream_ptr));
+      status = FastTopK(outer_size_, inner_size_, casted_float32_input, k_cut, casted_float32_top_k_output, indices,
+                        init_k, reinterpret_cast<cudaStream_t>(stream_ptr));
+      CHECK_CUDA_STATUS(status, kernel_name_);
 
       // cast workspace[n+1] back to float16
-      Cast(outer_size_ * k_, casted_float32_top_k_output, output_addr, reinterpret_cast<cudaStream_t>(stream_ptr),
-           GET_CTX_DEVICE_ID);
+      status =
+        Cast(outer_size_ * k_, casted_float32_top_k_output, output_addr, reinterpret_cast<cudaStream_t>(stream_ptr));
     } else {
       T init_k = std::numeric_limits<T>::lowest();
-      CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-        cudaMemcpyAsync(&k_cut, k, sizeof(S), cudaMemcpyDeviceToHost, reinterpret_cast<cudaStream_t>(stream_ptr)),
-        "cudaMemcpyAsync k_cut failed");
-      CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaDeviceSynchronize(), "cudaDeviceSyncFailed - TopK");
-      FastTopK(outer_size_, inner_size_, input_addr, k_cut, output_addr, indices, init_k,
-               reinterpret_cast<cudaStream_t>(stream_ptr));
+      status = FastTopK(outer_size_, inner_size_, input_addr, k_cut, output_addr, indices, init_k,
+                        reinterpret_cast<cudaStream_t>(stream_ptr));
+      CHECK_CUDA_STATUS(status, kernel_name_);
     }
     return true;
   }
@@ -101,12 +96,12 @@ class TopKGpuKernelMod : public NativeGpuKernelMod {
 
     is_null_input_ =
       CHECK_SHAPE_NULL(input_shapes, kernel_name_, "input") || CHECK_SHAPE_NULL(output_shapes, kernel_name_, "output");
-    if (is_null_input_) {
-      InitSizeLists();
+    if (input_shapes.empty() || is_null_input_) {
       return KRET_OK;
     }
 
     input_shape_size_ = input_shapes.size();
+    outer_size_ = 1;
     for (size_t i = 0; i < input_shapes.size() - 1; i++) {
       outer_size_ *= LongToSize(input_shapes[i]);
     }

@@ -26,9 +26,7 @@
 namespace mindspore {
 namespace kernel {
 namespace {
-constexpr size_t kNoRepeatNGramDim = 3;
 constexpr size_t kNoRepeatNGramInputNum = 2;
-constexpr int64_t kNoRepeatNGramParamValue = 1;
 }  // namespace
 bool NoRepeatNGramGpuKernelMode::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                       const std::vector<KernelTensorPtr> &outputs) {
@@ -46,8 +44,8 @@ bool NoRepeatNGramGpuKernelMode::Init(const BaseOperatorPtr &base_operator, cons
     MS_LOG(WARNING) << "For '" << kernel_name_ << "' does not support this kernel type: " << kernel_attr;
     return false;
   }
-  state_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  logit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).first);
+  state_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  logit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).dtype);
   kernel_func_ = func_list_[index].second;
 
   return true;
@@ -80,6 +78,9 @@ bool NoRepeatNGramGpuKernelMode::LaunchKernel(const std::vector<AddressPtr> &inp
   StateType *input_state = GetDeviceAddress<StateType>(inputs, kIndex0);
   LogProbType *log_probs = GetDeviceAddress<LogProbType>(inputs, kIndex1);
   LogProbType *output = GetDeviceAddress<LogProbType>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(input_state);
+  MS_EXCEPTION_IF_NULL(log_probs);
+  MS_EXCEPTION_IF_NULL(output);
   auto blocks = batch_size_ * beam_size_;
   auto mem_size = (seq_len_ + 1) * sizeof(StateType);
 
@@ -88,8 +89,9 @@ bool NoRepeatNGramGpuKernelMode::LaunchKernel(const std::vector<AddressPtr> &inp
                     reinterpret_cast<cudaStream_t>(cuda_stream_)),
     "For 'no_repeat_ngram', it launch memcopy failed.");
 
-  CalculateNoRepeatNGram(input_state, log_probs, output, seq_len_, ngram_, device_id_, vocab_size_, blocks, mem_size,
-                         reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = CalculateNoRepeatNGram(input_state, log_probs, output, seq_len_, ngram_, device_id_, vocab_size_,
+                                       blocks, mem_size, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

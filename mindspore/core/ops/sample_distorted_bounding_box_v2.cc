@@ -15,13 +15,28 @@
  */
 
 #include <set>
-#include "ops/sample_distorted_bounding_box_v2.h"
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/image_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "ops/sample_distorted_bounding_box_v2.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,32 +48,44 @@ constexpr auto kUseImage = "use_image_if_no_bounding_boxes";
 
 abstract::TupleShapePtr SampleDistortedBoundingBoxV2InferShape(const PrimitivePtr &primitive,
                                                                const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   const constexpr int64_t kIndex0 = 0;
   const constexpr int64_t kIndex1 = 1;
   const constexpr int64_t kIndex2 = 2;
-  const constexpr int64_t kSize1 = 1;
-  const constexpr int64_t kSize2 = 2;
-  const constexpr int64_t kSize3 = 3;
-  const constexpr int64_t kSize4 = 4;
+  MS_EXCEPTION_IF_NULL(input_args[kInputIndex0]);
+  MS_EXCEPTION_IF_NULL(input_args[kInputIndex1]);
+  MS_EXCEPTION_IF_NULL(input_args[kInputIndex2]);
 
   auto image_size_shape =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
   auto image_size_dim = SizeToLong(image_size_shape.size());
+
   auto bboxes_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
   auto bboxes_dim = SizeToLong(bboxes_shape.size());
+
   auto min_object_covered_shape =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->BuildShape())[kShape];
   auto min_object_covered_dim = SizeToLong(min_object_covered_shape.size());
-  (void)CheckAndConvertUtils::CheckInteger("image_size dimension", image_size_dim, kEqual, kSize1, prim_name);
-  (void)CheckAndConvertUtils::CheckInteger("image_size elements", image_size_shape[kIndex0], kEqual, kSize3, prim_name);
-  (void)CheckAndConvertUtils::CheckInteger("bounding_boxes dimension", bboxes_dim, kEqual, kSize3, prim_name);
-  (void)CheckAndConvertUtils::CheckInteger("elements of each bounding box in bounding_boxes", bboxes_shape[kIndex2],
-                                           kEqual, kSize4, prim_name);
-  (void)CheckAndConvertUtils::CheckInteger("min_object_covered dimension", min_object_covered_dim, kEqual, kSize1,
-                                           prim_name);
-  (void)CheckAndConvertUtils::CheckInteger("min_object_covered elements", min_object_covered_shape[kIndex0], kEqual,
-                                           kSize1, prim_name);
+
+  std::vector<ShapeVector> check_shapes = {image_size_shape, bboxes_shape, min_object_covered_shape};
+  auto is_dynamic = std::any_of(check_shapes.begin(), check_shapes.end(), IsDynamic);
+  auto is_dyn_rank = std::any_of(check_shapes.begin(), check_shapes.end(), IsDynamicRank);
+  if (!is_dyn_rank) {
+    (void)CheckAndConvertUtils::CheckInteger("image_size dimension", image_size_dim, kEqual, kSize1, prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("bounding_boxes dimension", bboxes_dim, kEqual, kSize3, prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("min_object_covered dimension", min_object_covered_dim, kEqual, kSize1,
+                                             prim_name);
+  }
+
+  if (!is_dynamic) {
+    (void)CheckAndConvertUtils::CheckInteger("image_size elements", image_size_shape[kIndex0], kEqual, kSize3,
+                                             prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("elements of each bounding box in bounding_boxes", bboxes_shape[kIndex2],
+                                             kEqual, kSize4, prim_name);
+    (void)CheckAndConvertUtils::CheckInteger("min_object_covered elements", min_object_covered_shape[kIndex0], kEqual,
+                                             kSize1, prim_name);
+  }
 
   auto aspect_ratio_range = GetValue<std::vector<float>>(primitive->GetAttr(kAspectRatioRange));
   auto aspect_ratio_range_dim = aspect_ratio_range.size();
@@ -86,29 +113,30 @@ abstract::TupleShapePtr SampleDistortedBoundingBoxV2InferShape(const PrimitivePt
   }
 
   auto use_image_if_no_bounding_boxes = GetValue<bool>(primitive->GetAttr(kUseImage));
-  if (!use_image_if_no_bounding_boxes) {
-    if (bboxes_shape[kIndex0] == 0 || bboxes_shape[kIndex1] == 0) {
-      MS_EXCEPTION(ValueError) << "For '" << prim_name
-                               << "', batch or N in bounding_boxes whose shape is [batch, N, 4] equals 0, which means "
-                               << "no bounding boxes provided as input. Set use_image_if_no_bounding_boxes=True if you"
-                               << " wish to not provide any bounding boxes.";
-    }
+  if (!use_image_if_no_bounding_boxes && (bboxes_shape[kIndex0] == 0 || bboxes_shape[kIndex1] == 0)) {
+    MS_EXCEPTION(ValueError) << "For '" << prim_name
+                             << "', batch or N in bounding_boxes whose shape is [batch, N, 4] equals 0, which means "
+                             << "no bounding boxes provided as input. Set use_image_if_no_bounding_boxes=True if you"
+                             << " wish to not provide any bounding boxes.";
   }
 
-  std::vector<int64_t> shape, shape_box;
-  shape.push_back(kSize3);
-  shape_box.push_back(kSize1);
-  shape_box.push_back(kSize1);
-  shape_box.push_back(kSize4);
+  std::vector<int64_t> shape = {kSize3};
+  std::vector<int64_t> shape_box = {kSize1, kSize1, kSize4};
   abstract::ShapePtr out_shape = std::make_shared<abstract::Shape>(shape);
   abstract::ShapePtr out_shape_box = std::make_shared<abstract::Shape>(shape_box);
+
   return std::make_shared<abstract::TupleShape>(
     std::vector<abstract::BaseShapePtr>{out_shape, out_shape, out_shape_box});
 }
 
 TuplePtr SampleDistortedBoundingBoxV2InferType(const PrimitivePtr &prim,
                                                const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(prim);
   auto name = prim->name();
+  MS_EXCEPTION_IF_NULL(input_args[kInputIndex0]);
+  MS_EXCEPTION_IF_NULL(input_args[kInputIndex1]);
+  MS_EXCEPTION_IF_NULL(input_args[kInputIndex2]);
+
   const std::set<TypePtr> valid_types1 = {kUInt8, kInt8, kInt16, kInt32, kInt64};
   const std::set<TypePtr> valid_types2 = {kFloat32};
   auto image_size_type = input_args[kInputIndex0]->BuildType();
@@ -174,7 +202,24 @@ AbstractBasePtr SampleDistortedBoundingBoxV2Infer(const abstract::AnalysisEngine
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(SampleDistortedBoundingBoxV2, prim::kPrimSampleDistortedBoundingBoxV2,
-                             SampleDistortedBoundingBoxV2Infer, nullptr, true);
+// AG means auto generated
+class MIND_API AGSampleDistortedBoundingBoxV2Infer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SampleDistortedBoundingBoxV2InferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SampleDistortedBoundingBoxV2InferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SampleDistortedBoundingBoxV2Infer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SampleDistortedBoundingBoxV2, prim::kPrimSampleDistortedBoundingBoxV2,
+                                 AGSampleDistortedBoundingBoxV2Infer, false);
 }  // namespace ops
 }  // namespace mindspore

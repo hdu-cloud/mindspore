@@ -27,7 +27,7 @@ using complex64 = std::complex<float>;
 using complex128 = std::complex<double>;
 static constexpr size_t INPUT_NUM = 2;
 static constexpr size_t OUTPUT_NUM = 1;
-static constexpr int MAX_DIMS = 7;
+static constexpr int MAX_DIMS = 8;
 static constexpr size_t PARALLEL_THRESHOLD = 4096;
 template <typename T>
 T GetDivZeroVal(const T &v) {
@@ -45,52 +45,23 @@ complex64 GetDivZeroVal(const complex64 &) {
   return std::numeric_limits<complex64>::quiet_NaN();
 }
 
-template <class T>
-bool isZero(const T &val) {
-  return val == T(0.0f);
-}
-
-template <>
-bool isZero(const float &val) {
-  return std::fpclassify(val) == FP_ZERO;
-}
-
-template <>
-bool isZero(const double &val) {
-  return std::fpclassify(val) == FP_ZERO;
-}
-
 template <typename T>
-void SameShapeTask(T *x_addr, T *y_addr, T *output_addr, size_t start, size_t end) {
-  for (size_t i = start; i < end; i++) {
-    auto dividend = x_addr[i];
-    auto divisor = y_addr[i];
-    if (isZero(divisor)) {
-      if (isZero(dividend)) {
-        output_addr[i] = static_cast<T>(0.0);
-        continue;
-      }
-      output_addr[i] = GetDivZeroVal(dividend);
-      continue;
-    }
-    output_addr[i] = dividend / divisor;
-  }
+void XDivySameShapeTask(T *x_addr, T *y_addr, T *output_addr, size_t start, size_t end) {
+  Eigen::Map<Eigen::Array<T, -1, 1>> x_v(x_addr + start, end - start);
+  Eigen::Map<Eigen::Array<T, -1, 1>> y_v(y_addr + start, end - start);
+  Eigen::Map<Eigen::Array<T, -1, 1>> o_v(output_addr + start, end - start);
+  o_v = (x_v == T(0)).select(T(0), x_v / y_v);
 }
 
 template <>
-void SameShapeTask(float *x_addr, float *y_addr, float *output_addr, size_t start, size_t end) {
-  Eigen::Map<Eigen::ArrayXf> x_v(x_addr + start, end - start);
-  Eigen::Map<Eigen::ArrayXf> y_v(y_addr + start, end - start);
-  Eigen::Map<Eigen::ArrayXf> o_v(output_addr + start, end - start);
-  o_v = (x_v == 0).select(o_v, x_v / y_v);
-}
-
-template <>
-void SameShapeTask(double *x_addr, double *y_addr, double *output_addr, size_t start, size_t end) {
-  Eigen::Map<Eigen::ArrayXd> x_v(x_addr + start, end - start);
-  Eigen::Map<Eigen::ArrayXd> y_v(y_addr + start, end - start);
-  Eigen::Map<Eigen::ArrayXd> o_v(output_addr + start, end - start);
-  o_v = (x_v == 0).select(o_v, x_v / y_v);
+void XDivySameShapeTask(float16 *x_addr, float16 *y_addr, float16 *output_addr, size_t start, size_t end) {
+  Eigen::half *ex_addr = reinterpret_cast<Eigen::half *>(x_addr);
+  Eigen::half *ey_addr = reinterpret_cast<Eigen::half *>(y_addr);
+  Eigen::half *eo_addr = reinterpret_cast<Eigen::half *>(output_addr);
+  Eigen::Map<Eigen::Array<Eigen::half, -1, 1>> x_v(ex_addr + start, end - start);
+  Eigen::Map<Eigen::Array<Eigen::half, -1, 1>> y_v(ey_addr + start, end - start);
+  Eigen::Map<Eigen::Array<Eigen::half, -1, 1>> o_v(eo_addr + start, end - start);
+  o_v = (x_v == Eigen::half(0)).select(Eigen::half(0), x_v / y_v);
 }
 
 template <typename T>
@@ -107,14 +78,12 @@ bool XdivyCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inpu
   auto output_addr = static_cast<T *>(outputs[0]->addr);
   size_t output_size = outputs[0]->size / sizeof(T);
   auto sameShapeTask = [&x_addr, &y_addr, &output_addr](size_t start, size_t end) {
-    SameShapeTask(x_addr, y_addr, output_addr, start, end);
+    XDivySameShapeTask(x_addr, y_addr, output_addr, start, end);
   };
   auto diffShapeTask = [this, &x_addr, &y_addr, &output_addr](size_t start, size_t end) {
     for (size_t i = start; i < end; i++) {
-      auto idxX = index_listx_[i];
-      auto idxY = index_listy_[i];
-      auto dividend = x_addr[idxX];
-      auto divisor = y_addr[idxY];
+      auto dividend = x_addr[index_listx_[i]];
+      auto divisor = y_addr[index_listy_[i]];
       auto zero = static_cast<T>(0);
       if (divisor == zero) {
         if (dividend == zero) {

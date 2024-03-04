@@ -18,8 +18,12 @@
 #define MINDSPORE_LITE_TOOLS_GRAPH_KERNEL_COMMON_UTILS_H_
 #include <vector>
 #include <string>
+#include <memory>
 #include "nnacl/tensor_c.h"
+#include "mindspore/ccsrc/kernel/kernel_build_info.h"
+#include "include/backend/kernel_info.h"
 
+constexpr auto kAkgKernelSo = "akgkernels.so";
 namespace mindspore::graphkernel {
 std::vector<std::string> SplitString(const std::string &raw_str, char delimiter);
 
@@ -30,5 +34,10 @@ int CalculateDynamicBatchSize(const TensorC *const *inputs, size_t inputs_size,
                               int *batch);
 void GetCustomIndex(const std::string &dynamic_input_index, std::vector<size_t> *index);
 int GetCustomShape(const std::string &attr, std::vector<std::vector<int>> *shapes);
+void SetKernelInfoWithFormatToAnfNode(const AnfNodePtr &node, const std::vector<std::string> &format);
+kernel::KernelBuildInfoPtr GetKernelInfo(const AnfNodePtr &node);
+void SetAnfKernelInfoFormatFromAToB(const AnfNodePtr &node_a, const CNodePtr &node_b,
+                                    const std::vector<std::string> &formats);
+std::string GetOutputFormatFromAnfNode(const AnfNodePtr &node, size_t output_idx);
 }  // namespace mindspore::graphkernel
 #endif  // MINDSPORE_LITE_TOOLS_GRAPH_KERNEL_COMMON_UTILS_H_

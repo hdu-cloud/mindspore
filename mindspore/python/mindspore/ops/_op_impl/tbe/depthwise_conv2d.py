@@ -16,16 +16,16 @@
 """DepthwiseConv2D op"""
 from mindspore.ops.op_info_register import op_info_register, TBERegOp, DataType
 
-depthwise_conv2d_op_info = TBERegOp("DepthwiseConv2dNative") \
+depthwise_conv2d_op_info = TBERegOp("DepthwiseConv2D") \
     .fusion_type("CONVOLUTION") \
     .async_flag(False) \
     .binfile_name("depthwise_conv2d.so") \
     .compute_cost(10) \
     .kernel_name("depthwise_conv2d") \
     .partial_flag(True) \
-    .attr("stride", "required", "listInt", "all") \
-    .attr("dilation", "required", "listInt", "all") \
-    .attr("pad_list", "required", "listInt", "all") \
+    .attr("stride", "required", "listInt", "all", "[]") \
+    .attr("dilation", "required", "listInt", "all", "[]") \
+    .attr("pad_list", "required", "listInt", "all", "[]") \
     .attr("format", "required", "str", "all") \
     .attr("offset_a", "optional", "int", "all", "0") \
     .input(0, "x", False, "required", "all") \
@@ -33,7 +33,7 @@ depthwise_conv2d_op_info = TBERegOp("DepthwiseConv2dNative") \
     .input(2, "bias", False, "optional", "all") \
     .input(3, "offset_w", False, "optional", "all") \
     .output(0, "y", True, "required", "all") \
-    .dtype_format(DataType.F16_5HD, DataType.F16_FracZ, DataType.F16_Default, DataType.F16_Default,
+    .dtype_format(DataType.F16_5HD, DataType.F16_C1HWNCoC0, DataType.F16_Default, DataType.F16_Default,
                   DataType.F16_5HD) \
     .get_op_info()
 

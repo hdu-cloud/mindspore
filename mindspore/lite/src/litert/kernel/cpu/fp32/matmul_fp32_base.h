@@ -39,6 +39,7 @@ class MatmulFp32BaseCPUKernel : public LiteKernel {
                           const std::vector<lite::Tensor *> &outputs, const mindspore::lite::InnerContext *ctx)
       : LiteKernel(parameter, inputs, outputs, ctx) {
     params_ = reinterpret_cast<MatMulParameter *>(op_parameter_);
+    params_->matmul_type_ = kMatmulFp32BaseCpu;
   }
   ~MatmulFp32BaseCPUKernel() override;
   int Prepare() override;
@@ -55,11 +56,28 @@ class MatmulFp32BaseCPUKernel : public LiteKernel {
   static int InitBroadcastParams(const std::vector<int> &a_shape_const, const std::vector<int> &b_shape_const,
                                  MatMulParameter *params, std::vector<int> *a_offsets, std::vector<int> *b_offsets);
   int PackMatrixBParallelRunByBatch(int task_id) const;
+  inline void SetSharingPack(bool is_sharing) { is_sharing_pack_ = is_sharing; }
 
   using ParallelRun = int (MatmulFp32BaseCPUKernel::*)(int task_id) const;
   ParallelRun parallel_fun_ = nullptr;
+  void SetRunByGEMM() { parallel_fun_ = &MatmulFp32BaseCPUKernel::ParallelRunByGEMM; }
+  void SetRunByGEPDOT() { parallel_fun_ = &MatmulFp32BaseCPUKernel::ParallelRunByGEPDOT; }
+  void SetRunByGEPM() { parallel_fun_ = &MatmulFp32BaseCPUKernel::ParallelRunByGEPM; }
+  void SetRunByBatchColRowGEMM() { parallel_fun_ = &MatmulFp32BaseCPUKernel::ParallelRunByBatchColRowGEMM; }
+  void SetRunByRow1Deep1GEPDOT() { parallel_fun_ = &MatmulFp32BaseCPUKernel::ParallelRunByRow1Deep1GEPDOT; }
 
- private:
+  virtual int ParallelRunByGEMM(int task_id) const { return RET_ERROR; }
+  virtual int ParallelRunByGEPDOT(int task_id) const { return RET_ERROR; }
+  virtual int ParallelRunByGEPM(int task_id) const { return RET_ERROR; }
+  virtual int ParallelRunByBatchColRowGEMM(int task_id) const { return RET_ERROR; }
+  virtual int ParallelRunByRow1Deep1GEPDOT(int task_id) const { return RET_ERROR; }
+  virtual int GetThreadCuttingPolicy();
+
+  const float *GetPackBPtr() const { return matrix_b_.pack_ptr; }
+  const int GetBBatch() const { return b_batch_; }
+  void SetWeightIsPacked(bool weight_is_packed) { this->weight_is_packed_ = weight_is_packed; }
+
+ public:
   struct MatrixInfo {
     bool need_pack{false};
     bool has_packed{false};  // only valid for constant, only do once throughout the process.
@@ -72,6 +90,7 @@ class MatmulFp32BaseCPUKernel : public LiteKernel {
   virtual int ParallelRunByRow(int task_id) const;
   virtual int ParallelRunByOC(int task_id) const;
   virtual int ParallelRunByBatch(int task_id) const;
+  virtual int ParallelRunByAllScene(int task_id) const { return RET_ERROR; }
   int ParallelRunIsNotPackByBatch(int task_id) const;
   int BackupConstMatrix(MatrixInfo *matrix_info, int index);
   virtual void InitGlobalVariable();
@@ -85,9 +104,8 @@ class MatmulFp32BaseCPUKernel : public LiteKernel {
   int PackBiasMatrix();
   void FreePackedMatrixA();
   void FreePackedMatrixB();
-  int InitParameter();
+  virtual int InitParameter();
   int InitTmpOutBuffer();
-  int GetThreadCuttingPolicy();
   virtual bool CheckThreadCuttingByRow();
   void GetThreadCuttingInfoByRow();
   void InitShapeA();
@@ -111,11 +129,13 @@ class MatmulFp32BaseCPUKernel : public LiteKernel {
   int row_num_;
   int row_min_unit_{1};
   int col_min_unit_{1};
-  int thread_count_ = 0;
   float *output_data_ = nullptr;
   bool out_need_aligned_ = false;
   int col_step_ = 0;
   std::vector<int> split_points_;
+  std::vector<int> col_split_points_;
+  std::vector<int> row_split_points_;
+  int block_col_unit_ = 0;
   MatrixInfo matrix_a_;
   MatrixInfo matrix_b_;
   MatrixInfo matrix_c_;
@@ -124,6 +144,8 @@ class MatmulFp32BaseCPUKernel : public LiteKernel {
   MatrixPackFun matrix_b_pack_fun_ = nullptr;
   float *conv1x1_origin_weight_ = nullptr;
   float *conv1x1_origin_bias_ = nullptr;
+  bool is_sharing_pack_ = true;
+  bool weight_is_packed_{false};
 };
 }  // namespace mindspore::kernel
 #endif  // MINDSPORE_LITE_SRC_RUNTIME_KERNEL_CPU_FP32_MATMUL_FP32_BASE_H_

@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,14 +17,12 @@
 #include "plugin/device/ascend/kernel/tbe/tbe_kernel_build.h"
 #include <memory>
 #include <map>
-#include "mindspore/core/ops/core_ops.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_convert_utils.h"
 #include "utils/ms_context.h"
 #include "runtime/dev.h"
 #include "utils/convert_utils_base.h"
-#include "utils/ms_utils.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_json/tbe_json_utils.h"
 namespace mindspore {
 namespace kernel {
@@ -48,7 +46,7 @@ void GetRealInputSize(const nlohmann::json &input_json, std::vector<size_t> *inp
       if (input_json[kJShape][j] == -1) {
         auto input_max_shape = input_json[kJRange];
         if (j >= input_max_shape.size()) {
-          MS_LOG(EXCEPTION) << "Invalid Dynamic Shape Max Shape";
+          MS_LOG(INTERNAL_EXCEPTION) << "Invalid Dynamic Shape Max Shape";
         }
         if (input_max_shape[j][kMaxShapeIdx] == -1) {
           MS_LOG(INFO) << "Change -1 Shape to 1";
@@ -109,7 +107,7 @@ void GetRealOutputSize(const nlohmann::json &output_json, std::vector<size_t> *o
       if (output_json[kJShape][j] == -1) {
         auto output_max_shape = output_json[kJRange];
         if (j >= output_max_shape.size()) {
-          MS_LOG(EXCEPTION) << "Invalid Dynamic Shape Max Shape";
+          MS_LOG(INTERNAL_EXCEPTION) << "Invalid Dynamic Shape Max Shape";
         }
         if (output_max_shape[j][kMaxShapeIdx] == -1) {
           MS_LOG(INFO) << "Change -1 Shape to 1";

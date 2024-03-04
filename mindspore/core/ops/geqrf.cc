@@ -17,24 +17,37 @@
 
 #include <algorithm>
 #include <memory>
-#include <map>
 #include <set>
-#include <string>
 #include <vector>
 
-#include "mindapi/ir/type.h"
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
-#include "utils/anf_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
+#include "utils/ms_context.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::TupleShapePtr GeqrfInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
-  const size_t kTwo = 2;
+  const int64_t kTwo = 2;
   const std::vector<int64_t> UNKNOWN_RANK = {-2};
+  MS_EXCEPTION_IF_NULL(primitive);
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, 1, primitive->name());
   auto a_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
   if (IsDynamicRank(a_shape) || IsDynamic(a_shape)) {
     ShapeVector dyn_shape{UNKNOWN_RANK};
@@ -44,15 +57,22 @@ abstract::TupleShapePtr GeqrfInferShape(const PrimitivePtr &primitive, const std
     return std::make_shared<abstract::TupleShape>(shape_tuple);
   }
   auto ndim = a_shape.size();
-  (void)CheckAndConvertUtils::CheckInteger("ndim", ndim, kGreaterEqual, kTwo, primitive->name());
+  auto context_ptr = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context_ptr);
+  auto is_ascend = (context_ptr->get_param<std::string>(MS_CTX_DEVICE_TARGET) == kAscendDevice);
+  if (is_ascend) {
+    (void)CheckAndConvertUtils::CheckInteger("ndim", SizeToLong(ndim), kEqual, kTwo, primitive->name());
+  } else {
+    (void)CheckAndConvertUtils::CheckInteger("ndim", SizeToLong(ndim), kGreaterEqual, kTwo, primitive->name());
+  }
   auto m = a_shape[ndim - 2];
   auto n = a_shape[ndim - 1];
   auto p = std::min(m, n);
   std::vector<int64_t> tau_shape;
-  for (size_t i = 0; i < ndim - kDim2; i++) {
-    tau_shape.emplace_back(a_shape[i]);
+  for (size_t i = 0; i < ndim - static_cast<size_t>(kDim2); i++) {
+    (void)tau_shape.emplace_back(a_shape[i]);
   }
-  tau_shape.emplace_back(p);
+  (void)tau_shape.emplace_back(p);
 
   std::vector<abstract::BaseShapePtr> shape_tuple;
   (void)shape_tuple.emplace_back(std::make_shared<abstract::Shape>(a_shape));
@@ -61,6 +81,8 @@ abstract::TupleShapePtr GeqrfInferShape(const PrimitivePtr &primitive, const std
 }
 
 TypePtr GeqrfInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(prim);
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, 1, prim->name());
   auto infer_type = input_args[kInputIndex0]->BuildType();
   MS_EXCEPTION_IF_NULL(infer_type);
   const std::set<TypePtr> valid_types = {kFloat32, kFloat64, kComplex64, kComplex128};
@@ -73,16 +95,30 @@ TypePtr GeqrfInferType(const PrimitivePtr &prim, const std::vector<AbstractBaseP
 
 AbstractBasePtr GeqrfInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                            const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  const int64_t kInputsNum = 1;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputsNum, primitive->name());
-
   auto infer_type = GeqrfInferType(primitive, input_args);
   auto infer_shape = GeqrfInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
 MIND_API_OPERATOR_IMPL(Geqrf, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(Geqrf, prim::kPrimGeqrf, GeqrfInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGGeqrfInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return GeqrfInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return GeqrfInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return GeqrfInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Geqrf, prim::kPrimGeqrf, AGGeqrfInfer, false);
 }  // namespace ops
 }  // namespace mindspore

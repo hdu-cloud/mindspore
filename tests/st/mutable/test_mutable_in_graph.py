@@ -1,4 +1,4 @@
-# Copyright 2022 Huawei Technologies Co., Ltd
+# Copyright 2022-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
 # limitations under the License.
 # ============================================================================
 """test the feature of mutable in graph"""
+import os
 import numpy as np
 import pytest
 import mindspore.nn as nn
@@ -38,7 +39,7 @@ def compare(a, b):
     return np.allclose(a.asnumpy(), b)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_cal_mutable_tensor():
@@ -80,7 +81,7 @@ def test_cal_mutable_tensor():
     assert np.allclose(output.asnumpy(), expect_output.asnumpy())
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_grad_const_tensor_to_mutable():
@@ -133,7 +134,7 @@ def test_grad_const_tensor_to_mutable():
     assert np.allclose(output.asnumpy(), expect_output)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_grad_const_tensor_arg_to_mutable():
@@ -171,7 +172,7 @@ def test_grad_const_tensor_arg_to_mutable():
     assert np.allclose(output.asnumpy(), expect_output)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_grad_const_tuple_tensor_to_mutable():
@@ -231,7 +232,7 @@ def test_grad_const_tuple_tensor_to_mutable():
     assert compare(output, expect)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_grad_const_list_tensor_to_mutable():
@@ -278,7 +279,7 @@ def test_grad_const_list_tensor_to_mutable():
 
     grad_net = GradNetWrtX(Net())
     output = grad_net()
-    assert isinstance(output, tuple)
+    assert isinstance(output, list)
     expect = [np.array([[1.4100001, 1.5999999, 6.6],
                         [1.4100001, 1.5999999, 6.6]]).astype(np.float32),
               np.array([[1.7, 1.7, 1.7],
@@ -287,11 +288,11 @@ def test_grad_const_list_tensor_to_mutable():
     assert compare(output, expect)
     grad_net = GradNetWrtX1(Net())
     output = grad_net()
-    assert isinstance(output, tuple)
+    assert isinstance(output, list)
     assert compare(output, expect)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_grad_const_tuple_or_list_tensor_arg_to_mutable():
@@ -337,7 +338,7 @@ def test_grad_const_tuple_or_list_tensor_arg_to_mutable():
     x = [Tensor([[0.5, 0.6, 0.4], [1.2, 1.3, 1.1]], dtype=mstype.float32),
          Tensor([[0.01, 0.3, 1.1], [0.1, 0.2, 1.3], [2.1, 1.2, 3.3]], dtype=mstype.float32)]
     output = grad_net(x)
-    assert isinstance(output, tuple)
+    assert isinstance(output, list)
     expect = [np.array([[1.4100001, 1.5999999, 6.6],
                         [1.4100001, 1.5999999, 6.6]]).astype(np.float32),
               np.array([[1.7, 1.7, 1.7],
@@ -346,7 +347,7 @@ def test_grad_const_tuple_or_list_tensor_arg_to_mutable():
     assert compare(output, expect)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_grad_const_list_and_tuple_tensor_to_mutable():
@@ -396,7 +397,7 @@ def test_grad_const_list_and_tuple_tensor_to_mutable():
 
     grad_net = GradNetWrtX(Net())
     output = grad_net()
-    assert isinstance(output, tuple)
+    assert isinstance(output, list)
     expect = [(np.array([[1.4100001, 1.5999999, 6.6],
                          [1.4100001, 1.5999999, 6.6]]).astype(np.float32),
                np.array([[0.00000000e+00, 0.00000000e+00, 0.00000000e+00],
@@ -407,12 +408,14 @@ def test_grad_const_list_and_tuple_tensor_to_mutable():
     assert compare(output, expect)
     grad_net = GradNetWrtX1(Net())
     output = grad_net()
-    assert isinstance(output, tuple)
+    assert isinstance(output, list)
     assert compare(output, expect)
 
 
-@pytest.mark.level0
-@pytest.mark.platform_x86_cpu
+@pytest.mark.level1
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
 def test_grad_const_dict_tensor_to_mutable():
     """
@@ -458,21 +461,27 @@ def test_grad_const_dict_tensor_to_mutable():
 
     grad_net = GradNetWrtX(Net())
     output = grad_net()
-    assert isinstance(output, tuple)
     expect = [np.array([[1.4100001, 1.5999999, 6.6],
                         [1.4100001, 1.5999999, 6.6]]).astype(np.float32),
               np.array([[1.7, 1.7, 1.7],
                         [1.9, 1.9, 1.9],
                         [1.5, 1.5, 1.5]]).astype(np.float32)]
-    assert compare(output, expect)
+    assert isinstance(output, dict)
+    assert len(output.keys()) == 2
+    assert compare(output['a'], expect[0])
+    assert compare(output['b'], expect[1])
     grad_net = GradNetWrtX1(Net())
     output = grad_net()
-    assert isinstance(output, tuple)
-    assert compare(output, expect)
+    assert isinstance(output, dict)
+    assert len(output.keys()) == 2
+    assert compare(output['a'], expect[0])
+    assert compare(output['b'], expect[1])
 
 
-@pytest.mark.level0
-@pytest.mark.platform_x86_cpu
+@pytest.mark.level1
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
 def test_grad_const_dict_tensor_arg_to_mutable():
     """
@@ -506,16 +515,18 @@ def test_grad_const_dict_tensor_arg_to_mutable():
          'b': Tensor([[0.01, 0.3, 1.1], [0.1, 0.2, 1.3], [2.1, 1.2, 3.3]], dtype=mstype.float32)}
     grad_net = GradNetWrtX(Net())
     output = grad_net(x)
-    assert isinstance(output, tuple)
     expect = [np.array([[1.4100001, 1.5999999, 6.6],
                         [1.4100001, 1.5999999, 6.6]]).astype(np.float32),
               np.array([[1.7, 1.7, 1.7],
                         [1.9, 1.9, 1.9],
                         [1.5, 1.5, 1.5]]).astype(np.float32)]
-    assert compare(output, expect)
+    assert isinstance(output, dict)
+    assert len(output.keys()) == 2
+    assert compare(output['a'], expect[0])
+    assert compare(output['b'], expect[1])
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_grad_const_dict_and_tuple_tensor_to_mutable():
@@ -563,8 +574,10 @@ def test_grad_const_dict_and_tuple_tensor_to_mutable():
             gradient_function = self.grad_op(self.net)
             return gradient_function(self.x)
 
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     grad_net = GradNetWrtX(Net())
     output = grad_net()
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
     assert isinstance(output, tuple)
     expect = [(np.array([[1.4100001, 1.5999999, 6.6],
                          [1.4100001, 1.5999999, 6.6]]).astype(np.float32),
@@ -574,13 +587,15 @@ def test_grad_const_dict_and_tuple_tensor_to_mutable():
                         [1.9, 1.9, 1.9],
                         [1.5, 1.5, 1.5]]).astype(np.float32)]
     assert compare(output, expect)
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     grad_net = GradNetWrtX1(Net())
     output = grad_net()
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
     assert isinstance(output, tuple)
     assert compare(output, expect)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_grad_const_dict_and_tuple_tensor_arg_to_mutable():
@@ -612,11 +627,13 @@ def test_grad_const_dict_and_tuple_tensor_arg_to_mutable():
             gradient_function = self.grad_op(self.net)
             return gradient_function(mutable(x))
 
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     x = {'a': (Tensor([[0.5, 0.6, 0.4], [1.2, 1.3, 1.1]], dtype=mstype.float32),
                Tensor([[0.5, 0.6, 4.0], [1.2, 1.3, 1.1]], dtype=mstype.float32)),
          'b': Tensor([[0.01, 0.3, 1.1], [0.1, 0.2, 1.3], [2.1, 1.2, 3.3]], dtype=mstype.float32)}
     grad_net = GradNetWrtX(Net())
     output = grad_net(x)
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
     assert isinstance(output, tuple)
     expect = [(np.array([[1.4100001, 1.5999999, 6.6],
                          [1.4100001, 1.5999999, 6.6]]).astype(np.float32),
@@ -628,6 +645,9 @@ def test_grad_const_dict_and_tuple_tensor_arg_to_mutable():
     assert compare(output, expect)
 
 
+@pytest.mark.level1
+@pytest.mark.platform_x86_cpu
+@pytest.mark.env_onecard
 def test_grad_mutable_in_primal():
     """
     Feature: Support mutable in graph.
@@ -662,3 +682,24 @@ def test_grad_mutable_in_primal():
     expect_output = np.array([[1.4100001, 1.5999999, 6.6],
                               [1.4100001, 1.5999999, 6.6]]).astype(np.float32)
     assert np.allclose(output.asnumpy(), expect_output)
+
+
+@pytest.mark.level0
+@pytest.mark.platform_x86_cpu
+@pytest.mark.env_onecard
+def test_mutable_empty_list():
+    """
+    Feature: Support mutable in graph.
+    Description: Support empty list with mutable.
+    Expectation: Get the correct gradients.
+    """
+    class Net(nn.Cell):
+        def construct(self, x, index):
+            list_out = x[:index]
+            return list_out
+
+    x = mutable([])
+    index = mutable(3)
+    net = Net()
+    out = net(x, index)
+    assert out == []

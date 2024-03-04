@@ -21,6 +21,7 @@ message RegistrationMessage {
   string node_id = 1;
   string host_name = 2;
   string role = 3;
+  string host_ip = 4;
 }
 
 message RegistrationRespMessage {
@@ -53,4 +54,14 @@ message ActorAddress {
   string actor_id = 1;
   string ip = 2;
   uint32 port = 3;
+  uint32 func_id = 4;
+}
+
+message PortRange {
+  uint32 min_port = 1;
+  uint32 max_port = 2;
+}
+
+message NodePortRanges {
+  map<string, PortRange> data = 1;
 }

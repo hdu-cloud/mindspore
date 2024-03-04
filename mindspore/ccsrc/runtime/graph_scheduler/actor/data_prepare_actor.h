@@ -47,7 +47,8 @@ class DataPrepareActor : public DebugAwareActor {
         strategy_(GraphExecutionStrategy::kPipeline),
         real_strategy_(GraphExecutionStrategy::kPipeline),
         host_data_source_actor_(host_data_source_actor),
-        host_tensor_queue_(host_tensor_queue) {}
+        host_tensor_queue_(host_tensor_queue),
+        value_node_prepared_(false) {}
   ~DataPrepareActor() override = default;
 
   // The process entry of data prepare.
@@ -62,7 +63,7 @@ class DataPrepareActor : public DebugAwareActor {
   void SendMemoryAllocReq(OpContext<DeviceTensor> *const context) override;
   void OnMemoryAllocFinish(OpContext<DeviceTensor> *const context) override;
 
-  const std::map<std::pair<CNodePtr, DeviceContext *>, std::pair<bool, bool>> &continuous_memory_nodes() const {
+  const std::map<std::pair<CNodePtr, const DeviceContext *>, std::pair<bool, bool>> &continuous_memory_nodes() const {
     return continuous_memory_nodes_;
   }
 
@@ -78,7 +79,7 @@ class DataPrepareActor : public DebugAwareActor {
   void UpdateDynamicShape(const AnfNodePtr &input_node, const TensorPtr &input_tensor) const;
 
   void UpdateDeviceAddressForDataNode(const AnfNodePtr &input_node, const TensorPtr &input_tensor,
-                                      const KernelGraphPtr &graph, const DeviceContext *device_context);
+                                      const KernelGraphPtr &graph);
 
   void PrepareDataForDeviceTensorStore(const std::vector<std::vector<TensorPtr>> &input_tensors,
                                        OpContext<DeviceTensor> *const context);
@@ -91,6 +92,8 @@ class DataPrepareActor : public DebugAwareActor {
   // Prepare the device data for persistent device tensor of value node.
   void PrepareDataForValueNode(const ValueNodePtr &node, const AnfNodePtr &front_node,
                                const DeviceContext *device_context, OpContext<DeviceTensor> *const context) const;
+  void PrepareDataForStringValue(const ValueNodePtr &node, size_t index, const AnfNodePtr &front_node,
+                                 const DeviceContext *device_context, OpContext<DeviceTensor> *const context) const;
   //  The branch processing of PrepareDataForValueNode that value type is tensor.
   void PrepareDataForValueNodeTensor(const ValueNodePtr &node, const ValuePtr &node_value, const AnfNodePtr &front_node,
                                      const DeviceContext *device_context, OpContext<DeviceTensor> *const context) const;
@@ -126,7 +129,7 @@ class DataPrepareActor : public DebugAwareActor {
   // The nodes need continuous memory, which must allocate in the begin of step running. The first bool of pair
   // expresses the inputs of node need continuous memory, the second bool of pair expresses the outputs of node need
   // continuous memory.
-  std::map<std::pair<CNodePtr, DeviceContext *>, std::pair<bool, bool>> continuous_memory_nodes_;
+  std::map<std::pair<CNodePtr, const DeviceContext *>, std::pair<bool, bool>> continuous_memory_nodes_;
   // The members for continuous memory alloc fetched by continuous_memory_nodes_.
   std::vector<std::vector<DeviceTensorPtr>> continuous_memory_alloc_list_list_;
   std::vector<std::vector<size_t>> size_list_list_;
@@ -134,8 +137,9 @@ class DataPrepareActor : public DebugAwareActor {
   std::vector<const DeviceContext *> continuous_memory_device_contexts_;
   std::vector<std::vector<TensorPtr>> init_tensors_;
 
-  // Record the address modified input ndoes to refresh the ref node.
+  // Record the address modified input nodes to refresh the ref node.
   std::set<AnfNode *> address_modified_input_nodes_;
+  bool value_node_prepared_;
 };  // namespace runtime
 
 using DataPrepareActorPtr = std::shared_ptr<DataPrepareActor>;

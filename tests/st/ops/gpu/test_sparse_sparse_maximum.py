@@ -24,10 +24,10 @@ import mindspore.ops.operations.sparse_ops as P
 class SparseSparseMaximumNet(nn.Cell):
     def __init__(self):
         super(SparseSparseMaximumNet, self).__init__()
-        self.sparsesparsemaximum = P.SparseSparseMaximum()
+        self.sparse_sparse_maximum = P.SparseSparseMaximum()
 
     def construct(self, x1_indices, x1_values, x1_shape, x2_indices, x2_values, x2_shape):
-        return self.sparsesparsemaximum(x1_indices, x1_values, x1_shape, x2_indices, x2_values, x2_shape)
+        return self.sparse_sparse_maximum(x1_indices, x1_values, x1_shape, x2_indices, x2_values, x2_shape)
 
 
 def sparse_sparse_maximum(loss):
@@ -65,7 +65,7 @@ def sparse_sparse_maximum_pynative(loss):
     assert np.allclose(n.asnumpy(), expected_n, loss1, loss1)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_sparse_sparse_maximum_graph_float32():
@@ -77,7 +77,7 @@ def test_sparse_sparse_maximum_graph_float32():
     sparse_sparse_maximum(loss=1.0e-4)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_sparse_sparse_maximum_pynative_float32():

@@ -15,14 +15,34 @@
  */
 
 #include "ops/affine_grid.h"
+
 #include <memory>
-#include <string>
 #include <set>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include <string>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -49,8 +69,7 @@ abstract::ShapePtr AffineGridInferShape(const PrimitivePtr &primitive, const std
   (void)CheckAndConvertUtils::CheckInteger("rank of 'theta'", theta_rank, kEqual, RANK_THETA, prim_name);
   auto output_size_arg = input_args[kInputIndex1];
   auto output_size_value_ptr = output_size_arg->BuildValue();
-  if ((output_size_arg->isa<abstract::AbstractTuple>() && output_size_value_ptr->isa<ValueTuple>()) ||
-      (output_size_arg->isa<abstract::AbstractTensor>() && output_size_value_ptr->isa<tensor::Tensor>())) {
+  if (IsValueKnown(output_size_value_ptr)) {
     ShapeVector output_size_val;
     if (output_size_value_ptr->isa<ValueTuple>()) {
       output_size_val = CheckAndConvertUtils::CheckTupleInt("input[output_size]", output_size_value_ptr, prim_name);
@@ -95,7 +114,7 @@ abstract::ShapePtr AffineGridInferShape(const PrimitivePtr &primitive, const std
                                << "and the size of 'output_size' is " << output_size_val_size << ".";
     }
     return std::make_shared<abstract::Shape>(grid_shape);
-  } else if (output_size_arg->isa<abstract::AbstractTensor>()) {
+  } else if (output_size_arg->isa<abstract::AbstractTensor>() || output_size_arg->isa<abstract::AbstractTuple>()) {
     ShapeVector grid_shape = {-2};
     return std::make_shared<abstract::Shape>(grid_shape);
   } else {
@@ -143,6 +162,26 @@ AbstractBasePtr AffineGridInfer(const abstract::AnalysisEnginePtr &, const Primi
 }
 
 MIND_API_OPERATOR_IMPL(AffineGrid, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(AffineGrid, prim::kPrimAffineGrid, AffineGridInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGAffineGridInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return AffineGridInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return AffineGridInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return AffineGridInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(AffineGrid, prim::kPrimAffineGrid, AGAffineGridInfer, false);
 }  // namespace ops
 }  // namespace mindspore

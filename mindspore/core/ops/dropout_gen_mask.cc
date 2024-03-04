@@ -15,18 +15,34 @@
  */
 #include "ops/dropout_gen_mask.h"
 
+#include <algorithm>
+#include <cstddef>
+#include <iterator>
+#include <limits>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
-#include <memory>
-#include <limits>
-#include <algorithm>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "ir/tensor.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -138,6 +154,13 @@ abstract::ShapePtr DropoutGenMaskInferShape(const PrimitivePtr &primitive,
     return std::make_shared<abstract::Shape>(any_shape);
   }
 
+  auto shape_value = shape_args->BuildValue();
+  MS_EXCEPTION_IF_NULL(shape_value);
+  if (!IsValueKnown(shape_value)) {
+    ShapeVector any_shape{abstract::Shape::kShapeDimAny};
+    return std::make_shared<abstract::Shape>(any_shape);
+  }
+
   auto x_shape = dyn_cast<abstract::AbstractTuple>(shape_args);
   auto x_shape_data = x_shape->elements();
   out_shape = CalOutputShape(primitive, x_shape_data);
@@ -145,6 +168,9 @@ abstract::ShapePtr DropoutGenMaskInferShape(const PrimitivePtr &primitive,
 }
 TypePtr DropoutGenMaskInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   auto op_name = primitive->name();
+  const int64_t input_num = 2;
+  (void)CheckAndConvertUtils::CheckInteger("infer shape", SizeToLong(input_args.size()), kGreaterEqual, input_num,
+                                           op_name);
   const std::set<TypePtr> valid_types = {kFloat32, kFloat16};
   (void)CheckAndConvertUtils::CheckTensorTypeValid("inputs", input_args[1]->BuildType(), valid_types, op_name);
   return kUInt8;
@@ -162,8 +188,28 @@ AbstractBasePtr DropoutGenMaskInfer(const abstract::AnalysisEnginePtr &, const P
   return abstract::MakeAbstract(DropoutGenMaskInferShape(primitive, input_args),
                                 DropoutGenMaskInferType(primitive, input_args));
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(DropoutGenMask, prim::kPrimDropoutGenMask, DropoutGenMaskInfer, nullptr, true);
-REGISTER_PRIMITIVE_EVAL_IMPL(StatelessDropOutGenMask, prim::kPrimStatelessDropOutGenMask, DropoutGenMaskInfer, nullptr,
-                             true);
+
+// AG means auto generated
+class MIND_API AGDropoutGenMaskInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DropoutGenMaskInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DropoutGenMaskInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DropoutGenMaskInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(DropoutGenMask, prim::kPrimDropoutGenMask, AGDropoutGenMaskInfer, false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(StatelessDropOutGenMask, prim::kPrimStatelessDropOutGenMask, AGDropoutGenMaskInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

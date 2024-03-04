@@ -14,15 +14,16 @@
  * limitations under the License.
  */
 
+#include "ops/addcdiv.h"
+#include <algorithm>
 #include <map>
 #include <set>
 #include <string>
-#include <algorithm>
-#include "ops/addcdiv.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -88,6 +89,24 @@ AbstractBasePtr AddcdivInfer(const abstract::AnalysisEnginePtr &, const Primitiv
   auto infer_shape = AddcdivInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Addcdiv, prim::kPrimAddcdiv, AddcdivInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGAddcdivInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return AddcdivInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return AddcdivInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return AddcdivInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Addcdiv, prim::kPrimAddcdiv, AGAddcdivInfer, false);
 }  // namespace ops
 }  // namespace mindspore

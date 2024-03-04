@@ -13,15 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <set>
-#include <string>
-#include <vector>
-#include <memory>
 #include <algorithm>
+#include <memory>
+#include <vector>
+
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "ops/diagonal.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/src/helper.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,13 +31,20 @@ abstract::ShapePtr DiagonalInferShape(const PrimitivePtr &primitive, const std::
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   const int64_t input_num = 1;
+  const int64_t dyn_shape = abstract::Shape::kShapeDimAny;
   (void)CheckAndConvertUtils::CheckInteger("input numbers", SizeToLong(input_args.size()), kGreaterEqual, input_num,
                                            prim_name);
-  auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
+  auto x = CheckAndConvertUtils::CheckArgs<abstract::AbstractTensor>(prim_name, input_args, 0);
+  auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(x->BuildShape())[kShape];
   auto x_rank = x_shape.size();
   auto offset = GetValue<int64_t>(primitive->GetAttr("offset"));
   auto dim1 = GetValue<int64_t>(primitive->GetAttr("dim1"));
   auto dim2 = GetValue<int64_t>(primitive->GetAttr("dim2"));
+
+  if (IsDynamicRank(x_shape)) {
+    return std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeRankAny}));
+  }
+
   CheckAndConvertUtils::CheckInRange<int64_t>("dim1", dim1, kIncludeBoth, {-x_rank, x_rank - 1}, prim_name);
   CheckAndConvertUtils::CheckInRange<int64_t>("dim2", dim2, kIncludeBoth, {-x_rank, x_rank - 1}, prim_name);
   if (x_rank < kDimNum) {
@@ -55,11 +62,13 @@ abstract::ShapePtr DiagonalInferShape(const PrimitivePtr &primitive, const std::
       out_shape.push_back(x_shape[tmp_dim]);
     }
   }
-  int64_t dsize = 0;
-  if (offset >= 0) {
-    dsize = std::max<int64_t>(std::min(x_shape[tmp_dim1], x_shape[tmp_dim2] - offset), 0);
-  } else {
-    dsize = std::max<int64_t>(std::min(x_shape[tmp_dim1] + offset, x_shape[tmp_dim2]), 0);
+  int64_t dsize = dyn_shape;
+  if (x_shape[tmp_dim1] != dyn_shape && x_shape[tmp_dim2] != dyn_shape) {
+    if (offset >= 0) {
+      dsize = std::max<int64_t>(std::min(x_shape[tmp_dim1], x_shape[tmp_dim2] - offset), 0);
+    } else {
+      dsize = std::max<int64_t>(std::min(x_shape[tmp_dim1] + offset, x_shape[tmp_dim2]), 0);
+    }
   }
   out_shape.push_back(dsize);
   return std::make_shared<abstract::Shape>(out_shape);
@@ -67,7 +76,9 @@ abstract::ShapePtr DiagonalInferShape(const PrimitivePtr &primitive, const std::
 
 TypePtr DiagonalInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
-  auto x_dtype = input_args[0]->BuildType();
+  auto prim_name = primitive->name();
+  auto x = CheckAndConvertUtils::CheckArgs<abstract::AbstractTensor>(prim_name, input_args, 0);
+  auto x_dtype = x->BuildType();
   return CheckAndConvertUtils::CheckTensorTypeValid("input type", x_dtype, common_valid_types, primitive->name());
 }
 }  // namespace
@@ -75,12 +86,30 @@ AbstractBasePtr DiagonalInfer(const abstract::AnalysisEnginePtr &, const Primiti
                               const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   const int64_t input_num = 1;
-  (void)CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
   auto infer_type = DiagonalInferType(primitive, input_args);
   auto infer_shape = DiagonalInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 MIND_API_OPERATOR_IMPL(Diagonal, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(Diagonal, prim::kPrimDiagonal, DiagonalInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGDiagonalInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DiagonalInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DiagonalInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DiagonalInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Diagonal, prim::kPrimDiagonal, AGDiagonalInfer, false);
 }  // namespace ops
 }  // namespace mindspore

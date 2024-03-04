@@ -41,8 +41,8 @@ int TraceGradCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const st
   input_shape_ = inputs.at(kIndex1)->GetDeviceShapeAdaptively();
   const std::vector<int64_t> x_shape_ = {2};
   if (input_shape_ != x_shape_) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the shape of input[x_shape] should be " << Vector2Str(x_shape_)
-                      << ", but got " << Vector2Str(input_shape_) << ".";
+    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the shape of input[x_shape] should be " << x_shape_
+                      << ", but got " << input_shape_ << ".";
   }
   return KRET_OK;
 }
@@ -96,8 +96,11 @@ template <typename T>
 void TraceGradCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
                                          const std::vector<AddressPtr> &outputs) {
   T *grad = GetDeviceAddress<T>(inputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(grad);
   auto shape = GetDeviceAddress<int64_t>(inputs, kIndex1);
+  MS_EXCEPTION_IF_NULL(shape);
   T *output_addr = GetDeviceAddress<T>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(output_addr);
 
   if (memset_s(output_addr, outputs[0]->size, 0, outputs[0]->size) != EOK) {
     MS_LOG(EXCEPTION) << "Failed to init output memory.";

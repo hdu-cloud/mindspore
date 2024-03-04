@@ -18,8 +18,8 @@
 
 #include <string>
 #include <vector>
-#include "backend/common/optimizer/optimizer.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/optimizer.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -40,6 +40,7 @@ class BnGradSplit : public PatternProcessPass {
 
  private:
   CNodePtr BNGradSplitForTBE(const FuncGraphPtr &func_graph, const CNodePtr &cnode) const;
+  std::vector<std::string> MustExistPrimitiveName() const override;
 };
 
 class SyncBnGradSplit : public BnGradSplit {

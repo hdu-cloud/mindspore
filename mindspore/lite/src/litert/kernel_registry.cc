@@ -32,8 +32,10 @@
 #include "src/common/utils.h"
 #endif
 #include "src/common/tensor_util.h"
-#include "src/litert/kernel/cpu/cpu_kernel.h"
-#include "nnacl/kernel.h"
+#include "src/litert/kernel/cpu/nnacl/nnacl_manager.h"
+#ifdef ENABLE_BOLT
+#include "src/litert/kernel/cpu/bolt/bolt_kernel_manager.h"
+#endif
 
 using mindspore::kernel::kBuiltin;
 using mindspore::kernel::kCPU;
@@ -164,7 +166,7 @@ bool KernelRegistry::SupportKernel(const KernelKey &key) {
   if (kernel_creator != nullptr) {
     return true;
   }
-  return SupportKernelC(key.type, NHWC, key.data_type);
+  return nnacl::NNACLSupportKernel(key.type, key.data_type);
 }
 
 int KernelRegistry::GetCustomKernel(const std::vector<Tensor *> &in_tensors, const std::vector<Tensor *> &out_tensors,
@@ -205,26 +207,38 @@ int KernelRegistry::GetCustomKernel(const std::vector<Tensor *> &in_tensors, con
 
 kernel::LiteKernel *KernelRegistry::GetLiteKernel(const std::vector<Tensor *> &in_tensors,
                                                   const std::vector<Tensor *> &out_tensors, const InnerContext *ctx,
-                                                  const kernel::KernelKey &key, OpParameter *parameter) {
-  auto creator = GetCreator(key);
+                                                  kernel::KernelKey *key, OpParameter *parameter) {
+#ifdef ENABLE_BOLT
+  if (key->arch == KERNEL_ARCH::kCPU) {
+    auto *bolt_kernel = kernel::bolt::BoltKernelRegistry(parameter, in_tensors, out_tensors, ctx, key);
+    if (bolt_kernel == nullptr) {
+      MS_LOG(DEBUG) << "Registry bolt kernel failed: " << parameter->name_;
+    } else {
+      bolt_kernel->set_registry_data_type(key->data_type);
+      return bolt_kernel;
+    }
+  }
+#endif
+
+  auto creator = GetCreator(*key);
   if (creator != nullptr) {
-    auto lite_kernel = creator(in_tensors, out_tensors, parameter, ctx, key);
+    auto lite_kernel = creator(in_tensors, out_tensors, parameter, ctx, *key);
     if (lite_kernel != nullptr) {
-      lite_kernel->set_registry_data_type(key.data_type);
+      lite_kernel->set_registry_data_type(key->data_type);
       return lite_kernel;
     }
     return nullptr;
   }
-  if (key.arch != KERNEL_ARCH::kCPU) {
+  if (key->arch != KERNEL_ARCH::kCPU) {
     return nullptr;
   }
 
-  auto *lite_kernel = CPUKernelRegistry(parameter, in_tensors, out_tensors, ctx, key);
+  auto *lite_kernel = nnacl::NNACLKernelRegistry(parameter, in_tensors, out_tensors, ctx, *key);
   if (lite_kernel == nullptr) {
-    MS_LOG(ERROR) << "Registry cpu kernel failed:  " << parameter->name_;
+    MS_LOG(WARNING) << "Registry cpu kernel failed:  " << parameter->name_;
     return nullptr;
   }
-  lite_kernel->set_registry_data_type(key.data_type);
+  lite_kernel->set_registry_data_type(key->data_type);
   return lite_kernel;
 }
 
@@ -245,41 +259,19 @@ int KernelRegistry::GetKernelExec(const std::vector<Tensor *> &in_tensors, const
 #endif
 
   CHECK_NULL_RETURN(ctx);
-  auto lite_kernel = GetLiteKernel(in_tensors, out_tensors, ctx, key, parameter);
+  auto modify_key = key;
+  auto lite_kernel = GetLiteKernel(in_tensors, out_tensors, ctx, &modify_key, parameter);
   if (lite_kernel != nullptr) {
     std::shared_ptr<kernel::Kernel> shared_kernel(lite_kernel);
     auto *kernel_exec = new (std::nothrow) kernel::KernelExec(shared_kernel);
     if (kernel_exec != nullptr) {
-      kernel_exec->set_desc(key);
+      kernel_exec->set_desc(modify_key);
       kernel_exec->set_context(ctx);
       *kernel = kernel_exec;
       return RET_OK;
     }
   }
-  MS_LOG(ERROR) << "common cpu kernel registry failed";
+  MS_LOG(WARNING) << "common cpu kernel registry failed";
   return RET_ERROR;
-}
-
-int KernelRegistry::ReplaceKernelExec(kernel::KernelExec *kernel_exec, const kernel::KernelKey &key) {
-  CHECK_NULL_RETURN(kernel_exec);
-  if (key.provider != kBuiltin) {
-    MS_LOG(DEBUG) << "The replace kernel function is only used for inner kernel.";
-    return RET_NOT_SUPPORT;
-  }
-  if (kernel_exec->desc() == key) {
-    MS_LOG(DEBUG) << "The kernel " << kernel_exec->name() << " is already be the specific desc.";
-    return RET_NO_CHANGE;
-  }
-  auto op_parameter = kernel_exec->op_parameter();
-  auto lite_kernel =
-    GetLiteKernel(kernel_exec->in_tensors(), kernel_exec->out_tensors(), kernel_exec->Context(), key, op_parameter);
-  if (lite_kernel == nullptr) {
-    return RET_ERROR;
-  }
-  lite_kernel->set_name(kernel_exec->name());
-  std::shared_ptr<kernel::Kernel> shared_kernel(lite_kernel);
-  kernel_exec->RepalceKernel(shared_kernel);
-  kernel_exec->set_desc(key);
-  return RET_OK;
 }
 }  // namespace mindspore::lite

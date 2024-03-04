@@ -25,7 +25,7 @@ class Net(nn.Cell):
         return x.permute(dims)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_arm_cpu
 @pytest.mark.platform_x86_gpu_training
@@ -52,4 +52,27 @@ def test_tensor_permute(mode):
                       [13, 17, 21],
                       [14, 18, 22],
                       [15, 19, 23]]]
+    assert np.allclose(output.asnumpy(), expect_output)
+
+
+@pytest.mark.level0
+@pytest.mark.platform_x86_cpu
+@pytest.mark.platform_arm_cpu
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.env_onecard
+@pytest.mark.parametrize('mode', [ms.GRAPH_MODE, ms.PYNATIVE_MODE])
+def test_tensor_permute_with_int_axis(mode):
+    """
+    Feature: tensor.permute
+    Description: Verify the result of permute with int axis
+    Expectation: success
+    """
+    ms.set_context(mode=mode)
+    x = Tensor([1, 2, 3, 4], ms.float32)
+    input_perm = 0
+    net = Net()
+    output = net(x, input_perm)
+    expect_output = [1, 2, 3, 4]
     assert np.allclose(output.asnumpy(), expect_output)

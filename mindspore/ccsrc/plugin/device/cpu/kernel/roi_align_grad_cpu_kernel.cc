@@ -62,7 +62,10 @@ void bilinear_interpolate(const int height, const int width, T y, T x, int *x_lo
   }
 
   // distance to nearest points
-  T lx, ly, hx, hy;
+  T lx;
+  T ly;
+  T hx;
+  T hy;
   ly = y - static_cast<T>(*y_low), lx = x - static_cast<T>(*x_low);
   hy = kOne - ly, hx = kOne - lx;
 
@@ -187,14 +190,15 @@ int ROIAlignGradCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const
   }
   // Calculate the sizes of inputs and output
   auto dy_type_size = abstract::TypeIdSize(inputs[kIndex0]->GetDtype());
-  dy_size_ = std::accumulate(dy_shape.begin(), dy_shape.end(), 1, std::multiplies{}) * dy_type_size;
+  dy_size_ = LongToSize(std::accumulate(dy_shape.begin(), dy_shape.end(), 1, std::multiplies{})) * dy_type_size;
 
   auto rois_type_size = abstract::TypeIdSize(inputs[kIndex1]->GetDtype());
-  rois_size_ = std::accumulate(rois_shape.begin(), rois_shape.end(), 1, std::multiplies{}) * rois_type_size;
+  rois_size_ = LongToSize(std::accumulate(rois_shape.begin(), rois_shape.end(), 1, std::multiplies{})) * rois_type_size;
   roi_rows_ = LongToInt(rois_shape[kIndex0]);
   roi_cols_ = LongToInt(rois_shape[kIndex1]);
 
-  output_size_ = std::accumulate(xdiff_shape.begin(), xdiff_shape.end(), 1, std::multiplies{}) * dy_type_size;
+  output_size_ =
+    LongToSize(std::accumulate(xdiff_shape.begin(), xdiff_shape.end(), 1, std::multiplies{})) * dy_type_size;
   batch_ = LongToInt(xdiff_shape[kIndex0]);
   channels_ = LongToInt(xdiff_shape[kIndex1]);
   height_ = LongToInt(xdiff_shape[kIndex2]);
@@ -231,9 +235,9 @@ template <typename T>
 bool ROIAlignGradCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
                                             const std::vector<AddressPtr> &workspace,
                                             const std::vector<AddressPtr> &outputs) {
-  const T *dy = reinterpret_cast<T *>(inputs[0]->addr);
-  const T *rois = reinterpret_cast<T *>(inputs[1]->addr);
-  T *dx = reinterpret_cast<T *>(outputs[0]->addr);
+  const T *dy = static_cast<T *>(inputs[0]->addr);
+  const T *rois = static_cast<T *>(inputs[1]->addr);
+  T *dx = static_cast<T *>(outputs[0]->addr);
 
   int size_init = batch_ * channels_ * height_ * width_;
   auto task1 = [this, &dx](size_t start, size_t end) {
@@ -255,8 +259,15 @@ bool ROIAlignGradCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &input
         continue;
       }
       int offset = -1;
-      int c, ph, pw, roi_bin_grid_h, roi_bin_grid_w;
-      T bin_size_h, bin_size_w, roi_start_h, roi_start_w;
+      int c;
+      int ph;
+      int pw;
+      int roi_bin_grid_h;
+      int roi_bin_grid_w;
+      T bin_size_h;
+      T bin_size_w;
+      T roi_start_h;
+      T roi_start_w;
 
       bin_box(SizeToInt(thread_idx), rois, roi_cols_, spatial_scale, sample_num_, roi_end_mode_, channels_, height_,
               width_, pooled_height_, pooled_width_, &offset, &n, &c, &ph, &pw, &roi_bin_grid_h, &roi_bin_grid_w,
@@ -278,8 +289,14 @@ bool ROIAlignGradCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &input
                       static_cast<T>(ix + .5f) * bin_size_w / static_cast<T>(roi_bin_grid_w);
           // bilinear interpolate by shifted y / x
           // calculate bilinear interpolation
-          int x_low = 0, y_low = 0, x_high = 0, y_high = 0;
-          T w1, w2, w3, w4;
+          int x_low = 0;
+          int y_low = 0;
+          int x_high = 0;
+          int y_high = 0;
+          T w1;
+          T w2;
+          T w3;
+          T w4;
           bilinear_interpolate(height_, width_, y, x, &x_low, &y_low, &x_high, &y_high, &w1, &w2, &w3, &w4);
           if (x_low >= 0 && x_high >= 0 && y_low >= 0 && y_high >= 0 && y_low < height_ && y_high < height_ &&
               x_low < width_ && x_high < width_) {

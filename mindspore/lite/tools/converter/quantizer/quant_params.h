@@ -17,11 +17,14 @@
 #ifndef MINDSPORE_LITE_TOOLS_CONVERTER_QUANTIZER_QUANT_PARAMS_H_
 #define MINDSPORE_LITE_TOOLS_CONVERTER_QUANTIZER_QUANT_PARAMS_H_
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
-#include <set>
+#include "mindspore/core/ops/lite_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
 #include "schema/inner/model_generated.h"
-#include "ops/core_ops.h"
+#include "src/common/quant_utils.h"
 namespace mindspore::lite::quant {
 enum WeightQuantType {
   FIXED_BIT_PER_CHANNEL = 0,
@@ -43,11 +46,10 @@ constexpr int kCpuBindMode = 1;
 constexpr int kPrimIndex = 0;
 constexpr int kPrimOffset = 1;
 constexpr int kU8ZeroPointOffset = 128;
-constexpr int kQuantRange = 127;
-constexpr int kInt8LeftRange = -128;
-constexpr int kInt8RightRange = 127;
 constexpr int kMinIterations = 40;
 constexpr auto kQuantParam = "quant_param";
+constexpr auto kGraphInputQuantParam = "graph_input_quant_param";
+constexpr auto kGraphOutputQuantParam = "graph_output_quant_param";
 constexpr auto kQuantType = "quant_type";
 constexpr auto kClusterQuant = "cluster_quant";
 constexpr auto kClusterCentroidList = "cluster_centroid_list";
@@ -60,12 +62,24 @@ constexpr auto kVarCorrList = "var_corr_list";
 constexpr auto kMeanCorrList = "mean_corr_list";
 constexpr auto kNumBitList = "num_bit_list";
 constexpr auto kNarrowRangeList = "narrow_range_list";
+constexpr auto kDstDtypeList = "dst_dtype_list";
+constexpr auto kRoundTypeList = "round_type_list";
+constexpr auto kMultiplierList = "multiplier_list";
+constexpr auto kChannelAxis = "channel_axis";
+constexpr float kBinarySearchStep = 2.0;
 
-const std::set<PrimitivePtr> kHasBiasOperator = {prim::kPrimConv2DFusion, prim::kPrimConv2dTransposeFusion,
-                                                 prim::kPrimMatMulFusion, prim::kPrimFullConnection,
-                                                 prim::kPrimLayerNormFusion};
+const std::set<PrimitivePtr> kHasBiasOperator = {prim::kPrimConv2DFusion,    prim::kPrimConv2dTransposeFusion,
+                                                 prim::kPrimMatMulFusion,    prim::kPrimFullConnection,
+                                                 prim::kPrimLayerNormFusion, prim::kPrimMatMul};
 const std::set<PrimitivePtr> kUint8toFP32Operator = {prim::kPrimDetectionPostProcess};
 const std::set<TypeId> kFullQuantDType = {kNumberTypeInt8, kNumberTypeUInt8, kNumberTypeFloat32};
+
+enum QuantType {
+  QUANT_NONE = 0,
+  QUANT_WEIGHT = 4,
+  QUANT_ALL = 5,
+  QUANT_DYNAMIC = 6,
+};
 
 enum ActivationQuantizedMethod {
   MAX_MIN = 0,
@@ -78,6 +92,7 @@ enum TargetDevice {
   KIRIN,
   NVGPU,
   DSP,
+  ASCEND,
 };
 
 enum DebugMode {
@@ -101,8 +116,23 @@ enum DequantStrategy {
   ON_THE_FLY,
 };
 
+enum WeightQuantStrategy {
+  MAX_MIN_ALGORITHM,
+  GPTQ_ALGORITHM,
+};
+
+enum PrecisionMode {
+  QUANT,
+  FLOAT32,
+};
+
+enum DynamicQuantStrategy {
+  ACTIVATION_LAYER_WEIGHT_CHANNEL,
+  ACTIVATION_CHANNEL_WEIGHT_LAYER,
+};
+
 struct CommonQuantParam {
-  schema::QuantType quant_type = schema::QuantType_QUANT_NONE;
+  QuantType quant_type = QUANT_NONE;
   int bit_num = 8;
   int min_quant_weight_size = 0;
   int min_quant_weight_channel = 16;
@@ -112,10 +142,16 @@ struct CommonQuantParam {
   std::set<std::string> skip_quant_node;
   int thread_num = 4;
   bool enable_encode = true;
+  std::string workspace;  // support for model larger than 2G
 };
 
 struct WeightQuantParam {
   DequantStrategy dequant_strategy = DEFAULT;
+  WeightQuantStrategy quant_strategy = MAX_MIN_ALGORITHM;
+  bool update_mindir = true;
+  int max_segments = 1;
+  bool per_channel = true;
+  bool bias_correction = true;
 };
 
 struct MixedBitWeightQuantParam {
@@ -130,7 +166,27 @@ struct FullQuantParam {
   bool bias_correction = true;
   bool per_channel = true;
   TargetDevice target_device = CPU;
+  double smooth_alpha = 0.5f;
+  bool enable_smooth_shift = false;
 };
+
+struct TransformQuantParam {
+  PrecisionMode precision_mode = QUANT;
+};
+
+struct DynamicQuantParam {
+  DynamicQuantStrategy quant_strategy = quant::ACTIVATION_LAYER_WEIGHT_CHANNEL;
+};
+
+typedef struct {
+  int status;
+  float scale;
+} BinarySearchResult;
+
+typedef struct {
+  float inv_norm;
+  lite::MinMax mm;
+} LayerParam;
 }  // namespace mindspore::lite::quant
 
 #endif  // MINDSPORE_LITE_TOOLS_CONVERTER_QUANTIZER_QUANT_PARAMS_H_

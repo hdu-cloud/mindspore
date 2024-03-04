@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_INVERT_H_
 #define MINDSPORE_CORE_OPS_INVERT_H_
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,8 +31,8 @@ class MIND_API Invert : public BaseOperator {
   MIND_API_BASE_MEMBER(Invert);
   Invert() : BaseOperator(kNameInvert) { InitIOName({"x"}, {"y"}); }
 };
-abstract::AbstractBasePtr InvertInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                      const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr InvertInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                               const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimInvertPtr = std::shared_ptr<Invert>;
 }  // namespace ops
 }  // namespace mindspore

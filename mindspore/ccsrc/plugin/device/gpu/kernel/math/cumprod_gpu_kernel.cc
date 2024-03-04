@@ -25,8 +25,6 @@ constexpr size_t kCumProdOutputsNum = 1;
 constexpr size_t kDimSize0 = 0;
 constexpr size_t kDimSize1 = 1;
 constexpr size_t kDimSize2 = 2;
-using complex64 = std::complex<float>;
-using complex128 = std::complex<double>;
 }  // namespace
 
 template <typename T>
@@ -41,13 +39,17 @@ bool CumProdGpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &in
   if (any(input_addr, output_addr, ws_addr)) {
     return false;
   }
-  auto axis_addr = GetDeviceAddress<T>(inputs, kIndex1);
+  auto axis_addr = GetDeviceAddress<int64_t>(inputs, kIndex1);
   if (axis_addr == nullptr) {
     return false;
   }
   int64_t axis_tmp;
-  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemcpy(&axis_tmp, axis_addr, inputs[kIndex1]->size, cudaMemcpyDeviceToHost),
-                                     "For '" << kernel_name_ << "', cudaMemcpy input 'axis' device to host failed.");
+  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+    cudaMemcpyAsync(&axis_tmp, axis_addr, inputs[kIndex1]->size, cudaMemcpyDeviceToHost, cuda_stream_),
+    "For '" << kernel_name_ << "', cudaMemcpyAsync input 'axis' device to host failed.");
+  if (cudaStreamQuery(cuda_stream_) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(cuda_stream_), "cuda Stream Sync Failed");
+  }
   axis_ = static_cast<int>(axis_tmp);
   if (axis_ >= input_dim_length_) {
     MS_LOG(ERROR) << "For '" << kernel_name_
@@ -56,8 +58,9 @@ bool CumProdGpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &in
     return false;
   }
   Reshape();
-  CumProd(input_addr, output_addr, ws_addr, dims_[kIndex0], dims_[kIndex1], dims_[kIndex2], stride_, stride2_,
-          exclusive_, reverse_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = CumProd(input_addr, output_addr, ws_addr, dims_[kIndex0], dims_[kIndex1], dims_[kIndex2], stride_,
+                        stride2_, exclusive_, reverse_, cuda_stream_);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -69,7 +72,6 @@ bool CumProdGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::
   exclusive_ = kernel_ptr->GetExclusive();
   reverse_ = kernel_ptr->GetReverse();
   is_dynamic_shape_ = inputs[kIndex0]->IsDynamicShape();
-  MS_LOG(ERROR) << "is_dynamic_shape_ = " << is_dynamic_shape_;
   auto input_num = inputs.size();
   if (input_num != kCumProdInputsNum) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', the number of inputs must be 2, but got " << input_num;
@@ -144,6 +146,10 @@ const std::vector<cumProdPair> &CumProdGpuKernelMod::GetFuncList() const {
      &CumProdGpuKernelMod::LaunchKernel<float>},
     {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64),
      &CumProdGpuKernelMod::LaunchKernel<double>},
+    {KernelAttr().AddInputAttr(kNumberTypeComplex64).AddOutputAttr(kNumberTypeComplex64),
+     &CumProdGpuKernelMod::LaunchKernel<utils::Complex<float>>},
+    {KernelAttr().AddInputAttr(kNumberTypeComplex128).AddOutputAttr(kNumberTypeComplex128),
+     &CumProdGpuKernelMod::LaunchKernel<utils::Complex<double>>},
     // Dynamic shape related.
     {KernelAttr().AddInputAttr(kNumberTypeInt8).AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeInt8),
      &CumProdGpuKernelMod::LaunchKernel<int8_t>},
@@ -167,6 +173,13 @@ const std::vector<cumProdPair> &CumProdGpuKernelMod::GetFuncList() const {
      &CumProdGpuKernelMod::LaunchKernel<float>},
     {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeFloat64),
      &CumProdGpuKernelMod::LaunchKernel<double>},
+    {KernelAttr().AddInputAttr(kNumberTypeComplex64).AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeComplex64),
+     &CumProdGpuKernelMod::LaunchKernel<utils::Complex<float>>},
+    {KernelAttr()
+       .AddInputAttr(kNumberTypeComplex128)
+       .AddInputAttr(kNumberTypeInt64)
+       .AddOutputAttr(kNumberTypeComplex128),
+     &CumProdGpuKernelMod::LaunchKernel<utils::Complex<double>>},
   };
   return func_list;
 }

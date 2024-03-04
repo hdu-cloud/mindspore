@@ -98,6 +98,7 @@ class ConverterInnerContext {
 
   void UpdateGraphInputTensorShape(const std::string &tensor_name, const std::vector<int64_t> &shape) {
     graph_input_tensor_shape_map_[tensor_name] = shape;
+    MS_LOG(INFO) << "Update shape of input " << tensor_name << " to " << shape;
   }
   std::vector<int64_t> GetGraphInputTensorShape(const std::string &tensor_name) const {
     if (graph_input_tensor_shape_map_.find(tensor_name) == graph_input_tensor_shape_map_.end()) {
@@ -131,6 +132,15 @@ class ConverterInnerContext {
 
   void SetTargetDevice(const std::string &target_device) { target_device_ = target_device; }
   std::string GetTargetDevice() const { return target_device_; }
+
+  void Free() {
+    graph_input_data_type_map_.clear();
+    graph_output_data_type_map_.clear();
+    graph_input_tensor_shape_map_.clear();
+    graph_output_tensor_names_.clear();
+    external_used_config_infos_.clear();
+    target_device_ = "";
+  }
 
  private:
   ConverterInnerContext() {

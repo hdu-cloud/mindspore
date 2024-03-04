@@ -119,7 +119,10 @@ class EinsumGpuKernelMod : public NativeGpuKernelMod {
 
   bool Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
             const std::vector<KernelTensorPtr> &outputs) override {
-    node_name_ = base_operator->GetPrim()->name();
+    MS_EXCEPTION_IF_NULL(base_operator);
+    auto primitive = base_operator->GetPrim();
+    MS_EXCEPTION_IF_NULL(primitive);
+    node_name_ = primitive->name();
     size_t input_num = inputs.size();
     if (input_num < 1) {
       MS_LOG(ERROR) << "For " << node_name_ << ", input number can not be less than 1, but got " << input_num;
@@ -135,6 +138,11 @@ class EinsumGpuKernelMod : public NativeGpuKernelMod {
     if (ret != KRET_OK) {
       return ret;
     }
+    input_shapes_.clear();
+    out_shape_.clear();
+    single_op_.clear();
+    res_op_.clear();
+    func_helper_.ResetResource();
 
     size_t input_num = inputs.size();
     for (size_t idx = 0; idx < input_num; ++idx) {
@@ -143,11 +151,13 @@ class EinsumGpuKernelMod : public NativeGpuKernelMod {
         MS_LOG(ERROR) << "For " << node_name_ << ", input types should be the same, but it does not.";
         return KRET_RESIZE_FAILED;
       }
-      auto in_shape = inputs[idx]->GetDeviceShapeAdaptively();
+      auto in_shape = inputs[idx]->GetShapeVector();
       input_shapes_.push_back(in_shape);
     }
 
-    std::string equation = GetValue<std::string>(base_operator->GetAttr("equation"));
+    auto equation_ptr = base_operator->GetAttr("equation");
+    MS_EXCEPTION_IF_NULL(equation_ptr);
+    std::string equation = GetValue<std::string>(equation_ptr);
     single_op_ = std::vector<std::vector<OpStruct>>(input_shapes_.size());
     bool flag = func_helper_.Preprocess(equation, node_name_, input_shapes_, &out_shape_, &single_op_, &res_op_);
     if (!flag) {
@@ -161,7 +171,6 @@ class EinsumGpuKernelMod : public NativeGpuKernelMod {
   void InitSizeLists() {
     size_t work_size = 0;
     size_t shape_size = 0;
-    // if (T == float16) { reduce_sum_work_size = size * 2; } else { reduce_sum_work_size = size; }
     size_t mul_val = (type_id_ == kNumberTypeFloat16) ? 2 : 1;
     size_t reduce_sum_wrok_size = 0;
     for (auto &op_vec : single_op_) {

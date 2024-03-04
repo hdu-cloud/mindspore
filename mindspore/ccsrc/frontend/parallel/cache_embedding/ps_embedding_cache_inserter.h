@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
 #include <vector>
 
 #include "ir/anf.h"
-#include "distributed/constants.h"
+#include "include/backend/distributed/constants.h"
 #include "utils/shape_utils.h"
 
 namespace mindspore {
@@ -55,7 +55,11 @@ class PsEmbeddingCacheInserter {
 
   // Build Embedding store for each param which enable cache. Embedding store can read/write embedding from/to
   // persistent storage.
-  void BuildEmbeddingStores();
+  void BuildEmbeddingStorages();
+  // Build Embedding store for dense mode(Tensor).
+  void BuildDenseEmbeddingStorages();
+  // Build Embedding store for sparse mode(Hash Table).
+  void BuildSparseEmbeddingStorages();
 
   // Construct the embedding cache services subgraphs, including embedding lookup and update operations, and package the
   // subgraphs corresponding to the related operations into the partial.
@@ -63,16 +67,25 @@ class PsEmbeddingCacheInserter {
                                                 std::vector<AnfNodePtr> *make_tuple_inputs) const;
 
   // Construct embedding lookup service sub graph:
-  // Input(param, indices) --> EmbeddingLookup --> RpcSend --> Return
+  // Input(param, indices) --> EmbeddingLookup/MapTensorGet --> RpcSend --> Return
   // RpcSend is used to send the embeddings to the service caller.
   FuncGraphPtr ConstructEmbeddingLookupSubGraph(const AnfNodePtr &node, const ParameterPtr &param,
                                                 int32_t param_key) const;
 
   // Construct updating embedding service sub graph:
-  // Input(param, indices, update_values) --> Sub --> ScatterUpdate --> Return
+  // Input(param, indices, update_values) --> ScatterUpdate/MapTensorPut --> Return
   // The Sub is used to rectify the id via offset for embedding slice.
   FuncGraphPtr ConstructUpdateEmbeddingSubGraph(const ParameterPtr &param, const AnfNodePtr &node,
                                                 int32_t param_key) const;
+
+  // Create embedding lookup kernel: 'EmbeddingLookup' for Tensor or 'MapTensorGet' for Hash Table.
+  CNodePtr CreateEmbeddingLookupKernel(const FuncGraphPtr &graph, const ParameterPtr &input_param,
+                                       const ParameterPtr &input_indices,
+                                       const AnfNodePtr &origin_embedding_lookup_node) const;
+
+  // Create embedding update kernel: 'ScatterUpdate' for Tensor or 'MapTensorPut' for Hash Table.
+  CNodePtr CreateEmbeddingUpdateKernel(const FuncGraphPtr &graph, const ParameterPtr &input_param,
+                                       const ParameterPtr &input_indices, const ParameterPtr &update_values) const;
 
   // Create return node for subgraph, using depend node to return a fake value node to ensure that the output abstract
   // of each subgraph is the same.

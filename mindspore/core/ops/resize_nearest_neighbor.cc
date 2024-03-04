@@ -14,22 +14,23 @@
  * limitations under the License.
  */
 
-#include <string>
+#include "ops/resize_nearest_neighbor.h"
 #include <algorithm>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "ops/resize_nearest_neighbor.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/image_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
-void ResizeNearestNeighbor::Init(const std::vector<int64_t> &size, const bool align_corners) {
+void ResizeNearestNeighbor::Init(const std::vector<int64_t> &, const bool align_corners) {
   this->set_align_corners(align_corners);
-  (void)this->AddAttr(kHalfPixelCenters, api::MakeValue(false));
 }
 void ResizeNearestNeighbor::set_align_corners(const bool align_corners) {
   (void)this->AddAttr(kAlignCorners, api::MakeValue(align_corners));
@@ -87,7 +88,27 @@ AbstractBasePtr ResizeNearestNeighborInfer(const abstract::AnalysisEnginePtr &, 
   return abstract::MakeAbstract(ResizeNearestNeighborInferShape(primitive, input_args),
                                 ResizeNearestNeighborInferType(primitive, input_args));
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(ResizeNearestNeighbor, prim::kPrimResizeNearestNeighbor, ResizeNearestNeighborInfer,
-                             nullptr, true);
+
+// AG means auto generated
+class MIND_API AGResizeNearestNeighborInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ResizeNearestNeighborInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ResizeNearestNeighborInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ResizeNearestNeighborInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ResizeNearestNeighbor, prim::kPrimResizeNearestNeighbor, AGResizeNearestNeighborInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

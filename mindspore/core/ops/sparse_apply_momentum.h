@@ -22,8 +22,8 @@
 #include <string>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 #include "utils/check_convert_utils.h"
 
 namespace mindspore {
@@ -45,8 +45,9 @@ class MIND_API SparseApplyMomentum : public BaseOperator {
   bool get_use_nesterov() const;
 };
 
-abstract::AbstractBasePtr SparseApplyMomentumInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                   const std::vector<AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr SparseApplyMomentumInfer(const abstract::AnalysisEnginePtr &,
+                                                            const PrimitivePtr &primitive,
+                                                            const std::vector<AbstractBasePtr> &input_args);
 using kPrimSparseApplyMomentumPtr = std::shared_ptr<SparseApplyMomentum>;
 }  // namespace ops
 }  // namespace mindspore

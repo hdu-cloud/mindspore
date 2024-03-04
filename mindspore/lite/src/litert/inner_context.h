@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <memory>
 #include <unordered_map>
 #ifdef BFC_MEMORY
 #include "src/extendrt/dynamic_mem_allocator.h"
@@ -27,16 +28,18 @@
 #endif
 #include "thread/threadpool.h"
 #include "nnacl/op_base.h"
+#include "nnacl/kernel.h"
 #ifdef ENABLE_ARM
 #include "src/litert/cpu_info.h"
 #endif
 #include "include/lite_types.h"
+#include "src/litert/infer_manager.h"
+
+namespace mindspore {
+class DeviceInfoContext;
+}
 
 namespace mindspore::lite {
-#ifdef ENABLE_MINDRT
-constexpr int kDefaultParallelNum = 2;
-#endif
-
 typedef struct CpuDeviceInfo {
   bool enable_float16_ = false; /**< prior enable float16 inference */
   CpuBindMode cpu_bind_mode_ = MID_CPU;
@@ -63,11 +66,17 @@ typedef struct AscendDeviceInfo {
   std::string image_size_;
 } AscendDeviceInfo;
 
+/// \brief CustomDeviceInfo defined for user defined device configuration information.
+typedef struct CustomDeviceInfo {
+  std::shared_ptr<DeviceInfoContext> user_defined_device_info_;
+} CustomDeviceInfo;
+
 struct DeviceInfo {
   CpuDeviceInfo cpu_device_info_;
   GpuDeviceInfo gpu_device_info_;
   NpuDeviceInfo npu_device_info_;
   AscendDeviceInfo ascend_device_info_;
+  CustomDeviceInfo custom_device_info_;
 };
 
 struct DeviceContext {
@@ -78,7 +87,15 @@ struct DeviceContext {
   AllocatorPtr allocator_ = nullptr;
 };
 
-struct InnerContext {
+typedef struct InstructionsContext {
+  // Instructions should be checked in the beginning.
+  bool support_fp16 = false;
+  bool support_sdot = false;
+  bool support_sse = false;
+  bool support_avx512 = false;
+} InstructionsContext;
+
+struct MS_API InnerContext {
  public:
   InnerContext();
   virtual ~InnerContext();
@@ -98,8 +115,16 @@ struct InnerContext {
   void SetAllLinkInfo(const std::unordered_map<void *, std::set<void *>> &all_link_info);
   void ReplaceLinkInfoReceiverWithNewOne(void *new_receiver, void *old_receiver);
   void ReplaceLinkInfoSenderWithNewOne(void *new_sender, void *old_sender);
+  inline void SetBindRunnerId(std::string runner_id) { runner_id_ = runner_id; }
+  inline void set_infer_checker(const InferChecker checker) { infer_checker_ = checker; }
+  inline const InferChecker get_infer_checker() const { return infer_checker_; }
+  inline void set_schema_version(const int schema_version) { this->schema_version_ = schema_version; }
+  inline const int &get_schema_version() const { return schema_version_; }
+  int CreateThreadPool(bool is_control_flow);
+  void DeleteThreadPool();
 
   std::string vendor_name_;
+  InstructionsContext instructions_ctx_;
   int thread_num_ = 2; /**< thread number config for thread pool */
   int inter_op_parallel_num_ = 1;
   bool enable_parallel_ = false;
@@ -112,15 +137,22 @@ struct InnerContext {
 
   bool device_and_pkg_support_fp16_ = false;
   ThreadPool *thread_pool_ = nullptr;
+  InferChecker infer_checker_{InferCheckerOutput};
   // key is the precursor tensor's pointer, value is the group of successors' pointer.
   std::unordered_map<void *, std::set<void *>> link_info_{};
+  const ExecEnv *GetExecEnv() const { return &exec_env_; }
 
  private:
   int IsValid();
   bool IsAllDeviceTypeValid() const;
   bool IsCpuBindModeInvalid() const;
-  int CreateThreadPool();
-  void InitExperimentalExecEnv();
+  void InitExecEnv();
+
+  std::string runner_id_;
+  BindMode bind_mode_{Power_NoBind};
+  size_t actor_thread_num_{0};
+  ExecEnv exec_env_;
+  int schema_version_{SCHEMA_VERSION::SCHEMA_CUR};
 };
 
 int ParallelLaunch(const InnerContext *context, const Func &func, Content content, int task_num);

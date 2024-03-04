@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,9 +25,10 @@
 #include "include/train/train_cfg.h"
 #include "src/litert/inner_context.h"
 #include "src/litert/c_api/context_c.h"
+#include "src/common/log_adapter.h"
 
 namespace mindspore {
-class ContextUtils {
+class MS_API ContextUtils {
  public:
   static std::shared_ptr<lite::InnerContext> Convert(Context *context);
   static std::shared_ptr<lite::InnerContext> Convert(const ContextC *context_c);
@@ -46,6 +47,7 @@ class ContextUtils {
                              lite::InnerContext *inner_context);
   static Status AddNpuDevice(bool enable_fp16, int frequency, lite::InnerContext *inner_context);
   static Status AddAscendDevice(lite::InnerContext *inner_context, DeviceInfoContext *device);
+  static Status AddCustomDevice(lite::InnerContext *inner_context, const std::shared_ptr<DeviceInfoContext> &device);
   static bool IsAffinityModeValid(int affinity_mode) {
     return affinity_mode >= lite::NO_BIND && affinity_mode <= lite::MID_CPU;
   }
@@ -58,6 +60,9 @@ inline lite::QuantizationType A2L_ConvertQT(mindspore::QuantizationType qt) {
   }
   if (qt == kWeightQuant) {
     return lite::QT_WEIGHT;
+  }
+  if (qt == kFullQuant || qt == kUnknownQuantType) {
+    MS_LOG(WARNING) << "QuantizationType " << qt << " does not support, set the quantizationType to default.";
   }
   return lite::QT_DEFAULT;
 }

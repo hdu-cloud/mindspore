@@ -51,13 +51,14 @@ class ResizeBilinearCpuKernelMod : public NativeCpuKernelMod, public MatchKernel
 
   std::vector<KernelAttr> GetOpSupport() override { return OpSupport(); }
 
+  std::vector<size_t> GetLaunchIgnoredInputAddressIdx() const override { return {kIndex1}; }
+
  private:
   template <typename T>
   bool LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
                     const std::vector<AddressPtr> &outputs) const;
   bool LaunchFloat16Kernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
                            const std::vector<AddressPtr> &outputs) const;
-  TypeId dtype_{kTypeUnknown};
   bool align_corners_{false};
   bool half_pixel_centers_{false};
   bool is_null_input_{false};

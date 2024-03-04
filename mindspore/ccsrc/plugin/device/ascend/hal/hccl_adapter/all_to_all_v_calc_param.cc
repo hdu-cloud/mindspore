@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,14 +14,21 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/hal/hccl_adapter/all_to_all_v_calc_param.h"
-#include <functional>
 #include <map>
 #include <string>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include <memory>
+#include <utility>
+
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "abstract/utils.h"
-#include "transform/graph_ir/transform_util.h"
 #include "runtime/device/memory_manager.h"
+#include "include/common/utils/utils.h"
+#include "ir/anf.h"
+#include "ir/value.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore::hccl {
 namespace {
@@ -54,7 +61,7 @@ void AllToAllvCalcParam::CalcOpParam() {
       input_num = 0;
     }
   }
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(cnode);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(cnode);
   std::vector<size_t> input_aligned_mem_size(input_num);
   std::vector<size_t> output_aligned_mem_size(output_num);
   std::vector<size_t> input_real_mem_size(input_num);
@@ -63,7 +70,7 @@ void AllToAllvCalcParam::CalcOpParam() {
     auto ms_shape = AnfAlgo::GetInputDeviceShape(cnode, i);
     auto type_size = abstract::TypeIdSize(AnfAlgo::GetInputDeviceDataType(cnode, i));
     if (type_size == 0) {
-      MS_LOG(EXCEPTION) << "Invalid type_size 0 of node: " << cnode->fullname_with_scope();
+      MS_LOG(INTERNAL_EXCEPTION) << "Invalid type_size 0 of node: " << cnode->fullname_with_scope();
     }
     size_t origin_mem_size = type_size * SizeOf(ms_shape);
     size_t aligned_mem_size = device::MemoryManager::GetCommonAlignSize(origin_mem_size);
@@ -74,7 +81,7 @@ void AllToAllvCalcParam::CalcOpParam() {
     auto ms_shape = AnfAlgo::GetOutputDeviceShape(cnode, i);
     auto type_size = abstract::TypeIdSize(AnfAlgo::GetOutputDeviceDataType(cnode, i));
     if (type_size == 0) {
-      MS_LOG(EXCEPTION) << "Invalid type_size 0 of node: " << cnode->fullname_with_scope();
+      MS_LOG(INTERNAL_EXCEPTION) << "Invalid type_size 0 of node: " << cnode->fullname_with_scope();
     }
     size_t origin_mem_size = type_size * SizeOf(ms_shape);
     size_t aligned_mem_size = device::MemoryManager::GetCommonAlignSize(origin_mem_size);
@@ -92,8 +99,8 @@ void AllToAllvCalcParam::CalcMemOffset(const std::vector<size_t> &mem_sizes, con
   MS_EXCEPTION_IF_NULL(cnode);
   auto rank_ids = common::AnfAlgo::GetNodeAttr<std::vector<int64_t>>(cnode, rank_ids_attr);
   if (mem_sizes.size() != rank_ids.size() || real_sizes.size() != rank_ids.size()) {
-    MS_LOG(EXCEPTION) << "Invalid addr num " << mem_sizes.size() << " and " << real_sizes.size()
-                      << " must be equal to rank ids size " << rank_ids.size();
+    MS_LOG(INTERNAL_EXCEPTION) << "Invalid addr num " << mem_sizes.size() << " and " << real_sizes.size()
+                               << " must be equal to rank ids size " << rank_ids.size();
   }
 
   if (!IsInTheOrder(rank_ids)) {

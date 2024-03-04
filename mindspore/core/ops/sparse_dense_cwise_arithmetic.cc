@@ -13,20 +13,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <set>
-#include <vector>
-#include <memory>
 #include <map>
+#include <memory>
+#include <set>
 #include <string>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "utils/tensor_construct_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
-#include "ops/sparse_dense_cwise_arithmetic.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
 #include "ops/sparse_dense_cwise_add.h"
-#include "ops/sparse_dense_cwise_mul.h"
+#include "ops/sparse_dense_cwise_arithmetic.h"
 #include "ops/sparse_dense_cwise_div.h"
+#include "ops/sparse_dense_cwise_mul.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -42,6 +54,13 @@ abstract::ShapePtr SparseDenseCwiseArithmeticInferShape(const PrimitivePtr &prim
   MS_EXCEPTION_IF_NULL(shape_shape_ptr);
   auto dense_shape_ptr = input_args[kInputIndex3]->BuildShape();
   MS_EXCEPTION_IF_NULL(dense_shape_ptr);
+
+  auto output_shape = input_args[kInputIndex1]->BuildShape()->cast<abstract::ShapePtr>();
+  if (indices_shape_ptr->IsDynamic() || values_shape_ptr->IsDynamic() || shape_shape_ptr->IsDynamic() ||
+      dense_shape_ptr->IsDynamic()) {
+    return output_shape;
+  }
+
   auto indices_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
   auto values_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
   auto shape_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->BuildShape())[kShape];
@@ -74,7 +93,6 @@ abstract::ShapePtr SparseDenseCwiseArithmeticInferShape(const PrimitivePtr &prim
                              << "',  the dims of `x2` should be less or equal to the shape[0] of `x1_shape`, but got "
                              << dense_shape.size() << " vs " << shape_shape[0] << ".";
   }
-  auto output_shape = input_args[kInputIndex1]->BuildShape()->cast<abstract::ShapePtr>();
   return output_shape;
 }
 
@@ -88,7 +106,7 @@ TypePtr SparseDenseCwiseArithmeticInferType(const PrimitivePtr &primitive,
   (void)CheckAndConvertUtils::CheckTensorTypeValid("shape", shape_type_ptr, type_set, prim_name);
   std::map<std::string, TypePtr> type_dict;
   (void)type_dict.emplace("values", input_args[kInputIndex1]->BuildType());
-  (void)type_dict.emplace("shape", input_args[kInputIndex3]->BuildType());
+  (void)type_dict.emplace("x2", input_args[kInputIndex3]->BuildType());
   return CheckAndConvertUtils::CheckTensorTypeSame(type_dict, common_valid_types_with_complex, prim_name);
 }
 }  // namespace
@@ -107,11 +125,28 @@ MIND_API_OPERATOR_IMPL(SparseDenseCwiseAdd, BaseOperator);
 MIND_API_OPERATOR_IMPL(SparseDenseCwiseMul, BaseOperator);
 MIND_API_OPERATOR_IMPL(SparseDenseCwiseDiv, BaseOperator);
 
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseDenseCwiseAdd, prim::kPrimSparseDenseCwiseAdd, SparseDenseCwiseArithmeticInfer,
-                             nullptr, true);
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseDenseCwiseMul, prim::kPrimSparseDenseCwiseMul, SparseDenseCwiseArithmeticInfer,
-                             nullptr, true);
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseDenseCwiseDiv, prim::kPrimSparseDenseCwiseDiv, SparseDenseCwiseArithmeticInfer,
-                             nullptr, true);
+// AG means auto generated
+class MIND_API AGSparseDenseCwiseArithmeticInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseDenseCwiseArithmeticInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseDenseCwiseArithmeticInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseDenseCwiseArithmeticInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseDenseCwiseAdd, prim::kPrimSparseDenseCwiseAdd, AGSparseDenseCwiseArithmeticInfer,
+                                 false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseDenseCwiseMul, prim::kPrimSparseDenseCwiseMul, AGSparseDenseCwiseArithmeticInfer,
+                                 false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseDenseCwiseDiv, prim::kPrimSparseDenseCwiseDiv, AGSparseDenseCwiseArithmeticInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

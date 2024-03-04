@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,14 +18,16 @@
 #include <algorithm>
 #include <tuple>
 #define google ascend_private
+#include "mindspore/core/ops/other_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "register/ops_kernel_builder_registry.h"
 #include "graph/compute_graph.h"
 #include "graph/debug/ge_attr_define.h"
 #undef google
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "utils/log_adapter.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "include/transform/graph_ir/utils.h"
 #include "include/common/utils/comm_manager.h"
 #include "plugin/device/ascend/hal/hccl_adapter/all_to_all_v_calc_param.h"
@@ -35,10 +37,12 @@ namespace {
 static constexpr char kGeOpNameHcclSend[] = "HcomSend";
 static constexpr char kGeOpNameHcclReceive[] = "HcomReceive";
 static constexpr char kGeOpNameHcclAllRudece[] = "HcomAllReduce";
+static constexpr char kGeOpNameHcclRudece[] = "HcomReduce";
 static constexpr char kGeOpNameHcclAllGather[] = "HcomAllGather";
 static constexpr char kGeOpNameHcclBroadcast[] = "HcomBroadcast";
 static constexpr char kGeOpNameHcclReduceScatter[] = "HcomReduceScatter";
 static constexpr char kGeOpNameHcclAllToAllV[] = "HcomAllToAllV";
+static constexpr char kGeOpNameHcclBarrier[] = "Barrier";
 static constexpr char kGeNodeAttrUsedStreamNum[] = "used_stream_num";
 static constexpr char kGeNodeAttrSendCounts[] = "send_counts";
 static constexpr char kGeNodeAttrSendDispls[] = "send_displacements";
@@ -108,7 +112,8 @@ static T ConvertAttr(const CNodePtr &cnode, const ge::OpDescPtr &ge_op, const st
   }
 
   if (!ret) {
-    MS_LOG(EXCEPTION) << "Set attr " << ge_attr_name << " for ge node of " << cnode->DebugString() << " failed.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Set attr " << ge_attr_name << " for ge node of " << cnode->DebugString()
+                               << " failed.";
   }
   MS_LOG(INFO) << "Convert success, attr " << ge_attr_name << " is " << attr;
   return attr;
@@ -122,7 +127,7 @@ static void SetGeNodeInt64VecAttr(const ge::OpDescPtr &ge_op, const std::string 
   }
   auto ret = ge::AttrUtils::SetListInt(*ge_op, ge_attr_name, attr_value);
   if (!ret) {
-    MS_LOG(EXCEPTION) << "Set attr " << ge_attr_name << " for ge node failed.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Set attr " << ge_attr_name << " for ge node failed.";
   }
 }
 
@@ -174,7 +179,7 @@ std::tuple<ge::NodePtr, ge::ComputeGraphPtr> GenerateStubGeNode(const AnfNodePtr
   ge::OpDescPtr op_desc = std::make_shared<ge::OpDesc>(kStubDataStructureName, ge_node_name);
   MS_EXCEPTION_IF_NULL(op_desc);
   size_t input_num = common::AnfAlgo::GetInputTensorNum(cnode);
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(cnode);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(cnode);
   for (size_t i = 0; i < input_num; ++i) {
     auto ge_shape = AnfAlgo::GetInputDeviceShape(cnode, i);
     (void)op_desc->AddInputDesc(
@@ -191,8 +196,8 @@ std::tuple<ge::NodePtr, ge::ComputeGraphPtr> GenerateStubGeNode(const AnfNodePtr
   // set node data type
   bool ret = ge::AttrUtils::SetDataType(*op_desc, ge::HCOM_ATTR_DATA_TYPE, ConvertHcclDTypeToGeDType(datatype));
   if (!ret) {
-    MS_LOG(EXCEPTION) << "Set attr " << ge::HCOM_ATTR_DATA_TYPE << " for ge node of " << cnode->DebugString()
-                      << " failed.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Set attr " << ge::HCOM_ATTR_DATA_TYPE << " for ge node of " << cnode->DebugString()
+                               << " failed.";
   }
 
   // set node attr
@@ -223,7 +228,8 @@ HcclTaskInfo ParseDomiTask(const ge::OpDescPtr &op, const domi::TaskDef &task_de
   int64_t stream_num;
   bool ret = ge::AttrUtils::GetInt(*op, kGeNodeAttrUsedStreamNum, stream_num);
   if (!ret) {
-    MS_LOG(EXCEPTION) << "Get attr " << kGeNodeAttrUsedStreamNum << " for ge node " << op->GetType() << " failed.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Get attr " << kGeNodeAttrUsedStreamNum << " for ge node " << op->GetType()
+                               << " failed.";
   }
 
   return {task_def.private_def(), workspace_size, stream_num};

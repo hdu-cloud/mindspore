@@ -174,8 +174,9 @@ if [[ $backend == "all" || $backend == "x86_gpu" ]]; then
     fi
 fi
 
-if [[ $backend == "all" || $backend =~ "x86_ascend310" || $backend =~ "x86_ascend710" || $backend =~ "arm_ascend310" ]]; then
-    sh $cur_path/scripts/ascend/run_ascend.sh -r $release_path -m $models_path -d $device_id -e $backend -l $level
+if [[ $backend == "all" || $backend =~ "x86_ascend310" || $backend =~ "x86_ascend710" || $backend =~ "arm_ascend310" ||
+      $backend =~ "ascend310_ge" ]]; then
+    sh $cur_path/scripts/ascend/run_ascend.sh -r $release_path -m $models_path -d $device_id -e $backend -l $level -p $fail_not_return
     ascend_status=$?
     if [[ ascend_status -ne 0 ]]; then
       echo "Run ${backend} failed"
@@ -206,6 +207,49 @@ if [[ $backend == "all" || $backend == "server_inference_x86_cloud_gpu" ]]; then
     server_inference_gpu_status=$?
     if [[ server_inference_gpu_status -ne 0 ]]; then
       echo "Run server inference gpu failed"
+      exit 1
+    fi
+fi
+
+# two whl in release_path
+if [[ $backend == "all" || $backend == "import_ms_and_mslite" ]]; then
+    sh $cur_path/scripts/run_import_ms_and_mslite.sh -r $release_path -m $models_path -e $backend -l $level
+    import_ms_and_mslite=$?
+    if [[ import_ms_and_mslite -ne 0 ]]; then
+      echo "Run import ms and mslite failed"
+      exit 1
+    fi
+fi
+
+# test tritonserver
+if [[ $backend == "all" || $backend == "tritonserver" ]]; then
+  sh $cur_path/scripts/test_triton.sh -r $release_path -m $models_path -l $level
+  test_triton=$?
+  if [[ test_triton -ne 0 ]]; then
+    echo "Run tritonserver failed"
+    exit 1
+  fi
+fi
+
+# two whl in release_path
+if [[ $backend == "all" || $backend == "plugin_custom_ops" ]]; then
+    sh $cur_path/scripts/run_plugin_custom_ops.sh -r $release_path -m $models_path -e $backend -l $level
+    plugin_custom_ops=$?
+    if [[ plugin_custom_ops -ne 0 ]]; then
+      echo "Run mslite ascend plugin custom ops failed"
+      exit 1
+    fi
+fi
+
+# test graph kernel
+if [[ $backend == "all" || $backend =~ "graph_kernel" ]]; then
+  if [[ $backend =~ "cpu" ]]; then
+    device_id="null"
+  fi
+    sh $cur_path/scripts/run_benchmark_graph_kernel.sh -r $release_path -m $models_path -e $backend -l $level -d $device_id
+    graph_kernel_status=$?
+    if [[ graph_kernel_status -ne 0 ]]; then
+      echo "Run graph kernel failed"
       exit 1
     fi
 fi

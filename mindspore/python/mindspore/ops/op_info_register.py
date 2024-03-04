@@ -1,4 +1,4 @@
-# Copyright 2020-2022 Huawei Technologies Co., Ltd
+# Copyright 2020-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,13 +21,221 @@ import inspect
 import json
 import os
 import functools
+import platform
+import hashlib
+import shutil
 
 from mindspore._c_expression import Oplib
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
+from mindspore import log as logger
+
+if platform.system() == "Linux":
+    import fcntl
 
 # path of built-in op info register.
 BUILT_IN_OPS_REGISTER_PATH = "mindspore/ops/_op_impl"
 BUILT_IN_CUSTOM_OPS_REGISTER_PATH = "mindspore/ops/_op_impl/_custom_op"
+
+
+def _get_reg_info_attr(op_info, attr_name, default_value=None):
+    """get attr value"""
+    for _, item in enumerate(op_info.get("attr", [])):
+        if item.get("name") == attr_name:
+            return item.get("defaultValue")
+    return default_value
+
+
+class _CustomInstaller:
+    """save custom op registration information to a json file which will be used by GE"""
+    reg_info_hash = []  # used to avoid writing the same reg info to file multiple times
+    copied_paths = []  # used to avoid copying the same file multiple times
+
+    def __init__(self, op_info, func=None):
+        self.op_info = op_info
+        self.func = func
+        self.op_type = op_info.get("op_name") if not func else func.__name__
+        vendor_name = "ms"
+        custom_dir = os.path.join(os.path.realpath("./"), "vendors", vendor_name)
+        self._set_env(custom_dir)
+        op_impl_dir = os.path.join(custom_dir, "op_impl")
+        self.ai_core_config_dir = os.path.join(op_impl_dir, "ai_core", "tbe", "config")
+        self.ai_core_impl_dir = os.path.join(op_impl_dir, "ai_core", "tbe", vendor_name + "_impl")
+        self.ai_cpu_config_dir = os.path.join(op_impl_dir, "cpu", "config")
+        self.ai_cpu_impl_dir = os.path.join(op_impl_dir, "cpu", "aicpu_kernel", "impl")
+
+    @staticmethod
+    def _set_env(custom_opp_path):
+        """set custom file path to env"""
+        if not os.environ.get("ASCEND_CUSTOM_OPP_PATH"):
+            os.environ["ASCEND_CUSTOM_OPP_PATH"] = custom_opp_path
+        else:
+            paths = os.environ["ASCEND_CUSTOM_OPP_PATH"].split(':')
+            if custom_opp_path not in paths:
+                os.environ["ASCEND_CUSTOM_OPP_PATH"] = custom_opp_path + ':' + os.environ["ASCEND_CUSTOM_OPP_PATH"]
+
+    @staticmethod
+    def _create_dir(*dir_names):
+        """create directory"""
+        for dir_name in dir_names:
+            if not os.path.isdir(dir_name):
+                try:
+                    os.makedirs(dir_name, exist_ok=True)
+                except OSError as err:
+                    if err.errno == 17:  # File exists
+                        pass
+                    else:
+                        raise err
+
+    @staticmethod
+    def _copy_file(src_path, dst_dir):
+        """copy file"""
+        if not os.path.exists(src_path) or src_path in _CustomInstaller.copied_paths:
+            return
+        _CustomInstaller.copied_paths.append(src_path)
+        if os.path.isfile(src_path):
+            lock_file = os.path.join(dst_dir, "file.lock")
+            with os.fdopen(os.open(lock_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                shutil.copy(src_path, dst_dir)
+
+    def check(self):
+        """check if the reg info need written"""
+        if platform.system() != "Linux":
+            return False
+        if not os.environ.get("MS_DEV_CUSTOM_OPP_PATH"):
+            # only process the first time import the mindspore module
+            return False
+        if self.op_info.get("target") in ["GPU", "CPU"]:
+            return False
+        sha256 = hashlib.sha256()
+        value = json.dumps(self.op_info, sort_keys=True).encode()
+        sha256.update(value)
+        hash_value = sha256.hexdigest()
+        if hash_value in _CustomInstaller.reg_info_hash:
+            return False
+        _CustomInstaller.reg_info_hash.append(hash_value)
+        return True
+
+    def _find_ai_cpu_so_path(self, so_file):
+        """find the absolute path of so"""
+        current_path = os.path.dirname(os.path.abspath(__file__))
+        search_paths = [current_path + "/../lib", current_path + "/../lib/plugin/ascend"]
+        for path in search_paths:
+            so_path = os.path.join(path, so_file)
+            if os.path.exists(so_path):
+                return so_path
+        logger.warning("For Custom op '{}', can not find the aicpu so file '{}' in the following directories:\n{}"
+                       .format(self.op_type, so_file, "\n".join(search_paths)))
+        return ""
+
+    def _gen_ai_core_reg_info(self, imply_path, func_name):
+        """generate reg info"""
+
+        def _get_dtype_format(idx):
+            data_type = []
+            data_format = []
+            for _, dtype_format in enumerate(self.op_info.get("dtype_format", [])):
+                if not dtype_format[idx][0]:
+                    data_type = None
+                else:
+                    data_type.append(dtype_format[idx][0])
+                if not dtype_format[idx][1]:
+                    data_format = None
+                else:
+                    if dtype_format[idx][1] == "DefaultFormat":
+                        data_format.append("ND")
+                    else:
+                        data_format.append(dtype_format[idx][1])
+            return data_type, data_format
+
+        op_info = {"opFile": {"value": os.path.splitext(os.path.basename(imply_path))[0]},
+                   "opInterface": {"value": func_name}}
+        # attr
+        attrs_name = []
+        for _, item in enumerate(self.op_info.get("attr", [])):
+            attr_name = item.get("name")
+            attrs_name.append(attr_name)
+            key = "attr_" + attr_name
+            op_info[key] = {}
+            for k, v in item.items():
+                if k != "name":
+                    op_info[key][k] = v
+        if attrs_name:
+            op_info["attr"] = {"list": ",".join(attrs_name)}
+        # input and output
+        inputs = self.op_info.get("inputs", [])
+        outputs = self.op_info.get("outputs", [])
+        input_num = len(inputs)
+        output_num = len(outputs)
+        for i in range(input_num + output_num):
+            item = inputs[i] if i < input_num else outputs[i - input_num]
+            key = "input" if i < input_num else "output"
+            key += str(item.get("index"))
+            op_info[key] = {"name": item.get("name"),
+                            "paramType": item.get("paramType", "required"),
+                            "shape": item.get("shape", "all")}
+            dtype, formats = _get_dtype_format(i)
+            if dtype:
+                op_info[key]["dtype"] = ",".join(dtype)
+            if formats:
+                op_info[key]["format"] = ",".join(formats)
+        return op_info
+
+    @staticmethod
+    def _gen_ai_cpu_reg_info(so_file):
+        """generate reg info"""
+        op_info = {"opInfo": {"computeCost": "100",
+                              "engine": "DNN_VM_AICPU",
+                              "flagAsync": "False",
+                              "flagPartial": "False",
+                              "functionName": "RunCpuKernel",
+                              "kernelSo": so_file,
+                              "opKernelLib": "CUSTAICPUKernel",
+                              "userDefined": "True"}}
+        return op_info
+
+    def _save_op_info(self, dst_dir, file_name, op_info):
+        """save op info file"""
+        repo = {}
+        save_path = os.path.join(dst_dir, file_name)
+        lock_file = os.path.join(dst_dir, "file.lock")
+        with os.fdopen(os.open(lock_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            if os.path.isfile(save_path):
+                with open(save_path, 'r') as fr:
+                    json_str = fr.read()
+                json_str = "{}" if json_str == "" else json_str
+                repo = json.loads(json_str)
+            repo.update({self.op_type: op_info})
+            with os.fdopen(os.open(save_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as fw:
+                json.dump(repo, fw, sort_keys=True, indent=4, separators=(',', ':'))
+
+    def run(self):
+        """save reg info to file"""
+        if not self.check():
+            return
+        so_name = _get_reg_info_attr(self.op_info, "cust_aicpu")
+        if so_name:
+            _CustomInstaller._create_dir(self.ai_cpu_config_dir, self.ai_cpu_impl_dir)
+            # copy so file
+            so_file = "lib" + so_name + ".so"
+            imply_path = self._find_ai_cpu_so_path(so_file)
+            self._copy_file(imply_path, self.ai_cpu_impl_dir)
+            # generate and copy reg info file
+            op_info = self._gen_ai_cpu_reg_info(so_file)
+            self._save_op_info(self.ai_cpu_config_dir, "cust_aicpu_kernel.json", op_info)
+        else:
+            _CustomInstaller._create_dir(self.ai_core_config_dir, self.ai_core_impl_dir)
+            # copy dsl file
+            imply_path = os.path.realpath(inspect.getfile(self.func))
+            self._copy_file(imply_path, self.ai_core_impl_dir)
+            # generate and copy reg info file
+            op_info = self._gen_ai_core_reg_info(imply_path, self.func.__name__)
+            self._copy_file(imply_path, self.ai_core_impl_dir)
+            for arc_name in ["ascend910", "ascend910b"]:
+                arc_dir = os.path.join(self.ai_core_config_dir, arc_name)
+                _CustomInstaller._create_dir(arc_dir)
+                self._save_op_info(arc_dir, "aic-{}-ops-info.json".format(arc_name), op_info)
 
 
 def op_info_register(op_info):
@@ -125,6 +333,12 @@ def custom_info_register(*reg_info):
 
     def decorator(func):
         setattr(func, "reg_info", reg_info)
+        if reg_info:
+            used_reg_info = reg_info[0]
+            if isinstance(used_reg_info, dict):
+                # ai_cpu should be parsed inside CustomRegOp, skip it here
+                if not _get_reg_info_attr(used_reg_info, "cust_aicpu"):
+                    _CustomInstaller(used_reg_info, func).run()
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -140,7 +354,7 @@ class RegOp:
     Base class for op info register.
 
     Args:
-        op_name (str): Name of op.
+        op_name (str): Name of operator.
     """
 
     def __init__(self, op_name=""):
@@ -272,10 +486,12 @@ class RegOp:
             raise ValueError("input size add output size must be equal to dtype format size")
         dtype_format = []
         for arg in args:
-            if not isinstance(arg, tuple) or len(arg) != 2:
-                raise ValueError("dtype and format value must be tuple of two elements")
+            if not isinstance(arg, tuple) or (len(arg) != 2 and len(arg) != 3):
+                raise ValueError("dtype and format value must be tuple of two or three elements")
             self._is_string(arg[0])
             self._is_string(arg[1])
+            if len(arg) == 3:
+                self._is_string(arg[2])
             dtype_format.append(arg)
         self.dtype_format_.append(tuple(dtype_format))
         return self
@@ -291,9 +507,15 @@ class RegOp:
         op_info = {}
         for key, value in self.__dict__.items():
             if isinstance(key, str) and key.endswith('_'):
-                op_info[key.rstrip('_')] = value
-            else:
-                op_info[key] = value
+                key = key.rstrip('_')
+                key_dic = {"dynamic_shape_support": "dynamicShapeSupport",
+                           "dynamic_rank_support": "dynamicRankSupport",
+                           "dynamic_compile_static": "dynamicCompileStatic",
+                           "need_check_support": "needCheckSupport",
+                           "dynamic_format": "dynamicFormat"
+                           }
+                key = key_dic.get(key, key)
+            op_info[key] = value
         return op_info
 
 
@@ -309,13 +531,13 @@ class CpuRegOp(RegOp):
         Register Cpu op input information.
 
         Args:
-            index (int): Order of the input. Default: None.
-            name (str): Name of the input. Default: None.
-            param_type (str): Param type of the input. Default: None.
+            index (int): Order of the input. Default: ``None`` .
+            name (str): Name of the input. Default: ``None`` .
+            param_type (str): Param type of the input. Default: ``None`` .
             kwargs (dict): Other information of the input.
         """
         param_list = [index, name, param_type]
-        key_list = ["index", "name", "param_type"]
+        key_list = ["index", "name", "paramType"]
         fn_list = [self._is_int, self._is_string, self._is_string]
         input_dict = self._check_param(param_list, key_list, fn_list, kwargs)
         self.inputs.append(input_dict)
@@ -326,13 +548,13 @@ class CpuRegOp(RegOp):
         Register AiCPU op output information.
 
         Args:
-            index (int): Order of the output. Default: None.
-            name (str): Name of the output. Default: None.
-            param_type (str): Param type of the output. Default: None.
+            index (int): Order of the output. Default: ``None`` .
+            name (str): Name of the output. Default: ``None`` .
+            param_type (str): Param type of the output. Default: ``None`` .
             kwargs (dict): Other information of the output.
         """
         param_list = [index, name, param_type]
-        key_list = ["index", "name", "param_type"]
+        key_list = ["index", "name", "paramType"]
         fn_list = [self._is_int, self._is_string, self._is_string]
         output_dict = self._check_param(param_list, key_list, fn_list, kwargs)
         self.outputs.append(output_dict)
@@ -343,9 +565,9 @@ class CpuRegOp(RegOp):
         Register AiCPU op attribute information.
 
         Args:
-            name (str): Name of the attribute. Default: None.
-            value_type (str): Value type of the attribute. Default: None.
-            value (str): Value of the attribute. Default: None.
+            name (str): Name of the attribute. Default: ``None`` .
+            value_type (str): Value type of the attribute. Default: ``None`` .
+            value (str): Value of the attribute. Default: ``None`` .
             kwargs (dict): Other information of the attribute.
         """
         param_list = [name, value_type, value]
@@ -369,13 +591,13 @@ class AkgRegOp(RegOp):
         Register Akg op input information.
 
         Args:
-            index (int): Order of the input. Default: None.
-            name (str): Name of the input. Default: None.
-            param_type (str): Param type of the input. Default: None.
+            index (int): Order of the input. Default: ``None`` .
+            name (str): Name of the input. Default: ``None`` .
+            param_type (str): Param type of the input. Default: ``None`` .
             kwargs (dict): Other information of the input.
         """
         param_list = [index, name, param_type]
-        key_list = ["index", "name", "param_type"]
+        key_list = ["index", "name", "paramType"]
         fn_list = [self._is_int, self._is_string, self._is_string]
         input_dict = self._check_param(param_list, key_list, fn_list, kwargs)
         self.inputs.append(input_dict)
@@ -386,8 +608,8 @@ class AkgRegOp(RegOp):
         Register Akg op output information.
 
         Args:
-            index (int): Order of the output. Default: None.
-            name (str): Name of the output. Default: None.
+            index (int): Order of the output. Default: ``None`` .
+            name (str): Name of the output. Default: ``None`` .
             kwargs (dict): Other information of the output.
         """
         param_list = [index, name]
@@ -402,13 +624,13 @@ class AkgRegOp(RegOp):
         Register Akg op attribute information.
 
         Args:
-            name (str): Name of the attribute. Default: None.
-            param_type (str): Param type of the attribute. Default: None.
-            value_type (str): Value type of the attribute. Default: None.
+            name (str): Name of the attribute. Default: ``None`` .
+            param_type (str): Param type of the attribute. Default: ``None`` .
+            value_type (str): Value type of the attribute. Default: ``None`` .
             kwargs (dict): Other information of the attribute.
         """
         param_list = [name, param_type, value_type]
-        key_list = ["name", "param_type", "type"]
+        key_list = ["name", "paramType", "type"]
         fn_list = [self._is_string]
         attr_dict = self._check_param(param_list, key_list, fn_list, kwargs)
         self.attr_.append(attr_dict)
@@ -438,10 +660,10 @@ class AkgCpuRegOp(AkgRegOp):
 
 class AiCPURegOp(CpuRegOp):
     r"""
-    Class for AiCPU operator information register.
+    Class for AiCPU operator information registration.
 
     Args:
-        op_name (str):kernel name.
+        op_name (str): Name of operator.
 
     Examples:
         >>> from mindspore.ops import AiCPURegOp, DataType
@@ -473,26 +695,39 @@ class AiCPURegOp(CpuRegOp):
 
 class TBERegOp(RegOp):
     r"""
-    Class for TBE operator information register.
+    Class for TBE operator information registration. TBE (Tensor Boost Engine) is the Ascend operator development
+    tool, which is extended on the basis of the TVM framework to develop custom operators.
 
     Args:
-        op_name (str):kernel name.
+        op_name (str): Name of operator.
 
     Examples:
         >>> from mindspore.ops import TBERegOp, DataType
-        >>> abs_op_info = TBERegOp("Abs") \
+        >>> op_name_op_info = TBERegOp("OpName") \
         ...    .fusion_type("ELEMWISE") \
         ...    .async_flag(False) \
-        ...    .binfile_name("abs.so") \
+        ...    .binfile_name("op_name.so") \
         ...    .compute_cost(10) \
-        ...    .kernel_name("abs") \
+        ...    .kernel_name("op_name") \
         ...    .partial_flag(True) \
         ...    .op_pattern("formatAgnostic") \
-        ...    .input(0, "x", None, "required", None) \
+        ...    .need_check_supported(True) \
+        ...    .dynamic_shape(True) \
+        ...    .dynamic_rank_support(True) \
+        ...    .dynamic_compile_static(True) \
+        ...    .attr("format", "required", "str", "all") \
+        ...    .input(0, "x1", None, "required", None) \
+        ...    .input(0, "x2", None, "required", None) \
+        ...    .input(1, "axis", None, "required", None) \
         ...    .output(0, "y", True, "required", "all") \
-        ...    .dtype_format(DataType.F16_None, DataType.F16_None) \
-        ...    .dtype_format(DataType.F32_None, DataType.F32_None) \
-        ...    .dtype_format(DataType.I32_None, DataType.I32_None) \
+        ...    .real_input_index([1, 0]) \
+        ...    .input_to_attr_index([2]) \
+        ...    .unknown_shape_formats(["ND", "ND", "ND", "ND"]) \
+        ...    .reshape_type("NC") \
+        ...    .is_dynamic_format(True) \
+        ...    .dtype_format(DataType.F16_None, DataType.F16_None, DataType.F16_None, DataType.F16_None) \
+        ...    .dtype_format(DataType.F32_None, DataType.F32_None, DataType.F32_None, DataType.F32_None) \
+        ...    .dtype_format(DataType.I32_None, DataType.I32_None, DataType.I32_None, DataType.I32_None) \
         ...    .get_op_info()
         >>>
     """
@@ -501,16 +736,16 @@ class TBERegOp(RegOp):
         super(TBERegOp, self).__init__(op_name)
         self.imply_type = "TBE"
         self.async_flag_ = False
-        self.binfile_name_ = ''
+        self.binfile_ = ''
         self.compute_cost_ = 10
-        self.kernel_name_ = ''
+        self.kernel_ = ''
         self.partial_flag_ = False
         self.reshape_type_ = ''
         self.dynamic_rank_support_ = False
-        self.dynamic_shape_ = False
+        self.dynamic_shape_support_ = False
         self.dynamic_compile_static_ = False
-        self.need_check_supported_ = False
-        self.is_dynamic_format_ = False
+        self.need_check_support_ = False
+        self.dynamic_format_ = False
         self.op_pattern_ = ""
         self.real_input_index_ = []
         self.input_to_attr_index_ = []
@@ -537,7 +772,7 @@ class TBERegOp(RegOp):
                                          True: indicates that dynamic rank is supported, and the operator supports
                                          shape (- 2), which is used to determine whether dynamic is performed.
                                          False: indicates that the operator does not support dynamic rank.
-                                         Default: False.
+                                         Default: ``False`` .
         """
         self._is_bool(dynamic_rank_support)
         self.dynamic_rank_support_ = dynamic_rank_support
@@ -548,7 +783,7 @@ class TBERegOp(RegOp):
         Description operator front end and tbe operator input mapping.
 
         Args:
-            real_input_index (list): Value of real_input_index. Default: ().
+            real_input_index (list): Value of real_input_index. Default: ``()`` .
         """
         RegOp._is_list(real_input_index)
         self.real_input_index_ = real_input_index
@@ -559,7 +794,7 @@ class TBERegOp(RegOp):
         Description the index of input need to cast to attr.
 
         Args:
-            input_to_attr_index (list): Value of input_to_attr_index. Default: ().
+            input_to_attr_index (list): Value of input_to_attr_index. Default: ``()`` .
         """
         RegOp._is_list(input_to_attr_index)
         self.input_to_attr_index_ = input_to_attr_index
@@ -570,7 +805,7 @@ class TBERegOp(RegOp):
         Define the calculation efficiency of the operator, whether the asynchronous calculation is supported.
 
         Args:
-            async_flag (bool): Value of async flag. Default: false.
+            async_flag (bool): Value of async flag. Default: ``False`` .
         """
         self._is_bool(async_flag)
         self.async_flag_ = async_flag
@@ -584,7 +819,7 @@ class TBERegOp(RegOp):
             binfile_name (str): The binary file name of the operator.
         """
         self._is_string(binfile_name)
-        self.binfile_name_ = binfile_name
+        self.binfile_ = binfile_name
         return self
 
     def compute_cost(self, compute_cost=10):
@@ -593,7 +828,7 @@ class TBERegOp(RegOp):
         in the tiling module.
 
         Args:
-            compute_cost (int): Value of compute cost. Default: 10.
+            compute_cost (int): Value of compute cost. Default: ``10`` .
         """
         self._is_int(compute_cost)
         self.compute_cost_ = compute_cost
@@ -607,7 +842,7 @@ class TBERegOp(RegOp):
             kernel_name (str): Name of operator kernel.
         """
         self._is_string(kernel_name)
-        self.kernel_name_ = kernel_name
+        self.kernel_ = kernel_name
         return self
 
     def partial_flag(self, partial_flag=True):
@@ -615,7 +850,7 @@ class TBERegOp(RegOp):
         Define the calculation efficiency of operator, whether the partial calculation is supported.
 
         Args:
-            partial_flag (bool): Value of partial flag. Default: true.
+            partial_flag (bool): Value of partial flag. Default: ``True`` .
         """
         self._is_bool(partial_flag)
         self.partial_flag_ = partial_flag
@@ -626,8 +861,9 @@ class TBERegOp(RegOp):
         Reshape type of operator.
 
         Args:
-            reshape_type (str): Value of reshape type. For example, if the input shape is (2,3) and `reshape_type`
-                is set to "CH", then the new shape is (1,2,3,1). "CH" means the C and H dimensions are kept and
+            reshape_type (str): Value of reshape type. For example, if the input shape is :math:`(2, 3)`
+                and `reshape_type` is set to "CH", then the new shape is :math:`(1, 2, 3, 1)`.
+                "CH" means the C and H dimensions are kept and
                 new dimensions are added for N and W dimension.
         """
         self._is_string(reshape_type)
@@ -639,10 +875,10 @@ class TBERegOp(RegOp):
         Whether the operator supports dynamic shape.
 
         Args:
-            dynamic_shape (bool): Value of dynamic shape. Default: false.
+            dynamic_shape (bool): Value of dynamic shape. Default: ``False`` .
         """
         self._is_bool(dynamic_shape)
-        self.dynamic_shape_ = dynamic_shape
+        self.dynamic_shape_support_ = dynamic_shape
         return self
 
     def dynamic_compile_static(self, dynamic_compile_static=False):
@@ -650,7 +886,7 @@ class TBERegOp(RegOp):
         Whether the operator supports dynamic compile static.
 
         Args:
-            dynamic_compile_static (bool): Value of dynamic compile static. Default: false.
+            dynamic_compile_static (bool): Value of dynamic compile static. Default: ``False`` .
         """
         self._is_bool(dynamic_compile_static)
         self.dynamic_compile_static_ = dynamic_compile_static
@@ -661,10 +897,10 @@ class TBERegOp(RegOp):
         Whether the operator needs check supports.
 
         Args:
-            need_check_supported (bool): Value of need_check_supported. Default: false.
+            need_check_supported (bool): Value of need_check_supported. Default: ``False`` .
         """
         self._is_bool(need_check_supported)
-        self.need_check_supported_ = need_check_supported
+        self.need_check_support_ = need_check_supported
         return self
 
     def is_dynamic_format(self, is_dynamic_format=False):
@@ -672,10 +908,10 @@ class TBERegOp(RegOp):
         Whether the operator needs calop_select_format api.
 
         Args:
-            is_dynamic_format (bool): Value of is_dynamic_format. Default: false.
+            is_dynamic_format (bool): Value of is_dynamic_format. Default: ``False`` .
         """
         self._is_bool(is_dynamic_format)
-        self.is_dynamic_format_ = is_dynamic_format
+        self.dynamic_format_ = is_dynamic_format
         return self
 
     def op_pattern(self, pattern=None):
@@ -683,7 +919,7 @@ class TBERegOp(RegOp):
         The behavior type of operator, such as broadcast, reduce and so on.
 
         Args:
-            pattern (str): Value of op pattern, e.g. "broadcast", "reduce". Default: None.
+            pattern (str): Value of op pattern, e.g. "broadcast", "reduce". Default: ``None`` .
         """
         if pattern is not None and self._is_string(pattern):
             self.op_pattern_ = pattern
@@ -694,15 +930,15 @@ class TBERegOp(RegOp):
         Register TBE op attribute information.
 
         Args:
-            name (str): Name of the attribute. Default: None.
-            param_type (str): Param type of the attribute. Default: None.
-            value_type (str): Type of the attribute. Default: None.
-            value (str): Value of the attribute. Default: None.
-            default_value (str): Default value of attribute. Default: None.
+            name (str): Name of the attribute. Default: ``None`` .
+            param_type (str): Param type of the attribute. Default: ``None`` .
+            value_type (str): Type of the attribute. Default: ``None`` .
+            value (str): Value of the attribute. Default: ``None`` .
+            default_value (str): Default value of attribute. Default: ``None`` .
             kwargs (dict): Other information of the attribute.
         """
         param_list = [name, param_type, value_type, value, default_value]
-        key_list = ["name", "param_type", "type", "value", "default_value"]
+        key_list = ["name", "paramType", "type", "value", "defaultValue"]
         fn_list = [self._is_string]
         attr_dict = self._check_param(param_list, key_list, fn_list, kwargs)
         self.attr_.append(attr_dict)
@@ -713,16 +949,16 @@ class TBERegOp(RegOp):
         Register TBE op input information.
 
         Args:
-            index (int): Order of the input. Default: None.
-            name (str): Name of the input. Default: None.
-            need_compile (bool): Whether the input needs to be compiled or not. Default: None.
-            param_type (str): Type of the input. Default: None.
-            shape (str): Shape of the input. Default: None.
-            value_depend (str): Whether the input is constant value depend. Default: None.
+            index (int): Order of the input. Default: ``None`` .
+            name (str): Name of the input. Default: ``None`` .
+            need_compile (bool): Whether the input needs to be compiled or not. Default: ``None`` .
+            param_type (str): Type of the input. Default: ``None`` .
+            shape (str): Shape of the input. Default: ``None`` .
+            value_depend (str): Whether the input is constant value depend. Default: ``None`` .
             kwargs (dict): Other information of the input.
         """
         param_list = [index, name, need_compile, param_type, shape, value_depend]
-        key_list = ["index", "name", "need_compile", "param_type", "shape", "value_depend"]
+        key_list = ["index", "name", "needCompile", "paramType", "shape", "valueDepend"]
         fn_list = [self._is_int, self._is_string, self._is_bool, self._is_string, self._is_string, self._is_string]
         input_dict = self._check_param(param_list, key_list, fn_list, kwargs)
         value_depend_values = ("ignored", "optional", "required")
@@ -737,15 +973,15 @@ class TBERegOp(RegOp):
         Register TBE op output information.
 
         Args:
-            index (int): Order of the output. Default: None.
-            name (str): Name of the output. Default: None.
-            need_compile (bool): Whether the output needs to be compiled or not. Default: None.
-            param_type (str): Type of the output. Default: None.
-            shape (str): Shape of the output. Default: None.
+            index (int): Order of the output. Default: ``None`` .
+            name (str): Name of the output. Default: ``None`` .
+            need_compile (bool): Whether the output needs to be compiled or not. Default: ``None`` .
+            param_type (str): Type of the output. Default: ``None`` .
+            shape (str): Shape of the output. Default: ``None`` .
             kwargs (dict): Other information of the output.
         """
         param_list = [index, name, need_compile, param_type, shape]
-        key_list = ["index", "name", "need_compile", "param_type", "shape"]
+        key_list = ["index", "name", "need_compile", "paramType", "shape"]
         fn_list = [self._is_int, self._is_string, self._is_bool, self._is_string, self._is_string]
         output_dict = self._check_param(param_list, key_list, fn_list, kwargs)
         self.outputs.append(output_dict)
@@ -761,7 +997,7 @@ class CustomRegOp(RegOp):
     Args:
         op_name (str): kernel name. The name will be record in the reg_op_name attr of the kernel node.
             Besides, the operator will generate a unique name automatically to identify the reg info.
-            Default: "Custom".
+            Default: ``"Custom"`` .
 
     Examples:
         >>> from mindspore.ops import CustomRegOp, DataType
@@ -787,17 +1023,18 @@ class CustomRegOp(RegOp):
 
         Args:
             index (int): Index of the input, starts from 0. 0 means the first input tensor, 1 means the second input
-                tensor and so on. If None, key "index" will not appear in the input tensor information dict.
-                Default: None.
-            name (str): Name of the `index` 'th input. If None, key "name" will not appear in the input tensor
-                information dict. Default: None.
+                tensor and so on. If ``None`` , key "index" will not appear in the input tensor information dict.
+                Default: ``None`` .
+            name (str): Name of the `index` 'th input. If ``None`` , key "name" will not appear in the input tensor
+                information dict. Default: ``None`` .
             param_type (str): Parameter type of the `index` 'th input, can be one of
-                ["required", "dynamic", "optional"]. If None, key "param_type" will not appear in the input tensor
-                information dict. Default: "required".
+                [``"required"`` , ``"dynamic"`` , ``"optional"`` ]. If ``None`` , key "param_type" will not appear in
+                the input tensor information dict. Default: ``"required"`` .
 
-                - "required": means the `index` 'th input exist and can only be a single tensor.
-                - "dynamic": means the `index` 'th input exist and may be multiple tensors, such as the input of AddN.
-                - "optional": means the `index` 'th input may exist and be a single tensor or may not exist.
+                - ``"required"``: means the `index` 'th input exist and can only be a single tensor.
+                - ``"dynamic":`` means the `index` 'th input exist and may be multiple tensors, such as the input of
+                  AddN.
+                - ``"optional"``: means the `index` 'th input may exist and be a single tensor or may not exist.
 
             kwargs (dict): Other information of the input, used for extension.
 
@@ -805,9 +1042,14 @@ class CustomRegOp(RegOp):
             TypeError: If `index` is neither int nor None.
             TypeError: If `name` is neither str nor None.
             TypeError: If `param_type` is neither str nor None.
+
+        Tutorial Examples:
+            - `Custom Operators (Custom-based) - Defining Custom Operator of aicpu Type
+              <https://mindspore.cn/tutorials/experts/en/master/operation/op_custom.html#
+              defining-custom-operator-of-aicpu-type>`_
         """
         param_list = [index, name, param_type]
-        key_list = ["index", "name", "param_type"]
+        key_list = ["index", "name", "paramType"]
         fn_list = [self._is_int, self._is_string, self._is_string]
         input_dict = self._check_param(param_list, key_list, fn_list, kwargs)
         self.inputs.append(input_dict)
@@ -822,17 +1064,17 @@ class CustomRegOp(RegOp):
 
         Args:
             index (int): Index of the output, starts from 0. 0 means the first output tensor, 1 means the second output
-                tensor and so on. If None, key "index" will not appear in the output tensor information dict.
-                Default: None.
-            name (str): Name of the `index` 'th output. If None, key "name" will not appear in the output tensor
-                information dict. Default: None.
+                tensor and so on. If ``None`` , key "index" will not appear in the output tensor information dict.
+                Default: ``None`` .
+            name (str): Name of the `index` 'th output. If ``None`` , key "name" will not appear in the output tensor
+                information dict. Default: ``None`` .
             param_type (str): Parameter type of the `index` 'th output, can be one of
-                ["required", "dynamic", "optional"]. If None, key "param_type" will not appear in the output tensor
-                information dict. Default: "required".
+                [ ``"required"`` , ``"dynamic"`` , ``"optional"`` ]. If ``None`` , key "param_type" will not appear in
+                the output tensor information dict. Default: ``"required"`` .
 
-                - "required": means the `index` 'th output exist and can only be a single tensor.
-                - "dynamic": means the `index` 'th output exist and may be multiple tensors.
-                - "optional": means the `index` 'th output may exist and be a single tensor or may not exist.
+                - ``"required"``: means the `index` 'th output exist and can only be a single tensor.
+                - ``"dynamic"``: means the `index` 'th output exist and may be multiple tensors.
+                - ``"optional"``: means the `index` 'th output may exist and be a single tensor or may not exist.
 
             kwargs (dict): Other information of the output, used for extension.
 
@@ -840,9 +1082,14 @@ class CustomRegOp(RegOp):
             TypeError: If `index` is neither int nor None.
             TypeError: If `name` is neither str nor None.
             TypeError: If `param_type` is neither str nor None.
+
+        Tutorial Examples:
+            - `Custom Operators (Custom-based) - Defining Custom Operator of aicpu Type
+              <https://mindspore.cn/tutorials/experts/en/master/operation/op_custom.html#
+              defining-custom-operator-of-aicpu-type>`_
         """
         param_list = [index, name, param_type]
-        key_list = ["index", "name", "param_type"]
+        key_list = ["index", "name", "paramType"]
         fn_list = [self._is_int, self._is_string, self._is_string]
         output_dict = self._check_param(param_list, key_list, fn_list, kwargs)
         self.outputs.append(output_dict)
@@ -863,6 +1110,11 @@ class CustomRegOp(RegOp):
 
         Raises:
             ValueError: If the size of `args` not equal to the sum of input tensors and output tensors.
+
+        Tutorial Examples:
+            - `Custom Operators (Custom-based) - Defining Custom Operator of aicpu Type
+              <https://mindspore.cn/tutorials/experts/en/master/operation/op_custom.html#
+              defining-custom-operator-of-aicpu-type>`_
         """
         io_nums = len(self.inputs) + len(self.outputs)
         if len(args) != io_nums:
@@ -879,18 +1131,18 @@ class CustomRegOp(RegOp):
         `default_value`}.
 
         Args:
-            name (str): Name of the attribute. If None, key "name" will not appear in the attributes tensor information
-                dict. Default: None.
-            param_type (str): Parameter type of the attribute, can be one of ["required", "optional"]. If None, key
-                "param_type" will not appear in the attributes tensor information dict. Default: None.
+            name (str): Name of the attribute. If ``None`` , key "name" will not appear in the attributes tensor
+                information dict. Default: ``None`` .
+            param_type (str): Parameter type of the attribute, can be one of ["required", "optional"]. If ``None`` ,
+                key "param_type" will not appear in the attributes tensor information dict. Default: ``None`` .
 
                 - "required": means must provide a value for this attribute either by setting a default value in the
                   registration information or providing an input value when calling the Custom operator.
                 - "optional": means does not have to provide a value for this attribute.
 
             value_type (str): Value type of the attribute, can be one of ["int", "str", "bool", "float", "listInt",
-                "listStr", "listBool", "listFloat"]. If None, key "value_type" will not appear in the attributes tensor
-                information dict. Default: None.
+                "listStr", "listBool", "listFloat"]. If ``None`` , key "value_type" will not appear in the attributes
+                tensor information dict. Default: ``None`` .
 
                 - "int": string representation of Python type int.
                 - "str": string representation of Python type str.
@@ -905,9 +1157,9 @@ class CustomRegOp(RegOp):
                 If the real default value of the attribute is float type with value 1.0, then the `value_type` should be
                 "float" and `default_value` should be "1.0". If the real default value of the attribute is a list of int
                 with value [1, 2, 3], then the `value_type` should be "listInt" and `default_value` should be "1,2,3",
-                each item should split by ','. If None, means the attribute has no default value and key "default_value"
-                will not appear in the attributes tensor information dict. It is used for "akg", "aicpu" and "tbe"
-                Custom operators currently. Default: None.
+                each item should split by ','. If ``None`` , means the attribute has no default value and key
+                "default_value" will not appear in the attributes tensor information dict. It is used for "akg",
+                "aicpu" and "tbe" Custom operators currently. Default: ``None`` .
             kwargs (dict): Other information of the attribute, used for extension.
 
         Raises:
@@ -915,9 +1167,14 @@ class CustomRegOp(RegOp):
             TypeError: If `param_type` is neither str nor None.
             TypeError: If `value_type` is neither str nor None.
             TypeError: If `default_value` is neither str nor None.
+
+        Tutorial Examples:
+            - `Custom Operators (Custom-based) - Defining Custom Operator of aicpu Type
+              <https://mindspore.cn/tutorials/experts/en/master/operation/op_custom.html#
+              defining-custom-operator-of-aicpu-type>`_
         """
         param_list = [name, param_type, value_type, default_value]
-        key_list = ["name", "param_type", "type", "default_value"]
+        key_list = ["name", "paramType", "type", "defaultValue"]
         fn_list = [self._is_string]
         attr_dict = self._check_param(param_list, key_list, fn_list, kwargs)
         self.attr_.append(attr_dict)
@@ -931,10 +1188,16 @@ class CustomRegOp(RegOp):
             target (str): Device target for current operator information, should be one of ["Ascend", "GPU", "CPU"].
                 For the same `func` of :class:`mindspore.ops.Custom`, it may support different data types and formats
                 on different targets, use `target` to specify which target that this registration information is used
-                for. If None, it will be inferred automatically inside :class:`mindspore.ops.Custom`. Default: None.
+                for. If ``None`` , it will be inferred automatically inside :class:`mindspore.ops.Custom`.
+                Default: ``None`` .
 
         Raises:
             TypeError: If `target` is neither str nor None.
+
+        Tutorial Examples:
+            - `Custom Operators (Custom-based) - Defining Custom Operator of aicpu Type
+              <https://mindspore.cn/tutorials/experts/en/master/operation/op_custom.html#
+              defining-custom-operator-of-aicpu-type>`_
         """
         if target is not None:
             self._is_string(target)
@@ -945,12 +1208,19 @@ class CustomRegOp(RegOp):
         """
         Return the generated registration information as a dict. This function should be invoked at last on the
         `CustomRegOp` instance as shown in the above example.
+
+        Tutorial Examples:
+            - `Custom Operators (Custom-based) - Defining Custom Operator of aicpu Type
+              <https://mindspore.cn/tutorials/experts/en/master/operation/op_custom.html#
+              defining-custom-operator-of-aicpu-type>`_
         """
         op_info = {}
         for k, v in self.__dict__.items():
             if isinstance(k, str) and k.endswith('_'):
                 k = k.rstrip('_')
             op_info[k] = v
+        if _get_reg_info_attr(op_info, "cust_aicpu"):
+            _CustomInstaller(op_info).run()
         return op_info
 
 
@@ -1130,6 +1400,7 @@ class DataType:
 
     None_None = ("", "")
     None_Default = ("", "DefaultFormat")
+
     BOOL_None = ("bool", "")
     BOOL_Default = ("bool", "DefaultFormat")
     BOOL_5HD = ("bool", "NC1HWC0")
@@ -1141,6 +1412,8 @@ class DataType:
     BOOL_HWCN = ("bool", "HWCN")
     BOOL_NDHWC = ("bool", "NDHWC")
     BOOL_ChannelLast = ("bool", "ChannelLast")
+    BOOL_Default_Tuple = ("bool", "DefaultFormat", "tuple")
+    BOOL_Default_List = ("bool", "DefaultFormat", "list")
 
     I8_None = ("int8", "")
     I8_Default = ("int8", "DefaultFormat")
@@ -1152,8 +1425,12 @@ class DataType:
     I8_NHWC = ("int8", "NHWC")
     I8_HWCN = ("int8", "HWCN")
     I8_NDHWC = ("int8", "NDHWC")
+    I8_NCDHW = ("int8", "NCDHW")
     I8_ChannelLast = ("int8", "ChannelLast")
     I8_NDC1HWC0 = ("int8", "NDC1HWC0")
+    I8_NC1HWC0 = ("int8", "NC1HWC0")
+    I8_Default_Tuple = ("int8", "DefaultFormat", "tuple")
+    I8_Default_List = ("int8", "DefaultFormat", "list")
 
     U8_None = ("uint8", "")
     U8_Default = ("uint8", "DefaultFormat")
@@ -1165,8 +1442,12 @@ class DataType:
     U8_NHWC = ("uint8", "NHWC")
     U8_HWCN = ("uint8", "HWCN")
     U8_NDHWC = ("uint8", "NDHWC")
+    U8_NCDHW = ("uint8", "NCDHW")
     U8_ChannelLast = ("uint8", "ChannelLast")
     U8_NDC1HWC0 = ("uint8", "NDC1HWC0")
+    U8_NC1HWC0 = ("uint8", "NC1HWC0")
+    U8_Default_Tuple = ("uint8", "DefaultFormat", "tuple")
+    U8_Default_List = ("uint8", "DefaultFormat", "list")
 
     I16_None = ("int16", "")
     I16_Default = ("int16", "DefaultFormat")
@@ -1179,6 +1460,8 @@ class DataType:
     I16_HWCN = ("int16", "HWCN")
     I16_NDHWC = ("int16", "NDHWC")
     I16_ChannelLast = ("int16", "ChannelLast")
+    I16_Default_Tuple = ("int16", "DefaultFormat", "tuple")
+    I16_Default_List = ("int16", "DefaultFormat", "list")
 
     U16_None = ("uint16", "")
     U16_Default = ("uint16", "DefaultFormat")
@@ -1191,6 +1474,8 @@ class DataType:
     U16_HWCN = ("uint16", "HWCN")
     U16_NDHWC = ("uint16", "NDHWC")
     U16_ChannelLast = ("uint16", "ChannelLast")
+    U16_Default_Tuple = ("uint16", "DefaultFormat", "tuple")
+    U16_Default_List = ("uint16", "DefaultFormat", "list")
 
     I32_None = ("int32", "")
     I32_Default = ("int32", "DefaultFormat")
@@ -1202,7 +1487,11 @@ class DataType:
     I32_NHWC = ("int32", "NHWC")
     I32_HWCN = ("int32", "HWCN")
     I32_NDHWC = ("int32", "NDHWC")
+    I32_NDC1HWC0 = ("int32", "NDC1HWC0")
+    I32_NCDHW = ("int32", "NCDHW")
     I32_ChannelLast = ("int32", "ChannelLast")
+    I32_Default_Tuple = ("int32", "DefaultFormat", "tuple")
+    I32_Default_List = ("int32", "DefaultFormat", "list")
 
     U32_None = ("uint32", "")
     U32_Default = ("uint32", "DefaultFormat")
@@ -1215,6 +1504,8 @@ class DataType:
     U32_HWCN = ("uint32", "HWCN")
     U32_NDHWC = ("uint32", "NDHWC")
     U32_ChannelLast = ("uint32", "ChannelLast")
+    U32_Default_Tuple = ("uint32", "DefaultFormat", "tuple")
+    U32_Default_List = ("uint32", "DefaultFormat", "list")
 
     I64_None = ("int64", "")
     I64_Default = ("int64", "DefaultFormat")
@@ -1227,6 +1518,8 @@ class DataType:
     I64_HWCN = ("int64", "HWCN")
     I64_NDHWC = ("int64", "NDHWC")
     I64_ChannelLast = ("int64", "ChannelLast")
+    I64_Default_Tuple = ("int64", "DefaultFormat", "tuple")
+    I64_Default_List = ("int64", "DefaultFormat", "list")
 
     U64_None = ("uint64", "")
     U64_Default = ("uint64", "DefaultFormat")
@@ -1239,6 +1532,8 @@ class DataType:
     U64_HWCN = ("uint64", "HWCN")
     U64_NDHWC = ("uint64", "NDHWC")
     U64_ChannelLast = ("uint64", "ChannelLast")
+    U64_Default_Tuple = ("uint64", "DefaultFormat", "tuple")
+    U64_Default_List = ("uint64", "DefaultFormat", "list")
 
     F16_None = ("float16", "")
     F16_Default = ("float16", "DefaultFormat")
@@ -1258,6 +1553,8 @@ class DataType:
     F16_FracZNRNN = ("float16", "FRACTAL_ZN_RNN")
     F16_ND_RNNBIAS = ("float16", "ND_RNN_BIAS")
     F16_ChannelLast = ("float16", "ChannelLast")
+    F16_Default_Tuple = ("float16", "DefaultFormat", "tuple")
+    F16_Default_List = ("float16", "DefaultFormat", "list")
 
     F32_None = ("float32", "")
     F32_Default = ("float32", "DefaultFormat")
@@ -1277,6 +1574,8 @@ class DataType:
     F32_FracZNRNN = ("float32", "FRACTAL_ZN_RNN")
     F32_ND_RNNBIAS = ("float32", "ND_RNN_BIAS")
     F32_ChannelLast = ("float32", "ChannelLast")
+    F32_Default_Tuple = ("float32", "DefaultFormat", "tuple")
+    F32_Default_List = ("float32", "DefaultFormat", "list")
 
     F64_None = ("float64", "")
     F64_Default = ("float64", "DefaultFormat")
@@ -1289,6 +1588,10 @@ class DataType:
     F64_HWCN = ("float64", "HWCN")
     F64_NDHWC = ("float64", "NDHWC")
     F64_ChannelLast = ("float64", "ChannelLast")
+    F64_Default_Tuple = ("float64", "DefaultFormat", "tuple")
+    F64_Default_List = ("float64", "DefaultFormat", "list")
 
     C64_Default = ("complex64", "DefaultFormat")
     C128_Default = ("complex128", "DefaultFormat")
+    C64_Default_Tuple = ("complex64", "DefaultFormat", "tuple")
+    C128_Default_Tuple = ("complex128", "DefaultFormat", "tuple")

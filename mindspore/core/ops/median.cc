@@ -15,22 +15,41 @@
  */
 
 #include "ops/median.h"
-#include <string>
+
 #include <algorithm>
 #include <memory>
 #include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
-void Median::Init(const bool global_median, const int64_t axis, const bool keep_dims) {
+void Median::Init(const bool global_median, const int64_t axis, const bool keep_dims, const bool ignore_nan) {
   this->set_global_median(global_median);
   this->set_axis(axis);
   this->set_keep_dims(keep_dims);
+  this->set_ignore_nan(ignore_nan);
 }
 
 void Median::set_global_median(const bool global_median) {
@@ -38,6 +57,8 @@ void Median::set_global_median(const bool global_median) {
 }
 
 void Median::set_keep_dims(const bool keep_dims) { (void)this->AddAttr(kKeepDims, api::MakeValue(keep_dims)); }
+
+void Median::set_ignore_nan(const bool ignore_nan) { (void)this->AddAttr(kIgnoreNan, api::MakeValue(ignore_nan)); }
 
 void Median::set_axis(const int64_t &axis) {
   int64_t f = axis;
@@ -51,6 +72,11 @@ bool Median::get_global_median() const {
 
 bool Median::get_keep_dims() const {
   auto value_ptr = GetAttr(kKeepDims);
+  return GetValue<bool>(value_ptr);
+}
+
+bool Median::get_ignore_nan() const {
+  auto value_ptr = GetAttr(kIgnoreNan);
   return GetValue<bool>(value_ptr);
 }
 
@@ -122,6 +148,24 @@ AbstractBasePtr MedianInfer(const abstract::AnalysisEnginePtr &, const Primitive
   auto infer_shape = MedianInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Median, prim::kPrimMedian, MedianInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMedianInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MedianInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MedianInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MedianInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Median, prim::kPrimMedian, AGMedianInfer, false);
 }  // namespace ops
 }  // namespace mindspore

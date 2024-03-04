@@ -55,11 +55,18 @@ class LeftShiftHelperGpuKernel : public GpuKernelHelperBase {
     auto inputx_shape = input_shapes[0];
     auto inputy_shape = input_shapes[1];
     auto output_shape = output_shapes[0];
+    ProcessScalar(&inputx_shape, &inputy_shape, &output_shape);
 
     for (size_t i = 0; i < inputx_shape.size(); i++) {
       if (inputx_shape[i] != inputy_shape[i]) {
         need_broadcast_ = true;
       }
+    }
+
+    if (inputx_shape.size() != inputy_shape.size() && need_broadcast_ == false) {
+      MS_LOG(ERROR) << "For '" << kernel_name_
+                    << "', the shape of 'inputx_shape' and 'inputy_shape' should be the same or can be broadcast.";
+      return -1;
     }
 
     lhs_shape_.resize(MAX_DIMS, 1);
@@ -116,16 +123,30 @@ class LeftShiftHelperGpuKernel : public GpuKernelHelperBase {
       return flag;
     }
 
+    cudaError_t status = cudaErrorNotReady;
     // call cuda kernel
     if (need_broadcast_) {
-      BroadcastLeftShift(lhs_shape_, rhs_shape_, output_shape_, inputx_ptr, inputy_ptr, output_ptr, device_id_,
-                         reinterpret_cast<cudaStream_t>(cuda_stream));
+      status = BroadcastLeftShift(lhs_shape_, rhs_shape_, output_shape_, inputx_ptr, inputy_ptr, output_ptr, device_id_,
+                                  reinterpret_cast<cudaStream_t>(cuda_stream));
     } else {
-      CalLeftShift(output_num_, inputx_ptr, inputy_ptr, output_ptr, device_id_,
-                   reinterpret_cast<cudaStream_t>(cuda_stream));
+      status = CalLeftShift(output_num_, inputx_ptr, inputy_ptr, output_ptr, device_id_,
+                            reinterpret_cast<cudaStream_t>(cuda_stream));
     }
-
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return 0;
+  }
+
+  void ProcessScalar(std::vector<int64_t> *x1_shape, std::vector<int64_t> *x2_shape, std::vector<int64_t> *y_shape) {
+    // If there is a scalar in the inputs, its shape will be [], so it will be treated as [1].
+    if (x1_shape->size() == 0) {
+      x1_shape->insert(x1_shape->begin(), 1);
+    }
+    if (x2_shape->size() == 0) {
+      x2_shape->insert(x2_shape->begin(), 1);
+    }
+    if (y_shape->size() == 0) {
+      y_shape->insert(y_shape->begin(), 1);
+    }
   }
 
  private:

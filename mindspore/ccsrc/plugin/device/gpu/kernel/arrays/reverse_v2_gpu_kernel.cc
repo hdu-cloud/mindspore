@@ -28,6 +28,8 @@ bool ReverseV2GpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std
                                  const std::vector<KernelTensorPtr> &outputs) {
   constexpr size_t input_num = 1;
   constexpr size_t output_num = 1;
+  auto kernel_ptr = std::dynamic_pointer_cast<ops::ReverseV2>(base_operator);
+  axis_ = kernel_ptr->get_axis();
   kernel_name_ = base_operator->GetPrim()->name();
   CHECK_KERNEL_INPUTS_NUM(inputs.size(), input_num, kernel_name_);
   CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), output_num, kernel_name_);
@@ -66,12 +68,8 @@ int ReverseV2GpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const st
   for (int32_t i = input_rank_ - 2; i >= 0; i--) {
     strides_[i] = static_cast<int64_t>(input_shape_[i + 1]) * strides_[i + 1];
   }
-
-  auto kernel_ptr = std::dynamic_pointer_cast<ops::ReverseV2>(base_operator);
-  axis_ = kernel_ptr->get_axis();
   if (axis_.size() < 1) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the size of 'axis' cannot be less than 1, but got "
-                      << axis_.size();
+    return KRET_OK;
   }
 
   std::transform(axis_.begin(), axis_.end(), axis_.begin(),
@@ -93,6 +91,16 @@ bool ReverseV2GpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
   }
   T *input_device = GetDeviceAddress<T>(inputs, 0);
   T *output_device = GetDeviceAddress<T>(outputs, 0);
+  if (axis_.size() < 1) {
+    MS_LOG(WARNING)
+      << "The 'axis' has no value in it, no need to reverse any dimension on the input. The output is the "
+         "same as the input.";
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+      cudaMemcpyAsync(output_device, input_device, input_size_ * sizeof(T), cudaMemcpyDeviceToDevice,
+                      reinterpret_cast<cudaStream_t>(stream_ptr)),
+      "cudaMemcpyAsync failed in ReverseV2GpuKernelMod::Launch.")
+    return true;
+  }
   size_t *input_shape_device = GetDeviceAddress<size_t>(workspace, 0);
   int64_t *strides_device = GetDeviceAddress<int64_t>(workspace, 1);
   int64_t *axis_device = GetDeviceAddress<int64_t>(workspace, 2);
@@ -112,13 +120,16 @@ bool ReverseV2GpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
                     reinterpret_cast<cudaStream_t>(stream_ptr)),
     "cudaMemcpyAsync for axis_ failed");
 
-  CalReverseV2(input_device, output_device, input_shape_device, strides_device, axis_device, input_size_, axis_.size(),
-               reinterpret_cast<cudaStream_t>(stream_ptr));
-
+  auto status = CalReverseV2(input_device, output_device, input_shape_device, strides_device, axis_device, input_size_,
+                             axis_.size(), reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
 std::vector<std::pair<KernelAttr, ReverseV2GpuKernelMod::ReverseV2LaunchFunc>> ReverseV2GpuKernelMod::func_list_ = {
+  {KernelAttr().AddInputAttr(kNumberTypeBool).AddOutputAttr(kNumberTypeBool),
+   &ReverseV2GpuKernelMod::LaunchKernel<bool>},
+
   {KernelAttr().AddInputAttr(kNumberTypeComplex64).AddOutputAttr(kNumberTypeComplex64),
    &ReverseV2GpuKernelMod::LaunchKernel<Complex<float>>},
 
@@ -139,6 +150,12 @@ std::vector<std::pair<KernelAttr, ReverseV2GpuKernelMod::ReverseV2LaunchFunc>> R
 
   {KernelAttr().AddInputAttr(kNumberTypeUInt16).AddOutputAttr(kNumberTypeUInt16),
    &ReverseV2GpuKernelMod::LaunchKernel<uint16_t>},
+
+  {KernelAttr().AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeUInt32),
+   &ReverseV2GpuKernelMod::LaunchKernel<uint32_t>},
+
+  {KernelAttr().AddInputAttr(kNumberTypeUInt64).AddOutputAttr(kNumberTypeUInt64),
+   &ReverseV2GpuKernelMod::LaunchKernel<uint64_t>},
 
   {KernelAttr().AddInputAttr(kNumberTypeInt8).AddOutputAttr(kNumberTypeInt8),
    &ReverseV2GpuKernelMod::LaunchKernel<int8_t>},

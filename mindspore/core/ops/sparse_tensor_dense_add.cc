@@ -14,15 +14,27 @@
  * limitations under the License.
  */
 
+#include <memory>
 #include <set>
 #include <vector>
-#include <memory>
-#include "ops/sparse_tensor_dense_add.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/primitive_c.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "ops/sparse_tensor_dense_add.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -40,6 +52,10 @@ abstract::ShapePtr SparseTensorDenseAddInferShape(const PrimitivePtr &prim,
   const size_t kDimensionOne = 1;
   const size_t kDimensionTwo = 2;
   const size_t kDimensionFive = 5;
+
+  if (x1_values_shape_size == 0 || x2_shape_size == 0) {
+    MS_EXCEPTION(ValueError) << "For " << prim_name << ", the 'x1_values_shape' or 'x2_shape' cannot be scalar ";
+  }
 
   if (!IsDynamicRank(x1_indices_shape) && x1_indices_shape_size != kDimensionTwo) {
     MS_EXCEPTION(ValueError) << "For " << prim_name
@@ -104,7 +120,25 @@ AbstractBasePtr SparseTensorDenseAddInfer(const abstract::AnalysisEnginePtr &, c
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 MIND_API_OPERATOR_IMPL(SparseTensorDenseAdd, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseTensorDenseAdd, prim::kPrimSparseTensorDenseAdd, SparseTensorDenseAddInfer, nullptr,
-                             true);
+
+// AG means auto generated
+class MIND_API AGSparseTensorDenseAddInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseTensorDenseAddInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseTensorDenseAddInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseTensorDenseAddInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseTensorDenseAdd, prim::kPrimSparseTensorDenseAdd, AGSparseTensorDenseAddInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 import mindspore.context as context
 import mindspore.nn as nn
-import mindspore.ops.operations.array_ops as ops
+import mindspore.ops.operations as ops
 from mindspore import Tensor
 from mindspore.common.api import ms_function
 from mindspore.common.initializer import initializer
@@ -47,7 +47,7 @@ def batch_to_space_nd_test_case(nptype, block_shape=2, input_shape=(4, 1, 1, 1))
     assert (output.asnumpy() == expect).all()
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_batch_to_space_nd_graph():

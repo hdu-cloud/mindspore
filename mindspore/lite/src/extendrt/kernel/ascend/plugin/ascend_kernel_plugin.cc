@@ -16,6 +16,7 @@
 
 #include "extendrt/kernel/ascend/plugin/ascend_kernel_plugin.h"
 #include <map>
+#include <utility>
 #include "utils/log_adapter.h"
 #include "include/errorcode.h"
 #include "plugin/factory/ms_factory.h"
@@ -25,32 +26,53 @@
 #endif
 
 namespace mindspore::kernel {
-AscendKernelPlugin &AscendKernelPlugin::GetInstance() {
-  static AscendKernelPlugin instance;
-  return instance;
+std::mutex AscendKernelPlugin::mutex_;
+
+AscendKernelPlugin::AscendKernelPlugin() = default;
+
+AscendKernelPlugin::~AscendKernelPlugin() {
+  MS_LOG(DEBUG) << "~AscendKernelPlugin() begin.";
+  Unregister();
+  MS_LOG(DEBUG) << "~AscendKernelPlugin() end.";
 }
 
-AscendKernelPlugin::AscendKernelPlugin() : handle_(nullptr), create_kernel_map_(nullptr), is_registered_(false) {}
+Status AscendKernelPlugin::TryRegister() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  static AscendKernelPlugin instance;
+  return instance.TryRegisterInner();
+}
 
-void AscendKernelPlugin::UpdateRegisterStatus(bool status) { is_registered_ = status; }
+bool AscendKernelPlugin::Register() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  static AscendKernelPlugin instance;
+  auto status = instance.TryRegisterInner();
+  if (status.IsError()) {
+    MS_LOG(ERROR) << status.ToString();
+    return false;
+  }
+  MS_LOG(INFO) << "Register ascend kernel plugin success.";
+  return true;
+}
 
-void AscendKernelPlugin::Register() {
+Status AscendKernelPlugin::TryRegisterInner() {
 #if !defined(_WIN32)
-  std::lock_guard<std::mutex> locker(mutex_);
   if (is_registered_) {
-    MS_LOG(INFO) << "Create kernel map has been created.";
-    return;
+    return kSuccess;
   }
   Dl_info dl_info;
   dladdr(reinterpret_cast<void *>(this), &dl_info);
   std::string cur_so_path = dl_info.dli_fname;
+  auto converter_pos = cur_so_path.find("libmindspore_converter.so");
+  if (converter_pos != std::string::npos) {
+    MS_LOG(INFO) << "libmindspore_converter.so does not need to register";
+    return kSuccess;
+  }
   auto pos = cur_so_path.find("libmindspore-lite.so");
   if (pos == std::string::npos) {
     MS_LOG(DEBUG) << "Could not find libmindspore-lite so, cur so path: " << cur_so_path;
     auto c_lite_pos = cur_so_path.find("_c_lite");
     if (c_lite_pos == std::string::npos) {
-      MS_LOG(ERROR) << "Could not find _c_lite so, cur so path: " << cur_so_path;
-      return;
+      return {kLiteError, "Could not find _c_lite so, cur so path: " + cur_so_path};
     }
     pos = c_lite_pos;
   }
@@ -58,42 +80,42 @@ void AscendKernelPlugin::Register() {
   std::string ascend_kernel_plugin_path;
   auto ret = FindSoPath(parent_dir, "libascend_kernel_plugin.so", &ascend_kernel_plugin_path);
   if (ret != kSuccess) {
-    MS_LOG(ERROR) << "Get real path of libascend_kernel_plugin.so failed.";
-    return;
+    return {kLiteError, "Get real path of libascend_kernel_plugin.so failed."};
   }
   MS_LOG(INFO) << "Find ascend kernel plugin so success, path = " << ascend_kernel_plugin_path;
   void *function = nullptr;
   ret = DLSoOpen(ascend_kernel_plugin_path, "CreateCustomAscendKernel", &handle_, &function);
   if (ret != kSuccess) {
-    MS_LOG(ERROR) << "DLSoOpen failed, so path: " << ascend_kernel_plugin_path;
-    return;
+    return {kLiteError, "DLSoOpen failed, so path: " + ascend_kernel_plugin_path};
   }
   auto create_kernel_func = reinterpret_cast<std::map<std::string, KernelModFunc> *(*)(void)>(function);
   if (create_kernel_func == nullptr) {
-    MS_LOG(ERROR) << "Cast CreateCustomAscendKernel failed.";
-    return;
+    return {kLiteError, "Cast CreateCustomAscendKernel failed."};
   }
   create_kernel_map_ = create_kernel_func();
   if (create_kernel_map_ == nullptr) {
-    MS_LOG(ERROR) << "Create custom ascend kernel failed.";
-    return;
+    return {kLiteError, "Create custom ascend kernel failed."};
   }
   // register
   for (auto &kernel : *create_kernel_map_) {
     if (!kernel::Factory<kernel::KernelMod>::Instance().IsRegistered(kernel.first)) {
-      KernelRegistrar<kernel::KernelMod> ascend_kernel_reg(kernel.first, kernel.second);
+      kernel::Factory<kernel::KernelMod>::Instance().Register(kernel.first, std::move(kernel.second));
+      register_kernels_.push_back(kernel.first);
     }
   }
   is_registered_ = true;
-  MS_LOG(INFO) << "Register ascend kernel plugin success.";
+  return kSuccess;
 #endif
 }
 
-void AscendKernelPlugin::DestroyAscendKernelMap() {
+void AscendKernelPlugin::Unregister() {
 #if !defined(_WIN32)
   if (handle_ == nullptr) {
-    MS_LOG(DEBUG) << "Handle is nullptr.";
+    MS_LOG(INFO) << "Handle is nullptr.";
     return;
+  }
+  for (auto &kernel : register_kernels_) {
+    kernel::Factory<kernel::KernelMod>::Instance().UnRegister(kernel);
   }
   auto destroy_map_func =
     reinterpret_cast<void (*)(std::map<std::string, KernelModFunc> *)>(dlsym(handle_, "DestroyCustomAscendKernel"));
@@ -102,19 +124,9 @@ void AscendKernelPlugin::DestroyAscendKernelMap() {
     return;
   }
   destroy_map_func(create_kernel_map_);
+  (void)dlclose(handle_);
+  handle_ = nullptr;
   is_registered_ = false;
-#endif
-}
-
-AscendKernelPlugin::~AscendKernelPlugin() {
-#if !defined(_WIN32)
-  MS_LOG(DEBUG) << "~AscendKernelPlugin() begin.";
-  DestroyAscendKernelMap();
-  if (handle_ != nullptr) {
-    (void)dlclose(handle_);
-    handle_ = nullptr;
-  }
-  MS_LOG(DEBUG) << "~AscendKernelPlugin() end.";
 #endif
 }
 }  // namespace mindspore::kernel

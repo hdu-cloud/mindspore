@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_SINC_H_
 #define MINDSPORE_CORE_OPS_SINC_H_
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -29,10 +29,10 @@ class MIND_API Sinc : public BaseOperator {
  public:
   MIND_API_BASE_MEMBER(Sinc);
   Sinc() : BaseOperator(kNameSinc) { InitIOName({"x"}, {"y"}); }
-  void Init() {}
+  void Init() const {}
 };
-abstract::AbstractBasePtr SincInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                    const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr SincInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                             const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimSincPtr = std::shared_ptr<Sinc>;
 }  // namespace ops
 }  // namespace mindspore

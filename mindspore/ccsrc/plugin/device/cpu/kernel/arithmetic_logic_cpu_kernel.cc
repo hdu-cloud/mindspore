@@ -25,6 +25,7 @@
 #include <utility>
 #include <complex>
 
+#include "mindspore/core/ops/comparison_ops.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 
 namespace mindspore {
@@ -123,7 +124,7 @@ class ArithLogicCpuTypeFunc : public CpuKernelFunc {
   void LessEqual(const T *input1, const T *input2, bool *out);
   void LogicalAnd(const T *input1, const T *input2, bool *out);
   void LogicalOr(const T *input1, const T *input2, bool *out);
-  void LogicalXor(const T *input1, const T *input2, bool *out) const;
+  void LogicalXor(const T *input1, const T *input2, bool *out);
 
   using TypeComputeFunc = std::function<void(ArithLogicCpuTypeFunc *, const T *, const T *, bool *)>;
   TypeComputeFunc compute_func_{nullptr};
@@ -340,31 +341,8 @@ void ArithLogicCpuTypeFunc<T>::LogicalOr(const T *input1, const T *input2, bool 
 }
 
 template <typename T>
-void ArithLogicCpuTypeFunc<T>::LogicalXor(const T *input1, const T *input2, bool *out) const {
-  BroadcastIterator base_iter(input_shape1_, input_shape2_, output_shape_);
-  auto task = [input1, input2, out, &base_iter](size_t start, size_t end) {
-    auto iter = base_iter;
-    iter.SetPos(start);
-    if constexpr (std::is_same_v<T, float>) {
-      for (size_t i = start; i < end; i++) {
-        out[i] = !(common::IsFloatEqual(input1[iter.GetInputPosA()], input2[iter.GetInputPosB()]));
-        iter.GenNextPos();
-      }
-    } else {
-      if constexpr (std::is_same_v<T, double>) {
-        for (size_t i = start; i < end; i++) {
-          out[i] = !(common::IsDoubleEqual(input1[iter.GetInputPosA()], input2[iter.GetInputPosB()]));
-          iter.GenNextPos();
-        }
-      } else {
-        for (size_t i = start; i < end; i++) {
-          out[i] = input1[iter.GetInputPosA()] != input2[iter.GetInputPosB()];
-          iter.GenNextPos();
-        }
-      }
-    }
-  };
-  CPUKernelUtils::ParallelFor(task, output_size_);
+void ArithLogicCpuTypeFunc<T>::LogicalXor(const T *input1, const T *input2, bool *out) {
+  BinaryOp(input1, input2, out, std::not_equal_to<T>());
 }
 
 template <typename T>
@@ -393,12 +371,22 @@ std::shared_ptr<CpuKernelFunc> SpecializeArithLogComplexFunc() {
 using ArithLogicCpuFuncCreator = std::function<std::shared_ptr<CpuKernelFunc>()>;
 static std::map<std::string, std::vector<std::pair<KernelAttr, ArithLogicCpuFuncCreator>>> kernel_attr_lists = {
   {kLess,
-   {{KernelAttr().AddInputAttr(kNumberTypeInt32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeBool),
+   {{KernelAttr().AddInputAttr(kNumberTypeBool).AddInputAttr(kNumberTypeBool).AddOutputAttr(kNumberTypeBool),
+     SpecializeArithLogFunc<bool>},
+    {KernelAttr().AddInputAttr(kNumberTypeInt8).AddInputAttr(kNumberTypeInt8).AddOutputAttr(kNumberTypeBool),
+     SpecializeArithLogFunc<int8_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddInputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeBool),
+     SpecializeArithLogFunc<uint8_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeInt16).AddInputAttr(kNumberTypeInt16).AddOutputAttr(kNumberTypeBool),
+     SpecializeArithLogFunc<int16_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeInt32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeBool),
      SpecializeArithLogFunc<int>},
-    {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeBool),
-     SpecializeArithLogFunc<float>},
     {KernelAttr().AddInputAttr(kNumberTypeInt64).AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeBool),
      SpecializeArithLogFunc<int64_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeBool),
+     SpecializeArithLogFunc<float16>},
+    {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeBool),
+     SpecializeArithLogFunc<float>},
     {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeBool),
      SpecializeArithLogFunc<double>}}},
   {kEqual,
@@ -425,6 +413,8 @@ static std::map<std::string, std::vector<std::pair<KernelAttr, ArithLogicCpuFunc
      SpecializeArithLogComplexFunc<uint16_t>},
     {KernelAttr().AddInputAttr(kNumberTypeUInt32).AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeBool),
      SpecializeArithLogComplexFunc<uint32_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeUInt64).AddInputAttr(kNumberTypeUInt64).AddOutputAttr(kNumberTypeBool),
+     SpecializeArithLogComplexFunc<uint64_t>},
     {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeBool),
      SpecializeArithLogComplexFunc<float16>},
     {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeBool),
@@ -514,7 +504,9 @@ static std::map<std::string, std::vector<std::pair<KernelAttr, ArithLogicCpuFunc
     {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeBool),
      SpecializeArithLogFunc<double>}}},
   {kLessEqual,
-   {{KernelAttr().AddInputAttr(kNumberTypeInt32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeBool),
+   {{KernelAttr().AddInputAttr(kNumberTypeBool).AddInputAttr(kNumberTypeBool).AddOutputAttr(kNumberTypeBool),
+     SpecializeArithLogFunc<bool>},
+    {KernelAttr().AddInputAttr(kNumberTypeInt32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeBool),
      SpecializeArithLogFunc<int>},
     {KernelAttr().AddInputAttr(kNumberTypeInt64).AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeBool),
      SpecializeArithLogFunc<int64_t>},

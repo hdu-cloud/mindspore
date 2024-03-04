@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,34 @@
  */
 
 #include <map>
+#include <memory>
+#include <set>
 #include <string>
-#include "ops/one_hot.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/one_hot.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -40,12 +63,15 @@ class OneHotInfer : public abstract::OpInferBase {
     MS_EXCEPTION_IF_NULL(primitive);
     auto prim_name = primitive->name();
     const int64_t input_num = kOneHotInputsNum;
-    (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_num,
-                                             prim_name);
+    CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, prim_name);
     auto op_name = primitive->name();
     const size_t depth_index = 1;
     auto shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape());
     auto in_shape = shape_map[kShape];
+
+    if (std::any_of(in_shape.begin(), in_shape.end(), [](int64_t s) { return s == 0; })) {
+      MS_LOG(EXCEPTION) << "Shape of input should not contain 0, bug got shape: " << in_shape;
+    }
 
     if (IsDynamicRank(in_shape)) {
       return input_args[0]->BuildShape();
@@ -66,7 +92,7 @@ class OneHotInfer : public abstract::OpInferBase {
     } else if (depth->isa<Int64Imm>()) {
       depth_value = GetValue<int64_t>(depth);
       (void)CheckAndConvertUtils::CheckInteger("depth value", depth_value, kGreaterEqual, 0, op_name);
-    } else if (input_args[depth_index]->isa<abstract::AbstractTensor>()) {
+    } else if (depth->isa<ValueAny>()) {
       depth_value = abstract::Shape::kShapeDimAny;
     } else {
       MS_EXCEPTION(TypeError) << "For '" << op_name
@@ -85,6 +111,8 @@ class OneHotInfer : public abstract::OpInferBase {
   TypePtr InferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) const override {
     MS_EXCEPTION_IF_NULL(prim);
     auto op_name = prim->name();
+    CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kOneHotInputsNum, op_name);
+
     (void)CheckAndConvertUtils::CheckTensorTypeValid("indices", input_args[kInputIndex0]->BuildType(),
                                                      {kUInt8, kInt32, kInt64}, op_name);
     (void)CheckAndConvertUtils::CheckTypeValid("depth", input_args[kInputIndex1]->BuildType(),
@@ -97,6 +125,8 @@ class OneHotInfer : public abstract::OpInferBase {
        kFloat64, kComplex64, kComplex128},
       op_name);
   }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
 };
 
 REGISTER_PRIMITIVE_OP_INFER_IMPL(OneHot, prim::kPrimOneHot, OneHotInfer, false);

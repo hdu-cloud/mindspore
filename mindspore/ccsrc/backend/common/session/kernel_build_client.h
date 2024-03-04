@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,16 +36,17 @@ constexpr inline static int kBufferSize = 4096;
 constexpr inline static auto kEnv = "python";
 // The TAG as prefix of real command from remote.
 constexpr inline static auto kTag = "[~]";
-std::string GetPyExe();
+BACKEND_EXPORT std::string GetPyExe();
+BACKEND_EXPORT std::string GetCmdResult();
 
 class BACKEND_EXPORT KernelBuildClient {
  public:
   // Send Finish request to server
   constexpr inline static auto kFinish = "FINISH";
-  constexpr inline static auto kAkgStart = "AKG/START";
-  constexpr inline static auto kAkgData = "AKG/DATA";
-  constexpr inline static auto kAkgAttr = "AKG/ATTR";
-  constexpr inline static auto kAkgWait = "AKG/WAIT";
+  constexpr inline static auto kCompilerStart = "AKG/START";
+  constexpr inline static auto kCompilerData = "AKG/DATA";
+  constexpr inline static auto kCompilerAttr = "AKG/ATTR";
+  constexpr inline static auto kCompilerWait = "AKG/WAIT";
   // Receive the response from server
   constexpr inline static auto kAck = "ACK";
   constexpr inline static auto kErr = "ERR";
@@ -75,6 +76,7 @@ class BACKEND_EXPORT KernelBuildClient {
       init_ = false;
     }
   }
+  bool IsOpen() const { return init_; }
 
   // Send a request and fetch its response
   std::string SendRequest(const std::string &data) {
@@ -84,20 +86,22 @@ class BACKEND_EXPORT KernelBuildClient {
   }
   void Request(const std::string &req) {
     if (!init_) {
-      MS_LOG(EXCEPTION) << "Try to send request before Open()";
+      MS_LOG(EXCEPTION) << "Try to send request before Open(). For more details, please refer to this FAQ: "
+                        << "https://www.mindspore.cn/tutorials/zh-CN/master/advanced/error_analysis/mindrt_debug.html";
     }
-    MS_LOG(DEBUG) << "\t[" << req << "]";
     *dp_ << req;
   }
   std::string Response() {
     if (!init_) {
-      MS_LOG(EXCEPTION) << "Try to get response before Open()";
+      MS_LOG(EXCEPTION) << "Try to get response before Open(). For more details, please refer to this FAQ: "
+                        << "https://www.mindspore.cn/tutorials/zh-CN/master/advanced/error_analysis/mindrt_debug.html";
     }
     std::string res;
     *dp_ >> res;
     // Filter out the interference
     if (res.empty()) {
-      MS_LOG(EXCEPTION) << "Response is empty";
+      MS_LOG(EXCEPTION) << "Response is empty. For more details, please refer to this FAQ: "
+                        << "https://www.mindspore.cn/tutorials/zh-CN/master/advanced/error_analysis/mindrt_debug.html";
     }
     auto start = res.find(kTag);
     if (start == std::string::npos) {
@@ -113,15 +117,14 @@ class BACKEND_EXPORT KernelBuildClient {
       ReplaceStr(&res, kLF, '\n');
       ReplaceStr(&res, kSP, ' ');
     }
-    MS_LOG(DEBUG) << "\t[" << res << "]";
     return res;
   }
 
-  // Run AKG building.
-  bool AkgStart(int process_num, int wait_time);
-  bool AkgSendAttr(const std::string &attr);
-  bool AkgSendData(const std::vector<std::string> &jsons);
-  bool AkgWait();
+  // Run Kernel Compiler building.
+  bool CompilerStart(int process_num, int wait_time);
+  bool CompilerSendAttr(const std::string &attr);
+  bool CompilerSendData(const std::vector<std::string> &jsons);
+  bool CompilerWait();
 
  protected:
   KernelBuildClient() : init_(false), dp_(std::make_shared<DuplexPipe>()) {}
@@ -134,17 +137,7 @@ class BACKEND_EXPORT KernelBuildClient {
   std::shared_ptr<DuplexPipe> dp_;
 };
 
-static std::string GetScriptFilePath(const std::string &cmd_env, const std::string &cmd_script,
-                                     const std::string &server_script) {
-  auto ms_context = MsContext::GetInstance();
-  MS_EXCEPTION_IF_NULL(ms_context);
-  auto server_dir = ms_context->get_param<std::string>(MS_CTX_KERNEL_BUILD_SERVER_DIR);
-  if (!server_dir.empty()) {
-    return server_dir + server_script;
-  }
-
-  std::string cmd = cmd_env;
-  (void)cmd.append(1, ' ').append(cmd_script);
+static std::string GetCmdResult(const std::string &cmd) {
 #ifdef _MSC_VER
   FILE *fpipe = _popen(cmd.c_str(), "r");
 #else
@@ -169,7 +162,7 @@ static std::string GetScriptFilePath(const std::string &cmd_env, const std::stri
     // Filter with 'kTAG' and '\n'
     if (start) {
       bool line_end = buf[len - 1] == '\n';
-      result.append(buf, line_end ? len - 1 : len);
+      (void)result.append(buf, line_end ? len - 1 : len);
       if (line_end) {
         break;
       }
@@ -180,6 +173,21 @@ static std::string GetScriptFilePath(const std::string &cmd_env, const std::stri
 #else
   (void)pclose(fpipe);
 #endif
+  return result;
+}
+
+static std::string GetScriptFilePath(const std::string &cmd_env, const std::string &cmd_script,
+                                     const std::string &server_script) {
+  auto ms_context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context);
+  auto server_dir = ms_context->get_param<std::string>(MS_CTX_KERNEL_BUILD_SERVER_DIR);
+  if (!server_dir.empty()) {
+    return server_dir + server_script;
+  }
+
+  std::string cmd = cmd_env;
+  (void)cmd.append(1, ' ').append(cmd_script);
+  auto result = GetCmdResult(cmd);
   const std::string py_suffix = ".py";
   if (result.empty() || result.rfind(py_suffix) != (result.length() - py_suffix.length())) {
     MS_LOG(EXCEPTION) << "py file seems incorrect, result: {" << result << "}";
@@ -273,6 +281,43 @@ class BACKEND_EXPORT AkgKernelBuildClient : public KernelBuildClient {
 
  private:
   AkgKernelBuildClient() { Open(); }
+};
+
+class BACKEND_EXPORT AkgV2KernelBuildClient : public KernelBuildClient {
+ public:
+  // Server configure
+  constexpr inline static auto kGetPathScript =
+    "-c "
+    "\""
+    "import pkgutil;"
+    "path = pkgutil"
+    ".get_loader(\\\"mindspore._extends.remote.kernel_build_server_akg_v2\\\")"  // Server module name
+    ".get_filename();"
+    "print('[~]' + path)"
+    "\"";
+
+  constexpr inline static auto kServerScript = "kernel_build_server_akg_v2.py";
+
+  static AkgV2KernelBuildClient &Instance();
+
+  std::string GetEnv() override { return GetPyExe(); }
+
+  std::string GetScript() override {
+    auto env = GetPyExe();
+    return GetScriptFilePath(env, kGetPathScript, kServerScript);
+  }
+
+  AkgV2KernelBuildClient(const AkgV2KernelBuildClient &) = delete;
+  AkgV2KernelBuildClient &operator=(const AkgV2KernelBuildClient &) = delete;
+
+  AkgV2KernelBuildClient(AkgV2KernelBuildClient &&) = delete;
+  AkgV2KernelBuildClient &operator=(AkgV2KernelBuildClient &&) = delete;
+
+ protected:
+  ~AkgV2KernelBuildClient() override { Close(); }
+
+ private:
+  AkgV2KernelBuildClient() { Open(); }
 };
 }  // namespace kernel
 }  // namespace mindspore

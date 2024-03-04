@@ -19,8 +19,8 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include "mindspore/core/ops/other_ops.h"
 #include "ir/func_graph.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "frontend/parallel/ops_info/ops_utils.h"
 #include "frontend/parallel/device_manager.h"
 #include "include/common/utils/parallel_context.h"
@@ -33,6 +33,7 @@ namespace opt {
 namespace {
 inline bool is_comm_ops(const AnfNodePtr &node) {
   static const std::vector<PrimitivePtr> kCommunicationOpsPrim = {prim::kPrimAllReduce,
+                                                                  prim::kPrimReduce,
                                                                   prim::kPrimAllGather,
                                                                   prim::kPrimReduceScatter,
                                                                   prim::kPrimAllToAll,
@@ -40,7 +41,8 @@ inline bool is_comm_ops(const AnfNodePtr &node) {
                                                                   prim::kPrimAllToAllv,
                                                                   prim::kPrimNeighborExchange,
                                                                   prim::kPrimNeighborExchangeV2,
-                                                                  prim::kPrimNeighborExchangeV2Grad};
+                                                                  prim::kPrimNeighborExchangeV2Grad,
+                                                                  prim::kPrimBarrier};
 
   for (const auto &prim : kCommunicationOpsPrim) {
     if (IsPrimitiveCNode(node, prim)) {
@@ -62,9 +64,9 @@ void AddCommOpReuseTag(const FuncGraphPtr &graph) {
   if (!parallel::IsAutoParallelCareGraph(graph)) {
     return;
   }
-  AnfNodePtr return_node = graph->get_return();
-  MS_EXCEPTION_IF_NULL(return_node);
-  std::vector<AnfNodePtr> all_nodes = DeepScopedGraphSearch(return_node);
+  auto manager = graph->manager();
+  MS_EXCEPTION_IF_NULL(manager);
+  const auto &all_nodes = manager->all_nodes();
   for (auto &node : all_nodes) {
     MS_EXCEPTION_IF_NULL(node);
     if (!is_comm_ops(node)) {

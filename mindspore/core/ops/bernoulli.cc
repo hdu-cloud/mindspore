@@ -18,18 +18,26 @@
 #include <algorithm>
 #include <memory>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::ShapePtr BernoulliInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
-  auto out_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
-  return std::make_shared<abstract::Shape>(out_shape);
+  auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
+  auto p_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
+  if (!IsDynamic(x_shape) && !IsDynamic(p_shape)) {
+    if (SizeOf(p_shape) != 1 && p_shape != x_shape) {
+      MS_EXCEPTION(ValueError) << "For '" << primitive->name() << "', "
+                               << "'x' and 'p' should have same shape or 'p' have a size of 1.";
+    }
+  }
+  return std::make_shared<abstract::Shape>(x_shape);
 }
 
 TypePtr BernoulliInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
@@ -65,6 +73,24 @@ AbstractBasePtr BernoulliInfer(const abstract::AnalysisEnginePtr &, const Primit
   auto infer_shape = BernoulliInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Bernoulli, prim::kPrimBernoulli, BernoulliInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGBernoulliInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return BernoulliInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return BernoulliInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return BernoulliInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Bernoulli, prim::kPrimBernoulli, AGBernoulliInfer, false);
 }  // namespace ops
 }  // namespace mindspore

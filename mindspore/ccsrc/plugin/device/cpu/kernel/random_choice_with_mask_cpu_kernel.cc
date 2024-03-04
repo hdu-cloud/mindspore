@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 #include "plugin/device/cpu/kernel/random_choice_with_mask_cpu_kernel.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 #include "mindspore/core/ops/random_choice_with_mask.h"
+#include "kernel/philox_random.h"
 
 namespace mindspore {
 namespace kernel {
@@ -84,6 +85,8 @@ void UpdateOutput(const std::vector<int32_t> &dims_, const int32_t &non_zero_num
 bool RandomChoiceWithMaskCpuKernelMod::Init(const BaseOperatorPtr &base_operator,
                                             const std::vector<KernelTensorPtr> &inputs,
                                             const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
+  MS_EXCEPTION_IF_NULL(base_operator->GetPrim());
   kernel_name_ = base_operator->GetPrim()->name();
   batch_rank_ = base_operator->get_batch_rank();
   constexpr size_t input_num = 1;
@@ -92,8 +95,10 @@ bool RandomChoiceWithMaskCpuKernelMod::Init(const BaseOperatorPtr &base_operator
   CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), output_num, kernel_name_);
 
   auto random_choice_with_mask_ptr = std::dynamic_pointer_cast<ops::RandomChoiceWithMask>(base_operator);
-  seed_ = random_choice_with_mask_ptr->get_seed();
-  seed2_ = random_choice_with_mask_ptr->get_seed2();
+  uint64_t seed = static_cast<uint64_t>(GetValue<int64_t>(base_operator->GetAttr("seed")));
+  uint64_t seed2 = static_cast<uint64_t>(GetValue<int64_t>(base_operator->GetAttr("seed2")));
+  uint64_t init_seed = random::GetSeed(seed, seed2);
+  rng_.seed(init_seed);
   count_ = random_choice_with_mask_ptr->get_count();
   return true;
 }
@@ -106,6 +111,11 @@ int RandomChoiceWithMaskCpuKernelMod::Resize(const BaseOperatorPtr &base_operato
     return ret;
   }
   auto x_shape = inputs[kIndex0]->GetShapeVector();
+  if (x_shape[0] == 0) {
+    MS_LOG(ERROR) << "For '" << kernel_name_
+                  << "', the shape size of 'input_x' must be greater than or equal to 1, but got 0.";
+    return KRET_RESIZE_FAILED;
+  }
   dims_.clear();
   for (size_t i = 0; i < batch_rank_; i++) {
     batch_size_ *= x_shape[i];
@@ -128,16 +138,26 @@ int RandomChoiceWithMaskCpuKernelMod::Resize(const BaseOperatorPtr &base_operato
 bool RandomChoiceWithMaskCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &inputs,
                                               const std::vector<kernel::AddressPtr> &workspace,
                                               const std::vector<kernel::AddressPtr> &outputs) {
-  auto *input_dim = reinterpret_cast<int *>(workspace[0]->addr);
-  auto *tmp_output = reinterpret_cast<int *>(workspace[1]->addr);
-  auto *mask_dim = reinterpret_cast<int *>(workspace[2]->addr);
-  auto *output = reinterpret_cast<int *>(workspace[3]->addr);
-  for (size_t b = 0; b < batch_size_; b++) {
-    auto *input = reinterpret_cast<bool *>(inputs[0]->addr) + b * input_total_count_;
-    auto *output_coordinate = reinterpret_cast<int32_t *>(outputs[0]->addr) + b * count_ * input_dim_size_;
-    auto *mask = reinterpret_cast<bool *>(outputs[1]->addr) + b * count_;
+  auto *input_dim = GetDeviceAddress<int>(workspace, kIndex0);
+  auto *tmp_output = GetDeviceAddress<int>(workspace, kIndex1);
+  auto *mask_dim = GetDeviceAddress<int>(workspace, kIndex2);
+  auto *output = GetDeviceAddress<int>(workspace, kIndex3);
 
-    size_t seedc = seed2_ != 0 ? seed2_ : (seed_ != 0 ? seed_ : generator_());
+  auto *input_ptr = GetDeviceAddress<bool>(inputs, kIndex0);
+  auto *output_coordinate_ptr = GetDeviceAddress<int32_t>(outputs, kIndex0);
+  auto *output_ptr = GetDeviceAddress<bool>(outputs, kIndex1);
+  MS_EXCEPTION_IF_NULL(input_dim);
+  MS_EXCEPTION_IF_NULL(tmp_output);
+  MS_EXCEPTION_IF_NULL(mask_dim);
+  MS_EXCEPTION_IF_NULL(output);
+  MS_EXCEPTION_IF_NULL(input_ptr);
+  MS_EXCEPTION_IF_NULL(output_coordinate_ptr);
+  MS_EXCEPTION_IF_NULL(output_ptr);
+  for (size_t b = 0; b < batch_size_; b++) {
+    auto *input = input_ptr + b * input_total_count_;
+    auto *output_coordinate = output_coordinate_ptr + b * count_ * input_dim_size_;
+    auto *mask = output_ptr + b * count_;
+
     int32_t non_zero_num = 0;
     for (int32_t i = 0; i < input_total_count_; i++) {
       if (input[i] != 0) {
@@ -159,7 +179,7 @@ bool RandomChoiceWithMaskCpuKernelMod::Launch(const std::vector<kernel::AddressP
 
     std::vector<int32_t> all_nums(non_zero_num);
     std::iota(begin(all_nums), end(all_nums), 0);
-    shuffle(all_nums.begin(), all_nums.end(), std::default_random_engine(seedc));
+    shuffle(all_nums.begin(), all_nums.end(), rng_);
 
     for (int32_t i = 0; i < output_non_zero_length; i++) {
       int32_t mean = all_nums[i];
@@ -175,7 +195,7 @@ bool RandomChoiceWithMaskCpuKernelMod::Launch(const std::vector<kernel::AddressP
       }
     }
 
-    if (output_length * input_dim_size_ >= INT_MAX || output_length * input_dim_size_ < 0) {
+    if (output_length >= INT_MAX / input_dim_size_ || output_length * input_dim_size_ < 0) {
       MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', output size exceed INT_MAX.";
     }
 

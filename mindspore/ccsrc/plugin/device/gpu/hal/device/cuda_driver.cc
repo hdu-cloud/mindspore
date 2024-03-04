@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ namespace device {
 namespace gpu {
 size_t CudaDriver::AllocDeviceMem(size_t size, DeviceMemPtr *addr) {
   if (size <= 0) {
-    MS_LOG(EXCEPTION) << "cudaMalloc alloc size is under 0.";
+    MS_LOG(EXCEPTION) << "#umsg#Cuda error:#umsg#The cudaMalloc alloc size is under 0.";
   }
   size_t retreat_count = 0;
   auto ret = cudaMalloc(reinterpret_cast<void **>(addr), size);
@@ -60,7 +60,7 @@ bool CudaDriver::FreeDeviceMem(const DeviceMemPtr &addr) {
 
 size_t CudaDriver::AllocHostPinnedMem(size_t size, void **addr) {
   if (size == 0) {
-    MS_LOG(EXCEPTION) << "The memory allocate size is 0";
+    MS_LOG(EXCEPTION) << "#umsg#Cuda error:#umsg#The cudaHostAlloc allocate size is 0";
   }
   auto ret = cudaHostAlloc(addr, size, cudaHostAllocDefault);
   if (ret != cudaSuccess) {
@@ -74,8 +74,25 @@ void CudaDriver::FreeHostPinnedMem(void *addr) {
   if (addr) {
     auto ret = cudaFreeHost(addr);
     if (ret != cudaSuccess) {
-      MS_LOG(EXCEPTION) << "cudaFreeHost failed, ret[" << static_cast<int>(ret) << "], " << cudaGetErrorString(ret);
+      MS_LOG(EXCEPTION) << "#umsg#Cuda error:#umsg#The cudaFreeHost failed, ret[" << static_cast<int>(ret) << "], "
+                        << cudaGetErrorString(ret);
     }
+  }
+}
+
+void CudaDriver::CudaHostRegister(void *addr, size_t alloc_size) {
+  MS_EXCEPTION_IF_NULL(addr);
+  auto ret = cudaHostRegister(addr, alloc_size, cudaHostRegisterDefault);
+  if (ret != cudaSuccess) {
+    MS_LOG(INFO) << "cudaHostRegister failed, ret[" << static_cast<int>(ret) << "], " << cudaGetErrorString(ret);
+  }
+}
+
+void CudaDriver::CudaHostUnregister(void *addr) {
+  MS_EXCEPTION_IF_NULL(addr);
+  auto ret = cudaHostUnregister(addr);
+  if (ret != cudaSuccess) {
+    MS_LOG(INFO) << "cudaHostUnregister failed, ret[" << static_cast<int>(ret) << "], " << cudaGetErrorString(ret);
   }
 }
 
@@ -116,7 +133,7 @@ bool CudaDriver::CopyHostMemToDeviceAsync(const DeviceMemPtr &dst, const void *s
   return true;
 }
 
-bool CudaDriver::CopyDeviceMemToHostAsync(const HostMemPtr &dst, const DeviceMemPtr &src, size_t size,
+bool CudaDriver::CopyDeviceMemToHostAsync(const HostMemPtr &dst, const void *src, size_t size,
                                           CudaDeviceStream stream) {
   auto ret = cudaMemcpyAsync(dst, src, size, cudaMemcpyDeviceToHost, (cudaStream_t)stream);
   if (ret != cudaSuccess) {
@@ -126,7 +143,7 @@ bool CudaDriver::CopyDeviceMemToHostAsync(const HostMemPtr &dst, const DeviceMem
   return true;
 }
 
-bool CudaDriver::CopyDeviceMemToDeviceAsync(const DeviceMemPtr &dst, const DeviceMemPtr &src, size_t size,
+bool CudaDriver::CopyDeviceMemToDeviceAsync(const DeviceMemPtr &dst, const void *src, size_t size,
                                             CudaDeviceStream stream) {
   auto ret = cudaMemcpyAsync(dst, src, size, cudaMemcpyDeviceToDevice, (cudaStream_t)stream);
   if (ret != cudaSuccess) {
@@ -162,8 +179,8 @@ size_t CudaDriver::free_mem_size() {
 bool CudaDriver::CreateStream(CudaDeviceStream *stream) {
   auto ret = cudaStreamCreateWithFlags(reinterpret_cast<CUstream_st **>(stream), cudaStreamNonBlocking);
   if (ret != cudaSuccess) {
-    MS_LOG(ERROR) << "cudaStreamCreate failed, ret[" << static_cast<int>(ret) << "], " << cudaGetErrorString(ret);
-    return false;
+    MS_LOG(EXCEPTION) << "#umsg#Cuda error:#umsg#The cudaStreamCreateWithFlags failed, ret[" << static_cast<int>(ret)
+                      << "], " << cudaGetErrorString(ret);
   }
   return true;
 }
@@ -181,6 +198,11 @@ bool CudaDriver::SyncStream(const CudaDeviceStream &stream) {
   auto ret = cudaStreamSynchronize((cudaStream_t)stream);
   if (ret != cudaSuccess) {
     MS_LOG(ERROR) << "cudaStreamSynchronize failed, ret[" << static_cast<int>(ret) << "], " << cudaGetErrorString(ret);
+    if (ret != cudaErrorNotReady && common::GetEnv("CUDA_LAUNCH_BLOCKING") != "1") {
+      MS_LOG(ERROR) << "The kernel name and backtrace in log might be incorrect, since CUDA error might be "
+                    << "asynchronously reported at some other function call. Please exporting CUDA_LAUNCH_BLOCKING=1 "
+                    << "for more accurate error positioning.";
+    }
     return false;
   }
   return true;
@@ -248,14 +270,15 @@ bool CudaDriver::ElapsedTime(float *cost_time, const CudaDeviceEvent &start, con
 int CudaDriver::device_count() {
   auto last_error = cudaGetLastError();
   if (last_error != cudaSuccess) {
-    MS_LOG(EXCEPTION) << "There is a cuda error, errorno[" << static_cast<int>(last_error) << "], "
+    MS_LOG(EXCEPTION) << "#umsg#Cuda error:#umsg#The cudaGetLastError[" << static_cast<int>(last_error) << "], "
                       << cudaGetErrorString(last_error);
   }
 
   int dev_count = 0;
   auto ret = cudaGetDeviceCount(&dev_count);
   if (ret != cudaSuccess) {
-    MS_LOG(EXCEPTION) << "cudaGetDeviceCount failed, ret[" << static_cast<int>(ret) << "], " << cudaGetErrorString(ret);
+    MS_LOG(EXCEPTION) << "#umsg#Cuda error:#umsg#The cudaGetDeviceCount failed, ret[" << static_cast<int>(ret) << "], "
+                      << cudaGetErrorString(ret);
   }
   return dev_count;
 }
@@ -263,14 +286,14 @@ int CudaDriver::device_count() {
 bool CudaDriver::SetDevice(int index) {
   auto ret = cudaSetDevice(index);
   if (ret != cudaSuccess) {
-    MS_LOG(ERROR)
-      << "SetDevice for id:" << index << " failed, ret[" << static_cast<int>(ret) << "], " << cudaGetErrorString(ret)
+    MS_LOG(EXCEPTION)
+      << "#umsg#Cuda error:#umsg#SetDevice for id:" << index << " failed, ret[" << static_cast<int>(ret) << "], "
+      << cudaGetErrorString(ret)
       << ". Please make sure that the 'device_id' set in context is in the range:[0, total number of GPU). "
          "If the environment variable 'CUDA_VISIBLE_DEVICES' is set, the total number of GPU will be the number set "
          "in the environment variable 'CUDA_VISIBLE_DEVICES'. For example, if export CUDA_VISIBLE_DEVICES=4,5,6, the "
          "'device_id' can be 0,1,2 at the moment, 'device_id' starts from 0, and 'device_id'=0 means using GPU of "
          "number 4.";
-    return false;
   }
   int major = 0;
   int minor = 0;

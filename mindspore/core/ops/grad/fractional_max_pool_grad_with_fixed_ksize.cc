@@ -16,15 +16,30 @@
 
 #include "ops/grad/fractional_max_pool_grad_with_fixed_ksize.h"
 
-#include <string>
-#include <algorithm>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -110,10 +125,10 @@ TypePtr FractionalMaxPoolGradWithFixedKsizeInferType(const PrimitivePtr &primiti
 
   const std::set<TypePtr> out_backprop_valid_types = {kFloat16, kFloat32, kFloat64, kInt32, kInt64};
   const std::set<TypePtr> argmax_valid_types = {kInt64};
-  CheckAndConvertUtils::CheckTensorTypeValid("origin_input dtype", input_args[kInputsIndex0]->BuildType(),
-                                             out_backprop_valid_types, prim_name);
-  CheckAndConvertUtils::CheckTensorTypeValid("argmax dtype", input_args[kInputsIndex2]->BuildType(), argmax_valid_types,
-                                             prim_name);
+  (void)CheckAndConvertUtils::CheckTensorTypeValid("origin_input dtype", input_args[kInputsIndex0]->BuildType(),
+                                                   out_backprop_valid_types, prim_name);
+  (void)CheckAndConvertUtils::CheckTensorTypeValid("argmax dtype", input_args[kInputsIndex2]->BuildType(),
+                                                   argmax_valid_types, prim_name);
   auto y_dtype = CheckAndConvertUtils::CheckTensorTypeValid(
     "out_backprop dtype", input_args[kInputsIndex1]->BuildType(), out_backprop_valid_types, prim_name);
   return std::make_shared<TensorType>(y_dtype);
@@ -143,7 +158,24 @@ std::string FractionalMaxPoolGradWithFixedKsize::get_data_format() const {
   return GetValue<std::string>(GetAttr(kFormat));
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(FractionalMaxPoolGradWithFixedKsize, prim::kPrimFractionalMaxPoolGradWithFixedKsize,
-                             FractionalMaxPoolGradWithFixedKsizeInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGFractionalMaxPoolGradWithFixedKsizeInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return FractionalMaxPoolGradWithFixedKsizeInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return FractionalMaxPoolGradWithFixedKsizeInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return FractionalMaxPoolGradWithFixedKsizeInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(FractionalMaxPoolGradWithFixedKsize, prim::kPrimFractionalMaxPoolGradWithFixedKsize,
+                                 AGFractionalMaxPoolGradWithFixedKsizeInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -98,12 +98,14 @@ const char debug_utils_c[] = R"RAW(
 
 #include <inttypes.h>
 #include "debug_utils.h"
+#ifdef ENABLE_ARM
+#include <arm_neon.h>
+#endif
 
 #define UP_DIV(x, y) (((x) + (y) - (1)) / (y))
 
 static const unsigned int kPrintNums = 20;
-static const unsigned int kLineSplitNum = 44;
-static const unsigned int kLineNum = 45;
+
 unsigned int GetTensorElementSize(const MicroTensor *tensor) {
   unsigned int ans = 1;
   if (tensor->format == Format_NC4HW4) {
@@ -166,6 +168,15 @@ void PrintTensorData(MicroTensor *tensor) {
       }
       break;
     }
+#ifdef ENABLE_ARM
+    case DataType_DT_FLOAT16: {
+      float16_t *addr = (float16_t *)(data);
+      for (int i = 0; i < elenums && i < kPrintNums; ++i) {
+        printf("%f, ", addr[i]);
+      }
+      break;
+    }
+#endif
     case DataType_DT_INT32: {
       int32_t *addr = (int32_t *)(data);
       for (int i = 0; i < elenums && i < kPrintNums; ++i) {
@@ -210,19 +221,22 @@ void PrintDataToFile(const void *data, const size_t elenums, const enum DataType
       float *addr = (float *)(data);
       for (int i = 0; i < elenums; ++i) {
         fprintf(file, "%0.15f, ", addr[i]);
-        if (i % kLineNum == kLineSplitNum) {
-          fprintf(file, "\n");
-        }
       }
       break;
     }
+#ifdef ENABLE_ARM
+    case DataType_DT_FLOAT16: {
+      float16_t *addr = (float16_t *)(data);
+      for (int i = 0; i < elenums; ++i) {
+        fprintf(file, "%0.15f, ", addr[i]);
+      }
+      break;
+    }
+#endif
     case DataType_DT_INT32: {
       int32_t *addr = (int32_t *)(data);
       for (int i = 0; i < elenums; ++i) {
         fprintf(file, "%d, ", addr[i]);
-        if (i % kLineNum == kLineSplitNum) {
-          fprintf(file, "\n");
-        }
       }
       break;
     }
@@ -230,9 +244,6 @@ void PrintDataToFile(const void *data, const size_t elenums, const enum DataType
       int8_t *addr = (int8_t *)(data);
       for (int i = 0; i < elenums; ++i) {
         fprintf(file, "%d, ", addr[i]);
-        if (i % kLineNum == kLineSplitNum) {
-          fprintf(file, "\n");
-        }
       }
       break;
     }
@@ -240,9 +251,6 @@ void PrintDataToFile(const void *data, const size_t elenums, const enum DataType
       uint32_t *addr = (uint32_t *)(data);
       for (int i = 0; i < elenums; ++i) {
         fprintf(file, "%u, ", addr[i]);
-        if (i % kLineNum == kLineSplitNum) {
-          fprintf(file, "\n");
-        }
       }
       break;
     }
@@ -250,9 +258,6 @@ void PrintDataToFile(const void *data, const size_t elenums, const enum DataType
       uint8_t *addr = (uint8_t *)(data);
       for (int i = 0; i < elenums; ++i) {
         fprintf(file, "%u, ", addr[i]);
-        if (i % kLineNum == kLineSplitNum) {
-          fprintf(file, "\n");
-        }
       }
       break;
     }

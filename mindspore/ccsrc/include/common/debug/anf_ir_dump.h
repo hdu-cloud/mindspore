@@ -50,6 +50,7 @@ COMMON_EXPORT int32_t DumpParams(const FuncGraphPtr &graph, std::ostringstream &
                                  OrderedMap<AnfNodePtr, int32_t> *para_map);
 COMMON_EXPORT void OutputOrderList(const FuncGraphPtr &sub_graph, std::ostringstream &oss);
 constexpr char PARALLEL_STRATEGY[] = "strategy";
+COMMON_EXPORT void DumpIRHead(const FuncGraphPtr &graph, std::ostringstream &buffer);
 COMMON_EXPORT void DumpIR(const std::string &filename, const FuncGraphPtr &graph, bool dump_full_name = false,
                           LocDumpMode dump_location = kOff, const std::string &target_file = "");
 COMMON_EXPORT void DumpIR(std::ostringstream &graph_buffer, const FuncGraphPtr &graph, bool dump_full_name = false,
@@ -60,6 +61,7 @@ COMMON_EXPORT void GatherInputAndOutputInferType(std::ostringstream &buffer, con
 COMMON_EXPORT void DumpIRForRDR(const std::string &filename, const FuncGraphPtr &graph, bool dump_full_name = false,
                                 LocDumpMode dump_location = kOff);
 COMMON_EXPORT DumpConfig GetDumpConfig();
+std::string GetValueText(const ValuePtr &value, const std::shared_ptr<SubGraphIRInfo> &gsub);
 }  // namespace mindspore
 
 #endif  // MINDSPORE_CCSRC_INCLUDE_COMMON_DEBUG_ANF_IR_DUMP_H_

@@ -18,12 +18,14 @@
 #include <memory>
 #include <vector>
 #include <string>
-#include "backend/common/optimizer/helper.h"
-#include "mindspore/core/ops/core_ops.h"
+#include "ops/sequence_ops.h"
+#include "ops/array_ops.h"
+#include "ops/framework_ops.h"
+#include "include/backend/optimizer/helper.h"
 #include "include/common/utils/utils.h"
 #include "include/common/utils/anfalgo.h"
 #include "utils/trace_base.h"
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 
 namespace mindspore {
 namespace opt {
@@ -74,10 +76,13 @@ AnfNodePtr EliminateIsolatedVirtualNodeInput(const FuncGraphPtr &func_graph, con
   MS_EXCEPTION_IF_NULL(cnode);
   MS_EXCEPTION_IF_NULL(eliminate_node);
   auto replace_node = eliminate_node->input(kSingleInputIndex);
+  MS_EXCEPTION_IF_NULL(replace_node);
   std::vector<AnfNodePtr> new_depend_inputs = cnode->inputs();
   new_depend_inputs[kIsolatedDependRealInputIndex + 1] = replace_node;
   auto new_depend = CreateNewDependNode(func_graph, cnode, new_depend_inputs);
-  (void)func_graph->manager()->Replace(cnode, new_depend);
+  auto manager = func_graph->manager();
+  MS_EXCEPTION_IF_NULL(manager);
+  (void)manager->Replace(cnode, new_depend);
   return new_depend;
 }
 
@@ -205,7 +210,9 @@ const AnfNodePtr OptimizeDependence::Process(const FuncGraphPtr &func_graph, con
   }
   // Create a new Depend node to replace the old one if inputs changed.
   auto new_depend = CreateNewDependNode(func_graph, cnode, new_inputs);
-  (void)func_graph->manager()->Replace(cnode, new_depend);
+  auto manager = func_graph->manager();
+  MS_EXCEPTION_IF_NULL(manager);
+  (void)manager->Replace(cnode, new_depend);
   return nullptr;
 }
 

@@ -20,7 +20,7 @@
 #include <utility>
 #include <algorithm>
 #include "utils/log_adapter.h"
-#include "runtime/device/device_address.h"
+#include "include/backend/device_address.h"
 
 namespace mindspore {
 namespace device {
@@ -34,7 +34,7 @@ MemoryOffloadConflict &MemoryOffloadConflict::GetInstance() {
 
 void MemoryOffloadConflict::AddMemoryOffloadConflict(const HashSet<const void *> &conflict_set) {
   for (const auto &key : conflict_set) {
-    conflict_map_[key].insert(conflict_set.cbegin(), conflict_set.cend());
+    (void)conflict_map_[key].insert(conflict_set.cbegin(), conflict_set.cend());
   }
 }
 

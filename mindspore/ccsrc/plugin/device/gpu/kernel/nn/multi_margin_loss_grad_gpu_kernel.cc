@@ -58,7 +58,7 @@ bool MultiMarginLossGradGpuKernelMod::Init(const BaseOperatorPtr &base_operator,
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).dtype);
   if (inputs.empty() || outputs.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "' got empty inputs or outputs, which is invalid.";
     return false;
@@ -84,14 +84,13 @@ int MultiMarginLossGradGpuKernelMod::Resize(const BaseOperatorPtr &base_operator
     }
   }
   auto input_shape = inputs.at(kIndex1)->GetShapeVector();
-  (void)std::transform(input_shape.begin(), input_shape.end(), std::back_inserter(input_shape_), LongToSize);
-  input_elements_ = std::accumulate(input_shape_.begin(), input_shape_.end(), 1, std::multiplies<size_t>());
+  input_elements_ = SizeOf(input_shape);
   if (input_elements_ == 0) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "' input size must be greater than zero.";
     return KRET_RESIZE_FAILED;
   }
-  nframe_ = input_shape_.at(0);
-  dim_ = input_shape_.at(1);
+  nframe_ = input_shape.at(0);
+  dim_ = input_shape.at(1);
   if (inputs_size == has_weight_inputs_size) {
     has_weight_ = true;
   } else {
@@ -115,8 +114,9 @@ bool MultiMarginLossGradGpuKernelMod::LaunchKernel(const std::vector<AddressPtr>
     weight = GetDeviceAddress<T>(inputs, kIndex3);
   }
   T *output = GetDeviceAddress<T>(outputs, kIndex0);
-  MultiMarginLossGrad(p_, margin_, reduction_, nframe_, dim_, output_grad, input, target, weight, output, device_id_,
-                      reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = MultiMarginLossGrad(p_, margin_, reduction_, nframe_, dim_, output_grad, input, target, weight, output,
+                                    device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

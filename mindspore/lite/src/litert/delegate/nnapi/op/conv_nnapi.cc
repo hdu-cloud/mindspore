@@ -22,6 +22,7 @@
 #include "src/common/utils.h"
 #include "nnacl/op_base.h"
 #include "nnacl/fp32/transpose_fp32.h"
+#include "nnacl/transpose_parameter.h"
 
 namespace mindspore {
 namespace lite {
@@ -63,7 +64,7 @@ int NNAPIConv::AddAttributesForConv(ANeuralNetworksModel *nnapi_model, std::vect
   }
   if (pad_list_.empty()) {
     // Use the implicit pad mode for NNAPI model.
-    MS_CHECK_TRUE_RET(pad_mode_ != PadMode::Pad_pad, RET_ERROR);
+    MS_CHECK_TRUE_RET(pad_mode_ != PadType::Pad_pad, RET_ERROR);
     auto pad_mode = pad_mode_ - 1;  // the enum pad scheme of NNAPI is PAD_SAME and PAD_VALID.
     if (AddScalarToNNAPIModel<int>(nnapi_model, all_tensors, "pad_mode", DataType::kNumberTypeInt32, pad_mode) !=
         RET_OK) {
@@ -183,7 +184,8 @@ int NNAPIConv::TransConvWeightFromKHWCToCHWK(ANeuralNetworksModel *nnapi_model,
   if (weight.DataType() == DataType::kNumberTypeFloat32) {
     ret = DoTransposeFp32(reinterpret_cast<float *>(weight.MutableData()),
                           reinterpret_cast<float *>(new_weight->MutableData()),
-                          reinterpret_cast<const int *>(out_shape.data()), &param);
+                          reinterpret_cast<const int *>(out_shape.data()), param.perm_, param.strides_,
+                          param.out_strides_, param.data_num_, param.num_axes_);
   } else {
     MS_LOG(ERROR) << "Unsupported to pack depthwise conv weight";
     delete new_weight;

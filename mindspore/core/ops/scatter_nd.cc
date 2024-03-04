@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@
 #include <set>
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
 
@@ -137,7 +138,7 @@ AbstractBasePtr ScatterNdInfer(const abstract::AnalysisEnginePtr &, const Primit
   MS_EXCEPTION_IF_NULL(primitive);
   auto name = primitive->name();
   const std::set<TypePtr> valid_indices_types = {kInt16, kInt32, kInt64};
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kScatterNdInputsNum, name);
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, SizeToLong(kScatterNdInputsNum), name);
   (void)CheckAndConvertUtils::CheckTensorTypeValid("indices", input_args[0]->BuildType(), valid_indices_types, name);
   auto shape_type = input_args[kInputIndex2]->BuildType();
   if (!shape_type->isa<TensorType>()) {
@@ -150,6 +151,26 @@ AbstractBasePtr ScatterNdInfer(const abstract::AnalysisEnginePtr &, const Primit
 }
 
 MIND_API_OPERATOR_IMPL(ScatterNd, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(ScatterNd, prim::kPrimScatterNd, ScatterNdInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGScatterNdInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScatterNdInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScatterNdInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScatterNdInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScatterNd, prim::kPrimScatterNd, AGScatterNdInfer, false);
 }  // namespace ops
 }  // namespace mindspore

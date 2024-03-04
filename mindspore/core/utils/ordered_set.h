@@ -291,6 +291,9 @@ class OrderedSet {
   const_iterator cbegin() const { return ordered_data_.cbegin(); }
   const_iterator cend() const { return ordered_data_.cend(); }
 
+  reverse_iterator rbegin() const { return ordered_data_.rbegin(); }
+  reverse_iterator rend() const { return ordered_data_.rend(); }
+
  private:
   map_type map_;
   sequential_type ordered_data_;
@@ -302,14 +305,13 @@ class OrderedSet<std::shared_ptr<T>> {
  public:
   using element_type = std::shared_ptr<T>;
   using key_type = const T *;
-  using hash_t = PointerHash<T>;
   using sequential_type = std::list<element_type>;
   using vector_type = std::vector<element_type>;
   using iterator = typename sequential_type::iterator;
   using const_iterator = typename sequential_type::const_iterator;
   using reverse_iterator = typename sequential_type::reverse_iterator;
   using const_reverse_iterator = typename sequential_type::const_reverse_iterator;
-  using map_type = mindspore::HashMap<key_type, iterator, hash_t>;
+  using map_type = mindspore::HashMap<key_type, iterator>;
   using ordered_set_type = OrderedSet<std::shared_ptr<T>>;
 
   OrderedSet() = default;
@@ -555,6 +557,9 @@ class OrderedSet<std::shared_ptr<T>> {
 
   const_iterator cbegin() const { return ordered_data_.cbegin(); }
   const_iterator cend() const { return ordered_data_.cend(); }
+
+  reverse_iterator rbegin() { return ordered_data_.rbegin(); }
+  reverse_iterator rend() { return ordered_data_.rend(); }
 
  private:
   map_type map_;

@@ -34,6 +34,7 @@ constexpr size_t kInplaceIndexAddOutputsNum = 1;
 
 bool InplaceIndexAddCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                        const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
   auto kernel_ptr = std::dynamic_pointer_cast<ops::InplaceIndexAdd>(base_operator);
   if (!kernel_ptr) {
     MS_LOG(ERROR) << "cast InplaceIndexAdd ops failed!";
@@ -45,8 +46,6 @@ bool InplaceIndexAddCpuKernelMod::Init(const BaseOperatorPtr &base_operator, con
     return false;
   }
 
-  base_operator_ = base_operator;
-
   return true;
 }
 
@@ -54,6 +53,7 @@ int InplaceIndexAddCpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
                                         const std::vector<KernelTensorPtr> &inputs,
                                         const std::vector<KernelTensorPtr> &outputs,
                                         const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost) {
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kInplaceIndexAddInputsNum, kernel_name_);
   if (auto ret = KernelMod::Resize(base_operator, inputs, outputs, inputsOnHost); ret != KRET_OK) {
     return ret;
   }
@@ -61,7 +61,8 @@ int InplaceIndexAddCpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
   var_shape = inputs[kIndex0]->GetShapeVector();
   updates_shape = inputs[kIndex2]->GetShapeVector();
   indices_shape = inputs[kIndex1]->GetShapeVector();
-  axis_ = GetValue<int64_t>(base_operator_->GetAttr(AXIS));
+  MS_EXCEPTION_IF_NULL(op_);
+  axis_ = GetValue<int64_t>(op_->GetAttr(AXIS));
   return KRET_OK;
 }
 
@@ -125,11 +126,23 @@ bool InplaceIndexAddCpuKernelMod::LaunchKernel(const std::vector<kernel::Address
                                                const std::vector<kernel::AddressPtr> &outputs) {
   CHECK_KERNEL_INPUTS_NUM(inputs.size(), kInplaceIndexAddInputsNum, kernel_name_);
   CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kInplaceIndexAddOutputsNum, kernel_name_);
-  auto *x = reinterpret_cast<T *>(inputs[kIndex0]->addr);
-  auto *indices = reinterpret_cast<int32_t *>(inputs[kIndex1]->addr);
-  auto *y = reinterpret_cast<T *>(inputs[kIndex2]->addr);
-  auto *output = reinterpret_cast<T *>(outputs[kIndex0]->addr);
+  auto x = GetDeviceAddress<T>(inputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(x);
+  auto indices = GetDeviceAddress<int32_t>(inputs, kIndex1);
+  MS_EXCEPTION_IF_NULL(indices);
+  auto y = GetDeviceAddress<T>(inputs, kIndex2);
+  MS_EXCEPTION_IF_NULL(y);
+  auto output = GetDeviceAddress<T>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(output);
   CheckParams();
+  // check indices's value is valid
+  auto axis = LongToSize(axis_);
+  for (int64_t i = 0; i < indices_shape[0]; ++i) {
+    if (indices[i] < 0 || indices[i] >= var_shape[axis]) {
+      MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the value of 'indices' must be in range [" << 0 << ", "
+                        << var_shape[axis] << "), but got " << indices[i] << ".";
+    }
+  }
   size_t x_axis_inner_size = x_axis_size_ * inner_size_;
   size_t y_axis_inner_size = y_axis_size_ * inner_size_;
 

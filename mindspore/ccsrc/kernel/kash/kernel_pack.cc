@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,27 +13,50 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <map>
 #include <fstream>
 #include <thread>
+#include <vector>
+#include <algorithm>
 #include "nlohmann/json.hpp"
 #include "securec/include/securec.h"
 #include "utils/log_adapter.h"
 #include "include/common/utils/convert_utils.h"
 #include "utils/system/sha256.h"
 #include "kernel/common_utils.h"
+#include "kernel/framework_utils.h"
+#include "kernel/kash/kernel_pack.h"
+
 namespace mindspore {
 namespace kernel {
+constexpr size_t kWorkspaceSize = 32;
 constexpr size_t kJsonSuffixLength = 5;
+constexpr char kMagic[] = "magic";
+constexpr char kBlockDim[] = "blockDim";
+constexpr char kKernelName[] = "kernelName";
+constexpr char kBinFileName[] = "binFileName";
+constexpr char kBinFileSuffix[] = "binFileSuffix";
+constexpr char kCoreType[] = "core_type";
+constexpr char kTaskRation[] = "taskRation";
+constexpr char kWorkspace[] = "workspace";
+constexpr char kParameters[] = "parameters";
+constexpr char kOpParaSize[] = "opParaSize";
+constexpr char kSHA256[] = "sha256";
+constexpr char kKBHit[] = "KBHit";
+constexpr char kKernelList[] = "kernelList";
+constexpr char kBatchBindOnly[] = "batchBindOnly";
+constexpr char kArgsRemap[] = "args_remap";
+constexpr char kSize[] = "size";
+constexpr char kGlobalWorkspaceSpecWorkspace[] = "globalworkspace_spec_workspace";
 namespace {
-bool CheckHash(const std::string &json_file, const std::string &bin_file, const nlohmann::json &js) {
-  if (js.find("sha256") == js.end()) {
-    MS_LOG(ERROR) << "No sha256 found in " << json_file;
+bool CheckHash(const std::string & /* json_file */, const std::string &bin_file, const nlohmann::json &js) {
+  if (js.find(kSHA256) == js.end()) {
     return false;
   }
   std::string sha256_cal = system::sha256::GetHashFromFile(bin_file);
-  std::string sha256_str = js["sha256"];
+  std::string sha256_str = js[kSHA256];
   if (sha256_cal.empty() || sha256_cal != sha256_str) {
-    MS_LOG(ERROR) << "Cal sha256 of " << bin_file << " failed.";
+    MS_LOG(WARNING) << "Check sha256 for [" << bin_file << "] failed, it will try to rebuild the op.";
     return false;
   }
   return true;
@@ -44,6 +67,9 @@ constexpr auto kTbeMixCubePrefix = "_mix_aic";
 constexpr auto kTbeMixVectorPrefix = "_mix_aiv";
 constexpr auto kCoreTypeMixAIV = "MIX_AIV";
 constexpr auto kCoreTypeMixAIC = "MIX_AIC";
+constexpr auto kFloatType = "float";
+constexpr auto kInitValue = "init_value";
+constexpr auto kModeInArgsFirstField = "_mode_in_args_first_field";
 const std::vector<std::string> kBinaryMagicTypes = {
   "RT_DEV_BINARY_MAGIC_PLAIN",     "RT_DEV_BINARY_MAGIC_PLAIN_AICPU", "RT_DEV_BINARY_MAGIC_PLAIN_AIVEC",
   "RT_DEV_BINARY_MAGIC_ELF",       "RT_DEV_BINARY_MAGIC_ELF_AICPU",   "RT_DEV_BINARY_MAGIC_ELF_AIVEC",
@@ -64,6 +90,31 @@ bool ParseJsonValue(const std::string &key, const nlohmann::json &json, T *res) 
     MS_LOG(DEBUG) << "Can not find key [" << key << "] in json file, json info: " << json.dump(indent);
   }
   return false;
+}
+
+bool LoadJsonFromFile(const std::string &json_file, nlohmann::json *js) {
+  std::ifstream json_fs(json_file);
+  if (!json_fs.is_open()) {
+    MS_LOG(INFO) << "Open json file: " << json_file << " error, please check kernel_meta.";
+    return false;
+  }
+  try {
+    json_fs >> *js;
+    json_fs.close();
+  } catch (std::exception &e) {
+    MS_LOG(WARNING) << "Parse json file error: " << json_file << ", sleep " << kRetryIntervalMilliSeconds
+                    << "ms and retry again. error ms: " << e.what();
+    json_fs.close();
+    std::this_thread::sleep_for(std::chrono::milliseconds(kRetryIntervalMilliSeconds));
+    std::ifstream retry_tmp(json_file);
+    if (!retry_tmp.is_open()) {
+      MS_LOG(INFO) << "Open json file: " << json_file << " error, please check kernel_meta.";
+      return false;
+    }
+    retry_tmp >> *js;
+    retry_tmp.close();
+  }
+  return true;
 }
 }  // namespace
 
@@ -103,14 +154,12 @@ bool KernelPack::ReadFromJsonFile(const std::string &json_f, const std::string &
     return false;
   }
 
-  std::ifstream kernel_json(json_f);
-  if (!kernel_json.is_open()) {
-    MS_LOG(DEBUG) << "Read json file(" << json_f << ") error, please check kernel_meta.";
+  nlohmann::json js;
+  if (!LoadJsonFromFile(json_f, &js)) {
     return false;
   }
-  nlohmann::json js;
-  kernel_json >> js;
 
+  std::ifstream kernel_json(json_f);
   size_t bin_size = LongToSize(kernel_json.seekg(0, std::ios::end).tellg());
   void *ptr = static_cast<void *>(new (std::nothrow) uint8_t[sizeof(KernelPack) + bin_size]);
   if (ptr != nullptr) {
@@ -154,9 +203,9 @@ bool KernelPack::ReadFromJsonFile(const std::string &json_f, const std::string &
     }
 
     // cuda json file may have workspace information
-    if (js.find("workspace") != js.end()) {
-      auto workspace = js.at("workspace");
-      std::vector<size_t> sizes = workspace.at("size");
+    if (js.find(kWorkspace) != js.end()) {
+      auto workspace = js.at(kWorkspace);
+      std::vector<size_t> sizes = workspace.at(kSize);
       for (auto size : sizes) {
         kernel_json_info_.workspaces.push_back(size);
       }
@@ -165,7 +214,7 @@ bool KernelPack::ReadFromJsonFile(const std::string &json_f, const std::string &
     return true;
   }
 
-  std::string binfile_suffix = js["binFileSuffix"];
+  std::string binfile_suffix = js[kBinFileSuffix];
   std::string bin_f = json_f.substr(0, json_f.length() - kJsonSuffixLength) + binfile_suffix;
   if (binfile_suffix == ".so") {
     // change "xx/xx.so" -> "xx/libxx.so"
@@ -247,7 +296,7 @@ void KernelPack::ParseMagic(const std::string &key, const nlohmann::json &js, Ke
 
 void KernelPack::ParseBlockDim(const std::string &key, const nlohmann::json &js, KernelJsonInfo *kernel_json_info) {
   MS_EXCEPTION_IF_NULL(kernel_json_info);
-  uint32_t block_dim;
+  uint32_t block_dim = 0;
   if (!ParseJsonValue(key, js, &block_dim)) {
     MS_LOG(DEBUG) << "Get value failed for key: " << key << ". Src json: " << js.dump(indent);
   }
@@ -282,18 +331,18 @@ void KernelPack::ParseWorkSpace(const std::string &key, const nlohmann::json &js
   }
   try {
     auto workspace = js.at(key);
-    if (workspace.find("num") == workspace.end() || workspace.find("size") == workspace.end()) {
+    if (workspace.find("num") == workspace.end() || workspace.find(kSize) == workspace.end()) {
       MS_LOG(WARNING) << "'num' and 'size' ars necessary in workspace, but not found. " << js.dump(indent);
       return;
     }
     size_t num = workspace.at("num");
-    std::vector<size_t> sizes = workspace.at("size");
+    std::vector<int64_t> sizes = workspace.at(kSize);
     if (num != sizes.size()) {
       MS_LOG(WARNING) << "'num' and length of 'size' must be same. " << js.dump(indent);
       return;
     }
-    if (workspace.find("type") != workspace.end()) {
-      std::vector<size_t> type = workspace.at("type");
+    if (workspace.find(kType) != workspace.end()) {
+      std::vector<size_t> type = workspace.at(kType);
       if (num != type.size()) {
         MS_LOG(WARNING) << "'num' and length of 'type' must be same. " << js.dump(indent);
         return;
@@ -304,7 +353,8 @@ void KernelPack::ParseWorkSpace(const std::string &key, const nlohmann::json &js
     }
 
     for (size_t i = 0; i < sizes.size(); i++) {
-      (void)kernel_json_info->workspaces.emplace_back(sizes[i]);
+      auto t = sizes[i] < 0 ? kWorkspaceSize : LongToSize(sizes[i]);
+      (void)kernel_json_info->workspaces.emplace_back(t);
     }
   } catch (std::exception &e) {
     MS_LOG(ERROR) << "Parse json value failed, error info: " << e.what();
@@ -317,12 +367,41 @@ void KernelPack::ParseParameters(const std::string &key, const nlohmann::json &j
     return;
   }
   try {
-    std::vector<size_t> parameters = js.at(key);
-    for (size_t i = 0; i < parameters.size(); i++) {
-      (void)kernel_json_info->parameters.emplace_back(parameters[i]);
+    nlohmann::json params = js.at(key);
+    constexpr int kDumpIndex = 4;
+    if (!params.is_array()) {
+      MS_LOG(INFO) << "Parameter should an array, " << params.dump(kDumpIndex);
+      return;
+    }
+    constexpr auto kIntType = "int";
+    for (auto item = params.begin(); item != params.end(); ++item) {
+      nlohmann::json obj = *item;
+      if (obj.is_null()) {
+        (void)kernel_json_info->parameters.emplace_back(0);
+        continue;
+      }
+      if (!obj.is_object()) {
+        auto in_param = params.get<std::vector<int64_t>>();
+        std::vector<size_t> tmp;
+        (void)std::transform(in_param.begin(), in_param.end(), std::back_inserter(tmp),
+                             [](int64_t v) { return LongToSize(v); });
+        kernel_json_info->parameters = tmp;
+        return;
+      }
+      (void)kernel_json_info->parameters.emplace_back(1);
+      auto dtype = obj.at(kDtype).get<std::string>();
+      (void)kernel_json_info->atomic_init_info.dtype_list.emplace_back(dtype);
+      if (dtype.find(kIntType) != std::string::npos) {
+        (void)kernel_json_info->atomic_init_info.init_value_int64_list.emplace_back(obj.at(kInitValue).get<int64_t>());
+      } else if (dtype.find(kFloatType) != std::string::npos) {
+        (void)kernel_json_info->atomic_init_info.init_value_float_list.emplace_back(obj.at(kInitValue).get<float>());
+      } else {
+        MS_LOG(INFO) << "Unsupported dtype: " << dtype;
+        return;
+      }
     }
   } catch (std::exception &e) {
-    MS_LOG(ERROR) << "Parse json value failed, error info: " << e.what();
+    MS_LOG(INFO) << "Parse json value failed, error info: " << e.what();
   }
 }
 
@@ -383,24 +462,47 @@ void KernelPack::ParseArgsRemap(const std::string &key, const nlohmann::json &js
   }
 }
 
+void KernelPack::ParseGlogbleWorkSpace(const std::string &key, const nlohmann::json &js,
+                                       KernelJsonInfo *kernel_json_info) {
+  MS_EXCEPTION_IF_NULL(kernel_json_info);
+  if (js.find(key) == js.end()) {
+    return;
+  }
+  try {
+    auto globalWorkspace = js.at(key);
+    if (globalWorkspace.find(kSize) != globalWorkspace.end()) {
+      kernel_json_info->global_workspace.size = globalWorkspace.at(kSize);
+      kernel_json_info->global_workspace.is_overflow = true;
+    }
+    if (globalWorkspace.find(kType) != globalWorkspace.end()) {
+      kernel_json_info->global_workspace.type = globalWorkspace.at(kType);
+      kernel_json_info->global_workspace.is_overflow = true;
+    }
+  } catch (std::exception &e) {
+    MS_LOG(ERROR) << "Parse json value failed, jsong is:" + js.dump() + ", error info: " << e.what();
+  }
+}
+
 void KernelPack::ParseKernelJson(const nlohmann::json &js) {
   using KernelJsonParser = std::function<void(const std::string &, const nlohmann::json &, KernelJsonInfo *)>;
-  const std::map<std::string, KernelJsonParser> kernel_json_map = {{"magic", ParseMagic},
-                                                                   {"blockDim", ParseBlockDim},
-                                                                   {"kernelName", ParseKernelName},
-                                                                   {"binFileName", ParseBinFileName},
-                                                                   {"binFileSuffix", ParseBinFileSuffix},
-                                                                   {"core_type", ParseCoreType},
-                                                                   {"taskRation", ParseTaskRatio},
-                                                                   {"workspace", ParseWorkSpace},
-                                                                   {"parameters", ParseParameters},
-                                                                   {"opParaSize", ParseOpParaSize},
-                                                                   {"sha256", ParseSHA256},
-                                                                   {"KBHit", ParseKBHit},
-                                                                   {"kernelList", ParseKernelList},
-                                                                   {"modeInArgsFirstField", ParseModeInArgsFirstField},
-                                                                   {"batchBindOnly", ParseBatchBindOnly},
-                                                                   {"args_remap", ParseArgsRemap}};
+  const std::map<std::string, KernelJsonParser> kernel_json_map = {
+    {kMagic, ParseMagic},
+    {kBlockDim, ParseBlockDim},
+    {kKernelName, ParseKernelName},
+    {kBinFileName, ParseBinFileName},
+    {kBinFileSuffix, ParseBinFileSuffix},
+    {kCoreType, ParseCoreType},
+    {kTaskRation, ParseTaskRatio},
+    {kWorkspace, ParseWorkSpace},
+    {kParameters, ParseParameters},
+    {kOpParaSize, ParseOpParaSize},
+    {kSHA256, ParseSHA256},
+    {kKBHit, ParseKBHit},
+    {kKernelList, ParseKernelList},
+    {kModeInArgsFirstField, ParseModeInArgsFirstField},
+    {kBatchBindOnly, ParseBatchBindOnly},
+    {kArgsRemap, ParseArgsRemap},
+    {kGlobalWorkspaceSpecWorkspace, ParseGlogbleWorkSpace}};
   auto iter = kernel_json_map.begin();
   while (iter != kernel_json_map.end()) {
     iter->second(iter->first, js, &kernel_json_info_);
@@ -413,26 +515,9 @@ bool KernelPack::LoadKernelMeta(const std::string &json_f) {
     MS_LOG(ERROR) << "please check json path.";
     return false;
   }
-  std::ifstream kernel_json(json_f);
-  if (!kernel_json.is_open()) {
-    MS_LOG(INFO) << "Open json file: " << json_f << " error, please check kernel_meta.";
-    return false;
-  }
   nlohmann::json js;
-  try {
-    kernel_json >> js;
-    kernel_json.close();
-  } catch (std::exception &e) {
-    MS_LOG(WARNING) << "Parse json file error: " << json_f << ", sleep 500ms and retry again. error ms: " << e.what();
-    kernel_json.close();
-    std::this_thread::sleep_for(std::chrono::microseconds(500000));
-    std::ifstream retry_tmp(json_f);
-    if (!retry_tmp.is_open()) {
-      MS_LOG(INFO) << "Open json file: " << json_f << " error, please check kernel_meta.";
-      return false;
-    }
-    retry_tmp >> js;
-    retry_tmp.close();
+  if (!LoadJsonFromFile(json_f, &js)) {
+    return false;
   }
   ParseKernelJson(js);
 

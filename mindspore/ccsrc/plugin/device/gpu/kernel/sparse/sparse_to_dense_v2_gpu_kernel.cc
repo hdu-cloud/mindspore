@@ -46,8 +46,8 @@ bool SparseToDenseV2GpuKernelMod::Init(const BaseOperatorPtr &base_operator, con
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  indice_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  value_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex2).first);
+  indice_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  value_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex2).dtype);
   return true;
 }
 
@@ -118,14 +118,22 @@ void SparseToDenseV2GpuKernelMod::CheckValidateTwoDim(const std::vector<kernel::
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(indices_addr, input_indices, input_elements_indices * indice_size_, cudaMemcpyDeviceToHost,
                     reinterpret_cast<cudaStream_t>(cuda_stream_)),
-    "cudaMemcpyAsync indices failed");
+    "For 'SparseToDenseV2', cudaMemcpyAsync indices failed.");
+  if (cudaStreamQuery(reinterpret_cast<cudaStream_t>(cuda_stream_)) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(cuda_stream_)),
+                                       "For 'SparseToDenseV2', cuda Stream Sync Failed.");
+  }
 
   I *input_output_shape = GetDeviceAddress<I>(inputs, kIndex1);
   I *output_shape_addr = reinterpret_cast<I *>(malloc(input_elements_output_shape * indice_size_));
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(output_shape_addr, input_output_shape, input_elements_output_shape * indice_size_,
                     cudaMemcpyDeviceToHost, reinterpret_cast<cudaStream_t>(cuda_stream_)),
-    "cudaMemcpyAsync dense_shape failed");
+    "For 'SparseToDenseV2', cudaMemcpyAsync dense_shape failed");
+  if (cudaStreamQuery(reinterpret_cast<cudaStream_t>(cuda_stream_)) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(cuda_stream_)),
+                                       "For 'SparseToDenseV2', cuda Stream Sync Failed.");
+  }
   bool valid = true;
   bool different = false;
   bool increasing = true;
@@ -179,14 +187,22 @@ void SparseToDenseV2GpuKernelMod::CheckValidateOneDim(const std::vector<kernel::
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(indices_addr, input_indices, input_elements_indices * indice_size_, cudaMemcpyDeviceToHost,
                     reinterpret_cast<cudaStream_t>(cuda_stream_)),
-    "cudaMemcpyAsync indices failed");
+    "For 'SparseToDenseV2', cudaMemcpyAsync indices failed");
+  if (cudaStreamQuery(reinterpret_cast<cudaStream_t>(cuda_stream_)) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(cuda_stream_)),
+                                       "For 'SparseToDenseV2', cuda Stream Sync Failed.");
+  }
 
   I *input_output_shape = GetDeviceAddress<I>(inputs, kIndex1);
   I *output_shape_addr = reinterpret_cast<I *>(malloc(input_elements_output_shape * indice_size_));
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(output_shape_addr, input_output_shape, input_elements_output_shape * indice_size_,
                     cudaMemcpyDeviceToHost, reinterpret_cast<cudaStream_t>(cuda_stream_)),
-    "cudaMemcpyAsync dense_shape failed");
+    "For 'SparseToDenseV2', cudaMemcpyAsync dense_shape failed");
+  if (cudaStreamQuery(reinterpret_cast<cudaStream_t>(cuda_stream_)) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(cuda_stream_)),
+                                       "For 'SparseToDenseV2', cuda Stream Sync Failed.");
+  }
   bool valid = true;
   bool different = false;
   bool increasing = true;
@@ -235,12 +251,18 @@ bool SparseToDenseV2GpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &in
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(default_value_data, input_default_value, value_size_, cudaMemcpyDeviceToHost,
                     reinterpret_cast<cudaStream_t>(cuda_stream_)),
-    "cudaMemcpyAsync default_value failed");
+    "For 'SparseToDenseV2', cudaMemcpyAsync default_value failed");
+  if (cudaStreamQuery(reinterpret_cast<cudaStream_t>(cuda_stream_)) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(cuda_stream_)),
+                                       "For 'SparseToDenseV2', cuda Stream Sync Failed.");
+  }
 
   auto cuda_stream = reinterpret_cast<cudaStream_t>(cuda_stream_);
-  CallSetDefaultValue(default_value_data[0], output_elements, output, device_id_, cuda_stream);
-  CallSparseToDense(input_indices, input_values, num_elems, input_elements_values, input_output_shape, ndims, output,
-                    device_id_, cuda_stream);
+  auto status = CallSetDefaultValue(default_value_data[0], output_elements, output, device_id_, cuda_stream);
+  CHECK_CUDA_STATUS(status, kernel_name_);
+  status = CallSparseToDense(input_indices, input_values, num_elems, input_elements_values, input_output_shape, ndims,
+                             output, device_id_, cuda_stream);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

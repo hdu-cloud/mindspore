@@ -19,13 +19,13 @@
 
 #include <algorithm>
 #include <map>
-#include <string>
 #include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 #include "kernel/common_utils.h"
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
 #include "plugin/factory/ms_factory.h"
-#include "mindspore/core/ops/grad/upsample_trilinear_3d_grad.h"
 
 namespace mindspore {
 namespace kernel {
@@ -41,20 +41,56 @@ class UpsampleTrilinear3DGradCpuKernelMod : public NativeCpuKernelMod {
              const std::vector<KernelTensorPtr> &outputs, const std::map<uint32_t, tensor::TensorPtr> &) override;
 
   bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
-              const std::vector<AddressPtr> &outputs) override;
+              const std::vector<AddressPtr> &outputs) override {
+    return kernel_func_(this, inputs, workspace, outputs);
+  }
 
- protected:
   std::vector<KernelAttr> GetOpSupport() override;
 
- private:
-  template <typename T, typename S>
-  bool LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &outputs);
+  std::vector<size_t> GetLaunchIgnoredInputAddressIdx() const override { return {kIndex2}; }
 
-  TypeId in_type_{kTypeUnknown};
+ private:
+  template <typename T>
+  struct WeightsAndIndices {
+    void operator()(int64_t *const input_index0, int64_t *const input_index1, T *const lambda_0,
+                    T *const lambda_1) const {
+      *input_index0 = id0;
+      *input_index1 = id1;
+      *lambda_0 = lambda0;
+      *lambda_1 = lambda1;
+    }
+    void Step(const int64_t stride) {
+      id0 *= stride;
+      id1 *= stride;
+    }
+    int64_t id0;
+    int64_t id1;
+    T lambda0;
+    T lambda1;
+  };
+
+  template <typename S>
+  void ComputeWeightsAndIndices(WeightsAndIndices<S> *const wi, const S scale, const int64_t out_idx,
+                                const int64_t input_size, const int64_t output_size, const int64_t stride) const;
+
+  template <typename S>
+  void ComputeHelper(WeightsAndIndices<S> *const helper, const S scale, const int64_t input_size,
+                     const int64_t output_size, const int64_t stride) const;
+
+  template <typename T, typename S>
+  bool LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
+                    const std::vector<AddressPtr> &outputs);
+  using KernelRunFunc = std::function<bool(UpsampleTrilinear3DGradCpuKernelMod *, const std::vector<AddressPtr> &,
+                                           const std::vector<AddressPtr> &, const std::vector<AddressPtr> &)>;
+  KernelRunFunc kernel_func_;
+  static std::vector<std::pair<KernelAttr, KernelRunFunc>> func_list_;
+
+  bool align_corners_{false};
+  TypeId x_type_{kTypeUnknown};
   std::vector<int64_t> input_shape_;
   std::vector<int64_t> output_shape_;
-  std::vector<float> attr_scales_;
-  bool attr_align_corners_{false};
+  std::vector<double> scales_;
+  std::vector<int64_t> none_list_;
 };
 }  // namespace kernel
 }  // namespace mindspore

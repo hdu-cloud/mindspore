@@ -27,6 +27,7 @@ from mindspore.common import Tensor
 from mindspore.common.sparse_tensor import RowTensorInner
 from mindspore.common.parameter import Parameter, ParameterTuple
 from mindspore.nn.wrap.grad_reducer import DistributedGradReducer
+from mindspore.ops.operations.math_ops import NPUGetFloatStatusV2, NPUClearFloatStatusV2
 from mindspore.ops import functional as F
 from mindspore.ops import composite as C
 from mindspore.ops import operations as P
@@ -112,10 +113,11 @@ class BoostTrainOneStepCell(TrainOneStepCell):
     Args:
         network (Cell): The training network. The network only supports single output.
         optimizer (Union[Cell]): Optimizer for updating the weights.
-        sens (numbers.Number): The scaling number to be filled as the input of backpropagation. Default value is 1.0.
+        sens (numbers.Number): The scaling number to be filled as the input of backpropagation.
+            Default: ``None`` , which is ``1.0`` .
 
     Inputs:
-        - **(\*inputs)** (Tuple(Tensor)) - Tuple of input tensors with shape :math:`(N, \ldots)`.
+        - **\*inputs** (Tuple(Tensor)) - Tuple of input tensors with shape :math:`(N, \ldots)`.
 
     Outputs:
         Tensor, a tensor means the loss value, the shape of which is usually :math:`()`.
@@ -132,7 +134,10 @@ class BoostTrainOneStepCell(TrainOneStepCell):
 
     Examples:
         >>> from mindspore import boost
-        >>> net = Net()
+        >>> from mindspore import nn
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> loss_fn = nn.SoftmaxCrossEntropyWithLogits()
         >>> optim = nn.Momentum(net.trainable_params(), learning_rate=0.1, momentum=0.9)
         >>> #1) Using the WithLossCell existing provide
@@ -140,7 +145,7 @@ class BoostTrainOneStepCell(TrainOneStepCell):
         >>> train_net = boost.BoostTrainOneStepCell(loss_net, optim)
         >>>
         >>> #2) Using user-defined WithLossCell
-        >>> class MyWithLossCell(Cell):
+        >>> class MyWithLossCell(nn.Cell):
         ...    def __init__(self, backbone, loss_fn):
         ...        super(MyWithLossCell, self).__init__(auto_prefix=False)
         ...        self._backbone = backbone
@@ -158,7 +163,7 @@ class BoostTrainOneStepCell(TrainOneStepCell):
         >>> train_net = boost.BoostTrainOneStepCell(loss_net, optim)
     """
 
-    def __init__(self, network, optimizer, sens=1.0):
+    def __init__(self, network, optimizer, sens=None):
         super(BoostTrainOneStepCell, self).__init__(network, optimizer, sens)
         self.hyper_map = C.HyperMap()
         self.freeze = isinstance(optimizer, FreezeOpt)
@@ -207,6 +212,8 @@ class BoostTrainOneStepCell(TrainOneStepCell):
         if self.freeze:
             loss = self.gradient_freeze_process(*inputs)
         else:
+            if not self.sense_flag:
+                return self._no_sens_impl(*inputs)
             loss = self.network(*inputs)
             sens = F.fill(loss.dtype, loss.shape, self.sens)
             grads = self.grad(self.network, self.weights)(*inputs, sens)
@@ -332,6 +339,22 @@ class BoostTrainOneStepCell(TrainOneStepCell):
             return False
         return True
 
+    def _no_sens_impl(self, *inputs):
+        """construct implementation when the 'sens' parameter is passed in."""
+        loss = self.network(*inputs)
+        sens = F.fill(loss.dtype, loss.shape, self.sens)
+        grads = self.grad_no_sens(self.network, self.weights)(*inputs)
+        grads = self.grad_reducer(grads)
+        if self.use_grad_accumulation:
+            loss = self.gradient_accumulation_process(loss, grads, sens, *inputs)
+        else:
+            if self.enable_dim_reduce:
+                loss = F.depend(loss, self.dim_reduce(loss, grads, sens, self.weights, self.weights_clone, *inputs))
+            elif self.enable_adasum:
+                loss = F.depend(loss, self.adasum_process(loss, grads))
+            else:
+                loss = F.depend(loss, self.optimizer(grads))
+
     def __init_dim_reduce(self):
         """dim reduce algorithm init method."""
         local_pca_mat_path = self.auto_boost.local_pca_mat_path
@@ -389,10 +412,11 @@ class BoostTrainOneStepWithLossScaleCell(BoostTrainOneStepCell):
         network (Cell): The training network. The network only supports single output.
         optimizer (Cell): Optimizer for updating the weights.
         scale_sense (Union[Tensor, Cell]): If this value is Cell type, the loss scaling update logic cell.If this value
-                                          is Tensor type, Tensor with shape :math:`()` or :math:`(1,)`.
+            is Tensor type, :func:`mindspore.nn.TrainOneStepWithLossScaleCell.set_sense_scale` can be called to update
+            loss scale factor, Tensor with shape :math:`()` or :math:`(1,)`.
 
     Inputs:
-        - **(*inputs)** (Tuple(Tensor)) - Tuple of input tensors with shape :math:`(N, \ldots)`.
+        - **\*inputs** (Tuple(Tensor)) - Tuple of input tensors with shape :math:`(N, \ldots)`.
 
     Outputs:
         Tuple of 3 Tensor, the loss, overflow flag and current loss scaling value.
@@ -403,7 +427,7 @@ class BoostTrainOneStepWithLossScaleCell(BoostTrainOneStepCell):
 
     Raises:
         TypeError: If `scale_sense` is neither Cell nor Tensor.
-        ValueError: If shape of `scale_sense` is neither (1,) nor ().
+        ValueError: If shape of `scale_sense` is neither :math:`(1,)` nor :math:`()`.
 
     Supported Platforms:
         ``Ascend`` ``GPU``
@@ -460,6 +484,10 @@ class BoostTrainOneStepWithLossScaleCell(BoostTrainOneStepCell):
         self.is_distributed = (self.parallel_mode != ParallelMode.STAND_ALONE)
         self.gpu_target = (context.get_context("device_target") == "GPU")
         self.loss_scaling_manager = None
+        self.base0 = Tensor(0, mstype.int32)
+        self.reduce_all = P.ReduceAll(keep_dims=False)
+        self.logic_not = P.LogicalNot()
+        self.equal = P.Equal()
 
         if self.auto_boost.boost_config.get("loss_scale_group", False):
             self.enable_enhanced_amp = True
@@ -535,12 +563,13 @@ class BoostTrainOneStepWithLossScaleCell(BoostTrainOneStepCell):
             bool, overflow value.
             float, update ratio.
         """
-        flag_sum = self.reduce_sum(param, (0,))
+        flag_sum = self.equal(self.base0, param)
         if self.reducer_flag:
             flag_reduce = self.allreduce(flag_sum)
-            overflow = self.less_equal(self.base, flag_reduce)
+            overflow = self.logic_not(self.reduce_all(flag_reduce))
         else:
-            overflow = self.less_equal(self.base, flag_sum)
+            overflow = self.logic_not(self.reduce_all(flag_sum))
+
         if overflow:
             update_ratio = self.reduce_ratio
         else:
@@ -609,13 +638,11 @@ class BoostTrainOneStepWithLossScaleCell(BoostTrainOneStepCell):
             The second value is the same as the input of `compute_input`, but contains some information about the
             execution order.
         """
-        status = False
+        status = Tensor([0] * 8, mstype.int32)
         if not self.gpu_target:
-            # init overflow buffer
-            status = P.NPUAllocFloatStatus()()
             status = F.depend(status, pre_cond)
             # clear overflow buffer
-            clear_status = P.NPUClearFloatStatus()(status)
+            clear_status = NPUClearFloatStatusV2()(status)
             compute_input = F.depend(compute_input, clear_status)
         return status, compute_input
 
@@ -636,22 +663,37 @@ class BoostTrainOneStepWithLossScaleCell(BoostTrainOneStepCell):
         """
         if not self.gpu_target:
             status = F.depend(status, compute_output)
-            get_status = P.NPUGetFloatStatus()(status)
-            status = F.depend(status, get_status)
-            # sum overflow buffer elements, 0:not overflow , >0:overflow
-            flag_sum = self.reduce_sum(status, (0,))
+            get_status = NPUGetFloatStatusV2()(status)
+
+            if self.is_distributed:
+                # sum overflow flag over devices
+                flag_reduce = self.allreduce(get_status)
+                # get_status not equal to [0]*8 means overflow
+                flag = self.equal(self.base0, flag_reduce)
+                status = F.depend(status, flag)
+                # distributed needs to skip allreduce to avoid its overflow affecting the next step
+                clear_status = NPUClearFloatStatusV2()(status)
+                flag = F.depend(flag, clear_status)
+                overall_finite = self.reduce_all(flag)
+            else:
+                status = F.depend(status, get_status)
+                clear_status = NPUClearFloatStatusV2()(status)
+                get_status = F.depend(get_status, clear_status)
+                flag = self.equal(self.base0, get_status)
+                overall_finite = self.reduce_all(flag)
+            overflow = self.logic_not(overall_finite)
         else:
             flag_sum = self.hyper_map(F.partial(_grad_overflow), compute_output)
             flag_sum = P.AddN()(flag_sum)
             # convert flag_sum to scalar
             flag_sum = P.Reshape()(flag_sum, (()))
 
-        if self.is_distributed:
-            # sum overflow flag over devices
-            flag_reduce = self.allreduce(flag_sum)
-            overflow = self.less_equal(self.base, flag_reduce)
-        else:
-            overflow = self.less_equal(self.base, flag_sum)
+            if self.is_distributed:
+                # sum overflow flag over devices
+                flag_reduce = self.allreduce(flag_sum)
+                overflow = self.less_equal(self.base, flag_reduce)
+            else:
+                overflow = self.less_equal(self.base, flag_sum)
         return overflow
 
     def _process_loss_scale(self, overflow):
@@ -688,7 +730,7 @@ class BoostTrainOneStepWithLossScaleCell(BoostTrainOneStepCell):
         self.optimizer_loss_scale = [self.parent.count(x) for x in parent_set]
         self.reduce_ratio = Tensor(1.0 / (2 ** 0.5), mstype.float32)
         self.growth_ratio = Tensor(2 ** (1.0 / 1000.0), mstype.float32)
-        self.overflow_status_list = ParameterTuple(Parameter(Tensor(np.zeros(shape=[8]), mstype.float32),
+        self.overflow_status_list = ParameterTuple(Parameter(Tensor(np.zeros(shape=[8]), mstype.int32),
                                                              name='mix_layer_status_{}'.format(x), requires_grad=False)
                                                    for x in range(loss_scale_number))
         self.loss_scaling_manager.set_loss_scale_status(loss_scale_number, self.loss_scaling_manager.get_loss_scale())

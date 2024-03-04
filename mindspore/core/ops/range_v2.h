@@ -17,14 +17,14 @@
 #ifndef MINDSPORE_CORE_OPS_RANGE_V2_H_
 #define MINDSPORE_CORE_OPS_RANGE_V2_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "abstract/abstract_value.h"
+#include "mindapi/base/types.h"
 #include "ops/base_operator.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/base/types.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,8 +37,8 @@ class MIND_API RangeV2 : public BaseOperator {
   RangeV2() : BaseOperator(kNameRangeV2) {}
 };
 
-abstract::AbstractBasePtr RangeV2Infer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                       const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr RangeV2Infer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimRangeV2Ptr = std::shared_ptr<RangeV2>;
 }  // namespace ops
 }  // namespace mindspore

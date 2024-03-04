@@ -146,12 +146,12 @@ class YOLOv3(nn.Cell):
         con1, big_object_output = self.backblock0(feature_map3)
 
         con1 = self.conv1(con1)
-        ups1 = P.ResizeNearestNeighbor((img_hight / 16, img_width / 16))(con1)
+        ups1 = P.ResizeNearestNeighbor((img_hight // 16, img_width // 16))(con1)
         con1 = self.concat((ups1, feature_map2))
         con2, medium_object_output = self.backblock1(con1)
 
         con2 = self.conv2(con2)
-        ups2 = P.ResizeNearestNeighbor((img_hight / 8, img_width / 8))(con2)
+        ups2 = P.ResizeNearestNeighbor((img_hight // 8, img_width // 8))(con2)
         con3 = self.concat((ups2, feature_map1))
         _, small_object_output = self.backblock2(con3)
 
@@ -314,9 +314,8 @@ class YoloLossBlock(nn.Cell):
         true_xy = y_true[:, :, :, :, :2] * grid_shape - grid
         true_wh = y_true[:, :, :, :, 2:4]
         true_wh = P.Select()(P.Equal()(true_wh, 0.0),
-                             P.Fill()(P.DType()(true_wh),
-                                      P.Shape()(true_wh), 1.0),
-                             true_wh)
+                             F.fill(P.DType()(true_wh),
+                                    P.Shape()(true_wh), 1.0), true_wh)
         true_wh = P.Log()(true_wh / self.anchors * input_shape)
         # 2-w*h for large picture, use small scale, since small obj need more precise
         box_loss_scale = 2 - y_true[:, :, :, :, 2:3] * y_true[:, :, :, :, 3:4]
@@ -432,7 +431,7 @@ class TrainingWrapper(nn.Cell):
     def construct(self, *args):
         weights = self.weights
         loss = self.network(*args)
-        sens = P.Fill()(P.DType()(loss), P.Shape()(loss), self.sens)
+        sens = F.fill(P.DType()(loss), P.Shape()(loss), self.sens)
         grads = self.grad(self.network, weights)(*args, sens)
         if self.reducer_flag:
             grads = self.grad_reducer(grads)

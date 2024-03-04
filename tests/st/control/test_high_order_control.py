@@ -1,4 +1,4 @@
-# Copyright 2021-2022 Huawei Technologies Co., Ltd
+# Copyright 2021-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,8 @@
 # limitations under the License.
 # ============================================================================
 """ test high order control flow """
-import pytest
+from tests.st.control.cases_register import case_register
+import mindspore as ms
 from mindspore.nn import Cell
 from mindspore.common import Tensor, dtype
 import mindspore.ops.functional as F
@@ -24,9 +25,8 @@ import numpy as np
 context.set_context(mode=context.GRAPH_MODE)
 
 
-@pytest.mark.level0
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.env_onecard
+@case_register.level0
+@case_register.target_gpu
 def test_high_control_while():
     """
     Feature: High-order differential function.
@@ -48,9 +48,8 @@ def test_high_control_while():
     assert order_grad == 0.0
 
 
-@pytest.mark.level0
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.env_onecard
+@case_register.level0
+@case_register.target_gpu
 def test_high_control_for_while():
     """
     Feature: High-order differential function.
@@ -85,9 +84,8 @@ def test_high_control_for_while():
     assert result == 0.0
 
 
-@pytest.mark.level0
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.env_onecard
+@case_register.level1
+@case_register.target_gpu
 def test_high_control_for_complex():
     """
     Feature: High-order differential function.
@@ -151,3 +149,42 @@ def test_high_control_for_complex():
     sgrad_net = F.grad(grad_net)
     sgrad = sgrad_net(Tensor(x), Tensor(y))
     assert sgrad == 0.0
+
+
+@case_register.level0
+@case_register.target_gpu
+def test_partial_graph_not_use():
+    """
+    Feature: High-order grad.
+    Description: The graph of partial called by noting, but inferred by normalize. Now we let backend ignore the
+    redundant graph, but we except front compiler make this partial graph as DeadNode.
+    Expectation: No exception raised.
+    """
+
+    class Net(Cell):
+        def __init__(self):
+            super().__init__()
+            self.w = ms.Parameter(Tensor([2], dtype.float32), name='weight')
+            self.b = ms.Parameter(Tensor([0], dtype.float32), name='bias')
+
+        def construct(self, x, y):
+            if x > y:
+                pass
+            elif x == y:
+                x = y / 2
+            elif y != self.b:
+                for _ in range(2):
+                    y = y * 3
+                    self.w = y * 3
+                    x = self.w + y
+                    if self.b <= y:
+                        break
+            return x + y
+
+    x = np.array([4], np.float32)
+    y = np.array([0], np.float32)
+    net = Net()
+    grad_net = F.grad(net, grad_position=(0, 1))
+    sgrad_net = F.grad(grad_net)
+    sgrad = sgrad_net(Tensor(x), Tensor(y))
+    print('second grad: ', sgrad)

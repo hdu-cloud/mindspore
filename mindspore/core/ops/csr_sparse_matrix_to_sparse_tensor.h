@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_CSR_SPAESE_MATRIX_TO_SPARSE_TENSOR_H_
 #define MINDSPORE_CORE_OPS_CSR_SPAESE_MATRIX_TO_SPARSE_TENSOR_H_
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,9 +33,9 @@ class MIND_API CSRSparseMatrixToSparseTensor : public BaseOperator {
                {"indices", "values", "dense_shape"});
   }
 };
-abstract::AbstractBasePtr CSRSparseMatrixToSparseTensorInfer(const abstract::AnalysisEnginePtr &,
-                                                             const PrimitivePtr &primitive,
-                                                             const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr CSRSparseMatrixToSparseTensorInfer(
+  const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+  const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimCSRSparseMatrixToSparseTensorPtr = std::shared_ptr<CSRSparseMatrixToSparseTensor>;
 }  // namespace ops
 }  // namespace mindspore

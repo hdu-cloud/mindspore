@@ -1,4 +1,4 @@
-# Copyright 2020-2022 Huawei Technologies Co., Ltd
+# Copyright 2020-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ from mindspore.nn import Momentum
 from mindspore.nn import TrainOneStepCell
 from mindspore.nn import WithLossCell
 from dump_test_utils import generate_dump_json, generate_dump_json_with_overflow, \
-    generate_statistic_dump_json, check_dump_structure, find_nth_pos
+    generate_statistic_dump_json, check_dump_structure, find_nth_pos, check_statistic_dump, check_data_dump
 from tests.security_utils import security_off_wrap
 
 
@@ -169,7 +169,7 @@ def test_cpu_e2e_dump_with_hccl_set():
     del os.environ['RANK_ID']
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 @security_off_wrap
@@ -206,7 +206,7 @@ class ReluReduceMeanDenseRelu(Cell):
         return x_
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -231,7 +231,7 @@ def test_async_dump_net_multi_layer_mode1():
         label = Tensor(np.zeros(shape=(32, 1000)).astype(np.float32))
         net_dict = train_network(inputs, label)
         dump_file_path = os.path.join(dump_path, 'rank_0', 'test', '0', '0')
-        dump_file_name = list(Path(dump_file_path).rglob("*SoftmaxCrossEntropyWithLogits*"))[0]
+        dump_file_name = list(Path(dump_file_path).rglob("SoftmaxCrossEntropyWithLogits*"))[0]
         dump_file_full_path = os.path.join(dump_file_path, dump_file_name)
         npy_path = os.path.join(dump_path, "npy_files")
         if os.path.exists(npy_path):
@@ -295,7 +295,7 @@ def run_e2e_dump_execution_graph():
         del os.environ['MINDSPORE_DUMP_CONFIG']
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
@@ -387,7 +387,7 @@ def run_not_overflow_dump():
         assert not os.path.exists(exe_graph_path)
         del os.environ['MINDSPORE_DUMP_CONFIG']
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -402,7 +402,7 @@ def test_ascend_overflow_dump():
     run_overflow_dump()
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -415,34 +415,6 @@ def test_ascend_not_overflow_dump():
     """
     context.set_context(mode=context.GRAPH_MODE, device_target='Ascend')
     run_not_overflow_dump()
-
-def check_statistic_dump(dump_file_path):
-    output_name = "statistic.csv"
-    output_path = glob.glob(os.path.join(dump_file_path, output_name))[0]
-    real_path = os.path.realpath(output_path)
-    with open(real_path) as f:
-        reader = csv.DictReader(f)
-        stats = list(reader)
-        num_tensors = len(stats)
-        assert num_tensors == 3
-        for tensor in stats:
-            if tensor['IO'] == 'input' and tensor['Slot'] == 0:
-                assert tensor['Min Value'] == '1'
-                assert tensor['Max Value'] == '6'
-            elif tensor['IO'] == 'input' and tensor['Slot'] == 1:
-                assert tensor['Min Value'] == '7'
-                assert tensor['Max Value'] == '12'
-            elif tensor['IO'] == 'output' and tensor['Slot'] == 0:
-                assert tensor['Min Value'] == '8'
-                assert tensor['Max Value'] == '18'
-
-def check_data_dump(dump_file_path):
-    output_name = "Add.Add-op*.output.0.*.npy"
-    output_path = glob.glob(os.path.join(dump_file_path, output_name))[0]
-    real_path = os.path.realpath(output_path)
-    output = np.load(real_path)
-    expect = np.array([[8, 10, 12], [14, 16, 18]], np.float32)
-    assert np.array_equal(output, expect)
 
 
 def run_train():
@@ -482,7 +454,8 @@ def run_saved_data_dump_test(scenario, saved_data):
             assert not os.path.isfile(stat_path)
         del os.environ['MINDSPORE_DUMP_CONFIG']
 
-@pytest.mark.level0
+
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 @security_off_wrap
@@ -495,7 +468,8 @@ def test_gpu_e2e_statistic_dump():
     context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
     run_saved_data_dump_test('test_gpu_e2e_dump', 'statistic')
 
-@pytest.mark.level0
+
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 @security_off_wrap
@@ -508,7 +482,8 @@ def test_gpu_e2e_tensor_dump():
     context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
     run_saved_data_dump_test('test_gpu_e2e_dump', 'tensor')
 
-@pytest.mark.level0
+
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 @security_off_wrap
@@ -521,7 +496,8 @@ def test_gpu_e2e_full_dump():
     context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
     run_saved_data_dump_test('test_gpu_e2e_dump', 'full')
 
-@pytest.mark.level0
+
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 @security_off_wrap
@@ -560,7 +536,7 @@ def test_stat_dump_nulls():
             assert output['Avg Value'] == 'null'
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -575,7 +551,7 @@ def test_ascend_statistic_dump():
     run_saved_data_dump_test('test_async_dump', 'statistic')
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -608,7 +584,7 @@ def test_ascend_tensor_dump():
     run_saved_data_dump_test('test_async_dump', 'tensor')
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -623,7 +599,7 @@ def test_ascend_full_dump():
     run_saved_data_dump_test('test_async_dump', 'full')
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -654,7 +630,7 @@ class ConstantNet(nn.Cell):
         return self.relu(construct_tensor(ops.shape(x_)))
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -714,7 +690,7 @@ def run_constant_e2e_dump():
         del os.environ['MINDSPORE_DUMP_CONFIG']
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 @security_off_wrap
@@ -728,7 +704,7 @@ def test_constant_gpu_e2e_dump():
     run_constant_e2e_dump()
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -741,3 +717,45 @@ def test_constant_ascend_e2e_dump():
     """
     context.set_context(mode=context.GRAPH_MODE, device_target="Ascend")
     run_constant_e2e_dump()
+
+
+@pytest.mark.level1
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.env_onecard
+def test_save_cce_graph():
+    """
+    Feature: Save cce file for Ascend ops
+    Description: Test save cce file in GRAPH_MODE
+    Expectation: there are cce files saved in rank_0/kernel_meta
+    """
+    os.environ["MS_COMPILER_OP_LEVEL"] = "1"
+    cur_path = os.path.split(os.path.realpath(__file__))[0]
+    cce_path = os.path.join(cur_path, "rank_0", "kernel_meta")
+    context.set_context(mode=context.GRAPH_MODE, device_target="Ascend")
+    add = Net()
+    add(Tensor(x), Tensor(y))
+    cce_file = glob.glob(os.path.join(cce_path, "*.cce"))[0]
+    assert cce_file
+    del os.environ["MS_COMPILER_OP_LEVEL"]
+
+
+@pytest.mark.level1
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.env_onecard
+def test_save_cce_pynative():
+    """
+    Feature: Save cce file for Ascend ops
+    Description: Test save cce file in PYNATIVE_MODE
+    Expectation: there are cce files saved in rank_0/kernel_meta
+    """
+    os.environ["MS_COMPILER_OP_LEVEL"] = "1"
+    cur_path = os.path.split(os.path.realpath(__file__))[0]
+    cce_path = os.path.join(cur_path, "rank_0", "kernel_meta")
+    context.set_context(mode=context.PYNATIVE_MODE, device_target="Ascend")
+    add = Net()
+    add(Tensor(x), Tensor(y))
+    cce_file = glob.glob(os.path.join(cce_path, "*.cce"))[0]
+    assert cce_file
+    del os.environ["MS_COMPILER_OP_LEVEL"]

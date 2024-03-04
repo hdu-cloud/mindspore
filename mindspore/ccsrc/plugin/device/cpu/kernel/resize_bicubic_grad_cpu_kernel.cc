@@ -17,19 +17,16 @@
 #include "plugin/device/cpu/kernel/resize_bicubic_grad_cpu_kernel.h"
 #include <limits>
 #include <utility>
-#include "plugin/device/cpu/hal/device/cpu_device_address.h"
-#include "kernel/common_utils.h"
+#include "kernel/ops_utils.h"
 #include "mindspore/core/ops/grad/resize_bicubic_grad.h"
+#include "plugin/device/cpu/hal/device/cpu_device_address.h"
 
 namespace mindspore {
 namespace kernel {
 namespace {
 constexpr size_t kResizeBicubicGradInputsNum = 2;
 constexpr size_t kResizeBicubicGradOutputNum = 1;
-constexpr size_t kResizeBicubicGradInputs0ShapeSize = 4;
-constexpr size_t kResizeBicubicGradInputs1ShapeSize = 4;
 constexpr int64_t cached_values_hand_max = 4;
-constexpr size_t caseid2 = 2;
 constexpr size_t caseid3 = 3;
 constexpr int64_t calnum8 = 8;
 constexpr int64_t calnum5 = 5;
@@ -38,22 +35,30 @@ constexpr int64_t calnum3 = 3;
 constexpr int64_t calnum2 = 2;
 static const int64_t kTableSize = (1 << 10);
 const int64_t kParallelDataNum = 1024 * 256;
-std::vector<int64_t> shape0;
-std::vector<int64_t> shape1;
+std::vector<int64_t> resize_shape;
+std::vector<int64_t> origin_shape;
 bool align_corners = false;
 bool half_pixel_centers = false;
+int64_t origin_chw;
+int64_t origin_hw;
+int64_t resized_chw;
+int64_t resized_hw;
 }  // namespace
 
 struct ResizerGradState {
-  void CalculateSize(const std::vector<int64_t> &shape0, const std::vector<int64_t> &shape1) {
-    batch_size = shape0[0];
-    channels = shape0[kIndex3];
-    resized_height = shape0[1];
-    resized_width = shape0[kIndex2];
-    original_height = shape1[1];
-    original_width = shape1[kIndex2];
+  void CalculateSize(const std::vector<int64_t> &resize_shape, const std::vector<int64_t> &origin_shape) {
+    batch_size = resize_shape[kIndex0];
+    channels = resize_shape[kIndex1];
+    resized_height = resize_shape[kIndex2];
+    resized_width = resize_shape[kIndex3];
+    original_height = origin_shape[kIndex2];
+    original_width = origin_shape[kIndex3];
     height_scale = Scaling(original_height, resized_height, align_corners);
     width_scale = Scaling(original_width, resized_width, align_corners);
+    origin_chw = channels * original_height * original_width;
+    origin_hw = original_height * original_width;
+    resized_chw = resized_height * resized_width * channels;
+    resized_hw = resized_height * resized_width;
   }
   int64_t batch_size;
   int64_t channels;
@@ -83,6 +88,7 @@ struct HalfPixelScalerGrad {
     return (static_cast<float>(x) + 0.5f) * scale - 0.5f;
   }
 };
+
 struct LegacyScalerGrad {
   LegacyScalerGrad() {}
   inline float operator()(const int64_t x, const float scale) const { return static_cast<float>(x) * scale; }
@@ -106,19 +112,9 @@ class CachedInterpolationCalculator {
         cached_values_hand++;
       }
     }
-    switch (new_indices_hand) {
-      case 0:
-        indexes_[0] = x_0;
-        break;
-      case 1:
-        indexes_[1] = x_1;
-        break;
-      case caseid2:
-        indexes_[kIndex2] = x_2;
-        break;
-      case caseid3:
-        indexes_[kIndex3] = x_3;
-        break;
+    std::vector<int64_t> values = {x_0, x_1, x_2, x_3};
+    for (size_t i = new_indices_hand; i <= caseid3; ++i) {
+      indexes_[i] = values[i];
     }
     return new_indices_hand;
   }
@@ -208,22 +204,20 @@ static void ComputeGradientXWeightsAndIndices(const ResizerGradState &RGS, const
     }
   }
 }
+
 const int64_t Calindex(const ResizerGradState &RGS, const int64_t &x1, const int64_t &x2, const int64_t &x3,
                        const int64_t &x4, bool flag_) {
   if (!flag_) {
-    return static_cast<int64_t>(static_cast<int64_t>(x1 * RGS.original_height * RGS.original_width * RGS.channels) +
-                                static_cast<int64_t>(x2 * RGS.original_width * RGS.channels) +
-                                static_cast<int64_t>(x3 * RGS.channels) + static_cast<int64_t>(x4));
+    return x1 * origin_chw + x2 * origin_hw + x3 * RGS.original_width + x4;
   } else {
-    return static_cast<int64_t>(static_cast<int64_t>(x1 * RGS.resized_height * RGS.resized_width * RGS.channels) +
-                                static_cast<int64_t>(x2 * RGS.resized_width * RGS.channels) +
-                                static_cast<int64_t>(x3 * RGS.channels) + static_cast<int64_t>(x4));
+    return x1 * resized_chw + x2 * resized_hw + x3 * RGS.resized_width + x4;
   }
 }
+
 template <typename T>
 void ResizeCommomCalc(const ResizerGradState &RGS, const bool half_pixel_centers,
                       const std::vector<WeightsAndIndices> &x_wais, const bool flag, const float *input_grad,
-                      T *output_grad, int64_t b, int64_t y) {
+                      T *output_grad, int64_t b, int64_t c, int64_t y) {
   WeightsAndIndices y_wai;
   if (half_pixel_centers) {
     GetWeightsAndIndicesGrad<HalfPixelScalerGrad, true>(RGS.height_scale, y, RGS.original_height, &y_wai);
@@ -232,46 +226,46 @@ void ResizeCommomCalc(const ResizerGradState &RGS, const bool half_pixel_centers
   }
   for (int64_t x = 0; x < RGS.resized_width; ++x) {
     const WeightsAndIndices &x_wai = x_wais[static_cast<size_t>(x)];
-    for (int64_t c = 0; c < RGS.channels; ++c) {
-      T curr_input_grad = input_grad[Calindex(RGS, b, y, x, c, flag)];
-      // row 0 of 0, 1, 2, 3
-      output_grad[Calindex(RGS, b, y_wai.index_0, x_wai.index_0, c, !flag)] +=
-        T(curr_input_grad * y_wai.weight_0 * x_wai.weight_0);
-      output_grad[Calindex(RGS, b, y_wai.index_0, x_wai.index_1, c, !flag)] +=
-        T(curr_input_grad * y_wai.weight_0 * x_wai.weight_1);
-      output_grad[Calindex(RGS, b, y_wai.index_0, x_wai.index_2, c, !flag)] +=
-        T(curr_input_grad * y_wai.weight_0 * x_wai.weight_2);
-      output_grad[Calindex(RGS, b, y_wai.index_0, x_wai.index_3, c, !flag)] +=
-        T(curr_input_grad * y_wai.weight_0 * x_wai.weight_3);
+    float curr_input_grad = input_grad[Calindex(RGS, b, c, y, x, flag)];
+    // row 0 of 0, 1, 2, 3
+    output_grad[Calindex(RGS, b, c, y_wai.index_0, x_wai.index_0, !flag)] +=
+      T(curr_input_grad * y_wai.weight_0 * x_wai.weight_0);
+    output_grad[Calindex(RGS, b, c, y_wai.index_0, x_wai.index_1, !flag)] +=
+      T(curr_input_grad * y_wai.weight_0 * x_wai.weight_1);
+    output_grad[Calindex(RGS, b, c, y_wai.index_0, x_wai.index_2, !flag)] +=
+      T(curr_input_grad * y_wai.weight_0 * x_wai.weight_2);
+    output_grad[Calindex(RGS, b, c, y_wai.index_0, x_wai.index_3, !flag)] +=
+      T(curr_input_grad * y_wai.weight_0 * x_wai.weight_3);
 
-      // row 1 of 0, 1, 2, 3
-      output_grad[Calindex(RGS, b, y_wai.index_1, x_wai.index_0, c, !flag)] +=
-        T(curr_input_grad * y_wai.weight_1 * x_wai.weight_0);
-      output_grad[Calindex(RGS, b, y_wai.index_1, x_wai.index_1, c, !flag)] +=
-        T(curr_input_grad * y_wai.weight_1 * x_wai.weight_1);
-      output_grad[Calindex(RGS, b, y_wai.index_1, x_wai.index_2, c, !flag)] +=
-        T(curr_input_grad * y_wai.weight_1 * x_wai.weight_2);
-      output_grad[Calindex(RGS, b, y_wai.index_1, x_wai.index_3, c, !flag)] +=
-        T(curr_input_grad * y_wai.weight_1 * x_wai.weight_3);
-      // row 2 of 0, 1, 2, 3
-      output_grad[Calindex(RGS, b, y_wai.index_2, x_wai.index_0, c, !flag)] +=
-        T(curr_input_grad * y_wai.weight_2 * x_wai.weight_0);
-      output_grad[Calindex(RGS, b, y_wai.index_2, x_wai.index_1, c, !flag)] +=
-        T(curr_input_grad * y_wai.weight_2 * x_wai.weight_1);
-      output_grad[Calindex(RGS, b, y_wai.index_2, x_wai.index_2, c, !flag)] +=
-        T(curr_input_grad * y_wai.weight_2 * x_wai.weight_2);
-      output_grad[Calindex(RGS, b, y_wai.index_2, x_wai.index_3, c, !flag)] +=
-        T(curr_input_grad * y_wai.weight_2 * x_wai.weight_3);
-      // row 3 of 0, 1, 2, 3
-      output_grad[Calindex(RGS, b, y_wai.index_3, x_wai.index_0, c, !flag)] +=
-        T(curr_input_grad * y_wai.weight_3 * x_wai.weight_0);
-      output_grad[Calindex(RGS, b, y_wai.index_3, x_wai.index_1, c, !flag)] +=
-        T(curr_input_grad * y_wai.weight_3 * x_wai.weight_1);
-      output_grad[Calindex(RGS, b, y_wai.index_3, x_wai.index_2, c, !flag)] +=
-        T(curr_input_grad * y_wai.weight_3 * x_wai.weight_2);
-      output_grad[Calindex(RGS, b, y_wai.index_3, x_wai.index_3, c, !flag)] +=
-        T(curr_input_grad * y_wai.weight_3 * x_wai.weight_3);
-    }
+    // row 1 of 0, 1, 2, 3
+    output_grad[Calindex(RGS, b, c, y_wai.index_1, x_wai.index_0, !flag)] +=
+      T(curr_input_grad * y_wai.weight_1 * x_wai.weight_0);
+    output_grad[Calindex(RGS, b, c, y_wai.index_1, x_wai.index_1, !flag)] +=
+      T(curr_input_grad * y_wai.weight_1 * x_wai.weight_1);
+    output_grad[Calindex(RGS, b, c, y_wai.index_1, x_wai.index_2, !flag)] +=
+      T(curr_input_grad * y_wai.weight_1 * x_wai.weight_2);
+    output_grad[Calindex(RGS, b, c, y_wai.index_1, x_wai.index_3, !flag)] +=
+      T(curr_input_grad * y_wai.weight_1 * x_wai.weight_3);
+
+    // row 2 of 0, 1, 2, 3
+    output_grad[Calindex(RGS, b, c, y_wai.index_2, x_wai.index_0, !flag)] +=
+      T(curr_input_grad * y_wai.weight_2 * x_wai.weight_0);
+    output_grad[Calindex(RGS, b, c, y_wai.index_2, x_wai.index_1, !flag)] +=
+      T(curr_input_grad * y_wai.weight_2 * x_wai.weight_1);
+    output_grad[Calindex(RGS, b, c, y_wai.index_2, x_wai.index_2, !flag)] +=
+      T(curr_input_grad * y_wai.weight_2 * x_wai.weight_2);
+    output_grad[Calindex(RGS, b, c, y_wai.index_2, x_wai.index_3, !flag)] +=
+      T(curr_input_grad * y_wai.weight_2 * x_wai.weight_3);
+
+    // row 3 of 0, 1, 2, 3
+    output_grad[Calindex(RGS, b, c, y_wai.index_3, x_wai.index_0, !flag)] +=
+      T(curr_input_grad * y_wai.weight_3 * x_wai.weight_0);
+    output_grad[Calindex(RGS, b, c, y_wai.index_3, x_wai.index_1, !flag)] +=
+      T(curr_input_grad * y_wai.weight_3 * x_wai.weight_1);
+    output_grad[Calindex(RGS, b, c, y_wai.index_3, x_wai.index_2, !flag)] +=
+      T(curr_input_grad * y_wai.weight_3 * x_wai.weight_2);
+    output_grad[Calindex(RGS, b, c, y_wai.index_3, x_wai.index_3, !flag)] +=
+      T(curr_input_grad * y_wai.weight_3 * x_wai.weight_3);
   }
 }
 
@@ -280,8 +274,10 @@ void CalNonUtil(const ResizerGradState &RGS, const bool half_pixel_centers,
                 const std::vector<WeightsAndIndices> &x_wais, const bool flag, const float *input_grad,
                 T *output_grad) {
   for (int64_t b = 0; b < RGS.batch_size; ++b) {
-    for (int64_t y = 0; y < RGS.resized_height; ++y) {
-      ResizeCommomCalc(RGS, half_pixel_centers, x_wais, flag, input_grad, output_grad, b, y);
+    for (int64_t c = 0; c < RGS.channels; ++c) {
+      for (int64_t y = 0; y < RGS.resized_height; ++y) {
+        ResizeCommomCalc(RGS, half_pixel_centers, x_wais, flag, input_grad, output_grad, b, c, y);
+      }
     }
   }
 }
@@ -297,14 +293,16 @@ inline void ResizeBicubicGrad(const float *input_grad, const ResizerGradState &R
     utils_flag = true;
   }
   if (utils_flag) {
-    for (int64_t b = 0; b < RGS.batch_size; ++b) {
-      auto task = [&](int64_t start, int64_t end) {
-        for (int64_t y = start; y < end; ++y) {
-          ResizeCommomCalc(RGS, half_pixel_centers_, x_wais, flag, input_grad, output_grad, b, y);
-        }
-      };
-      CPUKernelUtils::ParallelFor(task, static_cast<size_t>(RGS.resized_height));
-    }
+    auto task = [&](size_t start, size_t end) {
+      for (size_t i = start; i < end; ++i) {
+        const int64_t b = SizeToLong(i) / (RGS.channels * RGS.resized_height);
+        const int64_t c = SizeToLong(i) / RGS.resized_height % RGS.channels;
+        const int64_t y = SizeToLong(i) % RGS.resized_height;
+        ResizeCommomCalc(RGS, half_pixel_centers_, x_wais, flag, input_grad, output_grad, b, c, y);
+      }
+    };
+    const size_t parallel_num = static_cast<size_t>(RGS.batch_size * RGS.channels * RGS.resized_height);
+    CPUKernelUtils::ParallelFor(task, parallel_num);
   } else {
     CalNonUtil(RGS, half_pixel_centers_, x_wais, flag, input_grad, output_grad);
   }
@@ -339,24 +337,25 @@ int ResizeBicubicGradCPUKernelMod::Resize(const BaseOperatorPtr &base_operator,
   if (auto ret = KernelMod::Resize(base_operator, inputs, outputs, inputsOnHost); ret != KRET_OK) {
     return ret;
   }
-
-  shape0 = inputs[kIndex0]->GetDeviceShapeAdaptively();
-  shape1 = inputs[kIndex1]->GetDeviceShapeAdaptively();
+  resize_shape = inputs.at(kIndex0)->GetDeviceShapeAdaptively();
+  origin_shape = inputs.at(kIndex1)->GetDeviceShapeAdaptively();
   return KRET_OK;
 }
 
 template <typename T>
 bool ResizeBicubicGradCPUKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
-                                                 const std::vector<AddressPtr> &outputs) {
-  auto input0_addr = static_cast<float *>(inputs[0]->addr);
-  auto output_addr = static_cast<T *>(outputs[0]->addr);
-  size_t output_size = outputs[0]->size;
-  if (memset_s(output_addr, output_size, 0, output_size) != EOK) {
+                                                 const std::vector<AddressPtr> &outputs) const {
+  auto dy = GetDeviceAddress<float>(inputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(dy);
+  auto dx = GetDeviceAddress<T>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(dx);
+  size_t dx_size = outputs[kIndex0]->size;
+  if (memset_s(dx, dx_size, 0, dx_size) != EOK) {
     MS_EXCEPTION(ValueError) << "Memset Failed!";
   }
   ResizerGradState sta;
-  sta.CalculateSize(shape0, shape1);
-  ResizeBicubicGrad(input0_addr, sta, half_pixel_centers, output_addr);
+  sta.CalculateSize(resize_shape, origin_shape);
+  ResizeBicubicGrad(dy, sta, half_pixel_centers, dx);
   return true;
 }
 

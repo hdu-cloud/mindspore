@@ -33,7 +33,6 @@ class SoftMaxFP32Coder final : public SoftmaxBaseCoder {
 
  private:
   float *sum_data_{nullptr};
-  size_t sum_data_size_{0};
 };
 }  // namespace mindspore::lite::micro::nnacl
 #endif  // MINDSPORE_LITE_TOOLS_CONVERTER_MICRO_CODER_OPCODERS_NNACL_FP32_SOFTMAX_FP32_CODER_H_

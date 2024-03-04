@@ -21,7 +21,7 @@ from mindspore import context
 import mindspore.common.dtype as mstype
 from mindspore.common.seed import _get_graph_seed
 from mindspore.common.api import _cell_graph_executor
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from mindspore.ops.primitive import constexpr
 from mindspore.ops import composite as C
 from mindspore.ops import operations as P
@@ -60,6 +60,7 @@ def _is_float_dtype(dtype):
     if dtype in [mstype.float32, mstype.float16]:
         return True
     return False
+
 
 class Dropout(nn.Cell):
     def __init__(self, keep_prob=0.5, dtype=mstype.float32):
@@ -102,6 +103,7 @@ class Dropout(nn.Cell):
 
     def extend_repr(self):
         return 'keep_prob={}, dtype={}'.format(self.keep_prob, self.dtype)
+
 
 # model_parallel test
 def test_two_matmul_dropout():

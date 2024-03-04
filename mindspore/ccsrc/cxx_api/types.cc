@@ -141,7 +141,8 @@ class TensorReferenceImpl : public MSTensor::Impl {
 };
 
 MSTensor *MSTensor::CreateTensor(const std::vector<char> &name, enum DataType type, const std::vector<int64_t> &shape,
-                                 const void *data, size_t data_len) noexcept {
+                                 const void *data, size_t data_len, const std::vector<char> &device,
+                                 int device_id) noexcept {
   std::string name_str = CharToString(name);
   try {
     std::shared_ptr<Impl> impl = std::make_shared<TensorDefaultImpl>(name_str, type, shape, data, data_len);
@@ -154,6 +155,12 @@ MSTensor *MSTensor::CreateTensor(const std::vector<char> &name, enum DataType ty
     MS_LOG(ERROR) << "Unknown error occurred.";
     return nullptr;
   }
+}
+
+MSTensor *MSTensor::CreateTensor(const std::vector<char> &name, const MSTensor &tensor, const std::vector<char> &device,
+                                 int device_id) noexcept {
+  MS_LOG(ERROR) << "Invalid implement.";
+  return nullptr;
 }
 
 MSTensor *MSTensor::CreateRefTensor(const std::vector<char> &name, enum DataType type,
@@ -240,7 +247,7 @@ MSTensor *MSTensor::CreateTensorFromFile(const std::vector<char> &file, enum Dat
       {DataType::kNumberTypeInt8, 1},    {DataType::kNumberTypeInt16, 2},   {DataType::kNumberTypeInt32, 4},
       {DataType::kNumberTypeInt64, 8},   {DataType::kNumberTypeUInt8, 1},   {DataType::kNumberTypeUInt16, 2},
       {DataType::kNumberTypeUInt32, 4},  {DataType::kNumberTypeUInt64, 8},  {DataType::kNumberTypeFloat16, 2},
-      {DataType::kNumberTypeFloat32, 4}, {DataType::kNumberTypeFloat64, 8},
+      {DataType::kNumberTypeFloat32, 4}, {DataType::kNumberTypeFloat64, 8}, {DataType::kNumberTypeBFloat16, 2},
     };
 
     if (LongToSize(ret->ElementNum()) * TypeByte[type] != size) {
@@ -312,7 +319,9 @@ MSTensor *MSTensor::CharStringsToTensor(const std::vector<char> &name, const std
 }
 
 std::vector<std::vector<char>> MSTensor::TensorToStringChars(const MSTensor &tensor) {
-  if (tensor == nullptr || tensor.DataType() != DataType::kObjectTypeString || tensor.DataSize() < 4) {
+  constexpr auto minimum_tensor_size = 4;
+  if (tensor == nullptr || tensor.DataType() != DataType::kObjectTypeString ||
+      tensor.DataSize() < minimum_tensor_size) {
     MS_LOG(ERROR) << "Invalid tensor.";
     return {};
   }

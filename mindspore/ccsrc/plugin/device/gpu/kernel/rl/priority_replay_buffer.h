@@ -33,7 +33,7 @@ namespace gpu {
 // PriorityReplayBuffer is experience container used in Deep Q-Networks.
 // The algorithm is proposed in `Prioritized Experience Replay <https://arxiv.org/abs/1511.05952>`.
 // Same as the normal replay buffer, it lets the reinforcement learning agents remember and reuse experiences from the
-// past. Besides, it replays important transitions more frequently and improve sample effciency.
+// past. Besides, it replays important transitions more frequently and improve sample efficiency.
 constexpr float kMinPriority = 1e-7;
 constexpr size_t kNumSubNode = 2;
 
@@ -103,7 +103,8 @@ PriorityReplayBuffer<Tree>::PriorityReplayBuffer(const uint64_t &seed, const flo
   }
   sum_tree_ = static_cast<SumMinTree *>(allocator.AllocTensorMem(capacity_pow_two_ * sizeof(SumMinTree) * kNumSubNode));
   // Set initial segment info for all element.
-  SumTreeInit(sum_tree_, max_priority_, capacity_pow_two_, nullptr);
+  auto status = SumTreeInit(sum_tree_, max_priority_, capacity_pow_two_, nullptr);
+  CHECK_CUDA_STATUS(status, "SumTreeInit called by PriorityReplayBuffer");
 }
 
 template <typename Tree>
@@ -136,7 +137,8 @@ bool PriorityReplayBuffer<Tree>::Push(const std::vector<AddressPtr> &transition,
   }
 
   // Set max priority for the newest transition.
-  SumTreePush(sum_tree_, alpha_, idx, capacity_pow_two_, priority, max_priority_, stream);
+  auto status = SumTreePush(sum_tree_, alpha_, idx, capacity_pow_two_, priority, max_priority_, stream);
+  CHECK_CUDA_STATUS(status, "SumTreePush called by PriorityReplayBuffer");
   return true;
 }
 
@@ -145,21 +147,26 @@ bool PriorityReplayBuffer<Tree>::Sample(const size_t &batch_size, float *beta, s
                                         const std::vector<AddressPtr> &transition, cudaStream_t stream) {
   MS_EXCEPTION_IF_ZERO("batch size", batch_size);
 
+  cudaError_t status = cudaErrorNotReady;
   // Init random state for sampling.
   if (!rand_state_) {
     auto &allocator = device::gpu::GPUMemoryAllocator::GetInstance();
     rand_state_ = static_cast<curandState *>(allocator.AllocTensorMem(sizeof(curandState) * batch_size));
-    InitRandState(batch_size, seed_, rand_state_, stream);
+    status = InitRandState(batch_size, seed_, rand_state_, stream);
+    CHECK_CUDA_STATUS(status, "InitRandState called by Sample");
   }
 
-  SumTreeSample(sum_tree_, rand_state_, capacity_pow_two_, beta, batch_size, indices, weights, stream);
+  status = SumTreeSample(sum_tree_, rand_state_, capacity_pow_two_, beta, batch_size, indices, weights, stream);
+  CHECK_CUDA_STATUS(status, "SumTreeSample called by Sample");
 
   for (size_t i = 0; i < schema_.size(); i++) {
     auto output_addr = static_cast<uint8_t *>(transition[i]->addr);
-    FifoSlice(fifo_replay_buffer_[i], indices, output_addr, batch_size, schema_[i], stream);
+    status = FifoSlice(fifo_replay_buffer_[i], indices, output_addr, batch_size, schema_[i], stream);
+    CHECK_CUDA_STATUS(status, "FifoSlice called by Sample");
   }
 
-  SumTreeGetGlobalIdx(batch_size, indices, total_num_, capacity_, stream);
+  status = SumTreeGetGlobalIdx(batch_size, indices, total_num_, capacity_, stream);
+  CHECK_CUDA_STATUS(status, "SumTreeGetGlobalIdx called by Sample");
   return true;
 }
 
@@ -167,7 +174,9 @@ template <typename Tree>
 bool PriorityReplayBuffer<Tree>::UpdatePriorities(size_t *indices, float *priorities, const size_t &batch_size,
                                                   cudaStream_t stream) {
   size_t last = GetLastRoundIndex();
-  SumTreeUpdate(sum_tree_, capacity_pow_two_, last, alpha_, max_priority_, indices, priorities, batch_size, stream);
+  auto status =
+    SumTreeUpdate(sum_tree_, capacity_pow_two_, last, alpha_, max_priority_, indices, priorities, batch_size, stream);
+  CHECK_CUDA_STATUS(status, "SumTreeUpdate called by UpdatePriorities");
   return true;
 }
 }  // namespace gpu

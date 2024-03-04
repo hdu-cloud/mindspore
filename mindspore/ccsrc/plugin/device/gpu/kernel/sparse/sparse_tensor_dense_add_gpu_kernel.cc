@@ -202,15 +202,54 @@ bool SparseTensorDenseAddGpuKernelMod::LaunchKernel(const std::vector<kernel::Ad
   size_t *x2_shape = GetDeviceAddress<size_t>(workspace, 0);
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemcpyAsync(x2_shape, &x2_shape_[0], workspace_size_, cudaMemcpyHostToDevice,
                                                      reinterpret_cast<cudaStream_t>(cuda_stream_)),
-                                     "cudaMemcpyAsync x2_shape failed");
+                                     "For 'SparseTensorDenseAdd', cudaMemcpyAsync x2_shape failed");
+  constexpr int X1_SHAPE_INDICES = 2;
+  std::vector<I> x1_shape(inputs[X1_SHAPE_INDICES]->size / sizeof(I));
+  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+    cudaMemcpyAsync(x1_shape.data(), x1_shape_addr, inputs[X1_SHAPE_INDICES]->size, cudaMemcpyDeviceToHost,
+                    reinterpret_cast<cudaStream_t>(cuda_stream_)),
+    "For 'SparseTensorDenseAdd', cudaMemcpyAsync x1_shape failed");
+  if (cudaStreamQuery(reinterpret_cast<cudaStream_t>(cuda_stream_)) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(cuda_stream_)),
+                                       "For 'SparseTensorDenseAdd', cuda Stream Sync Failed.");
+  }
+
+  std::vector<I> x1_indices_host(inputs[0]->size / sizeof(I));
+  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+    cudaMemcpyAsync(x1_indices_host.data(), x1_indices_addr, inputs[0]->size, cudaMemcpyDeviceToHost,
+                    reinterpret_cast<cudaStream_t>(cuda_stream_)),
+    "For 'SparseTensorDenseAdd', cudaMemcpyAsync x1_indices failed");
+  if (cudaStreamQuery(reinterpret_cast<cudaStream_t>(cuda_stream_)) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(cuda_stream_)),
+                                       "For 'SparseTensorDenseAdd', cuda Stream Sync Failed.");
+  }
+
+  if (x1_shape.size() != x2_shape_.size()) {
+    MS_LOG(ERROR) << "For 'SparseTensorDenseAdd', the input x1_shape size does not equal x2_shape size! "
+                  << "The shape of 'sparse': " << x1_shape.size() << ",and the shape of 'dense':" << x2_shape_.size();
+    return false;
+  }
+
+  for (size_t idx = 0; idx < x2_shape_.size(); ++idx) {
+    if (x1_shape[idx] != x2_shape_[idx]) {
+      MS_LOG(ERROR) << "For 'SparseTensorDenseAdd', the input x1_shape dim does not equal x2_shape dim! "
+                    << "The dim of 'sparse': " << x1_shape[idx] << ",and the dim of 'dense':" << x2_shape_[idx];
+      return false;
+    }
+    if (x1_indices_host[idx] >= x1_shape[idx]) {
+      MS_LOG(ERROR) << "For 'SparseTensorDenseAdd', the input x1_indices is out of bounds! "
+                    << "x1_indices is : " << x1_indices_host[idx] << ", tensor bounds is:" << x1_shape[idx];
+      return false;
+    }
+  }
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(y_addr, x2_values_addr, output_elements_ * sizeof(T), cudaMemcpyDeviceToDevice,
                     reinterpret_cast<cudaStream_t>(cuda_stream_)),
     "Cuda memcopy input to output Fail");
-  SparseTensorDenseAddKernel(static_cast<size_t>(input_elements_), static_cast<size_t>(rank_), x2_shape,
-                             x1_indices_addr, x1_values_addr, x1_shape_addr, x2_values_addr, y_addr, device_id_,
-                             reinterpret_cast<cudaStream_t>(cuda_stream_));
-
+  auto status = SparseTensorDenseAddKernel(static_cast<size_t>(input_elements_), static_cast<size_t>(rank_), x2_shape,
+                                           x1_indices_addr, x1_values_addr, x1_shape_addr, x2_values_addr, y_addr,
+                                           device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -232,7 +271,7 @@ bool SparseTensorDenseAddGpuKernelMod::Init(const BaseOperatorPtr &base_operator
   }
 
   kernel_func_ = func_list_[pair.second].second;
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   return true;
 }
 
@@ -263,6 +302,7 @@ int SparseTensorDenseAddGpuKernelMod::Resize(const BaseOperatorPtr &base_operato
   }
   // A Code Block For setting input and output shape.
   input_elements_ = input_shape_0[0];
+  output_elements_ = 1;
   for (size_t i = 0; i < output_shape_size; i++) {
     output_elements_ *= output_shape_[i];
   }

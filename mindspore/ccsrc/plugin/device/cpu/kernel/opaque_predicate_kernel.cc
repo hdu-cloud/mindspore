@@ -18,7 +18,7 @@
 #include <utility>
 #include <algorithm>
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
-#include "mindspore/ccsrc/utils/dynamic_obfuscation/registry_opaque_predicate.h"
+#include "include/common/utils/dynamic_obfuscation/registry_opaque_predicate.h"
 
 namespace mindspore {
 namespace kernel {
@@ -30,7 +30,7 @@ constexpr size_t kOutputsNum = 1;
 template <typename T>
 bool OpaquePredicateKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
                                             const std::vector<AddressPtr> &workspace,
-                                            const std::vector<AddressPtr> &outputs) {
+                                            const std::vector<AddressPtr> &outputs) const {
   auto input1 = reinterpret_cast<T *>(inputs[0]->addr);
   auto input2 = reinterpret_cast<T *>(inputs[1]->addr);
   bool *output = reinterpret_cast<bool *>(outputs[0]->addr);

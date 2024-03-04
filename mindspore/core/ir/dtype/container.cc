@@ -18,9 +18,12 @@
 #include <string>
 #include <cstdlib>
 #include <algorithm>
-#include "ir/dtype.h"
+#include <iostream>
+#include <iterator>
+#include <type_traits>
 #include "utils/log_adapter.h"
 #include "utils/ms_utils.h"
+#include "ir/dtype/tensor_type.h"
 
 namespace mindspore {
 static std::string DumpTypeVector(const std::vector<TypePtr> &elements, bool is_dumptext, bool is_dynamic = false,
@@ -43,11 +46,16 @@ static std::string DumpTypeVector(const std::vector<TypePtr> &elements, bool is_
   // write 'Tuple[Bool, Bool, Bool, Int, Float, Float]' as 'Tuple[Bool...3, Int, Float...2]'
   for (size_t i = 0; i < elements.size(); ++i) {
     TypePtr elem = elements[i];
+    MS_EXCEPTION_IF_NULL(elem);
     cnt += 1;
     bool print = false;
     if (i + 1 < elements.size()) {
       TypePtr next = elements[i + 1];
-      if (*elem != *next) {
+      MS_EXCEPTION_IF_NULL(next);
+      // AnyType is the subclass of TensorType but AnyType and TensorType should not be combined.
+      bool is_tensor_and_any = (elem->isa<TensorType>() && !elem->isa<AnyType>() && next->isa<AnyType>()) ||
+                               (elem->isa<AnyType>() && next->isa<TensorType>() && !next->isa<TensorType>());
+      if (*elem != *next || is_tensor_and_any) {
         print = true;
       }
     } else {
@@ -90,7 +98,7 @@ TypePtr List::DeepCopy() const {
 
 const TypePtr List::operator[](std::size_t dim) const {
   if (dynamic_len_) {
-    MS_LOG(EXCEPTION) << "Dynamic length list " << ToString() << " can not get element.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Dynamic length list " << ToString() << " can not get element.";
   }
   if (dim >= size()) {
     MS_LOG(EXCEPTION) << "Index " << dim << " is out range of the List size " << size() << ".";
@@ -146,14 +154,14 @@ std::string List::DumpContent(bool is_dumptext) const {
 
 TypePtr List::dynamic_element_type() const {
   if (!dynamic_len_) {
-    MS_LOG(EXCEPTION) << "Constant list " << ToString() << " can not get the dynamic element type.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Constant list " << ToString() << " can not get the dynamic element type.";
   }
   return dynamic_element_type_;
 }
 
-void List::set_dynamic_element_type(TypePtr dynamic_element_type) {
+void List::set_dynamic_element_type(const TypePtr &dynamic_element_type) {
   if (!dynamic_len_) {
-    MS_LOG(EXCEPTION) << "Constant list " << ToString() << " can not set the dynamic element type.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Constant list " << ToString() << " can not set the dynamic element type.";
   }
   dynamic_element_type_ = dynamic_element_type;
 }
@@ -179,7 +187,7 @@ bool Tuple::operator==(const Type &other) const {
   if (!IsSameObjectType(*this, other)) {
     return false;
   }
-  auto other_tuple = static_cast<const Tuple &>(other);
+  auto &other_tuple = static_cast<const Tuple &>(other);
   if (dynamic_len_ || other_tuple.dynamic_len()) {
     if (dynamic_len_ != other_tuple.dynamic_len()) {
       return false;
@@ -209,7 +217,7 @@ size_t Tuple::hash() const {
 
 const TypePtr Tuple::operator[](std::size_t dim) const {
   if (dynamic_len_) {
-    MS_LOG(EXCEPTION) << "Dynamic length tuple " << ToString() << " can not get element.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Dynamic length tuple " << ToString() << " can not get element.";
   }
   if (dim >= size()) {
     MS_LOG(EXCEPTION) << "Index " << dim << " is out range of the Tuple size " << size() << ".";
@@ -233,14 +241,14 @@ std::string Tuple::DumpContent(bool is_dumptext) const {
 
 TypePtr Tuple::dynamic_element_type() const {
   if (!dynamic_len_) {
-    MS_LOG(EXCEPTION) << "Constant tuple " << ToString() << " can not get the dynamic element type.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Constant tuple " << ToString() << " can not get the dynamic element type.";
   }
   return dynamic_element_type_;
 }
 
-void Tuple::set_dynamic_element_type(TypePtr dynamic_element_type) {
+void Tuple::set_dynamic_element_type(const TypePtr &dynamic_element_type) {
   if (!dynamic_len_) {
-    MS_LOG(EXCEPTION) << "Constant tuple " << ToString() << " can not set the dynamic element type.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Constant tuple " << ToString() << " can not set the dynamic element type.";
   }
   dynamic_element_type_ = dynamic_element_type;
 }
@@ -249,26 +257,26 @@ TypePtr Dictionary::DeepCopy() const {
   if (IsGeneric()) {
     return std::make_shared<Dictionary>();
   } else {
-    std::vector<std::pair<TypePtr, TypePtr>> kv;
-    (void)std::transform(key_values_.cbegin(), key_values_.cend(), std::back_inserter(kv),
-                         [](const std::pair<TypePtr, TypePtr> &item) {
-                           return std::make_pair(item.first->DeepCopy(), item.second->DeepCopy());
-                         });
+    std::vector<std::pair<ValuePtr, TypePtr>> kv;
+    (void)std::transform(
+      key_values_.cbegin(), key_values_.cend(), std::back_inserter(kv),
+      [](const std::pair<ValuePtr, TypePtr> &item) { return std::make_pair(item.first, item.second->DeepCopy()); });
     return std::make_shared<Dictionary>(kv);
   }
 }
 
-std::string DumpKeyVector(std::vector<std::string> keys) {
+std::string DumpKeyVector(const std::vector<ValuePtr> &keys) {
   std::ostringstream buffer;
-  for (auto key : keys) {
-    buffer << key << ",";
+  for (const auto &key : keys) {
+    MS_EXCEPTION_IF_NULL(key);
+    buffer << key->ToString() << ",";
   }
   return buffer.str();
 }
 
 std::string Dictionary::DumpContent(bool) const {
   std::ostringstream buffer;
-  std::vector<TypePtr> keys;
+  std::vector<ValuePtr> keys;
   std::vector<TypePtr> values;
   for (const auto &kv : key_values_) {
     keys.push_back(kv.first);
@@ -278,7 +286,7 @@ std::string Dictionary::DumpContent(bool) const {
     buffer << "Dictionary";
   } else {
     buffer << "Dictionary[";
-    buffer << "[" << DumpTypeVector(keys, false) << "],";
+    buffer << "[" << DumpKeyVector(keys) << "],";
     buffer << "[" << DumpTypeVector(values, false) << "]";
     buffer << "]";
   }

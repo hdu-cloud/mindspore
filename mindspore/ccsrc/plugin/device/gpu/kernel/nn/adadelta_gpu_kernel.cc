@@ -24,9 +24,9 @@ void AdadeltaGpuKernelMod::InOutputResize(const BaseOperatorPtr &base_operator,
   input_size_list_.clear();
   output_size_list_.clear();
   auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
-  t_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  s_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex3).first);
-  g_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex6).first);
+  t_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  s_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex3).dtype);
+  g_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex6).dtype);
 
   std::vector<int64_t> variable_shape_ = std::vector<int64_t>(inputs.at(kIndex0)->GetDeviceShapeAdaptively().begin(),
                                                               inputs.at(kIndex0)->GetDeviceShapeAdaptively().end());
@@ -105,7 +105,6 @@ bool AdadeltaGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std:
   }
   kernel_func_ = func_list_[index].second;
   InOutputResize(base_operator, inputs, outputs);
-  outputs_ = outputs;
   return true;
 }
 
@@ -114,7 +113,6 @@ int AdadeltaGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std
                                  const std::map<uint32_t, tensor::TensorPtr> &) {
   kernel_ptr_ = base_operator;
   InOutputResize(base_operator, inputs, outputs);
-  outputs_ = outputs;
   return KRET_OK;
 }
 
@@ -132,8 +130,10 @@ bool AdadeltaGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, c
   T *accumulation_out = GetDeviceAddress<T>(outputs, kIndex1);
   T *accumulation_update_out = GetDeviceAddress<T>(outputs, kIndex2);
 
-  ApplyAdadelta(inputs[0]->size / sizeof(T), learning_rate, rho, epsilon, gradient, variable, accumulation,
-                accumulation_update, device_id_, reinterpret_cast<cudaStream_t>(stream_ptr_));
+  auto status =
+    ApplyAdadelta(inputs[0]->size / sizeof(T), learning_rate, rho, epsilon, gradient, variable, accumulation,
+                  accumulation_update, device_id_, reinterpret_cast<cudaStream_t>(stream_ptr_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemcpyAsync(variable_out, variable, variable_size_, cudaMemcpyDeviceToDevice,
                                                      reinterpret_cast<cudaStream_t>(stream_ptr_)),
                                      "cudaMemcpyAsync output failed");

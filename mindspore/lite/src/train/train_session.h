@@ -36,6 +36,14 @@
   +-------------------------------+
 */
 
+#define TRAIN_SESSION_CHECK_FALSE_MSG(value, errcode, msg) \
+  do {                                                     \
+    if ((value)) {                                         \
+      MS_LOG(ERROR) << #msg;                               \
+      return errcode;                                      \
+    }                                                      \
+  } while (0)
+
 namespace mindspore {
 namespace lite {
 using CreatorOp = std::tuple<mindspore::kernel::KernelKey, mindspore::kernel::KernelCreator>;
@@ -79,7 +87,6 @@ class TrainSession : virtual public lite::LiteSession {
     return lite::LiteSession::GetOutputByTensorName(tensor_name);
   }
   int Resize(const std::vector<lite::Tensor *> &inputs, const std::vector<std::vector<int>> &dims) override;
-  int UpdateWeights(std::vector<lite::Tensor *> new_weights) override;
 
   std::vector<lite::Tensor *> GetPredictions() const override {
     std::vector<lite::Tensor *> outputs;
@@ -90,8 +97,13 @@ class TrainSession : virtual public lite::LiteSession {
   }
   int Export(const std::string &fb_name, ModelType model_type, QuantizationType quant_type, FormatType,
              std::vector<std::string> out_put_tensor_name = {}) override;
-
+  int Export(Buffer *model_buffer, ModelType model_type, QuantizationType quant_type, FormatType,
+             std::vector<std::string> out_put_tensor_name = {}) override;
+  int ExportWeightsCollaborateWithMicro(const std::string &file_name, lite::ModelType model_type, FormatType,
+                                        bool enable_fp16,
+                                        const std::vector<std::string> &changeable_weights_name) override;
   std::vector<lite::Tensor *> GetFeatureMaps() const override;
+  std::vector<lite::Tensor *> GetTrainableParams() const override;
 
   int UpdateFeatureMaps(const std::vector<lite::Tensor *> &features_map) override;
   int FindUseInTensorKernel(std::vector<kernel::KernelExec *> *use_in_tensor_kernels,
@@ -114,11 +126,12 @@ class TrainSession : virtual public lite::LiteSession {
   virtual void CompileTrainKernels();
   virtual int CompileInferenceKernels();
   virtual void CompileOptimizedKernels();
+  virtual void CompileTrainableParams();
   virtual void CompileTrainOutputs();
   virtual void CompileEvalOutputs();
   virtual int InitCallBack();
+  virtual int FindConstFoldedKernels();
   std::shared_ptr<Model> model_ = nullptr;
-  // TrainCfg train_cfg_;
   std::unordered_map<std::string, std::vector<mindspore::lite::Tensor *>> orig_output_node_map_;
   std::unordered_map<std::string, mindspore::lite::Tensor *> orig_output_tensor_map_;
   std::vector<std::string> orig_output_tensor_names_;
@@ -133,6 +146,8 @@ class TrainSession : virtual public lite::LiteSession {
 
   std::vector<kernel::KernelExec *> inference_kernels_;
   std::vector<kernel::KernelExec *> train_kernels_;
+  std::vector<kernel::KernelExec *> const_fold_kernels_;
+  std::vector<lite::Tensor *> const_output_tensors_;
   TrainCfg cfg_;
 
  private:
@@ -158,14 +173,25 @@ class TrainSession : virtual public lite::LiteSession {
   size_t GetInplaceTensorOffset(kernel::KernelExec *kernel,
                                 const std::unordered_map<lite::Tensor *, size_t> &offset_map,
                                 std::unordered_map<lite::Tensor *, int> *ref_count, uint32_t input_idx);
-
+  template <typename DestType>
+  int ExportByDifferentType(DestType destination, ModelType model_type, QuantizationType quant_type,
+                            bool orig_train_state, std::vector<std::string> output_tensor_name = {});
+  template <typename DestType>
+  int ExportInner(DestType destination, ModelType model_type, QuantizationType quant_type, FormatType,
+                  std::vector<std::string> out_put_tensor_name = {});
+  lite::Tensor *FindObfTensor();
+  int ChangeObfWeight(std::string tensor_name, float obf_ratio);
+  float ModelRecoverObfuscate();
+  int ModelDeObfuscate(float obf_ratio);
   std::map<Tensor *, Tensor *> restored_origin_tensors_;
+  std::vector<Tensor *> trainable_parameters_;
   int virtual_batch_idx_ = 0;
   int virtual_batch_multiplier_ = 0;
   uint32_t num_of_not_nan_iter_ = 0;
   void *workspace_ = nullptr;
   SchedCallBack sched_mix_precision_callback_;
   bool train_mode_ = false;
+  bool model_buff_changed_ = false;
   void *tensors_data_ = nullptr;
   size_t tensors_data_size_ = 0;
   std::shared_ptr<Allocator> allocator_;

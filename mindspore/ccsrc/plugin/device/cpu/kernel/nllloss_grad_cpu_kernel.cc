@@ -17,9 +17,10 @@
 #include "plugin/device/cpu/kernel/nllloss_grad_cpu_kernel.h"
 #include <map>
 #include <string>
+#include <utility>
 #include <unordered_map>
 #include "mindspore/core/ops/grad/nllloss_grad.h"
-#include "nnacl/errorcode.h"
+#include "nnacl/op_base.h"
 
 namespace mindspore {
 namespace kernel {
@@ -40,10 +41,11 @@ bool NLLLossGradCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const s
   auto kernel_name = kernel_ptr->GetPrim()->name();
   auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
 
-  bool is_match = MatchKernelAttr(kernel_attr, GetOpSupport()).first;
+  auto [is_match, index] = MatchKernelAttr(kernel_attr, GetOpSupport());
   if (!is_match) {
     MS_LOG(EXCEPTION) << kernel_name << " does not support this kernel data type: " << kernel_attr;
   }
+  kernel_func_ = func_list_[index].second;
 
   auto reduction = kernel_ptr->get_reduction();
 
@@ -53,7 +55,8 @@ bool NLLLossGradCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const s
                       << ", the attr 'reduction' only support 'mean', 'sum' and 'none', but got " << reduction;
   }
 
-  nllloss_param_.reduction_type_ = pair->second;
+  reduction_type_ = pair->second;
+  ignore_index_ = static_cast<int32_t>(kernel_ptr->get_ignore_index());
   return true;
 }
 
@@ -71,25 +74,66 @@ int NLLLossGradCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const 
   return KRET_OK;
 }
 
-bool NLLLossGradCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &inputs,
-                                     const std::vector<kernel::AddressPtr> &workspace,
-                                     const std::vector<kernel::AddressPtr> &outputs) {
+template <typename T>
+bool NLLLossGradCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs,
+                                           const std::vector<kernel::AddressPtr> &workspace,
+                                           const std::vector<kernel::AddressPtr> &outputs) {
   CHECK_KERNEL_INPUTS_NUM(kNLLLossGradInputsNum, inputs.size(), kernel_name_);
   CHECK_KERNEL_OUTPUTS_NUM(kNLLLossGradOutputsNum, outputs.size(), kernel_name_);
 
   const auto *logits = reinterpret_cast<float *>(inputs[0]->addr);
   const auto *loss_grad = reinterpret_cast<float *>(inputs[1]->addr);
-  const auto *labels = reinterpret_cast<int *>(inputs[2]->addr);
+  const auto *labels = static_cast<T *>(inputs[2]->addr);
   const auto *weight = reinterpret_cast<float *>(inputs[3]->addr);
   const auto *total_weight = reinterpret_cast<float *>(inputs[4]->addr);
   auto *logits_grad = reinterpret_cast<float *>(outputs[0]->addr);
 
-  int ret = NLLLossGrad(logits, loss_grad, labels, weight, total_weight, logits_grad, &nllloss_param_);
-  if (ret != static_cast<int>(NNACL_OK)) {
-    MS_LOG(EXCEPTION) << "Launch " << kernel_name_ << " failed, the nnacl error code " << ret;
+  if (logits == nullptr || loss_grad == nullptr || labels == nullptr || weight == nullptr || total_weight == nullptr) {
+    MS_LOG(ERROR) << "For NLLLossGrad, it does not support NULL input";
+  }
+  auto ret =
+    memset_s(logits_grad, outputs[0]->size, 0, nllloss_param_.batch_ * nllloss_param_.class_num_ * sizeof(float));
+  if (ret != EOK) {
+    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', memset_s failed, ret=" << ret;
+  }
+  for (int i = 0; i < nllloss_param_.batch_; i++) {
+    if (labels[i] == ignore_index_) {
+      continue;
+    }
+    if (!(labels[i] < nllloss_param_.class_num_)) {
+      MS_EXCEPTION(ValueError) << "For '" << kernel_name_
+                               << "', the labels should be smaller than the number of classes, but got " << labels[i];
+    }
+    int index = i * nllloss_param_.class_num_ + labels[i];
+    float n_weight = weight[labels[i]];
+    if (reduction_type_ == Reduction_Sum) {
+      logits_grad[index] = -loss_grad[0] * n_weight;
+    } else if (reduction_type_ == Reduction_Mean) {
+      logits_grad[index] = -loss_grad[0] * n_weight / *total_weight;
+    } else {
+      logits_grad[index] = -loss_grad[i] * n_weight;
+    }
   }
   return true;
 }
+
+std::vector<std::pair<KernelAttr, NLLLossGradCpuKernelMod::NLLLossGradFunc>> NLLLossGradCpuKernelMod::func_list_ = {
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeFloat32)
+     .AddInputAttr(kNumberTypeFloat32)
+     .AddInputAttr(kNumberTypeInt32)
+     .AddInputAttr(kNumberTypeFloat32)
+     .AddInputAttr(kNumberTypeFloat32)
+     .AddOutputAttr(kNumberTypeFloat32),
+   &NLLLossGradCpuKernelMod::LaunchKernel<int32_t>},
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeFloat32)
+     .AddInputAttr(kNumberTypeFloat32)
+     .AddInputAttr(kNumberTypeInt32)
+     .AddInputAttr(kNumberTypeFloat32)
+     .AddInputAttr(kNumberTypeFloat32)
+     .AddOutputAttr(kNumberTypeFloat32),
+   &NLLLossGradCpuKernelMod::LaunchKernel<int64_t>}};
 
 MS_KERNEL_FACTORY_REG(NativeCpuKernelMod, NLLLossGrad, NLLLossGradCpuKernelMod);
 }  // namespace kernel

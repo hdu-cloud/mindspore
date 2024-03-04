@@ -15,10 +15,11 @@
  */
 
 #include "plugin/device/gpu/kernel/nn/softplus_gpu_kernel.h"
-#include <functional>
-#include <utility>
 #include <algorithm>
+#include <functional>
 #include <memory>
+#include <utility>
+#include "mindspore/core/ops/nn_ops.h"
 
 namespace mindspore {
 namespace kernel {
@@ -46,8 +47,7 @@ int SoftplusGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std
     return ret;
   }
   auto input_shape = inputs.at(kIndex0)->GetShapeVector();
-  auto input_element_num =
-    std::accumulate(input_shape.begin(), input_shape.end(), size_t(1), std::multiplies<size_t>());
+  auto input_element_num = SizeOf(input_shape);
   is_null_input_ = (input_element_num == 0);
   return KRET_OK;
 }
@@ -56,11 +56,15 @@ template <typename T>
 bool SoftplusGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &outputs) {
   T *input_addr = GetDeviceAddress<T>(inputs, 0);
   T *output_addr = GetDeviceAddress<T>(outputs, 0);
-  Softplus(input_size_list_.at(0) / sizeof(T), input_addr, output_addr, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status =
+    Softplus(input_size_list_.at(0) / sizeof(T), input_addr, output_addr, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
 std::vector<std::pair<KernelAttr, SoftplusGpuKernelMod::SoftplusFunc>> SoftplusGpuKernelMod::func_list_ = {
+  {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64),
+   &SoftplusGpuKernelMod::LaunchKernel<double>},
   {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
    &SoftplusGpuKernelMod::LaunchKernel<float>},
   {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeFloat16),

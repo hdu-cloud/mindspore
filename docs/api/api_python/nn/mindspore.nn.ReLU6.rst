@@ -8,12 +8,15 @@ mindspore.nn.ReLU6
     ReLU6类似于ReLU，不同之处在于设置了上限，其上限为6，如果输入大于6，输出会被限制为6。公式如下：
 
     .. math::
-        Y = \min(\max(0, x), 6).
+        Y = \min(\max(0, x), 6)
 
-    input是具有任何有效形状的张量。
+    ReLU6函数图：
+
+    .. image:: images/ReLU6.png
+        :align: center
 
     输入：
-        - **x** (Tensor) - ReLU6的输入，任意维度的Tensor，其数据类型为float16或float32。
+        - **x** (Tensor) - ReLU6的输入，是具有任何有效形状的张量，其数据类型为float16或float32。
 
     输出：
         Tensor，数据类型与 `x` 相同。

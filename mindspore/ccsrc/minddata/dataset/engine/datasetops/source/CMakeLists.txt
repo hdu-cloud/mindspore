@@ -22,6 +22,7 @@ set(DATASET_ENGINE_DATASETOPS_SOURCE_SRC_FILES
     fake_image_op.cc
     fashion_mnist_op.cc
     flickr_op.cc
+    food101_op.cc
     gtzan_op.cc
     image_folder_op.cc
     imdb_op.cc
@@ -43,12 +44,15 @@ set(DATASET_ENGINE_DATASETOPS_SOURCE_SRC_FILES
     places365_op.cc
     qmnist_op.cc
     random_data_op.cc
+    rendered_sst2_op.cc
     sbu_op.cc
     semeion_op.cc
     sogou_news_op.cc
     speech_commands_op.cc
     squad_op.cc
+    sst2_op.cc
     stl10_op.cc
+    sun397_op.cc
     tedlium_op.cc
     text_file_op.cc
     udpos_op.cc

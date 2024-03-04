@@ -17,12 +17,13 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/nn_optimizer_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
 #include "abstract/abstract_value.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -43,7 +44,7 @@ CNodePtr DereluFusion::CreateReluV2(const FuncGraphPtr &graph, const CNodePtr &r
   MS_EXCEPTION_IF_NULL(relu);
   CheckCNodeInputSize(relu, kReluInputTensorNum);
   constexpr auto kMaskShapeSize = 4;
-  auto prim = std::make_shared<Primitive>(kReLUV2OpName);
+  auto prim = std::make_shared<Primitive>(kReluV2OpName);
   std::vector<AnfNodePtr> inputs = {NewValueNode(prim), relu->input(kIndex1)};
   auto new_node = opt::NewCNode(inputs, graph, {relu});
   MS_EXCEPTION_IF_NULL(new_node);
@@ -87,7 +88,7 @@ CNodePtr DereluFusion::CreateReluGradV2(const FuncGraphPtr &graph, const CNodePt
   MS_EXCEPTION_IF_NULL(relu_grad);
   MS_EXCEPTION_IF_NULL(second_input);
 
-  auto prim = std::make_shared<Primitive>(kReluGradV2OpName);
+  auto prim = std::make_shared<Primitive>(kReLUGradV2OpName);
   std::vector<AnfNodePtr> inputs = {NewValueNode(prim), relu_grad->input(1), second_input};
   auto new_node = opt::NewCNode(inputs, graph, {relu_grad});
   MS_EXCEPTION_IF_NULL(new_node);
@@ -99,7 +100,7 @@ CNodePtr DereluFusion::CreateReluGradV2(const FuncGraphPtr &graph, const CNodePt
 const BaseRef DereluFusion::DefinePattern() const {
   VarPtr i0 = std::make_shared<Var>();
   VarPtr i1 = std::make_shared<Var>();
-  VectorRef relu({prim::kPrimReLU, i1});
+  VectorRef relu({prim::kPrimRelu, i1});
   VectorRef relu_grad({prim::kPrimReluGrad, i0, relu});
   return relu_grad;
 }

@@ -27,7 +27,7 @@
 #include "frontend/parallel/strategy.h"
 #include "frontend/parallel/graph_util/node_info.h"
 #include "frontend/parallel/tensor_layout/tensor_redistribution.h"
-#include "pipeline/jit/resource.h"
+#include "pipeline/jit/ps/resource.h"
 
 namespace mindspore {
 namespace parallel {
@@ -206,11 +206,35 @@ Status StridedSliceInfo::GetAttrs() {
                   << input_value_.size();
     return FAILED;
   }
-  if ((TransValueSequeueToVector(input_value_[STRIDED_SLICE_BEGIN_INDEX], &begin_) != SUCCESS) ||
-      (TransValueSequeueToVector(input_value_[STRIDED_SLICE_END_INDEX], &end_) != SUCCESS) ||
-      (TransValueSequeueToVector(input_value_[STRIDED_SLICE_STRIDES_INDEX], &strides_) != SUCCESS)) {
-    return FAILED;
+
+  std::vector<int64_t> unknow_value(inputs_shape_[0].size(), -1);
+  if (input_value_[STRIDED_SLICE_BEGIN_INDEX] != nullptr) {
+    if (TransValueSequeueToVector(input_value_[STRIDED_SLICE_BEGIN_INDEX], &begin_) != SUCCESS) {
+      MS_LOG(ERROR) << name_ << ": get begin value failed";
+      return FAILED;
+    }
+  } else {
+    begin_ = unknow_value;
   }
+
+  if (input_value_[STRIDED_SLICE_END_INDEX] != nullptr) {
+    if (TransValueSequeueToVector(input_value_[STRIDED_SLICE_END_INDEX], &end_) != SUCCESS) {
+      MS_LOG(ERROR) << name_ << ": get end value failed";
+      return FAILED;
+    }
+  } else {
+    end_ = unknow_value;
+  }
+
+  if (input_value_[STRIDED_SLICE_STRIDES_INDEX] != nullptr) {
+    if (TransValueSequeueToVector(input_value_[STRIDED_SLICE_STRIDES_INDEX], &strides_) != SUCCESS) {
+      MS_LOG(ERROR) << name_ << ": get strides value failed";
+      return FAILED;
+    }
+  } else {
+    strides_ = unknow_value;
+  }
+
   MS_LOG(INFO) << name_ << ": The begin is " << begin_ << ", the end is " << end_ << ", the stride is " << strides_;
 
   // handle the masks, it will modify the begin/end/strides, the new begin/end/strides are only used for CheckStrategy()
@@ -284,7 +308,8 @@ Status StridedSliceInfo::CheckInputStrategy(const Shape &strategy_value) {
 
 Status StridedSliceInfo::CheckStrategy(const StrategyPtr &strategy) {
   MS_EXCEPTION_IF_NULL(strategy);
-  if (CheckStrategyValue(strategy, inputs_shape_) != SUCCESS) {
+  Shapes valid_inputs_shape = {inputs_shape_[0]};
+  if (CheckStrategyValue(strategy, valid_inputs_shape) != SUCCESS) {
     MS_LOG(ERROR) << name_ << ": Invalid strategy";
     return FAILED;
   }
@@ -353,30 +378,37 @@ Status StridedSliceInfo::InferTensorMap() {
   return SUCCESS;
 }
 
-Status StridedSliceInfo::ChangeCNodeBeginEnd() {
+void StridedSliceInfo::ChangeCNodeBegin() {
   if (!skip_redistribution_) {
-    return SUCCESS;
+    return;
   }
   auto shard_size = strategy_->GetInputDim()[0];
   auto begin_new = begin_;
-  auto end_new = end_;
   for (size_t i = 0; i < shard_size.size(); ++i) {
+    MS_EXCEPTION_IF_ZERO("shard_size", shard_size[i]);
     begin_new[i] = begin_new[i] / shard_size[i];
-    end_new[i] = end_new[i] / shard_size[i];
   }
   auto begin_new_value = MakeValue(begin_new);
-  auto end_new_value = MakeValue(end_new);
   auto new_begin_value_node = std::make_shared<ValueNode>(begin_new_value);
+  cnode_->set_input(STRIDE_SLICE_CNODE_BEGIN_INDEX, new_begin_value_node);
+}
+
+void StridedSliceInfo::ChangeCNodeEnd() {
+  if (!skip_redistribution_) {
+    return;
+  }
+  auto shard_size = strategy_->GetInputDim()[0];
+  auto end_new = end_;
+  for (size_t i = 0; i < shard_size.size(); ++i) {
+    MS_EXCEPTION_IF_ZERO("shard_size", shard_size[i]);
+    end_new[i] = end_new[i] / shard_size[i];
+  }
+  auto end_new_value = MakeValue(end_new);
   auto new_end_value_node = std::make_shared<ValueNode>(end_new_value);
-  cnode_->set_input(INDEX_TWO, new_begin_value_node);
-  cnode_->set_input(INDEX_THREE, new_end_value_node);
-  return SUCCESS;
+  cnode_->set_input(STRIDE_SLICE_CNODE_END_INDEX, new_end_value_node);
 }
 
 Status StridedSliceInfo::InferMirrorOps() {
-  if (ChangeCNodeBeginEnd() != SUCCESS) {
-    return FAILED;
-  }
   mirror_ops_.clear();
   if (inputs_tensor_map_.empty()) {
     MS_LOG(ERROR) << name_ << ": The inputs tensor map is empty";
@@ -403,9 +435,86 @@ Status StridedSliceInfo::InferMirrorOps() {
   return SUCCESS;
 }
 
+void StridedSliceInfo::ChangeMakeTupleConstant(const CNodePtr &cnode, size_t make_tuple_index) {
+  size_t input_dim = inputs_shape_[0].size();
+  auto shard_size = strategy_->GetInputDim()[0];
+  if (input_dim != shard_size.size()) {
+    MS_LOG(EXCEPTION) << name_ << ": the input dim is " << input_dim << ", but the size of strategy is "
+                      << shard_size.size();
+  }
+
+  auto make_tuple = cnode->input(make_tuple_index);
+  auto make_tuple_cnode = dyn_cast_ptr<CNode>(make_tuple);
+  for (size_t i = 0; i < input_dim; ++i) {
+    if (shard_size[i] <= 1) {
+      continue;
+    }
+    auto value_node = GetValueNode(make_tuple_cnode->input(i + 1));
+    if (value_node != nullptr && value_node->isa<Int64Imm>()) {
+      MS_EXCEPTION_IF_ZERO("shard_size", shard_size[i]);
+      int64_t origin_value = GetValue<int64_t>(value_node);
+      if (origin_value < 0 || origin_value % shard_size[i] != 0) {
+        MS_LOG(EXCEPTION) << name_ << ": the origin value is " << origin_value << ", can not be div by shard size "
+                          << shard_size[i] << ", the input index of stridedslice is " << make_tuple_index
+                          << ", the input index of make_tuple is " << i + 1;
+      }
+      int64_t replace_value = GetValue<int64_t>(value_node) / shard_size[i];
+      auto replace_value_ptr = MakeValue(replace_value);
+      auto replace_value_node = std::make_shared<ValueNode>(replace_value_ptr);
+      make_tuple_cnode->set_input(i + 1, replace_value_node);
+    }
+  }
+}
+
+ReplaceGraphPtr StridedSliceInfo::replace_graph(const CNodePtr &cnode) {
+  if (!skip_redistribution_) {
+    return nullptr;
+  }
+
+  bool begin_is_constant = GetValueNode(cnode->input(STRIDE_SLICE_CNODE_BEGIN_INDEX)) != nullptr;
+  bool end_is_constant = GetValueNode(cnode->input(STRIDE_SLICE_CNODE_END_INDEX)) != nullptr;
+  if (begin_is_constant && end_is_constant) {
+    ChangeCNodeBegin();
+    ChangeCNodeEnd();
+    return nullptr;
+  }
+
+  if (!begin_is_constant && !IsPrimitiveCNode(cnode->input(STRIDE_SLICE_CNODE_BEGIN_INDEX), prim::kPrimMakeTuple)) {
+    MS_LOG(EXCEPTION) << name_ << ": the begin is not constant value, and it is not make tuple";
+  }
+
+  if (!end_is_constant && !IsPrimitiveCNode(cnode->input(STRIDE_SLICE_CNODE_END_INDEX), prim::kPrimMakeTuple)) {
+    MS_LOG(EXCEPTION) << name_ << ": the end is not constant value, and it is not make tuple";
+  }
+
+  // need to handle the constant part of begin/end
+  if (!begin_is_constant) {
+    // constant element of begin div by shard size
+    ChangeMakeTupleConstant(cnode, STRIDE_SLICE_CNODE_BEGIN_INDEX);
+  } else {
+    ChangeCNodeBegin();
+  }
+
+  if (!end_is_constant) {
+    // constant element of end div by shard size
+    ChangeMakeTupleConstant(cnode, STRIDE_SLICE_CNODE_END_INDEX);
+  } else {
+    ChangeCNodeEnd();
+  }
+
+  return nullptr;
+}
+
 // Note: if the batch dimension is not fully fetched, the batch strategy may not work.
 std::shared_ptr<Strategies> StridedSliceInfo::GenerateBatchStrategies() {
+  if (GetAttrs() != SUCCESS) {
+    MS_LOG(EXCEPTION) << name_ << "generate batch parallel strategies failed.";
+  }
   split_flag_list_ = {true};
+  bool no_fully_fetch = ((begin_[0] != 0) || (end_[0] < input_shape_in_process_[0]));
+  if (no_fully_fetch) {
+    split_flag_list_ = {false};
+  }
   return GenerateBatchStrategiesBySplitFlag(inputs_shape_, split_flag_list_);
 }
 

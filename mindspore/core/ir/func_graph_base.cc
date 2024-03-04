@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ namespace mindspore {
 FuncGraphLoopBreaker::~FuncGraphLoopBreaker() {
   std::lock_guard<std::mutex> lock_set(func_mutex_);
   for (auto fg : func_set_) {
+    MS_EXCEPTION_IF_NULL(fg);
     fg->reg_flg_ = false;
   }
 }
@@ -33,14 +34,28 @@ FuncGraphLoopBreaker &FuncGraphLoopBreaker::Inst() {
   return mgr;
 }
 
+MS_CORE_API const FuncGraphChecker &FuncGraphBase::GetChecker(const std::string &checker_name) {
+  auto it = checkers_.find(checker_name);
+  if (it == checkers_.cend()) {
+    static const auto empty_checker = FuncGraphChecker();
+    return empty_checker;
+  }
+  return *(it->second);
+}
+
+MS_CORE_API void FuncGraphBase::AddChecker(const std::string &checker_name,
+                                           const std::shared_ptr<FuncGraphChecker> &new_checker) {
+  (void)checkers_.emplace(checker_name, new_checker);
+}
+
 void FuncGraphLoopBreaker::BreakLoop() {
   MS_LOG(INFO) << "Size of not recycled graph before break loop is:" << func_set_.size();
   std::list<FuncGraphBasePtr> func_list;
 
   // Generate shared_ptr for every graph, to avoid func_set_ changes while BreakLoop
-  std::for_each(func_set_.begin(), func_set_.end(), [&func_list](FuncGraphBase *fun) {
+  (void)std::for_each(func_set_.begin(), func_set_.end(), [&func_list](FuncGraphBase *fun) {
     if (fun != nullptr && !fun->subclass_destruct_flag_) {
-      func_list.emplace_back(fun->shared_from_base<FuncGraphBase>());
+      (void)func_list.emplace_back(fun->shared_from_base<FuncGraphBase>());
     }
   });
   for (auto &item : func_list) {
@@ -68,9 +83,9 @@ void FuncGraphLoopBreaker::CleanMetaFuncGraphCache() {
   std::list<FuncGraphBasePtr> func_list;
 
   // Generate shared_ptr for every graph, to avoid func_set_ changes while BreakLoop
-  std::for_each(func_set_.begin(), func_set_.end(), [&func_list](FuncGraphBase *fun) {
+  (void)std::for_each(func_set_.begin(), func_set_.end(), [&func_list](FuncGraphBase *fun) {
     if (fun != nullptr && !fun->subclass_destruct_flag_) {
-      func_list.emplace_back(fun->shared_from_base<FuncGraphBase>());
+      (void)func_list.emplace_back(fun->shared_from_base<FuncGraphBase>());
     }
   });
   for (auto item : func_list) {
@@ -83,9 +98,9 @@ void FuncGraphLoopBreaker::CleanMetaFuncGraphCache() {
 void FuncGraphLoopBreaker::ClearCellGraphs(const std::string &phase) {
   std::list<FuncGraphBasePtr> func_list;
   // Generate shared_ptr for every graph, to avoid func_set_ changes while BreakLoop
-  std::for_each(func_set_.begin(), func_set_.end(), [&func_list](FuncGraphBase *fun) {
+  (void)std::for_each(func_set_.begin(), func_set_.end(), [&func_list](FuncGraphBase *fun) {
     if (fun != nullptr && !fun->subclass_destruct_flag_) {
-      func_list.emplace_back(fun->shared_from_base<FuncGraphBase>());
+      (void)func_list.emplace_back(fun->shared_from_base<FuncGraphBase>());
     }
   });
   for (auto item : func_list) {

@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_MUL_PARAMETER_H_
-#define MINDSPORE_NNACL_MUL_PARAMETER_H_
+#ifndef NNACL_MUL_PARAMETER_H_
+#define NNACL_MUL_PARAMETER_H_
 
 #include "nnacl/op_base.h"
 
@@ -29,11 +29,4 @@ typedef struct MulQuantArg {
   int shift_right_;
 } MulQuantArg;
 
-typedef struct MulParameter {
-  // Primitive parameter
-  OpParameter op_parameter_;
-  // other parameter
-  int thread_count_;
-} MulParameter;
-
-#endif  // MINDSPORE_NNACL_MUL_PARAMETER_H_
+#endif  // NNACL_MUL_PARAMETER_H_

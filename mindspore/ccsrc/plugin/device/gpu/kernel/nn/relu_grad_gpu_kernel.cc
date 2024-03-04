@@ -57,7 +57,8 @@ bool ReLUGradGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, c
   MS_ERROR_IF_NULL_W_RET_VAL(y, false);
   T *dx = GetDeviceAddress<T>(outputs, 0);
   MS_ERROR_IF_NULL_W_RET_VAL(dx, false);
-  CalReLUGrad(input_size_, dy, y, dx, reinterpret_cast<cudaStream_t>(stream_ptr));
+  auto status = CalReLUGrad(input_size_, dy, y, dx, reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -78,6 +79,12 @@ std::vector<std::pair<KernelAttr, ReLUGradGpuKernelMod::ReLUGradLaunchFunc>> ReL
    &ReLUGradGpuKernelMod::LaunchKernel<int8_t>},
   {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddInputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeUInt8),
    &ReLUGradGpuKernelMod::LaunchKernel<uint8_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeUInt16).AddInputAttr(kNumberTypeUInt16).AddOutputAttr(kNumberTypeUInt16),
+   &ReLUGradGpuKernelMod::LaunchKernel<uint16_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeUInt32).AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeUInt32),
+   &ReLUGradGpuKernelMod::LaunchKernel<uint32_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeUInt64).AddInputAttr(kNumberTypeUInt64).AddOutputAttr(kNumberTypeUInt64),
+   &ReLUGradGpuKernelMod::LaunchKernel<uint64_t>},
 };
 
 std::vector<KernelAttr> ReLUGradGpuKernelMod::GetOpSupport() {

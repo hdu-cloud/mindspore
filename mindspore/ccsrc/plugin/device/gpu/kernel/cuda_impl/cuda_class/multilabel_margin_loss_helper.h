@@ -133,8 +133,10 @@ class MultilabelMarginLossHelperGpuKernel : public GpuKernelHelperBase {
 
     reduction_ = attr_ptr_->reduction;
 
-    CalMultilabelMarginLoss(input_ptr, target_ptr, is_target_ptr, batch_size_, class_num_, reduction_, output_ptr,
-                            output_tmp_ptr, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream));
+    auto status =
+      CalMultilabelMarginLoss(input_ptr, target_ptr, is_target_ptr, batch_size_, class_num_, reduction_, output_ptr,
+                              output_tmp_ptr, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return 0;
   }
 
@@ -146,7 +148,8 @@ class MultilabelMarginLossHelperGpuKernel : public GpuKernelHelperBase {
   int CheckKernelParam() override {
     reduction_ = attr_ptr_->reduction;
     int64_t dims = static_cast<int64_t>(input_shape_.size());
-    int64_t min_dim = 1, max_dim = 2;
+    int64_t min_dim = 1;
+    int64_t max_dim = 2;
     if (dims < min_dim || dims > max_dim) {
       MS_LOG(ERROR) << "For '" << kernel_name_ << "', the dim of input should be 0 or 1 or 2 but got " << dims;
       return -1;

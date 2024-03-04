@@ -26,6 +26,8 @@
 #include <utility>
 #include <string>
 
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "utils/hash_map.h"
 #include "utils/hash_set.h"
 #include "utils/log_adapter.h"
@@ -83,6 +85,7 @@ AnfNodePtr RefSubGraphNode(const FuncGraphPtr &fg, const AnfNodePtr &node, AnfNo
   } else if (eqv.find(node) == eqv.end()) {
     inputs.push_back(node);
     eqv[node] = fg->add_parameter();
+    MS_EXCEPTION_IF_NULL(eqv[node]);
     eqv[node]->set_abstract(node->abstract());
     eqv[node]->set_kernel_info(node->kernel_info_ptr());
   }
@@ -97,6 +100,7 @@ std::tuple<FuncGraphPtr, AnfNodePtrList, AnfNodePtrList> TransformSegmentToAnfGr
   FuncGraphPtr fg = nullptr;
   {
     // limit the lifetime of guard.
+    MS_EXCEPTION_IF_NULL(lst[0]);
     MS_EXCEPTION_IF_NULL(lst[0]->cast<CNodePtr>());
     MS_EXCEPTION_IF_NULL(lst[0]->cast<CNodePtr>()->func_graph());
     TraceGuard guard(std::make_shared<TraceSegmentTransform>(lst[0]->cast<CNodePtr>()->func_graph()->debug_info()));
@@ -135,6 +139,7 @@ std::tuple<FuncGraphPtr, AnfNodePtrList, AnfNodePtrList> TransformSegmentToAnfGr
     TraceGuard tg(std::make_shared<TraceSegmentTransform>(n->debug_info()));
     MS_EXCEPTION_IF_NULL(fg);
     eqv[n] = fg->NewCNode(args);
+    MS_EXCEPTION_IF_NULL(eqv[n]);
     eqv[n]->set_abstract(n->abstract());
     eqv[n]->set_kernel_info(n->kernel_info_ptr());
   }
@@ -142,6 +147,7 @@ std::tuple<FuncGraphPtr, AnfNodePtrList, AnfNodePtrList> TransformSegmentToAnfGr
   for (auto &e : eqv) {
     (void)eqv_keys.emplace(e.first);
   }
+  MS_EXCEPTION_IF_NULL(lst[0]->func_graph());
   auto mgr = lst[0]->func_graph()->manager();
   MS_EXCEPTION_IF_NULL(mgr);
   auto outputs = GetOutput(lst, mgr->node_users(), eqv_keys);

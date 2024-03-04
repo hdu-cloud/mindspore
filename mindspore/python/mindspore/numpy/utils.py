@@ -206,6 +206,6 @@ def _callable(tensor, obj):
 
 
 def _isnan(x):
-    if _get_device() == 'Ascend' or not _check_is_float(F.dtype(x)):
+    if _get_device() == 'Ascend' and not _check_is_float(F.dtype(x)):
         return F.fill(mstype.bool_, F.shape(x), False)
     return F.isnan(x)

@@ -16,10 +16,10 @@
 
 #ifndef MINDSPORE_CORE_OPS_HSWISH_GRAD_H_
 #define MINDSPORE_CORE_OPS_HSWISH_GRAD_H_
-#include <vector>
 #include <memory>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore::ops {
 constexpr auto kNameHSwishGrad = "HSwishGrad";
@@ -28,5 +28,7 @@ class MIND_API HSwishGrad : public BaseOperator {
   MIND_API_BASE_MEMBER(HSwishGrad);
   HSwishGrad() : BaseOperator(kNameHSwishGrad) { InitIOName({"y_grad", "x"}, {"output"}); }
 };
+MIND_API abstract::AbstractBasePtr HSwishGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                   const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace mindspore::ops
 #endif  // MINDSPORE_CORE_OPS_HSWISH_GRAD_H_

@@ -15,9 +15,10 @@
  */
 
 #include "frontend/parallel/tensor_layout/arrangement.h"
+
 #include <algorithm>
 #include <utility>
-#include "utils/ms_utils.h"
+
 #include "frontend/parallel/status.h"
 #include "frontend/parallel/tensor_layout/shape_util.h"
 #include "include/common/utils/convert_utils.h"

@@ -16,10 +16,29 @@
 
 #include "ops/eig.h"
 
+#include <algorithm>
+#include <memory>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
-#include "ops/op_utils.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,14 +54,23 @@ abstract::TupleShapePtr EigInferShape(const PrimitivePtr &primitive, const std::
   constexpr size_t kColIndex = 1;
   auto const &x_shape_list = x_shape->shape();
   const size_t x_rank = x_shape_list.size();
+  // support dynamic rank
+  if (IsDynamicRank(x_shape_list)) {
+    auto unknown_rank_ptr = std::make_shared<abstract::Shape>(std::vector<int64_t>{abstract::Shape::kShapeRankAny});
+    return std::make_shared<abstract::TupleShape>(
+      std::vector<abstract::BaseShapePtr>{unknown_rank_ptr, unknown_rank_ptr});
+  }
   if (x_rank < kDefaultRank) {
     MS_EXCEPTION(ValueError) << "For Eig, x should be at least rank 2"
                              << ", but got a " << x_rank << "-D Tensor.";
   }
-  if (x_shape_list[x_rank - kRowIndex] != x_shape_list[x_rank - kColIndex]) {
-    MS_EXCEPTION(ValueError) << "For Eig, x should be square(squares)"
-                             << ", but got " << x_shape_list[x_rank - kRowIndex] << " × "
-                             << x_shape_list[x_rank - kColIndex] << " matrix(matrices).";
+  // support dynamic shape
+  if (!IsDynamic(x_shape_list)) {
+    if (x_shape_list[x_rank - kRowIndex] != x_shape_list[x_rank - kColIndex]) {
+      MS_EXCEPTION(ValueError) << "For Eig, x should be square(squares)"
+                               << ", but got " << x_shape_list[x_rank - kRowIndex] << " × "
+                               << x_shape_list[x_rank - kColIndex] << " matrix(matrices).";
+    }
   }
   auto compute_v = GetValue<bool>(primitive->GetAttr("compute_v"));
   std::vector<BaseShapePtr> shapes_list;
@@ -72,9 +100,9 @@ TuplePtr EigInferType(const PrimitivePtr &primitive, const std::vector<AbstractB
   (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_type, valid_types, op_name);
   std::vector<TypePtr> types_list;
   if (*(x_type->cast<TensorTypePtr>()->element()) == *(kFloat32)) {
-    types_list = {kComplex64, kComplex64};
+    types_list = {std::make_shared<TensorType>(kComplex64), std::make_shared<TensorType>(kComplex64)};
   } else if (*(x_type->cast<TensorTypePtr>()->element()) == *(kFloat64)) {
-    types_list = {kComplex128, kComplex128};
+    types_list = {std::make_shared<TensorType>(kComplex128), std::make_shared<TensorType>(kComplex128)};
   } else {
     types_list = {x_type, x_type};
   }
@@ -94,6 +122,24 @@ AbstractBasePtr EigInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr
   auto infer_shape = EigInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Eig, prim::kPrimEig, EigInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGEigInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return EigInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return EigInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return EigInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Eig, prim::kPrimEig, AGEigInfer, false);
 }  // namespace ops
 }  // namespace mindspore

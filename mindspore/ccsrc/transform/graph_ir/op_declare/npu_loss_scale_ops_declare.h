@@ -17,11 +17,10 @@
 #ifndef MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_NPU_LOSS_SCALE_OPS_DECLARE_H_
 #define MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_NPU_LOSS_SCALE_OPS_DECLARE_H_
 
-#include "utils/hash_map.h"
+#include "inc/ops/npu_loss_scale_ops.h"
 #include "transform/graph_ir/op_declare/op_declare_macro.h"
-#include "ops/npu_loss_scale_ops.h"
+#include "utils/hash_map.h"
 
-namespace mindspore::transform {
 DECLARE_OP_ADAPTER(NPUGetFloatStatus)
 DECLARE_OP_USE_OUTPUT(NPUGetFloatStatus)
 
@@ -30,5 +29,10 @@ DECLARE_OP_USE_OUTPUT(NPUAllocFloatStatus)
 
 DECLARE_OP_ADAPTER(NPUClearFloatStatus)
 DECLARE_OP_USE_OUTPUT(NPUClearFloatStatus)
-}  // namespace mindspore::transform
+
+DECLARE_OP_ADAPTER(NPUGetFloatStatusV2)
+DECLARE_OP_USE_OUTPUT(NPUGetFloatStatusV2)
+
+DECLARE_OP_ADAPTER(NPUClearFloatStatusV2)
+DECLARE_OP_USE_OUTPUT(NPUClearFloatStatusV2)
 #endif  // MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_NPU_LOSS_SCALE_OPS_DECLARE_H_

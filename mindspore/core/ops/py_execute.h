@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,14 +17,14 @@
 #ifndef MINDSPORE_CORE_OPS_PY_EXECUTE_H_
 #define MINDSPORE_CORE_OPS_PY_EXECUTE_H_
 
-#include <vector>
 #include <memory>
 #include <set>
+#include <vector>
 
-#include "ops/base_operator.h"
-#include "ops/op_utils.h"
 #include "mindapi/base/types.h"
 #include "mindapi/src/helper.h"
+#include "ops/base_operator.h"
+#include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
 #include "utils/ms_context.h"
 
@@ -47,9 +47,11 @@ class MIND_API PyExecuteInfer : public abstract::OpInferBase {
   AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
                                     const std::vector<AbstractBasePtr> &input_args) const override;
 
+  AbstractBasePtr InferPy(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const;
+
   std::set<int64_t> GetValueDependArgIndices() const override;
 
-  using InferHandler = void (*)(const std::vector<AbstractBasePtr> &);
+  using InferHandler = abstract::AbstractBasePtr (*)(const std::vector<AbstractBasePtr> &);
   static void set_infer_handler(const InferHandler &infer_handler) { infer_handler_ = infer_handler; }
 
  private:

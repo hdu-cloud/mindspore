@@ -14,14 +14,13 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_MINIMAL_FILTERING_GENERATOR_H_
-#define MINDSPORE_NNACL_MINIMAL_FILTERING_GENERATOR_H_
+#ifndef NNACL_MINIMAL_FILTERING_GENERATOR_H_
+#define NNACL_MINIMAL_FILTERING_GENERATOR_H_
 
 #ifdef ENABLE_ARM
 #include <arm_neon.h>
 #endif
 #include <stdbool.h>
-#include "nnacl/pack.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -56,4 +55,4 @@ int WinogradWeightTransform(const float *weight_data, float *winograd_data, floa
 }
 #endif
 
-#endif  // MINDSPORE_NNACL_MINIMAL_FILTERING_GENERATOR_H_
+#endif  // NNACL_MINIMAL_FILTERING_GENERATOR_H_

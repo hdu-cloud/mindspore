@@ -15,16 +15,20 @@
  */
 
 #include "ops/not_equal.h"
+#include <algorithm>
+#include <complex>
+#include <limits>
 #include <map>
+#include <memory>
+#include <set>
 #include <string>
 #include <vector>
-#include <algorithm>
-#include <memory>
-#include <complex>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/comparison_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -66,8 +70,8 @@ TypePtr NotEqualInferType(const PrimitivePtr &prim, const std::vector<AbstractBa
   std::map<std::string, TypePtr> types;
   (void)types.emplace("x", input_args[0]->BuildType());
   (void)types.emplace("y", input_args[1]->BuildType());
-  const std::set<TypePtr> valid_types = {kFloat64, kBool,   kInt64,  kFloat,  kFloat16, kInt16,     kInt32,
-                                         kInt8,    kUInt16, kUInt32, kUInt64, kUInt8,   kComplex64, kComplex128};
+  const std::set<TypePtr> valid_types = {kFloat64, kBool,   kInt64,  kFloat, kFloat16,   kInt16,      kInt32,   kInt8,
+                                         kUInt16,  kUInt32, kUInt64, kUInt8, kComplex64, kComplex128, kBFloat16};
   (void)CheckAndConvertUtils::CheckTensorTypeSame(types, valid_types, op_name);
   return std::make_shared<TensorType>(kBool);
 }
@@ -128,6 +132,10 @@ ValuePtr NotEqualInferValue(const PrimitivePtr &prim, const std::vector<Abstract
       NotEqualImpl<float16>(x1_tensor->data_c(), x2_tensor->data_c(), result_tensor->data_c(), data_size);
       break;
     }
+    case kNumberTypeBFloat16: {
+      NotEqualImpl<bfloat16>(x1_tensor->data_c(), x2_tensor->data_c(), result_tensor->data_c(), data_size);
+      break;
+    }
     case kNumberTypeFloat32: {
       NotEqualFloatImpl<float>(x1_tensor->data_c(), x2_tensor->data_c(), result_tensor->data_c(), data_size);
       break;
@@ -147,7 +155,8 @@ ValuePtr NotEqualInferValue(const PrimitivePtr &prim, const std::vector<Abstract
     default: {
       MS_EXCEPTION(TypeError) << "For '" << prim->name()
                               << "', the supported type is in the list: ['bool', 'int8', 'int16', 'int32', 'int64', "
-                                 "'complex64', 'complex128', 'uint8', 'float16', 'float32', 'float64'], but got "
+                                 "'complex64', 'complex128', 'uint8', 'float16', 'float32', 'float64', 'bfloat16'], "
+                                 "but got "
                               << result_type->ToString() << ".";
     }
   }
@@ -165,6 +174,27 @@ AbstractBasePtr NotEqualInfer(const abstract::AnalysisEnginePtr &, const Primiti
   auto infer_shape = NotEqualInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(NotEqual, prim::kPrimNotEqual, NotEqualInfer, NotEqualInferValue, true);
+
+// AG means auto generated
+class MIND_API AGNotEqualInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return NotEqualInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return NotEqualInferType(primitive, input_args);
+  }
+  ValuePtr InferValue(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return NotEqualInferValue(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return NotEqualInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(NotEqual, prim::kPrimNotEqual, AGNotEqualInfer, true);
 }  // namespace ops
 }  // namespace mindspore

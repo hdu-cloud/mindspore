@@ -19,7 +19,7 @@ import os
 import signal
 
 from mindspore import log
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from mindspore.train.serialization import load_checkpoint, save_checkpoint, export
 from mindspore.train.callback._callback import Callback
 
@@ -34,13 +34,13 @@ class OnRequestExit(Callback):
     including checkpoint and mindir, and then exit the training process.
 
     Args:
-        save_ckpt (bool): Whether save the checkpoint before the training process exit. Default: True.
-        save_mindir (bool): Whether save the mindir before the training process exit. Default: True.
+        save_ckpt (bool): Whether save the checkpoint before the training process exit. Default: ``True`` .
+        save_mindir (bool): Whether save the mindir before the training process exit. Default: ``True`` .
         file_name (str): The saved checkpoint and mindir file name,
-            the checkpoint file add suffix '.ckpt', the mindir file add suffix '.mindir'. Default: 'Net'.
-        directory (str): The directory save checkpoint and mindir. Default: './'.
+            the checkpoint file add suffix '.ckpt', the mindir file add suffix '.mindir'. Default: ``'Net'`` .
+        directory (str): The directory save checkpoint and mindir. Default: ``'./'`` .
         sig (int): The user registered exit signal, it must be a captureable and negligible signal.
-            When the process receives the signal, exits the training or eval process. Default: signal.SIGTERM.
+            When the process receives the signal, exits the training or eval process. Default: ``signal.SIGTERM`` .
 
     Raises:
         ValueError: If the 'save_ckpt' is not a bool.
@@ -50,38 +50,21 @@ class OnRequestExit(Callback):
         ValueError: If the 'sig' is not an int or the 'sig' is signal.SIGKILL.
 
     Examples:
-        >>> import numpy as np
-        >>> import mindspore as ms
-        >>> from mindspore import dataset as ds
         >>> from mindspore import nn
+        >>> from mindspore.train import Model, TimeMonitor
+        >>> import mindspore as ms
         >>>
-        >>> # Define the forward net
-        >>> class ForwardNet(nn.Cell):
-        >>>     def __init__(self, num_class=10, channel=1):
-        >>>         super(ForwardNet, self).__init__()
-        >>>         self.param = ms.Parameter(1.0)
-        >>>         self.relu = ms.ops.ReLU()
-        >>>
-        >>>     def construct(self, x):
-        >>>         return self.relu(x + self.param)
-        >>> forward_net = ForwardNet()
-        >>> loss = nn.MAELoss()
-        >>> opt = nn.Momentum(forward_net.trainable_params(), 0.01, 0.9)
-        >>> model = ms.Model(forward_net, loss_fn=loss, optimizer=opt)\
-        >>>
-        >>> # Create dataset
-        >>> def generator_multi_column():
-        >>>    i = 0
-        >>>    while i < 1000:
-        >>>        i += 1
-        >>>        yield np.ones((1, 32, 32)).astype(np.float32) * 0.01, np.array(1).astype(np.int32)
-        >>> dataset = ds.GeneratorDataset(source=generator_multi_column, column_names=["data", "label"])
-        >>> dataset = dataset.batch(32, drop_remainder=True)
-        >>>
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
+        >>> loss = nn.SoftmaxCrossEntropyWithLogits(sparse=True, reduction='mean')
+        >>> optim = nn.Momentum(net.trainable_params(), 0.01, 0.9)
+        >>> model = Model(net, loss_fn=loss, optimizer=optim)
+        >>> # Create the dataset taking MNIST as an example. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/mnist.py
+        >>> dataset = create_dataset()
         >>> on_request_exit = ms.train.OnRequestExit(file_name='LeNet5')
         >>> model.train(10, dataset, callbacks=on_request_exit)
-        >>> # The user send the signal SIGTERM to the training process,
-        >>> # the process would save the checkpoint and mindir, and then exit the training process.
     """
 
     def __init__(self, save_ckpt=True, save_mindir=True, file_name='Net', directory='./', sig=signal.SIGTERM):
@@ -95,8 +78,8 @@ class OnRequestExit(Callback):
             self.train_file_path = os.path.abspath(os.path.join(directory, f"{file_name}_train"))
             self.eval_file_path = os.path.abspath(os.path.join(directory, f"{file_name}_eval"))
         self.sig = Validator.check_isinstance('sig', sig, int)
-        if self.sig == signal.SIGKILL or self.sig == signal.SIGINT:
-            raise ValueError("Not support send exit request by signal SIGKILL or SIGINT.")
+        if hasattr(signal, "SIGKILL") and self.sig == signal.SIGKILL:
+            raise ValueError("Not support send exit request by signal SIGKILL.")
         self.exit = False
 
     def on_train_begin(self, run_context):

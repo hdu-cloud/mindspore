@@ -16,15 +16,15 @@
 
 #ifndef MINDSPORE_CORE_OPS_BUCKETIZE_H_
 #define MINDSPORE_CORE_OPS_BUCKETIZE_H_
-#include <memory>
-#include <vector>
 #include <algorithm>
-#include <set>
 #include <map>
+#include <memory>
+#include <set>
 #include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,23 +33,15 @@ constexpr auto kNameBucketize = "Bucketize";
 /// Refer to Python API @ref mindspore.ops.Bucketize for more details.
 class MIND_API Bucketize : public BaseOperator {
  public:
-  /// \brief Constructor.
   Bucketize() : BaseOperator(kNameBucketize) { InitIOName({"input"}, {"output"}); }
-  // /// \brief Destructor.
-  // ~Bucketize() = default;
   MIND_API_BASE_MEMBER(Bucketize);
-  /// \brief Init. Refer to the parameters of Python API @ref mindspore.ops.Bucketize for the inputs.
   void Init(const std::vector<float> &boundaries);
-  /// \brief Set boundaries.
   void set_boundaries(const std::vector<float> &boundaries);
-  /// \brief Get boundaries.
-  ///
-  /// \return boundaries.
   std::vector<float> get_boundaries() const;
 };
 
-abstract::AbstractBasePtr BucketizeInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                         const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr BucketizeInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                  const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_BUCKETIZE_H_

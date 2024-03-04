@@ -48,9 +48,10 @@ class RangeGpuKernelMod : public NativeGpuKernelMod {
 
     stream_ptr_ = stream_ptr;
 
-    CudaValidateInputAndInferShape(range_start, range_end, range_delta, output_shape_device_address,
-                                   error_code_device_address, max_output_length_,
-                                   reinterpret_cast<cudaStream_t>(stream_ptr));
+    auto status = CudaValidateInputAndInferShape(range_start, range_end, range_delta, output_shape_device_address,
+                                                 error_code_device_address, max_output_length_,
+                                                 reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
 
     DynamicRangeErrorCode error_code = DynamicRangeErrorCode::kOk;
 
@@ -58,7 +59,8 @@ class RangeGpuKernelMod : public NativeGpuKernelMod {
       cudaMemcpyAsync(&error_code, error_code_device_address, sizeof(DynamicRangeErrorCode), cudaMemcpyDeviceToHost,
                       reinterpret_cast<cudaStream_t>(stream_ptr)),
       "Failed to copy error code to host.");
-    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaDeviceSynchronize(), "cudaDeviceSyncFailed");
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(stream_ptr)),
+                                       "cudaStreamSyncFailed");
 
     // use workspace[0] for actual output shape, we know it must be 1d
     CHECK_CUDA_RET_WITH_ERROR_NOTRACE(
@@ -69,8 +71,9 @@ class RangeGpuKernelMod : public NativeGpuKernelMod {
 
     LogExceptionIfNotOk(error_code);
 
-    CalRange(range_start, range_end, range_delta, output_device_address, output_shape_device_address,
-             error_code_device_address, max_output_length_, reinterpret_cast<cudaStream_t>(stream_ptr));
+    status = CalRange(range_start, range_end, range_delta, output_device_address, output_shape_device_address,
+                      error_code_device_address, max_output_length_, reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
 
     return true;
   }
@@ -116,7 +119,6 @@ class RangeGpuKernelMod : public NativeGpuKernelMod {
     auto kernel_ptr = std::make_shared<ops::Range>(base_operator->GetPrim());
 
     max_output_length_ = kernel_ptr->get_maxlen();
-    outputs_ = outputs;
     is_need_retrieve_output_shape_ = true;
     return true;
   }
@@ -134,7 +136,7 @@ class RangeGpuKernelMod : public NativeGpuKernelMod {
   }
 
  protected:
-  void SyncData() override {
+  void SyncOutputShape() override {
     // required synchronize for UpdateOp
     CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(stream_ptr_)),
                                        "cudaStreamSynchronize failed");
@@ -142,13 +144,10 @@ class RangeGpuKernelMod : public NativeGpuKernelMod {
     outputs_[0]->SetShapeVector(output_shape);
   }
 
-  std::vector<KernelTensorPtr> GetOutputs() override { return outputs_; }
-
  private:
   void *stream_ptr_;
   int64_t output_shape_;
   int64_t max_output_length_;
-  std::vector<KernelTensorPtr> outputs_{};
 };
 }  // namespace kernel
 }  // namespace mindspore

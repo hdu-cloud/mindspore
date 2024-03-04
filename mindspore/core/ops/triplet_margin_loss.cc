@@ -14,11 +14,35 @@
  * limitations under the License.
  */
 #include "ops/triplet_margin_loss.h"
+
 #include <algorithm>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <map>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/base/types.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -45,6 +69,12 @@ abstract::ShapePtr TripletMarginLossInferShape(const PrimitivePtr &primitive,
   if (margin.size() != kDim0) {
     MS_EXCEPTION(ValueError) << "For " << op_name
                              << ", the dimension of input margin must be 0, margin_dim: " << margin.size() << ".";
+  }
+  auto x_shape_ptr = input_args[0]->BuildShape();
+  MS_EXCEPTION_IF_NULL(x_shape_ptr);
+  auto x_shape = x_shape_ptr->cast<abstract::ShapePtr>();
+  if (IsDynamicShape(x_shape->shape()) || IsDynamicRank(x_shape->shape())) {
+    return std::make_shared<abstract::Shape>(ShapeVector{abstract::Shape::kShapeRankAny});
   }
   auto dims = std::max(std::max(x.size(), positive.size()), negative.size());
   std::reverse(x.begin(), x.end());
@@ -120,8 +150,26 @@ AbstractBasePtr TripletMarginLossInfer(const abstract::AnalysisEnginePtr &, cons
   CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputsNum, primitive->name());
   auto infer_type = TripletMarginLossInferType(primitive, input_args);
   auto infer_shape = TripletMarginLossInferShape(primitive, input_args);
-  return abstract::MakeAbstract(infer_shape, infer_type);
+  return abstract::MakeAbstractTensor(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(TripletMarginLoss, prim::kPrimTripletMarginLoss, TripletMarginLossInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGTripletMarginLossInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return TripletMarginLossInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return TripletMarginLossInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return TripletMarginLossInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(TripletMarginLoss, prim::kPrimTripletMarginLoss, AGTripletMarginLossInfer, false);
 }  // namespace ops
 }  // namespace mindspore

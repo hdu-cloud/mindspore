@@ -16,7 +16,7 @@
 from __future__ import absolute_import
 
 from mindspore.ops import functional as F, composite as C, operations as P
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.common.api import jit
 from mindspore.nn.optim.optimizer import Optimizer
 from mindspore.nn.optim.optimizer import opt_init_args_register
@@ -47,8 +47,8 @@ class RMSProp(Optimizer):
     Implements Root Mean Squared Propagation (RMSProp) algorithm.
 
     Update `params` according to the RMSProp algorithm.
-    The 29th of the original presentation slide
-    [http://www.cs.toronto.edu/~tijmen/csc321/slides/lecture_slides_lec6.pdf] proposes RMSProp.
+    The 29th of the original `presentation slide
+    <http://www.cs.toronto.edu/~tijmen/csc321/slides/lecture_slides_lec6.pdf>`_ proposes RMSProp.
     The equation is as follows:
 
     .. math::
@@ -120,7 +120,7 @@ class RMSProp(Optimizer):
               If `order_params` in the keys, other keys will be ignored and the element of 'order_params' must be in
               one group of `params`.
 
-        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: 0.1.
+        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: ``0.1`` .
 
             - float: The fixed learning rate value. Must be equal to or greater than 0.
 
@@ -134,20 +134,21 @@ class RMSProp(Optimizer):
             - LearningRateSchedule: Learning rate is dynamic. During training, the optimizer calls the instance of
               LearningRateSchedule with step as the input to get the learning rate of the current step.
 
-        decay (float): Decay rate. Should be equal to or greater than 0. Default: 0.9.
+        decay (float): Decay rate. Should be equal to or greater than 0. Default: ``0.9`` .
         momentum (float): Hyperparameter of type float, means momentum for the moving average. Should be equal to or
-                          greater than 0. Default: 0.0.
+                          greater than 0. Default: ``0.0`` .
         epsilon (float): Term added to the denominator to improve numerical stability. Should be greater than
-                         0. Default: 1e-10.
+                         0. Default: ``1e-10`` .
         use_locking (bool):  Whether to enable a lock to protect the updating process of variable tensors.
-            Default: False.
-        centered (bool): If True, gradients are normalized by the estimated variance of the gradient. Default: False.
+            Default: ``False`` .
+        centered (bool): If True, gradients are normalized by the estimated variance of the gradient.
+            Default: ``False`` .
         loss_scale (float): A floating point value for the loss scale. Should be greater than 0. In general, use the
             default value. Only when `FixedLossScaleManager` is used for training and the `drop_overflow_update` in
-            `FixedLossScaleManager` is set to False, then this value needs to be the same as the `loss_scale` in
+            `FixedLossScaleManager` is set to ``False`` , then this value needs to be the same as the `loss_scale` in
             `FixedLossScaleManager`. Refer to class :class:`mindspore.amp.FixedLossScaleManager` for more details.
-            Default: 1.0.
-        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: 0.0.
+            Default: ``1.0`` .
+        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: ``0.0`` .
 
             - float: The fixed weight decay value. Must be equal to or greater than 0.
 
@@ -178,7 +179,9 @@ class RMSProp(Optimizer):
         >>> import mindspore as ms
         >>> from mindspore import nn
         >>>
-        >>> net = Net()
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> #1) All parameters use the same learning rate and weight decay
         >>> optim = nn.RMSProp(params=net.trainable_params(), learning_rate=0.1)
         >>>
@@ -196,7 +199,7 @@ class RMSProp(Optimizer):
         >>> # The final parameters order in which the optimizer will be followed is the value of 'order_params'.
         >>>
         >>> loss = nn.SoftmaxCrossEntropyWithLogits()
-        >>> model = ms.Model(net, loss_fn=loss, optimizer=optim)
+        >>> model = ms.train.Model(net, loss_fn=loss, optimizer=optim)
     """
 
     @opt_init_args_register
@@ -233,6 +236,7 @@ class RMSProp(Optimizer):
         gradients = self.gradients_centralization(gradients)
         gradients = self.scale_grad(gradients)
         lr = self.get_lr()
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
         if self.centered:
             if self.is_group_lr:
                 success = self.hyper_map_reverse(F.partial(_centered_rmsprop_opt, self.opt, self.decay, self.epsilon,

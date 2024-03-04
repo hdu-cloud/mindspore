@@ -15,6 +15,9 @@
  */
 
 #include "frontend/optimizer/ad/grad.h"
+#include <memory>
+#include <unordered_map>
+#include <vector>
 #include "frontend/optimizer/ad/dfunctor.h"
 #include "frontend/optimizer/irpass.h"
 #include "ir/func_graph_cloner.h"
@@ -35,25 +38,23 @@ FuncGraphPtr PartialEliminateOptPass(const pipeline::ResourcePtr &resource, cons
   auto after_lift_opt = opt::Optimizer::MakeOptimizer("partial_eliminate", resource, map);
 
   FuncGraphPtr opt_fg = nullptr;
-  WITH(MsProfile::GetProfile()->Step("partial_eliminate_before_grad"))[&after_lift_opt, func_graph, &opt_fg]() {
-    opt_fg = after_lift_opt->step(func_graph, true);
-  };
+  ProfileExecute(MsProfile::GetProfile()->Step("partial_eliminate_before_grad"),
+                 [&after_lift_opt, func_graph, &opt_fg]() { opt_fg = after_lift_opt->step(func_graph, true); });
   return opt_fg;
 }
 
 FuncGraphVector PartialEliminateMulti(const pipeline::ResourceBasePtr &resource, const FuncGraphVector &func_graphs) {
   auto new_res = std::dynamic_pointer_cast<pipeline::Resource>(resource);
   if (new_res == nullptr) {
-    MS_LOG(EXCEPTION) << "Parameter resources is not a pipeline::Resource";
+    MS_LOG(INTERNAL_EXCEPTION) << "Parameter resources is not a pipeline::Resource";
   }
-#ifdef ENABLE_DUMP_IR
-  bool save_graphs_flag = MsContext::GetInstance()->get_param<bool>(MS_CTX_SAVE_GRAPHS_FLAG);
-#endif
   FuncGraphVector opt_fgs;
   for (const auto &func_graph : func_graphs) {
     auto opt_fg = PartialEliminateOptPass(new_res, func_graph);
 #ifdef ENABLE_DUMP_IR
-    if (save_graphs_flag) {
+    auto context = MsContext::GetInstance();
+    MS_EXCEPTION_IF_NULL(context);
+    if (context->CanDump(kIntroductory)) {
       DumpIR("after_opt_" + opt_fg->ToString() + ".ir", opt_fg);
     }
 #endif
@@ -64,24 +65,26 @@ FuncGraphVector PartialEliminateMulti(const pipeline::ResourceBasePtr &resource,
 
 FuncGraphPtr LiftFv(const pipeline::ResourceBasePtr &resource, const FuncGraphPtr &func_graph) {
 #ifdef ENABLE_DUMP_IR
-  bool save_graphs_flag = MsContext::GetInstance()->get_param<bool>(MS_CTX_SAVE_GRAPHS_FLAG);
-  if (save_graphs_flag) {
+  auto context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  bool enable_save_graphs = context->CanDump(kIntroductory);
+  if (enable_save_graphs) {
     DumpIR("before_lift_" + func_graph->ToString() + ".ir", func_graph);
   }
 #endif
   FuncGraphPtr new_fg = LiftingClone(func_graph);
 #ifdef ENABLE_DUMP_IR
-  if (save_graphs_flag) {
+  if (enable_save_graphs) {
     DumpIR("after_lift_" + new_fg->ToString() + ".ir", new_fg);
   }
 #endif
   auto new_res = std::dynamic_pointer_cast<pipeline::Resource>(resource);
   if (new_res == nullptr) {
-    MS_LOG(EXCEPTION) << "Parameter resources is not a pipeline::Resource";
+    MS_LOG(INTERNAL_EXCEPTION) << "Parameter resources is not a pipeline::Resource";
   }
   auto opt_fg = PartialEliminateOptPass(new_res, new_fg);
 #ifdef ENABLE_DUMP_IR
-  if (save_graphs_flag) {
+  if (enable_save_graphs) {
     DumpIR("after_opt_" + opt_fg->ToString() + ".ir", opt_fg);
   }
 #endif
@@ -90,8 +93,9 @@ FuncGraphPtr LiftFv(const pipeline::ResourceBasePtr &resource, const FuncGraphPt
 
 FuncGraphVector LiftFvMulti(const pipeline::ResourceBasePtr &resource, const FuncGraphVector &func_graphs) {
 #ifdef ENABLE_DUMP_IR
-  bool save_graphs_flag = MsContext::GetInstance()->get_param<bool>(MS_CTX_SAVE_GRAPHS_FLAG);
-  if (save_graphs_flag) {
+  auto context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  if (context->CanDump(kIntroductory)) {
     for (const auto &func_graph : func_graphs) {
       DumpIR("before_lift_" + func_graph->ToString() + ".ir", func_graph);
     }
@@ -106,13 +110,40 @@ FuncGraphVector LiftFvMulti(const pipeline::ResourceBasePtr &resource, const Fun
   }
   FuncGraphVector new_fgs = LiftingCloneMulti(func_graphs);
 #ifdef ENABLE_DUMP_IR
-  if (save_graphs_flag) {
+  if (context->CanDump(kIntroductory)) {
     for (const auto &new_fg : new_fgs) {
       DumpIR("after_lift_" + new_fg->ToString() + ".ir", new_fg);
     }
   }
 #endif
   return PartialEliminateMulti(resource, new_fgs);
+}
+
+bool ForwardInputsEqual(const std::vector<AnfNodePtr> &first_inputs, const std::vector<AnfNodePtr> &second_inputs) {
+  if (first_inputs.size() != second_inputs.size()) {
+    return false;
+  }
+  for (size_t i = 1; i < first_inputs.size(); ++i) {
+    if (HasAbstractMonad(first_inputs[i]) && HasAbstractMonad(second_inputs[i])) {
+      continue;
+    }
+    if (first_inputs[i] != second_inputs[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+AnfNodePtr GetJUser(const FuncGraphManagerPtr &manager, const AnfNodePtr &j_node) {
+  auto iter = manager->node_users().find(j_node);
+  if (iter == manager->node_users().end()) {
+    return nullptr;
+  }
+  auto users = iter->second;
+  if (users.size() != 1) {
+    MS_LOG(EXCEPTION) << "The size of J users should be 1, but got " << users.size();
+  }
+  return users.begin()->first;
 }
 }  // namespace
 
@@ -136,7 +167,7 @@ FuncGraphPtr GradOneFuncGraph(const FuncGraphPtr &func_graph, const opt::Optimiz
     }
   };
 
-  auto f = std::make_shared<DFunctor>(func_graph, resources);
+  auto f = std::make_shared<DFunctor>(func_graph, resources, is_top);
   auto user_defined = f->KUserDefined(func_graph);
   if (user_defined != nullptr) {
     multi_graph_sink(user_defined);
@@ -194,26 +225,10 @@ FuncGraphVector GradMultiFuncGraph(const FuncGraphVector &func_graphs, const opt
   const auto &resources = optimizer->resource();
   auto manager_ptr = resources->manager();
   MS_EXCEPTION_IF_NULL(manager_ptr);
-  // Graded func_graph should not call each other;
-  for (const auto &func_graph : func_graphs) {
-    const auto &used_total = func_graph->func_graphs_used_total();
-    FuncGraphPtr used_fg;
-    bool used = std::any_of(func_graphs.cbegin(), func_graphs.end(), [&used_total, &used_fg](const FuncGraphPtr &fg) {
-      if (used_total.contains(fg)) {
-        used_fg = fg;
-        return true;
-      }
-      return false;
-    });
-    if (used) {
-      MS_LOG(EXCEPTION) << "Grad func_graph: " << func_graph->ToString()
-                        << " use another will be graded func_graph: " << used_fg->ToString();
-    }
-  }
-
   for (const auto &func_graph : func_graphs) {
     manager_ptr->AddFuncGraph(func_graph);
   }
+
   FuncGraphVector before_grad_fgs;
   if (optimizer->is_first_order_j()) {
     lift_fv_before_grad = true;
@@ -244,5 +259,52 @@ MetaFuncGraphPtr Kmeta(const PrimitivePtr &prim, const pipeline::ResourceBasePtr
 }
 
 void CleanRes() { DFunctor::Clear(); }
+
+bool MergeForward(const FuncGraphPtr &root, const opt::OptimizerPtr &opt) {
+  auto manager = opt->manager();
+  MS_EXCEPTION_IF_NULL(manager);
+  std::unordered_map<FuncGraphPtr, std::vector<AnfNodePtr>> forward_fg_to_j_nodes;
+  auto all_nodes = TopoSort(root->get_return(), SuccDeeperSimple, AlwaysInclude);
+  for (const auto &node : all_nodes) {
+    if (!IsPrimitiveCNode(node, prim::kPrimJ)) {
+      continue;
+    }
+    auto cnode = node->cast<CNodePtr>();
+    auto merge_forward = cnode->user_data<bool>("merge_forward");
+    if (merge_forward == nullptr || !(*merge_forward)) {
+      continue;
+    }
+    auto forward_fg = GetValueNode<FuncGraphPtr>(cnode->input(1));
+    if (forward_fg == nullptr) {
+      continue;
+    }
+    (void)forward_fg_to_j_nodes[forward_fg].emplace_back(node);
+  }
+  bool change = false;
+  for (const auto &iter : forward_fg_to_j_nodes) {
+    auto &j_nodes = iter.second;
+    MS_LOG(DEBUG) << "J nodes size is " << j_nodes.size();
+    if (j_nodes.size() <= 1) {
+      continue;
+    }
+    auto first_j_user = GetJUser(manager, j_nodes[0]);
+    if (first_j_user == nullptr) {
+      continue;
+    }
+    const auto &first_forward_inputs = first_j_user->cast<CNodePtr>()->inputs();
+    for (size_t i = 1; i < j_nodes.size(); ++i) {
+      auto j_user = GetJUser(manager, j_nodes[i]);
+      const auto &forward_inputs = j_user->cast<CNodePtr>()->inputs();
+      if (!ForwardInputsEqual(first_forward_inputs, forward_inputs)) {
+        continue;
+      }
+      manager->Replace(j_user, first_j_user);
+      MS_LOG(DEBUG) << "Replace J user " << j_user->DebugString() << " with the first J user "
+                    << first_j_user->DebugString();
+      change = true;
+    }
+  }
+  return change;
+}
 }  // namespace ad
 }  // namespace mindspore

@@ -17,7 +17,6 @@
 #include "plugin/device/cpu/hal/profiler/cpu_profiling.h"
 #include "plugin/device/cpu/hal/profiler/cpu_data_saver.h"
 #include "utils/log_adapter.h"
-#include "include/common/utils/utils.h"
 #include "utils/ms_context.h"
 
 namespace mindspore {
@@ -122,7 +121,7 @@ void CPUProfiler::RecordFrameWorkInfo(const CNodePtr &kernel) {
     cur_kernel_info.op_type = op_name.substr(begin_iter, end_iter - begin_iter);
     cur_kernel_info.op_name = op_name.substr(begin_iter, op_name.length() - begin_iter);
   }
-  for (uint32_t i = 0; i < (uint32_t)kernel->inputs().size(); i++) {
+  for (size_t i = 0; i < kernel->inputs().size(); i++) {
     if (kernel->input(i)->Shape() != nullptr) {
       cur_kernel_input_info.input_id = i;
       cur_kernel_input_info.shape = kernel->input(i)->Shape()->DumpText();
@@ -141,14 +140,19 @@ void CPUProfiler::OpDataProducerEndParallel(const std::string op_name) {
 }
 
 void CPUProfiler::OpDataProducerBegin(const std::string op_name, const uint32_t pid) {
+  if (!GetEnableFlag() || !GetOpTimeFlag()) {
+    return;
+  }
   op_time_start_ = GetHostMonoTimeStamp();
   op_time_mono_start_ = GetHostMonoTimeStamp();
   SetRunTimeData(op_name, pid);
-
   RecordGpuOneStepStartEndInfo();
 }
 
 void CPUProfiler::OpDataProducerEnd() {
+  if (!GetEnableFlag() || !GetOpTimeFlag()) {
+    return;
+  }
   float op_time_elapsed = 0;
   op_time_stop_ = GetHostMonoTimeStamp();
   op_time_elapsed = (op_time_stop_ - op_time_start_) / kNanosecondToMillisecond;
@@ -201,7 +205,7 @@ void CPUProfiler::RecordGpuOneStepStartEndInfo() {
 
   if (auto gpu_instance = Profiler::GetInstance(kGPUDevice);
       gpu_instance != nullptr && MsContext::GetInstance()->get_param<bool>(MS_CTX_ENABLE_MINDRT) &&
-      gpu_instance->GetEnableFlag()) {
+      gpu_instance->GetEnableFlag() && gpu_instance->GetOpTimeFlag()) {
     gpu_instance->RecordOneStepStartEndInfo();
   }
 }

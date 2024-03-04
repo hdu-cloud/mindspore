@@ -1,5 +1,5 @@
 /*
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,26 +16,54 @@
 
 package com.mindspore;
 
+import static com.mindspore.config.MindsporeLite.POINTER_DEFAULT_VALUE;
+
 import com.mindspore.config.MSContext;
+import com.mindspore.config.DataType;
 import com.mindspore.config.MindsporeLite;
 import com.mindspore.config.TrainCfg;
 
 import java.nio.MappedByteBuffer;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.logging.Logger;
+import java.lang.reflect.Array;
 
+/**
+ * The Model class is used to define a MindSpore model, facilitating computational graph management.
+ *
+ * @since v1.0
+ */
 public class Model {
+    private static final Logger LOGGER = Logger.getLogger(Model.class.toString());
+
     static {
         MindsporeLite.init();
     }
 
-    private long modelPtr = 0;
+    private long modelPtr = POINTER_DEFAULT_VALUE;
+    private boolean isModelSharePtr = false;
+    private List<MSTensor> inputTensors = null;
 
     /**
      * Construct function.
      */
     public Model() {
-        this.modelPtr = 0;
+        this.isModelSharePtr = false;
+        this.modelPtr = this.createModel();
+        this.inputTensors = null;
+    }
+
+    /**
+     * Construct function.
+     *
+     * @param modelPtr model shared pointer.
+     */
+    public Model(long modelPtr) {
+        this.isModelSharePtr = true;
+        this.modelPtr = modelPtr;
+        this.inputTensors = null;
     }
 
     /**
@@ -50,9 +78,8 @@ public class Model {
         if (graph == null || context == null) {
             return false;
         }
-        long cfgPtr = cfg != null ? cfg.getTrainCfgPtr() : 0;
-        modelPtr = this.buildByGraph(graph.getGraphPtr(), context.getMSContextPtr(), cfgPtr);
-        return modelPtr != 0;
+        long cfgPtr = cfg != null ? cfg.getTrainCfgPtr() : POINTER_DEFAULT_VALUE;
+        return this.buildByGraph(modelPtr, graph.getGraphPtr(), context.getMSContextPtr(), cfgPtr);
     }
 
     /**
@@ -61,17 +88,20 @@ public class Model {
      * @param buffer          model buffer.
      * @param modelType       model type.
      * @param context         model build context.
-     * @param dec_key         define the key used to decrypt the ciphertext model. The key length is 16.
-     * @param dec_mode        define the decryption mode. Options: AES-GCM.
-     * @param cropto_lib_path define the openssl library path.
+     * @param decKey         define the key used to decrypt the ciphertext model. The key length is 16.
+     * @param decMode        define the decryption mode. Options: AES-GCM.
+     * @param croptoLibPath   define the openssl library path.
      * @return model build status.
      */
-    public boolean build(final MappedByteBuffer buffer, int modelType, MSContext context, char[] dec_key, String dec_mode, String cropto_lib_path) {
-        if (context == null || buffer == null || dec_key == null || dec_mode == null) {
+    public boolean build(final MappedByteBuffer buffer, int modelType, MSContext context, char[] decKey, String decMode,
+                         String croptoLibPath) {
+        boolean isValid = (context != null && buffer != null && decKey != null && decMode != null &&
+                           croptoLibPath != null);
+        if (!isValid) {
             return false;
         }
-        modelPtr = this.buildByBuffer(buffer, modelType, context.getMSContextPtr(), dec_key, dec_mode, cropto_lib_path);
-        return modelPtr != 0;
+        return this.buildByBuffer(modelPtr, buffer, modelType, context.getMSContextPtr(), decKey, decMode,
+                                  croptoLibPath);
     }
 
     /**
@@ -86,8 +116,7 @@ public class Model {
         if (context == null || buffer == null) {
             return false;
         }
-        modelPtr = this.buildByBuffer(buffer, modelType, context.getMSContextPtr(), null, "", "");
-        return modelPtr != 0;
+        return this.buildByBuffer(modelPtr, buffer, modelType, context.getMSContextPtr(), null, "", "");
     }
 
 
@@ -97,17 +126,20 @@ public class Model {
      * @param modelPath       model path.
      * @param modelType       model type.
      * @param context         model build context.
-     * @param dec_key         define the key used to decrypt the ciphertext model. The key length is 16.
-     * @param dec_mode        define the decryption mode. Options: AES-GCM.
-     * @param cropto_lib_path define the openssl library path.
+     * @param decKey          define the key used to decrypt the ciphertext model. The key length is 16.
+     * @param decMode         define the decryption mode. Options: AES-GCM.
+     * @param croptoLibPath   define the openssl library path.
      * @return model build status.
      */
-    public boolean build(String modelPath, int modelType, MSContext context, char[] dec_key, String dec_mode, String cropto_lib_path) {
-        if (context == null || modelPath == null || dec_key == null || dec_mode == null) {
+    public boolean build(String modelPath, int modelType, MSContext context, char[] decKey, String decMode,
+                         String croptoLibPath) {
+        boolean isValid = (context != null && modelPath != null && decKey != null && decMode != null &&
+                                   croptoLibPath != null);
+        if (!isValid) {
             return false;
         }
-        modelPtr = this.buildByPath(modelPath, modelType, context.getMSContextPtr(), dec_key, dec_mode, cropto_lib_path);
-        return modelPtr != 0;
+        return this.buildByPath(modelPtr, modelPath, modelType, context.getMSContextPtr(), decKey, decMode,
+                                croptoLibPath);
     }
 
     /**
@@ -122,8 +154,7 @@ public class Model {
         if (context == null || modelPath == null) {
             return false;
         }
-        modelPtr = this.buildByPath(modelPath, modelType, context.getMSContextPtr(), null, "", "");
-        return modelPtr != 0;
+        return this.buildByPath(modelPtr, modelPath, modelType, context.getMSContextPtr(), null, "", "");
     }
 
     /**
@@ -132,7 +163,21 @@ public class Model {
      * @return predict status.
      */
     public boolean predict() {
-        return this.runStep(modelPtr);
+        List<MSTensor> inputs = this.getInputs();
+        if (inputs == null || inputs.size() == 0) {
+            return false;
+        }
+        long[] inputsPtrArray = new long[inputs.size()];
+        Object[] bufferArray = new Object[inputs.size()];
+        for (int i = 0; i < inputs.size(); i++) {
+            inputsPtrArray[i] = inputs.get(i).getMSTensorPtr();
+            Object obj = inputs.get(i).getData();
+            if (Array.getLength(obj) == 0) {
+                return false;
+            }
+            bufferArray[i] = obj;
+        }
+        return this.runStep(modelPtr, inputsPtrArray, bufferArray);
     }
 
     /**
@@ -141,7 +186,7 @@ public class Model {
      * @return run model status.work in train mode.
      */
     public boolean runStep() {
-        return this.runStep(modelPtr);
+        return this.predict();
     }
 
     /**
@@ -168,13 +213,16 @@ public class Model {
      * @return input tensors.
      */
     public List<MSTensor> getInputs() {
-        List<Long> ret = this.getInputs(this.modelPtr);
-        List<MSTensor> tensors = new ArrayList<>();
-        for (Long msTensorAddr : ret) {
-            MSTensor msTensor = new MSTensor(msTensorAddr);
-            tensors.add(msTensor);
+        if (this.inputTensors != null){
+            return this.inputTensors;
         }
-        return tensors;
+        List<Long> tensorAddrs = this.getInputs(this.modelPtr);
+        this.inputTensors = new ArrayList<>(tensorAddrs.size());
+        for (Long msTensorAddr : tensorAddrs) {
+            MSTensor msTensor = new MSTensor(msTensorAddr);
+            this.inputTensors.add(msTensor);
+        }
+        return this.inputTensors;
     }
 
     /**
@@ -183,9 +231,9 @@ public class Model {
      * @return model outputs tensor.
      */
     public List<MSTensor> getOutputs() {
-        List<Long> ret = this.getOutputs(this.modelPtr);
-        List<MSTensor> tensors = new ArrayList<>();
-        for (Long msTensorAddr : ret) {
+        List<Long> tensorAddrs = this.getOutputs(this.modelPtr);
+        List<MSTensor> tensors = new ArrayList<>(tensorAddrs.size());
+        for (Long msTensorAddr : tensorAddrs) {
             MSTensor msTensor = new MSTensor(msTensorAddr);
             tensors.add(msTensor);
         }
@@ -199,11 +247,14 @@ public class Model {
      * @return input tensor.
      */
     public MSTensor getInputByTensorName(String tensorName) {
-        if (tensorName == null) {
-            return null;
+        List<MSTensor> inputTensors = this.getInputs();
+        for (int i = 0; i < inputTensors.size(); i++) {
+            MSTensor tensor = inputTensors.get(i);
+            if (tensor.tensorName().equals(tensorName)) {
+                return tensor;
+            }
         }
-        long tensorAddr = this.getInputByTensorName(this.modelPtr, tensorName);
-        return new MSTensor(tensorAddr);
+        return null;
     }
 
     /**
@@ -217,6 +268,9 @@ public class Model {
             return null;
         }
         long tensorAddr = this.getOutputByTensorName(this.modelPtr, tensorName);
+        if (tensorAddr == POINTER_DEFAULT_VALUE) {
+            return null;
+        }
         return new MSTensor(tensorAddr);
     }
 
@@ -228,11 +282,11 @@ public class Model {
      */
     public List<MSTensor> getOutputsByNodeName(String nodeName) {
         if (nodeName == null) {
-            return null;
+            return new ArrayList<>();
         }
-        List<Long> ret = this.getOutputsByNodeName(this.modelPtr, nodeName);
-        List<MSTensor> tensors = new ArrayList<>();
-        for (Long msTensorAddr : ret) {
+        List<Long> tensorAddrs = this.getOutputsByNodeName(this.modelPtr, nodeName);
+        List<MSTensor> tensors = new ArrayList<>(tensorAddrs.size());
+        for (Long msTensorAddr : tensorAddrs) {
             MSTensor msTensor = new MSTensor(msTensorAddr);
             tensors.add(msTensor);
         }
@@ -246,6 +300,29 @@ public class Model {
      */
     public List<String> getOutputTensorNames() {
         return this.getOutputTensorNames(this.modelPtr);
+    }
+
+    /**
+     * Load config file.
+     *
+     * @param configPath          config file path.
+     *
+     * @return Whether the LoadConfig is successful.
+     */
+    public boolean loadConfig(String configPath) {
+        return loadConfig(modelPtr, configPath);
+    }
+
+    /**
+     * Update config.
+     *
+     * @param section define the config section.
+     * @param config define the config will be updated.
+     *
+     * @return Whether the updateConfig is successful.
+     */
+    public boolean updateConfig(String section, HashMap<String, String> config) {
+        return updateConfig(modelPtr, section, config);
     }
 
     /**
@@ -272,14 +349,33 @@ public class Model {
     }
 
     /**
+     * Export model's weights, which can be used in micro only.
+     *
+     * @param weightFile                  The path of exported weight file.
+     * @param isInference                 Whether to export weights from a reasoning model. Currently, only support`true`.
+     * @param enableFp16                  Float-weight is whether to be saved in float16 format.
+     * @param changeableWeightNames       The set the name of these weight tensors, whose shape is changeable.
+     * @return
+     */
+    public boolean exportWeightsCollaborateWithMicro(String weightFile, boolean isInference,
+                                 boolean enableFp16, List<String> changeableWeightNames) {
+        if (weightFile == null || weightFile.length() == 0) {
+            LOGGER.severe("Input params invalid.");
+            return false;
+        }
+        return exportWeightsCollaborateWithMicro(modelPtr, weightFile, isInference, enableFp16,
+                             changeableWeightNames.toArray(new String[0]));
+    }
+
+    /**
      * Get the FeatureMap.
      *
      * @return FeaturesMap Tensor list.
      */
     public List<MSTensor> getFeatureMaps() {
-        List<Long> ret = this.getFeatureMaps(this.modelPtr);
-        ArrayList<MSTensor> tensors = new ArrayList<>();
-        for (Long msTensorAddr : ret) {
+        List<Long> tensorAddrs = this.getFeatureMaps(this.modelPtr);
+        ArrayList<MSTensor> tensors = new ArrayList<>(tensorAddrs.size());
+        for (Long msTensorAddr : tensorAddrs) {
             MSTensor msTensor = new MSTensor(msTensorAddr);
             tensors.add(msTensor);
         }
@@ -348,24 +444,32 @@ public class Model {
      * Free model
      */
     public void free() {
-        this.free(modelPtr);
+        if (this.inputTensors != null){
+            for (MSTensor tensor : this.inputTensors) {
+                tensor.free();
+            }
+            this.inputTensors = null;
+        }
+        this.free(modelPtr, isModelSharePtr);
     }
 
-    private native void free(long modelPtr);
+    private native long createModel();
 
-    private native long buildByGraph(long graphPtr, long contextPtr, long cfgPtr);
+    private native void free(long modelPtr, boolean isShared);
 
-    private native long buildByPath(String modelPath, int modelType, long contextPtr,
+    private native boolean buildByGraph(long modelPtr, long graphPtr, long contextPtr, long cfgPtr);
+
+    private native boolean buildByPath(long modelPtr, String modelPath, int modelType, long contextPtr,
                                     char[] dec_key, String dec_mod, String cropto_lib_path);
 
-    private native long buildByBuffer(MappedByteBuffer buffer, int modelType, long contextPtr,
+    private native boolean buildByBuffer(long modelPtr, MappedByteBuffer buffer, int modelType, long contextPtr,
                                       char[] dec_key, String dec_mod, String cropto_lib_path);
 
     private native List<Long> getInputs(long modelPtr);
 
     private native long getInputByTensorName(long modelPtr, String tensorName);
 
-    private native boolean runStep(long modelPtr);
+    private native boolean runStep(long modelPtr, long[] inputs, Object[] buffer);
 
     private native List<Long> getOutputs(long modelPtr);
 
@@ -381,7 +485,14 @@ public class Model {
 
     private native boolean resize(long modelPtr, long[] inputs, int[][] dims);
 
+    private native boolean loadConfig(long modelPtr, String configPath);
+
+    private native boolean updateConfig(long modelPtr, String section, HashMap<String, String> config);
+
     private native boolean export(long modelPtr, String fileName, int quantizationType, boolean isOnlyExportInfer, String[] outputTensorNames);
+
+    private native boolean exportWeightsCollaborateWithMicro(long modelPtr, String weightFile, boolean isInference,
+                                         boolean enableFp16, String[] changeableWeightNames);
 
     private native List<Long> getFeatureMaps(long modelPtr);
 

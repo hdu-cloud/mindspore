@@ -18,7 +18,13 @@ import com.mindspore.MSTensor;
 import com.mindspore.config.DeviceType;
 import com.mindspore.config.MSContext;
 import com.mindspore.config.DataType;
+import com.mindspore.config.RunnerConfig;
+import com.mindspore.config.AscendDeviceInfo;
+import com.mindspore.config.ModelType;
 import com.mindspore.Model;
+import com.mindspore.ModelParallelRunner;
+import java.util.List;
+import java.util.ArrayList;
 
 import java.io.*;
 
@@ -65,23 +71,25 @@ public class Benchmark {
                     }
                     float[] outData = outTensor.getFloatData();
                     int errorCount = 0;
+                    meanError = 0;
                     for (int i = 0; i < benchmarkData.length; i++) {
                         double relativeTolerance = 1e-5;
                         double absoluteTolerance = 1e-8;
                         double tolerance = absoluteTolerance + relativeTolerance * Math.abs(benchmarkData[i]);
                         double absoluteError = Math.abs(outData[i] - benchmarkData[i]);
                         if (absoluteError > tolerance) {
-                            if (Math.abs(benchmarkData[i] - 0.0f) < Float.MIN_VALUE)
+                            if (Math.abs(benchmarkData[i] - 0.0f) < Float.MIN_VALUE) {
                                 if (absoluteError > 1e-5) {
                                     meanError += absoluteError;
                                     errorCount++;
                                 } else {
                                     continue;
                                 }
-                        } else {
-                            meanError += absoluteError / (Math.abs(benchmarkData[i]) + Float.MIN_VALUE);
-                            errorCount++;
-                        }
+                            } else {
+                                meanError += absoluteError / (Math.abs(benchmarkData[i]) + Float.MIN_VALUE);
+                                errorCount++;
+                            }                            
+                        } 
                     }
 
                     if (meanError > 0.0f) {
@@ -112,30 +120,101 @@ public class Benchmark {
         String[] inDataFile = args[1].split(",");
         String benchmarkDataFile = args[2];
         float accuracy = Float.parseFloat(args[3]);
+        if (args.length == 5 && args[4].equals("Runner")) {
+            // use default param init context
+            MSContext context = new MSContext();
+            context.init(1,0);
+            boolean ret = context.addDeviceInfo(DeviceType.DT_CPU, false, 0);
+            if (!ret) {
+                System.err.println("init context failed");
+                context.free();
+                return ;
+            }
+            // init runner config
+            RunnerConfig config = new RunnerConfig();
+            config.init(context);
+            config.setWorkersNum(2);
+            // init ModelParallelRunner
+            ModelParallelRunner runner = new ModelParallelRunner();
+            ret = runner.init(modelPath, config);
+            if (!ret) {
+                System.err.println("ModelParallelRunner init failed.");
+                runner.free();
+                return;
+            }
+            List<MSTensor> inputs = runner.getInputs();
+            for (int index = 0; index < inputs.size(); index++) {
+                MSTensor msTensor = inputs.get(index);
+                if (msTensor.getDataType() != DataType.kNumberTypeFloat32) {
+                    System.err.println("Input tensor data type is not float, the data type is " + msTensor.getDataType());
+                    runner.free();
+                    return;
+                }
+                // Set Input Data.
+                byte[] data = readBinFile(inDataFile[index], (int) msTensor.size());
+                msTensor.setData(data);
+            }
+            // init output
+            List<MSTensor> outputs = new ArrayList<>();
+
+            // runner do predict
+            ret = runner.predict(inputs,outputs);
+            if (!ret) {
+                System.err.println("MindSpore Lite predict failed.");
+                runner.free();
+                return;
+            }
+            config.free();
+            for (int i = 0; i < inputs.size(); i++) {
+                inputs.get(i).free();
+            }
+            for (int i = 0; i < outputs.size(); i++) {
+                outputs.get(i).free();
+            }
+            runner.free();
+            System.out.println("========== model parallel runner predict success ==========");
+        }
 
         MSContext context = new MSContext();
-        context.init(1, 0);
-        boolean ret = context.addDeviceInfo(DeviceType.DT_CPU, false, 0);
-        if (!ret) {
-            System.err.println("Compile graph failed");
-            return;
+        if (args.length == 5 && args[4].equals("Ascend")) { // run on ascend
+            context.init();
+            AscendDeviceInfo ascendDeviceInfo = new AscendDeviceInfo();
+            int deviceId = Integer.valueOf(System.getenv().getOrDefault("ASCEND_DEVICE_ID", "0"));
+            ascendDeviceInfo.setDeviceID(deviceId);
+            boolean ret = context.addDeviceInfo(ascendDeviceInfo);
+            if (!ret) {
+                System.err.println("Add Ascend device info failed");
+                return;
+            }
+        } else {
+            context.init(1, 0);
+            boolean ret = context.addDeviceInfo(DeviceType.DT_CPU, false, 0);
+            if (!ret) {
+                System.err.println("Add CPU device info failed");
+                return;
+            }
         }
         model = new Model();
-        ret = model.build(modelPath, 0, context);
+        boolean ret = model.build(modelPath, ModelType.MT_MINDIR, context);
         if (!ret) {
             System.err.println("Compile graph failed, model path is " + modelPath);
             model.free();
-            return;
+            System.exit(1);
         }
         for (int index = 0; index < model.getInputs().size(); index++) {
             MSTensor msTensor = model.getInputs().get(index);
             if (msTensor.getDataType() != DataType.kNumberTypeFloat32) {
                 System.err.println("Input tensor data type is not float, the data type is " + msTensor.getDataType());
                 model.free();
-                return;
+                System.exit(1);
             }
             // Set Input Data.
             byte[] data = readBinFile(inDataFile[index], (int) msTensor.size());
+            if (data == null) {
+                System.err.println("read bin file failed: " + inDataFile[index]);
+                model.free();
+                System.exit(1);
+            }
             msTensor.setData(data);
         }
 
@@ -144,8 +223,9 @@ public class Benchmark {
         if (!ret) {
             System.err.println("MindSpore Lite run failed.");
             model.free();
-            return;
+            System.exit(1);
         }
+        System.out.println("MindSpore Lite infer success!");
 
         boolean benchmarkResult = compareData(benchmarkDataFile, accuracy);
         model.free();

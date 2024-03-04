@@ -22,11 +22,12 @@
 #include <string>
 #include <vector>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -43,11 +44,11 @@ abstract::ShapePtr SparseMatrixNNZInferShape(const PrimitivePtr &, const std::ve
   std::vector<int64_t> values =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex4]->BuildShape())[kShape];
 
-  const int64_t rank_x = dense_shape[0];
   const int kInputNoBatch = 2;
   const int kInputWithBatch = 3;
   const int kZero = 0;
   const int kOne = 1;
+
   if (!IsDynamicRank(dense_shape) && dense_shape.size() != kOne) {
     MS_EXCEPTION(ValueError) << "For SparseMatrixNNZ, x_dense_shape should be 1-D, but got " << dense_shape.size()
                              << "-D.";
@@ -68,6 +69,7 @@ abstract::ShapePtr SparseMatrixNNZInferShape(const PrimitivePtr &, const std::ve
     MS_EXCEPTION(ValueError) << "For SparseMatrixNNZ, x_values should be 1-D, but got " << values.size() << "-D.";
   }
 
+  const int64_t rank_x = dense_shape[0];
   if (rank_x > kZero && rank_x != kInputNoBatch && rank_x != kInputWithBatch) {
     MS_EXCEPTION(ValueError) << "For SparseMatrixNNZ, the shape of x_dense_shape must be (2,) or (3,), but got ("
                              << rank_x << ",).";
@@ -116,6 +118,24 @@ AbstractBasePtr SparseMatrixNNZInfer(const abstract::AnalysisEnginePtr &, const 
 }
 
 MIND_API_OPERATOR_IMPL(SparseMatrixNNZ, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseMatrixNNZ, prim::kPrimSparseMatrixNNZ, SparseMatrixNNZInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSparseMatrixNNZInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixNNZInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixNNZInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixNNZInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseMatrixNNZ, prim::kPrimSparseMatrixNNZ, AGSparseMatrixNNZInfer, false);
 }  // namespace ops
 }  // namespace mindspore

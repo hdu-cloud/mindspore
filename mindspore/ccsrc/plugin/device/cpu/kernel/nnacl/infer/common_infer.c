@@ -19,6 +19,40 @@
 #include <string.h>
 #include "nnacl/infer/infer_register.h"
 #include "nnacl/op_base.h"
+#include "nnacl/tensor_c_utils.h"
+#include "nnacl/tensorlist_c_utils.h"
+
+bool CheckShaleValid(TensorC **tensors, int tensors_size) {
+  for (int i = 0; i < tensors_size; i++) {
+    TensorC *t = tensors[i];
+    for (size_t j = 0; j < t->shape_size_; j++) {
+      if (t->shape_[j] == -1) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool CheckInferShapeDone(TensorC **in, int in_size, TensorC **out, int out_size) {
+  for (int i = 0; i < in_size; i++) {
+    TensorC *t = in[i];
+    for (size_t j = 0; j < t->shape_size_; j++) {
+      if (t->shape_[j] == -1) {
+        return false;
+      }
+    }
+  }
+  for (int i = 0; i < out_size; i++) {
+    TensorC *t = out[i];
+    for (size_t j = 0; j < t->shape_size_; j++) {
+      if (t->shape_[j] == -1) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
 
 void ShapeSet(int *dst_shape, size_t *dst_shape_size, const int *src_shape, size_t src_shape_size) {
   size_t i = 0;
@@ -28,12 +62,58 @@ void ShapeSet(int *dst_shape, size_t *dst_shape_size, const int *src_shape, size
   *dst_shape_size = i;
 }
 
+bool Int64ShapeSet(int *dst_shape, size_t *dst_shape_size, const int64_t *src_shape, size_t src_shape_size) {
+  if (dst_shape_size == NULL || dst_shape == NULL || src_shape == NULL) {
+    return false;
+  }
+  size_t i = 0;
+  for (; i < src_shape_size && i < MAX_SHAPE_SIZE; i++) {
+    if (MS_UNLIKELY(src_shape[i] > (int64_t)INT32_MAX || src_shape[i] < (int64_t)INT32_MIN)) {
+      return false;
+    }
+    dst_shape[i] = (int32_t)(src_shape[i]);
+  }
+  *dst_shape_size = i;
+  return true;
+}
+
 void ShapePush(int *shape, size_t *shape_size, int value) {
   if (*shape_size >= MAX_SHAPE_SIZE) {
     return;
   }
   shape[*shape_size] = value;
   *shape_size = *shape_size + 1;
+}
+
+int GetInt32DataFromTensor(const TensorC *tensor, int *result, size_t *result_size) {
+  if (tensor->data_ == NULL || result == NULL || result_size == NULL) {
+    return NNACL_ERR;
+  }
+  if (tensor->shape_size_ > MAX_SHAPE_SIZE) {
+    return NNACL_ERR;
+  }
+  int ele_num = GetElementNum(tensor);
+  if (ele_num <= 0) {
+    return NNACL_ERR;
+  }
+  *result_size = (size_t)ele_num;
+  if (tensor->data_type_ == kNumberTypeInt || tensor->data_type_ == kNumberTypeInt32) {
+    int *data = (int *)(tensor->data_);
+    for (int i = 0; i < ele_num; i++) {
+      result[i] = data[i];
+    }
+  } else if (tensor->data_type_ == kNumberTypeInt64) {
+    int64_t *data = (int64_t *)(tensor->data_);
+    for (int i = 0; i < ele_num; i++) {
+      if (data[i] >= INT32_MAX) {
+        return NNACL_ERR;
+      }
+      result[i] = (int32_t)data[i];
+    }
+  } else {
+    return NNACL_UNSUPPORTED_DATA_TYPE;
+  }
+  return NNACL_OK;
 }
 
 int ShapeInsert(int *shape, size_t *shape_size, int index, int value) {
@@ -110,7 +190,7 @@ int CommonGradInferShape(const TensorC *const *inputs, size_t inputs_size, Tenso
   if (!InferFlag(inputs, inputs_size)) {
     return NNACL_INFER_INVALID;
   }
-  MS_CHECK_TRUE_RET(inputs[0]->shape_size_ == inputs[1]->shape_size_, NNACL_ERR);
+  NNACL_CHECK_TRUE_RET(inputs[0]->shape_size_ == inputs[1]->shape_size_, NNACL_ERR);
   for (int i = 0; i < inputs[0]->shape_size_; i++) {
     if (inputs[0]->shape_[i] != inputs[1]->shape_[i]) {
       return NNACL_ERR;
@@ -205,7 +285,7 @@ bool InferFlag(const TensorC *const *inputs, size_t inputs_size) {
       }
     } else {
       for (size_t j = 0; j < inputs[i]->shape_size_; ++j) {
-        if (inputs[i]->shape_[j] == -1) {
+        if (inputs[i]->shape_[j] < 0) {
           return false;
         }
       }
@@ -255,3 +335,4 @@ REG_INFER(Sqrt, PrimType_Sqrt, CommonInferShape)
 REG_INFER(SqrtGrad, PrimType_SqrtGrad, CommonInferShape)
 REG_INFER(Square, PrimType_Square, CommonInferShape)
 REG_INFER(ZerosLike, PrimType_ZerosLike, CommonInferShape)
+REG_INFER(ScatterElements, PrimType_ScatterElements, CommonInferShape)

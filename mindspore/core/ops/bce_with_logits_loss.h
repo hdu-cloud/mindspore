@@ -18,11 +18,11 @@
 #define MINDSPORE_CORE_OPS_BCE_WITH_LOGITS_LOSS_H_
 
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -45,8 +45,9 @@ class MIND_API BCEWithLogitsLoss : public BaseOperator {
   /// \return reduction.
   std::string get_reduction() const;
 };
-abstract::AbstractBasePtr BCEWithLogitsLossInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr BCEWithLogitsLossInfer(const abstract::AnalysisEnginePtr &,
+                                                          const PrimitivePtr &primitive,
+                                                          const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_BCE_WITH_LOGITS_LOSS_H_

@@ -16,13 +16,13 @@
 
 #ifndef MINDSPORE_CORE_OPS_CONV2D_BACKPROP_FILTER_H_
 #define MINDSPORE_CORE_OPS_CONV2D_BACKPROP_FILTER_H_
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
 
-#include "ops/base_operator.h"
-#include "mindapi/base/types.h"
 #include "mindapi/base/format.h"
+#include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -63,8 +63,9 @@ class MIND_API Conv2DBackpropFilter : public BaseOperator {
   int64_t get_group() const;
   Format get_format() const;
 };
-abstract::AbstractBasePtr Conv2DBackpropFilterInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                    const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr Conv2DBackpropFilterInfer(const abstract::AnalysisEnginePtr &,
+                                                             const PrimitivePtr &primitive,
+                                                             const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

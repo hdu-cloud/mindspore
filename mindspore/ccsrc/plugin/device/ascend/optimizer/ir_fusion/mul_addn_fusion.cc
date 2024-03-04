@@ -16,10 +16,13 @@
 #include "plugin/device/ascend/optimizer/ir_fusion/mul_addn_fusion.h"
 #include <vector>
 #include <memory>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/ascend_op_name.h"
+#include "ops/math_ops.h"
+#include "ops/array_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "frontend/optimizer/opt.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -61,12 +64,19 @@ const AnfNodePtr MulAddNFusion::Process(const FuncGraphPtr &graph, const AnfNode
   if (addn == nullptr) {
     return nullptr;
   }
+  if (common::AnfAlgo::IsDynamicShape(addn)) {
+    return nullptr;
+  }
+
   auto mul_anf = addn->input(kIndex1);
   if (mul_anf == nullptr) {
     return nullptr;
   }
   auto mul = mul_anf->cast<CNodePtr>();
   if (mul == nullptr || common::AnfAlgo::GetInputTensorNum(mul) != kMulInputTensorNum) {
+    return nullptr;
+  }
+  if (common::AnfAlgo::IsDynamicShape(mul)) {
     return nullptr;
   }
   if (IsUsedByOthers(graph, mul)) {
@@ -83,9 +93,7 @@ const AnfNodePtr MulAddNFusion::Process(const FuncGraphPtr &graph, const AnfNode
       break;
     }
   }
-  if (common::AnfAlgo::IsDynamicShape(mul->input(lossscale_input_index))) {
-    return nullptr;
-  }
+
   auto constant_shape = common::AnfAlgo::GetOutputInferShape(mul->input(lossscale_input_index), 0);
   if (!(constant_shape.size() == 0 || (constant_shape.size() == 1 && constant_shape[0] == 1))) {
     MS_LOG(DEBUG) << "The const input of Mul node must be scalar or shape=(1,), but shape size is "

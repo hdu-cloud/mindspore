@@ -34,13 +34,18 @@ class RCnet(nn.Cell):
 TARGET = "GPU"
 
 def test_rc_graph_fp16_int64():
+    """
+    Feature: RandomCategorical gpu kernel
+    Description: test the correctness of shape and result
+    Expectation: success.
+    """
     context.set_context(mode=context.GRAPH_MODE, device_target=TARGET)
 
     x = Tensor(np.array([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]), ms.float16)
     num_sample = 10
     seed = 5
     dtype = ms.int64
-    expect = np.array([[4, 3, 2, 4, 4, 4, 3, 4, 1, 3], [4, 3, 2, 4, 4, 4, 3, 4, 1, 3]], dtype=np.int64)
+    expect = np.array([[4, 4, 2, 4, 4, 3, 4, 4, 4, 4], [3, 4, 4, 4, 2, 4, 0, 3, 4, 2]], dtype=np.int64)
 
     random_cateogoric = RCnet(dtype)
     output = random_cateogoric(x, num_sample, seed)
@@ -49,13 +54,18 @@ def test_rc_graph_fp16_int64():
     assert np.all(diff == 0)
 
 def test_rc_graph_fp32_int64():
+    """
+    Feature: RandomCategorical gpu kernel
+    Description: test the correctness of shape and result
+    Expectation: success.
+    """
     context.set_context(mode=context.GRAPH_MODE, device_target=TARGET)
 
     x = Tensor(np.array([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]), ms.float32)
     num_sample = 10
     seed = 5
     dtype = ms.int64
-    expect = np.array([[4, 3, 2, 4, 4, 4, 3, 4, 1, 3], [4, 3, 2, 4, 4, 4, 3, 4, 1, 3]], dtype=np.int64)
+    expect = np.array([[4, 4, 2, 4, 4, 3, 4, 4, 4, 4], [3, 4, 4, 4, 2, 4, 0, 3, 4, 2]], dtype=np.int64)
 
     random_cateogoric = RCnet(dtype)
     output = random_cateogoric(x, num_sample, seed)
@@ -64,13 +74,18 @@ def test_rc_graph_fp32_int64():
     assert np.all(diff == 0)
 
 def test_rc_graph_fp64_int64():
+    """
+    Feature: RandomCategorical gpu kernel
+    Description: test the correctness of shape and result
+    Expectation: success.
+    """
     context.set_context(mode=context.GRAPH_MODE, device_target=TARGET)
 
     x = Tensor(np.array([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]), ms.float64)
     num_sample = 10
     seed = 5
     dtype = ms.int64
-    expect = np.array([[4, 3, 2, 4, 4, 4, 3, 4, 1, 3], [4, 3, 2, 4, 4, 4, 3, 4, 1, 3]], dtype=np.int64)
+    expect = np.array([[4, 4, 2, 4, 4, 3, 4, 4, 4, 4], [3, 4, 4, 4, 2, 4, 0, 3, 4, 2]], dtype=np.int64)
 
     random_cateogoric = RCnet(dtype)
     output = random_cateogoric(x, num_sample, seed)
@@ -79,13 +94,18 @@ def test_rc_graph_fp64_int64():
     assert np.all(diff == 0)
 
 def test_rc_graph_fp16_int16():
+    """
+    Feature: RandomCategorical gpu kernel
+    Description: test the correctness of shape and result
+    Expectation: success.
+    """
     context.set_context(mode=context.GRAPH_MODE, device_target=TARGET)
 
     x = Tensor(np.array([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]), ms.float16)
     num_sample = 10
     seed = 5
     dtype = ms.int16
-    expect = np.array([[4, 3, 2, 4, 4, 4, 3, 4, 1, 3], [4, 3, 2, 4, 4, 4, 3, 4, 1, 3]], dtype=np.int16)
+    expect = np.array([[4, 4, 2, 4, 4, 3, 4, 4, 4, 4], [3, 4, 4, 4, 2, 4, 0, 3, 4, 2]], dtype=np.int16)
 
     random_cateogoric = RCnet(dtype)
     output = random_cateogoric(x, num_sample, seed)
@@ -94,13 +114,18 @@ def test_rc_graph_fp16_int16():
     assert np.all(diff == 0)
 
 def test_rc_graph_fp16_int32():
+    """
+    Feature: RandomCategorical gpu kernel
+    Description: test the correctness of shape and result
+    Expectation: success.
+    """
     context.set_context(mode=context.GRAPH_MODE, device_target=TARGET)
 
     x = Tensor(np.array([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]), ms.float16)
     num_sample = 10
     seed = 5
     dtype = ms.int32
-    expect = np.array([[4, 3, 2, 4, 4, 4, 3, 4, 1, 3], [4, 3, 2, 4, 4, 4, 3, 4, 1, 3]], dtype=np.int32)
+    expect = np.array([[4, 4, 2, 4, 4, 3, 4, 4, 4, 4], [3, 4, 4, 4, 2, 4, 0, 3, 4, 2]], dtype=np.int32)
 
     random_cateogoric = RCnet(dtype)
     output = random_cateogoric(x, num_sample, seed)
@@ -109,13 +134,18 @@ def test_rc_graph_fp16_int32():
     assert np.all(diff == 0)
 
 def test_rc_pynative_fp16_int64():
+    """
+    Feature: RandomCategorical gpu kernel
+    Description: test the correctness of shape and result
+    Expectation: success.
+    """
     context.set_context(mode=context.PYNATIVE_MODE, device_target=TARGET)
 
     x = Tensor(np.array([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]), ms.float16)
     num_sample = 10
     seed = 5
     dtype = ms.int64
-    expect = np.array([[4, 3, 2, 4, 4, 4, 3, 4, 1, 3], [4, 3, 2, 4, 4, 4, 3, 4, 1, 3]], dtype=np.int64)
+    expect = np.array([[4, 4, 2, 4, 4, 3, 4, 4, 4, 4], [3, 4, 4, 4, 2, 4, 0, 3, 4, 2]], dtype=np.int64)
 
     random_cateogoric = RCnet(dtype)
     output = random_cateogoric(x, num_sample, seed)
@@ -124,13 +154,18 @@ def test_rc_pynative_fp16_int64():
     assert np.all(diff == 0)
 
 def test_rc_pynative_fp32_int64():
+    """
+    Feature: RandomCategorical gpu kernel
+    Description: test the correctness of shape and result
+    Expectation: success.
+    """
     context.set_context(mode=context.PYNATIVE_MODE, device_target=TARGET)
 
     x = Tensor(np.array([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]), ms.float32)
     num_sample = 10
     seed = 5
     dtype = ms.int64
-    expect = np.array([[4, 3, 2, 4, 4, 4, 3, 4, 1, 3], [4, 3, 2, 4, 4, 4, 3, 4, 1, 3]], dtype=np.int64)
+    expect = np.array([[4, 4, 2, 4, 4, 3, 4, 4, 4, 4], [3, 4, 4, 4, 2, 4, 0, 3, 4, 2]], dtype=np.int64)
 
     random_cateogoric = RCnet(dtype)
     output = random_cateogoric(x, num_sample, seed)
@@ -139,13 +174,18 @@ def test_rc_pynative_fp32_int64():
     assert np.all(diff == 0)
 
 def test_rc_pynative_fp64_int64():
+    """
+    Feature: RandomCategorical gpu kernel
+    Description: test the correctness of shape and result
+    Expectation: success.
+    """
     context.set_context(mode=context.PYNATIVE_MODE, device_target=TARGET)
 
     x = Tensor(np.array([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]), ms.float64)
     num_sample = 10
     seed = 5
     dtype = ms.int64
-    expect = np.array([[4, 3, 2, 4, 4, 4, 3, 4, 1, 3], [4, 3, 2, 4, 4, 4, 3, 4, 1, 3]], dtype=np.int64)
+    expect = np.array([[4, 4, 2, 4, 4, 3, 4, 4, 4, 4], [3, 4, 4, 4, 2, 4, 0, 3, 4, 2]], dtype=np.int64)
 
     random_cateogoric = RCnet(dtype)
     output = random_cateogoric(x, num_sample, seed)
@@ -154,13 +194,18 @@ def test_rc_pynative_fp64_int64():
     assert np.all(diff == 0)
 
 def test_rc_pynative_fp16_int16():
+    """
+    Feature: RandomCategorical gpu kernel
+    Description: test the correctness of shape and result
+    Expectation: success.
+    """
     context.set_context(mode=context.PYNATIVE_MODE, device_target=TARGET)
 
     x = Tensor(np.array([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]), ms.float16)
     num_sample = 10
     seed = 5
     dtype = ms.int16
-    expect = np.array([[4, 3, 2, 4, 4, 4, 3, 4, 1, 3], [4, 3, 2, 4, 4, 4, 3, 4, 1, 3]], dtype=np.int16)
+    expect = np.array([[4, 4, 2, 4, 4, 3, 4, 4, 4, 4], [3, 4, 4, 4, 2, 4, 0, 3, 4, 2]], dtype=np.int16)
 
     random_cateogoric = RCnet(dtype)
     output = random_cateogoric(x, num_sample, seed)
@@ -169,13 +214,18 @@ def test_rc_pynative_fp16_int16():
     assert np.all(diff == 0)
 
 def test_rc_pynative_fp16_int32():
+    """
+    Feature: RandomCategorical gpu kernel
+    Description: test the correctness of shape and result
+    Expectation: success.
+    """
     context.set_context(mode=context.PYNATIVE_MODE, device_target=TARGET)
 
     x = Tensor(np.array([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]), ms.float16)
     num_sample = 10
     seed = 5
     dtype = ms.int32
-    expect = np.array([[4, 3, 2, 4, 4, 4, 3, 4, 1, 3], [4, 3, 2, 4, 4, 4, 3, 4, 1, 3]], dtype=np.int32)
+    expect = np.array([[4, 4, 2, 4, 4, 3, 4, 4, 4, 4], [3, 4, 4, 4, 2, 4, 0, 3, 4, 2]], dtype=np.int32)
 
     random_cateogoric = RCnet(dtype)
     output = random_cateogoric(x, num_sample, seed)
@@ -199,7 +249,7 @@ def test_rc_pynative_fp16_int32_dynamic_shape():
     num_sample = 10
     seed = 5
     dtype = ms.int32
-    expect = np.array([[4, 3, 2, 4, 4, 4, 3, 4, 1, 3], [4, 3, 2, 4, 4, 4, 3, 4, 1, 3]], dtype=np.int32)
+    expect = np.array([[4, 4, 2, 4, 4, 3, 4, 4, 4, 4], [3, 4, 4, 4, 2, 4, 0, 3, 4, 2]], dtype=np.int32)
     x_dyn = Tensor(shape=[None for _ in x.shape], dtype=x.dtype)
     random_cateogoric = RCnet(dtype)
     random_cateogoric.set_inputs(x_dyn, num_sample, seed)

@@ -22,13 +22,11 @@
 #include <stack>
 #include <string>
 #include <vector>
-
 #include "utils/hash_map.h"
 #include "utils/hash_set.h"
 #include "utils/convert_utils_base.h"
 #include "utils/any.h"
 #include "base/base_ref.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "base/base.h"
 #include "ir/anf.h"
 #include "ir/func_graph.h"
@@ -63,6 +61,8 @@ COMMON_EXPORT bool Isomorphic(const FuncGraphPtr &g1, const FuncGraphPtr &g2, Fu
 
 COMMON_EXPORT tensor::TensorPtr ScalarToTensor(const ScalarPtr &scalar);
 
+COMMON_EXPORT ValuePtr CreateValueFromTensor(const tensor::TensorPtr &tensor);
+
 template <typename T>
 std::vector<T> TensorValueToVector(const tensor::TensorPtr &tensor) {
   MS_EXCEPTION_IF_NULL(tensor);
@@ -77,14 +77,18 @@ std::vector<T> TensorValueToVector(const tensor::TensorPtr &tensor) {
 
 COMMON_EXPORT void TensorValueToTensor(const ValuePtr &value, std::vector<tensor::TensorPtr> *tensors);
 
-COMMON_EXPORT ValuePtr ShallowCopyTensorValue(const ValuePtr &value);
-
-COMMON_EXPORT size_t CountValueNum(const ValueTuplePtr &value_tuple);
+COMMON_EXPORT size_t CountValueNum(const ValueSequencePtr &value_sequence);
 
 COMMON_EXPORT bool IsAKGSparseOP(const AnfNodePtr &cnode);
 
 COMMON_EXPORT tensor::MetaSparseTensorPtr TensorListToSparseTensor(const abstract::AbstractBasePtr &abs_sparse,
                                                                    const tensor::TensorPtrList &tensor_list);
+// Convert base shape to shape vector, support the tuple shape.
+COMMON_EXPORT std::vector<ShapeVector> BaseShapeToShapeVector(const abstract::BaseShapePtr &base_shape);
+// Convert base shape to shape, not support the tuple shape.
+COMMON_EXPORT ShapeVector BaseShapeToShape(const abstract::BaseShapePtr &base_shape);
+
+COMMON_EXPORT ValuePtr UpdateValueByAttrDataType(const ValuePtr &value, const std::string &attr_data_type);
 }  // namespace mindspore
 
 #endif  // MINDSPORE_CCSRC_INCLUDE_COMMON_UTILS_CONVERT_UTILS_H_

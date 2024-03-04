@@ -21,6 +21,7 @@
 #include "nnacl/fp32/matmul_fp32.h"
 #include "nnacl/fp32/add_fp32.h"
 #include "nnacl/fp32/transpose_fp32.h"
+#include "nnacl/transpose_parameter.h"
 #include "nnacl/fp32/softmax_fp32.h"
 #include "nnacl/errorcode.h"
 
@@ -212,7 +213,7 @@ int PackAttentionBias(Matrix *matrix, int tile) {
   return NNACL_OK;
 }
 
-static void RelativeShiftPad(const float *input_data, float *output_data, const int *input_shape, int tid,
+static void RelativeShiftPad(const float *input_data, float *output_data, const int32_t *input_shape, int tid,
                              int thread_num) {
   int row = input_shape[0];
   int col = input_shape[1];
@@ -231,7 +232,7 @@ static void RelativeShiftPad(const float *input_data, float *output_data, const 
   }
 }
 
-static void RelativeShiftSlice(const float *input_data, float *output_data, const int *input_shape, int tid,
+static void RelativeShiftSlice(const float *input_data, float *output_data, const int32_t *input_shape, int tid,
                                int thread_num) {
   int row = input_shape[0];
   int col = input_shape[1];
@@ -357,10 +358,13 @@ void QWithPosition(RelativePositionAttentionParameter *param, Matrix *q_mat, con
     }
     // Q_WITH_U perm [0,2,1,3]
     float *q_with_pu_trans = q2wq_with_pu_trans_mat->data_;
-    size_t q_with_pu_trans_data_size =
-      q2wq_with_pu_trans_mat->batch_ * q2wq_with_pu_trans_mat->row_ * q2wq_with_pu_trans_mat->col_ * sizeof(float);
+    size_t q_with_pu_trans_data_size = (size_t)(q2wq_with_pu_trans_mat->batch_) *
+                                       (size_t)(q2wq_with_pu_trans_mat->row_) * (size_t)(q2wq_with_pu_trans_mat->col_) *
+                                       sizeof(float);
     memset(q_with_pu_trans, 0, q_with_pu_trans_data_size);
-    TransposeDimsFp32(q_with_pu, q_with_pu_trans, q_with_pos_trans_out_shape, &q_with_pos_trans_param, 0, 1);
+    TransposeDimsFp32(q_with_pu, q_with_pu_trans, q_with_pos_trans_out_shape, q_with_pos_trans_param.perm_,
+                      q_with_pos_trans_param.strides_, q_with_pos_trans_param.out_strides_,
+                      q_with_pos_trans_param.num_axes_, 0, 1);
   }
 
   // Q_WQ + POS_V
@@ -375,10 +379,13 @@ void QWithPosition(RelativePositionAttentionParameter *param, Matrix *q_mat, con
     }
     // Q_WITH_V perm [0,2,1,3]
     float *q_with_pv_trans = q2wq_with_pv_trans_mat->data_;
-    size_t q_with_pv_trans_data_size =
-      q2wq_with_pv_trans_mat->batch_ * q2wq_with_pv_trans_mat->row_ * q2wq_with_pv_trans_mat->col_ * sizeof(float);
+    size_t q_with_pv_trans_data_size = (size_t)(q2wq_with_pv_trans_mat->batch_) *
+                                       (size_t)(q2wq_with_pv_trans_mat->row_) * (size_t)(q2wq_with_pv_trans_mat->col_) *
+                                       sizeof(float);
     memset(q_with_pv_trans, 0, q_with_pv_trans_data_size);
-    TransposeDimsFp32(q_with_pv, q_with_pv_trans, q_with_pos_trans_out_shape, &q_with_pos_trans_param, 0, 1);
+    TransposeDimsFp32(q_with_pv, q_with_pv_trans, q_with_pos_trans_out_shape, q_with_pos_trans_param.perm_,
+                      q_with_pos_trans_param.strides_, q_with_pos_trans_param.out_strides_,
+                      q_with_pos_trans_param.num_axes_, 0, 1);
   }
 }
 
@@ -410,7 +417,8 @@ void KMulWeightK(RelativePositionAttentionParameter *param, Matrix *k_mat, const
   int k2wk_out_shape[] = {batch, num_heads, depth, param->k_seq_};
   int k2wk_perm[] = {0, 2, 3, 1};
   (void)GetTransposeParameter(&k2wk_trans_param, k2wk_in_shape, 4, k2wk_out_shape, 4, k2wk_perm, 4);
-  TransposeDimsFp32(k2wk, k2wk_trans_data, k2wk_out_shape, &k2wk_trans_param, 0, 1);
+  TransposeDimsFp32(k2wk, k2wk_trans_data, k2wk_out_shape, k2wk_trans_param.perm_, k2wk_trans_param.strides_,
+                    k2wk_trans_param.out_strides_, k2wk_trans_param.num_axes_, 0, 1);
 }
 
 void VMulWeightV(RelativePositionAttentionParameter *param, Matrix *v_mat, const Matrix *wv_mat, Matrix *bv_mat,
@@ -441,7 +449,8 @@ void VMulWeightV(RelativePositionAttentionParameter *param, Matrix *v_mat, const
   int v2wv_out_shape[] = {batch, num_heads, param->v_seq_, depth};
   int v2wv_perm[] = {0, 2, 1, 3};
   (void)GetTransposeParameter(&v2wv_trans_param, v2wv_in_shape, 4, v2wv_out_shape, 4, v2wv_perm, 4);
-  TransposeDimsFp32(v2wv, v2wv_trans_data, v2wv_out_shape, &v2wv_trans_param, 0, 1);
+  TransposeDimsFp32(v2wv, v2wv_trans_data, v2wv_out_shape, v2wv_trans_param.perm_, v2wv_trans_param.strides_,
+                    v2wv_trans_param.out_strides_, v2wv_trans_param.num_axes_, 0, 1);
 }
 
 void PMulWeightP(RelativePositionAttentionParameter *param, Matrix *p_mat, const Matrix *wp_mat, Matrix *p2wp_mat,
@@ -473,7 +482,8 @@ void PMulWeightP(RelativePositionAttentionParameter *param, Matrix *p_mat, const
   int p2wp_out_shape[] = {batch, num_heads, depth, param->p_seq_};
   int p2wp_perm[] = {0, 2, 3, 1};
   (void)GetTransposeParameter(&p2wp_trans_param, p2wp_in_shape, 4, p2wp_out_shape, 4, p2wp_perm, 4);
-  TransposeDimsFp32(p2wp_data, p2wp_trans_data, p2wp_out_shape, &p2wp_trans_param, 0, 1);
+  TransposeDimsFp32(p2wp_data, p2wp_trans_data, p2wp_out_shape, p2wp_trans_param.perm_, p2wp_trans_param.strides_,
+                    p2wp_trans_param.out_strides_, p2wp_trans_param.num_axes_, 0, 1);
 }
 
 void CalculateLogits(RelativePositionAttentionParameter *param, Matrix *q2wq_with_pu_trans_mat,
@@ -549,7 +559,9 @@ void RelPosAttention(RelativePositionAttentionParameter *param, Matrix *logits_m
   int logits2v_trans_perm[] = {0, 2, 1, 3};
   (void)GetTransposeParameter(&logits2v_trans_param, logits2v_trans_in_shape, 4, logits2v_trans_out_shape, 4,
                               logits2v_trans_perm, 4);
-  TransposeDimsFp32(logits2v_data, logits2v_trans_data, logits2v_trans_out_shape, &logits2v_trans_param, 0, 1);
+  TransposeDimsFp32(logits2v_data, logits2v_trans_data, logits2v_trans_out_shape, logits2v_trans_param.perm_,
+                    logits2v_trans_param.strides_, logits2v_trans_param.out_strides_, logits2v_trans_param.num_axes_, 0,
+                    1);
   // concat = reshape [batch, -1, d_model]
   logits2v_trans_mat->batch_ = batch;
   logits2v_trans_mat->row_ = param->q_seq_;

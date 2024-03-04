@@ -16,17 +16,29 @@
 
 #include "ops/div_no_nan.h"
 
-#include <algorithm>
-#include <complex>
 #include <map>
 #include <set>
 #include <string>
 
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "utils/tensor_construct_utils.h"
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "base/float16.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "mindapi/base/type_id.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -167,6 +179,27 @@ AbstractBasePtr DivNoNanInfer(const abstract::AnalysisEnginePtr &, const Primiti
   auto infer_shape = DivNoNanInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(DivNoNan, prim::kPrimDivNoNan, DivNoNanInfer, DivNoNanInferValue, true);
+
+// AG means auto generated
+class MIND_API AGDivNoNanInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DivNoNanInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DivNoNanInferType(primitive, input_args);
+  }
+  ValuePtr InferValue(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DivNoNanInferValue(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DivNoNanInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(DivNoNan, prim::kPrimDivNoNan, AGDivNoNanInfer, true);
 }  // namespace ops
 }  // namespace mindspore

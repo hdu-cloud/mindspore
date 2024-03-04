@@ -15,15 +15,26 @@
  */
 
 #include "ops/check_numerics.h"
-#include <string>
-#include <algorithm>
+
 #include <memory>
 #include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "mindapi/src/helper.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -54,6 +65,24 @@ AbstractBasePtr CheckNumericsInfer(const abstract::AnalysisEnginePtr &, const Pr
 }
 
 MIND_API_OPERATOR_IMPL(CheckNumerics, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(CheckNumerics, prim::kPrimCheckNumerics, CheckNumericsInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGCheckNumericsInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return CheckNumericsInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return CheckNumericsInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return CheckNumericsInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(CheckNumerics, prim::kPrimCheckNumerics, AGCheckNumericsInfer, false);
 }  // namespace ops
 }  // namespace mindspore

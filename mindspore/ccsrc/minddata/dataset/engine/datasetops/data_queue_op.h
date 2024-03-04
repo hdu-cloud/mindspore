@@ -16,6 +16,7 @@
 #ifndef MINDSPORE_CCSRC_MINDDATA_DATASET_ENGINE_DATASETOPS_DATA_QUEUE_OP_H_
 #define MINDSPORE_CCSRC_MINDDATA_DATASET_ENGINE_DATASETOPS_DATA_QUEUE_OP_H_
 
+#include <deque>
 #include <memory>
 #include <string>
 #include <utility>
@@ -66,7 +67,10 @@ class DataQueueOp : public PipelineOp {
 
   Status EoeReceived(int32_t worker_id) override;
 
-  void StopSend() { stop_send_ = true; }
+  void StopSend() {
+    stop_send_ = true;
+    send_finished_ = true;
+  }
 
   void ContinueSend() {
     MS_LOG(INFO) << "continue send at the beginning of the epoch";
@@ -78,6 +82,8 @@ class DataQueueOp : public PipelineOp {
   Status ClearDevice();
 
   Status GetDataInfo(DATA_INFO *data_info);
+
+  std::vector<std::vector<double>> GetSendInfo();
 
   // Name: Print()
   // Description: A function that prints info about the node
@@ -126,6 +132,20 @@ class DataQueueOp : public PipelineOp {
   Status SendDataToAscend();
   Status SendEpochEndToAscend(const TensorRow &curr_row, const bool &is_profiling_enable, int32_t *tdt_cost,
                               bool *is_break_loop);
+  // Queue control logic for mbuf in host, to prevent from hang/exit abnormally
+  Status WaitForAscendQueue(size_t batch_data_len);
+
+  // After multi-stage pipeline cache prefetch is enabled, data is not directly pushed to the device queue but to the
+  // cache queue first, and then pushed to the device queue after the cache analysis is complete. Push prefetch cache
+  // data to Ascend device queue.
+  Status PushPrefetchDataToAscend();
+  // Push origin data to Ascend cache queue.
+  Status PushDataToAscendCacheQueue(const TensorRow &curr_row);
+  // Push prefetch cache data to GPU device queue.
+  Status PushPrefetchDataToGPU();
+  // Push origin data to GPU cache queue.
+  Status PushDataToGPUCacheQueue(std::vector<device::DataQueueItem> &&data_items);
+
   void LimitSendingBatches(int64_t send_batch, int64_t *sending_num, const std::shared_ptr<ConfigManager> &cfg) const;
   Status SendRowToTdt(TensorRow curr_row, bool is_profiling_enable, int32_t *tdt_cost);
   // check status that push data into device
@@ -141,6 +161,9 @@ class DataQueueOp : public PipelineOp {
   Status WorkerEntry(int32_t worker_id);
   Status SetThreadDevice();
   Status CreateDynamicDataQueue();
+  double CalMbufQueueMemory(size_t realtime_queue_size);
+  void RecordProfilingData(bool is_profiling_enable, bool end_of_epoch, int32_t *connector_size,
+                           int32_t *connector_capacity, const int64_t *send_batch) const;
 
   QueueList<TensorRow> receive_queues_;
   std::vector<std::shared_ptr<MemoryPool>> pool_;
@@ -158,7 +181,25 @@ class DataQueueOp : public PipelineOp {
   Status DetectFirstBatch();
 
   // Detect the cost time of each batch, present alarm message if cost too long
-  void DetectPerBatchTime(const uint64_t *start_time, uint64_t *end_time) const;
+  void DetectPerBatchTime(const uint64_t *start_time, uint64_t *end_time);
+
+  // Send information in sink mode
+  struct SendInfo {
+    double epoch = 0;
+    double fetch_data_num = 0;
+    double fetch_data_time = 0;
+    double first_data_time = 0;
+    bool init = false;
+    void record_data(double t) {
+      if (!init) {
+        first_data_time = t;
+        init = true;
+      }
+      fetch_data_time += t;
+      fetch_data_num += 1;
+    }
+  };
+  std::vector<SendInfo> send_summary_;
 #endif
 
   std::unique_ptr<ChildIterator> child_iterator_;
@@ -175,11 +216,15 @@ class DataQueueOp : public PipelineOp {
   std::mutex data_info_mutex_;
   bool first_push_flag_;  // default: false, when first push, it will be true
   bool dynamic_shape_{false};
+  std::deque<double> memory_per_batch_;
   std::shared_ptr<device::DataQueue> ascend_data_queue_;
 
 #ifdef ENABLE_DUMP_IR
   std::shared_ptr<MDChannelInfo> md_channel_info_;
 #endif
+
+  // Whether to enable the cache prefetch multilevel pipeline, used in ps cache mode.
+  bool enable_prefetch_cache_pipeline_{false};
 };
 }  // namespace dataset
 }  // namespace mindspore

@@ -13,22 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "backend/common/optimizer/optimizer.h"
-
+#include "include/backend/optimizer/optimizer.h"
 #include <memory>
 #include <string>
 #include <vector>
 #include <utility>
-
-#include "backend/common/optimizer/pass_manager.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
-#include "include/common/utils/anfalgo.h"
-#include "ir/manager.h"
+#include "include/backend/optimizer/pass_manager.h"
+#include "include/backend/anf_runtime_algorithm.h"
 
 namespace mindspore {
 namespace opt {
 std::vector<AnfNodePtr> PatternPass::GetOrigNodes() const {
   std::vector<AnfNodePtr> orig_nodes;
+  MS_EXCEPTION_IF_NULL(equiv_);
   for (auto &prim_var : *primitive_vars_) {
     auto equiv_iter = equiv_->find(prim_var.second);
     if (equiv_iter == equiv_->end()) {

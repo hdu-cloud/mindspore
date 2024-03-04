@@ -54,8 +54,10 @@ class BACKEND_EXPORT DataQueue {
   virtual DataQueueStatus Front(std::vector<DataQueueItem> *data) const = 0;
   virtual DataQueueStatus Pop() = 0;
   virtual void SetThreadDevice() {}
-  virtual size_t Size() { return size_; }
-  virtual size_t Capacity() { return capacity_; }
+  virtual size_t Size() const { return size_; }
+  virtual size_t Capacity() const { return capacity_; }
+  virtual size_t QueryQueueSize() const { return 0; }
+  virtual std::string QueueType() const { return "Unknown"; }
 
  protected:
   const std::string channel_name_;

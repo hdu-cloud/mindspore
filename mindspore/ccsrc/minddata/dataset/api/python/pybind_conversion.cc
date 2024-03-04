@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -78,6 +78,15 @@ std::vector<pid_t> toIntVector(const py::list input_list) {
   if (!input_list.empty()) {
     std::transform(input_list.begin(), input_list.end(), std::back_inserter(vector),
                    [&](const py::handle &handle) { return static_cast<pid_t>(toInt(handle)); });
+  }
+  return vector;
+}
+
+std::vector<int64_t> toInt64Vector(const py::list input_list) {
+  std::vector<int64_t> vector;
+  if (!input_list.empty()) {
+    std::transform(input_list.begin(), input_list.end(), std::back_inserter(vector),
+                   [&](const py::handle &handle) { return static_cast<int64_t>(toInt64(handle)); });
   }
   return vector;
 }
@@ -240,6 +249,7 @@ std::vector<std::shared_ptr<CsvBase>> toCSVBase(py::list csv_bases) {
 
 Status ToJson(const py::handle &padded_sample, nlohmann::json *const padded_sample_json,
               std::map<std::string, std::string> *sample_bytes) {
+  RETURN_UNEXPECTED_IF_NULL(padded_sample_json);
   for (const py::handle &key : padded_sample) {
     if (py::isinstance<py::bytes>(padded_sample[key])) {
       (*sample_bytes)[py::str(key).cast<std::string>()] = padded_sample[key].cast<std::string>();
@@ -267,6 +277,7 @@ Status ToJson(const py::handle &padded_sample, nlohmann::json *const padded_samp
 
 Status toPadInfo(const py::dict &value,
                  std::map<std::string, std::pair<TensorShape, std::shared_ptr<Tensor>>> *pad_info) {
+  RETURN_UNEXPECTED_IF_NULL(pad_info);
   constexpr size_t kExpectedTupleSize = 2;
   for (auto p : value) {
     if (!p.second.is_none()) {
@@ -346,31 +357,6 @@ Status toIntMapTensor(py::dict value, std::unordered_map<std::int16_t, std::shar
     RETURN_IF_NOT_OK(Tensor::CreateFromNpArray(py::reinterpret_borrow<py::array>(p.second), &feat_tensor));
     (void)feature->insert({toInt(p.first), feat_tensor});
   }
-  return Status::OK();
-}
-
-Status convertNumpyData(const py::array &edges, const py::dict &node_feat, const py::dict &edge_feat,
-                        const py::dict &graph_feat, const py::array &node_type, const py::array &edge_type,
-                        std::shared_ptr<Tensor> *edge_tensor,
-                        std::unordered_map<std::int16_t, std::shared_ptr<Tensor>> *node_feat_map,
-                        std::unordered_map<std::int16_t, std::shared_ptr<Tensor>> *edge_feat_map,
-                        std::unordered_map<std::int16_t, std::shared_ptr<Tensor>> *graph_feat_map,
-                        std::shared_ptr<Tensor> *node_type_tensor, std::shared_ptr<Tensor> *edge_type_tensor) {
-  RETURN_IF_NOT_OK(Tensor::CreateFromNpArray(edges, edge_tensor));
-  if (!node_feat.empty()) {
-    RETURN_IF_NOT_OK(toIntMapTensor(node_feat, node_feat_map));
-  }
-
-  if (!edge_feat.empty()) {
-    RETURN_IF_NOT_OK(toIntMapTensor(edge_feat, edge_feat_map));
-  }
-
-  if (!graph_feat.empty()) {
-    RETURN_IF_NOT_OK(toIntMapTensor(graph_feat, graph_feat_map));
-  }
-
-  RETURN_IF_NOT_OK(Tensor::CreateFromNpArray(node_type, node_type_tensor));
-  RETURN_IF_NOT_OK(Tensor::CreateFromNpArray(edge_type, edge_type_tensor));
   return Status::OK();
 }
 }  // namespace dataset

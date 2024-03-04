@@ -3,32 +3,33 @@ mindspore.dataset.VOCDataset
 
 .. py:class:: mindspore.dataset.VOCDataset(dataset_dir, task='Segmentation', usage='train', class_indexing=None, num_samples=None, num_parallel_workers=None, shuffle=None, decode=False, sampler=None, num_shards=None, shard_id=None, cache=None, extra_metadata=False, decrypt=None)
 
-    读取和解析VOC数据集的源文件构建数据集。
+    VOC（Visual Object Classes）数据集。
 
     根据给定的 `task` 配置，生成数据集具有不同的输出列：
 
-    - `task` = 'Detection'，输出列： `[image, dtype=uint8]` , `[bbox, dtype=float32]` , `[label, dtype=uint32]` , `[difficult, dtype=uint32]` , `[truncate, dtype=uint32]` 。
-    - `task` = 'Segmentation'，输出列： `[image, dtype=uint8]` , `[target, dtype=uint8]` 。
+    - `task` 为 ``'Detection'`` ，输出列： `[image, dtype=uint8]` , `[bbox, dtype=float32]` , `[label, dtype=uint32]` , `[difficult, dtype=uint32]` , `[truncate, dtype=uint32]` 。
+    - `task` 为 ``'Segmentation'`` ，输出列： `[image, dtype=uint8]` , `[target, dtype=uint8]` 。
 
     参数：
         - **dataset_dir** (str) - 包含数据集文件的根目录的路径。
-        - **task** (str, 可选) - 指定读取VOC数据的任务类型，现在只支持 'Segmentation'和 'Detection'。默认值：'Segmentation'。
-        - **usage** (str, 可选) - 指定数据集的子集。默认值：'train'。
+        - **task** (str, 可选) - 指定读取VOC数据的任务类型，现在只支持 ``'Segmentation'`` 和 ``'Detection'`` 。默认值： ``'Segmentation'`` 。
+        - **usage** (str, 可选) - 指定数据集的子集。默认值： ``'train'`` 。
 
-          - 如果 'task' 的值为 'Segmentation'，则读取 'ImageSets/Segmentation/' 目录下定义的图片和label信息；
-          - 如果 'task' 的值为 'Detection' ，则读取 'ImageSets/Main/' 目录下定义的图片和label信息。
+          - 如果 `task` 的值为 ``'Segmentation'`` ，则读取 'ImageSets/Segmentation/' 目录下定义的图片和label信息；
+          - 如果 `task` 的值为 ``'Detection'`` ，则读取 'ImageSets/Main/' 目录下定义的图片和label信息。
+
         - **class_indexing** (dict, 可选) - 指定一个从label名称到label索引的映射，要求映射规则为string到int。索引值从0开始，并且要求每个label名称对应的索引值唯一。
-          仅在 'Detection' 任务中有效。默认值：None，不指定。
-        - **num_samples** (int, 可选) - 指定从数据集中读取的样本数。默认值：None，所有图像样本。
-        - **num_parallel_workers** (int, 可选) - 指定读取数据的工作线程数。默认值：None，使用mindspore.dataset.config中配置的线程数。
-        - **shuffle** (bool, 可选) - 是否混洗数据集。默认值：None。下表中会展示不同参数配置的预期行为。
-        - **decode** (bool, 可选) - 是否对读取的图片进行解码操作。默认值：False，不解码。
-        - **sampler** (Sampler, 可选) - 指定从数据集中选取样本的采样器。默认值：None。下表中会展示不同配置的预期行为。
-        - **num_shards** (int, 可选) - 指定分布式训练时将数据集进行划分的分片数。默认值：None。指定此参数后， `num_samples` 表示每个分片的最大样本数。
-        - **shard_id** (int, 可选) - 指定分布式训练时使用的分片ID号。默认值：None。只有当指定了 `num_shards` 时才能指定此参数。
-        - **cache** (DatasetCache, 可选) - 单节点数据缓存服务，用于加快数据集处理，详情请阅读 `单节点数据缓存 <https://www.mindspore.cn/tutorials/experts/zh-CN/r2.0.0-alpha/dataset/cache.html>`_ 。默认值：None，不使用缓存。
-        - **extra_metadata** (bool, 可选) - 用于指定是否额外输出一个数据列用于表示图片元信息。如果为True，则将额外输出一个名为 `[_meta-filename, dtype=string]` 的数据列。默认值：False。
-        - **decrypt** (callable, 可选) - 图像解密函数，接受加密的图片路径并返回bytes类型的解密数据。默认值：None，不进行解密。
+          仅在 'Detection' 任务中有效。默认值： ``None`` ，不指定。
+        - **num_samples** (int, 可选) - 指定从数据集中读取的样本数。默认值： ``None`` ，所有图像样本。
+        - **num_parallel_workers** (int, 可选) - 指定读取数据的工作线程数。默认值： ``None`` ，使用全局默认线程数(8)，也可以通过 :func:`mindspore.dataset.config.set_num_parallel_workers` 配置全局线程数。
+        - **shuffle** (bool, 可选) - 是否混洗数据集。默认值： ``None`` 。下表中会展示不同参数配置的预期行为。
+        - **decode** (bool, 可选) - 是否对读取的图片进行解码操作。默认值： ``False`` ，不解码。
+        - **sampler** (Sampler, 可选) - 指定从数据集中选取样本的采样器。默认值： ``None`` 。下表中会展示不同配置的预期行为。
+        - **num_shards** (int, 可选) - 指定分布式训练时将数据集进行划分的分片数。默认值： ``None`` 。指定此参数后， `num_samples` 表示每个分片的最大样本数。
+        - **shard_id** (int, 可选) - 指定分布式训练时使用的分片ID号。默认值： ``None`` 。只有当指定了 `num_shards` 时才能指定此参数。
+        - **cache** (:class:`~.dataset.DatasetCache`, 可选) - 单节点数据缓存服务，用于加快数据集处理，详情请阅读 `单节点数据缓存 <https://www.mindspore.cn/tutorials/experts/zh-CN/master/dataset/cache.html>`_ 。默认值： ``None`` ，不使用缓存。
+        - **extra_metadata** (bool, 可选) - 用于指定是否额外输出一个数据列用于表示图片元信息。如果为 ``True`` ，则将额外输出一个名为 `[_meta-filename, dtype=string]` 的数据列。默认值： ``False`` 。
+        - **decrypt** (callable, 可选) - 图像解密函数，接受加密的图片路径并返回bytes类型的解密数据。默认值： ``None`` ，不进行解密。
 
     异常：
         - **RuntimeError** - `dataset_dir` 路径下不包含任何数据文件。
@@ -40,41 +41,21 @@ mindspore.dataset.VOCDataset
         - **RuntimeError** - 指定了 `num_shards` 参数，但是未指定 `shard_id` 参数。
         - **RuntimeError** - 指定了 `shard_id` 参数，但是未指定 `num_shards` 参数。
         - **ValueError** - `num_parallel_workers` 参数超过系统最大线程数。
-        - **ValueError** - 指定的任务不为 'Segmentation'或 'Detection'。
-        - **ValueError** - 指定任务为 'Segmentation'时， `class_indexing` 参数不为None。
+        - **ValueError** - 指定的任务不为 ``'Segmentation'`` 或 ``'Detection'`` 。
+        - **ValueError** - 指定任务为 ``'Segmentation'`` 时， `class_indexing` 参数不为 ``None`` 。
         - **ValueError** - 与 `usage` 参数相关的txt文件不存在。
-        - **ValueError** - `shard_id` 参数错误，小于0或者大于等于 `num_shards` 。
+        - **ValueError** - 如果 `shard_id` 取值不在[0, `num_shards` )范围。
+
+    教程样例：
+        - `使用数据Pipeline加载 & 处理数据集
+          <https://www.mindspore.cn/docs/zh-CN/master/api_python/samples/dataset/dataset_gallery.html>`_
 
     .. note::
         - 当参数 `extra_metadata` 为True时，还需使用 `rename` 操作删除额外数据列 '_meta-filename'的前缀 '_meta-'，
           否则迭代得到的数据行中不会出现此额外数据列。
-        - 此数据集可以指定参数 `sampler` ，但参数 `sampler` 和参数 `shuffle` 的行为是互斥的。下表展示了几种合法的输入参数组合及预期的行为。
+        - 入参 `num_samples` 、 `shuffle` 、 `num_shards` 、 `shard_id` 可用于控制数据集所使用的采样器，其与入参 `sampler` 搭配使用的效果如下。
 
-    .. list-table:: 配置 `sampler` 和 `shuffle` 的不同组合得到的预期排序结果
-       :widths: 25 25 50
-       :header-rows: 1
-
-       * - 参数 `sampler`
-         - 参数 `shuffle`
-         - 预期数据顺序
-       * - None
-         - None
-         - 随机排列
-       * - None
-         - True
-         - 随机排列
-       * - None
-         - False
-         - 顺序排列
-       * - `sampler` 实例
-         - None
-         - 由 `sampler` 行为定义的顺序
-       * - `sampler` 实例
-         - True
-         - 不允许
-       * - `sampler` 实例
-         - False
-         - 不允许
+    .. include:: mindspore.dataset.sampler.rst
 
     **关于VOC数据集：**
 

@@ -21,7 +21,7 @@
 #include <memory>
 
 #include "actor/aid.h"
-#include "distributed/rpc/tcp/constants.h"
+#include "include/backend/distributed/rpc/tcp/constants.h"
 #include "distributed/rpc/tcp/tcp_socket_operation.h"
 
 namespace mindspore {
@@ -189,11 +189,11 @@ bool TCPComm::Initialize() {
   return true;
 }
 
-bool TCPComm::StartServerSocket(const std::string &url, const MemAllocateCallback &allocate_cb) {
+int TCPComm::StartServerSocket(const std::string &url, const MemAllocateCallback &allocate_cb) {
   server_fd_ = SocketOperation::Listen(url);
   if (server_fd_ < 0) {
-    MS_LOG(ERROR) << "Failed to call socket listen, url: " << url.c_str();
-    return false;
+    MS_LOG(WARNING) << "Failed to call socket listen, url: " << url.c_str();
+    return server_fd_;
   }
   url_ = url;
   allocate_cb_ = allocate_cb;
@@ -210,13 +210,13 @@ bool TCPComm::StartServerSocket(const std::string &url, const MemAllocateCallbac
                                                  reinterpret_cast<void *>(this));
   if (retval != RPC_OK) {
     MS_LOG(ERROR) << "Failed to add server event, url: " << url.c_str();
-    return false;
+    return -1;
   }
   MS_LOG(INFO) << "Start server succ, fd: " << server_fd_ << ", url: " << url.c_str();
-  return true;
+  return 0;
 }
 
-bool TCPComm::StartServerSocket(const MemAllocateCallback &allocate_cb) {
+int TCPComm::StartServerSocket(const MemAllocateCallback &allocate_cb) {
   auto ip = SocketOperation::GetLocalIP();
   // The port 0 means that the port will be allocated randomly by the os system.
   auto url = ip + ":0";
@@ -338,8 +338,8 @@ bool TCPComm::Send(MessageBase *msg, size_t *const send_bytes, bool sync) {
     std::string destination = msg->to.Url();
     Connection *conn = conn_pool_->FindConnection(destination);
     if (conn == nullptr) {
-      MS_LOG(ERROR) << "Can not found remote link and send fail name: " << msg->name.c_str()
-                    << ", from: " << msg->from.Url().c_str() << ", to: " << destination;
+      MS_LOG(WARNING) << "Can not found remote link and send fail name: " << msg->name.c_str()
+                      << ", from: " << msg->from.Url().c_str() << ", to: " << destination;
       DropMessage(msg);
       return false;
     }
@@ -392,7 +392,7 @@ bool TCPComm::Flush(const std::string &dst_url) {
     return false;
   } else {
     std::lock_guard<std::mutex> lock(*(conn->conn_mutex));
-    return (conn->Flush() > 0);
+    return (conn->Flush() >= 0);
   }
 }
 
@@ -450,14 +450,19 @@ bool TCPComm::Connect(const std::string &dst_url, const MemFreeCallback &free_cb
       conn = nullptr;
       return false;
     }
-    conn->source = SocketOperation::GetLocalIP() + ":" + std::to_string(SocketOperation::GetPort(sock_fd));
+    conn->source = SocketOperation::GetIP(sock_fd) + ":" + std::to_string(SocketOperation::GetPort(sock_fd));
     conn->destination = dst_url;
+    dst_url_to_src_ip_[dst_url] = SocketOperation::GetIP(sock_fd);
+    MS_LOG(INFO) << "Connection " << sock_fd << " source: " << conn->source << ", destination: " << conn->destination;
 
     // Check the state of this new created connection.
     uint32_t interval = 1;
     size_t retry = 3;
+    // Record total retry number to avoid duplicated log.
+    static size_t total_retry_count = 0;
     while (conn->state < ConnectionState::kConnected && retry-- > 0) {
-      MS_LOG(WARNING) << "Waiting for the state of the connection to " << dst_url << " to be connected...";
+      MS_LOG(WARNING) << "Waiting for the state of the connection to " << dst_url
+                      << " to be connected...Retry number: " << ++total_retry_count;
       (void)sleep(interval);
     }
     if (conn->state != ConnectionState::kConnected) {

@@ -14,7 +14,7 @@
 # ============================================================================
 """Context for recovery"""
 
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from mindspore._c_expression import RecoveryContext
 
 RECOVERY_CONTEXT = None
@@ -65,7 +65,8 @@ def _set_recovery_context(**kwargs):
 
     Args:
         ckpt_path (string): Set the recovery path used to save checkpoint. Default: ''.
-        need_reset (bool): Set whether should call reset minddata and load ckpt for disaster recovery. Default: False.
+        need_reset (bool): Set whether should call reset minddata and load ckpt for disaster recovery.
+            Default: ``False``.
 
     Raises:
         ValueError: If input key is not the attribute in recovery context.

@@ -22,11 +22,15 @@
 #include "nnacl/fp32_grad/optimizer.h"
 
 namespace mindspore::kernel {
+constexpr int kAdamLrIndex = 5;
+constexpr int kAdamGradIndex = 9;
+
 class AdamCPUKernel : public OptimizerKernel {
  public:
   explicit AdamCPUKernel(OpParameter *parameter, const std::vector<lite::Tensor *> &inputs,
                          const std::vector<lite::Tensor *> &outputs, const lite::InnerContext *ctx)
-      : OptimizerKernel(parameter, inputs, outputs, ctx, 5, 9), thread_count_(ctx->thread_num_) {
+      : OptimizerKernel(parameter, inputs, outputs, ctx, kAdamLrIndex, kAdamGradIndex),
+        thread_count_(ctx->thread_num_) {
     adam_param_ = reinterpret_cast<AdamParameter *>(parameter);
   }
   ~AdamCPUKernel() override {
@@ -41,6 +45,7 @@ class AdamCPUKernel : public OptimizerKernel {
   int DoExecute(int task_id);
   int OptimizerStep() override;
   std::vector<int> GetOptimizerParamsIdxs() const override;
+  std::vector<int> GetTrainableParamsIdxs() const override;
 
  private:
   int thread_count_;

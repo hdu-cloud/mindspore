@@ -16,6 +16,10 @@
 #include "frontend/optimizer/irpass/taylor_eliminate.h"
 #include <string>
 #include <vector>
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "ir/func_graph_cloner.h"
 #include "pipeline/pynative/pynative_execute.h"
 
@@ -145,8 +149,8 @@ bool ExpandTaylorPrim::operator()(const FuncGraphPtr &, const OptimizerPtr &opti
     MS_EXCEPTION_IF_NULL(taylor_fg_node);
     auto taylor_fg = GetValueNode<FuncGraphPtr>(taylor_fg_node);
     if (taylor_fg == nullptr) {
-      MS_LOG(EXCEPTION) << "Unexpected Taylor node, input func graph should not be null, node: "
-                        << taylor_fg_node->ToString();
+      MS_LOG(INTERNAL_EXCEPTION) << "Unexpected Taylor node, input func graph should not be null, node: "
+                                 << taylor_fg_node->ToString();
     }
     // Copy original forward graph in case of the influence of usage in other place.
     auto taylor_fg_copy = BasicClone(taylor_fg, true);

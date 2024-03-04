@@ -16,7 +16,7 @@
 import numpy as np
 from mindspore.ops import operations as P
 from mindspore.ops import composite as C
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from mindspore.common import dtype as mstype
 from .distribution import Distribution
 from ._utils.utils import check_greater_zero, check_distribution_name, raise_not_defined
@@ -26,20 +26,20 @@ from ._utils.custom_ops import exp_generic, log_generic, log1p_generic
 class Cauchy(Distribution):
     r"""
     Cauchy distribution.
-    A Cauchy distributio is a continuous distribution with the range :math:`[0, 1]`
+    A Cauchy distributio is a continuous distribution with the range of all real numbers
     and the probability density function:
 
     .. math::
         f(x, a, b) = 1 / \pi b(1 - ((x - a)/b)^2),
 
-    where a and b are loc and scale parameter respectively.
+    where :math:`a, b` are loc and scale parameter respectively.
 
     Args:
-        loc (int, float, list, numpy.ndarray, Tensor): The location of the Cauchy distribution. Default: None.
-        scale (int, float, list, numpy.ndarray, Tensor): The scale of the Cauchy distribution. Default: None.
-        seed (int): The seed used in sampling. The global seed is used if it is None. Default: None.
-        dtype (mindspore.dtype): The type of the event samples. Default: mstype.float32.
-        name (str): The name of the distribution. Default: 'Cauchy'.
+        loc (int, float, list, numpy.ndarray, Tensor): The location of the Cauchy distribution. Default: ``None`` .
+        scale (int, float, list, numpy.ndarray, Tensor): The scale of the Cauchy distribution. Default: ``None`` .
+        seed (int): The seed used in sampling. The global seed is used if it is None. Default: ``None`` .
+        dtype (mindspore.dtype): The type of the event samples. Default: ``mstype.float32`` .
+        name (str): The name of the distribution. Default: ``'Cauchy'`` .
 
     Note:
         `scale` must be greater than zero.
@@ -170,7 +170,6 @@ class Cauchy(Distribution):
         self.const = P.ScalarToTensor()
         self.dtypeop = P.DType()
         self.exp = exp_generic
-        self.fill = P.Fill()
         self.less = P.Less()
         self.log = log_generic
         self.log1p = log1p_generic

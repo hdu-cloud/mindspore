@@ -1,4 +1,4 @@
-# Copyright 2021 Huawei Technologies Co., Ltd
+# Copyright 2021-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ def create_dir(dir_path):
     is_exists = os.path.exists(dir_path)
     if not is_exists:
         try:
-            os.makedirs(dir_path, 0o750, exist_ok=True)
+            os.makedirs(dir_path, 0o700, exist_ok=True)
         except (OSError, TypeError) as excep:
             raise excep
         finally:
@@ -53,7 +53,7 @@ def write_to_file(file_path, content=""):
         return False
 
     with os.fdopen(os.open(file_path, os.O_WRONLY | os.O_CREAT, \
-        stat.S_IWUSR | stat.S_IRUSR | stat.S_IRGRP), 'w') as file_handler:
+                           stat.S_IWUSR | stat.S_IRUSR), 'w') as file_handler:
         file_handler.write(content)
     return True
 
@@ -66,7 +66,7 @@ class LocalLock:
     def __init__(self, lock_file):
         if not os.path.exists(lock_file):
             write_to_file(lock_file)
-        self.lock_fd = os.open(lock_file, os.O_WRONLY | os.O_CREAT, stat.S_IWUSR | stat.S_IRUSR | stat.S_IRGRP)
+        self.lock_fd = os.open(lock_file, os.O_WRONLY | os.O_CREAT, stat.S_IWUSR | stat.S_IRUSR)
 
     def __del__(self):
         try:
@@ -141,12 +141,12 @@ def get_soc_info(initialize_job_info):
     :return: soc info
     """
     soc_param = dict()
-    soc_param["op_impl_mode"] = initialize_job_info["SocInfo"]["op_impl_mode"]
     soc_param["op_debug_level"] = reset_op_debug_level_in_soc_info(initialize_job_info["SocInfo"]["op_debug_level"])
-    soc_param["op_impl_mode_list"] = initialize_job_info["SocInfo"]["op_impl_mode_list"]
+    soc_param["op_debug_config"] = initialize_job_info["SocInfo"]["op_debug_config"]
     soc_param["op_debug_dir"] = initialize_job_info["SocInfo"]["op_debug_dir"]
     soc_param["vector_fp_ceiling"] = initialize_job_info["SocInfo"]["vector_fp_ceiling"]
     soc_param['mdl_bank_path'] = initialize_job_info["SocInfo"]["mdl_bank_path"]
+    soc_param['te_version'] = initialize_job_info["SocInfo"]["te_version"]
     soc_param['op_bank_path'] = initialize_job_info["SocInfo"]["op_bank_path"]
     soc_param['kernel_meta_temp_dir'] = initialize_job_info["SocInfo"]["kernel_meta_temp_dir"]
 
@@ -247,7 +247,7 @@ def assemble_op_args(compute_op_info, is_single_op_build=False):
         attrs = []
         attrs_info = compute_op_info["attrs"] if "attrs" in compute_op_info.keys() else []
         for item in attrs_info:
-            if item["valid"] and item["name"] != "isRef":
+            if item["valid"]:
                 attrs.append(item)
     else:
         attrs = compute_op_info["attr_desc"] if "attr_desc" in compute_op_info.keys() else []
@@ -285,16 +285,25 @@ def get_options_info(job_content):
     options["l2Fusion"] = job_content["SocInfo"]["l2Fusion"]
     options["l2Mode"] = job_content["SocInfo"]["l2Mode"]
     options["op_debug_level"] = reset_op_debug_level_in_soc_info(job_content["SocInfo"]["op_debug_level"])
-    options["op_impl_mode"] = job_content["SocInfo"]["op_impl_mode"]
+    options["op_debug_config"] = job_content["SocInfo"]["op_debug_config"]
     options["op_debug_dir"] = job_content["SocInfo"]["op_debug_dir"]
     options["mdl_bank_path"] = job_content["SocInfo"]["mdl_bank_path"]
+    options["te_version"] = job_content["SocInfo"]["te_version"]
     options["op_bank_path"] = job_content["SocInfo"]["op_bank_path"]
     options["deviceId"] = job_content["SocInfo"]["deviceId"]
     options["autoTilingMode"] = job_content["SocInfo"]["autoTilingMode"]
-    options["op_impl_mode_list"] = job_content["SocInfo"]["op_impl_mode_list"]
     options["kernel_meta_temp_dir"] = job_content["SocInfo"]["kernel_meta_temp_dir"]
-    options["status_check"] = "false"
+    options["deterministic"] = "true" if job_content["SocInfo"]["deterministic"] else "false"
+    options["status_check"] = job_content["SocInfo"]["status_check"]
     return options
+
+
+def get_context_param():
+    """
+    Get context param
+    :return: context param
+    """
+    return {"prebuild_targets": ["pattern", "coreType"]}
 
 
 def get_fuzz_build_info(job_content):
@@ -336,10 +345,10 @@ def get_module_name(compute_op_info):
     :param compute_op_info:
     :return:
     """
-    dynamic_compile_static = compute_op_info["dynamic_compile_static"]
+    is_dynamic_impl = compute_op_info["is_dynamic_impl"]
     unknown_shape = compute_op_info["unknown_shape"]
     op_module_name = compute_op_info["module_name"]
-    if dynamic_compile_static or unknown_shape:
+    if is_dynamic_impl or unknown_shape:
         d = ".dynamic."
         op_module_name = d.join((op_module_name.split(".")[0], op_module_name.split(".")[-1]))
     return op_module_name

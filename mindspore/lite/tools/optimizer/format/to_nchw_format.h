@@ -24,14 +24,15 @@ namespace opt {
 class ToNCHWFormat : public ToFormatBase {
  public:
   explicit ToNCHWFormat(FmkType fmk_type = converter::kFmkTypeMs, bool train_flag = false,
-                        ModelType export_mindir = kMindIR_Lite)
-      : ToFormatBase(fmk_type, train_flag, export_mindir, "ToNCHWFormat") {
+                        ModelType save_type = kMindIR)
+      : ToFormatBase(fmk_type, train_flag, save_type, "ToNCHWFormat") {
     format_ = mindspore::NCHW;
   }
   ~ToNCHWFormat() = default;
 
- protected:
   STATUS GetTransNodeFormatType(const CNodePtr &cnode, opt::TransTypePair *trans_info) override;
+
+ protected:
   STATUS DecideConvWeightSrcAndDstFormat(const CNodePtr &cnode, schema::Format *src_format,
                                          schema::Format *dst_format) override;
 };

@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 #include <utility>
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
 #include "plugin/factory/ms_factory.h"
-#include "nnacl/base/tile_base.h"
 
 namespace mindspore {
 namespace kernel {
@@ -48,14 +47,7 @@ class RandomCategoricalCpuKernel : public NativeCpuKernelMod, public MatchKernel
   const std::vector<std::pair<KernelAttr, KernelRunFunc>> &GetFuncList() const override;
 
  protected:
-  std::vector<KernelAttr> GetOpSupport() override {
-    static std::vector<KernelAttr> support_list = {KernelAttr()
-                                                     .AddInputAttr(kNumberTypeFloat32)
-                                                     .AddInputAttr(kNumberTypeInt64)
-                                                     .AddInputAttr(kNumberTypeInt64)
-                                                     .AddOutputAttr(kNumberTypeInt32)};
-    return support_list;
-  }
+  std::vector<KernelAttr> GetOpSupport() override { return OpSupport(); };
 
   template <typename T1, typename T2>
   bool LaunchKernel(const std::vector<kernel::AddressPtr> &inputs, const std::vector<AddressPtr> &,
@@ -63,7 +55,8 @@ class RandomCategoricalCpuKernel : public NativeCpuKernelMod, public MatchKernel
 
  private:
   ShapeVector input_shape_;
-  int seed_{0};
+  int init_seed_{0};
+  bool init_state_{true};
   std::default_random_engine rng_;
 };
 }  // namespace kernel

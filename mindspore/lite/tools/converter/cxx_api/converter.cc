@@ -28,6 +28,13 @@ constexpr size_t kMaxConfigNumPerSection = 1000;
 namespace lite {
 int RunConverter(const std::shared_ptr<ConverterPara> &data_);
 }
+Converter::Converter() {
+  data_ = std::make_shared<ConverterPara>();
+  if (data_ == nullptr) {
+    MS_LOG(ERROR) << "Create ConverterPara failed";
+  }
+}
+
 Converter::Converter(converter::FmkType fmk_type, const std::vector<char> &model_file,
                      const std::vector<char> &output_file, const std::vector<char> &weight_file) {
   data_ = std::make_shared<ConverterPara>();
@@ -130,6 +137,12 @@ Format Converter::GetInputFormat() const {
   }
 }
 
+void Converter::SetOutputFormat(Format format) {
+  if (data_ != nullptr) {
+    data_->spec_output_format = format;
+  }
+}
+
 void Converter::SetInputDataType(DataType data_type) {
   if (data_ != nullptr) {
     data_->input_data_type = data_type;
@@ -158,15 +171,15 @@ DataType Converter::GetOutputDataType() {
   }
 }
 
-void Converter::SetExportMindIR(ModelType export_mindir) {
+void Converter::SetSaveType(ModelType save_type) {
   if (data_ != nullptr) {
-    data_->export_mindir = export_mindir;
+    data_->save_type = save_type;
   }
 }
 
-ModelType Converter::GetExportMindIR() const {
+ModelType Converter::GetSaveType() const {
   if (data_ != nullptr) {
-    return data_->export_mindir;
+    return data_->save_type;
   } else {
     return kMindIR_Lite;
   }
@@ -270,6 +283,20 @@ bool Converter::GetNoFusion() {
   }
 }
 
+void Converter::SetOptimizeTransformer(bool optimizeTransformer) {
+  if (data_ != nullptr) {
+    data_->optimize_transformer = optimizeTransformer;
+  }
+}
+
+bool Converter::GetOptimizeTransformer() {
+  if (data_ != nullptr) {
+    return data_->optimize_transformer;
+  } else {
+    return false;
+  }
+}
+
 void Converter::SetDevice(const std::vector<char> &device) {
   if (data_ != nullptr) {
     data_->device = CharToString(device);
@@ -282,6 +309,60 @@ std::vector<char> Converter::GetDeviceChar() {
     device = data_->device;
   }
   return StringToChar(device);
+}
+
+void Converter::SetDeviceId(int32_t device_id) {
+  if (data_ != nullptr) {
+    data_->aclModelOptionCfgParam.device_id = device_id;
+  }
+}
+
+int32_t Converter::GetDeviceId() {
+  if (data_ != nullptr) {
+    return data_->aclModelOptionCfgParam.device_id;
+  }
+  return 0;
+}
+
+void Converter::SetRankId(int32_t rank_id) {
+  if (data_ != nullptr) {
+    data_->aclModelOptionCfgParam.rank_id = rank_id;
+  }
+}
+
+int32_t Converter::GetRankId() {
+  if (data_ != nullptr) {
+    return data_->aclModelOptionCfgParam.rank_id;
+  }
+  return 0;
+}
+
+void Converter::SetProvider(const std::vector<char> &provider) {
+  if (data_ != nullptr) {
+    data_->provider = CharToString(provider);
+  }
+}
+
+std::vector<char> Converter::GetProviderChar() {
+  std::string provider = "";
+  if (data_ != nullptr) {
+    provider = data_->provider;
+  }
+  return StringToChar(provider);
+}
+
+void Converter::SetChipName(const std::vector<char> &chip_name) {
+  if (data_ != nullptr) {
+    data_->chip_name = CharToString(chip_name);
+  }
+}
+
+std::vector<char> Converter::GetChipNameChar() {
+  std::string chip_name = "";
+  if (data_ != nullptr) {
+    chip_name = data_->chip_name;
+  }
+  return StringToChar(chip_name);
 }
 
 Status Converter::Convert() {
@@ -311,5 +392,24 @@ void *Converter::Convert(size_t *data_size) {
     MS_LOG(ERROR) << "Convert model failed, data is null.";
   }
   return model_data;
+}
+
+Status Converter::Convert(converter::FmkType fmk_type, const std::vector<char> &model_file,
+                          const std::vector<char> &output_file, const std::vector<char> &weight_file) {
+  if (data_ != nullptr) {
+    data_->fmk_type = fmk_type;
+    data_->model_file = CharToString(model_file);
+    data_->output_file = CharToString(output_file);
+    data_->weight_file = CharToString(weight_file);
+    Status ret = Converter::Convert();
+    if (ret != kSuccess) {
+      MS_LOG(ERROR) << "Convert model " << CharToString(model_file) << " failed, ret=" << ret;
+    }
+    lite::ConverterInnerContext::GetInstance()->Free();
+    return ret;
+  } else {
+    MS_LOG(ERROR) << "Convert model " << CharToString(model_file) << " failed, data is null.";
+    return kLiteError;
+  }
 }
 }  // namespace mindspore

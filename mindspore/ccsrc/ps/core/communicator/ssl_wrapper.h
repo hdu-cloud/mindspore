@@ -24,7 +24,6 @@
 #include <assert.h>
 #include <openssl/pkcs12.h>
 #include <openssl/bio.h>
-
 #include <iostream>
 #include <string>
 #include <memory>
@@ -32,11 +31,10 @@
 #include <condition_variable>
 #include <mutex>
 #include <atomic>
-
 #include "utils/log_adapter.h"
 #include "ps/core/comm_util.h"
 #include "ps/core/file_configuration.h"
-#include "ps/constants.h"
+#include "include/backend/distributed/ps/constants.h"
 
 namespace mindspore {
 namespace ps {

@@ -20,19 +20,15 @@
 #include <string>
 #include <tuple>
 #include <vector>
-#include "mindspore/core/ops/core_ops.h"
+#include "mindspore/core/ops/sequence_ops.h"
 #include "ir/dtype.h"
 #include "ir/func_graph.h"
 #include "utils/anf_utils.h"
 #include "include/common/utils/utils.h"
-#include "common/graph_kernel/core/graph_kernel_utils.h"
+#include "tools/graph_kernel/common/utils.h"
+#include "backend/common/graph_kernel/core/graph_kernel_utils.h"
 
 namespace mindspore::graphkernel {
-// register the callback object
-#ifndef ENABLE_CLOUD_FUSION_INFERENCE
-GRAPH_KERNEL_CALLBACK_REGISTER(CallbackImpl);
-#endif
-
 ShapeVector CallbackImpl::GetInputShape(const AnfNodePtr &node, size_t i) { return GetInputInferShape(node, i); }
 
 ShapeVector CallbackImpl::GetOutputShape(const AnfNodePtr &node, size_t i) { return GetOutputInferShape(node, i); }
@@ -108,7 +104,7 @@ TypeId CallbackImpl::GetOutputInferType(const AnfNodePtr &node, size_t i) {
   return type_ptr->type_id();
 }
 
-std::string GetDefaultFormat() { return kOpFormat_NCHW; }
+std::string GetDefaultFormat() { return kOpFormat_DEFAULT; }
 
 std::string CallbackImpl::GetInputFormat(const AnfNodePtr &node, size_t i) {
   auto cnode = node->cast<CNodePtr>();
@@ -118,31 +114,35 @@ std::string CallbackImpl::GetInputFormat(const AnfNodePtr &node, size_t i) {
 }
 
 std::string CallbackImpl::GetOutputFormat(const AnfNodePtr &node, size_t i) {
-  if (node->isa<CNode>()) {
-    auto cnode = node->cast<CNodePtr>();
-    MS_EXCEPTION_IF_NULL(cnode);
-    if (!cnode->HasAttr(kOutputsFormat)) {
-      MS_LOG(EXCEPTION) << "Unknown format for node " << node->fullname_with_scope();
-    }
-    auto vec = GetValue<std::vector<std::string>>(cnode->GetAttr(kOutputsFormat));
-    if (i >= vec.size()) {
-      MS_LOG(EXCEPTION) << "Index " << i << " is out of the range of outputs_format vector "
-                        << cnode->GetAttr(kOutputsFormat)->ToString() << ". node is " << node->fullname_with_scope();
-    }
-    return vec[i];
-  } else if (node->isa<Parameter>()) {
-    if (params_format_.count(node) == 0) {
-      MS_LOG(EXCEPTION) << "Unknown format for parameter " << node->cast<ParameterPtr>()->name();
-    }
-    return params_format_[node];
+  if (node->isa<CNode>() || node->isa<Parameter>()) {
+    return GetOutputFormatFromAnfNode(node, 0);
   } else {
     return GetDefaultFormat();
   }
 }
 
-std::string CallbackImpl::GetProcessor(const AnfNodePtr &node) { return "cpu"; }
+std::string CallbackImpl::GetProcessor(const AnfNodePtr &node) {
+  auto target = GetTargetFromContextImpl(false);
+  if (target == "Ascend") {
+    return "aicore";
+  }
+  if (target == "GPU") {
+    return "cuda";
+  }
+  return "cpu";
+}
 
-std::string CallbackImpl::GetTargetFromContext() { return "CPU"; }
+std::string CallbackImpl::GetTargetFromContextImpl(bool detail) {
+  const auto &target = converter_param_->device;
+  if (target.find("Ascend") != std::string::npos) {
+    // target is Ascend/Ascend310/Ascend310P
+    if (!detail) {
+      return "Ascend";
+    }
+    return target == "Ascend" ? "Ascend910" : target;
+  }
+  return !target.empty() ? target : "CPU";
+}
 
 void CallbackImpl::SetGraphKernelNodeKernelInfo(const AnfNodePtr &node) {
   std::vector<std::string> graph_output_format;
@@ -162,7 +162,7 @@ void CallbackImpl::SetGraphKernelNodeKernelInfo(const AnfNodePtr &node) {
     auto kernel_with_index = AnfUtils::VisitKernel(outputs[i], 0);
     graph_output_format.push_back(GetOutputFormat(kernel_with_index.first, kernel_with_index.second));
   }
-  cnode->AddAttr(kOutputsFormat, MakeValue(graph_output_format));
+  SetKernelInfoWithFormatToAnfNode(node, graph_output_format);
 
   auto inner_fg = GetCNodeFuncGraph(cnode);
   MS_EXCEPTION_IF_NULL(inner_fg);
@@ -172,21 +172,16 @@ void CallbackImpl::SetGraphKernelNodeKernelInfo(const AnfNodePtr &node) {
 }
 
 void CallbackImpl::SetBasicNodeKernelInfo(const AnfNodePtr &node, const std::vector<inner::NodeBase> &outputs_info) {
-  if (node->isa<CNode>()) {
-    auto cnode = node->cast<CNodePtr>();
-    MS_EXCEPTION_IF_NULL(cnode);
-    std::vector<std::string> output_formats;
-    for (size_t i = 0; i < outputs_info.size(); ++i) {
-      output_formats.push_back(outputs_info[i].format);
-    }
-    cnode->AddAttr(kOutputsFormat, MakeValue(output_formats));
-  } else if (node->isa<Parameter>()) {
-    SaveParameterFormat(node, outputs_info[0].format);
+  std::vector<std::string> output_formats;
+  for (size_t i = 0; i < outputs_info.size(); ++i) {
+    output_formats.push_back(outputs_info[i].format);
   }
+  SetKernelInfoWithFormatToAnfNode(node, output_formats);
 }
 
 void CallbackImpl::SaveParameterFormat(const AnfNodePtr &node, const std::string &format) {
-  params_format_[node] = format;
+  std::vector<std::string> output_format(1, format);
+  SetKernelInfoWithFormatToAnfNode(node, output_format);
 }
 
 void CallbackImpl::SetEmptyKernelInfo(const AnfNodePtr &node) {}

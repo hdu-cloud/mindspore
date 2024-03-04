@@ -16,13 +16,8 @@
 
 #include "plugin/device/cpu/kernel/right_shift_cpu_kernel.h"
 #include <vector>
-#include <cmath>
-#include <type_traits>
 #include <memory>
-#include <functional>
-#include "plugin/device/cpu/hal/device/cpu_device_address.h"
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
-#include "plugin/device/cpu/kernel/arithmetic_cpu_kernel.h"
 
 namespace mindspore {
 namespace kernel {
@@ -102,12 +97,9 @@ bool RightShiftCpuKernelMod::IntCompute(const std::vector<AddressPtr> &inputs, c
     iter.SetPos(start);
     for (size_t i = start; i < end; i++) {
       T y_val = (input2[iter.GetInputPosB()]);
-      T bit_val = static_cast<T>(sizeof(T) * 8 - 1);
-      T zero = static_cast<T>(0);
-      if (y_val <= zero) {
-        y_val = zero;
-      } else if (y_val > bit_val) {
-        y_val = bit_val;
+      T bit_val = static_cast<T>(sizeof(T) * 8) > 32 ? static_cast<T>(sizeof(T) * 8) : 32;
+      if (abs(y_val) > bit_val) {
+        y_val = y_val % bit_val;
       }
       output[i] = static_cast<T>(input1[iter.GetInputPosA()] >> y_val);
       iter.GenNextPos();
@@ -137,9 +129,9 @@ bool RightShiftCpuKernelMod::UIntCompute(const std::vector<AddressPtr> &inputs,
     iter.SetPos(start);
     for (size_t i = start; i < end; i++) {
       T y_val = (input2[iter.GetInputPosB()]);
-      T bit_val = static_cast<T>(sizeof(T) * 8 - 1);
-      if (y_val > bit_val) {
-        y_val = bit_val;
+      T bit_val = static_cast<T>(sizeof(T) * 8) > 32 ? static_cast<T>(sizeof(T) * 8) : 32;
+      if (y_val > bit_val || y_val < -(bit_val)) {
+        y_val = y_val % bit_val;
       }
       output[i] = static_cast<T>(input1[iter.GetInputPosA()] >> y_val);
       iter.GenNextPos();

@@ -23,7 +23,7 @@ import threading
 import mindspore.context as context
 from mindspore import log as logger
 from mindspore import nn
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from mindspore.train._utils import _make_directory
 from mindspore.train.serialization import save_checkpoint, _save_graph
 from mindspore.parallel._cell_wrapper import destroy_allgather_cell
@@ -31,6 +31,8 @@ from mindspore.parallel._recovery_context import _set_recovery_context, _get_rec
 from mindspore.train.callback._callback import Callback, set_cur_net
 from mindspore.common.tensor import Tensor
 from mindspore.common.parameter import Parameter
+from mindspore._c_expression import _collect_host_info
+
 
 _cur_dir = os.getcwd()
 SAVE_DIR = _cur_dir
@@ -60,7 +62,7 @@ def _chg_ckpt_file_name_if_same_exist(directory, prefix, exception=False):
                     suffix_num = max(suffix_num, int(num)+1)
 
     if suffix_num != 0:
-        prefix = prefix + "_" + str(suffix_num)
+        prefix = f'{prefix}_{suffix_num}'
 
     return prefix
 
@@ -80,68 +82,63 @@ class CheckpointConfig:
         `keep_checkpoint_per_n_minutes` will be invalid.
 
     Args:
-        save_checkpoint_steps (int): Steps to save checkpoint. Default: 1.
+        save_checkpoint_steps (int): Steps to save checkpoint. Default: ``1`` .
         save_checkpoint_seconds (int): Seconds to save checkpoint.
-            Can't be used with save_checkpoint_steps at the same time. Default: 0.
-        keep_checkpoint_max (int): Maximum number of checkpoint files can be saved. Default: 5.
+            Can't be used with save_checkpoint_steps at the same time. Default: ``0`` .
+        keep_checkpoint_max (int): Maximum number of checkpoint files can be saved. Default: ``5`` .
         keep_checkpoint_per_n_minutes (int): Save the checkpoint file every `keep_checkpoint_per_n_minutes` minutes.
-            Can't be used with keep_checkpoint_max at the same time. Default: 0.
+            Can't be used with keep_checkpoint_max at the same time. Default: ``0`` .
         integrated_save (bool): Whether to merge and save the split Tensor in the automatic parallel scenario.
             Integrated save function is only supported in automatic parallel scene, not supported
-            in manual parallel. Default: True.
-        async_save (bool): Whether asynchronous execution saves the checkpoint to a file. Default: False.
+            in manual parallel. Default: ``True`` .
+        async_save (bool): Whether asynchronous execution saves the checkpoint to a file. Default: ``False`` .
         saved_network (Cell): Network to be saved in checkpoint file. If the saved_network has no relation
-            with the network in training, the initial value of saved_network will be saved. Default: None.
-        append_info (list): The information save to checkpoint file. Support "epoch_num", "step_num" and dict. The key
-            of dict must be str, the value of dict must be one of int, float, bool, Parameter or Tensor. Default: None
+            with the network in training, the initial value of saved_network will be saved. Default: ``None`` .
+        append_info (list): The information save to checkpoint file. Support "epoch_num", "step_num" and
+            dict. The key of dict must be str, the value of dict must be one of int, float, bool, Parameter or Tensor.
+            Default: ``None`` .
         enc_key (Union[None, bytes]): Byte type key used for encryption. If the value is None, the encryption
-                                      is not required. Default: None.
+                                      is not required. Default: ``None`` .
         enc_mode (str): This parameter is valid only when enc_key is not set to None. Specifies the encryption
-                        mode, currently supports 'AES-GCM', 'AES-CBC' and 'SM4-CBC'. Default: 'AES-GCM'.
-        exception_save (bool): Whether to save the current checkpoint when an exception occurs. Default: False.
+                        mode, currently supports 'AES-GCM', 'AES-CBC' and 'SM4-CBC'. Default: ``'AES-GCM'`` .
+        exception_save (bool): Whether to save the current checkpoint when an exception occurs. Default: ``False`` .
+        kwargs (dict): Configuration options dictionary.
 
     Raises:
         ValueError: If input parameter is not the correct type.
 
     Examples:
-        .. note::
-            Before running the following example, you need to customize the network LeNet5 and
-            dataset preparation function create_dataset. Refer to
-            `Building a Network <https://www.mindspore.cn/tutorials/en/r2.0.0-alpha/beginner/model.html>`_
-            and `Dataset <https://www.mindspore.cn/tutorials/en/r2.0.0-alpha/beginner/dataset.html>`_ .
-
         >>> from mindspore import nn
-        >>> from mindspore.common.initializer import Normal
         >>> from mindspore.train import Model, CheckpointConfig, ModelCheckpoint
         >>>
-        >>> class LeNet5(nn.Cell):
-        ...     def __init__(self, num_class=10, num_channel=1):
-        ...         super(LeNet5, self).__init__()
-        ...         self.conv1 = nn.Conv2d(num_channel, 6, 5, pad_mode='valid')
-        ...         self.conv2 = nn.Conv2d(6, 16, 5, pad_mode='valid')
-        ...         self.fc1 = nn.Dense(16 * 5 * 5, 120, weight_init=Normal(0.02))
-        ...         self.fc2 = nn.Dense(120, 84, weight_init=Normal(0.02))
-        ...         self.fc3 = nn.Dense(84, num_class, weight_init=Normal(0.02))
-        ...         self.relu = nn.ReLU()
-        ...         self.max_pool2d = nn.MaxPool2d(kernel_size=2, stride=2)
-        ...         self.flatten = nn.Flatten()
-        ...
-        ...     def construct(self, x):
-        ...         x = self.max_pool2d(self.relu(self.conv1(x)))
-        ...         x = self.max_pool2d(self.relu(self.conv2(x)))
-        ...         x = self.flatten(x)
-        ...         x = self.relu(self.fc1(x))
-        ...         x = self.relu(self.fc2(x))
-        ...         x = self.fc3(x)
-        ...         return x
-        >>>
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
         >>> net = LeNet5()
         >>> loss = nn.SoftmaxCrossEntropyWithLogits(sparse=True, reduction='mean')
         >>> optim = nn.Momentum(net.trainable_params(), 0.01, 0.9)
         >>> model = Model(net, loss_fn=loss, optimizer=optim)
-        >>> data_path = './MNIST_Data'
-        >>> dataset = create_dataset(data_path)
-        >>> config = CheckpointConfig(saved_network=net)
+        >>> # Create the dataset taking MNIST as an example. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/mnist.py
+        >>> dataset = create_dataset()
+        >>> config = CheckpointConfig(save_checkpoint_seconds=100, keep_checkpoint_per_n_minutes=5, saved_network=net)
+        >>> config.save_checkpoint_steps
+        1
+        >>> config.save_checkpoint_seconds
+        100
+        >>> config.keep_checkpoint_max
+        5
+        >>> config.keep_checkpoint_per_n_minutes
+        5
+        >>> config.integrated_save
+        True
+        >>> config.async_save
+        False
+        >>> config.saved_network
+        >>> config.enc_key
+        >>> config.enc_mode
+        'AES-GCM'
+        >>> config.append_dict
+        >>> config.get_checkpoint_policy
         >>> ckpoint_cb = ModelCheckpoint(prefix='LeNet5', directory='./checkpoint', config=config)
         >>> model.train(10, dataset, callbacks=ckpoint_cb)
     """
@@ -157,7 +154,8 @@ class CheckpointConfig:
                  append_info=None,
                  enc_key=None,
                  enc_mode='AES-GCM',
-                 exception_save=False):
+                 exception_save=False,
+                 **kwargs):
 
         if save_checkpoint_steps is not None:
             save_checkpoint_steps = Validator.check_non_negative_int(save_checkpoint_steps)
@@ -199,6 +197,7 @@ class CheckpointConfig:
         self._append_dict = self._handle_append_info(append_info)
         self._enc_key = Validator.check_isinstance('enc_key', enc_key, (type(None), bytes))
         self._enc_mode = Validator.check_isinstance('enc_mode', enc_mode, str)
+        self._map_param_inc = kwargs.get('incremental', False)
 
     @property
     def save_checkpoint_steps(self):
@@ -299,6 +298,16 @@ class CheckpointConfig:
         """
         return self._append_dict
 
+    @property
+    def map_param_inc(self):
+        """
+        Get the value of whether to save map Parameter incrementally.
+
+        Returns:
+            Bool, whether to save map Parameter incrementally.
+        """
+        return self._map_param_inc
+
     def get_checkpoint_policy(self):
         """
         Get the policy of checkpoint.
@@ -327,6 +336,8 @@ class CheckpointConfig:
             handle_append_info["epoch_num"] = 0
         if "step_num" in append_info:
             handle_append_info["step_num"] = 0
+        if "random_op" in append_info:
+            handle_append_info["random_op"] = 0
         dict_num = 0
         for element in append_info:
             if not isinstance(element, str) and not isinstance(element, dict):
@@ -365,15 +376,30 @@ class ModelCheckpoint(Callback):
         parameters of the optimizer by default.
 
     Args:
-        prefix (str): The prefix name of checkpoint files. Default: "CKP".
+        prefix (str): The prefix name of checkpoint files. Default: ``'CKP'`` .
         directory (str): The path of the folder which will be saved in the checkpoint file.
-            By default, the file is saved in the current directory. Default: None.
-        config (CheckpointConfig): Checkpoint strategy configuration. Default: None.
+            By default, the file is saved in the current directory. Default: ``None`` .
+        config (CheckpointConfig): Checkpoint strategy configuration. Default: ``None`` .
 
     Raises:
         ValueError: If `prefix` is not str or contains the '/' character.
         ValueError: If `directory` is not str.
         TypeError: If the config is not CheckpointConfig type.
+
+    Examples:
+        >>> import numpy as np
+        >>> import mindspore.dataset as ds
+        >>> from mindspore import nn
+        >>> from mindspore.train import Model, ModelCheckpoint
+        >>>
+        >>> data = {"x": np.float32(np.random.rand(64, 10)), "y": np.random.randint(0, 5, (64,))}
+        >>> train_dataset = ds.NumpySlicesDataset(data=data).batch(32)
+        >>> net = nn.Dense(10, 5)
+        >>> crit = nn.SoftmaxCrossEntropyWithLogits(sparse=True, reduction='mean')
+        >>> opt = nn.Momentum(net.trainable_params(), 0.01, 0.9)
+        >>> ckpt_callback = ModelCheckpoint(prefix="myckpt")
+        >>> model = Model(network=net, optimizer=opt, loss_fn=crit)
+        >>> model.train(2, train_dataset, callbacks=[ckpt_callback])
     """
 
     def __init__(self, prefix='CKP', directory=None, config=None):
@@ -416,6 +442,7 @@ class ModelCheckpoint(Callback):
         self._append_step_num = self._append_dict.get("step_num") if "step_num" in self._append_dict else 0
         self._graph_saved = False
         self._need_flush_from_cache = True
+        self._map_param_inc = self._config.map_param_inc
 
     def step_end(self, run_context):
         """
@@ -425,7 +452,7 @@ class ModelCheckpoint(Callback):
             run_context (RunContext): Context of the train running.
         """
         cb_params = run_context.original_args()
-
+        _collect_host_info("Callback", "ModelCheckpoint", "step_end", level=1)
         # In disaster recovery scenario, the training process may be rolled back to the last step where
         # the ckpt was successfully saved, so the _last_triggered_step should be updated.
         if _get_recovery_context("enable_recovery") and cb_params.last_save_ckpt_step is not None:
@@ -454,6 +481,7 @@ class ModelCheckpoint(Callback):
             run_context (RunContext): Context of the train running.
         """
         cb_params = run_context.original_args()
+        _collect_host_info("Callback", "ModelCheckpoint", "end", level=1)
         _to_save_last_ckpt = True
 
         self._save_ckpt(cb_params, _to_save_last_ckpt)
@@ -513,7 +541,9 @@ class ModelCheckpoint(Callback):
             self._last_time_for_keep = time.time()
             self._last_triggered_step = cb_params.cur_step_num
 
-            if context.get_context("enable_ge"):
+            # TODO(MS_DISABLE_REF_MODE): Delete when remove MS_DISABLE_REF_MODE env.
+            if context.get_context("enable_ge") and os.getenv('MS_DISABLE_REF_MODE') \
+                    and context.get_context("mode") == context.GRAPH_MODE:
                 set_cur_net(cb_params.train_network)
                 cb_params.train_network.exec_checkpoint_graph()
             if "epoch_num" in self._append_dict:
@@ -522,7 +552,8 @@ class ModelCheckpoint(Callback):
                 self._append_dict["step_num"] = self._append_step_num + cb_params.cur_step_num
             network = self._config.saved_network if self._config.saved_network is not None else cb_params.train_network
             save_checkpoint(network, cur_file, self._config.integrated_save, self._config.async_save,
-                            self._append_dict, self._config.enc_key, self._config.enc_mode)
+                            self._append_dict, self._config.enc_key, self._config.enc_mode,
+                            incremental=self._map_param_inc)
 
             self._latest_ckpt_file_name = cur_file
 

@@ -56,8 +56,7 @@ void GluGradCpuKernelMod::InitKernel(const CNodePtr &kernel_node) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_
                       << "', x.shape must be euqal to grad.shape except for grad.shape[axis]=x.shape[axis]"
                          "/2,  but got axis="
-                      << axis_value << ", x.shape=" << Vector2Str(x_shape_)
-                      << " and grad.shape=" << Vector2Str(grad_shape_) << ".";
+                      << axis_value << ", x.shape=" << x_shape_ << " and grad.shape=" << grad_shape_ << ".";
   }
 }
 
@@ -80,9 +79,9 @@ bool GluGradCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &inputs, 
 
 template <typename T>
 void GluGradCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &outputs) {
-  const auto *input0 = reinterpret_cast<T *>(inputs[0]->addr);
-  const auto *input1 = reinterpret_cast<T *>(inputs[1]->addr);
-  auto *output = reinterpret_cast<T *>(outputs[0]->addr);
+  const auto *input0 = static_cast<T *>(inputs[0]->addr);
+  const auto *input1 = static_cast<T *>(inputs[1]->addr);
+  auto *output = static_cast<T *>(outputs[0]->addr);
   std::vector<int64_t> shape = x_shape_;
   int64_t dim = axis_;
   size_t lens = outputs[0]->size > 0 ? outputs[0]->size / sizeof(T) : 1;

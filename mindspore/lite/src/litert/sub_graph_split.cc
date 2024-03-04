@@ -28,17 +28,13 @@
 #include "src/litert/scheduler.h"
 #include "src/litert/tensor_category.h"
 #include "nnacl/pooling_parameter.h"
-#include "nnacl/split_parameter.h"
-#include "nnacl/reduce_parameter.h"
-#include "nnacl/reshape_parameter.h"
-#include "nnacl/concat_parameter.h"
 #include "include/model.h"
 #include "nnacl/base/conv_common_base.h"
 
 namespace {
 constexpr const int kMaxDepth = 2048;
+constexpr const int kInitBufferSize = 1024;
 constexpr int kOperatorMaxThreadNum = 16;
-constexpr size_t kInitialSize = 1024;
 }  // namespace
 
 namespace mindspore::lite {
@@ -104,7 +100,7 @@ bool SearchSubGraph::CheckIsParallelSubGraph(const std::vector<Subgraph> &subgra
 
     // 1. check head_node's input is SplitOverlap node
     for (const auto &input : head_node->input_indices_) {
-      if (tensors_.at(input).type_ == CONST) {
+      if (tensors_.at(input).type_ == CONSTANT) {
         continue;
       }
       auto input_node_index = tensors_.at(input).out_nodes_.front();
@@ -116,7 +112,7 @@ bool SearchSubGraph::CheckIsParallelSubGraph(const std::vector<Subgraph> &subgra
 
     // 2. check end_node's output is concat node
     for (const auto &output : end_node->output_indices_) {
-      if (tensors_.at(output).type_ == CONST) {
+      if (tensors_.at(output).type_ == CONSTANT) {
         continue;
       }
       auto output_node_index = tensors_.at(output).in_nodes_.front();
@@ -205,7 +201,7 @@ SearchSubGraph::CostModel SearchSubGraph::CalculateConv2DFusion(const LiteGraph:
 }
 
 const schema::Primitive *SearchSubGraph::CreatePartialPrimitive(int64_t subgraph_index) {
-  flatbuffers::FlatBufferBuilder fbb(1024);
+  flatbuffers::FlatBufferBuilder fbb(kInitBufferSize);
   auto val_offset = schema::CreatePartialFusion(fbb, subgraph_index);
   auto prim_offset = schema::CreatePrimitive(fbb, schema::PrimitiveType_PartialFusion, val_offset.o);
   fbb.Finish(prim_offset);
@@ -280,7 +276,7 @@ void SearchSubGraph::ConvertSubGraphToModel(std::vector<Subgraph> *sub_graphs) {
       LiteGraph::Node *head_node = model_->graph_.all_nodes_[head_index];
       std::vector<uint32_t> inputs = head_node->input_indices_;
       for (auto input : inputs) {
-        if (tensors_[input].type_ == CONST) {
+        if (tensors_[input].type_ == CONSTANT) {
           continue;
         }
         if (std::find(new_sub_graph->input_indices_.begin(), new_sub_graph->input_indices_.end(), input) !=
@@ -363,8 +359,9 @@ void SearchSubGraph::SearchMultyInNodes(std::vector<uint32_t> *multy_in_nodes) {
     if (IsPartialNode(node->primitive_, model_->GetSchemaVersion())) {
       continue;
     }
-    int input_count = std::count_if(node->input_indices_.begin(), node->input_indices_.end(),
-                                    [&](uint32_t in_tensor_index) { return tensors_[in_tensor_index].type_ != CONST; });
+    int input_count =
+      std::count_if(node->input_indices_.begin(), node->input_indices_.end(),
+                    [&](uint32_t in_tensor_index) { return tensors_[in_tensor_index].type_ != CONSTANT; });
     if (input_count > 1) {
       multy_in_nodes->push_back(node_index);
     }
@@ -377,7 +374,7 @@ void SearchSubGraph::RemoveConstNode(std::vector<uint32_t> *nodes) {
   while (!stop_search) {
     stop_search = true;
     for (size_t i = 0; i < nodes->size(); i++) {
-      if (tensors_[nodes->at(i)].type_ == CONST) {
+      if (tensors_[nodes->at(i)].type_ == CONSTANT) {
         VectorErase(nodes, nodes->at(i));
         stop_search = false;
         break;
@@ -600,7 +597,7 @@ void SearchSubGraph::InitMiddleSubgraph(const std::vector<uint32_t> *multy_in_no
     LiteGraph::Node *node = node_list_[node_index];
     for (uint32_t input_tensor_index : node->input_indices_) {
       Tensor *tensor = &tensors_[input_tensor_index];
-      if (tensor->type_ == CONST || tensor->type_ == INPUT) continue;
+      if (tensor->type_ == CONSTANT || tensor->type_ == INPUT) continue;
 
       std::vector<uint32_t> input_nodes = tensor->out_nodes_;
       if (input_nodes.empty()) continue;
@@ -666,7 +663,7 @@ void SearchSubGraph::InitSearchTensor() {
     }
     auto category = TensorCategory(*src_tensor);
     if (category == mindspore::lite::Category::CONST_TENSOR || category == mindspore::lite::Category::CONST_SCALAR) {
-      tensors_[i].type_ = CONST;
+      tensors_[i].type_ = CONSTANT;
     }
   }
   std::vector<uint32_t> graph_input = model_->graph_.sub_graphs_[0]->input_indices_;
@@ -871,7 +868,7 @@ void SearchSubGraph::SubGraphSplitByOffLineParallel() {
     std::vector<Subgraph> node_subs;
     for (uint32_t input_tensor_index : node->input_indices_) {
       Tensor *tensor = &tensors_[input_tensor_index];
-      if (tensor->type_ == CONST) continue;
+      if (tensor->type_ == CONSTANT) continue;
       std::vector<uint32_t> input_nodes = tensor->out_nodes_;
       Subgraph sub;
       sub.ends_.push_back(input_nodes[0]);
@@ -911,7 +908,7 @@ void SearchSubGraph::SubGraphSplitByOffLineParallel() {
 
 SearchSubGraph::SearchSubGraph(const InnerContext *context, Model *model, std::vector<lite::Tensor *> *src_tensors,
                                const std::map<int, OpParameter *> *op_parameters, std::vector<size_t> *output_nodes)
-    : output_nodes_(output_nodes), context_(context), src_tensors_(src_tensors), op_parameters_(op_parameters) {
+    : context_(context), src_tensors_(src_tensors), output_nodes_(output_nodes), op_parameters_(op_parameters) {
   model_ = reinterpret_cast<LiteModel *>(model);
 
   major_dt_ = DT_CPU;
@@ -929,8 +926,6 @@ SearchSubGraph::SearchSubGraph(const InnerContext *context, Model *model, std::v
     major_thread_ = UP_DIV(context_->thread_num_, kDefaultSubGraphSize);
     minor_thread_ = static_cast<size_t>(context_->thread_num_ - major_thread_);
   }
-  MS_ASSERT(major_thread_ > 0);
-  MS_ASSERT(minor_thread_ > 0);
 
   InitSearchTensor();
   return;
@@ -975,7 +970,7 @@ void SearchSubGraph::InsertParallelNode(uint32_t index, Subgraph *subgraph) {
 
   /* remove const node */
   for (int i = static_cast<int>(input.size()) - 1; i >= 0; i--) {
-    if (tensors_[input[i]].type_ == CONST) {
+    if (tensors_[input[i]].type_ == CONSTANT) {
       VectorErase(&input, input[i]);
     }
   }
@@ -1046,6 +1041,9 @@ void SearchSubGraph::CheckSubHeadEnd(Subgraph *sub) {
 bool SearchSubGraph::ValidInParallel() {
   LiteGraph::Node *front_node = model_->graph_.all_nodes_.at(0);
   if (front_node->quant_type_ != schema::QuantType_QUANT_NONE) {
+    return false;
+  }
+  if (major_thread_ < 1 || minor_thread_ < 1) {
     return false;
   }
   if (major_dt_ == DT_NPU) {
@@ -1163,262 +1161,5 @@ void SearchSubGraph::SubGraphSplitByOperator() {
     }
   }
   ConvertSubGraphToModel(&sub_graphs_);
-}
-
-void SearchSubGraph::DoOnlineFusion() {
-  DoSplitReduceConcatFusionPass();  // split + reduce + concat op fusion
-}
-
-void SearchSubGraph::DoSplitReduceConcatFusionPass() {
-  node_list_ = model_->graph_.all_nodes_;
-  // loop all node
-  for (uint32_t i = 0; i < node_list_.size(); i++) {
-    // the first node is split op
-    if (DoSplitReduceConcatFusion(i)) {
-      MS_LOG(INFO) << "split + reduce + concat op fusion to custom op success.";
-    }
-  }
-  return;
-}
-
-OpParameter *SearchSubGraph::GetNodeOpParameter(LiteGraph::Node *node) {
-  MS_ASSERT(node != nullptr);
-  auto primitive = node->primitive_;
-  auto split_param_func = PopulateRegistry::GetInstance()->GetParameterCreator(
-    GetPrimitiveType(primitive, SCHEMA_VERSION::SCHEMA_CUR), SCHEMA_VERSION::SCHEMA_CUR);
-  if (split_param_func == nullptr) {
-    return nullptr;
-  }
-  return split_param_func(primitive);
-}
-
-std::vector<std::vector<uint32_t>> SearchSubGraph::GetNextNodeIndex(LiteGraph::Node *cur_node) {
-  // reducefusion
-  std::vector<std::vector<uint32_t>> next_node;
-  auto &cur_node_output_tensor_indices = cur_node->output_indices_;
-  for (auto &cur_node_output_tensor_indice : cur_node_output_tensor_indices) {
-    auto &cur_node_output_tensor = tensors_.at(cur_node_output_tensor_indice);
-    next_node.emplace_back(cur_node_output_tensor.in_nodes_);
-  }
-  return next_node;
-}
-
-bool SearchSubGraph::SatifyReduceReshapeConcatParse(Subgraph *subgraph, uint32_t in_node, int split_concat_axis) {
-  // reduce op
-  uint32_t reduce_node1_index = in_node;
-  auto &reduce_node1 = node_list_.at(reduce_node1_index);
-  if (GetPrimitiveType(reduce_node1->primitive_, SCHEMA_VERSION::SCHEMA_CUR) != schema::PrimitiveType_ReduceFusion) {
-    return false;
-  }
-  auto *reduce_param = reinterpret_cast<ReduceParameter *>(GetNodeOpParameter(reduce_node1));
-  if (reduce_param == nullptr) {
-    return false;
-  }
-  if (reduce_param->mode_ != mindspore::schema::ReduceMode_ReduceSum &&
-      reduce_param->keep_dims_ == false) {  // only support reducesum
-    free(reduce_param);
-    reduce_param = nullptr;
-    return false;
-  }
-  free(reduce_param);
-  reduce_param = nullptr;
-  subgraph->nodes_.emplace_back(reduce_node1_index);
-
-  // reshape op
-  auto next_node = GetNextNodeIndex(reduce_node1);
-  if (next_node.size() != 1 && next_node.front().size() != 1) {
-    return false;
-  }
-  uint32_t reshape_node1_index = next_node.front().front();
-  auto &reshape_node1 = node_list_.at(reshape_node1_index);
-  if (GetPrimitiveType(reshape_node1->primitive_, SCHEMA_VERSION::SCHEMA_CUR) != schema::PrimitiveType_Reshape) {
-    return false;
-  }
-  // auto *reshape_param = reinterpret_cast<ReshapeParameter *>(GetNodeOpParameter(reshape_node1));
-  subgraph->nodes_.emplace_back(reshape_node1_index);
-
-  // concat op
-  next_node = GetNextNodeIndex(reshape_node1);
-  if (next_node.size() != 1 && next_node.front().size() != 1) {
-    return false;
-  }
-  uint32_t concat_node1_index = next_node.front().front();
-  auto &concat_node1 = node_list_.at(concat_node1_index);
-  if (GetPrimitiveType(concat_node1->primitive_, SCHEMA_VERSION::SCHEMA_CUR) != schema::PrimitiveType_Concat) {
-    return false;
-  }
-  auto *concat_param = reinterpret_cast<ConcatParameter *>(GetNodeOpParameter(concat_node1));
-  if (concat_param == nullptr) {
-    return false;
-  }
-  if (concat_param->axis_ != split_concat_axis) {
-    free(concat_param);
-    concat_param = nullptr;
-    return false;
-  }
-  free(concat_param);
-  concat_param = nullptr;
-
-  if (subgraph->ends_.size() == 0) {
-    subgraph->ends_.emplace_back(concat_node1_index);
-  } else if (subgraph->ends_.at(0) != concat_node1_index) {
-    return false;
-  }
-
-  return true;
-}
-
-void SearchSubGraph::DeleteOriginNode(Subgraph *subgraph) {
-  auto sub_graph = model_->graph_.sub_graphs_.at(0);
-  auto &subgraph_node_indices = sub_graph->node_indices_;
-  for (auto &node_index : subgraph->nodes_) {
-    // delete tensors_ tensor info
-    auto &input_indices = node_list_.at(node_index)->input_indices_;
-    for (auto input_indice : input_indices) {
-      tensors_.at(input_indice).in_nodes_.clear();
-      tensors_.at(input_indice).out_nodes_.clear();
-    }
-    node_list_.at(node_index)->input_indices_.clear();
-    node_list_.at(node_index)->output_indices_.clear();
-
-    auto indice_itr = std::find(subgraph_node_indices.begin(), subgraph_node_indices.end(), node_index);
-    subgraph_node_indices.erase(indice_itr);
-  }
-  for (auto &node_index : subgraph->ends_) {
-    // delete tensors_ tensor info
-    auto &input_indices = node_list_.at(node_index)->input_indices_;
-    for (auto input_indice : input_indices) {
-      tensors_.at(input_indice).in_nodes_.clear();
-      tensors_.at(input_indice).out_nodes_.clear();
-    }
-    auto &output_indices = node_list_.at(node_index)->output_indices_;
-    for (auto output_indice : output_indices) {
-      tensors_.at(output_indice).out_nodes_.clear();
-      tensors_.at(output_indice).out_nodes_.emplace_back(subgraph->heads_.front());
-    }
-
-    node_list_.at(node_index)->input_indices_.clear();
-    node_list_.at(node_index)->output_indices_.clear();
-
-    auto indice_itr = std::find(subgraph_node_indices.begin(), subgraph_node_indices.end(), node_index);
-    subgraph_node_indices.erase(indice_itr);
-  }
-}
-
-bool SearchSubGraph::DoSplitReduceConcatFusion(uint32_t node_id) {
-  node_list_ = model_->graph_.all_nodes_;
-  auto &node = node_list_[node_id];
-  // the first node is split op
-  if (GetPrimitiveType(node->primitive_, SCHEMA_VERSION::SCHEMA_CUR) != schema::PrimitiveType_Split) {
-    return false;
-  }
-  auto *split_param_base = GetNodeOpParameter(node);
-  auto *split_param = reinterpret_cast<SplitParameter *>(split_param_base);
-  if (split_param == nullptr) {
-    return false;
-  }
-
-  auto split_concat_axis = split_param->split_dim_;
-  if (split_concat_axis < 0) {
-    if (split_param_base->destroy_func_ != nullptr) {
-      split_param_base->destroy_func_(split_param_base);
-      free(split_param);
-      split_param_base = nullptr;
-      split_param = nullptr;
-    } else {
-      free(split_param);
-      split_param_base = nullptr;
-      split_param = nullptr;
-    }
-    return false;
-  }
-  auto output_indices = node->output_indices_;
-  Subgraph subgraph;
-  subgraph.heads_.emplace_back(node_id);
-  for (auto &output_indice : output_indices) {
-    auto &tensor = tensors_.at(output_indice);
-    auto &in_nodes = tensor.in_nodes_;
-    for (auto &in_node : in_nodes) {
-      // satisfy reduce + reshape + concat struct
-      if (!SatifyReduceReshapeConcatParse(&subgraph, in_node, split_concat_axis)) {
-        if (split_param_base->destroy_func_ != nullptr) {
-          split_param_base->destroy_func_(split_param_base);
-          free(split_param);
-          split_param_base = nullptr;
-          split_param = nullptr;
-        } else {
-          free(split_param);
-          split_param_base = nullptr;
-          split_param = nullptr;
-        }
-        return false;
-      }
-    }
-  }
-
-  // do fusion
-  auto ret = CreateCustomNode(node, &subgraph, split_param);
-  if (split_param_base->destroy_func_ != nullptr) {
-    split_param_base->destroy_func_(split_param_base);
-    free(split_param);
-    split_param_base = nullptr;
-    split_param = nullptr;
-  } else {
-    free(split_param);
-    split_param_base = nullptr;
-    split_param = nullptr;
-  }
-  if (ret != RET_OK) {
-    return false;
-  }
-
-  DeleteOriginNode(&subgraph);
-
-  return true;
-}
-
-flatbuffers::Offset<mindspore::schema::Attribute> SetDataToUint8Vector(void *src, size_t len,
-                                                                       flatbuffers::FlatBufferBuilder *fbb,
-                                                                       const char *attr_name) {
-  std::vector<uint8_t> data(len, 0);
-  (void)memcpy(data.data(), src, len);
-  flatbuffers::Offset<mindspore::schema::Attribute> attr =
-    mindspore::schema::CreateAttributeDirect(*fbb, attr_name, &data);
-  return attr;
-}
-
-int SearchSubGraph::CreateCustomNode(LiteGraph::Node *node, Subgraph *subgraph, SplitParameter *split_param) {
-  MS_ASSERT(node != nullptr);
-  flatbuffers::FlatBufferBuilder fbb(kInitialSize);
-
-  std::vector<flatbuffers::Offset<mindspore::schema::Attribute>> attrs;
-  attrs.emplace_back(SetDataToUint8Vector(split_param, sizeof(SplitParameter), &fbb, "split_primitive"));
-  attrs.emplace_back(
-    SetDataToUint8Vector(split_param->split_sizes_, sizeof(int) * split_param->num_split_, &fbb, "split_sizes"));
-
-  auto val_offset = schema::CreateCustomDirect(fbb, "SplitReduceConcatFusion", &attrs);
-  auto prim_offset =
-    schema::CreatePrimitive(fbb, static_cast<schema::PrimitiveType>(PrimType::PrimType_Custom), val_offset.o);
-  fbb.Finish(prim_offset);
-
-  void *prim = malloc(fbb.GetSize());
-  if (prim == nullptr) {
-    MS_LOG(ERROR) << "malloc primitive failed.";
-    return RET_ERROR;
-  }
-  (void)memcpy(prim, fbb.GetBufferPointer(), fbb.GetSize());
-  auto online_fusion_prim = flatbuffers::GetRoot<schema::Primitive>(prim);
-  if (online_fusion_prim == nullptr) {
-    return RET_ERROR;
-  }
-  fbb.Clear();
-  model_->node_bufs_.push_back(prim);
-
-  node->name_ = "SplitReduceConcatFusion";
-  node->primitive_ = online_fusion_prim;
-  node->node_type_ = PrimType::PrimType_Inner_SplitReduceConcatFusion;
-  node->input_indices_ = model_->graph_.all_nodes_.at(subgraph->heads_.front())->input_indices_;
-  node->output_indices_ = model_->graph_.all_nodes_.at(subgraph->ends_.front())->output_indices_;
-  return RET_OK;
 }
 }  // namespace mindspore::lite

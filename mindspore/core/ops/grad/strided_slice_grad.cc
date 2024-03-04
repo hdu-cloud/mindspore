@@ -15,15 +15,17 @@
  */
 
 #include "ops/grad/strided_slice_grad.h"
-#include <string>
+#include <bitset>
 #include <memory>
 #include <set>
-#include <bitset>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -118,6 +120,26 @@ void StridedSliceGrad::Init(int64_t begin_mask, int64_t end_mask, int64_t ellips
   this->set_new_axis_mask(new_axis_mask);
   this->set_shrink_axis_mask(shrink_axis_mask);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(StridedSliceGrad, prim::kPrimStridedSliceGrad, StridedSliceGradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGStridedSliceGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return StridedSliceGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return StridedSliceGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return StridedSliceGradInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1, 2, 3, 4}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(StridedSliceGrad, prim::kPrimStridedSliceGrad, AGStridedSliceGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

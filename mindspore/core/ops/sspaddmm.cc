@@ -14,18 +14,37 @@
  * limitations under the License.
  */
 
-#include <set>
-#include <vector>
-#include <memory>
+#include "ops/sspaddmm.h"
+#include <algorithm>
+#include <climits>
 #include <complex>
 #include <map>
+#include <memory>
+#include <set>
 #include <string>
-#include <climits>
-#include "ops/sspaddmm.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "base/float16.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/type_id.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -39,7 +58,7 @@ int64_t compute_output_indices_unique_size(const T *indices, size_t size) {
   for (size_t i = 0; i < half_size; i++) {
     (void)mat1_indices_set.insert(indices[i]);
   }
-  return mat1_indices_set.size();
+  return static_cast<int64_t>(mat1_indices_set.size());
 }
 
 enum DimNum : size_t {
@@ -120,13 +139,15 @@ void CheckAlphaBeta(const std::vector<AbstractBasePtr> &input_args) {
   auto alpha_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex7]->BuildShape())[kShape];
   auto beta_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex8]->BuildShape())[kShape];
   if (!IsDynamic(alpha_shape) &&
-      !((alpha_shape.size() == dim1Num && alpha_shape[0] == SizeToLong(dim1Num)) || (alpha_shape.size() == dim0Num))) {
+      !((alpha_shape.size() == static_cast<size_t>(dim1Num) && alpha_shape[0] == static_cast<size_t>(dim1Num)) ||
+        (alpha_shape.size() == static_cast<size_t>(dim0Num)))) {
     MS_EXCEPTION(ValueError) << "For Sspaddmm, alpha shape should be (1,) or ()"
                              << ", but get dim num is " << alpha_shape.size() << ", dim0 size is " << alpha_shape[0]
                              << ".";
   }
   if (!IsDynamic(beta_shape) &&
-      !((beta_shape.size() == dim1Num && beta_shape[0] == SizeToLong(dim1Num)) || (beta_shape.size() == dim0Num))) {
+      !((beta_shape.size() == static_cast<size_t>(dim1Num) && beta_shape[0] == static_cast<size_t>(dim1Num)) ||
+        (beta_shape.size() == static_cast<size_t>(dim0Num)))) {
     MS_EXCEPTION(ValueError) << "For Sspaddmm, beta shape should be (1,) or ()"
                              << ", but get dim num is " << beta_shape.size() << ", dim0 size is " << beta_shape[0]
                              << ".";
@@ -149,33 +170,33 @@ void CheckInputTensorShapeSize(const std::vector<AbstractBasePtr> &input_args, c
   auto x2_shape_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex5]->BuildShape())[kShape];
   auto x3_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex6]->BuildShape())[kShape];
 
-  if (x1_indices_shape.size() != dim2Num) {
+  if (x1_indices_shape.size() != static_cast<size_t>(dim2Num)) {
     MS_EXCEPTION(ValueError) << "For Sspaddmm, x1_indices should be a 2-D tensor"
                              << ", while x1_indices dim num is " << x1_indices_shape.size() << ".";
   }
-  if (x1_values_shape.size() != dim1Num) {
+  if (x1_values_shape.size() != static_cast<size_t>(dim1Num)) {
     MS_EXCEPTION(ValueError) << "For Sspaddmm, x1_values should be a 1-D tensor"
                              << ",  while x1_values dim num is " << x1_values_shape.size() << ".";
   }
-  if (x1_shape_shape.size() != dim1Num) {
+  if (x1_shape_shape.size() != static_cast<size_t>(dim1Num)) {
     MS_EXCEPTION(ValueError) << "For Sspaddmm"
                              << ", x1_shape should be a 1-D tensor, while x1_shape dim num is " << x1_shape_shape.size()
                              << ".";
   }
-  if (x2_indices_shape.size() != dim2Num) {
+  if (x2_indices_shape.size() != static_cast<size_t>(dim2Num)) {
     MS_EXCEPTION(ValueError) << "For Sspaddmm, x2_indices should be a 2-D tensor"
                              << ", while x2_indices dim num is " << x2_indices_shape.size() << ".";
   }
-  if (x2_values_shape.size() != dim1Num) {
+  if (x2_values_shape.size() != static_cast<size_t>(dim1Num)) {
     MS_EXCEPTION(ValueError) << "For Sspaddmm, x2_values should be a 1-D tensor"
                              << ",  while x2_values dim num is " << x2_values_shape.size() << ".";
   }
-  if (x2_shape_shape.size() != dim1Num) {
+  if (x2_shape_shape.size() != static_cast<size_t>(dim1Num)) {
     MS_EXCEPTION(ValueError) << "For Sspaddmm"
                              << ", x2_shape should be a 1-D tensor, while x2_shape dim num is " << x2_shape_shape.size()
                              << ".";
   }
-  if (x3_shape.size() != dim2Num) {
+  if (x3_shape.size() != static_cast<size_t>(dim2Num)) {
     MS_EXCEPTION(ValueError) << "For Sspaddmm, x3_dense should be a 2-D tensor"
                              << ", while dim num is " << x3_shape.size() << ".";
   }
@@ -196,7 +217,7 @@ void CheckInputTensorShapeValue(const std::vector<AbstractBasePtr> &input_args, 
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex4]->BuildShape())[kShape];
   auto x2_shape_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex5]->BuildShape())[kShape];
 
-  if (x1_indices_shape[0] != SizeToLong(dim2Num)) {
+  if (x1_indices_shape[0] != static_cast<int64_t>(dim2Num)) {
     MS_EXCEPTION(ValueError) << "For Sspaddmm, x1_indices shape should be (2, n)"
                              << ", while x1_indices shape dim0 is " << x1_indices_shape[0] << ".";
   }
@@ -206,11 +227,11 @@ void CheckInputTensorShapeValue(const std::vector<AbstractBasePtr> &input_args, 
                              << " while x1_indices dim1 size is " << x1_indices_shape[1]
                              << ", x1_values_shape dim0 size is " << x1_values_shape[0] << ".";
   }
-  if (x1_shape_shape[0] != SizeToLong(dim2Num)) {
+  if (x1_shape_shape[0] != static_cast<int64_t>(dim2Num)) {
     MS_EXCEPTION(ValueError) << "For Sspaddmm"
                              << ", the shape of x1_shape should be [2] but got shape [" << x1_shape_shape[0] << "].";
   }
-  if (x2_indices_shape[0] != SizeToLong(dim2Num)) {
+  if (x2_indices_shape[0] != static_cast<int64_t>(dim2Num)) {
     MS_EXCEPTION(ValueError) << "For Sspaddmm, x2_indices shape should be (2, n)"
                              << ", while x2_indices shape dim0 is " << x2_indices_shape[0] << ".";
   }
@@ -220,7 +241,7 @@ void CheckInputTensorShapeValue(const std::vector<AbstractBasePtr> &input_args, 
                              << " while x2_indices dim1 size is " << x2_indices_shape[1]
                              << ", x2_values_shape dim0 size is " << x2_values_shape[0] << ".";
   }
-  if (x2_shape_shape[0] != SizeToLong(dim2Num)) {
+  if (x2_shape_shape[0] != static_cast<int64_t>(dim2Num)) {
     MS_EXCEPTION(ValueError) << "For Sspaddmm"
                              << ", the shape of x2_shape should be [2] but got shape [" << x2_shape_shape[0] << "].";
   }
@@ -279,19 +300,13 @@ void CheckIndices(const std::vector<AbstractBasePtr> &input_args) {
     MS_EXCEPTION_IF_NULL(x1_indices_value_ptr);
     auto x1_indices_tensor = x1_indices_value_ptr->cast<tensor::TensorPtr>();
     MS_EXCEPTION_IF_NULL(x1_indices_tensor);
-    auto x1_indices_type = input_args[kInputIndex0]->BuildType();
-    MS_EXCEPTION_IF_NULL(x1_indices_type);
-    auto x1_indices_type_id = x1_indices_type->cast<TensorTypePtr>();
-    MS_EXCEPTION_IF_NULL(x1_indices_type_id);
-    auto x1_indices_type_element = x1_indices_type_id->element();
-    MS_EXCEPTION_IF_NULL(x1_indices_type_element);
     auto x1_shape_abstract = input_args[kInputIndex2]->cast<abstract::AbstractTensorPtr>();
     MS_EXCEPTION_IF_NULL(x1_shape_abstract);
     auto x1_shape_value_ptr = x1_shape_abstract->BuildValue();
     MS_EXCEPTION_IF_NULL(x1_shape_value_ptr);
     auto x1_shape_tensor = x1_shape_value_ptr->cast<tensor::TensorPtr>();
     MS_EXCEPTION_IF_NULL(x1_shape_tensor);
-    if (x1_indices_type_element->type_id() == kNumberTypeInt32) {
+    if (TypeId(x1_indices_tensor->data_type_c()) == kNumberTypeInt32) {
       IndicesBoundCheck<int32_t>(reinterpret_cast<int32_t *>(x1_indices_tensor->data_c()),
                                  x1_indices_tensor->DataSize(), reinterpret_cast<int32_t *>(x1_shape_tensor->data_c()),
                                  "x1");
@@ -311,19 +326,13 @@ void CheckIndices(const std::vector<AbstractBasePtr> &input_args) {
     MS_EXCEPTION_IF_NULL(x2_indices_value_ptr);
     auto x2_indices_tensor = x2_indices_value_ptr->cast<tensor::TensorPtr>();
     MS_EXCEPTION_IF_NULL(x2_indices_tensor);
-    auto x2_indices_type = input_args[kInputIndex3]->BuildType();
-    MS_EXCEPTION_IF_NULL(x2_indices_type);
-    auto x2_indices_type_id = x2_indices_type->cast<TensorTypePtr>();
-    MS_EXCEPTION_IF_NULL(x2_indices_type_id);
-    auto x2_indices_type_element = x2_indices_type_id->element();
-    MS_EXCEPTION_IF_NULL(x2_indices_type_element);
     auto x2_shape_abstract = input_args[kInputIndex5]->cast<abstract::AbstractTensorPtr>();
     MS_EXCEPTION_IF_NULL(x2_shape_abstract);
     auto x2_shape_value_ptr = x2_shape_abstract->BuildValue();
     MS_EXCEPTION_IF_NULL(x2_shape_value_ptr);
     auto x2_shape_tensor = x2_shape_value_ptr->cast<tensor::TensorPtr>();
     MS_EXCEPTION_IF_NULL(x2_shape_tensor);
-    if (x2_indices_type_element->type_id() == kNumberTypeInt32) {
+    if (TypeId(x2_indices_tensor->data_type_c()) == kNumberTypeInt32) {
       IndicesBoundCheck<int32_t>(reinterpret_cast<int32_t *>(x2_indices_tensor->data_c()),
                                  x2_indices_tensor->DataSize(), reinterpret_cast<int32_t *>(x2_shape_tensor->data_c()),
                                  "x2");
@@ -514,6 +523,26 @@ AbstractBasePtr SspaddmmInfer(const abstract::AnalysisEnginePtr &, const Primiti
 }
 
 MIND_API_OPERATOR_IMPL(Sspaddmm, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(Sspaddmm, prim::kPrimSspaddmm, SspaddmmInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSspaddmmInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SspaddmmInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SspaddmmInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SspaddmmInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0, 1, 2, 3, 4, 5, 7, 8}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Sspaddmm, prim::kPrimSspaddmm, AGSspaddmmInfer, false);
 }  // namespace ops
 }  // namespace mindspore

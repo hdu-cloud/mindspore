@@ -13,8 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_INTRINSICS_MS_SIMD_INSTRUCTIONS_FP16_H_
-#define MINDSPORE_NNACL_INTRINSICS_MS_SIMD_INSTRUCTIONS_FP16_H_
+#ifndef NNACL_INTRINSICS_MS_SIMD_INSTRUCTIONS_FP16_H_
+#define NNACL_INTRINSICS_MS_SIMD_INSTRUCTIONS_FP16_H_
 #include <math.h>
 #include "nnacl/intrinsics/ms_simd_instructions.h"
 
@@ -94,9 +94,13 @@ static inline float16x4_t ms_vcvt_f16_f32(float32x4_t in) {
 
 #define MS_FLOAT16X8 float16x8_t
 #define MS_FLOAT16X4 float16x4_t
+#define MS_FLOAT16X4X4 float16x4x4_t
+#define MS_FLOAT16X4X2 float16x4x2_t
 #define MS_MOVQ_F16 vmovq_n_f16
 #define MS_STQ_F16(ptr, val) vst1q_f16(ptr, val)
 #define MS_ST_F16 vst1_f16
+#define MS_ST2_F16 vst2_f16
+#define MS_ST4_F16 vst4_f16
 #define MS_MINQ_F16 vminq_f16
 #define MS_MAXQ_F16 vmaxq_f16
 #define MS_LDQ_F16(ptr) vld1q_f16(ptr)
@@ -155,4 +159,4 @@ static inline float32x4_t MS_VMLAL_F16(float16x4_t x, float16x4_t dy, float32x4_
   return vmlaq_f32(sum, x_fp32, dy_fp32);
 }
 
-#endif  // MINDSPORE_NNACL_INTRINSICS_MS_SIMD_INSTRUCTIONS_FP16_H_
+#endif  // NNACL_INTRINSICS_MS_SIMD_INSTRUCTIONS_FP16_H_

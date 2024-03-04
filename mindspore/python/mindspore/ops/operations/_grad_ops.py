@@ -23,10 +23,10 @@ from mindspore.ops import signature as sig
 from mindspore.ops._utils import get_concat_offset
 from mindspore.ops.primitive import Primitive, PrimitiveWithInfer, prim_attr_register
 import mindspore.context as context
-from mindspore._checkparam import Validator as validator, Rel
+from mindspore import _checkparam as validator
 from mindspore.common import dtype as mstype
 from mindspore.communication.management import GlobalComm
-from mindspore.ops._utils import is_shape_unknown, is_dim_unknown
+from mindspore.common._utils import is_shape_unknown, is_dim_unknown
 
 
 class SparseFillEmptyRowsGrad(Primitive):
@@ -156,7 +156,7 @@ class BatchNormGrad(Primitive):
     @prim_attr_register
     def __init__(self, is_training=False, epsilon=1e-5, data_format='NCHW'):
         self.is_training = validator.check_value_type('is_training', is_training, (bool,), self.name)
-        self.epsilon = validator.check_float_range(epsilon, 0, 1, Rel.INC_RIGHT, 'epsilon', self.name)
+        self.epsilon = validator.check_float_range(epsilon, 0, 1, validator.INC_RIGHT, 'epsilon', self.name)
         self.data_format = validator.check_string(data_format, ['NCHW', 'NHWC'], 'format', self.name)
 
 
@@ -166,7 +166,7 @@ class BatchNormGradGrad(Primitive):
     @prim_attr_register
     def __init__(self, is_training=False, epsilon=1e-5, data_format='NCHW'):
         self.is_training = validator.check_value_type('is_training', is_training, (bool,), self.name)
-        self.epsilon = validator.check_float_range(epsilon, 0, 1, Rel.INC_RIGHT, 'epsilon', self.name)
+        self.epsilon = validator.check_float_range(epsilon, 0, 1, validator.INC_RIGHT, 'epsilon', self.name)
         self.data_format = validator.check_string(data_format, ['NCHW', 'NHWC'], 'format', self.name)
 
 
@@ -175,10 +175,10 @@ class SyncBatchNormGrad(Primitive):
 
     @prim_attr_register
     def __init__(self, epsilon=1e-5, group="group0", device_num=2):
-        validator.check_float_range(epsilon, 0, 1, Rel.INC_RIGHT, 'epsilon', self.name)
+        validator.check_float_range(epsilon, 0, 1, validator.INC_RIGHT, 'epsilon', self.name)
         if not isinstance(group, str):
             raise TypeError("The group attr of SyncBatchNormGrad must be str.")
-        validator.check_int(device_num, 2, Rel.GE, "device_num", self.name)
+        validator.check_int(device_num, 2, validator.GE, "device_num", self.name)
 
 
 class BiasAddGrad(Primitive):
@@ -390,7 +390,7 @@ class Conv2DBackpropFilter(Primitive):
         stride (tuple): The stride to be applied to the convolution filter. Default: (1, 1).
         dilation (tuple): Specifies the dilation rate to be used for the dilated convolution. Default: (1, 1, 1, 1).
         group (int): Splits input into groups. Default: 1.
-        data_format (str) - The format of input and output data. It should be 'NHWC' or 'NCHW'，\
+        data_format (str) - The format of input and output data. It should be 'NHWC' or 'NCHW', \
             default is 'NCHW'.
 
     Returns:
@@ -591,7 +591,7 @@ class DropoutGrad(Primitive):
 
     @prim_attr_register
     def __init__(self, keep_prob=0.5):
-        self.keep_prob = validator.check_float_range(keep_prob, 0, 1, Rel.INC_RIGHT, "keep_prob", self.name)
+        self.keep_prob = validator.check_float_range(keep_prob, 0, 1, validator.INC_RIGHT, "keep_prob", self.name)
 
 
 class FlattenGrad(PrimitiveWithInfer):
@@ -627,7 +627,7 @@ class InstanceNormV2Grad(Primitive):
         self.init_prim_io_names(inputs=['dy', 'x', 'gamma', 'mean', 'variance', 'save_mean', 'save_variance'],
                                 outputs=['pd_x', 'pd_gamma', 'pd_beta'])
         validator.check_is_float(epsilon, 'epsilon', self.name)
-        validator.check_float_range(epsilon, 0, 1, Rel.INC_RIGHT, 'epsilon', self.name)
+        validator.check_float_range(epsilon, 0, 1, validator.INC_RIGHT, 'epsilon', self.name)
         validator.check_bool(is_training, "is_training", self.name)
 
 
@@ -636,7 +636,7 @@ class EinsumGrad(PrimitiveWithInfer):
 
     @prim_attr_register
     def __init__(self, equation):
-        self.add_prim_attr('equation', equation)
+        pass
 
     def infer_shape(self, x_shapes, dout_shape):
         out_shape = ()
@@ -695,7 +695,7 @@ class NeighborExchangeV2Grad(PrimitiveWithInfer):
 
     def __infer__(self, dy):
         dy_shape = dy['shape']
-        validator.check(f'dy_shape.size()', len(dy_shape), f'4', 4, Rel.EQ, self.name)
+        validator.check(f'dy_shape.size()', len(dy_shape), f'4', 4, validator.EQ, self.name)
         if self.send_rank_ids[5] != -1 or self.send_rank_ids[6] != -1 or self.send_rank_ids[7] != -1:
             dy_shape[3] -= self.send_lens[2]
 
@@ -885,16 +885,7 @@ class AdaptiveAvgPool2DGrad(Primitive):
     @prim_attr_register
     def __init__(self):
         """Initialize AdaptiveAvgPool2DGrad"""
-
-
-class AdaptiveAvgPool2DGradV1(Primitive):
-    """Gradients of the adaptive avg pool 2D V1 operation."""
-
-    @prim_attr_register
-    def __init__(self, orig_input_shape):
-        """Initialize AdaptiveAvgPool2DGradV1"""
-        self.init_prim_io_names(inputs=['input_grad'], outputs=['output_grad'])
-        self.add_prim_attr('orig_input_shape', self.orig_input_shape)
+        self.init_prim_io_names(inputs=['input_grad', 'orig_input_shape'], outputs=['output_grad'])
 
 
 class AdaptiveAvgPool3DGrad(Primitive):
@@ -1048,7 +1039,7 @@ class MaxPoolGradGrad(_PoolGrad):
         ValueError: If the shapes of `origin_input` and `grad` are not equal.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
     """
 
     @prim_attr_register
@@ -1220,13 +1211,71 @@ class MaximumGradGrad(Primitive):
         self.init_prim_io_names(inputs=['x1', 'x2', 'dy1', 'dy2'], outputs=['sopd_x1', 'sopd_x2', 'sopd_grad'])
 
 
-class MaxPoolGradWithArgmax(_PoolGrad):
+class MaxPoolGradWithArgmax(Primitive):
     """Computes the gradients of MaxPoolWithArgmax."""
+    @prim_attr_register
+    def __init__(self, kernel_size=1, strides=1, pad_mode="VALID", data_format="NCHW"):
+        self.init_prim_io_names(inputs=['x_origin', 'out_origin', 'grad'], outputs=['output'])
+        validator.check_value_type('kernel_size', kernel_size, [int, tuple], self.name)
+        validator.check_value_type('strides', strides, [int, tuple], self.name)
+        validator.check_value_type('pad_mode', pad_mode, [str], self.name)
+        self.pad_mode = validator.check_string(pad_mode.upper(), ['VALID', 'SAME'], 'pad_mode', self.name)
+        self.add_prim_attr("pad_mode", self.pad_mode)
+        self.format = validator.check_string(data_format, ['NCHW', 'NHWC'], 'format', self.name)
+        if context.get_context("device_target") != "GPU" and self.format == "NHWC":
+            raise ValueError("NHWC format only support in GPU target.")
+        self.is_maxpoolgradwithargmax = (self.name == "MaxPoolGradWithArgmax")
+        if not self.is_maxpoolgradwithargmax:
+            self.add_prim_attr('data_format', self.format)
+
+        def _grad_check_int_or_tuple(arg_name, arg_val):
+            validator.check_value_type(arg_name, arg_val, (int, tuple), self.name)
+            error_msg = ValueError(f"For '{self.name}' the '{arg_name}' must be an positive int number "
+                                   f"or a tuple of two or four positive int numbers, but got {arg_val}")
+            if isinstance(arg_val, int):
+                ret = (1, arg_val, arg_val, 1)
+            elif len(arg_val) == 2:
+                ret = (1, arg_val[0], arg_val[1], 1)
+            elif len(arg_val) == 4:
+                ret = arg_val
+            else:
+                raise error_msg
+            # whether all elements of tuple are positive integers
+            for item in ret:
+                if not isinstance(item, int) or item <= 0:
+                    raise error_msg
+            return ret
+
+        kernel_size = _grad_check_int_or_tuple("kernel_size", kernel_size)
+        self.kernel_size = kernel_size
+        self.add_prim_attr("kernel_size", self.kernel_size)
+
+        strides = _grad_check_int_or_tuple("strides", strides)
+        self.strides = strides
+        self.add_prim_attr("strides", self.strides)
+
+
+class MaxPoolGradWithArgmaxV2(Primitive):
+    """Gradients of the MaxPoolWithArgmaxV2 operation."""
 
     @prim_attr_register
-    def __init__(self, kernel_size=1, strides=1, pad_mode="VALID"):
-        self.init_prim_io_names(inputs=['x', 'grad', 'argmax'], outputs=['output'])
-        super(MaxPoolGradWithArgmax, self).__init__(kernel_size, strides, pad_mode)
+    def __init__(self, kernel_size, strides=None, pads=0, dilation=(1, 1), ceil_mode=False, argmax_type=mstype.int64):
+        self.init_prim_io_names(inputs=['x', 'grad', 'argmax'], outputs=['y'])
+        self.kernel_size = _check_positive_int_or_tuple("kernel_size", kernel_size, self.name, allow_four=True,
+                                                        ret_four=True)
+        self.add_prim_attr('kernel_size', self.kernel_size)
+        if strides is None:
+            strides = kernel_size
+        self.strides = _check_positive_int_or_tuple("strides", strides, self.name, allow_four=True, ret_four=True)
+        self.add_prim_attr('strides', self.strides)
+        self.pads = _check_positive_int_or_tuple("pads", pads, self.name, allow_four=True, ret_four=True,
+                                                 strict_positive=False)
+        self.add_prim_attr('pads', self.pads)
+        validator.check_value_type('ceil_mode', ceil_mode, bool, self.name)
+        self.add_prim_attr('ceil_mode', self.ceil_mode)
+        self.dilation = _check_positive_int_or_tuple("dilation", dilation, self.name, allow_four=True, ret_four=True)
+        self.add_prim_attr('dilation', self.dilation)
+        self.add_prim_attr('argmax_type', self.argmax_type)
 
 
 class MaxPool3DGradWithArgmax(Primitive):
@@ -1291,7 +1340,7 @@ class MaxPoolGradGradWithArgmax(_PoolGrad):
         ValueError: If the shapes of `x` and `grad` are not equal.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
     """
 
     @prim_attr_register
@@ -1409,7 +1458,7 @@ class LayerNormGradGrad(Primitive):
         ValueError: If gamma, d_dg, d_db don't have the same shape.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
     """
 
     @prim_attr_register
@@ -1430,7 +1479,7 @@ class LogSoftmaxGrad(Primitive):
         validator.check_value_type("axis", axis, [int], self.name)
 
 
-class LSTMGradData(PrimitiveWithInfer):
+class LSTMGradData(Primitive):
     """Computes the data gradients of LSTM."""
 
     @prim_attr_register
@@ -1441,43 +1490,15 @@ class LSTMGradData(PrimitiveWithInfer):
         self.has_bias = validator.check_value_type('has_bias', has_bias, (bool,), self.name)
         self.bidirectional = validator.check_value_type('bidirectional', bidirectional, (bool,), self.name)
         self.dropout = validator.check_value_type("dropout", dropout, [float], self.name)
-        self.dropout = validator.check_float_range(dropout, 0, 1, Rel.INC_BOTH, 'dropout', self.name)
+        self.dropout = validator.check_float_range(dropout, 0, 1, validator.INC_BOTH, 'dropout', self.name)
 
         if bidirectional:
             self.num_directions = 2
         else:
             self.num_directions = 1
 
-    def infer_shape(self, y_shape, dy_shape, dhy_shape, dcy_shape, w_shape,
-                    hx_shape, cx_shape, reserve_shape, state_shape):
-        # dhy and dcy should be same shape
-        validator.check_equal_int(len(dhy_shape), 3, "h_shape", self.name)
-        validator.check_equal_int(len(dhy_shape), len(dcy_shape), "h_shape", self.name)
-        validator.check_equal_int(dhy_shape[0], dcy_shape[0], "h_shape[0]", self.name)
-        validator.check_equal_int(dhy_shape[1], dcy_shape[1], "h_shape[1]", self.name)
-        validator.check_equal_int(dhy_shape[2], dcy_shape[2], "h_shape[2]", self.name)
 
-        validator.check_int(dhy_shape[0], self.num_layers * self.num_directions, Rel.EQ, "h_shape[0]", self.name)
-        validator.check_equal_int(dhy_shape[2], self.hidden_size, "h_shape[2]", self.name)
-
-        validator.check_equal_int(len(dy_shape), 3, "dy_shape", self.name)
-        validator.check_equal_int(dy_shape[1], dhy_shape[1], "dy[1]", self.name)
-        validator.check_int(dy_shape[2], self.hidden_size * self.num_directions, Rel.EQ, "dy[2]", self.name)
-
-        dx_shape = (y_shape[0], y_shape[1], self.input_size)
-        dhx_shape = dhy_shape
-        dcx_shape = dcy_shape
-
-        return (dx_shape, dhx_shape, dcx_shape)
-
-    def infer_dtype(self, y_dtype, dy_dtype, dhy_dtype, dcy_dtype, w_dtype,
-                    hx_dtype, cx_dtype, reserve_dtype, state_dtype):
-        args = {"dy": dy_dtype, "dhy": dhy_dtype, "dcy": dcy_dtype}
-        validator.check_tensors_dtypes_same_and_valid(args, (mstype.float32, mstype.float16), self.name)
-        return (dy_dtype, dy_dtype, dy_dtype)
-
-
-class LSTMGradWeight(PrimitiveWithInfer):
+class LSTMGradWeight(Primitive):
     """Computes the weight gradients of LSTM."""
 
     @prim_attr_register
@@ -1488,82 +1509,33 @@ class LSTMGradWeight(PrimitiveWithInfer):
         self.has_bias = validator.check_value_type('has_bias', has_bias, (bool,), self.name)
         self.bidirectional = validator.check_value_type('bidirectional', bidirectional, (bool,), self.name)
         self.dropout = validator.check_value_type("dropout", dropout, [float], self.name)
-        self.dropout = validator.check_float_range(dropout, 0, 1, Rel.INC_BOTH, 'dropout', self.name)
+        self.dropout = validator.check_float_range(dropout, 0, 1, validator.INC_BOTH, 'dropout', self.name)
 
         if bidirectional:
             self.num_directions = 2
         else:
             self.num_directions = 1
 
-    def infer_shape(self, x_shape, hx_shape, y_shape, reserve_shape, state_shape):
-        weight_size = 0
-        gate_size = 4 * self.hidden_size
-        for layer in range(self.num_layers):
-            for _ in range(self.num_directions):
-                input_layer_size = self.input_size if layer == 0 else self.hidden_size * self.num_directions
-                weight_size += gate_size * input_layer_size
-                weight_size += gate_size * self.hidden_size
-                if self.has_bias:
-                    weight_size += 2 * gate_size
 
-        return (weight_size, 1, 1)
-
-    def infer_dtype(self, x_dtype, hx_dtype, y_dtype, reserve_dtype, state_dtype):
-        return hx_dtype
-
-
-class LSTMGrad(PrimitiveWithInfer):
+class LSTMGrad(Primitive):
     """Computes the data and weight gradients of LSTM."""
 
     @prim_attr_register
-    def __init__(self, input_size, hidden_size, num_layers, has_bias, bidirectional, dropout):
+    def __init__(self, input_size, hidden_size, num_layers, has_bias, bidirectional, dropout, proj_size=0):
         self.input_size = validator.check_positive_int(input_size, 'input_size', self.name)
         self.hidden_size = validator.check_positive_int(hidden_size, 'hidden_size', self.name)
+        self.proj_size = validator.check_int_range(proj_size, 0, hidden_size, validator.INC_LEFT,
+                                                   'proj_size', self.name)
         self.num_layers = validator.check_positive_int(num_layers, 'num_layers', self.name)
         self.has_bias = validator.check_value_type('has_bias', has_bias, (bool,), self.name)
         self.bidirectional = validator.check_value_type('bidirectional', bidirectional, (bool,), self.name)
         self.dropout = validator.check_value_type("dropout", dropout, [float], self.name)
-        self.dropout = validator.check_float_range(dropout, 0, 1, Rel.INC_BOTH, 'dropout', self.name)
+        self.dropout = validator.check_float_range(dropout, 0, 1, validator.INC_BOTH, 'dropout', self.name)
 
         if bidirectional:
             self.num_directions = 2
         else:
             self.num_directions = 1
-
-    def infer_shape(self, x_shape, hx_shape, cx_shape, w_shape, y_shape, hy_shape, cy_shape, dy_shape, dhy_shape,
-                    dcy_shape, reserve_shape):
-        # dhy and dcy should be same shape
-        validator.check_equal_int(len(dhy_shape), 3, "h_shape", self.name)
-        validator.check_equal_int(len(dhy_shape), len(dcy_shape), "h_shape", self.name)
-        validator.check_equal_int(dhy_shape[0], dcy_shape[0], "h_shape[0]", self.name)
-        validator.check_equal_int(dhy_shape[1], dcy_shape[1], "h_shape[1]", self.name)
-        validator.check_equal_int(dhy_shape[2], dcy_shape[2], "h_shape[2]", self.name)
-
-        validator.check_int(dhy_shape[0], self.num_layers * self.num_directions, Rel.EQ, "h_shape[0]", self.name)
-        validator.check_equal_int(dhy_shape[2], self.hidden_size, "h_shape[2]", self.name)
-
-        validator.check_equal_int(len(dy_shape), 3, "dy_shape", self.name)
-        validator.check_equal_int(dy_shape[1], dhy_shape[1], "dy[1]", self.name)
-        validator.check_int(dy_shape[2], self.hidden_size * self.num_directions, Rel.EQ, "dy[2]", self.name)
-
-        dx_shape = (y_shape[0], y_shape[1], self.input_size)
-        dhx_shape = dhy_shape
-        dcx_shape = dcy_shape
-        weight_size = 0
-        gate_size = 4 * self.hidden_size
-        for layer in range(self.num_layers):
-            for _ in range(self.num_directions):
-                input_layer_size = self.input_size if layer == 0 else self.hidden_size * self.num_directions
-                weight_size += gate_size * input_layer_size
-                weight_size += gate_size * self.hidden_size
-                if self.has_bias:
-                    weight_size += gate_size
-
-        return (dx_shape, dhx_shape, dcx_shape, (weight_size, 1, 1))
-
-    def infer_dtype(self, x_dtype, hx_dtype, cx_dtype, w_dtype, y_dtype, hy_dtype, cy_dtype, dy_dtype, dhy_dtype,
-                    dcy_dtype, reserve_dtype):
-        return (dy_dtype, dy_dtype, dy_dtype, hx_dtype)
 
 
 class DynamicRNNGrad(Primitive):
@@ -1594,7 +1566,7 @@ class GruGradData(PrimitiveWithInfer):
         self.has_bias = validator.check_value_type('has_bias', has_bias, (bool,), self.name)
         self.bidirectional = validator.check_value_type('bidirectional', bidirectional, (bool,), self.name)
         self.dropout = validator.check_value_type("dropout", dropout, [float], self.name)
-        self.dropout = validator.check_float_range(dropout, 0, 1, Rel.INC_BOTH, 'dropout', self.name)
+        self.dropout = validator.check_float_range(dropout, 0, 1, validator.INC_BOTH, 'dropout', self.name)
 
         if bidirectional:
             self.num_directions = 2
@@ -1606,12 +1578,12 @@ class GruGradData(PrimitiveWithInfer):
         # dhy and dcy should be same shape
         validator.check_equal_int(len(dhy_shape), 3, "h_shape", self.name)
 
-        validator.check_int(dhy_shape[0], self.num_layers * self.num_directions, Rel.EQ, "h_shape[0]", self.name)
+        validator.check_int(dhy_shape[0], self.num_layers * self.num_directions, validator.EQ, "h_shape[0]", self.name)
         validator.check_equal_int(dhy_shape[2], self.hidden_size, "h_shape[2]", self.name)
 
         validator.check_equal_int(len(dy_shape), 3, "dy_shape", self.name)
         validator.check_equal_int(dy_shape[1], dhy_shape[1], "dy[1]", self.name)
-        validator.check_int(dy_shape[2], self.hidden_size * self.num_directions, Rel.EQ, "dy[2]", self.name)
+        validator.check_int(dy_shape[2], self.hidden_size * self.num_directions, validator.EQ, "dy[2]", self.name)
 
         dx_shape = (y_shape[0], y_shape[1], self.input_size)
         dhx_shape = dhy_shape
@@ -1636,7 +1608,7 @@ class GruGradWeight(PrimitiveWithInfer):
         self.has_bias = validator.check_value_type('has_bias', has_bias, (bool,), self.name)
         self.bidirectional = validator.check_value_type('bidirectional', bidirectional, (bool,), self.name)
         self.dropout = validator.check_value_type("dropout", dropout, [float], self.name)
-        self.dropout = validator.check_float_range(dropout, 0, 1, Rel.INC_BOTH, 'dropout', self.name)
+        self.dropout = validator.check_float_range(dropout, 0, 1, validator.INC_BOTH, 'dropout', self.name)
 
         if bidirectional:
             self.num_directions = 2
@@ -1660,6 +1632,25 @@ class GruGradWeight(PrimitiveWithInfer):
         return hx_dtype
 
 
+class GRUV2Grad(Primitive):
+    """Computes the grad gradients of GRU."""
+
+    @prim_attr_register
+    def __init__(self, input_size, hidden_size, num_layers, has_bias, bidirectional, dropout):
+        self.input_size = validator.check_positive_int(input_size, 'input_size', self.name)
+        self.hidden_size = validator.check_positive_int(hidden_size, 'hidden_size', self.name)
+        self.num_layers = validator.check_positive_int(num_layers, 'num_layers', self.name)
+        self.has_bias = validator.check_value_type('has_bias', has_bias, (bool,), self.name)
+        self.bidirectional = validator.check_value_type('bidirectional', bidirectional, (bool,), self.name)
+        self.dropout = validator.check_value_type("dropout", dropout, [float], self.name)
+        self.dropout = validator.check_float_range(dropout, 0, 1, validator.INC_BOTH, 'dropout', self.name)
+
+        if bidirectional:
+            self.num_directions = 2
+        else:
+            self.num_directions = 1
+
+
 class DynamicGRUV2Grad(Primitive):
     r"""
     Computes the input gradients of DynamicGRUV2.
@@ -1671,10 +1662,11 @@ class DynamicGRUV2Grad(Primitive):
         keep_prob (float): A float identifying the keep prob in the op. Default: 1.0.
         cell_clip (float): A float identifying the cell clip in the op. Default: -1.0.
         num_proj (int): An integer identifying the num proj in the op. Default: 0.
-        time_major (bool): A bool identifying the time major in the op. Default: True.
+        time_major (bool): A bool identifying the time major in the op. Default: ``True``.
         gate_order (str): An string identifying the gate order in weight and bias. Default: 'rzh.
             'zrh' is another option.
-        reset_after (bool): An bool identifying whether to apply reset gate after matrix multiplication. Default: True.
+        reset_after (bool): An bool identifying whether to apply reset gate after matrix multiplication.
+            Default: ``True``.
 
     Inputs:
         - **x** (Tensor) - Current words. Tensor of shape :math:`(num\_step, batch\_size, input\_size)`.
@@ -1690,7 +1682,7 @@ class DynamicGRUV2Grad(Primitive):
         - **init_h** (Tensor) - Hidden state of initial time.
           Tensor of shape :math:`(batch\_size, hidden\_size)`.
           The data type must be float16 or float32.
-        - **h** (Tensor) - A Tensor of shape :math:`(num\_step, batch\_size, hidden_size)`.
+        - **h** (Tensor) - A Tensor of shape :math:`(num\_step, batch\_size, hidden\_size)`.
           The data type must be float16 or float32.
         - **dy** (Tensor) - Gradient of `y`, has the same shape and data type as `y`.
         - **dh** (Tensor) - Gradient of `h`, has the same shape and data type as `init_h`.
@@ -1712,13 +1704,13 @@ class DynamicGRUV2Grad(Primitive):
         - **dw_hidden** (Tensor) - A Tensor has the same shape as `weight_hidden`.
           Has the same type with input `x`.
         - **db_input** (Tensor) - A Tensor of shape :math:`(3 x hidden\_size)`.
-          Has the same type with input `x`.
+          Has the same type with input `init\_h`.
         - **db_hidden** (Tensor) - A Tensor of shape :math:`(3 x hidden\_size)`.
-          Has the same type with input `x`.
+          Has the same type with input `init\_h`.
         - **dx** (Tensor) - A Tensor of shape :math:`(num\_step, batch\_size, hidden\_size)`.
           Has the same type with input `x`.
         - **dh_prev** (Tensor) - A Tensor of shape :math:`(batch\_size, hidden\_size)`.
-          Has the same type with input `x`.
+          Has the same type with input `init\_h`.
     """
 
     @prim_attr_register
@@ -1770,6 +1762,44 @@ class PReLUGrad(Primitive):
         pass
 
 
+class RandomGammaGrad(Primitive):
+    r"""
+    Computes the derivative of a random sample of Gamma with respect to alpha.:
+
+    Inputs:
+        - **alpha** (Tensor) - α is the shape parameter of RandomGamma distribution.
+        It must be greater than 0. Must be one of the following types: float32, float64.
+        - **sample** (Tensor) - The sample of random gamma tensor. Must be one of the
+        following types: float32, float64.
+
+    Outputs:
+        The dtype is the same type as alpha.
+        The output shape is derived from the input through broadcasting.
+
+    Raises:
+        TypeError: If data type of `alpha` and `sample` is not float32 or float64.
+        TypeError: If data type of `alpha` and `sample` is not same.
+        ValueError: If the shape last dim of `sample` and `alpha` is not equal.
+
+    Supported Platforms:
+        ``GPU``
+
+    Examples:
+        >>> alpha = Tensor(np.array([1., 0.6, 3., 26.]), mstype.float32)
+        >>> sample = Tensor(np.array([6., 7, 11., 0.5]), mstype.float32)
+        >>> randomgammagrad = ops.RandomGammaGrad()
+        >>> output = randomgammagrad(alpha, sample)
+        >>> print(output)
+        [2.5142431 3.4334087 1.8847835 0.07780622]
+    """
+
+    @prim_attr_register
+    def __init__(self):
+        """Initialize RandomGammaGrad"""
+        self.init_prim_io_names(inputs=['alpha', 'sample'], outputs=['output'])
+        self.add_prim_attr("side_effect_hidden", True)
+
+
 class ReluGrad(Primitive):
     """Performs grad of Relu operation."""
 
@@ -1777,6 +1807,15 @@ class ReluGrad(Primitive):
     def __init__(self):
         """Initialize ReluGrad"""
         self.init_prim_io_names(inputs=['y_backprop', 'x'], outputs=['output'])
+
+
+class SiLUGrad(Primitive):
+    """Performs grad of SiLU operation."""
+
+    @prim_attr_register
+    def __init__(self):
+        """Initialize SiLUGrad"""
+        self.init_prim_io_names(inputs=['dout', 'out'], outputs=['output'])
 
 
 class ReLU6Grad(Primitive):
@@ -1851,7 +1890,7 @@ class ResizeNearestNeighborGrad(Primitive):
 
     Args:
         align_corners (bool): Whether the centers of the 4 corner pixels of the input
-            and output tensors are aligned. Default: False.
+            and output tensors are aligned. Default: ``False``.
     """
 
     @prim_attr_register
@@ -1864,12 +1903,12 @@ class ResizeLinear1DGrad(Primitive):
     """
     Compute gradient of `ResizeLinear1D` operator.
 
-    Note:
-        This is an experimental feature and is subjected to change.
+    .. warning::
+        This is an experimental API that is subject to change.
 
     Args:
         coordinate_transformation_mode (string): Default is 'align_corners'. Describes how to transform the coordinate
-            in the resized tensor to the coordinate in the original tensor. Other optional: 'half_pixel', 'asymmetric'.
+            in the resized tensor to the coordinate in the original tensor. Other optional: 'half_pixel'.
     """
 
     @prim_attr_register
@@ -1879,7 +1918,7 @@ class ResizeLinear1DGrad(Primitive):
             inputs=['grads', 'input_x'], outputs=['y'])
         validator.check_value_type(
             "coordinate_transformation_mode", coordinate_transformation_mode, [str], self.name)
-        validator.check_string(coordinate_transformation_mode, ["align_corners", "half_pixel", "asymmetric"],
+        validator.check_string(coordinate_transformation_mode, ["align_corners", "half_pixel"],
                                "coordinate_transformation_mode", self.name)
 
 
@@ -1889,77 +1928,50 @@ class ResizeNearestNeighborV2Grad(Primitive):
 
     Args:
         align_corners (bool): Whether the centers of the 4 corner pixels of the input
-            and output tensors are aligned. Default: False.
-        half_pixel_centers (bool): Default: False.
-        data_format: An optional `string` that describes the format of the input `x` Defaults to `NHWC`.
+            and output tensors are aligned. Default: ``False``.
+        half_pixel_centers (bool): Default: ``False``.
     """
 
     @prim_attr_register
-    def __init__(self, align_corners=False, half_pixel_centers=False, data_format='NHWC'):
+    def __init__(self, align_corners=False, half_pixel_centers=False):
         """Initialize ResizeNearestNeighborV2Grad"""
         self.init_prim_io_names(inputs=['grads', 'size'], outputs=['y'])
-
         validator.check_value_type('align_corners', align_corners, [bool], self.name)
         validator.check_value_type('half_pixel_centers', half_pixel_centers, [bool], self.name)
-        validator.check_value_type('data_format', data_format, [str], self.name)
-        self.format = validator.check_string(data_format, ['NHWC', 'NCHW'], 'data_format', self.name)
-        self.add_prim_attr('data_format', self.format)
 
 
 class UpsampleNearest3DGrad(Primitive):
     """
     Upsample the 3-D gradient data  with the nearest neighbor interpolation algorithm.
 
-    Args:
-        input_size (listInt): An required listInt. contain 5 elements: [min_batch, channels, depth, height, width].
-            Must: input_size[0] == grad_output_tensor_size[0], input_size[1] == grad_output_tensor_size[1].
-        output_size (listInt): An optional listInt. Defaults to none.
-            contain 3 elements: depth, height, width. The number of elements of 'output_size' should
-            be the same as the rank of input 'grad_output'. Only one of 'scales' and 'output_size' can be specified.
-            Must: grad_output_tensor_size[2] == floor(input_size[2] * scales[0]) == output_size[0]
-            grad_output_tensor_size[3] == floor(input_size[3] * scales[1]) == output_size[1]
-            grad_output_tensor_size[4] == floor(input_size[4] * scales[2]) == output_size[2].
-        scales (listFloat): An optional listFloat. Defaults to none.
-            The scale array along each dimension, contain 3 elements: scale_depth, scale_height, scale_width.
-            The number of elements of 'scales' should be the same as the rank of input 'grad_output'.
-            One of 'scales' and 'output_size' MUST be specified and it is an error if both are specified.
+    Note:
+        Only one of 'scales' and 'output_size' can be specified, and it is an error if both are specified.
 
     Inputs:
-        - **grad_output** (Tensor) - Tensor of shape [N, C, D, H, W], Must be one of the following types:
-          float16, float32, float64.
+        - **dy** (Tensor) - Tensor of shape [N, C, D, H, W], Must be one of the following types:
+            float16, float32, float64.
+        - **input_size** (listInt): An required listInt, which contain 5 elements:
+            [min_batch, channels, depth, height, width].
+            Must: input_size[0] == dy_tensor_size[0], input_size[1] == dy_tensor_size[1].
+        - **output_size** (listInt): An optional listInt. Default: ``None``.
+            It contains 3 elements: depth, height, width, whose elements should be the same as `dy`.
+            Must:
+            dy_tensor_size[2] == floor(input_size[2] * scales[0]) == output_size[0],
+            dy_tensor_size[3] == floor(input_size[3] * scales[1]) == output_size[1],
+            dy_tensor_size[4] == floor(input_size[4] * scales[2]) == output_size[2].
+        - **scales** (listFloat): An optional listFloat. Default: ``None``.
+            The scale array along each dimension, contain 3 elements: scale_depth, scale_height, scale_width.
+            The number of elements of 'scales' should be the same as the rank of `dy`.
 
     Outputs:
-        Tensor, A 5-D tensor. Has the same type as input grad_output, shape depends on x and output_size/scales.
-
-    Raises:
-        TypeError: If `input_size` is not listInt.
-        TypeError: When `output_size` is not none and `output_size` is not listInt.
-        TypeError: When `scales` is not none and `scales` is not listFloat.
-        TypeError: If dtype of `x` is not int [float16, float32, float64].
-        ValueError: If any value of `input_size` is negative.
-        ValueError: If any value of `output_size` is negative.
-        ValueError: If any value of `scales` is negative.
-        ValueError: If shape of `x` is not 5D.
-
-    Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU``
+        - **dx**- (Tensor) - A 5-D tensor. Has the same type as `dy`, shape depends on `input_size`.
     """
     @prim_attr_register
-    def __init__(self, input_size, output_size=None, scales=None):
+    def __init__(self):
         """Initialize UpsampleNearest3DGrad."""
-        self.init_prim_io_names(inputs=['grad_output'], outputs=['y'])
-        validator.check_value_type("input_size", input_size, [list, tuple], self.name)
-        validator.check_positive_int_sequence(input_size, "input_size", self.name)
-        if output_size is not None:
-            validator.check_value_type("output_size", output_size, [list, tuple], self.name)
-            validator.check_positive_int_sequence(output_size, "output_size", self.name)
-        else:
-            self.add_prim_attr("output_size", [])
-        if scales is not None:
-            validator.check_value_type("scales", scales, [list, tuple], self.name)
-            validator.check_positive_float_sequence(scales, "scales", self.name)
-        else:
-            self.add_prim_attr("scales", [])
+        self.init_prim_io_names(
+            inputs=['dy', 'input_size', 'output_size', 'scales'],
+            outputs=['dx'])
 
 
 class ROIAlignGrad(Primitive):
@@ -2081,8 +2093,9 @@ class SliceGrad(PrimitiveWithInfer):
             for i in range(dy_shape_len):
                 if size_value[i] == -1:
                     size_value[i] = x_shape[i] - begin_v[i]
-                validator.check(f'dy_shape[{i}]', dy_shape[i], f'x_shape[{i}]', x_shape[i], Rel.LE, self.name)
-                validator.check(f'dy_shape[{i}]', dy_shape[i], f'size_shape[{i}]', size_value[i], Rel.EQ, self.name)
+                validator.check(f'dy_shape[{i}]', dy_shape[i], f'x_shape[{i}]', x_shape[i], validator.LE, self.name)
+                validator.check(f'dy_shape[{i}]', dy_shape[i], f'size_shape[{i}]',
+                                size_value[i], validator.EQ, self.name)
 
         return {'shape': x_shape,
                 'dtype': x['dtype'],
@@ -2093,11 +2106,13 @@ class NLLLossGrad(PrimitiveWithInfer):
     """Computes the gradients of `NLLLoss`."""
 
     @prim_attr_register
-    def __init__(self, reduction="mean"):
+    def __init__(self, reduction="mean", ignore_index=-100):
         """Initialize NLLLoss"""
         self.init_prim_io_names(inputs=['x', 'loss_grad', 'target', 'weight', 'total_weight'], outputs=['x_grad'])
         self.reduction = validator.check_string(reduction, ['none', 'sum', 'mean'], 'reduction', self.name)
+        self.ignore_index = ignore_index
         self.add_prim_attr('reduction', self.reduction)
+        self.add_prim_attr('ignore_index', self.ignore_index)
 
 
 class SmoothL1LossGrad(Primitive):
@@ -2105,6 +2120,7 @@ class SmoothL1LossGrad(Primitive):
 
     @prim_attr_register
     def __init__(self, beta=1.0, reduction='none'):
+        self.add_prim_attr('sigma', self.beta)
         self.reduction = validator.check_string(
             reduction, ['none', 'sum', 'mean'], 'reduction', self.name)
 
@@ -2144,7 +2160,6 @@ class StridedSliceV2Grad(Primitive):
                  new_axis_mask=0,
                  shrink_axis_mask=0):
         """Initialize StridedSliceV2Grad"""
-        self.set_const_input_indexes([0])
         self.init_prim_io_names(inputs=['shapex', 'begin', 'end', 'strides', 'dy'], outputs=['output'])
 
 
@@ -2202,7 +2217,6 @@ class MirrorPadGrad(Primitive):
     @prim_attr_register
     def __init__(self, mode="REFLECT"):
         """Initialize MirrorPad"""
-        self.set_const_input_indexes([1])
         self.init_prim_io_names(inputs=['dy', 'paddings'], outputs=['output'])
         validator.check_string(mode, ['REFLECT', 'SYMMETRIC'], 'mode', self.name)
         self.mode = mode
@@ -2216,9 +2230,8 @@ class PadV3Grad(Primitive):
         """Initialize Padv3Grad"""
         self.add_prim_attr("cust_aicpu", self.name)
         self.init_prim_io_names(inputs=['x', 'paddings'], outputs=['y'])
-        validator.check_string(mode, ['reflect', 'edge'], 'mode', self.name)
+        validator.check_string(mode, ['reflect', 'edge', 'circular'], 'mode', self.name)
         validator.check_bool(paddings_contiguous, "paddings_contiguous", self.name)
-        self.set_const_input_indexes([1])
         self.mode = mode
         self.paddings_contiguous = paddings_contiguous
 
@@ -2312,20 +2325,20 @@ class BasicLSTMCellCStateGrad(PrimitiveWithInfer):
     def infer_shape(self, c_shape, dht_shape, dct_shape, it_shape, jt_shape, ft_shape, ot_shape, tanhct_shape):
         # dhy and dcy should be same shape
         validator.check_equal_int(len(c_shape), 2, "c rank", self.name)
-        validator.check("dht rank", len(dht_shape), "c rank", len(c_shape), Rel.EQ, self.name)
-        validator.check("dct rank", len(dct_shape), "c rank", len(c_shape), Rel.EQ, self.name)
-        validator.check("it rank", len(it_shape), "c rank", len(c_shape), Rel.EQ, self.name)
-        validator.check("jt rank", len(jt_shape), "c rank", len(c_shape), Rel.EQ, self.name)
-        validator.check("ft rank", len(ft_shape), "c rank", len(c_shape), Rel.EQ, self.name)
-        validator.check("ot rank", len(ot_shape), "c rank", len(c_shape), Rel.EQ, self.name)
-        validator.check("tanhct rank", len(tanhct_shape), "c rank", len(c_shape), Rel.EQ, self.name)
-        validator.check("dht shape", dht_shape, "c shape", c_shape, Rel.EQ, self.name)
-        validator.check("dct shape", dct_shape, "c shape", c_shape, Rel.EQ, self.name)
-        validator.check("it shape", it_shape, "c shape", c_shape, Rel.EQ, self.name)
-        validator.check("jt shape", jt_shape, "c shape", c_shape, Rel.EQ, self.name)
-        validator.check("ft shape", ft_shape, "c shape", c_shape, Rel.EQ, self.name)
-        validator.check("ot shape", ot_shape, "c shape", c_shape, Rel.EQ, self.name)
-        validator.check("tanhct shape", tanhct_shape, "c shape", c_shape, Rel.EQ, self.name)
+        validator.check("dht rank", len(dht_shape), "c rank", len(c_shape), validator.EQ, self.name)
+        validator.check("dct rank", len(dct_shape), "c rank", len(c_shape), validator.EQ, self.name)
+        validator.check("it rank", len(it_shape), "c rank", len(c_shape), validator.EQ, self.name)
+        validator.check("jt rank", len(jt_shape), "c rank", len(c_shape), validator.EQ, self.name)
+        validator.check("ft rank", len(ft_shape), "c rank", len(c_shape), validator.EQ, self.name)
+        validator.check("ot rank", len(ot_shape), "c rank", len(c_shape), validator.EQ, self.name)
+        validator.check("tanhct rank", len(tanhct_shape), "c rank", len(c_shape), validator.EQ, self.name)
+        validator.check("dht shape", dht_shape, "c shape", c_shape, validator.EQ, self.name)
+        validator.check("dct shape", dct_shape, "c shape", c_shape, validator.EQ, self.name)
+        validator.check("it shape", it_shape, "c shape", c_shape, validator.EQ, self.name)
+        validator.check("jt shape", jt_shape, "c shape", c_shape, validator.EQ, self.name)
+        validator.check("ft shape", ft_shape, "c shape", c_shape, validator.EQ, self.name)
+        validator.check("ot shape", ot_shape, "c shape", c_shape, validator.EQ, self.name)
+        validator.check("tanhct shape", tanhct_shape, "c shape", c_shape, validator.EQ, self.name)
 
         dgate_shape = (c_shape[0], 4 * c_shape[1])
         dct_1_shape = c_shape
@@ -2333,14 +2346,14 @@ class BasicLSTMCellCStateGrad(PrimitiveWithInfer):
         return (dgate_shape, dct_1_shape)
 
     def infer_dtype(self, c_dtype, dht_dtype, dct_dtype, it_dtype, jt_dtype, ft_dtype, ot_dtype, tanhct_dtype):
-        validator.check_subclass("c", c_dtype, [mstype.tensor], self.name)
-        validator.check_subclass("dht", dht_dtype, [mstype.tensor], self.name)
-        validator.check_subclass("dct", dct_dtype, [mstype.tensor], self.name)
-        validator.check_subclass("it", it_dtype, [mstype.tensor], self.name)
-        validator.check_subclass("jt", jt_dtype, [mstype.tensor], self.name)
-        validator.check_subclass("ft", ft_dtype, [mstype.tensor], self.name)
-        validator.check_subclass("ot", ot_dtype, [mstype.tensor], self.name)
-        validator.check_subclass("tanhct", tanhct_dtype, [mstype.tensor], self.name)
+        validator.check_subclass("c", c_dtype, [mstype.tensor_type], self.name)
+        validator.check_subclass("dht", dht_dtype, [mstype.tensor_type], self.name)
+        validator.check_subclass("dct", dct_dtype, [mstype.tensor_type], self.name)
+        validator.check_subclass("it", it_dtype, [mstype.tensor_type], self.name)
+        validator.check_subclass("jt", jt_dtype, [mstype.tensor_type], self.name)
+        validator.check_subclass("ft", ft_dtype, [mstype.tensor_type], self.name)
+        validator.check_subclass("ot", ot_dtype, [mstype.tensor_type], self.name)
+        validator.check_subclass("tanhct", tanhct_dtype, [mstype.tensor_type], self.name)
         validator.check_type_name("c", c_dtype, [mstype.float16, mstype.float32], self.name)
         validator.check_type_name("dht", dht_dtype, [mstype.float16, mstype.float32], self.name)
         validator.check_type_name("dct", dct_dtype, [mstype.float16, mstype.float32], self.name)
@@ -2361,11 +2374,11 @@ class BasicLSTMCellWeightGrad(PrimitiveWithInfer):
 
     def infer_shape(self, x_shape, h_shape, dgate_shape):
         validator.check_equal_int(len(x_shape), 2, "x rank", self.name)
-        validator.check("h rank", len(h_shape), " x rank", len(x_shape), Rel.EQ, self.name)
-        validator.check("dgate rank", len(dgate_shape), "x rank", len(x_shape), Rel.EQ, self.name)
-        validator.check("h_shape[0]", h_shape[0], "x_shape[0]", x_shape[0], Rel.EQ, self.name)
-        validator.check("dgate_shape[0]", dgate_shape[0], "h_shape[0]", h_shape[0], Rel.EQ, self.name)
-        validator.check("dgate_shape[1]", dgate_shape[1], "4*h_shape[1]", 4 * h_shape[1], Rel.EQ, self.name)
+        validator.check("h rank", len(h_shape), " x rank", len(x_shape), validator.EQ, self.name)
+        validator.check("dgate rank", len(dgate_shape), "x rank", len(x_shape), validator.EQ, self.name)
+        validator.check("h_shape[0]", h_shape[0], "x_shape[0]", x_shape[0], validator.EQ, self.name)
+        validator.check("dgate_shape[0]", dgate_shape[0], "h_shape[0]", h_shape[0], validator.EQ, self.name)
+        validator.check("dgate_shape[1]", dgate_shape[1], "4*h_shape[1]", 4 * h_shape[1], validator.EQ, self.name)
         input_size = x_shape[1]
         hidden_size = h_shape[1]
         dw_shape = (input_size + hidden_size, 4 * hidden_size)
@@ -2373,9 +2386,9 @@ class BasicLSTMCellWeightGrad(PrimitiveWithInfer):
         return (dw_shape, db_shape)
 
     def infer_dtype(self, x_dtype, h_dtype, dgate_dtype):
-        validator.check_subclass("x", x_dtype, mstype.tensor, self.name)
-        validator.check_subclass("h", h_dtype, mstype.tensor, self.name)
-        validator.check_subclass("dgate", dgate_dtype, mstype.tensor, self.name)
+        validator.check_subclass("x", x_dtype, mstype.tensor_type, self.name)
+        validator.check_subclass("h", h_dtype, mstype.tensor_type, self.name)
+        validator.check_subclass("dgate", dgate_dtype, mstype.tensor_type, self.name)
         validator.check_type_name("x", x_dtype, [mstype.float16, mstype.float32], self.name)
         validator.check_type_name("h", h_dtype, [mstype.float16, mstype.float32], self.name)
         validator.check_type_name("dgate", dgate_dtype, [mstype.float16, mstype.float32], self.name)
@@ -2388,12 +2401,12 @@ class BasicLSTMCellInputGrad(PrimitiveWithInfer):
     @prim_attr_register
     def __init__(self, keep_prob):
         self.keep_prob = validator.check_value_type("keep_prob", keep_prob, [float], self.name)
-        self.keep_prob = validator.check_float_range(keep_prob, 0.0, 1.0, Rel.INC_BOTH, "keep_prob", self.name)
+        self.keep_prob = validator.check_float_range(keep_prob, 0.0, 1.0, validator.INC_BOTH, "keep_prob", self.name)
 
     def infer_shape(self, dgate_shape, w_shape):
         validator.check_equal_int(len(dgate_shape), 2, "dgate rank", self.name)
         validator.check_equal_int(len(w_shape), 2, "w rank", self.name)
-        validator.check("dgate_shape[1]", dgate_shape[1], "w_shape[1]", w_shape[1], Rel.EQ, self.name)
+        validator.check("dgate_shape[1]", dgate_shape[1], "w_shape[1]", w_shape[1], validator.EQ, self.name)
         batch_size = dgate_shape[0]
         hidden_size = dgate_shape[1] // 4
         input_size = w_shape[0] - hidden_size
@@ -2402,8 +2415,8 @@ class BasicLSTMCellInputGrad(PrimitiveWithInfer):
         return (dxt_shape, dht_shape)
 
     def infer_dtype(self, dgate_dtype, w_dtype):
-        validator.check_subclass("dgate", dgate_dtype, mstype.tensor, self.name)
-        validator.check_subclass("w", w_dtype, mstype.tensor, self.name)
+        validator.check_subclass("dgate", dgate_dtype, mstype.tensor_type, self.name)
+        validator.check_subclass("w", w_dtype, mstype.tensor_type, self.name)
         validator.check_type_name("dgate", dgate_dtype, [mstype.float16, mstype.float32], self.name)
         validator.check_type_name("w", w_dtype, [mstype.float16, mstype.float32], self.name)
         return (dgate_dtype, dgate_dtype)
@@ -2417,7 +2430,7 @@ class InvGrad(Primitive):
         self.init_prim_io_names(inputs=['x', 'grad'], outputs=['y'])
 
 
-class LRNGrad(PrimitiveWithInfer):
+class LRNGrad(Primitive):
     """Computes gradients for LRN operation."""
 
     @prim_attr_register
@@ -2427,14 +2440,6 @@ class LRNGrad(PrimitiveWithInfer):
         validator.check_value_type("bias", bias, [float], self.name)
         validator.check_value_type("alpha", alpha, [float], self.name)
         validator.check_value_type("beta", beta, [float], self.name)
-
-    def infer_dtype(self, grads, x, y):
-        args = {"grads": grads, "x": x, "y": y}
-        validator.check_tensors_dtypes_same_and_valid(args, (mstype.float16, mstype.float32,), self.name)
-        return x
-
-    def infer_shape(self, grads, x, y):
-        return x
 
 
 class MvlgammaGrad(Primitive):
@@ -2466,7 +2471,7 @@ class MvlgammaGrad(Primitive):
         ValueError: If all elements of `x` are not greater than (p-1)/2.
 
     Supported Platforms:
-        ``CPU``
+        ``Ascend`` ``CPU``
     """
 
     @prim_attr_register
@@ -2517,7 +2522,7 @@ class SoftShrinkGrad(Primitive):
     def __init__(self, lambd=0.5):
         self.init_prim_io_names(inputs=['input_grad', 'input_x'], outputs=['output'])
         validator.check_value_type("lambd", lambd, [float], self.name)
-        validator.check_number("lambd", lambd, 0, Rel.GE, self.name)
+        validator.check_number("lambd", lambd, 0, validator.GE, self.name)
 
 
 class CdistGrad(Primitive):
@@ -2554,7 +2559,7 @@ class PdistGrad(Primitive):
         ValueError: If dimension of `x` is not 2.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
     """
 
     @prim_attr_register
@@ -2570,7 +2575,12 @@ class MultilabelMarginLossGrad(Primitive):
     Compute the gradients of MultilabelMarginLoss operation.
 
     Args:
-        reduction (str): Apply specific reduction method to the output: 'none', 'mean', 'sum'. Default: "mean".
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **y_grad** (Tensor) - The gradients of loss to output of MultilabelMarginLoss function, with
@@ -2592,7 +2602,7 @@ class MultilabelMarginLossGrad(Primitive):
         TypeError: If dtype of `y_grad` is not the same as `x`.
         ValueError: If length of shape of `x` is neither 1 nor 2.
         ValueError: If shape of `x` is not the same as `target`.
-        ValueError: If `reduction` is not one of 'none', 'mean', 'sum'.
+        ValueError: If `reduction` is not one of ``'none'``, ``'mean'``, ``'sum'``.
         ValueError: If shape of `y_grad` is not the same as forward output `y`.
 
     Supported Platforms:
@@ -2629,7 +2639,7 @@ class HShrinkGrad(Primitive):
         TypeError: If dtype of `gradients` or `features` is neither float16 nor float32.
 
     Supported Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
     """
 
     @prim_attr_register
@@ -2686,7 +2696,7 @@ class Dilation2DBackpropInput(Primitive):
         ValueError: If `data_format` is not the str of 'NCHW'.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         (pad_mode="SAME", data_format="NCHW")
@@ -2803,7 +2813,7 @@ class Dilation2DBackpropFilter(Primitive):
 
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         (pad_mode="SAME", data_format="NCHW")
@@ -2859,7 +2869,9 @@ class Dilation2DBackpropFilter(Primitive):
         self.pad_mode = validator.check_string(self.pad_mode, ["SAME", "VALID", 'same', "valid"], "pad_mode", self.name)
         self.add_prim_attr("pad_mode", self.pad_mode.upper())
         self.stride = _check_format_stride_or_dilation("stride", stride, self.name, self.data_format)
-        if self.stride[2] < 1 or self.stride[2] > 255 or self.stride[3] < 1 or self.stride[3] > 255:
+        def is_in_range(x):
+            return 1 <= x <= 255
+        if not is_in_range(self.stride[2]) or not is_in_range(self.stride[3]):
             raise ValueError(f"For '{self.name}', size of stride is not supported, "
                              f'stride should be in the range of [1, 255], '
                              f'but got stride_h: `{self.stride[2]}`, stride_w: `{self.stride[3]}`.')
@@ -2914,7 +2926,12 @@ class MultiMarginLossGrad(Primitive):
     Args:
         p (int): Optional. The norm degree for pairwise distance.Should be 1 or 2. Default: 1.
         margin (float): Optional. A parameter to change pairwise distance. Default: 1.0.
-        reduction (str): Apply specific reduction method to the output: 'none', 'mean', 'sum'. Default: "mean".
+        reduction (str, optional): Apply specific reduction method to the output: ``'none'`` , ``'mean'`` ,
+            ``'sum'`` . Default: ``'mean'`` .
+
+            - ``'none'``: no reduction will be applied.
+            - ``'mean'``: compute and return the weighted mean of elements in the output.
+            - ``'sum'``: the output elements will be summed.
 
     Inputs:
         - **y_grad** (Tensor) - If it's not a scalar, the shape of 'y_grad' :math:`(N, C)`.
@@ -2923,7 +2940,7 @@ class MultiMarginLossGrad(Primitive):
         - **target** (Tensor) - Ground truth labels, with shape :math:`(N,)`. Data type only support int64. The
           value of target should be non-negative, less than C.
         - **weight** (Tensor, optional) - The rescaling weight to each class with shape :math:`(C,)`. Data type only
-          support float32, float16 or float64. Default: None.
+          support float32, float16 or float64. Default: ``None``.
 
     Outputs:
         The shape of output :math:`(N, C)`. Data type only support float32 or float16, float64.
@@ -2943,14 +2960,14 @@ class MultiMarginLossGrad(Primitive):
         ValueError: If rank of `x` is not 2 or rank of 'target' is not 1.
 
     Supported Platforms:
-        ``CPU``
+        ``Ascend``  ``CPU``
     """
 
     @prim_attr_register
     def __init__(self, p=1, margin=1.0, reduction="mean"):
         """Initialize MultiMarginLossGrad"""
         self.p = validator.check_value_type('p', p, [int], self.name)
-        validator.check_int(p, {1, 2}, Rel.IN, 'p', self.name)
+        validator.check_int(p, {1, 2}, validator.IN, 'p', self.name)
         self.margin = validator.check_value_type('margin', margin, [float], self.name)
         self.reduction = validator.check_string(reduction, ['none', 'sum', 'mean'], 'reduction', self.name)
         self.init_prim_io_names(inputs=['y_grad', 'x', 'target', 'weight'], outputs=['x_grad'])
@@ -2960,77 +2977,38 @@ class UpsampleTrilinear3DGrad(Primitive):
     r"""
     Upsample the 3-D gradient data with trilinear interpolation algorithm.
 
+    Note:
+        One of 'scales' and 'output_size' must be specified. And it is an error if both are specified.
+
     Args:
-        input_size (Union[tuple[int], list[int]]): An required listInt.
-            contain 5 elements: [batch, channels, depth, height, width]. Must:
-            input_size[0] == grad_output_tensor_size[0]
-            input_size[1] == grad_output_tensor_size[1].
-        output_size (Union[tuple[int], list[int]]): An optional listInt. Defaults to none.
-            contain 3 elements: depth, height, width. The number of elements of 'output_size' should
-            be the same as the rank of input 'grad_output'.
-            Only one of 'scales' and 'output_size' can be specified. Must:
-            grad_output_tensor_size[2] == floor(input_size[2] * scales[0]) == output_size[0]
-            grad_output_tensor_size[3] == floor(input_size[3] * scales[1]) == output_size[1]
-            grad_output_tensor_size[4] == floor(input_size[4] * scales[2]) == output_size[2].
-        scales (Union[tuple[float], list[float]]): An optional listFloat. Defaults to none.
-            The scale array along each dimension, contain 3 elements: scale_depth, scale_height, scale_width.
-            The number of elements of 'scales' should be the same as the rank of input 'grad_output'.
-            One of 'scales' and 'output_size' MUST be specified and it is an error if both are specified.
-        align_corners (bool): An optional bool. Defaults to false.
+        align_corners (bool): An optional bool. Default: ``False``.
 
     Inputs:
-        - **grad_output** (Tensor) - A 5-D input tensor [N, C, D, H, W].
-          Must be one of the following types: [float16, float32, float64].
+        - **dy** (Tensor) - Tensor of shape [N, C, D, H, W]. Must be one of the following types:
+          float16, float32, float64.
+        - **input_size** (Union[tuple[int], list[int]]): An required listInt which contains 5 elements:
+          [batch, channels, depth, height, width]. Must:
+          input_size[0] == dy_tensor_size[0]
+          input_size[1] == dy_tensor_size[1].
+        - **output_size** (Union[tuple[int], list[int]]): An optional listInt. Default: ``None``.
+          It contains 3 elements: depth, height, width, whose elements should be the same as `dy`. Must:
+          dy_tensor_size[2] == floor(input_size[2] * scales[0]) == output_size[0]
+          dy_tensor_size[3] == floor(input_size[3] * scales[1]) == output_size[1]
+          dy_tensor_size[4] == floor(input_size[4] * scales[2]) == output_size[2].
+        - **scales** (Union[tuple[float], list[float]]): An optional listFloat. Default: ``None``.
+          The scale array along each dimension, contain 3 elements: scale_depth, scale_height, scale_width.
+          The number of elements of 'scales' should be the same as the rank of input `dy`.
 
     Outputs:
-        backprops Tensor - A Tensor with shape depends on intput_size and output_size/scales.
-            Must be one of the following types: [float16, float32, float64].
-
-    Raises:
-        TypeError: If dtype of `x` is not int [float16, float32, float64].
-        TypeError: If `input_size` is not list[int] or tuple[int].
-        TypeError: When `output_size` is not none and `output_size` is not list[int] or tuple[int].
-        TypeError: When `scales` is not none and `scales` is not list[float] or tuple[float].
-        TypeError: If type of `align_corners` is not bool.
-        ValueError: If any value of `output_size` is negative or zero when `output_size` is not empty.
-        ValueError: If any value of `scales` is negative or zero when `scales` is not empty.
-        ValueError: If shape of `x` is not 5D.
-        ValueError: If none of `scales` and `output_size` is specified or both specified.
-        ValueError: If size of `scales` is not equal 3 when `scales` is specified.
-        ValueError: If size of `output_size` is not equal 3 when `output_size` is specified.
-        TypeError: If `input_size` is not Union[tuple[int], list[int]].
-        ValueError: If any value of `input_size` is negative.
-        ValueError: If elements number of `input_size` is not 5.
-
-    Supported Platforms:
-        ``GPU`` ``CPU``
+        - **dx** (Tensor) - A Tensor with shape depending on intput_size, and its' dtype is the same as `dy`.
     """
     @prim_attr_register
-    def __init__(self, input_size, output_size=None, scales=None, align_corners=False):
+    def __init__(self, align_corners=False):
         """Initialize UpsampleTrilinear3DGrad."""
-        self.init_prim_io_names(inputs=['grad_output'], outputs=['y'])
-        self.input_size = input_size
-        self.output_size = [] if output_size is None else output_size
-        self.scales = [] if scales is None else scales
+        self.init_prim_io_names(
+            inputs=['dy', 'input_size', 'output_size', 'scales'],
+            outputs=['dx'])
         self.align_corners = align_corners
-
-        validator.check_value_type("input_size", self.input_size, [list, tuple], self.name)
-        validator.check_equal_int(len(self.input_size), 5, "the dimension of input_size", self.name)
-        validator.check_value_type("output_size", self.output_size, [list, tuple], self.name)
-        validator.check_value_type("scales", self.scales, [list, tuple], self.name)
-        validator.check_bool(self.align_corners, self.name)
-        if len(self.output_size) == 3:
-            validator.check_positive_int_sequence(self.output_size, "output_size", self.name)
-        if len(self.scales) == 3:
-            validator.check_positive_float_sequence(self.scales, "scales", self.name)
-        if self.output_size == []:
-            validator.check_equal_int(len(self.scales), 3, 'size of scales', self.name)
-        if self.scales == []:
-            validator.check_equal_int(len(self.output_size), 3, 'size of output_size', self.name)
-
-        self.add_prim_attr('input_size', self.input_size)
-        self.add_prim_attr('output_size', self.output_size)
-        self.add_prim_attr('scales', self.scales)
         self.add_prim_attr('align_corners', self.align_corners)
 
 
@@ -3071,7 +3049,7 @@ class GridSampler3DGrad(Primitive):
         ValueError: If the shape of `grad` is inconsistent with the shape of the output result of forward calculation.
 
     Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU``
+        ``GPU`` ``CPU``
     """
 
     @prim_attr_register
@@ -3116,7 +3094,7 @@ class SparseSegmentMeanGrad(Primitive):
         ValueError: If `indices` is out of range of `output_dim0`.
 
     Supported Platforms:
-        ``Ascend`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
     """
 
     @prim_attr_register
@@ -3159,9 +3137,9 @@ class MaxUnpool2DGrad(Primitive):
         validator.check_value_type("pads", pads, [int, tuple], self.name)
         validator.check_value_type("output_shape", output_shape, [tuple], self.name)
         validator.check_string(data_format, ['NCHW', 'NHWC'], 'data_format', self.name)
-        validator.check_int(len(ksize), 4, Rel.EQ, "ksize rank", self.name)
-        validator.check_int(len(strides), 4, Rel.EQ, "strides rank", self.name)
-        validator.check_int(len(pads), 4, Rel.EQ, "pads rank", self.name)
+        validator.check_int(len(ksize), 4, validator.EQ, "ksize rank", self.name)
+        validator.check_int(len(strides), 4, validator.EQ, "strides rank", self.name)
+        validator.check_int(len(pads), 4, validator.EQ, "pads rank", self.name)
 
 
 class MaxUnpool3DGrad(Primitive):
@@ -3178,9 +3156,9 @@ class MaxUnpool3DGrad(Primitive):
         validator.check_value_type("pads", pads, [int, tuple], self.name)
         validator.check_value_type("output_shape", output_shape, [tuple], self.name)
         validator.check_string(data_format, ['NCDHW', 'NDHWC'], 'data_format', self.name)
-        validator.check_int(len(ksize), 5, Rel.EQ, "ksize rank", self.name)
-        validator.check_int(len(strides), 5, Rel.EQ, "strides rank", self.name)
-        validator.check_int(len(pads), 5, Rel.EQ, "pads rank", self.name)
+        validator.check_int(len(ksize), 5, validator.EQ, "ksize rank", self.name)
+        validator.check_int(len(strides), 5, validator.EQ, "strides rank", self.name)
+        validator.check_int(len(pads), 5, validator.EQ, "pads rank", self.name)
 
 
 class FractionalAvgPoolGrad(Primitive):
@@ -3253,7 +3231,7 @@ class TraceGrad(Primitive):
         ValueError: If length of shape of `x_shape` is not equal to 2.
 
     Support Platforms:
-        ``Ascend`` ``CPU`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
     """
 
     @prim_attr_register
@@ -3280,7 +3258,7 @@ class IgammaGradA(Primitive):
         ValueError: If `a` could not be broadcast to a tensor with shape of `x`.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> a = Tensor(np.array([2.0, 4.0, 6.0, 8.0]).astype(np.float32))
@@ -3311,7 +3289,7 @@ class DeformableOffsetsGrad(Primitive):
         data_format (str): An optional string from:"NCHW", "NHWC".Specify the data format of the input x. Default:
             "NCHW".
         deformable_groups (int): Specify the C-axis grouping number of input x. Default: 1.
-        modulated (bool): Specify version of DeformableOffsetsGrad, true means v2, false means v1. Default: true.
+        modulated (bool): Specify version of DeformableOffsetsGrad, true means v2, false means v1. Default: ``True``.
 
     Inputs:
         - **grad** (Tensor) - The input grad tensor. With float16 or float32 data type.
@@ -3390,7 +3368,7 @@ class MedianGrad(Primitive):
         ValueError: If shape of `y_grad` is not the same as `y`.
 
     Supported Platforms:
-        ``CPU``
+        ``Ascend`` ``CPU``
     """
 
     @prim_attr_register
@@ -3479,7 +3457,7 @@ class SparseSegmentSqrtNGrad(Primitive):
         ValueError: If `indices` is bigger than or equal to `output_dim0`.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
     """
 
     @prim_attr_register
@@ -3525,7 +3503,7 @@ class GridSampler2DGrad(Primitive):
         ValueError: If the shape of `grad` is inconsistent with the shape of the output result of forward calculation.
 
     Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU``
+        ``GPU`` ``CPU``
     """
 
     @prim_attr_register
@@ -3546,8 +3524,8 @@ class ResizeBicubicGrad(Primitive):
 
     Args:
         align_corners (bool):If true, the centers of the 4 corner pixels of the input
-    and output tensors are aligned, preserving the values at the corner pixels.Default: False.
-        half_pixel_centers (bool): An optional bool. Default: False.
+    and output tensors are aligned, preserving the values at the corner pixels.Default: ``False``.
+        half_pixel_centers (bool): An optional bool. Default: ``False``.
 
     Inputs:
         - **grads** (Tensor) - A Tensor of type float. 4-D with shape
@@ -3566,7 +3544,7 @@ class ResizeBicubicGrad(Primitive):
         ValueError: If `size` dim is not 4.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
     """
     @prim_attr_register
     def __init__(self, align_corners=False, half_pixel_centers=False):
@@ -3581,11 +3559,13 @@ class ResizeBicubicGrad(Primitive):
         original_image_shape = list(original_image['shape'])
         # get value
         if grads['value'] is None:
-            raise ValueError(f"For '{self.name}', the 'grads' cannot be None,\
-                            but got {grads['value']}.")
+            raise ValueError(
+                f"For '{self.name}', the 'grads' cannot be None, but got {grads['value']}."
+            )
         if original_image['value'] is None:
-            raise ValueError(f"For '{self.name}', the 'original_image' cannot be None,\
-                                but got {original_image['value']}.")
+            raise ValueError(
+                f"For '{self.name}', the 'original_image' cannot be None, but got {original_image['value']}."
+            )
         # get dtype
         grads_dtype = grads['dtype']
         original_image_dtype = original_image['dtype']
@@ -3595,15 +3575,16 @@ class ResizeBicubicGrad(Primitive):
         validator.check_tensor_dtype_valid("original_image", original_image_dtype,
                                            [mstype.float32, mstype.float64], self.name)
         # check input shape rank
-        validator.check("grads rank", len(grads_shape), "expected", 4, Rel.EQ, self.name)
-        validator.check("original_image rank", len(original_image_shape), "expected", 4, Rel.EQ, self.name)
-        validator.check("batch_size equal", grads_shape[0], "expected", original_image_shape[0], Rel.EQ, self.name)
-        validator.check("channel equal", grads_shape[3], "expected", original_image_shape[3], Rel.EQ, self.name)
+        validator.check("grads rank", len(grads_shape), "expected", 4, validator.EQ, self.name)
+        validator.check("original_image rank", len(original_image_shape), "expected", 4, validator.EQ, self.name)
+        validator.check("batch_size equal", grads_shape[0], "expected",
+                        original_image_shape[0], validator.EQ, self.name)
+        validator.check("channel equal", grads_shape[3], "expected", original_image_shape[3], validator.EQ, self.name)
         # check original_image_shape and grads_shape
         validator.check("original_image[0] and grads[0]", original_image_shape[0],
-                        "expected", grads_shape[0], Rel.EQ, self.name)
+                        "expected", grads_shape[0], validator.EQ, self.name)
         validator.check("original_image[3] and grads[3]", original_image_shape[3],
-                        "expected", grads_shape[3], Rel.EQ, self.name)
+                        "expected", grads_shape[3], validator.EQ, self.name)
 
         batch_size = grads_shape[0]
         height = original_image_shape[1]
@@ -3690,7 +3671,7 @@ class FractionalMaxPoolGradWithFixedKsize(Primitive):
         ValueError: If the second dimension size of `origin_input` and `out_backprop` is not equal.
 
     Supported Platforms:
-        ``GPU`` ``CPU``
+        ``Ascend`` ``GPU`` ``CPU``
     """
 
     @prim_attr_register
@@ -3698,6 +3679,42 @@ class FractionalMaxPoolGradWithFixedKsize(Primitive):
         self.data_format = validator.check_string(data_format, ['NCHW'], 'data_format', self.name)
         self.add_prim_attr("data_format", self.data_format)
         self.init_prim_io_names(inputs=['origin_input', 'out_backprop', 'argmax'], outputs=['y'])
+
+
+class AffineGridGrad(Primitive):
+    r"""
+    Computes gradients for AffineGrid operation.
+
+    Args:
+        align_corners (bool): if True, consider -1 and 1 to refer to the centers
+            of the corner pixels rather than the image corners. Default: ``False``.
+
+    Inputs:
+        - **y_grad** (Tensor) - Data type must be float16 or float32.
+        - **x_size** (tuple) - Data type must be int32 or int64.
+
+    Outputs:
+        Tensor, with data type same as `y_grad`.
+
+    Supported Platforms:
+        ``CPU``
+
+    Examples:
+        >>> import mindspore.ops.operations._grad_ops as _grad_ops
+        >>> affinegridgrad = _grad_ops.AffineGridGrad()
+        >>> y_grad = Tensor(np.ones([1, 2, 2, 2]), mindspore.float32)
+        >>> x_size = (1, 2, 2, 2)
+        >>> x_grad = affinegridgrad(y_grad, x_size)
+        >>> print(x_grad)
+        [[[0. 0. 4.]
+          [0. 0. 4.]]]
+    """
+
+    @prim_attr_register
+    def __init__(self, align_corners=False):
+        """Initialize AffineGridGrad."""
+        validator.check_value_type("align_corners", align_corners, [bool], self.name)
+        self.init_prim_io_names(inputs=['y_grad', 'x_size'], outputs=['x_grad'])
 
 
 class HSigmoidGrad(Primitive):
@@ -3778,3 +3795,71 @@ class MapTensorGetGrad(Primitive):
         """Initialize MapTensorGetGrad"""
         self.init_prim_io_names(inputs=['map_tensor', 'key_tensor', 'default_value', 'grad'], outputs=['output'])
         self.add_prim_attr('side_effect_mem', True)
+
+
+class ResizeV2Grad(Primitive):
+    r"""
+    Calculates the gradient of ResizeV2 operation.
+
+    Supported Platforms:
+        ``CPU``
+    """
+
+    @prim_attr_register
+    def __init__(self, coordinate_transformation_mode="half_pixel", mode="nearest"):
+        """Initialize ResizeV2Grad."""
+        self.init_prim_io_names(inputs=["grads", "roi", "scales", "original_size"], outputs=["y"])
+        self.add_prim_attr("nearest_mode", "floor")
+        self.add_prim_attr("cubic_coeff_a", -0.75)
+        validator.check_value_type(
+            "coordinate_transformation_mode", coordinate_transformation_mode, [str], self.name)
+        validator.check_string(coordinate_transformation_mode,
+                               ["align_corners", "half_pixel"], "coordinate_transformation_mode", self.name)
+        validator.check_value_type("mode", mode, [str], self.name)
+        validator.check_string(mode, ["nearest", "linear", "cubic"], "mode", self.name)
+
+
+class WKVGrad(Primitive):
+    r"""
+    Calculates the gradient of WKV operation.
+
+    Supported Platforms:
+        ``Ascend``
+    """
+
+    @prim_attr_register
+    def __init__(self):
+        """Initialize WKVGrad."""
+        self.init_prim_io_names(inputs=["time_first", "time_decay", "key", "value", "gy"],
+                                outputs=["gw", "gu", "gk", "gv"])
+
+
+class FlashAttentionScoreGrad(Primitive):
+    r"""
+    Calculates the gradient of FlashAttentionScore operation.
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
+
+    Supported Platforms:
+        ``Ascend``
+    """
+    @prim_attr_register
+    def __init__(self, head_num, keep_prob=1.0, scale_value=1.0, pre_tokens=65536, next_tokens=65536, inner_precise=1,
+                 input_layout='BSH'):
+        """Initialize FlashAttentionScoreGrad."""
+        validator.check_value_type('head_num', head_num, [int], self.name)
+        validator.check_value_type('keep_prob', keep_prob, [int, float], self.name)
+        validator.check_float(keep_prob, 0.0, validator.GE, "keep_prob", self.name)
+        validator.check_float(keep_prob, 1.0, validator.LE, "keep_prob", self.name)
+        validator.check_value_type('scale_value', scale_value, [float], self.name)
+        validator.check_value_type('pre_tokens', pre_tokens, [int], self.name)
+        validator.check_value_type('next_tokens', next_tokens, [int], self.name)
+        validator.check_value_type('inner_precise', inner_precise, [int], self.name)
+        if inner_precise not in [0, 1]:
+            raise ValueError(f"Attribute 'inner_precise' must be either 0 or 1, but got {inner_precise}")
+        validator.check_value_type('input_layout', input_layout, [str], self.name)
+        if input_layout not in ["BSH"]:
+            raise ValueError(f"Attribute 'input_layout' must be either 'bsh' or 'sbh', but got {input_layout}")
+        self.init_prim_io_names(inputs=['query', 'key', 'value', 'attn_mask', 'attention_in', 'softmax_max',
+                                        'softmax_sum', 'dy', 'drop_mask', 'real_shift', "padding_mask", 'softmax_out'],
+                                outputs=['dq', 'dk', 'dv'])

@@ -251,7 +251,7 @@ class BertAttentionSoftmax(nn.Cell):
         self.weight = TruncatedNormal(initializer_range)
 
         self.softmax = nn.Softmax()
-        self.dropout = nn.Dropout(1 - attention_probs_dropout_prob)
+        self.dropout = nn.Dropout(p=attention_probs_dropout_prob)
         self.transpose = P.Transpose()
 
         self.value_layer = nn.Dense(self.to_tensor_width,
@@ -322,7 +322,6 @@ class BertAttentionRelativePositionValues(nn.Cell):
                                        max_relative_position=16,
                                        initializer_range=initializer_range,
                                        use_one_hot_embeddings=use_one_hot_embeddings)
-        self.fill = P.Fill()
         self.multiply = P.Mul()
         self.type = P.DType()
         self.cast = P.Cast()
@@ -358,7 +357,7 @@ class BertAttentionRelativePositionValues(nn.Cell):
         context_layer = self.transpose(input_tensor, self.trans_shape)
         context_layer = self.reshape(context_layer, self.shp_return)
         # ge reshape should not return, need an operator here
-        ones = self.cast(self.fill((1, 1), 1), self.type(context_layer))
+        ones = self.cast(F.fill((1, 1), 1), self.type(context_layer))
         context_layer = self.multiply(context_layer, ones)
         return relations_values_embedding, context_layer
 

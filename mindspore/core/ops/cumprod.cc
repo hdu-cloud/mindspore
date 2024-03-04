@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-#include <memory>
 #include "ops/cumprod.h"
-#include "utils/check_convert_utils.h"
+#include <memory>
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -59,7 +60,13 @@ abstract::ShapePtr CumProdInferShape(const PrimitivePtr &primitive, const std::v
   } else if (input_args[kInputIndex1]->isa<abstract::AbstractScalar>()) {
     auto axis_ptr = input_args[kInputIndex1]->cast<abstract::AbstractScalarPtr>();
     MS_EXCEPTION_IF_NULL(axis_ptr);
-    axis = GetValue<int64_t>(axis_ptr->BuildValue());
+    auto axis_value = axis_ptr->BuildValue();
+    MS_EXCEPTION_IF_NULL(axis_value);
+    if (IsValueKnown(axis_value)) {
+      axis = GetValue<int64_t>(axis_value);
+    } else {
+      return std::make_shared<abstract::Shape>(x_shape);
+    }
   } else {
     MS_LOG(EXCEPTION) << "For '" << primitive->name()
                       << "', the second input type should be tensor or scalar, but got invalid abstract type:"
@@ -122,6 +129,27 @@ AbstractBasePtr CumProdInfer(const abstract::AnalysisEnginePtr &, const Primitiv
                              const std::vector<AbstractBasePtr> &input_args) {
   return abstract::MakeAbstract(CumProdInferShape(primitive, input_args), CumProdInferType(primitive, input_args));
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(CumProd, prim::kPrimCumProd, CumProdInfer, CumProdInferValue, true);
+
+// AG means auto generated
+class MIND_API AGCumProdInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return CumProdInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return CumProdInferType(primitive, input_args);
+  }
+  ValuePtr InferValue(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return CumProdInferValue(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return CumProdInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(CumProd, prim::kPrimCumProd, AGCumProdInfer, true);
 }  // namespace ops
 }  // namespace mindspore

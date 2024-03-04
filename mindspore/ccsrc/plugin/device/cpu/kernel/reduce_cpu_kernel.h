@@ -22,6 +22,7 @@
 #include <string>
 #include <map>
 #include <functional>
+#include "kernel/kernel_get_value.h"
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
 #include "plugin/factory/ms_factory.h"
 
@@ -46,6 +47,7 @@ class ReduceCpuKernelMod : public NativeCpuKernelMod {
 
  protected:
   std::vector<KernelAttr> GetOpSupport() override;
+  std::vector<size_t> GetLaunchIgnoredInputAddressIdx() const override { return {kIndex1}; }
 
  private:
   std::shared_ptr<CpuKernelFunc> func_obj_;

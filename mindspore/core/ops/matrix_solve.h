@@ -18,13 +18,13 @@
 #define MINDSPORE_CORE_OPS_MATRIX_SOLVE_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
-#include <memory>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -42,8 +42,8 @@ class MIND_API MatrixSolve : public BaseOperator {
   /// \brief Method to get adjoint attributes.
   bool get_adjoint() const;
 };
-abstract::AbstractBasePtr MatrixSolveInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                           const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr MatrixSolveInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                    const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimMatrixSolvePtr = std::shared_ptr<MatrixSolve>;
 }  // namespace ops
 }  // namespace mindspore

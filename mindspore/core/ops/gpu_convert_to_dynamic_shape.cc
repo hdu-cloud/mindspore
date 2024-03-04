@@ -14,21 +14,31 @@
  * limitations under the License.
  */
 
-#include <set>
-#include <map>
-#include <string>
-#include <vector>
 #include <memory>
-#include "ops/gpu_convert_to_dynamic_shape.h"
-#include "utils/check_convert_utils.h"
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/structure_ops.h"
+#include "ops/gpu_convert_to_dynamic_shape.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
-abstract::ShapePtr GpuConvertToDynamicShapeInferShape(const PrimitivePtr &primitive,
+abstract::ShapePtr GpuConvertToDynamicShapeInferShape(const PrimitivePtr &,
                                                       const std::vector<AbstractBasePtr> &input_args) {
   auto input_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
   if (IsDynamicRank(input_shape)) {
@@ -41,8 +51,7 @@ abstract::ShapePtr GpuConvertToDynamicShapeInferShape(const PrimitivePtr &primit
   return std::make_shared<abstract::Shape>(output_shape_dyn);
 }
 
-TypePtr GpuConvertToDynamicShapeInferType(const PrimitivePtr &primitive,
-                                          const std::vector<AbstractBasePtr> &input_args) {
+TypePtr GpuConvertToDynamicShapeInferType(const PrimitivePtr &, const std::vector<AbstractBasePtr> &input_args) {
   auto x_type = input_args[0]->BuildType();
   return x_type;
 }
@@ -58,7 +67,25 @@ AbstractBasePtr GpuConvertToDynamicShapeInfer(const abstract::AnalysisEnginePtr 
   auto infer_shape = GpuConvertToDynamicShapeInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(GpuConvertToDynamicShape, prim::kPrimGpuConvertToDynamicShape,
-                             GpuConvertToDynamicShapeInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGGpuConvertToDynamicShapeInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return GpuConvertToDynamicShapeInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return GpuConvertToDynamicShapeInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return GpuConvertToDynamicShapeInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(GpuConvertToDynamicShape, prim::kPrimGpuConvertToDynamicShape,
+                                 AGGpuConvertToDynamicShapeInfer, false);
 }  // namespace ops
 }  // namespace mindspore

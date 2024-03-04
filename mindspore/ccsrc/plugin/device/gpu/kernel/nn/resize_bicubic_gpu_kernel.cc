@@ -28,24 +28,12 @@ using ResizeBicubicPtrCreatorFunc =
   std::function<std::unique_ptr<cukernel::GpuKernelHelperBase>(const std::string &, const uint32_t &)>;
 
 const std::vector<std::pair<KernelAttr, ResizeBicubicPtrCreatorFunc>> kernel_attr = {
-  {KernelAttr().AddInputAttr(kNumberTypeInt8).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeFloat32),
-   CreateResizeBicubicKernelPtr<int8_t, float>},
-  {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeFloat32),
-   CreateResizeBicubicKernelPtr<uint8_t, float>},
-  {KernelAttr().AddInputAttr(kNumberTypeInt16).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeFloat32),
-   CreateResizeBicubicKernelPtr<int16_t, float>},
-  {KernelAttr().AddInputAttr(kNumberTypeUInt16).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeFloat32),
-   CreateResizeBicubicKernelPtr<uint16_t, float>},
-  {KernelAttr().AddInputAttr(kNumberTypeInt32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeFloat32),
-   CreateResizeBicubicKernelPtr<int32_t, float>},
-  {KernelAttr().AddInputAttr(kNumberTypeInt64).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeFloat32),
-   CreateResizeBicubicKernelPtr<int64_t, float>},
-  {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeFloat32),
-   CreateResizeBicubicKernelPtr<half, float>},
+  {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeFloat16),
+   CreateResizeBicubicKernelPtr<half, half>},
   {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeFloat32),
    CreateResizeBicubicKernelPtr<float, float>},
-  {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeFloat32),
-   CreateResizeBicubicKernelPtr<double, float>}};
+  {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeFloat64),
+   CreateResizeBicubicKernelPtr<double, double>}};
 }  // namespace
 
 bool ResizeBicubicGpuKernelMod::Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
@@ -61,35 +49,35 @@ bool ResizeBicubicGpuKernelMod::Launch(const std::vector<AddressPtr> &inputs, co
 
 bool ResizeBicubicGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                      const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
   auto kernel_ptr = std::dynamic_pointer_cast<ops::ResizeBicubic>(base_operator);
+  MS_EXCEPTION_IF_NULL(kernel_ptr);
   kernel_name_ = kernel_ptr->name();
   auto tensor_attr = GetKernelAttrFromTensors(inputs, outputs);
   auto [is_match, index] = MatchKernelAttr(tensor_attr, GetOpSupport());
   if (!is_match) {
     return false;
   }
+  MS_EXCEPTION_IF_NULL(attr_ptr_);
   attr_ptr_->align_corners = kernel_ptr->get_align_corners();
   attr_ptr_->half_pixel_centers = kernel_ptr->get_half_pixel_centers();
   helper_ptr_ = std::move(kernel_attr[index].second(kernel_name_, device_id_));
+  MS_EXCEPTION_IF_NULL(helper_ptr_);
   helper_ptr_->SetKernelParam(attr_ptr_);
-
   return true;
 }
 
 int ResizeBicubicGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                       const std::vector<KernelTensorPtr> &outputs,
                                       const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost) {
+  if (auto ret = KernelMod::Resize(base_operator, inputs, outputs); ret != KRET_OK) {
+    return ret;
+  }
+  std::vector<int64_t> inp_shape = inputs.at(kIndex0)->GetShapeVector();
+  std::vector<int64_t> inptosize_shape = inputs.at(kIndex1)->GetShapeVector();
+  std::vector<int64_t> out_shape = outputs.at(kIndex0)->GetShapeVector();
   std::vector<std::vector<int64_t>> input_shapes;
   std::vector<std::vector<int64_t>> output_shapes;
-  std::vector<int64_t> inp_shape = inputs[0]->GetShapeVector();
-  std::vector<int64_t> inptosize_shape = inputs[1]->GetShapeVector();
-  std::vector<int64_t> out_shape = outputs[0]->GetShapeVector();
-  for (const auto inputtest : inputs) {
-    auto inshape = inputtest->GetShapeVector();
-    if (!IsValidShape(inshape)) {
-      return KRET_UNKNOWN_SHAPE;
-    }
-  }
   input_shapes.emplace_back(inp_shape);
   input_shapes.emplace_back(inptosize_shape);
   output_shapes.emplace_back(out_shape);

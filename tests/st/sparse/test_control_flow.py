@@ -59,7 +59,8 @@ def test_while_tensor_as_condition_forward_and_backward():
     assert isinstance(grad_graph[1], CSRTensor)
 
 
-@pytest.mark.level0
+@pytest.mark.skip(reason="Sparse tensor can not run renormalize")
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
@@ -182,7 +183,7 @@ def test_control_flow_for_enumerate_if_continue():
     assert isinstance(grad_graph[0], CSRTensor)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard

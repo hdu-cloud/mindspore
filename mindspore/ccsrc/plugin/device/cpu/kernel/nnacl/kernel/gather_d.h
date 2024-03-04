@@ -13,21 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_KERNEL_GATHER_D_H_
-#define MINDSPORE_NNACL_KERNEL_GATHER_D_H_
+#ifndef NNACL_KERNEL_GATHER_D_H_
+#define NNACL_KERNEL_GATHER_D_H_
 
 #include "nnacl/op_base.h"
 #include "nnacl/tensor_c.h"
 #include "nnacl/kernel.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+KernelBase *CreateGatherD(OpParameter *param, int data_type);
 
-KernelBase *CreateGatherD(OpParameter *param, TensorC *in, size_t insize, TensorC *out, size_t outsize, int data_type,
-                          FormatC format);
-
-#ifdef __cplusplus
-}
-#endif
-#endif  // MINDSPORE_NNACL_KERNEL_GATHER_D_H_
+#endif  // NNACL_KERNEL_GATHER_D_H_

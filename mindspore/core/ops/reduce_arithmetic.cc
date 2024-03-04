@@ -13,21 +13,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <memory>
+#include <set>
+#include <string>
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/lite_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
 #include "ops/reduce_all.h"
 #include "ops/reduce_any.h"
 #include "ops/reduce_max.h"
-#include "ops/reduce_min.h"
-#include "ops/reduce_sum.h"
-#include "ops/reduce_prod.h"
 #include "ops/reduce_mean.h"
-#include <string>
-#include <set>
-#include <memory>
-#include "ops/op_utils.h"
-#include "abstract/ops/op_infer.h"
+#include "ops/reduce_min.h"
+#include "ops/reduce_prod.h"
+#include "ops/reduce_sum.h"
 #include "utils/check_convert_utils.h"
-#include "abstract/ops/primitive_infer_map.h"
-#include "mindapi/src/helper.h"
 
 namespace mindspore {
 namespace ops {
@@ -58,8 +60,10 @@ class ReduceArithmeticInfer : public abstract::OpInferBase {
       {prim::kPrimReduceMax->name(), common_valid_types_with_complex_and_bool},
       {prim::kPrimReduceMin->name(), common_valid_types_with_complex_and_bool},
       {prim::kPrimReduceSum->name(), common_valid_types_with_complex_and_bool},
-      {prim::kPrimReduceProd->name(), common_valid_types_with_complex},
+      {prim::kPrimReduceSumD->name(), common_valid_types_with_complex_and_bool},
+      {prim::kPrimReduceProd->name(), common_valid_types_with_complex_and_bool},
       {prim::kPrimReduceMean->name(), common_valid_types_with_complex},
+      {prim::kPrimReduceMeanD->name(), common_valid_types_with_complex},
     };
     if (check_list_map.find(op_name) == check_list_map.end()) {
       MS_EXCEPTION(TypeError) << "For Primitive[" << op_name << "], the current ops do not support this operation.";
@@ -69,6 +73,16 @@ class ReduceArithmeticInfer : public abstract::OpInferBase {
 
   std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
 };
+
+abstract::AbstractBasePtr ReduceArithmeticInferFunc(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                    const std::vector<abstract::AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
+  ReduceArithmeticInfer reduce;
+  auto type = reduce.InferType(primitive, input_args);
+  auto shape = reduce.InferShape(primitive, input_args);
+  return abstract::MakeAbstract(shape, type);
+}
+
 REGISTER_PRIMITIVE_OP_INFER_IMPL(ReduceAll, prim::kPrimReduceAll, ReduceArithmeticInfer, false);
 REGISTER_PRIMITIVE_OP_INFER_IMPL(ReduceAny, prim::kPrimReduceAny, ReduceArithmeticInfer, false);
 REGISTER_PRIMITIVE_OP_INFER_IMPL(ReduceMax, prim::kPrimReduceMax, ReduceArithmeticInfer, false);

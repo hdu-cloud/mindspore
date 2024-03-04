@@ -47,7 +47,7 @@ int PoolingInferShape(const TensorC *const *inputs, size_t inputs_size, TensorC 
   }
 
   const TensorC *input = inputs[0];
-  MS_CHECK_TRUE_RET(input->format_ == Format_NHWC, NNACL_FORMAT_ERROR);
+  NNACL_CHECK_TRUE_RET(input->format_ == Format_NHWC, NNACL_FORMAT_ERROR);
   for (size_t i = 0; i < outputs_size; i++) {
     TensorC *output = outputs[i];
     SetDataTypeFormat(output, input);
@@ -80,11 +80,11 @@ int PoolingInferShape(const TensorC *const *inputs, size_t inputs_size, TensorC 
       return NNACL_NULL_PTR;
     }
   } else {
-    int round_mode = (RoundMode)param->round_mode_;
-    if (round_mode == RoundMode_Floor) {
+    int round_mode = (RoundType)param->round_type_;
+    if (round_mode == RoundType_Floor) {
       output_h = floor((float)(input_h + param->pad_u_ + param->pad_d_ - window_h) / param->stride_h_) + 1;
       output_w = floor((float)(input_w + param->pad_l_ + param->pad_r_ - window_w) / param->stride_w_) + 1;
-    } else if (round_mode == RoundMode_Ceil) {
+    } else if (round_mode == RoundType_Ceil) {
       output_h = ceil((float)(input_h + param->pad_u_ + param->pad_d_ - window_h) / param->stride_h_) + 1;
       output_w = ceil((float)(input_w + param->pad_l_ + param->pad_r_ - window_w) / param->stride_w_) + 1;
     } else {

@@ -5,8 +5,8 @@ endif()
 
 list(APPEND DEVICE_SRC_LIST "ps/gpu_ps_cache.cc")
 if(ENABLE_GPU)
-    list(APPEND DEVICE_SRC_LIST ${CMAKE_SOURCE_DIR}/mindspore/ccsrc/common/mem_reuse/mem_reuse.cc)
-    list(APPEND DEVICE_SRC_LIST ${CMAKE_SOURCE_DIR}/mindspore/ccsrc/common/mem_reuse/mem_swap_manager.cc)
+    list(APPEND DEVICE_SRC_LIST ${CMAKE_SOURCE_DIR}/mindspore/ccsrc/backend/common/mem_reuse/mem_reuse.cc)
+    list(APPEND DEVICE_SRC_LIST ${CMAKE_SOURCE_DIR}/mindspore/ccsrc/backend/common/mem_reuse/mem_swap_manager.cc)
     list(APPEND DEVICE_SRC_LIST ${CMAKE_SOURCE_DIR}/mindspore/ccsrc/runtime/data_queue/data_queue.h)
     file(GLOB_RECURSE DEVICE_SRC_LIST RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*.cc")
     list(REMOVE_ITEM DEVICE_SRC_LIST
@@ -30,6 +30,12 @@ endif()
 if(ENABLE_GPU)
     file(GLOB_RECURSE CUDA_SRC_LIST RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}  "*.cu")
     set_property(SOURCE ${CUDA_SRC_LIST} PROPERTY COMPILE_DEFINITIONS SUBMODULE_ID=mindspore::SubModuleId::SM_DEVICE)
+    if(ENABLE_ASAN)
+        list(REMOVE_ITEM CUDA_SRC_LIST "gpu_hash_table.cu")
+    else()
+        list(REMOVE_ITEM CUDA_SRC_LIST "gpu_hash_table_dummy.cu")
+    endif()
+
 
     if(CMAKE_SYSTEM_NAME MATCHES "Linux" AND ${CUDA_VERSION} VERSION_GREATER "11.0")
         string(REPLACE "-arch=sm_53;" "" CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS}")

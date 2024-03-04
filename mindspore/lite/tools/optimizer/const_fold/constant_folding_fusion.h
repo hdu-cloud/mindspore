@@ -17,7 +17,7 @@
 #ifndef MINDSPORE_LITE_TOOLS_OPTIMIZER_CONST_FOLD_CONSTANT_FOLDING_FUSION_H_
 #define MINDSPORE_LITE_TOOLS_OPTIMIZER_CONST_FOLD_CONSTANT_FOLDING_FUSION_H_
 
-#include "backend/common/optimizer/pass.h"
+#include "include/backend/optimizer/pass.h"
 #include "include/registry/converter_context.h"
 #include "tools/optimizer/const_fold/fold_along_infershape.h"
 #include "tools/optimizer/const_fold/fold_with_infershape.h"
@@ -39,13 +39,13 @@ class ConstFoldPass : public Pass {
     if (fmk_type_ == converter::kFmkTypeMs) {
       auto fold_schedule = ConstFoldWithInferShape(fmk_type_, train_flag_);
       if (!fold_schedule.Run(func_graph)) {
-        MS_LOG(ERROR) << "Do constant fold failed.";
+        MS_LOG(WARNING) << "Do constant fold failed.";
         return false;
       }
     } else {
       auto fold_schedule = ConstFoldAlongInferShape(fmk_type_, train_flag_);
       if (!fold_schedule.Run(func_graph)) {
-        MS_LOG(ERROR) << "Do constant fold failed.";
+        MS_LOG(WARNING) << "Do constant fold failed.";
         return false;
       }
     }

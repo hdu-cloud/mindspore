@@ -15,9 +15,10 @@
 """Geometric Distribution"""
 import numpy as np
 from mindspore.ops import operations as P
+from mindspore.ops import functional as F
 from mindspore.ops.operations import _inner_ops as inner
 from mindspore.ops import composite as C
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from mindspore.common import dtype as mstype
 from .distribution import Distribution
 from ._utils.utils import check_prob, check_distribution_name
@@ -33,10 +34,10 @@ class Geometric(Distribution):
     trials when the first success is achieved.
 
     Args:
-        probs (float, list, numpy.ndarray, Tensor): The probability of success. Default: None.
-        seed (int): The seed used in sampling. Global seed is used if it is None. Default: None.
-        dtype (mindspore.dtype): The type of the event samples. Default: mstype.int32.
-        name (str): The name of the distribution. Default: 'Geometric'.
+        probs (float, list, numpy.ndarray, Tensor): The probability of success. Default: ``None`` .
+        seed (int): The seed used in sampling. Global seed is used if it is None. Default: ``None`` .
+        dtype (mindspore.dtype): The type of the event samples. Default: ``mstype.int32`` .
+        name (str): The name of the distribution. Default: ``'Geometric'`` .
 
     Note:
         `probs` must be a proper probability (0 < p < 1).
@@ -160,7 +161,6 @@ class Geometric(Distribution):
         self.cast = P.Cast()
         self.const = P.ScalarToTensor()
         self.dtypeop = P.DType()
-        self.fill = P.Fill()
         self.floor = P.Floor()
         self.issubclass = inner.IsSubClass()
         self.less = P.Less()
@@ -212,7 +212,7 @@ class Geometric(Distribution):
             MODE(Geo) = 0
         """
         probs1 = self._check_param_type(probs1)
-        return self.fill(self.dtype, self.shape(probs1), 0.)
+        return F.fill(self.dtype, self.shape(probs1), 0.)
 
     def _var(self, probs1=None):
         r"""
@@ -260,7 +260,7 @@ class Geometric(Distribution):
         value = self.floor(value)
         probs1 = self._check_param_type(probs1)
         pmf = self.exp(self.log(1.0 - probs1) * value + self.log(probs1))
-        zeros = self.fill(self.dtypeop(pmf), self.shape(pmf), 0.0)
+        zeros = F.fill(self.dtypeop(pmf), self.shape(pmf), 0.0)
         comp = self.less(value, zeros)
         return self.select(comp, zeros, pmf)
 
@@ -283,7 +283,7 @@ class Geometric(Distribution):
         probs1 = self._check_param_type(probs1)
         probs0 = 1.0 - probs1
         cdf = 1.0 - self.pow(probs0, value + 1.0)
-        zeros = self.fill(self.dtypeop(cdf), self.shape(cdf), 0.0)
+        zeros = F.fill(self.dtypeop(cdf), self.shape(cdf), 0.0)
         comp = self.less(value, zeros)
         return self.select(comp, zeros, cdf)
 

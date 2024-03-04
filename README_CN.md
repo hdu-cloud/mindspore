@@ -2,7 +2,7 @@
 
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/mindspore.svg)](https://pypi.org/project/mindspore)
 [![PyPI](https://badge.fury.io/py/mindspore.svg)](https://badge.fury.io/py/mindspore)
-[![Downloads](https://pepy.tech/badge/mindspore)](https://pepy.tech/project/mindspore)
+[![Downloads](https://static.pepy.tech/badge/mindspore)](https://pepy.tech/project/mindspore)
 [![DockerHub](https://img.shields.io/docker/pulls/mindspore/mindspore-cpu.svg)](https://hub.docker.com/r/mindspore/mindspore-cpu)
 [![LICENSE](https://img.shields.io/github/license/mindspore-ai/mindspore.svg?style=flat-square)](https://github.com/mindspore-ai/mindspore/blob/master/LICENSE)
 [![Slack](https://img.shields.io/badge/slack-chat-green.svg?logo=slack)](https://join.slack.com/t/mindspore/shared_invite/zt-dgk65rli-3ex4xvS4wHX7UDmsQmfu8w)
@@ -274,10 +274,13 @@ MindSpore的版本分支有以下几种维护阶段：
 
 | **分支名** | **当前状态**  | **上线时间**          | **后续状态**                           | **EOL 日期**|
 |------------|--------------|----------------------|----------------------------------------|------------|
+| **r2.1**   | Maintained   | 2023-07-29           | Unmaintained <br> 2024-07-29 estimated |            |
+| **r2.0**   | Maintained   | 2023-06-15           | Unmaintained <br> 2024-06-15 estimated |            |
+| **r1.10**  | Maintained   | 2023-02-02           | Unmaintained <br> 2024-02-02 estimated |            |
 | **r1.9**   | Maintained   | 2022-10-26           | Unmaintained <br> 2023-10-26 estimated |            |
-| **r1.8**   | Maintained   | 2022-07-29           | Unmaintained <br> 2023-07-29 estimated |            |
-| **r1.7**   | Maintained   | 2022-04-29           | Unmaintained <br> 2023-04-29 estimated |            |
-| **r1.6**   | Maintained   | 2022-01-29           | Unmaintained <br> 2023-01-29 estimated |            |
+| **r1.8**   | End Of Life  | 2022-07-29           |                                        | 2023-07-29 |
+| **r1.7**   | End Of Life  | 2022-04-29           |                                        | 2023-04-29 |
+| **r1.6**   | End Of Life  | 2022-01-29           |                                        | 2023-01-29 |
 | **r1.5**   | End Of Life  | 2021-10-15           |                                        | 2022-10-15 |
 | **r1.4**   | End Of Life  | 2021-08-15           |                                        | 2022-08-15 |
 | **r1.3**   | End Of Life  | 2021-07-15           |                                        | 2022-07-15 |

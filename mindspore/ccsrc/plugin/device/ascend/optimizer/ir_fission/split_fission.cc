@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,9 @@
 #include "plugin/device/ascend/optimizer/ir_fission/split_fission.h"
 #include <memory>
 #include <vector>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/array_op_name.h"
+#include "ops/sequence_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "utils/trace_base.h"
 
@@ -60,7 +62,7 @@ void CreateOutputShapeAndTypeId(const CNodePtr &origin_cnode, int64_t split_dim,
   }
   size_t split_dim_unsigned = LongToSize(split_dim);
   if (split_dim_unsigned >= output_shape.size()) {
-    MS_LOG(EXCEPTION) << "Error split dim: " << split_dim << trace::DumpSourceLines(origin_cnode);
+    MS_LOG(INTERNAL_EXCEPTION) << "Error split dim: " << split_dim << trace::DumpSourceLines(origin_cnode);
   }
   TypeId type_id = common::AnfAlgo::GetOutputInferDataType(origin_cnode, 0);
   for (size_t i = 0; i < size_splits_new.size(); ++i) {
@@ -83,7 +85,7 @@ void SetAttrAndAbstractForBaseSplitv(const CNodePtr &origin_cnode, const CNodePt
     split_dim += SizeToLong(output_shape.size());
   }
   if (split_dim < 0) {
-    MS_LOG(EXCEPTION) << "Error split dim: " << split_dim << trace::DumpSourceLines(origin_cnode);
+    MS_LOG(INTERNAL_EXCEPTION) << "Error split dim: " << split_dim << trace::DumpSourceLines(origin_cnode);
   }
   auto split_dim_l = LongToSize(split_dim);
   auto num_split_l = LongToSize(num_split);
@@ -99,7 +101,7 @@ void SetAttrAndAbstractForBaseSplitv(const CNodePtr &origin_cnode, const CNodePt
 CNodePtr SplitFission::CreateSplitVNode(const FuncGraphPtr &func_graph, const AnfNodePtr &input_node) const {
   MS_EXCEPTION_IF_NULL(func_graph);
   MS_EXCEPTION_IF_NULL(input_node);
-  std::vector<AnfNodePtr> splitv_inputs{NewValueNode(std::make_shared<Primitive>(kSplitVOpName)), input_node};
+  std::vector<AnfNodePtr> splitv_inputs{NewValueNode(std::make_shared<Primitive>(kSplitVDOpName)), input_node};
   CNodePtr splitv = NewCNode(splitv_inputs, func_graph);
   MS_EXCEPTION_IF_NULL(splitv);
   splitv->set_scope(input_node->scope());
@@ -119,9 +121,9 @@ AnfNodePtr SplitFission::DoFission(const FuncGraphPtr &func_graph, const CNodePt
 
   auto size_splits = common::AnfAlgo::GetNodeAttr<std::vector<int64_t>>(cnode, kAttrSizeSplits);
   if (size_splits.size() != LongToSize(num_split)) {
-    MS_LOG(EXCEPTION) << "The size of size_splits should be equal to num_split[" << num_split << "], but got "
-                      << size_splits.size() << ", node: " << cnode->fullname_with_scope()
-                      << trace::DumpSourceLines(cnode);
+    MS_LOG(INTERNAL_EXCEPTION) << "The size of size_splits should be equal to num_split[" << num_split << "], but got "
+                               << size_splits.size() << ", node: " << cnode->fullname_with_scope()
+                               << trace::DumpSourceLines(cnode);
   }
 
   // Create make_tuple input to create a make_tuple for replacing the old Split node.
@@ -182,7 +184,7 @@ AnfNodePtr SplitFission::DoFission(const FuncGraphPtr &func_graph, const CNodePt
 
 const BaseRef SplitFission::DefinePattern() const {
   VarPtr Xs = std::make_shared<SeqVar>();
-  auto split_prim = std::make_shared<Primitive>(kSplitOpName);
+  auto split_prim = std::make_shared<Primitive>(kSplitDOpName);
   return VectorRef({split_prim, Xs});
 }
 

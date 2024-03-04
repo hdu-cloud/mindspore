@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,14 +14,36 @@
  * limitations under the License.
  */
 #include "ops/uniform_candidate_sampler.h"
-#include <string>
-#include <algorithm>
+
+#include <limits>
+#include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/random_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -29,8 +51,6 @@ namespace {
 abstract::TupleShapePtr UCSInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto op_name = primitive->name();
-  const int64_t input_num = 1;
-  (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_num, op_name);
   MS_EXCEPTION_IF_NULL(input_args[kInputIndex0]);
   auto input_shape_ptr = input_args[kInputIndex0]->BuildShape();
   auto input_shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_shape_ptr);
@@ -38,6 +58,11 @@ abstract::TupleShapePtr UCSInferShape(const PrimitivePtr &primitive, const std::
 
   if (IsDynamicRank(input_shape)) {
     auto unknow_shape_ptr = std::make_shared<abstract::Shape>(std::vector<int64_t>{abstract::Shape::kShapeRankAny});
+    return std::make_shared<abstract::TupleShape>(
+      std::vector<abstract::BaseShapePtr>{unknow_shape_ptr, unknow_shape_ptr, unknow_shape_ptr});
+  }
+  if (input_shape_ptr->IsDynamic()) {
+    auto unknow_shape_ptr = std::make_shared<abstract::Shape>(std::vector<int64_t>{abstract::Shape::kShapeDimAny});
     return std::make_shared<abstract::TupleShape>(
       std::vector<abstract::BaseShapePtr>{unknow_shape_ptr, unknow_shape_ptr, unknow_shape_ptr});
   }
@@ -163,11 +188,32 @@ bool UniformCandidateSampler::get_remove_accidental_hits() const {
 abstract::AbstractBasePtr UniformCandidateSamplerInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &prim,
                                                        const std::vector<abstract::AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(prim);
+  auto op_name = prim->name();
+  const int64_t input_num = 1;
+  (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_num, op_name);
   return abstract::MakeAbstract(UCSInferShape(prim, input_args), UCSInferType(prim, input_args));
 }
 
 // register primivtive
-REGISTER_PRIMITIVE_EVAL_IMPL(UniformCandidateSampler, prim::kPrimUniformCandidateSampler, UniformCandidateSamplerInfer,
-                             nullptr, true);
+
+// AG means auto generated
+class MIND_API AGUniformCandidateSamplerInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return UCSInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return UCSInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return UniformCandidateSamplerInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(UniformCandidateSampler, prim::kPrimUniformCandidateSampler,
+                                 AGUniformCandidateSamplerInfer, false);
 }  // namespace ops
 }  // namespace mindspore

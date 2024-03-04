@@ -51,8 +51,9 @@ void BinaryCrossEntropyGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> 
   T *loss = GetDeviceAddress<T>(outputs, kIndex0);
   T *tmp_loss = GetDeviceAddress<T>(workspace, kIndex0);
   if (input_size_ > 0) {
-    BinaryCrossEntropyLoss(input_size_, reduction_, input_x, input_y, weight, loss, tmp_loss,
-                           reinterpret_cast<cudaStream_t>(stream_ptr));
+    auto status = BinaryCrossEntropyLoss(input_size_, reduction_, input_x, input_y, weight, loss, tmp_loss,
+                                         reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
   }
 }
 

@@ -17,12 +17,12 @@
 #ifndef MINDSPORE_CORE_OPS_REDUCE_SUM_H_
 #define MINDSPORE_CORE_OPS_REDUCE_SUM_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/reduce.h"
 #include "mindapi/base/types.h"
+#include "ops/reduce.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,6 +37,9 @@ class MIND_API ReduceSum : public Reduce {
   /// \brief Init.
   void Init() const {}
 };
+MIND_API abstract::AbstractBasePtr ReduceArithmeticInferFunc(const abstract::AnalysisEnginePtr &,
+                                                             const PrimitivePtr &primitive,
+                                                             const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

@@ -15,17 +15,25 @@
  */
 
 #include "common/common_test.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "ir/param_info.h"
 #include "frontend/operator/ops.h"
-#include "backend/common/session/kernel_graph.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
-#include "mindspore/ccsrc/runtime/device/kernel_info.h"
+#include "include/backend/kernel_graph.h"
+#include "include/backend/anf_runtime_algorithm.h"
+#include "mindspore/ccsrc/include/backend/kernel_info.h"
 #include "mindspore/ccsrc/plugin/device/ascend/hal/device/ascend_device_address.h"
 #include "include/common/utils/utils.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
 namespace session {
+namespace {
+constexpr auto kPatternConvolution = "Convolution";
+}
+
 using device::KernelInfo;
 using KernelBuildInfoBuilder = kernel::KernelBuildInfo::KernelBuildInfoBuilder;
 using AscendDeviceAddress = device::ascend::AscendDeviceAddress;
@@ -229,17 +237,24 @@ TEST_F(AnfRuntimeAlgorithmTest, GetOutputTensorNum) {
   auto x_abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, shp);
   AbstractBasePtrList args_spec_list{x_abstract, x_abstract, x_abstract, x_abstract, x_abstract};
   bn->set_abstract(std::make_shared<abstract::AbstractTuple>(args_spec_list));
-  EXPECT_EQ(common::AnfAlgo::GetOutputTensorNum(bn), 5);
-  EXPECT_THROW(common::AnfAlgo::GetOutputTensorNum(nullptr), std::runtime_error);
+  KernelBuildInfoBuilder builder;
+  builder.SetOutputsFormat(
+    {kOpFormat_DEFAULT, kOpFormat_DEFAULT, kOpFormat_DEFAULT, kOpFormat_DEFAULT, kOpFormat_DEFAULT});
+  builder.SetOutputsDeviceType(
+    {kFloat32->type_id(), kFloat32->type_id(), kFloat32->type_id(), kFloat32->type_id(), kFloat32->type_id()});
+  builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TUPLE_UNFOLD});
+  AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), bn.get());
+  EXPECT_EQ(AnfAlgo::GetOutputTensorNum(bn), 5);
+  EXPECT_THROW(AnfAlgo::GetOutputTensorNum(nullptr), std::runtime_error);
   // test add as input
   inputs.clear();
   inputs.push_back(NewValueNode(prim::kPrimAdd));
   auto add = kernel_graph->NewCNode(inputs);
   MS_EXCEPTION_IF_NULL(add);
   add->set_abstract(std::make_shared<abstract::AbstractNone>());
-  EXPECT_EQ(common::AnfAlgo::GetOutputTensorNum(add), 0);
+  EXPECT_EQ(AnfAlgo::GetOutputTensorNum(add), 0);
   add->set_abstract(x_abstract);
-  EXPECT_EQ(common::AnfAlgo::GetOutputTensorNum(add), 1);
+  EXPECT_EQ(AnfAlgo::GetOutputTensorNum(add), 1);
 }
 
 TEST_F(AnfRuntimeAlgorithmTest, GetOutputFormat) {
@@ -676,9 +691,9 @@ TEST_F(AnfRuntimeAlgorithmTest, GetFusionType) {
   auto d_kernel_info = dynamic_cast<KernelInfo *>(add->kernel_info());
   MS_EXCEPTION_IF_NULL(d_kernel_info);
   KernelBuildInfoBuilder builder;
-  builder.SetFusionType(kernel::CONV);
+  builder.SetFusionType(kPatternConvolution);
   d_kernel_info->set_select_kernel_build_info(builder.Build());
-  EXPECT_EQ(AnfAlgo::GetFusionType(add), kernel::CONV);
+  EXPECT_EQ(AnfAlgo::GetFusionType(add), kPatternConvolution);
   EXPECT_THROW(AnfAlgo::GetFusionType(nullptr), std::runtime_error);
 }
 
@@ -688,10 +703,10 @@ TEST_F(AnfRuntimeAlgorithmTest, SetSelectKernelBuildInfo) {
   inputs.push_back(NewValueNode(prim::kPrimAdd));
   auto add = kernel_graph->NewCNode(inputs);
   std::shared_ptr<KernelBuildInfoBuilder> builder = std::make_shared<KernelBuildInfoBuilder>();
-  builder->SetFusionType(kernel::CONV);
+  builder->SetFusionType(kPatternConvolution);
   AnfAlgo::SetSelectKernelBuildInfo(builder->Build(), add.get());
   EXPECT_THROW(AnfAlgo::SetSelectKernelBuildInfo(builder->Build(), nullptr), std::runtime_error);
-  EXPECT_EQ(AnfAlgo::GetFusionType(add), kernel::CONV);
+  EXPECT_EQ(AnfAlgo::GetFusionType(add), kPatternConvolution);
 }
 
 TEST_F(AnfRuntimeAlgorithmTest, GetKernelMod) {

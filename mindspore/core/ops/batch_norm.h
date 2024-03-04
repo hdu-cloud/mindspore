@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_BATCH_NORMAL_H_
 #define MINDSPORE_CORE_OPS_BATCH_NORMAL_H_
 #include <map>
-#include <vector>
 #include <memory>
 #include <string>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/format.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -90,6 +90,10 @@ class MIND_API BatchNormWithAddAndActivation : public BatchNorm {
                {"y", "batch_mean", "batch_variance", "reserve_space_1", "reserve_space_2"});
   }
 };
+
+MIND_API abstract::AbstractBasePtr BatchNormInferFunc(const abstract::AnalysisEnginePtr &,
+                                                      const PrimitivePtr &primitive,
+                                                      const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

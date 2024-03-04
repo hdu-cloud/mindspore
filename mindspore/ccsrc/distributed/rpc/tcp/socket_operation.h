@@ -19,12 +19,14 @@
 
 #include <netinet/in.h>
 #include <string>
-
 #include "utils/convert_utils_base.h"
 
 namespace mindspore {
 namespace distributed {
 namespace rpc {
+// This is the return value that represents the address is in use errno.
+constexpr int kAddressInUseError = -2;
+
 class Connection;
 
 union SocketAddress {
@@ -45,6 +47,9 @@ class SocketOperation {
   static std::string GetLocalIP();
 
   static std::string GetIP(const std::string &url);
+
+  // Get ip and port of the specified socket fd.
+  static std::string GetIP(int sock_fd);
   static uint16_t GetPort(int sock_fd);
 
   // Get the address(ip:port) of the other end of the connection.
@@ -62,6 +67,9 @@ class SocketOperation {
 
   // Connect to the Socket sock_fd.
   static int Connect(int sock_fd, const struct sockaddr *sa, socklen_t saLen, uint16_t *boundPort);
+
+  // Get interface name for specified socket address.
+  static std::string GetInterfaceName(SocketAddress *const addr);
 
   // Close the given connection.
   virtual void Close(Connection *connection) = 0;

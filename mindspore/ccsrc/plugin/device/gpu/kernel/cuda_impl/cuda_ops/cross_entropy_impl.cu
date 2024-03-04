@@ -65,58 +65,83 @@ __global__ void CrossEntropyGradWithSparseKernel(const T *logits, const S *label
 }
 
 template <typename T, typename S>
-__global__ void CrossEntropyKernel(const T *logits, const S *labels, const size_t batch_size, const size_t class_num,
-                                   T epsilon, T *losses, T *dlogits) {
+__global__ void CrossEntropyKernel(const T *input0, const S *input1, const size_t batch_size, const size_t class_num,
+                                   T *output0, T *output1, T *work) {
   for (size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < batch_size; index += blockDim.x * gridDim.x) {
-    losses[index] = 0;
-    const int start = index * class_num;
-    const int end = (index + 1) * class_num;
-    for (int i = start; i < end; ++i) {
-      losses[index] -= logf((logits[i] <= 0 ? epsilon : logits[i])) * labels[i];
-      dlogits[i] = logits[i] - labels[i];
+    const float *logits = input0 + index * class_num;
+    const float *labels = input1 + index * class_num;
+    float *backprop = output1 + index * class_num;
+    float *workspace = work + index * class_num;
+
+    float maxv = logits[0];
+    for (size_t i = 0; i < class_num; i++) {
+      maxv = maxv > logits[i] ? maxv : logits[i];
     }
+
+    float sum = 0.0;
+    for (size_t i = 0; i < class_num; i++) {
+      backprop[i] = logits[i] - maxv;
+      workspace[i] = exp(backprop[i]);
+      sum += workspace[i];
+    }
+
+    float logit = logf(sum);
+    float loss = 0.0;
+
+    for (size_t i = 0; i < class_num; i++) {
+      loss += labels[i] * (backprop[i] - logit);
+      workspace[i] = workspace[i] / sum;
+      backprop[i] = workspace[i] - labels[i];
+    }
+    output0[index] = -loss;
   }
 }
 
 template <typename T, typename S>
-void CrossEntropyWithSparse(const T *logits, const S *labels, const size_t batch_size, const size_t class_num, T *loss,
-                            cudaStream_t cuda_stream) {
+cudaError_t CrossEntropyWithSparse(const T *logits, const S *labels, const size_t batch_size, const size_t class_num,
+                                   T *loss, cudaStream_t cuda_stream) {
   if (batch_size <= kLargeBatchLowLimit) {
     CrossEntropyWithSparseKernel<<<1, 1, 0, cuda_stream>>>(logits, labels, batch_size, class_num, loss);
   } else {
     LargeBatchCrossEntropyWithSparseKernel<<<GET_BLOCKS(batch_size), GET_THREADS, 0, cuda_stream>>>(
       logits, labels, batch_size, class_num, loss);
   }
+  return GetCudaStatus();
 }
 
 template <typename T, typename S>
-void CrossEntropyGradWithSparse(const T *logits, const S *labels, const size_t batch_size, const size_t class_num,
-                                T *grad, cudaStream_t cuda_stream) {
+cudaError_t CrossEntropyGradWithSparse(const T *logits, const S *labels, const size_t batch_size,
+                                       const size_t class_num, T *grad, cudaStream_t cuda_stream) {
   CrossEntropyGradWithSparseKernel<<<GET_BLOCKS(batch_size), GET_THREADS, 0, cuda_stream>>>(logits, labels, batch_size,
                                                                                             class_num, grad);
+  return GetCudaStatus();
 }
 
 template <typename T, typename S>
-void CrossEntropy(const T *logits, const S *labels, const size_t batch_size, const size_t class_num, T *losses,
-                  T *dlogits, cudaStream_t cuda_stream) {
-  T epsilon = 1e-6;
+cudaError_t CrossEntropy(const T *logits, const S *labels, const size_t batch_size, const size_t class_num, T *losses,
+                         T *dlogits, T *workspace, cudaStream_t cuda_stream) {
   CrossEntropyKernel<<<GET_BLOCKS(batch_size), GET_THREADS, 0, cuda_stream>>>(logits, labels, batch_size, class_num,
-                                                                              epsilon, losses, dlogits);
+                                                                              losses, dlogits, workspace);
+  return GetCudaStatus();
 }
 
-template CUDA_LIB_EXPORT void CrossEntropyWithSparse<float, int>(const float *logits, const int *labels,
-                                                                 const size_t batch_size, const size_t class_num,
-                                                                 float *loss, cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CrossEntropyWithSparse<float, int64_t>(const float *logits, const int64_t *labels,
-                                                                     const size_t batch_size, const size_t class_num,
-                                                                     float *loss, cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CrossEntropyGradWithSparse<float, int>(const float *logits, const int *labels,
-                                                                     const size_t batch_size, const size_t class_num,
-                                                                     float *grad, cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CrossEntropyGradWithSparse<float, int64_t>(const float *logits, const int64_t *labels,
-                                                                         const size_t batch_size,
-                                                                         const size_t class_num, float *grad,
-                                                                         cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CrossEntropy<float, float>(const float *logits, const float *labels,
-                                                         const size_t batch_size, const size_t class_num, float *losses,
-                                                         float *dlogits, cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CrossEntropyWithSparse<float, int>(const float *logits, const int *labels,
+                                                                        const size_t batch_size, const size_t class_num,
+                                                                        float *loss, cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CrossEntropyWithSparse<float, int64_t>(const float *logits, const int64_t *labels,
+                                                                            const size_t batch_size,
+                                                                            const size_t class_num, float *loss,
+                                                                            cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CrossEntropyGradWithSparse<float, int>(const float *logits, const int *labels,
+                                                                            const size_t batch_size,
+                                                                            const size_t class_num, float *grad,
+                                                                            cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CrossEntropyGradWithSparse<float, int64_t>(const float *logits,
+                                                                                const int64_t *labels,
+                                                                                const size_t batch_size,
+                                                                                const size_t class_num, float *grad,
+                                                                                cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CrossEntropy<float, float>(const float *logits, const float *labels,
+                                                                const size_t batch_size, const size_t class_num,
+                                                                float *losses, float *dlogits, float *workspace,
+                                                                cudaStream_t cuda_stream);

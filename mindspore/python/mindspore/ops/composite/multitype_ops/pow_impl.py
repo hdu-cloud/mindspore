@@ -26,6 +26,7 @@ pow_ = base.MultitypeFuncGraph("pow", True)
 `pow` is a metafuncgraph object which will compute the pow of two objects
 using ".register" decorator.
 """
+pow_.set_need_raise()
 
 
 @pow_.register("Number", "Number")

@@ -16,14 +16,25 @@
 
 #include "ops/non_zero_with_value.h"
 
-#include <set>
-#include <memory>
-#include <algorithm>
 #include <functional>
+#include <memory>
+#include <numeric>
+#include <vector>
 
-#include "ops/op_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/param_validator.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -48,15 +59,14 @@ AbstractBasePtr NonZeroWithValueInfer(const abstract::AnalysisEnginePtr &, const
   (void)y_shape.emplace_back(rank_base);
   // Indices of elements that are non-zero
   (void)y_shape.emplace_back(abstract::Shape::kShapeDimAny);
-  ShapeVector min_shape = {rank_base, 1};
   ShapeVector max_shape = {rank_base, max_size};
 
-  auto value = std::make_shared<abstract::AbstractTensor>(
-    x->element(), std::make_shared<abstract::Shape>(y_shape, min_shape, max_shape));
-  auto index = std::make_shared<abstract::AbstractTensor>(
-    kInt32, std::make_shared<abstract::Shape>(y_shape, min_shape, max_shape));
-  auto count = std::make_shared<abstract::AbstractTensor>(
-    kInt32, std::make_shared<abstract::Shape>(y_shape, min_shape, max_shape));
+  auto value =
+    std::make_shared<abstract::AbstractTensor>(x->element(), std::make_shared<abstract::Shape>(y_shape, max_shape));
+  auto index =
+    std::make_shared<abstract::AbstractTensor>(kInt32, std::make_shared<abstract::Shape>(y_shape, max_shape));
+  auto count =
+    std::make_shared<abstract::AbstractTensor>(kInt32, std::make_shared<abstract::Shape>(y_shape, max_shape));
   AbstractBasePtrList result = {value, index, count};
   return std::make_shared<abstract::AbstractTuple>(result);
 }

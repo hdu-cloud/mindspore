@@ -70,7 +70,7 @@ def vm_impl_cast(self):
     """Generate vm_impl function for Cast"""
 
     def vm_impl(x, t):
-        if isinstance(t, type(mstype.tensor)):
+        if isinstance(t, type(mstype.tensor_type)):
             t = t.element_type()
         # update the src type
         x = x.asnumpy()
@@ -145,11 +145,12 @@ def vm_impl_split(self):
 def vm_impl_fill(self):
     """Generate vm_impl function for Fill"""
 
-    def vm_impl(dims, x):
+    def vm_impl(dtype, dims, x):
+        x_nptype = mstype.dtype_to_nptype(dtype)
         if isinstance(x, int):
-            ret = np.full(dims, x, np.int32)
+            ret = np.full(dims, x, x_nptype)
         else:
-            ret = np.full(dims, x, np.float32)
+            ret = np.full(dims, x, x_nptype)
         return Tensor(ret)
 
     return vm_impl
@@ -340,5 +341,18 @@ def vm_impl_load(self):
     """Generate vm_impl function for Load"""
     def vm_impl(value, u=None):
         return value
+
+    return vm_impl
+
+
+@vm_impl_getters.register(P.FillV2)
+def vm_impl_fillv2(self):
+    def vm_impl(x, y):
+        if isinstance(x, Tensor):
+            x = x.asnumpy()
+        y = y.asnumpy()
+        out = np.empty(x).astype(y.dtype)
+        out.fill(y)
+        return Tensor(out)
 
     return vm_impl

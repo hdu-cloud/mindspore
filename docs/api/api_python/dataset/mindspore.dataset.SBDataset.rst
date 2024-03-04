@@ -3,24 +3,24 @@ mindspore.dataset.SBDataset
 
 .. py:class:: mindspore.dataset.SBDataset(dataset_dir, task='Boundaries', usage='all', num_samples=None, num_parallel_workers=1, shuffle=None, decode=None, sampler=None, num_shards=None, shard_id=None)
 
-    读取和解析Semantic Boundaries数据集的源文件构建数据集。
+    SB（Semantic Boundaries）数据集。
 
     通过配置 `task` 参数，生成的数据集具有不同的输出列：
 
-    - `task` = 'Boundaries'，有两个输出列： `image` 列的数据类型为uint8，`label` 列包含1个的数据类型为uint8的图像。
-    - `task` = 'Segmentation'，有两个输出列： `image` 列的数据类型为uint8。 `label` 列包含20个的数据类型为uint8的图像。
+    - `task` 为 ``'Boundaries'`` ，有两个输出列： `image` 列的数据类型为uint8， `label` 列包含1个的数据类型为uint8的图像。
+    - `task` 为 ``'Segmentation'`` ，有两个输出列： `image` 列的数据类型为uint8。 `label` 列包含20个的数据类型为uint8的图像。
 
     参数：
         - **dataset_dir** (str) - 包含数据集文件的根目录的路径。
-        - **task** (str, 可选) - 指定读取SB数据集的任务类型，支持 'Boundaries'和 'Segmentation'。默认值：'Boundaries'。
-        - **usage** (str, 可选) - 指定数据集的子集，可取值为 'train'、 'val'、 'train_noval'和 'all'。默认值：'train'。
-        - **num_samples** (int, 可选) - 指定从数据集中读取的样本数。默认值：None，所有图像样本。
-        - **num_parallel_workers** (int, 可选) - 指定读取数据的工作线程数。默认值：1，使用mindspore.dataset.config中配置的线程数。
-        - **shuffle** (bool, 可选) - 是否混洗数据集。默认值：None。下表中会展示不同参数配置的预期行为。
-        - **decode** (bool, 可选) - 是否对读取的图片进行解码操作。默认值：False，不解码。
-        - **sampler** (Sampler, 可选) - 指定从数据集中选取样本的采样器。默认值：None。下表中会展示不同配置的预期行为。
-        - **num_shards** (int, 可选) - 指定分布式训练时将数据集进行划分的分片数。默认值：None。指定此参数后， `num_samples` 表示每个分片的最大样本数。
-        - **shard_id** (int, 可选) - 指定分布式训练时使用的分片ID号。默认值：None。只有当指定了 `num_shards` 时才能指定此参数。
+        - **task** (str, 可选) - 指定读取SB数据集的任务类型，支持 ``'Boundaries'`` 和 ``'Segmentation'``。默认值： ``'Boundaries'`` 。
+        - **usage** (str, 可选) - 指定数据集的子集，可取值为 ``'train'`` 、 ``'val'`` 、 ``'train_noval'`` 和 ``'all'`` 。默认值： ``'all'`` 。
+        - **num_samples** (int, 可选) - 指定从数据集中读取的样本数。默认值： ``None`` ，所有图像样本。
+        - **num_parallel_workers** (int, 可选) - 指定读取数据的工作进程数。默认值： ``1`` 。
+        - **shuffle** (bool, 可选) - 是否混洗数据集。默认值： ``None`` 。下表中会展示不同参数配置的预期行为。
+        - **decode** (bool, 可选) - 是否对读取的图片进行解码操作。默认值： ``None`` ，默认为 ``False`` ，不解码。
+        - **sampler** (Sampler, 可选) - 指定从数据集中选取样本的采样器。默认值： ``None`` 。下表中会展示不同配置的预期行为。
+        - **num_shards** (int, 可选) - 指定分布式训练时将数据集进行划分的分片数。默认值： ``None`` 。指定此参数后， `num_samples` 表示每个分片的最大样本数。
+        - **shard_id** (int, 可选) - 指定分布式训练时使用的分片ID号。默认值： ``None`` 。只有当指定了 `num_shards` 时才能指定此参数。
 
     异常：
         - **RuntimeError** - `dataset_dir` 路径下不包含任何数据文件。
@@ -30,37 +30,17 @@ mindspore.dataset.SBDataset
         - **RuntimeError** - 指定了 `shard_id` 参数，但是未指定 `num_shards` 参数。
         - **ValueError** - `dataset_dir` 不存在。
         - **ValueError** - `num_parallel_workers` 参数超过系统最大线程数。
-        - **ValueError** - `task` 不是['Boundaries', 'Segmentation']中的任何一个。
-        - **ValueError** - `usage` 不是['train', 'val', 'train_noval', 'all']中的任何一个。
-        - **ValueError** - `shard_id` 参数错误，小于0或者大于等于 `num_shards` 。
+        - **ValueError** - `task` 不是 ``'Boundaries'`` 或 ``'Segmentation'`` 。
+        - **ValueError** - `usage` 不是 ``'train'`` 、 ``'val'`` 、 ``'train_noval'`` 或 ``'all'`` 。
+        - **ValueError** - 如果 `shard_id` 取值不在[0, `num_shards` )范围。
 
-    .. note:: 此数据集可以指定参数 `sampler` ，但参数 `sampler` 和参数 `shuffle` 的行为是互斥的。下表展示了几种合法的输入参数组合及预期的行为。
+    教程样例：
+        - `使用数据Pipeline加载 & 处理数据集
+          <https://www.mindspore.cn/docs/zh-CN/master/api_python/samples/dataset/dataset_gallery.html>`_
 
-    .. list-table:: 配置 `sampler` 和 `shuffle` 的不同组合得到的预期排序结果
-       :widths: 25 25 50
-       :header-rows: 1
+    .. note:: 入参 `num_samples` 、 `shuffle` 、 `num_shards` 、 `shard_id` 可用于控制数据集所使用的采样器，其与入参 `sampler` 搭配使用的效果如下。
 
-       * - 参数 `sampler`
-         - 参数 `shuffle`
-         - 预期数据顺序
-       * - None
-         - None
-         - 随机排列
-       * - None
-         - True
-         - 随机排列
-       * - None
-         - False
-         - 顺序排列
-       * - `sampler` 实例
-         - None
-         - 由 `sampler` 行为定义的顺序
-       * - `sampler` 实例
-         - True
-         - 不允许
-       * - `sampler` 实例
-         - False
-         - 不允许
+    .. include:: mindspore.dataset.sampler.rst
 
     **关于Semantic Boundaries数据集：**
 

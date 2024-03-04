@@ -15,25 +15,42 @@
  */
 
 #include "ops/dense_to_sparse_set_operation.h"
-#include <set>
-#include <vector>
+
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <numeric>
+#include <set>
 #include <string>
-#include "ops/op_utils.h"
-#include "utils/tensor_construct_utils.h"
-#include "utils/check_convert_utils.h"
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::TupleShapePtr DenseToSparseSetOperationInferShape(const PrimitivePtr &primitive,
                                                             const std::vector<AbstractBasePtr> &input_args) {
-  auto prim_name = primitive->name();
   MS_EXCEPTION_IF_NULL(primitive);
+  auto prim_name = primitive->name();
   auto x1_shape_ptr = input_args[0]->BuildShape();
   auto x2_indices_shape_ptr = input_args[1]->BuildShape();
   auto x2_values_shape_ptr = input_args[2]->BuildShape();
@@ -46,12 +63,12 @@ abstract::TupleShapePtr DenseToSparseSetOperationInferShape(const PrimitivePtr &
   // Args x2_indice must be 2D tensor, x2_values and x2_shape must be 1D tensor
   const int64_t tensor2d_num = 2;
   const int64_t tensor1d_num = 1;
-  (void)CheckAndConvertUtils::CheckInteger("dimension of 'x2_indices'", x2_indice_shape.size(), kEqual, tensor2d_num,
-                                           prim_name);
-  (void)CheckAndConvertUtils::CheckInteger("dimension of 'x2_values'", x2_values_shape.size(), kEqual, tensor1d_num,
-                                           prim_name);
-  (void)CheckAndConvertUtils::CheckInteger("dimension of 'x2_shape'", x2_shape_shape.size(), kEqual, tensor1d_num,
-                                           prim_name);
+  (void)CheckAndConvertUtils::CheckInteger("dimension of 'x2_indices'", SizeToLong(x2_indice_shape.size()), kEqual,
+                                           tensor2d_num, prim_name);
+  (void)CheckAndConvertUtils::CheckInteger("dimension of 'x2_values'", SizeToLong(x2_values_shape.size()), kEqual,
+                                           tensor1d_num, prim_name);
+  (void)CheckAndConvertUtils::CheckInteger("dimension of 'x2_shape'", SizeToLong(x2_shape_shape.size()), kEqual,
+                                           tensor1d_num, prim_name);
 
   // Dimension of x1 must be equal or greater than 2
   (void)CheckAndConvertUtils::CheckInteger("dimension of 'x1'", SizeToLong(x1_shape.size()), kGreaterEqual,
@@ -60,12 +77,10 @@ abstract::TupleShapePtr DenseToSparseSetOperationInferShape(const PrimitivePtr &
   CheckAndConvertUtils::Check("'x2_values' shape", x2_values_shape[0], kEqual, x2_indice_shape[0], prim_name);
 
   std::string set_operation_str = GetValue<std::string>(primitive->GetAttr("set_operation"));
-  std::transform(set_operation_str.begin(), set_operation_str.end(), set_operation_str.begin(), ::tolower);
+  (void)std::transform(set_operation_str.begin(), set_operation_str.end(), set_operation_str.begin(), ::tolower);
   int64_t x1_size = std::accumulate(x1_shape.begin(), x1_shape.end(), 1, std::multiplies<int64_t>());
-  int64_t x2_size = SizeToLong(x2_values_shape[0]);
+  int64_t x2_size = SizeToLong(x2_values_shape[LongToSize(0)]);
 
-  // y__size_min and y__size_max infer
-  int64_t y_size_min = 0;
   int64_t y_size_max = 0;
 
   if (set_operation_str == "a-b") {
@@ -83,22 +98,17 @@ abstract::TupleShapePtr DenseToSparseSetOperationInferShape(const PrimitivePtr &
 
   // y_indices shape infer
   ShapeVector y_indices_shape = {-1, SizeToLong(x1_shape.size())};
-  ShapeVector y_indices_min_shape = {y_size_min, SizeToLong(x1_shape.size())};
   ShapeVector y_indices_max_shape = {y_size_max, SizeToLong(x1_shape.size())};
-  auto y_indices_shape_ptr =
-    std::make_shared<abstract::Shape>(y_indices_shape, y_indices_min_shape, y_indices_max_shape);
+  auto y_indices_shape_ptr = std::make_shared<abstract::Shape>(y_indices_shape, y_indices_max_shape);
 
   // y_values shape infer
   ShapeVector y_values_shape = {-1};
-  ShapeVector y_values_min_shape = {y_size_min};
   ShapeVector y_values_max_shape = {y_size_max};
-  auto y_values_shape_ptr = std::make_shared<abstract::Shape>(y_values_shape, y_values_min_shape, y_values_max_shape);
+  auto y_values_shape_ptr = std::make_shared<abstract::Shape>(y_values_shape, y_values_max_shape);
 
   // y_shape shape infer
   ShapeVector y_shape_shape = {SizeToLong(x1_shape.size())};
-  ShapeVector y_shape_min_shape = {SizeToLong(x1_shape.size())};
-  ShapeVector y_shape_max_shape = {SizeToLong(x1_shape.size())};
-  auto y_shape_shape_ptr = std::make_shared<abstract::Shape>(y_shape_shape, y_shape_min_shape, y_shape_max_shape);
+  auto y_shape_shape_ptr = std::make_shared<abstract::Shape>(y_shape_shape);
 
   return std::make_shared<abstract::TupleShape>(
     std::vector<abstract::BaseShapePtr>{y_indices_shape_ptr, y_values_shape_ptr, y_shape_shape_ptr});
@@ -140,7 +150,25 @@ AbstractBasePtr DenseToSparseSetOperationInfer(const abstract::AnalysisEnginePtr
   auto infer_shape = DenseToSparseSetOperationInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(DenseToSparseSetOperation, prim::kPrimDenseToSparseSetOperation,
-                             DenseToSparseSetOperationInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGDenseToSparseSetOperationInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DenseToSparseSetOperationInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DenseToSparseSetOperationInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DenseToSparseSetOperationInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(DenseToSparseSetOperation, prim::kPrimDenseToSparseSetOperation,
+                                 AGDenseToSparseSetOperationInfer, false);
 }  // namespace ops
 }  // namespace mindspore

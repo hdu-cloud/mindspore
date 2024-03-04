@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,15 +15,36 @@
  */
 
 #include "ops/sparse_matrix_add.h"
-#include <string>
+
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -107,14 +128,37 @@ TuplePtr SparseMatrixAddInferType(const PrimitivePtr &primitive, const std::vect
   const std::set<TypePtr> valid_types = {kFloat32, kFloat64, kComplex64, kComplex128};
   auto a_values_type = input_args[kAValuesIdx]->BuildType();
   auto b_values_type = input_args[kBValuesIdx]->BuildType();
-  (void)CheckAndConvertUtils::CheckTensorTypeSame({{"a values", a_values_type}, {"b values", b_values_type}},
-                                                  valid_types, op_name);
+  auto alpha_type = input_args[kAlphaIndex]->BuildType();
+  auto beta_type = input_args[kBetaIndex]->BuildType();
+  std::map<std::string, TypePtr> value_type;
+  (void)value_type.emplace("a values", a_values_type);
+  (void)value_type.emplace("b values", b_values_type);
+  (void)value_type.emplace("alpha", alpha_type);
+  (void)value_type.emplace("beta", beta_type);
+  (void)CheckAndConvertUtils::CheckTensorTypeSame(value_type, valid_types, op_name);
   auto a_indices_type = input_args[kAIndicesIdx]->BuildType();
+  auto a_dense_shape_type = input_args[kADenseShapeIdx]->BuildType();
+  auto a_batch_ptr_type = input_args[kABatchPtrIdx]->BuildType();
+  auto a_index_ptr_type = input_args[kAIndptrIdx]->BuildType();
   auto b_indices_type = input_args[kBIndicesIdx]->BuildType();
-  const std::set<TypePtr> int_types = {kInt16, kInt32, kInt64};
-  (void)CheckAndConvertUtils::CheckTensorTypeValid("a indices", a_indices_type, int_types, op_name);
-  (void)CheckAndConvertUtils::CheckTensorTypeValid("b indices", b_indices_type, int_types, op_name);
+  auto b_dense_shape_type = input_args[kBDenseShapeIdx]->BuildType();
+  auto b_batch_ptr_type = input_args[kBBatchPtrIdx]->BuildType();
+  auto b_index_ptr_type = input_args[kBIndptrIdx]->BuildType();
 
+  const std::set<TypePtr> int_types = {kInt32, kInt64};
+  std::map<std::string, TypePtr> types;
+  (void)types.emplace("a indices type", a_indices_type);
+  (void)types.emplace("b indices type", b_indices_type);
+  (void)types.emplace("a batch ptr type", a_batch_ptr_type);
+  (void)types.emplace("a index ptr type", a_index_ptr_type);
+  (void)types.emplace("b batch ptr type", b_batch_ptr_type);
+  (void)types.emplace("b index ptr type", b_index_ptr_type);
+  (void)CheckAndConvertUtils::CheckTensorTypeSame(types, int_types, op_name);
+
+  (void)types.emplace("a dense shape type", a_dense_shape_type);
+  (void)types.emplace("b dense shape type", b_dense_shape_type);
+  (void)CheckAndConvertUtils::CheckTensorTypeSame(
+    {{"a dense type", a_dense_shape_type}, {"b dense type", b_dense_shape_type}}, int_types, op_name);
   return std::make_shared<Tuple>(
     std::vector<TypePtr>{a_indices_type, a_indices_type, a_indices_type, a_indices_type, a_values_type});
 }
@@ -128,7 +172,7 @@ AbstractBasePtr SparseMatrixAddInfer(const abstract::AnalysisEnginePtr &, const 
     MS_EXCEPTION_IF_NULL(input);
   }
   const int64_t input_num = 12;
-  (void)CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, op_name);
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, op_name);
   auto types = SparseMatrixAddInferType(primitive, input_args);
   auto shapes = SparseMatrixAddInferShape(primitive, input_args);
   return abstract::MakeAbstract(shapes, types);
@@ -153,6 +197,24 @@ void SparseMatrixAdd::Init(const std::vector<int64_t> &csr_a, const std::vector<
 }
 
 MIND_API_OPERATOR_IMPL(SparseMatrixAdd, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseMatrixAdd, prim::kPrimSparseMatrixAdd, SparseMatrixAddInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSparseMatrixAddInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixAddInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixAddInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixAddInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseMatrixAdd, prim::kPrimSparseMatrixAdd, AGSparseMatrixAddInfer, false);
 }  // namespace ops
 }  // namespace mindspore

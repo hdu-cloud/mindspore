@@ -25,7 +25,8 @@
 namespace mindspore {
 namespace numa {
 namespace {
-static auto kNodeBase = "/sys/devices/system/node/node";
+static constexpr auto kNodeBase = "/sys/devices/system/node/node";
+constexpr int kBase = 10;
 }  // namespace
 
 NUMAAdapter::NUMAAdapter() {
@@ -115,7 +116,7 @@ NUMAAdapter::NUMAAdapter() {
   }
 }
 
-void NUMAAdapter::Bind(int node_id) {
+void NUMAAdapter::Bind(int node_id) const {
   if (!Available() || node_id < 0) {
     return;
   }
@@ -129,28 +130,28 @@ void NUMAAdapter::Bind(int node_id) {
   numa_interfaces_.numa_bitmask_free(bitmask);
 }
 
-void *NUMAAdapter::Malloc(int node_id, size_t size) {
+void *NUMAAdapter::Malloc(int node_id, size_t size) const {
   if (!Available() || node_id < 0) {
     return nullptr;
   }
   return numa_interfaces_.numa_alloc_onnode(size, node_id);
 }
 
-void NUMAAdapter::Free(void *data, size_t size) {
+void NUMAAdapter::Free(void *data, size_t size) const {
   if (!Available() || data == nullptr) {
     return;
   }
   numa_interfaces_.numa_free(data, size);
 }
 
-int NUMAAdapter::NodesNum() {
+int NUMAAdapter::NodesNum() const {
   if (!Available()) {
     return 0;
   }
   return numa_interfaces_.numa_num_configured_nodes();
 }
 
-int NUMAAdapter::CPUNum() {
+int NUMAAdapter::CPUNum() const {
   if (!Available()) {
     return 0;
   }
@@ -191,8 +192,8 @@ std::vector<int> NUMAAdapter::GetCPUList(int node_id) {
     if (cpu_range.size() != kMaxRangeNum) {
       continue;
     }
-    int begin = std::stoi(cpu_range[0]);
-    int end = std::stoi(cpu_range[1]);
+    int begin = static_cast<int>(strtol(cpu_range[0].c_str(), nullptr, kBase));
+    int end = static_cast<int>(strtol(cpu_range[1].c_str(), nullptr, kBase));
     for (int j = begin; j <= end; ++j) {
       cpu_list.emplace_back(j);
     }
@@ -202,7 +203,7 @@ std::vector<int> NUMAAdapter::GetCPUList(int node_id) {
   return cpu_list;
 }
 
-MemoryInfo NUMAAdapter::GetNodeSize(int node_id) {
+MemoryInfo NUMAAdapter::GetNodeSize(int node_id) const {
   MemoryInfo mem_info;
   if (!Available() || node_id < 0) {
     return mem_info;

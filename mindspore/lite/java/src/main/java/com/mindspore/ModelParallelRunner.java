@@ -18,6 +18,7 @@ package com.mindspore;
 
 import com.mindspore.config.MindsporeLite;
 import com.mindspore.config.RunnerConfig;
+import com.mindspore.config.DataType;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -56,36 +57,50 @@ public class ModelParallelRunner {
     }
 
     /**
-     * Build a model runner from model path so that it can run on a device. 
+     * Build a model runner from model path so that it can run on a device.
      *
      * @param modelPath    the model path.
      * @param runnerConfig the RunnerConfig Object.
      * @return init status.
      */
     public boolean init(String modelPath, RunnerConfig runnerConfig) {
+        rwLock.writeLock().lock();
         if (runnerConfig == null || modelPath == null) {
+            rwLock.writeLock().unlock();
             return false;
         }
+        if (modelParallelRunnerPtr != 0L){
+            rwLock.writeLock().unlock();
+            return true;
+        }
         modelParallelRunnerPtr = this.init(modelPath, runnerConfig.getRunnerConfigPtr());
+        rwLock.writeLock().unlock();
         return modelParallelRunnerPtr != 0L;
     }
 
     /**
-     * Build a model runner from model path so that it can run on a device. 
+     * Build a model runner from model path so that it can run on a device.
      *
      * @param modelPath the model path.
      * @return init status.
      */
     public boolean init(String modelPath) {
+        rwLock.writeLock().lock();
         if (modelPath == null) {
+            rwLock.writeLock().unlock();
             return false;
         }
+        if (modelParallelRunnerPtr != 0L){
+            rwLock.writeLock().unlock();
+            return true;
+        }
         modelParallelRunnerPtr = this.init(modelPath, 0L);
+        rwLock.writeLock().unlock();
         return modelParallelRunnerPtr != 0;
     }
 
     /**
-     * Build a model runner from model path so that it can run on a device. 
+     * Build a model runner from model path so that it can run on a device.
      *
      * @param inputs  inputs A vector where model inputs are arranged in sequence.
      * @param outputs outputs Which is a pointer to a vector. The model outputs are filled in the container in sequence.
@@ -102,8 +117,10 @@ public class ModelParallelRunner {
                 return false;
             }
             long[] inputsPtrArray = new long[inputs.size()];
+            Object[] bufferArray = new Object[inputs.size()];
             for (int i = 0; i < inputs.size(); i++) {
                 inputsPtrArray[i] = inputs.get(i).getMSTensorPtr();
+                bufferArray[i] = inputs.get(i).getData();
             }
             if(outputs.size() != 0){
                 long[] outputsPtrArray = new long[outputs.size()];
@@ -113,13 +130,18 @@ public class ModelParallelRunner {
                     }
                     outputsPtrArray[i] = outputs.get(i).getMSTensorPtr();
                 }
-                boolean ret = predictWithOutput(modelParallelRunnerPtr, inputsPtrArray, outputsPtrArray);
+                boolean ret = predictWithOutputZeroCopy(modelParallelRunnerPtr,
+                                                        inputsPtrArray,
+                                                        bufferArray,
+                                                        outputsPtrArray);
                 if (!ret) {
                     return false;
                 }
                 return true;
             }
-            List<Long> outputPtrs = predict(modelParallelRunnerPtr, inputsPtrArray);
+            List<Long> outputPtrs = predictZeroCopy(modelParallelRunnerPtr,
+                                                    inputsPtrArray,
+                                                    bufferArray);
             if (outputPtrs.isEmpty()) {
                 return false;
             }
@@ -197,18 +219,24 @@ public class ModelParallelRunner {
             break;
         }
         rwLock.writeLock().lock();
-        if (modelParallelRunnerPtr != 0L) {
-            this.free(modelParallelRunnerPtr);
-            modelParallelRunnerPtr = 0L;
-        }
+        long modelParallelRunnerTempPtr = modelParallelRunnerPtr;
+        modelParallelRunnerPtr = 0L;
         rwLock.writeLock().unlock();
+        if (modelParallelRunnerTempPtr != 0L) {
+            this.free(modelParallelRunnerTempPtr);
+        }
     }
 
     private native long init(String modelPath, long runnerConfigPtr);
 
-    private native List<Long> predict(long modelParallelRunnerPtr, long[] inputs);
+    private native List<Long> predictZeroCopy(long modelParallelRunnerPtr,
+                                              long[] inputs,
+                                              Object[] buffer);
 
-    private native boolean predictWithOutput(long modelParallelRunnerPtr, long[] inputs, long[] outputs);
+    private native boolean predictWithOutputZeroCopy(long modelParallelRunnerPtr,
+                                                     long[] inputs,
+                                                     Object[] buffer,
+                                                     long[] outputs);
 
     private native List<Long> getInputs(long modelParallelRunnerPtr);
 

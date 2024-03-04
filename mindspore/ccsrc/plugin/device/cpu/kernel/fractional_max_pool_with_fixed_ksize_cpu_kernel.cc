@@ -84,6 +84,10 @@ bool FractionalMaxPoolWithFixedKsizeCPUKernelMod::Init(const BaseOperatorPtr &ba
   if (data_format_ != "NCHW") {
     MS_EXCEPTION(ValueError) << "For '" << kernel_name_ << "', the attr data_format must be NCHW.";
   }
+  if (std::any_of(output_shape_.begin(), output_shape_.end(), [](int64_t output_shape) { return output_shape <= 0; })) {
+    MS_EXCEPTION(ValueError) << "For '" << kernel_name_
+                             << "', the output_shape should all be positive numbers, but there are negative numbers.";
+  }
   if (output_shape_.size() == kOutputShapeLength1) {
     output_h_ = output_shape_[kOutputShapeIndexH];
     output_w_ = output_shape_[kOutputShapeIndexH];
@@ -236,7 +240,8 @@ void FractionalMaxPoolWithFixedKsizeCPUKernelMod::FractionalMaxPoolWithFixedKsiz
     scalar_t *outputPlane = outputForPlane + plane * output_h_ * output_w_;
     int64_t *argmaxPlane = argmaxForPlane + plane * output_h_ * output_w_;
 
-    int h, w;
+    int h;
+    int w;
     for (h = 0; h < output_h_; h++) {
       int inputHStart = sequenceH[h];
       for (w = 0; w < output_w_; w++) {

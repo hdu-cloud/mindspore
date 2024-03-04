@@ -29,26 +29,23 @@ from mindspore.parallel._utils import _get_parallel_mode, _get_full_batch
 from mindspore.parallel._ps_context import _get_ps_context, _enable_distributed_mindrt
 from mindspore.parallel._ps_context import _is_role_worker, _is_role_pserver
 from mindspore.parallel._ps_context import _insert_hash_table_size, _set_cache_enable, _set_rank_id
-from mindspore._checkparam import Rel
-from mindspore._checkparam import Validator as validator
-from mindspore.ops.primitive import constexpr
+from mindspore import _checkparam as Validator
+from mindspore.ops.primitive import constexpr, _primexpr
 from mindspore.nn.layer.basic import ClipByNorm
-from mindspore.nn.layer.math import Range
 from mindspore.nn.cell import Cell
 
 __all__ = ['Embedding', 'EmbeddingLookup', 'MultiFieldEmbeddingLookup']
 
 
-@constexpr
+@_primexpr
 def _check_input_2d(input_shape, param_name, func_name):
     if len(input_shape) != 2:
         raise ValueError(f"For '{func_name}', the dimension of '{param_name}' must be 2d, but got {len(input_shape)}")
-    return True
 
 
 @constexpr
 def _check_input_dtype(input_dtype, param_name, allow_dtypes, cls_name):
-    validator.check_type_name(param_name, input_dtype, allow_dtypes, cls_name)
+    Validator.check_type_name(param_name, input_dtype, allow_dtypes, cls_name)
 
 
 class Embedding(Cell):
@@ -65,13 +62,15 @@ class Embedding(Cell):
     Args:
         vocab_size (int): Size of the dictionary of embeddings.
         embedding_size (int): The size of each embedding vector.
-        use_one_hot (bool): Specifies whether to apply one_hot encoding form. Default: False.
+        use_one_hot (bool): Specifies whether to apply one_hot encoding form. Default: ``False`` .
         embedding_table (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the embedding_table.
-            Refer to class `initializer` for the values of string when a string
-            is specified. Default: 'normal'.
-        dtype (:class:`mindspore.dtype`): Data type of `x`. Default: mindspore.float32.
+            Refer to class `mindspore.common.initializer
+            <https://www.mindspore.cn/docs/en/master/api_python/mindspore.common.initializer.html>`_
+            for the values of string when a string is specified. Default: ``'normal'`` .
+        dtype (:class:`mindspore.dtype`): Data type of `x`. Default: ``mstype.float32`` .
         padding_idx (int, None): When the padding_idx encounters index, the output embedding vector of this index
-                                 will be initialized to zero. Default: None. The feature is inactivated.
+                                 will be initialized to zero. Default: ``None`` . The feature is inactivated.
+
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(\text{batch_size}, \text{x_length})`. The elements of
           the Tensor must be integer and not larger than vocab_size. Otherwise the corresponding embedding vector will
@@ -89,6 +88,9 @@ class Embedding(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> net = nn.Embedding(20000, 768,  True)
         >>> x = Tensor(np.ones([8, 128]), mindspore.int32)
         >>> # Maps the input word IDs to word embedding.
@@ -102,16 +104,16 @@ class Embedding(Cell):
                  dtype=mstype.float32, padding_idx=None):
         """Initialize Embedding."""
         super(Embedding, self).__init__()
-        self.vocab_size = validator.check_value_type('vocab_size', vocab_size, [int], self.cls_name)
-        self.embedding_size = validator.check_value_type('embedding_size', embedding_size, [int], self.cls_name)
-        validator.check_value_type('use_one_hot', use_one_hot, [bool], self.cls_name)
-        validator.check_subclass("dtype", dtype, mstype.number_type, self.cls_name)
+        self.vocab_size = Validator.check_value_type('vocab_size', vocab_size, [int], self.cls_name)
+        self.embedding_size = Validator.check_value_type('embedding_size', embedding_size, [int], self.cls_name)
+        Validator.check_value_type('use_one_hot', use_one_hot, [bool], self.cls_name)
+        Validator.check_subclass("dtype", dtype, mstype.number_type, self.cls_name)
         self.use_one_hot = use_one_hot
         self.dtype = dtype
         self.init_tensor = initializer(embedding_table, [vocab_size, embedding_size])
         self.padding_idx = padding_idx
         if padding_idx is not None:
-            self.padding_idx = validator.check_int_range(padding_idx, 0, vocab_size, Rel.INC_LEFT,
+            self.padding_idx = Validator.check_int_range(padding_idx, 0, vocab_size, Validator.INC_LEFT,
                                                          "padding_idx", self.cls_name)
             if isinstance(self.init_tensor, Tensor) and self.init_tensor.init is not None:
                 self.init_tensor = self.init_tensor.init_data()
@@ -129,6 +131,7 @@ class Embedding(Cell):
         self.array_mul = P.MatMul()
         self.reshape = P.Reshape()
         self.get_shp = P.Shape()
+        self.concat = P.Concat()
 
     def construct(self, ids):
         out_shape = self.get_shp(ids) + (self.embedding_size,)
@@ -144,12 +147,11 @@ class Embedding(Cell):
         return output
 
     def extend_repr(self):
-        s = 'vocab_size={}, embedding_size={}, use_one_hot={}, embedding_table={}, dtype={}, padding_idx={}'.format(
-            self.vocab_size, self.embedding_size, self.use_one_hot, self.embedding_table, self.dtype, self.padding_idx)
-        return s
+        return f'vocab_size={self.vocab_size}, embedding_size={self.embedding_size}, use_one_hot={self.use_one_hot}, ' \
+            f'embedding_table={self.embedding_table}, dtype={self.dtype}, padding_idx={self.padding_idx}'
 
 
-@constexpr
+@_primexpr
 def _make_axis_range(start, end):
     axis = tuple(range(start, end))
     return axis
@@ -176,19 +178,20 @@ class EmbeddingLookup(Cell):
         embedding_size (int): The size of each embedding vector.
         param_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the embedding_table.
             Refer to class `initializer` for the values of string when a string
-            is specified. Default: 'normal'.
+            is specified. Default: ``'normal'`` .
         target (str): Specifies the target where the op is executed. The value must in
-            ['DEVICE', 'CPU']. Default: 'CPU'.
+            [ ``'DEVICE'`` , ``'CPU'`` ]. Default: ``'CPU'`` .
         slice_mode (str): The slicing way in semi_auto_parallel/auto_parallel. The value must get through
-            :class:`mindspore.nn.EmbeddingLookup`. Default: 'nn.EmbeddingLookup.BATCH_SLICE'.
-        manual_shapes (tuple): The accompaniment array in field slice mode. Default: None.
+            :class:`mindspore.nn.EmbeddingLookup`. Default: ``'batch_slice'`` .
+        manual_shapes (tuple): The accompaniment array in field slice mode. Default: ``None`` .
         max_norm (Union[float, None]): A maximum clipping value. The data type must be float16, float32
-                                       or None. Default: None
-        sparse (bool): Using sparse mode. When 'target' is set to 'CPU', 'sparse' has to be true. Default: True.
-        vocab_cache_size (int): Cache size of the dictionary of embeddings. Default: 0. It is valid only in
+                                       or None. Default: ``None`` .
+        sparse (bool): Using sparse mode. When 'target' is set to 'CPU', 'sparse' has to be true. Default: ``True`` .
+        vocab_cache_size (int): Cache size of the dictionary of embeddings. Default: ``0`` . It is valid only in
             parameter server trainning mode and 'DEVICE' target. And the moment parameter of corresponding
             optimizer will also be set to the cache size. In addition, it should be noted that it will cost the 'DEVICE'
             memory, so suggests setting a reasonable value to avoid insufficient memory.
+        dtype (:class:`mindspore.dtype`): Dtype of Parameters. Default: ``mstype.float32`` .
 
     Inputs:
         - **input_indices** (Tensor) - The shape of tensor is :math:`(y_1, y_2, ..., y_S)`.
@@ -215,6 +218,9 @@ class EmbeddingLookup(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> input_indices = Tensor(np.array([[1, 0], [3, 2]]), mindspore.int32)
         >>> result = nn.EmbeddingLookup(4,2)(input_indices)
         >>> print(result.shape)
@@ -227,17 +233,17 @@ class EmbeddingLookup(Cell):
 
     def __init__(self, vocab_size, embedding_size, param_init='normal',
                  target='CPU', slice_mode='batch_slice', manual_shapes=None,
-                 max_norm=None, sparse=True, vocab_cache_size=0):
+                 max_norm=None, sparse=True, vocab_cache_size=0, dtype=mstype.float32):
         """Initialize EmbeddingLookup."""
         super(EmbeddingLookup, self).__init__()
-        validator.check_value_type('sparse', sparse, [bool], self.cls_name)
-        self.vocab_size = validator.check_positive_int(vocab_size, 'vocab_size')
-        self.vocab_cache_size = validator.check_non_negative_int(vocab_cache_size, 'vocab_cache_size')
+        Validator.check_value_type('sparse', sparse, [bool], self.cls_name)
+        self.vocab_size = Validator.check_positive_int(vocab_size, 'vocab_size')
+        self.vocab_cache_size = Validator.check_non_negative_int(vocab_cache_size, 'vocab_cache_size')
         self.target = target
         self.sparse = sparse
         self.cache_enable = self.vocab_cache_size > 0
         self.forward_unique = False
-        validator.check_string(target, ['CPU', 'DEVICE'], 'target', self.cls_name)
+        Validator.check_string(target, ['CPU', 'DEVICE'], 'target', self.cls_name)
         if not sparse and target == 'CPU':
             raise ValueError(f"For '{self.cls_name}', 'sparse' must be True when 'target' is \"CPU\", "
                              f"but got 'sparse': {sparse} and 'target': {target}")
@@ -250,9 +256,9 @@ class EmbeddingLookup(Cell):
         enable_ps = _get_ps_context("enable_ps")
         if enable_ps:
             self._process_vocab_cache(slice_mode)
-        self.embedding_size = validator.check_positive_int(embedding_size, 'embedding_size', self.cls_name)
-        self.embedding_table = Parameter(initializer(param_init, [self.vocab_size, self.embedding_size]),
-                                         name='embedding_table')
+        self.embedding_size = Validator.check_positive_int(embedding_size, 'embedding_size', self.cls_name)
+        self.embedding_table = Parameter(initializer(param_init, [self.vocab_size, self.embedding_size],
+                                                     dtype=dtype), name='embedding_table')
         parallel_mode = _get_parallel_mode()
         is_auto_parallel = parallel_mode in (ParallelMode.SEMI_AUTO_PARALLEL, ParallelMode.AUTO_PARALLEL)
         self.gather_revert = P.Gather()
@@ -263,7 +269,7 @@ class EmbeddingLookup(Cell):
         if is_auto_parallel:
             self.unique = P.Unique().shard(((1,),))
         if self.cache_enable and enable_ps:
-            self._set_voacb_cache_enable_for_ps(vocab_cache_size, embedding_size, vocab_size, param_init)
+            self._set_voacb_cache_enable_for_ps(vocab_cache_size, embedding_size, vocab_size, param_init, dtype=dtype)
             if is_auto_parallel:
                 self.unique.add_prim_attr('cache_enable', True)
         indices_shape_size = 2
@@ -275,7 +281,7 @@ class EmbeddingLookup(Cell):
                 raise TypeError(f"For '{self.cls_name}', the type of 'manual_shapes' must be tuple(int), "
                                 f"but got {type(manual_shapes).__name__}!")
             for dim in manual_shapes:
-                validator.check_positive_int(dim, 'manual shape dim', self.cls_name)
+                Validator.check_positive_int(dim, 'manual shape dim', self.cls_name)
             self.gatherv2.add_prim_attr("manual_split", manual_shapes)
             self.embeddinglookup.add_prim_attr("manual_split", manual_shapes)
             self.gatherv2.shard(((get_group_size(), 1), (1, get_group_size())))
@@ -299,21 +305,21 @@ class EmbeddingLookup(Cell):
             self.embeddinglookup.shard(((1, get_group_size()), indices_strategy))
         elif slice_mode == "batch_slice" and is_auto_parallel:
             indices_strategy = [get_group_size()]
-            indices_strategy.extend([1]*(indices_shape_size - 1))
+            indices_strategy.extend([1] * (indices_shape_size - 1))
             indices_strategy = tuple(indices_strategy)
             self.gatherv2.shard(((1, 1), indices_strategy))
             self.embeddinglookup.shard(((1, 1), indices_strategy))
         else:
             if is_auto_parallel:
                 support_mode = ["field_slice", "table_row_slice", "table_column_slice", "batch_slice"]
-                raise ValueError("For '{}', the 'slice_mode' must be in {}, "
-                                 "but got \"{}\".".format(self.cls_name, support_mode, slice_mode))
+                raise ValueError(f"For '{self.cls_name}', the 'slice_mode' must be in {support_mode}, "
+                                 f"but got \"{slice_mode}\".")
         if self.cache_enable and not enable_ps:
             raise ValueError(f"For '{self.cls_name}', haven't supported cache enable for not ps mode.")
         self.embedding_table.unique = self.forward_unique
         self.max_norm = max_norm
         if self.max_norm is not None:
-            self.max_norm = validator.check_positive_float(self.max_norm, 'max_norm', self.cls_name)
+            self.max_norm = Validator.check_positive_float(self.max_norm, 'max_norm', self.cls_name)
             self.max_norm = Tensor(self.max_norm, dtype=mstype.float32)
 
     def _process_vocab_cache(self, slice_mode):
@@ -343,13 +349,16 @@ class EmbeddingLookup(Cell):
                                      f"But got full_batch: {full_batch} and 'slice_mode': \"{slice_mode}\".")
                 self.vocab_cache_size = self.vocab_cache_size * rank_size
                 _set_rank_id(rank_id)
+
             self.cache_enable = True
+            _set_cache_enable(True)
+
             if _is_role_worker():
                 self.vocab_size = self.vocab_cache_size
 
-    def _set_voacb_cache_enable_for_ps(self, vocab_cache_size, embedding_size, vocab_size, param_init):
+    def _set_voacb_cache_enable_for_ps(self, vocab_cache_size, embedding_size, vocab_size, param_init,
+                                       dtype=mstype.float32):
         """PS embeddingLookup cache enable set."""
-        _set_cache_enable(True)
         if self.sparse:
             self.forward_unique = True
         param_key = _get_unique_parameter_key()
@@ -362,10 +371,10 @@ class EmbeddingLookup(Cell):
         if _enable_distributed_mindrt():
             self.rank_id = get_rank()
             if self.is_ps_server:
-                self._slice_pserver_embeddings("zeros")
+                self._slice_pserver_embeddings("zeros", dtype=dtype)
                 self._set_cache_enable_and_key_for_pserver(param_key)
 
-    def _slice_pserver_embeddings(self, param_init):
+    def _slice_pserver_embeddings(self, param_init, dtype=mstype.float32):
         '''
         Method to slice embedding tables on Parameter Servers.
         It helps to train with a large scale embedding table and is used only in Parameter Server training mode.
@@ -393,7 +402,7 @@ class EmbeddingLookup(Cell):
         for i in range(server_num):
             self.embedding_table_list.append(Parameter(initializer(param_init,
                                                                    [self.embedding_table_vocab_dim_list[i],
-                                                                    self.embedding_size]),
+                                                                    self.embedding_size], dtype=dtype),
                                                        name="embedding_table_server_" + str(i)))
 
             self.embedding_offset.append(offset)
@@ -484,7 +493,7 @@ class MultiFieldEmbeddingLookup(EmbeddingLookup):
         'MEAN'. Ensure the input_values of the padded id is zero, so that they can be ignored. The final
         output will be zeros if the sum of absolute weight of the field is zero. This class only
         supports ['table_row_slice', 'batch_slice' and 'table_column_slice']. For the operation 'MAX' on
-        device Ascend, there is a constraint where batch_size * (seq_length + field_size) < 3500.
+        device Ascend, there is a constraint where :math:`batch\_size * (seq\_length + field\_size) < 3500`.
 
     Args:
         vocab_size (int): The size of the dictionary of embeddings.
@@ -492,17 +501,20 @@ class MultiFieldEmbeddingLookup(EmbeddingLookup):
         field_size (int): The field size of the final outputs.
         param_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the embedding_table.
             Refer to class `initializer` for the values of string when a string
-            is specified. Default: 'normal'.
+            is specified. Default: ``'normal'`` .
         target (str): Specifies the target where the op is executed. The value must in
-            ['DEVICE', 'CPU']. Default: 'CPU'.
+            [ ``'DEVICE'`` , ``'CPU'`` ]. Default: ``'CPU'`` .
         slice_mode (str): The slicing way in semi_auto_parallel/auto_parallel. The value must get through
-            :class:`mindspore.nn.EmbeddingLookup`. Default: 'nn.EmbeddingLookup.BATCH_SLICE'.
-        feature_num_list (tuple): The accompaniment array in field slice mode. This is unused currently. Default: None.
-        max_norm (Union[float, None]): A maximum clipping value. The data type must be float16, float32
-                                       or None. Default: None
-        sparse (bool): Using sparse mode. When 'target' is set to 'CPU', 'sparse' has to be true. Default: True.
-        operator (str): The pooling method for the features in one field. Support 'SUM', 'MEAN' and 'MAX'.
-            Default: 'SUM'.
+            :class:`mindspore.nn.EmbeddingLookup`. Default: ``'batch_slice'``.
+        feature_num_list (tuple): The accompaniment array in field slice mode. This is unused currently.
+            Default:  ``None`` .
+        max_norm (Union[float, None]): A maximum clipping value. The data type must be float16, float32.
+            Default: ``None`` .
+        sparse (bool): Using sparse mode. When 'target' is set to ``'CPU'`` , 'sparse' has to be true.
+            Default: ``True`` .
+        operator (str): The pooling method for the features in one field. Support ``'SUM'`` , ``'MEAN'`` and
+            ``'MAX'`` . Default: ``'SUM'`` .
+        dtype (:class:`mindspore.dtype`): Dtype of Parameters. Default: ``mstype.float32`` .
 
     Inputs:
         - **input_indices** (Tensor) - The shape of tensor is :math:`(batch\_size, seq\_length)`.
@@ -521,17 +533,19 @@ class MultiFieldEmbeddingLookup(EmbeddingLookup):
         TypeError: If `vocab_size` or `embedding_size` or `field_size` is not an int.
         TypeError: If `sparse` is not a bool or `feature_num_list` is not a tuple.
         ValueError: If `vocab_size` or `embedding_size` or `field_size` is less than 1.
-        ValueError: If `target` is neither 'CPU' nor 'DEVICE'.
-        ValueError: If `slice_mode` is not one of 'batch_slice', 'field_slice', 'table_row_slice',
-                    'table_column_slice'.
-        ValueError: If `sparse` is False and `target` is 'CPU'.
-        ValueError: If `slice_mode` is 'field_slice' and `feature_num_list` is None.
-        ValueError: If `operator` is not one of 'SUM', 'MAX', 'MEAN'.
+        ValueError: If `target` is neither ``'CPU'`` nor ``'DEVICE'``.
+        ValueError: If `slice_mode` is not one of ``'batch_slice'``, ``'field_slice'``, ``'table_row_slice'``,
+                    ``'table_column_slice'`` .
+        ValueError: If `sparse` is False and `target` is ``'CPU'`` .
+        ValueError: If `slice_mode` is ``'field_slice'`` and `feature_num_list` is None.
+        ValueError: If `operator` is not one of ``'SUM'``, ``'MAX'``, ``'MEAN'`` .
 
     Supported Platforms:
         ``Ascend`` ``GPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
         >>> input_indices = Tensor([[2, 4, 6, 0, 0], [1, 3, 5, 0, 0]], mindspore.int32)
         >>> input_values = Tensor([[1, 1, 1, 0, 0], [1, 1, 1, 0, 0]], mindspore.float32)
         >>> field_ids = Tensor([[0, 1, 1, 0, 0], [0, 0, 1, 0, 0]], mindspore.int32)
@@ -545,11 +559,12 @@ class MultiFieldEmbeddingLookup(EmbeddingLookup):
     OPERATOR_MAX = 'MAX'
 
     def __init__(self, vocab_size, embedding_size, field_size, param_init='normal', target='CPU',
-                 slice_mode='batch_slice', feature_num_list=None, max_norm=None, sparse=True, operator='SUM'):
+                 slice_mode='batch_slice', feature_num_list=None, max_norm=None, sparse=True, operator='SUM',
+                 dtype=mstype.float32):
         """Initialize MultiFieldEmbeddingLookup."""
         super(MultiFieldEmbeddingLookup, self).__init__(vocab_size, embedding_size, param_init, target,
-                                                        slice_mode, feature_num_list, max_norm, sparse)
-        self.field_size = validator.check_positive_int(field_size, 'field_size', self.cls_name)
+                                                        slice_mode, feature_num_list, max_norm, sparse, dtype=dtype)
+        self.field_size = Validator.check_positive_int(field_size, 'field_size', self.cls_name)
         self.operator = operator
 
         self.mul = P.Mul()
@@ -567,7 +582,7 @@ class MultiFieldEmbeddingLookup(EmbeddingLookup):
         self.max_mask_mul = P.Mul()
         self.max_no_equal = P.NotEqual()
 
-        validator.check_string(operator, ['SUM', 'MAX', 'MEAN'], 'operator', self.cls_name)
+        Validator.check_string(operator, ['SUM', 'MAX', 'MEAN'], 'operator', self.cls_name)
         if operator == MultiFieldEmbeddingLookup.OPERATOR_SUM:
             self.merge_op = P.UnsortedSegmentSum()
         elif operator == MultiFieldEmbeddingLookup.OPERATOR_MAX:
@@ -612,14 +627,14 @@ class MultiFieldEmbeddingLookup(EmbeddingLookup):
                 self.inf_add.shard(((1, 1, get_group_size()), (1, 1, 1)))
         else:
             if is_auto_parallel:
-                raise ValueError("For '{}', the 'slice_mode' must be in ['table_row_slice', 'batch_slice' and \
-                                       'table_column_slice'], but got {}".format(self.cls_name, str(slice_mode)))
+                raise ValueError(
+                    f"For '{self.cls_name}', the 'slice_mode' must be in ['table_row_slice', 'batch_slice' "
+                    f"and 'table_column_slice'], but got {str(slice_mode)}.")
 
         # Min value for fp32
         self.negative_inf_value = -3.402823466E+38
 
     def construct(self, input_indices, input_values, field_ids):
-
         _check_input_2d(F.shape(input_indices), "input_indices", self.cls_name)
         _check_input_2d(F.shape(input_values), "input_values", self.cls_name)
         _check_input_2d(F.shape(field_ids), "field_ids", self.cls_name)
@@ -629,7 +644,7 @@ class MultiFieldEmbeddingLookup(EmbeddingLookup):
 
         batch_size = self.shape(input_indices)[0]
         num_segments = batch_size * self.field_size
-        bias = Range(0, num_segments, self.field_size)()
+        bias = F.tuple_to_array(F.make_range(0, num_segments, self.field_size))
         bias = self.reshape(bias, (batch_size, -1))
         field_ids = self.bias_add(field_ids, bias)
 

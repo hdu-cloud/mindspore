@@ -17,12 +17,12 @@
 #define MINDSPORE_CORE_OPS_DETECTION_POST_PROCESS_H_
 
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
-#include "mindapi/base/types.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/format.h"
+#include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -61,8 +61,9 @@ class MIND_API DetectionPostProcess : public BaseOperator {
   bool get_out_quantized() const;
   Format get_format() const;
 };
-abstract::AbstractBasePtr DetectionPostProcessInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                    const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr DetectionPostProcessInfer(const abstract::AnalysisEnginePtr &,
+                                                             const PrimitivePtr &primitive,
+                                                             const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

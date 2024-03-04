@@ -84,7 +84,7 @@ Status TextFileOp::LoadFile(const std::string &file, int64_t start_offset, int64
     RETURN_STATUS_UNEXPECTED("Invalid file path, " + file + " does not exist.");
   }
 
-  std::ifstream handle(realpath.value());
+  std::ifstream handle(realpath.value(), std::ios::in);
   if (!handle.is_open()) {
     RETURN_STATUS_UNEXPECTED("Invalid file, failed to open text:" + file +
                              ", the file is damaged or permission denied.");
@@ -109,11 +109,20 @@ Status TextFileOp::LoadFile(const std::string &file, int64_t start_offset, int64
 
     TensorRow tRow(1, nullptr);
     tRow.setPath({file});
-    RETURN_IF_NOT_OK(LoadTensor(line, &tRow));
-    RETURN_IF_NOT_OK(jagged_rows_connector_->Add(worker_id, std::move(tRow)));
+    auto s = LoadTensor(line, &tRow);
+    if (s != Status::OK()) {
+      handle.close();
+      return s;
+    }
+    s = jagged_rows_connector_->Add(worker_id, std::move(tRow));
+    if (s != Status::OK()) {
+      handle.close();
+      return s;
+    }
 
     rows_total++;
   }
+  handle.close();
 
   return Status::OK();
 }
@@ -129,26 +138,25 @@ Status TextFileOp::FillIOBlockQueue(const std::vector<int64_t> &i_keys) {
     if (!i_keys.empty()) {
       for (auto it = i_keys.begin(); it != i_keys.end(); ++it) {
         {
-          if (!load_io_block_queue_) {
+          if (!GetLoadIoBlockQueue()) {
             break;
           }
         }
-        file_index.emplace_back(std::pair<std::string, int64_t>((*filename_index_)[*it], *it));
+        (void)file_index.emplace_back(std::pair<std::string, int64_t>((*filename_index_)[*it], *it));
       }
     } else {
       for (auto it = filename_index_->begin(); it != filename_index_->end(); ++it) {
         {
-          if (!load_io_block_queue_) {
+          if (!GetLoadIoBlockQueue()) {
             break;
           }
         }
-        file_index.emplace_back(std::pair<std::string, int64_t>(it.value(), it.key()));
+        (void)file_index.emplace_back(std::pair<std::string, int64_t>(it.value(), it.key()));
       }
     }
     for (auto file_info : file_index) {
       if (NeedPushFileToBlockQueue(file_info.first, &start_offset, &end_offset, pre_count)) {
-        auto ioBlock =
-          std::make_unique<FilenameBlock>(file_info.second, start_offset, end_offset, IOBlock::kDeIoBlockNone);
+        auto ioBlock = std::make_unique<FilenameBlock>(file_info.second, start_offset, end_offset, IOBlock::kFlagNone);
         RETURN_IF_NOT_OK(PushIoBlockQueue(queue_index, std::move(ioBlock)));
         queue_index = (queue_index + 1) % num_workers_;
       }
@@ -174,7 +182,7 @@ int64_t TextFileOp::CountTotalRows(const std::string &file) {
     return 0;
   }
 
-  std::ifstream handle(realpath.value());
+  std::ifstream handle(realpath.value(), std::ios::in);
   if (!handle.is_open()) {
     MS_LOG(ERROR) << "Invalid file, failed to open text file:" << file << ", the file is damaged or permission denied.";
     return 0;
@@ -187,6 +195,7 @@ int64_t TextFileOp::CountTotalRows(const std::string &file) {
       count++;
     }
   }
+  handle.close();
 
   return count;
 }

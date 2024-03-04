@@ -101,7 +101,7 @@ void SchedulerNode::RunRecovery() {
                << ", the initial cluster state:" << kClusterState.at(clusterConfig.initial_cluster_state);
 
   if (!clusterConfig.initial_registered_nodes_infos.empty()) {
-    for (const auto kvs : clusterConfig.initial_registered_nodes_infos) {
+    for (const auto &kvs : clusterConfig.initial_registered_nodes_infos) {
       MS_LOG(INFO) << "The ip:" << kvs.second.ip_ << ", the port:" << kvs.second.port_
                    << ", the node_id:" << kvs.second.node_id_
                    << ", the node_role:" << CommUtil::NodeRoleToString(kvs.second.node_role_)
@@ -128,12 +128,12 @@ void SchedulerNode::RunRecovery() {
     auto &node_id = kvs.first;
     auto &node_info = kvs.second;
     auto client = std::make_shared<TcpClient>(node_info.ip_, node_info.port_, node_info.node_role_);
+    MS_EXCEPTION_IF_NULL(client);
     client->SetMessageCallback([this](const std::shared_ptr<MessageMeta> &meta, const Protos &, const void *, size_t) {
       MS_LOG(INFO) << "received the response. ";
       NotifyMessageArrival(meta);
     });
     client->Init();
-    MS_EXCEPTION_IF_NULL(client);
 
     auto message_meta = std::make_shared<MessageMeta>();
     MS_EXCEPTION_IF_NULL(message_meta);

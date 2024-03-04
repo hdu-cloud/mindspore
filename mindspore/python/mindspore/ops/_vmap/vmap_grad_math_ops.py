@@ -17,9 +17,9 @@
 from __future__ import absolute_import
 
 from mindspore.ops import functional as F
-from mindspore.ops import constexpr
+from mindspore.ops.primitive import _primexpr
 from mindspore.ops.operations import _grad_ops as G
-from mindspore.ops.composite import _VmapGeneralRule
+from mindspore.ops.function import _VmapGeneralRule
 from mindspore.ops._vmap.vmap_base import vmap_rules_getters, vmap_general_preprocess, _bdim_at_front, \
     _handle_broadcasting, get_unary_grad_vmap_rule, _get_broadcasting_with_front_axis_additional_axis
 
@@ -36,7 +36,7 @@ def get_broadcast_binary_op_grad_vmap_rule(prim, axis_size):
     if isinstance(prim, str):
         prim = broadcast_binary_op_grad_map.get(prim)()
 
-    @constexpr
+    @_primexpr
     def get_longest_shape(x_shape, y_shape, g_shape):
         x_rank = len(x_shape)
         y_rank = len(y_shape)
@@ -62,8 +62,9 @@ def get_broadcast_binary_op_grad_vmap_rule(prim, axis_size):
         y_shape = F.shape(y)
         g_shape = F.shape(g)
 
-        if x_dim == y_dim and x_dim == g_dim and \
-            x_shape == y_shape and x_shape == g_shape:
+        is_dim_ok = x_dim == y_dim and x_dim == g_dim
+        is_shape_ok = x_shape == y_shape and x_shape == g_shape
+        if is_dim_ok and is_shape_ok:
             dx, dy = prim(x, y, g)
             return (dx, x_dim), (dy, y_dim)
 
@@ -113,8 +114,9 @@ def get_broadcast_grad_grad_vmap_rule(prim, axis_size):
         dx1_shape = F.shape(dx1)
         dx2_shape = F.shape(dx2)
 
-        if x1_dim == x2_dim and dx1_dim == dx2_dim and x1_dim == dx1_dim \
-                and x1_shape == x2_shape and dx1_shape == dx2_shape:
+        is_dim_ok = x1_dim == x2_dim and dx1_dim == dx2_dim and x1_dim == dx1_dim
+        is_shape_ok = x1_shape == x2_shape and dx1_shape == dx2_shape
+        if is_dim_ok and is_shape_ok:
             sopd_x1, sopd_x2, sopd_grad = prim(x1, x2, dx1, dx2)
             return (sopd_x1, x1_dim), (sopd_x2, x1_dim), (sopd_grad, x1_dim)
 
@@ -148,7 +150,7 @@ def get_median_grad_vmap_rule(prim, axis_size):
     axis = prim.axis
     keep_dims = prim.keep_dims
 
-    @constexpr
+    @_primexpr
     def trans_grad_axis(axis, rank, dim, keep_dims):
         if axis < 0:
             axis += rank - 1

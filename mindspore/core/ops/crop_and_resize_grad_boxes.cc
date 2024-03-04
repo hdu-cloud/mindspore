@@ -16,13 +16,28 @@
 
 #include "ops/crop_and_resize_grad_boxes.h"
 
-#include <set>
 #include <memory>
+#include <set>
 
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
-#include "mindapi/src/helper.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/image_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -90,7 +105,7 @@ abstract::ShapePtr CropAndResizeGradBoxesInferShape(const PrimitivePtr &primitiv
   if (!(input_shape0[kHeight] > 0 && input_shape0[kWidth] > 0)) {
     MS_EXCEPTION(ValueError) << "For '" << prim_name
                              << "', the height and width of grads must be greater than 0. But got height: "
-                             << input_shape1[kHeight] << ", width: " << input_shape1[kWidth] << ".";
+                             << input_shape0[kHeight] << ", width: " << input_shape0[kWidth] << ".";
   }
   if (!(input_shape0[0] == input_shape3[0] && input_shape2[0] == input_shape0[0])) {
     MS_EXCEPTION(ValueError)
@@ -131,7 +146,25 @@ AbstractBasePtr CropAndResizeGradBoxesInfer(const abstract::AnalysisEnginePtr &,
   auto shape = CropAndResizeGradBoxesInferShape(primitive, input_args);
   return abstract::MakeAbstract(shape, type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(CropAndResizeGradBoxes, prim::kPrimCropAndResizeGradBoxes, CropAndResizeGradBoxesInfer,
-                             nullptr, true);
+
+// AG means auto generated
+class MIND_API AGCropAndResizeGradBoxesInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return CropAndResizeGradBoxesInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return CropAndResizeGradBoxesInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return CropAndResizeGradBoxesInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(CropAndResizeGradBoxes, prim::kPrimCropAndResizeGradBoxes,
+                                 AGCropAndResizeGradBoxesInfer, false);
 }  // namespace ops
 }  // namespace mindspore

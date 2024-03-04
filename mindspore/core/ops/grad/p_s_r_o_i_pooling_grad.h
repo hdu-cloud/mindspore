@@ -18,11 +18,11 @@
 #define MINDSPORE_P_S_R_O_I_POOLING_GRAD_H
 
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -34,8 +34,9 @@ class MIND_API PSROIPoolingGrad : public BaseOperator {
   PSROIPoolingGrad() : BaseOperator(kNamePSROIPoolingGrad) {}
 };
 
-abstract::AbstractBasePtr PSROIPoolingGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr PSROIPoolingGradInfer(const abstract::AnalysisEnginePtr &,
+                                                         const PrimitivePtr &primitive,
+                                                         const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

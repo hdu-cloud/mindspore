@@ -41,6 +41,7 @@ from mindspore.nn.optim.optimizer import Optimizer
 from mindspore.nn.loss.loss import LossBase
 from mindspore.train._utils import check_value_type, _make_directory
 from mindspore._c_expression import security
+from mindspore._c_expression import _collect_host_info
 
 HYPER_CONFIG_ENV_NAME = "MINDINSIGHT_HYPER_CONFIG"
 HYPER_CONFIG_LEN_LIMIT = 100000
@@ -70,9 +71,9 @@ class LineageMetadata:
 
 class SummaryCollector(Callback):
     """
-    SummaryCollector can help you to collect some common information.
+    SummaryCollector can help you to collect some common information,
+    such as loss, learning late, computational graph and so on.
 
-    It can help you to collect loss, learning late, computational graph and so on.
     SummaryCollector also enables the summary operator to collect data to summary files.
 
     Note:
@@ -90,50 +91,55 @@ class SummaryCollector(Callback):
             and the unit is `step`. If a frequency is set, we will collect data
             when (current steps % freq) equals to 0, and the first step will be collected at any time.
             It is important to note that if the data sink mode is used, the unit will become the `epoch`.
-            It is not recommended to collect data too frequently, which can affect performance. Default: 10.
+            It is not recommended to collect data too frequently, which can affect performance. Default: ``10`` .
+        num_process (int): Number of processes saving summary data. The more processes there are, the better the
+            performance, but there may be host memory overflow issues. Default: ``32`` .
         collect_specified_data (Union[None, dict]): Perform custom operations on the collected data.
             By default, if set to None, all data is collected as the default behavior.
             You can customize the collected data with a dictionary.
             For example, you can set {'collect_metric': False} to control not collecting metrics.
-            The data that supports control is shown below. Default: None.
+            The data that supports control is shown below. Default: ``None`` .
 
             - collect_metric (bool): Whether to collect training metrics, currently only the loss is collected.
-              The first output will be treated as the loss and it will be averaged. Default: True.
+              The first output will be treated as the loss and it will be averaged. Default: ``True`` .
             - collect_graph (bool): Whether to collect the computational graph. Currently, only
-              training computational graph is collected. Default: True.
+              training computational graph is collected. Default: ``True`` .
             - collect_train_lineage (bool): Whether to collect lineage data for the training phase,
               this field will be displayed on the `lineage page \
-              <https://www.mindspore.cn/mindinsight/docs/en/r2.0.0-alpha/lineage_and_scalars_comparison.html>`_
-              of MindInsight. Default: True.
+              <https://www.mindspore.cn/mindinsight/docs/en/master/lineage_and_scalars_comparison.html>`_
+              of MindInsight. Default: ``True`` .
             - collect_eval_lineage (bool): Whether to collect lineage data for the evaluation phase,
-              this field will be displayed on the lineage page of MindInsight. Default: True.
+              this field will be displayed on the `lineage page
+              <https://www.mindspore.cn/mindinsight/docs/en/master/lineage_and_scalars_comparison.html>`_
+              of MindInsight. Default: ``True`` .
             - collect_input_data (bool): Whether to collect dataset for each training.
               Currently only image data is supported.
               If there are multiple columns of data in the dataset, the first column should be image data.
-              Default: True.
-            - collect_dataset_graph (bool): Whether to collect dataset graph for the training phase. Default: True.
+              Default: ``True`` .
+            - collect_dataset_graph (bool): Whether to collect dataset graph for the training phase.
+              Default: ``True`` .
             - histogram_regular (Union[str, None]): Collect weight and bias for parameter distribution page
               and displayed in MindInsight. This field allows regular strings to control which parameters to collect.
               It is not recommended to collect too many parameters at once, as it can affect performance.
               Note that if you collect too many parameters and run out of memory, the training will fail.
-              Default: None, it means only the first five parameters are collected.
+              Default: ``None`` , it means only the first five parameters are collected.
             - collect_landscape (Union[dict,None]): Whether to collect the parameters needed to create the
               loss landscape. If set to None, collect_landscape parameters will not be collected. All parameter
               information is collected by default and stored in file `{summary_dir}/ckpt_dir/train_metadata.json`.
 
               - landscape_size (int): Specify the image resolution of the generated loss landscape.
-                For example, if it is set to 128, the resolution of the landscape is 128 * 128.
+                For example, if it is set to ``128`` , the resolution of the landscape is 128 * 128.
                 The calculation time increases with the increase of resolution.
-                Default: 40. Optional values: between 3 and 256.
-              - unit (str): Specify the interval strength of the training process. Default: "step".
+                Default: ``40`` . Optional values: between 3 and 256.
+              - unit (str): Specify the interval strength of the training process. Default: ``"step"`` .
                 Optional: epoch/step.
               - create_landscape (dict): Select how to create loss landscape.
                 Training process loss landscape(train) and training result loss landscape(result).
-                Default: {"train": True, "result": True}. Optional: True/False.
+                Default: {"train": True, "result": True}. Optional: ``True`` / ``False`` .
               - num_samples (int): The size of the dataset used to create the loss landscape.
                 For example, in image dataset, You can set num_samples is 128,
                 which means that 128 images are used to create loss landscape.
-                Default: 128.
+                Default: ``128`` .
               - intervals (List[List[int]]): Specifies the interval
                 in which the loss landscape. For example: If the user wants to
                 create loss landscape of two training processes, they are 1-5 epoch
@@ -143,10 +149,11 @@ class SummaryCollector(Callback):
         keep_default_action (bool): This field affects the collection behavior of the 'collect_specified_data' field.
             True: it means that after specified data is set, non-specified data is collected as the default behavior.
             False: it means that after specified data is set, only the specified data is collected,
-            and the others are not collected. Default: True.
+            and the others are not collected. Default: ``True`` .
         custom_lineage_data (Union[dict, None]): Allows you to customize the data and present it on the MingInsight
-            lineage page. In the custom data, the type of the key supports str, and the type of value supports str, int
-            and float. Default: None, it means there is no custom data.
+            `lineage page <https://www.mindspore.cn/mindinsight/docs/en/master/lineage_and_scalars_comparison.html>`_ .
+            In the custom data, the type of the key supports str, and the type of value supports str, int
+            and float. Default: ``None`` , it means there is no custom data.
         collect_tensor_freq (Optional[int]): The same semantics as the `collect_freq`, but controls TensorSummary only.
             Because TensorSummary data is too large to be compared with other summary data, this parameter is used to
             reduce its collection. By default, The maximum number of steps for collecting TensorSummary data is 20,
@@ -156,18 +163,18 @@ class SummaryCollector(Callback):
             but when the total steps is 20, both TensorSummary and other summary will be collected 3 steps.
             Also note that when in parallel mode, the total steps will be split evenly, which will
             affect the number of steps TensorSummary will be collected.
-            Default: None, which means to follow the behavior as described above.
+            Default: ``None`` , which means to follow the behavior as described above.
         max_file_size (Optional[int]): The maximum size in bytes of each file that can be written to the disk.
             For example, to write not larger than 4GB, specify `max_file_size=4*1024**3`.
-            Default: None, which means no limit.
+            Default: ``None`` , which means no limit.
         export_options (Union[None, dict]): Perform custom operations on the export data.
             Note that the size of export files is not limited by the max_file_size.
             You can customize the export data with a dictionary. For example, you can set {'tensor_format': 'npy'}
             to export tensor as npy file. The data that supports control is shown below.
-            Default: None, it means that the data is not exported.
+            Default: ``None`` , it means that the data is not exported.
 
             - tensor_format (Union[str, None]): Customize the export tensor format. Supports ["npy", None].
-              Default: None, it means that the tensor is not exported.
+              Default: ``None`` , it means that the tensor is not exported.
 
               - npy: export tensor as npy file.
 
@@ -176,17 +183,18 @@ class SummaryCollector(Callback):
 
     Examples:
         >>> import mindspore as ms
-        >>> import mindspore.nn as nn
-        >>> from mindspore.train import Model, SummaryCollector
-        >>> from mindspore.nn import Accuracy
+        >>> from mindspore import nn, SummaryCollector
+        >>> from mindspore.train import Model, Accuracy
         >>>
         >>> if __name__ == '__main__':
         ...     # If the device_target is GPU, set the device_target to "GPU"
         ...     ms.set_context(mode=ms.GRAPH_MODE, device_target="Ascend")
         ...     mnist_dataset_dir = '/path/to/mnist_dataset_directory'
-        ...     # The detail of create_dataset method shown in model_zoo.official.cv.lenet.src.dataset.py
-        ...     ds_train = create_dataset(mnist_dataset_dir, 32)
-        ...     # The detail of LeNet5 shown in model_zoo.official.cv.lenet.src.lenet.py
+        ...     # Create the dataset taking MNIST as an example. Refer to
+        ...     # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/mnist.py
+        ...     ds_train = create_dataset()
+        ...     # Define the network structure of LeNet5. Refer to
+        ...     # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
         ...     network = LeNet5(10)
         ...     net_loss = nn.SoftmaxCrossEntropyWithLogits(sparse=True, reduction="mean")
         ...     net_opt = nn.Momentum(network.trainable_params(), 0.01, 0.9)
@@ -222,6 +230,7 @@ class SummaryCollector(Callback):
     def __init__(self,
                  summary_dir,
                  collect_freq=10,
+                 num_process=32,
                  collect_specified_data=None,
                  keep_default_action=True,
                  custom_lineage_data=None,
@@ -275,6 +284,7 @@ class SummaryCollector(Callback):
         self._is_parse_loss_success = True
         self._first_step = True
         self._dataset_sink_mode = True
+        self._num_process = num_process
 
     def __enter__(self):
         self._record = SummaryRecord(log_dir=self._summary_dir,
@@ -463,6 +473,7 @@ class SummaryCollector(Callback):
 
     def begin(self, run_context):
         cb_params = run_context.original_args()
+        _collect_host_info("Callback", "SummaryCollector", "begin", level=1)
         self._check_callbacks(cb_params)
 
         if cb_params.mode not in ModeEnum.to_list():
@@ -474,6 +485,7 @@ class SummaryCollector(Callback):
 
     def step_end(self, run_context):
         cb_params = run_context.original_args()
+        _collect_host_info("Callback", "SummaryCollector", "step_end", level=1)
         if cb_params.mode != ModeEnum.TRAIN.value:
             return
 
@@ -488,20 +500,8 @@ class SummaryCollector(Callback):
             self._record.add_value('custom_lineage_data', 'custom_lineage_data', packaged_custom_data)
             self._has_saved_custom_data = True
             self._record.record(cb_params.cur_step_num)
-
-        if self._first_step:
-            self._tensor_collect_range = self._get_tensor_collect_range(cb_params, self._dataset_sink_mode)
-            self._collect_at_step_end(cb_params, plugin_filter=None)
-            self._first_step = False
-            self._record.flush()
-        else:
-            current = cb_params.cur_epoch_num if self._dataset_sink_mode else cb_params.cur_step_num
-            if current % self._collect_freq == 0 and current in self._tensor_collect_range:
-                self._collect_at_step_end(cb_params, plugin_filter=None)
-            elif current in self._tensor_collect_range:
-                self._collect_at_step_end(cb_params, lambda plugin: plugin == PluginEnum.TENSOR.value)
-            elif current % self._collect_freq == 0:
-                self._collect_at_step_end(cb_params, lambda plugin: plugin != PluginEnum.TENSOR.value)
+        if not self._dataset_sink_mode:
+            self._collect_tensor_data(cb_params)
 
         collect_landscape = self._collect_specified_data.get('collect_landscape')
         if collect_landscape is not None:
@@ -515,6 +515,24 @@ class SummaryCollector(Callback):
 
         if collect_landscape and collect_landscape.get('unit', 'step') == 'step' and collect_interval:
             self._save_model_params_for_landscape(cb_params)
+
+    def _collect_tensor_data(self, cb_params):
+        """Collect tensor summary data."""
+        if cb_params.mode != ModeEnum.TRAIN.value:
+            return
+        if self._first_step:
+            self._tensor_collect_range = self._get_tensor_collect_range(cb_params, self._dataset_sink_mode)
+            self._collect_at_step_end(cb_params, plugin_filter=None)
+            self._first_step = False
+            self._record.flush()
+        else:
+            current = cb_params.cur_epoch_num if self._dataset_sink_mode else cb_params.cur_step_num
+            if current % self._collect_freq == 0 and current in self._tensor_collect_range:
+                self._collect_at_step_end(cb_params, plugin_filter=None)
+            elif current in self._tensor_collect_range:
+                self._collect_at_step_end(cb_params, lambda plugin: plugin == PluginEnum.TENSOR.value)
+            elif current % self._collect_freq == 0:
+                self._collect_at_step_end(cb_params, lambda plugin: plugin != PluginEnum.TENSOR.value)
 
     def _get_tensor_collect_range(self, cb_params, dataset_sink_mode):
         """Get tensor collect range."""
@@ -542,6 +560,8 @@ class SummaryCollector(Callback):
 
     def epoch_end(self, run_context):
         cb_params = run_context.original_args()
+        _collect_host_info("Callback", "SummaryCollector", "epoch_end", level=1)
+        self._collect_tensor_data(cb_params)
         collect_landscape = self._collect_specified_data.get('collect_landscape')
         if collect_landscape is not None:
             intervals = collect_landscape.get('intervals')
@@ -557,6 +577,7 @@ class SummaryCollector(Callback):
 
     def end(self, run_context):
         cb_params = run_context.original_args()
+        _collect_host_info("Callback", "SummaryCollector", "end", level=1)
         if cb_params.mode == ModeEnum.TRAIN.value:
             self._collect_train_lineage(cb_params)
         else:
@@ -863,14 +884,14 @@ class SummaryCollector(Callback):
         if regular is not None:
             for parameter in parameters:
                 if re.match(regular, parameter.name):
-                    self._record.add_value(PluginEnum.HISTOGRAM.value, parameter.name+'/auto', parameter.data)
+                    self._record.add_value(PluginEnum.HISTOGRAM.value, parameter.name + '/auto', parameter.data)
             return
 
         # Note: If `histogram_regular` in `self._collect_specified_data` and the value is None,
         # we will collect the first five parameters.
         default_parameter_count = 5
         for parameter in parameters[:default_parameter_count]:
-            self._record.add_value(PluginEnum.HISTOGRAM.value, parameter.name+'/auto', parameter.data)
+            self._record.add_value(PluginEnum.HISTOGRAM.value, parameter.name + '/auto', parameter.data)
 
     @staticmethod
     def _get_learning_rate(optimizer):

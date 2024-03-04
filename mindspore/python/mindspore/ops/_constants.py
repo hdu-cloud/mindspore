@@ -18,12 +18,6 @@
 """ Define constants"""
 
 # Arithmetic
-kScalarAdd = "ScalarAdd"
-kScalarSub = "ScalarSub"
-kScalarMul = "ScalarMul"
-kScalarDiv = "ScalarDiv"
-kScalarFloordiv = "ScalarFloordiv"
-kScalarMod = "ScalarMod"
 kScalarPow = "ScalarPow"
 kScalarTrunc = "ScalarTrunc"
 kScalarFloor = "ScalarFloor"

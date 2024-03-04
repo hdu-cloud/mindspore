@@ -17,15 +17,13 @@
 #ifndef MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_LOGGING_OPS_DECLARE_H_
 #define MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_LOGGING_OPS_DECLARE_H_
 
-#include "utils/hash_map.h"
+#include "inc/ops/logging_ops.h"
 #include "transform/graph_ir/op_declare/op_declare_macro.h"
-#include "ops/logging_ops.h"
+#include "utils/hash_map.h"
 
-namespace mindspore::transform {
-DECLARE_OP_ADAPTER(Print)
-DECLARE_OP_USE_DYN_INPUT(Print)
+DECLARE_OP_ADAPTER(PrintV2)
+DECLARE_OP_ATTR(PrintV2)
 
 DECLARE_OP_ADAPTER(Assert)
 DECLARE_OP_USE_DYN_INPUT(Assert)
-}  // namespace mindspore::transform
 #endif  // MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_LOGGING_OPS_DECLARE_H_

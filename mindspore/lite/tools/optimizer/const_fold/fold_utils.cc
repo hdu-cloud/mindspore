@@ -19,7 +19,9 @@
 #include <algorithm>
 #include <memory>
 #include <vector>
-#include "backend/common/optimizer/helper.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "include/backend/optimizer/helper.h"
 #include "ir/anf.h"
 #include "tools/converter/quantizer/quant_param_holder.h"
 #include "tools/optimizer/common/format_utils.h"
@@ -27,7 +29,7 @@
 #include "tools/common/tensor_util.h"
 #include "src/common/context_util.h"
 #include "src/common/ops/populate/populate_register.h"
-#include "src/litert/kernel_exec.h"
+#include "src/executor/kernel_exec.h"
 #include "src/litert/kernel_registry.h"
 #include "src/litert/inner_context.h"
 #include "src/tensor.h"
@@ -35,6 +37,7 @@
 #include "src/litert/infer_manager.h"
 #include "tools/optimizer/graph/lite_tensor_extractor.h"
 #include "tools/optimizer/common/helper.h"
+#include "tools/optimizer/const_fold/rsqrt_fp32.h"
 
 using mindspore::lite::KernelRegistry;
 using mindspore::lite::Tensor;
@@ -73,6 +76,39 @@ ParameterPtr CreateNewParamter(const FuncGraphPtr &func_graph, Tensor *tensor) {
   return parameter;
 }
 
+int GetHighAccuracyKernel(const std::vector<Tensor *> &in_tensors, const std::vector<Tensor *> &out_tensors,
+                          const lite::InnerContext *ctx, const mindspore::Context *ms_ctx, const kernel::KernelKey &key,
+                          OpParameter *parameter, kernel::KernelExec **kernel) {
+  static const std::vector<std::pair<kernel::KernelKey, kernel::KernelCreator>> high_accuracy_map = {
+    std::pair<kernel::KernelKey, kernel::KernelCreator>(
+      {kernel::KERNEL_ARCH::kCPU, kNumberTypeFloat32, Format::NHWC, schema::PrimitiveType_Rsqrt},
+      kernel::LiteKernelCreator<kernel::HighAccuracyRsqrtCPUKernel>),
+  };
+  CHECK_NULL_RETURN(kernel);
+  for (const auto &item : high_accuracy_map) {
+    if (item.first == key) {
+      MS_ASSERT(item.second != nullptr);
+      auto lite_kernel = item.second(in_tensors, out_tensors, parameter, ctx, key);
+      if (lite_kernel == nullptr) {
+        MS_LOG(ERROR) << " KernelCreator failed.";
+        return lite::RET_ERROR;
+      }
+      lite_kernel->set_registry_data_type(key.data_type);
+      std::shared_ptr<kernel::Kernel> shared_kernel(lite_kernel);
+      auto *kernel_exec = new (std::nothrow) kernel::KernelExec(shared_kernel);
+      if (kernel_exec == nullptr) {
+        MS_LOG(ERROR) << "new KernelExec failed.";
+        return lite::RET_ERROR;
+      }
+      kernel_exec->set_desc(key);
+      kernel_exec->set_context(ctx);
+      *kernel = kernel_exec;
+      return lite::RET_OK;
+    }
+  }
+  return lite::RET_NOT_SUPPORT;
+}
+
 kernel::KernelExec *GetKernelExec(std::vector<Tensor *> inputs, std::vector<Tensor *> *outputs, const CNodePtr &cnode,
                                   const lite::InnerContext *context, const mindspore::Context *ms_context) {
   MS_ASSERT(outputs != nullptr && cnode != nullptr && context != nullptr && ms_context != nullptr);
@@ -83,7 +119,7 @@ kernel::KernelExec *GetKernelExec(std::vector<Tensor *> inputs, std::vector<Tens
     return nullptr;
   }
   MS_CHECK_TRUE_MSG(parameter != nullptr, nullptr, "parameter is nullptr");
-  parameter->thread_num_ = 1;
+  parameter->thread_num_ = context->thread_num_;
   ret = KernelInferShape(inputs, *outputs, parameter);
   if (ret != lite::RET_OK && (ret != lite::RET_INFER_INVALID || !IsInferInRunning(cnode))) {
     if (parameter->destroy_func_ != nullptr) {
@@ -96,8 +132,11 @@ kernel::KernelExec *GetKernelExec(std::vector<Tensor *> inputs, std::vector<Tens
   auto data_type = inputs.front()->data_type();
   kernel::KernelKey desc{kernel::KERNEL_ARCH::kCPU, data_type, NHWC, parameter->type_};
   kernel::KernelExec *kernel_exec = nullptr;
-  ret = lite::KernelRegistry::GetInstance()->GetKernelExec(inputs, *outputs, context, ms_context, desc, parameter,
-                                                           &kernel_exec);
+  ret = GetHighAccuracyKernel(inputs, *outputs, context, ms_context, desc, parameter, &kernel_exec);
+  if (ret == lite::RET_NOT_SUPPORT) {
+    ret = lite::KernelRegistry::GetInstance()->GetKernelExec(inputs, *outputs, context, ms_context, desc, parameter,
+                                                             &kernel_exec);
+  }
   if (ret != lite::RET_OK) {
     if (parameter->destroy_func_ != nullptr) {
       parameter->destroy_func_(parameter);
@@ -183,7 +222,9 @@ lite::STATUS CopyQuantParams(const CNodePtr &cnode, const std::vector<Tensor *> 
     }
   }
   auto output_quant_params = quant_param_holder->get_output_quant_params();
-  for (size_t m = 0; m < output_quant_params.size(); m++) {
+  // for fuzz model
+  auto output_size = outputs.size() > output_quant_params.size() ? output_quant_params.size() : outputs.size();
+  for (size_t m = 0; m < output_size; m++) {
     for (auto outputQuantParam : output_quant_params[m]) {
       lite::LiteQuantParam quant_arg{};
       quant_arg.scale = outputQuantParam.scale;
@@ -254,10 +295,11 @@ int ConstFoldProcessor::DoConstantFold(const FuncGraphPtr &func_graph, const CNo
   }
   auto kernel_exec = GetKernelExec(input_tensors, &output_tensors, cnode, context_.get(), ms_context_.get());
   if (kernel_exec == nullptr) {
-    MS_LOG(ERROR) << "constant_folding schedule node lite kernel nullptr";
+    MS_LOG(WARNING) << "constant_folding schedule node lite kernel nullptr, node " << cnode->fullname_with_scope();
     return lite::RET_ERROR;
   }
   for (auto output_tensor : output_tensors) {
+    output_tensor->set_allocator(context_->allocator);
     auto status = output_tensor->MallocData();
     if (status != lite::RET_OK) {
       MS_LOG(ERROR) << "MallocData failed";

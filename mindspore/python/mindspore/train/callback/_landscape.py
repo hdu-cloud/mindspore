@@ -180,17 +180,18 @@ class SummaryLandscape:
     Examples:
         >>> import mindspore as ms
         >>> import mindspore.nn as nn
-        >>> from mindspore.nn import Loss, Accuracy
-        >>> from mindspore.train import Model, SummaryCollector, SummaryLandscape
+        >>> from mindspore.train import Model, Accuracy, Loss
+        >>> from mindspore import SummaryCollector, SummaryLandscape
         >>>
         >>> if __name__ == '__main__':
         ...     # If the device_target is Ascend, set the device_target to "Ascend"
         ...     ms.set_context(mode=ms.GRAPH_MODE, device_target="GPU")
-        ...     mnist_dataset_dir = '/path/to/mnist_dataset_directory'
-        ...     # The detail of create_dataset method shown in model_zoo.official.cv.lenet.src.dataset.py
-        ...     ds_train = create_dataset(mnist_dataset_dir, 32)
-        ...     # The detail of LeNet5 shown in model_zoo.official.cv.lenet.src.lenet.py
-        ...     network = LeNet5(10)
+        ...     # Create the dataset taking MNIST as an example. Refer to
+        ...     # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/mnist.py
+        ...     ds_train = create_dataset()
+        ...     # Define the network structure of LeNet5. Refer to
+        ...     # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        ...     network = LeNet5()
         ...     net_loss = nn.SoftmaxCrossEntropyWithLogits(sparse=True, reduction="mean")
         ...     net_opt = nn.Momentum(network.trainable_params(), 0.01, 0.9)
         ...     model = Model(network, net_loss, net_opt, metrics={"Accuracy": Accuracy()})
@@ -208,12 +209,15 @@ class SummaryLandscape:
         ...
         ...     # Simple usage for visualization landscape:
         ...     def callback_fn():
-        ...         network = LeNet5(10)
+        ...         # Define the network structure of LeNet5. Refer to
+        ...         # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        ...         network = LeNet5()
         ...         net_loss = nn.SoftmaxCrossEntropyWithLogits(sparse=True, reduction="mean")
         ...         metrics = {"Loss": Loss()}
         ...         model = Model(network, net_loss, metrics=metrics)
-        ...         mnist_dataset_dir = '/path/to/mnist_dataset_directory'
-        ...         ds_eval = create_dataset(mnist_dataset_dir, 32)
+        ...         # Create the dataset taking MNIST as an example. Refer to
+        ...         # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/mnist.py
+        ...         ds_eval = create_dataset()
         ...         return model, network, ds_eval, metrics
         ...
         ...     summary_landscape = SummaryLandscape('./summary/lenet_interval_1')
@@ -269,30 +273,36 @@ class SummaryLandscape:
             collect_landscape (Union[dict, None]): The meaning of the parameters
                 when creating loss landscape is consistent with the fields
                 with the same name in SummaryCollector. The purpose of setting here
-                is to allow users to freely modify creating parameters. Default: None.
+                is to allow users to freely modify creating parameters. Default: ``None`` .
 
                 - landscape_size (int): Specify the image resolution of the generated loss landscape.
-                  For example, if it is set to 128, the resolution of the landscape is 128 * 128.
+                  For example, if it is set to ``128`` , the resolution of the landscape is 128 * 128.
                   The calculation time increases with the increase of resolution.
-                  Default: 40. Optional values: between 3 and 256.
+                  Default: ``40`` . Optional values: between 3 and 256.
                 - create_landscape (dict): Select how to create loss landscape.
                   Training process loss landscape(train) and training result loss landscape(result).
-                  Default: {"train": True, "result": True}. Optional: True/False.
+                  Default: {"train": True, "result": True}. Optional: ``True`` / ``False`` .
                 - num_samples (int): The size of the dataset used to create the loss landscape.
                   For example, in image dataset, You can set num_samples is 2048,
                   which means that 2048 images are used to create loss landscape.
-                  Default: 2048.
-                - intervals (List[List[int]): Specifies the interval
+                  Default: ``2048`` .
+                - intervals (List[List[int]]): Specifies the interval
                   in which the loss landscape. For example: If the user wants to
                   create loss landscape of two training processes, they are 1-5 epoch
                   and 6-10 epoch respectively. They can set [[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]].
                   Note: Each interval have at least three epochs.
             device_ids (List(int)): Specifies which devices are used to create loss landscape.
                 For example: [0, 1] refers to creating loss landscape with device 0 and device 1.
-                Default: None.
+                Default: ``None`` .
             output (str): Specifies the path to save the loss landscape.
-                Default: None. The default save path is the same as the summary file.
+                Default: ``None`` . The default save path is the same as the summary file.
         """
+
+        executor = None
+        if len(device_ids) > 1:
+            executor = ProcessPoolExecutor(len(device_ids))
+            futures = [executor.submit(self._set_context, i) for i in device_ids]
+            wait(futures, return_when=ALL_COMPLETED)
 
         output_path = os.path.realpath(output) if output is not None else self._summary_dir
         summary_record = SummaryRecord(output_path)
@@ -321,13 +331,14 @@ class SummaryLandscape:
                 json.dump(data, file)
             os.chmod(json_path, stat.S_IRUSR)
 
-        for interval, landscape in self._list_landscapes(callback_fn=callback_fn, device_ids=device_ids):
+        for interval, landscape in self._list_landscapes(callback_fn=callback_fn, executor=executor,
+                                                         device_ids=device_ids):
             summary_record.add_value(PluginEnum.LANDSCAPE.value, f'landscape_{str(interval)}', landscape)
             summary_record.record(0)
             summary_record.flush()
         summary_record.close()
 
-    def _list_landscapes(self, callback_fn, device_ids=None):
+    def _list_landscapes(self, callback_fn, executor=None, device_ids=None):
         """Create landscape with single device and list all landscape."""
 
         if not os.path.exists(os.path.join(self._ckpt_dir, 'train_metadata.json')):
@@ -343,39 +354,30 @@ class SummaryLandscape:
         kwargs = dict(proz=0.2, landscape_size=data['landscape_size'], device_ids=device_ids, callback_fn=callback_fn)
 
         start = time.time()
-        with ProcessPoolExecutor(max_workers=len(device_ids)) as executor:
-            if len(device_ids) > 1:
-                futures = []
-                for device_id in device_ids:
-                    future = executor.submit(self._set_context, device_id)
-                    futures.append(future)
-                wait(futures, return_when=ALL_COMPLETED)
-
-            kwargs['executor'] = executor if len(device_ids) > 1 else None
-
-            if data['create_landscape']['train']:
-                for i, epochs in enumerate(self._epoch_group.values()):
-                    self._log_message(data['create_landscape'], index=i, interval=epochs)
-                    kwargs['epochs'] = epochs
-                    mid_time = time.time()
-                    landscape_data = self._create_landscape_by_pca(**kwargs)
-                    logger.info("Create landscape end, use time: %s s." % (round(time.time() - mid_time, 6)))
-                    landscape_data.unit = data['unit']
-                    landscape_data.step_per_epoch = data['step_per_epoch']
-                    landscape_data.num_samples = data['num_samples']
-                    yield [epochs[0], epochs[-1]], landscape_data.transform_to_loss_landscape_msg(landscape_data)
-
-            if data['create_landscape']['result']:
-                final_epochs = [list(self._epoch_group.values())[-1][-1]]
-                self._log_message(data['create_landscape'], final_epochs=final_epochs)
-                kwargs['epochs'] = final_epochs
+        kwargs['executor'] = executor
+        if data['create_landscape']['train']:
+            for i, epochs in enumerate(self._epoch_group.values()):
+                self._log_message(data['create_landscape'], index=i, interval=epochs)
+                kwargs['epochs'] = epochs
                 mid_time = time.time()
-                landscape_data = self._create_landscape_by_random(**kwargs)
+                landscape_data = self._create_landscape_by_pca(**kwargs)
                 logger.info("Create landscape end, use time: %s s." % (round(time.time() - mid_time, 6)))
                 landscape_data.unit = data['unit']
                 landscape_data.step_per_epoch = data['step_per_epoch']
                 landscape_data.num_samples = data['num_samples']
-                yield final_epochs, landscape_data.transform_to_loss_landscape_msg(landscape_data)
+                yield [epochs[0], epochs[-1]], landscape_data.transform_to_loss_landscape_msg(landscape_data)
+
+        if data['create_landscape']['result']:
+            final_epochs = [list(self._epoch_group.values())[-1][-1]]
+            self._log_message(data['create_landscape'], final_epochs=final_epochs)
+            kwargs['epochs'] = final_epochs
+            mid_time = time.time()
+            landscape_data = self._create_landscape_by_random(**kwargs)
+            logger.info("Create landscape end, use time: %s s." % (round(time.time() - mid_time, 6)))
+            landscape_data.unit = data['unit']
+            landscape_data.step_per_epoch = data['step_per_epoch']
+            landscape_data.num_samples = data['num_samples']
+            yield final_epochs, landscape_data.transform_to_loss_landscape_msg(landscape_data)
         logger.info("Total use time: %s s." % (round(time.time() - start, 6)))
 
     def _log_message(self, create_landscape, index=None, interval=None, final_epochs=None):

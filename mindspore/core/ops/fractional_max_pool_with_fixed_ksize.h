@@ -17,14 +17,13 @@
 #ifndef MINDSPORE_CORE_OPS_FRACTIONAL_MAX_POOL_WITH_FIXED_KSIZE_H_
 #define MINDSPORE_CORE_OPS_FRACTIONAL_MAX_POOL_WITH_FIXED_KSIZE_H_
 
-#include <algorithm>
 #include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -63,10 +62,9 @@ class MIND_API FractionalMaxPoolWithFixedKsize : public BaseOperator {
   /// \return data format attributes.
 };
 
-abstract::AbstractBasePtr FractionalMaxPoolWithFixedKsizeInfer(
+MIND_API abstract::AbstractBasePtr FractionalMaxPoolWithFixedKsizeInfer(
   const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
   const std::vector<abstract::AbstractBasePtr> &input_args);
-// using PrimFractionalMaxPoolWithFixedKsizePtr = std::shared_ptr<FractionalMaxPoolWithFixedKsize>;
 }  // namespace ops
 }  // namespace mindspore
 

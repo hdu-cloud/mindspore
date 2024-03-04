@@ -58,7 +58,10 @@ class PoolingGradCpuKernelMod : public MKLCpuKernelMod {
            .AddInputAttr(kNumberTypeFloat32)
            .AddInputAttr(kNumberTypeFloat32)
            .AddInputAttr(kNumberTypeFloat32)
-           .AddOutputAttr(kNumberTypeFloat32)}}},
+           .AddOutputAttr(kNumberTypeFloat32)},
+        {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32)},
+        {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeFloat16)},
+        {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64)}}},
       {kAvgPool3DGrad,
        {{KernelAttr()
            .AddInputAttr(kNumberTypeInt32)
@@ -89,8 +92,10 @@ class PoolingGradCpuKernelMod : public MKLCpuKernelMod {
   }
 
  private:
-  void EliminateInvalidPadding(float *output);
-  void ReComputeDivisor(float *output);
+  template <typename T>
+  void EliminateInvalidPadding(T *output);
+  template <typename T>
+  void ReComputeDivisor(T *output);
 
   dnnl::algorithm algorithm_{dnnl::algorithm::pooling_max};
   bool ceil_mode_{false};
@@ -102,9 +107,6 @@ class PoolingGradCpuKernelMod : public MKLCpuKernelMod {
   std::string pad_mode_;
   std::vector<int64_t> kernel_include_nc_{};
   std::vector<int64_t> strides_include_nc_{};
-  BaseOperatorPtr base_operator_{nullptr};
-  std::vector<KernelTensorPtr> inputs_{};
-  std::vector<KernelTensorPtr> outputs_{};
   std::map<uint32_t, tensor::TensorPtr> inputs_on_host_{};
 
   void ComputeMaxValueIndex(void *src, void *dst, void *work_array);
@@ -119,6 +121,12 @@ class PoolingGradCpuKernelMod : public MKLCpuKernelMod {
   std::shared_ptr<dnnl::pooling_forward> primitive_forward_{nullptr};
   ParallelSearchInfo forward_parallel_info_{};
   std::string kernel_type_{kUnknown};
+
+  template <typename T>
+  bool LaunchKernel(const std::vector<kernel::AddressPtr> &inputs, const std::vector<kernel::AddressPtr> &workspace,
+                    const std::vector<kernel::AddressPtr> &outputs);
+
+  TypeId dtype_{kTypeUnknown};
 };
 }  // namespace kernel
 }  // namespace mindspore

@@ -27,6 +27,7 @@
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
 #include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
 #include "plugin/device/gpu/kernel/kernel_constants.h"
+#include "plugin/device/gpu/kernel/nn/convolution/conv_gpu_common.h"
 
 namespace mindspore {
 namespace kernel {
@@ -82,9 +83,10 @@ class Conv3dGradInputGpuKernelMod : public NativeGpuKernelMod {
         cudnnConvolutionBackwardData(cudnn_handle_, &alpha, w_desc_, w, dy_desc_, dy, conv_desc_, algo_, work_space,
                                      workspace_size_, &beta_, padded_descriptor_, padded),
         "ConvolutionBackwardData failed");
-      CalPadGrad3d(output_size_ / sizeof(T), padded, n_, c_, old_depth_, old_height_, old_width_,
-                   old_depth_ + pad_depth_, old_height_ + pad_height_, old_width_ + pad_width_, pad_head_, pad_top_,
-                   pad_left_, dx, reinterpret_cast<cudaStream_t>(stream_ptr));
+      auto status = CalPadGrad3d(output_size_ / sizeof(T), padded, n_, c_, old_depth_, old_height_, old_width_,
+                                 old_depth_ + pad_depth_, old_height_ + pad_height_, old_width_ + pad_width_, pad_head_,
+                                 pad_top_, pad_left_, dx, reinterpret_cast<cudaStream_t>(stream_ptr));
+      CHECK_CUDA_STATUS(status, kernel_name_);
     } else {
       CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
         cudnnConvolutionBackwardData(cudnn_handle_, &alpha, w_desc_, w, dy_desc_, dy, conv_desc_, algo_, work_space,
@@ -156,19 +158,28 @@ class Conv3dGradInputGpuKernelMod : public NativeGpuKernelMod {
     group_ = kernel_ptr->get_group();
     CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(cudnnSetConvolutionGroupCount(conv_desc_, group_),
                                         "cudnnSetConvGroupCount failed");
+    pad_mode_ = GetValue<std::string>(base_operator->GetAttr("pad_mode"));
     std::vector<int> pad_list;
-    std::vector<int64_t> pad_list_me = kernel_ptr->get_pad_list();
+    std::vector<int64_t> pad_list_me;
+    if (pad_mode_ == kValidPadModeUpperCase || pad_mode_ == kValidPadModeLowerCase) {
+      pad_list_me = {0, 0, 0, 0, 0, 0};
+    } else if (pad_mode_ == kSamePadModeUpperCase || pad_mode_ == kSamePadModeLowerCase) {
+      pad_list_me = base_operator->HasAttr("pad_list")
+                      ? GetValue<std::vector<int64_t>>(base_operator->GetAttr("pad_list"))
+                      : GetSameModePadList(dy_shape, input_shape, kernel_ptr->get_stride(), kernel_ptr->get_dilation(),
+                                           kernel_ptr->get_kernel_size());
+    } else if (pad_mode_ == "PAD" || pad_mode_ == "pad") {
+      pad_list_me = kernel_ptr->get_pad();
+    }
     (void)std::transform(pad_list_me.begin(), pad_list_me.end(), std::back_inserter(pad_list),
                          [](const int64_t &value) { return static_cast<int>(value); });
     SetPad(pad_list);
-    pad_mode_ = kernel_ptr->get_pad_mode();
     SetStrideAndDilation(kernel_ptr->get_stride(), kernel_ptr->get_dilation());
     auto dx_desc_real = GetDxDescReal(pad_list);
-    if (cudnn_data_type_ == CUDNN_DATA_HALF) {
-      CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(cudnnSetConvolutionMathType(conv_desc_, CUDNN_TENSOR_OP_MATH),
-                                          "cudnnSetConvolutionMathType failed.")
-    }
-    SelectAlgorithm(dx_desc_real);
+    SetConvolutionMathType(conv_desc_, cudnn_data_type_);
+
+    algo_ =
+      SelectBackwardDataAlgorithm(cudnn_handle_, cudnn_data_type_, w_desc_, dy_desc_, conv_desc_, dx_desc_real, group_);
     auto inplace_algo_ptr = base_operator->GetAttr("inplace_algo");
     if (inplace_algo_ptr == nullptr) {
       beta_ = 0;
@@ -178,6 +189,8 @@ class Conv3dGradInputGpuKernelMod : public NativeGpuKernelMod {
     InitSizeLists();
     return KRET_OK;
   }
+
+  std::vector<size_t> GetLaunchIgnoredInputAddressIdx() const override { return {kIndex2}; }
 
   void ResetResource() noexcept {
     cudnn_handle_ = nullptr;
@@ -261,17 +274,6 @@ class Conv3dGradInputGpuKernelMod : public NativeGpuKernelMod {
   }
 
  private:
-  void SelectAlgorithm(cudnnTensorDescriptor_t dx_desc_real) {
-    const int requested_algo_count = 1;
-    int returned_algo_count = 0;
-    cudnnConvolutionBwdDataAlgoPerf_t perf_results;
-    CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
-      cudnnGetConvolutionBackwardDataAlgorithm_v7(cudnn_handle_, w_desc_, dy_desc_, conv_desc_, dx_desc_real,
-                                                  requested_algo_count, &returned_algo_count, &perf_results),
-      "cudnnGetConvolutionBackwardDataAlgorithm_v7 failed");
-    algo_ = perf_results.algo;
-  }
-
   void SetNDDesc(const ShapeVector &dy_shape, const ShapeVector &input_shape, const ShapeVector &filter_shape) {
     const int kDims = 5;
     int dimA[kDims];
@@ -296,6 +298,8 @@ class Conv3dGradInputGpuKernelMod : public NativeGpuKernelMod {
   }
 
   void SetStrideAndDilation(std::vector<int64_t> stride_me, std::vector<int64_t> dilation_me) {
+    stride_.clear();
+    dilation_.clear();
     (void)std::transform(stride_me.begin(), stride_me.end(), std::back_inserter(stride_),
                          [](const int64_t &value) { return static_cast<int>(value); });
     (void)std::transform(dilation_me.begin(), dilation_me.end(), std::back_inserter(dilation_),
@@ -315,6 +319,39 @@ class Conv3dGradInputGpuKernelMod : public NativeGpuKernelMod {
       MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the value of 'dilation' at 0 and 1 axis must be 1, but got "
                         << "dilation[0]: " << dilation_[0] << ", dilation[1]: " << dilation_[1];
     }
+  }
+
+  std::vector<int64_t> GetSameModePadList(const ShapeVector &dout_shape_norm, const ShapeVector &x_size_v,
+                                          std::vector<int64_t> stride, std::vector<int64_t> dilation,
+                                          std::vector<int64_t> kernel_size) {
+    constexpr auto kConv3DBackpropInputPadHalf = 2;
+    auto kernel_d = kernel_size[kIndex0];
+    auto kernel_h = kernel_size[kIndex1];
+    auto kernel_w = kernel_size[kIndex2];
+    auto stride_d = stride[kIndex2];
+    auto stride_h = stride[kIndex3];
+    auto stride_w = stride[kIndex4];
+    auto dilation_d = dilation[kIndex2];
+    auto dilation_h = dilation[kIndex3];
+    auto dilation_w = dilation[kIndex4];
+    int64_t pad_head, pad_tail, pad_top, pad_bottom, pad_left, pad_right;
+
+    auto pad_needed_d = (dout_shape_norm[kIndex2] - 1) * stride_d + dilation_d * (kernel_d - 1) + 1 - x_size_v[kIndex2];
+    pad_needed_d = 0 > pad_needed_d ? 0 : pad_needed_d;
+    pad_head = pad_needed_d / kConv3DBackpropInputPadHalf;
+    pad_tail = pad_needed_d - pad_head;
+
+    auto pad_needed_h = (dout_shape_norm[kIndex3] - 1) * stride_h + dilation_h * (kernel_h - 1) + 1 - x_size_v[kIndex3];
+    pad_needed_h = 0 > pad_needed_h ? 0 : pad_needed_h;
+    pad_top = pad_needed_h / kConv3DBackpropInputPadHalf;
+    pad_bottom = pad_needed_h - pad_top;
+
+    auto pad_needed_w = (dout_shape_norm[kIndex4] - 1) * stride_w + dilation_w * (kernel_w - 1) + 1 - x_size_v[kIndex4];
+    pad_needed_w = 0 > pad_needed_w ? 0 : pad_needed_w;
+    pad_left = pad_needed_w / kConv3DBackpropInputPadHalf;
+    pad_right = pad_needed_w - pad_left;
+
+    return std::vector<int64_t>{pad_head, pad_tail, pad_top, pad_bottom, pad_left, pad_right};
   }
 
   void SetPad(const std::vector<int> &pad_list) {

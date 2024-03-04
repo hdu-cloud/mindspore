@@ -13,13 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_FP16_ACTIVATION_FP16_H_
-#define MINDSPORE_NNACL_FP16_ACTIVATION_FP16_H_
+#ifndef NNACL_FP16_ACTIVATION_FP16_H_
+#define NNACL_FP16_ACTIVATION_FP16_H_
 
 #include <math.h>
 #include "nnacl/op_base.h"
 #include "nnacl/intrinsics/ms_simd_instructions_fp16.h"
 #include "nnacl/int8/fixed_point.h"
+#include "nnacl/activation_parameter.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,4 +40,4 @@ int EluFp16(const float16_t *src, int length, float16_t *dst, float16_t alpha);
 #ifdef __cplusplus
 }
 #endif
-#endif  // MINDSPORE_NNACL_FP16_ACTIVATION_FP16_H_
+#endif  // NNACL_FP16_ACTIVATION_FP16_H_

@@ -14,16 +14,17 @@
  * limitations under the License.
  */
 #include "common/backend_common_test.h"
+#include "ops/other_op_name.h"
 #include "common/py_func_graph_fetcher.h"
 #include "frontend/operator/ops.h"
 #include "ir/tensor.h"
 #include "ir/manager.h"
 #include "include/common/debug/anf_ir_dump.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "backend/common/pass/communication_op_fusion.h"
-#include "backend/common/optimizer/optimizer.h"
-#include "runtime/device/kernel_info.h"
-#include "backend/common/optimizer/pass_manager.h"
+#include "include/backend/optimizer/optimizer.h"
+#include "include/backend/kernel_info.h"
+#include "include/backend/optimizer/pass_manager.h"
 #include "kernel/kernel_build_info.h"
 #include "include/common/utils/utils.h"
 #include "include/common/utils/anfalgo.h"
@@ -31,6 +32,10 @@
 
 namespace mindspore {
 namespace opt {
+namespace {
+constexpr auto kPatternElemWise = "ElemWise";
+}
+
 class TestHWAllReduceFusion : public BackendCommon {
  public:
   TestHWAllReduceFusion() : getPyFun_("gtest_input.pre_activate.ir_fusion_test", true) {}
@@ -55,7 +60,7 @@ TEST_F(TestHWAllReduceFusion, test_fusion_all) {
   builder.SetOutputsFormat({"NC1HWC0"});
   builder.SetInputsDeviceType({kFloat32->type_id()});
   builder.SetOutputsDeviceType({kFloat32->type_id()});
-  builder.SetFusionType(kernel::FusionType::ELEMWISE);
+  builder.SetFusionType(kPatternElemWise);
   builder.SetProcessor(kernel::Processor::AICORE);
   builder.SetKernelType(KernelType::AKG_KERNEL);
   auto node_list = TopoSort(func_graph->get_return());
@@ -96,7 +101,7 @@ TEST_F(TestHWAllReduceFusion, test_fusion_group) {
   builder.SetOutputsFormat({"NC1HWC0"});
   builder.SetInputsDeviceType({kFloat32->type_id()});
   builder.SetOutputsDeviceType({kFloat32->type_id()});
-  builder.SetFusionType(kernel::FusionType::ELEMWISE);
+  builder.SetFusionType(kPatternElemWise);
   builder.SetProcessor(kernel::Processor::AICORE);
   builder.SetKernelType(KernelType::AKG_KERNEL);
   auto node_list = TopoSort(func_graph->get_return());
@@ -137,7 +142,7 @@ TEST_F(TestHWAllReduceFusion, test_fusion_op) {
   builder.SetOutputsFormat({"NC1HWC0"});
   builder.SetInputsDeviceType({kFloat32->type_id()});
   builder.SetOutputsDeviceType({kFloat32->type_id()});
-  builder.SetFusionType(kernel::FusionType::ELEMWISE);
+  builder.SetFusionType(kPatternElemWise);
   builder.SetProcessor(kernel::Processor::AICORE);
   builder.SetKernelType(KernelType::AKG_KERNEL);
   auto node_list = TopoSort(func_graph->get_return());
@@ -194,7 +199,7 @@ TEST_F(TestHWAllReduceFusion, test_fusion_sorted) {
   builder.SetOutputsFormat({"NC1HWC0"});
   builder.SetInputsDeviceType({kFloat32->type_id()});
   builder.SetOutputsDeviceType({kFloat32->type_id()});
-  builder.SetFusionType(kernel::FusionType::ELEMWISE);
+  builder.SetFusionType(kPatternElemWise);
   builder.SetProcessor(kernel::Processor::AICORE);
   builder.SetKernelType(KernelType::AKG_KERNEL);
   auto node_list = TopoSort(func_graph->get_return());

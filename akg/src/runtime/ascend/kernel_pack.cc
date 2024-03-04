@@ -70,16 +70,21 @@ void KernelPack::ParseKernelJson(const picojson::value::object &js) {
   if (js.count("opParaSize")) {
     kernel_json_info_.op_para_size = static_cast<uint32_t>(js.at("opParaSize").get<int64_t>());
   }
+  kernel_json_info_.sha256 = js.at("sha256").get<std::string>();
   if (js.find("parameters") != js.end()) {
     if (!js.at("parameters").is<picojson::array>()) {
       LOG(DEBUG) << "Format error!,parameters should be array.";
+      return;
     }
     picojson::array sizes = js.at("parameters").get<picojson::array>();
     for (auto size : sizes) {
+      if (size.is<picojson::null>()) {
+        kernel_json_info_.parameters.push_back(0);
+        continue;
+      }
       kernel_json_info_.parameters.push_back(size.get<int64_t>());
     }
   }
-  kernel_json_info_.sha256 = js.at("sha256").get<std::string>();
 }
 
 bool KernelPack::LoadKernelMeta(const std::string &json_f) {
@@ -130,10 +135,23 @@ uintptr_t GetFuncStub(const KernelPack &kernel_pack, uint32_t *block_dim) {
   std::string func_name = kernel_json_info.kernel_name;
   std::string magic = kernel_json_info.magic;
 
+  static std::map<std::string, uint32_t> magic_maps = {{"RT_DEV_BINARY_MAGIC_PLAIN", RT_DEV_BINARY_MAGIC_PLAIN},
+                                                       {"RT_DEV_BINARY_MAGIC_PLAIN_AICPU", RT_DEV_BINARY_MAGIC_PLAIN_AICPU},
+                                                       {"RT_DEV_BINARY_MAGIC_PLAIN_AIVEC", RT_DEV_BINARY_MAGIC_PLAIN_AIVEC},
+                                                       {"RT_DEV_BINARY_MAGIC_ELF", RT_DEV_BINARY_MAGIC_ELF},
+                                                       {"RT_DEV_BINARY_MAGIC_ELF_AICPU", RT_DEV_BINARY_MAGIC_ELF_AICPU},
+                                                       {"RT_DEV_BINARY_MAGIC_ELF_AIVEC", RT_DEV_BINARY_MAGIC_ELF_AIVEC},
+                                                       {"RT_DEV_BINARY_MAGIC_ELF_AICUBE", RT_DEV_BINARY_MAGIC_ELF_AICUBE}};
+  // object for device register.
+  auto iter = magic_maps.find(magic);
+  if (iter == magic_maps.end()) {
+    LOG(FATAL) << "Invalid magic number: " << magic << ", kernel: " << func_name;
+  }
+
   // BinaryRegister
   void *module = nullptr;
   rtDevBinary_t devBin;
-  devBin.magic = RT_DEV_BINARY_MAGIC_ELF;
+  devBin.magic = iter->second;
   devBin.version = 0;
   devBin.length = kernel->len;
   devBin.data = kernel->contents;

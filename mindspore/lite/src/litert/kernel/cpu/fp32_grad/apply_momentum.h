@@ -22,11 +22,14 @@
 #include "nnacl/fp32_grad/optimizer.h"
 
 namespace mindspore::kernel {
+constexpr int kApplyMomentumLrIndex = 2;
+constexpr int kApplyMomentumGradIndex = 3;
+
 class ApplyMomentumCPUKernel : public OptimizerKernel {
  public:
   explicit ApplyMomentumCPUKernel(OpParameter *parameter, const std::vector<lite::Tensor *> &inputs,
                                   const std::vector<lite::Tensor *> &outputs, const lite::InnerContext *ctx)
-      : OptimizerKernel(parameter, inputs, outputs, ctx, 2, 3),
+      : OptimizerKernel(parameter, inputs, outputs, ctx, kApplyMomentumLrIndex, kApplyMomentumGradIndex),
         thread_count_(ctx->thread_num_),
         apply_momentum_param_(nullptr) {
     apply_momentum_param_ = reinterpret_cast<ApplyMomentumParameter *>(parameter);
@@ -43,6 +46,7 @@ class ApplyMomentumCPUKernel : public OptimizerKernel {
   int Run() override;
   int OptimizerStep() override;
   std::vector<int> GetOptimizerParamsIdxs() const override;
+  std::vector<int> GetTrainableParamsIdxs() const override;
 
  private:
   int thread_count_;

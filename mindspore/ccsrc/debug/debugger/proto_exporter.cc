@@ -21,20 +21,18 @@
 #include <utility>
 #include <algorithm>
 
-#include "utils/hash_map.h"
 #include "utils/hash_set.h"
 #include "include/common/debug/anf_dump_utils.h"
-#include "debug/data_dump/dump_utils.h"
+#include "include/backend/debug/data_dump/dump_utils.h"
 #include "include/common/debug/common.h"
-#include "debug/debugger/debugger.h"
-#include "debug/data_dump/dump_json_parser.h"
-#include "proto/debug_graph.pb.h"
+#include "include/backend/debug/debugger/debugger.h"
 #include "ir/graph_utils.h"
 #include "utils/symbolic.h"
 #include "utils/trace_base.h"
-#include "debug/data_dump/e2e_dump.h"
+#include "include/backend/debug/data_dump/e2e_dump.h"
 #include "mindspore/core/utils/file_utils.h"
 #include "utils/anf_utils.h"
+#include "debug/debugger/debugger_utils.h"
 
 namespace mindspore {
 
@@ -44,7 +42,7 @@ void SetOutputType(const TypePtr &type, const BaseShapePtr &shape, debugger::Typ
 
 void CheckIfValidType(const TypePtr &type, debugger::TypeProto *const type_proto) {
   if (!(type->isa<Number>() || type->isa<TensorType>() || type->isa<Tuple>() || type->isa<TypeType>() ||
-        type->isa<List>() || type->isa<TypeAnything>() || type->isa<RefKeyType>() || type->isa<RefType>() ||
+        type->isa<List>() || type->isa<TypeAny>() || type->isa<RefKeyType>() || type->isa<RefType>() ||
         type->isa<Function>() || type->isa<TypeNone>() || type->isa<String>() || type->isa<SymbolicKeyType>() ||
         type->isa<MapTensorType>() || type->isa<UMonadType>() || type->isa<IOMonadType>())) {
     MS_LOG(EXCEPTION) << "Unknown type: " << type->type_name();
@@ -80,12 +78,12 @@ void SetListTypeProto(const TypePtr &type, debugger::TypeProto *type_proto) {
 }
 
 static TypeInfoToProtoTypeMap type_info_to_proto_type = {
-  {TensorType::kTypeId, debugger::DT_TENSOR},     {Tuple::kTypeId, debugger::DT_TUPLE},
-  {TypeType::kTypeId, debugger::DT_TYPE},         {List::kTypeId, debugger::DT_LIST},
-  {TypeAnything::kTypeId, debugger::DT_ANYTHING}, {RefKeyType::kTypeId, debugger::DT_REFKEY},
-  {RefType::kTypeId, debugger::DT_REF},           {Function::kTypeId, debugger::DT_GRAPH},
-  {TypeNone::kTypeId, debugger::DT_NONE},         {String::kTypeId, debugger::DT_STRING},
-  {UMonadType::kTypeId, debugger::DT_UMONAD},     {IOMonadType::kTypeId, debugger::DT_IOMONAD}};
+  {TensorType::kTypeId, debugger::DT_TENSOR}, {Tuple::kTypeId, debugger::DT_TUPLE},
+  {TypeType::kTypeId, debugger::DT_TYPE},     {List::kTypeId, debugger::DT_LIST},
+  {TypeAny::kTypeId, debugger::DT_ANY},       {RefKeyType::kTypeId, debugger::DT_REFKEY},
+  {RefType::kTypeId, debugger::DT_REF},       {Function::kTypeId, debugger::DT_GRAPH},
+  {TypeNone::kTypeId, debugger::DT_NONE},     {String::kTypeId, debugger::DT_STRING},
+  {UMonadType::kTypeId, debugger::DT_UMONAD}, {IOMonadType::kTypeId, debugger::DT_IOMONAD}};
 
 void SetOutputType(const TypePtr &type, const BaseShapePtr &shape, debugger::TypeProto *type_proto) {
   if (type_proto == nullptr) {
@@ -340,7 +338,7 @@ std::string DebuggerProtoExporter::GetFuncGraphProtoString(const FuncGraphPtr &f
 
 debugger::ModelProto DebuggerProtoExporter::GetFuncGraphProto(const FuncGraphPtr &func_graph) {
   if (func_graph == nullptr) {
-    return ModelProto();
+    return debugger::ModelProto();
   }
 
   InitModelInfo();
@@ -364,12 +362,17 @@ void DebuggerProtoExporter::ExportFuncGraph(const FuncGraphPtr &func_graph, debu
   MS_LOG(INFO) << "graph names: " << func_graph->ToString();
 
   // cast FuncGraph to KernelGraph to access root_graph_id()
-  uint32_t root_graph_id = static_cast<session::KernelGraph *>(func_graph.get())->root_graph_id();
-
+  auto kernel_graph = static_cast<session::KernelGraph *>(func_graph.get());
+  uint32_t root_graph_id = kernel_graph->root_graph_id();
+  uint32_t graph_id = kernel_graph->graph_id();
   MS_LOG(INFO) << "root graph id: " << root_graph_id;
 
   // set root graph id
-  graph_proto->set_root_name(std::to_string(root_graph_id));
+  if (kernel_graph->is_graph_run_mode()) {
+    graph_proto->set_root_name(std::to_string(root_graph_id));
+  } else {
+    graph_proto->set_root_name(std::to_string(graph_id));
+  }
 
   ExportParameters(func_graph, graph_proto);
 
@@ -557,6 +560,8 @@ debugger::DataType GetDebuggerNumberDataType(const TypePtr &type) {
       return debugger::DT_FLOAT32;
     case kNumberTypeFloat64:
       return debugger::DT_FLOAT64;
+    case kNumberTypeBFloat16:
+      return debugger::DT_BFLOAT16;
     case kNumberTypeInt:
       return debugger::DT_BASE_INT;
     case kNumberTypeUInt:
@@ -601,6 +606,7 @@ void DumpConstantInfo(const KernelGraphPtr &graph, const std::string &target_dir
   // Dump constant to npy file
   MS_LOG(INFO) << "Start e2e dump Const values";
   auto debugger = Debugger::GetInstance();
+  MS_EXCEPTION_IF_NULL(debugger);
   E2eDump::DumpConstantData(graph.get(), target_dir, debugger.get());
 }
 #else

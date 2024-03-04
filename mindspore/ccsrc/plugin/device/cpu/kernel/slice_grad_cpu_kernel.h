@@ -21,8 +21,9 @@
 #include <string>
 #include <vector>
 #include <map>
-
+#include "kernel/kernel_get_value.h"
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "plugin/factory/ms_factory.h"
 
 namespace mindspore {
@@ -31,7 +32,6 @@ constexpr auto kSliceGrad = "SliceGrad";
 constexpr auto kStridedSliceGrad = "StridedSliceGrad";
 constexpr auto kUnknown = "Unknown";
 constexpr auto kSecondIndex = 2;
-constexpr auto kIndex = 4;
 
 class SliceGradCpuKernelMod : public NativeCpuKernelMod {
  public:

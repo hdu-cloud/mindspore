@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,12 @@
 #ifndef MINDSPORE_LITE_SRC_COMMON_LOG_ADAPTER_H_
 #define MINDSPORE_LITE_SRC_COMMON_LOG_ADAPTER_H_
 
-#if defined(USE_GLOG) || defined(BUILD_CORE_RUNTIME)
+#ifdef USE_GLOG
 #include "utils/log_adapter.h"
 #else
 #include "src/common/log.h"
 #endif  // USE_GLOG
+#include "src/common/log_util.h"
 
 namespace mindspore {
 const char *const unsupport_string_tensor_log =

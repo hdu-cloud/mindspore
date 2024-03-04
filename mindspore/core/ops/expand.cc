@@ -15,12 +15,33 @@
  */
 
 #include "ops/expand.h"
-#include <algorithm>
+
 #include <set>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/named.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/type_id.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -103,7 +124,7 @@ abstract::ShapePtr ExpandInferShape(const PrimitivePtr &primitive, const std::ve
   auto max_length_ptr = primitive->GetAttr("max_length");
   MS_EXCEPTION_IF_NULL(max_length_ptr);
   int64_t max_length = GetValue<int64_t>(max_length_ptr);
-  if (!input_args[1]->BuildValue()->isa<AnyValue>() && !input_args[1]->BuildValue()->isa<None>()) {
+  if (!input_args[1]->BuildValue()->isa<ValueAny>() && !input_args[1]->BuildValue()->isa<None>()) {
     std::vector<int64_t> output_shape;
     if (shape_type_element->type_id() == kNumberTypeInt16) {
       output_shape = ExpandInferOutShape<int16_t>(output_shape, x_shape, x_shape_size, shape_size, shape_tensor,
@@ -117,16 +138,11 @@ abstract::ShapePtr ExpandInferShape(const PrimitivePtr &primitive, const std::ve
     }
     return std::make_shared<abstract::Shape>(output_shape);
   } else {
-    const uint32_t input_shapes = static_cast<uint32_t>(std::pow(max_length, 1.0 / shape_size));
     std::vector<int64_t> output_shape;
-    ShapeVector shape_min;
-    ShapeVector shape_max;
     for (int i = 0; i < shape_size; i++) {
       output_shape.push_back(abstract::Shape::kShapeDimAny);
-      shape_min.push_back(0);
-      shape_max.push_back(input_shapes);
     }
-    return std::make_shared<abstract::Shape>(output_shape, shape_min, shape_max);
+    return std::make_shared<abstract::Shape>(output_shape);
   }
 }
 
@@ -152,6 +168,26 @@ AbstractBasePtr ExpandInfer(const abstract::AnalysisEnginePtr &, const Primitive
 }
 
 MIND_API_OPERATOR_IMPL(Expand, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(Expand, prim::kPrimExpand, ExpandInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGExpandInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ExpandInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ExpandInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ExpandInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Expand, prim::kPrimExpand, AGExpandInfer, false);
 }  // namespace ops
 }  // namespace mindspore

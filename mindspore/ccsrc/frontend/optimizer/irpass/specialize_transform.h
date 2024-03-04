@@ -61,7 +61,7 @@ class SpecializeTransform {
           continue;
         }
         // replace the parameter with arg in new_fg without changing origin func_graph.
-        mng->Replace(params[i], NewReplaceValueNode(need_eliminate_args[i]));
+        (void)mng->Replace(params[i], NewReplaceValueNode(need_eliminate_args[i]));
       }
       mng->SetParameters(new_fg, new_params);
       cache[key] = new_fg;
@@ -81,7 +81,7 @@ class SpecializeTransform {
       auto const_tensor_ptr = std::make_shared<tensor::Tensor>(const_tensor);
       return NewValueNode(const_tensor_ptr);
     }
-    MS_LOG(EXCEPTION) << "Unexpected value:" << value->ToString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Unexpected value:" << value->ToString();
   }
 };
 }  // namespace internal
@@ -103,7 +103,7 @@ class SpecializeOnGraphArguments : public AnfVisitor {
     }
 
     auto inp0_fg = GetValueNode<FuncGraphPtr>(inputs[0]);
-    if (inp0_fg == nullptr || inp0_fg->has_flag(FUNC_GRAPH_FLAG_NO_INLINE) ||
+    if (inp0_fg == nullptr || inp0_fg->has_flag(FUNC_GRAPH_FLAG_NO_INLINE) || IsSetRecomputed(inp0_fg) ||
         inp0_fg->has_flag(FUNC_GRAPH_FLAG_DEFER_INLINE) || inp0_fg->recursive()) {
       return nullptr;
     }
@@ -116,7 +116,7 @@ class SpecializeOnGraphArguments : public AnfVisitor {
         need_eliminated_args.push_back(GetValueNode(inputs[i]));
         hasVNode = true;
       } else {
-        need_eliminated_args.emplace_back(nullptr);
+        (void)need_eliminated_args.emplace_back(nullptr);
         new_xs.push_back(inputs[i]);
       }
     }
@@ -130,6 +130,15 @@ class SpecializeOnGraphArguments : public AnfVisitor {
   }
 
  private:
+  static bool IsSetRecomputed(const FuncGraphPtr &fg) {
+    auto context = MsContext::GetInstance();
+    MS_EXCEPTION_IF_NULL(context);
+    const auto cell_reuse = context->CellReuseLevel() != CellReuseLevel::kNoCellReuse;
+    return fg->has_flag(FUNC_GRAPH_OUTPUT_NO_RECOMPUTE) ||
+           (cell_reuse &&
+            (fg->has_flag(FUNC_GRAPH_NOT_RECOMPUTE_K_GRAPH) || fg->has_flag(FUNC_GRAPH_RECOMPUTE_K_GRAPH)));
+  }
+
   internal::SpecializeTransform specialize_transform_;
 };
 }  // namespace irpass

@@ -36,7 +36,7 @@ class OPComputeTimeParser:
     """
 
     _dst_file_title = 'title:op compute time'
-    _dst_file_column_title = 'op_name       compute_time(ms) stream_id'
+    _dst_file_column_title = 'op_name       compute_time(ms) stream_id execution_times'
     _dst_file_column_title += '\n------------  ---------------  ---------'
 
     def __init__(self, hwts_output_file, output_filename, op_task_info,
@@ -77,8 +77,7 @@ class OPComputeTimeParser:
             op_duration_str = str(item.duration / factor)
             if op_name in op_name_time_dict.keys():
                 op_name_time_dict[op_name] += op_duration
-                if item.task_id == op_name_task_dict[op_name]:
-                    op_name_count_dict[op_name] += 1
+                op_name_count_dict[op_name] += 1
                 op_name_start_time[op_name].append(
                     (op_start_time_str, op_duration_str)
                 )
@@ -120,7 +119,7 @@ class OPComputeTimeParser:
                     raise ValueError("The number of operations can not be 0.")
                 avg_time = time / op_name_count_dict.get(op_name)
                 total_time += avg_time
-                result_data += ("%s %s  %s\n" % (op_name, str(avg_time), stream_id))
+                result_data += ("%s %s %s %s\n" % (op_name, str(avg_time), stream_id, op_name_count_dict.get(op_name)))
         result_data += ("total op  %s 0" % (str(total_time)))
 
         timeline_data = []
@@ -206,7 +205,7 @@ class OPComputeTimeParser:
 
         # write to file
         try:
-            with open(file_path, 'w') as f_obj:
+            with os.fdopen(os.open(file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as f_obj:
                 f_obj.write(TIMELINE_FILE_COLUMN_TITLE + '\n')
                 for timeline in timeline_data:
                     timeline = [str(item) for item in timeline]
@@ -225,25 +224,25 @@ class OPComputeTimeParser:
         """
         tmp_result_data = []
         op_map_list = self._get_op_task_id_map()
+        tmp_op_dict = dict()
 
         cur_index = 0
         length = len(op_map_list)
         min_cycle_counter = float("inf")
         while cur_index < length:
-            if cur_index + 1 == length:
-                break
+            op_time = op_map_list[cur_index]
+            if op_time.status == "Start":
+                tmp_op_dict[op_time.op_name] = op_time
+            elif op_time.status == "End" and op_time.op_name in tmp_op_dict:
+                op_start = tmp_op_dict.get(op_time.op_name, None)
+                if op_start:
+                    op_start.duration = op_time.cycle_counter - op_start.cycle_counter
+                    tmp_result_data.append(op_start)
+                    del tmp_op_dict[op_time.op_name]
+            if not op_time.op_name.startswith("assign"):
+                min_cycle_counter = min(min_cycle_counter, op_time.cycle_counter)
 
-            op_start = op_map_list[cur_index]
-            op_end = op_map_list[cur_index + 1]
-            if op_start.status == "Start" and op_end.status == "End" \
-                    and op_start.op_name == op_end.op_name:
-                op_start.duration = op_end.cycle_counter - op_start.cycle_counter
-                tmp_result_data.append(op_start)
-                cur_index += 2
-                if not op_start.op_name.startswith("assign"):
-                    min_cycle_counter = min(min_cycle_counter, op_start.cycle_counter)
-            else:
-                cur_index += 1
+            cur_index += 1
 
         # Update the value of minimum cycle counter.
         self._min_cycle_counter = min_cycle_counter / 1e5  # Convert the time unit from 10ns to 1ms

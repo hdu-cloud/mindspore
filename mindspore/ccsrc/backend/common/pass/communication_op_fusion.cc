@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,19 +15,21 @@
  */
 #include "backend/common/pass/communication_op_fusion.h"
 
-#include <vector>
-#include <set>
 #include <memory>
+#include <set>
+#include <vector>
 
-#include "utils/hash_map.h"
-#include "ir/graph_utils.h"
-#include "mindspore/core/ops/core_ops.h"
-#include "runtime/device/kernel_info.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
+#include "include/backend/kernel_info.h"
+#include "include/backend/optimizer/helper.h"
 #include "include/common/utils/anfalgo.h"
-#include "kernel/kernel_build_info.h"
-#include "backend/common/optimizer/helper.h"
 #include "include/common/utils/parallel_context.h"
+#include "ir/graph_utils.h"
+#include "kernel/kernel_build_info.h"
+#include "ops/framework_ops.h"
+#include "ops/sequence_ops.h"
+#include "utils/hash_map.h"
+#include "ir/manager.h"
 
 namespace mindspore {
 namespace opt {
@@ -64,7 +66,7 @@ kernel::KernelBuildInfoPtr GenerateKernelBuildInfo(const CommunicationOpInfo &co
       inputs_device_type.push_back(AnfAlgo::GetInputDeviceDataType(cnode, input_index));
     }
     for (int64_t rank_index = 0; rank_index < rank_size; ++rank_index) {
-      size_t output_num = common::AnfAlgo::GetOutputTensorNum(cnode);
+      size_t output_num = AnfAlgo::GetOutputTensorNum(cnode);
       for (size_t output_index = 0; output_index < output_num; ++output_index) {
         outputs_device_format.push_back(AnfAlgo::GetOutputFormat(cnode, output_index));
         outputs_device_type.push_back(AnfAlgo::GetOutputDeviceDataType(cnode, output_index));
@@ -92,6 +94,38 @@ std::string GetFusionGroupKey(const AnfNodePtr &node) {
   if (fusion == 0) {
     return "";
   }
+  auto parallel_context = parallel::ParallelContext::GetInstance();
+  if (parallel_context->enable_fold_pipeline()) {
+    auto cnode = node->cast<CNodePtr>();
+    auto cnode_name = common::AnfAlgo::GetCNodeName(cnode);
+    auto prim = GetCNodePrimitive(node);
+    if (cnode_name == kAllReduceOpName) {
+      if (prim->HasAttr(kAttrSegment)) {
+        auto segment_info = GetValue<int64_t>(prim->GetAttr(kAttrSegment));
+        MS_LOG(INFO) << "Cnode : " << cnode->fullname_with_scope() << ", instance_name: " << prim->instance_name()
+                     << ", segment: " << segment_info;
+        fusion = segment_info + 2;
+        prim->AddAttr(kAttrFusion, MakeValue(std::make_shared<Int64Imm>(fusion)));
+        MS_LOG(INFO) << "Now cnode : " << cnode->fullname_with_scope()
+                     << ", fusion: " << GetValue<int64_t>(prim->GetAttr(kAttrFusion));
+      }
+    }
+    if (cnode_name == kAllGatherOpName) {
+      if (prim->HasAttr(kAttrSegment)) {
+        auto segment_info = GetValue<int64_t>(prim->GetAttr(kAttrSegment));
+        MS_LOG(INFO) << "Cnode : " << cnode->fullname_with_scope() << ", instance_name: " << prim->instance_name()
+                     << ", segment: " << segment_info;
+        if (segment_info != 0) {
+          int64_t fusion_interval = 100;
+          fusion = segment_info + fusion_interval;
+          prim->AddAttr(kAttrFusion, MakeValue(std::make_shared<Int64Imm>(fusion)));
+        }
+        MS_LOG(INFO) << "Cnode : " << cnode->fullname_with_scope()
+                     << ", fusion: " << GetValue<int64_t>(prim->GetAttr(kAttrFusion));
+      }
+    }
+  }
+
   std::string group = kAttrDefaultGroup;
   ValuePtr attr_group = primitive->GetAttr(kAttrGroup);
   if (attr_group != nullptr) {
@@ -135,7 +169,7 @@ bool CommunicationOpFusion::GetSplitSegments(const CommunicationOpInfo &communic
   size_t communication_op_node_size = communication_op_info.communication_op_nodes.size();
   MS_LOG(INFO) << "graph " << op_name_ << " node size " << communication_op_node_size;
 
-  if (op_name_ == kHcomSendOpName || op_name_ == kReceiveOpName) {
+  if (op_name_ == kSendOpName || op_name_ == kReceiveOpName) {
     if (communication_op_node_size == 0) {
       return false;
     }
@@ -325,8 +359,8 @@ static void AdjustAllReduceInputWithLoad(const CNodePtr &cnode) {
         auto new_cnode_make_tuple = cnode_make_tuple->func_graph()->NewCNode(new_tuple_inputs);
         manager->Replace(cnode_make_tuple, new_cnode_make_tuple);
       } else {
-        MS_LOG(EXCEPTION) << "Cannot replace UpdateState with CNode U: " << cnode_update_state->DebugString()
-                          << " as make_tuple CNode cannot match " << cnode_make_tuple->DebugString();
+        MS_LOG(INTERNAL_EXCEPTION) << "Cannot replace UpdateState with CNode U: " << cnode_update_state->DebugString()
+                                   << " as make_tuple CNode cannot match " << cnode_make_tuple->DebugString();
       }
     }
   }
@@ -397,8 +431,8 @@ AnfNodePtr CommunicationOpFusion::CreateFusedCommunicationOp(const FuncGraphPtr 
   auto kernel_build_info = GenerateKernelBuildInfo(communication_op_info, start_index, end_index);
   AnfAlgo::SetSelectKernelBuildInfo(kernel_build_info, fused_node.get());
   const std::vector<std::string> kHcclFusionAttrs = {
-    kAttrFusion, kAttrGroup, kAttrGroupBack, kAttrSrTag,        kAttrDestRank,          kAttrSrcRank,
-    kAttrDType,  kAttrOp,    kAttrRankSize,  kAttrGroupRankIds, kAttrReuseCommunication};
+    kAttrFusion, kAttrGroup, kAttrGroupBack, kAttrSrTag,        kAttrDestRank,           kAttrSrcRank,
+    kAttrDType,  kAttrOp,    kAttrRankSize,  kAttrGroupRankIds, kAttrReuseCommunication, kAttrSegment};
   for (const auto &attr : kHcclFusionAttrs) {
     if (common::AnfAlgo::HasNodeAttr(attr, final_node)) {
       common::AnfAlgo::CopyNodeAttr(attr, final_node, fused_node);
@@ -464,8 +498,29 @@ bool CommunicationOpFusion::DoFusion(const FuncGraphPtr &func_graph, const Commu
       if (kernel_graph->IsInternalOutput(communication_op_node_item, 0)) {
         kernel_graph->ReplaceInternalOutput(communication_op_node_item, new_communication_op, 0, LongToSize(offset));
       }
+      if (common::GetEnv("MS_ENABLE_FRONTEND_SCHEDULING_OPTIMIZATION") == "1") {
+        auto &users = manager->node_users()[communication_op_node_item];
+        for (auto &node : users) {
+          auto cnode = node.first->cast<CNodePtr>();
+          if (cnode->HasAttr("comp_comm_scheduling_depend")) {
+            MS_LOG(INFO) << "Start EdgeRemove: AllReduce to comp_comm_scheduling_depend";
+            if (cnode->size() <= 1 || !common::AnfAlgo::IsCommunicationOp(cnode->input(1))) {
+              MS_LOG(INTERNAL_EXCEPTION) << "Input 1 of Cnode doesn't exist or is not a communication node!";
+            }
+            std::vector<AnfNodePtr> depend_inputs{NewValueNode(prim::kPrimDepend), cnode->input(1)->cast<CNodePtr>()};
+            auto depend_node = cnode->func_graph()->NewCNode(depend_inputs);
+            depend_node->set_abstract(cnode->input(1)->cast<CNodePtr>()->abstract()->Clone());
+            depend_node->AddAttr("comp_comm_scheduling_depend", MakeValue(true));
+            MS_EXCEPTION_IF_NULL(depend_node);
+            if (!manager->Replace(cnode, depend_node)) {
+              MS_LOG(INTERNAL_EXCEPTION) << "Manager replace node failed";
+            }
+            MS_LOG(INFO) << "End EdgeRemove: AllReduce to comp_comm_scheduling_depend";
+          }
+        }
+      }
       if (!manager->Replace(communication_op_node_item, tuple_getitem)) {
-        MS_LOG(EXCEPTION) << "Manager replace node failed";
+        MS_LOG(INTERNAL_EXCEPTION) << "Manager replace node failed";
       }
     }
     start_index = end_index + 1;

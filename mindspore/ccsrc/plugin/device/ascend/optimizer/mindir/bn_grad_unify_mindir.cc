@@ -16,29 +16,33 @@
 #include "plugin/device/ascend/optimizer/mindir/bn_grad_unify_mindir.h"
 #include <vector>
 #include <memory>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/nn_op_name.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
 namespace opt {
 namespace {
 constexpr auto kAttrUnifyIRPassed = "unifyir_passed";
+constexpr auto kX1 = "X1";
+constexpr auto kX2 = "X2";
+constexpr auto kX3 = "X3";
+constexpr auto kX4 = "X4";
+constexpr auto kX5 = "X5";
+constexpr auto kXs = "Xs";
+constexpr auto kMBatchnormGrad = "m_batchnorm_grad";
+constexpr auto kRBatchnormGrad = "r_batchnorm_grad";
 }  // namespace
 
-AnfNodePtr BatchNormGradUnifyMindIR::CreateNewBatchNormGrad(const FuncGraphPtr &graph,
-                                                            const CNodePtr &bn_grad_node) const {
-  MS_EXCEPTION_IF_NULL(graph);
+AnfNodePtr BuildBatchNormGrad(const PatternMap &m, const AnfNodePtr &new_node) {
+  auto node = m.Get(kMBatchnormGrad);
+  MS_EXCEPTION_IF_NULL(node);
+  auto bn_grad_node = node->cast<CNodePtr>();
   MS_EXCEPTION_IF_NULL(bn_grad_node);
   size_t kBNGradInputNum = 6;
-  const auto &bn_grad_node_inputs = bn_grad_node->inputs();
   CheckCNodeInputSize(bn_grad_node, kBNGradInputNum);
-  std::vector<AnfNodePtr> bn_grad_inputs = {NewValueNode(std::make_shared<Primitive>(kBatchNormGradOpName)),
-                                            bn_grad_node_inputs[kDim1],
-                                            bn_grad_node_inputs[kDim2],
-                                            bn_grad_node_inputs[kDim3],
-                                            bn_grad_node_inputs[kDim4],
-                                            bn_grad_node_inputs[kDim5]};
-  auto new_bn_grad = NewCNode(bn_grad_inputs, graph);
+  auto new_bn_grad = new_node->cast<CNodePtr>();
+  MS_EXCEPTION_IF_NULL(new_bn_grad);
   MS_EXCEPTION_IF_NULL(new_bn_grad);
   new_bn_grad->set_scope(bn_grad_node->scope());
   auto types = {common::AnfAlgo::GetOutputInferDataType(bn_grad_node, 0UL),
@@ -46,34 +50,43 @@ AnfNodePtr BatchNormGradUnifyMindIR::CreateNewBatchNormGrad(const FuncGraphPtr &
                 common::AnfAlgo::GetOutputInferDataType(bn_grad_node, 2UL),
                 common::AnfAlgo::GetPrevNodeOutputInferDataType(bn_grad_node, 3UL),
                 common::AnfAlgo::GetPrevNodeOutputInferDataType(bn_grad_node, 4UL)};
-  auto shapes = {common::AnfAlgo::GetOutputDetailShape(bn_grad_node, 0UL),
-                 common::AnfAlgo::GetOutputDetailShape(bn_grad_node, 1UL),
-                 common::AnfAlgo::GetOutputDetailShape(bn_grad_node, 2UL),
-                 common::AnfAlgo::GetPrevNodeOutputDetailShape(bn_grad_node, 3UL),
-                 common::AnfAlgo::GetPrevNodeOutputDetailShape(bn_grad_node, 4UL)};
+  auto shapes = {AnfAlgo::GetOutputDetailShape(bn_grad_node, 0UL), AnfAlgo::GetOutputDetailShape(bn_grad_node, 1UL),
+                 AnfAlgo::GetOutputDetailShape(bn_grad_node, 2UL),
+                 AnfAlgo::GetPrevNodeOutputDetailShape(bn_grad_node, 3UL),
+                 AnfAlgo::GetPrevNodeOutputDetailShape(bn_grad_node, 4UL)};
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, new_bn_grad.get());
   common::AnfAlgo::CopyNodeAttrs(bn_grad_node, new_bn_grad);
   common::AnfAlgo::SetNodeAttr(kAttrUnifyIRPassed, MakeValue(true), new_bn_grad);
   return new_bn_grad;
 }
 
-const BaseRef BatchNormGradUnifyMindIR::DefinePattern() const {
-  VarPtr Xs = std::make_shared<SeqVar>();
-  auto prim = std::make_shared<Primitive>(kBatchNormGradOpName);
-  return VectorRef({prim, Xs});
-}
-
-const AnfNodePtr BatchNormGradUnifyMindIR::Process(const FuncGraphPtr &func_graph, const AnfNodePtr &node,
-                                                   const EquivPtr &) const {
+bool BatchNormGradUnifyMindIR::CheckMatchedDAG(const PatternMap &, const FuncGraphPtr &func_graph,
+                                               const AnfNodePtr &node) const {
   MS_EXCEPTION_IF_NULL(node);
-  MS_EXCEPTION_IF_NULL(func_graph);
-
   auto cnode = node->cast<CNodePtr>();
   MS_EXCEPTION_IF_NULL(cnode);
-  if (common::AnfAlgo::HasNodeAttr(kAttrUnifyIRPassed, cnode)) {
-    return nullptr;
+  if (common::AnfAlgo::HasNodeAttr(kAttrUnifyIRPassed, cnode) ||
+      (func_graph->has_flag(kAttrMutableKernel) && !GetBoolAttr(cnode, kAttrIsTraining))) {
+    return false;
   }
-  return CreateNewBatchNormGrad(func_graph, cnode);
+  return true;
+}
+
+void BatchNormGradUnifyMindIR::DefineSrcPattern(SrcPattern *src_pattern) {
+  (void)(*src_pattern)
+    .AddVar(kX1)
+    .AddVar(kX2)
+    .AddVar(kX3)
+    .AddVar(kX4)
+    .AddVar(kX5)
+    .AddSeqVar(kXs)
+    .AddCNode(kMBatchnormGrad, {std::make_shared<Primitive>(kBatchNormGradOpName), kX1, kX2, kX3, kX4, kX5, kXs});
+}
+
+void BatchNormGradUnifyMindIR::DefineDstPattern(DstPattern *dst_pattern) {
+  (void)(*dst_pattern)
+    .AddCNode(kRBatchnormGrad, {std::make_shared<Primitive>(kBatchNormGradOpName), kX1, kX2, kX3, kX4, kX5},
+              BuildBatchNormGrad);
 }
 }  // namespace opt
 }  // namespace mindspore

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-import pytest
+from tests.st.control.cases_register import case_register
 
 from mindspore.nn import Cell
 from mindspore.common import Tensor, dtype
@@ -25,7 +25,7 @@ class IfInFor(Cell):
     def __init__(self):
         super().__init__()
         self.param = Parameter(Tensor(np.ones((1,), dtype=np.int32)), name="w1")
-        self.shape = P.TensorShape()
+        self.shape = P.Shape()
 
     def construct(self, x, y):
         shape = self.shape(y)
@@ -41,10 +41,9 @@ class IfInFor(Cell):
         return x
 
 
-@pytest.mark.level0
-@pytest.mark.platform_arm_ascend_training
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.env_onecard
+@case_register.level0
+@case_register.target_ascend
+@case_register.target_gpu
 def test_for_in_for_break_phi_node_eliminate():
     """
     Feature: Phi node eliminate.

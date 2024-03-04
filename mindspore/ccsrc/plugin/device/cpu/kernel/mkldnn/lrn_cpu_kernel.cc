@@ -31,6 +31,7 @@ bool LrnCpuKernelMod::GetLrnAttr(const BaseOperatorPtr &base_operator) {
     return false;
   }
   auto kernel_ptr = std::make_shared<ops::LRN>(base_operator->GetPrim());
+  MS_EXCEPTION_IF_NULL(kernel_ptr);
   depth_radius_ = kernel_ptr->get_depth_radius();
   bias_ = kernel_ptr->get_bias();
   alpha_ = kernel_ptr->get_alpha();
@@ -47,6 +48,7 @@ bool LrnCpuKernelMod::GetLrnAttr(const BaseOperatorPtr &base_operator) {
 
 bool LrnCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                            const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
   kernel_name_ = base_operator->name();
   if (inputs.empty() || outputs.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "' got empty inputs or outputs, which is invalid.";
@@ -72,6 +74,8 @@ int LrnCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vec
   if (int ret = KernelMod::Resize(base_operator, inputs, outputs); ret != KRET_OK) {
     return ret;
   }
+  constexpr size_t kInputsNum = 1;
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kInputsNum, kernel_name_);
   TypeId ms_type_id = inputs.at(kIndex0)->GetDtype();
   auto dnnl_type_id = GetDnnlDataType(ms_type_id);
   if (dnnl_type_id == dnnl::memory::data_type::undef) {
@@ -101,8 +105,12 @@ bool LrnCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs
   constexpr size_t kOutputsNum = 1;
   CHECK_KERNEL_INPUTS_NUM(inputs.size(), kInputsNum, kernel_name_);
   CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kOutputsNum, kernel_name_);
-  SetArgumentHandle(DNNL_ARG_SRC, inputs.at(kIndex0)->addr);
-  SetArgumentHandle(DNNL_ARG_DST, outputs.at(kIndex0)->addr);
+  auto *input0_ptr = GetDeviceAddress<float>(inputs, kIndex0);
+  auto *output0_ptr = GetDeviceAddress<float>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(input0_ptr);
+  MS_EXCEPTION_IF_NULL(output0_ptr);
+  SetArgumentHandle(DNNL_ARG_SRC, input0_ptr);
+  SetArgumentHandle(DNNL_ARG_DST, output0_ptr);
   ExecutePrimitive();
   return true;
 }

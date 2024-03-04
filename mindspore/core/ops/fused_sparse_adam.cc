@@ -15,14 +15,15 @@
  */
 
 #include "ops/fused_sparse_adam.h"
-#include <string>
-#include <memory>
-#include <vector>
 #include <algorithm>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <memory>
+#include <string>
+#include <vector>
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -145,6 +146,23 @@ AbstractBasePtr FusedSparseAdamInfer(const abstract::AnalysisEnginePtr &, const 
   return abstract::MakeAbstract(shapes, types);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(FusedSparseAdam, prim::kPrimFusedSparseAdam, FusedSparseAdamInfer, nullptr, true)
+// AG means auto generated
+class MIND_API AGFusedSparseAdamInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return fused_sparse_adam::FusedSparseAdamInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return fused_sparse_adam::FusedSparseAdamInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return FusedSparseAdamInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(FusedSparseAdam, prim::kPrimFusedSparseAdam, AGFusedSparseAdamInfer, false);
 }  // namespace ops
 }  // namespace mindspore

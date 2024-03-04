@@ -16,11 +16,12 @@
 
 #include "ir/named.h"
 #include "abstract/abstract_value.h"
+#include "abstract/abstract_function.h"
 
 namespace mindspore {
 bool Named::operator==(const Value &other) const {
   if (other.isa<Named>()) {
-    auto other_named = static_cast<const Named &>(other);
+    auto &other_named = static_cast<const Named &>(other);
     return *this == other_named;
   }
   return false;
@@ -42,5 +43,9 @@ abstract::AbstractBasePtr MindIRNameSpace::ToAbstract() {
 
 abstract::AbstractBasePtr MindIRSymbol::ToAbstract() {
   return std::make_shared<abstract::AbstractScalar>(shared_from_base<MindIRSymbol>(), std::make_shared<External>());
+}
+
+abstract::AbstractBasePtr MindIRMetaFuncGraph::ToAbstract() {
+  return std::make_shared<abstract::MetaFuncGraphAbstractClosure>(std::make_shared<MetaFuncGraph>(name()));
 }
 }  // namespace mindspore

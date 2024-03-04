@@ -1,4 +1,4 @@
-# Copyright 2021 Huawei Technologies Co., Ltd
+# Copyright 2021-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,8 +17,9 @@
 import numpy as np
 import pytest
 
-from mindspore import Tensor
+from mindspore import Tensor, jit
 import mindspore.nn as nn
+import mindspore.numpy as ms_np
 from mindspore.ops import operations as P
 import mindspore.context as context
 import mindspore as ms
@@ -199,3 +200,95 @@ def test_print_op_tuple():
     net = PrintTupleNet()
     x = Tensor([6, 7, 8, 9, 10])
     net(x)
+
+
+@security_off_wrap
+@pytest.mark.level1
+@pytest.mark.env_onecard
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.parametrize('mode', [context.GRAPH_MODE, context.PYNATIVE_MODE])
+def test_print_tensor_dtype_in_nested_tuple(mode):
+    """
+    Feature: Print op.
+    Description: test Print with tensor dtype in nested tuple.
+    Expectation: success.
+    """
+    class PrintDtypeNet(nn.Cell):
+        def construct(self, x, y):
+            dtype_tuple = (x.dtype, y)
+            dtype_tuple_tuple = (x, dtype_tuple)
+            print("Tensor type in tuple:", dtype_tuple_tuple)
+            return x + y
+
+    context.set_context(mode=mode, device_target="GPU")
+    x = Tensor([3, 4], dtype=ms.int32)
+    y = Tensor([1, 2], dtype=ms.int32)
+    net = PrintDtypeNet()
+    net(x, y)
+
+
+@pytest.mark.level1
+@pytest.mark.env_onecard
+@pytest.mark.platform_x86_gpu_training
+def test_print_abs():
+    """
+    Feature: Print op.
+    Description: Print the result of max.
+    Expectation: success.
+    """
+    @jit
+    def function():
+        tuple_x = (Tensor(10).astype("float32"), Tensor(30).astype("float32"), Tensor(50).astype("float32"))
+        sum_x = Tensor(0).astype("float32")
+        max_x = Tensor(0).astype("float32")
+        for i in range(3):
+            max_x = max(tuple_x)
+            sum_x += max_x
+            print(max_x)
+            print(i)
+        for x in zip(tuple_x):
+            sum_x = sum(x, sum_x)
+            print(sum_x)
+        return sum_x
+
+    context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
+    out = function()
+    print("out:", out)
+
+
+@pytest.mark.level1
+@pytest.mark.env_onecard
+@pytest.mark.platform_x86_gpu_training
+def test_print_tensor():
+    """
+    Feature: Print op.
+    Description: Print tensor.
+    Expectation: success.
+    """
+    class ReLUDynamicNet(nn.Cell):
+        def __init__(self):
+            super().__init__()
+            self.relu = nn.ReLU()
+            self.reduce = P.ReduceSum(keep_dims=False)
+            self.shape = P.Shape()
+
+        def construct(self, x, y, z):
+            rand_axis = ms_np.randint(1, 3, (3,))
+            axis = ms_np.unique(rand_axis)
+            print("the input y is:", y)
+            print("the input z is:", z)
+            print("the input z is:", z, " the shape of x:", self.shape(x))
+            print("before reduce the shape of x is: ", self.shape(x))
+            x = self.reduce(x, axis)
+            x_shape = self.shape(x)
+            print("after reduce the shape of x is: ", self.shape(x))
+            return self.relu(x), axis, x_shape
+
+    context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
+    relu_net = ReLUDynamicNet()
+    input_x = Tensor(np.random.randn(8, 3, 5, 8, 5, 6).astype(np.float32))
+    input_y = [1, 2, 3, 4]
+    input_z = (5, 6, 7, 8, 9)
+    _, _, x_shape = relu_net(input_x, input_y, input_z)
+    print(x_shape)
+    print("test end")

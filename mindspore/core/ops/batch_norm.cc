@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,16 +13,38 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <string>
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <set>
+#include <string>
+#include <utility>
 #include <vector>
-#include "ops/batch_norm.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/base/type_id.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/batch_norm.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -57,16 +79,19 @@ void BatchNorm::set_momentum(const float momentun) {
 
 float BatchNorm::get_momentum() const {
   auto value_ptr = GetAttr(kMomentum);
+  MS_EXCEPTION_IF_NULL(value_ptr);
   return GetValue<float>(value_ptr);
 }
 
 bool BatchNorm::get_is_training() const {
   auto value_ptr = GetAttr(kIsTraining);
+  MS_EXCEPTION_IF_NULL(value_ptr);
   return GetValue<bool>(value_ptr);
 }
 
 float BatchNorm::get_epsilon() const {
   auto value_ptr = GetAttr(kEpsilon);
+  MS_EXCEPTION_IF_NULL(value_ptr);
   return GetValue<float>(value_ptr);
 }
 
@@ -91,10 +116,13 @@ Format BatchNorm::get_format() const {
 
 namespace {
 bool MeanAndVarianceValid(const std::vector<AbstractBasePtr> &input_args) {
+  if (input_args.size() < 5) {
+    MS_LOG(EXCEPTION) << "The inputs' num of BatchNorm should be greater than 4, but got " << input_args.size();
+  }
   std::vector<int> params_ids = {3, 4};
   size_t valid_param = 0;
   for (auto idx : params_ids) {
-    auto type = input_args[idx]->BuildType();
+    auto type = input_args[IntToSize(idx)]->BuildType();
     if (type->isa<TensorType>()) {
       auto tensor_type = type->cast<TensorTypePtr>();
       auto element = tensor_type->element();
@@ -106,6 +134,7 @@ bool MeanAndVarianceValid(const std::vector<AbstractBasePtr> &input_args) {
 
 std::string get_format_in_infer(const PrimitivePtr &primitive) {
   auto format_ptr = primitive->GetAttr(kFormat);
+  MS_EXCEPTION_IF_NULL(format_ptr);
   if (format_ptr->isa<StringImm>()) {
     return GetValue<std::string>(format_ptr);
   }
@@ -119,6 +148,7 @@ class BatchNormInfer : public abstract::OpInferBase {
   BaseShapePtr InferShape(const PrimitivePtr &primitive,
                           const std::vector<AbstractBasePtr> &input_args) const override {
     const auto prim_name = primitive->name();
+    CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterThan, 0, prim_name);
     auto x_shape_ptr = input_args[kInputIndex0]->BuildShape();
     auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(x_shape_ptr)[kShape];
     auto scale_shape_ptr = input_args[kInputIndex1]->BuildShape();
@@ -130,13 +160,11 @@ class BatchNormInfer : public abstract::OpInferBase {
     auto variance_shape_ptr = input_args[kInputIndex4]->BuildShape();
     auto variance_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(variance_shape_ptr)[kShape];
 
-    auto is_training = GetValue<bool>(primitive->GetAttr(kIsTraining));
-
     (void)CheckAndConvertUtils::CheckInteger("rank of scale", SizeToLong(scale_shape.size()), kEqual, 1, prim_name);
     (void)CheckAndConvertUtils::CheckInteger("rank of bias", SizeToLong(bias_shape.size()), kEqual, 1, prim_name);
 
     if (!x_shape_ptr->IsDynamic() && !scale_shape_ptr->IsDynamic()) {
-      // auto format = GetValue<std::string>(primitive->GetAttr(kFormat));
+      CheckAndConvertUtils::CheckInRange("rank of images", SizeToLong(x_shape.size()), kIncludeBoth, {2, 4}, prim_name);
       auto format = get_format_in_infer(primitive);
       auto channel = format == "NHWC" ? x_shape.back() : x_shape[1];
       if (scale_shape[kInputIndex0] != channel) {
@@ -156,7 +184,7 @@ class BatchNormInfer : public abstract::OpInferBase {
         (void)CheckAndConvertUtils::CheckInteger("rank of mean", SizeToLong(mean_shape.size()), kEqual, 1, prim_name);
         (void)CheckAndConvertUtils::CheckInteger("rank of variance", SizeToLong(variance_shape.size()), kEqual, 1,
                                                  prim_name);
-        if (!is_training && (mean_shape[0] != variance_shape[0] || variance_shape[0] != scale_shape[0])) {
+        if (mean_shape[0] != variance_shape[0] || variance_shape[0] != scale_shape[0]) {
           MS_EXCEPTION(ValueError)
             << "For '" << prim_name
             << "', 'scale', 'bias', 'mean', and 'variance' should have the same size during training, but got "
@@ -173,9 +201,11 @@ class BatchNormInfer : public abstract::OpInferBase {
   }
 
   TypePtr InferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) const override {
-    const std::set valid_types = {kFloat16, kFloat32};
+    const auto prim_name = prim->name();
+    CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterThan, 0, prim_name);
+    const std::set<TypePtr> valid_types = {kFloat16, kFloat32};
     auto x_type = input_args[0]->BuildType();
-    (void)CheckAndConvertUtils::CheckTensorTypeValid("input_x", x_type, valid_types, prim->name());
+    (void)CheckAndConvertUtils::CheckTensorTypeValid("input_x", x_type, valid_types, prim_name);
 
     std::map<std::string, TypePtr> types;
     auto scale_type = input_args[kInputIndex1]->BuildType();
@@ -185,10 +215,19 @@ class BatchNormInfer : public abstract::OpInferBase {
       (void)types.emplace("mean", input_args[kInputIndex3]->BuildType());
       (void)types.emplace("variance", input_args[kInputIndex4]->BuildType());
     }
-    (void)CheckAndConvertUtils::CheckTensorTypeSame(types, valid_types, prim->name());
+    (void)CheckAndConvertUtils::CheckTensorTypeSame(types, valid_types, prim_name);
     return std::make_shared<Tuple>(std::vector<TypePtr>{x_type, scale_type, scale_type, scale_type, scale_type});
   }
 };
+
+abstract::AbstractBasePtr BatchNormInferFunc(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                             const std::vector<abstract::AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
+  BatchNormInfer bn;
+  auto type = bn.InferType(primitive, input_args);
+  auto shape = bn.InferShape(primitive, input_args);
+  return abstract::MakeAbstract(shape, type);
+}
 
 REGISTER_PRIMITIVE_OP_INFER_IMPL(BatchNorm, prim::kPrimBatchNorm, BatchNormInfer, false);
 REGISTER_PRIMITIVE_OP_INFER_IMPL(BatchNormWithActivation, prim::kPrimBatchNormWithActivation, BatchNormInfer, false);

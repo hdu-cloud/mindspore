@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_ADJUST_CONTRASTV2_H_
 #define MINDSPORE_CORE_OPS_ADJUST_CONTRASTV2_H_
 #include <memory>
-#include <vector>
 #include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,8 +35,9 @@ class MIND_API AdjustContrastv2 : public BaseOperator {
   AdjustContrastv2() : BaseOperator(kNameAdjustContrastv2) { InitIOName({"images", "contrast_factor"}, {"y"}); }
 };
 
-abstract::AbstractBasePtr AdjustContrastv2Infer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr AdjustContrastv2Infer(const abstract::AnalysisEnginePtr &,
+                                                         const PrimitivePtr &primitive,
+                                                         const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimAdjustContrastv2Ptr = std::shared_ptr<AdjustContrastv2>;
 }  // namespace ops
 }  // namespace mindspore

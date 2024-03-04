@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,16 @@
 #include "backend/common/pass/eliminate_redundant_op.h"
 #include <memory>
 #include <utility>
+#include "ops/ascend_op_name.h"
+#include "ops/sequence_ops.h"
+#include "ops/other_ops.h"
+#include "ops/array_ops.h"
+#include "ops/framework_ops.h"
 #include "utils/hash_map.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
-#include "mindspore/core/ops/core_ops.h"
+#include "include/backend/optimizer/helper.h"
 #include "kernel/common_utils.h"
 
 namespace mindspore {
@@ -69,7 +73,12 @@ CNodePtr GetRealPrevCNode(const AnfNodePtr &node, size_t index, std::vector<Kern
 bool TransOpEliminateCondition(const CNodePtr &, const CNodePtr &) { return true; }
 
 bool CastEliminateCondition(const CNodePtr &node1, const CNodePtr &node2) {
-  return HasSymmetricalKernelInfo(node1, node2);
+  // Only process Cast nodes which inserted by backend.
+  if (common::AnfAlgo::GetBooleanAttr(node1, kIsBackendCast) &&
+      common::AnfAlgo::GetBooleanAttr(node2, kIsBackendCast)) {
+    return HasSymmetricalKernelInfo(node1, node2);
+  }
+  return false;
 }
 
 bool TransDataOpEliminateCondition(const CNodePtr &node1, const CNodePtr &node2) {
@@ -92,6 +101,11 @@ const AnfNodePtr EliminateRedundantOp::ProcessMatchedNodes(const FuncGraphPtr &f
   auto &users = manager->node_users();
 
   auto pass_size = pass_vector->size();
+  constexpr size_t kOffset = 2;
+  if (pass_size < kOffset) {
+    MS_LOG(WARNING) << "The pass_size should >= 2.";
+    return nullptr;
+  }
   for (size_t idx = 1; idx <= pass_size - 1; ++idx) {
     auto nd = (*pass_vector)[idx].first;
     if (common::AnfAlgo::CheckPrimitiveType(nd, prim::kPrimDepend)) {
@@ -103,16 +117,12 @@ const AnfNodePtr EliminateRedundantOp::ProcessMatchedNodes(const FuncGraphPtr &f
   }
 
   // when no depend node and no node used more than once, no need to rebuild the pass nodes
-  constexpr size_t kOffset = 2;
   if (!has_depend_node) {
     return prev_cnode->input(1);
   } else if (!has_node_used_more_than_once) {
     (void)manager->Replace(prev_cnode, prev_cnode->input(1));
     return cnode->input(1);
   } else {  // rebuild the pass nodes
-    if (pass_size < kOffset) {
-      MS_LOG(ERROR) << "pass_size should >= 2";
-    }
     for (size_t idx = pass_size - kOffset; idx > 0; --idx) {
       auto new_node = NewCNode((*pass_vector)[idx].first->inputs(), func_graph);
       if (idx == pass_size - kOffset) {
@@ -120,6 +130,9 @@ const AnfNodePtr EliminateRedundantOp::ProcessMatchedNodes(const FuncGraphPtr &f
                             (*pass_vector)[idx + 1].first->input((*pass_vector)[idx + 1].second));
       } else {
         new_node->set_input((*pass_vector)[idx].second, (*pass_vector)[idx + 1].first);
+      }
+      if (IsPrimitiveCNode(new_node, prim::kPrimDepend)) {
+        new_node->set_abstract(new_node->input(1)->abstract());
       }
       (*pass_vector)[idx].first = new_node;
     }

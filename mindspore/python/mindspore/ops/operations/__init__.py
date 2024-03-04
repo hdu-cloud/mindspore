@@ -21,7 +21,7 @@ A collection of operators to build neural networks or to compute functions.
 
 from ._embedding_cache_ops import (CacheSwapTable, UpdateCache, MapCacheIdx, SubAndFilter,
                                    MapUniform, DynamicAssign, PadAndShift)
-from ._inner_ops import (FillV2, MatmulDDS, DSDMatmul, Cummin, ExtractImagePatches)
+from ._inner_ops import (MatmulDDS, DSDMatmul, Cummin, ExtractImagePatches, SelectView, CopyWithSlice)
 from ._quant_ops import *
 from ._thor_ops import (CusBatchMatMul, CusCholeskyTrsm, CusFusedAbsMax1, CusImg2Col, CusMatMulCubeDenseLeft,
                         CusMatMulCubeFraczRightMul, CusMatMulCube, CusMatrixCombine, CusTranspose02314,
@@ -29,26 +29,27 @@ from ._thor_ops import (CusBatchMatMul, CusCholeskyTrsm, CusFusedAbsMax1, CusImg
                         LoadIm2Col, UpdateThorGradient, CholeskyTrsm,
                         DetTriangle, ProdForceSeA)
 from ._ms_kernel import (ms_kernel, kernel)
-from .array_ops import (ArgMaxWithValue, ArgMinWithValue, Argmax, Argmin, BatchToSpace, BatchToSpaceND,
+from .array_ops import (ArgMaxWithValue, ArgMinWithValue, Argmax, Argmin, BatchToSpace,
                         BatchToSpaceNDV2, BroadcastTo, Cast, Coalesce, Concat, Cummax, DType, DepthToSpace, Diag,
-                        DiagPart, DynamicShape, EditDistance, EmbeddingLookup, ExpandDims, ExtractVolumePatches,
-                        Eye, Fill, Gather, GatherD, GatherNd, GatherV2, Identity, Im2Col, InvertPermutation,
+                        DiagPart, EditDistance, EmbeddingLookup, ExpandDims, ExtractVolumePatches,
+                        Eye, Fill, Gather, GatherD, GatherNd, Identity, Im2Col, InvertPermutation,
                         LowerBound, Lstsq, MaskedFill, MaskedSelect, Meshgrid, Mvlgamma, Ones, OnesLike,
-                        Pack, Padding, ParallelConcat, PopulationCount, Range, Rank, Reshape, ResizeNearestNeighbor,
+                        Padding, ParallelConcat, PopulationCount, Range, Rank, Reshape, ResizeNearestNeighbor,
                         ReverseSequence, ReverseV2, Rint, ScalarToTensor, ScatterAdd,
                         ScatterDiv, ScatterMax, ScatterMin, ScatterMul, ScatterNd, ScatterNdAdd, ScatterNdDiv,
-                        ScatterNdMax, ScatterNdMin, ScatterNdSub, ScatterNdUpdate, ScatterNonAliasingAdd, ScatterSub,
+                        ScatterNdMax, ScatterNdMin, ScatterNdSub, ScatterNdUpdate, ScatterSub,
                         ScatterUpdate, SearchSorted, Select, Shape, Size, Slice, Sort, SpaceToBatch, SpaceToBatchND,
                         SpaceToDepth, SparseGatherV2, Split, SplitV, Squeeze, Stack, StridedSlice, TensorScatterAdd,
                         TensorScatterDiv, TensorScatterMax, TensorScatterMin, TensorScatterMul, TensorScatterSub,
                         TensorScatterUpdate, TensorShape, Tile, TopK, TransShape, Transpose, TupleToArray, Unique,
-                        UniqueWithPad, Unpack, UnsortedSegmentMax, UnsortedSegmentMin, UnsortedSegmentProd,
+                        UniqueWithPad, UnsortedSegmentMax, UnsortedSegmentMin, UnsortedSegmentProd,
                         UnsortedSegmentSum, Unstack, UpperBound, Zeros, ZerosLike, AffineGrid, Bincount, CheckNumerics,
                         HammingWindow, IdentityN, IndexFill, LeftShift, ListDiff, LogSpace, MatrixBandPart,
                         MatrixDiagPartV3, MatrixDiagV3, MatrixSetDiagV3, NonZero, Expand, Col2Im, ConjugateTranspose,
                         FillDiagonal, Fills, ResizeNearestNeighborV2, RightShift, ScatterAddWithAxis,
                         ScatterNdMul, SegmentMean, SegmentProd, SegmentSum, SegmentMax, SegmentMin, Tril, Triu,
-                        UniqueConsecutive, UnravelIndex)
+                        UniqueConsecutive, UnravelIndex, FillV2, CountNonZero, TensorScatterElements, IndexPut,
+                        MaskedScatter)
 from .comm_ops import (AllGather, AllReduce, NeighborExchange, NeighborExchangeV2, AlltoAll, _AllSwap, ReduceScatter,
                        Broadcast,
                        _MirrorOperator, _MirrorMiniStepOperator, _MiniStepAllGather, ReduceOp, _VirtualDataset,
@@ -61,14 +62,14 @@ from .debug_ops import (ImageSummary, InsertGradientOf, HookBackward, ScalarSumm
                         TensorSummary, HistogramSummary, Print, Assert)
 from .image_ops import (CropAndResize, NonMaxSuppressionV3, HSVToRGB, AdjustHue, AdjustSaturation,
                         NonMaxSuppressionWithOverlaps, ResizeArea, ResizeBilinearV2, ExtractGlimpse,
-                        CombinedNonMaxSuppression, RGBToHSV, ScaleAndTranslate)
+                        CombinedNonMaxSuppression, RGBToHSV, ScaleAndTranslate, ResizeLinear1D, ResizeBicubic)
 from .inner_ops import (ScalarCast, Randperm, NoRepeatNGram, LambApplyOptimizerAssign, LambApplyWeightAssign,
                         FusedWeightScaleApplyMomentum, FusedCastAdamWeightDecay, FusedAdaFactor,
                         FusedAdaFactorWithGlobalNorm)
 from .linalg_ops import (Svd, Geqrf)
 from .math_ops import (Abs, ACos, Asin, Asinh, AddN, AccumulateNV2, AssignAdd, AssignSub, Atan2, BatchMatMul,
-                       BitwiseAnd, BitwiseOr, Ger,
-                       BitwiseXor, Inv, Invert, ApproximateEqual, InplaceAdd, InplaceSub, InplaceUpdate,
+                       BitwiseAnd, BitwiseOr, Ger, BitwiseXor, Inv, Invert, ApproximateEqual,
+                       InplaceAdd, InplaceSub, InplaceUpdateV2,
                        ReduceMax, ReduceMin, ReduceMean, ReduceSum, ReduceAll, ReduceProd, CumProd, Cdist, ReduceAny,
                        Cos, Cross, Div, DivNoNan, Equal, EqualCount, Exp, Expm1, Erf, Erfc, Floor, FloorDiv, FloorMod,
                        Ceil, Acosh, Greater, GreaterEqual, Lerp, Less, LessEqual, Log, Log1p, LogicalAnd, Mod,
@@ -78,26 +79,28 @@ from .math_ops import (Abs, ACos, Asin, Asinh, AddN, AccumulateNV2, AssignAdd, A
                        NPUGetFloatStatus, Pow, RealDiv, IsNan, IsInf, IsFinite, FloatStatus,
                        Reciprocal, CumSum, HistogramFixedWidth, SquaredDifference, Xdivy, Xlogy,
                        Sin, Sqrt, Rsqrt, BesselI0e, BesselI1e, TruncateDiv, TruncateMod, Addcdiv,
-                       Addcmul, Square, Sub, TensorAdd, Add, Sign, Round, SquareSumAll, Atan, Atanh, Cosh, Sinh, Eps,
+                       Addcmul, Square, Sub, Add, Sign, Round, SquareSumAll, Atan, Atanh, Cosh, Sinh, Eps,
                        Tan, MatrixInverse, IndexAdd, Erfinv, Conj, Real, Imag, Complex, Trunc, IsClose, LuSolve,
                        CholeskyInverse, BesselJ0, BesselJ1, BesselK0, BesselK0e, BesselK1, BesselK1e, BesselY0,
                        BesselY1, Bucketize, Cauchy, Cholesky, CholeskySolve, Betainc,
                        FFTWithSize, Heaviside, Histogram, Hypot, Lcm, LuUnpack, MatrixExp,
                        MatrixLogarithm, MatrixPower, MatrixSolve, MatrixTriangularSolve, ReduceStd, STFT,
                        NextAfter, Orgqr, Qr, RaggedRange, Digamma, Eig, EuclideanNorm, CompareAndBitpack, ComplexAbs,
-                       CumulativeLogsumexp, Gcd, Trace, TridiagonalMatMul, TrilIndices, TriuIndices, Zeta,
-                       Roll)
+                       CumulativeLogsumexp, Gcd, Polygamma, Trace, TridiagonalMatMul, TrilIndices, TriuIndices, Zeta,
+                       Roll, Lgamma, Logit, MatrixSolveLs, Polar, Fmax, Fmin, Quantile, Sinc, Angle, Bernoulli,
+                       NanToNum, Igamma, BesselI0, BesselI1, InplaceIndexAdd, Igammac, Ormqr)
 from .nn_ops import (LSTM, SGD, Adam, AdamWeightDecay, FusedSparseAdam, FusedSparseLazyAdam, AdamNoUpdateParam,
                      ApplyMomentum, BatchNorm, BiasAdd, Conv2D, Conv3D, Conv2DTranspose, Conv3DTranspose,
                      DepthwiseConv2dNative,
-                     DropoutDoMask, Dropout, Dropout2D, Dropout3D, DropoutGenMask, Flatten,
-                     InstanceNorm, BNTrainingReduce, BNTrainingUpdate,
-                     GeLU, Gelu, FastGeLU, FastGelu, Elu, CeLU,
+                     Dropout, Dropout2D, Dropout3D, Flatten,
+                     InstanceNorm,
+                     GeLU, FastGeLU, Elu, CeLU,
                      GetNext, L2Normalize, LayerNorm, L2Loss, CTCLoss, CTCLossV2, CTCLossV2Grad, CTCGreedyDecoder,
                      LogSoftmax, MaxPool3D, AvgPool3D,
                      MaxPool, DataFormatDimMap,
                      AvgPool, Conv2DBackpropInput, ComputeAccidentalHits,
-                     MaxPoolWithArgmax, OneHot, Pad, MirrorPad, Mish, PReLU, ReLU, ReLU6, ReLUV2, HSwish, HSigmoid,
+                     MaxPoolWithArgmaxV2, OneHot, Pad, MirrorPad, Mish, PReLU, ReLU, ReLU6, ReLUV2,
+                     HSwish, HSigmoid,
                      ResizeBilinear, Sigmoid, SeLU, HShrink, ApplyKerasMomentum,
                      SigmoidCrossEntropyWithLogits, NLLLoss, BCEWithLogitsLoss,
                      SmoothL1Loss, SoftMarginLoss, Softmax, Softsign, Softplus, LRN, RNNTLoss, DynamicRNN, DynamicGRUV2,
@@ -109,22 +112,30 @@ from .nn_ops import (LSTM, SGD, Adam, AdamWeightDecay, FusedSparseAdam, FusedSpa
                      ApplyAdaMax, ApplyAdadelta, ApplyAdagrad, ApplyAdagradV2, MultiMarginLoss, ApplyAdagradDA,
                      ApplyAddSign, ApplyPowerSign, ApplyGradientDescent, ApplyProximalGradientDescent,
                      ApplyRMSProp, ApplyCenteredRMSProp, BasicLSTMCell, InTopK, AdaptiveAvgPool2D, SoftShrink,
-                     ApplyAdamWithAmsgrad, AdaptiveAvgPool3D, AdaptiveMaxPool2D, AdaptiveMaxPool3D,
+                     ApplyAdamWithAmsgrad, ApplyAdamWithAmsgradV2, AdaptiveAvgPool3D, AdaptiveMaxPool2D,
+                     AdaptiveMaxPool3D,
                      GridSampler3D, MaxPool3DWithArgmax, MaxUnpool2D, NuclearNorm, NthElement, MultilabelMarginLoss,
-                     PSROIPooling, Dilation2D, DataFormatVecPermute, DeformableOffsets, FractionalAvgPool,
+                     Dilation2D, DataFormatVecPermute, DeformableOffsets, Dense, FractionalAvgPool,
                      FractionalMaxPool, FractionalMaxPool3DWithFixedKsize, FractionalMaxPoolWithFixedKsize,
-                     GridSampler2D, TripletMarginLoss, UpsampleNearest3D, UpsampleTrilinear3D, PadV3)
+                     GridSampler2D, TripletMarginLoss, UpsampleNearest3D, UpsampleTrilinear3D, PadV3, ChannelShuffle,
+                     GLU, MaxUnpool3D, Pdist)
 from .other_ops import (Assign, IOU, BoundingBoxDecode, BoundingBoxEncode,
                         ConfusionMatrix, UpdateState, Load, StopGradient,
-                        CheckValid, Partial, Depend, identity, Push, Pull, PyExecute, PyFunc, _DynamicLossScale,
+                        CheckValid, Partial, Depend, Push, Pull, PyExecute, PyFunc, _DynamicLossScale,
                         SampleDistortedBoundingBoxV2)
 from .random_ops import (RandomChoiceWithMask, StandardNormal, Gamma, RandomGamma, Poisson, UniformInt, UniformReal,
                          RandomCategorical, StandardLaplace, Multinomial, UniformCandidateSampler,
                          LogUniformCandidateSampler, TruncatedNormal, LogNormalReverse, NonDeterministicInts,
-                         ParameterizedTruncatedNormal, RandomPoisson)
+                         ParameterizedTruncatedNormal, RandomPoisson, MultinomialWithReplacement, RandomShuffle,
+                         RandpermV2)
 from .rl_ops import (BufferAppend, BufferGetItem, BufferSample)
-from .sparse_ops import (SparseToDense, SparseTensorDenseMatmul, SparseTensorDenseAdd)
+from .sparse_ops import (
+    SparseToDense, SparseTensorDenseMatmul, SparseTensorDenseAdd, SparseSlice)
 from .spectral_ops import (BartlettWindow, BlackmanWindow)
+from ..deprecated import (identity, DropoutDoMask, MaxPoolWithArgmax,
+                          BNTrainingReduce, BNTrainingUpdate, DropoutGenMask, Gelu, FastGelu,
+                          TensorAdd, InplaceUpdate, ScatterNonAliasingAdd,
+                          BatchToSpaceND, Unpack, GatherV2, DynamicShape, ScalarToArray, Pack)
 
 __all__ = [
     'HSVToRGB',
@@ -173,6 +184,7 @@ __all__ = [
     'FillV2',
     'Flatten',
     'MaxPoolWithArgmax',
+    'MaxPoolWithArgmaxV2',
     'BNTrainingReduce',
     'BNTrainingUpdate',
     'BatchNorm',
@@ -321,6 +333,7 @@ __all__ = [
     'DynamicRNN',
     'ReduceAll',
     'ReduceAny',
+    'ScalarToArray',
     'ScalarToTensor',
     'TupleToArray',
     'GeSwitch',
@@ -445,6 +458,7 @@ __all__ = [
     "ApplyAdagradV2",
     "ApplyAdagradDA",
     "ApplyAdamWithAmsgrad",
+    "ApplyAdamWithAmsgradV2",
     "ApplyAddSign",
     "ApplyPowerSign",
     "ApplyGradientDescent",
@@ -470,6 +484,7 @@ __all__ = [
     "DataFormatDimMap",
     "ApproximateEqual",
     "InplaceUpdate",
+    "InplaceUpdateV2",
     "InTopK",
     "UniformCandidateSampler",
     "LogUniformCandidateSampler",
@@ -583,7 +598,6 @@ __all__ = [
     "Orgqr",
     "NonDeterministicInts",
     "NonZero",
-    "PSROIPooling",
     "ResizeArea",
     "ResizeBilinearV2",
     "Qr",
@@ -607,7 +621,10 @@ __all__ = [
     "CumulativeLogsumexp",
     "DataFormatVecPermute",
     "DeformableOffsets",
+    "Dense",
     "ExtractImagePatches",
+    "SelectView",
+    "CopyWithSlice",
     "FillDiagonal",
     "Fills",
     "Gcd",
@@ -643,6 +660,38 @@ __all__ = [
     "Zeta",
     "PadV3",
     "Roll",
+    "Lgamma",
+    "SparseSlice",
+    "ResizeLinear1D",
+    "ResizeBicubic",
+    "Logit",
+    "MatrixSolveLs",
+    "Polar",
+    "Fmax",
+    "Fmin",
+    "Polygamma",
+    "CountNonZero",
+    "Quantile",
+    "Sinc",
+    "Angle",
+    "Bernoulli",
+    "NanToNum",
+    "ChannelShuffle",
+    "Igamma",
+    "BesselI0",
+    "MultinomialWithReplacement",
+    "BesselI1",
+    "GLU",
+    "TensorScatterElements",
+    "RandomShuffle",
+    "InplaceIndexAdd",
+    "Igammac",
+    "MaxUnpool3D",
+    "Pdist",
+    "IndexPut",
+    "MaskedScatter",
+    "Ormqr",
+    "RandpermV2"
 ]
 
 __custom__ = [

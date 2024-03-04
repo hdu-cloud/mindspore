@@ -16,19 +16,26 @@
 #include "plugin/device/ascend/optimizer/buffer_fusion/batchmatmul_eltwise_fusion_pass.h"
 #include <set>
 #include <string>
+#include "ops/nn_optimizer_op_name.h"
+#include "ops/nn_op_name.h"
+#include "ops/math_op_name.h"
+#include "ops/lite_op_name.h"
+#include "ops/framework_ops.h"
 #include "kernel/kernel_fusion.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "mindspore/core/ops/core_ops.h"
-#include "common/graph_kernel/graph_kernel_flags.h"
-#include "backend/common/optimizer/fusion_id_allocator.h"
+#include "backend/common/graph_kernel/graph_kernel_flags.h"
+#include "plugin/device/ascend/optimizer/fusion_id_allocator.h"
 
 namespace mindspore {
 namespace opt {
 namespace {
+constexpr auto kPatternMatmul = "Matmul";
 constexpr auto kAttrNoFusion = "no_fusion";
+constexpr auto kPatternBroadcast = "Broadcast";
+constexpr auto kPatternBatchMatmul = "BatchMatmul";
 
-CNodePtr FindInputNode(const CNodePtr &cnode, const string &node_type, const kernel::FusionType &fusion_type) {
+CNodePtr FindInputNode(const CNodePtr &cnode, const string &node_type, const std::string &fusion_type) {
   auto input_num = common::AnfAlgo::GetInputTensorNum(cnode);
   for (size_t i = 1; i <= input_num; ++i) {
     auto input = cnode->input(i);
@@ -45,7 +52,7 @@ CNodePtr FindInputNode(const CNodePtr &cnode, const string &node_type, const ker
 bool BatchMatmulEltwiseFusionPass::MatchPattern1(const CNodePtr &eltwise1,
                                                  mindspore::HashSet<AnfNodePtr> *record) const {
   // bmm - eltwise - eltwise1
-  const std::set<string> kElem1TypeList = {kAddOpName, kReLUOpName, kFusedMulAddOpName};
+  const std::set<string> kElem1TypeList = {kAddOpName, kReluOpName, kFusedMulAddOpName};
   if (kElem1TypeList.find(common::AnfAlgo::GetCNodeName(eltwise1)) == kElem1TypeList.end()) {
     return false;
   }
@@ -65,13 +72,13 @@ bool BatchMatmulEltwiseFusionPass::MatchPattern1(const CNodePtr &eltwise1,
 bool BatchMatmulEltwiseFusionPass::MatchPattern2(const CNodePtr &eltwise,
                                                  mindspore::HashSet<AnfNodePtr> *record) const {
   // bmm - eltwise
-  const std::set<string> kElemTypeList = {kFusedMulAddOpName, kAddOpName,  kDivOpName,
-                                          kRealDivOpName,     kReLUOpName, kReluGradOpName};
+  const std::set<string> kElemTypeList = {kFusedMulAddOpName, kAddOpName,  kTruncateDivOpName,
+                                          kRealDivOpName,     kReluOpName, kReLUGradOpName};
   if (kElemTypeList.find(common::AnfAlgo::GetCNodeName(eltwise)) == kElemTypeList.end()) {
     return false;
   }
 
-  CNodePtr bmm = FindInputNode(eltwise, kBatchMatMulOpName, kernel::FusionType::BATCH_MATMUL);
+  CNodePtr bmm = FindInputNode(eltwise, kBatchMatMulOpName, kPatternBatchMatmul);
   if (bmm == nullptr || common::AnfAlgo::IsDynamicShape(bmm) || common::AnfAlgo::GetBooleanAttr(bmm, kAttrNoFusion)) {
     return false;
   }
@@ -88,17 +95,17 @@ bool BatchMatmulEltwiseFusionPass::MatchPattern3(const CNodePtr &eltwise,
     return false;
   }
 
-  CNodePtr eltwise2 = FindInputNode(eltwise, kSigmoidOpName, kernel::FusionType::ELEMWISE);
+  CNodePtr eltwise2 = FindInputNode(eltwise, kSigmoidOpName, kPatternElemWise);
   if (eltwise2 == nullptr) {
     return false;
   }
 
-  CNodePtr eltwise1 = FindInputNode(eltwise2, kMulOpName, kernel::FusionType::ELEMWISE);
+  CNodePtr eltwise1 = FindInputNode(eltwise2, kMulOpName, kPatternElemWise);
   if (eltwise1 == nullptr) {
     return false;
   }
 
-  CNodePtr bmm = FindInputNode(eltwise1, kBatchMatMulOpName, kernel::FusionType::BATCH_MATMUL);
+  CNodePtr bmm = FindInputNode(eltwise1, kBatchMatMulOpName, kPatternMatmul);
   if (bmm == nullptr || common::AnfAlgo::IsDynamicShape(bmm)) {
     return false;
   }
@@ -124,7 +131,7 @@ void BatchMatmulEltwiseFusionPass::MatchSingleFusionPattern(const session::Kerne
     auto cnode = node->cast<CNodePtr>();
     MS_EXCEPTION_IF_NULL(cnode);
     if (AnfAlgo::GetKernelType(cnode) == KernelType::TBE_KERNEL &&
-        AnfAlgo::GetFusionType(cnode) == kernel::FusionType::ELEMWISE) {
+        (AnfAlgo::GetFusionType(cnode) == kPatternElemWise || AnfAlgo::GetFusionType(cnode) == kPatternBroadcast)) {
       mindspore::HashSet<AnfNodePtr> record;
       if (MatchPattern1(cnode, &record) || MatchPattern2(cnode, &record) || MatchPattern3(cnode, &record)) {
         candidate_fusion->push_back(record);

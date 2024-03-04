@@ -34,18 +34,18 @@ class CoderSession {
 
   ~CoderSession();
 
-  int Init(const void *content, int size);
+  int Init(const void *content, int size, const int model_index, bool end_flag, bool enable_fp16);
 
   virtual int Build();
 
-  virtual int Run();
+  virtual int Run(const std::string &model_name);
 
   virtual int GenerateCode();
 
  protected:
   int Preprocess();
   virtual int DoCode();
-  virtual int PassArgsToContext();
+  virtual int PassArgsToContext(const std::string &model_name);
 
  private:
   OpParameter *GenParameterAndInfer(const LiteGraph::Node *node, const std::vector<lite::Tensor *> &inputs,
@@ -64,6 +64,7 @@ class CoderSession {
 
  private:
   int schema_version_ = SCHEMA_VERSION::SCHEMA_CUR;
+  bool enable_fp16_{false};
 };
 }  // namespace mindspore::lite::micro
 #endif  // MINDSPORE_LITE_TOOLS_CONVERTER_MICRO_CODER_SESSION_H_

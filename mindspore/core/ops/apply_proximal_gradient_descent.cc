@@ -16,16 +16,31 @@
 
 #include "ops/apply_proximal_gradient_descent.h"
 
-#include <algorithm>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
+#include <type_traits>
+#include <utility>
 
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -44,7 +59,7 @@ abstract::ShapePtr ApplyProximalGradientDescentInferShape(const PrimitivePtr &pr
   if (IsDynamicRank(var_shape) || IsDynamicRank(delta_shape)) {
     return std::make_shared<abstract::Shape>(ShapeVector{abstract::Shape::kShapeRankAny});
   }
-  size_t batch_rank = 0;
+  int64_t batch_rank = 0;
   if (primitive->HasAttr(kBatchRank)) {
     auto value_ptr = primitive->GetAttr(kBatchRank);
     batch_rank = GetValue<int64_t>(value_ptr);
@@ -112,7 +127,24 @@ AbstractBasePtr ApplyProximalGradientDescentInfer(const abstract::AnalysisEngine
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(ApplyProximalGradientDescent, prim::kPrimApplyProximalGradientDescent,
-                             ApplyProximalGradientDescentInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGApplyProximalGradientDescentInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyProximalGradientDescentInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyProximalGradientDescentInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyProximalGradientDescentInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ApplyProximalGradientDescent, prim::kPrimApplyProximalGradientDescent,
+                                 AGApplyProximalGradientDescentInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -15,16 +15,19 @@
  */
 
 #include "ops/sparse_matrix_mat_mul.h"
+
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "include/common/utils/convert_utils.h"
+
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -48,6 +51,11 @@ void SparseMatrixMatMulCheckShape(const std::vector<AbstractBasePtr> &input_args
   if (!is_dynamic) {
     const int kInputNoBatch = 2;
     const int kInputWithBatch = 3;
+    auto x1_dense_shape_size = x1_dense_shape.size();
+    if (x1_dense_shape_size == 0) {
+      MS_EXCEPTION(ValueError) << "For SparseMatrixMatMul, x1_dense_shape.size() = " << x1_dense_shape_size
+                               << ", which is invalid";
+    }
     const int64_t rank_x1 = x1_dense_shape[0];
     const int64_t rank_x2 = (SizeToLong)(x2_dense_shape.size());
     if (rank_x1 != rank_x2) {
@@ -115,7 +123,8 @@ abstract::ShapePtr SparseMatrixMatMulInferShape(const PrimitivePtr &primitive,
       << adjoint_x2 << ", and transpose_x2 = " << transpose_x2 << ".";
   }
 
-  int64_t row_x2 = -1, col_x2 = -1;
+  int64_t row_x2 = -1;
+  int64_t col_x2 = -1;
   if (!IsDynamicRank(x2_dense_shape)) {
     const int64_t rank_x2 = SizeToLong(x2_dense_shape.size());
     const int64_t kNumTwo = 2;
@@ -127,7 +136,7 @@ abstract::ShapePtr SparseMatrixMatMulInferShape(const PrimitivePtr &primitive,
 
   // row and col of A
   const int kInputWithBatch = 3;
-  if (input_args[0]->isa<abstract::AbstractTensor>() && !input_args[0]->BuildValue()->isa<AnyValue>() &&
+  if (input_args[0]->isa<abstract::AbstractTensor>() && !input_args[0]->BuildValue()->isa<ValueAny>() &&
       !input_args[0]->BuildValue()->isa<None>()) {
     auto dense_shape_value = input_args[0]->cast<abstract::AbstractTensorPtr>();
     MS_EXCEPTION_IF_NULL(dense_shape_value);
@@ -137,8 +146,8 @@ abstract::ShapePtr SparseMatrixMatMulInferShape(const PrimitivePtr &primitive,
       CheckAndConvertUtils::CheckTensorIntValue("x1_dense_shape", dense_shape_value_ptr, primitive->name());
 
     const int64_t rank_x1 = static_cast<int64_t>(dense_shape_value_ptr_tensor.size());
-    auto row_x1 = dense_shape_value_ptr_tensor[rank_x1 - 2];
-    auto col_x1 = dense_shape_value_ptr_tensor[rank_x1 - 1];
+    auto row_x1 = dense_shape_value_ptr_tensor[LongToSize(rank_x1 - 2)];
+    auto col_x1 = dense_shape_value_ptr_tensor[LongToSize(rank_x1 - 1)];
 
     row_x1 = (adjoint_x1 || transpose_x1) ? col_x1 : row_x1;
 
@@ -201,7 +210,26 @@ AbstractBasePtr SparseMatrixMatMulInfer(const abstract::AnalysisEnginePtr &, con
 }
 
 MIND_API_OPERATOR_IMPL(SparseMatrixMatMul, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseMatrixMatMul, prim::kPrimSparseMatrixMatMul, SparseMatrixMatMulInfer, nullptr, true);
-REGISTER_HOST_DEPENDS(kNameSparseMatrixMatMul, {0});
+
+// AG means auto generated
+class MIND_API AGSparseMatrixMatMulInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixMatMulInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixMatMulInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixMatMulInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseMatrixMatMul, prim::kPrimSparseMatrixMatMul, AGSparseMatrixMatMulInfer, false);
 }  // namespace ops
 }  // namespace mindspore

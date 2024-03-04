@@ -15,6 +15,7 @@
 """Test dynamic obfuscation"""
 import os
 import numpy as np
+import pytest
 
 import mindspore.ops as ops
 import mindspore.nn as nn
@@ -77,25 +78,26 @@ def test_obfuscate_model_password_mode():
     Description: Test obfuscate a MindIR format model and then load it for prediction.
     Expectation: Success.
     """
-    net = ObfuscateNet()
+    ori_mindir_path = os.path.join(os.path.split(os.path.realpath(__file__))[0], "ori_net.mindir")
+    ori_graph = load(ori_mindir_path)
+    ori_net = nn.GraphCell(ori_graph)
     input_tensor = Tensor(np.ones((1, 1, 32, 32)).astype(np.float32))
-    export(net, input_tensor, file_name="net", file_format="MINDIR")
-    original_result = net(input_tensor).asnumpy()
+    original_result = ori_net(input_tensor).asnumpy()
 
     # obfuscate model
-    obf_config = {"original_model_path": "net.mindir", "save_model_path": "./obf_net",
-                  "model_inputs": [input_tensor], "obf_ratio": 0.8, "obf_password": 3423}
+    obf_config = {"original_model_path": ori_mindir_path, "save_model_path": "./obf_net_1",
+                  "model_inputs": [input_tensor], "obf_ratio": 0.8, "obf_random_seed": 3423}
     obfuscate_model(obf_config)
 
     # load obfuscated model, predict with right password
-    obf_graph = load("obf_net.mindir")
-    obf_net = nn.GraphCell(obf_graph, obf_password=3423)
-    right_password_result = obf_net(input_tensor).asnumpy()
-
-    os.remove("net.mindir")
-    os.remove("obf_net.mindir")
+    obf_graph_1 = load("obf_net_1.mindir")
+    obf_net_1 = nn.GraphCell(obf_graph_1, obf_random_seed=3423)
+    right_password_result = obf_net_1(input_tensor).asnumpy()
 
     assert np.all(original_result == right_password_result)
+
+    if os.path.exists("obf_net_1.mindir"):
+        os.remove("obf_net_1.mindir")
 
 
 def test_obfuscate_model_customized_func_mode():
@@ -104,10 +106,11 @@ def test_obfuscate_model_customized_func_mode():
     Description: Test obfuscate a MindIR format model and then load it for prediction.
     Expectation: Success.
     """
-    net = ObfuscateNet()
+    ori_mindir_path = os.path.join(os.path.split(os.path.realpath(__file__))[0], "ori_net.mindir")
+    ori_graph = load(ori_mindir_path)
+    ori_net = nn.GraphCell(ori_graph)
     input_tensor = Tensor(np.ones((1, 1, 32, 32)).astype(np.float32))
-    export(net, input_tensor, file_name="net", file_format="MINDIR")
-    original_result = net(input_tensor).asnumpy()
+    original_result = ori_net(input_tensor).asnumpy()
 
     # obfuscate model
     def my_func(x1, x2):
@@ -115,19 +118,19 @@ def test_obfuscate_model_customized_func_mode():
             return True
         return False
 
-    obf_config = {"original_model_path": "net.mindir", "save_model_path": "./obf_net",
+    obf_config = {"original_model_path": ori_mindir_path, "save_model_path": "./obf_net_2",
                   "model_inputs": [input_tensor], "obf_ratio": 0.8, "customized_func": my_func}
     obfuscate_model(obf_config)
 
     # load obfuscated model, predict with right customized function
-    obf_graph = load("obf_net.mindir", obf_func=my_func)
-    obf_net = nn.GraphCell(obf_graph)
-    right_func_result = obf_net(input_tensor).asnumpy()
-
-    os.remove("net.mindir")
-    os.remove("obf_net.mindir")
+    obf_graph_2 = load("obf_net_2.mindir", obf_func=my_func)
+    obf_net_2 = nn.GraphCell(obf_graph_2)
+    right_func_result = obf_net_2(input_tensor).asnumpy()
 
     assert np.all(original_result == right_func_result)
+
+    if os.path.exists("obf_net_2.mindir"):
+        os.remove("obf_net_2.mindir")
 
 
 def test_export_password_mode():
@@ -136,24 +139,23 @@ def test_export_password_mode():
     Description: Test obfuscate a MindIR format model and then load it for prediction.
     Expectation: Success.
     """
-    net = ObfuscateNet()
+    net_3 = ObfuscateNet()
     input_tensor = Tensor(np.ones((1, 1, 32, 32)).astype(np.float32))
-    export(net, input_tensor, file_name="net", file_format="MINDIR")
-    original_result = net(input_tensor).asnumpy()
+    original_result = net_3(input_tensor).asnumpy()
 
     # obfuscate model
-    obf_config = {"obf_ratio": 0.8, "obf_password": 3423}
-    export(net, input_tensor, file_name="obf_net", file_format="MINDIR", obf_config=obf_config)
+    obf_config = {"obf_ratio": 0.8, "obf_random_seed": 3423}
+    export(net_3, input_tensor, file_name="obf_net_3", file_format="MINDIR", obf_config=obf_config)
 
     # load obfuscated model, predict with right password
-    obf_graph = load("obf_net.mindir")
-    obf_net = nn.GraphCell(obf_graph, obf_password=3423)
-    right_password_result = obf_net(input_tensor).asnumpy()
-
-    os.remove("net.mindir")
-    os.remove("obf_net.mindir")
+    obf_graph_3 = load("obf_net_3.mindir")
+    obf_net_3 = nn.GraphCell(obf_graph_3, obf_random_seed=3423)
+    right_password_result = obf_net_3(input_tensor).asnumpy()
 
     assert np.all(original_result == right_password_result)
+
+    if os.path.exists("obf_net_3.mindir"):
+        os.remove("obf_net_3.mindir")
 
 
 def test_export_customized_func_mode():
@@ -162,10 +164,9 @@ def test_export_customized_func_mode():
     Description: Test obfuscate a MindIR format model and then load it for prediction.
     Expectation: Success.
     """
-    net = ObfuscateNet()
+    net_4 = ObfuscateNet()
     input_tensor = Tensor(np.ones((1, 1, 32, 32)).astype(np.float32))
-    export(net, input_tensor, file_name="net", file_format="MINDIR")
-    original_result = net(input_tensor).asnumpy()
+    original_result = net_4(input_tensor).asnumpy()
 
     # obfuscate model
     def my_func(x1, x2):
@@ -173,15 +174,54 @@ def test_export_customized_func_mode():
             return True
         return False
 
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     obf_config = {"obf_ratio": 0.8, "customized_func": my_func}
-    export(net, input_tensor, file_name="obf_net", file_format="MINDIR", obf_config=obf_config)
+    export(net_4, input_tensor, file_name="obf_net_4", file_format="MINDIR", obf_config=obf_config)
 
     # load obfuscated model, predict with customized function
-    obf_graph = load("obf_net.mindir", obf_func=my_func)
-    obf_net = nn.GraphCell(obf_graph)
-    right_func_result = obf_net(input_tensor).asnumpy()
-
-    os.remove("net.mindir")
-    os.remove("obf_net.mindir")
+    obf_graph_4 = load("obf_net_4.mindir", obf_func=my_func)
+    obf_net_4 = nn.GraphCell(obf_graph_4)
+    right_func_result = obf_net_4(input_tensor).asnumpy()
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
     assert np.all(original_result == right_func_result)
+
+    if os.path.exists("obf_net_4.mindir"):
+        os.remove("obf_net_4.mindir")
+
+
+def test_wrong_file_format_input():
+    """
+    Feature: Obfuscate MindIR format model with dynamic obfuscation (customized_func mode) in export().
+    Description: Test wrong file_formar input.
+    Expectation: Success.
+    """
+    net_5 = ObfuscateNet()
+    input_tensor = Tensor(np.ones((1, 1, 32, 32)).astype(np.float32))
+
+    # obfuscate model
+    obf_config = {"obf_ratio": 0.8, "obf_random_seed": 3423}
+    with pytest.raises(ValueError) as error_info:
+        export(net_5, input_tensor, file_name="obf_net_3", file_format="ONNX", obf_config=obf_config)
+    assert str(error_info.value) == "Dynamic obfuscation only support for MindIR format, but got ONNX format."
+
+
+def test_wrong_device_target():
+    """
+    Feature: Obfuscate MindIR format model with dynamic obfuscation (customized_func mode) in export().
+    Description: Test wrong device_target.
+    Expectation: Success.
+    """
+    context.set_context(device_target="GPU")
+    net_6 = ObfuscateNet()
+    input_tensor = Tensor(np.ones((1, 1, 32, 32)).astype(np.float32))
+
+    # obfuscate model
+    def my_func(x1, x2):
+        if x1 + x2 > 1000000000:
+            return True
+        return False
+    obf_config = {"obf_ratio": 0.8, "customized_func": my_func}
+    with pytest.raises(ValueError) as error_info:
+        export(net_6, input_tensor, file_name="obf_net", file_format="MINDIR", obf_config=obf_config)
+    assert str(error_info.value) == "Customized func mode only support 'device_target'='CPU, but got GPU."

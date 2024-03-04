@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_CLIP_BY_NORM_NO_DIV_SUM_H_
 #define MINDSPORE_CORE_OPS_CLIP_BY_NORM_NO_DIV_SUM_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,8 +37,9 @@ class MIND_API ClipByNormNoDivSum : public BaseOperator {
   }
   void Init() const {}
 };
-abstract::AbstractBasePtr ClipByNormNoDivSumInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                  const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr ClipByNormNoDivSumInfer(const abstract::AnalysisEnginePtr &,
+                                                           const PrimitivePtr &primitive,
+                                                           const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimClipByNormNoDivSumPtr = std::shared_ptr<ClipByNormNoDivSum>;
 }  // namespace ops
 }  // namespace mindspore

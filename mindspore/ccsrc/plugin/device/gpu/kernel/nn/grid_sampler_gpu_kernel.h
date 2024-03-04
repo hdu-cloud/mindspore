@@ -46,9 +46,10 @@ class GridSampler2DGpuKernelMod : public NativeGpuKernelMod {
     T *input_addr = GetDeviceAddress<T>(inputs, kIndex0);
     T *grid_addr = GetDeviceAddress<T>(inputs, kIndex1);
     T *output_addr = GetDeviceAddress<T>(outputs, kIndex0);
-    GridSampler2D(size_, input_addr, grid_addr, output_addr, input_shape_, grid_shape_, output_shape_, input_stride_,
-                  grid_stride_, output_stride_, interpolation_mode_, padding_mode_, align_corners_,
-                  reinterpret_cast<cudaStream_t>(stream_ptr));
+    auto status = GridSampler2D(size_, input_addr, grid_addr, output_addr, input_shape_, grid_shape_, output_shape_,
+                                input_stride_, grid_stride_, output_stride_, interpolation_mode_, padding_mode_,
+                                align_corners_, reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return true;
   }
 
@@ -110,10 +111,13 @@ class GridSampler2DGpuKernelMod : public NativeGpuKernelMod {
       }
       stride_tmp = 1;
     };
+    input_stride_.clear();
+    grid_stride_.clear();
+    output_stride_.clear();
     stride_compute(input_stride_, input_shape_);
     stride_compute(grid_stride_, grid_shape_);
     stride_compute(output_stride_, output_shape_);
-    size_ = input_shape_[kIndex0] * grid_shape_[kIndex1] * grid_shape_[kIndex2] * grid_shape_[kIndex3];
+    size_ = input_shape_[kIndex0] * grid_shape_[kIndex1] * grid_shape_[kIndex2];
     return KRET_OK;
   }
 
@@ -226,6 +230,9 @@ class GridSampler3DGpuKernelMod : public NativeGpuKernelMod {
       }
       stride_tmp = 1;
     };
+    input_stride_.clear();
+    grid_stride_.clear();
+    output_stride_.clear();
     stride_compute(input_stride_, input_shape_);
     stride_compute(grid_stride_, grid_shape_);
     stride_compute(output_stride_, output_shape_);

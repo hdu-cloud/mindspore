@@ -1,7 +1,12 @@
 file(GLOB_RECURSE KERNEL_SRC_LIST RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+    "kernel_factory.cc"
     "kernel_build_info.cc"
     "kernel.cc"
+    "kernel_get_value.cc"
+    "ops_utils.cc"
     "common_utils.cc"
+    "framework_utils.cc"
+    "philox_random.cc"
     "kash/*.cc"
     "oplib/*.cc"
     "environ_manager.cc"
@@ -13,10 +18,18 @@ endif()
 
 if(ENABLE_AKG AND ${CMAKE_SYSTEM_NAME} MATCHES "Linux")
     file(GLOB_RECURSE AKG_SRC_LIST RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
-        "akg/akg_kernel_build.cc"
-        "akg/akg_kernel_build_manager.cc"
-        "akg/akg_kernel_json_generator.cc"
-        "akg/akg_kernel_json_decoder.cc"
+        "graph_kernel/graph_kernel_json_generator.cc"
+        "graph_kernel/graph_kernel_builder.cc"
+        "graph_kernel/graph_kernel_builder_manager.cc"
+        "graph_kernel/akg/akg_kernel_build.cc"
+        "graph_kernel/akg/akg_kernel_json_decoder.cc"
+        "graph_kernel/dynamic_akg/dynamic_akg_kernel_build.cc"
+    )
+    list(APPEND KERNEL_SRC_LIST "${AKG_SRC_LIST}")
+else()
+    file(GLOB_RECURSE AKG_SRC_LIST RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+        "graph_kernel/graph_kernel_json_generator.cc"
+        "graph_kernel/akg/akg_kernel_json_decoder.cc"
     )
     list(APPEND KERNEL_SRC_LIST "${AKG_SRC_LIST}")
 endif()

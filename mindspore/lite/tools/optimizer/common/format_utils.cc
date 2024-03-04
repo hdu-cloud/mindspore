@@ -19,6 +19,9 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/image_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "ops/adam.h"
 #include "ops/addn.h"
 #include "ops/apply_momentum.h"
@@ -68,11 +71,16 @@
 #include "ops/space_to_depth.h"
 #include "ops/split.h"
 #include "ops/strided_slice.h"
+#include "ops/grid_sampler_2d.h"
+#include "ops/deformable_conv2d.h"
+#include "ops/roi_align.h"
 #include "tools/lite_exporter/fetch_content.h"
 #include "nnacl/op_base.h"
+#include "tools/common/graph_util.h"
 
 namespace mindspore {
 namespace opt {
+// treat the weight of deformableConv2d as an input instead of a const because of the ops infershape only support nchw.
 static const std::unordered_map<std::string, std::vector<size_t>> NHWCOpMap = {
   {ops::kNameAdam, {10}},
   {ops::kNameApplyMomentum, {4}},
@@ -88,14 +96,17 @@ static const std::unordered_map<std::string, std::vector<size_t>> NHWCOpMap = {
   {ops::kNameConv2DFusion, {1}},
   {ops::kNameConv2dTransposeFusion, {1}},
   {ops::kNameDepthToSpace, {1}},
+  {ops::kNameDeformableConv2d, {1, 2}},
   {ops::kNameFusedBatchNorm, {1}},
   {ops::kNameInstanceNorm, {1}},
+  {ops::kNameGridSampler2D, {1}},
   {ops::kNameLRN, {1}},
   {ops::kNameMaxPoolFusion, {1}},
   {ops::kNameMaxPoolGrad, {}},
   {ops::kNamePReLUFusion, {1}},
   {ops::kNameResize, {1}},
   {ops::kNameResizeGrad, {}},
+  {ops::kNameROIAlign, {1}},
   {ops::kNameROIPooling, {1}},
   {ops::kNameSGD, {2}},
   {ops::kNameSpaceToBatch, {1}},
@@ -104,6 +115,7 @@ static const std::unordered_map<std::string, std::vector<size_t>> NHWCOpMap = {
 
 static const std::unordered_map<std::string, std::vector<size_t>> NCHWOpMap = {};
 
+// treat the weight of deformableConv2d as an input instead of a const because of the ops infershape only support nchw.
 static const std::unordered_map<std::string, std::vector<size_t>> ToNCHWOpMap = {
   {ops::kNameAdam, {10}},
   {ops::kNameApplyMomentum, {4}},
@@ -119,7 +131,9 @@ static const std::unordered_map<std::string, std::vector<size_t>> ToNCHWOpMap = 
   {ops::kNameConv2DFusion, {1}},
   {ops::kNameConv2dTransposeFusion, {1}},
   {ops::kNameDepthToSpace, {1}},
+  {ops::kNameDeformableConv2d, {1, 2}},
   {ops::kNameFusedBatchNorm, {1}},
+  {ops::kNameGridSampler2D, {1}},
   {ops::kNameInstanceNorm, {1}},
   {ops::kNameLRN, {1}},
   {ops::kNameMaxPoolFusion, {1}},
@@ -127,6 +141,7 @@ static const std::unordered_map<std::string, std::vector<size_t>> ToNCHWOpMap = 
   {ops::kNamePReLUFusion, {1}},
   {ops::kNameResize, {1}},
   {ops::kNameResizeGrad, {}},
+  {ops::kNameROIAlign, {1}},
   {ops::kNameROIPooling, {1}},
   {ops::kNameSGD, {2}},
   {ops::kNameSpaceToBatch, {1}},
@@ -163,6 +178,39 @@ bool IsDynamicFormatOp(const std::string &op_type) {
 bool IsDynamicFormatOpWithAxis(const std::string &op_type) {
   auto iter = DynamicFormatOpList.find(op_type);
   return iter != DynamicFormatOpList.end() && iter->second;
+}
+
+STATUS GetCastDstDataType(const CNodePtr &cnode, int *perm) {
+  MS_CHECK_TRUE_RET(cnode != nullptr, lite::RET_NULL_PTR);
+  MS_CHECK_TRUE_RET(perm != nullptr, lite::RET_NULL_PTR);
+  if (cnode->size() != kInputSizeThree) {
+    MS_LOG(ERROR) << "cast op input size must be three.";
+    return lite::RET_ERROR;
+  }
+  if (utils::isa<CNodePtr>(cnode->input(kInputIndexTwo))) {
+    return lite::RET_OK;
+  }
+  lite::DataInfo data_info;
+  int status;
+  if (utils::isa<ParameterPtr>(cnode->input(kInputIndexTwo))) {
+    status = lite::FetchDataFromParameterNode(cnode, kInputIndexTwo, converter::kFmkTypeMs, &data_info, true);
+  } else {
+    status = lite::FetchDataFromValueNode(cnode, kInputIndexTwo, converter::kFmkTypeMs, false, &data_info, true);
+  }
+  if (status != lite::RET_OK) {
+    MS_LOG(ERROR) << "fetch cast dst data type failed.";
+    return lite::RET_ERROR;
+  }
+  if (data_info.data_type_ != kNumberTypeInt && data_info.data_type_ != kNumberTypeInt32) {
+    MS_LOG(ERROR) << "cast data type is invalid.";
+    return lite::RET_ERROR;
+  }
+  if (data_info.data_.size() != sizeof(int32_t)) {
+    MS_LOG(ERROR) << "Data and datatype of data-info not match.";
+    return false;
+  }
+  *perm = reinterpret_cast<int *>(data_info.data_.data())[0];
+  return lite::RET_OK;
 }
 
 STATUS GetTransposePerm(const CNodePtr &cnode, std::vector<int> *perm) {
@@ -234,32 +282,129 @@ bool IsMonadNode(const AnfNodePtr &node) {
 
 bool IsSpecialType(const CNodePtr &cnode) {
   return CheckPrimitiveType(cnode, prim::kPrimTupleGetItem) || CheckPrimitiveType(cnode, prim::kPrimDepend) ||
-         CheckPrimitiveType(cnode, prim::kPrimMakeTuple) || CheckPrimitiveType(cnode, kPrimMakeTupleV2) ||
+         CheckPrimitiveType(cnode, prim::kPrimMakeTuple) || CheckPrimitiveType(cnode, prim::kPrimMakeTupleV2) ||
          CheckPrimitiveType(cnode, prim::kPrimReturn);
+}
+
+int DetermineCertainOutputFormat(const CNodePtr &cnode, int index, Format *format) {
+  MS_CHECK_TRUE_MSG(cnode != nullptr && format != nullptr, RET_ERROR, "function's parameter is nullptr.");
+  *format = mindspore::NHWC;
+  auto prim = GetCNodePrimitive(cnode);
+  MS_CHECK_TRUE_MSG(prim != nullptr, RET_ERROR, "get primitive failed");
+  auto value_ptr = prim->GetAttr(kOutputsFormat);
+  if (value_ptr != nullptr) {
+    MS_CHECK_TRUE_MSG(value_ptr->isa<ValueSequeue>(), RET_ERROR, "outputs_format attr should be sequence.");
+    auto formats = CastToInt(value_ptr);
+    if (index >= 0 && static_cast<size_t>(index) < formats.size()) {
+      MS_CHECK_TRUE_MSG(formats[index] >= NCHW && formats[index] <= NCW, RET_ERROR,
+                        "format val is out of enum's range.");
+      *format = static_cast<Format>(formats[index]);
+    }
+  }
+  return RET_OK;
 }
 
 int DetermineCertainVarInputFormat(const CNodePtr &cnode, size_t index, Format *format) {
   MS_CHECK_TRUE_MSG(cnode != nullptr && format != nullptr, RET_ERROR, "function's parameter is nullptr.");
   auto var_input_info = GetRealCertainVarInput(cnode, index);
   if (var_input_info.first == nullptr) {
-    MS_LOG(ERROR) << "cannot get the real var input.";
-    return RET_ERROR;
+    MS_LOG(DEBUG) << "cannot get the real var input.";
+    return RET_OK;
   }
-  *format = mindspore::NHWC;
   auto real_input_cnode = var_input_info.first;
   auto item_index = var_input_info.second;
-  auto input_node_prim = GetValueNode<PrimitivePtr>((real_input_cnode->input(0)));
-  MS_CHECK_TRUE_MSG(input_node_prim != nullptr, RET_ERROR, "get primitive failed");
-  auto value_ptr = input_node_prim->GetAttr(kOutputsFormat);
-  if (value_ptr != nullptr) {
-    MS_CHECK_TRUE_MSG(value_ptr->isa<ValueSequeue>(), RET_ERROR, "outputs_format attr should be sequence.");
-    auto formats = CastToInt(value_ptr);
-    if (item_index >= 0 && static_cast<size_t>(item_index) < formats.size()) {
-      MS_CHECK_TRUE_MSG(formats[item_index] >= NCHW && formats[item_index] <= NCW, RET_ERROR,
-                        "format val is out of enum's range.");
-      *format = static_cast<Format>(formats[item_index]);
+  return DetermineCertainOutputFormat(real_input_cnode, item_index, format);
+}
+
+int SetAbstractTensorInfo(const AbstractBasePtr &abstract) {
+  if (!utils::isa<abstract::AbstractTensor>(abstract)) {
+    MS_LOG(ERROR) << "abstract is not a AbstractTensor";
+    return RET_ERROR;
+  }
+  if (abstract->isa<tensor::Tensor>()) {
+    MS_LOG(DEBUG) << "abstract have a tensor value.";
+    return RET_OK;
+  }
+  ShapeVector shape;
+  if (opt::FetchShapeFromAbstract(abstract, &shape) != RET_OK) {
+    MS_LOG(ERROR) << "FetchShapeFromAbstract failed.";
+    return RET_ERROR;
+  }
+  TypeId type = lite::GetAbstractTensorDtype(abstract->cast<abstract::AbstractTensorPtr>());
+  // For kObjectTypeTensorType, the abstract value is TensorList amd does not need to reset.
+  if (type != kObjectTypeTensorType) {
+    auto tensor_info = std::make_shared<tensor::Tensor>(type, shape);
+    if (tensor_info == nullptr) {
+      MS_LOG(ERROR) << "new tensor::Tensor failed";
+      return RET_ERROR;
+    }
+    abstract->set_value(tensor_info);
+  }
+  return RET_OK;
+}
+
+STATUS GetFormatSensitiveOpInsertIndex(const CNodePtr &cnode, std::vector<size_t> *insert_index) {
+  auto prim_node = cnode->input(0);
+  auto prim = GetValueNode<PrimitivePtr>(prim_node);
+  MS_ERROR_IF_NULL_W_RET_VAL(prim, lite::RET_ERROR);
+  MS_ERROR_IF_NULL_W_RET_VAL(insert_index, lite::RET_ERROR);
+  insert_index->clear();
+  if (ToNCHWOpMap.find(prim->name()) == ToNCHWOpMap.end()) {
+    return lite::RET_OK;
+  }
+
+  *insert_index = ToNCHWOpMap.at(prim->name());
+  if (insert_index->empty()) {
+    if (opt::CheckPrimitiveType(cnode, prim::kPrimResizeGrad) && prim->GetAttr(ops::kMethod) != nullptr &&
+        GetValue<int64_t>(prim->GetAttr(ops::kMethod)) == static_cast<int64_t>(mindspore::ResizeMethod::NEAREST)) {
+      insert_index->push_back(1);
+    } else {
+      for (size_t i = 1; i < cnode->size(); ++i) {
+        insert_index->push_back(i);
+      }
     }
   }
+  return RET_OK;
+}
+
+int ConvertAbstractFormatShape(const AbstractBasePtr &abstract, FormatTransNodeType perm) {
+  ShapeVector shape;
+  if (perm == kNONE) {
+    return lite::RET_OK;
+  }
+  if (FetchShapeFromAbstract(abstract, &shape) != lite::RET_OK) {
+    MS_LOG(ERROR) << "fetch shape failed.";
+    return lite::RET_ERROR;
+  }
+  if (shape.size() < kInputSizeThree) {
+    MS_LOG(DEBUG) << "shape don't need to modify.";
+    return lite::RET_OK;
+  }
+  auto shape_value = abstract->BuildValue();
+  if (!shape_value->isa<tensor::Tensor>()) {
+    MS_LOG(WARNING) << "abstract must be a tensor, but got: " << shape_value->ToString() << ".";
+    return RET_ERROR;
+  }
+  auto input_tensor = shape_value->cast<tensor::TensorPtr>();
+  MS_CHECK_FALSE(input_tensor == nullptr, RET_ERROR);
+  if (perm == kNHWC2NCHW) {
+    ShapeVector transfer_shape = shape;
+    size_t shape_size = shape.size();
+    transfer_shape[1] = shape[shape_size - 1];
+    for (size_t i = kDim2; i < shape_size; i++) {
+      transfer_shape[i] = shape[i - 1];
+    }
+    abstract->set_shape(std::make_shared<abstract::Shape>(transfer_shape));
+  } else if (perm == kNCHW2NHWC) {
+    ShapeVector transfer_shape = shape;
+    size_t shape_size = shape.size();
+    transfer_shape[shape_size - 1] = shape[1];
+    for (size_t i = kDim1; i < shape_size - 1; i++) {
+      transfer_shape[i] = shape[i + 1];
+    }
+    abstract->set_shape(std::make_shared<abstract::Shape>(transfer_shape));
+  }
+
   return RET_OK;
 }
 }  // namespace opt

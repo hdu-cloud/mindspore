@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,15 +15,18 @@
  */
 
 #include "frontend/parallel/auto_parallel/rec_core/rec_partition.h"
+
 #include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
+#include <iostream>
 
-#include "ir/anf.h"
 #include "frontend/parallel/status.h"
 #include "frontend/parallel/ops_info/ops_utils.h"
+#include "frontend/parallel/step_parallel_utils.h"
+#include "include/common/utils/parallel_context.h"
 
 namespace mindspore {
 namespace parallel {
@@ -36,6 +39,11 @@ double GetWeights(const Graph::NodeType &node) {
     auto cost_ptr = std::make_shared<CostMatMul>();
 
     return cost_ptr->GetMaxCostIn(op);
+  } else if (op.op_type == OperatorType::kRecBatchMatMul) {
+    // For BatchMatMul
+    auto cost_ptr = std::make_shared<CostBatchMatMul>();
+
+    return cost_ptr->GetMaxCostIn(node);
   } else if (op.op_type == OperatorType::kRecConvolution) {
     // For Convolution
     auto cost_ptr = std::make_shared<CostConvolution>();
@@ -76,15 +84,21 @@ double GetWeights(const Graph::NodeType &node) {
     return cost_ptr->GetMinCostIn();
   } else if (op.op_type == OperatorType::kRecBatchNorm || op.op_type == OperatorType::kRecOneHot ||
              op.op_type == OperatorType::kRecPReLU || op.op_type == OperatorType::kRecUnsortedSegmentOp ||
-             op.op_type == OperatorType::kRecSoftmax ||
+             op.op_type == OperatorType::kRecSoftmax || op.op_type == OperatorType::kRecBatchParallel ||
              op.op_type == OperatorType::kRecSparseSoftmaxCrossEntropyWithLogits ||
              op.op_type == OperatorType::kRecSoftmaxCrossEntropyWithLogits) {
     // For BatchParallel op
     auto cost_ptr = std::make_shared<CostBatchParallel>();
 
     return cost_ptr->GetMaxCostIn();
-  } else if (op.op_type == OperatorType::kRecUnkownType) {
+  } else if (op.op_type == OperatorType::kRecUnknownType) {
     // For Unknown type
+    return 0.0;
+  } else if (op.op_type == OperatorType::kRecVirtual) {
+    // For Unknown type
+    return 0.0;
+  } else if (op.op_type == OperatorType::kRecStandAlone) {
+    // For StandAlone type
     return 0.0;
   } else {
     MS_LOG(EXCEPTION) << "Failure: GetOperatorWeight failed.";
@@ -99,11 +113,16 @@ std::vector<size_t> SortByWeight(const std::shared_ptr<Graph> &graph) {
   std::vector<size_t> node_index_by_weights;
 
   // Get node's weight.
-  for (size_t i = 0; i < graph->nodes.size(); i++) {
-    if (graph->nodes[i].info == kApplication) {
-      const Graph::NodeType &node_ptr = graph->nodes[i];
-      double weight = GetWeights(node_ptr);
-      size_t index = i;
+  for (size_t pos = 0; pos < graph->nodes.size(); pos++) {
+    if (graph->nodes[pos].info == kApplication) {
+      const Graph::NodeType &node_ptr = graph->nodes[pos];
+      double weight;
+      if (PARTITION_ORDER == PartitionOrder::TopologyOrder) {
+        weight = (node_ptr.apply.op_type == OperatorType::kRecUnknownType) ? DOUBLE_LOWEST : pos;
+      } else {
+        weight = GetWeights(node_ptr);
+      }
+      size_t index = pos;
       weight_to_node_index.push_back(std::make_pair(weight, index));
     }
   }
@@ -121,17 +140,96 @@ std::vector<size_t> SortByWeight(const std::shared_ptr<Graph> &graph) {
 }
 
 // Get optimal strategy to partition the target node
-StrategyRec PartitionNode(const Graph::NodeType &node,
+StrategyRec PartitionNode(Graph::NodeType node,
                           const std::vector<std::pair<std::string, StrategyRec>> &node_name_to_strategy,
-                          const std::shared_ptr<Graph> &graph) {
+                          const std::shared_ptr<Graph> &graph, const bool isTraining) {
   bool enable_conv_chw_partition = false;
   MS_EXCEPTION_IF_NULL(graph);
 
   if (node.apply.op_type == OperatorType::kRecMatMul) {
+    if (graph->dyn_shape_tmp_fix) {
+      if (node.param_name.find(".projection.weight") != std::string::npos) {
+        node.apply.str.inputTensor[0].str_w /= 2.0;
+        node.apply.str.inputTensor[1].str_h /= 2.0;
+        return node.apply.str;
+      }
+      if (node.param_name.find(".mapping.weight") != std::string::npos) {
+        node.apply.str.inputTensor[1].str_w /= 2.0;
+        node.apply.str.outputTensor.str_w /= 2.0;
+        return node.apply.str;
+      }
+      if (node.param_name.find(".attention.dense2.weight") != std::string::npos) {
+        node.apply.str.inputTensor[1].str_w /= 2.0;
+        node.apply.str.outputTensor.str_w /= 2.0;
+        return node.apply.str;
+      }
+    }
+
     // For MatMul
     auto cost_ptr = std::make_shared<CostMatMul>();
 
-    return cost_ptr->GetOptimalStr(node, node_name_to_strategy, *graph);
+    return cost_ptr->GetOptimalStr(node, node_name_to_strategy, *graph, isTraining);
+  } else if (node.apply.op_type == OperatorType::kRecBatchMatMul) {
+    if (graph->dyn_shape_tmp_fix) {
+      if (node.param_name.find(".projection.weight") != std::string::npos) {
+        node.apply.str.inputTensor[0].str_w /= 2.0;
+        node.apply.str.inputTensor[1].str_h /= 2.0;
+        return node.apply.str;
+      }
+      if (node.param_name.find(".mapping.weight") != std::string::npos) {
+        node.apply.str.inputTensor[1].str_w /= 2.0;
+        node.apply.str.outputTensor.str_w /= 2.0;
+        return node.apply.str;
+      }
+
+      bool same_inputs = false;
+      bool projection_bias_bmm = false;
+      bool mapping_bias_bmm = false;
+      for (size_t idx = 0; idx < node.node_in.size(); idx++) {
+        if (idx == node.node_in.size() - 1) {
+          break;
+        }
+        for (size_t idx_bis = idx + 1; idx_bis < node.node_in.size(); idx_bis++) {
+          if (node.node_in[idx] == node.node_in[idx_bis]) {
+            same_inputs = true;
+            break;
+          }
+        }
+        if (same_inputs) {
+          break;
+        }
+      }
+      if (same_inputs) {
+        return node.apply.str;
+      }
+
+      for (size_t idx = 0; idx < node.node_in.size(); idx++) {
+        auto incoming_node_idx = node.node_in[idx];
+        if (graph->nodes[incoming_node_idx].param_name.find(".projection.bias") != std::string::npos) {
+          projection_bias_bmm = true;
+          break;
+        }
+        if (graph->nodes[incoming_node_idx].param_name.find(".mapping.bias") != std::string::npos) {
+          mapping_bias_bmm = true;
+          break;
+        }
+      }
+      if (projection_bias_bmm) {
+        node.apply.str.inputTensor[0].str_w /= 2.0;
+        node.apply.str.inputTensor[1].str_h /= 2.0;
+        return node.apply.str;
+      }
+      if (mapping_bias_bmm) {
+        node.apply.str.inputTensor[1].str_w /= 2.0;
+        node.apply.str.outputTensor.str_w /= 2.0;
+        return node.apply.str;
+      }
+    }
+
+    // For BatchMatMul
+    auto cost_ptr = std::make_shared<CostBatchMatMul>();
+
+    return cost_ptr->GetOptimalStr(node, node_name_to_strategy, *graph, isTraining);
   } else if (node.apply.op_type == OperatorType::kRecConvolution) {
     // For Convolution
     auto cost_ptr = std::make_shared<CostConvolution>();
@@ -173,7 +271,8 @@ StrategyRec PartitionNode(const Graph::NodeType &node,
   } else if (node.apply.op_type == OperatorType::kRecBatchNorm || node.apply.op_type == OperatorType::kRecOneHot ||
              node.apply.op_type == OperatorType::kRecPReLU || node.apply.op_type == kRecSoftmax ||
              node.apply.op_type == OperatorType::kRecSparseSoftmaxCrossEntropyWithLogits ||
-             node.apply.op_type == kRecUnsortedSegmentOp) {
+             node.apply.op_type == kRecUnsortedSegmentOp || node.apply.op_type == OperatorType::kRecBatchParallel ||
+             node.apply.op_type == OperatorType::kRecVirtual) {
     // For BatchParallel type
     auto cost_ptr = std::make_shared<CostBatchParallel>();
     return cost_ptr->GetOptimalStr(node);
@@ -181,8 +280,12 @@ StrategyRec PartitionNode(const Graph::NodeType &node,
     // For SoftmaxCrossEntropyWithLogits type
     auto cost_ptr = std::make_shared<CostSoftmaxCrossEntropyWithLogits>();
     return cost_ptr->GetOptimalStr(node);
-  } else if (node.apply.op_type == OperatorType::kRecUnkownType) {
+  } else if (node.apply.op_type == OperatorType::kRecUnknownType) {
     // For Unknown type
+    StrategyRec default_strategy;
+    return default_strategy;
+  } else if (node.apply.op_type == OperatorType::kRecStandAlone) {
+    // For stand_alone type
     StrategyRec default_strategy;
     return default_strategy;
   } else {
@@ -201,12 +304,48 @@ StrategyRec GetOneLoopStrategy(size_t op_inputs_num, const StrategyRec &old_str,
     }
   }
 
+  if (old_str.outputTensor.str_n > EPS && old_str.outputTensor.str_c > EPS && old_str.outputTensor.str_h > EPS &&
+      old_str.outputTensor.str_w > EPS) {
+    new_str.outputTensor.str_n = new_str.outputTensor.str_n / old_str.outputTensor.str_n;
+    new_str.outputTensor.str_c = new_str.outputTensor.str_c / old_str.outputTensor.str_c;
+    new_str.outputTensor.str_h = new_str.outputTensor.str_h / old_str.outputTensor.str_h;
+    new_str.outputTensor.str_w = new_str.outputTensor.str_w / old_str.outputTensor.str_w;
+  }
+
   return new_str;
 }
 
+Graph::NodeType ChangeStrategy(Graph::NodeType Node, size_t n_cut) {
+  if (n_cut >= Node.apply.strs.size()) {
+    MS_LOG(EXCEPTION) << "Strategy not available";
+  }
+  Node.apply.str = Node.apply.strs[n_cut];
+  Node = ApplyStrToTensor(Node);
+
+  return Node;
+}
+
+size_t GetStratNumber(const Graph::NodeType &Node) { return Node.apply.strs.size(); }
+
+void PartitionPipelineStages(double device_memory, const std::shared_ptr<Graph> &graph) {
+  if (!ENABLE_PIPE_ALGO) {
+    size_t n_stage = LongToSize(parallel::ParallelContext::GetInstance()->pipeline_stage_split_num());
+    size_t n_node = graph->nodes.size();
+    size_t roll_back = FloatToSize(log2(n_stage));
+
+    MS_LOG(INFO) << "ROLLING BACK ACCORDING TO STAGE NUMBER (" << n_stage << ") BY " << roll_back << " LEVELS"
+                 << std::endl;
+    for (size_t i_node = 0; i_node < n_node; ++i_node) {
+      Graph::NodeType &node_ptr = graph->nodes[i_node];
+      size_t n_cut = GetStratNumber(graph->nodes[i_node]) - roll_back - 1;
+      graph->nodes[i_node] = ChangeStrategy(node_ptr, n_cut);
+    }
+  }
+}
+
 // Partition graph into all devices.
-Status PartitionForAllDevices(const size_t num_device, const double device_memory,
-                              const std::shared_ptr<Graph> &graph) {
+Status PartitionForAllDevices(size_t num_device, double device_memory, const std::shared_ptr<Graph> &graph,
+                              bool isTraining) {
   if (num_device < 1) {
     MS_LOG(EXCEPTION) << "ERROR: Number of devices can't be " << num_device << ".";
   }
@@ -222,6 +361,7 @@ Status PartitionForAllDevices(const size_t num_device, const double device_memor
   if (iter_times > 10) {
     MS_LOG(EXCEPTION) << "ERROR: Number of iter_times can't be larger than 10.";
   }
+
   // N-cuts loop
   for (int64_t loop = 0; loop < iter_times; loop++) {
     // Sort by weights
@@ -243,8 +383,16 @@ Status PartitionForAllDevices(const size_t num_device, const double device_memor
       // 2-parts partitioning StrategyRec of the last loop
       StrategyRec old_str = graph->nodes[index].apply.str;
 
-      // Serch optimal strategy to cut this operator. And store the result optimal strategy in graph.
-      graph->nodes[index].apply.str = PartitionNode(node_ptr, node_name_to_strategy, graph);
+      // Save first strategy too
+      if (graph->nodes[index].apply.strs.size() == 0) {
+        graph->nodes[index].apply.strs.push_back(old_str);
+      }
+
+      MS_LOG(INFO) << "------------Node_name: " << graph->nodes[index].name << " -------------";
+
+      // Search optimal strategy to cut this operator. And store the result optimal strategy in graph.
+      graph->nodes[index].apply.str = PartitionNode(node_ptr, node_name_to_strategy, graph, isTraining);
+      graph->nodes[index].apply.strs.push_back(graph->nodes[index].apply.str);
 
       // Get Current 2-parts partitioning strategy of this loop
       size_t op_inputs_num = graph->nodes[index].node_in.size();
@@ -259,9 +407,12 @@ Status PartitionForAllDevices(const size_t num_device, const double device_memor
     }
   }
 
-  if (DevicesMemoryControl(num_device, device_memory, graph) != SUCCESS) {
-    return FAILED;
+  // Partition stages
+  if (parallel::ParallelContext::GetInstance()->pipeline_stage_split_num() > 1) {
+    PartitionPipelineStages(device_memory, graph);
   }
+
+  DevicesMemoryControl(num_device, device_memory, graph);
   return SUCCESS;
 }
 
@@ -283,7 +434,7 @@ Graph::NodeType ApplyStrToTensor(Graph::NodeType Node) {
   return Node;
 }
 
-Status DevicesMemoryControl(const size_t num_device, const double device_memory, const std::shared_ptr<Graph> &graph) {
+void DevicesMemoryControl(const size_t num_device, const double device_memory, const std::shared_ptr<Graph> &graph) {
   MS_EXCEPTION_IF_NULL(graph);
   if (num_device == 0) {
     MS_LOG(EXCEPTION) << "Failure: device number is 0.";
@@ -306,9 +457,7 @@ Status DevicesMemoryControl(const size_t num_device, const double device_memory,
   }
 
   if (device_memory < (used_memory / num_device)) {
-    MS_LOG(EXCEPTION) << "Failure: Out of memory!";
-  } else {
-    return SUCCESS;
+    MS_LOG(WARNING) << "It is estimated that the task may collapse due to out of memory!";
   }
 }
 

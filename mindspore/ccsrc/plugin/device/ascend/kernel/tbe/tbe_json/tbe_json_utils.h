@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,8 +22,8 @@
 #include <algorithm>
 #include <vector>
 #include <string>
-#include "mindspore/core/ops/core_ops.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
+#include "ops/framework_op_name.h"
 #include "include/common/utils/anfalgo.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_convert_utils.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_dynamic_shape_util.h"
@@ -60,6 +60,7 @@ constexpr auto kVTypeFloat32 = "float32";
 constexpr auto kVTypeListInt = "listInt";
 constexpr auto kVTypeInt32 = "Int32";
 constexpr auto kVTypeInt64 = "Int64";
+constexpr auto kVTypeListInt64 = "listInt64";
 constexpr auto kVTypeListUInt64 = "listUInt64";
 constexpr auto kVTypeListFloat = "listFloat";
 constexpr auto kVTypeListListInt = "listListInt";
@@ -75,6 +76,7 @@ constexpr auto kJSplitIndex = "split_index";
 constexpr auto kJTotalShape = "total_shape";
 constexpr auto kJDynamicCompileStatic = "dynamic_compile_static";
 constexpr auto kJIsDynamicImpl = "is_dynamic_impl";
+constexpr auto kJOpImplMode = "op_impl_mode";
 constexpr auto kJInt64Mode = "int64mode";
 constexpr auto kJValidShape = "valid_shape";
 constexpr auto kJModuleName = "module_name";
@@ -103,10 +105,12 @@ constexpr auto kJOpName = "op_name";
 constexpr auto kJUnknowShape = "unknown_shape";
 constexpr auto kJListArgs = "list_args";
 constexpr auto kAccuratelyBuild = "accurately_build";
-constexpr auto kPyPath = "/usr/local/Ascend/opp/op_impl/built-in/ai_core/tbe";
+constexpr auto kPyPath = "/usr/local/Ascend/latest/opp/built-in/op_impl/ai_core/tbe";
 constexpr auto kJMaxKernelIDValue = 10;
 constexpr auto kJConstValue = "const_value";
 constexpr auto kJConstValueDtype = "const_value_dtype";
+constexpr auto kJOpDebugConfig = "op_debug_config";
+constexpr auto kJCValue = "input_c_values";
 
 class TbeJsonUtils {
  public:

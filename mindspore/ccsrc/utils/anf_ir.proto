@@ -86,12 +86,16 @@ enum DataType {
   DT_BASE_UINT = 37;    // type generate unsigned int
   DT_BASE_FLOAT = 38;   // type generate float
   DT_TYPE = 39;         // type type
-  DT_ANYTHING = 40;     // type anything
+  DT_ANY = 40;          // type any
   DT_REFKEY = 41;     // type refkey
   DT_REF = 42;     // type ref
   DT_COMPLEX64 = 43;   // list of complex64
   DT_COMPLEX128 = 44;   // list of complex128
   DT_BASE_COMPLEX = 45;   // type generate complex
+
+  // bfloat type
+  DT_BFLOAT16 = 46;   // bfloat16
+  DT_BFLOATS16 = 47;  // list of bfloat16
 }
 
 // Value definition for attribute value or parameter default value

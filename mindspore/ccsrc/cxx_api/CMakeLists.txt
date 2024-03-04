@@ -25,7 +25,7 @@ include_directories(${CMAKE_SOURCE_DIR}/mindspore/ccsrc/minddata/dataset)
 if(ENABLE_D OR ENABLE_ACL)
     # build 910 and 310 code into one distro, files needed for 310 mode
     add_compile_definitions(ENABLE_ACL)
-    include_directories(${CMAKE_SOURCE_DIR}/graphengine/ge)
+    include_directories(${GRAPHENGINE_PATH}/ge)
     include_directories(${CMAKE_BINARY_DIR}/proto/ge)
 endif()
 
@@ -56,23 +56,30 @@ endif()
 
 if(NOT BUILD_LITE)
     list(APPEND MSLIB_SRC_DEPEND
+            ${CMAKE_SOURCE_DIR}/mindspore/ccsrc/frontend/parallel/strategy_checkpoint/strategy_checkpoint_info.cc)
+    list(APPEND MSLIB_SRC_DEPEND
             ${CMAKE_SOURCE_DIR}/mindspore/ccsrc/frontend/parallel/strategy_checkpoint/parallel_strategy_checkpoint.cc)
     list(APPEND MSLIB_SRC_DEPEND ${CMAKE_SOURCE_DIR}/mindspore/ccsrc/frontend/parallel/tensor_layout/array.cc)
     list(APPEND MSLIB_SRC_DEPEND ${CMAKE_SOURCE_DIR}/mindspore/ccsrc/frontend/parallel/tensor_layout/map.cc)
     list(APPEND MSLIB_SRC_DEPEND ${CMAKE_SOURCE_DIR}/mindspore/ccsrc/frontend/parallel/tensor_layout/arrangement.cc)
     list(APPEND MSLIB_SRC_DEPEND ${CMAKE_SOURCE_DIR}/mindspore/ccsrc/frontend/parallel/tensor_layout/shape_util.cc)
+    list(APPEND MSLIB_SRC_DEPEND ${CMAKE_SOURCE_DIR}/mindspore/ccsrc/frontend/parallel/tensor_layout/tensor_layout.cc)
     list(APPEND MSLIB_SRC_DEPEND ${CMAKE_CURRENT_SOURCE_DIR}/utils.cc)
 endif()
 
 if((MODE_ASCEND_ACL) AND NOT BUILD_LITE)
     list(APPEND MSLIB_SRC
         "${CMAKE_SOURCE_DIR}/mindspore/ccsrc/plugin/device/ascend/optimizer/enhancer/add_placeholder_for_dynamic_rnn.cc"
+        "${CMAKE_SOURCE_DIR}/mindspore/ccsrc/plugin/device/ascend/optimizer/enhancer/add_placeholder_for_dynamic_gru.cc"
         "${CMAKE_SOURCE_DIR}/mindspore/ccsrc/backend/common/optimizer/pattern_engine.cc"
         "${CMAKE_SOURCE_DIR}/mindspore/ccsrc/backend/common/optimizer/helper.cc"
         "${CMAKE_SOURCE_DIR}/mindspore/ccsrc/backend/common/optimizer/node_pass.cc"
-        "${CMAKE_SOURCE_DIR}/mindspore/ccsrc/backend/common/optimizer/visit.cc"
+        "${CMAKE_SOURCE_DIR}/mindspore/ccsrc/backend/common/optimizer/visitor.cc"
+        "${CMAKE_SOURCE_DIR}/mindspore/ccsrc/backend/operator/ops_backend_infer_function.cc"
         "${CMAKE_SOURCE_DIR}/mindspore/ccsrc/kernel/kernel_build_info.cc"
-        "${CMAKE_SOURCE_DIR}/mindspore/ccsrc/runtime/device/kernel_info.cc")
+        "${CMAKE_SOURCE_DIR}/mindspore/ccsrc/runtime/device/kernel_info.cc"
+        "${CMAKE_SOURCE_DIR}/mindspore/ccsrc/plugin/device/ascend/optimizer/mindir/reduce_axis_update.cc"
+        "${CMAKE_SOURCE_DIR}/mindspore/ccsrc/plugin/device/ascend/optimizer/ge_optimization.cc")
     # MODE_ASCEND_ACL don't need reg akg kernel
     list(REMOVE_ITEM MSLIB_SRC "${CMAKE_CURRENT_SOURCE_DIR}/akg_kernel_register.cc")
 endif()
@@ -83,7 +90,9 @@ if(NOT ENABLE_TESTCASES AND NOT BUILD_LITE)
 endif()
 
 if(BUILD_LITE)
-    list(APPEND MSLIB_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../../../mindspore/ccsrc/utils/config_manager.cc")
+    list(APPEND MSLIB_SRC
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../../mindspore/ccsrc/utils/config_manager.cc"
+        "${CMAKE_CURRENT_SOURCE_DIR}/model/aoe/auto_tune_process.cc")
     file(GLOB_RECURSE ACL_REMOVE_SRC ${CMAKE_CURRENT_SOURCE_DIR}
             "model/acl/acl_vm/*.cc"
             )
@@ -97,11 +106,15 @@ if(BUILD_LITE)
             ${ACL_REMOVE_SRC})
 endif()
 
-add_library(mindspore_shared_lib_obj OBJECT ${MSLIB_SRC})
-add_library(mindspore_shared_lib SHARED $<TARGET_OBJECTS:mindspore_shared_lib_obj> ${MSLIB_SRC_DEPEND})
+add_library(common_shared_lib_obj OBJECT ${MSLIB_SRC})
 if(BUILD_LITE)
-    target_link_libraries(mindspore_shared_lib PRIVATE $<TARGET_OBJECTS:_mindspore_transform_graph_ir_obj>)
-    add_dependencies(mindspore_shared_lib _mindspore_transform_graph_ir_obj)
+    add_library(mslite_shared_lib SHARED $<TARGET_OBJECTS:common_shared_lib_obj> ${MSLIB_SRC_DEPEND})
+else()
+    add_library(mindspore_shared_lib SHARED $<TARGET_OBJECTS:common_shared_lib_obj> ${MSLIB_SRC_DEPEND})
+endif()
+if(BUILD_LITE)
+    target_link_libraries(mslite_shared_lib PRIVATE $<TARGET_OBJECTS:_mindspore_transform_graph_ir_obj>)
+    add_dependencies(mslite_shared_lib _mindspore_transform_graph_ir_obj)
 elseif(MODE_ASCEND_ACL)
     target_link_libraries(mindspore_shared_lib PRIVATE _mindspore_transform_graph_ir_obj
             _mindspore_backend_graph_compiler_obj _mindspore_debug_obj mindspore_backend_static)
@@ -128,11 +141,16 @@ else()
 endif()
 
 if(ENABLE_D OR ENABLE_GPU)
-    target_link_libraries(mindspore_shared_lib PRIVATE -Wl,--as-needed ${SECUREC_LIBRARY}
-            mindspore_backend mindspore_core mindspore_common proto_input mindspore::protobuf)
+    if(BUILD_LITE)
+        target_link_libraries(mslite_shared_lib PRIVATE -Wl,--as-needed ${SECUREC_LIBRARY}
+                mindspore_backend mindspore_core mindspore_common proto_input mindspore::protobuf)
+    else()
+        target_link_libraries(mindspore_shared_lib PRIVATE -Wl,--as-needed ${SECUREC_LIBRARY}
+                mindspore_backend mindspore_core mindspore_common proto_input mindspore::protobuf)
+    endif()
 else()
     if(BUILD_LITE)
-        target_link_libraries(mindspore_shared_lib PRIVATE mindspore_core ${SECUREC_LIBRARY})
+        target_link_libraries(mslite_shared_lib PRIVATE mindspore_core ${SECUREC_LIBRARY})
     else()
         target_link_libraries(mindspore_shared_lib PRIVATE ${PY3_LIBG} ${SECUREC_LIBRARY}
                 mindspore_backend mindspore mindspore_core mindspore_common proto_input mindspore::protobuf)
@@ -140,15 +158,27 @@ else()
 endif()
 
 if(ENABLE_CPU)
-    target_link_libraries(mindspore_shared_lib PRIVATE mindspore::dnnl mindspore::mkldnn nnacl)
+    if(BUILD_LITE)
+        target_link_libraries(mslite_shared_lib PRIVATE mindspore::dnnl mindspore::mkldnn nnacl)
+    else()
+        target_link_libraries(mindspore_shared_lib PRIVATE mindspore::dnnl mindspore::mkldnn nnacl)
+    endif()
 endif()
 
 if(USE_GLOG)
-    target_link_libraries(mindspore_shared_lib PRIVATE mindspore::glog)
+    if(BUILD_LITE)
+        target_link_libraries(mslite_shared_lib PRIVATE mindspore::glog)
+    else()
+        target_link_libraries(mindspore_shared_lib PRIVATE mindspore::glog)
+    endif()
 endif()
 
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
-    target_link_options(mindspore_shared_lib PRIVATE -Wl,-init,common_log_init)
+    if(BUILD_LITE)
+        target_link_options(mslite_shared_lib PRIVATE -Wl,-init,common_log_init)
+    else()
+        target_link_options(mindspore_shared_lib PRIVATE -Wl,-init,common_log_init)
+    endif()
 endif()
 
 if(MODE_ASCEND_ACL OR MSLITE_ENABLE_ACL)
@@ -167,11 +197,18 @@ if(MODE_ASCEND_ACL OR MSLITE_ENABLE_ACL)
             ${ASCEND_TOOLKIT_RUNTIME_PATH})
     find_library(GE_RUNNER ge_runner ${ASCEND_CANN_RUNTIME_PATH} ${ASCEND_TOOLKIT_RUNTIME_PATH})
 
-    target_link_libraries(mindspore_shared_lib PRIVATE -Wl,--no-as-needed graph ${ge_compiler}
-            ${acl_retr} ${acl_cblas} ${acl_dvpp} ${acl_runtime} ${libplatform} ${libcompress} ${libopskernel}
-            ${libaicore_utils} ${libaicpu_engine_common} ${acl} ${GE_RUNNER})
-    add_dependencies(mindspore_shared_lib_obj graph)
-    add_dependencies(mindspore_shared_lib graph)
+    if(BUILD_LITE)
+        target_link_libraries(mslite_shared_lib PRIVATE -Wl,--no-as-needed graph ${ge_compiler}
+                ${acl_retr} ${acl_cblas} ${acl_dvpp} ${acl_runtime} ${libplatform} ${libcompress} ${libopskernel}
+                ${libaicore_utils} ${libaicpu_engine_common} ${acl} ${GE_RUNNER})
+        add_dependencies(mslite_shared_lib graph)
+    else()
+        target_link_libraries(mindspore_shared_lib PRIVATE -Wl,--no-as-needed graph ${ge_compiler}
+                ${acl_retr} ${acl_cblas} ${acl_dvpp} ${acl_runtime} ${libplatform} ${libcompress} ${libopskernel}
+                ${libaicore_utils} ${libaicpu_engine_common} ${acl} ${GE_RUNNER})
+        add_dependencies(mindspore_shared_lib graph)
+    endif()
+    add_dependencies(common_shared_lib_obj graph)
 endif()
 
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
@@ -184,15 +221,19 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux")
         set(MINDSPORE_SHARED_LIB_RPATH
             ${MINDSPORE_SHARED_LIB_RPATH}:/usr/local/Ascend/opp/op_impl/built-in/ai_core/tbe/op_tiling)
         set(MINDSPORE_SHARED_LIB_RPATH
-            ${MINDSPORE_SHARED_LIB_RPATH}:/usr/local/Ascend/nnae/latest/opp/op_impl/built-in/ai_core/tbe/op_tiling)
+            ${MINDSPORE_SHARED_LIB_RPATH}:/usr/local/Ascend/nnae/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling)
         set(MINDSPORE_SHARED_LIB_RPATH "${MINDSPORE_SHARED_LIB_RPATH}\
-            :/usr/local/Ascend/ascend-toolkit/latest/opp/op_impl/built-in/ai_core/tbe/op_tiling")
+            :/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling")
         set(MINDSPORE_SHARED_LIB_RPATH
-            ${MINDSPORE_SHARED_LIB_RPATH}:/usr/local/Ascend/latest/opp/op_impl/built-in/ai_core/tbe/op_tiling)
+            ${MINDSPORE_SHARED_LIB_RPATH}:/usr/local/Ascend/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling)
         set(MINDSPORE_SHARED_LIB_RPATH "${MINDSPORE_SHARED_LIB_RPATH}\
             :/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling")
         set(MINDSPORE_SHARED_LIB_RPATH
             ${MINDSPORE_SHARED_LIB_RPATH}:/usr/local/Ascend/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling)
     endif()
-    set_target_properties(mindspore_shared_lib PROPERTIES INSTALL_RPATH ${MINDSPORE_SHARED_LIB_RPATH})
+    if(BUILD_LITE)
+        set_target_properties(mslite_shared_lib PROPERTIES INSTALL_RPATH ${MINDSPORE_SHARED_LIB_RPATH})
+    else()
+        set_target_properties(mindspore_shared_lib PROPERTIES INSTALL_RPATH ${MINDSPORE_SHARED_LIB_RPATH})
+    endif()
 endif()

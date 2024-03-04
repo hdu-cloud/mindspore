@@ -17,7 +17,7 @@
 #include "runtime/graph_scheduler/rpc_node_scheduler.h"
 #include <vector>
 #include <string>
-#include "distributed/cluster/topology/compute_graph_node.h"
+#include "include/backend/distributed/cluster/topology/compute_graph_node.h"
 #include "include/common/utils/anfalgo.h"
 #include "runtime/graph_scheduler/actor/rpc/mux_send_actor.h"
 #include "runtime/graph_scheduler/actor/rpc/mux_recv_actor.h"
@@ -102,10 +102,8 @@ RpcActorSetPtr RpcNodeScheduler::Build(const ActorSet *actor_set) {
     rpc_actor->set_actor_route_table_proxy(proxy);
   }
 
-  if (!common::GetEnv("use_void").empty()) {
-    // Update the reference counts of rpc kernel inputs and workspaces.
-    UpdateRpcActorRefCounts(rpc_actor_set);
-  }
+  // Update the reference counts of rpc kernel inputs and workspaces.
+  UpdateRpcActorRefCounts(rpc_actor_set);
 
   return rpc_actor_set;
 }
@@ -217,6 +215,22 @@ void RpcNodeScheduler::ResetOpcontext(const RpcActorSetPtr &rpc_actors) {
   op_context_ = nullptr;
 }
 
+void RpcNodeScheduler::Clear() {
+  if (rpc_actors_ != nullptr) {
+    MS_LOG(INFO) << "Start finalizing tcp server and client for rpc actors.";
+    for (auto &recv_actor : rpc_actors_->recv_actors_) {
+      MS_EXCEPTION_IF_NULL(recv_actor);
+      recv_actor->Clear();
+    }
+    for (auto &send_actor : rpc_actors_->send_actors_) {
+      MS_EXCEPTION_IF_NULL(send_actor);
+      send_actor->Clear();
+    }
+    rpc_actors_ = nullptr;
+    MS_LOG(INFO) << "End finalizing tcp server and client for rpc actors.";
+  }
+}
+
 void RpcNodeScheduler::Abort() {
   MS_LOG(INFO) << "Start aborting rpc actors.";
   MS_ERROR_IF_NULL_WO_RET_VAL(rpc_actors_);
@@ -234,7 +248,7 @@ void RpcNodeScheduler::Abort() {
 
 void RpcNodeScheduler::UpdateRpcActorRefCounts(RpcActorSetPtr rpc_actor_set) const {
   MS_EXCEPTION_IF_NULL(rpc_actor_set);
-  for (const auto send_actor : rpc_actor_set->send_actors_) {
+  for (const auto &send_actor : rpc_actor_set->send_actors_) {
     MS_EXCEPTION_IF_NULL(send_actor);
     auto kernel_mod = AnfAlgo::GetKernelMod(send_actor->kernel_);
     MS_EXCEPTION_IF_NULL(kernel_mod);
@@ -266,19 +280,34 @@ RpcActorStatusUpdater &RpcActorStatusUpdater::GetInstance() {
   return instance;
 }
 
-void RpcActorStatusUpdater::set_rpc_actors(const RpcActorSetPtr &rpc_actors) {
+void RpcActorStatusUpdater::set_rpc_actors(const std::string &graph_name, const RpcActorSetPtr &rpc_actors) {
   if (rpc_actors != nullptr) {
-    rpc_actors_ = rpc_actors;
+    graph_to_rpc_actors_[graph_name] = rpc_actors;
   }
 }
 
-void RpcActorStatusUpdater::UpdateRpcActorStatus() const {
-  // To ensure performance, only mux recv actor need to update ready status for embedding cache mode currently.
-  if (is_embedding_cache_server()) {
-    MS_EXCEPTION_IF_NULL(rpc_actors_.lock());
-    for (auto &recv_actor : rpc_actors_.lock()->recv_actors_) {
-      MS_EXCEPTION_IF_NULL(recv_actor);
-      recv_actor->UpdateStatus();
+void RpcActorStatusUpdater::UpdateRpcActorStatus(const std::string &graph_name) {
+  // Update status for recv actors to control their execution orders.
+  if (graph_to_rpc_actors_.count(graph_name) != 0) {
+    auto rpc_actors = graph_to_rpc_actors_[graph_name];
+    if (rpc_actors.lock() != nullptr) {
+      for (auto &recv_actor : rpc_actors.lock()->recv_actors_) {
+        MS_EXCEPTION_IF_NULL(recv_actor);
+        recv_actor->UpdateStatus();
+      }
+    }
+  }
+}
+
+void RpcActorStatusUpdater::FlushRpcData(const std::string &graph_name) {
+  // Flush data for send actors.
+  if (graph_to_rpc_actors_.count(graph_name) != 0) {
+    auto rpc_actors = graph_to_rpc_actors_[graph_name];
+    if (rpc_actors.lock() != nullptr) {
+      for (auto &send_actor : rpc_actors.lock()->send_actors_) {
+        MS_EXCEPTION_IF_NULL(send_actor);
+        send_actor->FlushData();
+      }
     }
   }
 }

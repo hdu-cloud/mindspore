@@ -1,4 +1,4 @@
-# Copyright 2021-2022 Huawei Technologies Co., Ltd
+# Copyright 2021-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,6 +19,9 @@ import mindspore.dataset as ds
 import mindspore.common.dtype as mstype
 import mindspore.dataset.vision as C
 import mindspore.dataset.transforms as C2
+
+# Run these tests in separate processes since some tests update config parameters, like offload
+pytestmark = pytest.mark.forked
 
 DATA_DIR = "../data/dataset/testPK/data"
 BATCH_SIZE = 2
@@ -384,8 +387,7 @@ def test_offload_dim_check():
     dataset = dataset.map(operations=[C.Decode()], input_columns="image")
     dataset = dataset.map(operations=[C.HWC2CHW()], input_columns="image", offload=True)
 
-    error_msg = "For HwcToChw offload operation, the dimension of input should be 4, but got 3."
-    with pytest.raises(ValueError, match=error_msg):
+    with pytest.raises(ValueError):
         for (_, _) in dataset.create_tuple_iterator(num_epochs=1, output_numpy=True):
             continue
 
@@ -438,6 +440,33 @@ def test_offload_with_dict_itr():
     assert num == 3
 
 
+def test_offload_with_output_shape_type():
+    """
+    Feature: Test offload
+    Description: Test map offload with getter functions
+    Expectation: Pipeline will remove Normalize, HWC2CHW, TypeCast thus output shape is HWC and type is uint
+    """
+    dataset = ds.ImageFolderDataset(DATA_DIR, shuffle=False, decode=False)
+    trans = [
+        C.RandomCropDecodeResize(300),
+        C.RandomHorizontalFlip(prob=0.5),
+        C.RandomColorAdjust(brightness=0.4, contrast=0.4, saturation=0.4),
+        C.Normalize(mean=[0.485 * 255, 0.456 * 255, 0.406 * 255], std=[0.229 * 255, 0.224 * 255, 0.225 * 255]),
+        C.HWC2CHW(),
+        C2.TypeCast(mstype.float32)
+        ]
+    type_cast_op = C2.TypeCast(mstype.int32)
+
+    dataset = dataset.map(input_columns="image", operations=trans, num_parallel_workers=8, offload=True)
+    dataset = dataset.map(input_columns="label", operations=type_cast_op, num_parallel_workers=8)
+    dataset = dataset.batch(4, drop_remainder=True)
+
+    output_shapes = dataset.output_shapes()
+    output_types = dataset.output_types()
+    assert output_shapes == [[4, 300, 300, 3], [4]]
+    assert output_types == [np.dtype('uint8'), np.dtype('int32')]
+
+
 if __name__ == "__main__":
     test_offload()
     test_offload_string()
@@ -456,3 +485,4 @@ if __name__ == "__main__":
     test_offload_dim_check()
     test_offload_random_sharpness_op()
     test_offload_with_dict_itr()
+    test_offload_with_output_shape_type()

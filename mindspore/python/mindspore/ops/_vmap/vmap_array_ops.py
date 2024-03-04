@@ -16,25 +16,26 @@
 """array_ops vmap impl."""
 from __future__ import absolute_import
 
-import numpy as np
 import mindspore
 import mindspore.numpy as mnp
 from mindspore import ops
 from mindspore.common import Tensor
+from mindspore._c_expression import Tensor as Tensor_
 from mindspore.ops import operations as P
 from mindspore.ops import functional as F
-from mindspore.ops import constexpr
+from mindspore.ops.primitive import constexpr, _primexpr
 from mindspore.ops.operations._grad_ops import MaskedSelectGrad
 from mindspore.ops.operations import _grad_ops as G
 from mindspore.ops.operations.array_ops import Fills, UniqueConsecutive, Col2Im, NonZero, IndexFill, \
     TensorScatterElements
 from mindspore.ops.operations.random_ops import RandomPoisson
+from mindspore.ops.operations._inner_ops import DynamicBroadcastTo
 from mindspore.ops.primitive import Primitive
 from mindspore.ops._vmap.vmap_base import vmap_rules_getters, vmap_general_preprocess, _bdim_at_front, \
     _raise_value_error, _vmap_clone_prim, _handle_broadcasting, get_unsupported_dynamic_vmap_rule, _broadcast_by_axis, \
     get_unop_vmap_rule, _get_reduce_out_dim, _get_reduce_batch_axis, \
     _bdim_at_any
-from mindspore.ops.composite import _VmapGeneralRule
+from mindspore.ops.function import _VmapGeneralRule
 
 
 @vmap_rules_getters.register(P.NoRepeatNGram)
@@ -137,7 +138,7 @@ def get_arg_min_max_with_value_vmap_rule(prim, axis_size):
     return vmap_rule
 
 
-@constexpr
+@_primexpr
 def _get_prefix(indices_shape, axis_size, indices_dtype):
     """
     Generate prefix by indices shape, whose -1 axis value is the index value of axis 0.
@@ -147,14 +148,16 @@ def _get_prefix(indices_shape, axis_size, indices_dtype):
     the generated prefix is a Tensor([[[0], [0]],
                                       [[1], [1]]])
     """
-    if not indices_shape:
-        raise ValueError("indices_shape is empty in _get_prefix.")
+    def _check(indices_shape):
+        if not indices_shape:
+            raise ValueError("indices_shape is empty in _get_prefix.")
 
+    _check(indices_shape)
     indices_len = len(indices_shape)
-
     if indices_len == 1:
-        prefix = np.arange(axis_size)
-        return Tensor(prefix, indices_dtype)
+        prefix = P.Range()(Tensor(0, indices_dtype), F.fill(
+            indices_dtype, (), axis_size), Tensor(1, indices_dtype))
+        return prefix
 
     indices_end = indices_len - 1
     prefix_shape = ()
@@ -169,8 +172,9 @@ def _get_prefix(indices_shape, axis_size, indices_dtype):
         else:
             expand_shape = expand_shape + (1,)
 
-    prefix = np.broadcast_to(np.arange(axis_size).reshape(expand_shape), prefix_shape)
-    return Tensor(prefix, indices_dtype)
+    prefix = P.BroadcastTo(prefix_shape)(P.Reshape()(P.Range()(Tensor(
+        0, indices_dtype), Tensor(axis_size, indices_dtype), Tensor(1, indices_dtype)), expand_shape))
+    return prefix
 
 
 @vmap_rules_getters.register(P.Transpose)
@@ -179,7 +183,7 @@ def get_transpose_vmap_rule(prim, axis_size):
     if isinstance(prim, str):
         prim = Primitive(prim)
 
-    @constexpr
+    @_primexpr
     def _get_transpose_batch_perm(dim, perm, x_rank):
         """Generate batch_perm based on the original perm of transpose operation and dim of the input."""
         if dim < 0:
@@ -223,7 +227,7 @@ def get_tile_vmap_rule(prim, axis_size):
     if isinstance(prim, str):
         prim = Primitive(prim)
 
-    @constexpr
+    @_primexpr
     def _get_batch_multiples(input_shape, dim, multiples):
         input_ndim = len(input_shape)
         multiples_ndim = len(multiples)
@@ -352,8 +356,13 @@ def get_unstack_vmap_rule(prim, axis_size):
 def get_reshape_vmap_rule(prim, axis_size):
     """VmapRule for `Reshape` operation."""
 
-    @constexpr
+
+    @_primexpr
     def get_batch_shape(x_shape, x_dim, target_shape, axis_size):
+        def _check(neg_index, target_shape):
+            if neg_index != -1:
+                raise ValueError(f'The shape can only has one -1 at most, but {target_shape}.')
+
         if x_dim == 0:
             return (axis_size,) + target_shape, 0, False
 
@@ -364,19 +373,21 @@ def get_reshape_vmap_rule(prim, axis_size):
         dim_prod = 1
         for i, shp_i in enumerate(target_shape):
             if shp_i == -1:
-                if neg_index != -1:
-                    raise ValueError(f'The shape can only has one -1 at most, but {target_shape}.')
+                _check(neg_index, target_shape)
                 neg_index = i
             else:
                 dim_prod *= shp_i
-        arr_prod = np.prod(x_shape)
+        arr_prod = 1
+        for i in x_shape:
+            arr_prod *= i
         target_shape_list = list(target_shape)
         if neg_index != -1:
             neg_index_size = int(arr_prod // (dim_prod * axis_size))
             target_shape_list[neg_index] = neg_index_size
 
-        arr_prod_before_dim = np.prod(x_shape[:x_dim])
-
+        arr_prod_before_dim = 1
+        for i in x_shape[:x_dim]:
+            arr_prod_before_dim *= i
         dim_prod = 1
         for i, shp_i in enumerate(target_shape_list, start=1):
             dim_prod *= shp_i
@@ -421,7 +432,7 @@ def get_reverse_sequence_vmap_rule(prim, axis_size):
     batch_dim = prim.batch_dim_
     seq_dim = prim.seq_dim_
 
-    @constexpr
+    @_primexpr
     def get_batch_seq_dim(dim, batch_dim_, seq_dim_):
         if dim is None:
             batch_dim_ += 1
@@ -437,7 +448,7 @@ def get_reverse_sequence_vmap_rule(prim, axis_size):
                     seq_dim_ += 1
         return batch_dim_, seq_dim_
 
-    @constexpr
+    @_primexpr
     def get_seq_dim(dim, batch_dim_, seq_dim_):
         if dim is None:
             return seq_dim_
@@ -557,20 +568,19 @@ def get_scatter_nd_vmap_rule(prim, axis_size):
     Reshape the output tensor to `[10, 6, 4, 5]`
     """
 
-    @constexpr
+    @_primexpr
     def _refine_shape(shape, bdim_size):
         offset = shape[0]
         return (bdim_size * shape[0],) + tuple(shape[1:]), offset, (bdim_size,) + tuple(shape)
 
-    @constexpr
+    @_primexpr
     def _gen_indices_offset(shape, offset):
         # original rank(indices.shape) is required >= 2, so indices with batch dim's rank >= 3.
-        shape = [shape[0]] + [1] * (len(shape) - 2) + [shape[-1]]
-        val = np.zeros(shape, np.int32)  # the dtype will be changed when creating Tensor
-        val = np.reshape(val, (shape[0], shape[-1]))
+        shape = (shape[0],) + (1,) * (len(shape) - 2) + (shape[-1],)
+        val = P.Zeros()((shape[0], shape[-1]), mindspore.int32)
         for i in range(shape[0]):
             val[i, 0] = i * offset
-        return np.reshape(val, shape)
+        return P.Reshape()(val, shape)
 
     if isinstance(prim, str):
         prim = Primitive(prim)
@@ -591,7 +601,7 @@ def get_scatter_nd_vmap_rule(prim, axis_size):
         indices_shape = F.shape(indices)
         indices_dtype = F.dtype(indices)
         offset_val = _gen_indices_offset(indices_shape, offset)
-        indices_offset = Tensor(offset_val, indices_dtype)
+        indices_offset = P.Cast()(offset_val, indices_dtype)
         new_indices = P.Add()(indices, indices_offset)
         out = prim(new_indices, updates, new_shape)
         real_out = P.Reshape()(out, out_shape)
@@ -839,6 +849,62 @@ def get_fill_vmap_rule(prim, axis_size):
     return vmap_rule
 
 
+@constexpr
+def to_tensor_with_type(x, dtype):
+    """x to Tensor with type"""
+    return Tensor(x, dtype)
+
+
+@vmap_rules_getters.register(P.FillV2)
+def get_fill_v2_vmap_rule(prim, axis_size):
+    """VmapRule for `FillV2` operation."""
+    if isinstance(prim, str):
+        prim = Primitive(prim)
+
+    def vmap_rule(shape_bdim, value_bdim):
+        is_all_none, result = vmap_general_preprocess(prim, shape_bdim, value_bdim)
+        if is_all_none:
+            return result
+
+        value_shape, shape_dim = shape_bdim
+        if shape_dim is not None:
+            _raise_value_error(
+                "The source axis of `shape` in `P.FillV2` must be None, but got {}."
+                .format(shape_dim))
+
+        value, vdim = value_bdim
+        value_rank = F.rank(value)
+        if value_rank != 1 or vdim != 0:
+            _raise_value_error(
+                "The `value` in `P.FillV2` must be constant value, thus the value only "
+                "can be rank: 1 with source axis: 0 in vmap scope, but got value rank: "
+                "{} with source axis: {}.".format(value_rank, vdim))
+        value = F.reshape(value, (axis_size,) + (1,) * len(value_shape))
+
+        out = None
+        if isinstance(value_shape, (Tensor_, Tensor)):
+            value_shape_rank = F.rank(value_shape)
+            if value_shape_rank != 1:
+                _raise_value_error(
+                    "The `shape` in `P.FillV2` must be 1-D tensor, thus the shape only "
+                    "can be rank: 1, but got shape rank: "
+                    "{}.".format(value_shape_rank))
+            axis_size_tensor = to_tensor_with_type((axis_size,),
+                                                   F.dtype(value_shape))
+            broad_cast_shape = F.concat((axis_size_tensor, value_shape))
+            out = DynamicBroadcastTo()(value, broad_cast_shape)
+        elif isinstance(value_shape, tuple):
+            out = P.BroadcastTo((axis_size,) + value_shape)(value)
+        else:
+            _raise_value_error(
+                f"For `P.FillV2`, the input `shape` should be Tuple or Tensor, but got `shape`: {value_shape}."
+            )
+
+        return out, 0
+
+    return vmap_rule
+
+
 @vmap_rules_getters.register(Fills)
 def get_fills_vmap_rule(prim, axis_size):
     """VmapRule for `Fills` operation."""
@@ -1072,6 +1138,8 @@ def get_masked_select_vmap_rule(prim, axis_size):
 @vmap_rules_getters.register(MaskedSelectGrad)
 def get_masked_select_grad_vmap_rule(prim, axis_size):
     """VmapRule for `MaskedSelect`."""
+    if isinstance(prim, str):
+        prim = Primitive(prim)
 
     def vmap_rule(x_bdim, mask_bdim, outgrad_bdim):
         is_all_none, result = vmap_general_preprocess(prim, x_bdim, mask_bdim, outgrad_bdim)
@@ -1414,6 +1482,7 @@ def get_meshgrid_vmap_rule(prim, axis_size):
                 "The input number of P.Meshgrid must be greater than 1.")
 
         output_shape = []
+        ones_shape = []
         for each_arg in args:
             x, bdim = each_arg
             if bdim is None:
@@ -1424,19 +1493,30 @@ def get_meshgrid_vmap_rule(prim, axis_size):
                 _raise_value_error(
                     "Each input of Meshgrid must be 1D, but got {}.".format(F.rank(x) - 1))
             output_shape.append(F.shape(x)[-1])
+            ones_shape.append(1)
         output_shape.insert(0, axis_size)
+        ones_shape.insert(0, axis_size)
 
         if indexing == "xy":
             output_shape[1], output_shape[2] = output_shape[2], output_shape[1]
-
         shape = tuple(output_shape)
+
+        input_0, _ = args[0]
+        dtype = F.dtype(input_0)
+        ones_tensor = F.fill(dtype, shape, 1)
+
+        index = 0
         vals_out_tuple = ()
         for each_arg in args:
             x, bdim = each_arg
             x = _bdim_at_front(x, bdim, axis_size)
-            x = _handle_broadcasting(x, F.shape(x), output_shape)
-            output = P.BroadcastTo(shape)(x)
+            shape_index = (1 - index) if (index <= 1 and indexing == "xy") else index
+            ones_shape[shape_index + 1] = output_shape[shape_index + 1]
+            x = P.Reshape()(x, tuple(ones_shape))
+            output = P.Mul()(x, ones_tensor)
             vals_out_tuple = vals_out_tuple + ((output, 0),)
+            ones_shape[shape_index + 1] = 1
+            index = index + 1
 
         return vals_out_tuple
 
@@ -1480,7 +1560,7 @@ def get_gather_vmap_rule(prim, axis_size):
     else:
         prim_name = prim.name
 
-    @constexpr
+    @_primexpr
     def process_axis(axis, x_shape_size, has_xdim: bool, has_idim: bool):
         if has_xdim and has_idim:
             if axis < 0:
@@ -1494,7 +1574,7 @@ def get_gather_vmap_rule(prim, axis_size):
 
         return axis
 
-    @constexpr
+    @_primexpr
     def get_x_dst_shape(x_shape, axis):
         target_axis_size = x_shape[axis + 1]
         x_dst_shape = x_shape[0:axis] + (axis_size * target_axis_size,) + x_shape[axis + 2:]
@@ -1694,7 +1774,7 @@ def get_data_format_dim_map_vmap_rule(prim, axis_size):
 def get_expand_dims_vmap_rule(prim, axis_size):
     """VmapRule for `ExpandDims`."""
 
-    @constexpr
+    @_primexpr
     def process_axis(axis, rank, x_dim):
         if axis < 0:
             axis += rank
@@ -1788,7 +1868,7 @@ def get_squeeze_vmap_rule(prim, axis_size):
     else:
         prim_axis = None
 
-    @constexpr
+    @_primexpr
     def move_axis(axes):
         new_axis = ()
         for axis in axes:
@@ -1798,7 +1878,7 @@ def get_squeeze_vmap_rule(prim, axis_size):
                 new_axis = new_axis + (axis + 1,)
         return new_axis
 
-    @constexpr
+    @_primexpr
     def generate_all_axis_except_first(x_rank):
         new_axis = ()
         for i in range(1, x_rank, 1):
@@ -1842,7 +1922,7 @@ def get_stridedslice_vmap_rule(prim, axis_size):
     batch_stridedslice = P.StridedSlice(new_begin_mask, new_end_mask, new_ellipsis_mask, new_new_axis_mask, \
                                         new_shrink_axis_mask)
 
-    @constexpr
+    @_primexpr
     def get_new_begin_end_strided(begin, end, strided):
         new_begin = (0,) + begin
         new_end = (0,) + end
@@ -1883,7 +1963,7 @@ def get_stridedslice_grad_vmap_rule(prim, axis_size):
     batch_stridedslice_grad = G.StridedSliceGrad(new_begin_mask, new_end_mask, new_ellipsis_mask, new_new_axis_mask, \
                                                  new_shrink_axis_mask)
 
-    @constexpr
+    @_primexpr
     def get_new_xshape_begin_end_strided(xshape, begin, end, strided):
         new_xshape = (axis_size,) + xshape
         new_begin = (0,) + begin

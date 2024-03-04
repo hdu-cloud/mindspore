@@ -1,9 +1,7 @@
 approvers:
-- cristoval
-- limingqi107
+- limingqi107 #
 - wilfchen
 - jjfeing
-- zhoufeng54
 - yuchaojie
 - linqingke
 - kisnwang
@@ -11,12 +9,10 @@ approvers:
 - HulkTang
 - chujinjin
 - hwcaifubi
+- reku1997
 
 reviewers:
-- ouwenchang
 - robingrosman
 - yanghaitao1
-- wangyue01
-- wenkai_dist
 - zangqx
 - maning202007

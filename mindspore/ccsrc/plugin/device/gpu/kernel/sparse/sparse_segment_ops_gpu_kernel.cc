@@ -48,8 +48,8 @@ bool SparseSegmentOpsGpuKernelMod::Init(const BaseOperatorPtr &base_operator,
     return false;
   }
   kernel_func_ = kernel_attr_map_.at(kernel_type_)[index].second;
-  unit_x_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  unit_idx_seg_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).first);
+  unit_x_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  unit_idx_seg_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).dtype);
   return true;
 }
 
@@ -81,6 +81,9 @@ int SparseSegmentOpsGpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
   x_shape_0_ = x_shape[0];
   x_elements_ = std::accumulate(x_shape.begin(), x_shape.end(), 1, std::multiplies{});
   outer_size_ = x_shape.front();
+  if (outer_size_ == 0) {
+    return KRET_RESIZE_FAILED;
+  }
   inner_size_ = x_elements_ / x_shape.front();
   std::vector<int64_t> indices_shape = inputs.at(kIndex1)->GetShapeVector();
   idx_seg_elements_ = std::accumulate(indices_shape.begin(), indices_shape.end(), 1, std::multiplies{});
@@ -122,15 +125,19 @@ bool SparseSegmentOpsGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &i
   num_segments_host.resize(kNumber1);
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(indices_host.data(), indices_ptr, idx_seg_elements_ * sizeof(S), cudaMemcpyDeviceToHost, stream),
-    "cudaMemcpy failed.");
+    "For '" << kernel_name_ << "', cudaMemcpy failed.");
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemcpyAsync(segment_ids_host.data(), segment_ids_ptr,
                                                      idx_seg_elements_ * sizeof(S), cudaMemcpyDeviceToHost, stream),
-                                     "cudaMemcpy failed.");
+                                     "For '" << kernel_name_ << "', cudaMemcpy failed.");
   if (!flag_) {
     auto num_segments_ptr = GetDeviceAddress<S>(inputs, kIndex3);
     CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
       cudaMemcpyAsync(num_segments_host.data(), num_segments_ptr, sizeof(S), cudaMemcpyDeviceToHost, stream),
-      "cudaMemcpy failed.");
+      "For '" << kernel_name_ << "', cudaMemcpy failed.");
+  }
+  if (cudaStreamQuery(stream) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(stream),
+                                       "For '" << kernel_name_ << "', cuda Stream Sync Failed.");
   }
   if (segment_ids_host[0] != 0 && flag_) {
     MS_EXCEPTION(ValueError) << "For '" << kernel_name_
@@ -154,8 +161,10 @@ bool SparseSegmentOpsGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &i
       MS_EXCEPTION(ValueError) << "For '" << kernel_name_ << "', indices out of range of x's first shape.";
     }
   }
-  CalSparseSegmentCombination(kernel_type_, x_ptr, indices_ptr, segment_ids_ptr, segment_pos_ptr, outer_size_,
-                              inner_size_, idx_seg_elements_, output_dim0_, y_ptr, device_id_, stream);
+  auto status =
+    CalSparseSegmentCombination(kernel_type_, x_ptr, indices_ptr, segment_ids_ptr, segment_pos_ptr, outer_size_,
+                                inner_size_, idx_seg_elements_, output_dim0_, y_ptr, device_id_, stream);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -481,9 +490,10 @@ std::map<std::string, std::vector<std::pair<KernelAttr, SparseSegmentOpsGpuKerne
 std::vector<KernelAttr> SparseSegmentOpsGpuKernelMod::GetOpSupport() {
   auto iter = kernel_attr_map_.find(kernel_type_);
   if (iter == kernel_attr_map_.end()) {
-    MS_LOG(ERROR) << "For 'SparseSegmentOpsOp', only support these types: "
-                  << kernel::Map2Str<std::map, std::vector<std::pair<KernelAttr, SSLaunchFunc>>>(kernel_attr_map_)
-                  << " currently, but got " << kernel_name_;
+    MS_EXCEPTION(ValueError) << "For 'SparseSegmentOpsOp', only support these types: "
+                             << kernel::Map2Str<std::map, std::vector<std::pair<KernelAttr, SSLaunchFunc>>>(
+                                  kernel_attr_map_)
+                             << " currently, but got " << kernel_name_;
   }
   std::vector<KernelAttr> support_list;
   (void)std::transform(

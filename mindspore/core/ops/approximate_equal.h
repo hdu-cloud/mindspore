@@ -16,8 +16,8 @@
 
 #ifndef MINDSPORE_CORE_OPS_APPROXIMATE_EQUAL_H_
 #define MINDSPORE_CORE_OPS_APPROXIMATE_EQUAL_H_
-#include <vector>
 #include <memory>
+#include <vector>
 
 #include "ops/base_operator.h"
 
@@ -33,8 +33,9 @@ class MIND_API ApproximateEqual : public BaseOperator {
   void set_tolerance(const float tolerance);
   float get_tolerance() const;
 };
-abstract::AbstractBasePtr ApproximateEqualInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr ApproximateEqualInfer(const abstract::AnalysisEnginePtr &,
+                                                         const PrimitivePtr &primitive,
+                                                         const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimApproximateEqualPtr = std::shared_ptr<ApproximateEqual>;
 }  // namespace ops
 }  // namespace mindspore

@@ -21,41 +21,64 @@
 #include "src/common/file_utils.h"
 #if !defined(_WIN32) && !defined(_WIN64)
 #include <dlfcn.h>
+#include <string.h>
 #include <dirent.h>
 #include <memory>
 #include <fstream>
 
 namespace mindspore {
+inline std::string FindFileWithRecursion(const std::string &parent_dir, const std::string &target_so, int depth = 0) {
+  constexpr int MAX_RECURSION_DEPTH = 5;
+  if (depth == MAX_RECURSION_DEPTH) {
+    MS_LOG(DEBUG) << "Recursion depth exceeds MAX_RECURSION_DEPTH(5).";
+    return "";
+  }
+  DIR *dir = opendir(parent_dir.c_str());
+  if (dir == nullptr) {
+    MS_LOG(ERROR) << "Can't open dir " << parent_dir;
+    return "";
+  }
+  dirent *ent = readdir(dir);
+  std::vector<std::string> child_dirs;
+  while (ent != nullptr) {
+    if (ent->d_type == DT_DIR && strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0) {
+      std::string dir_path = parent_dir + std::string(ent->d_name);
+      child_dirs.push_back(lite::RealPath(dir_path.c_str()) + "/");
+      ent = readdir(dir);
+      continue;
+    }
+    if (std::string(ent->d_name).find(target_so) != std::string::npos) {
+      std::string found_path = parent_dir + std::string(ent->d_name);
+      (void)closedir(dir);
+      return found_path;
+    }
+    ent = readdir(dir);
+  }
+  for (auto const &child_dir : child_dirs) {
+    if (!child_dir.empty()) {
+      std::string found_path = FindFileWithRecursion(child_dir, target_so, depth + 1);
+      if (!found_path.empty()) {
+        (void)closedir(dir);
+        return found_path;
+      }
+    }
+  }
+  (void)closedir(dir);
+  return "";
+}
+
 inline Status FindSoPath(const std::string &parent_dir, const std::string &target_so, std::string *target_so_path) {
   if (target_so_path == nullptr) {
     return Status(kMEFailed, "Input target_so_path is nullptr.");
   }
-  std::string found_target_so;
-
-  DIR *dir = opendir(parent_dir.c_str());
-  if (dir != nullptr) {
-    // access all the files and directories within directory
-    dirent *ent = readdir(dir);
-    while (ent != nullptr) {
-      if (std::string(ent->d_name).find(target_so) != std::string::npos) {
-        found_target_so = std::string(ent->d_name);
-        break;
-      }
-      ent = readdir(dir);
-    }
-    (void)closedir(dir);
-  } else {
-    return Status(kMEFailed, "Could not open directory: " + parent_dir);
-  }
+  std::string found_target_so = FindFileWithRecursion(parent_dir, target_so);
   if (found_target_so.empty()) {
     return Status(kMEFailed, "Could not find target so " + target_so + " in " + parent_dir);
   }
-  std::string unreal_path = parent_dir + found_target_so;
-  auto realpath = lite::RealPath(unreal_path.c_str());
+  auto realpath = lite::RealPath(found_target_so.c_str());
   if (realpath.empty()) {
-    return Status(kMEFailed, "Get target so " + target_so + " real path failed, path: " + unreal_path);
+    return Status(kMEFailed, "Get target so " + target_so + " real path failed, path: " + found_target_so);
   }
-
   *target_so_path = realpath;
   return kSuccess;
 }
@@ -112,6 +135,32 @@ inline Status DLSoOpen(const std::string &dl_path, const std::string &func_name,
       MS_LOG(WARNING) << "Could not find " + func_name + " in " + dl_path + ", error: " << error;
       return Status(kMEFailed, "Could not find " + func_name + " in " + dl_path + ", error: " + error);
     }
+  }
+  return kSuccess;
+}
+
+inline Status DLSoSym(const std::string &dl_path, void *handle, const std::string &func_name, void **function) {
+  if (handle == nullptr) {
+    MS_LOG(WARNING) << "Input parameter handle cannot be nullptr";
+    return Status(kMEFailed, "Input parameter handle cannot be nullptr");
+  }
+  if (func_name.empty()) {
+    MS_LOG(WARNING) << "Input parameter func_name cannot be empty";
+    return Status(kMEFailed, "Input parameter func_name cannot be empty");
+  }
+  if (function == nullptr) {
+    MS_LOG(WARNING) << "Input parameter function cannot be nullptr";
+    return Status(kMEFailed, "Input parameter function cannot be nullptr");
+  }
+  auto get_dl_error = []() -> std::string {
+    auto error = dlerror();
+    return error == nullptr ? "" : error;
+  };
+  *function = dlsym(handle, func_name.c_str());
+  if (*function == nullptr) {
+    auto error = get_dl_error();
+    MS_LOG(WARNING) << "Could not find " + func_name + " in " + dl_path + ", error: " << error;
+    return Status(kMEFailed, "Could not find " + func_name + " in " + dl_path + ", error: " + error);
   }
   return kSuccess;
 }

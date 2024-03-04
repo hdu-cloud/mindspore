@@ -21,7 +21,6 @@
 #include <memory>
 #include <sstream>
 #include <string>
-
 #include "utils/hash_map.h"
 #include "base/base.h"
 #include "ir/named.h"
@@ -55,7 +54,7 @@ class MS_CORE_API Number : public Object {
   TypeId type_id() const override { return number_type_; }
   TypeId generic_type_id() const override { return kObjectTypeNumber; }
   bool operator==(const Type &other) const override;
-  size_t hash() const override;
+  std::size_t hash() const override;
   TypePtr DeepCopy() const override { return std::make_shared<Number>(); }
   std::string ToString() const override { return "Number"; }
   std::string ToReprString() const override { return "number"; }
@@ -193,6 +192,37 @@ class MS_CORE_API Float : public Number {
   }
 };
 
+// BFloat
+/// \brief BFloat defines a Number class whose type is brain float.
+class MS_CORE_API BFloat : public Number {
+ public:
+  /// \brief Default constructor for BFloat.
+  BFloat() : Number(kNumberTypeBFloat16, 0) {}
+
+  /// \brief Constructor for BFloat.
+  ///
+  /// \param nbits Define the bit length of BFloat object.
+  explicit BFloat(const int nbits);
+
+  /// \brief Destructor of BFloat.
+  ~BFloat() override {}
+  MS_DECLARE_PARENT(BFloat, Number)
+
+  TypeId generic_type_id() const override { return kNumberTypeBFloat16; }
+  TypePtr DeepCopy() const override {
+    if (nbits() == 0) {
+      return std::make_shared<BFloat>();
+    }
+    return std::make_shared<BFloat>(nbits());
+  }
+
+  std::string ToString() const override { return GetTypeName("BFloat"); }
+  std::string ToReprString() const override { return nbits() == 0 ? "bfloat" : GetTypeName("bfloat"); }
+  std::string DumpText() const override {
+    return nbits() == 0 ? std::string("BFloat") : std::string("BF") + std::to_string(nbits());
+  }
+};
+
 // Complex
 /// \brief Complex defines a Number class whose type is complex.
 class MS_CORE_API Complex : public Number {
@@ -234,9 +264,11 @@ GVAR_DEF(TypePtr, kUInt64, std::make_shared<UInt>(static_cast<int>(BitsNum::eBit
 GVAR_DEF(TypePtr, kFloat16, std::make_shared<Float>(static_cast<int>(BitsNum::eBits16)));
 GVAR_DEF(TypePtr, kFloat32, std::make_shared<Float>(static_cast<int>(BitsNum::eBits32)));
 GVAR_DEF(TypePtr, kFloat64, std::make_shared<Float>(static_cast<int>(BitsNum::eBits64)));
+GVAR_DEF(TypePtr, kBFloat16, std::make_shared<BFloat>(static_cast<int>(BitsNum::eBits16)));
 GVAR_DEF(TypePtr, kInt, std::make_shared<Int>());
 GVAR_DEF(TypePtr, kUInt, std::make_shared<UInt>());
 GVAR_DEF(TypePtr, kFloat, std::make_shared<Float>());
+GVAR_DEF(TypePtr, kBFloat, std::make_shared<BFloat>());
 GVAR_DEF(TypePtr, kNumber, std::make_shared<Number>());
 GVAR_DEF(TypePtr, kComplex64, std::make_shared<Complex>(static_cast<int>(BitsNum::eBits64)));
 GVAR_DEF(TypePtr, kComplex128, std::make_shared<Complex>(static_cast<int>(BitsNum::eBits128)));

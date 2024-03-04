@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@ using mindspore::device::DeviceContext;
 using mindspore::device::KernelInfo;
 using mindspore::kernel::Address;
 using mindspore::kernel::KernelLaunchInfo;
+using mindspore::kernel::KernelMod;
 using mindspore::session::SomasInfo;
 using mindspore::tensor::TensorPtr;
 
@@ -105,6 +106,7 @@ class KernelActor : public DebugAwareActor {
   CNodePtr kernel_;
   bool is_dynamic_shape_;
   KernelInfo *kernel_info_;
+  KernelMod *kernel_mod_;
   // The kernel launch info is fetched by the device tensors.
   KernelLaunchInfo launch_info_;
 
@@ -173,6 +175,9 @@ class KernelActor : public DebugAwareActor {
 
   // Whether skip the kernel launch.
   bool is_launch_skipped_;
+
+  // The ignore input addresses when the kernel launch.
+  std::vector<size_t> launch_ignored_inputs_;
 
   // Whether the inputs need continuous memory, used to check the inputs legitimacy.
   bool inputs_continuous_memory_;

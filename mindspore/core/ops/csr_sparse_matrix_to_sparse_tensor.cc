@@ -14,19 +14,32 @@
  * limitations under the License.
  */
 
+#include <memory>
 #include <set>
-#include <map>
 #include <string>
 #include <vector>
-#include <memory>
 
-#include "ops/csr_sparse_matrix_to_sparse_tensor.h"
+#include "abstract/abstract_value.h"
 #include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/csr_sparse_matrix_to_sparse_tensor.h"
+#include "ops/op_name.h"
 #include "ops/op_utils.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -59,6 +72,7 @@ abstract::TupleShapePtr CSRSparseMatrixToSparseTensorInferShape(const PrimitiveP
   const int64_t kOne = 1;
   const int64_t kDefalutRank = 2;
   const int64_t kBatchRank = 3;
+  CheckInputShapeEmpty(primitive->name(), input_args);
   std::vector<int64_t> x_dense_shape_shape =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
   auto prim_name = primitive->name();
@@ -123,11 +137,35 @@ AbstractBasePtr CSRSparseMatrixToSparseTensorInfer(const abstract::AnalysisEngin
   MS_EXCEPTION_IF_NULL(primitive);
   const int64_t input_num = 5;
   CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
+  for (size_t i = 0; i < input_args.size(); ++i) {
+    MS_EXCEPTION_IF_NULL(input_args[i]->BuildShape());
+    if (input_args[i]->BuildShape()->IsDimZero()) {
+      MS_LOG(EXCEPTION) << "For '" << primitive->name() << "', input " << i << "'s shape should not be empty!";
+    }
+  }
   auto infer_type = CSRSparseMatrixToSparseTensorInferType(primitive, input_args);
   auto infer_shape = CSRSparseMatrixToSparseTensorInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(CSRSparseMatrixToSparseTensor, prim::kPrimCSRSparseMatrixToSparseTensor,
-                             CSRSparseMatrixToSparseTensorInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGCSRSparseMatrixToSparseTensorInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return CSRSparseMatrixToSparseTensorInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return CSRSparseMatrixToSparseTensorInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return CSRSparseMatrixToSparseTensorInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(CSRSparseMatrixToSparseTensor, prim::kPrimCSRSparseMatrixToSparseTensor,
+                                 AGCSRSparseMatrixToSparseTensorInfer, false);
 }  // namespace ops
 }  // namespace mindspore

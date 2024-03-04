@@ -14,25 +14,20 @@
  * limitations under the License.
  */
 
-#include "debug/debugger/debugger.h"
+#include "include/backend/debug/debugger/debugger.h"
 #include <dirent.h>
-#include <cstdio>
-#include <fstream>
 #include <tuple>
 #include <vector>
 #include <algorithm>
 #include <iostream>
-#include <cstring>
-#include <utility>
 #include <map>
 #include <regex>
-#include "debug/data_dump/dump_json_parser.h"
+#include "include/backend/debug/data_dump/dump_json_parser.h"
 #include "backend/common/session/session_basic.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "runtime/device/kernel_runtime_manager.h"
 #include "runtime/device/kernel_runtime.h"
-#include "debug/data_dump/e2e_dump.h"
+#include "include/backend/debug/data_dump/e2e_dump.h"
 #include "include/common/utils/config_manager.h"
 #include "include/common/debug/env_config_parser.h"
 #include "include/common/utils/comm_manager.h"
@@ -42,9 +37,12 @@
 #include "runtime/graph_scheduler/device_tensor_store.h"
 #ifdef ENABLE_DEBUGGER
 #include "debug/debugger/proto_exporter.h"
-#else
-#include "debug/debugger/proto_exporter_stub.h"
 #endif
+#include "include/backend/debug/debugger/proto_exporter.h"
+#include "debug/debugger/debugger_utils.h"
+#include "debug/debugger/grpc_client.h"
+#include "debug/debug_services.h"
+#include "runtime/device/ms_device_shape_transfer.h"
 
 using debugger::Chunk;
 using debugger::EventReply;
@@ -64,6 +62,14 @@ namespace mindspore {
 
 static constexpr auto g_chunk_size = 1024 * 1024 * 3;
 static constexpr int32_t heartbeat_period_second = 30;
+
+std::shared_ptr<Debugger> Debugger::GetInstance() {
+  std::lock_guard<std::mutex> i_lock(instance_lock_);
+  if (debugger_ == nullptr) {
+    debugger_ = std::shared_ptr<Debugger>(new (std::nothrow) Debugger());
+  }
+  return debugger_;
+}
 
 Debugger::Debugger()
     : grpc_client_(nullptr),
@@ -477,10 +483,9 @@ uint32_t Debugger::GetRankID() {
   const auto &device_context =
     device::DeviceContextManager::GetInstance().GetOrCreateDeviceContext({device_target, device_id});
   uint32_t rank_id = 0;
-  auto deprecated_kernel_executor =
-    dynamic_cast<device::DeprecatedKernelExecutor *>(device_context->kernel_executor_.get());
-  if (deprecated_kernel_executor != nullptr) {
-    rank_id = deprecated_kernel_executor->GetRankID();
+  auto kernel_executor = device_context->GetKernelExecutor(false);
+  if (kernel_executor != nullptr) {
+    rank_id = kernel_executor->GetRankID();
   }
   return rank_id;
 }
@@ -512,8 +517,14 @@ void Debugger::DumpParamsAndConstAndHistory() {
   }
   for (auto kernel_graph = executed_graph_ptr_set_.cbegin(); kernel_graph != executed_graph_ptr_set_.cend();
        ++kernel_graph) {
+    auto debugger = Debugger::GetInstance();
+    MS_EXCEPTION_IF_NULL(debugger);
     // Dump graph run hisotry for each graph.
-    E2eDump::DumpRunIter(*kernel_graph, GetRankID());
+    if (debugger->GetAscendKernelByKernelFlag() && (*kernel_graph)->graph_id() != (*kernel_graph)->root_graph_id()) {
+      MS_LOG(INFO) << "current graph graph_id = " << (*kernel_graph)->graph_id() << " is not root graph.";
+    } else {
+      E2eDump::DumpRunIter(*kernel_graph, GetRankID());
+    }
   }
   if (!cur_root_graph_checked) {
     visited_root_graph_ids_.push_back(cur_root_graph_id_);
@@ -1365,110 +1376,6 @@ bool Debugger::LoadNewTensor(const std::shared_ptr<TensorData> &tensor, bool kee
 
 bool Debugger::debugger_enabled() const { return debugger_enabled_; }
 
-DebuggerCommand GetCommand(const EventReply &reply) {
-  DebuggerCommand cmd = DebuggerCommand::kUnknownCMD;
-  switch (reply.cmd_case()) {
-    case debugger::EventReply::CmdCase::kExit:
-      cmd = DebuggerCommand::kExitCMD;
-      break;
-    case debugger::EventReply::CmdCase::kRunCmd:
-      cmd = DebuggerCommand::kRunCMD;
-      break;
-    case debugger::EventReply::CmdCase::kSetCmd:
-      cmd = DebuggerCommand::kSetCMD;
-      break;
-    case debugger::EventReply::CmdCase::kViewCmd:
-      cmd = DebuggerCommand::kViewCMD;
-      break;
-    case debugger::EventReply::CmdCase::kVersionMatched:
-      cmd = DebuggerCommand::kVersionMatchedCMD;
-      break;
-    default:
-      MS_LOG(DEBUG) << "Debug: UnknownCMD";
-      break;
-  }
-  return cmd;
-}
-
-ProtoVector<WatchCondition_Parameter> GetParameters(const EventReply &reply) {
-  if (!reply.has_set_cmd() || !reply.set_cmd().has_watch_condition()) {
-    MS_LOG(ERROR) << "Error: Can not get Parameters from command. Returning default value: ProtoVector<Parameter>().";
-    return ProtoVector<WatchCondition_Parameter>();
-  }
-  return reply.set_cmd().watch_condition().params();
-}
-
-ProtoVector<WatchNode> GetWatchnodes(const EventReply &reply) {
-  if (!reply.has_set_cmd()) {
-    MS_LOG(ERROR) << "Error: Not SetCMD, can not get WatchNodes. Returning default value: ProtoVector<WatchNode>().";
-    return ProtoVector<WatchNode>();
-  }
-  return reply.set_cmd().watch_nodes();
-}
-
-std::string GetRunLevel(const EventReply &reply) {
-  if (!reply.has_run_cmd()) {
-    MS_LOG(ERROR) << "Error: Not RunCMD, can not get RunLevel. Returning default value: "
-                     "";
-    return "";
-  }
-  return reply.run_cmd().run_level();
-}
-
-std::string GetNodeName(const EventReply &reply) {
-  if (!reply.has_run_cmd()) {
-    MS_LOG(ERROR) << "Error: Not RunCMD, can not get NodeName. Returning default value: "
-                     "";
-    return "";
-  }
-  return reply.run_cmd().node_name();
-}
-
-WatchCondition GetWatchcondition(const EventReply &reply) {
-  if (!reply.has_set_cmd() || !reply.set_cmd().has_watch_condition()) {
-    MS_LOG(ERROR) << "Error: Can not get WatchCondition from command. Returning default value: WatchCondition().";
-    return WatchCondition();
-  }
-  return reply.set_cmd().watch_condition();
-}
-
-int32_t GetWatchpointID(const EventReply &reply) {
-  if (!reply.has_set_cmd()) {
-    MS_LOG(ERROR) << "Error: Not SetCMD, can not get Watchpoint ID. Returning default value: 0.";
-    return 0;
-  }
-  return reply.set_cmd().id();
-}
-
-bool GetWatchpointDelete(const EventReply &reply) {
-  if (!reply.has_set_cmd()) {
-    MS_LOG(ERROR) << "Error: Not SetCMD, can not get Watchpoint delete flag. Returning default value: false.";
-    return false;
-  }
-  return reply.set_cmd().delete_();
-}
-
-ProtoVector<TensorProto> GetTensors(const EventReply &reply) {
-  if (!reply.has_view_cmd()) {
-    MS_LOG(ERROR) << "Error: Not ViewCMD, can not get Tensors. Returning default value: ProtoVector<TensorProto>().";
-    return ProtoVector<TensorProto>();
-  }
-  return reply.view_cmd().tensors();
-}
-
-std::string GetTensorFullName(const TensorProto &tensor) {
-  string node_name = tensor.node_name();
-  if (tensor.truncate()) {
-    // scopes in node name are separated by '/'
-    // use the name without scope if truncate is true
-    std::size_t found = node_name.find_last_of("/");
-    node_name = node_name.substr(found + 1);
-  }
-  return node_name + ":" + tensor.slot() + (tensor.iter() == "" ? "" : ":" + tensor.iter());
-}
-
-bool GetMiVersionMatched(const EventReply &reply) { return reply.version_matched(); }
-
 bool Debugger::partial_memory() const { return partial_memory_; }
 
 void Debugger::SetEnableHeartbeat(bool enabled) { enable_heartbeat_ = enabled; }
@@ -1618,14 +1525,14 @@ void Debugger::LoadParametersAndConst() {
   auto root_graph_id = graph_ptr_->root_graph_id();
   const auto &parameters = graph_ptr_->inputs();
   for (auto &item : parameters) {
-    LoadSingleAnfnode(item, PARAMETER_OUTPUT_INDEX, root_graph_id);
+    LoadSingleAnfnode(item, kParameterOutputIndex, root_graph_id);
   }
   // load value nodes
   // get all constant values from the graph
   MS_LOG(INFO) << "Start to load value nodes for graph " << graph_ptr_->graph_id() << ".";
   const auto value_nodes = graph_ptr_->graph_value_nodes();
   for (auto &item : value_nodes) {
-    LoadSingleAnfnode(item, VALUE_NODE_OUTPUT_INDEX, root_graph_id);
+    LoadSingleAnfnode(item, kValueNodeOutputIndex, root_graph_id);
   }
 }
 
@@ -1645,14 +1552,14 @@ void Debugger::LoadParametersAndConst(const KernelGraphPtr &graph) {
   auto root_graph_id = graph->root_graph_id();
   const auto &parameters = graph->inputs();
   for (auto &item : parameters) {
-    LoadSingleAnfnode(item, PARAMETER_OUTPUT_INDEX, root_graph_id);
+    LoadSingleAnfnode(item, kParameterOutputIndex, root_graph_id);
   }
   // load value nodes
   // get all constant values from the graph
   MS_LOG(INFO) << "Start to load value nodes for graph " << graph->graph_id() << ".";
   const auto value_nodes = graph->graph_value_nodes();
   for (auto &item : value_nodes) {
-    LoadSingleAnfnode(item, VALUE_NODE_OUTPUT_INDEX, root_graph_id);
+    LoadSingleAnfnode(item, kValueNodeOutputIndex, root_graph_id);
   }
 }
 
@@ -1689,7 +1596,7 @@ void Debugger::LoadConstsForGraph(const KernelGraphPtr &graph) {
   auto root_graph_id = graph->root_graph_id();
   const auto value_nodes = graph->graph_value_nodes();
   for (auto &item : value_nodes) {
-    LoadSingleAnfnode(item, VALUE_NODE_OUTPUT_INDEX, root_graph_id);
+    LoadSingleAnfnode(item, kValueNodeOutputIndex, root_graph_id);
   }
 }
 
@@ -1711,7 +1618,7 @@ void Debugger::LoadGraphOutputs() {
   for (const auto &node : apply_kernels) {
     MS_EXCEPTION_IF_NULL(node);
     std::string kernel_name = GetKernelNodeName(node);
-    auto output_size = common::AnfAlgo::GetOutputTensorNum(node);
+    auto output_size = AnfAlgo::GetOutputTensorNum(node);
     if (partial_memory_) {
       if (!debug_services_->IsWatchPoint(kernel_name, node)) {
         continue;

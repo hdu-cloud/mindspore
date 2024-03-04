@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,8 +23,8 @@
 #include "include/common/utils/anfalgo.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_kernel_select/tbe_select_utils.h"
 #include "plugin/device/ascend/hal/common/ascend_utils.h"
-#include "kernel/common_utils.h"
-#include "common/util/platform_info.h"
+#include "kernel/framework_utils.h"
+#include "external/platform/platform_info.h"
 
 namespace mindspore::kernel {
 constexpr int64_t kChannelN = 0;
@@ -42,6 +42,7 @@ void TbeKernelReduceSelector::GetSupportedFormatDType(SupportFormatDType *suppor
   GetReduceSupport5HD(&support_format);
   GetReduceSupportNDC1HWC0(&support_format);
   GetReduceSupportFracZ(&support_format);
+  GetReduceSupportFracNZ(&support_format);
   GetReduceSupportC1HWNCoC0(&support_format);
   GetReduceSupportFracZ3D(&support_format);
   GenerateSupportFormatDType(cnode_ptr_, support_format, support_format_dtype);
@@ -49,8 +50,9 @@ void TbeKernelReduceSelector::GetSupportedFormatDType(SupportFormatDType *suppor
 }
 
 void TbeKernelReduceSelector::GetReduceNodeInfo() {
+  MS_EXCEPTION_IF_NULL(cnode_ptr_);
   auto input_num = common::AnfAlgo::GetInputTensorNum(cnode_ptr_);
-  auto output_num = common::AnfAlgo::GetOutputTensorNum(cnode_ptr_);
+  auto output_num = AnfAlgo::GetOutputElementNum(cnode_ptr_);
   if (input_num != 1 || output_num != 1) {
     MS_LOG(INFO) << "Reduce operator input/output is not 1, input num: " << input_num << ", output num: " << output_num
                  << ", node info: " << cnode_ptr_->DebugString();
@@ -171,9 +173,6 @@ void TbeKernelReduceSelector::GetReduceSupportFracNZ(SupportFormat *support_form
   if (is_shape_less_2_dims_) {
     return;
   }
-  if (!keep_dims_) {
-    return;
-  }
   int64_t last_channel = SizeToLong(input_shape_.at(0).size()) - 1;
   bool is_reduce_last = CheckReduceContainChanel(last_channel);
   int64_t last_channel_but_one = SizeToLong(input_shape_.at(0).size()) - 2;
@@ -181,6 +180,9 @@ void TbeKernelReduceSelector::GetReduceSupportFracNZ(SupportFormat *support_form
   if (!is_reduce_last && !is_reduce_last_but_one) {
     GenerateSupportFormat(kOpFormat_FRAC_NZ, input_shape_.size(), kOpFormat_FRAC_NZ, output_shape_.size(),
                           support_format);
+    return;
+  }
+  if (!keep_dims_) {
     return;
   }
   if (last_channel >= 0 && LongToSize(last_channel) < input_shape_.at(kIndex0).size() &&
@@ -196,8 +198,9 @@ void TbeKernelReduceSelector::GetReduceSupportFracNZ(SupportFormat *support_form
 }
 
 void TbeKernelReduceSelector::GetReduceAttrKeepDim() {
+  MS_EXCEPTION_IF_NULL(cnode_ptr_);
   if (!common::AnfAlgo::HasNodeAttr(kAttrKeepDims, cnode_ptr_)) {
-    MS_LOG(INFO) << "This node doesn't have keep_attr.";
+    MS_LOG(INFO) << "This node doesn't have keep_attr. Node: " << cnode_ptr_->fullname_with_scope();
     keep_dims_ = false;
     return;
   }

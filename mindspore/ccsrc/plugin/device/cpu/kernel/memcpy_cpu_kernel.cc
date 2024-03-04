@@ -15,6 +15,7 @@
  */
 
 #include "plugin/device/cpu/kernel/memcpy_cpu_kernel.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 
 namespace mindspore {
@@ -35,8 +36,23 @@ bool MemcpyCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::v
   return true;
 }
 
+int MemcpyCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+                               const std::vector<KernelTensorPtr> &outputs,
+                               const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost) {
+  int ret = 0;
+  if ((ret = KernelMod::Resize(base_operator, inputs, outputs)) != 0) {
+    return ret;
+  }
+  auto shape0 = inputs[kIndex0]->GetShapeVector();
+  is_empty_tensor_ = std::any_of(shape0.begin(), shape0.end(), [](const int64_t shape) { return shape == 0; });
+  return ret;
+}
+
 bool MemcpyCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &inputs, const std::vector<kernel::AddressPtr> &,
                                 const std::vector<kernel::AddressPtr> &outputs) {
+  if (is_empty_tensor_) {
+    return true;
+  }
   if (inputs.empty()) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the inputs can not be empty.";
   }
@@ -52,15 +68,22 @@ bool MemcpyCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &inputs, c
   auto *output_addr = reinterpret_cast<unsigned char *>(outputs[0]->addr);
   int cp_ret = EOK;
   auto task = [input_addr, output_addr, &cp_ret](size_t start, size_t end) {
-    auto ret = memcpy_s(output_addr + start, end - start, input_addr + start, end - start);
-    if (ret != EOK && cp_ret == EOK) {
-      cp_ret = ret;
-    }
+    // the max size allowed by memcpy_s is SECUREC_MEM_MAX_LEN. If end - start > SECUREC_MEM_MAX_LEN,
+    // we need to do memcpy_s multiple times instead of just one copy.
+    do {
+      auto size = end - start <= SECUREC_MEM_MAX_LEN ? end - start : SECUREC_MEM_MAX_LEN;
+      auto ret = memcpy_s(output_addr + start, size, input_addr + start, size);
+      start += SECUREC_MEM_MAX_LEN;
+      if (ret != EOK && cp_ret == EOK) {
+        cp_ret = ret;
+        break;
+      }
+    } while (start < end);
   };
+  ParallelLaunchAutoSearch(task, outputs[0]->size, this, &parallel_search_info_);
   if (cp_ret != EOK) {
     MS_LOG(EXCEPTION) << "For " << kernel_name_ << ", memcpy error, errorno: " << cp_ret;
   }
-  ParallelLaunchAutoSearch(task, outputs[0]->size, this, &parallel_search_info_);
   return true;
 }
 

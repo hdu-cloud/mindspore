@@ -44,9 +44,19 @@ namespace {
 const char *const kExecutionPlan = "execution_plan";
 constexpr size_t kMaxSectionNum = 100;
 constexpr size_t kMaxConfigNumPerSection = 1000;
-constexpr auto kSharingWorkspaceSection = "inner_common";
+constexpr auto kSharingWorkspaceSection = "inner_common";  // don't support external user configuration
 constexpr auto kSharingWorkspaceKey = "inner_sharing_workspace";
 constexpr auto kSharingWorkspaceValue = "true";
+constexpr auto kBuildSection = "build_session";
+constexpr auto kObfRatioKey = "obf_ratio";
+constexpr auto kObfNodeName = "obf_op-obf_mul";
+constexpr size_t kFloatSize = 4;
+constexpr int kDataIndex = 1;
+#if defined(ENABLE_PRE_INFERENCE) && defined(__linux__) && !defined(Debug)
+constexpr auto kCommonSection = "common";  // support external user configuration
+constexpr auto kEnablePreInferenceKey = "enable_pre_inference";
+constexpr auto kEnablePreInferenceValue = "true";
+#endif
 }  // namespace
 using mindspore::lite::RET_ERROR;
 using mindspore::lite::RET_OK;
@@ -67,14 +77,6 @@ CreateTrainSessionProto *CreateTrainSessionCallbackHolder(CreateTrainSessionProt
     proto_ = proto;
   }
   return proto_;
-}
-
-ExpressionLoader CreateExpressionLoader(const ExpressionLoader &loader) {
-  static ExpressionLoader loader_ = nullptr;
-  if (loader != nullptr) {
-    loader_ = loader;
-  }
-  return loader_;
 }
 
 #if defined(ENABLE_PRE_INFERENCE) && defined(__linux__) && !defined(Debug)
@@ -145,9 +147,25 @@ Status ModelImpl::BuildAndRun() {
   }
   return kSuccess;
 }
+
+bool ModelImpl::IsEnablePreInference() {
+  if (config_info_.find(kCommonSection) == config_info_.end()) {
+    return true;
+  }
+  auto common_config = config_info_.at(kCommonSection);
+  if (common_config.find(kEnablePreInferenceKey) == common_config.end()) {
+    return true;
+  }
+  return common_config.at(kEnablePreInferenceKey) == kEnablePreInferenceValue;
+}
 #endif
 Status ModelImpl::Build(const void *model_data, size_t data_size, ModelType model_type,
                         const std::shared_ptr<Context> &ms_context) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  if (session_ != nullptr) {
+    MS_LOG(ERROR) << "Model has been called Build";
+    return kLiteModelRebuild;
+  }
   if (model_data == nullptr) {
     MS_LOG(ERROR) << "The input model buffer is nullptr.";
     return kLiteNullptr;
@@ -189,6 +207,11 @@ Status ModelImpl::Build(const void *model_data, size_t data_size, ModelType mode
 
 Status ModelImpl::Build(const std::string &model_path, ModelType model_type,
                         const std::shared_ptr<Context> &ms_context) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  if (session_ != nullptr) {
+    MS_LOG(ERROR) << "Model has been called Build";
+    return kLiteModelRebuild;
+  }
   if (!PlatformInstructionSetSupportCheck()) {
     MS_LOG(ERROR) << "The platform exist don't support's instruction.";
     return kLiteNotSupport;
@@ -220,6 +243,11 @@ Status ModelImpl::Build(const std::string &model_path, ModelType model_type,
 }
 
 Status ModelImpl::Build() {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  if (session_ != nullptr) {
+    MS_LOG(ERROR) << "Model has been called Build";
+    return kLiteModelRebuild;
+  }
   MS_LOG(DEBUG) << "Start build model.";
   if (graph_ == nullptr || graph_->graph_data_ == nullptr) {
     MS_LOG(ERROR) << "Invalid graph.";
@@ -248,6 +276,11 @@ Status ModelImpl::Build() {
     if (session != nullptr) {
       session_ = session;
       MS_LOG(DEBUG) << "Build model success.";
+      auto ret_obf = ModelDeObfuscate();
+      if (ret_obf != RET_OK) {
+        MS_LOG(ERROR) << "Model deobfuscate failed.";
+        return kLiteError;
+      }
       return kSuccess;
     }
   }
@@ -264,11 +297,12 @@ Status ModelImpl::Build() {
     return kLiteNullptr;
   }
   std::string model_id;
+  std::string runner_id;
   auto model_buf = model->buf;
   auto model_size = model->buf_size_;
   auto is_shared_weight = false;
-  auto status =
-    lite::PackWeightManager::GetInstance()->InitPackWeightManager(model_buf, model_size, &model_id, &config_info_);
+  auto status = lite::PackWeightManager::GetInstance()->InitPackWeightManager(model_buf, model_size, &model_id,
+                                                                              &runner_id, &config_info_);
   if (status != RET_OK) {
     MS_LOG(ERROR) << "InitPackWeightByBuf failed.";
     return kLiteError;
@@ -290,12 +324,17 @@ Status ModelImpl::Build() {
   model->buf = model_buf;
   session_.swap(session);
   MS_LOG(DEBUG) << "Build model success.";
+  auto ret_obf = ModelDeObfuscate();
+  if (ret_obf != RET_OK) {
+    MS_LOG(ERROR) << "Model deobfuscate failed.";
+    return kLiteError;
+  }
   return kSuccess;
 }
 
 static void ResetTensorData(std::vector<void *> old_data, const std::vector<lite::Tensor *> &tensors) {
   for (size_t j = 0; j < old_data.size(); j++) {
-    tensors.at(j)->set_data(old_data.at(j));
+    tensors.at(j)->set_data(old_data.at(j), tensors.at(j)->own_data());
   }
 }
 
@@ -328,6 +367,11 @@ Status ModelImpl::RunGraph(const MSKernelCallBack &before, const MSKernelCallBac
 bool ModelImpl::IsTrainModel() { return (graph_ && graph_->graph_data_ && graph_->graph_data_->IsTrainModel()); }
 
 Status ModelImpl::LoadConfig(const std::string &config_path) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  if (session_ != nullptr) {
+    MS_LOG(ERROR) << "Model has been called Build, please call LoadConfig before Build.";
+    return kLiteError;
+  }
   std::map<std::string, std::map<std::string, std::string>> all_config_info;
   int ret = lite::GetAllSectionInfoFromConfigFile(config_path, &all_config_info);
   if (ret != RET_OK) {
@@ -346,6 +390,7 @@ Status ModelImpl::LoadConfig(const std::string &config_path) {
 }
 
 Status ModelImpl::UpdateConfig(const std::string &section, const std::pair<std::string, std::string> &config) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   auto iter = config_info_.find(section);
   if (iter == config_info_.end()) {
     if (config_info_.size() >= kMaxSectionNum) {
@@ -365,12 +410,13 @@ Status ModelImpl::UpdateConfig(const std::string &section, const std::pair<std::
 
 Status ModelImpl::Predict(const std::vector<MSTensor> &inputs, std::vector<MSTensor> *outputs,
                           const MSKernelCallBack &before, const MSKernelCallBack &after) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  if (session_ == nullptr) {
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
+    return kLiteNullptr;
+  }
   if (outputs == nullptr) {
     MS_LOG(ERROR) << "outputs is nullptr.";
-    return kLiteError;
-  }
-  if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Run graph failed.";
     return kLiteError;
   }
   auto input_tensors = session_->GetInputs();
@@ -454,9 +500,10 @@ Status ModelImpl::Predict(const std::vector<MSTensor> &inputs, std::vector<MSTen
 }
 
 Status ModelImpl::Predict(const MSKernelCallBack &before, const MSKernelCallBack &after) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Run graph failed.";
-    return kLiteError;
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
+    return kLiteNullptr;
   }
   auto input_tensors = session_->GetInputs();
   if (input_tensors.empty()) {
@@ -480,23 +527,23 @@ Status ModelImpl::Predict(const MSKernelCallBack &before, const MSKernelCallBack
 }
 
 std::vector<MSTensor> ModelImpl::GetInputs() {
-  std::vector<MSTensor> empty;
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
-    return empty;
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
+    return {};
   }
   std::vector<MSTensor> res;
   auto inputs = session_->GetInputs();
   if (inputs.empty()) {
     MS_LOG(ERROR) << "The inputs of model is null.";
-    return empty;
+    return {};
   }
   res.resize(inputs.size());
   for (size_t i = 0; i < inputs.size(); i++) {
     auto impl = std::make_shared<LiteTensorImpl>(inputs[i]);
     if (impl == nullptr || impl->lite_tensor() == nullptr) {
       MS_LOG(ERROR) << "Create tensor failed.";
-      return empty;
+      return {};
     }
 
     res[i] = MSTensor(impl);
@@ -505,37 +552,37 @@ std::vector<MSTensor> ModelImpl::GetInputs() {
 }
 
 std::vector<MSTensor> ModelImpl::GetOutputs() {
-  std::vector<MSTensor> empty;
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
-    return empty;
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
+    return {};
   }
   std::vector<MSTensor> res;
   auto names = session_->GetOutputTensorNames();
   if (names.empty()) {
     MS_LOG(ERROR) << "The output tensor name of this model is null.";
-    return empty;
+    return {};
   }
   auto outputs = session_->GetOutputs();
   if (outputs.empty()) {
     MS_LOG(ERROR) << "The outputs of model is null.";
-    return empty;
+    return {};
   }
   if (names.size() != outputs.size()) {
     MS_LOG(ERROR) << "The size of outputs dose not match the size of names.";
-    return empty;
+    return {};
   }
   res.resize(names.size());
   for (size_t i = 0; i < names.size(); i++) {
     auto impl = std::make_shared<LiteTensorImpl>(outputs[names[i]]);
     if (impl == nullptr || impl->lite_tensor() == nullptr) {
       MS_LOG(ERROR) << "Create tensor failed.";
-      return empty;
+      return {};
     }
     auto tensor = MSTensor(impl);
     if (tensor == nullptr) {
       MS_LOG(ERROR) << "Create tensor failed.";
-      return empty;
+      return {};
     }
     res[i] = tensor;
   }
@@ -543,23 +590,24 @@ std::vector<MSTensor> ModelImpl::GetOutputs() {
 }
 
 std::vector<MSTensor> ModelImpl::GetGradients() const {
-  std::vector<MSTensor> empty;
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
-    return empty;
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
+    return {};
   }
   auto params = session_->GetGradients();
   if (params.empty()) {
     MS_LOG(ERROR) << "No optimizer parameters avelibale.";
-    return empty;
+    return {};
   }
   std::vector<MSTensor> res = LiteTensorsToMSTensors(params, false);
   return res;
 }
 
 Status ModelImpl::ApplyGradients(const std::vector<MSTensor> &gradients) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
     return kLiteNullptr;
   }
   if (gradients.empty()) {
@@ -586,23 +634,39 @@ Status ModelImpl::ApplyGradients(const std::vector<MSTensor> &gradients) {
 }
 
 std::vector<MSTensor> ModelImpl::GetFeatureMaps() const {
-  std::vector<MSTensor> empty;
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
-    return empty;
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
+    return {};
   }
   auto params = session_->GetFeatureMaps();
   if (params.empty()) {
     MS_LOG(ERROR) << "No optimizer parameters avelibale.";
-    return empty;
+    return {};
+  }
+  std::vector<MSTensor> res = LiteTensorsToMSTensors(params, true);
+  return res;
+}
+
+std::vector<MSTensor> ModelImpl::GetTrainableParams() const {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  if (session_ == nullptr) {
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
+    return {};
+  }
+  auto params = session_->GetTrainableParams();
+  if (params.empty()) {
+    MS_LOG(ERROR) << "No trainable parameters available.";
+    return {};
   }
   std::vector<MSTensor> res = LiteTensorsToMSTensors(params, true);
   return res;
 }
 
 Status ModelImpl::UpdateFeatureMaps(const std::vector<MSTensor> &new_weights) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
     return kLiteNullptr;
   }
   if (new_weights.empty()) {
@@ -629,23 +693,24 @@ Status ModelImpl::UpdateFeatureMaps(const std::vector<MSTensor> &new_weights) {
 }
 
 std::vector<MSTensor> ModelImpl::GetOptimizerParams() const {
-  std::vector<MSTensor> empty;
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
-    return empty;
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
+    return {};
   }
   auto params = session_->GetOptimizerParams();
   if (params.empty()) {
     MS_LOG(ERROR) << "No optimizer parameters avelibale.";
-    return empty;
+    return {};
   }
   std::vector<MSTensor> res = LiteTensorsToMSTensors(params);
   return res;
 }
 
 Status ModelImpl::SetOptimizerParams(const std::vector<MSTensor> &params) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
     return kLiteNullptr;
   }
   if (params.empty()) {
@@ -672,8 +737,9 @@ Status ModelImpl::SetOptimizerParams(const std::vector<MSTensor> &params) {
 }
 
 MSTensor ModelImpl::GetInputByTensorName(const std::string &name) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
     return MSTensor(nullptr);
   }
   auto res = session_->GetInputsByTensorName(name);
@@ -691,17 +757,18 @@ MSTensor ModelImpl::GetInputByTensorName(const std::string &name) {
 }
 
 std::vector<std::string> ModelImpl::GetOutputTensorNames() {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
-    std::vector<std::string> empty;
-    return empty;
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
+    return {};
   }
   return session_->GetOutputTensorNames();
 }
 
 MSTensor ModelImpl::GetOutputByTensorName(const std::string &name) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
     return MSTensor(nullptr);
   }
   auto res = session_->GetOutputByTensorName(name);
@@ -719,28 +786,28 @@ MSTensor ModelImpl::GetOutputByTensorName(const std::string &name) {
 }
 
 std::vector<MSTensor> ModelImpl::GetOutputsByNodeName(const std::string &name) {
-  std::vector<MSTensor> empty;
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
-    return empty;
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
+    return {};
   }
   std::vector<MSTensor> res;
   auto outputs = session_->GetOutputsByNodeName(name);
   if (outputs.empty()) {
     MS_LOG(ERROR) << "The outputs of model is null.";
-    return empty;
+    return {};
   }
   res.resize(outputs.size());
   for (size_t i = 0; i < outputs.size(); i++) {
     auto impl = std::make_shared<LiteTensorImpl>(outputs[i]);
     if (impl == nullptr || impl->lite_tensor() == nullptr) {
       MS_LOG(ERROR) << "Create tensor failed.";
-      return empty;
+      return {};
     }
     auto tensor = MSTensor(impl);
     if (tensor == nullptr) {
       MS_LOG(ERROR) << "Create tensor failed.";
-      return empty;
+      return {};
     }
     res[i] = tensor;
   }
@@ -749,9 +816,10 @@ std::vector<MSTensor> ModelImpl::GetOutputsByNodeName(const std::string &name) {
 
 Status ModelImpl::BindGLTexture2DMemory(const std::map<std::string, unsigned int> &inputGLTexture,
                                         std::map<std::string, unsigned int> *outputGLTexture) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   MS_LOG(INFO) << "Bind GLTexture2D to Input MsTensors and Output MsTensors";
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
     return kLiteError;
   }
   auto status = session_->BindGLTexture2DMemory(inputGLTexture, outputGLTexture);
@@ -763,8 +831,9 @@ Status ModelImpl::BindGLTexture2DMemory(const std::map<std::string, unsigned int
 }
 
 Status ModelImpl::Resize(const std::vector<MSTensor> &inputs, const std::vector<std::vector<int64_t>> &dims) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
     return kLiteNullptr;
   }
   if (inputs.empty()) {
@@ -816,8 +885,9 @@ Status ModelImpl::Resize(const std::vector<MSTensor> &inputs, const std::vector<
 }
 
 Status ModelImpl::UpdateWeights(const std::vector<MSTensor> &new_weights) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
     return kLiteNullptr;
   }
   if (new_weights.empty()) {
@@ -840,12 +910,16 @@ Status ModelImpl::UpdateWeights(const std::vector<MSTensor> &new_weights) {
     inner_weights[i] = lite_impl->lite_tensor();
   }
   auto ret = session_->UpdateWeights(inner_weights);
+  if (ret != kSuccess) {
+    MS_LOG(ERROR) << "UpdateWeights failed, and the origin weights may have been changed.";
+  }
   return static_cast<StatusCode>(ret);
 }
 
 Status ModelImpl::SetupVirtualBatch(int virtual_batch_multiplier, float lr, float momentum) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
     return kLiteNullptr;
   }
   auto ret = session_->SetupVirtualBatch(virtual_batch_multiplier, lr, momentum);
@@ -853,8 +927,9 @@ Status ModelImpl::SetupVirtualBatch(int virtual_batch_multiplier, float lr, floa
 }
 
 Status ModelImpl::SetLearningRate(float learning_rate) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(ERROR) << "Session is null.";
+    MS_LOG(ERROR) << "Model has not been called Build, or Model Build has failed";
     return kLiteNullptr;
   }
   auto ret = session_->SetLearningRate(learning_rate);
@@ -862,8 +937,9 @@ Status ModelImpl::SetLearningRate(float learning_rate) {
 }
 
 float ModelImpl::GetLearningRate() {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (session_ == nullptr) {
-    MS_LOG(WARNING) << "Session is null.";
+    MS_LOG(WARNING) << "Model has not been called Build, or Model Build has failed";
     return 0.0;
   }
   return session_->GetLearningRate();
@@ -885,5 +961,74 @@ lite::LiteSession *ModelImpl::CreateLiteSession(const std::shared_ptr<lite::Inne
     return nullptr;
   }
   return session;
+}
+
+bool ModelImpl::IsValidDoubleNum(const std::string &num_str) {
+  if (num_str.empty()) {
+    return false;
+  }
+  std::istringstream iss(num_str);
+  double d;
+  iss >> std::noskipws >> d;
+  return iss.eof() && !iss.fail();
+}
+
+int ModelImpl::ModelDeObfuscate() {
+  float obf_ratio = 0.0;
+  auto iter = config_info_.find(kBuildSection);
+  if (iter != config_info_.end()) {
+    auto item_runner = iter->second.find(kObfRatioKey);
+    if (item_runner != iter->second.end()) {
+      if (IsValidDoubleNum(iter->second.at(kObfRatioKey))) {
+        obf_ratio = std::stof(iter->second.at(kObfRatioKey));
+      } else {
+        MS_LOG(ERROR) << "Obfuscate ratio should be float but got " << iter->second.at(kObfRatioKey);
+        return RET_ERROR;
+      }
+    }
+  } else {
+    MS_LOG(INFO) << "No obfuscate key find in config file";
+  }
+  if (obf_ratio > 50.0) {
+    MS_LOG(ERROR) << "Obf ratio is greater than 50. Please set it within the range of (0, 50]";
+    return RET_ERROR;
+  }
+
+  auto model = graph_->graph_data_->lite_model();
+  std::string tensor_name = "";
+  for (auto node : model->graph_.all_nodes_) {
+    if (node->name_.find(kObfNodeName) != std::string::npos) {
+      auto idx = node->input_indices_[kDataIndex];
+      auto *tensor = model->graph_.all_tensors_[idx];
+      if (tensor == nullptr) {
+        MS_LOG(ERROR) << "Obfuscate tensor is null.";
+        return RET_ERROR;
+      }
+      if (tensor->name() != nullptr) {
+        tensor_name = tensor->name()->str();
+      }
+    }
+  }
+  if (tensor_name.empty()) {
+    MS_LOG(INFO) << "Could not find corresponding tensor of the obfuscate value";
+    return RET_OK;
+  }
+  MS_LOG(DEBUG) << "Find obfuscate value in tensor " << tensor_name;
+
+  float data[1] = {obf_ratio};
+  auto new_tensor =
+    MSTensor::CreateTensor(tensor_name, mindspore::DataType::kNumberTypeFloat32, {1, 1}, data, kFloatSize);
+  if (new_tensor == nullptr) {
+    MS_LOG(ERROR) << "Create tensor failed";
+    return RET_ERROR;
+  }
+  std::vector<mindspore::MSTensor> modify_tensors;
+  modify_tensors.emplace_back(*new_tensor);
+  auto ret = this->UpdateWeights(modify_tensors);
+  if (ret != kSuccess) {
+    MS_LOG(ERROR) << "UpdateWeights failed.";
+    return RET_ERROR;
+  }
+  return RET_OK;
 }
 }  // namespace mindspore

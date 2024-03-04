@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@
 #include <utility>
 #include <set>
 #include <map>
+#include <string>
 #include "include/common/thread_pool.h"
 #include "mindspore/core/ops/sparse_matrix_add.h"
 
@@ -49,7 +50,6 @@ using KernelRunFunc = SparseMatrixAddCpuKernelMod::KernelRunFunc;
 }  // namespace
 bool SparseMatrixAddCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                        const std::vector<KernelTensorPtr> &outputs) {
-  outputs_ = outputs;
   auto kernel_ptr = std::dynamic_pointer_cast<ops::SparseMatrixAdd>(base_operator);
   MS_EXCEPTION_IF_NULL(kernel_ptr);
   kernel_name_ = kernel_ptr->name();
@@ -101,6 +101,16 @@ int SparseMatrixAddCpuKernelMod::Resize(const BaseOperatorPtr &base_operator,
   return ret;
 }
 
+template <typename T>
+void CheckInputValid(const T *input, const size_t &size, const std::string &name) {
+  for (size_t i = 0; i < size - 1; i++) {
+    if (input[i] > input[i + 1] || input[i] < 0 || input[i + 1] < 0) {
+      std::vector<T> v(input, input + size);
+      MS_LOG_EXCEPTION << "For SparseMatrixAdd, " << name << " must non-negative and increasing, but got " << v;
+    }
+  }
+}
+
 template <typename T, typename S>
 bool SparseMatrixAddCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
                                                const std::vector<AddressPtr> &outputs) {
@@ -132,6 +142,8 @@ bool SparseMatrixAddCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &in
   if (ret != EOK) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', launch kernel error: memcpy failed. Error no: " << ret;
   }
+  CheckInputValid(a_indptr, inputs[kAIndptrIdx]->size / sizeof(T), "a indptr");
+  CheckInputValid(b_indptr, inputs[kBIndptrIdx]->size / sizeof(T), "b indptr");
   auto batch_size = static_cast<size_t>(a_batch_size > 1 ? (a_batch_size - 1) : 1);
   c_batch[0] = 0;
   // Do the compute: C = alpha * A + beta * B.
@@ -140,12 +152,11 @@ bool SparseMatrixAddCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &in
   size_t c_idx = 0;
   S a_v = 0;
   S b_v = 0;
-  size_t tmp_batch = 0;
   size_t a_v_idx = 0;
   size_t b_v_idx = 0;
   for (size_t s = 0; s < batch_size; s++) {  // loop for all batches
     auto task = [this, &a_indptr, &a_indices, &a_values, &b_indptr, &b_indices, &b_values, &alpha, &beta, &c_indptr,
-                 &c_indices, &c_values, &index_set, &c_idx, &a_v, &b_v, &a_v_idx, &b_v_idx, &tmp_batch,
+                 &c_indices, &c_values, &index_set, &c_idx, &a_v, &b_v, &a_v_idx, &b_v_idx,
                  &s](size_t start, size_t end) {
       for (size_t x = start; x < end; x++) {  // one batch
         auto i = x + s;
@@ -179,16 +190,12 @@ bool SparseMatrixAddCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &in
           b_v = 0;  // Reset the tmp value, real number or zero.
           a_v = 0;
         }
-        tmp_batch += index_set.size();
         index_set.clear();
       }
     };
     ParallelLaunchAutoSearch(task, row_, this, &parallel_search_info_);
-    if (s < batch_size - 1) {
-      c_batch[s + 1] = static_cast<T>(tmp_batch) + c_batch[s];
-    }
-    tmp_batch = 0;
   }
+  c_batch[1] = static_cast<T>(c_idx);
   // Update output shape and type
   std::vector<int64_t> out_indptr_shape;
   std::vector<int64_t> out_indices_shape;

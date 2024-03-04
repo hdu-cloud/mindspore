@@ -20,11 +20,18 @@
 #include <map>
 #include "common/util/error_manager/error_manager.h"
 #include "include/common/utils/anfalgo.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "runtime/device/ms_device_shape_transfer.h"
 #include "utils/ms_context.h"
+#include "utils/dlopen_macro.h"
 #include "runtime/dev.h"
+#include "runtime/config.h"
 #include "acl/error_codes/rt_error_codes.h"
+#ifdef ASCEND_910
+#define EXPECT_ASCEND_VERSION "ascend910"
+#elif defined(ASCEND_910B)
+#define EXPECT_ASCEND_VERSION "ascend910b"
+#endif
 
 namespace mindspore {
 namespace device {
@@ -100,10 +107,39 @@ const std::map<uint32_t, std::string> error_msg = {
 };
 
 constexpr auto kUnknowErrorString = "Unknown error occurred";
-constexpr auto kSOC_VERSION = "SOC_VERSION";
 }  // namespace
 
-std::string GetErrorMessage(bool add_title) {
+error_message::Context ErrorManagerAdapter::context_;
+std::mutex ErrorManagerAdapter::initialized_mutex_;
+bool ErrorManagerAdapter::initialized_ = false;
+std::vector<std::string> ErrorManagerAdapter::traceback_;
+
+bool ErrorManagerAdapter::Init() {
+  std::unique_lock<std::mutex> lock(initialized_mutex_);
+  if (initialized_) {
+    MS_LOG(DEBUG) << "Ascend error manager has been initialized.";
+    return true;
+  }
+  const auto error_manager_init_ret = ErrorManager::GetInstance().Init();
+  if (error_manager_init_ret != 0) {
+    MS_LOG(WARNING) << "Init ascend error manager failed, some ascend error log may be left out.";
+    return false;
+  }
+  ErrorManager::GetInstance().GenWorkStreamIdDefault();
+  context_ = ErrorManager::GetInstance().GetErrorManagerContext();
+  MS_LOG(DEBUG) << "Initialize ascend error manager successfully. Work stream id: " << context_.work_stream_id;
+  initialized_ = true;
+  LogWriter::SetMessageHandler(&MessageHandler);
+  return true;
+}
+
+void ErrorManagerAdapter::BindToCurrentThread() {
+  if (initialized_) {
+    ErrorManager::GetInstance().SetErrorContext(context_);
+  }
+}
+
+std::string ErrorManagerAdapter::GetErrorMessage(bool add_title) {
   const string &error_message = ErrorManager::GetInstance().GetErrorMessage();
   if (error_message.empty() || error_message.find(kUnknowErrorString) != string::npos) {
     return "";
@@ -115,14 +151,29 @@ std::string GetErrorMessage(bool add_title) {
   return error_message;
 }
 
-void SetErrorManagerContext() { ErrorManager::GetInstance().GenWorkStreamIdDefault(); }
-
-std::string GetWarningMessage() {
+std::string ErrorManagerAdapter::GetWarningMessage(bool add_title) {
   const string &warning_message = ErrorManager::GetInstance().GetWarningMessage();
-  if (!warning_message.empty()) {
-    return warning_message;
+  if (warning_message.empty()) {
+    return "";
   }
-  return "";
+  if (add_title) {
+    return "#umsg#Ascend Warning Message:#umsg#" + warning_message;
+  }
+  return warning_message;
+}
+
+void ErrorManagerAdapter::MessageHandler(std::ostringstream *oss) {
+  const auto &error_message = GetErrorMessage(true);
+  if (!error_message.empty()) {
+    (void)traceback_.emplace_back(error_message);
+  }
+  const auto &warning_message = GetWarningMessage(true);
+  if (!warning_message.empty()) {
+    (void)traceback_.emplace_back(warning_message);
+  }
+  for (const auto &message : traceback_) {
+    *oss << message;
+  }
 }
 
 bool IsGraphMode() {
@@ -140,7 +191,7 @@ bool IsDynamicShapeGraph(const FuncGraphPtr &func_graph) {
 
 std::string GetSocVersion() {
   // Get default soc version.
-  static std::string version{};
+  static std::string version;
   if (version.empty()) {
     const int kSocVersionLen = 50;
     char soc_version[kSocVersionLen] = {0};
@@ -148,73 +199,41 @@ std::string GetSocVersion() {
     if (ret != RT_ERROR_NONE) {
       MS_LOG(EXCEPTION) << "GetSocVersion failed.";
     }
-    // Get soc version from env value.
-    const char *soc_version_env = nullptr;
-    std::string str_soc_version_env = common::GetEnv(kSOC_VERSION);
-    if (!str_soc_version_env.empty()) {
-      soc_version_env = common::SafeCStr(str_soc_version_env);
-    }
-    if (soc_version_env != nullptr) {
-      if (std::strcmp(soc_version, soc_version_env) != 0) {
-        MS_LOG(DEBUG) << "Detected the env SOC_VERSION, so the SocVersion will be changed to " << str_soc_version_env
-                      << ".";
-        ret = rtSetSocVersion(soc_version_env);
-        if (ret != RT_ERROR_NONE) {
-          MS_LOG(EXCEPTION) << "SetSocVersion failed, errorno: " << ret;
-        }
-        version = soc_version_env;
-        return soc_version_env;
-      }
-    }
     version = soc_version;
   }
   return version;
 }
 
-void AssignOutputNopNodeDeviceAddress(const KernelGraphPtr &graph, const device::DeviceContext *device_context) {
-  MS_EXCEPTION_IF_NULL(graph);
-  auto outputs = common::AnfAlgo::GetAllOutput(graph->output(), {prim::kPrimTupleGetItem});
-  for (auto output : outputs) {
-    if (!output->isa<CNode>() || !AnfUtils::IsRealKernel(output)) {
-      continue;
-    }
-
-    if (!common::AnfAlgo::IsNopNode(output)) {
-      continue;
-    }
-
-    if (!common::AnfAlgo::IsNeedSkipNopOpAddr(output)) {
-      continue;
-    }
-
-    size_t input_num = common::AnfAlgo::GetInputTensorNum(output);
-    if (input_num != 1) {
-      MS_LOG(WARNING) << "The input number of nop node :" << output->fullname_with_scope() << " is " << input_num
-                      << ", not equal 1";
-      continue;
-    }
-
-    auto real_input_index = AnfAlgo::GetInputGraphIdxByKernelIdx(output, 0);
-    auto pre_node_out_device_address = AnfAlgo::GetPrevNodeOutputAddr(output, real_input_index);
-    MS_EXCEPTION_IF_NULL(pre_node_out_device_address);
-    auto ptr = pre_node_out_device_address->GetPtr();
-    auto size = pre_node_out_device_address->GetSize();
-    std::string output_format = AnfAlgo::GetOutputFormat(output, 0);
-    auto output_type = AnfAlgo::GetOutputDeviceDataType(output, 0);
-    auto device_address = device_context->device_res_manager_->CreateDeviceAddress(
-      const_cast<void *>(ptr), size, output_format, output_type, trans::GetRuntimePaddingShape(output, 0));
-    // If graph has the flag kFlagEnableZeroCopyInGraph, it means the graph should run in graph mode, the device
-    // address of graph output should not be persisted, and its output addr will be replaced after RunGraph.
-    // As we fetch the output device address of a nopnode, we can only get the input device address of it, so we
-    // have to prevent the ptr persist flag of the device address here.
-    if (!graph->has_flag(kFlagEnableZeroCopyInGraph)) {
-      device_address->set_is_ptr_persisted(true);
-    }
-    device_address->set_host_shape(trans::GetRuntimePaddingShape(output, 0));
-    AnfAlgo::SetOutputAddr(device_address, 0, output.get());
-    common::AnfAlgo::SetNodeAttr(kAttrSkipNopOpAddr, MakeValue(false), output);
-    MS_LOG(INFO) << "Assign device address to output nop node " << output->fullname_with_scope();
+std::string GetAscendPath() {
+  Dl_info info;
+  if (dladdr(reinterpret_cast<void *>(rtGetSocVersion), &info) == 0) {
+    MS_LOG(INFO) << "Get dladdr failed, skip.";
+    return "";
   }
+  auto path_tmp = std::string(info.dli_fname);
+  const std::string kLib64 = "lib64";
+  auto pos = path_tmp.find(kLib64);
+  if (pos == std::string::npos) {
+    MS_EXCEPTION(ValueError) << "Get ascend path failed, please check the run package.";
+  }
+  return path_tmp.substr(0, pos);
+}
+
+std::string GetAICoreNumber() {
+  constexpr int32_t kModelTypeAiCore = 4;  // enum DEV_MODULE_TYPE { MODULE_TYPE_AICORE = 4 }
+  constexpr int32_t kInfoTypeCoreNum = 3;  // enum DEV_INFO_TYPE { INFO_TYPE_CORE_NUM = 3 }
+  auto context_ptr = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context_ptr);
+  uint32_t device_id = context_ptr->get_param<uint32_t>(MS_CTX_DEVICE_ID);
+  int64_t aicore_number = 0;
+  auto rt_ret = rtGetDeviceInfo(device_id, kModelTypeAiCore, kInfoTypeCoreNum, &aicore_number);
+  if (rt_ret != RT_ERROR_NONE) {
+    MS_LOG(WARNING) << "Get aicore number for device " << device_id
+                    << " failed, will compile tbe op with empty core_num.";
+    return "";
+  }
+  MS_LOG(DEBUG) << "AiCore number of device " << device_id << " is " << aicore_number;
+  return std::to_string(aicore_number);
 }
 
 std::string GetErrorMsg(uint32_t rt_error_code) {
@@ -224,6 +243,55 @@ std::string GetErrorMsg(uint32_t rt_error_code) {
   }
   return find_iter->second;
 }
+
+#if defined(ASCEND_910) || defined(ASCEND_910B)
+constexpr auto k910AscendVersion = "Ascend910";
+constexpr auto k910BAscendVersion = "ascend910b";
+const std::map<std::string, std::string> kAscendSocVersions = {
+  {"Ascend910A", "ascend910"},    {"Ascend910B", "ascend910"},    {"Ascend910PremiumA", "ascend910"},
+  {"Ascend910ProA", "ascend910"}, {"Ascend910ProB", "ascend910"}, {"Ascend910B1", "ascend910b"},
+  {"Ascend910B2", "ascend910b"},  {"Ascend910B3", "ascend910b"},  {"Ascend910B4", "ascend910b"}};
+
+// for unify 1980 and 1980b, when the function throw exception, it means the 910b soc version is not available.
+const bool SelectAscendPlugin = []() -> bool {
+  // for 1951, if is_heterogenous, return true
+  int32_t is_heterogenous = 0;
+  (void)rtGetIsHeterogenous(&is_heterogenous);
+  if (is_heterogenous == 1) {
+    if (std::string(EXPECT_ASCEND_VERSION) == k910BAscendVersion) {
+      exit(0);
+    } else {
+      return true;
+    }
+  }
+  std::string soc_version = GetSocVersion();
+  // if soc_version belongs to 310 or 710, return true
+  if (soc_version.find(k910AscendVersion) == std::string::npos) {
+    return true;
+  }
+  auto iter = kAscendSocVersions.find(soc_version);
+  if (iter == kAscendSocVersions.end()) {
+    exit(0);
+  }
+  if (iter->second != std::string(EXPECT_ASCEND_VERSION)) {
+    exit(0);
+  }
+  if (iter->second == k910BAscendVersion) {
+    common::SetEnv("MS_ENABLE_GE", "1");
+    auto format_mode = common::GetEnv("MS_ENABLE_FORMAT_MODE");
+    if (format_mode.empty()) {
+      common::SetEnv("MS_ENABLE_FORMAT_MODE", "1");
+    }
+    auto force_acl = common::GetEnv("MS_DEV_FORCE_ACL");
+    auto disable_ref = common::GetEnv("MS_DISABLE_REF_MODE");
+    // MS_DEV_FORCE_ACL 1: ACL with special format, 2: ACL with default format.
+    if (force_acl.empty() && disable_ref != "1") {
+      common::SetEnv("MS_DEV_FORCE_ACL", "1");
+    }
+  }
+  return true;
+}();
+#endif
 }  // namespace ascend
 }  // namespace device
 }  // namespace mindspore

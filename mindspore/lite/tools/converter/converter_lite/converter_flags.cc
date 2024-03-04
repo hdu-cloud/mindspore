@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,19 +29,26 @@ using mindspore::lite::RET_INPUT_PARAM_INVALID;
 using mindspore::lite::RET_OK;
 
 Flags::Flags() {
-  AddFlag(&Flags::fmkIn, "fmk", "Input model framework type. TF | TFLITE | CAFFE | MINDIR | ONNX | PYTORCH", "");
+  AddFlag(&Flags::fmkIn, "fmk",
+          "Input model framework type. TF | TFLITE | CAFFE | MINDIR | ONNX | OM | PYTORCH | MSLITE."
+          " When set MSLITE, micro must be enabled. When set OM, device must be set to Ascend.",
+          "");
   AddFlag(&Flags::modelFile, "modelFile",
-          "Input model file. TF: *.pb | TFLITE: *.tflite | CAFFE: *.prototxt | MINDIR: *.mindir | ONNX: *.onnx", "");
+          "Input model file. TF: *.pb | TFLITE: *.tflite | CAFFE: *.prototxt | MINDIR: *.mindir | ONNX: *.onnx | "
+          "MSLITE: *.ms | OM: *.om",
+          "");
   AddFlag(&Flags::outputFile, "outputFile", "Output model file path.", "");
   AddFlag(&Flags::weightFile, "weightFile", "Input model weight file. Needed when fmk is CAFFE. CAFFE: *.caffemodel",
           "");
   AddFlag(&Flags::inputDataTypeStr, "inputDataType",
-          "Data type of input tensors, default is same with the type defined in model. FLOAT | INT8 | UINT8 | DEFAULT",
+          "Data type of input tensors, default is same with the type defined in model. FLOAT16 | FLOAT | INT8 | UINT8 "
+          "| INT32 | INT64 | DEFAULT",
           "DEFAULT");
-  AddFlag(&Flags::outputDataTypeStr, "outputDataType",
-          "Data type of output and output tensors, default is same with the type defined in model. FLOAT | INT8 | "
-          "UINT8 | DEFAULT",
-          "DEFAULT");
+  AddFlag(
+    &Flags::outputDataTypeStr, "outputDataType",
+    "Data type of output and output tensors, default is same with the type defined in model. FLOAT16 | FLOAT | INT8 | "
+    "UINT8 | DEFAULT",
+    "DEFAULT");
   AddFlag(&Flags::configFile, "configFile",
           "Configuration for post-training, offline split op to parallel,"
           "disable op fusion ability and set plugin so path",
@@ -49,10 +56,13 @@ Flags::Flags() {
   AddFlag(&Flags::saveFP16Str, "fp16",
           "Serialize const tensor in Float16 data type, only effective for const tensor in Float32 data type. on | off",
           "off");
+// Cloud infer do not support trainModel para
+#if !defined(ENABLE_CLOUD_FUSION_INFERENCE) && !defined(ENABLE_CLOUD_INFERENCE)
   AddFlag(&Flags::trainModelIn, "trainModel",
           "whether the model is going to be trained on device. "
           "true | false",
           "false");
+#endif
   AddFlag(&Flags::dec_key, "decryptKey",
           "The key used to decrypt the file, expressed in hexadecimal characters. Only valid when fmkIn is 'MINDIR'",
           "");
@@ -68,6 +78,8 @@ Flags::Flags() {
           "");
   AddFlag(&Flags::graphInputFormatStr, "inputDataFormat",
           "Assign the input format of exported model. Only Valid for 4-dimensional input. NHWC | NCHW", "");
+  AddFlag(&Flags::graphOutputFormatStr, "outputDataFormat",
+          "Assign the output format of exported model. Only Valid for 4-dimensional output. NHWC | NCHW", "");
 #ifdef ENABLE_OPENSSL
   AddFlag(&Flags::encryptionStr, "encryption",
           "Whether to export the encryption model."
@@ -82,23 +94,31 @@ Flags::Flags() {
           "Whether to do pre-inference after convert. "
           "true | false",
           "false");
-  AddFlag(&Flags::exportMindIR, "exportMindIR", "MINDIR | MINDIR_LITE", "MINDIR_LITE");
-  AddFlag(&Flags::noFusionStr, "NoFusion", "Avoid fusion optimization true|false", "false");
-  AddFlag(&Flags::device, "device", "Set the target device, support Ascend", "");
+  AddFlag(&Flags::device, "device",
+          "Set the target device, support Ascend, Ascend310 and Ascend310P will be deprecated.", "");
+#if defined(ENABLE_CLOUD_FUSION_INFERENCE) || defined(ENABLE_CLOUD_INFERENCE)
+  AddFlag(&Flags::saveTypeStr, "saveType", "The type of saved model. MINDIR | MINDIR_LITE", "MINDIR");
+#else
+  AddFlag(&Flags::saveTypeStr, "saveType", "The type of saved model. MINDIR | MINDIR_LITE", "MINDIR_LITE");
+#endif
+  AddFlag(&Flags::optimizeStr, "optimize", "The type of optimization. none | general | gpu_oriented | ascend_oriented",
+          "general");
+  AddFlag(&Flags::optimizeTransformerStr, "optimizeTransformer", "Enable Fast-Transformer fusion true|false", "false");
 }
 
 int Flags::InitInputOutputDataType() {
   // value check not here, it is in converter c++ API's CheckValueParam method.
-  std::map<std::string, DataType> StrToEnumDataTypeMap = {{"FLOAT", DataType::kNumberTypeFloat32},
-                                                          {"INT8", DataType::kNumberTypeInt8},
-                                                          {"UINT8", DataType::kNumberTypeUInt8},
-                                                          {"DEFAULT", DataType::kTypeUnknown}};
+  std::map<std::string, DataType> StrToEnumDataTypeMap = {
+    {"FLOAT16", DataType::kNumberTypeFloat16}, {"FLOAT", DataType::kNumberTypeFloat32},
+    {"INT8", DataType::kNumberTypeInt8},       {"UINT8", DataType::kNumberTypeUInt8},
+    {"INT32", DataType::kNumberTypeInt32},     {"INT64", DataType::kNumberTypeInt64},
+    {"DEFAULT", DataType::kTypeUnknown}};
   if (StrToEnumDataTypeMap.find(this->inputDataTypeStr) != StrToEnumDataTypeMap.end()) {
     this->inputDataType = StrToEnumDataTypeMap.at(this->inputDataTypeStr);
   } else {
-    std::cerr
-      << "INPUT INVALID: inputDataType is invalid: %s, supported inputDataType: FLOAT | INT8 | UINT8 | DEFAULT, got: "
-      << this->inputDataTypeStr << std::endl;
+    std::cerr << "INPUT INVALID: inputDataType is invalid: %s, supported inputDataType: FLOAT | INT8 | UINT8 | INT32 | "
+                 "INT64 | DEFAULT, got: "
+              << this->inputDataTypeStr << std::endl;
     return RET_INPUT_PARAM_INVALID;
   }
 
@@ -116,9 +136,9 @@ int Flags::InitInputOutputDataType() {
 
 int Flags::InitFmk() {
   // value check not here, it is in converter c++ API's CheckValueParam method.
-  std::map<std::string, FmkType> StrToEnumFmkTypeMap = {{"CAFFE", kFmkTypeCaffe},   {"MINDIR", kFmkTypeMs},
-                                                        {"TFLITE", kFmkTypeTflite}, {"ONNX", kFmkTypeOnnx},
-                                                        {"TF", kFmkTypeTf},         {"PYTORCH", kFmkTypePytorch}};
+  std::map<std::string, FmkType> StrToEnumFmkTypeMap = {
+    {"CAFFE", kFmkTypeCaffe}, {"MINDIR", kFmkTypeMs},       {"TFLITE", kFmkTypeTflite}, {"ONNX", kFmkTypeOnnx},
+    {"TF", kFmkTypeTf},       {"PYTORCH", kFmkTypePytorch}, {"MSLITE", kFmkTypeMsLite}, {"OM", kFmkTypeOM}};
   if (StrToEnumFmkTypeMap.find(this->fmkIn) != StrToEnumFmkTypeMap.end()) {
     this->fmk = StrToEnumFmkTypeMap.at(this->fmkIn);
   } else {
@@ -158,25 +178,25 @@ int Flags::InitInTensorShape() const {
     constexpr int kMinShapeSizeInStr = 2;
     if (string_split.size() < kMinShapeSizeInStr) {
       MS_LOG(ERROR) << "shape size must not be less than " << kMinShapeSizeInStr;
-      return mindspore::lite::RET_ERROR;
+      return lite::RET_INPUT_PARAM_INVALID;
     }
     auto name = string_split[0];
     for (size_t i = 1; i < string_split.size() - 1; ++i) {
       name += ":" + string_split[i];
     }
     if (name.empty()) {
-      MS_LOG(ERROR) << "input tensor name is empty";
-      return lite::RET_ERROR;
+      MS_LOG(ERROR) << "input tensor name is empty!";
+      return lite::RET_INPUT_PARAM_INVALID;
     }
     auto dim_strs = string_split[string_split.size() - 1];
     if (dim_strs.empty()) {
-      MS_LOG(ERROR) << "input tensor dim string is empty";
-      return lite::RET_ERROR;
+      MS_LOG(ERROR) << "input tensor dim string is empty!";
+      return lite::RET_INPUT_PARAM_INVALID;
     }
     auto dims = lite::StrSplit(dim_strs, std::string(","));
     if (dims.empty()) {
-      MS_LOG(ERROR) << "input tensor dim is empty";
-      return lite::RET_ERROR;
+      MS_LOG(ERROR) << "input tensor dim is empty!";
+      return lite::RET_INPUT_PARAM_INVALID;
     }
     for (const auto &dim : dims) {
       int64_t dim_value;
@@ -184,7 +204,7 @@ int Flags::InitInTensorShape() const {
         dim_value = std::stoi(dim);
       } catch (const std::exception &e) {
         MS_LOG(ERROR) << "Get dim failed: " << e.what();
-        return lite::RET_ERROR;
+        return lite::RET_INPUT_PARAM_INVALID;
       }
       shape.push_back(dim_value);
     }
@@ -200,6 +220,18 @@ int Flags::InitGraphInputFormat() {
     graphInputFormat = StrToEnumFormatMap.at(this->graphInputFormatStr);
   } else if (!this->graphInputFormatStr.empty()) {
     MS_LOG(ERROR) << "graph input format is invalid.";
+    return RET_INPUT_PARAM_INVALID;
+  }
+  return RET_OK;
+}
+
+int Flags::InitGraphOutputFormat() {
+  // value check not here, it is in converter c++ API's CheckValueParam method.
+  std::map<std::string, Format> StrToEnumFormatMap = {{"NHWC", NHWC}, {"NCHW", NCHW}};
+  if (StrToEnumFormatMap.find(this->graphOutputFormatStr) != StrToEnumFormatMap.end()) {
+    graphOutputFormat = StrToEnumFormatMap.at(this->graphOutputFormatStr);
+  } else if (!this->graphOutputFormatStr.empty()) {
+    MS_LOG(ERROR) << "graph input format [" << graphOutputFormatStr << "] is invalid!";
     return RET_INPUT_PARAM_INVALID;
   }
   return RET_OK;
@@ -229,30 +261,33 @@ int Flags::InitPreInference() {
   return RET_OK;
 }
 
-int Flags::InitNoFusion() {
-  if (this->noFusionStr == "true") {
+int Flags::InitOptimize() {
+  // For compatibility of interface, the check will be removed when nofusion is deleted
+  if (!this->device.empty()) {
+    return RET_OK;
+  }
+  if (this->optimizeStr == "none") {
     this->disableFusion = true;
-  } else if (this->noFusionStr == "false") {
+  } else if (this->optimizeStr == "general") {
     this->disableFusion = false;
-  } else {
-    std::cerr << "INPUT ILLEGAL: NoFusion must be true|false " << std::endl;
+  } else if (this->optimizeStr == "gpu_oriented") {
+    this->disableFusion = false;
+    this->device = "GPU";
+  } else if (this->optimizeStr.find("ascend_oriented") != std::string::npos) {
+    this->disableFusion = false;
+    this->device = "Ascend";
+    auto string_split = lite::StrSplit(this->optimizeStr, std::string(":"));
+    if (string_split.size() == 1) {
+      this->chip_name = "default";
+    } else if (string_split.size() == 2) {
+      this->chip_name = string_split[1];
+    } else {
+      MS_LOG(ERROR) << "not support ascend_oriented has more than one device model";
+      return lite::RET_ERROR;
+    }
+  } else if (!this->optimizeStr.empty()) {
+    std::cerr << "INPUT ILLEGAL: optimize must be none|general|gpu_oriented|ascend_oriented" << std::endl;
     return RET_INPUT_PARAM_INVALID;
-  }
-  return RET_OK;
-}
-
-int Flags::InitExportMindIR() {
-  // value check not here, it is in converter c++ API's CheckValueParam method.
-  std::map<std::string, ModelType> StrToEnumModelTypeMap = {{"MINDIR", kMindIR}, {"MINDIR_LITE", kMindIR_Lite}};
-  if (StrToEnumModelTypeMap.find(this->exportMindIR) != StrToEnumModelTypeMap.end()) {
-    this->export_mindir = StrToEnumModelTypeMap.at(this->exportMindIR);
-  } else {
-    std::cerr << "INPUT ILLEGAL: exportMindIR must be MINDIR|MINDIR_LITE " << std::endl;
-    return RET_INPUT_PARAM_INVALID;
-  }
-
-  if (this->exportMindIR == "MINDIR") {
-    this->disableFusion = true;
   }
   return RET_OK;
 }
@@ -264,6 +299,30 @@ int Flags::InitEncrypt() {
     this->encryption = false;
   } else {
     std::cerr << "INPUT ILLEGAL: encryption must be true|false " << std::endl;
+    return RET_INPUT_PARAM_INVALID;
+  }
+  return RET_OK;
+}
+
+int Flags::InitSaveType() {
+  std::map<std::string, ModelType> StrToEnumModelTypeMap = {{"MINDIR", kMindIR}, {"MINDIR_LITE", kMindIR_Lite}};
+  if (StrToEnumModelTypeMap.find(this->saveTypeStr) != StrToEnumModelTypeMap.end()) {
+    this->save_type = StrToEnumModelTypeMap.at(this->saveTypeStr);
+  } else {
+    std::cerr << "INPUT ILLEGAL: saveType must be MINDIR|MINDIR_LITE " << std::endl;
+    return RET_INPUT_PARAM_INVALID;
+  }
+
+  return RET_OK;
+}
+
+int Flags::InitOptimizeTransformer() {
+  if (this->optimizeTransformerStr == "true") {
+    this->optimizeTransformer = true;
+  } else if (this->optimizeTransformerStr == "false") {
+    this->optimizeTransformer = false;
+  } else {
+    std::cerr << "INPUT ILLEGAL:  optimizeTransformer must be true|false " << std::endl;
     return RET_INPUT_PARAM_INVALID;
   }
   return RET_OK;
@@ -286,21 +345,11 @@ int Flags::PreInit(int argc, const char **argv) {
     std::cout << this->Usage() << std::endl;
     return lite::RET_SUCCESS_EXIT;
   }
-
-  if (this->fmkIn.empty()) {
-    std::cerr << "INPUT MISSING: fmk is necessary" << std::endl;
-    return RET_INPUT_PARAM_INVALID;
-  }
-
   return RET_OK;
 }
 
 int Flags::Init(int argc, const char **argv) {
-  auto ret = PreInit(argc, argv);
-  if (ret != RET_OK) {
-    return ret;
-  }
-  ret = InitSaveFP16();
+  auto ret = InitSaveFP16();
   if (ret != RET_OK) {
     std::cerr << "Init save fp16 failed." << std::endl;
     return RET_INPUT_PARAM_INVALID;
@@ -336,26 +385,39 @@ int Flags::Init(int argc, const char **argv) {
     return RET_INPUT_PARAM_INVALID;
   }
 
+  ret = InitGraphOutputFormat();
+  if (ret != RET_OK) {
+    std::cerr << "Init graph output format failed." << std::endl;
+    return RET_INPUT_PARAM_INVALID;
+  }
+
   ret = InitEncrypt();
   if (ret != RET_OK) {
     std::cerr << "Init encrypt failed." << std::endl;
     return RET_INPUT_PARAM_INVALID;
   }
+
+  ret = InitOptimizeTransformer();
+  if (ret != RET_OK) {
+    std::cerr << "Init optimize transformers failed." << std::endl;
+    return RET_INPUT_PARAM_INVALID;
+  }
+
   ret = InitPreInference();
   if (ret != RET_OK) {
     std::cerr << "Init pre inference failed." << std::endl;
     return RET_INPUT_PARAM_INVALID;
   }
 
-  ret = InitExportMindIR();
+  ret = InitSaveType();
   if (ret != RET_OK) {
-    std::cerr << "Init export mindir failed." << std::endl;
+    std::cerr << "Init save type failed." << std::endl;
     return RET_INPUT_PARAM_INVALID;
   }
 
-  ret = InitNoFusion();
+  ret = InitOptimize();
   if (ret != RET_OK) {
-    std::cerr << "Init no fusion failed." << std::endl;
+    std::cerr << "Init optimize failed" << std::endl;
     return RET_INPUT_PARAM_INVALID;
   }
 

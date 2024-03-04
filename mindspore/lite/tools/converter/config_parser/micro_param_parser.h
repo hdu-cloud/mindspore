@@ -33,6 +33,10 @@ class MicroParamParser {
   STATUS ParseCodeGenMode(const std::string &codegen_mode, micro::MicroParam *micro_param);
   STATUS ParseSupportParallel(const std::string &support_parallel, micro::MicroParam *micro_param);
   STATUS ParseDebugMode(const std::string &debug_mode, micro::MicroParam *micro_param);
+  STATUS ParseSavePath(const std::string &debug_mode, micro::MicroParam *micro_param);
+  STATUS ParseProjName(const std::string &debug_mode, micro::MicroParam *micro_param);
+  STATUS ParseKeepOriginalWeight(const std::string &keep_weight, micro::MicroParam *micro_param);
+  STATUS ParseChangeableWeightsName(const std::string &changeable_weights_name, micro::MicroParam *micro_param);
 };
 }  // namespace lite
 }  // namespace mindspore

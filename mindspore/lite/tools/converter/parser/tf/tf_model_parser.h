@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,14 +42,18 @@ class TFModelParser : public converter::ModelParser {
 
   api::FuncGraphPtr Parse(const converter::ConverterParameters &flag) override;
 
-  static int TF2AnfAdjust(const std::set<FuncGraphPtr> &all_func_graphs);
+  static int TF2AnfAdjust(const std::set<FuncGraphPtr> &all_func_graphs,
+                          std::map<AnfNodePtr, int> *ineffective_if_op_map = nullptr);
 
  private:
   static STATUS ConvertConstVariant(const tensorflow::TensorProto &tensor_proto, tensor::TensorPtr *tensor_info);
-  static STATUS ConvertConstTensor(const tensorflow::NodeDef &node_def, const tensorflow::AttrValue &attr_value,
-                                   const TypeId &type, const ParameterPtr &parameter,
-                                   std::vector<int64_t> *shape_vector);
-  static STATUS SetTensorInfoFromType(const tensorflow::TensorProto &tensor_proto, tensor::TensorPtr *tensor_info);
+  STATUS ConvertConstTensor(const tensorflow::NodeDef &node_def, const tensorflow::AttrValue &attr_value,
+                            const TypeId &type, const ParameterPtr &parameter, std::vector<int64_t> *shape_vector);
+  STATUS SetInt64TensorInfo(const tensorflow::TensorProto &tensor_proto, tensor::TensorPtr *tensor_info,
+                            const std::string &node_name);
+  STATUS SetInt64TensorToInt64Tensor(const tensorflow::TensorProto &tensor_proto, tensor::TensorPtr *tensor_info);
+  STATUS SetTensorInfoFromType(const tensorflow::TensorProto &tensor_proto, tensor::TensorPtr *tensor_info,
+                               const std::string &node_name);
   STATUS ConvertParameter(const tensorflow::NodeDef &node, const ParameterPtr &parameter,
                           std::unordered_map<std::string, AnfNodePtr> *anf_node_map, bool root_graph = false);
   STATUS ConvertGraphInputsAndConsts(const std::vector<const tensorflow::NodeDef *> &tf_graph_nodes,
@@ -66,8 +70,14 @@ class TFModelParser : public converter::ModelParser {
   STATUS ConvertOps(const tensorflow::NodeDef &node_def,
                     const std::map<std::string, const tensorflow::NodeDef *> &tf_node_map,
                     const FuncGraphPtr &func_graph_ptr, std::unordered_map<std::string, AnfNodePtr> *anf_node_map);
-
+  STATUS ResetAbstractTensorToInt64(const std::string &op_type, const std::vector<std::string> &input_names,
+                                    const std::map<std::string, const tensorflow::NodeDef *> &tf_node_map,
+                                    const std::unordered_map<std::string, AnfNodePtr> &anf_node_map);
   STATUS ProcessControlFlowOp(const CNodePtr &anf_node, const string &op_type, const tensorflow::NodeDef &node_def);
+
+  bool IsIneffectiveIfOp(const CNodePtr &anf_node, const string &op_type, const tensorflow::NodeDef &node_def);
+
+  bool IsEmptyTfFunction(const CNodePtr &anf_node, std::string branch_name);
 
   std::set<std::string> GetAllNodeInputs();
 
@@ -106,6 +116,7 @@ class TFModelParser : public converter::ModelParser {
   std::vector<std::string> graph_output_names_;
   std::map<std::string, AnfNodePtr> function_while_map_;  // tf function name->while_node_name
   std::map<std::string, AnfNodePtr> function_if_map_;     // tf function name->if_node
+  std::map<AnfNodePtr, int> ineffective_if_op_map_;
   std::vector<std::pair<CNodePtr, std::vector<std::string>>> nodes_with_null_input_{};
   std::vector<std::string> while_cond_branch_name_;
   std::vector<std::string> if_then_branch_name_;

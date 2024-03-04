@@ -1,4 +1,4 @@
-# Copyright 2022 Huawei Technologies Co., Ltd
+# Copyright 2022-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,21 +16,12 @@
 import json
 import os
 import time
-from enum import Enum
 from mindspore.profiler import Profiler
-from mindspore.profiler.profiling import AICORE_METRICS_DICT
+from mindspore.profiler.profiling import AICORE_METRICS_DICT, DeviceSupportParam, ALWAYS_VALID_PARAM
 from mindspore.profiler.common.validator.validate_path import validate_and_normalize_path
 from mindspore.profiler.parser.integrator import DeviceTarget
 
 from mindspore import log as logger, context
-
-
-class DeviceSupportParam(Enum):
-    """The device target enum."""
-    CPU = ['start', 'output_path']
-    GPU = ['start', 'output_path', 'data_process', 'timeline_limit', 'sync_enable']
-    ASCEND = ['start', 'output_path', 'data_process', 'timeline_limit', 'profile_memory', 'parallel_strategy',
-              'profile_communication', 'aicore_metrics', 'l2_cache']
 
 
 def get_profiling_options():
@@ -38,31 +29,50 @@ def get_profiling_options():
     try:
         options = json.loads(os.environ.get("MS_PROFILER_OPTIONS", "{}"))
     except json.JSONDecodeError:
-        return None
+        return {"error": True}
     return options
 
 
-def parse_device_support_param(options):
+def parse_device_support_param(origin_options, final_options, factor_s_to_us=1e6):
     """Parse platform support parameters."""
     device_target = context.get_context("device_target").upper()
-    for param in options.keys():
-        if param not in DeviceSupportParam.__getattr__(f'{device_target}').value:
-            logger.warning(f"The parameter '{param}' is not supported on {device_target} currently.")
+    op_time = final_options.get("op_time")
+    support_list = DeviceSupportParam.__getattr__(f'{device_target}').value
+    all_param = list(set(origin_options) | set(final_options))
+    for param in all_param:
+        if param not in support_list and param in list(origin_options.keys()):
+            logger.warning(f"[Profiler]'{param}' is an invalid param which doesn't work.")
+        if param in support_list:
+            if not op_time and param in origin_options.keys() and param not in ALWAYS_VALID_PARAM:
+                logger.warning(f"When op_time is set to False, the parameter '{param}' setting is invalid.")
+        if param not in support_list and final_options.get(param):
+            final_options.pop(param)
+
+    simple_options = {
+        "start_time": int(time.time() * factor_s_to_us),
+        "file_output_path": "",
+        "pid": os.getpid(),
+    }
+    final_options.update(simple_options)
+    return final_options
 
 
 def construct_profiling_options():
     """Construct profiling options to determine which profiling data should be collected."""
     profiling_options = get_profiling_options()
-    if profiling_options is None:
-        raise RuntimeError(
+    if profiling_options.get('error'):
+        error_config = {"start": False}
+        if os.getenv("MS_PROFILER_RUN_CONFIG"):
+            return error_config
+        os.environ["MS_PROFILER_RUN_CONFIG"] = json.dumps(error_config)
+        logger.error(
             "The format of MS_PROFILER_OPTIONS is incorrect. "
             "The MS_PROFILER_OPTIONS parameter configuration may refer to "
             "'https://www.mindspore.cn/mindinsight/docs/zh-CN/master/performance_profiling_ascend.html'."
         )
-    options = combine_profile_options(profiling_options)
-    conbine_options = parse_profiling_args(options)
+        return error_config
+    conbine_options = combine_profile_options(profiling_options)
     if conbine_options.get("start"):
-        parse_device_support_param(profiling_options)
         output_path = conbine_options.get("output_path")
         if not output_path:
             output_path = os.path.join(os.getcwd(), "data")
@@ -87,10 +97,19 @@ def parse_pubilc_args(options):
             "The 'data_process' parameter of the environment variable MS_PROFILE_OPTIONS must be bool,"
             f" but got type {type(options.get('data_process'))}, it will be set to true.")
         options["data_process"] = True
-    if not isinstance(options.get("timeline_limit"), int):
+    if not isinstance(options.get("op_time"), bool):
+        logger.warning(
+            "The 'op_time' parameter of the environment variable MS_PROFILE_OPTIONS must be bool,"
+            f" but got type {type(options.get('op_time'))}, it will be set to true.")
+        options["op_time"] = True
+    if isinstance(options.get("timeline_limit"), bool) or not isinstance(options.get("timeline_limit"), int):
         logger.warning(
             "The 'timeline_limit' parameter of the environment variable MS_PROFILE_OPTIONS must be int,"
             f" but got type {type(options.get('timeline_limit'))}, it will be set to 500.")
+        options["timeline_limit"] = 500
+    if options.get('timeline_limit') <= 0:
+        logger.warning(
+            "The 'timeline_limit' parameter of the environment variable MS_PROFILE_OPTIONS must be greater than 0.")
         options["timeline_limit"] = 500
     absolute_path = os.path.join(os.getcwd(), "data")
     if not isinstance(options.get("output_path"), str):
@@ -103,6 +122,11 @@ def parse_pubilc_args(options):
             "The 'output_path' parameter of the environment variable MS_PROFILE_OPTIONS only supports absolute path, "
             f"it will be set to '{absolute_path}'.")
         options["output_path"] = absolute_path
+    if options.get("profile_framework") not in ["memory", "time", "all", None]:
+        logger.warning(
+            "The 'profile_framework' parameter of the environment variable MS_PROFILE_OPTIONS must be one of ['memory',"
+            " 'time', 'all', null], but got %s, it will be set to 'all'.", options.get("profile_framework"))
+        options['profile_framework'] = "all"
     return options
 
 
@@ -160,28 +184,26 @@ def parse_profiling_args(options):
 
 def combine_profile_options(profiling_options):
     """Combined profiling options."""
-    factor_s_to_us = 1e7
     output_path = os.path.join(os.getcwd(), "data")
-    if context.get_context("device_target").upper() == "GPU":
-        sync_enable = profiling_options.get("sync_enable", True)
-    else:
-        sync_enable = profiling_options.get("sync_enable", False)
-    options = {
+    config_options = {
         "start": profiling_options.get('start', False),
-        "start_time": int(time.time() * factor_s_to_us),
-        "pid": os.getpid(),
         "output_path": profiling_options.get('output_path', output_path),
-        "file_output_path": "",
         "profile_memory": profiling_options.get("profile_memory", False),
         "profile_communication": profiling_options.get("profile_communication", False),
         "aicore_metrics": profiling_options.get("aicore_metrics", 0),
         "l2_cache": profiling_options.get("l2_cache", False),
-        "sync_enable": sync_enable,
+        "sync_enable": profiling_options.get("sync_enable", True),
         "data_process": profiling_options.get("data_process", True),
         "timeline_limit": profiling_options.get("timeline_limit", 500),
         "parallel_strategy": profiling_options.get("parallel_strategy", True),
+        'op_time': profiling_options.get("op_time", True),
+        'profile_framework': profiling_options.get("profile_framework", "all")
     }
-    return options
+    combine_options = parse_profiling_args(config_options)
+    if combine_options.get("start"):
+        final_options = parse_device_support_param(profiling_options, combine_options)
+        return final_options
+    return combine_options
 
 
 class EnvProfiler:
@@ -190,17 +212,22 @@ class EnvProfiler:
     def __init__(self):
         self._profiling_options = {}
 
-    def analyse(self):
-        """Determine whether to stop collecting and parsing performance data based on environment variables."""
+    def need_analyse(self):
+        """Determine whether the data needs to be parsed."""
         if not os.getenv("MS_PROFILER_OPTIONS"):
-            return
+            return False
         self._profiling_options = json.loads(os.getenv("MS_PROFILER_RUN_CONFIG", "{}"))
         if not self._profiling_options.get("pid", 0) == os.getpid():
-            return
+            return False
         if not self._profiling_options.get("start"):
-            return
-        profiler = Profiler(env_enable=self._profiling_options)
-        profiler.analyse()
+            return False
+        return True
+
+    def analyse(self):
+        """Determine whether to stop collecting and parsing performance data based on environment variables."""
+        if self.need_analyse():
+            profiler = Profiler(env_enable=self._profiling_options)
+            profiler.analyse()
 
 
 def profiler_check_env():
@@ -214,14 +241,16 @@ def profiler_check_env():
     if not config.get("start"):
         return
     Profiler(output_path=config.get("output_path"),
-             profile_memory=config.get("profile_memory"),
-             profile_communication=config.get("profile_communication"),
-             data_process=config.get("data_process"),
-             parallel_strategy=config.get("parallel_strategy"),
-             aicore_metrics=config.get("aicore_metrics"),
-             l2_cache=config.get("l2_cache"),
-             sync_enable=config.get("sync_enable"),
-             timeline_limit=config.get("timeline_limit"))
+             profile_memory=config.get("profile_memory", False),
+             profile_communication=config.get("profile_communication", False),
+             data_process=config.get("data_process", False),
+             parallel_strategy=config.get("parallel_strategy", False),
+             aicore_metrics=config.get("aicore_metrics", 0),
+             l2_cache=config.get("l2_cache", False),
+             sync_enable=config.get("sync_enable", False),
+             op_time=config.get("op_time", False),
+             timeline_limit=config.get("timeline_limit", 500),
+             profile_framework=config.get("profile_framework", "all"))
 
 
 profiler_check_env()

@@ -14,8 +14,8 @@
 # ============================================================================
 """Rewrite module api: ValueType and ScopedValue."""
 from enum import Enum
-from typing import Optional, Union
-from ..._checkparam import Validator
+from typing import Optional, Union, List, Tuple
+from mindspore import _checkparam as Validator
 
 
 class ValueType(Enum):
@@ -28,9 +28,7 @@ class ValueType(Enum):
     """
 
     # base type
-    StringValue = 0
-    IntValue = 1
-    FloatValue = 2
+    ConstantValue = 0
     # container type
     TupleValue = 20
     ListValue = 21
@@ -50,8 +48,9 @@ class ScopedValue:
     Args:
         arg_type (ValueType): A `ValueType` represents type of current value.
         scope (str): A string represents scope of current value. Take "self.var1" as an example, `scope` of this
-            var1 is "self".
+            var1 is "self". Default: ``""`` .
         value: A handler represents value of current value. The type of value is corresponding to `arg_type`.
+            Default: ``None`` .
     """
 
     def __init__(self, arg_type: ValueType, scope: str = "", value=None):
@@ -77,13 +76,11 @@ class ScopedValue:
         Examples:
             >>> from mindspore.rewrite import ScopedValue
             >>> variable = ScopedValue.create_variable_value(2)
+            >>> print(variable)
+            2
         """
-        if isinstance(value, int):
-            return cls(ValueType.IntValue, "", value)
-        if isinstance(value, float):
-            return cls(ValueType.FloatValue, "", value)
-        if isinstance(value, str):
-            return cls(ValueType.StringValue, "", value)
+        if isinstance(value, (type(None), int, float, str, bool)):
+            return cls(ValueType.ConstantValue, "", value)
         if isinstance(value, tuple):
             return cls(ValueType.TupleValue, "",
                        tuple(cls.create_variable_value(single_value) for single_value in value))
@@ -104,7 +101,7 @@ class ScopedValue:
 
         Args:
             name: (str): A string represents the identifier of another variable.
-            scope: (str): A string represents the scope of another variable.
+            scope: (str): A string represents the scope of another variable. Default: ``""`` .
 
         Returns:
             An instance of `ScopedValue`.
@@ -116,19 +113,23 @@ class ScopedValue:
         Examples:
             >>> from mindspore.rewrite import ScopedValue
             >>> variable = ScopedValue.create_naming_value("conv", "self")
+            >>> print(variable)
+            self.conv
         """
         Validator.check_value_type("name", name, [str], "ScopedValue")
         Validator.check_value_type("scope", scope, [str], "ScopedValue")
         return cls(ValueType.NamingValue, scope, name)
 
     @staticmethod
-    def create_name_values(names: Union[list, tuple], scopes: Union[list, tuple] = None) -> ['ScopedValue']:
+    def create_name_values(names: Union[List[str], Tuple[str]],
+                           scopes: Union[List[str], Tuple[str]] = None) -> List['ScopedValue']:
         """
         Create a list of naming `ScopedValue`.
 
         Args:
-            names: (list[str] or tuple[str]): List or tuple of `str` represents names of referenced variables.
-            scopes: (list[str] or tuple[str]): List or tuple of `str` represents scopes of referenced variables.
+            names (List[str] or Tuple[str]): List or tuple of `str` represents names of referenced variables.
+            scopes (List[str] or Tuple[str]): List or tuple of `str` represents scopes of referenced variables.
+                Default: ``None`` .
 
         Returns:
             An list of instance of `ScopedValue`.
@@ -140,7 +141,9 @@ class ScopedValue:
 
         Examples:
             >>> from mindspore.rewrite import ScopedValue
-            >>> variables = ScopedValue.create_name_values(["z", "z_1"]), name="subnet")
+            >>> variables = ScopedValue.create_name_values(names=["z", "z_1"], scopes=["self", "self"])
+            >>> print(variables)
+            [self.z, self.z_1]
         """
         Validator.check_element_type_of_iterable("names", names, [str], "ScopedValue")
         if scopes is not None:
@@ -157,7 +160,7 @@ class ScopedValue:
         return result
 
     def __str__(self):
-        if self.type in (ValueType.IntValue, ValueType.FloatValue, ValueType.StringValue):
+        if self.type == ValueType.ConstantValue:
             return str(self.value)
         if self.type == ValueType.NamingValue:
             return f"{self.scope}.{self.value}" if self.scope else str(self.value)

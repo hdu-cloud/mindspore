@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 #include "ops/random_standard_normal.h"
+#include <memory>
 #include <set>
 #include <string>
-#include <memory>
-#include "ops/standard_normal.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/random_ops.h"
+#include "ops/op_utils.h"
+#include "ops/standard_normal.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -43,6 +44,25 @@ int64_t RandomStandardNormal::get_seed2() const {
   return GetValue<int64_t>(value_ptr);
 }
 
+void StandardNormal::Init(const int64_t seed, const int64_t seed2) {
+  this->set_seed(seed);
+  this->set_seed2(seed2);
+}
+
+void StandardNormal::set_seed(int64_t seed) { (void)this->AddAttr(kSeed, api::MakeValue(seed)); }
+
+void StandardNormal::set_seed2(int64_t seed2) { (void)this->AddAttr(kSeed2, api::MakeValue(seed2)); }
+
+int64_t StandardNormal::get_seed() const {
+  auto value_ptr = GetAttr(kSeed);
+  return GetValue<int64_t>(value_ptr);
+}
+
+int64_t StandardNormal::get_seed2() const {
+  auto value_ptr = GetAttr(kSeed2);
+  return GetValue<int64_t>(value_ptr);
+}
+
 namespace {
 abstract::ShapePtr RandomStandardNormalInferShape(const PrimitivePtr &primitive,
                                                   const std::vector<AbstractBasePtr> &input_args) {
@@ -53,11 +73,18 @@ abstract::ShapePtr RandomStandardNormalInferShape(const PrimitivePtr &primitive,
   MS_EXCEPTION_IF_NULL(shape_value);
   if (input_args[kInputIndex0]->isa<abstract::AbstractTuple>()) {
     std::vector<int64_t> out_shape = CheckAndConvertUtils::CheckIntOrTupleInt("input[shape]", shape_value, prim_name);
-    (void)CheckAndConvertUtils::CheckPositiveVector("shape", out_shape, prim_name);
-    return std::make_shared<abstract::Shape>(out_shape);
+    if (IsValueKnown(shape_value)) {
+      (void)CheckAndConvertUtils::CheckPositiveVector("shape", out_shape, prim_name);
+      return std::make_shared<abstract::Shape>(out_shape);
+    } else {
+      constexpr int dynamic_rank_value = -2;
+      ShapeVector shape = {dynamic_rank_value};
+      return std::make_shared<abstract::Shape>(shape);
+    }
   } else if (input_args[kInputIndex0]->isa<abstract::AbstractTensor>()) {
-    if (!shape_value->isa<AnyValue>() && !shape_value->isa<None>()) {
+    if (!shape_value->isa<ValueAny>() && !shape_value->isa<None>()) {
       ShapeVector input_shape = CheckAndConvertUtils::CheckTensorIntValue("input[shape]", shape_value, prim_name);
+      (void)CheckAndConvertUtils::CheckPositiveVector("shape", input_shape, prim_name);
       return std::make_shared<abstract::Shape>(input_shape);
     } else {
       constexpr int dynamic_rank_value = -2;
@@ -93,7 +120,6 @@ TypePtr RandomStandardNormalInferType(const PrimitivePtr &primitive, const std::
                             << "', input must be a Int, a tuple, or a Tensor with all Int elements, but got: "
                             << input_args[kInputIndex0]->ToString() << ".";
   }
-  (void)primitive->AddAttr(kOutputDType, MakeValue(std::make_shared<TensorType>(kFloat32)));
   return std::make_shared<TensorType>(kFloat32);
 }
 }  // namespace
@@ -118,9 +144,27 @@ AbstractBasePtr RandomStandardNormalInfer(const abstract::AnalysisEnginePtr &, c
 
 MIND_API_OPERATOR_IMPL(RandomStandardNormal, BaseOperator);
 MIND_API_OPERATOR_IMPL(StandardNormal, BaseOperator);
-REGISTER_HOST_DEPENDS(kNameStandardNormal, {0});
-REGISTER_HOST_DEPENDS(kNameRandomStandardNormal, {0});
-REGISTER_PRIMITIVE_EVAL_IMPL(RandomStandardNormal, prim::kPrimStandardNormal, RandomStandardNormalInfer, nullptr, true);
-REGISTER_PRIMITIVE_EVAL_IMPL(StandardNormal, prim::kPrimStandardNormal, RandomStandardNormalInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGRandomStandardNormalInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return RandomStandardNormalInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return RandomStandardNormalInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return RandomStandardNormalInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(RandomStandardNormal, prim::kPrimStandardNormal, AGRandomStandardNormalInfer, false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(StandardNormal, prim::kPrimStandardNormal, AGRandomStandardNormalInfer, false);
 }  // namespace ops
 }  // namespace mindspore

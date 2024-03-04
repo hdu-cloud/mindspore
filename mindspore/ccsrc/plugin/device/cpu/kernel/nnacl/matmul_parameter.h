@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_MATMUL_H_
-#define MINDSPORE_NNACL_MATMUL_H_
+#ifndef NNACL_MATMUL_H_
+#define NNACL_MATMUL_H_
 
 #include "nnacl/op_base.h"
 
@@ -35,20 +35,31 @@ typedef void (*MATMUL_OPT_DP_FUNC)(const int8_t *a, const int8_t *b, int8_t *dst
 
 typedef enum OutType { OutType_C8 = 0, OutType_Nhwc = 1, OutType_TileC8 = 2, OutType_NC4HW4 = 3 } OutType;
 
+typedef enum MatmulType {
+  // reserve 0 for base op
+  kNotImplemented = 0,
+  kMatmulInt8Cpu,
+  kMatmulDynamicInt8Cpu,
+  kMatmulDynamicSdotInt8Cpu,
+  kMatmulFp32BaseCpu,
+  kMatmulFp32Arm64Cpu,
+} MatmulType;
+
 typedef struct MatMulParameter {
   // Primitive parameter
   OpParameter op_parameter_;
   bool has_bias_;
+  bool use_axis_;
+  bool a_transpose_; /* false :  row-major  */
+  bool b_transpose_; /* true  :  col-major  */
+  ActType act_type_;
 
   // other parameter
   int row_;
   int col_;
   int row_4_;
-  int row_6_;
-  int row_12_;
   int row_16_;
   int row_align_;
-  int col_4_;
   int col_8_;
   int col_align_;
   int deep_;
@@ -56,13 +67,10 @@ typedef struct MatMulParameter {
   int deep_16_;
   int deep_align_;
   int batch;
-  bool a_transpose_; /* false :  row-major  */
-  bool b_transpose_; /* true  :  col-major  */
   bool a_const_;
   bool b_const_;
-  ActType act_type_;
-  bool use_axis_;
   int axis_;
+  MatmulType matmul_type_;
 } MatMulParameter;
 
 typedef struct MatmulQuantParameter {
@@ -79,10 +87,10 @@ typedef struct MatmulQuantParameter {
 } MatmulQuantParameter;
 
 typedef struct MatmulDynamicQuantParameter {
-  float input_scale_;
-  int32_t input_zp_;
+  float *input_scale_;
+  int32_t *input_zp_;
   float *filter_scale_;
   int32_t *filter_zp_;
 } MatmulDynamicQuantParameter;
 
-#endif  // MINDSPORE_NNACL_MATMUL_H_
+#endif  // NNACL_MATMUL_H_

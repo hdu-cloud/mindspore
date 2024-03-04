@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,45 +21,6 @@ namespace mindspore::graphkernel::inner {
 SPLIT_MODEL_REGISTER(kCPUDevice, SplitModelCpu);
 constexpr size_t kReduceFusionDepth = 20;
 constexpr size_t kBroadcastFusionDepth = 20;
-
-class FuseElemwiseFwd : public FusePattern {
- public:
-  explicit FuseElemwiseFwd(FuseType fuse_type) : FusePattern("elemwise_fwd"), fuse_type_(fuse_type) {
-    direction_ = FuseDirection::FORWARD;
-    name_ += (fuse_type == FuseType::kWidth ? "_width" : "_depth");
-  }
-  ~FuseElemwiseFwd() = default;
-  static FusePatternPtr CreateDepthMatcher() { return std::make_shared<FuseElemwiseFwd>(FuseType::kDepth); }
-  static FusePatternPtr CreateWidthMatcher() { return std::make_shared<FuseElemwiseFwd>(FuseType::kWidth); }
-
- protected:
-  bool Check(const AreaPtr &dom) override {
-    if (dom->pattern() != NodePattern::ELEMWISE) {
-      return false;
-    }
-    return fuse_type_ == FuseType::kWidth || dom->input_num() == 1;
-  }
-  bool Match(const AreaPtr &dom) override {
-    for (auto &[a, r] : dom->inputs_with_relation()) {
-      // depth match only support one to one pattern
-      if (fuse_type_ == FuseType::kDepth && a->user_num() != 1) {
-        continue;
-      }
-      if (a->pattern() <= NodePattern::ELEMWISE && r == EdgeRelation::INJECTIVE) {
-        // it's unnecessary to check circle for depth match
-        if (fuse_type_ == FuseType::kWidth && HasCircle(a, dom)) {
-          continue;
-        }
-        if (a->compute_size() == dom->compute_size()) {
-          (void)fused_areas_.emplace_back(a);
-        }
-      }
-    }
-    return !fused_areas_.empty();
-  }
-
-  FuseType fuse_type_;
-};
 
 class FuseConv : public FusePattern {
  public:

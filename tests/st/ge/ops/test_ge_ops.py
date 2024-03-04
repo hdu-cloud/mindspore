@@ -16,7 +16,7 @@ import pytest
 import tests.st.ge.ge_test_utils as utils
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -29,7 +29,7 @@ def test_broadcast_gradient_args():
     utils.run_testcase('broadcast_gradient_args')
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -42,7 +42,7 @@ def test_conv2d_backprop_filter():
     utils.run_testcase('conv2d_backprop_filter')
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -55,7 +55,7 @@ def test_conv2d_backprop_input():
     utils.run_testcase('conv2d_backprop_input')
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -68,7 +68,7 @@ def test_conv2d_transpose():
     utils.run_testcase('conv2d_transpose')
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -81,7 +81,7 @@ def test_dynamic_broadcast_to():
     utils.run_testcase('dynamic_broadcast_to')
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard

@@ -23,9 +23,10 @@
 #include <unordered_map>
 #include <memory>
 #include <string>
+#include "kernel/kernel_get_value.h"
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
 #include "plugin/factory/ms_factory.h"
-#include "nnacl/transpose.h"
+#include "nnacl/transpose_parameter.h"
 
 namespace mindspore {
 namespace kernel {
@@ -42,6 +43,8 @@ class TransposeFwdCpuKernelMod : public NativeCpuKernelMod {
               const std::vector<AddressPtr> &outputs) override;
 
   std::vector<KernelAttr> GetOpSupport() override;
+
+  std::vector<size_t> GetLaunchIgnoredInputAddressIdx() const override { return {kIndex1}; }
 
  private:
   template <typename T>
@@ -78,8 +81,10 @@ class TransposeFwdCpuKernelMod : public NativeCpuKernelMod {
   std::vector<int64_t> perm_;
   size_t num_axes_{0};
   size_t data_num_{0};
+  size_t output_size_{1};
   std::vector<int64_t> strides_;
   std::vector<int64_t> out_strides_;
+  std::vector<size_t> tanspose_index_;
   bool got_perm_value_{false};
 
   using TypeKernel =

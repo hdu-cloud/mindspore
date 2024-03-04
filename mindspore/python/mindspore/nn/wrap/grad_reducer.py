@@ -297,11 +297,11 @@ class DistributedGradReducer(Cell):
         parameters (list): the parameters to be updated.
         mean (bool): When mean is true, the mean coefficient (degree) would apply on gradients.
                      When it is not specified, using the configuration `gradients_mean` in auto_parallel_context.
-                     Default: None.
-        degree (int): The mean coefficient. Usually it equals to device number. Default: None.
-        fusion_type (int): The type of all reduce fusion. Default: 1.
+                     Default: ``None`` .
+        degree (int): The mean coefficient. Usually it equals to device number. Default: ``None`` .
+        fusion_type (int): The type of all reduce fusion. Default: ``1`` .
         group (str): The communication group to work on. Normally, the group should be created by create_group,
-                     otherwise, using the default group. Default: GlobalComm.WORLD_COMM_GROUP.
+                     otherwise, using the default group. Default: ``GlobalComm.WORLD_COMM_GROUP`` .
 
     Raises:
         ValueError: If degree is not an int or less than 0.
@@ -314,21 +314,22 @@ class DistributedGradReducer(Cell):
             Before running the following examples, you need to configure the communication environment variables.
 
             For the Ascend devices, users need to prepare the rank table, set rank_id and device_id.
-            Please see the `Ascend tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_ascend.html#preparations>`_
+            Please see the `rank table Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/rank_table.html>`_
             for more details.
 
-            For the GPU devices, users need to prepare the host file and mpi, please see the `GPU tutorial
-            <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/parallel/train_gpu.html#preparation>`_ .
+            For the GPU devices, users need to prepare the host file and mpi, please see the `mpirun Startup
+            <https://www.mindspore.cn/tutorials/experts/en/master/parallel/mpirun.html>`_ .
+
+            For the CPU device, users need to write a dynamic cluster startup script, please see the `Dynamic Cluster
+            Startup <https://www.mindspore.cn/tutorials/experts/en/master/parallel/dynamic_cluster.html>`_ .
 
             This example should be run with multiple devices.
 
         >>> import numpy as np
         >>> import mindspore as ms
         >>> from mindspore.communication import init
-        >>> from mindspore import ops
-        >>> from mindspore import Parameter, Tensor
-        >>> from mindspore import nn
+        >>> from mindspore import Parameter, Tensor, ops, nn
         >>>
         >>> ms.set_context(mode=ms.GRAPH_MODE)
         >>> init()
@@ -358,7 +359,7 @@ class DistributedGradReducer(Cell):
         ...     def construct(self, *args):
         ...         weights = self.weights
         ...         loss = self.network(*args)
-        ...         sens = ops.Fill()(ops.DType()(loss), ops.Shape()(loss), self.sens)
+        ...         sens = F.fill(ops.DType()(loss), ops.Shape()(loss), self.sens)
         ...         grads = self.grad(self.network, weights)(*args, sens)
         ...         if self.reducer_flag:
         ...             # apply grad reducer on grads
@@ -391,6 +392,7 @@ class DistributedGradReducer(Cell):
 
     def __init__(self, parameters, mean=None, degree=None, fusion_type=1, group=GlobalComm.WORLD_COMM_GROUP):
         super(DistributedGradReducer, self).__init__(auto_prefix=False)
+        self._check_parallel_mode()
         self.map_ = C.Map()
         self.mean = mean
         if mean is None:
@@ -457,3 +459,10 @@ class DistributedGradReducer(Cell):
                                                self.allreduce), self.allreduce_filter, grads)
         new_grad = self.map_(F.partial(_cast_datatype), datatypes, new_grad)
         return new_grad
+
+    def _check_parallel_mode(self):
+        """check parallel mode"""
+        parallel_mode = context.get_auto_parallel_context('parallel_mode')
+        if context.get_context('mode') == context.GRAPH_MODE and parallel_mode in (
+                context.ParallelMode.SEMI_AUTO_PARALLEL, context.ParallelMode.AUTO_PARALLEL):
+            raise RuntimeError("{} can not use DistributedGradReducer in graph mode".format(parallel_mode))

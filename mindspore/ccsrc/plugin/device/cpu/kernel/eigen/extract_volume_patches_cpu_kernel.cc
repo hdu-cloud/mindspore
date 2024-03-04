@@ -59,12 +59,27 @@ int ExtractVolumePatchesKernelMod::Resize(const BaseOperatorPtr &base_operator,
                                           const std::vector<KernelTensorPtr> &inputs,
                                           const std::vector<KernelTensorPtr> &outputs,
                                           const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost) {
+  constexpr size_t x_dim_num = 5;
+  constexpr size_t out_dim_num = 5;
+  if (inputs.empty() || outputs.empty()) {
+    MS_LOG(EXCEPTION) << "Get empty inputs or outputs, inputs size: " << inputs.size()
+                      << ", outputs size: " << outputs.size();
+  }
+
   int ret = KernelMod::Resize(base_operator, inputs, outputs, inputsOnHost);
   if (ret != 0) {
     return ret;
   }
   input_shape_ = inputs[0]->GetShapeVector();
+  if (input_shape_.size() != x_dim_num) {
+    MS_LOG(EXCEPTION) << "Incorrect input dim size: " << input_shape_.size() << ", which should be " << x_dim_num;
+  }
+
   output_shape_ = outputs[0]->GetShapeVector();
+  if (output_shape_.size() != out_dim_num) {
+    MS_LOG(EXCEPTION) << "Incorrect output dim size: " << output_shape_.size() << ", which should be " << out_dim_num;
+  }
+
   return static_cast<int>(KRET_OK);
 }
 
@@ -73,6 +88,9 @@ bool ExtractVolumePatchesKernelMod::LaunchKernel(const std::vector<kernel::Addre
                                                  const std::vector<kernel::AddressPtr> &workspace,
                                                  const std::vector<kernel::AddressPtr> &outputs) {
   constexpr size_t dims = 5;
+  constexpr size_t x_dim_num = 5;
+  constexpr size_t out_dim_num = 5;
+  constexpr size_t extract_dims = 6;
   constexpr size_t xn = 0, xc = 1, xd = 2, xh = 3, xw = 4;
   constexpr size_t on = 0, oc = 1, od = 2, oh = 3, ow = 4;
   constexpr size_t kd = 2, kh = 3, kw = 4;
@@ -80,16 +98,44 @@ bool ExtractVolumePatchesKernelMod::LaunchKernel(const std::vector<kernel::Addre
   constexpr int storage_option = static_cast<int>(Eigen::RowMajor);
   constexpr int alignment_type = static_cast<int>(Eigen::Aligned);
 
+  if (input_shape_.size() != x_dim_num) {
+    MS_LOG(EXCEPTION) << "For ExtractVolumePatches, incorrect input dim size: " << input_shape_.size()
+                      << ", which should be " << x_dim_num;
+  }
+  if (output_shape_.size() != out_dim_num) {
+    MS_LOG(EXCEPTION) << "For ExtractVolumePatches, incorrect output dim size: " << output_shape_.size()
+                      << ", which should be " << out_dim_num;
+  }
+  if (kernel_size_.size() != dims) {
+    MS_LOG(EXCEPTION) << "For ExtractVolumePatches, incorrect kernel_size_ dim size: " << kernel_size_.size()
+                      << ", which should be " << dims;
+  }
+  if (strides_.size() != dims) {
+    MS_LOG(EXCEPTION) << "For ExtractVolumePatches, incorrect strides_ dim size: " << strides_.size()
+                      << ", which should be " << dims;
+  }
+
   Eigen::TensorMap<Eigen::Tensor<T, dims, storage_option, Eigen::DenseIndex>, alignment_type> eigen_inputs(
     static_cast<T *>(inputs[0]->addr), input_shape_[xn], input_shape_[xc], input_shape_[xd], input_shape_[xh],
     input_shape_[xw]);
   Eigen::TensorMap<Eigen::Tensor<T, dims, storage_option, Eigen::DenseIndex>, alignment_type> eigen_outputs(
     static_cast<T *>(outputs[0]->addr), output_shape_[on], output_shape_[oc], output_shape_[od], output_shape_[oh],
     output_shape_[ow]);
-  eigen_outputs.device(Eigen::DefaultDevice()) =
+  Eigen::Tensor<T, extract_dims, storage_option, Eigen::DenseIndex> extract_tensor =
     eigen_inputs.shuffle(Eigen::array<int, dims>{xn, xd, xh, xw, xc})
       .extract_volume_patches(kernel_size_[kw], kernel_size_[kh], kernel_size_[kd], strides_[sw], strides_[sh],
-                              strides_[sd], String2EigenPadding(padding_))
+                              strides_[sd], String2EigenPadding(padding_));
+  const int64_t output_size =
+    std::accumulate(output_shape_.begin(), output_shape_.end(), static_cast<int64_t>(1), std::multiplies<>());
+  const auto &extract_shape = extract_tensor.dimensions();
+  const int64_t extract_size =
+    std::accumulate(extract_shape.begin(), extract_shape.end(), static_cast<int64_t>(1), std::multiplies<>());
+  if (extract_size != output_size) {
+    MS_LOG(EXCEPTION) << "Incorrect output shape " << output_shape_ << " for ExtractVolumePatch. Input shape "
+                      << input_shape_;
+  }
+  eigen_outputs.device(Eigen::DefaultDevice()) =
+    extract_tensor
       .reshape(Eigen::array<int64_t, dims>{output_shape_[on], output_shape_[od], output_shape_[oh], output_shape_[ow],
                                            output_shape_[oc]})
       .shuffle(Eigen::array<int, dims>{on, ow, oc, od, oh});

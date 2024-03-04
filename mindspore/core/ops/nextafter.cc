@@ -13,31 +13,33 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "ops/nextafter.h"
 #include <map>
 #include <set>
 #include <string>
-#include "ops/nextafter.h"
-#include "ops/op_utils.h"
-#include "mindapi/src/helper.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::ShapePtr NextAfterInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  auto prim_name = primitive->name();
-  const int64_t input_num = 2;
-  (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_num, prim_name);
   for (const auto &item : input_args) {
     MS_EXCEPTION_IF_NULL(item);
   }
 
-  return BroadCastInferShape(prim_name, input_args);
+  MS_EXCEPTION_IF_NULL(primitive);
+  return BroadCastInferShape(primitive->name(), input_args);
 }
 
 TypePtr NextAfterInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(prim);
+  auto prim_name = prim->name();
+  const int64_t input_num = 2;
+  (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_num, prim_name);
   for (const auto &item : input_args) {
     MS_EXCEPTION_IF_NULL(item);
   }
@@ -62,6 +64,24 @@ AbstractBasePtr NextAfterInfer(const abstract::AnalysisEnginePtr &, const Primit
 }
 
 MIND_API_OPERATOR_IMPL(NextAfter, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(NextAfter, prim::kPrimNextAfter, NextAfterInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGNextAfterInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return NextAfterInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return NextAfterInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return NextAfterInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(NextAfter, prim::kPrimNextAfter, AGNextAfterInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,17 +19,19 @@
 #include <string>
 #include <memory>
 #include <vector>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/sequence_ops.h"
+#include "ops/array_ops.h"
+#include "ops/framework_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/common/utils/utils.h"
-#include "mindspore/core/ops/core_ops.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
 namespace {
 using KernelWithIndex = std::pair<AnfNodePtr, size_t>;
-const std::set<std::string> InvalidOps = {kSplitOpName, kSplitVOpName, kConcatOpName};
+const std::set<std::string> InvalidOps = {kSplitOpName, kSplitDOpName, kSplitVOpName, kSplitVDOpName, kConcatDOpName};
 
 void GetSplitOutputs(const FuncGraphPtr &func_graph, const AnfNodePtr &node, std::vector<AnfNodePtr> *const out_nodes) {
   MS_EXCEPTION_IF_NULL(func_graph);
@@ -73,7 +75,7 @@ KernelWithIndex VisitSplitKernel(const AnfNodePtr &anf_node, size_t index) {
       return VisitSplitKernel(node, 0);
     } else if (IsPrimitive(input0, prim::kPrimTupleGetItem)) {
       if (cnode->inputs().size() != kTupleGetItemInputSize) {
-        MS_LOG(EXCEPTION) << "The node tuple_get_item must have 2 inputs!";
+        MS_LOG(INTERNAL_EXCEPTION) << "The node tuple_get_item must have 2 inputs!";
       }
       auto input2 = cnode->input(kInputNodeOutputIndexInTupleGetItem);
       MS_EXCEPTION_IF_NULL(input2);
@@ -85,7 +87,7 @@ KernelWithIndex VisitSplitKernel(const AnfNodePtr &anf_node, size_t index) {
       return std::make_pair(anf_node, index);
     }
   } else {
-    MS_LOG(EXCEPTION) << "The input is invalid";
+    MS_LOG(INTERNAL_EXCEPTION) << "The input is invalid";
   }
 }
 
@@ -152,7 +154,7 @@ bool OutputCheck(const FuncGraphPtr &func_graph, const AnfNodePtr &node) {
       MS_LOG(INFO) << "Next node is " << item->fullname_with_scope() << ", not a invalid node, can not optimizer.";
       return false;
     }
-    if (common::AnfAlgo::GetOutputTensorNum(item) == 0) {
+    if (AnfAlgo::GetOutputTensorNum(item) == 0) {
       MS_LOG(INFO) << "Next node has no output, can not optimizer.";
       return false;
     }
@@ -166,9 +168,9 @@ bool NeedSkip(const FuncGraphPtr &func_graph, const AnfNodePtr &node) {
   MS_EXCEPTION_IF_NULL(func_manager);
   int64_t split_dim = -1;
   auto op_name = common::AnfAlgo::GetCNodeName(node);
-  if (op_name == prim::kPrimSplit->name()) {
+  if (op_name == prim::kPrimSplit->name() || op_name == prim::kPrimSplitD->name()) {
     split_dim = common::AnfAlgo::GetNodeAttr<int64_t>(node, kAttrAxis);
-  } else if (op_name == prim::kPrimSplitV->name()) {
+  } else if (op_name == prim::kPrimSplitV->name() || op_name == prim::kPrimSplitVD->name()) {
     split_dim = common::AnfAlgo::GetNodeAttr<int64_t>(node, kAttrSplitDim);
   }
   if (split_dim != 0) {
@@ -206,7 +208,8 @@ const AnfNodePtr SplitOpOptimizer::Process(const FuncGraphPtr &func_graph, const
   }
   common::AnfAlgo::SetNodeAttr(kAttrVisited, MakeValue(true), node);
   auto op_name = common::AnfAlgo::GetCNodeName(node);
-  if (op_name != prim::kPrimSplit->name() && op_name != prim::kPrimSplitV->name()) {
+  if (op_name != prim::kPrimSplit->name() && op_name != prim::kPrimSplitV->name() &&
+      op_name != prim::kPrimSplitD->name() && op_name != prim::kPrimSplitVD->name()) {
     return nullptr;
   }
 

@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,31 +13,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_KERNEL_CONVOLUTION_1X1_H_
-#define MINDSPORE_NNACL_KERNEL_CONVOLUTION_1X1_H_
+
+#ifndef NNACL_KERNEL_CONVOLLUTION_1X1_H_
+#define NNACL_KERNEL_CONVOLLUTION_1X1_H_
 
 #include "nnacl/op_base.h"
 #include "nnacl/tensor_c.h"
 #include "nnacl/kernel.h"
-#include "nnacl/kernel/matmul_optimize.h"
-#include "nnacl/kernel/matmul_experimental.h"
+#include "nnacl/kernel/convolution_base.h"
+#include "nnacl/conv_parameter.h"
+#include "nnacl/matmul_parameter.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+typedef struct Convolution1x1Struct {
+  ConvolutionBaseStruct conv_;
+  MatMulParameter matmul_param_;
+  int row_tile_;
+  int col_tile_;
+  bool pre_trans_input_;
+  float *input_ptr_;
+  float *output_ptr_;
+  float *pack_input_;
+  bool multi_thread_by_hw_;
+  int thread_stride_;
+} Convolution1x1Struct;
 
-typedef struct Conv1x1Stru {
-  KernelBase base;
-  uint8_t *bias_;
-  uint8_t *weight_;
-  MatmulOptStru opt_;
-  MatmulExpStru exp_;
-} Conv1x1Stru;
+ConvolutionBaseStruct *CreateConvolution1x1(ConvParameter *conv_param);
 
-KernelBase *CreateConv1x1(OpParameter *param, TensorC *in, size_t insize, TensorC *out, size_t outsize, int data_type,
-                          FormatC format);
-
-#ifdef __cplusplus
-}
-#endif
-#endif  // MINDSPORE_NNACL_KERNEL_CONVOLUTION_1X1_H_
+#endif  // NNACL_KERNEL_CONVOLLUTION_1X1_H_

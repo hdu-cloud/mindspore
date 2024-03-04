@@ -34,7 +34,7 @@ bool MvlgammaGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std:
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   p_ = kernel_ptr_->get_p();
   if (p_ < 1) {
     MS_LOG(ERROR) << "For " << kernel_name_ << ", the attr 'p' has to be greater than or equal to 1, "
@@ -71,7 +71,7 @@ int MvlgammaGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std
   size_t input_size = input_elements_ * unit_size_;
   input_size_list_.push_back(input_size);
   output_size_list_.push_back(input_size);
-  workspace_size_list_.push_back(sizeof(bool));
+  workspace_size_list_.push_back(sizeof(int));
   return KRET_OK;
 }
 
@@ -80,18 +80,13 @@ bool MvlgammaGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, c
                                         const std::vector<AddressPtr> &outputs) {
   T *input = GetDeviceAddress<T>(inputs, 0);
   T *output = GetDeviceAddress<T>(outputs, 0);
-  bool *valid_d = GetDeviceAddress<bool>(workspace, 0);
-  bool valid = true;
-  bool *valid_h = &valid;
-  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemcpyAsync(valid_d, valid_h, sizeof(bool), cudaMemcpyHostToDevice,
-                                                     reinterpret_cast<cudaStream_t>(cuda_stream_)),
-                                     "cudaMemcpyAsync valid Host to Device failed.");
-  CalMvlgamma(valid_d, input_elements_, input, p_, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
-  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemcpyAsync(valid_h, valid_d, sizeof(bool), cudaMemcpyDeviceToHost,
-                                                     reinterpret_cast<cudaStream_t>(cuda_stream_)),
-                                     "cudaMemcpyAsync valid Device to Host failed.");
-  if (!*valid_h) {
-    MS_LOG(ERROR) << "For " << kernel_name_ << ", all element must be greater than (p-1)/2.";
+  int *valid_d = GetDeviceAddress<int>(workspace, 0);
+  int host_valid = -1;
+  auto status = CalMvlgamma(valid_d, input_elements_, input, p_, output, device_id_,
+                            reinterpret_cast<cudaStream_t>(cuda_stream_), &host_valid);
+  CHECK_CUDA_STATUS(status, kernel_name_);
+  if (host_valid >= 0) {
+    MS_LOG(ERROR) << "For " << kernel_name_ << ", all element must be greater than (p-1)/2";
     return false;
   }
   return true;

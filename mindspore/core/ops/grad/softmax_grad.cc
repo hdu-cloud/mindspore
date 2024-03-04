@@ -15,9 +15,30 @@
  */
 
 #include "ops/grad/softmax_grad.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include <map>
+#include <memory>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,7 +52,7 @@ abstract::ShapePtr SoftmaxGradInferShape(const PrimitivePtr &primitive,
   auto in_shape = shape_map[kShape];
   if (!IsDynamicRank(in_shape)) {
     auto rank = SizeToLong(in_shape.size());
-    (void)CheckAndConvertUtils::CheckInRange<int64_t>("axis", axis, kIncludeLeft, {-rank, rank}, primitive->name());
+    CheckAndConvertUtils::CheckInRange<int64_t>("axis", axis, kIncludeLeft, {-rank, rank}, primitive->name());
   }
   return std::make_shared<abstract::Shape>(in_shape);
 }
@@ -68,6 +89,24 @@ AbstractBasePtr SoftmaxGradInfer(const abstract::AnalysisEnginePtr &, const Prim
   auto shape = SoftmaxGradInferShape(primitive, input_args);
   return abstract::MakeAbstract(shape, type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(SoftmaxGrad, prim::kPrimSoftmaxGrad, SoftmaxGradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSoftmaxGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SoftmaxGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SoftmaxGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SoftmaxGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SoftmaxGrad, prim::kPrimSoftmaxGrad, AGSoftmaxGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

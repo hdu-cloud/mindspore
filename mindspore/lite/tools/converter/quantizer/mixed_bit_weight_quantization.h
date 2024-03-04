@@ -20,23 +20,12 @@
 #include <vector>
 #include <cmath>
 #include <string>
-#include "schema/inner/model_generated.h"
+#include "tools/converter/quantizer/quant_params.h"
 #include "src/common/log_adapter.h"
 #include "src/common/quant_utils.h"
 #include "ir/tensor.h"
 
 namespace mindspore::lite::quant {
-constexpr float kBinarySearchStep = 2.0;
-typedef struct {
-  int status;
-  float scale;
-} BinarySearchResult;
-
-typedef struct {
-  float inv_norm;
-  MinMax mm;
-} LayerParam;
-
 class MixedBitWeightQuantization {
  public:
   explicit MixedBitWeightQuantization(float target_relative_err, float target_search_tolerance = 0.01,
@@ -47,7 +36,7 @@ class MixedBitWeightQuantization {
   ~MixedBitWeightQuantization() = default;
 
   int QuantFilter(const PrimitivePtr &primitive, const AnfNodePtr &parameter_node, const tensor::TensorPtr &weight,
-                  int index, schema::QuantType quant_type, bool use_auto_tune_alg = false);
+                  QuantType quant_type, bool use_auto_tune_alg = false);
 
  private:
   int DoQuantization(float *weights, std::vector<int64_t> shape, int preferred_dim,
@@ -64,9 +53,9 @@ class MixedBitWeightQuantization {
   BinarySearchResult BinarySearchForQuantizationScale(float *weights, int *shape, int dims, int preferred_dim,
                                                       int max_iters, float target_err, float rel_tol);
 
-  float GetDx(float *weights, const int *shape, int dims, const std::string &node_name);
+  float GetDx(const float *weights, const int *shape, int dims, const std::string &node_name);
 
-  void CalculateBiasCorrection(float *weights, int element_num, float scale, float *origin_dequant_datas);
+  void CalculateBiasCorrection(const float *weights, int element_num, float scale, float *origin_dequant_datas);
 
   float CalculateMeanError(std::vector<float> norms2, std::vector<float> dnorms2);
 

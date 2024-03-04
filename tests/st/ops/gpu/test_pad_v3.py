@@ -1,4 +1,4 @@
-# Copyright 2022 Huawei Technologies Co., Ltd
+# Copyright 2022-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ import mindspore
 import mindspore.context as context
 import mindspore.nn as nn
 from mindspore import Tensor
+from mindspore.ops.operations import math_ops
 from mindspore.ops.operations import nn_ops
 from mindspore.ops import functional as F
 
@@ -53,7 +54,103 @@ class NetDynamic(nn.Cell):
         return out
 
 
-@pytest.mark.level0
+class NetDynamicRank(nn.Cell):
+    def __init__(self, padding, mode, paddings_contiguous, value=0):
+        super(NetDynamicRank, self).__init__()
+        self.padv3 = nn_ops.PadV3(mode, paddings_contiguous)
+        self.reduce_mean = math_ops.ReduceMean()
+        self.padding = padding
+        self.mode = mode
+        if mode == "constant":
+            self.value = value
+
+    def construct(self, x, axis):
+        reduce_out = self.reduce_mean(x, axis)
+        if self.mode == "constant":
+            out = self.padv3(reduce_out, self.padding, self.value)
+        else:
+            out = self.padv3(reduce_out, self.padding)
+        return out
+
+
+@pytest.mark.level1
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.env_onecard
+def test_padv3_circular_dynamic_shape_3d():
+    """
+    Feature: test padv3 x and padding dynamic shape
+    Description: test padv3 dynamic shape
+    Expectation: Success
+    """
+    context.set_context(device_target="GPU", save_graphs=False)
+    x = Tensor(np.arange(9).reshape(1, 3, 3).astype(np.float32))
+    padding = Tensor((1, 2), dtype=mindspore.int64)
+
+    net = NetDynamic('circular')
+
+    x_dyn = Tensor(shape=(1, 3, None), dtype=x.dtype)
+    padding_dyn = Tensor(shape=(None,), dtype=padding.dtype)
+    net.set_inputs(x_dyn, padding_dyn)
+
+    out = net(x, padding)
+    expect = np.array([[[2, 0, 1, 2, 0, 1],
+                        [5, 3, 4, 5, 3, 4],
+                        [8, 6, 7, 8, 6, 7]]]).astype(np.float32)
+    np.testing.assert_almost_equal(expect, out.asnumpy())
+
+
+@pytest.mark.level1
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.env_onecard
+def test_padv3_circular_dynamic_shape_4d():
+    """
+    Feature: test padv3 x and padding dynamic shape
+    Description: test padv3 dynamic shape
+    Expectation: Success
+    """
+    context.set_context(device_target="GPU", save_graphs=False)
+    x = Tensor(np.arange(9).reshape(1, 1, 3, 3).astype(np.float64))
+    padding = Tensor((1, -1, 1, 2), dtype=mindspore.int32)
+
+    net = NetDynamic('circular')
+
+    x_dyn = Tensor(shape=(1, 1, 3, None), dtype=x.dtype)
+    padding_dyn = Tensor(shape=(None,), dtype=padding.dtype)
+    net.set_inputs(x_dyn, padding_dyn)
+
+    out = net(x, padding)
+    expect = np.array([[[[7, 6, 7], [1, 0, 1], [4, 3, 4],
+                         [7, 6, 7], [1, 0, 1], [4, 3, 4]]]]).astype(np.float64)
+    np.testing.assert_almost_equal(expect, out.asnumpy())
+
+
+@pytest.mark.level1
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.env_onecard
+def test_padv3_circular_dynamic_shape_5d():
+    """
+    Feature: test padv3 x and padding dynamic shape
+    Description: test padv3 dynamic shape
+    Expectation: Success
+    """
+    context.set_context(device_target="GPU", save_graphs=False)
+    x = Tensor(np.arange(18).reshape(1, 1, 2, 3, 3).astype(np.float64))
+    padding = Tensor((0, 1, 1, -1, 0, -1), dtype=mindspore.int32)
+
+    net = NetDynamic('circular')
+
+    x_dyn = Tensor(shape=(1, 1, None, 3, None), dtype=x.dtype)
+    padding_dyn = Tensor(shape=(None,), dtype=padding.dtype)
+    net.set_inputs(x_dyn, padding_dyn)
+
+    out = net(x, padding)
+    expect = np.array([[[[[3, 4, 5, 3,],
+                          [0, 1, 2, 0,],
+                          [3, 4, 5, 3,]]]]]).astype(np.float64)
+    np.testing.assert_almost_equal(expect, out.asnumpy())
+
+
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_padv3_constant():
@@ -74,7 +171,7 @@ def test_padv3_constant():
     np.testing.assert_almost_equal(expect, res_ms)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_padv3_reflect():
@@ -94,7 +191,7 @@ def test_padv3_reflect():
     np.testing.assert_almost_equal(expect, res_ms)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_padv3_edge():
@@ -114,7 +211,7 @@ def test_padv3_edge():
     np.testing.assert_almost_equal(expect, res_ms)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_padv3_vmap():
@@ -134,7 +231,7 @@ def test_padv3_vmap():
     np.testing.assert_almost_equal(output.asnumpy(), expect_out)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_padv3_x_padding_dynamic_shape():
@@ -166,7 +263,7 @@ def test_padv3_x_padding_dynamic_shape():
     np.testing.assert_almost_equal(expect, out.asnumpy())
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_padv3_x_dynamic_shape():
@@ -197,7 +294,7 @@ def test_padv3_x_dynamic_shape():
     np.testing.assert_almost_equal(expect, out.asnumpy())
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_padv3_padding_dynamic_shape():
@@ -228,7 +325,7 @@ def test_padv3_padding_dynamic_shape():
     np.testing.assert_almost_equal(expect, out.asnumpy())
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_padv3_padding_list():
@@ -252,3 +349,25 @@ def test_padv3_padding_list():
                        [1.5, 1.5, 1.5, 1.5, 1.5],
                        [1.5, 1.5, 1.5, 1.5, 1.5]]).astype(np.float32)
     np.testing.assert_almost_equal(expect, out.asnumpy())
+
+
+@pytest.mark.level1
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.env_onecard
+def test_padv3_constant_dynamic_rank():
+    """
+    Feature: test padv3 constant mode with dynamic rank in pynative backend
+    Description: test padv3 constant mode with dynamic ran
+    Expectation: Success
+    """
+    mode = 'constant'
+    context.set_context(mode=context.PYNATIVE_MODE, device_target="GPU")
+    x = np.arange(9).reshape(1, 1, 1, 3, 3).astype(np.float32)
+    padding = Tensor((-1, 1, 0, 0))
+    value = 1.5
+    axis = Tensor([0])
+    net = NetDynamicRank(padding, mode, True, value)
+    out = net(Tensor(x), axis)
+    res_ms = out.asnumpy()
+    expect = [[[[1., 2., 1.5], [4., 5., 1.5], [7., 8., 1.5]]]]
+    np.testing.assert_almost_equal(expect, res_ms)

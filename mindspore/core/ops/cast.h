@@ -16,11 +16,10 @@
 
 #ifndef MINDSPORE_CORE_OPS_CAST_H_
 #define MINDSPORE_CORE_OPS_CAST_H_
-#include <vector>
 #include <memory>
+#include <vector>
 
 #include "ops/base_operator.h"
-#include "mindapi/base/types.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,9 +32,6 @@ class MIND_API Cast : public BaseOperator {
   /// \brief Constructor.
   Cast() : BaseOperator(kNameCast) { InitIOName({"x", "dst_type"}, {"output"}); }
 };
-abstract::AbstractBasePtr CastInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                    const std::vector<abstract::AbstractBasePtr> &input_args);
-using PrimCast = std::shared_ptr<Cast>;
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_CAST_H_

@@ -22,7 +22,7 @@
 #include <unordered_map>
 
 #include "utils/hash_set.h"
-#include "frontend/parallel/step_parallel.h"
+#include "utils/ms_context.h"
 #include "utils/log_adapter.h"
 
 namespace mindspore {
@@ -80,7 +80,8 @@ bool InitDevice(int64_t device_num, int64_t global_rank, const std::string &back
     return false;
   }
 
-  RankList devices, stage_map;
+  RankList devices;
+  RankList stage_map;
   for (int64_t i = 0; i < device_num; ++i) {
     devices.push_back(i);
   }
@@ -114,6 +115,7 @@ bool InitDevice(int64_t device_num, int64_t global_rank, const std::string &back
   }
   if (g_device_manager->Init(devices, global_rank, stage_map, backend) == SUCCESS) {
     MS_LOG(INFO) << "Device initialization succeeds.";
+    MS_LOG(INFO) << "g_device_manager: DeviceNum: " << g_device_manager->DeviceNum();
     return true;
   }
 
@@ -164,7 +166,7 @@ std::shared_ptr<Device> GetListMemberByIndex(size_t index, const std::vector<std
 namespace {
 constexpr int64_t NODE_PER_SERVER = 8;
 Status IsFeasibleDeiveListOneServer(const RankList &rank_list) {
-  if (rank_list.size() == 1 || rank_list.size() == 8) {
+  if (rank_list.size() == 1 || rank_list.size() == NODE_PER_SERVER) {
     return SUCCESS;
   }
   if (rank_list.size() == 4 && (rank_list[3] - rank_list[0] == 3) && (rank_list[0] == 0 || rank_list[3] == 7)) {
@@ -344,7 +346,7 @@ std::string DeviceManager::FindRankListNameByHashName(const std::string &hash_na
   }
   std::map<std::string, std::string>::const_iterator iter = group_to_rank_.find(hash_name);
   if (iter == group_to_rank_.cend()) {
-    MS_LOG(WARNING) << "Can not find the rank list name by hash name: " << hash_name;
+    MS_LOG(INFO) << "Can not find the rank list name by hash name: " << hash_name;
     return tmp;
   }
   return iter->second;
@@ -365,7 +367,7 @@ RankList DeviceManager::FindRankListByHashName(const std::string &hash_name) {
   rank_list_name = rank_list_name + "-";
   for (size_t i = 0; i < rank_list_name.size(); i++) {
     if (rank_list_name[i] == '-') {
-      int64_t rank_id = std::stoi(rank_str);
+      int64_t rank_id = std::atoi(rank_str.c_str());
       rank_list.push_back(rank_id);
       rank_str = "";
     } else if (rank_list_name[i] <= '9' && rank_list_name[i] >= '0') {
@@ -428,7 +430,11 @@ Status DeviceManager::CreateGroup(const std::string &group_name,
     MS_LOG(ERROR) << "Create communication group failed, the rank list is: " << rank_list;
     return FAILED;
   }
-  return gm_.CreateGroup(group_name, devices, comm_group);
+  if (gm_.CreateGroup(group_name, devices, comm_group) != SUCCESS) {
+    return FAILED;
+  }
+  group_to_rank_[group_name] = RankListName(rank_list);
+  return SUCCESS;
 }
 
 // Create the group with only the given devices' ranks.

@@ -15,15 +15,16 @@
  */
 
 #include <map>
-#include <string>
-#include <set>
-#include <vector>
 #include <memory>
+#include <set>
+#include <string>
+#include <vector>
 
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/comparison_ops.h"
 #include "ops/logical_not.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/src/helper.h"
 
 namespace mindspore {
 namespace ops {
@@ -42,7 +43,7 @@ TypePtr LogicalNotInferType(const PrimitivePtr &prim, const std::vector<Abstract
   auto infer_dtype = input_args[0]->BuildType();
   std::set<TypePtr> local_bool = {kBool};
   (void)CheckAndConvertUtils::CheckTensorTypeValid("x", infer_dtype, local_bool, op_name);
-  return infer_dtype;
+  return kBool;
 }
 }  // namespace
 
@@ -54,9 +55,26 @@ AbstractBasePtr LogicalNotInfer(const abstract::AnalysisEnginePtr &, const Primi
   CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterEqual, input_num, primitive->name());
   auto infer_type = LogicalNotInferType(primitive, input_args);
   auto infer_shape = LogicalNotInferShape(primitive, input_args);
-  return abstract::MakeAbstract(infer_shape, infer_type);
+  return abstract::MakeAbstractTensor(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(LogicalNot, prim::kPrimLogicalNot, LogicalNotInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGLogicalNotInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return LogicalNotInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return LogicalNotInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return LogicalNotInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(LogicalNot, prim::kPrimLogicalNot, AGLogicalNotInfer, false);
 }  // namespace ops
 }  // namespace mindspore

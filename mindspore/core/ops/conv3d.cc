@@ -16,16 +16,36 @@
 
 #include "ops/conv3d.h"
 
-#include <set>
-#include <map>
-#include <string>
 #include <algorithm>
-#include "utils/check_convert_utils.h"
+#include <iterator>
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+
+#include "abstract/abstract_value.h"
 #include "abstract/dshape.h"
-#include "ir/dtype/tensor_type.h"
-#include "ops/op_utils.h"
-#include "mindapi/src/helper.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
 #include "include/common/utils/utils.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/ms_context.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -157,17 +177,23 @@ constexpr size_t kConv3DDilationNum = 3;
 constexpr size_t kConv3DStartIndex = 2;
 constexpr size_t kConv3DPaddingNum = 6;
 
-inline std::vector<int64_t> Conv3DCheckAttrIntOrTuple(const ValuePtr &attr, const size_t start_idx,
-                                                      const size_t num_element) {
+inline std::vector<int64_t> Conv3DCheckAttrIntOrTuple(const std::string &attrname, const ValuePtr &attr,
+                                                      const size_t start_idx, const size_t num_element) {
   std::vector<int64_t> result;
   MS_EXCEPTION_IF_NULL(attr);
   if (attr->isa<ValueTuple>()) {
     std::vector<ValuePtr> attr_vec = attr->cast<ValueTuplePtr>()->value();
     auto it_start = attr_vec.begin() + SizeToLong(start_idx);
+    if (start_idx + num_element > attr_vec.size()) {
+      MS_EXCEPTION(ValueError) << "For Conv3d attribute " << attrname
+                               << ", start_idx + num_element can't be larger than attr_vec size"
+                               << ", but got start_idx: " << start_idx << ", num_element: " << num_element
+                               << ", attr_vec size: " << attr_vec.size();
+    }
     (void)std::transform(it_start, it_start + SizeToLong(num_element), std::back_inserter(result),
                          [](const ValuePtr &e) -> int64_t { return GetValue<int64_t>(e); });
   } else {
-    int64_t attr_val = attr->cast<Int64ImmPtr>()->value();
+    int64_t attr_val = GetValue<int64_t>(attr);
     (void)result.insert(result.begin(), num_element, attr_val);
   }
   return result;
@@ -186,13 +212,23 @@ inline bool Conv3DCheckShape(const std::string &op, const ShapeVector &shape) {
   }
   return true;
 }
+
+inline void Conv3dInferCheck(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
+  for (auto item : input_args) {
+    MS_EXCEPTION_IF_NULL(item);
+  }
+  const int64_t input_num = 2;
+  (void)CheckAndConvertUtils::CheckInteger("Conv3d infer check", SizeToLong(input_args.size()), kGreaterEqual,
+                                           input_num, primitive->name());
+}
 }  // namespace
 
 class Conv3DInfer : public abstract::OpInferBase {
  public:
   BaseShapePtr InferShape(const PrimitivePtr &primitive,
                           const std::vector<AbstractBasePtr> &input_args) const override {
-    MS_EXCEPTION_IF_NULL(primitive);
+    Conv3dInferCheck(primitive, input_args);
     auto prim_name = primitive->name();
     auto x_shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kIndex0]->BuildShape());
     auto w_shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kIndex1]->BuildShape());
@@ -211,12 +247,12 @@ class Conv3DInfer : public abstract::OpInferBase {
       return std::make_shared<abstract::Shape>(ShapeVector{abstract::Shape::kShapeRankAny});
     }
     std::vector<int64_t> kernel_size =
-      Conv3DCheckAttrIntOrTuple(primitive->GetAttr(kKernelSize), 0, kConv3DKernelSizeNum);
+      Conv3DCheckAttrIntOrTuple("kernel size", primitive->GetAttr(kKernelSize), 0, kConv3DKernelSizeNum);
     std::vector<int64_t> stride =
-      Conv3DCheckAttrIntOrTuple(primitive->GetAttr(kStrides), kConv3DStartIndex, kConv3DstrideNum);
+      Conv3DCheckAttrIntOrTuple("strides", primitive->GetAttr(kStrides), kConv3DStartIndex, kConv3DstrideNum);
     std::vector<int64_t> dilation =
-      Conv3DCheckAttrIntOrTuple(primitive->GetAttr(kDilations), kConv3DStartIndex, kConv3DDilationNum);
-    std::vector<int64_t> pad_list = Conv3DCheckAttrIntOrTuple(primitive->GetAttr(kPad), 0, kConv3DPaddingNum);
+      Conv3DCheckAttrIntOrTuple("dilations", primitive->GetAttr(kDilations), kConv3DStartIndex, kConv3DDilationNum);
+    std::vector<int64_t> pad_list = Conv3DCheckAttrIntOrTuple("pad", primitive->GetAttr(kPad), 0, kConv3DPaddingNum);
     int64_t pad_mode;
     CheckAndConvertUtils::GetPadModEnumValue(primitive->GetAttr(kPadMode), &pad_mode);
 
@@ -226,7 +262,7 @@ class Conv3DInfer : public abstract::OpInferBase {
     uint64_t d_axis = 2;
     uint64_t h_axis = 3;
     uint64_t w_axis = 4;
-    int64_t group = primitive->GetAttr(kGroup)->cast<Int64ImmPtr>()->value();
+    int64_t group = GetValue<int64_t>(primitive->GetAttr(kGroup));
     if ((x_shape[c_axis] != abstract::Shape::kShapeDimAny) && (w_shape[c_axis] != abstract::Shape::kShapeDimAny) &&
         ((x_shape[c_axis] / group) != w_shape[c_axis])) {
       MS_EXCEPTION(ValueError) << "For '" << prim_name
@@ -235,7 +271,7 @@ class Conv3DInfer : public abstract::OpInferBase {
                                << w_shape[c_axis] << ", but got 'C_in' of input 'x' shape: " << x_shape[c_axis]
                                << ", and 'group': " << group << ".";
     }
-    int64_t out_channel = primitive->GetAttr(kOutChannel)->cast<Int64ImmPtr>()->value();
+    int64_t out_channel = GetValue<int64_t>(primitive->GetAttr(kOutChannel));
     if ((w_shape[n_axis] != abstract::Shape::kShapeDimAny) && (w_shape[n_axis] != out_channel)) {
       MS_EXCEPTION(ValueError) << "For '" << prim_name << "', 'w_shape[" << n_axis
                                << "]' must be equal to 'out_channel', but got 'w_shape[" << n_axis
@@ -271,6 +307,7 @@ class Conv3DInfer : public abstract::OpInferBase {
   }
 
   TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    Conv3dInferCheck(primitive, input_args);
     auto prim_name = primitive->name();
     const std::set<TypePtr> valid_types = {kFloat16, kFloat32};
     auto x_dtype = input_args[0]->BuildType();
@@ -315,12 +352,12 @@ class Conv3DInfer : public abstract::OpInferBase {
       pad_list->clear();
       (void)pad_list->insert(pad_list->begin(), pad_list_size, 0);
     } else if (pad_mode == PadMode::SAME) {
-      int64_t pad_head = abstract::Shape::kShapeDimAny;
-      int64_t pad_tail = abstract::Shape::kShapeDimAny;
-      int64_t pad_top = abstract::Shape::kShapeDimAny;
-      int64_t pad_bottom = abstract::Shape::kShapeDimAny;
-      int64_t pad_left = abstract::Shape::kShapeDimAny;
-      int64_t pad_right = abstract::Shape::kShapeDimAny;
+      int64_t pad_head = 0;
+      int64_t pad_tail = 0;
+      int64_t pad_top = 0;
+      int64_t pad_bottom = 0;
+      int64_t pad_left = 0;
+      int64_t pad_right = 0;
 
       const int64_t kNumber2 = 2;
       if (x_d != abstract::Shape::kShapeDimAny) {
@@ -367,8 +404,12 @@ class Conv3DInfer : public abstract::OpInferBase {
         *w_out = 1 + (x_w + pad_left + pad_right - kernel_w - (kernel_w - 1) * (dilation_w - 1)) / stride_w;
       }
     }
-
-    CheckPadList(kernel_size, dilation, pad_list);
+    auto context = MsContext::GetInstance();
+    MS_EXCEPTION_IF_NULL(context);
+    bool is_ascend = (context->get_param<std::string>(MS_CTX_DEVICE_TARGET) == kAscendDevice);
+    if (is_ascend) {
+      CheckPadList(kernel_size, dilation, pad_list);
+    }
   }
 
   void CheckPadList(const std::vector<int64_t> &kernel_size, const std::vector<int64_t> &dilation,

@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,9 @@
 #include "plugin/device/ascend/hal/device/tasksink/task_generator.h"
 
 #include <runtime/rt.h>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/ascend_op_name.h"
+#include "ops/framework_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "kernel/task_stream.h"
 #include "plugin/device/ascend/kernel/hccl/hccl_kernel.h"
@@ -40,7 +42,7 @@ namespace {
 void GetSendReceiveStream(const std::vector<CNodePtr> &anf_node_list, std::set<uint32_t> *send_recv_stream_ids) {
   for (const auto &node : anf_node_list) {
     auto node_name = common::AnfAlgo::GetCNodeName(node);
-    if (node_name == kHcomSendOpName || node_name == kReceiveOpName) {
+    if (node_name == kSendOpName || node_name == kReceiveOpName) {
       uint32_t stream_id = AnfAlgo::GetStreamId(node);
       send_recv_stream_ids->insert(stream_id);
     }
@@ -61,10 +63,9 @@ bool TaskGenerator::GenTasks(const std::vector<CNodePtr> &anf_node_list, std::ve
 #ifdef ENABLE_DUMP_IR
   string task_info_name = "task_info_graph." + std::to_string(graph_id);
   (void)mindspore::RDR::RecordTaskDebugInfo(SUBMODULE_ID, task_info_name, task_debug_info_list_);
-  auto context_ptr = MsContext::GetInstance();
-  MS_EXCEPTION_IF_NULL(context_ptr);
-  bool save_graphs = context_ptr->get_param<bool>(MS_CTX_SAVE_GRAPHS_FLAG);
-  if (save_graphs) {
+  auto context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  if (context->CanDump(kIntroductory)) {
 #ifndef ENABLE_SECURITY
     std::string file_path = GetSaveGraphsPathName("task_info_graph_" + std::to_string(graph_id) + ".ir");
     DumpTaskInfo(file_path);
@@ -87,14 +88,14 @@ void TaskGenerator::LaunchAddrCleanAkgKernel(const CNodePtr &anf_node_ptr, Addre
     MS_EXCEPTION_IF_NULL(manager);
     auto &node_users = manager->node_users();
     if (node_users[anf_node_ptr].empty()) {
-      MS_LOG(EXCEPTION) << "Node users of " << anf_node_ptr->ToString() << " is empty.";
+      MS_LOG(INTERNAL_EXCEPTION) << "Node users of " << anf_node_ptr->ToString() << " is empty.";
     }
     auto depend_node = node_users[anf_node_ptr].pop().first;
     if (!IsPrimitiveCNode(depend_node, prim::kPrimDepend)) {
-      MS_LOG(EXCEPTION) << "Checking Depend node failed";
+      MS_LOG(INTERNAL_EXCEPTION) << "Checking Depend node failed";
     }
     if (node_users[depend_node].empty()) {
-      MS_LOG(EXCEPTION) << "Node users of " << depend_node->ToString() << " is empty.";
+      MS_LOG(INTERNAL_EXCEPTION) << "Node users of " << depend_node->ToString() << " is empty.";
     }
     auto post_node = node_users[depend_node].pop().first;
     for (auto index : clean_output_indexs) {
@@ -154,10 +155,10 @@ void TaskGenerator::LaunchAddrCleanKernel(const CNodePtr &anf_node_ptr, AddressP
       MS_LOG(DEBUG) << "AtomicAddClean clean workspace size:" << clean_workspace_indexs.size();
     }
   }
-  auto clear_mems = common::AnfAlgo::GetNodeAttr<std::vector<size_t>>(anf_node_ptr, kAttrAtomicAddMemSize);
+  auto clear_mems = common::AnfAlgo::GetNodeAttr<std::vector<int64_t>>(anf_node_ptr, kAttrSizes);
   if (kernel_inputs->size() != clear_mems.size()) {
-    MS_LOG(EXCEPTION) << "AtomicAddClean kernel inputs size not equal clear memory size, kernel inputs size:"
-                      << kernel_inputs->size() << ",clean mem size" << clear_mems.size();
+    MS_LOG(INTERNAL_EXCEPTION) << "AtomicAddClean kernel inputs size not equal clear memory size, kernel inputs size:"
+                               << kernel_inputs->size() << ",clean mem size" << clear_mems.size();
   }
 }
 
@@ -165,7 +166,7 @@ AddressPtrList TaskGenerator::GetTaskInput(const CNodePtr &node) {
   MS_EXCEPTION_IF_NULL(node);
   AddressPtrList kernel_inputs;
   auto op_name = common::AnfAlgo::GetCNodeName(node);
-  if (op_name == kAtomicAddrCleanOpName) {
+  if (op_name == kMemSetOpName) {
     LaunchAddrCleanKernel(node, &kernel_inputs);
     return kernel_inputs;
   }
@@ -206,7 +207,7 @@ AddressPtrList TaskGenerator::GetTaskOutput(const CNodePtr &node) {
   AddressPtrList kernel_outputs;
   // No kernel output if output of the cnode is monad, such as LabelSwitch.
   if (!HasAbstractMonad(node)) {
-    size_t output_num = common::AnfAlgo::GetOutputTensorNum(node);
+    size_t output_num = AnfAlgo::GetOutputTensorNum(node);
     for (size_t i = 0; i < output_num; ++i) {
       auto it = AnfAlgo::GetOutputAddr(node, i, false);
       AddressPtr output = std::make_shared<Address>();
@@ -257,7 +258,7 @@ bool TaskGenerator::LaunchKernel(const CNodePtr &anf_node_ptr, uint32_t stream_i
   AddressPtrList kernel_workspaces;
   AddressPtrList kernel_outputs;
 
-  if (op_name == kAtomicAddrCleanOpName) {
+  if (op_name == kMemSetOpName) {
     LaunchAddrCleanKernel(anf_node_ptr, &kernel_inputs);
   } else {
     kernel_inputs = GetTaskInput(anf_node_ptr);
@@ -273,10 +274,10 @@ bool TaskGenerator::LaunchKernel(const CNodePtr &anf_node_ptr, uint32_t stream_i
   auto debug_info = std::make_shared<TaskDebugInfo>();
   MS_EXCEPTION_IF_NULL(debug_info);
   if (task_info_ptrs.empty()) {
-    MS_LOG(ERROR) << "Empty task_info_ptrs.";
-    return false;
+    MS_LOG(INFO) << anf_node_ptr->fullname_with_scope() << " task info is empty.";
+    return true;
   }
-  MS_LOG(INFO) << "Node " << anf_node_ptr->fullname_with_scope() << " get task " << task_info_ptrs.front()->op_name();
+  MS_LOG(DEBUG) << "Node " << anf_node_ptr->fullname_with_scope() << " get task " << task_info_ptrs.front()->op_name();
   debug_info->op_name_ = anf_node_ptr->fullname_with_scope();
   debug_info->task_num_ = task_info_ptrs.size();
   debug_info->stream_id_ = task_info_ptrs[0]->stream_id();
@@ -321,9 +322,9 @@ bool TaskGenerator::LaunchAllKernel(const std::vector<CNodePtr> &anf_node_list,
     launch_node_list = anf_node_list;
   }
   for (const auto &anf_node_ptr : launch_node_list) {
+    MS_EXCEPTION_IF_NULL(anf_node_ptr);
     size_t old_size = task_info_list->size();
     uint32_t stream_id = AnfAlgo::GetStreamId(anf_node_ptr);
-    MS_EXCEPTION_IF_NULL(anf_node_ptr);
     MS_LOG(DEBUG) << "Task gen launch begin, current_op_idx:" << current_op_index
                   << " name:" << anf_node_ptr->fullname_with_scope() << ", stream id:" << stream_id;
     if (!LaunchKernel(anf_node_ptr, stream_id, task_info_list)) {
@@ -336,13 +337,6 @@ bool TaskGenerator::LaunchAllKernel(const std::vector<CNodePtr> &anf_node_list,
     }
     current_op_index++;
   }
-
-#ifndef ENABLE_SECURITY
-  ProfilingUtils::SetGraphKernelName(graph_id, kernel_name_list);
-  if (ProfilingManager::GetInstance().IsProfilingInitialized()) {
-    ProfilingUtils::SetGraphProfilingCNode(graph_id, profiling_cnode_list);
-  }
-#endif
 
   return true;
 }

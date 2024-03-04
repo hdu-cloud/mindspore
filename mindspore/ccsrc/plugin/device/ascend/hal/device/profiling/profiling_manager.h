@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 #define MINDSPORE_CCSRC_RUNTIME_DEVICE_ASCEND_PROFILING_PROFILING_MANAGER_H_
 
 #include <map>
-#include <cstring>
 #include <string>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -27,7 +26,7 @@
 #include "toolchain/prof_acl_api.h"
 #include "toolchain/slog.h"
 #include "runtime/base.h"
-#include "profiler/device/profiling.h"
+#include "include/backend/debug/profiler/profiling.h"
 #include "acl/acl_prof.h"
 
 using std::map;
@@ -60,7 +59,8 @@ class ProfilingManager {
   bool IsMsprofiling();
   bool InitProfiling(const std::string &profiling_path, uint32_t device_id);
   bool IsProfilingInitialized() const { return cur_state_ >= kProfilingInit; }
-  inline bool IsProfilingStart() const { return cur_state_ >= kProfilingStart; }
+  bool IsProfilingStart() const { return cur_state_ == kProfilingStart && step_start_; }
+  inline void SetStepStart(const bool start) { step_start_ = start; }
   Status PluginInit() const;
   void PluginUnInit() const;
   Status CallMsprofReport(NotNull<ReporterData *> reporter_data) const;
@@ -85,6 +85,7 @@ class ProfilingManager {
   ProfilingState cur_state_;
   std::string profiling_path_;
   bool msprof_enable_{false};
+  bool step_start_{false};
 };
 
 Status ProfCommandHandle(ProfCommandHandleType type);

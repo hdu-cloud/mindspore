@@ -13,7 +13,7 @@
 # limitations under the License.
 # ============================================================================
 
-"""RandomGamma op"""
+"""Gamma op"""
 from mindspore.ops.op_info_register import op_info_register, AiCPURegOp, DataType
 
 gamma_op_info = AiCPURegOp("Gamma") \
@@ -32,5 +32,5 @@ gamma_op_info = AiCPURegOp("Gamma") \
 
 @op_info_register(gamma_op_info)
 def _gamma_aicpu():
-    """RandomGamma AiCPU register"""
+    """Gamma AiCPU register"""
     return

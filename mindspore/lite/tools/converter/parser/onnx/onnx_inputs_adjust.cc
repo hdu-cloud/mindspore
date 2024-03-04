@@ -19,29 +19,45 @@
 #include <functional>
 #include <algorithm>
 #include <memory>
+#include "mindspore/core/ops/random_ops.h"
+#include "mindspore/core/ops/lite_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
 #include "ops/resize.h"
 #include "ops/random_normal.h"
+#include "ops/roi_align.h"
+#include "ops/concat.h"
+#include "ops/reshape.h"
+#include "ops/cast.h"
+#include "ops/multinomial.h"
+#include "ops/one_hot.h"
+#include "ops/affine_grid.h"
+#include "ops/reverse_v2.h"
+#include "ops/transpose.h"
 #include "include/errorcode.h"
 #include "nnacl/op_base.h"
 #include "tools/common/tensor_util.h"
 #include "tools/optimizer/common/gllo_utils.h"
 #include "tools/common/node_util.h"
+#include "tools/lite_exporter/fetch_content.h"
 
 namespace mindspore::lite {
 namespace {
 const std::vector<int> kNH2NCPerm = {0, 3, 1, 2};
+constexpr int kInputNum3 = 3;
+constexpr int kInputNum4 = 4;
 
 STATUS AddAttrToInput(const FuncGraphPtr &func_graph, const CNodePtr &cnode, int input_num,
                       const std::string &attr_name) {
-  MS_ASSERT(func_graph != nullptr);
-  MS_ASSERT(cnode != nullptr);
+  MS_CHECK_TRUE_RET(func_graph != nullptr, RET_NULL_PTR);
+  MS_CHECK_TRUE_RET(cnode != nullptr, RET_NULL_PTR);
   MS_CHECK_TRUE_RET(!cnode->inputs().empty(), lite::RET_ERROR);
   if (!opt::CheckInputs(cnode)) {
     MS_LOG(ERROR) << "input is invalid.";
     return lite::RET_INPUT_TENSOR_ERROR;
   }
   auto primitive_c = GetValueNode<PrimitiveCPtr>(cnode->input(0));
-  MS_ASSERT(primitive_c != nullptr);
+  MS_CHECK_TRUE_MSG(primitive_c != nullptr, RET_NULL_PTR, "Create primitive_c return nullptr");
   MS_LOG(INFO) << "supplement " << attr_name << " attr to input";
   auto value_ptr = primitive_c->GetAttr(attr_name);
   auto inputs = cnode->inputs();
@@ -76,8 +92,8 @@ STATUS AddAttrToInput(const FuncGraphPtr &func_graph, const CNodePtr &cnode, int
 
 STATUS ReplaceTypeParameterNode(const FuncGraphPtr &func_graph, const ParameterPtr &param_node, TypeId input,
                                 TypeId output) {
-  MS_ASSERT(func_graph != nullptr);
-  MS_ASSERT(param_node != nullptr);
+  MS_CHECK_TRUE_RET(func_graph != nullptr, RET_NULL_PTR);
+  MS_CHECK_TRUE_RET(param_node != nullptr, RET_NULL_PTR);
   if (param_node->abstract() == nullptr) {
     MS_LOG(ERROR) << "parameter node abstract is invalid.";
     return lite::RET_NULL_PTR;
@@ -99,7 +115,7 @@ STATUS ReplaceTypeParameterNode(const FuncGraphPtr &func_graph, const ParameterP
   MS_CHECK_TRUE_MSG(manager != nullptr, RET_ERROR, "funcgraph has no manager");
   if (param_node->has_default()) {
     auto default_value = param_node->default_param();
-    MS_ASSERT(default_value != nullptr);
+    MS_CHECK_TRUE_RET(default_value != nullptr, RET_NULL_PTR);
     auto tensor_info = default_value->cast<tensor::TensorPtr>();
     if (tensor_info == nullptr) {
       MS_LOG(ERROR) << "default data is not tensor::Tensor.";
@@ -125,18 +141,18 @@ STATUS ReplaceTypeParameterNode(const FuncGraphPtr &func_graph, const ParameterP
 }
 
 bool ValidParameterNode(const ParameterPtr &param_node) {
-  MS_ASSERT(param_node != nullptr);
+  MS_CHECK_TRUE_RET(param_node != nullptr, false);
   if (!param_node->has_default()) {
     return true;
   }
   auto tensor_info = std::dynamic_pointer_cast<tensor::Tensor>(param_node->default_param());
-  MS_ASSERT(tensor_info != nullptr);
+  MS_CHECK_TRUE_RET(tensor_info != nullptr, false);
   return tensor_info->Size() != 0;
 }
 
 STATUS ReplaceConstant(const FuncGraphPtr &func_graph, const CNodePtr &cnode) {
-  MS_ASSERT(func_graph != nullptr);
-  MS_ASSERT(cnode != nullptr);
+  MS_CHECK_TRUE_RET(func_graph != nullptr, RET_NULL_PTR);
+  MS_CHECK_TRUE_RET(cnode != nullptr, RET_NULL_PTR);
   if (cnode->inputs().empty() || cnode->input(0) == nullptr) {
     MS_LOG(ERROR) << "constant cnode has no primitive.";
     return lite::RET_ERROR;
@@ -172,7 +188,7 @@ STATUS ReplaceConstant(const FuncGraphPtr &func_graph, const CNodePtr &cnode) {
     return lite::RET_ERROR;
   }
   auto manager = func_graph->manager();
-  MS_ASSERT(manager != nullptr);
+  MS_CHECK_TRUE_RET(manager != nullptr, RET_NULL_PTR);
   if (!manager->Replace(cnode, param_node)) {
     MS_LOG(ERROR) << "Replace param node failed.";
     return RET_ERROR;
@@ -181,8 +197,8 @@ STATUS ReplaceConstant(const FuncGraphPtr &func_graph, const CNodePtr &cnode) {
 }
 
 STATUS ReplaceTransposeWithGraphInput(const FuncGraphPtr &func_graph, const CNodePtr &cnode) {
-  MS_ASSERT(func_graph != nullptr);
-  MS_ASSERT(cnode != nullptr);
+  MS_CHECK_TRUE_RET(func_graph != nullptr, RET_NULL_PTR);
+  MS_CHECK_TRUE_RET(cnode != nullptr, RET_NULL_PTR);
   if (cnode->inputs().size() != opt::kInputSizeThree) {
     MS_LOG(ERROR) << "onnx transpose input size should be 2, now is " << (cnode->inputs().size() - 1);
     return lite::RET_ERROR;
@@ -194,7 +210,7 @@ STATUS ReplaceTransposeWithGraphInput(const FuncGraphPtr &func_graph, const CNod
     MS_LOG(DEBUG) << "input is not graph input";
     return lite::RET_OK;
   }
-  MS_ASSERT(param_node->abstract() != nullptr);
+  MS_CHECK_TRUE_RET(param_node->abstract() != nullptr, RET_NULL_PTR);
   if (param_node->abstract()->GetShapeTrack() == nullptr) {
     MS_LOG(ERROR) << "shape is nullptr.";
     return lite::RET_ERROR;
@@ -210,7 +226,7 @@ STATUS ReplaceTransposeWithGraphInput(const FuncGraphPtr &func_graph, const CNod
     return lite::RET_OK;
   }
   auto perm_anf = cnode->input(opt::kInputIndexTwo);
-  MS_ASSERT(perm_anf != nullptr);
+  MS_CHECK_TRUE_RET(perm_anf != nullptr, RET_NULL_PTR);
   auto perm_param = perm_anf->cast<ParameterPtr>();
   if (perm_param == nullptr || !perm_param->has_default() ||
       !utils::isa<tensor::TensorPtr>(perm_param->default_param())) {
@@ -218,7 +234,7 @@ STATUS ReplaceTransposeWithGraphInput(const FuncGraphPtr &func_graph, const CNod
     return lite::RET_OK;
   }
   auto perm_value = perm_param->default_param()->cast<tensor::TensorPtr>();
-  MS_ASSERT(perm_value != nullptr);
+  MS_CHECK_TRUE_RET(perm_value != nullptr, RET_NULL_PTR);
   if (perm_value->shape().empty()) {
     MS_LOG(ERROR) << "transpose second input is invalid.";
     return lite::RET_ERROR;
@@ -247,9 +263,9 @@ STATUS ReplaceTransposeWithGraphInput(const FuncGraphPtr &func_graph, const CNod
 }
 
 STATUS AdjustStridedSlice(const FuncGraphPtr &func_graph, const CNodePtr &cnode) {
-  MS_ASSERT(func_graph != nullptr);
+  MS_CHECK_TRUE_RET(func_graph != nullptr, RET_NULL_PTR);
   auto manager = func_graph->manager();
-  MS_ASSERT(cnode != nullptr);
+  MS_CHECK_TRUE_RET(cnode != nullptr, RET_NULL_PTR);
   if (!opt::CheckInputs(cnode)) {
     MS_LOG(ERROR) << "input is invalid.";
     return lite::RET_INPUT_TENSOR_ERROR;
@@ -269,7 +285,7 @@ STATUS AdjustStridedSlice(const FuncGraphPtr &func_graph, const CNodePtr &cnode)
   int size = 1;
   for (size_t i = 2; i < cnode->inputs().size(); ++i) {
     auto param_anf = cnode->input(opt::kInputIndexTwo);
-    MS_ASSERT(param_anf != nullptr);
+    MS_CHECK_TRUE_RET(param_anf != nullptr, RET_NULL_PTR);
     const auto &param_node = param_anf->cast<ParameterPtr>();
     if (param_node == nullptr || !param_node->has_default()) {
       continue;
@@ -321,17 +337,14 @@ STATUS AdjustStridedSlice(const FuncGraphPtr &func_graph, const CNodePtr &cnode)
 }
 
 STATUS AdjustResize(bool *need_update_manager, const CNodePtr &cnode) {
-  MS_ASSERT(cnode != nullptr);
+  MS_CHECK_TRUE_RET(cnode != nullptr, RET_NULL_PTR);
   MS_CHECK_TRUE_RET(!cnode->inputs().empty(), lite::RET_ERROR);
   auto node = cnode->input(0);
-  MS_ASSERT(node != nullptr);
+  MS_CHECK_TRUE_RET(node != nullptr, RET_NULL_PTR);
   auto resize_prim = GetValueNode<std::shared_ptr<ops::PrimitiveC>>(node);
   if (resize_prim == nullptr) {
     MS_LOG(ERROR) << "cnode is invalid.";
     return lite::RET_ERROR;
-  }
-  if (resize_prim->GetAttr(ops::kCoordinateTransformMode) == nullptr) {
-    return lite::RET_OK;
   }
   if (cnode->inputs().size() == opt::kInputSizeFour) {
     auto new_input = cnode->inputs();
@@ -347,8 +360,8 @@ STATUS AdjustResize(bool *need_update_manager, const CNodePtr &cnode) {
     int shape_index = opt::kInputIndexFour;
     auto scale_node = cnode->inputs()[opt::kInputIndexThree];
     auto size_node = cnode->inputs()[opt::kInputIndexFour];
-    MS_ASSERT(scale_node != nullptr);
-    MS_ASSERT(size_node != nullptr);
+    MS_CHECK_TRUE_RET(scale_node != nullptr, RET_NULL_PTR);
+    MS_CHECK_TRUE_RET(size_node != nullptr, RET_NULL_PTR);
     if (scale_node->isa<CNode>() && size_node->isa<CNode>()) {
       MS_LOG(ERROR) << "One of scale and size should be specified.";
       return lite::RET_ERROR;
@@ -356,7 +369,7 @@ STATUS AdjustResize(bool *need_update_manager, const CNodePtr &cnode) {
                (scale_node->isa<Parameter>() && size_node->isa<CNode>())) {
       auto param_node =
         scale_node->isa<Parameter>() ? scale_node->cast<ParameterPtr>() : size_node->cast<ParameterPtr>();
-      MS_ASSERT(param_node != nullptr);
+      MS_CHECK_TRUE_RET(param_node != nullptr, RET_NULL_PTR);
       if (ValidParameterNode(param_node)) {
         MS_LOG(ERROR) << "One of scale and size should be specified.";
         return lite::RET_ERROR;
@@ -365,8 +378,8 @@ STATUS AdjustResize(bool *need_update_manager, const CNodePtr &cnode) {
     } else if (scale_node->isa<Parameter>() && size_node->isa<Parameter>()) {
       auto scale_param = scale_node->cast<ParameterPtr>();
       auto size_param = size_node->cast<ParameterPtr>();
-      MS_ASSERT(scale_param != nullptr);
-      MS_ASSERT(size_param != nullptr);
+      MS_CHECK_TRUE_RET(scale_param != nullptr, RET_NULL_PTR);
+      MS_CHECK_TRUE_RET(size_param != nullptr, RET_NULL_PTR);
       bool is_scale_valid = ValidParameterNode(scale_param);
       bool is_size_valid = ValidParameterNode(size_param);
       if (!(is_scale_valid || is_size_valid)) {
@@ -383,7 +396,7 @@ STATUS AdjustResize(bool *need_update_manager, const CNodePtr &cnode) {
 }
 
 STATUS AdjustUnsqueeze(bool *need_update_manager, const CNodePtr &cnode) {
-  MS_ASSERT(cnode != nullptr);
+  MS_CHECK_TRUE_RET(cnode != nullptr, RET_NULL_PTR);
   MS_CHECK_TRUE_RET(!cnode->inputs().empty(), lite::RET_ERROR);
   if (cnode->inputs().size() == opt::kInputSizeThree) {
     auto new_input = cnode->inputs();
@@ -395,7 +408,7 @@ STATUS AdjustUnsqueeze(bool *need_update_manager, const CNodePtr &cnode) {
 }
 
 STATUS AdjustRandomNormal(const FuncGraphPtr &func_graph, const CNodePtr &cnode) {
-  MS_ASSERT(func_graph != nullptr && cnode != nullptr);
+  MS_CHECK_TRUE_RET(func_graph != nullptr && cnode != nullptr, RET_NULL_PTR);
   if (cnode->size() != 1) {
     return RET_OK;
   }
@@ -435,17 +448,18 @@ STATUS AdjustRandomNormal(const FuncGraphPtr &func_graph, const CNodePtr &cnode)
 }
 
 STATUS AdjustGatherD(const FuncGraphPtr &func_graph, const CNodePtr &cnode) {
-  MS_ASSERT(func_graph != nullptr && cnode != nullptr);
+  MS_CHECK_TRUE_RET(func_graph != nullptr && cnode != nullptr, RET_NULL_PTR);
   auto gather_d_node = ops::GetOperator<ops::GatherD>(cnode->input(0));
   MS_CHECK_TRUE_RET(gather_d_node != nullptr, RET_ERROR);
   auto prim = gather_d_node->GetPrim();
   MS_CHECK_TRUE_RET(prim != nullptr, RET_ERROR);
   MS_CHECK_TRUE_RET(prim->GetAttr(ops::kDims) != nullptr, RET_ERROR);
   int32_t dim_val = GetValue<int32_t>(prim->GetAttr(ops::kDims));
-  auto dim_parameter_ptr = mindspore::opt::BuildIntValueParameterNode(func_graph, dim_val, "dim");
+  auto dim_parameter_ptr =
+    mindspore::opt::BuildIntValueParameterNode(func_graph, dim_val, cnode->fullname_with_scope() + "_dim");
   MS_CHECK_TRUE_RET(dim_parameter_ptr != nullptr, RET_ERROR);
   auto attr_index = cnode->input(THIRD_INPUT);
-  MS_ASSERT(attr_index != nullptr);
+  MS_CHECK_TRUE_RET(attr_index != nullptr, RET_NULL_PTR);
   std::vector<AnfNodePtr> new_inputs;
   new_inputs.push_back(cnode->inputs()[FIRST_INPUT]);
   new_inputs.push_back(cnode->inputs()[SECOND_INPUT]);
@@ -454,10 +468,125 @@ STATUS AdjustGatherD(const FuncGraphPtr &func_graph, const CNodePtr &cnode) {
   cnode->set_inputs(new_inputs);
   return RET_OK;
 }
+
+STATUS AdjustROIAlign(const FuncGraphPtr &func_graph, const CNodePtr &cnode) {
+  MS_CHECK_TRUE_RET(func_graph != nullptr && cnode != nullptr, RET_NULL_PTR);
+  if (cnode->inputs().size() != kInputNum4) {
+    MS_LOG(INFO) << "RoiAlign input size is not 3, does not need to adjust.";
+    return RET_OK;
+  }
+  auto rois = cnode->inputs()[THIRD_INPUT];
+  auto batch_indices = cnode->inputs()[FOURTH_INPUT];
+  auto abstract = batch_indices->abstract();
+  auto cast_node =
+    opt::GenCastNode(func_graph, batch_indices, cnode->fullname_with_scope() + "_Cast", kNumberTypeFloat32, abstract);
+  if (cast_node == nullptr) {
+    MS_LOG(ERROR) << "Create cast node failed.";
+    return RET_ERROR;
+  }
+  std::vector<int> shape = {-1, 1};
+  auto new_reshape_node = opt::GenReshapeNode(func_graph, cast_node, shape, cnode->fullname_with_scope() + "_Reshape");
+  if (new_reshape_node == nullptr) {
+    MS_LOG(ERROR) << "Create reshape node failed.";
+    return RET_ERROR;
+  }
+  auto concat_prim = std::make_shared<ops::Concat>();
+  MS_CHECK_TRUE_MSG(concat_prim != nullptr, RET_ERROR, "Create concat prim failed");
+  auto concat_prim_c = concat_prim->GetPrim();
+  MS_CHECK_TRUE_MSG(concat_prim_c != nullptr, RET_ERROR, "Create concat primc failed");
+  concat_prim->set_axis(1);
+  ValueNodePtr value_node = NewValueNode(concat_prim_c);
+  MS_CHECK_TRUE_MSG(value_node != nullptr, RET_ERROR, "Create value node failed");
+  std::vector<AnfNodePtr> op_inputs = {value_node, new_reshape_node, rois};
+  auto new_concat_node = func_graph->NewCNode(op_inputs);
+  if (new_concat_node == nullptr) {
+    MS_LOG(ERROR) << "Create concat node failed.";
+    return RET_ERROR;
+  }
+  new_concat_node->set_fullname_with_scope(cnode->fullname_with_scope() + "_Concat");
+
+  std::vector<AnfNodePtr> new_inputs;
+  new_inputs.push_back(cnode->inputs()[FIRST_INPUT]);
+  new_inputs.push_back(cnode->inputs()[SECOND_INPUT]);
+  new_inputs.push_back(new_concat_node);
+  cnode->set_inputs(new_inputs);
+  opt::UpdateManager(func_graph);
+  return RET_OK;
+}
+
+STATUS AdjustMultinomial(const FuncGraphPtr &func_graph, const CNodePtr &cnode, bool *need_update_manager) {
+  MS_CHECK_TRUE_RET(func_graph != nullptr && cnode != nullptr, RET_NULL_PTR);
+  auto multinomial_node = ops::GetOperator<ops::Multinomial>(cnode->input(0));
+  MS_CHECK_TRUE_RET(multinomial_node != nullptr, RET_ERROR);
+
+  auto prim = multinomial_node->GetPrim();
+  MS_CHECK_TRUE_RET(prim != nullptr, RET_ERROR);
+
+  MS_CHECK_TRUE_RET(prim->GetAttr("sample_size") != nullptr, RET_ERROR);
+  int64_t sample_size = GetValue<int64_t>(prim->GetAttr("sample_size"));
+  auto num_samples_val = static_cast<int32_t>(sample_size);
+
+  auto sample_parameter_ptr =
+    mindspore::opt::BuildIntValueParameterNode(func_graph, num_samples_val, "num_samples", true);
+  MS_CHECK_TRUE_RET(sample_parameter_ptr != nullptr, RET_ERROR);
+
+  std::vector<AnfNodePtr> new_inputs;
+  new_inputs.push_back(cnode->inputs()[FIRST_INPUT]);
+  new_inputs.push_back(cnode->inputs()[SECOND_INPUT]);
+  new_inputs.push_back(static_cast<AnfNodePtr>(sample_parameter_ptr));
+  cnode->set_inputs(new_inputs);
+  *need_update_manager = true;
+  opt::UpdateManager(func_graph);
+  return RET_OK;
+}
+
+STATUS AdjustOneHot(const FuncGraphPtr &func_graph, const CNodePtr &cnode) {
+  MS_CHECK_TRUE_RET(func_graph != nullptr && cnode != nullptr, RET_NULL_PTR);
+  auto onehot_node = ops::GetOperator<ops::OneHot>(cnode->input(0));
+  MS_CHECK_TRUE_RET(onehot_node != nullptr, RET_ERROR);
+
+  auto prim = onehot_node->GetPrim();
+  MS_CHECK_TRUE_RET(prim != nullptr, RET_ERROR);
+
+  auto value_input = cnode->inputs()[kInputNum3];
+  MS_CHECK_TRUE_RET(value_input != nullptr, RET_ERROR);
+
+  DataInfo data_info;
+  if (cnode->inputs().size() > kInputNum3 &&
+      FetchDataFromParameterNode(cnode, kInputNum3, converter::kFmkTypeMs, &data_info, true) == lite::RET_OK) {
+    if (data_info.data_type_ != static_cast<int>(kNumberTypeFloat32)) {
+      MS_LOG(ERROR) << "data_type not correct";
+      return RET_ERROR;
+    }
+    if (data_info.data_.data() == nullptr) {
+      MS_LOG(ERROR) << "data is nullptr. " << cnode->fullname_with_scope();
+      return RET_ERROR;
+    }
+    auto data1 = reinterpret_cast<float *>(data_info.data_.data())[FIRST_INPUT];
+    auto data2 = reinterpret_cast<float *>(data_info.data_.data())[SECOND_INPUT];
+    auto off_value_parameter = mindspore::opt::BuildFloatValueParameterNode(
+      func_graph, data1, cnode->fullname_with_scope() + "_off_value", true);
+    MS_CHECK_TRUE_RET(off_value_parameter != nullptr, RET_ERROR);
+
+    auto on_value_parameter =
+      mindspore::opt::BuildFloatValueParameterNode(func_graph, data2, cnode->fullname_with_scope() + "_on_value", true);
+    MS_CHECK_TRUE_RET(on_value_parameter != nullptr, RET_ERROR);
+
+    std::vector<AnfNodePtr> new_inputs;
+    new_inputs.push_back(cnode->inputs()[FIRST_INPUT]);
+    new_inputs.push_back(cnode->inputs()[SECOND_INPUT]);
+    new_inputs.push_back(cnode->inputs()[THIRD_INPUT]);
+    new_inputs.push_back(static_cast<AnfNodePtr>(on_value_parameter));
+    new_inputs.push_back(static_cast<AnfNodePtr>(off_value_parameter));
+    cnode->set_inputs(new_inputs);
+    opt::UpdateManager(func_graph);
+  }
+  return RET_OK;
+}
 }  // namespace
 
 bool OnnxInputAdjust::Adjust(const FuncGraphPtr &func_graph, const converter::ConverterParameters &flag) {
-  MS_ASSERT(func_graph != nullptr);
+  MS_CHECK_TRUE_RET(func_graph != nullptr, false);
   auto manager = Manage(func_graph, true);
   if (manager == nullptr) {
     MS_LOG(ERROR) << "manager is nullptr.";
@@ -487,7 +616,7 @@ bool OnnxInputAdjust::Adjust(const FuncGraphPtr &func_graph, const converter::Co
     }
     if (opt::CheckPrimitiveType(node, prim::kPrimConstant)) {
       status = ReplaceConstant(func_graph, cnode);
-    } else if (opt::CheckPrimitiveType(node, prim::kPrimTranspose) && flag.export_mindir != kMindIR) {
+    } else if (opt::CheckPrimitiveType(node, prim::kPrimTranspose) && flag.save_type != kMindIR) {
       status = ReplaceTransposeWithGraphInput(func_graph, cnode);
     } else if (opt::CheckPrimitiveType(node, prim::kPrimStridedSlice)) {
       status = AdjustStridedSlice(func_graph, cnode);
@@ -499,8 +628,12 @@ bool OnnxInputAdjust::Adjust(const FuncGraphPtr &func_graph, const converter::Co
       status = AdjustGatherD(func_graph, cnode);
     } else if (opt::CheckPrimitiveType(node, prim::kPrimUnsqueeze)) {
       status = AdjustUnsqueeze(&need_update_manager, cnode);
-    } else {
-      continue;
+    } else if (opt::CheckPrimitiveType(node, prim::kPrimROIAlign)) {
+      status = AdjustROIAlign(func_graph, cnode);
+    } else if (opt::CheckPrimitiveType(node, prim::kPrimMultinomial)) {
+      status = AdjustMultinomial(func_graph, cnode, &need_update_manager);
+    } else if (opt::CheckPrimitiveType(node, prim::kPrimOneHot)) {
+      status = AdjustOneHot(func_graph, cnode);
     }
     if (status != lite::RET_OK && status != lite::RET_NO_CHANGE) {
       MS_LOG(ERROR) << "adjust input pass is failed.";

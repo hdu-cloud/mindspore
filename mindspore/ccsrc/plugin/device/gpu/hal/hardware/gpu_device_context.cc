@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License"){}
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@
 #include "plugin/device/gpu/hal/device/gpu_memory_manager.h"
 #include "plugin/device/gpu/hal/device/gpu_memory_allocator.h"
 #include "plugin/device/gpu/hal/device/gpu_stream_assign.h"
-#include "distributed/init.h"
+#include "include/backend/distributed/init.h"
 #include "plugin/device/gpu/hal/device/gpu_device_manager.h"
 #include "plugin/device/gpu/hal/hardware/gpu_somas.h"
 #include "include/backend/data_queue/data_queue_mgr.h"
@@ -35,13 +35,14 @@
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/cuda_common.h"
 #include "plugin/device/gpu/hal/hardware/optimizer.h"
 #include "runtime/device/ms_device_shape_transfer.h"
-#include "common/graph_kernel/graph_kernel_flags.h"
+#include "backend/common/graph_kernel/graph_kernel_flags.h"
 #include "plugin/device/gpu/hal/profiler/gpu_profiling.h"
 #include "plugin/device/gpu/hal/profiler/gpu_profiling_utils.h"
-#include "backend/common/pass/clip_by_norm_fission.h"
-#include "backend/common/session/kernel_graph.h"
+#include "plugin/device/gpu/optimizer/clip_by_norm_fission.h"
+#include "include/backend/kernel_graph.h"
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
 #include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
+#include "plugin/device/gpu/hal/device/gpu_kernel_task.h"
 #include "plugin/device/gpu/hal/device/gpu_hash_table_util.h"
 #include "plugin/device/gpu/optimizer/reg_gpu_const_input_to_attr.h"
 #include "backend/common/optimizer/common_backend_optimization.h"
@@ -53,22 +54,30 @@
 #endif
 #include "include/common/utils/comm_manager.h"
 #ifdef ENABLE_DEBUGGER
-#include "debug/debugger/debugger.h"
+#include "include/backend/debug/debugger/debugger.h"
 #endif
 #ifndef ENABLE_SECURITY
-#include "debug/data_dump/dump_json_parser.h"
+#include "include/backend/debug/data_dump/dump_json_parser.h"
 #endif
 #include "backend/common/pass/optimize_updatestate.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "common/graph_kernel/adapter/expander.h"
-#ifdef ENABLE_AKG
-#include "common/graph_kernel/value_graph_binder.h"
-#endif
+#include "backend/common/expander/fallback/expander_fallback.h"
+#include "backend/common/graph_kernel/value_graph_binder.h"
+#include "plugin/device/cpu/kernel/cpu_kernel.h"
+#include "plugin/device/gpu/hal/device/gpu_pin_mem_pool.h"
+#include "include/common/profiler.h"
+#include "ops/ascend_op_name.h"
+#include "runtime/pynative/async/kernel_task.h"
 
 namespace mindspore {
 namespace device {
 namespace gpu {
 namespace {
+const char kModelNameGPU[] = "GPU";
+const char kEventOptimizeGraph[] = "OptimizeGraph";
+const char kStageOptimizeWithoutDeviceInfo[] = "OptimizeWithoutDeviceInfo";
+const char kStageSetKernelInfo[] = "SetKernelInfo";
+const char kStageOptimizeWithDeviceInfo[] = "OptimizeWithDeviceInfo";
 std::string GetCurrentDir() {
 #ifndef _WIN32
   Dl_info dl_info;
@@ -82,14 +91,29 @@ std::string GetCurrentDir() {
   return "";
 #endif
 }
+
+pynative::KernelTaskPtr GetTaskByTaskType(const pynative::KernelTaskType &task_type,
+                                          const std::shared_ptr<pynative::KernelTaskContext> &task_context) {
+  switch (task_type) {
+    case pynative::KernelTaskType::kCONTIGUOUS_TASK:
+      return std::make_shared<GpuContiguousKernelTask>(task_context);
+      break;
+    case pynative::KernelTaskType::kCOPY_TASK:
+      return std::make_shared<GpuCopyWithSliceKernelTask>(task_context);
+      break;
+    default:
+      MS_LOG(EXCEPTION) << "KernelTaskType is invalid, task_type:" << task_type;
+  }
+}
 }  // namespace
 using KernelGraph = mindspore::session::KernelGraph;
 
 static thread_local bool cur_thread_device_inited{false};
 
 void GPUDeviceContext::Initialize() {
+  std::lock_guard<std::mutex> lock(init_mutex_);
   if (initialized_) {
-    if (!device_res_manager_->BindDeviceToCurrentThread()) {
+    if (!device_res_manager_->BindDeviceToCurrentThread(false)) {
       MS_LOG(EXCEPTION) << "BindDeviceToCurrentThread failed.";
     }
     GPUMemoryAllocator::GetInstance().CheckMaxDeviceMemory();
@@ -97,9 +121,21 @@ void GPUDeviceContext::Initialize() {
   }
 
   device_res_manager_->Initialize();
-  auto gpu_kernel_executor = dynamic_cast<GPUKernelExecutor *>(kernel_executor_.get());
-  MS_EXCEPTION_IF_NULL(gpu_kernel_executor);
-  gpu_kernel_executor->Initialize();
+  MS_EXCEPTION_IF_NULL(GetKernelExecutor(false));
+  GetKernelExecutor(false)->Initialize();
+#ifndef ENABLE_SECURITY
+  // Dump json config file if dump is enabled.
+  uint32_t rank_id = 0;
+  if (distributed::collective::CollectiveManager::instance()->need_init()) {
+    rank_id = device_context_key().device_id_;
+  }
+
+  MS_LOG(INFO) << "Set rank id " << rank_id << " for dumping.";
+  auto &json_parser = DumpJsonParser::GetInstance();
+  json_parser.Parse();
+  json_parser.CopyDumpJsonToDir(rank_id);
+  json_parser.CopyMSCfgJsonToDir(rank_id);
+#endif
   initialized_ = true;
 }
 
@@ -114,7 +150,7 @@ void GPUDeviceResManager::Initialize() {
 
     auto ms_context = MsContext::GetInstance();
     MS_EXCEPTION_IF_NULL(ms_context);
-    ms_context->set_param<uint32_t>(MS_CTX_DEVICE_ID, device_context_->device_context_key().device_id_);
+    ms_context->set_param_inner<uint32_t>(MS_CTX_DEVICE_ID, device_context_->device_context_key().device_id_);
   }
 
   MS_LOG(INFO) << "Set GPU device id index " << device_context_->device_context_key().device_id_;
@@ -131,18 +167,9 @@ void GPUDeviceResManager::Initialize() {
   auto ms_context = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(ms_context);
   if (ms_context->get_param<bool>(MS_CTX_ENABLE_MEM_OFFLOAD)) {
-    auto_mem_offload_ = std::make_shared<MindRTAutoOffloadAdapter>(&GPUMemoryAllocator::GetInstance(),
-                                                                   GPUDeviceManager::GetInstance().default_stream_id());
+    swap_manager_ = std::make_shared<SwapManager>(GPUDeviceManager::GetInstance().default_stream_id(),
+                                                  &GPUMemoryAllocator::GetInstance(), &GPUPinMemPool::GetInstance());
   }
-
-#ifndef ENABLE_SECURITY
-  // Dump json config file if dump is enabled.
-  auto rank_id = device_context_->device_context_key().device_id_;
-  auto &json_parser = DumpJsonParser::GetInstance();
-  json_parser.Parse();
-  json_parser.CopyDumpJsonToDir(rank_id);
-  json_parser.CopyMSCfgJsonToDir(rank_id);
-#endif
 
   // Initialize NCCL.
   if (distributed::collective::CollectiveManager::instance()->initialized()) {
@@ -210,15 +237,18 @@ void GPUDeviceContext::Destroy() {
     }
   }
 #endif
-  auto gpu_kernel_executor = dynamic_cast<GPUKernelExecutor *>(kernel_executor_.get());
-  gpu_kernel_executor->Destroy();
+  MS_EXCEPTION_IF_NULL(GetKernelExecutor(false));
+  GetKernelExecutor(false)->Destroy();
   device_res_manager_->Destroy();
 }
 
 void *GPUDeviceResManager::AllocateMemory(size_t size) const {
   MS_EXCEPTION_IF_NULL(mem_manager_);
-  if (!BindDeviceToCurrentThread()) {
+  if (!BindDeviceToCurrentThread(false)) {
     return nullptr;
+  }
+  if (swap_manager_ != nullptr) {
+    return swap_manager_->AllocDeviceMemory(size);
   }
   return mem_manager_->MallocMemFromMemPool(size, false);
 }
@@ -242,13 +272,15 @@ bool GPUDeviceResManager::AllocateMemory(DeviceAddress *const &address) const {
     return false;
   }
 
-  if (!BindDeviceToCurrentThread()) {
+  if (!BindDeviceToCurrentThread(false)) {
     return false;
   }
-  if (auto_mem_offload_ != nullptr) {
-    return auto_mem_offload_->Malloc(address);
+  void *device_ptr;
+  if (swap_manager_ != nullptr) {
+    device_ptr = swap_manager_->AllocDeviceMemory(address->GetSize());
+  } else {
+    device_ptr = mem_manager_->MallocMemFromMemPool(address->GetSize(), address->from_persistent_mem());
   }
-  auto device_ptr = mem_manager_->MallocMemFromMemPool(address->GetSize(), address->from_persistent_mem());
   if (!device_ptr) {
     return false;
   }
@@ -259,7 +291,7 @@ bool GPUDeviceResManager::AllocateMemory(DeviceAddress *const &address) const {
 }
 
 std::vector<void *> GPUDeviceResManager::AllocateContinuousMemory(const std::vector<size_t> &size_list) const {
-  if (!BindDeviceToCurrentThread()) {
+  if (!BindDeviceToCurrentThread(false)) {
     std::vector<void *> ptr_list;
     return ptr_list;
   }
@@ -270,8 +302,8 @@ std::vector<void *> GPUDeviceResManager::AllocateContinuousMemory(const std::vec
     auto align_size = GPUMemoryAllocator::GetInstance().AlignMemorySize(size);
     (void)align_size_list.emplace_back(align_size);
   }
-  if (auto_mem_offload_ != nullptr) {
-    return auto_mem_offload_->MallocContinuousMem(align_size_list);
+  if (swap_manager_ != nullptr) {
+    return swap_manager_->AllocDeviceContinuousMem(align_size_list);
   }
   return mem_manager_->MallocContinuousMemFromMemPool(align_size_list);
 }
@@ -333,7 +365,7 @@ void GPUKernelExecutor::PreprocessBeforeRun(const FuncGraphPtr &graph) const {
     if (ret) {
       MS_LOG(INFO) << "Somas allocate success for graph " << kernel_graph->graph_id()
                    << " somas size: " << kernel_graph->somas_whole_block_size();
-    } else {
+    } else if (somas->IsSupportSomas(*kernel_graph)) {
       MS_LOG(WARNING) << "Somas allocate failed for graph " << kernel_graph->graph_id();
     }
   }
@@ -342,33 +374,49 @@ void GPUKernelExecutor::PreprocessBeforeRun(const FuncGraphPtr &graph) const {
 
 void GPUKernelExecutor::OptimizeGraphWithoutDeviceInfo(const KernelGraphPtr &graph) const {
   MS_EXCEPTION_IF_NULL(graph);
+  (void)profiler::CollectHostInfo(kModelNameGPU, kEventOptimizeGraph, kStageOptimizeWithoutDeviceInfo, 1, 0, 0);
   // Operator fusion optimization.
   FuseOperators(graph);
+  (void)profiler::CollectHostInfo(kModelNameGPU, kEventOptimizeGraph, kStageOptimizeWithoutDeviceInfo, 1, 0, 1);
 }
 
 void GPUKernelExecutor::OptimizeGraphWithDeviceInfo(const KernelGraphPtr &graph) const {
   MS_EXCEPTION_IF_NULL(graph);
   auto ms_context = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(ms_context);
+  (void)profiler::CollectHostInfo(kModelNameGPU, kEventOptimizeGraph, kStageOptimizeWithDeviceInfo, 1, 0, 0);
   // Graph optimization relevant to device data format
   auto optimizer = std::make_shared<opt::GraphOptimizer>();
   auto pm = std::make_shared<opt::PassManager>();
-  pm->AddPass(std::make_shared<opt::BatchNormReluFusion>());
-  pm->AddPass(std::make_shared<opt::BatchNormReluGradFusion>());
-  pm->AddPass(std::make_shared<opt::BatchNormAddReluFusion>());
-  pm->AddPass(std::make_shared<opt::PostBatchNormAddReluFusion>());
-  pm->AddPass(std::make_shared<opt::BatchNormAddReluGradFusion>());
-  pm->AddPass(std::make_shared<opt::InsertFormatTransformOp>());
-  pm->AddPass(std::make_shared<opt::RemoveFormatTransformPair>());
-  pm->AddPass(std::make_shared<opt::RemoveRedundantFormatTransform>());
-  if (ms_context->get_param<int>(MS_CTX_EXECUTION_MODE) == kGraphMode) {
-    // Remove node only used by UpdateState, in order to ensure the correct execution sequence in CudnnInplaceAggregate.
-    pm->AddPass(std::make_shared<opt::OptimizeUpdateState>());
-    pm->AddPass(std::make_shared<opt::CudnnInplaceAggregate>());
+  pm->AddPass(std::make_shared<opt::InsertTypeTransformOp>("insert_type_transform_op"));
+  // ReplaceAddNFusion depends on the input expansion of AddN, so must be after the operator select.
+  pm->AddPass(std::make_shared<opt::ReplaceAddNFusion>());
+  // PrintReduceFusion depends on the input expansion of Print, so must be after the operator select.
+  pm->AddPass(std::make_shared<opt::PrintReduceFusion>("print_reduce"));
+
+  // The fusion operator generates a new primitive and can't be supported in dynamic shape scene.
+  if (!graph->is_dynamic_shape()) {
+    pm->AddPass(std::make_shared<opt::BatchNormReluFusion>());
+    pm->AddPass(std::make_shared<opt::BatchNormSiluFusion>());
+    pm->AddPass(std::make_shared<opt::BatchNormReluGradFusion>());
+    pm->AddPass(std::make_shared<opt::BatchNormSiluGradFusion>());
+    pm->AddPass(std::make_shared<opt::BatchNormAddReluFusion>());
+    pm->AddPass(std::make_shared<opt::PostBatchNormAddReluFusion>());
+    pm->AddPass(std::make_shared<opt::BatchNormAddReluGradFusion>());
+    pm->AddPass(std::make_shared<opt::InsertFormatTransformOp>());
+    pm->AddPass(std::make_shared<opt::RemoveFormatTransformPair>());
+    pm->AddPass(std::make_shared<opt::RemoveRedundantFormatTransform>());
+    if (ms_context->get_param<int>(MS_CTX_EXECUTION_MODE) == kGraphMode) {
+      // Remove node only used by UpdateState, in order to ensure the correct execution sequence in
+      // CudnnInplaceAggregate.
+      pm->AddPass(std::make_shared<opt::OptimizeUpdateState>());
+      pm->AddPass(std::make_shared<opt::CudnnInplaceAggregate>());
+    }
+    pm->AddPass(std::make_shared<opt::ReluV2Pass>());
+    pm->AddPass(std::make_shared<opt::AddReluV2Fusion>());
+    pm->AddPass(std::make_shared<opt::AddReluGradV2Fusion>());
   }
-  pm->AddPass(std::make_shared<opt::ReluV2Pass>());
-  pm->AddPass(std::make_shared<opt::AddReluV2Fusion>());
-  pm->AddPass(std::make_shared<opt::AddReluGradV2Fusion>());
+
   pm->AddPass(std::make_shared<opt::AllReduceFusion>());
   pm->AddPass(std::make_shared<opt::AdjustDependForParallelOptimizerRecomputeAllGather>());
   pm->AddPass(std::make_shared<opt::AllGatherFusion>());
@@ -379,6 +427,7 @@ void GPUKernelExecutor::OptimizeGraphWithDeviceInfo(const KernelGraphPtr &graph)
   optimizer->AddPassManager(pm);
   (void)optimizer->Optimize(graph);
   graph->SetExecOrderByDefault();
+  (void)profiler::CollectHostInfo(kModelNameGPU, kEventOptimizeGraph, kStageOptimizeWithDeviceInfo, 1, 0, 1);
 }
 
 void GPUKernelExecutor::FuseOperators(const KernelGraphPtr &graph) const {
@@ -391,7 +440,8 @@ void GPUKernelExecutor::FuseOperators(const KernelGraphPtr &graph) const {
   // Therefore, this kind of scene does not support dynamic shape.
   if (graph->is_dynamic_shape()) {
     MS_LOG(INFO) << "Dynamic shape skip some fusion pass";
-    pm->AddPass(std::make_shared<opt::PrintReduceFusion>("print_reduce"));
+    pm->AddPass(std::make_shared<opt::InsertCastGPU>("insert_cast_gpu"));
+    pm->AddPass(std::make_shared<opt::BCEWithLogitsLossFusion>());
   } else {
     pm->AddPass(std::make_shared<opt::ClipByNormFission>());
     pm->AddPass(std::make_shared<opt::MatMulBiasAddFusion>());
@@ -404,16 +454,15 @@ void GPUKernelExecutor::FuseOperators(const KernelGraphPtr &graph) const {
     if (!graphkernel::GraphKernelFlags::GetInstance().IsEnableGraphKernel()) {
       pm->AddPass(std::make_shared<opt::CastAllFusion>("cast_all"));
     }
-    pm->AddPass(std::make_shared<opt::CombineMomentumFusion>("combine_momentum"));
+    pm->AddPass(std::make_shared<opt::CombineOptimizerFusion>(kCombineOptimizerOpName));
     pm->AddPass(std::make_shared<opt::ReplaceMomentumCastFusion>());
-    pm->AddPass(std::make_shared<opt::ReplaceAddNFusion>());
-    pm->AddPass(std::make_shared<opt::PrintReduceFusion>("print_reduce"));
     pm->AddPass(std::make_shared<opt::BCEWithLogitsLossFusion>());
     pm->AddPass(std::make_shared<opt::InsertCastGPU>("insert_cast_gpu"));
     pm->AddPass(std::make_shared<opt::NeighborExchangeV2Fusion>());
     pm->AddPass(std::make_shared<opt::NeighborExchangeV2GradFusion>());
     pm->AddPass(std::make_shared<opt::BiasDropoutAddFusion>());
   }
+  pm->AddPass(std::make_shared<opt::DynamicSequenceOpsAdaptation>());
   optimizer->AddPassManager(pm);
   (void)optimizer->Optimize(graph);
   graph->SetExecOrderByDefault();
@@ -422,9 +471,6 @@ void GPUKernelExecutor::FuseOperators(const KernelGraphPtr &graph) const {
 namespace {
 void RunOpOptimize(const KernelGraphPtr &kernel_graph) {
   MS_EXCEPTION_IF_NULL(kernel_graph);
-  if (kernel_graph->is_dynamic_shape()) {
-    return;
-  }
   auto optimizer = std::make_shared<opt::GraphOptimizer>();
   auto pm = std::make_shared<opt::PassManager>();
   pm->AddPass(std::make_shared<opt::BCEWithLogitsLossFusion>());
@@ -438,6 +484,10 @@ void RunOpHardwareOptimize(const KernelGraphPtr &kernel_graph) {
   MS_EXCEPTION_IF_NULL(kernel_graph);
   auto optimizer = std::make_shared<opt::GraphOptimizer>();
   auto pm = std::make_shared<opt::PassManager>();
+  if (kernel_graph->has_attr(kAttrPackFunction)) {
+    kernel_graph->SetKernelObjectTypesForUnrealNodes();
+    pm->AddPass(std::make_shared<opt::InsertTypeTransformOp>("insert_type_transform_op"));
+  }
   pm->AddPass(std::make_shared<opt::ReducePrecisionFusion>("reduce_precision"));
   optimizer->AddPassManager(pm);
   (void)optimizer->Optimize(kernel_graph);
@@ -460,19 +510,101 @@ void RunOpRemoveNopNode(const KernelGraphPtr &kernel_graph) {
   }
 }
 
+bool CheckSupportBackoff(const KernelGraphPtr &graph, const CNodePtr &node,
+                         const std::pair<std::string, ExceptionType> &failure_info) {
+  MS_EXCEPTION_IF_NULL(node);
+  // The single op does not support the backoff ability.
+  if (!AnfAlgo::IsEnableKernelSelectBackoff(graph)) {
+    return false;
+  }
+  const auto &kernel_name = common::AnfAlgo::GetCNodeName(node);
+  const auto &kernel_attrs = kernel::NativeCpuKernelMod::GetCpuSupportedList(kernel_name);
+  // CPU also doesn't support the kernel.
+  if (kernel_attrs.empty() || kernel::IsKernelObjectTypeNotSupportedError(failure_info.first)) {
+    return false;
+  }
+  return true;
+}
+
+void SetBackoffInfo(const CNodePtr &node, const std::pair<std::string, ExceptionType> &failure_info) {
+  MS_LOG(INFO) << "GPU doesn't support the kernel " << common::AnfAlgo::GetCNodeName(node)
+               << " and will try to backoff on CPU.";
+  // Mark kernel selection backoff info.
+  AnfAlgo::SetKernelSelectBackoffInfo(node, failure_info);
+}
+
+// Mark the kernel backoff with failure info when setting operator info fails.
+void HandleKernelSelectFailure(const KernelGraphPtr &graph, const CNodePtr &node,
+                               const std::pair<std::string, ExceptionType> &failure_info) {
+  if (!CheckSupportBackoff(graph, node, failure_info)) {
+    MS_EXCEPTION(failure_info.second) << "#umsg#Kernel select failed:#umsg#" << failure_info.first;
+  }
+  SetBackoffInfo(node, failure_info);
+}
+
+bool TryExpandFallback(const KernelGraphPtr &graph, const CNodePtr &node,
+                       const std::pair<std::string, ExceptionType> &failure_info) {
+  auto f = [ori_node = node, &failure_info, &graph](const CNodePtr &n) mutable {
+    auto res = SetKernelInfoWithMsg(n);
+    if (res.first.empty()) {
+      // select gpu kernel success.
+      return true;
+    }
+    // select gpu kernel failed, first try to use CPU kernel for original op.
+    if (ori_node != nullptr) {
+      MS_LOG(DEBUG) << "The basic op " << n->fullname_with_scope()
+                    << " select kernel failed. Try to backoff on CPU for original op "
+                    << ori_node->fullname_with_scope();
+      if (CheckSupportBackoff(graph, ori_node, failure_info)) {
+        // original node use cpu kernel, stop expanding.
+        MS_LOG(DEBUG) << "Original op " << ori_node->fullname_with_scope() << " use CPU kernel.";
+        return false;
+      } else {
+        MS_LOG(DEBUG) << "Failed to backoff on CPU for original op " << ori_node->fullname_with_scope()
+                      << ", try to backoff on CPU for basic op " << n->fullname_with_scope();
+      }
+      // only try once for original node.
+      ori_node = nullptr;
+    } else {
+      MS_LOG(DEBUG) << "The basic op " << n->fullname_with_scope() << " select kernel failed, try to backoff on CPU";
+    }
+    // Original op cannot backoff on CPU, try to use CPU kernel for current op.
+    if (CheckSupportBackoff(graph, n, res)) {
+      AnfAlgo::SetKernelSelectBackoffInfo(n, res);
+      MS_LOG(DEBUG) << "The basic op " << n->fullname_with_scope() << " use CPU kernel.";
+      return true;
+    }
+    return false;
+  };
+  return expander::TryExpandCNode(node, f);
+}
+
 // Before creating the kernel, check whether the node has completed the operator selection. If not, the operator
 // selection needs to be performed to set kernel info.
 void SetKernelInfoBeforeCreateKernel(const std::vector<CNodePtr> &nodes) {
-  // Check whether the node has completed operator selection.
   for (const auto &node : nodes) {
-    if (AnfAlgo::GetSelectKernelBuildInfo(node) != nullptr) {
-      continue;
-    }
-
+    auto build_info = AnfAlgo::GetSelectKernelBuildInfo(node);
     // Kernel selection process.
-    auto [msg, etype] = SetKernelInfoWithMsg(node);
-    if (!msg.empty()) {
-      MS_EXCEPTION(etype) << msg;
+    if (build_info == nullptr) {
+      const auto &failure_info = SetKernelInfoWithMsg(node);
+      if (!failure_info.first.empty()) {
+        const auto &kernel_graph = AnfAlgo::FetchKernelGraph(node.get());
+        HandleKernelSelectFailure(kernel_graph, node, failure_info);
+      }
+    } else if (!build_info->valid()) {
+      // Judge whether match strictly between kernel build info and supported kernel attrs.
+      const auto &kernel_attr = kernel::GetKernelAttrFromBuildInfo(build_info);
+      const auto &supported_kernel_attrs =
+        kernel::NativeGpuKernelModFactory::GetInstance().GetGpuSupportedList(common::AnfAlgo::GetCNodeName(node));
+      const auto &match_result = kernel::MatchKernelAttrStrict(kernel_attr, supported_kernel_attrs);
+      if (!match_result.first) {
+        auto attr_info = kernel::FetchPrintInfoByKernelAttr(kernel_attr);
+        std::string error_info =
+          "Unsupported op [" + common::AnfAlgo::GetCNodeName(node) + "] on GPU, node attr: " + attr_info;
+        const auto &kernel_graph = AnfAlgo::FetchKernelGraph(node.get());
+        HandleKernelSelectFailure(kernel_graph, node, {error_info, NotSupportError});
+      }
+      build_info->set_valid(true);
     }
   }
 }
@@ -534,16 +666,33 @@ std::lock_guard<std::mutex> LockLaunchKernel(const void *stream) {
 }  // namespace
 
 void GPUKernelExecutor::Initialize() {
+  if (initialized_) {
+    return;
+  }
   res_manager_ = dynamic_cast<GPUDeviceResManager *>(device_context_->device_res_manager_.get());
   MS_EXCEPTION_IF_NULL(res_manager_);
+  initialized_ = true;
 }
 
-void GPUKernelExecutor::Destroy() { res_manager_ = nullptr; }
+void GPUKernelExecutor::Destroy() {
+  if (!initialized_) {
+    return;
+  }
+  res_manager_ = nullptr;
+  initialized_ = false;
+}
 
 void GPUKernelExecutor::OptimizeGraph(const FuncGraphPtr &graph) const {
   MS_EXCEPTION_IF_NULL(graph);
   auto kernel_graph = graph->cast<KernelGraphPtr>();
   MS_EXCEPTION_IF_NULL(kernel_graph);
+  auto ms_context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context);
+  auto enable_lazy_inline = ms_context->CellReuseLevel() != CellReuseLevel::kNoCellReuse;
+  if (enable_lazy_inline) {
+    MS_LOG(EXCEPTION) << "GPU does not support the lazy_inline feature, "
+                      << "please do not mark @lazy_inline in cell's __init__ func.";
+  }
   if (kernel_graph->is_from_single_op()) {
     RunOpOptimize(kernel_graph);
 
@@ -563,6 +712,14 @@ void GPUKernelExecutor::OptimizeGraph(const FuncGraphPtr &graph) const {
     FormatTransformChecker::GetInstance().CheckSupportFormatTransform(kernel_graph);
     SetOperatorInfo(kernel_graph);
 
+    // SetOperatorInfo may generate new node, so need set kernel object type again.
+    kernel_graph->SetKernelObjectTypesForUnrealNodes();
+#ifdef ENABLE_DUMP_IR
+    if (ms_context->CanDump(kIntroductory)) {
+      DumpIR("hwopt_comm_after_kernel_select_" + graph->ToString() + ".ir", graph, true);
+    }
+#endif
+
     // Optimization pass which is relevant to device type or format.
     OptimizeGraphWithDeviceInfo(kernel_graph);
 
@@ -571,9 +728,7 @@ void GPUKernelExecutor::OptimizeGraph(const FuncGraphPtr &graph) const {
 
     // Graph kernel fusion optimization
     if (graphkernel::GraphKernelFlags::GetInstance().IsEnableGraphKernel()) {
-#if (defined(ENABLE_AKG) && !defined(_WIN32))
       graphkernel::GraphKernelOptimize(kernel_graph);
-#endif
       kernel_graph->SetExecOrderByDefault();
     }
 
@@ -603,42 +758,32 @@ void GPUKernelExecutor::UpdateKernelRefInfo(const KernelGraphPtr &graph) const {
 }
 
 void GPUKernelExecutor::SetOperatorInfo(const KernelGraphPtr &graph) const {
+  (void)profiler::CollectHostInfo(kModelNameGPU, kEventOptimizeGraph, kStageSetKernelInfo, 1, 0, 0);
   auto mng = graph->manager();
   if (mng == nullptr) {
     mng = Manage(graph, true);
     graph->set_manager(mng);
   }
-#if (defined(ENABLE_AKG) && !defined(_WIN32))
   bool do_expand = false;
-#endif
   auto &node_list = graph->execution_order();
   for (auto &node : node_list) {
-    auto [msg, etype] = SetKernelInfoWithMsg(node);
-    if (msg.empty()) {
+    const auto &failure_info = SetKernelInfoWithMsg(node);
+    if (failure_info.first.empty()) {
       continue;
     }
-#if (defined(ENABLE_AKG) && !defined(_WIN32))
-    auto f = [](const CNodePtr &n) {
-      auto res = SetKernelInfoWithMsg(n);
-      return res.first.empty();
-    };
-    auto cnode = graphkernel::TryExpandCNode(node, f);
-    if (cnode == nullptr) {
-      MS_EXCEPTION(etype) << msg;
+    auto expand_ret = TryExpandFallback(graph, node, failure_info);
+    if (expand_ret) {
+      MS_LOG(INFO) << failure_info.first << " but expand success.";
+      do_expand = true;
+    } else {
+      HandleKernelSelectFailure(graph, node, failure_info);
     }
-    (void)mng->Replace(node, cnode);
-    MS_LOG(INFO) << msg << " but expand success.";
-    auto expand_fg = GetCNodeFuncGraph(cnode);
-    graphkernel::InlineExpandFuncGraph(cnode, expand_fg);
-    do_expand = true;
-#endif
   }
-#if (defined(ENABLE_AKG) && !defined(_WIN32))
   if (do_expand) {
     graphkernel::BindValueToGraph().Run(graph);
     graph->SetExecOrderByDefault();
   }
-#endif
+  (void)profiler::CollectHostInfo(kModelNameGPU, kEventOptimizeGraph, kStageSetKernelInfo, 1, 0, 1);
 }
 
 void GPUKernelExecutor::CreateKernel(const std::vector<CNodePtr> &nodes) const {
@@ -650,7 +795,7 @@ bool GPUKernelExecutor::LaunchKernel(const CNodePtr &kernel, const std::vector<A
                                      const std::vector<AddressPtr> &workspace, const std::vector<AddressPtr> &outputs,
                                      size_t stream_id) const {
   MS_EXCEPTION_IF_NULL(kernel);
-  if (!res_manager_->BindDeviceToCurrentThread()) {
+  if (!res_manager_->BindDeviceToCurrentThread(false)) {
     return false;
   }
   bool ret = true;
@@ -664,7 +809,7 @@ bool GPUKernelExecutor::LaunchKernel(const CNodePtr &kernel, const std::vector<A
   const auto &profiler_inst = profiler::gpu::GPUProfiler::GetInstance();
   MS_EXCEPTION_IF_NULL(profiler_inst);
 
-  if (!profiler_inst->GetEnableFlag()) {
+  if (!profiler_inst->GetEnableFlag() || !profiler_inst->GetOpTimeFlag()) {
 #endif
     auto lock = LockLaunchKernel(stream);
     MS_LOG(DEBUG) << "Begin launch kernel: " << kernel->fullname_with_scope();
@@ -680,14 +825,6 @@ bool GPUKernelExecutor::LaunchKernel(const CNodePtr &kernel, const std::vector<A
 #endif
   if (!ret) {
     MS_LOG(ERROR) << "Launch kernel failed, kernel full name: " << kernel->fullname_with_scope();
-    return false;
-  }
-
-  // Sync running.
-  auto ms_context = MsContext::GetInstance();
-  MS_EXCEPTION_IF_NULL(ms_context);
-  if ((ms_context->get_param<int>(MS_CTX_EXECUTION_MODE) == kPynativeMode) &&
-      ms_context->get_param<bool>(MS_CTX_ENABLE_PYNATIVE_SYNCHRONIZE) && !res_manager_->SyncAllStreams()) {
     return false;
   }
 
@@ -734,7 +871,21 @@ bool GPUKernelExecutor::DoLaunchKernel(const CNodePtr &kernel, const std::vector
   MS_EXCEPTION_IF_NULL(stream);
   auto kernel_mod = AnfAlgo::GetKernelMod(kernel);
   MS_EXCEPTION_IF_NULL(kernel_mod);
-  return kernel_mod->Launch(inputs, workspace, outputs, stream);
+
+  uint64_t start_time = 0;
+  PROFILER_START(start_time);
+  auto ret = kernel_mod->Launch(inputs, workspace, outputs, stream);
+  // Sync running.
+  auto ms_context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context);
+  if ((ms_context->get_param<int>(MS_CTX_EXECUTION_MODE) == kPynativeMode) &&
+      ms_context->get_param<bool>(MS_CTX_ENABLE_PYNATIVE_SYNCHRONIZE) && !res_manager_->SyncAllStreams()) {
+    return false;
+  }
+  PROFILER_END(start_time, runtime::ProfilerModule::kKernel, runtime::ProfilerEvent::kKernelLaunch,
+               kernel->fullname_with_scope(), false);
+
+  return ret;
 }
 
 bool GPUDeviceResManager::CreateStream(size_t *stream_id) const {
@@ -758,6 +909,10 @@ bool GPUDeviceResManager::SyncStream(size_t stream_id) const {
 }
 
 bool GPUDeviceResManager::SyncAllStreams() const {
+  if (!BindDeviceToCurrentThread(false)) {
+    MS_LOG(ERROR) << "Fail to bind device to current thread";
+    return false;
+  }
   bool result = GPUDeviceManager::GetInstance().SyncAllStreams();
 #ifdef ENABLE_DUMP_IR
   if (!result) {
@@ -778,6 +933,31 @@ uint32_t GPUKernelExecutor::GetRankID() const {
     }
   }
   return rank_id;
+}
+
+bool GPUKernelExecutor::ExecuteKernelTask(const pynative::KernelTaskType &task_type,
+                                          const device::DeviceAddressPtrList &input_addr_list,
+                                          const TensorStorageInfoPtrList &input_storage_list,
+                                          const device::DeviceAddressPtrList &output_addr_list) const {
+  auto stream = GPUDeviceManager::GetInstance().default_stream();
+  MS_EXCEPTION_IF_NULL(stream);
+
+  auto task_context = std::make_shared<pynative::KernelTaskContext>(device_context_, input_addr_list,
+                                                                    input_storage_list, output_addr_list, stream);
+
+  auto task = GetTaskByTaskType(task_type, task_context);
+  MS_EXCEPTION_IF_NULL(task);
+
+  // 需要补充PROFILER_END
+  // PROFILER_END(start_time, runtime::ProfilerModule::kKernel, runtime::ProfilerEvent::kKernelLaunch,
+  // kernel->fullname_with_scope(), false);
+  auto lock = LockLaunchKernel(stream);
+
+  auto ret = task->RunWithRet();
+  if (!ret) {
+    MS_LOG(EXCEPTION) << "Exec task failed, task_type:" << task_type;
+  }
+  return ret;
 }
 
 bool GPUDeviceResManager::LoadCollectiveCommLib() {
@@ -802,8 +982,8 @@ bool GPUDeviceResManager::LoadCollectiveCommLib() {
 #endif
 }
 
-bool GPUDeviceResManager::BindDeviceToCurrentThread() const {
-  if (cur_thread_device_inited) {
+bool GPUDeviceResManager::BindDeviceToCurrentThread(bool force_bind) const {
+  if (cur_thread_device_inited && !force_bind) {
     return true;
   }
 

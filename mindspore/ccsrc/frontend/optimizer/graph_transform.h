@@ -23,12 +23,15 @@
 #include <memory>
 
 #include "utils/hash_map.h"
+#include "mindspore/core/ops/sequence_ops.h"
 #include "frontend/optimizer/optimizer.h"
 #include "ir/func_graph_cloner.h"
 
 namespace mindspore {
 namespace opt {
 bool FuncGraphHasTupleInput(const FuncGraphPtr &fg);
+bool FuncGraphHasConstantTupleInput(const FuncGraphPtr &fg);
+bool IsSequenceExpandable(const AbstractBasePtr &abs);
 std::vector<AnfNodePtr> TransformTupleArgument(const FuncGraphPtr &fg, const AnfNodePtr &node,
                                                const abstract::AbstractTuplePtr &abs);
 bool ContainSparseTensor(const abstract::AbstractBasePtr &abs);
@@ -75,10 +78,10 @@ class GraphTupleParamTransform {
     mindspore::HashMap<AnfNodePtr, AnfNodePtr> repl;
     for (auto &param : params) {
       auto abs = param->abstract();
-      if (abs != nullptr && abs->isa<abstract::AbstractTuple>() && !common::AnfAlgo::CheckAbsSparseTensor(abs)) {
+      if (IsSequenceExpandable(abs)) {
         auto tuple_abs = abs->cast<abstract::AbstractTuplePtr>();
         std::vector<AnfNodePtr> tuple_params;
-        repl.emplace(param, GenerateTupleParams(tuple_abs, new_fg, &tuple_params));
+        (void)repl.emplace(param, GenerateTupleParams(tuple_abs, new_fg, &tuple_params));
         std::transform(tuple_params.begin(), tuple_params.end(), std::back_inserter(new_params),
                        [](AnfNodePtr p) { return p; });
       } else {
@@ -90,7 +93,8 @@ class GraphTupleParamTransform {
     for (auto &item : repl) {
       bool ret = tr.Replace(item.first, item.second);
       if (ret == false) {
-        MS_LOG(ERROR) << "replace failed" << item.first->DebugString() << " with__" << item.second->DebugString(2);
+        MS_LOG(ERROR) << "replace failed" << item.first->DebugString() << " with__"
+                      << item.second->DebugString(SizeToInt(kIndex2));
       }
     }
     tr.SetParameters(new_fg, new_params);

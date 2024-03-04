@@ -14,12 +14,29 @@
  * limitations under the License.
  */
 #include "ops/reduce_scatter.h"
+
+#include <memory>
 #include <set>
-#include "ops/op_utils.h"
-#include "utils/ms_context.h"
-#include "utils/check_convert_utils.h"
-#include "mindspore/ccsrc/include/common/utils/utils.h"
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/ccsrc/include/common/utils/utils.h"
+#include "mindspore/core/ops/other_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/ms_context.h"
 
 namespace mindspore {
 namespace ops {
@@ -51,6 +68,7 @@ int ReduceScatter::get_rank_size() const {
 }
 
 class ReduceScatterInfer : public abstract::OpInferBase {
+ public:
   BaseShapePtr InferShape(const PrimitivePtr &primitive,
                           const std::vector<AbstractBasePtr> &input_args) const override {
     MS_ERROR_IF_NULL_W_RET_VAL(primitive, std::make_shared<abstract::Shape>());

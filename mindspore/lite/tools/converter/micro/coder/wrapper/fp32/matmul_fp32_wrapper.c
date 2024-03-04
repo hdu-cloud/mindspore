@@ -16,12 +16,13 @@
 
 #include "wrapper/fp32/matmul_fp32_wrapper.h"
 #include "nnacl/fp32/pack_fp32.h"
-void InitMatrixA(const float *src_ptr, float *dst_ptr, const MatMulParameter *params_, bool is_vector_a) {
+
+void InitMatrixA(const float *src_ptr, float *dst_ptr, const MicroMatmulParameter *params_, bool is_vector_a) {
   if (is_vector_a) {
-    memcpy(dst_ptr, src_ptr, (size_t)(params_->batch * params_->deep_) * sizeof(float));
+    memcpy(dst_ptr, src_ptr, (size_t)(params_->a_batch_ * params_->deep_) * sizeof(float));
     return;
   }
-  for (int i = 0; i < params_->batch; i++) {
+  for (int i = 0; i < params_->a_batch_; i++) {
     const float *src = src_ptr + i * params_->deep_ * params_->row_;
     float *dst = dst_ptr + i * params_->deep_ * params_->row_align_;
     if (params_->a_transpose_) {
@@ -32,12 +33,12 @@ void InitMatrixA(const float *src_ptr, float *dst_ptr, const MatMulParameter *pa
   }
 }
 
-void InitMatrixB(const float *src_ptr, float *dst_ptr, const MatMulParameter *params_, bool is_vector_a) {
+void InitMatrixB(const float *src_ptr, float *dst_ptr, const MicroMatmulParameter *params_, bool is_vector_a) {
   if (is_vector_a) {
     if (params_->b_transpose_) {
-      memcpy(dst_ptr, src_ptr, (size_t)(params_->batch * params_->col_ * params_->deep_) * sizeof(float));
+      memcpy(dst_ptr, src_ptr, (size_t)(params_->b_batch_ * params_->col_ * params_->deep_) * sizeof(float));
     } else {
-      for (int i = 0; i < params_->batch; i++) {
+      for (int i = 0; i < params_->b_batch_; i++) {
         const float *src = src_ptr + i * params_->deep_ * params_->col_;
         float *dst = dst_ptr + i * params_->deep_ * params_->col_;
         RowMajor2ColMajor(src, dst, params_->deep_, params_->col_);
@@ -45,7 +46,7 @@ void InitMatrixB(const float *src_ptr, float *dst_ptr, const MatMulParameter *pa
     }
     return;
   }
-  for (int i = 0; i < params_->batch; i++) {
+  for (int i = 0; i < params_->b_batch_; i++) {
     const float *src = src_ptr + i * params_->deep_ * params_->col_;
     float *dst = dst_ptr + i * params_->deep_ * params_->col_align_;
 #ifdef ENABLE_ARM32

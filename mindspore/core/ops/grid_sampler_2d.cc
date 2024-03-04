@@ -15,10 +15,30 @@
  */
 
 #include "ops/grid_sampler_2d.h"
+
+#include <map>
 #include <set>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -102,6 +122,35 @@ bool GridSampler2D::get_align_corners() const {
   return GetValue<bool>(value_ptr);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(GridSampler2D, prim::kPrimGridSampler2D, GridSampler2DInfer, nullptr, true);
+void GridSampler2D::set_interpolation_mode(const std::string &interpolation_mode) {
+  (void)this->AddAttr("interpolation_mode", api::MakeValue(interpolation_mode));
+}
+
+void GridSampler2D::set_padding_mode(const std::string &padding_mode) {
+  (void)this->AddAttr(kPaddingMode, api::MakeValue(padding_mode));
+}
+
+void GridSampler2D::set_align_corners(bool align_corners) {
+  (void)this->AddAttr(kAlignCorners, api::MakeValue(align_corners));
+}
+
+// AG means auto generated
+class MIND_API AGGridSampler2DInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return GridSampler2DInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return GridSampler2DInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return GridSampler2DInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(GridSampler2D, prim::kPrimGridSampler2D, AGGridSampler2DInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -16,6 +16,7 @@
 
 #include "plugin/device/gpu/kernel/random/random_choice_with_mask_gpu_kernel.h"
 #include "mindspore/core/ops/random_choice_with_mask.h"
+#include "kernel/philox_random.h"
 
 namespace mindspore {
 namespace kernel {
@@ -24,6 +25,8 @@ bool RandomChoiceWithMaskGpuKernelMod::Init(const BaseOperatorPtr &base_operator
                                             const std::vector<KernelTensorPtr> &outputs) {
   constexpr size_t input_num = 1;
   constexpr size_t output_num = 2;
+  MS_EXCEPTION_IF_NULL(base_operator);
+  MS_EXCEPTION_IF_NULL(base_operator->GetPrim());
   kernel_name_ = base_operator->GetPrim()->name();
   CHECK_KERNEL_INPUTS_NUM(inputs.size(), input_num, kernel_name_);
   CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), output_num, kernel_name_);
@@ -34,13 +37,12 @@ bool RandomChoiceWithMaskGpuKernelMod::Init(const BaseOperatorPtr &base_operator
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  uint32_t time_interval = std::chrono::system_clock::now().time_since_epoch().count();
-  // init seedc
+  // init seed_
   auto random_choice_with_mask_ptr = std::dynamic_pointer_cast<ops::RandomChoiceWithMask>(base_operator);
-  seed_ = random_choice_with_mask_ptr->get_seed();
-  seed2_ = random_choice_with_mask_ptr->get_seed2();
+  uint64_t seed = random_choice_with_mask_ptr->get_seed();
+  uint64_t seed2 = random_choice_with_mask_ptr->get_seed2();
+  seed_ = random::GetSeed(seed, seed2);
   count_ = random_choice_with_mask_ptr->get_count();
-  generator_.seed(time_interval);
   batch_rank_ = base_operator->get_batch_rank();
   return true;
 }
@@ -56,6 +58,7 @@ int RandomChoiceWithMaskGpuKernelMod::Resize(const BaseOperatorPtr &base_operato
   input_shape_size_ = input_shape_with_batch.size() - batch_rank_;
   input_shape_5D_.clear();
   // convert size_t to int
+  batch_size_ = 1;
   for (size_t i = 0; i < batch_rank_; i++) {
     batch_size_ *= input_shape_with_batch[i];
   }
@@ -70,6 +73,7 @@ int RandomChoiceWithMaskGpuKernelMod::Resize(const BaseOperatorPtr &base_operato
   }
 
   // init memory
+  input_size_ = 1;
   input_size_ *= SizeOf(input_shape_without_batch);
   // upper ceiling for input for ceil_power2
   if (count_ > kSmallK || input_shape_size_ > 1) {
@@ -86,19 +90,11 @@ bool RandomChoiceWithMaskGpuKernelMod::LaunchKernel(const std::vector<AddressPtr
   T *input = GetDeviceAddress<T>(inputs, 0);
   S *output_index = GetDeviceAddress<S>(outputs, 0);
   T *output_mask = GetDeviceAddress<T>(outputs, 1);
-  int seedc = 0;
-  if (seed2_ != 0) {
-    seedc = seed2_;
-  } else if (seed_ != 0) {
-    seedc = seed_;
-  } else {
-    seedc = generator_();
-  }
   for (size_t i = 0; i < batch_size_; i++) {
     input += i * input_size_;
     output_index += i * count_ * input_shape_size_;
     output_mask += i * count_;
-
+    cudaError_t status = cudaErrorNotReady;
     if (count_ > kSmallK || input_shape_size_ > 1) {
       S *index_buff = GetDeviceAddress<S>(workspaces, 0);
       S *mask_buff = GetDeviceAddress<S>(workspaces, 1);
@@ -107,15 +103,18 @@ bool RandomChoiceWithMaskGpuKernelMod::LaunchKernel(const std::vector<AddressPtr
       S *tmp_buff = GetDeviceAddress<S>(workspaces, 4);
       void *States = GetDeviceAddress<void *>(workspaces, 5);
       curandState *devStates = reinterpret_cast<curandState *>(States);
-      CalRandomChoiceWithMask(input_size_, input_shape_size_, input_shape_5D_[kIndex0], input_shape_5D_[kIndex1],
-                              input_shape_5D_[kIndex2], input_shape_5D_[kIndex3], input_shape_5D_[kIndex4], seedc,
-                              count_, input, output_index, output_mask, index_buff, mask_buff, rank_buff, Tnum_buff,
-                              tmp_buff, devStates, reinterpret_cast<cudaStream_t>(stream_ptr));
+      status =
+        CalRandomChoiceWithMask(input_size_, input_shape_size_, input_shape_5D_[kIndex0], input_shape_5D_[kIndex1],
+                                input_shape_5D_[kIndex2], input_shape_5D_[kIndex3], input_shape_5D_[kIndex4], seed_,
+                                seed_offset_, count_, input, output_index, output_mask, index_buff, mask_buff,
+                                rank_buff, Tnum_buff, tmp_buff, devStates, reinterpret_cast<cudaStream_t>(stream_ptr));
     } else {
-      CalRandomChoiceWithMaskSmall<float, S, T>(input_size_, seedc, count_, input, output_index, output_mask,
-                                                reinterpret_cast<cudaStream_t>(stream_ptr));
+      status = CalRandomChoiceWithMaskSmall<float, S, T>(input_size_, seed_, seed_offset_, count_, input, output_index,
+                                                         output_mask, reinterpret_cast<cudaStream_t>(stream_ptr));
     }
+    CHECK_CUDA_STATUS(status, kernel_name_);
   }
+  seed_offset_ += 1;
   return true;
 }
 

@@ -1,4 +1,4 @@
-# Copyright 2022 Huawei Technologies Co., Ltd
+# Copyright 2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,8 +15,12 @@
 """
 Test Map op in Dataset
 """
+import os
 import random
+import subprocess
+import time
 import numpy as np
+import psutil
 import pytest
 
 import mindspore.dataset as ds
@@ -257,6 +261,8 @@ def test_c_map_randomness_repeatability_with_shards(set_seed_to=312, set_num_par
     ds.config.set_num_parallel_workers(original_num_parallel_workers)
 
 
+# Run this test in separate process since this test updates config settings
+@pytest.mark.forked
 @pytest.mark.parametrize("num_parallel_workers", (2, 4, 6))
 @pytest.mark.parametrize("num_samples", (1, 2, 5, 6))
 def test_python_map_mp_repeatability(num_parallel_workers, num_samples, set_seed_to=1605):
@@ -290,6 +296,8 @@ def test_python_map_mp_repeatability(num_parallel_workers, num_samples, set_seed
     ds.config.set_enable_shared_mem(original_enable_shared_mem)
 
 
+# Run this test in separate process since this test updates config settings
+@pytest.mark.forked
 def test_python_map_mp_seed_repeatability(set_seed_to=1337, set_num_parallel_workers_to=4, num_repeat=5):
     """
     Feature: Map op
@@ -364,6 +372,323 @@ def test_map_with_deprecated_parameter():
     assert "The parameter 'column_order' had been deleted in map operation." in str(info.value)
 
 
+def test_map_just_exchange_columns():
+    """
+    Feature: Map op
+    Description: map with exchange columns pyfunc
+    Expectation: success
+    """
+    # construct the data
+    data1 = np.array(np.random.sample(size=(300, 300, 3)) * 255, dtype=np.uint8)
+    data2 = np.array(np.random.sample(size=(300, 300, 3)) * 255, dtype=np.uint8)
+    data3 = np.array(np.random.sample(size=(300, 300, 3)) * 255, dtype=np.uint8)
+    data4 = np.array(np.random.sample(size=(300, 300, 3)) * 255, dtype=np.uint8)
+
+    label = [1, 2, 3, 4]
+
+    # dataset with two columns
+    dataset = ds.NumpySlicesDataset(([data1, data2, data3, data4], label), ["data", "label"])
+
+    def exchange_columns(col1, col2):
+        return col2, col1
+    dataset = dataset.map(operations=exchange_columns, input_columns=["data", "label"],
+                          output_columns=["label", "data"])
+
+    for item in dataset.create_dict_iterator(output_numpy=True, num_epochs=1):
+        assert len(item.keys()) == 2
+        assert "label" in item.keys()
+        assert "data" in item.keys()
+
+    for item in dataset.create_tuple_iterator(output_numpy=True, num_epochs=1):
+        assert len(item) == 2
+        assert item[0].shape == ()
+        assert item[1].shape == (300, 300, 3)
+
+    # dataset with three columns
+    dataset2 = ds.NumpySlicesDataset(([data1, data2, data3, data4], [data1, data2, data3, data4], label),
+                                     ["data", "data2", "label"])
+    dataset2 = dataset2.map(operations=vision.RandomCrop(size=(250, 250)), input_columns="data2")
+
+    def exchange_columns_three(col1, col2, col3):
+        return col2, col3, col1
+    dataset2 = dataset2.map(operations=exchange_columns_three, input_columns=["data", "data2", "label"],
+                            output_columns=["data2", "label", "data"])
+
+    for item in dataset2.create_dict_iterator(output_numpy=True, num_epochs=1):
+        assert len(item.keys()) == 3
+        assert "label" in item.keys()
+        assert "data" in item.keys()
+        assert "data2" in item.keys()
+
+    for item in dataset2.create_tuple_iterator(output_numpy=True, num_epochs=1):
+        assert len(item) == 3
+        print(item[0].shape, item[1].shape, item[2].shape)
+        assert item[0].shape == (250, 250, 3)
+        assert item[1].shape == ()
+        assert item[2].shape == (300, 300, 3)
+
+
+class FakeData:
+    def __init__(self):
+        self.input_ids = np.ones((128, 128), dtype=np.int32)
+        self.input_mask = np.ones((128, 128), dtype=np.int32)
+
+    def __getitem__(self, index):
+        return self.input_ids, self.input_mask
+
+    def __len__(self):
+        return 791
+
+
+def test_map_multiprocessing_without_thread():
+    """
+    Feature: Map op
+    Description: map with multiprocessing and don't degenerate into threading
+    Expectation: success
+    """
+
+    dataset = ds.GeneratorDataset(FakeData(), ["input_ids", "input_mask"])
+
+    def long_running_op(col1, col2):
+        data1 = np.ones([50, 3, 655, 655], dtype=np.float64)
+        data2 = np.ones([50, 3, 600, 600], dtype=np.float64)
+        return data1, data2
+
+    dataset = dataset.map(operations=long_running_op, input_columns=["input_ids", "input_mask"],
+                          python_multiprocessing=True, num_parallel_workers=2, max_rowsize=10)
+    assert dataset.get_dataset_size() == 791
+    assert dataset.output_shapes() == [[50, 3, 655, 655], [50, 3, 600, 600]]
+    assert dataset.output_types() == [np.float64, np.float64]
+    assert dataset.get_col_names() == ["input_ids", "input_mask"]
+
+    count = 1
+    for item in dataset.create_tuple_iterator(output_numpy=True, num_epochs=1):
+        print("count: {}, type: {}, shape: {}".format(count, item[0].dtype, item[0].shape))
+        assert item[0].dtype == np.float64
+        assert item[0].shape == (50, 3, 655, 655)
+        assert len(item) == 2
+        count += 1
+        if count > 5:
+            break
+
+
+def test_map_multiprocessing_with_fixed_handle():
+    """
+    Feature: Map op
+    Description: map with multiprocessing and don't leak pipe handle which is used by queue
+    Expectation: success
+    """
+
+    dataset = ds.GeneratorDataset(FakeData(), ["input_ids", "input_mask"])
+    def long_running_op(col1, col2):
+        data1 = np.ones([3, 65, 65], dtype=np.float64)
+        data2 = np.ones([3, 60, 60], dtype=np.float64)
+        return data1, data2
+
+    dataset = dataset.map(operations=long_running_op, input_columns=["input_ids", "input_mask"],
+                          python_multiprocessing=True, num_parallel_workers=2, max_rowsize=10)
+    assert dataset.get_dataset_size() == 791
+
+    fds = 0
+    for i in range(5):
+        count = 0
+        for item in dataset.create_tuple_iterator(output_numpy=True, num_epochs=1):
+            print("count: {}, type: {}, shape: {}".format(count, item[0].dtype, item[0].shape))
+            assert item[0].dtype == np.float64
+            assert item[0].shape == (3, 65, 65)
+            assert len(item) == 2
+            count += 1
+        assert count == 791
+
+        # wait for the fds handle to be released automatic
+        time.sleep(1)
+
+        i += 1
+        if i == 1:
+            fds = psutil.Process(os.getpid()).num_fds()
+            lsof = subprocess.getoutput("lsof -p " + str(os.getpid()) + " | wc -l")
+        elif i > 1:
+            assert fds == psutil.Process(os.getpid()).num_fds()
+            new_lsof = subprocess.getoutput("lsof -p " + str(os.getpid()) + " | wc -l")
+            assert lsof == new_lsof
+
+
+def test_map_multiprocessing_with_in_out_rowsize_exception():
+    """
+    Feature: Map op
+    Description: map with multiprocessing and max_rowsize with in rowsize & out rowsize exception
+    Expectation: success
+    """
+
+    dataset = ds.GeneratorDataset(FakeData(), ["input_ids", "input_mask"])
+    def long_running_op(col1, col2):
+        data1 = np.ones([3, 65, 65], dtype=np.float64)
+        data2 = np.ones([3, 60, 60], dtype=np.float64)
+        return data1, data2
+
+    with pytest.raises(TypeError) as info:
+        dataset = dataset.map(operations=long_running_op, input_columns=["input_ids", "input_mask"],
+                              python_multiprocessing=True, num_parallel_workers=2, max_rowsize=(12, 20))
+    assert " is not of type " in str(info.value)
+
+    with pytest.raises(TypeError) as info:
+        dataset = dataset.map(operations=long_running_op, input_columns=["input_ids", "input_mask"],
+                              python_multiprocessing=True, num_parallel_workers=2, max_rowsize="16")
+    assert " is not of type " in str(info.value)
+
+    with pytest.raises(TypeError) as info:
+        dataset = dataset.map(operations=long_running_op, input_columns=["input_ids", "input_mask"],
+                              python_multiprocessing=True, num_parallel_workers=2, max_rowsize=20.5)
+    assert " is not of type " in str(info.value)
+
+    with pytest.raises(ValueError) as info:
+        dataset = dataset.map(operations=long_running_op, input_columns=["input_ids", "input_mask"],
+                              python_multiprocessing=True, num_parallel_workers=2, max_rowsize=-8)
+    assert "is not within the required interval of " in str(info.value)
+
+    with pytest.raises(TypeError) as info:
+        dataset = dataset.map(operations=long_running_op, input_columns=["input_ids", "input_mask"],
+                              python_multiprocessing=True, num_parallel_workers=2, max_rowsize=[12.4, 20])
+    assert " is not of type " in str(info.value)
+
+    with pytest.raises(ValueError) as info:
+        dataset = dataset.map(operations=long_running_op, input_columns=["input_ids", "input_mask"],
+                              python_multiprocessing=True, num_parallel_workers=2, max_rowsize=[-8, 20])
+    assert "is not within the required interval of " in str(info.value)
+
+
+def test_map_multiprocessing_with_in_out_rowsize():
+    """
+    Feature: Map op
+    Description: map with multiprocessing and max_rowsize with in rowsize & out rowsize
+    Expectation: success
+    """
+
+    dataset = ds.GeneratorDataset(FakeData(), ["input_ids", "input_mask"])
+    def long_running_op(col1, col2):
+        data1 = np.ones([3, 65, 65], dtype=np.float64)
+        data2 = np.ones([3, 60, 60], dtype=np.float64)
+        return data1, data2
+
+    dataset = dataset.map(operations=long_running_op, input_columns=["input_ids", "input_mask"],
+                          python_multiprocessing=True, num_parallel_workers=2, max_rowsize=[3, 6])
+
+    assert dataset.get_dataset_size() == 791
+
+    for _ in range(3):
+        count = 0
+        for item in dataset.create_tuple_iterator(output_numpy=True, num_epochs=1):
+            print("count: {}, type: {}, shape: {}".format(count, item[0].dtype, item[0].shape))
+            assert item[0].dtype == np.float64
+            assert item[0].shape == (3, 65, 65)
+            assert len(item) == 2
+            count += 1
+        assert count == 791
+
+
+def test_map_and_generatordataset_with_multiprocessing():
+    """
+    Feature: Map op
+    Description: The output_types and output_shapes methods do not start multiprocessing and multithreading When map or
+    GeneratorDataset's parameter multiprocessing is True or num_parallel_workers > 1
+    Expectation: The returned result is as expected
+    """
+
+    dataset = ds.GeneratorDataset(FakeData(), ["input_ids", "input_mask"], python_multiprocessing=True,
+                                  num_parallel_workers=2)
+
+    def long_running_op(col1, col2):
+        data1 = np.ones([50, 3, 655, 655], dtype=np.float64)
+        data2 = np.ones([50, 3, 600, 600], dtype=np.float64)
+        return data1, data2
+
+    dataset = dataset.map(operations=long_running_op, input_columns=["input_ids", "input_mask"],
+                          python_multiprocessing=True, num_parallel_workers=2, max_rowsize=10)
+    assert dataset.output_shapes() == [[50, 3, 655, 655], [50, 3, 600, 600]]
+    assert dataset.output_types() == [np.float64, np.float64]
+
+
+def map_with_pyfunc_with_multi_ops(mode):
+    GLOBAL_EXECUTOR_LEN = len(transforms.EXECUTORS_LIST)
+
+    data_dir = "../data/dataset/testImageNetData2/train"
+    data2 = ds.ImageFolderDataset(dataset_dir=data_dir, shuffle=False)
+
+    def pyfunc2(img_bytes):
+        img_decode = vision.Decode()(img_bytes)
+
+        # resize
+        img_resize = vision.Resize(size=(64, 32))(img_decode)
+
+        # normalize
+        mean_vec = [0.475 * 255, 0.451 * 255, 0.392 * 255]
+        std_vec = [0.275 * 255, 0.267 * 255, 0.278 * 255]
+        img_normalize = vision.Normalize(mean=mean_vec, std=std_vec)(img_resize)
+        return img_normalize
+
+    # map with PyFunc transform which contains vision.Decode, vision.Resize and vision.Normalize
+    data2 = data2.map(pyfunc2, input_columns="image", python_multiprocessing=mode, num_parallel_workers=2)
+
+    for _ in range(5):
+        for item in data2.create_tuple_iterator(num_epochs=1, output_numpy=True):
+            assert item[0].shape == (64, 32, 3)
+            assert item[0].dtype == np.float32
+
+    time.sleep(1)
+    assert len(transforms.EXECUTORS_LIST) == GLOBAL_EXECUTOR_LEN
+
+
+class FakeDataWithTransform:
+    def __init__(self):
+        self.input_ids = np.ones((128, 128, 3), dtype=np.uint8)
+        self.input_mask = np.ones((100, 100, 3), dtype=np.int32)
+
+    def __getitem__(self, index):
+        img_resize = vision.Resize(size=(64, 32))(self.input_ids)
+        return img_resize, self.input_mask
+
+    def __len__(self):
+        return 10
+
+
+def generator_with_multi_transforms(mode):
+    GLOBAL_EXECUTOR_LEN = len(transforms.EXECUTORS_LIST)
+
+    # generator with vision.Resize transform
+    data2 = ds.GeneratorDataset(source=FakeDataWithTransform(), column_names=["image", "label"], shuffle=False,
+                                python_multiprocessing=mode, num_parallel_workers=2)
+
+    def pyfunc2(img):
+        # normalize
+        mean_vec = [0.475 * 255, 0.451 * 255, 0.392 * 255]
+        std_vec = [0.275 * 255, 0.267 * 255, 0.278 * 255]
+        img_normalize = vision.Normalize(mean=mean_vec, std=std_vec)(img)
+        return img_normalize
+
+    # map with PyFunc transform which contains vision.Normalize
+    data2 = data2.map(pyfunc2, input_columns="image", python_multiprocessing=mode, num_parallel_workers=2)
+
+    for _ in range(5):
+        for item in data2.create_tuple_iterator(num_epochs=1, output_numpy=True):
+            assert item[0].shape == (64, 32, 3)
+            assert item[0].dtype == np.float32
+
+    time.sleep(1)
+    assert len(transforms.EXECUTORS_LIST) == GLOBAL_EXECUTOR_LEN
+
+
+def test_generator_or_map_with_pyfunc_use_global_executor():
+    """
+    Feature: Generator op or Map op with pyfunc contains multi ops which use global executor
+    Description: Test generator or map with pyfunc
+    Expectation: The result is equal to the expected
+    """
+    map_with_pyfunc_with_multi_ops(True)
+    map_with_pyfunc_with_multi_ops(False)
+    generator_with_multi_transforms(True)
+    generator_with_multi_transforms(False)
+
+
 if __name__ == '__main__':
     test_map_c_transform_exception()
     test_map_py_transform_exception()
@@ -374,3 +699,10 @@ if __name__ == '__main__':
     test_python_map_mp_repeatability(num_parallel_workers=4, num_samples=4)
     test_python_map_mp_seed_repeatability()
     test_map_with_deprecated_parameter()
+    test_map_just_exchange_columns()
+    test_map_multiprocessing_without_thread()
+    test_map_multiprocessing_with_fixed_handle()
+    test_map_multiprocessing_with_in_out_rowsize()
+    test_map_multiprocessing_with_in_out_rowsize_exception()
+    test_map_and_generatordataset_with_multiprocessing()
+    test_generator_or_map_with_pyfunc_use_global_executor()

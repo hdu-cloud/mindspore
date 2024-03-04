@@ -18,16 +18,17 @@ import numpy as np
 from mindspore import Tensor, context
 from mindspore.nn import Cell
 from mindspore.ops import operations as P
-
+import mindspore.common.dtype as mstype
 from parallel.utils.utils import compile_net
 
 
 def setup_function():
     context.set_auto_parallel_context(dataset_strategy="full_batch")
 
-x_ = (Tensor(np.random.normal(size=[8, 8, 8])),
-      Tensor(np.random.normal(size=[8, 8, 8])),
-      Tensor(np.random.normal(size=[8, 8, 8])))
+
+x_ = Tensor(np.random.normal(size=[8, 8, 8]), dtype=mstype.int32)
+y_ = Tensor(np.random.normal(size=[8, 8, 8]), dtype=mstype.int32)
+z_ = Tensor(np.random.normal(size=[8, 8, 8]), dtype=mstype.int32)
 
 
 class Net(Cell):
@@ -35,8 +36,8 @@ class Net(Cell):
         super(Net, self).__init__()
         self.addn = P.AddN().shard(strategy)
 
-    def construct(self, x):
-        return self.addn(x)
+    def construct(self, x, y, z):
+        return self.addn([x, y, z])
 
 
 def test_addn_auto_parallel():
@@ -45,9 +46,10 @@ def test_addn_auto_parallel():
     Description: auto parallel
     Expectation: compile success
     """
-    context.set_auto_parallel_context(parallel_mode="auto_parallel", device_num=8, global_rank=0)
+    context.set_auto_parallel_context(parallel_mode="auto_parallel", search_mode="dynamic_programming", device_num=8,
+                                      global_rank=0)
     net = Net()
-    compile_net(net, x_)
+    compile_net(net, x_, y_, z_)
 
 
 def test_addn_model_parallel():
@@ -59,7 +61,7 @@ def test_addn_model_parallel():
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", device_num=8, global_rank=0)
     strategy = ((2, 2, 2), (2, 2, 2), (2, 2, 2))
     net = Net(strategy)
-    compile_net(net, x_)
+    compile_net(net, x_, y_, z_)
 
 
 def test_addn_strategy_error():
@@ -72,4 +74,4 @@ def test_addn_strategy_error():
     strategy = ((2, 2, 2), (2, 2, 2), (2, 2, 1))
     net = Net(strategy)
     with pytest.raises(RuntimeError):
-        compile_net(net, x_)
+        compile_net(net, x_, y_, z_)

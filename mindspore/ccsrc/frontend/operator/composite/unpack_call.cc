@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "mindspore/core/ops/structure_ops.h"
+#include "mindspore/core/ops/sequence_ops.h"
 #include "abstract/abstract_value.h"
 #include "abstract/dshape.h"
 #include "frontend/operator/cc_implementations.h"
@@ -40,12 +42,10 @@ using mindspore::abstract::AbstractTuple;
 using mindspore::abstract::AbstractTuplePtr;
 
 FuncGraphPtr UnpackCall::GenerateFuncGraph(const AbstractBasePtrList &args_abs_list) {
-  // slice a tensor
-  // args: tensor, slice or slice tuple
   size_t arg_length = args_abs_list.size();
   const size_t min_args_size = 2;
   if (arg_length < min_args_size) {
-    MS_LOG(EXCEPTION) << "The UnpackCall operator requires at least two arguments, but got " << arg_length << ".";
+    MS_LOG(INTERNAL_EXCEPTION) << "The UnpackCall operator requires arguments >=2, but got " << arg_length << ".";
   }
 
   // No need to check, check will be done in infer.
@@ -86,8 +86,8 @@ FuncGraphPtr UnpackCall::GenerateFuncGraph(const AbstractBasePtrList &args_abs_l
           return res_graph->NewCNode({NewValueNode(prim::kPrimMakeKeywordArg), NewValueNode(key_value), dict_get_item});
         });
     } else {
-      MS_LOG(EXCEPTION) << "The arguments of UnpackCall operator should be tuple, list or dict, but got "
-                        << args_abs_list[index]->ToString();
+      MS_LOG(INTERNAL_EXCEPTION) << "The arguments of UnpackCall operator should be tuple, list or dict, but got "
+                                 << args_abs_list[index]->ToString();
     }
   }
   // Add to order list to trace if fn_node had side effect.

@@ -15,17 +15,32 @@
  */
 
 #include "ops/eye.h"
+
 #include <complex>
 #include <memory>
-#include <string>
-#include <map>
 #include <set>
+#include <string>
+
 #include "abstract/abstract_value.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/dshape.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/primitive_c.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "base/float16.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "ir/tensor.h"
+#include "mindapi/base/type_id.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -42,17 +57,46 @@ void ImpleEye(int64_t num_n_, int64_t num_m_, void *target) {
 }
 
 abstract::ShapePtr EyeInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto n_ptr = input_args[0]->BuildValue();
   auto m_ptr = input_args[1]->BuildValue();
   auto n_v = GetValue<int64_t>(n_ptr);
   auto m_v = GetValue<int64_t>(m_ptr);
+  auto prim_name = primitive->name();
+  CheckAndConvertUtils::Check("n", n_v, kGreaterEqual, 0, prim_name);
+  CheckAndConvertUtils::Check("m", m_v, kGreaterEqual, 0, prim_name);
   std::vector<int64_t> state_shape = {n_v, m_v};
   return std::make_shared<abstract::Shape>(state_shape);
+}
+
+void EyeCheck(const std::vector<AbstractBasePtr> &input_args) {
+  if (!input_args[0]->isa<abstract::AbstractScalar>()) {
+    MS_EXCEPTION(TypeError) << "For Eye, 'n' must be int, but got ValueAny!";
+  }
+  if (!input_args[1]->isa<abstract::AbstractScalar>()) {
+    MS_EXCEPTION(TypeError) << "For Eye, 'm' must be int, but got ValueAny!";
+  }
+  auto n_ptr_ = input_args[0]->BuildValue();
+  auto m_ptr_ = input_args[1]->BuildValue();
+  MS_EXCEPTION_IF_NULL(n_ptr_);
+  MS_EXCEPTION_IF_NULL(m_ptr_);
+  if (!n_ptr_->isa<Int64Imm>() && !n_ptr_->isa<Int32Imm>()) {
+    MS_EXCEPTION(TypeError) << "For Eye, the dtype of n is invalid!";
+  }
+  if (!m_ptr_->isa<Int64Imm>() && !m_ptr_->isa<Int32Imm>()) {
+    MS_EXCEPTION(TypeError) << "For Eye, the dtype of m is invalid!";
+  }
+  auto dtype_value_c = input_args[2]->BuildValue();
+  MS_EXCEPTION_IF_NULL(dtype_value_c);
+  if (!dtype_value_c->isa<Type>()) {
+    MS_EXCEPTION(TypeError) << "For Eye, the dtype of Eye is invalid!";
+  }
 }
 
 TypePtr EyeInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(prim);
   auto prim_name = prim->name();
+  EyeCheck(input_args);
   auto dtype_value = input_args[2]->BuildValue();
   if (!dtype_value->isa<Type>()) {
     MS_EXCEPTION(TypeError) << "For Eye, the dtype of Eye is invalid!";
@@ -62,27 +106,6 @@ TypePtr EyeInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr
                                          kUInt64, kFloat16, kFloat32, kFloat64, kComplex64, kComplex128, kBool};
   auto dtype_ret = CheckAndConvertUtils::CheckSubClass("dtype", output_type, valid_types, prim_name);
   return dtype_ret;
-}
-
-void EyeCheck(const std::vector<AbstractBasePtr> &input_args) {
-  if (!input_args[0]->isa<abstract::AbstractScalar>()) {
-    MS_EXCEPTION(TypeError) << "For Eye, 'n' must be int, but got AnyValue!";
-  }
-  if (!input_args[1]->isa<abstract::AbstractScalar>()) {
-    MS_EXCEPTION(TypeError) << "For Eye, 'm' must be int, but got AnyValue!";
-  }
-  auto n_ptr_ = input_args[0]->BuildValue();
-  auto m_ptr_ = input_args[1]->BuildValue();
-  if (!n_ptr_->isa<Int64Imm>() && !n_ptr_->isa<Int32Imm>()) {
-    MS_EXCEPTION(TypeError) << "For Eye, the dtype of n is invalid!";
-  }
-  if (!m_ptr_->isa<Int64Imm>() && !m_ptr_->isa<Int32Imm>()) {
-    MS_EXCEPTION(TypeError) << "For Eye, the dtype of m is invalid!";
-  }
-  auto dtype_value_c = input_args[2]->BuildValue();
-  if (!dtype_value_c->isa<Type>()) {
-    MS_EXCEPTION(TypeError) << "For Eye, the dtype of Eye is invalid!";
-  }
 }
 
 ValuePtr EyeInferValue(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
@@ -100,8 +123,8 @@ ValuePtr EyeInferValue(const PrimitivePtr &prim, const std::vector<AbstractBaseP
   EyeCheck(input_args);
   auto num_n_ = GetValue<int64_t>(n_pt);
   auto num_m_ = GetValue<int64_t>(m_pt);
-  CheckAndConvertUtils::Check("n", num_n_, kGreaterEqual, 1, prim_name);
-  CheckAndConvertUtils::Check("m", num_m_, kGreaterEqual, 1, prim_name);
+  CheckAndConvertUtils::Check("n", num_n_, kGreaterEqual, 0, prim_name);
+  CheckAndConvertUtils::Check("m", num_m_, kGreaterEqual, 0, prim_name);
   auto type_id = dtype_value_->cast<TypePtr>()->type_id();
   auto shape = EyeInferShape(prim, input_args);
   auto result_tensor = std::make_shared<tensor::Tensor>(type_id, shape->shape());
@@ -171,7 +194,6 @@ ValuePtr EyeInferValue(const PrimitivePtr &prim, const std::vector<AbstractBaseP
 }
 }  // namespace
 
-MIND_API_OPERATOR_IMPL(Eye, BaseOperator);
 AbstractBasePtr EyeInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                          const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
@@ -183,6 +205,29 @@ AbstractBasePtr EyeInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(Eye, prim::kPrimEye, EyeInfer, EyeInferValue, false);
+MIND_API_OPERATOR_IMPL(Eye, BaseOperator);
+class MIND_API AGEyeInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return EyeInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return EyeInferType(primitive, input_args);
+  }
+
+  ValuePtr InferValue(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return EyeInferValue(primitive, input_args);
+  }
+
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return EyeInfer(engine, primitive, input_args);
+  }
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0, 1, 2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Eye, prim::kPrimEye, AGEyeInfer, true);
 }  // namespace ops
 }  // namespace mindspore

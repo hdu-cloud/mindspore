@@ -85,6 +85,7 @@ class ControlActor : public MemoryAwareActor {
  protected:
   friend class ControlNodeScheduler;
   friend class SchedulerHelper;
+  friend class MemSwapScheduler;
 
   void Init() override;
 
@@ -113,7 +114,8 @@ class ControlActor : public MemoryAwareActor {
 
   // Increase the dynamic ref count by the outputs. It corresponds to the SendOutput.
   virtual void IncreaseDynamicRefCounts(OpContext<DeviceTensor> *const context);
-
+  void MergeDeviceAddress(OpContext<DeviceTensor> *const context, const std::vector<DeviceTensor *> &addr_list,
+                          DeviceTensor **deivce_tensor);
   // Input data.
   // 1.Input partial.
   // Record the partial received by each step, the key of the pair indicates the location of the partial.
@@ -134,6 +136,12 @@ class ControlActor : public MemoryAwareActor {
   // The lists of device tensors which need free by dynamic ref count, will be cleared at the end of step.
   std::queue<std::vector<DeviceTensor *>> memory_free_lists_;
 
+  // The exit actor needs to create a new device address and take out the ptr from the device tensor come from
+  // the kernel actor. These new created device tensors are stored in the created device tensors.
+  std::vector<DeviceTensorPtr> created_device_tensors_;
+  // In control flow, when the argument is not a dynamic len tuple but the parameter is, need create a new
+  // real make tuple node for it.
+  std::vector<AnfNodePtr> created_new_nodes_;
   // Input num.
   size_t input_partials_num_{0};
   size_t input_branch_ids_num_{0};
@@ -175,7 +183,7 @@ class ControlActor : public MemoryAwareActor {
   // start_time_ and its current time, for example, set exit actor of kernel graph to its entrance actor to count the
   // execution time of the kernel graph.
   std::set<ControlActor *> end_actors_;
-  double start_time_;
+  double start_time_{0};
 
   // local node for control actor, such as return node for exit actor, switch node for switch actor.
   AnfNodePtr node_;

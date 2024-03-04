@@ -28,7 +28,7 @@ def test_fold_functional_api():
     Description: test case for fold functional API.
     Expectation: the result match with expected result.
     """
-    x = Tensor(np.ones([16, 16, 4, 25]), mstype.float32)
+    x = Tensor(np.ones([16, 64, 25]), mstype.float32)
     output_size = Tensor([8, 8], mstype.int32)
     output = F.fold(x, output_size, kernel_size=[2, 2], dilation=[2, 2], padding=[2, 2], stride=[2, 2])
     expected_shape = (16, 16, 8, 8)
@@ -42,7 +42,7 @@ def test_fold_tensor_api():
     Description: test case for fold tensor API.
     Expectation: the result match with expected result.
     """
-    x = Tensor(np.ones([16, 16, 4, 25]), mstype.float32)
+    x = Tensor(np.ones([16, 64, 25]), mstype.float32)
     output_size = Tensor([8, 8], mstype.int32)
     output = x.fold(output_size, kernel_size=[2, 2], dilation=[2, 2], padding=[2, 2], stride=[2, 2])
     expected_shape = (16, 16, 8, 8)
@@ -50,7 +50,7 @@ def test_fold_tensor_api():
     assert output.shape == expected_shape
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_fold_tensor_functional_api_modes():

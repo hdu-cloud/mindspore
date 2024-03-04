@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-#include "distributed/init.h"
+#include "include/backend/distributed/init.h"
 #include <vector>
 #include <string>
 #include <memory>
-#include "distributed/recovery/recovery_context.h"
+#include "include/backend/distributed/recovery/recovery_context.h"
 #include "runtime/graph_scheduler/graph_scheduler.h"
 #include "runtime/graph_scheduler/embedding_cache_scheduler.h"
 
@@ -30,14 +30,33 @@ bool Initialize() {
   // If this process participates in the cluster building, we need to initialize cluster context.
   if (common::UseDynamicCluster()) {
     if (!InitializeCluster()) {
-      MS_LOG(EXCEPTION) << "Failed to initialize distributed training.";
+      MS_LOG(EXCEPTION) << "Failed to initialize distributed training because some nodes in the cluster are not "
+                           "successfully launched. "
+                           "Please check log of each node to find out which is the first one to throw exception. You "
+                           "can search 'is timed out' in Scheduler's log to see which node is offline.";
     }
   }
 
   // Initialize the collective manager regardless of whether the cluster is initialized or not.
   if (!InitializeCollective()) {
-    MS_LOG(EXCEPTION) << "Failed to initialize collective communication.";
+    MS_LOG(EXCEPTION) << "Failed to initialize collective communication because some nodes in the cluster are not "
+                         "successfully launched. Please check "
+                         "log of each node to find out which is the first one to throw exception. You can search 'is "
+                         "timed out' in Scheduler's log to see which node is offline.";
   }
+
+  // If this is a scheduler node, it does not need to execute other codes like graph compiling and running. We should
+  // finalize it immediately.
+  if (cluster::ClusterContext::instance()->initialized() &&
+      cluster::ClusterContext::instance()->node_role() == kEnvRoleOfScheduler) {
+    MS_LOG(INFO) << "Scheduler starts to wait for cluster to exit.";
+    (void)cluster::ClusterContext::instance()->Finalize(UINT32_MAX);
+    MS_LOG(INFO) << "Scheduler ends waiting for cluster to exit.";
+    exit(0);
+    return true;
+  }
+
+  MsException::Instance().CheckException();
   return true;
 }
 
@@ -75,7 +94,10 @@ bool InitializeCluster() {
     if (graph_scheduler.initialized() && graph_scheduler.rpc_node_scheduler() != nullptr) {
       graph_scheduler.rpc_node_scheduler()->Abort();
     }
-    runtime::EmbeddingCacheScheduler::GetInstance().Finalize();
+
+    MS_LOG(INFO) << "Begin finalize the EmbeddingCacheScheduler.";
+    runtime::EmbeddingCacheScheduler::GetInstance().Finalize(false);
+    MS_LOG(INFO) << "End finalize the EmbeddingCacheScheduler.";
   });
   node->set_abnormal_callback(callback);
 

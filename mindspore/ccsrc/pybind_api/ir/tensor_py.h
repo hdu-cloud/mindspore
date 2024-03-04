@@ -111,6 +111,8 @@ class TensorPy {
   // param input [py::int_] slice num of data.
   static TensorPtr MakePersistentDataTensorOfNumpy(const py::array &input, const py::int_ slice_num);
 
+  static py::bytes GetBytes(const Tensor &tensor);
+
   static py::array SyncAsNumpy(const Tensor &tensor);
 
   static py::array AsNumpy(const Tensor &tensor);
@@ -129,6 +131,8 @@ class TensorPy {
   static py::int_ GetPyNBytes(const Tensor &tensor);
 
   static void FlushFromCache(const Tensor &tensor);
+
+  static void Offload(const Tensor &tensor);
 };
 
 // CSRTensor python wrapper and adapter class.

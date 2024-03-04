@@ -32,6 +32,9 @@ int FillInferShape(const TensorC *const *inputs, size_t inputs_size, TensorC **o
   }
 
   const TensorC *dst_shape_tensor = inputs[1];
+  if (dst_shape_tensor->data_type_ != kNumberTypeInt && dst_shape_tensor->data_type_ != kNumberTypeInt32) {
+    return NNACL_ERR;
+  }
   const int32_t *dst_shape = (int32_t *)(dst_shape_tensor->data_);
   int num_dims = 1;
   if (dst_shape_tensor->shape_size_ != DIMENSION_1D) {
@@ -41,7 +44,7 @@ int FillInferShape(const TensorC *const *inputs, size_t inputs_size, TensorC **o
     if (INT_MUL_OVERFLOW(num_dims, dst_shape_tensor->shape_[i])) {
       return NNACL_ERRCODE_MUL_OVERFLOW;
     }
-    MS_CHECK_FALSE(dst_shape_tensor->shape_[i] < 0, NNACL_ERR);
+    NNACL_CHECK_FALSE(dst_shape_tensor->shape_[i] < 0, NNACL_ERR);
     num_dims *= dst_shape_tensor->shape_[i];
   }
   if (num_dims != 0 && dst_shape == NULL) {

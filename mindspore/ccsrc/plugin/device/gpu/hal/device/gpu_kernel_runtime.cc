@@ -17,6 +17,8 @@
 #include <algorithm>
 #include <map>
 #include <chrono>
+#include "ops/framework_op_name.h"
+#include "ops/sequence_ops.h"
 #include "include/common/debug/anf_dump_utils.h"
 #include "plugin/device/gpu/hal/device/gpu_device_address.h"
 #include "plugin/device/gpu/hal/device/cuda_driver.h"
@@ -24,26 +26,26 @@
 #include "include/backend/data_queue/data_queue_mgr.h"
 #include "plugin/device/gpu/hal/device/gpu_device_manager.h"
 #include "plugin/device/gpu/hal/device/gpu_memory_allocator.h"
-#include "distributed/init.h"
+#include "include/backend/distributed/init.h"
 #include "include/common/utils/convert_utils.h"
 #include "utils/ms_context.h"
-#include "common/graph_kernel/graph_kernel_flags.h"
+#include "backend/common/graph_kernel/graph_kernel_flags.h"
 #include "runtime/device/kernel_runtime_manager.h"
 #include "plugin/device/gpu/hal/device/gpu_common.h"
 #include "utils/ms_utils.h"
 #include "plugin/device/gpu/hal/device/gpu_memory_manager.h"
-#include "kernel/common_utils.h"
+#include "kernel/framework_utils.h"
 #include "plugin/device/gpu/hal/device/gpu_memory_copy_manager.h"
 #include "runtime/device/ms_device_shape_transfer.h"
 #include "ir/dtype.h"
-#include "backend/common/optimizer/dynamic_shape/dynamic_shape_helper.h"
+#include "include/backend/optimizer/helper.h"
 #ifndef ENABLE_SECURITY
 #include "plugin/device/gpu/hal/profiler/gpu_profiling.h"
 #include "plugin/device/gpu/hal/profiler/gpu_profiling_utils.h"
 #endif
 #include "utils/shape_utils.h"
 #ifndef ENABLE_SECURITY
-#include "debug/data_dump/dump_json_parser.h"
+#include "include/backend/debug/data_dump/dump_json_parser.h"
 #endif
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
 #ifdef ENABLE_DEBUGGER
@@ -60,7 +62,7 @@ namespace gpu {
 using mindspore::device::memswap::MemSwapInfoSet;
 using mindspore::device::memswap::MemSwapManager;
 using mindspore::device::memswap::SwapKind;
-static const size_t PARAMETER_OUTPUT_INDEX = 0;
+static const size_t kParameterOutputIndex = 0;
 static thread_local bool cur_thread_device_inited{false};
 
 bool GPUKernelRuntime::SyncStream() {
@@ -169,7 +171,7 @@ void LoadKernelData(Debugger *debugger, const CNodePtr &kernel,
       MS_EXCEPTION_IF_NULL(input_kernel);
       std::string input_kernel_name = GetKernelNodeName(input_kernel);
       auto addr = kernel_inputs[j];
-      auto type = common::AnfAlgo::GetOutputInferDataType(input_kernel, PARAMETER_OUTPUT_INDEX);
+      auto type = common::AnfAlgo::GetOutputInferDataType(input_kernel, kParameterOutputIndex);
       // For example, this happens with the Depend op
       if (type == kMetaTypeNone) {
         continue;
@@ -178,7 +180,7 @@ void LoadKernelData(Debugger *debugger, const CNodePtr &kernel,
       MS_EXCEPTION_IF_NULL(addr);
       auto gpu_addr = std::make_unique<GPUDeviceAddress>(addr->addr, addr->size, format, type);
       string input_tensor_name = input_kernel_name + ':' + "0";
-      ShapeVector int_shapes = trans::GetRuntimePaddingShape(input_kernel, PARAMETER_OUTPUT_INDEX);
+      ShapeVector int_shapes = trans::GetRuntimePaddingShape(input_kernel, kParameterOutputIndex);
       auto ret =
         gpu_addr->LoadMemToHost(input_tensor_name, exec_order, format, int_shapes, type, 0, true, 0, false, true);
       if (!ret) {
@@ -190,7 +192,7 @@ void LoadKernelData(Debugger *debugger, const CNodePtr &kernel,
 
   if (debugger->debugger_enabled() || dump_json_parser.OutputNeedDump()) {
     // get outputs
-    auto output_size = common::AnfAlgo::GetOutputTensorNum(kernel);
+    auto output_size = AnfAlgo::GetOutputTensorNum(kernel);
     auto node_name = common::AnfAlgo::GetCNodeName(kernel);
 
     std::vector<int> real_outputs = CheckRealOutput(node_name, output_size);
@@ -426,8 +428,8 @@ void GPUKernelRuntime::FetchMemUnitSize(const session::KernelGraph *graph) {
     }
   }
   if (max_sum_size > GPUMemoryAllocator::GetInstance().MemAllocUnitSize()) {
-    size_t unit_size = (max_sum_size / DYNAMIC_MEM_ALLOC_UNIT_SIZE + 1) * DYNAMIC_MEM_ALLOC_UNIT_SIZE;
-    if (unit_size < DYNAMIC_MEM_ALLOC_UNIT_SIZE) {
+    size_t unit_size = (max_sum_size / kDynamicMemAllocUnitSize + 1) * kDynamicMemAllocUnitSize;
+    if (unit_size < kDynamicMemAllocUnitSize) {
       MS_LOG(WARNING) << "Current memory unit size [" << unit_size << "] is too small.";
       return;
     }
@@ -769,10 +771,10 @@ bool GPUKernelRuntime::LaunchKernelDynamic(const session::KernelGraph *graph, bo
     }
 
     if (common::AnfAlgo::IsDynamicShape(kernel)) {
-      opt::dynamic_shape::InferOp(kernel);
+      opt::InferOp(kernel);
       auto args = kernel::GetArgsFromCNode(kernel);
-      if (gpu_kernel->Resize(args->op, args->inputs, args->outputs, args->depend_tensor_map) ==
-          kernel::KRET_RESIZE_FAILED) {
+      auto op = GetValueNode<PrimitivePtr>(kernel->inputs()[0]);
+      if (gpu_kernel->Resize(args->inputs, args->outputs, args->depend_tensor_map) == kernel::KRET_RESIZE_FAILED) {
         MS_LOG(EXCEPTION) << "Node " << kernel->fullname_with_scope() << " Resize failed.";
       }
     }
@@ -850,7 +852,8 @@ void GPUKernelRuntime::LaunchKernelWithoutMock(const session::KernelGraph *graph
   auto profiler_inst = profiler::gpu::GPUProfiler::GetInstance();
   MS_EXCEPTION_IF_NULL(profiler_inst);
 
-  if (profiler_inst->GetEnableFlag() && profiler::gpu::ProfilingUtils::IsFirstStep(graph->graph_id())) {
+  if (profiler_inst->GetEnableFlag() && profiler::gpu::ProfilingUtils::IsFirstStep(graph->graph_id()) &&
+      profiler_inst->GetOpTimeFlag()) {
     profiler::gpu::ProfilingTraceInfo profiling_trace =
       profiler::gpu::ProfilingUtils::GetProfilingTraceFromEnv(NOT_NULL(graph));
     profiler_inst->SetStepTraceOpName(profiling_trace);
@@ -858,7 +861,7 @@ void GPUKernelRuntime::LaunchKernelWithoutMock(const session::KernelGraph *graph
 #endif
   if (!profiling) {
 #ifndef ENABLE_SECURITY
-    if (profiler_inst->GetEnableFlag()) {
+    if (profiler_inst->GetEnableFlag() && profiler_inst->GetOpTimeFlag()) {
       profiler_inst->OpDataProducerBegin(kernel->fullname_with_scope(), stream_);
     }
 #endif
@@ -872,7 +875,7 @@ void GPUKernelRuntime::LaunchKernelWithoutMock(const session::KernelGraph *graph
       MS_LOG(EXCEPTION) << "Launch kernel failed: " << kernel->fullname_with_scope();
     }
 #ifndef ENABLE_SECURITY
-    if (profiler_inst->GetEnableFlag()) {
+    if (profiler_inst->GetEnableFlag() && profiler_inst->GetOpTimeFlag()) {
       profiler_inst->OpDataProducerEnd();
       if (profiler_inst->GetSyncEnableFlag()) {
         CHECK_OP_RET_WITH_ERROR(SyncStream(), "Profiler SyncStream failed.");
@@ -899,10 +902,9 @@ bool GPUKernelRuntime::RunOpLaunchKernelDynamic(const session::KernelGraph *grap
     }
     // pre-processing for dynamic shape kernel
     if (common::AnfAlgo::IsDynamicShape(kernel)) {
-      opt::dynamic_shape::InferOp(kernel);
+      opt::InferOp(kernel);
       auto args = kernel::GetArgsFromCNode(kernel);
-      if (gpu_kernel->Resize(args->op, args->inputs, args->outputs, args->depend_tensor_map) ==
-          kernel::KRET_RESIZE_FAILED) {
+      if (gpu_kernel->Resize(args->inputs, args->outputs, args->depend_tensor_map) == kernel::KRET_RESIZE_FAILED) {
         MS_LOG(EXCEPTION) << "Node " << kernel->fullname_with_scope() << " Resize failed.";
       }
     }
@@ -1145,7 +1147,7 @@ bool GPUKernelRuntime::AllocKernelInputDynamicRes(const mindspore::AnfNodePtr &k
     MS_EXCEPTION_IF_NULL(input);
     input->addr = device_address->ptr_;
     input->size = device_address->size_;
-    kernel_inputs->emplace_back(input);
+    (void)kernel_inputs->emplace_back(input);
   }
   return true;
 }
@@ -1170,7 +1172,7 @@ bool GPUKernelRuntime::AllocKernelOutputDynamicRes(const mindspore::kernel::Kern
     MS_EXCEPTION_IF_NULL(output);
     output->addr = device_address->ptr_;
     output->size = output_sizes[i];
-    kernel_outputs->emplace_back(output);
+    (void)kernel_outputs->emplace_back(output);
   }
   return true;
 }
@@ -1183,7 +1185,7 @@ bool GPUKernelRuntime::AllocKernelWorkspaceDynamicRes(const mindspore::kernel::K
   auto workspace_sizes = kernel_mod.GetWorkspaceSizeList();
   for (size_t i = 0; i < workspace_sizes.size(); ++i) {
     if (workspace_sizes[i] == 0) {
-      kernel_workspaces->emplace_back(nullptr);
+      (void)kernel_workspaces->emplace_back(nullptr);
       continue;
     }
     auto device_address = AnfAlgo::GetMutableWorkspaceAddr(kernel, i);
@@ -1195,7 +1197,7 @@ bool GPUKernelRuntime::AllocKernelWorkspaceDynamicRes(const mindspore::kernel::K
     MS_EXCEPTION_IF_NULL(workspace);
     workspace->addr = device_address->ptr_;
     workspace->size = workspace_sizes[i];
-    kernel_workspaces->emplace_back(workspace);
+    (void)kernel_workspaces->emplace_back(workspace);
   }
   return true;
 }
@@ -1210,7 +1212,7 @@ void GPUKernelRuntime::AllocCommunicationOpDynamicRes(const session::KernelGraph
   auto &kernels = graph->execution_order();
   for (auto &kernel : kernels) {
     MS_EXCEPTION_IF_NULL(kernel);
-    if (common::AnfAlgo::IsCommunicationOp(kernel) && common::AnfAlgo::GetCNodeName(kernel) != kHcomSendOpName &&
+    if (common::AnfAlgo::IsCommunicationOp(kernel) && common::AnfAlgo::GetCNodeName(kernel) != kSendOpName &&
         common::AnfAlgo::GetCNodeName(kernel) != kReceiveOpName) {
       AllocCommunicationOpInputDynamicRes(kernel);
     }
@@ -1244,8 +1246,8 @@ void GPUKernelRuntime::AllocCommunicationOpInputDynamicRes(const mindspore::AnfN
       is_need_free_memory = true;
     }
     total_size += intput_sizes[i];
-    size_list.emplace_back(intput_sizes[i]);
-    addr_list.emplace_back(device_address);
+    (void)size_list.emplace_back(intput_sizes[i]);
+    (void)addr_list.emplace_back(device_address);
   }
   AllocCommunicationOpMemory(is_need_alloc_memory, is_need_free_memory, addr_list, total_size, size_list);
 }
@@ -1269,8 +1271,8 @@ void GPUKernelRuntime::AllocCommunicationOpOutputDynamicRes(const mindspore::Anf
       is_need_free_memory = true;
     }
     total_size += output_sizes[i];
-    size_list.emplace_back(output_sizes[i]);
-    addr_list.emplace_back(device_address);
+    (void)size_list.emplace_back(output_sizes[i]);
+    (void)addr_list.emplace_back(device_address);
   }
   AllocCommunicationOpMemory(is_need_alloc_memory, is_need_free_memory, addr_list, total_size, size_list);
 }
@@ -1329,7 +1331,7 @@ void GPUKernelRuntime::FreeKernelDynamicRes(const mindspore::AnfNodePtr &kernel)
     }
   }
   // Free the output of kernel, if output has no reference.
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(kernel);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(kernel);
   for (size_t i = 0; i < output_num; ++i) {
     auto kernel_ref_count_ptr = mem_reuse_util_->GetRef(cnode, i);
     if (kernel_ref_count_ptr == nullptr) {

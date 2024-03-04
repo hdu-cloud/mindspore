@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ class AdamDeltaCpuKernelTest : public UT::Common {
   AddressPtr CreateKernelAddress(void *addr, size_t elem_num) {
     auto kernel_addr = std::make_shared<Address>();
     kernel_addr->addr = addr;
-    kernel_addr->size = elem_num * 4;
+    kernel_addr->size = elem_num * sizeof(float);
     return kernel_addr;
   }
 
@@ -75,6 +75,9 @@ class AdamDeltaCpuKernelTest : public UT::Common {
   size_t elem_num_ = 27;
 };
 
+/// Feature: Develop AdamDelta op on CPU.
+/// Description: Test AdamDeltaCpuKernel.
+/// Expectation: The AdamDeltaCpuKernel is successfully executed and a correct result is returned.
 TEST_F(AdamDeltaCpuKernelTest, compute_test) {
   for (size_t i = 0; i < elem_num_; ++i) {
     delta_.push_back(1.0);

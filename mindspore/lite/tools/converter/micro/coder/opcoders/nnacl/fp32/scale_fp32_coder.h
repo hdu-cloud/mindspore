@@ -19,10 +19,11 @@
 
 #include <vector>
 #include "coder/opcoders/op_coder.h"
-#include "nnacl/scale.h"
+#include "nnacl/scale_parameter.h"
+#include "nnacl/kernel/scale.h"
 
 namespace mindspore::lite::micro::nnacl {
-class ScaleFP32Coder final : public OperatorCoder {
+class ScaleFP32Coder : public OperatorCoder {
  public:
   ScaleFP32Coder(const std::vector<Tensor *> &in_tensors, const std::vector<Tensor *> &out_tensors,
                  const LiteGraph::Node *node, size_t node_index, Target target)
@@ -32,15 +33,17 @@ class ScaleFP32Coder final : public OperatorCoder {
 
   int DoCode(CoderContext *const context) override;
 
- private:
-  int ReSize();
+ protected:
+  virtual int ReSize();
   int CalculateParameter();
   int InitScaleOffset();
 
- private:
+ protected:
+  int thread_num_ = 1;
+  bool const_scale_ = false;
+  bool const_offset_ = false;
+  ScaleStruct scale_struct_;
   ScaleParameter *scale_param_{nullptr};
-  float *scale_{nullptr};
-  float *offset_{nullptr};
 };
 }  // namespace mindspore::lite::micro::nnacl
 #endif  // MICRO_CODER_OPCODERS_FP32__CODER_H_

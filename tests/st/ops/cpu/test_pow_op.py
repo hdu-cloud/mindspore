@@ -16,6 +16,7 @@
 import numpy as np
 import pytest
 
+import mindspore as ms
 import mindspore.context as context
 import mindspore.nn as nn
 from mindspore import Tensor, jit, ops
@@ -90,6 +91,7 @@ def test_tensor_pow_pynative():
     Description: test tensor interface pow in pynative mode.
     Expectation: Success.
     """
+    context.set_context(mode=context.PYNATIVE_MODE, device_target='CPU')
     x = Tensor([1, 2, 3])
     y = Tensor([1, 2, 3])
     output = x.pow(y)
@@ -145,3 +147,45 @@ def test_pow_vmap():
     pow_vmap = ops.vmap(tensor_pow_func, (0, 0), 0)
     output = pow_vmap(x, y)
     assert np.all(output.asnumpy() == np.array([[1, 4, 27], [27, 4, 1]]))
+
+
+@pytest.mark.level0
+@pytest.mark.platform_x86_cpu
+@pytest.mark.env_onecard
+def test_pow_dynamic_shape():
+    """
+    Feature: test Pow op on CPU.
+    Description: test the ops in dynamic shape.
+    Expectation: expect correct shape result.
+    """
+    context.set_context(mode=context.GRAPH_MODE, device_target='CPU')
+    net = Net()
+    x_dyn = Tensor(shape=[2, 3, 4, None], dtype=ms.float32)
+    y_dyn = Tensor(shape=[2, 3, None, 5], dtype=ms.float32)
+    net.set_inputs(x_dyn, y_dyn)
+    x = np.random.randn(2, 3, 4, 5)
+    y = np.random.randn(2, 3, 4, 5)
+    output = net(Tensor(x, ms.float32), Tensor(y, ms.float32))
+    except_shape = (2, 3, 4, 5)
+    assert output.asnumpy().shape == except_shape
+
+
+@pytest.mark.level0
+@pytest.mark.platform_x86_cpu
+@pytest.mark.env_onecard
+def test_pow_complex():
+    """
+    Feature: Support various complex datatypes。
+    Description: Input various types of complex numbers input Pow op. Test whether it supports.
+    Expectation: Output of Pow op match to numpy.power.
+    """
+    context.set_context(mode=context.GRAPH_MODE, device_target='CPU')
+    x_complex = np.array([1.+1.j, 1.-1.j, -1.+1.j, -1.-1.j])
+    y_complex = np.array([1.+1.j, 1.-1.j, -1.+1.j, -1.-1.j])
+    np_out = np.power(x_complex, y_complex)
+
+    complex_op = ops.Complex()
+    x_complex = complex_op(Tensor(x_complex.real, dtype=ms.float32), Tensor(x_complex.imag, dtype=ms.float32))
+    y_complex = complex_op(Tensor(y_complex.real, dtype=ms.float32), Tensor(y_complex.imag, dtype=ms.float32))
+    output = ops.pow(x_complex, y_complex)
+    assert np.allclose(output.asnumpy(), np_out)

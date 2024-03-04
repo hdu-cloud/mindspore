@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,12 +18,14 @@
 #include <vector>
 #include <memory>
 
+#include "ops/sequence_ops.h"
+#include "ops/nn_ops.h"
 #include "plugin/device/ascend/optimizer/ir_fission/bn_split.h"
 #include "include/common/utils/utils.h"
 #include "utils/ms_context.h"
-#include "backend/common/optimizer/helper.h"
-#include "runtime/device/kernel_info.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/kernel_info.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "utils/trace_base.h"
 
@@ -45,8 +47,7 @@ void BnGradSplit::CreateOutputsOfUpdateGrad(const FuncGraphPtr &graph, const CNo
 
   auto types = {common::AnfAlgo::GetOutputInferDataType(bn_grad_node, 1),
                 common::AnfAlgo::GetOutputInferDataType(bn_grad_node, 2)};
-  auto shapes = {common::AnfAlgo::GetOutputDetailShape(bn_grad_node, 1),
-                 common::AnfAlgo::GetOutputDetailShape(bn_grad_node, 2)};
+  auto shapes = {AnfAlgo::GetOutputDetailShape(bn_grad_node, 1), AnfAlgo::GetOutputDetailShape(bn_grad_node, 2)};
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, bn_update_grad.get());
   common::AnfAlgo::CopyNodeAttr(kAttrEpsilon, bn_grad_node, bn_update_grad);
   if (common::AnfAlgo::HasNodeAttr(kAttrFormat, bn_grad_node)) {
@@ -68,8 +69,9 @@ void BnGradSplit::CreateOutputsOfReduceGrad(const FuncGraphPtr &graph, const CNo
   auto bn_grad_inputs = bn_grad_node->inputs();
   CheckCNodeInputSize(bn_grad_node, kBNGradInputTensorNum);
   if (bn_update_grad_outputs.size() != kBNTrainingUpdateGradOutputNum) {
-    MS_LOG(EXCEPTION) << "Outputs of bn_update_grad has wrong size, should be " << kBNTrainingUpdateGradOutputNum
-                      << ", but got " << bn_update_grad_outputs.size() << trace::DumpSourceLines(bn_grad_node);
+    MS_LOG(INTERNAL_EXCEPTION) << "Outputs of bn_update_grad has wrong size, should be "
+                               << kBNTrainingUpdateGradOutputNum << ", but got " << bn_update_grad_outputs.size()
+                               << trace::DumpSourceLines(bn_grad_node);
   }
   std::vector<AnfNodePtr> bn_reduce_grad_inputs = {
     NewValueNode(std::make_shared<Primitive>(kBNTrainingReduceGradOpName)),
@@ -86,7 +88,7 @@ void BnGradSplit::CreateOutputsOfReduceGrad(const FuncGraphPtr &graph, const CNo
   bn_reduce_grad->set_scope(bn_grad_node->scope());
 
   auto types = {common::AnfAlgo::GetOutputInferDataType(bn_grad_node, 0)};
-  auto shapes = {common::AnfAlgo::GetOutputDetailShape(bn_grad_node, 0)};
+  auto shapes = {AnfAlgo::GetOutputDetailShape(bn_grad_node, 0)};
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, bn_reduce_grad.get());
   common::AnfAlgo::CopyNodeAttr(kAttrEpsilon, bn_grad_node, bn_reduce_grad);
   if (common::AnfAlgo::HasNodeAttr(kAttrFormat, bn_grad_node)) {
@@ -107,21 +109,40 @@ CNodePtr BnGradSplit::BNGradSplitForTBE(const FuncGraphPtr &func_graph, const CN
   std::vector<AnfNodePtr> bn_update_grad_outputs;
   CreateOutputsOfUpdateGrad(func_graph, cnode, &bn_update_grad_outputs, is_dynamic);
   if (bn_update_grad_outputs.size() != kBNTrainingUpdateGradOutputNum) {
-    MS_LOG(EXCEPTION) << "Outputs of bn_update_grad has wrong size, should be " << kBNTrainingUpdateGradOutputNum
-                      << ", but got " << bn_update_grad_outputs.size() << trace::DumpSourceLines(cnode);
+    MS_LOG(INTERNAL_EXCEPTION) << "Outputs of bn_update_grad has wrong size, should be "
+                               << kBNTrainingUpdateGradOutputNum << ", but got " << bn_update_grad_outputs.size()
+                               << trace::DumpSourceLines(cnode);
   }
 
   std::vector<AnfNodePtr> bn_reduce_grad_outputs;
   CreateOutputsOfReduceGrad(func_graph, cnode, bn_update_grad_outputs, &bn_reduce_grad_outputs, is_dynamic);
   if (bn_reduce_grad_outputs.size() != 1) {
-    MS_LOG(EXCEPTION) << "Outputs of bn_reduce_grad has wrong size, should be " << 1 << ", but got "
-                      << bn_reduce_grad_outputs.size() << trace::DumpSourceLines(cnode);
+    MS_LOG(INTERNAL_EXCEPTION) << "Outputs of bn_reduce_grad has wrong size, should be " << 1 << ", but got "
+                               << bn_reduce_grad_outputs.size() << trace::DumpSourceLines(cnode);
   }
 
   std::vector<AnfNodePtr> make_tuple_inputs = {NewValueNode(prim::kPrimMakeTuple), bn_reduce_grad_outputs[0],
                                                bn_update_grad_outputs[0], bn_update_grad_outputs[1]};
+  AbstractBasePtrList make_tuple_abstract = {bn_reduce_grad_outputs[0]->abstract(),
+                                             bn_update_grad_outputs[0]->abstract(),
+                                             bn_update_grad_outputs[1]->abstract()};
+  if (func_graph->has_flag(kAttrMutableKernel)) {
+    // The output number of the BatchNormGrad op is 5, so if it runs
+    // in a single op graph, the output number needs to be 5.
+    auto none1 = NewValueNode(std::make_shared<None>());
+    MS_EXCEPTION_IF_NULL(none1);
+    auto none2 = NewValueNode(std::make_shared<None>());
+    MS_EXCEPTION_IF_NULL(none2);
+    none1->set_abstract(std::make_shared<abstract::AbstractNone>());
+    none2->set_abstract(std::make_shared<abstract::AbstractNone>());
+    make_tuple_inputs.push_back(none1);
+    make_tuple_inputs.push_back(none2);
+    make_tuple_abstract.push_back(none1->abstract());
+    make_tuple_abstract.push_back(none2->abstract());
+  }
   auto make_tuple = func_graph->NewCNode(make_tuple_inputs);
   MS_EXCEPTION_IF_NULL(make_tuple);
+  make_tuple->set_abstract(std::make_shared<abstract::AbstractTuple>(make_tuple_abstract));
   return make_tuple;
 }
 
@@ -133,8 +154,9 @@ CNodePtr SyncBnGradSplit::SyncBNGradSplitForTBE(const FuncGraphPtr &func_graph, 
   bool is_dynamic = common::AnfAlgo::IsDynamicShape(cnode);
   CreateOutputsOfUpdateGrad(func_graph, cnode, &bn_update_grad_outputs, is_dynamic);
   if (bn_update_grad_outputs.size() != kBNTrainingUpdateGradOutputNum) {
-    MS_LOG(EXCEPTION) << "Outputs of bn_update_grad has wrong size, should be " << kBNTrainingUpdateGradOutputNum
-                      << ", but got " << bn_update_grad_outputs.size() << trace::DumpSourceLines(cnode);
+    MS_LOG(INTERNAL_EXCEPTION) << "Outputs of bn_update_grad has wrong size, should be "
+                               << kBNTrainingUpdateGradOutputNum << ", but got " << bn_update_grad_outputs.size()
+                               << trace::DumpSourceLines(cnode);
   }
 
   std::vector<AnfNodePtr> allreduce_mul_outputs;
@@ -146,15 +168,18 @@ CNodePtr SyncBnGradSplit::SyncBNGradSplitForTBE(const FuncGraphPtr &func_graph, 
   std::vector<AnfNodePtr> bn_reduce_grad_outputs;
   CreateOutputsOfReduceGrad(func_graph, cnode, allreduce_mul_outputs, &bn_reduce_grad_outputs, is_dynamic);
   if (bn_reduce_grad_outputs.size() != 1) {
-    MS_LOG(EXCEPTION) << "Outputs of bn_reduce_grad has wrong size, should be " << 1 << ", but got "
-                      << bn_reduce_grad_outputs.size() << trace::DumpSourceLines(cnode);
+    MS_LOG(INTERNAL_EXCEPTION) << "Outputs of bn_reduce_grad has wrong size, should be " << 1 << ", but got "
+                               << bn_reduce_grad_outputs.size() << trace::DumpSourceLines(cnode);
   }
 
-  std::vector<AnfNodePtr> make_tuple_inputs = {NewValueNode(prim::kPrimMakeTuple), bn_reduce_grad_outputs[0],
-                                               allreduce_mul_outputs[0], allreduce_mul_outputs[1]};
-  auto make_tuple = func_graph->NewCNode(make_tuple_inputs);
-  MS_EXCEPTION_IF_NULL(make_tuple);
-  return make_tuple;
+  return CreateMakeTupleNode(
+    func_graph, std::vector<AnfNodePtr>{bn_reduce_grad_outputs[0], allreduce_mul_outputs[0], allreduce_mul_outputs[1]});
+}
+
+std::vector<std::string> BnGradSplit::MustExistPrimitiveName() const {
+  std::vector<std::string> ret;
+  ret.emplace_back(prim::kPrimBatchNormGrad->name());
+  return ret;
 }
 
 const BaseRef BnGradSplit::DefinePattern() const {

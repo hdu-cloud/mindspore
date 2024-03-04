@@ -18,13 +18,13 @@ mindspore.ops.gelu
     当 `approximate` 为 `tanh` ，GELU的定义如下：
 
     .. math::
-        GELU(x_i) = 0.5 * x_i * (1 + tanh(\sqrt(2 / \pi) * (x_i + 0.044715 * x_i^3)))
+        GELU(x_i) = 0.5 * x_i * (1 + \tanh(\sqrt(2 / \pi) * (x_i + 0.044715 * x_i^3)))
 
     GELU相关图参见 `GELU <https://en.wikipedia.org/wiki/Activation_function#/media/File:Activation_gelu.png>`_ 。
 
     参数：
         - **input_x** (Tensor) - 用于计算GELU的Tensor。数据类型为float16、float32、float64。
-        - **approximate** (str) - gelu近似算法。有两种：'none' 和 'tanh'。默认值：none。
+        - **approximate** (str) - gelu近似算法。有两种：``'none'`` 和 ``'tanh'`` 。默认值： ``'none'`` 。
 
     返回：
         Tensor，具有与 `input_x` 相同的数据类型和shape。

@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -71,11 +71,12 @@ class TbeJsonCreator {
   std::string GetJsonName() { return json_name_; }
   size_t GetJsonHash() const { return json_hash_; }
   virtual bool GenInputsJson(const AnfNodePtr &anf_node, nlohmann::json *compute_json) { return false; }
+  virtual bool GenOutputsJson(const AnfNodePtr &anf_node, nlohmann::json *compute_json) { return false; }
 
  protected:
+  std::string GetPySrcPath() const;
   static std::string GetCoreType(const AnfNodePtr &node);
   bool GenComputeJson(const AnfNodePtr &anf_node, nlohmann::json *compute_json);
-  virtual bool GenOutputsJson(const AnfNodePtr &anf_node, nlohmann::json *compute_json) { return false; }
   void GenOutputDataDescJson(const AnfNodePtr &anf_node, nlohmann::json *compute_json) const;
   void GenComputeCommonJson(const AnfNodePtr &anf_node, nlohmann::json *compute_json) const;
   virtual void GenOtherJson(const AnfNodePtr &anf_node, nlohmann::json *compute_json) {}

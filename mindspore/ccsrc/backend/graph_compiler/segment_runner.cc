@@ -26,10 +26,14 @@
 #include <utility>
 #include <string>
 
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "utils/ms_context.h"
 #include "utils/hash_map.h"
 #include "utils/hash_set.h"
 #include "utils/log_adapter.h"
 #include "include/common/utils/utils.h"
+#include "include/common/utils/anfalgo.h"
 #include "ir/manager.h"
 #include "ir/func_graph_cloner.h"
 #include "frontend/operator/ops.h"
@@ -45,7 +49,7 @@ namespace {
 AnfNodePtrList GetOutput(const AnfNodePtrList &nodes, const NodeUsersMap &users,
                          const mindspore::HashSet<AnfNodePtr> &seen) {
   AnfNodePtrList output;
-  if (users.size() == 0) {
+  if (users.empty()) {
     return output;
   }
   for (auto &node : nodes) {
@@ -58,11 +62,9 @@ AnfNodePtrList GetOutput(const AnfNodePtrList &nodes, const NodeUsersMap &users,
       continue;
     }
     auto &node_users = iter->second;
-    const bool has_outer_user = std::any_of(std::begin(node_users), std::end(node_users),
-                                            [&seen](const std::pair<AnfNodePtr, int64_t> &u) -> bool {
-                                              const bool is_outer_user = (seen.find(u.first) == seen.end());
-                                              return is_outer_user;
-                                            });
+    const bool has_outer_user = std::any_of(
+      std::begin(node_users), std::end(node_users),
+      [&seen](const std::pair<AnfNodePtr, int64_t> &u) -> bool { return seen.find(u.first) == seen.end(); });
     if (has_outer_user) {
       output.emplace_back(node);
     }
@@ -105,7 +107,7 @@ std::tuple<FuncGraphPtr, AnfNodePtrList, AnfNodePtrList> TransformSegmentToAnfGr
   AnfNodePtrList inputs;
   AnfNodePtrToAnfNodePtrMap eqv;
   // Merge CNodes into a AnfGraph that represents a linear instruction segment
-  for (auto n : lst) {
+  for (const auto &n : lst) {
     MS_EXCEPTION_IF_NULL(n);
     if (!n->isa<CNode>()) {
       MS_LOG(EXCEPTION) << "Inst is not CNode";
@@ -114,10 +116,15 @@ std::tuple<FuncGraphPtr, AnfNodePtrList, AnfNodePtrList> TransformSegmentToAnfGr
     if (inps.empty()) {
       MS_LOG(EXCEPTION) << "Input is empty";
     }
-    if (!IsValueNode<Primitive>(inps[0]) &&
-        !(IsValueNode<FuncGraph>(inps[0]) &&
-          inps[0]->cast<ValueNodePtr>()->value()->cast<FuncGraphPtr>()->has_attr(FUNC_GRAPH_ATTR_GRAPH_KERNEL))) {
-      MS_LOG(EXCEPTION) << "Input[0] must be a Primitive ValueNode";
+    auto ms_context = MsContext::GetInstance();
+    MS_EXCEPTION_IF_NULL(ms_context);
+    static const bool is_enable_ge = (ms_context->backend_policy() == "ge");
+    bool is_graph_kernel =
+      (IsValueNode<FuncGraph>(inps[0]) &&
+       inps[0]->cast<ValueNodePtr>()->value()->cast<FuncGraphPtr>()->has_attr(FUNC_GRAPH_ATTR_GRAPH_KERNEL));
+    bool is_pynative_jit_call_node = common::AnfAlgo::HasNodeAttr(kAttrJitCallNode, n->cast<CNodePtr>());
+    if (!IsValueNode<Primitive>(inps[0]) && !is_graph_kernel && !is_pynative_jit_call_node && !is_enable_ge) {
+      MS_LOG(EXCEPTION) << "Input[0] must be a Primitive ValueNode, but get " << inps[0]->DebugString();
     }
     auto fn = inps[0];
     std::vector<AnfNodePtr> args{fn};

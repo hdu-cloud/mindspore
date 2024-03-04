@@ -19,11 +19,14 @@
 #include <vector>
 #include <string>
 
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -40,7 +43,7 @@ kernel::KernelBuildInfoPtr GenerateKernelBuildInfo(CNodePtr node) {
     inputs_type.push_back(common::AnfAlgo::GetPrevNodeOutputInferDataType(node, input_index));
     inputs_format.push_back(kOpFormat_DEFAULT);
   }
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(node);
   for (size_t output_index = 0; output_index < output_num; ++output_index) {
     outputs_type.push_back(common::AnfAlgo::GetOutputInferDataType(node, output_index));
     outputs_format.push_back(kOpFormat_DEFAULT);
@@ -91,7 +94,7 @@ const AnfNodePtr MatMulBiasAddFusion::Process(const FuncGraphPtr &graph, const A
   load_bias->set_abstract(bias_input->abstract());
 
   // Fused into a FusedMatMulBiasAdd operator.
-  auto prim = std::make_shared<Primitive>(kFusedMatMulBiasAddName);
+  auto prim = std::make_shared<Primitive>(kFusedMatMulBiasAddOpName);
   MS_EXCEPTION_IF_NULL(prim);
   auto prim_value = NewValueNode(prim);
   std::vector<AnfNodePtr> inputs = {prim_value, x_input, load_w, load_bias};
@@ -100,7 +103,7 @@ const AnfNodePtr MatMulBiasAddFusion::Process(const FuncGraphPtr &graph, const A
 
   // Copy Abstract and KernelBuildInfo.
   auto types = {common::AnfAlgo::GetOutputInferDataType(node, 0)};
-  auto shapes = {common::AnfAlgo::GetOutputDetailShape(node, 0)};
+  auto shapes = {AnfAlgo::GetOutputDetailShape(node, 0)};
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, fused_node.get());
   common::AnfAlgo::CopyNodeAttrs(matmul, fused_node);
   fused_node->set_scope(node->scope());

@@ -16,13 +16,29 @@
 
 #include "ops/roi_align.h"
 
+#include <memory>
 #include <set>
+#include <vector>
 
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
-#include "ops/op_utils.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,25 +49,25 @@ class ROIAlignInfer : public abstract::OpInferBase {
                           const std::vector<AbstractBasePtr> &input_args) const override {
     MS_EXCEPTION_IF_NULL(primitive);
     auto op_name = primitive->name();
-    constexpr size_t kInputNum = 2;
-    (void)CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputNum, op_name);
+    constexpr int64_t kInputNum = 2;
+    CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputNum, op_name);
 
     auto feature_shape =
       CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
     auto rois_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
-    int64_t out_c, out_n;
+    int64_t out_c;
+    int64_t out_n;
     if (IsDynamicRank(feature_shape)) {
       out_c = abstract::Shape::kShapeDimAny;
     } else {
-      constexpr size_t kFeatureShapeSize = 4;
-      (void)CheckAndConvertUtils::CheckInteger("rank of feature shape", SizeToLong(feature_shape.size()), kLessEqual,
-                                               kFeatureShapeSize, op_name);
+      (void)CheckAndConvertUtils::CheckInRange("rank of feature shape", SizeToLong(feature_shape.size()), kIncludeBoth,
+                                               {1, 4}, op_name);
       out_c = feature_shape[kInputIndex1];
     }
     if (IsDynamicRank(rois_shape)) {
       out_n = abstract::Shape::kShapeDimAny;
     } else {
-      constexpr size_t kRoisShapeSize = 2;
+      constexpr int64_t kRoisShapeSize = 2;
       (void)CheckAndConvertUtils::CheckInteger("rank of rois shape", SizeToLong(rois_shape.size()), kEqual,
                                                kRoisShapeSize, op_name);
       auto rois_second_dim = rois_shape[kInputIndex1];
@@ -71,17 +87,19 @@ class ROIAlignInfer : public abstract::OpInferBase {
     MS_EXCEPTION_IF_NULL(pooled_width_ptr);
     auto pooled_width = GetValue<int64_t>(pooled_width_ptr);
 
-    output_shape.emplace_back(out_n);
-    output_shape.emplace_back(out_c);
-    output_shape.emplace_back(pooled_height);
-    output_shape.emplace_back(pooled_width);
+    (void)output_shape.emplace_back(out_n);
+    (void)output_shape.emplace_back(out_c);
+    (void)output_shape.emplace_back(pooled_height);
+    (void)output_shape.emplace_back(pooled_width);
 
     return std::make_shared<abstract::Shape>(output_shape);
   }
 
   TypePtr InferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) const override {
     MS_EXCEPTION_IF_NULL(prim);
+    constexpr int64_t kInputNum = 2;
     auto op_name = prim->name();
+    CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputNum, op_name);
     auto feature_type = input_args[kInputIndex0]->BuildType();
     MS_EXCEPTION_IF_NULL(feature_type);
     auto rois_type = input_args[kInputIndex1]->BuildType();
@@ -103,7 +121,7 @@ int64_t ROIAlign::get_pooled_height() const {
 }
 
 void ROIAlign::set_pooled_width(const int64_t pooled_width) {
-  (void)this->AddAttr(kPooledHeight, api::MakeValue(pooled_width));
+  (void)this->AddAttr(kPooledWidth, api::MakeValue(pooled_width));
 }
 
 int64_t ROIAlign::get_pooled_width() const {

@@ -16,12 +16,12 @@
 
 #ifndef MINDSPORE_CORE_OPS_AFFINE_GRID_H_
 #define MINDSPORE_CORE_OPS_AFFINE_GRID_H_
-#include <vector>
 #include <memory>
-#include "ops/primitive_c.h"
-#include "ops/base_operator.h"
-#include "mindapi/base/types.h"
+#include <vector>
 #include "abstract/abstract_value.h"
+#include "mindapi/base/types.h"
+#include "ops/base_operator.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
 
 namespace mindspore {
@@ -43,8 +43,8 @@ class MIND_API AffineGrid : public BaseOperator {
   /// \return align_corners.
   bool get_align_corners() const;
 };
-abstract::AbstractBasePtr AffineGridInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                          const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr AffineGridInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                   const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimAffineGridPtr = std::shared_ptr<AffineGrid>;
 }  // namespace ops
 }  // namespace mindspore

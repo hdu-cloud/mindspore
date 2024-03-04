@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@
 
 namespace mindspore {
 namespace dataset {
-
 const std::vector<uint8_t> RandomPosterizeOp::kBitRange = {4, 8};
 
 RandomPosterizeOp::RandomPosterizeOp(const std::vector<uint8_t> &bit_range)
@@ -32,7 +31,7 @@ RandomPosterizeOp::RandomPosterizeOp(const std::vector<uint8_t> &bit_range)
 }
 
 Status RandomPosterizeOp::Compute(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output) {
-  CHECK_FAIL_RETURN_UNEXPECTED(input != nullptr, "RandomPosterizeOp: parameter input is nullptr");
+  IO_CHECK(input, output);
   bit_ = (bit_range_[0] == bit_range_[1])
            ? bit_range_[0]
            : static_cast<uint8_t>(std::uniform_int_distribution<uint32_t>(bit_range_[0], bit_range_[1])(rnd_));

@@ -44,16 +44,17 @@ class ScatterNdGpuKernelMod : public NativeGpuKernelMod, public MatchKernelHelpe
 
   std::vector<KernelAttr> GetOpSupport() override { return OpSupport(); }
 
+  std::vector<size_t> GetLaunchIgnoredInputAddressIdx() const override { return {kIndex2}; }
+
   int Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
              const std::vector<KernelTensorPtr> &outputs,
              const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost) override;
 
  private:
   template <typename T, typename S>
-  bool LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
+  bool LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
                     const std::vector<AddressPtr> &outputs);
 
-  void FreeResource();
   void CalSize(const std::vector<KernelTensorPtr> &inputs, const std::vector<KernelTensorPtr> &outputs);
 
   void *stream_ptr_{nullptr};
@@ -65,11 +66,6 @@ class ScatterNdGpuKernelMod : public NativeGpuKernelMod, public MatchKernelHelpe
   size_t block_size_{1};
   size_t indices_dim_0_{0};
   size_t indices_dim_1_{0};
-
-  // memory in device
-  bool memcpy_flag_{false};
-  void *indices_stride_{nullptr};
-  void *work_shape_{nullptr};
 };
 }  // namespace kernel
 }  // namespace mindspore

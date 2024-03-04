@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,6 +38,32 @@ class MutableTensorImpl : public MSTensor::Impl {
   virtual void SetQuantParams(const std::vector<QuantParam> &quant_param) = 0;
   virtual void SetDeviceData(void *data) = 0;
   virtual void *GetDeviceData() = 0;
+  virtual std::string GetDevice() const = 0;
+  virtual int GetDeviceId() const = 0;
+  virtual void SetDeviceId(int device_id) = 0;
+  virtual void SetDevice(const std::string &device) = 0;
+  virtual int64_t ElementNum() const {
+    const auto &shape = Shape();
+    int64_t ele_num = 1;
+    for (auto &dim : shape) {
+      if (dim < 0) {
+        return 0;
+      }
+#if defined(ENABLE_CLOUD_FUSION_INFERENCE) || defined(ENABLE_CLOUD_INFERENCE)
+      if (INT64_MAX / ele_num < dim) {
+        MS_LOG(ERROR) << "The shape " << shape << " is invalid";
+        return 0;
+      }
+#else
+      if (INT32_MAX / ele_num < dim) {
+        MS_LOG(ERROR) << "The shape " << shape << " is invalid";
+        return 0;
+      }
+#endif
+      ele_num *= dim;
+    }
+    return ele_num;
+  }
 };
 using MutableTensorImplPtr = std::shared_ptr<MutableTensorImpl>;
 }  // namespace mindspore

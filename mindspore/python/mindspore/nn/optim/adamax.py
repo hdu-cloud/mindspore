@@ -23,10 +23,9 @@ from mindspore.ops import composite as C
 from mindspore.ops import functional as F
 from mindspore.common.parameter import Parameter
 from mindspore.common.tensor import Tensor
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.nn.optim.optimizer import Optimizer
 from mindspore.nn.optim.optimizer import opt_init_args_register
-from mindspore._checkparam import Rel
 
 _ada_max_opt = C.MultitypeFuncGraph("ada_max_opt")
 
@@ -44,8 +43,8 @@ def _check_param_value(beta1, beta2, eps, prim_name):
     validator.check_value_type("beta1", beta1, [float], prim_name)
     validator.check_value_type("beta2", beta2, [float], prim_name)
     validator.check_value_type("eps", eps, [float], prim_name)
-    validator.check_float_range(beta1, 0.0, 1.0, Rel.INC_NEITHER, "beta1", prim_name)
-    validator.check_float_range(beta2, 0.0, 1.0, Rel.INC_NEITHER, "beta2", prim_name)
+    validator.check_float_range(beta1, 0.0, 1.0, validator.INC_NEITHER, "beta1", prim_name)
+    validator.check_float_range(beta2, 0.0, 1.0, validator.INC_NEITHER, "beta2", prim_name)
     validator.check_positive_float(eps, "eps", prim_name)
 
 
@@ -67,7 +66,7 @@ class AdaMax(Optimizer):
     :math:`m` represents the 1st moment vector, :math:`v` represents the 2nd moment vector,
     :math:`g` represents `gradients`, :math:`\beta_1, \beta_2` represent `beta1` and `beta2`,
     :math:`t` represents the current step, :math:`beta_1^t` represent `beta1_power`,
-    :math:`\l` represents `learning_rate`, :math:`w` represents `params`,
+    :math:`l` represents `learning_rate`, :math:`w` represents `params`,
     :math:`\epsilon` represents `eps`.
 
     Note:
@@ -103,7 +102,7 @@ class AdaMax(Optimizer):
               If `order_params` in the keys, other keys will be ignored and the element of 'order_params' must be in
               one group of `params`.
 
-        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: 0.001.
+        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: ``0.001`` .
 
             - float: The fixed learning rate value. Must be equal to or greater than 0.
 
@@ -118,13 +117,13 @@ class AdaMax(Optimizer):
               LearningRateSchedule with step as the input to get the learning rate of current step.
 
         beta1 (float): The exponential decay rate for the 1st moment estimations. Should be in range (0.0, 1.0).
-                       Default: 0.9.
+                       Default: ``0.9`` .
         beta2 (float): The exponential decay rate for the 2nd moment estimations. Should be in range (0.0, 1.0).
-                       Default: 0.999.
-        eps (float): Term added to the denominator to improve numerical stability. Should be greater than 0. Default:
-                     1e-8.
+                       Default: ``0.999`` .
+        eps (float): Term added to the denominator to improve numerical stability. Should be greater than 0.
+                     Default: ``1e-08`` .
 
-        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: 0.0.
+        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: ``0.0`` .
 
             - float: The fixed weight decay value. Must be equal to or greater than 0.
 
@@ -135,9 +134,9 @@ class AdaMax(Optimizer):
 
         loss_scale (float): A floating point value for the loss scale. Should be greater than 0. In general, use the
             default value. Only when `FixedLossScaleManager` is used for training and the `drop_overflow_update` in
-            `FixedLossScaleManager` is set to False, then this value needs to be the same as the `loss_scale` in
+            `FixedLossScaleManager` is set to ``False`` , then this value needs to be the same as the `loss_scale` in
             `FixedLossScaleManager`. Refer to class :class:`mindspore.amp.FixedLossScaleManager` for more details.
-            Default: 1.0.
+            Default: ``1.0`` .
 
     Inputs:
         - **gradients** (tuple[Tensor]) - The gradients of `params`, the shape is the same as `params`.
@@ -161,7 +160,9 @@ class AdaMax(Optimizer):
         >>> import mindspore as ms
         >>> from mindspore import nn
         >>>
-        >>> net = Net()
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> #1) All parameters use the same learning rate and weight decay
         >>> optim = nn.AdaMax(params=net.trainable_params())
         >>>
@@ -203,6 +204,7 @@ class AdaMax(Optimizer):
         gradients = self.gradients_centralization(gradients)
         gradients = self.scale_grad(gradients)
         lr = self.get_lr()
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
 
         self.beta1_power *= self.beta1
 

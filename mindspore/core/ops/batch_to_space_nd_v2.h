@@ -18,11 +18,11 @@
 #define MINDSPORE_CORE_OPS_BATCH_TO_SPACE_ND_V2_H_
 
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,8 +37,9 @@ class MIND_API BatchToSpaceNDV2 : public BaseOperator {
   /// \brief Init. Refer to the parameters of Python API @ref mindspore.ops.BatchToSpaceNDV2 for the inputs.
   void Init() const {}
 };
-abstract::AbstractBasePtr BatchToSpaceNDV2Infer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr BatchToSpaceNDV2Infer(const abstract::AnalysisEnginePtr &,
+                                                         const PrimitivePtr &primitive,
+                                                         const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimBatchToSpaceNDV2Ptr = std::shared_ptr<BatchToSpaceNDV2>;
 }  // namespace ops
 }  // namespace mindspore

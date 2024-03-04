@@ -310,6 +310,7 @@ class BatchMatMul(Cell):
 
 class BatchMatMulTestNet(Cell):
     def __init__(self, inputs=None):
+        super().__init__()
         self.input_x1 = inputs[0]
         self.input_x2 = inputs[1]
 
@@ -321,7 +322,7 @@ class BatchMatMulTestNet(Cell):
         return out
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_batchmatmul_type_float16():
@@ -346,7 +347,7 @@ def test_batchmatmul_type_float16():
     assert str(float16_out.dtype) == "Float16"
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_batchmatmul_type_float32():
@@ -371,7 +372,7 @@ def test_batchmatmul_type_float32():
     assert str(float32_out.dtype) == "Float32"
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_batchmatmul_type_float64():
@@ -396,7 +397,7 @@ def test_batchmatmul_type_float64():
     assert str(float64_out.dtype) == "Float64"
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_batchmatmul_type_int8():
@@ -422,7 +423,7 @@ def test_batchmatmul_type_int8():
         assert str(out.dtype) == "Int32"
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_batchmatmul_type_complex64():
@@ -466,7 +467,7 @@ def test_batchmatmul_type_complex64():
         assert str(out.dtype) == "Complex64"
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_batchmatmul_type_complex128():

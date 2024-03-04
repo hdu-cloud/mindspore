@@ -25,22 +25,20 @@ context.set_context(mode=context.GRAPH_MODE, device_target="Ascend")
 
 
 class Im2ColNet(nn.Cell):
-    def __init__(self, ksizes, strides=1, dilations=1, padding_mode="CALCULATED", pads=0):
+    def __init__(self, ksizes, strides=1, dilations=1, pads=0):
         super(Im2ColNet, self).__init__()
         self.ksizes = ksizes
         self.strides = strides
         self.dilations = dilations
-        self.padding_mode = padding_mode
         self.pads = pads
-        self.im2col = P.Im2Col(ksizes=self.ksizes, strides=self.strides, dilations=self.dilations,
-                               padding_mode=self.padding_mode, pads=self.pads)
+        self.im2col = P.Im2Col(ksizes=self.ksizes, strides=self.strides, dilations=self.dilations, pads=self.pads)
 
     def construct(self, x):
         output = self.im2col(x)
         return output
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -54,4 +52,4 @@ def test_im2col():
     x = Tensor(input_data=np.random.rand(4, 4, 32, 32), dtype=mstype.float16)
     im2col = Im2ColNet(ksizes)
     outputs = im2col(Tensor(x))
-    assert outputs.shape == (4, 36, 30, 30)
+    assert outputs.shape == (4, 4, 9, 900)

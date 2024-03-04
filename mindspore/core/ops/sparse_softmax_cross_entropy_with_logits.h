@@ -19,8 +19,8 @@
 #include <memory>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -42,7 +42,7 @@ class MIND_API SparseSoftmaxCrossEntropyWithLogits : public BaseOperator {
   /// \return is_grad.
   bool get_is_grad() const;
 };
-abstract::AbstractBasePtr SparseSoftmaxCrossEntropyWithLogitsInfer(
+MIND_API abstract::AbstractBasePtr SparseSoftmaxCrossEntropyWithLogitsInfer(
   const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
   const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops

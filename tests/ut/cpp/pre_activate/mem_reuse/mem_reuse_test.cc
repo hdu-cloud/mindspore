@@ -16,25 +16,31 @@
 #include <memory>
 #include <vector>
 #include <string>
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "backend/common/session/session_basic.h"
 #include "plugin/device/ascend/hal/hardware/ascend_session.h"
-#include "common/mem_reuse/kernel_refcount.h"
-#include "runtime/device/kernel_info.h"
+#include "backend/common/mem_reuse/kernel_refcount.h"
+#include "include/backend/kernel_info.h"
 #include "plugin/device/ascend/kernel/tbe/tbe_kernel_mod.h"
 #include "frontend/operator/ops.h"
 #include "utils/log_adapter.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "utils/ms_utils.h"
-#include "pipeline/jit/resource.h"
-#include "common/mem_reuse/mem_reuse.h"
+#include "pipeline/jit/ps/resource.h"
+#include "backend/common/mem_reuse/mem_reuse.h"
 
 #include "common/common_test.h"
 #include "common/py_func_graph_fetcher.h"
 
 namespace mindspore {
 namespace memreuse {
+namespace {
+constexpr auto kPatternElemWise = "ElemWise";
+constexpr auto kPatternConvolution = "Convolution";
+}  // namespace
+
 using session::KernelGraph;
 using KernelBuildInfoBuilder = kernel::KernelBuildInfo::KernelBuildInfoBuilder;
 class TestMemReuseWithPy : public UT::Common {
@@ -97,7 +103,7 @@ static KernelGraphPtr CreateKernelGraph() {
   builder.SetOutputsFormat({kOpFormat_NCHW});
   builder.SetOutputsDeviceType({kFloat32->type_id()});
   builder.SetKernelType(KernelType::TBE_KERNEL);
-  builder.SetFusionType(mindspore::kernel::CONV);
+  builder.SetFusionType(kPatternConvolution);
   builder.SetProcessor(kernel::Processor::AICORE);
   AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), kernelptr_first.get());
 
@@ -127,7 +133,7 @@ static KernelGraphPtr CreateKernelGraph() {
   relu_builder.SetInputsDeviceType({kFloat32->type_id()});
   relu_builder.SetOutputsDeviceType({kFloat32->type_id()});
   relu_builder.SetKernelType(KernelType::TBE_KERNEL);
-  relu_builder.SetFusionType(kernel::FusionType::ELEMWISE);
+  relu_builder.SetFusionType(kPatternElemWise);
   relu_builder.SetProcessor(kernel::Processor::AICORE);
   AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), kernelptr_floor.get());
   next_cnode_ptr = kernelptr_floor;

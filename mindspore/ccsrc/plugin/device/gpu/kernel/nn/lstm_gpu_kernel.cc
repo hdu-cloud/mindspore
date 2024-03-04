@@ -56,6 +56,11 @@ bool LstmGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vec
   num_layers_ = kernel_ptr->get_num_layers();
   has_bias_ = kernel_ptr->get_has_bias();
   dropout_ = kernel_ptr->get_dropout();
+  auto proj_size = kernel_ptr->get_proj_size();
+  if (proj_size != 0) {
+    MS_LOG(EXCEPTION) << "For '" << kernel_name_
+                      << "', 'proj_size' could only be 0 in GPU, but got proj_size=" << proj_size;
+  }
   return true;
 }
 
@@ -161,6 +166,9 @@ bool LstmGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const
   auto reserved_addr = GetDeviceAddress<T>(outputs, 3);
   auto states_addr = GetDeviceAddress<T>(outputs, 4);
   void *workspace_addr = GetPossiblyNullDeviceAddress<T>(workspace, 0);
+
+  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(stream_ptr)),
+                                     "stream synchronize failed.");
 
   if (!states_init_) {
     CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(

@@ -18,16 +18,22 @@
 
 #include "pybind11/pybind11.h"
 
+#include "ops/structure_ops.h"
+#include "ops/sequence_ops.h"
+#include "ops/conv_pool_ops.h"
+#include "ops/nn_optimizer_ops.h"
+#include "ops/nn_ops.h"
+#include "ops/arithmetic_ops.h"
+#include "ops/framework_ops.h"
 #include "common/common_test.h"
 #include "common/py_func_graph_fetcher.h"
 #include "ir/manager.h"
-#include "pipeline/jit/static_analysis/prim.h"
+#include "pipeline/jit/ps/static_analysis/prim.h"
 #include "pipeline/static_analysis/helper.h"
 #include "frontend/operator/ops.h"
 #include "include/common/debug/draw.h"
 #include "ir/tensor.h"
 #include "utils/symbolic.h"
-#include "mindspore/core/ops/core_ops.h"
 
 namespace mindspore {
 namespace abstract {
@@ -46,17 +52,17 @@ class UTPrimUtils {
   static std::shared_ptr<AbstractType> TypeToAbstract(TypePtr t) { return std::make_shared<AbstractType>(t); }
 
   static AbstractTensorPtr ArrayFloat64Of(std::initializer_list<int64_t> shp) {
-    auto ele = std::make_shared<AbstractScalar>(kAnyValue, kFloat64);
+    auto ele = std::make_shared<AbstractScalar>(kValueAny, kFloat64);
     return std::make_shared<AbstractTensor>(ele, std::make_shared<Shape>(shp));
   }
 
   static AbstractTensorPtr ArrayFloat32Of(std::initializer_list<int64_t> shp) {
-    auto ele = std::make_shared<AbstractScalar>(kAnyValue, kFloat32);
+    auto ele = std::make_shared<AbstractScalar>(kValueAny, kFloat32);
     return std::make_shared<AbstractTensor>(ele, std::make_shared<Shape>(shp));
   }
 
   static AbstractTensorPtr ArrayInt32Of(std::initializer_list<int64_t> shp) {
-    auto ele = std::make_shared<AbstractScalar>(kAnyValue, kInt64);
+    auto ele = std::make_shared<AbstractScalar>(kValueAny, kInt64);
     return std::make_shared<AbstractTensor>(ele, std::make_shared<Shape>(shp));
   }
 
@@ -152,7 +158,7 @@ TEST_F(TestPrim, test_list_reduce) {
   AbstractBasePtr abstract_v1 = FromValue(v1, false);
   AbstractBasePtr abstract_v2 = FromValue(v1, false);
   auto abstract_list = std::make_shared<AbstractList>(AbstractBasePtrList({abstract_v1, abstract_v2}));
-  auto prim_scalar_add = std::make_shared<Primitive>(prim::kScalarAdd);
+  auto prim_scalar_add = std::make_shared<Primitive>(kScalarAddOpName);
   AbstractBasePtr abstract_func = ToAbstract(prim_scalar_add);
 
   args_spec_list.push_back(abstract_func);
@@ -341,7 +347,7 @@ TEST_F(TestPrim, test_environ_set) {
   args_spec_list = {abstract_environ, embed_x, abstract_y};
 
   AbstractBasePtr res = engine_->Run(func_graph, args_spec_list).eval_result->abstract();
-  AbstractBasePtr exp = std::make_shared<AbstractScalar>(kAnyValue, std::make_shared<EnvType>());
+  AbstractBasePtr exp = std::make_shared<AbstractScalar>(kValueAny, std::make_shared<EnvType>());
   ASSERT_TRUE(*res == *exp);
 }
 
@@ -361,7 +367,7 @@ TEST_F(TestPrim, test_environ_get) {
   args_spec_list = {abstract_environ, embed_x, abstract_y};
 
   AbstractBasePtr res = engine_->Run(graph_environ_set, args_spec_list).eval_result->abstract();
-  AbstractBasePtr exp = std::make_shared<AbstractScalar>(kAnyValue, std::make_shared<EnvType>());
+  AbstractBasePtr exp = std::make_shared<AbstractScalar>(kValueAny, std::make_shared<EnvType>());
   ASSERT_TRUE(*res == *exp);
 
   FuncGraphPtr graph_environ_get = MakeFuncGraph(prim::kPrimEnvironGet, 3);
@@ -390,7 +396,7 @@ TEST_F(TestPrim, test_environ_add) {
   args_spec_list = {abstract_environ, embed_x, abstract_y};
 
   AbstractBasePtr abstract_e1 = engine_->Run(graph_environ_set, args_spec_list).eval_result->abstract();
-  AbstractBasePtr exp = std::make_shared<AbstractScalar>(kAnyValue, std::make_shared<EnvType>());
+  AbstractBasePtr exp = std::make_shared<AbstractScalar>(kValueAny, std::make_shared<EnvType>());
   ASSERT_TRUE(*abstract_e1 == *exp);
 
   AbstractBasePtr abstract_z = FromValue(static_cast<int64_t>(3), false);
@@ -557,7 +563,7 @@ TEST_F(TestPrim, test_tensor_to_scalar_prim) {
   AbstractBasePtrList args_spec_list = {logits, labels};
   AbstractBasePtr ret = engine_->Run(func_graph, args_spec_list).eval_result->abstract();
   auto res = dyn_cast<AbstractScalar>(ret);
-  AbstractScalarPtr expected = std::make_shared<AbstractScalar>(kAnyValue, kFloat64);
+  AbstractScalarPtr expected = std::make_shared<AbstractScalar>(kValueAny, kFloat64);
   expected->set_type(UTPrimUtils::kF64);
   MS_LOG(INFO) << "result: " << res->ToString();
   MS_LOG(INFO) << "expected: " << expected->ToString();
@@ -614,7 +620,7 @@ TEST_F(TestPrim, test_hastype) {
 TEST_F(TestPrim, test_array_len) {
   AbstractBasePtrList args_spec_list;
   auto v1 = UTPrimUtils::ArrayFloat64Of({3, 4, 0, 2});
-  auto expected = std::make_shared<AbstractScalar>(kAnyValue, kInt32);
+  auto expected = std::make_shared<AbstractScalar>(kValueAny, kInt32);
 
   args_spec_list.push_back(v1);
 
@@ -885,7 +891,7 @@ TEST_F(TestPrim, test_DropoutGenMask) {
   args_spec_list.push_back(abstract_keep_prob);
 
   // should return a tensor with on dimension of 79 elements
-  AbstractBasePtr expected = std::make_shared<AbstractTensor>(std::make_shared<AbstractScalar>(kAnyValue, kUInt8),
+  AbstractBasePtr expected = std::make_shared<AbstractTensor>(std::make_shared<AbstractScalar>(kValueAny, kUInt8),
                                                               std::make_shared<Shape>(std::vector<int64_t>{79}));
 
   AbstractBasePtr res = engine_->Run(func_graph, args_spec_list).eval_result->abstract();

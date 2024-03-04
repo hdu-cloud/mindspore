@@ -16,7 +16,9 @@
 
 #include "plugin/device/ascend/optimizer/enhancer/split_inputs_for_reduce_scatter.h"
 #include <algorithm>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/other_ops.h"
+#include "ops/array_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
@@ -32,7 +34,7 @@ std::vector<AnfNodePtr> SplitInputsForReduceScatter::InsertSplitForInput(const F
     MS_LOG(EXCEPTION) << "The rank size can not be zero.";
   }
   for (size_t i = 0; i < inputs_size; i++) {
-    std::vector<AnfNodePtr> split_inputs{NewValueNode(std::make_shared<Primitive>(prim::kPrimSplitV->name()))};
+    std::vector<AnfNodePtr> split_inputs{NewValueNode(std::make_shared<Primitive>(prim::kPrimSplitVD->name()))};
     split_inputs.push_back(common::AnfAlgo::GetInputNode(node, i));
     auto split = NewCNode(split_inputs, func_graph);
     MS_EXCEPTION_IF_NULL(split);
@@ -41,20 +43,8 @@ std::vector<AnfNodePtr> SplitInputsForReduceScatter::InsertSplitForInput(const F
     std::vector<int> size_splits;
     auto output_node_shape = common::AnfAlgo::GetPrevNodeOutputInferShape(node, i);
     output_node_shape[0] /= rank_size;
-    if (IsDynamic(output_node_shape)) {
-      auto min_shape = common::AnfAlgo::GetInputMinShape(node, i);
-      auto max_shape = common::AnfAlgo::GetInputMaxShape(node, i);
-      if (!min_shape.empty() && !max_shape.empty()) {
-        min_shape[0] /= rank_size;
-        max_shape[0] /= rank_size;
-      }
-      std::vector<BaseShapePtr> shapes(rank_size_t,
-                                       std::make_shared<abstract::Shape>(output_node_shape, min_shape, max_shape));
-      common::AnfAlgo::SetOutputTypeAndDetailShape(dtypes, shapes, split.get());
-    } else {
-      std::vector<ShapeVector> shapes(rank_size_t, output_node_shape);
-      common::AnfAlgo::SetOutputInferTypeAndShape(dtypes, shapes, split.get());
-    }
+    std::vector<ShapeVector> shapes(rank_size_t, output_node_shape);
+    common::AnfAlgo::SetOutputInferTypeAndShape(dtypes, shapes, split.get());
 
     for (size_t j = 0; j < rank_size_t; j++) {
       size_splits.push_back(output_node_shape[0]);
@@ -64,7 +54,7 @@ std::vector<AnfNodePtr> SplitInputsForReduceScatter::InsertSplitForInput(const F
     common::AnfAlgo::SetNodeAttr("size_splits", MakeValue(size_splits), split);
     kernel_select_->SelectKernel(split);
     std::vector<AnfNodePtr> new_outputs;
-    CreateMultipleOutputsOfAnfNode(func_graph, split, common::AnfAlgo::GetOutputTensorNum(split), &new_outputs);
+    CreateMultipleOutputsOfAnfNode(func_graph, split, AnfAlgo::GetOutputTensorNum(split), &new_outputs);
     for (size_t j = 0; j < new_outputs.size(); j++) {
       split_outputs.push_back(new_outputs[j]);
     }

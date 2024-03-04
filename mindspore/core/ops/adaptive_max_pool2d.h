@@ -17,11 +17,12 @@
 #ifndef MINDSPORE_CORE_OPS_ADAPTIVEMAXPOOL2D_H_
 #define MINDSPORE_CORE_OPS_ADAPTIVEMAXPOOL2D_H_
 
-#include <vector>
 #include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -38,11 +39,11 @@ class MIND_API AdaptiveMaxPool2D : public BaseOperator {
   MIND_API_BASE_MEMBER(AdaptiveMaxPool2D);
   AdaptiveMaxPool2D() : BaseOperator(kAdaptiveMaxPool2D) { InitIOName({"input_x"}, {"output"}); }
   std::vector<int64_t> output_size() const;
-  bool return_indices() const;
 };
 
-abstract::AbstractBasePtr AdaptiveMaxPool2DInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr AdaptiveMaxPool2DInfer(const abstract::AnalysisEnginePtr &,
+                                                          const PrimitivePtr &primitive,
+                                                          const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

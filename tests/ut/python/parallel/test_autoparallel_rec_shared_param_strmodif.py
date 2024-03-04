@@ -26,6 +26,7 @@ from mindspore.parallel import set_algo_parameters
 from mindspore.common.api import _cell_graph_executor
 from tests.dataset_mock import MindData
 
+
 class Dataset(MindData):
     def __init__(self, input_ids, length=3):
         super(Dataset, self).__init__(size=length)
@@ -60,7 +61,7 @@ class Net(nn.Cell):
         self.matmul = P.MatMul(transpose_b=True)
         self.cast = P.Cast()
         self.add = P.Add()
-        self.gather = P.GatherV2()
+        self.gather = P.Gather()
         self.dtype = compute_type
         self.width = width
 
@@ -101,4 +102,3 @@ def test_rec_shared_param_strmodif():
         if re.search("Gather", k) is not None:
             assert v == [[2, 1], [4, 1]]
     context.reset_auto_parallel_context()
-    

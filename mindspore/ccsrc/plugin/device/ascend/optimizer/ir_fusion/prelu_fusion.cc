@@ -14,22 +14,22 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/optimizer/ir_fusion/prelu_fusion.h"
-
 #include <memory>
 #include <vector>
 
-#include "backend/common/session/anf_runtime_algorithm.h"
-#include "include/common/utils/anfalgo.h"
-#include "ir/primitive.h"
+#include "include/backend/anf_runtime_algorithm.h"
+#include "include/backend/optimizer/helper.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "ir/primitive.h"
+#include "ops/math_ops.h"
+#include "ops/nn_optimizer_ops.h"
 
 namespace mindspore {
 namespace opt {
 const BaseRef PReluFusion::DefinePattern() const {
-  VectorRef x_pattern({prim::kPrimReLU, VectorRef({prim::kPrimNeg, x_})});
+  VectorRef x_pattern({prim::kPrimRelu, VectorRef({prim::kPrimNeg, x_})});
   VectorRef mul_pattern({prim::kPrimMul, VectorRef({prim::kPrimNeg, weight_}), x_pattern});
-  VectorRef pattern({prim::kPrimAdd, VectorRef({prim::kPrimReLU, x_}), mul_pattern});
+  VectorRef pattern({prim::kPrimAdd, VectorRef({prim::kPrimRelu, x_}), mul_pattern});
   return pattern;
 }
 
@@ -47,7 +47,7 @@ const AnfNodePtr PReluFusion::Process(const FuncGraphPtr &graph, const AnfNodePt
   MS_EXCEPTION_IF_NULL(x);
   MS_EXCEPTION_IF_NULL(weight);
 
-  auto prim = std::make_shared<Primitive>(kPReLUOpName);
+  auto prim = std::make_shared<Primitive>(kPReluOpName);
   MS_EXCEPTION_IF_NULL(prim);
   std::vector<AnfNodePtr> inputs = {NewValueNode(prim), x, weight};
   auto fusion_node = NewCNode(inputs, graph);

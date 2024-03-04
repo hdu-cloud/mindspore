@@ -21,8 +21,8 @@
 #include <set>
 #include <string>
 #include <vector>
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -43,8 +43,9 @@ class MIND_API InplaceUpdate : public BaseOperator {
   std::vector<int64_t> get_indices() const;
 };
 
-abstract::AbstractBasePtr InplaceUpdateInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                             const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr InplaceUpdateInfer(const abstract::AnalysisEnginePtr &,
+                                                      const PrimitivePtr &primitive,
+                                                      const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimInplaceUpdatePtr = std::shared_ptr<InplaceUpdate>;
 }  // namespace ops
 }  // namespace mindspore

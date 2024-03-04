@@ -21,7 +21,6 @@
 #include <map>
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 #include "plugin/device/cpu/kernel/mkldnn/mkl_cpu_kernel.h"
-#include "utils/ms_utils.h"
 #include "mindspore/core/ops/cumulative_logsumexp.h"
 namespace mindspore {
 namespace kernel {
@@ -85,7 +84,7 @@ bool CumulativeLogsumexpCpuKernelMod::Launch(const std::vector<kernel::AddressPt
 
 template <typename t>
 void CumulativeLogsumexpCpuKernelMod::CumulativeProcess(const t *input_data, t *output_data, const uint32_t outer,
-                                                        const uint32_t inner, const uint32_t depth) {
+                                                        const uint32_t inner, const uint32_t depth) const {
   for (size_t outer_index = 0; outer_index < outer; ++outer_index) {
     size_t outer_index_adj;
     if (reverse_) {
@@ -167,13 +166,13 @@ void CumulativeLogsumexpCpuKernelMod::LaunchKernel(const std::vector<AddressPtr>
       axis_[0] += x_rank;
     }
     uint32_t inner = 1;
-    uint32_t depth = shape_[IntToSize(axis_[0])];
+    uint32_t depth = static_cast<uint32_t>(shape_[IntToSize(axis_[0])]);
     uint32_t outer = 1;
     for (size_t i = 0; i < IntToSize(axis_[0]); i++) {
-      inner *= shape_[i];
+      inner *= static_cast<uint32_t>(shape_[i]);
     }
     for (size_t i = IntToSize(axis_[0]) + 1; i < shape_.size(); i++) {
-      outer *= shape_[i];
+      outer *= static_cast<uint32_t>(shape_[i]);
     }
     CumulativeProcess<T>(input_data, output_data, outer, inner, depth);
   };

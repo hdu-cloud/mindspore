@@ -14,6 +14,7 @@
 # ============================================================================
 
 """bprop primitives"""
+from mindspore.ops.operations.sparse_ops import RaggedTensorToSparse
 from mindspore.ops.operations.sparse_ops import CSRSparseMatrixToSparseTensor
 from mindspore.ops.operations.sparse_ops import SparseReorder
 from mindspore.ops.operations.sparse_ops import SparseTensorToCSRSparseMatrix
@@ -30,6 +31,9 @@ from mindspore.ops.operations.sparse_ops import SparseSlice
 from mindspore.ops.operations.sparse_ops import SparseDenseCwiseMul
 from mindspore.ops.operations.sparse_ops import SparseDenseCwiseDiv
 from mindspore.ops.operations.sparse_ops import SparseTensorDenseAdd
+from mindspore.ops.operations.sparse_ops import Sspaddmm
+from mindspore.ops.operations._inner_ops import IsSubClass
+import mindspore as ms
 from mindspore.ops.operations import _map_tensor_ops
 from mindspore.common import dtype as mstype
 from mindspore import Tensor
@@ -38,12 +42,11 @@ from mindspore.ops import functional as F
 from mindspore.ops import operations as P
 from mindspore.ops.composite.multitype_ops.zeros_like_impl import zeros_like
 from mindspore.ops.operations import _grad_ops as G
-from mindspore.ops._grad.grad_base import bprop_getters
-from mindspore.ops._utils.utils import is_shape_unknown
+from mindspore.ops._grad_experimental.grad_base import bprop_getters
 from mindspore import context
 
 # Unused parameters are placeholders.
-dyn_shape_op = P.TensorShape()
+is_sub_class = IsSubClass()
 
 
 @bprop_getters.register(SparseDenseCwiseMul)
@@ -129,7 +132,7 @@ def get_bprop_sparse_softmax(self):
         default_values = _create_tensor(0, values.dtype)
         out_dout = mul(out, dout)
         sp_product = sparse_to_dense(indices, shape, out_dout, default_values)
-        sum_reduced = -reduce_sum(sp_product, -1)
+        sum_reduced = -1 * reduce_sum(sp_product, -1)
         sp_sum = sparse_dense_cwise_add(indices, dout, shape, sum_reduced)
         grad_x = mul(sp_sum, out)
         return zeros_like(indices), grad_x, zeros_like(shape)
@@ -184,8 +187,6 @@ def get_bprop_sparse_segment_sqrt_n(self):
 
     def bprop(x, indices, segment_ids, out, dout):
         shape_x = shape(x)
-        if is_shape_unknown(shape_x):
-            shape_x = dyn_shape_op(x)
         output_dim0 = P.Cast()(shape_x[0], mstype.int32)
         indices = F.cast(indices, mstype.int32)
         segment_ids = F.cast(segment_ids, mstype.int32)
@@ -204,8 +205,6 @@ def get_bprop_sparse_segment_sqrt_n_with_num_segments(self):
 
     def bprop(x, indices, segment_ids, num_segments, out, dout):
         shape_x = shape(x)
-        if is_shape_unknown(shape_x):
-            shape_x = dyn_shape_op(x)
         output_dim0 = P.Cast()(shape_x[0], mstype.int32)
         indices = F.cast(indices, mstype.int32)
         segment_ids = F.cast(segment_ids, mstype.int32)
@@ -226,8 +225,6 @@ def get_bprop_sparse_segment_sum(self):
     def bprop_gpu(x, indices, segment_ids, out, dout):
         input_grad = G.SparseSegmentSumGrad()
         shape_x = shape(x)
-        if is_shape_unknown(shape_x):
-            shape_x = dyn_shape_op(x)
         output_dim0 = P.Cast()(shape_x[0], mstype.int32)
         indices = F.cast(indices, mstype.int32)
         segment_ids = F.cast(segment_ids, mstype.int32)
@@ -236,7 +233,7 @@ def get_bprop_sparse_segment_sum(self):
         return all_d
 
     def bprop(x, indices, segment_ids, out, dout):
-        shape_x = dyn_shape_op(x)
+        shape_x = shape(x)
         output_dim0 = P.Cast()(shape_x[0], mstype.int32)
         segment_ids = F.cast(segment_ids, mstype.int32)
         input0 = gather(dout, segment_ids, 0)
@@ -274,8 +271,6 @@ def get_bprop_sparse_segment_sum_with_num_segments(self):
     def bprop_gpu(x, indices, segment_ids, num_segments, out, dout):
         input_grad = G.SparseSegmentSumGrad()
         shape_x = shape(x)
-        if is_shape_unknown(shape_x):
-            shape_x = dyn_shape_op(x)
         output_dim0 = P.Cast()(shape_x[0], mstype.int32)
         indices = F.cast(indices, mstype.int32)
         segment_ids = F.cast(segment_ids, mstype.int32)
@@ -284,7 +279,7 @@ def get_bprop_sparse_segment_sum_with_num_segments(self):
         return all_d
 
     def bprop(x, indices, segment_ids, num_segments, out, dout):
-        shape_x = dyn_shape_op(x)
+        shape_x = shape(x)
         output_dim0 = P.Cast()(shape_x[0], mstype.int32)
         segment_ids = F.cast(segment_ids, mstype.int32)
         input0 = gather(dout, segment_ids, 0)
@@ -309,8 +304,7 @@ def get_bprop_sparse_segment_mean_with_num_segments(self):
 
     def bprop(x, indices, segment_ids, num_segments, out, dout):
         x_shp = shape(x)
-        if is_shape_unknown(x_shp):
-            x_shp = dyn_shape_op(x)
+        if F.is_sequence_value_unknown(x_shp):
             output_dim0 = F.cast(x_shp[0], mstype.int32)
         else:
             output_dim0 = F.scalar_to_tensor(x_shp[0], mstype.int32)
@@ -336,6 +330,43 @@ def get_bprop_sparse_slice(self):
     return bprop
 
 
+@bprop_getters.register(Sspaddmm)
+def get_bprop_sspaddmm(self):
+    """Grad definition for `Sspaddmm` operation."""
+    def bprop(x1_indices, x1_values, x1_shape, x2_indices, x2_values, x2_shape, x3_dense, alpha, beta, out, dout):
+        dx_all = (zeros_like(x1_indices), zeros_like(x1_values), zeros_like(x1_shape),
+                  zeros_like(x2_indices), zeros_like(x2_values), zeros_like(x2_shape),
+                  zeros_like(x3_dense), zeros_like(alpha), zeros_like(beta))
+        return dx_all
+
+    return bprop
+
+
+@bprop_getters.register(RaggedTensorToSparse)
+def get_bprop_ragged_tensor_to_sparse(self):
+    """Grad definition for `RaggedTensorToSparse` operation."""
+    shape = P.Shape()
+    reshape = P.Reshape()
+
+    def bprop(rt_nested_splits, rt_dense_values, out, dout):
+        ragged_values_shape = shape(rt_dense_values)
+        ragged_values_grad = reshape(dout[1], ragged_values_shape)
+
+        if is_sub_class(F.typeof(rt_nested_splits), ms.list_):
+            split = []
+            for i in enumerate(rt_nested_splits):
+                split.append(zeros_like(i))
+            all_d = (split, ragged_values_grad)
+            return all_d
+        split = ()
+        for i in enumerate(rt_nested_splits):
+            split = split + (zeros_like(i),)
+        all_d = (split, ragged_values_grad)
+        return all_d
+
+    return bprop
+
+
 @bprop_getters.register(SparseReorder)
 def get_bprop_sparse_reorder(self):
     """Grad definition for `SparseReorder` operation."""
@@ -346,7 +377,7 @@ def get_bprop_sparse_reorder(self):
     def bprop(indices, values, shape, out, dout):
         num_entries = F.shape(indices)[0]
         start = Tensor(0, dtype=mstype.int32)
-        limit = Tensor(num_entries, dtype=mstype.int32)
+        limit = P.Cast()(num_entries, mstype.int32)
         delta = Tensor(1, dtype=mstype.int32)
         entry_indices = range_op(start, limit, delta)
         output = sparse_reorder_op(indices, entry_indices, shape)

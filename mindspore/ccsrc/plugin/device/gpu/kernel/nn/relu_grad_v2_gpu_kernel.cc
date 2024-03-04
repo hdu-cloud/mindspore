@@ -15,7 +15,7 @@
  */
 
 #include "plugin/device/gpu/kernel/nn/relu_grad_v2_gpu_kernel.h"
-#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/relu_impl.cuh"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/relu_grad_v2_impl.cuh"
 
 namespace mindspore {
 namespace kernel {
@@ -59,7 +59,8 @@ bool ReluGradV2GpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
   MS_ERROR_IF_NULL_W_RET_VAL(mask, false);
   auto dx = GetDeviceAddress<T>(outputs, 0);
   MS_ERROR_IF_NULL_W_RET_VAL(dx, false);
-  ReluGradV2(element_num_, dy, mask, dx, reinterpret_cast<cudaStream_t>(stream_ptr));
+  auto status = ReluGradV2(element_num_, dy, mask, dx, reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -80,6 +81,12 @@ std::vector<std::pair<KernelAttr, ReluGradV2GpuKernelMod::ReluV2GradLaunchFunc>>
    &ReluGradV2GpuKernelMod::LaunchKernel<int8_t>},
   {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeUInt8),
    &ReluGradV2GpuKernelMod::LaunchKernel<uint8_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeUInt16).AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeUInt16),
+   &ReluGradV2GpuKernelMod::LaunchKernel<uint16_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeUInt32).AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeUInt32),
+   &ReluGradV2GpuKernelMod::LaunchKernel<uint32_t>},
+  {KernelAttr().AddInputAttr(kNumberTypeUInt64).AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeUInt64),
+   &ReluGradV2GpuKernelMod::LaunchKernel<uint64_t>},
 };
 
 std::vector<KernelAttr> ReluGradV2GpuKernelMod::GetOpSupport() {

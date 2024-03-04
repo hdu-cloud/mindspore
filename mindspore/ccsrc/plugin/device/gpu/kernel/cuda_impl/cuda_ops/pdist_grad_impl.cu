@@ -15,6 +15,7 @@
  */
 
 #include "pdist_grad_impl.cuh"
+#include <math.h>
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/util.cuh"
 
 template <typename T>
@@ -90,8 +91,7 @@ __global__ void PDist_Grad_Lt_Two(const size_t y_size, const T *y_grad, const T 
     T *buff2 = buffer + (jb * n + j) * m + init;
     for (; x_i < end; x_i += s, x_j += s, buff1 += s, buff2 += s) {
       const T diff = *x_i - *x_j;
-      T res = static_cast<T>(sign(diff) * pow(static_cast<double>(abs(diff)), static_cast<double>(p - 1)) * (grad_k) /
-                             pow(static_cast<double>(dist_k), static_cast<double>(p - 1)));
+      T res = (sign(diff) * pow(abs(diff), static_cast<T>(p - 1)) * (grad_k) / pow(dist_k, static_cast<T>(p - 1)));
       *buff1 = res;
       *buff2 = -res;
     }
@@ -160,8 +160,7 @@ __global__ void PDist_Grad_P(const size_t y_size, const T *y_grad, const T *x, c
     T *buff2 = buffer + (jb * n + j) * m + init;
     for (; x_i < end; x_i += s, x_j += s, buff1 += s, buff2 += s) {
       const T diff = (*x_i - *x_j);
-      T res = static_cast<T>(diff * pow(static_cast<double>(abs(diff)), static_cast<double>(p - 2)) * grad_k /
-                             pow(static_cast<double>(dist_k), static_cast<double>(p - 1)));
+      T res = diff * pow(abs(diff), static_cast<T>(p - 2)) * grad_k / pow(dist_k, static_cast<T>(p - 1));
       *buff1 = res;
       *buff2 = -res;
     }
@@ -215,12 +214,12 @@ __global__ void AddBuffer(T *x_grad, T *buffer, const int64_t n, const size_t si
 }
 
 template <typename T>
-void CalPDistGrad(const size_t x_size, const size_t y_size, const size_t grad_size, const T *y_grad, const T *x,
-                  const T *y, const int64_t n, const int64_t m, const float p, T *x_grad, T *buffer,
-                  const uint32_t &device_id, cudaStream_t cuda_stream) {
+cudaError_t CalPDistGrad(const size_t x_size, const size_t y_size, const size_t grad_size, const T *y_grad, const T *x,
+                         const T *y, const int64_t n, const int64_t m, const float p, T *x_grad, T *buffer,
+                         const uint32_t &device_id, cudaStream_t cuda_stream) {
   if (p == 0.0 || grad_size == 0 || x_size == 0) {
     InitOutput<<<CUDA_BLOCKS(device_id, x_size), CUDA_THREADS(device_id), 0, cuda_stream>>>(x_grad, x_size);
-    return;
+    return GetCudaStatus();
   }
 
   const int block_x = 8;
@@ -234,29 +233,31 @@ void CalPDistGrad(const size_t x_size, const size_t y_size, const size_t grad_si
   if (p == 1.0) {
     PDist_Grad_One<T><<<grid, block, 0, cuda_stream>>>(y_size, y_grad, x, y, buffer, n, m, p, n1, n2);
   } else if (p < 2.0) {
-    InitOutput<<<CUDA_BLOCKS(device_id, (n-1) * x_size), CUDA_THREADS(device_id), 0, cuda_stream>>>
-                                                                                (buffer, (n-1) * x_size);
+    InitOutput<<<CUDA_BLOCKS(device_id, (n - 1) * x_size), CUDA_THREADS(device_id), 0, cuda_stream>>>(buffer,
+                                                                                                      (n - 1) * x_size);
     PDist_Grad_Lt_Two<T><<<grid, block, 0, cuda_stream>>>(y_size, y_grad, x, y, buffer, n, m, p, n1, n2);
   } else if (p == 2.0) {
-    InitOutput<<<CUDA_BLOCKS(device_id, (n-1) * x_size), CUDA_THREADS(device_id), 0, cuda_stream>>>
-                                                                                (buffer, (n-1) * x_size);
+    InitOutput<<<CUDA_BLOCKS(device_id, (n - 1) * x_size), CUDA_THREADS(device_id), 0, cuda_stream>>>(buffer,
+                                                                                                      (n - 1) * x_size);
     PDist_Grad_Two<T><<<grid, block, 0, cuda_stream>>>(y_size, y_grad, x, y, buffer, n, m, p, n1, n2);
   } else if (std::isinf(p)) {
     PDist_Grad_Inf<T><<<grid, block, 0, cuda_stream>>>(y_size, y_grad, x, y, buffer, n, m, p, n1, n2);
   } else {
-    InitOutput<<<CUDA_BLOCKS(device_id, (n-1) * x_size), CUDA_THREADS(device_id), 0, cuda_stream>>>
-                                                                                (buffer, (n-1) * x_size);
+    InitOutput<<<CUDA_BLOCKS(device_id, (n - 1) * x_size), CUDA_THREADS(device_id), 0, cuda_stream>>>(buffer,
+                                                                                                      (n - 1) * x_size);
     PDist_Grad_P<T><<<grid, block, 0, cuda_stream>>>(y_size, y_grad, x, y, buffer, n, m, p, n1, n2);
   }
   AddBuffer<<<CUDA_BLOCKS(device_id, x_size), CUDA_THREADS(device_id), 0, cuda_stream>>>(x_grad, buffer, n, x_size);
+  return GetCudaStatus();
 }
 
-template CUDA_LIB_EXPORT void CalPDistGrad<float>(const size_t x_size, const size_t y_size, const size_t grad_size,
-                                                  const float *y_grad, const float *x, const float *y, const int64_t n,
-                                                  const int64_t m, const float p, float *x_grad, float *buffer,
-                                                  const uint32_t &device_id, cudaStream_t cuda_stream);
-template CUDA_LIB_EXPORT void CalPDistGrad<double>(const size_t x_size, const size_t y_size, const size_t grad_size,
-                                                   const double *y_grad, const double *x, const double *y,
-                                                   const int64_t n, const int64_t m, const float p,
-                                                   double *x_grad, double *buffer,
-                                                   const uint32_t &device_id, cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalPDistGrad<float>(const size_t x_size, const size_t y_size,
+                                                         const size_t grad_size, const float *y_grad, const float *x,
+                                                         const float *y, const int64_t n, const int64_t m,
+                                                         const float p, float *x_grad, float *buffer,
+                                                         const uint32_t &device_id, cudaStream_t cuda_stream);
+template CUDA_LIB_EXPORT cudaError_t CalPDistGrad<double>(const size_t x_size, const size_t y_size,
+                                                          const size_t grad_size, const double *y_grad, const double *x,
+                                                          const double *y, const int64_t n, const int64_t m,
+                                                          const float p, double *x_grad, double *buffer,
+                                                          const uint32_t &device_id, cudaStream_t cuda_stream);

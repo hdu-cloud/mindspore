@@ -17,13 +17,13 @@
 #include "abstract/param_validator.h"
 
 #include <algorithm>
-#include <set>
 #include <string>
 #include <sstream>
 #include <memory>
-#include "utils/symbolic.h"
-#include "abstract/utils.h"
-
+#include "abstract/dshape.h"
+#include "ir/dtype.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/scalar.h"
 namespace mindspore {
 namespace abstract {
 #define ABSTRACT_REPORT_NAME_DEC(abstract) constexpr char ReportNameTraits<Abstract##abstract>::name[];
@@ -103,11 +103,11 @@ TypePtr CheckTensorsDTypeSame(const AbstractTensorPtrList &tensor_list, const Ty
 TypePtr CheckScalarType(const AbstractScalarPtr &scalar, const TypePtrList &accepts,
                         const std::string &error_message_prefix) {
   if (scalar == nullptr) {
-    MS_LOG(EXCEPTION) << "Scalar nullptr";
+    MS_LOG(INTERNAL_EXCEPTION) << "Scalar nullptr";
   }
   auto type = scalar->BuildType();
   if (type == nullptr) {
-    MS_LOG(EXCEPTION) << "Scalar value nullptr";
+    MS_LOG(INTERNAL_EXCEPTION) << "Scalar value nullptr";
   }
 
   return CheckType(type, accepts, error_message_prefix);
@@ -128,8 +128,8 @@ void CheckShapeSame(const std::string &op, const AbstractTensorPtr &tensor_base,
   auto shape_base_vector = shape_base->shape();
   if (shape_vector.size() != shape_base_vector.size()) {
     MS_EXCEPTION(ValueError) << "For '" << op << "', the shape of two args should be same, but the first arg shape "
-                             << shape->ToString() << " are not consistent with second arg shape "
-                             << shape_base->ToString();
+                             << shape_base->ToString() << " are not consistent with second arg shape "
+                             << shape->ToString();
   }
 
   for (size_t i = 0; i < shape_vector.size(); i++) {
@@ -138,8 +138,8 @@ void CheckShapeSame(const std::string &op, const AbstractTensorPtr &tensor_base,
     }
     if (shape_vector[i] != shape_base_vector[i]) {
       MS_EXCEPTION(ValueError) << "For '" << op << "',  the shape of two args should be same, but the first arg shape "
-                               << shape->ToString() << " are not consistent with second arg shape "
-                               << shape_base->ToString();
+                               << shape_base->ToString() << " are not consistent with second arg shape "
+                               << shape->ToString();
     }
   }
   return;
@@ -183,22 +183,23 @@ int64_t CheckAxis(const std::string &op, const std::string &args_name, const Val
   }
   return axis_value;
 }
-void CheckArgsSize(const std::string &op, const mindspore::abstract::AbstractBasePtrList &args_spec_list,
+void CheckArgsSize(const std::string &op, const mindspore::abstract::AbstractBasePtrList &args_abs_list,
                    size_t size_expect) {
-  if (args_spec_list.size() != size_expect) {
+  if (args_abs_list.size() != size_expect) {
     MS_LOG(EXCEPTION) << "For '" << op << "', the number of input should be " << size_expect << ", but got "
-                      << args_spec_list.size();
+                      << args_abs_list.size();
   }
 
   for (size_t i = 0; i < size_expect; i++) {
-    MS_EXCEPTION_IF_NULL(args_spec_list[i]);
+    MS_EXCEPTION_IF_NULL(args_abs_list[i]);
   }
 }
 
 void CheckShapeAllPositive(const std::string &op, const ShapeVector &shape) {
   for (size_t i = 0; i < shape.size(); ++i) {
     if (shape[i] < 0) {
-      MS_LOG(EXCEPTION) << op << " shape element [" << i << "] must be positive integer, but got " << shape[i];
+      MS_LOG(EXCEPTION) << "For '" << op << "', shape element [" << i << "] must be positive integer, but got "
+                        << shape[i];
     }
   }
 }
@@ -212,13 +213,13 @@ void CheckShapeAnyAndPositive(const std::string &op, const ShapeVector &shape) {
   }
 }
 
-void CheckRequiredArgsSize(const std::string &op, const mindspore::abstract::AbstractBasePtrList &args_spec_list,
+void CheckRequiredArgsSize(const std::string &op, const mindspore::abstract::AbstractBasePtrList &args_abs_list,
                            size_t size_expect) {
-  if (args_spec_list.size() < size_expect) {
-    MS_LOG(EXCEPTION) << op << " required input args size " << size_expect << ", but got " << args_spec_list.size();
+  if (args_abs_list.size() < size_expect) {
+    MS_LOG(EXCEPTION) << op << " required input args size " << size_expect << ", but got " << args_abs_list.size();
   }
   for (size_t i = 0; i < size_expect; i++) {
-    MS_EXCEPTION_IF_NULL(args_spec_list[i]);
+    MS_EXCEPTION_IF_NULL(args_abs_list[i]);
   }
 }
 }  // namespace abstract

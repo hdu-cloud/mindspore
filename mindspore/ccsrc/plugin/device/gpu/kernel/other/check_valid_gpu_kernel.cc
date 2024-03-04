@@ -19,6 +19,7 @@
 #include <utility>
 #include <algorithm>
 #include <memory>
+#include "mindspore/core/ops/framework_ops.h"
 #include "mindspore/core/ops/check_valid.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/check_valid_impl.cuh"
 
@@ -74,7 +75,9 @@ bool CheckValidGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
     return false;
   }
   const size_t size = block_size / coordinate;
-  CheckValid(size, anchor_boxes_addr, img_metas_addr, valid_addr, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status =
+    CheckValid(size, anchor_boxes_addr, img_metas_addr, valid_addr, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

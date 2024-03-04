@@ -50,6 +50,7 @@ void RunnerConfig::SetContext(const std::shared_ptr<Context> &context) {
     MS_LOG(ERROR) << "Runner config data is nullptr.";
     return;
   }
+  MS_CHECK_TRUE_RET_VOID(context != nullptr);
   data_->context = context;
 }
 
@@ -112,6 +113,22 @@ std::map<std::vector<char>, std::map<std::vector<char>, std::vector<char>>> Runn
     return empty;
   }
   return MapMapStringToChar(data_->config_info);
+}
+
+void RunnerConfig::SetDeviceIds(const std::vector<uint32_t> &device_ids) {
+  if (data_ == nullptr) {
+    MS_LOG(ERROR) << "Runner config data is nullptr.";
+    return;
+  }
+  data_->device_ids = device_ids;
+}
+
+std::vector<uint32_t> RunnerConfig::GetDeviceIds() const {
+  if (data_ == nullptr) {
+    MS_LOG(ERROR) << "Runner config data is nullptr.";
+    return {};
+  }
+  return data_->device_ids;
 }
 
 ModelParallelRunner::ModelParallelRunner() {}

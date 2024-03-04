@@ -50,7 +50,11 @@ ConvolutionBaseCPUKernel::~ConvolutionBaseCPUKernel() {
   if (addr_map.find(reinterpret_cast<uintptr_t>(packed_weight_)) != addr_map.end()) {
     FreeAlignedData(reinterpret_cast<void **>(&packed_weight_));
   } else if (!op_parameter_->is_train_session_) {
-    lite::PackWeightManager::GetInstance()->Free(packed_weight_);
+    if (!is_sharing_pack_) {
+      free(packed_weight_);
+    } else {
+      lite::PackWeightManager::GetInstance()->Free(packed_weight_);
+    }
     packed_weight_ = nullptr;
   }
   if (addr_map.find(reinterpret_cast<uintptr_t>(bias_data_)) != addr_map.end()) {
@@ -548,5 +552,26 @@ int ConvolutionBaseCPUKernel::CheckAndGetWeightParam(int32_t *batch, int32_t *he
     return RET_ERROR;
   }
   return RET_OK;
+}
+
+void *ConvolutionBaseCPUKernel::GetConvPackWeightData(size_t data_size) {
+  void *data = nullptr;
+  if (reinterpret_cast<ConvParameter *>(op_parameter_)->group_ > 1 ||
+      (in_tensors_[1]->category() != lite::CONST_TENSOR && in_tensors_[1]->category() != lite::CONST_SCALAR)) {
+    if (data_size == 0) {
+      MS_LOG(ERROR) << "data size is zero.";
+      return nullptr;
+    }
+    data = malloc(data_size);
+    weight_is_packed_ = false;
+    is_sharing_pack_ = false;
+  } else {
+    data = lite::PackWeightManager::GetInstance()->GetPackData(in_tensors_[1]->data(), data_size, &weight_is_packed_);
+  }
+  if (data == nullptr) {
+    MS_LOG(ERROR) << "pack weight is nullptr.";
+    return nullptr;
+  }
+  return data;
 }
 }  // namespace mindspore::kernel

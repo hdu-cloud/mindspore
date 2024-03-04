@@ -23,9 +23,9 @@
 #include <vector>
 
 #include "abstract/abstract_value.h"
+#include "mindapi/base/types.h"
 #include "ops/base_operator.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/base/types.h"
 
 namespace mindspore {
 namespace ops {
@@ -39,8 +39,8 @@ class MIND_API Col2Im : public BaseOperator {
   Col2Im() : BaseOperator(kNameCol2Im) { InitIOName({"x", "output_size"}, {"y"}); }
 };
 
-abstract::AbstractBasePtr Col2ImInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                      const std::vector<AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr Col2ImInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                               const std::vector<AbstractBasePtr> &input_args);
 using PrimCol2ImPtr = std::shared_ptr<Col2Im>;
 }  // namespace ops
 }  // namespace mindspore

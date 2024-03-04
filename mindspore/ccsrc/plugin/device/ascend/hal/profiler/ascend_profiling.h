@@ -18,9 +18,9 @@
 #include <string>
 #include <memory>
 #include <map>
-#include "profiler/device/profiling.h"
+#include "include/backend/debug/profiler/profiling.h"
 #include "acl/acl_prof.h"
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 #include "kernel/kernel.h"
 
 namespace mindspore {
@@ -44,7 +44,8 @@ class AscendProfiler : public Profiler {
   void MsprofInitProfiler() const;
   void MsprofStopProfiler() const;
   aclprofAicoreMetrics GetAicMetrics() const;
-  void GetNodeTaskIdStreamId(const CNodePtr &kernel, uint32_t graph_id, int device_id, const KernelType kernel_type);
+  void GetNodeTaskIdStreamId(const CNodePtr &kernel, uint32_t graph_id, int device_id, const KernelType kernel_type,
+                             int32_t kernel_mod_task_id);
   std::map<std::thread::id, uint32_t> last_tid_;
   std::map<std::thread::id, uint32_t> last_streamid_;
 
@@ -54,7 +55,6 @@ class AscendProfiler : public Profiler {
 
  private:
   uint32_t device_id_ = 0;
-  uint32_t aicpu_kernel_type_ = 2;
   uint32_t max_op_taskid_limit_ = 65536;
   aclprofConfig *acl_config_{nullptr};
 };

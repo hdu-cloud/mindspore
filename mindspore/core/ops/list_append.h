@@ -16,9 +16,9 @@
 
 #ifndef MINDSPORE_CORE_OPS_LIST_APPEND_H_
 #define MINDSPORE_CORE_OPS_LIST_APPEND_H_
+#include "mindspore/core/ops/sequence_ops.h"
 
 #include "ops/base_operator.h"
-#include "mindspore/core/ops/core_ops.h"
 
 namespace mindspore {
 namespace ops {
@@ -27,7 +27,7 @@ class MIND_API ListAppend : public BaseOperator {
  public:
   MIND_API_BASE_MEMBER(ListAppend);
   /// \brief Constructor.
-  ListAppend() : BaseOperator(prim::kListAppend) {}
+  ListAppend() : BaseOperator(kListAppendOpName) { InitIOName({"input_data", "target"}, {"output_data"}); }
   /// \brief Init function.
   void Init() const {}
 };

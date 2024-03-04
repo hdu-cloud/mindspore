@@ -15,15 +15,15 @@
  */
 #ifndef MINDSPORE_CORE_OPS_MISH_H_
 #define MINDSPORE_CORE_OPS_MISH_H_
-#include "mindspore/core/ops/core_ops.h"
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/base_operator.h"
 namespace mindspore {
 namespace ops {
 class MIND_API Mish : public BaseOperator {
  public:
   MIND_API_BASE_MEMBER(Mish);
-  Mish() : BaseOperator(prim::kMish) { InitIOName({"x"}, {"output"}); }
+  Mish() : BaseOperator(kMishOpName) { InitIOName({"x"}, {"output"}); }
 };
 }  // namespace ops
 }  // namespace mindspore

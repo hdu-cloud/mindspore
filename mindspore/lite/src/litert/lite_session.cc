@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@
 #include <set>
 #include <vector>
 #include <utility>
+#include <fstream>
+#include <algorithm>
 #include "src/litert/pack_weight_manager.h"
 #include "src/litert/runtime_pass.h"
 #include "include/errorcode.h"
@@ -30,33 +32,42 @@
 #include "src/common/graph_util.h"
 #include "src/common/tensor_util.h"
 #include "src/common/file_utils.h"
+#include "src/common/mmap_utils.h"
 #include "src/litert/lite_model.h"
 #include "src/litert/weight_decoder.h"
 #include "src/litert/runtime_allocator.h"
 #include "src/litert/kernel_exec_util.h"
+#include "src/litert/cpu_info.h"
 #ifndef CUSTOM_KERNEL_REGISTRY_CLIP
 #include "src/registry/register_kernel_impl.h"
 #endif
 #ifdef ENABLE_MINDRT
 #include "src/litert/mindrt_executor.h"
 #endif
-#if SUPPORT_NPU
+#ifdef SUPPORT_NPU
 #include "src/litert/delegate/npu/npu_delegate.h"
 #endif
-#if GPU_OPENCL
+#ifdef GPU_OPENCL
 #include "src/litert/kernel/opencl/opencl_subgraph.h"
 #endif
-#if GPU_TENSORRT
+#ifdef GPU_TENSORRT
 #include "src/litert/delegate/tensorrt/tensorrt_delegate.h"
 #endif
-#if SUPPORT_NNAPI
+#ifdef SUPPORT_NNAPI
 #include "src/litert/delegate/nnapi/nnapi_delegate.h"
+#endif
+#ifdef ENABLE_COREML
+#include "src/litert/delegate/coreml/coreml_delegate.h"
 #endif
 #include "src/litert/runtime_convert.h"
 #include "extendrt/mindir_loader/model_loader.h"
 #ifndef __ANDROID__
 #include "kernel/ascend/plugin/ascend_kernel_plugin.h"
 #endif
+#if defined(PARALLEL_INFERENCE) && defined(ENABLE_MINDRT)
+#include "thread/parallel_thread_pool_manager.h"
+#endif
+#include "src/litert/runtime_packed_node_pass.h"
 
 using AbstractBaseModel = mindspore::infer::AbstractBaseModel;
 
@@ -224,6 +235,10 @@ lite::Tensor *LiteSession::ConvertTensor(const schema::Tensor &src_tensor) {
     dst_tensor = new (std::nothrow)
       Tensor(TypeId(data_type), shape, static_cast<mindspore::Format>(src_tensor.format()), src_category);
   }
+  if (dst_tensor == nullptr) {
+    MS_LOG(ERROR) << "create dst_tensor is nullptr.";
+    return nullptr;
+  }
   if (src_tensor.name() != nullptr) {
     dst_tensor->set_tensor_name(src_tensor.name()->str());
   }
@@ -355,6 +370,16 @@ void LiteSession::InitGraphInputMap(const lite::Model *model) {
       }
     }
   }
+
+  for (auto input_tensor : this->inputs_) {
+    MS_ASSERT(input_tensor != nullptr);
+    if (this->input_map_.find(input_tensor->tensor_name()) == this->input_map_.end()) {
+      this->input_map_[input_tensor->tensor_name()] = input_tensor;
+    }
+    if (this->input_shape_map_.find(input_tensor) == this->input_shape_map_.end()) {
+      this->input_shape_map_[input_tensor] = input_tensor->shape();
+    }
+  }
 }
 
 void LiteSession::InitGraphOutputNodeMap(const lite::Model *model) {
@@ -436,11 +461,9 @@ int LiteSession::IsolateOutputTensor() {
     new_tensor->set_init_ref_count(src_tensor->init_ref_count());
 
     /* src tensor set for graph calculate */
-#ifdef ENABLE_FP16
     if (src_tensor->data_type() == kNumberTypeFloat16) {
       src_tensor->set_data_type(kNumberTypeFloat32);
     }
-#endif
     src_tensor->set_ref_count(1);
 
     isolate_graph_output_map_.insert(std::make_pair(new_tensor, src_tensor));
@@ -502,7 +525,7 @@ void LiteSession::FreePackOpWeight(const std::vector<kernel::KernelExec *> &kern
   for (auto *kernel : kernels) {
     MS_ASSERT(kernel != nullptr);
     if (kernel->subgraph_type() == kernel::kNotSubGraph) {
-      if (!IsPackedOp(static_cast<int>(kernel->type()))) {
+      if (!IsPackedOp(static_cast<int>(kernel::SchemaType(kernel->type())))) {
         continue;
       }
     } else {
@@ -512,10 +535,33 @@ void LiteSession::FreePackOpWeight(const std::vector<kernel::KernelExec *> &kern
     auto inputs = kernel->in_tensors();
     for (auto *tensor : inputs) {
       MS_ASSERT(tensor != nullptr);
-      if (!tensor->IsConst()) {
+      if (!tensor->IsConst() || tensor->ref_count() >= 1) {
         continue;
       }
       tensor->FreeData();
+    }
+  }
+}
+
+void LiteSession::MarkSharedWeight(const std::vector<kernel::KernelExec *> &kernels) {
+  // For reducing runtime RAM
+  // free pack-op weight because pack-op will not access origin weight in runtime
+  for (auto *kernel : kernels) {
+    MS_ASSERT(kernel != nullptr);
+    if (kernel->subgraph_type() == kernel::kNotSubGraph) {
+      if (IsPackedOp(static_cast<int>(kernel::SchemaType(kernel->type())))) {
+        continue;
+      }
+    } else {
+      auto subgraph = reinterpret_cast<kernel::SubGraphKernel *>(kernel);
+      MarkSharedWeight(subgraph->nodes());
+    }
+    auto inputs = kernel->in_tensors();
+    for (auto *tensor : inputs) {
+      MS_ASSERT(tensor != nullptr);
+      if (tensor->IsConst()) {
+        tensor->IncRefCount();
+      }
     }
   }
 }
@@ -533,6 +579,7 @@ int LiteSession::CompileGraph(Model *model) {
   } else {
     // Convert to abstract base model interface
     ret = ConvertTensors(model);
+    context_->set_schema_version(reinterpret_cast<LiteModel *>(model)->GetSchemaVersion());
   }
   if (ret != RET_OK) {
     MS_LOG(ERROR) << "ConvertTensors failed: " << ret;
@@ -542,14 +589,18 @@ int LiteSession::CompileGraph(Model *model) {
   ret = lite::PackWeightManager::GetInstance()->StoreOriginTensorData(model, &tensors_);
   if (ret != RET_OK) {
     MS_LOG(ERROR) << "StoreOriginTensorData failed.";
+    is_running_.store(false);
     return RET_ERROR;
   }
   InitGraphInputTensors(model);
   InitGraphOutputTensors(model);
 
+  PackedNodePass::GetInstance().Run(model, tensors_);
+
   // scheduler kernels
   Scheduler scheduler(context_.get(), ms_context_, model, &tensors_, &inputs_, &outputs_, is_train_session_,
-                      &is_infershape_, &is_control_flow_, execution_plan_, delegate_, delegate_device_type_);
+                      &is_infershape_, &is_control_flow_, &infer_along_running_, execution_plan_, delegate_,
+                      delegate_device_type_);
   scheduler.SetupSchedulerCb(std::move(sched_cb_));
   scheduler.SetConfig(config_info_);
   ret = scheduler.Schedule(&kernels_);
@@ -558,6 +609,12 @@ int LiteSession::CompileGraph(Model *model) {
     is_running_.store(false);
     return ret;
   }
+  if (ms_context_->GetThreadNum() == 1 && !context_->IsCpuFloat16Enabled() && is_control_flow_) {
+    context_->DeleteThreadPool();
+    (void)context_->CreateThreadPool(is_control_flow_);
+  }
+
+  infer_along_running_ = infer_along_running_ && !is_control_flow_ && !is_train_session_ && (is_infershape_ != RET_OK);
   InitGraphInOutTensorsMap(model);
 
   non_tail_call_kernels_ = scheduler.NonTailCallNodes();
@@ -581,6 +638,7 @@ int LiteSession::CompileGraph(Model *model) {
     return ret;
   }
 
+  MarkSharedWeight(kernels_);
   FreePackOpWeight(kernels_);
 
   ret = RuntimeAllocatorInit();
@@ -589,7 +647,10 @@ int LiteSession::CompileGraph(Model *model) {
     is_running_.store(false);
     return ret;
   }
-
+  infer_along_running_ = infer_along_running_ && (runtime_allocator_ == nullptr);
+  if (infer_along_running_) {
+    this->context_->set_infer_checker(InferCheckerAll);
+  }
   is_running_.store(false);
   return RET_OK;
 }
@@ -625,6 +686,84 @@ int LiteSession::SetAllocatorForDelegateKernels(const kernel::KernelExec *kernel
   return RET_OK;
 }
 
+int LiteSession::DrawGraph(kernel::SubGraphKernel *graph) {
+  if (graph == nullptr) {
+    return RET_NULL_PTR;
+  }
+  // create and open .dot file
+  std::ofstream dotfile;
+  dotfile.open("./graph.dot", std::ios::out | std::ios::trunc);
+  if (!dotfile.is_open()) {
+    MS_LOG(ERROR) << "create or open dotfile failed.";
+    return RET_ERROR;
+  }
+  // write data to .dot file
+  dotfile << "digraph " << graph->name() << " {\n";
+  for (auto node : graph->nodes()) {
+    std::replace(node->name().begin(), node->name().end(), '/', '-');
+    // first node
+    if (node->in_kernels().empty()) {
+      dotfile << "\tinput->" << node->name();
+      dotfile << "[label=\"";
+      std::vector<int> input_shapes = node->in_tensors().front()->shape();
+      for (auto iter = input_shapes.begin(); iter != input_shapes.end(); iter++) {
+        if (iter == input_shapes.end() - 1) {
+          dotfile << *iter;
+        } else {
+          dotfile << *iter << "*";
+        }
+      }
+      dotfile << "\"]\n";
+      continue;
+    }
+
+    for (size_t i = 0; i < node->in_kernels().size(); ++i) {
+      dotfile << "\t" << node->in_kernels()[i]->name() << "->" << node->name() << "[label=\"";
+      std::vector<int32_t> in_kernel_shapes = node->in_tensors()[i]->shape();
+
+      for (auto iter = in_kernel_shapes.begin(); iter != in_kernel_shapes.end(); iter++) {
+        if (iter == in_kernel_shapes.end() - 1) {
+          dotfile << *iter;
+        } else {
+          dotfile << *iter << "*";
+        }
+      }
+      dotfile << "\"]\n";
+    }
+    // last node
+    if (node->out_kernels().empty()) {
+      dotfile << "\t" << node->name() << "->output";
+      dotfile << "[label=\"";
+      std::vector<int32_t> out_shapes = node->out_tensors().front()->shape();
+      for (auto iter = out_shapes.begin(); iter != out_shapes.end(); iter++) {
+        if (iter == out_shapes.end() - 1) {
+          dotfile << *iter;
+        } else {
+          dotfile << *iter << "*";
+        }
+      }
+      dotfile << "\"]\n";
+    }
+  }
+  dotfile.close();
+  return RET_OK;
+}
+
+void LiteSession::SetInitRefCountOfPartialSubgraphInputs(const Model *model) {
+  if (model == nullptr) {
+    return;
+  }
+  constexpr size_t kFirstPartialSubgraphIndex = 1U;
+  const auto &sub_graphs = model->graph_.sub_graphs_;
+  // Find out partial subgraph's inputs and set their 'init_ref_count' to INT_MAX to avoid trigger 'FreeData()'.
+  // Here start with index:1 to skip main subgraph.
+  for (size_t i = kFirstPartialSubgraphIndex; i < sub_graphs.size(); i++) {
+    for (auto index : sub_graphs[i]->input_indices_) {
+      tensors_[index]->set_init_ref_count(INT_MAX);
+    }
+  }
+}
+
 int LiteSession::PrepareKernels(const Model *model) {
   // find kernel's in_kernels and out_kernels in every subgraph
   kernel::KernelExecUtil::FindAllInoutKernelsInSubgraphKernel(this->kernels_);
@@ -637,6 +776,11 @@ int LiteSession::PrepareKernels(const Model *model) {
     MS_LOG(ERROR) << "SetTensorInitRefCount failed.";
     return ret;
   }
+  // When running control flow model, if partial subgraph's input is also it's output,
+  // 'init_ref_count' is not correctly initialized in 'SetTensorInitRefCount()', which would cause an error
+  // of referencing on input tensor's data_ptr after it's reset to NULL when ref_count down to 0.
+  // Here we set partial input tensor's 'init_ref_count' to INT_MAX to avoid null-filling in above case.
+  SetInitRefCountOfPartialSubgraphInputs(model);
 
   for (auto kernel : this->kernels_) {
     if (kernel->desc().arch == kernel::kDelegate) {
@@ -654,6 +798,11 @@ int LiteSession::PrepareKernels(const Model *model) {
         return RET_ERROR;
       }
       for (auto &node : subgraph_kernel->nodes()) {
+        ret = PackKernelExec(node, tensors_);
+        if (ret != RET_OK) {
+          MS_LOG(ERROR) << "Pack KernelExec failed.";
+          return ret;
+        }
         ret = node->Prepare();
         if (ret != RET_OK) {
           MS_LOG(ERROR) << "node: " << node->name() << " prepare failed.";
@@ -661,6 +810,15 @@ int LiteSession::PrepareKernels(const Model *model) {
         }
       }
     }
+
+#if (defined DEBUG) && (defined MSLITE_EXPORT_COMPUTE_IR)
+    auto subgraph_kernel = static_cast<kernel::SubGraphKernel *>(kernel);
+    ret = DrawGraph(subgraph_kernel);
+    if (ret != RET_OK) {
+      MS_LOG(ERROR) << "graph: " << kernel->name() << " draw failed.";
+    }
+#endif
+
     ret = kernel->Prepare();
     if (ret != RET_OK) {
       MS_LOG(ERROR) << "Prepare kernel " << kernel->name() << " failed: " << ret;
@@ -717,25 +875,70 @@ int LiteSession::RunGraph(const KernelCallBack &before, const KernelCallBack &af
     MS_LOG(ERROR) << "Not support multi-threading";
     return RET_ERROR;
   }
+#if defined(PARALLEL_INFERENCE) && defined(ENABLE_MINDRT)
+  ParallelThreadPoolManager::GetInstance()->ActivatePool(runner_id_, worker_id_);
+#endif
   STATUS ret = CheckTensorsInvalid(inputs_);
-  if (ret != RET_OK) {
+  if (MS_UNLIKELY(ret != RET_OK)) {
     is_running_.store(false);
     MS_LOG(ERROR) << "CheckInputs failed.";
     return ret;
   }
   ret = CheckGraphInputShapes(inputs_, input_shape_map_);
-  if (ret != RET_OK) {
+  if (MS_UNLIKELY(ret != RET_OK)) {
     is_running_.store(false);
     MS_LOG(ERROR) << "Check graph input shapes failed.";
     return ret;
   }
   MS_ASSERT(this->context_ != nullptr);
   ret = executor_->Run(this->inputs_, this->outputs_, this->kernels_, before, after);
-  if (ret != RET_OK) {
+  if (MS_UNLIKELY(ret != RET_OK)) {
     MS_LOG(ERROR) << "RunGraph failed : " << ret;
   }
+  if (infer_along_running_) {
+    this->context_->set_infer_checker(InferCheckerInput);
+    for (auto input : inputs_) {
+      input->set_shape_changed(false);
+    }
+  }
+#if defined(PARALLEL_INFERENCE) && defined(ENABLE_MINDRT)
+  ParallelThreadPoolManager::GetInstance()->SetFreePool(runner_id_, worker_id_);
+#endif
   is_running_.store(false);
   return ret;
+}
+
+int LiteSession::InitSharedThreadPool() {
+  int workers_num = -1;
+  int remaining_thread_num = -1;
+  int thread_num_limit = -1;
+  bool enable_shared_pool = false;
+  if (config_info_ != nullptr) {
+    auto runner_info_item = config_info_->find(kInnerModelParallelRunnerSection);
+    if (runner_info_item != config_info_->end()) {
+      auto item_runner = runner_info_item->second.find(kInnerRunnerIDKey);
+      if (item_runner != runner_info_item->second.end()) {
+        runner_id_ = runner_info_item->second.at(kInnerRunnerIDKey);
+      }
+      auto shared_pool_item = runner_info_item->second.find(kEnableSharedThreadPoolKey);
+      if (shared_pool_item != runner_info_item->second.end() &&
+          runner_info_item->second.at(kEnableSharedThreadPoolKey) == "true") {
+        workers_num = std::atoi(runner_info_item->second.at(kInnerWorkerNumKey).c_str());
+        remaining_thread_num = std::atoi(runner_info_item->second.at(kThreadNumRemainingPerWorkerKey).c_str());
+        thread_num_limit = std::atoi(runner_info_item->second.at(kThreadNumLimitPerWorkerKey).c_str());
+        worker_id_ = std::atoi(runner_info_item->second.at(kInnerModelIDKey).c_str());
+        enable_shared_pool = true;
+      }
+    }
+  }
+  MS_LOG(INFO) << "runner id: " << runner_id_ << "  enable_shared_pool: " << enable_shared_pool
+               << "  workers_num: " << workers_num << "  thread_num_limit: " << thread_num_limit
+               << "  remaining_thread_num: " << remaining_thread_num;
+#if defined(PARALLEL_INFERENCE) && defined(ENABLE_MINDRT)
+  ParallelThreadPoolManager::GetInstance()->Init(enable_shared_pool, runner_id_, workers_num, remaining_thread_num,
+                                                 thread_num_limit);
+#endif
+  return RET_OK;
 }
 
 int LiteSession::ContextInit(const std::shared_ptr<InnerContext> &context) {
@@ -744,7 +947,7 @@ int LiteSession::ContextInit(const std::shared_ptr<InnerContext> &context) {
     return RET_NULL_PTR;
   }
   this->context_ = context;
-
+  context_->SetBindRunnerId(runner_id_);
   auto ret = this->context_->Init();
   if (ret != RET_OK) {
     MS_LOG(ERROR) << "Init Context failed";
@@ -761,6 +964,15 @@ int LiteSession::ContextInit(const std::shared_ptr<InnerContext> &context) {
   context_->thread_pool_->SetMaxSpinCount(kDefaulLiteIosSpinCount);
   context_->thread_pool_->SetMinSpinCount(kDefaulLiteIosSpinCount);
 #endif
+
+#if defined(PARALLEL_INFERENCE) && defined(ENABLE_MINDRT)
+  if (context_->inter_op_parallel_num_ > 1 && !runner_id_.empty() &&
+      ParallelThreadPoolManager::GetInstance()->GetEnableSharedThreadPool(runner_id_)) {
+    MS_LOG(INFO) << "Enable subgraph parallelism and enable thread pool sharing";
+    ParallelThreadPoolManager::GetInstance()->BindPoolToRunner(context_->thread_pool_, config_info_);
+  }
+#endif
+
   return RET_OK;
 }
 
@@ -784,19 +996,19 @@ int LiteSession::CreateTensorRTDelegate() {
   size_t device_cache_size = 0;
   std::map<std::string, std::string> input_ranges;
   if (config_info_ != nullptr) {
-    auto input_ranges_iter = config_info_->find(kGPUContext);
+    auto input_ranges_iter = config_info_->find(kGPUContextSection);
     if (input_ranges_iter != config_info_->end()) {
       input_ranges = input_ranges_iter->second;
     }
-    auto ms_cache_iter = config_info_->find(kMSCache);
+    auto ms_cache_iter = config_info_->find(kMSCacheSection);
     if (ms_cache_iter != config_info_->end()) {
       auto ms_cache = ms_cache_iter->second;
-      auto model_path_iter = ms_cache.find(kMSCacheModelPath);
+      auto model_path_iter = ms_cache.find(kMSCacheModelPathKey);
       if (model_path_iter != ms_cache.end()) {
         cache_model_path = model_path_iter->second;
       }
 
-      auto vocab_size_iter = ms_cache.find(kMSCacheVocabSize);
+      auto vocab_size_iter = ms_cache.find(kMSCacheVocabSizeKey);
       if (vocab_size_iter != ms_cache.end()) {
         auto vocab_size_opt = GenericParseValue<size_t>(vocab_size_iter->second);
         if (!vocab_size_opt.IsNone()) {
@@ -804,7 +1016,7 @@ int LiteSession::CreateTensorRTDelegate() {
         }
       }
 
-      auto device_cache_size_iter = ms_cache.find(kMSCacheDeviceSize);
+      auto device_cache_size_iter = ms_cache.find(kMSCacheDeviceSizeKey);
       if (device_cache_size_iter != ms_cache.end()) {
         auto device_cache_size_opt = GenericParseValue<size_t>(device_cache_size_iter->second);
         if (!device_cache_size_opt.IsNone()) {
@@ -812,7 +1024,7 @@ int LiteSession::CreateTensorRTDelegate() {
         }
       }
 
-      auto serialize_path_iter = ms_cache.find(kMSCacheSerializePath);
+      auto serialize_path_iter = ms_cache.find(kMSCacheSerializePathKey);
       if (serialize_path_iter != ms_cache.end()) {
         serialize_path = serialize_path_iter->second;
       }
@@ -833,7 +1045,18 @@ int LiteSession::CreateTensorRTDelegate() {
 
 int LiteSession::CreateNPUDelegate() {
 #if SUPPORT_NPU
-  delegate_ = std::make_shared<NPUDelegate>(context_->GetDeviceInfo(DT_NPU).npu_device_info_);
+  std::string model_cache_dir;
+  if (config_info_ != nullptr) {
+    auto common_context_iter = config_info_->find(kCommonContextSection);
+    if (common_context_iter != config_info_->end()) {
+      auto common_context = common_context_iter->second;
+      auto model_cache_dir_iter = common_context.find(kGraphCompilerCacheDirKey);
+      if (model_cache_dir_iter != common_context.end()) {
+        model_cache_dir = model_cache_dir_iter->second;
+      }
+    }
+  }
+  delegate_ = std::make_shared<NPUDelegate>(context_->GetDeviceInfo(DT_NPU).npu_device_info_, model_cache_dir);
   if (delegate_ == nullptr) {
     MS_LOG(ERROR) << "New delegate_ failed";
     return RET_ERROR;
@@ -863,6 +1086,18 @@ int LiteSession::CreateNNAPIDelegate() {
   return RET_OK;
 }
 
+int LiteSession::CreateCoreMLDelegate() {
+#ifdef ENABLE_COREML
+  delegate_ = std::make_shared<CoreMLDelegate>();
+  if (delegate_ == nullptr) {
+    MS_LOG(ERROR) << "New delegate_ failed";
+    return RET_ERROR;
+  }
+  this->context_->delegate = delegate_;
+#endif
+  return RET_OK;
+}
+
 int LiteSession::DelegateInit() {
 #ifndef DELEGATE_CLIP
   int ret = RET_OK;
@@ -873,6 +1108,9 @@ int LiteSession::DelegateInit() {
     switch (context_->delegate_mode_) {
       case kNNAPI:
         ret = CreateNNAPIDelegate();
+        break;
+      case kCoreML:
+        ret = CreateCoreMLDelegate();
         break;
       default:
         MS_LOG(ERROR) << "Unsupported built-in delegate mode: " << context_->delegate_mode_;
@@ -913,6 +1151,18 @@ int LiteSession::Init(const std::shared_ptr<InnerContext> &context) {
     return RET_ERROR;
   }
 
+  if (!PlatformInstructionSetSupportCheck()) {
+    MS_LOG(ERROR) << "Device not support isa";
+    is_running_.store(false);
+    return RET_NOT_SUPPORT;
+  }
+
+  auto status = InitSharedThreadPool();
+  if (status != RET_OK) {
+    MS_LOG(ERROR) << "init Shared thread pool failed";
+    is_running_.store(false);
+    return status;
+  }
   auto ret = ContextInit(context);
   if (ret != RET_OK) {
     MS_LOG(ERROR) << "Init Context failed";
@@ -923,6 +1173,7 @@ int LiteSession::Init(const std::shared_ptr<InnerContext> &context) {
   ret = AscendInit(context);
   if (ret != RET_OK) {
     MS_LOG(ERROR) << "Open Ascend kernel plugin failed";
+    is_running_.store(false);
     return ret;
   }
 
@@ -1008,7 +1259,10 @@ LiteSession::~LiteSession() {
 #endif
   delete ms_context_;
   ms_context_ = nullptr;
-  lite::PackWeightManager::GetInstance()->FreePackWeight(id_);
+#if defined(PARALLEL_INFERENCE) && defined(ENABLE_MINDRT)
+  ParallelThreadPoolManager::GetInstance()->ResetParallelThreadPoolManager(runner_id_);
+#endif
+  lite::PackWeightManager::GetInstance()->FreePackWeight(runner_id_, model_id_);
   if (model_ != nullptr && is_shared_weight_) {
     model_->buf = nullptr;
   }
@@ -1082,6 +1336,9 @@ int LiteSession::ResizeInputs(const std::vector<mindspore::lite::Tensor *> &inpu
       return RET_PARAM_INVALID;
     }
     inputs_[i]->FreeData();
+    if (infer_along_running_ && !inputs_[i]->get_shape_changed()) {
+      inputs_[i]->set_shape_changed(dims[i] != inputs_[i]->shape());
+    }
     inputs_[i]->set_shape(dims[i]);
   }
   if (!is_train_session_) {
@@ -1094,6 +1351,7 @@ void LiteSession::ResetInputsShape(const std::vector<std::vector<int>> &dims) {
   for (size_t i = 0; i < inputs_.size(); ++i) {
     inputs_[i]->FreeData();
     inputs_[i]->set_shape(dims[i]);
+    inputs_[i]->set_shape_changed(false);
   }
 }
 
@@ -1118,7 +1376,7 @@ int LiteSession::ReSizeKernels(const std::vector<kernel::KernelExec *> &kernels,
       if (kernel->subgraph_type() == kernel::kGpuFp16SubGraph || kernel->subgraph_type() == kernel::kGpuFp32SubGraph) {
 #if GPU_OPENCL
         auto sub_graph = reinterpret_cast<kernel::OpenCLSubGraph *>(kernel);
-        ret = sub_graph->ReSize(false);
+        ret = sub_graph->ReSize();
 #endif
       } else {
         auto sub_graph = reinterpret_cast<kernel::SubGraphKernel *>(kernel);
@@ -1225,6 +1483,15 @@ int LiteSession::Resize(const std::vector<mindspore::lite::Tensor *> &inputs,
     is_running_.store(false);
     return ret;
   }
+  ret = UpdateInputShapeMap();
+  if (ret != RET_OK) {
+    MS_LOG(ERROR) << "update input shape map failed.";
+    return RET_ERROR;
+  }
+  if (infer_along_running_) {
+    is_running_.store(false);
+    return ret;
+  }
 
   ret = ReSizeKernels(kernels_, isolate_input_map_);
   if (ret != RET_OK) {
@@ -1250,11 +1517,6 @@ int LiteSession::Resize(const std::vector<mindspore::lite::Tensor *> &inputs,
   }
 
   is_running_.store(false);
-  ret = UpdateInputShapeMap();
-  if (ret != RET_OK) {
-    MS_LOG(ERROR) << "update input shape map failed.";
-    return RET_ERROR;
-  }
   return RET_OK;
 }
 
@@ -1297,12 +1559,16 @@ int LiteSession::PreCheck(Model *model) {
 int LiteSession::InitExecutor() {
   int ret;
 #ifdef ENABLE_MINDRT
-  ret = IsolateOutputTensor();
-  if (ret != RET_OK) {
-    MS_LOG(ERROR) << "Isolate output tensor failed.";
-    return ret;
+  if (ms_context_->GetThreadNum() == 1 && !context_->IsCpuFloat16Enabled() && !is_control_flow_) {
+    executor_ = new (std::nothrow) Executor();
+  } else {
+    ret = IsolateOutputTensor();
+    if (ret != RET_OK) {
+      MS_LOG(ERROR) << "Isolate output tensor failed.";
+      return ret;
+    }
+    executor_ = new (std::nothrow) MindrtExecutor(&isolate_graph_output_map_, &isolate_input_map_);
   }
-  executor_ = new (std::nothrow) MindrtExecutor(&isolate_graph_output_map_, &isolate_input_map_);
 #else
   executor_ = new (std::nothrow) Executor();
 #endif
@@ -1347,10 +1613,12 @@ int LiteSession::RuntimeAllocatorValid() {
     MS_LOG(DEBUG) << "Not support runtime allocator in runtime-infershape.";
     return RET_ERROR;
   }
+#ifdef ENABLE_MINDRT
   if (kernels_.size() != 1) {
     MS_LOG(DEBUG) << "Not support runtime allocator in random subgraph sort";
     return RET_ERROR;
   }
+#endif
 #ifdef ENABLE_ARM64
   MS_LOG(DEBUG) << "support runtime allocator.";
   return RET_OK;
@@ -1433,7 +1701,7 @@ void LiteSession::RuntimeAllocatorInitSubgraph() {
     for (auto kernel : kernel_list) {
       /* malloc for output */
       for (auto tensor : kernel->out_tensors()) {
-        if (tensor->allocator() != default_allocator) {
+        if (tensor->allocator() != default_allocator || tensor->IsConst()) {
           continue;
         }
         tensor->set_allocator(runtime_allocator_);
@@ -1513,12 +1781,9 @@ int LiteSession::InitGPURuntime() {
   if (context_->IsDeviceTypeEnabled(DT_CPU)) {
     CpuBindMode cpu_bind_mode = context_->GetDeviceInfo(DT_CPU).cpu_device_info_.cpu_bind_mode_;
     ThreadPool *thread_pool = this->context_->thread_pool_;
-    if (thread_pool == nullptr) {
-      MS_LOG(ERROR) << "thread pool is nullptr";
-      is_running_.store(false);
-      return RET_NULL_PTR;
+    if (thread_pool != nullptr) {
+      thread_pool->SetProcessAffinity(static_cast<BindMode>(cpu_bind_mode));
     }
-    thread_pool->SetProcessAffinity(static_cast<BindMode>(cpu_bind_mode));
   }
 #if GPU_OPENCL
   if (this->context_->IsDeviceTypeEnabled(DT_GPU)) {
@@ -1555,7 +1820,9 @@ int LiteSession::InitGPURuntime() {
   // Setting the binding core will affect the opencl drive scheduling.
   if (context_->IsDeviceTypeEnabled(DT_CPU)) {
     ThreadPool *thread_pool = this->context_->thread_pool_;
-    thread_pool->SetProcessAffinity(static_cast<BindMode>(NO_BIND));
+    if (thread_pool != nullptr) {
+      thread_pool->SetProcessAffinity(static_cast<BindMode>(NO_BIND));
+    }
   }
   return RET_OK;
 }
@@ -1627,9 +1894,15 @@ mindspore::ModelType lite::LiteSession::LoadModelByBuff(const char *model_buf, c
   return mindspore::ModelType::kMindIR;
 }
 
-const char *lite::LiteSession::LoadModelByPath(const std::string &file, mindspore::ModelType model_type, size_t *size) {
+const char *lite::LiteSession::LoadModelByPath(const std::string &file, mindspore::ModelType model_type, size_t *size,
+                                               bool use_mmap) {
   size_t buf_size;
-  auto model_buf = lite::ReadFile(file.c_str(), &buf_size);
+  char *model_buf;
+  if (use_mmap) {
+    model_buf = reinterpret_cast<char *>(lite::ReadFileByMmap(file.c_str(), &buf_size));
+  } else {
+    model_buf = lite::ReadFile(file.c_str(), &buf_size);
+  }
   if (model_buf == nullptr) {
     MS_LOG(ERROR) << "The model path is invalid";
     return model_buf;
@@ -1638,6 +1911,12 @@ const char *lite::LiteSession::LoadModelByPath(const std::string &file, mindspor
   char *lite_buf = nullptr;
   auto buf_model_type = LoadModelByBuff(model_buf, buf_size, &lite_buf, size, model_type);
   if (buf_model_type == mindspore::ModelType::kUnknownType || lite_buf == nullptr) {
+    if (use_mmap) {
+      lite::UnmapMmapBuffer(const_cast<void *>(static_cast<const void *>(model_buf)), buf_size);
+    } else {
+      delete[] model_buf;
+    }
+    model_buf = nullptr;
     return nullptr;
   }
 
@@ -1647,15 +1926,100 @@ const char *lite::LiteSession::LoadModelByPath(const std::string &file, mindspor
 std::string lite::LiteSession::ParseWeightPath() {
   std::string weight_path = "";
   if (config_info_ != nullptr) {
-    auto ms_weight = config_info_->find(kWeight);
+    auto ms_weight = config_info_->find(kConfigModelFileSection);
     if (ms_weight != config_info_->end()) {
       auto ms_weight_iter = ms_weight->second;
-      if (ms_weight_iter.find(kWeightPath) != ms_weight_iter.end()) {
-        weight_path = ms_weight_iter[kWeightPath];
+      if (ms_weight_iter.find(kConfigMindIRPathKey) != ms_weight_iter.end()) {
+        weight_path = ms_weight_iter[kConfigMindIRPathKey];
       }
     }
   }
   return weight_path;
+}
+
+int lite::LiteSession::ReshapeWeightTensor(lite::Tensor *orig_tensor, lite::Tensor *new_tensor) {
+  if (orig_tensor->data_type() != new_tensor->data_type()) {
+    MS_LOG(ERROR) << "Cannot reshape tensor of different type: " << new_tensor->tensor_name();
+    return RET_PARAM_INVALID;
+  }
+
+  if (orig_tensor->category() != lite::Category::CONST_TENSOR) {
+    MS_LOG(ERROR) << "Cannot reshape non const tensor: " << new_tensor->tensor_name();
+    return RET_ERROR;
+  }
+
+  auto orig_size = orig_tensor->Size();
+  uint8_t *new_data = reinterpret_cast<uint8_t *>(new_tensor->data());
+  if (new_data == nullptr) {
+    // Copy original data into new_tensor
+    new_data = reinterpret_cast<uint8_t *>(new_tensor->MutableData());
+    if (new_data == nullptr) {
+      MS_LOG(ERROR) << "Allocation of Data Failed" << new_tensor->tensor_name();
+      return RET_ERROR;
+    }
+    if (orig_size == 0) {
+      MS_LOG(ERROR) << "Operation failed: Both new tensors and original one have no data";
+      return RET_ERROR;
+    }
+    uint8_t *orig_data = reinterpret_cast<uint8_t *>(orig_tensor->data());
+    for (unsigned int loc = 0; loc < new_tensor->Size(); loc++) {
+      new_data[loc] = orig_data[loc % orig_size];
+    }
+  }
+
+  if (orig_tensor->shape() != new_tensor->shape()) {
+    orig_tensor->FreeData();
+    orig_tensor->set_data(nullptr);
+    orig_tensor->set_shape(new_tensor->shape());
+  }
+
+  uint8_t *dst_data = reinterpret_cast<uint8_t *>(orig_tensor->MutableData());
+  if (dst_data == nullptr) {
+    MS_LOG(ERROR) << "Allocation of Data Failed";
+    return RET_ERROR;
+  }
+  std::copy(new_data, new_data + orig_tensor->Size(), dst_data);
+  return RET_OK;
+}
+
+int lite::LiteSession::UpdateWeights(std::vector<lite::Tensor *> modify_tensors) {
+  unsigned int num_of_found_tensors = 0;
+  for (auto tensor : tensors_) {
+    for (auto modify : modify_tensors) {
+      if (modify == nullptr) {
+        MS_LOG(ERROR) << "Tensor is nullptr";
+        return RET_PARAM_INVALID;
+      }
+      if (modify->tensor_name() == tensor->tensor_name()) {
+        if (tensor->Size() != modify->Size()) {
+          model_buff_changed_ = true;
+        }
+        auto ret = ReshapeWeightTensor(tensor, modify);
+        num_of_found_tensors++;
+        if (ret != RET_OK) {
+          model_buff_changed_ = false;
+          return ret;
+        }
+        break;
+      }
+    }
+  }
+  if (num_of_found_tensors != modify_tensors.size()) {
+    MS_LOG(ERROR) << "Did not find all the given tensors in the model";
+    return RET_ERROR;
+  }
+  auto ret = ReSizeKernels(kernels_);
+  if (ret != RET_OK) {
+    MS_LOG(ERROR) << "Resize kernels fail!";
+    model_buff_changed_ = false;
+    return ret;
+  }
+
+  bool is_eval = IsEval();
+  if (is_eval) {
+    ret = Eval();
+  }
+  return ret;
 }
 
 #ifdef ENABLE_LITE_HELPER
@@ -1666,13 +2030,14 @@ int lite::LiteSession::LoadModelAndCompileByBuf(const char *model_buf, mindspore
 int lite::LiteSession::LoadModelAndCompileByBuf(const char *model_buf, mindspore::ModelType model_type,
                                                 const size_t &buf_size) {
 #endif
-  auto status = lite::PackWeightManager::GetInstance()->InitPackWeightManager(model_buf, buf_size, &id_, config_info_);
+  auto status = lite::PackWeightManager::GetInstance()->InitPackWeightManager(model_buf, buf_size, &model_id_,
+                                                                              &runner_id_, config_info_);
   if (status != RET_OK) {
     MS_LOG(ERROR) << "InitPackWeightByBuf failed.";
     return RET_ERROR;
   }
   auto new_model_buf =
-    lite::PackWeightManager::GetInstance()->GetSharedModelBuf(model_buf, id_, config_info_, &is_shared_weight_);
+    lite::PackWeightManager::GetInstance()->GetSharedModelBuf(model_buf, model_id_, config_info_, &is_shared_weight_);
   if (new_model_buf == nullptr) {
     MS_LOG(ERROR) << "get shared model buf is nullptr.";
     return RET_ERROR;
@@ -1694,12 +2059,9 @@ int lite::LiteSession::LoadModelAndCompileByBuf(const char *model_buf, mindspore
     MS_LOG(ERROR) << "Import model failed";
     return RET_ERROR;
   }
+  (reinterpret_cast<lite::LiteModel *>(model))->set_keep_model_buf(keep_model_buf_);
   auto ret = CompileGraph(model);
   model->buf = nullptr;
-  // if (buf_model_type == mindspore::ModelType::kMindIR) {
-  //   delete[] lite_buf;
-  //   lite_buf = nullptr;
-  // }
   if (ret != lite::RET_OK) {
     MS_LOG(ERROR) << "Compile model failed";
     delete model;
@@ -1711,31 +2073,39 @@ int lite::LiteSession::LoadModelAndCompileByBuf(const char *model_buf, mindspore
 
 int lite::LiteSession::LoadModelAndCompileByPath(const std::string &model_path, mindspore::ModelType model_type) {
   size_t model_size;
-  auto model_buf = LoadModelByPath(model_path, model_type, &model_size);
+  bool use_mmap = IsMmapEnable();
+  auto model_buf = LoadModelByPath(model_path, model_type, &model_size, use_mmap);
   if (model_buf == nullptr) {
     MS_LOG(ERROR) << "Read model file failed";
     return RET_ERROR;
   }
-  auto status =
-    lite::PackWeightManager::GetInstance()->InitPackWeightManager(model_buf, model_size, &id_, config_info_);
+  auto status = lite::PackWeightManager::GetInstance()->InitPackWeightManager(model_buf, model_size, &model_id_,
+                                                                              &runner_id_, config_info_);
   if (status != RET_OK) {
     MS_LOG(ERROR) << "InitPackWeightByBuf failed.";
     return RET_ERROR;
   }
   auto new_model_buf =
-    lite::PackWeightManager::GetInstance()->GetSharedModelBuf(model_buf, id_, config_info_, &is_shared_weight_);
+    lite::PackWeightManager::GetInstance()->GetSharedModelBuf(model_buf, model_id_, config_info_, &is_shared_weight_);
   if (new_model_buf == nullptr) {
     MS_LOG(ERROR) << "get shared model buf is nullptr.";
     return RET_ERROR;
   }
   if (is_shared_weight_) {
-    delete[] model_buf;
+    if (use_mmap) {
+      lite::UnmapMmapBuffer(const_cast<void *>(static_cast<const void *>(model_buf)), model_size);
+    } else {
+      delete[] model_buf;
+    }
     model_buf = nullptr;
   }
   auto *model = lite::ImportFromBuffer(new_model_buf, model_size, true, model_type, model_path);
   if (model == nullptr) {
     MS_LOG(ERROR) << "Import model failed";
     return RET_ERROR;
+  }
+  if (use_mmap && new_model_buf == model_buf) {
+    reinterpret_cast<lite::LiteModel *>(model)->model_buf_by_mmap_ = true;
   }
   (reinterpret_cast<lite::LiteModel *>(model))->set_keep_model_buf(true);
   auto ret = CompileGraph(model);
@@ -1747,5 +2117,16 @@ int lite::LiteSession::LoadModelAndCompileByPath(const std::string &model_path, 
   }
   set_model(model);
   return RET_OK;
+}
+
+bool lite::LiteSession::IsMmapEnable() {
+#if !defined(_WIN32) && !defined(_WIN64) && !defined(MS_COMPILE_IOS)
+  if (delegate_device_type_ == DT_NPU) {
+    return false;
+  }
+  return true;
+#else
+  return false;
+#endif
 }
 }  // namespace mindspore

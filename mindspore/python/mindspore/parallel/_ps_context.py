@@ -40,7 +40,7 @@ def _need_reset_device_target_for_ps(target):
     For Ascend backend, the card can't be occupied by multiple processes in distributed traning,
     so we need to reset the device target for some roles.
     '''
-    is_server = (_get_ps_context("ms_role") in ["MS_PSERVER", "MS_SERVER", "MS_SCHED"])
+    is_server = (os.getenv('MS_ROLE') in ["MS_PSERVER", "MS_SERVER", "MS_SCHED"])
     return is_server and target == "Ascend"
 
 
@@ -114,10 +114,10 @@ def _set_ps_context(**kwargs):
     Args:
         enable_ps (bool): Whether to enable parameter server training mode.
                           Only after enable_ps is set True, the environment variables will be effective.
-                          Default: False.
+                          Default: ``False``.
         config_file_path (string): Configuration file path used by recovery. Default: ''.
         scheduler_manage_port (int): scheduler manage port used to scale out/in. Default: 11202.
-        enable_ssl (bool): Set PS SSL mode enabled or disabled. Default: False.
+        enable_ssl (bool): Set PS SSL mode enabled or disabled. Default: ``False``.
         client_password (str): Password to decrypt the secret key stored in the client certificate. Default: ''.
         server_password (str): Password to decrypt the secret key stored in the server certificate. Default: ''.
 
@@ -180,12 +180,8 @@ def _insert_hash_table_size(name, cache_vocab_size, embedding_size, vocab_size, 
     ps_context().insert_hash_table_size(name, cache_vocab_size, embedding_size, vocab_size, param_key)
 
 
-def _reinsert_hash_table_size(new_name, cur_name, cache_vocab_size, embedding_size):
-    ps_context().reinsert_hash_table_size(new_name, cur_name, cache_vocab_size, embedding_size)
-
-
-def _insert_weight_init_info(name, global_seed, op_seed):
-    ps_context().insert_weight_init_info(name, global_seed, op_seed)
+def _reinsert_hash_table_size(new_name, cur_name):
+    ps_context().reinsert_hash_table_size(new_name, cur_name)
 
 
 def _insert_accumu_init_info(name, init_val):
@@ -210,6 +206,14 @@ def _cache_enable():
     return ps_context().cache_enable()
 
 
+def _set_cache_size(cache_size):
+    ps_context().set_cache_size(cache_size)
+
+
+def _set_sparse_format(sparse_format):
+    ps_context().set_sparse_format(sparse_format)
+
+
 def _set_rank_id(rank_id):
     ps_context().set_rank_id(rank_id)
 
@@ -224,3 +228,15 @@ def _enable_distributed_mindrt():
     This method is used to distinguish from old distributed training mode.
     '''
     return ps_context().enable_distributed_mindrt()
+
+
+def _set_checkpoint_load_status(status):
+    return ps_context().set_checkpoint_load_status(status)
+
+
+def _store_warm_up_ptr_by_tensor(param_key, tensor):
+    return ps_context().store_warm_up_ptr_by_tensor(param_key, tensor)
+
+
+def _store_warm_up_ptr_by_tensor_list(param_key, key_tensor, value_tensor, status_tensor):
+    return ps_context().store_warm_up_ptr_by_tensor_list(param_key, key_tensor, value_tensor, status_tensor)

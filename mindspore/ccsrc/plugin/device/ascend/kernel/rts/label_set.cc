@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 #include "plugin/device/ascend/kernel/rts/label_set.h"
 #include "runtime/stream.h"
 #include "plugin/device/ascend/hal/device/ge_runtime/task_info.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 
 using mindspore::ge::model_runner::LabelSetTaskInfo;
@@ -32,7 +32,7 @@ bool LabelSetKernel::Init(const AnfNodePtr &anf_node) {
   MS_LOG(INFO) << "LabelSetKernel init";
   auto cnode = anf_node->cast<CNodePtr>();
   if (!common::AnfAlgo::HasNodeAttr(kAttrLabelIndex, cnode)) {
-    MS_LOG(EXCEPTION) << "LabelSetKernel has no attr label_index";
+    MS_LOG(INTERNAL_EXCEPTION) << "LabelSetKernel has no attr label_index";
   }
   auto primitive = common::AnfAlgo::GetCNodePrimitive(anf_node);
   MS_EXCEPTION_IF_NULL(primitive);

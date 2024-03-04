@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,9 @@
 #include <functional>
 #include <string>
 #include "abstract/utils.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "kernel/common_utils.h"
+#include "kernel/ops_utils.h"
 #include "runtime/mem.h"
 #include "acl/acl_rt.h"
 #include "runtime/device/kernel_runtime.h"
@@ -38,7 +38,7 @@ TensorCopySlices::~TensorCopySlices() {}
 
 bool TensorCopySlices::Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
                               const std::vector<AddressPtr> &outputs, void *stream_ptr) {
-  if (inputs.size() != 2) {
+  if (inputs.size() != kTensorCopySlicesInputSize) {
     MS_LOG(ERROR) << "inputs size is not 2";
     return false;
   }
@@ -88,8 +88,8 @@ bool TensorCopySlices::Init(const mindspore::AnfNodePtr &anf_node) {
 void TensorCopySlices::GetInputOutputInfo(const AnfNodePtr &anf_node) {
   MS_EXCEPTION_IF_NULL(anf_node);
   size_t input_size = common::AnfAlgo::GetInputTensorNum(anf_node);
-  if (input_size != 2) {
-    MS_LOG(EXCEPTION) << "TensorCopySlices input size is not 2, got " << input_size;
+  if (input_size != kTensorCopySlicesInputSize) {
+    MS_LOG(INTERNAL_EXCEPTION) << "TensorCopySlices input size is not 2, got " << input_size;
   }
   input_type_id_ = AnfAlgo::GetPrevNodeOutputDeviceDataType(anf_node, 0);
   update_type_id_ = AnfAlgo::GetPrevNodeOutputDeviceDataType(anf_node, 0);
@@ -112,7 +112,7 @@ void TensorCopySlices::GetInputOutputTotalCount(const AnfNodePtr &anf_node) {
   MS_EXCEPTION_IF_NULL(anf_node);
   size_t input_size = common::AnfAlgo::GetInputTensorNum(anf_node);
   if (input_size != kTensorCopySlicesInputSize) {
-    MS_LOG(EXCEPTION) << "TensorCopySlices input size is not 2";
+    MS_LOG(INTERNAL_EXCEPTION) << "TensorCopySlices input size is not 2";
   }
 
   auto input_shape = AnfAlgo::GetInputDeviceShape(anf_node, 0);
@@ -134,11 +134,11 @@ void TensorCopySlices::GetInputOutputTotalCount(const AnfNodePtr &anf_node) {
 std::vector<TaskInfoPtr> TensorCopySlices::GenTask(const std::vector<AddressPtr> &inputs,
                                                    const std::vector<AddressPtr> &,
                                                    const std::vector<AddressPtr> &outputs, uint32_t stream_id) {
-  if (inputs.size() != 2) {
-    MS_LOG(EXCEPTION) << "inputs size is not 2.";
+  if (inputs.size() != kTensorCopySlicesInputSize) {
+    MS_LOG(INTERNAL_EXCEPTION) << "inputs size is not 2.";
   }
   if (outputs.size() != 1) {
-    MS_LOG(EXCEPTION) << "outputs size is not 1.";
+    MS_LOG(INTERNAL_EXCEPTION) << "outputs size is not 1.";
   }
   MS_EXCEPTION_IF_NULL(outputs[0]);
   MS_EXCEPTION_IF_NULL(inputs[0]);
@@ -150,8 +150,8 @@ std::vector<TaskInfoPtr> TensorCopySlices::GenTask(const std::vector<AddressPtr>
 
   stream_id_ = stream_id;
   std::shared_ptr<MemcpyAsyncTaskInfo> task_info_ptr1 =
-    std::make_shared<MemcpyAsyncTaskInfo>(unique_name_, stream_id, outputs[0]->addr, outputs[0]->size, inputs[0]->addr,
-                                          inputs[0]->size, ACL_MEMCPY_DEVICE_TO_DEVICE, NeedDump());
+    std::make_shared<MemcpyAsyncTaskInfo>(unique_name_ + "_1", stream_id, outputs[0]->addr, outputs[0]->size,
+                                          inputs[0]->addr, inputs[0]->size, ACL_MEMCPY_DEVICE_TO_DEVICE, NeedDump());
   std::shared_ptr<MemcpyAsyncTaskInfo> task_info_ptr2 = std::make_shared<MemcpyAsyncTaskInfo>(
     unique_name_, stream_id, VoidPointerOffset(outputs[0]->addr, offset_), copy_size_, inputs[1]->addr, copy_size_,
     ACL_MEMCPY_DEVICE_TO_DEVICE, NeedDump());
@@ -185,7 +185,9 @@ std::vector<std::shared_ptr<kernel::KernelBuildInfo>> TensorCopySlicesDesc::GetK
       builder.SetOutputsDeviceType(output_type);
       builder.SetProcessor(AICORE);
       builder.SetKernelType(RT_KERNEL);
-      builder.SetFusionType(OPAQUE);
+      builder.SetFusionType(kPatternOpaque);
+      builder.SetInputsKernelObjectType({KernelObjectType::TENSOR, KernelObjectType::TENSOR});
+      builder.SetOutputsKernelObjectType({KernelObjectType::TENSOR});
       tensor_copy_slices_build_info.emplace_back(builder.Build());
     }
   }

@@ -61,7 +61,6 @@ int SparseSliceCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const 
                                     const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost) {
   auto ret = KernelMod::Resize(base_operator, inputs, outputs, inputsOnHost);
   if (ret == KRET_UNKNOWN_OUT_SHAPE) {
-    outputs_ = outputs;
     const auto input_indices_shape = inputs[kIndex0]->GetShapeVector();
     const auto input_values_shape = inputs[kIndex1]->GetShapeVector();
     const auto input_shape_shape = inputs[kIndex2]->GetShapeVector();
@@ -98,16 +97,14 @@ int SparseSliceCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const 
       MS_LOG(ERROR) << "For '" << kernel_name_
                     << "', the shape of 'input_shape' must be the same as the shape of 'input_start', but got the "
                        "shape of 'input_shape': "
-                    << Vector2Str(input_shape_shape)
-                    << " and the shape of 'input_start': " << Vector2Str(input_start_shape);
+                    << input_shape_shape << " and the shape of 'input_start': " << input_start_shape;
       return KRET_RESIZE_FAILED;
     }
     if (!IsSameShape(input_shape_shape, input_size_shape)) {
       MS_LOG(ERROR) << "For '" << kernel_name_
                     << "', the shape of 'input_shape' must be the same as the shape of 'input_size', but got the shape "
                        "of 'input_shape': "
-                    << Vector2Str(input_shape_shape)
-                    << " and the shape of 'input_size': " << Vector2Str(input_size_shape);
+                    << input_shape_shape << " and the shape of 'input_size': " << input_size_shape;
       return KRET_RESIZE_FAILED;
     }
     nnz_ = input_indices_shape[0];
@@ -121,7 +118,7 @@ int SparseSliceCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const 
   return ret;
 }
 
-void SparseSliceCpuKernelMod::SyncData() {
+void SparseSliceCpuKernelMod::SyncOutputShape() {
   outputs_[0]->SetShapeVector(ShapeVector({slice_nnz_, rank_}));
   outputs_[1]->SetShapeVector(ShapeVector({slice_nnz_}));
   outputs_[kIndex2]->SetShapeVector(ShapeVector({rank_}));
@@ -197,10 +194,11 @@ void SparseSliceCpuKernelMod::SliceCompute(int64_t *input_indices, T *input_valu
 const std::vector<std::pair<KernelAttr, SparseSliceCpuKernelMod::KernelRunFunc>> &SparseSliceCpuKernelMod::GetFuncList()
   const {
   static const std::vector<std::pair<KernelAttr, SparseSliceCpuKernelMod::KernelRunFunc>> func_list = {
-    ADD_KERNEL(Bool, bool),      ADD_KERNEL(UInt8, uint8_t),       ADD_KERNEL(UInt16, uint16_t),
-    ADD_KERNEL(Int8, int8_t),    ADD_KERNEL(Int16, int16_t),       ADD_KERNEL(Int32, int),
-    ADD_KERNEL(Int64, int64_t),  ADD_KERNEL(Float16, float16),     ADD_KERNEL(Float32, float),
-    ADD_KERNEL(Float64, double), ADD_KERNEL(Complex64, complex64), ADD_KERNEL(Complex128, complex128),
+    ADD_KERNEL(Bool, bool),           ADD_KERNEL(UInt8, uint8_t),         ADD_KERNEL(UInt16, uint16_t),
+    ADD_KERNEL(Int8, int8_t),         ADD_KERNEL(Int16, int16_t),         ADD_KERNEL(Int32, int),
+    ADD_KERNEL(UInt32, uint32_t),     ADD_KERNEL(UInt64, uint64_t),       ADD_KERNEL(Int64, int64_t),
+    ADD_KERNEL(Float16, float16),     ADD_KERNEL(Float32, float),         ADD_KERNEL(Float64, double),
+    ADD_KERNEL(Complex64, complex64), ADD_KERNEL(Complex128, complex128),
   };
   return func_list;
 }  // namespace kernel

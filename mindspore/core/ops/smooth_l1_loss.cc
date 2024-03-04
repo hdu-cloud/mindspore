@@ -14,15 +14,32 @@
  * limitations under the License.
  */
 
-#include <set>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
-#include "ops/smooth_l1_loss.h"
-#include "utils/ms_context.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/param_validator.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "ops/smooth_l1_loss.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -50,7 +67,6 @@ std::string SmoothL1Loss::get_reduction() const {
 namespace {
 abstract::ShapePtr SmoothL1LossInferShape(const PrimitivePtr &primitive,
                                           const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   auto prediction = CheckAndConvertUtils::CheckArgs<abstract::AbstractTensor>(prim_name, input_args, kInputIndex0);
   auto target = CheckAndConvertUtils::CheckArgs<abstract::AbstractTensor>(prim_name, input_args, kInputIndex1);
@@ -74,15 +90,7 @@ abstract::ShapePtr SmoothL1LossInferShape(const PrimitivePtr &primitive,
 
 TypePtr SmoothL1LossInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
   // Infer type
-  std::set<TypePtr> valid_types{};
-  auto context = MsContext::GetInstance();
-  MS_EXCEPTION_IF_NULL(context);
-  bool is_ascend = (context->get_param<std::string>(MS_CTX_DEVICE_TARGET) == kAscendDevice);
-  if (is_ascend) {
-    valid_types = {kFloat16, kFloat32};
-  } else {
-    valid_types = {kFloat16, kFloat32, kFloat64};
-  }
+  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64};
 
   std::map<std::string, TypePtr> args;
   (void)args.emplace("scale", input_args[kInputIndex0]->BuildType());
@@ -95,12 +103,31 @@ TypePtr SmoothL1LossInferType(const PrimitivePtr &prim, const std::vector<Abstra
 AbstractBasePtr SmoothL1LossInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                   const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
+  auto prim_name = primitive->name();
   const int64_t input_num = 2;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, prim_name);
   auto infer_type = SmoothL1LossInferType(primitive, input_args);
   auto infer_shape = SmoothL1LossInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(SmoothL1Loss, prim::kPrimSmoothL1Loss, SmoothL1LossInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSmoothL1LossInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SmoothL1LossInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SmoothL1LossInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SmoothL1LossInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SmoothL1Loss, prim::kPrimSmoothL1Loss, AGSmoothL1LossInfer, false);
 }  // namespace ops
 }  // namespace mindspore

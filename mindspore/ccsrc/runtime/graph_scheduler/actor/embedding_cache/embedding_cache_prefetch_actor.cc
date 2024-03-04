@@ -20,108 +20,23 @@
 #include "kernel/common_utils.h"
 #include "runtime/graph_scheduler/actor/rpc/rpc_actor.h"
 #include "proto/topology.pb.h"
-#include "distributed/constants.h"
+#include "include/backend/distributed/constants.h"
+#include "include/backend/distributed/rpc/tcp/constants.h"
+#include "runtime/graph_scheduler/actor/embedding_cache/device_dense_embedding_operation.h"
+#include "runtime/graph_scheduler/actor/embedding_cache/device_sparse_embedding_operation.h"
+#include "include/backend/distributed/embedding_cache/data_queue_manager.h"
 
 namespace mindspore {
 namespace runtime {
+using distributed::IdDataInfo;
+using distributed::IndexDataInfo;
+
+using distributed::DataQueueManager;
 using distributed::cluster::ClusterContext;
 using mindspore::session::KernelGraph;
-
-// One and two dimensional shape placeholder.
-const ShapeVector kOneDimensionalShape = {1};
-const ShapeVector kTwoDimensionalShape = {1, 1};
-
-const size_t kInputIndexZero = 0;
-const size_t kInputIndexOne = 1;
-const size_t kInputIndexTwo = 2;
-
-// Maximum number of threads for concurrent accelerated cache processing.
-constexpr size_t kMaxThreadNum = 16;
-// Maximum number of feature ids processed per thread.
-constexpr size_t kMaxIdsPerThread = 10000;
+constexpr size_t kDefaultQueueCapacity = 128;
 
 namespace {
-ParameterPtr NewParameter(const KernelGraphPtr &graph, TypePtr type, const ShapeVector &shape) {
-  MS_EXCEPTION_IF_NULL(graph);
-  MS_EXCEPTION_IF_NULL(type);
-
-  auto param = graph->NewParameter();
-  MS_EXCEPTION_IF_NULL(param);
-  auto abstract = std::make_shared<abstract::AbstractTensor>(type, shape);
-  param->set_abstract(abstract);
-
-  auto kernel_build_info_builder = std::make_shared<kernel::KernelBuildInfo::KernelBuildInfoBuilder>();
-  std::vector<std::string> formats = {kOpFormat_DEFAULT};
-  std::vector<TypeId> types = {type->type_id()};
-  kernel_build_info_builder->SetOutputsFormat(formats);
-  kernel_build_info_builder->SetOutputsDeviceType(types);
-  AnfAlgo::SetSelectKernelBuildInfo(kernel_build_info_builder->Build(), param.get());
-
-  auto mutable_inputs = graph->MutableInputs();
-  MS_EXCEPTION_IF_NULL(mutable_inputs);
-  mutable_inputs->push_back(param);
-
-  return param;
-}
-
-ValueNodePtr NewValueNode(int64_t value, const DeviceContext *device_context, size_t stream_id) {
-  MS_EXCEPTION_IF_NULL(device_context);
-
-  auto tensor = std::make_shared<tensor::Tensor>(static_cast<int64_t>(value), kInt32);
-  auto value_node = NewValueNode(tensor);
-  value_node->set_abstract(tensor->ToAbstract());
-
-  // Create kernel build info.
-  auto kernel_build_info_builder = std::make_shared<kernel::KernelBuildInfo::KernelBuildInfoBuilder>();
-  std::vector<std::string> formats = {kOpFormat_DEFAULT};
-  std::vector<TypeId> types = {kInt32->type_id()};
-  kernel_build_info_builder->SetOutputsFormat(formats);
-  kernel_build_info_builder->SetOutputsDeviceType(types);
-
-  auto kernel_info = std::make_shared<device::KernelInfo>();
-  MS_EXCEPTION_IF_NULL(kernel_info);
-  value_node->set_kernel_info(kernel_info);
-  AnfAlgo::SetSelectKernelBuildInfo(kernel_build_info_builder->Build(), value_node.get());
-
-  // Create device address.
-  size_t output_idx = 0;
-  size_t tensor_size = AnfAlgo::GetOutputTensorMemSize(value_node, output_idx);
-  TypeId output_type_id = AnfAlgo::GetOutputDeviceDataType(value_node, output_idx);
-  std::string output_format = AnfAlgo::GetOutputFormat(value_node, output_idx);
-
-  MS_EXCEPTION_IF_NULL(device_context->device_res_manager_);
-  auto value_addr = device_context->device_res_manager_->AllocateMemory(tensor_size);
-  MS_EXCEPTION_IF_NULL(value_addr);
-  auto address = device_context->device_res_manager_->CreateDeviceAddress(
-    value_addr, tensor_size, output_format, output_type_id, trans::GetRuntimePaddingShape(value_node, output_idx));
-  MS_EXCEPTION_IF_NULL(address);
-
-  // Sync tensor value.
-  MS_EXCEPTION_IF_CHECK_FAIL(address->AsyncHostToDevice({}, tensor_size, output_type_id, tensor->data_c(), stream_id),
-                             "Async memcpy host to device failed.");
-  MS_EXCEPTION_IF_CHECK_FAIL(device_context->device_res_manager_->SyncStream(stream_id), "Synchronize stream failed.");
-
-  address->set_from_persistent_mem(true);
-  AnfAlgo::SetOutputAddr(address, output_idx, value_node.get());
-
-  return value_node;
-}
-
-bool InferOpShape(const CNodePtr &kernel) {
-  MS_EXCEPTION_IF_NULL(kernel);
-  opt::dynamic_shape::InferOp(kernel);
-  auto args = kernel::GetArgsFromCNode(kernel);
-  MS_EXCEPTION_IF_NULL(args);
-
-  auto kernel_mod = AnfAlgo::GetKernelMod(kernel);
-  MS_EXCEPTION_IF_NULL(kernel_mod);
-  if (kernel::KRET_OK != kernel_mod->Resize(args->op, args->inputs, args->outputs, args->depend_tensor_map)) {
-    MS_LOG(ERROR) << "Kernel " << kernel->fullname_with_scope() << " resize failed.";
-    return false;
-  }
-  return true;
-}
-
 // Generate unique inter process edge name, format:
 // src role + src rank id -> dst role + dst rank id + embedding cache operation + parameter key.
 std::string GenerateInterProcessEdge(const std::string &src_role, uint32_t src_rank, const std::string &dst_role,
@@ -156,7 +71,7 @@ SendRecvPair CreateSenderReceiverPair(uint32_t worker_rank, uint32_t server_rank
                                                                  cache_operation, param_key));
   sender->set_inter_process_edge_name(GenerateInterProcessEdge(distributed::kEnvRoleOfWorker, worker_rank,
                                                                distributed::kEnvRoleOfPServer, server_rank,
-                                                               distributed::kLookupEmbeddingCache, param_key));
+                                                               cache_operation, param_key));
 
   // Set route table proxy.
   receiver->set_actor_route_table_proxy(CreateRouteTableProxy());
@@ -185,44 +100,107 @@ int32_t GetCacheOpsServiceId(const std::string &cache_operation, int32_t param_k
   return id;
 }
 
-// Async copy host memory to device.
-bool MemcpyHostToDeviceAsync(void *dst, const void *src, size_t size, const DeviceContext *device_context,
-                             size_t stream_id) {
-  MS_ERROR_IF_NULL(dst);
-  MS_ERROR_IF_NULL(src);
-  MS_ERROR_IF_NULL(device_context);
-  MS_ERROR_IF_NULL(device_context->device_res_manager_);
+// Parallelly generate fixed or random numbers continuously using specified algorithm.
+template <typename T, typename Generator, typename Distribution, typename... Args>
+void GenerateDistributionParallel(size_t size, T *output, Args... args) {
+  std::thread threads[kMaxThreadNum];
+  std::random_device rd;
+  const std::uint64_t seed = rd();
 
-  void *device_ptr = dst;
-  const void *host_ptr = src;
+  // 1. Compute total thread number need to parallel generate distribution and the size of new numbers that each
+  // thread need to generate.
+  // Once calculation of the normal distribution may produce two random values, so each thread should be responsible for
+  // producing an even number of random numbers, except for the last thread.
+  auto [thread_num, size_per_thread] = random::ComputeTaskNumSize(size, kMaxThreadNum);
 
-  auto device_address = device_context->device_res_manager_->CreateDeviceAddress(device_ptr, size, kOpFormat_DEFAULT,
-                                                                                 kTypeUnknown, ShapeVector());
-  MS_ERROR_IF_NULL(device_address);
-  RETURN_IF_FALSE_WITH_LOG(device_address->AsyncHostToDevice({}, size, kTypeUnknown, host_ptr, stream_id),
-                           "Async memcpy host to device failed.");
+  // For performance, multi-thread concurrency is not required when the total size is small.
+  if (thread_num == 1) {
+    random::GenerateRandoms<T, Generator, Distribution, Args...>(seed, 0, output, size, args...);
+    return;
+  }
 
-  return true;
+  // 2. Parallelly generate specified distribution using specified algorithm.
+  // Note that the offset need to be set to 'Generator' to prevent generating same sequence of each thread.
+  size_t offset = 0;
+  for (size_t i = 0; i < thread_num; ++i) {
+    size_t task_len = ((i < (thread_num - 1)) ? size_per_thread : (size - ((thread_num - 1) * size_per_thread)));
+    threads[i] = std::thread(&random::GenerateRandoms<T, Generator, Distribution, Args...>, seed, offset,
+                             output + offset, task_len, args...);
+    offset += task_len;
+  }
+
+  for (size_t j = 0; j < thread_num; j++) {
+    threads[j].join();
+  }
 }
 
-// Async copy device memory to host.
-bool MemcpyDeviceToHostAsync(void *dst, const void *src, size_t size, const DeviceContext *device_context,
-                             size_t stream_id) {
-  MS_ERROR_IF_NULL(dst);
-  MS_ERROR_IF_NULL(src);
-  MS_ERROR_IF_NULL(device_context);
-  MS_ERROR_IF_NULL(device_context->device_res_manager_);
+void DeduplicateId(UniqueIds *unique_ids) {
+  MS_EXCEPTION_IF_NULL(unique_ids);
 
-  void *device_ptr = const_cast<void *>(src);
-  void *host_ptr = dst;
+  constexpr size_t kMaxParallelNum = 32;
+  size_t parallel_num = unique_ids->multi_batch_data_.size();
+  if (parallel_num > kMaxParallelNum) {
+    MS_LOG(EXCEPTION) << "The parallel num: " << parallel_num
+                      << " can not be greater than max parallel num: " << kMaxParallelNum;
+  }
+  std::thread threads[kMaxParallelNum];
 
-  auto device_address = device_context->device_res_manager_->CreateDeviceAddress(device_ptr, size, kOpFormat_DEFAULT,
-                                                                                 kTypeUnknown, ShapeVector());
-  MS_ERROR_IF_NULL(device_address);
-  RETURN_IF_FALSE_WITH_LOG(device_address->AsyncDeviceToHost({}, size, kTypeUnknown, host_ptr, stream_id),
-                           "Async memcpy device to host failed.");
+  std::vector<mindspore::HashSet<int>> unique_batch_ids_sets(parallel_num);
+  auto unique_task = [&](int *origin_batch_ids, size_t proc_len, mindspore::HashSet<int> *unique_set) {
+    (void)std::for_each(origin_batch_ids, origin_batch_ids + proc_len,
+                        [&unique_set](int id) { (void)unique_set->insert(id); });
+  };
 
-  return true;
+  size_t i = 0;
+  for (; i < parallel_num; ++i) {
+    threads[i] = std::thread(unique_task, reinterpret_cast<int *>(unique_ids->multi_batch_data_.at(i)),
+                             unique_ids->multi_batch_size_.at(i), &unique_batch_ids_sets[i]);
+  }
+
+  for (size_t j = 0; j < i; j++) {
+    threads[j].join();
+  }
+
+  for (size_t k = 1; k < parallel_num; ++k) {
+    auto end_iter = unique_batch_ids_sets[k].end();
+    for (auto iter = unique_batch_ids_sets[k].begin(); iter != end_iter; ++iter) {
+      unique_batch_ids_sets[0].insert(*iter);
+    }
+  }
+  const auto &unique_ids_set = unique_batch_ids_sets.front();
+  unique_ids->ids_num_ = unique_ids_set.size();
+  unique_ids->ids_ = new int[unique_ids->ids_num_];
+  MS_EXCEPTION_IF_NULL(unique_ids->ids_);
+  size_t index = 0;
+  auto unique_ids_ptr = unique_ids->ids_;
+  (void)std::for_each(unique_ids_set.begin(), unique_ids_set.end(), [&](int id) { unique_ids_ptr[index++] = id; });
+}
+
+void TransformIdsToIndices(mindspore::HashMap<int, int> *unique_ids_to_indices, size_t batch_ids_num, int *batch_ids) {
+  auto change_id_to_index_func = [&](int *batch_ids_ptr, size_t proc_len) {
+    for (size_t i = 0; i < proc_len; i++) {
+      batch_ids_ptr[i] = (*unique_ids_to_indices)[batch_ids_ptr[i]];
+    }
+  };
+
+  size_t thread_num = batch_ids_num / kMaxIdsPerThread + 1;
+  thread_num = thread_num > kMaxThreadNum ? kMaxThreadNum : thread_num;
+  std::thread threads[kMaxThreadNum];
+  size_t i = 0;
+  size_t offset = 0;
+
+  for (; i < thread_num; ++i) {
+    size_t proc_len = batch_ids_num / thread_num + (i < (batch_ids_num % thread_num) ? 1 : 0);
+    threads[i] = std::thread(change_id_to_index_func, batch_ids + offset, proc_len);
+    offset += proc_len;
+  }
+  if (offset != batch_ids_num) {
+    MS_LOG(WARNING) << "Check id in device inadequate, total:" << batch_ids_num << " checked:" << offset;
+  }
+
+  for (size_t j = 0; j < i; j++) {
+    threads[j].join();
+  }
 }
 }  // namespace
 
@@ -236,31 +214,11 @@ void EmbeddingCachePrefetchActor::Initialize() {
     MS_LOG(EXCEPTION) << "Create stream failed.";
   }
 
-  // Create and Initialize the random number generator for embedding values.
-  const std::uint64_t seed = 0;
-  const size_t skip = 0;
-  rnd_gen_ = std::make_unique<distributed::RandomGenerator<DataType, Generator, Distribution>>(seed, skip);
-
-  const double mean = 0.0;
-  const double sigma = 0.01;
-  rnd_gen_->Initialize(mean, sigma);
-
   // Get embedding cache table info.
-  hash_tables_ = embedding_cache_table_manager.hash_tables_;
   local_host_cache_size_ = embedding_cache_table_manager.host_cache_size_;
   vocab_size_ = embedding_cache_table_manager.vocab_size_;
-  embedding_device_cache_ = embedding_cache_table_manager.embedding_device_cache_;
-  MS_EXCEPTION_IF_NULL(embedding_device_cache_);
-  embedding_host_cache_ = embedding_cache_table_manager.embedding_host_cache_;
-  MS_EXCEPTION_IF_NULL(embedding_host_cache_);
   local_embedding_slice_bounds_ = embedding_cache_table_manager.local_embedding_slice_bounds_;
   local_device_cache_bounds_ = embedding_cache_table_manager.local_device_cache_bounds_;
-
-  // Get the id range of each server's embedding table slice.
-  GetRemoteEmbeddingSliceBound();
-
-  BuildEmbeddingCacheLookupKernel();
-  BuildEmbeddingCacheUpdateKernel();
 
   // Initialize CPU device context. The origin device context for embedding cache prefetch actor is GPU or NPU. But we
   // still need the CPU device context to allocate host memory.
@@ -269,194 +227,59 @@ void EmbeddingCachePrefetchActor::Initialize() {
   MS_EXCEPTION_IF_NULL(cpu_device_context_);
   cpu_device_context_->Initialize();
 
+  server_num_ = PSContext::instance()->server_num();
+  if (server_num_ == 0) {
+    MS_LOG(EXCEPTION) << "The number of servers is at least 1, but get 0";
+  }
+
   // Build and link rpc operators.
   BuildRpcOperators();
   LinkRpcOperators();
 
+  // Create the device embedding operation.
+  emb_ops_ = new DeviceDenseEmbeddingOperation(this, device_context_, local_embedding_slice_bounds_,
+                                               local_device_cache_bounds_, &statistics_info_, stream_id_);
+  MS_EXCEPTION_IF_NULL(emb_ops_);
+  if (!emb_ops_->Initialize()) {
+    MS_LOG(ERROR) << "Failed to initialize the device embedding operation.";
+  }
+
+  // Get the id range of each server's embedding table slice.
+  emb_ops_->GetRemoteEmbeddingSliceBound(vocab_size_, server_num_, &remote_embedding_slice_bounds_);
+
   initialized_ = true;
 }
 
-void EmbeddingCachePrefetchActor::Finalize() {
+void EmbeddingCachePrefetchActor::Finalize(bool finalize_remote) {
+  std::lock_guard<std::mutex> lock(finalize_mutex_);
   if (!initialized_ || finalized_) {
     return;
   }
-  SyncEmbeddingTable();
 
-  running_ = false;
-  (void)FinalizeRemote();
+  StopPrefetchCachePipeline();
+  for (const auto &item : channel_locks_) {
+    const auto &channel_ptr = item.second;
+    MS_EXCEPTION_IF_NULL(channel_ptr);
+    channel_ptr->TryWakeChannel(true);
+  }
+  WaitPrefetchCacheFinish();
 
   PsDataPrefetch::GetInstance().NotifyFinalize();
+
+  if (finalize_remote) {
+    (void)FinalizeRemote();
+  }
+
   data_parser_.notify_all();
 
-  embedding_cache_lookup_node_ = nullptr;
-  embedding_cache_update_node_ = nullptr;
-
-  if (rnd_gen_ != nullptr) {
-    (void)rnd_gen_->Finalize();
+  if (emb_ops_ != nullptr) {
+    delete emb_ops_;
+    emb_ops_ = nullptr;
   }
 
   rpc_operators_.clear();
   finalized_ = true;
   initialized_ = false;
-}
-
-void EmbeddingCachePrefetchActor::BuildEmbeddingCacheLookupKernel() {
-  auto graph = std::make_shared<KernelGraph>();
-  MS_EXCEPTION_IF_NULL(graph);
-  graph->set_graph_id((std::numeric_limits<uint32_t>::max)());
-  embedding_cache_graphs_.push_back(graph);
-
-  // 1. Create parameter nodes which are inputs of embedding cache look up kernel(operator name: 'Gather').
-  ParameterPtr input_param = NewParameter(graph, kFloat32, kTwoDimensionalShape);
-  ParameterPtr input_indices = NewParameter(graph, kInt32, kOneDimensionalShape);
-  ValueNodePtr offset_value_node = NewValueNode(0, device_context_, stream_id_);
-
-  // 2. Create a CNode for operator EmbeddingLookup.
-  PrimitivePtr emb_lookup_primitive = std::make_shared<Primitive>(kEmbeddingLookupOpName);
-  emb_lookup_primitive->set_attr(kAttrInputIsDynamicShape, MakeValue(true));
-  emb_lookup_primitive->set_attr(kAttrOutputIsDynamicShape, MakeValue(true));
-
-  std::vector<AnfNodePtr> emb_lookup_input_nodes{NewValueNode(emb_lookup_primitive), input_param, input_indices,
-                                                 offset_value_node};
-  embedding_cache_lookup_node_ = graph->NewCNode(emb_lookup_input_nodes);
-  MS_EXCEPTION_IF_NULL(embedding_cache_lookup_node_);
-  auto abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, kTwoDimensionalShape);
-  embedding_cache_lookup_node_->set_abstract(abstract);
-
-  // 3. Kernel build process.
-  MS_EXCEPTION_IF_NULL(device_context_);
-  MS_EXCEPTION_IF_NULL(device_context_->kernel_executor_);
-  device_context_->kernel_executor_->CreateKernel({embedding_cache_lookup_node_});
-  AnfAlgo::SetStreamId(stream_id_, embedding_cache_lookup_node_.get());
-}
-
-void EmbeddingCachePrefetchActor::BuildEmbeddingCacheUpdateKernel() {
-  auto graph = std::make_shared<KernelGraph>();
-  MS_EXCEPTION_IF_NULL(graph);
-  graph->set_graph_id((std::numeric_limits<uint32_t>::max)());
-  embedding_cache_graphs_.push_back(graph);
-
-  // 1. Create parameter nodes which are inputs of embedding cache update kernel(operator name: 'ScatterUpdate').
-  ParameterPtr input_param = NewParameter(graph, kFloat32, kTwoDimensionalShape);
-  ParameterPtr input_indices = NewParameter(graph, kInt32, kOneDimensionalShape);
-  ParameterPtr update_values = NewParameter(graph, kFloat32, kTwoDimensionalShape);
-
-  // 2. Create a CNode for operator ScatterUpdate.
-  PrimitivePtr embedding_cache_update_primitive = std::make_shared<Primitive>(kScatterUpdateOpName);
-  embedding_cache_update_primitive->set_attr(kAttrInputIsDynamicShape, MakeValue(true));
-
-  std::vector<AnfNodePtr> embedding_cache_update_input_nodes{NewValueNode(embedding_cache_update_primitive),
-                                                             input_param, input_indices, update_values};
-  embedding_cache_update_node_ = graph->NewCNode(embedding_cache_update_input_nodes);
-  MS_EXCEPTION_IF_NULL(embedding_cache_update_node_);
-  auto abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, kTwoDimensionalShape);
-  embedding_cache_update_node_->set_abstract(abstract);
-
-  // 3. Kernel build process.
-  MS_EXCEPTION_IF_NULL(device_context_);
-  MS_EXCEPTION_IF_NULL(device_context_->kernel_executor_);
-  device_context_->kernel_executor_->CreateKernel({embedding_cache_update_node_});
-  AnfAlgo::SetStreamId(stream_id_, embedding_cache_update_node_.get());
-}
-
-bool EmbeddingCachePrefetchActor::LookupDeviceCache(void *indices, void *embedding_cache, size_t indices_num,
-                                                    size_t cache_size, size_t embedding_size, void *outputs) {
-  MS_ERROR_IF_NULL(indices);
-  MS_ERROR_IF_NULL(embedding_cache);
-  MS_ERROR_IF_NULL(outputs);
-  MS_ERROR_IF_NULL(embedding_cache_lookup_node_);
-
-  // 1. Update parameter nodes' shape.
-  auto input_param_node = common::AnfAlgo::GetInputNode(embedding_cache_lookup_node_, kInputIndexZero);
-  MS_ERROR_IF_NULL(input_param_node);
-  const ShapeVector input_param_shape = {SizeToLong(cache_size), SizeToLong(embedding_size)};
-  auto input_param_abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, input_param_shape);
-  input_param_node->set_abstract(input_param_abstract);
-
-  auto input_indices_node = common::AnfAlgo::GetInputNode(embedding_cache_lookup_node_, kInputIndexOne);
-  MS_ERROR_IF_NULL(input_indices_node);
-  const ShapeVector input_indices_shape = {SizeToLong(indices_num)};
-  auto input_indices_abstract = std::make_shared<abstract::AbstractTensor>(kInt32, input_indices_shape);
-  input_indices_node->set_abstract(input_indices_abstract);
-
-  auto input_offset_node = common::AnfAlgo::GetInputNode(embedding_cache_lookup_node_, kInputIndexTwo);
-  MS_ERROR_IF_NULL(input_offset_node);
-  auto offset_address = AnfAlgo::GetMutableOutputAddr(input_offset_node, 0);
-  MS_ERROR_IF_NULL(offset_address);
-
-  // 2. Infer shape for embedding cache look up kernel(operator name: 'Gather') which is dynamic shape kernel.
-  if (!InferOpShape(embedding_cache_lookup_node_)) {
-    MS_LOG(ERROR) << "Infer operator shape failed, op name: " << embedding_cache_lookup_node_->fullname_with_scope();
-    return false;
-  }
-
-  // 3. Do embedding cache look up on device.
-  AddressPtrList kernel_inputs = {
-    std::make_shared<Address>(embedding_cache, cache_size * embedding_size * sizeof(float)),
-    std::make_shared<Address>(indices, indices_num * sizeof(int)),
-    std::make_shared<Address>(offset_address->GetMutablePtr(), offset_address->GetSize())};
-  AddressPtrList kernel_outputs = {std::make_shared<Address>(outputs, indices_num * embedding_size * sizeof(float))};
-
-  MS_ERROR_IF_NULL(device_context_);
-  MS_ERROR_IF_NULL(device_context_->kernel_executor_);
-  auto ret = device_context_->kernel_executor_->LaunchKernel(embedding_cache_lookup_node_, kernel_inputs, {},
-                                                             kernel_outputs, stream_id_);
-  if (!ret) {
-    MS_LOG(ERROR) << "Launch kernel: " << embedding_cache_lookup_node_->fullname_with_scope() << " failed.";
-    return false;
-  }
-  return true;
-}
-
-bool EmbeddingCachePrefetchActor::UpdateDeviceCache(void *indices, void *update_value, size_t indices_num,
-                                                    size_t cache_size, size_t embedding_size, void *embedding_cache) {
-  MS_ERROR_IF_NULL(indices);
-  MS_ERROR_IF_NULL(update_value);
-  MS_ERROR_IF_NULL(embedding_cache);
-  MS_ERROR_IF_NULL(embedding_cache_update_node_);
-
-  // 1. Update parameter nodes' shape.
-  auto input_param_node = common::AnfAlgo::GetInputNode(embedding_cache_update_node_, kInputIndexZero);
-  MS_ERROR_IF_NULL(input_param_node);
-  const ShapeVector input_param_shape = {SizeToLong(cache_size), SizeToLong(embedding_size)};
-  auto input_param_abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, input_param_shape);
-  input_param_node->set_abstract(input_param_abstract);
-
-  auto input_indices_node = common::AnfAlgo::GetInputNode(embedding_cache_update_node_, kInputIndexOne);
-  MS_ERROR_IF_NULL(input_indices_node);
-  const ShapeVector input_indices_shape = {SizeToLong(indices_num)};
-  auto input_indices_abstract = std::make_shared<abstract::AbstractTensor>(kInt32, input_indices_shape);
-  input_indices_node->set_abstract(input_indices_abstract);
-
-  auto update_values_node = common::AnfAlgo::GetInputNode(embedding_cache_update_node_, kInputIndexTwo);
-  MS_ERROR_IF_NULL(update_values_node);
-  const ShapeVector update_values_shape = {SizeToLong(indices_num), SizeToLong(embedding_size)};
-  auto update_values_abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, update_values_shape);
-  update_values_node->set_abstract(update_values_abstract);
-
-  // 2. Infer shape for embedding cache update kernel(operator name: 'ScatterUpdate') which is dynamic shape kernel.
-  if (!InferOpShape(embedding_cache_update_node_)) {
-    MS_LOG(ERROR) << "Infer operator shape failed, op name: " << embedding_cache_update_node_->fullname_with_scope();
-    return false;
-  }
-
-  // 3. Do update cache on device.
-  AddressPtrList kernel_inputs = {
-    std::make_shared<Address>(embedding_cache, cache_size * embedding_size * sizeof(float)),
-    std::make_shared<Address>(indices, indices_num * sizeof(int)),
-    std::make_shared<Address>(update_value, indices_num * embedding_size * sizeof(float))};
-  AddressPtrList kernel_outputs = {
-    std::make_shared<Address>(embedding_cache, cache_size * embedding_size * sizeof(float))};
-
-  MS_ERROR_IF_NULL(device_context_);
-  MS_ERROR_IF_NULL(device_context_->kernel_executor_);
-  auto ret = device_context_->kernel_executor_->LaunchKernel(embedding_cache_update_node_, kernel_inputs, {},
-                                                             kernel_outputs, stream_id_);
-  if (!ret) {
-    MS_LOG(ERROR) << "Launch kernel: " << embedding_cache_update_node_->fullname_with_scope() << " failed.";
-    return false;
-  }
-  return true;
 }
 
 void EmbeddingCachePrefetchActor::IncreaseGraphStep(const std::string &channel_name) {
@@ -477,12 +300,27 @@ void EmbeddingCachePrefetchActor::IncreaseGraphStep(const std::string &channel_n
         !error_info_.empty() ? error_info_ : "Embedding cache prefetch actor is finalized abnormally.";
       MS_LOG(EXCEPTION) << error_info;
     }
+    distributed::EmbeddingCacheTableManager::GetInstance().WaitForWarmUpHostCacheComplete();
     MS_LOG(INFO) << "Graph running waiting embedding table init end.";
   }
   graph_step_++;
-  set_channel_name(channel_name);
-  if (!PsDataPrefetch::GetInstance().TryWakeChannel(channel_name)) {
-    MS_LOG(EXCEPTION) << "TryWakeChannel failed, channel name: " << channel_name;
+  if (embedding_cache_table_manager.enable_pipeline()) {
+    if (channel_name != channel_name_) {
+      set_channel_name(channel_name);
+      // Create pipeline tasks for this channel
+      StartPrefetchCachePipeline(channel_name);
+    }
+    const auto &iter = channel_locks_.find(channel_name);
+    if (iter == channel_locks_.end()) {
+      MS_LOG(EXCEPTION) << "Can not find channel lock for channel: " << channel_name;
+    }
+    MS_EXCEPTION_IF_NULL(iter->second);
+    iter->second->TryWakeChannel();
+  } else {
+    set_channel_name(channel_name);
+    if (!PsDataPrefetch::GetInstance().TryWakeChannel(channel_name)) {
+      MS_LOG(EXCEPTION) << "TryWakeChannel failed, channel name: " << channel_name;
+    }
   }
   data_parser_.notify_one();
 }
@@ -493,7 +331,7 @@ void EmbeddingCachePrefetchActor::Run() {
   // Bind device to current thread to gain device control privileges
   MS_EXCEPTION_IF_NULL(device_context_);
   MS_EXCEPTION_IF_NULL(device_context_->device_res_manager_);
-  if (!device_context_->device_res_manager_->BindDeviceToCurrentThread()) {
+  if (!device_context_->device_res_manager_->BindDeviceToCurrentThread(false)) {
     MS_LOG(ERROR) << "Failed to bind device to current thread.";
     running_ = false;
     PsDataPrefetch::GetInstance().NotifyFinalize();
@@ -507,68 +345,329 @@ void EmbeddingCachePrefetchActor::Run() {
 
   // Wait data channel ready.
   WaitDataChannelInit();
-
-  MS_LOG(INFO) << "Begin prefetching cache.";
-  while (running_) {
-    if (!PrefetchCache()) {
-      running_ = false;
-      // If prefetch cache failed, need to finalize data prefetch thread which is executing
-      // PsDataPrefetch::PrefetchData(), so as to the minddata can release resource normally.
-      PsDataPrefetch::GetInstance().NotifyFinalize();
-    }
-  }
-  MS_LOG(INFO) << "End prefetching cache.";
 }
 
-bool EmbeddingCachePrefetchActor::PrefetchCache() {
-  // 1. Acquire batch ids
-  void *data = nullptr;
-  RETURN_IF_FALSE_WITH_LOG(PsDataPrefetch::GetInstance().QueryData(channel_name_, &data), "Query input data failed.");
+void EmbeddingCachePrefetchActor::CreateChannelLock(const std::string &channel_name) {
+  if (channel_locks_.find(channel_name) != channel_locks_.end()) {
+    return;
+  }
+  auto sink_size = DataQueueManager::GetInstance().GetSinkSize(channel_name);
+  channel_locks_.emplace(channel_name, std::make_shared<PsDataChannel>(channel_name, sink_size));
+}
 
-  if (data == nullptr) {
-    MS_LOG(INFO) << "There is no input data of dataset channel name:" << channel_name_;
-    std::unique_lock<std::mutex> locker(data_mutex_);
-    const int64_t longest_time_to_wait = 100;
-    (void)data_parser_.wait_for(locker, std::chrono::milliseconds(longest_time_to_wait));
-    return true;
+void EmbeddingCachePrefetchActor::CreateBlockQueue(const std::string &channel_name) {
+  auto unique_ids_queue = std::make_shared<BlockingQueue<UniqueIds>>(kDefaultQueueCapacity);
+  auto cache_analysis_queue = std::make_shared<BlockingQueue<CacheAnalysis>>(kDefaultQueueCapacity);
+  auto ids_and_indices_queue = std::make_shared<BlockingQueue<IdsAndIndices>>(kDefaultQueueCapacity);
+  (void)channel_to_queues_.emplace(channel_name,
+                                   std::make_tuple(unique_ids_queue, cache_analysis_queue, ids_and_indices_queue));
+}
+
+void EmbeddingCachePrefetchActor::StartPrefetchCachePipeline(const std::string &channel_name) {
+  MS_LOG(INFO) << "Begin StartPrefetchCachePipeline for channel name: " << channel_name;
+  std::lock_guard<std::mutex> lock(pipeline_mutex_);
+  if (pipeline_stages_.find(channel_name) != pipeline_stages_.end()) {
+    return;
   }
 
-  RETURN_IF_FALSE_WITH_LOG(IncreaseStep(), "Increase step failed.");
-  auto data_size = PsDataPrefetch::GetInstance().data_size(channel_name_);
-  if (data_size == 0) {
-    MS_LOG(ERROR) << "The data size of batch ids can not be zero.";
-    return false;
+  CreateChannelLock(channel_name);
+  CreateBlockQueue(channel_name);
+
+  auto thread_list = std::make_shared<std::vector<std::thread>>(kPipelineStageNum);
+  pipeline_stages_.emplace(channel_name, thread_list);
+
+  thread_list->at(kIndex0) = std::thread(&EmbeddingCachePrefetchActor::UniqueIdsTask, this, channel_name);
+  thread_list->at(kIndex1) = std::thread(&EmbeddingCachePrefetchActor::AnalyseCacheTask, this, channel_name);
+  thread_list->at(kIndex2) = std::thread(&EmbeddingCachePrefetchActor::UpdateCacheTask, this, channel_name);
+  thread_list->at(kIndex3) = std::thread(&EmbeddingCachePrefetchActor::TransformIdsToIndicesTask, this, channel_name);
+  MS_LOG(INFO) << "End StartPrefetchCachePipeline for channel name: " << channel_name;
+}
+
+void EmbeddingCachePrefetchActor::StopPrefetchCachePipeline() {
+  MS_LOG(INFO) << "Begin StopPrefetchCachePipeline";
+  std::lock_guard<std::mutex> lock(pipeline_mutex_);
+  running_ = false;
+  DataQueueManager::GetInstance().CloseAllQueues();
+  for (const auto &item : channel_to_queues_) {
+    const BlockingQueueTuple &queues_tuple = item.second;
+    const auto &unique_ids_queue = std::get<std::shared_ptr<BlockingQueue<UniqueIds>>>(queues_tuple);
+    MS_EXCEPTION_IF_NULL(unique_ids_queue);
+    unique_ids_queue->Close();
+
+    const auto &cache_analysis_queue = std::get<std::shared_ptr<BlockingQueue<CacheAnalysis>>>(queues_tuple);
+    MS_EXCEPTION_IF_NULL(cache_analysis_queue);
+    cache_analysis_queue->Close();
+
+    const auto &ids_and_indices_queue = std::get<std::shared_ptr<BlockingQueue<IdsAndIndices>>>(queues_tuple);
+    MS_EXCEPTION_IF_NULL(ids_and_indices_queue);
+    ids_and_indices_queue->Close();
   }
-  auto batch_ids = reinterpret_cast<int *>(data);
-  auto batch_ids_num = data_size / sizeof(int);
-  std::unique_ptr<int[]> hash_index = std::make_unique<int[]>(batch_ids_num);
-  auto ret = memset_s(&statistics_info_, sizeof(statistics_info_), 0, sizeof(statistics_info_));
-  if (ret != EOK) {
-    MS_LOG(ERROR) << "Memset for cache statistics info failed, errno[" << ret << "]";
-    return false;
+  MS_LOG(INFO) << "End StopPrefetchCachePipeline";
+}
+
+void EmbeddingCachePrefetchActor::WaitPrefetchCacheFinish() {
+  std::lock_guard<std::mutex> lock(pipeline_mutex_);
+  for (auto &item : pipeline_stages_) {
+    const std::string &channel_name = item.first;
+    MS_LOG(INFO) << "Begin stop pipeline for channel: " << channel_name;
+    auto stage_threads = item.second;
+    MS_EXCEPTION_IF_NULL(stage_threads);
+    for (size_t i = 0; i < kPipelineStageNum; ++i) {
+      if (stage_threads->at(i).joinable()) {
+        stage_threads->at(i).join();
+      }
+    }
+    MS_LOG(INFO) << "End stop pipeline for channel: " << channel_name;
+  }
+}
+
+void EmbeddingCachePrefetchActor::UniqueIdsTask(const std::string &channel_name) {
+  const auto &iter = channel_locks_.find(channel_name);
+  if (iter == channel_locks_.end()) {
+    MS_LOG(EXCEPTION) << "Can not find channel lock for channel: " << channel_name;
+  }
+  auto channel_lock = iter->second;
+  MS_EXCEPTION_IF_NULL(channel_lock);
+
+  const auto &id_data_queue = DataQueueManager::GetInstance().GetDataQueue(channel_name).first;
+  MS_EXCEPTION_IF_NULL(id_data_queue);
+
+  const auto &queue_iter = channel_to_queues_.find(channel_name);
+  if (queue_iter == channel_to_queues_.end()) {
+    MS_LOG(EXCEPTION) << "Can not find queue for channel: " << channel_name;
+  }
+  const auto &unique_ids_queue = std::get<std::shared_ptr<BlockingQueue<UniqueIds>>>(queue_iter->second);
+  MS_EXCEPTION_IF_NULL(unique_ids_queue);
+
+  size_t sink_size = DataQueueManager::GetInstance().GetSinkSize(channel_name);
+  size_t multi_batch_counter = 0;
+  UniqueIds *unique_ids = nullptr;
+  while (running_) {
+    IdDataInfo *data = id_data_queue->Pop();
+    if (!running_) {
+      break;
+    }
+    MS_EXCEPTION_IF_NULL(data);
+    int *batch_ids = reinterpret_cast<int *>(data->data_);
+    if (batch_ids) {
+      // Lock in first stage to support multi-channel case for real input data.
+      channel_lock->TryLockChannel();
+      MS_EXCEPTION_IF_CHECK_FAIL(IncreaseStep(), "Increase step failed.");
+    }
+
+    if (data->end_of_file_ || data->end_of_epoch_) {
+      // Push empty data for epoch or file end flag.
+      UniqueIds *empty_unique_ids = new UniqueIds();
+      MS_EXCEPTION_IF_NULL(empty_unique_ids);
+      empty_unique_ids->end_of_epoch_ = data->end_of_epoch_;
+      empty_unique_ids->end_of_file_ = data->end_of_file_;
+      unique_ids_queue->Push(empty_unique_ids);
+      delete data;
+      continue;
+    }
+
+    if (unique_ids == nullptr) {
+      unique_ids = new UniqueIds();
+      MS_EXCEPTION_IF_NULL(unique_ids);
+    }
+
+    ++multi_batch_counter;
+    if (multi_batch_counter < sink_size &&
+        multi_batch_counter % embedding_cache_table_manager.multi_batch_threshold_ != 0) {
+      unique_ids->multi_batch_data_.push_back(batch_ids);
+      unique_ids->multi_batch_size_.push_back(data->size_ / sizeof(int));
+      unique_ids->multi_batch_items_.push_back(data->items_);
+      continue;
+    }
+    unique_ids->multi_batch_data_.push_back(batch_ids);
+    unique_ids->multi_batch_size_.push_back(data->size_ / sizeof(int));
+    unique_ids->multi_batch_items_.push_back(data->items_);
+
+    if (multi_batch_counter == sink_size) {
+      multi_batch_counter = 0;
+    }
+
+    // Unique for each batch and store unique ids
+    DeduplicateId(unique_ids);
+    // Push to next stage pipeline queue.
+    unique_ids->data_step_ = data_step_;
+
+    unique_ids_queue->Push(unique_ids);
+    unique_ids = nullptr;
+    delete data;
+  }
+}
+
+void EmbeddingCachePrefetchActor::AnalyseCacheTask(const std::string &channel_name) {
+  const auto &queue_iter = channel_to_queues_.find(channel_name);
+  if (queue_iter == channel_to_queues_.end()) {
+    MS_LOG(EXCEPTION) << "Can not find queue for channel: " << channel_name;
   }
 
-  // 2. Count cache miss ids.
-  RETURN_IF_FALSE_WITH_LOG(CountCacheMissIds(batch_ids, batch_ids_num, hash_index.get()),
-                           "Count cache miss ids failed.");
+  const auto &unique_ids_queue = std::get<std::shared_ptr<BlockingQueue<UniqueIds>>>(queue_iter->second);
+  MS_EXCEPTION_IF_NULL(unique_ids_queue);
+  const auto &cache_analysis_queue = std::get<std::shared_ptr<BlockingQueue<CacheAnalysis>>>(queue_iter->second);
+  MS_EXCEPTION_IF_NULL(cache_analysis_queue);
 
-  if ((device_cache_need_wait_graph_ || host_cache_need_wait_graph_) && (!WaitGraphRun())) {
-    MS_LOG(ERROR) << "Cache prefetching waits graph finish failed.";
-    return false;
+  while (running_) {
+    UniqueIds *unique_ids = unique_ids_queue->Pop();
+    if (!running_) {
+      break;
+    }
+    MS_EXCEPTION_IF_NULL(unique_ids);
+    if (unique_ids->end_of_file_ || unique_ids->end_of_epoch_) {
+      // Push empty data for epoch or file end flag.
+      CacheAnalysis *cache_analysis = new CacheAnalysis();
+      MS_EXCEPTION_IF_NULL(cache_analysis);
+      cache_analysis->end_of_epoch_ = unique_ids->end_of_epoch_;
+      cache_analysis->end_of_file_ = unique_ids->end_of_file_;
+      cache_analysis_queue->Push(cache_analysis);
+      delete unique_ids;
+      continue;
+    }
+    size_t unique_ids_num = unique_ids->ids_num_;
+    int *indices = new int[unique_ids_num];
+    MS_EXCEPTION_IF_NULL(indices);
+
+    EmbeddingDeviceCache *embedding_device_cache = new EmbeddingDeviceCache(unique_ids_num);
+    MS_EXCEPTION_IF_NULL(embedding_device_cache);
+    EmbeddingHostCache *embedding_host_cache = new EmbeddingHostCache(unique_ids_num);
+    MS_EXCEPTION_IF_NULL(embedding_host_cache);
+    EmbeddingCacheStatisticsInfo *statistics_info = new EmbeddingCacheStatisticsInfo();
+    MS_EXCEPTION_IF_NULL(statistics_info);
+
+    // Analyse cache hit/miss
+    if (!emb_ops_->AnalyseCache(unique_ids->ids_, unique_ids_num, unique_ids->data_step_, &graph_step_,
+                                &device_cache_need_wait_graph_, &host_cache_need_wait_graph_, indices,
+                                embedding_device_cache, embedding_host_cache, statistics_info)) {
+      MS_LOG(ERROR) << "Analyse cache failed.";
+      StopPrefetchCachePipeline();
+      return;
+    }
+
+    // Push analyse result to update cache queue
+    CacheAnalysis *cache_analysis =
+      new CacheAnalysis(embedding_device_cache, embedding_host_cache, statistics_info, unique_ids, indices,
+                        unique_ids->end_of_epoch_, unique_ids->end_of_file_);
+    MS_EXCEPTION_IF_NULL(cache_analysis);
+    cache_analysis_queue->Push(cache_analysis);
+  }
+}
+
+void EmbeddingCachePrefetchActor::UpdateCacheTask(const std::string &channel_name) {
+  const auto &queue_iter = channel_to_queues_.find(channel_name);
+  if (queue_iter == channel_to_queues_.end()) {
+    MS_LOG(EXCEPTION) << "Can not find queue for channel: " << channel_name;
   }
 
-  // 3. If the device cache does not reach 100% hit rate, the cache needs to be updated.
-  RETURN_IF_FALSE_WITH_LOG(UpdateCache(), "Update local cache failed.");
+  const auto &cache_analysis_queue = std::get<std::shared_ptr<BlockingQueue<CacheAnalysis>>>(queue_iter->second);
+  MS_EXCEPTION_IF_NULL(cache_analysis_queue);
 
-  // 4. Replace the batch_ids by hash index for GetNext operator to get hash index as input.
-  size_t dest_len = data_size;
-  ret = memcpy_s(data, dest_len, hash_index.get(), data_size);
-  if (ret != EOK) {
-    MS_LOG(ERROR) << "Memcpy hash index failed, errno[" << ret << "]";
-    return false;
+  const auto &ids_and_indices_queue = std::get<std::shared_ptr<BlockingQueue<IdsAndIndices>>>(queue_iter->second);
+  MS_EXCEPTION_IF_NULL(ids_and_indices_queue);
+
+  while (running_) {
+    CacheAnalysis *cache_analysis = cache_analysis_queue->Pop();
+    if (!running_) {
+      break;
+    }
+    MS_EXCEPTION_IF_NULL(cache_analysis);
+    if (cache_analysis->end_of_file_ || cache_analysis->end_of_epoch_) {
+      // Push empty data for epoch end flag.
+      IdsAndIndices *ids_and_indices = new IdsAndIndices();
+      MS_EXCEPTION_IF_NULL(ids_and_indices);
+      ids_and_indices->end_of_epoch_ = cache_analysis->end_of_epoch_;
+      ids_and_indices->end_of_file_ = cache_analysis->end_of_file_;
+      ids_and_indices_queue->Push(ids_and_indices);
+      delete cache_analysis;
+      continue;
+    }
+
+    for (const auto &item : embedding_cache_table_manager.hash_tables_) {
+      const auto &hash_info = item.second;
+      MS_EXCEPTION_IF_CHECK_FAIL(PushCacheFromLocalHostToRemote(hash_info, cache_analysis),
+                                 "Push cache from local host to remote failed.");
+      MS_EXCEPTION_IF_CHECK_FAIL(emb_ops_->PushCacheFromDeviceToLocalHost(hash_info, cache_analysis),
+                                 "Push cache from device to local host failed.");
+      MS_EXCEPTION_IF_CHECK_FAIL(InitLocalCacheForNewIds(hash_info, cache_analysis),
+                                 "Initialize the local cache values using random generator.");
+      MS_EXCEPTION_IF_CHECK_FAIL(PullCacheFromRemoteToLocalHost(hash_info, cache_analysis),
+                                 "Pull cache from remote to local host failed.");
+      MS_EXCEPTION_IF_CHECK_FAIL(emb_ops_->PullCacheFromLocalHostToDevice(hash_info, cache_analysis),
+                                 "Pull cache from local host to device failed.");
+    }
+
+    IdsAndIndices *ids_and_indices = new IdsAndIndices(cache_analysis->unique_ids_, cache_analysis->indices_,
+                                                       cache_analysis->end_of_epoch_, cache_analysis->end_of_file_);
+
+    ids_and_indices_queue->Push(ids_and_indices);
+
+    delete cache_analysis->embedding_host_cache_;
+    delete cache_analysis->embedding_device_cache_;
+    delete cache_analysis->statistics_info_;
+    delete cache_analysis;
   }
-  RETURN_IF_FALSE_WITH_LOG(PsDataPrefetch::GetInstance().FinalizeData(channel_name_), "Finalize data failed.");
-  return true;
+}
+
+void EmbeddingCachePrefetchActor::TransformIdsToIndicesTask(const std::string &channel_name) {
+  const auto &queue_iter = channel_to_queues_.find(channel_name);
+  if (queue_iter == channel_to_queues_.end()) {
+    MS_LOG(EXCEPTION) << "Can not find queue for channel: " << channel_name;
+  }
+  const auto &ids_and_indices_queue = std::get<std::shared_ptr<BlockingQueue<IdsAndIndices>>>(queue_iter->second);
+  MS_EXCEPTION_IF_NULL(ids_and_indices_queue);
+
+  const auto &index_data_queue = DataQueueManager::GetInstance().GetDataQueue(channel_name).second;
+  MS_EXCEPTION_IF_NULL(index_data_queue);
+  while (running_) {
+    IdsAndIndices *ids_and_indices = ids_and_indices_queue->Pop();
+    if (!running_) {
+      break;
+    }
+    MS_EXCEPTION_IF_NULL(ids_and_indices);
+    // Push empty data for epoch end flag.
+    if (ids_and_indices->end_of_file_ || ids_and_indices->end_of_epoch_) {
+      IndexDataInfo *indices_info = new IndexDataInfo();
+      MS_EXCEPTION_IF_NULL(indices_info);
+      indices_info->end_of_epoch_ = ids_and_indices->end_of_epoch_;
+      indices_info->end_of_file_ = ids_and_indices->end_of_file_;
+      index_data_queue->Push(indices_info);
+      delete ids_and_indices;
+      continue;
+    }
+
+    auto *unique_ids = ids_and_indices->unique_ids_;
+    MS_EXCEPTION_IF_NULL(unique_ids);
+    auto *unique_ids_ptr = unique_ids->ids_;
+    auto unique_ids_num = unique_ids->ids_num_;
+    auto *unique_indices_ptr = ids_and_indices->indices_;
+
+    mindspore::HashMap<int, int> unique_ids_to_indices;
+    for (size_t i = 0; i < unique_ids_num; i++) {
+      (void)unique_ids_to_indices.try_emplace(unique_ids_ptr[i], unique_indices_ptr[i]);
+    }
+
+    for (size_t i = 0; i < unique_ids->multi_batch_data_.size(); ++i) {
+      if (!embedding_cache_table_manager.is_sparse_format()) {
+        TransformIdsToIndices(&unique_ids_to_indices, unique_ids->multi_batch_size_.at(i),
+                              reinterpret_cast<int *>(unique_ids->multi_batch_data_.at(i)));
+      }
+      IndexDataInfo *indices_info =
+        new IndexDataInfo(unique_ids->multi_batch_data_.at(i), unique_ids->multi_batch_items_.at(i),
+                          ids_and_indices->end_of_epoch_, ids_and_indices->end_of_file_);
+
+      if (unique_ids->multi_batch_data_.at(i) != unique_ids->multi_batch_items_.at(i)->at(0).data_ptr) {
+        MS_LOG(EXCEPTION) << "The id data ptr is valid";
+      }
+
+      index_data_queue->Push(indices_info);
+    }
+
+    delete[] ids_and_indices->unique_ids_->ids_;
+    delete ids_and_indices->unique_ids_;
+    delete[] ids_and_indices->indices_;
+    delete ids_and_indices;
+  }
 }
 
 bool EmbeddingCachePrefetchActor::IncreaseStep() {
@@ -583,282 +682,6 @@ bool EmbeddingCachePrefetchActor::IncreaseStep() {
                   << ").";
     return false;
   }
-  return true;
-}
-
-bool EmbeddingCachePrefetchActor::CountCacheMissIds(const int *batch_ids, const size_t batch_ids_num, int *hash_index) {
-  MS_ERROR_IF_NULL(batch_ids);
-  MS_ERROR_IF_NULL(hash_index);
-
-  statistics_info_.batch_id_count_ = batch_ids_num;
-  std::unique_ptr<bool[]> in_device = std::make_unique<bool[]>(batch_ids_num);
-  std::unique_ptr<bool[]> out_range = std::make_unique<bool[]>(batch_ids_num);
-  auto ret = memset_s(in_device.get(), batch_ids_num * sizeof(bool), 0, batch_ids_num * sizeof(bool));
-  if (ret != EOK) {
-    MS_LOG(ERROR) << "Memset failed, errno[" << ret << "]";
-    return false;
-  }
-  ret = memset_s(out_range.get(), batch_ids_num * sizeof(bool), 0, batch_ids_num * sizeof(bool));
-  if (ret != EOK) {
-    MS_LOG(ERROR) << "Memset failed, errno[" << ret << "]";
-    return false;
-  }
-
-  // 1. Analyze the hit/miss info of the local host cache and device cache.
-  RETURN_IF_FALSE_WITH_LOG(
-    CheckCacheHitOrOutRange(batch_ids, batch_ids_num, hash_index, in_device.get(), out_range.get()),
-    "Check cache hit or out range failed.");
-  RETURN_IF_FALSE_WITH_LOG(ResetEmbeddingHashMap(), "Reset embedding hash map failed.");
-
-  // 2.calculate the swapping and mapping(feature id to cache index) information of the missing feature id that needs to
-  // be inserted into the cache.
-  for (size_t i = 0; i < batch_ids_num; i++) {
-    if (in_device[i] || out_range[i]) {
-      continue;
-    }
-    bool need_swap_host_to_device = true;
-    bool need_swap_device_to_host = true;
-    int index = INVALID_INDEX_VALUE;
-    RETURN_IF_FALSE_WITH_LOG(
-      ParseDeviceData(batch_ids[i], &need_swap_device_to_host, &need_swap_host_to_device, &index),
-      "Parse device cache data failed.");
-    hash_index[i] = index + local_device_cache_bounds_.first;
-    if (need_swap_host_to_device) {
-      RETURN_IF_FALSE_WITH_LOG(ParseHostDataHostToDevice(batch_ids[i]),
-                               "Parse local host cache data(swap local host cache to device) failed.");
-    }
-    if (need_swap_device_to_host) {
-      RETURN_IF_FALSE_WITH_LOG(ParseHostDataDeviceToHost(),
-                               "Parse local host cache data(swap device cache to local host) failed.");
-    }
-  }
-  return true;
-}
-
-bool EmbeddingCachePrefetchActor::ParseDeviceData(int id, bool *need_swap_device_to_host,
-                                                  bool *need_swap_host_to_device, int *hash_index) {
-  MS_ERROR_IF_NULL(need_swap_device_to_host);
-  MS_ERROR_IF_NULL(need_swap_host_to_device);
-  MS_ERROR_IF_NULL(hash_index);
-  MS_ERROR_IF_NULL(embedding_device_cache_);
-  auto &device_hash_map = embedding_device_cache_->device_hash_map_;
-  MS_ERROR_IF_NULL(device_hash_map);
-
-  int index = INVALID_INDEX_VALUE;
-  const auto &hash_id_to_index = device_hash_map->hash_id_to_index();
-  const auto &iter = hash_id_to_index.find(id);
-  if (iter != hash_id_to_index.end()) {
-    *need_swap_device_to_host = false;
-    *need_swap_host_to_device = false;
-    index = iter->second;
-    if (device_hash_map->hash_step(index) != data_step_) {
-      statistics_info_.hash_hit_count_++;
-      device_hash_map->set_hash_step(index, data_step_);
-    }
-  } else {
-    int *device_to_host_index = embedding_device_cache_->device_to_host_index.get();
-    int *device_to_host_ids = embedding_device_cache_->device_to_host_ids.get();
-    int *host_to_device_index = embedding_device_cache_->host_to_device_index.get();
-    int *host_to_device_ids = embedding_device_cache_->host_to_device_ids.get();
-    MS_ERROR_IF_NULL(host_to_device_index);
-    MS_ERROR_IF_NULL(host_to_device_ids);
-    auto tmp_device_to_host_size = statistics_info_.device_to_host_size_;
-    while (true) {
-      // Calculate the mapping of id to index.
-      index = device_hash_map->ParseData(id, device_to_host_index, device_to_host_ids, data_step_, graph_running_step_,
-                                         &(statistics_info_.device_to_host_size_), &device_cache_need_wait_graph_);
-      if (index == INVALID_INDEX_VALUE) {
-        if (!WaitGraphRun()) {
-          return false;
-        }
-        continue;
-      }
-      host_to_device_index[statistics_info_.host_to_device_size_] = index;
-      host_to_device_ids[statistics_info_.host_to_device_size_] = id;
-      statistics_info_.host_to_device_size_++;
-      *need_swap_device_to_host = statistics_info_.device_to_host_size_ > tmp_device_to_host_size;
-      break;
-    }
-  }
-
-  *hash_index = index;
-  return true;
-}
-
-bool EmbeddingCachePrefetchActor::ParseHostDataHostToDevice(int id) {
-  MS_ERROR_IF_NULL(embedding_host_cache_);
-  int *host_to_device_index = embedding_host_cache_->host_to_device_index.get();
-  MS_ERROR_IF_NULL(host_to_device_index);
-  auto &host_hash_map = embedding_host_cache_->host_hash_map_;
-  MS_ERROR_IF_NULL(host_hash_map);
-
-  const auto &hash_id_to_index = host_hash_map->hash_id_to_index();
-  const auto &iter = hash_id_to_index.find(id);
-  if (iter != hash_id_to_index.end()) {
-    auto index = iter->second;
-    if (host_hash_map->hash_step(index) != data_step_) {
-      host_hash_map->set_hash_step(index, data_step_);
-    }
-    host_to_device_index[statistics_info_.host_to_device_size_ - 1] = index;
-  } else {
-    int *host_to_server_index = embedding_host_cache_->host_to_server_index.get();
-    int *host_to_server_ids = embedding_host_cache_->host_to_server_ids.get();
-    while (true) {
-      // Calculate the mapping of id to index.
-      auto index =
-        host_hash_map->ParseData(id, host_to_server_index, host_to_server_ids, data_step_, graph_running_step_,
-                                 &statistics_info_.host_to_server_size_, &host_cache_need_wait_graph_);
-      if (index == INVALID_INDEX_VALUE) {
-        RETURN_IF_FALSE_WITH_LOG(WaitGraphRun(), "Wait graph run failed.");
-        continue;
-      }
-      host_to_device_index[statistics_info_.host_to_device_size_ - 1] = index;
-
-      // This feature id has never been seen before, so it's value is initialized using the local random generator.
-      if (initialized_ids_.find(id) == initialized_ids_.end()) {
-        int *new_id_index = embedding_host_cache_->new_id_index.get();
-        MS_ERROR_IF_NULL(new_id_index);
-        new_id_index[statistics_info_.new_id_size_] = index;
-        initialized_ids_.insert(id);
-        // This feature id has been initialized already, so it's latest value has been kept in the remote server.
-      } else {
-        int *server_to_host_index = embedding_host_cache_->server_to_host_index.get();
-        int *server_to_host_ids = embedding_host_cache_->server_to_host_ids.get();
-        MS_ERROR_IF_NULL(server_to_host_index);
-        MS_ERROR_IF_NULL(server_to_host_ids);
-        server_to_host_index[statistics_info_.server_to_host_size_] = index;
-        server_to_host_ids[statistics_info_.server_to_host_size_++] = id;
-      }
-      break;
-    }
-  }
-
-  return true;
-}
-
-bool EmbeddingCachePrefetchActor::ParseHostDataDeviceToHost() {
-  MS_ERROR_IF_NULL(embedding_device_cache_);
-  MS_ERROR_IF_NULL(embedding_host_cache_);
-  int *device_to_host_ids = embedding_device_cache_->device_to_host_ids.get();
-  int *device_to_host_index = embedding_host_cache_->device_to_host_index.get();
-  MS_ERROR_IF_NULL(device_to_host_ids);
-  MS_ERROR_IF_NULL(device_to_host_index);
-
-  auto &host_hash_map = embedding_host_cache_->host_hash_map_;
-  MS_ERROR_IF_NULL(host_hash_map);
-  int swap_device_to_host_id = device_to_host_ids[statistics_info_.device_to_host_size_ - 1];
-  const auto &hash_id_to_index = host_hash_map->hash_id_to_index();
-  const auto &iter = hash_id_to_index.find(swap_device_to_host_id);
-  if (iter != hash_id_to_index.end()) {
-    auto index = iter->second;
-    if (host_hash_map->hash_step(index) != data_step_) {
-      host_hash_map->set_hash_step(index, data_step_);
-    }
-    device_to_host_index[statistics_info_.device_to_host_size_ - 1] = index;
-  } else {
-    int *host_to_server_index = embedding_host_cache_->host_to_server_index.get();
-    int *host_to_server_ids = embedding_host_cache_->host_to_server_ids.get();
-    while (true) {
-      // Calculate the mapping of id to index.
-      auto index = host_hash_map->ParseData(swap_device_to_host_id, host_to_server_index, host_to_server_ids,
-                                            data_step_, graph_running_step_, &statistics_info_.host_to_server_size_,
-                                            &host_cache_need_wait_graph_);
-      if (index == INVALID_INDEX_VALUE) {
-        RETURN_IF_FALSE_WITH_LOG(WaitGraphRun(), "Wait graph run");
-        continue;
-      }
-      device_to_host_index[statistics_info_.device_to_host_size_ - 1] = index;
-      break;
-    }
-  }
-
-  return true;
-}
-
-bool EmbeddingCachePrefetchActor::CheckCacheHitOrOutRangeFunc(const int *batch_ids, const size_t batch_ids_num,
-                                                              int *hash_index, bool *in_device, bool *out_range,
-                                                              size_t *hash_hit_count) {
-  MS_ERROR_IF_NULL(batch_ids);
-  MS_ERROR_IF_NULL(hash_index);
-  MS_ERROR_IF_NULL(in_device);
-  MS_ERROR_IF_NULL(out_range);
-  MS_ERROR_IF_NULL(hash_hit_count);
-  MS_ERROR_IF_NULL(embedding_device_cache_);
-  auto &device_hash_map = embedding_device_cache_->device_hash_map_;
-  MS_ERROR_IF_NULL(device_hash_map);
-  const auto &hash_id_to_index = device_hash_map->hash_id_to_index();
-
-  for (size_t i = 0; i < batch_ids_num; ++i) {
-    if (batch_ids[i] < local_embedding_slice_bounds_.first) {
-      hash_index[i] = batch_ids[i] - local_embedding_slice_bounds_.first + local_device_cache_bounds_.first;
-      out_range[i] = true;
-      continue;
-    }
-    if (batch_ids[i] >= local_embedding_slice_bounds_.second) {
-      hash_index[i] = batch_ids[i] + local_device_cache_bounds_.second;
-      out_range[i] = true;
-      continue;
-    }
-    auto iter = hash_id_to_index.find(batch_ids[i]);
-    if (iter != hash_id_to_index.end()) {
-      hash_index[i] = iter->second + local_device_cache_bounds_.first;
-      if (device_hash_map->hash_step(iter->second) != data_step_) {
-        ++(*hash_hit_count);
-        device_hash_map->set_hash_step(iter->second, data_step_);
-      }
-      in_device[i] = true;
-    }
-  }
-  return true;
-}
-
-bool EmbeddingCachePrefetchActor::CheckCacheHitOrOutRange(const int *batch_ids, const size_t batch_ids_num,
-                                                          int *hash_index, bool *in_device, bool *out_range) {
-  MS_ERROR_IF_NULL(batch_ids);
-  MS_ERROR_IF_NULL(hash_index);
-  MS_ERROR_IF_NULL(in_device);
-  MS_ERROR_IF_NULL(out_range);
-
-  size_t thread_num = batch_ids_num / kMaxIdsPerThread + 1;
-  thread_num = thread_num > kMaxThreadNum ? kMaxThreadNum : thread_num;
-  std::thread threads[kMaxThreadNum];
-  size_t hash_hit_count[kMaxThreadNum] = {0};
-  size_t i = 0;
-  size_t offset = 0;
-
-  for (; i < thread_num; ++i) {
-    if (offset >= batch_ids_num) {
-      break;
-    }
-    size_t proc_len = batch_ids_num / thread_num + (i < (batch_ids_num % thread_num) ? 1 : 0);
-    threads[i] = std::thread(&EmbeddingCachePrefetchActor::CheckCacheHitOrOutRangeFunc, this, batch_ids + offset,
-                             proc_len, hash_index + offset, in_device + offset, out_range + offset, hash_hit_count + i);
-    offset += proc_len;
-  }
-  if (offset != batch_ids_num) {
-    MS_LOG(WARNING) << "Check id in device inadequate, total:" << batch_ids_num << " checked:" << offset;
-  }
-
-  for (size_t j = 0; j < i; j++) {
-    threads[j].join();
-  }
-  for (size_t j = 0; j < i; j++) {
-    statistics_info_.hash_hit_count_ += hash_hit_count[j];
-  }
-  return true;
-}
-
-bool EmbeddingCachePrefetchActor::ResetEmbeddingHashMap() {
-  MS_ERROR_IF_NULL(embedding_device_cache_);
-  const auto &device_hash_map = embedding_device_cache_->device_hash_map_;
-  MS_ERROR_IF_NULL(device_hash_map);
-  MS_ERROR_IF_NULL(embedding_host_cache_);
-  const auto &host_hash_map = embedding_host_cache_->host_hash_map_;
-  MS_ERROR_IF_NULL(host_hash_map);
-  device_hash_map->Reset();
-  host_hash_map->Reset();
-  device_cache_need_wait_graph_ = false;
-  host_cache_need_wait_graph_ = false;
   return true;
 }
 
@@ -879,35 +702,71 @@ bool EmbeddingCachePrefetchActor::WaitGraphRun() {
   return true;
 }
 
-bool EmbeddingCachePrefetchActor::UpdateCache() {
-  for (const auto &item : hash_tables_) {
-    auto hash_info = item.second;
-    RETURN_IF_FALSE_WITH_LOG(PushCacheFromLocalHostToRemote(hash_info), "Push cache from local host to remote failed.");
-    RETURN_IF_FALSE_WITH_LOG(PushCacheFromDeviceToLocalHost(hash_info), "Push cache from device to local host failed.");
-    RETURN_IF_FALSE_WITH_LOG(InitLocalCacheForNewIds(hash_info),
-                             "Initialize the local cache values using random generator.");
-    RETURN_IF_FALSE_WITH_LOG(PullCacheFromRemoteToLocalHost(hash_info), "Pull cache from remote to local host failed.");
-    RETURN_IF_FALSE_WITH_LOG(PullCacheFromLocalHostToDevice(hash_info), "Pull cache from local host to device failed.");
-  }
+bool EmbeddingCachePrefetchActor::ResetEmbeddingHashMap() {
+  const auto &device_hash_map = embedding_cache_table_manager.device_hash_map_;
+  MS_ERROR_IF_NULL(device_hash_map);
+  const auto &host_hash_map = embedding_cache_table_manager.host_hash_map_;
+  MS_ERROR_IF_NULL(host_hash_map);
+  device_hash_map->Reset();
+  host_hash_map->Reset();
+  device_cache_need_wait_graph_ = false;
+  host_cache_need_wait_graph_ = false;
   return true;
 }
 
-bool EmbeddingCachePrefetchActor::PushCacheFromLocalHostToRemote(const HashTableInfo &hash_info) {
-  auto swap_indices_size = statistics_info_.host_to_server_size_;
+void EmbeddingCachePrefetchActor::LookupEmbeddingTable(size_t indices_num, size_t embedding_size, size_t first_dim_size,
+                                                       const float *input_addr, const int *indices_addr,
+                                                       float *output_addr) {
+  MS_ERROR_IF_NULL_WO_RET_VAL(input_addr);
+  MS_ERROR_IF_NULL_WO_RET_VAL(indices_addr);
+  MS_ERROR_IF_NULL_WO_RET_VAL(output_addr);
+
+  auto type_size = sizeof(float);
+  size_t lens = embedding_size * type_size;
+  for (size_t i = 0; i < indices_num; ++i) {
+    int index = indices_addr[i];
+    if (index >= 0 && index < SizeToInt(first_dim_size)) {
+      size_t pos = IntToSize(index) * embedding_size;
+      auto ret = memcpy_s(output_addr, (indices_num - i) * lens, input_addr + pos, lens);
+      if (ret != EOK) {
+        MS_LOG(ERROR) << "Memcpy failed, errno[" << ret << "]";
+        StopPrefetchCachePipeline();
+        return;
+      }
+    } else {
+      auto ret = memset_s(output_addr, (indices_num - i) * lens, 0, lens);
+      if (ret != EOK) {
+        MS_LOG(ERROR) << "Memset failed, errno[" << ret << "]";
+        StopPrefetchCachePipeline();
+        return;
+      }
+    }
+    output_addr += embedding_size;
+  }
+}
+
+bool EmbeddingCachePrefetchActor::PushCacheFromLocalHostToRemote(const HashTableInfo &hash_info,
+                                                                 const CacheAnalysis *cache_analysis) {
+  MS_ERROR_IF_NULL(cache_analysis);
+  auto statistics_info = cache_analysis->statistics_info_;
+  auto embedding_host_cache = cache_analysis->embedding_host_cache_;
+  MS_ERROR_IF_NULL(statistics_info);
+  MS_ERROR_IF_NULL(embedding_host_cache);
+
+  auto swap_indices_size = statistics_info->host_to_server_size_;
   if (swap_indices_size == 0) {
     return true;
   }
 
-  MS_ERROR_IF_NULL(embedding_host_cache_);
-  auto host_to_server_ids = embedding_host_cache_->host_to_server_ids.get();
+  auto host_to_server_ids = embedding_host_cache->host_to_server_ids.get();
   MS_ERROR_IF_NULL(host_to_server_ids);
-  auto host_to_server_index = embedding_host_cache_->host_to_server_index.get();
+  auto host_to_server_index = embedding_host_cache->host_to_server_index.get();
   MS_ERROR_IF_NULL(host_to_server_index);
 
   std::vector<float> swap_out_data;
   auto embedding_size = hash_info.embedding_size;
   swap_out_data.resize(swap_indices_size * embedding_size);
-  auto host_hash_table_addr = reinterpret_cast<float *>(hash_info.host_address.get());
+  auto host_hash_table_addr = hash_info.host_address;
 
   RETURN_IF_FALSE_WITH_LOG(LookupLocalHostCache(embedding_size, swap_indices_size, host_hash_table_addr,
                                                 host_to_server_index, swap_out_data.data()),
@@ -918,63 +777,25 @@ bool EmbeddingCachePrefetchActor::PushCacheFromLocalHostToRemote(const HashTable
   return true;
 }
 
-bool EmbeddingCachePrefetchActor::PushCacheFromDeviceToLocalHost(const HashTableInfo &hash_info) {
-  auto swap_indices_size = statistics_info_.device_to_host_size_;
+bool EmbeddingCachePrefetchActor::PullCacheFromRemoteToLocalHost(const HashTableInfo &hash_info,
+                                                                 const CacheAnalysis *cache_analysis) {
+  MS_ERROR_IF_NULL(cache_analysis);
+  auto statistics_info = cache_analysis->statistics_info_;
+  auto embedding_host_cache = cache_analysis->embedding_host_cache_;
+  MS_ERROR_IF_NULL(statistics_info);
+  MS_ERROR_IF_NULL(embedding_host_cache);
+
+  auto swap_indices_size = statistics_info->server_to_host_size_;
   if (swap_indices_size == 0) {
     return true;
   }
 
-  MS_ERROR_IF_NULL(embedding_device_cache_);
-  MS_ERROR_IF_NULL(embedding_host_cache_);
-
-  auto device_cache_device_to_host_index = embedding_device_cache_->device_to_host_index.get();
-  auto host_cache_device_to_host_index = embedding_host_cache_->device_to_host_index.get();
-  MS_ERROR_IF_NULL(device_cache_device_to_host_index);
-  MS_ERROR_IF_NULL(host_cache_device_to_host_index);
-  auto hash_table_addr = reinterpret_cast<float *>(hash_info.device_address.addr);
-  auto cache_vocab_size = hash_info.cache_vocab_size;
-  auto host_hash_table_addr = reinterpret_cast<float *>(hash_info.host_address.get());
-  auto embedding_size = hash_info.embedding_size;
-  auto swap_out_data = std::make_unique<float[]>(swap_indices_size * embedding_size);
-
-  RETURN_IF_FALSE_WITH_LOG(
-    MemcpyHostToDeviceAsync(embedding_device_cache_->hash_swap_index_addr_, device_cache_device_to_host_index,
-                            swap_indices_size * sizeof(int), device_context_, stream_id_),
-    "Memcpy host to device asynchronously failed.");
-
-  RETURN_IF_FALSE_WITH_LOG(
-    LookupDeviceCache(embedding_device_cache_->hash_swap_index_addr_, hash_table_addr, swap_indices_size,
-                      cache_vocab_size, embedding_size, embedding_device_cache_->hash_swap_value_addr_),
-    "Lookup device cache failed.");
-
-  RETURN_IF_FALSE_WITH_LOG(
-    MemcpyDeviceToHostAsync(swap_out_data.get(), embedding_device_cache_->hash_swap_value_addr_,
-                            swap_indices_size * embedding_size * sizeof(float), device_context_, stream_id_),
-    "Memcpy device to host asynchronously failed.");
-
-  MS_ERROR_IF_NULL(device_context_);
-  MS_ERROR_IF_NULL(device_context_->device_res_manager_);
-  RETURN_IF_FALSE_WITH_LOG(device_context_->device_res_manager_->SyncStream(stream_id_), "Synchronize stream failed.");
-  RETURN_IF_FALSE_WITH_LOG(
-    InsertLocalHostCache(embedding_size, IntToSize(swap_indices_size), host_cache_device_to_host_index,
-                         swap_out_data.get(), host_hash_table_addr),
-    "Insert local host cache failed.");
-  return true;
-}
-
-bool EmbeddingCachePrefetchActor::PullCacheFromRemoteToLocalHost(const HashTableInfo &hash_info) {
-  auto swap_indices_size = statistics_info_.server_to_host_size_;
-  if (swap_indices_size == 0) {
-    return true;
-  }
-
-  MS_ERROR_IF_NULL(embedding_host_cache_);
-  auto server_to_host_ids = embedding_host_cache_->server_to_host_ids.get();
+  auto server_to_host_ids = embedding_host_cache->server_to_host_ids.get();
   MS_ERROR_IF_NULL(server_to_host_ids);
-  auto server_to_host_index = embedding_host_cache_->server_to_host_index.get();
+  auto server_to_host_index = embedding_host_cache->server_to_host_index.get();
   MS_ERROR_IF_NULL(server_to_host_index);
 
-  auto host_hash_table_addr = reinterpret_cast<float *>(hash_info.host_address.get());
+  auto host_hash_table_addr = hash_info.host_address;
   MS_ERROR_IF_NULL(host_hash_table_addr);
   auto embedding_size = hash_info.embedding_size;
   std::vector<float> lookup_result(swap_indices_size * embedding_size, 0);
@@ -988,58 +809,20 @@ bool EmbeddingCachePrefetchActor::PullCacheFromRemoteToLocalHost(const HashTable
   return true;
 }
 
-bool EmbeddingCachePrefetchActor::PullCacheFromLocalHostToDevice(const HashTableInfo &hash_info) {
-  auto swap_indices_size = statistics_info_.host_to_device_size_;
-  if (swap_indices_size == 0) {
-    return true;
-  }
+bool EmbeddingCachePrefetchActor::InitLocalCacheForNewIds(const HashTableInfo &hash_info,
+                                                          const CacheAnalysis *cache_analysis) {
+  MS_ERROR_IF_NULL(cache_analysis);
+  auto statistics_info = cache_analysis->statistics_info_;
+  auto embedding_host_cache = cache_analysis->embedding_host_cache_;
+  MS_ERROR_IF_NULL(statistics_info);
+  MS_ERROR_IF_NULL(embedding_host_cache);
 
-  MS_ERROR_IF_NULL(embedding_device_cache_);
-  MS_ERROR_IF_NULL(embedding_host_cache_);
-
-  auto host_cache_host_to_device_index = embedding_host_cache_->host_to_device_index.get();
-  auto device_cache_host_to_device_index = embedding_device_cache_->host_to_device_index.get();
-  MS_ERROR_IF_NULL(host_cache_host_to_device_index);
-  MS_ERROR_IF_NULL(device_cache_host_to_device_index);
-
-  auto embedding_size = hash_info.embedding_size;
-  MS_ERROR_IF_NULL(hash_info.device_address.addr);
-  auto hash_table_addr = reinterpret_cast<float *>(hash_info.device_address.addr);
-  auto cache_vocab_size = hash_info.cache_vocab_size;
-  MS_ERROR_IF_NULL(hash_info.host_address);
-  auto host_hash_table_addr = reinterpret_cast<float *>(hash_info.host_address.get());
-  auto swap_out_data = std::make_unique<float[]>(swap_indices_size * embedding_size);
-  RETURN_IF_FALSE_WITH_LOG(LookupLocalHostCache(embedding_size, swap_indices_size, host_hash_table_addr,
-                                                host_cache_host_to_device_index, swap_out_data.get()),
-                           "Lookup local host cache failed.");
-
-  RETURN_IF_FALSE_WITH_LOG(
-    MemcpyHostToDeviceAsync(embedding_device_cache_->hash_swap_value_addr_, swap_out_data.get(),
-                            swap_indices_size * embedding_size * sizeof(float), device_context_, stream_id_),
-    "Memcpy host to device asynchronously failed.");
-  RETURN_IF_FALSE_WITH_LOG(
-    MemcpyHostToDeviceAsync(embedding_device_cache_->hash_swap_index_addr_, device_cache_host_to_device_index,
-                            swap_indices_size * sizeof(int), device_context_, stream_id_),
-    "Memcpy host to device asynchronously failed.");
-
-  RETURN_IF_FALSE_WITH_LOG(
-    UpdateDeviceCache(embedding_device_cache_->hash_swap_index_addr_, embedding_device_cache_->hash_swap_value_addr_,
-                      swap_indices_size, cache_vocab_size, embedding_size, hash_table_addr),
-    "Update device embedding cache failed.");
-  MS_ERROR_IF_NULL(device_context_);
-  MS_ERROR_IF_NULL(device_context_->device_res_manager_);
-  RETURN_IF_FALSE_WITH_LOG(device_context_->device_res_manager_->SyncStream(stream_id_), "Synchronize stream failed.");
-  return true;
-}
-
-bool EmbeddingCachePrefetchActor::InitLocalCacheForNewIds(const HashTableInfo &hash_info) {
-  auto new_id_size = statistics_info_.new_id_size_;
+  auto new_id_size = statistics_info->new_id_size_;
   if (new_id_size == 0) {
     return true;
   }
 
-  MS_ERROR_IF_NULL(embedding_host_cache_);
-  auto new_id_index = embedding_host_cache_->new_id_index.get();
+  auto new_id_index = embedding_host_cache->new_id_index.get();
   MS_ERROR_IF_NULL(new_id_index);
 
   // Compute the feature values size needed to be initialized.
@@ -1050,18 +833,16 @@ bool EmbeddingCachePrefetchActor::InitLocalCacheForNewIds(const HashTableInfo &h
   // Initialize accumulate values with the configured constant value.
   if (hash_info.param_init_info_.param_type_ == distributed::ParamType::kAccumulation) {
     auto init_value = hash_info.param_init_info_.init_val_;
-    for (size_t i = 0; i < total_size; ++i) {
-      init_result[i] = init_value;
-    }
+    GenerateDistributionParallel<DataType, Generator, ConstantDistribution>(total_size, init_result.data(), init_value);
   } else {
     // Initialize embedding values from local random generator for feature ids that have never been seen before.
-    for (size_t i = 0; i < total_size; ++i) {
-      init_result[i] = rnd_gen_->Next();
-    }
+    const double mean = 0.0;
+    const double sigma = 0.01;
+    GenerateDistributionParallel<DataType, Generator, NormalDistribution>(total_size, init_result.data(), mean, sigma);
   }
 
   // Insert initialized feature values into the local hash cache.
-  auto host_hash_table_addr = reinterpret_cast<float *>(hash_info.host_address.get());
+  auto host_hash_table_addr = hash_info.host_address;
   MS_ERROR_IF_NULL(host_hash_table_addr);
   RETURN_IF_FALSE_WITH_LOG(InsertLocalHostCache(embedding_size, IntToSize(new_id_size), new_id_index,
                                                 init_result.data(), host_hash_table_addr),
@@ -1096,7 +877,7 @@ bool EmbeddingCachePrefetchActor::InsertLocalHostCache(size_t embedding_size, si
           memcpy_s(hash_table_addr + index * embedding_size, dest_len, insert_data + i * embedding_size, copy_len);
         if (ret != EOK) {
           MS_LOG(ERROR) << "Memcpy failed, errno[" << ret << "]";
-          running_ = false;
+          StopPrefetchCachePipeline();
           return;
         }
       }
@@ -1119,37 +900,6 @@ bool EmbeddingCachePrefetchActor::InsertLocalHostCache(size_t embedding_size, si
     threads[j].join();
   }
   return running_;
-}
-
-void EmbeddingCachePrefetchActor::LookupEmbeddingTable(size_t indices_num, size_t embedding_size, size_t first_dim_size,
-                                                       const float *input_addr, const int *indices_addr,
-                                                       float *output_addr) {
-  MS_ERROR_IF_NULL_WO_RET_VAL(input_addr);
-  MS_ERROR_IF_NULL_WO_RET_VAL(indices_addr);
-  MS_ERROR_IF_NULL_WO_RET_VAL(output_addr);
-
-  auto type_size = sizeof(float);
-  size_t lens = embedding_size * type_size;
-  for (size_t i = 0; i < indices_num; ++i) {
-    int index = indices_addr[i];
-    if (index >= 0 && index < SizeToInt(first_dim_size)) {
-      size_t pos = index * embedding_size;
-      auto ret = memcpy_s(output_addr, (indices_num - i) * lens, input_addr + pos, lens);
-      if (ret != EOK) {
-        MS_LOG(ERROR) << "Memcpy failed, errno[" << ret << "]";
-        running_ = false;
-        return;
-      }
-    } else {
-      auto ret = memset_s(output_addr, (indices_num - i) * lens, 0, lens);
-      if (ret != EOK) {
-        MS_LOG(ERROR) << "Memset failed, errno[" << ret << "]";
-        running_ = false;
-        return;
-      }
-    }
-    output_addr += embedding_size;
-  }
 }
 
 bool EmbeddingCachePrefetchActor::LookupLocalHostCache(size_t embedding_size, size_t indices_num,
@@ -1239,16 +989,15 @@ bool EmbeddingCachePrefetchActor::PullEembeddingsFromRemote(int32_t param_key, c
   return true;
 }
 
-bool EmbeddingCachePrefetchActor::PushEmbeddingsToRemote(int32_t param_key, const int *ids, size_t ids_num,
-                                                         const float *embeddings, size_t embeddings_len) {
-  MS_ERROR_IF_NULL(ids);
-  MS_ERROR_IF_NULL(embeddings);
-
+bool EmbeddingCachePrefetchActor::DoPushEmbeddingsToRemote(int32_t param_key, const int *ids, size_t ids_num,
+                                                           const float *embeddings, size_t embeddings_len) {
+  MS_LOG(DEBUG) << "Enter DoPushEmbeddingsToRemote - param_key : " << param_key << ", ids : " << ids
+                << ", ids_num : " << ids_num << ", embeddings : " << embeddings
+                << ", embeddings_len : " << embeddings_len << ".";
   if (ids_num == 0) {
-    MS_LOG(WARNING) << "The ids number is 0";
-    return true;
+    MS_LOG(ERROR) << "Invalidate ids num : 0.";
+    return false;
   }
-
   std::vector<std::vector<int>> slice_ids_list(server_num_);
   std::vector<std::vector<float>> slice_embeddings_list(server_num_);
   // 1. Partition ids end embeddings by remote embedding slice bound.
@@ -1270,34 +1019,45 @@ bool EmbeddingCachePrefetchActor::PushEmbeddingsToRemote(int32_t param_key, cons
                    slice_ids.size() * sizeof(int), slice_embeddings.data(), slice_embeddings.size() * sizeof(float)),
       "Send ids and embeddings to server failed.");
   }
-
+  MS_LOG(DEBUG) << "Exit DoPushEmbeddingsToRemote.";
   return true;
 }
 
-void EmbeddingCachePrefetchActor::GetRemoteEmbeddingSliceBound() {
-  server_num_ = PSContext::instance()->server_num();
-  if (server_num_ == 0) {
-    MS_LOG(EXCEPTION) << "The server num is 0";
-  }
-  size_t average_slice_size = vocab_size_ / server_num_;
-  std::vector<size_t> remote_embedding_slice_sizes = std::vector<size_t>(server_num_, average_slice_size);
-  size_t rest_vocab_size = vocab_size_ % server_num_;
-  for (size_t i = 0; i < rest_vocab_size; i++) {
-    remote_embedding_slice_sizes[i] += 1;
-  }
+bool EmbeddingCachePrefetchActor::PushEmbeddingsToRemote(int32_t param_key, const int *ids, size_t ids_num,
+                                                         const float *embeddings, size_t embeddings_len) {
+  MS_EXCEPTION_IF_NULL(ids);
+  MS_EXCEPTION_IF_NULL(embeddings);
+  MS_EXCEPTION_IF_CHECK_FAIL(ids_num != 0, "The ids_num is 0.");
 
-  size_t begin;
-  size_t end;
-  for (size_t i = 0; i < server_num_; i++) {
-    if (i == 0) {
-      begin = 0;
-      end = remote_embedding_slice_sizes[0] - 1;
-    } else {
-      begin = remote_embedding_slice_bounds_[i - 1].second + 1;
-      end = begin + remote_embedding_slice_sizes[i] - 1;
-    }
-    (void)remote_embedding_slice_bounds_.emplace_back(begin, end);
+  const auto ids_boundary = ids + ids_num;
+  const auto embeddings_boundary = embeddings + embeddings_len / sizeof(float);
+  MS_LOG(DEBUG) << "Enter PushEmbeddingsToRemote - param_key : " << param_key << ", ids : " << ids
+                << ", ids_num : " << ids_num << ", embeddings : " << embeddings
+                << ", embeddings_len : " << embeddings_len << ", ids_boundary : " << ids_boundary
+                << ", embeddings_boundary : " << embeddings_boundary << ".";
+  const size_t embeddings_num = embeddings_len / sizeof(float);
+  const size_t embeddings_dim = embeddings_num / ids_num;
+  MS_EXCEPTION_IF_CHECK_FAIL(embeddings_dim != 0, "The embeddings_dim is 0.");
+  // Max batch size : 128Mb.
+  const size_t max_batch_size = 1 << 27;
+  const size_t batch_num = max_batch_size / embeddings_dim;
+  MS_EXCEPTION_IF_CHECK_FAIL(batch_num != 0, "The batch_num is 0.");
+  size_t batch_size = ids_num / batch_num;
+  size_t batch_remainder = ids_num % batch_num;
+  if (batch_remainder != 0) {
+    batch_size++;
   }
+  MS_LOG(DEBUG) << "batch_size : " << batch_size << ", batch_num << : " << batch_num
+                << ", batch_remainder : " << batch_remainder << ".";
+  for (size_t count = 0; count != batch_size; count++) {
+    auto batch_ids = ids + batch_num * count;
+    size_t batch_ids_num = (count != batch_size - 1) ? batch_num : batch_remainder;
+    auto batch_embeddings = embeddings + batch_num * count * embeddings_dim;
+    size_t batch_embeddings_len = batch_ids_num * embeddings_dim * sizeof(float);
+    (void)DoPushEmbeddingsToRemote(param_key, batch_ids, batch_ids_num, batch_embeddings, batch_embeddings_len);
+  }
+  MS_LOG(DEBUG) << "Exit PushEmbeddingsToRemote.";
+  return true;
 }
 
 bool EmbeddingCachePrefetchActor::PartitionIds(const int *ids, size_t ids_num,
@@ -1305,19 +1065,29 @@ bool EmbeddingCachePrefetchActor::PartitionIds(const int *ids, size_t ids_num,
   MS_ERROR_IF_NULL(ids);
   MS_ERROR_IF_NULL(slice_ids_list);
 
-  for (size_t i = 0; i < slice_ids_list->size(); i++) {
+  size_t partition_num = slice_ids_list->size();
+  // There is no need to partition ids for one server case.
+  if (partition_num == 1) {
+    std::vector<int> &slice_ids = slice_ids_list->front();
+    slice_ids.resize(ids_num);
+    auto ret = memcpy_s(slice_ids.data(), slice_ids.size() * sizeof(int), ids, ids_num * sizeof(int));
+    if (ret != EOK) {
+      MS_LOG(ERROR) << "Memcpy failed, errno[" << ret << "]";
+      return false;
+    }
+    return true;
+  }
+
+  for (size_t i = 0; i < partition_num; i++) {
     int begin = SizeToInt(remote_embedding_slice_bounds_[i].first);
     int end = SizeToInt(remote_embedding_slice_bounds_[i].second);
 
-    mindspore::HashSet<int> unique_ids;
+    std::vector<int> &slice_ids = slice_ids_list->at(i);
     (void)std::for_each(ids, ids + ids_num, [&](int id) {
       if (id >= begin && id <= end) {
-        (void)unique_ids.insert(id);
+        slice_ids.push_back(id);
       }
     });
-
-    std::vector<int> &slice_ids = slice_ids_list->at(i);
-    (void)std::for_each(unique_ids.begin(), unique_ids.end(), [&](int id) { slice_ids.push_back(id); });
   }
 
   return true;
@@ -1337,8 +1107,27 @@ bool EmbeddingCachePrefetchActor::PartitionIdsAndEmbeddings(const int *ids, size
     return true;
   }
 
-  size_t embedding_dim = (embeddings_len / ids_num) / sizeof(float);
   size_t partition_num = slice_ids_list->size();
+  // There is no need to partition ids and embeddings for one server case.
+  if (partition_num == 1) {
+    std::vector<int> &slice_ids = slice_ids_list->front();
+    std::vector<float> &slice_embeddings = slice_embeddings_list->front();
+    slice_ids.resize(ids_num);
+    slice_embeddings.resize(embeddings_len / sizeof(float));
+    auto ret = memcpy_s(slice_ids.data(), slice_ids.size() * sizeof(int), ids, ids_num * sizeof(int));
+    if (ret != EOK) {
+      MS_LOG(ERROR) << "Memcpy failed, errno[" << ret << "]";
+      return false;
+    }
+    ret = memcpy_s(slice_embeddings.data(), slice_embeddings.size() * sizeof(float), embeddings, embeddings_len);
+    if (ret != EOK) {
+      MS_LOG(ERROR) << "Memcpy failed, errno[" << ret << "]";
+      return false;
+    }
+    return true;
+  }
+
+  size_t embedding_dim = (embeddings_len / ids_num) / sizeof(float);
   for (size_t i = 0; i < partition_num; i++) {
     int begin = SizeToInt(remote_embedding_slice_bounds_[i].first);
     int end = SizeToInt(remote_embedding_slice_bounds_[i].second);
@@ -1499,10 +1288,9 @@ void EmbeddingCachePrefetchActor::SyncEmbeddingTable() {
 }
 
 bool EmbeddingCachePrefetchActor::SyncHostEmbeddingTable() {
-  MS_ERROR_IF_NULL(embedding_host_cache_);
-  MS_ERROR_IF_NULL(embedding_host_cache_->host_hash_map_);
-  const auto &hash_id_to_index = embedding_host_cache_->host_hash_map_->hash_id_to_index();
-  size_t swap_indices_lens = hash_id_to_index.size();
+  MS_ERROR_IF_NULL(embedding_cache_table_manager.host_hash_map_);
+  const auto &ids_indices_pairs = embedding_cache_table_manager.host_hash_map_->Export();
+  size_t swap_indices_lens = ids_indices_pairs.size();
   if (swap_indices_lens == 0) {
     return true;
   }
@@ -1512,16 +1300,24 @@ bool EmbeddingCachePrefetchActor::SyncHostEmbeddingTable() {
   std::unique_ptr<int[]> host_to_server_indices_ptr = std::make_unique<int[]>(swap_indices_lens);
   MS_ERROR_IF_NULL(host_to_server_indices_ptr);
   size_t idx = 0;
-  for (const auto &item : hash_id_to_index) {
-    host_to_server_ids_ptr[idx] = item.first;
-    host_to_server_indices_ptr[idx++] = item.second;
+  MS_EXCEPTION_IF_NULL(emb_ops_);
+  const auto &modified_ids = emb_ops_->modified_ids();
+  for (const auto &item : ids_indices_pairs) {
+    if (modified_ids.find(item.first) != modified_ids.end()) {
+      host_to_server_ids_ptr[idx] = item.first;
+      host_to_server_indices_ptr[idx++] = item.second;
+    }
   }
-  for (const auto &item : hash_tables_) {
+  swap_indices_lens = idx;
+  if (swap_indices_lens == 0) {
+    return true;
+  }
+  for (const auto &item : embedding_cache_table_manager.hash_tables_) {
     const auto &hash_info = item.second;
     std::vector<float> swap_out_data;
     auto embedding_size = hash_info.embedding_size;
     swap_out_data.resize(swap_indices_lens * embedding_size);
-    auto host_hash_table_addr = hash_info.host_address.get();
+    auto host_hash_table_addr = hash_info.host_address;
     MS_ERROR_IF_NULL(host_hash_table_addr);
     RETURN_IF_FALSE(LookupLocalHostCache(embedding_size, swap_indices_lens, host_hash_table_addr,
                                          host_to_server_indices_ptr.get(), swap_out_data.data()));
@@ -1535,11 +1331,10 @@ bool EmbeddingCachePrefetchActor::SyncHostEmbeddingTable() {
 }
 
 bool EmbeddingCachePrefetchActor::SyncDeviceEmbeddingTable() {
-  MS_ERROR_IF_NULL(embedding_device_cache_);
-  const auto &device_hash_map = embedding_device_cache_->device_hash_map_;
+  const auto &device_hash_map = embedding_cache_table_manager.device_hash_map_;
   MS_ERROR_IF_NULL(device_hash_map);
-  const auto &hash_id_to_index = device_hash_map->hash_id_to_index();
-  size_t swap_indices_lens = hash_id_to_index.size();
+  const auto &ids_indices_pairs = device_hash_map->Export();
+  size_t swap_indices_lens = ids_indices_pairs.size();
   if (swap_indices_lens == 0) {
     return true;
   }
@@ -1550,11 +1345,11 @@ bool EmbeddingCachePrefetchActor::SyncDeviceEmbeddingTable() {
   std::unique_ptr<int[]> device_to_server_indices_ptr = std::make_unique<int[]>(swap_indices_lens);
   MS_ERROR_IF_NULL(device_to_server_indices_ptr);
   size_t idx = 0;
-  for (const auto &item : hash_id_to_index) {
+  for (const auto &item : ids_indices_pairs) {
     device_to_server_ids_ptr[idx] = item.first;
     device_to_server_indices_ptr[idx++] = item.second;
   }
-  for (const auto &item : hash_tables_) {
+  for (const auto &item : embedding_cache_table_manager.hash_tables_) {
     const auto &hash_info = item.second;
     std::vector<float> swap_out_data;
     auto embedding_size = hash_info.embedding_size;
@@ -1563,12 +1358,13 @@ bool EmbeddingCachePrefetchActor::SyncDeviceEmbeddingTable() {
       std::make_unique<float[]>(device_hash_map->hash_capacity() * embedding_size);
     MS_ERROR_IF_NULL(device_hash_table_addr_tmp);
 
-    auto hash_table_addr = reinterpret_cast<float *>(hash_info.device_address.addr);
+    auto hash_table_addr = reinterpret_cast<float *>(hash_info.address.addr);
     MS_ERROR_IF_NULL(hash_table_addr);
-    auto hash_table_size = hash_info.device_address.size;
-    RETURN_IF_FALSE_WITH_LOG(MemcpyDeviceToHostAsync(device_hash_table_addr_tmp.get(), hash_table_addr, hash_table_size,
-                                                     device_context_, stream_id_),
-                             "Memcpy device to host asynchronously failed.");
+    auto hash_table_size = hash_info.address.size;
+    RETURN_IF_FALSE_WITH_LOG(
+      DeviceEmbeddingOperation::MemcpyDeviceToHostAsync(device_hash_table_addr_tmp.get(), hash_table_addr,
+                                                        hash_table_size, device_context_, stream_id_),
+      "Memcpy device to host asynchronously failed.");
     RETURN_IF_FALSE_WITH_LOG(device_context_->device_res_manager_->SyncStream(stream_id_),
                              "Synchronize stream failed.");
     RETURN_IF_FALSE(LookupLocalHostCache(embedding_size, swap_indices_lens, device_hash_table_addr_tmp.get(),
@@ -1595,12 +1391,12 @@ bool EmbeddingCachePrefetchActor::FinalizeRemote() {
   return true;
 }
 
-std::string EmbeddingCachePrefetchActor::channel_name() {
+const std::string &EmbeddingCachePrefetchActor::channel_name() {
   std::lock_guard<std::mutex> locker(channel_mutex_);
   return channel_name_;
 }
 
-void EmbeddingCachePrefetchActor::set_channel_name(const std::string channel_name) {
+void EmbeddingCachePrefetchActor::set_channel_name(const std::string &channel_name) {
   if (channel_name_ == channel_name) {
     return;
   }
@@ -1651,11 +1447,11 @@ void EmbeddingCachePrefetchActor::BuildRpcOperators() {
     std::vector<SendRecvPairList> &send_recv_pair_lists = item.second;
     for (uint32_t i = 0; i < server_num_; i++) {
       SendRecvPairList &send_recv_pair_list = send_recv_pair_lists[i];
-      send_recv_pair_list.resize(hash_tables_.size());
+      send_recv_pair_list.resize(embedding_cache_table_manager.hash_tables_.size());
 
-      for (const auto &table : hash_tables_) {
+      for (const auto &table : embedding_cache_table_manager.hash_tables_) {
         int32_t key = table.second.param_key_;
-        if (key >= SizeToInt(hash_tables_.size()) || key < 0) {
+        if (key >= SizeToInt(embedding_cache_table_manager.hash_tables_.size()) || key < 0) {
           MS_LOG(EXCEPTION) << "Invalid parameter key: " << key;
         }
 
@@ -1741,7 +1537,7 @@ bool Sender::ConnectServer() {
   auto free_callback = std::bind(&Sender::FreeMessage, this, std::placeholders::_1);
   size_t retry_count = 60;
 
-  bool ret = use_void_ ? client_->Connect(server_url_, retry_count, free_callback) : client_->Connect(server_url_);
+  bool ret = client_->Connect(server_url_, retry_count, free_callback);
   if (!ret) {
     MS_LOG(ERROR) << "Failed to connect to server of edge: " << inter_process_edge_ << ", server_url: " << server_url_;
     return false;
@@ -1773,18 +1569,14 @@ std::unique_ptr<MessageBase> Sender::BuildRpcMessage(const std::vector<ShapeVect
 
   RpcDataPtr rpc_data = nullptr;
   size_t data_size = CalDataSize(shapes, data_types, data_list, finalize_remote);
-  if (use_void_) {
-    MS_EXCEPTION_IF_NULL(cpu_device_context_);
-    MS_EXCEPTION_IF_NULL(cpu_device_context_->device_res_manager_);
-    rpc_data = static_cast<RpcDataPtr>(cpu_device_context_->device_res_manager_->AllocateMemory(data_size));
-    MS_EXCEPTION_IF_NULL(rpc_data);
-    message->data = rpc_data;
-    message->size = data_size;
-  } else {
-    message->body.resize(data_size);
-    rpc_data = message->body.data();
-  }
+  MS_EXCEPTION_IF_NULL(cpu_device_context_);
+  MS_EXCEPTION_IF_NULL(cpu_device_context_->device_res_manager_);
+  rpc_data = static_cast<RpcDataPtr>(cpu_device_context_->device_res_manager_->AllocateMemory(data_size));
+  MS_EXCEPTION_IF_NULL(rpc_data);
+  message->data = rpc_data;
+  message->size = data_size;
 
+  errno_t ret;
   size_t offset = 0;
   for (size_t i = 0; i < data_list.size(); i++) {
     const ShapeVector &shape = shapes[i];
@@ -1799,29 +1591,29 @@ std::unique_ptr<MessageBase> Sender::BuildRpcMessage(const std::vector<ShapeVect
     // Message format:
     // |RPC_DYNAMIC_SHAPE_DATA | dynamic shape PB data size |---dynamic shape PB data----|---real data----|
     // 1. The dynamic shape header.
-    if (EOK !=
-        memcpy_s(rpc_data + offset, strlen(kRpcDynamicShapeData), kRpcDynamicShapeData, strlen(kRpcDynamicShapeData))) {
-      MS_LOG(EXCEPTION) << "Failed to memcpy_s for kRpcDynamicShapeData";
+    if ((ret = memcpy_s(rpc_data + offset, strlen(kRpcDynamicShapeData), kRpcDynamicShapeData,
+                        strlen(kRpcDynamicShapeData))) != EOK) {
+      MS_LOG(EXCEPTION) << "Failed to memcpy_s for kRpcDynamicShapeData, errno[" << ret << "].";
     }
     offset += strlen(kRpcDynamicShapeData);
 
     // 2. The size of the protobuf DynamicShapeMessage.
     size_t ds_pb_msg_size = ds_pb_msg_str.size();
-    if (EOK != memcpy_s(rpc_data + offset, sizeof(ds_pb_msg_size), &ds_pb_msg_size, sizeof(ds_pb_msg_size))) {
-      MS_LOG(EXCEPTION) << "Failed to memcpy_s for pb message size.";
+    if ((ret = memcpy_s(rpc_data + offset, sizeof(ds_pb_msg_size), &ds_pb_msg_size, sizeof(ds_pb_msg_size))) != EOK) {
+      MS_LOG(EXCEPTION) << "Failed to memcpy_s for pb message size, errno[" << ret << "].";
     }
     offset += sizeof(ds_pb_msg_size);
 
     // 3. Protobuf DynamicShapeMessage.
-    if (EOK != memcpy_s(rpc_data + offset, ds_pb_msg_str.size(), ds_pb_msg_str.c_str(), ds_pb_msg_str.size())) {
-      MS_LOG(EXCEPTION) << "Failed to memcpy_s for pb message.";
+    if ((ret = memcpy_s(rpc_data + offset, ds_pb_msg_str.size(), ds_pb_msg_str.c_str(), ds_pb_msg_str.size())) != EOK) {
+      MS_LOG(EXCEPTION) << "Failed to memcpy_s for pb message, errno[" << ret << "].";
     }
     offset += ds_pb_msg_str.size();
 
     // 4. The real data buffer need to be sent.
     MS_EXCEPTION_IF_NULL(data);
-    if (EOK != memcpy_s(rpc_data + offset, data->size, data->addr, data->size)) {
-      MS_LOG(EXCEPTION) << "Failed to memcpy_s for real data.";
+    if ((ret = memcpy_s(rpc_data + offset, data->size, data->addr, data->size)) != EOK) {
+      MS_LOG(EXCEPTION) << "Failed to memcpy_s for real data, errno[" << ret << "].";
     }
     offset += data->size;
   }
@@ -1829,13 +1621,14 @@ std::unique_ptr<MessageBase> Sender::BuildRpcMessage(const std::vector<ShapeVect
   // 5. Finalize remote command.
   if (finalize_remote) {
     size_t header_len = strlen(distributed::kFinalizeMuxRecvActor);
-    if (EOK != memcpy_s(rpc_data + offset, header_len, distributed::kFinalizeMuxRecvActor, header_len)) {
-      MS_LOG(EXCEPTION) << "Failed to memcpy_s for kFinalizeMuxRecvActor.";
+    if ((ret = memcpy_s(rpc_data + offset, header_len, distributed::kFinalizeMuxRecvActor, header_len)) != EOK) {
+      MS_LOG(EXCEPTION) << "Failed to memcpy_s for kFinalizeMuxRecvActor, errno[" << ret << "].";
     }
     offset += header_len;
 
-    if (EOK != memcpy_s(rpc_data + offset, sizeof(finalize_remote), &finalize_remote, sizeof(finalize_remote))) {
-      MS_LOG(EXCEPTION) << "Failed to memcpy_s for finalize_remote.";
+    if ((ret = memcpy_s(rpc_data + offset, sizeof(finalize_remote), &finalize_remote, sizeof(finalize_remote))) !=
+        EOK) {
+      MS_LOG(EXCEPTION) << "Failed to memcpy_s for finalize_remote, errno[" << ret << "].";
     }
   }
 
@@ -1909,12 +1702,8 @@ bool Receiver::StartServer() {
   server_ = std::make_unique<TCPServer>();
   MS_EXCEPTION_IF_NULL(server_);
 
-  std::function<void *(size_t size)> allocate_callback;
-  if (use_void_) {
-    allocate_callback = std::bind(&Receiver::AllocateMessage, this, std::placeholders::_1);
-  } else {
-    allocate_callback = {};
-  }
+  std::function<void *(size_t size)> allocate_callback =
+    std::bind(&Receiver::AllocateMessage, this, std::placeholders::_1);
   if (!server_->Initialize(allocate_callback)) {
     MS_LOG(EXCEPTION) << "Failed to initialize tcp server for recv actor";
   }
@@ -1999,8 +1788,8 @@ MessageBase *Receiver::HandleMessage(MessageBase *const msg) {
     return distributed::rpc::NULL_MSG;
   }
 
-  RpcDataPtr data = use_void_ ? static_cast<RpcDataPtr>(msg->data) : msg->body.data();
-  size_t data_size = use_void_ ? msg->size : msg->body.size();
+  RpcDataPtr data = static_cast<RpcDataPtr>(msg->data);
+  size_t data_size = msg->size;
   // The data pair: <addr of data, size of data>.
   std::pair<const void *, size_t> real_data;
   // Get real data addr and size.
@@ -2021,11 +1810,10 @@ MessageBase *Receiver::HandleMessage(MessageBase *const msg) {
   received_msg_ = true;
   received_msg_cv_.notify_one();
 
-  if (use_void_) {
-    MS_EXCEPTION_IF_NULL(cpu_device_context_);
-    MS_EXCEPTION_IF_NULL(cpu_device_context_->device_res_manager_);
-    cpu_device_context_->device_res_manager_->FreeMemory(data);
-  }
+  MS_EXCEPTION_IF_NULL(cpu_device_context_);
+  MS_EXCEPTION_IF_NULL(cpu_device_context_->device_res_manager_);
+  cpu_device_context_->device_res_manager_->FreeMemory(data);
+
   delete msg;
   return distributed::rpc::NULL_MSG;
 }

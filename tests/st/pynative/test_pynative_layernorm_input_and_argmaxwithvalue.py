@@ -21,7 +21,7 @@ from mindspore import Tensor, context
 from mindspore.nn import LayerNorm, Cell
 from mindspore.common import ParameterTuple
 from mindspore.ops.composite import GradOperation
-from mindspore.train.model import Model
+from mindspore.train import Model
 
 class _Grad(Cell):
     def __init__(self, grad, network, wrt_params=False, real_inputs_count=None):
@@ -241,7 +241,7 @@ def test_argmaxwithvalue_input_ascend():
     context.set_context(device_target="Ascend")
     argmaxwithvalue_input()
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_argmaxwithvalue_input_gpu():

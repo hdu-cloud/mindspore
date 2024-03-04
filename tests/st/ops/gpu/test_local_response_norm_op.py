@@ -38,13 +38,13 @@ class MSLRNOpNet(nn.Cell):
 class MSGradNet(nn.Cell):
     def __init__(self, network):
         super(MSGradNet, self).__init__()
-        self.grad = C.GradOperation(get_all=True, sens_param=True, get_by_list=True)
+        self.grad = C.GradOperation(get_all=True, get_by_list=True)
         self.network = network
         self.params = ParameterTuple(network.trainable_params())
 
-    def construct(self, x, dy):
+    def construct(self, x):
         grad_op = self.grad(self.network, self.params)
-        output = grad_op(x, dy)
+        output = grad_op(x)
         return output
 
 
@@ -85,22 +85,16 @@ def test_lrn_grad():
                            [1.7448118, -0.7612069]],
                           [[0.3190391, -0.24937038],
                            [1.4621079, -2.0601406]]]]).astype(np.float32))
-    dy = Tensor(np.array([[[[-0.3224172, -0.38405436],
-                            [1.1337694, -1.0998913]],
-                           [[-0.1724282, -0.8778584],
-                            [0.04221375, 0.58281523]],
-                           [[-1.1006192, 1.1447237],
-                            [0.9015907, 0.50249434]]]]).astype(np.float32))
-    dx_exp = np.array([[[[-0.3220835, -0.3837087],
-                         [1.133368, -1.0994467]],
-                        [[-0.17225023, -0.8768017],
-                         [0.04198911, 0.5825201]],
-                        [[-1.1002823, 1.1443052],
-                         [0.9010479, 0.50217706]]]]).astype(np.float32)
+    dx_exp = np.array([[[[0.9990543, 0.9992802],
+                         [0.99980265, 0.99892604]],
+                        [[0.9993739, 0.99847937],
+                         [0.9988902, 0.99910796]],
+                        [[0.9996039, 0.99945194],
+                         [0.9990037, 0.99834996]]]]).astype(np.float32)
     net = MSLRNOpNet()
     grad_net = MSGradNet(net)
     grad_net.set_train(True)
-    output = grad_net(x, dy)
+    output = grad_net(x)
     dx = output[0][0].asnumpy()
     assert np.allclose(dx, dx_exp, atol=1.0e-4, rtol=1.0e-4, equal_nan=True)
 
@@ -116,13 +110,11 @@ def test_lrn_grad_dynamic_shape():
     """
     context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
     x_dyn = Tensor(shape=[1, 32, 64, None], dtype=mindspore.float32)
-    dy_dyn = Tensor(shape=[1, 32, 64, None], dtype=mindspore.float32)
     net = MSLRNOpNet()
     grad_net = MSGradNet(net)
     grad_net.set_train(True)
-    grad_net.set_inputs(x_dyn, dy_dyn)
+    grad_net.set_inputs(x_dyn)
     x = np.random.randn(1, 32, 64, 64)
-    dy = np.random.randn(1, 32, 64, 64)
-    output = grad_net(Tensor(x, mindspore.float32), Tensor(dy, mindspore.float32))
+    output = grad_net(Tensor(x, mindspore.float32))
     expect_shape = (1, 32, 64, 64)
     assert output[0][0].asnumpy().shape == expect_shape

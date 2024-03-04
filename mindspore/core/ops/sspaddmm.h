@@ -16,12 +16,12 @@
 
 #ifndef MINDSPORE_CORE_OPS_SSPADDMM_H_
 #define MINDSPORE_CORE_OPS_SSPADDMM_H_
-#include <vector>
-#include <set>
 #include <memory>
+#include <set>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -41,8 +41,8 @@ class MIND_API Sspaddmm : public BaseOperator {
   /// \brief Init. Refer to the parameters of Python API @ref mindspore.ops.Sspaddmm for the inputs.
   void Init() const {}
 };
-abstract::AbstractBasePtr SspaddmmInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                        const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr SspaddmmInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

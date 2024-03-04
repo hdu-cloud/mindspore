@@ -9,9 +9,13 @@ mindspore.dataset.vision.UniformAugment
 
     参数：
         - **transforms** (Sequence) - 数据处理操作序列。
-        - **num_ops** (int，可选) - 均匀采样的数据处理操作数。默认值：2。
+        - **num_ops** (int，可选) - 均匀采样的数据处理操作数。默认值： ``2`` 。
 
     异常：
         - **TypeError** - 当 `transforms` 的类型不为数据处理操作序列。
         - **TypeError** - 当 `num_ops` 的类型不为int。
         - **ValueError** - 当 `num_ops` 不为正数。
+
+    教程样例：
+        - `视觉变换样例库
+          <https://www.mindspore.cn/docs/zh-CN/master/api_python/samples/dataset/vision_gallery.html>`_

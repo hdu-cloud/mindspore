@@ -44,7 +44,6 @@ int SparseSliceGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const 
                                     const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost) {
   auto ret = KernelMod::Resize(base_operator, inputs, outputs, inputsOnHost);
   if (ret == KRET_UNKNOWN_OUT_SHAPE) {
-    outputs_ = outputs;
     auto input_indices_shape = inputs[kIndex0]->GetShapeVector();
     auto out_shape = outputs.at(kIndex2)->GetShapeVector();
     auto out_size = std::accumulate(out_shape.begin(), out_shape.end(), 1, std::multiplies<int64_t>());
@@ -80,6 +79,10 @@ bool SparseSliceGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs
   auto out_shape_ptr = GetDeviceAddress<IndexType>(outputs, kIndex2);
   auto sum_count_ptr = GetDeviceAddress<int64_t>(workspace, kIndex0);
 
+  CHECK_CUDA_RET_WITH_ERROR_NOTRACE(
+    cudaMemsetAsync(sum_count_ptr, static_cast<int64_t>(0), workspace.at(kIndex0)->size, cuda_stream),
+    "For SparseSlice, failed to cudaMemset.");
+
   bool is_nullptr = (indices_ptr == nullptr) || (values_ptr == nullptr) || (x_ptr == nullptr) ||
                     (start_ptr == nullptr) || (size_ptr == nullptr) || (y_indices_ptr == nullptr) ||
                     (y_values_ptr == nullptr) || (out_shape_ptr == nullptr) || (sum_count_ptr == nullptr);
@@ -87,17 +90,21 @@ bool SparseSliceGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs
     return false;
   }
 
-  SparseSlice(indices_ptr, values_ptr, x_ptr, start_ptr, size_ptr, y_indices_ptr, y_values_ptr, out_shape_ptr,
-              sum_count_ptr, input_nnz_, num_dim_, out_size_, device_id_, cuda_stream);
+  auto status = SparseSlice(indices_ptr, values_ptr, x_ptr, start_ptr, size_ptr, y_indices_ptr, y_values_ptr,
+                            out_shape_ptr, sum_count_ptr, input_nnz_, num_dim_, out_size_, device_id_, cuda_stream);
+  CHECK_CUDA_STATUS(status, kernel_name_);
 
   // Get dynamic shape
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(&real_output_size, sum_count_ptr, sizeof(int64_t), cudaMemcpyDeviceToHost, cuda_stream),
     "For SparseSlice, cudaMemcpyAsync failed.");
+  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+    cudaMemcpyAsync(out_shape_ptr, size_ptr, sizeof(int64_t) * out_size_, cudaMemcpyDeviceToDevice, cuda_stream),
+    "For SparseSlice, cudaMemcpyAsync out_shape failed.");
   return true;
 }
 
-void SparseSliceGpuKernelMod::SyncData() {
+void SparseSliceGpuKernelMod::SyncOutputShape() {
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(cuda_stream), "SparseSlice cudaStreamSynchronized failed");
   outputs_[kIndex0]->SetShapeVector(ShapeVector({real_output_size, static_cast<int64_t>(num_dim_)}));
   outputs_[kIndex1]->SetShapeVector(ShapeVector({real_output_size}));
@@ -126,6 +133,26 @@ std::vector<std::pair<KernelAttr, SparseSliceGpuKernelMod::SparseSliceLaunchFunc
        .AddOutputAttr(kNumberTypeUInt16)
        .AddOutputAttr(kNumberTypeInt64),
      &SparseSliceGpuKernelMod::LaunchKernel<uint16_t, int64_t>},
+    {KernelAttr()
+       .AddInputAttr(kNumberTypeInt64)
+       .AddInputAttr(kNumberTypeUInt32)
+       .AddInputAttr(kNumberTypeInt64)
+       .AddInputAttr(kNumberTypeInt64)
+       .AddInputAttr(kNumberTypeInt64)
+       .AddOutputAttr(kNumberTypeInt64)
+       .AddOutputAttr(kNumberTypeUInt32)
+       .AddOutputAttr(kNumberTypeInt64),
+     &SparseSliceGpuKernelMod::LaunchKernel<uint32_t, int64_t>},
+    {KernelAttr()
+       .AddInputAttr(kNumberTypeInt64)
+       .AddInputAttr(kNumberTypeUInt64)
+       .AddInputAttr(kNumberTypeInt64)
+       .AddInputAttr(kNumberTypeInt64)
+       .AddInputAttr(kNumberTypeInt64)
+       .AddOutputAttr(kNumberTypeInt64)
+       .AddOutputAttr(kNumberTypeUInt64)
+       .AddOutputAttr(kNumberTypeInt64),
+     &SparseSliceGpuKernelMod::LaunchKernel<uint64_t, int64_t>},
     {KernelAttr()
        .AddInputAttr(kNumberTypeInt64)
        .AddInputAttr(kNumberTypeInt64)

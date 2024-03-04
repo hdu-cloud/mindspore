@@ -40,6 +40,7 @@ class ActivationBase : public OperatorInfo {
   Status InferMirrorOps() override;
   Status InferForwardCommunication() override;
   Status InferTensorMap() override;
+  Status InferOutputTensorMap() override;
   Status InferDevMatrixShape() override;
 };
 
@@ -113,9 +114,8 @@ class Softmax : public ActivationBase {
 
  protected:
   Status CheckStrategy(const StrategyPtr &strategy) override;
+  Status CheckLayoutConfig() override;
   Status GetAttrs() override;
-
- private:
   std::vector<int64_t> axis_;
 };
 
@@ -135,6 +135,26 @@ class LogSoftmaxInfo : public Softmax {
   ~LogSoftmaxInfo() override = default;
 };
 
+class SortInfo : public Softmax {
+ public:
+  SortInfo(const std::string &name, const Shapes &inputs_shape, const Shapes &outputs_shape,
+           const PrimitiveAttrs &attrs)
+      : Softmax(name, inputs_shape, outputs_shape, attrs) {}
+  ~SortInfo() override = default;
+
+ protected:
+  Status InferTensorMap() override;
+  Status InferAsLossDivisor() override;
+};
+
+class ReverseV2Info : public Softmax {
+ public:
+  ReverseV2Info(const std::string &name, const Shapes &inputs_shape, const Shapes &outputs_shape,
+                const PrimitiveAttrs &attrs)
+      : Softmax(name, inputs_shape, outputs_shape, attrs) {}
+  ~ReverseV2Info() override = default;
+};
+
 class CumOpBase : public ActivationBase {
  public:
   CumOpBase(const std::string &name, const Shapes &inputs_shape, const Shapes &outputs_shape,
@@ -150,7 +170,7 @@ class CumOpBase : public ActivationBase {
   Status CheckStrategy(const StrategyPtr &strategy) override;
   Status InferMirrorOps() override;
   Status GetAttrs() override;
-  int axis_ = -1;
+  int64_t axis_ = -1;
 };
 
 class CumSumInfo : public CumOpBase {
@@ -167,6 +187,28 @@ class CumProdInfo : public CumOpBase {
               const PrimitiveAttrs &attrs)
       : CumOpBase(name, inputs_shape, outputs_shape, attrs, std::make_shared<CumProdCost>()) {}
   ~CumProdInfo() = default;
+};
+
+class CummaxInfo : public CumOpBase {
+ public:
+  CummaxInfo(const std::string &name, const Shapes &inputs_shape, const Shapes &outputs_shape,
+             const PrimitiveAttrs &attrs)
+      : CumOpBase(name, inputs_shape, outputs_shape, attrs, std::make_shared<CumProdCost>()) {}
+  ~CummaxInfo() = default;
+
+ protected:
+  Status InferMirrorOps() override;
+  Status GetAttrs() override;        // the axis is in the attr
+  Status InferTensorMap() override;  // cummax/cummin has two outputs
+  Status InferAsLossDivisor() override;
+};
+
+class CumminInfo : public CummaxInfo {
+ public:
+  CumminInfo(const std::string &name, const Shapes &inputs_shape, const Shapes &outputs_shape,
+             const PrimitiveAttrs &attrs)
+      : CummaxInfo(name, inputs_shape, outputs_shape, attrs) {}
+  ~CumminInfo() = default;
 };
 
 class EluInfo : public ActivationOther {

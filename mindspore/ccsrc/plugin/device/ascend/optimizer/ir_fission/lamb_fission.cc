@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,18 @@
  */
 #include "plugin/device/ascend/optimizer/ir_fission/lamb_fission.h"
 #include <memory>
-#include <vector>
 #include <string>
+#include <vector>
+#include "include/backend/anf_runtime_algorithm.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/optimizer/optimizer.h"
 #include "include/common/utils/anfalgo.h"
-#include "mindspore/core/ops/core_ops.h"
-#include "backend/common/optimizer/optimizer.h"
+#include "ops/array_op_name.h"
+#include "ops/framework_ops.h"
+#include "ops/math_ops.h"
+#include "ops/nn_ops.h"
+#include "ops/nn_optimizer_ops.h"
+#include "ops/sequence_ops.h"
 
 namespace mindspore {
 namespace opt {
@@ -46,8 +53,7 @@ AnfNodePtr CreateCastNode(const FuncGraphPtr &graph, const AnfNodePtr &input, co
   MS_EXCEPTION_IF_NULL(input);
   if (common::AnfAlgo::GetOutputInferDataType(input, 0) != dst_type) {
     AnfNodePtr cast = graph->NewCNode({NewValueNode(std::make_shared<Primitive>(kCastOpName)), input});
-    common::AnfAlgo::SetOutputTypeAndDetailShape({dst_type}, {common::AnfAlgo::GetOutputDetailShape(input, 0)},
-                                                 cast.get());
+    common::AnfAlgo::SetOutputTypeAndDetailShape({dst_type}, {AnfAlgo::GetOutputDetailShape(input, 0)}, cast.get());
     common::AnfAlgo::SetNodeAttr(kAttrDstType, MakeValue(static_cast<size_t>(dst_type)), cast);
     cast->set_scope(input->scope());
     return cast;
@@ -126,9 +132,9 @@ AnfNodePtr CreateLambApplyOptimizerAssignNode(const FuncGraphPtr &graph, const s
   std::vector<AnfNodePtr> lamb_assign_outputs;
   CreateMultipleOutputsOfAnfNode(graph, new_node, kLambApplyOptimizerAssignOutputNum, &lamb_assign_outputs);
   if (lamb_assign_outputs.size() != kLambApplyOptimizerAssignOutputNum) {
-    MS_LOG(EXCEPTION) << "The input tensor size[" << lamb_assign_outputs.size()
-                      << "] of node [" + new_node->DebugString() + "] is not equal to "
-                      << kLambApplyOptimizerAssignOutputNum << trace::DumpSourceLines(new_node);
+    MS_LOG(INTERNAL_EXCEPTION) << "The input tensor size[" << lamb_assign_outputs.size()
+                               << "] of node [" + new_node->DebugString() + "] is not equal to "
+                               << kLambApplyOptimizerAssignOutputNum << trace::DumpSourceLines(new_node);
   }
   return lamb_assign_outputs[kLambApplyOptimizerAssignUpdateIndex];
 }
@@ -189,9 +195,9 @@ const AnfNodePtr LambFission::Process(const FuncGraphPtr &graph, const AnfNodePt
   MS_EXCEPTION_IF_NULL(lamb_cnode);
   auto real_input_num = common::AnfAlgo::GetInputNum(lamb_cnode);
   if (real_input_num < kLambInputNum) {
-    MS_LOG(EXCEPTION) << "The input tensor size[" << real_input_num
-                      << "] of node [" + lamb_cnode->DebugString() + "] is not equal to " << kLambInputNum
-                      << trace::DumpSourceLines(lamb_cnode);
+    MS_LOG(INTERNAL_EXCEPTION) << "The input tensor size[" << real_input_num
+                               << "] of node [" + lamb_cnode->DebugString() + "] is not equal to " << kLambInputNum
+                               << trace::DumpSourceLines(lamb_cnode);
   }
 
   bool is_exist_umonad_node = false;
@@ -209,9 +215,7 @@ const AnfNodePtr LambFission::Process(const FuncGraphPtr &graph, const AnfNodePt
                                             ori_inputs[kUMonadIndex], ori_inputs[kGlobalStepIndex]);
 
     // For multiple load scenarios, MakeTuple needs to be executed as the input parameter of UpdateState
-    std::vector<AnfNodePtr> make_tuple_inputs = {NewValueNode(prim::kPrimMakeTuple), param_node, global_step_node};
-    auto make_tuple_node = NewCNode(make_tuple_inputs, graph);
-    MS_EXCEPTION_IF_NULL(make_tuple_node);
+    auto make_tuple_node = CreateMakeTupleNode(graph, std::vector<AnfNodePtr>{param_node, global_step_node});
 
     // graph mode need umonad and update-state function to keep order
     update_state_load_node =

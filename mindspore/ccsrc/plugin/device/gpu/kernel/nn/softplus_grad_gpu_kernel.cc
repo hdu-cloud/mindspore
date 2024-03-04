@@ -15,10 +15,11 @@
  */
 
 #include "plugin/device/gpu/kernel/nn/softplus_grad_gpu_kernel.h"
-#include <functional>
-#include <utility>
 #include <algorithm>
+#include <functional>
 #include <memory>
+#include <utility>
+#include "mindspore/core/ops/nn_ops.h"
 
 namespace mindspore {
 namespace kernel {
@@ -46,8 +47,7 @@ int SoftplusGradGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const
     return ret;
   }
   auto input_shape = inputs.at(kIndex0)->GetShapeVector();
-  auto input_element_num =
-    std::accumulate(input_shape.begin(), input_shape.end(), size_t(1), std::multiplies<size_t>());
+  auto input_element_num = SizeOf(input_shape);
   is_null_input_ = (input_element_num == 0);
   return KRET_OK;
 }
@@ -58,12 +58,15 @@ bool SoftplusGradGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &input
   T *dy_addr = GetDeviceAddress<T>(inputs, 0);
   T *x_addr = GetDeviceAddress<T>(inputs, 1);
   T *dx_addr = GetDeviceAddress<T>(outputs, 0);
-  SoftplusGrad(input_size_list_.at(0) / sizeof(T), dy_addr, x_addr, dx_addr,
-               reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = SoftplusGrad(input_size_list_.at(0) / sizeof(T), dy_addr, x_addr, dx_addr,
+                             reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
 std::vector<std::pair<KernelAttr, SoftplusGradGpuKernelMod::SoftplusGradFunc>> SoftplusGradGpuKernelMod::func_list_ = {
+  {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64),
+   &SoftplusGradGpuKernelMod::LaunchKernel<double>},
   {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
    &SoftplusGradGpuKernelMod::LaunchKernel<float>},
   {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeFloat16),

@@ -21,6 +21,7 @@ namespace mindspore {
 namespace kernel {
 bool NextAfterGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                  const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
   kernel_name_ = base_operator->name();
   kernel_ptr_ = std::make_shared<ops::NextAfter>(base_operator->GetPrim());
   auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
@@ -33,7 +34,7 @@ bool NextAfterGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std
   kernel_func_ = func_list_[index].second;
   int const INPUT_SIZE = 2;
   int const OUTPUT_SIZE = 1;
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   if (inputs.empty() || outputs.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "' got empty inputs or outputs, which is invalid.";
     return false;
@@ -90,10 +91,15 @@ template <typename T>
 bool NextAfterGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
                                          const std::vector<AddressPtr> &workspace,
                                          const std::vector<AddressPtr> &outputs) {
-  T *input1 = GetDeviceAddress<T>(inputs, 0);
-  T *input2 = GetDeviceAddress<T>(inputs, 1);
-  T *output = GetDeviceAddress<T>(outputs, 0);
-  NextAfter(input_elements_, input1, input2, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  T *input1 = GetDeviceAddress<T>(inputs, kIndex0);
+  T *input2 = GetDeviceAddress<T>(inputs, kIndex1);
+  T *output = GetDeviceAddress<T>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(input1);
+  MS_EXCEPTION_IF_NULL(input2);
+  MS_EXCEPTION_IF_NULL(output);
+  auto status =
+    NextAfter(input_elements_, input1, input2, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

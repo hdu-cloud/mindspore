@@ -26,12 +26,12 @@ def set_dump(target, enabled=True):
 
     `target` should be an instance of :class:`mindspore.nn.Cell` or :class:`mindspore.ops.Primitive` .
     Please note that this API takes effect only when Asynchronous Dump is enabled and the `dump_mode`
-    field in dump config file is "2". See the `dump document <https://www.mindspore.cn/tutorials/
-    experts/en/r2.0.0-alpha/debug/dump.html>`_ for details. The default enabled status for
+    field in dump config file is ``"2"`` . See the `dump document <https://www.mindspore.cn/tutorials/
+    experts/en/master/debug/dump.html>`_ for details. The default enabled status for
     a :class:`mindspore.nn.Cell` or :class:`mindspore.ops.Primitive` is False.
 
     .. warning::
-        This is an experimental prototype that is subject to change or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Note:
         1. This API is only effective for GRAPH_MODE with Ascend backend.
@@ -50,16 +50,18 @@ def set_dump(target, enabled=True):
     Args:
         target (Union[Cell, Primitive]): The Cell instance or Primitive instance
             to which the dump flag is set.
-        enabled (bool, optional): True means enable dump, False means disable dump.
-            Default: True.
+        enabled (bool, optional): ``True`` means enable dump, ``False`` means disable dump.
+            Default: ``True`` .
 
     Supported Platforms:
         ``Ascend``
 
     Examples:
-        >>> # Please set the dump config file and environment variable before
-        >>> # running this example to actually get the dump data.
-        >>> # See the document of this API for details.
+        .. note::
+            Please set environment variable `MINDSPORE_DUMP_CONFIG` to the dump config file and set `dump_mode` field
+            in dump config file to 2 before running this example.
+            See `dump document <https://www.mindspore.cn/tutorials/experts/en/master/debug/dump.html>`_ for details.
+
         >>> import numpy as np
         >>> import mindspore as ms
         >>> import mindspore.nn as nn

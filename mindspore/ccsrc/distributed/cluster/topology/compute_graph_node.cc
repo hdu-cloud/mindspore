@@ -13,17 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+#include "include/backend/distributed/cluster/topology/compute_graph_node.h"
 #include <utility>
 #include <nlohmann/json.hpp>
 #include "utils/log_adapter.h"
 #include "utils/ms_exception.h"
-#include "distributed/cluster/topology/common.h"
-#include "distributed/recovery/recovery_context.h"
-#include "distributed/constants.h"
+#include "include/backend/distributed/cluster/topology/common.h"
+#include "include/backend/distributed/recovery/recovery_context.h"
+#include "include/backend/distributed/constants.h"
 #include "proto/topology.pb.h"
-#include "ps/ps_context.h"
-#include "distributed/cluster/topology/compute_graph_node.h"
+#include "include/backend/distributed/ps/ps_context.h"
+#include "include/backend/distributed/rpc/tcp/constants.h"
+#include "utils/convert_utils_base.h"
 
 namespace mindspore {
 namespace distributed {
@@ -183,6 +184,10 @@ bool ComputeGraphNode::Register() {
   }
   reg_msg.set_host_name(std::string(host_name));
 
+  // Set client ip address.
+  client_ip_ = hb_client_->GetClientIPByDstUrl(server_url);
+  reg_msg.set_host_ip(client_ip_);
+
   std::string content = reg_msg.SerializeAsString();
   auto message = CreateMessage(server_url, MessageName::kRegistration, content);
   MS_EXCEPTION_IF_NULL(message);
@@ -265,9 +270,10 @@ bool ComputeGraphNode::Heartbeat() {
             if (abnormal_callback_ != nullptr) {
               (*abnormal_callback_)();
             }
-            MS_LOG(EXCEPTION) << "Failed to connect to the meta server. Maybe it has exited. Please check log.";
+            MS_LOG(EXCEPTION)
+              << "Failed to connect to the meta server. Maybe it has exited. Please check scheduler's log.";
           } else {
-            MS_LOG(ERROR) << "Failed to connect to the meta server. Maybe it has exited. Please check log.";
+            MS_LOG(ERROR) << "Failed to connect to the meta server. Maybe it has exited. Please check scheduler's log.";
           }
         }
       } else {
@@ -517,6 +523,8 @@ std::vector<std::string> ComputeGraphNode::GetHostNames(const std::string &role)
 void ComputeGraphNode::set_abnormal_callback(std::shared_ptr<std::function<void(void)>> abnormal_callback) {
   abnormal_callback_ = abnormal_callback;
 }
+
+const std::string &ComputeGraphNode::client_ip() const { return client_ip_; }
 
 std::shared_ptr<std::string> ComputeGraphNode::RetrieveMessageFromMSN(const std::string &msg_name,
                                                                       const std::string &msg_body, uint32_t timeout) {

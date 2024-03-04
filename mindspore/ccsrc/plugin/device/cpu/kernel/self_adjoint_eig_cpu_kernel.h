@@ -17,10 +17,8 @@
 #ifndef MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_CPU_SELF_ADJOINT_EIG_CPU_KERNEL_H_
 #define MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_CPU_SELF_ADJOINT_EIG_CPU_KERNEL_H_
 
-#include <string>
 #include <vector>
 #include <utility>
-#include <cmath>
 #include <algorithm>
 #include <map>
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
@@ -28,12 +26,15 @@
 
 namespace mindspore {
 namespace kernel {
-class SelfAdjointEigCpuKernelMod : public DeprecatedNativeCpuKernelMod {
+class SelfAdjointEigCpuKernelMod : public NativeCpuKernelMod {
  public:
   SelfAdjointEigCpuKernelMod() = default;
   ~SelfAdjointEigCpuKernelMod() override = default;
 
-  void InitKernel(const CNodePtr &kernel_node) override;
+  bool Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+            const std::vector<KernelTensorPtr> &outputs) override;
+  int Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+             const std::vector<KernelTensorPtr> &outputs, const std::map<uint32_t, tensor::TensorPtr> &) override;
   bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
               const std::vector<AddressPtr> &outputs) override;
 
@@ -48,7 +49,7 @@ class SelfAdjointEigCpuKernelMod : public DeprecatedNativeCpuKernelMod {
   static std::vector<std::pair<KernelAttr, SelfAdjointEigLaunchFunc>> func_list_;
   TypeId dtype_{kTypeUnknown};
   std::vector<int64_t> input_shape_;
-  bool attr_;
+  bool compute_v_;
 };
 }  // namespace kernel
 }  // namespace mindspore

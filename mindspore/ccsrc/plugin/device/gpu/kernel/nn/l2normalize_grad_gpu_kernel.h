@@ -23,7 +23,8 @@
 #include <utility>
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
 #include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
-#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/broadcast_impl.cuh"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/binary_ops_impl.cuh"
+#include "plugin/device/gpu/kernel/math/broadcast_public.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/l2normalize_impl.cuh"
 #include "plugin/device/gpu/kernel/kernel_constants.h"
 namespace mindspore {
@@ -60,8 +61,7 @@ class L2NormalizeGradGpuKernelMod : public NativeGpuKernelMod {
     for (auto &shape : input_shape_list_) {
       if (output_shape != shape) {
         MS_LOG(ERROR) << "For '" << kernel_name_ << "', the shape of input and output must be the same, but "
-                      << "got the shape of input: " << CONVERT_VECTOR_TO_STRING(shape)
-                      << ", the shape of output: " << CONVERT_VECTOR_TO_STRING(output_shape);
+                      << "got the shape of input: " << shape << ", the shape of output: " << output_shape;
         return false;
       }
     }
@@ -112,13 +112,14 @@ class L2NormalizeGradGpuKernelMod : public NativeGpuKernelMod {
                                        kernel_name_ + " cudnnDestroyTensorDescriptor failed.");
   }
   void InferArrayReduceType() {
+    cudnnDataType_t comp_type = (data_type_ == CUDNN_DATA_DOUBLE) ? CUDNN_DATA_DOUBLE : CUDNN_DATA_FLOAT;
     CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
-      cudnnSetReduceTensorDescriptor(reduce_tensor_descriptor_, CUDNN_REDUCE_TENSOR_NORM2, CUDNN_DATA_FLOAT, nan_prop_,
+      cudnnSetReduceTensorDescriptor(reduce_tensor_descriptor_, CUDNN_REDUCE_TENSOR_NORM2, comp_type, nan_prop_,
                                      reduce_indices_, CUDNN_32BIT_INDICES),
       kernel_name_ + " cudnnSetReduceTensorDescriptor failed");
     CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
-      cudnnSetReduceTensorDescriptor(reduce_sum_tensor_descriptor_, CUDNN_REDUCE_TENSOR_ADD, CUDNN_DATA_FLOAT,
-                                     nan_prop_, reduce_indices_, CUDNN_32BIT_INDICES),
+      cudnnSetReduceTensorDescriptor(reduce_sum_tensor_descriptor_, CUDNN_REDUCE_TENSOR_ADD, comp_type, nan_prop_,
+                                     reduce_indices_, CUDNN_32BIT_INDICES),
       kernel_name_ + " cudnnSetReduceTensorDescriptor failed");
     return;
   }
@@ -171,9 +172,9 @@ class L2NormalizeGradGpuKernelMod : public NativeGpuKernelMod {
   float epsilon_{0.0};
   int axis_origin_{0};
   int axis_{0};
-  std::vector<size_t> lhs_shape_{};
-  std::vector<size_t> rhs_shape_{};
-  std::vector<size_t> output_shape_{};
+  std::vector<int64_t> lhs_shape_{};
+  std::vector<int64_t> rhs_shape_{};
+  std::vector<int64_t> output_shape_{};
 
   L2NormalizeGradGpuLaunchFunc kernel_func_;
   static std::vector<std::pair<KernelAttr, L2NormalizeGradGpuLaunchFunc>> func_list_;

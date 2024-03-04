@@ -15,11 +15,17 @@
  */
 #include "plugin/device/ascend/optimizer/ge/lamb_fission.h"
 #include <memory>
-#include <vector>
 #include <string>
+#include <vector>
+#include "include/backend/anf_runtime_algorithm.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/optimizer/optimizer.h"
 #include "include/common/utils/anfalgo.h"
-#include "mindspore/core/ops/core_ops.h"
-#include "backend/common/optimizer/optimizer.h"
+#include "ops/array_op_name.h"
+#include "ops/framework_ops.h"
+#include "ops/math_ops.h"
+#include "ops/nn_optimizer_ops.h"
+#include "ops/sequence_ops.h"
 
 namespace mindspore {
 namespace opt {
@@ -46,9 +52,9 @@ AnfNodePtr CreateCastNode(const FuncGraphPtr &graph, const AnfNodePtr &input, co
   MS_EXCEPTION_IF_NULL(input);
   if (common::AnfAlgo::GetOutputInferDataType(input, 0) != dst_type) {
     AnfNodePtr cast = graph->NewCNode({NewValueNode(std::make_shared<Primitive>(kCastOpName)), input});
-    common::AnfAlgo::SetOutputTypeAndDetailShape({dst_type}, {common::AnfAlgo::GetOutputDetailShape(input, 0)},
-                                                 cast.get());
-    common::AnfAlgo::SetNodeAttr(kAttrDstType, MakeValue(static_cast<size_t>(dst_type)), cast);
+    MS_EXCEPTION_IF_NULL(cast);
+    common::AnfAlgo::SetOutputTypeAndDetailShape({dst_type}, {AnfAlgo::GetOutputDetailShape(input, 0)}, cast.get());
+    common::AnfAlgo::SetNodeAttr(kAttrDstType, TypeIdToType(dst_type), cast);
     cast->set_scope(input->scope());
     return cast;
   }
@@ -78,13 +84,20 @@ AnfNodePtr CreateUpdateStateNode(const FuncGraphPtr &graph, const bool is_need_u
   return update_state_node;
 }
 
-ValueNodePtr CreateValueNode(const ValuePtr &value_ptr) {
+ValueNodePtr CreateValueNode(const FuncGraphPtr &graph, const ValuePtr &value_ptr) {
   MS_EXCEPTION_IF_NULL(value_ptr);
-  auto new_node = std::make_shared<ValueNode>(value_ptr);
-  MS_EXCEPTION_IF_NULL(new_node);
-  auto value_abstract = value_ptr->ToAbstract();
-  new_node->set_abstract(value_abstract);
-  return new_node;
+  auto kernel_graph = graph->cast<KernelGraphPtr>();
+  if (kernel_graph == nullptr) {
+    auto new_node = std::make_shared<ValueNode>(value_ptr);
+    MS_EXCEPTION_IF_NULL(new_node);
+    auto value_abstract = value_ptr->ToAbstract();
+    new_node->set_abstract(value_abstract);
+    return new_node;
+  } else {
+    ValueNodePtr value_node = kernel_graph->NewValueNode(value_ptr->ToAbstract(), value_ptr);
+    kernel_graph->AddValueNodeToGraph(value_node);
+    return value_node;
+  }
 }
 
 AnfNodePtr CreateLambApplyOptimizerAssignNode(const FuncGraphPtr &graph, const std::vector<AnfNodePtr> &ori_inputs,
@@ -138,10 +151,12 @@ AnfNodePtr CreateLayerNormNode(const FuncGraphPtr &graph, const AnfNodePtr &inpu
   // Calc the sum of square
   auto shape_vec = common::AnfAlgo::GetOutputInferShape(input_node, 0);
 
-  auto type_id = common::AnfAlgo::GetPrevNodeOutputInferDataType(input_node, 0);
+  auto type_id = (input_node->isa<CNode>()) ? common::AnfAlgo::GetPrevNodeOutputInferDataType(input_node, 0)
+                                            : common::AnfAlgo::GetOutputInferDataType(input_node, 0);
   const auto dim = shape_vec.size();
-  std::vector<int64_t> axis;
-  for (size_t i = 0; i < dim; ++i) {
+  int64_t ddim = SizeToLong(dim);
+  std::vector<int64_t> axis{0};
+  for (int64_t i = 1; i < ddim; ++i) {
     (void)axis.emplace_back(i);
   }
   const std::vector<AnfNodePtr> square_node_inputs = {NewValueNode(std::make_shared<Primitive>(kSquareOpName)),
@@ -154,7 +169,6 @@ AnfNodePtr CreateLayerNormNode(const FuncGraphPtr &graph, const AnfNodePtr &inpu
   auto types = {common::AnfAlgo::GetOutputInferDataType(input_node, 0)};
   common::AnfAlgo::SetOutputInferTypeAndShape(types, {shape_vec}, square_node.get());
 
-  int64_t ddim = SizeToLong(dim);
   ShapeVector reduce_sum_output_shape = shape_vec;
   for (const auto &idx : axis) {
     if (idx < -ddim || idx >= ddim) {
@@ -167,7 +181,8 @@ AnfNodePtr CreateLayerNormNode(const FuncGraphPtr &graph, const AnfNodePtr &inpu
 
   auto abs = std::make_shared<abstract::AbstractTensor>(TypeIdToType(type_id), reduce_sum_output_shape);
 
-  auto axis_node = CreateValueNode(MakeValue(axis));
+  auto axis_node = CreateValueNode(graph, MakeValue(axis));
+  MS_EXCEPTION_IF_NULL(axis_node);
   // Calc the sum of reducesum
   const std::vector<AnfNodePtr> square_sum_node_inputs = {NewValueNode(std::make_shared<Primitive>(kReduceSumOpName)),
                                                           square_node, axis_node};
@@ -175,6 +190,10 @@ AnfNodePtr CreateLayerNormNode(const FuncGraphPtr &graph, const AnfNodePtr &inpu
   MS_EXCEPTION_IF_NULL(square_sum_node);
 
   common::AnfAlgo::SetNodeAttr(kAttrKeepDims, MakeValue(false), square_sum_node);
+  auto input_names = std::vector<std::string>{"input_x", "axis"};
+  auto output_names = std::vector<std::string>{"y"};
+  common::AnfAlgo::SetNodeAttr(kAttrInputNames, MakeValue(input_names), square_sum_node);
+  common::AnfAlgo::SetNodeAttr(kAttrOutputNames, MakeValue(output_names), square_sum_node);
   square_sum_node->set_scope(input_node->scope());
   square_sum_node->set_abstract(abs);
   ShapeVector shape = {1};
@@ -235,6 +254,7 @@ const AnfNodePtr LambFissionGe::Process(const FuncGraphPtr &graph, const AnfNode
     // param is a side-effect operator parameter, need load with UMonad
     param_node = CreateNodeOfBinaryOp(graph, prim::kPrimLoad->name(), ori_inputs[kParamIndex], ori_inputs[kUMonadIndex],
                                       ori_inputs[kParamIndex]);
+    MS_EXCEPTION_IF_NULL(param_node);
     auto global_step_node1 = CreateNodeOfBinaryOp(graph, prim::kPrimLoad->name(), ori_inputs[kGlobalStepIndex],
                                                   ori_inputs[kUMonadIndex], ori_inputs[kGlobalStepIndex]);
 
@@ -251,9 +271,7 @@ const AnfNodePtr LambFissionGe::Process(const FuncGraphPtr &graph, const AnfNode
     common::AnfAlgo::SetOutputInferTypeAndShape(types, shapes, global_step_node.get());
 
     // For multiple load scenarios, MakeTuple needs to be executed as the input parameter of UpdateState
-    std::vector<AnfNodePtr> make_tuple_inputs = {NewValueNode(prim::kPrimMakeTuple), param_node, global_step_node};
-    auto make_tuple_node = NewCNode(make_tuple_inputs, graph);
-    MS_EXCEPTION_IF_NULL(make_tuple_node);
+    auto make_tuple_node = CreateMakeTupleNode(graph, std::vector<AnfNodePtr>{param_node, global_step_node});
 
     // graph mode need umonad and update-state function to keep order
     update_state_load_node =
@@ -271,10 +289,10 @@ const AnfNodePtr LambFissionGe::Process(const FuncGraphPtr &graph, const AnfNode
 
   // cast delay flag to float32
   auto flag = std::make_shared<tensor::Tensor>(1.0);
-  auto weight_decay_flag = CreateValueNode(flag);
+  auto weight_decay_flag = CreateValueNode(graph, flag);
 
   auto num = std::make_shared<tensor::Tensor>(1.0);
-  auto num_one = CreateValueNode(num);
+  auto num_one = CreateValueNode(graph, num);
   // create 1-beta1
   auto sub_beta1 = CreateNodeOfBinaryOp(graph, kSubOpName, num_one, ori_inputs[kBeta1Index], ori_inputs[kBeta1Index]);
   // create 1-beta2

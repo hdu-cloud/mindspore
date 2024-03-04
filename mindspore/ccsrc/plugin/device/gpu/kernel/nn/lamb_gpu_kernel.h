@@ -83,9 +83,10 @@ class LambGpuKernelMod : public NativeGpuKernelMod {
     float *grad_float = GetDeviceAddress<float>(workspaces, kGradFloatIndex);
     float *g_hat_var = GetDeviceAddress<float>(workspaces, kGHatValIndex);
 
-    ApplyLambEraly(inputs[0]->size / sizeof(T), variable, m, v, beta1, beta2, epsilon, decay, global_step, gradient,
-                   update, var_float, grad_float, g_hat_var, reinterpret_cast<cudaStream_t>(stream_ptr));
-
+    auto status =
+      ApplyLambEraly(inputs[0]->size / sizeof(T), variable, m, v, beta1, beta2, epsilon, decay, global_step, gradient,
+                     update, var_float, grad_float, g_hat_var, reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     float trust_ratio{0};
     CalcTrustRatio(workspaces, var_float, grad_float, g_hat_var, stream_ptr, &trust_ratio);
 
@@ -95,9 +96,9 @@ class LambGpuKernelMod : public NativeGpuKernelMod {
                       reinterpret_cast<cudaStream_t>(stream_ptr)),
       "For " + kernel_name_ + " cudaMemcpyAsync trust_ratio failed.");
 
-    ApplyLambLater(inputs[0]->size / sizeof(T), variable, learning_rate, update, trust_ratio_ptr,
-                   reinterpret_cast<cudaStream_t>(stream_ptr));
-
+    status = ApplyLambLater(inputs[0]->size / sizeof(T), variable, learning_rate, update, trust_ratio_ptr,
+                            reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return true;
   }
 
@@ -122,7 +123,7 @@ class LambGpuKernelMod : public NativeGpuKernelMod {
     auto v_int64_shape = inputs[kVIndex]->GetShapeVector();
     auto gradient_int64_shape = inputs[kGradIndex]->GetShapeVector();
     if (AnfAlgo::IsShapesDynamic({variable_int64_shape, m_int64_shape, v_int64_shape, gradient_int64_shape})) {
-      return true;
+      return 0;
     }
 
     is_null_input_ = CHECK_SHAPE_NULL(variable_int64_shape, kernel_name_, "var") ||
@@ -281,31 +282,41 @@ class LambGpuKernelMod : public NativeGpuKernelMod {
       MS_LOG(EXCEPTION) << "var_float or grad_float or g_hat_var is null";
     }
 
-    float *reduce_workspace_addr = GetPossiblyNullDeviceAddress<float>(workspaces, kReduceWorkspaceIndex);
-    float *w_norm_ptr = GetDeviceAddress<float>(workspaces, kWNormIndex);
-    float *g_norm_ptr = GetDeviceAddress<float>(workspaces, kGNormIndex);
-    float *g_hat_norm_ptr = GetDeviceAddress<float>(workspaces, kGHatNormIndex);
+    float *w_norm_ptr = nullptr;
+    float *g_norm_ptr = nullptr;
+    float *g_hat_norm_ptr = nullptr;
 
-    // Calc sum of square
-    constexpr float alpha = 1;
-    constexpr float beta = 0;
-    CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
-      cudnnReduceTensor(cudnn_handle_, reduce_tensor_descriptor_, nullptr, 0, reduce_workspace_addr,
-                        workspace_size_list_[kReduceWorkspaceIndex], &alpha, input_descriptor_, var_float, &beta,
-                        output_descriptor_, w_norm_ptr),
-      "For " + kernel_name_ + " cudnnReduceTensor for 'var_float' failed");
+    if (is_all_match_) {
+      w_norm_ptr = var_float;
+      g_norm_ptr = grad_float;
+      g_hat_norm_ptr = g_hat_var;
+    } else {
+      float *reduce_workspace_addr = GetPossiblyNullDeviceAddress<float>(workspaces, kReduceWorkspaceIndex);
+      w_norm_ptr = GetDeviceAddress<float>(workspaces, kWNormIndex);
+      g_norm_ptr = GetDeviceAddress<float>(workspaces, kGNormIndex);
+      g_hat_norm_ptr = GetDeviceAddress<float>(workspaces, kGHatNormIndex);
 
-    CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
-      cudnnReduceTensor(cudnn_handle_, reduce_tensor_descriptor_, nullptr, 0, reduce_workspace_addr,
-                        workspace_size_list_[kReduceWorkspaceIndex], &alpha, input_descriptor_, grad_float, &beta,
-                        output_descriptor_, g_norm_ptr),
-      "For " + kernel_name_ + " cudnnReduceTensor for 'grad_float' failed");
+      // Calc sum of square
+      constexpr float alpha = 1;
+      constexpr float beta = 0;
+      CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
+        cudnnReduceTensor(cudnn_handle_, reduce_tensor_descriptor_, nullptr, 0, reduce_workspace_addr,
+                          workspace_size_list_[kReduceWorkspaceIndex], &alpha, input_descriptor_, var_float, &beta,
+                          output_descriptor_, w_norm_ptr),
+        "For " + kernel_name_ + " cudnnReduceTensor for 'var_float' failed");
 
-    CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
-      cudnnReduceTensor(cudnn_handle_, reduce_tensor_descriptor_, nullptr, 0, reduce_workspace_addr,
-                        workspace_size_list_[kReduceWorkspaceIndex], &alpha, input_descriptor_, g_hat_var, &beta,
-                        output_descriptor_, g_hat_norm_ptr),
-      "For " + kernel_name_ + " cudnnReduceTensor for 'g_hat_var' failed");
+      CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
+        cudnnReduceTensor(cudnn_handle_, reduce_tensor_descriptor_, nullptr, 0, reduce_workspace_addr,
+                          workspace_size_list_[kReduceWorkspaceIndex], &alpha, input_descriptor_, grad_float, &beta,
+                          output_descriptor_, g_norm_ptr),
+        "For " + kernel_name_ + " cudnnReduceTensor for 'grad_float' failed");
+
+      CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(
+        cudnnReduceTensor(cudnn_handle_, reduce_tensor_descriptor_, nullptr, 0, reduce_workspace_addr,
+                          workspace_size_list_[kReduceWorkspaceIndex], &alpha, input_descriptor_, g_hat_var, &beta,
+                          output_descriptor_, g_hat_norm_ptr),
+        "For " + kernel_name_ + " cudnnReduceTensor for 'g_hat_var' failed");
+    }
 
     float w_norm = 0;
     float g_norm = 0;
@@ -320,6 +331,10 @@ class LambGpuKernelMod : public NativeGpuKernelMod {
       cudaMemcpyAsync(&g_norm_hat, g_hat_norm_ptr, reduce_output_size_, cudaMemcpyDeviceToHost,
                       reinterpret_cast<cudaStream_t>(stream_ptr)),
       "For " + kernel_name_ + " cudaMemcpyAsync g_hat_square_sum failed.");
+    if (cudaStreamQuery(reinterpret_cast<cudaStream_t>(stream_ptr)) != cudaSuccess) {
+      CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(stream_ptr)),
+                                         "For '" << kernel_name_ << "', cuda Stream Sync Failed.");
+    }
 
     *trust_ratio = w_norm > 0 ? (g_norm_hat > 0 ? (w_norm / g_norm_hat) : 1) : 1;
     if (*trust_ratio < 0 || std::isnan(*trust_ratio)) {
@@ -331,8 +346,13 @@ class LambGpuKernelMod : public NativeGpuKernelMod {
 
   void InitShapeInfo(const ShapeVector &input_shape, const ShapeVector &output_shape) {
     // Determine which dimension will be reduced.
+    is_all_match_ = false;
     ShapeVector reduce_output_shape = output_shape;
     std::fill(reduce_output_shape.begin(), reduce_output_shape.end(), 1);
+
+    if (input_shape == reduce_output_shape) {
+      is_all_match_ = true;
+    }
 
     // Infer input and output descriptor.
     InferInAndOutDesc(input_shape, reduce_output_shape);
@@ -383,6 +403,7 @@ class LambGpuKernelMod : public NativeGpuKernelMod {
   size_t trust_ratio_size_{0};
   size_t reduce_output_size_{0};
   bool is_null_input_{false};
+  bool is_all_match_{false};
 
   cudnnHandle_t cudnn_handle_{nullptr};
   cudnnDataType_t data_type_{CUDNN_DATA_FLOAT};

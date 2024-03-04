@@ -1,8 +1,12 @@
 cmake_minimum_required(VERSION 3.12)
 project(Lite_benchmark)
 
-if(NOT MSLITE_ENABLE_CLOUD_FUSION_INFERENCE)
-    set(BENCHMARK_LINK_LIB mindspore-lite)
+if(NOT (MSLITE_ENABLE_CLOUD_FUSION_INFERENCE OR MSLITE_ENABLE_CLOUD_INFERENCE))
+    if(TARGET_OHOS)
+        set(BENCHMARK_LINK_LIB libmindspore-lite.so)
+    else()
+        set(BENCHMARK_LINK_LIB mindspore-lite)
+    endif()
 else()
     add_definitions(-DUSE_GLOG)
     set(BENCHMARK_LINK_LIB mindspore-extendrt)
@@ -45,9 +49,16 @@ else()
         if(SUPPORT_NPU AND ANDROID_STL STREQUAL "c++_static")
             set(BENCHMARK_LINK_LIB ${BENCHMARK_LINK_LIB} c++_shared)
         endif()
+        if(TARGET_AOS_ARM)
+            set(BENCHMARK_LINK_LIB ${BENCHMARK_LINK_LIB} pthread)
+        endif()
     elseif(NOT MSVC)
         set(BENCHMARK_LINK_LIB ${BENCHMARK_LINK_LIB} pthread)
     endif()
+endif()
+
+if(MSLITE_EXPORT_COMPUTE_IR)
+    set(BENCHMARK_LINK_LIB ${BENCHMARK_LINK_LIB} mindspore_lite_drawer)
 endif()
 
 include_directories(${CCSRC_DIR}/plugin/device/cpu/kernel)
@@ -58,6 +69,7 @@ set(COMMON_SRC
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/common/file_utils.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/common/utils.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/common/config_file.cc
+        ${CCSRC_DIR}/plugin/device/cpu/kernel/nnacl/nnacl_common.c
         )
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../../lite)
@@ -70,8 +82,12 @@ if(MSLITE_GPU_BACKEND STREQUAL opencl)
     endif()
 endif()
 
-if(NOT MSLITE_ENABLE_CLOUD_FUSION_INFERENCE)
+if(NOT (MSLITE_ENABLE_CLOUD_FUSION_INFERENCE OR MSLITE_ENABLE_CLOUD_INFERENCE))
   set(C_SRC ${CMAKE_CURRENT_SOURCE_DIR}/benchmark_c_api.cc)
+endif()
+
+if(MSVC)
+    set(COMMON_SRC ${COMMON_SRC} ${CMAKE_CURRENT_SOURCE_DIR}/../converter/converter_context.cc)
 endif()
 
 add_executable(benchmark
@@ -81,6 +97,11 @@ add_executable(benchmark
         ${CMAKE_CURRENT_SOURCE_DIR}/benchmark_unified_api.cc
         ${C_SRC}
         ${COMMON_SRC})
+
+if(TARGET_OHOS)
+    target_link_directories(benchmark PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/../../src)
+    add_dependencies(benchmark mindspore-lite)
+endif()
 
 add_dependencies(benchmark fbs_src)
 

@@ -14,16 +14,29 @@
  * limitations under the License.
  */
 #include "ops/grad/relu6_grad.h"
-#include <string>
-#include <algorithm>
-#include <map>
+
+#include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "abstract/param_validator.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/param_validator.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -62,6 +75,16 @@ class ReLU6GradInfer : public abstract::OpInferBase {
     return x_type;
   }
 };
-REGISTER_PRIMITIVE_OP_INFER_IMPL(ReLU6Grad, prim::kPrimRelu6Grad, ReLU6GradInfer, false);
+
+abstract::AbstractBasePtr ReLU6GradInferFunc(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                             const std::vector<abstract::AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
+  ReLU6GradInfer relu_6_grad;
+  auto type = relu_6_grad.InferType(primitive, input_args);
+  auto shape = relu_6_grad.InferShape(primitive, input_args);
+  return abstract::MakeAbstract(shape, type);
+}
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ReLU6Grad, prim::kPrimReLU6Grad, ReLU6GradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

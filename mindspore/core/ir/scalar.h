@@ -35,6 +35,18 @@
 using std::fabs;
 
 namespace mindspore {
+template <typename T>
+inline std::string scalar_float_to_string(T v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+template <typename T>
+inline std::string scalar_to_string(T v) {
+  return std::to_string(v);
+}
+
 /// \brief Scalar defines interface for scalar data.
 class MS_CORE_API Scalar : public Value {
  public:
@@ -144,7 +156,7 @@ class MS_CORE_API Int8Imm final : public IntegerImm {
   /// \param[in] other The other Int8Imm to be compared with.
   /// \return Return true if other's value and the value of current object are the same,else return false.
   bool operator==(const Int8Imm &other) const;
-  std::string ToString() const override { return std::to_string(v_); }
+  std::string ToString() const override { return scalar_to_string(v_); }
 
   std::string DumpText() const override {
     std::ostringstream oss;
@@ -182,7 +194,7 @@ class MS_CORE_API Int16Imm final : public IntegerImm {
   /// \param[in] other The other Int16Imm to be compared with.
   /// \return Return true if other's value and the value of current object are the same,else return false.
   bool operator==(const Int16Imm &other) const;
-  std::string ToString() const override { return std::to_string(v_); }
+  std::string ToString() const override { return scalar_to_string(v_); }
 
   std::string DumpText() const override {
     std::ostringstream oss;
@@ -221,7 +233,7 @@ class MS_CORE_API Int32Imm final : public IntegerImm {
   /// \param[in] other The other Int32Imm to be compared with.
   /// \return Return true if other's value and the value of current object are the same,else return false.
   bool operator==(const Int32Imm &other) const;
-  std::string ToString() const override { return std::to_string(v_); }
+  std::string ToString() const override { return scalar_to_string(v_); }
 
   std::string DumpText() const override {
     std::ostringstream oss;
@@ -260,7 +272,7 @@ class MS_CORE_API Int64Imm final : public IntegerImm {
   /// \param[in] other The other Int64Imm to be compared with.
   /// \return Return true if other's value and the value of current object are the same,else return false.
   bool operator==(const Int64Imm &other) const;
-  std::string ToString() const override { return std::to_string(v_); }
+  std::string ToString() const override { return scalar_to_string(v_); }
 
   std::string DumpText() const override {
     std::ostringstream oss;
@@ -300,7 +312,7 @@ class MS_CORE_API UInt8Imm final : public IntegerImm {
   /// \param[in] other The other UInt8Imm to be compared with.
   /// \return Return true if other's value and the value of current object are the same,else return false.
   bool operator==(const UInt8Imm &other) const;
-  std::string ToString() const override { return std::to_string(v_); }
+  std::string ToString() const override { return scalar_to_string(v_); }
 
   std::string DumpText() const override {
     std::ostringstream oss;
@@ -341,7 +353,7 @@ class MS_CORE_API UInt16Imm final : public IntegerImm {
   /// \param[in] other The other UInt16Imm to be compared with.
   /// \return Return true if other's value and the value of current object are the same,else return false.
   bool operator==(const UInt16Imm &other) const;
-  std::string ToString() const override { return std::to_string(v_); }
+  std::string ToString() const override { return scalar_to_string(v_); }
 
   std::string DumpText() const override {
     std::ostringstream oss;
@@ -382,7 +394,7 @@ class MS_CORE_API UInt32Imm final : public IntegerImm {
   /// \param[in] other The other UInt32Imm to be compared with.
   /// \return Return true if other's value and the value of current object are the same,else return false.
   bool operator==(const UInt32Imm &other) const;
-  std::string ToString() const override { return std::to_string(v_); }
+  std::string ToString() const override { return scalar_to_string(v_); }
 
   std::string DumpText() const override {
     std::ostringstream oss;
@@ -422,7 +434,7 @@ class MS_CORE_API UInt64Imm final : public IntegerImm {
   /// \param[in] other The other UInt64Imm to be compared with.
   /// \return Return true if other's value and the value of current object are the same,else return false.
   bool operator==(const UInt64Imm &other) const;
-  std::string ToString() const override { return std::to_string(v_); }
+  std::string ToString() const override { return scalar_to_string(v_); }
 
   std::string DumpText() const override {
     std::ostringstream oss;
@@ -475,13 +487,22 @@ class MS_CORE_API FP32Imm final : public FloatImm {
   ///
   /// \return Return the value of FP32Imm.
   float value() const { return v_; }
+  /// \brief Get the double type value of FP32Imm.
+  ///
+  /// \return Return the double type value of FP32Imm.
+  double prim_value() const { return prim_v_; }
+  /// \brief Set the double type value of FP32Imm.
+  ///
+  /// \param[prim_v] double type value for FP32IMM.
+  void set_prim_value(double prim_v) { prim_v_ = prim_v; }
   bool operator==(const Value &other) const override;
   /// \brief Compare two FP32Imm objects is equal.
   ///
   /// \param[in] other The other FP32Imm to be compared with.
   /// \return Return true if other's value and the value of current object are the same,else return false.
   bool operator==(const FP32Imm &other) const;
-  std::string ToString() const override { return std::to_string(v_); }
+
+  std::string ToString() const override { return scalar_float_to_string(v_); }
 
   std::string DumpText() const override {
     std::ostringstream oss;
@@ -491,6 +512,7 @@ class MS_CORE_API FP32Imm final : public FloatImm {
 
  private:
   float v_;
+  double prim_v_;
 };
 using FP32ImmPtr = std::shared_ptr<FP32Imm>;
 IMM_TRAITS(FP32ImmPtr, float)
@@ -520,7 +542,7 @@ class MS_CORE_API FP64Imm final : public FloatImm {
   /// \param[in] other The other FP64Imm to be compared with.
   /// \return Return true if other's value and the value of current object are the same,else return false.
   bool operator==(const FP64Imm &other) const;
-  std::string ToString() const override { return std::to_string(v_); }
+  std::string ToString() const override { return scalar_float_to_string(v_); }
 
   std::string DumpText() const override {
     std::ostringstream oss;

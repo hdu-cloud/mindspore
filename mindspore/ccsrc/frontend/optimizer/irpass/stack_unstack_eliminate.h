@@ -23,6 +23,7 @@
 #include <string>
 
 #include "frontend/optimizer/optimizer_caller.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "frontend/optimizer/anf_visitor.h"
 #include "frontend/operator/ops.h"
 #include "frontend/optimizer/irpass.h"
@@ -77,7 +78,7 @@ class StackUnstackEliminator : public AnfVisitor {
     auto prim = GetCNodePrimitive(node);
     auto num_val = prim->GetAttr(kAttrNum);
     // UnStack may not be inferred and do not have attribute axis.
-    if (num_val == nullptr) {
+    if (num_val == nullptr || num_val->isa<None>()) {
       return false;
     }
     auto axis_val = prim->GetAttr(kAttrAxis);

@@ -18,7 +18,7 @@ from __future__ import absolute_import
 import math
 import numpy as np
 
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.train.metrics.metric import Metric, rearrange_inputs
 
 
@@ -34,7 +34,7 @@ class Perplexity(Metric):
 
     Args:
         ignore_label (Union[int, None]): Index of an invalid label to be ignored when counting. If set to `None`,
-                it will include all entries. Default: None.
+                it will include all entries. Default: ``None`` .
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``

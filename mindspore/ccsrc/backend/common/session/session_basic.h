@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,20 +25,22 @@
 #include "utils/hash_map.h"
 #include "backend/common/session/kernel_graph_mgr.h"
 #include "backend/common/session/session_context.h"
-#include "backend/common/session/kernel_graph.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/kernel_graph.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
+#include "include/common/utils/tensor_future.h"
 #include "ir/anf.h"
 #include "ir/tensor.h"
 #include "utils/any.h"
 #include "include/common/utils/contract.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/kernel_info.h"
 #include "utils/ms_context.h"
 #include "pipeline/pynative/base.h"
 
 #if defined(ENABLE_DEBUGGER) && !defined(_WIN32) && !defined(_WIN64)
-#include "debug/debugger/debugger.h"
+#include "include/backend/debug/debugger/debugger.h"
 #endif
+#include "mindspore/ccsrc/debug/summary/summary.h"
 #include "runtime/hardware/device_context.h"
 #include "include/backend/visible.h"
 
@@ -52,23 +54,27 @@ namespace mindspore {
 const char kSessionBasic[] = "SessionBasic";
 
 namespace session {
-using CallBackFunc = uint32_t (*)(uint32_t graph_id,
-                                  const std::map<std::string, mindspore::tensor::TensorPtr> &params_list);
+using mindspore::debug::CallBackFunc;
+#ifndef ENABLE_SECURITY
+using mindspore::debug::Summary;
+#endif
+
 using AnyList = std::vector<Any>;
 using AnyListPtr = std::shared_ptr<AnyList>;
 
 struct BackendOpRunInfo {
   ~BackendOpRunInfo() = default;
-  BackendOpRunInfo(pynative::BaseOpRunInfo base_op_run_info, Primitive *prim, bool is_infer, bool is_gradient_out)
+  BackendOpRunInfo(pynative::BaseOpRunInfo base_op_run_info, PrimitivePtr prim, bool is_infer, bool is_gradient_out)
       : base_op_run_info(std::move(base_op_run_info)),
-        op_prim(prim),
+        op_prim(std::move(prim)),
         is_infer(is_infer),
         is_gradient_out(is_gradient_out) {}
 
   pynative::BaseOpRunInfo base_op_run_info;
-  Primitive *op_prim;
+  PrimitivePtr op_prim;
   bool is_infer = false;
   bool is_gradient_out = false;
+  std::vector<pynative::DeviceAddressPromisePtr> device_sync_promises;
 };
 using BackendOpRunInfoPtr = std::shared_ptr<BackendOpRunInfo>;
 
@@ -161,8 +167,11 @@ class BACKEND_EXPORT SessionBasic : public KernelGraphMgr, public std::enable_sh
                                VectorRef *const outputs,
                                std::map<KernelWithIndex, std::vector<std::vector<size_t>>> *output_indexes) const;
   void GetRefCount(const KernelGraph *graph, std::map<KernelWithIndex, size_t> *ref_count) const;
+  // Cut op not flatten, so we need calculate maketuple input ref count.
+  void CalculateRefCount(const AnfNodePtr &node, std::map<KernelWithIndex, size_t> *ref_count) const;
   void GetForwardOpOutputRefCount(const KernelGraph *graph, const std::vector<tensor::TensorPtr> &inputs,
-                                  std::map<std::string, size_t> *forward_op_output_tensor_id) const;
+                                  std::map<std::string, size_t> *forward_op_output_tensor_id,
+                                  const std::map<AnfNodePtr, size_t> &parameter_index) const;
   void ReleaseForwardOpOutput(const std::vector<tensor::TensorPtr> &input_tensors,
                               std::map<std::string, size_t> *forward_op_output_tensor_id) const;
   void HandleOpInputs(const std::set<KernelWithIndex> &input_kernel, std::map<KernelWithIndex, size_t> *ref_count,
@@ -234,9 +243,7 @@ class BACKEND_EXPORT SessionBasic : public KernelGraphMgr, public std::enable_sh
                                const std::map<KernelWithIndex, size_t> &cnode_refcount) {}
 #ifndef ENABLE_SECURITY
   virtual void SetSummaryNodes(KernelGraph *graph);
-  void SetSummaryNodesForAllGraphs(KernelGraph *graph, const std::vector<KernelGraphPtr> &all_graphs);
-  void RecurseSetSummaryNodes(KernelGraph *graph, std::vector<KernelGraphPtr> all_graphs,
-                              std::map<std::string, std::pair<AnfNodePtr, int>> *summary);
+  void RecurseSetSummaryNodesForAllGraphs(KernelGraph *graph);
 #endif
 
   void LoadInputs(const GraphId &graph_id, const std::vector<tensor::TensorPtr> &inputs_const) const {
@@ -264,12 +271,8 @@ class BACKEND_EXPORT SessionBasic : public KernelGraphMgr, public std::enable_sh
 #endif
   // create graph output for RunOp
   void CreateOutputNode(const CNodePtr &cnode, const std::shared_ptr<KernelGraph> &graph) const;
-  // Generate graph info for a single op graph
-  void GetSingleOpGraphInfo(const CNodePtr &kernel, const InputTensorInfo &tensor_info, GraphInfo *graph_info,
-                            const BackendOpRunInfoPtr &op_run_info) const;
 
-  BackendOpRunInfoPtr GetSingleOpRunInfo(const CNodePtr &cnode, const GraphInfo &graph_info,
-                                         const InputTensorInfo &tensor_info,
+  BackendOpRunInfoPtr GetSingleOpRunInfo(const CNodePtr &cnode, const InputTensorInfo &tensor_info,
                                          const GraphOutputInfo *const graph_output_info) const;
   tensor::TensorPtr GetValueNodeOutputTensor(const AnfNodePtr &node, size_t output_index) const;
   tensor::TensorPtr GetParameterOutputTensor(const AnfNodePtr &node,
@@ -290,7 +293,7 @@ class BACKEND_EXPORT SessionBasic : public KernelGraphMgr, public std::enable_sh
   std::vector<uint32_t> GetAllReduceSplitIndex();
   virtual std::string GetCommWorldGroup() { return std::string(); }
   void DumpGraphs(const std::vector<KernelGraphPtr> &graphs) const;
-  void GetConstValueDepend(const CNodePtr &cnode, std::vector<size_t> *const_input_attr_index) const;
+  void GetConstValueDepend(const CNodePtr &cnode, std::set<int64_t> *const_input_attr_index) const;
   mindspore::HashMap<GraphInfo, std::shared_ptr<KernelGraph>> run_op_graphs_;
   std::shared_ptr<Context> context_;
   CallBackFunc summary_callback_;

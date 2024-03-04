@@ -16,14 +16,22 @@
 
 #include "ops/csr_mv.h"
 
+#include <memory>
+
+#include "abstract/abstract_value.h"
 #include "abstract/dshape.h"
-#include "abstract/param_validator.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/param_validator.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_ops.h"
 #include "ops/op_utils.h"
+#include "ops/primitive_c.h"
 #include "utils/anf_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {

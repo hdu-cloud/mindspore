@@ -61,11 +61,7 @@ class RepeatOp : public PipelineOp {
   // typically our parent node, when the parent is asking us to provide the next row of data.
   // Since RepeatOp is an inlined op, getting a row from us will simply bounce you to get
   // a row from our child.
-  // @note This function sets the `retryIfEoe` flag when popping from the child connector. This way,
-  // this function will retry to pop the connector again and will get the non-EOE row if any.
   // @param row - output pointer to the buffer that it will fetch.
-  // @param worker_id - The worker id
-  // @param retry_if_eoe Set this flag to true to allow calling pop() again after the first pop() returns EOE.
   // @return Status The status code returned
   Status GetNextRow(TensorRow *row) override;
 
@@ -97,6 +93,11 @@ class RepeatOp : public PipelineOp {
 
   std::vector<std::shared_ptr<DatasetOp>> eoe_ops_;  // List of operators that can generate EOE underneath this repeat.
 
+  /// \brief In pull mode, gets the next row
+  /// \param row[out] - Fetched TensorRow
+  /// \return Status The status code returned
+  Status GetNextRowPullMode(TensorRow *const row) override;
+
  protected:
   // The number of repeats that the user requested.
   // Note that num_repeats_ is different with op_total_repeats_ or op_num_repeats_per_epoch_ in base DatasetOp class.
@@ -107,6 +108,10 @@ class RepeatOp : public PipelineOp {
   // Note that repeat_count_ is different with op_current_repeats_ in the base DatasetOp class
   // because it counts the repeats in the current epoch, whereas op_current_repeats_ counts the global total repeats.
   int32_t repeat_count_;
+
+  /// \brief Gets the implementation status for operator in pull mode
+  /// \return implementation status
+  ImplementedPullMode PullModeImplementationStatus() const override { return ImplementedPullMode::Implemented; }
 };
 }  // namespace dataset
 }  // namespace mindspore

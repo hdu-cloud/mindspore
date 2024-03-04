@@ -23,7 +23,7 @@
 #include <map>
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
 #include "plugin/factory/ms_factory.h"
-#include "plugin/device/cpu/kernel/nnacl/arithmetic.h"
+#include "plugin/device/cpu/kernel/nnacl/arithmetic_parameter.h"
 
 namespace mindspore {
 namespace kernel {
@@ -58,12 +58,6 @@ class AddcdivCpuKernelMod : public NativeCpuKernelMod {
   int64_t output_size_{0};
   ArithmeticParameter mul_para_{};
 
-  template <typename T>
-  void AddcdivAdd(const T *input1, const T *input2, T *output);
-  template <typename T1, typename T2>
-  void AddcdivMul(const T1 *input1, const T2 *input2, T1 *output);
-  template <typename T>
-  void AddcdivDiv(const T *input1, const T *input2, T *output);
   template <typename T>
   bool AddcdivCheck(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &outputs);
   template <typename T1, typename T2>

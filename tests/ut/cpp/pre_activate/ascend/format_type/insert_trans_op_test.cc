@@ -17,10 +17,10 @@
 #include "frontend/operator/ops.h"
 #include "include/common/debug/anf_ir_dump.h"
 #include "common/py_func_graph_fetcher.h"
-#include "backend/common/optimizer/optimizer.h"
-#include "backend/common/optimizer/pass_manager.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/optimizer/optimizer.h"
+#include "include/backend/optimizer/pass_manager.h"
+#include "include/backend/anf_runtime_algorithm.h"
+#include "include/backend/kernel_info.h"
 #include "utils/ms_context.h"
 
 #define private public
@@ -54,6 +54,8 @@ class TestHWInsertTransOp : public BackendCommon {
     builder.SetOutputsReshapeType({""});
     builder.SetOutputsFormat({format});
     builder.SetOutputsDeviceType({kFloat16->type_id()});
+    builder.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR, kernel::KernelObjectType::TENSOR});
+    builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR});
     add->set_kernel_info(std::make_shared<device::KernelInfo>());
     AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), add.get());
     return fg;
@@ -78,6 +80,8 @@ class TestHWInsertTransOp : public BackendCommon {
     builder.SetInputsDeviceType({kFloat16->type_id()});
     builder.SetOutputsFormat({format, format});
     builder.SetOutputsDeviceType({kFloat16->type_id(), kFloat16->type_id()});
+    builder.SetInputsKernelObjectType({kernel::KernelObjectType::TENSOR});
+    builder.SetOutputsKernelObjectType({kernel::KernelObjectType::TENSOR, kernel::KernelObjectType::TENSOR});
     max_pool->set_kernel_info(std::make_shared<device::KernelInfo>());
     AnfAlgo::SetSelectKernelBuildInfo(builder.Build(), max_pool.get());
     return fg;

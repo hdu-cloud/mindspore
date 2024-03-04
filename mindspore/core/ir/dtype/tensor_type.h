@@ -28,7 +28,6 @@
 #include <vector>
 #include <type_traits>
 #include <algorithm>
-
 #include "utils/hash_map.h"
 #include "base/base.h"
 #include "ir/named.h"
@@ -69,7 +68,7 @@ class MS_CORE_API UndeterminedType final : public Object {
   std::string DumpText() const override;
 
   bool operator==(const Type &other) const override;
-  size_t hash() const override;
+  std::size_t hash() const override;
 
  protected:
   TypePtr element_type_;
@@ -109,12 +108,52 @@ class MS_CORE_API TensorType : public Object {
   std::string ToReprString() const override;
   std::string DumpText() const override;
   bool operator==(const Type &other) const override;
-  size_t hash() const override;
+  std::size_t hash() const override;
 
  private:
   TypePtr element_type_;
 };
 using TensorTypePtr = std::shared_ptr<TensorType>;
+
+/// \brief AnyType defines interface for any data type.
+class MS_CORE_API AnyType : public TensorType {
+ public:
+  /// \brief Default constructor for AnyType.
+  AnyType() = default;
+
+  /// \brief Constructor for AnyType.
+  ///
+  /// \param[in] element_type The element type of AnyType.
+  explicit AnyType(const TypePtr &element_type) : TensorType(element_type) {}
+
+  /// \brief Destructor of AnyType.
+  ~AnyType() override = default;
+  MS_DECLARE_PARENT(AnyType, TensorType)
+
+  std::string ToString() const override;
+  std::string DumpText() const override;
+};
+using AnyTypePtr = std::shared_ptr<AnyType>;
+
+/// \brief NegligibleType defines interface for negligible data type.
+class MS_CORE_API NegligibleType final : public AnyType {
+ public:
+  /// \brief Default constructor for NegligibleType.
+  NegligibleType() = default;
+
+  /// \brief Constructor for NegligibleType.
+  ///
+  /// \param[in] element_type The element type of NegligibleType.
+  explicit NegligibleType(const TypePtr &element_type) : AnyType(element_type) {}
+
+  /// \brief Destructor of NegligibleType.
+  ~NegligibleType() override = default;
+  MS_DECLARE_PARENT(NegligibleType, AnyType)
+
+  std::string ToString() const override;
+  std::string DumpText() const override;
+};
+using NegligibleTypePtr = std::shared_ptr<NegligibleType>;
 
 /// \brief SparseTensorType is the base type for all sparse tensors.
 class MS_CORE_API SparseTensorType : public Object {
@@ -148,7 +187,7 @@ class MS_CORE_API SparseTensorType : public Object {
 
   const TypePtr operator[](std::size_t dim) const;
   bool operator==(const Type &other) const override;
-  size_t hash() const override;
+  std::size_t hash() const override;
   TypePtrList elements() const { return elements_; }
 
   std::size_t size() const { return elements_.size(); }
@@ -196,7 +235,7 @@ class MS_CORE_API RowTensorType final : public Object {
   std::string ToReprString() const override;
   std::string DumpText() const override;
   bool operator==(const Type &other) const override;
-  size_t hash() const override;
+  std::size_t hash() const override;
 
  private:
   TypePtr element_type_;
@@ -282,7 +321,7 @@ class MS_CORE_API MapTensorType final : public Object {
   std::string ToReprString() const override;
   std::string DumpText() const override;
   bool operator==(const Type &other) const override;
-  size_t hash() const override;
+  std::size_t hash() const override;
 
  private:
   TypePtr key_dtype_;

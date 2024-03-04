@@ -31,7 +31,6 @@ from .datasets_text import *
 from .datasets_audio import *
 from .datasets_standard_format import *
 from .datasets_user_defined import *
-from .graphdata import GraphData, Graph, InMemoryGraphDataset, ArgoverseDataset, SamplingStrategy, OutputFormat
 from .iterators import *
 from .obs.obs_mindrecord_dataset import *
 from .samplers import *
@@ -50,6 +49,7 @@ __all__ = ["Caltech101Dataset",        # Vision
            "FashionMnistDataset",      # Vision
            "FlickrDataset",            # Vision
            "Flowers102Dataset",        # Vision
+           "Food101Dataset",           # Vision
            "ImageFolderDataset",       # Vision
            "KITTIDataset",             # Vision
            "KMnistDataset",            # Vision
@@ -62,10 +62,12 @@ __all__ = ["Caltech101Dataset",        # Vision
            "Places365Dataset",         # Vision
            "QMnistDataset",            # Vision
            "RandomDataset",            # Vision
+           "RenderedSST2Dataset",      # Vision
            "SBDataset",                # Vision
            "SBUDataset",               # Vision
            "SemeionDataset",           # Vision
            "STL10Dataset",             # Vision
+           "SUN397Dataset",            # Vision
            "SVHNDataset",              # Vision
            "USPSDataset",              # Vision
            "VOCDataset",               # Vision
@@ -83,6 +85,7 @@ __all__ = ["Caltech101Dataset",        # Vision
            "PennTreebankDataset",      # Text
            "SogouNewsDataset",         # Text
            "SQuADDataset",             # Text
+           "SST2Dataset",              # Text
            "TextFileDataset",          # Text
            "UDPOSDataset",             # Text
            "WikiTextDataset",          # Text
@@ -102,10 +105,6 @@ __all__ = ["Caltech101Dataset",        # Vision
            "GeneratorDataset",         # User Defined
            "NumpySlicesDataset",       # User Defined
            "PaddedDataset",            # User Defined
-           "GraphData",                # Graph Data
-           "Graph",                    # Graph
-           "InMemoryGraphDataset",     # InMemoryGraphDataset
-           "ArgoverseDataset",         # ArgoverseDataset
            "DistributedSampler",       # Sampler
            "RandomSampler",            # Sampler
            "SequentialSampler",        # Sampler

@@ -20,9 +20,13 @@
 #include <memory>
 #include "tools/converter/optimizer.h"
 #include "tools/converter/legacy_optimizer/fusion/matmul_biasadd_fusion_pass.h"
-#include "mindspore/lite/src/train/optimizer/fusion/matmul_activation_fusion_pass.h"
+#include "src/train/optimizer/fusion/gru_fusion_pass.h"
+#include "src/train/optimizer/fusion/matmul_activation_fusion_pass.h"
+#include "src/train/optimizer/fusion/reshape_gather_reshape_fusion_pass.h"
+#include "src/train/optimizer/fusion/matmul_matmul_add_fusion_pass.h"
 #include "tools/converter/legacy_optimizer/graph/isolated_node_remove_pass.h"
 #include "tools/converter/legacy_optimizer/graph/subgraph_node_pass.h"
+#include "src/train/optimizer/fusion/matmul_add_fusion_pass.h"
 
 namespace mindspore {
 namespace lite {
@@ -40,10 +44,19 @@ STATUS GraphFusion::Run(schema::MetaGraphT *graph) {
     MS_LOG(ERROR) << "graph is nullptr.";
     return RET_ERROR;
   }
+  auto gru_fusion = std::make_shared<GruFusionPass>();
+  MS_CHECK_TRUE_MSG(gru_fusion != nullptr, RET_NULL_PTR, "Create GruFusion object failed.");
+  if (gru_fusion->Run(graph) != RET_OK) {
+    MS_LOG(ERROR) << "Do GruFusion failed.";
+    return RET_ERROR;
+  }
   auto old_nodes = GetGraphNodes(*graph);
   Optimizer fusion_optimizer;
+  fusion_optimizer.AddPass(new (std::nothrow) ReshapeGatherReshapeFusionPass());
+  fusion_optimizer.AddPass(new (std::nothrow) MatMulAddFusionPass());
   fusion_optimizer.AddPass(new (std::nothrow) MatMulBiasAddFusionPass());
   fusion_optimizer.AddPass(new (std::nothrow) MatMulActivationFusionPass());
+  fusion_optimizer.AddPass(new (std::nothrow) MatMulMatMulAddFusionPass());
   fusion_optimizer.AddPass(new (std::nothrow) IsolatedNodeRemovePass());
   fusion_optimizer.AddPass(new (std::nothrow) SubgraphNodePass(old_nodes));
   auto status = fusion_optimizer.Run(graph);

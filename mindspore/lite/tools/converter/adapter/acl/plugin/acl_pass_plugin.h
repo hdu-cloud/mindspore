@@ -19,27 +19,28 @@
 
 #include <memory>
 #include <string>
-#include "backend/common/optimizer/pass.h"
+#include "include/backend/optimizer/pass.h"
 #include "tools/converter/cxx_api/converter_para.h"
+#include "tools/converter/optimizer_manager.h"
 
 namespace mindspore {
 namespace opt {
 class AclPassPlugin {
  public:
-  static AclPassPlugin &GetInstance();
-
-  bool HasPluginSo();
-
-  Pass *CreateAclPass(const std::shared_ptr<ConverterPara> &param);
-
-  void DestroyAclPass(Pass *acl_pass);
+  static std::shared_ptr<Pass> CreateAclPass(const std::shared_ptr<ConverterPara> &param);
 
  private:
   AclPassPlugin();
   ~AclPassPlugin();
 
-  void *handle_;
-  Pass *pass_ptr_;
+  bool GetPluginSoPath();
+  std::shared_ptr<Pass> CreateAclPassInner(const std::shared_ptr<ConverterPara> &param);
+
+  typedef mindspore::opt::Pass *(*AclPassCreatorFunc)(const std::shared_ptr<ConverterPara> &);
+
+  void *handle_ = nullptr;
+  AclPassCreatorFunc creator_func_ = nullptr;
+  static std::mutex mutex_;
   std::string real_path_;
 };
 }  // namespace opt

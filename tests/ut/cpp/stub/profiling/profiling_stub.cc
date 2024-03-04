@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 #include <string>
-#include "prof_mgr_core.h"
 #include "prof_callback.h"
 #include "acl/acl_prof.h"
+#include "toolchain/prof_api.h"
 
 namespace Msprof {
 namespace Engine {
@@ -34,24 +34,6 @@ int RegisterEngine(const std::string &module, const EngineIntf *engine) { return
 
 }  // namespace Engine
 }  // namespace Msprof
-
-/**
- * @name  : ProfMgrStartUP
- * @berif : start Profiling task
- * @param : ProfMgrCfg cfg : config of start_up profiling
- * @return: NO_NULL (success)
- *        NULL (failed)
- */
-void *ProfMgrStartUp(const ProfMgrCfg *cfg) { return const_cast<void *>(reinterpret_cast<const void *>(cfg)); }
-
-/**
- * @name  : ProfMgrStop
- * @berif : stop Profiling task
- * @param : void * handle return by ProfMgrStartUP
- * @return: PROFILING_SUCCESS 0 (success)
- *        PROFILING_FAILED -1 (failed)
- */
-int ProfMgrStop(void *handle) { return 0; }
 
 namespace Analysis::Dvvp::ProfilerSpecial {
 uint32_t MsprofilerInit() { return 0; }
@@ -110,3 +92,74 @@ MSVP_PROF_API int32_t MsprofRegisterCallback(uint32_t moduleId, ProfCommandHandl
  * @return enum MsprofErrorCod
  */
 MSVP_PROF_API int32_t MsprofReportData(uint32_t moduleId, uint32_t type, void *data, uint32_t len) { return 0; }
+
+/*
+ * @ingroup libprofapi
+ * @name  MsprofSysCycleTime
+ * @brief get systime cycle time of CPU
+ * @return system cycle time of CPU
+ */
+MSVP_PROF_API uint64_t MsprofSysCycleTime() { return 0; }
+
+/*
+ * @ingroup libprofapi
+ * @name  MsprofReportEvent
+ * @brief report event timestamp
+ * @param [in] agingFlag: 0 isn't aging, !0 is aging
+ * @param [in] event: event of timestamp data
+ * @return 0:SUCCESS, !0:FAILED
+ */
+MSVP_PROF_API int32_t MsprofReportEvent(uint32_t agingFlag, const MsprofEvent *event) { return 0; }
+
+/*
+ * @ingroup libprofapi
+ * @name  MsprofRegTypeInfo
+ * @brief reg mapping info of type id and type name
+ * @param [in] level: level is the report struct's level
+ * @param [in] typeId: type id is the report struct's type
+ * @param [in] typeName: label of type id for presenting user
+ * @return 0:SUCCESS, !0:FAILED
+ */
+MSVP_PROF_API int32_t MsprofRegTypeInfo(uint16_t level, uint32_t typeId, const char *typeName) { return 0; }
+
+/*
+ * @ingroup libprofapi
+ * @name  MsprofReportCompactInfo
+ * @brief report profiling compact information
+ * @param [in] agingFlag: 0 isn't aging, !0 is aging
+ * @param [in] data: profiling data of compact information
+ * @param [in] length: length of profiling data
+ * @return 0:SUCCESS, !0:FAILED
+ */
+MSVP_PROF_API int32_t MsprofReportCompactInfo(uint32_t agingFlag, const VOID_PTR data, uint32_t length) { return 0; }
+
+/*
+ * @ingroup libprofapi
+ * @name  MsprofReportAdditionalInfo
+ * @brief report profiling additional information
+ * @param [in] agingFlag: 0 isn't aging, !0 is aging
+ * @param [in] data: profiling data of additional information
+ * @param [in] length: length of profiling data
+ * @return 0:SUCCESS, !0:FAILED
+ */
+MSVP_PROF_API int32_t MsprofReportAdditionalInfo(uint32_t agingFlag, const VOID_PTR data, uint32_t length) { return 0; }
+
+/*
+ * @ingroup libprofapi
+ * @name  MsprofGetHashId
+ * @brief return hash id of hash info
+ * @param [in] hashInfo: information to be hashed
+ * @param [in] length: the length of information to be hashed
+ * @return hash id
+ */
+MSVP_PROF_API uint64_t MsprofGetHashId(const char *hashInfo, size_t length) { return 0; }
+
+/*
+ * @ingroup libprofapi
+ * @name  MsprofReportApi
+ * @brief report api timestamp
+ * @param [in] agingFlag: 0 isn't aging, !0 is aging
+ * @param [in] api: api of timestamp data
+ * @return 0:SUCCESS, !0:FAILED
+ */
+MSVP_PROF_API int32_t MsprofReportApi(uint32_t agingFlag, const MsprofApi *api) { return 0; }

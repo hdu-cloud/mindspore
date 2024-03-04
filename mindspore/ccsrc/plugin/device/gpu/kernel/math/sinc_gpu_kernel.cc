@@ -29,14 +29,12 @@ namespace mindspore {
 namespace kernel {
 bool SincGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                             const std::vector<KernelTensorPtr> &outputs) {
+  MS_ERROR_IF_NULL(base_operator);
   auto kernel_ptr_ = std::dynamic_pointer_cast<ops::Sinc>(base_operator);
+  MS_ERROR_IF_NULL(kernel_ptr_);
   kernel_name_ = kernel_ptr_->name();
   if (inputs.empty() || outputs.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "' got empty inputs or outputs, which is invalid.";
-    return false;
-  }
-  if (!kernel_ptr_) {
-    MS_LOG(ERROR) << "cast Sinc ops failed!";
     return false;
   }
   auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
@@ -46,8 +44,8 @@ bool SincGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vec
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  unit_input_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  unit_output_size_ = abstract::TypeIdSize(kernel_attr.GetOutputAttr(kIndex0).first);
+  unit_input_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  unit_output_size_ = abstract::TypeIdSize(kernel_attr.GetOutputAttr(kIndex0).dtype);
   return true;
 }
 
@@ -80,7 +78,8 @@ bool SincGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const
                                     const std::vector<AddressPtr> &outputs) {
   T *input = GetDeviceAddress<T>(inputs, 0);
   S *output = GetDeviceAddress<S>(outputs, 0);
-  CalSinc(output_elements_, input, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = CalSinc(output_elements_, input, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

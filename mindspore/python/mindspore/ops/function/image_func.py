@@ -26,18 +26,17 @@ from .._primitive_cache import _get_cache_prim
 def bounding_box_decode(anchor_box, deltas, max_shape, means=(0.0, 0.0, 0.0, 0.0), stds=(1.0, 1.0, 1.0, 1.0),
                         wh_ratio_clip=0.016):
     r"""
-    Decodes bounding boxes locations.
-
-    The function of the operator is to calculate the offset, and this operator converts the offset into a Bbox,
-    which is used to mark the target in the subsequent images, etc.
+    Decode the bounding box locations, calculate the offset, and convert the offset into a Bbox, which is used to mark
+    the target in the subsequent images, etc.
 
     Args:
         anchor_box (Tensor): Anchor boxes. The shape of `anchor_box` must be :math:`(n, 4)`.
         deltas (Tensor): Delta of boxes. Which has the same shape with `anchor_box`.
         max_shape (tuple): The max size limit for decoding box calculation.
-        means (tuple): The means of `deltas` calculation. Default: (0.0, 0.0, 0.0, 0.0).
-        stds (tuple): The standard deviations of `deltas` calculation. Default: (1.0, 1.0, 1.0, 1.0).
-        wh_ratio_clip (float): The limit of width and height ratio for decoding box calculation. Default: 0.016.
+        means (tuple, optional): The means of `deltas` calculation. Default: ``(0.0, 0.0, 0.0, 0.0)`` .
+        stds (tuple, optional): The standard deviations of `deltas` calculation. Default: ``(1.0, 1.0, 1.0, 1.0)`` .
+        wh_ratio_clip (float, optional): The limit of width and height ratio for decoding box calculation.
+            Default: ``0.016`` .
 
     Returns:
         Tensor, decoded boxes. It has the same data type and shape as `anchor_box`.
@@ -51,6 +50,8 @@ def bounding_box_decode(anchor_box, deltas, max_shape, means=(0.0, 0.0, 0.0, 0.0
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, ops
         >>> anchor_box = Tensor([[4, 1, 2, 1], [2, 2, 2, 3]], mindspore.float32)
         >>> deltas = Tensor([[3, 1, 2, 2], [1, 2, 1, 4]], mindspore.float32)
         >>> output = ops.bounding_box_decode(anchor_box, deltas, max_shape=(768, 1280), means=(0.0, 0.0, 0.0, 0.0),
@@ -66,16 +67,14 @@ def bounding_box_decode(anchor_box, deltas, max_shape, means=(0.0, 0.0, 0.0, 0.0
 
 def bounding_box_encode(anchor_box, groundtruth_box, means=(0.0, 0.0, 0.0, 0.0), stds=(1.0, 1.0, 1.0, 1.0)):
     r"""
-    Encodes bounding boxes locations.
-
-    This operator will calculate the offset between the predicted bounding boxes and the real bounding boxes,
-    and this offset will be used as a variable for the loss.
+    Encode the bounding box locations, calculate the offset between the predicted bounding boxes and
+    the real bounding boxes, and the offset will be used as a variable for the loss.
 
     Args:
         anchor_box (Tensor): Anchor boxes. The shape of `anchor_box` must be :math:`(n, 4)`.
         groundtruth_box (Tensor): Ground truth boxes. Which has the same shape with `anchor_box`.
-        means (tuple): Means for encoding bounding boxes calculation. Default: (0.0, 0.0, 0.0, 0.0).
-        stds (tuple): The standard deviations of deltas calculation. Default: (1.0, 1.0, 1.0, 1.0).
+        means (tuple, optional): Means for encoding bounding boxes calculation. Default: ``(0.0, 0.0, 0.0, 0.0)`` .
+        stds (tuple, optional): The standard deviations of deltas calculation. Default: (``1.0, 1.0, 1.0, 1.0)`` .
 
     Returns:
         Tensor, encoded bounding boxes. It has the same data type and shape as input `anchor_box`.
@@ -88,6 +87,8 @@ def bounding_box_encode(anchor_box, groundtruth_box, means=(0.0, 0.0, 0.0, 0.0),
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, ops
         >>> anchor_box = Tensor([[2, 2, 2, 3], [2, 2, 2, 3]], mindspore.float32)
         >>> groundtruth_box = Tensor([[1, 2, 1, 4], [1, 2, 1, 4]], mindspore.float32)
         >>> output = ops.bounding_box_encode(anchor_box, groundtruth_box, means=(0.0, 0.0, 0.0, 0.0),
@@ -103,18 +104,36 @@ def bounding_box_encode(anchor_box, groundtruth_box, means=(0.0, 0.0, 0.0, 0.0),
 
 def check_valid(bboxes, img_metas):
     r"""
-    Checks bounding box.
+    Checks whether the bounding box is in the image.
 
-    Checks whether the bounding box cross data and data border are valid.
+    `bboxes` contain several sets of bounding boxes, each represented by two abscissa points :math:`(x0, x1)` and
+    two ordinate points :math:`(y0, y1)` .
+    `img_metas` provides information about the original image, including three parameters
+    :math:`(height, width, ratio)` , which specify the valid boundary of the image.
+
+    when the following conditions are met:
+
+    :math:`x0 >= 0`
+
+    :math:`y0 >= 0`
+
+    :math:`x1 <= width * ratio - 1`
+
+    :math:`y1 <= height * ratio - 1`
+
+    the bounding box is considered to be within the image.
 
     .. warning::
-        Boundary(heights * ratio, widths * ratio) specified by `bboxes` is required to be valid.
+        The bounding box specified by `bboxes` and the image information specified by `img_metas` need to be valid,
+        i.e.:
+        :math:`x0 <= x1` , :math:`y0 <= y1` , and :math:`(height, width, ratio)` are all positive.
 
     Args:
-        bboxes (Tensor): Bounding boxes tensor with shape :math:`(N, 4)`. :math:`N` indicates the number of
-            bounding boxes, the value `4` indicates `x0`, `x1`, `y0`, and `y1`. Data type must be float16 or float32.
-        img_metas (Tensor): Raw image size information with the format of `(height, width, ratio)`, specifying
-            the valid boundary `(height * ratio, width * ratio)`. Data type must be float16 or float32.
+        bboxes (Tensor): Bounding boxes tensor with shape :math:`(N, 4)` . :math:`N` indicates the number of
+            bounding boxes, the value `4` indicates four coordinate points :math:`(x0, y0, x1, y1)` . Data type must
+            be float16 or float32.
+        img_metas (Tensor): Raw image size information with the format of :math:`(height, width, ratio)` , specifying
+            the valid boundary :math:`(height * ratio - 1, width * ratio - 1)` . Data type must be float16 or float32.
 
     Returns:
         Tensor, with shape of :math:`(N,)` and dtype of bool, specifying whether the bounding boxes is in the image.
@@ -128,6 +147,9 @@ def check_valid(bboxes, img_metas):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> bboxes = Tensor(np.linspace(0, 6, 12).reshape(3, 4), mindspore.float32)
         >>> img_metas = Tensor(np.array([2, 1, 3]), mindspore.float32)
         >>> output = ops.check_valid(bboxes, img_metas)
@@ -139,7 +161,7 @@ def check_valid(bboxes, img_metas):
 
 
 def crop_and_resize(image, boxes, box_indices, crop_size, method="bilinear", extrapolation_value=0.0):
-    """
+    r"""
     Extracts crops from the input image Tensor and resizes them.
 
     Note:
@@ -147,28 +169,36 @@ def crop_and_resize(image, boxes, box_indices, crop_size, method="bilinear", ext
         For now, the backward of the operator only support bilinear method, for other methods, will return 0.
 
     Args:
-        image (Tensor): The input image must be a 4-D tensor of shape (batch, image_height, image_width, depth).
-           Types allowed: int8, int16, int32, int64, float16, float32, float64, uint8, uint16.
-        boxes (Tensor): A 2-D tensor of shape [num_boxes, 4].
-           The i-th row of the tensor specifies the coordinates of a box in the box_ind[i] image
-           and is specified in normalized coordinates [y1, x1, y2, x2]. A normalized coordinate value of y is mapped to
-           the image coordinate at y * (image_height - 1), so as the [0, 1] interval of normalized image height is
-           mapped to [0, image_height - 1] in image height coordinates. We do allow y1 > y2, in which case the sampled
-           crop is an up-down flipped version of the original image. The width dimension is treated similarly.
-           Normalized coordinates outside the [0, 1] range are allowed, in which case we use extrapolation_value to
-           extrapolate the input image values. Types allowed: float32.
-        box_indices (Tensor): A 1-D tensor of shape [num_boxes] with int32 values in [0, batch).
-           The value of box_ind[i] specifies the image that the i-th box refers to. Types allowed: int32.
-        crop_size (Tuple[int]): A tuple of two int32 elements: (crop_height, crop_width).
-           Only constant value is allowed. All cropped image patches are resized to this size.
-           The aspect ratio of the image content is not preserved. Both crop_height and crop_width need to be positive.
+        image (Tensor): A 4-D Tensor representing a batch of images. It has shape
+            :math:`(batch, image\_height, image\_width, depth)`.
+        boxes (Tensor):  A 2-D Tensor with shape :math:`(num\_boxes, 4)` representing the normalized
+            coordinates of the boxes to be cropped. The coordinates are specified in the
+            form :math:`[y1, x1, y2, x2]`, where :math:`(y1, x1)` is the first corner
+            and :math:`(y2, x2)` is the second corner of the box.
+            If :math:`y1 > y2`, the sampled crop is inverted upside down, the width dimensionis treated
+            similarly when :math:`x1 > x2`. If normalized coordinates are not in range :math:`[0, 1]`,
+            extrapolated input image values are used instead. Supported data type: float32.
+        box_indices (Tensor): A 1-D Tensor of shape :math:`(num\_boxes)` representing the batch
+            index for each box. Supported type: int32.
+        crop_size (Tuple[int]): A tuple of two elements: (crop_height, crop_width), representing
+            the output size of the cropped and resized images.
+            Only positive values are supported. Supported type: int32.
         method (str, optional): An optional string that specifies the sampling method for resizing.
-           It can be "bilinear", "nearest" or "bilinear_v2". The option "bilinear" stands for standard bilinear
-           interpolation algorithm, while "bilinear_v2" may result in better result in some cases. Default: "bilinear"
-        extrapolation_value (float, optional): An optional float value used extrapolation, if applicable. Default: 0.0.
+            It can be ``"bilinear"`` , ``"nearest"`` or ``"bilinear_v2"`` . Default: ``"bilinear"`` .
+
+            - ``"nearest"``: Nearest neighbor interpolation. Each output pixel is assigned the value of the
+              nearest input pixel. This method is simple and fast but can result in blocky or pixelated outputs.
+            - ``"bilinear"``: Bilinear interpolation. Each output pixel is a weighted average of the four nearest input
+              pixels, computed using bilinear interpolation. This method produces smoother results compared
+              to nearest neighbor interpolation.
+            - ``"bilinear_v2"``: The optimized variant of
+              ``"bilinear"``, it may achieve better result(higher precision and speed) in some cases.
+
+        extrapolation_value (float, optional): An optional float value used extrapolation, if applicable.
+            Default: ``0.0`` .
 
     Returns:
-        A 4-D tensor of shape [num_boxes, crop_height, crop_width, depth] with type(float32).
+        A 4-D tensor of shape :math:`(num\_boxes, crop\_height, crop\_width, depth)` with type(float32).
 
     Raises:
         TypeError: If `image` or `boxes` or `box_indices` is not a Tensor.
@@ -189,6 +219,8 @@ def crop_and_resize(image, boxes, box_indices, crop_size, method="bilinear", ext
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import ops, Tensor
         >>> BATCH_SIZE = 1
         >>> NUM_BOXES = 5
         >>> IMAGE_HEIGHT = 256

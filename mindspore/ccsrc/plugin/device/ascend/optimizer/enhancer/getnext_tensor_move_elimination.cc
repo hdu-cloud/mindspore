@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,9 @@
 
 #include "plugin/device/ascend/optimizer/enhancer/getnext_tensor_move_elimination.h"
 #include <memory>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/framework_op_name.h"
+#include "ops/sequence_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "frontend/optimizer/opt.h"
 
@@ -52,7 +54,7 @@ const AnfNodePtr GetnextTensorMoveElimination::Process(const FuncGraphPtr &graph
   auto manager = graph->manager();
   MS_EXCEPTION_IF_NULL(manager);
   if (manager->node_users().find(tensor_move_node) == manager->node_users().end()) {
-    MS_LOG(EXCEPTION) << "tensor move has no output in manager";
+    MS_LOG(INTERNAL_EXCEPTION) << "tensor move has no output in manager";
   }
   auto next_nodes = manager->node_users()[tensor_move_node];
   if (next_nodes.size() > 1) {

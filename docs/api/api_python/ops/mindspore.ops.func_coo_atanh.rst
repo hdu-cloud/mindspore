@@ -9,10 +9,10 @@ mindspore.ops.coo_atanh
         out_i = \tanh^{-1}(x_{i})
 
     .. warning::
-       实验性算子，将来有可能更改或删除。
+        这是一个实验性API，后续可能修改或删除。
 
     参数：
-        - **x** (COOTensor) - COOTensor的shape为 :math:`(N,*)` ，其中 :math:`*` 表示任意数量的附加维度。数据类型支持：float16、float32。
+        - **x** (COOTensor) - COOTensor的输入。数据类型支持：float16、float32。
 
     返回：
         COOTensor的数据类型与输入相同。

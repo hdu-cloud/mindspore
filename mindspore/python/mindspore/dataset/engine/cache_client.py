@@ -27,28 +27,30 @@ class DatasetCache:
     A client to interface with tensor caching service.
 
     For details, please check `Tutorial <https://www.mindspore.cn/
-    tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
+    tutorials/experts/en/master/dataset/cache.html>`_ .
 
     Args:
         session_id (int): A user assigned session id for the current pipeline.
-        size (int, optional): Size of the memory set aside for the row caching. Default: 0, which means unlimited,
+        size (int, optional): Size of the memory set aside for the row caching. Default: ``0``, which means unlimited,
             note that it might bring in the risk of running out of memory on the machine.
-        spilling (bool, optional): Whether or not spilling to disk if out of memory. Default: False.
-        hostname (str, optional): Host name. Default: None, use default hostname '127.0.0.1'.
-        port (int, optional): Port to connect to server. Default: None, use default port 50052.
-        num_connections (int, optional): Number of tcp/ip connections. Default: None, use default value 12.
+        spilling (bool, optional): Whether or not spilling to disk if out of memory. Default: ``False``.
+        hostname (str, optional): Host name. Default: ``None`` , use default hostname '127.0.0.1'.
+        port (int, optional): Port to connect to server. Default: ``None`` , use default port 50052.
+        num_connections (int, optional): Number of tcp/ip connections. Default: ``None`` , use default value 12.
         prefetch_size (int, optional): The size of the cache queue between operations.
-            Default: None, use default value 20.
+            Default: ``None`` , use default value 20.
 
     Examples:
-            >>> import mindspore.dataset as ds
-            >>>
-            >>> # Create a cache instance, in which session_id is generated from command line `cache_admin -g`
-            >>> # In the following code, suppose the session_id is 780643335
-            >>> some_cache = ds.DatasetCache(session_id=780643335, size=0)
-            >>>
-            >>> dataset_dir = "/path/to/image_folder_dataset_directory"
-            >>> ds1 = ds.ImageFolderDataset(dataset_dir, cache=some_cache)
+        >>> import subprocess
+        >>> import mindspore.dataset as ds
+        >>>
+        >>> # Create a cache instance with command line `cache_admin --start` and create a session with `cache_admin -g`
+        >>> # After creating cache with a valid session, get session id with command `cache_admin --list_sessions`
+        >>> session_id = subprocess.getoutput('cache_admin --list_sessions | tail -1 | awk -F " " \'{{print $1;}}\'')
+        >>> some_cache = ds.DatasetCache(session_id=int(session_id), size=0)
+        >>>
+        >>> dataset_dir = "/path/to/image_folder_dataset_directory"
+        >>> dataset = ds.ImageFolderDataset(dataset_dir, cache=some_cache)
     """
 
     def __init__(self, session_id, size=0, spilling=False, hostname=None, port=None, num_connections=None,
@@ -83,6 +85,27 @@ class DatasetCache:
         Get the statistics from a cache. After data pipeline, three types of statistics can be obtained,
         including average number of cache hits (avg_cache_sz), number of caches in memory (num_mem_cached)
         and number of caches in disk (num_disk_cached).
+
+        Examples:
+            >>> import os
+            >>> import mindspore.dataset as ds
+            >>>
+            >>> # In example above, we created cache with a valid session id
+            >>> id = int(os.popen('cache_admin --list_sessions | tail -1 | awk -F " " \'{{print $1;}}\'').read())
+            >>> some_cache = ds.DatasetCache(session_id=id, size=0)
+            >>>
+            >>> # run the dataset pipeline to trigger cache
+            >>> dataset = ds.ImageFolderDataset("/path/to/image_folder_dataset_directory", cache=some_cache)
+            >>> data = list(dataset)
+            >>>
+            >>> # get status of cache
+            >>> stat = some_cache.get_stat()
+            >>> # Average cache size
+            >>> cache_sz = stat.avg_cache_sz
+            >>> # Number of rows cached in memory
+            >>> num_mem_cached = stat.num_mem_cached
+            >>> # Number of rows spilled to disk
+            >>> num_disk_cached = stat.num_disk_cached
         """
         return self.cache_client.GetStat()
 

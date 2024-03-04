@@ -33,6 +33,8 @@ size_t GetInnerSize(TypeId type_id, int inner_elements) {
       return inner_elements * sizeof(float);
     case kNumberTypeInt32:
       return inner_elements * sizeof(int32_t);
+    case kNumberTypeFloat16:
+      return inner_elements * sizeof(uint16_t);
     default:
       MS_LOG(ERROR) << "Not supported data type: " << type_id;
       return 0;
@@ -71,6 +73,9 @@ int StridedSliceBaseCoder::InitFastRunParam() {
     inner_ *= in_shape[i];
   }
   int thread_num = strided_slice_parameter_->op_parameter_.thread_num_;
+  if (support_parallel_) {
+    thread_num = 1;
+  }
   // decide multi-thread launch strategy
   if (outer_ == 1) {
     parallel_on_split_axis_ = true;
@@ -152,6 +157,9 @@ int StridedSliceBaseCoder::DoNormalCode(CoderContext *ctx) {
     case kNumberTypeInt32:
       strided_slice_parameter_->data_type = ::kNumberTypeInt32;
       break;
+    case kNumberTypeFloat16:
+      strided_slice_parameter_->data_type = ::kNumberTypeFloat16;
+      break;
     default:
       MS_LOG(ERROR) << "Not supported data type: " << input_tensor_->data_type();
       return RET_ERROR;
@@ -169,9 +177,11 @@ int StridedSliceBaseCoder::DoCode(CoderContext *ctx) {
   Collect(ctx,
           {
             "nnacl/fp32/strided_slice_fp32.h",
+            "wrapper/base/strided_slice_wrapper.h",
           },
           {
             "strided_slice_fp32.c",
+            "strided_slice_wrapper.c",
           });
   if (fast_run_) {
     return DoFastCode(ctx);
@@ -181,5 +191,7 @@ int StridedSliceBaseCoder::DoCode(CoderContext *ctx) {
 REG_OPERATOR_CODER(kAllTargets, kNumberTypeFloat32, PrimitiveType_StridedSlice,
                    CPUOpCoderCreator<StridedSliceBaseCoder>)
 REG_OPERATOR_CODER(kAllTargets, kNumberTypeInt32, PrimitiveType_StridedSlice, CPUOpCoderCreator<StridedSliceBaseCoder>)
+REG_OPERATOR_CODER(kAllTargets, kNumberTypeFloat16, PrimitiveType_StridedSlice,
+                   CPUOpCoderCreator<StridedSliceBaseCoder>)
 REG_OPERATOR_CODER(kAllTargets, kNumberTypeInt8, PrimitiveType_StridedSlice, CPUOpCoderCreator<StridedSliceBaseCoder>)
 }  // namespace mindspore::lite::micro

@@ -20,6 +20,7 @@
 #include <limits>
 #include <memory>
 #include <set>
+#include <utility>
 
 #include "minddata/dataset/engine/opt/pass.h"
 #include "minddata/dataset/util/random.h"
@@ -64,7 +65,7 @@ Status ComputeShuffleSize(int64_t num_files, int64_t num_devices, int64_t num_ro
 
 // Helper function to inject a shuffle operator over top of current operator being built
 Status AddShuffleOp(int64_t num_files, int64_t num_devices, int64_t num_rows, int64_t total_rows,
-                    int32_t connector_que_size, std::shared_ptr<DatasetOp> *shuffle_op) {
+                    int32_t connector_que_size, std::shared_ptr<ShuffleOp> *shuffle_op) {
   RETURN_UNEXPECTED_IF_NULL(shuffle_op);
   int64_t shuffle_size = 0;
   RETURN_IF_NOT_OK(ComputeShuffleSize(num_files, num_devices, num_rows, total_rows, &shuffle_size));
@@ -105,7 +106,7 @@ Status ValidateDatasetFilesParam(const std::string &dataset_name, const std::vec
     LOG_AND_RETURN_STATUS_SYNTAX_ERROR(err_msg);
   }
 
-  for (auto f : dataset_files) {
+  for (const auto &f : dataset_files) {
     Path dataset_file(f);
     if (!dataset_file.Exists()) {
       std::string err_msg = dataset_name + ": " + file_name + ": [" + f + "] is invalid or does not exist.";

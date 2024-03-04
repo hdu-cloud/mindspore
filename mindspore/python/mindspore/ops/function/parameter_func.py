@@ -31,7 +31,7 @@ def assign(variable, value):
 
     Args:
         variable (Parameter): The `Parameter`. :math:`(N,*)` where :math:`*` means,
-            any number of additional dimensions, its rank should be less than 8.
+            any number of additional dimensions.
         value (Tensor): The value to be assigned, has the same shape with `variable`.
 
     Returns:
@@ -47,6 +47,8 @@ def assign(variable, value):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, ops
         >>> value = Tensor([2.0], mindspore.float32)
         >>> variable = mindspore.Parameter(Tensor([1.0], mindspore.float32), name="variable")
         >>> ops.assign(variable, value)
@@ -77,7 +79,7 @@ def assign_sub(variable, value):
 
     Args:
         variable (Parameter): The `Parameter`.
-            :math:`(N,*)` where :math:`*` means, any number of additional dimensions, its rank be should be less than 8.
+            :math:`(N,*)` where :math:`*` means, any number of additional dimensions.
         value (Tensor): The value to be subtracted from the `variable`.
             It must have the same shape as `variable`.
             it is recommended to use the same data type when using this operator.
@@ -94,6 +96,9 @@ def assign_sub(variable, value):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> variable = mindspore.Parameter(initializer(1, [1], mindspore.int32), name="global_step")
         >>> value = Tensor(np.ones([1]).astype(np.int32) * 100)
         >>> ops.assign_sub(variable, value)
@@ -124,7 +129,7 @@ def assign_add(variable, value):
 
     Args:
         variable (Parameter): The `Parameter`.
-            :math:`(N,*)` where :math:`*` means, any number of additional dimensions, its rank should be less than 8.
+            :math:`(N,*)` where :math:`*` means, any number of additional dimensions.
         value (Tensor): The value to be added to the `variable`.
             It must have the same shape as `variable`.
             it is recommended to use the same data type when using this operator.
@@ -141,6 +146,9 @@ def assign_add(variable, value):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> variable = mindspore.Parameter(initializer(1, [1], mindspore.int32), name="global_step")
         >>> value = Tensor(np.ones([1]).astype(np.int32) * 100)
         >>> ops.assign_add(variable, value)
@@ -165,9 +173,11 @@ def index_add(x, indices, y, axis, use_lock=True, check_index_bound=True):
             The shape must be the same as `x` except the `axis` th dimension.
         axis (int): The dimension along which to index.
         use_lock (bool): Whether to enable a lock to protect the updating process of variable tensors.
-            If true, when updating the value of `x`, this process will be protected by a lock by using atomic operation.
-            If false, the result may be unpredictable. Default: True.
-        check_index_bound (bool): If true, check index boundary. If false, don't check index boundary. Default: True.
+            If ``True`` , when updating the value of `x`, this process will be protected by a lock by using atomic
+            operation.
+            If ``False`` , the result may be unpredictable. Default: ``True`` .
+        check_index_bound (bool): If True, check index boundary. If ``False`` , don't check index boundary.
+            Default: ``True`` .
 
     Returns:
         Tensor, has the same shape and dtype as `x`.

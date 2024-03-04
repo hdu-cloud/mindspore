@@ -18,10 +18,13 @@
 #include <memory>
 #include <string>
 #include <utility>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/nn_op_name.h"
+#include "ops/sequence_ops.h"
+#include "ops/math_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "frontend/optimizer/opt.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {

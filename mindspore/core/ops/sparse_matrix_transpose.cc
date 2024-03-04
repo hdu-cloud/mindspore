@@ -14,22 +14,44 @@
  * limitations under the License.
  */
 
-#include <set>
 #include <map>
+#include <set>
 #include <string>
 
-#include "ops/sparse_matrix_transpose.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "ops/sparse_matrix_transpose.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::TupleShapePtr SparseMatrixTransposeInferShape(const PrimitivePtr &primitive,
                                                         const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
+  const int64_t input_num = 5;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, prim_name);
+
   const int64_t kInputNoBatch = 2;
   const int64_t kInputWithBatch = 3;
   const int64_t ktwo = 2;
@@ -65,7 +87,7 @@ abstract::TupleShapePtr SparseMatrixTransposeInferShape(const PrimitivePtr &prim
   }
   if (values_shape.size() != 1) {
     MS_EXCEPTION(ValueError) << "For " << prim_name << ",the shape of input col indices must be 1-D, but got "
-                             << col_indices_shape.size() << "-D.";
+                             << values_shape.size() << "-D.";
   }
   ShapeVector transpose_row_pointers_shape{abstract::Shape::kShapeDimAny};
   auto dense_shape = input_args[kInputIndex0];
@@ -99,6 +121,11 @@ abstract::TupleShapePtr SparseMatrixTransposeInferShape(const PrimitivePtr &prim
 }
 
 TuplePtr SparseMatrixTransposeInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(prim);
+  auto prim_name = prim->name();
+  const int64_t input_num = 5;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, prim_name);
+
   const std::set<TypePtr> index_valid_types = {kInt32, kInt64};
   const std::set<TypePtr> values_valid_types = {kInt8,   kInt16,   kInt32,   kInt64,   kUInt8,     kUInt16,    kUInt32,
                                                 kUInt64, kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
@@ -143,8 +170,27 @@ AbstractBasePtr SparseMatrixTransposeInfer(const abstract::AnalysisEnginePtr &, 
 }
 
 MIND_API_OPERATOR_IMPL(SparseMatrixTranspose, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseMatrixTranspose, prim::kPrimSparseMatrixTranspose, SparseMatrixTransposeInfer,
-                             nullptr, true);
-REGISTER_HOST_DEPENDS(kNameSparseMatrixTranspose, {0});
+
+// AG means auto generated
+class MIND_API AGSparseMatrixTransposeInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixTransposeInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixTransposeInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseMatrixTransposeInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseMatrixTranspose, prim::kPrimSparseMatrixTranspose, AGSparseMatrixTransposeInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

@@ -17,14 +17,13 @@
 #ifndef MINDSPORE_CORE_OPS_LSTM_H_
 #define MINDSPORE_CORE_OPS_LSTM_H_
 
-#include <map>
-#include <vector>
-#include <string>
-#include <memory>
 #include <algorithm>
+#include <map>
+#include <memory>
+#include <string>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -52,6 +51,12 @@ class MIND_API LSTM : public BaseOperator {
   ///
   /// \return hidden_size.
   int64_t get_hidden_size() const;
+  /// \brief Set proj_size.
+  void set_proj_size(const int64_t proj_size);
+  /// \brief Get proj_size.
+  ///
+  /// \return proj_size.
+  int64_t get_proj_size() const;
   /// \brief Set num_layers.
   void set_num_layers(const int64_t num_layers);
   /// \brief Get num_layers.
@@ -99,8 +104,6 @@ class MIND_API LSTM : public BaseOperator {
   /// \return good_ld.
   int64_t get_good_ld(const int64_t dim, const int64_t type_size);
 };
-abstract::AbstractBasePtr LstmInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                    const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

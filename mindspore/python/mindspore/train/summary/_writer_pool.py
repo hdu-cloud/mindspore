@@ -69,16 +69,17 @@ class WriterPool(ctx.Process):
         max_file_size (Optional[int]): The maximum size of each file that can be written to disk in bytes.
         raise_exception (bool, optional): Sets whether to throw an exception when an RuntimeError exception occurs
             in recording data. Default: False, this means that error logs are printed and no exception is thrown.
-        export_options (Union[None, dict]): Perform custom operations on the export data. Default: None.
+        export_options (Union[None, dict]): Perform custom operations on the export data. Default: ``None``.
         filedict (dict): The mapping from plugin to filename.
     """
 
-    def __init__(self, base_dir, max_file_size, raise_exception=False, **filedict) -> None:
+    def __init__(self, base_dir, max_file_size, num_process=32, raise_exception=False, **filedict) -> None:
         super().__init__()
         self._base_dir, self._filedict = base_dir, filedict
         self._queue, self._writers_ = ctx.Queue(ctx.cpu_count() * 2), None
         self._max_file_size = max_file_size
         self._raise_exception = raise_exception
+        self._num_process = num_process
         self._training_pid = os.getpid()
         self.start()
 
@@ -97,7 +98,7 @@ class WriterPool(ctx.Process):
         # which causes the main process to fail to exit.
         signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-        with ctx.Pool(min(ctx.cpu_count(), 32)) as pool:
+        with ctx.Pool(min(ctx.cpu_count(), self._num_process)) as pool:
             deq = deque()
             while True:
                 if self._check_heartbeat():

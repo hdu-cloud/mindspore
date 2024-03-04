@@ -17,7 +17,6 @@
 #include "frontend/parallel/tensor_layout/map.h"
 #include <algorithm>
 #include <utility>
-#include "utils/ms_utils.h"
 #include "frontend/parallel/status.h"
 #include "frontend/parallel/tensor_layout/shape_util.h"
 #include "include/common/utils/convert_utils.h"
@@ -141,16 +140,11 @@ std::shared_ptr<std::vector<Arrangement>> Map::ReMapVector(const std::vector<Arr
   return std::make_shared<std::vector<Arrangement>>(out);
 }
 
-bool Map::CheckNoneByIdxList(std::vector<size_t> idx_list) const {
-  for (auto &value : idx_list) {
-    if (GetDimByIdx(value) != MAP_NONE) {
-      return false;
-    }
-  }
-  return true;
+bool Map::CheckNoneByIdxList(const std::vector<size_t> &idx_list) const {
+  return std::all_of(idx_list.begin(), idx_list.end(), [this](size_t value) { return GetDimByIdx(value) == MAP_NONE; });
 }
 
-Map Map::SqueezeMapByIdxList(std::vector<size_t> idx_list) const {
+Map Map::SqueezeMapByIdxList(const std::vector<size_t> &idx_list) const {
   Shape out_shape;
   for (size_t i = 0; i < GetDimSize(); i++) {
     auto it = std::find(idx_list.begin(), idx_list.end(), i);

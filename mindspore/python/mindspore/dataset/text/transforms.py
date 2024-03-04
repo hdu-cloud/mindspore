@@ -24,9 +24,13 @@ and use Lookup to find the index of tokens in Vocab.
     class attributes (self.xxx) to support save() and load().
 
 Examples:
-    >>> text_file_dataset_dir = ["/path/to/text_file_dataset_file"] # contains 1 or multiple text files
+    >>> import mindspore.dataset as ds
+    >>> import mindspore.dataset.text as text
+    >>>
     >>> # Create a dataset for text sentences saved as line data in a file
-    >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_dataset_dir, shuffle=False)
+    >>> text_file_list = ["/path/to/text_file_dataset_file"] # contains 1 or multiple text files
+    >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list, shuffle=False)
+    >>>
     >>> # Tokenize sentences to unicode characters
     >>> tokenizer = text.UnicodeCharTokenizer()
     >>> # Load vocabulary from list
@@ -49,11 +53,11 @@ import mindspore._c_dataengine as cde
 from mindspore.common import dtype as mstype
 
 from .utils import JiebaMode, NormalizeForm, to_str, SPieceTokenizerOutType, SPieceTokenizerLoadType, SentencePieceVocab
-from .validators import check_lookup, check_jieba_add_dict, check_to_vectors, \
+from .validators import check_add_token, check_lookup, check_jieba_add_dict, check_to_vectors, \
     check_jieba_add_word, check_jieba_init, check_with_offsets, check_unicode_script_tokenizer, \
     check_wordpiece_tokenizer, check_regex_replace, check_regex_tokenizer, check_basic_tokenizer, check_ngram, \
     check_pair_truncate, check_to_number, check_bert_tokenizer, check_python_tokenizer, check_slidingwindow, \
-    check_sentence_piece_tokenizer
+    check_sentence_piece_tokenizer, check_truncate
 from ..core.datatypes import mstype_to_detype
 from ..core.validator_helpers import replace_none
 from ..transforms.py_transforms_util import Implementation
@@ -91,51 +95,105 @@ DE_C_INTER_SENTENCEPIECE_OUTTYPE = {
 }
 
 
-class JiebaTokenizer(TextTensorOperation):
+class AddToken(TextTensorOperation):
     """
-    Tokenize Chinese string into words based on dictionary.
-
-    Note:
-        The integrity of the HMMSEgment algorithm and MPSegment algorithm files must be confirmed.
+    Add token to beginning or end of sequence.
 
     Args:
-        hmm_path (str): Dictionary file is used by HMMSegment algorithm.
-            The dictionary can be obtained on the official website of cppjieba.
-        mp_path (str): Dictionary file is used by MPSegment algorithm.
-            The dictionary can be obtained on the official website of cppjieba.
-        mode (JiebaMode, optional): Valid values can be any of [JiebaMode.MP, JiebaMode.HMM,
-            JiebaMode.MIX]. Default: JiebaMode.MIX.
-
-            - JiebaMode.MP, tokenize with MPSegment algorithm.
-
-            - JiebaMode.HMM, tokenize with Hidden Markov Model Segment algorithm.
-
-            - JiebaMode.MIX, tokenize with a mix of MPSegment and HMMSegment algorithm.
-
-        with_offsets (bool, optional): Whether or not output offsets of tokens. Default: False.
+        token (str): The token to be added.
+        begin (bool, optional): Choose the position where the token is inserted. If True,
+            the token will be inserted at the beginning of the sequence. Otherwise, it will
+            be inserted at the end of the sequence. Default: ``True``.
 
     Raises:
-        ValueError: If path of HMMSegment dict is not provided.
-        ValueError: If path of MPSegment dict is not provided.
-        TypeError: If `hmm_path` or `mp_path` is not of type string.
+        TypeError: If `token` is not of type string.
+        TypeError: If `begin` is not of type bool.
+
+    Supported Platforms:
+        ``CPU``
+
+    Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.text as text
+        >>>
+        >>> dataset = ds.NumpySlicesDataset(data={"text": [['a', 'b', 'c', 'd', 'e']]})
+        >>> # Data before
+        >>> # |           text            |
+        >>> # +---------------------------+
+        >>> # | ['a', 'b', 'c', 'd', 'e'] |
+        >>> # +---------------------------+
+        >>> add_token_op = text.AddToken(token='TOKEN', begin=True)
+        >>> dataset = dataset.map(operations=add_token_op)
+        >>> # Data after
+        >>> # |           text            |
+        >>> # +---------------------------+
+        >>> # | ['TOKEN', 'a', 'b', 'c', 'd', 'e'] |
+        >>> # +---------------------------+
+
+    Tutorial Examples:
+        - `Illustration of text transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
+    """
+
+    @check_add_token
+    def __init__(self, token, begin=True):
+        super().__init__()
+        self.token = token
+        self.begin = begin
+
+    def parse(self):
+        return cde.AddTokenOperation(self.token, self.begin)
+
+
+class JiebaTokenizer(TextTensorOperation):
+    """
+    Use Jieba tokenizer to tokenize Chinese strings.
+
+    Note:
+        The dictionary files used by Hidden Markov Model segment and Max Probability segment can be
+        obtained through the `cppjieba GitHub <https://github.com/yanyiwu/cppjieba/tree/master/dict>`_ .
+        Please ensure the validity and integrity of these files.
+
+    Args:
+        hmm_path (str): Path to the dictionary file used by Hidden Markov Model segment.
+        mp_path (str): Path to the dictionary file used by Max Probability segment.
+        mode (JiebaMode, optional): The desired segment algorithms. See :class:`~.text.JiebaMode`
+            for details on optional values. Default: ``JiebaMode.MIX`` .
+        with_offsets (bool, optional): Whether to output the start and end offsets of each
+            token in the original string. Default: ``False`` .
+
+    Raises:
+        TypeError: If `hmm_path` is not of type str.
+        TypeError: If `mp_path` is not of type str.
+        TypeError: If `mode` is not of type :class:`~.text.JiebaMode` .
         TypeError: If `with_offsets` is not of type bool.
 
     Supported Platforms:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> import mindspore.dataset.text as text
         >>> from mindspore.dataset.text import JiebaMode
-        >>> # If with_offsets=False, default output one column {["text", dtype=str]}
+        >>>
+        >>> text_file_list = ["/path/to/text_file_dataset_file"]
+        >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
+        >>>
+        >>> # 1) If with_offsets=False, return one data column {["text", dtype=str]}
         >>> jieba_hmm_file = "/path/to/jieba/hmm/file"
         >>> jieba_mp_file = "/path/to/jieba/mp/file"
         >>> tokenizer_op = text.JiebaTokenizer(jieba_hmm_file, jieba_mp_file, mode=JiebaMode.MP, with_offsets=False)
         >>> text_file_dataset = text_file_dataset.map(operations=tokenizer_op)
-        >>> # If with_offsets=False, then output three columns {["token", dtype=str], ["offsets_start", dtype=uint32],
-        >>> #                                                   ["offsets_limit", dtype=uint32]}
+        >>>
+        >>> # 2) If with_offsets=True, return three columns {["token", dtype=str], ["offsets_start", dtype=uint32],
+        >>> #                                                ["offsets_limit", dtype=uint32]}
         >>> tokenizer_op = text.JiebaTokenizer(jieba_hmm_file, jieba_mp_file, mode=JiebaMode.MP, with_offsets=True)
-        >>> text_file_dataset_1 = text_file_dataset_1.map(operations=tokenizer_op, input_columns=["text"],
-        ...                                               output_columns=["token", "offsets_start", "offsets_limit"])
+        >>> text_file_dataset = text_file_dataset.map(operations=tokenizer_op, input_columns=["text"],
+        ...                                           output_columns=["token", "offsets_start", "offsets_limit"])
+
+    Tutorial Examples:
+        - `Illustration of text transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
     """
 
     @check_jieba_init
@@ -170,17 +228,19 @@ class JiebaTokenizer(TextTensorOperation):
     @check_jieba_add_word
     def add_word(self, word, freq=None):
         """
-        Add a user defined word to JiebaTokenizer's dictionary.
+        Add a specified word mapping to the Vocab of the tokenizer.
 
         Args:
-            word (str): The word to be added to the JiebaTokenizer instance.
-                The added word will not be written into the built-in dictionary on disk.
-            freq (int, optional): The frequency of the word to be added. The higher the frequency,
-                the better chance the word will be tokenized. Default: None, use default frequency.
+            word (str): The word to be added to the Vocab.
+            freq (int, optional): The frequency of the word to be added. The higher the word frequency,
+                the greater the chance that the word will be tokenized. Default: ``None``, using the
+                default word frequency.
 
         Examples:
+            >>> import mindspore.dataset as ds
             >>> import mindspore.dataset.text as text
             >>> from mindspore.dataset.text import JiebaMode
+            >>>
             >>> jieba_hmm_file = "/path/to/jieba/hmm/file"
             >>> jieba_mp_file = "/path/to/jieba/mp/file"
             >>> jieba_op = text.JiebaTokenizer(jieba_hmm_file, jieba_mp_file, mode=JiebaMode.MP)
@@ -189,6 +249,9 @@ class JiebaTokenizer(TextTensorOperation):
             ...     for line in f:
             ...         word = line.split(',')[0]
             ...         jieba_op.add_word(word)
+            >>>
+            >>> text_file_list = ["/path/to/text_file_dataset_file"]
+            >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
             >>> text_file_dataset = text_file_dataset.map(operations=jieba_op, input_columns=["text"])
         """
 
@@ -201,30 +264,30 @@ class JiebaTokenizer(TextTensorOperation):
     @check_jieba_add_dict
     def add_dict(self, user_dict):
         """
-        Add a user defined word to JiebaTokenizer's dictionary.
+        Add the specified word mappings to the Vocab of the tokenizer.
 
         Args:
-            user_dict (Union[str, dict]): One of the two loading methods is file path(str) loading
-                (according to the Jieba dictionary format) and the other is Python dictionary(dict) loading,
-                Python Dict format: {word1:freq1, word2:freq2,...}.
-                Jieba dictionary format : word(required), freq(optional), such as:
-
-                .. code-block::
-
-                    word1 freq1
-                    word2 None
-                    word3 freq3
-
-                Only valid word-freq pairs in user provided file will be added into the dictionary.
-                Rows containing invalid input will be ignored. No error nor warning Status is returned.
+            user_dict (Union[str, dict[str, int]]): The word mappings to be added to the Vocab.
+                If the input type is str, it means the path of the file storing the word mappings to be added.
+                Each line of the file should contain two fields separated by a space, where the first field
+                indicates the word itself and the second field should be a number indicating the word frequency.
+                Invalid lines will be ignored and no error or warning will be returned.
+                If the input type is dict[str, int], it means the dictionary storing the word mappings to be added,
+                where the key name is the word itself and the key value is the word frequency.
 
         Examples:
+            >>> import mindspore.dataset as ds
+            >>> import mindspore.dataset.text as text
             >>> from mindspore.dataset.text import JiebaMode
+            >>>
             >>> jieba_hmm_file = "/path/to/jieba/hmm/file"
             >>> jieba_mp_file = "/path/to/jieba/mp/file"
             >>> user_dict = {"男默女泪": 10}
             >>> jieba_op = text.JiebaTokenizer(jieba_hmm_file, jieba_mp_file, mode=JiebaMode.MP)
             >>> jieba_op.add_dict(user_dict)
+            >>>
+            >>> text_file_list = ["/path/to/text_file_dataset_file"]
+            >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
             >>> text_file_dataset = text_file_dataset.map(operations=jieba_op, input_columns=["text"])
         """
 
@@ -260,7 +323,7 @@ class JiebaTokenizer(TextTensorOperation):
             raise ValueError(
                 "user dict file {} is not exist.".format(file_path))
         real_file_path = os.path.realpath(file_path)
-        file_dict = open(real_file_path)
+        file_dict = open(real_file_path, "r")
         data_re = re.compile('^\\s*([^\\s*]+?)\\s*([0-9]+)?\\s*$', re.U)
         words_list = []
         for item in file_dict:
@@ -284,9 +347,9 @@ class Lookup(TextTensorOperation):
         vocab (Vocab): A vocabulary object.
         unknown_token (str, optional): Word is used for lookup. In case of the word is out of vocabulary (OOV),
             the result of lookup will be replaced with unknown_token. If the unknown_token is not specified or
-            it is OOV, runtime error will be thrown. Default: None, means no unknown_token is specified.
+            it is OOV, runtime error will be thrown. Default: ``None``, means no unknown_token is specified.
         data_type (mindspore.dtype, optional): The data type that lookup operation maps
-            string to. Default: mindspore.int32.
+            string to. Default: ``mstype.int32``.
 
     Raises:
         TypeError: If `vocab` is not of type text.Vocab.
@@ -297,12 +360,20 @@ class Lookup(TextTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> import mindspore.dataset.text as text
         >>> # Load vocabulary from list
         >>> vocab = text.Vocab.from_list(['深', '圳', '欢', '迎', '您'])
         >>> # Use Lookup operation to map tokens to ids
         >>> lookup = text.Lookup(vocab)
+        >>>
+        >>> text_file_list = ["/path/to/text_file_dataset_file"]
+        >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
         >>> text_file_dataset = text_file_dataset.map(operations=[lookup])
+
+    Tutorial Examples:
+        - `Illustration of text transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
     """
 
     @check_lookup
@@ -330,13 +401,13 @@ class Ngram(TextTensorOperation):
             an empty string produced.
         left_pad (tuple, optional): Padding performed on left side of the sequence shaped like ("pad_token", pad_width).
             `pad_width` will be capped at n-1. For example, specifying left_pad=("_", 2) would pad left side of the
-            sequence with "__". Default: ('', 0).
+            sequence with "__". Default: ``('', 0)``.
         right_pad (tuple, optional): Padding performed on right side of the sequence shaped like
             ("pad_token", pad_width). `pad_width` will be capped at n-1. For example, specifying right_pad=("_", 2)
-            would pad right side of the sequence with "__". Default: ('', 0).
+            would pad right side of the sequence with "__". Default: ``('', 0)``.
         separator (str, optional): Symbol used to join strings together. For example, if 2-gram is
-            ["mindspore", "amazing"] with separator="-", the result would be ["mindspore-amazing"].
-            Default: ' ', which will use whitespace as separator.
+            ["mindspore", "amazing"] with separator is ``"-"``, the result would be ["mindspore-amazing"].
+            Default: ``' '``, which will use whitespace as separator.
 
     Raises:
         TypeError: If values of `n` not positive is not of type int.
@@ -349,13 +420,21 @@ class Ngram(TextTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> import mindspore.dataset.text as text
         >>> ngram_op = text.Ngram(3, separator="-")
         >>> output = ngram_op(["WildRose Country", "Canada's Ocean Playground", "Land of Living Skies"])
         >>> # output
         >>> # ["WildRose Country-Canada's Ocean Playground-Land of Living Skies"]
+        >>>
         >>> # same ngram_op called through map
+        >>> text_file_list = ["/path/to/text_file_dataset_file"]
+        >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
         >>> text_file_dataset = text_file_dataset.map(operations=ngram_op)
+
+    Tutorial Examples:
+        - `Illustration of text transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
     """
 
     @check_ngram
@@ -384,9 +463,19 @@ class PythonTokenizer:
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.text as text
+        >>>
         >>> def my_tokenizer(line):
         ...     return line.split()
+        >>>
+        >>> text_file_list = ["/path/to/text_file_dataset_file"]
+        >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
         >>> text_file_dataset = text_file_dataset.map(operations=text.PythonTokenizer(my_tokenizer))
+
+    Tutorial Examples:
+        - `Illustration of text transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
     """
 
     @check_python_tokenizer
@@ -421,11 +510,11 @@ class SentencePieceTokenizer(TextTensorOperation):
         mode (Union[str, SentencePieceVocab]): SentencePiece model.
             If the input parameter is a file, it represents the path of SentencePiece mode to be loaded.
             If the input parameter is a SentencePieceVocab object, it should be constructed in advanced.
-        out_type (SPieceTokenizerOutType): The type of output, it can be any of [SPieceTokenizerOutType.STRING,
-            SPieceTokenizerOutType.INT].
+        out_type (SPieceTokenizerOutType): The type of output, it can be ``SPieceTokenizerOutType.STRING``,
+            ``SPieceTokenizerOutType.INT``.
 
-            - SPieceTokenizerOutType.STRING, means output type of SentencePice Tokenizer is string.
-            - SPieceTokenizerOutType.INT, means output type of SentencePice Tokenizer is int.
+            - ``SPieceTokenizerOutType.STRING``, means output type of SentencePice Tokenizer is string.
+            - ``SPieceTokenizerOutType.INT``, means output type of SentencePice Tokenizer is int.
 
     Raises:
         TypeError: If `mode` is not of type string or SentencePieceVocab.
@@ -435,13 +524,22 @@ class SentencePieceTokenizer(TextTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> import mindspore.dataset.text as text
         >>> from mindspore.dataset.text import SentencePieceModel, SPieceTokenizerOutType
+        >>>
         >>> sentence_piece_vocab_file = "/path/to/sentence/piece/vocab/file"
         >>> vocab = text.SentencePieceVocab.from_file([sentence_piece_vocab_file], 5000, 0.9995,
         ...                                           SentencePieceModel.UNIGRAM, {})
         >>> tokenizer = text.SentencePieceTokenizer(vocab, out_type=SPieceTokenizerOutType.STRING)
+        >>>
+        >>> text_file_list = ["/path/to/text_file_dataset_file"]
+        >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
         >>> text_file_dataset = text_file_dataset.map(operations=tokenizer)
+
+    Tutorial Examples:
+        - `Illustration of text transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
     """
 
     @check_sentence_piece_tokenizer
@@ -462,7 +560,7 @@ class SlidingWindow(TextTensorOperation):
 
     Args:
         width (int): The width of the window. It must be an integer and greater than zero.
-        axis (int, optional): The axis along which the sliding window is computed. Default: 0.
+        axis (int, optional): The axis along which the sliding window is computed. Default: ``0``.
 
     Raises:
         TypeError: If `width` is not of type int.
@@ -474,6 +572,8 @@ class SlidingWindow(TextTensorOperation):
 
     Examples:
         >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.text as text
+        >>>
         >>> dataset = ds.NumpySlicesDataset(data=[[1, 2, 3, 4, 5]], column_names="col1")
         >>> # Data before
         >>> # |     col1     |
@@ -488,6 +588,10 @@ class SlidingWindow(TextTensorOperation):
         >>> # |   [2, 3, 4], |
         >>> # |   [3, 4, 5]] |
         >>> # +--------------+
+
+    Tutorial Examples:
+        - `Illustration of text transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
     """
 
     @check_slidingwindow
@@ -523,10 +627,15 @@ class ToNumber(TextTensorOperation):
         >>> import mindspore.dataset as ds
         >>> import mindspore.dataset.text as text
         >>> from mindspore import dtype as mstype
+        >>>
         >>> data = [["1", "2", "3"]]
         >>> dataset = ds.NumpySlicesDataset(data)
         >>> to_number_op = text.ToNumber(mstype.int8)
         >>> dataset = dataset.map(operations=to_number_op)
+
+    Tutorial Examples:
+        - `Illustration of text transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
     """
 
     @check_to_number
@@ -546,10 +655,11 @@ class ToVectors(TextTensorOperation):
     Args:
         vectors (Vectors): A vectors object.
         unk_init (sequence, optional): Sequence used to initialize out-of-vectors (OOV) token.
-            Default: None, initialize with zero vectors.
-        lower_case_backup (bool, optional): Whether to look up the token in the lower case. If False, each token in the
-            original case will be looked up; if True, each token in the original case will be looked up first, if not
-            found in the keys of the property stoi, the token in the lower case will be looked up. Default: False.
+            Default: ``None``, initialize with zero vectors.
+        lower_case_backup (bool, optional): Whether to look up the token in the lower case. If ``False``,
+            each token in the original case will be looked up; if ``True``, each token in the original
+            case will be looked up first, if not found in the keys of the property stoi, the token in the
+            lower case will be looked up. Default: ``False``.
 
     Raises:
         TypeError: If `unk_init` is not of type sequence.
@@ -560,12 +670,21 @@ class ToVectors(TextTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> import mindspore.dataset.text as text
+        >>>
         >>> # Load vectors from file
         >>> vectors = text.Vectors.from_file("/path/to/vectors/file")
         >>> # Use ToVectors operation to map tokens to vectors
         >>> to_vectors = text.ToVectors(vectors)
+        >>>
+        >>> text_file_list = ["/path/to/text_file_dataset_file"]
+        >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
         >>> text_file_dataset = text_file_dataset.map(operations=[to_vectors])
+
+    Tutorial Examples:
+        - `Illustration of text transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
     """
 
     @check_to_vectors
@@ -579,14 +698,61 @@ class ToVectors(TextTensorOperation):
         return cde.ToVectorsOperation(self.vectors, self.unk_init, self.lower_case_backup)
 
 
-class TruncateSequencePair(TextTensorOperation):
+class Truncate(TextTensorOperation):
     """
-    Truncate a pair of rank-1 tensors such that the total length is less than max_length.
-
-    This operation takes two input tensors and returns two output Tensors.
+    Truncate the input sequence so that it does not exceed the maximum length.
 
     Args:
-        max_length (int): Maximum length required.
+        max_seq_len (int): Maximum allowable length.
+
+    Raises:
+        TypeError: If `max_length_len` is not of type int.
+        ValueError: If value of `max_length_len` is not greater than or equal to 0.
+        RuntimeError: If the input tensor is not of dtype bool, int, float, double or str.
+
+    Supported Platforms:
+        ``CPU``
+
+    Examples:
+        >>> import mindspore.dataset as ds
+        >>> import mindspore.dataset.text as text
+        >>>
+        >>> dataset = ds.NumpySlicesDataset(data=[['a', 'b', 'c', 'd', 'e']], column_names=["text"], shuffle=False)
+        >>> # Data before
+        >>> # |           col1            |
+        >>> # +---------------------------+
+        >>> # | ['a', 'b', 'c', 'd', 'e'] |
+        >>> # +---------------------------+
+        >>> truncate = text.Truncate(4)
+        >>> dataset = dataset.map(operations=truncate, input_columns=["text"])
+        >>> # Data after
+        >>> # |          col1          |
+        >>> # +------------------------+
+        >>> # |  ['a', 'b', 'c', 'd']  |
+        >>> # +------------------------+
+
+    Tutorial Examples:
+        - `Illustration of text transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
+    """
+
+    @check_truncate
+    def __init__(self, max_seq_len):
+        super().__init__()
+        self.max_seq_len = max_seq_len
+
+    def parse(self):
+        return cde.TruncateOperation(self.max_seq_len)
+
+
+class TruncateSequencePair(TextTensorOperation):
+    """
+    Truncate a pair of 1-D string input so that their total length is less than the specified length.
+
+    Args:
+        max_length (int): The maximum total length of the output strings. If it is no less than the
+            total length of the original pair of strings, no truncation is performed; otherwise, the
+            longer of the two input strings is truncated until its total length equals this value.
 
     Raises:
         TypeError: If `max_length` is not of type int.
@@ -595,7 +761,9 @@ class TruncateSequencePair(TextTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> import mindspore.dataset.text as text
+        >>>
         >>> dataset = ds.NumpySlicesDataset(data={"col1": [[1, 2, 3]], "col2": [[4, 5]]})
         >>> # Data before
         >>> # |   col1    |   col2    |
@@ -609,6 +777,10 @@ class TruncateSequencePair(TextTensorOperation):
         >>> # +-----------+-----------+
         >>> # |  [1, 2]   |  [4, 5]   |
         >>> # +-----------+-----------+
+
+    Tutorial Examples:
+        - `Illustration of text transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
     """
 
     @check_pair_truncate
@@ -622,10 +794,11 @@ class TruncateSequencePair(TextTensorOperation):
 
 class UnicodeCharTokenizer(TextTensorOperation):
     """
-    Tokenize a scalar tensor of UTF-8 string to Unicode characters.
+    Unpack the Unicode characters in the input strings.
 
     Args:
-        with_offsets (bool, optional): Whether or not output offsets of tokens. Default: False.
+        with_offsets (bool, optional): Whether to output the start and end offsets of each
+            token in the original string. Default: ``False`` .
 
     Raises:
         TypeError: If `with_offsets` is not of type bool.
@@ -634,15 +807,25 @@ class UnicodeCharTokenizer(TextTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> import mindspore.dataset.text as text
+        >>>
+        >>> text_file_list = ["/path/to/text_file_dataset_file"]
+        >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
+        >>>
         >>> # If with_offsets=False, default output one column {["text", dtype=str]}
         >>> tokenizer_op = text.UnicodeCharTokenizer(with_offsets=False)
         >>> text_file_dataset = text_file_dataset.map(operations=tokenizer_op)
+        >>>
         >>> # If with_offsets=True, then output three columns {["token", dtype=str], ["offsets_start", dtype=uint32],
         >>> #                                                   ["offsets_limit", dtype=uint32]}
         >>> tokenizer_op = text.UnicodeCharTokenizer(with_offsets=True)
         >>> text_file_dataset = text_file_dataset.map(operations=tokenizer_op, input_columns=["text"],
         ...                                           output_columns=["token", "offsets_start", "offsets_limit"])
+
+    Tutorial Examples:
+        - `Illustration of text transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
     """
 
     @check_with_offsets
@@ -660,13 +843,14 @@ class WordpieceTokenizer(TextTensorOperation):
 
     Args:
         vocab (Vocab): Vocabulary used to look up words.
-        suffix_indicator (str, optional): Prefix flags used to indicate subword suffixes. Default: '##'.
+        suffix_indicator (str, optional): Prefix flags used to indicate subword suffixes. Default: ``'##'``.
         max_bytes_per_token (int, optional): The maximum length of tokenization, words exceeding this length will
-                not be split. Default: 100.
+                not be split. Default: ``100``.
         unknown_token (str, optional): The output for unknown words. When set to an empty string, the corresponding
                 unknown word will be directly returned as the output. Otherwise, the set string will be returned as the
-                output. Default: '[UNK]'.
-        with_offsets (bool, optional): Whether to return the offsets of tokens. Default: False.
+                output. Default: ``'[UNK]'``.
+        with_offsets (bool, optional): Whether to output the start and end offsets of each
+            token in the original string. Default: ``False`` .
 
     Raises:
         TypeError: If `vocab` is not of type :class:`mindspore.dataset.text.Vocab` .
@@ -680,19 +864,31 @@ class WordpieceTokenizer(TextTensorOperation):
         ``CPU``
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> import mindspore.dataset.text as text
+        >>>
+        >>> text_file_list = ["/path/to/text_file_dataset_file"]
+        >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
+        >>>
         >>> vocab_list = ["book", "cholera", "era", "favor", "##ite", "my", "is", "love", "dur", "##ing", "the"]
         >>> vocab = text.Vocab.from_list(vocab_list)
+        >>>
         >>> # If with_offsets=False, default output one column {["text", dtype=str]}
         >>> tokenizer_op = text.WordpieceTokenizer(vocab=vocab, unknown_token='[UNK]',
         ...                                        max_bytes_per_token=100, with_offsets=False)
         >>> text_file_dataset = text_file_dataset.map(operations=tokenizer_op)
+        >>>
         >>> # If with_offsets=True, then output three columns {["token", dtype=str], ["offsets_start", dtype=uint32],
         >>> #                                                   ["offsets_limit", dtype=uint32]}
         >>> tokenizer_op = text.WordpieceTokenizer(vocab=vocab, unknown_token='[UNK]',
         ...                                       max_bytes_per_token=100, with_offsets=True)
+        >>>
         >>> text_file_dataset = text_file_dataset.map(operations=tokenizer_op, input_columns=["text"],
         ...                                           output_columns=["token", "offsets_start", "offsets_limit"])
+
+    Tutorial Examples:
+        - `Illustration of text transforms
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
     """
 
     @check_wordpiece_tokenizer
@@ -730,27 +926,20 @@ if platform.system().lower() != 'windows':
         Args:
             lower_case (bool, optional): Whether to perform lowercase processing on the text. If True, will fold the
                 text to lower case and strip accented characters. If False, will only perform normalization on the
-                text, with mode specified by `normalization_form` . Default: False.
-            keep_whitespace (bool, optional): If True, the whitespace will be kept in the output. Default: False.
-            normalization_form (NormalizeForm, optional):
-                `Unicode normalization forms <http://unicode.org/reports/tr15/>`_ , only valid when `lower_case`
-                is False, can be NormalizeForm.NONE, NormalizeForm.NFC, NormalizeForm.NFKC, NormalizeForm.NFD or
-                NormalizeForm.NFKD. Default: NormalizeForm.NONE.
-
-                - NormalizeForm.NONE, no normalization.
-                - NormalizeForm.NFC, Canonical Decomposition, followed by Canonical Composition.
-                - NormalizeForm.NFKC, Compatibility Decomposition, followed by Canonical Composition.
-                - NormalizeForm.NFD, Canonical Decomposition.
-                - NormalizeForm.NFKD, Compatibility Decomposition.
-
+                text, with mode specified by `normalization_form` . Default: ``False``.
+            keep_whitespace (bool, optional): If True, the whitespace will be kept in the output. Default: ``False``.
+            normalization_form (NormalizeForm, optional): The desired normalization form.
+                See :class:`~.text.NormalizeForm` for details on optional values.
+                Default: ``NormalizeForm.NFKC`` .
             preserve_unused_token (bool, optional): Whether to preserve special tokens. If True, will not split special
-                tokens like '[CLS]', '[SEP]', '[UNK]', '[PAD]', '[MASK]'. Default: True.
-            with_offsets (bool, optional): Whether to return the offsets of tokens. Default: False.
+                tokens like '[CLS]', '[SEP]', '[UNK]', '[PAD]', '[MASK]'. Default: ``True``.
+            with_offsets (bool, optional): Whether to output the start and end offsets of each
+                token in the original string. Default: ``False`` .
 
         Raises:
             TypeError: If `lower_case` is not of type bool.
             TypeError: If `keep_whitespace` is not of type bool.
-            TypeError: If `normalization_form` is not of type :class:`mindspore.dataset.text.NormalizeForm` .
+            TypeError: If `normalization_form` is not of type :class:`~.text.NormalizeForm` .
             TypeError: If `preserve_unused_token` is not of type bool.
             TypeError: If `with_offsets` is not of type bool.
             RuntimeError: If dtype of input Tensor is not str.
@@ -759,27 +948,34 @@ if platform.system().lower() != 'windows':
             ``CPU``
 
         Examples:
+            >>> import mindspore.dataset as ds
             >>> import mindspore.dataset.text as text
             >>> from mindspore.dataset.text import NormalizeForm
             >>>
-            >>> # If with_offsets=False, default output one column {["text", dtype=str]}
+            >>> text_file_list = ["/path/to/text_file_dataset_file"]
+            >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
+            >>>
+            >>> # 1) If with_offsets=False, default output one column {["text", dtype=str]}
             >>> tokenizer_op = text.BasicTokenizer(lower_case=False,
             ...                                    keep_whitespace=False,
             ...                                    normalization_form=NormalizeForm.NONE,
             ...                                    preserve_unused_token=True,
             ...                                    with_offsets=False)
             >>> text_file_dataset = text_file_dataset.map(operations=tokenizer_op)
-            >>> # If with_offsets=True, then output three columns {["token", dtype=str],
-            >>> #                                                   ["offsets_start", dtype=uint32],
-            >>> #                                                   ["offsets_limit", dtype=uint32]}
+            >>> # 2) If with_offsets=True, then output three columns {["token", dtype=str],
+            >>> #                                                     ["offsets_start", dtype=uint32],
+            >>> #                                                     ["offsets_limit", dtype=uint32]}
             >>> tokenizer_op = text.BasicTokenizer(lower_case=False,
             ...                                    keep_whitespace=False,
             ...                                    normalization_form=NormalizeForm.NONE,
             ...                                    preserve_unused_token=True,
             ...                                    with_offsets=True)
-            >>> text_file_dataset_1 = text_file_dataset_1.map(operations=tokenizer_op, input_columns=["text"],
-            ...                                               output_columns=["token", "offsets_start",
-            ...                                                               "offsets_limit"])
+            >>> text_file_dataset = text_file_dataset.map(operations=tokenizer_op, input_columns=["text"],
+            ...                                           output_columns=["token", "offsets_start", "offsets_limit"])
+
+        Tutorial Examples:
+            - `Illustration of text transforms
+              <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
         """
 
         @check_basic_tokenizer
@@ -809,30 +1005,25 @@ if platform.system().lower() != 'windows':
 
         Args:
             vocab (Vocab): Vocabulary used to look up words.
-            suffix_indicator (str, optional): Prefix flags used to indicate subword suffixes. Default: '##'.
+            suffix_indicator (str, optional): Prefix flags used to indicate subword suffixes. Default: ``'##'``.
             max_bytes_per_token (int, optional): The maximum length of tokenization, words exceeding this length will
-                not be split. Default: 100.
+                not be split. Default: ``100``.
             unknown_token (str, optional): The output for unknown words. When set to an empty string, the corresponding
                 unknown word will be directly returned as the output. Otherwise, the set string will be returned as the
-                output. Default: '[UNK]'.
-            lower_case (bool, optional): Whether to perform lowercase processing on the text. If True, will fold the
-                text to lower case and strip accented characters. If False, will only perform normalization on the
-                text, with mode specified by `normalization_form` . Default: False.
-            keep_whitespace (bool, optional): If True, the whitespace will be kept in the output. Default: False.
-            normalization_form (NormalizeForm, optional):
-                `Unicode normalization forms <http://unicode.org/reports/tr15/>`_ , only valid when `lower_case`
-                is False, can be NormalizeForm.NONE, NormalizeForm.NFC, NormalizeForm.NFKC, NormalizeForm.NFD or
-                NormalizeForm.NFKD. Default: NormalizeForm.NONE.
-
-                - NormalizeForm.NONE, no normalization.
-                - NormalizeForm.NFC, Canonical Decomposition, followed by Canonical Composition.
-                - NormalizeForm.NFKC, Compatibility Decomposition, followed by Canonical Composition.
-                - NormalizeForm.NFD, Canonical Decomposition.
-                - NormalizeForm.NFKD, Compatibility Decomposition.
-
-            preserve_unused_token (bool, optional): Whether to preserve special tokens. If True, will not split special
-                tokens like '[CLS]', '[SEP]', '[UNK]', '[PAD]', '[MASK]'. Default: True.
-            with_offsets (bool, optional): Whether to return the offsets of tokens. Default: False.
+                output. Default: ``'[UNK]'``.
+            lower_case (bool, optional): Whether to perform lowercase processing on the text. If ``True``, will fold the
+                text to lower case and strip accented characters. If ``False``, will only perform normalization on the
+                text, with mode specified by `normalization_form` . Default: ``False``.
+            keep_whitespace (bool, optional): If ``True``, the whitespace will be kept in the output.
+                Default: ``False``.
+            normalization_form (NormalizeForm, optional): The desired normalization form.
+                See :class:`~.text.NormalizeForm` for details on optional values.
+                Default: ``NormalizeForm.NFKC`` .
+            preserve_unused_token (bool, optional): Whether to preserve special tokens. If ``True``,
+                will not split special tokens like '[CLS]', '[SEP]', '[UNK]', '[PAD]', '[MASK]'.
+                Default: ``True``.
+            with_offsets (bool, optional): Whether to output the start and end offsets of each
+                token in the original string. Default: ``False`` .
 
         Raises:
             TypeError: If `vocab` is not of type :class:`mindspore.dataset.text.Vocab` .
@@ -842,7 +1033,7 @@ if platform.system().lower() != 'windows':
             TypeError: If `unknown_token` is not of type str.
             TypeError: If `lower_case` is not of type bool.
             TypeError: If `keep_whitespace` is not of type bool.
-            TypeError: If `normalization_form` is not of type :class:`mindspore.dataset.text.NormalizeForm` .
+            TypeError: If `normalization_form` is not of type :class:`~.text.NormalizeForm` .
             TypeError: If `preserve_unused_token` is not of type bool.
             TypeError: If `with_offsets` is not of type bool.
 
@@ -850,10 +1041,14 @@ if platform.system().lower() != 'windows':
             ``CPU``
 
         Examples:
+            >>> import mindspore.dataset as ds
             >>> import mindspore.dataset.text as text
             >>> from mindspore.dataset.text import NormalizeForm
             >>>
-            >>> # If with_offsets=False, default output one column {["text", dtype=str]}
+            >>> text_file_list = ["/path/to/text_file_dataset_file"]
+            >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
+            >>>
+            >>> # 1) If with_offsets=False, default output one column {["text", dtype=str]}
             >>> vocab_list = ["床", "前", "明", "月", "光", "疑", "是", "地", "上", "霜", "举", "头", "望", "低",
             ...               "思", "故", "乡","繁", "體", "字", "嘿", "哈", "大", "笑", "嘻", "i", "am", "mak",
             ...               "make", "small", "mistake", "##s", "during", "work", "##ing", "hour", "😀", "😃",
@@ -865,16 +1060,20 @@ if platform.system().lower() != 'windows':
             ...                                   normalization_form=NormalizeForm.NONE, preserve_unused_token=True,
             ...                                   with_offsets=False)
             >>> text_file_dataset = text_file_dataset.map(operations=tokenizer_op)
-            >>> # If with_offsets=True, then output three columns {["token", dtype=str],
-            >>> #                                                  ["offsets_start", dtype=uint32],
-            >>> #                                                  ["offsets_limit", dtype=uint32]}
+            >>> # 2) If with_offsets=True, then output three columns {["token", dtype=str],
+            >>> #                                                     ["offsets_start", dtype=uint32],
+            >>> #                                                     ["offsets_limit", dtype=uint32]}
             >>> tokenizer_op = text.BertTokenizer(vocab=vocab, suffix_indicator='##', max_bytes_per_token=100,
             ...                                   unknown_token='[UNK]', lower_case=False, keep_whitespace=False,
             ...                                   normalization_form=NormalizeForm.NONE, preserve_unused_token=True,
             ...                                   with_offsets=True)
-            >>> text_file_dataset_1 = text_file_dataset_1.map(operations=tokenizer_op, input_columns=["text"],
+            >>> text_file_dataset = text_file_dataset.map(operations=tokenizer_op, input_columns=["text"],
             ...                                               output_columns=["token", "offsets_start",
             ...                                                               "offsets_limit"])
+
+        Tutorial Examples:
+            - `Illustration of text transforms
+              <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
         """
 
         @check_bert_tokenizer
@@ -914,9 +1113,16 @@ if platform.system().lower() != 'windows':
             ``CPU``
 
         Examples:
+            >>> import mindspore.dataset as ds
             >>> import mindspore.dataset.text as text
             >>> case_op = text.CaseFold()
+            >>> text_file_list = ["/path/to/text_file_dataset_file"]
+            >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
             >>> text_file_dataset = text_file_dataset.map(operations=case_op)
+
+        Tutorial Examples:
+            - `Illustration of text transforms
+              <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
         """
 
         def parse(self):
@@ -935,10 +1141,17 @@ if platform.system().lower() != 'windows':
             ``CPU``
 
         Examples:
+            >>> import mindspore.dataset as ds
             >>> import mindspore.dataset.text as text
             >>>
             >>> replace_op = text.FilterWikipediaXML()
+            >>> text_file_list = ["/path/to/text_file_dataset_file"]
+            >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
             >>> text_file_dataset = text_file_dataset.map(operations=replace_op)
+
+        Tutorial Examples:
+            - `Illustration of text transforms
+              <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
         """
 
         def parse(self):
@@ -947,34 +1160,35 @@ if platform.system().lower() != 'windows':
 
     class NormalizeUTF8(TextTensorOperation):
         """
-        Apply normalize operation on UTF-8 string tensor.
+        Normalize the input UTF-8 encoded strings.
 
         Note:
             NormalizeUTF8 is not supported on Windows platform yet.
 
         Args:
-            normalize_form (NormalizeForm, optional): Valid values can be [NormalizeForm.NONE, NormalizeForm.NFC,
-                NormalizeForm.NFKC, NormalizeForm.NFD, NormalizeForm.NFKD] any of the four unicode
-                normalized forms. Default: NormalizeForm.NFKC.
-                See http://unicode.org/reports/tr15/ for details.
-
-                - NormalizeForm.NONE, do nothing for input string tensor.
-                - NormalizeForm.NFC, normalize with Normalization Form C.
-                - NormalizeForm.NFKC, normalize with Normalization Form KC.
-                - NormalizeForm.NFD, normalize with Normalization Form D.
-                - NormalizeForm.NFKD, normalize with Normalization Form KD.
+            normalize_form (NormalizeForm, optional): The desired normalization form.
+                See :class:`~.text.NormalizeForm` for details on optional values.
+                Default: ``NormalizeForm.NFKC`` .
 
         Raises:
-            TypeError: If `normalize_form` is not of type NormalizeForm.
+            TypeError: If `normalize_form` is not of type :class:`~.text.NormalizeForm`.
 
         Supported Platforms:
             ``CPU``
 
         Examples:
+            >>> import mindspore.dataset as ds
             >>> import mindspore.dataset.text as text
             >>> from mindspore.dataset.text import NormalizeForm
+            >>>
             >>> normalize_op = text.NormalizeUTF8(normalize_form=NormalizeForm.NFC)
+            >>> text_file_list = ["/path/to/text_file_dataset_file"]
+            >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
             >>> text_file_dataset = text_file_dataset.map(operations=normalize_op)
+
+        Tutorial Examples:
+            - `Illustration of text transforms
+              <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
         """
 
         def __init__(self, normalize_form=NormalizeForm.NFKC):
@@ -991,33 +1205,39 @@ if platform.system().lower() != 'windows':
 
     class RegexReplace(TextTensorOperation):
         """
-        Replace a part of UTF-8 string tensor with given text according to regular expressions.
-
-        See https://unicode-org.github.io/icu/userguide/strings/regexp.html for supported regex pattern.
+        Replace part of the input UTF-8 string with a difference text string using regular expressions.
 
         Note:
             RegexReplace is not supported on Windows platform yet.
 
         Args:
-            pattern (str): the regex expression patterns.
-            replace (str): the string to replace matched element.
-            replace_all (bool, optional): If False, only replace first matched element;
-                if True, replace all matched elements. Default: True.
+            pattern (str): The regular expression, used to mean the specific, standard textual syntax for
+                representing patterns for matching text.
+            replace (str): The string used to replace the matched elements.
+            replace_all (bool, optional): Whether to replace all matched elements. If ``False``, only the
+                first matched element will be replaced; otherwise, all matched elements will be replaced.
+                Default: ``True``.
 
         Raises:
-            TypeError: If `pattern` is not of type string.
-            TypeError: If `replace` is not of type string.
+            TypeError: If `pattern` is not of type str.
+            TypeError: If `replace` is not of type str.
             TypeError: If `replace_all` is not of type bool.
 
         Supported Platforms:
             ``CPU``
 
         Examples:
+            >>> import mindspore.dataset as ds
             >>> import mindspore.dataset.text as text
-            >>> pattern = 'Canada'
-            >>> replace = 'China'
-            >>> replace_op = text.RegexReplace(pattern, replace)
-            >>> text_file_dataset = text_file_dataset.map(operations=replace_op)
+            >>>
+            >>> regex_replace = text.RegexReplace('apple', 'orange')
+            >>> text_file_list = ["/path/to/text_file_dataset_file"]
+            >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
+            >>> text_file_dataset = text_file_dataset.map(operations=regex_replace)
+
+        Tutorial Examples:
+            - `Illustration of text transforms
+              <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
         """
 
         @check_regex_replace
@@ -1045,8 +1265,9 @@ if platform.system().lower() != 'windows':
                 The original string will be split by matched elements.
             keep_delim_pattern (str, optional): The string matched by 'delim_pattern' can be kept as a token
                 if it can be matched by 'keep_delim_pattern'. The default value is an empty str
-                which means that delimiters will not be kept as an output token. Default: ''.
-            with_offsets (bool, optional): Whether or not output offsets of tokens. Default: False.
+                which means that delimiters will not be kept as an output token. Default: ``''``.
+            with_offsets (bool, optional): Whether to output the start and end offsets of each
+                token in the original string. Default: ``False`` .
 
         Raises:
             TypeError: If `delim_pattern` is not of type string.
@@ -1057,18 +1278,27 @@ if platform.system().lower() != 'windows':
             ``CPU``
 
         Examples:
+            >>> import mindspore.dataset as ds
             >>> import mindspore.dataset.text as text
-            >>> # If with_offsets=False, default output is one column {["text", dtype=str]}
+            >>>
+            >>> text_file_list = ["/path/to/text_file_dataset_file"]
+            >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
+            >>>
+            >>> # 1) If with_offsets=False, default output is one column {["text", dtype=str]}
             >>> delim_pattern = r"[ |,]"
             >>> tokenizer_op = text.RegexTokenizer(delim_pattern, with_offsets=False)
             >>> text_file_dataset = text_file_dataset.map(operations=tokenizer_op)
-            >>> # If with_offsets=True, then output three columns {["token", dtype=str],
-            >>> #                                                   ["offsets_start", dtype=uint32],
-            >>> #                                                   ["offsets_limit", dtype=uint32]}
+            >>>
+            >>> # 2) If with_offsets=True, then output three columns {["token", dtype=str],
+            >>> #                                                     ["offsets_start", dtype=uint32],
+            >>> #                                                     ["offsets_limit", dtype=uint32]}
             >>> tokenizer_op = text.RegexTokenizer(delim_pattern, with_offsets=True)
-            >>> text_file_dataset_1 = text_file_dataset_1.map(operations=tokenizer_op, input_columns=["text"],
-            ...                                               output_columns=["token", "offsets_start",
-            ...                                                               "offsets_limit"])
+            >>> text_file_dataset = text_file_dataset.map(operations=tokenizer_op, input_columns=["text"],
+            ...                                           output_columns=["token", "offsets_start", "offsets_limit"])
+
+        Tutorial Examples:
+            - `Illustration of text transforms
+              <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
         """
 
         @check_regex_tokenizer
@@ -1090,8 +1320,9 @@ if platform.system().lower() != 'windows':
             UnicodeScriptTokenizer is not supported on Windows platform yet.
 
         Args:
-            keep_whitespace (bool, optional): Whether or not emit whitespace tokens. Default: False.
-            with_offsets (bool, optional): Whether or not output offsets of tokens. Default: False.
+            keep_whitespace (bool, optional): Whether or not emit whitespace tokens. Default: ``False``.
+            with_offsets (bool, optional): Whether to output the start and end offsets of each
+                token in the original string. Default: ``False`` .
 
         Raises:
             TypeError: If `keep_whitespace` is not of type bool.
@@ -1101,16 +1332,26 @@ if platform.system().lower() != 'windows':
             ``CPU``
 
         Examples:
+            >>> import mindspore.dataset as ds
             >>> import mindspore.dataset.text as text
-            >>> # If with_offsets=False, default output one column {["text", dtype=str]}
+            >>>
+            >>> text_file_list = ["/path/to/text_file_dataset_file"]
+            >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
+            >>>
+            >>> # 1) If with_offsets=False, default output one column {["text", dtype=str]}
             >>> tokenizer_op = text.UnicodeScriptTokenizer(keep_whitespace=True, with_offsets=False)
             >>> text_file_dataset = text_file_dataset.map(operations=tokenizer_op)
-            >>> # If with_offsets=True, then output three columns {["token", dtype=str],
-            >>> #                                                  ["offsets_start", dtype=uint32],
-            >>> #                                                  ["offsets_limit", dtype=uint32]}
+            >>>
+            >>> # 2) If with_offsets=True, then output three columns {["token", dtype=str],
+            >>> #                                                     ["offsets_start", dtype=uint32],
+            >>> #                                                     ["offsets_limit", dtype=uint32]}
             >>> tokenizer_op = text.UnicodeScriptTokenizer(keep_whitespace=True, with_offsets=True)
             >>> text_file_dataset = text_file_dataset.map(operations=tokenizer_op, input_columns=["text"],
             ...                                           output_columns=["token", "offsets_start", "offsets_limit"])
+
+        Tutorial Examples:
+            - `Illustration of text transforms
+              <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
 
         """
 
@@ -1134,7 +1375,8 @@ if platform.system().lower() != 'windows':
             WhitespaceTokenizer is not supported on Windows platform yet.
 
         Args:
-            with_offsets (bool, optional): Whether or not output offsets of tokens. Default: False.
+            with_offsets (bool, optional): Whether to output the start and end offsets of each
+                token in the original string. Default: ``False`` .
 
         Raises:
             TypeError: If `with_offsets` is not of type bool.
@@ -1143,16 +1385,26 @@ if platform.system().lower() != 'windows':
             ``CPU``
 
         Examples:
+            >>> import mindspore.dataset as ds
             >>> import mindspore.dataset.text as text
-            >>> # If with_offsets=False, default output one column {["text", dtype=str]}
+            >>>
+            >>> text_file_list = ["/path/to/text_file_dataset_file"]
+            >>> text_file_dataset = ds.TextFileDataset(dataset_files=text_file_list)
+            >>>
+            >>> # 1) If with_offsets=False, default output one column {["text", dtype=str]}
             >>> tokenizer_op = text.WhitespaceTokenizer(with_offsets=False)
             >>> text_file_dataset = text_file_dataset.map(operations=tokenizer_op)
-            >>> # If with_offsets=True, then output three columns {["token", dtype=str],
+            >>>
+            >>> # 2) If with_offsets=True, then output three columns {["token", dtype=str],
             >>> #                                                   ["offsets_start", dtype=uint32],
             >>> #                                                   ["offsets_limit", dtype=uint32]}
             >>> tokenizer_op = text.WhitespaceTokenizer(with_offsets=True)
             >>> text_file_dataset = text_file_dataset.map(operations=tokenizer_op, input_columns=["text"],
             ...                                           output_columns=["token", "offsets_start", "offsets_limit"])
+
+        Tutorial Examples:
+            - `Illustration of text transforms
+              <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_
         """
 
         @check_with_offsets

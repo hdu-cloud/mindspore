@@ -16,16 +16,34 @@
 
 #include "ops/fractional_max_pool_with_fixed_ksize.h"
 
-#include <iostream>
-#include <string>
 #include <algorithm>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "mindapi/src/helper.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -150,8 +168,8 @@ TuplePtr FractionalMaxPoolWithFixedKsizeInferType(const PrimitivePtr &primitive,
 
   const std::set<TypePtr> random_samples_valid_types = {kFloat16, kFloat32, kFloat64};
   auto random_samples_dtype = input_args[1]->BuildType();
-  CheckAndConvertUtils::CheckTensorTypeValid("random_samples dtype", random_samples_dtype, random_samples_valid_types,
-                                             prim_name);
+  (void)CheckAndConvertUtils::CheckTensorTypeValid("random_samples dtype", random_samples_dtype,
+                                                   random_samples_valid_types, prim_name);
 
   const std::set<TypePtr> x_valid_types = {kFloat16, kFloat32, kFloat64, kInt32, kInt64};
   auto x_dtype = input_args[0]->BuildType();
@@ -204,7 +222,24 @@ std::vector<int64_t> FractionalMaxPoolWithFixedKsize::get_output_shape() const {
 
 std::string FractionalMaxPoolWithFixedKsize::get_data_format() const { return GetValue<std::string>(GetAttr(kFormat)); }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(FractionalMaxPoolWithFixedKsize, prim::kPrimFractionalMaxPoolWithFixedKsize,
-                             FractionalMaxPoolWithFixedKsizeInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGFractionalMaxPoolWithFixedKsizeInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return FractionalMaxPoolWithFixedKsizeInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return FractionalMaxPoolWithFixedKsizeInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return FractionalMaxPoolWithFixedKsizeInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(FractionalMaxPoolWithFixedKsize, prim::kPrimFractionalMaxPoolWithFixedKsize,
+                                 AGFractionalMaxPoolWithFixedKsizeInfer, false);
 }  // namespace ops
 }  // namespace mindspore

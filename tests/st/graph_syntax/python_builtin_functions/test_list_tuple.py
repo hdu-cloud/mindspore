@@ -20,7 +20,7 @@ from mindspore import Tensor, context, jit
 context.set_context(mode=context.GRAPH_MODE)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
@@ -37,7 +37,7 @@ def test_fallback_list_with_input_constant_tensor():
         x.append(Tensor([4]))
         return x
     out = foo()
-    assert isinstance(out, tuple)
+    assert isinstance(out, list)
     assert len(out) == 4
     assert isinstance(out[0], Tensor)
     assert out[0].asnumpy() == 1
@@ -49,7 +49,7 @@ def test_fallback_list_with_input_constant_tensor():
     assert out[3].asnumpy() == 4
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
@@ -66,7 +66,7 @@ def test_fallback_list_with_input_constant_tensor_2():
         x.append(Tensor([5, 6]))
         return x
     out = foo()
-    assert isinstance(out, tuple)
+    assert isinstance(out, list)
     assert len(out) == 3
     assert isinstance(out[0], Tensor)
     assert np.allclose(out[0].asnumpy(), np.array([1, 2]))
@@ -76,7 +76,7 @@ def test_fallback_list_with_input_constant_tensor_2():
     assert np.allclose(out[2].asnumpy(), np.array([5, 6]))
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
@@ -97,7 +97,7 @@ def test_builtin_function_list_with_non_constant_tensor():
     assert np.all(ret[1].asnumpy() == np.array([4, 5, 6]))
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
@@ -123,7 +123,7 @@ def test_fallback_tuple_with_input_constant_tensor():
     assert out[2].asnumpy() == 3
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
@@ -139,9 +139,29 @@ def test_fallback_tuple_with_input_constant_tensor_2():
         x = list(Tensor([[1, 2], [3, 4]]))
         return x
     out = foo()
-    assert isinstance(out, tuple)
+    assert isinstance(out, list)
     assert len(out) == 2
     assert isinstance(out[0], Tensor)
     assert np.allclose(out[0].asnumpy(), np.array([1, 2]))
     assert isinstance(out[1], Tensor)
     assert np.allclose(out[1].asnumpy(), np.array([3, 4]))
+
+
+@pytest.mark.level1
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.env_onecard
+def test_fallback_list_with_input_numpy_array():
+    """
+    Feature: JIT Fallback
+    Description: Test list() in graph mode with numpy aray.
+    Expectation: No exception.
+    """
+    @jit
+    def foo():
+        x = list(np.array([1, 2, 3]))
+        x.append(4)
+        return Tensor(x)
+    out = foo()
+    assert np.allclose(np.array([1, 2, 3, 4]), out.asnumpy())

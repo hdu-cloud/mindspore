@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,18 +14,18 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/optimizer/ir_fission/conv2d_backprop_filter_mul_fission.h"
-
 #include <algorithm>
 #include <string>
 #include <vector>
 #include <memory>
-#include "backend/common/optimizer/const_input_to_attr.h"
-#include "kernel/kernel_build_info.h"
+#include "ops/conv_pool_op_name.h"
+#include "ops/math_op_name.h"
+#include "backend/common/pass/const_input_to_attr.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/session/kernel_graph.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/kernel_graph.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/kernel_info.h"
 #include "utils/ms_context.h"
 
 namespace mindspore::opt {
@@ -58,8 +58,8 @@ ValueNodePtr CreateAssistNode(const FuncGraphPtr &func_graph, const AnfNodePtr &
     SetAssistTensorData<float>(tensor->data_c(), static_cast<float>(1), matrix_size);
     x_abstract = std::make_shared<abstract::AbstractTensor>(kFloat, shape);
   } else {
-    MS_EXCEPTION(TypeError) << "The type of node [" << node->DebugString()
-                            << "] should be int32, float16 or float32, but got" << node->Type()->ToString();
+    MS_INTERNAL_EXCEPTION(TypeError) << "The type of node [" << node->DebugString()
+                                     << "] should be int32, float16 or float32, but got" << node->Type()->ToString();
   }
   auto kernel_graph = func_graph->cast<KernelGraphPtr>();
   MS_EXCEPTION_IF_NULL(kernel_graph);
@@ -73,7 +73,7 @@ ValueNodePtr CreateAssistNode(const FuncGraphPtr &func_graph, const AnfNodePtr &
 const BaseRef Conv2dBackpropFilterMul::DefinePattern() const {
   VarPtr X1 = std::make_shared<Var>();
   VarPtr X2 = std::make_shared<Var>();
-  auto prim = std::make_shared<Primitive>(kConv2DBackpropFilterOpName);
+  auto prim = std::make_shared<Primitive>(kConv2DBackpropFilterDOpName);
   return VectorRef({prim, X1, X2});
 }
 
@@ -90,7 +90,7 @@ const AnfNodePtr Conv2dBackpropFilterMul::Process(const FuncGraphPtr &func_graph
   auto cnode = node->cast<CNodePtr>();
   MS_EXCEPTION_IF_NULL(cnode);
   if (!common::AnfAlgo::HasNodeAttr(kAttrGroup, cnode)) {
-    MS_LOG(EXCEPTION) << "Get Conv2DBackpropFilter attr(groups) failed, node: " << node->DebugString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Get Conv2DBackpropFilter attr(groups) failed, node: " << node->DebugString();
   }
   auto groups = common::AnfAlgo::GetNodeAttr<int64_t>(node, kAttrGroup);
   // if groups not > 1, skip process

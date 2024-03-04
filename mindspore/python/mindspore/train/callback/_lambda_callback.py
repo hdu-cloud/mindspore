@@ -26,22 +26,22 @@ class LambdaCallback(Callback):
     at the appropriate time (during `mindspore.train.Model.{train | eval | fit}`). Note that
     each stage of callbacks expects one positional arguments: `run_context`.
 
-    Note:
-        This is an experimental interface that is subject to change or deletion.
+    .. warning::
+        This is an experimental API that is subject to change or deletion.
 
     Args:
-        on_train_epoch_begin (Function): called at each train epoch begin.
-        on_train_epoch_end (Function): called at each train epoch end.
-        on_train_step_begin (Function):  called at each train step begin.
-        on_train_step_end (Function): called at each train step end.
-        on_train_begin (Function): called at the beginning of model train.
-        on_train_end (Function): called at the end of model train.
-        on_eval_epoch_begin (Function): called at eval epoch begin.
-        on_eval_epoch_end (Function): called at eval epoch end.
-        on_eval_step_begin (Function): called at each eval step begin.
-        on_eval_step_end (Function): called at each eval step end.
-        on_eval_begin (Function): called at the beginning of model eval.
-        on_eval_end (Function): called at the end of model eval.
+        on_train_epoch_begin (Function): called at each train epoch begin. Default: ``None`` .
+        on_train_epoch_end (Function): called at each train epoch end. Default: ``None`` .
+        on_train_step_begin (Function):  called at each train step begin. Default: ``None`` .
+        on_train_step_end (Function): called at each train step end. Default: ``None`` .
+        on_train_begin (Function): called at the beginning of model train. Default: ``None`` .
+        on_train_end (Function): called at the end of model train. Default: ``None`` .
+        on_eval_epoch_begin (Function): called at eval epoch begin. Default: ``None`` .
+        on_eval_epoch_end (Function): called at eval epoch end. Default: ``None`` .
+        on_eval_step_begin (Function): called at each eval step begin. Default: ``None`` .
+        on_eval_step_end (Function): called at each eval step end. Default: ``None`` .
+        on_eval_begin (Function): called at the beginning of model eval. Default: ``None`` .
+        on_eval_end (Function): called at the end of model eval. Default: ``None`` .
 
     Examples:
         >>> import numpy as np
@@ -54,7 +54,7 @@ class LambdaCallback(Callback):
         >>> crit = nn.SoftmaxCrossEntropyWithLogits(sparse=True, reduction='mean')
         >>> opt = nn.Momentum(net.trainable_params(), 0.01, 0.9)
         >>> lambda_callback = LambdaCallback(on_train_epoch_end=
-        ... lambda run_context: print("loss: ", run_context.original_args().net_outputs))
+        ... lambda run_context: print("loss:", run_context.original_args().net_outputs))
         >>> model = Model(network=net, optimizer=opt, loss_fn=crit, metrics={"recall"})
         >>> model.train(2, train_dataset, callbacks=[lambda_callback])
         loss: 1.6127687

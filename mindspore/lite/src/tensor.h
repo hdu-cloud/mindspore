@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,8 @@
 #include <atomic>
 #include "include/api/format.h"
 #include "include/lite_types.h"
+#include "nnacl/tensor_c.h"
+#include "nnacl/tensor_c_utils.h"
 #include "src/litert/inner_allocator.h"
 #include "src/common/log_adapter.h"
 #include "src/common/utils.h"
@@ -35,8 +37,12 @@ namespace mindspore {
 namespace lite {
 #define STATIC_ALLOCATION -271964
 #define RUNTIME_REFCOUNT 0x9999
+#define OPENCL_ALLOCATOR_REFCOUNT -10000
 #define IS_STATIC_ALLOCATOR(allocator) ((allocator != nullptr) && (allocator->RefCount(nullptr) == STATIC_ALLOCATION))
 #define IS_RUNTIME_ALLOCATOR(allocator) ((allocator != nullptr) && (allocator->RefCount(nullptr) == RUNTIME_REFCOUNT))
+#define IS_OPENCL_ALLOCATOR(allocator) \
+  ((allocator != nullptr) && (allocator->RefCount(nullptr) == OPENCL_ALLOCATOR_REFCOUNT))
+
 struct LiteQuantParam {
   double scale;
   int32_t zeroPoint;
@@ -65,7 +71,7 @@ enum CompressType {
 
 class Tensor {
  public:
-  Tensor() = default;
+  Tensor() { tensor_c_ = {false, kTypeUnknown, NHWC, VarTensor, nullptr, 0}; }
 
   Tensor(TypeId data_type, std::vector<int> shape, const mindspore::Format &format = mindspore::NHWC,
          Category category = VAR);
@@ -95,13 +101,43 @@ class Tensor {
 
   std::string tensor_name() const { return tensor_name_; }
 
-  TypeId data_type() const { return data_type_; }
+  TypeId data_type() const { return static_cast<TypeId>(tensor_c_.data_type_); }
 
-  void set_data_type(TypeId data_type) { data_type_ = data_type; }
+  void set_data_type(TypeId data_type) { tensor_c_.data_type_ = data_type; }
 
-  std::vector<int> shape() const { return shape_; }
+  std::vector<int> shape() const {
+    return std::vector<int>(tensor_c_.shape_, tensor_c_.shape_ + tensor_c_.shape_size_);
+  }
 
-  void set_shape(const std::vector<int> &shape) { shape_ = shape; }
+  void set_shape(const std::vector<int> &shape) {
+    if (shape.size() > MAX_SHAPE_SIZE) {
+      FreeData();
+      tensor_c_.shape_size_ = 0;
+      MS_LOG(WARNING) << "The shape-size has exceeded the limit 8, now is " << shape.size();
+      return;
+    }
+    tensor_c_.shape_size_ = shape.size();
+    for (size_t i = 0; i < shape.size(); ++i) {
+      tensor_c_.shape_[i] = shape[i];
+    }
+  }
+
+  std::vector<int64_t> shape64() const {
+    return std::vector<int64_t>(tensor_c_.shape_, tensor_c_.shape_ + tensor_c_.shape_size_);
+  }
+
+  void set_shape64(const std::vector<int64_t> &shape) {
+    if (shape.size() > MAX_SHAPE_SIZE) {
+      FreeData();
+      tensor_c_.shape_size_ = 0;
+      MS_LOG(WARNING) << "The shape-size has exceeded the limit 8, now is " << shape.size();
+      return;
+    }
+    tensor_c_.shape_size_ = shape.size();
+    for (size_t i = 0; i < shape.size(); ++i) {
+      tensor_c_.shape_[i] = shape[i];
+    }
+  }
 
   int DimensionSize(size_t index) const;
 
@@ -132,18 +168,18 @@ class Tensor {
 
   void *ReallocData();
 
-  virtual void *data() { return data_; }
+  virtual void *data() { return tensor_c_.data_; }
 
-  virtual void *data() const { return data_; }
+  virtual void *data() const { return tensor_c_.data_; }
 
   // note: in the case of that old_data is valid, set_data just releases the ownership of it but not frees it. Of
   //       course, you can call FreeData before calling set_data to ensure the data can be freed by current tensor.
   void set_data(void *data, bool own_data = true) {
-    if (allocator_ != nullptr && this->data_ != data) {
+    if (allocator_ != nullptr && this->tensor_c_.data_ != data) {
       (void)allocator_->IncRefCount(data, 1);
-      (void)allocator_->DecRefCount(this->data_, 1);
+      (void)allocator_->DecRefCount(this->tensor_c_.data_, 1);
     }
-    this->data_ = data;
+    this->tensor_c_.data_ = data;
     this->own_data_ = own_data;
   }
 
@@ -151,13 +187,15 @@ class Tensor {
 
   void *device_data() const { return device_data_; }
 
-  Category category() const { return this->category_; }
+  bool is_device() const { return device_data_ != nullptr; }
 
-  void set_category(Category category) { this->category_ = category; }
+  Category category() const { return static_cast<Category>(tensor_c_.category_); }
 
-  void set_format(mindspore::Format format) { this->format_ = format; }
+  void set_category(Category category) { tensor_c_.category_ = category; }
 
-  mindspore::Format format() const { return this->format_; }
+  void set_format(mindspore::Format format) { this->tensor_c_.format_ = format; }
+
+  mindspore::Format format() const { return static_cast<mindspore::Format>(this->tensor_c_.format_); }
   virtual int ref_count() const { return ref_count_; }
 
   virtual int init_ref_count() const { return static_cast<int>(this->init_ref_count_); }
@@ -186,24 +224,22 @@ class Tensor {
 
   void set_quant_clusters(const std::vector<float> &clusters);
 
-  virtual bool IsConst() const {
-    return (this->category_ == CONST_TENSOR || this->category_ == CONST_SCALAR) && this->data_ != nullptr;
-  }
+  virtual bool IsConst() const { return ::IsConst(&tensor_c_); }
 
-  bool IsScalar() const { return this->category_ == CONST_SCALAR && this->data_ != nullptr; }
+  bool IsScalar() const { return this->tensor_c_.category_ == CONST_SCALAR && this->tensor_c_.data_ != nullptr; }
 
-  bool IsGraphInput() const { return this->category_ == GRAPH_INPUT; }
+  bool IsGraphInput() const { return this->tensor_c_.category_ == GRAPH_INPUT; }
 
-  bool IsGraphOutput() const { return this->category_ == GRAPH_OUTPUT; }
+  bool IsGraphOutput() const { return this->tensor_c_.category_ == GRAPH_OUTPUT; }
 
   void Prepare() {
     if (allocator_ != nullptr) {
-      data_ = allocator_->Prepare(data_);
+      tensor_c_.data_ = allocator_->Prepare(tensor_c_.data_);
     }
   }
 
   bool IsReady() const {
-    return this->IsConst() || (this->IsGraphInput() && this->data_ != nullptr) || ref_count() >= 1;
+    return this->IsConst() || (this->IsGraphInput() && this->tensor_c_.data_ != nullptr) || ref_count() >= 1;
   }
 
   bool own_data() const { return this->own_data_; }
@@ -213,7 +249,7 @@ class Tensor {
   template <typename T>
   int Scale(float scale) {
     T cast_scale = static_cast<T>(scale);
-    auto data = reinterpret_cast<T *>(data_);
+    auto data = reinterpret_cast<T *>(tensor_c_.data_);
     if (data == nullptr) {
       return RET_ERROR;
     }
@@ -237,6 +273,20 @@ class Tensor {
 
   bool IsScale() const { return (std::fabs(this->scale_ - 1.0f) > 1.0e-05); }
 
+  void set_shape_changed(bool shape_changed) { tensor_c_.shape_changed_ = shape_changed; }
+
+  bool get_shape_changed() const { return tensor_c_.shape_changed_; }
+
+  int get_device_id() const { return device_id_; }
+
+  void set_device_id(int device_id) { device_id_ = device_id; }
+
+  std::string get_device() { return device_; }
+
+  void set_device(const std::string &device) { device_ = device; }
+
+  TensorC *ConvertToTensorC() { return &tensor_c_; }
+
  private:
   template <typename T>
   std::string DataToString(void *data, size_t data_number, size_t print_len = 40) const {
@@ -252,12 +302,8 @@ class Tensor {
   }
 
  protected:
+  TensorC tensor_c_;
   std::string tensor_name_;
-  void *data_ = nullptr;
-  TypeId data_type_;
-  std::vector<int> shape_;
-  mindspore::Format format_ = mindspore::NHWC;
-  Category category_ = VAR;
   std::atomic_int ref_count_ = {0};
   int init_ref_count_ = 0;
   std::vector<LiteQuantParam> quant_params_;
@@ -268,6 +314,8 @@ class Tensor {
   void *device_data_ = nullptr;
   CompressType compress_type_ = kNoCompression;
   size_t compressed_size_ = 0;
+  std::string device_ = "";
+  int device_id_ = -1;
 };
 }  // namespace lite
 }  // namespace mindspore

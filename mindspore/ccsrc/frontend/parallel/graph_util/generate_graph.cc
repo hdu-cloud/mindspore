@@ -22,30 +22,31 @@
 
 #include "include/common/utils/python_adapter.h"
 #include "include/common/utils/convert_utils_py.h"
+#include "include/common/utils/parallel_context.h"
 #include "frontend/parallel/graph_util/node_info.h"
-#include "mindspore/ccsrc/pipeline/jit/parse/parse_base.h"
+#include "mindspore/ccsrc/pipeline/jit/ps/parse/parse_base.h"
 
 using mindspore::tensor::Tensor;
 
 namespace mindspore {
 namespace parallel {
 const char *GetOpPythonPath(const char *op_name) {
-  static py::module inner_mod = py::module::import(INNER_OP_PATH);
+  static const py::module inner_mod = py::module::import(INNER_OP_PATH);
   if (py::hasattr(inner_mod, op_name)) {
     return INNER_OP_PATH;
   }
 
-  static py::module mod = py::module::import(OP_PATH);
+  static const py::module mod = py::module::import(OP_PATH);
   if (py::hasattr(mod, op_name)) {
     return OP_PATH;
   }
 
-  static py::module grad_mod = py::module::import(GRAD_OP_PATH);
+  static const py::module grad_mod = py::module::import(GRAD_OP_PATH);
   if (py::hasattr(grad_mod, op_name)) {
     return GRAD_OP_PATH;
   }
 
-  static py::module functional_mod = py::module::import(FUNCTIONAL_OP_PATH);
+  static const py::module functional_mod = py::module::import(FUNCTIONAL_OP_PATH);
   if (!py::hasattr(functional_mod, op_name)) {
     MS_LOG(EXCEPTION) << OP_PATH << " and " << INNER_OP_PATH << " and " << GRAD_OP_PATH << " and " << FUNCTIONAL_OP_PATH
                       << " don't have op:" << op_name;
@@ -149,6 +150,26 @@ std::string HashInstanceName(const std::string &name) {
   return instance_name;
 }
 
+void InsertVirtualPipelineEndNode(const CNodePtr &cnode, const FuncGraphManagerPtr &manager, size_t index,
+                                  std::string end_flag) {
+  auto pre_cnode = cnode->input(index)->cast<CNodePtr>();
+  MS_EXCEPTION_IF_NULL(pre_cnode);
+  auto graph = cnode->func_graph();
+  MS_EXCEPTION_IF_NULL(graph);
+  OperatorAttrs attrs_;
+  auto op = CreateOpInstance(attrs_, "_VirtualPipelineEnd", "end_node");
+  auto value_node = NewValueNode(op);
+  auto virtual_end = graph->NewCNode({value_node, pre_cnode});
+  virtual_end->set_abstract(pre_cnode->abstract());
+  virtual_end->AddPrimalAttr(end_flag, pre_cnode->GetPrimalAttr(MICRO));
+  virtual_end->AddPrimalAttr(MICRO, pre_cnode->GetPrimalAttr(MICRO));
+  manager->SetEdge(cnode, SizeToInt(index), virtual_end);
+  if (ParallelContext::GetInstance()->enable_fold_pipeline()) {
+    auto seg = ParallelContext::GetInstance()->pipeline_segment_split_num();
+    virtual_end->AddPrimalAttr(SEGMENT, MakeValue(seg - 1));
+  }
+}
+
 Status GenerateGraph::Init(const CNodePtr &cnode) {
   if (!cnode) {
     MS_LOG(ERROR) << "Init:cnode is nullptr";
@@ -186,7 +207,6 @@ AnfNodePtr GenerateGraph::PushBack(const std::vector<AnfNodePtr> &inputs) {
   if (inputs.size() < 2) {
     MS_LOG(EXCEPTION) << "inputs.size() must be more than 1";
   }
-  (void)manager_->Replace(inputs.at(1), cnode);  // using Replace function to insert cnode after inputs[1]
   auto new_anf_node_ptr = cnode->cast<AnfNodePtr>();
   MS_EXCEPTION_IF_NULL(new_anf_node_ptr);
   return new_anf_node_ptr;

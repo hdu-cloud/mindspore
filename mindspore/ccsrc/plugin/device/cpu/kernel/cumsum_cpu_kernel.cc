@@ -51,11 +51,11 @@ inline void RightMove(const T *input, T *output, size_t dim0, size_t dim1, size_
     size_t k2 = i % dim2;
     size_t offset = k1 * stride + k2;
     for (int j = SizeToInt(dim1 - 1); j >= 0; --j) {
-      size_t read_index = j * stride2 + offset;
+      size_t read_index = IntToSize(j) * stride2 + offset;
       if (j == SizeToInt(dim1 - 1)) {
         output[read_index] = (T)0;
       } else {
-        size_t read_index2 = (j + 1) * stride2 + offset;
+        size_t read_index2 = IntToSize((j + 1)) * stride2 + offset;
         output[read_index] = input[read_index2];
       }
     }
@@ -84,11 +84,11 @@ inline void CumSumKernelReverse(const T *input, T *output, size_t dim0, size_t d
     size_t k2 = i % dim2;
     size_t offset = k1 * stride + k2;
     for (int j = SizeToInt(dim1 - 1); j >= 0; --j) {
-      size_t read_index = j * stride2 + offset;
+      size_t read_index = IntToSize(j) * stride2 + offset;
       if (j == SizeToInt(dim1 - 1)) {
         output[read_index] = input[read_index];
       } else {
-        size_t read_index2 = (j + 1) * stride2 + offset;
+        size_t read_index2 = IntToSize((j + 1)) * stride2 + offset;
         output[read_index] = output[read_index2] + input[read_index];
       }
     }
@@ -122,6 +122,12 @@ bool CumSumCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::v
   auto input_num = inputs.size();
   if (input_num != kCumSumInputsNum) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', the number of inputs must be 2 or 3, but got " << input_num;
+    return false;
+  }
+
+  auto dims_shape = inputs[kIndex0]->GetShapeVector();
+  if (dims_shape.size() == 0) {
+    MS_LOG(ERROR) << "Invalid input tensor shape: " << dims_shape.size();
     return false;
   }
 
@@ -193,6 +199,10 @@ bool CumSumCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, con
     return false;
   }
   Reshape();
+  if (dims_[kIndex1] == 0) {
+    MS_LOG(ERROR) << "Invalid zero value. Please check resize input data.";
+    return false;
+  }
 
   // multithreading
   size_t lens = inputs[kIndex0]->size > 0 ? static_cast<size_t>(inputs[kIndex0]->size / sizeof(T)) : 1;
@@ -245,6 +255,10 @@ std::vector<std::pair<KernelAttr, CumSumCpuKernelMod::CumSumLaunchFunc>> CumSumC
    &CumSumCpuKernelMod::LaunchKernel<float>},
   {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeFloat64),
    &CumSumCpuKernelMod::LaunchKernel<double>},
+  {KernelAttr().AddInputAttr(kNumberTypeComplex64).AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeComplex64),
+   &CumSumCpuKernelMod::LaunchKernel<std::complex<float>>},
+  {KernelAttr().AddInputAttr(kNumberTypeComplex128).AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeComplex128),
+   &CumSumCpuKernelMod::LaunchKernel<std::complex<double>>},
   {KernelAttr().AddInputAttr(kNumberTypeInt8).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt8),
    &CumSumCpuKernelMod::LaunchKernel<int8_t>},
   {KernelAttr().AddInputAttr(kNumberTypeInt16).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt16),

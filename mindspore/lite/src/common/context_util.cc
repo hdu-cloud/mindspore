@@ -107,6 +107,17 @@ std::shared_ptr<mindspore::AscendDeviceInfo> AscendDeviceInfoFromAscendDeviceCon
   ascend_info->SetDynamicImageSize(ascend_context.device_info_.ascend_device_info_.image_size_);
   return ascend_info;
 }
+
+std::shared_ptr<mindspore::DeviceInfoContext> CustomDeviceInfoFromCustomDeviceContext(
+  const lite::DeviceContext &inner_context) {
+  if (inner_context.device_type_ != DT_CUSTOM) {
+    MS_LOG(ERROR) << "Function input parameter is not extended context.";
+    return nullptr;
+  }
+  auto device_info = inner_context.device_info_.custom_device_info_.user_defined_device_info_;
+  MS_CHECK_TRUE_RET(device_info != nullptr, nullptr);
+  return device_info;
+}
 }  // namespace
 
 mindspore::Context *MSContextFromContext(const std::shared_ptr<InnerContext> &context) {
@@ -121,7 +132,9 @@ mindspore::Context *MSContextFromContext(const std::shared_ptr<InnerContext> &co
   }
   ms_context->SetThreadNum(context->thread_num_);
   ms_context->SetThreadAffinity(context->affinity_core_list_);
+#ifndef ENABLE_CLOUD_FUSION_INFERENCE
   ms_context->SetEnableParallel(context->enable_parallel_);
+#endif
   if (context->delegate) {
     ms_context->SetDelegate(context->delegate);
   }
@@ -130,7 +143,8 @@ mindspore::Context *MSContextFromContext(const std::shared_ptr<InnerContext> &co
     transfer_funcs = {{DT_CPU, CPUDeviceInfoFromCPUDeviceContext},
                       {DT_GPU, GPUDeviceInfoFromGPUDeviceContext},
                       {DT_NPU, NPUDeviceInfoFromNPUDeviceContext},
-                      {DT_ASCEND, AscendDeviceInfoFromAscendDeviceContext}};
+                      {DT_ASCEND, AscendDeviceInfoFromAscendDeviceContext},
+                      {DT_CUSTOM, CustomDeviceInfoFromCustomDeviceContext}};
   for (auto &device_context : context->device_list_) {
     auto device_type = device_context.device_type_;
     if (transfer_funcs.find(device_type) == transfer_funcs.end()) {
@@ -179,6 +193,8 @@ DeviceType KernelArchToDeviceType(kernel::KERNEL_ARCH kernel_arch) {
       return DT_GPU;
     case kernel::KERNEL_ARCH::kNPU:
       return DT_NPU;
+    case kernel::KERNEL_ARCH::kACL:
+      return DT_ASCEND;
     default:
       return DT_CPU;
   }

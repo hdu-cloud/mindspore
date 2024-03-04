@@ -52,9 +52,8 @@ def _is_in_hybrid_parallel_mode():
 
 
 def _is_pynative_parallel():
-    run_mode = context.get_context('mode')
     parallel_mode = context.get_auto_parallel_context('parallel_mode')
-    return run_mode == context.PYNATIVE_MODE and parallel_mode in (
+    return context.get_context('mode') == context.PYNATIVE_MODE and parallel_mode in (
         context.ParallelMode.SEMI_AUTO_PARALLEL, context.ParallelMode.AUTO_PARALLEL)
 
 
@@ -97,9 +96,19 @@ def _slice_parameter(parameter, phase, layout):
     new_param = parameter.init_data(layout, set_sliced=True)
     parameter = new_param
     graph_executor.updata_param_node_default_input(phase, {parameter.name: parameter})
-    if not parameter.sliced and (layout is not None):
-        new_tensor = _load_tensor_by_layout(parameter, layout)
+    if layout is None:
+        parameter.sliced = True
+        return
+    if not parameter.sliced:
+        rank = get_rank()
+        new_tensor = _load_tensor_by_layout(parameter, layout, rank)
         parameter.set_data(new_tensor, True)
+
+
+def _slice_tensor(tensor, layout, rank_id):
+    """Slice python tensor obj according to the layout."""
+    new_tensor = _load_tensor_by_layout(tensor, layout, rank_id)
+    return new_tensor
 
 
 def _init_optimizer_state(parameter, phase):
@@ -128,14 +137,17 @@ def _to_full_shapes(shapes, device_num):
                                  "dataset strategy item size {}".format(len(shape), len(dataset_strategy[index])))
             new_shape = ()
             for i, item in enumerate(shape):
-                new_shape += (item * dataset_strategy[index][i],)
+                if item > 0:
+                    new_shape += (item * dataset_strategy[index][i],)  # static shape
+                else:
+                    new_shape += (item,)  # dynamic shape
             new_shapes.append(new_shape)
         return new_shapes
     for shape in shapes:
         new_shape = ()
         for i, item in enumerate(shape):
-            if i == 0:
-                new_shape += (item * device_num,)
+            if i == 0 and item > 0:
+                new_shape += (item * device_num,)  # only for static shape
             else:
                 new_shape += (item,)
         new_shapes.append(new_shape)
@@ -193,7 +205,7 @@ def _to_full_tensor(elem, global_device_num, global_rank, scaling_sens=None):
                 slice_index += (s,)
             new_tensor_numpy = np.zeros(new_shape, dtype_to_nptype(type_))
             new_tensor_numpy[slice_index] = data.asnumpy()
-        new_tensor = Tensor(new_tensor_numpy)
+        new_tensor = Tensor(new_tensor_numpy, dtype=type_)
         lst.append(new_tensor)
     if scaling_sens:
         lst.append(Tensor(scaling_sens, mstype.float32))
@@ -326,7 +338,7 @@ def _parallel_predict_check():
         dataset_strategy = context.get_auto_parallel_context("dataset_strategy")
         is_shard_dataset_mp = (dataset_strategy and dataset_strategy not in ("data_parallel", "full_batch"))
         if not context.get_auto_parallel_context("full_batch") and not is_shard_dataset_mp:
-            raise RuntimeError('Model prediction only supports full batch dataset. Please set "full_batch" with True.')
+            logger.warning('Using non full-batch dataset in model prediction may lead to incorrect data.')
 
 
 def _check_similar_layout(tensor_layout1, tensor_layout2):
@@ -336,7 +348,7 @@ def _check_similar_layout(tensor_layout1, tensor_layout2):
     for i in tensor_layout1[1]:
         if i == -1:
             continue
-        if tensor_layout1[0][-1-i] != tensor_layout2[0][-1-i]:
+        if tensor_layout1[0][-1 - i] != tensor_layout2[0][-1 - i]:
             return False
     return True
 
@@ -354,7 +366,7 @@ def _remove_repeated_slices(tensor_layout):
     tensor_map = tensor_layout[1]
     for dim in range(len(dev_mat)):
         if dim not in tensor_map:
-            dev_mat[-1-dim] = 1
+            dev_mat[-1 - dim] = 1
     new_tensor_layout[0] = dev_mat
     return new_tensor_layout
 
@@ -410,15 +422,24 @@ def _grads_divided_by_device_num_if_recomputation(grads):
     """
     If in pynative parallel and full_batch is True, divide grads by device num to ensure that the gradients is correct.
     """
-    if not grads or not _is_pynative_parallel() or not _get_full_batch():
+    if not _is_pynative_parallel() or not _get_full_batch():
         return grads
 
-    device_num = Tensor(_get_device_num(), grads[0].dtype)
+    device_num = _get_device_num()
     logger.info(f"In PyNative mode, when parallel mode is in "
                 f"({context.ParallelMode.SEMI_AUTO_PARALLEL}, {context.ParallelMode.AUTO_PARALLEL}) and "
                 f"full_batch is Ture, the gradients will be automatically divided by device_num({device_num}).")
-    new_grads = ()
-    for grad in grads:
-        new_grads += (grad / device_num,)
 
+    if not isinstance(grads, (tuple, Tensor)):
+        raise ValueError(f"The type of grads must be either Tuple[Tensor] or Tensor, but got {type(grads)}.")
+
+    if isinstance(grads, tuple):
+        new_grads = ()
+        if grads:
+            device_num_tensor = Tensor(device_num, grads[0].dtype)
+            for grad in grads:
+                new_grads += (grad / device_num_tensor,)
+    else:
+        device_num_tensor = Tensor(device_num, grads.dtype)
+        new_grads = grads / device_num_tensor
     return new_grads

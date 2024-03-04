@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,11 @@
 
 #include "plugin/device/ascend/kernel/rts/send.h"
 #include "runtime/event.h"
+#include "acl/acl.h"
+#include "acl/acl_rt.h"
 #include "plugin/device/ascend/hal/device/ge_runtime/task_info.h"
 #include "plugin/device/ascend/hal/device/ascend_stream_manager.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 
 using mindspore::ge::model_runner::EventRecordTaskInfo;
@@ -33,7 +35,7 @@ bool SendKernel::Init(const AnfNodePtr &anf_node) {
   auto primitive = common::AnfAlgo::GetCNodePrimitive(anf_node);
   MS_EXCEPTION_IF_NULL(primitive);
   if (!common::AnfAlgo::HasNodeAttr(kAttrEventId, anf_node->cast<CNodePtr>())) {
-    MS_LOG(EXCEPTION) << "SendKernel has no attr kAttrEventId";
+    MS_LOG(INTERNAL_EXCEPTION) << "SendKernel has no attr kAttrEventId";
   }
   event_id_ = GetValue<uint32_t>(primitive->GetAttr(kAttrEventId));
 
@@ -48,9 +50,9 @@ bool SendKernel::Launch(const std::vector<AddressPtr> &, const std::vector<Addre
                         const std::vector<AddressPtr> &, void *stream_ptr) {
   MS_EXCEPTION_IF_NULL(event_);
   MS_EXCEPTION_IF_NULL(stream_ptr);
-  rtError_t status = rtEventRecord(event_, stream_ptr);
-  if (status != RT_ERROR_NONE) {
-    MS_LOG(ERROR) << "Send op rtEventRecord failed!";
+  auto status = aclrtRecordEvent(event_, stream_ptr);
+  if (status != ACL_ERROR_NONE) {
+    MS_LOG(ERROR) << "Send op aclrtRecordEvent failed!";
     return false;
   }
   return true;

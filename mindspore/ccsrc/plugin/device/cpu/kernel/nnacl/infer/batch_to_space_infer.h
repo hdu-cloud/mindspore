@@ -17,7 +17,7 @@
 #define MINDSPORE_NNACL_BATCH_TO_SPACE_INFER_H
 
 #include "nnacl/infer/common_infer.h"
-#include "nnacl/batch_to_space.h"
+#include "nnacl/batch_to_space_parameter.h"
 
 #ifdef __cplusplus
 extern "C" {

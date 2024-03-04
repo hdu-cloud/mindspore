@@ -21,13 +21,30 @@
 #include "ir/anf.h"
 #include "ir/param_info.h"
 #include "runtime/device/kernel_runtime.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "utils/ms_utils.h"
 #include "runtime/device/ms_device_shape_transfer.h"
 #include "include/common/utils/config_manager.h"
 
 namespace mindspore::session {
+namespace {
+bool SkipUnusedNode(const std::shared_ptr<KernelGraph> &kernel_graph, const AnfNodePtr &input_node) {
+  MS_EXCEPTION_IF_NULL(kernel_graph);
+  MS_EXCEPTION_IF_NULL(input_node);
+  if (!input_node->isa<Parameter>() || !AnfAlgo::OutputAddrExist(input_node, 0)) {
+    MS_LOG(INFO) << "Kernel graph inputs have anfnode which is not Parameter or without output addr.";
+    return false;
+  }
+  auto pk_node = input_node->cast<ParameterPtr>();
+  MS_EXCEPTION_IF_NULL(pk_node);
+  if (!pk_node->IsUsedByRealKernelInGraph(kernel_graph->graph_id())) {
+    MS_LOG(INFO) << "Kernel graph inputs have anfnode which has no user.";
+    return false;
+  }
+  return true;
+}
+}  // namespace
 void AscendInferenceSession::LoadInputData(const std::shared_ptr<KernelGraph> &kernel_graph,
                                            const std::vector<tensor::TensorPtr> &inputs_const) const {
   MS_EXCEPTION_IF_NULL(kernel_graph);
@@ -37,8 +54,7 @@ void AscendInferenceSession::LoadInputData(const std::shared_ptr<KernelGraph> &k
   size_t no_weight_input = 0;
   for (auto &input_node : input_nodes) {
     tensor::TensorPtr tensor = nullptr;
-    if (!input_node->isa<Parameter>() || !AnfAlgo::OutputAddrExist(input_node, 0)) {
-      MS_LOG(INFO) << "Kernel graph inputs have anfnode which is not Parameter or without output addr.";
+    if (!SkipUnusedNode(kernel_graph, input_node)) {
       continue;
     }
     auto pk_node = input_node->cast<ParameterPtr>();
@@ -64,8 +80,7 @@ GraphId AscendInferenceSession::CompileGraphImpl(NotNull<FuncGraphPtr> func_grap
   // load weight data to device
   auto input_nodes = kernel_graph->inputs();
   for (auto &input_node : input_nodes) {
-    if (!input_node->isa<Parameter>() || !AnfAlgo::OutputAddrExist(input_node, 0)) {
-      MS_LOG(INFO) << "Kernel graph inputs have anfnode which is not Parameter or without output addr.";
+    if (!SkipUnusedNode(kernel_graph, input_node)) {
       continue;
     }
     auto pk_node = input_node->cast<ParameterPtr>();
@@ -109,21 +124,21 @@ bool AscendInferenceSession::CheckModelInputs(uint32_t graph_id, const std::vect
   }
 
   // check inputs
+  if (paras.size() != inputs.size()) {
+    MS_LOG(ERROR) << "Input number is inconsistent. The actual input number [" << inputs.size()
+                  << "] but the graph input number is [" << paras.size() << "]";
+    MS_LOG(ERROR) << "InputsInfo --" << InputsInfo(paras, inputs);
+    if (error_msg != nullptr) {
+      std::stringstream str_stream;
+      str_stream << "Input number is inconsistent. The given input number [" << inputs.size()
+                 << "] but the graph input number is [" << paras.size() << "]\n";
+      str_stream << "InputsInfo --" << InputsInfo(paras, inputs);
+      *error_msg = str_stream.str();
+    }
+    return false;
+  }
   for (size_t i = 0; i < paras.size(); ++i) {
     // compare input number
-    if (paras.size() != inputs.size()) {
-      MS_LOG(ERROR) << "Input number is inconsistent. The actual input number [" << inputs.size()
-                    << "] but the graph input number is [" << paras.size() << "]";
-      MS_LOG(ERROR) << "InputsInfo --" << InputsInfo(paras, inputs);
-      if (error_msg != nullptr) {
-        std::stringstream str_stream;
-        str_stream << "Input number is inconsistent. The given input number [" << inputs.size()
-                   << "] but the graph input number is [" << paras.size() << "]\n";
-        str_stream << "InputsInfo --" << InputsInfo(paras, inputs);
-        *error_msg = str_stream.str();
-      }
-      return false;
-    }
     auto input = inputs[no_weight_input++];
     if (!CompareInput(input, paras[i])) {
       MS_LOG(ERROR) << "Please check the input information.";

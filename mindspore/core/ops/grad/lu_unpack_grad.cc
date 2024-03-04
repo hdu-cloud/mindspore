@@ -15,13 +15,29 @@
  */
 
 #include "ops/grad/lu_unpack_grad.h"
+
 #include <algorithm>
-#include <vector>
+#include <memory>
 #include <set>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -45,6 +61,7 @@ abstract::TupleShapePtr LuUnpackGradInferShape(const PrimitivePtr &primitive,
   auto LU_data_dim1 = LU_data_shape[LU_data_shape.size() - 2];
   auto LU_data_dim2 = LU_data_shape[LU_data_shape.size() - 1];
   int64_t LU_data_min = std::min(LU_data_dim1, LU_data_dim2);
+
   if (LU_data_dim1 != L_data_dim1) {
     MS_EXCEPTION(ValueError) << "For '" << primitive->name()
                              << "', L_grad's data dim[-2] and LU_data's dim[-2] should be same.";
@@ -83,6 +100,23 @@ AbstractBasePtr LuUnpackGradInfer(const abstract::AnalysisEnginePtr &, const Pri
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(LuUnpackGrad, prim::kPrimLuUnpackGrad, LuUnpackGradInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGLuUnpackGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return LuUnpackGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return LuUnpackGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return LuUnpackGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(LuUnpackGrad, prim::kPrimLuUnpackGrad, AGLuUnpackGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

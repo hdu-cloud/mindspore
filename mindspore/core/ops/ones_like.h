@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_ONES_LIKE_H_
 #define MINDSPORE_CORE_OPS_ONES_LIKE_H_
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,8 +35,8 @@ class MIND_API OnesLike : public BaseOperator {
   /// \brief Init. Refer to the parameters of Python API @ref mindspore.ops.OnesLike for the inputs.
   void Init() const {}
 };
-abstract::AbstractBasePtr OnesLikeInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                        const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr OnesLikeInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

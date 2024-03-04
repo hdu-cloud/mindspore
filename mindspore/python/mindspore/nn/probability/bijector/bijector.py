@@ -16,10 +16,11 @@
 from mindspore import context
 from mindspore.nn.cell import Cell
 from mindspore.ops import operations as P
+from mindspore.ops import functional as F
 from mindspore.ops.operations import _inner_ops as inner
 from mindspore.common import dtype as mstype
 from mindspore.common.tensor import Tensor
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from ..distribution._utils.utils import CheckTensor, cast_to_tensor, raise_type_error
 from ..distribution import Distribution
 from ..distribution import TransformedDistribution
@@ -28,16 +29,16 @@ from ..distribution import TransformedDistribution
 class Bijector(Cell):
     """
     Bijecotr class. A bijector perform a mapping from one distribution to the other via some function.
-    If X is a random variable following the original distribution,
-    and g(x) is the mapping function,
-    then Y = g(X) is the random variable following the transformed distribution.
+    If :math:`X` is a random variable following the original distribution,
+    and :math:`g(x)` is the mapping function,
+    then :math:`Y = g(X)` is the random variable following the transformed distribution.
 
     Args:
-        is_constant_jacobian (bool): Whether the Bijector has constant derivative. Default: False.
-        is_injective (bool): Whether the Bijector is a one-to-one mapping. Default: True.
-        name (str): The name of the Bijector. Default: None.
-        dtype (mindspore.dtype): The type of the distributions that the Bijector can operate on. Default: None.
-        param (dict): The parameters used to initialize the Bijector. Default: None.
+        is_constant_jacobian (bool): Whether the Bijector has constant derivative. Default: ``False`` .
+        is_injective (bool): Whether the Bijector is a one-to-one mapping. Default: ``True`` .
+        name (str): The name of the Bijector. Default: ``None`` .
+        dtype (mindspore.dtype): The type of the distributions that the Bijector can operate on. Default: ``None`` .
+        param (dict): The parameters used to initialize the Bijector. Default: ``None`` .
 
     Note:
         `dtype` of bijector represents the type of the distributions that the bijector could operate on.
@@ -96,7 +97,6 @@ class Bijector(Cell):
         self.cast_base = P.Cast()
         self.dtype_base = P.DType()
         self.shape_base = P.Shape()
-        self.fill_base = P.Fill()
         self.sametypeshape_base = inner.SameTypeShape()
         self.issubclass_base = inner.IsSubClass()
 
@@ -140,13 +140,13 @@ class Bijector(Cell):
             if self.issubclass_base(value_type, mstype.float_):
                 return value
             return raise_type_error('input value of bijector', value_type, mstype.float_)
-        dtype_tensor = self.fill_base(self.dtype, self.shape_base(value), 0.0)
+        dtype_tensor = F.fill(self.dtype, self.shape_base(value), 0.0)
         self.sametypeshape_base(value, dtype_tensor)
         return value
 
     def _shape_mapping(self, shape):
-        shape_tensor = self.fill_base(self.parameter_type, shape, 0.0)
-        dist_shape_tensor = self.fill_base(
+        shape_tensor = F.fill(self.parameter_type, shape, 0.0)
+        dist_shape_tensor = F.fill(
             self.parameter_type, self.batch_shape, 0.0)
         return (shape_tensor + dist_shape_tensor).shape
 
@@ -165,7 +165,7 @@ class Bijector(Cell):
             self.common_dtype = None
         # cast value to a tensor if it is not None
         if isinstance(value, bool) or value is None:
-            raise TypeError("{} cannot be type {}".format(name, type(value)))
+            raise TypeError(f"{name} cannot be type {type(value)}")
         value_t = Tensor(value)
         # if the bijector's dtype is not specified
         if self.dtype is None:
@@ -189,7 +189,7 @@ class Bijector(Cell):
         """
         Calculate batch_shape based on parameters.
         """
-        if 'param_dict' not in self.parameters.keys():
+        if 'param_dict' not in self.parameters:
             return None
         param_dict = self.parameters.get('param_dict')
         broadcast_shape_tensor = None

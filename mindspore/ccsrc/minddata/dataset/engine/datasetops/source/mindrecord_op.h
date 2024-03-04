@@ -151,6 +151,16 @@ class MindRecordOp : public MappableLeafOp {
   /// \return Status The status code returned
   Status RemoveWorkers(int32_t num_workers = 1) override;
 
+  /// Initialize pull mode, calls PrepareData() within
+  /// @return Status The status code returned
+  Status InitPullMode() override;
+
+  /// Load a tensor row at location row_id for pull mode
+  /// \param row_id_type row_id - id for this tensor row
+  /// \param TensorRow row - loaded row
+  /// \return Status The status code returned
+  Status LoadTensorRowPullMode(row_id_type row_id, TensorRow *row) override;
+
  private:
   std::vector<std::string> dataset_file_;                  // dataset files
   bool load_dataset_;                                      // load dataset from single file or not
@@ -164,8 +174,6 @@ class MindRecordOp : public MappableLeafOp {
   std::map<std::string, std::string> sample_bytes_;
 
   std::unique_ptr<DataSchema> data_schema_;  // Data schema for column typing
-  std::vector<std::string> columns_blob_;    // Blob Columns to load from dataset
-  std::vector<int32_t> columns_blob_index_;  // Blob Columns to load from dataset
 
   std::unique_ptr<ShardReader> shard_reader_;
 

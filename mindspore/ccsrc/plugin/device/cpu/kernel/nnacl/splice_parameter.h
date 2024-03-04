@@ -14,16 +14,15 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_SPLICE_PARAMETER_H_
-#define MINDSPORE_NNACL_SPLICE_PARAMETER_H_
+#ifndef NNACL_SPLICE_PARAMETER_H_
+#define NNACL_SPLICE_PARAMETER_H_
 #include "nnacl/op_base.h"
 typedef struct SpliceParameter {
   OpParameter op_parameter_;
   int context_dim_;
   int forward_indexes_dim_;
-  int src_to_dst_row_offset_;
   int *context_;
   int *forward_indexes_;
   int output_dim_;
 } SpliceParameter;
-#endif  // MINDSPORE_NNACL_SPLICE_PARAMETER_H_
+#endif  // NNACL_SPLICE_PARAMETER_H_

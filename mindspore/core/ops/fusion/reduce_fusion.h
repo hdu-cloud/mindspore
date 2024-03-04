@@ -17,11 +17,10 @@
 #ifndef MINDSPORE_CORE_OPS_REDUCE_FUSION_H_
 #define MINDSPORE_CORE_OPS_REDUCE_FUSION_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/reduce.h"
+#include <string>
 #include "mindapi/base/types.h"
+#include "ops/reduce.h"
 
 namespace mindspore {
 namespace ops {
@@ -84,8 +83,6 @@ class MIND_API ReduceFusion : public Reduce {
   /// \return a size factor applied to output.
   float get_coeff() const;
 };
-abstract::AbstractBasePtr ReduceFusionInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                            const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

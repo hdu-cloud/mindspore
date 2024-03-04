@@ -15,9 +15,12 @@
  */
 
 #include "plugin/device/ascend/kernel/ascend_kernel_mod.h"
-#include "runtime/device/kernel_runtime.h"
-#include "runtime/rt.h"
+#include <algorithm>
+#include "runtime/pynative/op_runtime_info.h"
 #include "include/common/utils/anfalgo.h"
+#include "include/backend/anf_runtime_algorithm.h"
+#include "include/common/utils/utils.h"
+#include "utils/log_adapter.h"
 namespace mindspore {
 namespace kernel {
 void AscendKernelMod::SetAtomicCleanNodes(const std::vector<CNodePtr> &atomic_clean_node) {
@@ -30,14 +33,33 @@ void AscendKernelMod::SetAtomicCleanNodes(const std::vector<CNodePtr> &atomic_cl
 void AscendKernelMod::UpdateOutputSizeList() {
   auto node = anf_node_.lock();
   MS_EXCEPTION_IF_NULL(node);
+  auto op_runtime_info = node->user_data<runtime::OpRuntimeInfo>();
   auto cnode = node->cast<CNodePtr>();
+  if (op_runtime_info != nullptr) {
+    op_runtime_info->Resize(node);
+  }
   for (size_t i = 0; i < output_size_list_.size(); ++i) {
     auto ori_output_size = output_size_list_[i];
-    auto real_output_size = AnfAlgo::GetOutputTensorMemSize(cnode, i);
+    size_t real_output_size =
+      (op_runtime_info == nullptr) ? AnfAlgo::GetOutputTensorMemSize(cnode, i) : op_runtime_info->output_tensor_size(i);
     if (ori_output_size != real_output_size) {
       output_size_list_[i] = real_output_size;
     }
   }
+}
+
+bool AscendKernelMod::IsOutputAllEmptyTensor() {
+  auto node = anf_node_.lock();
+  MS_EXCEPTION_IF_NULL(node);
+  for (size_t i = 0; i < output_size_list_.size(); ++i) {
+    auto output_shape = common::AnfAlgo::GetOutputInferShape(node, i);
+    if (std::none_of(output_shape.cbegin(), output_shape.cend(), [](int64_t dim) { return dim == 0; })) {
+      is_output_all_empty_tensor_ = false;
+      return false;
+    }
+  }
+  is_output_all_empty_tensor_ = true;
+  return true;
 }
 
 bool AscendKernelMod::IsNeedRetrieveOutputShape() {

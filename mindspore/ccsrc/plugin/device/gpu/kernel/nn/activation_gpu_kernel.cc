@@ -16,32 +16,20 @@
 
 #include "plugin/device/gpu/kernel/nn/activation_gpu_kernel.h"
 #include <memory>
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "ops/elu.h"
-#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/unary_op_impl.cuh"
 namespace mindspore {
 namespace kernel {
 namespace {
 constexpr auto kReLU6 = "ReLU6";
-constexpr auto kTanh = "Tanh";
 constexpr auto kElu = "Elu";
-constexpr auto kSigmoid = "Sigmoid";
 }  // namespace
 
 std::map<std::string, std::vector<std::pair<KernelAttr, ActivationFwdGpuKernelMod::ActivationFunc>>>
   ActivationFwdGpuKernelMod::kernel_attr_map_ = {
     {kReLU6,
      {{KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
-       &ActivationFwdGpuKernelMod::LaunchKernel<float>},
-      {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeFloat16),
-       &ActivationFwdGpuKernelMod::LaunchKernel<half>}}},
-    {kTanh,
-     {{KernelAttr().AddInputAttr(kNumberTypeComplex128).AddOutputAttr(kNumberTypeComplex128),
-       &ActivationFwdGpuKernelMod::LaunchKernel<utils::Complex<double>>},
-      {KernelAttr().AddInputAttr(kNumberTypeComplex64).AddOutputAttr(kNumberTypeComplex64),
-       &ActivationFwdGpuKernelMod::LaunchKernel<utils::Complex<float>>},
-      {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64),
-       &ActivationFwdGpuKernelMod::LaunchKernel<double>},
-      {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
        &ActivationFwdGpuKernelMod::LaunchKernel<float>},
       {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeFloat16),
        &ActivationFwdGpuKernelMod::LaunchKernel<half>}}},
@@ -52,17 +40,7 @@ std::map<std::string, std::vector<std::pair<KernelAttr, ActivationFwdGpuKernelMo
        &ActivationFwdGpuKernelMod::LaunchKernel<float>},
       {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeFloat16),
        &ActivationFwdGpuKernelMod::LaunchKernel<half>}}},
-    {kSigmoid,
-     {{KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
-       &ActivationFwdGpuKernelMod::LaunchKernel<float>},
-      {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeFloat16),
-       &ActivationFwdGpuKernelMod::LaunchKernel<half>},
-      {KernelAttr().AddInputAttr(kNumberTypeComplex64).AddOutputAttr(kNumberTypeComplex64),
-       &ActivationFwdGpuKernelMod::LaunchKernel<utils::Complex<float>>},
-      {KernelAttr().AddInputAttr(kNumberTypeComplex128).AddOutputAttr(kNumberTypeComplex128),
-       &ActivationFwdGpuKernelMod::LaunchKernel<utils::Complex<double>>},
-      {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64),
-       &ActivationFwdGpuKernelMod::LaunchKernel<double>}}}};
+};
 
 bool ActivationFwdGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                      const std::vector<KernelTensorPtr> &outputs) {
@@ -87,10 +65,7 @@ bool ActivationFwdGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const
   kernel_func_ = kernel_attr_map_.at(kernel_name_)[index].second;
 
   static const std::map<std::string, cudnnActivationMode_t> activation_mode_map = {
-    {kReLU6, CUDNN_ACTIVATION_CLIPPED_RELU},
-    {kTanh, CUDNN_ACTIVATION_TANH},
-    {kElu, CUDNN_ACTIVATION_ELU},
-    {kSigmoid, CUDNN_ACTIVATION_SIGMOID}};
+    {kReLU6, CUDNN_ACTIVATION_CLIPPED_RELU}, {kElu, CUDNN_ACTIVATION_ELU}};
   auto mode_iter = activation_mode_map.find(kernel_name_);
   if (mode_iter == activation_mode_map.end()) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', only support these activations: "
@@ -100,11 +75,7 @@ bool ActivationFwdGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const
   }
   mode_ = mode_iter->second;
 
-  const auto dtype = inputs.at(kIndex0)->GetDtype();
-  if ((dtype == kNumberTypeFloat64 && kernel_name_ != kElu) || (dtype == kNumberTypeComplex64) ||
-      (dtype == kNumberTypeComplex128)) {
-    is_additional_dtype_ = true;
-  }
+  dtype_ = inputs.at(kIndex0)->GetDtype();
   return true;
 }
 
@@ -122,11 +93,6 @@ int ActivationFwdGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, cons
   input_shape_ = inputs.at(kIndex0)->GetShapeVector();
   is_null_input_ = CHECK_NULL_INPUT(input_shape_);
   if (is_null_input_) {
-    return KRET_OK;
-  }
-
-  if (is_additional_dtype_) {
-    // Does not call Cudnn
     return KRET_OK;
   }
 
@@ -188,14 +154,6 @@ bool ActivationFwdGpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPt
                                              const std::vector<kernel::AddressPtr> &outputs) {
   T *input = GetDeviceAddress<T>(inputs, kIndex0);
   T *output = GetDeviceAddress<T>(outputs, kIndex0);
-  if (is_additional_dtype_) {
-    if (kernel_name_ == kTanh) {
-      Tanh(input, output, input_size_list_[0] / sizeof(T), reinterpret_cast<cudaStream_t>(cuda_stream_));
-    } else {
-      Sigmoid(input, output, input_size_list_[0] / sizeof(T), reinterpret_cast<cudaStream_t>(cuda_stream_));
-    }
-    return true;
-  }
 
   if constexpr (std::is_same_v<T, double>) {
     constexpr double alpha = 1.0;
@@ -218,11 +176,7 @@ bool ActivationFwdGpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPt
 
 MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeGpuKernelMod, ReLU6,
                                  []() { return std::make_shared<ActivationFwdGpuKernelMod>(kReLU6); });
-MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeGpuKernelMod, Tanh,
-                                 []() { return std::make_shared<ActivationFwdGpuKernelMod>(kTanh); });
 MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeGpuKernelMod, Elu,
                                  []() { return std::make_shared<ActivationFwdGpuKernelMod>(kElu); });
-MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeGpuKernelMod, Sigmoid,
-                                 []() { return std::make_shared<ActivationFwdGpuKernelMod>(kSigmoid); });
 }  // namespace kernel
 }  // namespace mindspore

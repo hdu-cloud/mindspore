@@ -17,9 +17,9 @@
 #ifndef MINDSPORE_CORE_OPS_MESHGRID_H_
 #define MINDSPORE_CORE_OPS_MESHGRID_H_
 
-#include <vector>
 #include <memory>
 #include <string>
+#include <vector>
 #include "ops/base_operator.h"
 
 namespace mindspore {
@@ -40,8 +40,8 @@ class MIND_API Meshgrid : public BaseOperator {
   std::string get_indexing() const;
 };
 
-abstract::AbstractBasePtr MeshgridInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                        const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr MeshgridInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimMeshgridPtr = std::shared_ptr<Meshgrid>;
 }  // namespace ops
 }  // namespace mindspore

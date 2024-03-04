@@ -15,9 +15,26 @@
  */
 
 #include "ops/lars_v2_update.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include <map>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -77,7 +94,7 @@ abstract::ShapePtr LARSUpdateInferShape(const PrimitivePtr &primitive, const std
     (void)CheckAndConvertUtils::CheckInteger(para_name, learning_rate_shape[kShape][0], kEqual, 1);
   }
 
-  return std::make_shared<abstract::Shape>(weight_shape[kShape], weight_shape[kMinShape], weight_shape[kMaxShape]);
+  return std::make_shared<abstract::Shape>(weight_shape[kShape]);
 }
 
 TypePtr LARSUpdateInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
@@ -102,6 +119,24 @@ AbstractBasePtr LARSUpdateInfer(const abstract::AnalysisEnginePtr &, const Primi
   auto infer_shape = LARSUpdateInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(LARSUpdate, prim::kPrimLARSUpdate, LARSUpdateInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGLARSUpdateInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return LARSUpdateInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return LARSUpdateInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return LARSUpdateInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(LARSUpdate, prim::kPrimLARSUpdate, AGLARSUpdateInfer, false);
 }  // namespace ops
 }  // namespace mindspore

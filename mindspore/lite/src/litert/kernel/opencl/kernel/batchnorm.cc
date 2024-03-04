@@ -21,6 +21,7 @@
 #include "src/litert/kernel/opencl/kernel/batchnorm.h"
 #include "src/litert/kernel/opencl/utils.h"
 #include "src/litert/kernel/opencl/cl/batchnorm.cl.inc"
+#include "nnacl/batchnorm_parameter.h"
 
 using mindspore::kernel::KERNEL_ARCH::kGPU;
 using mindspore::lite::KernelRegistrar;
@@ -59,7 +60,8 @@ int BatchNormOpenCLKernel::CheckSpecs() {
 
 int BatchNormGetWorkGroup(const std::vector<size_t> &global, std::vector<size_t> *local, int max_size) {
   const int max_divider = 8;
-  const int max_x = 4, max_y = 8;
+  const int max_x = 4;
+  const int max_y = 8;
   int x = std::min(GetMaxDivisorStrategy1(global[0], max_divider), max_x);
   CHECK_EQUAL_RETURN(x, 0);
   int yz = max_size / x;

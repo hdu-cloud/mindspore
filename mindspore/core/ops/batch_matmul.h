@@ -16,10 +16,10 @@
 
 #ifndef MINDSPORE_CORE_OPS_BATCH_MATMUL_H_
 #define MINDSPORE_CORE_OPS_BATCH_MATMUL_H_
-#include <vector>
 #include <memory>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 #include "ops/mat_mul.h"
 
 namespace mindspore {
@@ -34,8 +34,8 @@ class MIND_API BatchMatMul : public MatMul {
   /// \brief Constructor.
   BatchMatMul() : MatMul(kNameBatchMatMul) { InitIOName({"x1", "x2"}, {"output"}); }
 };
-abstract::AbstractBasePtr BatchMatmulInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                           const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr BatchMatmulInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                    const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

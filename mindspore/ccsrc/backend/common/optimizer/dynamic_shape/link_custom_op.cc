@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,12 @@
 
 #include <memory>
 #include <vector>
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "utils/anf_utils.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "backend/common/optimizer/dynamic_shape/dynamic_shape_helper.h"
 #include "abstract/ops/primitive_infer_map.h"
 
@@ -176,10 +178,12 @@ void LinkCustomOp::AttachDependNodes(const FuncGraphPtr &g, const AnfNodePtrList
   auto make_tuple_node = g->NewCNode(mk_inputs);
 
   // Get first element item form that maketuple and return.
-  auto get_1st_item = g->NewCNode(AnfNodePtrList{NewValueNode(std::make_shared<Primitive>(prim::kTupleGetItem)),
-                                                 make_tuple_node, NewValueNode(SizeToLong(kTupleFirstItemIndex))});
+  auto get_1st_item =
+    g->NewCNode(AnfNodePtrList{NewValueNode(std::make_shared<Primitive>(mindspore::kTupleGetItemOpName)),
+                               make_tuple_node, NewValueNode(SizeToLong(kTupleFirstItemIndex))});
   // The getitem node always obtains the first input of the maketuple, which is the output in the original graph,
   // so set the abstract of the output to the getitem node.
+  MS_EXCEPTION_IF_NULL(get_1st_item);
   get_1st_item->set_abstract(output_node->abstract());
   // Attach back.
   return_node->set_input(kFirstDataInputIndex, get_1st_item);
@@ -189,9 +193,10 @@ bool LinkCustomOp::Run(const FuncGraphPtr &func_graph) {
   MS_EXCEPTION_IF_NULL(func_graph);
   bool changed = false;
   AnfNodePtrList depend_nodes;
-  auto node_list = TopoSort(func_graph->get_return());
+  const auto &node_list = TopoSort(func_graph->get_return());
   added_set_.clear();
   for (const auto &node : node_list) {
+    MS_EXCEPTION_IF_NULL(node);
     CNodePtr cnode = node->cast<CNodePtr>();
     if (cnode == nullptr || !CustomActorNodeManager::Instance().IsRegistered(cnode)) {
       continue;
@@ -213,6 +218,7 @@ bool LinkCustomOp::Run(const FuncGraphPtr &func_graph) {
       mng = Manage(func_graph, true);
       func_graph->set_manager(mng);
     }
+    MS_EXCEPTION_IF_NULL(mng);
     mng->RemoveRoots();
     mng->KeepRoots({func_graph});
   }

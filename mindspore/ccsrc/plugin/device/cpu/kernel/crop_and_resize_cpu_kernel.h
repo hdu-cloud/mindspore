@@ -39,6 +39,7 @@ constexpr size_t IMAGE = 0;
 constexpr size_t BOXES = 1;
 constexpr size_t BOX_INDEX = 2;
 constexpr size_t CROP_SIZE = 3;
+constexpr size_t IMAGE_BATCH = 0;
 constexpr size_t IMAGE_HEIGHT = 1;
 constexpr size_t IMAGE_WEIGHT = 2;
 class CropAndResizeCpuKernelMod : public NativeCpuKernelMod {
@@ -67,6 +68,14 @@ class CropAndResizeCpuKernelMod : public NativeCpuKernelMod {
   template <typename T>
   bool LaunchKernel(const std::vector<kernel::AddressPtr> &inputs, const std::vector<kernel::AddressPtr> &outputs);
 
+  template <typename T>
+  void BilinearResize(T *input_image, float target_x, float target_y, size_t pos, int box_index, int pos_channel,
+                      float *output) const;
+
+  template <typename T>
+  void BilinearV2Resize(T *input_image, float y1, float x1, float y2, float x2, int pos_y, int pos_x, size_t pos,
+                        int box_index, int pos_channel, float *output) const;
+
   using CropAndResizeFunc = std::function<bool(CropAndResizeCpuKernelMod *, const std::vector<kernel::AddressPtr> &,
                                                const std::vector<kernel::AddressPtr> &)>;
   static std::vector<std::pair<KernelAttr, CropAndResizeFunc>> func_list_;
@@ -74,6 +83,7 @@ class CropAndResizeCpuKernelMod : public NativeCpuKernelMod {
   int method_{1};
   float extrapolation_value_{0.0};
   int output_size_{0};
+  int input_batch_{0};
   int input_height_{0};
   int input_width_{0};
   int final_height_{0};

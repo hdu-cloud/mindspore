@@ -17,15 +17,15 @@
 #ifndef MINDSPORE_CORE_OPS_MVLGAMMA_GRAD_H_
 #define MINDSPORE_CORE_OPS_MVLGAMMA_GRAD_H_
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
-#include "ops/primitive_c.h"
-#include "ops/op_utils.h"
 #include "abstract/abstract_value.h"
-#include "utils/check_convert_utils.h"
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,15 +35,12 @@ class MIND_API MvlgammaGrad : public BaseOperator {
   MIND_API_BASE_MEMBER(MvlgammaGrad);
   MvlgammaGrad() : BaseOperator(kNameMvlgammaGrad) { InitIOName({"y_grad", "x"}, {"x_grad"}); }
   void Init(const int64_t p = 0);
-  /// \brief Set p.
   void set_p(const int64_t p);
   int64_t get_p() const;
-  // ~MvlgammaGrad() = default;
-  // MS_DECLARE_PARENT(MvlgammaGrad, PrimitiveC);
 };
 
-abstract::AbstractBasePtr MvlgammaGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                            const std::vector<AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr MvlgammaGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                     const std::vector<AbstractBasePtr> &input_args);
 using PrimMvlgammaGradPtr = std::shared_ptr<MvlgammaGrad>;
 }  // namespace ops
 }  // namespace mindspore

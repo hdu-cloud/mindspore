@@ -16,7 +16,7 @@ import os
 import pytest
 
 
-@pytest.mark.level1
+@pytest.mark.level2
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_single
 def test_split_ref_without_optim():
@@ -30,13 +30,14 @@ def test_split_ref_without_optim():
     )
     if return_code != 0:
         os.system(f"echo '\n**************** Worker Log ****************'")
-        os.system(f"grep -E 'ERROR|Error|error' -C 15 ./worker*/worker*.log")
+        os.system(f"grep -E 'ERROR|Error' -C 15 ./worker*/worker*.log")
+        os.system(f"cat ./worker*/worker*.log | grep acc")
         os.system(f"echo '\n**************** Scheduler Log ****************'")
-        os.system(f"grep -E 'ERROR|Error|error' -C 15 ./sched/sched.log")
+        os.system(f"grep -E 'ERROR|Error' -C 15 ./sched/sched.log")
     assert return_code == 0
 
 
-@pytest.mark.level1
+@pytest.mark.level2
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_single
 def test_split_optim():
@@ -50,7 +51,8 @@ def test_split_optim():
     )
     if return_code != 0:
         os.system(f"echo '\n**************** Worker Log ****************'")
-        os.system(f"grep -E 'ERROR|Error|error' -C 15 ./worker*/worker*.log")
+        os.system(f"grep -E 'ERROR|Error' -C 15 ./worker*/worker*.log")
+        os.system(f"cat ./worker*/worker*.log | grep acc")
         os.system(f"echo '\n**************** Scheduler Log ****************'")
-        os.system(f"grep -E 'ERROR|Error|error' -C 15 ./sched/sched.log")
+        os.system(f"grep -E 'ERROR|Error' -C 15 ./sched/sched.log")
     assert return_code == 0

@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <complex>
 #include "plugin/device/cpu/kernel/segment_max_min_cpu_kernel.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 
 namespace mindspore {
@@ -44,7 +45,7 @@ void ComputeFuncMin(void *output_addr, void *input_addr) {
 }
 
 template <typename T>
-T SegmentMaxMinCPUKernelMod::GetInitValue() {
+T SegmentMaxMinCPUKernelMod::GetInitValue() const {
   static const std::map<std::string, T> SegmentMaxMinInitValueMap{{prim::kPrimSegmentMax->name(), static_cast<T>(0.0)},
                                                                   {prim::kPrimSegmentMin->name(), static_cast<T>(0.0)}};
   if (SegmentMaxMinInitValueMap.find(kernel_name_) == SegmentMaxMinInitValueMap.end()) {
@@ -150,7 +151,7 @@ std::vector<KernelAttr> SegmentMaxMinCPUKernelMod::GetOpSupport() {
 
 template <typename T1, typename T2>
 bool SegmentMaxMinCPUKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs,
-                                             const std::vector<kernel::AddressPtr> &workspace,
+                                             const std::vector<kernel::AddressPtr> &,
                                              const std::vector<kernel::AddressPtr> &outputs) {
   if (kernel_name_ == prim::kPrimSegmentMax->name() || kernel_name_ == prim::kPrimSegmentMin->name()) {
     if constexpr (std::is_same_v<T1, std::complex<float>>) {
@@ -180,7 +181,7 @@ bool SegmentMaxMinCPUKernelMod::LaunchKernel(const std::vector<kernel::AddressPt
       const size_t count = static_cast<size_t>(segments[i]);
       int64_t count_no = 0;
       for (size_t j = 0; j < i; ++j) {
-        count_no += static_cast<size_t>(segments[j]);
+        count_no += static_cast<int64_t>(segments[j]);
       }
       size_t input_addr_base = LongToSize(count_no) * num_compare_per;
       auto task = [&](size_t start, size_t end) {
@@ -188,10 +189,11 @@ bool SegmentMaxMinCPUKernelMod::LaunchKernel(const std::vector<kernel::AddressPt
           size_t res_init_addr = input_addr_base + j;
           T1 res_value = input_x_data_addr[res_init_addr];
           for (size_t k = 1; k < count; ++k) {
-            int cmp_addr = res_init_addr + k * num_compare_per;
+            int cmp_addr = SizeToInt(res_init_addr + k * num_compare_per);
             compute_func_(static_cast<void *>(&res_value), static_cast<void *>(input_x_data_addr + cmp_addr));
           }
-          output_data_addr[segment_ids_data_addr[LongToSize(count_no)] * num_compare_per + j] = res_value;
+          output_data_addr[static_cast<size_t>(segment_ids_data_addr[LongToSize(count_no)]) * num_compare_per + j] =
+            res_value;
         }
       };
       if (num_compare_per < kDataSizeThreshold) {
@@ -206,17 +208,18 @@ bool SegmentMaxMinCPUKernelMod::LaunchKernel(const std::vector<kernel::AddressPt
         const size_t count = static_cast<size_t>(segments[i]);
         int64_t count_no = 0;
         for (size_t j = 0; j < i; ++j) {
-          count_no += static_cast<size_t>(segments[j]);
+          count_no += static_cast<int64_t>(segments[j]);
         }
         size_t input_addr_base = LongToSize(count_no) * num_compare_per;
         for (size_t j = 0; j < num_compare_per; ++j) {
           size_t res_init_addr = input_addr_base + j;
           T1 res_value = input_x_data_addr[res_init_addr];
           for (size_t k = 1; k < count; ++k) {
-            int cmp_addr = res_init_addr + k * num_compare_per;
+            int cmp_addr = SizeToInt(res_init_addr + k * num_compare_per);
             compute_func_(static_cast<void *>(&res_value), static_cast<void *>(input_x_data_addr + cmp_addr));
           }
-          output_data_addr[segment_ids_data_addr[LongToSize(count_no)] * num_compare_per + j] = res_value;
+          output_data_addr[static_cast<size_t>(segment_ids_data_addr[LongToSize(count_no)]) * num_compare_per + j] =
+            res_value;
         }
       }
     };

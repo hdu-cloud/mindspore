@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,12 +20,14 @@
 #include <map>
 #include <set>
 #include <algorithm>
+#include "ops/ascend_op_name.h"
+#include "acl/acl_rt.h"
 #include "runtime/rt.h"
 #include "external/acl/acl_rt.h"
 #include "ir/tensor.h"
 #include "include/common/utils/anfalgo.h"
-#include "runtime/device/kernel_info.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/kernel_info.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "plugin/device/ascend/hal/device/ge_runtime/model_runner.h"
 #include "plugin/device/ascend/hal/device/tasksink/task_generator.h"
 
@@ -59,15 +61,15 @@ bool CheckTaskValid(const CNodePtr &node, const std::vector<void *> &args_datas)
   // Check input/output/workspace
   auto input_addrs = TaskGenerator::GetTaskInput(node);
   auto output_addrs = TaskGenerator::GetTaskOutput(node);
-  auto workspace_addrs = TaskGenerator::GetTaskWorkspace(node);
 
   std::vector<AddressPtr> node_addresses;
+  // Only need to check input and output.
+  // The overflow addr was additionally added to workspace.
   std::move(input_addrs.begin(), input_addrs.end(), std::back_inserter(node_addresses));
   std::move(output_addrs.begin(), output_addrs.end(), std::back_inserter(node_addresses));
-  std::move(workspace_addrs.begin(), workspace_addrs.end(), std::back_inserter(node_addresses));
 
-  if (node_addresses.size() != args_datas.size()) {
-    MS_LOG(ERROR) << "Check failed, Node " << node->UniqueName() << " total addr size " << node_addresses.size()
+  if (node_addresses.size() > args_datas.size()) {
+    MS_LOG(ERROR) << "Node " << node->UniqueName() << " total addr size " << node_addresses.size()
                   << " is not equal to " << args_datas.size();
     return false;
   }
@@ -76,8 +78,8 @@ bool CheckTaskValid(const CNodePtr &node, const std::vector<void *> &args_datas)
     auto node_address = node_addresses[i];
     MS_EXCEPTION_IF_NULL(node_address);
     if (node_address->addr != args_datas[i]) {
-      MS_LOG(ERROR) << "Node " << node->UniqueName() << " addr " << node_address->addr << " not equal to addr of task "
-                    << args_datas[i] << " index:" << i;
+      MS_LOG(WARNING) << "Node " << node->UniqueName() << " addr " << node_address->addr
+                      << " not equal to addr of task " << args_datas[i] << " index:" << i;
       task_valid = false;
     }
   }
@@ -161,8 +163,8 @@ void DumpDeviceAddressInGraph(const session::KernelGraph &graph) {
   auto graph_id = graph.graph_id();
   auto tasks = ge::model_runner::ModelRunner::Instance().GetTaskList(graph_id);
   std::map<std::string, TaskPtr> op_name_to_task;
-  std::transform(tasks.begin(), tasks.end(), std::inserter(op_name_to_task, op_name_to_task.end()),
-                 [](const TaskPtr &task) { return std::make_pair(task->task_name(), task); });
+  (void)std::transform(tasks.begin(), tasks.end(), std::inserter(op_name_to_task, op_name_to_task.end()),
+                       [](const TaskPtr &task) { return std::make_pair(task->task_name(), task); });
   MS_LOG(WARNING) << "Start dump device address for graph:" << graph.ToString();
   auto nodes = graph.execution_order();
   for (const auto &node : nodes) {
@@ -212,7 +214,7 @@ void DumpDeviceAddressInGraph(const session::KernelGraph &graph) {
   }
   for (const auto &kernel : graph.execution_order()) {
     MS_EXCEPTION_IF_NULL(kernel);
-    auto output_num = common::AnfAlgo::GetOutputTensorNum(kernel);
+    auto output_num = AnfAlgo::GetOutputTensorNum(kernel);
     for (size_t i = 0; i < output_num; ++i) {
       MS_LOG(WARNING) << "Graph:" << graph.ToString() << " kernel:" << kernel->fullname_with_scope()
                       << " output index:" << i << " device address:" << AnfAlgo::GetMutableOutputAddr(kernel, i, false)
@@ -235,26 +237,29 @@ void CheckZeroCopyTaskValid(const session::KernelGraph &graph,
   for (const auto &kernel : graph.execution_order()) {
     MS_EXCEPTION_IF_NULL(kernel);
     auto input_num = common::AnfAlgo::GetInputTensorNum(kernel);
-    auto output_num = common::AnfAlgo::GetOutputTensorNum(kernel);
+    auto output_num = AnfAlgo::GetOutputTensorNum(kernel);
     for (size_t i = 0; i < output_num; ++i) {
       const auto device_address = AnfAlgo::GetMutableOutputAddr(kernel, i, false);
       if (device_address != nullptr && device_address->GetPtr() == nullptr &&
           node_to_offset.find(std::pair(kernel, i + input_num)) == node_to_offset.end()) {
         DumpDeviceAddressInGraph(graph);
-        MS_LOG(EXCEPTION) << "Failed to generate zero copy task for kernel:" << kernel->fullname_with_scope()
-                          << " output index:" << i << " in graph:" << graph.ToString();
+        MS_LOG(INTERNAL_EXCEPTION) << "Failed to generate zero copy task for kernel:" << kernel->fullname_with_scope()
+                                   << " output index:" << i << " in graph:" << graph.ToString();
       }
     }
 
     for (size_t i = 0; i < input_num; ++i) {
       size_t input_index_in_graph = AnfAlgo::GetInputGraphIdxByKernelIdx(kernel, i);
       const auto &input_with_index = common::AnfAlgo::GetPrevNodeOutput(kernel, input_index_in_graph, true);
+      if (common::AnfAlgo::IsNoneInput(kernel, i)) {
+        continue;
+      }
       const auto device_address = AnfAlgo::GetMutableOutputAddr(input_with_index.first, input_with_index.second, false);
       if (device_address != nullptr && device_address->GetPtr() == nullptr &&
           node_to_offset.find(std::pair(kernel, i)) == node_to_offset.end()) {
         DumpDeviceAddressInGraph(graph);
-        MS_LOG(EXCEPTION) << "Failed to generate zero copy task for kernel:" << kernel->fullname_with_scope()
-                          << " input index:" << i << " in graph:" << graph.ToString();
+        MS_LOG(INTERNAL_EXCEPTION) << "Failed to generate zero copy task for kernel:" << kernel->fullname_with_scope()
+                                   << " input index:" << i << " in graph:" << graph.ToString();
       }
     }
   }
@@ -265,7 +270,7 @@ void *ParameterZeroCopyTask::GetAddressPtr() {
   auto node = anf_node_.lock();
   MS_EXCEPTION_IF_NULL(node);
   if (!node->isa<Parameter>()) {
-    MS_LOG(EXCEPTION) << "Not a parameter node " << node->DebugString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Not a parameter node " << node->DebugString();
   }
   auto kernel_info = dynamic_cast<KernelInfo *>(node->kernel_info());
   MS_EXCEPTION_IF_NULL(kernel_info);
@@ -280,7 +285,7 @@ void *ValueNodeZeroCopyTask::GetAddressPtr() {
   auto node = anf_node_.lock();
   MS_EXCEPTION_IF_NULL(node);
   if (!node->isa<ValueNode>()) {
-    MS_LOG(EXCEPTION) << "Not a ValueNode " << node->DebugString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Not a ValueNode " << node->DebugString();
   }
 
   auto value_node = node->cast<ValueNodePtr>();
@@ -297,13 +302,13 @@ void *CNodeZeroCopyTask::GetAddressPtr() {
   auto node = anf_node_.lock();
   MS_EXCEPTION_IF_NULL(node);
   if (!node->isa<CNode>()) {
-    MS_LOG(EXCEPTION) << "Not a CNode " << node->DebugString();
+    MS_LOG(INTERNAL_EXCEPTION) << "Not a CNode " << node->DebugString();
   }
   auto node_device_address = AnfAlgo::GetMutableOutputAddr(node, output_index_, false);
   MS_EXCEPTION_IF_NULL(node_device_address);
   if (node_device_address->GetMutablePtr() == nullptr) {
-    MS_LOG(EXCEPTION) << "Empty ptr in device address:" << node_device_address
-                      << " for node:" << node->fullname_with_scope() << " index:" << output_index_;
+    MS_LOG(INTERNAL_EXCEPTION) << "Empty ptr in device address:" << node_device_address
+                               << " for node:" << node->fullname_with_scope() << " index:" << output_index_;
   }
   MS_LOG(DEBUG) << "Get ptr:" << node_device_address->GetMutablePtr() << " for device address:" << node_device_address
                 << " in node:" << node->fullname_with_scope();
@@ -341,7 +346,7 @@ std::vector<KernelWithIndex> GetInputNodeWithIndex(const CNodePtr &node, const T
                                                    std::set<std::pair<AnfNodePtr, size_t>> *node_to_offset) {
   std::vector<KernelWithIndex> input_node_with_indexs;
   auto input_num = common::AnfAlgo::GetInputTensorNum(node);
-  if (common::AnfAlgo::GetCNodeName(node) == kAtomicAddrCleanOpName) {
+  if (common::AnfAlgo::GetCNodeName(node) == kMemSetOpName) {
     // For atomic addr clean op, the args in task is not the input node of kernel, we should get the real input index
     // from the input node. The output and workspace addr should be reset, and the output addr should be collect.
     size_t workspace_size = 0;
@@ -353,7 +358,7 @@ std::vector<KernelWithIndex> GetInputNodeWithIndex(const CNodePtr &node, const T
           auto clean_output_indexs = common::AnfAlgo::GetNodeAttr<std::vector<size_t>>(input, kAttrAtomicOutputIndexs);
           for (auto index : clean_output_indexs) {
             MS_LOG(DEBUG) << "atomic addr clean index:" << index << " for node:" << input->fullname_with_scope();
-            input_node_with_indexs.emplace_back(input, index);
+            (void)input_node_with_indexs.emplace_back(input, index);
           }
         } else if (common::AnfAlgo::HasNodeAttr(kAttrAtomicWorkspaceIndexs, input->cast<CNodePtr>())) {
           workspace_size += common::AnfAlgo::GetNodeAttr<std::vector<size_t>>(input, kAttrAtomicWorkspaceIndexs).size();
@@ -367,7 +372,7 @@ std::vector<KernelWithIndex> GetInputNodeWithIndex(const CNodePtr &node, const T
   } else {
     for (size_t i = 0; i < input_num; ++i) {
       if (node_to_offset->find(std::make_pair(node, i)) != node_to_offset->end()) {
-        input_node_with_indexs.emplace_back(nullptr, i);
+        (void)input_node_with_indexs.emplace_back(nullptr, i);
         continue;
       }
 
@@ -385,7 +390,7 @@ std::vector<KernelWithIndex> GetInputNodeWithIndex(const CNodePtr &node, const T
       } while (input_with_index.first != nullptr && common::AnfAlgo::IsNopNode(input_with_index.first));
       MS_LOG(DEBUG) << "Add input node:" << input_with_index.first->fullname_with_scope()
                     << " index:" << input_with_index.second << " for node:" << node->fullname_with_scope();
-      input_node_with_indexs.emplace_back(input_with_index);
+      (void)input_node_with_indexs.emplace_back(input_with_index);
     }
   }
   return input_node_with_indexs;
@@ -413,9 +418,9 @@ void GenerateZeroCopyTaskForInput(const CNodePtr &node, const TaskPtr &task, con
 
     if (input->isa<Parameter>()) {
       // 1. Input parameter.
-      zero_copy_tasks->emplace_back(
+      (void)zero_copy_tasks->emplace_back(
         std::make_shared<tasksink::ParameterZeroCopyTask>(input, task->Args(), i * sizeof(void *), task->task_name()));
-      node_to_offset->emplace(node, i);
+      (void)node_to_offset->emplace(node, i);
       MS_LOG(DEBUG) << "Add zero copy task for node:" << node->fullname_with_scope() << " input index:" << i
                     << " ptr from parameter input:" << input->fullname_with_scope();
     } else if (input->isa<CNode>()) {
@@ -425,9 +430,9 @@ void GenerateZeroCopyTaskForInput(const CNodePtr &node, const TaskPtr &task, con
                          const auto &real_output = common::AnfAlgo::FetchRealNodeSkipMonadControl(output);
                          return real_output == input_with_index;
                        }) != output_with_indexs.end()) {
-        zero_copy_tasks->emplace_back(std::make_shared<tasksink::CNodeZeroCopyTask>(
+        (void)zero_copy_tasks->emplace_back(std::make_shared<tasksink::CNodeZeroCopyTask>(
           input, input_with_index.second, task->Args(), i * sizeof(void *), task->task_name()));
-        node_to_offset->emplace(node, i);
+        (void)node_to_offset->emplace(node, i);
         MS_LOG(DEBUG) << "Add zero copy task for node:" << node->fullname_with_scope() << " input index:" << i
                       << " ptr from cnode input:" << input->fullname_with_scope()
                       << " cnode index:" << input_with_index.second;
@@ -439,11 +444,11 @@ void GenerateZeroCopyTaskForInput(const CNodePtr &node, const TaskPtr &task, con
         AnfNodePtr parameter = nullptr;
         bool is_parameter_ref_input = IsParameterInputRefNode(input_with_index, ref_node_map, &parameter);
         if (is_parameter_ref_input && parameter != nullptr) {
-          zero_copy_tasks->emplace_back(std::make_shared<tasksink::ParameterZeroCopyTask>(
+          (void)zero_copy_tasks->emplace_back(std::make_shared<tasksink::ParameterZeroCopyTask>(
             parameter, task->Args(), i * sizeof(void *), task->task_name()));
           MS_LOG(DEBUG) << "Add zero copy task for node:" << node->fullname_with_scope() << " input index:" << i
                         << " ptr from parameter input:" << parameter->fullname_with_scope();
-          node_to_offset->emplace(node, i);
+          (void)node_to_offset->emplace(node, i);
         }
       }
     }
@@ -459,7 +464,7 @@ void GenerateZeroCopyTaskForOutput(const AnfNodePtr &node, const TaskPtr &task, 
   MS_EXCEPTION_IF_NULL(node_to_offset);
 
   auto input_num = common::AnfAlgo::GetInputTensorNum(node);
-  auto output_num = common::AnfAlgo::GetOutputTensorNum(node);
+  auto output_num = AnfAlgo::GetOutputTensorNum(node);
   const auto &output_with_indexs = common::AnfAlgo::GetAllOutputWithIndex(graph.output());
   const auto &ref_node_map = graph.GetRefMap();
 
@@ -468,11 +473,11 @@ void GenerateZeroCopyTaskForOutput(const AnfNodePtr &node, const TaskPtr &task, 
     if (is_output_zero_copy) {
       // 4. Output of graph.
       // 5. Output which is input of ref node.
-      zero_copy_tasks->emplace_back(std::make_shared<tasksink::CNodeZeroCopyTask>(
+      (void)zero_copy_tasks->emplace_back(std::make_shared<tasksink::CNodeZeroCopyTask>(
         node, i, task->Args(), (input_num + i) * sizeof(void *), task->task_name()));
       MS_LOG(DEBUG) << "Add zero copy task for node:" << node->fullname_with_scope() << " output index:" << i
                     << " output index:" << i;
-      node_to_offset->emplace(node, i + input_num);
+      (void)node_to_offset->emplace(node, i + input_num);
     }
 
     const auto ref_iter = ref_node_map.find(KernelWithIndex(node, i));
@@ -480,21 +485,21 @@ void GenerateZeroCopyTaskForOutput(const AnfNodePtr &node, const TaskPtr &task, 
       if (is_output_zero_copy && ref_iter->second.first->isa<CNode>()) {
         // 6. Input of ref output node.
         size_t input_index = FetchInputNumByInputNode(node, ref_iter->second);
-        zero_copy_tasks->emplace_back(
+        (void)zero_copy_tasks->emplace_back(
           std::make_shared<tasksink::CNodeZeroCopyTask>(ref_iter->second.first, ref_iter->second.second, task->Args(),
                                                         input_index * sizeof(void *), task->task_name()));
         MS_LOG(DEBUG) << "Add zero copy task for node:" << node->fullname_with_scope() << " input index:" << i
                       << " ptr from cnode input:" << ref_iter->second.first->fullname_with_scope()
                       << " cnode index:" << ref_iter->second.second;
-        node_to_offset->emplace(node, input_index);
-        zero_copy_ref_nodes->emplace(ref_iter->second);
+        (void)node_to_offset->emplace(node, input_index);
+        (void)zero_copy_ref_nodes->emplace(ref_iter->second);
       } else if (ref_iter->second.first->isa<Parameter>()) {
         // 7. Ref output of Parameter input.
-        zero_copy_tasks->emplace_back(std::make_shared<tasksink::ParameterZeroCopyTask>(
+        (void)zero_copy_tasks->emplace_back(std::make_shared<tasksink::ParameterZeroCopyTask>(
           ref_iter->second.first, task->Args(), (input_num + i) * sizeof(void *), task->task_name()));
         MS_LOG(DEBUG) << "Add zero copy task for node:" << node->fullname_with_scope() << " output index:" << i
                       << " ptr from parameter input:" << ref_iter->second.first->fullname_with_scope();
-        node_to_offset->emplace(node, input_num + i);
+        (void)node_to_offset->emplace(node, input_num + i);
       }
     }
   }
@@ -505,12 +510,10 @@ bool RtModelZeroCopy::GenerateZeroCopyTaskForSubGraphSink(const session::KernelG
   std::vector<ZeroCopyTaskPtr> zero_copy_tasks;
   auto task_lists = ge::model_runner::ModelRunner::Instance().GetTaskList(graph.graph_id());
   std::map<std::string, TaskPtr> op_name_to_task;
-  std::transform(task_lists.begin(), task_lists.end(), std::inserter(op_name_to_task, op_name_to_task.end()),
-                 [](const TaskPtr &task) { return std::make_pair(task->task_name(), task); });
+  (void)std::transform(task_lists.begin(), task_lists.end(), std::inserter(op_name_to_task, op_name_to_task.end()),
+                       [](const TaskPtr &task) { return std::make_pair(task->task_name(), task); });
 
   const auto &nodes = graph.execution_order();
-  const auto &output_with_indexs = common::AnfAlgo::GetAllOutputWithIndex(graph.output());
-  const auto &ref_node_map = graph.GetRefMap();
   // Collect all the zero task node with its offset, if the task is an input copy the offset is the index of input,
   // if is output, it is the index of output add its input num.
   std::set<std::pair<AnfNodePtr, size_t>> node_to_offset;
@@ -527,7 +530,7 @@ bool RtModelZeroCopy::GenerateZeroCopyTaskForSubGraphSink(const session::KernelG
     auto op_name = node->UniqueName();
     auto task_iter = op_name_to_task.find(op_name);
     if (task_iter == op_name_to_task.end()) {
-      MS_LOG(EXCEPTION) << "Cannot found task of op " << op_name;
+      MS_LOG(INTERNAL_EXCEPTION) << "Cannot found task of op " << op_name;
     }
     auto task = task_iter->second;
     MS_EXCEPTION_IF_NULL(task);
@@ -556,8 +559,8 @@ bool RtModelZeroCopy::GenerateZeroCopyTasks(const session::KernelGraph &graph) {
   std::vector<ZeroCopyTaskPtr> zero_copy_tasks;
   auto task_lists = ge::model_runner::ModelRunner::Instance().GetTaskList(graph.graph_id());
   std::map<std::string, TaskPtr> op_name_to_task;
-  std::transform(task_lists.begin(), task_lists.end(), std::inserter(op_name_to_task, op_name_to_task.end()),
-                 [](const TaskPtr &task) { return std::make_pair(task->task_name(), task); });
+  (void)std::transform(task_lists.begin(), task_lists.end(), std::inserter(op_name_to_task, op_name_to_task.end()),
+                       [](const TaskPtr &task) { return std::make_pair(task->task_name(), task); });
 
   auto nodes = graph.execution_order();
   for (const auto &node : nodes) {
@@ -569,7 +572,7 @@ bool RtModelZeroCopy::GenerateZeroCopyTasks(const session::KernelGraph &graph) {
     auto op_name = node->UniqueName();
     auto iter = op_name_to_task.find(op_name);
     if (iter == op_name_to_task.end()) {
-      MS_LOG(EXCEPTION) << "Cannot found task of op " << op_name;
+      MS_LOG(INTERNAL_EXCEPTION) << "Cannot found task of op " << op_name;
     }
 
     auto task = iter->second;
@@ -580,12 +583,12 @@ bool RtModelZeroCopy::GenerateZeroCopyTasks(const session::KernelGraph &graph) {
       auto input = common::AnfAlgo::GetPrevNodeOutput(node, input_index_in_graph, true).first;
       MS_EXCEPTION_IF_NULL(input);
       if (input->isa<Parameter>()) {
-        zero_copy_tasks.emplace_back(std::make_shared<tasksink::ParameterZeroCopyTask>(
+        (void)zero_copy_tasks.emplace_back(std::make_shared<tasksink::ParameterZeroCopyTask>(
           input, task->Args(), i * sizeof(void *), task->task_name()));
         MS_LOG(INFO) << "Generate ZeroCopyTask for Node " << node->fullname_with_scope() << " Parameter "
                      << input->DebugString();
       } else if (IsForwardOutputValueNode(input)) {
-        zero_copy_tasks.emplace_back(std::make_shared<tasksink::ValueNodeZeroCopyTask>(
+        (void)zero_copy_tasks.emplace_back(std::make_shared<tasksink::ValueNodeZeroCopyTask>(
           input, task->Args(), i * sizeof(void *), task->task_name()));
         MS_LOG(INFO) << "Generate ZeroCopyTask for Node " << node->fullname_with_scope() << " ValueNode "
                      << input->DebugString();
@@ -620,7 +623,7 @@ bool RtModelZeroCopy::UpdateTaskArgs(const session::KernelGraph &graph, void *st
     return false;
   }
 
-  if (rtStreamSynchronize(stream) != RT_ERROR_NONE) {
+  if (aclrtSynchronizeStreamWithTimeout(stream, -1) != ACL_ERROR_NONE) {
     MS_LOG(WARNING) << "Sync stream for graph:" << graph.ToString() << " failed.";
     return true;
   }
@@ -637,17 +640,17 @@ bool RtModelZeroCopy::CheckRtModelValid(const session::KernelGraph &graph) {
   auto graph_id = graph.graph_id();
   auto tasks = ge::model_runner::ModelRunner::Instance().GetTaskList(graph_id);
   std::map<std::string, TaskPtr> op_name_to_task;
-  std::transform(tasks.begin(), tasks.end(), std::inserter(op_name_to_task, op_name_to_task.end()),
-                 [](const TaskPtr &task) { return std::make_pair(task->task_name(), task); });
+  (void)std::transform(tasks.begin(), tasks.end(), std::inserter(op_name_to_task, op_name_to_task.end()),
+                       [](const TaskPtr &task) { return std::make_pair(task->task_name(), task); });
 
   auto nodes = graph.execution_order();
   bool task_valid = true;
   for (const auto &node : nodes) {
+    MS_EXCEPTION_IF_NULL(node);
     if (NeedSkipZeroCopy(node)) {
       continue;
     }
 
-    MS_EXCEPTION_IF_NULL(node);
     auto unique_name = node->UniqueName();
     auto iter = op_name_to_task.find(unique_name);
     if (iter == op_name_to_task.end()) {
@@ -667,7 +670,7 @@ bool RtModelZeroCopy::CheckRtModelValid(const session::KernelGraph &graph) {
     }
     std::vector<void *> args_datas(task_size / sizeof(void *), nullptr);
     if (aclrtMemcpy(args_datas.data(), task_size, task_args, task_size, ACL_MEMCPY_DEVICE_TO_HOST) != ACL_ERROR_NONE) {
-      MS_LOG(ERROR) << "aclrtMemcpy failed, task " << task->task_name() << " task_size " << task_size;
+      MS_LOG(WARNING) << "aclrtMemcpy failed, task " << task->task_name() << " task_size " << task_size;
       return false;
     }
 

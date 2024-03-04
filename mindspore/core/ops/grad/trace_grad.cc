@@ -15,15 +15,27 @@
  */
 
 #include "ops/grad/trace_grad.h"
-#include <string>
+
+#include <memory>
 #include <set>
 #include <vector>
-#include <memory>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,8 +45,8 @@ const int64_t kTraceInputsNum = 2;
 abstract::ShapePtr TraceGradInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
-  CheckAndConvertUtils::CheckInteger("input numbers", SizeToLong(input_args.size()), kEqual, kTraceInputsNum,
-                                     prim_name);
+  (void)CheckAndConvertUtils::CheckInteger("input numbers", SizeToLong(input_args.size()), kEqual, kTraceInputsNum,
+                                           prim_name);
   auto shape_arg = input_args[1];
   MS_EXCEPTION_IF_NULL(shape_arg);
   auto output_shape = GetShapeValue(primitive, shape_arg);
@@ -61,6 +73,26 @@ AbstractBasePtr TraceGradInfer(const abstract::AnalysisEnginePtr &, const Primit
   auto infer_shape = TraceGradInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(TraceGrad, prim::kPrimTraceGrad, TraceGradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGTraceGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return TraceGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return TraceGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return TraceGradInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(TraceGrad, prim::kPrimTraceGrad, AGTraceGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

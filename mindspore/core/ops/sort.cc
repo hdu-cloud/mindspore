@@ -14,15 +14,16 @@
  * limitations under the License.
  */
 #include "ops/sort.h"
-#include <string>
-#include <algorithm>
+
 #include <memory>
 #include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -52,6 +53,11 @@ abstract::TupleShapePtr SortInferShape(const PrimitivePtr &primitive, const std:
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
+  if (IsDynamicRank(x_shape)) {
+    auto unknown_shape_ptr = std::make_shared<abstract::Shape>(std::vector<int64_t>{abstract::Shape::kShapeRankAny});
+    return std::make_shared<abstract::TupleShape>(
+      std::vector<abstract::BaseShapePtr>{unknown_shape_ptr, unknown_shape_ptr});
+  }
   auto x_rank = SizeToLong(x_shape.size());
   auto axis = GetValue<int64_t>(primitive->GetAttr("axis"));
   CheckAndConvertUtils::CheckInRange<int64_t>("axis", axis, kIncludeBoth, {-x_rank, x_rank - 1}, prim_name);
@@ -66,7 +72,7 @@ abstract::TupleShapePtr SortInferShape(const PrimitivePtr &primitive, const std:
 TuplePtr SortInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto infer_type = input_args[0]->BuildType();
-  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kUInt8, kInt8, kInt16, kInt32, kInt64};
+  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64, kUInt8, kInt8, kInt16, kInt32, kInt64, kBool};
   auto type = CheckAndConvertUtils::CheckTensorTypeValid("inputx", infer_type, valid_types, primitive->name());
   std::vector<TypePtr> type_tuple;
   type_tuple.push_back(type);
@@ -86,6 +92,24 @@ AbstractBasePtr SortInfer(const abstract::AnalysisEnginePtr &, const PrimitivePt
 }
 
 MIND_API_OPERATOR_IMPL(Sort, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(Sort, prim::kPrimSort, SortInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSortInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SortInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SortInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SortInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Sort, prim::kPrimSort, AGSortInfer, false);
 }  // namespace ops
 }  // namespace mindspore

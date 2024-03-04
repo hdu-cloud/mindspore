@@ -15,9 +15,26 @@
  */
 
 #include "ops/apply_centered_rms_prop.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include <map>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -40,6 +57,11 @@ abstract::ShapePtr ApplyCenteredRMSPropInferShape(const PrimitivePtr &primitive,
   auto mom_shape_ptr = mom_shape->cast<abstract::ShapePtr>();
   auto grad_shape_ptr = grad_shape->cast<abstract::ShapePtr>();
   // ToSupport Dynamic rank
+  MS_EXCEPTION_IF_NULL(var_shape_ptr);
+  MS_EXCEPTION_IF_NULL(mg_shape_ptr);
+  MS_EXCEPTION_IF_NULL(ms_shape_ptr);
+  MS_EXCEPTION_IF_NULL(mom_shape_ptr);
+  MS_EXCEPTION_IF_NULL(grad_shape_ptr);
   if (IsDynamicRank(var_shape_ptr->shape()) || IsDynamicRank(mg_shape_ptr->shape()) ||
       IsDynamicRank(ms_shape_ptr->shape()) || IsDynamicRank(mom_shape_ptr->shape()) ||
       IsDynamicRank(grad_shape_ptr->shape())) {
@@ -101,14 +123,15 @@ TypePtr ApplyCenteredRMSPropInferType(const PrimitivePtr &primitive, const std::
   (void)types.emplace("mean square dtype", mean_square_dtype);
   (void)types.emplace("moment dtype", moment_dtype);
   (void)types.emplace("grad dtype", grad_dtype);
-  const std::set<TypePtr> number_type = {kInt8,   kInt16,   kInt32,   kInt64,   kUInt8,     kUInt16,   kUInt32,
-                                         kUInt64, kFloat16, kFloat32, kFloat64, kComplex64, kComplex64};
+  const std::set<TypePtr> number_type = {kInt8,   kInt16,   kInt32,   kInt64,   kUInt8,     kUInt16,    kUInt32,
+                                         kUInt64, kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
   (void)CheckAndConvertUtils::CheckTensorTypeSame(types, number_type, primitive->name());
   std::map<std::string, TypePtr> types_decay;
   (void)types_decay.emplace("decay dtype", decay_dtype);
   (void)types_decay.emplace("momentum dtype", momentum_dtype);
   (void)types_decay.emplace("epsilon dtype", epsilon_dtype);
-  const std::set<TypePtr> valid_types = {kFloat16, kFloat32};
+  const std::set<TypePtr> valid_types = {kInt8,   kInt16,   kInt32,   kInt64,   kUInt8,     kUInt16,    kUInt32,
+                                         kUInt64, kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
   (void)CheckAndConvertUtils::CheckScalarOrTensorTypesSame(types_decay, valid_types, primitive->name());
   std::map<std::string, TypePtr> types_lr;
   (void)types_lr.emplace("learning rate dtype", learning_rate_dtype);
@@ -125,7 +148,25 @@ AbstractBasePtr ApplyCenteredRMSPropInfer(const abstract::AnalysisEnginePtr &, c
   auto infer_shape = ApplyCenteredRMSPropInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(ApplyCenteredRMSProp, prim::kPrimApplyCenteredRMSProp, ApplyCenteredRMSPropInfer, nullptr,
-                             true);
+
+// AG means auto generated
+class MIND_API AGApplyCenteredRMSPropInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyCenteredRMSPropInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyCenteredRMSPropInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyCenteredRMSPropInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ApplyCenteredRMSProp, prim::kPrimApplyCenteredRMSProp, AGApplyCenteredRMSPropInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

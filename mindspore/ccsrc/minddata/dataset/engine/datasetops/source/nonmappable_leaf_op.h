@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,9 +42,14 @@ class FilenameBlock;
 
 using StringIndex = AutoIndexObj<std::string>;
 
-class NonMappableLeafOp : public ParallelOp<std::unique_ptr<IOBlock>, TensorRow> {
+class NonMappableLeafOp : public ParallelOp<TensorRow, TensorRow> {
  public:
-  enum class CompressionType { None = 0, GZIP = 1, ZLIB = 2 };
+  // NONE: No compression_type is used
+  // GZIP: GZIP compression_type with num_samples provided
+  // ZLIB: ZLIB compression_type with num_samples provided
+  // GZIP_WITH_COUNT: GZIP compression_type with num_samples not provided
+  // ZLIB_WITH_COUNT: ZLIB compression_type with num_samples not provided
+  enum class CompressionType { NONE = 0, GZIP = 1, ZLIB = 2, GZIP_WITH_COUNT = 3, ZLIB_WITH_COUNT = 4 };
 
   // Constructor of TFReaderOp (2)
   // @note The builder class should be used to call this constructor.
@@ -59,10 +64,10 @@ class NonMappableLeafOp : public ParallelOp<std::unique_ptr<IOBlock>, TensorRow>
   // @param compression_type - the compression type of the tf_file files
   NonMappableLeafOp(int32_t num_workers, int32_t worker_connector_size, int64_t total_num_rows,
                     int32_t op_connector_size, bool shuffle_files, int32_t num_devices, int32_t device_id,
-                    const CompressionType &compression_type = CompressionType::None);
+                    const CompressionType &compression_type = CompressionType::NONE);
 
   // Default destructor
-  ~NonMappableLeafOp() = default;
+  ~NonMappableLeafOp() override = default;
 
   // Instantiates the internal queues and connectors.
   // @return Status - the error code returned.
@@ -83,12 +88,28 @@ class NonMappableLeafOp : public ParallelOp<std::unique_ptr<IOBlock>, TensorRow>
   // @return Name of the current Op
   std::string Name() const override { return "NonMappableLeafOp"; }
 
+  // \Common implementation for PrepareOperators and PrepareOperatorPullBased
+  // @return Status The status code returned
+  Status PrepareOperatorImplementation();
+
   // \brief During tree prepare phase, operators may have specific post-operations to perform depending on
   //     their role.
   // \notes Derived versions of this function should always call their superclass version first
   //     before providing their own implementations.
   // @return Status The status code returned
   Status PrepareOperator() override;
+
+  // \brief During tree prepare phase, operators may have specific post-operations to perform depending on
+  //     their role. This is the implementation for pull mode.
+  // \notes Derived versions of this function should always call its superclass version first
+  //     before providing their own implementations.
+  // \return Status The status code returned
+  Status PrepareOperatorPullBased() override;
+
+  /// \brief In pull mode, gets the next row
+  /// \param row[out] - Fetched TensorRow
+  /// \return Status The status code returned
+  Status GetNextRowPullMode(TensorRow *const row) override;
 
  protected:
   // The entry point for when workers are launched.
@@ -153,9 +174,40 @@ class NonMappableLeafOp : public ParallelOp<std::unique_ptr<IOBlock>, TensorRow>
   // @return Status - the error code returned.
   virtual Status FillIOBlockQueue(const std::vector<int64_t> &i_keys) = 0;
 
+  virtual bool GetLoadIoBlockQueue() {
+    bool ret_load_io_block_queue = false;
+    {
+      std::unique_lock<std::mutex> lock(load_io_block_queue_mutex_);
+      ret_load_io_block_queue = load_io_block_queue_;
+    }
+    return ret_load_io_block_queue;
+  }
+
+  virtual bool GetLoadJaggedConnector() {
+    bool ret_load_jagged_connector = false;
+    {
+      std::unique_lock<std::mutex> lock(load_jagged_connector_mutex_);
+      ret_load_jagged_connector = load_jagged_connector_;
+    }
+    return ret_load_jagged_connector;
+  }
+
+  /// \brief Prepare data by reading from disk and caching tensors into the jagged_row_connector queue.
+  /// \return Status The status code returned
+  Status PrepareData();
+
+  /// \brief Gets the implementation status for operator in pull mode
+  /// \return implementation status
+  ImplementedPullMode PullModeImplementationStatus() const override { return ImplementedPullMode::Implemented; }
+
+  /// \brief reset the op and update repeat and epoch number if the condition is met.
+  /// \return Status The status code returned
+  Status ResetAndUpdateRepeat();
+
   int32_t device_id_;
   int32_t num_devices_;
   bool load_jagged_connector_;
+  std::mutex load_jagged_connector_mutex_;
   std::unique_ptr<StringIndex> filename_index_;
 
   QueueList<std::unique_ptr<FilenameBlock>> io_block_queues_;
@@ -172,6 +224,9 @@ class NonMappableLeafOp : public ParallelOp<std::unique_ptr<IOBlock>, TensorRow>
   bool shuffle_files_;
   int64_t num_rows_per_shard_;
   int64_t num_rows_;
+  bool prepared_data_;     // flag to indicate whether the data is prepared before taking for pull mode
+  uint32_t curr_row_;      // current row number count for pull mode
+  uint32_t workers_done_;  // how many workers have done the tensors reading work for pull mode
 
  private:
   std::vector<int64_t> shuffled_keys_;  // to store shuffled filename indices

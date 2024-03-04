@@ -27,13 +27,12 @@
 #include "runtime/hardware/device_context_manager.h"
 #include "include/backend/data_queue/data_queue.h"
 #include "include/backend/data_queue/blocking_queue.h"
-#include "include/backend/visible.h"
 #include "runtime/rt.h"
 #include "acl/acl_tdt.h"
 
 namespace mindspore {
 namespace device {
-class BACKEND_EXPORT AscendDataQueueDynamic : public DataQueue {
+class AscendDataQueueDynamic : public DataQueue {
  public:
   explicit AscendDataQueueDynamic(const std::string &channel_name, const size_t capacity);
   ~AscendDataQueueDynamic() override = default;
@@ -68,7 +67,7 @@ class WingmanQueue : public DataQueue {
   DataQueueStatus Pop() override;
   bool IsEmpty() const override { return queue_.empty(); }
   bool IsFull() const override { return false; }
-  size_t Size() override { return queue_.size(); }
+  size_t Size() const override { return queue_.size(); }
 
  private:
   std::queue<std::vector<DataQueueItem>> queue_;
@@ -83,6 +82,8 @@ class AscendTdtQueue : public DataQueue {
   DataQueueStatus Push(std::vector<DataQueueItem> data) override;
   DataQueueStatus Front(std::vector<DataQueueItem> *data) const override { return DataQueueStatus::SUCCESS; }
   DataQueueStatus Pop() override { return DataQueueStatus::SUCCESS; }
+  size_t QueryQueueSize() const override;
+  std::string QueueType() const override { return queue_type_; }
 
  private:
   void DestroyAclDataset(acltdtDataset *acl_dataset, bool include_data_item = true) const;
@@ -92,6 +93,7 @@ class AscendTdtQueue : public DataQueue {
 
   acltdtChannelHandle *acl_handle_;
   uint32_t device_id_;
+  std::string queue_type_;
 };
 
 class AscendHostQueue : public DataQueue {

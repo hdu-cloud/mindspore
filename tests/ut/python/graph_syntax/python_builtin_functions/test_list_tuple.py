@@ -13,10 +13,13 @@
 # limitations under the License.
 # ============================================================================
 """ test graph fallback buildin python function list and tuple"""
+import os
 import operator
 import pytest
 import numpy as np
 from mindspore import jit, context, Tensor
+from mindspore.common import mutable
+from mindspore.ops import functional as F
 
 context.set_context(mode=context.GRAPH_MODE)
 
@@ -27,14 +30,17 @@ def test_fallback_list_with_input_tuple():
     Description: Test list() in graph mode with tuple input.
     Expectation: No exception.
     """
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
+
     @jit
     def foo():
         x = list((1, 2, 3))
         x.append(4)
         return x
     out = foo()
-    assert isinstance(out, tuple)
-    assert operator.eq(out, (1, 2, 3, 4))
+    assert isinstance(out, list)
+    assert operator.eq(out, [1, 2, 3, 4])
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_fallback_list_with_input_list():
@@ -43,14 +49,17 @@ def test_fallback_list_with_input_list():
     Description: Test list() in graph mode with list input.
     Expectation: No exception.
     """
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
+
     @jit
     def foo():
         x = list([1, 2, 3])
         x.append(4)
         return x
     out = foo()
-    assert isinstance(out, tuple)
-    assert operator.eq(out, (1, 2, 3, 4))
+    assert isinstance(out, list)
+    assert operator.eq(out, [1, 2, 3, 4])
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_fallback_list_with_input_dict():
@@ -59,29 +68,17 @@ def test_fallback_list_with_input_dict():
     Description: Test list() in graph mode with dict input.
     Expectation: No exception.
     """
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
+
     @jit
     def foo():
         x = list({'a': 1, 'b': 2, 'c': 3})
         x.append('d')
         return x
     out = foo()
-    assert isinstance(out, tuple)
-    assert operator.eq(out, ('a', 'b', 'c', 'd'))
-
-
-def test_fallback_list_with_input_numpy_array():
-    """
-    Feature: JIT Fallback
-    Description: Test list() in graph mode with numpy aray.
-    Expectation: No exception.
-    """
-    @jit
-    def foo():
-        x = list(np.array([1, 2, 3]))
-        x.append(4)
-        return Tensor(x)
-    out = foo()
-    assert np.allclose(np.array([1, 2, 3, 4]), out.asnumpy())
+    assert isinstance(out, list)
+    assert operator.eq(out, ['a', 'b', 'c', 'd'])
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_fallback_list_with_empty_input():
@@ -90,6 +87,8 @@ def test_fallback_list_with_empty_input():
     Description: Test list() in graph mode with empty input.
     Expectation: No exception.
     """
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
+
     @jit
     def foo():
         x = list()
@@ -100,6 +99,7 @@ def test_fallback_list_with_empty_input():
         return 3
     out = foo()
     assert out == 1
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_fallback_list_with_input_number():
@@ -108,6 +108,8 @@ def test_fallback_list_with_input_number():
     Description: Test list() in graph mode with number input.
     Expectation: TypeError.
     """
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
+
     @jit
     def foo():
         x = list(1)
@@ -115,6 +117,7 @@ def test_fallback_list_with_input_number():
     with pytest.raises(TypeError) as ex:
         foo()
     assert "object is not iterable" in str(ex.value)
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_fallback_tuple_with_input_list():
@@ -145,6 +148,80 @@ def test_fallback_tuple_with_input_tuple():
     out = foo()
     assert isinstance(out, tuple)
     assert operator.eq(out, (1, 2, 3))
+
+
+def test_fallback_tuple_with_input_variable_len_list():
+    """
+    Feature: tuple() function
+    Description: Test tuple() in graph mode with variable length list input.
+    Expectation: No exception.
+    """
+    @jit
+    def foo():
+        a = mutable([1, 2, 3, 4], True)
+        x = tuple(a)
+        return isinstance(x, tuple), F.is_sequence_shape_unknown(x)
+    out = foo()
+    assert len(out) == 2
+    assert out[0]
+    assert out[1]
+
+
+def test_fallback_tuple_with_input_variable_len_list_2():
+    """
+    Feature: tuple() function
+    Description: Test tuple() in graph mode with variable length list input.
+    Expectation: No exception.
+    """
+    @jit
+    def foo():
+        a = mutable([], True)
+        x = tuple(a)
+        return isinstance(x, tuple), F.is_sequence_shape_unknown(x)
+    out = foo()
+    assert len(out) == 2
+    assert out[0]
+    assert out[1]
+
+
+def test_fallback_list_with_input_variable_len_tuple():
+    """
+    Feature: list() function
+    Description: Test list() in graph mode with variable length tuple input.
+    Expectation: No exception.
+    """
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
+
+    @jit
+    def foo():
+        a = mutable((1, 2, 3, 4), True)
+        x = list(a)
+        return isinstance(x, list), F.is_sequence_shape_unknown(x)
+    out = foo()
+    assert len(out) == 2
+    assert out[0]
+    assert out[1]
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
+
+
+def test_fallback_list_with_input_variable_len_tuple_2():
+    """
+    Feature: list() function
+    Description: Test tuple() in graph mode with list input.
+    Expectation: No exception.
+    """
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
+
+    @jit
+    def foo():
+        a = mutable((), True)
+        x = list(a)
+        return isinstance(x, list), F.is_sequence_shape_unknown(x)
+    out = foo()
+    assert len(out) == 2
+    assert out[0]
+    assert out[1]
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_fallback_tuple_with_input_dict():
@@ -215,6 +292,8 @@ def test_builtin_function_list_with_non_constant_tensor():
     Description: When the input to list() is non constant tensor, list function will return correct result.
     Expectation: No exception.
     """
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
+
     @jit
     def foo(x):
         return list(x)
@@ -223,6 +302,7 @@ def test_builtin_function_list_with_non_constant_tensor():
     assert len(ret) == 2
     assert np.all(ret[0].asnumpy() == np.array([1, 2, 3]))
     assert np.all(ret[1].asnumpy() == np.array([4, 5, 6]))
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_builtin_function_tuple_with_non_constant_tensor():

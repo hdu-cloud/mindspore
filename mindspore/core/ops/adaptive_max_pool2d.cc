@@ -15,15 +15,31 @@
  */
 
 #include "ops/adaptive_max_pool2d.h"
-#include <string>
-#include <algorithm>
+
+#include <map>
 #include <memory>
 #include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,12 +47,6 @@ std::vector<int64_t> AdaptiveMaxPool2D::output_size() const {
   auto value_ptr = GetAttr("output_size");
   MS_EXCEPTION_IF_NULL(value_ptr);
   return GetValue<std::vector<int64_t>>(value_ptr);
-}
-
-bool AdaptiveMaxPool2D::return_indices() const {
-  auto value_ptr = GetAttr("return_indices");
-  MS_EXCEPTION_IF_NULL(value_ptr);
-  return GetValue<bool>(value_ptr);
 }
 
 namespace {
@@ -81,18 +91,9 @@ abstract::BaseShapePtr AdaptiveMaxPool2DInferShape(const PrimitivePtr &primitive
       }
     }
   }
-
-  const auto &return_indices_ptr = primitive->GetAttr("return_indices");
-  MS_EXCEPTION_IF_NULL(return_indices_ptr);
-  const auto &return_indices = GetValue<bool>(return_indices_ptr);
   auto in_shape = std::make_shared<abstract::Shape>(in_shape_vector);
 
-  // If return indices is true, need to output the indices corresponding to the max value, whose shape is the same
-  // as the max value.
-  if (return_indices) {
-    return std::make_shared<abstract::TupleShape>(std::vector<abstract::BaseShapePtr>{in_shape, in_shape});
-  }
-  return in_shape;
+  return std::make_shared<abstract::TupleShape>(std::vector<abstract::BaseShapePtr>{in_shape, in_shape});
 }
 
 TypePtr AdaptiveMaxPool2DInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
@@ -107,17 +108,8 @@ TypePtr AdaptiveMaxPool2DInferType(const PrimitivePtr &prim, const std::vector<A
   auto input_type =
     CheckAndConvertUtils::CheckTensorTypeValid("input_x", input_args[0]->BuildType(), valid_types, prim->name());
 
-  const auto &return_indices_ptr = prim->GetAttr("return_indices");
-  MS_EXCEPTION_IF_NULL(return_indices_ptr);
-  const auto &return_indices = GetValue<bool>(return_indices_ptr);
-
-  // If return indices is true, need to output the indices corresponding to the max value, whose shape is the same
-  // as the max value.
-  if (return_indices) {
-    auto indices_type = kInt64;
-    return std::make_shared<Tuple>(std::vector<TypePtr>{input_type, indices_type});
-  }
-  return input_type;
+  auto indices_type = kInt64;
+  return std::make_shared<Tuple>(std::vector<TypePtr>{input_type, indices_type});
 }
 }  // namespace
 
@@ -127,6 +119,24 @@ AbstractBasePtr AdaptiveMaxPool2DInfer(const abstract::AnalysisEnginePtr &, cons
   return abstract::MakeAbstract(AdaptiveMaxPool2DInferShape(primitive, input_args),
                                 AdaptiveMaxPool2DInferType(primitive, input_args));
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(AdaptiveMaxPool2D, prim::kPrimAdaptiveMaxPool2D, AdaptiveMaxPool2DInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGAdaptiveMaxPool2DInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return AdaptiveMaxPool2DInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return AdaptiveMaxPool2DInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return AdaptiveMaxPool2DInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(AdaptiveMaxPool2D, prim::kPrimAdaptiveMaxPool2D, AGAdaptiveMaxPool2DInfer, false);
 }  // namespace ops
 }  // namespace mindspore

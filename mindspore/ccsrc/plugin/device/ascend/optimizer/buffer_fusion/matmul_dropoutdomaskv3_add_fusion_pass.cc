@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,13 +14,15 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/optimizer/buffer_fusion/matmul_dropoutdomaskv3_add_fusion_pass.h"
+#include "ops/nn_ops.h"
+#include "ops/math_ops.h"
+#include "ops/framework_ops.h"
 #include "include/common/debug/anf_ir_dump.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "utils/ms_context.h"
-#include "backend/common/optimizer/fusion_id_allocator.h"
-#include "plugin/device/ascend/optimizer/platform.h"
+#include "plugin/device/ascend/optimizer/fusion_id_allocator.h"
+#include "plugin/device/ascend/hal/common/platform_info_util.h"
 
 namespace mindspore {
 namespace opt {
@@ -30,7 +32,7 @@ void MatmulDropoutDoMaskV3AddFusionPass::MatchMatmulDropoutDoMaskV3Add(const CNo
   MS_EXCEPTION_IF_NULL(candidate_fusion);
   auto add_input = cnode->input(kIndex2);
   MS_EXCEPTION_IF_NULL(add_input);
-  if (!add_input->isa<CNode>() || !common::AnfAlgo::CheckPrimitiveType(add_input, prim::kPrimDropoutDoMaskV3)) {
+  if (!add_input->isa<CNode>() || !(common::AnfAlgo::CheckPrimitiveType(add_input, prim::kPrimDropOutDoMaskV3D))) {
     return;
   }
   auto dropout_do_mask_v3 = add_input->cast<CNodePtr>();

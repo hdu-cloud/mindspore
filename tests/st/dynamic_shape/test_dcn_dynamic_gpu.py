@@ -19,8 +19,7 @@ import pytest
 from mindspore import ops, nn, Tensor, Parameter, ParameterTuple, context, set_seed
 from mindspore.common.initializer import initializer, XavierUniform
 import mindspore.dataset as ds
-from mindspore.train.callback import Callback
-from mindspore.train import Model
+from mindspore.train import Callback, Model
 from mindspore.common import dtype as mstype
 import mindspore as ms
 
@@ -34,7 +33,7 @@ class CrossNet(nn.Cell):
         bias_list = []
         for i in range(self.num_layers):
             kernel = Parameter(initializer(XavierUniform(0.02), (hidden_size, 1), mstype.float32),
-                               requires_grad=True, name="kernerl" + str(i))
+                               requires_grad=True, name="kernel" + str(i))
             kernels.append(kernel)
             bias = Parameter(Tensor(np.zeros((hidden_size, 1)), mstype.float32),
                              requires_grad=True, name="bias" + str(i))
@@ -69,9 +68,9 @@ class DNN(nn.Cell):
         drop_layers = []
         for i in range(self.num_layers):
             dense_layer = nn.Dense(in_channels=self.hidden_units[i], out_channels=self.hidden_units[i + 1],
-                                   activation=self.activation, weight_init="heUniform")
+                                   activation=self.activation, weight_init="heUniform", bias_init="zeros")
             dense_layers.append(dense_layer)
-            drop_layer = nn.Dropout(1.0 - self.dropout_rate)
+            drop_layer = nn.Dropout(p=self.dropout_rate)
             drop_layers.append(drop_layer)
         self.dense_layers = nn.CellList(dense_layers)
         self.drop_layers = nn.CellList(drop_layers)
@@ -209,19 +208,19 @@ def get_train_loss(numeric_columns, sparse_columns, data_list, mode):
     loss_callback = LossCallback()
     model = Model(train_net)
     sink_step = dataset.get_dataset_size()
-    model.train(sink_step, dataset, callbacks=loss_callback, dataset_sink_mode=True, sink_size=1)
+    model.train(sink_step, dataset, callbacks=loss_callback, sink_size=1, dataset_sink_mode=True)
     loss_list = loss_callback.loss_list
     return loss_list
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_train():
     """
     Feature: Test the dcn_dynamic network with small shape.
     Description:  The batch of inputs is dynamic.
-    Expectation: Assert that results of GRAPH_MODE(static graph) are consistent with expected result.
+    Expectation: Assert that results are consistent with expected result.
     """
     batch_size_list = [6, 70, 123]
     DenseFeature = namedtuple("DenseFeature", ['name', 'size'])
@@ -229,8 +228,10 @@ def test_train():
     SparseFeature = namedtuple("SparseFeature", ['name', 'voc_size', 'embed_size'])
     sparse_columns = [SparseFeature('a', 7, 6), SparseFeature('b', 136, 18), SparseFeature('c', 3, 6)]
     data_list = gen_data(numeric_columns, sparse_columns, batch_size_list)
-    # For graph mode
     set_seed(0)
     graph_loss = get_train_loss(numeric_columns, sparse_columns, data_list, context.GRAPH_MODE)
     expect_loss = [6.687461, 2928.5852, 8715.267]
     assert np.allclose(graph_loss, expect_loss, 1e-3, 1e-3)
+    set_seed(0)
+    pynative_loss = get_train_loss(numeric_columns, sparse_columns, data_list, context.PYNATIVE_MODE)
+    assert np.allclose(pynative_loss, expect_loss, 1e-3, 1e-3)

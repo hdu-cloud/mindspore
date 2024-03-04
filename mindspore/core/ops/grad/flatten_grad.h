@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_FLATTEN_GRAD_H_
 #define MINDSPORE_CORE_OPS_FLATTEN_GRAD_H_
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,8 +31,8 @@ class MIND_API FlattenGrad : public BaseOperator {
   FlattenGrad() : BaseOperator(kNameFlattenGrad) { InitIOName({"x", "shape"}, {"output"}); }
 };
 
-abstract::AbstractBasePtr FlattenGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                           const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr FlattenGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                    const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimFlattenGrad = std::shared_ptr<FlattenGrad>;
 }  // namespace ops
 }  // namespace mindspore

@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_CHECKNUMERICS_H_
 #define MINDSPORE_CORE_OPS_CHECKNUMERICS_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,8 +33,9 @@ class CheckNumerics : public BaseOperator {
   CheckNumerics() : BaseOperator(kNameCheckNumerics) { InitIOName({"x"}, {"y"}); }
 };
 
-abstract::AbstractBasePtr CheckNumericsInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                             const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr CheckNumericsInfer(const abstract::AnalysisEnginePtr &,
+                                                      const PrimitivePtr &primitive,
+                                                      const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimCheckNumericsPtr = std::shared_ptr<CheckNumerics>;
 }  // namespace ops
 }  // namespace mindspore

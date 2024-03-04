@@ -65,7 +65,7 @@ class FractionalMaxPool3DWithFixedKsizeAttr : public GpuKernelAttrBase {
  public:
   FractionalMaxPool3DWithFixedKsizeAttr() = default;
   ~FractionalMaxPool3DWithFixedKsizeAttr() override = default;
-  std::vector<float> ksize;
+  std::vector<int64_t> ksize;
   std::vector<int64_t> output_shape;
   std::string data_format;
 };
@@ -207,10 +207,11 @@ class FractionalMaxPool3DWithFixedKsizeHelperGpuKernel : public GpuKernelHelperB
       outer_size *= output_shape_[i];
     }
 
-    CalFractionalmaxpool3dwithfixedksize(input_ptr, random_samples_ptr, output_ptr, argmax_ptr, outputD_, outputH_,
-                                         outputW_, inputN_, inputC_, inputD_, inputH_, inputW_, kernelsizeD_,
-                                         kernelsizeH_, kernelsizeW_, outer_size, device_id_,
-                                         reinterpret_cast<cudaStream_t>(cuda_stream));
+    auto status = CalFractionalmaxpool3dwithfixedksize(input_ptr, random_samples_ptr, output_ptr, argmax_ptr, outputD_,
+                                                       outputH_, outputW_, inputN_, inputC_, inputD_, inputH_, inputW_,
+                                                       kernelsizeD_, kernelsizeH_, kernelsizeW_, outer_size, device_id_,
+                                                       reinterpret_cast<cudaStream_t>(cuda_stream));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return 0;
   }
 
@@ -222,7 +223,6 @@ class FractionalMaxPool3DWithFixedKsizeHelperGpuKernel : public GpuKernelHelperB
   int CheckKernelParam() override {
     ksize_ = attr_ptr_->ksize;
     output_shape_attr_ = attr_ptr_->output_shape;
-    // data_format_ = attr_ptr_->data_format;
     kernelsizeD_ = ksize_[kkernelsizeIndexD];
     kernelsizeH_ = ksize_[kkernelsizeIndexH];
     kernelsizeW_ = ksize_[kkernelsizeIndexW];
@@ -263,7 +263,7 @@ class FractionalMaxPool3DWithFixedKsizeHelperGpuKernel : public GpuKernelHelperB
   }
 
  private:
-  std::vector<float> ksize_;
+  std::vector<int64_t> ksize_;
   std::vector<int64_t> output_shape_attr_;
   std::string data_format_;
   int64_t outputD_{1};

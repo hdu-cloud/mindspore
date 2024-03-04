@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,19 +14,36 @@
  * limitations under the License.
  */
 #include "ops/multinomial.h"
-#include <string>
-#include <algorithm>
+
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include <iostream>
-#include <map>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/ms_context.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "abstract/param_validator.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/dtype.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/base/type_id.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/random_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/ms_context.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -41,34 +58,26 @@ abstract::ShapePtr MultinomialInferShape(const PrimitivePtr &primitive,
   }
   const int64_t x_rank_max = 2;
   const int64_t x_rank_min = 1;
-  auto context_ptr = MsContext::GetInstance();
-  MS_EXCEPTION_IF_NULL(context_ptr);
-  auto is_ascend = (context_ptr->get_param<std::string>(MS_CTX_DEVICE_TARGET) == kAscendDevice);
-  if (is_ascend) {
-    if (x_shape.size() != x_rank_max) {
-      MS_EXCEPTION(ValueError) << "For '" << primitive->name()
-                               << "', input[x] dimension must be 2 in Ascend, but got rank " << x_shape.size() << ".";
-    }
-  } else {
-    if (x_shape.size() > x_rank_max || x_shape.size() < x_rank_min) {
-      MS_EXCEPTION(ValueError) << "For '" << primitive->name()
-                               << "', input[x] dimension must be 1 or 2 in CPU and GPU, but got rank " << x_shape.size()
-                               << ".";
-    }
+  if (x_shape.size() > x_rank_max || x_shape.size() < x_rank_min) {
+    MS_EXCEPTION(ValueError) << "For '" << primitive->name() << "', input[x] dimension must be 1 or 2, but got rank "
+                             << x_shape.size() << ".";
   }
 
   int64_t num_samples_val = 0;
   if (input_args[1]->isa<abstract::AbstractScalar>()) {
-    auto num_samples = input_args[1]->cast<abstract::AbstractScalarPtr>();
-    auto num_samples_value_ptr = num_samples->BuildValue();
-    if (!num_samples_value_ptr->isa<Int64Imm>()) {
-      MS_EXCEPTION(TypeError) << "For '" << prim_name << "', the num_samples"
-                              << " must be a int, but got " << num_samples_value_ptr->ToString() << ".";
-    }
-    num_samples_val = GetValue<int64_t>(num_samples->BuildValue());
-    if (num_samples_val < 0) {
-      MS_EXCEPTION(ValueError) << "For '" << prim_name << "', num_samples"
-                               << " should be a nonnegative number, but got " << num_samples_val << ".";
+    auto num_samples_value_ptr = input_args[1]->BuildValue();
+    if (num_samples_value_ptr->isa<ValueAny>()) {
+      num_samples_val = -1;
+    } else {
+      if (!num_samples_value_ptr->isa<Int64Imm>()) {
+        MS_EXCEPTION(TypeError) << "For '" << prim_name << "', the num_samples"
+                                << " must be a int, but got " << num_samples_value_ptr->ToString() << ".";
+      }
+      num_samples_val = GetValue<int64_t>(num_samples_value_ptr);
+      if (num_samples_val < 0) {
+        MS_EXCEPTION(ValueError) << "For '" << prim_name << "', num_samples"
+                                 << " should be a nonnegative number, but got " << num_samples_val << ".";
+      }
     }
   } else if (input_args[1]->cast<abstract::AbstractTensorPtr>()) {
     auto num_samples = input_args[1]->cast<abstract::AbstractTensorPtr>();
@@ -107,14 +116,24 @@ TypePtr MultinomialInferType(const PrimitivePtr &prim, const std::vector<Abstrac
   MS_EXCEPTION_IF_NULL(prim);
   auto prim_name = prim->name();
   auto x_type = input_args[0]->BuildType();
+  MS_EXCEPTION_IF_NULL(x_type);
   auto num_samples_type = input_args[1]->BuildType();
-  const std::set valid_types_1 = {kFloat16, kFloat32, kFloat64};
-  const std::set valid_types_2 = {kInt32, kInt64};
+  MS_EXCEPTION_IF_NULL(num_samples_type);
+  const std::set<TypePtr> valid_types_1 = {kFloat16, kFloat32, kFloat64, kInt8,   kInt16, kInt32,
+                                           kInt64,   kUInt8,   kUInt16,  kUInt32, kUInt64};
+  const std::set<TypePtr> valid_types_2 = {kInt32, kInt64};
   (void)CheckAndConvertUtils::CheckTensorTypeValid("x", x_type, valid_types_1, prim_name);
   (void)CheckAndConvertUtils::CheckTypeValid("num_samples", num_samples_type, valid_types_2, prim_name);
-  auto dtype = GetValue<TypePtr>(prim->GetAttr("dtype"));
-  const std::set valid_types_3 = {kInt32, kInt64};
-  auto out_type = CheckAndConvertUtils::CheckTypeValid("dtype", dtype->cast<TypePtr>(), valid_types_3, prim->name());
+  const std::set<TypePtr> valid_types_3 = {kInt32, kInt64};
+  auto dtype_attr = prim->GetAttr("dtype");
+  MS_EXCEPTION_IF_NULL(dtype_attr);
+  if (!dtype_attr->isa<Type>()) {
+    TypeId type_id = static_cast<TypeId>(GetValue<int64_t>(dtype_attr));
+    auto out_type = CheckAndConvertUtils::CheckTypeValid("dtype", TypeIdToType(type_id), valid_types_3, prim->name());
+    return out_type;
+  }
+  auto out_type =
+    CheckAndConvertUtils::CheckTypeValid("dtype", dtype_attr->cast<TypePtr>(), valid_types_3, prim->name());
   return out_type;
 }
 }  // namespace
@@ -147,6 +166,25 @@ AbstractBasePtr MultinomialInfer(const abstract::AnalysisEnginePtr &, const Prim
   return abstract::MakeAbstract(infershape, infertype);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(Multinomial, prim::kPrimMultinomial, MultinomialInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGMultinomialInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MultinomialInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MultinomialInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MultinomialInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Multinomial, prim::kPrimMultinomial, AGMultinomialInfer, false);
 }  // namespace ops
 }  // namespace mindspore

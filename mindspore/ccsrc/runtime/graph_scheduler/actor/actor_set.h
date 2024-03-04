@@ -35,6 +35,7 @@
 #include "runtime/graph_scheduler/actor/kernel_actor.h"
 #include "runtime/graph_scheduler/actor/custom_actor.h"
 #include "runtime/graph_scheduler/actor/super_kernel_actor.h"
+#include "runtime/graph_scheduler/actor/any_type_kernel_actor.h"
 #include "runtime/graph_scheduler/actor/output_actor.h"
 #include "runtime/graph_scheduler/actor/copy_actor.h"
 #include "runtime/graph_scheduler/actor/fusion/fusion_actor.h"
@@ -104,6 +105,7 @@ struct ActorSet {
   std::vector<KernelActorPtr> kernel_actors_;
   std::vector<CustomActorPtr> custom_actors_;
   std::vector<SuperKernelActorPtr> super_kernel_actors_;
+  std::vector<AnyTypeKernelActorPtr> any_type_kernel_actors_;
   // No input kernel actors need be triggered specifically.
   std::vector<AbstractActorPtr> no_input_kernel_actors_;
   std::vector<MemoryAwareActorPtr> memory_actors_;
@@ -122,6 +124,8 @@ struct ActorSet {
   size_t execution_count_{0};
   double multi_thread_execution_time_{0};
   double single_thread_execution_time_{0};
+  // Record the execution state.
+  bool is_execution_failed_{false};
 };
 using ActorSetPtr = std::shared_ptr<ActorSet>;
 

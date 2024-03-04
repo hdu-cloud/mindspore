@@ -23,6 +23,8 @@ from mindspore.ops.operations import _inner_ops as inner
 # using ".register" decorator
 bitwise_or = base.MultitypeFuncGraph("bitwise_or", True)
 
+bitwise_or.set_need_raise()
+
 
 @bitwise_or.register("Number", "Number")
 def _bitwise_or_scalar(x, y):
@@ -46,4 +48,3 @@ def _tensor_bitwise_or_scalar(x, y):
 def _scalar_bitwise_or_tensor(x, y):
     """Returns x | y where x and y are all tensors."""
     return F.bitwise_or(x, y)
-    

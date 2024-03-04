@@ -17,15 +17,14 @@
 #ifndef MINDSPORE_CORE_OPS_FILL_DIAGONAL_H_
 #define MINDSPORE_CORE_OPS_FILL_DIAGONAL_H_
 
-#include <algorithm>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -49,8 +48,8 @@ class MIND_API FillDiagonal : public BaseOperator {
   bool get_wrap() const;
 };
 
-abstract::AbstractBasePtr FillDiagonalInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                            const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr FillDiagonalInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                     const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

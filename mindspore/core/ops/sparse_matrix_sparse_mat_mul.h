@@ -22,9 +22,10 @@
 #include <set>
 #include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/base_operator.h"
+#include "ops/op_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -60,9 +61,9 @@ class MIND_API SparseMatrixSparseMatMul : public BaseOperator {
   /// \brief Init.
   void Init() const {}
 };
-abstract::AbstractBasePtr SparseMatrixSparseMatMulInfer(const abstract::AnalysisEnginePtr &,
-                                                        const PrimitivePtr &primitive,
-                                                        const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr SparseMatrixSparseMatMulInfer(
+  const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+  const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimSparseMatrixSparseMatMul = std::shared_ptr<SparseMatrixSparseMatMul>;
 }  // namespace ops
 }  // namespace mindspore

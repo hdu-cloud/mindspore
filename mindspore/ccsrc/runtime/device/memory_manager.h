@@ -21,7 +21,7 @@
 #include <vector>
 #include <map>
 #include <queue>
-#include "common/mem_reuse/mem_reuse.h"
+#include "backend/common/mem_reuse/mem_reuse.h"
 #include "runtime/device/common_somas_allocator.h"
 
 namespace mindspore {
@@ -46,6 +46,7 @@ class BACKEND_EXPORT MemoryManager {
   uint8_t *MallocOutputMem(const AnfNodePtr &node, size_t index, MemType type, size_t size,
                            const DeviceAddressPtr &address, bool comm_mem);
   uint8_t *MallocWorkSpaceMem(const AnfNodePtr &node, size_t index, MemType type, size_t size);
+  uint8_t *MallocWorkSpaceMem(size_t size);
   virtual uint8_t *MallocMem(MemType type, size_t size, const DeviceAddressPtr &address, uint32_t graph_id);
   virtual uint8_t *MallocMem(MemType type, size_t size, const DeviceAddressPtr &address) {
     return MallocMem(type, size, address, kInvalidGraphId);
@@ -53,7 +54,8 @@ class BACKEND_EXPORT MemoryManager {
   // param address is the address type of each device
   // param from_persistent_mem shows whether the tensor is a parameter in Pynative mode
   virtual bool MallocMemFromMemPool(const DeviceAddressPtr &address, size_t size);
-  virtual void *MallocMemFromMemPool(size_t size, bool from_persistent_mem);
+  virtual void *MallocMemFromMemPool(size_t size, bool from_persistent_mem, bool need_recycle = false);
+  virtual size_t GetMaxUsedMemorySize() const { return 0; }
   virtual uint8_t *MallocCommunicationMemFromMemPool(size_t size) { return nullptr; }
   virtual void FreeMemFromMemPool(const DeviceAddressPtr address);
   virtual void FreeMemFromMemPool(void *device_ptr);

@@ -27,8 +27,8 @@ from mindspore.nn import Flatten
 from mindspore.nn import Momentum
 import mindspore.ops.operations as P
 from mindspore.train.serialization import load_param_into_net
-from mindspore.train.callback import CheckpointConfig
-from mindspore.train.callback import ModelCheckpoint
+from mindspore.train import CheckpointConfig
+from mindspore.train import ModelCheckpoint
 from mindspore.train.serialization import load_checkpoint
 
 from mindspore.nn import SoftmaxCrossEntropyWithLogits
@@ -278,7 +278,7 @@ class OptimizerSemiAutoAndAutoParallelFactory:
         set_algo_parameters(fully_use_devices=False)
         context.reset_auto_parallel_context()
         context.set_auto_parallel_context(parallel_mode=ParallelMode.AUTO_PARALLEL,
-                                          device_num=device_num)
+                                          device_num=device_num, search_mode="dynamic_programming")
         parallel_mode_net = self.net(self.strategy_dict)
         self.parallel_ckpt = self._model_train_and_save_ckpt(net=parallel_mode_net,
                                                              dataset=dataset, epoch=epoch)
@@ -291,7 +291,7 @@ class OptimizerSemiAutoAndAutoParallelFactory:
         set_algo_parameters(fully_use_devices=False)
         context.reset_auto_parallel_context()
         context.set_auto_parallel_context(parallel_mode=ParallelMode.AUTO_PARALLEL,
-                                          device_num=device_num,
+                                          device_num=device_num, search_mode="dynamic_programming",
                                           enable_parallel_optimizer=True)
         parallel_mode_net = self.net(self.strategy_dict)
         self.optimizer_parallel_ckpt = self._model_train_and_save_ckpt(net=parallel_mode_net,

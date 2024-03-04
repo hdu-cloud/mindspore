@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <utility>
 
 #include "utils/hash_map.h"
 #include "abstract/abstract_value.h"
@@ -42,8 +43,8 @@ class PrimitivePy : public Primitive {
  public:
   explicit PrimitivePy(const std::string &name);
   PrimitivePy(const PrimitivePy &prim_py);
-  virtual PrimitivePy &operator=(const PrimitivePy &other);
-  PrimitivePy(const py::object &python_obj, const PrimitivePyAdapterPtr &adapter);
+  PrimitivePy &operator=(const PrimitivePy &other);
+  explicit PrimitivePy(const py::object &python_obj);
   ~PrimitivePy() override;
   MS_DECLARE_PARENT(PrimitivePy, Primitive);
   const bool parse_info_ = true;
@@ -74,6 +75,7 @@ class PrimitivePy : public Primitive {
   PrimitivePtr Clone() override;
   PrimitivePyAdapterPtr adapter() const { return adapter_; }
   void set_bprop_cls_name(const std::string &name) { bprop_cls_name_ = name; }
+  static void ProcessUnPairedCellHook(bool execute_hook_fn);
   static void ClearHookRes();
 
  private:
@@ -87,12 +89,14 @@ class PrimitivePy : public Primitive {
   std::vector<Signature> signatures_;
   std::vector<PrimitivePyWeakPtr> bprop_cut_prims_;
   std::map<int, py::function> backward_hook_fn_;
-  static std::map<std::string, py::object> hook_grad_;
+  static std::map<std::string, std::pair<std::map<int, py::function>, py::object>> hook_grad_;
 };
 
 class PrimitivePyAdapter {
  public:
   explicit PrimitivePyAdapter(const py::str &name);
+  PrimitivePyAdapter(const PrimitivePyAdapter &adapter);
+  PrimitivePyAdapter &operator=(const PrimitivePyAdapter &other);
   ~PrimitivePyAdapter() = default;
   void AddPyAttr(const py::str &name, const py::object &obj);
   void DelPyAttr(const py::str &name);
@@ -101,19 +105,46 @@ class PrimitivePyAdapter {
   void RemoveBackwardHookFn(int key);
   void set_prim_type(const PrimType t);
   void set_const_prim(bool is_const_prim);
+  void set_inplace_prim(bool inplace_prim);
   void set_const_input_indexes(const std::vector<size_t> &const_input_indexes);
   void set_signatures(const std::vector<Signature> &signatures);
   void set_instance_name(const std::string &s);
   void set_attached_primitive(const PrimitivePyPtr &prim);
   PrimitivePyPtr attached_primitive() const { return attached_primitive_.lock(); }
+  uint64_t id() const { return id_; }
   std::string name() const { return name_; }
   void set_name(const std::string &name) { name_ = name; }
+
+  struct PrimitiveUserData {
+    py::object obj;
+    ~PrimitiveUserData() {
+      // cppcheck-suppress unreadVariable
+      py::gil_scoped_acquire acquire_gil;
+      obj = py::none();
+    }
+  };
+
+  void SetUserData(const py::str &key, const py::object &value);
+  py::object GetUserData(const py::str &key) const;
+
   const bool parse_info_ = true;
 
  private:
   friend PrimitivePy;
-  bool is_const_prim_{false};
+
+  template <typename T>
+  void set_user_data(const std::string &key, const std::shared_ptr<T> &value) {
+    user_data_.set<T>(key, value);
+  }
+  template <typename T>
+  std::shared_ptr<T> user_data(const std::string &key) const {
+    return user_data_.get<T>(key);
+  }
+
+  bool const_prim_{false};
+  bool inplace_prim_{false};
   int backward_hook_fn_key_{-1};
+  uint64_t id_;
   std::string name_;
   std::string instance_name_;
   PrimType prim_type_{kPrimTypeBuiltIn};
@@ -122,6 +153,40 @@ class PrimitivePyAdapter {
   std::vector<size_t> const_input_indexes_;
   std::vector<Signature> signatures_;
   std::map<int, py::function> backward_hook_fn_;
+  UserData user_data_;
+};
+
+/// \brief OpPrimPyRegister defines the singleton to save primitivepy which has no attrs.
+class OpPrimPyRegister {
+ public:
+  /// \brief Destructor of OpPrimPyRegister.
+  ~OpPrimPyRegister() {}
+
+  /// \brief Get the OpPrimPyRegister singleton.
+  ///
+  /// \return The OpPrimPyRegister singleton.
+  static OpPrimPyRegister &GetInstance() {
+    static OpPrimPyRegister instance{};
+    return instance;
+  }
+
+  /// \brief Get PrimPyMap of the OpPrimPyRegister singleton.
+  ///
+  /// \return The PrimPyMap of the OpPrimPyRegister singleton.
+  const HashMap<std::string, ValuePtr> &GetPrimPyMap() const { return primpy_map_; }
+
+  /// \brief Add an element into the PrimPyMap of the OpPrimPyRegister singleton.
+  ///
+  /// param[in] name The operator name.
+  /// param[in] primpy The primitivepy of the operator.
+  void SetPrimPyMap(const std::string &name, const ValuePtr &primpy) { primpy_map_[name] = primpy; }
+
+  /// \brief Clear the PrimPyMap before the pyobject destroyed.
+  void Clear() { primpy_map_.clear(); }
+
+ private:
+  OpPrimPyRegister() {}
+  HashMap<std::string, ValuePtr> primpy_map_;  // op_name, primpy
 };
 }  // namespace mindspore
 #endif  // MINDSPORE_CCSRC_UTILS_PRIMITIVE_PY_H_

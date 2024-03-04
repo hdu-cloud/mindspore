@@ -17,11 +17,12 @@
 #ifndef MINDSPORE_CCSRC_PLUGIN_DEVICE_GPU_NN_SOFTMAX_GRAD_GPU_KERNEL_H_
 #define MINDSPORE_CCSRC_PLUGIN_DEVICE_GPU_NN_SOFTMAX_GRAD_GPU_KERNEL_H_
 
-#include <vector>
-#include <string>
 #include <algorithm>
+#include <functional>
 #include <map>
+#include <string>
 #include <utility>
+#include <vector>
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
 #include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
 #include "plugin/device/gpu/kernel/kernel_constants.h"
@@ -60,12 +61,11 @@ class SoftmaxGradGpuKernelMod : public NativeGpuKernelMod {
   void InitSizeLists() {
     input_size_list_.push_back(input_size_);
     output_size_list_.push_back(output_size_);
-    workspace_size_list_.push_back(input_size_);
-    workspace_size_list_.push_back(input_size_);
-    workspace_size_list_.push_back(output_size_);
-    workspace_size_list_.push_back(workspace_size_);
-    workspace_size_list_.push_back(workspace_size_);
-    workspace_size_list_.push_back(workspace_size_);
+    if (use_workspace_) {
+      workspace_size_list_.push_back(input_size_);
+      workspace_size_list_.push_back(input_size_);
+      workspace_size_list_.push_back(output_size_);
+    }
     return;
   }
 
@@ -82,28 +82,32 @@ class SoftmaxGradGpuKernelMod : public NativeGpuKernelMod {
     if (axis_ < 0) {
       axis_ += SizeToInt(shape_size_);
     }
-    if (axis_ == 1) {
-      batch_size_ = input_shape[0];
-      channel_size_ = input_shape[1];
-    } else if (axis_ == 0) {
-      batch_size_ = input_shape[1];
-      channel_size_ = input_shape[0];
-      input_shape_.push_back(input_shape[0]);
-      input_shape_.push_back(input_shape[1]);
-      transpose_shape_.push_back(input_shape[1]);
-      transpose_shape_.push_back(input_shape[0]);
-      transpose_axis_.push_back(1);
-      transpose_axis_.push_back(0);
-    } else {
+    if (axis_ >= SizeToInt(shape_size_) || axis_ < 0) {
       MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the value of 'axis' must be in range [-" << shape_size_
                         << ", " << shape_size_ << "), but got " << axis;
     }
 
+    input_shape_ = input_shape;
+    transpose_shape_ = input_shape;
+    for (size_t i = 0; i < input_shape.size(); ++i) {
+      transpose_axis_.emplace_back(i);
+    }
+    std::swap(transpose_shape_[IntToSize(axis_)], transpose_shape_.back());
+    std::swap(transpose_axis_[IntToSize(axis_)], transpose_axis_.back());
+
+    size_t size_ = std::accumulate(input_shape.begin(), input_shape.end(), 1UL, std::multiplies<size_t>());
+    channel_size_ = transpose_shape_.back();
+    if (channel_size_ != 0) {
+      batch_size_ = size_ / channel_size_;
+    } else {
+      MS_LOG(EXCEPTION) << "For '" << kernel_name_
+                        << "', the value of the shape of the input along the 'axis' dimension should be greater than 0"
+                        << ", but got " << channel_size_;
+    }
     height_ = 1;
     width_ = 1;
     input_size_ = type_id_size_ * batch_size_ * channel_size_ * height_ * width_;
     output_size_ = input_size_;
-    workspace_size_ = shape_size_ * sizeof(size_t);
   }
 
   SoftmaxGradGpuLaunchFunc kernel_func_;
@@ -115,16 +119,14 @@ class SoftmaxGradGpuKernelMod : public NativeGpuKernelMod {
   cudnnSoftmaxMode_t mode_{CUDNN_SOFTMAX_MODE_INSTANCE};
   cudnnDataType_t cudnn_data_type_{CUDNN_DATA_FLOAT};
   bool is_null_input_{false};
+  bool use_workspace_{false};
   size_t input_size_{0};
   size_t output_size_{0};
-  size_t workspace_size_{0};
-
   std::vector<size_t> input_shape_;
   std::vector<size_t> transpose_shape_;
   std::vector<size_t> transpose_axis_;
   int axis_{0};
   size_t shape_size_{0};
-
   size_t batch_size_{0};
   size_t channel_size_{0};
   size_t height_{0};

@@ -14,18 +14,34 @@
  * limitations under the License.
  */
 #include "ops/hsigmoid.h"
-#include <string>
-#include <set>
+
+#include <algorithm>
 #include <map>
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
+#include <memory>
+#include <set>
+#include <string>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/lite_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::ShapePtr HSigmoidInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, 1, primitive->name());
   for (const auto &item : input_args) {
     MS_EXCEPTION_IF_NULL(item);
   }
@@ -34,6 +50,8 @@ abstract::ShapePtr HSigmoidInferShape(const PrimitivePtr &primitive, const std::
 }
 
 TypePtr HSigmoidInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(prim);
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, 1, prim->name());
   if (std::any_of(input_args.begin(), input_args.end(), [](const AbstractBasePtr &a) { return a == nullptr; })) {
     MS_LOG(EXCEPTION) << "For '" << prim->name()
                       << "', the input args used for infer shape and type is necessary, but missing it.";
@@ -51,6 +69,24 @@ AbstractBasePtr HSigmoidInfer(const abstract::AnalysisEnginePtr &, const Primiti
   return std::make_shared<abstract::AbstractTensor>(HSigmoidInferType(primitive, input_args),
                                                     HSigmoidInferShape(primitive, input_args)->shape());
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(HSigmoid, prim::kPrimHSigmoid, HSigmoidInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGHSigmoidInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return HSigmoidInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return HSigmoidInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return HSigmoidInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(HSigmoid, prim::kPrimHSigmoid, AGHSigmoidInfer, false);
 }  // namespace ops
 }  // namespace mindspore

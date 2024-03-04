@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,13 @@
 
 #ifndef MINDSPORE_CORE_OPS_CONV3D_BACKPROP_FILTER_H_
 #define MINDSPORE_CORE_OPS_CONV3D_BACKPROP_FILTER_H_
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
-#include "mindapi/base/types.h"
 #include "mindapi/base/format.h"
+#include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -59,8 +59,6 @@ class MIND_API Conv3DBackpropFilter : public BaseOperator {
   Format get_format() const;
   std::vector<int64_t> get_pad_list() const;
 };
-void SetConv3DBackpropPadList(const PrimitivePtr &primitive, const std::vector<int64_t> &dout_shape_norm,
-                              const std::vector<int64_t> &x_size_v);
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_Conv3DBackpropFilter_H_

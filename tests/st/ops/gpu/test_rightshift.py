@@ -67,7 +67,7 @@ def test_rightshift_1d():
     """
     context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
     x_np = (np.array([-1, -5, -3, -14, 64])).astype(np.int8)
-    y_np = (np.array([5, 0, 7, 11, 66])).astype(np.int8)
+    y_np = (np.array([5, 0, 7, 11, 1])).astype(np.int8)
     z_np = np.right_shift(x_np, y_np)
 
     x_ms = Tensor(x_np)
@@ -89,7 +89,7 @@ def test_rightshift_2d():
     """
     context.set_context(mode=context.PYNATIVE_MODE, device_target="GPU")
     x_np = (np.array([[-1, -5, -3], [-14, 64, 0]])).astype(np.int8)
-    y_np = (np.array([[5, 0, 7], [11, 66, 0]])).astype(np.int8)
+    y_np = (np.array([[5, 0, 7], [11, 1, 0]])).astype(np.int8)
     z_np = np.right_shift(x_np, y_np)
 
     x_ms = Tensor(x_np)

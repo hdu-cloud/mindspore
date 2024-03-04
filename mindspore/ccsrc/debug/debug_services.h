@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,10 +15,6 @@
  */
 #ifndef MINDSPORE_CCSRC_DEBUG_DEBUG_SERVICES_H_
 #define MINDSPORE_CCSRC_DEBUG_DEBUG_SERVICES_H_
-
-#ifndef OFFLINE_DBG_MODE
-#define ONLINE_DBG_MODE
-#endif
 
 #ifdef OFFLINE_DBG_MODE
 #include "base/float16.h"
@@ -38,7 +34,7 @@
 #include <sstream>
 #include <utility>
 #include "debug/tensor_load.h"
-#include "debug/tensor_data.h"
+#include "include/backend/debug/tensor_data.h"
 
 namespace mindspore {
 class DebugServices {
@@ -196,6 +192,9 @@ class DebugServices {
              condition.type == SD_LT || condition.type == MAX_MIN_LT;
     }
 
+    // for parameter_list of the condition TOO_LARGE/TOO_SMALL, the meaning of parameter_list is:
+    // parameter_list[0]: the absolute mean value is set; parameter_list[1]: the max value is set;
+    // parameter_list[2]: the min is set; parameter_list[3]: the mean value is set.
     // mean or sd related condition set
     bool mean_sd_enabled() const {
       return condition.type == MEAN_LT || condition.type == MEAN_GT || condition.type == SD_LT ||
@@ -212,6 +211,9 @@ class DebugServices {
     }
     bool allclose_enabled() const { return condition.type == NOT_CHANGED; }
 
+    // for parameter_list of the condition RANGE, the meaning of parameter_list is:
+    // parameter_list[0]: the elements value in range is lower than setting percentage is set;
+    // parameter_list[1]: the elements value in range is higher than setting percentage is set.
     bool range_enabled() const {
       return condition.type == RANGE && (!parameter_list[0].disabled || !parameter_list[1].disabled);
     }
@@ -312,7 +314,14 @@ class DebugServices {
                                  std::vector<unsigned int> *device_id, std::vector<unsigned int> *root_graph_id,
                                  bool error_on_no_value = false);
 
-  void AddOpOverflowOpNames(const std::string &overflow_bin_path, std::vector<std::string> *op_names) const;
+  void GetOverflowTaskStreamId(const std::string &overflow_bin_path,
+                               std::vector<std::pair<uint64_t, uint64_t>> *task_stream_hits) const;
+
+  void GetTaskStreamIdNodeMap(const std::string &tensor_path,
+                              std::map<std::pair<uint64_t, uint64_t>, std::string> *task_stream_to_opnames) const;
+
+  void AddOpOverflowOpNames(const std::string &overflow_bin_path, const std::string &tensors_path,
+                            std::vector<std::string> *op_names) const;
 
   void CheckWatchpoints(std::vector<std::string> *name, std::vector<std::string> *slot, std::vector<int> *condition,
                         std::vector<unsigned int> *const watchpoint_id,
@@ -441,7 +450,7 @@ class DebugServices {
 
   void SearchNodesTensors(const std::vector<std::string> &name,
                           std::vector<std::tuple<std::string, std::shared_ptr<TensorData>>> *result_list);
-#ifdef ONLINE_DBG_MODE
+#ifndef OFFLINE_DBG_MODE
   bool IsWatchPoint(const std::string &kernel_name, const CNodePtr &kernel = nullptr) const;
 
   bool IsWatchPointNodeInput(const std::string &w_name, const CNodePtr &kernel) const;
@@ -457,7 +466,7 @@ class DebugServices {
 
   void EmptyCurrentTensor();
 
-#ifdef ONLINE_DBG_MODE
+#ifndef OFFLINE_DBG_MODE
   bool DumpTensorToFile(const std::string &filepath, const std::string &tensor_name, size_t slot) const;
 #endif
 
@@ -466,7 +475,7 @@ class DebugServices {
   uint32_t GetPrevIteration(const std::shared_ptr<TensorData> &tensor);
 
   void ResetLoadedTensors();
-#ifdef ONLINE_DBG_MODE
+#ifndef OFFLINE_DBG_MODE
   std::vector<std::shared_ptr<TensorData>> GetNodeTensor(const CNodePtr &kernel);
 #endif
 

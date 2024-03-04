@@ -22,8 +22,8 @@
 #include <set>
 #include <string>
 #include <vector>
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,8 +37,8 @@ class MIND_API Acosh : public BaseOperator {
   Acosh() : BaseOperator(kNameAcosh) { InitIOName({"x"}, {"y"}); }
 };
 
-abstract::AbstractBasePtr AcoshInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                     const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr AcoshInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                              const std::vector<abstract::AbstractBasePtr> &input_args);
 
 using PrimAcoshPtr = std::shared_ptr<Acosh>;
 }  // namespace ops

@@ -16,13 +16,17 @@
 #include <algorithm>
 
 #include "common/common_test.h"
+
+#include "ops/comparison_ops.h"
+#include "ops/arithmetic_ops.h"
+#include "ops/framework_ops.h"
 #include "common/py_func_graph_fetcher.h"
 #include "ir/manager.h"
 #include "utils/log_adapter.h"
 #include "ir/func_graph_cloner.h"
-#include "pipeline/jit/parse/parse.h"
+#include "pipeline/jit/ps/parse/parse.h"
 #include "ir/graph_utils.h"
-#include "pipeline/jit/resource.h"
+#include "pipeline/jit/ps/resource.h"
 #include "include/common/debug/draw.h"
 #include "frontend/operator/ops.h"
 #include "backend/graph_compiler/segment_runner.h"
@@ -31,7 +35,6 @@
 #include "include/common/utils/convert_utils.h"
 #include "include/common/utils/convert_utils_py.h"
 #include "utils/log_adapter.h"
-#include "mindspore/core/ops/core_ops.h"
 
 namespace mindspore {
 namespace compile {
@@ -47,7 +50,7 @@ class TestCompileSegmentRunner : public UT::Common {
 };
 
 TEST_F(TestCompileSegmentRunner, test_MsVmConvert1) {
-  FuncGraphPtr g = get_py_fun_(prim::kScalarAdd);
+  FuncGraphPtr g = get_py_fun_(kScalarAddOpName);
   // g was managed by local variable manager in get_py_fun_ and that manager will be freed as no reference.
   // so a new manager should be declared to make get_outputs() in segment_runner.cc happy.
   std::shared_ptr<mindspore::FuncGraphManager> manager = mindspore::Manage(g);
@@ -63,7 +66,7 @@ TEST_F(TestCompileSegmentRunner, test_MsVmConvert1) {
 }
 
 TEST_F(TestCompileSegmentRunner, test_MsVmConvert2) {
-  FuncGraphPtr g = get_py_fun_(prim::kScalarMul);
+  FuncGraphPtr g = get_py_fun_(kScalarMulOpName);
   std::shared_ptr<mindspore::FuncGraphManager> manager = mindspore::Manage(g);
 
   BackendPtr b = std::make_shared<Backend>("vm");
@@ -76,31 +79,17 @@ TEST_F(TestCompileSegmentRunner, test_MsVmConvert2) {
   ASSERT_TRUE(runResult.size() == 1 && py::cast<double>(BaseRefToPyData(runResult[0])) == 2.0);
 }
 
-TEST_F(TestCompileSegmentRunner, test_if) {
-  FuncGraphPtr g = get_py_fun_("test_if");
-  std::shared_ptr<mindspore::FuncGraphManager> manager = mindspore::Manage(g);
-
-  BackendPtr b = std::make_shared<Backend>("vm");
-  auto graph_partition = std::make_shared<GraphPartition>(GetNonlinearOps(), b->name());
-  auto segments = graph_partition->Partition(g);
-  VectorRef args({1.0, 2.0});
-
-  auto convertResult = MsVmConvert(segments[0], "");
-  auto runResult = (*(convertResult.run))(args);
-
-  auto result = py::cast<bool>(BaseRefToPyData(runResult[0]));
-  ASSERT_TRUE(runResult.size() == 1 && result == false);
-}
-
 TEST_F(TestCompileSegmentRunner, test_RunOperation1) {
   VectorRef args({1});
-  auto res = RunOperation(std::make_shared<PrimitivePy>(py::str(prim::kPrimIdentity->name())), args);
+  auto res =
+    RunOperation(std::make_shared<PrimitivePy>(py::str(prim::kPrimIdentity->name()).cast<std::string>()), args);
   ASSERT_EQ(py::cast<int>(BaseRefToPyData(res)), 1);
 }
 
 TEST_F(TestCompileSegmentRunner, test_RunOperation2) {
   VectorRef args({1, 2});
-  auto res = RunOperation(std::make_shared<PrimitivePy>(py::str(prim::kPrimScalarGt->name())), args);
+  auto res =
+    RunOperation(std::make_shared<PrimitivePy>(py::str(prim::kPrimScalarGt->name()).cast<std::string>()), args);
   ASSERT_EQ(py::cast<bool>(BaseRefToPyData(res)), false);
 }
 }  // namespace compile

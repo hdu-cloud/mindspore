@@ -21,8 +21,8 @@
 #include <string>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -34,9 +34,13 @@ class MIND_API GridSampler2D : public BaseOperator {
   std::string get_interpolation_mode() const;
   std::string get_padding_mode() const;
   bool get_align_corners() const;
+  void set_interpolation_mode(const std::string &interpolation_mode);
+  void set_padding_mode(const std::string &padding_mode);
+  void set_align_corners(bool align_corners);
 };
-abstract::AbstractBasePtr GridSampler2DInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                             const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr GridSampler2DInfer(const abstract::AnalysisEnginePtr &,
+                                                      const PrimitivePtr &primitive,
+                                                      const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimGridSampler2D = std::shared_ptr<GridSampler2D>;
 }  // namespace ops
 }  // namespace mindspore

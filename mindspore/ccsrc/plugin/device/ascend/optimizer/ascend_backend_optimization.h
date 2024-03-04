@@ -16,19 +16,20 @@
 #ifndef MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_ASCEND_BACKEND_OPTIMIZATION_H_
 #define MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_ASCEND_BACKEND_OPTIMIZATION_H_
 #include <memory>
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
+#include "include/backend/optimizer/pass_manager.h"
 namespace mindspore {
 namespace opt {
-void RunOpAscendDataLayout(const std::shared_ptr<session::KernelGraph> &kernel_graph);
 void RunOpAscendBackendIRFusionOptimization(const std::shared_ptr<session::KernelGraph> &kernel_graph);
-void RunOpIRFissionForAcl(const std::shared_ptr<session::KernelGraph> &kernel_graph);
 void RunOpAscendBackendOptimization(const std::shared_ptr<session::KernelGraph> &kernel_graph);
 void AscendDataLayout(const std::shared_ptr<session::KernelGraph> &kernel_graph);
 void AscendMixPrecision(const std::shared_ptr<session::KernelGraph> &kernel_graph);
 void AscendBackendOptimization(const std::shared_ptr<session::KernelGraph> &kernel_graph);
+void AscendAfterInlineOptimization(const std::shared_ptr<session::KernelGraph> &kernel_graph);
 void AscendBackendIRFusionOptimization(const std::shared_ptr<session::KernelGraph> &kernel_graph);
-void AscendBackendUBFusionOptimization(const std::shared_ptr<session::KernelGraph> &kernel_graph);
 void AscendUnifyMindIR(const std::shared_ptr<session::KernelGraph> &kernel_graph);
+void AscendOpAdaptation(const std::shared_ptr<session::KernelGraph> &kernel_graph);
+PassManagerPtr GetAscendUnifyMindIRPassManager();
 }  // namespace opt
 }  // namespace mindspore
 

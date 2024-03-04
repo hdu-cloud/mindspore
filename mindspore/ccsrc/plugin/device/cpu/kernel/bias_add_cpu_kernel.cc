@@ -15,6 +15,9 @@
  */
 
 #include "plugin/device/cpu/kernel/bias_add_cpu_kernel.h"
+#ifdef ENABLE_AVX
+#include <immintrin.h>
+#endif
 #include "ops/bias_add.h"
 #include <map>
 #include <complex>
@@ -44,12 +47,6 @@ int BiasAddCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std:
   int ret = KernelMod::Resize(base_operator, inputs, outputs);
   if (ret != KRET_OK) {
     return ret;
-  }
-  for (const auto &input : inputs) {
-    auto input_shape = input->GetShapeVector();
-    if (!IsValidShape(input_shape)) {
-      return KRET_UNKNOWN_SHAPE;
-    }
   }
   input_shape_ = Convert2SizeTClipNeg(inputs[kIndex0]->GetShapeVector());
   bias_shape_ = Convert2SizeTClipNeg(inputs[kIndex1]->GetShapeVector());
@@ -104,7 +101,7 @@ bool BiasAddCpuKernelMod::Launch(const std::vector<AddressPtr> &inputs, const st
                                  const std::vector<AddressPtr> &outputs) {
   CHECK_KERNEL_INPUTS_NUM(inputs.size(), kBiasAddInputsNum, kernel_name_);
   CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kBiasAddOutputsNum, kernel_name_);
-  kernel_func_(this, inputs, workspace, outputs);
+  (void)kernel_func_(this, inputs, workspace, outputs);
   return true;
 }
 
@@ -168,30 +165,18 @@ bool BiasAddCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, co
         ComputeNHWC<T>(src_addr, bias_addr, output_addr, num_value, num_bias);
       } else {
         size_t c_size = input_shape_[kIndex1];
-        for (size_t n = 0; n < input_shape_[kIndex0]; ++n) {
-          for (size_t c = 0; c < c_size; ++c) {
-            size_t offset = n * c_size * hw_size + c * hw_size;
-            size_t hw = 0;
-#ifdef ENABLE_AVX
-            constexpr size_t C8NUM = 8;
-            size_t hw8 = hw_size / C8NUM * C8NUM;
-            const float *in_ptr = src_addr + offset;
-            float *out_ptr = output_addr + offset;
-            for (; hw < hw8; hw += C8NUM) {
-              __m256 src_r1 = _mm256_loadu_ps(in_ptr);
-              __m256 bias_r2 = _mm256_set1_ps(bias_addr[c]);
-              __m256 dst_r3 = _mm256_add_ps(src_r1, bias_r2);
-              _mm256_storeu_ps(out_ptr, dst_r3);
-
-              in_ptr += C8NUM;
-              out_ptr += C8NUM;
-            }
-#endif
-            for (; hw < LongToSize(hw_size); ++hw) {
-              output_addr[offset + hw] = src_addr[offset + hw] + bias_addr[c];
+        auto task = [&](size_t start, size_t end) {
+          for (size_t n = start; n < end; ++n) {
+            for (size_t c = 0; c < c_size; ++c) {
+              size_t offset = LongToSize(n * c_size * hw_size + c * hw_size);
+              size_t hw = 0;
+              for (; hw < LongToSize(hw_size); ++hw) {
+                output_addr[offset + hw] = src_addr[offset + hw] + bias_addr[c];
+              }
             }
           }
-        }
+        };
+        ParallelLaunchAutoSearch(task, LongToSize(input_shape_[0]), this, &parallel_search_info_);
       }
     } else {
       auto task = [&](size_t start, size_t end) {

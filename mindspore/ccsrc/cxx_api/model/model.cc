@@ -17,7 +17,6 @@
 #include "include/api/context.h"
 #include "cxx_api/model/model_impl.h"
 #include "cxx_api/factory.h"
-#include "include/common/utils/utils.h"
 
 namespace mindspore {
 Status Model::Build(GraphCell graph_cell, const std::shared_ptr<Context> &model_context,
@@ -63,9 +62,9 @@ Status Model::Build(const std::vector<char> &, ModelType, const std::shared_ptr<
   return kMCFailed;
 }
 
-Status Model::Build(const void *model_data, size_t data_size, ModelType model_type,
-                    const std::shared_ptr<Context> &model_context, const Key &dec_key,
-                    const std::vector<char> &dec_mode, const std::vector<char> &cropto_lib_path) {
+Status Model::Build(const void * /* model_data */, size_t /* data_size */, ModelType /* model_type */,
+                    const std::shared_ptr<Context> & /* model_context */, const Key & /* dec_key */,
+                    const std::vector<char> & /* dec_mode */, const std::vector<char> & /* cropto_lib_path */) {
   MS_LOG(ERROR) << "Unsupported Feature.";
   return kMCFailed;
 }
@@ -167,7 +166,7 @@ std::vector<MSTensor> Model::GetOutputsByNodeName(const std::vector<char> &node_
 Model::Model() : impl_(nullptr) {}
 Model::~Model() {}
 
-bool Model::CheckModelSupport(enum DeviceType device_type, ModelType model_type) {
+bool Model::CheckModelSupport(DeviceType device_type, ModelType model_type) {
   auto check_model = ModelImplFactory::Instance().Create(device_type);
   if (check_model == nullptr) {
     return false;

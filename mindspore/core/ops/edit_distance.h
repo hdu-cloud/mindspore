@@ -17,20 +17,19 @@
 #ifndef MINDSPORE_CORE_OPS_EDIT_DISTANCE_H_
 #define MINDSPORE_CORE_OPS_EDIT_DISTANCE_H_
 #include <memory>
-
+#include "mindspore/core/ops/math_ops.h"
 #include "ops/base_operator.h"
-#include "mindspore/core/ops/core_ops.h"
 
 namespace mindspore {
 namespace ops {
-constexpr auto kNormalize = "normalize";
+constexpr auto kNameEditDistance = "EditDistance";
 /// \brief Computes the Levenshtein Edit Distance of two sparse tensors.
 /// Refer to Python API @ref mindspore.ops.EditDistance for more details.
 class MIND_API EditDistance : public BaseOperator {
  public:
   MIND_API_BASE_MEMBER(EditDistance);
   /// \brief Constructor.
-  EditDistance() : BaseOperator(prim::kEditDistance) {}
+  EditDistance() : BaseOperator(kNameEditDistance) {}
   /// \brief Init. Refer to the parameters of Python API @ref mindspore.ops.EditDistance for the inputs.
   void Init(const bool normalize = true);
   /// \brief Set normalize.

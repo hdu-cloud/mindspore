@@ -561,10 +561,10 @@ __global__ void Addcmul_value1(const int64_t l0, const int64_t l1, const int64_t
   }
 }
 template <typename T, typename VT>
-void CalAddcmul(const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims,
-                const std::vector<int64_t> &x2_dims, const std::vector<int64_t> &value_dims,
-                const std::vector<int64_t> &output_dims, const T *input_data, const T *x1, const T *x2, const VT *value,
-                T *output, const uint32_t &device_id, cudaStream_t stream) {
+cudaError_t CalAddcmul(const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims,
+                       const std::vector<int64_t> &x2_dims, const std::vector<int64_t> &value_dims,
+                       const std::vector<int64_t> &output_dims, const T *input_data, const T *x1, const T *x2,
+                       const VT *value, T *output, const uint32_t &device_id, cudaStream_t stream) {
   int64_t size = 1;
 
   int64_t size_value = 1;
@@ -588,7 +588,7 @@ void CalAddcmul(const std::vector<int64_t> &input_data_dims, const std::vector<i
       inp *= input_data_dims[j];
       x1_ *= x1_dims[j];
       x2_ *= x2_dims[j];
-      v *= output_dims[j];
+      v *= value_dims[j];
     }
     output_broadcast_used[i] = o;
     input_data_broadcast_used[i] = inp;
@@ -608,6 +608,20 @@ void CalAddcmul(const std::vector<int64_t> &input_data_dims, const std::vector<i
     } else if (size_value == 1) {
       Addcmul_all_same_value1<<<CUDA_BLOCKS(device_id, size), CUDA_THREADS(device_id), 0, stream>>>(
         input_data, x1, x2, value, output, size);
+    } else {
+      Addcmul<<<CUDA_BLOCKS(device_id, size), CUDA_THREADS(device_id), 0, stream>>>(
+        input_data_dims[0], input_data_dims[1], input_data_dims[2], input_data_dims[3], input_data_dims[4],
+        input_data_dims[5], input_data_dims[6], x1_dims[0], x1_dims[1], x1_dims[2], x1_dims[3], x1_dims[4], x1_dims[5],
+        x1_dims[6], x2_dims[0], x2_dims[1], x2_dims[2], x2_dims[3], x2_dims[4], x2_dims[5], x2_dims[6], value_dims[0],
+        value_dims[1], value_dims[2], value_dims[3], value_dims[4], value_dims[5], value_dims[6], output_dims[0],
+        output_dims[1], output_dims[2], output_dims[3], output_dims[4], output_dims[5], output_dims[6],
+        output_broadcast_used[0], output_broadcast_used[1], output_broadcast_used[2], output_broadcast_used[3],
+        output_broadcast_used[4], input_data_broadcast_used[0], input_data_broadcast_used[1],
+        input_data_broadcast_used[2], input_data_broadcast_used[3], input_data_broadcast_used[4], x1_broadcast_used[0],
+        x1_broadcast_used[1], x1_broadcast_used[2], x1_broadcast_used[3], x1_broadcast_used[4], x2_broadcast_used[0],
+        x2_broadcast_used[1], x2_broadcast_used[2], x2_broadcast_used[3], x2_broadcast_used[4], value_broadcast_used[0],
+        value_broadcast_used[1], value_broadcast_used[2], value_broadcast_used[3], value_broadcast_used[4], input_data,
+        x1, x2, value, output, size);
     }
   } else if (size_value == 1) {
     Addcmul_value1<<<CUDA_BLOCKS(device_id, size), CUDA_THREADS(device_id), 0, stream>>>(
@@ -636,221 +650,222 @@ void CalAddcmul(const std::vector<int64_t> &input_data_dims, const std::vector<i
       value_broadcast_used[1], value_broadcast_used[2], value_broadcast_used[3], value_broadcast_used[4], input_data,
       x1, x2, value, output, size);
   }
+  return GetCudaStatus();
 }
 
-template CUDA_LIB_EXPORT void CalAddcmul<half, half>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<half, half>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const half *input_data,
   const half *x1, const half *x2, const half *value, half *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<half, double>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<half, double>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const half *input_data,
   const half *x1, const half *x2, const double *value, half *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<half, float>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<half, float>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const half *input_data,
   const half *x1, const half *x2, const float *value, half *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<half, int>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<half, int>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const half *input_data,
   const half *x1, const half *x2, const int *value, half *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<half, int8_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<half, int8_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const half *input_data,
   const half *x1, const half *x2, const int8_t *value, half *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<half, int64_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<half, int64_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const half *input_data,
   const half *x1, const half *x2, const int64_t *value, half *output, const uint32_t &device_id, cudaStream_t stream);
 
-template CUDA_LIB_EXPORT void CalAddcmul<half, uint8_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<half, uint8_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const half *input_data,
   const half *x1, const half *x2, const uint8_t *value, half *output, const uint32_t &device_id, cudaStream_t stream);
 
-template CUDA_LIB_EXPORT void CalAddcmul<float, float>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<float, float>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const float *input_data,
   const float *x1, const float *x2, const float *value, float *output, const uint32_t &device_id, cudaStream_t stream);
 
-template CUDA_LIB_EXPORT void CalAddcmul<float, double>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<float, double>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const float *input_data,
   const float *x1, const float *x2, const double *value, float *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<float, half>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<float, half>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const float *input_data,
   const float *x1, const float *x2, const half *value, float *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<float, int64_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<float, int64_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const float *input_data,
   const float *x1, const float *x2, const int64_t *value, float *output, const uint32_t &device_id,
   cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<float, int8_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<float, int8_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const float *input_data,
   const float *x1, const float *x2, const int8_t *value, float *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<float, int>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<float, int>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const float *input_data,
   const float *x1, const float *x2, const int *value, float *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<float, uint8_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<float, uint8_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const float *input_data,
   const float *x1, const float *x2, const uint8_t *value, float *output, const uint32_t &device_id,
   cudaStream_t stream);
 
-template CUDA_LIB_EXPORT void CalAddcmul<double, double>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<double, double>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const double *input_data,
   const double *x1, const double *x2, const double *y, double *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<double, float>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<double, float>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const double *input_data,
   const double *x1, const double *x2, const float *y, double *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<double, int>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<double, int>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const double *input_data,
   const double *x1, const double *x2, const int *y, double *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<double, half>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<double, half>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const double *input_data,
   const double *x1, const double *x2, const half *y, double *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<double, int8_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<double, int8_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const double *input_data,
   const double *x1, const double *x2, const int8_t *y, double *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<double, int64_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<double, int64_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const double *input_data,
   const double *x1, const double *x2, const int64_t *y, double *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<double, uint8_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<double, uint8_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const double *input_data,
   const double *x1, const double *x2, const uint8_t *y, double *output, const uint32_t &device_id, cudaStream_t stream);
 
-template CUDA_LIB_EXPORT void CalAddcmul<int, int>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int, int>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int *input_data, const int *x1,
   const int *x2, const int *y, int *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int, double>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int, double>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int *input_data, const int *x1,
   const int *x2, const double *y, int *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int, float>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int, float>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int *input_data, const int *x1,
   const int *x2, const float *y, int *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int, half>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int, half>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int *input_data, const int *x1,
   const int *x2, const half *y, int *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int, int8_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int, int8_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int *input_data, const int *x1,
   const int *x2, const int8_t *y, int *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int, int64_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int, int64_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int *input_data, const int *x1,
   const int *x2, const int64_t *y, int *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int, uint8_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int, uint8_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int *input_data, const int *x1,
   const int *x2, const uint8_t *y, int *output, const uint32_t &device_id, cudaStream_t stream);
 
-template CUDA_LIB_EXPORT void CalAddcmul<uint8_t, uint8_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<uint8_t, uint8_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const uint8_t *input_data,
   const uint8_t *x1, const uint8_t *x2, const uint8_t *y, uint8_t *output, const uint32_t &device_id,
   cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<uint8_t, int>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<uint8_t, int>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const uint8_t *input_data,
   const uint8_t *x1, const uint8_t *x2, const int *y, uint8_t *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<uint8_t, float>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<uint8_t, float>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const uint8_t *input_data,
   const uint8_t *x1, const uint8_t *x2, const float *y, uint8_t *output, const uint32_t &device_id,
   cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<uint8_t, double>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<uint8_t, double>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const uint8_t *input_data,
   const uint8_t *x1, const uint8_t *x2, const double *y, uint8_t *output, const uint32_t &device_id,
   cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<uint8_t, half>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<uint8_t, half>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const uint8_t *input_data,
   const uint8_t *x1, const uint8_t *x2, const half *y, uint8_t *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<uint8_t, int64_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<uint8_t, int64_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const uint8_t *input_data,
   const uint8_t *x1, const uint8_t *x2, const int64_t *y, uint8_t *output, const uint32_t &device_id,
   cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<uint8_t, int8_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<uint8_t, int8_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const uint8_t *input_data,
   const uint8_t *x1, const uint8_t *x2, const int8_t *y, uint8_t *output, const uint32_t &device_id,
   cudaStream_t stream);
 
-template CUDA_LIB_EXPORT void CalAddcmul<int64_t, int64_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int64_t, int64_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int64_t *input_data,
   const int64_t *x1, const int64_t *x2, const int64_t *y, int64_t *output, const uint32_t &device_id,
   cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int64_t, half>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int64_t, half>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int64_t *input_data,
   const int64_t *x1, const int64_t *x2, const half *y, int64_t *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int64_t, int8_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int64_t, int8_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int64_t *input_data,
   const int64_t *x1, const int64_t *x2, const int8_t *y, int64_t *output, const uint32_t &device_id,
   cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int64_t, uint8_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int64_t, uint8_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int64_t *input_data,
   const int64_t *x1, const int64_t *x2, const uint8_t *y, int64_t *output, const uint32_t &device_id,
   cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int64_t, double>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int64_t, double>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int64_t *input_data,
   const int64_t *x1, const int64_t *x2, const double *y, int64_t *output, const uint32_t &device_id,
   cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int64_t, float>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int64_t, float>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int64_t *input_data,
   const int64_t *x1, const int64_t *x2, const float *y, int64_t *output, const uint32_t &device_id,
   cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int64_t, int>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int64_t, int>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int64_t *input_data,
   const int64_t *x1, const int64_t *x2, const int *y, int64_t *output, const uint32_t &device_id, cudaStream_t stream);
 
-template CUDA_LIB_EXPORT void CalAddcmul<int8_t, int8_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int8_t, int8_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int8_t *input_data,
   const int8_t *x1, const int8_t *x2, const int8_t *y, int8_t *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int8_t, int>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int8_t, int>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int8_t *input_data,
   const int8_t *x1, const int8_t *x2, const int *y, int8_t *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int8_t, int64_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int8_t, int64_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int8_t *input_data,
   const int8_t *x1, const int8_t *x2, const int64_t *y, int8_t *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int8_t, double>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int8_t, double>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int8_t *input_data,
   const int8_t *x1, const int8_t *x2, const double *y, int8_t *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int8_t, float>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int8_t, float>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int8_t *input_data,
   const int8_t *x1, const int8_t *x2, const float *y, int8_t *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int8_t, uint8_t>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int8_t, uint8_t>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int8_t *input_data,
   const int8_t *x1, const int8_t *x2, const uint8_t *y, int8_t *output, const uint32_t &device_id, cudaStream_t stream);
-template CUDA_LIB_EXPORT void CalAddcmul<int8_t, half>(
+template CUDA_LIB_EXPORT cudaError_t CalAddcmul<int8_t, half>(
   const std::vector<int64_t> &input_data_dims, const std::vector<int64_t> &x1_dims, const std::vector<int64_t> &x2_dims,
   const std::vector<int64_t> &value_dims, const std::vector<int64_t> &output_dims, const int8_t *input_data,
   const int8_t *x1, const int8_t *x2, const half *y, int8_t *output, const uint32_t &device_id, cudaStream_t stream);

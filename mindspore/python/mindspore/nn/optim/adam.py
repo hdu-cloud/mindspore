@@ -26,8 +26,7 @@ from mindspore.ops import composite as C
 from mindspore.ops import functional as F
 from mindspore.common.parameter import Parameter
 from mindspore.common.tensor import Tensor
-from mindspore._checkparam import Validator as validator
-from mindspore._checkparam import Rel
+from mindspore import _checkparam as validator
 from mindspore.nn.optim.optimizer import Optimizer
 from mindspore.nn.optim.optimizer import opt_init_args_register
 from mindspore.nn.optim._dist_optimizer_registry import _register_dist_optimizer
@@ -89,6 +88,46 @@ def _run_lazy_opt_with_sparse_dist(opt, sparse_opt, push, pull, use_locking, use
         success = F.depend(success, scatter_add(params, indices, - lr_t * param_update))
         success = F.depend(success, scatter_update(m, indices, next_m))
         success = F.depend(success, scatter_update(v, indices, next_v))
+
+    return success
+
+
+@_lazy_adam_opt.register("Function", "Function", "Function", "Function", "Bool", "Bool", "Bool", "Tensor", "Tensor",
+                         "Tensor", "Tensor", "Tensor", "Tensor", "MapTensor", "MapTensor", "MapTensor", "MapTensor",
+                         "Bool", "Bool", "Function", "Bool", "Function", "Bool")
+def _run_map_tensor_lazy_opt_with_sparse_dist(opt, sparse_opt, push, pull, use_locking, use_nesterov, target,
+                                              beta1_power, beta2_power, beta1, beta2, eps, lr, gradient, params, m, v,
+                                              ps_parameter, cache_enable, distributed_opt, use_flag,
+                                              distributed_sparse_opt, use_sparse_flag):
+    """Apply sparse lazy adam optimizer to the weight parameter when the gradient is sparse."""
+    success = True
+    indices, values = gradient.get_data()
+    if use_sparse_flag:
+        # PS Mode.
+        success = F.depend(success, distributed_sparse_opt(params, m, v, beta1_power, beta2_power, lr, beta1, beta2,
+                                                           eps, values, indices))
+    else:
+        # PS Cache mode.
+        op_sqrt = P.Sqrt()
+
+        m_slice = m.get(indices)
+        v_slice = v.get(indices)
+
+        next_m = m_slice * beta1 + values * (1 - beta1)
+        next_v = v_slice * beta2 + values * values * (1 - beta2)
+
+        lr_t = lr * op_sqrt(1 - beta2_power) / (1 - beta1_power)
+
+        if use_nesterov:
+            m_temp = beta1 * next_m + values * (1 - beta1)
+            param_update = m_temp / (op_sqrt(next_v) + eps)
+        else:
+            param_update = next_m / (op_sqrt(next_v) + eps)
+
+        params_need_update = params.get(indices)
+        params.put(indices, params_need_update - lr_t * param_update)
+        m.put(indices, next_m)
+        v.put(indices, next_v)
 
     return success
 
@@ -360,18 +399,14 @@ def _run_opt_with_one_number_dist(opt, sparse_opt, push, pull, use_locking, use_
 
 
 @_adam_opt.register("Function", "Function", "Function", "Function",
-                    "Bool", "Bool", "Bool", "Bool",
+                    "Bool", "Bool", "Bool",
                     "Tensor", "Tensor", "Tensor", "Tensor", "Tensor", "Tensor",
-                    "RowTensor", "Tensor", "Tensor", "Tensor", "Tensor", "Bool", "Bool")
+                    "RowTensor", "Tensor", "Tensor", "Tensor", "Bool", "Bool")
 def _run_opt_with_sparse(opt, sparse_opt, push, pull,
-                         use_locking, use_nesterov, use_amsgrad, target,
+                         use_locking, use_nesterov, target,
                          beta1_power, beta2_power, beta1, beta2, eps, lr,
-                         gradient, param, m, v, vhat, ps_parameter, cache_enable):
+                         gradient, param, m, v, ps_parameter, cache_enable):
     """Apply sparse adam optimizer to the weight parameter when the gradient is sparse."""
-    if use_amsgrad:
-        raise Exception("""Adam with amsgrad is currently not supported when the gradients are sparse!
-                        Please set use_amsgrad=False for sparse gradients.""")
-
     success = True
     indices = gradient.indices
     values = gradient.values
@@ -429,30 +464,43 @@ def _run_opt_with_sparse(opt, sparse_opt, push, pull,
 
 
 @_adam_opt.register("Function", "Function", "Function", "Function",
-                    "Bool", "Bool", "Bool", "Bool",
+                    "Bool", "Bool", "Bool",
                     "Tensor", "Tensor", "Tensor", "Tensor", "Tensor", "Tensor",
-                    "Tensor", "Tensor", "Tensor", "Tensor", "Tensor", "Bool", "Bool")
+                    "Tensor", "Tensor", "Tensor", "Tensor", "Bool", "Bool")
 def _run_opt_with_one_number(opt, sparse_opt, push, pull,
-                             use_locking, use_nesterov, use_amsgrad, target,
+                             use_locking, use_nesterov, target,
                              beta1_power, beta2_power, beta1, beta2, eps, lr,
-                             gradient, param, moment1, moment2, vhat, ps_parameter, cache_enable):
+                             gradient, param, moment1, moment2, ps_parameter, cache_enable):
     """Apply adam optimizer to the weight parameter using Tensor."""
     success = True
     if ps_parameter and not cache_enable:
         op_shape = P.Shape()
-        if use_amsgrad:
-            success = F.depend(success, pull(push((beta1_power, beta2_power, lr, gradient),
-                                                  (op_shape(param), op_shape(moment1), op_shape(moment2),
-                                                   op_shape(vhat))), param))
-        else:
-            success = F.depend(success, pull(push((beta1_power, beta2_power, lr, beta1, beta2, eps, gradient),
-                                                  (op_shape(param), op_shape(moment1), op_shape(moment2))), param))
+        success = F.depend(success, pull(push((beta1_power, beta2_power, lr, beta1, beta2, eps, gradient),
+                                              (op_shape(param), op_shape(moment1), op_shape(moment2))), param))
     else:
-        if use_amsgrad:
-            success = F.depend(success, opt(param, moment1, moment2, vhat, beta1_power, beta2_power, lr, gradient))
-        else:
-            success = F.depend(success, opt(param, moment1, moment2, beta1_power, beta2_power, lr, beta1, beta2,
-                                            eps, gradient))
+        success = F.depend(success, opt(param, moment1, moment2, beta1_power, beta2_power, lr, beta1, beta2,
+                                        eps, gradient))
+    return success
+
+
+@_adam_opt.register("Function", "Function", "Function", "Function",
+                    "Bool", "Bool", "Bool",
+                    "Tensor", "Tensor", "Tensor", "Tensor", "Tensor", "Tensor",
+                    "Tensor", "Tensor", "Tensor", "Tensor", "Tensor", "Bool", "Bool")
+def _run_opt_with_one_number_use_amsgrad(opt, sparse_opt, push, pull,
+                                         use_locking, use_nesterov, target,
+                                         beta1_power, beta2_power, beta1, beta2, eps, lr,
+                                         gradient, param, moment1, moment2, vhat, ps_parameter, cache_enable):
+    """Apply adam optimizer to the weight parameter using Tensor and use amsgrad."""
+    success = True
+    if ps_parameter and not cache_enable:
+        op_shape = P.Shape()
+        success = F.depend(success, pull(push((beta1_power, beta2_power, lr, gradient),
+                                              (op_shape(param), op_shape(moment1), op_shape(moment2),
+                                               op_shape(vhat))), param))
+    else:
+        success = F.depend(success, opt(param, moment1, moment2, vhat, beta1_power, beta2_power,
+                                        lr, beta1, beta2, eps, gradient))
     return success
 
 
@@ -484,8 +532,8 @@ def _check_param_value(beta1, beta2, eps, prim_name):
     validator.check_value_type("beta1", beta1, [float], prim_name)
     validator.check_value_type("beta2", beta2, [float], prim_name)
     validator.check_value_type("eps", eps, [float], prim_name)
-    validator.check_float_range(beta1, 0.0, 1.0, Rel.INC_NEITHER, "beta1", prim_name)
-    validator.check_float_range(beta2, 0.0, 1.0, Rel.INC_NEITHER, "beta2", prim_name)
+    validator.check_float_range(beta1, 0.0, 1.0, validator.INC_NEITHER, "beta1", prim_name)
+    validator.check_float_range(beta2, 0.0, 1.0, validator.INC_NEITHER, "beta2", prim_name)
     validator.check_positive_float(eps, "eps", prim_name)
 
 
@@ -587,7 +635,7 @@ class Adam(Optimizer):
               If `order_params` in the keys, other keys will be ignored and the element of 'order_params' must be in
               one group of `params`.
 
-        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: 1e-3.
+        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: ``1e-3`` .
 
             - float: The fixed learning rate value. Must be equal to or greater than 0.
 
@@ -602,22 +650,22 @@ class Adam(Optimizer):
               LearningRateSchedule with step as the input to get the learning rate of current step.
 
         beta1 (float): The exponential decay rate for the 1st moment estimations. Should be in range (0.0, 1.0).
-                       Default: 0.9.
+                       Default: ``0.9`` .
         beta2 (float): The exponential decay rate for the 2nd moment estimations. Should be in range (0.0, 1.0).
-                       Default: 0.999.
-        eps (float): Term added to the denominator to improve numerical stability. Should be greater than 0. Default:
-                     1e-8.
+                       Default: ``0.999`` .
+        eps (float): Term added to the denominator to improve numerical stability. Should be greater than 0.
+                     Default: ``1e-8`` .
         use_locking (bool): Whether to enable a lock to protect the updating process of variable tensors.
-            If true, updates of the `w`, `m`, and `v` tensors will be protected by a lock.
-            If false, the result is unpredictable. Default: False.
+            If ``true`` , updates of the `w`, `m`, and `v` tensors will be protected by a lock.
+            If ``false`` , the result is unpredictable. Default: ``False`` .
         use_nesterov (bool): Whether to use Nesterov Accelerated Gradient (NAG) algorithm to update the gradients.
-            If true, update the gradients using NAG.
-            If false, update the gradients without using NAG. Default: False.
+            If ``true`` , update the gradients using NAG.
+            If ``false`` , update the gradients without using NAG. Default: ``False`` .
         use_amsgrad (bool): Whether to use Amsgrad algorithm to update the gradients.
-            If true, update the gradients using Amsgrad.
-            If false, update the gradients without using Amsgrad. Default: False.
+            If ``true`` , update the gradients using Amsgrad.
+            If ``false`` , update the gradients without using Amsgrad. Default: ``False`` .
 
-        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: 0.0.
+        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: ``0.0`` .
 
             - float: The fixed weight decay value. Must be equal to or greater than 0.
 
@@ -634,14 +682,14 @@ class Adam(Optimizer):
 
         kwargs:
 
-            - use_lazy (bool): Whether to use Lazy Adam algorithm. Default: False.
-              If true, apply lazy adam algorithm.
-              If false, apply normal adam algorithm.
+            - use_lazy (bool): Whether to use Lazy Adam algorithm. Default: ``False`` .
+              If ``true`` , apply lazy adam algorithm.
+              If ``false`` , apply normal adam algorithm.
 
             - use_offload (bool): Whether to offload adam optimizer to host CPU and keep parameters being updated on
-              the device in order to minimize the memory cost. Default: False.
-              If true, apply offload adam.
-              If false, apply normal adam.
+              the device in order to minimize the memory cost. Default: ``False`` .
+              If ``true`` , apply offload adam.
+              If ``false`` , apply normal adam.
 
     Inputs:
         - **gradients** (tuple[Tensor]) - The gradients of `params`, the shape is the same as `params`.
@@ -650,6 +698,7 @@ class Adam(Optimizer):
         Tensor[bool], the value is True.
 
     Raises:
+        KeyError: If kwargs got keys other than 'use_lazy' or 'use_offload'.
         TypeError: If `learning_rate` is not one of int, float, Tensor, Iterable, LearningRateSchedule.
         TypeError: If element of `parameters` is neither Parameter nor dict.
         TypeError: If `beta1`, `beta2`, `eps` or `loss_scale` is not a float.
@@ -658,8 +707,8 @@ class Adam(Optimizer):
         ValueError: If `loss_scale` or `eps` is less than or equal to 0.
         ValueError: If `beta1`, `beta2` is not in range (0.0, 1.0).
         ValueError: If `weight_decay` is less than 0.
-        ValueError: If `use_lazy` and `use_offload` are both true.
-        ValueError: If `use_amsgrad` is true and (`use_lazy` or `use_offload` is true).
+        ValueError: If `use_lazy` and `use_offload` are both ``true`` .
+        ValueError: If `use_amsgrad` is ``true`` and (`use_lazy` or `use_offload` is ``true`` ).
         ValueError: If `use_amsgrad` while using distributed training.
 
     Supported Platforms:
@@ -669,7 +718,9 @@ class Adam(Optimizer):
         >>> import mindspore as ms
         >>> from mindspore import nn
         >>>
-        >>> net = Net()
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> #1) All parameters use the same learning rate and weight decay
         >>> optim = nn.Adam(params=net.trainable_params())
         >>>
@@ -694,6 +745,10 @@ class Adam(Optimizer):
     def __init__(self, params, learning_rate=1e-3, beta1=0.9, beta2=0.999, eps=1e-8, use_locking=False,
                  use_nesterov=False, weight_decay=0.0, loss_scale=1.0, use_amsgrad=False, **kwargs):
         super(Adam, self).__init__(learning_rate, params, weight_decay, loss_scale)
+        valid_keys = {'use_lazy', 'use_offload'}
+        if set(kwargs.keys()) - valid_keys:
+            raise KeyError(f"For 'Adam', invalid keys are passed as kwargs, supported keys are 'use_lazy' and"
+                           f"'use_offload', but got {kwargs.keys()}.")
         use_lazy = kwargs.get('use_lazy', False)
         use_offload = kwargs.get('use_offload', False)
         _check_param_value(beta1, beta2, eps, self.cls_name)
@@ -723,7 +778,8 @@ class Adam(Optimizer):
         self.use_offload = use_offload
         self.moment1 = self._parameters.clone(prefix="moment1", init='zeros')
         self.moment2 = self._parameters.clone(prefix="moment2", init='zeros')
-        self.vhat = self._parameters.clone(prefix="vhat", init='zeros')
+        if use_amsgrad:
+            self.vhat = self._parameters.clone(prefix="vhat", init='zeros')
 
         if use_offload:
             self.opt = P.AdamNoUpdateParam(use_locking, use_nesterov)
@@ -742,7 +798,7 @@ class Adam(Optimizer):
         else:
             self._is_device = True
             if use_amsgrad:
-                self.opt = P.ApplyAdamWithAmsgrad(beta1, beta2, eps, use_locking)
+                self.opt = P.ApplyAdamWithAmsgradV2(use_locking)
             else:
                 self.opt = P.Adam(use_locking, use_nesterov)
             self.sparse_opt = P.FusedSparseAdam(use_locking, use_nesterov)
@@ -756,25 +812,8 @@ class Adam(Optimizer):
 
             self._init_distributed_opts(use_locking, use_nesterov)
 
-    @jit
-    def construct(self, gradients):
-        params = self._parameters
-        moment1 = self.moment1
-        moment2 = self.moment2
-        vhat = self.vhat
-        gradients = self.flatten_gradients(gradients)
-        gradients = self.decay_weight(gradients)
-        if not self.use_offload:
-            gradients = self.gradients_centralization(gradients)
-        gradients = self.scale_grad(gradients)
-        gradients = self._grad_sparse_indices_deduplicate(gradients)
-        lr = self.get_lr()
-
-        beta1_power = self.beta1_power * self.beta1
-        self.beta1_power = beta1_power
-        beta2_power = self.beta2_power * self.beta2
-        self.beta2_power = beta2_power
-
+    def _apply_adam(self, params, beta1_power, beta2_power, moment1, moment2, lr, gradients):
+        """Execute Adam optimizer and its variants."""
         if self.use_offload:
             if self.is_group_lr:
                 success = self.map_reverse(F.partial(_adam_opt, self.opt, beta1_power, beta2_power, self.beta1,
@@ -831,13 +870,19 @@ class Adam(Optimizer):
                                                       self._is_device, beta1_power, beta2_power, self.beta1, self.beta2,
                                                       self.eps), lr, gradients, params, moment1, moment2,
                                             self.ps_parameters, self.cache_enable)
-
                     else:
-                        success = self.map_(F.partial(_adam_opt, self.opt, self.sparse_opt, self._ps_push,
-                                                      self._ps_pull, self.use_locking, self.use_nesterov,
-                                                      self.use_amsgrad, self._is_device, beta1_power, beta2_power,
-                                                      self.beta1, self.beta2, self.eps), lr, gradients, params,
-                                            moment1, moment2, vhat, self.ps_parameters, self.cache_enable)
+                        if self.use_amsgrad:
+                            success = self.map_(F.partial(_adam_opt, self.opt, self.sparse_opt, self._ps_push,
+                                                          self._ps_pull, self.use_locking, self.use_nesterov,
+                                                          self._is_device, beta1_power, beta2_power,
+                                                          self.beta1, self.beta2, self.eps), lr, gradients, params,
+                                                moment1, moment2, self.vhat, self.ps_parameters, self.cache_enable)
+                        else:
+                            success = self.map_(F.partial(_adam_opt, self.opt, self.sparse_opt, self._ps_push,
+                                                          self._ps_pull, self.use_locking, self.use_nesterov,
+                                                          self._is_device, beta1_power, beta2_power,
+                                                          self.beta1, self.beta2, self.eps), lr, gradients, params,
+                                                moment1, moment2, self.ps_parameters, self.cache_enable)
                 else:
                     if self.use_lazy:
                         success = self.map_(F.partial(_lazy_adam_opt, self.opt, self.sparse_opt, self._ps_push,
@@ -845,14 +890,42 @@ class Adam(Optimizer):
                                                       self._is_device, beta1_power, beta2_power, self.beta1, self.beta2,
                                                       self.eps, lr), gradients, params, moment1, moment2,
                                             self.ps_parameters, self.cache_enable)
-
                     else:
-                        success = self.map_(F.partial(_adam_opt, self.opt, self.sparse_opt, self._ps_push,
-                                                      self._ps_pull, self.use_locking, self.use_nesterov,
-                                                      self.use_amsgrad, self._is_device, beta1_power, beta2_power,
-                                                      self.beta1, self.beta2, self.eps, lr), gradients, params,
-                                            moment1, moment2, vhat, self.ps_parameters, self.cache_enable)
+                        if self.use_amsgrad:
+                            success = self.map_(F.partial(_adam_opt, self.opt, self.sparse_opt, self._ps_push,
+                                                          self._ps_pull, self.use_locking, self.use_nesterov,
+                                                          self._is_device, beta1_power, beta2_power,
+                                                          self.beta1, self.beta2, self.eps, lr), gradients, params,
+                                                moment1, moment2, self.vhat, self.ps_parameters, self.cache_enable)
+                        else:
+                            success = self.map_(F.partial(_adam_opt, self.opt, self.sparse_opt, self._ps_push,
+                                                          self._ps_pull, self.use_locking, self.use_nesterov,
+                                                          self._is_device, beta1_power, beta2_power,
+                                                          self.beta1, self.beta2, self.eps, lr), gradients, params,
+                                                moment1, moment2, self.ps_parameters, self.cache_enable)
+
         return success
+
+    @jit
+    def construct(self, gradients):
+        params = self._parameters
+        moment1 = self.moment1
+        moment2 = self.moment2
+        gradients = self.flatten_gradients(gradients)
+        gradients = self.decay_weight(gradients)
+        if not self.use_offload:
+            gradients = self.gradients_centralization(gradients)
+        gradients = self.scale_grad(gradients)
+        gradients = self._grad_sparse_indices_deduplicate(gradients)
+        lr = self.get_lr()
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
+
+        beta1_power = self.beta1_power * self.beta1
+        self.beta1_power = beta1_power
+        beta2_power = self.beta2_power * self.beta2
+        self.beta2_power = beta2_power
+
+        return self._apply_adam(params, beta1_power, beta2_power, moment1, moment2, lr, gradients)
 
     @Optimizer.target.setter
     def target(self, value):
@@ -907,13 +980,13 @@ class AdamWeightDecay(Optimizer):
     :math:`m` represents the 1st moment vector `moment1`, :math:`v` represents the 2nd moment vector `moment2`,
     :math:`g` represents `gradients`, :math:`\gamma` represents `learning_rate`,
     :math:`\beta_1, \beta_2` represent `beta1` and `beta2`, :math:`t` represents the current step,
-    :math:`w` represents `params`, :math:`\gamma` represents `weight_decay`.
+    :math:`w` represents `params`, :math:`\lambda` represents `weight_decay`.
 
     Note:
         There is usually no connection between a optimizer and mixed precision. But when `FixedLossScaleManager` is used
         and `drop_overflow_update` in `FixedLossScaleManager` is set to False, optimizer needs to set the 'loss_scale'.
         As this optimizer has no argument of `loss_scale`, so `loss_scale` needs to be processed by other means, refer
-        document `LossScale <https://www.mindspore.cn/tutorials/zh-CN/r2.0.0-alpha/advanced/mixed_precision.html>`_ to
+        document `LossScale <https://www.mindspore.cn/tutorials/en/master/advanced/mixed_precision.html>`_ to
         process `loss_scale` correctly.
 
         If parameters are not grouped, the `weight_decay` in optimizer will be applied on the network parameters without
@@ -944,7 +1017,7 @@ class AdamWeightDecay(Optimizer):
               If `order_params` in the keys, other keys will be ignored and the element of 'order_params' must be in
               one group of `params`.
 
-        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: 1e-3.
+        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: ``1e-3`` .
 
             - float: The fixed learning rate value. Must be equal to or greater than 0.
 
@@ -958,14 +1031,14 @@ class AdamWeightDecay(Optimizer):
             - LearningRateSchedule: Learning rate is dynamic. During training, the optimizer calls the instance of
               LearningRateSchedule with step as the input to get the learning rate of current step.
 
-        beta1 (float): The exponential decay rate for the 1st moment estimations. Default: 0.9.
+        beta1 (float): The exponential decay rate for the 1st moment estimations. Default: ``0.9`` .
             Should be in range (0.0, 1.0).
-        beta2 (float): The exponential decay rate for the 2nd moment estimations. Default: 0.999.
+        beta2 (float): The exponential decay rate for the 2nd moment estimations. Default: ``0.999`` .
             Should be in range (0.0, 1.0).
-        eps (float): Term added to the denominator to improve numerical stability. Default: 1e-6.
+        eps (float): Term added to the denominator to improve numerical stability. Default: ``1e-6`` .
             Should be greater than 0.
 
-        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: 0.0.
+        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: ``0.0`` .
 
             - float: The fixed weight decay value. Must be equal to or greater than 0.
 
@@ -996,7 +1069,9 @@ class AdamWeightDecay(Optimizer):
         >>> import mindspore as ms
         >>> from mindspore import nn
         >>>
-        >>> net = Net()
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> #1) All parameters use the same learning rate and weight decay
         >>> optim = nn.AdamWeightDecay(params=net.trainable_params())
         >>>
@@ -1025,16 +1100,17 @@ class AdamWeightDecay(Optimizer):
         self.moments1 = self._parameters.clone(prefix="adam_m", init='zeros')
         self.moments2 = self._parameters.clone(prefix="adam_v", init='zeros')
         self.fused_opt = P.AdamWeightDecay()
-        if context.get_context("device_target") == "CPU":
-            self.use_fused_opt = True
-        else:
+        if context.get_context("device_target") == "Ascend":
             self.use_fused_opt = False
+        else:
+            self.use_fused_opt = True
 
     @jit
     def construct(self, gradients):
         gradients = self.flatten_gradients(gradients)
         weight_decay = self.get_weight_decay()
         lr = self.get_lr()
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
 
         if self.use_fused_opt:
             if self.is_group:
@@ -1142,7 +1218,7 @@ class AdamOffload(Optimizer):
               If `order_params` in the keys, other keys will be ignored and the element of 'order_params' must be in
               one group of `params`.
 
-        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: 1e-3.
+        learning_rate (Union[float, int, Tensor, Iterable, LearningRateSchedule]): Default: ``1e-3`` .
 
             - float: The fixed learning rate value. Must be equal to or greater than 0.
 
@@ -1157,19 +1233,19 @@ class AdamOffload(Optimizer):
               LearningRateSchedule with step as the input to get the learning rate of current step.
 
         beta1 (float): The exponential decay rate for the 1st moment estimations. Should be in range (0.0, 1.0).
-                       Default: 0.9.
+                       Default: ``0.9`` .
         beta2 (float): The exponential decay rate for the 2nd moment estimations. Should be in range (0.0, 1.0).
-                       Default: 0.999.
-        eps (float): Term added to the denominator to improve numerical stability. Should be greater than 0. Default:
-                     1e-8.
+                       Default: ``0.999`` .
+        eps (float): Term added to the denominator to improve numerical stability. Should be greater than 0.
+                       Default: ``1e-8`` .
         use_locking (bool): Whether to enable a lock to protect the updating process of variable tensors.
-            If true, updates of the `w`, `m`, and `v` tensors will be protected by a lock.
-            If false, the result is unpredictable. Default: False.
+            If ``true`` , updates of the `w`, `m`, and `v` tensors will be protected by a lock.
+            If ``false`` , the result is unpredictable. Default: ``False`` .
         use_nesterov (bool): Whether to use Nesterov Accelerated Gradient (NAG) algorithm to update the gradients.
-            If true, update the gradients using NAG.
-            If false, update the gradients without using NAG. Default: False.
+            If ``true`` , update the gradients using NAG.
+            If ``false`` , update the gradients without using NAG. Default: ``False`` .
 
-        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: 0.0.
+        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: ``0.0`` .
 
             - float: The fixed weight decay value. Must be equal to or greater than 0.
 
@@ -1180,15 +1256,15 @@ class AdamOffload(Optimizer):
 
         loss_scale (float): A floating point value for the loss scale. Should be greater than 0. In general, use the
             default value. Only when `FixedLossScaleManager` is used for training and the `drop_overflow_update` in
-            `FixedLossScaleManager` is set to False, then this value needs to be the same as the `loss_scale` in
+            `FixedLossScaleManager` is set to ``False`` , then this value needs to be the same as the `loss_scale` in
             `FixedLossScaleManager`. Refer to class :class:`mindspore.amp.FixedLossScaleManager` for more details.
-            Default: 1.0.
+            Default: ``1.0`` .
 
     Inputs:
         - **gradients** (tuple[Tensor]) - The gradients of `params`, the shape is the same as `params`.
 
     Outputs:
-        Tensor[bool], the value is True.
+        Tensor[bool], the value is ``True`` .
 
     Raises:
         TypeError: If `learning_rate` is not one of int, float, Tensor, Iterable, LearningRateSchedule.
@@ -1207,7 +1283,9 @@ class AdamOffload(Optimizer):
         >>> import mindspore as ms
         >>> from mindspore import nn
         >>>
-        >>> net = Net()
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> #1) All parameters use the same learning rate and weight decay
         >>> optim = nn.AdamOffload(params=net.trainable_params())
         >>>
@@ -1254,6 +1332,7 @@ class AdamOffload(Optimizer):
         gradients = self.decay_weight(gradients)
         gradients = self.scale_grad(gradients)
         lr = self.get_lr()
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
 
         beta1_power = self.beta1_power * self.beta1
         self.beta1_power = beta1_power

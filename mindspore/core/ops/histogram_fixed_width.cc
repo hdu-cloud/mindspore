@@ -15,17 +15,42 @@
  */
 
 #include "ops/histogram_fixed_width.h"
-#include "mindapi/ir/type.h"
-#include "ops/op_utils.h"
-#include "mindapi/src/helper.h"
-#include "utils/check_convert_utils.h"
+
+#include <iostream>
+#include <memory>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/type.h"
+#include "mindapi/ir/value.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/structure_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::ShapePtr HistogramFixedWidthInferShape(const PrimitivePtr &primitive,
                                                  const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
+
+  auto range_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
+  (void)CheckAndConvertUtils::CheckInteger("rank of 'range'", range_shape.size(), kEqual, 1, primitive->name());
+  (void)CheckAndConvertUtils::CheckInteger("first rank of 'range'", range_shape[0], kEqual, 2, primitive->name());
+
   int32_t nbins = static_cast<int32_t>(GetValue<int64_t>(primitive->GetAttr(kNbins)));
   ShapeVector out_shape = std::vector<int64_t>(1, nbins);
   return std::make_shared<abstract::Shape>(out_shape);
@@ -75,7 +100,26 @@ AbstractBasePtr HistogramFixedWidthInfer(const abstract::AnalysisEnginePtr &, co
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(HistogramFixedWidth, prim::kPrimHistogramFixedWidth, HistogramFixedWidthInfer, nullptr,
-                             true);
+// AG means auto generated
+class MIND_API AGHistogramFixedWidthInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return HistogramFixedWidthInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return HistogramFixedWidthInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return HistogramFixedWidthInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(HistogramFixedWidth, prim::kPrimHistogramFixedWidth, AGHistogramFixedWidthInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

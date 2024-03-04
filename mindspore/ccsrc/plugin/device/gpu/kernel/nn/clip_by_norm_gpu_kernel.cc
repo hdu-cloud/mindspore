@@ -18,11 +18,13 @@
 #include <memory>
 #include <algorithm>
 #include <functional>
+#include "mindspore/core/ops/math_ops.h"
 #include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/cast_impl.cuh"
-#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/broadcast_impl.cuh"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/binary_ops_impl.cuh"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/l2normalize_impl.cuh"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/clip_by_norm_impl.cuh"
+#include "plugin/device/gpu/kernel/math/broadcast_public.h"
 
 namespace mindspore {
 namespace kernel {
@@ -128,10 +130,12 @@ bool ClipByNormGpuKernelMod<T, S>::DoLaunch(const std::vector<AddressPtr> &input
   float *clip_norm_mul_output_addr = GetPossiblyNullDeviceAddress<float>(workspace, kIndex5);
   float *output_addr = GetDeviceAddress<float>(outputs, 0);
   // Running `cast(x)` to float32 data type
-  Cast(x_size_ / sizeof(T), x_addr, x_float_addr, reinterpret_cast<cudaStream_t>(stream_ptr), GET_CTX_DEVICE_ID);
+  auto status = Cast(x_size_ / sizeof(T), x_addr, x_float_addr, reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   // Launch `cudnnReduceTensorNorm2` operator to achieve `L2_norm` calculation, keep_dims = true.
   if (all_match_) {
-    AbsOp(x_size_ / sizeof(T), x_float_addr, l2norm_output_addr, reinterpret_cast<cudaStream_t>(stream_ptr));
+    status = AbsOp(x_size_ / sizeof(T), x_float_addr, l2norm_output_addr, reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
   } else {
     constexpr float alpha = 1.0;
     constexpr float beta = 0.0;
@@ -141,30 +145,45 @@ bool ClipByNormGpuKernelMod<T, S>::DoLaunch(const std::vector<AddressPtr> &input
                         l2norm_output_addr),
       kernel_name_ + " running cudnnReduceTensor::cudnnReduceTensorNorm2 failed.");
   }
-  auto l2_norm_lhs_shape_size = Convert2SizeTClipNeg(l2_norm_lhs_shape_);
-  auto l2_norm_rhs_shap_size = Convert2SizeTClipNeg(l2_norm_rhs_shape_);
-  auto l2_norm_ouths_shape_size = Convert2SizeTClipNeg(l2_norm_ouths_shape_);
+  std::vector<int64_t> simplified_in0_shape;
+  std::vector<int64_t> simplified_in1_shape;
+  std::vector<int64_t> simplified_out_shape;
+  SimplifyBinaryBroadcastShape(l2_norm_lhs_shape_, l2_norm_rhs_shape_, l2_norm_ouths_shape_, &simplified_in0_shape,
+                               &simplified_in1_shape, &simplified_out_shape);
+  bool is_broadcast = IsBinaryBroadcast(simplified_in0_shape, simplified_in1_shape);
+
   // Calculation std::max(l2_norm, epsilon) to keep numerical stability.
-  GetMaxWithEpsAndValue(l2_norm_output_size_ / sizeof(float), epsilon_, l2norm_output_addr,
-                        reinterpret_cast<cudaStream_t>(stream_ptr));
+  status = GetMaxWithEpsAndValue(l2_norm_output_size_ / sizeof(float), epsilon_, l2norm_output_addr,
+                                 reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   // Running `x/l2_norm(x)` and broadcast output shape to `input_x` shape
-  BroadcastArith(l2_norm_lhs_shape_size, l2_norm_rhs_shap_size, l2_norm_ouths_shape_size, BROADCAST_TYPE_REALDIV,
-                 x_float_addr, l2norm_output_addr, div_output_addr, reinterpret_cast<cudaStream_t>(stream_ptr));
+  status = BinaryOpWithBroadcastCudaFunc<BinaryOpType::kRealDiv, float, float, float>(
+    is_broadcast, simplified_in0_shape, simplified_in1_shape, simplified_out_shape, x_float_addr, l2norm_output_addr,
+    div_output_addr, device_id_, reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   // Running `cast(clip_norm)` to the data type of `input_x`
-  Cast(clip_norm_size_ / sizeof(S), clip_norm_addr, clip_norm_float_addr, reinterpret_cast<cudaStream_t>(stream_ptr),
-       GET_CTX_DEVICE_ID);
+  status =
+    Cast(clip_norm_size_ / sizeof(S), clip_norm_addr, clip_norm_float_addr, reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   // Running '(x/l2_norm(x)) * clip_norm' and broadcast output shape to `input_x` shape
   if (clip_norm_need_broadcast_) {
-    BroadcastArith(l2_norm_ouths_shape_size, Convert2SizeTClipNeg(clip_norm_rhs_shape_), l2_norm_ouths_shape_size,
-                   BROADCAST_TYPE_MUL, div_output_addr, clip_norm_float_addr, clip_norm_mul_output_addr,
-                   reinterpret_cast<cudaStream_t>(stream_ptr));
+    SimplifyBinaryBroadcastShape(l2_norm_ouths_shape_, clip_norm_rhs_shape_, l2_norm_ouths_shape_,
+                                 &simplified_in0_shape, &simplified_in1_shape, &simplified_out_shape);
+    is_broadcast = IsBinaryBroadcast(simplified_in0_shape, simplified_in1_shape);
+    BinaryOpWithBroadcastCudaFunc<BinaryOpType::kMul, float, float, float>(
+      is_broadcast, simplified_in0_shape, simplified_in1_shape, simplified_out_shape, div_output_addr,
+      clip_norm_float_addr, clip_norm_mul_output_addr, device_id_, reinterpret_cast<cudaStream_t>(stream_ptr));
   } else {
-    ElewiseArith(output_size_ / sizeof(float), BROADCAST_TYPE_MUL, div_output_addr, clip_norm_float_addr,
-                 clip_norm_mul_output_addr, reinterpret_cast<cudaStream_t>(stream_ptr));
+    std::vector<int64_t> ele_shape = {static_cast<int64_t>(output_size_ / sizeof(float))};
+    BinaryOpWithBroadcastCudaFunc<BinaryOpType::kMul, float, float, float>(
+      false, ele_shape, ele_shape, ele_shape, div_output_addr, clip_norm_float_addr, clip_norm_mul_output_addr,
+      device_id_, reinterpret_cast<cudaStream_t>(stream_ptr));
   }
+
   // Running compare between `input_x` and `upper output` and cast final output to float type.
-  CompOp(output_size_ / sizeof(float), x_float_addr, clip_norm_mul_output_addr, output_addr,
-         reinterpret_cast<cudaStream_t>(stream_ptr));
+  status = CompOp(output_size_ / sizeof(float), x_float_addr, clip_norm_mul_output_addr, output_addr,
+                  reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -242,7 +261,8 @@ void ClipByNormGpuKernelMod<T, S>::InitAxisAndEpsilon(const ops::ClipByNormPtr &
     for (size_t i = 0; i < x_dim_; ++i) {
       axis_.emplace_back(i);  // Reduce for all dimensions.
     }
-  } else {  // Convert negative `axis` to positive `axis` and keep number unique
+  } else {
+    // Convert negative `axis` to positive `axis` and keep number unique
     int64_t temp_x_dim = SizeToLong(x_dim_);
     std::for_each(temp_axis.begin(), temp_axis.end(), [this, &temp_x_dim](const int64_t &value) {
       value < 0 ? axis_.emplace_back(LongToSize(value + temp_x_dim)) : axis_.emplace_back(LongToSize(value));

@@ -17,7 +17,7 @@ mindspore.nn.AdamOffload
             w_{t+1} = w_{t} - l * \frac{m_{t+1}}{\sqrt{v_{t+1}} + \epsilon}
         \end{array}
 
-    :math:`m` 代表第一个矩向量 `moment1` ， :math:`v` 代表第二个矩向量 `moment2`，:math:`g` 代表 `gradients`，:math:`l` 代表缩放因子，:math:`\beta_1,\beta_2` 代表 `beta1` 和 `beta2`，:math:`t` 代表当前step，:math:`beta_1^t` 和 :math:`beta_2^t` 代表 `beta1_power` 和 `beta2_power`，:math:`\alpha` 代表 `learning_rate`，:math:`w` 代表 `params`，:math:`\epsilon` 代表 `eps` 。
+    :math:`m` 代表第一个矩向量 `moment1` ， :math:`v` 代表第二个矩向量 `moment2`，:math:`g` 代表 `gradients`，:math:`l` 代表缩放因子，:math:`\beta_1, \beta_2` 代表 `beta1` 和 `beta2`，:math:`t` 代表当前step，:math:`beta_1^t` 和 :math:`beta_2^t` 代表 `beta1_power` 和 `beta2_power`，:math:`\alpha` 代表 `learning_rate`，:math:`w` 代表 `params`，:math:`\epsilon` 代表 `eps` 。
 
     .. note::
         此优化器目前仅支持图模式。
@@ -32,16 +32,16 @@ mindspore.nn.AdamOffload
           .. include:: mindspore.nn.optim_group_dynamic_weight_decay.rst
           .. include:: mindspore.nn.optim_group_order.rst
 
-        - **learning_rate** (Union[float, int, Tensor, Iterable, LearningRateSchedule]) - 默认值：1e-3。
+        - **learning_rate** (Union[float, int, Tensor, Iterable, LearningRateSchedule]) - 默认值： ``1e-3`` 。
 
           .. include:: mindspore.nn.optim_arg_dynamic_lr.rst
 
-        - **beta1** (float) - `moment1` 的指数衰减率。参数范围（0.0,1.0）。默认值：0.9。
-        - **beta2** (float) - `moment2` 的指数衰减率。参数范围（0.0,1.0）。默认值：0.999。
-        - **eps** (float) - 将添加到分母中，以提高数值稳定性。必须大于0。默认值：1e-8。
-        - **use_locking** (bool) - 是否对参数更新加锁保护。如果为True，则 `w` 、`m` 和 `v` 的更新将受到锁保护。如果为False，则结果不可预测。默认值：False。
-        - **use_nesterov** (bool) - 是否使用Nesterov Accelerated Gradient (NAG)算法更新梯度。如果为True，使用NAG更新梯度。如果为False，则在不使用NAG的情况下更新梯度。默认值：False。
-        - **weight_decay** (Union[float, int, Cell]) - 权重衰减（L2 penalty）。默认值：0.0。
+        - **beta1** (float) - `moment1` 的指数衰减率。参数范围（0.0,1.0）。默认值： ``0.9`` 。
+        - **beta2** (float) - `moment2` 的指数衰减率。参数范围（0.0,1.0）。默认值： ``0.999`` 。
+        - **eps** (float) - 将添加到分母中，以提高数值稳定性。必须大于0。默认值： ``1e-8`` 。
+        - **use_locking** (bool) - 是否对参数更新加锁保护。如果为 ``True`` ，则 `w` 、`m` 和 `v` 的更新将受到锁保护。如果为 ``False`` ，则结果不可预测。默认值： ``False`` 。
+        - **use_nesterov** (bool) - 是否使用Nesterov Accelerated Gradient (NAG)算法更新梯度。如果为 ``True`` ，使用NAG更新梯度。如果为 ``False`` ，则在不使用NAG的情况下更新梯度。默认值： ``False`` 。
+        - **weight_decay** (Union[float, int, Cell]) - 权重衰减（L2 penalty）。默认值： ``0.0`` 。
 
           .. include:: mindspore.nn.optim_arg_dynamic_wd.rst
 
@@ -51,7 +51,7 @@ mindspore.nn.AdamOffload
         - **gradients** (tuple[Tensor]) - `params` 的梯度，shape与 `params` 相同。
 
     输出：
-        Tensor[bool]，值为True。
+        Tensor[bool]，值为 ``True`` 。
 
     异常：
         - **TypeError** - `learning_rate` 不是int、float、Tensor、Iterable或LearningRateSchedule。

@@ -17,7 +17,6 @@
 #include "minddata/dataset/engine/ir/datasetops/source/iwslt2017_node.h"
 
 #include <algorithm>
-#include <fstream>
 #include <memory>
 #include <string>
 #include <utility>
@@ -111,7 +110,7 @@ Status IWSLT2017Node::Build(std::vector<std::shared_ptr<DatasetOp>> *const node_
   // shuffle option to false.
   if (shuffle_ == ShuffleMode::kGlobal) {
     // Inject ShuffleOp.
-    std::shared_ptr<DatasetOp> shuffle_op = nullptr;
+    std::shared_ptr<ShuffleOp> shuffle_op = nullptr;
     int64_t num_rows = 0;
 
     // First, get the number of rows in the dataset.
@@ -122,6 +121,7 @@ Status IWSLT2017Node::Build(std::vector<std::shared_ptr<DatasetOp>> *const node_
       AddShuffleOp(iwslt_op->FileNames().size(), num_shards_, num_rows, 0, connector_que_size_, &shuffle_op));
     shuffle_op->SetTotalRepeats(GetTotalRepeats());
     shuffle_op->SetNumRepeatsPerEpoch(GetNumRepeatsPerEpoch());
+    shuffle_op->Skip(skip_steps_);
     node_ops->push_back(shuffle_op);
   }
   iwslt_op->SetTotalRepeats(GetTotalRepeats());

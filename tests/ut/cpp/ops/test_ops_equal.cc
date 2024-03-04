@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,49 +16,51 @@
 #include <vector>
 #include <memory>
 #include "common/common_test.h"
+#include "ir/primitive.h"
+#include "abstract/abstract_value.h"
+#include "ops/test_ops.h"
 #include "ops/equal.h"
-#include "ir/dtype/type.h"
-#include "ir/value.h"
-#include "abstract/dshape.h"
-#include "utils/tensor_construct_utils.h"
+#include "ops/test_ops_dyn_cases.h"
+#include "include/backend/optimizer/helper.h"
+#include "ops/test_value_utils.h"
 
 namespace mindspore {
 namespace ops {
-class TestEqual : public UT::Common {
- public:
-  TestEqual() {}
-  void SetUp() {}
-  void TearDown() {}
-};
+class TestEqual : public TestOps,
+                  public testing::WithParamInterface<std::tuple<BroadcastOpShapeParams, BroadcastOpTypeParams>> {};
 
-TEST_F(TestEqual, test_ops_equal1) {
-  auto equal = std::make_shared<Equal>();
-  auto tensor_x1 = TensorConstructUtils::CreateOnesTensor(kNumberTypeFloat32, std::vector<int64_t>{3, 2, 7, 7});
-  auto tensor_x2 = TensorConstructUtils::CreateOnesTensor(kNumberTypeFloat32, std::vector<int64_t>{3, 2, 7, 7});
-  MS_EXCEPTION_IF_NULL(tensor_x1);
-  MS_EXCEPTION_IF_NULL(tensor_x2);
-  auto abstract = equal->Infer({tensor_x1->ToAbstract(), tensor_x2->ToAbstract()});
-  MS_EXCEPTION_IF_NULL(abstract);
-  EXPECT_EQ(abstract->isa<abstract::AbstractTensor>(), true);
-  auto shape_ptr = abstract->BuildShape();
-  MS_EXCEPTION_IF_NULL(shape_ptr);
-  EXPECT_EQ(shape_ptr->isa<abstract::Shape>(), true);
-  auto shape = shape_ptr->cast<abstract::ShapePtr>();
-  MS_EXCEPTION_IF_NULL(shape);
-  auto shape_vec = shape->shape();
-  auto type = abstract->BuildType();
-  MS_EXCEPTION_IF_NULL(type);
-  EXPECT_EQ(type->isa<TensorType>(), true);
-  auto tensor_type = type->cast<TensorTypePtr>();
-  MS_EXCEPTION_IF_NULL(tensor_type);
-  auto data_type = tensor_type->element();
-  MS_EXCEPTION_IF_NULL(data_type);
-  EXPECT_EQ(data_type->type_id(), kNumberTypeFloat32);
-  EXPECT_EQ(shape_vec.size(), 4);
-  EXPECT_EQ(shape_vec[0], 3);
-  EXPECT_EQ(shape_vec[1], 2);
-  EXPECT_EQ(shape_vec[2], 7);
-  EXPECT_EQ(shape_vec[3], 7);
+TEST_P(TestEqual, dyn_shape) {
+  const auto &shape_param = std::get<0>(GetParam());
+  const auto &dtype_param = std::get<1>(GetParam());
+  auto x = std::make_shared<abstract::AbstractTensor>(dtype_param.x_type, shape_param.x_shape);
+  ASSERT_NE(x, nullptr);
+  auto y = std::make_shared<abstract::AbstractTensor>(dtype_param.y_type, shape_param.y_shape);
+  ASSERT_NE(y, nullptr);
+  auto expect = std::make_shared<abstract::AbstractTensor>(dtype_param.out_type, shape_param.out_shape);
+  ASSERT_NE(expect, nullptr);
+  auto prim = std::make_shared<Primitive>(kNameEqual);
+  auto out_abstract = opt::CppInferShapeAndType(prim, {x, y});
+  ASSERT_NE(out_abstract, nullptr);
+  ASSERT_TRUE(*out_abstract == *expect);
 }
+
+auto EqualOpTypeCases = testing::ValuesIn({
+  BroadcastOpTypeParams{kBool, kBool, kBool},
+  BroadcastOpTypeParams{kInt8, kInt8, kBool},
+  BroadcastOpTypeParams{kInt16, kInt16, kBool},
+  BroadcastOpTypeParams{kInt32, kInt32, kBool},
+  BroadcastOpTypeParams{kInt64, kInt64, kBool},
+  BroadcastOpTypeParams{kUInt8, kUInt8, kBool},
+  BroadcastOpTypeParams{kUInt16, kUInt16, kBool},
+  BroadcastOpTypeParams{kUInt32, kUInt32, kBool},
+  BroadcastOpTypeParams{kFloat16, kFloat16, kBool},
+  BroadcastOpTypeParams{kFloat32, kFloat32, kBool},
+  BroadcastOpTypeParams{kFloat64, kFloat64, kBool},
+  BroadcastOpTypeParams{kComplex64, kComplex64, kBool},
+  BroadcastOpTypeParams{kComplex128, kComplex128, kBool},
+});
+
+INSTANTIATE_TEST_CASE_P(TestEqual_1, TestEqual, testing::Combine(BroadcastOpShapeScalarTensorCases, EqualOpTypeCases));
+INSTANTIATE_TEST_CASE_P(TestEqual_2, TestEqual, testing::Combine(BroadcastOpShapeTensorTensorCases, EqualOpTypeCases));
 }  // namespace ops
 }  // namespace mindspore

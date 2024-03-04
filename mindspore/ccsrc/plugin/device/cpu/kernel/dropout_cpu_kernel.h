@@ -19,6 +19,7 @@
 
 #include <memory>
 #include <vector>
+#include <random>
 #include <map>
 #include <string>
 #include <utility>
@@ -54,6 +55,7 @@ class DropoutCpuKernelMod : public NativeCpuKernelMod, public MatchKernelHelper<
   ShapeVector input_shape_;
   float keep_prob_{0.0};
   size_t tensor_size_{1};
+  std::default_random_engine rng_;
 };
 }  // namespace kernel
 }  // namespace mindspore

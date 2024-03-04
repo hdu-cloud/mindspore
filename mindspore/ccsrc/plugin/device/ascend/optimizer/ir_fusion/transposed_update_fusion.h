@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,16 +17,14 @@
 #define MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_IR_FUSION_TRANSPOSED_UPDATE_FUSION_H_
 #include <string>
 #include <memory>
-
-#include "backend/common/optimizer/pass.h"
+#include "include/backend/optimizer/pass.h"
 #include "ir/func_graph.h"
 #include "ir/anf.h"
-#include "backend/common/optimizer/helper.h"
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/optimizer/optimizer.h"
 #include "plugin/device/ascend/optimizer/ascend_helper.h"
 
-namespace mindspore {
-namespace opt {
+namespace mindspore::opt {
 class TransposedUpdateFusion : public PatternProcessPass {
  public:
   explicit TransposedUpdateFusion(bool multigraph = true, const string &name = "transposed_update_fusion")
@@ -36,10 +34,7 @@ class TransposedUpdateFusion : public PatternProcessPass {
   const AnfNodePtr Process(const FuncGraphPtr &func_graph, const AnfNodePtr &node, const EquivPtr &) const override;
 
  protected:
-  CNodePtr DoSplit(const FuncGraphPtr &func_graph, const AnfNodePtr &node) const;
-  bool IsFormatInvaild(const AnfNodePtr &node) const;
   KernelSelectPtr kernel_select_;
 };
-}  // namespace opt
-}  // namespace mindspore
+}  // namespace mindspore::opt
 #endif  // MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_IR_FUSION_TRANSPOSED_UPDATE_FUSION_H_

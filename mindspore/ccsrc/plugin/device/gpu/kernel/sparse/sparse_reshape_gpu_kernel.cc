@@ -95,11 +95,15 @@ bool SparseReshapeGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inpu
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(h_shape.data(), shape, sizeof(int64_t) * shape_elements_, cudaMemcpyDeviceToHost,
                     reinterpret_cast<cudaStream_t>(cuda_stream_)),
-    "cudaMemcpy h_shape variable failed.");
+    "For 'SparseReshape', cudaMemcpy h_shape variable failed.");
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(h_new_shape.data(), new_shape, sizeof(int64_t) * new_shape_elements_, cudaMemcpyDeviceToHost,
                     reinterpret_cast<cudaStream_t>(cuda_stream_)),
-    "cudaMemcpy h_new_shape variable failed.");
+    "For 'SparseReshape', cudaMemcpy h_new_shape variable failed.");
+  if (cudaStreamQuery(reinterpret_cast<cudaStream_t>(cuda_stream_)) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(cuda_stream_)),
+                                       "For 'SparseReshape', cuda Stream Sync Failed.");
+  }
   int status = CalShape(h_shape.data(), h_new_shape.data(), h_y_shape.data(), shape_elements_, new_shape_elements_);
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(y_shape, h_y_shape.data(), sizeof(int64_t) * new_shape_elements_, cudaMemcpyHostToDevice,
@@ -120,8 +124,9 @@ bool SparseReshapeGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inpu
       MS_LOG(ERROR) << "For '" << kernel_name_ << "' The number of elements in shape differ from that in new_shape.";
       return false;
   }
-  CalSparseReshape(indices, shape, y_indices, y_shape, indice_number_, shape_elements_, new_shape_elements_, device_id_,
-                   reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto ret = CalSparseReshape(indices, shape, y_indices, y_shape, indice_number_, shape_elements_, new_shape_elements_,
+                              device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(ret, kernel_name_);
   return true;
 }
 

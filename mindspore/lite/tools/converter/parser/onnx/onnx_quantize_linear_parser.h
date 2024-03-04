@@ -33,7 +33,7 @@ class OnnxQuantizeLinearParser : public OnnxNodeParser {
   PrimitiveCPtr Parse(const onnx::GraphProto &onnx_graph, const onnx::NodeProto &onnx_node) override;
 
  private:
-  const void *GetConstData(const onnx::GraphProto &onnx_graph, const std::string &name, TypeId *data_type);
+  tensor::TensorPtr GetConstData(const onnx::GraphProto &onnx_graph, const std::string &input_name);
 };
 }  // namespace lite
 }  // namespace mindspore

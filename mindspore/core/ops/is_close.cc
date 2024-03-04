@@ -15,16 +15,17 @@
  */
 
 #include "ops/is_close.h"
-#include <string>
 #include <algorithm>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/ms_context.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
+#include "utils/ms_context.h"
 
 namespace mindspore {
 namespace ops {
@@ -39,19 +40,12 @@ abstract::ShapePtr IsCloseInferShape(const PrimitivePtr &primitive, const std::v
     const int MAX = 0x3fffffff;
     auto input_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
     auto other_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
-    auto input_rank = SizeToLong(input_shape.size());
-    auto other_rank = SizeToLong(other_shape.size());
-    CheckAndConvertUtils::Check("input rank", input_rank, kEqual, other_rank, op_name);
     int64_t input_size = 1, other_size = 1;
     for (size_t i = 0; i < input_shape.size(); i++) {
       input_size *= input_shape[i];
+    }
+    for (size_t i = 0; i < other_shape.size(); i++) {
       other_size *= other_shape[i];
-      if (input_shape[i] != other_shape[i] && (input_shape[i] != 1 || other_shape[i] != 1)) {
-        MS_EXCEPTION(ValueError) << "For '" << op_name
-                                 << "', the size of tensor 'input' must match the size of tensor 'other' at the " << i
-                                 << "th dimension, but got 'input' size: " << input_shape[i]
-                                 << ", 'other' size: " << other_shape[i] << ".";
-      }
     }
     if (input_size > MAX) {
       MS_EXCEPTION(ValueError) << "For '" << op_name
@@ -121,6 +115,24 @@ AbstractBasePtr IsCloseInfer(const abstract::AnalysisEnginePtr &, const Primitiv
   auto infershape = IsCloseInferShape(primitive, input_args);
   return abstract::MakeAbstract(infershape, infertype);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(IsClose, prim::kPrimIsClose, IsCloseInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGIsCloseInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return IsCloseInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return IsCloseInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return IsCloseInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(IsClose, prim::kPrimIsClose, AGIsCloseInfer, false);
 }  // namespace ops
 }  // namespace mindspore

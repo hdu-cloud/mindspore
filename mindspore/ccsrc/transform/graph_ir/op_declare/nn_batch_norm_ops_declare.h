@@ -17,12 +17,11 @@
 #ifndef MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_NN_BATCH_NORM_OPS_DECLARE_H_
 #define MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_NN_BATCH_NORM_OPS_DECLARE_H_
 
-#include "utils/hash_map.h"
+#include "inc/ops/nn_batch_norm_ops.h"
+#include "inc/ops/reduce_ops.h"
 #include "transform/graph_ir/op_declare/op_declare_macro.h"
-#include "ops/nn_batch_norm_ops.h"
-#include "ops/reduce_ops.h"
+#include "utils/hash_map.h"
 
-namespace mindspore::transform {
 DECLARE_OP_ADAPTER(BatchNorm)
 DECLARE_OP_USE_OUTPUT(BatchNorm)
 
@@ -43,5 +42,4 @@ DECLARE_OP_USE_OUTPUT(L2Normalize)
 
 DECLARE_OP_ADAPTER(L2NormalizeGrad)
 DECLARE_OP_USE_OUTPUT(L2NormalizeGrad)
-}  // namespace mindspore::transform
 #endif  // MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_NN_BATCH_NORM_OPS_DECLARE_H_

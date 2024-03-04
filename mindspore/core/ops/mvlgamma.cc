@@ -14,14 +14,25 @@
  * limitations under the License.
  */
 
-#include <algorithm>
 #include <set>
-#include <string>
-#include "ops/mvlgamma.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/mvlgamma.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -30,11 +41,6 @@ abstract::ShapePtr MvlgammaInferShape(const PrimitivePtr &primitive, const std::
   MS_EXCEPTION_IF_NULL(primitive);
   MS_EXCEPTION_IF_NULL(input_args[0]);
   auto in_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->GetShapeTrack())[kShape];
-  auto first_input_shape_min = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kMinShape];
-  auto first_input_shape_max = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kMaxShape];
-  if (first_input_shape_min.empty() || first_input_shape_max.empty()) {
-    return std::make_shared<abstract::Shape>(in_shape);
-  }
 
   return std::make_shared<abstract::Shape>(in_shape);
 }
@@ -64,6 +70,24 @@ AbstractBasePtr MvlgammaInfer(const abstract::AnalysisEnginePtr &, const Primiti
 }
 
 MIND_API_OPERATOR_IMPL(Mvlgamma, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(Mvlgamma, prim::kPrimMvlgamma, MvlgammaInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMvlgammaInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MvlgammaInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MvlgammaInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MvlgammaInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Mvlgamma, prim::kPrimMvlgamma, AGMvlgammaInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -1,4 +1,4 @@
-# Copyright 2021 Huawei Technologies Co., Ltd
+# Copyright 2021-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,10 +19,9 @@ from __future__ import absolute_import
 import functools
 from mindspore.common.dtype import type_size_in_bytes
 import mindspore.context as context
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.common import dtype as mstype
 from mindspore.ops.primitive import prim_attr_register, PrimitiveWithInfer, Primitive
-from mindspore._checkparam import Rel
 from mindspore.communication.management import GlobalComm
 
 
@@ -32,7 +31,7 @@ class EnvCreate(PrimitiveWithInfer):
     created handle. Make sure to create a new operator instance if you want to create a new environment instance.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Args:
         name (str): Name of built-in environment.
@@ -70,7 +69,7 @@ class EnvReset(PrimitiveWithInfer):
     Reset reinforcement learning built-in environment.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Args:
         handle (int): The handle returned by `EnvCreate` operator.
@@ -110,7 +109,7 @@ class EnvStep(PrimitiveWithInfer):
     Run one environment timestep.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Args:
         handle (int): The handle returned by `EnvCreate` operator.
@@ -186,20 +185,22 @@ class DiscountedReturn(PrimitiveWithInfer):
     @prim_attr_register
     def __init__(self, gamma):
         self.init_prim_io_names(inputs=['reward', 'done', 'last_state_value'], outputs=['output'])
-        validator.check_float_range(gamma, 0, 1, Rel.INC_RIGHT, "gamma", self.name)
+        validator.check_float_range(gamma, 0, 1, validator.INC_RIGHT, "gamma", self.name)
 
     def infer_shape(self, reward_shape, done_shape, last_state_value_shape):
         if len(reward_shape) != len(done_shape):
-            raise ValueError(f'{self.name} len(reward) and len(done) must be same, ',
+            raise ValueError(f'For \'{self.name}\', len(reward) and len(done) must be the same, ',
                              f'but got {len(reward_shape)} and {len(done_shape)}.')
 
         if reward_shape[0] != done_shape[0]:
-            raise ValueError(f'{self.name} timestep of reward and done must be same, ',
-                             f'but got {reward_shape[0]} and {done_shape[0]}.')
+            raise ValueError(f'For \'{self.name}\', the first element of the shape of \'reward\' '
+                             f'and \'done\' must be the same, but got reward.shape[0]:'
+                             f' {reward_shape[0]} and done.shape[0]: {done_shape[0]}.')
 
         if reward_shape[1:] != last_state_value_shape:
-            raise ValueError(f'{self.name} state value shape must be match, ',
-                             f'but got {reward_shape[1:]} and {last_state_value_shape}.')
+            raise ValueError(f'For \'{self.name}\', reward.shape[1:] and last_state_value.shape must be the same, '
+                             f'but got reward.shape[1:]: {reward_shape[1:]} '
+                             f'and last_state_value.shape: {last_state_value_shape}.')
         return reward_shape
 
     def infer_dtype(self, reward_dtype, done_dtype, last_state_value_dtype):
@@ -247,7 +248,7 @@ class GRUV2(PrimitiveWithInfer):
         ValueError: If `dropout` is not in range [0.0, 1.0].
 
     Supported Platforms:
-        ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
         >>> input_size = 10
@@ -285,7 +286,7 @@ class GRUV2(PrimitiveWithInfer):
         self.has_bias = validator.check_value_type("has_bias", has_bias, (bool,), self.name)
         self.bidirectional = validator.check_value_type("bidirectional", bidirectional, (bool,), self.name)
         self.dropout = validator.check_value_type("dropout", dropout, [float], self.name)
-        self.dropout = validator.check_float_range(dropout, 0, 1, Rel.INC_BOTH, 'dropout', self.name)
+        self.dropout = validator.check_float_range(dropout, 0, 1, validator.INC_BOTH, 'dropout', self.name)
         self.is_train = validator.check_value_type("is_train", is_train, (bool,), self.name)
 
         if bidirectional:
@@ -298,9 +299,9 @@ class GRUV2(PrimitiveWithInfer):
         validator.check_equal_int(x_shape[2], self.input_size, "x[2]", self.name)
 
         validator.check_equal_int(len(h_shape), 3, "h rank", self.name)
-        validator.check_int(h_shape[0], self.num_layers * self.num_directions, Rel.EQ, "h[0]", self.name)
+        validator.check_int(h_shape[0], self.num_layers * self.num_directions, validator.EQ, "h[0]", self.name)
         validator.check_equal_int(h_shape[1], x_shape[1], "h[1]", self.name)
-        validator.check_int(h_shape[2], self.hidden_size, Rel.EQ, "h[2]", self.name)
+        validator.check_int(h_shape[2], self.hidden_size, validator.EQ, "h[2]", self.name)
 
         validator.check_equal_int(len(seq_lengths_shape), 1, "seq_lengths rank", self.name)
         validator.check_equal_int(seq_lengths_shape[0], x_shape[1], "seq_lengths_shape[0]", self.name)
@@ -319,7 +320,91 @@ class GRUV2(PrimitiveWithInfer):
         return x_dtype, x_dtype, x_dtype, x_dtype
 
 
-class CudnnGRU(PrimitiveWithInfer):
+class LSTMV2(Primitive):
+    """
+    Performs the Long Short-Term Memory (LSTM) on the input.
+
+    For detailed information, please refer to :class:`mindspore.nn.LSTM`.
+
+    Args:
+        input_size (int): Number of features of input.
+        hidden_size (int):  Number of features of hidden layer.
+        num_layers (int): Number of layers of stacked LSTM.
+        has_bias (bool): Whether the cell has bias `b_ih` and `b_hh`.
+        bidirectional (bool): Specifies whether it is a bidirectional LSTM.
+        dropout (float, optional): If not 0, append `Dropout` layer on the outputs of each
+            LSTM layer except the last layer. The range of dropout is [0.0, 1.0]. Default: 0.0.
+        is_train (bool): Specifies whether it is training mode or inference mode.
+
+    Inputs:
+        - **input** (Tensor) - Tensor of shape (seq_len, batch_size, `input_size`).
+        - **h** (Tensor) - Tensor of shape (num_directions * `num_layers`, batch_size, `hidden_size`).
+        - **c** (Tensor) - Tensor of shape (num_directions * `num_layers`, batch_size, `hidden_size`).
+        - **w** (Tensor) - The input tensor which states for weights.
+        - **seq_lengths** (Tensor) - The Tensor[Int32] of shape (batch_size, ),
+          indicates the seq_length of each batch dim.
+
+    Outputs:
+        Tuple, a tuple contains (`output`, `h_n`, `c_n`, `reserve`, `state`).
+
+        - **output** (Tensor) - Tensor of shape (seq_len, batch_size, num_directions * `hidden_size`).
+        - **h_n** (Tensor) - Tensor of shape (num_directions * `num_layers`, batch_size, `hidden_size`).
+        - **c_n** (Tensor) - Tensor of shape (num_directions * `num_layers`, batch_size, `hidden_size`).
+        - **reserve** (Tensor) - Tensor of shape (r, 1).
+        - **state** (Tensor) - Random number generator state and its shape is (s, 1).
+
+    Raises:
+        TypeError: If `input_size`, `hidden_size` or `num_layers` is not an int.
+        TypeError: If `has_bias` or `bidirectional` is not a bool.
+        TypeError: If `dropout` is not a float.
+        ValueError: If `dropout` is not in range [0.0, 1.0].
+
+    Supported Platforms:
+        ``GPU``
+
+    Examples:
+        >>> input_size = 10
+        >>> hidden_size = 2
+        >>> num_layers = 1
+        >>> max_seq_len = 5
+        >>> batch_size = 2
+        >>>
+        >>> import mindspore.ops.operations._rl_inner_ops as rl_ops
+        >>> net = rl_ops.LSTMV2(input_size, hidden_size, num_layers, True, False, 0.0)
+        >>> input_tensor = Tensor(np.ones([max_seq_len, batch_size, input_size]).astype(np.float32))
+        >>> h0 = Tensor(np.ones([num_layers, batch_size, hidden_size]).astype(np.float32))
+        >>> c0 = Tensor(np.ones([num_layers, batch_size, hidden_size]).astype(np.float32))
+        >>> w = Tensor(np.ones([112, 1, 1]).astype(np.float32))
+        >>> seq_lengths = Tensor(np.array([4, 3]).astype(np.int32))
+        >>> output, hn, cn, _, _ = net(input_tensor, h0, c0, w, seq_lengths)
+        >>> print(output)
+        Tensor(shape=[5, 2, 2], dtype=Float32, value=
+        [[[ 9.64026690e-01, 9.64026690e-01],
+        [ 9.64026690e-01, 9.64026690e-01]],
+        [[ 9.95053887e-01, 9.95053887e-01],
+        [ 9.95053887e-01, 9.95053887e-01]],
+        [[ 9.99328434e-01, 9.99328434e-01],
+        [ 9.99328434e-01, 9.99328434e-01]],
+        [[ 9.99908388e-01, 9.99908388e-01],
+        [ 0.00000000e+00, 0.00000000e+00]],
+        [[ 0.00000000e+00, 0.00000000e+00],
+        [ 0.00000000e+00, 0.00000000e+00]]])
+    """
+
+    @prim_attr_register
+    def __init__(self, input_size, hidden_size, num_layers, has_bias, bidirectional, dropout, is_train=True):
+        """Initialize GRU."""
+        validator.check_positive_int(input_size, "input_size", self.name)
+        validator.check_positive_int(hidden_size, "hidden_size", self.name)
+        validator.check_positive_int(num_layers, "num_layers", self.name)
+        validator.check_value_type("has_bias", has_bias, (bool,), self.name)
+        validator.check_value_type("bidirectional", bidirectional, (bool,), self.name)
+        validator.check_value_type("dropout", dropout, [float], self.name)
+        validator.check_float_range(dropout, 0, 1, validator.INC_BOTH, 'dropout', self.name)
+        validator.check_value_type("is_train", is_train, (bool,), self.name)
+
+
+class CudnnGRU(Primitive):
     """
     Performs the Stacked GRU (Gated Recurrent Unit) on the input.
 
@@ -337,7 +422,7 @@ class CudnnGRU(PrimitiveWithInfer):
     Inputs:
         - **input** (Tensor) - Tensor of shape (seq_len, batch_size, `input_size`) or
           (batch_size, seq_len, `input_size`).
-        - **h** (tuple) - Tensor of shape (num_directions * `num_layers`, batch_size, `hidden_size`).
+        - **h** (Tensor) - Tensor of shape (num_directions * `num_layers`, batch_size, `hidden_size`).
         - **w** (Tensor) - The input tensor which states for weights.
 
     Outputs:
@@ -395,34 +480,12 @@ class CudnnGRU(PrimitiveWithInfer):
         self.has_bias = validator.check_value_type("has_bias", has_bias, (bool,), self.name)
         self.bidirectional = validator.check_value_type("bidirectional", bidirectional, (bool,), self.name)
         self.dropout = validator.check_value_type("dropout", dropout, [float], self.name)
-        self.dropout = validator.check_float_range(dropout, 0, 1, Rel.INC_BOTH, 'dropout', self.name)
+        self.dropout = validator.check_float_range(dropout, 0, 1, validator.INC_BOTH, 'dropout', self.name)
 
         if bidirectional:
             self.num_directions = 2
         else:
             self.num_directions = 1
-
-    def infer_shape(self, x_shape, h_shape, w_shape):
-        validator.check_equal_int(len(x_shape), 3, "x rank", self.name)
-        validator.check_equal_int(x_shape[2], self.input_size, "x[2]", self.name)
-
-        validator.check_equal_int(len(h_shape), 3, "h rank", self.name)
-
-        validator.check_int(h_shape[0], self.num_layers * self.num_directions, Rel.EQ, "h[0]", self.name)
-        validator.check_equal_int(h_shape[1], x_shape[1], "h[1]", self.name)
-        validator.check_int(h_shape[2], self.hidden_size, Rel.EQ, "h[2]", self.name)
-
-        y_shape = (x_shape[0], x_shape[1], self.hidden_size * self.num_directions)
-
-        # set arbitrary shape for reserved space
-        reserved_shape = (1, 1)
-        state_shape = (1, 1)
-        return y_shape, h_shape, reserved_shape, state_shape
-
-    def infer_dtype(self, x_dtype, h_dtype, w_dtype):
-        args = {'x': x_dtype, 'h': h_dtype, 'w': w_dtype}
-        validator.check_tensors_dtypes_same_and_valid(args, (mstype.float32, mstype.float16), self.name)
-        return x_dtype, x_dtype, x_dtype, x_dtype
 
 
 class PriorityReplayBufferCreate(PrimitiveWithInfer):
@@ -454,8 +517,8 @@ class PriorityReplayBufferCreate(PrimitiveWithInfer):
     @prim_attr_register
     def __init__(self, capacity, alpha, shapes, dtypes, seed0, seed1):
         """Initialize PriorityReplaBufferCreate."""
-        validator.check_int(capacity, 1, Rel.GE, "capacity", self.name)
-        validator.check_float_range(alpha, 0.0, 1.0, Rel.INC_BOTH)
+        validator.check_int(capacity, 1, validator.GE, "capacity", self.name)
+        validator.check_float_range(alpha, 0.0, 1.0, validator.INC_BOTH)
         validator.check_value_type("shape of init data", shapes, [tuple, list], self.name)
         validator.check_value_type("dtypes of init data", dtypes, [tuple, list], self.name)
         validator.check_non_negative_int(seed0, "seed0", self.name)
@@ -494,7 +557,7 @@ class PriorityReplayBufferPush(PrimitiveWithInfer):
     @prim_attr_register
     def __init__(self, handle):
         """Initialize PriorityReplaBufferPush."""
-        validator.check_int(handle, 0, Rel.GE, "handle", self.name)
+        validator.check_int(handle, 0, validator.GE, "handle", self.name)
 
     def infer_shape(self, *inputs):
         return (1,)
@@ -508,7 +571,7 @@ class PriorityReplayBufferSample(PrimitiveWithInfer):
     Sample a transition to the priority replay buffer.
 
     .. warning::
-            This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Args:
         handle(Tensor): Priority replay buffer instance handle with dtype int64 and shape (1,).
@@ -529,8 +592,8 @@ class PriorityReplayBufferSample(PrimitiveWithInfer):
     @prim_attr_register
     def __init__(self, handle, batch_size, shapes, dtypes):
         """Initialize PriorityReplaBufferSample."""
-        validator.check_int(handle, 0, Rel.GE, "capacity", self.name)
-        validator.check_int(batch_size, 1, Rel.GE, "batch_size", self.name)
+        validator.check_int(handle, 0, validator.GE, "capacity", self.name)
+        validator.check_int(batch_size, 1, validator.GE, "batch_size", self.name)
         validator.check_value_type("shape of init data", shapes, [tuple, list], self.name)
         validator.check_value_type("dtypes of init data", dtypes, [tuple, list], self.name)
 
@@ -575,7 +638,7 @@ class PriorityReplayBufferUpdate(PrimitiveWithInfer):
     @prim_attr_register
     def __init__(self, handle):
         """Initialize PriorityReplaBufferUpdate."""
-        validator.check_int(handle, 0, Rel.GE, "capacity", self.name)
+        validator.check_int(handle, 0, validator.GE, "capacity", self.name)
 
     def infer_shape(self, indices, priorities):
         return (1,)
@@ -604,7 +667,7 @@ class PriorityReplayBufferDestroy(PrimitiveWithInfer):
     @prim_attr_register
     def __init__(self, handle):
         """Initialize PriorityReplayBufferDestroy."""
-        validator.check_int(handle, 0, Rel.GE, "handle", self.name)
+        validator.check_int(handle, 0, validator.GE, "handle", self.name)
 
     def infer_shape(self):
         return (1,)
@@ -641,7 +704,7 @@ class ReservoirReplayBufferCreate(Primitive):
     @prim_attr_register
     def __init__(self, capacity, shapes, dtypes, seed0, seed1):
         """Initialize ReservoirReplayBufferCreate."""
-        validator.check_int(capacity, 1, Rel.GE, "capacity", self.name)
+        validator.check_int(capacity, 1, validator.GE, "capacity", self.name)
         validator.check_value_type("shape of init data", shapes, [tuple, list], self.name)
         validator.check_value_type("dtypes of init data", dtypes, [tuple, list], self.name)
         validator.check_non_negative_int(seed0, "seed0", self.name)
@@ -674,7 +737,7 @@ class ReservoirReplayBufferPush(Primitive):
     @prim_attr_register
     def __init__(self, handle):
         """Initialize ReservoirReplayBufferPush."""
-        validator.check_int(handle, 0, Rel.GE, "handle", self.name)
+        validator.check_int(handle, 0, validator.GE, "handle", self.name)
 
 
 class ReservoirReplayBufferSample(Primitive):
@@ -682,7 +745,7 @@ class ReservoirReplayBufferSample(Primitive):
     Sample a transition to the replay buffer.
 
     .. warning::
-            This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Args:
         handle(Tensor): Priority replay buffer instance handle with dtype int64 and shape (1,).
@@ -703,8 +766,8 @@ class ReservoirReplayBufferSample(Primitive):
     @prim_attr_register
     def __init__(self, handle, batch_size, shapes, dtypes):
         """Initialize PriorityReplaBufferSample."""
-        validator.check_int(handle, 0, Rel.GE, "capacity", self.name)
-        validator.check_int(batch_size, 1, Rel.GE, "batch_size", self.name)
+        validator.check_int(handle, 0, validator.GE, "capacity", self.name)
+        validator.check_int(batch_size, 1, validator.GE, "batch_size", self.name)
         validator.check_value_type("shape of init data", shapes, [tuple, list], self.name)
         validator.check_value_type("dtypes of init data", dtypes, [tuple, list], self.name)
 
@@ -735,7 +798,7 @@ class ReservoirReplayBufferDestroy(PrimitiveWithInfer):
     @prim_attr_register
     def __init__(self, handle):
         """Initialize ReservoirReplayBufferDestroy."""
-        validator.check_int(handle, 0, Rel.GE, "handle", self.name)
+        validator.check_int(handle, 0, validator.GE, "handle", self.name)
 
 
 class BatchAssign(PrimitiveWithInfer):
@@ -743,7 +806,7 @@ class BatchAssign(PrimitiveWithInfer):
     Assign the parameters of the source to overwrite the target.
 
     Args:
-        lock (bool): Lock when the operator is Write, else shared the mutex. Default: True.
+        lock (bool): Lock when the operator is Write, else shared the mutex. Default: ``True``.
 
     Inputs:
         - **dst_model** (tuple) - A parameters tuple of the dst model.
@@ -790,7 +853,7 @@ class TensorsQueueCreate(PrimitiveWithInfer):
     TensorsQueueCreate used to create a TensorsQueue and return an unique handle.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Args:
         dtype (mindspore.dtype): the data type in the TensorsQueue.
@@ -818,9 +881,9 @@ class TensorsQueueCreate(PrimitiveWithInfer):
     @prim_attr_register
     def __init__(self, dtype, shapes, size=0, name="Q"):
         validator.check_type_name("dtype", dtype, mstype.number_type + (mstype.bool_,), self.name)
-        validator.check_int(size, 0, Rel.GE, "size", self.name)
+        validator.check_int(size, 0, validator.GE, "size", self.name)
         elements_num = len(shapes)
-        validator.check_int(elements_num, 1, Rel.GE, "elements_num", self.name)
+        validator.check_int(elements_num, 1, validator.GE, "elements_num", self.name)
         self.add_prim_attr('shapes', shapes)
         self.add_prim_attr('dtype', dtype)
         self.add_prim_attr('elements_num', elements_num)
@@ -840,7 +903,7 @@ class TensorsQueuePut(PrimitiveWithInfer):
     TensorsQueuePut used to put tensors into a created TensorsQueue.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Args:
         dtype (mindspore.dtype): the data type in the TensorsQueue.
@@ -878,7 +941,7 @@ class TensorsQueuePut(PrimitiveWithInfer):
         validator.check_equal_int(len(elements_shape), self.elements_num, "inputs elements", self.name)
         for i, shape in enumerate(elements_shape):
             if tuple(shape) != self.shapes[i]:
-                raise ValueError(f'{self.name} init shape and ipnut shape must be the same, ',
+                raise ValueError(f'{self.name} init shape and input shape must be the same, ',
                                  f'but got {self.shapes[i]} and input {shape} in position {i}.')
         return ()
 
@@ -892,7 +955,7 @@ class TensorsQueueGet(PrimitiveWithInfer):
     TensorsQueueGet used to get tensors in the front of the TensorsQueue.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Args:
         shapes (tuple(tuple(int))): the shape of each tensor in element.
@@ -946,7 +1009,7 @@ class TensorsQueueClose(PrimitiveWithInfer):
     TensorsQueueClose used to close the created TensorsQueue. The resources in TensorsQueue will be deleted.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Inputs:
         - **handle** (mindspore.int64) - The handle pointed to the TensorsQueue.
@@ -982,7 +1045,7 @@ class TensorsQueueSize(PrimitiveWithInfer):
     TensorsQueueSize used get the indeed size of TensorsQueue.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Inputs:
         - **handle** (mindspore.int64) - The handle pointed to the TensorsQueue.
@@ -1019,7 +1082,7 @@ class TensorsQueueClear(PrimitiveWithInfer):
     TensorsQueueClear used to reset the created TensorsQueue. The instance of TensorsQueue is still aviliable.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Inputs:
         - **handle** (mindspore.int64) - The handle pointed to the TensorsQueue.
@@ -1055,7 +1118,7 @@ class MuxSend(PrimitiveWithInfer):
     Send tensors to the specified dest_rank.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Note:
         Send and Receive must be used in combination.
@@ -1111,7 +1174,7 @@ class MuxReceive(PrimitiveWithInfer):
     receive tensors from src_rank.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Note:
         Send and Receive must be used in combination.

@@ -13,14 +13,14 @@ mindspore.nn.WarmUpLR
     其中，
 
     .. math::
-        tmp\_step=min(current\_step, warmup\_steps)
+        tmp\_step= \min(current\_step, warmup\_steps)
 
     参数：
         - **learning_rate** (float) - 学习率的初始值。
         - **warmup_steps** (int) - 学习率warmup的step数。
 
     输入：
-        - **global_step** (Tensor) - 当前step数，即current_step。
+        - **global_step** (Tensor) - 当前step数，即current_step，shape为 :math:`()`。
 
     输出：
         标量Tensor。当前step的学习率值。

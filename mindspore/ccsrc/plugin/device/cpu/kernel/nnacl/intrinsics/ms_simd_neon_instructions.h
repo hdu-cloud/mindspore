@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_NEON_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
-#define MINDSPORE_NNACL_NEON_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
+#ifndef NNACL_NEON_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
+#define NNACL_NEON_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
 #include <math.h>
 #include <float.h>
 
@@ -24,6 +24,8 @@
 #define MS_F32X4_GETI(src, i) src[i]
 #define MS128_F32_GETI(src, i) src[i]
 #define MS_FLOAT32X4 float32x4_t
+#define MS_FLOAT32X4X2 float32x4x2_t
+#define MS_FLOAT32X4X4 float32x4x4_t
 #define MS_FLOAT128_F32 float32x4_t
 #define MS_INT32X4 int32x4_t
 #define MS_INT128_EPI32 int32x4_t
@@ -100,9 +102,11 @@ static inline float32x4_t vrecp(float32x4_t v) {
 #define MS_AND128_MASK(src1, src2) vandq_u32(src1, src2)
 #define MS_AND128_F32(src1, src2) \
   vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(src1), vreinterpretq_u32_f32(src2)))
-
 #define MS_OR128_F32(src1, src2) \
   vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(src1), vreinterpretq_u32_f32(src2)))
+#define MS_CAST128_U32_F32(src) vreinterpretq_u32_f32(src)
+#define MS_CAST128_F32_U32(src) vreinterpretq_f32_u32(src)
+#define MS_OR128_MASK(src1, src2) vorrq_u32(src1, src2)
 
 #ifdef ENABLE_ARM64
 #define MS_GET_MAX128_F32 vmaxvq_f32
@@ -213,31 +217,37 @@ static inline MS_FLOAT32X4 MS_SQRT128_F32(MS_FLOAT32X4 src) {
   MS_STQ_F32(output_ptr + 7 * num, dst##8);
 
 static inline MS_FLOAT32X4 VexpFp32(MS_FLOAT32X4 input) {
-  static MS_FLOAT32X4 param[] = {{0.693147f, 0.693147f, 0.693147f, 0.693147f},
-                                 {1.0f / 120, 1.0f / 120, 1.0f / 120, 1.0f / 120},
-                                 {1.0f / 24, 1.0f / 24, 1.0f / 24, 1.0f / 24},
-                                 {1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6},
-                                 {0.5f, 0.5f, 0.5f, 0.5f},
-                                 {1.0f, 1.0f, 1.0f, 1.0f}};
-  MS_INT32X4 integer = MS_CVTQPS_EPI32(MS_DIVQ_F32(input, param[0]));
+  static MS_FLOAT32X4 param[] = {
+    {0.693147f, 0.693147f, 0.693147f, 0.693147f},
+    {1.0f / 120, 1.0f / 120, 1.0f / 120, 1.0f / 120},
+    {1.0f / 24, 1.0f / 24, 1.0f / 24, 1.0f / 24},
+    {1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6},
+    {0.5f, 0.5f, 0.5f, 0.5f},
+    {1.0f, 1.0f, 1.0f, 1.0f},
+    {1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f},
+    {2.0f, 2.0f, 2.0f, 2.0f}};
+  static MS_FLOAT32X4 negative_flag = {-0.0f, -0.0f, -0.0f, -0.0f};
+
+  MS_INT32X4 integer =
+    MS_CVTQPS_EPI32(MS_FMADD128_F32(input, param[6], MS_OR128_F32(MS_AND128_F32(input, negative_flag), param[4])));
   MS_FLOAT32X4 decimal = MS_SUBQ_F32(input, MS_MULQ_F32(MS_CVTQEPI32_PS(integer), param[0]));
-  MS_INT32X4 int_exp = MS_SLLIQ_EPI32(MS_ADDQ_EPI32(integer, MS_MOVQ_EPI32(127)), 23);
+  MS_INT32X4 int_exp = MS_SLLIQ_EPI32(MS_ADDQ_EPI32(integer, MS_MOVQ_EPI32(126)), 23);
   MS_FLOAT32X4 tmp = MS_MULQ_F32(decimal, (MS_ADDQ_F32(param[2], MS_MULQ_F32(decimal, param[1]))));
   tmp = MS_MULQ_F32(decimal, MS_ADDQ_F32(param[4], MS_MULQ_F32(decimal, MS_ADDQ_F32(param[3], tmp))));
   MS_FLOAT32X4 decimal_exp = MS_ADDQ_F32(param[5], MS_MULQ_F32(decimal, MS_ADDQ_F32(param[5], tmp)));
-  return MS_MULQ_F32(decimal_exp, MS_CAST128_F32_S32(int_exp));
+  return MS_MULQ_F32(param[7], MS_MULQ_F32(decimal_exp, MS_CAST128_F32_S32(int_exp)));
 }
 
 static inline void simd_exp128(MS_FLOAT32X4 input, float *dst) {
-  static MS_FLOAT32X4 maxv = {88.0f, 88.0f, 88.0f, 88.0f};
-  static MS_FLOAT32X4 minv = {-88.0f, -88.0f, -88.0f, -88.0f};
+  static MS_FLOAT32X4 maxv = {88.72283935546875f, 88.72283935546875f, 88.72283935546875f, 88.72283935546875f};
+  static MS_FLOAT32X4 minv = {-87.3365478515625f, -87.3365478515625f, -87.3365478515625f, -87.3365478515625f};
   input = MS_MAXQ_F32(minv, MS_MINQ_F32(input, maxv));
   MS_STQ_F32(dst, VexpFp32(input));
 }
 
 static inline MS_FLOAT32X4 simd_exp128_f32(MS_FLOAT32X4 input) {
-  static MS_FLOAT32X4 maxv = {88.0f, 88.0f, 88.0f, 88.0f};
-  static MS_FLOAT32X4 minv = {-88.0f, -88.0f, -88.0f, -88.0f};
+  static MS_FLOAT32X4 maxv = {88.72283935546875f, 88.72283935546875f, 88.72283935546875f, 88.72283935546875f};
+  static MS_FLOAT32X4 minv = {-87.3365478515625f, -87.3365478515625f, -87.3365478515625f, -87.3365478515625f};
   input = MS_MAXQ_F32(minv, MS_MINQ_F32(input, maxv));
   return VexpFp32(input);
 }
@@ -349,4 +359,4 @@ static inline MS_FLOAT32X4 MS128_ERF_F32(MS_FLOAT32X4 src) {
   MS_FLOAT32X4 dst##2 = MS_MOVQ_F32(0.0f); \
   MS_FLOAT32X4 dst##3 = MS_MOVQ_F32(0.0f); \
   MS_FLOAT32X4 dst##4 = MS_MOVQ_F32(0.0f);
-#endif  // MINDSPORE_NNACL_NEON_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
+#endif  // NNACL_NEON_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_

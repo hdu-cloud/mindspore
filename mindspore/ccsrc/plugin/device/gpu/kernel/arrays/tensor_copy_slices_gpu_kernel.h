@@ -27,6 +27,7 @@
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
 #include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
 #include "kernel/common_utils.h"
+#include "kernel/kernel_get_value.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/slice_copy_impl.cuh"
 
 namespace mindspore {
@@ -53,8 +54,9 @@ class TensorCopySlicesGpuKernelMod : public NativeGpuKernelMod {
       cudaMemcpyAsync(output_addr, input_addr, inputs[0]->size, cudaMemcpyDeviceToDevice,
                       reinterpret_cast<cudaStream_t>(stream_ptr)),
       "TensorCopySlices cudaMemcpyAsync outputs failed");
-    CopySlices(update_shape_, begin_, strides_, output_shape_, update_addr, output_addr,
-               reinterpret_cast<cudaStream_t>(stream_ptr));
+    auto status = CopySlices(update_shape_, begin_, strides_, output_shape_, update_addr, output_addr,
+                             reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return true;
   }
 
@@ -100,6 +102,10 @@ class TensorCopySlicesGpuKernelMod : public NativeGpuKernelMod {
     InitSizeLists();
 
     return KRET_OK;
+  }
+
+  std::vector<size_t> GetLaunchIgnoredInputAddressIdx() const override {
+    return {kBeginIndex_, kEndIndex_, kStrideIndex_};
   }
 
   void ResetResource() noexcept {

@@ -21,7 +21,7 @@ from mindspore import Tensor
 from mindspore.nn import Cell
 import mindspore.ops as ops
 from mindspore.ops import operations as P
-from mindspore.train.model import Model
+from mindspore.train import Model
 
 context.set_context(mode=context.GRAPH_MODE, device_target="Ascend")
 
@@ -67,7 +67,7 @@ def test_select_2_2():
     cmp_select(input_cond, inputa, inputb)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard

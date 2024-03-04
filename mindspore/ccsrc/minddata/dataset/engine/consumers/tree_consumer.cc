@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,30 +14,33 @@
  * limitations under the License.
  */
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <string>
-#include <map>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
 #include "minddata/dataset/engine/consumers/tree_consumer.h"
 #include "minddata/dataset/engine/datasetops/data_queue_op.h"
 #include "minddata/dataset/engine/opt/pre/getter_pass.h"
 #ifndef ENABLE_SECURITY
 #include "minddata/dataset/engine/perf/auto_tune.h"
-#include "minddata/dataset/engine/perf/monitor.h"
+#endif
+#include "minddata/dataset/engine/perf/info_collector.h"
+#ifndef ENABLE_SECURITY
 #include "minddata/dataset/engine/perf/profiling.h"
 #endif
 #include "minddata/dataset/engine/tree_adapter.h"
-
 #ifndef ENABLE_ANDROID
-#include "minddata/mindrecord/include/shard_index_generator.h"
 #include "minddata/mindrecord/include/shard_header.h"
+#include "minddata/mindrecord/include/shard_index_generator.h"
 #include "minddata/mindrecord/include/shard_writer.h"
 #endif
 #ifdef WITH_BACKEND
 #include "utils/ms_context.h"
 #endif
+
 namespace mindspore {
 namespace dataset {
 #ifndef ENABLE_SECURITY
@@ -50,13 +53,19 @@ TreeConsumer::TreeConsumer(int32_t num_epochs) : num_epochs_(num_epochs) {
   tree_adapter_ = std::make_unique<TreeAdapter>();
 }
 
-Status TreeConsumer::Init(std::shared_ptr<DatasetNode> d) {
-  RETURN_IF_NOT_OK(tree_adapter_->Compile(std::move(d)));
+Status TreeConsumer::Init(const std::shared_ptr<DatasetNode> &root) {
+  RETURN_IF_NOT_OK(tree_adapter_->Compile(root));
 #ifndef ENABLE_SECURITY
   profiling_manager_ = GlobalContext::profiling_manager();
   RETURN_IF_NOT_OK(RegisterProfilingManager());
 #endif
   return Status::OK();
+}
+
+Status TreeConsumer::Init(const std::shared_ptr<DatasetNode> &root, int64_t global_step, int64_t dataset_size) {
+  MS_LOG(WARNING) << "TreeConsumer does not support initializing from intermediate epoch or step, change to "
+                     "initialize from the beginning.";
+  return Init(root);
 }
 
 Status TreeConsumer::Terminate() {
@@ -159,8 +168,11 @@ Status TreeConsumer::InitAutoTune() {
 std::string TreeConsumer::GetOffload() { return (tree_adapter_->GetOffloadJson()).dump(); }
 
 // IteratorConsumer
-Status IteratorConsumer::Init(std::shared_ptr<DatasetNode> d) {
-  RETURN_IF_NOT_OK(tree_adapter_->Compile(std::move(d), num_epochs_));
+Status IteratorConsumer::Init(const std::shared_ptr<DatasetNode> &root, int64_t global_step, int64_t dataset_size) {
+  if (global_step != 0) {
+    tree_adapter_ = std::make_unique<TreeAdapter>(TreeAdapter::UsageFlag::kDeReset);
+  }
+  RETURN_IF_NOT_OK(tree_adapter_->Compile(root, num_epochs_, global_step, dataset_size));
 #ifndef ENABLE_SECURITY
   profiling_manager_ = GlobalContext::profiling_manager();
   if (profiling_manager_->IsProfiling()) {
@@ -174,15 +186,19 @@ Status IteratorConsumer::Init(std::shared_ptr<DatasetNode> d) {
   return Status::OK();
 }
 
-Status IteratorConsumer::GetNextAsVector(std::vector<TensorPtr> *out) {
+Status IteratorConsumer::GetNextAsVector(std::vector<TensorPtr> *const out) {
   RETURN_UNEXPECTED_IF_NULL(out);
+  RETURN_IF_NOT_OK(CollectPipelineInfoStart("IteratorConsumer", "GetNextAsVector"));
   out->clear();
-
   TensorRow res;
   RETURN_IF_NOT_OK(tree_adapter_->GetNext(&res));
 
   // Return empty vector if there's no data
-  RETURN_OK_IF_TRUE(res.empty());
+  if (res.empty()) {
+    RETURN_IF_NOT_OK(
+      CollectPipelineInfoEnd("IteratorConsumer", "GetNextAsVector", {{"TensorRowFlags", res.FlagName()}}));
+    return Status::OK();
+  }
 
   // Filter meta column
   std::vector<size_t> to_keep_indices;
@@ -195,7 +211,7 @@ Status IteratorConsumer::GetNextAsVector(std::vector<TensorPtr> *out) {
     }
     to_keep_indices.push_back(colMap.second);
   }
-  if (to_keep_indices.size() == 0) {
+  if (to_keep_indices.empty()) {
     std::string err_msg = "No effective column found, maybe all columns are meta column and will be filtered. ";
     err_msg += "If you want to output meta column please rename column name to a new one which is not start with ";
     err_msg += "\"" + std::string(kDftMetaColumnPrefix) + "\"";
@@ -204,19 +220,23 @@ Status IteratorConsumer::GetNextAsVector(std::vector<TensorPtr> *out) {
   std::sort(to_keep_indices.begin(), to_keep_indices.end());
   (void)std::transform(to_keep_indices.begin(), to_keep_indices.end(), std::back_inserter(*out),
                        [&res](const auto &it) { return std::move(res[it]); });
-
+  RETURN_IF_NOT_OK(CollectPipelineInfoEnd("IteratorConsumer", "GetNextAsVector"));
   return Status::OK();
 }
 
 Status IteratorConsumer::GetNextAsMap(std::unordered_map<std::string, TensorPtr> *const out_map) {
   RETURN_UNEXPECTED_IF_NULL(out_map);
-  out_map->clear();
+  RETURN_IF_NOT_OK(CollectPipelineInfoStart("IteratorConsumer", "GetNextAsMap"));
 
+  out_map->clear();
   TensorRow res;
   RETURN_IF_NOT_OK(tree_adapter_->GetNext(&res));
 
   // Return empty map if there's no data
-  RETURN_OK_IF_TRUE(res.empty());
+  if (res.empty()) {
+    RETURN_IF_NOT_OK(CollectPipelineInfoEnd("IteratorConsumer", "GetNextAsMap", {{"TensorRowFlags", res.FlagName()}}));
+    return Status::OK();
+  }
 
   // Populate the out map from the row and return it
   for (const auto &colMap : tree_adapter_->GetColumnNameMap()) {
@@ -228,22 +248,30 @@ Status IteratorConsumer::GetNextAsMap(std::unordered_map<std::string, TensorPtr>
     }
     (*out_map)[colMap.first] = std::move(res[colMap.second]);
   }
-  if (out_map->size() == 0) {
+  if (out_map->empty()) {
     std::string err_msg = "No effective column found, maybe all columns are meta column and will be filtered. ";
     err_msg += "If you want to output meta column please rename column name to a new one which is not start with ";
     err_msg += "\"" + std::string(kDftMetaColumnPrefix) + "\"";
     RETURN_STATUS_UNEXPECTED(err_msg);
   }
+  RETURN_IF_NOT_OK(CollectPipelineInfoEnd("IteratorConsumer", "GetNextAsMap"));
   return Status::OK();
 }
 
 Status IteratorConsumer::GetNextAsOrderedPair(std::vector<std::pair<std::string, std::shared_ptr<Tensor>>> *const vec) {
   CHECK_FAIL_RETURN_UNEXPECTED(vec != nullptr && vec->empty(), "vec is null or non-empty.");
+  RETURN_IF_NOT_OK(CollectPipelineInfoStart("IteratorConsumer", "GetNextAsOrderedPair"));
 
   TensorRow curr_row;
 
   RETURN_IF_NOT_OK(tree_adapter_->GetNext(&curr_row));
-  RETURN_OK_IF_TRUE(curr_row.empty());
+
+  // Return empty pair if there's no data
+  if (curr_row.empty()) {
+    RETURN_IF_NOT_OK(
+      CollectPipelineInfoEnd("IteratorConsumer", "GetNextAsOrderedPair", {{"TensorRowFlags", curr_row.FlagName()}}));
+    return Status::OK();
+  }
 
   size_t num_cols = curr_row.size();  // num_cols is non-empty.
   // order the column names according to their ids
@@ -260,7 +288,7 @@ Status IteratorConsumer::GetNextAsOrderedPair(std::vector<std::pair<std::string,
     }
   }
 
-  if (column_order_.size() == 0) {
+  if (column_order_.empty()) {
     std::string err_msg = "No effective column found, maybe all columns are meta column and will be filtered. ";
     err_msg += "If you want to output meta column please rename column name to a new one which is not start with ";
     err_msg += "\"" + std::string(kDftMetaColumnPrefix) + "\"";
@@ -270,13 +298,16 @@ Status IteratorConsumer::GetNextAsOrderedPair(std::vector<std::pair<std::string,
 
   std::transform(column_order_.begin(), column_order_.end(), std::back_inserter(*vec),
                  [curr_row](const auto &col) { return std::make_pair(col.second, curr_row[col.first]); });
-
+  RETURN_IF_NOT_OK(CollectPipelineInfoEnd("IteratorConsumer", "GetNextAsOrderedPair"));
   return Status::OK();
 }
 
 // ToDevice
-Status ToDevice::Init(std::shared_ptr<DatasetNode> d) {
-  RETURN_IF_NOT_OK(tree_adapter_->Compile(std::move(d), num_epochs_));
+Status ToDevice::Init(const std::shared_ptr<DatasetNode> &root, int64_t global_step, int64_t dataset_size) {
+  if (global_step != 0) {
+    tree_adapter_ = std::make_unique<TreeAdapter>(TreeAdapter::UsageFlag::kDeReset);
+  }
+  RETURN_IF_NOT_OK(tree_adapter_->Compile(root, num_epochs_, global_step, dataset_size));
 #ifndef ENABLE_SECURITY
   profiling_manager_ = GlobalContext::profiling_manager();
   if (profiling_manager_->IsProfiling()) {
@@ -334,6 +365,18 @@ Status ToDevice::GetDataInfo(std::vector<DataType> *const types, std::vector<Ten
   return Status::OK();
 }
 
+Status ToDevice::GetSendInfo(std::vector<std::vector<double>> *send_info) {
+  RETURN_UNEXPECTED_IF_NULL(send_info);
+  // tree_.root() must be DataQueueOp
+  std::shared_ptr<DatasetOp> root = std::shared_ptr<DatasetOp>(tree_adapter_->GetRoot());
+  CHECK_FAIL_RETURN_UNEXPECTED(root != nullptr, "Root is a nullptr.");
+  DataQueueOp *op = dynamic_cast<DataQueueOp *>(root.get());
+  CHECK_FAIL_RETURN_UNEXPECTED(op != nullptr, "GetSendInfo only supported by DataQueueOp");
+  DATA_INFO data_info;
+  *send_info = op->GetSendInfo();
+  return Status::OK();
+}
+
 Status ToDevice::Terminate() {
 #ifdef WITH_BACKEND
   RETURN_UNEXPECTED_IF_NULL(MsContext::GetInstance());
@@ -348,18 +391,13 @@ Status ToDevice::Terminate() {
   return TreeConsumer::Terminate();
 }
 
-Status TreeConsumer::Reset(int64_t step, const int64_t epoch_num) {
+Status TreeConsumer::Reset(int64_t step, const int64_t dataset_size) {
   MS_LOG(INFO) << "Resetting TreeConsumer";
 
   MS_LOG(INFO) << "Terminating pipeline with UUID:" << tree_adapter_->tree_->GetUniqueId();
   std::shared_ptr<DatasetNode> old_root = tree_adapter_->input_ir_;
   RETURN_IF_NOT_OK(this->Stop());
-  {
-#ifdef ENABLE_PYTHON
-    py::gil_scoped_release gil_release;  // release GIL to allow python threads to terminate.
-#endif
-    RETURN_IF_NOT_OK(this->Terminate());
-  }
+  RETURN_IF_NOT_OK(this->Terminate());
 #ifdef WITH_BACKEND
   RETURN_UNEXPECTED_IF_NULL(MsContext::GetInstance());
   if (MsContext::GetInstance()->get_param<std::string>(MS_CTX_DEVICE_TARGET) == kGPUDevice) {
@@ -374,7 +412,7 @@ Status TreeConsumer::Reset(int64_t step, const int64_t epoch_num) {
   }
 #endif
   tree_adapter_ = std::make_unique<TreeAdapter>(TreeAdapter::UsageFlag::kDeReset);
-  RETURN_IF_NOT_OK(tree_adapter_->Compile(old_root, num_epochs_, step, epoch_num));
+  RETURN_IF_NOT_OK(tree_adapter_->Compile(old_root, num_epochs_, step, dataset_size));
   RETURN_IF_NOT_OK(tree_adapter_->Launch());
   MS_LOG(INFO) << "Launched a new pipeline after reset. UUID: " << tree_adapter_->tree_->GetUniqueId();
   std::shared_ptr<DatasetOp> root2 = std::shared_ptr<DatasetOp>(tree_adapter_->GetRoot());
@@ -418,6 +456,7 @@ Status SaveToDisk::ValidateParams() {
 }
 
 Status SaveToDisk::Save() {
+  RETURN_IF_NOT_OK(CollectPipelineInfoStart("SaveToDisk", "Save"));
   std::vector<std::string> file_names;
   if (num_files_ == 1) {
     file_names.push_back(dataset_path_);
@@ -481,6 +520,7 @@ Status SaveToDisk::Save() {
 
   RETURN_IF_NOT_OK(mr_writer->Commit());
   RETURN_IF_NOT_OK(mindrecord::ShardIndexGenerator::Finalize(file_names));
+  RETURN_IF_NOT_OK(CollectPipelineInfoEnd("SaveToDisk", "Save"));
   return Status::OK();
 }
 
@@ -739,7 +779,7 @@ Status SaveToDisk::TransformTensor(const unsigned char *src, const TensorShape &
   *data_ptr = std::make_unique<std::vector<uint8_t>>(num_of_elements * sizeof(T));
   if (need_convert) {
     auto tmp_ptr = std::make_unique<std::vector<uint8_t>>(num_of_elements * sizeof(S));
-    std::copy(src, src + sizeof(S) * num_of_elements, tmp_ptr->begin());
+    (void)std::copy(src, src + sizeof(S) * num_of_elements, tmp_ptr->begin());
     auto s_ptr = reinterpret_cast<S *>(&(*(tmp_ptr->begin())));
     auto el = std::make_unique<T>();
     for (uint32_t i = 0; i < num_of_elements; ++i) {
@@ -750,7 +790,7 @@ Status SaveToDisk::TransformTensor(const unsigned char *src, const TensorShape &
       }
     }
   } else {
-    std::copy(src, src + sizeof(T) * num_of_elements, (*data_ptr)->begin());
+    (void)std::copy(src, src + sizeof(T) * num_of_elements, (*data_ptr)->begin());
   }
   if (shape.empty()) {
     *data = std::make_unique<T>();
@@ -763,166 +803,16 @@ Status SaveToDisk::TransformTensor(const unsigned char *src, const TensorShape &
 }
 #endif
 
-TreeGetters::TreeGetters()
-    : root_(nullptr),
-      dataset_size_(-1),
-      first_row_type_({}),
-      first_row_shape_({}),
-      estimated_row_shape_({}),
-      init_flag_(false),
-      first_row_obtained_(false) {
-  tree_adapter_ = std::make_unique<TreeAdapter>(TreeAdapter::UsageFlag::kDeGetter);
-}
-
-Status TreeGetters::Init(std::shared_ptr<DatasetNode> d) {
-  RETURN_UNEXPECTED_IF_NULL(d);
-  root_ = std::move(d);
-  return Status::OK();
-}
-
-Status TreeGetters::GetRow(TensorRow *row) {
-  RETURN_UNEXPECTED_IF_NULL(row);
-  return tree_adapter_->GetNext(row);
-}
-
-Status TreeGetters::GetOutputTypes(std::vector<DataType> *types) {
-  RETURN_UNEXPECTED_IF_NULL(types);
-  RETURN_IF_NOT_OK(GetFirstRowShapeAndType());
-  *types = first_row_type_;
-  return Status::OK();
-}
-
-Status TreeGetters::GetOutputShapes(std::vector<TensorShape> *shapes, bool estimate) {
-  RETURN_UNEXPECTED_IF_NULL(shapes);
-  RETURN_IF_NOT_OK(GetFirstRowShapeAndType());
-  *shapes = first_row_shape_;
-
-  if (estimate) {
-    estimated_row_shape_ = first_row_shape_;
-    TensorRow row;
-    RETURN_IF_NOT_OK(GetRow(&row));
-
-    while (!row.empty()) {
-      std::vector<TensorShape> cur_row_shape;
-      (void)std::transform(row.begin(), row.end(), std::back_inserter(cur_row_shape),
-                           [=](auto &t) { return t->shape(); });
-
-      // calculate dynamic shape
-      CHECK_FAIL_RETURN_SYNTAX_ERROR(cur_row_shape.size() == estimated_row_shape_.size(),
-                                     "Inconsistent shapes, expect same shape for each data row, last data row: " +
-                                       std::to_string(cur_row_shape.size()) +
-                                       ", current data row: " + std::to_string(estimated_row_shape_.size()));
-      size_t shape_size = cur_row_shape.size();
-      std::vector<TensorShape> dynamic_shapes;
-      for (size_t i = 0; i < shape_size; i++) {
-        CHECK_FAIL_RETURN_SYNTAX_ERROR(
-          cur_row_shape[i].Size() == estimated_row_shape_[i].Size(),
-          "Inconsistent shapes, expect same shape for each data row, last data row: " + cur_row_shape[i].ToString() +
-            ", current data row: " + estimated_row_shape_[i].ToString());
-
-        std::vector<dsize_t> vec;
-        for (size_t j = 0; j < estimated_row_shape_[i].Size(); j++) {
-          dsize_t dim = cur_row_shape[i][j] == estimated_row_shape_[i][j] ? cur_row_shape[i][j] : -1;
-          vec.push_back(dim);
-        }
-        dynamic_shapes.emplace_back(TensorShape(vec));
-      }
-      estimated_row_shape_ = dynamic_shapes;
-      RETURN_IF_NOT_OK(GetRow(&row));
-    }
-
-    *shapes = estimated_row_shape_;
-  }
-  return Status::OK();
-}
-
-Status TreeGetters::GetBatchSize(int64_t *batch_size) {
-  RETURN_UNEXPECTED_IF_NULL(batch_size);
-  RETURN_IF_NOT_OK(InternalInit());
-  std::shared_ptr<DatasetOp> root = std::shared_ptr<DatasetOp>(tree_adapter_->GetRoot());
-  RETURN_UNEXPECTED_IF_NULL(root);
-  *batch_size = root->GetTreeBatchSize();
-  CHECK_FAIL_RETURN_UNEXPECTED(*batch_size != 0, "GetBatchSize: Failed to find the batch size in Dataset pipeline.");
-  return Status::OK();
-}
-
-Status TreeGetters::GetRepeatCount(int64_t *repeat_count) {
-  RETURN_UNEXPECTED_IF_NULL(repeat_count);
-  RETURN_IF_NOT_OK(InternalInit());
-  std::shared_ptr<DatasetOp> root = std::shared_ptr<DatasetOp>(tree_adapter_->GetRoot());
-  RETURN_UNEXPECTED_IF_NULL(root);
-  *repeat_count = root->GetTreeRepeatCount();
-  return Status::OK();
-}
-
-Status TreeGetters::GetNumClasses(int64_t *num_classes) {
-  RETURN_UNEXPECTED_IF_NULL(num_classes);
-  RETURN_IF_NOT_OK(InternalInit());
-  std::shared_ptr<DatasetOp> root = std::shared_ptr<DatasetOp>(tree_adapter_->GetRoot());
-  RETURN_UNEXPECTED_IF_NULL(root);
-  RETURN_IF_NOT_OK(root->GetNumClasses(num_classes));
-  return Status::OK();
-}
-
-Status TreeGetters::GetColumnNames(std::vector<std::string> *output) {
-  RETURN_UNEXPECTED_IF_NULL(output);
-  RETURN_IF_NOT_OK(InternalInit());
-  std::shared_ptr<DatasetOp> root = std::shared_ptr<DatasetOp>(tree_adapter_->GetRoot());
-  RETURN_UNEXPECTED_IF_NULL(root);
-  std::unordered_map<std::string, int32_t> column_name_id_map = root->column_name_id_map();
-  CHECK_FAIL_RETURN_UNEXPECTED(!column_name_id_map.empty(), "GetColumnNames: column_name_id map can not be empty.");
-  std::vector<std::pair<std::string, int32_t>> col_name_id_vec(column_name_id_map.begin(), column_name_id_map.end());
-  std::sort(col_name_id_vec.begin(), col_name_id_vec.end(),
-            [](const std::pair<std::string, int32_t> &a, const std::pair<std::string, int32_t> &b) {
-              return a.second < b.second;
-            });
-  std::transform(col_name_id_vec.begin(), col_name_id_vec.end(), std::back_inserter(*output),
-                 [](const std::pair<std::string, int32_t> &p) { return p.first; });
-  return Status::OK();
-}
-
-Status TreeGetters::GetClassIndexing(std::vector<std::pair<std::string, std::vector<int32_t>>> *output_class_indexing) {
-  RETURN_UNEXPECTED_IF_NULL(output_class_indexing);
-  RETURN_IF_NOT_OK(InternalInit());
-  std::shared_ptr<DatasetOp> root = std::shared_ptr<DatasetOp>(tree_adapter_->GetRoot());
-  RETURN_UNEXPECTED_IF_NULL(root);
-  RETURN_IF_NOT_OK(root->GetClassIndexing(output_class_indexing));
-  return Status::OK();
-}
-
-Status TreeGetters::InternalInit() {
-  if (init_flag_) {
-    return Status::OK();
-  }
-
-  Status s = tree_adapter_->Compile(std::move(root_), 1);
-  if (s.IsOk()) {
-    init_flag_ = true;
-  }
-  return s;
-}
-
-Status TreeGetters::GetFirstRowShapeAndType() {
-  RETURN_OK_IF_TRUE(first_row_obtained_);
-  RETURN_IF_NOT_OK(InternalInit());
-  TensorRow first_row;
-  RETURN_IF_NOT_OK(GetRow(&first_row));
-  std::transform(first_row.begin(), first_row.end(), std::back_inserter(first_row_type_),
-                 [](const TensorPtr &t) { return t->type(); });
-  std::transform(first_row.begin(), first_row.end(), std::back_inserter(first_row_shape_),
-                 [](const TensorPtr &t) { return t->shape(); });
-  first_row_obtained_ = true;
-  return Status::OK();
-}
-
-Status BuildVocabConsumer::Init(std::shared_ptr<DatasetNode> d) { return tree_adapter_->Compile(std::move(d), 1); }
+Status BuildVocabConsumer::Init(const std::shared_ptr<DatasetNode> &root) { return tree_adapter_->Compile(root, 1); }
 
 Status BuildVocabConsumer::Start() {
+  RETURN_IF_NOT_OK(CollectPipelineInfoStart("BuildVocabConsumer", "Start"));
   // Getting one row would trigger building the vocab
   TensorRow row;
   RETURN_IF_NOT_OK(tree_adapter_->GetNext(&row));
   // The returned row would EOE which is an empty row
   CHECK_FAIL_RETURN_UNEXPECTED(row.empty(), "BuildVocab: The fetched row from BuildVocab should be an EOE.");
+  RETURN_IF_NOT_OK(CollectPipelineInfoEnd("BuildVocabConsumer", "Start"));
   return Status::OK();
 }
 Status DatasetSizeGetter::GetDatasetSize(int64_t *size, bool estimate) {
@@ -934,11 +824,13 @@ Status DatasetSizeGetter::GetDatasetSize(int64_t *size, bool estimate) {
   *size = dataset_size_;
   return Status::OK();
 }
-Status DatasetSizeGetter::Init(std::shared_ptr<DatasetNode> d) {
-  root_ = std::move(d);
+
+Status DatasetSizeGetter::Init(const std::shared_ptr<DatasetNode> &root) {
+  root_ = root;
   return Status::OK();
 }
-Status DatasetSizeGetter::DryRun(std::shared_ptr<DatasetNode> ir_node, int64_t *dataset_size) {
+
+Status DatasetSizeGetter::DryRun(const std::shared_ptr<DatasetNode> &ir_node, int64_t *dataset_size) {
   RETURN_UNEXPECTED_IF_NULL(dataset_size);
   std::shared_ptr<TreeAdapter> tree_adapter = std::make_shared<TreeAdapter>(TreeAdapter::UsageFlag::kDeGetter);
   tree_adapters_.push_back(tree_adapter);
@@ -953,10 +845,12 @@ Status DatasetSizeGetter::DryRun(std::shared_ptr<DatasetNode> ir_node, int64_t *
   *dataset_size = row_cnt;
   return Status::OK();
 }
+
 Status DatasetSizeGetter::GetRow(const std::shared_ptr<TreeAdapter> &tree_adapter, TensorRow *row) {
   RETURN_UNEXPECTED_IF_NULL(row);
   return tree_adapter->GetNext(row);
 }
+
 Status DatasetSizeGetter::Terminate() {
   for (const auto &tree : tree_adapters_) {
     RETURN_UNEXPECTED_IF_NULL(tree);

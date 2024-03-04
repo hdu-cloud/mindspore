@@ -17,14 +17,32 @@
 #include "ops/svd.h"
 
 #include <algorithm>
+#include <memory>
 #include <set>
 #include <vector>
 
-#include "mindapi/ir/type.h"
-#include "utils/check_convert_utils.h"
-#include "utils/anf_utils.h"
-#include "ops/op_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/anf_utils.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -65,8 +83,8 @@ abstract::BaseShapePtr SvdInferShape(const PrimitivePtr &prim, const std::vector
       v_shape[v_shape.size() - kIndexOne] = p;
     }
   } else {
-    u_shape = {0};
-    v_shape = {0};
+    u_shape = {1};
+    v_shape = {1};
   }
 
   std::vector<abstract::BaseShapePtr> shape_tuple;
@@ -79,7 +97,7 @@ abstract::BaseShapePtr SvdInferShape(const PrimitivePtr &prim, const std::vector
 TypePtr SvdInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
   auto infer_type = input_args[kInputIndex0]->BuildType();
   MS_EXCEPTION_IF_NULL(infer_type);
-  const std::set<TypePtr> valid_types = {kFloat32, kFloat64};
+  const std::set<TypePtr> valid_types = {kFloat32, kFloat64, kComplex64, kComplex128};
   auto type = CheckAndConvertUtils::CheckTensorTypeValid("a", infer_type, valid_types, prim->name());
 
   std::vector<TypePtr> type_tuple = {type, type, type};
@@ -111,6 +129,24 @@ AbstractBasePtr SvdInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr
   auto type = SvdInferType(primitive, input_args);
   return abstract::MakeAbstract(shape, type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Svd, prim::kPrimSvd, SvdInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSvdInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SvdInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SvdInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SvdInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Svd, prim::kPrimSvd, AGSvdInfer, false);
 }  // namespace ops
 }  // namespace mindspore

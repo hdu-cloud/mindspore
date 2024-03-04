@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 #include "ops/solve_triangular.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <map>
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
-#include "common/graph_kernel/core/graph_kernel_utils.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -129,6 +131,24 @@ AbstractBasePtr SolveTriangularInfer(const abstract::AnalysisEnginePtr &, const 
   auto infer_shape = SolveTriangularInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(SolveTriangular, prim::kPrimSolveTriangular, SolveTriangularInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSolveTriangularInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SolveTriangularInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SolveTriangularInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SolveTriangularInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SolveTriangular, prim::kPrimSolveTriangular, AGSolveTriangularInfer, false);
 }  // namespace ops
 }  // namespace mindspore

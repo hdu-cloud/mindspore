@@ -64,7 +64,8 @@ void SparseDenseCwiseDivCpuKernelMod::ComputeDiv(const std::vector<AddressPtr> &
 
   for (size_t i = 0; i < static_cast<size_t>(index_num); i++) {
     for (size_t j = 0; j < static_cast<size_t>(dimension); j++) {
-      if (indices_data[i * static_cast<size_t>(dimension) + j] >= sparse_shape_data[j]) {
+      if (indices_data[i * static_cast<size_t>(dimension) + j] >= sparse_shape_data[j] ||
+          indices_data[i * static_cast<size_t>(dimension) + j] < 0) {
         MS_EXCEPTION(ValueError) << "For SparseDenseCwiseDiv, the indices cannot go out of bounds.";
       }
     }
@@ -83,6 +84,12 @@ void SparseDenseCwiseDivCpuKernelMod::ComputeDiv(const std::vector<AddressPtr> &
   if (isNeedBcast) {
     SparseDenseCwiseDivNoBcastCompute<T>(inputs, outputs);
   } else if (dense_dims <= dimension) {
+    if (dense_dims < dimension) {
+      auto diff = dimension - dense_dims;
+      for (int i = 0; i < diff; i++) {
+        dense_shape_.push_back(1);
+      }
+    }
     for (int64_t i = dense_dims - 1; i >= 0; --i) {
       if ((dense_shape_[static_cast<size_t>(i)] != 1) &&
           (dense_shape_[static_cast<size_t>(i)] != sparse_shape[static_cast<size_t>(i + dimension - dense_dims)])) {
@@ -247,6 +254,5 @@ std::vector<KernelAttr> SparseDenseCwiseDivCpuKernelMod::GetOpSupport() {
 
   return kernel_attr_list;
 }
-MS_KERNEL_FACTORY_REG(NativeCpuKernelMod, SparseDenseCwiseDiv, SparseDenseCwiseDivCpuKernelMod);
 }  // namespace kernel
 }  // namespace mindspore

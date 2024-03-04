@@ -14,13 +14,32 @@
  * limitations under the License.
  */
 #include "ops/random_standard_laplace.h"
-#include <string>
+
 #include <memory>
 #include <set>
-#include <condition_variable>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <string>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/random_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -49,18 +68,21 @@ abstract::ShapePtr StandardLaplaceInferShape(const PrimitivePtr &primitive,
   MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   MS_EXCEPTION_IF_NULL(input_args[kInputIndex0]);
-  auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
   auto shape_value = input_args[kInputIndex0]->BuildValue();
   MS_EXCEPTION_IF_NULL(shape_value);
-  if (IsDynamicRank(x_shape)) {
-    return std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
-  }
   if (input_args[kInputIndex0]->isa<abstract::AbstractTuple>()) {
     std::vector<int64_t> out_shape = CheckAndConvertUtils::CheckIntOrTupleInt("input[shape]", shape_value, prim_name);
-    (void)CheckAndConvertUtils::CheckPositiveVector("shape", out_shape, prim_name);
-    return std::make_shared<abstract::Shape>(out_shape);
+    if (IsValueKnown(shape_value)) {
+      (void)CheckAndConvertUtils::CheckPositiveVector("shape", out_shape, prim_name);
+      return std::make_shared<abstract::Shape>(out_shape);
+    } else {
+      constexpr int dynamic_rank_value = -2;
+      ShapeVector shape = {dynamic_rank_value};
+      return std::make_shared<abstract::Shape>(shape);
+    }
   } else if (input_args[kInputIndex0]->isa<abstract::AbstractTensor>()) {
-    if (!shape_value->isa<AnyValue>() && !shape_value->isa<None>()) {
+    if (IsValueKnown(shape_value)) {
+      auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
       if (x_shape.size() != 1) {
         MS_EXCEPTION(ValueError) << "For '" << prim_name
                                  << "', rank of the input Tensor shall be 1, but got: " << x_shape.size() << ".";
@@ -70,9 +92,7 @@ abstract::ShapePtr StandardLaplaceInferShape(const PrimitivePtr &primitive,
     } else {
       constexpr int dynamic_rank_value = -2;
       ShapeVector shape = {dynamic_rank_value};
-      ShapeVector min_shape = {0};
-      ShapeVector max_shape = {abstract::Shape::kShapeDimAny};
-      return std::make_shared<abstract::Shape>(shape, min_shape, max_shape);
+      return std::make_shared<abstract::Shape>(shape);
     }
   } else {
     MS_EXCEPTION(TypeError) << "For '" << prim_name
@@ -123,8 +143,27 @@ AbstractBasePtr StandardLaplaceInfer(const abstract::AnalysisEnginePtr &, const 
   return abstract::MakeAbstract(shape, type);
 }
 
-REGISTER_HOST_DEPENDS(kNameStandardLaplace, {0});
 MIND_API_OPERATOR_IMPL(StandardLaplace, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(StandardLaplace, prim::kPrimStandardLaplace, StandardLaplaceInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGStandardLaplaceInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return StandardLaplaceInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return StandardLaplaceInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return StandardLaplaceInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(StandardLaplace, prim::kPrimStandardLaplace, AGStandardLaplaceInfer, false);
 }  // namespace ops
 }  // namespace mindspore

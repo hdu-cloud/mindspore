@@ -84,7 +84,7 @@ void SparseFillEmptyRowsCpuKernelMod::InitKernel(const CNodePtr &kernel_node) {
   kernel_name_ = common::AnfAlgo::GetCNodeName(kernel_node);
   size_t input_num = common::AnfAlgo::GetInputTensorNum(kernel_node);
   CHECK_KERNEL_INPUTS_NUM(input_num, kSparseFillEmptyRowsInputsNum, kKernelName);
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(kernel_node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(kernel_node);
   CHECK_KERNEL_OUTPUTS_NUM(output_num, kSparseFillEmptyRowsInputsNum, kKernelName);
   const auto indices_shape = AnfAlgo::GetInputDeviceShape(node_ptr, 0);
   const auto values_shape = AnfAlgo::GetInputDeviceShape(node_ptr, 1);
@@ -93,19 +93,17 @@ void SparseFillEmptyRowsCpuKernelMod::InitKernel(const CNodePtr &kernel_node) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_
                       << "', it requires 'indices' must be a 2-D Tensor and the first dimension length "
                          "must be equal to the first dimension length of 'values' "
-                      << Vector2Str(indices_shape);
+                      << indices_shape;
   }
   if (indices_shape[1] != kIndicesLastDim) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the last dim of the indices must be 2, but got "
                       << indices_shape[1];
   }
   if (values_shape.size() != kValuesSizeNum) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', it requires 'dense' must be a 1-D Tensor "
-                      << Vector2Str(values_shape);
+    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', it requires 'dense' must be a 1-D Tensor " << values_shape;
   }
   if (dense_shape.size() != kValuesSizeNum) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', it requires 'dense' must be a 1-D Tensor "
-                      << Vector2Str(dense_shape);
+    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', it requires 'dense' must be a 1-D Tensor " << dense_shape;
   }
 }
 
@@ -190,7 +188,7 @@ bool SparseFillEmptyRowsCpuKernelMod::LaunchKernel(const std::vector<kernel::Add
     int64_t &offset = filled_count[row];
     const int64_t output_i = ((row == 0) ? 0 : scratch[row - 1]) + offset;
     offset++;  // Increment the filled count for this row.
-    std::copy_n(&a_indices(i, 0), rank, &a_output_y_indices(output_i, 0));
+    (void)std::copy_n(&a_indices(i, 0), rank, &a_output_y_indices(output_i, 0));
     output_y_values_ptr[output_i] = values_ptr[i];
     // We'll need this reverse index map to backprop correctly.
     output_reverse_index_map_ptr[i] = output_i;

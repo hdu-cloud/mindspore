@@ -14,17 +14,31 @@
  * limitations under the License.
  */
 
-#include <vector>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
-#include "ops/zeta.h"
-#include "ops/op_utils.h"
-#include "utils/tensor_construct_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/primitive_c.h"
+#include "ops/zeta.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -84,9 +98,26 @@ AbstractBasePtr ZetaInfer(const abstract::AnalysisEnginePtr &, const PrimitivePt
   CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
   auto infer_type = ZetaInferType(primitive, input_args);
   auto infer_shape = ZetaInferShape(primitive, input_args);
-  return abstract::MakeAbstract(infer_shape, infer_type);
+  return abstract::MakeAbstractTensor(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(Zeta, prim::kPrimZeta, ZetaInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGZetaInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ZetaInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ZetaInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ZetaInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Zeta, prim::kPrimZeta, AGZetaInfer, false);
 }  // namespace ops
 }  // namespace mindspore

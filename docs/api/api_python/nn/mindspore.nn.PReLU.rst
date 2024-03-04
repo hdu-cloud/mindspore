@@ -19,11 +19,14 @@ mindspore.nn.PReLU
 
     当带参数调用时每个通道上学习一个 :math:`w` 。如果不带参数调用时，则将在所有通道中共享单个参数 :math:`w` 。
 
-    PReLU相关图参见 `PReLU <https://en.wikipedia.org/wiki/Activation_function#/media/File:Activation_prelu.svg>`_ 。
+    PReLU函数图：
+
+    .. image:: images/PReLU.png
+        :align: center
 
     参数：
-        - **channel** (int) - 可训练参数 :math:`w` 的数量。它可以是int，值是1或输入Tensor `x` 的通道数。默认值：1。
-        - **w** (Union[float, list, Tensor]) - 参数的初始值。它可以是float、float组成的list或与输入Tensor `x` 具有相同数据类型的Tensor。默认值：0.25。
+        - **channel** (int) - 可训练参数 :math:`w` 的数量。它可以是int，值是1或输入Tensor `x` 的通道数。默认值： ``1`` 。
+        - **w** (Union[float, list, Tensor]) - 参数的初始值。它可以是float、float组成的list或与输入Tensor `x` 具有相同数据类型的Tensor。默认值： ``0.25`` 。
 
     输入：
         - **x** (Tensor) - PReLU的输入Tensor，其shape为 :math:`(N, *)` ，其中 :math:`*` 表示任意的额外维度，数据类型为float16或float32。

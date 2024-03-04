@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,11 +14,14 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/optimizer/ir_fusion/adam_apply_one_with_decay_rule.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/nn_optimizer_ops.h"
+#include "ops/math_ops.h"
+#include "ops/framework_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "plugin/device/ascend/optimizer/ascend_helper.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "utils/trace_base.h"
 
 namespace mindspore {
@@ -300,8 +303,8 @@ const AnfNodePtr AdamApplyOneWithDecayRule::Process(const FuncGraphPtr &graph, c
   if (common::AnfAlgo::CheckPrimitiveType(node, prim::kPrimDepend)) {
     auto iter_sub0 = (*equiv).find(sub0_var_);
     if (iter_sub0 == (*equiv).end()) {
-      MS_LOG(EXCEPTION) << "The equiv map is expected to contains the sub0 var after matched."
-                        << trace::DumpSourceLines(node);
+      MS_LOG(INTERNAL_EXCEPTION) << "The equiv map is expected to contains the sub0 var after matched."
+                                 << trace::DumpSourceLines(node);
     }
     sub0 = utils::cast<AnfNodePtr>(iter_sub0->second);
   }
@@ -316,13 +319,13 @@ const AnfNodePtr AdamApplyOneWithDecayRule::Process(const FuncGraphPtr &graph, c
 
   auto iter_add0 = (*equiv).find(add0_var_);
   if (iter_add0 == (*equiv).cend()) {
-    MS_LOG(EXCEPTION) << "The equiv map is expected to contains the add0 var after matched."
-                      << trace::DumpSourceLines(node);
+    MS_LOG(INTERNAL_EXCEPTION) << "The equiv map is expected to contains the add0 var after matched."
+                               << trace::DumpSourceLines(node);
   }
   auto iter_add1 = (*equiv).find(add1_var_);
   if (iter_add1 == (*equiv).cend()) {
-    MS_LOG(EXCEPTION) << "The equiv map is expected to contains the add1 var after matched."
-                      << trace::DumpSourceLines(node);
+    MS_LOG(INTERNAL_EXCEPTION) << "The equiv map is expected to contains the add1 var after matched."
+                               << trace::DumpSourceLines(node);
   }
   auto add0 = utils::cast<AnfNodePtr>(iter_add0->second);
   MS_EXCEPTION_IF_NULL(add0);
@@ -330,8 +333,8 @@ const AnfNodePtr AdamApplyOneWithDecayRule::Process(const FuncGraphPtr &graph, c
   MS_EXCEPTION_IF_NULL(add1);
   auto types = {common::AnfAlgo::GetOutputInferDataType(add1, 0), common::AnfAlgo::GetOutputInferDataType(add0, 0),
                 common::AnfAlgo::GetOutputInferDataType(sub0, 0)};
-  auto shapes = {common::AnfAlgo::GetOutputDetailShape(add1, 0), common::AnfAlgo::GetOutputDetailShape(add0, 0),
-                 common::AnfAlgo::GetOutputDetailShape(sub0, 0)};
+  auto shapes = {AnfAlgo::GetOutputDetailShape(add1, 0), AnfAlgo::GetOutputDetailShape(add0, 0),
+                 AnfAlgo::GetOutputDetailShape(sub0, 0)};
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, fusion_node.get());
 
   std::vector<AnfNodePtr> fusion_node_outputs;

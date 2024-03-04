@@ -17,11 +17,12 @@
 #ifndef MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_ELEWISE_CALCULATION_OPS_DECLARE_H_
 #define MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_ELEWISE_CALCULATION_OPS_DECLARE_H_
 
-#include "utils/hash_map.h"
+#include "inc/ops/bitwise_ops.h"
+#include "inc/ops/elewise_calculation_ops.h"
+#include "transform/graph_ir/custom_op_proto/cust_elewise_calculation_ops.h"
 #include "transform/graph_ir/op_declare/op_declare_macro.h"
-#include "ops/elewise_calculation_ops.h"
+#include "utils/hash_map.h"
 
-namespace mindspore::transform {
 DECLARE_OP_ADAPTER(ClipByValue)
 DECLARE_OP_USE_OUTPUT(ClipByValue)
 
@@ -31,18 +32,6 @@ DECLARE_OP_USE_OUTPUT(AccumulateNV2)
 
 DECLARE_OP_ADAPTER(ConfusionMulGrad)
 DECLARE_OP_USE_OUTPUT(ConfusionMulGrad)
-
-DECLARE_OP_ADAPTER(FakeQuantWithMinMaxVars)
-DECLARE_OP_USE_OUTPUT(FakeQuantWithMinMaxVars)
-
-DECLARE_OP_ADAPTER(FakeQuantWithMinMaxVarsGradient)
-DECLARE_OP_USE_OUTPUT(FakeQuantWithMinMaxVarsGradient)
-
-DECLARE_OP_ADAPTER(FakeQuantWithMinMaxVarsPerChannel)
-DECLARE_OP_USE_OUTPUT(FakeQuantWithMinMaxVarsPerChannel)
-
-DECLARE_OP_ADAPTER(FakeQuantWithMinMaxVarsPerChannelGradient)
-DECLARE_OP_USE_OUTPUT(FakeQuantWithMinMaxVarsPerChannelGradient)
 
 DECLARE_OP_ADAPTER(GreaterEqual)
 DECLARE_OP_USE_OUTPUT(GreaterEqual)
@@ -59,14 +48,14 @@ DECLARE_OP_USE_OUTPUT(ZerosLike)
 DECLARE_OP_ADAPTER(OnesLike)
 DECLARE_OP_USE_OUTPUT(OnesLike)
 
+DECLARE_CUST_OP_ADAPTER(ArgMax)
+DECLARE_CUST_OP_USE_OUTPUT(ArgMax)
+
 DECLARE_OP_ADAPTER(ArgMaxD)
 DECLARE_OP_USE_OUTPUT(ArgMaxD)
 
 DECLARE_OP_ADAPTER(ArgMaxV2)
 DECLARE_OP_USE_OUTPUT(ArgMaxV2)
-
-DECLARE_OP_ADAPTER(ArgMinD)
-DECLARE_OP_USE_OUTPUT(ArgMinD)
 
 DECLARE_OP_ADAPTER(ArgMaxWithValue)
 DECLARE_OP_USE_OUTPUT(ArgMaxWithValue)
@@ -211,6 +200,9 @@ DECLARE_OP_USE_OUTPUT(Assign)
 DECLARE_OP_ADAPTER(Add)
 DECLARE_OP_USE_OUTPUT(Add)
 
+DECLARE_OP_ADAPTER(AddV2)
+DECLARE_OP_USE_OUTPUT(AddV2)
+
 DECLARE_OP_ADAPTER(Cos)
 DECLARE_OP_USE_OUTPUT(Cos)
 
@@ -336,5 +328,31 @@ DECLARE_OP_USE_OUTPUT(KLDiv)
 
 DECLARE_OP_ADAPTER(Erfinv)
 DECLARE_OP_USE_OUTPUT(Erfinv)
-}  // namespace mindspore::transform
+
+DECLARE_OP_ADAPTER(ArgMin)
+DECLARE_OP_USE_OUTPUT(ArgMin)
+
+DECLARE_OP_ADAPTER(Threshold)
+DECLARE_OP_USE_OUTPUT(Threshold)
+
+DECLARE_OP_ADAPTER(Addcdiv)
+DECLARE_OP_USE_OUTPUT(Addcdiv)
+
+DECLARE_OP_ADAPTER(Addcmul)
+DECLARE_OP_USE_OUTPUT(Addcmul)
+
+DECLARE_OP_ADAPTER(Lerp)
+DECLARE_OP_USE_OUTPUT(Lerp)
+
+DECLARE_OP_ADAPTER(IsClose)
+DECLARE_OP_USE_OUTPUT(IsClose)
+
+DECLARE_OP_ADAPTER(CosineSimilarity)
+DECLARE_OP_USE_OUTPUT(CosineSimilarity)
+
+DECLARE_OP_ADAPTER(LeftShift)
+DECLARE_OP_USE_OUTPUT(LeftShift)
+
+DECLARE_OP_ADAPTER(RightShift)
+DECLARE_OP_USE_OUTPUT(RightShift)
 #endif  // MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_ELEWISE_CALCULATION_OPS_DECLARE_H_

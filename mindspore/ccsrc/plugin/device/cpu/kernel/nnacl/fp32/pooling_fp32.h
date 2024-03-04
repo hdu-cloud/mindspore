@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_FP32_POOLING_H_
-#define MINDSPORE_NNACL_FP32_POOLING_H_
+#ifndef NNACL_FP32_POOLING_H_
+#define NNACL_FP32_POOLING_H_
 
 #ifdef ENABLE_NEON
 #include <arm_neon.h>
@@ -23,20 +23,26 @@
 #include "nnacl/op_base.h"
 #include "nnacl/pooling_parameter.h"
 #include "nnacl/int8/quantize.h"
+#include "nnacl/kernel/pooling.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-int AvgPooling(const float *input_ptr, float *output_ptr, const PoolingParameter *pooling_param, int task_id,
-               float minf, float maxf);
+int AvgPooling(const float *input_ptr, float *output_ptr, const PoolingParameter *pooling_param,
+               const PoolingComputeParam *pooling_args, int task_id, int thread_num);
+int MaxPooling(const float *input_ptr, float *output_ptr, const PoolingParameter *pooling_param,
+               const PoolingComputeParam *pooling_args, int task_id, int thread_num);
+
 int AvgPoolingFromNC4HW4ToNHWC(const float *input_ptr, float *output_ptr, const PoolingParameter *pooling_param,
-                               int task_id, float minf, float maxf);
-int MaxPooling(const float *input_ptr, float *output_ptr, const PoolingParameter *pooling_param, int task_id,
-               float minf, float maxf);
+                               const PoolingComputeParam *pooling_args, int task_id, int thread_num);
 int MaxPoolingFromNC4HW4ToNHWC(const float *input_ptr, float *output_ptr, const PoolingParameter *pooling_param,
-                               int task_id, float minf, float maxf);
+                               const PoolingComputeParam *pooling_args, int task_id, int thread_num);
+void MaxPooling3D_NDHWC(const float *input_ptr, float *output_ptr, const Pooling3DParameter *pooling_param,
+                        const Pooling3DComputeParam *pooling_args, int start, int end);
+void AvgPooling3D_NDHWC(const float *input_ptr, float *output_ptr, const Pooling3DParameter *pooling_param,
+                        const Pooling3DComputeParam *pooling_args, int start, int end);
 #ifdef __cplusplus
 }
 #endif
 
-#endif  // MINDSPORE_NNACL_FP32_POOLING_H_
+#endif  // NNACL_FP32_POOLING_H_

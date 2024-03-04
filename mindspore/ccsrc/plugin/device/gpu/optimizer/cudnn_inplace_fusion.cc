@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,12 +25,16 @@
 #include <utility>
 #include <string>
 
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/conv_pool_op_name.h"
+#include "ops/math_op_name.h"
+#include "ops/sequence_ops.h"
+#include "ops/framework_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
 #include "include/common/utils/contract.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "plugin/device/gpu/hal/device/kernel_info_setter.h"
 
 namespace mindspore {
@@ -44,7 +48,8 @@ struct AnfNodeIndex {
 };
 
 // opname, output idx
-std::map<string, uint32_t> kInplaceOpNames = {{kConv2DBackpropInputOpName, 0}, {kBatchNormGradWithAddAndActivation, 3}};
+std::map<string, uint32_t> kInplaceOpNames = {{kConv2DBackpropInputOpName, 0},
+                                              {kBatchNormGradWithAddAndActivationOpName, 3}};
 
 std::set<string> kSkipOpNames = {
   kTensorAddOpName,
@@ -52,7 +57,7 @@ std::set<string> kSkipOpNames = {
 
 // opname, input idx
 std::map<string, uint32_t> kAggregatesOpNames = {
-  {kConv2DBackpropInputOpName, 0}, {kMaxPoolGradOpName, 2}, {kBatchNormGradWithAddAndActivation, 0}};
+  {kConv2DBackpropInputOpName, 0}, {kMaxPoolGradOpName, 2}, {kBatchNormGradWithAddAndActivationOpName, 0}};
 
 constexpr size_t inplace_node_size = 2;
 
@@ -125,7 +130,7 @@ std::pair<size_t, bool> GetCoverIndex(const std::vector<AnfNodeIndex> &inplace_n
   auto second_node = inplace_node[1].node;
   if (common::AnfAlgo::GetCNodeName(first_node) != kConv2DBackpropInputOpName ||
       common::AnfAlgo::GetCNodeName(second_node) != kConv2DBackpropInputOpName) {
-    return {0, false};
+    return {0, true};
   }
 
   auto first_node_prim = common::AnfAlgo::GetCNodePrimitive(first_node);
@@ -153,12 +158,12 @@ std::pair<size_t, bool> GetCoverIndex(const std::vector<AnfNodeIndex> &inplace_n
 void CopyKernelInfo(AnfNodePtr src, AnfNodePtr dst) {
   auto build_info = AnfAlgo::GetSelectKernelBuildInfo(src);
   AnfAlgo::SetSelectKernelBuildInfo(build_info, dst.get());
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(src);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(src);
   std::vector<TypeId> types;
   std::vector<BaseShapePtr> shapes;
   for (size_t i = 0; i < output_num; i++) {
-    types.emplace_back(common::AnfAlgo::GetOutputInferDataType(src, i));
-    shapes.emplace_back(common::AnfAlgo::GetOutputDetailShape(src, i));
+    (void)types.emplace_back(common::AnfAlgo::GetOutputInferDataType(src, i));
+    (void)shapes.emplace_back(AnfAlgo::GetOutputDetailShape(src, i));
   }
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, dst.get());
 }
@@ -203,7 +208,7 @@ void CheckInplaceNodeInputs(std::vector<AnfNodeIndex> *inplace_node, size_t cove
     CopyKernelInfo(acc_node, new_inplace_node);
     auto manager = graph->manager();
     MS_EXCEPTION_IF_NULL(manager);
-    manager->Replace(acc_node, new_inplace_node);
+    (void)manager->Replace(acc_node, new_inplace_node);
     (*inplace_node)[acc_index].node = new_inplace_node;
   }
 }
@@ -243,7 +248,7 @@ void SetNodeAttr(AnfNodeIndex aggregate_node, AnfNodePtr skip_node, std::vector<
       depend_node->set_abstract(acc_node_input->abstract());
       auto manager = graph->manager();
       MS_EXCEPTION_IF_NULL(manager);
-      manager->Replace(acc_node_input, depend_node);
+      (void)manager->Replace(acc_node_input, depend_node);
     }
   }
   group++;
@@ -305,7 +310,7 @@ bool PatternMatch(const FuncGraphPtr &graph, const AnfNodePtr &node, AnfNodeInde
 std::map<AnfNodePtr, int> TopoIndex(const std::vector<AnfNodePtr> &node_list) {
   std::map<AnfNodePtr, int> topo_index;
   for (size_t i = 0; i < node_list.size(); i++) {
-    topo_index.insert(make_pair(node_list[i], i));
+    (void)topo_index.insert(make_pair(node_list[i], i));
   }
   return topo_index;
 }

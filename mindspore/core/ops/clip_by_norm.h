@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_CLIP_BY_NORM_H_
 #define MINDSPORE_CORE_OPS_CLIP_BY_NORM_H_
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -43,8 +43,8 @@ class MIND_API ClipByNorm : public BaseOperator {
   std::vector<int64_t> GetAxis() const;
 };
 
-abstract::AbstractBasePtr ClipByNormInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                          const std::vector<abstract::AbstractBasePtr> &input_args_abs);
+MIND_API abstract::AbstractBasePtr ClipByNormInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                   const std::vector<abstract::AbstractBasePtr> &input_args_abs);
 
 using ClipByNormPtr = std::shared_ptr<ClipByNorm>;
 }  // namespace ops

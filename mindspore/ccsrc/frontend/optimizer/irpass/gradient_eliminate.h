@@ -20,6 +20,7 @@
 #include <memory>
 
 #include "frontend/optimizer/optimizer.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "frontend/optimizer/irpass.h"
 #include "frontend/optimizer/anf_visitor.h"
 #include "utils/ms_utils.h"
@@ -36,6 +37,9 @@ class ExpandJPrim : public ExpandMetaFgPrim {
   ExpandJPrim() { prim_ = prim::kPrimJ; }
   virtual ~ExpandJPrim() = default;
   bool operator()(const FuncGraphPtr &func_graph, const OptimizerPtr &optimizer) override;
+
+ private:
+  void CloneUsedPrimalGraph(const FuncGraphManagerPtr &manager, FuncGraphVector *func_graphs) const;
 };
 using ExpandJPrimPtr = std::shared_ptr<ExpandJPrim>;
 }  // namespace irpass

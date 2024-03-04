@@ -20,6 +20,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <functional>
 #include "mindspore/core/ops/argmax_with_value.h"
 #include "mindspore/core/ops/argmin_with_value.h"
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
@@ -38,6 +39,11 @@ class ArgMaxAndMinWithValueGpuKernelMod : public NativeGpuKernelMod {
 
   int Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
              const std::vector<KernelTensorPtr> &outputs, const std::map<uint32_t, tensor::TensorPtr> &) override {
+    auto input_shape = inputs.at(kIndex0)->GetShapeVector();
+    if (CheckNullInput(input_shape)) {
+      kernel_name_ = base_operator->name();
+      MS_EXCEPTION(ValueError) << kernel_name_ << " cannot deal with empty input. Please try other inputs.";
+    }
     if (!InitSize(base_operator, inputs, outputs)) {
       return KRET_RESIZE_FAILED;
     }
@@ -46,6 +52,10 @@ class ArgMaxAndMinWithValueGpuKernelMod : public NativeGpuKernelMod {
 
   std::vector<KernelAttr> GetOpSupport() override {
     static std::vector<KernelAttr> support_list = {
+      KernelAttr().AddInputAttr(kNumberTypeInt8).AddOutputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt8),
+      KernelAttr().AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt64),
+      KernelAttr().AddInputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt8),
+      KernelAttr().AddInputAttr(kNumberTypeUInt64).AddOutputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt64),
       KernelAttr().AddInputAttr(kNumberTypeInt16).AddOutputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt16),
       KernelAttr().AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt32),
       KernelAttr().AddInputAttr(kNumberTypeUInt16).AddOutputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeUInt16),
@@ -62,8 +72,9 @@ class ArgMaxAndMinWithValueGpuKernelMod : public NativeGpuKernelMod {
     T *input = GetDeviceAddress<T>(inputs, 0);
     T *output = GetDeviceAddress<T>(outputs, 1);
     S *index = GetDeviceAddress<S>(outputs, 0);
-    CalGeneralReduction(small_, input, bound_, outer_size_, inner_size_, index, output,
-                        reinterpret_cast<cudaStream_t>(stream_ptr));
+    auto status = CalGeneralReduction(small_, input, bound_, outer_size_, inner_size_, index, output,
+                                      reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return true;
   }
 
@@ -87,6 +98,17 @@ class ArgMaxAndMinWithValueGpuKernelMod : public NativeGpuKernelMod {
         << outputs.size();
     }
 
+    small_ = (kernel_name_ == "ArgMinWithValue") ? true : false;
+    return true;
+  }
+
+  bool InitSize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+                const std::vector<KernelTensorPtr> &outputs) {
+    MS_EXCEPTION_IF_NULL(inputs[0]);
+    auto shape = Convert2SizeTClipNeg(inputs[0]->GetShapeVector());
+    MS_EXCEPTION_IF_NULL(outputs[0]);
+    auto output_shape = Convert2SizeTClipNeg(outputs[0]->GetShapeVector());
+    int64_t dims = SizeToLong(shape.size());
     if (kernel_name_ == "ArgMinWithValue") {
       auto kernel_ptr = std::dynamic_pointer_cast<ops::ArgMinWithValue>(base_operator);
       MS_EXCEPTION_IF_NULL(kernel_ptr);
@@ -96,28 +118,26 @@ class ArgMaxAndMinWithValueGpuKernelMod : public NativeGpuKernelMod {
       MS_EXCEPTION_IF_NULL(kernel_ptr);
       axis_ = kernel_ptr->axis();
     }
-    small_ = (kernel_name_ == "ArgMinWithValue") ? true : false;
-    return InitSize(base_operator, inputs, outputs);
-  }
+    is_zero_dim_ = (dims == 0);
 
-  bool InitSize(const BaseOperatorPtr &, const std::vector<KernelTensorPtr> &inputs,
-                const std::vector<KernelTensorPtr> &outputs) {
-    MS_EXCEPTION_IF_NULL(inputs[0]);
-    auto shape = Convert2SizeTClipNeg(inputs[0]->GetShapeVector());
-    MS_EXCEPTION_IF_NULL(outputs[0]);
-    auto output_shape = Convert2SizeTClipNeg(outputs[0]->GetShapeVector());
-    int64_t dims = SizeToLong(shape.size());
-
-    // If the rank is uncertain, do not update the axis.
-    ShapeVector dynamic_rank_shape = {-2};
-    if (inputs[0]->GetShapeVector() != dynamic_rank_shape) {
+    if (is_zero_dim_) {
+      if (axis_ != -1 && axis_ != 0) {
+        MS_EXCEPTION(ValueError) << "For '" << kernel_name_ << "', the 'axis' must be in the range [-1, "
+                                 << "0], but got " << axis_;
+      }
+    } else {
       if (axis_ < -dims || axis_ >= dims) {
         MS_EXCEPTION(ValueError) << "For '" << kernel_name_ << "', the 'axis' must be in the range [-" << dims << ","
                                  << dims << "), but got " << axis_;
       }
-      if (axis_ < 0) {
-        axis_ += dims;
-      }
+    }
+
+    if (axis_ < 0) {
+      axis_ += dims;
+    }
+    size_t input_element_num = std::accumulate(shape.begin(), shape.end(), size_t(1), std::multiplies<size_t>());
+    if (input_element_num == 0) {
+      return true;
     }
 
     input_size_ = sizeof(T);
@@ -128,11 +148,8 @@ class ArgMaxAndMinWithValueGpuKernelMod : public NativeGpuKernelMod {
     for (auto x : output_shape) {
       output_size_ *= x;
     }
-    bound_ = static_cast<S>(shape[axis_]);
-    if (static_cast<S>(shape[axis_]) != bound_) {
-      MS_EXCEPTION(ArgumentError) << "For '" << kernel_name_ << "', the value of shape[axis] must be "
-                                  << static_cast<size_t>(bound_) << ", but got " << shape[axis_];
-    }
+
+    bound_ = is_zero_dim_ ? 1 : static_cast<S>(shape[axis_]);
     outer_size_ = 1;
     for (int64_t i = axis_ - 1; i >= 0; i--) {
       outer_size_ *= shape[i];
@@ -165,6 +182,7 @@ class ArgMaxAndMinWithValueGpuKernelMod : public NativeGpuKernelMod {
 
  private:
   bool small_ = false;
+  bool is_zero_dim_{false};
   int64_t axis_;
   size_t input_size_;
   size_t output_size_;

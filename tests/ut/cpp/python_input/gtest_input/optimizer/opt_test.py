@@ -29,8 +29,8 @@ from mindspore.ops.operations import _grad_ops as G
 # pylint: disable=unused-argument
 # pylint: disable=redefined-outer-name
 
-scalar_add = Primitive(Constants.kScalarAdd)
-scalar_mul = Primitive(Constants.kScalarMul)
+scalar_add = F.scalar_add
+scalar_mul = F.scalar_mul
 tuple_getitem = Primitive(Constants.kTupleGetItem)
 switch = Primitive('Switch')
 
@@ -354,7 +354,7 @@ def test_inline_while(tag):
 def test_cse(tag):
     """ test_cse """
     fns = FnDict()
-    scalar_div = Primitive(Constants.kScalarDiv)
+    scalar_div = F.scalar_div
 
     @fns
     def test_f1(x, y):
@@ -397,18 +397,6 @@ def test_arithmetic(tag):
     """ test_arithmetic """
     fns = FnDict()
     identity = Primitive('identity')
-
-    @fns
-    def multiply_by_zero_l(x):
-        return scalar_mul(x, 0)
-
-    @fns
-    def multiply_by_zero_r(x):
-        return scalar_mul(0, x)
-
-    @fns
-    def after_0(x):
-        return 0
 
     @fns
     def multiply_by_one_l(x):
@@ -484,22 +472,6 @@ def elim_two_reshape(tag):
     @fns
     def after(x):
         return reshape(x, shape)
-
-    return fns[tag]
-
-
-def elim_two_cast(tag):
-    """ elim_two_cast """
-    fns = FnDict()
-    cast = P.Cast()
-
-    @fns
-    def before(x, a, b):
-        return cast(cast(x, a), b)
-
-    @fns
-    def after(x, a, b):
-        return cast(x, b)
 
     return fns[tag]
 
@@ -790,7 +762,7 @@ def test_incorporate_getitem(tag):
 def test_incorporate_getitem_through_switch(tag):
     """ test_incorporate_getitem_through_switch """
     fns = FnDict()
-    scalar_gt = Primitive('scalar_gt')
+    scalar_gt = F.scalar_gt
 
     @fns
     def before(x, y):
@@ -850,7 +822,7 @@ def test_incorporate_call_through_switch(tag):
     fns = FnDict()
     f1 = Primitive('f1')
     f2 = Primitive('f2')
-    scalar_gt = Primitive('scalar_gt')
+    scalar_gt = F.scalar_gt
     identity = Primitive('identity')
 
     @fns
@@ -885,7 +857,7 @@ def test_incorporate_call_through_switch(tag):
 def test_float_tuple_getitem_through_switch(tag):
     """ test_float_tuple_getitem_through_switch """
     fns = FnDict()
-    scalar_gt = Primitive('scalar_gt')
+    scalar_gt = F.scalar_gt
 
     @fns
     def before(x, y):
@@ -947,7 +919,7 @@ def test_convert_switch_ops(tag):
     fns = FnDict()
     ge_switch = Primitive('GeSwitch')
     merge = Primitive('Merge')
-    add = Primitive(Constants.kScalarAdd)
+    add = F.scalar_add
     neg = Primitive('Neg')
     tuple_getitem = Primitive(Constants.kTupleGetItem)
     make_tuple = Primitive('MakeTuple')
@@ -1241,7 +1213,9 @@ def test_tuple_flatten(tag):
     fns = FnDict()
     w = Tensor(np.random.randn(64, 3, 7, 7).astype(np.float32))
     x = Tensor(np.random.randn(32, 3, 224, 224).astype(np.float32))
-    y = Tensor(np.random.randn(32, 3, 224, 224).astype(np.float32))
+
+    x1 = Tensor(np.random.randn(1).astype(np.float32))
+    y1 = Tensor(np.random.randn(1).astype(np.float32))
 
     p = Tensor(3, mstype.float32)
 
@@ -1266,7 +1240,7 @@ def test_tuple_flatten(tag):
         # Add tuple args in partial args.
         func1 = F.partial(called_graph_with_tuple, (pow_ops(x, p), pow_ops(w, p)))
         func2 = F.partial(called_graph_with_tuple, (pow_ops(x, p), pow_ops(w, p)))
-        cond = x < y
+        cond = x1 < y1
 
         switch_node = F.switch(cond, func1, func2)
         # Add tuple args in call args.

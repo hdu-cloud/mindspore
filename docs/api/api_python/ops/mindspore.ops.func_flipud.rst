@@ -1,16 +1,15 @@
 mindspore.ops.flipud
 =====================
 
-.. py:function:: mindspore.ops.flipud(x)
+.. py:function:: mindspore.ops.flipud(input)
 
-    沿上下方向翻转Tensor中每行的元素。
-    Tensor的行会被保留，但显示顺序将与以前不同。
+    将输入Tensor中每一列的元素沿上下进行翻转，但保持矩阵的行不变。
 
     参数：
-        - **x** (Tensor) - 输入tensor。
+        - **input** (Tensor) - 输入Tensor。
 
     返回：
-        Tensor。
+        翻转后的Tensor。
 
     异常：
-        - **TypeError** - `x` 不是Tensor。
+        - **TypeError** - `input` 不是Tensor。

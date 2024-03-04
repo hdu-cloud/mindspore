@@ -1,4 +1,4 @@
-# Copyright 2022 Huawei Technologies Co., Ltd
+# Copyright 2022-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -120,7 +120,7 @@ def run_reset(data, num_epochs: int, failure_point: int):
             expected2.append(d)
             if cur_step + 1 == failure_point:
                 # pylint: disable=W0212
-                ds.engine.datasets._reset_training_dataset(failure_point, failure_point // size)
+                ds.engine.datasets._reset_training_dataset(failure_point, size)
                 failed = True
                 break
             cur_step += 1
@@ -149,12 +149,12 @@ def run_reset_error(data, num_epochs: int, failure_point: int):
     if failure_point > 0:
         with pytest.raises(RuntimeError) as err:
             # pylint: disable=W0212
-            ds.engine.datasets._reset_training_dataset(failure_point, failure_point % dataset_size)
+            ds.engine.datasets._reset_training_dataset(failure_point, dataset_size)
         assert "Cannot reset the pipeline, reset step must be less than dataset_size * num_epochs." in str(err.value)
     else:
         with pytest.raises(RuntimeError) as err:
             # pylint: disable=W0212
-            ds.engine.datasets._reset_training_dataset(failure_point, failure_point % dataset_size)
+            ds.engine.datasets._reset_training_dataset(failure_point, dataset_size)
         assert "Cannot reset the pipeline, reset step must be >= 0." in str(err.value)
 
 
@@ -277,6 +277,9 @@ def test_repeatable_reset_imagenet(sampler, num_parallel_workers, to_pil, batch_
     dataset_size = data.get_dataset_size()
     # try different failure points
     for failure_point in (5, 6, 22):
+        fail_at_epoch_end = False
+        if failure_point % dataset_size == 0:
+            fail_at_epoch_end = True
         expected2 = []
         expected2_itr = data.create_tuple_iterator(
             num_epochs=num_epochs, output_numpy=True)
@@ -291,8 +294,13 @@ def test_repeatable_reset_imagenet(sampler, num_parallel_workers, to_pil, batch_
                     break
             if failure:
                 # pylint: disable=W0212
-                ds.engine.datasets._reset_training_dataset(failure_point, failure_point // dataset_size)
+                ds.engine.datasets._reset_training_dataset(failure_point, dataset_size)
                 failure = False
+                if fail_at_epoch_end:
+                    # if the failure point is at the end of the epoch, there is no need to
+                    # continue iterating, just start directly from the next epoch
+                    fail_at_epoch_end = False
+                    continue
                 for d in expected2_itr:
                     expected2.append(d)
         del expected2_itr
@@ -353,7 +361,8 @@ def test_repeatable_reset_distributed(shard_id, num_parallel_workers, to_pil):
                     failure = True
                     break
             if failure:
-                ds.engine.datasets._reset_training_dataset(failure_point, epoch)  # pylint: disable=W0212
+                # pylint: disable=W0212
+                ds.engine.datasets._reset_training_dataset(failure_point, data.get_dataset_size())
                 failure = False
                 for d in expected2_itr:
                     expected2.append(d)
@@ -401,7 +410,7 @@ def test_reset_shuffle():
                 failure = True
                 break
         if failure:
-            ds.engine.datasets._reset_training_dataset(failure_point, epoch)  # pylint: disable=W0212
+            ds.engine.datasets._reset_training_dataset(failure_point, data1.get_dataset_size())  # pylint: disable=W0212
             failure = False
             for step, d in enumerate(expected2_itr):
                 expected2.append(d)
@@ -454,7 +463,7 @@ def test_reset_sampler(sampler):
                 failure = True
                 break
         if failure:
-            ds.engine.datasets._reset_training_dataset(failure_point, epoch)  # pylint: disable=W0212
+            ds.engine.datasets._reset_training_dataset(failure_point, data1.get_dataset_size())  # pylint: disable=W0212
             failure = False
             for step, d in enumerate(expected2_itr):
                 expected2.append(d)
@@ -505,7 +514,7 @@ def test_reset_batch(fast_recovery):
                 failure = True
                 break
         if failure:
-            ds.engine.datasets._reset_training_dataset(failure_point, epoch)  # pylint: disable=W0212
+            ds.engine.datasets._reset_training_dataset(failure_point, data1.get_dataset_size())  # pylint: disable=W0212
             failure = False
             for step, d in enumerate(itr):
                 expected2.append(d)
@@ -553,7 +562,7 @@ def test_reset_nonmappable():
                     break
             if failure:
                 # pylint: disable=W0212
-                ds.engine.datasets._reset_training_dataset(failure_point, (failure_point//dataset_size))
+                ds.engine.datasets._reset_training_dataset(failure_point, dataset_size)
                 failure = False
                 # let's collect the remaining rows of this epoch
                 if failure_point % dataset_size != 0:
@@ -562,7 +571,7 @@ def test_reset_nonmappable():
         return res
 
     shard_id = 0
-    expected = get_res(0, 5, -1) # no reset in this run
+    expected = get_res(0, 5, -1)  # no reset in this run
     # try different failure points and compare against 'expected'
     for failure_point in range(100):
         expected2 = get_res(shard_id, num_repeats, failure_point)
@@ -572,6 +581,28 @@ def test_reset_nonmappable():
     ds.config.set_fast_recovery(original_fast_recovery)
 
 
+def test_reset_generator_with_unknow_length():
+    """
+    Feature: Failover
+    Description: Reset unknown length GeneratorDataset
+    Expectation: The recovery should not hang and can iterate as many times as expected
+    """
+
+    def gen():
+        for index in range(5):
+            yield index
+
+    dataset = ds.GeneratorDataset(gen, ["data"])
+    iterator = dataset.create_dict_iterator(output_numpy=True, num_epochs=1)
+    ds.engine.datasets._set_training_dataset(iterator)  # pylint: disable=W0212
+    for i in range(5):
+        ds.engine.datasets._reset_training_dataset(i, 5)  # pylint: disable=W0212
+        count = 0
+        for _ in enumerate(iterator):
+            count += 1
+        assert count == 5 - i
+
+
 if __name__ == "__main__":
     test_reset_np()
     test_reset_cifar1()
@@ -579,9 +610,10 @@ if __name__ == "__main__":
     test_reset_imagenet()
     test_reset_mindrecord(add_and_remove_cv_file)
     test_reset_np_error()
-    test_repeatable_reset_imagenet()
-    test_repeatable_reset_distributed()
+    test_repeatable_reset_imagenet(None, 3, False, None)
+    test_repeatable_reset_distributed(1, 2, True)
     test_reset_shuffle()
     test_reset_sampler(ds.RandomSampler())
     test_reset_batch(False)
     test_reset_nonmappable()
+    test_reset_generator_with_unknow_length()

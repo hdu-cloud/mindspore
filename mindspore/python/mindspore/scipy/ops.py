@@ -13,8 +13,8 @@
 # limitations under the License.
 # ============================================================================
 """Operators for scipy submodule"""
+from mindspore import _checkparam as validator
 from ..ops import PrimitiveWithInfer, prim_attr_register, Primitive
-from .._checkparam import Validator as validator
 from ..common import dtype as mstype
 
 
@@ -50,7 +50,7 @@ class SolveTriangular(Primitive):
         LinAlgError: If :math:`a` is singular
 
     Supported Platforms:
-        ``CPU`` ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
         Solve the lower triangular system :math:`a x = b`, where:
@@ -61,7 +61,7 @@ class SolveTriangular(Primitive):
                  [1  1  1  1]       [2]
 
         >>> import numpy as onp
-        >>> from mindspore.common import Tensor
+        >>> from mindspore import Tensor
         >>> import mindspore.numpy as mnp
         >>> from mindspore.scipy.ops import SolveTriangular
         >>> a = Tensor(onp.array([[3, 0, 0, 0], [2, 1, 0, 0], [1, 0, 1, 0], [1, 1, 1, 1]], onp.float64))
@@ -88,42 +88,6 @@ class SolveTriangular(Primitive):
         self.init_prim_io_names(inputs=['a', 'b'], outputs=['output'])
 
 
-class Eigh(PrimitiveWithInfer):
-    """
-    Eigh decomposition(Symmetric matrix)
-    Ax = lambda * x
-    """
-
-    @prim_attr_register
-    def __init__(self, compute_eigenvectors=True, lower=True):
-        super().__init__(name="Eigh")
-        self.init_prim_io_names(inputs=['A'], outputs=['output_w', 'output_v'])
-        self.compute_eigenvectors = validator.check_value_type(
-            "compute_eigenvectors", compute_eigenvectors, [bool], self.name)
-        self.lower = validator.check_value_type("lower", lower, [bool], self.lower)
-        self.add_prim_attr('lower', self.lower)
-        self.add_prim_attr('compute_eigenvectors', self.compute_eigenvectors)
-
-    def __infer__(self, A):
-        validator.check_scalar_or_tensor_types_same({"A_dtype": A['dtype']},
-                                                    [mstype.float32, mstype.float64, mstype.complex64,
-                                                     mstype.complex128], self.name, True)
-        output = None
-        if self.compute_eigenvectors:
-            output = {
-                'shape': ((A['shape'][0],), (A['shape'][0], A['shape'][0])),
-                'dtype': (A['dtype'], A['dtype']),
-                'value': None
-            }
-        else:
-            output = {
-                'shape': (A['shape'][0],),
-                'dtype': A['dtype'],
-                'value': None
-            }
-        return output
-
-
 class Eig(PrimitiveWithInfer):
     """
     Eig decomposition,(generic matrix)
@@ -137,10 +101,10 @@ class Eig(PrimitiveWithInfer):
         self.compute_v = validator.check_value_type("compute_v", compute_v, [bool], self.name)
         self.add_prim_attr('compute_v', self.compute_v)
         self.io_table = {
-            mstype.tensor_type(mstype.float32): mstype.complex64,
-            mstype.tensor_type(mstype.complex64): mstype.complex64,
-            mstype.tensor_type(mstype.float64): mstype.complex128,
-            mstype.tensor_type(mstype.complex128): mstype.complex128
+            mstype.TensorType(mstype.float32): mstype.complex64,
+            mstype.TensorType(mstype.complex64): mstype.complex64,
+            mstype.TensorType(mstype.float64): mstype.complex128,
+            mstype.TensorType(mstype.complex128): mstype.complex128
         }
 
     def __infer__(self, a):

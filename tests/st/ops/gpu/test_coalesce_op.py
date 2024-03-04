@@ -52,7 +52,7 @@ def dyn_case():
         assert out[i].asnumpy().shape == expect_shapes[i]
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_coalesce_dyn():
@@ -67,7 +67,7 @@ def test_coalesce_dyn():
     dyn_case()
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_coalesce_fp32():
@@ -89,7 +89,7 @@ def test_coalesce_fp32():
     assert np.array_equal(y_shape, expect_shape)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_coalesce_fp16():
@@ -111,7 +111,7 @@ def test_coalesce_fp16():
     assert np.array_equal(y_shape, expect_shape)
 
 
-@pytest.mark.level0gi
+@pytest.mark.level0
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_coalesce_fp64():

@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
+#include "ops/topk.h"
 #include <set>
 #include <utility>
-#include "ops/topk.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/src/helper.h"
 
 namespace mindspore {
 namespace ops {
@@ -43,9 +44,8 @@ abstract::TupleShapePtr TopKInferShape(const PrimitivePtr &primitive, const std:
     return std::make_shared<abstract::TupleShape>(std::vector<abstract::BaseShapePtr>{out_shape_ptr, out_shape_ptr});
   }
   int64_t k_v = 0;
-
-  if ((IsDynamicRank(x_shape)) || ((input_args[kInputIndex1]->isa<abstract::AbstractTensor>()) &&
-                                   (!input_args[kInputIndex1]->BuildValue()->isa<tensor::Tensor>()))) {
+  auto input1_value = input_args[kInputIndex1]->BuildValue();
+  if ((IsDynamicRank(x_shape)) || !IsValueKnown(input1_value)) {
     auto unknown_shape_p = std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeRankAny}));
     return std::make_shared<abstract::TupleShape>(
       std::vector<abstract::BaseShapePtr>{unknown_shape_p, unknown_shape_p});
@@ -53,23 +53,24 @@ abstract::TupleShapePtr TopKInferShape(const PrimitivePtr &primitive, const std:
 
   // 2rd input is a Tensor when TopK is a dynamic shape operator
   if (input_args[kInputIndex1]->isa<abstract::AbstractTensor>()) {
-    auto k_ptr = input_args[kInputIndex1]->BuildValue();
-    MS_EXCEPTION_IF_NULL(k_ptr);
-    if (k_ptr->isa<tensor::Tensor>()) {
-      auto k_tensor_ptr = k_ptr->cast<tensor::TensorPtr>();
+    MS_EXCEPTION_IF_NULL(input1_value);
+    if (input1_value->isa<tensor::Tensor>()) {
+      auto k_tensor_ptr = input1_value->cast<tensor::TensorPtr>();
       MS_EXCEPTION_IF_NULL(k_tensor_ptr);
       k_v = *static_cast<int32_t *>(k_tensor_ptr->data_c());
     }
   } else if (input_args[kInputIndex1]->isa<abstract::AbstractScalar>()) {
-    k_v = GetValue<int64_t>(input_args[kInputIndex1]->BuildValue());
+    k_v = GetValue<int64_t>(input1_value);
   } else {
     MS_LOG(EXCEPTION) << "Invalid abstract type:" << input_args[kInputIndex1]->type_name();
   }
-  auto ndims = x_shape.size() - 1;
-  if (x_shape[ndims] != abstract::Shape::kShapeDimAny) {
-    std::pair<int64_t, int64_t> k_range(0, x_shape[ndims]);
-    CheckAndConvertUtils::CheckInRange<int64_t>("k", k_v, kIncludeRight, k_range, prim_name);
-    x_shape[ndims] = k_v;
+  if (!x_shape.empty()) {
+    auto ndims = x_shape.size() - 1;
+    if (x_shape[ndims] != abstract::Shape::kShapeDimAny) {
+      std::pair<int64_t, int64_t> k_range(0, x_shape[ndims]);
+      CheckAndConvertUtils::CheckInRange<int64_t>("k", k_v, kIncludeRight, k_range, prim_name);
+      x_shape[ndims] = k_v;
+    }
   }
 
   auto out_shape_ptr = std::make_shared<abstract::Shape>(x_shape);
@@ -79,8 +80,7 @@ abstract::TupleShapePtr TopKInferShape(const PrimitivePtr &primitive, const std:
 TuplePtr TopKInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   auto prim_name = primitive->name();
   auto output0_type = input_args[kInputIndex0]->BuildType();
-  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kInt32};
-  (void)CheckAndConvertUtils::CheckTensorTypeValid("input_x", output0_type, valid_types, prim_name);
+  (void)CheckAndConvertUtils::CheckTensorTypeValid("input_x", output0_type, common_valid_types, prim_name);
   auto k_type = input_args[kInputIndex1]->BuildType();
   const std::set<TypePtr> int_types = {kInt8, kInt16, kInt32, kInt64};
   (void)CheckAndConvertUtils::CheckTypeValid("k", k_type, int_types, prim_name);
@@ -105,6 +105,25 @@ bool TopK::get_attr(const char *attr) const {
   return GetValue<bool>(attr_ptr);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(TopK, prim::kPrimTopK, TopKInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGTopKInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return TopKInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return TopKInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return TopKInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(TopK, prim::kPrimTopK, AGTopKInfer, false);
 }  // namespace ops
 }  // namespace mindspore

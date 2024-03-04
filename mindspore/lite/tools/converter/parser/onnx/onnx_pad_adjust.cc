@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include "mindspore/core/ops/lite_ops.h"
 #include "ops/reshape.h"
 #include "ops/primitive_c.h"
 #include "tools/common/tensor_util.h"
@@ -29,8 +30,8 @@ constexpr uint32_t kTripleNum = 3;
 constexpr uint32_t kQuadraNum = 4;
 
 CNodePtr NewReshapeOpNode(const FuncGraphPtr &func_graph, const AnfNodePtr &input_node, const std::vector<int> &shape) {
-  MS_ASSERT(func_graph != nullptr);
-  MS_ASSERT(input_node != nullptr);
+  MS_CHECK_TRUE_RET(func_graph != nullptr, nullptr);
+  MS_CHECK_TRUE_RET(input_node != nullptr, nullptr);
   auto reshape_prim = std::make_shared<ops::Reshape>();
   if (reshape_prim == nullptr) {
     MS_LOG(ERROR) << "create reshape failed.";
@@ -48,11 +49,18 @@ CNodePtr NewReshapeOpNode(const FuncGraphPtr &func_graph, const AnfNodePtr &inpu
   auto reshape = func_graph->NewCNode(op_inputs);
   MS_CHECK_TRUE_MSG(reshape != nullptr, nullptr, "create cnode return nullptr");
   reshape->set_fullname_with_scope(input_node->fullname_with_scope() + "_reshape");
+
+  std::vector<int64_t> new_shape;
+  std::transform(shape.begin(), shape.end(), std::back_inserter(new_shape),
+                 [](int x) { return static_cast<int64_t>(x); });
+  auto abstract = lite::CreateTensorAbstract(new_shape, kNumberTypeInt32);
+  MS_CHECK_TRUE_MSG(abstract != nullptr, nullptr, "Create tensor abstract for reshape failed.");
+  reshape->set_abstract(abstract);
   return reshape;
 }
 
 bool AdjstVariablePadding(const FuncGraphPtr &func_graph, const AnfNodePtr &input_node) {
-  MS_ASSERT(func_graph != nullptr && input_node != nullptr);
+  MS_CHECK_TRUE_RET(func_graph != nullptr && input_node != nullptr, false);
   // reshape the padding of pad operator to 2 x i.
   std::vector<int> shape_pre = {2, -1};
   auto reshape_pre = NewReshapeOpNode(func_graph, input_node, shape_pre);
@@ -87,8 +95,10 @@ bool AdjstVariablePadding(const FuncGraphPtr &func_graph, const AnfNodePtr &inpu
   return true;
 }
 
-bool AdjstConstPadding(const FuncGraphPtr &func_graph, const AnfNodePtr &input_node) {
-  MS_ASSERT(func_graph != nullptr && input_node != nullptr);
+bool AdjstConstPadding(const CNodePtr &cnode, const AnfNodePtr &input_node) {
+  MS_CHECK_TRUE_RET(cnode != nullptr && input_node != nullptr, false);
+  auto func_graph = cnode->func_graph();
+  MS_CHECK_TRUE_RET(func_graph != nullptr, false);
   auto tensor_info = opt::GetTensorInfo(input_node);
   if (tensor_info == nullptr) {
     MS_LOG(ERROR) << "get tensor info from parameter failed.";
@@ -103,19 +113,19 @@ bool AdjstConstPadding(const FuncGraphPtr &func_graph, const AnfNodePtr &input_n
     padding.at(i * DIMENSION_2D) = *(data + i);
     padding.at(i * DIMENSION_2D + 1) = *(data + data_size / DIMENSION_2D + i);
   }
-  if (memcpy_s(data, tensor_info->Size(), padding.data(), padding.size() * sizeof(int)) != EOK) {
-    MS_LOG(ERROR) << "memcpy data failed.";
-    return false;
+  std::vector<std::vector<int32_t>> padding2d(DIMENSION_2D);
+  for (size_t i = 0; i < data_size / DIMENSION_2D; i++) {
+    padding2d[Index0].push_back(padding[i]);
+    padding2d[Index1].push_back(padding[i + data_size / DIMENSION_2D]);
   }
-
-  std::vector<int64_t> new_shape = {static_cast<int64_t>(data_size) / DIMENSION_2D, DIMENSION_2D};
-  tensor_info->set_shape(new_shape);
+  auto param_node = opt::BuildIntVec2DParameterNode(func_graph, padding2d, cnode->fullname_with_scope() + "_pads");
+  cnode->set_input(Index2, param_node);
   return true;
 }
 }  // namespace
 
 bool OnnxPadAdjust::Adjust(const FuncGraphPtr &func_graph) {
-  MS_ASSERT(func_graph != nullptr);
+  MS_CHECK_TRUE_RET(func_graph != nullptr, false);
   auto cnodes = func_graph->GetOrderedCnodes();
   for (auto &cnode : cnodes) {
     if (!opt::CheckPrimitiveType(cnode, prim::kPrimPadFusion) ||
@@ -128,7 +138,7 @@ bool OnnxPadAdjust::Adjust(const FuncGraphPtr &func_graph) {
     MS_CHECK_TRUE_RET(input_node != nullptr, false);
     auto param_input = input_node->cast<ParameterPtr>();
     if (param_input != nullptr && param_input->has_default()) {
-      if (!AdjstConstPadding(func_graph, input_node)) {
+      if (!AdjstConstPadding(cnode, input_node)) {
         MS_LOG(ERROR) << "Adjust paddings for node: " << cnode->fullname_with_scope() << " failed.";
         return false;
       } else {

@@ -15,8 +15,13 @@
  */
 
 #include "backend/common/pass/add_dropout_attrs.h"
+
 #include <memory>
-#include "mindspore/core/ops/core_ops.h"
+#include <string>
+#include <vector>
+
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
@@ -63,6 +68,12 @@ const AnfNodePtr AddDropoutAttrs::Process(const FuncGraphPtr &func_graph, const 
     cnode->AddAttr(kAttrOnlyUseSecondOutput, MakeValue(true));
   }
   return cnode;
+}
+
+std::vector<std::string> AddDropoutAttrs::MustExistPrimitiveName() const {
+  std::vector<std::string> ret;
+  (void)ret.emplace_back(prim::kPrimDropout->name());
+  return ret;
 }
 
 const BaseRef AddDropoutAttrs::DefinePattern() const {

@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 #include "minddata/dataset/core/data_type.h"
-#ifdef ENABLE_PYTHON
+#ifdef ENABLE_MINDDATA_PYTHON
 #include "minddata/dataset/core/pybind_support.h"
 #endif
 
@@ -31,7 +31,7 @@ uint8_t DataType::SizeInBytes() const {
   }
 }
 
-#ifdef ENABLE_PYTHON
+#ifdef ENABLE_MINDDATA_PYTHON
 py::dtype DataType::AsNumpyType() const {
   if (type_ < DataType::NUM_OF_TYPES) {
     return py::dtype(kTypeInfo[type_].pybindType_);
@@ -41,7 +41,7 @@ py::dtype DataType::AsNumpyType() const {
 }
 #endif
 
-#if !defined(ENABLE_ANDROID) || defined(ENABLE_CLOUD_FUSION_INFERENCE)
+#if !defined(ENABLE_ANDROID) || defined(ENABLE_MINDDATA_PYTHON)
 uint8_t DataType::AsCVType() const {
   uint8_t res = kCVInvalidType;
   if (type_ < DataType::NUM_OF_TYPES) {
@@ -118,6 +118,10 @@ DataType::DataType(const std::string &type_str) {
     type_ = DE_STRING;
   } else if (type_str == "bytes") {
     type_ = DE_BYTES;
+#ifdef ENABLE_MINDDATA_PYTHON
+  } else if (type_str == "python") {
+    type_ = DE_PYTHON;
+#endif
   } else {
     type_ = DE_UNKNOWN;
   }
@@ -131,7 +135,7 @@ std::string DataType::ToString() const {
   }
 }
 
-#ifdef ENABLE_PYTHON
+#ifdef ENABLE_MINDDATA_PYTHON
 DataType DataType::FromNpArray(const py::array &arr) {
   if (py::isinstance<py::array_t<bool>>(arr)) {
     return DataType(DataType::DE_BOOL);

@@ -16,12 +16,12 @@
 
 #ifndef MINDSPORE_CORE_OPS_GRAD_LAYER_NORM_GRAD_H_
 #define MINDSPORE_CORE_OPS_GRAD_LAYER_NORM_GRAD_H_
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -36,10 +36,8 @@ class MIND_API LayerNormGrad : public BaseOperator {
   void set_begin_params_axis(const int64_t begin_params_axis);
   int64_t get_begin_norm_axis() const;
   int64_t get_begin_params_axis() const;
+  float get_epsilon() const;
 };
-
-abstract::AbstractBasePtr LayerNormGradInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                             const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

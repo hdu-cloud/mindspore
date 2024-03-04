@@ -43,7 +43,11 @@ update_submodule()
 {
   git submodule update --init graphengine
   cd "${BASEPATH}/graphengine"
-  git submodule update --init metadef
+  GRAPHENGINE_SUBMODULE="910/metadef"
+  if [[ "X$ASCEND_VERSION" = "X910b" ]]; then
+    GRAPHENGINE_SUBMODULE="910b/metadef"
+  fi
+  git submodule update --init ${GRAPHENGINE_SUBMODULE}
   cd "${BASEPATH}"
   if [[ "X$ENABLE_AKG" = "Xon" ]]; then
     if [[ "X$ENABLE_D" == "Xon" ]]; then
@@ -92,7 +96,10 @@ else
   if [[ "X$ENABLE_ACL" == "Xon" ]] && [[ "X$ENABLE_D" == "Xoff" ]]; then
       echo "acl mode, skipping deploy phase"
       rm -rf ${BASEPATH}/output/_CPack_Packages/
-    else
+  elif [[ "X$FASTER_BUILD_FOR_PLUGINS" == "Xon" ]]; then
+      echo "plugin mode, skipping deploy phase"
+      rm -rf ${BASEPATH}/output/_CPack_Packages/
+  else
       cp -rf ${BUILD_PATH}/package/mindspore/lib ${BASEPATH}/mindspore/python/mindspore
       cp -rf ${BUILD_PATH}/package/mindspore/*.so ${BASEPATH}/mindspore/python/mindspore
   fi

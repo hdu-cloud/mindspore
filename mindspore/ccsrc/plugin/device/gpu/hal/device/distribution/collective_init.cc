@@ -17,7 +17,7 @@
 #include "plugin/device/gpu/hal/device/distribution/collective_init.h"
 #include "utils/log_adapter.h"
 #include "utils/ms_utils.h"
-#include "distributed/init.h"
+#include "include/backend/distributed/init.h"
 
 namespace mindspore {
 namespace device {
@@ -37,13 +37,13 @@ void CollectiveInitializer::InitCollective() {
     void *handle = dlopen("libgpu_collective.so", RTLD_LAZY);
     if (handle == nullptr) {
       MS_LOG(EXCEPTION)
-        << "Loading libgpu_collective.so failed. Many reasons could cause this:\n"
+        << "#umsg#Loading libgpu_collective.so failed:#umsg#Many reasons could cause this:\n"
            "1.libgpu_collective.so is not found, please check this MindSpore package is GPU version and built "
            "with distributed feature.\n"
            "2.NCCL is not found or the user-installed NCCL version installed is incompatible: MindSpore "
-           "requires NCCL-2.7.6.\n"
+           "requires NCCL-2.16.5.\n"
            "3.OpenMPI is not found or the user-installed OpenMPI version is incompatible: MindSpore "
-           "requires OpenMPI-4.0.3.\n";
+           "requires OpenMPI-4.1.4.\n";
     }
     auto mpi_init_funcptr = reinterpret_cast<InitMPI>(dlsym(handle, "InitMPI"));
     MS_EXCEPTION_IF_NULL(mpi_init_funcptr);

@@ -40,19 +40,10 @@ bool Dilation2DBackpropFilterCpuKernelMod::Init(const BaseOperatorPtr &base_oper
                                                 const std::vector<KernelTensorPtr> &outputs) {
   auto kernel_ptr = std::dynamic_pointer_cast<ops::Dilation2DBackpropFilter>(base_operator);
   kernel_name_ = kernel_ptr->name();
-
-  f_input_shape_ = inputs[kInputIndexf]->GetShapeVector();
-  f_filter_shape_ = inputs[kFilterIndexf]->GetShapeVector();
-  f_out_backprop_shape_ = inputs[kBackpropIndexf]->GetShapeVector();
-  f_output_shape_ = outputs[kOutputIndexf]->GetShapeVector();
-
   stride_ = kernel_ptr->get_stride();
   dilation_ = kernel_ptr->get_dilation();
   pad_mode_ = kernel_ptr->get_pad_mode();
   format_ = kernel_ptr->get_format();
-
-  CheckKernelParam();
-
   if (!MatchKernelFunc(base_operator, inputs, outputs)) {
     return false;
   }
@@ -73,6 +64,11 @@ int Dilation2DBackpropFilterCpuKernelMod::Resize(const BaseOperatorPtr &base_ope
   if (ret != 0) {
     return ret;
   }
+  f_input_shape_ = inputs[kInputIndexf]->GetShapeVector();
+  f_filter_shape_ = inputs[kFilterIndexf]->GetShapeVector();
+  f_out_backprop_shape_ = inputs[kBackpropIndexf]->GetShapeVector();
+  f_output_shape_ = outputs[kOutputIndexf]->GetShapeVector();
+  CheckKernelParam();
   return KRET_OK;
 }
 
@@ -95,8 +91,8 @@ bool Dilation2DBackpropFilterCpuKernelMod::LaunchKernel(const std::vector<kernel
   size_t filter_width = LongToSize(f_filter_shape_[kFormatCHWIndexW]);
   size_t out_backprop_height = LongToSize(f_out_backprop_shape_[kFormatNCHWIndexH]);
   size_t out_backprop_width = LongToSize(f_out_backprop_shape_[kFormatNCHWIndexW]);
-  size_t output_height = LongToSize(f_output_shape_[kFormatNCHWIndexH]);
-  size_t output_width = LongToSize(f_output_shape_[kFormatNCHWIndexW]);
+  size_t output_height = LongToSize(f_output_shape_[kFormatCHWIndexH]);
+  size_t output_width = LongToSize(f_output_shape_[kFormatCHWIndexW]);
   size_t stride_height = LongToSize(stride_[kFormatNCHWIndexH]);
   size_t stride_width = LongToSize(stride_[kFormatNCHWIndexW]);
   size_t rate_height = LongToSize(dilation_[kFormatNCHWIndexH]);

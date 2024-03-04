@@ -17,14 +17,14 @@
 #ifndef MINDSPORE_CORE_OPS_EXTRACT_GLIMPSE_H_
 #define MINDSPORE_CORE_OPS_EXTRACT_GLIMPSE_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/primitive_c.h"
+#include <string>
+#include <vector>
 #include "abstract/abstract_value.h"
-#include "utils/check_convert_utils.h"
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -44,8 +44,9 @@ class MIND_API ExtractGlimpse : public BaseOperator {
   bool get_uniform_noise() const;
   std::string get_noise() const;
 };
-abstract::AbstractBasePtr ExtractGlimpseInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                              const std::vector<AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr ExtractGlimpseInfer(const abstract::AnalysisEnginePtr &,
+                                                       const PrimitivePtr &primitive,
+                                                       const std::vector<AbstractBasePtr> &input_args);
 using PrimExtractGlimpsePtr = std::shared_ptr<ExtractGlimpse>;
 }  // namespace ops
 }  // namespace mindspore

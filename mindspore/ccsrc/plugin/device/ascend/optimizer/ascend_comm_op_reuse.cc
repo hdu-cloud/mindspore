@@ -14,8 +14,12 @@
  * limitations under the License.
  */
 #include <cstdlib>
-#include "backend/common/optimizer/helper.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/optimizer/helper.h"
+#include "mindspore/core/ops/structure_ops.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/other_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "frontend/parallel/ops_info/ops_utils.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/common/utils/comm_manager.h"
@@ -40,7 +44,7 @@ std::string VecToString(const std::vector<T> &vec) {
   return res;
 }
 
-std::string GenCommOpKey(const CNodePtr &node) {
+std::string GenCommOpKey(const CNodePtr &node, const KernelGraphPtr &root_graph) {
   std::string op_key;
   MS_EXCEPTION_IF_NULL(node);
   auto comm_prim = GetCNodePrimitive(node);
@@ -68,6 +72,8 @@ std::string GenCommOpKey(const CNodePtr &node) {
   if (comm_prim->HasAttr(kAttrRecvRankIds)) {
     op_key += "_" + VecToString(GetValue<std::vector<int64_t>>(comm_prim->GetAttr(kAttrRecvRankIds)));
   }
+  // model identifier, aka. root_graph_id
+  op_key += "_" + std::to_string(root_graph->root_graph_id());
   MS_LOG(INFO) << node->DebugString() << " key " << op_key;
   return op_key;
 }
@@ -198,7 +204,7 @@ void AscendCommOpReuse::AnalyseCommOpReuse() {
     if (!IsReusable(comm_op)) {
       continue;
     }
-    reuse_map[GenCommOpKey(comm_op)].push_back(comm_op);
+    reuse_map[GenCommOpKey(comm_op, root_graph_)].push_back(comm_op);
   }
 
   for (const auto &[key, comm_op_set] : reuse_map) {
@@ -239,7 +245,6 @@ KernelGraphPtr AscendCommOpReuse::CreateCommSubGraph(const CNodePtr &comm_op) {
   // create sub graph
   auto graph = std::make_shared<session::KernelGraph>();
   graph->set_graph_id(comm_subgraph_sum_++);
-  MS_EXCEPTION_IF_NULL(graph);
   auto sub_graph_inputs = graph->MutableInputs();
   MS_EXCEPTION_IF_NULL(sub_graph_inputs);
   // create inputs param for sub graph
@@ -255,7 +260,7 @@ KernelGraphPtr AscendCommOpReuse::CreateCommSubGraph(const CNodePtr &comm_op) {
   MS_EXCEPTION_IF_NULL(new_comm_op);
   new_comm_op->set_abstract(comm_op->abstract());
 
-  std::string group_name = GenCommOpKey(comm_op);
+  std::string group_name = GenCommOpKey(comm_op, root_graph_);
   auto rank_list = common::AnfAlgo::GetNodeAttr<std::vector<unsigned int>>(comm_op, kAttrRankList);
   if (!CommManager::GetInstance().CreateGroupSync(group_name, rank_list)) {
     MS_LOG(EXCEPTION) << "Create new group " << group_name << " failed, rank list = " << VecToString(rank_list);

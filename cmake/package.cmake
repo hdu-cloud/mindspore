@@ -79,9 +79,10 @@ install(
 
 if(ENABLE_D)
     install(
-        TARGETS mindspore_ascend
+        TARGETS mindspore_ascend LIBRARY
         DESTINATION ${INSTALL_PLUGIN_DIR}
         COMPONENT mindspore
+        NAMELINK_SKIP
     )
 endif()
 
@@ -128,6 +129,7 @@ if(ENABLE_MINDDATA)
       DESTINATION ${INSTALL_LIB_DIR} RENAME libicudata.so.69 COMPONENT mindspore)
     install(FILES ${icu4c_LIBPATH}/libicui18n.so.69.1
       DESTINATION ${INSTALL_LIB_DIR} RENAME libicui18n.so.69 COMPONENT mindspore)
+    install(FILES ${jemalloc_LIBPATH}/libjemalloc.so.2 DESTINATION ${INSTALL_LIB_DIR} COMPONENT mindspore)
 endif()
 
 if(ENABLE_CPU)
@@ -179,14 +181,15 @@ if(ENABLE_GPU)
           COMPONENT mindspore
         )
         if(CMAKE_SYSTEM_NAME MATCHES "Linux" AND GPU_BACKEND_CUDA)
-            install(FILES ${nccl_LIBPATH}/libnccl.so.2.7.6 DESTINATION ${INSTALL_PLUGIN_DIR}/gpu${CUDA_VERSION}
+            install(FILES ${nccl_LIBPATH}/libnccl.so.2.16.5 DESTINATION ${INSTALL_PLUGIN_DIR}/gpu${CUDA_VERSION}
                     RENAME libnccl.so.2 COMPONENT mindspore)
         endif()
     endif()
     install(
-            TARGETS cuda_ops
+            TARGETS cuda_ops LIBRARY
             DESTINATION ${INSTALL_PLUGIN_DIR}/gpu${CUDA_VERSION}
             COMPONENT mindspore
+            NAMELINK_SKIP
     )
 endif()
 
@@ -269,6 +272,12 @@ install(
     COMPONENT mindspore
 )
 
+file(GLOB NOTICE ${CMAKE_SOURCE_DIR}/Third_Party_Open_Source_Software_Notice)
+install(
+    FILES ${NOTICE}
+    DESTINATION ${INSTALL_PY_DIR}
+    COMPONENT mindspore
+)
 install(
     DIRECTORY
         ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/nn
@@ -283,8 +292,8 @@ install(
         ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/ops
         ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/communication
         ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/profiler
-        ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/compression
         ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/rewrite
+        ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/safeguard
         ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/run_check
         ${CMAKE_SOURCE_DIR}/mindspore/python/mindspore/experimental
     DESTINATION ${INSTALL_PY_DIR}
@@ -380,7 +389,15 @@ install(
 ## config files
 install(
     FILES ${CMAKE_SOURCE_DIR}/config/op_info.config
+          ${CMAKE_SOURCE_DIR}/config/super_bar_config.json
     DESTINATION ${INSTALL_CFG_DIR}
     COMPONENT mindspore
 )
 
+if(ENABLE_AIO)
+    install(
+        TARGETS aio_plugin
+        DESTINATION ${INSTALL_LIB_DIR}
+        COMPONENT mindspore
+    )
+endif()

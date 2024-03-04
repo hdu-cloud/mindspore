@@ -18,11 +18,11 @@
 #define MINDSPORE_CORE_OPS_ADAPTIVE_MAX_POOL3D_H_
 
 #include <algorithm>
-#include <set>
 #include <memory>
+#include <set>
 #include <vector>
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -32,8 +32,9 @@ class MIND_API AdaptiveMaxPool3D : public BaseOperator {
   MIND_API_BASE_MEMBER(AdaptiveMaxPool3D);
   AdaptiveMaxPool3D() : BaseOperator(kNameAdaptiveMaxPool3D) { InitIOName({"x", "output_size"}, {"y", "argmax"}); }
 };
-abstract::AbstractBasePtr AdaptiveMaxPool3DInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr AdaptiveMaxPool3DInfer(const abstract::AnalysisEnginePtr &,
+                                                          const PrimitivePtr &primitive,
+                                                          const std::vector<abstract::AbstractBasePtr> &input_args);
 using AdaptiveMaxPool3DPtr = std::shared_ptr<AdaptiveMaxPool3D>;
 }  // namespace ops
 }  // namespace mindspore

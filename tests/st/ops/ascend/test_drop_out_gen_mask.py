@@ -18,6 +18,7 @@ import pytest
 
 import mindspore.context as context
 import mindspore.nn as nn
+import mindspore.ops as ops
 from mindspore import Tensor
 from mindspore.ops import operations as P
 from mindspore.common import set_seed
@@ -56,7 +57,7 @@ def test_net():
 class Drop(nn.Cell):
     def __init__(self):
         super(Drop, self).__init__()
-        self.drop = nn.Dropout(1.0 - 0.5)
+        self.drop = nn.Dropout(p=0.5)
 
     def construct(self, out):
         out = self.drop(out)
@@ -72,7 +73,7 @@ def train(net, data):
     return res_list
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -143,7 +144,7 @@ px = np.ones([2, 4, 2, 2]).astype(np.int32)
 py = np.array([0.5]).astype(np.float32)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -165,3 +166,19 @@ def test_diff_seed():
            (np.allclose(net0_out1.asnumpy(), net1_out1.asnumpy(), 0, 0) is False)
     assert (np.allclose(net0_out0.asnumpy(), net2_out0.asnumpy(), 0, 0) is False) or \
            (np.allclose(net0_out1.asnumpy(), net2_out1.asnumpy(), 0, 0) is False)
+
+
+@pytest.mark.level1
+@pytest.mark.platform_arm_ascend_training
+@pytest.mark.platform_x86_ascend_training
+@pytest.mark.env_onecard
+def test_fuzz():
+    """
+    Feature: test dropout gen mask fuzz input.
+    Description: dropout gen mask.
+    Expectation: ValueError.
+    """
+    test_op = ops.DropoutGenMask()
+    with pytest.raises(ValueError):
+        output = test_op(**{})
+        print(output)

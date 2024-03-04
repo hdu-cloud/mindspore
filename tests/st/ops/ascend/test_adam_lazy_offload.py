@@ -25,7 +25,7 @@ class NetAdam(nn.Cell):
         self.batch_size = 1
         self.reshape = P.Reshape()
         weight = Tensor(np.ones([10, 16]).astype(np.float32) * 0.01)
-        self.fc1 = Dense(16, 10, weight_init=weight)
+        self.fc1 = Dense(16, 10, weight_init=weight, bias_init="zeros")
 
     def construct(self, input_x):
         output = self.reshape(input_x, (self.batch_size, -1))
@@ -45,7 +45,7 @@ class NetWithSparseGatherV2(nn.Cell):
         return self.gather(self.weight1, indices, self.axis) + self.weight2
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -76,7 +76,7 @@ def test_lazy_adam_converge():
     assert losses1[1] > losses1[2]
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -101,7 +101,7 @@ def test_lazy_adam_acc():
     assert np.allclose(output.asnumpy(), expected_output)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard

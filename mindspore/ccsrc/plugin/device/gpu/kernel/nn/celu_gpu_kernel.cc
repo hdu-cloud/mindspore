@@ -33,14 +33,14 @@ bool CeluGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vec
     return false;
   }
   kernel_name_ = kernel_ptr->name();
-  alpha_ = kernel_ptr->get_alpha();
+  alpha_ = static_cast<double>(kernel_ptr->get_alpha());
 
   if (!MatchKernelFunc(base_operator, inputs, outputs)) {
     return false;
   }
 
   auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   if (inputs.empty() || outputs.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "' got empty inputs or outputs, which is invalid.";
     return false;
@@ -67,10 +67,11 @@ int CeluGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::ve
 template <typename T>
 bool CeluGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
                                     const std::vector<AddressPtr> &outputs) {
-  T alpha = static_cast<T>(alpha_);
   T *input = GetDeviceAddress<T>(inputs, kIndex0);
   T *output = GetDeviceAddress<T>(outputs, kIndex0);
-  CalculateCelu(input, input_elements_, alpha, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status =
+    CalculateCelu(input, input_elements_, alpha_, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -80,6 +81,8 @@ const std::vector<std::pair<KernelAttr, CeluGpuKernelMod::KernelRunFunc>> &CeluG
      &CeluGpuKernelMod::LaunchKernel<half>},
     {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
      &CeluGpuKernelMod::LaunchKernel<float>},
+    {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64),
+     &CeluGpuKernelMod::LaunchKernel<double>},
   };
   return func_list;
 }

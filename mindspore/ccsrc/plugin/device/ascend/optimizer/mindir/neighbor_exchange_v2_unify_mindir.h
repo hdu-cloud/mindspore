@@ -19,8 +19,9 @@
 #include <memory>
 #include <vector>
 #include <utility>
-#include "backend/common/optimizer/optimizer.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include <string>
+#include "include/backend/optimizer/optimizer.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 
 namespace mindspore {
@@ -36,7 +37,7 @@ class NeighborExchangeV2UnifyMindIR : public PatternProcessPass {
  private:
   std::vector<CNodePtr> CreateSplitNodes(const FuncGraphPtr &graph, const CNodePtr &neighbor_exchange_v2,
                                          std::vector<int64_t> *split_num) const;
-  CNodePtr CreateConcatNode(const FuncGraphPtr &graph, const std::vector<AnfNodePtr> &concat_input, int64_t axis,
+  CNodePtr CreateConcatNode(const FuncGraphPtr &graph, const std::vector<AnfNodePtr> &input_nodes, int64_t axis,
                             int64_t input_nums) const;
   CNodePtr CreateLeftRightConcat(const FuncGraphPtr &graph, const std::vector<AnfNodePtr> &all_to_all_v_outputs,
                                  const std::vector<int64_t> &recv_rank_ids, const std::vector<int64_t> &recv_lens,
@@ -49,6 +50,7 @@ class NeighborExchangeV2UnifyMindIR : public PatternProcessPass {
                               const CNodePtr &all_to_all_v) const;
   CNodePtr CreateConcatNodes(const FuncGraphPtr &graph, const CNodePtr &neighbor_exchange_v2,
                              const CNodePtr &all_to_all_v) const;
+  std::vector<std::string> MustExistPrimitiveName() const override;
 };
 
 class NeighborExchangeV2GradUnifyMindIR : public PatternProcessPass {
@@ -68,6 +70,7 @@ class NeighborExchangeV2GradUnifyMindIR : public PatternProcessPass {
   CNodePtr CreateSplitGradNodes(const FuncGraphPtr &graph, const CNodePtr &neighbor_exchange_v2_grad,
                                 const CNodePtr &all_to_all_v, const std::vector<CNodePtr> &split_nodes,
                                 const std::vector<int64_t> &split_num) const;
+  std::vector<std::string> MustExistPrimitiveName() const override;
 };
 
 }  // namespace opt

@@ -16,39 +16,19 @@
 
 #ifndef MINDSPORE_CORE_OPS_PRIMITIVE_C_H_
 #define MINDSPORE_CORE_OPS_PRIMITIVE_C_H_
-#include <string>
-#include <vector>
 #include <map>
 #include <memory>
+#include <string>
+#include <vector>
 #include "ir/primitive.h"
 #include "ir/value.h"
 #include "utils/hash_map.h"
 namespace mindspore {
 namespace ops {
-/// \brief PrimitiveC defines the base class for end side operators.
-class MS_CORE_API PrimitiveC : public Primitive {
- public:
-  /// \brief Constructor for PrimitiveC.
-  ///
-  /// \param[in] name The name of the end side operator.
-  explicit PrimitiveC(const std::string &name) : Primitive(name) {}
-  MS_DECLARE_PARENT(PrimitiveC, Primitive);
-
-  /// \brief Destructor of PrimitiveC.
-  ~PrimitiveC() = default;
-
-  /// \brief Derive the abstract of the PrimitiveC object.
-  ///
-  /// \param[in] abstract_list The abstract of the inputs of the PrimitiveC object.
-  /// \return The abstract of the PrimitiveC object.
-  AbstractBasePtr Infer(const AbstractBasePtrList &abstract_list);
-
- protected:
-  void InitIOName(const std::vector<std::string> &inputs_name, const std::vector<std::string> &outputs_name);
-};
-
+/// \brief PrimitiveC defines the base class for c++ operators.
+using PrimitiveC = Primitive;
 using OpPrimCDefineFunc = std::function<std::shared_ptr<PrimitiveC>()>;
-/// \brief OpPrimCRegister defines the singleton to save the end side operators.
+/// \brief OpPrimCRegister defines the singleton to save c++ operators.
 class MS_CORE_API OpPrimCRegister {
  public:
   /// \brief Destructor of OpPrimCRegister.
@@ -62,7 +42,7 @@ class MS_CORE_API OpPrimCRegister {
   /// \brief Get PrimCMap of the OpPrimCRegister singleton.
   ///
   /// \return The PrimCMap of the OpPrimCRegister singleton.
-  const HashMap<std::string, OpPrimCDefineFunc> &GetPrimCMap();
+  const HashMap<std::string, OpPrimCDefineFunc> &GetPrimCMap() const;
 
   /// \brief Add an element into the PrimCMap of the OpPrimCRegister singleton.
   ///
@@ -84,6 +64,7 @@ class MS_CORE_API OpPrimCRegisterHelper {
   /// param[in] fn The input end side operator.
   OpPrimCRegisterHelper(const std::string &kname, const OpPrimCDefineFunc &fn) {
     OpPrimCRegister::GetInstance().SetPrimCMap(kname, fn);
+    (void)id_;  // make compiler happy on macos
   }
 
   /// Destructor of OpPrimCRegisterHelper.

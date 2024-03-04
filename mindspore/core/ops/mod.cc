@@ -14,19 +14,30 @@
  * limitations under the License.
  */
 
-#include <string>
-#include <algorithm>
-#include <memory>
-#include <set>
 #include <map>
+#include <memory>
+#include <string>
 #include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/type_id.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "ops/mod.h"
 #include "ops/op_utils.h"
-
-#include "abstract/ops/primitive_infer_map.h"
-#include "utils/tensor_construct_utils.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/src/helper.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -85,6 +96,24 @@ AbstractBasePtr ModInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 MIND_API_OPERATOR_IMPL(Mod, BaseOperator);
-REGISTER_PRIMITIVE_C(kNameMod, Mod);
+
+// AG means auto generated
+class MIND_API AGModInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ModInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ModInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ModInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Mod, prim::kPrimMod, AGModInfer, false);
 }  // namespace ops
 }  // namespace mindspore

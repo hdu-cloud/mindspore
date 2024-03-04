@@ -17,13 +17,29 @@
 #include "ops/sparse_apply_centered_rms_prop.h"
 
 #include <algorithm>
+#include <map>
+#include <memory>
 #include <set>
+#include <utility>
 
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "abstract/utils.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -129,7 +145,7 @@ void SparseApplyCenteredRMSProp::Init(bool use_locking) { set_use_locking(use_lo
 void SparseApplyCenteredRMSProp::set_use_locking(bool use_locking) {
   (void)AddAttr(kUseLocking, api::MakeValue(use_locking));
 }
-bool SparseApplyCenteredRMSProp::get_use_locking() { return GetValue<bool>(GetAttr(kUseLocking)); }
+bool SparseApplyCenteredRMSProp::get_use_locking() const { return GetValue<bool>(GetAttr(kUseLocking)); }
 
 AbstractBasePtr SparseApplyCenteredRMSPropInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                                 const std::vector<AbstractBasePtr> &input_args) {
@@ -143,7 +159,24 @@ AbstractBasePtr SparseApplyCenteredRMSPropInfer(const abstract::AnalysisEnginePt
 
 MIND_API_OPERATOR_IMPL(SparseApplyCenteredRMSProp, BaseOperator);
 
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseApplyCenteredRMSProp, prim::kPrimSparseApplyCenteredRMSProp,
-                             SparseApplyCenteredRMSPropInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGSparseApplyCenteredRMSPropInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseApplyCenteredRMSPropInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseApplyCenteredRMSPropInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseApplyCenteredRMSPropInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseApplyCenteredRMSProp, prim::kPrimSparseApplyCenteredRMSProp,
+                                 AGSparseApplyCenteredRMSPropInfer, false);
 }  // namespace ops
 }  // namespace mindspore

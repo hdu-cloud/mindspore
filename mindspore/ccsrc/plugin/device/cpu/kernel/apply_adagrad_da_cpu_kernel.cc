@@ -44,32 +44,14 @@ constexpr size_t kStepIndex = 7;
 bool ApplyAdagradDACpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                       const std::vector<KernelTensorPtr> &outputs) {
   kernel_name_ = base_operator->name();
+  if (inputs.empty()) {
+    MS_EXCEPTION(ValueError) << "ApplyAdagradDA input is empty";
+  }
   dtype_ = inputs[0]->GetDtype();
   batch_rank_ = base_operator->get_batch_rank();
   return true;
 }
 
-void ApplyAdagradDACpuKernelMod::CheckDType(const std::vector<KernelTensorPtr> &inputs) const {
-  auto LRDtype = inputs[kLRIndex]->GetDtype();
-  auto L1Dtype = inputs[kL1Index]->GetDtype();
-  auto L2Dtype = inputs[kL2Index]->GetDtype();
-  auto StepDtype = inputs[kStepIndex]->GetDtype();
-  if (LRDtype != kNumberTypeFloat16 && LRDtype != kNumberTypeFloat32) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the 'lr' should be float16 or float32, but got " << LRDtype
-                      << " .";
-  }
-  if (L1Dtype != kNumberTypeFloat16 && L1Dtype != kNumberTypeFloat32) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the 'l1' should be float16 or float32, but got " << L1Dtype
-                      << " .";
-  }
-  if (L2Dtype != kNumberTypeFloat16 && L2Dtype != kNumberTypeFloat32) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the 'l2' should be float16 or float32, but got " << L2Dtype
-                      << " .";
-  }
-  if (StepDtype != kNumberTypeInt32 && StepDtype != kNumberTypeInt64) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the 'lr' should be int32 or int64, but got " << LRDtype << " .";
-  }
-}
 int ApplyAdagradDACpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                        const std::vector<KernelTensorPtr> &outputs,
                                        const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost) {
@@ -77,17 +59,9 @@ int ApplyAdagradDACpuKernelMod::Resize(const BaseOperatorPtr &base_operator, con
   if (ret != 0) {
     return ret;
   }
-  CheckDType(inputs);
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kApplyAdagradDAInputsNum, kernel_name_);
   std::vector<int64_t> var_shape = inputs[kVarIndex]->GetShapeVector();
   std::vector<int64_t> lr_shape = inputs[kLRIndex]->GetShapeVector();
-
-  if (batch_rank_ < 0 || lr_shape.size() != static_cast<size_t>(batch_rank_)) {
-    MS_LOG(ERROR) << "For '" << kernel_name_
-                  << "', the shape size of 'lr' must be equal to 'batch_rank', "
-                     "but got the shape of 'lr': "
-                  << Vector2Str(lr_shape) << " and 'batch_rank': " << batch_rank_;
-    return KRET_RESIZE_FAILED;
-  }
 
   if (!lr_shape.empty()) {
     batch_size_ = std::accumulate(lr_shape.begin(), lr_shape.end(), int64_t(1), std::multiplies<int64_t>());
@@ -95,8 +69,7 @@ int ApplyAdagradDACpuKernelMod::Resize(const BaseOperatorPtr &base_operator, con
 
   if (batch_size_ > 0) {
     input_elements_ = std::accumulate(var_shape.begin(), var_shape.end(), int64_t(1), std::multiplies<int64_t>());
-    input_elements_ = input_elements_ / batch_size_;
-
+    input_elements_ /= batch_size_;
     return ret;
   } else {
     MS_LOG(ERROR) << "For '" << kernel_name_
@@ -107,7 +80,7 @@ int ApplyAdagradDACpuKernelMod::Resize(const BaseOperatorPtr &base_operator, con
 
 bool ApplyAdagradDACpuKernelMod::Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
                                         const std::vector<AddressPtr> &outputs) {
-  CheckParam(inputs, outputs);
+  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kApplyAdagradDAOutputsNum, kernel_name_);
   if (dtype_ == kNumberTypeFloat16) {
     LaunchKernel<float16>(inputs, outputs);
   } else if (dtype_ == kNumberTypeFloat32) {
@@ -117,26 +90,6 @@ bool ApplyAdagradDACpuKernelMod::Launch(const std::vector<AddressPtr> &inputs, c
                       << TypeIdToType(dtype_)->ToString();
   }
   return true;
-}
-
-void ApplyAdagradDACpuKernelMod::CheckShapeAndDtypeEqual(int64_t size_a, int64_t size_b, const char *name_a,
-                                                         const char *name_b) const {
-  if (size_a != size_b) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the shape and dtype of '" << name_a << "' and '" << name_b
-                      << "' must be the same, "
-                         "but got the memory size of '"
-                      << name_a << "': " << size_a << " and '" << name_b << "': " << size_b;
-  }
-}
-
-void ApplyAdagradDACpuKernelMod::CheckParam(const std::vector<AddressPtr> &inputs,
-                                            const std::vector<AddressPtr> &outputs) const {
-  // Inputs: var, gradient_accumulator, gradient_squared_accumulator, grad, lr, l1, l2, global_step
-  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kApplyAdagradDAInputsNum, kernel_name_);
-  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kApplyAdagradDAOutputsNum, kernel_name_);
-  CheckShapeAndDtypeEqual(inputs[kAccIndex]->size, inputs[kVarIndex]->size, "gradient_accumulator", "var");
-  CheckShapeAndDtypeEqual(inputs[kSquarAccIndex]->size, inputs[kVarIndex]->size, "gradient_squared_accumulator", "var");
-  CheckShapeAndDtypeEqual(inputs[kGradIndex]->size, inputs[kVarIndex]->size, "grad", "var");
 }
 
 template <typename T>
@@ -170,6 +123,7 @@ T max(T num1, T num2) {
 
 template <typename T>
 void ApplyAdagradDACpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &) {
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kApplyAdagradDAInputsNum, kernel_name_);
   auto *var = reinterpret_cast<T *>(inputs[kVarIndex]->addr);
   auto *gradient_accumulator = reinterpret_cast<T *>(inputs[kAccIndex]->addr);
   auto *gradient_squared_accumulator = reinterpret_cast<T *>(inputs[kSquarAccIndex]->addr);
@@ -186,15 +140,15 @@ void ApplyAdagradDACpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inp
       LaunchApplyAdagradDA(var, gradient_accumulator, gradient_squared_accumulator, grad, lr, l1, l2, global_step,
                            start, end);
     };
-    CPUKernelUtils::ParallelForAutoSearch(task, input_elements_, &parallel_search_info_);
-    var = var + input_elements_;
-    gradient_accumulator = gradient_accumulator + input_elements_;
-    gradient_squared_accumulator = gradient_squared_accumulator + input_elements_;
-    grad = grad + input_elements_;
-    lr++;
-    l1++;
-    l2++;
-    global_step++;
+    ParallelLaunch(task, input_elements_, 0, this, pool_);
+    var += input_elements_;
+    gradient_accumulator += input_elements_;
+    gradient_squared_accumulator += input_elements_;
+    grad += input_elements_;
+    ++lr;
+    ++l1;
+    ++l2;
+    ++global_step;
   }
 }
 
@@ -202,11 +156,11 @@ template <typename T>
 void ApplyAdagradDACpuKernelMod::LaunchApplyAdagradDA(T *var, T *gradient_accumulator, T *gradient_squared_accumulator,
                                                       const T *grad, const T *lr, const T *l1, const T *l2,
                                                       const int *global_step, size_t start, size_t end) const {
+  auto minus_one = static_cast<T>(-1);
+  auto zeros = static_cast<T>(0);
   for (size_t i = start; i < end; i++) {
     gradient_accumulator[i] += grad[i];
     gradient_squared_accumulator[i] += grad[i] * grad[i];
-    auto minus_one = static_cast<T>(-1);
-    auto zeros = static_cast<T>(0);
     auto tmp_val =
       l1[0] > zeros
         ? Sign<T>(gradient_accumulator[i]) *

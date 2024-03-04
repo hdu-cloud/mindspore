@@ -22,7 +22,7 @@
 #include <vector>
 
 #include "ir/value.h"
-#include "pipeline/jit/resource.h"
+#include "pipeline/jit/ps/resource.h"
 #include "frontend/parallel/auto_parallel/costmodel.h"
 #include "frontend/parallel/dynamic_creator.h"
 #include "frontend/parallel/graph_util/node_info.h"
@@ -189,7 +189,7 @@ void SetGenMaskShape(const CNodePtr &cnode, const Shape &input_slice_shape) {
   }
   ValuePtr new_shape = MakeValue(input_slice_shape);
   AnfNodePtr val = NewValueNode(new_shape);
-  (void)manager->Replace(dropout_gen_mask_cnode->input(1), val);
+  dropout_gen_mask_cnode->set_input(kIndex1, val);
 }
 
 // DropoutDoMask needs to be used together with DropoutGenMask. Only the first input tensor of DropoutGenMask is
@@ -197,7 +197,6 @@ void SetGenMaskShape(const CNodePtr &cnode, const Shape &input_slice_shape) {
 // of DropoutGenMask according to the strategy of DropoutDoMask. When the DropoutDoMask performs repeated calculation
 // and both seeds of DropoutGenMask are 0, two new seeds are automatically generated for DropoutGenMask.
 std::vector<Operator> DropoutDoMaskInfo::GetDropoutGenMaskReplaceOp(const CNodePtr &cnode) {
-  std::vector<Operator> replace_ops;
   MS_EXCEPTION_IF_NULL(cnode);
   PrimitivePtr prim = GetDropoutGenMaskPrim(cnode);
   MS_EXCEPTION_IF_NULL(prim);
@@ -221,6 +220,7 @@ std::vector<Operator> DropoutDoMaskInfo::GetDropoutGenMaskReplaceOp(const CNodeP
     MS_LOG(EXCEPTION) << "The attrs of dropout gen mask must be have seed0 and seed1";
   }
 
+  std::vector<Operator> replace_ops;
   Shape input_slice_shape = inputs_tensor_info_[0].slice_shape();
   int64_t seed_0 = GetValue<int64_t>(attr[SEED0]);
   int64_t seed_1 = GetValue<int64_t>(attr[SEED1]);

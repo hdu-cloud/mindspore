@@ -24,13 +24,29 @@
 using mindspore::schema::PrimitiveType_Transpose;
 namespace mindspore::lite::micro::nnacl {
 int TransposeFp32Coder::Resize() {
-  if (input_tensors_.size() == DIMENSION_2D) {
-    param_->num_axes_ = input_tensors_.at(1)->ElementsNum();
+  param_->num_axes_ = 0;
+  if (input_tensors_.size() == C2NUM) {
+    param_->num_axes_ = input_tensors_[SECOND_INPUT]->ElementsNum();
   }
   if (input_tensors_.at(kInputIndex)->shape().size() != static_cast<size_t>(param_->num_axes_)) {
     return RET_OK;
   }
   // get perm data
+  auto ret = ResetStatus();
+  if (ret != RET_OK) {
+    MS_LOG(ERROR) << "Do transpose reset failed.";
+    return ret;
+  }
+
+  ret = ComputeOfflineInfo();
+  if (ret != RET_OK) {
+    MS_LOG(ERROR) << "Do compute transpose offline info failed.";
+    return ret;
+  }
+  return RET_OK;
+}
+
+int TransposeFp32Coder::ResetStatus() {
   MS_CHECK_TRUE_RET(input_tensors_.size() == DIMENSION_2D, RET_ERROR);
   auto perm_tensor = input_tensors_.at(1);
   int *perm_data = reinterpret_cast<int *>(perm_tensor->data());
@@ -38,20 +54,19 @@ int TransposeFp32Coder::Resize() {
   for (int i = 0; i < param_->num_axes_; ++i) {
     param_->perm_[i] = perm_data[i];
   }
+  return RET_OK;
+}
+
+int TransposeFp32Coder::ComputeOfflineInfo() {
   auto in_shape = input_tensor_->shape();
   auto out_shape = output_tensor_->shape();
   param_->strides_[param_->num_axes_ - 1] = 1;
   param_->out_strides_[param_->num_axes_ - 1] = 1;
-  param_->data_num_ = input_tensor_->ElementsNum();
+  param_->data_num_ = static_cast<int>(input_tensor_->ElementsNum());
   for (int i = param_->num_axes_ - 2; i >= 0; i--) {
     param_->strides_[i] = in_shape.at(i + 1) * param_->strides_[i + 1];
     param_->out_strides_[i] = out_shape.at(i + 1) * param_->out_strides_[i + 1];
   }
-
-  out_shape_ =
-    reinterpret_cast<int *>(allocator_->Malloc(kNumberTypeInt32, out_shape.size() * sizeof(int), kOfflinePackWeight));
-  MS_CHECK_PTR(out_shape_);
-  memcpy(out_shape_, out_shape.data(), in_shape.size() * sizeof(int));
   return RET_OK;
 }
 
@@ -92,7 +107,7 @@ int TransposeFp32Coder::DoCode(CoderContext *const context) {
   Collect(context,
           {
             "wrapper/fp32/transpose_fp32_wrapper.h",
-            "nnacl/transpose.h",
+            "nnacl/transpose_parameter.h",
             "nnacl/errorcode.h",
             "nnacl/fp32/transpose_fp32.h",
           },
@@ -141,7 +156,9 @@ int TransposeFp32Coder::DoCode(CoderContext *const context) {
   }
 
   code.CodeStruct("trans_param", *param_);
-  dims_ = output_tensor_->shape().size();
+  auto out_shape = output_tensor_->shape();
+  dims_ = static_cast<int>(out_shape.size());
+  code.CodeArray("output_shape", out_shape.data(), dims_, true);
   if (dims_ > MAX_TRANSPOSE_DIM_SIZE) {
     int *dim_size = reinterpret_cast<int *>(malloc(dims_ * sizeof(int)));
     if (dim_size == nullptr) {
@@ -149,7 +166,7 @@ int TransposeFp32Coder::DoCode(CoderContext *const context) {
     }
     *(dim_size + dims_ - 1) = 1;
     for (int i = dims_ - 1; i > 0; --i) {
-      *(dim_size + i - 1) = *(dim_size + i) * out_shape_[i];
+      *(dim_size + i - 1) = *(dim_size + i) * out_shape[i];
     }
     code.CodeArray("dim_size", dim_size, dims_);
     int *position = reinterpret_cast<int *>(malloc(dims_ * thread_num_ * sizeof(int)));
@@ -158,12 +175,15 @@ int TransposeFp32Coder::DoCode(CoderContext *const context) {
       return RET_NULL_PTR;
     }
     code.CodeArray("position", position, dims_ * thread_num_);
-    code.CodeFunction("TransposeDimsFp32", input_tensor_, output_tensor_, out_shape_, "dim_size", "position",
-                      "&trans_param", kDefaultTaskId, thread_num_);
+    code.CodeFunction("TransposeDimsFp32", input_tensor_, output_tensor_, "output_shape", "trans_param.perm_",
+                      "trans_param.strides_", "trans_param.out_strides_", "trans_param.num_axes_", kDefaultTaskId,
+                      thread_num_);
     free(dim_size);
     free(position);
   } else {
-    code.CodeFunction("DoTransposeFp32", input_tensor_, output_tensor_, out_shape_, "&trans_param");
+    code.CodeFunction("DoTransposeFp32", input_tensor_, output_tensor_, "output_shape", "trans_param.perm_",
+                      "trans_param.strides_", "trans_param.out_strides_", "trans_param.data_num_",
+                      "trans_param.num_axes_");
   }
   context->AppendCode(code.str());
   return RET_OK;

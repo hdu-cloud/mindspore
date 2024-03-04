@@ -18,10 +18,13 @@
 #include <memory>
 #include <vector>
 
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -72,7 +75,9 @@ const AnfNodePtr BiasDropoutAddFusion::Process(const FuncGraphPtr &graph, const 
   common::AnfAlgo::CopyNodeAttrs(dropout, fused_node);
   auto manager = graph->manager();
   MS_EXCEPTION_IF_NULL(manager);
-  manager->Replace(dropout, fused_node);
+  if (!manager->Replace(dropout, fused_node)) {
+    MS_LOG(EXCEPTION) << "manager replace node failed in bias dropout fusion.";
+  }
   return get_item;
 }
 }  // namespace opt

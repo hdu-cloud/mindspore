@@ -20,10 +20,13 @@ from __future__ import division
 from mindspore.ops.composite import base
 from mindspore.ops import functional as F
 from mindspore.ops.operations import _inner_ops as inner
+from mindspore.ops.operations import _sequence_ops as _seq
 
 # less is a metafuncgraph object which will determine if two objects are less according to input type
 # using ".register" decorator
 less = base.MultitypeFuncGraph("less", True)
+
+less.set_need_raise()
 
 
 @less.register("Number", "Number")
@@ -71,3 +74,33 @@ def _less_tensor(x, y):
        Tensor, return value of  x and y by operation P.Less()
    """
     return F.tensor_lt(x, y)
+
+
+@less.register("Tuple", "Tuple")
+def _less_tuple(x, y):
+    """
+    Determine whether x is less than to y.
+
+    Args:
+       x(Tuple): Tuple.
+       y(Tuple): Tuple.
+
+    Returns:
+       bool, if x < y return true in python logic, x >= y return false.
+   """
+    return _seq.tuple_lt()(x, y)
+
+
+@less.register("List", "List")
+def _less_list(x, y):
+    """
+    Determine whether x is less than to y.
+
+    Args:
+       x(List): List.
+       y(List): List.
+
+    Returns:
+       bool, if x < y return true in python logic, x >= y return false.
+   """
+    return _seq.list_lt()(x, y)

@@ -15,7 +15,12 @@
  */
 
 #include "plugin/device/ascend/hal/hardware/ascend_communication_group.h"
+#include "plugin/device/ascend/hal/common/ascend_utils.h"
 #include "plugin/device/ascend/hal/hccl_adapter/hccl_adapter.h"
+#include "mindspore/core/utils/ms_context.h"
+#include "runtime/rt.h"
+#include "acl/acl_rt.h"
+#include "acl/acl.h"
 
 namespace mindspore {
 namespace device {
@@ -31,14 +36,27 @@ bool AscendCommunicationGroup::Initialize(void *root_info) {
   if (initialized_) {
     return false;
   }
+  if (hccl::HcclAdapter::GetInstance().UseHcclCM()) {
+    // If using hccl CM envs to launch distributed job, no need to call HcclCommInitRootInfo. The group will be
+    // initialized in rank table way.
+    initialized_ = true;
+    return true;
+  }
 
+  auto ms_context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context);
+  auto device_id = ms_context->get_param<uint32_t>(MS_CTX_DEVICE_ID);
+  (void)aclrtSetDevice(device_id);
   unique_id_ = *(static_cast<HcclRootInfo *>(root_info));
   uint32_t group_rank = GetGroupRank(global_rank_);
-  RETURN_IF_FALSE_WITH_LOG(
-    HcclCommInitRootInfo(static_cast<uint32_t>(size_), &unique_id_, static_cast<uint32_t>(group_rank), &comm_) ==
-      static_cast<int32_t>(HCCL_SUCCESS),
-    "Initializing HCCL communicator failed.");
+  if (HcclCommInitRootInfo(static_cast<uint32_t>(size_), &unique_id_, static_cast<uint32_t>(group_rank), &comm_) !=
+      static_cast<int32_t>(HCCL_SUCCESS)) {
+    const string &error_message = ErrorManagerAdapter::GetErrorMessage(true);
+    MS_LOG(ERROR) << "HcclCommInitRootInfo failed. " + error_message;
+    return false;
+  }
   initialized_ = true;
+  (void)aclrtResetDevice(device_id);
   return true;
 }
 
@@ -46,7 +64,21 @@ bool AscendCommunicationGroup::Finalize() {
   if (!initialized_) {
     return false;
   }
-  CHECK_RET(HcclCommDestroy(comm_), static_cast<int32_t>(HCCL_SUCCESS), "Failed to destroy HCCL communicator.");
+  if (hccl::HcclAdapter::GetInstance().UseHcclCM()) {
+    // If using hccl CM envs to launch distributed job, comm_ is not initialized. So directly return.
+    initialized_ = false;
+    return true;
+  }
+
+  // This function will be called at a lonesome thread that has no rtContext, so HcclCommDestroy will be failed.
+  // Delete these codes when these threads can be bind.
+  auto ms_context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context);
+  auto device_id = ms_context->get_param<uint32_t>(MS_CTX_DEVICE_ID);
+  (void)aclrtSetDevice(device_id);
+  RETURN_IF_FALSE_WITH_LOG(HcclCommDestroy(comm_) == static_cast<int32_t>(HCCL_SUCCESS),
+                           "Failed to destroy HCCL communicator.");
+  (void)aclrtResetDevice(device_id);
   initialized_ = false;
   comm_ = nullptr;
   return true;
@@ -56,7 +88,16 @@ void *AscendCommunicationGroup::GenerateRootInfo(size_t *root_info_size) {
   *root_info_size = sizeof(unique_id_);
   uint32_t group_rank = GetGroupRank(global_rank_);
   if (group_rank == 0) {
-    CHECK_RET(HcclGetRootInfo(&unique_id_), static_cast<int32_t>(HCCL_SUCCESS), "Failed to get HCCL unique id.");
+    if (hccl::HcclAdapter::GetInstance().UseHcclCM()) {
+      // If using hccl CM envs to launch distributed job, no need to call HcclGetRootInfo.
+      return &unique_id_;
+    }
+
+    if (HcclGetRootInfo(&unique_id_) != static_cast<int32_t>(HCCL_SUCCESS)) {
+      const string &error_message = ErrorManager::GetInstance().GetErrorMessage();
+      MS_LOG(ERROR) << "Failed to get HCCL unique id: " + error_message;
+      return nullptr;
+    }
   }
   return &unique_id_;
 }

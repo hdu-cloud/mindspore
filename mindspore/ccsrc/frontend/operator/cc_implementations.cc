@@ -21,9 +21,12 @@
 #include <string>
 #include <cfloat>
 #include <memory>
+#include <type_traits>
+
 #include "utils/log_adapter.h"
-#include "include/common/utils/convert_utils.h"
-#include "utils/ms_utils.h"
+#include "ir/scalar.h"
+#include "ir/value.h"
+#include "utils/convert_utils_base.h"
 
 namespace mindspore {
 // namespace to support primitive operators definition
@@ -139,6 +142,9 @@ T InnerScalarPow(T x, U y) {
 
 template <typename T, typename U>
 bool InnerScalarEq(T x, U y) {
+  if (std::isinf(static_cast<double>(x)) && std::isinf(static_cast<double>(y))) {
+    return (x > 0 && y > 0) || (x < 0 && y < 0);
+  }
   double error = static_cast<double>(x) - static_cast<double>(y);
   error = fabs(error);
   return error < DBL_EPSILON;

@@ -14,7 +14,7 @@ mindspore.nn.TrainOneStepWithLossScaleCell
         - **scale_sense** (Union[Tensor, Cell]) - 如果此值为Cell类型，`TrainOneStepWithLossScaleCell` 会调用它来更新损失缩放系数。如果此值为Tensor类型，可调用 `set_sense_scale` 来更新损失缩放系数，shape为 :math:`()` 或 :math:`(1,)` 。
 
     输入：
-        - **(*inputs)** (Tuple(Tensor)) - shape为 :math:`(N, \ldots)` 的Tensor组成的元组。
+        - **\*inputs** (Tuple(Tensor)) - shape为 :math:`(N, \ldots)` 的Tensor组成的元组。
 
     输出：
         Tuple，包含三个Tensor，分别为损失函数值、溢出状态和当前损失缩放系数。
@@ -25,7 +25,7 @@ mindspore.nn.TrainOneStepWithLossScaleCell
 
     异常：
         - **TypeError** - `scale_sense` 既不是Cell，也不是Tensor。
-        - **ValueError** - `scale_sense` 的shape既不是(1,)也不是()。
+        - **ValueError** - `scale_sense` 的shape既不是 :math:`(1,)` 也不是 :math:`()` 。
 
     .. py:method:: get_overflow_status(status, compute_output)
 
@@ -34,8 +34,8 @@ mindspore.nn.TrainOneStepWithLossScaleCell
         溢出检测的目标过程执行完成后，获取溢出结果。继承该类自定义训练网络时，可复用该接口。
 
         参数：
-            - **status** (object) - 用于检测溢出的状态实例。
-            - **compute_output** - 对特定计算过程进行溢出检测时，将 `compute_output` 设置为该计算过程的输出，以确保在执行计算之前获取了 `status`。
+            - **status** (object) - 用于控制与 `start_overflow_check` 的执行序，应设置为 `start_overflow_check` 的第一输出。
+            - **compute_output** - 对特定计算过程进行溢出检测时，将 `compute_output` 设置为该计算过程的输出。
 
         返回：
             bool，是否发生溢出。
@@ -70,4 +70,4 @@ mindspore.nn.TrainOneStepWithLossScaleCell
             - **compute_input** (object) - 后续运算的输入。需要对特定的计算过程进行溢出检测。将 `compute_input` 设置这一计算过程的输入，以确保在执行该计算之前清除了溢出状态。
 
         返回：
-            Tuple[object, object]，GPU后端的第一个值为False，而其他后端的第一个值是NPUAllocFloatStatus的实例。该值用于在 `get_overflow_status` 期间检测溢出。第二个值与 `compute_input` 的输入相同，用于控制执行序。
+            Tuple[object, object]，第一输出用于控制执行序，为保证编译优化后 `start_overflow_check` 在 `get_overflow_status` 前执行，该值应作为 `get_overflow_status` 的第一个输入。第二输出与 `compute_input` 的输入相同，用于控制执行序，保证在函数返回时完成对溢出标志的清理。

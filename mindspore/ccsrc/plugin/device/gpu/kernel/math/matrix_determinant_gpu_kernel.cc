@@ -19,6 +19,7 @@
 #include <utility>
 #include <string>
 #include <algorithm>
+#include "mindspore/core/ops/math_ops.h"
 #include "abstract/utils.h"
 #include "kernel/common_utils.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/complex.h"
@@ -105,8 +106,10 @@ bool MatrixDeterminantGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &
   CHECK_CUBLAS_RET_WITH_EXCEPT_NOTRACE(cublasSetStream(cublas_handle_, reinterpret_cast<cudaStream_t>(cuda_stream_)),
                                        "For MatrixDeterminantGpuKernelMod cublasSetStream Fail");
   // Transpose input data from rowMajor to colMajor.
-  MatrixTranspose(input, SizeToInt(input_elements_), SizeToInt(m_), SizeToInt(m_), middle_lu_output, device_id_,
-                  reinterpret_cast<cudaStream_t>(cuda_stream_));
+  cudaError_t status = cudaErrorNotReady;
+  status = MatrixTranspose(input, SizeToInt(input_elements_), SizeToInt(m_), SizeToInt(m_), middle_lu_output,
+                           device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   // Compute the partial pivoted lu factorization.
   // If m_ / batch_size_ <= 128 :
   //  We use batched cublas api is faster by empiricism, for small matrices or large batch.
@@ -143,10 +146,12 @@ bool MatrixDeterminantGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &
   CHECK_CUDA_RET_WITH_ERROR_NOTRACE(cudaMemcpyAsync(&host_info, info, sizeof(int), cudaMemcpyDeviceToHost,
                                                     reinterpret_cast<cudaStream_t>(cuda_stream_)),
                                     "For MatrixDeterminantGpuKernelMod cudaMemcpyAsync Fail");
+  // Sync host info
+  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(cuda_stream_)),
+                                     "cudaStreamSynchronized failed");
   if (host_info > 0) {
-    MS_LOG(ERROR) << "For '" << kernel_name_ << "', it's " << host_info
-                  << "-th parameter is wrong, please check your input data info.";
-    return false;
+    MS_LOG(WARNING) << "For '" << kernel_name_ << "', it's " << host_info
+                    << "-th parameter is wrong, please check your input data info.";
   }
   // Compute the determinant (-1)^s * prod(diag(U)), s is the order of the permutation in pivots and U is the result of
   // LU factorization.
@@ -154,16 +159,18 @@ bool MatrixDeterminantGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &
   if (is_sign_log_determinant_) {
     // For LogMatrixDeterminant, two output -->(sign determinant, log_abs_determinant)
     auto log_determinant_output = GetDeviceAddress<T>(outputs, kIndex1);
-    CalculateDeterminantByLu(middle_lu_output, pivot, SizeToInt(m_), SizeToInt(batch_size_), is_sign_log_determinant_,
-                             log_determinant_output, sign_output, device_id_,
-                             reinterpret_cast<cudaStream_t>(cuda_stream_));
+    status = CalculateDeterminantByLu(middle_lu_output, pivot, SizeToInt(m_), SizeToInt(batch_size_),
+                                      is_sign_log_determinant_, log_determinant_output, sign_output, device_id_,
+                                      reinterpret_cast<cudaStream_t>(cuda_stream_));
   } else {
     // For MatrixDeterminant, only one output -->(determinant)
     auto determinant_output = sign_output;
     sign_output = nullptr;
-    CalculateDeterminantByLu(middle_lu_output, pivot, SizeToInt(m_), SizeToInt(batch_size_), is_sign_log_determinant_,
-                             determinant_output, sign_output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+    status = CalculateDeterminantByLu(middle_lu_output, pivot, SizeToInt(m_), SizeToInt(batch_size_),
+                                      is_sign_log_determinant_, determinant_output, sign_output, device_id_,
+                                      reinterpret_cast<cudaStream_t>(cuda_stream_));
   }
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -178,21 +185,19 @@ std::vector<std::pair<KernelAttr, MatrixDeterminantGpuKernelMod::MatrixDetermina
      &MatrixDeterminantGpuKernelMod::LaunchKernel<utils::Complex<float>>},
     {KernelAttr().AddInputAttr(kNumberTypeComplex128).AddOutputAttr(kNumberTypeComplex128),
      &MatrixDeterminantGpuKernelMod::LaunchKernel<utils::Complex<double>>},
+};
+
+std::vector<std::pair<KernelAttr, LogMatrixDeterminantGpuKernelMod::LogMatrixDeterminantFunc>>
+  LogMatrixDeterminantGpuKernelMod::func_list_ = {
     // LogMatrixDeterminant's launch kernel
-    {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
-     &MatrixDeterminantGpuKernelMod::LaunchKernel<float>},
-    {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64),
-     &MatrixDeterminantGpuKernelMod::LaunchKernel<double>},
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeComplex64)
-       .AddOutputAttr(kNumberTypeComplex64)
-       .AddOutputAttr(kNumberTypeComplex64),
-     &MatrixDeterminantGpuKernelMod::LaunchKernel<utils::Complex<float>>},
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeComplex128)
-       .AddOutputAttr(kNumberTypeComplex128)
-       .AddOutputAttr(kNumberTypeComplex128),
-     &MatrixDeterminantGpuKernelMod::LaunchKernel<utils::Complex<double>>},
+    {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32).AddAllSameAttr(true),
+     &LogMatrixDeterminantGpuKernelMod::LaunchKernel<float>},
+    {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64).AddAllSameAttr(true),
+     &LogMatrixDeterminantGpuKernelMod::LaunchKernel<double>},
+    {KernelAttr().AddInputAttr(kNumberTypeComplex64).AddOutputAttr(kNumberTypeComplex64).AddAllSameAttr(true),
+     &LogMatrixDeterminantGpuKernelMod::LaunchKernel<utils::Complex<float>>},
+    {KernelAttr().AddInputAttr(kNumberTypeComplex128).AddOutputAttr(kNumberTypeComplex128).AddAllSameAttr(true),
+     &LogMatrixDeterminantGpuKernelMod::LaunchKernel<utils::Complex<double>>},
 };
 
 void MatrixDeterminantGpuKernelMod::InitWorkSpaceSizeList() {
@@ -215,8 +220,15 @@ std::vector<KernelAttr> MatrixDeterminantGpuKernelMod::GetOpSupport() {
   return support_list;
 }
 
+std::vector<KernelAttr> LogMatrixDeterminantGpuKernelMod::GetOpSupport() {
+  std::vector<KernelAttr> support_list;
+  (void)std::transform(func_list_.begin(), func_list_.end(), std::back_inserter(support_list),
+                       [](const std::pair<KernelAttr, LogMatrixDeterminantFunc> &pair) { return pair.first; });
+  return support_list;
+}
+
 MS_KERNEL_FACTORY_REG(NativeGpuKernelMod, MatrixDeterminant, MatrixDeterminantGpuKernelMod);
 // Whether to computes the sign and the log of the absolute value of the determinant.
-MS_KERNEL_FACTORY_REG(NativeGpuKernelMod, LogMatrixDeterminant, MatrixDeterminantGpuKernelMod);
+MS_KERNEL_FACTORY_REG(NativeGpuKernelMod, LogMatrixDeterminant, LogMatrixDeterminantGpuKernelMod);
 }  // namespace kernel
 }  // namespace mindspore

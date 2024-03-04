@@ -74,6 +74,10 @@ TEST_F(TestMetaTensor, ShapeTest) {
 
   // Test number of elements
   ASSERT_EQ(210, meta_tensor_.ElementsNum());
+
+  std::vector<int64_t> dimensions1({100000, 100000, 100000});
+  meta_tensor_.set_shape(dimensions1);
+  ASSERT_EQ(1e15, meta_tensor_.ElementsNum());
 }
 
 TEST_F(TestMetaTensor, EqualTest) {
@@ -284,7 +288,7 @@ TEST_F(TestTensor, InitByFloatArrayDataCTest) {
   // Print each elements
   std::cout << "Elements: " << std::endl;
   float *tensor_data = reinterpret_cast<float *>(tensor->data_c());
-  for (int i = 0; i < tensor->ElementsNum(); i++) {
+  for (int64_t i = 0; i < tensor->ElementsNum(); i++) {
     std::cout << tensor_data[i] << std::endl;
   }
 }
@@ -432,6 +436,35 @@ TEST_F(TestTensor, TensorSetShapeDataTest) {
   tensor.set_shape(little_shape);
   ASSERT_EQ(2, tensor.DataSize());
   ASSERT_EQ(nullptr, tensor.data().const_data());
+}
+
+/// Feature: Tensor offload
+/// Description: Test offload tensor to file.
+/// Expectation: Offload and Load file success.
+TEST_F(TestTensor, TensorOffloadTest) {
+  // Create a Tensor with wanted data type and shape
+  std::vector<int64_t> tensor_shape({2, 3});
+  Tensor tensor(TypeId::kNumberTypeInt64, tensor_shape);
+  ASSERT_EQ(6, tensor.DataSize());
+  ASSERT_EQ(nullptr, tensor.data().const_data());
+
+  // Init a data buffer
+  int64_t init_data[] = {1, 2, 3, 4, 5, 6};
+  errno_t ret = memcpy_s(tensor.data_c(), tensor.data().nbytes(), init_data, sizeof(init_data));
+  ASSERT_EQ(0, ret);
+  ASSERT_NE(nullptr, tensor.data().const_data());
+  auto const kTmpFilePath = "./test_file_path";
+  tensor.Offload(kTmpFilePath);
+  ASSERT_EQ(tensor.GetOffloadFilePath(), kTmpFilePath);
+
+  // Check tensor data
+  int64_t load_data[] = {0, 0, 0, 0, 0, 0};
+  ret = memcpy_s(load_data, tensor.data().nbytes(), tensor.data_c(), sizeof(load_data));
+  ASSERT_EQ(0, ret);
+  const size_t kElemNum = 6;
+  for (size_t i = 0; i < kElemNum; ++i) {
+    ASSERT_EQ(load_data[i], init_data[i]);
+  }
 }
 
 /// Feature: SparseTensor

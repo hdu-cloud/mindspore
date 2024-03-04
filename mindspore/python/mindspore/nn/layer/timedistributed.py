@@ -15,16 +15,16 @@
 """Time Distributed."""
 from __future__ import absolute_import
 
-from mindspore.ops.primitive import constexpr, Primitive
+from mindspore.ops.primitive import constexpr, Primitive, _primexpr
 from mindspore.ops import Reshape, Transpose, Stack, Unstack
 from mindspore.common import Tensor
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from mindspore.nn.cell import Cell
 
 __all__ = ['TimeDistributed']
 
 
-@constexpr
+@_primexpr
 def _check_reshape_pos(reshape_pos, inputs_shape, outputs_shape, prim_name=None):
     msg_prefix = f"For '{prim_name}', the" if prim_name else "The"
     if reshape_pos >= len(outputs_shape) or inputs_shape[reshape_pos] != outputs_shape[reshape_pos]:
@@ -35,7 +35,7 @@ def _check_reshape_pos(reshape_pos, inputs_shape, outputs_shape, prim_name=None)
                          f"{outputs_shape}. You may try pass parameters without 'reshape_with_axis'.")
 
 
-@constexpr
+@_primexpr
 def _check_expand_dims_axis(time_axis, ndim, prim_name=None):
     msg_prefix = f"For '{prim_name}', the" if prim_name else "The"
     if time_axis > ndim:
@@ -57,7 +57,7 @@ def _check_data(flag, prim_name=None):
         raise TypeError(f"{msg_prefix} inputs and outputs must be a Tensor.")
 
 
-@constexpr
+@_primexpr
 def _check_inputs_dim(shape, prim_name=None):
     msg_prefix = f"For '{prim_name}', the" if prim_name else "The"
     if len(shape) < 3:
@@ -78,7 +78,7 @@ class TimeDistributed(Cell):
     Args:
         layer(Union[Cell, Primitive]): The Cell or Primitive which will be wrapped.
         time_axis(int): The axis of time_step.
-        reshape_with_axis(int): The axis which will be reshaped with time_axis. Default: None.
+        reshape_with_axis(int): The axis which will be reshaped with time_axis. Default: ``None`` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(N, T, *)`,
@@ -94,9 +94,11 @@ class TimeDistributed(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> x = Tensor(np.random.random([32, 10, 3]), mindspore.float32)
-        >>> dense = nn.Dense(3, 6)
-        >>> net = nn.TimeDistributed(dense, time_axis=1, reshape_with_axis=0)
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> x = ms.Tensor(np.random.random([32, 10, 3]), ms.float32)
+        >>> dense = ms.nn.Dense(3, 6)
+        >>> net = ms.nn.TimeDistributed(dense, time_axis=1, reshape_with_axis=0)
         >>> output = net(x)
         >>> print(output.shape)
         (32, 10, 6)

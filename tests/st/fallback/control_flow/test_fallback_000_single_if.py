@@ -13,19 +13,19 @@
 # limitations under the License.
 # ============================================================================
 """ test graph fallback control flow."""
-import pytest
 import numpy as np
+import mindspore as ms
 from mindspore import Tensor, jit, context
 from mindspore import dtype as mstype
+from mindspore.nn import Cell
+from tests.st.fallback.cases_register import case_register
 
 context.set_context(mode=context.GRAPH_MODE)
 
 
-@pytest.mark.level0
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.platform_arm_ascend_training
-@pytest.mark.platform_x86_ascend_training
-@pytest.mark.env_onecard
+@case_register.level0
+@case_register.target_gpu
+@case_register.target_ascend
 def test_single_if_4():
     """
     Feature: JIT Fallback
@@ -44,11 +44,9 @@ def test_single_if_4():
     assert res == 42
 
 
-@pytest.mark.level1
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.platform_arm_ascend_training
-@pytest.mark.platform_x86_ascend_training
-@pytest.mark.env_onecard
+@case_register.level1
+@case_register.target_gpu
+@case_register.target_ascend
 def test_single_if_two_cond():
     """
     Feature: JIT Fallback
@@ -66,10 +64,8 @@ def test_single_if_two_cond():
     assert res == 1
 
 
-@pytest.mark.level1
-@pytest.mark.platform_arm_ascend_training
-@pytest.mark.platform_x86_ascend_training
-@pytest.mark.env_onecard
+@case_register.level1
+@case_register.target_ascend
 def test_single_if_builtin_function_abs():
     """
     Feature: JIT Fallback
@@ -86,10 +82,8 @@ def test_single_if_builtin_function_abs():
     assert res == -13
 
 
-@pytest.mark.level1
-@pytest.mark.platform_arm_ascend_training
-@pytest.mark.platform_x86_ascend_training
-@pytest.mark.env_onecard
+@case_register.level1
+@case_register.target_ascend
 def test_single_if_builtin_function_abs_min():
     """
     Feature: JIT Fallback
@@ -105,3 +99,75 @@ def test_single_if_builtin_function_abs_min():
         return x * 2
     res = control_flow_if()
     assert res == -22
+
+
+@case_register.level0
+@case_register.target_gpu
+@case_register.target_ascend
+def test_single_if_no_else_type():
+    """
+    Feature: JIT Fallback
+    Description: Test fallback with control flow.
+    Expectation: No exception.
+    """
+    class FalseNet(Cell):
+        def __init__(self):
+            super(FalseNet, self).__init__()
+            self.cond = False
+
+        def construct(self):
+            x = np.array(1)
+            if self.cond:
+                return type(2).mro()
+            return type(x).mro()
+
+    test_net = FalseNet()
+    res = test_net()
+    assert str(res) == "[<class 'numpy.ndarray'>, <class 'object'>]"
+
+
+@case_register.level1
+@case_register.target_gpu
+@case_register.target_ascend
+def test_single_if_no_else_type_2():
+    """
+    Feature: JIT Fallback
+    Description: Test fallback with control flow.
+    Expectation: No exception.
+    """
+    class TrueNet(Cell):
+        def __init__(self):
+            super(TrueNet, self).__init__()
+            self.cond = True
+
+        def construct(self):
+            x = np.array(2)
+            y = 2
+            if self.cond:
+                return type(y).mro()
+            return type(x).mro()
+
+    test_net = TrueNet()
+    res = test_net()
+    assert str(res) == "[<class 'int'>, <class 'object'>]"
+
+
+@case_register.level0
+@case_register.target_ascend
+@case_register.target_gpu
+def test_single_if_tensor_asnumpy_as_condition():
+    """
+    Feature: JIT Fallback
+    Description: Test PyExecute as condition.
+    Expectation: No exception.
+    """
+    @jit
+    def tensor_asnumpy_as_condition(x):
+        cond = x.asnumpy()
+        if cond:
+            return x + 10
+        return x
+
+    x = Tensor(1.0, ms.float32)
+    out = tensor_asnumpy_as_condition(x)
+    assert out == 11

@@ -16,15 +16,10 @@
 
 #include "plugin/device/cpu/kernel/cauchy_cpu_kernel.h"
 #include <vector>
-#include <cmath>
-#include <type_traits>
 #include <memory>
-#include <functional>
 #include <random>
 #include "mindspore/core/ops/cauchy.h"
-#include "plugin/device/cpu/hal/device/cpu_device_address.h"
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
-#include "plugin/device/cpu/kernel/arithmetic_cpu_kernel.h"
 
 namespace mindspore {
 namespace kernel {
@@ -46,13 +41,13 @@ bool CauchyCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::v
 
 bool CauchyCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &, const std::vector<kernel::AddressPtr> &,
                                 const std::vector<kernel::AddressPtr> &outputs) {
-  LaunchKernel<float>(outputs);
+  (void)LaunchKernel<float>(outputs);
   return true;
 }
 
 template <typename T>
-bool CauchyCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &outputs) {
-  T *y_data = reinterpret_cast<T *>(outputs[0]->addr);
+bool CauchyCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &outputs) const {
+  T *y_data = static_cast<T *>(outputs[0]->addr);
   std::random_device rd;
   std::default_random_engine generator(rd());
   std::cauchy_distribution<float> cauchy_d(median_, sigma_);

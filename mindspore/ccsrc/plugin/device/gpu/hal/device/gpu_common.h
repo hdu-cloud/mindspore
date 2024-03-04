@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,188 +26,207 @@
 #include <sstream>
 #include "utils/log_adapter.h"
 #include "utils/trace_base.h"
+#include "utils/ms_utils.h"
 #include "include/curand.h"
 
 namespace mindspore {
 namespace device {
 namespace gpu {
-#define CHECK_OP_RET_WITH_EXCEPT(expression, message)                                 \
-  {                                                                                   \
-    bool success = (expression);                                                      \
-    if (!success) {                                                                   \
-      MS_LOG(EXCEPTION) << "Op Error: " << message << " | Error Number: " << success; \
-    }                                                                                 \
-  }
+#define CHECK_OP_RET_WITH_EXCEPT(expression, message)                                                     \
+  do {                                                                                                    \
+    bool success = (expression);                                                                          \
+    if (!success) {                                                                                       \
+      MS_LOG(INTERNAL_EXCEPTION) << "#dmsg#Op Error:#dmsg#" << message << " | Error Number: " << success; \
+    }                                                                                                     \
+  } while (0);
 
-#define CHECK_OP_RET_WITH_EXCEPT_TRANCE(node, expression, message)                                  \
-  {                                                                                                 \
-    bool success = (expression);                                                                    \
-    if (!success) {                                                                                 \
-      MS_LOG(EXCEPTION) << "Op Error: " << message << " | " << trace::DumpSourceLines(node.lock()); \
-    }                                                                                               \
-  }
+#define CHECK_OP_RET_WITH_EXCEPT_TRANCE(node, expression, message)              \
+  do {                                                                          \
+    bool success = (expression);                                                \
+    if (!success) {                                                             \
+      MS_LOG(INTERNAL_EXCEPTION) << "#dmsg#Op Error:#dmsg#" << message << " | " \
+                                 << trace::DumpSourceLines(node.lock());        \
+    }                                                                           \
+  } while (0);
 
 #define CHECK_OP_RET_WITH_ERROR(expression, message)                              \
-  {                                                                               \
+  do {                                                                            \
     bool success = (expression);                                                  \
     if (!success) {                                                               \
       MS_LOG(ERROR) << "Op Error: " << message << " | Error Number: " << success; \
     }                                                                             \
-  }
+  } while (0);
 
 #define CHECK_RET_WITH_RETURN_ERROR(expression, message) \
-  {                                                      \
+  do {                                                   \
     bool success = (expression);                         \
     if (!success) {                                      \
       MS_LOG(ERROR) << message;                          \
       return false;                                      \
     }                                                    \
-  }
+  } while (0);
 
 #define CHECK_CUDA_RET_WITH_ERROR(node, expression, message)                                                           \
-  {                                                                                                                    \
+  do {                                                                                                                 \
     cudaError_t status = (expression);                                                                                 \
     if (status != cudaSuccess) {                                                                                       \
       MS_LOG(ERROR) << "CUDA Error: " << message << " | Error Number: " << status << " " << cudaGetErrorString(status) \
                     << trace::DumpSourceLines(node.lock(), false);                                                     \
     }                                                                                                                  \
-  }
+  } while (0);
 
 #define CHECK_CUDA_RET_WITH_ERROR_NOTRACE(expression, message)                           \
-  {                                                                                      \
+  do {                                                                                   \
     cudaError_t status = (expression);                                                   \
     if (status != cudaSuccess) {                                                         \
       MS_LOG(ERROR) << "CUDA Error: " << message << " | Error Number: " << status << " " \
                     << cudaGetErrorString(status);                                       \
     }                                                                                    \
-  }
+  } while (0);
 
 #define CHECK_CUDA_RET_WITH_RETURN_ERROR_NOTRACE(expression, message)                    \
-  {                                                                                      \
+  do {                                                                                   \
     cudaError_t status = (expression);                                                   \
     if (status != cudaSuccess) {                                                         \
       MS_LOG(ERROR) << "CUDA Error: " << message << " | Error Number: " << status << " " \
                     << cudaGetErrorString(status);                                       \
       return false;                                                                      \
     }                                                                                    \
-  }
+  } while (0);
 
-#define CHECK_CUDA_RET_WITH_EXCEPT(node, expression, message)                                 \
-  {                                                                                           \
-    cudaError_t status = (expression);                                                        \
-    if (status != cudaSuccess) {                                                              \
-      MS_LOG(EXCEPTION) << "CUDA Error: " << message << " | Error Number: " << status << " "  \
-                        << cudaGetErrorString(status) << trace::DumpSourceLines(node.lock()); \
-    }                                                                                         \
-  }
+#define CHECK_CUDA_STATUS(status, kernel_name)                                                                 \
+  do {                                                                                                         \
+    if (status != cudaSuccess) {                                                                               \
+      if (status != cudaErrorNotReady && mindspore::common::GetEnv("CUDA_LAUNCH_BLOCKING") != "1") {           \
+        MS_LOG(EXCEPTION)                                                                                      \
+          << "The cuda Kernel fails to run, the error number is " << status << ", which means "                \
+          << cudaGetErrorString(status) << ". But the name of failed kernel is uncertain and the "             \
+          << "backtrace of error might be incorrect, since CUDA error might be asynchronously reported "       \
+          << "at some other function call. Please exporting CUDA_LAUNCH_BLOCKING=1 for more accurate "         \
+          << "error positioning.";                                                                             \
+      } else {                                                                                                 \
+        MS_LOG(EXCEPTION) << "For `" << kernel_name << "`, the cuda Kernel fails to run, the error number is " \
+                          << status << ", which means " << cudaGetErrorString(status) << ".";                  \
+      }                                                                                                        \
+    }                                                                                                          \
+  } while (0);
 
-#define CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(expression, message)                              \
-  {                                                                                          \
-    cudaError_t status = (expression);                                                       \
-    if (status != cudaSuccess) {                                                             \
-      MS_LOG(EXCEPTION) << "CUDA Error: " << message << " | Error Number: " << status << " " \
-                        << cudaGetErrorString(status);                                       \
-    }                                                                                        \
-  }
+#define CHECK_CUDA_RET_WITH_EXCEPT(node, expression, message)                                           \
+  do {                                                                                                  \
+    cudaError_t status = (expression);                                                                  \
+    if (status != cudaSuccess) {                                                                        \
+      MS_LOG(EXCEPTION) << "#umsg#CUDA Error:#umsg#" << message << " | Error Number: " << status << " " \
+                        << cudaGetErrorString(status) << trace::DumpSourceLines(node.lock());           \
+    }                                                                                                   \
+  } while (0);
 
-#define CHECK_CUDNN_RET_WITH_EXCEPT(node, expression, message)                                 \
-  {                                                                                            \
-    cudnnStatus_t status = (expression);                                                       \
-    if (status != CUDNN_STATUS_SUCCESS) {                                                      \
-      MS_LOG(EXCEPTION) << "cuDNN Error: " << message << " | Error Number: " << status << " "  \
-                        << cudnnGetErrorString(status) << trace::DumpSourceLines(node.lock()); \
-    }                                                                                          \
-  }
+#define CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(expression, message)                                         \
+  do {                                                                                                  \
+    cudaError_t status = (expression);                                                                  \
+    if (status != cudaSuccess) {                                                                        \
+      MS_LOG(EXCEPTION) << "#umsg#CUDA Error:#umsg#" << message << " | Error Number: " << status << " " \
+                        << cudaGetErrorString(status);                                                  \
+    }                                                                                                   \
+  } while (0);
 
-#define CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(expression, message)                              \
-  {                                                                                           \
-    cudnnStatus_t status = (expression);                                                      \
-    if (status != CUDNN_STATUS_SUCCESS) {                                                     \
-      MS_LOG(EXCEPTION) << "cuDNN Error: " << message << " | Error Number: " << status << " " \
-                        << cudnnGetErrorString(status);                                       \
-    }                                                                                         \
-  }
+#define CHECK_CUDNN_RET_WITH_EXCEPT(node, expression, message)                                           \
+  do {                                                                                                   \
+    cudnnStatus_t status = (expression);                                                                 \
+    if (status != CUDNN_STATUS_SUCCESS) {                                                                \
+      MS_LOG(EXCEPTION) << "#umsg#cuDNN Error:#umsg#" << message << " | Error Number: " << status << " " \
+                        << cudnnGetErrorString(status) << trace::DumpSourceLines(node.lock());           \
+    }                                                                                                    \
+  } while (0);
+
+#define CHECK_CUDNN_RET_WITH_EXCEPT_NOTRACE(expression, message)                                         \
+  do {                                                                                                   \
+    cudnnStatus_t status = (expression);                                                                 \
+    if (status != CUDNN_STATUS_SUCCESS) {                                                                \
+      MS_LOG(EXCEPTION) << "#umsg#cuDNN Error:#umsg#" << message << " | Error Number: " << status << " " \
+                        << cudnnGetErrorString(status);                                                  \
+    }                                                                                                    \
+  } while (0);
 
 #define CHECK_CUDNN_RET_WITH_ERROR_NOTRACE(expression, message)                           \
-  {                                                                                       \
+  do {                                                                                    \
     cudnnStatus_t status = (expression);                                                  \
     if (status != CUDNN_STATUS_SUCCESS) {                                                 \
       MS_LOG(ERROR) << "cuDNN Error: " << message << " | Error Number: " << status << " " \
                     << cudnnGetErrorString(status);                                       \
     }                                                                                     \
-  }
+  } while (0);
 
 #define CHECK_CUDNN_RET_WITH_ERROR(node, expression, message)                                     \
-  {                                                                                               \
+  do {                                                                                            \
     cudnnStatus_t status = (expression);                                                          \
     if (status != CUDNN_STATUS_SUCCESS) {                                                         \
       MS_LOG(ERROR) << "cuDNN Error: " << message << " | Error Number: " << status << " "         \
                     << cudnnGetErrorString(status) << trace::DumpSourceLines(node.lock(), false); \
     }                                                                                             \
-  }
+  } while (0);
 
-#define CHECK_CUBLAS_RET_WITH_EXCEPT_NOTRACE(expression, message)                              \
-  {                                                                                            \
-    cublasStatus_t status = (expression);                                                      \
-    if (status != CUBLAS_STATUS_SUCCESS) {                                                     \
-      MS_LOG(EXCEPTION) << "cuBLAS Error: " << message << " | Error Number: " << status << " " \
-                        << mindspore::device::gpu::cuBlasGetErrorString(status);               \
-    }                                                                                          \
-  }
+#define CHECK_CUBLAS_RET_WITH_EXCEPT_NOTRACE(expression, message)                                         \
+  do {                                                                                                    \
+    cublasStatus_t status = (expression);                                                                 \
+    if (status != CUBLAS_STATUS_SUCCESS) {                                                                \
+      MS_LOG(EXCEPTION) << "#umsg#cuBLAS Error:#umsg#" << message << " | Error Number: " << status << " " \
+                        << mindspore::device::gpu::cuBlasGetErrorString(status);                          \
+    }                                                                                                     \
+  } while (0);
 
-#define CHECK_CUBLAS_RET_WITH_EXCEPT(node, expression, message)                                \
-  {                                                                                            \
-    cublasStatus_t status = (expression);                                                      \
-    if (status != CUBLAS_STATUS_SUCCESS) {                                                     \
-      MS_LOG(EXCEPTION) << "cuBLAS Error: " << message << " | Error Number: " << status << " " \
-                        << mindspore::device::gpu::cuBlasGetErrorString(status)                \
-                        << trace::DumpSourceLines(node.lock());                                \
-    }                                                                                          \
-  }
+#define CHECK_CUBLAS_RET_WITH_EXCEPT(node, expression, message)                                           \
+  do {                                                                                                    \
+    cublasStatus_t status = (expression);                                                                 \
+    if (status != CUBLAS_STATUS_SUCCESS) {                                                                \
+      MS_LOG(EXCEPTION) << "#umsg#cuBLAS Error:#umsg#" << message << " | Error Number: " << status << " " \
+                        << mindspore::device::gpu::cuBlasGetErrorString(status)                           \
+                        << trace::DumpSourceLines(node.lock());                                           \
+    }                                                                                                     \
+  } while (0);
 
 #define CHECK_CUBLAS_RET_WITH_ERROR(expression, message)                                   \
-  {                                                                                        \
+  do {                                                                                     \
     cublasStatus_t status = (expression);                                                  \
     if (status != CUBLAS_STATUS_SUCCESS) {                                                 \
       MS_LOG(ERROR) << "cuBLAS Error: " << message << " | Error Number: " << status << " " \
                     << mindspore::device::gpu::cuBlasGetErrorString(status);               \
     }                                                                                      \
-  }
+  } while (0);
 
-#define CHECK_CUSOLVER_RET_WITH_EXCEPT_NOTRACE(expression, message)                        \
-  {                                                                                        \
-    cusolverStatus_t status = (expression);                                                \
-    if (status != CUSOLVER_STATUS_SUCCESS) {                                               \
-      MS_LOG(EXCEPTION) << "cusolver Error: " << message << " | Error Number: " << status; \
-    }                                                                                      \
-  }
+#define CHECK_CUSOLVER_RET_WITH_EXCEPT_NOTRACE(expression, message)                                   \
+  do {                                                                                                \
+    cusolverStatus_t status = (expression);                                                           \
+    if (status != CUSOLVER_STATUS_SUCCESS) {                                                          \
+      MS_LOG(EXCEPTION) << "#umsg#cusolver Error:#umsg#" << message << " | Error Number: " << status; \
+    }                                                                                                 \
+  } while (0);
 
-#define CHECK_CUSOLVER_RET_WITH_EXCEPT(node, expression, message)                         \
-  {                                                                                       \
-    cusolverStatus_t status = (expression);                                               \
-    if (status != CUSOLVER_STATUS_SUCCESS) {                                              \
-      MS_LOG(EXCEPTION) << "cusolver Error: " << message << " | Error Number: " << status \
-                        << trace::DumpSourceLines(node.lock());                           \
-      ;                                                                                   \
-    }                                                                                     \
-  }
+#define CHECK_CUSOLVER_RET_WITH_EXCEPT(node, expression, message)                                    \
+  do {                                                                                               \
+    cusolverStatus_t status = (expression);                                                          \
+    if (status != CUSOLVER_STATUS_SUCCESS) {                                                         \
+      MS_LOG(EXCEPTION) << "#umsg#cusolver Error:#umsg#" << message << " | Error Number: " << status \
+                        << trace::DumpSourceLines(node.lock());                                      \
+      ;                                                                                              \
+    }                                                                                                \
+  } while (0);
 
 #define CHECK_CUSOLVER_RET_WITH_ERROR(expression, message)                             \
-  {                                                                                    \
+  do {                                                                                 \
     cusolverStatus_t status = (expression);                                            \
     if (status != CUSOLVER_STATUS_SUCCESS) {                                           \
       MS_LOG(ERROR) << "cusolver Error: " << message << " | Error Number: " << status; \
     }                                                                                  \
-  }
+  } while (0);
 
-#define CHECK_NCCL_RET_WITH_EXCEPT(node, expression, message)                         \
-  {                                                                                   \
-    int result = (expression);                                                        \
-    if (result != ncclSuccess) {                                                      \
-      MS_LOG(EXCEPTION) << "NCCL Error: " << message << " | Error Number: " << result \
-                        << trace::DumpSourceLines(node.lock());                       \
-    }                                                                                 \
-  }
+#define CHECK_NCCL_RET_WITH_EXCEPT(node, expression, message)                                    \
+  do {                                                                                           \
+    int result = (expression);                                                                   \
+    if (result != ncclSuccess) {                                                                 \
+      MS_LOG(EXCEPTION) << "#umsg#NCCL Error:#umsg#" << message << " | Error Number: " << result \
+                        << trace::DumpSourceLines(node.lock());                                  \
+    }                                                                                            \
+  } while (0);
 
 #define CHECK_CUSPARSE_RET_WITH_ERROR(expression, message)                           \
   do {                                                                               \
@@ -215,15 +234,15 @@ namespace gpu {
     if (result != CUSPARSE_STATUS_SUCCESS) {                                         \
       MS_LOG(ERROR) << "cusparse Error: " << message << " | Error Code: " << result; \
     }                                                                                \
-  } while (0)
+  } while (0);
 
-#define CHECK_CUSPARSE_RET_WITH_EXCEPT(expression, message)                              \
-  do {                                                                                   \
-    cusparseStatus_t result = (expression);                                              \
-    if (result != CUSPARSE_STATUS_SUCCESS) {                                             \
-      MS_LOG(EXCEPTION) << "cusparse Error: " << message << " | Error Code: " << result; \
-    }                                                                                    \
-  } while (0)
+#define CHECK_CUSPARSE_RET_WITH_EXCEPT(expression, message)                                         \
+  do {                                                                                              \
+    cusparseStatus_t result = (expression);                                                         \
+    if (result != CUSPARSE_STATUS_SUCCESS) {                                                        \
+      MS_LOG(EXCEPTION) << "#umsg#cusparse Error:#umsg#" << message << " | Error Code: " << result; \
+    }                                                                                               \
+  } while (0);
 
 #define VARIABLE_NOT_USED(var) \
   { (void)(var); }
@@ -304,14 +323,14 @@ inline const char *cuBlasGetErrorString(cublasStatus_t status) {
   }
 }
 
-#define CHECK_CURAND_RET_WITH_EXCEPT(expression, message)                                           \
-  {                                                                                                 \
-    curandStatus_t status = (expression);                                                           \
-    if (status != CURAND_STATUS_SUCCESS) {                                                          \
-      MS_LOG(EXCEPTION) << "CUDA curand Error: " << message << " | curandStatus: " << status << " " \
-                        << mindspore::device::gpu::CurandGetErrorString(status);                    \
-    }                                                                                               \
-  }
+#define CHECK_CURAND_RET_WITH_EXCEPT(expression, message)                                                      \
+  do {                                                                                                         \
+    curandStatus_t status = (expression);                                                                      \
+    if (status != CURAND_STATUS_SUCCESS) {                                                                     \
+      MS_LOG(EXCEPTION) << "#umsg#CUDA curand Error:#umsg#" << message << " | curandStatus: " << status << " " \
+                        << mindspore::device::gpu::CurandGetErrorString(status);                               \
+    }                                                                                                          \
+  } while (0);
 }  // namespace gpu
 }  // namespace device
 }  // namespace mindspore

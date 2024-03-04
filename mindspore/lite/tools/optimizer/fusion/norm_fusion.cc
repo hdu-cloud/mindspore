@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,9 @@
 #include "tools/optimizer/fusion/norm_fusion.h"
 #include <algorithm>
 #include <memory>
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/lite_ops.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "ops/fusion/layer_norm_fusion.h"
 #include "ops/fusion/reduce_fusion.h"
 #include "mindspore/core/ops/instance_norm.h"
@@ -164,7 +167,7 @@ bool NormFusion::GetNormTypeAndAxis(const FuncGraphPtr &func_graph, const CNodeP
     return false;
   }
   int shape_size = static_cast<int>(shape.size());
-  if (shape.empty()) {
+  if (lite::JudgeDynamicShape(shape)) {
     auto shape_size_map = ShapeSizeInfer(func_graph);
     if (shape_size_map.find(input_cnode->fullname_with_scope()) != shape_size_map.end()) {
       shape_size = shape_size_map[input_cnode->fullname_with_scope()];
@@ -453,6 +456,20 @@ void NormFusion::InitShapeSizeInferFuncMap() {
   shape_size_infer_registry_[schema::PrimitiveType_PowFusion] = CommonShapeSizeInfer;
 }
 
+CNodePtr NormFusion::CreateActivationNode(const FuncGraphPtr &func_graph, const AnfNodePtr &node) const {
+  auto act_primitive = std::make_shared<ops::Activation>();
+  MS_CHECK_TRUE_RET(act_primitive != nullptr, nullptr);
+  act_primitive->set_activation_type(add_act_type_);
+  auto act_primitive_c = act_primitive->GetPrim();
+  MS_CHECK_TRUE_RET(act_primitive_c != nullptr, nullptr);
+  auto value_node = NewValueNode(act_primitive_c);
+  MS_CHECK_TRUE_RET(value_node != nullptr, nullptr);
+  std::vector<AnfNodePtr> new_node_inputs = {value_node};
+  new_node_inputs.push_back(node);
+  auto new_node = func_graph->NewCNode(new_node_inputs);
+  return new_node;
+}
+
 const AnfNodePtr NormFusion::Process(const FuncGraphPtr &func_graph, const AnfNodePtr &node,
                                      const EquivPtr &equiv) const {
   if (func_graph == nullptr || node == nullptr || equiv == nullptr) {
@@ -463,6 +480,12 @@ const AnfNodePtr NormFusion::Process(const FuncGraphPtr &func_graph, const AnfNo
     return nullptr;
   }
   auto add2_cnode = node->cast<CNodePtr>();
+  auto add2_primitive = ops::GetOperator<ops::AddFusion>(add2_cnode->input(0));
+  MS_CHECK_TRUE_RET(add2_primitive != nullptr, nullptr);
+  auto add2_primitive_c = add2_primitive->GetPrim();
+  if (add2_primitive_c->GetAttr(ops::kActivationType) != nullptr) {
+    add_act_type_ = add2_primitive->get_activation_type();
+  }
   if (IsMarkedTrainOp(add2_cnode)) {
     return nullptr;
   }
@@ -486,6 +509,27 @@ const AnfNodePtr NormFusion::Process(const FuncGraphPtr &func_graph, const AnfNo
   } else if (type == schema::PrimitiveType_InstanceNorm) {
     norm_cnode->set_fullname_with_scope("instance_norm_" + add2_cnode->fullname_with_scope());
     MS_LOG(DEBUG) << "instance_norm node:" << norm_cnode->fullname_with_scope() << " fusion success";
+  }
+  // insert relu node
+  if (add_act_type_ != ActivationType::NO_ACTIVATION) {
+    auto new_act_node = CreateActivationNode(func_graph, node);
+    if (new_act_node == nullptr) {
+      MS_LOG(ERROR) << "create act cnode failed.";
+      return nullptr;
+    }
+    new_act_node->set_fullname_with_scope("relu_" + add2_cnode->fullname_with_scope());
+    auto manager = func_graph->manager();
+    if (manager == nullptr) {
+      manager = Manage(func_graph, true);
+      MS_CHECK_TRUE_RET(manager != nullptr, nullptr);
+    }
+    auto node_users = manager->node_users()[add2_cnode];
+    for (auto &node_user : node_users) {
+      auto next_cnode = node_user.first->cast<CNodePtr>();
+      MS_CHECK_TRUE_RET(next_cnode != nullptr, nullptr);
+      manager->SetEdge(next_cnode, node_user.second, new_act_node);
+    }
+    UpdateManager(func_graph);
   }
   return norm_cnode;
 }

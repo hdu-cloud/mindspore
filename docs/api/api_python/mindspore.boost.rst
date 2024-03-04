@@ -11,7 +11,7 @@ Boost能够自动加速网络，如减少BN/梯度冻结/累积梯度等。
     MindSpore自动优化算法库。
 
     参数：
-        - **level** (str) - Boost的配置级别，默认值："O0"。
+        - **level** (str) - Boost的配置级别，默认值： ``"O0"`` 。
 
           - "O0"：不变化。
           - "O1"：启用boost模式，性能将提升约20%，准确率保持不变。
@@ -44,9 +44,6 @@ Boost能够自动加速网络，如减少BN/梯度冻结/累积梯度等。
                       "freeze_p": 0.7,
                       "total_steps": 65536},
 
-                  "grad_accumulation": {
-                      "grad_accumulation_step": 1},
-
                   "dim_reduce": {
                       "rho": 0.55,
                       "gamma": 0.9,
@@ -59,44 +56,42 @@ Boost能够自动加速网络，如减少BN/梯度冻结/累积梯度等。
 
               }
 
+          默认值： ``""`` 。
+
           - boost：
 
-            - mode (str)：Boost配置模式，支持 ["auto", "manual", "enable_all", "disable_all"]。默认值： "auto"。
+            - mode (str)：Boost配置模式，支持 ["auto", "manual", "enable_all", "disable_all"]。默认值：  ``"auto"`` 。
 
               - auto：自动配置，取决于Model类中的 `boost_level` 参数配置。
               - manual：在 `boost_config_dict` 中人工配置。
               - enable_all：开启所有boost算法。
               - disable_all：关闭所有boost算法。
 
-            - less_bn (bool)：是否开启LessBN算法，默认：False
-            - grad_freeze (bool)：是否开启梯度冻结算法，默认：False。
-            - adasum (bool)：是否开启自适应求和算法，默认：False。
-            - grad_accumulation (bool)：是否开启梯度累加算法，默认：False。
-            - dim_reduce (bool)：是否开启降维训练算法，默认：False。
+            - less_bn (bool)：是否开启LessBN算法，默认值： ``False`` 。
+            - grad_freeze (bool)：是否开启梯度冻结算法，默认值： ``False`` 。
+            - adasum (bool)：是否开启自适应求和算法，默认值： ``False``。
+            - grad_accumulation (bool)：是否开启梯度累加算法，默认值： ``False`` 。
+            - dim_reduce (bool)：是否开启降维训练算法，默认值： ``False`` 。
 
               如果开启dim_reduce算法，其他算法会失效。
               如果开启grad_freeze算法，同时关闭dim_reduce，其他算法会失效。
 
           - common：
 
-            - gradient_split_groups (list)：网络的梯度分割点，默认：[50, 100]。
-            - device_number (int)：设备数，默认：8。
+            - gradient_split_groups (list)：网络的梯度分割点，默认值： ``[50, 100]`` 。
+            - device_number (int)：设备数，默认值： ``8`` 。
 
           - less_bn：
 
-            - fn_flag (bool)：是否采用fn替换fc，默认：替换。
-            - gc_flag (bool)：是否启用gc，默认：启用gc。
+            - fn_flag (bool)：是否采用fn替换fc，默认值： ``True`` ，采用fn替换fc。
+            - gc_flag (bool)：是否启用gc，默认值： ``True`` ，启用gc。
 
           - grad_freeze：
 
-            - param_groups (int)：参数分组数量，默认值：10。
-            - freeze_type (int)：梯度冻结策略，参数选择[0, 1]，默认值：1。
-            - freeze_p (float)：梯度冻结概率，默认值：0.7。
-            - total_steps (int)：总训练步数，默认值：65536。
-
-          - grad_accumulation：
-
-            - grad_accumulation_step (int)：累加梯度的步数，默认值：1。
+            - param_groups (int)：参数分组数量，默认值： ``10`` 。
+            - freeze_type (int)：梯度冻结策略，参数选择[0, 1]，默认值： ``1`` 。
+            - freeze_p (float)：梯度冻结概率，默认值： ``0.7`` 。
+            - total_steps (int)：总训练步数，默认值： ``65536`` 。
 
           - dim_reduce：
 
@@ -113,8 +108,8 @@ Boost能够自动加速网络，如减少BN/梯度冻结/累积梯度等。
 
             其中：
 
-            - pca_mat (array)：维度(k*n)，k是 *n_components* 的大小，n是权重的大小。
-            - bk (array)：维度(k*k)，bk是拟牛顿法中的对称正定矩阵。
+            - pca_mat (array)：维度 :math:`(k*n)`，k是 *n_components* 的大小，n是权重的大小。
+            - bk (array)：维度 :math:`(k*k)`，bk是拟牛顿法中的对称正定矩阵。
 
             我们需要找到满足以下条件的m：
 
@@ -131,14 +126,14 @@ Boost能够自动加速网络，如减少BN/梯度冻结/累积梯度等。
                 delta\_grad &= alpha \cdot new\_grad\_momentum - pca\_mat.T \cdot sk
                 \end{align}
 
-            - rho (float)：超参，一般无需调整，默认值：0.55。
-            - gamma (float)：超参，一般无需调整，默认值：0.9。
-            - alpha (float)：超参，一般无需调整，默认值：0.001。
-            - sigma (float)：超参，一般无需调整，默认值：0.4。
-            - n_components (int)：PCA后的维度，默认值：32。
-            - pca_mat_path (str)：PCA矩阵的加载路径，使用绝对路径，默认值：None。
-            - weight_load_dir (str)：以checkpoint形式保存的权重加载路径，用于计算PCA矩阵，默认值：None。
-            - timeout (int)：加载PCA矩阵的最长等待时间，默认值：1800(s)。
+            - rho (float)：超参，一般无需调整，默认值： ``0.55`` 。
+            - gamma (float)：超参，一般无需调整，默认值： ``0.9`` 。
+            - alpha (float)：超参，一般无需调整，默认值： ``0.001`` 。
+            - sigma (float)：超参，一般无需调整，默认值： ``0.4`` 。
+            - n_components (int)：PCA后的维度，默认值： ``32`` 。
+            - pca_mat_path (str)：PCA矩阵的加载路径，使用绝对路径，默认值： ``None`` 。
+            - weight_load_dir (str)：以checkpoint形式保存的权重加载路径，用于计算PCA矩阵，默认值： ``None`` 。
+            - timeout (int)：加载PCA矩阵的最长等待时间，默认值： ``1800(s)`` 。
 
           用户可以通过加载JSON文件或者直接使用字典来配置 *boost_config_dict*。
           未配置的参数会使用默认值。
@@ -214,7 +209,7 @@ Boost能够自动加速网络，如减少BN/梯度冻结/累积梯度等。
             - **parameters** (list) - 训练网络的新权重。
             - **origin_params** (list) - 训练网络的初始权重。
 
-.. py:class:: mindspore.boost.BoostTrainOneStepCell(network, optimizer, sens=1.0)
+.. py:class:: mindspore.boost.BoostTrainOneStepCell(network, optimizer, sens=None)
 
     Boost网络训练封装类。
 
@@ -223,13 +218,13 @@ Boost能够自动加速网络，如减少BN/梯度冻结/累积梯度等。
     参数：
         - **network** (Cell) - 训练网络，当前网络只支持单个输出。
         - **optimizer** (Union[Cell]) - 用于更新网络参数的优化器。
-        - **sens** (numbers.Number) - 作为反向传播输入要填充的缩放数，默认值为1.0。
+        - **sens** (numbers.Number) - 作为反向传播输入要填充的缩放数，默认值： ``None`` ，取 ``1.0`` 。
 
     输入：
-        - **(*inputs)** (Tuple(Tensor)) - 网络的所有输入组成的元组。
+        - **\*inputs** (Tuple(Tensor)) - 网络的所有输入组成的元组，其shape为 :math:`(N, \ldots)`。
 
     输出：
-        Tuple，包含三个Tensor，分别为损失函数值、溢出状态和当前损失缩放系数。
+        Tuple，包含三个Tensor，分别为损失函数值、溢出状态和当前损失缩放系数。shape为 :math:`()`。
 
         - loss(Tensor)，标量Tensor。
         - overflow(Tensor)，标量Tensor，类型为bool。
@@ -243,11 +238,11 @@ Boost能够自动加速网络，如减少BN/梯度冻结/累积梯度等。
         使用Adasum算法训练。
 
         参数：
-            - **loss** (Tensor) - 网络训练的loss值。
+            - **loss** (Tensor) - 网络训练的loss值。shape为 :math:`()`。
             - **grads** (tuple(Tensor)) - 网络训练过程中的梯度。
 
         返回：
-            Tensor，网络训练过程中得到的loss值。
+            Tensor，网络训练过程中得到的loss值。shape为 :math:`()`。
 
     .. py:method:: check_adasum_enable()
 
@@ -268,23 +263,23 @@ Boost能够自动加速网络，如减少BN/梯度冻结/累积梯度等。
         使用梯度累积算法训练。
 
         参数：
-            - **loss** (Tensor) - 网络训练的loss值。
+            - **loss** (Tensor) - 网络训练的loss值。shape为 :math:`()`。
             - **grads** (tuple(Tensor)) - 网络训练过程中的梯度。
-            - **sens** (Tensor) - 作为反向传播输入要填充的缩放数。
-            - **inputs** (tuple(Tensor)) - 网络训练的输入。
+            - **sens** (Tensor) - 作为反向传播输入要填充的缩放数。shape为 :math:`()`。
+            - **inputs** (tuple(Tensor)) - 网络训练的输入。shape为 :math:`(N, \ldots)`。
 
         返回：
-            Tensor，网络训练过程中得到的loss值。
+            Tensor，网络训练过程中得到的loss值，其shape为 :math:`()`。
 
     .. py:method:: gradient_freeze_process(*inputs)
 
         使用梯度冻结算法训练。
 
         参数：
-            - **inputs** (tuple(Tensor)) - 网络训练的输入。
+            - **inputs** (tuple(Tensor)) - 网络训练的输入，其shape为 :math:`(N, \ldots)`。
 
         返回：
-            Tensor，网络训练过程中得到的loss值。
+            Tensor，网络训练过程中得到的loss值，其shape为 :math:`()`。
 
 .. py:class:: mindspore.boost.BoostTrainOneStepWithLossScaleCell(network, optimizer, scale_sense)
 
@@ -296,21 +291,21 @@ Boost能够自动加速网络，如减少BN/梯度冻结/累积梯度等。
     参数：
         - **network** (Cell) - 训练网络，当前网络只支持单个输出。
         - **optimizer** (Cell) - 用于更新网络参数的优化器。
-        - **scale_sense** (Union[Tensor, Cell]) - 如果此值为Cell类型，`BoostTrainOneStepWithLossScaleCell` 会调用它来更新损失缩放系数。如果此值为Tensor类型，可调用 `set_sense_scale` 来更新损失缩放系数，shape为 :math:`()` 或 :math:`(1,)` 。
+        - **scale_sense** (Union[Tensor, Cell]) - 如果此值为Cell类型，`BoostTrainOneStepWithLossScaleCell` 会调用它来更新损失缩放系数。如果此值为Tensor类型，可调用 :func:`mindspore.nn.TrainOneStepWithLossScaleCell.set_sense_scale` 来更新损失缩放系数，shape为 :math:`()` 或 :math:`(1,)` 。
 
     输入：
-        - **(*inputs)** (Tuple(Tensor)) - 网络的所有输入组成的元组。
+        - **\*inputs** (Tuple(Tensor)) - 网络的所有输入组成的元组。shape为 :math:`(N, \ldots)`。
 
     输出：
         Tuple，包含三个Tensor，分别为损失函数值、溢出状态和当前损失缩放系数。
 
-        - **loss** (Tensor) - 标量Tensor。
-        - **overflow** (Tensor) - 标量Tensor，类型为bool。
-        - **loss scaling value** (Tensor) - 标量Tensor。
+        - **loss** (Tensor) - 标量Tensor。shape为 :math:`()`。
+        - **overflow** (Tensor) - 标量Tensor，类型为bool。shape为 :math:`()`。
+        - **loss scaling value** (Tensor) - 标量Tensor。shape为 :math:`()`。
 
     异常：
         - **TypeError** - `scale_sense` 既不是Cell，也不是Tensor。
-        - **ValueError** - `scale_sense` 的shape既不是(1,)也不是()。
+        - **ValueError** - `scale_sense` 的shape既不是 :math:`(1,)` 也不是 :math:`()`。
 
 .. py:class:: mindspore.boost.LessBN(network, fn_flag=False)
 
@@ -318,7 +313,7 @@ Boost能够自动加速网络，如减少BN/梯度冻结/累积梯度等。
 
     参数：
         - **network** (Cell) - 待训练的网络模型。
-        - **fn_flag** (bool) - 是否将网络中最后一个全连接层替换为全归一化层。默认值：False。
+        - **fn_flag** (bool) - 是否将网络中最后一个全连接层替换为全归一化层。默认值： ``False`` 。
 
 .. py:class:: mindspore.boost.GradientFreeze(param_groups, freeze_type, freeze_p, total_steps)
 
@@ -363,8 +358,8 @@ Boost能够自动加速网络，如减少BN/梯度冻结/累积梯度等。
 
     参数：
         - **opt** (Cell) - 非冻结优化器实例，如 *Momentum*，*SGD*。
-        - **train_parameter_groups** (Union[tuple, list]) - 梯度冻结训练的权重。
-        - **train_strategy** (Union[tuple(int), list(int), Tensor]) - 梯度冻结训练的策略。
+        - **train_parameter_groups** (Union[tuple, list]) - 梯度冻结训练的权重。默认值： ``None`` 。
+        - **train_strategy** (Union[tuple(int), list(int), Tensor]) - 梯度冻结训练的策略。默认值： ``None`` 。
 
 .. py:function:: mindspore.boost.freeze_cell(reducer_flag, network, optimizer, sens, grad, use_grad_accumulation, mean=None, degree=None, max_accumulation_step=1)
 
@@ -377,9 +372,9 @@ Boost能够自动加速网络，如减少BN/梯度冻结/累积梯度等。
         - **sens** (numbers.Number) - 损失缩放系数。
         - **grad** (tuple(Tensor)) - 网络梯度。
         - **use_grad_accumulation** (bool) - 是否使用梯度累积。
-        - **mean** (bool) - 可选参数，梯度是否求平均，仅分布式训练时生效。默认值为None。
-        - **degree** (int) - 可选参数，device卡数，仅分布式训练时生效。默认值为None。
-        - **max_accumulation_step** (int) - 可选参数，梯度累积步数。默认值为1。
+        - **mean** (bool) - 可选参数，梯度是否求平均，仅分布式训练时生效。默认值： ``None`` 。
+        - **degree** (int) - 可选参数，device卡数，仅分布式训练时生效。默认值： ``None`` 。
+        - **max_accumulation_step** (int) - 可选参数，梯度累积步数。默认值： ``1`` 。
 
 .. py:class:: mindspore.boost.GradientAccumulation(max_accumulation_step, optimizer)
 
@@ -422,17 +417,17 @@ Boost能够自动加速网络，如减少BN/梯度冻结/累积梯度等。
         delta\_loss &= sigma \cdot grad\_k.T \cdot sk
         \end{align}
 
-    其中:
+    其中：
 
-    - pca_mat (array): PCA矩阵，维度(k*n)，k是 `n_components` 的大小，n是权重的大小。
-    - bk (array): 维度(k*k)，bk是拟牛顿法中的对称正定矩阵。
+    - pca_mat (array): PCA矩阵，维度 :math:`(k*n)`，k是 `n_components` 的大小，n是权重的大小。
+    - bk (array): 维度 :math:`(k*k)`，bk是拟牛顿法中的对称正定矩阵。
 
-    我们需要找到满足以下条件的m:
+    我们需要找到满足以下条件的m：
 
     .. math::
         new\_loss < old\_loss + delta\_loss
 
-    然后使用delta_grad去更新模型的权重:
+    然后使用delta_grad去更新模型的权重：
 
     .. math::
 
@@ -456,14 +451,14 @@ Boost能够自动加速网络，如减少BN/梯度冻结/累积梯度等。
         - **rank_size** (int) - Rank总数。
 
     输入：
-        - **loss** (Tensor) - 网络loss，标量Tensor。
+        - **loss** (Tensor) - 网络loss，shape为 :math:`()` 的标量Tensor。
         - **old_grad** (Tuple(Tensor)) - 网络权重提取组成的元组。
         - **weight** (Tuple(Tensor)) - 网络权重组成的元组。
         - **weight_clone** (Tuple(Tensor)) - 网络权重的副本。
-        - **(\*inputs)** (Tuple(Tensor)) - 网络的所有输入组成的元组。
+        - **\*inputs** (Tuple(Tensor)) - 网络的所有输入组成的元组，shape为 :math:`(N, \ldots)`。
 
     输出：
-        - **loss** (Tensor) - 网络loss，标量Tensor。
+        - **loss** (Tensor) - 网络loss，shape为 :math:`()` 的标量Tensor。
 
 .. py:class:: mindspore.boost.GroupLossScaleManager(init_loss_scale, loss_scale_groups)
 
@@ -479,7 +474,7 @@ Boost能够自动加速网络，如减少BN/梯度冻结/累积梯度等。
         - **layer2** (int) - 最后一个网络层的值。
 
     输出：
-        - **x** (Tensor) - _DynamicLossScale operator的输出。
+        - **out** (Tensor) - 带有分组loss scale标记的Tensor，用来标记当前Tensor对应的loss scale组号。
 
     .. py:method:: get_loss_scale()
 

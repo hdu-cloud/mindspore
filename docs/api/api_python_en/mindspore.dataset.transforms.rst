@@ -12,7 +12,7 @@ Transforms
 .. autosummary::
     :toctree: dataset_transforms
     :nosignatures:
-    :template: classtemplate.rst
+    :template: classtemplate_dataset.rst
 
     mindspore.dataset.transforms.Compose
     mindspore.dataset.transforms.Concatenate
@@ -34,7 +34,7 @@ Utilities
 .. autosummary::
     :toctree: dataset_transforms
     :nosignatures:
-    :template: classtemplate.rst
+    :template: classtemplate_dataset.rst
 
     mindspore.dataset.transforms.Relational
 
@@ -43,15 +43,27 @@ Vision
 
 .. automodule:: mindspore.dataset.vision
 
+Example Gallery
+^^^^^^^^^^^^^^^^
+
+Example gallery of using vision transform APIs, jump to `Load & Process Data With Dataset Pipeline <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/vision_gallery.html>`_.
+This guide presents various transforms and input/output results.
+
 Transforms
 ^^^^^^^^^^^
 
 .. autosummary::
     :toctree: dataset_vision
     :nosignatures:
-    :template: classtemplate.rst
+    :template: classtemplate_dataset.rst
 
+    mindspore.dataset.vision.AdjustBrightness
+    mindspore.dataset.vision.AdjustContrast
     mindspore.dataset.vision.AdjustGamma
+    mindspore.dataset.vision.AdjustHue
+    mindspore.dataset.vision.AdjustSaturation
+    mindspore.dataset.vision.AdjustSharpness
+    mindspore.dataset.vision.Affine
     mindspore.dataset.vision.AutoAugment
     mindspore.dataset.vision.AutoContrast
     mindspore.dataset.vision.BoundingBoxAugment
@@ -62,6 +74,7 @@ Transforms
     mindspore.dataset.vision.CutOut
     mindspore.dataset.vision.Decode
     mindspore.dataset.vision.Equalize
+    mindspore.dataset.vision.Erase
     mindspore.dataset.vision.FiveCrop
     mindspore.dataset.vision.GaussianBlur
     mindspore.dataset.vision.Grayscale
@@ -76,6 +89,9 @@ Transforms
     mindspore.dataset.vision.NormalizePad
     mindspore.dataset.vision.Pad
     mindspore.dataset.vision.PadToSize
+    mindspore.dataset.vision.Perspective
+    mindspore.dataset.vision.Posterize
+    mindspore.dataset.vision.RandAugment
     mindspore.dataset.vision.RandomAdjustSharpness
     mindspore.dataset.vision.RandomAffine
     mindspore.dataset.vision.RandomAutoContrast
@@ -105,15 +121,18 @@ Transforms
     mindspore.dataset.vision.RandomVerticalFlipWithBBox
     mindspore.dataset.vision.Rescale
     mindspore.dataset.vision.Resize
+    mindspore.dataset.vision.ResizedCrop
     mindspore.dataset.vision.ResizeWithBBox
     mindspore.dataset.vision.RgbToHsv
     mindspore.dataset.vision.Rotate
     mindspore.dataset.vision.SlicePatches
+    mindspore.dataset.vision.Solarize
     mindspore.dataset.vision.TenCrop
     mindspore.dataset.vision.ToNumpy
     mindspore.dataset.vision.ToPIL
     mindspore.dataset.vision.ToTensor
     mindspore.dataset.vision.ToType
+    mindspore.dataset.vision.TrivialAugmentWide
     mindspore.dataset.vision.UniformAugment
     mindspore.dataset.vision.VerticalFlip
 
@@ -123,7 +142,7 @@ Utilities
 .. autosummary::
     :toctree: dataset_vision
     :nosignatures:
-    :template: classtemplate.rst
+    :template: classtemplate_dataset.rst
 
     mindspore.dataset.vision.AutoAugmentPolicy
     mindspore.dataset.vision.Border
@@ -147,14 +166,21 @@ Text
 
 .. automodule:: mindspore.dataset.text
 
+Example Gallery
+^^^^^^^^^^^^^^^^
+
+Example gallery of using vision transform APIs, jump to `Illustration of text transforms <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/text_gallery.html>`_.
+This guide presents various transforms and input/output results.
+
 Transforms
 ^^^^^^^^^^^
 
 .. msnoteautosummary::
     :toctree: dataset_text
     :nosignatures:
-    :template: classtemplate.rst
+    :template: classtemplate_dataset.rst
 
+    mindspore.dataset.text.AddToken
     mindspore.dataset.text.BasicTokenizer
     mindspore.dataset.text.BertTokenizer
     mindspore.dataset.text.CaseFold
@@ -170,6 +196,7 @@ Transforms
     mindspore.dataset.text.SlidingWindow
     mindspore.dataset.text.ToNumber
     mindspore.dataset.text.ToVectors
+    mindspore.dataset.text.Truncate
     mindspore.dataset.text.TruncateSequencePair
     mindspore.dataset.text.UnicodeCharTokenizer
     mindspore.dataset.text.UnicodeScriptTokenizer
@@ -183,7 +210,7 @@ Utilities
 .. msnoteautosummary::
     :toctree: dataset_text
     :nosignatures:
-    :template: classtemplate.rst
+    :template: classtemplate_dataset.rst
 
     mindspore.dataset.text.CharNGram
     mindspore.dataset.text.FastText
@@ -204,13 +231,19 @@ Audio
 
 .. automodule:: mindspore.dataset.audio
 
+Example Gallery
+^^^^^^^^^^^^^^^^
+
+Example gallery of using vision transform APIs, jump to `Illustration of audio transforms <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/audio_gallery.html>`_.
+This guide presents various transforms and input/output results.
+
 Transforms
 ^^^^^^^^^^^
 
 .. autosummary::
     :toctree: dataset_audio
     :nosignatures:
-    :template: classtemplate.rst
+    :template: classtemplate_dataset.rst
 
     mindspore.dataset.audio.AllpassBiquad
     mindspore.dataset.audio.AmplitudeToDB
@@ -230,23 +263,29 @@ Transforms
     mindspore.dataset.audio.Dither
     mindspore.dataset.audio.EqualizerBiquad
     mindspore.dataset.audio.Fade
+    mindspore.dataset.audio.Filtfilt
     mindspore.dataset.audio.Flanger
     mindspore.dataset.audio.FrequencyMasking
     mindspore.dataset.audio.Gain
     mindspore.dataset.audio.GriffinLim
     mindspore.dataset.audio.HighpassBiquad
     mindspore.dataset.audio.InverseMelScale
+    mindspore.dataset.audio.InverseSpectrogram
+    mindspore.dataset.audio.LFCC
     mindspore.dataset.audio.LFilter
     mindspore.dataset.audio.LowpassBiquad
     mindspore.dataset.audio.Magphase
     mindspore.dataset.audio.MaskAlongAxis
     mindspore.dataset.audio.MaskAlongAxisIID
     mindspore.dataset.audio.MelScale
+    mindspore.dataset.audio.MelSpectrogram
+    mindspore.dataset.audio.MFCC
     mindspore.dataset.audio.MuLawDecoding
     mindspore.dataset.audio.MuLawEncoding
     mindspore.dataset.audio.Overdrive
     mindspore.dataset.audio.Phaser
     mindspore.dataset.audio.PhaseVocoder
+    mindspore.dataset.audio.PitchShift
     mindspore.dataset.audio.Resample
     mindspore.dataset.audio.RiaaBiquad
     mindspore.dataset.audio.SlidingWindowCmn
@@ -265,7 +304,7 @@ Utilities
 .. autosummary::
     :toctree: dataset_audio
     :nosignatures:
-    :template: classtemplate.rst
+    :template: classtemplate_dataset.rst
 
     mindspore.dataset.audio.BorderType
     mindspore.dataset.audio.DensityFunction
@@ -280,4 +319,5 @@ Utilities
     mindspore.dataset.audio.ScaleType
     mindspore.dataset.audio.WindowType
     mindspore.dataset.audio.create_dct
+    mindspore.dataset.audio.linear_fbanks
     mindspore.dataset.audio.melscale_fbanks

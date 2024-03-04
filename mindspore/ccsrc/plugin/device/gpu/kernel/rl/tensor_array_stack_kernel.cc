@@ -17,7 +17,6 @@
  */
 
 #include "plugin/device/gpu/kernel/rl/tensor_array_stack_kernel.h"
-#include <algorithm>
 #include "kernel/common_utils.h"
 #include "plugin/device/gpu/hal/device/gpu_tensor_array.h"
 #include "runtime/device/tensor_array_manager.h"
@@ -59,7 +58,7 @@ bool TensorArrayStackKernelMod::Init(const CNodePtr &kernel_node) {
   return true;
 }
 
-void TensorArrayStackKernelMod::SyncData() {
+void TensorArrayStackKernelMod::SyncOutputShape() {
   CHECK_CUDA_RET_WITH_EXCEPT(kernel_node_, cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(stream_ptr_)),
                              "TensorArrayStack cudaStreamSynchronized failed");
   TensorArrayPtr tensors_ = TensorArrayMgr::GetInstance().GetTensorArray(handle_);
@@ -68,7 +67,8 @@ void TensorArrayStackKernelMod::SyncData() {
   auto shape = shapes_;
   shape.insert(shape.begin(), tensor_size);
   MS_LOG(DEBUG) << "After postexecute, the real shape of TensorArrayStack is " << shape;
-  common::AnfAlgo::SetOutputInferTypeAndShape({type_->type_id()}, {Convert2Long(shape)}, kernel_node_.lock().get());
+  // common::AnfAlgo::SetOutputInferTypeAndShape({type_->type_id()}, {Convert2Long(shape)}, kernel_node_.lock().get());
+  outputs_[0]->SetShapeVector(Convert2Long(shape));
 }
 
 void TensorArrayStackKernelMod::ResetResource() noexcept {
@@ -95,14 +95,20 @@ bool TensorArrayStackKernelMod::Launch(const std::vector<AddressPtr> &inputs, co
   MS_ERROR_IF_NULL(out_value);
   MS_ERROR_IF_NULL(handle_addr);
 
+  auto cuda_stream = reinterpret_cast<cudaStream_t>(stream_ptr);
+  MS_ERROR_IF_NULL(cuda_stream);
+
   // Set out_value to zeros when TensorArray in static size.
   if (!is_dynamic_) {
-    CHECK_CUDA_RET_WITH_EXCEPT(
-      kernel_node_, cudaMemsetAsync(out_value, 0, outputs[0]->size, reinterpret_cast<cudaStream_t>(stream_ptr)),
-      "Cudamemset output value failed");
+    CHECK_CUDA_RET_WITH_EXCEPT(kernel_node_, cudaMemsetAsync(out_value, 0, outputs[0]->size, cuda_stream),
+                               "For 'TensorArrayStack', Cudamemset output value failed");
   }
-  CHECK_CUDA_RET_WITH_EXCEPT(kernel_node_, cudaMemcpy(&handle_, handle_addr, sizeof(int64_t), cudaMemcpyDeviceToHost),
-                             "Get handle to host failed");
+  CHECK_CUDA_RET_WITH_EXCEPT(
+    kernel_node_, cudaMemcpyAsync(&handle_, handle_addr, sizeof(int64_t), cudaMemcpyDeviceToHost, cuda_stream),
+    "For 'TensorArrayStack', get handle to host failed");
+  if (cudaStreamQuery(cuda_stream) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(cuda_stream), "cuda Stream Sync Failed");
+  }
   TensorArrayPtr tensors_ = TensorArrayMgr::GetInstance().GetTensorArray(handle_);
   MS_ERROR_IF_NULL(tensors_);
   if (tensors_->GetValidSize() > tensors_->GetRealSize()) {
@@ -111,8 +117,8 @@ bool TensorArrayStackKernelMod::Launch(const std::vector<AddressPtr> &inputs, co
   for (size_t i = 0; i < tensors_->GetValidSize(); i++) {
     CHECK_CUDA_RET_WITH_EXCEPT(kernel_node_,
                                cudaMemcpyAsync(out_value + ele_size_ * i, tensors_->GetTensorAddr(i), ele_size_,
-                                               cudaMemcpyDeviceToDevice, reinterpret_cast<cudaStream_t>(stream_ptr)),
-                               "Stack value failed");
+                                               cudaMemcpyDeviceToDevice, cuda_stream),
+                               "For 'TensorArrayStack', stack value failed");
   }
   return true;
 }

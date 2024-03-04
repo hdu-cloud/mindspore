@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,16 +14,27 @@
  * limitations under the License.
  */
 
-#include <set>
-#include <algorithm>
 #include <memory>
+#include <set>
 #include <vector>
 
-#include "ops/ceil.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/ceil.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,7 +46,7 @@ abstract::ShapePtr CeilInferShape(const PrimitivePtr &primitive, const std::vect
   (void)CheckAndConvertUtils::CheckArgs<abstract::AbstractTensor>(prim_name, input_args, 0);
   const int64_t max_dim = 8;
   auto in_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
-  (void)CheckAndConvertUtils::CheckInteger("The dimension of Atan input", SizeToLong(in_shape.size()), kLessThan,
+  (void)CheckAndConvertUtils::CheckInteger("The dimension of Ceil input", SizeToLong(in_shape.size()), kLessThan,
                                            max_dim, prim_name);
   auto x = input_args[0]->BuildShape();
   MS_EXCEPTION_IF_NULL(x);
@@ -49,7 +60,7 @@ TypePtr CeilInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePt
   (void)CheckAndConvertUtils::CheckInteger("input numbers", SizeToLong(input_args.size()), kEqual, 1, prim_name);
   MS_EXCEPTION_IF_NULL(input_args[0]);
   auto x_type = input_args[0]->BuildType();
-  const std::set valid_types = {kFloat16, kFloat32};
+  const std::set<TypePtr> valid_types = {kFloat16, kFloat32};
   (void)CheckAndConvertUtils::CheckTensorTypeValid("input_x", x_type, valid_types, prim_name);
   return x_type;
 }
@@ -66,6 +77,23 @@ AbstractBasePtr CeilInfer(const abstract::AnalysisEnginePtr &, const PrimitivePt
   return abstract::MakeAbstract(shape, type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(Ceil, prim::kPrimCeil, CeilInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGCeilInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return CeilInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return CeilInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return CeilInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Ceil, prim::kPrimCeil, AGCeilInfer, false);
 }  // namespace ops
 }  // namespace mindspore

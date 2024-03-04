@@ -24,8 +24,8 @@
 #include <string>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -39,9 +39,9 @@ class MIND_API MultilabelMarginLossGrad : public BaseOperator {
   int64_t get_reduction() const;
 };
 
-abstract::AbstractBasePtr MultilabelMarginLossGradInfer(const abstract::AnalysisEnginePtr &,
-                                                        const PrimitivePtr &primitive,
-                                                        const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr MultilabelMarginLossGradInfer(
+  const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+  const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimMultilabelMarginLossGradPtr = std::shared_ptr<MultilabelMarginLossGrad>;
 }  // namespace ops
 }  // namespace mindspore

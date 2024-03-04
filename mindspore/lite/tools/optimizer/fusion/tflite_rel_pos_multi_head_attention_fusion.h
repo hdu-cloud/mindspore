@@ -20,7 +20,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/optimizer.h"
 #include "include/common/utils/utils.h"
 #include "include/errorcode.h"
 #include "tools/optimizer/fusion/multi_head_attention_fusion.h"
@@ -50,6 +50,8 @@ class TfliteRelPosMultiHeadAttentionFusion : public MultiHeadAttentionFusion {
                                               const std::string &base_name) const;
 
   int SetQuantParamForAttentionNode(const PrimitivePtr &prim, const EquivPtr &equiv) const;
+
+  int SetQuantParamNewForAttentionNode(const CNodePtr &cnode, const EquivPtr &equiv) const;
 
   const VectorRef DefineRelativeShiftPattern(const BaseRef &input) const;
 

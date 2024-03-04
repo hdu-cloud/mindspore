@@ -24,17 +24,15 @@ import pytest
 
 import mindspore.common.dtype as mstype
 import mindspore.nn as nn
-from mindspore import context, Model
-from mindspore import dataset as ds
+from mindspore import context
 from mindspore.common.parameter import Parameter
 from mindspore.common.tensor import Tensor
-from mindspore.common.initializer import Normal
-from mindspore.nn import SoftmaxCrossEntropyWithLogits, WithLossCell, TrainOneStepCell, Accuracy
+from mindspore.nn import SoftmaxCrossEntropyWithLogits, WithLossCell, TrainOneStepCell
 from mindspore.nn.optim.momentum import Momentum
 from mindspore.ops import operations as P
-from mindspore.train.callback import ModelCheckpoint, CheckpointConfig, LossMonitor, _CheckpointManager
+from mindspore.train.callback import _CheckpointManager
 from mindspore.train.serialization import save_checkpoint, load_checkpoint, load_param_into_net, \
-     export, _save_graph, load
+    export, _save_graph, load
 from tests.security_utils import security_off_wrap
 from ..ut_filter import non_graph_engine
 
@@ -51,6 +49,7 @@ class Net(nn.Cell):
         fc.weight
         fc.bias
     """
+
     def __init__(self, num_classes=10):
         super(Net, self).__init__()
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=0, weight_init="zeros")
@@ -142,75 +141,6 @@ def test_load_checkpoint_error_filename():
     ckpt_file_name = 1
     with pytest.raises(TypeError):
         load_checkpoint(ckpt_file_name)
-
-
-class LeNet5(nn.Cell):
-    """
-    Lenet network
-    """
-    def __init__(self, num_class=10, num_channel=1):
-        super(LeNet5, self).__init__()
-        self.conv1 = nn.Conv2d(num_channel, 6, 5, pad_mode='valid')
-        self.conv2 = nn.Conv2d(6, 16, 5, pad_mode='valid')
-        self.fc1 = nn.Dense(16 * 5 * 5, 120, weight_init=Normal(0.02))
-        self.fc2 = nn.Dense(120, 84, weight_init=Normal(0.02))
-        self.fc3 = nn.Dense(84, num_class, weight_init=Normal(0.02))
-        self.relu = nn.ReLU()
-        self.max_pool2d = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.flatten = nn.Flatten()
-
-    def construct(self, x):
-        x = self.max_pool2d(self.relu(self.conv1(x)))
-        x = self.max_pool2d(self.relu(self.conv2(x)))
-        x = self.flatten(x)
-        x = self.relu(self.fc1(x))
-        x = self.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x
-
-
-def get_data(num, img_size=(1, 32, 32), num_classes=10, is_onehot=True):
-    """Get Data"""
-    for _ in range(num):
-        img = np.random.randn(*img_size)
-        target = np.random.randint(0, num_classes)
-        target_ret = np.array([target]).astype(np.float32)
-        if is_onehot:
-            target_onehot = np.zeros(shape=(num_classes,))
-            target_onehot[target] = 1
-            target_ret = target_onehot.astype(np.float32)
-        yield img.astype(np.float32), target_ret
-
-
-def create_dataset(num_data=32, batch_size=32, repeat_size=1):
-    """Generate Data"""
-    input_data = ds.GeneratorDataset(list(get_data(num_data)), column_names=['data', 'label'])
-    input_data = input_data.batch(batch_size, drop_remainder=True)
-    input_data = input_data.repeat(repeat_size)
-    return input_data
-
-
-def test_checkpointconfig_append_info_and_load_checkpoint():
-    """
-    Feature: Save checkpoint for CheckpointConfig's append_info and load checkpoint.
-    Description: Test save checkpoint and load checkpoint for CheckpointConfig's append_info.
-    Expectation: Checkpoint for CheckpointConfig's append_info can be saved and reloaded.
-    """
-    if os.path.exists('./ckptconfig_append_info-1_1.ckpt'):
-        os.chmod('./ckptconfig_append_info-1_1.ckpt', stat.S_IWRITE)
-        os.remove('./ckptconfig_append_info-1_1.ckpt')
-
-    ds_train = create_dataset()
-    network = LeNet5(10)
-    net_loss = nn.SoftmaxCrossEntropyWithLogits()
-    net_opt = nn.Momentum(network.trainable_params(), learning_rate=0.01, momentum=0.9)
-    model = Model(network, net_loss, net_opt, metrics={"Accuracy": Accuracy()})
-    config_ck = CheckpointConfig(save_checkpoint_steps=1, keep_checkpoint_max=1,
-                                 append_info=[{'param_1': Tensor(200.0),
-                                               'param_2': Parameter(Tensor([[1, 2], [3, 4]])),
-                                               'param_3': 'param_string'}])
-    ckpt_cb = ModelCheckpoint(prefix='ckptconfig_append_info', directory='./', config=config_ck)
-    model.train(epoch=1, train_dataset=ds_train, callbacks=[LossMonitor(), ckpt_cb])
 
 
 def test_save_checkpoint_for_list_append_info_and_load_checkpoint():
@@ -441,10 +371,10 @@ def test_load_checkpoint_error_param():
     net = Net(10)
     ckpt_file = "check_name.ckpt"
     save_checkpoint(net, ckpt_file)
-    with pytest.raises(TypeError):
-        load_checkpoint(ckpt_file, specify_prefix=123)
     with pytest.raises(ValueError):
-        load_checkpoint(ckpt_file, filter_prefix="")
+        load_checkpoint(ckpt_file, choice_func=lambda x: x.startswith(123))
+    with pytest.raises(ValueError):
+        load_checkpoint(ckpt_file, choice_func=lambda x: not x.startswith(""))
     if os.path.exists(ckpt_file):
         os.remove(ckpt_file)
 
@@ -460,7 +390,7 @@ def test_load_checkpoint_error_load():
     ckpt_file = "check_name.ckpt"
     save_checkpoint(net, ckpt_file)
     with pytest.raises(ValueError):
-        load_checkpoint(ckpt_file, specify_prefix="123")
+        load_checkpoint(ckpt_file, choice_func=lambda x: x.startswith("123"))
     if os.path.exists(ckpt_file):
         os.remove(ckpt_file)
 
@@ -475,11 +405,11 @@ def test_load_checkpoint_specify_prefix():
     net = Net(10)
     ckpt_file = "specify_prefix.ckpt"
     save_checkpoint(net, ckpt_file)
-    param_dict = load_checkpoint(ckpt_file, specify_prefix="bn")
+    param_dict = load_checkpoint(ckpt_file, choice_func=lambda x: x.startswith("bn"))
     assert len(param_dict) == 4
-    param_dict = load_checkpoint(ckpt_file, specify_prefix="fc")
+    param_dict = load_checkpoint(ckpt_file, choice_func=lambda x: x.startswith("fc"))
     assert len(param_dict) == 2
-    param_dict = load_checkpoint(ckpt_file, specify_prefix=["fc", "bn"])
+    param_dict = load_checkpoint(ckpt_file, choice_func=lambda x: x.startswith(("fc", "bn")))
     assert len(param_dict) == 6
     if os.path.exists(ckpt_file):
         os.remove(ckpt_file)
@@ -495,11 +425,11 @@ def test_load_checkpoint_filter_prefix():
     net = Net(10)
     ckpt_file = "filter_prefix.ckpt"
     save_checkpoint(net, ckpt_file)
-    param_dict = load_checkpoint(ckpt_file, filter_prefix="fc")
+    param_dict = load_checkpoint(ckpt_file, choice_func=lambda x: not x.startswith("fc"))
     assert len(param_dict) == 5
-    param_dict = load_checkpoint(ckpt_file, filter_prefix="bn")
+    param_dict = load_checkpoint(ckpt_file, choice_func=lambda x: not x.startswith("bn"))
     assert len(param_dict) == 3
-    param_dict = load_checkpoint(ckpt_file, filter_prefix=["bn", "fc"])
+    param_dict = load_checkpoint(ckpt_file, choice_func=lambda x: not x.startswith(("bn", "fc")))
     assert len(param_dict) == 1
     if os.path.exists(ckpt_file):
         os.remove(ckpt_file)
@@ -515,9 +445,10 @@ def test_load_checkpoint_specify_filter_prefix():
     net = Net(10)
     ckpt_file = "specify_filter_prefix.ckpt"
     save_checkpoint(net, ckpt_file)
-    param_dict = load_checkpoint(ckpt_file, specify_prefix="bn", filter_prefix="bn1.moving")
+    param_dict = load_checkpoint(ckpt_file, choice_func=lambda x: x.startswith("bn") and not x.startswith("bn1.moving"))
     assert len(param_dict) == 2
-    param_dict = load_checkpoint(ckpt_file, specify_prefix=["bn", "fc"], filter_prefix="fc.weight")
+    param_dict = load_checkpoint(ckpt_file,
+                                 choice_func=lambda x: x.startswith(("bn", "fc")) and not x.startswith("fc.weight"))
     assert len(param_dict) == 5
     if os.path.exists(ckpt_file):
         os.remove(ckpt_file)

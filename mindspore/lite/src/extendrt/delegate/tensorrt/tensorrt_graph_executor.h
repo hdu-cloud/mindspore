@@ -13,8 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_LITE_SRC_EXTENDRT_DELEGATE_TENSORRT_TENSORRT_DELEGATE_H_
-#define MINDSPORE_LITE_SRC_EXTENDRT_DELEGATE_TENSORRT_TENSORRT_DELEGATE_H_
+#ifndef MINDSPORE_LITE_SRC_EXTENDRT_DELEGATE_TENSORRT_TENSORRT_GRAPH_EXECUTOR_H_
+#define MINDSPORE_LITE_SRC_EXTENDRT_DELEGATE_TENSORRT_TENSORRT_GRAPH_EXECUTOR_H_
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -31,8 +31,7 @@
 #include "core/base/base.h"
 #include "extendrt/delegate/factory.h"
 #include "extendrt/session/lite_graph_executor.h"
-#include "ccsrc/backend/common/session/kernel_graph.h"
-#include "extendrt/utils/kernel_graph_utils.h"
+#include "include/backend/kernel_graph.h"
 
 namespace mindspore::lite {
 struct TrtGraphContext {
@@ -50,27 +49,29 @@ class TensorRTExecutor : public LiteGraphExecutor {
 
   bool Init();
 
-  bool CompileGraph(const FuncGraphPtr &graph, const std::map<string, string> &compile_options) override;
-  bool RunGraph(const FuncGraphPtr &graph, const std::vector<tensor::Tensor> &inputs,
-                std::vector<tensor::Tensor> *outputs, const std::map<string, string> &compile_options) override;
+  bool CompileGraph(const FuncGraphPtr &graph, const std::map<string, string> &compile_options,
+                    uint32_t *graph_id) override;
+  bool RunGraph(uint32_t graph_id, const std::vector<tensor::Tensor> &inputs, std::vector<tensor::Tensor> *outputs,
+                const std::map<string, string> &compile_options) override;
 
-  bool Resize(const FuncGraphPtr &, const std::vector<tensor::Tensor> &inputs,
+  bool Resize(uint32_t graph_id, const std::vector<tensor::Tensor> &inputs,
               const std::vector<std::vector<int64_t>> &new_shapes) override;
-  std::vector<tensor::Tensor> GetInputInfos(const FuncGraphPtr &) override;
-  std::vector<tensor::Tensor> GetOutputInfos(const FuncGraphPtr &) override;
+  std::vector<tensor::Tensor> GetInputInfos(uint32_t graph_id) override;
+  std::vector<tensor::Tensor> GetOutputInfos(uint32_t graph_id) override;
 
  private:
   int ParseOptimizationProfile();
 
-  Status BuildSubGraph(const KernelGraphPtr &graph);
+  int ParseTransformerProfile();
+
+  Status BuildSubGraph(const FuncGraphPtr &graph);
 
   TensorRTOp *FindTensorRTOp(const CNodePtr &cnode, const BaseOperatorPtr &base_operator,
                              const std::vector<TensorInfo> &input_tensors,
                              const std::vector<TensorInfo> &output_tensors);
 
-  std::shared_ptr<TensorRTSubGraph> CreateTensorRTGraph(const std::vector<TensorRTOp *> &ops,
-                                                        const KernelGraphPtr &graph, int index,
-                                                        const std::vector<TensorInfo> &inputs,
+  std::shared_ptr<TensorRTSubGraph> CreateTensorRTGraph(const std::vector<TensorRTOp *> &ops, const FuncGraphPtr &graph,
+                                                        int index, const std::vector<TensorInfo> &inputs,
                                                         const std::vector<TensorInfo> &outputs);
   int ParseDumpOptions(const std::map<std::string, std::string> &gpu_context);
 
@@ -99,8 +100,6 @@ class TensorRTExecutor : public LiteGraphExecutor {
   std::vector<std::string> dump_ops_;
   std::string dump_dir_;
   bool has_dumped_ = false;
-
-  KernelGraphUtilsPtr kernel_graph_utils_;
 };
 }  // namespace mindspore::lite
-#endif  // MINDSPORE_LITE_SRC_RUNTIME_DELEGATE_TENSORRT_DELEGATE_
+#endif  // MINDSPORE_LITE_SRC_EXTENDRT_DELEGATE_TENSORRT_TENSORRT_GRAPH_EXECUTOR_H_

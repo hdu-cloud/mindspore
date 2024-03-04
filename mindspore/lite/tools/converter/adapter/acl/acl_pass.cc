@@ -17,13 +17,18 @@
 #include "tools/converter/adapter/acl/acl_pass.h"
 #ifdef ENABLE_LITE_ACL
 #include "mindspore/lite/tools/converter/adapter/acl/src/acl_pass_impl.h"
+#include "mindspore/lite/tools/converter/adapter/acl/src/acl_memory_offload_pass_impl.h"
 #endif
 
 namespace mindspore {
 namespace opt {
 AclPass::AclPass(const std::shared_ptr<ConverterPara> &param) : Pass("ACL") {
 #ifdef ENABLE_LITE_ACL
-  impl_ = std::make_shared<AclPassImpl>(param);
+  if (param->enable_memory_offload) {
+    impl_ = std::make_shared<AclMemoryOffloadPassImpl>(param);
+  } else {
+    impl_ = std::make_shared<AclPassImpl>(param);
+  }
 #endif
 }
 
@@ -37,8 +42,11 @@ bool AclPass::Run(const FuncGraphPtr &func_graph) {
     MS_LOG(ERROR) << "Acl pass impl run failed.";
     return false;
   }
-#endif
   return true;
+#else
+  MS_LOG(ERROR) << "Failed to run AclPass, ENABLE_LITE_ACL is not defined";
+  return false;
+#endif
 }
 }  // namespace opt
 }  // namespace mindspore

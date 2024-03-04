@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_SQUARE_SUM_V1_H_
 #define MINDSPORE_CORE_OPS_SQUARE_SUM_V1_H_
-#include <vector>
 #include <set>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -62,9 +62,6 @@ class MIND_API SquareSumV1 : public BaseOperator {
   /// \return keep dims attributes.
   bool get_keep_dims() const;
 };
-
-abstract::AbstractBasePtr SquareSumV1Infer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                           const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

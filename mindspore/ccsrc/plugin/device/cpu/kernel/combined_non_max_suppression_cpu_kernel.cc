@@ -38,8 +38,8 @@ constexpr float k_5 = 0.5;
 constexpr int multiplier = 4;
 }  // namespace
 
-void CombinedNonMaxSuppressionCpuKernelMod::regular_input2buffer(std::vector<std::vector<float>> *boxes_buffer,
-                                                                 float *box_src, int class_idx) {
+void CombinedNonMaxSuppressionCpuKernelMod::regular_input2buffer(std::vector<std::vector<float>> *const boxes_buffer,
+                                                                 const float *box_src, const int class_idx) const {
   /**
    * shape of box_src
    * box_src[num_boxes_*q_*4]
@@ -47,7 +47,7 @@ void CombinedNonMaxSuppressionCpuKernelMod::regular_input2buffer(std::vector<std
    * box_src[i][class_idx][k]=box_src[i*q_*4+class_idx*4+k]
    */
   int sub_box_len1 = q_ * multiplier;
-  int box_len2 = (class_idx << KIndex2);
+  int box_len2 = (static_cast<size_t>(class_idx)) << KIndex2;
   for (size_t i = 0; i < IntToSize(num_boxes_); i++) {
     size_t box_len1 = IntToSize(i * sub_box_len1 + box_len2);
     if (box_src[box_len1] > box_src[box_len1 + KIndex2]) {
@@ -68,7 +68,8 @@ void CombinedNonMaxSuppressionCpuKernelMod::regular_input2buffer(std::vector<std
 }
 
 // Calculate the area ratio of the intersection of two squares
-float CombinedNonMaxSuppressionCpuKernelMod::IOU(std::vector<std::vector<float>> *boxes_buffer, int i, int j) const {
+float CombinedNonMaxSuppressionCpuKernelMod::IOU(std::vector<std::vector<float>> *const boxes_buffer, const int i,
+                                                 const int j) const {
   std::vector<float> box_a = (*boxes_buffer)[i];
   std::vector<float> box_b = (*boxes_buffer)[j];
   float lx, ly, rx, ry;
@@ -94,9 +95,9 @@ float CombinedNonMaxSuppressionCpuKernelMod::IOU(std::vector<std::vector<float>>
  * if soft_nms_sigma_ <= 0.0, nms is used, means delete it when iou > iou_threshold_
  * run non max suppression per bath per class
  */
-void CombinedNonMaxSuppressionCpuKernelMod::non_max_suppression(std::vector<std::vector<float>> *boxes_buffer,
-                                                                std::vector<float> *scores_buffer,
-                                                                std::vector<int> &selected) {
+void CombinedNonMaxSuppressionCpuKernelMod::non_max_suppression(std::vector<std::vector<float>> *const boxes_buffer,
+                                                                std::vector<float> *const scores_buffer,
+                                                                std::vector<int> &selected) const {
   std::priority_queue<non_max_suppression_local::score_index> pq;
   for (size_t i = 0; i < IntToSize(num_boxes_); i++) {
     if ((*scores_buffer)[i] > score_threshold_) {
@@ -127,7 +128,9 @@ void CombinedNonMaxSuppressionCpuKernelMod::non_max_suppression(std::vector<std:
         should_hard_suppress = true;
         break;
       }
-      if (next_si.score <= score_threshold_) break;
+      if (next_si.score <= score_threshold_) {
+        break;
+      }
     }
     next_si.suppress_begin_index = static_cast<int>(selected.size());
     if (!should_hard_suppress) {
@@ -143,7 +146,8 @@ void CombinedNonMaxSuppressionCpuKernelMod::non_max_suppression(std::vector<std:
 }
 
 void CombinedNonMaxSuppressionCpuKernelMod::nms_perclass(
-  float *boxes, float *scores, std::vector<non_max_suppression_local::result_para> &sub_result_vec, int &result_size) {
+  float *boxes, float *scores, std::vector<non_max_suppression_local::result_para> &sub_result_vec,
+  int &result_size) const {
   size_t k = 0;
   int box_idx;
   size_t boxe_len1;
@@ -185,8 +189,8 @@ void CombinedNonMaxSuppressionCpuKernelMod::nms_perclass(
 size_t CombinedNonMaxSuppressionCpuKernelMod::nms_perbath(float *boxes, float *scores, float *nmsed_boxes,
                                                           float *nmsed_scores, float *nmsed_class,
                                                           int *valid_detection) {
-  int box_size = num_bath_ * num_detection_ * sizeof(float) * multiplier;
-  int score_size = num_bath_ * num_detection_ * sizeof(float);
+  int box_size = SizeToInt(num_bath_ * num_detection_ * sizeof(float) * multiplier);
+  int score_size = SizeToInt(num_bath_ * num_detection_ * sizeof(float));
   void(memset_s(nmsed_boxes, box_size, 0, box_size));
   void(memset_s(nmsed_scores, score_size, 0, score_size));
   void(memset_s(nmsed_class, score_size, 0, score_size));

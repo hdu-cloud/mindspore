@@ -17,21 +17,21 @@
 #include "plugin/device/cpu/kernel/akg/akg_cpu_kernel_build.h"
 #include <memory>
 #include <string>
-#include "kernel/common_utils.h"
+#include "kernel/framework_utils.h"
 #include "plugin/device/cpu/kernel/akg/akg_cpu_kernel_mod.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 
 namespace mindspore {
 namespace kernel {
-void AkgCpuKernelBuilder::AkgSetKernelMod(const KernelPackPtr &kernel_pack,
-                                          const AkgKernelJsonGenerator &json_generator, const AnfNodePtr &anf_node) {
+void AkgCpuKernelBuilder::SetKernelMod(const KernelPackPtr &kernel_pack, const GraphKernelJsonGenerator &json_generator,
+                                       const AnfNodePtr &anf_node) {
   auto kernel_mod_ptr = std::make_shared<AkgCpuKernelMod>(kernel_pack);
   kernel_mod_ptr->SetInputSizeList(json_generator.input_size_list());
   kernel_mod_ptr->SetOutputSizeList(json_generator.output_size_list());
   AnfAlgo::SetKernelMod(kernel_mod_ptr, anf_node.get());
 }
 
-void AkgCpuKernelBuilder::AkgSaveJsonInfo(const string &kernel_name, const string &kernel_json) {
+void AkgCpuKernelBuilder::SaveJsonInfo(const string &kernel_name, const string &kernel_json) {
   kernel::SaveJsonInfo(kernel_name, kernel_json, kernel::KernelMeta::GetInstance()->kernel_meta_path());
 }
 }  // namespace kernel

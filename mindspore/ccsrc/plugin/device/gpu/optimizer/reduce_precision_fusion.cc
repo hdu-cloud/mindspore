@@ -19,8 +19,10 @@
 #include <string>
 #include <vector>
 
-#include "backend/common/optimizer/helper.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
@@ -75,7 +77,7 @@ bool ReducePrecisionFusion::Run(const FuncGraphPtr &graph) {
     MS_EXCEPTION_IF_NULL(node);
     if (node != nullptr && node->isa<CNode>() && AnfUtils::IsRealKernel(node)) {
       size_t input_num = common::AnfAlgo::GetInputTensorNum(node);
-      size_t output_num = common::AnfAlgo::GetOutputTensorNum(node);
+      size_t output_num = AnfAlgo::GetOutputTensorNum(node);
       for (size_t i = 0; i < input_num; i++) {
         auto inferType = common::AnfAlgo::GetPrevNodeOutputInferDataType(node, i);
         auto deviceType = AnfAlgo::GetInputDeviceDataType(node, i);

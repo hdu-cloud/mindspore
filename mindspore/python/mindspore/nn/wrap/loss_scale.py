@@ -15,19 +15,23 @@
 """Loss scale cell for loss scale training."""
 from __future__ import absolute_import
 
+import os
 import mindspore.context as context
 from mindspore.context import ParallelMode
 from mindspore.parallel._utils import _get_enable_parallel_optimizer
+from mindspore import nn
 from mindspore.nn.wrap.cell_wrapper import TrainOneStepCell
 from mindspore.nn.cell import Cell
 from mindspore.common import Tensor
 from mindspore.common.sparse_tensor import RowTensorInner
 from mindspore.common.parameter import Parameter
+from mindspore.ops.operations.math_ops import NPUGetFloatStatusV2, NPUClearFloatStatusV2
 from mindspore.ops import functional as F
 from mindspore.ops import composite as C
 from mindspore.ops import operations as P
 from mindspore.common import dtype as mstype
 from mindspore.common.api import jit
+from mindspore._c_expression import MSContext
 
 _grad_scale = C.MultitypeFuncGraph("grad_scale")
 reciprocal = P.Reciprocal()
@@ -56,6 +60,28 @@ def _tensor_grad_overflow(grad):
 @_grad_overflow.register("RowTensor")
 def _tensor_grad_overflow_row_tensor(grad):
     return grad_overflow(grad.values)
+
+
+_ascend_grad_overflow = C.MultitypeFuncGraph("_ascend_grad_overflow")
+ascend_grad_overflow = P.IsFinite()
+
+
+@_ascend_grad_overflow.register("Tensor")
+def _tensor_ascend_grad_overflow(grad):
+    status = ascend_grad_overflow(grad)
+    base = Tensor(1.0, dtype=mstype.float32)
+    output = base - status.all()
+    output = P.Reshape()(output, ((1,)))
+    return output
+
+
+@_ascend_grad_overflow.register("RowTensor")
+def _tensor_ascend_grad_overflow_row_tensor(grad):
+    status = ascend_grad_overflow(grad.values)
+    base = Tensor(1.0, dtype=mstype.float32)
+    output = base - status.all()
+    output = P.Reshape()(output, ((1,)))
+    return output
 
 
 class DynamicLossScaleUpdateCell(Cell):
@@ -87,8 +113,8 @@ class DynamicLossScaleUpdateCell(Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, Parameter, nn
-        >>> import mindspore.ops as ops
+        >>> import mindspore
+        >>> from mindspore import Tensor, Parameter, nn, ops
         >>>
         >>> class Net(nn.Cell):
         ...     def __init__(self, in_features, out_features):
@@ -141,6 +167,13 @@ class DynamicLossScaleUpdateCell(Cell):
 
         Returns:
             float, the loss scale value.
+
+        Examples:
+            >>> from mindspore import nn
+            >>> manager = nn.DynamicLossScaleUpdateCell(loss_scale_value=212, scale_factor=2, scale_window=1000)
+            >>> output = manager.get_loss_scale()
+            >>> print(output)
+            212
         """
         return self.loss_scale_value
 
@@ -185,6 +218,7 @@ class FixedLossScaleUpdateCell(Cell):
 
     Examples:
         >>> import numpy as np
+        >>> import mindspore
         >>> from mindspore import Tensor, Parameter, nn, ops
         >>>
         >>> class Net(nn.Cell):
@@ -220,6 +254,13 @@ class FixedLossScaleUpdateCell(Cell):
 
         Returns:
             float, the loss scale value.
+
+        Examples:
+            >>> from mindspore import nn
+            >>> manager = nn.FixedLossScaleUpdateCell(loss_scale_value=212)
+            >>> output = manager.get_loss_scale()
+            >>> print(output)
+            212
         """
         return self.loss_scale_value
 
@@ -244,7 +285,7 @@ class TrainOneStepWithLossScaleCell(TrainOneStepCell):
             the shape should be :math:`()` or :math:`(1,)`.
 
     Inputs:
-        - **(*inputs)** (Tuple(Tensor)) - Tuple of input tensors with shape :math:`(N, \ldots)`.
+        - **\*inputs** (Tuple(Tensor)) - Tuple of input tensors with shape :math:`(N, \ldots)`.
 
     Outputs:
         Tuple of 3 Tensor, the loss, overflow flag and current loss scale value.
@@ -255,7 +296,7 @@ class TrainOneStepWithLossScaleCell(TrainOneStepCell):
 
     Raises:
         TypeError: If `scale_sense` is neither Cell nor Tensor.
-        ValueError: If shape of `scale_sense` is neither (1,) nor ().
+        ValueError: If shape of `scale_sense` is neither :math:`(1,)` nor :math:`()`.
 
     Supported Platforms:
         ``Ascend`` ``GPU``
@@ -264,7 +305,6 @@ class TrainOneStepWithLossScaleCell(TrainOneStepCell):
         >>> import numpy as np
         >>> import mindspore
         >>> from mindspore import Tensor, Parameter, nn, ops
-        >>> from mindspore import dtype as mstype
         >>>
         >>> class Net(nn.Cell):
         ...     def __init__(self, in_features, out_features):
@@ -280,14 +320,21 @@ class TrainOneStepWithLossScaleCell(TrainOneStepCell):
         >>> size, in_features, out_features = 16, 16, 10
         >>> #1) when the type of scale_sense is Cell:
         >>> net = Net(in_features, out_features)
-        >>> loss = nn.MSELoss()
+        >>> loss_fn = nn.MSELoss()
         >>> optimizer = nn.Momentum(net.trainable_params(), learning_rate=0.1, momentum=0.9)
-        >>> net_with_loss = nn.WithLossCell(net, loss)
-        >>> manager = nn.DynamicLossScaleUpdateCell(loss_scale_value=2**12, scale_factor=2, scale_window=1000)
-        >>> train_network = nn.TrainOneStepWithLossScaleCell(net_with_loss, optimizer, scale_sense=manager)
+        >>> net_with_loss = nn.WithLossCell(net, loss_fn)
         >>> input = Tensor(np.ones([out_features, in_features]), mindspore.float32)
         >>> labels = Tensor(np.ones([out_features,]), mindspore.float32)
-        >>> output = train_network(input, labels)
+        >>> loss = net_with_loss(input, labels)
+        >>> manager = nn.DynamicLossScaleUpdateCell(loss_scale_value=2**12, scale_factor=2, scale_window=1000)
+        >>> train_network = nn.TrainOneStepWithLossScaleCell(net_with_loss, optimizer, scale_sense=manager)
+        >>> status = Tensor([0] * 8, mindspore.int32)
+        >>> scaling_sens = train_network.scale_sense
+        >>> scaling_sens_filled = ops.ones_like(loss) * ops.cast(scaling_sens, ops.dtype(loss))
+        >>> grads = train_network.grad(train_network.network, train_network.weights)(input, labels, scaling_sens_filled)
+        >>> grads = train_network.grad_reducer(grads)
+        >>> cond = train_network.get_overflow_status(status, grads)
+        >>> overflow = train_network.process_loss_scale(cond)
         >>>
         >>> #2) when the type of scale_sense is Tensor:
         >>> net = Net(in_features, out_features)
@@ -296,12 +343,14 @@ class TrainOneStepWithLossScaleCell(TrainOneStepCell):
         >>> net_with_loss = nn.WithLossCell(net, loss)
         >>> inputs = Tensor(np.ones([size, in_features]).astype(np.float32))
         >>> label = Tensor(np.zeros([size, out_features]).astype(np.float32))
-        >>> scaling_sens = Tensor([1024], dtype=mstype.float32)
+        >>> scaling_sens = Tensor([1024], dtype=mindspore.float32)
         >>> train_network = nn.TrainOneStepWithLossScaleCell(net_with_loss, optimizer, scale_sense=scaling_sens)
+        >>> scaling_sens = Tensor([1], dtype=mstype.float32)
+        >>> train_network.set_sense_scale(scaling_sens)
         >>> output = train_network(inputs, label)
         >>>
         >>> # update scaling sens and train the network
-        >>> scaling_sens = Tensor([1], dtype=mstype.float32)
+        >>> scaling_sens = Tensor([1], dtype=mindspore.float32)
         >>> train_network.set_sense_scale(scaling_sens)
         >>> output = train_network(inputs, label)
     """
@@ -309,12 +358,21 @@ class TrainOneStepWithLossScaleCell(TrainOneStepCell):
         super(TrainOneStepWithLossScaleCell, self).__init__(network, optimizer, sens=None)
         self.hyper_map = C.HyperMap()
         self.base = Tensor(1, mstype.float32)
+        self.base0 = Tensor(0, mstype.int32)
         self.reduce_sum = P.ReduceSum(keep_dims=False)
+        self.reduce_all = P.ReduceAll(keep_dims=False)
         self.less_equal = P.LessEqual()
+        self.equal = P.Equal()
+        self.logic_not = P.LogicalNot()
         self.allreduce = P.AllReduce()
         self.is_distributed = (self.parallel_mode != ParallelMode.STAND_ALONE)
         self.gpu_target = (context.get_context("device_target") == "GPU")
+        self.ascend_910a_target = (MSContext.get_instance().get_ascend_soc_version() == 'ascend910')
+        self.ascend_910b_target = (MSContext.get_instance().get_ascend_soc_version() == 'ascend910b')
         self.loss_scaling_manager = None
+        self._ascend910b_check_overflow_status_mode = os.environ.get('MS_ASCEND_CHECK_OVERFLOW_MODE')
+
+
         if isinstance(scale_sense, Cell):
             self.loss_scaling_manager = scale_sense
             self.scale_sense = Parameter(Tensor(scale_sense.get_loss_scale(), dtype=mstype.float32),
@@ -331,13 +389,13 @@ class TrainOneStepWithLossScaleCell(TrainOneStepCell):
                             "the 'scale_sense' must be Cell or Tensor, but got 'scale_sense' type: {}."
                             .format(type(scale_sense)))
         self.enable_tuple_broaden = True
+        self._get_attr_from_cell(network)
 
     def construct(self, *inputs):
         weights = self.weights
         loss = self.network(*inputs)
         scaling_sens = self.scale_sense
-
-        status, scaling_sens = self.start_overflow_check(loss, scaling_sens)
+        status = Tensor([0] * 8, mstype.int32)
 
         scaling_sens_filled = C.ones_like(loss) * F.cast(scaling_sens, F.dtype(loss))
         grads = self.grad(self.network, weights)(*inputs, scaling_sens_filled)
@@ -385,20 +443,74 @@ class TrainOneStepWithLossScaleCell(TrainOneStepCell):
               cleared before executing the computation.
 
         Returns:
-            Tuple[object, object], the first value is False for GPU backend, while it is an instance of
-            NPUAllocFloatStatus for other backend. The status is used to detect overflow during `get_overflow_status`.
-            The second value is the same as the input of `compute_input`, but contains some information about the
-            execution order.
+            Tuple[object, object], the first output is used to control the execution sequence. To ensure that the
+            `start_overflow_check` is executed before get_overflow_status after compilation optimization is performed.
+            This value should be used as the first input of get_overflow_status. The second output is the same as
+            the input of compute_input, used to control the execution sequence, and make ensure that the overflow flag
+            is cleaned up when the function returns.
         """
-        status = False
-        if not self.gpu_target:
-            # init overflow buffer
-            status = P.NPUAllocFloatStatus()()
+        status = Tensor([0] * 8, mstype.int32)
+        if self.ascend_910a_target or (self.ascend_910b_target and \
+                                       self._ascend910b_check_overflow_status_mode != "INFNAN_MODE"):
             status = F.depend(status, pre_cond)
             # clear overflow buffer
-            clear_status = P.NPUClearFloatStatus()(status)
+            clear_status = NPUClearFloatStatusV2()(status)
             compute_input = F.depend(compute_input, clear_status)
         return status, compute_input
+
+    def _check_overflow_status_on_infnan_mode(self, grad_overflow_check_func, compute_output):
+        """check overflow status on infnan mode."""
+        flag_sum = self.hyper_map(F.partial(grad_overflow_check_func), compute_output)
+        flag_sum = P.AddN()(flag_sum)
+        # convert flag_sum to scalar
+        flag_sum = P.Reshape()(flag_sum, (()))
+        return flag_sum
+
+    def _get_distributed_overflow_status_on_infnan_mode(self, grad_overflow_check_func, compute_output):
+        """converge the distributed overflow status on infnan mode."""
+        flag_sum = self._check_overflow_status_on_infnan_mode(grad_overflow_check_func, compute_output)
+
+        if self.is_distributed:
+            # sum overflow flag over devices
+            flag_reduce = self.allreduce(flag_sum)
+            overflow = self.less_equal(self.base, flag_reduce)
+        else:
+            overflow = self.less_equal(self.base, flag_sum)
+        return overflow
+
+    def _get_gpu_overflow_status(self, compute_output):
+        """get overflow status of gpu."""
+        overflow = self._get_distributed_overflow_status_on_infnan_mode(_grad_overflow, compute_output)
+        return overflow
+
+    def _get_ascend_overflow_status_on_infnan_mode(self, compute_output):
+        """get overflow status of ascend on infnan mode."""
+        overflow = self._get_distributed_overflow_status_on_infnan_mode(_ascend_grad_overflow, compute_output)
+        return overflow
+
+    def _get_ascend_overflow_status_on_saturation_mode(self, status, compute_output):
+        """get overflow status of ascend on saturation mode"""
+        status = F.depend(status, compute_output)
+        get_status = NPUGetFloatStatusV2()(status)
+
+        if self.is_distributed:
+            # sum overflow flag over devices
+            flag_reduce = self.allreduce(get_status)
+            # get_status not equal to [0]*8 means overflow
+            flag = self.equal(self.base0, flag_reduce)
+            status = F.depend(status, flag)
+            # distributed needs to skip allreduce to avoid its overflow affecting the next step
+            clear_status = NPUClearFloatStatusV2()(status)
+            flag = F.depend(flag, clear_status)
+            overall_finite = self.reduce_all(flag)
+        else:
+            status = F.depend(status, get_status)
+            clear_status = NPUClearFloatStatusV2()(status)
+            get_status = F.depend(get_status, clear_status)
+            flag = self.equal(self.base0, get_status)
+            overall_finite = self.reduce_all(flag)
+        overflow = self.logic_not(overall_finite)
+        return overflow
 
     @jit
     def get_overflow_status(self, status, compute_output):
@@ -409,32 +521,23 @@ class TrainOneStepWithLossScaleCell(TrainOneStepCell):
         based on this class can also call this interface to process the overflow.
 
         Args:
-            status (object): A status instance used to detect the overflow.
-            compute_output: Overflow detection should be performed on a certain computation. Set `compute_output`
-              as the output of the computation, to ensure overflow `status` is acquired before executing the
-              computation.
+            status (object): To control the execution sequence with start_overflow_check, it should be set as the first
+              output of start_overflow_check.
+            compute_output: Overflow detection should be performed in a certain computation process. Set
+              `compute_output` as the output of the computation process.
 
         Returns:
             bool, whether the overflow occurs or not.
         """
-        if not self.gpu_target:
-            status = F.depend(status, compute_output)
-            get_status = P.NPUGetFloatStatus()(status)
-            status = F.depend(status, get_status)
-            # sum overflow buffer elements, 0:not overflow , >0:overflow
-            flag_sum = self.reduce_sum(status, (0,))
-        else:
-            flag_sum = self.hyper_map(F.partial(_grad_overflow), compute_output)
-            flag_sum = P.AddN()(flag_sum)
-            # convert flag_sum to scalar
-            flag_sum = P.Reshape()(flag_sum, (()))
-
-        if self.is_distributed:
-            # sum overflow flag over devices
-            flag_reduce = self.allreduce(flag_sum)
-            overflow = self.less_equal(self.base, flag_reduce)
-        else:
-            overflow = self.less_equal(self.base, flag_sum)
+        if self.gpu_target:
+            overflow = self._get_gpu_overflow_status(compute_output)
+        elif self.ascend_910b_target:
+            if self._ascend910b_check_overflow_status_mode != "INFNAN_MODE":
+                overflow = self._get_ascend_overflow_status_on_saturation_mode(status, compute_output)
+            else:
+                overflow = self._get_ascend_overflow_status_on_infnan_mode(compute_output)
+        else:  # ascend_910a_target
+            overflow = self._get_ascend_overflow_status_on_saturation_mode(status, compute_output)
         return overflow
 
     def process_loss_scale(self, overflow):
@@ -477,7 +580,7 @@ def tensor_shard_grad_scale_pipeline(scale, grad, accu_grad):
     return new_grad
 
 
-class _TrainPipelineWithLossScaleCell(TrainOneStepCell):
+class _TrainGradAccuWithLossScaleCell(TrainOneStepCell):
     """
     Append an optimizer to the training network after that the construct
     function can be called to create the backward graph.
@@ -488,14 +591,14 @@ class _TrainPipelineWithLossScaleCell(TrainOneStepCell):
         scale_sense (Cell): Cell to do the loss scale.
     """
     def __init__(self, network, optimizer, scale_sense):
-        super(_TrainPipelineWithLossScaleCell, self).__init__(network, optimizer, sens=None)
+        super(_TrainGradAccuWithLossScaleCell, self).__init__(network, optimizer, sens=None)
         self.network = network
         self.network.add_flags(defer_inline=True)
         self.weights = optimizer.parameters
         self.accu_grads = self.weights.clone(prefix="accu_grads", init="zeros")
         self.optimizer = optimizer
         self.grad = C.GradOperation(get_by_list=True, sens_param=True)
-        self.grad_reducer = F.identity
+        self.grad_reducer = nn.Identity()
         self.degree = 1
         self.cast = P.Cast()
         self.alloc_status = P.NPUAllocFloatStatus()
@@ -531,12 +634,12 @@ class _TrainPipelineWithLossScaleCell(TrainOneStepCell):
         scaling_sens = self.scale_sense
         init = self.alloc_status()
         scaling_sens_filled = C.ones_like(loss) * F.cast(scaling_sens, F.dtype(loss))
+        scaling_sens_filled = F.depend(scaling_sens_filled, self.clear_before_grad(init))
         grads = self.grad(self.network, self.weights)(*inputs, scaling_sens_filled)
         init = F.depend(init, grads)
         get_status = self.get_status(init)
         init = F.depend(init, get_status)
         flag_sum = self.reduce_sum(init, (0,))
-        loss = F.depend(loss, self.clear_before_grad(init))
         if self.opt_shard:
             grads = self.grad_reducer(grads)
             grads = self.hyper_map(F.partial(shard_grad_scale, scaling_sens * self.degree), grads, self.accu_grads)

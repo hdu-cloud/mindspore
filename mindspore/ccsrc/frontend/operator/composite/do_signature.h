@@ -25,7 +25,7 @@
 #include <memory>
 
 #include "utils/hash_map.h"
-#include "pipeline/jit/static_analysis/static_analysis.h"
+#include "pipeline/jit/ps/static_analysis/static_analysis.h"
 #include "utils/misc.h"
 #include "utils/any.h"
 #include "ir/dtype.h"
@@ -44,7 +44,7 @@ class DoSignatureMetaFuncGraph : public MetaFuncGraph {
 
   MS_DECLARE_PARENT(DoSignatureMetaFuncGraph, MetaFuncGraph)
 
-  FuncGraphPtr GenerateFuncGraph(const abstract::AbstractBasePtrList &args_spec_list) override;
+  FuncGraphPtr GenerateFuncGraph(const abstract::AbstractBasePtrList &args_abs_list) override;
   const ValuePtr function() const { return function_; }
 
   friend bool operator==(const DoSignatureMetaFuncGraph &lhs, const DoSignatureMetaFuncGraph &rhs) {
@@ -64,7 +64,7 @@ void RaiseExceptionForConvertRefDtype(const ValuePtr &func, const std::string &r
 void RaiseExceptionForCheckParameter(const std::string &func_name, size_t i, const std::string &source_type);
 
 AnfNodePtr GenerateCNode(const FuncGraphPtr &func_graph, const std::string &func_name, const ValuePtr &function,
-                         const AbstractBasePtrList &args_spec_list, const AnfNodePtrList &old_node_inputs);
+                         const AbstractBasePtrList &args_abs_list, const AnfNodePtrList &old_node_inputs);
 }  // namespace prim
 }  // namespace mindspore
 

@@ -20,8 +20,8 @@
 #include <memory>
 #include <vector>
 #include <set>
-#include "backend/common/optimizer/optimizer.h"
-#include "backend/common/optimizer/pass.h"
+#include "include/backend/optimizer/optimizer.h"
+#include "include/backend/optimizer/pass.h"
 #include "schema/inner/model_generated.h"
 #include "tools/common/meta_graph_serializer.h"
 #include "ir/anf.h"
@@ -34,10 +34,10 @@ class AnfTransform {
  public:
   AnfTransform();
   virtual ~AnfTransform();
-  FuncGraphPtr Transform(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param);
+  STATUS Transform(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param);
 
  private:
-  FuncGraphPtr TransformFuncGraph(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param);
+  STATUS TransformFuncGraph(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param);
 
   static int RunPass(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param);
 
@@ -47,16 +47,18 @@ class AnfTransform {
 
   static int RunConvertPass(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param);
 
+  static int RunInt64CastInt32Pass(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param);
+
   static int RunConstFoldPass(const FuncGraphPtr &olde_graph, const std::shared_ptr<ConverterPara> &param);
 
   static int RunParallelPass(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param);
 
   static int DoQuantize(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param);
 
-  static int SpecInputFormat(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param);
   static int DoFormatForMindIR(const FuncGraphPtr &old_graph, const std::shared_ptr<ConverterPara> &param);
 
   static bool StoreBuiltinPass(const std::shared_ptr<ConverterPara> &param);
+  static void ClearBuiltinPass();
 
   static int RunFormatTrans(const FuncGraphPtr &old_graph);
 
@@ -65,10 +67,6 @@ class AnfTransform {
   static STATUS MarkTrainWeightSharingOp(const FuncGraphPtr &func_graph, const CNodePtr &cnode);
 
   static STATUS MarkTrainOp(const FuncGraphPtr &func_graph);
-
-  static STATUS QATTransform(const FuncGraphPtr &func_graph, const std::shared_ptr<ConverterPara> &param);
-
-  static STATUS DoSingleGraphQATTransform(const FuncGraphPtr &func_graph, const std::shared_ptr<ConverterPara> &param);
 
   static bool CheckExternalExtension(const std::shared_ptr<ConverterPara> &param);
 

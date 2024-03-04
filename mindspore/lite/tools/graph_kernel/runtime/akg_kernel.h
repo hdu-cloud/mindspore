@@ -34,8 +34,7 @@ class AkgKernel : public LiteKernel {
     params_ = static_cast<void *>(reinterpret_cast<CustomParameter *>(op_parameter_)->attr_data[0]);
     ExtractKernelAttr();
   }
-  ~AkgKernel() override;
-
+  virtual ~AkgKernel();
   int Prepare() override;
   int Run() override;
   int ReSize() override;
@@ -49,7 +48,6 @@ class AkgKernel : public LiteKernel {
   void ExtractKernelAttr();
 
   void *params_{nullptr};
-  void *handle_{nullptr};
   void *kernel_func_{nullptr};
   std::string kernel_name_;
   int nthread_{0};
@@ -60,6 +58,16 @@ class AkgKernel : public LiteKernel {
   void *cached_runtimeargs_ = nullptr;
   std::vector<size_t> dynamic_input_index_;
   std::vector<std::vector<int>> origin_inputs_shape_;
+  void *lib_handle_ = nullptr;
+  std::string process;
+  std::string arch;
+  std::string system;
+  std::string cpu_feature = "";
+
+ private:
+  int LoadAkgLib(void *data, size_t file_size);
+  int CheckAkgKernelInfo();
+  void CloseAkgLib();
 };
 }  // namespace mindspore::kernel
 #endif  // MINDSPORE_LITE_TOOLS_GRAPH_KERNEL_RUNTIME_AKG_KERNEL_H_

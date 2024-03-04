@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_AVG_POOL_GRAD_V1_H_
 #define MINDSPORE_CORE_OPS_AVG_POOL_GRAD_V1_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 #include "utils/check_convert_utils.h"
 
 namespace mindspore {
@@ -33,8 +33,9 @@ class MIND_API AvgPoolGradV1 : public BaseOperator {
   MIND_API_BASE_MEMBER(AvgPoolGradV1);
 };
 
-abstract::AbstractBasePtr AvgPoolGradV1Infer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                             const std::vector<AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr AvgPoolGradV1Infer(const abstract::AnalysisEnginePtr &,
+                                                      const PrimitivePtr &primitive,
+                                                      const std::vector<AbstractBasePtr> &input_args);
 using PrimAvgPoolGradV1Ptr = std::shared_ptr<AvgPoolGradV1>;
 }  // namespace ops
 }  // namespace mindspore

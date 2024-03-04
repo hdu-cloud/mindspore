@@ -28,6 +28,7 @@ constexpr size_t kXMinShapeSize = 2;
 
 bool MatrixBandPartGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                       const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
   kernel_name_ = base_operator->name();
   if (inputs.empty() || outputs.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', it got empty inputs or outputs, which is invalid.";
@@ -43,10 +44,10 @@ bool MatrixBandPartGpuKernelMod::Init(const BaseOperatorPtr &base_operator, cons
   return true;
 }
 
-void MatrixBandPartGpuKernelMod::BroadcastShape(const std::vector<size_t> &x_shape,
-                                                const std::vector<size_t> &lower_shape,
-                                                const std::vector<size_t> &upper_shape,
-                                                const std::vector<size_t> &output_shape) {
+void MatrixBandPartGpuKernelMod::BroadcastShape(const std::vector<int64_t> &x_shape,
+                                                const std::vector<int64_t> &lower_shape,
+                                                const std::vector<int64_t> &upper_shape,
+                                                const std::vector<int64_t> &output_shape) {
   broadcast_x_shape_.clear();
   broadcast_lower_shape_.clear();
   broadcast_upper_shape_.clear();
@@ -55,8 +56,8 @@ void MatrixBandPartGpuKernelMod::BroadcastShape(const std::vector<size_t> &x_sha
   broadcast_lower_shape_.resize(kMaxDims, 1);
   broadcast_upper_shape_.resize(kMaxDims, 1);
   broadcast_output_shape_.resize(kMaxDims, 1);
-  auto expanded_lower_shape = ops::GetExpandedShape<size_t>(lower_shape, output_shape.size());
-  auto expanded_upper_shape = ops::GetExpandedShape<size_t>(upper_shape, output_shape.size());
+  auto expanded_lower_shape = ops::GetExpandedShape<int64_t>(lower_shape, output_shape.size());
+  auto expanded_upper_shape = ops::GetExpandedShape<int64_t>(upper_shape, output_shape.size());
 
   for (size_t i = 0; i < output_shape.size(); i++) {
     broadcast_output_shape_[i] = output_shape[i];
@@ -92,10 +93,10 @@ int MatrixBandPartGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, con
   auto lower_shape_temp = inputs.at(kIndex1)->GetShapeVector();
   auto upper_shape_temp = inputs.at(kIndex2)->GetShapeVector();
   auto output_shape_temp = outputs.at(kIndex0)->GetShapeVector();
-  std::vector<size_t> x_shape{};
-  std::vector<size_t> lower_shape{};
-  std::vector<size_t> upper_shape{};
-  std::vector<size_t> output_shape{};
+  std::vector<int64_t> x_shape{};
+  std::vector<int64_t> lower_shape{};
+  std::vector<int64_t> upper_shape{};
+  std::vector<int64_t> output_shape{};
   (void)std::transform(x_shape_temp.begin(), x_shape_temp.end(), std::back_inserter(x_shape), LongToSize);
   (void)std::transform(lower_shape_temp.begin(), lower_shape_temp.end(), std::back_inserter(lower_shape), LongToSize);
   (void)std::transform(upper_shape_temp.begin(), upper_shape_temp.end(), std::back_inserter(upper_shape), LongToSize);
@@ -148,6 +149,10 @@ bool MatrixBandPartGpuKernelMod::LaunchKernelNotBroadcast(const T *x_ptr, const 
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemcpyAsync(&upper, upper_ptr, sizeof(LU), cudaMemcpyDeviceToHost,
                                                      reinterpret_cast<cudaStream_t>(cuda_stream_)),
                                      "For 'MatrixBandPart', copying input upper to host failed.");
+  if (cudaStreamQuery(reinterpret_cast<cudaStream_t>(cuda_stream_)) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(cuda_stream_)),
+                                       "For 'MatrixBandPart', cuda Stream Sync Failed.");
+  }
 
   lower_ = static_cast<int64_t>(lower);
   upper_ = static_cast<int64_t>(upper);
@@ -168,8 +173,9 @@ bool MatrixBandPartGpuKernelMod::LaunchKernelNotBroadcast(const T *x_ptr, const 
   if (lower_ >= SizeToLong(m_) && upper_ >= SizeToLong(n_)) {
     return true;
   }
-  MatrixBandPart(output_outer_size_, x_ptr, m_, n_, lower_, upper_, output_ptr, device_id_,
-                 reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = MatrixBandPart(output_outer_size_, x_ptr, m_, n_, lower_, upper_, output_ptr, device_id_,
+                               reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -182,9 +188,10 @@ bool MatrixBandPartGpuKernelMod::LaunchKernel(const std::vector<kernel::AddressP
   const auto upper_ptr = reinterpret_cast<LU *>(inputs.at(kIndex2)->addr);
   auto output_ptr = reinterpret_cast<T *>(outputs.at(kIndex0)->addr);
   if (need_broadcast_) {
-    MatrixBandPartBroadcast(output_element_num_, broadcast_x_shape_, broadcast_lower_shape_, broadcast_upper_shape_,
-                            broadcast_output_shape_, x_ptr, m_, n_, lower_ptr, upper_ptr, output_ptr, device_id_,
-                            reinterpret_cast<cudaStream_t>(cuda_stream_));
+    auto status = MatrixBandPartBroadcast(
+      output_element_num_, broadcast_x_shape_, broadcast_lower_shape_, broadcast_upper_shape_, broadcast_output_shape_,
+      x_ptr, m_, n_, lower_ptr, upper_ptr, output_ptr, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return true;
   } else {
     return LaunchKernelNotBroadcast(x_ptr, lower_ptr, upper_ptr, output_ptr);

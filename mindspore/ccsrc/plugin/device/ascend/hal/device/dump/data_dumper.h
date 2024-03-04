@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 #include <functional>
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 
 namespace aicpu {
 namespace dump {
@@ -34,8 +34,8 @@ class Task;
 namespace mindspore {
 namespace device {
 namespace ascend {
-// tuple(op_name, task_id, stream_id, args)
-using RuntimeInfo = std::tuple<uint32_t, uint32_t, void *>;
+// tuple(op_name, task_id, stream_id, args, task_info)
+using RuntimeInfo = std::tuple<uint32_t, uint32_t, void *, std::string>;
 class DataDumper {
  public:
   DataDumper(const session::KernelGraph *kernel_graph, NotNull<std::function<void *()>> model_handle)
@@ -65,21 +65,16 @@ class DataDumper {
   void UnloadDumpInfo();
 
  private:
-  void ReleaseDevMem(void **ptr) const noexcept;
 #ifndef ENABLE_SECURITY
-  bool KernelNeedDump(const CNodePtr &kernel) const;
   void SetOpMappingInfo(NotNull<aicpu::dump::OpMappingInfo *> dump_info) const;
 #endif
-  void SetOpDebugMappingInfo(const NotNull<aicpu::dump::OpMappingInfo *> dump_info) const;
   void SetOpEndgraphMappingInfo(const NotNull<aicpu::dump::OpMappingInfo *> dump_info) const;
   void ConstructDumpTask(NotNull<const CNodePtr &> kernel, NotNull<aicpu::dump::Task *> dump_task) const;
 #ifndef ENABLE_SECURITY
-  void GetNeedDumpKernelList(NotNull<std::map<std::string, CNodePtr> *> kernel_map) const;
   static void DumpKernelOutput(const CNodePtr &kernel, void *args, NotNull<aicpu::dump::Task *> task);
   static void DumpKernelInput(const CNodePtr &kernel, void *args, NotNull<aicpu::dump::Task *> task);
 #endif
   static std::string StripUniqueId(const std::string node_name);
-  static void RtLoadDumpData(const aicpu::dump::OpMappingInfo &dump_info, void **ptr);
 
   const session::KernelGraph *kernel_graph_;
   std::function<void *()> model_handle_;

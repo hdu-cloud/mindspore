@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,13 @@
 
 #include <string>
 #include "mindspore/ccsrc/plugin/device/cpu/kernel/nnacl/op_base.h"
+
+/*
+Naming a key of path must be consistent with existing naming styles and follow the following rules:
+(1) If a path points to a file, please name it xxx_file;
+(2) If a path points to a dir, please name it xxx_dir;
+(3) If others, please make a technical review.
+*/
 
 namespace mindspore {
 namespace lite {
@@ -52,30 +59,94 @@ static const char CALIB_NORM[] = "NORM";
 
 // dims
 static const int32_t DIM_DEFAULT_SIZE = 4;
-// ms cache
-static const char *const kMSCache = "ms_cache";
-static const char *const kMSCacheModelPath = "cache_model_path";
-static const char *const kMSCacheVocabSize = "vocab_size";
-static const char *const kMSCacheDeviceSize = "device_cache_size";
-static const char *const kMSCacheSerializePath = "serialize_path";
-// weight path
-static const char *const kWeight = "weight";
-static const char *const kWeightPath = "weight_path";
-
-// model parallel runner id
-static const char *const kInnerIDs = "inner_ids";
-static const char *const kInnerRunnerID = "inner_runner_id";
-static const char *const kInnerNumaID = "inner_numa_id";
-
 static const char *const kIsOptimized = "isOptimized";
+static const char *const kInputFormat = "inputFormat";
+static const char *const kOutputFormat = "outputFormat";
+static const char *const kIsDynamicShape = "isDynamicShape";
+// ms cache
+static const char *const kMSCacheSection = "ms_cache";
+static const char *const kMSCacheModelPathKey = "cache_model_path";
+static const char *const kMSCacheVocabSizeKey = "vocab_size";
+static const char *const kMSCacheDeviceSizeKey = "device_cache_size";
+static const char *const kMSCacheSerializePathKey = "serialize_path";
+// mindir weight path
+static const char *const kConfigModelFileSection = "model_file";
+static const char *const kConfigMindIRPathKey = "mindir_path";
+static const char *const kWeightSection = "weight";
+static const char *const kWeightPathKey = "weight_path";
+// shared parallel thread pool
+static const char *const kSharedThreadPoolSection = "shared_thread_pool";
+static const char *const kEnableSharedThreadPoolKey = "enable_shared_thread_pool";
+static const char *const kThreadNumLimitPerWorkerKey = "thread_num_limit_per_worker";
+static const char *const kThreadNumRemainingPerWorkerKey = "thread_num_remaining_per_worker";
+// model pool inner section and key
+static const char *const kInnerModelParallelRunnerSection = "inner_model_parallel_runner";
+static const char *const kInnerSharingWeightCopyBufKey = "sharing_weight_copy_buf";
+static const char *const kInnerModelIDKey = "inner_model_id";
+static const char *const kInnerRunnerIDKey = "inner_runner_id";
+static const char *const kInnerNumaIDKey = "inner_numa_id";
+static const char *const kInnerWorkerNumKey = "inner_worker_num";
+
+// common context
+static const char *const kCommonContextSection = "common_context";
 // gpu context
-static const char *const kGPUContext = "gpu_context";
-static const char *const kInputShape = "input_shape";
-static const char *const kDynamicDims = "dynamic_dims";
-static const char *const kOptimizeDims = "opt_dims";
-static const char *const kPrecisionMode = "precision_mode";
-static const char *const kDumpOps = "dump_ops";
-static const char *const kDumpDir = "dump_dir";
+static const char *const kGPUContextSection = "gpu_context";
+static const char *const kInputShapeKey = "input_shape";
+static const char *const kDynamicDimsKey = "dynamic_dims";
+static const char *const kOptimizeDimsKey = "opt_dims";
+static const char *const kPrecisionModeKey = "precision_mode";
+static const char *const kDumpOpsKey = "dump_ops";
+static const char *const kDumpDirKey = "dump_dir";
+// ascend context
+static const char *const kAscendContextSection = "ascend_context";
+static const char *const kProfilingPathKey = "profiling_config_file";
+static const char *const kDumpPathKey = "dump_config_file";
+static const char *const kDumpModelNameKey = "dump_model_name";
+static const char *const kGeVariableMemoryMaxSize = "ge_variable_memory_max_size";
+static const char *const kGeGraphMemoryMaxSize = "ge_graph_memory_max_size";
+static const char *const kGraphCompilerCacheDirKey = "model_cache_dir";
+static const char *const kModifyMixList = "mixprecision_list_path";
+static const char *const kEnableCustomOp = "enable_custom_op";
+static const char *const kPluginCustomOps = "plugin_custom_ops";
+static const char *const kAoeMode = "aoe_mode";
+static const char *const kProvider = "provider";
+static const char *const kAscendProviderGe = "ge";
+static const char *const kParameterAsRefData = "parameter_as_refdata";
+static const char *const kModelCacheMode = "model_cache_mode";
+// ge options
+static const char *const kGeSessionOptionsSection = "ge_session_options";
+static const char *const kGeGraphOptionsSection = "ge_graph_options";
+static const char *const kGeGlobalOptionsSection = "ge_global_options";
+// distributed infer
+static const char *const kRankTableFilePathKey = "rank_table_file";
+// transformer
+static const char *const kTransformerSection = "transformer_context";
+static const char *const kEncoderInputKey = "encoder_input";
+static const char *const kDecoderInputKey = "decoder_input";
+static const char *const kFfnFp16Key = "ffn_fp16";
+static const char *const kOptimizeTransformer = "optimize_transformer";
+// lite inner group
+static const char *const kLiteInnerGroupSection = "lite_inner_group";
+static const char *const kLiteInnerGroupId = "group_id";
+// aoe section
+static const char *const kAoeGlobalOptionsSection = "aoe_global_options";
+static const char *const kAoeTuningOptionsSection = "aoe_tuning_options";
+// acl options
+static const char *const kAclOptionParam = "acl_option_cfg_param";
+static const char *const kAclInitOptionParam = "acl_init_options";
+static const char *const kAclBuildOptionParam = "acl_build_options";
+
+static const char *const kNameAttrWeightDir = "weight_dir";
+
+static const char *const kOutputShapes = "outputs_shape";
+static const char *const kNameCustomAscend = "CustomAscend";
+
+static const char *const kNameAttrRefDatas = "ref_datas";
+static const char *const kNameAttrZeroValRefDatas = "zero_val_ref_datas";
+static const char *const kConverterParams = "converter_params";
+static const char *const kConverterOutputFile = "output_file";
+// om converter options
+static const char *const kOMConverterOptionsSection = "om_converter";
 }  // namespace lite
 }  // namespace mindspore
 

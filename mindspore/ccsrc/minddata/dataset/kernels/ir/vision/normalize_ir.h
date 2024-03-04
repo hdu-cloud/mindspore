@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,16 +29,15 @@
 
 namespace mindspore {
 namespace dataset {
-
 namespace vision {
-
 constexpr char kNormalizeOperation[] = "Normalize";
 
 class NormalizeOperation : public TensorOperation {
  public:
-  NormalizeOperation(const std::vector<float> &mean, const std::vector<float> &std, bool is_hwc);
+  NormalizeOperation(const std::vector<float> &mean, const std::vector<float> &std, bool is_hwc,
+                     const std::string &device_target = "CPU");
 
-  ~NormalizeOperation();
+  ~NormalizeOperation() override;
 
   std::shared_ptr<TensorOp> Build() override;
 
@@ -50,12 +49,14 @@ class NormalizeOperation : public TensorOperation {
 
   static Status from_json(nlohmann::json op_params, std::shared_ptr<TensorOperation> *operation);
 
+  MapTargetDevice Type() override;
+
  private:
   std::vector<float> mean_;
   std::vector<float> std_;
   bool is_hwc_;
+  std::string device_target_;  // CPU, Ascend
 };
-
 }  // namespace vision
 }  // namespace dataset
 }  // namespace mindspore

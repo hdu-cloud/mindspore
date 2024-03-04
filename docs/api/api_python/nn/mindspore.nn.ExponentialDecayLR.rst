@@ -24,13 +24,13 @@ mindspore.nn.ExponentialDecayLR
         - **learning_rate** (float) - 学习率的初始值。
         - **decay_rate** (float) - 衰减率。
         - **decay_steps** (int) - 进行衰减的step数。
-        - **is_stair** (bool) - 如果为True，则学习率每 `decay_steps` 步衰减一次。默认值：False。
+        - **is_stair** (bool) - 如果为True，则学习率每 `decay_steps` 步衰减一次。默认值： ``False`` 。
 
     输入：
         - **global_step** (Tensor) - 当前step数，即current_step。
 
     输出：
-        标量Tensor。当前step的学习率值。
+        标量Tensor。当前step的学习率值，shape为 :math:`()`。
 
     异常：
         - **TypeError** - `learning_rate` 或  `decay_rate` 不是float。

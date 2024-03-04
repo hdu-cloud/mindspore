@@ -46,6 +46,12 @@ message AttributeProto {
     SYMBOL = 35;
     TYPE_NULL = 36;
     MAP_TENSOR = 37;
+    FUNCTOR = 38;
+    SCALAR = 39;
+  }
+  message SeqInfoProto{
+    optional bool is_dyn_len = 1;                 // store if tuple is dynamic length
+    optional AttributeProto tuple_elem_item = 2;  // store the element of tuple dynamic length
   }
   optional string name = 1;
   optional float f = 2;
@@ -63,9 +69,19 @@ message AttributeProto {
   optional string doc_string = 14;
   optional string ref_attr_name = 15;
   optional AttributeType type = 16;
-  repeated AttributeProto values = 17;          // tuple, list,dict of value
+  repeated AttributeProto values = 17;          // tuple, list, dict of value
+  optional SeqInfoProto seq_info = 18;       // tuple, list, structural info
+  optional FunctorProto functor = 19;
 }
 
+message FunctorProto {
+  enum FunctorType {
+    SHAPE_CALC_FUNCTOR = 1;
+  }
+  optional FunctorType type = 1;
+  optional string name = 2;
+  repeated AttributeProto values = 3;
+}
 
 message ValueInfoProto {
   optional string name = 1;
@@ -84,8 +100,9 @@ message NodeProto {
   repeated AttributeProto attribute = 5;
   optional string doc_string = 6;
   optional string domain = 7;
+  repeated AttributeProto node_attr = 8;
+  repeated AttributeProto primal_attr = 9;
 }
-
 
 message ModelProto {
   optional string ir_version = 1;
@@ -101,6 +118,7 @@ message ModelProto {
   optional ParallelProto parallel = 11; // information for parallel.
   repeated PrimitiveProto primitives = 12; // all the primitives of the model.
   optional int64 mind_ir_version = 13;
+  map<string,string> user_info = 14; // data for custom
 }
 
 
@@ -169,7 +187,7 @@ message TensorProto {
     optional string location = 1;
     optional int64 offset = 2;
     optional int64 length = 3;
-    optional string checksum = 4;
+    //optional string checksum = 4;
   }
   message QuantParamProto {
     required string quant_algo_name = 1;
@@ -220,4 +238,5 @@ message PrimitiveProto {
   optional string name = 1;
   optional string op_type = 2;
   repeated AttributeProto attribute = 3;
+  optional string instance_name = 4;
 }

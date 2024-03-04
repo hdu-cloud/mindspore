@@ -16,12 +16,12 @@
 
 #ifndef MINDSPORE_CORE_OPS_MULTINOMIAL_H_
 #define MINDSPORE_CORE_OPS_MULTINOMIAL_H_
-#include <vector>
 #include <memory>
+#include <vector>
 #include "mindapi/base/types.h"
-#include "ops/primitive_c.h"
-#include "ops/op_utils.h"
 #include "ops/base_operator.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
 
 namespace mindspore {
@@ -52,8 +52,8 @@ class MIND_API Multinomial : public BaseOperator {
   int64_t get_seed2() const;
 };
 
-abstract::AbstractBasePtr MultinomialInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                           const std::vector<AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr MultinomialInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                    const std::vector<AbstractBasePtr> &input_args);
 using PrimMultinomial = std::shared_ptr<Multinomial>;
 }  // namespace ops
 }  // namespace mindspore

@@ -14,12 +14,18 @@
  * limitations under the License.
  */
 
-#include <memory>
 #include "ops/sparse_to_dense.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -39,10 +45,10 @@ abstract::ShapePtr SparseToDenseInferShape(const PrimitivePtr &primitive,
   std::vector<ShapeVector> all_shapes = {indice_shape, values_shape};
   auto is_dynamic = std::any_of(all_shapes.begin(), all_shapes.end(), IsDynamic);
 
-  (void)CheckAndConvertUtils::CheckInteger("dimension of 'values'", values_shape.size(), kEqual,
+  (void)CheckAndConvertUtils::CheckInteger("dimension of 'values'", SizeToLong(values_shape.size()), kEqual,
                                            kSparseToDenseInputMinDim, op_name);
   if (!is_dynamic) {
-    (void)CheckAndConvertUtils::CheckInteger("dimension of 'indices'", indice_shape.size(), kEqual,
+    (void)CheckAndConvertUtils::CheckInteger("dimension of 'indices'", SizeToLong(indice_shape.size()), kEqual,
                                              kSparseToDenseInputMaxDim, op_name);
     (void)CheckAndConvertUtils::CheckInteger("batch of 'indices'", indice_shape[kInputIndex0], kEqual,
                                              values_shape[kInputIndex0], op_name);
@@ -76,14 +82,34 @@ abstract::AbstractBasePtr SparseToDenseInfer(const abstract::AnalysisEnginePtr &
   for (auto input : input_args) {
     MS_EXCEPTION_IF_NULL(input);
   }
-  CheckAndConvertUtils::CheckInteger("input numbers", SizeToLong(input_args.size()), kEqual, kSparseToDenseInputsNum,
-                                     primitive->name());
+  (void)CheckAndConvertUtils::CheckInteger("input numbers", SizeToLong(input_args.size()), kEqual,
+                                           kSparseToDenseInputsNum, primitive->name());
   auto infer_type = SparseToDenseInferType(primitive, input_args);
   auto infer_shape = SparseToDenseInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
 MIND_API_OPERATOR_IMPL(SparseToDense, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseToDense, prim::kPrimSparseToDense, SparseToDenseInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSparseToDenseInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseToDenseInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseToDenseInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseToDenseInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseToDense, prim::kPrimSparseToDense, AGSparseToDenseInfer, false);
 }  // namespace ops
 }  // namespace mindspore

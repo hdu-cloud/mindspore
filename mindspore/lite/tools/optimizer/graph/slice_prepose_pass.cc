@@ -20,6 +20,9 @@
 #include <memory>
 #include <set>
 #include <algorithm>
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/lite_ops.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "ops/fusion/full_connection.h"
 #include "ops/reshape.h"
 #include "ops/fusion/slice_fusion.h"
@@ -28,7 +31,7 @@
 #include "include/errorcode.h"
 #include "tools/optimizer/common/gllo_utils.h"
 #include "tools/optimizer/common/helper.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "src/common/log_adapter.h"
 #include "nnacl/op_base.h"
 
@@ -186,7 +189,7 @@ void SlicePreposePass::ClearCNodeAbstractValue(const CNodePtr &cnode) {
   if (!utils::isa<abstract::AbstractTensorPtr>(abstract)) {
     MS_LOG(DEBUG) << "Abstract of cnode is not abstract tensor, " << cnode->fullname_with_scope();
   }
-  abstract->set_value(std::make_shared<AnyValue>());
+  abstract->set_value(std::make_shared<ValueAny>());
 }
 
 STATUS SlicePreposePass::SwapSliceWithPreceed(const FuncGraphPtr &graph, const CNodePtr &slice_cnode,
@@ -437,6 +440,10 @@ bool SlicePreposePass::SiblingsAreSameSlice(const NodeUsedListPtr &output_node_l
   MS_CHECK_TRUE_MSG(slices.size() >= output_node_list->size(), false, "slices.size() is wrong");
   for (size_t i = 1; i < output_node_list->size(); ++i) {
     auto slice = GetSlice(slices[i]);
+    if (slice == nullptr) {
+      MS_LOG(WARNING) << "slice is nullptr!";
+      continue;
+    }
     auto axes = slice->get_axes();
     auto begin = GetSliceBeginAndSize(slices[i], SliceBeginIndex);
     auto size = GetSliceBeginAndSize(slices[i], SliceSizeIndex);
@@ -857,7 +864,8 @@ bool SlicePreposePass::PreposeWithSoftmax(const FuncGraphPtr &graph, const CNode
   }
   auto shape = GetCNodeInputShape(softmax_cnode, 1);
   if (softmax_axis.front() == -1) {
-    if (shape.empty()) {  // when softmax axis == -1, shape info is needed to determine whether slice can be preposed
+    // when softmax axis == -1, shape info is needed to determine whether slice can be preposed
+    if (lite::JudgeDynamicShape(shape)) {
       return false;
     }
     softmax_axis[0] += static_cast<int64_t>(shape.size());
@@ -880,7 +888,7 @@ bool SlicePreposePass::PreposeWithSoftmax(const FuncGraphPtr &graph, const CNode
         return false;
       }
       if (slice_size[i] != -1) {
-        if (shape.empty() || slice_axes[i] >= static_cast<int>(shape.size())) {
+        if (lite::JudgeDynamicShape(shape) || slice_axes[i] >= static_cast<int>(shape.size())) {
           return false;
         }
         if (slice_size[i] < shape[slice_axes[i]]) {
@@ -1256,8 +1264,8 @@ bool SlicePreposePass::PreposeWithArithmetic(const FuncGraphPtr &graph, const CN
     auto &another_shape = shapes[another_index];
     if (IsScalarNode(input)) {
       continue;
-    } else if (shape.empty()) {           // infershape failed at this input
-      if (IsScalarNode(another_input)) {  // if another input is scalar, we can process this one
+    } else if (lite::JudgeDynamicShape(shape)) {  // infershape failed at this input
+      if (IsScalarNode(another_input)) {          // if another input is scalar, we can process this one
         auto new_slice_vnode = CopySliceValueNode(slice_cnode);
         if (new_slice_vnode == nullptr) {
           changed = false;

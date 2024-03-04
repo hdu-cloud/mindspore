@@ -13,12 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifdef ENABLE_AVX
+#if defined(ENABLE_AVX) || defined(ENABLE_ARM64)
 #include "src/litert/kernel/cpu/fp32/convolution_slidewindow_fp32.h"
 #include "nnacl/fp32/conv_depthwise_fp32.h"
 #include "nnacl/fp32/conv_common_fp32.h"
-#include "nnacl/fp32/conv_1x1_x86_fp32.h"
-#include "schema/model_generated.h"
 #include "src/litert/kernel_registry.h"
 #include "include/errorcode.h"
 
@@ -219,9 +217,8 @@ int ConvolutionSWCPUKernel::MallocWeightBiasData() {
   int oc_block_num = UP_DIV(output_channel, oc_tile_);
   int pack_weight_size = oc_block_num * oc_tile_ * input_channel * kernel_plane;
   if (!op_parameter_->is_train_session_) {
-    CHECK_LESS_RETURN(MAX_MALLOC_SIZE, pack_weight_size * sizeof(float));
-    packed_weight_ = lite::PackWeightManager::GetInstance()->GetPackData(
-      in_tensors_[1]->data(), pack_weight_size * sizeof(float), &weight_is_packed_);
+    CHECK_LESS_RETURN(MAX_MALLOC_SIZE, static_cast<size_t>(pack_weight_size) * sizeof(float));
+    packed_weight_ = GetConvPackWeightData(pack_weight_size * sizeof(float));
     if (packed_weight_ == nullptr) {
       MS_LOG(ERROR) << "malloc packed weight failed.";
       return RET_NULL_PTR;
@@ -229,7 +226,7 @@ int ConvolutionSWCPUKernel::MallocWeightBiasData() {
   }
 
   if (in_tensors_.size() == kInputSize2) {
-    CHECK_LESS_RETURN(MAX_MALLOC_SIZE, oc_block_num * oc_tile_ * sizeof(float));
+    CHECK_LESS_RETURN(MAX_MALLOC_SIZE, static_cast<size_t>(oc_block_num * oc_tile_) * sizeof(float));
     bias_data_ = malloc(oc_block_num * oc_tile_ * sizeof(float));
     if (bias_data_ == nullptr) {
       MS_LOG(ERROR) << "malloc bias failed.";

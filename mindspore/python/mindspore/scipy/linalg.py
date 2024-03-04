@@ -14,7 +14,6 @@
 # ============================================================================
 """Linear algebra submodule"""
 from __future__ import absolute_import
-from .ops import Eigh
 from .ops import LU
 from .ops import SolveTriangular
 from .utils import _nd_transpose, _value_check, _type_check, _dtype_check, _mstype_check, _square_check, _solve_check
@@ -23,10 +22,11 @@ from .. import numpy as mnp
 from .. import ops
 from ..common import dtype as mstype
 from ..ops.operations.math_ops import Cholesky
+from ..ops.operations.linalg_ops import Eigh
 from ..ops import functional as F
 from ..ops import operations as P
 
-__all__ = ['block_diag', 'solve_triangular', 'inv', 'cho_factor', 'cholesky', 'cho_solve', 'eigh', 'lu_factor', 'lu']
+__all__ = ['block_diag', 'inv', 'cho_factor', 'cholesky', 'cho_solve', 'eigh', 'lu_factor', 'lu']
 
 
 def block_diag(*arrs):
@@ -56,11 +56,11 @@ def block_diag(*arrs):
         ValueError: If there are Tensors with dimensions higher than 2 in all arguments.
 
     Supported Platforms:
-        ``CPU`` ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
         >>> import numpy as onp
-        >>> from mindspore.common import Tensor
+        >>> from mindspore import Tensor
         >>> from mindspore.scipy.linalg import block_diag
         >>> A = Tensor(onp.array([[1, 0], [0, 1]]))
         >>> B = Tensor(onp.array([[3, 4, 5], [6, 7, 8]]))
@@ -96,110 +96,6 @@ def block_diag(*arrs):
     return accum
 
 
-def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False,
-                     overwrite_b=False, debug=None, check_finite=True):
-    """
-    Assuming a is a batched triangular matrix, solve the equation
-
-    .. math::
-        a x = b
-
-    Note:
-        - `solve_triangular` is not supported on Windows platform yet.
-        - Only `float32`, `float64`, `int32`, `int64` are supported Tensor dtypes. If Tensor with dtype `int32` or
-          `int64` is passed, it will be cast to :class:`mstype.float64`.
-        - The floating point error will accumulate when the size of input matrix gets larger. Substituting
-          result `x` back into :math:`a x = b` would be a way to evaluate the result. If the input shape is large
-          enough, using `float64` instead of `float32` is also a way to mitigate the error.
-
-    Args:
-        a (Tensor): A non-singular triangular matrix of shape :math:`(M, M)`.
-        b (Tensor): A Tensor of shape :math:`(M,)` or :math:`(M, N)`. Right-hand side matrix in :math:`a x = b`.
-        lower (bool, optional): Use only data contained in the lower triangle of `a`. Default: False.
-        trans (0, 1, 2, 'N', 'T', 'C', optional): Type of system to solve. Default: 0.
-
-            ========  =========
-            trans     system
-            ========  =========
-            0 or 'N'  a x  = b
-            1 or 'T'  a^T x = b
-            2 or 'C'  a^H x = b
-            ========  =========
-        unit_diagonal (bool, optional): If True, diagonal elements of :math:`a` are assumed to be 1 and
-            will not be referenced. Default: False.
-        overwrite_b (bool, optional): Allow overwriting data in :math:`b` (may enhance performance). Default: False.
-        debug (None): Not implemented now. Default: None.
-        check_finite (bool, optional): Whether to check that the input matrices contain only finite numbers.
-            Disabling may give a performance gain, but may result in problems
-            (crashes, non-termination) if the inputs do contain infinities or NaNs. Default: True.
-
-    Returns:
-        Tensor of shape :math:`(M,)` or :math:`(M, N)`,
-        which is the solution to the system :math:`a x = b`.
-        Shape of :math:`x` matches :math:`b`.
-
-    Raises:
-        TypeError: If `a` is not Tensor.
-        ValueError: If `a` is not 2 dimension.
-        TypeError: If `b` is not Tensor.
-        ValueError: If `b` is not 1 or 2 dimension.
-        TypeError: If dtype of `a` and `b` are not the same.
-        ValueError: If the shape of `a` and `b` are not matched.
-        TypeError: If `trans` is not int or str.
-        ValueError: If `trans` is not in set {0, 1, 2, 'N', 'T', 'C'}.
-        TypeError: If `lower` is not bool.
-        TypeError: If `unit_diagonal` is not bool.
-        TypeError: If `overwrite_b` is not bool.
-        TypeError: If `check_finite` is not bool.
-        ValueError: If `debug` is not None.
-        ValueError: If `a` is singular matrix.
-
-    Supported Platforms:
-        ``CPU`` ``GPU``
-
-    Examples:
-        Solve the lower triangular system :math:`a x = b`, where::
-
-                 [3  0  0  0]       [4]
-            a =  [2  1  0  0]   b = [2]
-                 [1  0  1  0]       [4]
-                 [1  1  1  1]       [2]
-
-        >>> import numpy as onp
-        >>> from mindspore.common import Tensor
-        >>> import mindspore.numpy as mnp
-        >>> from mindspore.scipy.linalg import solve_triangular
-        >>> a = Tensor(onp.array([[3, 0, 0, 0], [2, 1, 0, 0], [1, 0, 1, 0], [1, 1, 1, 1]], onp.float64))
-        >>> b = Tensor(onp.array([4, 2, 4, 2], onp.float64))
-        >>> x = solve_triangular(a, b, lower=True, unit_diagonal=False, trans='N')
-        >>> print(x)
-        [ 1.33333333 -0.66666667  2.66666667 -1.33333333]
-        >>> print(mnp.dot(a, x))  # Check the result
-        [4. 2. 4. 2.]
-    """
-    func_name = 'solve_triangular'
-    _mstype_check(func_name, a, mstype.tensor_type, 'a')
-    _mstype_check(func_name, b, mstype.tensor_type, 'b')
-    _type_check(func_name, trans, (int, str), 'trans')
-    _type_check(func_name, lower, bool, 'lower')
-    _type_check(func_name, overwrite_b, bool, 'overwrite_b')
-    _type_check(func_name, check_finite, bool, 'check_finite')
-    _dtype_check(func_name, a, [mstype.int32, mstype.int64, mstype.float32, mstype.float64], 'a')
-    _dtype_check(func_name, b, [mstype.int32, mstype.int64, mstype.float32, mstype.float64], 'b')
-    _solve_check(func_name, a, b)
-    _value_check(func_name, debug, None, 'debug', op='is', fmt='todo')
-    _value_check(func_name, trans, (0, 1, 2, 'N', 'T', 'C'), "trans", "value")
-
-    if F.dtype(a) in (mstype.int32, mstype.int64):
-        a = F.cast(a, mstype.float64)
-        b = F.cast(b, mstype.float64)
-    if isinstance(trans, int):
-        trans_table = ['N', 'T', 'C']
-        trans = trans_table[trans]
-    solve = SolveTriangular(lower, unit_diagonal, trans)
-    return solve(a, b)
-
-
 def inv(a, overwrite_a=False, check_finite=True):
     """
     Compute the inverse of a matrix.
@@ -211,10 +107,10 @@ def inv(a, overwrite_a=False, check_finite=True):
 
     Args:
         a (Tensor): Square matrix to be inverted.
-        overwrite_a (bool, optional): Discard data in `a` (may improve performance). Default: False.
+        overwrite_a (bool, optional): Discard data in `a` (may improve performance). Default: ``False`` .
         check_finite (bool, optional): Whether to check that the input matrix contains only finite numbers.
             Disabling may give a performance gain, but may result in problems (crashes, non-termination)
-            if the inputs do contain infinities or NaNs. Default: True.
+            if the inputs do contain infinities or NaNs. Default: ``True`` .
 
     Returns:
         Tensor, inverse of the matrix `a`.
@@ -224,11 +120,11 @@ def inv(a, overwrite_a=False, check_finite=True):
         ValueError: If :math:`a` is not square, or not 2D.
 
     Supported Platforms:
-        ``CPU`` ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
         >>> import numpy as onp
-        >>> from mindspore.common import Tensor
+        >>> from mindspore import Tensor
         >>> import mindspore.numpy as mnp
         >>> from mindspore.scipy.linalg import inv
         >>> a = Tensor(onp.array([[1., 2.], [3., 4.]]))
@@ -242,7 +138,7 @@ def inv(a, overwrite_a=False, check_finite=True):
     func_name = "inv"
     _type_check(func_name, overwrite_a, bool, 'overwrite_a')
     _type_check(func_name, check_finite, bool, 'check_finite')
-    _mstype_check(func_name, a, mstype.tensor_type)
+    _mstype_check(func_name, a, mstype.TensorType)
     _square_check(func_name, a)
     _dtype_check(func_name, a, [mstype.int32, mstype.int64, mstype.float32, mstype.float64])
 
@@ -254,11 +150,11 @@ def inv(a, overwrite_a=False, check_finite=True):
 
 def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
     """
-    Compute the cholesky decomposition of a matrix, to use in cho_solve.
+    Compute the cholesky decomposition of a matrix, to use in :func:`mindspore.scipy.linalg.cho_solve`.
 
     Returns a matrix containing the cholesky decomposition,
     :math:`a = l l*` or :math:`a = u* u` of a Hermitian positive-definite matrix `a`.
-    The return value can be directly used as the first parameter to `cho_solve`.
+    The return value can be directly used as the first parameter to :func:`mindspore.scipy.linalg.cho_solve`.
 
     Note:
         - `cho_factor` is not supported on Windows platform yet.
@@ -272,12 +168,13 @@ def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
 
     Args:
         a (Tensor): square Matrix of (M, M) to be decomposed.
-        lower (bool, optional): Whether to compute the upper or lower triangular cholesky factorization. Default: False.
-        overwrite_a(bool, optional): Whether to overwrite data in a (may improve performance). Default: False.
+        lower (bool, optional): Whether to compute the upper or lower triangular cholesky factorization.
+            Default: ``False`` .
+        overwrite_a(bool, optional): Whether to overwrite data in a (may improve performance). Default: ``False`` .
             in mindspore, this arg does not work right now.
         check_finite(bool, optional): Whether to check that the input matrix contains only finite numbers.
             Disabling may give a performance gain, but may result in problems
-            (crashes, non-termination) if the inputs do contain infinities or NaNs. Default: True.
+            (crashes, non-termination) if the inputs do contain infinities or NaNs. Default: ``True`` .
             in mindspore, this arg does not work right now.
 
     Returns:
@@ -289,11 +186,11 @@ def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
         ValueError: If input a tensor is not a square matrix or it's dims not equal to 2D.
 
     Supported Platforms:
-        ``CPU`` ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
         >>> import numpy as onp
-        >>> from mindspore.common import Tensor
+        >>> from mindspore import Tensor
         >>> from mindspore.scipy.linalg import cho_factor
         >>> a = Tensor(onp.array([[9, 3, 1, 5], [3, 7, 5, 1], [1, 5, 9, 2], [5, 1, 2, 6]]).astype(onp.float32))
         >>> c, low = cho_factor(a)
@@ -307,7 +204,7 @@ def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
     _type_check(func_name, overwrite_a, bool, 'overwrite_a')
     _type_check(func_name, check_finite, bool, 'check_finite')
     _type_check(func_name, lower, bool, 'lower')
-    _mstype_check(func_name, a, mstype.tensor_type)
+    _mstype_check(func_name, a, mstype.TensorType)
     _dtype_check(func_name, a, [mstype.int32, mstype.int64, mstype.float32, mstype.float64])
     _square_check(func_name, a)
 
@@ -335,12 +232,12 @@ def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
     Args:
         a (Tensor): square Matrix of (M, M) to be decomposed.
         lower (bool, optional): Whether to compute the upper- or lower-triangular cholesky
-            factorization. Default: False.
-        overwrite_a (bool, optional): Whether to overwrite data in `a` (may improve performance). Default: False.
+            factorization. Default: ``False`` .
+        overwrite_a (bool, optional): Whether to overwrite data in `a` (may improve performance). Default: ``False`` .
             in mindspore, this arg does not work right now.
         check_finite (bool, optional): Whether to check that the input matrix contains only finite numbers.
             Disabling may give a performance gain, but may result in problems
-            (crashes, non-termination) if the inputs do contain infinities or NaNs. Default: True.
+            (crashes, non-termination) if the inputs do contain infinities or NaNs. Default: ``True`` .
             in mindspore, this arg does not work right now.
 
     Returns:
@@ -350,11 +247,11 @@ def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
         ValueError: If input a tensor is not a square matrix or it's dims not equal to 2D.
 
     Supported Platforms:
-        ``CPU`` ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
         >>> import numpy as onp
-        >>> from mindspore.common import Tensor
+        >>> from mindspore import Tensor
         >>> from mindspore.scipy.linalg import cholesky
         >>> a = Tensor(onp.array([[1, 2],[2, 5]]).astype(onp.float32))
         >>> L = cholesky(a, lower=True)
@@ -366,7 +263,7 @@ def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
     _type_check(func_name, overwrite_a, bool, 'overwrite_a')
     _type_check(func_name, check_finite, bool, 'check_finite')
     _type_check(func_name, lower, bool, 'lower')
-    _mstype_check(func_name, a, mstype.tensor_type)
+    _mstype_check(func_name, a, mstype.TensorType)
     _dtype_check(func_name, a, [mstype.int32, mstype.int64, mstype.float32, mstype.float64])
     _square_check(func_name, a)
 
@@ -380,38 +277,40 @@ def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
 
 
 def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
-    """Given the cholesky factorization of a, solve the linear equation
+    """
+    Given the cholesky factorization of a, solve the linear equation
 
     .. math::
         a x = b
 
     Note:
         - `cho_solve` is not supported on Windows platform yet.
-        - Only `float32`, `float64`, `int32`, `int64` are supported Tensor dtypes. If Tensor with dtype `int32` or
+        - Only `float32`, `float64`, `int32`, `int64` support Tensor dtypes. If Tensor with dtype `int32` or
           `int64` is passed, it will be cast to :class:`mstype.float64`.
 
     Args:
-        c_and_lower ((Tensor, bool)): cholesky factorization of a, as given by cho_factor.
+        c_and_lower ((Tensor, bool)): cholesky factorization of :math:`a`,
+            as given by :func:`mindspore.scipy.linalg.cho_factor`.
         b (Tensor): Right-hand side.
-        overwrite_b (bool, optional): Whether to overwrite data in b (may improve performance). Default: False.
+        overwrite_b (bool, optional): Whether to overwrite data in :math:`b` (may improve performance).
+            Default: ``False``.
         check_finite (bool, optional): Whether to check that the input matrices contain only finite numbers.
             Disabling may give a performance gain, but may result in problems
-            (crashes, non-termination) if the inputs do contain infinities or NaNs. Default: True.
+            (crashes, non-termination) if the inputs do contain infinities or NaNs. Default: ``True``.
 
     Returns:
-        Tensor, the solution to the system a x = b
+        Tensor, the solution to the system a x = b.
 
     Supported Platforms:
-        ``CPU`` ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
         >>> import numpy as onp
-        >>> from mindspore.common import Tensor
-        >>> from mindspore.scipy.linalg import cho_factor, cho_solve
-        >>> a = Tensor(onp.array([[9, 3, 1, 5], [3, 7, 5, 1], [1, 5, 9, 2], [5, 1, 2, 6]]).astype(onp.float32))
-        >>> b = Tensor(onp.array([1, 1, 1, 1]).astype(onp.float32))
-        >>> c, low = cho_factor(a)
-        >>> x = cho_solve((c, low), b)
+        >>> import mindspore as ms
+        >>> a = ms.Tensor(onp.array([[9, 3, 1, 5], [3, 7, 5, 1], [1, 5, 9, 2], [5, 1, 2, 6]]).astype(onp.float32))
+        >>> b = ms.Tensor(onp.array([1, 1, 1, 1]).astype(onp.float32))
+        >>> c, low = ms.scipy.linalg.cho_factor(a)
+        >>> x = ms.scipy.linalg.cho_solve((c, low), b)
         >>> print(x)
         [-0.01749266  0.11953348  0.01166185  0.15743434]
     """
@@ -420,8 +319,8 @@ def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
     _type_check(func_name, overwrite_b, bool, 'overwrite_b')
     _type_check(func_name, check_finite, bool, 'check_finite')
     _type_check(func_name, lower, bool, 'lower')
-    _mstype_check(func_name, c, mstype.tensor_type, 'c')
-    _mstype_check(func_name, b, mstype.tensor_type, 'b')
+    _mstype_check(func_name, c, mstype.TensorType, 'c')
+    _mstype_check(func_name, b, mstype.TensorType, 'b')
     _dtype_check(func_name, c, [mstype.int32, mstype.int64, mstype.float32, mstype.float64], 'c')
     _dtype_check(func_name, b, [mstype.int32, mstype.int64, mstype.float32, mstype.float64], 'b')
     _solve_check(func_name, c, b, 'c', 'b')
@@ -459,17 +358,17 @@ def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
     Note:
         - `eigh` is not supported on Windows platform yet.
         - Only `float32`, `float64`, `int32`, `int64` are supported Tensor dtypes. If Tensor with dtype `int32` or
-          `int64` is passed, it will be cast to :class:`mstype.float64`.
+          `int64` is passed, it will be cast to `mstype.float64`.
 
     Args:
         a (Tensor): A :math:`(M, M)` complex Hermitian or real symmetric matrix whose eigenvalues and
             eigenvectors will be computed.
         b (Tensor, optional): A :math:`(M, M)` complex Hermitian or real symmetric definite positive matrix in.
-            If omitted, identity matrix is assumed. Default: None.
+            If omitted, identity matrix is assumed. Default: ``None``.
         lower (bool, optional): Whether the pertinent Tensor data is taken from the lower or upper
-            triangle of `a` and, if applicable, `b`. Default: True.
+            triangle of `a` and, if applicable, `b`. Default: ``True``.
         eigvals_only (bool, optional): Whether to calculate only eigenvalues and no eigenvectors.
-            Default: False.
+            Default: ``False`` .
         type (int, optional): For the generalized problems, this keyword specifies the problem type
             to be solved for `w` and `v` (only takes 1, 2, 3 as possible inputs)::
 
@@ -477,24 +376,24 @@ def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
                 2 => a @ b @ v = w @ v
                 3 => b @ a @ v = w @ v
 
-            This keyword is ignored for standard problems. Default: 1.
-        overwrite_a (bool, optional): Whether to overwrite data in `a` (may improve performance). Default: False.
-        overwrite_b (bool, optional): Whether to overwrite data in `b` (may improve performance). Default: False.
+            This keyword is ignored for standard problems. Default: ``1`` .
+        overwrite_a (bool, optional): Whether to overwrite data in `a` (may improve performance). Default: ``False`` .
+        overwrite_b (bool, optional): Whether to overwrite data in `b` (may improve performance). Default: ``False`` .
         check_finite (bool, optional): Whether to check that the input matrices contain only finite numbers.
             Disabling may give a performance gain, but may result in problems (crashes, non-termination)
-            if the inputs do contain infinities or NaNs. Default: True.
+            if the inputs do contain infinities or NaNs. Default: ``True`` .
         turbo (bool, optional): use divide and conquer algorithm (faster but expensive in memory, only
             for generalized eigenvalue problem and if full set of eigenvalues are requested.).
-            Has no significant effect if eigenvectors are not requested. Default: True.
+            Has no significant effect if eigenvectors are not requested. Default: ``True`` .
         eigvals (tuple, optional): Indexes of the smallest and largest (in ascending order) eigenvalues
             and corresponding eigenvectors to be returned: :math:`0 <= lo <= hi <= M-1`. If omitted, all eigenvalues
-            and eigenvectors are returned. Default: None.
+            and eigenvectors are returned. Default: ``None`` .
 
     Returns:
         - Tensor with shape :math:`(N,)`, the :math:`N (1<=N<=M)` selected eigenvalues, in ascending order,
           each repeated according to its multiplicity.
 
-        - Tensor with shape :math:`(M, N)`, (if ``eigvals_only == False``)
+        - Tensor with shape :math:`(M, N)`, if `eigvals_only == False`.
 
     Raises:
         RuntimeError: If eigenvalue computation does not converge, an error occurred, or b matrix is not
@@ -512,12 +411,12 @@ def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
         ValueError: If `eigvals` is not None.
 
     Supported Platforms:
-        ``CPU`` ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
         >>> import numpy as onp
         >>> import mindspore.numpy as mnp
-        >>> from mindspore.common import Tensor, dtype
+        >>> from mindspore import Tensor, dtype
         >>> from mindspore.scipy.linalg import eigh
         >>> a = Tensor([[6, 3, 1, 5], [3, 0, 5, 1], [1, 5, 6, 2], [5, 1, 2, 2]], dtype.float64)
         >>> w, v = eigh(a)
@@ -535,7 +434,7 @@ def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
     eigh_type_check(turbo, bool, 'turbo')
     eigh_type_check(type, int, 'type')
     eigh_type_check(check_finite, bool, 'check_finite')
-    _mstype_check(func_name, a, mstype.tensor_type)
+    _mstype_check(func_name, a, mstype.TensorType)
     _dtype_check(func_name, a,
                  [mstype.int32, mstype.int64, mstype.float32, mstype.float64, mstype.complex64, mstype.complex128])
     _square_check(func_name, a)
@@ -562,8 +461,8 @@ def lu_pivots_to_permutation(pivots, permutation_size: int):
         loc = mnp.ix_(*(mnp.arange(0, b) for b in batch_dims))
         x = permutation[..., i]
         y = permutation[loc + (j,)]
-        permutation[..., i] = y
         permutation[loc + (j,)] = x
+        permutation[..., i] = y
     return permutation
 
 
@@ -587,10 +486,11 @@ def lu_factor(a, overwrite_a=False, check_finite=True):
     Args:
         a (Tensor): square matrix of :math:`(M, M)` to decompose. Note that if the input tensor is not a `float`,
             then it will be cast to :class:'mstype.float32'.
-        overwrite_a (bool, optional): Whether to overwrite data in :math:`a` (may increase performance). Default: False.
+        overwrite_a (bool, optional): Whether to overwrite data in :math:`a` (may increase performance).
+            Default: ``False`` .
         check_finite (bool, optional): Whether to check that the input matrix contains only finite numbers.
             Disabling may give a performance gain, but may result in problems
-            (crashes, non-termination) if the inputs do contain infinities or NaNs. Default: True.
+            (crashes, non-termination) if the inputs do contain infinities or NaNs. Default: ``True`` .
 
     Returns:
         - Tensor, a square matrix of :math:`(N, N)` containing `U` in its upper triangle, and `L` in its lower triangle.
@@ -603,11 +503,11 @@ def lu_factor(a, overwrite_a=False, check_finite=True):
         ValueError: If :math:`a` is not square.
 
     Supported Platforms:
-        ``CPU`` ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
         >>> import numpy as onp
-        >>> from mindspore.common import Tensor
+        >>> from mindspore import Tensor
         >>> from mindspore.scipy.linalg import lu_factor
         >>> a = Tensor(onp.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]]).astype(onp.float64))
         >>> lu, piv = lu_factor(a)
@@ -622,7 +522,7 @@ def lu_factor(a, overwrite_a=False, check_finite=True):
     func_name = "lu_factor"
     _type_check(func_name, overwrite_a, bool, 'overwrite_a')
     _type_check(func_name, check_finite, bool, 'check_finite')
-    _mstype_check(func_name, a, mstype.tensor_type)
+    _mstype_check(func_name, a, mstype.TensorType)
     _dtype_check(func_name, a, [mstype.int32, mstype.int64, mstype.float32, mstype.float64])
     _square_check(func_name, a)
 
@@ -653,11 +553,13 @@ def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
     Args:
         a (Tensor): a :math:`(M, N)` matrix to decompose. Note that if the input tensor is not a `float`,
             then it will be cast to :class:'mstype.float32'.
-        permute_l (bool, optional): Perform the multiplication :math:`P L` (Default: do not permute). Default: False.
-        overwrite_a (bool, optional): Whether to overwrite data in :math:`a` (may improve performance). Default: False.
+        permute_l (bool, optional): Perform the multiplication :math:`P L` (Default: do not permute).
+            Default: ``False`` .
+        overwrite_a (bool, optional): Whether to overwrite data in :math:`a` (may improve performance).
+            Default: ``False`` .
         check_finite (bool, optional):  Whether to check that the input matrix contains
             only finite numbers. Disabling may give a performance gain, but may result
-            in problems (crashes, non-termination) if the inputs do contain infinities or NaNs. Default: True.
+            in problems (crashes, non-termination) if the inputs do contain infinities or NaNs. Default: ``True`` .
 
     Returns:
         **If permute_l == False**
@@ -672,11 +574,11 @@ def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
         - Tensor, :math:`(K, N)` upper triangular or trapezoidal matrix.
 
     Supported Platforms:
-        ``CPU`` ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
         >>> import numpy as onp
-        >>> from mindspore.common import Tensor
+        >>> from mindspore import Tensor
         >>> from mindspore.scipy.linalg import lu
         >>> a = Tensor(onp.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]]).astype(onp.float64))
         >>> p, l, u = lu(a)
@@ -700,7 +602,7 @@ def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
     _type_check(func_name, permute_l, bool, 'permute_l')
     _type_check(func_name, overwrite_a, bool, 'overwrite_a')
     _type_check(func_name, check_finite, bool, 'check_finite')
-    _mstype_check(func_name, a, mstype.tensor_type)
+    _mstype_check(func_name, a, mstype.TensorType)
     _dtype_check(func_name, a, [mstype.int32, mstype.int64, mstype.float32, mstype.float64])
     _value_check(func_name, a.ndim, 2, 'a', 'dimension')
 
@@ -750,11 +652,11 @@ def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
         Tensor, solution to the system
 
     Supported Platforms:
-        ``CPU`` ``GPU``
+        ``GPU`` ``CPU``
 
     Examples:
         >>> import numpy as onp
-        >>> from mindspore.common import Tensor
+        >>> from mindspore import Tensor
         >>> from mindspore.scipy.linalg import lu_factor, lu_solve
         >>> a = Tensor(onp.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]]).astype(onp.float64))
         >>> b = Tensor(onp.array([1, 1, 1, 1]).astype(onp.float64))
@@ -766,9 +668,9 @@ def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
     lu_matrix, pivot = lu_and_piv
     _type_check(func_name, overwrite_b, bool, 'overwrite_b')
     _type_check(func_name, check_finite, bool, 'check_finite')
-    _mstype_check(func_name, lu_matrix, mstype.tensor_type, 'lu_matrix')
-    _mstype_check(func_name, b, mstype.tensor_type, 'b')
-    _mstype_check(func_name, pivot, mstype.tensor_type, 'pivot')
+    _mstype_check(func_name, lu_matrix, mstype.TensorType, 'lu_matrix')
+    _mstype_check(func_name, b, mstype.TensorType, 'b')
+    _mstype_check(func_name, pivot, mstype.TensorType, 'pivot')
     _dtype_check(func_name, lu_matrix, [mstype.int32, mstype.int64, mstype.float32, mstype.float64], 'lu_matrix')
     _dtype_check(func_name, b, [mstype.int32, mstype.int64, mstype.float32, mstype.float64], 'b')
     _dtype_check(func_name, pivot, [mstype.int32], 'pivot')
@@ -845,7 +747,7 @@ def det(a, overwrite_a=False, check_finite=True):
 
     Examples:
         >>> import numpy as onp
-        >>> from mindspore.common import Tensor
+        >>> from mindspore import Tensor
         >>> from mindspore.scipy.linalg import det
         >>> a = Tensor(onp.array([[0, 2, 3], [4, 5, 6], [7, 8, 9]])).astype(onp.float64)
         >>> print(det(a))
@@ -854,7 +756,7 @@ def det(a, overwrite_a=False, check_finite=True):
     func_name = "det"
     _type_check(func_name, overwrite_a, bool, 'overwrite_a')
     _type_check(func_name, check_finite, bool, 'check_finite')
-    _mstype_check(func_name, a, mstype.tensor_type)
+    _mstype_check(func_name, a, mstype.TensorType)
     _square_check(func_name, a)
     _dtype_check(func_name, a, [mstype.int32, mstype.int64, mstype.float32, mstype.float64])
 

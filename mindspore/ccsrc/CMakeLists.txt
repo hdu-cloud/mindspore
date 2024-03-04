@@ -5,6 +5,8 @@ include_directories(${CMAKE_BINARY_DIR})
 include_directories(${CMAKE_SOURCE_DIR}/mindspore/core/mindrt/include)
 include_directories(${CMAKE_SOURCE_DIR}/mindspore/core/mindrt/src)
 
+# graphengine include directories
+include(${CMAKE_SOURCE_DIR}/cmake/graphengine_variables.cmake)
 
 set(SERVER_FLATBUFFER_OUTPUT "${CMAKE_BINARY_DIR}/schema")
 
@@ -54,45 +56,50 @@ function(set_nvcc_flag CUDA_NVCC_FLAGS)
             endif()
             list(APPEND cuda_archs_bin ${arch_bin})
         endforeach()
-        # Get build flag from env to choose common/auto build.
-        set(NVCC_ARCH_FLAG_FROM_ENV $ENV{CUDA_ARCH})
-        if(NVCC_ARCH_FLAG_FROM_ENV STREQUAL "common")
-            message("Build common archs for release.")
-            list(APPEND CUDA_NVCC_FLAGS -gencode=arch=compute_53,code=sm_53
-                                        -gencode=arch=compute_60,code=sm_60
-                                        -gencode=arch=compute_70,code=sm_70
-                                        -gencode=arch=compute_72,code=sm_72)
-            if(${CUDA_VERSION} VERSION_GREATER "9.5")
-                list(APPEND CUDA_NVCC_FLAGS -gencode=arch=compute_75,code=sm_75)
-                if(${CUDA_VERSION} VERSION_LESS "11.0")
-                    list(APPEND CUDA_NVCC_FLAGS -gencode=arch=compute_75,code=compute_75)
-                endif()
-            endif()
-            if(${CUDA_VERSION} VERSION_GREATER "10.5")
-                list(APPEND CUDA_NVCC_FLAGS -gencode=arch=compute_80,code=sm_80)
-                if(${CUDA_VERSION} VERSION_LESS "11.1")
-                    list(APPEND CUDA_NVCC_FLAGS -gencode=arch=compute_80,code=compute_80)
-                endif()
-            endif()
-            if(NOT ${CUDA_VERSION} VERSION_LESS "11.1")
-                list(APPEND CUDA_NVCC_FLAGS -gencode=arch=compute_86,code=compute_86)
-            endif()
-        else()
-            message("Auto build for arch(s) " ${cuda_archs_bin})
-            string(REGEX REPLACE "\\." "" cuda_archs_bin "${cuda_archs_bin}")
-            string(REGEX MATCHALL "[0-9()]+" cuda_archs_bin "${cuda_archs_bin}")
-            foreach(arch ${cuda_archs_bin})
-                list(APPEND CUDA_NVCC_FLAGS -gencode=arch=compute_${arch},code=sm_${arch})
-            endforeach()
-            # For auto build, it only generate the code for indeed arch, so add sm_53 as a default arch
-            # to avoid error in different archs. It may increase the compilation time.
-            list(APPEND CUDA_NVCC_FLAGS -arch=sm_53)
-        endif()
-        message("Final CUDA_NVCC_FLASG " ${CUDA_NVCC_FLAGS})
     else()
-        message("Failed to detect gpu arch automatically, build a base arch 5.3.")
-        list(APPEND CUDA_NVCC_FLAGS -arch=sm_53)
+        message("Failed to detect gpu arch automatically, build a base arch 6.0.")
+        list(APPEND CUDA_NVCC_FLAGS -arch=sm_60)
     endif()
+    # Get build flag from env to choose common/auto build.
+    set(NVCC_ARCH_FLAG_FROM_ENV $ENV{CUDA_ARCH})
+    if(NVCC_ARCH_FLAG_FROM_ENV STREQUAL "common")
+        message("Build common archs for release.")
+        list(APPEND CUDA_NVCC_FLAGS -gencode=arch=compute_60,code=sm_60
+                                    -gencode=arch=compute_61,code=sm_61
+                                    -gencode=arch=compute_70,code=sm_70)
+        if(${CUDA_VERSION} VERSION_GREATER "9.5")
+            list(APPEND CUDA_NVCC_FLAGS -gencode=arch=compute_75,code=sm_75)
+            if(${CUDA_VERSION} VERSION_LESS "11.0")
+                list(APPEND CUDA_NVCC_FLAGS -gencode=arch=compute_75,code=compute_75)
+            endif()
+        endif()
+        if(${CUDA_VERSION} VERSION_GREATER "10.5")
+            list(APPEND CUDA_NVCC_FLAGS -gencode=arch=compute_80,code=sm_80)
+            if(${CUDA_VERSION} VERSION_LESS "11.1")
+                list(APPEND CUDA_NVCC_FLAGS -gencode=arch=compute_80,code=compute_80)
+            endif()
+        endif()
+        if(NOT ${CUDA_VERSION} VERSION_LESS "11.1")
+            list(APPEND CUDA_NVCC_FLAGS -gencode=arch=compute_86,code=compute_86)
+        endif()
+    elseif(NVCC_ARCH_FLAG_FROM_ENV STREQUAL "auto")
+        message("Auto build for arch(s) " ${cuda_archs_bin})
+        string(REGEX REPLACE "\\." "" cuda_archs_bin "${cuda_archs_bin}")
+        string(REGEX MATCHALL "[0-9()]+" cuda_archs_bin "${cuda_archs_bin}")
+        foreach(arch ${cuda_archs_bin})
+            list(APPEND CUDA_NVCC_FLAGS -gencode=arch=compute_${arch},code=sm_${arch})
+        endforeach()
+        # For auto build, it only generate the code for indeed arch, so add sm_60 as a default arch
+        # to avoid error in different archs. It may increase the compilation time.
+        list(APPEND CUDA_NVCC_FLAGS -arch=sm_60)
+    else()
+        message("Only build ptx to speed up compiling cuda ops.")
+        set(CUDA_NVCC_FLAGS "CUDA_NVCC_FLAGS")
+        list(APPEND CUDA_NVCC_FLAGS -arch=compute_60 -code=compute_60)
+    endif()
+    list(REMOVE_DUPLICATES CUDA_NVCC_FLAGS)
+    message("Final CUDA_NVCC_FLASG " ${CUDA_NVCC_FLAGS})
+
     list(APPEND CUDA_NVCC_FLAGS --expt-relaxed-constexpr)
     if(MSVC AND ${CUDA_VERSION} VERSION_GREATER_EQUAL "11.6")
         list(APPEND CUDA_NVCC_FLAGS -t0)
@@ -223,6 +230,11 @@ if(ENABLE_MPI)
     add_compile_definitions(ENABLE_MPI)
 endif()
 
+if(ENABLE_RDMA)
+    add_compile_definitions(ENABLE_RDMA)
+    include_directories(/usr/include/umdk)
+endif()
+
 ## make protobuf files
 file(GLOB ONNX_PROTO "" ${CMAKE_SOURCE_DIR}/third_party/proto/onnx/onnx.proto)
 message("onnx proto path is :" ${ONNX_PROTO})
@@ -290,9 +302,14 @@ if(MODE_ASCEND_ALL)
             "plugin/device/ascend/hal/device/dump/proto/*.proto")
     ms_protobuf_generate(DUMP_PROTOSRCS PROTOHDRS ${PROTO_DUMP})
 
+    file(GLOB_RECURSE  RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "plugin/device/ascend/kernel/aicpu/proto/*.proto")
+    ms_protobuf_generate(RANDOM_PROTOSRC RANDOM_PROTOHDR
+            "plugin/device/ascend/optimizer/ir_fission/random_status.proto")
+
     list(APPEND MINDSPORE_PROTO_LIST ${PROTOSRCS})
     list(APPEND MINDSPORE_PROTO_LIST ${PREDICT_PROTOSRCS})
     list(APPEND MINDSPORE_PROTO_LIST ${DUMP_PROTOSRCS})
+    list(APPEND MINDSPORE_PROTO_LIST ${RANDOM_PROTOSRC})
 
     add_compile_definitions(ENABLE_D)
 endif()
@@ -321,7 +338,8 @@ set(SUB_COMP
         frontend/optimizer
         frontend/parallel
         frontend/operator
-        pipeline/jit
+        frontend/expander
+        pipeline/jit/ps
         pipeline/pynative
         pybind_api
 )
@@ -346,6 +364,7 @@ set(COMMON_SUB_COMP
         utils
         common
         common/debug
+        common/expander
         )
 
 foreach(_comp ${COMMON_SUB_COMP})
@@ -375,17 +394,20 @@ endif()
 
 set(BACKEND_SUB_COMP
         debug
-        profiler
+        debug/profiler
         ps
         distributed
         kernel
-        common/mem_reuse
+        backend/common/mem_reuse
         backend/common/optimizer
         backend/common/pass
         backend/common/session
         backend/common/somas
-        common/graph_kernel
+        backend/common/graph_kernel
+        backend/common/expander
+        backend/common/op_evaluator
         backend/graph_compiler
+        backend/operator
         runtime/collective
         runtime/device
         runtime/graph_scheduler
@@ -427,6 +449,10 @@ if(ENABLE_TEST OR ENABLE_TESTCASES)
     list(APPEND STUB_BACKEND_SOURCE ${CMAKE_SOURCE_DIR}/tests/ut/cpp/stub/ps/ps_core_stub.cc)
     add_library(stub_backend_obj OBJECT ${STUB_BACKEND_SOURCE})
     list(APPEND BACKEND_SUB_OBJECTS_SRC $<TARGET_OBJECTS:stub_backend_obj>)
+endif()
+
+if(ENABLE_D)
+    list(APPEND BACKEND_SUB_OBJECTS_SRC $<TARGET_OBJECTS:_mindspore_transform_acl_declare_obj>)
 endif()
 
 set_property(SOURCE ${BACKEND_SUB_OBJECTS_SRC} PROPERTY COMPILE_DEFINITIONS SUBMODULE_ID=mindspore::SubModuleId::SM_ME)
@@ -495,9 +521,9 @@ endif()
 
 # set c_expression building
 set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
-set_property(SOURCE "pipeline/jit/init.cc" PROPERTY
+set_property(SOURCE "pipeline/jit/ps/init.cc" PROPERTY
             COMPILE_DEFINITIONS SUBMODULE_ID=mindspore::SubModuleId::SM_PIPELINE)
-pybind11_add_module(_c_expression NO_EXTRAS "pipeline/jit/init.cc" NO_EXTRAS)
+pybind11_add_module(_c_expression NO_EXTRAS "pipeline/jit/ps/init.cc" NO_EXTRAS)
 
 MESSAGE(STATUS "operation system is ${CMAKE_SYSTEM}")
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
@@ -515,16 +541,19 @@ endif()
 if(ENABLE_D)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/plugin/device/ascend)
     add_subdirectory(plugin/device/ascend)
+    enable_directory_when_only_build_plugins(plugin/device/ascend)
 endif()
 
 if(ENABLE_GPU AND GPU_BACKEND_CUDA)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/plugin/device/gpu)
     add_subdirectory(plugin/device/gpu)
+    enable_directory_when_only_build_plugins(plugin/device/gpu)
 endif()
 
 if(ENABLE_GPU AND GPU_BACKEND_ROCM)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/plugin/device/amd)
     add_subdirectory(plugin/device/amd)
+    enable_directory_when_only_build_plugins(plugin/device/amd)
 endif()
 if(CMAKE_SYSTEM_NAME MATCHES "Windows")
     target_link_libraries(mindspore PUBLIC mindspore::pybind11_module)
@@ -542,9 +571,6 @@ elseif(CMAKE_SYSTEM_NAME MATCHES "Darwin")
 else()
     if(ENABLE_CPU AND NOT WIN32)
         target_link_libraries(mindspore PUBLIC proto_input mindspore::protobuf mindspore::eigen mindspore::json)
-        if(${ENABLE_IBVERBS} STREQUAL "ON")
-            target_link_libraries(mindspore PUBLIC ibverbs rdmacm)
-        endif()
     endif()
     target_link_libraries(_c_expression PRIVATE -Wl,--whole-archive mindspore proto_input -Wl,--no-whole-archive
             mindspore_core mindspore_common mindspore_backend)
@@ -584,6 +610,7 @@ if(ENABLE_TEST OR ENABLE_TESTCASES)
     list(APPEND STUB_COMMON_SOURCE ${CMAKE_SOURCE_DIR}/tests/ut/cpp/stub/pipeline/action_stub.cc)
     list(APPEND STUB_COMMON_SOURCE ${CMAKE_SOURCE_DIR}/tests/ut/cpp/stub/cluster/cluster_stub.cc)
     list(APPEND STUB_COMMON_SOURCE ${CMAKE_SOURCE_DIR}/tests/ut/cpp/stub/profiling/parallel_strategy_profiling_stub.cc)
+    list(APPEND STUB_COMMON_SOURCE ${CMAKE_SOURCE_DIR}/tests/ut/cpp/stub/profiling/profiling_stub.cc)
 
     list(APPEND EXPRESSION_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/ut/cpp/stub/ps/ps_core_stub.cc)
 
@@ -605,4 +632,7 @@ if(NOT ENABLE_TESTCASES AND NOT (ENABLE_D OR ENABLE_CPU OR ENABLE_GPU))
     target_link_libraries(_c_expression PUBLIC expression_)
 endif()
 add_subdirectory(transform/graph_ir)
+add_subdirectory(transform/acl_ir)
 add_subdirectory(cxx_api)
+enable_directory_when_only_build_plugins(cxx_api)
+add_subdirectory(c_api)

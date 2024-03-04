@@ -23,7 +23,6 @@
 #include <map>
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
 #include "plugin/device/gpu/kernel/map_tensor/map_tensor_gpu_kernel.h"
-#include "plugin/device/gpu/hal/device/gpu_hash_table.h"
 
 namespace mindspore {
 namespace kernel {
@@ -52,8 +51,7 @@ class MapTensorGetGradGpuKernelMod : public MapTensorGpuKernelMod {
   }
 
  protected:
-  void SyncData() override;
-  std::vector<KernelTensorPtr> GetOutputs() override { return outputs_; }
+  void SyncOutputShape() override;
 
  private:
   template <typename KeyType>
@@ -70,8 +68,6 @@ class MapTensorGetGradGpuKernelMod : public MapTensorGpuKernelMod {
                        const std::vector<AddressPtr> &, void *)>;
   static std::vector<std::pair<KernelAttr, MapTensorGetGradLaunchFunc>> map_tensor_get_grad_func_list_;
   MapTensorGetGradLaunchFunc kernel_launch_func_;
-
-  std::vector<KernelTensorPtr> outputs_ = {};
   int64_t keys_size_{1};
   ShapeVector value_dims_ = {};
 };

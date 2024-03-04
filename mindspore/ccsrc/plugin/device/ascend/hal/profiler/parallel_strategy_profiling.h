@@ -21,7 +21,6 @@
 
 #include "ir/func_graph.h"
 #include "base/base.h"
-#include "include/backend/visible.h"
 
 namespace mindspore {
 namespace irpb {
@@ -31,17 +30,17 @@ namespace profiler {
 namespace ascend {
 class ParallelStrategy {
  public:
-  BACKEND_EXPORT static std::shared_ptr<ParallelStrategy> &GetInstance();
+  static std::shared_ptr<ParallelStrategy> &GetInstance();
   ParallelStrategy() = default;
   ~ParallelStrategy() {}
-  BACKEND_EXPORT void DumpProfileParallelStrategy(const FuncGraphPtr &func_graph);
+  void DumpProfileParallelStrategy(const FuncGraphPtr &func_graph);
   void SaveParallelStrategyToFile();
   std::string GetParallelStrategyForReport();
 
  private:
   std::shared_ptr<irpb::ProfilingParallel> GetProfilingParallel();
-  bool IsProfilingParallelStrategyEnabled();
-  bool StringToInt(std::string *str, int32_t *value);
+  bool IsProfilingParallelStrategyEnabled() const;
+  bool StringToInt(std::string *str, int32_t *value) const;
 
   static std::shared_ptr<ParallelStrategy> parallel_strategy_inst_;
   bool has_save_parallel_strategy_ = false;

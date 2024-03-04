@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@
 #include <ctime>
 #include <utility>
 #include <set>
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "tools/common/meta_graph_utils.h"
 #include "schema/inner/model_generated.h"
 #include "tools/common/tensor_util.h"
@@ -28,9 +30,9 @@
 #include "src/common/utils.h"
 #include "nnacl/op_base.h"
 #include "ops/make_tuple.h"
-#include "ops/core_ops.h"
 #include "tools/converter/converter_context.h"
 #include "tools/optimizer/common/gllo_utils.h"
+#include "tools/common/string_util.h"
 
 namespace mindspore {
 namespace lite {
@@ -39,67 +41,90 @@ const int kZeroPointGap = 128;
 constexpr size_t kTupleGetItemFirstInputIdx = 1;
 constexpr size_t kDependInputNum = 3;
 constexpr size_t kDependFirstInputIdx = 1;
-constexpr size_t kTupleGetItemInputSize = 3;
+constexpr size_t kSequenceCodeGetItemInputSize = 3;
 constexpr size_t kSecondIndex = 1;
 constexpr size_t kInvalidSize = SIZE_MAX;
 constexpr auto kMakeTuple = "MakeTuple";
+constexpr auto kMakeList = "make_list";
+constexpr size_t kEncMaxLen = 16;
 }  // namespace
 
-static AbstractBasePtr GetAbstractFromCNode(const std::pair<AnfNodePtr, int64_t> &node) {
-  auto cnode = node.first->cast<CNodePtr>();
-  MS_CHECK_TRUE_MSG(cnode != nullptr, nullptr, "cnode is nullptr.");
-  AbstractBasePtr abstract = cnode->abstract();
-  if (utils::isa<abstract::AbstractTuplePtr>(abstract)) {
-    auto abstract_tuple = utils::cast<abstract::AbstractTuplePtr>(abstract);
-    MS_CHECK_TRUE_MSG(abstract_tuple != nullptr, nullptr, "abstract tuple is nullptr.");
-    auto abstract_list = abstract_tuple->elements();
-    if (abstract_list.size() <= static_cast<size_t>(node.second)) {
-      MS_LOG(ERROR) << "AbstractTuple's size[" << abstract_list.size() << "] is smaller than expect size["
-                    << node.second << "]";
-      return nullptr;
-    }
-    abstract = abstract_list[node.second];
-  }
-  return abstract;
-}
-
-static STATUS GetAbstractfromTupleGetItem(const CNodePtr &cnode, AbstractBasePtr *abstract, size_t *idx) {
+static STATUS GetAbstractfromSequenceCodeGetItem(const CNodePtr &cnode, AbstractBasePtr *abstract, size_t *idx) {
   MS_CHECK_TRUE_MSG(abstract != nullptr, lite::RET_ERROR, "Abstract is nullptr.");
   MS_CHECK_TRUE_MSG(idx != nullptr, lite::RET_ERROR, "idx is nullptr.");
-  auto tuple_inputs = cnode->inputs();
-  MS_CHECK_TRUE_MSG(tuple_inputs.size() == kTupleGetItemInputSize, lite::RET_ERROR, "The node must have 3 inputs!");
-  auto get_item_input_cnode = tuple_inputs.at(kSecondIndex);
+  auto SequenceCode_inputs = cnode->inputs();
+  MS_CHECK_TRUE_MSG(SequenceCode_inputs.size() == kSequenceCodeGetItemInputSize, lite::RET_ERROR,
+                    "The node must have 3 inputs!");
+  auto get_item_input_cnode = SequenceCode_inputs.at(kSecondIndex);
   MS_CHECK_TRUE_MSG(get_item_input_cnode != nullptr, lite::RET_ERROR, "input node is nullptr.");
-  *idx = opt::GetTupleGetItemOutIndex(cnode);
-  if (!mindspore::utils::isa<mindspore::abstract::AbstractTuplePtr>(get_item_input_cnode->abstract())) {
-    MS_LOG(ERROR) << "TupleGetItem's abstract is not AbstractTuple, cnode name: "
-                  << get_item_input_cnode->fullname_with_scope();
-    return lite::RET_ERROR;
+
+  AbstractBasePtrList abstract_list;
+  if (opt::CheckPrimitiveType(cnode, prim::kPrimTupleGetItem)) {
+    *idx = opt::GetTupleGetItemOutIndex(cnode);
+    if (!mindspore::utils::isa<mindspore::abstract::AbstractTuplePtr>(get_item_input_cnode->abstract())) {
+      MS_LOG(ERROR) << "TupleGetItem's abstract is not AbstractTuple, cnode name: "
+                    << get_item_input_cnode->fullname_with_scope();
+      return lite::RET_ERROR;
+    }
+    auto input_node_abstract = utils::cast<abstract::AbstractTuplePtr>(get_item_input_cnode->abstract());
+    abstract_list = input_node_abstract->elements();
+  } else {
+    *idx = opt::GetListGetItemOutIndex(cnode);
+    if (!mindspore::utils::isa<mindspore::abstract::AbstractListPtr>(get_item_input_cnode->abstract())) {
+      MS_LOG(ERROR) << "ListGetItem's abstract is not AbstractTuple, cnode name: "
+                    << get_item_input_cnode->fullname_with_scope();
+      return lite::RET_ERROR;
+    }
+    auto input_node_abstract = utils::cast<abstract::AbstractListPtr>(get_item_input_cnode->abstract());
+    abstract_list = input_node_abstract->elements();
   }
-  auto abstract_tuple = utils::cast<abstract::AbstractTuplePtr>(get_item_input_cnode->abstract());
-  auto abstract_list = abstract_tuple->elements();
+
   if (abstract_list.size() <= *idx) {
-    MS_LOG(ERROR) << "AbstractTuple's size is smaller than expect";
+    MS_LOG(ERROR) << "Abstract's size is smaller than expect";
     return lite::RET_ERROR;
   }
   *abstract = abstract_list[*idx];
   return lite::RET_OK;
 }
 
-static STATUS GetShapeVectorAndIdxFromCNode(const CNodePtr &cnode, std::vector<int64_t> *shape_vector, size_t *idx) {
+STATUS GetShapeVectorFromParameter(const mindspore::ParameterPtr &param_node, std::vector<int64_t> *shape_vector) {
+  MS_CHECK_TRUE_MSG(shape_vector != nullptr, RET_ERROR, "shape vector is nullptr.");
+  auto abstract_base = param_node->abstract();
+  if (abstract_base == nullptr) {
+    MS_LOG(ERROR) << "Abstract of parameter is nullptr, " << param_node->name();
+    return RET_ERROR;
+  }
+
+  if (!abstract_base->isa<abstract::AbstractTensor>()) {
+    MS_LOG(ERROR) << "Abstract of parameter should be abstract tensor, " << param_node->name();
+    return lite::RET_ERROR;
+  }
+  auto abstract_tensor = abstract_base->cast<abstract::AbstractTensorPtr>();
+  MS_CHECK_TRUE_MSG(abstract_tensor != nullptr, RET_ERROR, "Cast to abstract tensor failed!");
+  *shape_vector = abstract_tensor->shape()->shape();
+  return lite::RET_OK;
+}
+
+STATUS GetShapeVectorAndIdxFromCNode(const CNodePtr &cnode, std::vector<int64_t> *shape_vector, size_t *idx) {
   MS_CHECK_TRUE_MSG(shape_vector != nullptr, lite::RET_ERROR, "shape is nullptr");
-  MS_CHECK_TRUE_MSG(idx != nullptr, lite::RET_ERROR, "idx is nullptr");
 
   AbstractBasePtr cnode_abstract = nullptr;
-  if (opt::CheckPrimitiveType(cnode, prim::kPrimTupleGetItem)) {
-    if (GetAbstractfromTupleGetItem(cnode, &cnode_abstract, idx) != lite::RET_OK) {
+  if ((opt::CheckPrimitiveType(cnode, prim::kPrimTupleGetItem)) ||
+      (opt::CheckPrimitiveType(cnode, prim::kPrimListGetItem))) {
+    // idx is only used when cnode is type of kPrimTupleGetItem or kPrimListGetItem.
+    MS_CHECK_TRUE_MSG(idx != nullptr, lite::RET_ERROR, "idx is nullptr");
+    if (GetAbstractfromSequenceCodeGetItem(cnode, &cnode_abstract, idx) != lite::RET_OK) {
       MS_LOG(ERROR) << "Get abstract from tuple get item failed.";
       return lite::RET_ERROR;
     }
   } else {
     cnode_abstract = cnode->abstract();
   }
-  MS_CHECK_TRUE_MSG(cnode_abstract != nullptr, lite::RET_ERROR, "node abstract is nullptr");
+  // the control flow model may be nullptr
+  if (cnode_abstract == nullptr) {
+    *shape_vector = std::vector<int64_t>();
+    return lite::RET_OK;
+  }
   if (cnode_abstract->BuildShape() == mindspore::abstract::kNoShape) {
     *shape_vector = std::vector<int64_t>();
     return lite::RET_OK;
@@ -121,6 +146,31 @@ static STATUS GetShapeVectorAndIdxFromCNode(const CNodePtr &cnode, std::vector<i
   }
   *shape_vector = shape_ptr->shape();
   return lite::RET_OK;
+}
+
+STATUS GetCNodeOrParameterShapeVec(const AnfNodePtr &anf_node, std::vector<int> *shape) {
+  auto int64_t_to_int_func = [](int64_t x) -> int { return static_cast<int>(x); };
+  std::vector<int64_t> in_shape;
+  if (anf_node->isa<CNode>()) {
+    auto status = GetShapeVectorAndIdxFromCNode(anf_node->cast<CNodePtr>(), &in_shape);
+    if (status != RET_OK) {
+      MS_LOG(ERROR) << "Get shape from CNode failed.";
+      return status;
+    }
+  } else if (anf_node->isa<Parameter>()) {
+    auto param_node = anf_node->cast<ParameterPtr>();
+    auto status = GetShapeVectorFromParameter(param_node, &in_shape);
+    if (status != RET_OK) {
+      MS_LOG(ERROR) << "Get shape from Parameter failed.";
+      return status;
+    }
+  } else {
+    MS_LOG(ERROR) << "Node type is not recognized.";
+    return RET_ERROR;
+  }
+  shape->resize(in_shape.size());
+  (void)std::transform(in_shape.begin(), in_shape.end(), shape->begin(), int64_t_to_int_func);
+  return RET_OK;
 }
 
 static STATUS TraceOutput(const AnfNodePtr &node, std::vector<std::pair<AnfNodePtr, int64_t>> *outputs,
@@ -148,9 +198,14 @@ static STATUS TraceOutput(const AnfNodePtr &node, std::vector<std::pair<AnfNodeP
   std::string name = GetCNodeFuncName(cnode);
   iter++;
   MS_LOG(INFO) << "Func name of cnode " << name << " ,trace iter: " << iter;
-  if (name == kMakeTuple) {
+  if ((name == kMakeTuple) || (name == kMakeList)) {
     for (size_t i = 1; i < cnode->inputs().size(); ++i) {
-      if (TraceOutput(cnode->input(i), outputs, output_names, output_dims) != lite::RET_OK) {
+      auto make_tuple_input = cnode->input(i);
+      if (opt::CheckPrimitiveType(make_tuple_input, prim::kPrimUpdateState) ||
+          opt::CheckPrimitiveType(make_tuple_input, prim::kPrimLoad)) {
+        continue;
+      }
+      if (TraceOutput(make_tuple_input, outputs, output_names, output_dims) != lite::RET_OK) {
         MS_LOG(ERROR) << "The input[ " << i << "]"
                       << " trace output failed, name: " << name;
         return lite::RET_ERROR;
@@ -169,7 +224,7 @@ static STATUS TraceOutput(const AnfNodePtr &node, std::vector<std::pair<AnfNodeP
     MS_LOG(INFO) << "Name of graph output node is " << cnode->fullname_with_scope();
     std::string node_name = cnode->fullname_with_scope();
     std::vector<int64_t> dims;
-    size_t idx = 0;
+    size_t idx = -1;
     STATUS ret;
     if (pre_node != nullptr && IsPrimitiveCNode(pre_node, prim::kPrimTupleGetItem)) {
       ret = GetShapeVectorAndIdxFromCNode(pre_node, &dims, &idx);
@@ -609,41 +664,6 @@ STATUS GetFuncGraphOutputsInfo(const FuncGraphPtr &func_graph, std::vector<std::
   return lite::RET_OK;
 }
 
-STATUS UpdateFuncGraphInputAndOutputNames(const FuncGraphPtr &func_graph) {
-  MS_CHECK_TRUE_MSG(func_graph != nullptr, RET_ERROR, "Func graph is nullptr.");
-  // update graph input names
-  for (auto &input : func_graph->get_inputs()) {
-    auto abstract = input->abstract();
-    MS_CHECK_TRUE_MSG(abstract != nullptr, RET_ERROR, "Abstract is nullptr.");
-    if (abstract->name().empty()) {
-      abstract->set_name(input->fullname_with_scope());
-    }
-  }
-  // update graph output names
-  std::vector<std::pair<AnfNodePtr, int64_t>> outputs;
-  std::vector<std::string> output_names;
-  std::vector<std::vector<int64_t>> output_dims;
-  auto ret = GetFuncGraphOutputsInfo(func_graph, &outputs, &output_names, &output_dims);
-  if (ret != lite::RET_OK) {
-    MS_LOG(ERROR) << "Get outputs info of funcgraph failed.";
-    return lite::RET_ERROR;
-  }
-  auto updated_output_names = ConverterInnerContext::GetInstance()->GetGraphOutputTensorNames();
-  if (updated_output_names.size() > outputs.size()) {
-    MS_LOG(ERROR) << "The num of updated_output_names is greater than actual, " << updated_output_names.size() << " > "
-                  << outputs.size() << ".";
-    return lite::RET_ERROR;
-  }
-  for (size_t i = 0; i < updated_output_names.size(); ++i) {
-    auto abstract = GetAbstractFromCNode(outputs[i]);
-    if (abstract == nullptr) {
-      abstract = outputs[i].first->abstract();
-    }
-    abstract->set_name(updated_output_names[i]);
-  }
-  return lite::RET_OK;
-}
-
 STATUS UpdateGraphOutputName(schema::MetaGraphT *meta_graph) {
   MS_CHECK_TRUE_MSG(meta_graph != nullptr, RET_NULL_PTR, "meta_graph is nullptr");
   auto output_names = ConverterInnerContext::GetInstance()->GetGraphOutputTensorNames();
@@ -690,7 +710,24 @@ int TransferMetaGraph(const schema::MetaGraphT &graph, void **model_buf, size_t 
     MS_LOG(ERROR) << "malloc model_buf failed";
     return RET_ERROR;
   }
-  (void)memcpy(*model_buf, content, *size);
+  return memcpy_s(*model_buf, *size, content, *size);
+}
+
+int InitEncryptKey(const std::shared_ptr<ConverterPara> &param, unsigned char *encKey, size_t *keyLen) {
+  if (!param->enable_encryption) {
+    return RET_OK;
+  }
+  if (param->encrypt_key.empty()) {
+    MS_LOG(ERROR) << "param->encrypt_key is empty.";
+    return RET_INPUT_PARAM_INVALID;
+  }
+  *keyLen = lite::Hex2ByteArray(param->encrypt_key, encKey, kEncMaxLen);
+  if (*keyLen != kEncMaxLen) {
+    MS_LOG(ERROR) << "enc_key must expressed in hexadecimal characters "
+                  << " and only support AES-GCM method and the key length is " << kEncMaxLen;
+    return RET_INPUT_PARAM_INVALID;
+  }
+
   return RET_OK;
 }
 }  // namespace lite

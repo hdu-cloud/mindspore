@@ -17,9 +17,8 @@
 #define MINDSPORE_CCSRC_BACKEND_OPTIMIZER_PASS_CONVERT_TUPLE_INPUT_TO_DYNAMIC_INPUT_H_
 
 #include <string>
-
 #include "ir/anf.h"
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/optimizer.h"
 
 namespace mindspore {
 namespace opt {

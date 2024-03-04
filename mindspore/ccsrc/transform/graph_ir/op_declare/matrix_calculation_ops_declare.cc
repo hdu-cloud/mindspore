@@ -15,6 +15,11 @@
  */
 
 #include "transform/graph_ir/op_declare/matrix_calculation_ops_declare.h"
+#include <string>
+#include "ops/array_op_name.h"
+#include "ops/ascend_op_name.h"
+#include "ops/math_op_name.h"
+#include "ops/math_ops.h"
 
 namespace mindspore::transform {
 // TensorScatterUpdate
@@ -34,6 +39,18 @@ INPUT_MAP(ScatterNdUpdate) = {{1, INPUT_DESC(var)}, {2, INPUT_DESC(indices)}, {3
 ATTR_MAP(ScatterNdUpdate) = {{"use_locking", ATTR_DESC(use_locking, AnyTraits<bool>())}};
 OUTPUT_MAP(ScatterNdUpdate) = {{0, OUTPUT_DESC(var)}};
 REG_ADPT_DESC(ScatterNdUpdate, kNameScatterNdUpdate, ADPT_DESC(ScatterNdUpdate))
+
+// ScatterNdMax
+INPUT_MAP(ScatterNdMax) = {{1, INPUT_DESC(var)}, {2, INPUT_DESC(indices)}, {3, INPUT_DESC(updates)}};
+ATTR_MAP(ScatterNdMax) = {{"use_locking", ATTR_DESC(use_locking, AnyTraits<bool>())}};
+OUTPUT_MAP(ScatterNdMax) = {{0, OUTPUT_DESC(var)}};
+REG_ADPT_DESC(ScatterNdMax, kScatterNdMaxOpName, ADPT_DESC(ScatterNdMax))
+
+// ScatterNdMin
+INPUT_MAP(ScatterNdMin) = {{1, INPUT_DESC(var)}, {2, INPUT_DESC(indices)}, {3, INPUT_DESC(updates)}};
+ATTR_MAP(ScatterNdMin) = {{"use_locking", ATTR_DESC(use_locking, AnyTraits<bool>())}};
+OUTPUT_MAP(ScatterNdMin) = {{0, OUTPUT_DESC(var)}};
+REG_ADPT_DESC(ScatterNdMin, kScatterNdMinOpName, ADPT_DESC(ScatterNdMin))
 
 // ScatterMax
 INPUT_MAP(ScatterMax) = {{1, INPUT_DESC(var)}, {2, INPUT_DESC(indices)}, {3, INPUT_DESC(updates)}};
@@ -98,23 +115,45 @@ OUTPUT_MAP(MatMulV2) = {{0, OUTPUT_DESC(y)}};
 REG_ADPT_DESC(MatMulV2, prim::kPrimMatMul->name(), ADPT_DESC(MatMulV2))
 REG_ADPT_DESC(MatMulV2Duplicate, prim::kPrimMatMulV2->name(), ADPT_DESC(MatMulV2))
 
-// MatrixDiag
-INPUT_MAP(MatrixDiag) = {{1, INPUT_DESC(x)}};
-ATTR_MAP(MatrixDiag) = EMPTY_ATTR_MAP;
-OUTPUT_MAP(MatrixDiag) = {{0, OUTPUT_DESC(y)}};
-REG_ADPT_DESC(MatrixDiag, kNameMatrixDiagD, ADPT_DESC(MatrixDiag))
+// MatrixDiagD
+INPUT_MAP(MatrixDiagD) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(assist)}};
+ATTR_MAP(MatrixDiagD) = EMPTY_ATTR_MAP;
+OUTPUT_MAP(MatrixDiagD) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(MatrixDiag, kMatrixDiagOpName, ADPT_DESC(MatrixDiagD))
+REG_ADPT_DESC(MatrixDiagD, kMatrixDiagDOpName, ADPT_DESC(MatrixDiagD))
 
 // MatrixDiagPartD
 INPUT_MAP(MatrixDiagPartD) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(assist)}};
 ATTR_MAP(MatrixDiagPartD) = EMPTY_ATTR_MAP;
 OUTPUT_MAP(MatrixDiagPartD) = {{0, OUTPUT_DESC(y)}};
-REG_ADPT_DESC(MatrixDiagPartD, kNameMatrixDiagPartD, ADPT_DESC(MatrixDiagPartD))
+REG_ADPT_DESC(MatrixDiagPartD, kMatrixDiagPartDOpName, ADPT_DESC(MatrixDiagPartD))
+REG_ADPT_DESC(MatrixDiagPart, kMatrixDiagPartOpName, ADPT_DESC(MatrixDiagPartD))
 
 // MatrixSetDiagD
 INPUT_MAP(MatrixSetDiagD) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(diagonal)}, {3, INPUT_DESC(assist)}};
 ATTR_MAP(MatrixSetDiagD) = EMPTY_ATTR_MAP;
 OUTPUT_MAP(MatrixSetDiagD) = {{0, OUTPUT_DESC(y)}};
 REG_ADPT_DESC(MatrixSetDiagD, kNameMatrixSetDiagD, ADPT_DESC(MatrixSetDiagD))
+REG_ADPT_DESC(MatrixSetDiag, kMatrixSetDiagOpName, ADPT_DESC(MatrixSetDiagD))
+
+// MatrixDiagPartV3
+INPUT_MAP(MatrixDiagPartV3) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(k)}, {3, INPUT_DESC(padding_value)}};
+ATTR_MAP(MatrixDiagPartV3) = {{"align", ATTR_DESC(align, AnyTraits<std::string>())}};
+OUTPUT_MAP(MatrixDiagPartV3) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(MatrixDiagPartV3, kMatrixDiagPartV3OpName, ADPT_DESC(MatrixDiagPartV3))
+
+// MatrixSetDiagV3
+INPUT_MAP(MatrixSetDiagV3) = {{1, INPUT_DESC(input)}, {2, INPUT_DESC(diagonal)}, {3, INPUT_DESC(k)}};
+ATTR_MAP(MatrixSetDiagV3) = {{"align", ATTR_DESC(align, AnyTraits<std::string>())}};
+OUTPUT_MAP(MatrixSetDiagV3) = {{0, OUTPUT_DESC(output)}};
+REG_ADPT_DESC(MatrixSetDiagV3, kMatrixSetDiagV3OpName, ADPT_DESC(MatrixSetDiagV3))
+
+// ConfusionMatrix
+INPUT_MAP(ConfusionMatrix) = {{1, INPUT_DESC(labels)}, {2, INPUT_DESC(predictions)}, {3, INPUT_DESC(weights)}};
+ATTR_MAP(ConfusionMatrix) = {{"num_classes", ATTR_DESC(num_classes, AnyTraits<int64_t>())},
+                             {"dtype", ATTR_DESC(dtype, AnyTraits<std::string>())}};
+OUTPUT_MAP(ConfusionMatrix) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(ConfusionMatrix, kNameConfusionMatrix, ADPT_DESC(ConfusionMatrix))
 
 // DiagPart
 INPUT_MAP(DiagPart) = {{1, INPUT_DESC(x)}};
@@ -122,16 +161,22 @@ ATTR_MAP(DiagPart) = EMPTY_ATTR_MAP;
 OUTPUT_MAP(DiagPart) = {{0, OUTPUT_DESC(y)}};
 REG_ADPT_DESC(DiagPart, kNameDiagPart, ADPT_DESC(DiagPart))
 
+// DiagPartD
+INPUT_MAP(DiagPartD) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(assist)}};
+ATTR_MAP(DiagPartD) = EMPTY_ATTR_MAP;
+OUTPUT_MAP(DiagPartD) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(DiagPartD, kNameDiagPartD, ADPT_DESC(DiagPartD))
+
 // BatchMatMul
 INPUT_MAP(BatchMatMul) = {{1, INPUT_DESC(x1)}, {2, INPUT_DESC(x2)}};
-ATTR_MAP(BatchMatMul) = {{"transpose_x1", ATTR_DESC(adj_x1, AnyTraits<bool>())},
-                         {"transpose_x2", ATTR_DESC(adj_x2, AnyTraits<bool>())}};
+ATTR_MAP(BatchMatMul) = {{"transpose_a", ATTR_DESC(adj_x1, AnyTraits<bool>())},
+                         {"transpose_b", ATTR_DESC(adj_x2, AnyTraits<bool>())}};
 OUTPUT_MAP(BatchMatMul) = {{0, OUTPUT_DESC(y)}};
 
 // BatchMatMul->BatchMatMulV2
-INPUT_MAP(BatchMatMulV2) = {{1, INPUT_DESC(x1)}, {2, INPUT_DESC(x2)}};
-ATTR_MAP(BatchMatMulV2) = {{"transpose_x1", ATTR_DESC(adj_x1, AnyTraits<bool>())},
-                           {"transpose_x2", ATTR_DESC(adj_x2, AnyTraits<bool>())}};
+INPUT_MAP(BatchMatMulV2) = {{1, INPUT_DESC(x1)}, {2, INPUT_DESC(x2)}, {3, INPUT_DESC(bias)}};
+ATTR_MAP(BatchMatMulV2) = {{"transpose_a", ATTR_DESC(adj_x1, AnyTraits<bool>())},
+                           {"transpose_b", ATTR_DESC(adj_x2, AnyTraits<bool>())}};
 OUTPUT_MAP(BatchMatMulV2) = {{0, OUTPUT_DESC(y)}};
 REG_ADPT_DESC(BatchMatMul, kNameBatchMatMul, ADPT_DESC(BatchMatMul))
 REG_ADPT_DESC(BatchMatMulV2, kNameBatchMatMulV2, ADPT_DESC(BatchMatMulV2))
@@ -164,5 +209,59 @@ REG_ADPT_DESC(FullyConnection, kNameFullConnection, ADPT_DESC(FullyConnection))
 INPUT_MAP(IndexAdd) = {{1, INPUT_DESC(var)}, {2, INPUT_DESC(indices)}, {3, INPUT_DESC(updates)}};
 ATTR_MAP(IndexAdd) = {{"axis", ATTR_DESC(axis, AnyTraits<int64_t>())}};
 OUTPUT_MAP(IndexAdd) = {{0, OUTPUT_DESC(var_out)}};
-REG_ADPT_DESC(IndexAdd, prim::kPrimIndexAdd->name(), ADPT_DESC(IndexAdd))
+
+// TensorScatterAdd
+INPUT_MAP(TensorScatterAdd) = {{1, INPUT_DESC(x)}, {2, INPUT_DESC(indices)}, {3, INPUT_DESC(updates)}};
+ATTR_MAP(TensorScatterAdd) = EMPTY_ATTR_MAP;
+OUTPUT_MAP(TensorScatterAdd) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(TensorScatterAdd, kNameTensorScatterAdd, ADPT_DESC(TensorScatterAdd))
+
+// Triu
+INPUT_MAP(Triu) = {{1, INPUT_DESC(x)}};
+ATTR_MAP(Triu) = {{"diagonal", ATTR_DESC(diagonal, AnyTraits<int64_t>())}};
+OUTPUT_MAP(Triu) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(Triu, kNameTriu, ADPT_DESC(Triu))
+
+INPUT_MAP(MatrixDiagV3) = {{1, INPUT_DESC(x)},
+                           {2, INPUT_DESC(k)},
+                           {3, INPUT_DESC(num_rows)},
+                           {4, INPUT_DESC(num_cols)},
+                           {5, INPUT_DESC(padding_value)}};
+ATTR_MAP(MatrixDiagV3) = {{"align", ATTR_DESC(align, AnyTraits<std::string>())}};
+OUTPUT_MAP(MatrixDiagV3) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(MatrixDiagV3, kNameMatrixDiagV3, ADPT_DESC(MatrixDiagV3))
+
+// Tril
+INPUT_MAP(Tril) = {{1, INPUT_DESC(x)}};
+ATTR_MAP(Tril) = {{"diagonal", ATTR_DESC(diagonal, AnyTraits<int64_t>())}};
+OUTPUT_MAP(Tril) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(Tril, kNameTril, ADPT_DESC(Tril))
+
+// Eye
+INPUT_MAP(Eye) = EMPTY_INPUT_MAP;
+ATTR_MAP(Eye) = EMPTY_ATTR_MAP;
+INPUT_ATTR_MAP(Eye) = {{1, ATTR_DESC(num_rows, AnyTraits<int>())},
+                       {2, ATTR_DESC(num_columns, AnyTraits<int>())},
+                       {3, ATTR_DESC(dtype, AnyTraits<GEType>())}};
+OUTPUT_MAP(Eye) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(Eye, kNameEye, ADPT_DESC(Eye));
+
+// FillDiagonal
+INPUT_MAP(FillDiagonal) = {{1, INPUT_DESC(x)}};
+ATTR_MAP(FillDiagonal) = {{"fill_value", ATTR_DESC(fill_value, AnyTraits<float>())},
+                          {"wrap", ATTR_DESC(wrap, AnyTraits<bool>())}};
+OUTPUT_MAP(FillDiagonal) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(FillDiagonal, kNameFillDiagonal, ADPT_DESC(FillDiagonal));
+
+// Trace
+INPUT_MAP(Trace) = {{1, INPUT_DESC(x)}};
+ATTR_MAP(Trace) = EMPTY_ATTR_MAP;
+OUTPUT_MAP(Trace) = {{0, OUTPUT_DESC(y)}};
+REG_ADPT_DESC(Trace, prim::kPrimTrace->name(), ADPT_DESC(Trace));
+
+// TraceGrad
+CUST_INPUT_MAP(TraceGrad) = {{1, INPUT_DESC(y_grad)}, {2, INPUT_DESC(x_shape)}};
+CUST_ATTR_MAP(TraceGrad) = EMPTY_ATTR_MAP;
+CUST_OUTPUT_MAP(TraceGrad) = {{0, OUTPUT_DESC(x_grad)}};
+REG_ADPT_DESC(TraceGrad, prim::kPrimTraceGrad->name(), CUST_ADPT_DESC(TraceGrad));
 }  // namespace mindspore::transform

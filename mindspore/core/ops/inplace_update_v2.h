@@ -16,14 +16,13 @@
 
 #ifndef MINDSPORE_CORE_OPS_INPLACE_UPDATE_V2_H_
 #define MINDSPORE_CORE_OPS_INPLACE_UPDATE_V2_H_
-#include <algorithm>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
 #include <vector>
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -38,8 +37,9 @@ class MIND_API InplaceUpdateV2 : public BaseOperator {
   void Init() const {}
 };
 
-abstract::AbstractBasePtr InplaceUpdateV2Infer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                               const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr InplaceUpdateV2Infer(const abstract::AnalysisEnginePtr &,
+                                                        const PrimitivePtr &primitive,
+                                                        const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimInplaceUpdateV2Ptr = std::shared_ptr<InplaceUpdateV2>;
 }  // namespace ops
 }  // namespace mindspore

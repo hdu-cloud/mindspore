@@ -18,15 +18,13 @@
 #include <numeric>
 #include "src/extendrt/delegate/tensorrt/tensorrt_utils.h"
 #include "ops/scatter_nd_update.h"
+#include "ops/tensor_scatter_update.h"
+#include "ops/tensor_scatter_add.h"
 
 namespace mindspore::lite {
 int ScatterNdTensorRT::IsSupport(const BaseOperatorPtr &base_operator, const std::vector<TensorInfo> &in_tensors,
                                  const std::vector<TensorInfo> &out_tensors) {
 #if TRT_VERSION_GE(8, 2)
-  if (!IsShapeKnown()) {
-    MS_LOG(ERROR) << "Unsupported input tensor unknown shape: " << op_name_;
-    return RET_ERROR;
-  }
   if (in_tensors.size() != INPUT_SIZE3) {
     MS_LOG(ERROR) << "Unsupported input tensor size, size is " << in_tensors.size() << " : " << op_name_;
     return RET_ERROR;
@@ -45,14 +43,14 @@ int ScatterNdTensorRT::IsSupport(const BaseOperatorPtr &base_operator, const std
 
 int ScatterNdTensorRT::AddInnerOp(TensorRTContext *ctx) {
 #if TRT_VERSION_GE(8, 2)
-  ITensorHelper scatter_input;
-  int ret = PreprocessInputs2SameDim(ctx, input(ctx, 0), &scatter_input);
-  if (ret != RET_OK || scatter_input.trt_tensor_ == nullptr) {
-    MS_LOG(ERROR) << "PreprocessInputs2SameDim input tensor failed for " << op_name_;
-    return ret;
+  ITensorHelper scatter_input = input(ctx, 0);
+  if (in_tensors_[0].IsConst() && scatter_input.trt_tensor_ == nullptr) {
+    scatter_input.trt_tensor_ = lite::ConvertConstantTensor(ctx, in_tensors_[0], op_name_);
+    scatter_input.format_ = Format::NCHW;
+    ctx->RegisterTensor(scatter_input, in_tensors_[0].Name());
   }
   ITensorHelper indices_helper;
-  ret = PreprocessInputs2SameDim(ctx, input(ctx, 1), &indices_helper);
+  int ret = PreprocessInputs2SameDim(ctx, input(ctx, 1), &indices_helper);
   if (ret != RET_OK || indices_helper.trt_tensor_ == nullptr) {
     MS_LOG(ERROR) << "PreprocessInputs2SameDim indices tensor failed for " << op_name_;
     return ret;
@@ -82,4 +80,5 @@ int ScatterNdTensorRT::AddInnerOp(TensorRTContext *ctx) {
 #endif
 }
 REGISTER_TENSORRT_CREATOR(ops::kNameScatterNdUpdate, ScatterNdTensorRT)
+REGISTER_TENSORRT_CREATOR(ops::kNameTensorScatterUpdate, ScatterNdTensorRT)
 }  // namespace mindspore::lite

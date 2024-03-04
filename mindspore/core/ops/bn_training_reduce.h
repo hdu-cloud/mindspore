@@ -16,11 +16,12 @@
 
 #ifndef MINDSPORE_CORE_OPS_BN_TRAINING_REDUCE_H_
 #define MINDSPORE_CORE_OPS_BN_TRAINING_REDUCE_H_
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -30,8 +31,9 @@ class MIND_API BNTrainingReduce : public BaseOperator {
   MIND_API_BASE_MEMBER(BNTrainingReduce);
   BNTrainingReduce() : BaseOperator(kNamekBNTrainingReduce) { InitIOName({"x"}, {"sum", "square_sum"}); }
 };
-abstract::AbstractBasePtr BNTrainingReduceInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr BNTrainingReduceInfer(const abstract::AnalysisEnginePtr &,
+                                                         const PrimitivePtr &primitive,
+                                                         const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimBNTrainingReduce = std::shared_ptr<BNTrainingReduce>;
 }  // namespace ops
 }  // namespace mindspore

@@ -77,34 +77,18 @@ const std::array<std::string, kEight> OutputTransFuncRelu6List8 = {"",
                                                                    "OutputTransform8x6Relu6Unit",
                                                                    "OutputTransform8x7Relu6Unit"};
 
-int ConvolutionWinogradFP32Coder::WinogradFilterTransform(const float *weight_data, float *matrix_g,
-                                                          const float *matrix_gt, int oc_block) {
-  MS_CHECK_TRUE(oc_block, "Divide by zero!");
-  return WinogradWeightTransform(weight_data, trans_weight_, matrix_g, matrix_gt, oc_block, input_unit_, kernel_unit_,
-                                 conv_param_->input_channel_, conv_param_->output_channel_, true);
-}
-
 int ConvolutionWinogradFP32Coder::InitTmpBuffer() {
   int channel_out = conv_param_->output_channel_;
   int oc8 = UP_DIV(channel_out, C8NUM);
-  int tile_num = C12NUM;
-  tile_buffer_size_ = thread_num_ * tile_num * input_unit_ * input_unit_ * conv_param_->input_channel_ * sizeof(float);
-  trans_input_ = reinterpret_cast<float *>(allocator_->Malloc(kNumberTypeFloat32, tile_buffer_size_, kWorkspace));
-  gemm_out_size_ = thread_num_ * tile_num * input_unit_ * input_unit_ * oc8 * C8NUM * sizeof(float);
-  gemm_out_ = reinterpret_cast<float *>(allocator_->Malloc(kNumberTypeFloat32, gemm_out_size_, kWorkspace));
-  tmp_data_size_ = thread_num_ * C4NUM * input_unit_ * input_unit_ * sizeof(float);
-  tmp_data_ = reinterpret_cast<float *>(allocator_->Malloc(kNumberTypeFloat32, tmp_data_size_, kWorkspace));
-  col_buffer_size_ = thread_num_ * tile_num * conv_param_->input_channel_ * sizeof(float);
-  col_buffer_ = reinterpret_cast<float *>(allocator_->Malloc(kNumberTypeFloat32, col_buffer_size_, kWorkspace));
-  return RET_OK;
-}
-
-int ConvolutionWinogradFP32Coder::ReSize() {
-  // malloc tmp buffer
-  int ret = ConfigInputOutput();
-  MS_CHECK_RET_CODE(ret, "ConfigInputOutput failed.");
-  ret = InitTmpBuffer();
-  MS_CHECK_RET_CODE(ret, "Init tmp buffer failed.");
+  tile_buffer_size_ =
+    thread_num_ * row_tile_ * input_unit_ * input_unit_ * conv_param_->input_channel_ * DataTypeSize(data_type_);
+  trans_input_ = allocator_->Malloc(data_type_, tile_buffer_size_, kWorkspace);
+  gemm_out_size_ = thread_num_ * row_tile_ * input_unit_ * input_unit_ * oc8 * col_tile_ * DataTypeSize(data_type_);
+  gemm_out_ = allocator_->Malloc(data_type_, gemm_out_size_, kWorkspace);
+  tmp_data_size_ = thread_num_ * C4NUM * input_unit_ * input_unit_ * DataTypeSize(data_type_);
+  tmp_data_ = allocator_->Malloc(data_type_, tmp_data_size_, kWorkspace);
+  col_buffer_size_ = thread_num_ * row_tile_ * conv_param_->input_channel_ * DataTypeSize(data_type_);
+  col_buffer_ = allocator_->Malloc(data_type_, col_buffer_size_, kWorkspace);
   return RET_OK;
 }
 
@@ -115,12 +99,23 @@ int ConvolutionWinogradFP32Coder::Prepare(CoderContext *const context) {
   input_unit_ = output_unit_ + kernel_unit_ - 1;
   conv_param_->input_unit_ = input_unit_;
   conv_param_->output_unit_ = output_unit_;
-  ret = InitWeightBias();
-  MS_CHECK_RET_CODE(ret, "Init weight bias failed.");
-  return ReSize();
-}  // namespace micro
+  MS_CHECK_RET_CODE(InitParameter(), "Winograd convolution do InitParameter failed");
+  if (input_tensor_->data_type() == kNumberTypeFloat32) {
+    is_weight_online_ = Configurator::GetInstance()->keep_original_weight();
+  }
+  if (is_weight_online_) {
+    MS_CHECK_RET_CODE(InitWeightBiasOnline(), "Winograd convolution do InitWeightBiasOnline failed");
+  } else {
+    MS_CHECK_RET_CODE(InitWeightBiasOffline(), "Winograd convolution do InitWeightBiasOffline failed");
+  }
+  ret = ConfigInputOutput();
+  MS_CHECK_RET_CODE(ret, "ConfigInputOutput failed.");
+  ret = InitTmpBuffer();
+  MS_CHECK_RET_CODE(ret, "Init tmp buffer failed.");
+  return RET_OK;
+}
 
-int ConvolutionWinogradFP32Coder::InitWeightBias() {
+int ConvolutionWinogradFP32Coder::InitParameter() {
   int in_channel = filter_tensor_->Channel();
   int out_channel = filter_tensor_->Batch();
   MS_CHECK_TRUE(in_channel > 0, "invalid in channel size");
@@ -129,17 +124,12 @@ int ConvolutionWinogradFP32Coder::InitWeightBias() {
   conv_param_->output_channel_ = out_channel;
 
   int oc4 = UP_DIV(out_channel, C4NUM);
-  const int oc_block = C8NUM;
-  int oc_block_num = UP_DIV(out_channel, C8NUM);
+  int oc_block_num = UP_DIV(out_channel, col_tile_);
   // init weight
-  int trans_matrix_data_size = input_unit_ * input_unit_ * in_channel * oc_block_num * oc_block;
-  trans_weight_ = reinterpret_cast<float *>(
-    allocator_->Malloc(kNumberTypeFloat32, trans_matrix_data_size * sizeof(float), kOfflinePackWeight));
-  MS_CHECK_PTR(trans_weight_);
-  int ret = memset_s(trans_weight_, trans_matrix_data_size * sizeof(float), 0, trans_matrix_data_size * sizeof(float));
-  MS_CHECK_RET_CODE(ret, "memset_s failed!");
-  float matrix_g[k64];
-  float matrix_gt[k64];
+  trans_weight_size_ = input_unit_ * input_unit_ * in_channel * oc_block_num * col_tile_ * DataTypeSize(data_type_);
+  packed_bias_size_ = oc4 * C4NUM * DataTypeSize(data_type_);
+  matrix_g_.resize(k64);
+  matrix_gt_.resize(k64);
   float matrix_a[k64];
   float matrix_at[k64];
   float matrix_b[k64];
@@ -148,28 +138,41 @@ int ConvolutionWinogradFP32Coder::InitWeightBias() {
   if (input_unit_ == DIMENSION_8D) {
     coef = 0.5f;
   }
-  ret = CookToomFilter(matrix_a, matrix_at, matrix_b, matrix_bt, matrix_g, matrix_gt, coef, output_unit_, kernel_unit_);
+  auto ret = CookToomFilter(matrix_a, matrix_at, matrix_b, matrix_bt, matrix_g_.data(), matrix_gt_.data(), coef,
+                            output_unit_, kernel_unit_);
   MS_CHECK_RET_CODE(ret, "CookToomFilter failed!");
-  auto out_channel_size = static_cast<size_t>(out_channel);
+  return RET_OK;
+}
+
+int ConvolutionWinogradFP32Coder::InitWeightBiasOffline() {
+  trans_weight_ = allocator_->Malloc(data_type_, trans_weight_size_, kOfflinePackWeight);
+  MS_CHECK_PTR(trans_weight_);
+  int ret = memset_s(trans_weight_, trans_weight_size_, 0, trans_weight_size_);
+  MS_CHECK_RET_CODE(ret, "memset_s failed!");
   auto weight_data = reinterpret_cast<float *>(filter_tensor_->data());
   MS_CHECK_PTR(weight_data);
-  ret = WinogradFilterTransform(weight_data, matrix_g, matrix_gt, oc_block);
+  ret = WinogradWeightTransform(weight_data, reinterpret_cast<float *>(trans_weight_), matrix_g_.data(),
+                                matrix_gt_.data(), C8NUM, input_unit_, kernel_unit_, conv_param_->input_channel_,
+                                conv_param_->output_channel_, true);
   MS_CHECK_RET_CODE(ret, "winograd filter transform failed!");
-  // init bias
-  int new_bias_ele_num = oc4 * C4NUM;
-  auto new_bias_ele_size = static_cast<size_t>(new_bias_ele_num * sizeof(float));
-  new_bias_ = reinterpret_cast<float *>(allocator_->Malloc(kNumberTypeFloat32, new_bias_ele_size, kOfflinePackWeight));
+
+  new_bias_ = allocator_->Malloc(data_type_, packed_bias_size_, kOfflinePackWeight);
   MS_CHECK_PTR(new_bias_);
-  ret = memset_s(new_bias_, new_bias_ele_size, 0, new_bias_ele_size);
+  ret = memset_s(new_bias_, packed_bias_size_, 0, packed_bias_size_);
   MS_CHECK_RET_CODE(ret, "memset_s failed!");
   if (input_tensors_.size() == kInputSize2) {
     auto ori_bias_addr = reinterpret_cast<float *>(bias_tensor_->data());
     MS_CHECK_PTR(ori_bias_addr);
-    MS_CHECK_RET_CODE(memcpy_s(new_bias_, new_bias_ele_size, ori_bias_addr, out_channel_size * sizeof(float)),
-                      "memcpy_s failed!");
-  } else {
-    MS_CHECK_RET_CODE(memset_s(new_bias_, new_bias_ele_size, 0, new_bias_ele_size), "memset_s failed!");
+    MS_CHECK_RET_CODE(memcpy_s(new_bias_, packed_bias_size_, ori_bias_addr, bias_tensor_->Size()), "memcpy_s failed!");
   }
+  return RET_OK;
+}
+
+int ConvolutionWinogradFP32Coder::InitWeightBiasOnline() {
+  trans_weight_ = allocator_->Malloc(data_type_, kOnlineSize, kOnlinePackWeight);
+  MS_CHECK_PTR(trans_weight_);
+  new_bias_ = allocator_->Malloc(data_type_, kOnlineSize, kOnlinePackWeight);
+  MS_CHECK_PTR(new_bias_);
   return RET_OK;
 }
 
@@ -217,7 +220,63 @@ std::string ConvolutionWinogradFP32Coder::GetOutputTransFunc(int input_unit, int
   }
 }
 
-int ConvolutionWinogradFP32Coder::DoCode(CoderContext *const context) {
+void ConvolutionWinogradFP32Coder::InitCodeOnline(CoderContext *const context) {
+  if (!Configurator::GetInstance()->keep_original_weight()) {
+    return;
+  }
+  Collect(context,
+          {
+            "nnacl/base/minimal_filtering_generator.h",
+            "nnacl/fp32/pack_fp32.h",
+          },
+          {"minimal_filtering_generator.c", "nnacl/fp32/pack_fp32.h"});
+  NNaclFp32Serializer init_code;
+  init_code.CodeBufferOffsetExpression(trans_weight_, context->weight_name(), context->weight_offset_name(),
+                                       context->weight_size_name(), trans_weight_size_);
+  auto filter_str = allocator_->GetRuntimeAddr(filter_tensor_);
+  init_code.CodeArray("matrix_g", matrix_g_.data(), k64);
+  init_code.CodeArray("matrix_gt", matrix_gt_.data(), k64);
+  init_code.CodeFunction("WinogradWeightTransform", filter_str, reinterpret_cast<float *>(trans_weight_), "matrix_g",
+                         "matrix_gt", C8NUM, input_unit_, kernel_unit_, conv_param_->input_channel_,
+                         conv_param_->output_channel_, true);
+  init_code.CodeBufferOffsetExpression(new_bias_, context->weight_name(), context->weight_offset_name(),
+                                       context->weight_size_name(), packed_bias_size_);
+  if (input_tensors_.size() == kInputSize2) {
+    auto bias_str = allocator_->GetRuntimeAddr(bias_tensor_);
+    init_code.CodeFunction("memcpy", new_bias_, bias_str, bias_tensor_->Size());
+  } else {
+    init_code.CodeFunction("memcpy", new_bias_, 0, packed_bias_size_);
+  }
+  context->AppendInitWeightSizeCode(trans_weight_size_ + packed_bias_size_);
+  context->AppendInitCode(init_code.str());
+}
+
+void ConvolutionWinogradFP32Coder::CollectFilesForFunc(CoderContext *const context) {
+  if (target_ == kARM32) {
+    Collect(context, {}, {},
+            {
+              "MatmulFp32.S",
+              "MatmulFp32Opt.S",
+              "MatVecMulFp32.S",
+              "PreSum4x16Int8Peroc.S",
+              "PreSum4x16Int8Pert.S",
+              "IndirectGemmInt16to32_8x4.S",
+              "MatmulInt8.S",
+            });
+  } else if (target_ == kARM64) {
+    Collect(context, {}, {},
+            {
+              "BigMatmulFp32Opt.S",
+              "MatmulFp32.S",
+              "MatmulFp32Opt.S",
+              "PreSum4x16Int8Peroc.S",
+              "MatVecMulFp32.S",
+              "PreSum4x16Int8Peroc.S",
+              "PreSum4x16Int8Pert.S",
+              "IndirectGemmInt16to32_8x4.S",
+              "MatmulInt8.S",
+            });
+  }
   Collect(context,
           {
             "nnacl/fp32/conv_winograd_fp32.h",
@@ -239,49 +298,32 @@ int ConvolutionWinogradFP32Coder::DoCode(CoderContext *const context) {
   if (support_parallel_) {
     Collect(context, {"wrapper/fp32/conv_winograd_fp32_wrapper.h"}, {"conv_winograd_fp32_wrapper.c"});
   }
-  if (target_ == kARM32) {
-    Collect(context, {}, {},
-            {
-              "MatmulFp32.S",
-              "MatmulFp32Opt.S",
-              "MatVecMulFp32.S",
-              "PreSum4x16Int8Peroc.S",
-              "PreSum4x16Int8Pert.S",
-              "IndirectGemmInt16to32_8x4.S",
-              "MatmulInt8.S",
-            });
-  } else if (target_ == kARM64) {
-    Collect(context, {}, {},
-            {
-              "MatmulFp32.S",
-              "MatmulFp32Opt.S",
-              "PreSum4x16Int8Peroc.S",
-              "MatVecMulFp32.S",
-              "PreSum4x16Int8Peroc.S",
-              "PreSum4x16Int8Pert.S",
-              "IndirectGemmInt16to32_8x4.S",
-              "MatmulInt8.S",
-            });
-  }
+}
 
+int ConvolutionWinogradFP32Coder::DoCode(CoderContext *const context) {
+  CollectFilesForFunc(context);
+  InitCodeOnline(context);
   NNaclFp32Serializer code;
   // call the op function
   code.CodeFunction("memset", trans_input_, "0", tile_buffer_size_);
   code.CodeFunction("memset", gemm_out_, "0", gemm_out_size_);
   code.CodeFunction("memset", tmp_data_, "0", tmp_data_size_);
   code.CodeFunction("memset", col_buffer_, "0", col_buffer_size_);
-  code << "    float *tmp_buffer_address_list[4] = {" << allocator_->GetRuntimeAddr(trans_input_) << ", "
-       << allocator_->GetRuntimeAddr(gemm_out_) << ", " << allocator_->GetRuntimeAddr(tmp_data_) << ", "
-       << allocator_->GetRuntimeAddr(col_buffer_) << "};\n";
+  code << "    float *tmp_buffer_address_list[4] = {" << allocator_->GetRuntimeAddr(static_cast<float *>(trans_input_))
+       << ", " << allocator_->GetRuntimeAddr(static_cast<float *>(gemm_out_)) << ", "
+       << allocator_->GetRuntimeAddr(static_cast<float *>(tmp_data_)) << ", "
+       << allocator_->GetRuntimeAddr(static_cast<float *>(col_buffer_)) << "};\n";
   code.CodeStruct("conv_parameter", *conv_param_);
   code.CodeStruct("trans_func", trans_func_str_);
+  auto trans_weight_str = MemoryAllocator::GetInstance()->GetRuntimeAddr(static_cast<float *>(trans_weight_));
+  auto new_bias_str = MemoryAllocator::GetInstance()->GetRuntimeAddr(static_cast<float *>(new_bias_));
   if (support_parallel_) {
-    code.CodeBaseStruct("ConvWinogradFp32Args", kRunArgs, input_tensor_, trans_weight_, new_bias_, output_tensor_,
+    code.CodeBaseStruct("ConvWinogradFp32Args", kRunArgs, input_tensor_, trans_weight_str, new_bias_str, output_tensor_,
                         "tmp_buffer_address_list", "&conv_parameter", "trans_func");
     code.CodeFunction(kParallelLaunch, "ConvWinogradFp32Run", kRunArgsAddr, "conv_parameter.thread_num_");
   } else {
     // code operator func
-    code.CodeFunction("ConvWinogardFp32", input_tensor_, trans_weight_, new_bias_, output_tensor_,
+    code.CodeFunction("ConvWinogardFp32", input_tensor_, trans_weight_str, new_bias_str, output_tensor_,
                       "tmp_buffer_address_list", kDefaultTaskId, "&conv_parameter", "trans_func");
   }
   context->AppendCode(code.str());

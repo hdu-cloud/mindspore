@@ -47,6 +47,7 @@ bool LayerNormGradGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const
     return false;
   }
   kernel_func_ = func_list_[index].second;
+  epsilon_ = kernel_ptr->get_epsilon();
   return true;
 }
 
@@ -110,7 +111,9 @@ void LayerNormGradGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inpu
   auto dg = GetDeviceAddress<T>(outputs, kLayerNormGradOutputDgIndex);
   auto db = GetDeviceAddress<T>(outputs, kLayerNormGradOutputDbIndex);
 
-  LayerNormGrad(input_row_, input_col_, param_dim_, epsilon_, dy, x, mean, var, gamma, dx, dg, db, cuda_stream_);
+  auto status =
+    LayerNormGrad(input_row_, input_col_, param_dim_, epsilon_, dy, x, mean, var, gamma, dx, dg, db, cuda_stream_);
+  CHECK_CUDA_STATUS(status, kernel_name_);
 }
 
 std::vector<std::pair<KernelAttr, LayerNormGradGpuKernelMod::KernelFunc>> LayerNormGradGpuKernelMod::func_list_ = {

@@ -15,15 +15,27 @@
  */
 
 #include "ops/max_pool_v1.h"
-#include <string>
-#include <algorithm>
+
 #include <memory>
 #include <set>
 #include <vector>
-#include "mindapi/src/helper.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/format.h"
+#include "mindapi/base/types.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -129,6 +141,24 @@ AbstractBasePtr MaxPoolV1Infer(const abstract::AnalysisEnginePtr &, const Primit
   return std::make_shared<abstract::AbstractTensor>(maxpoolv1_infer_type, maxpoolv1_infer_shape);
 }
 MIND_API_OPERATOR_IMPL(MaxPoolV1, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(MaxPoolV1, prim::kPrimMaxPoolV1, MaxPoolV1Infer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMaxPoolV1Infer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPoolV1InferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPoolV1InferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MaxPoolV1Infer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MaxPoolV1, prim::kPrimMaxPoolV1, AGMaxPoolV1Infer, false);
 }  // namespace ops
 }  // namespace mindspore

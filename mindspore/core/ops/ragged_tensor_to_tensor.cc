@@ -14,15 +14,16 @@
  * limitations under the License.
  */
 #include "ops/ragged_tensor_to_tensor.h"
+#include <algorithm>
+#include <functional>
+#include <map>
+#include <memory>
+#include <set>
 #include <string>
 #include <vector>
-#include <memory>
-#include <map>
-#include <functional>
-#include <algorithm>
-#include <set>
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_ops.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,19 +32,70 @@ BaseShapePtr RaggedTensorToTensorInferShape(const PrimitivePtr &primitive,
                                             const std::vector<AbstractBasePtr> &input_args) {
   auto prim_name = primitive->name();
   auto shape_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
-  CheckAndConvertUtils::CheckInteger("dimension of 'shape'", SizeToLong(shape_shape.size()), kEqual, 1, prim_name);
   auto values_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
   auto default_value_shape =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->BuildShape())[kShape];
-  CheckAndConvertUtils::CheckInteger("dimension of 'default_value'", SizeToLong(default_value_shape.size()), kLessThan,
-                                     SizeToLong(values_shape.size()), prim_name);
-
   auto shape_arg = input_args[kInputIndex0];
   MS_EXCEPTION_IF_NULL(shape_arg);
   auto output_shape = GetShapeValue(primitive, shape_arg);
-  auto row_partition_tensors_shape =
-    CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex3]->BuildShape())[kShape];
-  primitive->AddAttr("num_row_partition_tensors", MakeValue(SizeToLong(row_partition_tensors_shape.size())));
+  auto values_rank = values_shape.size();
+  auto output_shape_rank = output_shape.size();
+  auto tensors = input_args[kInputIndex3]->isa<abstract::AbstractTuple>()
+                   ? input_args[kInputIndex3]->cast<abstract::AbstractTuplePtr>()->elements()
+                   : input_args[kInputIndex3]->cast<abstract::AbstractListPtr>()->elements();
+  auto tensors_size = tensors.size();
+  auto tensor0_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(tensors[0]->BuildShape())[kShape];
+  auto tensor0_dim = tensor0_shape.size();
+  const auto &row_partition_types_ptr = primitive->GetAttr("row_partition_types");
+  MS_EXCEPTION_IF_NULL(row_partition_types_ptr);
+  const auto &row_partition_types = GetValue<std::vector<std::string>>(row_partition_types_ptr);
+  auto types_size = row_partition_types.size();
+
+  if (IsDynamic(shape_shape) || IsDynamicRank(values_shape) || IsDynamicRank(default_value_shape) ||
+      IsDynamicRank(tensor0_shape)) {
+    return std::make_shared<abstract::Shape>(output_shape);
+  }
+
+  (void)CheckAndConvertUtils::CheckInteger("dimension of 'shape'", SizeToLong(shape_shape.size()), kEqual, 1,
+                                           prim_name);
+  (void)CheckAndConvertUtils::CheckInteger("dimension of 'default_value'", SizeToLong(default_value_shape.size()),
+                                           kLessThan, SizeToLong(values_shape.size()), prim_name);
+
+  if (tensors_size != types_size) {
+    MS_EXCEPTION(ValueError) << "For '" << prim_name << "', the number of row_partition_tensors must be equal to the "
+                             << "number of row_partition_types: " << types_size << ", but got " << tensors_size << ".";
+  }
+  if (row_partition_types[0] == "FIRST_DIM_SIZE") {
+    (void)CheckAndConvertUtils::CheckInteger("dimension of row_partition_tensors[0](for 'FIRST_DIM_SIZE')",
+                                             SizeToLong(tensor0_dim), kEqual, 0, prim_name);
+    if (types_size - 1 + values_rank != output_shape_rank) {
+      MS_EXCEPTION(ValueError) << "For '" << prim_name
+                               << "', row partition size plus 'values' rank should be equal to 'shape' rank: "
+                               << output_shape.size() << ", but got row partition size: " << (types_size - 1)
+                               << ", 'values' rank: " << values_rank << ".";
+    }
+  } else if (row_partition_types[0] == "ROW_SPLITS") {
+    (void)CheckAndConvertUtils::CheckInteger("dimension of row_partition_tensors[0](for 'ROW_SPLITS')",
+                                             SizeToLong(tensor0_dim), kEqual, 1, prim_name);
+    if (types_size + values_rank != output_shape_rank) {
+      MS_EXCEPTION(ValueError) << "For '" << prim_name
+                               << "', row partition size plus 'values' rank should be equal to 'shape' rank: "
+                               << output_shape.size() << ", but got row partition size: " << types_size
+                               << ", 'values' rank: " << values_rank << ".";
+    }
+  } else if (row_partition_types[0] == "VALUE_ROWIDS") {
+    MS_EXCEPTION(ValueError) << "For '" << prim_name << "', cannot handle 'VALUE_ROWIDS' in row_partition_types[0].";
+  } else {
+    MS_EXCEPTION(ValueError) << "For '" << prim_name << "', row_partition_types only support 'FIRST_DIM_SIZE', "
+                             << "'VALUE_ROWIDS' and 'ROW_SPLITS', but got unknown string: " << row_partition_types[0]
+                             << ".";
+  }
+  for (size_t i = 1; i < types_size; i++) {
+    auto tensori_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(tensors[i]->BuildShape())[kShape];
+    auto tensori_dim = tensori_shape.size();
+    (void)CheckAndConvertUtils::CheckInteger("dimension of row_partition_tensors[" + std::to_string(i) + "]",
+                                             SizeToLong(tensori_dim), kEqual, 1, prim_name);
+  }
   return std::make_shared<abstract::Shape>(output_shape);
 }
 
@@ -85,8 +137,26 @@ AbstractBasePtr RaggedTensorToTensorInfer(const abstract::AnalysisEnginePtr &, c
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(RaggedTensorToTensor, prim::kPrimRaggedTensorToTensor, RaggedTensorToTensorInfer, nullptr,
-                             true);
-REGISTER_HOST_DEPENDS(kNameRaggedTensorToTensor, {0});
+// AG means auto generated
+class MIND_API AGRaggedTensorToTensorInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return RaggedTensorToTensorInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return RaggedTensorToTensorInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return RaggedTensorToTensorInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(RaggedTensorToTensor, prim::kPrimRaggedTensorToTensor, AGRaggedTensorToTensorInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

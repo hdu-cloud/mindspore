@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_TENSORC_UTILS_H_
-#define MINDSPORE_NNACL_TENSORC_UTILS_H_
+#ifndef NNACL_TENSORC_UTILS_H_
+#define NNACL_TENSORC_UTILS_H_
 
 #include <stddef.h>
 #include "nnacl/errorcode.h"
@@ -35,10 +35,13 @@ void SetHeight(TensorC *tensor, int height);
 void SetWidth(TensorC *tensor, int width);
 void SetChannel(TensorC *tensor, int channel);
 int GetElementNum(const TensorC *tensor);
+int GetSize(const TensorC *tensor);
 int GetDimensionSize(const TensorC *tensor, const size_t index);
+bool IsShapeSame(const TensorC *tensor1, const TensorC *tensor2);
+bool IsConst(const TensorC *tensor);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif  // MINDSPORE_NNACL_TENSORC_UTILS_H_
+#endif  // NNACL_TENSORC_UTILS_H_

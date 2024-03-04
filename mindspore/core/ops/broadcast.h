@@ -16,12 +16,12 @@
 
 #ifndef MINDSPORE_CORE_OPS_BROADCAST_H_
 #define MINDSPORE_CORE_OPS_BROADCAST_H_
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -47,8 +47,8 @@ class MIND_API Broadcast : public BaseOperator {
   /// \return group.
   std::string get_group() const;
 };
-abstract::AbstractBasePtr BroadcastInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                         const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr BroadcastInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                  const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimBroadcast = std::shared_ptr<Broadcast>;
 }  // namespace ops
 }  // namespace mindspore

@@ -65,17 +65,17 @@ int QuantParamParser::ParseBitNum(const CommonQuantString &common_quant_string, 
     MS_LOG(ERROR) << "INPUT ILLEGAL: bit_num should be a valid number.";
     return RET_INPUT_PARAM_INVALID;
   }
-  if (common_quant->quant_type == schema::QuantType_QUANT_WEIGHT) {
+  if (common_quant->quant_type == quant::QUANT_WEIGHT) {
     if (common_quant->bit_num < 0 || common_quant->bit_num > kQuantBitNumInt16) {
       MS_LOG(ERROR) << "INPUT ILLEGAL: bit_num should be [0,16].";
       return RET_INPUT_PARAM_INVALID;
     }
-  } else if (common_quant->quant_type == schema::QuantType_QUANT_ALL) {
+  } else if (common_quant->quant_type == quant::QUANT_ALL) {
     if (common_quant->bit_num != kQuantBitNumInt8) {
       MS_LOG(ERROR) << "INPUT ILLEGAL: bit_num should be 8.";
       return RET_INPUT_PARAM_INVALID;
     }
-  } else if (common_quant->quant_type == schema::QuantType_QUANT_DYNAMIC) {
+  } else if (common_quant->quant_type == quant::QUANT_DYNAMIC) {
     if (common_quant->bit_num != kQuantBitNumInt8) {
       MS_LOG(ERROR) << "INPUT ILLEGAL: bit_num should be 8.";
       return RET_INPUT_PARAM_INVALID;
@@ -91,7 +91,7 @@ int QuantParamParser::ParseEnableEncode(const CommonQuantString &common_quant_st
     MS_LOG(ERROR) << "INPUT ILLEGAL: enable_encode should be true or false.";
     return RET_INPUT_PARAM_INVALID;
   }
-  if (common_quant->quant_type == schema::QuantType_QUANT_WEIGHT &&
+  if (common_quant->quant_type == quant::QUANT_WEIGHT &&
       (common_quant->bit_num != kQuantBitNumInt8 && common_quant->bit_num != kQuantBitNumInt16)) {
     if (!common_quant->enable_encode) {
       MS_LOG(ERROR) << "INPUT ILLEGAL: enable_encode should be true when parameter bit_num belongs to [0,7] or [9,15].";
@@ -134,6 +134,9 @@ int QuantParamParser::ParseCommonQuant(const CommonQuantString &common_quant_str
   if (!common_quant->debug_info_save_path.empty()) {
     common_quant->is_debug = true;
   }
+
+  // this is required only for model larger than 2G
+  common_quant->workspace = common_quant_string.workspace;
   return RET_OK;
 }
 
@@ -196,21 +199,31 @@ int QuantParamParser::ParseFullQuant(const FullQuantString &full_quant_string, q
     MS_LOG(ERROR) << "INPUT ILLEGAL: per_channel should be true or false.";
     return RET_INPUT_PARAM_INVALID;
   }
+  if (!full_quant_string.smooth_alpha.empty() &&
+      !ConvertDoubleNum(full_quant_string.smooth_alpha, &full_quant->smooth_alpha)) {
+    MS_LOG(ERROR) << "INPUT ILLEGAL: smooth_alpha should be a valid number.";
+    return RET_INPUT_PARAM_INVALID;
+  }
+  if (!full_quant_string.enable_smooth_shift.empty() &&
+      !ConvertBool(full_quant_string.enable_smooth_shift, &full_quant->enable_smooth_shift)) {
+    MS_LOG(ERROR) << "INPUT ILLEGAL: enable_smooth_shift should be true or false.";
+    return RET_INPUT_PARAM_INVALID;
+  }
   return RET_OK;
 }
 
-int QuantParamParser::ParseQuantType(const std::string &quant_type_str, schema::QuantType *quant_type) {
+int QuantParamParser::ParseQuantType(const std::string &quant_type_str, quant::QuantType *quant_type) {
   if (quant_type_str == "WEIGHT_QUANT") {
-    (*quant_type) = schema::QuantType_QUANT_WEIGHT;
+    (*quant_type) = quant::QUANT_WEIGHT;
     return RET_OK;
   } else if (quant_type_str == "FULL_QUANT") {
-    (*quant_type) = schema::QuantType_QUANT_ALL;
+    (*quant_type) = quant::QUANT_ALL;
     return RET_OK;
   } else if (quant_type_str == "DYNAMIC_QUANT") {
-    (*quant_type) = schema::QuantType_QUANT_DYNAMIC;
+    (*quant_type) = quant::QUANT_DYNAMIC;
     return RET_OK;
   } else if (quant_type_str.empty()) {
-    (*quant_type) = schema::QuantType_QUANT_NONE;
+    (*quant_type) = quant::QUANT_NONE;
     return RET_OK;
   } else {
     MS_LOG(ERROR) << "INPUT ILLEGAL: quant_type must be WEIGHT_QUANT|FULL_QUANT|DYNAMIC_QUANT.";
@@ -228,8 +241,11 @@ int QuantParamParser::ParseTargetDevice(const std::string &target_device_str, qu
   } else if (target_device_str == "DSP") {
     (*target_device) = quant::DSP;
     return RET_OK;
+  } else if (target_device_str == "ASCEND") {
+    (*target_device) = quant::ASCEND;
+    return RET_OK;
   } else {
-    MS_LOG(ERROR) << "INPUT ILLEGAL: target_device must be KIRIN, NVGPU or DSP.";
+    MS_LOG(ERROR) << "INPUT ILLEGAL: target_device must be KIRIN|NVGPU|DSP|ASCEND.";
     return RET_INPUT_PARAM_INVALID;
   }
 }
@@ -260,6 +276,87 @@ int QuantParamParser::ParseWeightQuant(const WeightQuantString &weight_quant_str
       MS_LOG(ERROR) << "INPUT ILLEGAL: dequant_strategy must be ON_THE_FLY.";
       return RET_INPUT_PARAM_INVALID;
     }
+  }
+  if (!weight_quant_string.quant_strategy.empty()) {
+    if (weight_quant_string.quant_strategy == "GPTQ") {
+      weight_quant->quant_strategy = quant::GPTQ_ALGORITHM;
+    } else if (weight_quant_string.quant_strategy == "MAX_MIN") {
+      weight_quant->quant_strategy = quant::MAX_MIN_ALGORITHM;
+    } else {
+      MS_LOG(ERROR) << "INPUT ILLEGAL: quant_strategy must be GPTQ or MAX_MIN.";
+      return RET_INPUT_PARAM_INVALID;
+    }
+  }
+  if (!weight_quant_string.update_mindir.empty() &&
+      !ConvertBool(weight_quant_string.update_mindir, &weight_quant->update_mindir)) {
+    MS_LOG(ERROR) << "INPUT ILLEGAL: update_mindir should be true or false.";
+    return RET_INPUT_PARAM_INVALID;
+  }
+  if (!weight_quant_string.max_segments.empty() &&
+      !ConvertIntNum(weight_quant_string.max_segments, &weight_quant->max_segments)) {
+    MS_LOG(ERROR) << "INPUT ILLEGAL: decode_threads should be a number.";
+    return RET_INPUT_PARAM_INVALID;
+  }
+  if (!weight_quant_string.per_channel.empty() &&
+      !ConvertBool(weight_quant_string.per_channel, &weight_quant->per_channel)) {
+    MS_LOG(ERROR) << "INPUT ILLEGAL: per_channel should be true or false.";
+    return RET_INPUT_PARAM_INVALID;
+  }
+  if (!weight_quant_string.bias_correction.empty() &&
+      !ConvertBool(weight_quant_string.bias_correction, &weight_quant->bias_correction)) {
+    MS_LOG(ERROR) << "INPUT ILLEGAL: bias_correction should be true or false.";
+    return RET_INPUT_PARAM_INVALID;
+  }
+  return RET_OK;
+}
+
+int QuantParamParser::ParseExportPrecisionMode(const std::string &precision_modeL_str,
+                                               quant::PrecisionMode *precision_mode) {
+  if (precision_modeL_str == "QUANT") {
+    (*precision_mode) = quant::QUANT;
+    return RET_OK;
+  } else if (precision_modeL_str == "FLOAT32") {
+    (*precision_mode) = quant::FLOAT32;
+    return RET_OK;
+  } else {
+    MS_LOG(ERROR) << "INPUT ILLEGAL: export_precision_mode must be QUANT or FLOAT32.";
+    return RET_INPUT_PARAM_INVALID;
+  }
+}
+
+int QuantParamParser::ParseTransformQuant(const TransformQuantString &transform_quant_string,
+                                          quant::TransformQuantParam *transform_quant) {
+  if (!transform_quant_string.export_precision_mode.empty()) {
+    auto ret = ParseExportPrecisionMode(transform_quant_string.export_precision_mode, &transform_quant->precision_mode);
+    if (ret != RET_OK) {
+      MS_LOG(ERROR) << "Parse precision mode failed.";
+      return ret;
+    }
+  }
+  return RET_OK;
+}
+
+int QuantParamParser::ParseDynamicQuant(const DynamicQuantString &dynamic_quant_string,
+                                        quant::DynamicQuantParam *dynamic_quant) {
+  if (!dynamic_quant_string.quant_strategy.empty()) {
+    auto ret = ParseDynamicQuantStrategy(dynamic_quant_string.quant_strategy, &dynamic_quant->quant_strategy);
+    if (ret != RET_OK) {
+      MS_LOG(ERROR) << "Parse dynamic quant strategy failed.";
+      return ret;
+    }
+  }
+  return RET_OK;
+}
+
+int QuantParamParser::ParseDynamicQuantStrategy(const std::string &dynamic_quant_strategy_str,
+                                                quant::DynamicQuantStrategy *dynamic_strategy) {
+  if (dynamic_quant_strategy_str == "ALWC") {
+    (*dynamic_strategy) = quant::ACTIVATION_LAYER_WEIGHT_CHANNEL;
+  } else if (dynamic_quant_strategy_str == "ACWL") {
+    (*dynamic_strategy) = quant::ACTIVATION_CHANNEL_WEIGHT_LAYER;
+  } else {
+    MS_LOG(ERROR) << "INPUT ILLEGAL: dynamic_quant_strategy must be ALWC or ACWL.";
+    return RET_INPUT_PARAM_INVALID;
   }
   return RET_OK;
 }

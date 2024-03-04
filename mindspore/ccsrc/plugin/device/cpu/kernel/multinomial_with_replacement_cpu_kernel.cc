@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,18 +43,18 @@ const size_t kMultinomialWithReplacementInputsNum = 3;
 const size_t kMultinomialWithReplacementOutputsNum = 1;
 }  // namespace
 
-uint64_t MultinomialWithReplacementCpuKernelMod::New64() {
+uint64_t MultinomialWithReplacementCpuKernelMod::New64() const {
   std::random_device device("/dev/urandom");
   static std::mt19937_64 rng = std::mt19937_64(device());
   return (rng)();
 }
 
-void MultinomialWithReplacementCpuKernelMod::InitMSPhiloxRandom(int64_t seed_, int64_t offset_) {
-  if (seed_ == 0 && offset_ == 0) {
-    seed_ = New64();
-    offset_ = New64();
+void MultinomialWithReplacementCpuKernelMod::InitPhiloxRandom(int64_t seed, int64_t offset) {
+  if (seed == 0 && offset == 0) {
+    seed = static_cast<int64_t>(New64());
+    offset = static_cast<int64_t>(New64());
   }
-  generator_ = random::MSPhiloxRandom(seed_, offset_);
+  generator_ = random::PhiloxRandom(seed, offset);
 }
 
 float MultinomialWithReplacementCpuKernelMod::RandFloat() {
@@ -64,12 +64,15 @@ float MultinomialWithReplacementCpuKernelMod::RandFloat() {
   const uint32_t val = (exp << 23) | man;
 
   float result;
-  memcpy_s(&result, sizeof(result), &val, sizeof(val));
+  int ret = memcpy_s(&result, sizeof(result), &val, sizeof(val));
+  if (ret != EOK) {
+    MS_LOG(EXCEPTION) << "The memcpy error, errorno (" << ret << ")";
+  }
   return result - 1.0f;
 }
 
 uint32_t MultinomialWithReplacementCpuKernelMod::GenerateSingle() {
-  if (used_result_index_ == random::MSPhiloxRandom::kResultElementCount) {
+  if (used_result_index_ == random::PhiloxRandom::kResultElementCount) {
     unused_results_ = generator_();
     used_result_index_ = 0;
   }
@@ -91,7 +94,6 @@ bool MultinomialWithReplacementCpuKernelMod::Init(const BaseOperatorPtr &base_op
   }
   numsamples_ = op->get_numsamples();
   replacement_ = op->get_replacement();
-  x_shape_ = inputs[0]->GetShapeVector();
   kernel_func_ = func_list_[index].second;
   return true;
 }
@@ -100,13 +102,11 @@ int MultinomialWithReplacementCpuKernelMod::Resize(const BaseOperatorPtr &base_o
                                                    const std::vector<KernelTensorPtr> &inputs,
                                                    const std::vector<KernelTensorPtr> &outputs,
                                                    const std::map<uint32_t, tensor::TensorPtr> &) {
-  int ret = KRET_OK;
-  if ((ret = NativeCpuKernelMod::Resize(base_operator, inputs, outputs)) != 0) {
+  if (int ret = KernelMod::Resize(base_operator, inputs, outputs); ret != KRET_OK) {
     return ret;
   }
-  std::vector<int64_t> input_shape = inputs.at(kIndex0)->GetShapeVector();
-  std::transform(input_shape.begin(), input_shape.end(), std::back_inserter(input_shape_), LongToSize);
-  return ret;
+  x_shape_ = inputs[0]->GetShapeVector();
+  return KRET_OK;
 }
 
 template <typename T>
@@ -120,9 +120,18 @@ bool MultinomialWithReplacementCpuKernelMod::LaunchKernel(const std::vector<kern
                              << numsamples_ << ".";
   }
   auto x = reinterpret_cast<T *>(inputs[0]->addr);
-  auto seed_ = reinterpret_cast<int64_t>(inputs[1]->addr);
-  auto offset_ = reinterpret_cast<int64_t>(inputs[2]->addr);
-  InitMSPhiloxRandom(seed_, offset_);
+  auto seed = *reinterpret_cast<int64_t *>(inputs[1]->addr);
+  auto offset = *reinterpret_cast<int64_t *>(inputs[2]->addr);
+  if (init_state_) {
+    init_seed_ = seed;
+    init_offset_ = offset;
+    InitPhiloxRandom(init_seed_, init_offset_);
+    init_state_ = false;
+  } else if (!init_state_ && (seed != init_seed_ || offset != init_offset_)) {
+    init_seed_ = seed;
+    init_offset_ = offset;
+    InitPhiloxRandom(init_seed_, init_offset_);
+  }
 
   int64_t num_row_ = 1;
   size_t num_shape = 2;
@@ -169,7 +178,7 @@ bool MultinomialWithReplacementCpuKernelMod::LaunchKernel(const std::vector<kern
 
 template <typename T>
 int64_t *MultinomialWithReplacementCpuKernelMod::TrueCompute(T *in, int64_t *out, T *RandomData, int64_t i,
-                                                             int64_t num_col_) {
+                                                             int64_t num_col_) const {
   double *cumulative_distribution_function = new double[num_col_];
   double running_total = 0;
   auto random = RandomData + i * numsamples_;
@@ -177,7 +186,7 @@ int64_t *MultinomialWithReplacementCpuKernelMod::TrueCompute(T *in, int64_t *out
     *(cumulative_distribution_function + j) = static_cast<double>(*(in + j));
   }
   for (int64_t j = 0; j < num_col_; ++j) {
-    if (*(cumulative_distribution_function + j) != 0.0) {
+    if (static_cast<double>(*(cumulative_distribution_function + j)) != static_cast<double>(0.0)) {
       running_total += *(cumulative_distribution_function + j);
       *(cumulative_distribution_function + j) = running_total;
     }
@@ -193,7 +202,7 @@ int64_t *MultinomialWithReplacementCpuKernelMod::TrueCompute(T *in, int64_t *out
       }
     }
     for (int k = 0; k < num_col_; k++) {
-      if (*temp == *(cumulative_distribution_function + k)) {
+      if (static_cast<double>(*temp) == static_cast<double>(*(cumulative_distribution_function + k))) {
         *out = static_cast<int64_t>(k);
       }
     }
@@ -204,7 +213,7 @@ int64_t *MultinomialWithReplacementCpuKernelMod::TrueCompute(T *in, int64_t *out
 
 template <typename T>
 int64_t *MultinomialWithReplacementCpuKernelMod::FalseCompute(T *in, int64_t *out, T *RandomData, int64_t i,
-                                                              int64_t num_col_) {
+                                                              int64_t num_col_) const {
   double *cumulative_distribution_function = new double[num_col_];
   T *weight = new T[num_col_];
   int64_t zero_num = 0;
@@ -216,7 +225,7 @@ int64_t *MultinomialWithReplacementCpuKernelMod::FalseCompute(T *in, int64_t *ou
     *(cumulative_distribution_function + j) = static_cast<double>(*(in + j));
   }
   for (int64_t j = 0; j < num_col_; ++j) {
-    if (*(cumulative_distribution_function + j) != 0.0) {
+    if (static_cast<double>(*(cumulative_distribution_function + j)) != static_cast<double>(0.0)) {
       running_total += *(cumulative_distribution_function + j);
       *(cumulative_distribution_function + j) = running_total;
     } else {
@@ -236,7 +245,7 @@ int64_t *MultinomialWithReplacementCpuKernelMod::FalseCompute(T *in, int64_t *ou
         }
       }
       for (int k = 0; k < num_col_; k++) {
-        if (*temp == *(cumulative_distribution_function + k)) {
+        if (static_cast<double>(*temp) == static_cast<double>(*(cumulative_distribution_function + k))) {
           *out = static_cast<int64_t>(k);
         }
       }
@@ -247,7 +256,7 @@ int64_t *MultinomialWithReplacementCpuKernelMod::FalseCompute(T *in, int64_t *ou
         *(cumulative_distribution_function + t) = static_cast<double>(*(weight + t));
       }
       for (int64_t t = 0; t < num_col_; t++) {
-        if (*(cumulative_distribution_function + t) != 0.0) {
+        if (static_cast<double>(*(cumulative_distribution_function + t)) != static_cast<double>(0.0)) {
           running_total += *(cumulative_distribution_function + t);
           *(cumulative_distribution_function + t) = running_total;
         }

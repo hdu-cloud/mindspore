@@ -14,15 +14,32 @@
  * limitations under the License.
  */
 
+#include <memory>
 #include <set>
+#include <vector>
 
-#include "ops/embedding_lookup.h"
-#include "mindapi/ir/type.h"
-#include "ops/op_utils.h"
-#include "mindapi/src/helper.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
 #include "include/common/utils/utils.h"
+#include "ir/anf.h"
+#include "ir/dtype.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/embedding_lookup.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -90,24 +107,24 @@ class EmbeddingLookupInfer : public abstract::OpInferBase {
   TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
     MS_EXCEPTION_IF_NULL(primitive);
     const std::string &op_name = primitive->name();
-    constexpr int64_t input_num_dynamic = 3;
-    constexpr int64_t input_num = 2;
-    CheckAndConvertUtils::CheckInRange<int64_t>("input number", SizeToLong(input_args.size()), kIncludeBoth,
-                                                {input_num, input_num_dynamic}, op_name);
+    constexpr size_t input_num = 3;
+    (void)CheckAndConvertUtils::CheckValue<size_t>("inputs number", input_args.size(), kEqual, input_num, op_name);
     std::set<TypePtr> valid_params_types = {kTensorType};
+    MS_EXCEPTION_IF_NULL(input_args[kInputIndex0]);
     (void)CheckAndConvertUtils::CheckSubClass("params", input_args[kInputIndex0]->BuildType(), valid_params_types,
                                               op_name);
     std::set<TypePtr> int_types = {kInt32, kInt64};
+    MS_EXCEPTION_IF_NULL(input_args[kInputIndex1]);
     (void)CheckAndConvertUtils::CheckTensorTypeValid("indices", input_args[kInputIndex1]->BuildType(), int_types,
                                                      op_name);
-    if (SizeToLong(input_args.size()) == input_num_dynamic) {
-      std::set<TypePtr> int_type = {kInt64};
-      (void)CheckAndConvertUtils::CheckTypeValid("offset", input_args[kInputIndex2]->BuildType(), int_type, op_name);
-    }
+    std::set<TypePtr> int_type = {kInt32, kInt64};
+    MS_EXCEPTION_IF_NULL(input_args[kInputIndex2]);
+    (void)CheckAndConvertUtils::CheckTypeValid("offset", input_args[kInputIndex2]->BuildType(), int_type, op_name);
 
     CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterEqual, 0, op_name);
     abstract::AbstractTensorPtr params =
       CheckAndConvertUtils::CheckArgs<abstract::AbstractTensor>(op_name, input_args, 0);
+    MS_EXCEPTION_IF_NULL(params);
     return params->BuildType();
   }
 };

@@ -17,9 +17,9 @@
 
 #include <string>
 #include <utility>
-#include "backend/common/optimizer/helper.h"
-#include "backend/common/optimizer/optimizer.h"
-#include "backend/common/optimizer/pass_manager.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/optimizer/optimizer.h"
+#include "include/backend/optimizer/pass_manager.h"
 #include "backend/common/optimizer/common_backend_optimization.h"
 #include "plugin/device/gpu/optimizer/adam_weight_decay_fusion.h"
 #include "plugin/device/gpu/optimizer/adam_fusion.h"
@@ -28,11 +28,13 @@
 #include "plugin/device/gpu/optimizer/apply_momentum_scale_fusion.h"
 #include "plugin/device/gpu/optimizer/apply_momentum_weight_fusion.h"
 #include "plugin/device/gpu/optimizer/batch_norm_relu_fusion.h"
+#include "plugin/device/gpu/optimizer/batch_norm_silu_fusion.h"
 #include "plugin/device/gpu/optimizer/batch_norm_relu_grad_fusion.h"
+#include "plugin/device/gpu/optimizer/batch_norm_silu_grad_fusion.h"
 #include "plugin/device/gpu/optimizer/batch_norm_add_relu_fusion.h"
 #include "plugin/device/gpu/optimizer/post_batch_norm_add_relu_fusion.h"
 #include "plugin/device/gpu/optimizer/batch_norm_add_relu_grad_fusion.h"
-#include "plugin/device/gpu/optimizer/combine_momentum_fusion.h"
+#include "plugin/device/gpu/optimizer/combine_optimizer_fusion.h"
 #include "plugin/device/gpu/optimizer/combine_cast_fusion.h"
 #include "plugin/device/gpu/optimizer/cudnn_inplace_fusion.h"
 #include "plugin/device/gpu/optimizer/insert_format_transform_op.h"
@@ -49,10 +51,11 @@
 #include "plugin/device/gpu/optimizer/add_relu_grad_v2_fusion.h"
 #include "plugin/device/gpu/optimizer/matmul_biasadd_fusion.h"
 #include "plugin/device/gpu/optimizer/neighbor_exchange_v2_fusion.h"
+#include "plugin/device/gpu/optimizer/clip_by_norm_fission.h"
 #ifdef ENABLE_GPU_INFER
 #include "plugin/device/gpu/optimizer/trt_pass/graph_converter.h"
 #endif
-#include "common/graph_kernel/adapter/graph_kernel_optimization.h"
+#include "backend/common/graph_kernel/adapter/graph_kernel_optimization.h"
 #include "backend/common/pass/communication_op_fusion.h"
 #include "plugin/device/gpu/optimizer/concat_outputs_for_all_gather.h"
 #include "backend/common/pass/getitem_tuple.h"
@@ -62,36 +65,34 @@
 #include "include/common/debug/anf_ir_dump.h"
 #include "include/common/debug/dump_proto.h"
 #ifdef ENABLE_DEBUGGER
-#include "debug/data_dump/e2e_dump.h"
-#include "debug/data_dump/dump_json_parser.h"
+#include "include/backend/debug/data_dump/e2e_dump.h"
 #include "debug/debugger/proto_exporter.h"
-#include "debug/data_dump/dump_utils.h"
+#include "include/backend/debug/data_dump/dump_utils.h"
 #include "debug/tensor_load.h"
-#else
-#include "debug/debugger/proto_exporter_stub.h"
 #endif
+#include "include/backend/debug/debugger/proto_exporter.h"
 #include "plugin/device/gpu/hal/device/gpu_kernel_build.h"
 #include "plugin/device/gpu/hal/device/gpu_kernel_runtime.h"
 #include "plugin/device/gpu/hal/device/gpu_stream_assign.h"
 #include "plugin/device/gpu/hal/device/kernel_info_setter.h"
 #include "runtime/device/kernel_runtime_manager.h"
 #include "plugin/device/gpu/hal/device/cuda_driver.h"
-#include "distributed/init.h"
+#include "include/backend/distributed/init.h"
 #include "plugin/device/gpu/hal/device/gpu_device_address.h"
 #include "utils/ms_utils.h"
 #include "include/common/utils/config_manager.h"
 #include "utils/ms_context.h"
-#include "common/graph_kernel/graph_kernel_flags.h"
+#include "backend/common/graph_kernel/graph_kernel_flags.h"
 #include "include/common/utils/utils.h"
 #include "abstract/utils.h"
 #include "kernel/graph_kernel_info.h"
 #ifdef WITH_BACKEND
-#include "ps/util.h"
-#include "ps/ps_context.h"
+#include "include/backend/distributed/ps/util.h"
+#include "include/backend/distributed/ps/ps_context.h"
 #endif
 
 #ifndef ENABLE_SECURITY
-#include "debug/data_dump/dump_json_parser.h"
+#include "include/backend/debug/data_dump/dump_json_parser.h"
 #endif
 
 namespace mindspore {
@@ -109,7 +110,7 @@ void GPUSession::Init(uint32_t device_id) {
   }
   auto ms_context = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(ms_context);
-  ms_context->set_param<uint32_t>(MS_CTX_DEVICE_ID, device_id);
+  ms_context->set_param_inner<uint32_t>(MS_CTX_DEVICE_ID, device_id);
   if (distributed::collective::CollectiveManager::instance()->initialized()) {
 #ifndef _WIN32
     rank_id_ = GetRankId();
@@ -162,7 +163,7 @@ void GPUSession::Optimize(const std::shared_ptr<KernelGraph> &kernel_graph) {
   if (!graphkernel::GraphKernelFlags::GetInstance().IsEnableGraphKernel()) {
     pm->AddPass(std::make_shared<opt::CastAllFusion>("cast_all"));
   }
-  pm->AddPass(std::make_shared<opt::CombineMomentumFusion>("combine_momentum"));
+  pm->AddPass(std::make_shared<opt::CombineOptimizerFusion>(kCombineOptimizerOpName));
   pm->AddPass(std::make_shared<opt::ReplaceMomentumCastFusion>());
   pm->AddPass(std::make_shared<opt::ReplaceAddNFusion>());
   pm->AddPass(std::make_shared<opt::PrintReduceFusion>("print_reduce"));
@@ -180,7 +181,9 @@ void GPUSession::HardwareOptimize(const std::shared_ptr<KernelGraph> &kernel_gra
   auto optimizer = std::make_shared<opt::GraphOptimizer>();
   auto pm = std::make_shared<opt::PassManager>();
   pm->AddPass(std::make_shared<opt::BatchNormReluFusion>());
+  pm->AddPass(std::make_shared<opt::BatchNormSiluFusion>());
   pm->AddPass(std::make_shared<opt::BatchNormReluGradFusion>());
+  pm->AddPass(std::make_shared<opt::BatchNormSiluGradFusion>());
   pm->AddPass(std::make_shared<opt::BatchNormAddReluFusion>());
   pm->AddPass(std::make_shared<opt::PostBatchNormAddReluFusion>());
   pm->AddPass(std::make_shared<opt::BatchNormAddReluGradFusion>());
@@ -226,13 +229,11 @@ void GPUSession::RunOpHardwareOptimize(const std::shared_ptr<KernelGraph> &kerne
 }
 
 void GPUSession::GraphKernelOptimize(const std::shared_ptr<KernelGraph> &kernel_graph) {
-#ifdef ENABLE_AKG
   if (!graphkernel::GraphKernelFlags::GetInstance().IsEnableGraphKernel()) {
     return;
   }
   graphkernel::GraphKernelOptimize(kernel_graph);
   kernel_graph->SetExecOrderByDefault();
-#endif
 }
 
 void GPUSession::AssignStream(const std::shared_ptr<KernelGraph> &kernel_graph) {
@@ -317,6 +318,7 @@ size_t UpdateGraphInputAbstract(const AnfNodePtr input_node, const tensor::Tenso
 bool CheckIfNeedSync(const tensor::TensorPtr &tensor, const DeviceAddressPtr &device_address,
                      const ParameterPtr &pk_node) {
   MS_EXCEPTION_IF_NULL(tensor);
+  MS_EXCEPTION_IF_NULL(device_address);
   MS_EXCEPTION_IF_NULL(pk_node);
   auto tensor_address = std::dynamic_pointer_cast<device::DeviceAddress>(tensor->device_address());
   bool need_sync = false;
@@ -356,6 +358,12 @@ void GPUSession::LoadInputData(const std::shared_ptr<KernelGraph> &kernel_graph,
     MS_EXCEPTION_IF_NULL(input_node);
     if (input_node->isa<Parameter>() && AnfAlgo::OutputAddrExist(input_node, 0)) {
       auto pk_node = input_node->cast<ParameterPtr>();
+      MS_EXCEPTION_IF_NULL(pk_node);
+      if (!pk_node->IsUsedByRealKernelInGraph(kernel_graph->graph_id())) {
+        MS_LOG(INFO) << "Kernel graph inputs have anfnode which has no user.";
+        tensor->set_sync_status(kNoNeedSync);
+        continue;
+      }
       auto device_address = AnfAlgo::GetMutableOutputAddr(pk_node, 0);
       MS_EXCEPTION_IF_NULL(device_address);
       bool need_sync = CheckIfNeedSync(tensor, device_address, pk_node);
@@ -412,9 +420,8 @@ GraphId GPUSession::CompileGraphImpl(const KernelGraphPtr &graph) {
   json_parser.Parse();
 #endif
 #ifdef ENABLE_DUMP_IR
-  bool save_graphs = context_ptr->get_param<bool>(MS_CTX_SAVE_GRAPHS_FLAG);
-  // Dump .pb graph before graph optimization
-  if (save_graphs) {
+  if (context_ptr->CanDump(kIntroductory)) {
+    // Dump .pb graph before graph optimization
     DumpIRProto(graph, "before_opt_" + std::to_string(graph->graph_id()));
   }
 #endif
@@ -434,7 +441,7 @@ GraphId GPUSession::CompileGraphImpl(const KernelGraphPtr &graph) {
   AssignStream(graph);
 #ifdef ENABLE_DUMP_IR
   // Dump .pb graph before remove nop nodes
-  if (save_graphs) {
+  if (context_ptr->CanDump(kIntroductory)) {
     DumpIRProto(graph, "before_removeNop_" + std::to_string(graph->graph_id()));
   }
 #endif
@@ -452,7 +459,7 @@ GraphId GPUSession::CompileGraphImpl(const KernelGraphPtr &graph) {
 #endif
   // Dump .pb graph after graph optimization
 #ifdef ENABLE_DUMP_IR
-  if (save_graphs) {
+  if (context_ptr->CanDump(kIntroductory)) {
     DumpIRProto(graph, "after_opt_" + std::to_string(graph->graph_id()));
   }
 #endif
@@ -535,6 +542,7 @@ void GPUSession::PostExecuteGraph(const std::shared_ptr<KernelGraph> &kernel_gra
 }
 
 void GPUSession::ExecuteGraph(const std::shared_ptr<KernelGraph> &kernel_graph) {
+  MS_EXCEPTION_IF_NULL(kernel_graph);
   int kernel_num = kernel_graph->execution_order().size();
   int64_t loopsize = (kernel_num > 1) ? ConfigManager::GetInstance().gpu_loopsink_size() : 1;
   for (int64_t i = 0; i < loopsize; i++) {
@@ -546,6 +554,7 @@ void GPUSession::UpdateOutputTensors(const VectorRef *outputs,
                                      const std::map<tensor::TensorPtr, session::KernelWithIndex> &tensor_to_node,
                                      std::map<DeviceAddressPtr, DeviceAddressPtr> *new_to_old_device_address) {
   MS_EXCEPTION_IF_NULL(outputs);
+  MS_EXCEPTION_IF_NULL(new_to_old_device_address);
   for (const auto &item : *outputs) {
     if (utils::isa<VectorRefPtr>(item)) {
       const auto &vector_ref = utils::cast<VectorRef>(item);
@@ -633,6 +642,7 @@ KernelGraphPtr GPUSession::BuildOpImpl(const BackendOpRunInfoPtr &op_run_info, c
                                        const std::vector<int64_t> &tensors_mask) {
   // Check if the graph cache exists.
   auto it = run_op_graphs_.find(graph_info);
+  MS_EXCEPTION_IF_NULL(op_run_info);
   if (it != run_op_graphs_.end() && !IsOneOfCacheBlackList(op_run_info->base_op_run_info.op_name)) {
     return it->second;
   }

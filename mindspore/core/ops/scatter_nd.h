@@ -16,10 +16,10 @@
 
 #ifndef MINDSPORE_CORE_OPS_SCATTER_ND_H_
 #define MINDSPORE_CORE_OPS_SCATTER_ND_H_
-#include <vector>
 #include <memory>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -34,8 +34,8 @@ class MIND_API ScatterNd : public BaseOperator {
   /// \brief Init.
   void Init() const {}
 };
-abstract::AbstractBasePtr ScatterNdInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                         const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr ScatterNdInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                  const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimScatterNdPtr = std::shared_ptr<ScatterNd>;
 }  // namespace ops
 }  // namespace mindspore

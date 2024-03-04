@@ -98,7 +98,7 @@ Others
     mindspore.dataset.Dataset.sync_wait
     mindspore.dataset.Dataset.to_json
 
-{% elif objname in ['Caltech101Dataset', 'Caltech256Dataset', 'CelebADataset', 'Cifar100Dataset', 'Cifar10Dataset', 'CityscapesDataset', 'CocoDataset', 'DIV2KDataset', 'EMnistDataset', 'FakeImageDataset', 'FashionMnistDataset', 'FlickrDataset', 'Flowers102Dataset', 'ImageFolderDataset', 'KMnistDataset', 'ManifestDataset', 'MnistDataset', 'PhotoTourDataset', 'Places365Dataset', 'QMnistDataset', 'SBDataset', 'SBUDataset', 'SemeionDataset', 'STL10Dataset', 'SVHNDataset', 'USPSDataset', 'VOCDataset', 'WIDERFaceDataset']%}
+{% elif objname in ['Caltech101Dataset', 'Caltech256Dataset', 'CelebADataset', 'Cifar100Dataset', 'Cifar10Dataset', 'CityscapesDataset', 'CocoDataset', 'DIV2KDataset', 'EMnistDataset', 'FakeImageDataset', 'FashionMnistDataset', 'FlickrDataset', 'Flowers102Dataset', 'ImageFolderDataset', 'KITTIDataset', 'KMnistDataset', 'LFWDataset', 'LSUNDataset', 'ManifestDataset', 'MnistDataset', 'OmniglotDataset', 'PhotoTourDataset', 'Places365Dataset', 'QMnistDataset', 'SBDataset', 'SBUDataset', 'SemeionDataset', 'STL10Dataset', 'SVHNDataset', 'USPSDataset', 'VOCDataset', 'WIDERFaceDataset', 'Food101Dataset', 'SUN397Dataset', 'SST2Dataset', 'RenderedSST2Dataset']%}
 
 {{ fullname | underline }}
 
@@ -194,7 +194,7 @@ Others
     mindspore.dataset.Dataset.to_json
 
 
-{% elif objname in ['LJSpeechDataset', 'SpeechCommandsDataset', 'TedliumDataset', 'YesNoDataset'] %}
+{% elif objname in ['CMUArcticDataset', 'GTZANDataset', 'LibriTTSDataset', 'LJSpeechDataset', 'SpeechCommandsDataset', 'TedliumDataset', 'YesNoDataset'] %}
 
 {{ fullname | underline }}
 
@@ -290,7 +290,7 @@ Others
     mindspore.dataset.Dataset.to_json
 
 
-{% elif objname in ['AGNewsDataset', 'AmazonReviewDataset', 'CLUEDataset', 'CoNLL2000Dataset', 'CSVDataset', 'DBpediaDataset', 'EnWik9Dataset', 'GeneratorDataset', 'IMDBDataset', 'IWSLT2016Dataset', 'IWSLT2017Dataset', 'MindDataset', 'NumpySlicesDataset', 'OBSMindDataset', 'PaddedDataset', 'PennTreebankDataset', 'RandomDataset', 'SogouNewsDataset', 'TextFileDataset', 'TFRecordDataset', 'UDPOSDataset', 'WikiTextDataset', 'YahooAnswersDataset', 'YelpReviewDataset'] %}
+{% elif objname in ['AGNewsDataset', 'AmazonReviewDataset', 'CLUEDataset', 'CoNLL2000Dataset', 'CSVDataset', 'DBpediaDataset', 'EnWik9Dataset', 'GeneratorDataset', 'IMDBDataset', 'IWSLT2016Dataset', 'IWSLT2017Dataset', 'Multi30kDataset', 'MindDataset', 'NumpySlicesDataset', 'OBSMindDataset', 'PaddedDataset', 'PennTreebankDataset', 'RandomDataset', 'SogouNewsDataset', 'SQuADDataset', 'TextFileDataset', 'TFRecordDataset', 'UDPOSDataset', 'WikiTextDataset', 'YahooAnswersDataset', 'YelpReviewDataset'] %}
 
 {{ fullname | underline }}
 
@@ -319,8 +319,6 @@ Pre-processing Operation
     mindspore.dataset.Dataset.split
     mindspore.dataset.Dataset.take
     mindspore.dataset.Dataset.zip
-    mindspore.dataset.TextBaseDataset.build_sentencepiece_vocab
-    mindspore.dataset.TextBaseDataset.build_vocab
 
 Batch
 ------------------------
@@ -395,12 +393,35 @@ Others
 .. autoclass:: {{ name }}
     :members: sync_epoch_begin, sync_step_begin
 
+{% elif "mindspore.dataset.vision" in fullname and objname[0].istitle() %}
+
+{{ fullname | underline }}
+
+.. autoclass:: {{ name }}
+    :exclude-members: to_c_type, to_python_type
+    :members:
+
+{% elif "mindspore.dataset.transforms" in fullname and objname[0].istitle() %}
+{{ fullname | underline }}
+
+.. autoclass:: {{ name }}
+    :exclude-members: infer_value, infer_shape, infer_dtype
+    :members:
+
 {% elif objname[0].istitle() %}
 
 {{ fullname | underline }}
 
 .. autoclass:: {{ name }}
     :inherited-members:
+    :exclude-members: parse_tree, create_ir_tree, create_runtime_obj
+    :members:
+
+{% elif '.' in objname and objname.lower() != objname %}
+
+{{ fullname | underline }}
+
+.. autoclass:: {{ fullname }}
     :exclude-members: parse_tree, create_ir_tree, create_runtime_obj
     :members:
 

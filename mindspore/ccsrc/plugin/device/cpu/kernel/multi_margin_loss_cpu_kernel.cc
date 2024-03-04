@@ -60,8 +60,7 @@ int MultiMarginLossCPUKernelMod::Resize(const BaseOperatorPtr &base_operator,
   return KRET_OK;
 }
 
-bool MultiMarginLossCPUKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
-                                               const std::vector<AddressPtr> &workspace,
+bool MultiMarginLossCPUKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
                                                const std::vector<AddressPtr> &outputs) {
   if (dtype_ == kNumberTypeFloat16) {
     LaunchKernelFP16<float16>(inputs, outputs);
@@ -109,8 +108,8 @@ const std::vector<std::pair<KernelAttr, MultiMarginLossCPUKernelMod::KernelRunFu
 template <typename T>
 void MultiMarginLossCPUKernelMod::LaunchKernelFP32AndFP64(const std::vector<kernel::AddressPtr> &inputs,
                                                           const std::vector<kernel::AddressPtr> &outputs) {
-  auto x_addr = reinterpret_cast<T *>(inputs[kZero]->addr);
-  auto target_addr = reinterpret_cast<int64_t *>(inputs[kOne]->addr);
+  auto x_addr = static_cast<T *>(inputs[kZero]->addr);
+  auto target_addr = static_cast<int64_t *>(inputs[kOne]->addr);
   for (size_t i = 0; i < batch_size; i++) {
     if (target_addr[i] < 0 || target_addr[i] >= SizeToLong(dims)) {
       MS_EXCEPTION(ValueError) << "Target out of range.";
@@ -119,9 +118,9 @@ void MultiMarginLossCPUKernelMod::LaunchKernelFP32AndFP64(const std::vector<kern
   T *weight_addr = nullptr;
   bool weight_defined_ = (input_num == 3);
   if (weight_defined_) {
-    weight_addr = reinterpret_cast<T *>(inputs[kTwo]->addr);
+    weight_addr = static_cast<T *>(inputs[kTwo]->addr);
   }
-  auto y_addr = reinterpret_cast<T *>(outputs[kZero]->addr);
+  auto y_addr = static_cast<T *>(outputs[kZero]->addr);
   std::vector<T> tmp_loss(batch_size);
   auto task = [&](size_t start, size_t end) {
     start *= dims;
@@ -213,22 +212,19 @@ void MultiMarginLossCPUKernelMod::LaunchKernelFP16(const std::vector<kernel::Add
     }
   };
   CPUKernelUtils::ParallelFor(task, batch_size);
-  if (reduction == MEAN) {
-    *y_addr = static_cast<T>(0);
-    for (size_t i = 0; i < batch_size; i++) {
-      *y_addr += static_cast<T>(tmp_loss[i]);
-    }
-    *y_addr /= static_cast<T>(batch_size);
-  }
-  if (reduction == SUM) {
-    *y_addr = static_cast<T>(0);
-    for (size_t i = 0; i < batch_size; i++) {
-      *y_addr += static_cast<T>(tmp_loss[i]);
-    }
-  }
   if (reduction == NONE) {
     for (size_t t = 0; t < batch_size; t++) {
       *(y_addr + t) = static_cast<T>(tmp_loss[t]);
+    }
+  } else {
+    float tmp_loss_sum = 0.0f;
+    for (size_t i = 0; i < batch_size; i++) {
+      tmp_loss_sum += tmp_loss[i];
+    }
+    if (reduction == MEAN) {
+      *y_addr = static_cast<T>(tmp_loss_sum / batch_size);
+    } else if (reduction == SUM) {
+      *y_addr = static_cast<T>(tmp_loss_sum);
     }
   }
 }
@@ -238,7 +234,7 @@ void MultiMarginLossCPUKernelMod::CheckParam(const CNodePtr &kernel_node) {
   if (input_num != kMultiMarginLossInputNumWithoutWeight && input_num != kMultiMarginLossInputNumWithWeight) {
     MS_LOG(EXCEPTION) << "Invalid input numbers, expect input number 2 or 3, but actual input number " << input_num;
   }
-  size_t output_num = common::AnfAlgo::GetOutputTensorNum(kernel_node);
+  size_t output_num = AnfAlgo::GetOutputTensorNum(kernel_node);
   CHECK_KERNEL_OUTPUTS_NUM(output_num, kMultiMarginLossOutputsNum, kKernelName);
 }
 

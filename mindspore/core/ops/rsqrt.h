@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_RSQRT_H_
 #define MINDSPORE_CORE_OPS_RSQRT_H_
-#include <vector>
 #include <memory>
 #include <set>
-#include "ops/base_operator.h"
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,8 +35,8 @@ class MIND_API Rsqrt : public BaseOperator {
   /// \brief Init.
   void Init() const {}
 };
-abstract::AbstractBasePtr RsqrtInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                     const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr RsqrtInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                              const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimRsqrtPtr = std::shared_ptr<Rsqrt>;
 }  // namespace ops
 }  // namespace mindspore

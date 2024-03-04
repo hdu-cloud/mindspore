@@ -87,7 +87,9 @@ class AbstractActor : public OpActor<DeviceTensor> {
   const std::vector<std::pair<AID, ControlArrow *>> &input_control_arrow_aids() const {
     return input_control_arrow_aids_;
   }
-  const std::map<size_t, std::vector<AnfNodeWeakPtr>> &internal_parameters() const { return internal_parameters_; }
+  const std::map<KernelWithIndex, std::vector<AnfNodeWeakPtr>> &internal_parameters() const {
+    return internal_parameters_;
+  }
   const mindspore::HashMap<std::string, std::vector<DataArrowPtr>> &batch_output_data_arrows() const {
     return batch_output_data_arrows_;
   }
@@ -100,6 +102,7 @@ class AbstractActor : public OpActor<DeviceTensor> {
  protected:
   friend class GraphScheduler;
   friend class ControlNodeScheduler;
+  friend class AnyTypeGraphScheduler;
   friend class SchedulerHelper;
 
   // Check whether satisfy the actor running condition.
@@ -110,6 +113,11 @@ class AbstractActor : public OpActor<DeviceTensor> {
   // Erase input data and input controls when finish actor running.
   virtual void EraseInput(const OpContext<DeviceTensor> *context);
 
+  // Fetch input data from the device tensor store.
+  void FetchInputByTensorStore(std::vector<DeviceTensor *> *const input_device_tensors,
+                               std::vector<DeviceTensor *> *const memory_free_tensors,
+                               OpContext<DeviceTensor> *const context) const;
+
   // Init the member output_data_ and batch_output_data_ by output data arrows.
   void InitOutputData();
   // Update the output data before send output data.
@@ -119,7 +127,11 @@ class AbstractActor : public OpActor<DeviceTensor> {
   virtual void SendOutput(OpContext<DeviceTensor> *const context);
   // Send recorder info to recorder actor.
   virtual void SendRecorderInfo(OpContext<DeviceTensor> *const context) const {}
-
+  void SendOutputData(OpContext<DeviceTensor> *const context, const std::vector<AnfNodePtr> &output_data_nodes,
+                      const std::vector<DataArrowPtr> output_data_arrows,
+                      const std::vector<std::pair<OpDataUniquePtr<DeviceTensor>, size_t>> &output_data_list,
+                      const mindspore::HashMap<DataArrow *, size_t> &data_arrow_to_fusion_actor_indexs,
+                      mindspore::HashMap<std::string, std::vector<OpData<DeviceTensor> *>> *batch_output_data);
   // Fetch the sub actor in the fusion actor by the name.
   AbstractActor *FetchSubActorInFusionActor(const std::string &sub_actor_name) const;
 
@@ -133,7 +145,7 @@ class AbstractActor : public OpActor<DeviceTensor> {
 
   // The output_data_nodes_ and output_data_ corresponds to the output_data_arrows_ one by one.
   std::vector<AnfNodePtr> output_data_nodes_;
-  // The second of pair indicates the output data falg. See constant prefixed with kOutputDataFalg for details.
+  // The second of pair indicates the output data flag. See constant prefixed with kOutputDataFalg for details.
   std::vector<std::pair<OpDataUniquePtr<DeviceTensor>, size_t>> output_data_;
   // Record the fusion output index for output data arrow.
   mindspore::HashMap<DataArrow *, size_t> data_arrow_to_fusion_actor_indexs_;
@@ -153,10 +165,10 @@ class AbstractActor : public OpActor<DeviceTensor> {
   // The device tensor stores which have the auto monad attribute.
   std::set<AnfNodePtr> auto_monad_device_tensor_stores_;
 
-  // Map <output_index, internal_parameter> is used to update the shape of internal parameter node for inferring the
-  // dynamic shape information of the nodes located at the boundary of the graph partition, such as heterogeneous
-  // scenario and so on.
-  std::map<size_t, std::vector<AnfNodeWeakPtr>> internal_parameters_;
+  // Map <output_node_with_index, internal_parameter> is used to update the shape of internal parameter node for
+  // inferring the dynamic shape information of the nodes located at the boundary of the graph partition, such as
+  // heterogeneous scenario and so on.
+  std::map<KernelWithIndex, std::vector<AnfNodeWeakPtr>> internal_parameters_;
 
   // The dependent input actors.
   std::vector<std::pair<AID, DataArrow *>> input_data_arrow_aids_;

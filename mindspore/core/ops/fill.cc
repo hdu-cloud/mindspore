@@ -16,20 +16,22 @@
 
 #include "ops/fill.h"
 
+#include <complex>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
 #include <vector>
-#include <map>
-#include <complex>
 
 #include "abstract/abstract_value.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "include/common/utils/utils.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
 #include "utils/tensor_construct_utils.h"
-#include "abstract/ops/primitive_infer_map.h"
-#include "mindapi/src/helper.h"
-#include "include/common/utils/utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -39,7 +41,7 @@ static tensor::TensorPtr CreateValuedTensor(const TypePtr &type, const std::vect
   MS_EXCEPTION_IF_NULL(type);
   auto type_id = type->type_id();
   tensor::TensorPtr tensor = std::make_shared<tensor::Tensor>(type_id, shape);
-  const size_t &mem_size = IntToSize(tensor->ElementsNum());
+  const size_t &mem_size = LongToSize(tensor->ElementsNum());
   auto tensor_data = tensor->data_c();
   std::map<TypeId, std::function<void()>> type_dict{
     {kNumberTypeBool,
@@ -81,7 +83,7 @@ static tensor::TensorPtr CreateComplexTensor(const TypePtr &type, const std::vec
   MS_EXCEPTION_IF_NULL(type);
   auto type_id = type->type_id();
   tensor::TensorPtr tensor = std::make_shared<tensor::Tensor>(type_id, shape);
-  const size_t &mem_size = IntToSize(tensor->ElementsNum());
+  const size_t &mem_size = LongToSize(tensor->ElementsNum());
   auto tensor_data = tensor->data_c();
   std::map<TypeId, std::function<void()>> type_dict{
     {kNumberTypeComplex64,
@@ -113,59 +115,49 @@ class FillInfer : public abstract::OpInferBase {
     }
     auto prim_name = primitive->name();
     if (input_args[inputsIndex[kIndex1]]->isa<abstract::AbstractTuple>()) {
-      auto shape_value = input_args[inputsIndex[kIndex1]]->BuildValue();
-      MS_EXCEPTION_IF_NULL(shape_value);
-      std::vector<int64_t> out_shape = CheckAndConvertUtils::CheckIntOrTupleInt("input[shape]", shape_value, prim_name);
+      auto out_shape = GetShapeValue(primitive, input_args[inputsIndex[kIndex1]]);
       return std::make_shared<abstract::Shape>(out_shape);
     }
 
     if (!input_args[inputsIndex[kIndex1]]->isa<abstract::AbstractTensor>()) {
-      MS_EXCEPTION(TypeError) << "For '" << primitive->name() << "', input[1] must be tensor.";
+      MS_EXCEPTION(TypeError) << "For '" << prim_name << "', input[1] must be tensor.";
     }
     MS_EXCEPTION_IF_NULL(primitive);
     const uint32_t kInputDims = 1;
-    auto input1_shape =
-      CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[inputsIndex[kIndex1]]->BuildShape())[kShape];
-    if (input1_shape.size() != 1) {
-      MS_EXCEPTION(TypeError) << "For '" << primitive->name()
-                              << "', the shape size of 'input1' must be 1, but got: " << input1_shape.size() << ".";
+    auto shape_arg = input_args[inputsIndex[1]];
+    MS_EXCEPTION_IF_NULL(shape_arg);
+    if (!IsValueKnown(shape_arg->BuildValue()) && shape_arg->isa<abstract::AbstractTensor>()) {
+      auto abs_tensor = shape_arg->cast<abstract::AbstractTensorPtr>();
+      auto abs_tensor_shape = abs_tensor->shape()->shape();
+      if (abs_tensor_shape.size() != kInputDims) {
+        MS_EXCEPTION(TypeError) << "For '" << prim_name
+                                << "', the shape size of 'input1' must be 1, but got: " << abs_tensor_shape.size()
+                                << ".";
+      }
     }
     auto input2_shape =
       CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[inputsIndex[kIndex2]]->BuildShape())[kShape];
     if (input2_shape.size() > 1 || (input2_shape.size() == 1 && input2_shape[0] > 1)) {
-      MS_EXCEPTION(TypeError) << "For '" << primitive->name()
+      MS_EXCEPTION(TypeError) << "For '" << prim_name
                               << "', the shape size of 'input2' must be 0, but got: " << input2_shape.size() << ".";
     }
-    auto shape_ptr = std::make_shared<abstract::Shape>(
-      CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[inputsIndex[kIndex1]]->BuildShape())[kShape]);
-    auto shape_v = shape_ptr->shape();
-    if (shape_v.size() != kInputDims) {
-      MS_EXCEPTION(ValueError) << "For '" << primitive->name()
-                               << "', input must be a 1-D tensor, but got a: " << shape_v.size() << "-D tensor.";
-    }
-    auto shape_arg = input_args[inputsIndex[1]];
-    MS_EXCEPTION_IF_NULL(shape_arg);
+
     auto output_shape = GetShapeValue(primitive, shape_arg);
-    if (input_args.size() == kIndex2) {
-      auto input_value = input_args[0]->BuildValue();
-      output_shape = CheckAndConvertUtils::CheckTensorIntValue("axis", input_value, prim_name);
-    }
     return std::make_shared<abstract::Shape>(output_shape);
   }
 
   TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
-    std::vector<size_t> inputsIndex{0, 1, 2};
-    if (input_args.size() == kIndex2) {
-      inputsIndex[kIndex1] = 0;
-      inputsIndex[kIndex2] = 1;
-    }
     MS_EXCEPTION_IF_NULL(primitive);
     auto prim_name = primitive->name();
+    if (input_args.size() <= kIndex2) {
+      MS_EXCEPTION(TypeError) << "For '" << prim_name << "', the inputs take 3 arguments, but got less than 3 here!";
+    }
     // check
     ValuePtr dtype_value;
     TypePtr value_dtype;
     auto input2_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[2]->BuildShape())[kShape];
     auto input2_dtype = input_args[2]->BuildType();
+    MS_EXCEPTION_IF_NULL(input2_dtype);
     TypePtr input2_element_dtype;
     if (input2_dtype->isa<TensorType>()) {
       auto tensor_type = input2_dtype->cast<TensorTypePtr>();
@@ -202,10 +194,6 @@ class FillInfer : public abstract::OpInferBase {
     MS_EXCEPTION_IF_NULL(infered_type);
     auto input_value_ptr = input_args[2]->BuildValue();
     auto input_value_type_id = input_args[2]->BuildType()->type_id();
-    if (input_value_type_id != infered_type->type_id()) {
-      MS_LOG(WARNING) << "value type is not same as given dtype, value type id is " << input_value_type_id
-                      << " and given dtype id is " << infered_type->type_id();
-    }
     auto tmp_shape = InferShape(prim, input_args);
     MS_EXCEPTION_IF_NULL(tmp_shape);
     auto infered_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(tmp_shape)[kShape];

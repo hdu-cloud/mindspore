@@ -1,4 +1,4 @@
-# Copyright 2022 Huawei Technologies Co., Ltd
+# Copyright 2022-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,11 +13,15 @@
 # limitations under the License.
 # ============================================================================
 """ test graph fallback buildin python function max and min"""
+import os
+import re
 import operator
 import pytest
 import numpy as np
 from mindspore import jit, context, Tensor
 from mindspore import dtype as mstype
+from mindspore.common import mutable
+from mindspore.nn import Cell
 
 context.set_context(mode=context.GRAPH_MODE)
 
@@ -130,8 +134,10 @@ def test_fallback_max_with_two_inputs_list():
     def foo():
         x = max([1, 2, 3], [4, 5])
         return x
+    os.environ['MS_DEV_FALLBACK_SUPPORT_LIST_DICT_INPLACE'] = '0'
     out = foo()
-    assert operator.eq(out, (4, 5))
+    assert operator.eq(out, [4, 5])
+    del os.environ['MS_DEV_FALLBACK_SUPPORT_LIST_DICT_INPLACE']
 
 
 def test_fallback_min_with_two_inputs_list():
@@ -144,8 +150,10 @@ def test_fallback_min_with_two_inputs_list():
     def foo():
         x = min([1, 2, 3], [4, 5])
         return x
+    os.environ['MS_DEV_FALLBACK_SUPPORT_LIST_DICT_INPLACE'] = '0'
     out = foo()
-    assert operator.eq(out, (1, 2, 3))
+    assert operator.eq(out, [1, 2, 3])
+    del os.environ['MS_DEV_FALLBACK_SUPPORT_LIST_DICT_INPLACE']
 
 
 def test_builtin_function_max_min_with_string():
@@ -402,3 +410,44 @@ def test_builtin_function_max_with_tensor_elements_in_two_tuple(mode):
     with pytest.raises(ValueError, match="The truth value of an array with more than one element is ambiguous."):
         context.set_context(mode=mode)
         foo()
+
+
+def test_min_mutable():
+    """
+    Feature: Check the arg of min.
+    Description: Test max()/min() in graph mode.
+    Expectation: No exception.
+    """
+    class Net(Cell):
+        def construct(self, x):
+            out = min(x)
+            return out
+
+    context.set_context(mode=context.GRAPH_MODE)
+    info = "The input of min() only support Tensor, List, Tuple, constant Scalar, but got variable Int64"
+    with pytest.raises(TypeError, match=re.escape(info)):
+        x = mutable(1)
+        net = Net()
+        out = net(x)
+        print(out)
+
+
+def test_max_mutable():
+    """
+    Feature: Check the arg of max.
+    Description: Test max()/min() in graph mode.
+    Expectation: No exception.
+    """
+    class Net(Cell):
+        def construct(self, x, y):
+            out = max(x, y)
+            return out
+
+    context.set_context(mode=context.GRAPH_MODE)
+    info = "The input of max() only support Tensor, List, Tuple, constant Scalar, but got variable Int64"
+    with pytest.raises(TypeError, match=re.escape(info)):
+        x = mutable(1)
+        y = mutable(2)
+        net = Net()
+        out = net(x, y)
+        print(out)

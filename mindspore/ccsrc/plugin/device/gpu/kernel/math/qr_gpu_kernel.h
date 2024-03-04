@@ -18,26 +18,26 @@
 #define MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_GPU_MATH_QR_GPU_KERNEL_H_
 
 #include <cublas_v2.h>
-#include <cuda_runtime_api.h>
-#include <cuda_runtime.h>
 #include <cuda_fp16.h>
-#include <map>
-#include <vector>
-#include <string>
-#include <utility>
+#include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
+#include <cusolverDn.h>
 #include <algorithm>
 #include <complex>
-#include <memory>
 #include <functional>
-#include <cusolverDn.h>
-#include "mindspore/core/ops/qr.h"
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 #include "abstract/utils.h"
-#include "plugin/factory/ms_factory.h"
-#include "plugin/device/gpu/kernel/gpu_kernel.h"
-#include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
+#include "mindspore/core/ops/qr.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/complex.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/transpose_impl.cuh"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/tril_triu_impl.cuh"
+#include "plugin/device/gpu/kernel/gpu_kernel.h"
+#include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
+#include "plugin/factory/ms_factory.h"
 
 namespace mindspore {
 namespace kernel {
@@ -87,8 +87,8 @@ class QrGpuKernelMod : public NativeGpuKernelMod {
   void RunQr(T *d_input, T *d_A, T *d_tau, int *dev_info, T *d_output_q, T *d_output_r);
 
   template <typename T>
-  void LaunchQr(T *d_input, T *d_A, T *d_tau, T *d_output_q, T *d_output_r, int *dev_info, size_t *d_transpose_shape,
-                size_t *d_transpose_axis, T *d_output_r_t, T *output_r);
+  void LaunchQr(T *d_input, T *d_A, T *d_tau, T *d_output_q, T *d_output_r, int *dev_info, T *d_output_r_t,
+                T *output_r);
 
   using LaunchKernelFunc =
     std::function<bool(QrGpuKernelMod *, const std::vector<kernel::AddressPtr> &,
@@ -98,15 +98,15 @@ class QrGpuKernelMod : public NativeGpuKernelMod {
   size_t unit_input_size_{1};
   size_t total_size_{0};
   size_t input_dims_{0};
-  size_t m_{0};
-  size_t n_{0};
+  int64_t m_{0};
+  int64_t n_{0};
   size_t p_{0};
   size_t s_{0};
   size_t batch_size_{1};
   bool full_matrices_{false};
-  size_t transpose_input_shape_[TRANSPOSE_MAX_DIMENSION] = {0};
-  size_t transpose_input_axis_[TRANSPOSE_MAX_DIMENSION] = {0};
-  size_t transpose_q_shape_[TRANSPOSE_MAX_DIMENSION] = {0};
+  size_t transpose_input_shape_[transpose_max_dimension] = {0};
+  size_t transpose_input_axis_[transpose_max_dimension] = {0};
+  size_t transpose_q_shape_[transpose_max_dimension] = {0};
   bool is_null_input_{false};
   cusolverDnHandle_t cusolverH_{nullptr};
   void *cuda_stream_{nullptr};

@@ -53,7 +53,6 @@ bool NoRepeatNGramCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const
     MS_LOG(ERROR) << "NoRepeatNGram does not support this kernel data type: " << kernel_attr;
   }
 
-  base_operator_ = base_operator;
   kernel_func_ = func_list_[index].second;
   return true;
 }
@@ -97,9 +96,12 @@ bool NoRepeatNGramCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPt
                                              const std::vector<kernel::AddressPtr> &outputs) {
   CHECK_KERNEL_INPUTS_NUM(inputs.size(), kNoRepeatNGramInputsNum, kernel_name_);
   CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kNoRepeatNGramOutputsNum, kernel_name_);
-  auto *state_seq = reinterpret_cast<int32_t *>(inputs[kIndex0]->addr);
-  auto *log_probs = reinterpret_cast<T *>(inputs[kIndex1]->addr);
-  auto *output = reinterpret_cast<T *>(outputs[kIndex0]->addr);
+  auto state_seq = GetDeviceAddress<int32_t>(inputs, kIndex0);
+  auto log_probs = GetDeviceAddress<T>(inputs, kIndex1);
+  auto output = GetDeviceAddress<T>(outputs, kIndex0);
+  MS_EXCEPTION_IF_NULL(state_seq);
+  MS_EXCEPTION_IF_NULL(log_probs);
+  MS_EXCEPTION_IF_NULL(output);
   CheckAndInitParams();
 
   for (size_t i = 0; i < LongToSize(output_size_); i++) {
@@ -122,6 +124,11 @@ bool NoRepeatNGramCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPt
     for (int64_t j = 0; j < state_dim_ - ngram_size_ + 1; j++) {
       if (equal(array_ngram.begin(), array_ngram.end(), array_dim.begin() + j)) {
         int64_t output_index_j = static_cast<int64_t>(array_dim[LongToSize(j + ngram_size_ - 1)]);
+        if (output_index_j < 0 || output_index_j >= output_dim_) {
+          MS_EXCEPTION(ValueError) << "For NoRepeatNGram, the id in the state input is not valid. "
+                                   << "Please make the value in the state_seq in the valid range between [0,"
+                                   << output_dim_ << ").";
+        }
         output[output_index_i + output_index_j] = -(std::numeric_limits<T>::max)();
       }
     }

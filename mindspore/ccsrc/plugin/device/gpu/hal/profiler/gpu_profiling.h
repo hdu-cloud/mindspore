@@ -27,8 +27,8 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include "profiler/device/profiling.h"
-#include "profiler/device/data_saver.h"
+#include "include/backend/debug/profiler/profiling.h"
+#include "include/backend/debug/profiler/data_saver.h"
 #include "plugin/device/gpu/hal/profiler/gpu_profiling_utils.h"
 
 namespace mindspore {
@@ -125,6 +125,7 @@ class GPU_EXPORT GPUProfiler : public Profiler {
   void StopCUPTI();
   void StepProfilingEnable(const bool enable_flag) override;
   bool GetSyncEnableFlag() const { return sync_enable_flag_; }
+  bool GetDataProcessEnableFlag() const { return data_process_enable_; }
   void EventHandleProcess(CUpti_CallbackId cbid, const CUpti_CallbackData *cbdata, const std::string &typestring,
                           uint64_t startTimestamp, uint64_t endTimestamp);
   void CUPTIAPI AllocBuffer(uint8_t **buffer, size_t *size, size_t *maxNumRecords);
@@ -176,7 +177,7 @@ class GPU_EXPORT GPUProfiler : public Profiler {
   uint64_t op_host_time_start_;
   uint64_t op_host_time_stop_;
   uint64_t op_cupti_time_start_;
-  std::string profile_data_path_;
+  std::mutex event_lock_;
   std::map<std::string, std::shared_ptr<ProfilingOp>> profiling_op_;
   ProfilingTraceInfo step_trace_op_name_;
   bool is_init_ = false;

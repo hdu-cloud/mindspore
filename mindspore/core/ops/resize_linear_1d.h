@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_RESIZE_LINEAR_1D_H_
 #define MINDSPORE_CORE_OPS_RESIZE_LINEAR_1D_H_
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,8 +37,9 @@ class MIND_API ResizeLinear1D : public BaseOperator {
   void set_coordinate_transformation_mode(const std::string coordinate_transformation_mode);
   std::string get_coordinate_transformation_mode() const;
 };
-abstract::AbstractBasePtr ResizeLinear1DInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                              const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr ResizeLinear1DInfer(const abstract::AnalysisEnginePtr &,
+                                                       const PrimitivePtr &primitive,
+                                                       const std::vector<abstract::AbstractBasePtr> &input_args);
 using kPrimResizeLinear1DPtr = std::shared_ptr<ResizeLinear1D>;
 }  // namespace ops
 }  // namespace mindspore

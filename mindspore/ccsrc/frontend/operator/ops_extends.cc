@@ -17,7 +17,7 @@
 #include "frontend/operator/ops.h"
 #include <string>
 #include "include/common/utils/python_adapter.h"
-#include "pipeline/jit/parse/data_converter.h"
+#include "pipeline/jit/ps/parse/data_converter.h"
 
 namespace mindspore {
 // namespace to support primitive operators
@@ -27,7 +27,7 @@ ValuePtr GetPythonOps(const std::string &op_name, const std::string &module_name
   ValuePtr node = nullptr;
   bool succ = parse::ConvertData(obj, &node, use_signature);
   if (!succ) {
-    MS_LOG(EXCEPTION) << "Get Python op " << op_name << " from " << module_name << " fail.";
+    MS_LOG(INTERNAL_EXCEPTION) << "Get Python op " << op_name << " from " << module_name << " fail.";
   }
   return node;
 }

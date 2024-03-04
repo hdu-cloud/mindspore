@@ -18,19 +18,19 @@
 #define MINDSPORE_LITE_SRC_RUNTIME_KERNEL_EXEC_UTIL_H_
 #include <vector>
 #include <set>
-#include "src/litert/kernel_exec.h"
-#include "src/litert/sub_graph_kernel.h"
+#include "src/executor/kernel_exec.h"
+#include "src/executor/sub_graph_kernel.h"
 #include "src/litert/inner_context.h"
 
 namespace mindspore::kernel {
 
-class KernelExecUtil {
+class MS_API KernelExecUtil {
  public:
   static std::vector<KernelExec *> SubgraphInputNodes(const std::vector<KernelExec *> &kernels);
   static std::vector<KernelExec *> SubgraphOutputNodes(const std::vector<KernelExec *> &kernels);
+  static int TopologicalSortNodes(std::vector<KernelExec *> *nodes, std::vector<KernelExec *> in_nodes = {});
   static std::vector<lite::Tensor *> SubgraphInputTensors(const std::vector<KernelExec *> &kernels);
   static std::vector<lite::Tensor *> SubgraphOutputTensors(const std::vector<KernelExec *> &kernels);
-  static int TopologicalSortKernels(std::vector<KernelExec *> *kernels);
   static void InitTensorInitRefCount(const std::vector<KernelExec *> &kernels);
   static bool IsSwitchTypeCall(KernelExec *kernel);
   static bool IsNonTailCall(const KernelExec *node);
@@ -47,6 +47,8 @@ class KernelExecUtil {
   static void FindAllInoutKernelsInSubgraphKernel(const std::vector<KernelExec *> &kernels);
   static KernelExec *FindInKernelForInTensor(const KernelExec *kernel, lite::Tensor *tensor);
   static std::vector<KernelExec *> FindOutKernelsForOutTensor(const KernelExec *kernel, lite::Tensor *tensor);
+  static KernelExec *FindInKernelForTensorInSubGraph(lite::Tensor *tensor, SubGraphKernel *graph);
+  static std::vector<KernelExec *> FindOutKernelsForTensorInSubGraph(lite::Tensor *tensor, SubGraphKernel *graph);
   static int SetKernelTensorDataType(const kernel::KernelExec *kernel);
   static SubGraphKernel *CreateSubGraphKernel(const std::vector<KernelExec *> &kernels,
                                               const std::vector<lite::Tensor *> *in_tensors,

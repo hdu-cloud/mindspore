@@ -15,11 +15,31 @@
  */
 
 #include <complex>
+#include <memory>
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "base/float16.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "mindapi/base/type_id.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
 #include "ops/select.h"
 #include "utils/check_convert_utils.h"
-#include "abstract/ops/primitive_infer_map.h"
-#include "utils/tensor_construct_utils.h"
-#include "mindapi/src/helper.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -88,8 +108,11 @@ TypePtr SelectInferType(const PrimitivePtr &prim, const std::vector<AbstractBase
   auto cond_type = input_args[kSelectCondIndex]->BuildType();
   MS_EXCEPTION_IF_NULL(x_type);
   MS_EXCEPTION_IF_NULL(y_type);
-  (void)CheckAndConvertUtils::CheckSubClass("x_type", x_type, {kTensorType}, prim_name);
-  (void)CheckAndConvertUtils::CheckSubClass("y_type", y_type, {kTensorType}, prim_name);
+
+  (void)CheckAndConvertUtils::CheckTensorTypeValid("x_type", x_type, common_valid_types_with_complex_and_bool,
+                                                   prim_name);
+  (void)CheckAndConvertUtils::CheckTensorTypeValid("y_type", y_type, common_valid_types_with_complex_and_bool,
+                                                   prim_name);
   (void)CheckAndConvertUtils::CheckTensorTypeValid("cond", cond_type, {kBool}, prim_name);
   if (*x_type != *y_type) {
     MS_EXCEPTION(TypeError) << "For '" << prim_name
@@ -180,7 +203,8 @@ void SelectInnerInferValue(const PrimitivePtr &prim, const tensor::TensorPtr &co
       MS_EXCEPTION_IF_NULL(result_type);
       MS_EXCEPTION(TypeError) << "For '" << prim->name()
                               << "', the supported data type is ['bool', 'int8', 'int16', 'int32', 'int64', 'uint8', "
-                                 "'uint16','uint32', 'uint64','float16', 'float32', 'float64'], but got "
+                                 "'uint16','uint32', 'uint64','float16', 'float32', 'float64', 'complex64', "
+                                 "'complex128'], but got "
                               << result_type->ToString() << ".";
     }
   }
@@ -221,6 +245,27 @@ ValuePtr SelectInferValue(const PrimitivePtr &prim, const std::vector<AbstractBa
 }  // namespace
 
 MIND_API_OPERATOR_IMPL(Select, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(Select, prim::kPrimSelect, SelectInfer, SelectInferValue, true);
+
+// AG means auto generated
+class MIND_API AGSelectInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SelectInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SelectInferType(primitive, input_args);
+  }
+  ValuePtr InferValue(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SelectInferValue(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SelectInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Select, prim::kPrimSelect, AGSelectInfer, true);
 }  // namespace ops
 }  // namespace mindspore

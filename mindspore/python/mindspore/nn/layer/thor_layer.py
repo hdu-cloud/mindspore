@@ -25,7 +25,8 @@ from mindspore.communication.management import get_group_size, get_rank
 from mindspore.ops import operations as P
 from mindspore.ops.operations._thor_ops import ThorIm2Col
 from mindspore.common.parameter import Parameter
-from mindspore._checkparam import Validator, Rel, twice
+from mindspore import _checkparam as Validator
+from mindspore._checkparam import twice
 from mindspore import context
 from mindspore.nn.cell import Cell
 from mindspore.nn.layer.activation import get_activation
@@ -33,9 +34,9 @@ from mindspore.parallel._ps_context import _is_role_worker, _get_ps_context, \
     _set_rank_id, _insert_hash_table_size, _set_cache_enable
 from mindspore.parallel._utils import _get_parallel_mode, _get_full_batch
 from mindspore.context import ParallelMode
-from mindspore.ops.primitive import constexpr
 from mindspore.ops import functional as F
 from mindspore.nn.layer.basic import ClipByNorm
+from mindspore.ops.primitive import constexpr
 
 __all__ = ['DenseThor', 'Conv2dThor', 'EmbeddingThor', 'EmbeddingLookupThor']
 
@@ -45,8 +46,8 @@ class DenseThor(Cell):
     The dense connected layer and saving the information needed for THOR.
 
     Applies dense connected layer for the input and saves the information A and G in the dense connected layer
-    needed for THOR, the detail can be seen in `THOR, Trace-based Hardware-driven layer-ORiented Natural
-    Gradient Descent Computation <https://www.aaai.org/AAAI21Papers/AAAI-6611.ChenM.pdf>`_.
+    needed for THOR.
+
     This layer implements the operation as:
 
     .. math::
@@ -54,18 +55,18 @@ class DenseThor(Cell):
 
     where :math:`\text{activation}` is the activation function , :math:`\text{kernel}` is a weight matrix with the same
     data type as the inputs created by the layer, and :math:`\text{bias}` is a bias vector
-    with the same data type as the inputs created by the layer (only if has_bias is True).
+    with the same data type as the inputs created by the layer (only if has_bias is ``True`` ).
 
     Args:
         in_channels (int): The number of the input channels.
         out_channels (int): The number of the output channels.
         weight_init (Union[Tensor, str, Initializer, numbers.Number]): The trainable weight_init parameter. The dtype
-            is same as `x`. The values of str refer to the function `initializer`. Default: 'normal'.
+            is same as `x`. The values of str refer to the function `initializer`. Default: ``'normal'`` .
         bias_init (Union[Tensor, str, Initializer, numbers.Number]): The trainable bias_init parameter. The dtype is
-            same as `x`. The values of str refer to the function `initializer`. Default: 'zeros'.
-        has_bias (bool): Specifies whether the layer uses a bias vector. Default: True.
+            same as `x`. The values of str refer to the function `initializer`. Default: ``'zeros'`` .
+        has_bias (bool): Specifies whether the layer uses a bias vector. Default: ``True`` .
         activation (str): activate function applied to the output of the fully connected layer, eg. 'ReLU'.
-            Default: None.
+            Default: ``None`` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(N, in\_channels)`.
@@ -80,8 +81,10 @@ class DenseThor(Cell):
         ``Ascend`` ``GPU``
 
     Examples:
-        >>> x = Tensor(np.array([[1, 2, 3], [3, 4, 5]]), mindspore.float32)
-        >>> net = nn.DenseThor(3, 4, weight_init="ones")
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> x = ms.Tensor(np.array([[1, 2, 3], [3, 4, 5]]), ms.float32)
+        >>> net = ms.nn.DenseThor(3, 4, weight_init="ones")
         >>> output = net(x)
         >>> print(output)
         [[  6.  6.  6.  6.]
@@ -283,7 +286,6 @@ class Conv2dThor(_ConvThor):
     Applies a 2D convolution over an input tensor which is typically of shape :math:`(N, C_{in}, H_{in}, W_{in})`,
     where :math:`N` is batch size, :math:`C_{in}` is channel number, and :math:`H_{in}, W_{in})` are height and width.
     And saves the information A and G in the 2D convolution layer needed for THOR.
-    The detail can be seen in paper: https://www.aaai.org/AAAI21Papers/AAAI-6611.ChenM.pdf
 
     For each batch of shape :math:`(C_{in}, H_{in}, W_{in})`, the formula is defined as:
 
@@ -318,44 +320,44 @@ class Conv2dThor(_ConvThor):
             the width of the kernel. A tuple of 2 integers means the height and the width of the kernel respectively.
         stride (Union[int, tuple[int]]): The distance of kernel moving, an int number represents the height and width
              of movement, or a tuple of two int numbers that represent height and width of movement, respectively.
-             Default: 1.
+             Default: ``1`` .
         pad_mode (str): Specifies padding mode. The optional values are
-            "same", "valid", "pad". Default: "same".
+            ``"same"`` , ``"valid"`` , ``"pad"`` . Default: ``"same"`` .
 
-            - same: Adopts the way of completion. The shape of the output will be the same as
+            - ``"same"``: Adopts the way of completion. The shape of the output will be the same as
               the `x`. The total number of padding will be calculated in horizontal and vertical
               directions and evenly distributed to top and bottom, left and right if possible. Otherwise, the
               last extra padding will be done from the bottom and the right side. If this mode is set, `padding`
               must be 0.
 
-            - valid: Adopts the way of discarding. The possible largest height and width of output will be returned
-              without padding. Extra pixels will be discarded. If this mode is set, `padding` must be 0.
+            - ``"valid"``: Adopts the way of discarding. The possible largest height and width of output will be
+              returned without padding. Extra pixels will be discarded. If this mode is set, `padding` must be 0.
 
-            - pad: Implicit paddings on both sides of the input `x`. The number of `padding` will be padded to the input
-              Tensor borders. `padding` must be greater than or equal to 0.
+            - ``"pad"``: Implicit paddings on both sides of the input `x`. The number of `padding` will be padded to
+              the input Tensor borders. `padding` must be greater than or equal to 0.
 
         padding (Union[int, tuple[int]]): Implicit paddings on both sides of the input `x`. If `padding` is an integer,
                     the paddings of top, bottom, left and right are the same, equal to padding. If `padding` is a tuple
                     with four integers, the paddings of top, bottom, left and right will be equal to padding[0],
-                    padding[1], padding[2], and padding[3] accordingly. Default: 0.
+                    padding[1], padding[2], and padding[3] accordingly. Default: ``0`` .
         dilation (Union[int, tuple[int]]): The data type is int or a tuple of 2 integers. Specifies the dilation rate
                                       to use for dilated convolution. If set to be :math:`k > 1`, there will
                                       be :math:`k - 1` pixels skipped for each sampling location. Its value must
                                       be greater or equal to 1 and bounded by the height and width of the  input `x`.
-                                      Default: 1.
+                                      Default: ``1`` .
         group (int): Splits filter into groups, `in_ channels` and `out_channels` must be
             divisible by the number of groups. If the group is equal to `in_channels` and `out_channels`,
-            this 2D convolution layer also can be called 2D depthwise convolution layer. Default: 1.
-        has_bias (bool): Specifies whether the layer uses a bias vector. Default: False.
+            this 2D convolution layer also can be called 2D depthwise convolution layer. Default: ``1`` .
+        has_bias (bool): Specifies whether the layer uses a bias vector. Default: ``False`` .
         weight_init (Union[Tensor, str, Initializer, numbers.Number]): Initializes the convolution kernel.
             It can be a Tensor, a string, an Initializer or a number. When a string is specified,
-            values from 'TruncatedNormal', 'Normal', 'Uniform', 'HeUniform' and 'XavierUniform' distributions as well
-            as constant 'One' and 'Zero' distributions are possible. Alias 'xavier_uniform', 'he_uniform', 'ones'
-            and 'zeros' are acceptable. Uppercase and lowercase are both acceptable. Refer to the values of
-            Initializer for more details. Default: 'normal'.
+            values from ``'TruncatedNormal'`` , ``'Normal'`` , ``'Uniform'`` , ``'HeUniform'`` and ``'XavierUniform'``
+            distributions as well as constant ``'One'`` and ``'Zero'`` distributions are possible. Alias
+            ``'xavier_uniform'`` , ``'he_uniform'`` , ``'ones'`` and ``'zeros'`` are acceptable. Uppercase and
+            lowercase are both acceptable. Refer to the values of Initializer for more details. Default: ``'normal'`` .
         bias_init (Union[Tensor, str, Initializer, numbers.Number]): Initializes the bias vector. Possible
             Initializer and string are the same as 'weight_init'. Refer to the values of
-            Initializer for more details. Default: 'zeros'.
+            Initializer for more details. Default: ``'zeros'`` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(N, C_{in}, H_{in}, W_{in})`.
@@ -367,9 +369,11 @@ class Conv2dThor(_ConvThor):
         ``Ascend`` ``GPU``
 
     Examples:
-        >>> net = nn.Conv2dThor(120, 240, 4, has_bias=False, weight_init='normal')
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> net = ms.nn.Conv2dThor(120, 240, 4, has_bias=False, weight_init='normal')
         >>> # for Ascend
-        >>> x = Tensor(np.ones([1, 120, 1024, 640]), mindspore.float16)
+        >>> x = ms.Tensor(np.ones([1, 120, 1024, 640]), ms.float16)
         >>> print(net(x).shape)
         (1, 240, 1024, 640)
     """
@@ -434,8 +438,8 @@ class Conv2dThor(_ConvThor):
         """Initialize depthwise conv2d op"""
         if context.get_context("device_target") == "Ascend" and self.group > 1:
             self.dilation = self._dilation
-            Validator.check_int('group', self.group, self.in_channels, Rel.EQ, self.cls_name)
-            Validator.check_int('group', self.group, self.out_channels, Rel.EQ, self.cls_name)
+            Validator.check_int('group', self.group, self.in_channels, Validator.EQ, self.cls_name)
+            Validator.check_int('group', self.group, self.out_channels, Validator.EQ, self.cls_name)
             self.conv2d = P.DepthwiseConv2dNative(channel_multiplier=1,
                                                   kernel_size=self.kernel_size,
                                                   pad_mode=self.pad_mode,
@@ -462,7 +466,7 @@ class Conv2dThor(_ConvThor):
             matrix_g = self.cube_matmul(dout, dout)
             normalizer = self.cast(normalizer, mstype.float32)
             matrix_g = self.mul(matrix_g, 1.0 / normalizer)
-            self.g_normalizer = normalizer
+            self.g_normalizer = self.reshape(Tensor(normalizer), (1,))
             self.matrix_g_cov = matrix_g
         else:
             dout = self.reduce_mean(dout, 0)
@@ -473,7 +477,7 @@ class Conv2dThor(_ConvThor):
             dout = self.cast(dout, mstype.float32)
             matrix_g = self.matmul(dout, dout)
             matrix_g = self.mul(matrix_g, 1.0 / normalizer)
-            self.g_normalizer = normalizer
+            self.g_normalizer = self.reshape(Tensor(normalizer), (1,))
             self.matrix_g_cov = matrix_g
         return out
 
@@ -489,7 +493,7 @@ class Conv2dThor(_ConvThor):
                 matrix_a = self.cube_matmul(matrix_a, matrix_a)
                 normalizer = self.cast(normalizer, mstype.float32)
                 matrix_a = self.mul(matrix_a, 1.0 / normalizer)
-                self.a_normalizer = normalizer
+                self.a_normalizer = self.reshape(Tensor(normalizer), (1,))
                 self.matrix_a_cov = matrix_a
                 weight = self.cast(self.weight, mstype.float16)
                 output = self.conv2d(x, weight)
@@ -505,7 +509,7 @@ class Conv2dThor(_ConvThor):
                 matrix_a = self.cast(matrix_a, mstype.float32)
                 matrix_a = self.matmul(matrix_a, matrix_a)
                 matrix_a = self.mul(matrix_a, 1.0 / normalizer)
-                self.a_normalizer = normalizer
+                self.a_normalizer = self.reshape(Tensor(normalizer), (1,))
                 self.matrix_a_cov = matrix_a
                 output = self.conv2d(x, self.weight)
                 output = self.getG(output)
@@ -540,7 +544,7 @@ class EmbeddingThor(Cell):
     This module is often used to store word embeddings and retrieve them using
     indices. The input to the module is a list of indices, and the output is
     the corresponding word embeddings. And saves the information A and G in the dense connected layer
-    needed for THOR, the detail can be seen in paper: https://www.aaai.org/AAAI21Papers/AAAI-6611.ChenM.pdf
+    needed for THOR.
 
     Note:
         When 'use_one_hot' is set to True, the type of the input `x` must be mindspore.int32.
@@ -548,12 +552,12 @@ class EmbeddingThor(Cell):
     Args:
         vocab_size (int): The size of the dictionary of embeddings.
         embedding_size (int): The size of each embedding vector.
-        use_one_hot (bool): Specifies whether to apply one_hot encoding form. Default: False.
+        use_one_hot (bool): Specifies whether to apply one_hot encoding form. Default: ``False`` .
         embedding_table (Union[Tensor, str, Initializer, numbers.Number]): Initializes the embedding_table.
-            Refer to class `initializer` for the values of string when a string is specified. Default: 'normal'.
-        dtype (:class:`mindspore.dtype`): Data type of input `x`. Default: mindspore.float32.
+            Refer to class `initializer` for the values of string when a string is specified. Default: ``'normal'`` .
+        dtype (:class:`mindspore.dtype`): Data type of input `x`. Default: ``mindspore.float32`` .
         padding_idx (int, None): When the padding_idx encounters index, the output embedding vector of this index
-                                 will be initialized to zero. Default: None. The feature is inactivated.
+                                 will be initialized to zero. Default: ``None`` . The feature is inactivated.
     Inputs:
         - **x** (Tensor) - Tensor of input shape :math:`(\text{batch_size}, \text{x_length})`. The elements of
           the Tensor must be integer and not larger than vocab_size. Otherwise the corresponding embedding vector will
@@ -566,8 +570,10 @@ class EmbeddingThor(Cell):
         ``Ascend`` ``GPU``
 
     Examples:
-        >>> net = nn.EmbeddingThor(20000, 768,  True)
-        >>> x = Tensor(np.ones([8, 128]), mindspore.int32)
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> net = ms.nn.EmbeddingThor(20000, 768,  True)
+        >>> x = ms.Tensor(np.ones([8, 128]), ms.int32)
         >>>
         >>> # Maps the input word IDs to word embedding.
         >>> output = net(x)
@@ -588,15 +594,15 @@ class EmbeddingThor(Cell):
         self.init_tensor = initializer(embedding_table, [vocab_size, embedding_size])
         self.padding_idx = padding_idx
         if padding_idx is not None:
-            self.padding_idx = Validator.check_int_range(padding_idx, 0, vocab_size, Rel.INC_BOTH,
+            self.padding_idx = Validator.check_int_range(padding_idx, 0, vocab_size, Validator.INC_BOTH,
                                                          "padding_idx", self.cls_name)
-            self.init_tensor = self.init_tensor.to_tensor().asnumpy()
+            self.init_tensor = self.init_tensor.init_data().asnumpy()
             self.init_tensor[self.padding_idx] = 0
         self.embedding_table = Parameter(self.init_tensor, name='embedding_table')
         self.expand = P.ExpandDims()
         self.reshape_flat = P.Reshape()
         self.shp_flat = (-1,)
-        self.gather = P.GatherV2()
+        self.gather = P.Gather()
         self.one_hot = P.OneHot()
         self.on_value = Tensor(1.0, self.dtype)
         self.off_value = Tensor(0.0, self.dtype)
@@ -671,8 +677,7 @@ class EmbeddingLookupThor(Cell):
     and saving the information needed for THOR.
 
     This module has the same function as EmbeddingLookup, but additionally saves the information A and G in the
-    embeddinglookup layer needed for THOR,
-    the detail can be seen in paper: https://www.aaai.org/AAAI21Papers/AAAI-6611.ChenM.pdf
+    embeddinglookup layer needed for THOR.
 
 
     Args:
@@ -680,17 +685,17 @@ class EmbeddingLookupThor(Cell):
         embedding_size (int): The size of each embedding vector.
         param_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the embedding_table.
             Refer to class `initializer` for the values of string when a string is specified.
-            Default: 'normal'.
+            Default: ``'normal'`` .
         target (str): Specifies the target where the op is executed. The value must in
-            ['DEVICE', 'CPU']. Default: 'CPU'.
+            [ ``'DEVICE'`` , ``'CPU'`` ]. Default: ``'CPU'`` .
         slice_mode (str): The slicing way in semi_auto_parallel/auto_parallel. The value must get through
             nn.EmbeddingLookup. Default: nn.EmbeddingLookup.BATCH_SLICE.
         manual_shapes (tuple): The accompaniment array in field slice mode.
         max_norm (Union[float, None]): A maximum clipping value. The data type must be float16, float32 or None.
-                                       Default: None
-        sparse (bool): Using sparse mode. When 'target' is set to 'CPU', 'sparse' has to be true.
-                       Default: True.
-        vocab_cache_size (int): Cache size of the dictionary of embeddings. Default: 0. It is valid only in
+                                       Default: ``None`` .
+        sparse (bool): Using sparse mode. When 'target' is set to 'CPU', 'sparse' has to be ``true`` .
+                       Default: ``True`` .
+        vocab_cache_size (int): Cache size of the dictionary of embeddings. Default: ``0`` . It is valid only in
             'DEVICE' target. And the moment parameter of corresponding optimizer will also be set to the cache size.
             In addition, it should be noted that it will cost the 'DEVICE' memory, so suggests setting a reasonable
             value to avoid insufficient memory.
@@ -717,8 +722,10 @@ class EmbeddingLookupThor(Cell):
         ``Ascend``
 
     Examples:
-        >>> input_indices = Tensor(np.array([[1, 0], [3, 2]]), mindspore.int32)
-        >>> result = nn.EmbeddingLookup(4,2)(input_indices)
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> input_indices = ms.Tensor(np.array([[1, 0], [3, 2]]), ms.int32)
+        >>> result = ms.nn.EmbeddingLookup(4,2)(input_indices)
         >>> print(result.shape)
         (2, 2, 2)
     """

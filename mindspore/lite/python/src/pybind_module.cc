@@ -13,8 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "pybind11/pybind11.h"
 #include "include/api/types.h"
+#include "pybind11/pybind11.h"
+#include "pybind11/numpy.h"
+#include "pybind11/stl.h"
 
 namespace mindspore::lite {
 namespace py = pybind11;
@@ -22,10 +24,19 @@ namespace py = pybind11;
 void ContextPyBind(const py::module &m);
 void ConverterPyBind(const py::module &m);
 void ModelPyBind(const py::module &m);
+#ifdef MSLITE_ENABLE_CLOUD_INFERENCE
+void LiteInferPyBind(const py::module &m);
+#endif
 void ModelParallelRunnerPyBind(const py::module &m);
+void ModelGroupPyBind(const py::module &m);
 void TensorPyBind(const py::module &m);
-MSTensor create_tensor();
-
+void LLMEnginePyBind(const py::module &m);
+std::shared_ptr<MSTensor> create_tensor(DataType data_type, const std::vector<int64_t> &shape,
+                                        const std::string &device_type, int device_id);
+std::shared_ptr<MSTensor> create_tensor_by_tensor(const MSTensor &tensor, const std::string &device_type,
+                                                  int device_id);
+std::shared_ptr<MSTensor> create_tensor_by_numpy(const py::array &input, const std::string &device_type,
+                                                 int32_t device_id);
 PYBIND11_MODULE(_c_lite_wrapper, m) {
   m.doc() = "MindSpore Lite";
   ContextPyBind(m);
@@ -33,8 +44,15 @@ PYBIND11_MODULE(_c_lite_wrapper, m) {
   ConverterPyBind(m);
 #endif
   ModelPyBind(m);
+#ifdef MSLITE_ENABLE_CLOUD_INFERENCE
+  LiteInferPyBind(m);
+#endif
   ModelParallelRunnerPyBind(m);
+  ModelGroupPyBind(m);
   TensorPyBind(m);
+  LLMEnginePyBind(m);
   m.def("create_tensor", &create_tensor);
+  m.def("create_tensor_by_tensor", &create_tensor_by_tensor);
+  m.def("create_tensor_by_numpy", &create_tensor_by_numpy);
 }
 }  // namespace mindspore::lite

@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,10 @@
 #include <string>
 #include <list>
 #include <algorithm>
-#include "mindspore/core/ops/core_ops.h"
+#include "ops/structure_ops.h"
+#include "ops/sequence_ops.h"
+#include "ops/other_ops.h"
+#include "ops/framework_ops.h"
 #include "utils/trace_base.h"
 #include "utils/hash_map.h"
 #include "utils/os.h"
@@ -44,10 +47,17 @@ class AbstractMutexManager {
   }
 
   void Close() {
+    // cppcheck-suppress unreadVariable
+    std::lock_guard<std::recursive_mutex> lock(mu_);
     is_valid_ = false;
     mu_for_nodes_.clear();
   }
-  void Open() { is_valid_ = true; }
+
+  void Open() {
+    // cppcheck-suppress unreadVariable
+    std::lock_guard<std::recursive_mutex> lock(mu_);
+    is_valid_ = true;
+  }
 
  private:
   mindspore::HashMap<const AnfNode *, std::recursive_mutex> mu_for_nodes_;
@@ -128,75 +138,38 @@ void AnfUtils::OpenAbstractLock() { AbstractMutexManager::GetInstance().Open(); 
 
 void AnfUtils::CloseAbstractLock() { AbstractMutexManager::GetInstance().Close(); }
 
-bool AnfUtils::IsDimUnknown(const abstract::ShapePtr &shape) {
-  MS_EXCEPTION_IF_NULL(shape);
-  return std::any_of(shape->shape().begin(), shape->shape().end(), [](int64_t s) { return s < -1; });
-}
-
-bool AnfUtils::IsShapeDynamic(const abstract::ShapePtr &shape) {
-  if (shape == nullptr) {
-    return false;
-  }
-  return std::any_of(shape->shape().begin(), shape->shape().end(), [](int64_t s) { return s < 0; });
-}
-
-bool AnfUtils::IsNodeOutputDynamicShape(const CNodePtr &node) {
+// If the node's shape is dynamic shape or dynamic rank, return true.
+bool AnfUtils::IsNodeOutputShapeDynamic(const AnfNodePtr &node) {
   MS_EXCEPTION_IF_NULL(node);
   auto base_shape = node->Shape();
   if (base_shape == nullptr) {
     MS_LOG(INFO) << "Invalid base shape, node: " << node->fullname_with_scope();
     return false;
   }
-  if (base_shape->isa<abstract::Shape>() && IsShapeDynamic(base_shape->cast<abstract::ShapePtr>())) {
-    return true;
-  } else if (base_shape->isa<abstract::TupleShape>()) {
-    auto tuple_shape = base_shape->cast<abstract::TupleShapePtr>();
-    MS_EXCEPTION_IF_NULL(tuple_shape);
-    for (size_t i = 0; i < tuple_shape->size(); i++) {
-      auto b_shape = (*tuple_shape)[i];
-      if (b_shape->isa<abstract::Shape>() && IsShapeDynamic(b_shape->cast<abstract::ShapePtr>())) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-bool AnfUtils::IsDimUnknown(const AnfNodePtr &node) {
-  MS_EXCEPTION_IF_NULL(node);
-  auto base_shape = node->Shape();
-  if (base_shape == nullptr) {
-    MS_LOG(INFO) << "Invalid base shape, node: " << node->fullname_with_scope();
-    return false;
-  }
-  if (base_shape->isa<abstract::Shape>()) {
-    auto base_shape_ptr = base_shape->cast<abstract::ShapePtr>();
-    MS_EXCEPTION_IF_NULL(base_shape_ptr);
-    return base_shape_ptr->IsDimUnknown();
-  } else if (base_shape->isa<abstract::TupleShape>()) {
-    auto tuple_shape_ptr = base_shape->cast<abstract::TupleShapePtr>();
-    MS_EXCEPTION_IF_NULL(tuple_shape_ptr);
-    return tuple_shape_ptr->IsDimUnknown();
-  } else if (base_shape->isa<abstract::SequenceShape>()) {
-    auto seq_shape_ptr = base_shape->cast<abstract::SequenceShapePtr>();
-    MS_EXCEPTION_IF_NULL(seq_shape_ptr);
-    return seq_shape_ptr->IsDimUnknown();
-  } else if (base_shape->isa<abstract::ListShape>()) {
-    auto list_shape_ptr = base_shape->cast<abstract::ListShapePtr>();
-    MS_EXCEPTION_IF_NULL(list_shape_ptr);
-    return list_shape_ptr->IsDimUnknown();
-  }
-  return false;
+  return base_shape->IsDynamic();
 }
 
 bool AnfUtils::IsRealKernel(const AnfNodePtr &node) {
   MS_EXCEPTION_IF_NULL(node);
 #ifndef ENABLE_SECURITY
-  static const PrimitiveSet virtual_prims = {
-    prim::kPrimImageSummary,    prim::kPrimScalarSummary, prim::kPrimTensorSummary, prim::kPrimHistogramSummary,
-    prim::kPrimMakeTuple,       prim::kPrimStateSetItem,  prim::kPrimTupleGetItem,  prim::kPrimReturn,
-    prim::kPrimPartial,         prim::kPrimDepend,        prim::kPrimUpdateState,   prim::kPrimLoad,
-    prim::kPrimDynamicLossScale};
+  static const PrimitiveSet virtual_prims = {prim::kPrimImageSummary,
+                                             prim::kPrimScalarSummary,
+                                             prim::kPrimTensorSummary,
+                                             prim::kPrimHistogramSummary,
+                                             prim::kPrimMakeTuple,
+                                             prim::kPrimStateSetItem,
+                                             prim::kPrimTupleGetItem,
+                                             prim::kPrimReturn,
+                                             prim::kPrimPartial,
+                                             prim::kPrimDepend,
+                                             prim::kPrimUpdateState,
+                                             prim::kPrimLoad,
+                                             prim::kPrimDynamicLossScale,
+                                             prim::kPrimMakeList,
+                                             prim::kPrimListGetItem,
+                                             prim::kPrimIs_,
+                                             prim::kPrimIsNot,
+                                             prim::kPrimIsInstance};
 #else
   static const PrimitiveSet virtual_prims = {
     prim::kPrimMakeTuple,   prim::kPrimStateSetItem, prim::kPrimTupleGetItem,
@@ -209,7 +182,8 @@ bool AnfUtils::IsRealKernel(const AnfNodePtr &node) {
     return true;
   }
   if (cnode->size() == 0) {
-    MS_LOG(EXCEPTION) << "Illegal null input of cnode(%s)" << node->DebugString() << trace::DumpSourceLines(node);
+    MS_LOG(INTERNAL_EXCEPTION) << "Illegal null input of cnode(%s)" << node->DebugString()
+                               << trace::DumpSourceLines(node);
   }
 
   auto kernel_info = cnode->kernel_info();
@@ -274,15 +248,15 @@ std::string AnfUtils::GetCNodeName(const AnfNodePtr &node) {
     }
     return func_graph->ToString();
   }
-  MS_LOG(EXCEPTION) << "Unknown anf node type " << node->DebugString() << trace::DumpSourceLines(node);
+  MS_LOG(INTERNAL_EXCEPTION) << "Unknown anf node type " << node->DebugString() << trace::DumpSourceLines(node);
 }
 
 size_t AnfUtils::GetInputTensorNum(const AnfNodePtr &node) {
   MS_EXCEPTION_IF_NULL(node);
   auto cnode = node->cast<CNodePtr>();
   if (cnode == nullptr) {
-    MS_LOG(EXCEPTION) << "Only cnode has real input, but this anf is " << node->DebugString()
-                      << trace::DumpSourceLines(node);
+    MS_LOG(INTERNAL_EXCEPTION) << "Only cnode has real input, but this anf is " << node->DebugString()
+                               << trace::DumpSourceLines(node);
   }
   {
     // cppcheck-suppress unreadVariable
@@ -295,7 +269,7 @@ size_t AnfUtils::GetInputTensorNum(const AnfNodePtr &node) {
 
   size_t input_num = cnode->inputs().size();
   if (input_num == 0) {
-    MS_LOG(EXCEPTION) << "Cnode inputs size can't be zero" << trace::DumpSourceLines(node);
+    MS_LOG(INTERNAL_EXCEPTION) << "Cnode inputs size can't be zero" << trace::DumpSourceLines(node);
   }
   // Exclude inputs[0].
   --input_num;
@@ -341,15 +315,26 @@ size_t AnfUtils::GetOutputTensorNum(const AnfNodePtr &node) {
     auto tuple_type = type->cast<TuplePtr>();
     MS_EXCEPTION_IF_NULL(tuple_type);
     res = tuple_type->size();
+    if (res == 0) {
+      return res;
+    }
+    auto last_type = tuple_type->elements()[res - 1];
+    MS_EXCEPTION_IF_NULL(last_type);
     // Some nodes could have monad outputs like RpcRecv. We need to jump these outputs.
-    if (NeedJumpMonadOutput(node) && tuple_type->elements()[res - 1]->isa<MonadType>()) {
+    if (NeedJumpMonadOutput(node) && last_type->isa<MonadType>()) {
       for (size_t i = 0; i < tuple_type->elements().size(); i++) {
-        if (tuple_type->elements()[i]->isa<MonadType>()) {
+        auto tuple_type_elem = tuple_type->elements()[i];
+        MS_EXCEPTION_IF_NULL(tuple_type_elem);
+        if (tuple_type_elem->isa<MonadType>()) {
           res = i;
           break;
         }
       }
     }
+  } else if (type->isa<List>()) {
+    auto list_type = type->cast<ListPtr>();
+    MS_EXCEPTION_IF_NULL(list_type);
+    res = list_type->size();
   } else if (type->isa<TypeNone>()) {
     res = 0;
   } else if (type->isa<CSRTensorType>()) {
@@ -379,7 +364,8 @@ size_t AnfUtils::GetOutputTensorNum(const AnfNodePtr &node) {
 void AnfUtils::SetNodeAttr(const std::string &key, const ValuePtr &value, const AnfNodePtr &node) {
   MS_EXCEPTION_IF_NULL(node);
   if (!node->isa<CNode>()) {
-    MS_LOG(EXCEPTION) << "Only cnode has attr, but this anf is " << node->DebugString() << trace::DumpSourceLines(node);
+    MS_LOG(INTERNAL_EXCEPTION) << "Only cnode has attr, but this anf is " << node->DebugString()
+                               << trace::DumpSourceLines(node);
   }
   // single op cnode.
   auto primitive = GetCNodePrimitive(node);
@@ -402,6 +388,7 @@ int64_t AnfUtils::GetIntValue(const AnfNodePtr &anf_node) {
 }
 
 int64_t AnfUtils::GetIntValue(const ValuePtr &value) {
+  MS_EXCEPTION_IF_NULL(value);
   if (value->isa<Int64Imm>()) {
     return GetValue<int64_t>(value);
   } else if (value->isa<Int32Imm>()) {
@@ -409,7 +396,6 @@ int64_t AnfUtils::GetIntValue(const ValuePtr &value) {
   } else {
     MS_LOG(EXCEPTION) << "The value should be Int32Imm or Int64Imm, but got " << value->ToString();
   }
-  return 0;
 }
 
 std::pair<AnfNodePtr, size_t> AnfUtils::VisitKernel(const AnfNodePtr &anf_node, size_t index) {
@@ -435,7 +421,7 @@ std::pair<AnfNodePtr, size_t> AnfUtils::VisitKernel(const AnfNodePtr &anf_node, 
       return VisitKernel(node, 0);
     } else if (IsPrimitive(input0, prim::kPrimTupleGetItem)) {
       if (cnode->inputs().size() != kTupleGetItemInputSize) {
-        MS_LOG(EXCEPTION) << "The node tuple_get_item must have 2 inputs!";
+        MS_LOG(INTERNAL_EXCEPTION) << "The node tuple_get_item must have 2 inputs!";
       }
       auto input2 = cnode->input(kInputNodeOutputIndexInTupleGetItem);
       auto item_idx = AnfUtils::GetIntValue(input2);
@@ -448,7 +434,7 @@ std::pair<AnfNodePtr, size_t> AnfUtils::VisitKernel(const AnfNodePtr &anf_node, 
       return std::make_pair(anf_node, index);
     }
   } else {
-    MS_LOG(EXCEPTION) << "The input is invalid";
+    MS_LOG(INTERNAL_EXCEPTION) << "The input is invalid";
   }
 }
 
@@ -507,7 +493,7 @@ bool AnfUtils::IsCutomActorNodeSame(const AnfNodePtr &node1, const AnfNodePtr &n
   MS_EXCEPTION_IF_NULL(node1);
   MS_EXCEPTION_IF_NULL(node2);
   if (!IsCustomActorNode(node1) || !IsCustomActorNode(node2)) {
-    MS_LOG(EXCEPTION) << "Two node are not all Custom Actor Node!";
+    MS_LOG(INTERNAL_EXCEPTION) << "Two node are not all Custom Actor Node!";
   }
 
   auto actor_info1 = node1->user_data<CustomActorInfo>();
@@ -524,7 +510,7 @@ bool AnfUtils::IsCutomActorNodeSame(const AnfNodePtr &node1, const AnfNodePtr &n
 std::string AnfUtils::GetCustomActorType(const AnfNodePtr &node) {
   MS_EXCEPTION_IF_NULL(node);
   if (!IsCustomActorNode(node)) {
-    MS_LOG(EXCEPTION) << node->fullname_with_scope() << " is not a custom actor node!";
+    MS_LOG(INTERNAL_EXCEPTION) << node->fullname_with_scope() << " is not a custom actor node!";
   }
 
   auto actor_info = node->user_data<CustomActorInfo>();
@@ -535,7 +521,7 @@ std::string AnfUtils::GetCustomActorType(const AnfNodePtr &node) {
 std::string AnfUtils::GetCustomActorName(const AnfNodePtr &node) {
   MS_EXCEPTION_IF_NULL(node);
   if (!IsCustomActorNode(node)) {
-    MS_LOG(EXCEPTION) << node->fullname_with_scope() << " is not a custom actor node!";
+    MS_LOG(INTERNAL_EXCEPTION) << node->fullname_with_scope() << " is not a custom actor node!";
   }
 
   auto actor_info = node->user_data<CustomActorInfo>();
@@ -549,7 +535,7 @@ std::string AnfUtils::GetCustomActorName(const AnfNodePtr &node) {
 CNodePtr AnfUtils::GetCustomActorBaseNode(const AnfNodePtr &node) {
   MS_EXCEPTION_IF_NULL(node);
   if (!IsCustomActorNode(node)) {
-    MS_LOG(EXCEPTION) << node->fullname_with_scope() << " is not a custom actor node!";
+    MS_LOG(INTERNAL_EXCEPTION) << node->fullname_with_scope() << " is not a custom actor node!";
   }
 
   auto actor_info = node->user_data<CustomActorInfo>();
@@ -560,7 +546,7 @@ CNodePtr AnfUtils::GetCustomActorBaseNode(const AnfNodePtr &node) {
 AnfUtils::CustomActorCallback AnfUtils::GetCustomFunc(const AnfNodePtr &node) {
   MS_EXCEPTION_IF_NULL(node);
   if (!IsCustomActorNode(node)) {
-    MS_LOG(EXCEPTION) << node->fullname_with_scope() << " is not a custom actor node!";
+    MS_LOG(INTERNAL_EXCEPTION) << node->fullname_with_scope() << " is not a custom actor node!";
   }
 
   auto actor_info = node->user_data<CustomActorInfo>();

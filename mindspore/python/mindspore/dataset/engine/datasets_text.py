@@ -1,4 +1,4 @@
-# Copyright 2019-2022 Huawei Technologies Co., Ltd
+# Copyright 2019-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -30,41 +30,48 @@ from .validators import check_imdb_dataset, check_iwslt2016_dataset, check_iwslt
     check_penn_treebank_dataset, check_ag_news_dataset, check_amazon_review_dataset, check_udpos_dataset, \
     check_wiki_text_dataset, check_conll2000_dataset, check_cluedataset, \
     check_sogou_news_dataset, check_textfiledataset, check_dbpedia_dataset, check_yelp_review_dataset, \
-    check_en_wik9_dataset, check_yahoo_answers_dataset, check_multi30k_dataset, check_squad_dataset
+    check_en_wik9_dataset, check_yahoo_answers_dataset, check_multi30k_dataset, check_squad_dataset, \
+    check_sst2_dataset
 
 from ..core.validator_helpers import replace_none
 
 
 class AGNewsDataset(SourceDataset, TextBaseDataset):
     """
-    A source dataset that reads and parses AG News datasets.
+    AG News dataset.
 
     The generated dataset has three columns: :py:obj:`[index, title, description]` ,
     and the data type of three columns is string type.
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        usage (str, optional): Acceptable usages include 'train', 'test' and 'all'. Default: None, all samples.
-        num_samples (int, optional): Number of samples (rows) to read. Default: None, reads the full dataset.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the mindspore.dataset.config.
+        usage (str, optional): Acceptable usages include ``'train'`` , ``'test'`` and ``'all'`` .
+            Default: ``None`` , all samples.
+        num_samples (int, optional): Number of samples (rows) to read. Default: ``None`` ,
+            reads the full dataset.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Bool type and Shuffle enum are both supported to pass in. Default: `Shuffle.GLOBAL` .
-            If `shuffle` is False, no shuffling will be performed.
-            If `shuffle` is True, it is equivalent to setting `shuffle` to mindspore.dataset.Shuffle.GLOBAL.
+            Bool type and Shuffle enum are both supported to pass in.
+            Default: ``Shuffle.GLOBAL`` .
+            If `shuffle` is ``False``, no shuffling will be performed.
+            If `shuffle` is ``True``, it is equivalent to setting `shuffle` to
+            ``mindspore.dataset.Shuffle.GLOBAL`` .
             Set the mode of data shuffling by passing in enumeration variables:
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples.
+            - ``Shuffle.GLOBAL``: Shuffle both the files and samples.
 
-            - Shuffle.FILES: Shuffle files only.
+            - ``Shuffle.FILES``: Shuffle files only.
 
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
-            When this argument is specified, `num_samples` reflects the max sample number of per shard.
+        num_shards (int, optional): Number of shards that the dataset will be divided into.
+            Default: ``None``. When this argument is specified, `num_samples` reflects the
+            max sample number of per shard.
         shard_id (int, optional): The shard ID within `num_shards` . This
-            argument can only be specified when `num_shards` is also specified. Default: None.
+            argument can only be specified when `num_shards` is also specified. Default: ``None``.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None``, which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
@@ -72,7 +79,12 @@ class AGNewsDataset(SourceDataset, TextBaseDataset):
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
 
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
+
     Examples:
+        >>> import mindspore.dataset as ds
         >>> ag_news_dataset_dir = "/path/to/ag_news_dataset_file"
         >>> dataset = ds.AGNewsDataset(dataset_dir=ag_news_dataset_dir, usage='all')
 
@@ -129,7 +141,7 @@ class AGNewsDataset(SourceDataset, TextBaseDataset):
 
 class AmazonReviewDataset(SourceDataset, TextBaseDataset):
     """
-    A source dataset that reads and parses Amazon Review Polarity and Amazon Review Full datasets.
+    Amazon Review Polarity and Amazon Review Full datasets.
 
     The generated dataset has three columns: :py:obj:`[label, title, content]` ,
     and the data type of three columns is string.
@@ -137,33 +149,37 @@ class AmazonReviewDataset(SourceDataset, TextBaseDataset):
     Args:
         dataset_dir (str): Path to the root directory that contains the Amazon Review Polarity dataset
             or the Amazon Review Full dataset.
-        usage (str, optional): Usage of this dataset, can be 'train', 'test' or 'all'.
-            For Polarity dataset, 'train' will read from 3,600,000 train samples,
-            'test' will read from 400,000 test samples,
-            'all' will read from all 4,000,000 samples.
-            For Full dataset, 'train' will read from 3,000,000 train samples,
-            'test' will read from 650,000 test samples,
-            'all' will read from all 3,650,000 samples. Default: None, all samples.
-        num_samples (int, optional): Number of samples (rows) to be read. Default: None, reads the full dataset.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the mindspore.dataset.config.
+        usage (str, optional): Usage of this dataset, can be ``'train'`` , ``'test'`` or ``'all'`` .
+            For Polarity dataset, ``'train'`` will read from 3,600,000 train samples,
+            ``'test'`` will read from 400,000 test samples,
+            ``'all'`` will read from all 4,000,000 samples.
+            For Full dataset, ``'train'`` will read from 3,000,000 train samples,
+            ``'test'`` will read from 650,000 test samples,
+            ``'all'`` will read from all 3,650,000 samples. Default: ``None``, all samples.
+        num_samples (int, optional): Number of samples (rows) to be read. Default: ``None``,
+            reads the full dataset.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Bool type and Shuffle enum are both supported to pass in. Default: `Shuffle.GLOBAL` .
-            If `shuffle` is False, no shuffling will be performed.
-            If `shuffle` is True, it is equivalent to setting `shuffle` to mindspore.dataset.Shuffle.GLOBAL.
+            Bool type and Shuffle enum are both supported to pass in.
+            Default: ``Shuffle.GLOBAL`` .
+            If `shuffle` is ``False``, no shuffling will be performed.
+            If `shuffle` is ``True``, it is equivalent to setting `shuffle` to
+            ``mindspore.dataset.Shuffle.GLOBAL``.
             Set the mode of data shuffling by passing in enumeration variables:
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples.
+            - ``Shuffle.GLOBAL`` : Shuffle both the files and samples.
 
-            - Shuffle.FILES: Shuffle files only.
+            - ``Shuffle.FILES`` : Shuffle files only.
 
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the max sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
@@ -171,7 +187,12 @@ class AmazonReviewDataset(SourceDataset, TextBaseDataset):
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
 
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
+
     Examples:
+        >>> import mindspore.dataset as ds
         >>> amazon_review_dataset_dir = "/path/to/amazon_review_dataset_dir"
         >>> dataset = ds.AmazonReviewDataset(dataset_dir=amazon_review_dataset_dir, usage='all')
 
@@ -224,36 +245,39 @@ class AmazonReviewDataset(SourceDataset, TextBaseDataset):
 
 class CLUEDataset(SourceDataset, TextBaseDataset):
     """
-    A source dataset that reads and parses CLUE datasets.
-    Supported CLUE classification tasks: 'AFQMC', 'TNEWS', 'IFLYTEK', 'CMNLI', 'WSC' and 'CSL'.
+    CLUE(Chinese Language Understanding Evaluation) dataset.
+    Supported CLUE classification tasks: ``'AFQMC'`` , ``'TNEWS'``, ``'IFLYTEK'``, ``'CMNLI'``,
+    ``'WSC'`` and ``'CSL'``.
 
     Args:
         dataset_files (Union[str, list[str]]): String or list of files to be read or glob strings to search for
             a pattern of files. The list will be sorted in a lexicographical order.
-        task (str, optional): The kind of task, one of 'AFQMC', 'TNEWS', 'IFLYTEK', 'CMNLI', 'WSC' and 'CSL'.
-            Default: 'AFQMC'.
-        usage (str, optional): Specify the 'train', 'test' or 'eval' part of dataset. Default: 'train'.
+        task (str, optional): The kind of task, one of ``'AFQMC'`` , ``'TNEWS'``, ``'IFLYTEK'``, ``'CMNLI'``,
+            ``'WSC'`` and ``'CSL'``. Default: ``'AFQMC'`` .
+        usage (str, optional): Specify the ``'train'``, ``'test'`` or ``'eval'`` part of dataset.
+            Default: ``'train'``.
         num_samples (int, optional): The number of samples to be included in the dataset.
-            Default: None, will include all images.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the config.
+            Default: ``None`` , will include all images.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Default: Shuffle.GLOBAL. Bool type and Shuffle enum are both supported to pass in.
-            If shuffle is False, no shuffling will be performed.
-            If shuffle is True, performs global shuffle.
-            There are three levels of shuffling, desired shuffle enum defined by mindspore.dataset.Shuffle.
+            Default: ``Shuffle.GLOBAL`` . Bool type and Shuffle enum are both supported to pass in.
+            If `shuffle` is ``False``, no shuffling will be performed.
+            If `shuffle` is ``True``, performs global shuffle.
+            There are three levels of shuffling, desired shuffle enum defined by :class:`mindspore.dataset.Shuffle` .
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples, same as setting shuffle to True.
+            - ``Shuffle.GLOBAL`` : Shuffle both the files and samples, same as setting `shuffle` to ``True``.
 
-            - Shuffle.FILES: Shuffle files only.
+            - ``Shuffle.FILES`` : Shuffle files only.
 
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the maximum sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     The generated dataset with different task setting has different output columns:
 
@@ -399,14 +423,20 @@ class CLUEDataset(SourceDataset, TextBaseDataset):
 
     Raises:
         ValueError: If dataset_files are not valid or do not exist.
-        ValueError: task is not in 'AFQMC', 'TNEWS', 'IFLYTEK', 'CMNLI', 'WSC' or 'CSL'.
-        ValueError: usage is not in 'train', 'test' or 'eval'.
+        ValueError: task is not in ``'AFQMC'`` , ``'TNEWS'``, ``'IFLYTEK'``, ``'CMNLI'``, ``'WSC'``
+            or ``'CSL'``.
+        ValueError: usage is not in ``'train'``, ``'test'`` or ``'eval'``.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
-        ValueError: If `shard_id` is invalid (< 0 or >= `num_shards`).
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
         RuntimeError: If `num_shards` is specified but `shard_id` is None.
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
 
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
+
     Examples:
+        >>> import mindspore.dataset as ds
         >>> clue_dataset_dir = ["/path/to/clue_dataset_file"] # contains 1 or multiple clue files
         >>> dataset = ds.CLUEDataset(dataset_files=clue_dataset_dir, task='AFQMC', usage='train')
 
@@ -459,7 +489,7 @@ class CLUEDataset(SourceDataset, TextBaseDataset):
 
 class CoNLL2000Dataset(SourceDataset, TextBaseDataset):
     """
-    A source dataset that reads and parses CoNLL2000 chunking dataset.
+    CoNLL-2000(Conference on Computational Natural Language Learning) chunking dataset.
 
     The generated dataset has three columns: :py:obj:`[word, pos_tag, chunk_tag]` .
     The tensors of column :py:obj:`word` , column :py:obj:`pos_tag` ,
@@ -467,29 +497,33 @@ class CoNLL2000Dataset(SourceDataset, TextBaseDataset):
 
     Args:
         dataset_dir (str): Path to the root directory that contains the CoNLL2000 chunking dataset.
-        usage (str, optional): Usage of dataset, can be 'train', 'test', or 'all'.
-            For dataset, 'train' will read from 8,936 train samples,
-            'test' will read from 2,012 test samples,
-            'all' will read from all 1,0948 samples. Default: None, read all samples.
-        num_samples (int, optional): Number of samples (rows) to be read. Default: None, read the full dataset.
+        usage (str, optional): Usage of dataset, can be ``'train'`` , ``'test'`` , or ``'all'`` .
+            For dataset, ``'train'`` will read from 8,936 train samples,
+            ``'test'`` will read from 2,012 test samples,
+            ``'all'`` will read from all 1,0948 samples. Default: ``None`` , read all samples.
+        num_samples (int, optional): Number of samples (rows) to be read. Default: ``None`` ,
+            read the full dataset.
         shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Default: `mindspore.dataset.Shuffle.GLOBAL` .
-            If shuffle is False, no shuffling will be performed.
-            If shuffle is True, performs global shuffle.
-            There are three levels of shuffling, desired shuffle enum defined by mindspore.dataset.Shuffle.
+            Default: ``Shuffle.GLOBAL`` .
+            If `shuffle` is ``False`` , no shuffling will be performed.
+            If `shuffle` is ``True`` , performs global shuffle.
+            There are three levels of shuffling, desired shuffle enum defined by
+            :class:`mindspore.dataset.Shuffle` .
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples, same as setting shuffle to True.
-            - Shuffle.FILES: Shuffle files only.
+            - ``Shuffle.GLOBAL`` : Shuffle both the files and samples, same as setting `shuffle` to ``True``.
+            - ``Shuffle.FILES`` : Shuffle files only.
 
         num_shards (int, optional): Number of shards that the dataset will be divided into.
-            When this argument is specified, `num_samples` reflects the max sample number of per shard. Default: None.
+            When this argument is specified, `num_samples` reflects the max sample number of per shard.
+            Default: ``None`` .
         shard_id (int, optional): The shard ID within `num_shards` . This
-            argument can only be specified when `num_shards` is also specified. Default: None.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the config.
+            argument can only be specified when `num_shards` is also specified. Default: ``None`` .
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
@@ -497,7 +531,12 @@ class CoNLL2000Dataset(SourceDataset, TextBaseDataset):
         RuntimeError: If `num_shards` is specified but `shard_id` is None.
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
 
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
+
     Examples:
+        >>> import mindspore.dataset as ds
         >>> conll2000_dataset_dir = "/path/to/conll2000_dataset_dir"
         >>> dataset = ds.CoNLL2000Dataset(dataset_dir=conll2000_dataset_dir, usage='all')
 
@@ -549,47 +588,55 @@ class CoNLL2000Dataset(SourceDataset, TextBaseDataset):
 
 class DBpediaDataset(SourceDataset, TextBaseDataset):
     """
-    A source dataset that reads and parses the DBpedia dataset.
+    DBpedia dataset.
 
     The generated dataset has three columns :py:obj:`[class, title, content]` ,
     and the data type of three columns is string.
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        usage (str, optional): Usage of this dataset, can be 'train', 'test' or 'all'.
-            'train' will read from 560,000 train samples,
-            'test' will read from 70,000 test samples,
-            'all' will read from all 630,000 samples. Default: None, all samples.
+        usage (str, optional): Usage of this dataset, can be ``'train'`` , ``'test'`` or ``'all'`` .
+            ``'train'`` will read from 560,000 train samples,
+            ``'test'`` will read from 70,000 test samples,
+            ``'all'`` will read from all 630,000 samples. Default: ``None`` , all samples.
         num_samples (int, optional): The number of samples to be included in the dataset.
-            Default: None, will include all text.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the mindspore.dataset.config.
+            Default: ``None`` , will include all text.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Bool type and Shuffle enum are both supported to pass in. Default: `Shuffle.GLOBAL` .
-            If shuffle is False, no shuffling will be performed.
-            If shuffle is True, it is equivalent to setting `shuffle` to mindspore.dataset.Shuffle.GLOBAL.
+            Bool type and Shuffle enum are both supported to pass in.
+            Default: ``Shuffle.GLOBAL`` .
+            If `shuffle` is ``False`` , no shuffling will be performed.
+            If `shuffle` is ``True`` , it is equivalent to setting `shuffle` to
+            ``mindspore.dataset.Shuffle.GLOBAL`` .
             Set the mode of data shuffling by passing in enumeration variables:
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples.
+            - ``Shuffle.GLOBAL`` : Shuffle both the files and samples.
 
-            - Shuffle.FILES: Shuffle files only.
+            - ``Shuffle.FILES`` : Shuffle files only.
 
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the maximum sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
         RuntimeError: If `num_shards` is specified but `shard_id` is None.
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
-        ValueError: If `shard_id` is invalid (< 0 or >= `num_shards`).
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
+
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> dbpedia_dataset_dir = "/path/to/dbpedia_dataset_directory"
         >>>
         >>> # 1) Read 3 samples from DBpedia dataset
@@ -646,36 +693,35 @@ class DBpediaDataset(SourceDataset, TextBaseDataset):
 
 class EnWik9Dataset(SourceDataset, TextBaseDataset):
     """
-    A source dataset that reads and parses EnWik9 Polarity and EnWik9 Full datasets.
+    EnWik9 dataset.
 
     The generated dataset has one column :py:obj:`[text]` with type string.
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
         num_samples (int, optional): The number of samples to be included in the dataset.
-            For Polarity dataset, 'train' will read from 3,600,000 train samples, 'test' will read from 400,000 test
-            samples, 'all' will read from all 4,000,000 samples.
-            For Full dataset, 'train' will read from 3,000,000 train samples, 'test' will read from 650,000 test
-            samples, 'all' will read from all 3,650,000 samples. Default: None, will include all samples.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the mindspore.dataset.config.
+            Default: ``None`` , will include all samples.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Bool type and Shuffle enum are both supported to pass in. Default: True.
-            If shuffle is False, no shuffling will be performed.
-            If shuffle is True, it is equivalent to setting `shuffle` to mindspore.dataset.Shuffle.GLOBAL.
+            Bool type and Shuffle enum are both supported to pass in. Default: ``True``.
+            If `shuffle` is ``False`` , no shuffling will be performed.
+            If `shuffle` is ``True`` , it is equivalent to setting `shuffle` to
+            ``mindspore.dataset.Shuffle.GLOBAL`` .
             Set the mode of data shuffling by passing in enumeration variables:
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples.
+            - ``Shuffle.GLOBAL`` : Shuffle both the files and samples.
 
-            - Shuffle.FILES: Shuffle files only.
+            - ``Shuffle.FILES`` : Shuffle files only.
 
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the maximum sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
@@ -683,7 +729,12 @@ class EnWik9Dataset(SourceDataset, TextBaseDataset):
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
 
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
+
     Examples:
+        >>> import mindspore.dataset as ds
         >>> en_wik9_dataset_dir = "/path/to/en_wik9_dataset"
         >>> dataset2 = ds.EnWik9Dataset(dataset_dir=en_wik9_dataset_dir, num_samples=2,
         ...                             shuffle=True)
@@ -732,7 +783,7 @@ class EnWik9Dataset(SourceDataset, TextBaseDataset):
 
 class IMDBDataset(MappableDataset, TextBaseDataset):
     """
-    A source dataset that reads and parses Internet Movie Database (IMDb).
+    IMDb(Internet Movie Database) dataset.
 
     The generated dataset has two columns: :py:obj:`[text, label]` .
     The tensor of column :py:obj:`text` is of the string type.
@@ -740,27 +791,25 @@ class IMDBDataset(MappableDataset, TextBaseDataset):
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        usage (str, optional): Usage of this dataset, can be 'train', 'test' or 'all'.
-            Default: None, will read all samples.
+        usage (str, optional): Usage of this dataset, can be ``'train'`` , ``'test'`` or ``'all'`` .
+            Default: ``None`` , will read all samples.
         num_samples (int, optional): The number of images to be included in the dataset.
-            For Polarity dataset, 'train' will read from 3,600,000 train samples, 'test' will read from 400,000 test
-            samples, 'all' will read from all 4,000,000 samples. For Full dataset, 'train' will read from 3,000,000
-            train samples, 'test' will read from 650,000 test samples, 'all' will read from all 3,650,000 samples.
-            Default: None, will include all samples.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the mindspore.dataset.config.
+            Default: ``None`` , will include all samples.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         shuffle (bool, optional): Whether or not to perform shuffle on the dataset.
-            Default: None, expected order behavior shown in the table below.
+            Default: ``None`` , expected order behavior shown in the table below.
         sampler (Sampler, optional): Object used to choose samples from the dataset.
-            Default: None, expected order behavior shown in the table below.
+            Default: ``None`` , expected order behavior shown in the table below.
         num_shards (int, optional): Number of shards that the dataset will be divided
-            into. Default: None. When this argument is specified, `num_samples` reflects
+            into. Default: ``None`` . When this argument is specified, `num_samples` reflects
             the maximum sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
@@ -769,40 +818,21 @@ class IMDBDataset(MappableDataset, TextBaseDataset):
         RuntimeError: If `num_shards` is specified but `shard_id` is None.
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
-        ValueError: If `shard_id` is invalid (< 0 or >= `num_shards`).
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
+
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
 
     Note:
         - The shape of the test column.
-        - This dataset can take in a `sampler` . `sampler` and `shuffle` are mutually exclusive.
-          The table below shows what input arguments are allowed and their expected behavior.
+        - The parameters `num_samples` , `shuffle` , `num_shards` , `shard_id` can be used to control the sampler
+          used in the dataset, and their effects when combined with parameter `sampler` are as follows.
 
-    .. list-table:: Expected Order Behavior of Using `sampler` and `shuffle`
-       :widths: 25 25 50
-       :header-rows: 1
-
-       * - Parameter `sampler`
-         - Parameter `shuffle`
-         - Expected Order Behavior
-       * - None
-         - None
-         - random order
-       * - None
-         - True
-         - random order
-       * - None
-         - False
-         - sequential order
-       * - Sampler object
-         - None
-         - order defined by sampler
-       * - Sampler object
-         - True
-         - not allowed
-       * - Sampler object
-         - False
-         - not allowed
+    .. include:: mindspore.dataset.sampler.txt
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> imdb_dataset_dir = "/path/to/imdb_dataset_directory"
         >>>
         >>> # 1) Read all samples (text files) in imdb_dataset_dir with 8 threads
@@ -877,7 +907,7 @@ class IMDBDataset(MappableDataset, TextBaseDataset):
 
 class IWSLT2016Dataset(SourceDataset, TextBaseDataset):
     """
-    A source dataset that reads and parses IWSLT2016 datasets.
+    IWSLT2016(International Workshop on Spoken Language Translation) dataset.
 
     The generated dataset has two columns: :py:obj:`[text, translation]` .
     The tensor of column :py:obj: `text` is of the string type.
@@ -885,36 +915,40 @@ class IWSLT2016Dataset(SourceDataset, TextBaseDataset):
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        usage (str, optional): Acceptable usages include 'train', 'valid', 'test' and 'all'. Default: None, all samples.
+        usage (str, optional): Acceptable usages include 'train', 'valid', 'test' and 'all'. Default: ``None`` ,
+            all samples.
         language_pair (sequence, optional): Sequence containing source and target language, supported values are
-            ('en', 'fr'), ('en', 'de'), ('en', 'cs'), ('en', 'ar'), ('fr', 'en'), ('de', 'en'), ('cs', 'en'),
-            ('ar', 'en'). Default: ('de', 'en').
+            ``('en', 'fr')``, ``('en', 'de')``, ``('en', 'cs')``, ``('en', 'ar')``, ``('fr', 'en')``,
+            ``('de', 'en')``, ``('cs', 'en')``, ``('ar', 'en')``. Default: ``None``, set to ``('de', 'en')``.
         valid_set (str, optional): A string to identify validation set, when usage is valid or all, the validation set
-            of `valid_set` type will be read, supported values are 'dev2010', 'tst2010', 'tst2011', 'tst2012', 'tst2013'
-            and 'tst2014'. Default: 'tst2013'.
+            of `valid_set` type will be read, supported values are ``'dev2010'``, ``'tst2010'``, ``'tst2011'``,
+            ``'tst2012'``, ``'tst2013'`` and ``'tst2014'``. Default: ``None``, set to ``'tst2013'``.
         test_set (str, optional): A string to identify test set, when usage is test or all, the test set of `test_set`
-            type will be read, supported values are 'dev2010', 'tst2010', 'tst2011', 'tst2012', 'tst2013' and 'tst2014'.
-            Default: 'tst2014'.
-        num_samples (int, optional): Number of samples (rows) to read. Default: None, reads the full dataset.
+            type will be read, supported values are ``'dev2010'``, ``'tst2010'``, ``'tst2011'``, ``'tst2012'``,
+            ``'tst2013'`` and ``'tst2014'``. Default: ``None``, set to ``'tst2014'``.
+        num_samples (int, optional): Number of samples (rows) to read. Default: ``None`` , reads the full dataset.
         shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Bool type and Shuffle enum are both supported to pass in. Default: `Shuffle.GLOBAL` .
-            If `shuffle` is False, no shuffling will be performed.
-            If `shuffle` is True, it is equivalent to setting `shuffle` to mindspore.dataset.Shuffle.GLOBAL.
+            Bool type and Shuffle enum are both supported to pass in.
+            Default: ``Shuffle.GLOBAL`` .
+            If `shuffle` is ``False``, no shuffling will be performed.
+            If `shuffle` is ``True``, it is equivalent to setting `shuffle` to
+            ``mindspore.dataset.Shuffle.GLOBAL`` .
             Set the mode of data shuffling by passing in enumeration variables:
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples.
+            - ``Shuffle.GLOBAL`` : Shuffle both the files and samples.
 
-            - Shuffle.FILES: Shuffle files only.
+            - ``Shuffle.FILES`` : Shuffle files only.
 
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the max sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the mindspore.dataset.config.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
@@ -922,7 +956,12 @@ class IWSLT2016Dataset(SourceDataset, TextBaseDataset):
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
 
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
+
     Examples:
+        >>> import mindspore.dataset as ds
         >>> iwslt2016_dataset_dir = "/path/to/iwslt2016_dataset_dir"
         >>> dataset = ds.IWSLT2016Dataset(dataset_dir=iwslt2016_dataset_dir, usage='all',
         ...                               language_pair=('de', 'en'), valid_set='tst2013', test_set='tst2014')
@@ -1005,38 +1044,43 @@ class IWSLT2016Dataset(SourceDataset, TextBaseDataset):
 
 class IWSLT2017Dataset(SourceDataset, TextBaseDataset):
     """
-    A source dataset that reads and parses IWSLT2017 datasets.
+    IWSLT2017(International Workshop on Spoken Language Translation) dataset.
 
     The generated dataset has two columns: :py:obj:`[text, translation]` .
     The tensor of column :py:obj:`text` and :py:obj:`translation` are of the string type.
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        usage (str, optional): Acceptable usages include 'train', 'valid', 'test' and 'all'. Default: None, all samples.
-        language_pair (sequence, optional): List containing src and tgt language, supported values are ('en', 'nl'),
-            ('en', 'de'), ('en', 'it'), ('en', 'ro'), ('nl', 'en'), ('nl', 'de'), ('nl', 'it'), ('nl', 'ro'),
-            ('de', 'en'), ('de', 'nl'), ('de', 'it'), ('de', 'ro'), ('it', 'en'), ('it', 'nl'), ('it', 'de'),
-            ('it', 'ro'), ('ro', 'en'), ('ro', 'nl'), ('ro', 'de'), ('ro', 'it'). Default: ('de', 'en').
-        num_samples (int, optional): Number of samples (rows) to read. Default: None, reads the full dataset.
+        usage (str, optional): Acceptable usages include 'train', 'valid', 'test' and 'all'. Default: ``None`` ,
+            all samples.
+        language_pair (sequence, optional): List containing src and tgt language, supported values are ``('en', 'nl')``,
+            ``('en', 'de')``, ``('en', 'it')``, ``('en', 'ro')``, ``('nl', 'en')``, ``('nl', 'de')``, ``('nl', 'it')``,
+            ``('nl', 'ro')``, ``('de', 'en')``, ``('de', 'nl')``, ``('de', 'it')``, ``('de', 'ro')``, ``('it', 'en')``,
+            ``('it', 'nl')``, ``('it', 'de')``, ``('it', 'ro')``, ``('ro', 'en')``, ``('ro', 'nl')``, ``('ro', 'de')``,
+            ``('ro', 'it')``. Default: ``None``, set to ``('de', 'en')``.
+        num_samples (int, optional): Number of samples (rows) to read. Default: ``None`` , reads the full dataset.
         shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Bool type and Shuffle enum are both supported to pass in. Default: `Shuffle.GLOBAL` .
-            If shuffle is False, no shuffling will be performed.
-            If shuffle is True, it is equivalent to setting `shuffle` to mindspore.dataset.Shuffle.GLOBAL.
+            Bool type and Shuffle enum are both supported to pass in.
+            Default: ``Shuffle.GLOBAL`` .
+            If `shuffle` is ``False`` , no shuffling will be performed.
+            If `shuffle` is ``True`` , it is equivalent to setting `shuffle` to
+            ``mindspore.dataset.Shuffle.GLOBAL`` .
             Set the mode of data shuffling by passing in enumeration variables:
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples.
+            - ``Shuffle.GLOBAL`` : Shuffle both the files and samples.
 
-            - Shuffle.FILES: Shuffle files only.
+            - ``Shuffle.FILES`` : Shuffle files only.
 
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the max sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the mindspore.dataset.config.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
@@ -1044,7 +1088,12 @@ class IWSLT2017Dataset(SourceDataset, TextBaseDataset):
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
 
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
+
     Examples:
+        >>> import mindspore.dataset as ds
         >>> iwslt2017_dataset_dir = "/path/to/iwslt2017_dataset_dir"
         >>> dataset = ds.IWSLT2017Dataset(dataset_dir=iwslt2017_dataset_dir, usage='all', language_pair=('de', 'en'))
 
@@ -1102,60 +1151,68 @@ class IWSLT2017Dataset(SourceDataset, TextBaseDataset):
 
 class Multi30kDataset(SourceDataset, TextBaseDataset):
     """
-    A source dataset that reads and parses Multi30k dataset.
+    Multi30k dataset.
 
     The generated dataset has two columns :py:obj:`[text, translation]` .
-    The tensor of column :py:obj:'text' is of the string type.
-    The tensor of column :py:obj:'translation' is of the string type.
+    The tensor of column :py:obj:`text` is of the string type.
+    The tensor of column :py:obj:`translation` is of the string type.
 
-      Args:
+    Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        usage (str, optional): Acceptable usages include 'train', 'test, 'valid' or 'all'. Default: 'all'.
-        language_pair (str, optional): Acceptable language_pair include ['en', 'de'], ['de', 'en'].
-            Default: ['en', 'de'].
+        usage (str, optional): Acceptable usages include ``'train'``, ``'test'``, ``'valid'`` or ``'all'``.
+            Default: ``None`` , will read all samples.
+        language_pair (Sequence[str, str], optional): Acceptable language_pair include ``['en', 'de']``,
+            ``['de', 'en']``. Default: ``None`` , means ``['en', 'de']``.
         num_samples (int, optional): The number of images to be included in the dataset.
-            Default: None, all samples.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the config.
-        shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Bool type and Shuffle enum are both supported to pass in. Default: `Shuffle.GLOBAL` .
-            If shuffle is False, no shuffling will be performed.
-            If shuffle is True, it is equivalent to setting `shuffle` to mindspore.dataset.Shuffle.GLOBAL.
-            Set the mode of data shuffling by passing in enumeration variables:
+            Default: ``None`` , will read all samples.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
+        shuffle (Union[bool, Shuffle], optional): Whether to shuffle the dataset. Default: ``None`` ,
+            means ``mindspore.dataset.Shuffle.GLOBAL`` .
+            If ``False`` is provided, no shuffling will be performed.
+            If ``True`` is provided, it is the same as setting to
+            ``mindspore.dataset.Shuffle.GLOBAL`` .
+            If Shuffle is provided, the effect is as follows:
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples.
-
-            - Shuffle.FILES: Shuffle files only.
+            - ``Shuffle.GLOBAL`` : Shuffle both the files and samples.
+            - ``Shuffle.FILES`` : Shuffle files only.
 
         num_shards (int, optional): Number of shards that the dataset will be divided
-            into. Default: None. When this argument is specified, `num_samples` reflects
+            into. Default: ``None`` . When this argument is specified, `num_samples` reflects
             the max sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
-        RuntimeError: If `usage` is not 'train', 'test', 'valid' or 'all'.
-        RuntimeError: If the length of language_pair is not equal to 2.
-        ValueError: If `num_parallel_workers` exceeds the max thread numbers.
+        ValueError: If `usage` is not ``'train'``, ``'test'``, ``'valid'`` or ``'all'``.
+        TypeError: If `language_pair` is not of type Sequence[str, str].
+        RuntimeError: If num_samples is less than 0.
+        RuntimeError: If `num_parallel_workers` exceeds the max thread numbers.
         RuntimeError: If `num_shards` is specified but `shard_id` is None.
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
-        RuntimeError: If num_samples is less than 0.
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
+
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> multi30k_dataset_dir = "/path/to/multi30k_dataset_directory"
         >>> data = ds.Multi30kDataset(dataset_dir=multi30k_dataset_dir, usage='all', language_pair=['de', 'en'])
 
     About Multi30k dataset:
 
-    Multi30K is a dataset to stimulate multilingual multimodal research for English-German.
-    It is based on the Flickr30k dataset, which contains images sourced from online
-    photo-sharing websites. Each image is paired with five English descriptions, which were
-    collected from Amazon Mechanical Turk. The Multi30K dataset extends the Flickr30K
-    dataset with translated and independent German sentences.
+    Multi30K is a multilingual dataset that features approximately 31,000 standardized images
+    described in multiple languages. The images are sourced from Flickr and each image comes
+    with sentence descripitions in both English and German, as well as descriptions in other
+    languages. Multi30k is used primarily for training and testing in tasks such as image
+    captioning, machine translation, and visual question answering.
 
     You can unzip the dataset files into the following directory structure and read by MindSpore's API.
 
@@ -1203,38 +1260,41 @@ class Multi30kDataset(SourceDataset, TextBaseDataset):
 
 class PennTreebankDataset(SourceDataset, TextBaseDataset):
     """
-    A source dataset that reads and parses PennTreebank datasets.
+    PennTreebank dataset.
 
     The generated dataset has one column :py:obj:`[text]` .
     The tensor of column :py:obj:`text` is of the string type.
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        usage (str, optional): Acceptable usages include 'train', 'test', 'valid' and 'all'.
-            'train' will read from 42,068 train samples of string type,
-            'test' will read from 3,370 test samples of string type,
-            'valid' will read from 3,761 test samples of string type,
-            'all' will read from all 49,199 samples of string type. Default: None, all samples.
-        num_samples (int, optional): Number of samples (rows) to read. Default: None, reads the full dataset.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the mindspore.dataset.config.
+        usage (str, optional): Acceptable usages include ``'train'``, ``'test'``, ``'valid'`` and ``'all'``.
+            ``'train'`` will read from 42,068 train samples of string type,
+            ``'test'`` will read from 3,370 test samples of string type,
+            ``'valid'`` will read from 3,761 test samples of string type,
+            ``'all'`` will read from all 49,199 samples of string type. Default: ``None`` , all samples.
+        num_samples (int, optional): Number of samples (rows) to read. Default: ``None`` , reads the full dataset.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Bool type and Shuffle enum are both supported to pass in. Default: `Shuffle.GLOBAL` .
-            If shuffle is False, no shuffling will be performed.
-            If shuffle is True, it is equivalent to setting `shuffle` to mindspore.dataset.Shuffle.GLOBAL.
+            Bool type and Shuffle enum are both supported to pass in.
+            Default: ``Shuffle.GLOBAL`` .
+            If `shuffle` is ``False`` , no shuffling will be performed.
+            If `shuffle` is ``True`` , it is equivalent to setting `shuffle` to
+            ``mindspore.dataset.Shuffle.GLOBAL`` .
             Set the mode of data shuffling by passing in enumeration variables:
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples.
+            - ``Shuffle.GLOBAL`` : Shuffle both the files and samples.
 
-            - Shuffle.FILES: Shuffle files only.
+            - ``Shuffle.FILES`` : Shuffle files only.
 
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
-            When this argument is specified, 'num_samples' reflects the max sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
+            When this argument is specified, `num_samples` reflects the max sample number of per shard.
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
@@ -1242,7 +1302,12 @@ class PennTreebankDataset(SourceDataset, TextBaseDataset):
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
 
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
+
     Examples:
+        >>> import mindspore.dataset as ds
         >>> penn_treebank_dataset_dir = "/path/to/penn_treebank_dataset_directory"
         >>> dataset = ds.PennTreebankDataset(dataset_dir=penn_treebank_dataset_dir, usage='all')
 
@@ -1300,35 +1365,38 @@ class PennTreebankDataset(SourceDataset, TextBaseDataset):
 
 class SogouNewsDataset(SourceDataset, TextBaseDataset):
     r"""
-    A source dataset that reads and parses Sogou News dataset.
+    Sogou News dataset.
 
     The generated dataset has three columns: :py:obj:`[index, title, content]` ,
     and the data type of three columns is string.
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        usage (str, optional): Usage of this dataset, can be 'train', 'test' or 'all' .
-            'train' will read from 450,000 train samples, 'test' will read from 60,000 test samples,
-            'all' will read from all 510,000 samples. Default: None, all samples.
-        num_samples (int, optional): Number of samples (rows) to read. Default: None, read all samples.
+        usage (str, optional): Usage of this dataset, can be ``'train'`` , ``'test'`` or ``'all'`` .
+            ``'train'`` will read from 450,000 train samples, ``'test'`` will read from 60,000 test samples,
+            ``'all'`` will read from all 510,000 samples. Default: ``None`` , all samples.
+        num_samples (int, optional): Number of samples (rows) to read. Default: ``None`` , read all samples.
         shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Bool type and Shuffle enum are both supported to pass in. Default: `Shuffle.GLOBAL` .
-            If shuffle is False, no shuffling will be performed.
-            If shuffle is True, it is equivalent to setting `shuffle` to mindspore.dataset.Shuffle.GLOBAL.
+            Bool type and Shuffle enum are both supported to pass in.
+            Default: ``Shuffle.GLOBAL`` .
+            If `shuffle` is ``False`` , no shuffling will be performed.
+            If `shuffle` is ``True`` , it is equivalent to setting `shuffle` to
+            ``mindspore.dataset.Shuffle.GLOBAL`` .
             Set the mode of data shuffling by passing in enumeration variables:
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples, same as setting shuffle to True.
+            - ``Shuffle.GLOBAL`` : Shuffle both the files and samples, same as setting shuffle to True.
 
-            - Shuffle.FILES: Shuffle files only.
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+            - ``Shuffle.FILES`` : Shuffle files only.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the max sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the config.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
@@ -1336,7 +1404,12 @@ class SogouNewsDataset(SourceDataset, TextBaseDataset):
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
 
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
+
     Examples:
+        >>> import mindspore.dataset as ds
         >>> sogou_news_dataset_dir = "/path/to/sogou_news_dataset_dir"
         >>> dataset = ds.SogouNewsDataset(dataset_dir=sogou_news_dataset_dir, usage='all')
 
@@ -1386,54 +1459,62 @@ class SogouNewsDataset(SourceDataset, TextBaseDataset):
 
 class SQuADDataset(SourceDataset, TextBaseDataset):
     """
-    A source dataset that reads and parses SQuAD 1.1 and SQuAD 2.0 datasets.
+    SQuAD 1.1 and SQuAD 2.0 datasets.
 
     The generated dataset with different versions and usages has the same output columns:
-        :py:obj:`[context, question, text, answer_start]` .
+    :py:obj:`[context, question, text, answer_start]` .
     The tensor of column :py:obj:`context` is of the string type.
     The tensor of column :py:obj:`question` is of the string type.
     The tensor of column :py:obj:`text` is the answer in the context of the string type.
     The tensor of column :py:obj:`answer_start` is the start index of answer in context,
-        which is of the uint32 type.
+    which is of the uint32 type.
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        usage (str, optional): Specify the 'train', 'dev' or 'all' part of dataset. Default: None, all samples.
+        usage (str, optional): Specify the ``'train'``, ``'dev'`` or ``'all'`` part of dataset.
+            Default: ``None`` , all samples.
         num_samples (int, optional): The number of samples to be included in the dataset.
-            Default: None, will include all samples.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the config.
-        shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Bool type and Shuffle enum are both supported to pass in. Default: `Shuffle.GLOBAL` .
-            If shuffle is False, no shuffling will be performed.
-            If shuffle is True, it is equivalent to setting `shuffle` to mindspore.dataset.Shuffle.GLOBAL.
-            Set the mode of data shuffling by passing in enumeration variables:
+            Default: ``None`` , will include all samples.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
+        shuffle (Union[bool, Shuffle], optional): Whether to shuffle the dataset.
+            Default: ``Shuffle.GLOBAL`` .
+            If ``False`` is provided, no shuffling will be performed.
+            If ``True`` is provided, it is the same as setting to
+            ``mindspore.dataset.Shuffle.GLOBAL`` .
+            If Shuffle is provided, the effect is as follows:
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples.
+            - ``Shuffle.GLOBAL`` : Shuffle both the files and samples.
+            - ``Shuffle.FILES`` : Shuffle files only.
 
-            - Shuffle.FILES: Shuffle files only.
-
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the maximum sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
         RuntimeError: If `num_shards` is specified but `shard_id` is None.
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
+
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> squad_dataset_dir = "/path/to/squad_dataset_file"
         >>> dataset = ds.SQuADDataset(dataset_dir=squad_dataset_dir, usage='all')
 
     About SQuAD dataset:
 
-    Stanford Question Answering Dataset (SQuAD) is a reading comprehension dataset, consisting of questions posed by
+    SQuAD (Stanford Question Answering Dataset) is a reading comprehension dataset, consisting of questions posed by
     crowdworkers on a set of Wikipedia articles, where the answer to every question is a segment of text, or span,
     from the corresponding reading passage, or the question might be unanswerable.
 
@@ -1447,6 +1528,7 @@ class SQuADDataset(SourceDataset, TextBaseDataset):
     For SQuAD 1.1:
 
     .. code-block::
+
         .
         └── SQuAD1
              ├── train-v1.1.json
@@ -1455,6 +1537,7 @@ class SQuADDataset(SourceDataset, TextBaseDataset):
     For SQuAD 2.0:
 
     .. code-block::
+
         .
         └── SQuAD2
              ├── train-v2.0.json
@@ -1496,6 +1579,112 @@ class SQuADDataset(SourceDataset, TextBaseDataset):
                              self.num_shards, self.shard_id)
 
 
+class SST2Dataset(SourceDataset, TextBaseDataset):
+    """
+    SST2(Stanford Sentiment Treebank v2) dataset.
+
+    The generated dataset's train.tsv and dev.tsv have two columns :py:obj:`[sentence, label]` .
+    The generated dataset's test.tsv has one column :py:obj:`[sentence]` .
+    The tensor of column :py:obj:`sentence` and :py:obj:`label` are of the string type.
+
+    Args:
+        dataset_dir (str): Path to the root directory that contains the dataset.
+        usage (str, optional): Usage of this dataset, can be ``"train"``, ``"test"`` or ``"dev"``.
+            ``"train"`` will read from 67,349 train samples, ``"test"`` will read from 1,821 test samples,
+            ``"dev"`` will read from all 872 samples. Default: ``None`` , will read train samples.
+        num_samples (int, optional): The number of samples to be included in the dataset.
+            Default: ``None`` , will include all text.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
+        shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
+            Bool type and Shuffle enum are both supported to pass in.
+            Default: ``Shuffle.GLOBAL`` .
+            If `shuffle` is ``False`` , no shuffling will be performed;
+            If `shuffle` is ``True`` , the behavior is the same as setting shuffle to be Shuffle.GLOBAL
+            Set the mode of data shuffling by passing in enumeration variables:
+
+            - ``Shuffle.GLOBAL`` : Shuffle the samples.
+
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
+            When this argument is specified, `num_samples` reflects the maximum sample number of per shard.
+        shard_id (int, optional): The shard ID within `num_shards`. This argument can only be specified when
+            `num_shards` is also specified. Default: ``None`` .
+        cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
+
+    Raises:
+        RuntimeError: If `dataset_dir` does not contain data files.
+        ValueError: If `num_parallel_workers` exceeds the max thread numbers.
+        RuntimeError: If `num_shards` is specified but shard_id is None.
+        RuntimeError: If `shard_id` is specified but `num_shards` is None.
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
+
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
+
+    Examples:
+        >>> import mindspore.dataset as ds
+        >>> sst2_dataset_dir = "/path/to/sst2_dataset_directory"
+        >>>
+        >>> # 1) Read 3 samples from SST2 dataset
+        >>> dataset = ds.SST2Dataset(dataset_dir=sst2_dataset_dir, num_samples=3)
+        >>>
+        >>> # 2) Read train samples from SST2 dataset
+        >>> dataset = ds.SST2Dataset(dataset_dir=sst2_dataset_dir, usage="train")
+
+    About SST2 dataset:
+    The Stanford Sentiment Treebank is a corpus with fully labeled parse trees that allows for a complete
+    analysis of the compositional effects of sentiment in language. The corpus is based on the dataset introduced
+    by Pang and Lee (2005) and consists of 11,855 single sentences extracted from movie reviews. It was parsed
+    with the Stanford parser and includes a total of 215,154 unique phrases from those parse trees, each
+    annotated by 3 human judges.
+
+    Here is the original SST2 dataset structure.
+    You can unzip the dataset files into this directory structure and read by Mindspore's API.
+
+    .. code-block::
+
+        .
+        └── sst2_dataset_dir
+            ├── train.tsv
+            ├── test.tsv
+            ├── dev.tsv
+            └── original
+
+    Citation:
+
+    .. code-block::
+
+        @inproceedings{socher-etal-2013-recursive,
+            title     = {Recursive Deep Models for Semantic Compositionality Over a Sentiment Treebank},
+            author    = {Socher, Richard and Perelygin, Alex and Wu, Jean and Chuang, Jason and Manning,
+                          Christopher D. and Ng, Andrew and Potts, Christopher},
+            booktitle = {Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing},
+            month     = oct,
+            year      = {2013},
+            address   = {Seattle, Washington, USA},
+            publisher = {Association for Computational Linguistics},
+            url       = {https://www.aclweb.org/anthology/D13-1170},
+            pages     = {1631--1642},
+        }
+    """
+
+    @check_sst2_dataset
+    def __init__(self, dataset_dir, usage=None, num_samples=None, num_parallel_workers=None, shuffle=Shuffle.GLOBAL,
+                 num_shards=None, shard_id=None, cache=None):
+        super().__init__(num_parallel_workers=num_parallel_workers, num_samples=num_samples, shuffle=shuffle,
+                         num_shards=num_shards, shard_id=shard_id, cache=cache)
+        self.dataset_dir = dataset_dir
+        self.usage = replace_none(usage, "train")
+
+    def parse(self, children=None):
+        return cde.SST2Node(self.dataset_dir, self.usage, self.num_samples, self.shuffle_flag,
+                            self.num_shards, self.shard_id)
+
+
 class TextFileDataset(SourceDataset, TextBaseDataset):
     """
     A source dataset that reads and parses datasets stored on disk in text format.
@@ -1505,37 +1694,44 @@ class TextFileDataset(SourceDataset, TextBaseDataset):
         dataset_files (Union[str, list[str]]): String or list of files to be read or glob strings to search for a
             pattern of files. The list will be sorted in a lexicographical order.
         num_samples (int, optional): The number of samples to be included in the dataset.
-            Default: None, will include all images.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the config.
+            Default: ``None`` , will include all images.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Default: `Shuffle.GLOBAL` . Bool type and Shuffle enum are both supported to pass in.
-            If shuffle is False, no shuffling will be performed.
-            If shuffle is True, performs global shuffle.
-            There are three levels of shuffling, desired shuffle enum defined by mindspore.dataset.Shuffle.
+            Default: ``Shuffle.GLOBAL`` .
+            Bool type and Shuffle enum are both supported to pass in.
+            If `shuffle` is ``False`` , no shuffling will be performed.
+            If `shuffle` is ``True`` , performs global shuffle.
+            There are three levels of shuffling, desired shuffle enum defined by :class:`mindspore.dataset.Shuffle` .
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples, same as setting shuffle to True.
+            - ``Shuffle.GLOBAL`` : Shuffle both the files and samples, same as setting shuffle to True.
 
-            - Shuffle.FILES: Shuffle files only.
+            - ``Shuffle.FILES`` : Shuffle files only.
 
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the maximum sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         ValueError: If dataset_files are not valid or do not exist.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
         RuntimeError: If `num_shards` is specified but `shard_id` is None.
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
-        ValueError: If `shard_id` is invalid (< 0 or >= `num_shards`).
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
+
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
 
     Examples:
-        >>> text_file_dataset_dir = ["/path/to/text_file_dataset_file"] # contains 1 or multiple text files
-        >>> dataset = ds.TextFileDataset(dataset_files=text_file_dataset_dir)
+        >>> import mindspore.dataset as ds
+        >>> text_file_list = ["/path/to/text_file_dataset_file"] # contains 1 or multiple text files
+        >>> dataset = ds.TextFileDataset(dataset_files=text_file_list)
     """
 
     @check_textfiledataset
@@ -1553,36 +1749,40 @@ class TextFileDataset(SourceDataset, TextBaseDataset):
 
 class UDPOSDataset(SourceDataset, TextBaseDataset):
     """
-    A source dataset that reads and parses UDPOS dataset.
+    UDPOS(Universal Dependencies dataset for Part of Speech) dataset.
 
     The generated dataset has three columns: :py:obj:`[word, universal, stanford]` ,
     and the data type of three columns is string.
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        usage (str, optional): Usage of this dataset, can be 'train', 'test', 'valid' or 'all'. 'train' will read from
-            12,543 train samples, 'test' will read from 2,077 test samples, 'valid' will read from 2,002 test samples,
-            'all' will read from all 16,622 samples. Default: None, all samples.
-        num_samples (int, optional): Number of samples (rows) to read. Default: None, reads the full dataset.
+        usage (str, optional): Usage of this dataset, can be ``'train'``, ``'test'``, ``'valid'`` or ``'all'``.
+            ``'train'`` will read from 12,543 train samples, ``'test'`` will read from 2,077 test samples,
+            ``'valid'`` will read from 2,002 test samples, ``'all'`` will read from all 16,622 samples.
+            Default: ``None`` , all samples.
+        num_samples (int, optional): Number of samples (rows) to read. Default: ``None`` , reads the full dataset.
         shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Bool type and Shuffle enum are both supported to pass in. Default: `Shuffle.GLOBAL` .
-            If shuffle is False, no shuffling will be performed.
-            If shuffle is True, it is equivalent to setting `shuffle` to mindspore.dataset.Shuffle.GLOBAL.
+            Bool type and Shuffle enum are both supported to pass in.
+            Default: ``Shuffle.GLOBAL`` .
+            If `shuffle` is ``False`` , no shuffling will be performed.
+            If `shuffle` is ``True`` , it is equivalent to setting `shuffle` to
+            ``mindspore.dataset.Shuffle.GLOBAL`` .
             Set the mode of data shuffling by passing in enumeration variables:
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples.
+            - ``Shuffle.GLOBAL`` : Shuffle both the files and samples.
 
-            - Shuffle.FILES: Shuffle files only.
+            - ``Shuffle.FILES`` : Shuffle files only.
 
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the max sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the config.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
@@ -1590,7 +1790,12 @@ class UDPOSDataset(SourceDataset, TextBaseDataset):
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
 
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
+
     Examples:
+        >>> import mindspore.dataset as ds
         >>> udpos_dataset_dir = "/path/to/udpos_dataset_dir"
         >>> dataset = ds.UDPOSDataset(dataset_dir=udpos_dataset_dir, usage='all')
 
@@ -1629,42 +1834,50 @@ class UDPOSDataset(SourceDataset, TextBaseDataset):
 
 class WikiTextDataset(SourceDataset, TextBaseDataset):
     """
-    A source dataset that reads and parses WikiText2 and WikiText103 datasets.
+    WikiText2 and WikiText103 datasets.
 
     The generated dataset has one column :py:obj:`[text]` , and
     the tensor of column `text` is of the string type.
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        usage (str, optional): Acceptable usages include 'train', 'test', 'valid' and 'all'. Default: None, all samples.
-        num_samples (int, optional): Number of samples (rows) to read. Default: None, reads the full dataset.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the config.
+        usage (str, optional): Acceptable usages include ``'train'``, ``'test'``, ``'valid'`` and ``'all'``.
+            Default: ``None`` , all samples.
+        num_samples (int, optional): Number of samples (rows) to read. Default: ``None`` , reads the full dataset.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Bool type and Shuffle enum are both supported to pass in. Default: `Shuffle.GLOBAL` .
-            If shuffle is False, no shuffling will be performed.
-            If shuffle is True, it is equivalent to setting `shuffle` to mindspore.dataset.Shuffle.GLOBAL.
+            Bool type and Shuffle enum are both supported to pass in.
+            Default: ``Shuffle.GLOBAL`` .
+            If `shuffle` is ``False`` , no shuffling will be performed.
+            If `shuffle` is ``True`` , it is equivalent to setting `shuffle` to
+            ``mindspore.dataset.Shuffle.GLOBAL`` .
             Set the mode of data shuffling by passing in enumeration variables:
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples.
+            - ``Shuffle.GLOBAL`` : Shuffle both the files and samples.
 
-            - Shuffle.FILES: Shuffle files only.
+            - ``Shuffle.FILES`` : Shuffle files only.
 
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
-            When this argument is specified, 'num_samples' reflects the max sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
+            When this argument is specified, `num_samples` reflects the max sample number of per shard.
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files or invalid.
         RuntimeError: If `num_shards` is specified but `shard_id` is None.
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
-        ValueError: If `shard_id` is invalid (< 0 or >= `num_shards`).
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
         ValueError: If `num_samples` is invalid (< 0).
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
+
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
 
     About WikiTextDataset dataset:
 
@@ -1697,6 +1910,7 @@ class WikiTextDataset(SourceDataset, TextBaseDataset):
         }
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> wiki_text_dataset_dir = "/path/to/wiki_text_dataset_directory"
         >>> dataset = ds.WikiTextDataset(dataset_dir=wiki_text_dataset_dir, usage='all')
     """
@@ -1716,45 +1930,53 @@ class WikiTextDataset(SourceDataset, TextBaseDataset):
 
 class YahooAnswersDataset(SourceDataset, TextBaseDataset):
     """
-    A source dataset that reads and parses the YahooAnswers dataset.
+    YahooAnswers dataset.
 
     The generated dataset has four columns :py:obj:`[class, title, content, answer]` , whose data type is string.
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        usage (str, optional): Usage of this dataset, can be 'train', 'test' or 'all'. 'train' will read
-            from 1,400,000 train samples, 'test' will read from 60,000 test samples, 'all' will read from
-            all 1,460,000 samples. Default: None, all samples.
+        usage (str, optional): Usage of this dataset, can be ``'train'`` , ``'test'`` or ``'all'`` .
+            ``'train'`` will read from 1,400,000 train samples, ``'test'`` will read from 60,000 test
+            samples, ``'all'`` will read from all 1,460,000 samples. Default: ``None`` , all samples.
         num_samples (int, optional): The number of samples to be included in the dataset.
-            Default: None, will include all text.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the config.
+            Default: ``None`` , will include all text.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Bool type and Shuffle enum are both supported to pass in. Default: `Shuffle.GLOBAL` .
-            If shuffle is False, no shuffling will be performed.
-            If shuffle is True, it is equivalent to setting `shuffle` to mindspore.dataset.Shuffle.GLOBAL.
+            Bool type and Shuffle enum are both supported to pass in.
+            Default: ``Shuffle.GLOBAL`` .
+            If `shuffle` is ``False`` , no shuffling will be performed.
+            If `shuffle` is ``True`` , it is equivalent to setting `shuffle` to
+            ``mindspore.dataset.Shuffle.GLOBAL`` .
             Set the mode of data shuffling by passing in enumeration variables:
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples.
+            - ``Shuffle.GLOBAL`` : Shuffle both the files and samples.
 
-            - Shuffle.FILES: Shuffle files only.
+            - ``Shuffle.FILES`` : Shuffle files only.
 
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the maximum sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
         RuntimeError: If `num_shards` is specified but `shard_id` is None.
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
-        ValueError: If `shard_id` is invalid (< 0 or >= `num_shards`).
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
 
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
+
     Examples:
+        >>> import mindspore.dataset as ds
         >>> yahoo_answers_dataset_dir = "/path/to/yahoo_answers_dataset_directory"
         >>>
         >>> # 1) Read 3 samples from YahooAnswers dataset
@@ -1810,36 +2032,40 @@ class YahooAnswersDataset(SourceDataset, TextBaseDataset):
 
 class YelpReviewDataset(SourceDataset, TextBaseDataset):
     """
-    A source dataset that reads and parses Yelp Review Polarity and Yelp Review Full dataset.
+    Yelp Review Polarity and Yelp Review Full datasets.
 
     The generated dataset has two columns: :py:obj:`[label, text]` , and the data type of two columns is string.
 
     Args:
         dataset_dir (str): Path to the root directory that contains the dataset.
-        usage (str, optional): Usage of this dataset, can be 'train', 'test' or 'all'.
-            For Polarity, 'train' will read from 560,000 train samples, 'test' will read from 38,000 test samples,
-            'all' will read from all 598,000 samples.
-            For Full, 'train' will read from 650,000 train samples, 'test' will read from 50,000 test samples,
-            'all' will read from all 700,000 samples. Default: None, all samples.
-        num_samples (int, optional): Number of samples (rows) to read. Default: None, reads all samples.
+        usage (str, optional): Usage of this dataset, can be ``'train'`` , ``'test'`` or ``'all'`` .
+            For Polarity, ``'train'`` will read from 560,000 train samples,
+            ``'test'`` will read from 38,000 test samples,
+            ``'all'`` will read from all 598,000 samples.
+            For Full, ``'train'`` will read from 650,000 train samples, ``'test'`` will read from 50,000 test samples,
+            ``'all'`` will read from all 700,000 samples. Default: ``None`` , all samples.
+        num_samples (int, optional): Number of samples (rows) to read. Default: ``None`` , reads all samples.
         shuffle (Union[bool, Shuffle], optional): Perform reshuffling of the data every epoch.
-            Bool type and Shuffle enum are both supported to pass in. Default: `Shuffle.GLOBAL` .
-            If shuffle is False, no shuffling will be performed.
-            If shuffle is True, it is equivalent to setting `shuffle` to mindspore.dataset.Shuffle.GLOBAL.
+            Bool type and Shuffle enum are both supported to pass in.
+            Default: ``Shuffle.GLOBAL`` .
+            If `shuffle` is ``False`` , no shuffling will be performed.
+            If `shuffle` is ``True`` , it is equivalent to setting `shuffle` to
+            ``mindspore.dataset.Shuffle.GLOBAL`` .
             Set the mode of data shuffling by passing in enumeration variables:
 
-            - Shuffle.GLOBAL: Shuffle both the files and samples.
+            - ``Shuffle.GLOBAL`` : Shuffle both the files and samples.
 
-            - Shuffle.FILES: Shuffle files only.
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+            - ``Shuffle.FILES`` : Shuffle files only.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the max sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This
             argument can only be specified when `num_shards` is also specified.
-        num_parallel_workers (int, optional): Number of workers to read the data.
-            Default: None, number set in the config.
+        num_parallel_workers (int, optional): Number of worker threads to read the data.
+            Default: ``None`` , will use global default workers(8), it can be set
+            by :func:`mindspore.dataset.config.set_num_parallel_workers` .
         cache (DatasetCache, optional): Use tensor caching service to speed up dataset processing. More details:
-            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/dataset/cache.html>`_ .
-            Default: None, which means no cache is used.
+            `Single-Node Data Cache <https://www.mindspore.cn/tutorials/experts/en/master/dataset/cache.html>`_ .
+            Default: ``None`` , which means no cache is used.
 
     Raises:
         RuntimeError: If `dataset_dir` does not contain data files.
@@ -1847,7 +2073,12 @@ class YelpReviewDataset(SourceDataset, TextBaseDataset):
         RuntimeError: If `shard_id` is specified but `num_shards` is None.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
 
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
+
     Examples:
+        >>> import mindspore.dataset as ds
         >>> yelp_review_dataset_dir = "/path/to/yelp_review_dataset_dir"
         >>> dataset = ds.YelpReviewDataset(dataset_dir=yelp_review_dataset_dir, usage='all')
 

@@ -20,6 +20,8 @@
 #include <memory>
 
 #include "frontend/optimizer/optimizer.h"
+#include "mindspore/core/ops/structure_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "frontend/optimizer/opt.h"
 #include "frontend/optimizer/anf_visitor.h"
 
@@ -33,7 +35,6 @@ class OptimizeIRPassLib {
   ~OptimizeIRPassLib() = default;
 
   SubstitutionPtr arithmetic_simplify_;
-  SubstitutionPtr arithmetic_simplify2_;
   SubstitutionPtr special_op_eliminate_;
   SubstitutionPtr ad_related_special_op_eliminate_;
   SubstitutionPtr zero_like_fill_zero_;
@@ -48,6 +49,9 @@ class OptimizeIRPassLib {
   SubstitutionPtr tuple_list_get_item_depend_reorder_;
   SubstitutionPtr tuple_list_convert_item_index_to_positive_;
   SubstitutionPtr make_slice_get_slice_eliminator_;
+  SubstitutionPtr dict_get_item_eliminator_;
+  SubstitutionPtr dict_get_item_const_eliminator_;
+  SubstitutionPtr dict_set_item_eliminator_;
 
   SubstitutionPtr stack_unstack_eliminate_;
   SubstitutionPtr tile_eliminate_;
@@ -64,6 +68,9 @@ class OptimizeIRPassLib {
   SubstitutionPtr mini_step_allgather_replace_;
   SubstitutionPtr micro_step_allgather_replace_;
   SubstitutionPtr real_op_eliminate_;
+  SubstitutionPtr convert_tensor_eliminate_;
+  SubstitutionPtr convert_tensor_all_eliminate_;
+  SubstitutionPtr get_grad_eliminate_;
 
   // Env Item Eliminate
   SubstitutionPtr environ_get_eliminate_;
@@ -129,6 +136,9 @@ class OptimizeIRPassLib {
   // Convert
   SubstitutionPtr print_tuple_wrapper_;
 
+  // Print const Convert string
+  SubstitutionPtr print_const_string_wrapper_;
+
   // tuple parameter graph transform
   SubstitutionPtr call_graph_tuple_transform_;
 
@@ -144,6 +154,9 @@ class OptimizeIRPassLib {
   // Value_Based Eliminate
   SubstitutionPtr value_based_eliminate_;
 
+  // Partial defer inline
+  SubstitutionPtr partial_defer_inline_;
+
   // Switch defer inline
   SubstitutionPtr switch_defer_inline_;
 
@@ -158,9 +171,7 @@ class OptimizeIRPassLib {
 
   // Recompute
   SubstitutionPtr set_cell_output_no_recompute_;
-
-  // Workaround
-  SubstitutionPtr stop_gradient_special_op_;
+  SubstitutionPtr remove_not_recompute_node_;
 };
 
 // the collection of irpass for resolve action
@@ -178,21 +189,14 @@ class MetaUnpackPrepareLib {
   SubstitutionPtr meta_unpack_prepare_;
 };
 
-class BpropMindIRPassLib {
+class GradPartialPassLib {
  public:
-  BpropMindIRPassLib();
-  ~BpropMindIRPassLib() = default;
-  SubstitutionPtr get_constexpr_ops_;
-  SubstitutionPtr get_class_type_;
-  SubstitutionPtr get_meta_fg_;
-  SubstitutionPtr get_primal_attr_;
-  SubstitutionPtr get_sub_func_graph_;
-  SubstitutionPtr class_type_resolve_;
-  SubstitutionPtr do_signature_resolve_;
-  SubstitutionPtr resolve_node_resolve_;
+  GradPartialPassLib();
+  ~GradPartialPassLib() = default;
+  SubstitutionPtr grad_partial_transform_;
 };
 
-// predicate functions
+// Predicate functions
 inline bool IsNode(const AnfNodePtr &) { return true; }
 
 inline bool IsCNode(const AnfNodePtr &node) {

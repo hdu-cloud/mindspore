@@ -1,6 +1,8 @@
 mindspore_lite
 ==============
 
+The Python API only support cloud-side inference.
+
 Context
 --------
 
@@ -10,10 +12,6 @@ Context
     :template: classtemplate.rst
 
     mindspore_lite.Context
-    mindspore_lite.DeviceInfo
-    mindspore_lite.CPUDeviceInfo
-    mindspore_lite.GPUDeviceInfo
-    mindspore_lite.AscendDeviceInfo
 
 Converter
 ---------
@@ -34,10 +32,11 @@ Model
     :nosignatures:
     :template: classtemplate.rst
 
-    mindspore_lite.ModelType
     mindspore_lite.Model
-    mindspore_lite.RunnerConfig
+    mindspore_lite.ModelGroup
+    mindspore_lite.ModelGroupFlag
     mindspore_lite.ModelParallelRunner
+    mindspore_lite.ModelType
 
 Tensor
 ------

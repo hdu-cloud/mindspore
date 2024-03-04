@@ -22,7 +22,6 @@
 #include <vector>
 
 #include "ir/value.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "frontend/parallel/device_matrix.h"
 #include "frontend/parallel/dynamic_creator.h"
 #include "frontend/parallel/graph_util/generate_graph.h"
@@ -30,9 +29,9 @@
 #include "include/common/utils/parallel_context.h"
 #include "frontend/parallel/tensor_layout/tensor_redistribution.h"
 #if defined(__linux__) && defined(WITH_BACKEND)
-#include "ps/ps_cache/ps_data/ps_data_prefetch.h"
-#include "ps/ps_context.h"
-#include "distributed/embedding_cache/embedding_cache_utils.h"
+#include "include/backend/distributed/ps/ps_cache/ps_data_prefetch.h"
+#include "include/backend/distributed/ps/ps_context.h"
+#include "include/backend/distributed/embedding_cache/embedding_cache_utils.h"
 #endif
 
 namespace mindspore {
@@ -93,7 +92,7 @@ Status UniqueInfo::SetCostUnderStrategy(const StrategyPtr &strategy) { return Se
 
 std::vector<StrategyPtr> UniqueInfo::GenerateOpStrategies(int64_t stage_id) {
   Shape input0_split;
-  input0_split.emplace_back(0);
+  (void)input0_split.emplace_back(0);
   Shapes splittable_inputs = {input0_split};
   std::vector<StrategyPtr> sp_vector;
   if (GenerateStrategiesForIndependentInputs(stage_id, inputs_shape_, splittable_inputs, &sp_vector) != SUCCESS) {
@@ -114,7 +113,7 @@ Status UniqueInfo::ComputeReplaceGraph(const CNodePtr &cnode) {
   if (ps::PSContext::instance()->enable_distributed_mindrt()) {
     bias = static_cast<int64_t>(embedding_cache_table_manager.cache_indices_lower_bound());
   }
-  auto slice_size = SizeToLong(embedding_cache_table_manager.vocab_cache_size());
+  auto slice_size = SizeToLong(embedding_cache_table_manager.cache_size());
 
   auto sub = gen_g.PushBack({gen_g.NewOpInst(SUB), gen_g.virtual_input_node(), CreateInt32Tensor(bias)});
   auto relu = gen_g.PushBack({gen_g.NewOpInst(RELU), sub});

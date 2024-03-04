@@ -15,18 +15,20 @@
  */
 
 #include "plugin/device/ascend/hal/hardware/ascend_device_context.h"
+#include <map>
 #include <memory>
+#include <string>
 #include "plugin/device/ascend/hal/common/ascend_utils.h"
+#include "runtime/device/ms_device_shape_transfer.h"
 #ifdef ENABLE_DEBUGGER
 #include "debug/tensor_load.h"
 #include "debug/debugger/proto_exporter.h"
-#else
-#include "debug/debugger/proto_exporter_stub.h"
 #endif
 #ifndef ENABLE_SECURITY
 #include "plugin/device/ascend/hal/profiler/ascend_profiling.h"
-#include "plugin/device/ascend/hal/device/profiling/profiling_manager.h"
-#include "distributed/collective/collective_manager.h"
+#include "pybind_api/gil_scoped_long_running.h"
+#include "include/backend/distributed/collective/collective_manager.h"
+#include "runtime/dev.h"
 
 using mindspore::profiler::ascend::AscendProfiler;
 #endif
@@ -35,12 +37,14 @@ namespace mindspore {
 namespace device {
 namespace ascend {
 void AscendDeviceContext::Initialize() {
-  MS_LOG(INFO) << "Start Initialize...";
+  GilReleaseWithCheck gil_release;
+  std::lock_guard<std::mutex> lock(init_mutex_);
   if (initialized_) {
     MS_EXCEPTION_IF_NULL(runtime_instance_);
     runtime_instance_->SetContext();
     return;
   } else {
+    MS_LOG(INFO) << "Start Initialize...";
 #ifndef ENABLE_SECURITY
     AscendProfiler::GetInstance()->MsprofInitProfiler();
 #endif
@@ -54,14 +58,19 @@ void AscendDeviceContext::Initialize() {
 #ifndef ENABLE_SECURITY
   runtime_instance_->PreInit();
 #endif
-  MS_EXCEPTION_IF_NULL(GetDeprecatedInterface());
-  GetDeprecatedInterface()->OpenTsd(MsContext::GetInstance());
-  runtime_instance_->SetRtDevice(device_id);
-
   // enable hccl and init hccl not done, skip the rest step.
   if (ms_context->get_param<bool>(MS_CTX_ENABLE_HCCL) &&
       !distributed::collective::CollectiveManager::instance()->initialized()) {
     return;
+  }
+
+  DeviceContext::SetDynKernelExecutor(std::make_shared<GeKernelExecutor>());
+  GetKernelExecutor(true)->SetDeviceContext(this);
+
+  auto force_acl = common::GetEnv("MS_DEV_FORCE_ACL");
+  if (!force_acl.empty()) {
+    DeviceContext::SetKernelExecutor(GetKernelExecutor(true));
+    GetKernelExecutor(false)->SetDeviceContext(this);
   }
 
   MS_EXCEPTION_IF_NULL(device_res_manager_);
@@ -69,9 +78,10 @@ void AscendDeviceContext::Initialize() {
   auto ascend_res_manager = dynamic_cast<AscendDeviceResManager *>(device_res_manager_.get());
   MS_EXCEPTION_IF_NULL(ascend_res_manager);
   runtime_instance_ = ascend_res_manager->runtime_instance_;
-  auto ascend_kernel_executor = dynamic_cast<AscendKernelExecutor *>(kernel_executor_.get());
-  MS_EXCEPTION_IF_NULL(ascend_kernel_executor);
-  ascend_kernel_executor->Initialize();
+  MS_EXCEPTION_IF_NULL(GetKernelExecutor(false));
+  GetKernelExecutor(false)->Initialize();
+  MS_EXCEPTION_IF_NULL(GetKernelExecutor(true));
+  GetKernelExecutor(true)->Initialize();
   auto ascend_graph_executor = dynamic_cast<AscendGraphExecutor *>(graph_executor_.get());
   MS_EXCEPTION_IF_NULL(ascend_graph_executor);
   ascend_graph_executor->Initialize();
@@ -103,9 +113,13 @@ void AscendDeviceContext::Destroy() {
 
   MS_LOG(INFO) << "Start Destroy ";
   auto ascend_graph_executor = dynamic_cast<AscendGraphExecutor *>(graph_executor_.get());
+  MS_EXCEPTION_IF_NULL(ascend_graph_executor);
   ascend_graph_executor->Destroy();
-  auto ascend_kernel_executor = dynamic_cast<AscendKernelExecutor *>(kernel_executor_.get());
-  ascend_kernel_executor->Destroy();
+  MS_EXCEPTION_IF_NULL(GetKernelExecutor(false));
+  GetKernelExecutor(false)->Destroy();
+  MS_EXCEPTION_IF_NULL(GetKernelExecutor(true));
+  GetKernelExecutor(true)->Destroy();
+  MS_EXCEPTION_IF_NULL(device_res_manager_);
   device_res_manager_->Destroy();
   if (runtime_instance_) {
     runtime_instance_ = nullptr;
@@ -144,21 +158,52 @@ DeprecatedInterface *AscendDeviceContext::GetDeprecatedInterface() {
 
 MS_REGISTER_DEVICE(kAscendDevice, AscendDeviceContext);
 MS_REGISTER_DEVICE(kDavinciMultiGraphInferenceDevice, AscendDeviceContext);
-#ifdef WITH_BACKEND
-MSCONTEXT_REGISTER_INIT_FUNC(kAscendDevice, [](MsContext *ctx) -> void {
-  MS_EXCEPTION_IF_NULL(ctx);
-  auto enable_ge = mindspore::common::GetEnv("MS_ENABLE_GE");
-  if (enable_ge == "1") {
-    if (ctx->backend_policy() != "ge") {
-      ctx->set_backend_policy("ge");
+
+void AssignOutputNopNodeDeviceAddress(const KernelGraphPtr &graph, const device::DeviceContext *device_context) {
+  MS_EXCEPTION_IF_NULL(graph);
+  auto outputs = common::AnfAlgo::GetAllOutput(graph->output(), {prim::kPrimTupleGetItem});
+  for (auto output : outputs) {
+    if (!output->isa<CNode>() || !AnfUtils::IsRealKernel(output)) {
+      continue;
     }
-  } else {
-    if (ctx->backend_policy() != "ms") {
-      ctx->set_backend_policy("ms");
+
+    if (!common::AnfAlgo::IsNopNode(output)) {
+      continue;
     }
+
+    if (!common::AnfAlgo::IsNeedSkipNopOpAddr(output)) {
+      continue;
+    }
+
+    size_t input_num = common::AnfAlgo::GetInputTensorNum(output);
+    if (input_num != 1) {
+      MS_LOG(WARNING) << "The input number of nop node :" << output->fullname_with_scope() << " is " << input_num
+                      << ", not equal 1";
+      continue;
+    }
+
+    auto real_input_index = AnfAlgo::GetInputGraphIdxByKernelIdx(output, 0);
+    auto pre_node_out_device_address = AnfAlgo::GetPrevNodeOutputAddr(output, real_input_index);
+    MS_EXCEPTION_IF_NULL(pre_node_out_device_address);
+    auto ptr = pre_node_out_device_address->GetPtr();
+    auto size = pre_node_out_device_address->GetSize();
+    std::string output_format = AnfAlgo::GetOutputFormat(output, 0);
+    auto output_type = AnfAlgo::GetOutputDeviceDataType(output, 0);
+    auto device_address = device_context->device_res_manager_->CreateDeviceAddress(
+      const_cast<void *>(ptr), size, output_format, output_type, trans::GetRuntimePaddingShape(output, 0));
+    // If graph has the flag kFlagEnableZeroCopyInGraph, it means the graph should run in graph mode, the device
+    // address of graph output should not be persisted, and its output addr will be replaced after RunGraph.
+    // As we fetch the output device address of a nopnode, we can only get the input device address of it, so we
+    // have to prevent the ptr persist flag of the device address here.
+    if (!graph->has_flag(kFlagEnableZeroCopyInGraph)) {
+      device_address->set_is_ptr_persisted(true);
+    }
+    device_address->set_host_shape(trans::GetRuntimePaddingShape(output, 0));
+    AnfAlgo::SetOutputAddr(device_address, 0, output.get());
+    common::AnfAlgo::SetNodeAttr(kAttrSkipNopOpAddr, MakeValue(false), output);
+    MS_LOG(INFO) << "Assign device address to output nop node " << output->fullname_with_scope();
   }
-});
-#endif
+}
 }  // namespace ascend
 }  // namespace device
 }  // namespace mindspore

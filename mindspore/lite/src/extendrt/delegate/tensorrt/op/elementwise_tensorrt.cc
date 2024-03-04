@@ -63,10 +63,6 @@ std::unordered_map<std::string, nvinfer1::ElementWiseOperation> NOT_BOOL_PRIM2NV
 
 int ElementWiseTensorRT::IsSupport(const BaseOperatorPtr &base_operator, const std::vector<TensorInfo> &in_tensors,
                                    const std::vector<TensorInfo> &out_tensors) {
-  if (!IsShapeKnown()) {
-    MS_LOG(ERROR) << "Unsupported input tensor unknown shape: " << op_name_;
-    return RET_ERROR;
-  }
   if (in_tensors.size() != INPUT_SIZE2) {
     MS_LOG(ERROR) << "invalid input tensort size: " << in_tensors.size();
     return RET_ERROR;
@@ -109,11 +105,21 @@ int ElementWiseTensorRT::IsSupport(const BaseOperatorPtr &base_operator, const s
   return RET_OK;
 }
 
-int ElementWiseTensorRT::AddInnerOp(TensorRTContext *ctx) {
-  if (ctx == nullptr || ctx->network() == nullptr) {
-    MS_LOG(ERROR) << "network or input tensor size is invalid";
-    return RET_ERROR;
+void ElementWiseTensorRT::LogicalOpChangeInputType(TensorRTContext *ctx, ITensorHelper *x_input,
+                                                   ITensorHelper *y_input) {
+  if (type_ == ops::kNameGreater || type_ == ops::kNameLess) {
+    if (x_input->trt_tensor_->getType() != nvinfer1::DataType::kINT32) {
+      x_input->trt_tensor_ =
+        TRTTensorCast(ctx, x_input->trt_tensor_, nvinfer1::DataType::kINT32, op_name_ + "_input_cast_to_int_0");
+    }
+    if (y_input->trt_tensor_->getType() != nvinfer1::DataType::kINT32) {
+      y_input->trt_tensor_ =
+        TRTTensorCast(ctx, y_input->trt_tensor_, nvinfer1::DataType::kINT32, op_name_ + "_input_cast_to_int_1");
+    }
   }
+}
+
+int ElementWiseTensorRT::AddInnerOp(TensorRTContext *ctx) {
   ITensorHelper x_input;
   ITensorHelper y_input;
   int ret = PreprocessInputTensors(ctx, &x_input, &y_input);
@@ -213,6 +219,20 @@ int ElementWiseTensorRT::PreprocessInputTensors(TensorRTContext *ctx, ITensorHel
 
   MS_LOG(DEBUG) << "after transpose " << GetTensorFormat(*x_input);
   MS_LOG(DEBUG) << "after transpose " << GetTensorFormat(*y_input);
+  if (BroadcastInputTensors(ctx, x_input, y_input) != RET_OK) {
+    return RET_ERROR;
+  }
+
+  while (x_input->trt_tensor_->getDimensions().nbDims < y_input->trt_tensor_->getDimensions().nbDims) {
+    x_input->trt_tensor_ = ExpandDim(ctx, x_input->trt_tensor_, 0);
+  }
+  while (x_input->trt_tensor_->getDimensions().nbDims > y_input->trt_tensor_->getDimensions().nbDims) {
+    y_input->trt_tensor_ = ExpandDim(ctx, y_input->trt_tensor_, 0);
+  }
+  return RET_OK;
+}
+
+int ElementWiseTensorRT::BroadcastInputTensors(TensorRTContext *ctx, ITensorHelper *x_input, ITensorHelper *y_input) {
   if (GetDimsVolume(x_input->trt_tensor_->getDimensions()) == GetDimsVolume(y_input->trt_tensor_->getDimensions()) &&
       x_input->trt_tensor_->getDimensions().nbDims != y_input->trt_tensor_->getDimensions().nbDims) {
     bool x_large = x_input->trt_tensor_->getDimensions().nbDims > y_input->trt_tensor_->getDimensions().nbDims;
@@ -225,14 +245,22 @@ int ElementWiseTensorRT::PreprocessInputTensors(TensorRTContext *ctx, ITensorHel
     }
     reshape_layer->setReshapeDimensions(output_dim);
     input_tensor->trt_tensor_ = reshape_layer->getOutput(0);
+    return RET_OK;
+  } else if (GetDimsVolume(x_input->trt_tensor_->getDimensions()) !=
+               GetDimsVolume(y_input->trt_tensor_->getDimensions()) &&
+             x_input->trt_tensor_->getDimensions().nbDims != y_input->trt_tensor_->getDimensions().nbDims) {
+    bool x_large = x_input->trt_tensor_->getDimensions().nbDims > y_input->trt_tensor_->getDimensions().nbDims;
+    auto input_tensor = x_large ? y_input : x_input;
+    auto output_dim = x_large ? x_input->trt_tensor_->getDimensions() : y_input->trt_tensor_->getDimensions();
+    nvinfer1::Dims in_tensor_dims = input_tensor->trt_tensor_->getDimensions();
+    while (in_tensor_dims.nbDims < output_dim.nbDims) {
+      input_tensor->trt_tensor_ = ExpandDim(ctx, input_tensor->trt_tensor_, 0);
+      in_tensor_dims = input_tensor->trt_tensor_->getDimensions();
+    }
+    return RET_OK;
+  } else {
+    return RET_OK;
   }
-  while (x_input->trt_tensor_->getDimensions().nbDims < y_input->trt_tensor_->getDimensions().nbDims) {
-    x_input->trt_tensor_ = ExpandDim(ctx, x_input->trt_tensor_, 0);
-  }
-  while (x_input->trt_tensor_->getDimensions().nbDims > y_input->trt_tensor_->getDimensions().nbDims) {
-    y_input->trt_tensor_ = ExpandDim(ctx, y_input->trt_tensor_, 0);
-  }
-  return RET_OK;
 }
 
 nvinfer1::IElementWiseLayer *ElementWiseTensorRT::AddFoorMod(TensorRTContext *ctx, nvinfer1::ITensor *x0_trt,
@@ -337,6 +365,7 @@ REGISTER_TENSORRT_CREATOR(ops::kNameMinimum, ElementWiseTensorRT)
 REGISTER_TENSORRT_CREATOR(ops::kNameMaximum, ElementWiseTensorRT)
 REGISTER_TENSORRT_CREATOR(ops::kNameBiasAdd, ElementWiseTensorRT)
 REGISTER_TENSORRT_CREATOR(ops::kNameFloorMod, ElementWiseTensorRT)
+REGISTER_TENSORRT_CREATOR(ops::kNameFloorDiv, ElementWiseTensorRT)
 #if TRT_VERSION_GE(7, 2)
 REGISTER_TENSORRT_CREATOR(ops::kNameNotEqual, ElementWiseTensorRT)
 REGISTER_TENSORRT_CREATOR(ops::kNameEqual, ElementWiseTensorRT)

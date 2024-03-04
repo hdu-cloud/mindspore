@@ -20,8 +20,10 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include "ops/array_op_name.h"
+#include "ops/sequence_ops.h"
 #include "include/common/utils/anfalgo.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 
 namespace mindspore {
 namespace opt {
@@ -35,7 +37,7 @@ bool IsDepthwiseCase(const AnfNodePtr &node, size_t index, const std::string &fo
   if (format != kOpFormat_FRAC_Z) {
     return false;
   }
-  abstract::BaseShapePtr base_shape = common::AnfAlgo::GetOutputDetailShape(node, index);
+  abstract::BaseShapePtr base_shape = AnfAlgo::GetOutputDetailShape(node, index);
   MS_EXCEPTION_IF_NULL(base_shape);
   if (base_shape->isa<abstract::Shape>()) {
     auto shape_ptr = base_shape->cast<abstract::ShapePtr>();

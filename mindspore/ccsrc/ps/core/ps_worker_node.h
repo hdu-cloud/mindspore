@@ -19,7 +19,6 @@
 
 #include <memory>
 #include "ps/core/abstract_ps_node.h"
-#include "include/backend/visible.h"
 
 namespace mindspore {
 namespace ps {
@@ -27,7 +26,7 @@ namespace core {
 // This class is a derived class of WorkerNode specialized for Parameter Server. It is used to rewrite the logic
 // specific to Parameter Server mode training in WorkerNode. For example, the registration of Parameter Server's Worker
 // node is synchronous.
-class BACKEND_EXPORT PSWorkerNode : public AbstractPSNode {
+class PSWorkerNode : public AbstractPSNode {
  public:
   PSWorkerNode() = default;
   ~PSWorkerNode() override = default;

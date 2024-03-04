@@ -16,8 +16,8 @@
 
 #include "plugin/device/gpu/kernel/sparse/dense_to_csr_sparse_matrix_gpu_kernel.h"
 #include <algorithm>
-#include <utility>
 #include <map>
+#include <utility>
 #include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
 
 namespace mindspore {
@@ -165,9 +165,7 @@ bool DenseToCSRSparseMatrixKernelMod::LaunchKernel(const std::vector<AddressPtr>
                                                    const std::vector<AddressPtr> &outputs, void *stream_ptr) {
   T *input_addr = GetDeviceAddress<T>(inputs, kIndex0);
   S *indices_addr = GetDeviceAddress<S>(inputs, kIndex1);
-  S *dev_nd_strides_ = GetDeviceAddress<S>(workspace, kIndex0);
-  S *dev_nd_indices_ = GetDeviceAddress<S>(workspace, kIndex1);
-  S *dev_row_indices_ = GetDeviceAddress<S>(workspace, kIndex2);
+  S *dev_row_indices_ = GetDeviceAddress<S>(workspace, kIndex0);
   S *dense_shape_addr = GetDeviceAddress<S>(outputs, kIndex0);
   S *batch_pointers_addr = GetDeviceAddress<S>(outputs, kIndex1);
   S *row_pointers_addr = GetDeviceAddress<S>(outputs, kIndex2);
@@ -187,34 +185,28 @@ bool DenseToCSRSparseMatrixKernelMod::LaunchKernel(const std::vector<AddressPtr>
     nd_strides_[i - 1] = input_shapes_[i - 1];
     nd_indices_[i - 1] = nd_indices_[i] * input_shapes_[i];
   }
-
-  if (!memcpy_flag_) {
-    const size_t strides_len = sizeof(S) * nd_strides_.size();
-    const size_t indices_len = sizeof(S) * nd_indices_.size();
-    std::vector<S> input_shapes_host(input_shapes_.begin(), input_shapes_.end());
-
-    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-      cudaMemcpyAsync(dev_nd_strides_, &nd_strides_[kIndex0], strides_len, cudaMemcpyHostToDevice,
-                      reinterpret_cast<cudaStream_t>(stream_ptr)),
-      "cudaMemcpyAsync failed in DenseToCSRSparseMatrixKernelMod::Launch.");
-    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-      cudaMemcpyAsync(dev_nd_indices_, &nd_indices_[kIndex0], indices_len, cudaMemcpyHostToDevice,
-                      reinterpret_cast<cudaStream_t>(stream_ptr)),
-      "cudaMemcpyAsync failed in DenseToCSRSparseMatrixKernelMod::Launch.");
-
-    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
-      cudaMemcpyAsync(dense_shape_addr, &input_shapes_host[kIndex0], indices_len, cudaMemcpyHostToDevice,
-                      reinterpret_cast<cudaStream_t>(stream_ptr)),
-      "cudaMemcpyAsync failed in DenseToCSRSparseMatrixKernelMod::Launch.");
-    memcpy_flag_ = true;
+  // indices and strides
+  GatherNdInfo<S> info;
+  for (size_t i = 0; i < dim_indices_last_; ++i) {
+    info.indices[i] = nd_indices_[i];
+    info.strides[i] = nd_strides_[i];
   }
+
+  const size_t indices_len = sizeof(S) * nd_indices_.size();
+  std::vector<S> input_shapes_host(input_shapes_.begin(), input_shapes_.end());
+
+  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+    cudaMemcpyAsync(dense_shape_addr, &input_shapes_host[kIndex0], indices_len, cudaMemcpyHostToDevice,
+                    reinterpret_cast<cudaStream_t>(stream_ptr)),
+    "cudaMemcpyAsync failed in DenseToCSRSparseMatrixKernelMod::Launch.");
 
   size_t num_batches = (is_batch_csr_) ? input_shapes_[kIndex0] : 1;
   // row pointers need to be set to zero to avoid any blank rows.
-  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemsetAsync(row_pointers_addr, 0, sizeof(S) * outputs[kIndex2]->size,
-                                                     reinterpret_cast<cudaStream_t>(stream_ptr)),
-                                     "cudaMemset failed in DenseToCSRSparseMatrixKernelMod::Launch.");
+  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+    cudaMemsetAsync(row_pointers_addr, 0, outputs[kIndex2]->size, reinterpret_cast<cudaStream_t>(stream_ptr)),
+    "cudaMemset failed in DenseToCSRSparseMatrixKernelMod::Launch.");
 
+  cudaError_t status = cudaErrorNotReady;
   if (!is_batch_csr_) {
     std::vector<S> batch_ptr_host{};
     batch_ptr_host.emplace_back(0);
@@ -223,28 +215,34 @@ bool DenseToCSRSparseMatrixKernelMod::LaunchKernel(const std::vector<AddressPtr>
       cudaMemcpyAsync(batch_pointers_addr, &batch_ptr_host[kIndex0], sizeof(S) * (num_batches + 1),
                       cudaMemcpyHostToDevice, reinterpret_cast<cudaStream_t>(stream_ptr)),
       "cudaMemcpyAsync failed in DenseToCSRSparseMatrixKernelMod::Launch.");
-    GatherNd(input_addr, indices_addr, values_addr, dims_[kIndex0], dims_[kIndex1], dims_[kIndex2], dev_nd_strides_,
-             dev_nd_indices_, reinterpret_cast<cudaStream_t>(stream_ptr));
-    CallSplitIndices2D(indices_addr, dev_row_indices_, col_indices_addr, nnz_,
-                       reinterpret_cast<cudaStream_t>(stream_ptr));
+    status = GatherNd(input_addr, indices_addr, values_addr, dims_[kIndex0], dims_[kIndex1], dims_[kIndex2], info,
+                      reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
+    status = CallSplitIndices2D(indices_addr, dev_row_indices_, col_indices_addr, nnz_,
+                                reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     cusparseXcoo2csr(handle_, dev_row_indices_, nnz_, m_, row_pointers_addr, CUSPARSE_INDEX_BASE_ZERO);
   } else {
-    S *dev_batch_indices_ = GetDeviceAddress<S>(workspace, 3);
-    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemsetAsync(batch_pointers_addr, 0, sizeof(S) * outputs[kIndex1]->size,
-                                                       reinterpret_cast<cudaStream_t>(stream_ptr)),
-                                       "cudaMemset failed in DenseToCSRSparseMatrixKernelMod::Launch.");
+    S *dev_batch_indices_ = GetDeviceAddress<S>(workspace, kIndex1);
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+      cudaMemsetAsync(batch_pointers_addr, 0, outputs[kIndex1]->size, reinterpret_cast<cudaStream_t>(stream_ptr)),
+      "cudaMemset failed in DenseToCSRSparseMatrixKernelMod::Launch.");
 
-    GatherNd(input_addr, indices_addr, values_addr, dims_[kIndex0], dims_[kIndex1], dims_[kIndex2], dev_nd_strides_,
-             dev_nd_indices_, reinterpret_cast<cudaStream_t>(stream_ptr));
-    CallSplitIndices3D(indices_addr, dev_batch_indices_, dev_row_indices_, col_indices_addr, nnz_,
-                       reinterpret_cast<cudaStream_t>(stream_ptr));
-    CallNNZPerBatch(dev_batch_indices_, batch_pointers_addr, nnz_, num_batches + 1,
-                    reinterpret_cast<cudaStream_t>(stream_ptr));
+    status = GatherNd(input_addr, indices_addr, values_addr, dims_[kIndex0], dims_[kIndex1], dims_[kIndex2], info,
+                      reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
+    status = CallSplitIndices3D(indices_addr, dev_batch_indices_, dev_row_indices_, col_indices_addr, nnz_,
+                                reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
+    status = CallNNZPerBatch(dev_batch_indices_, batch_pointers_addr, nnz_, num_batches + 1,
+                             reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     std::vector<S> host_batch_pointers(batch_pointers_shapes_[kIndex0], 0);
     CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
       cudaMemcpyAsync(host_batch_pointers.data(), batch_pointers_addr, sizeof(S) * (num_batches + 1),
                       cudaMemcpyDeviceToHost, reinterpret_cast<cudaStream_t>(stream_ptr)),
       "cudaMemcpyAsync failed for device batch pointers to host.");
+    cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(stream_ptr));
     auto row_num = input_shapes_[kIndex1];
     for (size_t i = 0; i < host_batch_pointers.size() - 1; ++i) {
       S *temp_row_indices_addr = dev_row_indices_ + host_batch_pointers[i];
@@ -286,11 +284,9 @@ int DenseToCSRSparseMatrixKernelMod::Resize(const BaseOperatorPtr &base_operator
   rank_ = input_shapes_.size();
   constexpr size_t kBatchCSR = 3;
   is_batch_csr_ = (rank_ == kBatchCSR) ? true : false;
+  workspace_size_list_.push_back(sizeof(output_size_list_.at(kIndex0)) * nnz_);
+  workspace_size_list_.push_back(sizeof(output_size_list_.at(kIndex0)) * nnz_);
 
-  workspace_size_list_.push_back(sizeof(output_size_list_.at(kIndex0)) * dim_indices_last_);
-  workspace_size_list_.push_back(sizeof(output_size_list_.at(kIndex0)) * dim_indices_last_);
-  workspace_size_list_.push_back(sizeof(output_size_list_.at(kIndex0)) * nnz_);
-  workspace_size_list_.push_back(sizeof(output_size_list_.at(kIndex0)) * nnz_);
   return KRET_OK;
 }
 

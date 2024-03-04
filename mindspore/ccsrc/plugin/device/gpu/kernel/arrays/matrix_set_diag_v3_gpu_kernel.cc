@@ -19,7 +19,8 @@
 #include <tuple>
 #include <map>
 #include <functional>
-#include "kernel/common_utils.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "kernel/ops_utils.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/matrix_set_diag_impl.cuh"
 #include "mindspore/core/ops/matrix_set_diag_v3.h"
 
@@ -111,6 +112,10 @@ bool MatrixSetDiagV3GpuKernelMod::LaunchKernel(const std::vector<kernel::Address
     cudaMemcpyAsync(host_k_vec.data(), k_device_address, k->size, cudaMemcpyDeviceToHost,
                     reinterpret_cast<cudaStream_t>(cuda_stream_)),
     "MatrixSetDiagV3GpuKernelMod cuda copy device to host Fail");
+  if (cudaStreamQuery(reinterpret_cast<cudaStream_t>(cuda_stream_)) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(cuda_stream_)),
+                                       "For 'MatrixSetDiagV3', cuda Stream Sync Failed.");
+  }
 
   lower_ = host_k_vec.at(kIndex0);
   upper_ = host_k_vec.at(kIndex0);
@@ -152,9 +157,11 @@ bool MatrixSetDiagV3GpuKernelMod::LaunchKernel(const std::vector<kernel::Address
     "MatrixSetDiagV3GpuKernelMod cuda copy input to output Fail");
   bool right_align_super_diagonal = (alignment_.first == MatrixDiag::RIGHT);
   bool right_align_sub_diagonal = (alignment_.second == MatrixDiag::RIGHT);
-  MatrixSetDiag(outer_batch_, inner_rows_, inner_cols_, num_diags_, max_diag_len_, lower_, upper_,
-                right_align_super_diagonal, right_align_sub_diagonal, is_single_diag_, diag_device_address,
-                output_device_address, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status =
+    MatrixSetDiag(outer_batch_, inner_rows_, inner_cols_, num_diags_, max_diag_len_, lower_, upper_,
+                  right_align_super_diagonal, right_align_sub_diagonal, is_single_diag_, diag_device_address,
+                  output_device_address, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

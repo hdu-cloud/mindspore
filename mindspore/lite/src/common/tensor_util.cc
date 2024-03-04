@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,36 +21,12 @@
 #include "schema/model_generated.h"
 #include "include/errorcode.h"
 #include "src/common/log_adapter.h"
-#ifdef ENABLE_FP16
+#include "src/litert/pack_weight_manager.h"
 #include "src/litert/kernel/cpu/fp16/fp16_op_handler.h"
-#endif
 #include "nnacl/base/cast_base.h"
 namespace mindspore {
 namespace lite {
-int OutputTensor2TensorC(const std::vector<lite::Tensor *> &tensors, std::vector<TensorC *> *tensors_c,
-                         std::shared_ptr<Allocator> allocator) {
-  MS_ASSERT(tensors_c != nullptr);
-  for (size_t i = 0; i < tensors.size(); ++i) {
-    TensorC *tensor_c = nullptr;
-    if (allocator != nullptr && !IS_RUNTIME_ALLOCATOR(allocator)) {
-      tensor_c = static_cast<TensorC *>(allocator->Malloc(sizeof(TensorC)));
-    } else {
-      tensor_c = static_cast<TensorC *>(malloc(sizeof(TensorC)));
-    }
-    if (tensor_c == nullptr) {
-      MS_LOG(ERROR) << "malloc tensor fail!";
-      return RET_ERROR;
-    }
-    tensor_c->data_type_ = kNumberTypeFloat32;
-    tensor_c->format_ = tensors[i]->format();
-    tensor_c->data_ = nullptr;
-    tensor_c->shape_size_ = 0;
-    tensors_c->push_back(tensor_c);
-  }
-  return RET_OK;
-}
-
-void FreeAllTensorC(std::vector<TensorC *> *tensors_in, std::shared_ptr<Allocator> allocator) {
+void FreeInTensorC(std::vector<TensorC *> *tensors_in, const std::shared_ptr<Allocator> &allocator) {
   if (tensors_in == nullptr) {
     return;
   }
@@ -59,24 +35,46 @@ void FreeAllTensorC(std::vector<TensorC *> *tensors_in, std::shared_ptr<Allocato
       continue;
     }
     if (i->data_type_ == kObjectTypeTensorType) {
-      TensorListC *tensorListC = reinterpret_cast<TensorListC *>(i);
-      FreeTensorListC(tensorListC, allocator);
-      tensorListC = nullptr;
-    } else {
-      if (allocator != nullptr && !IS_RUNTIME_ALLOCATOR(allocator)) {
-        allocator->Free(i);
-      } else {
-        free(i);
+      auto *tensorListC = reinterpret_cast<TensorListC *>(i);
+      if (tensorListC->tensors_ != nullptr) {
+        if (allocator != nullptr && !IS_RUNTIME_ALLOCATOR(allocator)) {
+          allocator->Free(tensorListC->tensors_);
+        } else {
+          free(tensorListC->tensors_);
+        }
+        tensorListC->tensors_ = nullptr;
       }
-      i = nullptr;
     }
   }
   tensors_in->clear();
 }
 
+void FreeOutTensorC(std::vector<TensorC *> *tensors_out, const std::shared_ptr<Allocator> &allocator) {
+  if (tensors_out == nullptr) {
+    return;
+  }
+  for (auto &i : *tensors_out) {
+    if (i == nullptr) {
+      continue;
+    }
+    if (i->data_type_ == static_cast<int>(kObjectTypeTensorType)) {
+      auto *tensorListC = reinterpret_cast<TensorListC *>(i);
+      if (tensorListC->tensors_ != nullptr) {
+        for (size_t j = 0; j < tensorListC->element_num_; ++j) {
+          if (tensorListC->tensors_[j] != nullptr && tensorListC->tensors_[j]->data_ != nullptr) {
+            free(tensorListC->tensors_[j]->data_);
+          }
+        }
+        free((tensorListC->tensors_));
+        tensorListC->tensors_ = nullptr;
+      }
+    }
+  }
+  tensors_out->clear();
+}
+
 int Tensor2TensorC(const Tensor *src, TensorC *dst) {
   MS_CHECK_TRUE_RET(src != nullptr && dst != nullptr, RET_ERROR);
-  dst->is_ready_ = src->IsReady();
   dst->format_ = static_cast<int>(src->format());
   dst->data_ = src->data();
   dst->data_type_ = src->data_type();
@@ -91,7 +89,7 @@ int Tensor2TensorC(const Tensor *src, TensorC *dst) {
   return RET_OK;
 }
 
-int TensorC2Tensor(const TensorC *src, Tensor *dst, std::shared_ptr<Allocator> allocator) {
+int TensorC2Tensor(TensorC *src, Tensor *dst, std::shared_ptr<Allocator> allocator) {
   MS_CHECK_TRUE_RET(src != nullptr && dst != nullptr, RET_ERROR);
   dst->set_format(static_cast<mindspore::Format>(src->format_));
   dst->set_data_type(static_cast<TypeId>(src->data_type_));  // get data during the runtime period
@@ -99,40 +97,38 @@ int TensorC2Tensor(const TensorC *src, Tensor *dst, std::shared_ptr<Allocator> a
   if (src->data_ != nullptr) {
     auto data = dst->MutableData();
     MS_CHECK_TRUE_RET(data != nullptr, RET_ERROR);
-    memcpy(data, src->data_, dst->Size());
-    dst->set_category(CONST_TENSOR);
-    if (allocator != nullptr && !IS_RUNTIME_ALLOCATOR(allocator)) {
-      allocator->Free(src->data_);
-    } else {
-      free(src->data_);
+    if (data == src->data_) {  // tensor
+      dst->set_own_data(true);
+      dst->set_category(CONST_TENSOR);
+      return RET_OK;
     }
+    memcpy(data, src->data_, dst->Size());  // tensor_list
+    dst->set_category(CONST_TENSOR);
   }
   return RET_OK;
 }
 
 int GenerateOutTensorC(const OpParameter *const parameter, const std::vector<lite::Tensor *> &outputs,
-                       std::vector<TensorC *> *out_tensor_c, std::shared_ptr<Allocator> allocator) {
+                       std::vector<TensorC *> *out_tensor_c) {
   MS_CHECK_TRUE_RET(out_tensor_c != nullptr && parameter != nullptr, RET_ERROR);
   if (parameter->type_ == mindspore::schema::PrimitiveType_TensorListFromTensor ||
       parameter->type_ == mindspore::schema::PrimitiveType_TensorListReserve ||
       parameter->type_ == mindspore::schema::PrimitiveType_TensorListSetItem) {
+#ifndef CONTROLFLOW_TENSORLIST_CLIP
     // TensorListC ->TensorC
     MS_CHECK_TRUE_RET(!outputs.empty() && outputs.front()->data_type() == TypeId::kObjectTypeTensorType, RET_ERROR);
-    TensorListC *tensor_list_c = nullptr;
-    if (allocator != nullptr && !IS_RUNTIME_ALLOCATOR(allocator)) {
-      tensor_list_c = reinterpret_cast<TensorListC *>(allocator->Malloc(sizeof(TensorListC)));
-    } else {
-      tensor_list_c = reinterpret_cast<TensorListC *>(malloc(sizeof(TensorListC)));
-    }
-    if (tensor_list_c == nullptr) {
-      return RET_ERROR;
-    }
-    memset(tensor_list_c, 0, sizeof(TensorListC));
+    auto output = static_cast<TensorList *>(outputs[0]);
+    TensorListC *tensor_list_c = output->ConvertToTensorListC();
+    tensor_list_c->element_num_ = 0;
     out_tensor_c->push_back(reinterpret_cast<TensorC *const>(tensor_list_c));
-    return RET_OK;
+#else
+    return RET_NOT_SUPPORT;
+#endif
   } else {
-    return OutputTensor2TensorC(outputs, out_tensor_c, allocator);
+    (void)std::transform(outputs.begin(), outputs.end(), std::back_inserter(*out_tensor_c),
+                         [](lite::Tensor *output) { return output->ConvertToTensorC(); });
   }
+  return RET_OK;
 }
 
 int GenerateInTensorC(const std::vector<lite::Tensor *> &inputs, std::vector<TensorC *> *in_tensor_c,
@@ -141,53 +137,28 @@ int GenerateInTensorC(const std::vector<lite::Tensor *> &inputs, std::vector<Ten
   int ret = RET_OK;
   for (auto input : inputs) {
     if (input->data_type() == kObjectTypeTensorType) {
+#ifndef CONTROLFLOW_TENSORLIST_CLIP
       // Tensor ->TensorList -> TensorListC -> TensorC
       auto *tensor_list = reinterpret_cast<TensorList *>(input);
-      TensorListC *tensor_list_c = nullptr;
-      if (allocator != nullptr && !IS_RUNTIME_ALLOCATOR(allocator)) {
-        tensor_list_c = reinterpret_cast<TensorListC *>(allocator->Malloc(sizeof(TensorListC)));
-      } else {
-        tensor_list_c = reinterpret_cast<TensorListC *>(malloc(sizeof(TensorListC)));
-      }
-      if (tensor_list_c == nullptr) {
-        ret = RET_NULL_PTR;
-        break;
-      }
-      memset(tensor_list_c, 0, sizeof(TensorListC));
-      ret = TensorList2TensorListC(tensor_list, tensor_list_c, allocator);
-      if (ret != RET_OK) {
+      TensorListC *tensor_list_c = tensor_list->ConvertToTensorListC();
+      auto tensors = tensor_list->tensors();
+      if (!tensors.empty()) {
         if (allocator != nullptr && !IS_RUNTIME_ALLOCATOR(allocator)) {
-          allocator->Free(tensor_list_c->tensors_);
-          allocator->Free(tensor_list_c);
+          tensor_list_c->tensors_ = reinterpret_cast<TensorC **>(allocator->Malloc(tensors.size() * sizeof(void *)));
         } else {
-          free(tensor_list_c->tensors_);
-          free(tensor_list_c);
+          tensor_list_c->tensors_ = reinterpret_cast<TensorC **>(malloc(tensors.size() * sizeof(void *)));
         }
-        return NNACL_ERR;
+        for (size_t i = 0; i < tensors.size(); ++i) {
+          tensor_list_c->tensors_[i] = tensors[i]->ConvertToTensorC();
+        }
       }
       in_tensor_c->push_back(reinterpret_cast<TensorC *>(tensor_list_c));
+#else
+      return RET_NOT_SUPPORT;
+#endif
     } else {
       // Tensor -> TensorC
-      TensorC *tensor_c = nullptr;
-      if (allocator != nullptr && !IS_RUNTIME_ALLOCATOR(allocator)) {
-        tensor_c = reinterpret_cast<TensorC *>(allocator->Malloc(sizeof(TensorC)));
-      } else {
-        tensor_c = reinterpret_cast<TensorC *>(malloc(sizeof(TensorC)));
-      }
-      if (tensor_c == nullptr) {
-        ret = RET_NULL_PTR;
-        break;
-      }
-      ret = Tensor2TensorC(input, tensor_c);
-      if (ret != RET_OK) {
-        MS_LOG(ERROR) << "Tensor to TensorC failed.";
-        if (allocator != nullptr && !IS_RUNTIME_ALLOCATOR(allocator)) {
-          allocator->Free(tensor_c);
-        } else {
-          free(tensor_c);
-        }
-        return ret;
-      }
+      TensorC *tensor_c = input->ConvertToTensorC();
       in_tensor_c->emplace_back(tensor_c);
     }
   }
@@ -195,27 +166,27 @@ int GenerateInTensorC(const std::vector<lite::Tensor *> &inputs, std::vector<Ten
 }
 
 int CheckTensorsInvalid(const std::vector<Tensor *> &tensors) {
-  for (auto &tensor : tensors) {
+  for (auto tensor : tensors) {
     if (tensor == nullptr) {
       MS_LOG(ERROR) << "Graph input tensor is nullptr";
       return RET_ERROR;
     }
-    if (tensor->data_type() != kObjectTypeTensorType && tensor->data() == nullptr) {
+    if (MS_UNLIKELY(tensor->data_type() != kObjectTypeTensorType && tensor->data() == nullptr)) {
       MS_LOG(ERROR) << "Graph input tensor data is nullptr " << tensor->tensor_name();
       return RET_ERROR;
     }
     const auto &shape = tensor->shape();
     bool valid = all_of(shape.begin(), shape.end(), [](int i) { return i >= 0; });
-    if (!valid) {
+    if (MS_UNLIKELY(!valid)) {
       MS_LOG(ERROR) << "The shape of tensor contains negative dimension,"
                     << "check the model and assign the input shape with method Resize().";
       return RET_ERROR;
     }
-    if (tensor->format() != mindspore::NHWC && tensor->format() != mindspore::NCHW) {
+    if (MS_UNLIKELY(tensor->format() != mindspore::NHWC && tensor->format() != mindspore::NCHW)) {
       MS_LOG(ERROR) << "model input's format may be changed, which should be NHWC or NCHW";
       return RET_FORMAT_ERR;
     }
-    if (tensor->data() == nullptr) {
+    if (MS_UNLIKELY(tensor->data() == nullptr)) {
       MS_LOG(ERROR) << "tensor data should be filled before run op";
       return RET_ERROR;
     }
@@ -246,16 +217,22 @@ int CheckGraphInputShapes(const std::vector<Tensor *> &inputs,
       return RET_ERROR;
     }
     if (!input_shape_map.at(input).empty() && input_shape_map.at(input) != input->shape()) {
-#ifndef ENABLE_LITE_ACL
-      MS_LOG(ERROR) << "graph input:" << input->tensor_name()
-                    << " shape has been illegally modified, please modify the input shape with method Resize().";
-      return RET_ERROR;
-#else
+#if defined(ENABLE_LITE_ACL)
       MS_LOG(WARNING) << "Please check graph input " << input->tensor_name()
                       << " shape:" << ShapeToString(input->shape())
                       << " has been modified by DVPP method to shape:" << ShapeToString(input_shape_map.at(input))
                       << "."
                       << "If not, the modification is illegal, please modify the input shape with method Resize().";
+#elif defined(ENABLE_LITE_DPICO)
+      MS_LOG(WARNING) << "Please check graph input " << input->tensor_name()
+                      << " shape:" << ShapeToString(input->shape())
+                      << " has been modified by setting 'SupportZeroCopy=on' to shape:"
+                      << ShapeToString(input_shape_map.at(input)) << "."
+                      << "If not, the modification is illegal, please modify the input shape with method Resize().";
+#else
+      MS_LOG(ERROR) << "graph input:" << input->tensor_name()
+                    << " shape has been illegally modified, please modify the input shape with method Resize().";
+      return RET_ERROR;
 #endif
     }
   }
@@ -285,7 +262,11 @@ int MoveCommonTensorData(Tensor *dst_tensor, Tensor *src_tensor) {
     dst_tensor->set_data(src_tensor->MutableData()); /* using MutableData to sync GPU data */
   }
 
-  dst_tensor->set_own_data(src_tensor->own_data());
+  if (src_tensor->data() == dst_tensor->data() && src_tensor->IsConst()) {
+    dst_tensor->set_own_data(false);
+  } else {
+    dst_tensor->set_own_data(src_tensor->own_data());
+  }
   src_tensor->DecRefCount();
   return RET_OK;
 }
@@ -360,15 +341,15 @@ int CastCommonTensorData(Tensor *dst, Tensor *src, bool support_fp16) {
 #if defined(ENABLE_ARM) && defined(ENABLE_FP16)
     Float16ToFloat32_fp16_handler(src_data, dst_data, src_nums_size, support_fp16);
 #else
-    MS_LOG(ERROR) << "not enable fp16.";
-    return RET_NOT_SUPPORT;
+    // mix kernel support fp16 on GPU/Ascend
+    Float16ToFloat32_fp16_handler(src_data, dst_data, src_nums_size, support_fp16);
 #endif
   } else if (dst_data_type == kNumberTypeFloat16 && src_data_type == kNumberTypeFloat32) {
 #if defined(ENABLE_ARM) && defined(ENABLE_FP16)
     Float32ToFloat16_fp16_handler(src_data, dst_data, src_nums_size, support_fp16);
 #else
-    MS_LOG(ERROR) << "not enable fp16.";
-    return RET_NOT_SUPPORT;
+    // mix kernel support fp16 on GPU/Ascend
+    Float16ToFloat32_fp16_handler(src_data, dst_data, src_nums_size, support_fp16);
 #endif
   } else if (dst_data_type == kNumberTypeFloat32 && src_data_type == kNumberTypeInt32) {
     Int32ToFloat32(static_cast<const int32_t *>(src_data), static_cast<float *>(dst_data),
@@ -389,6 +370,68 @@ bool NeedCastData(Tensor *dst_tensor, Tensor *src_tensor) {
     return false;
   }
   return !IsSameDtype(dst_tensor, src_tensor);
+}
+
+// support_fp16: current device and package support float16
+int CastConstTensorData(Tensor *tensor, TypeId dst_data_type, bool support_fp16) {
+  MS_CHECK_TRUE_RET(tensor != nullptr, RET_NULL_PTR);
+  if (tensor->data_type() != kNumberTypeFloat32 && tensor->data_type() != kNumberTypeFloat16) {
+    return RET_OK;
+  }
+  if (dst_data_type != kNumberTypeFloat32 && dst_data_type != kNumberTypeFloat16) {
+    return RET_OK;
+  }
+  MS_CHECK_TRUE_RET(tensor->IsConst(), RET_ERROR);
+  if (tensor->data_type() == dst_data_type) {
+    return RET_OK;
+  }
+  auto origin_own_data = tensor->own_data();
+  auto origin_dt = tensor->data_type();
+  auto origin_data = tensor->data();
+  MS_CHECK_TRUE_RET(origin_data != nullptr, RET_ERROR);
+  tensor->set_data(nullptr);
+  tensor->set_data_type(dst_data_type);
+  auto ret = tensor->MallocData();
+  if (RET_OK != ret) {
+    MS_LOG(ERROR) << "malloc data failed";
+    // reset tensor
+    tensor->set_data(origin_data);
+    tensor->set_data_type(origin_dt);
+    tensor->set_own_data(origin_own_data);
+    return ret;
+  }
+  auto new_tensor_data = tensor->data();
+  MS_ASSERT(new_tensor_data != nullptr);
+  if (dst_data_type == kNumberTypeFloat32) {
+    bool replace = false;
+    void *data = lite::PackWeightManager::GetInstance()->ReplaceFp16Data(origin_data, tensor->Size(), &replace);
+    if (replace) {
+      if (data == nullptr) {
+        MS_LOG(ERROR) << "replace fp16 data failed.";
+        return RET_ERROR;
+      }
+      if (tensor->allocator() == nullptr) {
+        free(new_tensor_data);
+      } else {
+        tensor->allocator()->Free(new_tensor_data);
+      }
+      tensor->set_data(data);
+      tensor->set_own_data(false);
+    } else {
+      data = new_tensor_data;
+    }
+    Float16ToFloat32_fp16_handler(origin_data, data, tensor->ElementsNum(), support_fp16);
+  } else {  // dst_data_type == kNumberTypeFloat16
+    Float32ToFloat16_fp16_handler(origin_data, new_tensor_data, tensor->ElementsNum(), support_fp16);
+  }
+  if (origin_own_data) {
+    if (tensor->allocator() == nullptr) {
+      free(origin_data);
+    } else {
+      tensor->allocator()->Free(origin_data);
+    }
+  }
+  return RET_OK;
 }
 
 #ifndef CONTROLFLOW_TENSORLIST_CLIP
@@ -462,7 +505,7 @@ int MoveTensorListTensorData(TensorList *dst_tensorlist, TensorList *src_tensorl
   auto dst_tensorlist_tensors_size = dst_tensorlist->tensors().size();
   if (src_tensorlist_tensors_size != dst_tensorlist_tensors_size) {
     MS_LOG(ERROR) << "src tensorlist: " << src_tensorlist->tensor_name()
-                  << " tesnors size: " << src_tensorlist_tensors_size
+                  << " tensors size: " << src_tensorlist_tensors_size
                   << " vs dst tensorlist: " << dst_tensorlist->tensor_name()
                   << " tensors size: " << dst_tensorlist_tensors_size;
     return RET_ERROR;
@@ -479,6 +522,11 @@ int MoveTensorListTensorData(TensorList *dst_tensorlist, TensorList *src_tensorl
     dst_tensor->set_own_data(src_tensor->own_data());
     if (src_tensor->data() != nullptr) {
       dst_tensor->set_data(src_tensor->MutableData()); /* using MutableData to sync GPU data */
+    }
+    if (src_tensor->data() == dst_tensor->data() && src_tensor->IsConst()) {
+      dst_tensor->set_own_data(false);
+    } else {
+      dst_tensor->set_own_data(src_tensor->own_data());
     }
     dst_tensor->set_shape(src_tensor->shape());
   }
@@ -501,80 +549,21 @@ int SetTensorListTensorData(TensorList *dst_tensor_list, TensorList *src_tensor_
   return RET_OK;
 }
 
-void FreeTensorListC(TensorListC *tensorlist_c, std::shared_ptr<Allocator> allocator) {
-  MS_ASSERT(tensorlist_c != nullptr);
-  if (tensorlist_c->tensors_ != nullptr) {
-    if (allocator != nullptr && !IS_RUNTIME_ALLOCATOR(allocator)) {
-      allocator->Free(tensorlist_c->tensors_);
-    } else {
-      free(tensorlist_c->tensors_);
-    }
-    tensorlist_c->tensors_ = nullptr;
-  }
-  if (allocator != nullptr && !IS_RUNTIME_ALLOCATOR(allocator)) {
-    allocator->Free(tensorlist_c);
-  } else {
-    free(tensorlist_c);
-  }
-}
-
-int TensorList2TensorListC(TensorList *src, TensorListC *dst, std::shared_ptr<Allocator> allocator) {
-  MS_CHECK_TRUE_RET(src != nullptr && dst != nullptr, RET_ERROR);
-  dst->is_ready_ = src->IsReady();
-  dst->data_type_ = static_cast<TypeIdC>(src->data_type());
-  dst->format_ = static_cast<int>(src->format());
-  dst->shape_value_ = src->shape().empty() ? 0 : src->shape().front();
-  dst->element_num_ = src->shape().empty() ? 0 : src->tensors().size();
-
-  if ((dst->element_num_ != 0 && SIZE_MAX / dst->element_num_ < sizeof(TensorC)) ||
-      dst->element_num_ * sizeof(TensorC) > MAX_MALLOC_SIZE) {
-    MS_LOG(ERROR) << "data size error.";
-    return RET_ERROR;
-  }
-  if (allocator != nullptr && !IS_RUNTIME_ALLOCATOR(allocator)) {
-    dst->tensors_ = reinterpret_cast<TensorC *>(allocator->Malloc(dst->element_num_ * sizeof(TensorC)));
-  } else {
-    dst->tensors_ = reinterpret_cast<TensorC *>(malloc(dst->element_num_ * sizeof(TensorC)));
-  }
-  if (dst->tensors_ == nullptr) {
-    return RET_ERROR;
-  }
-  memset(dst->tensors_, 0, dst->element_num_ * sizeof(TensorC));
-  for (size_t i = 0; i < dst->element_num_; i++) {
-    auto ret = Tensor2TensorC(src->tensors()[i], &dst->tensors_[i]);
-    if (ret != RET_OK) {
-      MS_LOG(ERROR) << "Tensor to TensorC failed.";
-      return ret;
-    }
-  }
-
-  dst->tensors_data_type_ = src->tensors_data_type();
-  dst->element_shape_size_ = src->element_shape().size();
-  for (size_t i = 0; i < dst->element_shape_size_; i++) {
-    dst->element_shape_[i] = src->element_shape().at(i);
-  }
-  dst->max_elements_num_ = src->max_elements_num();
-  return NNACL_OK;
-}
-
 int TensorListC2TensorList(const TensorListC *src, TensorList *dst) {
   MS_CHECK_TRUE_RET(src != nullptr && dst != nullptr, RET_ERROR);
   dst->set_data_type(static_cast<TypeId>(src->data_type_));
   dst->set_format(static_cast<mindspore::Format>(src->format_));
   dst->set_shape(std::vector<int>(1, src->element_num_));
-  dst->set_tensors_data_type(static_cast<TypeId>(src->tensors_data_type_));
 
   // Set Tensors
   for (size_t i = 0; i < src->element_num_; i++) {
-    auto ret = TensorC2Tensor(&src->tensors_[i], dst->GetTensor(static_cast<int>(i)));
+    auto ret = TensorC2Tensor(src->tensors_[i], dst->GetTensor(static_cast<int>(i)));
     if (ret != RET_OK) {
       MS_LOG(ERROR) << "TensorC2Tensor failed";
       return ret;
     }
   }
 
-  dst->set_element_shape(std::vector<int>(src->element_shape_, src->element_shape_ + src->element_shape_size_));
-  dst->set_max_elements_num(src->max_elements_num_);
   return RET_OK;
 }
 
@@ -596,7 +585,7 @@ TensorList *MallocTensorListDataAccordingToTensorListC(Tensor *tensor, TensorLis
   auto tensor_shape = std::vector<std::vector<int>>(
     tensor_list_c->element_num_, std::vector<int>(tensor_list_c->element_shape_,
                                                   tensor_list_c->element_shape_ + tensor_list_c->element_shape_size_));
-  auto ret = tensor_list->MallocTensorListData(static_cast<TypeId>(tensor_list_c->data_type_), tensor_shape);
+  auto ret = tensor_list->MallocTensorListData(static_cast<TypeId>(tensor_list_c->tensors_data_type_), tensor_shape);
   MS_CHECK_FALSE_MSG(ret != RET_OK, nullptr, "tensor list MallocTensorListData");
   return tensor_list;
 }
@@ -756,11 +745,6 @@ int SetTensorListTensorData(TensorList *dst_tensor_list, TensorList *src_tensor_
 void FreeTensorListC(TensorListC *tensorlist_c, std::shared_ptr<Allocator> allocator) {
   MS_LOG(ERROR) << unsupport_controlflow_tensorlist_log;
   return;
-}
-
-int TensorList2TensorListC(TensorList *src, TensorListC *dst, std::shared_ptr<Allocator> allocator) {
-  MS_LOG(ERROR) << unsupport_controlflow_tensorlist_log;
-  return NNACL_ERR;
 }
 
 int TensorListC2TensorList(const TensorListC *src, TensorList *dst) {

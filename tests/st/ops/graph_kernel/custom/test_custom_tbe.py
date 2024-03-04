@@ -33,7 +33,7 @@ from mindspore.ops.composite.multitype_ops.zeros_like_impl import zeros_like
 def square_with_bias(input_x, output_y, bias=0.0, kernel_name="square_with_bias"):
     import te.lang.cce
     from te import tvm
-    from topi.cce import util
+    from tbe.tvm.topi.cce import util
 
     shape = input_x.get("shape")
     dtype = input_x.get("dtype").lower()
@@ -177,7 +177,7 @@ def multi_input_multi_output_with_attr():
         raise ValueError("Precision error, compare result: {}".format(compare_res))
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -191,7 +191,7 @@ def test_net1_graph_mode():
     multi_input_multi_output_with_attr()
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -238,7 +238,7 @@ def grad_case(bprop_func):
         raise ValueError("Precision error, compare result: {}".format(compare_res))
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -325,7 +325,7 @@ def test_net2_bprop1_graph_mode():
     grad_case(bprop1())
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard

@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
 #include <unordered_map>
 #include <vector>
 #include <set>
-#include "src/litert/kernel_exec.h"
+#include "src/executor/kernel_exec.h"
 #include "schema/model_generated.h"
 
 using mindspore::kernel::kKernelArch_MAX;
@@ -31,7 +31,7 @@ using mindspore::schema::PrimitiveType_MAX;
 using mindspore::schema::PrimitiveType_MIN;
 
 namespace mindspore::lite {
-class KernelRegistry {
+class MS_API KernelRegistry {
  public:
   KernelRegistry() = default;
   virtual ~KernelRegistry();
@@ -45,14 +45,13 @@ class KernelRegistry {
   int GetKernelExec(const std::vector<Tensor *> &in_tensors, const std::vector<Tensor *> &out_tensors,
                     const InnerContext *ctx, const mindspore::Context *ms_ctx, const kernel::KernelKey &key,
                     OpParameter *op_parameter, kernel::KernelExec **kernel, const void *primitive = nullptr);
-  int ReplaceKernelExec(kernel::KernelExec *kernel, const kernel::KernelKey &key);
-
- protected:
+  kernel::LiteKernel *GetLiteKernel(const std::vector<Tensor *> &in_tensors, const std::vector<Tensor *> &out_tensors,
+                                    const InnerContext *ctx, kernel::KernelKey *key, OpParameter *parameter);
   int GetCustomKernel(const std::vector<Tensor *> &in_tensors, const std::vector<Tensor *> &out_tensors,
                       const mindspore::Context *ctx, const kernel::KernelKey &key, kernel::KernelExec **kernel,
                       const void *primitive = nullptr);
-  kernel::LiteKernel *GetLiteKernel(const std::vector<Tensor *> &in_tensors, const std::vector<Tensor *> &out_tensors,
-                                    const InnerContext *ctx, const kernel::KernelKey &key, OpParameter *parameter);
+
+ protected:
   static const int device_type_length_{kKernelArch_MAX - kKernelArch_MIN + 1};
   static const int data_type_length_{kNumberTypeEnd - kNumberTypeBegin + 1};
   static const int op_type_length_{PrimitiveType_MAX - PrimitiveType_MIN + 1};

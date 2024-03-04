@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 #include "ops/scatter_sub.h"
-#include <set>
 #include <map>
+#include <set>
 #include <string>
 #include "abstract/ops/primitive_infer_map.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/src/helper.h"
 
 namespace mindspore {
 namespace ops {
@@ -84,6 +85,24 @@ AbstractBasePtr ScatterSubInfer(const abstract::AnalysisEnginePtr &, const Primi
   auto infer_shape = ScatterSubInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(ScatterSub, prim::kPrimScatterSub, ScatterSubInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGScatterSubInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScatterSubInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScatterSubInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ScatterSubInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ScatterSub, prim::kPrimScatterSub, AGScatterSubInfer, false);
 }  // namespace ops
 }  // namespace mindspore

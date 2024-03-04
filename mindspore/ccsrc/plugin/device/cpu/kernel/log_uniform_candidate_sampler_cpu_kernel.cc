@@ -39,6 +39,14 @@ bool LogUniformCandidateSamplerCpuKernel::Init(const BaseOperatorPtr &base_opera
   this->unique_ = op->get_unique();
   this->seed_ = op->get_seed();
   this->range_max_ = op->get_range_max();
+  kernel_name_ = base_operator->name();
+  constexpr int32_t ZERO = 0;
+  if (range_max_ == ZERO) {
+    MS_LOG(ERROR) << "For '" << kernel_name_
+                  << "', the 'range_max' must be greater than 0, but got range_max=" << range_max_
+                  << ". 'Range_max' integer overflow causes this error.";
+    return false;
+  }
   this->log_range_ = log1p(range_max_);
   if (unique_ && range_max_ < num_sampled_) {
     MS_LOG(ERROR) << "When unique is True, range_max must be greater than or equal to num_sampled";
@@ -62,7 +70,7 @@ float LogUniformCandidateSamplerCpuKernel::Probability(int64_t value) const {
   return (log((value + 2.0) / (value + 1.0))) / log_range_;
 }
 
-int64_t LogUniformCandidateSamplerCpuKernel::Sample(random::SinglePhiloxRandom *single) {
+int64_t LogUniformCandidateSamplerCpuKernel::Sample(random::SinglePhiloxRandom *single) const {
   double d = single->GenDouble();
   int64_t val = static_cast<int64_t>(exp(d * log_range_)) - 1;
   return val % range_max_;
@@ -76,26 +84,21 @@ int LogUniformCandidateSamplerCpuKernel::Resize(const BaseOperatorPtr &base_oper
   if ((ret = NativeCpuKernelMod::Resize(base_operator, inputs, outputs)) != 0) {
     return ret;
   }
-  auto true_classes_shape = input_shapes_.at(0);
-  if (true_classes_shape.size() != 2) {
-    MS_LOG(ERROR) << "input true_classes dims should be 2.";
-    return KRET_RESIZE_FAILED;
-  }
-
+  auto true_classes_shape = inputs[0]->GetShapeVector();
   if (true_classes_shape[1] != num_true_) {
     MS_LOG(ERROR) << "input true_classes dim[1] should equal to num_true, true_classes.dim[1] = "
                   << true_classes_shape[1] << ", num_true = " << num_true_;
     return KRET_RESIZE_FAILED;
   }
 
-  auto sampled_candidates_shape = output_shapes_.at(0);
+  auto sampled_candidates_shape = outputs[0]->GetShapeVector();
   if (sampled_candidates_shape.size() != 1 || sampled_candidates_shape[0] != static_cast<int64_t>(num_sampled_)) {
     MS_LOG(ERROR) << "output sampled_candidates shape should equal to (num_sampled, ), sampled_candidates shape = "
                   << VectorToString(sampled_candidates_shape) << ", num_sampled_ = " << num_sampled_;
     return KRET_RESIZE_FAILED;
   }
 
-  auto true_expected_count_shape = output_shapes_.at(1);
+  auto true_expected_count_shape = outputs[1]->GetShapeVector();
   if (true_expected_count_shape != true_classes_shape) {
     MS_LOG(ERROR)
       << "output true_expected_count shape should be same with true_classes shape, true_expected_count shape = "
@@ -103,12 +106,12 @@ int LogUniformCandidateSamplerCpuKernel::Resize(const BaseOperatorPtr &base_oper
     return KRET_RESIZE_FAILED;
   }
 
-  auto sampled_expected_count_shape = output_shapes_.at(2);
+  auto sampled_expected_count_shape = outputs[2]->GetShapeVector();
   if (sampled_expected_count_shape.size() != 1 ||
       sampled_expected_count_shape[0] != static_cast<int64_t>(num_sampled_)) {
     MS_LOG(ERROR)
       << "output sampled_expected_count shape shape should equal to (num_sampled, ), sampled_expected_count shape = "
-      << VectorToString(sampled_candidates_shape) << ", num_sampled_ = " << num_sampled_;
+      << VectorToString(sampled_expected_count_shape) << ", num_sampled_ = " << num_sampled_;
     return KRET_RESIZE_FAILED;
   }
   return ret;

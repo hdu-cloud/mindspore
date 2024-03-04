@@ -34,7 +34,7 @@ bool LogSpaceGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std:
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   steps_ = kernel_ptr_->get_steps();
   base_ = kernel_ptr_->get_base();
   if (steps_ < 0) {
@@ -78,15 +78,9 @@ bool LogSpaceGpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &i
   auto start = GetDeviceAddress<T>(inputs, kIndex0);
   auto end = GetDeviceAddress<T>(inputs, kIndex1);
   T *output = GetDeviceAddress<T>(outputs, kIndex0);
-  T host_start, host_end;
-  CHECK_CUDA_RET_WITH_ERROR_NOTRACE(cudaMemcpyAsync(&host_start, start, sizeof(T), cudaMemcpyDeviceToHost,
-                                                    reinterpret_cast<cudaStream_t>(cuda_stream_)),
-                                    "For LogSpace, cudaMemcpy start failed");
-  CHECK_CUDA_RET_WITH_ERROR_NOTRACE(
-    cudaMemcpyAsync(&host_end, end, sizeof(T), cudaMemcpyDeviceToHost, reinterpret_cast<cudaStream_t>(cuda_stream_)),
-    "For LogSpace, cudaMemcpy end failed");
-  T host_add = ((host_end - host_start) / (steps_ == 1 ? steps_ : steps_ - 1));
-  CalLogSpace(host_start, host_add, steps_, base_, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status =
+    CalLogSpace(start, end, steps_, base_, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

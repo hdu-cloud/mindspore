@@ -16,10 +16,9 @@
 
 #include "backend/common/pass/optimize_updatestate.h"
 #include <memory>
-#include <vector>
 #include <string>
-#include "mindspore/core/ops/core_ops.h"
-#include "include/common/utils/utils.h"
+#include <vector>
+#include "mindspore/core/ops/framework_ops.h"
 
 namespace mindspore {
 namespace opt {

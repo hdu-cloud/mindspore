@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,10 @@
 
 namespace mindspore::lite {
 void LiteOpActor::RunOpData(OpData<lite::Tensor> *inputs, OpContext<lite::Tensor> *context) {
+  if (inputs == nullptr || context == nullptr) {
+    MS_LOG(ERROR) << "param is nullptr.";
+    return;
+  }
   auto op_uuid = context->sequential_num_;
   input_op_datas_[op_uuid].push_back(inputs);
   inputs_data_[inputs->index_] = inputs->data_;
@@ -72,11 +76,17 @@ bool OfflineIsolated(const std::vector<kernel::KernelExec *> &kernels, const ker
 }
 
 TypeId GetSubgraphInTensorDataType(const kernel::KernelExec *kernel, const lite::Tensor *tensor) {
+  if (kernel == nullptr || tensor == nullptr) {
+    return kTypeUnknown;
+  }
 #ifdef ENABLE_LITE_ACL
   if (kernel->subgraph_type() == kernel::kCustomSubGraph) {
     return tensor->data_type();
   }
 #endif
+  if (kernel->subgraph_type() == kernel::kAclSubGraph) {
+    return tensor->data_type();
+  }
   if (kernel->subgraph_type() != kernel::kGpuFp16SubGraph || tensor->IsGraphInput() || tensor->IsGraphOutput()) {
     if (tensor->data_type() == kNumberTypeFloat16 || tensor->data_type() == kNumberTypeFloat32) {
       return kernel->desc().data_type;
@@ -87,12 +97,18 @@ TypeId GetSubgraphInTensorDataType(const kernel::KernelExec *kernel, const lite:
 
 int LiteOpActor::PreInit(std::vector<std::shared_ptr<LiteOpActor>> *actors,
                          std::unordered_map<Tensor *, Tensor *> *input_map) {
+  if (actors == nullptr || input_map == nullptr) {
+    return RET_ERROR;
+  }
   return IsolateInputData(actors, input_map);
 }
 int LiteOpActor::PostInit() { return PrepareOutputData(); }
 
 int LiteOpActor::IsolateInputData(std::vector<std::shared_ptr<LiteOpActor>> *actors,
                                   std::unordered_map<Tensor *, Tensor *> *input_map) {
+  if (actors == nullptr || input_map == nullptr) {
+    return RET_ERROR;
+  }
   isolate_input_map_ = input_map;
   std::vector<kernel::KernelExec *> kernels{};
   std::transform(actors->begin(), actors->end(), std::back_inserter(kernels),
@@ -242,6 +258,9 @@ bool LiteOpActor::ArrowHasCompiled(const AID &actor_name, size_t to_index,
 
 void LiteOpActor::MarkArrowAsCompiled(const AID *actor_name, size_t to_index,
                                       std::unordered_map<AID, std::set<size_t>> *receiver_index_set) {
+  if (actor_name == nullptr || receiver_index_set == nullptr) {
+    return;
+  }
   if (receiver_index_set->find(*actor_name) == receiver_index_set->end()) {
     std::set<size_t> tmp{to_index};
     receiver_index_set->insert(std::pair<AID, std::set<size_t>>(*actor_name, tmp));
@@ -253,6 +272,9 @@ void LiteOpActor::MarkArrowAsCompiled(const AID *actor_name, size_t to_index,
 int LiteOpActor::CreateCommonArrow(const std::unordered_map<void *, std::set<std::pair<AID, size_t>>> &receivers_map,
                                    const std::set<void *> &receiver_tensors, const size_t &output_index,
                                    std::unordered_map<AID, std::set<size_t>> *receiver_index_set) {
+  if (receiver_index_set == nullptr) {
+    return RET_ERROR;
+  }
   std::unordered_map<void *, std::set<std::pair<AID, size_t>>>::const_iterator iter;
   for (auto receiver_tensor : receiver_tensors) {
     iter = receivers_map.find(receiver_tensor);
@@ -326,6 +348,7 @@ int LiteOpActor::AssignInputData() {
   for (size_t i = 0; i < inputs_data_.size(); ++i) {
     auto dst_tensor = kernel_->in_tensors()[i];
     auto src_tensor = inputs_data_[i];
+    dst_tensor->set_shape_changed(src_tensor->get_shape_changed());
     if (dst_tensor->init_ref_count() == 0) {
       src_tensor->DecRefCount();
       continue;
@@ -380,14 +403,15 @@ int LiteOpActor::InitInputData() {
   if (need_resize) {
     auto subgraph_kernel = reinterpret_cast<kernel::SubGraphKernel *>(kernel_);
     ret = subgraph_kernel->ReSize();
-    MS_CHECK_FALSE_MSG(ret != RET_OK, ret, "Subgraph kernel Resize failed.");
-    ret = subgraph_kernel->MallocNodesOutputSpace();
-    MS_CHECK_FALSE_MSG(ret != RET_OK, ret, "Subgraph kernel MallocSubgraphInputs failed.");
+    MS_CHECK_FALSE_MSG((ret != RET_OK) && (ret != RET_INFER_INVALID), ret, "Subgraph kernel Resize failed.");
   }
   return RET_OK;
 }
 
 void LiteOpActor::AsyncOutput(OpContext<Tensor> *context) {
+  if (context == nullptr) {
+    return;
+  }
   auto output_size = output_data_arrows_.size();
   for (size_t i = 0; i < output_size; ++i) {
     auto data = outputs_data_[i];
@@ -396,9 +420,15 @@ void LiteOpActor::AsyncOutput(OpContext<Tensor> *context) {
   }
 }
 
-void LiteOpActor::AddResultIndex(size_t index) { results_index_.push_back(index); }
+void LiteOpActor::AddResultIndex(size_t index, size_t tensor_index) {
+  results_index_.push_back(index);
+  results_tensor_index_.push_back(tensor_index);
+}
 
 void LiteOpActor::SetOutputData(const OpContext<Tensor> *context) {
+  if (context == nullptr) {
+    return;
+  }
   for (auto index : results_index_) {
     context->SetResult(index, RET_OK);
   }
@@ -421,6 +451,7 @@ int LiteOpActor::PrepareOutputData() {
 
 std::vector<std::shared_ptr<LiteOpActor>> CreateOpActor(const std::vector<kernel::KernelExec *> &kernels,
                                                         lite::InnerContext *ctx, const std::shared_ptr<ActorMgr> &mgr) {
+  MS_CHECK_TRUE_RET(ctx != nullptr, {});
   std::vector<std::shared_ptr<LiteOpActor>> actors;
   ActorThreadPool *thread_pool = reinterpret_cast<ActorThreadPool *>(ctx->thread_pool_);
   if (thread_pool == nullptr) {

@@ -10,13 +10,13 @@
 
     参数：
         - **root_rank** (int) - 表示发送源的进程编号。除发送数据的进程外，存在于所有进程中。
-        - **group** (str) - 表示通信域。默认值："hccl_world_group"。
+        - **group** (str，可选) - 表示通信域。默认值： ``GlobalComm.WORLD_COMM_GROUP`` 。
 
     输入：
-        - **input_x** (Tensor) - Tensor的shape为 :math:`(x_1, x_2, ..., x_R)` 。
+        - **input_x** (tuple[Tensor]) - Tensor的shape为 :math:`(x_1, x_2, ..., x_R)` 。
 
     输出：
-        Tensor，shape与输入相同，即 :math:`(x_1, x_2, ..., x_R)` 。内容取决于 `root_rank` device的数据。
+        tuple[Tensor]，Tensor的shape与输入相同，即 :math:`(x_1, x_2, ..., x_R)` 。内容取决于 `root_rank` device的数据。
 
     异常：
         - **TypeError** - root_rank不是int或group不是str。
@@ -27,3 +27,7 @@
         .. include:: mindspore.ops.comm_note.rst
 
         该样例需要在多卡环境下运行。
+    
+    教程样例：
+        - `分布式集合通信原语 - Broadcast
+          <https://www.mindspore.cn/docs/zh-CN/master/api_python/samples/ops/communicate_ops.html#broadcast>`_

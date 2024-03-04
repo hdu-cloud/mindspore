@@ -17,9 +17,8 @@
 #ifndef MINDSPORE_CONVERT_TUPLE_OUTPUT_TO_MAKETUPLE_H
 #define MINDSPORE_CONVERT_TUPLE_OUTPUT_TO_MAKETUPLE_H
 #include <string>
-
 #include "ir/anf.h"
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/optimizer.h"
 
 namespace mindspore {
 namespace opt {

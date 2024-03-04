@@ -17,15 +17,16 @@
 #ifndef MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_QUANTIZE_OPS_DECLARE_H_
 #define MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_QUANTIZE_OPS_DECLARE_H_
 
-#include "utils/hash_map.h"
+#include "inc/ops/quantize_ops.h"
 #include "transform/graph_ir/op_declare/op_declare_macro.h"
-#include "ops/quantize_ops.h"
+#include "utils/hash_map.h"
 
-namespace mindspore::transform {
 DECLARE_OP_ADAPTER(AscendQuant)
 DECLARE_OP_USE_OUTPUT(AscendQuant)
 
 DECLARE_OP_ADAPTER(AscendDequant)
 DECLARE_OP_USE_OUTPUT(AscendDequant)
-}  // namespace mindspore::transform
+
+DECLARE_OP_ADAPTER(AscendAntiQuant)
+DECLARE_OP_USE_OUTPUT(AscendAntiQuant)
 #endif  // MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_QUANTIZE_OPS_DECLARE_H_

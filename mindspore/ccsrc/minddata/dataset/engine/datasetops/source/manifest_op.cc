@@ -46,6 +46,7 @@ ManifestOp::ManifestOp(int32_t num_works, std::string file, int32_t queue_size, 
 
 // Load 1 TensorRow (image,label) using 1 ImageLabelPair. 1 function call produces 1 TensorTow
 Status ManifestOp::LoadTensorRow(row_id_type row_id, TensorRow *trow) {
+  RETURN_UNEXPECTED_IF_NULL(trow);
   std::pair<std::string, std::vector<std::string>> data = image_labelname_[static_cast<size_t>(row_id)];
   std::shared_ptr<Tensor> image;
   std::shared_ptr<Tensor> label;
@@ -125,7 +126,7 @@ Status ManifestOp::PrepareData() {
     RETURN_STATUS_UNEXPECTED("Invalid file path, " + file_ + " does not exist.");
   }
 
-  std::ifstream file_handle(realpath.value());
+  std::ifstream file_handle(realpath.value(), std::ios::in);
   if (!file_handle.is_open()) {
     RETURN_STATUS_UNEXPECTED("Invalid file, failed to open " + file_ +
                              ": manifest file is damaged or permission denied!");
@@ -144,7 +145,11 @@ Status ManifestOp::PrepareData() {
       }
       // If image is not JPEG/PNG/GIF/BMP, drop it
       bool valid = false;
-      RETURN_IF_NOT_OK(CheckImageType(image_file_path, &valid));
+      auto s = CheckImageType(image_file_path, &valid);
+      if (s != Status::OK()) {
+        file_handle.close();
+        return s;
+      }
       if (!valid) {
         continue;
       }

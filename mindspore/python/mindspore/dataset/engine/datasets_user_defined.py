@@ -1,4 +1,4 @@
-# Copyright 2019-2022 Huawei Technologies Co., Ltd
+# Copyright 2019-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ After declaring the dataset object, you can further apply dataset operations
 (e.g. filter, skip, concat, map, batch) on it.
 """
 import builtins
+import errno
 import math
 import os
 import signal
@@ -27,6 +28,7 @@ import multiprocessing
 from multiprocessing.util import Finalize
 import queue
 from functools import partial
+import subprocess
 import threading
 import weakref
 import platform
@@ -43,9 +45,10 @@ from . import samplers
 from .queue import _SharedQueue
 from .validators import check_generatordataset, check_numpyslicesdataset, check_paddeddataset
 from ..core.config import get_enable_shared_mem, get_prefetch_size, get_multiprocessing_timeout_interval, \
-    get_enable_watchdog
+    get_enable_watchdog, get_debug_mode
 from ..core.datatypes import mstypelist_to_detypelist
 from ..core.py_util_helpers import ExceptionHandler
+from ..transforms import transforms
 
 
 def _iter_fn(dataset, num_samples):
@@ -126,18 +129,30 @@ def _fill_worker_indices(workers, indices, idx):
     return idx
 
 
+def _fill_worker_quit_flag(workers, worker_to_quit):
+    """
+    Worker index queue filler, fill worker index queue with QUIT flag.
+    """
+    num_worker = len(workers)
+    for i in range(num_worker):
+        # just put only one QUIT flag to the sub-thread / sub-process
+        if str(i) not in worker_to_quit:
+            try:
+                workers[i].put("QUIT")
+                worker_to_quit[str(i)] = "QUIT"
+            except queue.Full:
+                continue
+
+
 def _convert_row(row):
     """
-    Convert Op return value to numpy
+    Convert Op return value to numpy, or keep as a dict (if already a dict)
     """
-    if isinstance(row, dict):
-        raise TypeError("Input data is expected to be " \
-                        "int, float, str, bytes, numpy.ndarray, Tensor or list/tuple of them, but got dict.")
 
     # convert single item to np.array
-    prim_type = (int, float, str, bytes, np.ndarray, Tensor)
+    prim_type = (int, float, str, bytes, np.ndarray, Tensor, np.number, np.bool_)
     if isinstance(row, prim_type):
-        if isinstance(row, Tensor):      # mindspore.Tensor
+        if isinstance(row, Tensor):  # mindspore.Tensor
             item = row.asnumpy()
         else:
             item = np.array(row, copy=False)
@@ -146,16 +161,18 @@ def _convert_row(row):
                                 "int or float or str, but got {}.".format(item.dtype))
         return tuple([item])
 
+    if isinstance(row, dict):
+        return tuple([row])
+
     value = []
     # convert each item to np.array
     idx = 0
     for x in row:
         idx += 1
-        if isinstance(x, Tensor):      # mindspore.Tensor
+        if isinstance(x, Tensor):  # mindspore.Tensor
             value.append(x.asnumpy())
         elif isinstance(x, dict):
-            raise TypeError("The {}th item of input data is expected to be " \
-                            "int, float, str, bytes, numpy.ndarray, Tensor, but got dict.".format(idx))
+            value.append(x)
         else:
             item = np.array(x, copy=False)
             if item.dtype == 'object':
@@ -199,20 +216,30 @@ class SamplerFn:
         queue_size = max(2, queue_size)
 
         if multi_process and get_enable_shared_mem():
-            _check_shm_usage(num_worker, queue_size, max_rowsize)
-        count = multiprocessing.Value('i', 0)
+            # generator dataset use idx_queue and res_queue to transfer data between main and subprocess
+            # idx_queue is used multiprocess.Queue which is not shared memory, so it's size is 0.
+            # res_queue is used shared memory, so it' size is max_rowsize which is defined by user.
+            _check_shm_usage(num_worker, queue_size, 0, max_rowsize)
+        self.count = multiprocessing.Value('i', 0)
         for _ in range(num_worker):
             if multi_process is True:
                 try:
-                    worker = _GeneratorWorkerMp(dataset, self.eof, max_rowsize, queue_size, self.ppid, count)
-                except Exception:
-                    raise RuntimeError("Init multiprocessing.Queue() failed, This might be caused by insufficient shm, "
-                                       "and the recommended shm size is at least 5 GB.")
-                worker.daemon = True
-                # When multi processes fork a subprocess, the lock of the main process is copied to the subprocess,
-                # which may cause deadlock. Therefore, the subprocess startup is performed in the initialization phase.
-                # In this phase, the main process is not locked.
-                worker.start()
+                    worker = _GeneratorWorkerMp(dataset, self.eof, max_rowsize, queue_size, self.ppid, self.count)
+                    worker.daemon = True
+                    # When multi processes fork a subprocess, the lock of the main process is copied to the subprocess,
+                    # which may cause deadlock. Therefore, the subprocess startup is performed in the initialization
+                    # phase. In this phase, the main process is not locked.
+                    worker.start()
+                except OSError as e:
+                    if e.errno == errno.EMFILE:
+                        raise RuntimeError("Failed to launch multiprocessing of GeneratorDataset: "
+                                           "Too many open files. Please check if `num_parallel_workers` "
+                                           "is set too large, or you are creating iterators multiple times. "
+                                           "You can also increase the limit using `ulimit -n` in the shell "
+                                           "to avoid this error.")
+                    raise
+                except Exception as e:
+                    raise RuntimeError("Failed to launch multiprocessing of GeneratorDataset: {0}".format(e))
                 self.pids.append(worker.pid)
                 self.need_join = True
             else:
@@ -229,7 +256,11 @@ class SamplerFn:
         for w in self.workers:
             # Check whether the queue of the subprocess is empty.
             if not w.queue_empty():
-                raise Exception("The queue of the subprocess is not empty.")
+                # in failover reset scenario the QUIT flag should be pop first
+                while w.idx_queue.qsize() > 0:
+                    result = w.idx_queue.get()
+                    if result != "QUIT":
+                        raise Exception("The queue of the subprocess is not empty.")
             # Start all workers
             if not w.is_alive():
                 w.start()
@@ -237,6 +268,9 @@ class SamplerFn:
         # Fill initial index queues
         idx_cursor = 0
         idx_cursor = _fill_worker_indices(self.workers, indices, idx_cursor)
+
+        # worker to quit
+        worker_to_quit = {}
 
         # Fetch results
         for i in range(len(indices)):
@@ -261,13 +295,7 @@ class SamplerFn:
                     cost_time = int(time.time()) - start_time
                     if cost_time / self.check_interval >= wait_count:
                         wait_count += 1
-                        logger.warning("It has been waiting for " + str(cost_time) + "s because the multi "
-                                       "thread/process of the generator generates data had been hung by gil lock. "
-                                       "Check whether the source of generator has an infinite loop operation or the "
-                                       "output data is too large. You can also set the timeout interval by "
-                                       "ds.config.set_multiprocessing_interval to adjust the output frequency of this "
-                                       "log.")
-
+                        self._log_stuck_warning(self.workers[i % self.num_worker], cost_time)
                 result = self.workers[i % self.num_worker].get()
                 if isinstance(result, ExceptionHandler):
                     result.reraise()
@@ -282,7 +310,46 @@ class SamplerFn:
                 return
             if idx_cursor < len(indices):
                 idx_cursor = _fill_worker_indices(self.workers, indices, idx_cursor)
+            else:
+                # send QUIT flag to workers
+                _fill_worker_quit_flag(self.workers, worker_to_quit)
             yield _convert_row(result)
+
+    def _log_stuck_warning(self, worker, waiting_time):
+        """
+        Log warning of the stuck worker, containing the worker ID, waiting time and
+        the current stack (if py-spy installed).
+
+        Args:
+            worker (Union[threading.Thread, multiprocessing.Process]): The worker instance.
+            waiting_time (int): The waiting time for getting data from the worker.
+        """
+        if self.multi_process:
+            stuck_worker_id = worker.pid
+            worker_type = "process"
+            stuck_pid = stuck_worker_id
+        else:
+            if hasattr(worker, "native_id"):
+                # only supported since Python 3.8
+                stuck_worker_id = worker.native_id
+            else:
+                stuck_worker_id = worker.ident
+            worker_type = "thread"
+            stuck_pid = os.getpid()  # get the process ID of the stuck thread
+        warning_message = "Has been waiting for data from Generator worker {0} ID '{1}' " \
+                          "for more than {2} seconds. Please check if the user defined " \
+                          "dataset of GeneratorDataset has a dead loop, or is processing " \
+                          "too slowly. ".format(worker_type, stuck_worker_id, waiting_time)
+        install_status, _ = subprocess.getstatusoutput("py-spy --version")
+        if install_status == 0:
+            stack = subprocess.getoutput("py-spy dump -p {}".format(stuck_pid))
+            warning_message += "Below is the stack of this worker:\n{0}\n".format(stack)
+        else:
+            warning_message += "You can install py-spy via `pip install py-spy`, then " \
+                               "stop and rerun your script to get the current stack. "
+        warning_message += "If it is not a problem, you can adjust the printing frequency of this log via " \
+                           "the `mindspore.dataset.config.set_multiprocessing_timeout_interval` interface."
+        logger.warning(warning_message)
 
     def _launch_cleanup_worker(self, multi_process):
         """
@@ -314,23 +381,61 @@ class SamplerFn:
     def _stop_subprocess(self):
         """Only the main process can call join."""
         if self.need_join is True and self.ppid == os.getpid():
+            # close the watch dog first
+            self._abort_watchdog()
+
             if hasattr(self, 'eof') and self.eof is not None and not self.eof.is_set():
                 self.eof.set()
             self.need_join = False
             for w in self.workers:
                 if self.multi_process is True and hasattr(w, '_closed') and w._closed is False:  # pylint: disable=W0212
                     try:
+                        # del the queue first
+                        del w.res_queue
+                        del w.idx_queue
+
+                        # close all the subprocess workers
+                        w.terminate()
                         w.join()
+                        w.close()
                     except Exception:  # pylint: disable=W0703
                         # Block all errors when join
                         continue
-            self._abort_watchdog()
+
+            # release the file descriptor handle
+            check_interval = get_multiprocessing_timeout_interval()
+            for w in self.workers:
+                try:
+                    subprocess_file_descriptor = w.sentinel
+                    st = time.time()
+                    while _PythonMultiprocessing.is_process_alive(w.pid):
+                        time.sleep(0.01)  # sleep 10ms, waiting for the subprocess exit
+                        if time.time() - st > check_interval:
+                            logger.warning("Waiting for the subprocess worker [{}] to exit.".format(w.pid))
+                            st += check_interval
+                except ValueError as e:
+                    if "process object is closed" in str(e):
+                        continue
+                    raise e
+                try:
+                    if w.is_alive():
+                        os.close(subprocess_file_descriptor)
+                except OSError as e:
+                    # Maybe the file descriptor had been released, so ignore the 'Bad file descriptor'
+                    if "Bad file descriptor" not in str(e):
+                        raise e
+
+            self.workers.clear()
+            self.workers = None
 
     def _abort_watchdog(self):
         if hasattr(self, 'eot') and self.eot is not None and not self.eot.is_set():
             self.eot.set()
         if hasattr(self, 'cleaning_process') and self.cleaning_process is not None:
             _PythonMultiprocessing._terminate_processes([self.cleaning_process])  # pylint: disable=W0212
+            del self.cleaning_process
+        if hasattr(self, 'count'):
+            del self.count
 
     @classmethod
     def _finalize_join(cls, twr, eot):
@@ -380,6 +485,7 @@ def _generator_worker_loop(dataset, idx_queue, result_queue, eof, is_multiproces
     Multithread or multiprocess generator worker process loop.
     """
     if is_multiprocessing:
+        result_queue.cancel_join_thread()  # Ensure that the process does not hung when exiting
         signal.signal(signal.SIGTERM, partial(_subprocess_handle, eof))
     while True:
         _ignore_sigint(is_multiprocessing=is_multiprocessing)
@@ -389,19 +495,26 @@ def _generator_worker_loop(dataset, idx_queue, result_queue, eof, is_multiproces
             idx = idx_queue.get(timeout=1)
         except queue.Empty:
             if _main_process_already_exit(eof, is_multiprocessing, idx_queue, result_queue, ppid) is True:
+                del idx_queue
+                del result_queue
                 return
             # If end-of-file (eof) is not set, continue to get data from idx_queue
+            continue
+        if idx == "QUIT":
+            # all the data had been processed, so we release the executor which is used by the current thread/process
+            transforms.clean_unused_executors()
             continue
         if idx is None:
             # When the queue is out of scope from master process, a None item can be fetched from the queue.
             # Upon receiving None, worker process should check if eof is set.
             if not eof.is_set():
                 raise Exception("")
+            del idx_queue
+            del result_queue
             return
         if eof.is_set():
-            if is_multiprocessing:
-                idx_queue.cancel_join_thread()
-                result_queue.cancel_join_thread()
+            del idx_queue
+            del result_queue
             return
         # Fetch data, any exception from __getitem__ will terminate worker and timeout master process
         try:
@@ -414,6 +527,8 @@ def _generator_worker_loop(dataset, idx_queue, result_queue, eof, is_multiproces
                 result_queue.put(result, timeout=5)
             except queue.Full:
                 if _main_process_already_exit(eof, is_multiprocessing, idx_queue, result_queue, ppid) is True:
+                    del idx_queue
+                    del result_queue
                     return
                 # If eof is not set, continue to put data to result_queue
                 continue
@@ -429,7 +544,8 @@ class _GeneratorWorkerMt(threading.Thread):
     def __init__(self, dataset, eof):
         self.idx_queue = queue.Queue(16)
         self.res_queue = queue.Queue(16)
-        super().__init__(target=_generator_worker_loop, args=(dataset, self.idx_queue, self.res_queue, eof, False))
+        super().__init__(target=_generator_worker_loop, args=(dataset, self.idx_queue, self.res_queue, eof, False),
+                         name="GeneratorWorkerThread")
 
     def put(self, item):
         """
@@ -464,9 +580,9 @@ class _GeneratorWorkerMp(multiprocessing.Process):
             self.res_queue = _SharedQueue(queue_size, count, max_rowsize=max_rowsize)
         else:
             self.res_queue = multiprocessing.Queue(queue_size)
-        self.idx_queue._joincancelled = True  # pylint: disable=W0212
-        self.res_queue._joincancelled = True  # pylint: disable=W0212
-        super().__init__(target=_generator_worker_loop, args=(dataset, self.idx_queue, self.res_queue, eof, True, ppid))
+        self.idx_queue.cancel_join_thread()  # Ensure that the process does not hung when exiting
+        super().__init__(target=_generator_worker_loop, args=(dataset, self.idx_queue, self.res_queue, eof, True, ppid),
+                         name="GeneratorWorkerProcess")
 
     def put(self, item):
         """
@@ -493,8 +609,11 @@ class _GeneratorWorkerMp(multiprocessing.Process):
 
     def __del__(self):
         # del all the Queue & SharedQueue when the iter had been deleted from ITERATORS_LIST
-        del self.idx_queue
-        del self.res_queue
+        if hasattr(self, 'idx_queue'):
+            del self.idx_queue
+        if hasattr(self, 'res_queue'):
+            # del the queue when has
+            del self.res_queue
 
 
 class GeneratorDataset(MappableDataset, UnionBaseDataset):
@@ -511,29 +630,33 @@ class GeneratorDataset(MappableDataset, UnionBaseDataset):
             iter(source).next().
             Random accessible source is required to return a tuple of NumPy arrays as a row of the dataset on
             source[idx].
-        column_names (Union[str, list[str]], optional): List of column names of the dataset. Default: None. Users are
-            required to provide either column_names or schema.
-        column_types (list[mindspore.dtype], optional): List of column data types of the dataset. Default: None.
+        column_names (Union[str, list[str]], optional): List of column names of the dataset. Default: ``None`` .
+            Users are required to provide either column_names or schema.
+        column_types (list[mindspore.dtype], optional): List of column data types of the dataset. Default: ``None`` .
             If provided, sanity check will be performed on generator output.
         schema (Union[str, Schema], optional): Data format policy, which specifies the data types and shapes of the data
-            column to be read. Both JSON file path and objects constructed by mindspore.dataset.Schema are acceptable.
-            Default: None.
+            column to be read. Both JSON file path and objects constructed by :class:`mindspore.dataset.Schema` are
+            acceptable. Default: ``None`` .
         num_samples (int, optional): The number of samples to be included in the dataset.
-            Default: None, all images.
-        num_parallel_workers (int, optional): Number of subprocesses used to fetch the dataset in parallel. Default: 1.
+            Default: ``None`` , all images.
+        num_parallel_workers (int, optional): Number of worker threads/subprocesses used to
+            fetch the dataset in parallel. Default: ``1``.
         shuffle (bool, optional): Whether or not to perform shuffle on the dataset. Random accessible input is required.
-            Default: None, expected order behavior shown in the table below.
+            Default: ``None`` , expected order behavior shown in the table below.
         sampler (Union[Sampler, Iterable], optional): Object used to choose samples from the dataset. Random accessible
-            input is required. Default: None, expected order behavior shown in the table below.
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+            input is required. Default: ``None`` , expected order behavior shown in the table below.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             Random accessible input is required. When this argument is specified, `num_samples` reflects the maximum
             sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This argument must be specified only
-            when num_shards is also specified. Random accessible input is required.
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` .
+            This argument must be specified only when `num_shards` is also specified.
+            Random accessible input is required.
         python_multiprocessing (bool, optional): Parallelize Python operations with multiple worker process. This
-            option could be beneficial if the Python operation is computational heavy. Default: True.
-        max_rowsize(int, optional): Maximum size of row in MB that is used for shared memory allocation to copy
-            data between processes.  This is only used if python_multiprocessing is set to True. Default: 6 MB.
+            option could be beneficial if the Python operation is computational heavy. Default: ``True``.
+        max_rowsize(int, optional): Maximum size of row in MB that is used for shared memory
+            allocation to copy data between processes, the total occupied shared memory will increase as
+            ``num_parallel_workers`` and :func:`mindspore.dataset.config.set_prefetch_size` increase. This is only
+            used if python_multiprocessing is set to True. Default: 16.
 
     Raises:
         RuntimeError: If source raises an exception during execution.
@@ -541,43 +664,44 @@ class GeneratorDataset(MappableDataset, UnionBaseDataset):
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
         ValueError: If sampler and shuffle are specified at the same time.
         ValueError: If sampler and sharding are specified at the same time.
-        ValueError: If num_shards is specified but shard_id is None.
+        ValueError: If `num_shards` is specified but shard_id is None.
         ValueError: If shard_id is specified but `num_shards` is None.
-        ValueError: If `shard_id` is invalid (< 0 or >= `num_shards`).
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
+
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
 
     Note:
+        - If you configure `python_multiprocessing=True` (Default: ``True`` ) and `num_parallel_workers>1`
+          (default: ``1`` ) indicates that the multi-process mode is started for data load acceleration.
+          At this time, as the datasetiterates, the memory consumption of the subprocess will gradually increase,
+          mainly because the subprocess of the user-defined dataset obtains the member variables from the main
+          process in the Copy On Write way.
+          Example: If you define a dataset with `__ init__` function which contains a large number of member variable
+          data (for example, a very large file name list is loaded during the dataset construction) and uses the
+          multi-process mode, which may cause the problem of OOM (the estimated total memory usage is:
+          `(num_parallel_workers+1) * size of the parent process` ). The simplest solution is to replace Python objects
+          (such as list/dict/int/float/string) with non referenced data types
+          (such as Pandas, Numpy or PyArrow objects) for member variables, or load less meta data in member variables,
+          or configure `python_multiprocessing=False` to use multi-threading mode.
+
+          There are several classes/functions that can help you reduce the size of member variables, and you can choose
+          to use them:
+
+          1. :class:`mindspore.dataset.utils.LineReader`: Use this class to initialize your text file object in the
+          `__init__` function. Then read the file content based on the line number of the object with the `__getitem__`
+          function.
+
         - Input `source` accepts user-defined Python functions (PyFuncs), Do not add network computing operators from
           mindspore.nn and mindspore.ops or others into this `source` .
-        - This dataset can take in a `sampler` . `sampler` and `shuffle` are mutually exclusive.
-          The table below shows what input arguments are allowed and their expected behavior.
+        - The parameters `num_samples` , `shuffle` , `num_shards` , `shard_id` can be used to control the sampler
+          used in the dataset, and their effects when combined with parameter `sampler` are as follows.
 
-    .. list-table:: Expected Order Behavior of Using `sampler` and `shuffle`
-       :widths: 25 25 50
-       :header-rows: 1
-
-       * - Parameter `sampler`
-         - Parameter `shuffle`
-         - Expected Order Behavior
-       * - None
-         - None
-         - random order
-       * - None
-         - True
-         - random order
-       * - None
-         - False
-         - sequential order
-       * - Sampler object
-         - None
-         - order defined by sampler
-       * - Sampler object
-         - True
-         - not allowed
-       * - Sampler object
-         - False
-         - not allowed
+    .. include:: mindspore.dataset.sampler.txt
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> import numpy as np
         >>>
         >>> # 1) Multidimensional generator function as callable input.
@@ -659,6 +783,10 @@ class GeneratorDataset(MappableDataset, UnionBaseDataset):
         if platform.system().lower() == 'windows' and num_parallel_workers > 1 and python_multiprocessing:
             logger.warning("Python multiprocessing is not supported on Windows platform.")
         self.python_multiprocessing = python_multiprocessing if platform.system().lower() != 'windows' else False
+        if self.python_multiprocessing and get_debug_mode():
+            logger.warning("Python multiprocessing is not supported in debug mode."
+                           " Ignoring Python multiprocessing for GeneratorDataset.")
+            self.python_multiprocessing = False
 
         self.column_names = to_list(column_names)
 
@@ -688,42 +816,7 @@ class GeneratorDataset(MappableDataset, UnionBaseDataset):
     def __deepcopy__(self, memodict):
         if id(self) in memodict:
             return memodict[id(self)]
-        new_op = self.__safe_deepcopy__(memodict, exclude=("source", "__transfer_dataset__"))
-
-        sample_fn = None
-        if new_op.sampler is not None and hasattr(self.source, "__getitem__"):
-            # The reason why there is a try catch here is because when the new op is being constructed with shared
-            # memory enabled, there will be an exception thrown if there is not enough shared memory available
-            if self.source_len == -1:
-                raise RuntimeError("Attempt to construct a random access dataset, '__len__' method is required!")
-            try:
-                if new_op.num_parallel_workers > 1:
-                    self.__validate_memory_usage()
-
-                    sample_fn = SamplerFn(self.source, new_op.num_parallel_workers, self.python_multiprocessing,
-                                          self.max_rowsize)
-                    new_op.prepared_source = (lambda sample_ids: _cpp_sampler_fn_mp(sample_ids, sample_fn))
-                else:
-                    new_op.prepared_source = (lambda sample_ids: _cpp_sampler_fn(sample_ids, self.source))
-                new_op.sample_fn = sample_fn
-            except RuntimeError as e:
-                raise Exception(str(e))
-        else:
-            try:
-                new_op.sampler = None
-                new_op.sample_fn = sample_fn
-                new_op.source_len = min(new_op.source_len,
-                                        new_op.num_samples) if new_op.num_samples != 0 else new_op.source_len
-                iter(self.source)
-            except TypeError:
-                # Use generator function if input callable
-                new_op.prepared_source = (lambda: _generator_fn(self.source, new_op.num_samples))
-            else:
-                # Use iterator function if input is iterable
-                # Random accessible input is also iterable
-                new_op.prepared_source = (lambda: _iter_fn(self.source, new_op.num_samples))
-
-        return new_op
+        return self.__safe_deepcopy__(memodict, exclude=("source", "__transfer_dataset__"))
 
     def is_shuffled(self):
         if self.sampler:
@@ -742,7 +835,38 @@ class GeneratorDataset(MappableDataset, UnionBaseDataset):
             return super().split(sizes, randomize)
         return super(MappableDataset, self).split(sizes, randomize)
 
+    def prepare_multiprocessing(self):
+        """Preprocessing of prepared_source."""
+        sample_fn = None
+        if self.sampler is not None and hasattr(self.source, "__getitem__"):
+            # The reason why there is a try catch here is because when the new op is being constructed with shared
+            # memory enabled, there will be an exception thrown if there is not enough shared memory available
+            if self.source_len == -1:
+                raise RuntimeError("Attempt to construct a random access dataset, '__len__' method is required!")
+
+            if self.num_parallel_workers > 1:
+                self.__validate_memory_usage()
+
+                sample_fn = SamplerFn(self.source, self.num_parallel_workers, self.python_multiprocessing,
+                                      self.max_rowsize)
+                self.prepared_source = (lambda sample_ids: _cpp_sampler_fn_mp(sample_ids, sample_fn))
+            else:
+                self.prepared_source = (lambda sample_ids: _cpp_sampler_fn(sample_ids, self.source))
+            self.sample_fn = sample_fn
+        else:
+            self.sampler = None
+            self.sample_fn = sample_fn
+            self.source_len = min(self.source_len, self.num_samples) if self.num_samples != 0 else self.source_len
+            if not hasattr(self.source, "__iter__"):
+                # Use generator function if input callable
+                self.prepared_source = (lambda: _generator_fn(self.source, self.num_samples))
+            else:
+                # Use iterator function if input is iterable
+                # Random accessible input is also iterable
+                self.prepared_source = (lambda: _iter_fn(self.source, self.num_samples))
+
     def parse(self, children=None):
+        self.prepare_multiprocessing()
         if self.schema is None:
             return cde.GeneratorNode(self.prepared_source, self.column_names, self.column_types, self.source_len,
                                      self.sampler, self.num_parallel_workers)
@@ -768,11 +892,11 @@ class GeneratorDataset(MappableDataset, UnionBaseDataset):
             # get process memory usage
             process = psutil.Process(os.getpid())
             process_memory = process.memory_info().rss
-            sys_memory_free = psutil.virtual_memory().free
+            sys_memory_available = psutil.virtual_memory().available
 
             total_memory_maybe_used = process_memory * self.num_parallel_workers * valid_num_shards
-            if total_memory_maybe_used / sys_memory_free > 0.85:
-                valid_num_worker = math.floor(sys_memory_free * 0.85 / valid_num_shards / process_memory)
+            if total_memory_maybe_used / sys_memory_available > 0.85:
+                valid_num_worker = math.floor(sys_memory_available * 0.85 / valid_num_shards / process_memory)
                 valid_num_worker = 1 if valid_num_worker <= 0 else valid_num_worker
                 info = "GeneratorDataset's num_parallel_workers: {} is too large which may cause a lot of memory " \
                        "occupation (>85%) or out of memory(OOM) during multiprocessing. Therefore, it is recommended " \
@@ -794,9 +918,8 @@ class _NumpySlicesDataset:
 
         if isinstance(data, tuple):
             self.data = data
-            data_len = len(data)
         else:
-            self.data = (np.array(data),)
+            self.data = (data,)
 
         # check whether the data length in each column is equal
         data_len = [len(data_item) for data_item in self.data]
@@ -856,60 +979,43 @@ class NumpySlicesDataset(GeneratorDataset):
             NumPy formats. Input data will be sliced along the first dimension and generate additional rows, if input is
             list, there will be one column in each row, otherwise there tends to be multi columns. Large data is not
             recommended to be loaded in this way as data is loading into memory.
-        column_names (list[str], optional): List of column names of the dataset. Default: None. If column_names is not
-            provided, the output column names will be named as the keys of dict when the input data is a dict,
+        column_names (list[str], optional): List of column names of the dataset. Default: ``None`` . If `column_names`
+            is not provided, the output column names will be named as the keys of dict when the input data is a dict,
             otherwise they will be named like column_0, column_1 ...
-        num_samples (int, optional): The number of samples to be included in the dataset. Default: None, all samples.
-        num_parallel_workers (int, optional): Number of subprocesses used to fetch the dataset in parallel. Default: 1.
+        num_samples (int, optional): The number of samples to be included in the dataset. Default: ``None`` ,
+            all samples.
+        num_parallel_workers (int, optional): Number of worker subprocesses used to
+            fetch the dataset in parallel. Default: ``1``.
         shuffle (bool, optional): Whether or not to perform shuffle on the dataset.
-            Default: None, expected order behavior shown in the table below.
+            Default: ``None`` , expected order behavior shown in the table below.
         sampler (Union[Sampler, Iterable], optional): Object used to choose samples from the dataset.
-            Default: None, expected order behavior shown in the table below.
-        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: None.
+            Default: ``None`` , expected order behavior shown in the table below.
+        num_shards (int, optional): Number of shards that the dataset will be divided into. Default: ``None`` .
             When this argument is specified, `num_samples` reflects the max sample number of per shard.
-        shard_id (int, optional): The shard ID within `num_shards` . Default: None. This argument must be specified only
-            when num_shards is also specified.
+        shard_id (int, optional): The shard ID within `num_shards` . Default: ``None`` . This argument must be
+            specified only when `num_shards` is also specified.
 
     Note:
-        - This dataset can take in a `sampler` . `sampler` and `shuffle` are mutually exclusive.
-          The table below shows what input arguments are allowed and their expected behavior.
+        - The parameters `num_samples` , `shuffle` , `num_shards` , `shard_id` can be used to control the sampler
+          used in the dataset, and their effects when combined with parameter `sampler` are as follows.
 
-    .. list-table:: Expected Order Behavior of Using `sampler` and `shuffle`
-       :widths: 25 25 50
-       :header-rows: 1
-
-       * - Parameter `sampler`
-         - Parameter `shuffle`
-         - Expected Order Behavior
-       * - None
-         - None
-         - random order
-       * - None
-         - True
-         - random order
-       * - None
-         - False
-         - sequential order
-       * - Sampler object
-         - None
-         - order defined by sampler
-       * - Sampler object
-         - True
-         - not allowed
-       * - Sampler object
-         - False
-         - not allowed
+    .. include:: mindspore.dataset.sampler.txt
 
     Raises:
         RuntimeError: If len of column_names does not match output len of data.
         ValueError: If `num_parallel_workers` exceeds the max thread numbers.
         ValueError: If sampler and shuffle are specified at the same time.
         ValueError: If sampler and sharding are specified at the same time.
-        ValueError: If num_shards is specified but shard_id is None.
+        ValueError: If `num_shards` is specified but shard_id is None.
         ValueError: If shard_id is specified but `num_shards` is None.
-        ValueError: If `shard_id` is invalid (< 0 or >= `num_shards`).
+        ValueError: If `shard_id` is not in range of [0, `num_shards` ).
+
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
 
     Examples:
+        >>> import mindspore.dataset as ds
         >>> # 1) Input data can be a list
         >>> data = [1, 2, 3]
         >>> dataset = ds.NumpySlicesDataset(data=data, column_names=["column_1"])
@@ -970,7 +1076,12 @@ class PaddedDataset(GeneratorDataset):
         TypeError: If the element of padded_samples is not an instance of dict.
         ValueError: If the padded_samples is empty.
 
+    Tutorial Examples:
+        - `Load & Process Data With Dataset Pipeline
+          <https://www.mindspore.cn/docs/en/master/api_python/samples/dataset/dataset_gallery.html>`_
+
     Examples:
+        >>> import mindspore.dataset as ds
         >>> import numpy as np
         >>> data = [{'image': np.zeros(1, np.uint8)}, {'image': np.zeros(2, np.uint8)}]
         >>> dataset = ds.PaddedDataset(padded_samples=data)

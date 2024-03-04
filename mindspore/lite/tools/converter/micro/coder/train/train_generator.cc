@@ -48,7 +48,7 @@ void TrainGenerator::CodeTrainAndEvalFunc(std::ofstream &ofs) {
 }
 
 void TrainGenerator::CodeNetExecuteFunc(std::ofstream &ofs) {
-  ofs << "void Execute(bool train_mode) {\n";
+  ofs << "void Execute" << ctx_->GetCurModelIndex() << "(bool train_mode) {\n";
   if (config_->support_parallel()) {
     ofs << "  " << gThreadNum << " = GetCurrentThreadNum();\n";
     ofs << "  SetSpinCountMaxValue();\n";
@@ -64,12 +64,12 @@ void TrainGenerator::CodeNetExecuteFunc(std::ofstream &ofs) {
 }
 
 int TrainGenerator::CodeNetHFile() {
-  std::string net_include_file = net_src_file_path_ + net_inc_hfile_;
+  std::string net_include_file = model_dir_ + net_inc_hfile_;
   std::ofstream ofs(net_include_file);
   MS_CHECK_TRUE(!ofs.bad(), "filed to open file");
   MS_LOG(INFO) << "write " << net_include_file;
   CodeCommonNetH(ofs);
-  CodeCopyTrainOutputsState(ofs);
+  CodeCopyTrainOutputsState(ofs, ctx_->GetCurModelIndex());
   ofs << kEndExternCpp;
   ofs.close();
   return RET_OK;

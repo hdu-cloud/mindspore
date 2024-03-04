@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 #include "ops/mish.h"
-#include <string>
 #include <algorithm>
+#include <string>
 #include <vector>
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "utils/check_convert_utils.h"
 namespace mindspore {
 namespace ops {
 namespace {
@@ -42,7 +43,7 @@ TypePtr MishInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePt
                                            prim_name);
   MS_EXCEPTION_IF_NULL(input_args[0]);
   auto x_type = input_args[0]->BuildType();
-  const std::set valid_types = {kFloat16, kFloat32, kFloat64};
+  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64};
   (void)CheckAndConvertUtils::CheckTensorTypeValid("input_x", x_type, valid_types, prim_name);
   return x_type;
 }
@@ -55,6 +56,24 @@ AbstractBasePtr MishInfer(const abstract::AnalysisEnginePtr &, const PrimitivePt
   auto shape = MishInferShape(primitive, input_args);
   return abstract::MakeAbstract(shape, type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Mish, prim::kPrimMish, MishInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMishInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MishInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MishInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MishInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Mish, prim::kPrimMish, AGMishInfer, false);
 }  // namespace ops
 }  // namespace mindspore

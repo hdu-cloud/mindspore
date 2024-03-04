@@ -54,8 +54,9 @@ bool RenormGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, con
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemsetAsync(norm_value, 0, input_shape_[dim_] * sizeof(float), reinterpret_cast<cudaStream_t>(cuda_stream_)),
     "For 'Renorm', it's cudaMemsetAsync failed.");
-  CalRenorm(input, total_size_, inner_size_, axis_size_, p_, norm_value, output, device_id_,
-            reinterpret_cast<cudaStream_t>(cuda_stream_), max_norm_);
+  auto status = CalRenorm(input, total_size_, inner_size_, axis_size_, p_, norm_value, output, device_id_,
+                          reinterpret_cast<cudaStream_t>(cuda_stream_), max_norm_);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 
@@ -106,6 +107,10 @@ void RenormGpuKernelMod::InitParams() {
   if (dim_ < 0) {
     dim_ += shape_size;
   }
+  axis_size_ = 1;
+  inner_size_ = 1;
+  stride_size_ = 1;
+  total_size_ = 1;
   for (size_t i = 0; i < shape_size; ++i) {
     if (SizeToLong(i) == dim_) {
       axis_size_ *= input_shape_[i];

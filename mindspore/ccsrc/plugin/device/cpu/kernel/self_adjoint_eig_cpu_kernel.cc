@@ -25,27 +25,50 @@ constexpr auto kSelfAdjopintEig = "SelfAdjopintEig";
 constexpr const size_t kInputsNum = 1;
 constexpr const size_t kOutputsNum = 2;
 
-void SelfAdjointEigCpuKernelMod::InitKernel(const CNodePtr &kernel_node) {
-  MS_EXCEPTION_IF_NULL(kernel_node);
-  kernel_name_ = common::AnfAlgo::GetCNodeName(kernel_node);
-  dtype_ = AnfAlgo::GetInputDeviceDataType(kernel_node, 0);
-  attr_ = common::AnfAlgo::GetNodeAttr<bool>(kernel_node, "compute_v");
-  input_shape_ = AnfAlgo::GetInputDeviceShape(kernel_node, 0);
+bool SelfAdjointEigCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+                                      const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
+  kernel_name_ = base_operator->name();
+  auto prim = base_operator->GetPrim();
+  MS_EXCEPTION_IF_NULL(prim);
+
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kInputsNum, kernel_name_);
+  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kOutputsNum, kernel_name_);
+
+  auto kernel_attr = GetKernelAttrFromTensors(inputs, outputs);
+  auto is_match = MatchKernelAttr(kernel_attr, GetOpSupport());
+  if (!is_match.first) {
+    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', it does not support this kernel data type: " << kernel_attr;
+  }
+
+  dtype_ = inputs[kIndex0]->GetDtype();
+  compute_v_ = GetValue<bool>(prim->GetAttr("compute_v"));
+
+  return true;
+}
+
+int SelfAdjointEigCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+                                       const std::vector<KernelTensorPtr> &outputs,
+                                       const std::map<uint32_t, tensor::TensorPtr> &) {
+  if (auto ret = KernelMod::Resize(base_operator, inputs, outputs); ret != KRET_OK) {
+    return ret;
+  }
+  input_shape_ = inputs[kIndex0]->GetShapeVector();
+
+  return KRET_OK;
 }
 
 bool SelfAdjointEigCpuKernelMod::Launch(const std::vector<kernel::AddressPtr> &inputs,
                                         const std::vector<kernel::AddressPtr> &,
                                         const std::vector<kernel::AddressPtr> &outputs) {
-  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kInputsNum, kernel_name_);
-  // CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kOutputsNum, kernel_name_);
   if (dtype_ == kNumberTypeFloat32) {
-    LaunchKernel<float>(inputs, outputs);
+    (void)LaunchKernel<float>(inputs, outputs);
   } else if (dtype_ == kNumberTypeFloat64) {
-    LaunchKernel<double>(inputs, outputs);
+    (void)LaunchKernel<double>(inputs, outputs);
   } else if (dtype_ == kNumberTypeComplex64) {
-    LaunchKernel<std::complex<float>>(inputs, outputs);
+    (void)LaunchKernel<std::complex<float>>(inputs, outputs);
   } else if (dtype_ == kNumberTypeComplex128) {
-    LaunchKernel<std::complex<double>>(inputs, outputs);
+    (void)LaunchKernel<std::complex<double>>(inputs, outputs);
   } else {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the dtype of x must be float32 or float64, but got "
                       << TypeIdLabel(dtype_) << ".";
@@ -59,7 +82,7 @@ bool SelfAdjointEigCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressP
   auto *input = reinterpret_cast<T *>(inputs[kIndex0]->addr);
   auto *output0 = reinterpret_cast<T *>(outputs[kIndex0]->addr);
   auto *output1 = reinterpret_cast<T *>(outputs[kIndex1]->addr);
-  bool attr0_ = attr_;
+  bool attr0_ = compute_v_;
   // The size of each dimension
   std::vector<int64_t> shape = input_shape_;
   // rank
@@ -93,9 +116,9 @@ bool SelfAdjointEigCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressP
     }
   } else {
     for (int64_t batch = 0; batch < num_array; ++batch) {
-      T *A = reinterpret_cast<T *>(new T[m * n]);
-      T *B = reinterpret_cast<T *>(new T[m]);
-      T *C = reinterpret_cast<T *>(new T[m * n]);
+      T *A = static_cast<T *>(new T[m * n]);
+      T *B = static_cast<T *>(new T[m]);
+      T *C = static_cast<T *>(new T[m * n]);
       // Get the address of the input and output matrix for each batch
       for (int64_t i = 0; i < m * n; ++i) {
         A[i] = input[batch * m * n + i];

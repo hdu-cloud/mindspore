@@ -1,9 +1,10 @@
 #!/bin/bash
 source ./scripts/base_functions.sh
+echo "Running mslite test script : run_benchmark_codegen.sh"
 
 function Run_x86_codegen() {
     # $1:buildPath $2:modelPath $3:models_list $4:logFile $5:resultFile $6:micro_cofig $7:parallel_flag
-    local bind_mode thread_num suffix run_result
+    local bind_mode thread_num suffix run_result elapsed_time ret
     rm -rf $1
     mkdir -p $1
 
@@ -65,7 +66,6 @@ function Run_x86_codegen() {
         weight_file=${model_file%.*}".caffemodel"
       fi
       output_file=$1"/"${model_name}
-      quant_type=""
       config_file=$6
       train_model="false"
       in_dtype="DEFAULT"
@@ -77,13 +77,16 @@ function Run_x86_codegen() {
       echo './converter_lite  --fmk='${model_fmk}' --modelFile='${model_file}' --weightFile='${weight_file}' --outputFile='${output_file}\
         ' --inputDataType='${in_dtype}' --outputDataType='${out_dtype}' --inputShape='${spec_shapes}\
         ' --configFile='${config_file}' --trainModel='${train_model} >> "$4"
+      elapsed_time=$(date +%s.%N)
       ./converter_lite  --fmk=${model_fmk} --modelFile=${model_file} --weightFile=${weight_file} --outputFile=${output_file}\
         --inputDataType=${in_dtype} --outputDataType=${out_dtype} --inputShape=${spec_shapes}\
         --configFile=${config_file} --trainModel=${train_model} >> "$4"
-      if [ $? = 0 ]; then
-          converter_result='converter '${model_type}''${quant_type}' '${model_name}' pass';echo ${converter_result} >> $5
+      ret=$?
+      elapsed_time=$(printf %.2f "$(echo "$(date +%s.%N) - $elapsed_time" | bc)")
+      if [ ${ret} = 0 ]; then
+          converter_result='converter_'${model_type}' '${model_name}' '${elapsed_time}' pass';echo ${converter_result} >> $5
       else
-          converter_result='converter '${model_type}''${quant_type}' '${model_name}' failed';echo ${converter_result} >> $5
+          converter_result='converter_'${model_type}' '${model_name}' '${elapsed_time}' failed';echo ${converter_result} >> $5
           return 1;
       fi
 
@@ -98,9 +101,18 @@ function Run_x86_codegen() {
       echo ${model_name} >> "$4"
 
       # 1. build benchmark
+      elapsed_time=$(date +%s.%N)
       mkdir -p ${output_file}/build && cd ${output_file}/build || exit 1
       cmake -DPKG_PATH=${x86_path}/mindspore-lite-${version}-linux-x64 ${output_file} >> $4
-      make || return 1
+      make
+      ret=$?
+      elapsed_time=$(printf %.2f "$(echo "$(date +%s.%N) - $elapsed_time" | bc)")
+      if [ ${ret} = 0 ]; then
+          run_result='x86_codegen_make '${model_name}' '${elapsed_time}' pass'; echo ${run_result} >> $5
+      else
+          run_result='x86_codegen_make '${model_name}' '${elapsed_time}' failed'; echo ${run_result} >> $5;
+          return 1;
+      fi
       # 2. run benchmark
       if [[ ${input_num} == "" || ${input_num} == 1 ]]; then
         input_files=${models_path}/input_output/input/${model_name}.ms.bin
@@ -110,13 +122,16 @@ function Run_x86_codegen() {
           input_files=${input_files}${models_path}'/input_output/input/'${model_name}'.ms.bin_'$i','
         done
       fi
-      echo "net file: ${output_file}/src/net.bin" >> $4
-      echo "./benchmark ${input_files} ${output_file}/src/net.bin 1 ${models_path}/input_output/output/${model_name}.ms.out ${thread_num} ${bind_mode} 0" >> $4
-      ./benchmark ${input_files} ${output_file}/src/net.bin 1 ${models_path}/input_output/output/${model_name}.ms.out ${thread_num} ${bind_mode} 0 >> $4
-      if [ $? = 0 ]; then
-          run_result='x86_codegen'${suffix}': '${model_name}' pass'; echo ${run_result} >> $5
+      echo "net file: ${output_file}/src/model0/net0.bin" >> $4
+      echo "./benchmark ${input_files} ${output_file}/src/model0/net0.bin 1 ${models_path}/input_output/output/${model_name}.ms.out ${thread_num} ${bind_mode} 0" >> $4
+      elapsed_time=$(date +%s.%N)
+      ./benchmark ${input_files} ${output_file}/src/model0/net0.bin 1 ${models_path}/input_output/output/${model_name}.ms.out ${thread_num} ${bind_mode} 0 >> $4
+      ret=$?
+      elapsed_time=$(printf %.2f "$(echo "$(date +%s.%N) - $elapsed_time" | bc)")
+      if [ ${ret} = 0 ]; then
+          run_result='x86_codegen'${suffix}' '${model_name}' '${elapsed_time}' pass'; echo ${run_result} >> $5
       else
-          run_result='x86_codegen'${suffix}': '${model_name}' failed'; echo ${run_result} >> $5;
+          run_result='x86_codegen'${suffix}' '${model_name}' '${elapsed_time}' failed'; echo ${run_result} >> $5;
           return 1;
       fi
     done < $3
@@ -124,7 +139,7 @@ function Run_x86_codegen() {
 
 function Run_cortex_m_codegen() {
     # $1:buildPath $2:modelPath $3:models_list $4:logFile $5:resultFile $6:micro_cofig
-    local bind_mode thread_num suffix run_result
+    local bind_mode thread_num suffix run_result elapsed_time ret
     rm -rf $1
     mkdir -p $1
 
@@ -182,7 +197,6 @@ function Run_cortex_m_codegen() {
       cp -r ${STM32_DEMO_PATH}/stm32f767 $1/
       # output_file=$1"/stm32f767/"${model_name}
       output_file=$1"/stm32f767/gen_output"
-      quant_type=""
       config_file=$6
       spec_shapes=""
       train_model="false"
@@ -195,13 +209,16 @@ function Run_cortex_m_codegen() {
       echo './converter_lite  --fmk='${model_fmk}' --modelFile='${model_file}' --weightFile='${weight_file}' --outputFile='${output_file}\
         ' --inputDataType='${in_dtype}' --outputDataType='${out_dtype}' --inputShape='${spec_shapes}\
         ' --configFile='${config_file}' --trainModel='${train_model} >> "$4"
+      elapsed_time=$(date +%s.%N)
       ./converter_lite  --fmk=${model_fmk} --modelFile=${model_file} --weightFile=${weight_file} --outputFile=${output_file}\
         --inputDataType=${in_dtype} --outputDataType=${out_dtype} --inputShape=${spec_shapes}\
         --configFile=${config_file} --trainModel=${train_model} >> "$4"
-      if [ $? = 0 ]; then
-          converter_result='converter '${model_type}''${quant_type}' '${model_name}' pass';echo ${converter_result} >> $5
+      ret=$?
+      elapsed_time=$(printf %.2f "$(echo "$(date +%s.%N) - $elapsed_time" | bc)")
+      if [ ${ret} = 0 ]; then
+          converter_result='converter_'${model_type}' '${model_name}' '${elapsed_time}' pass';echo ${converter_result} >> $5
       else
-          converter_result='converter '${model_type}''${quant_type}' '${model_name}' failed';echo ${converter_result} >> $5
+          converter_result='converter_'${model_type}' '${model_name}' '${elapsed_time}' failed';echo ${converter_result} >> $5
           return 1;
       fi
 
@@ -229,17 +246,22 @@ function Run_cortex_m_codegen() {
       cd ${stm_demo_file} || exit 1
       [ -n "${stm_demo_file}" ] && rm -rf ${stm_demo_file}/build
       sed -i "s/LITE_PACK =/LITE_PACK = mindspore-lite-${version}-none-cortex-m7/g" Makefile
+      sed -i "42a\gen_output/src/model0/model0.c \\\\" Makefile
+      sed -i "s/net.c/model0\/net0.c/g" Makefile
+      sed -i "s/weight.c/model0\/weight0.c/g" Makefile
       make >> "$4" || return 1
 
       # 2. run benchmark
+      elapsed_time=$(date +%s.%N)
       bash ${STM32_CUBE_PROG_PATH}/bin/STM32_Programmer.sh -c port=SWD -w build/test_767_01.bin 0x08000000 -s 0x08000000 || exit 1
       sleep 3
       bash ${STM32_CUBE_PROG_PATH}/bin/STM32_Programmer.sh -c port=SWD model=HOTPLUG --upload 0x20000000 0x1 ret.bin  || exit 1
       calib_ret=`cat ret.bin`
+      elapsed_time=$(printf %.2f "$(echo "$(date +%s.%N) - $elapsed_time" | bc)")
       if [[ ${calib_ret} = 1 ]];then
-          run_result='cortex_codegen'${suffix}': '${model_name}' pass'; echo ${run_result} >> $5
+          run_result='cortex_codegen'${suffix}' '${model_name}' '${elapsed_time}' pass'; echo ${run_result} >> $5
       else
-          run_result='cortex_codegen'${suffix}': '${model_name}' failed'; echo ${run_result} >> $5;
+          run_result='cortex_codegen'${suffix}' '${model_name}' '${elapsed_time}' failed'; echo ${run_result} >> $5;
           echo "return is "${calib_ret} >> $5;
           return 1;
       fi
@@ -248,7 +270,7 @@ function Run_cortex_m_codegen() {
 
 function Run_quant_codegen() {
     # $1:buildPath $2:modelPath $3:models_list $4:logFile $5:resultFile $6:micro_cofig
-    local bind_mode thread_num suffix run_result
+    local bind_mode thread_num suffix run_result elapsed_time ret
     rm -rf $1
     mkdir -p $1
 
@@ -334,7 +356,6 @@ function Run_quant_codegen() {
       fi
 
       output_file=$1"/"${model_name}
-      quant_type=""
       train_model="false"
       in_dtype="DEFAULT"
       out_dtype="DEFAULT"
@@ -346,13 +367,16 @@ function Run_quant_codegen() {
       echo './converter_lite  --fmk='${model_fmk}' --modelFile='${model_file}' --weightFile='${weight_file}' --outputFile='${output_file}\
         ' --inputDataType='${in_dtype}' --outputDataType='${out_dtype}' --inputShape='\"${spec_shapes}\"\
         ' --configFile='${config_file}' --trainModel='${train_model} >> "$4"
+      elapsed_time=$(date +%s.%N)
       ./converter_lite  --fmk=${model_fmk} --modelFile=${model_file} --weightFile=${weight_file} --outputFile=${output_file}\
         --inputDataType=${in_dtype} --outputDataType=${out_dtype} --inputShape="${spec_shapes}"\
         --configFile=${config_file} --trainModel=${train_model} >> "$4"
-      if [ $? = 0 ]; then
-          converter_result='converter '${model_type}' quant '${model_name}' pass';echo ${converter_result} >> $5
+      ret=$?
+      elapsed_time=$(printf %.2f "$(echo "$(date +%s.%N) - $elapsed_time" | bc)")
+      if [ ${ret} = 0 ]; then
+          converter_result='converter_'${model_type}'_quant '${model_name}' '${elapsed_time}' pass';echo ${converter_result} >> $5
       else
-          converter_result='converter '${model_type}' quant '${model_name}' failed';echo ${converter_result} >> $5
+          converter_result='converter_'${model_type}'_quant '${model_name}' '${elapsed_time}' failed';echo ${converter_result} >> $5
           return 1;
       fi
 
@@ -362,9 +386,18 @@ function Run_quant_codegen() {
       echo ${model_name} >> "$4"
 
       # 1. build benchmark
+      elapsed_time=$(date +%s.%N)
       mkdir -p ${output_file}/build && cd ${output_file}/build || exit 1
       cmake -DPKG_PATH=${x86_path}/mindspore-lite-${version}-linux-x64 ${output_file} >> $4
-      make || return 1
+      make
+      ret=$?
+      elapsed_time=$(printf %.2f "$(echo "$(date +%s.%N) - $elapsed_time" | bc)")
+      if [ ${ret} = 0 ]; then
+          run_result='x86_codegen_make '${model_name}' '${elapsed_time}' pass'; echo ${run_result} >> $5
+      else
+          run_result='x86_codegen_make '${model_name}' '${elapsed_time}' failed'; echo ${run_result} >> $5;
+          return 1;
+      fi
       # 2. run benchmark
       input_files=""
       if [[ ${input_num} == "" || ${input_num} == 1 ]]; then
@@ -376,13 +409,16 @@ function Run_quant_codegen() {
         done
       fi
       benchmark_data_file=${models_path}"/input_output/output/"${model_name}.ms.out
-      echo "net file: ${output_file}/src/net.bin" >> $4
-      echo "./benchmark ${input_files} ${output_file}/src/net.bin 1  ${benchmark_data_file} ${thread_num} ${bind_mode} 0 ${cosine_threshold}" >> $4
-      ./benchmark ${input_files} ${output_file}/src/net.bin 1 ${benchmark_data_file} ${thread_num} ${bind_mode} 0 ${cosine_threshold}>> $4
-      if [ $? = 0 ]; then
-          run_result='x86_codegen'${suffix}': '${model_name}' pass'; echo ${run_result} >> $5
+      echo "net file: ${output_file}/src/model0/net0.bin" >> $4
+      echo "./benchmark ${input_files} ${output_file}/src/model0/net0.bin 1  ${benchmark_data_file} ${thread_num} ${bind_mode} 0 ${cosine_threshold}" >> $4
+      elapsed_time=$(date +%s.%N)
+      ./benchmark ${input_files} ${output_file}/src/model0/net0.bin 1 ${benchmark_data_file} ${thread_num} ${bind_mode} 0 ${cosine_threshold}>> $4
+      ret=$?
+      elapsed_time=$(printf %.2f "$(echo "$(date +%s.%N) - $elapsed_time" | bc)")
+      if [ ${ret} = 0 ]; then
+          run_result='x86_codegen'${suffix}' '${model_name}' '${elapsed_time}' pass'; echo ${run_result} >> $5
       else
-          run_result='x86_codegen'${suffix}': '${model_name}' failed'; echo ${run_result} >> $5;
+          run_result='x86_codegen'${suffix}' '${model_name}' '${elapsed_time}' failed'; echo ${run_result} >> $5;
           return 1;
       fi
     done < $3
@@ -390,7 +426,8 @@ function Run_quant_codegen() {
 
 function Run_arm_codegen() {
     # $1:buildPath $2:modelPath $3:model_list $4:logFile $5:resultFile $6:deviceID $7:processor $8:micro_cofig $9:failNotReturn;
-    local package_path package_suffix target platform android_abi toolchain_name package_path run_result
+    local package_path package_suffix target platform android_abi toolchain_name package_path run_result elapsed_time \
+          ret
     echo "ANDROID_NDK: ${ANDROID_NDK}" >> $4
     package_path=${arm64_path}
     package_suffix="aarch64"
@@ -472,7 +509,6 @@ function Run_arm_codegen() {
         weight_file=${model_file%.*}".caffemodel"
       fi
       output_file=$1"/"${model_name}
-      quant_type=""
       config_file=$8
       train_model="false"
       in_dtype="DEFAULT"
@@ -484,13 +520,16 @@ function Run_arm_codegen() {
       echo './converter_lite  --fmk='${model_fmk}' --modelFile='${model_file}' --weightFile='${weight_file}' --outputFile='${output_file}\
         ' --inputDataType='${in_dtype}' --outputDataType='${out_dtype}' --inputShape='${spec_shapes}\
         ' --configFile='${config_file}' --trainModel='${train_model} >> "$4"
+      elapsed_time=$(date +%s.%N)
       ./converter_lite  --fmk=${model_fmk} --modelFile=${model_file} --weightFile=${weight_file} --outputFile=${output_file}\
         --inputDataType=${in_dtype} --outputDataType=${out_dtype} --inputShape=${spec_shapes}\
         --configFile=${config_file} --trainModel=${train_model} >> "$4"
-      if [ $? = 0 ]; then
-          converter_result='converter '${model_type}''${quant_type}' '${model_name}' pass';echo ${converter_result} >> $5
+      ret=$?
+      elapsed_time=$(printf %.2f "$(echo "$(date +%s.%N) - $elapsed_time" | bc)")
+      if [ ${ret} = 0 ]; then
+          converter_result='converter_'${model_type}' '${model_name}' '${elapsed_time}' pass';echo ${converter_result} >> $5
       else
-          converter_result='converter '${model_type}''${quant_type}' '${model_name}' failed';echo ${converter_result} >> $5
+          converter_result='converter_'${model_type}' '${model_name}' '${elapsed_time}' failed';echo ${converter_result} >> $5
           return 1;
       fi
 
@@ -514,13 +553,13 @@ function Run_arm_codegen() {
                 -DPLATFORM_${platform}=ON \
                 -DPKG_PATH=${PKG_PATH} $1/${model_name}
           make -j4
-      } >> $4  || return 1
+      } >> $4  2>&1 || return 1
 
       benchmark_dir="$1/codegen_test_$7"
       rm -rf "$benchmark_dir"
       mkdir "$benchmark_dir" && cd "$benchmark_dir" || exit 1
       cp -a "$1/benchmark/benchmark" "$benchmark_dir/benchmark" || exit 1
-      cp -a "$1/$model_name/src/net.bin" "$benchmark_dir/net.bin" || exit 1
+      cp -a "$1/$model_name/src/model0/net0.bin" "$benchmark_dir/net.bin" || exit 1
 
       {
             echo "ls $benchmark_dir:"
@@ -532,26 +571,28 @@ function Run_arm_codegen() {
       {
           echo "cd  /data/local/tmp/codegen_test_$7"
           echo 'chmod 777 benchmark'
-          echo 'chmod 777 net.bin'
+          echo 'chmod 777 net0.bin'
           echo 'ls'
-          echo './benchmark /data/local/tmp/input_output/input/'${model_name}'.ms.bin ./net.bin 1 /data/local/tmp/input_output/output/'${model_name}'.ms.out'
+          echo './benchmark /data/local/tmp/input_output/input/'${model_name}'.ms.bin ./net0.bin 1 /data/local/tmp/input_output/output/'${model_name}'.ms.out'
           echo "cd .. && rm -rf codegen_test_$7"
       } >> $4
 
         {
             echo "cd  /data/local/tmp/codegen_test_$7"
             echo 'chmod 777 benchmark'
-            echo 'chmod 777 net.bin'
+            echo 'chmod 777 net0.bin'
             echo 'ls'
-            echo './benchmark /data/local/tmp/input_output/input/'${model_name}'.ms.bin ./net.bin 1 /data/local/tmp/input_output/output/'${model_name}'.ms.out'
+            echo './benchmark /data/local/tmp/input_output/input/'${model_name}'.ms.bin ./net0.bin 1 /data/local/tmp/input_output/output/'${model_name}'.ms.out'
             echo "cd .. && rm -rf codegen_test_$7"
         } > adb_run_cmd.txt
-
+        elapsed_time=$(date +%s.%N)
         adb -s $6 shell < adb_run_cmd.txt >> $4
-        if [ $? = 0 ]; then
-            run_result=$7'_codegen: '${model_name}' pass'; echo ${run_result} >> $5
+        ret=$?
+        elapsed_time=$(printf %.2f "$(echo "$(date +%s.%N) - $elapsed_time" | bc)")
+        if [ ${ret} = 0 ]; then
+            run_result=$7'_codegen: '${model_name}' '${elapsed_time}' pass'; echo ${run_result} >> $5
         else
-            run_result=$7'_codegen: '${model_name}' failed'; echo ${run_result} >> $5;
+            run_result=$7'_codegen: '${model_name}' '${elapsed_time}' failed'; echo ${run_result} >> $5;
             return 1;
         fi
     done < $3

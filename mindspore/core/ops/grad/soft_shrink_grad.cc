@@ -16,16 +16,29 @@
 
 #include "ops/grad/soft_shrink_grad.h"
 
-#include <set>
-#include <algorithm>
+#include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -78,6 +91,24 @@ AbstractBasePtr SoftShrinkGradInfer(const abstract::AnalysisEnginePtr &, const P
 }
 
 MIND_API_OPERATOR_IMPL(SoftShrinkGrad, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(SoftShrinkGrad, prim::kPrimSoftShrinkGrad, SoftShrinkGradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSoftShrinkGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SoftShrinkGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SoftShrinkGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SoftShrinkGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SoftShrinkGrad, prim::kPrimSoftShrinkGrad, AGSoftShrinkGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

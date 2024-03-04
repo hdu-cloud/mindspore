@@ -19,8 +19,7 @@
 #include "nnacl/fp32/reduce_fp32.h"
 #include "schema/inner/model_generated.h"
 #include "src/tensor.h"
-#include "mindspore/lite/src/litert/kernel_registry.h"
-#include "mindspore/lite/src/litert/inner_allocator.h"
+#include "nnacl/nnacl_manager.h"
 
 using mindspore::lite::Tensor;
 using mindspore::schema::ReduceMode;
@@ -39,8 +38,7 @@ class TestReduceFp32 : public mindspore::CommonTest {
   TestReduceFp32() = default;
 
   void Prepare(const std::vector<int> &in_shape, const std::vector<int> &out_shape, float *input_data,
-               float *output_data, ReduceMode mode, const int *axes, const int num_axes, bool reduce_to_end,
-               float coeff);
+               float *output_data, ReduceMode mode, int *axes, const int num_axes, bool reduce_to_end, float coeff);
   void TearDown() override;
 
  public:
@@ -49,8 +47,9 @@ class TestReduceFp32 : public mindspore::CommonTest {
   float err_tol = 1e-5;
   ReduceParameter param_ = {};
   Tensor in_tensor_;
+  Tensor axes_tensor_;
   Tensor out_tensor_;
-  std::vector<Tensor *> inputs{&in_tensor_};
+  std::vector<Tensor *> inputs{&in_tensor_, &axes_tensor_};
   std::vector<Tensor *> outputs{&out_tensor_};
   kernel::KernelKey desc_ = {kernel::KERNEL_ARCH::kCPU, kNumberTypeFloat32, NHWC, schema::PrimitiveType_ReduceFusion};
   kernel::KernelCreator creator_ = nullptr;
@@ -59,7 +58,9 @@ class TestReduceFp32 : public mindspore::CommonTest {
 };
 
 void TestReduceFp32::TearDown() {
+  axes_tensor_.set_data(nullptr);
   delete ctx_;
+  kernel_->set_parameter(nullptr);
   delete kernel_;
   ctx_ = nullptr;
   kernel_ = nullptr;
@@ -68,30 +69,33 @@ void TestReduceFp32::TearDown() {
 }
 
 void TestReduceFp32::Prepare(const std::vector<int> &in_shape, const std::vector<int> &out_shape, float *input_data,
-                             float *output_data, ReduceMode mode, const int *axes, const int num_axes,
-                             bool reduce_to_end, float coeff) {
+                             float *output_data, ReduceMode mode, int *axes, const int num_axes, bool reduce_to_end,
+                             float coeff) {
   in_tensor_.set_data_type(kNumberTypeFloat32);
   in_tensor_.set_shape(in_shape);
   in_tensor_.set_data(input_data);
+
+  axes_tensor_.set_data_type(kNumberTypeInt32);
+  axes_tensor_.set_shape({num_axes});
+  axes_tensor_.set_data(axes);
 
   out_tensor_.set_data_type(kNumberTypeFloat32);
   out_tensor_.set_shape(out_shape);
   out_tensor_.set_data(output_data);
 
   param_.mode_ = static_cast<int>(mode);
-  param_.num_axes_ = num_axes;
-  memcpy(param_.axes_, axes, num_axes * sizeof(int));
   param_.reduce_to_end_ = reduce_to_end;
   param_.coeff = coeff;
 
   ctx_ = new (std::nothrow) lite::InnerContext;
   ASSERT_EQ(lite::RET_OK, ctx_->Init());
-  creator_ = lite::KernelRegistry::GetInstance()->GetCreator(desc_);
-  if (ctx_->allocator == nullptr) {
-    ctx_->allocator = Allocator::Create();
-  }
-  ctx_->thread_num_ = thread_num_;
-  kernel_ = creator_(inputs, outputs, reinterpret_cast<OpParameter *>(&param_), ctx_, desc_);
+
+  OpParameter *param = reinterpret_cast<OpParameter *>(&param_);
+  param->thread_num_ = thread_num_;
+  param->type_ = schema::PrimitiveType_ReduceFusion;
+  kernel_ = nnacl::NNACLKernelRegistry(param, inputs, outputs, ctx_, desc_);
+  ASSERT_NE(kernel_, nullptr);
+
   auto ret = kernel_->Prepare();
   EXPECT_EQ(0, ret);
 }

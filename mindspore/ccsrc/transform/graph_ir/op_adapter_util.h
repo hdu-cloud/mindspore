@@ -19,10 +19,33 @@
 
 #include <string>
 #include <vector>
+#include <memory>
 
 #include "transform/graph_ir/op_adapter_base.h"
+#include "ir/scalar.h"
 
 namespace mindspore {
+class GeDataTypeImm final : public IntegerImm {
+ public:
+  GeDataTypeImm();
+  explicit GeDataTypeImm(::ge::DataType v);
+  ~GeDataTypeImm() override = default;
+  MS_DECLARE_PARENT(GeDataTypeImm, IntegerImm)
+  std::size_t hash() const override { return hash_; }
+  bool IsZero() override { return v_ == static_cast<::ge::DataType>(0); }
+  bool IsOne() override { return v_ == static_cast<::ge::DataType>(1); }
+  ::ge::DataType value() const { return v_; }
+  bool operator==(const Value &other) const override;
+  bool operator==(const GeDataTypeImm &other) const;
+  std::string ToString() const override { return scalar_to_string(v_); }
+  std::string DumpText() const override;
+
+ private:
+  ::ge::DataType v_;
+};
+using GeDataTypeImmPtr = std::shared_ptr<GeDataTypeImm>;
+IMM_TRAITS(GeDataTypeImmPtr, ::ge::DataType)
+
 namespace transform {
 template <typename T>
 inline ValuePtr GetRealValue(const T &value) {
@@ -31,11 +54,11 @@ inline ValuePtr GetRealValue(const T &value) {
 
 template <>
 inline ValuePtr GetRealValue<GeDataType>(const GeDataType &value) {
-  return MakeValue(static_cast<int64_t>(value));
+  return MakeValue<GeDataType>(value);
 }
 
 template <>
-inline ValuePtr GetRealValue<GeTensor>(const GeTensor &value) {
+inline ValuePtr GetRealValue<GeTensor>(const GeTensor &) {
   return nullptr;
 }
 
@@ -58,6 +81,8 @@ std::vector<int64_t> ConvertAnyUtil(const ValuePtr &value, const std::string &fo
 
 GeDataType ConvertAnyUtil(const ValuePtr &value, const AnyTraits<GEType>);
 
+std::vector<GeDataType> ConvertAnyUtil(const ValuePtr &value, const AnyTraits<std::vector<GEType>>);
+
 template <typename P, typename Q>
 std::vector<Q> ConvertAnyUtil(const ValuePtr &value, AnyTraits<P>, const AnyTraits<std::vector<Q>>) {
   MS_EXCEPTION_IF_NULL(value);
@@ -75,10 +100,11 @@ std::vector<Q> ConvertAnyUtil(const ValuePtr &value, AnyTraits<P>, const AnyTrai
   return data;
 }
 
-GeTensor ConvertAnyUtil(const ValuePtr &value, const AnyTraits<AnyValue>);
+GeTensor ConvertAnyUtil(const ValuePtr &value, const AnyTraits<ValueAny>);
 
 bool IsCustomPrim(const PrimitivePtr &prim);
 bool IsCustomCNode(const AnfNodePtr &node);
+bool IsNoNeedConstantFoldCNode(const PrimitivePtr &prim);
 std::string GetOpIOFormat(const AnfNodePtr &node);
 }  // namespace transform
 }  // namespace mindspore

@@ -63,7 +63,7 @@ int CTCLossV2CpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const st
     MS_LOG(ERROR) << "For '" << kernel_name_
                   << "', the shape of 'input_length' must be one-dimensional, "
                      "and the size is equal to batch_size: "
-                  << batch_sizes_ << ", but got the shape of 'input_length': " << Vector2Str(input_length_shape) << ".";
+                  << batch_sizes_ << ", but got the shape of 'input_length': " << input_length_shape << ".";
     return KRET_RESIZE_FAILED;
   }
   const auto target_length_shape = inputs[kIndex3]->GetShapeVector();
@@ -71,8 +71,7 @@ int CTCLossV2CpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const st
     MS_LOG(ERROR) << "For '" << kernel_name_
                   << "', the shape of 'target_length' must be one-dimensional, "
                      "and the size is equal to batch_size: "
-                  << batch_sizes_ << ", but got the shape of 'target_length': " << Vector2Str(target_length_shape)
-                  << ".";
+                  << batch_sizes_ << ", but got the shape of 'target_length': " << target_length_shape << ".";
     return KRET_RESIZE_FAILED;
   }
   return KRET_OK;
@@ -139,12 +138,12 @@ bool CTCLossV2CpuKernelMod::IndexProcessing(const T *in_len_p, const T *tar_len_
     const auto target_length = tar_len_p[b];
     if (input_length > time_series_) {
       MS_LOG(ERROR) << "For '" << kernel_name_ << "', the input_lengths[" << b << "] = " << input_length
-                    << " should be smaller than probs.shape[0] = " << time_series_;
+                    << " should be not greater than probs.shape[0] = " << time_series_;
       return false;
     }
     if (input_length < 0 || input_length < target_length) {
       MS_LOG(ERROR) << "For '" << kernel_name_ << "', the input_lengths[" << b << "] = " << input_length
-                    << " should be non-negative and smaller than tar_len_p[" << b << "] = " << target_length;
+                    << " should be non-negative and not smaller than tar_len_p[" << b << "] = " << target_length;
       return false;
     }
   }

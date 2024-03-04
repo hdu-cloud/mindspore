@@ -15,22 +15,26 @@
  */
 #include "plugin/device/ascend/optimizer/buffer_fusion/segment_eltwise_fusion_pass.h"
 #include <vector>
+#include "mindspore/core/ops/framework_ops.h"
 #include "kernel/kernel_fusion.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "utils/ms_context.h"
-#include "backend/common/optimizer/fusion_id_allocator.h"
+#include "plugin/device/ascend/optimizer/fusion_id_allocator.h"
 
 namespace mindspore {
 namespace opt {
+namespace {
+constexpr auto kPatternSegment = "Segment";
+}
+
 void SegmentEltwiseFusionPass::MatchSegmentEltwise(const CNodePtr &cnode, const session::KernelGraph &kernel_graph,
                                                    FusedNodeRecord *candidate_fusion) {
   MS_EXCEPTION_IF_NULL(cnode);
   MS_EXCEPTION_IF_NULL(candidate_fusion);
   mindspore::HashSet<AnfNodePtr> record{cnode};
   auto eltwise_input = cnode->input(kIndex1);
-  while (CheckEltWiseNode(kernel_graph, eltwise_input)) {
+  while (CheckSingleInEltWiseNode(kernel_graph, eltwise_input)) {
     (void)record.insert(eltwise_input);
     auto input_cnode = eltwise_input->cast<CNodePtr>();
     MS_EXCEPTION_IF_NULL(input_cnode);
@@ -45,13 +49,13 @@ void SegmentEltwiseFusionPass::MatchSegmentEltwise(const CNodePtr &cnode, const 
     return;
   }
   if (AnfAlgo::GetKernelType(eltwise_input) == KernelType::TBE_KERNEL &&
-      AnfAlgo::GetFusionType(eltwise_input) == kernel::FusionType::SEGMENT) {
+      AnfAlgo::GetFusionType(eltwise_input) == kPatternSegment) {
     (void)record.insert(eltwise_input);
     auto previous_input_cnode = eltwise_input->cast<CNodePtr>();
     MS_EXCEPTION_IF_NULL(previous_input_cnode);
     auto previous_eltwise_input = previous_input_cnode->input(kIndex1);
     auto previous_size = record.size();
-    while (CheckEltWiseNode(kernel_graph, previous_eltwise_input)) {
+    while (CheckSingleInEltWiseNode(kernel_graph, previous_eltwise_input)) {
       (void)record.insert(previous_eltwise_input);
       MS_EXCEPTION_IF_NULL(previous_eltwise_input);
       auto previous_node = previous_eltwise_input->cast<CNodePtr>();
@@ -78,8 +82,8 @@ void SegmentEltwiseFusionPass::MatchSingleFusionPattern(const session::KernelGra
     }
     auto cnode = node->cast<CNodePtr>();
     MS_EXCEPTION_IF_NULL(cnode);
-    if (AnfAlgo::GetKernelType(cnode) == KernelType::TBE_KERNEL &&
-        AnfAlgo::GetFusionType(cnode) == kernel::FusionType::ELEMWISE && cnode->inputs().size() == ELTWISE_INPUT_SIZE) {
+    if (AnfAlgo::GetKernelType(cnode) == KernelType::TBE_KERNEL && AnfAlgo::GetFusionType(cnode) == kPatternElemWise &&
+        cnode->inputs().size() == ELTWISE_INPUT_SIZE) {
       MatchSegmentEltwise(cnode, kernel_graph, candidate_fusion);
     }
   }

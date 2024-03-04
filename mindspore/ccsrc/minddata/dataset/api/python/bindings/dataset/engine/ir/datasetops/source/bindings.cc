@@ -43,6 +43,7 @@
 #include "minddata/dataset/engine/ir/datasetops/source/fake_image_node.h"
 #include "minddata/dataset/engine/ir/datasetops/source/fashion_mnist_node.h"
 #include "minddata/dataset/engine/ir/datasetops/source/flickr_node.h"
+#include "minddata/dataset/engine/ir/datasetops/source/food101_node.h"
 #include "minddata/dataset/engine/ir/datasetops/source/generator_node.h"
 #include "minddata/dataset/engine/ir/datasetops/source/gtzan_node.h"
 #include "minddata/dataset/engine/ir/datasetops/source/image_folder_node.h"
@@ -55,10 +56,13 @@
 #include "minddata/dataset/engine/ir/datasetops/source/mnist_node.h"
 #include "minddata/dataset/engine/ir/datasetops/source/penn_treebank_node.h"
 #include "minddata/dataset/engine/ir/datasetops/source/random_node.h"
+#include "minddata/dataset/engine/ir/datasetops/source/rendered_sst2_node.h"
 #include "minddata/dataset/engine/ir/datasetops/source/semeion_node.h"
 #include "minddata/dataset/engine/ir/datasetops/source/speech_commands_node.h"
 #include "minddata/dataset/engine/ir/datasetops/source/squad_node.h"
+#include "minddata/dataset/engine/ir/datasetops/source/sst2_node.h"
 #include "minddata/dataset/engine/ir/datasetops/source/stl10_node.h"
+#include "minddata/dataset/engine/ir/datasetops/source/sun397_node.h"
 #include "minddata/dataset/engine/ir/datasetops/source/tedlium_node.h"
 #include "minddata/dataset/engine/ir/datasetops/source/text_file_node.h"
 #include "minddata/dataset/engine/ir/datasetops/source/udpos_node.h"
@@ -323,6 +327,18 @@ PYBIND_REGISTER(FlickrNode, 2, ([](const py::module *m) {
                                                                  toSamplerObj(sampler), nullptr);
                       THROW_IF_ERROR(flickr->ValidateParams());
                       return flickr;
+                    }));
+                }));
+
+PYBIND_REGISTER(Food101Node, 2, ([](const py::module *m) {
+                  (void)py::class_<Food101Node, DatasetNode, std::shared_ptr<Food101Node>>(*m, "Food101Node",
+                                                                                           "to create a Food101Node")
+                    .def(py::init([](const std::string &dataset_dir, const std::string &usage, bool decode,
+                                     const py::handle &sampler) {
+                      auto food101 =
+                        std::make_shared<Food101Node>(dataset_dir, usage, decode, toSamplerObj(sampler), nullptr);
+                      THROW_IF_ERROR(food101->ValidateParams());
+                      return food101;
                     }));
                 }));
 
@@ -627,6 +643,18 @@ PYBIND_REGISTER(
       }));
   }));
 
+PYBIND_REGISTER(RenderedSST2Node, 2, ([](const py::module *m) {
+                  (void)py::class_<RenderedSST2Node, DatasetNode, std::shared_ptr<RenderedSST2Node>>(
+                    *m, "RenderedSST2Node", "to create a RenderedSST2Node")
+                    .def(py::init([](const std::string &dataset_dir, const std::string &usage, bool decode,
+                                     const py::handle &sampler) {
+                      auto rendered_sst2 =
+                        std::make_shared<RenderedSST2Node>(dataset_dir, usage, decode, toSamplerObj(sampler), nullptr);
+                      THROW_IF_ERROR(rendered_sst2->ValidateParams());
+                      return rendered_sst2;
+                    }));
+                }));
+
 PYBIND_REGISTER(SBUNode, 2, ([](const py::module *m) {
                   (void)py::class_<SBUNode, DatasetNode, std::shared_ptr<SBUNode>>(*m, "SBUNode",
                                                                                    "to create an SBUNode")
@@ -683,6 +711,18 @@ PYBIND_REGISTER(SQuADNode, 2, ([](const py::module *m) {
                     }));
                 }));
 
+PYBIND_REGISTER(SST2Node, 2, ([](const py::module *m) {
+                  (void)py::class_<SST2Node, DatasetNode, std::shared_ptr<SST2Node>>(*m, "SST2Node",
+                                                                                     "to create a SST2Node")
+                    .def(py::init([](const std::string &dataset_dir, const std::string &usage, int64_t num_samples,
+                                     int32_t shuffle, int32_t num_shards, int32_t shard_id) {
+                      auto sst2 = std::make_shared<SST2Node>(dataset_dir, usage, num_samples, toShuffleMode(shuffle),
+                                                             num_shards, shard_id, nullptr);
+                      THROW_IF_ERROR(sst2->ValidateParams());
+                      return sst2;
+                    }));
+                }));
+
 PYBIND_REGISTER(STL10Node, 2, ([](const py::module *m) {
                   (void)py::class_<STL10Node, DatasetNode, std::shared_ptr<STL10Node>>(*m, "STL10Node",
                                                                                        "to create a STL10Node")
@@ -692,6 +732,16 @@ PYBIND_REGISTER(STL10Node, 2, ([](const py::module *m) {
                         THROW_IF_ERROR(stl10->ValidateParams());
                         return stl10;
                       }));
+                }));
+
+PYBIND_REGISTER(SUN397Node, 2, ([](const py::module *m) {
+                  (void)py::class_<SUN397Node, DatasetNode, std::shared_ptr<SUN397Node>>(*m, "SUN397Node",
+                                                                                         "to create a SUN397Node")
+                    .def(py::init([](const std::string &dataset_dir, bool decode, const py::handle &sampler) {
+                      auto sun397 = std::make_shared<SUN397Node>(dataset_dir, decode, toSamplerObj(sampler), nullptr);
+                      THROW_IF_ERROR(sun397->ValidateParams());
+                      return sun397;
+                    }));
                 }));
 
 PYBIND_REGISTER(TedliumNode, 2, ([](const py::module *m) {

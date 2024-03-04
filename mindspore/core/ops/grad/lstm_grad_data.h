@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_LSTM_GRAD_DATA_H_
 #define MINDSPORE_CORE_OPS_LSTM_GRAD_DATA_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -52,9 +52,11 @@ class MIND_API LSTMGradData : public BaseOperator {
   void set_zoneout_hidden(float zoneout_hidden);
   float get_zoneout_hidden() const;
   int64_t get_good_ld(const int64_t dim, const int64_t type_size);
+  void set_proj_size(const int64_t proj_size);
+  int64_t get_proj_size() const;
 };
-abstract::AbstractBasePtr LstmGradDataInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                            const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr LstmGradDataInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                     const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

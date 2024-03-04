@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include "mindspore/core/ops/sparse_ops.h"
 #include "mindspore/core/ops/grad/sparse_add_grad.h"
 
 namespace mindspore {
@@ -107,7 +108,6 @@ bool SparseAddGradGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const
 int SparseAddGradGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                       const std::vector<KernelTensorPtr> &outputs,
                                       const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost) {
-  outputs_ = outputs;
   std::vector<std::vector<int64_t>> input_shapes;
   std::vector<std::vector<int64_t>> output_shapes;
   (void)std::transform(inputs.begin(), inputs.end(), std::back_inserter(input_shapes),
@@ -126,7 +126,7 @@ int SparseAddGradGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, cons
   return KRET_OK;
 }
 
-void SparseAddGradGpuKernelMod::SyncData() {
+void SparseAddGradGpuKernelMod::SyncOutputShape() {
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(cuda_stream_),
                                      "For SparseAddGrad, cudaStreamSynchronized failed");
   std::vector<int64_t> dx1_shape = {dx1_size_};

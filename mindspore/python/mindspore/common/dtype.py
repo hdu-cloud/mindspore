@@ -20,7 +20,6 @@ from __future__ import absolute_import
 import enum
 from inspect import isfunction
 import numpy as np
-from mindspore import log as logger
 from mindspore._c_expression import typing
 from mindspore._c_expression.typing import Type
 
@@ -39,11 +38,12 @@ __dtype__ = [
     "bool_", "float_",
     "list_", "tuple_",
     "int_", "uint",
-    "number", "tensor",
+    "number", "tensor_type",
     "string", "type_none",
-    "tensor_type", "_null",
+    "TensorType", "_null",
     "Type", "Int",
-    "complex64", "complex128"
+    "complex64", "complex128",
+    "bfloat16"
 ]
 
 __method__ = [
@@ -82,6 +82,7 @@ float32 = typing.Float(32)
 single = float32
 float64 = typing.Float(64)
 double = float64
+bfloat16 = typing.BFloat(16)
 complex64 = typing.Complex(64)
 complex128 = typing.Complex(128)
 
@@ -95,7 +96,7 @@ tuple_ = typing.Tuple()
 type_none = typing.TypeNone()
 _null = typing.TypeNull()
 
-tensor = typing.TensorType()
+tensor_type = typing.TensorType()
 index_slices = typing.RowTensorType()
 coo_tensor = typing.COOTensorType()
 csr_tensor = typing.CSRTensorType()
@@ -115,16 +116,16 @@ List = typing.List
 Tuple = typing.Tuple
 Dict = typing.Dict
 Slice = typing.Slice
-function_type = typing.Function
+FunctionType = typing.Function
 Ellipsis_ = typing.TypeEllipsis
 MsClassType = typing.TypeMsClassType
-none_type = typing.TypeNone
-env_type_type = typing.EnvType
-tensor_type = typing.TensorType
-csr_tensor_type = typing.CSRTensorType
-anything_type = typing.TypeAnything
-ref_type = typing.RefType
-_null_type = typing.TypeNull
+NoneType = typing.TypeNone
+EnvType = typing.EnvType
+TensorType = typing.TensorType
+CSRTensorType = typing.CSRTensorType
+AnythingType = typing.TypeAny
+RefType = typing.RefType
+_NullType = typing.TypeNull
 
 number_type = (int8,
                int16,
@@ -137,6 +138,7 @@ number_type = (int8,
                float16,
                float32,
                float64,
+               bfloat16,
                complex64,
                complex128,)
 
@@ -145,8 +147,9 @@ uint_type = (uint8, uint16, uint32, uint64,)
 float_type = (float16, float32, float64,)
 signed_type = (int8, byte, int16, short, int32, intc, int64,
                intp, float16, half, float32, single, float64,
-               double, complex64, complex128)
-all_types = (bool_, int8, uint8, int16, int32, int64, float16, float32, float64, complex64, complex128)
+               double, bfloat16, complex64, complex128)
+complex_type = (complex64, complex128,)
+all_types = (bool_, int8, uint8, int16, int32, int64, float16, float32, float64, bfloat16, complex64, complex128)
 implicit_conversion_seq = {t: idx for idx, t in enumerate(all_types)}
 
 _simple_types = {
@@ -186,6 +189,12 @@ def pytype_to_dtype(obj):
 
     Raises:
         NotImplementedError: If the python type cannot be converted to MindSpore type.
+
+    Examples:
+        >>> import mindspore as ms
+        >>> out = ms.pytype_to_dtype(bool)
+        >>> print(out)
+        Bool
     """
 
     if isinstance(obj, np.dtype):
@@ -209,10 +218,15 @@ def get_py_obj_dtype(obj):
 
     Returns:
         Type of MindSpore type.
+
+    Examples:
+        >>> import mindspore as ms
+        >>> ms.get_py_obj_dtype(1)
+        mindspore.int64
     """
     # Tensor
     if hasattr(obj, 'shape') and hasattr(obj, 'dtype') and isinstance(obj.dtype, typing.Type):
-        return tensor_type(obj.dtype)
+        return TensorType(obj.dtype)
     # Primitive or Cell
     if hasattr(obj, '__primitive_flag__') or hasattr(obj, 'construct'):
         return function
@@ -230,14 +244,19 @@ def get_py_obj_dtype(obj):
 
 
 def dtype_to_nptype(type_):
-    """
+    r"""
     Convert MindSpore dtype to numpy data type.
 
     Args:
-        type_ (:class:`mindspore.dtype`): MindSpore's dtype.
+        type\_ (:class:`mindspore.dtype`): MindSpore's dtype.
 
     Returns:
         The data type of numpy.
+
+    Examples:
+        >>> import mindspore as ms
+        >>> ms.dtype_to_nptype(ms.int8)
+        <class 'numpy.int8'>
     """
 
     return {
@@ -255,18 +274,25 @@ def dtype_to_nptype(type_):
         float64: np.float64,
         complex64: np.complex64,
         complex128: np.complex128,
+        bfloat16: np.float32,
     }[type_]
 
 
 def dtype_to_pytype(type_):
-    """
+    r"""
     Convert MindSpore dtype to python data type.
 
     Args:
-        type_ (:class:`mindspore.dtype`): MindSpore's dtype.
+        type\_ (:class:`mindspore.dtype`): MindSpore's dtype.
 
     Returns:
         Type of python.
+
+    Examples:
+        >>> import mindspore as ms
+        >>> out = ms.dtype_to_pytype(ms.bool_)
+        >>> print(out)
+        <class 'bool'>
     """
 
     return {
@@ -284,6 +310,7 @@ def dtype_to_pytype(type_):
         float16: float,
         float32: float,
         float64: float,
+        bfloat16: float,
         list_: list,
         tuple_: tuple,
         string: str,
@@ -320,6 +347,18 @@ def type_size_in_bytes(dtype):
 class QuantDtype(enum.Enum):
     """
     An enum for quant datatype, contains `INT1` ~ `INT16`, `UINT1` ~ `UINT16`.
+
+    `QuantDtype` is defined in `dtype.py <https://gitee.com/mindspore/mindspore/tree/master/mindspore/python/mindspore/
+    common/dtype.py>`_, use command below to import:
+
+    .. code-block::
+
+        from mindspore import QuantDtype
+
+    Tutorial Examples:
+        - `Quantization algorithm in Golden Stick
+          <https://www.mindspore.cn/golden_stick/docs/en/master/quantization/slb.html
+          #applying-the-quantization-algorithm>`_
     """
     INT1 = 0
     INT2 = 1
@@ -360,9 +399,17 @@ class QuantDtype(enum.Enum):
 
     def value(self) -> int:
         """
-        Return value of `QuantDtype`.
+        Return value of `QuantDtype`. This interface is currently used to serialize or deserialize `QuantDtype`
+        primarily.
 
         Returns:
             An int as value of `QuantDtype`.
+
+        Examples:
+            >>> from mindspore import QuantDtype
+            >>> print(QuantDtype.INT8.value())
+            7
+            >>> print(QuantDtype.UINT16.value())
+            115
         """
         return self._value_

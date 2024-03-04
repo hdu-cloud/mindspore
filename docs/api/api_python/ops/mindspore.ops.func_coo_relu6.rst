@@ -3,7 +3,7 @@
 
 .. py:function:: mindspore.ops.coo_relu6(x: COOTensor)
 
-    计算输入COOTensor的ReLU（修正线性单元），其上限为6。
+    对输入的COOTensor计算其应用ReLU激活函数后的值，上限为6。
 
     .. math::
         \text{ReLU6}(x) = \min(\max(0,x), 6)
@@ -11,7 +11,7 @@
     返回 :math:`\min(\max(0,x), 6)` 元素的值。
 
     参数：
-        - **x** (COOTensor) - coo_relu6的输入，shape： :math:`(N, *)` ，其中 :math:`*` 表示任意数量的附加维度，数据类型为float16或float32。
+        - **x** (COOTensor) - coo_relu6的输入，数据类型为float16或float32。
 
     返回：
         COOTensor，数据类型和shape与 `x` 相同。

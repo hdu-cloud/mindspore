@@ -13,10 +13,12 @@
 # limitations under the License.
 # ============================================================================
 """ test list mul number """
-
+import os
 import numpy as np
 from mindspore import Tensor, context
 from mindspore import nn
+
+context.set_context(mode=context.GRAPH_MODE)
 
 
 class Net(nn.Cell):
@@ -35,13 +37,13 @@ def test_list_mul_number():
     Description: test_list_mul_number
     Expectation: the results are as expected
     """
-
-    context.set_context(mode=context.GRAPH_MODE)
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     net = Net()
     expect_ret0 = [Tensor([1, 2, 3])] * 5
-    expect_ret1 = (Tensor([1, 2, 3]),) * 0
-    assert isinstance(net()[0], tuple)
-    assert isinstance(net()[1], tuple)
+    expect_ret1 = [Tensor([1, 2, 3]),] * 0
+    assert isinstance(net()[0], list)
+    assert isinstance(net()[1], list)
     for i in range(len(net()[0])):
         assert np.array_equal(net()[0][i].asnumpy(), expect_ret0[i].asnumpy())
     assert net()[1] == expect_ret1
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'

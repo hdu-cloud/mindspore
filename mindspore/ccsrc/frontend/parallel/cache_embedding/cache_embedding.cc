@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 
 #include "frontend/parallel/cache_embedding/cache_embedding.h"
+
 #include <random>
 #include <vector>
 #include <list>
@@ -23,9 +24,16 @@
 #include <memory>
 #include <string>
 #include <algorithm>
+
+#include "ops/sequence_ops.h"
+#include "ops/other_ops.h"
+#include "ops/nn_optimizer_ops.h"
+#include "ops/nn_ops.h"
+#include "ops/array_ops.h"
+#include "ops/framework_ops.h"
 #include "utils/hash_map.h"
 #include "utils/hash_set.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 #include "frontend/optimizer/optimizer.h"
 #include "ir/func_graph.h"
 #include "utils/cache_embedding_hashmap_struct.h"
@@ -191,7 +199,7 @@ void BindAndInitCacheTensor(const ParamMap &param_pair_list, const ParameterPtr 
                                       host_data_max_size, cache_data_max_size, LongToSize(hashmap_size),
                                       LongToSize(host_shape[1]));
     } else if (hashmap_data_type == TypeId::kNumberTypeInt64) {
-      MemCopyFromHostToCache<int32_t>(hashmap_tensor->data_c(), host_tensor->data_c(), cache_tensor->data_c(),
+      MemCopyFromHostToCache<int64_t>(hashmap_tensor->data_c(), host_tensor->data_c(), cache_tensor->data_c(),
                                       host_data_max_size, cache_data_max_size, LongToSize(hashmap_size),
                                       LongToSize(host_shape[1]));
     } else {
@@ -309,16 +317,14 @@ AnfNodePtr CreateMapCacheIdx(const FuncGraphPtr &func_graph, const AnfNodePtr &i
   auto indices_ori_shp = indices->Shape();
   auto indices_shp = indices_ori_shp->cast<abstract::ShapePtr>();
   ShapeVector shape(indices_shp->shape().size(), -1);
-  ShapeVector min_shape = indices_shp->min_shape();
-  ShapeVector max_shape = indices_shp->max_shape();
 
   auto cache_idx = std::make_shared<abstract::AbstractTensor>(indices_element_type, indices_shp);
-  auto old_emb_idx = std::make_shared<abstract::AbstractTensor>(
-    indices_element_type, std::make_shared<abstract::Shape>(shape, min_shape, max_shape));
-  auto miss_emb_idx = std::make_shared<abstract::AbstractTensor>(
-    indices_element_type, std::make_shared<abstract::Shape>(shape, min_shape, max_shape));
-  auto swap_emb_idx = std::make_shared<abstract::AbstractTensor>(
-    indices_element_type, std::make_shared<abstract::Shape>(shape, min_shape, max_shape));
+  auto old_emb_idx =
+    std::make_shared<abstract::AbstractTensor>(indices_element_type, std::make_shared<abstract::Shape>(shape));
+  auto miss_emb_idx =
+    std::make_shared<abstract::AbstractTensor>(indices_element_type, std::make_shared<abstract::Shape>(shape));
+  auto swap_emb_idx =
+    std::make_shared<abstract::AbstractTensor>(indices_element_type, std::make_shared<abstract::Shape>(shape));
 
   std::vector<std::shared_ptr<abstract::AbstractBase>> elements = {cache_idx, old_emb_idx, miss_emb_idx, swap_emb_idx};
   auto abstract = std::make_shared<abstract::AbstractTuple>(elements);
@@ -576,12 +582,12 @@ void ReplaceNoRefToParams(const FuncGraphPtr &graph, const AnfMap &no_ref_pipe_p
                           const AnfNodePtr &sparse_gatherv2_indices) {
   auto manager = graph->manager();
   MS_EXCEPTION_IF_NULL(manager);
-  auto node_users = manager->node_users();
+  const auto &node_users = manager->node_users();
   // add other no ref pipe param and unique index dense
   for (auto &ele : no_ref_pipe_param_map) {
-    auto user_set = node_users[ele.first];
+    const auto &user_set = node_users.at(ele.first);
     auto assign_status = CreateAssign(graph, ele.second, ele.first);
-    for (auto user_node : user_set) {
+    for (const auto &user_node : user_set) {
       CreateControlDepend(graph, user_node.first, assign_status);
     }
     if (!manager->Replace(ele.first, ele.second)) {
@@ -591,8 +597,8 @@ void ReplaceNoRefToParams(const FuncGraphPtr &graph, const AnfMap &no_ref_pipe_p
 
   // add cache idx param
   auto dynamic_assgin_status = CreateAssign(graph, cache_idx_param, cache_idx, true);
-  auto indices_user_set = node_users[sparse_gatherv2_indices];
-  for (auto &user_node : indices_user_set) {
+  const auto &indices_user_set = node_users.at(sparse_gatherv2_indices);
+  for (const auto &user_node : indices_user_set) {
     CreateControlDepend(graph, user_node.first, dynamic_assgin_status);
   }
   if (!manager->Replace(sparse_gatherv2_indices, cache_idx_param)) {
@@ -607,6 +613,9 @@ void CacheEmbeddingForTrain(const FuncGraphPtr &graph, bool is_pipe, const CNode
   MS_EXCEPTION_IF_NULL(manager);
   size_t cnodes_size = cnodes.size();
   auto cache_host_params_map = AddCacheParameters(graph, param_cache_enable_set);
+  if (cache_host_params_map.empty()) {
+    MS_LOG(EXCEPTION) << "host's cache parameter map is empty!";
+  }
   auto param_set = MapKeysToSet(cache_host_params_map);
   ReplaceCacheParams(graph, cache_host_params_map);
   graph->set_flag(GRAPH_FLAG_CACHE_ENABLE, true);

@@ -18,8 +18,7 @@ from __future__ import absolute_import
 from mindspore.ops import functional as F, composite as C, operations as P
 from mindspore.ops.composite.multitype_ops.zeros_like_impl import zeros_like
 from mindspore.common.api import jit
-from mindspore._checkparam import Validator as validator
-from mindspore._checkparam import Rel
+from mindspore import _checkparam as validator
 from mindspore.nn.optim.optimizer import Optimizer
 from mindspore.nn.optim.optimizer import opt_init_args_register
 from mindspore.nn.optim._dist_optimizer_registry import _register_dist_optimizer
@@ -45,6 +44,62 @@ def _tensor_run_opt_with_sparse_dist(opt, spars_opt, push, pull, l1, l2, lr_powe
         success = F.depend(success, pull(push((values, indices), shapes), weight))
     else:
         success = F.depend(success, spars_opt(weight, moment, linear, values, indices))
+    return success
+
+
+def _apply_map_tensor_ftrl(l1, l2, lr_power, learning_rate, linear, weight, moment, indices, values):
+    """Apllpy ftrl optimizer for map parameter"""
+    success = True
+    linear_slice = linear.get(indices)
+    moment_slice = moment.get(indices)
+    weight_slice = weight.get(indices)
+
+    op_pow = P.Pow()
+    op_sign = P.Sign()
+    op_greater = P.Greater()
+    op_select = P.Select()
+    op_abs = P.Abs()
+
+    lr_power_val = -lr_power
+    accu_pow = op_pow(moment_slice, lr_power_val)
+    moment_slice = F.depend(moment_slice, accu_pow)
+    cur_accu = moment_slice + values * values
+    cur_accu_pow = op_pow(cur_accu, lr_power_val)
+    sigma = (cur_accu_pow - accu_pow) / learning_rate
+
+    linear_slice = linear_slice + values - sigma * weight_slice
+
+    update_weight_cond = op_greater(op_abs(linear_slice), l1)
+    updated_weight = (l1 * op_sign(linear_slice) - linear_slice) / (cur_accu_pow / learning_rate + 2 * l2)
+    zeros = zeros_like(weight_slice)
+
+    weight_slice = op_select(update_weight_cond, updated_weight, zeros)
+    moment_slice = cur_accu
+
+    moment.put(indices, moment_slice)
+    linear.put(indices, linear_slice)
+    weight.put(indices, weight_slice)
+
+    return success
+
+
+@_ftrl_opt.register("Function", "Function", "Function", "Function", "Number", "Number", "Number", "Tensor", "MapTensor",
+                    "MapTensor", "MapTensor", "MapTensor", "Bool", "Bool",
+                    "Function", "Bool", "Function", "Bool")
+def _run_map_tensor_opt_with_sparse_dist(opt, spars_opt, push, pull, l1, l2, lr_power, learning_rate, linear,
+                                         gradient, weight, moment, ps_parameter, cache_enable,
+                                         distributed_opt, use_flag, distributed_sparse_opt, use_sparse_flag):
+    """Apply sparse ftrl optimizer to the weight parameter when the gradient is sparse."""
+    success = True
+    indices, values = gradient.get_data()
+    if use_sparse_flag:
+        # PS Mode.
+        success = F.depend(success, distributed_sparse_opt(weight, moment, linear, values, indices))
+    elif cache_enable:
+        # PS Cache mode.
+        _apply_map_tensor_ftrl(l1, l2, lr_power, learning_rate, linear, weight, moment, indices, values)
+    else:
+        raise Exception("Unexpected mode for distributed optimizer.")
     return success
 
 
@@ -91,36 +146,7 @@ def _run_map_tensor_opt_with_sparse(opt, spars_opt, push, pull, l1, l2, lr_power
     """Apply sparse ftrl optimizer to the weight parameter when the gradient is sparse."""
     success = True
     indices, values = gradient.get_data()
-
-    linear_slice = linear.get(indices)
-    moment_slice = moment.get(indices)
-    weight_slice = weight.get(indices)
-
-    op_pow = P.Pow()
-    op_sign = P.Sign()
-    op_greater = P.Greater()
-    op_select = P.Select()
-
-    lr_power_val = -lr_power
-    accu_pow = op_pow(moment_slice, lr_power_val)
-    moment_slice = F.depend(moment_slice, accu_pow)
-    cur_accu = moment_slice + values * values
-    cur_accu_pow = op_pow(cur_accu, lr_power_val)
-    sigma = (cur_accu_pow - accu_pow) / learning_rate
-
-    linear_slice = linear_slice + values - sigma * weight_slice
-
-    update_weight_cond = op_greater(linear_slice, l1)
-    updated_weight = (l1 * op_sign(linear_slice) - linear_slice) / (cur_accu_pow / learning_rate + 2 * l2)
-    zeros = zeros_like(weight_slice)
-
-    weight_slice = op_select(update_weight_cond, updated_weight, zeros)
-    moment_slice = cur_accu
-
-    moment.put(indices, moment_slice)
-    linear.put(indices, linear_slice)
-    weight.put(indices, weight_slice)
-
+    _apply_map_tensor_ftrl(l1, l2, lr_power, learning_rate, linear, weight, moment, indices, values)
     return success
 
 
@@ -139,19 +165,22 @@ def _tensor_run_opt(opt, spars_opt, push, pull, l1, l2, lr_power, learning_rate,
     return success
 
 
-def _check_param(initial_accum, lr_power, l1, l2, use_locking, prim_name=None):
+def _check_param(initial_accum, learning_rate, lr_power, l1, l2, use_locking, prim_name=None):
     """Check param."""
     validator.check_value_type("initial_accum", initial_accum, [float], prim_name)
-    validator.check_number("initial_accum", initial_accum, 0.0, Rel.GE, prim_name)
+    validator.check_number("initial_accum", initial_accum, 0.0, validator.GE, prim_name)
+
+    validator.check_value_type("learning_rate", learning_rate, [float], prim_name)
+    validator.check_positive_float(learning_rate, "learning_rate", prim_name)
 
     validator.check_value_type("lr_power", lr_power, [float], prim_name)
-    validator.check_number("lr_power", lr_power, 0.0, Rel.LE, prim_name)
+    validator.check_number("lr_power", lr_power, 0.0, validator.LE, prim_name)
 
     validator.check_value_type("l1", l1, [float], prim_name)
-    validator.check_number("l1", l1, 0.0, Rel.GE, prim_name)
+    validator.check_number("l1", l1, 0.0, validator.GE, prim_name)
 
     validator.check_value_type("l2", l2, [float], prim_name)
-    validator.check_number("l2", l2, 0.0, Rel.GE, prim_name)
+    validator.check_number("l2", l2, 0.0, validator.GE, prim_name)
 
     validator.check_value_type("use_locking", use_locking, [bool], prim_name)
 
@@ -162,8 +191,7 @@ class FTRL(Optimizer):
 
     FTRL is an online convex optimization algorithm that adaptively chooses its regularization function
     based on the loss functions. Refer to paper `Adaptive Bound Optimization for Online Convex Optimization
-    <https://arxiv.org/abs/1002.4908>`_. Refer to paper `Ad Click Prediction: a View from the Trenches
-    <https://www.eecs.tufts.edu/~dsculley/papers/ad-click-prediction.pdf>`_ for engineering document.
+    <https://arxiv.org/abs/1002.4908>`_.
 
     The updating formulas are as follows,
 
@@ -221,20 +249,21 @@ class FTRL(Optimizer):
               If `order_params` in the keys, other keys will be ignored and the element of 'order_params' must be in
               one group of `params`.
 
-        initial_accum (float): The starting value for accumulators `m`, must be zero or positive values. Default: 0.1.
+        initial_accum (float): The starting value for accumulators `m`, must be zero or positive values.
+            Default: ``0.1`` .
         learning_rate (float): The learning rate value, must be zero or positive, dynamic learning rate is currently
-            not supported. Default: 0.001.
+            not supported. Default: ``0.001`` .
         lr_power (float): Learning rate power controls how the learning rate decreases during training, must be less
-            than or equal to zero. Use fixed learning rate if lr_power is zero. Default: -0.5.
-        l1 (float): l1 regularization strength, must be greater than or equal to zero. Default: 0.0.
-        l2 (float): l2 regularization strength, must be greater than or equal to zero. Default: 0.0.
-        use_locking (bool): If true, use locks for updating operation. Default: False.
+            than or equal to zero. Use fixed learning rate if lr_power is zero. Default: ``-0.5`` .
+        l1 (float): l1 regularization strength, must be greater than or equal to zero. Default: ``0.0`` .
+        l2 (float): l2 regularization strength, must be greater than or equal to zero. Default: ``0.0`` .
+        use_locking (bool): If true, use locks for updating operation. Default: ``False`` .
         loss_scale (float): Value for the loss scale. It must be greater than 0.0. In general, use the default value.
             Only when `FixedLossScaleManager` is used for training and the `drop_overflow_update` in
-            `FixedLossScaleManager` is set to False, then this value needs to be the same as the `loss_scale` in
+            `FixedLossScaleManager` is set to ``False`` , then this value needs to be the same as the `loss_scale` in
             `FixedLossScaleManager`. Refer to class :class:`mindspore.amp.FixedLossScaleManager` for more details.
-            Default: 1.0.
-        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: 0.0.
+            Default: ``1.0`` .
+        weight_decay (Union[float, int, Cell]): Weight decay (L2 penalty). Default: ``0.0`` .
 
             - float: The fixed weight decay value. Must be equal to or greater than 0.
 
@@ -266,7 +295,9 @@ class FTRL(Optimizer):
         >>> import mindspore as ms
         >>> from mindspore import nn
         >>>
-        >>> net = Net()
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
         >>> #1) All parameters use the same learning rate and weight decay
         >>> optim = nn.FTRL(params=net.trainable_params())
         >>>
@@ -284,7 +315,7 @@ class FTRL(Optimizer):
         >>> # The final parameters order in which the optimizer will be followed is the value of 'order_params'.
         >>>
         >>> loss = nn.SoftmaxCrossEntropyWithLogits()
-        >>> model = ms.Model(net, loss_fn=loss, optimizer=optim)
+        >>> model = ms.train.Model(net, loss_fn=loss, optimizer=optim)
     """
 
     @opt_init_args_register
@@ -295,7 +326,7 @@ class FTRL(Optimizer):
             raise ValueError(f"For 'FTRL', dynamic learning rate and group learning rate are currently not supported "
                              f"in FTRL, they should all be false, but got dynamic learning rate {self.dynamic_lr} and"
                              f" group learning rate {self.is_group_lr}.")
-        _check_param(initial_accum, lr_power, l1, l2, use_locking, self.cls_name)
+        _check_param(initial_accum, learning_rate, lr_power, l1, l2, use_locking, self.cls_name)
         self.moments = self._parameters.clone(prefix="moments", init=initial_accum)
         self.linear = self._parameters.clone(prefix="linear", init='zeros')
         self.l1 = l1
@@ -328,6 +359,7 @@ class FTRL(Optimizer):
         grads = self.scale_grad(grads)
         grads = self._grad_sparse_indices_deduplicate(grads)
         lr = self.get_lr()
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
 
         if self.use_dist_optimizer:
             success = self.map_(F.partial(_ftrl_opt, self.opt, self.sparse_opt, self._ps_push, self._ps_pull,
@@ -348,12 +380,12 @@ class FTRL(Optimizer):
         optimizer operation.
         """
         if not isinstance(value, str):
-            raise TypeError("For 'FTRL', the property 'target' must be string type, "
-                            "but got type {}.".format(type(value)))
+            raise TypeError(f"For 'FTRL', the property 'target' must be string type, "
+                            f"but got type {type(value)}.")
 
         if value not in ('CPU', 'Ascend', 'GPU'):
-            raise ValueError("For 'FTRL', the property 'target' must be 'CPU', 'Ascend' or 'GPU', "
-                             "but got {}".format(value))
+            raise ValueError(f"For 'FTRL', the property 'target' must be 'CPU', 'Ascend' or 'GPU', "
+                             f"but got {value}.")
 
         if value == 'CPU':
             self.sparse_opt = P.FusedSparseFtrl(self.lr, self.l1, self.l2, self.lr_power, self.use_locking)

@@ -28,7 +28,7 @@
 #include <algorithm>
 #include "utils/hash_map.h"
 #include "runtime/hardware/device_context.h"
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 
 namespace mindspore {
 namespace runtime {
@@ -91,6 +91,10 @@ using CallNodeToFuncGraph = mindspore::HashMap<AnfNodePtr, std::set<FuncGraphPtr
 using KernelGraphToDeviceContext = mindspore::HashMap<KernelGraphPtr, DeviceContext *>;
 using GroupNameToCommuNodes =
   mindspore::HashMap<std::string, std::pair<std::vector<CNodePtr>, std::vector<KernelGraphPtr>>>;
+using ReturnDynamicLenArgIndex =
+  mindspore::HashMap<AnfNodePtr, mindspore::HashMap<AnfNodePtr, mindspore::HashMap<size_t, size_t>>>;
+using ControlNodeDynamicLenArgIndex =
+  mindspore::HashMap<AnfNodePtr, mindspore::HashMap<FuncGraph *, mindspore::HashMap<size_t, size_t>>>;
 // In the control flow, heterogeneous kernel graphs need to be reconnected in the same group, and the kernel graph
 // group info is used to store the inputs and outputs of the group.
 // Need stack indicates whether a stack actor needs to be created for the group.
@@ -115,8 +119,6 @@ bool IsCooNode(const AnfNodePtr &node);
 KernelWithIndex GetFrontNodeByKernelGraph(const AnfNodePtr &backend_node, const KernelGraph *const graph);
 // Get all the real input of the frontend node, skip the virtual node like maketuple, tuplegetitem.
 std::vector<KernelWithIndex> FetchInputNodeByCNode(const AnfNodePtr &node);
-// Fetch the sub abstract from the top abstract by the index.
-abstract::AbstractBasePtr FetchAbstractByIndex(const AbstractBasePtr &abstract, size_t index);
 // Fetch the real input of tuple get item node.
 KernelWithIndex FetchRealNodeByGetItem(const KernelWithIndex &node_with_index);
 // Check if the partial node is valid.
@@ -128,6 +130,7 @@ bool IsPartialInput(const AnfNodePtr &node);
 void FetchRealDependNodeByAutoMonad(const AnfNodePtr &node, std::set<AnfNodePtr> *const depend_nodes);
 // Get all the depend nodes of node in side effect.
 std::vector<AnfNodePtr> FetchAllMonadNodeByNode(const AnfNodePtr &node);
+void CreateBuildInfoForFrontNode(const KernelWithIndex &front_node_with_index, const AnfNodePtr &backend_node);
 // ControlNodeParser is used to parse control nodes, and get the edges between nodes.
 class ControlNodeParser {
  public:
@@ -178,6 +181,7 @@ class ControlNodeParser {
     const KernelWithIndex &front_parameter_with_index);
   // Create tensor for value like scalar or monad U.
   tensor::TensorPtr CreateTensorForValue(const ValuePtr &value);
+  void AddControlNodeTensor(const tensor::TensorPtr &tensor) { (void)control_node_tensors_.emplace_back(tensor); }
 
  private:
   friend class GraphScheduler;
@@ -258,6 +262,9 @@ class ControlNodeParser {
   // When the parameter is directly used as the condition of the switch, there will be no back-end node, and a device
   // tensor needs to be created for it.
   void CreateDeviceTensorForRootGraphParameter(DeviceContext *const default_context);
+  void ParseDynamicLenFormalParameter(const std::vector<AnfNodePtr> &control_nodes);
+  void ParseDynamicLenFormalParameterByCallNode(const AnfNodePtr &node);
+  void ParseDynamicLenFormalParameterByPartial(const AnfNodePtr &node);
   // In control flow, funcgraph will be cut into multiple kernel graphs for execution, and this relationship is recorded
   // in this map.
   FuncGraphToKernelGraphGroup func_graph_to_kernel_graph_groups_;
@@ -325,6 +332,9 @@ class ControlNodeParser {
   mindspore::HashMap<KernelGraphPtr, KernelGraphGroupInfoPtr> kernel_graphs_to_group_info_;
   // Scalar value will be convert to tensor in control flow, these tensors are placed in the vector.
   std::vector<tensor::TensorPtr> control_node_tensors_;
+  // The index of the argument that needs to be converted into a dynamic len sequence.
+  ReturnDynamicLenArgIndex return_to_call_with_dynamic_sequence_index_;
+  ControlNodeDynamicLenArgIndex control_node_to_funcgraph_with_dynamic_sequence_index_;
   // Is control flow enable.
   bool is_inited_;
 

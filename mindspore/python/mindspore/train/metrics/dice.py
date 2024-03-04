@@ -17,7 +17,7 @@ from __future__ import absolute_import
 
 import numpy as np
 
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.train.metrics.metric import Metric, rearrange_inputs
 
 
@@ -33,7 +33,7 @@ class Dice(Metric):
 
     Args:
         smooth (float): A term added to the denominator to improve numerical stability. Should be greater than 0.
-                        Default: 1e-5.
+                        Default: ``1e-5`` .
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
@@ -69,7 +69,7 @@ class Dice(Metric):
     @rearrange_inputs
     def update(self, *inputs):
         r"""
-        Updates the internal evaluation result :math:`y\_pred` and :math:`y`.
+        Updates the internal evaluation result `y_pred` and `y`.
 
         Args:
             inputs (tuple): Input `y_pred` and `y`. `y_pred` and `y` are Tensor, list or numpy.ndarray. `y_pred` is the

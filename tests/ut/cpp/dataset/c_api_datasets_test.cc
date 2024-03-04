@@ -48,7 +48,7 @@ TEST_F(MindDataTestPipeline, TestCelebADataset) {
   ASSERT_OK(iter->GetNextRow(&row));
 
   // Check if CelebA() read correct images/attr
-  std::string expect_file[] = {"1.JPEG", "2.jpg"};
+  std::string expect_file[] = {"1_apple.JPEG", "2_banana.jpg"};
   std::vector<std::vector<uint32_t>> expect_attr_vector = {
      {0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1,
       0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0, 1},
@@ -439,4 +439,42 @@ TEST_F(MindDataTestPipeline, TestImageFolderClassIndexDatasetSizeFail) {
   class_index["wrong class"] = 333;
   auto ds = ImageFolder(folder_path, false, std::make_shared<RandomSampler>(), {}, class_index);
   EXPECT_EQ(ds->GetNumClasses(), -1);
+}
+
+/// Feature: GetClassIndexing
+/// Description: Test GetClassIndexing on ImageFolderDataset
+/// Expectation: Output is equal to the expected output
+TEST_F(MindDataTestPipeline, TestImageFolderClassIndexing) {
+  MS_LOG(INFO) << "Doing MindDataTestPipeline-TestImageFolderClassIndexing.";
+
+  // Create an ImageFolder Dataset
+  std::string folder_path = datasets_root_path_ + "/testPK/data/";
+  std::shared_ptr<Dataset> ds = ImageFolder(folder_path);
+  EXPECT_NE(ds, nullptr);
+  std::vector<std::pair<std::string, std::vector<int32_t>>> indexing = ds->GetClassIndexing();
+
+  EXPECT_EQ(indexing.size(), 4);
+  EXPECT_EQ(indexing[0].first, "class1");
+  EXPECT_EQ(indexing[0].second[0], 0);
+  EXPECT_EQ(indexing[1].first, "class2");
+  EXPECT_EQ(indexing[1].second[0], 1);
+  EXPECT_EQ(indexing[2].first, "class3");
+  EXPECT_EQ(indexing[2].second[0], 2);
+  EXPECT_EQ(indexing[3].first, "class4");
+  EXPECT_EQ(indexing[3].second[0], 3);
+
+  std::map<std::string, int32_t> class_index;
+  class_index["class1"] = 0;
+  class_index["class2"] = 1;
+  class_index["class3"] = 9;
+  std::shared_ptr<Dataset> ds2 = ImageFolder(folder_path, false, std::make_shared<RandomSampler>(), {}, class_index);
+  std::vector<std::pair<std::string, std::vector<int32_t>>> indexing2 = ds2->GetClassIndexing();
+
+  EXPECT_EQ(indexing2.size(), 3);
+  EXPECT_EQ(indexing2[0].first, "class1");
+  EXPECT_EQ(indexing2[0].second[0], 0);
+  EXPECT_EQ(indexing2[1].first, "class2");
+  EXPECT_EQ(indexing2[1].second[0], 1);
+  EXPECT_EQ(indexing2[2].first, "class3");
+  EXPECT_EQ(indexing2[2].second[0], 9);
 }

@@ -35,6 +35,7 @@ MS_REG_GPU_KERNEL_TWO(TopK,
                         .AddOutputAttr(kNumberTypeFloat16)
                         .AddOutputAttr(kNumberTypeInt32),
                       TopKGpuKernelMod, half, int)
+
 MS_REG_GPU_KERNEL_TWO(TopK,
                       KernelAttr()
                         .AddInputAttr(kNumberTypeFloat32)

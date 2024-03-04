@@ -23,7 +23,7 @@
 #include "hccl/hccl_types.h"
 #include "include/common/utils/utils.h"
 #include "utils/dlopen_macro.h"
-#include "include/backend/visible.h"
+#include "ops/ascend_op_name.h"
 
 namespace mindspore {
 namespace device {
@@ -39,7 +39,7 @@ ORIGIN_METHOD(GetDeviceId, int);
 ORIGIN_METHOD(CreateCommForGroup, bool, const std::string &, const std::vector<unsigned int> &);
 ORIGIN_METHOD(DestroyHcclComm, void);
 
-class BACKEND_EXPORT HcclCollectiveGroup {
+class HcclCollectiveGroup {
  public:
   HcclCollectiveGroup(HcclCollectiveGroup const &) = delete;
   HcclCollectiveGroup &operator=(const HcclCollectiveGroup &) = delete;

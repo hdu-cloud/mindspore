@@ -16,15 +16,14 @@
 """inner_ops"""
 
 import numbers
-from mindspore._checkparam import Validator as validator
-from mindspore._checkparam import Rel
+import numpy as np
+from mindspore import _checkparam as validator
 from mindspore.common import dtype as mstype
-from mindspore.common.dtype import tensor, dtype_to_pytype
 from mindspore.ops.primitive import prim_attr_register, PrimitiveWithInfer, Primitive
 from mindspore.ops import signature as sig
 
 
-class ScalarCast(PrimitiveWithInfer):
+class ScalarCast(Primitive):
     """
     Casts the input scalar to another type.
 
@@ -34,6 +33,8 @@ class ScalarCast(PrimitiveWithInfer):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import ops
         >>> scalar_cast = ops.ScalarCast()
         >>> output = scalar_cast(255.0, mindspore.int32)
         >>> print(output)
@@ -42,21 +43,16 @@ class ScalarCast(PrimitiveWithInfer):
 
     @prim_attr_register
     def __init__(self):
-        pass
+        self.init_prim_io_names(inputs=['input_scalar', 'dtype'], outputs=['output_data'])
 
-    def __infer__(self, x, t):
-        validator.check_equal_int(len(x['shape']), 0, 'x shape', self.name)
-        value, to = x['value'], t['value']
-        if value is not None:
-            validator.check_value_type("value", value, [numbers.Number, bool], self.name)
-            if isinstance(to, type(tensor)):
-                to = to.element_type()
-            np_type = dtype_to_pytype(to)
-            value = np_type(value)
-        out = {'shape': x['shape'],
-               'dtype': t['value'],
-               'value': value}
-        return out
+    def __call__(self, x, dtype):
+        validator.check_value_type("x", x, [bool, numbers.Number], self.name)
+        if isinstance(dtype, type(mstype.tensor_type)):
+            dtype = dtype.element_type()
+        np_dtype = str(dtype)
+        value = np.cast[np_dtype.lower()](x)
+        value = value.item()
+        return value
 
 
 class Randperm(Primitive):
@@ -65,12 +61,12 @@ class Randperm(Primitive):
     the last `max_length-n` elements will be filled with `pad`.
 
     Args:
-        max_length (int): Number of items expected to get and the number must be greater than 0. Default: 1.
-        pad (int): The pad value to be filled. Default: -1.
-        dtype (mindspore.dtype): The type of output. Default: mindspore.int32.
+        max_length (int): Number of items expected to get and the number must be greater than 0. Default: ``1`` .
+        pad (int): The pad value to be filled. Default: ``-1`` .
+        dtype (mindspore.dtype): The type of output. Default: ``mstype.int32`` .
 
     Inputs:
-        - **n** (Tensor) - The input tensor with shape (1,) with and dtype int32 or int64.
+        - **n** (Tensor) - The input tensor with shape :math:`(1,)` with and dtype int32 or int64.
           `n` must be in range [0, `max_length`].
 
     Outputs:
@@ -89,6 +85,8 @@ class Randperm(Primitive):
         ``Ascend`` ``GPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, ops
         >>> # The result of every execution is different because this operator will generate n random samples.
         >>> randperm = ops.Randperm(max_length=30, pad=-1)
         >>> n = Tensor([20], dtype=mindspore.int32)
@@ -103,14 +101,17 @@ class Randperm(Primitive):
         """Initialize Randperm"""
         validator.check_value_type("pad", pad, [int], self.name)
         validator.check_value_type("max_length", max_length, [int], self.name)
-        validator.check_int(max_length, 1, Rel.GE, "max_length", self.name)
+        validator.check_int(max_length, 1, validator.GE, "max_length", self.name)
+        valid_values = (mstype.int8, mstype.int16, mstype.int32, mstype.int64, mstype.uint8, mstype.uint16,
+                        mstype.uint32, mstype.uint64, mstype.float16, mstype.float32, mstype.float64)
+        validator.check_type_name("dtype", dtype, valid_values, self.name)
         self.dtype = dtype
         self.max_length = max_length
         self.init_prim_io_names(inputs=[], outputs=['output'])
 
 
-class NoRepeatNGram(PrimitiveWithInfer):
-    """
+class NoRepeatNGram(Primitive):
+    r"""
     Updates the probability of occurrence of words with its corresponding n-grams.
 
     During beam search, if consecutive `ngram_size` words exist in the generated word sequence,
@@ -120,12 +121,12 @@ class NoRepeatNGram(PrimitiveWithInfer):
     Because 3 consecutive words [2, 3, 2] do not appear twice in the word sequence.
 
     Args:
-        ngram_size (int): Size of n-grams, must be greater than 0. Default: 1.
+        ngram_size (int): Size of n-grams, must be greater than 0. Default: ``1`` .
 
     Inputs:
-        - **state_seq** (Tensor) - n-gram word series, a 3-D tensor with shape: (batch_size, beam_width, m).
+        - **state_seq** (Tensor) - n-gram word series, a 3-D tensor with shape: :math:`(batch\_size, beam\_width, m)`.
         - **log_probs** (Tensor) - Probability of occurrence of n-gram word series, a 3-D
-          tensor with shape: (batch_size, beam_width, vocab_size).
+          tensor with shape: :math:`(batch\_size, beam\_width, vocab\_size)`.
           The value of log_probs will be replaced with -FLOAT_MAX when n-grams repeated.
 
     Outputs:
@@ -146,6 +147,8 @@ class NoRepeatNGram(PrimitiveWithInfer):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, ops
         >>> no_repeat_ngram = ops.NoRepeatNGram(ngram_size=3)
         >>> state_seq = Tensor([[[1, 2, 1, 2, 5, 1, 2],
         ...                      [9, 3, 9, 5, 4, 1, 5]],
@@ -175,23 +178,9 @@ class NoRepeatNGram(PrimitiveWithInfer):
     def __init__(self, ngram_size=1):
         """NoRepeatNGram Randperm"""
         validator.check_value_type("ngram_size", ngram_size, [int], self.name)
-        validator.check_int(ngram_size, 1, Rel.GE, "ngram_size", self.name)
+        validator.check_int(ngram_size, 1, validator.GE, "ngram_size", self.name)
         self.ngram_size = ngram_size
         self.init_prim_io_names(inputs=['state_seq', 'log_probs'], outputs=['log_probs'])
-
-    def infer_shape(self, seq_shape, log_shape):
-        validator.check_int(len(seq_shape), 3, Rel.EQ, "rank of state_seq", self.name)
-        validator.check_int(len(log_shape), 3, Rel.EQ, "rank of log_probs", self.name)
-        validator.check("state_seq shape[0]", seq_shape[0], "log_probs shape[0]", log_shape[0], Rel.EQ, self.name)
-        validator.check("state_seq shape[1]", seq_shape[1], "log_probs shape[1]", log_shape[1], Rel.EQ, self.name)
-        validator.check("ngram_size", self.ngram_size, "state_seq shape[2] + 1", seq_shape[2] + 1, Rel.LE, self.name)
-        return log_shape
-
-    def infer_dtype(self, seq_type, log_type):
-        validator.check_type_name("seq_type", seq_type, mstype.int32, self.name)
-        valid_values = (mstype.float16, mstype.float32, mstype.float64)
-        validator.check_type_name("log_type", log_type, valid_values, self.name)
-        return log_type
 
 
 class LambApplyOptimizerAssign(PrimitiveWithInfer):
@@ -253,9 +242,9 @@ class LambApplyOptimizerAssign(PrimitiveWithInfer):
 
     def infer_shape(self, grad_shape, v_shape, m_shape, var_shape, beta1_shape, sub1_shape,
                     beta2_shape, sub2_shape, eps_shape, steps_shape, use_weight_shape, weight_decay_shape):
-        validator.check("var_shape", var_shape, "m_shape", m_shape, Rel.EQ, self.name)
-        validator.check("var_shape", var_shape, "v_shape", v_shape, Rel.EQ, self.name)
-        validator.check("var_shape", var_shape, "grad_shape", grad_shape, Rel.EQ, self.name)
+        validator.check("var_shape", var_shape, "m_shape", m_shape, validator.EQ, self.name)
+        validator.check("var_shape", var_shape, "v_shape", v_shape, validator.EQ, self.name)
+        validator.check("var_shape", var_shape, "grad_shape", grad_shape, validator.EQ, self.name)
         return m_shape, v_shape, m_shape
 
     def infer_dtype(self, grad_dtype, v_dtype, m_dtype, var_dtype, beta1_dtype, sub1_dtype,
@@ -315,7 +304,7 @@ class LambApplyWeightAssign(PrimitiveWithInfer):
         self.add_prim_attr('side_effect_mem', True)
 
     def infer_shape(self, w_norm_shape, g_norm_shape, lr_shape, update_shape, var_shape):
-        validator.check("var_shape", var_shape, "update_shape", update_shape, Rel.EQ, self.name)
+        validator.check("var_shape", var_shape, "update_shape", update_shape, validator.EQ, self.name)
         return var_shape
 
     def infer_dtype(self, w_norm_dtype, g_norm_dtype, lr_dtype, update_dtype, var_dtype):
@@ -344,9 +333,9 @@ class FusedWeightScaleApplyMomentum(PrimitiveWithInfer):
 
     Inputs:
         - **weight_decay** (Tensor) - The weight decay value, must be a scalar tensor with float data type.
-          Default: 0.0.
+          Default: ``0.0`` .
         - **loss_scale** (Tensor) - The loss scale value, must be a scalar tensor with float data type.
-          Default: 1.0.
+          Default: ``1.0`` .
         - **variable** (Parameter) - Weights to be updated. data type must be float.
         - **accumulation** (Parameter) - Accumulated gradient value by moment weight.
           Has the same data type with `variable`.
@@ -429,8 +418,8 @@ class FusedCastAdamWeightDecay(PrimitiveWithInfer):
 
     Args:
         use_locking (bool): Whether to enable a lock to protect variable tensors from being updated.
-            If true, updates of the var, m, and v tensors will be protected by a lock.
-            If false, the result is unpredictable. Default: False.
+            If ``True`` , updates of the var, m, and v tensors will be protected by a lock.
+            If ``False`` , the result is unpredictable. Default: ``False`` .
 
     Inputs:
         - **var** (Tensor) - Weights to be updated with the type float16 or float32.
@@ -483,9 +472,9 @@ class FusedCastAdamWeightDecay(PrimitiveWithInfer):
 
     def infer_shape(self, var_shape, m_shape, v_shape, lr_shape, beta1_shape, beta2_shape,
                     epsilon_shape, decay_shape, grad_shape, global_norm):
-        validator.check("var_shape", var_shape, "m_shape", m_shape, Rel.EQ, self.name)
-        validator.check("var_shape", var_shape, "v_shape", v_shape, Rel.EQ, self.name)
-        validator.check("var_shape", var_shape, "grad_shape", grad_shape, Rel.EQ, self.name)
+        validator.check("var_shape", var_shape, "m_shape", m_shape, validator.EQ, self.name)
+        validator.check("var_shape", var_shape, "v_shape", v_shape, validator.EQ, self.name)
+        validator.check("var_shape", var_shape, "grad_shape", grad_shape, validator.EQ, self.name)
         return var_shape, m_shape, v_shape
 
     def infer_dtype(self, var_dtype, m_dtype, v_dtype, lr_dtype, beta1_dtype, beta2_dtype,
@@ -510,7 +499,7 @@ class FusedAdaFactor(PrimitiveWithInfer):
     Cost <https://arxiv.org/abs/1804.04235>`_.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Adafactor for weight vector are as follows,
 
@@ -559,9 +548,9 @@ class FusedAdaFactor(PrimitiveWithInfer):
     :math:`C` is the running averages of the column sums of the squared gradient.
 
     Args:
-        enable_weight_decay (bool): If True, enable weight decay. default: False
-        enable_first_moment (bool): If True, enable first moment. default: False
-        enable_scale_parameter (bool): If True, enable scale learning rate using parameter. default: False
+        enable_weight_decay (bool): If ``True`` , enable weight decay. Default: ``False`` .
+        enable_first_moment (bool): If ``True`` , enable first moment. Default: ``False`` .
+        enable_scale_parameter (bool): If ``True`` , enable scale learning rate using parameter. Default: ``False`` .
 
     Inputs:
         - **epsilon** (Tensor) - input epsilon pair.
@@ -621,7 +610,7 @@ class FusedAdaFactor(PrimitiveWithInfer):
     def infer_shape(self, epsilon_shape, clip_threshold_shape, beta1_shape, beta2t_shape, weight_decay_shape,
                     learning_rate_shape, grad_shape, param_shape, exp_avg_shape, exp_avg_sq_row_shape,
                     exp_avg_sq_col_shape, exp_avg_sq_shape):
-        validator.check("grad_shape", grad_shape, "param_shape", param_shape, Rel.EQ, self.name)
+        validator.check("grad_shape", grad_shape, "param_shape", param_shape, validator.EQ, self.name)
         return param_shape
 
     def infer_dtype(self, epsilon_type, clip_threshold_type, beta1_type, beta2t_type, weight_decay_type,
@@ -643,7 +632,7 @@ class FusedAdaFactorWithGlobalNorm(FusedAdaFactor):
     def infer_shape(self, epsilon_shape, clip_threshold_shape, beta1_shape, beta2t_shape, weight_decay_shape,
                     learning_rate_shape, grad_shape, param_shape, exp_avg_shape, exp_avg_sq_row_shape,
                     exp_avg_sq_col_shape, exp_avg_sq_shape, global_norm_shape):
-        validator.check("grad_shape", grad_shape, "param_shape", param_shape, Rel.EQ, self.name)
+        validator.check("grad_shape", grad_shape, "param_shape", param_shape, validator.EQ, self.name)
         return param_shape
 
     def infer_dtype(self, epsilon_type, clip_threshold_type, beta1_type, beta2t_type, weight_decay_type,
@@ -669,3 +658,25 @@ class ScaleGrad(PrimitiveWithInfer):
     @prim_attr_register
     def __init__(self):
         """Initialize ScaleGrad"""
+
+
+class KVCacheMgr(Primitive):
+    """
+    Update past with cur and index along sequence axis.
+
+    Inputs:
+        - **past** (Parameter) - 4-D tensor with shape: :math:`(batch_size, num_head, seq_len, hidden_size)`.
+        - **cur** (Tensor) - 4-D tensor with shape: :math:`(batch_size, num_head, 1, hidden_size)`.
+        - **index** (Tensor) - 1-D tensor with shape: :math:`(batch_size,)`.
+
+    Outputs:
+        Tensor, has the same data type and shape as original `past`.
+
+    Supported Platforms:
+        ``Ascend``
+    """
+
+    @prim_attr_register
+    def __init__(self):
+        self.init_prim_io_names(inputs=['past', 'cur', 'index'], outputs=['past'])
+        self.add_prim_attr('side_effect_mem', True)

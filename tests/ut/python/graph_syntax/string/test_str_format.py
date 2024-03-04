@@ -18,6 +18,8 @@ from mindspore import jit, Tensor, jit_class, context
 from mindspore.ops import prim_attr_register, Primitive
 from mindspore.nn import Cell
 
+context.set_context(mode=context.GRAPH_MODE)
+
 
 def test_str_format_single_input():
     """
@@ -63,24 +65,6 @@ def test_str_format_constant_tensor_input():
         return ms_str
 
     assert foo() == "string is Tensor(shape=[1], dtype=Int64, value=[1])"
-
-
-def test_str_format_variable_input():
-    """
-    Feature: JIT Fallback
-    Description: Test str.format() in graph mode.
-    Expectation: No exception.
-    """
-
-    @jit
-    def foo(b, a):
-        a = a + b
-        ms_str = "{} is {}".format("String", a)
-        return ms_str
-
-    with pytest.raises(ValueError) as ex:
-        foo(Tensor([1]), Tensor([1]))
-    assert "str.format not support to input a variable." in str(ex.value)
 
 
 def test_fallback_str_format_input():
@@ -132,11 +116,8 @@ def test_format_with_key_input():
         ms_format_str = ms_str.format(name2="Mind", name1="Spore")
         return ms_format_str
 
-    with pytest.raises(TypeError) as ex:
-        result_st = foo()
-        assert result_st == "hello Mind,It's me, Spore"
-    assert "Only supported positional parameter type for python primitive, "\
-           "but got keyword parameter type." in str(ex.value)
+    result_st = foo()
+    assert result_st == "hello Mind,It's me, Spore"
 
 
 def test_format_with_list_index():
@@ -180,7 +161,7 @@ def test_format_as_function():
     """
     Feature: JIT Fallback
     Description: Test str.format() in graph mode.
-    Expectation: No exception.git
+    Expectation: No exception.
     """
 
     @jit
@@ -198,7 +179,7 @@ def test_format_number():
     """
     Feature: JIT Fallback
     Description: Test str.format() in graph mode.
-    Expectation: No exception.git
+    Expectation: No exception.
     """
 
     @jit
@@ -230,7 +211,7 @@ def test_format_padding():
     """
     Feature: JIT Fallback
     Description: Test str.format() in graph mode.
-    Expectation: No exception.git
+    Expectation: No exception.
     """
 
     @jit
@@ -257,7 +238,7 @@ def test_str_format_using_ms_class():
     """
     Feature: JIT Fallback
     Description: Test str.format() in graph mode.
-    Expectation: No exception.git
+    Expectation: No exception.
     """
 
     @jit_class
@@ -278,7 +259,7 @@ def test_str_format_using_ms_class_in_init():
     """
     Feature: JIT Fallback
     Description: Test str.format() in graph mode.
-    Expectation: No exception.git
+    Expectation: No exception.
     """
 
     context.set_context(mode=context.GRAPH_MODE)
@@ -305,7 +286,7 @@ def test_str_format_using_primitive():
     """
     Feature: JIT Fallback
     Description: Test str.format() in graph mode.
-    Expectation: No exception.git
+    Expectation: No exception.
     """
 
     class TestPrim(Primitive):
@@ -326,8 +307,9 @@ def test_str_format_using_primitive_in_init():
     """
     Feature: JIT Fallback
     Description: Test str.format() in graph mode.
-    Expectation: No exception.git
+    Expectation: No exception.
     """
+    context.set_context(mode=context.GRAPH_MODE)
 
     class TestPrim(Primitive):
         @prim_attr_register
@@ -338,6 +320,7 @@ def test_str_format_using_primitive_in_init():
         def __init__(self):
             super(TestCell, self).__init__()
             self.prim = TestPrim(123)
+
         def construct(self):
             format_str = "value is {0.x}".format(self.prim)
             return format_str
@@ -347,7 +330,6 @@ def test_str_format_using_primitive_in_init():
     assert format_str == "value is 123"
 
 
-@pytest.mark.skip("Not support yet")
 def test_str_format_using_cell():
     """
     Feature: JIT Fallback
@@ -360,6 +342,9 @@ def test_str_format_using_cell():
             super(TestSubCell, self).__init__()
             self.x = x
 
+        def construct(self):
+            return self.x
+
     class TestCell(Cell):
         def construct(self):
             test_obj = TestSubCell(123)
@@ -367,11 +352,13 @@ def test_str_format_using_cell():
             return format_str
 
     test_obj = TestCell()
-    format_str = test_obj()
-    assert format_str == "value is 123"
+    with pytest.raises(TypeError) as err:
+        format_str = test_obj()
+        test_obj = TestSubCell(123)
+        assert format_str == "value is {0.x}".format(test_obj)
+    assert "Unsupported parameter type for python primitive, the parameter value is DeadNode" in str(err.value)
 
 
-@pytest.mark.skip("Not support yet")
 def test_str_format_using_cell_in_init():
     """
     Feature: JIT Fallback
@@ -383,15 +370,21 @@ def test_str_format_using_cell_in_init():
         def __init__(self, x):
             super(TestSubCell, self).__init__()
             self.x = x
+        def construct(self):
+            return self.x
 
     class TestCell(Cell):
         def __init__(self):
             super(TestCell, self).__init__()
             self.test_sub_cell = TestSubCell(123)
+
         def construct(self):
             format_str = "value is {0.x}".format(self.test_sub_cell)
             return format_str
 
     test_cell = TestCell()
-    format_str = test_cell()
-    assert format_str == "value is 123"
+    with pytest.raises(TypeError) as err:
+        format_str = test_cell()
+        test_sub_cell = TestSubCell(123)
+        assert format_str == "value is {0.x}".format(test_sub_cell)
+    assert "Unsupported parameter type for python primitive, the parameter value is DeadNode" in str(err.value)

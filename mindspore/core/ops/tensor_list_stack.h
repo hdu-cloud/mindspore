@@ -19,8 +19,8 @@
 #include <memory>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -40,7 +40,7 @@ class MIND_API TensorListStack : public BaseOperator {
 
   /// \brief Method to set the op's num_elements attributes.
   ///
-  /// \param[in] element_dtype Define the num_elements data type in op;
+  /// \param[in] num_elements Define the num_elements data type in op;
   void set_num_elements(const int64_t num_elements);
 
   /// \brief Method to set the op's element_dtype attributes.
@@ -55,8 +55,9 @@ class MIND_API TensorListStack : public BaseOperator {
   int64_t get_element_dtype() const;
 };
 
-abstract::AbstractBasePtr TensorListStackInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                               const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr TensorListStackInfer(const abstract::AnalysisEnginePtr &,
+                                                        const PrimitivePtr &primitive,
+                                                        const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

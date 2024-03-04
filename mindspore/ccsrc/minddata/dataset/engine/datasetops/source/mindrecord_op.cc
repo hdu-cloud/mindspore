@@ -144,13 +144,26 @@ void MindRecordOp::Print(std::ostream &out, bool show_all) const {
 Status MindRecordOp::WorkerEntry(int32_t worker_id) {
   TaskManager::FindMe()->Post();
   std::unique_ptr<IOBlock> io_block;
+
+  RETURN_IF_NOT_OK(CollectOpInfoStart(this->NameWithID(), "WorkerGet"));
   RETURN_IF_NOT_OK(worker_in_queues_[worker_id]->PopFront(&io_block));
+  RETURN_IF_NOT_OK(CollectOpInfoEnd(this->NameWithID(), "WorkerGet", {{"TensorRowFlags", io_block->FlagName()}}));
+  RETURN_IF_NOT_OK(CollectOpInfoStart(this->NameWithID(), "WorkerProcess"));
+
   while (io_block != nullptr) {
     if (io_block->wait()) {
+      RETURN_IF_NOT_OK(
+        CollectOpInfoEnd(this->NameWithID(), "WorkerProcess", {{"TensorRowFlags", io_block->FlagName()}}));
       RETURN_IF_NOT_OK(worker_out_queues_[worker_id]->EmplaceBack(TensorRow(TensorRow::TensorRowFlags::kFlagWait)));
+      RETURN_IF_NOT_OK(TaskManager::FindMe()->Wait());  // wait for auto tune update workers successful
+      TaskManager::FindMe()->Clear();
     } else if (io_block->eoe()) {
+      RETURN_IF_NOT_OK(
+        CollectOpInfoEnd(this->NameWithID(), "WorkerProcess", {{"TensorRowFlags", io_block->FlagName()}}));
       RETURN_IF_NOT_OK(worker_out_queues_[worker_id]->EmplaceBack(TensorRow(TensorRow::TensorRowFlags::kFlagEOE)));
     } else if (io_block->eof()) {
+      RETURN_IF_NOT_OK(
+        CollectOpInfoEnd(this->NameWithID(), "WorkerProcess", {{"TensorRowFlags", io_block->FlagName()}}));
       RETURN_IF_NOT_OK(worker_out_queues_[worker_id]->EmplaceBack(TensorRow(TensorRow::TensorRowFlags::kFlagEOF)));
     } else {
       // load TensorRow
@@ -164,6 +177,8 @@ Status MindRecordOp::WorkerEntry(int32_t worker_id) {
             shard_reader_->Close();
           }
         }
+        RETURN_IF_NOT_OK(CollectOpInfoEnd(this->NameWithID(), "WorkerProcess",
+                                          {{"TensorRowFlags", IOBlock(IOBlock::kFlagQuit).FlagName()}}));
         return Status::OK();  // empty key is a quit signal for workers
       }
 
@@ -175,9 +190,14 @@ Status MindRecordOp::WorkerEntry(int32_t worker_id) {
         MS_LOG(DEBUG) << "MindRecord operator consumed row " << row_id << " by worker " << worker_id << ".";
       }
       RETURN_IF_NOT_OK(GetRowFromReader(&fetched_row, row_id, worker_id));
+      RETURN_IF_NOT_OK(
+        CollectOpInfoEnd(this->NameWithID(), "WorkerProcess", {{"TensorRowFlags", io_block->FlagName()}}));
       RETURN_IF_NOT_OK(worker_out_queues_[worker_id]->EmplaceBack(std::move(fetched_row)));
     }
+    RETURN_IF_NOT_OK(CollectOpInfoStart(this->NameWithID(), "WorkerGet"));
     RETURN_IF_NOT_OK(worker_in_queues_[worker_id]->PopFront(&io_block));
+    RETURN_IF_NOT_OK(CollectOpInfoEnd(this->NameWithID(), "WorkerGet", {{"TensorRowFlags", io_block->FlagName()}}));
+    RETURN_IF_NOT_OK(CollectOpInfoStart(this->NameWithID(), "WorkerProcess"));
   }
   RETURN_STATUS_UNEXPECTED("[Internal ERROR] Unexpected nullptr received in worker.");
 }
@@ -185,9 +205,11 @@ Status MindRecordOp::WorkerEntry(int32_t worker_id) {
 Status MindRecordOp::GetRowFromReader(TensorRow *fetched_row, uint64_t row_id, int32_t worker_id) {
   RETURN_UNEXPECTED_IF_NULL(fetched_row);
   *fetched_row = {};
-  auto rc = shard_reader_->GetNextById(row_id, worker_id);
-  auto task_type = rc.first;
-  auto tupled_buffer = rc.second;
+  auto task_content_ptr = std::make_shared<mindrecord::TASK_CONTENT>(
+    mindrecord::TaskType::kCommonTask, std::vector<std::tuple<std::vector<uint8_t>, mindrecord::json>>());
+  RETURN_IF_NOT_OK(shard_reader_->GetNextById(row_id, worker_id, &task_content_ptr));
+  auto task_type = task_content_ptr->first;
+  auto tupled_buffer = task_content_ptr->second;
   if (task_type == mindrecord::TaskType::kPaddedTask) {
     RETURN_IF_NOT_OK(LoadTensorRow(fetched_row, {}, mindrecord::json(), task_type));
     std::vector<std::string> file_path(fetched_row->size(), dataset_file_[0]);
@@ -213,6 +235,7 @@ Status MindRecordOp::GetRowFromReader(TensorRow *fetched_row, uint64_t row_id, i
 
 Status MindRecordOp::LoadTensorRow(TensorRow *tensor_row, const std::vector<uint8_t> &columns_blob,
                                    const mindrecord::json &columns_json, const mindrecord::TaskType task_type) {
+  RETURN_UNEXPECTED_IF_NULL(tensor_row);
   for (int32_t i_col = 0; i_col < columns_to_load_.size(); i_col++) {
     auto column_name = columns_to_load_[i_col];
 
@@ -240,7 +263,7 @@ Status MindRecordOp::LoadTensorRow(TensorRow *tensor_row, const std::vector<uint
         std::string ss(sample_bytes_[column_name]);
         n_bytes = ss.size();
         data_ptr = std::make_unique<unsigned char[]>(n_bytes);
-        std::copy(ss.begin(), ss.end(), data_ptr.get());
+        (void)std::copy(ss.begin(), ss.end(), data_ptr.get());
       } else {
         RETURN_STATUS_UNEXPECTED("Invalid datatype, retrieved data type is unknown.");
       }
@@ -290,6 +313,15 @@ Status MindRecordOp::Reset() {
   MS_LOG(DEBUG) << Name() << " performing a self-reset.";
   RETURN_IF_NOT_OK(WaitForWorkers());
   RETURN_IF_NOT_OK(MappableLeafOp::Reset());  // Call our super class reset first.
+
+  // wakeup workers
+  for (auto &item : worker_tasks_) {
+    item->Post();
+  }
+
+  // wakeup the collector thread
+  wait_for_collector_.Set();
+
   return Status::OK();
 }
 
@@ -331,9 +363,14 @@ Status MindRecordOp::AddNewWorkers(int32_t num_new_workers) {
   RETURN_IF_NOT_OK(shard_reader_->ExtendRandomFileStreams(num_new_workers));
   num_mind_record_workers_ += num_new_workers;
 
+  // create queue first
   for (int32_t i = 0; i < num_new_workers; i++) {
     RETURN_IF_NOT_OK(worker_in_queues_.AddQueue(tree_->AllTasks()));
     RETURN_IF_NOT_OK(worker_out_queues_.AddQueue(tree_->AllTasks()));
+  }
+
+  // launch new workers
+  for (int32_t i = 0; i < num_new_workers; i++) {
     Task *new_task;
     RETURN_IF_NOT_OK(tree_->AllTasks()->CreateAsyncTask(
       Name() + "::WorkerEntry", std::bind(&MindRecordOp::WorkerEntry, this, num_workers_), &new_task, id()));
@@ -342,6 +379,14 @@ Status MindRecordOp::AddNewWorkers(int32_t num_new_workers) {
     num_workers_++;
     MS_LOG(INFO) << "A new worker has been added to op: " << Name() << "::" << id() << " num_workers=" << num_workers_;
   }
+
+  // wakeup old workers
+  for (auto &item : worker_tasks_) {
+    item->Post();
+  }
+
+  // wakeup the collector thread
+  wait_for_collector_.Set();
 
   return Status::OK();
 }
@@ -355,6 +400,7 @@ Status MindRecordOp::RemoveWorkers(int32_t num_workers) {
 
   for (int32_t i = 0; i < num_workers; i++) {
     RETURN_IF_NOT_OK(SendQuitFlagToWorker(num_workers_ - 1));
+    worker_tasks_[num_workers_ - 1]->Post();
     RETURN_IF_NOT_OK(worker_tasks_[num_workers_ - 1]->Join());
     RETURN_IF_NOT_OK(worker_in_queues_.RemoveLastQueue());
     worker_tasks_.pop_back();
@@ -363,7 +409,26 @@ Status MindRecordOp::RemoveWorkers(int32_t num_workers) {
                  << " num_workers=" << num_workers_;
   }
 
+  // wakeup left workers
+  for (auto &item : worker_tasks_) {
+    item->Post();
+  }
+
+  // wakeup the collector thread
+  wait_for_collector_.Set();
+
   return Status::OK();
+}
+
+Status MindRecordOp::InitPullMode() {
+  num_workers_ = 1;
+  RETURN_IF_NOT_OK(Init());
+  RETURN_IF_NOT_OK(shard_reader_->Launch(true));
+  return this->PrepareData();
+}
+
+Status MindRecordOp::LoadTensorRowPullMode(row_id_type row_id, TensorRow *row) {
+  return GetRowFromReader(row, row_id, 0);
 }
 
 }  // namespace dataset

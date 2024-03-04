@@ -29,7 +29,7 @@
 namespace mindspore {
 static mindspore::HashMap<TypeId, std::string> g_type_2_lable{{kTypeUnknown, "Unknown"},
                                                               {kMetaTypeType, "Type"},
-                                                              {kMetaTypeAnything, "Anything"},
+                                                              {kMetaTypeAny, "Any"},
                                                               {kMetaTypeObject, "Object"},
                                                               {kMetaTypeTypeType, "TypeType"},
                                                               {kMetaTypeProblem, "Problem"},
@@ -72,6 +72,7 @@ static mindspore::HashMap<TypeId, std::string> g_type_2_lable{{kTypeUnknown, "Un
                                                               {kNumberTypeFloat16, "Float16"},
                                                               {kNumberTypeFloat32, "Float32"},
                                                               {kNumberTypeFloat64, "Float64"},
+                                                              {kNumberTypeBFloat16, "BFloat16"},
                                                               {kNumberTypeComplex, "Complex"},
                                                               {kNumberTypeComplex64, "Complex64"},
                                                               {kNumberTypeComplex128, "Complex128"},
@@ -83,17 +84,18 @@ static mindspore::HashMap<TypeId, std::string> g_type_2_lable{{kTypeUnknown, "Un
 
 const mindspore::HashMap<TypeId, int> &type_priority_map() {
   static const mindspore::HashMap<TypeId, int> type_priority_map = {
-    {kNumberTypeBool, 0},    {kNumberTypeUInt8, 1},   {kNumberTypeInt8, 2},
-    {kNumberTypeInt16, 3},   {kNumberTypeInt32, 4},   {kNumberTypeInt64, 5},
-    {kNumberTypeFloat16, 6}, {kNumberTypeFloat32, 7}, {kNumberTypeFloat64, 8}};
+    {kNumberTypeBool, 0},    {kNumberTypeUInt8, 1},   {kNumberTypeInt8, 2},    {kNumberTypeInt16, 3},
+    {kNumberTypeInt32, 4},   {kNumberTypeInt64, 5},   {kNumberTypeFloat16, 6}, {kNumberTypeFloat32, 7},
+    {kNumberTypeFloat64, 8}, {kNumberTypeBFloat16, 9}};
   return type_priority_map;
 }
 
 const mindspore::HashMap<TypeId, std::string> &type_name_map() {
   static const mindspore::HashMap<TypeId, std::string> type_name_map = {
-    {kNumberTypeBool, "bool_"},      {kNumberTypeInt8, "int8"},       {kNumberTypeUInt8, "uint8"},
-    {kNumberTypeInt16, "int16"},     {kNumberTypeInt32, "int32"},     {kNumberTypeInt64, "int64"},
-    {kNumberTypeFloat16, "float16"}, {kNumberTypeFloat32, "float32"}, {kNumberTypeFloat64, "float64"}};
+    {kNumberTypeBool, "bool_"},       {kNumberTypeInt8, "int8"},       {kNumberTypeUInt8, "uint8"},
+    {kNumberTypeInt16, "int16"},      {kNumberTypeInt32, "int32"},     {kNumberTypeInt64, "int64"},
+    {kNumberTypeFloat16, "float16"},  {kNumberTypeFloat32, "float32"}, {kNumberTypeFloat64, "float64"},
+    {kNumberTypeBFloat16, "bfloat16"}};
   return type_name_map;
 }
 
@@ -143,6 +145,15 @@ TypeId FloatBitsToTypeId(const int nbits) {
   }
 }
 
+TypeId BFloatBitsToTypeId(const int nbits) {
+  switch (nbits) {
+    case static_cast<int>(BitsNum::eBits16):
+      return kNumberTypeBFloat16;
+    default:
+      MS_LOG(EXCEPTION) << "For BFloat type only support number of 16bits, but got " << nbits << "bits";
+  }
+}
+
 TypeId ComplexBitsToTypeId(const int nbits) {
   switch (nbits) {
     case static_cast<int>(BitsNum::eBits64):
@@ -171,6 +182,14 @@ TypeId NormalizeTypeId(const TypeId type_id) {
   } else if ((type_id == kNumberTypeFloat) || (type_id == kNumberTypeFloat16) || (type_id == kNumberTypeFloat32) ||
              (type_id == kNumberTypeFloat64)) {
     return kNumberTypeFloat;
+  } else if (type_id == kNumberTypeBFloat16) {
+    return kNumberTypeBFloat16;
+  } else if ((type_id == kNumberTypeUInt) || (type_id == kNumberTypeUInt8) || (type_id == kNumberTypeUInt16) ||
+             (type_id == kNumberTypeUInt32) || (type_id == kNumberTypeUInt64)) {
+    return kNumberTypeUInt;
+  } else if ((type_id == kNumberTypeComplex) || (type_id == kNumberTypeComplex64) ||
+             (type_id == kNumberTypeComplex128)) {
+    return kNumberTypeComplex;
   } else {
     return type_id;
   }

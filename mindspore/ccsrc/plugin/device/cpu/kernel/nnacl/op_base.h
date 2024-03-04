@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_OP_BASE_H_
-#define MINDSPORE_NNACL_OP_BASE_H_
+#ifndef MINDSPORE_CCSRC_PLUGIN_DEVICE_CPU_KERNEL_NNACL_OP_BASE_H_
+#define MINDSPORE_CCSRC_PLUGIN_DEVICE_CPU_KERNEL_NNACL_OP_BASE_H_
 
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -37,11 +38,19 @@
 #define C8NUM 8
 #define C9NUM 9
 #define C10NUM 10
+#define C11NUM 11
 #define C12NUM 12
 #define C13NUM 13
+#define C14NUM 14
+#define C15NUM 15
 #define C16NUM 16
+#define C17NUM 17
+#define C18NUM 18
+#define C19NUM 19
 #define C20NUM 20
 #define C21NUM 21
+#define C22NUM 22
+#define C23NUM 23
 #define C24NUM 24
 #define C28NUM 28
 #define C32NUM 32
@@ -54,8 +63,10 @@
 #define C128NUM 128
 #define C150NUM 150
 #define C256NUM 256
+#define C512NUM 512
 #define C1500NUM 1500
 #define TILE_NUM 8
+#define MAX_SPLIT_NUM 2048
 
 #define FP16_DATA_TYPE_LEN 2
 
@@ -66,6 +77,17 @@
 #define MS_UNLIKELY(x) __builtin_expect(!!(x), 0)
 #endif
 #endif
+
+#ifndef MS_LIKELY
+#ifdef _MSC_VER
+#define MS_LIKELY(x) (x)
+#else
+#define MS_LIKELY(x) __builtin_expect(!!(x), 1)
+#endif
+#endif
+
+#define NNACL_MIN(x, y) ((x) < (y) ? (x) : (y))
+#define NNACL_MAX(x, y) ((x) > (y) ? (x) : (y))
 
 #define MSMIN(x, y) ((x) < (y) ? (x) : (y))
 #define MSMAX(x, y) ((x) > (y) ? (x) : (y))
@@ -92,15 +114,49 @@
 
 #define INT_ADD_OVERFLOW_THRESHOLD(x, y, threshold) ((threshold) - (x)) < (y)
 
+#define MALLOC_MAX_SIZE (2000 * 1024 * 1024)
+
 #define COMM_SHAPE_SIZE 4
 #define MAX_SHAPE_SIZE 8
 
+#define OUTPUT_INDEX 0
 #define FIRST_INPUT 0
 #define SECOND_INPUT 1
 #define THIRD_INPUT 2
 #define FOURTH_INPUT 3
 #define FIFTH_INPUT 4
 #define SIXTH_INPUT 5
+#define SEVENTH_INPUT 6
+#define EIGHTH_INPUT 7
+#define NINTH_INPUT 8
+
+#define ONE_TENSOR 1
+#define TWO_TENSOR 2
+#define THREE_TENSOR 3
+#define FOUR_TENSOR 4
+#define FIVE_TENSOR 5
+
+#define Index0 0
+#define Index1 1
+#define Index2 2
+#define Index3 3
+#define Index4 4
+#define Index5 5
+#define Index6 6
+#define Index7 7
+#define Index8 8
+#define Index9 9
+
+#define Num0 0
+#define Num1 1
+#define Num2 2
+#define Num3 3
+#define Num4 4
+#define Num5 5
+#define Num6 6
+#define Num7 7
+#define Num8 8
+#define Num9 9
 
 #define DIMENSION_0D 0
 #define DIMENSION_1D 1
@@ -138,12 +194,15 @@
 #define kInputSize2 3
 #define MAX_AXIS_SIZE 6
 #define MAX_LEN 256
+#define MAX_THREAD_NUM 64
 #define FLT16_MAX 65504
 #define kDefaulLiteMaxSpinCount 300000
 #define kDefaulLiteMinSpinCount 1
 #define kDefaulLiteIosSpinCount 1
 #define DEFAULT_GROUP_NAME_LEN 101
 #define kValueThreshold6 6
+
+#define INVALID_SHAPE -1
 
 #define CLARGSINDEX0 0
 #define CLARGSINDEX1 1
@@ -159,116 +218,72 @@
 #define CLIDX_X 0
 #define CLIDX_Y 1
 #define CLIDX_Z 2
+#define CLIDX_W 3
 
 #define RELU6_MIN_VAL 0
 #define RELU6_MAX_VAL 6
 
-#if ENABLE_HIGH_PERFORMANCE
-#define MS_CHECK_TRUE_RET(value, errcode)
-#define MS_CHECK_TRUE_RET_VOID(value)
-#define MS_CHECK_FALSE(value, errcode)
-#define MS_CHECK_TRUE_MSG(value, errcode, msg)
-#define MS_CHECK_FALSE_MSG(value, errcode, msg)
-#define MS_CHECK_LT(value1, value2, errcode)
-#define MS_CHECK_GT(value1, value2, errcode)
-#define MS_CHECK_LE(value1, value2, errcode)
-#define MS_CHECK_GE(value1, value2, errcode)
-#define MS_CHECK_PTR_IF_NULL(ptr)
+/* index for primitive_type & activation_type */
+#define TC_PTYPE(primitive_type) (primitive_type << 16)
+#define TC_ATYPE(activation_type) (activation_type)
+#define TC_TYPE(primitive_type, activation_type) (TC_PTYPE(primitive_type) + TC_ATYPE(activation_type))
 
-#define MS_CHECK_INT_MUL_NOT_OVERFLOW(value1, value2, errcode)
-#define MS_CHECK_INT_ADD_NOT_OVERFLOW(value1, value2, errcode)
+#define NNACL_MALLOC_CHECK_NULL_RETURN_ERR(ptr) \
+  do {                                          \
+    if ((ptr) == NULL) {                        \
+      return NNACL_NULL_PTR;                    \
+    }                                           \
+  } while (0)
+
+#define NNACL_MALLOC_CHECK_NULL_RETURN_NULL(ptr) \
+  do {                                           \
+    if ((ptr) == NULL) {                         \
+      return NULL;                               \
+    }                                            \
+  } while (0)
+
+#if ENABLE_HIGH_PERFORMANCE
+#define NNACL_CHECK_TRUE_RET(value, errcode)
+#define NNACL_CHECK_TRUE_RET_VOID(value)
+#define NNACL_CHECK_FALSE(value, errcode)
+#define NNACL_CHECK_INT_MUL_NOT_OVERFLOW(value1, value2, errcode)
+#define NNACL_CHECK_INT_ADD_NOT_OVERFLOW(value1, value2, errcode)
 
 #define NNACL_CHECK_ZERO_RETURN_ERR(val)
 #define NNACL_CHECK_ZERO_RETURN(val)
 #define NNACL_CHECK_NULL_RETURN_ERR(ptr)
 #define NNACL_CHECK_NULL_RETURN_VOID(ptr)
 #define NNACL_CHECK_NULL_RETURN_NULL(ptr)
+#define NNACL_CHECK_MALLOC_SIZE(val)
 #else
-// Check whether value is true, if not return 'errcode'
-#define MS_CHECK_TRUE_RET(value, errcode) \
+#define NNACL_CHECK_TRUE_RET(value, errcode) \
+  do {                                       \
+    if (!(value)) {                          \
+      return errcode;                        \
+    }                                        \
+  } while (0)
+
+#define NNACL_CHECK_TRUE_RET_VOID(value) \
+  do {                                   \
+    if (!(value)) {                      \
+      return;                            \
+    }                                    \
+  } while (0)
+
+// Check whether value is false, if not return 'errcode'
+#define NNACL_CHECK_FALSE(value, errcode) \
   do {                                    \
-    if (!(value)) {                       \
+    if ((value)) {                        \
       return errcode;                     \
     }                                     \
   } while (0)
 
-#define MS_CHECK_TRUE_RET_VOID(value) \
-  do {                                \
-    if (!(value)) {                   \
-      return;                         \
-    }                                 \
-  } while (0)
-
-// Check whether value is false, if not return 'errcode'
-#define MS_CHECK_FALSE(value, errcode) \
-  do {                                 \
-    if ((value)) {                     \
-      return errcode;                  \
-    }                                  \
-  } while (0)
-
-// Check whether value is true, if not return 'errcode'
-// and print error string msg
-#define MS_CHECK_TRUE_MSG(value, errcode, msg) \
-  do {                                         \
-    if (!(value)) {                            \
-      MS_LOG(ERROR) << #msg;                   \
-      return errcode;                          \
-    }                                          \
-  } while (0)
-
-#define MS_CHECK_FALSE_MSG(value, errcode, msg) \
-  do {                                          \
-    if ((value)) {                              \
-      MS_LOG(ERROR) << #msg;                    \
-      return errcode;                           \
-    }                                           \
-  } while (0)
-
-#define MS_CHECK_LT(value1, value2, errcode)                                         \
-  do {                                                                               \
-    if ((value1) >= (value2)) {                                                      \
-      MS_LOG(ERROR) << "check ge fail, value1: " << value1 << " value2: " << value2; \
-      return errcode;                                                                \
-    }                                                                                \
-  } while (0)
-
-#define MS_CHECK_GT(value1, value2, errcode)                                         \
-  do {                                                                               \
-    if ((value1) <= (value2)) {                                                      \
-      MS_LOG(ERROR) << "check gt fail, value1: " << value1 << " value2: " << value2; \
-      return errcode;                                                                \
-    }                                                                                \
-  } while (0)
-
-#define MS_CHECK_LE(value1, value2, errcode)                                         \
-  do {                                                                               \
-    if ((value1) > (value2)) {                                                       \
-      MS_LOG(ERROR) << "check le fail, value1: " << value1 << " value2: " << value2; \
-      return errcode;                                                                \
-    }                                                                                \
-  } while (0)
-
-#define MS_CHECK_GE(value1, value2, errcode)                                         \
-  do {                                                                               \
-    if ((value1) < (value2)) {                                                       \
-      MS_LOG(ERROR) << "check ge fail, value1: " << value1 << " value2: " << value2; \
-      return errcode;                                                                \
-    }                                                                                \
-  } while (0)
-
-#define MS_CHECK_PTR_IF_NULL(ptr)                                \
-  do {                                                           \
-    if ((ptr) == nullptr) {                                      \
-      MS_LOG(ERROR) << ": The pointer[" << #ptr << "] is null."; \
-      return;                                                    \
-    }                                                            \
-  } while (0)
-
-#define MS_CHECK_INT_MUL_NOT_OVERFLOW(value1, value2, errcode) \
-  MS_CHECK_TRUE_RET(!(INT_MUL_OVERFLOW(value1, value2)), errcode)
-#define MS_CHECK_INT_ADD_NOT_OVERFLOW(value1, value2, errcode) \
-  MS_CHECK_TRUE_RET(!(INT_ADD_OVERFLOW(value1, value2)), errcode)
+#define NNACL_CHECK_INT_MUL_NOT_OVERFLOW(value1, value2, errcode) \
+  NNACL_CHECK_TRUE_RET(!(INT_MUL_OVERFLOW(value1, value2)), errcode)
+#define NNACL_CHECK_INT_ADD_NOT_OVERFLOW(value1, value2, errcode) \
+  NNACL_CHECK_TRUE_RET(!(INT_ADD_OVERFLOW(value1, value2)), errcode)
+#define NNACL_CHECK_MALLOC_SIZE(malloc_size) \
+  NNACL_CHECK_FALSE((malloc_size) > MALLOC_MAX_SIZE, NNACL_MALLOC_SIZE_INVALID)
 
 #define NNACL_CHECK_ZERO_RETURN_ERR(val) \
   do {                                   \
@@ -401,7 +416,7 @@ enum PrimType {
   PrimType_MaximumGrad = 91,
   PrimType_MaxPoolFusion = 92,
   PrimType_MaxPoolGrad = 93,
-  PrimType_Merge = 94,
+  PrimType_SwitchLayer = 94,
   PrimType_Mfcc = 95,
   PrimType_Minimum = 96,
   PrimType_MinimumGrad = 97,
@@ -521,8 +536,16 @@ enum PrimType {
   PrimType_GroupNormFusion = 211,
   PrimType_Log1p = 212,
   PrimType_TensorScatterAdd = 213,
+  PrimType_SparseFillEmptyRows = 214,
+  PrimType_SparseReshape = 215,
+  PrimType_SparseSegmentSum = 216,
+  PrimType_ScatterElements = 217,
+  PrimType_Triu = 218,
+  PrimType_Tril = 219,
+  PrimType_AdamWeightDecay = 220,
+  PrimType_FillV2 = 221,
   PrimType_MIN = PrimType_NONE,
-  PrimType_MAX = PrimType_TensorScatterAdd + 1,
+  PrimType_MAX = PrimType_FillV2 + 1,
 
   // inner operators.
   PrimType_Inner_ToFormat = 10000,
@@ -531,6 +554,13 @@ enum PrimType {
   PrimType_Inner_ShapeFusion = 10003,
   PrimType_Inner_GraphKernel = 10004,
   PrimType_Inner_SplitReduceConcatFusion = 10005,
+  PrimType_Inner_EncoderLayer = 10006,
+  PrimType_Inner_FseDecode = 10007,
+  PrimType_Inner_DecoderLayer = 10008,
+  PrimType_Inner_UsePastEmbedding = 10009,
+  PrimType_Inner_CustomGru = 10010,
+  PrimType_Inner_CastGatherReduceFusion = 10011,
+  PrimType_Inner_ReduceConcatFusion = 10012,
   PrimType_InnerOpMax,
   PrimType_InnerOpMin = PrimType_Inner_ToFormat
 };
@@ -566,7 +596,7 @@ typedef enum TypeIdC {
   kTypeUnknown = 0,
   kMetaTypeBegin = kTypeUnknown,
   kMetaTypeType,  // Type
-  kMetaTypeAnything,
+  kMetaTypeAny,
   kMetaTypeObject,
   kMetaTypeTypeType,  // TypeType
   kMetaTypeProblem,
@@ -617,9 +647,13 @@ typedef enum TypeIdC {
   kNumberTypeFloat16,
   kNumberTypeFloat32,
   kNumberTypeFloat64,
+  kNumberTypeDouble,
+  kNumberTypeComplex,
   kNumberTypeComplex64,
   kNumberTypeComplex128,
-  kNumberTypeEnd
+  kNumberTypeInt4,
+  kNumberTypeGLUInt,
+  kNumberTypeEnd,
 } TypeIdC;
 
 typedef enum DataOrder {
@@ -649,13 +683,114 @@ typedef struct QuantMulArg {
 } QuantMulArg;
 
 typedef enum ReductionType { Reduction_Sum, Reduction_Mean, Reduction_None } ReductionType;
-typedef enum ActType { ActType_No, ActType_Relu, ActType_Sigmod, ActType_Relu6, ActType_Prelu } ActType;
-typedef enum PadMode { Pad_pad, Pad_same, Pad_valid } PadMode;
+typedef enum ActType {
+  ActType_No = 0,
+  ActType_Relu = 1,
+  ActType_Sigmoid = 2,
+  ActType_Relu6 = 3,
+  ActType_Elu = 4,
+  ActType_LeakyRelu = 5,
+  ActType_Abs = 6,
+  ActType_Relu1 = 7,
+  ActType_Softsign = 8,
+  ActType_Softplus = 9,
+  ActType_Tanh = 10,
+  ActType_Selu = 11,
+  ActType_HSwish = 12,
+  ActType_HSigmoid = 13,
+  ActType_ThresholdRelu = 14,
+  ActType_Linear = 15,
+  ActType_HardTanh = 16,
+  ActType_Sign = 17,
+  ActType_Swish = 18,
+  ActType_Gelu = 19,
+  ActType_FastGelu = 20,
+  ActType_Unknown = 21
+} ActType;
+typedef enum PadType { Pad_pad, Pad_same, Pad_valid } PadType;
+typedef enum EltwiseType { Eltwise_PROD, Eltwise_SUM, Eltwise_MAXIMUM, Eltwise_UNKNOWN } EltwiseType;
 typedef enum RoundingMode { Rounding_No, Rounding_Away_from_zero, Rounding_Up } RoundingMode;
+
+typedef enum PaddingModeC {
+  PaddingMode_Constant,
+  PaddingMode_Reflect,
+  PaddingMode_Symmetric,
+  PaddingMode_Mode_Reserved,
+} PaddingModeC;
+
+typedef enum ElementwiseModeC {
+  Elementwise_Not = 0,
+  Elementwise_Per_Channel = 1,
+  Elementwise_Per_Num = 2
+} ElementwiseModeC;
+
+typedef enum QuantTypeC {
+  Quant_None = 0,
+  Quant_AwareTraining = 1,
+  Quant_WeightQuant = 2,
+  Quant_PostTraining = 3,
+  Quant_QuantWeight = 4,
+  Quant_QuantAll = 5,
+  Quant_QuantDynamic = 6,
+  Quant_Min = Quant_None,
+  Quant_Max = Quant_QuantDynamic
+} QuantTypeC;
+
+typedef enum TensorCategoryC {
+  VarTensor,    // common tensor
+  ConstTensor,  // const tensor
+  ConstScalar,  // const scalar
+  GraphInput,
+  GraphOutput
+} TensorCategoryC;
+
+typedef enum ReduceModeC {
+  Reduce_Mean = 0,
+  Reduce_Max = 1,
+  Reduce_Min = 2,
+  Reduce_Prod = 3,
+  Reduce_Sum = 4,
+  Reduce_SumSquare = 5,
+  Reduce_ASum = 6,
+  Reduce_All = 7,
+  Reduce_L2 = 8,
+  Reduce_MIN = Reduce_Mean,
+  Reduce_MAX = Reduce_L2
+} ReduceModeC;
+
 typedef enum CalFixedMultiplierMode {
   Method_No,
   Method_SinglePrecision,
   Method_DoublePrecision
 } CalFixedMultiplierMode;
 
-#endif  // MINDSPORE_NNACL_OP_BASE_H_
+#define VA_ARG_TUPLE_LEN 2
+static inline void offset_to_index_init(int offset, int cnt, ...) {
+  va_list valist;
+  va_start(valist, cnt);
+  int start = offset;
+  for (int i = 0; i < cnt; i += VA_ARG_TUPLE_LEN) {
+    int *x = va_arg(valist, int *);
+    int X = va_arg(valist, int);
+
+    *x = start % X;
+    start = start / X;
+  }
+  va_end(valist);
+}
+
+static inline void offset_to_index_step(int cnt, ...) {
+  va_list valist;
+  int flag = 1;
+  va_start(valist, cnt);
+  for (int i = 0; i < cnt; i += VA_ARG_TUPLE_LEN) {
+    int *x = va_arg(valist, int *);
+    int X = va_arg(valist, int);
+    if (flag) {
+      *x = (++*x != X) ? (flag = 0, *x) : (flag = 1, 0);
+    }
+  }
+  va_end(valist);
+}
+
+#endif  // MINDSPORE_CCSRC_PLUGIN_DEVICE_CPU_KERNEL_NNACL_OP_BASE_H_

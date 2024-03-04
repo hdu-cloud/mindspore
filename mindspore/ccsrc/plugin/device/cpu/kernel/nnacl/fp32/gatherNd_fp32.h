@@ -14,22 +14,17 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_GATHERND_H_
-#define MINDSPORE_NNACL_GATHERND_H_
+#ifndef NNACL_FP32_GATHERND_FP32_H_
+#define NNACL_FP32_GATHERND_FP32_H_
 
 #include "nnacl/op_base.h"
-
-typedef struct {
-  // Primitive parameter
-  OpParameter op_parameter_;
-} GatherNdParameter;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-int GatherNd(const void *input, void *output, const int *in_offset, int area, int count, int data_type_len);
+int GatherNd(const void *input, void *output, const int32_t *in_offset, int area, int count, int data_type_len);
 #ifdef __cplusplus
 }
 #endif
 
-#endif  // MINDSPORE_NNACL_GATHERND_H_
+#endif  // NNACL_FP32_GATHERND_FP32_H_

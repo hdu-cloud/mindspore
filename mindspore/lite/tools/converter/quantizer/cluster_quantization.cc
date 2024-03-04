@@ -30,6 +30,7 @@ constexpr int kMinSize = 2;
 constexpr int kAverage = 2;
 }  // namespace
 std::vector<float> ClusterQuantization::KMeansPlusPlusInit(const float *data, size_t elem_count, size_t k) {
+  MS_ASSERT(data != nullptr);
   std::vector<float> data_vector(data, data + elem_count);
   std::sort(data_vector.begin(), data_vector.end());
   data_vector.erase(std::unique(data_vector.begin(), data_vector.end()), data_vector.end());
@@ -96,6 +97,7 @@ std::vector<float> ClusterQuantization::LinearInit(const float *data, size_t ele
 void ClusterQuantization::SelectClusterCentroid(const float *data, size_t elem_count,
                                                 const std::vector<float> &clusters, std::vector<int8_t> *clusters_index,
                                                 std::vector<std::vector<float>> *clusters_data) {
+  CHECK_NULL_RETURN_VOID(data);
   for (size_t i = 0; i < elem_count; i++) {
     size_t index = 0;
     double euclidean_distance = std::pow(data[i] - clusters.at(0), kPowExponent);
@@ -157,7 +159,7 @@ int ClusterQuantization::KMeans(const float *data, size_t elem_count, size_t k, 
       break;
     }
 
-    if (cur_error == min_error) {
+    if (cur_error - min_error == 0) {
       MS_LOG(INFO) << "The cluster center has not changed, stop the iteration.";
       break;
     }
@@ -176,7 +178,7 @@ int ClusterQuantization::KMeansQuantization(const CNodePtr &cnode, const std::ve
     auto input = cnode->input(idx);
     ParameterPtr parameter;
     tensor::TensorPtr tensor_info;
-    GetLiteParameter(input, &parameter, &tensor_info);
+    GetParameterAndTensor(input, &parameter, &tensor_info);
     if (parameter == nullptr || tensor_info == nullptr || tensor_info->data_type() != TypeId::kNumberTypeFloat32 ||
         tensor_info->compression_type() != mindspore::kNoCompression) {
       MS_LOG(INFO) << "This op " << cnode->fullname_with_scope() << " dont need quant weight";
@@ -197,12 +199,16 @@ int ClusterQuantization::KMeansQuantization(const CNodePtr &cnode, const std::ve
       return ret;
     }
 
-    UpdateTensorDataAndSize(parameter, tensor_info, clusters.data(), clusters.size(), kNumberTypeInt8);
+    ret = UpdateTensorDataAndSize(parameter, tensor_info, clusters.data(), clusters.size(), kNumberTypeInt8);
+    if (ret != RET_OK) {
+      MS_LOG(ERROR) << input->fullname_with_scope() << " update tensor data failed.";
+      return ret;
+    }
     // Optimize with Share Weight
     auto quant_param_holder = GetCNodeQuantHolder(cnode);
     CHECK_NULL_RETURN(quant_param_holder);
     quant_param_holder->SetQuantClusters(idx - kPrimOffset, cluster_centroid);
-    quant_param_holder->set_quant_type(schema::QuantType_QUANT_WEIGHT);
+    quant_param_holder->set_quant_type(quant::QUANT_WEIGHT);
 
     FSEEncoder fse_encoder;
     ret = fse_encoder.Compress(parameter, {}, mindspore::kFSEInt);

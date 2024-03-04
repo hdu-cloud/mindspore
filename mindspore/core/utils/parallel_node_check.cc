@@ -16,35 +16,45 @@
 
 #include <set>
 #include <string>
+#include "ir/func_graph.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
+#include "mindspore/core/ops/other_ops.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
 
 #include "utils/parallel_node_check.h"
-#include "mindspore/core/ops/core_ops.h"
 
 namespace mindspore {
 // clang-format off
 #ifndef ENABLE_SECURITY
-static const std::set<std::string> PARALLEL_BLACK_LIST_ = {prim::kTupleGetItem, "J", "list_getitem",
+static const std::set<std::string> PARALLEL_BLACK_LIST_ = {mindspore::kTupleGetItemOpName, "J", "list_getitem",
   "array_getitem", "tuple_setitem", "Depend", "list_setitem", "array_setitem", "dict_getitem",
   "list_append", "list_map", "list_reduce", "tuple_reversed", "tile_shape", "tuple_div", "tuple_to_array",
-  "make_dict", "make_slice", "string_eq", "VirtualLoss", "Return", "env_getitem",
-  "partial", "env_setitem", "env_getitem", "env_add",
-  "dot", "im2col", "col2im", "im2col_v1", "state_setitem", "ScalarSummary",
+  "make_dict", "make_slice", "string_eq", "VirtualLoss", "Return", "env_getitem", "TensorShape", "ScalarToTensor",
+  "partial", "env_setitem", "env_getitem", "env_add", "Shape",
+  "dot", "im2col", "col2im", "im2col_v1", "state_setitem",
   "ImageSummary", "TensorSummary", "Debug", "HistogramSummary", "col2im_v1", "resolve", "BroadcastGradientArgs",
   "InvertPermutation", "DropoutGenMask", "StatelessDropOutGenMask", "embed", "create_instance", "RefToEmbed",
-  "StopGradient", "UpdateState", "Load", "Switch", "Print", "call_instance"};
+  "StopGradient", "UpdateState", "Load", "Switch", "Print", "call_instance", "TensorMove", "DType",
+  "ScalarAdd", "ScalarSub", "ScalarMul", "ScalarDiv", "ScalarFloordiv", "ScalarPow", "ScalarSummary", "ScalarCast",
+  "ScalarMod", "scalar_gt", "scalar_ge", "scalar_lt", "scalar_le", "scalar_eq"};
 #else
-static const std::set<std::string> PARALLEL_BLACK_LIST_ = {prim::kTupleGetItem, "J", "list_getitem",
+static const std::set<std::string> PARALLEL_BLACK_LIST_ = {mindspore::kTupleGetItemOpName, "J", "list_getitem",
   "array_getitem", "tuple_setitem", "Depend", "list_setitem", "array_setitem", "dict_getitem",
   "list_append", "list_map", "list_reduce", "tuple_reversed", "tile_shape", "tuple_div", "tuple_to_array",
-  "make_dict", "make_slice", "string_eq", "VirtualLoss", "Return", "env_getitem",
-  "identity", "partial", "env_setitem", "env_getitem", "env_add",
+  "make_dict", "make_slice", "string_eq", "VirtualLoss", "Return", "env_getitem", "TensorShape", "ScalarToTensor",
+  "identity", "partial", "env_setitem", "env_getitem", "env_add", "Shape", "FillV2",
   "dot", "im2col", "col2im", "im2col_v1", "state_setitem", "Debug", "col2im_v1", "resolve", "BroadcastGradientArgs",
   "InvertPermutation", "DropoutGenMask", "StatelessDropOutGenMask", "embed", "create_instance", "RefToEmbed",
-  "StopGradient", "UpdateState", "Load", "Switch", "Print", "call_instance"};
+  "StopGradient", "UpdateState", "Load", "Switch", "Print", "call_instance", "TensorMove", "DType",
+  "ScalarAdd", "ScalarSub", "ScalarMul", "ScalarDiv", "ScalarFloordiv", "ScalarPow", "ScalarSummary", "ScalarCast",
+  "ScalarMod", "scalar_gt", "scalar_ge", "scalar_lt", "scalar_le", "scalar_eq"};
 #endif
 static const std::set<PrimitivePtr> ALLGATHER_NODE_LIST_ = {prim::kPrimAllGather, prim::kPrimMiniStepAllGather,
                                                             prim::kPrimMicroStepAllGather};
-static const std::set<PrimitivePtr> TRIVIAL_NODE_LIST_ = {prim::kPrimCast, prim::kPrimDepend};
+static const std::set<PrimitivePtr> TRIVIAL_NODE_LIST_ = {prim::kPrimCast, prim::kPrimDepend,
+                                                            std::make_shared<Primitive>("AscendAntiQuant")};
 // clang-format on
 
 bool IsInParallelBlackList(const PrimitivePtr &prim) {
@@ -70,6 +80,24 @@ bool IsInTrivialNodeList(const CNodePtr &cnode) {
   return false;
 }
 
+// Return true if cnode is ReShape and match pattern DropoutGenMask -> ReShape -> FlashAttentionScore
+bool IsReshapeBetweenDropoutGenMaskAndFlashAttentionScore(const CNodePtr &cnode) {
+  if (!IsPrimitiveCNode(cnode, prim::kPrimReshape)) {
+    return false;
+  }
+  auto input1 = cnode->input(kIndex1);
+  if (!IsPrimitiveCNode(input1, prim::kPrimDropoutGenMask)) {
+    return false;
+  }
+  auto func_graph = cnode->func_graph();
+  auto manager = func_graph->manager();
+  auto node_users = manager->node_users()[cnode];
+  if (node_users.size() != 1 || !IsPrimitiveCNode(node_users.begin()->first, prim::kPrimFlashAttentionScore)) {
+    return false;
+  }
+  return true;
+}
+
 bool IsParallelConsiderCNode(const CNodePtr &cnode) {
   if (cnode == nullptr || cnode->size() == 0) {
     return false;
@@ -80,6 +108,10 @@ bool IsParallelConsiderCNode(const CNodePtr &cnode) {
   }
   const auto &prim = prim_node->value()->cast<PrimitivePtr>();
   if (prim == nullptr) {
+    return false;
+  }
+  // If match pattern DropoutGenMask -> ReShape -> FlashAttentionScore, skip ReShape
+  if (IsReshapeBetweenDropoutGenMaskAndFlashAttentionScore(cnode)) {
     return false;
   }
   return !IsInParallelBlackList(prim);

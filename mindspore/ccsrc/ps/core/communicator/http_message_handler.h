@@ -23,7 +23,6 @@
 #include <event2/keyvalq_struct.h>
 #include <event2/listener.h>
 #include <event2/util.h>
-
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -33,12 +32,11 @@
 #include <map>
 #include <memory>
 #include <vector>
-
 #include "ps/core/comm_util.h"
 #include "utils/log_adapter.h"
 #include "ps/core/communicator/request_process_result_code.h"
 #include "nlohmann/json.hpp"
-#include "ps/constants.h"
+#include "include/backend/distributed/ps/constants.h"
 
 namespace mindspore {
 namespace ps {

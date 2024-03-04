@@ -15,18 +15,22 @@
  */
 
 #include "ops/softmax.h"
-#include <string>
-#include <algorithm>
+
 #include <memory>
 #include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
+constexpr auto kNameSoftmaxMinInputSize = 1;
+constexpr auto kNameSoftmaxMaxInputSize = 2;
+
 void Softmax::set_axis(const std::vector<int64_t> &axis) { (void)this->AddAttr(kAxis, api::MakeValue(axis)); }
 
 std::vector<int64_t> Softmax::get_axis() const {
@@ -48,6 +52,11 @@ void Softmax::Init(const int64_t axis) {
 namespace {
 abstract::ShapePtr SoftMaxInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
+  if (input_args.size() < kNameSoftmaxMinInputSize || input_args.size() > kNameSoftmaxMaxInputSize) {
+    MS_LOG(EXCEPTION) << "For '" << primitive->name() << "', the input args size should be " << kNameSoftmaxMinInputSize
+                      << " or " << kNameSoftmaxMaxInputSize << " , but get " << input_args.size();
+  }
+
   auto op_name = primitive->name();
   auto axis = GetValue<std::vector<int64_t>>(primitive->GetAttr(kAxis));
   (void)CheckAndConvertUtils::CheckValue<size_t>("length of axis", axis.size(), kGreaterEqual, 1, op_name);
@@ -68,11 +77,15 @@ abstract::ShapePtr SoftMaxInferShape(const PrimitivePtr &primitive, const std::v
 }
 
 TypePtr SoftMaxInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  if (input_args.size() < kNameSoftmaxMinInputSize || input_args.size() > kNameSoftmaxMaxInputSize) {
+    MS_LOG(EXCEPTION) << "For '" << prim->name() << "', the input args size should be " << kNameSoftmaxMinInputSize
+                      << " or " << kNameSoftmaxMaxInputSize << " , but get " << input_args.size();
+  }
   if (std::any_of(input_args.begin(), input_args.end(), [](const AbstractBasePtr &a) { return a == nullptr; })) {
     MS_LOG(EXCEPTION) << "For '" << prim->name()
                       << ", the input args used for infer shape and type is necessary, but missing it.";
   }
-  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64};
+  const std::set<TypePtr> valid_types = {kBFloat16, kFloat16, kFloat32, kFloat64};
   return CheckAndConvertUtils::CheckTensorTypeValid("x", input_args[0]->BuildType(), valid_types, prim->name());
 }
 }  // namespace
@@ -82,6 +95,24 @@ AbstractBasePtr SoftmaxInfer(const abstract::AnalysisEnginePtr &, const Primitiv
                              const std::vector<AbstractBasePtr> &input_args) {
   return abstract::MakeAbstract(SoftMaxInferShape(primitive, input_args), SoftMaxInferType(primitive, input_args));
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Softmax, prim::kPrimSoftmax, SoftmaxInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSoftmaxInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SoftMaxInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SoftMaxInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SoftmaxInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Softmax, prim::kPrimSoftmax, AGSoftmaxInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -21,7 +21,9 @@
 #include "src/common/log_util.h"
 #ifdef ENABLE_MINDRT
 #include "thread/actor_threadpool.h"
+#ifndef MS_COMPILE_IOS
 #include "thread/parallel_threadpool.h"
+#endif
 #endif
 #ifdef SUPPORT_NPU
 #include "include/HiAiModelManagerType.h"
@@ -29,14 +31,15 @@
 #ifdef GPU_OPENCL
 #include "src/litert/kernel/gpu/opencl/opencl_runtime.h"
 #endif
-#include "nnacl/kernel.h"
 #include "src/litert/inner_allocator.h"
-#include "experimental/src/exec_env_utils.h"
+#include "nnacl/cxx_utils.h"
+#include "src/litert/thread_pool_reuse_manager.h"
 
 namespace mindspore::lite {
 namespace {
 const constexpr int kMaxInnerContextDeviceNums = 3;
 const constexpr int kNumCoreNumTimes = 5;
+constexpr int kDefaultParallelNum = 2;
 }  // namespace
 
 InnerContext::InnerContext() {
@@ -46,50 +49,56 @@ InnerContext::InnerContext() {
 #endif
 }
 
-void InnerContext::InitExperimentalExecEnv() {
-#ifdef MSLITE_ENABLE_EXPERIMENTAL_KERNEL
-  GetExecEnv()->allocator = this->allocator.get();
-  GetExecEnv()->threadPool = this->thread_pool_;
-  GetExecEnv()->alloc = experimental::DefaultAllocatorMalloc;
-  GetExecEnv()->free = experimental::DefaultAllocatorFree;
-  GetExecEnv()->parallelLaunch = experimental::DefaultThreadPoolParallelLunch;
-#endif
+void InnerContext::InitExecEnv() {
+  exec_env_.allocator_ = this->allocator.get();
+  exec_env_.thread_pool_ = this->thread_pool_;
+  exec_env_.Alloc = nnacl::DefaultAllocatorMalloc;
+  exec_env_.Free = nnacl::DefaultAllocatorFree;
+  exec_env_.ParallelLaunch = nnacl::DefaultThreadPoolParallelLunch;
 }
 
-int InnerContext::CreateThreadPool() {
+int InnerContext::CreateThreadPool(bool is_control_flow) {
   if (this->thread_pool_ == nullptr) {
-    BindMode bind_mode = Power_NoBind;
+    bind_mode_ = Power_NoBind;
     if (this->IsDeviceTypeEnabled(DT_CPU)) {
-      bind_mode = static_cast<BindMode>(this->GetDeviceInfo(DT_CPU).cpu_device_info_.cpu_bind_mode_);
+      bind_mode_ = static_cast<BindMode>(this->GetDeviceInfo(DT_CPU).cpu_device_info_.cpu_bind_mode_);
     }
-
+    this->inter_op_parallel_num_ =
+      (!this->enable_parallel_ && this->inter_op_parallel_num_ > 1) ? this->inter_op_parallel_num_ : 1;
+    actor_thread_num_ = (inter_op_parallel_num_ > 1) ? 1 : (this->enable_parallel_ ? kDefaultParallelNum : 1);
+    thread_pool_ = ThreadPoolReuseManager::GetInstance()->GetThreadPool(
+      actor_thread_num_, inter_op_parallel_num_, thread_num_, bind_mode_, affinity_core_list_, runner_id_);
+    if (thread_pool_ == nullptr) {
 #ifdef ENABLE_MINDRT
-    if (!this->enable_parallel_ && this->inter_op_parallel_num_ > 1) {
-      thread_pool_ = ParallelThreadPool::CreateThreadPool(this->inter_op_parallel_num_, this->thread_num_,
-                                                          this->affinity_core_list_, bind_mode);
-      MS_CHECK_TRUE_MSG(thread_pool_ != nullptr, RET_NULL_PTR, "Create Allocator failed");
-    } else {
-      int actor_parallel_thread = this->enable_parallel_ ? kDefaultParallelNum : 1;
-      thread_pool_ = ActorThreadPool::CreateThreadPool(actor_parallel_thread, this->thread_num_,
-                                                       this->affinity_core_list_, bind_mode);
-      MS_CHECK_TRUE_MSG(thread_pool_ != nullptr, RET_NULL_PTR, "Create Allocator failed");
-    }
-#else
-    thread_pool_ = ThreadPool::CreateThreadPool(thread_num_ - 1);
-    thread_pool_->SetCpuAffinity(static_cast<mindspore::BindMode>(bind_mode));
+#ifndef MS_COMPILE_IOS
+      if (inter_op_parallel_num_ > 1) {
+        thread_pool_ = ParallelThreadPool::CreateThreadPool(this->inter_op_parallel_num_, this->thread_num_,
+                                                            this->affinity_core_list_, bind_mode_, runner_id_);
+      } else if (thread_num_ == 1 && !IsCpuFloat16Enabled() && !is_control_flow) {
+        thread_pool_ = ThreadPool::CreateThreadPool(thread_num_ - 1);
+        thread_pool_->SetCpuAffinity(static_cast<mindspore::BindMode>(bind_mode_));
+      } else {
 #endif
+        thread_pool_ = ActorThreadPool::CreateThreadPool(actor_thread_num_, this->thread_num_,
+                                                         this->affinity_core_list_, bind_mode_);
+#ifndef MS_COMPILE_IOS
+      }
+#endif
+#else
+      thread_pool_ = ThreadPool::CreateThreadPool(thread_num_ - 1);
+      thread_pool_->SetCpuAffinity(static_cast<mindspore::BindMode>(bind_mode_));
+#endif
+    }
+    MS_CHECK_TRUE_MSG(thread_pool_ != nullptr, RET_NULL_PTR, "Create Allocator failed");
+    InitExecEnv();
   }
+
   return RET_OK;
 }
 int InnerContext::Init() {
   if (this->IsValid() != RET_OK) {
     MS_LOG(ERROR) << "Context is not valid";
     return RET_NOT_SUPPORT;
-  }
-
-  if (CreateThreadPool()) {
-    MS_LOG(ERROR) << "CreateThreadPool failed.";
-    return RET_ERROR;
   }
 
   if (this->allocator == nullptr) {
@@ -112,15 +121,29 @@ int InnerContext::Init() {
     }
 #endif
   }
-  InitExperimentalExecEnv();
+
+  if (CreateThreadPool(false)) {
+    MS_LOG(ERROR) << "CreateThreadPool failed.";
+    return RET_ERROR;
+  }
+
   return RET_OK;
 }
 
-InnerContext::~InnerContext() {
-  if (this->thread_pool_ != nullptr) {
+void InnerContext::DeleteThreadPool() {
+  MS_LOG(INFO) << "delete ThreadPool.";
+  if (thread_pool_ != nullptr) {
     delete thread_pool_;
-    this->thread_pool_ = nullptr;
+    thread_pool_ = nullptr;
   }
+}
+
+InnerContext::~InnerContext() {
+  MS_LOG(INFO) << "delete InnerContext.";
+  ThreadPoolReuseManager::GetInstance()->RetrieveThreadPool(actor_thread_num_, inter_op_parallel_num_, thread_num_,
+                                                            bind_mode_, affinity_core_list_, thread_pool_);
+  thread_pool_ = nullptr;
+  MS_LOG(INFO) << "delete InnerContext done.";
 }
 
 int InnerContext::IsValid() {
@@ -165,7 +188,7 @@ int InnerContext::IsValid() {
     return RET_NOT_SUPPORT;
   }
 #endif
-#ifndef SUPPORT_NPU
+#if !defined(SUPPORT_NPU) && !defined(SUPPORT_NNAPI)
   if (IsDeviceTypeEnabled(DT_NPU)) {
     MS_LOG(ERROR) << "NPU is not supported.";
     return RET_NOT_SUPPORT;

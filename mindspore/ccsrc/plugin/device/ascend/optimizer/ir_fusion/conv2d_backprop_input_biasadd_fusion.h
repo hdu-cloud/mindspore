@@ -17,7 +17,8 @@
 #define MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_IR_FUSION_CONV2D_BACKPROP_INPUT_BIASADD_FUSION_H_
 
 #include <memory>
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/optimizer.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
 
 namespace mindspore {
 namespace opt {

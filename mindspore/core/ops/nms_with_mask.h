@@ -17,12 +17,11 @@
 #ifndef MINDSPORE_CORE_OPS_NMS_WITH_MASK_H
 #define MINDSPORE_CORE_OPS_NMS_WITH_MASK_H
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
-#include "ops/core_ops.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -48,8 +47,8 @@ class MIND_API NMSWithMask : public BaseOperator {
   std::vector<float> get_iou_threshold() const;
 };
 
-abstract::AbstractBasePtr NMSWithMaskInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                           const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr NMSWithMaskInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                    const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

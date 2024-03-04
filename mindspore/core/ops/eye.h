@@ -16,12 +16,12 @@
 
 #ifndef MINDSPORE_CORE_OPS_EYE_H_
 #define MINDSPORE_CORE_OPS_EYE_H_
-#include <vector>
 #include <memory>
+#include <vector>
+#include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 #include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
-#include "ops/base_operator.h"
-#include "mindapi/base/types.h"
 
 namespace mindspore {
 namespace ops {
@@ -36,9 +36,6 @@ class MIND_API Eye : public BaseOperator {
   /// \brief Init. Refer to the parameters of Python API @ref mindspore.ops.FloorDiv for the inputs.
   void Init() const {}
 };
-
-abstract::AbstractBasePtr EyeInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                   const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

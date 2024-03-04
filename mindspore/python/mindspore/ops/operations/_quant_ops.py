@@ -18,13 +18,21 @@ from __future__ import absolute_import
 from functools import partial
 
 import mindspore.context as context
-from mindspore._checkparam import Validator as validator
-from mindspore._checkparam import Rel
+from mindspore import _checkparam as validator
 from mindspore.ops.primitive import Primitive, PrimitiveWithInfer, prim_attr_register
 from mindspore.common import dtype as mstype
 from mindspore.common.dtype import QuantDtype
 
-if context.get_context('device_target') == "Ascend":
+
+def _support_te():
+    try:
+        import te  # pylint: disable=unused-import
+        return True
+    # pylint: disable=broad-except
+    except Exception:
+        return False
+
+if context.get_context('device_target') == "Ascend" and _support_te():
     import mindspore.ops._op_impl._custom_op
 
 __all__ = ["MinMaxUpdatePerLayer",
@@ -108,8 +116,22 @@ class FakeQuantParam(Primitive):
 
     @classmethod
     def linear_quant_param(cls, quant_dtype, scale, zp, is_per_channel=False, **kwargs):
-        kwargs[FakeQuantParam.attr_key_linear_quant_scale] = scale
-        kwargs[FakeQuantParam.attr_key_linear_quant_zero_point] = zp
+        """
+        Create a linear quantization operator based on scale and zero-point parameter.
+        """
+        validator.check_value_type("scale", scale, [float, tuple, list], "FakeQuantParam")
+        if isinstance(scale, float):
+            scale_list = [scale]
+        else:
+            scale_list = scale
+        validator.check_value_type("zero_point", zp, [int, tuple, list], "FakeQuantParam")
+        if isinstance(zp, int):
+            zp_list = [zp]
+        else:
+            zp_list = zp
+        validator.check_value_type("is_per_channel", is_per_channel, [bool], "FakeQuantParam")
+        kwargs[FakeQuantParam.attr_key_linear_quant_scale] = scale_list
+        kwargs[FakeQuantParam.attr_key_linear_quant_zero_point] = zp_list
         return cls(quant_dtype, FakeQuantParam.attr_value_linear_quant_algo_name, is_per_channel, **kwargs)
 
 
@@ -118,7 +140,7 @@ class MinMaxUpdatePerLayer(PrimitiveWithInfer):
     Updates min and max per layer.
 
     Args:
-        ema (bool): Uses EMA algorithm update value min and max. Default: False.
+        ema (bool): Uses EMA algorithm update value min and max. Default: ``False``.
         ema_decay (int) : EMA algorithm decay parameter. Default: 0.999.
 
     Inputs:
@@ -147,14 +169,14 @@ class MinMaxUpdatePerLayer(PrimitiveWithInfer):
                 f"For '{self.name}' attr \'ema\' and \'ema_decay\' should set together.")
 
         self.ema = validator.check_value_type('ema', ema, (bool,), self.name)
-        self.ema_decay = validator.check_float_range(ema_decay, 0, 1, Rel.INC_BOTH, 'ema_decay', self.name)
+        self.ema_decay = validator.check_float_range(ema_decay, 0, 1, validator.INC_BOTH, 'ema_decay', self.name)
         self.init_prim_io_names(inputs=['x', 'min', 'max'],
                                 outputs=['min_up', 'max_up'])
 
     def infer_shape(self, x_shape, min_shape, max_shape):
-        validator.check_int(len(x_shape), 1, Rel.GE, "x rank", self.name)
+        validator.check_int(len(x_shape), 1, validator.GE, "x rank", self.name)
         validator.check("min shape", min_shape, "max shape",
-                        max_shape, Rel.EQ, self.name)
+                        max_shape, validator.EQ, self.name)
         validator.check_equal_int(len(min_shape), 1, "min shape", self.name)
         return min_shape, max_shape
 
@@ -171,7 +193,7 @@ class MinMaxUpdatePerChannel(PrimitiveWithInfer):
      Updates min and max per channel.
 
     Args:
-        ema (bool): Uses EMA algorithm update value min and max. Default: False.
+        ema (bool): Uses EMA algorithm update value min and max. Default: ``False``.
         ema_decay (int) : EMA algorithm decay parameter. Default: 0.999.
         channel_axis (int): Quantization by channel axis. Ascend backend only supports 0 or 1. Default: 1.
 
@@ -203,9 +225,10 @@ class MinMaxUpdatePerChannel(PrimitiveWithInfer):
                 f"For '{self.name}' attr \'ema\' and \'ema_decay\' should set together.")
 
         self.ema = validator.check_value_type('ema', ema, (bool,), self.name)
-        self.ema_decay = validator.check_float_range(ema_decay, 0, 1, Rel.INC_BOTH, 'ema_decay', self.name)
+        self.ema_decay = validator.check_float_range(ema_decay, 0, 1, validator.INC_BOTH, 'ema_decay', self.name)
         if self.is_ascend:
-            self.channel_axis = validator.check_int_range(channel_axis, 0, 1, Rel.INC_BOTH, 'channel_axis', self.name)
+            self.channel_axis = validator.check_int_range(channel_axis, 0, 1, validator.INC_BOTH,
+                                                          'channel_axis', self.name)
         else:
             self.channel_axis = validator.check_non_negative_int(channel_axis, 'channel_axis', self.name)
         self.init_prim_io_names(
@@ -215,9 +238,9 @@ class MinMaxUpdatePerChannel(PrimitiveWithInfer):
         if self.is_ascend and len(x_shape) not in self.ascend_support_x_rank:
             raise ValueError(f"For '{self.name}' x rank must be in '{self.ascend_support_x_rank}'")
         if not self.is_ascend:
-            validator.check_int(len(x_shape), 1, Rel.GE, "x rank", self.name)
+            validator.check_int(len(x_shape), 1, validator.GE, "x rank", self.name)
         validator.check("min shape", min_shape, "max shape",
-                        max_shape, Rel.EQ, self.name)
+                        max_shape, validator.EQ, self.name)
         validator.check_equal_int(len(min_shape), 1, "min shape", self.name)
         return min_shape, max_shape
 
@@ -237,8 +260,8 @@ class FakeLearnedScaleQuantPerLayer(PrimitiveWithInfer):
         quant_delay (int): Quantilization delay parameter. Before delay step in training time not update
             simulate quantization aware function. After delay step in training time begin simulate the aware
             quantize function. Default: 0.
-        neg_trunc (bool): Whether the quantization algorithm uses negative truncation or not. Default: False.
-        training (bool): Training the network or not. Default: True.
+        neg_trunc (bool): Whether the quantization algorithm uses negative truncation or not. Default: ``False``.
+        training (bool): Training the network or not. Default: ``True``.
 
     Inputs:
         - **input_x** (Tensor) : Input tensor that needs to be quantified.
@@ -246,7 +269,7 @@ class FakeLearnedScaleQuantPerLayer(PrimitiveWithInfer):
         - **quant_max** (Tensor) : Value of the quantization range.
 
     Outputs:
-        - Tensor: Simulates quantize tensor of `input_x`，with the same type and shape as the `input_x`.
+        - Tensor: Simulates quantize tensor of `input_x`, with the same type and shape as the `input_x`.
 
     Examples:
         >>> input_tensor = Tensor(np.random.rand(3, 16, 5, 5), mstype.float32)
@@ -273,9 +296,9 @@ class FakeLearnedScaleQuantPerLayer(PrimitiveWithInfer):
                                 outputs=['out'])
 
     def infer_shape(self, input_x_shape, alpha_shape, quant_max_shape):
-        validator.check_int(len(input_x_shape), 1, Rel.GE, "input_x rank", self.name)
-        validator.check_int(len(alpha_shape), 1, Rel.GE, "alpha rank", self.name)
-        validator.check_int(len(quant_max_shape), 1, Rel.GE, "quant max rank", self.name)
+        validator.check_int(len(input_x_shape), 1, validator.GE, "input_x rank", self.name)
+        validator.check_int(len(alpha_shape), 1, validator.GE, "alpha rank", self.name)
+        validator.check_int(len(quant_max_shape), 1, validator.GE, "quant max rank", self.name)
         return input_x_shape
 
     def infer_dtype(self, input_x_type, alpha_type, quant_max_type):
@@ -314,9 +337,9 @@ class FakeLearnedScaleQuantPerLayerGrad(PrimitiveWithInfer):
             inputs=['dout', 'x', 'alpha', 'quant_max'], outputs=['dx', 'dalpha'])
 
     def infer_shape(self, dout_shape, x_shape, alpha_shape, quant_max_shape):
-        validator.check("dout shape", dout_shape, "x_shape", x_shape, Rel.EQ, self.name)
-        validator.check_int(len(alpha_shape), 1, Rel.GE, "alpha rank", self.name)
-        validator.check_int(len(quant_max_shape), 1, Rel.GE, "quant max rank", self.name)
+        validator.check("dout shape", dout_shape, "x_shape", x_shape, validator.EQ, self.name)
+        validator.check_int(len(alpha_shape), 1, validator.GE, "alpha rank", self.name)
+        validator.check_int(len(quant_max_shape), 1, validator.GE, "quant max rank", self.name)
         return dout_shape, alpha_shape
 
     def infer_dtype(self, dout_type, x_type, alpha_type, quant_max_type):
@@ -345,9 +368,9 @@ class FakeLearnedScaleQuantPerLayerGradD(PrimitiveWithInfer):
             inputs=['dout', 'x', 'alpha', 'quant_max'], outputs=['dx', 'dalpha'])
 
     def infer_shape(self, dout_shape, x_shape, alpha_shape, quant_max_shape):
-        validator.check("dout shape", dout_shape, "x_shape", x_shape, Rel.EQ, self.name)
-        validator.check_int(len(alpha_shape), 1, Rel.GE, "alpha rank", self.name)
-        validator.check_int(len(quant_max_shape), 1, Rel.GE, "quant max rank", self.name)
+        validator.check("dout shape", dout_shape, "x_shape", x_shape, validator.EQ, self.name)
+        validator.check_int(len(alpha_shape), 1, validator.GE, "alpha rank", self.name)
+        validator.check_int(len(quant_max_shape), 1, validator.GE, "quant max rank", self.name)
         return dout_shape, dout_shape
 
     def infer_dtype(self, dout_type, x_type, alpha_type, quant_max_type):
@@ -386,8 +409,8 @@ class FakeLearnedScaleQuantPerChannel(PrimitiveWithInfer):
         quant_delay (int): Quantilization delay parameter. Before delay step in training time not update
             simulate quantization aware function. After delay step in training time begin simulate the aware
             quantize function. Default: 0.
-        neg_trunc (bool): Whether the quantization algorithm uses negative truncation or not. Default: False.
-        training (bool): Training the network or not. Default: True.
+        neg_trunc (bool): Whether the quantization algorithm uses negative truncation or not. Default: ``False``.
+        training (bool): Training the network or not. Default: ``True``.
         channel_axis (int): Quantization by channel axis. Ascend backend only supports 0 or 1. Default: 1.
 
     Inputs:
@@ -396,7 +419,7 @@ class FakeLearnedScaleQuantPerChannel(PrimitiveWithInfer):
         - **quant_max** (Tensor) : Value of the quantization range.
 
     Outputs:
-        - Tensor: Simulates quantize tensor of `input_x`，with the same type and shape as the `input_x`.
+        - Tensor: Simulates quantize tensor of `input_x`, with the same type and shape as the `input_x`.
 
     Examples:
         >>> input_tensor = Tensor(np.random.rand(3, 16, 5, 5), mstype.float32)
@@ -423,7 +446,8 @@ class FakeLearnedScaleQuantPerChannel(PrimitiveWithInfer):
         self.training = validator.check_value_type(
             'training', training, (bool,), self.name)
         if self.is_ascend:
-            self.channel_axis = validator.check_int_range(channel_axis, 0, 1, Rel.INC_BOTH, 'channel_axis', self.name)
+            self.channel_axis = validator.check_int_range(channel_axis, 0, 1, validator.INC_BOTH,
+                                                          'channel_axis', self.name)
         else:
             self.channel_axis = validator.check_non_negative_int(channel_axis, 'channel_axis', self.name)
         self.init_prim_io_names(inputs=['input_x', 'alpha', 'quant_max'],
@@ -433,12 +457,12 @@ class FakeLearnedScaleQuantPerChannel(PrimitiveWithInfer):
         if self.is_ascend and len(input_x_shape) not in self.ascend_support_x_rank:
             raise ValueError(f"For '{self.name}' x rank must be in '{self.ascend_support_x_rank}'")
         if not self.is_ascend:
-            validator.check_int(len(input_x_shape), 1, Rel.GE, "input_x rank", self.name)
+            validator.check_int(len(input_x_shape), 1, validator.GE, "input_x rank", self.name)
         if len(input_x_shape) == 1:
             self.channel_axis = 0
 
         validator.check_equal_int(alpha_shape[0], input_x_shape[self.channel_axis], "alpha rank", self.name)
-        validator.check_int(len(quant_max_shape), 1, Rel.GE, "quant max rank", self.name)
+        validator.check_int(len(quant_max_shape), 1, validator.GE, "quant max rank", self.name)
         return input_x_shape
 
     def infer_dtype(self, input_x_type, alpha_type, quant_max_type):
@@ -479,7 +503,7 @@ class FakeLearnedScaleQuantPerChannelGrad(PrimitiveWithInfer):
             inputs=['dout', 'x', 'alpha', 'quant_max'], outputs=['dx', 'dalpha'])
 
     def infer_shape(self, dout_shape, x_shape, alpha_shape, quant_max_shape):
-        validator.check("dout shape", dout_shape, "x_shape", x_shape, Rel.EQ, self.name)
+        validator.check("dout shape", dout_shape, "x_shape", x_shape, validator.EQ, self.name)
         return dout_shape, alpha_shape
 
     def infer_dtype(self, dout_type, x_type, alpha_type, quant_max_type):
@@ -510,9 +534,9 @@ class FakeLearnedScaleQuantPerChannelGradD(PrimitiveWithInfer):
             inputs=['dout', 'x', 'alpha', 'quant_max'], outputs=['dx', 'dalpha'])
 
     def infer_shape(self, dout_shape, x_shape, alpha_shape, quant_max_shape):
-        validator.check("dout shape", dout_shape, "x_shape", x_shape, Rel.EQ, self.name)
-        validator.check_int(len(alpha_shape), 1, Rel.GE, "alpha rank", self.name)
-        validator.check_int(len(quant_max_shape), 1, Rel.GE, "quant max rank", self.name)
+        validator.check("dout shape", dout_shape, "x_shape", x_shape, validator.EQ, self.name)
+        validator.check_int(len(alpha_shape), 1, validator.GE, "alpha rank", self.name)
+        validator.check_int(len(quant_max_shape), 1, validator.GE, "quant max rank", self.name)
         return dout_shape, dout_shape
 
     def infer_dtype(self, dout_type, x_type, alpha_type, quant_max_type):
@@ -552,7 +576,7 @@ class FakeQuantWithMinMaxVars(PrimitiveWithInfer):
         num_bits (int): Quantization bitwidth; between 2 and 16. Default: 8.
         narrow_range (bool): Whether the quantization algorithm uses narrow range or not.
             if True, the quantization range is [0, 2^num_bits-1]. Otherwise, the quantization
-            range is [1, 2^num_bits-1]. Default: False.
+            range is [1, 2^num_bits-1]. Default: ``False``.
 
     Inputs:
         - **x** (Tensor) - Float32 tensor representing the shape of the output tensor.
@@ -576,7 +600,7 @@ class FakeQuantWithMinMaxVars(PrimitiveWithInfer):
                  num_bits=8,
                  narrow_range=False):
         self.num_bits = validator.check_positive_int(num_bits, 'num_bits', self.name)
-        self.num_bits = validator.check_int_range(self.num_bits, 2, 16, Rel.INC_BOTH, 'num_bits', self.name)
+        self.num_bits = validator.check_int_range(self.num_bits, 2, 16, validator.INC_BOTH, 'num_bits', self.name)
         self.narrow_range = validator.check_value_type(
             'narrow_range', narrow_range, (bool,), self.name)
 
@@ -588,9 +612,9 @@ class FakeQuantWithMinMaxVars(PrimitiveWithInfer):
             raise ValueError(f"For '{self.name}', the shape of \'min\' cannot broadcast to the shape of \'x\'.")
 
     def infer_shape(self, x_shape, min_shape, max_shape):
-        validator.check_int(len(x_shape), 1, Rel.GE, "x rank", self.name)
-        validator.check("min shape", min_shape, "max shape", max_shape, Rel.EQ, self.name)
-        validator.check_int(len(min_shape), 1, Rel.EQ, "min shape", self.name)
+        validator.check_int(len(x_shape), 1, validator.GE, "x rank", self.name)
+        validator.check("min shape", min_shape, "max shape", max_shape, validator.EQ, self.name)
+        validator.check_int(len(min_shape), 1, validator.EQ, "min shape", self.name)
         self.check_broadcast(min_shape, x_shape)
         return x_shape
 
@@ -610,7 +634,7 @@ class FakeQuantWithMinMaxVarsGradient(PrimitiveWithInfer):
         num_bits (int): Quantization bitwidth; between 2 and 16, inclusive. Default: 8.
         narrow_range (bool): Whether the quantization algorithm uses narrow range or not.
             if True, the quantization range is [0, 2^num_bits-1]. Otherwise, the quantization
-            range is [1, 2^num_bits-1]. Default: False.
+            range is [1, 2^num_bits-1]. Default: ``False``.
 
     Inputs:
         - **gradients** (Tensor) - The gradient above the FakeQuantWithMinMaxVars.
@@ -640,7 +664,7 @@ class FakeQuantWithMinMaxVarsGradient(PrimitiveWithInfer):
                  num_bits=8,
                  narrow_range=False):
         self.num_bits = validator.check_positive_int(num_bits, 'num_bits', self.name)
-        self.num_bits = validator.check_int_range(self.num_bits, 2, 16, Rel.INC_BOTH, 'num_bits', self.name)
+        self.num_bits = validator.check_int_range(self.num_bits, 2, 16, validator.INC_BOTH, 'num_bits', self.name)
         self.narrow_range = validator.check_value_type(
             'narrow_range', narrow_range, (bool,), self.name)
 
@@ -652,10 +676,10 @@ class FakeQuantWithMinMaxVarsGradient(PrimitiveWithInfer):
             raise ValueError(f"For '{self.name}', the shape of \'min\' cannot broadcast to the shape of \'x\'.")
 
     def infer_shape(self, dout_shape, x_shape, min_shape, max_shape):
-        validator.check_int(len(x_shape), 1, Rel.GE, "x rank", self.name)
-        validator.check("dout shape", dout_shape, "x shape", x_shape, Rel.EQ, self.name)
-        validator.check("min shape", min_shape, "max shape", max_shape, Rel.EQ, self.name)
-        validator.check_int(len(min_shape), 1, Rel.EQ, "min shape", self.name)
+        validator.check_int(len(x_shape), 1, validator.GE, "x rank", self.name)
+        validator.check("dout shape", dout_shape, "x shape", x_shape, validator.EQ, self.name)
+        validator.check("min shape", min_shape, "max shape", max_shape, validator.EQ, self.name)
+        validator.check_int(len(min_shape), 1, validator.EQ, "min shape", self.name)
         self.check_broadcast(min_shape, x_shape)
         return x_shape, min_shape, max_shape
 
@@ -675,7 +699,7 @@ class FakeQuantWithMinMaxVarsPerChannel(PrimitiveWithInfer):
         num_bits (int): Quantization bitwidth; between 2 and 16, inclusive. Default: 8.
         narrow_range (bool): Whether the quantization algorithm uses narrow range or not.
             if True, the quantization range is [0, 2^num_bits-1]. Otherwise, the quantization
-            range is [1, 2^num_bits-1]. Default: False.
+            range is [1, 2^num_bits-1]. Default: ``False``.
 
     Inputs:
         - **x** (Tensor) - Float32 tensor representing the shape of the output tensor.
@@ -699,15 +723,15 @@ class FakeQuantWithMinMaxVarsPerChannel(PrimitiveWithInfer):
                  num_bits=8,
                  narrow_range=False):
         self.num_bits = validator.check_positive_int(num_bits, 'num_bits', self.name)
-        self.num_bits = validator.check_int_range(self.num_bits, 2, 16, Rel.INC_BOTH, 'num_bits', self.name)
+        self.num_bits = validator.check_int_range(self.num_bits, 2, 16, validator.INC_BOTH, 'num_bits', self.name)
         self.narrow_range = validator.check_value_type(
             'narrow_range', narrow_range, (bool,), self.name)
 
     def infer_shape(self, x_shape, min_shape, max_shape):
-        validator.check_int(len(x_shape), 1, Rel.GE, "x rank", self.name)
-        validator.check("min shape", min_shape, "max shape", max_shape, Rel.EQ, self.name)
-        validator.check_int(len(min_shape), 1, Rel.EQ, "min shape", self.name)
-        validator.check("min shape", min_shape[0], "x shape", x_shape[-1], Rel.EQ, self.name)
+        validator.check_int(len(x_shape), 1, validator.GE, "x rank", self.name)
+        validator.check("min shape", min_shape, "max shape", max_shape, validator.EQ, self.name)
+        validator.check_int(len(min_shape), 1, validator.EQ, "min shape", self.name)
+        validator.check("min shape", min_shape[0], "x shape", x_shape[-1], validator.EQ, self.name)
         return x_shape
 
     def infer_dtype(self, x_type, min_type, max_type):
@@ -726,7 +750,7 @@ class FakeQuantWithMinMaxVarsPerChannelGradient(PrimitiveWithInfer):
         num_bits (int): Quantization bitwidth; between 2 and 16, inclusive. Default: 8.
         narrow_range (bool): Whether the quantization algorithm uses narrow range or not.
             if True, the quantization range is [0, 2^num_bits-1]. Otherwise, the quantization
-            range is [1, 2^num_bits-1]. Default: False.
+            range is [1, 2^num_bits-1]. Default: ``False``.
 
     Inputs:
         - **gradients** (Tensor) - The gradient above the FakeQuantWithMinMaxVars.
@@ -757,16 +781,16 @@ class FakeQuantWithMinMaxVarsPerChannelGradient(PrimitiveWithInfer):
                  num_bits=8,
                  narrow_range=False):
         self.num_bits = validator.check_positive_int(num_bits, 'num_bits', self.name)
-        self.num_bits = validator.check_int_range(self.num_bits, 2, 16, Rel.INC_BOTH, 'num_bits', self.name)
+        self.num_bits = validator.check_int_range(self.num_bits, 2, 16, validator.INC_BOTH, 'num_bits', self.name)
         self.narrow_range = validator.check_value_type(
             'narrow_range', narrow_range, (bool,), self.name)
 
     def infer_shape(self, dout_shape, x_shape, min_shape, max_shape):
-        validator.check_int(len(x_shape), 1, Rel.GE, "x rank", self.name)
-        validator.check("dout shape", dout_shape, "x shape", x_shape, Rel.EQ, self.name)
-        validator.check("min shape", min_shape, "max shape", max_shape, Rel.EQ, self.name)
-        validator.check_int(len(min_shape), 1, Rel.EQ, "min shape", self.name)
-        validator.check("min shape", min_shape[0], "x shape", x_shape[-1], Rel.EQ, self.name)
+        validator.check_int(len(x_shape), 1, validator.GE, "x rank", self.name)
+        validator.check("dout shape", dout_shape, "x shape", x_shape, validator.EQ, self.name)
+        validator.check("min shape", min_shape, "max shape", max_shape, validator.EQ, self.name)
+        validator.check_int(len(min_shape), 1, validator.EQ, "min shape", self.name)
+        validator.check("min shape", min_shape[0], "x shape", x_shape[-1], validator.EQ, self.name)
         return x_shape, min_shape, max_shape
 
     def infer_dtype(self, dout_type, x_type, min_type, max_type):
@@ -805,14 +829,14 @@ class FakeQuantPerLayer(PrimitiveWithInfer):
 
     Args:
         num_bits (int) : Number bits for quantization aware. Default: 8.
-        ema (bool): Uses EMA algorithm update value min and max. Default: False.
+        ema (bool): Uses EMA algorithm update value min and max. Default: ``False``.
         ema_decay (int) : EMA algorithm decay parameter. Default: 0.999.
         quant_delay (int): Quantilization delay parameter. Before delay step in training time not update
             simulate quantization aware function. After delay step in training time begin simulate the aware
             quantize function. Default: 0.
-        symmetric (bool): Whether the quantization algorithm is symmetric or not. Default: False.
-        narrow_range (bool): Whether the quantization algorithm uses narrow range or not. Default: False.
-        training (bool): Training the network or not. Default: True.
+        symmetric (bool): Whether the quantization algorithm is symmetric or not. Default: ``False``.
+        narrow_range (bool): Whether the quantization algorithm uses narrow range or not. Default: ``False``.
+        training (bool): Training the network or not. Default: ``True``.
 
     Inputs:
         - **x** (Tensor) : float32 Tensor representing the shape of the output tensor.
@@ -855,15 +879,15 @@ class FakeQuantPerLayer(PrimitiveWithInfer):
         self.narrow_range = validator.check_value_type(
             'narrow_range', narrow_range, (bool,), self.name)
         self.training = validator.check_value_type('training', training, (bool,), self.name)
-        self.ema_decay = validator.check_float_range(ema_decay, 0, 1, Rel.INC_BOTH, 'ema_decay', self.name)
+        self.ema_decay = validator.check_float_range(ema_decay, 0, 1, validator.INC_BOTH, 'ema_decay', self.name)
         self.num_bits = validator.check_positive_int(num_bits, 'num_bits', self.name)
         self.quant_delay = validator.check_non_negative_int(quant_delay, 'quant_delay', self.name)
         self.init_prim_io_names(inputs=['x', 'min', 'max'],
                                 outputs=['out'])
 
     def infer_shape(self, x_shape, min_shape, max_shape):
-        validator.check_int(len(x_shape), 1, Rel.GE, "x rank", self.name)
-        validator.check("min shape", min_shape, "max shape", max_shape, Rel.EQ, self.name)
+        validator.check_int(len(x_shape), 1, validator.GE, "x rank", self.name)
+        validator.check("min shape", min_shape, "max shape", max_shape, validator.EQ, self.name)
         validator.check_equal_int(len(min_shape), 1, "min shape", self.name)
         return x_shape
 
@@ -909,9 +933,9 @@ class FakeQuantPerLayerGrad(PrimitiveWithInfer):
 
     def infer_shape(self, dout_shape, x_shape, min_shape, max_shape):
         validator.check("dout shape", dout_shape, "x shape",
-                        x_shape, Rel.EQ, self.name)
+                        x_shape, validator.EQ, self.name)
         validator.check("min shape", min_shape, "max shape",
-                        max_shape, Rel.EQ, self.name)
+                        max_shape, validator.EQ, self.name)
         validator.check_equal_int(len(min_shape), 1, "min shape", self.name)
         return dout_shape
 
@@ -925,14 +949,14 @@ class FakeQuantPerChannel(PrimitiveWithInfer):
 
     Args:
         num_bits (int) : Number bits to quantilization. Default: 8.
-        ema (bool): Uses EMA algorithm update tensor min and tensor max. Default: False.
+        ema (bool): Uses EMA algorithm update tensor min and tensor max. Default: ``False``.
         ema_decay (int) : EMA algorithm decay parameter. Default: 0.999.
         quant_delay (int): Quantilization delay  parameter. Before delay step in training time not
             update the weight data to simulate quantize operation. After delay step in training time
             begin simulate the quantize operation. Default: 0.
-        symmetric (bool): Whether the quantization algorithm is symmetric or not. Default: False.
-        narrow_range (bool): Whether the quantization algorithm uses narrow range or not. Default: False.
-        training (bool): Training the network or not. Default: True.
+        symmetric (bool): Whether the quantization algorithm is symmetric or not. Default: ``False``.
+        narrow_range (bool): Whether the quantization algorithm uses narrow range or not. Default: ``False``.
+        training (bool): Training the network or not. Default: ``True``.
         channel_axis (int): Quantization by channel axis. Ascend backend only supports 0 or 1. Default: 1.
 
     Inputs:
@@ -951,7 +975,7 @@ class FakeQuantPerChannel(PrimitiveWithInfer):
         >>> result = fake_quant(input_x, _min, _max)
     """
     support_quant_bit = [4, 7, 8]
-    ascend_support_x_rank = [2, 4]
+    ascend_support_x_rank = [2, 3, 4]
 
     @prim_attr_register
     def __init__(self,
@@ -981,23 +1005,20 @@ class FakeQuantPerChannel(PrimitiveWithInfer):
             'narrow_range', narrow_range, (bool,), self.name)
         self.training = validator.check_value_type(
             'training', training, (bool,), self.name)
-        self.ema_decay = validator.check_float_range(ema_decay, 0, 1, Rel.INC_BOTH, 'ema_decay', self.name)
+        self.ema_decay = validator.check_float_range(ema_decay, 0, 1, validator.INC_BOTH, 'ema_decay', self.name)
         self.num_bits = validator.check_positive_int(num_bits, 'num_bits', self.name)
         self.quant_delay = validator.check_non_negative_int(quant_delay, 'quant_delay', self.name)
-        if self.is_ascend:
-            self.channel_axis = validator.check_int_range(channel_axis, 0, 1, Rel.INC_BOTH, 'channel_axis', self.name)
-        else:
-            self.channel_axis = validator.check_non_negative_int(channel_axis, 'channel_axis', self.name)
+        self.channel_axis = validator.check_non_negative_int(channel_axis, 'channel_axis', self.name)
         self.init_prim_io_names(inputs=['x', 'min', 'max'], outputs=['out'])
 
     def infer_shape(self, x_shape, min_shape, max_shape):
         if self.is_ascend and len(x_shape) not in self.ascend_support_x_rank:
             raise ValueError(f"For '{self.name}' x rank must be in '{self.ascend_support_x_rank}'")
         if not self.is_ascend:
-            validator.check_int(len(x_shape), 1, Rel.GE, "x rank", self.name)
+            validator.check_int(len(x_shape), 1, validator.GE, "x rank", self.name)
         if len(x_shape) == 1:
             self.channel_axis = 0
-        validator.check("min shape", min_shape, "max shape", max_shape, Rel.EQ, self.name)
+        validator.check("min shape", min_shape, "max shape", max_shape, validator.EQ, self.name)
         validator.check_equal_int(min_shape[0], x_shape[self.channel_axis], "min shape", self.name)
         validator.check_equal_int(max_shape[0], x_shape[self.channel_axis], "max shape", self.name)
         return x_shape
@@ -1062,7 +1083,7 @@ class BatchNormFold(PrimitiveWithInfer):
         momentum (float): Momentum value must be [0, 1]. Default: 0.9.
         epsilon (float): A small float number to avoid dividing by 0. 1e-5 if dtype in
             float32 else 1e-3. Default: 1e-5.
-        is_training (bool): In training mode set True, else set False. Default: True.
+        is_training (bool): In training mode set True, else set False. Default: ``True``.
         freeze_bn (int): Delay in steps at which computation switches from regular batch
             norm to frozen mean and std. Default: 0.
 
@@ -1093,7 +1114,7 @@ class BatchNormFold(PrimitiveWithInfer):
     @prim_attr_register
     def __init__(self, momentum=0.9, epsilon=1e-5, is_training=True, freeze_bn=0):
         """Initialize batch norm fold layer"""
-        self.momentum = validator.check_float_range(momentum, 0, 1, Rel.INC_BOTH, 'momentum', self.name)
+        self.momentum = validator.check_float_range(momentum, 0, 1, validator.INC_BOTH, 'momentum', self.name)
         self.epsilon = validator.check_positive_float(epsilon, 'epsilon', self.name)
         self.is_training = validator.check_value_type('is_training', is_training, (bool,), self.name)
         self.freeze_bn = validator.check_value_type('freeze_bn', freeze_bn, (int,), self.name)
@@ -1102,8 +1123,9 @@ class BatchNormFold(PrimitiveWithInfer):
                                 outputs=['batch_mean', 'batch_std', 'running_mean', 'running_std'])
 
     def infer_shape(self, x_shape, mean_shape, variance_shape, global_step_shape):
-        validator.check("mean shape", mean_shape, "gamma_shape", variance_shape, Rel.EQ, self.name)
-        validator.check("mean_shape[0]", mean_shape[0], "input channel", x_shape[self.channel_axis], Rel.EQ, self.name)
+        validator.check("mean shape", mean_shape, "gamma_shape", variance_shape, validator.EQ, self.name)
+        validator.check("mean_shape[0]", mean_shape[0], "input channel",
+                        x_shape[self.channel_axis], validator.EQ, self.name)
         validator.check_equal_int(len(global_step_shape), 1, "global step shape len", self.name)
         return mean_shape, mean_shape, mean_shape, mean_shape
 
@@ -1144,13 +1166,13 @@ class BatchNormFoldGrad(PrimitiveWithInfer):
     def infer_shape(self, d_batch_mean_shape, d_batch_std_shape, x_shape, batch_mean_shape, batch_std_shape,
                     global_step_shape):
         validator.check("d_batch_mean shape", d_batch_mean_shape,
-                        "d_batch_std shape", d_batch_std_shape, Rel.EQ, self.name)
+                        "d_batch_std shape", d_batch_std_shape, validator.EQ, self.name)
         validator.check("d_batch_mean shape", d_batch_mean_shape,
-                        "batch_mean shape", batch_mean_shape, Rel.EQ, self.name)
+                        "batch_mean shape", batch_mean_shape, validator.EQ, self.name)
         validator.check("d_batch_mean shape", d_batch_mean_shape,
-                        "batch_std shape", batch_std_shape, Rel.EQ, self.name)
+                        "batch_std shape", batch_std_shape, validator.EQ, self.name)
         validator.check("d_batch_mean_shape[0]", d_batch_mean_shape[0],
-                        "input channel", x_shape[self.channel_axis], Rel.EQ, self.name)
+                        "input channel", x_shape[self.channel_axis], validator.EQ, self.name)
         validator.check_equal_int(len(global_step_shape), 1, "global step shape len", self.name)
         return x_shape
 
@@ -1195,9 +1217,10 @@ class CorrectionMul(PrimitiveWithInfer):
                                 outputs=['out'])
 
     def infer_shape(self, x_shape, batch_std_shape, running_std_shape):
-        validator.check("batch_std shape", batch_std_shape, "running_std shape", running_std_shape, Rel.EQ, self.name)
+        validator.check("batch_std shape", batch_std_shape, "running_std shape",
+                        running_std_shape, validator.EQ, self.name)
         validator.check("batch_std_shape[0]", batch_std_shape[0], "x_shape channel size", x_shape[self.channel_axis],
-                        Rel.EQ, self.name)
+                        validator.EQ, self.name)
         return x_shape
 
     def infer_dtype(self, x_type, batch_std_type, running_std_type):
@@ -1229,11 +1252,11 @@ class CorrectionMulGrad(PrimitiveWithInfer):
                                 outputs=['dx', 'mul_dx'])
 
     def infer_shape(self, dout_shape, x_shape, gamma_shape, running_std_shape):
-        validator.check("dout shape", dout_shape, "x_shape x", x_shape, Rel.EQ, self.name)
+        validator.check("dout shape", dout_shape, "x_shape x", x_shape, validator.EQ, self.name)
         validator.check("gamma_shape[0]", gamma_shape[0], "dout channel size", dout_shape[self.channel_axis],
-                        Rel.EQ, self.name)
+                        validator.EQ, self.name)
         validator.check("running_std_shape[0]", running_std_shape[0],
-                        "dout channel size", dout_shape[self.channel_axis], Rel.EQ, self.name)
+                        "dout channel size", dout_shape[self.channel_axis], validator.EQ, self.name)
         if context.get_context('device_target') == "Ascend":
             return x_shape, x_shape
         return x_shape, gamma_shape
@@ -1319,14 +1342,16 @@ class BatchNormFold2(PrimitiveWithInfer):
 
     def infer_shape(self, x_shape, beta_shape, gamma_shape, batch_std_shape, running_std_shape, batch_mean_shape,
                     running_mean_shape, global_step_shape):
-        validator.check("batch_std shape", batch_std_shape, "running_std shape", running_std_shape, Rel.EQ, self.name)
-        validator.check("batch_std shape", batch_std_shape, "batch_mean shape", batch_mean_shape, Rel.EQ, self.name)
-        validator.check("batch_std shape", batch_std_shape, "beta shape", beta_shape, Rel.EQ, self.name)
+        validator.check("batch_std shape", batch_std_shape, "running_std shape",
+                        running_std_shape, validator.EQ, self.name)
+        validator.check("batch_std shape", batch_std_shape, "batch_mean shape",
+                        batch_mean_shape, validator.EQ, self.name)
+        validator.check("batch_std shape", batch_std_shape, "beta shape", beta_shape, validator.EQ, self.name)
         validator.check("batch_std shape", batch_std_shape, "running_mean shape", running_mean_shape,
-                        Rel.EQ, self.name)
-        validator.check("batch_std shape", batch_std_shape, "batch_mean shape", gamma_shape, Rel.EQ, self.name)
+                        validator.EQ, self.name)
+        validator.check("batch_std shape", batch_std_shape, "batch_mean shape", gamma_shape, validator.EQ, self.name)
         validator.check("batch_std_shape[0]", batch_std_shape[0], "x_shape channel size", x_shape[self.channel_axis],
-                        Rel.EQ, self.name)
+                        validator.EQ, self.name)
         validator.check_equal_int(len(global_step_shape), 1, "global step shape len", self.name)
         return x_shape
 
@@ -1369,13 +1394,15 @@ class BatchNormFold2Grad(PrimitiveWithInfer):
     def infer_shape(self, dout_shape, x_shape, gamma_shape,
                     batch_std_shape, batch_mean_shape,
                     running_std_shape, running_mean_shape, global_step_shape):
-        validator.check("batch_std shape", batch_std_shape, "batch_mean shape", batch_mean_shape, Rel.EQ, self.name)
-        validator.check("batch_std shape", batch_std_shape, "running_std shape", running_std_shape, Rel.EQ, self.name)
+        validator.check("batch_std shape", batch_std_shape, "batch_mean shape",
+                        batch_mean_shape, validator.EQ, self.name)
+        validator.check("batch_std shape", batch_std_shape, "running_std shape",
+                        running_std_shape, validator.EQ, self.name)
         validator.check("batch_std shape", batch_std_shape, "running_mean shape", running_mean_shape,
-                        Rel.EQ, self.name)
-        validator.check("batch_std shape", batch_std_shape, "gamma shape", gamma_shape, Rel.EQ, self.name)
+                        validator.EQ, self.name)
+        validator.check("batch_std shape", batch_std_shape, "gamma shape", gamma_shape, validator.EQ, self.name)
         validator.check("batch_std size", batch_std_shape[0], "dout channel size", dout_shape[self.channel_axis],
-                        Rel.EQ, self.name)
+                        validator.EQ, self.name)
         validator.check_equal_int(len(global_step_shape), 1, "global step shape len", self.name)
         return gamma_shape, gamma_shape, gamma_shape, gamma_shape, x_shape
 
@@ -1406,7 +1433,7 @@ class BatchNormFoldD(PrimitiveWithInfer):
     def __init__(self, momentum=0.9, epsilon=1e-5, is_training=True, freeze_bn=0):
         """Initialize _BatchNormFold layer"""
         from mindspore.ops._op_impl._custom_op import batchnorm_fold
-        self.momentum = validator.check_float_range(momentum, 0, 1, Rel.INC_BOTH, 'momentum', self.name)
+        self.momentum = validator.check_float_range(momentum, 0, 1, validator.INC_BOTH, 'momentum', self.name)
         self.epsilon = validator.check_positive_float(epsilon, 'epsilon', self.name)
         self.is_training = validator.check_value_type('is_training', is_training, (bool,), self.name)
         self.freeze_bn = validator.check_value_type('freeze_bn', freeze_bn, (int,), self.name)
@@ -1416,8 +1443,8 @@ class BatchNormFoldD(PrimitiveWithInfer):
                                          'mean_updated', 'variance_updated'])
 
     def infer_shape(self, x_shape, x_sum_shape, x_square_sum_shape, mean_shape, variance_shape):
-        validator.check("mean shape", mean_shape, "gamma_shape", variance_shape, Rel.EQ, self.name)
-        validator.check("mean_shape[0]", mean_shape[0], "input channel", x_shape[1], Rel.EQ, self.name)
+        validator.check("mean shape", mean_shape, "gamma_shape", variance_shape, validator.EQ, self.name)
+        validator.check("mean_shape[0]", mean_shape[0], "input channel", x_shape[1], validator.EQ, self.name)
         return x_shape, mean_shape, mean_shape, mean_shape, mean_shape, mean_shape, mean_shape
 
     def infer_dtype(self, x_type, x_sum_type, x_square_sum_type, mean_type, variance_type):
@@ -1487,12 +1514,14 @@ class BatchNormFold2D(PrimitiveWithInfer):
                                 outputs=['y'])
 
     def infer_shape(self, x_shape, beta_shape, gamma_shape, batch_std_shape, running_std_shape, batch_mean_shape):
-        validator.check("batch_std shape", batch_std_shape, "running_std shape", running_std_shape, Rel.EQ, self.name)
-        validator.check("batch_std shape", batch_std_shape, "batch_mean shape", batch_mean_shape, Rel.EQ, self.name)
-        validator.check("batch_std shape", batch_std_shape, "beta shape", beta_shape, Rel.EQ, self.name)
-        validator.check("batch_std shape", batch_std_shape, "batch_mean shape", gamma_shape, Rel.EQ, self.name)
+        validator.check("batch_std shape", batch_std_shape, "running_std shape",
+                        running_std_shape, validator.EQ, self.name)
+        validator.check("batch_std shape", batch_std_shape, "batch_mean shape",
+                        batch_mean_shape, validator.EQ, self.name)
+        validator.check("batch_std shape", batch_std_shape, "beta shape", beta_shape, validator.EQ, self.name)
+        validator.check("batch_std shape", batch_std_shape, "batch_mean shape", gamma_shape, validator.EQ, self.name)
         validator.check("batch_std_shape[0]", batch_std_shape[0], "x_shape channel size", x_shape[self.channel_axis],
-                        Rel.EQ, self.name)
+                        validator.EQ, self.name)
         return x_shape
 
     def infer_dtype(self, x_type, beta_type, gamma_type, batch_std_type, running_std_type, batch_mean_type):
@@ -1517,11 +1546,13 @@ class BatchNormFold2GradD(PrimitiveWithInfer):
 
     def infer_shape(self, dout_shape, dout_reduce_shape, dout_x_reduce_shape, gamma_shape, batch_std_shape,
                     batch_mean_shape, running_std_shape):
-        validator.check("batch_std shape", batch_std_shape, "batch_mean shape", batch_mean_shape, Rel.EQ, self.name)
-        validator.check("batch_std shape", batch_std_shape, "running_std shape", running_std_shape, Rel.EQ, self.name)
-        validator.check("batch_std shape", batch_std_shape, "gamma shape", gamma_shape, Rel.EQ, self.name)
+        validator.check("batch_std shape", batch_std_shape, "batch_mean shape",
+                        batch_mean_shape, validator.EQ, self.name)
+        validator.check("batch_std shape", batch_std_shape, "running_std shape",
+                        running_std_shape, validator.EQ, self.name)
+        validator.check("batch_std shape", batch_std_shape, "gamma shape", gamma_shape, validator.EQ, self.name)
         validator.check("batch_std size", batch_std_shape[0], "dout channel size", dout_shape[self.channel_axis],
-                        Rel.EQ, self.name)
+                        validator.EQ, self.name)
         return gamma_shape, gamma_shape, gamma_shape, dout_shape
 
     def infer_dtype(self, dout_type, dout_reduce_type, dout_x_reduce_type, gamma_type, batch_std_type,
@@ -1553,7 +1584,7 @@ class BatchNormFold2GradReduce(PrimitiveWithInfer):
                                 outputs=['dout_reduce', 'dout_x_reduce'])
 
     def infer_shape(self, dout_shape, x_shape):
-        validator.check("dout shape", dout_shape, "x shape", x_shape, Rel.EQ, self.name)
+        validator.check("dout shape", dout_shape, "x shape", x_shape, validator.EQ, self.name)
         return (dout_shape[self.channel_axis],), (dout_shape[self.channel_axis],)
 
     def infer_dtype(self, dout_type, x_type):
@@ -1595,17 +1626,17 @@ class ActsULQ(PrimitiveWithInfer):
     def __init__(self, fixed_min=False, num_bits=8):
         validator.check_value_type("fixed_min", fixed_min, [bool], self.name)
         validator.check_value_type("num_bits", num_bits, [int], self.name)
-        validator.check_int(num_bits, 8, Rel.EQ, "value of num_bits", self.name)
+        validator.check_int(num_bits, 8, validator.EQ, "value of num_bits", self.name)
 
     def infer_shape(self, x_shape, clamp_min_shape, clamp_max_shape):
         """infer shape of primitive"""
-        validator.check_int(len(clamp_min_shape), len(x_shape), Rel.EQ, "dims of clamp_min", self.name)
-        validator.check_int(len(clamp_max_shape), len(x_shape), Rel.EQ, "dims of clamp_max", self.name)
+        validator.check_int(len(clamp_min_shape), len(x_shape), validator.EQ, "dims of clamp_min", self.name)
+        validator.check_int(len(clamp_max_shape), len(x_shape), validator.EQ, "dims of clamp_max", self.name)
 
         x_shape_len = len(x_shape)
         for i in range(x_shape_len):
-            validator.check_int(clamp_min_shape[i], 1, Rel.EQ, "dims of clamp_min", self.name)
-            validator.check_int(clamp_max_shape[i], 1, Rel.EQ, "dims of clamp_max", self.name)
+            validator.check_int(clamp_min_shape[i], 1, validator.EQ, "dims of clamp_min", self.name)
+            validator.check_int(clamp_max_shape[i], 1, validator.EQ, "dims of clamp_max", self.name)
 
         return x_shape, x_shape, x_shape, x_shape
 
@@ -1746,12 +1777,12 @@ class WtsARQ(PrimitiveWithInfer):
     @prim_attr_register
     def __init__(self, num_bits, offset_flag):
         validator.check_value_type("num_bits", num_bits, [int], self.name)
-        validator.check_int(num_bits, 8, Rel.EQ, "value of num_bits", self.name)
+        validator.check_int(num_bits, 8, validator.EQ, "value of num_bits", self.name)
         validator.check_value_type("offset_flag", offset_flag, [bool], self.name)
 
     def infer_shape(self, w_shape, w_min_shape, w_max_shape):
-        validator.check_int(len(w_min_shape), len(w_shape), Rel.EQ, "dims of w_min", self.name)
-        validator.check_int(len(w_max_shape), len(w_shape), Rel.EQ, "dims of w_max", self.name)
+        validator.check_int(len(w_min_shape), len(w_shape), validator.EQ, "dims of w_min", self.name)
+        validator.check_int(len(w_max_shape), len(w_shape), validator.EQ, "dims of w_max", self.name)
         return w_shape
 
     def infer_dtype(self, w_dtype, w_min_dtype, w_max_dtype):
@@ -1771,7 +1802,7 @@ class IFMR(Primitive):
         max_percentile (float): Max init percentile. Default: 0.999999.
         search_range Union[list(float), tuple(float)]: Range of searching. Default: [0.7, 1.3].
         search_step (float): Step size of searching. Default: 0.01.
-        with_offset (bool): Whether using offset. Default: True.
+        with_offset (bool): Whether using offset. Default: ``True``.
 
     Inputs:
         - **data** (Tensor) - A Tensor of feature map. With float16 or float32 data type.
@@ -1808,6 +1839,6 @@ class IFMR(Primitive):
         validator.check_value_type("search_range", search_range, [list, tuple], self.name)
         for item in search_range:
             validator.check_positive_float(item, "item of search_range", self.name)
-        validator.check('search_range[1]', search_range[1], 'search_range[0]', search_range[0], Rel.GE, self.name)
+        validator.check('search_range[1]', search_range[1], 'search_range[0]', search_range[0], validator.GE, self.name)
         validator.check_value_type("search_step", search_step, [float], self.name)
         validator.check_value_type("offset_flag", with_offset, [bool], self.name)

@@ -19,87 +19,58 @@ from __future__ import absolute_import
 from mindspore import Tensor
 from mindspore.ops.primitive import constexpr
 from mindspore.common import dtype as mstype
-from mindspore.numpy.array_ops import where
-from mindspore.ops._grad.grad_math_ops import binop_grad_common
-from mindspore.ops._grad.grad_base import bprop_getters, dyn_rank, dyn_fill, dyn_ones, create_tensor_by_element
-from mindspore.ops._grad.grad_base import convert_to_tensor
+from mindspore.ops._grad_experimental.grad_math_ops import binop_grad_common
+from mindspore.ops._grad_experimental.grad_base import bprop_getters, dyn_ones
+from mindspore.ops._grad_experimental.grad_base import convert_to_tensor, create_tensor_by_element
 from mindspore.ops.composite.multitype_ops.zeros_like_impl import zeros_like
-from mindspore.ops.operations.array_ops import Tril
 from mindspore.ops.operations.array_ops import MatrixDiagV3
 from mindspore.ops.operations.array_ops import MatrixDiagPartV3
 from mindspore.ops.operations.array_ops import ResizeNearestNeighborV2
 from mindspore.ops.operations.array_ops import MatrixSetDiagV3
+from mindspore.ops.operations.array_ops import MatrixBandPart
 from mindspore.ops.operations.array_ops import Mvlgamma
-from mindspore.ops.operations.array_ops import Triu
-from mindspore.ops.operations.array_ops import IdentityN
 from mindspore.ops.operations.array_ops import IndexFill
-from mindspore.ops.operations.array_ops import CheckNumerics
-from mindspore.ops.operations.array_ops import ConjugateTranspose
-from mindspore.ops.operations.array_ops import SegmentMax
-from mindspore.ops.operations.array_ops import SegmentMin
+from mindspore.ops.operations.array_ops import IndexPut
 from mindspore.ops.operations.array_ops import SegmentSum
-from mindspore.ops.operations.array_ops import TensorScatterElements
 from mindspore.ops.operations.array_ops import ScatterAddWithAxis
 from mindspore.ops.operations.array_ops import Expand
 from mindspore.ops.operations.array_ops import SegmentMean
 from mindspore.ops.operations.array_ops import AffineGrid
-from mindspore.ops.operations.array_ops import Im2Col
-from mindspore.ops.operations.array_ops import Col2Im
-from mindspore.ops.operations.array_ops import StridedSliceV2
 from mindspore.ops.operations.array_ops import MaskedScatter
-from mindspore.ops.operations._grad_ops import StridedSliceV2Grad
+from mindspore.ops.operations.array_ops import MaskedSelect
+from mindspore.ops.operations.array_ops import CountNonZero
 from mindspore.ops.operations.random_ops import LogNormalReverse
+from mindspore.ops.operations.random_ops import ParameterizedTruncatedNormal
 from mindspore.ops.operations import _inner_ops as inner
 from mindspore.ops import functional as F
 from mindspore.ops import operations as P
-from mindspore.ops._utils.utils import is_shape_unknown
 from mindspore.ops.operations import _grad_ops as G
+from mindspore import context
+from mindspore.ops.primitive import _primexpr
+from mindspore.common.sparse_tensor import RowTensorInner
+from mindspore.ops._utils.utils import generate_shape_index
+
+reduce_sum = P.ReduceSum()
+unsorted_segment_sum = P.UnsortedSegmentSum()
+transpose = P.Transpose()
+shape_op = P.Shape()
+reshape = P.Reshape()
+size_op = P.Size()
+invert_permutation = P.InvertPermutation()
+logical_and = P.LogicalAnd()
 
 
-@bprop_getters.register(StridedSliceV2)
-def get_bprop_strided_slice_v2(self):
-    """Generate bprop for StridedSliceV2"""
-    shape_op = P.Shape()
-    dyn_shape_op = P.TensorShape()
-    input_grad = StridedSliceV2Grad(self.begin_mask,
-                                    self.end_mask,
-                                    self.ellipsis_mask,
-                                    self.new_axis_mask,
-                                    self.shrink_axis_mask)
-
-    def bprop(x, begin, end, strides, out, dout):
-        x_shape = shape_op(x)
-        if -1 in x_shape:
-            x_shape = dyn_shape_op(x)
-        dx = input_grad(x_shape, begin, end, strides, dout)
-        dx_all = (dx, zeros_like(begin), zeros_like(end), zeros_like(strides))
-        return dx_all
-
-    return bprop
+@constexpr
+def _raise_value_error(*info):
+    info_str = ""
+    for obj in info:
+        info_str = info_str + f"{obj}"
+    raise ValueError(info_str)
 
 
 @constexpr
 def _create_tensor(data, dtype):
     return Tensor(data, dtype=dtype)
-
-
-def _segment_min_or_max_grad(segment_sum_op, input_x, segment_ids, output, dout):
-    """Calculate the gradient of SegmentMax or SegmentMin"""
-    gather = P.Gather()
-    equal = P.Equal()
-    cast = P.Cast()
-    divide = P.Div()
-    input_x_type = F.dtype(input_x)
-    input_x = cast(input_x, mstype.float32)
-    output = cast(output, mstype.float32)
-    dout = cast(dout, mstype.float32)
-    zeros = zeros_like(input_x)
-    gathered_outputs = gather(output, segment_ids, 0)
-    is_selected = equal(input_x, gathered_outputs)
-    num_selected = segment_sum_op(cast(is_selected, F.dtype(dout)), segment_ids)
-    weighted_grads = divide(dout, num_selected)
-    gathered_grads = gather(weighted_grads, segment_ids, 0)
-    return cast(where(is_selected, gathered_grads, zeros), input_x_type), zeros_like(segment_ids)
 
 
 @bprop_getters.register(P.MaskedFill)
@@ -108,13 +79,20 @@ def get_bprop_masked_select(self):
     mul_op = P.Mul()
     sum_op = P.ReduceSum()
     is_instance_op = inner.IsInstance()
+    rank = P.Rank()
 
     def bprop(input_data, mask, value, out, dout):
         mask = F.cast(mask, mstype.float32)
+        dout = F.cast(dout, mstype.float32)
         dinput = mul_op(dout, (1 - mask))
         dvalue = mul_op(dout, mask)
         dinput, dvalue = binop_grad_common(input_data, mask, dinput, dvalue)
-        dvalue = sum_op(dvalue)
+        # for dynamic rank, reduce axis should be calc
+        if F.is_sequence_shape_unknown(P.Shape()(dvalue)):
+            axis = range(0, rank(dvalue), 1)
+            dvalue = sum_op(dvalue, axis)
+        else:
+            dvalue = sum_op(dvalue)
         dinput = F.cast(dinput, F.dtype(input_data))
         if is_instance_op(value, mstype.number):
             dvalue = 0
@@ -128,37 +106,31 @@ def get_bprop_masked_select(self):
 @bprop_getters.register(MaskedScatter)
 def get_bprop_masked_scatter(self):
     """Generate bprop for MaskedScatter"""
-    sort_ = P.Sort(descending=True)
-    masked_scatter = MaskedScatter()
     masked_fill = P.MaskedFill()
     masked_select = P.MaskedSelect()
-    size = P.Size()
-    zeros = P.Zeros()
-    concat = P.Concat(axis=0)
-    reshape = P.Reshape()
-    shape = P.Shape()
-
+    shape = P.TensorShape()
+    range_ = P.Range()
+    scatter_update = P.TensorScatterElements()
     def bprop(x, mask, updates, out, dout):
-        dx = masked_fill(F.cast(dout, mstype.float32), mask, 0.0)
-        mask_selected = masked_select(F.cast(dout, mstype.float32), mask)
-        mask_broad = mask
-        if shape(mask) != shape(x):
-            broad_cast = P.BroadcastTo(shape(x))
-            mask_broad = broad_cast(mask)
-        mask_broad_vec = mask_broad.reshape(-1)
-        mask_sorted = F.cast(sort_(F.cast(mask_broad_vec, mstype.float32))[0], F.dtype(mask))
-        diff_num = size(updates) - size(mask_broad)
-        if diff_num > 0:
-            zeros_pad = zeros(diff_num, F.dtype(mask))
-            mask_sorted = concat((mask_sorted, zeros_pad))
-        zeros_tensor = zeros(size(updates), mstype.float32)
-        dupdates = masked_scatter(zeros_tensor, mask_sorted, mask_selected)
-        if shape(updates) != ():
-            dupdates = reshape(dupdates, shape(updates))
-        else:
-            zeros_tensor = zeros(shape(updates), mstype.float32)
-            dupdates = masked_scatter(zeros_tensor, mask, mask_selected)
-        return F.cast(dx, F.dtype(x)), zeros_like(mask), F.cast(dupdates, F.dtype(updates))
+        dout = F.cast(dout, mstype.float32)
+        dx = masked_fill(dout, mask, F.cast(0, mstype.float32))
+        dupdates = F.cast(zeros_like(updates).reshape(-1), mstype.float32)
+        dupdates_val = F.cast(masked_select(dout, mask), mstype.float32)
+        length = F.cast(shape(dupdates_val)[0], mstype.int32)
+        scatter_indices = range_(F.cast(0, mstype.int32), length, F.cast(1, mstype.int32))
+        dupdates = scatter_update(dupdates, scatter_indices, dupdates_val)
+        dupdates = reshape(dupdates, shape(updates))
+        return F.cast(dx, x.dtype), zeros_like(mask), F.cast(dupdates, updates.dtype)
+
+    return bprop
+
+
+@bprop_getters.register(CountNonZero)
+def get_bprop_countnonzero(self):
+    """Grad definition for CountNonZero"""
+
+    def bprop(x, out, dout):
+        return (zeros_like(x),)
 
     return bprop
 
@@ -175,43 +147,19 @@ def get_bprop_mvlgamma(self):
     return bprop
 
 
-@bprop_getters.register(P.TensorScatterDiv)
-def get_bprop_tensor_scatter_div(self):
-    """Generate bprop for TensorScatterDiv"""
-    gather_nd = P.GatherNd()
-    tensor_scatter_div = P.TensorScatterDiv()
-    neg = P.Neg()
-    div = P.Div()
-    mul = P.Mul()
-
-    def bprop(x, indices, update, out, dout):
-        # (input)' / update
-        in_grad = tensor_scatter_div(dout, indices, update)
-
-        # - (input * (update)') / (update * update)
-        gather_update = gather_nd(dout, indices)
-        gather_x = gather_nd(x, indices)
-        mul_result = mul(update, update)
-        neg_result = neg(mul_result)
-        update_grad = gather_update * div(gather_x, neg_result)
-
-        return in_grad, zeros_like(indices), update_grad
-
-    return bprop
-
-
 @bprop_getters.register(IndexFill)
 def get_bprop_index_fill(self):
     """Generate bprop for IndexFill"""
     gather = P.Gather()
     index_fill = IndexFill()
     shape = P.Shape()
+    rank = P.Rank()
 
     def bprop(x, dim, indices, value, out, dout):
         zero_value = zeros_like(value)
         x_grad = index_fill(dout, dim, indices, zero_value)
-        if is_shape_unknown(shape(x)):
-            if dyn_rank(x) == 0:
+        if F.is_sequence_value_unknown(shape(x)):
+            if rank(x) == 0:
                 value_grad = dout
             else:
                 value_grad = gather(dout, indices, dim).sum()
@@ -226,46 +174,42 @@ def get_bprop_index_fill(self):
     return bprop
 
 
-@bprop_getters.register(P.TensorScatterSub)
-def get_bprop_tensor_scatter_sub(self):
-    """Generate bprop for TensorScatterSub"""
+@bprop_getters.register(IndexPut)
+def get_bprop_index_put(self):
+    """Generate bprop for IndexPut"""
     gather_nd = P.GatherNd()
-    neg = P.Neg()
+    stack = P.Stack()
+    tile = P.Tile()
+    masked_select = MaskedSelect()
+    masked_scatter = MaskedScatter()
+    accumulate_grad = self.accumulate
+    equal = P.Equal()
+    cast = P.Cast()
+    index_put = IndexPut(accumulate=accumulate_grad)
+    is_ascend = context.get_context("device_target") == 'Ascend'
 
-    def bprop(x, indices, update, out, dout):
-        update_grad = neg(gather_nd(dout, indices))
-        return dout, zeros_like(indices), update_grad
+    # Negative value are not supported for GatherNd indices when Ascend, so convert it to positive value.
+    def convert_idx_positive(indices_i, x_shape_i):
+        mask = indices_i < 0
+        idx_pos = masked_select(indices_i + x_shape_i, mask)
+        idx = masked_scatter(indices_i, mask, idx_pos)
+        return idx
 
-    return bprop
-
-
-@bprop_getters.register(P.TensorScatterMul)
-def get_bprop_tensor_scatter_mul(self):
-    """Generate bprop for TensorScatterMul"""
-    gather_nd = P.GatherNd()
-    mul_func = P.TensorScatterMul()
-
-    def bprop(x, indices, update, out, dout):
-        gather_update = gather_nd(dout, indices)
-        gather_x = gather_nd(x, indices)
-        dx = mul_func(dout, indices, update)
-        d_update = gather_x * gather_update
-        return dx, zeros_like(indices), d_update
-
-    return bprop
-
-
-@bprop_getters.register(MatrixDiagV3)
-def get_bprop_matrix_diag_v3(self):
-    """Generate bprop for MatrixDiagV3"""
-    align = self.align
-    matrix_diag_part_v3 = MatrixDiagPartV3(align=align)
-    zeros = P.Zeros()
-
-    def bprop(x, k, num_rows, num_cols, padding_value, out, dout):
-        result = (matrix_diag_part_v3(dout, k, zeros((), dout.dtype)), zeros_like(k), zeros_like(num_rows),
-                  zeros_like(num_cols), zeros_like(padding_value))
-        return result
+    def bprop(x1, x2, indices, out, dout):
+        maxsize = max(x.shape[0] for x in indices)
+        indices_ms = [tile(x, (maxsize,)) if x.shape[0] == 1 else x for x in indices]
+        if is_ascend:
+            indices_ms = [convert_idx_positive(indices_ms[i], x1.shape[i]) for i in range(len(indices_ms))]
+        indices_me = stack(indices_ms)
+        indices_grad = F.transpose(indices_me, F.make_range(F.rank(indices_me)-1, -1, -1))
+        values_grad = gather_nd(dout, indices_grad)
+        if equal(cast(x2.shape[0], mstype.int32), Tensor(1)):
+            values_grad = values_grad.sum().reshape(1)
+        if values_grad.shape != x2.shape and len(indices) < len(x1.shape):
+            _, values_grad = binop_grad_common(x1, x2, dout, values_grad)
+        if accumulate_grad == 0:
+            dout = index_put(dout, zeros_like(x2), indices)
+        return dout, values_grad, [zeros_like(item) for item in indices]
 
     return bprop
 
@@ -280,7 +224,7 @@ def get_bprop_matrix_diag_part_v3(self):
 
     def bprop(x, k, padding_value, out, dout):
         shape_this = P.Shape()(x)[-2:]
-        if not is_shape_unknown(shape_this):
+        if not F.is_sequence_value_unknown(shape_this):
             row = shape_this[0]
             col = shape_this[1]
             result = (matrix_diag_v3(dout, k, Tensor(row, dtype=mstype.int32), Tensor(col, dtype=mstype.int32),
@@ -288,6 +232,17 @@ def get_bprop_matrix_diag_part_v3(self):
         else:
             result = (matrix_set_diag_v3(zeros_like(x), dout, k), zeros_like(k), zeros_like(padding_value))
         return result
+
+    return bprop
+
+
+@bprop_getters.register(MatrixBandPart)
+def get_bprop_matrix_band_part(self):
+    """Grad definition for `MatrixBandPart` operation."""
+    matrix_band_part = MatrixBandPart()
+
+    def bprop(x, lower, upper, out, dout):
+        return matrix_band_part(dout, lower, upper), zeros_like(lower), zeros_like(upper)
 
     return bprop
 
@@ -304,7 +259,7 @@ def get_bprop_matrix_set_diag_v3(self):
         diagonal_cal = matrix_diag_part_v3(dout, k, zeros((), dout.dtype))
 
         diagonal_shape = P.Shape()(diagonal)
-        if is_shape_unknown(diagonal_shape):
+        if F.is_sequence_value_unknown(diagonal_shape):
             diagonal = F.cast(diagonal, dout.dtype)
             x_cal = matrix_set_diag_v3(dout, zeros_like(diagonal), k)
         else:
@@ -321,15 +276,11 @@ def tensor_scatter_possible_replacement(x, indices, updates, out, dout):
     scatter_nd = P.ScatterNd()
     equal = P.Equal()
     shape = P.Shape()
-    dyn_shape_op = P.TensorShape()
 
     x_indicators = F.cast(equal(x, out), mstype.int32)
     possibly_updated = gather_nd(out, indices)
     out_indicators = F.cast(equal(updates, possibly_updated), mstype.int32)
     input_shape = shape(x)
-    if is_shape_unknown(input_shape):
-        input_shape = dyn_shape_op(x)
-
     scattered_out_indicators = scatter_nd(indices, out_indicators, input_shape)
     indicators = x_indicators + scattered_out_indicators
     dx = dout * F.cast(x_indicators, F.dtype(dout)) / F.cast(indicators, F.dtype(dout))
@@ -343,6 +294,15 @@ def get_bprop_log_normal_reverse(self):
     """Grad definition for `LogNormalReverse` operation."""
     def bprop(input_data, out, dout):
         return (zeros_like(input_data),)
+
+    return bprop
+
+
+@bprop_getters.register(ParameterizedTruncatedNormal)
+def get_bprop_parameterized_truncated_normal(self):
+    """Grad definition for `ParameterizedTruncatedNormal` operation."""
+    def bprop(shape, mean, stdevs, min_val, max_val, out, dout):
+        return (zeros_like(shape), zeros_like(mean), zeros_like(stdevs), zeros_like(min_val), zeros_like(max_val))
 
     return bprop
 
@@ -377,103 +337,23 @@ def get_bprop_coalesce(self):
     return bprop
 
 
-@bprop_getters.register(ConjugateTranspose)
-def get_bprop_conjugate_transpose(self):
-    """Generate bprop for ConjugateTranspose"""
-    conjugate_transpose = ConjugateTranspose()
-    invert_permutation = P.InvertPermutation()
-
-    def bprop(x, perm, out, dout):
-        return conjugate_transpose(dout, invert_permutation(perm)), zeros_like(perm)
-
-    return bprop
-
-
-@bprop_getters.register(Triu)
-def get_bprop_triu(self):
-    """Grad definition for 'Triu' operation"""
-    diagonal = self.diagonal
-    triu = Triu(diagonal)
-
-    def bprop(x, out, dout):
-        dx = triu(dout)
-        return (dx,)
-
-    return bprop
-
-
-@bprop_getters.register(CheckNumerics)
-def get_bprop_check_numerics(self):
-    """Generate bprop for CheckNumerics"""
-    check_numerics = CheckNumerics()
-
-    def bprop(x_input, out, dout):
-        return (check_numerics(dout),)
-
-    return bprop
-
-
-@bprop_getters.register(P.SplitV)
-def get_bprop_split_v(self):
-    """Generate bprop for SplitV"""
-    split_dim = self.split_dim
-    concat_op = P.Concat(split_dim)
-
-    def bprop(x_input, output, dout):
-        dx = concat_op(dout)
-        return (dx,)
-
-    return bprop
-
-
-@bprop_getters.register(IdentityN)
-def get_bprop_identity_n(self):
-    """Generate bprop for IdentityN"""
-
-    def bprop(x, out, dout):
-        return (dout,)
-
-    return bprop
-
-
 @bprop_getters.register(ResizeNearestNeighborV2)
 def get_bprop_resize_nearest_neighbor_v2(self):
     """Generate bprop for ResizeNearestNeighborV2"""
     align_corners = self.align_corners
     half_pixel_centers = self.half_pixel_centers
-    data_format = self.data_format
-    grad_op = G.ResizeNearestNeighborV2Grad(align_corners, half_pixel_centers, data_format)
+    grad_op = G.ResizeNearestNeighborV2Grad(align_corners, half_pixel_centers)
 
     def bprop(x, size, output, dout):
         x_shape = P.Shape()(x)
-        if is_shape_unknown(x_shape):
-            x_shape = P.TensorShape()(x)
-        grad_in_size = x_shape[1:3]
-        if data_format == 'NCHW':
-            grad_in_size = x_shape[2:4]
+        grad_in_size = x_shape[2:4]
 
-        if is_shape_unknown(P.Shape()(x)):
+        if F.is_sequence_value_unknown(P.Shape()(x)):
             dx = grad_op(dout, grad_in_size)
             return dx, zeros_like(grad_in_size)
 
         dx = grad_op(dout, _create_tensor(grad_in_size, mstype.int32))
         return dx, zeros_like(grad_in_size)
-
-    return bprop
-
-
-@bprop_getters.register(Col2Im)
-def get_bprop_col2im(self):
-    """Generate bprop for Col2Im"""
-    ksizes = self.kernel_size
-    dilations = self.dilation
-    strides = self.stride
-    pads = self.padding
-    im2col = Im2Col(ksizes=ksizes, dilations=dilations, strides=strides, padding_mode="CALCULATED", pads=pads)
-
-    def bprop(x, output_size, out, dout):
-        dx = im2col(dout)
-        return dx, zeros_like(output_size)
 
     return bprop
 
@@ -487,18 +367,16 @@ def get_bprop_extract_volume_patches(self):
     expend_dims = P.ExpandDims()
     scatter_nd = P.ScatterNd()
     slice_op = P.Slice()
-    fill = P.Fill()
     dtype = P.DType()
     cast = P.Cast()
     matmul = P.MatMul()
     _, _, ksize_d, ksize_h, ksize_w = self.kernel_size
     range_ = P.Range()
-    dyn_shape_op = P.TensorShape()
     ones_like = P.OnesLike()
 
     def _dyn_extract_volume_patches(x, out, dout):
-        x_shape = dyn_shape_op(x)
-        out_shape = dyn_shape_op(out)
+        x_shape = shape_op(x)
+        out_shape = shape_op(out)
         x_n, x_c, x_d, x_h, x_w = x_shape[0], x_shape[1], x_shape[2], x_shape[3], x_shape[4]
         x_indices_num = 1 + x_d * x_h * x_w
         x_idx = range_(cast(1, mstype.float32), cast(x_indices_num, mstype.float32), cast(1, mstype.float32))
@@ -538,7 +416,7 @@ def get_bprop_extract_volume_patches(self):
     def bprop(x, out, dout):
         x_shape = P.Shape()(x)
         out_shape = P.Shape()(out)
-        if is_shape_unknown(x_shape) or is_shape_unknown(out_shape):
+        if F.is_sequence_value_unknown(x_shape) or F.is_sequence_value_unknown(out_shape):
             return _dyn_extract_volume_patches(x, out, dout)
         x_n, x_c, x_d, x_h, x_w = x_shape
         x_indices_num = 1 + x_d * x_h * x_w
@@ -556,7 +434,7 @@ def get_bprop_extract_volume_patches(self):
         idx_tensor = concat((expend_dims(x_idx_patched, -1), expend_dims(out_idx, -1)))
         idx_map = P.Reshape()(idx_tensor, (-1, 2))
         sp_shape = (x_indices_num, out_indices_num)
-        sp_mat_full = scatter_nd(idx_map, fill(dtype(dout), (out_indices_num,), 1), sp_shape)
+        sp_mat_full = scatter_nd(idx_map, F.fill(dtype(dout), (out_indices_num,), 1), sp_shape)
         sp_tensor = slice_op(sp_mat_full, (1, 0), (x_indices_num - 1, out_indices_num))
 
         grad = P.Transpose()(dout, (0, 2, 3, 4, 1))
@@ -568,19 +446,6 @@ def get_bprop_extract_volume_patches(self):
         jac = matmul(sp_tensor, grad_flat)
         dx = P.Reshape()(jac, (x_d, x_h, x_w, x_n, x_c))
         dx = P.Transpose()(dx, (3, 4, 0, 1, 2))
-        return (dx,)
-
-    return bprop
-
-
-@bprop_getters.register(Tril)
-def get_bprop_tril(self):
-    """Grad definition for 'Tril' operation"""
-    diagonal = self.diagonal
-    tril = Tril(diagonal)
-
-    def bprop(x, out, dout):
-        dx = tril(dout)
         return (dx,)
 
     return bprop
@@ -609,17 +474,15 @@ def get_bprop_affinegrid(self):
     """Generate bprop for AffineGrid"""
 
     align_corners = self.align_corners
+    input_grad = G.AffineGridGrad(align_corners)
     ones = P.Ones()
-    transpose = P.Transpose()
     concat = P.Concat(1)
     concat0 = P.Concat(0)
     tile = P.Tile()
     div = P.Div()
-    reshape = P.Reshape()
     linspace = P.LinSpace()
     batmatmul = P.BatchMatMul()
     expend_dims = P.ExpandDims()
-    dyn_shape = P.TensorShape()
     reducesum = P.ReduceSum(keep_dims=False)
 
     def get_linspace(num):
@@ -718,7 +581,7 @@ def get_bprop_affinegrid(self):
         return transpose(dtheta, perm2), tre
 
     def dyn_bprop(theta, output_size, out, dout):
-        len_output_size = reducesum(dyn_shape(output_size))
+        len_output_size = reducesum(shape_op(output_size))
         dtheta = dyn_ones(Tensor([1, 3, 2], mstype.int32), mstype.float32)
         ret = dyn_ones(Tensor([1, 6], mstype.int32), mstype.float32)
         if len_output_size == 5:
@@ -824,49 +687,18 @@ def get_bprop_affinegrid(self):
             dtheta = transpose(dtheta, perm2)
         return dtheta, tre
 
-    def bprop(theta, output_size, out, dout):
+    def bprop_gpu(theta, output_size, out, dout):
         is_tensor, _ = convert_to_tensor(output_size)
         if is_tensor:
             return dyn_bprop(theta, output_size, out, dout)
         return static_bprop(theta, output_size, out, dout)
 
-    return bprop
+    def bprop(theta, output_size, out, dout):
+        dx = input_grad(dout, output_size)
+        return dx, zeros_like(output_size)
 
-
-@bprop_getters.register(SegmentMax)
-def get_bprop_segment_max(self):
-    """Generate bprop for SegmentMax"""
-    segment_sum = SegmentSum()
-
-    def bprop(input_x, segment_ids, output, dout):
-        return _segment_min_or_max_grad(segment_sum, input_x, segment_ids, output, dout)
-
-    return bprop
-
-
-@bprop_getters.register(SegmentMin)
-def get_bprop_segment_min(self):
-    """Generate bprop for SegmentMin"""
-    segment_sum = SegmentSum()
-
-    def bprop(input_x, segment_ids, output, dout):
-        return _segment_min_or_max_grad(segment_sum, input_x, segment_ids, output, dout)
-
-    return bprop
-
-
-@bprop_getters.register(TensorScatterElements)
-def get_bprop_tensor_scatter_elements(self):
-    """Generate bprop for TensorScatterElements"""
-    gather_d = P.GatherD()
-    axis = self.axis
-    reduction = self.reduction
-    tensor_scatter_elements = TensorScatterElements(axis, reduction)
-
-    def bprop(x, indices, update, out, dout):
-        x_grad = tensor_scatter_elements(dout, indices, zeros_like(update))
-        update_grad = gather_d(dout, axis, indices)
-        return x_grad, zeros_like(indices), update_grad
+    if context.get_context('device_target') == "GPU":
+        return bprop_gpu
 
     return bprop
 
@@ -907,7 +739,7 @@ def get_bprop_expand(self):
 
     def bprop(x, shape, out, dout):
         reduce_dims = []
-        dshape = zeroslike(dout)
+        dshape = zeroslike(shape)
         dx_shape = dout.shape
         if dx_shape is None:
             return dout.sum(), dshape
@@ -931,38 +763,173 @@ def get_bprop_segment_mean(self):
     """Generate bprop for SegmentMean"""
     rank = P.Rank()
     shape = P.Shape()
-    dyn_shape = P.TensorShape()
-    fill = P.Fill()
+    fill = P.FillV2()
     divide = P.Div()
     segment_sum = SegmentSum()
     gather = P.Gather()
     cast = P.Cast()
-    concat = P.Concat()
-    expand_dims = P.ExpandDims()
 
     def bprop(input_x, segment_ids, output, dout):
         input_x_type = F.dtype(input_x)
         input_x = cast(input_x, mstype.float32)
         dout = cast(dout, mstype.float32)
         dout_type = F.dtype(dout)
-
         ones_shape = shape(segment_ids)
-        if is_shape_unknown(ones_shape):
-            ones_shape = dyn_shape(segment_ids)
-
-        ones = ()
-        inputx_shape = shape(input_x)
-        if is_shape_unknown(inputx_shape):
-            input_rank = dyn_rank(input_x)
-            if input_rank > cast(1, mstype.float32):
-                ones_shape = concat([ones_shape, dyn_ones(expand_dims(input_rank - 1, 0), mstype.int64)])
-            ones = dyn_fill(dout_type, ones_shape, 1)
-        else:
-            input_rank = rank(input_x)
-            ones_shape = ones_shape + (1,) * (input_rank - 1)
-            ones = fill(dout_type, ones_shape, 1)
-
+        input_rank = rank(input_x)
+        ones_shape = ones_shape + (1,) * (input_rank - 1)
+        ones = fill(ones_shape, Tensor(1, dout_type))
         scaled_grad = divide(dout, segment_sum(ones, segment_ids))
         return cast(gather(scaled_grad, segment_ids, 0), input_x_type), zeros_like(segment_ids)
+
+    return bprop
+
+
+@bprop_getters.register(P.EmbeddingLookup)
+def get_bprop_embedding_lookup(self):
+    """Generate bprop for EmbeddingLookup"""
+    sub_op = P.Sub()
+    reshape_op = P.Reshape()
+
+    def bprop_sparse(x, indices, offset, out, dout):
+        x_shp = shape_op(x)
+        if F.is_sequence_value_unknown(x_shp):
+            raise RuntimeError("Now, EmbeddingLookup op's grad don't support Dynamic Sense!")
+        new_indices = sub_op(indices, offset)
+        indices_size = size_op(new_indices)
+        if indices_size > 0:
+            # Reshape the 'new_indices'
+            new_indices_shape_changed = (indices_size,)
+            new_indices = reshape_op(new_indices, new_indices_shape_changed)
+        else:
+            new_indices_shape_changed = ()
+        x_shp_tail = x_shp[1:]
+        actual_dout_shape_changed = new_indices_shape_changed + x_shp_tail
+        # Reshape the 'actual_dout' on device
+        actual_dout = reshape_op(dout, actual_dout_shape_changed)
+        return RowTensorInner(new_indices, actual_dout, x_shp), zeros_like(indices), zeros_like(offset)
+
+    return bprop_sparse
+
+
+@_primexpr
+def _generate_inverse_index(x_shape, axis, batch_dims=0):
+    x_rank = len(x_shape)
+    index = tuple(range(x_rank))
+    if axis < 0:
+        axis += x_rank
+    perm = index[:batch_dims] + index[batch_dims + 1:1 + axis] + (index[batch_dims],) + index[1 + axis:]
+    return perm
+
+
+@bprop_getters.register(P.SparseGatherV2)
+def get_bprop_sparse_gather_v2(self):
+    """Generate bprop for SparseGatherV2"""
+
+    def bprop(x, indices, axis, out, dout):
+        x_shp = shape_op(x)
+        if axis == 0:
+            indices_size = (size_op(indices),)
+            if len(x_shp) <= 1:
+                x_tail_shp = ()
+            else:
+                x_tail_shp = x_shp[1:]
+            values_shape = indices_size + x_tail_shp
+            values = reshape(dout, values_shape)
+            indices_new = reshape(indices, indices_size)
+            return RowTensorInner(indices_new, values, x_shp), zeros_like(indices), zeros_like(axis)
+        if F.rank(dout) == 0:
+            dout = P.ExpandDims()(dout, -1)
+        if F.rank(indices) == 0:
+            indices = P.ExpandDims()(indices, -1)
+        out_shp = shape_op(dout)
+        ind_shp = shape_op(indices)
+        # Example: out_shape:(3,2,3) axis 1 -> (1,0,2)
+        perm_1 = generate_shape_index(out_shp, ind_shp, axis)
+        values_transpose = transpose(dout, perm_1)
+        params_grad = unsorted_segment_sum(values_transpose, indices, shape_op(x)[axis])
+        # Example: out_shape:(3,2,3) axis 2 -> (1,2,0)
+        perm_2 = _generate_inverse_index(x_shp, axis)
+        params_grad = transpose(params_grad, perm_2)
+        return params_grad, zeros_like(indices), zeros_like(axis)
+
+    return bprop
+
+
+@bprop_getters.register(P.Unstack)
+def get_bprop_unstack(self):
+    """Generate bprop for Unstack"""
+    axis = self.axis
+
+    def bprop(x, out, dout):
+        unstack_grad = P.Stack(axis)
+        out = unstack_grad(dout)
+        return (out,)
+
+    return bprop
+
+
+@bprop_getters.register(P.Eye)
+def get_bprop_eye(self):
+    """Generate bprop for Eye"""
+
+    def bprop(n, m, t, out, dout):
+        return zeros_like(n), zeros_like(m), zeros_like(t)
+
+    return bprop
+
+
+@bprop_getters.register(P.ScatterNdUpdate)
+def get_bprop_scatter_nd_update(self):
+    """Generate bprop for ScatterNdUpdate"""
+    op = P.GatherNd()
+
+    def bprop(x, indices, update, out, dout):
+        return dout, zeros_like(indices), op(dout, indices)
+
+    return bprop
+
+
+@bprop_getters.register(P.ScatterNonAliasingAdd)
+def get_bprop_scatter_non_aliasing_add_update(self):
+    """Generate bprop for ScatterNonAliasingAdd"""
+    op = P.GatherNd()
+
+    def bprop(x, indices, update, out, dout):
+        return dout, zeros_like(indices), op(dout, indices)
+
+    return bprop
+
+
+@bprop_getters.register(P.ScatterUpdate)
+def get_bprop_scatter_update(self):
+    """Generate bprop for ScatterUpdate"""
+    gather = P.Gather()
+
+    def bprop(x, indices, update, out, dout):
+        return dout, zeros_like(indices), gather(dout, indices, 0)
+
+    return bprop
+
+
+@bprop_getters.register(P.TransShape)
+def get_bprop_trans_shape(self):
+    """Generate bprop for TransShape"""
+    op = P.TransShape()
+
+    def bprop(x, shape, out, dout):
+        dx = op(dout, shape_op(x))
+        return (dx, zeros_like(shape))
+
+    return bprop
+
+
+@bprop_getters.register(P.Unique)
+def get_bprop_unique(self):
+    """Generate bprop for Unique"""
+    op = G.UniqueGrad()
+
+    def bprop(x, out, dout):
+        dx = op(dout, out)
+        return (dx,)
 
     return bprop

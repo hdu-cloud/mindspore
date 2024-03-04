@@ -17,11 +17,11 @@
 #include <regex>
 #include "frontend/parallel/graph_util/graph_info.h"
 #include "include/common/debug/anf_ir_dump.h"
-#include "pipeline/jit/debug/anf_ir_utils.h"
+#include "pipeline/jit/ps/debug/anf_ir_utils.h"
 #include "include/common/debug/draw.h"
 #include "utils/ms_context.h"
 #include "ir/graph_utils.h"
-#include "pipeline/jit/pipeline.h"
+#include "pipeline/jit/ps/pipeline.h"
 #include "frontend/parallel/ops_info/ops_utils.h"
 
 namespace mindspore {
@@ -48,14 +48,16 @@ std::vector<PrimitivePtr> FindPrimtive(const FuncGraphPtr &graph, const std::str
 
 void DumpGraph(const FuncGraphPtr &root, const std::string &name) {
 #ifdef ENABLE_DUMP_IR
-  if (MsContext::GetInstance()->get_param<bool>(MS_CTX_SAVE_GRAPHS_FLAG)) {
+  auto context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  if (context->CanDump(kIntroductory)) {
     static const auto switch_order = (common::GetEnv("MS_DEV_SAVE_GRAPHS_SORT_MODE") == "1");
     if (switch_order) {
       ExportIR(name + ".ir", root);
     } else {
       DumpIR(name + ".ir", root);
     }
-    if (MsContext::GetInstance()->get_param<bool>(MS_CTX_SAVE_GRAPH_DOT)) {
+    if (context->CanDump(kFully)) {
       draw::Draw(name + ".dot", root);
     }
   }
@@ -72,7 +74,7 @@ bool GetLoopIndexFromCNode(const CNodePtr &cnode, size_t *loop_index) {
     if (result.length() < 2) {
       MS_LOG(EXCEPTION) << "Wrong format of fullname_with_scope: " << cnode_fullname;
     }
-    *loop_index = IntToSize(std::stoi(result[1]));
+    *loop_index = IntToSize(std::atoi(result[1].str().c_str()));
     return true;
   }
   return false;

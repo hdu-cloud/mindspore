@@ -17,7 +17,7 @@
 #include "pybind11/pybind11.h"
 #include "ir/param_info.h"
 #include "include/transform/graph_ir/utils.h"
-#include "pipeline/jit/parse/data_converter.h"
+#include "pipeline/jit/ps/parse/data_converter.h"
 #include "include/common/utils/python_adapter.h"
 #include "utils/shape_utils.h"
 
@@ -77,7 +77,7 @@ static TensorPtr GetMeTensorTransformed(uint32_t graph_id, const std::string &pa
     return nullptr;
   }
 
-  return transform::ConvertGeTensor(ge_tensor_ptr, *parameter_shape_ptr);
+  return transform::ConvertGeTensor(ge_tensor_ptr, *parameter_shape_ptr, true);
 }
 
 uint32_t CheckpointSaveCallback(uint32_t graph_id, const std::map<std::string, ge::Tensor> &params_list) {

@@ -17,7 +17,6 @@
 #include <map>
 #include <string>
 #include <vector>
-#include "common/util/error_manager/error_manager.h"
 #include "utils/log_adapter.h"
 #include "include/common/utils/utils.h"
 #include "plugin/device/ascend/hal/common/ascend_utils.h"
@@ -29,7 +28,7 @@
 #include "kernel/kernel.h"
 #include "acl/acl_rt.h"
 
-using mindspore::device::ascend::GetErrorMessage;
+using mindspore::device::ascend::ErrorManagerAdapter;
 using mindspore::device::ascend::ProfilingManager;
 using mindspore::device::ascend::ProfilingReporter;
 using mindspore::profiler::ascend::MemoryProfiling;
@@ -83,18 +82,28 @@ void AscendProfiler::Init(const std::string &profiling_path, uint32_t device_id,
   }
 
   // Init ErrorManager instance in order to get error msg reported by Ascend.
-  if (ErrorManager::GetInstance().Init() != 0) {
-    MS_LOG(WARNING) << "[Internal Error] Failed to init ErrorManager class.";
-  }
+  (void)ErrorManagerAdapter::Init();
 
-  (void)ProfilingManager::GetInstance().InitProfiling(profiling_path, device_id);
+  if (options["op_time"] == "on") {
+    (void)ProfilingManager::GetInstance().InitProfiling(profiling_path, device_id);
+  }
 
   MemoryProfiling::GetInstance().SetMemoryProfilingInitialize(profiling_options_);
 
   aclError aclRet = aclprofInit(profile_data_path_.c_str(), profile_data_path_.length());
   if (aclRet != ACL_SUCCESS) {
-    MS_LOG(EXCEPTION) << "Failed to call aclprofInit function." << GetErrorMessage(true);
+    MS_LOG(EXCEPTION) << "Failed to call aclprofInit function.";
   }
+
+  uint32_t device_list[1] = {device_id_};
+  uint32_t device_num = 1;
+  uint64_t mask = GetOptionsMask();
+  aclprofAicoreMetrics aic_metrics = GetAicMetrics();
+  acl_config_ = aclprofCreateConfig(device_list, device_num, aic_metrics, nullptr, GetOptionsMask());
+  if (acl_config_ == nullptr) {
+    MS_LOG(EXCEPTION) << "Failed to call aclprofCreateConfig function.";
+  }
+  MS_LOG(INFO) << "Start profiling, options mask is " << mask << " aic_metrics is " << aic_metrics;
 
   init_flag_ = true;
 }
@@ -112,6 +121,10 @@ uint64_t AscendProfiler::GetOptionsMask() const {
 
   if (options_json["task_trace"] == "on") {
     mask |= ACL_PROF_TASK_TIME;
+  }
+
+  if (options_json["training_trace"] == "on") {
+    mask |= ACL_PROF_TRAINING_TRACE;
   }
 
   if (options_json["aicpu"] == "on") {
@@ -144,19 +157,12 @@ aclprofAicoreMetrics AscendProfiler::GetAicMetrics() const {
 }
 
 void AscendProfiler::Start() {
-  uint32_t device_list[1] = {device_id_};
-  uint32_t device_num = 1;
-  uint64_t mask = GetOptionsMask();
-  aclprofAicoreMetrics aic_metrics = GetAicMetrics();
-  acl_config_ = aclprofCreateConfig(device_list, device_num, aic_metrics, nullptr, GetOptionsMask());
-  if (acl_config_ == nullptr) {
-    MS_LOG(EXCEPTION) << "Failed to call aclprofCreateConfig function." << GetErrorMessage(true);
-  }
+  MS_LOG(INFO) << "Begin to profiling.";
   aclError aclRet = aclprofStart(acl_config_);
   if (aclRet != ACL_SUCCESS) {
-    MS_LOG(EXCEPTION) << "Failed to call aclprofStart function." << GetErrorMessage(true);
+    MS_LOG(EXCEPTION) << "Failed to call aclprofStart function.";
   }
-  MS_LOG(INFO) << "Start profiling, options mask is " << mask << " aic_metrics is " << aic_metrics;
+  (void)ProfilingManager::GetInstance().SetStepStart(true);
 
   MemoryProfiling::GetInstance().StartMemoryProfiling();
 
@@ -167,6 +173,8 @@ void AscendProfiler::Start() {
 
 void AscendProfiler::Stop() {
   MS_LOG(INFO) << "Begin to stop profiling.";
+  (void)ProfilingManager::GetInstance().SetStepStart(false);
+
   if (acl_config_ == nullptr) {
     MS_LOG(EXCEPTION)
       << "Failed to stop profiling because of null aReportDatacl config.Please make sure call Profiler.Start function "
@@ -175,11 +183,11 @@ void AscendProfiler::Stop() {
 
   aclError aclRet = aclprofStop(acl_config_);
   if (aclRet != ACL_SUCCESS) {
-    MS_LOG(EXCEPTION) << "Failed to call aclprofStop function." << GetErrorMessage(true);
+    MS_LOG(EXCEPTION) << "Failed to call aclprofStop function.";
   }
   aclRet = aclprofDestroyConfig(acl_config_);
   if (aclRet != ACL_SUCCESS) {
-    MS_LOG(EXCEPTION) << "Failed to call aclprofDestroyConfig function." << GetErrorMessage(true);
+    MS_LOG(EXCEPTION) << "Failed to call aclprofDestroyConfig function.";
   }
 
   MemoryProfiling::GetInstance().StopMemoryProfiling();
@@ -191,25 +199,34 @@ void AscendProfiler::Finalize() {
   MS_LOG(INFO) << "Begin to finalize profiling";
   aclError aclRet = aclprofFinalize();
   if (aclRet != ACL_SUCCESS) {
-    MS_LOG(EXCEPTION) << "Failed to call aclprofDestroyConfig function." << GetErrorMessage(true);
+    MS_LOG(EXCEPTION) << "Failed to call aclprofDestroyConfig function.";
   }
 }
 
 void AscendProfiler::MsprofInitProfiler() const {
   if (ProfilingManager::GetInstance().IsMsprofiling()) {
-    ProfilingManager::GetInstance().ProfRegisterCtrlCallback();
-    MsprofInit(MSPROF_CTRL_INIT_DYNA, nullptr, 0);
+    auto ret = ProfilingManager::GetInstance().ProfRegisterCtrlCallback();
+    if (!ret) {
+      MS_LOG(ERROR) << "Call ProfRegisterCtrlCallback failed, the ret = " << ret << ".";
+    }
+    auto prof_ret = MsprofInit(MSPROF_CTRL_INIT_DYNA, nullptr, 0);
+    if (prof_ret > 0) {
+      MS_LOG(ERROR) << "Call MsprofInit failed, the prof_ret = " << prof_ret << ".";
+    }
   }
 }
 
 void AscendProfiler::MsprofStopProfiler() const {
   if (ProfilingManager::GetInstance().IsMsprofiling()) {
-    MsprofFinalize();
+    auto ret = MsprofFinalize();
+    if (ret > 0) {
+      MS_LOG(ERROR) << "Call MsprofFinalize failed, the ret = " << ret << ".";
+    }
   }
 }
 
 void AscendProfiler::GetNodeTaskIdStreamId(const CNodePtr &kernel, uint32_t graph_id, int device_id,
-                                           const KernelType kernel_type) {
+                                           const KernelType kernel_type, int32_t kernel_mod_task_id) {
   uint32_t stream_id;
   uint32_t task_id;
   uint32_t aicpu_task_id;
@@ -222,11 +239,14 @@ void AscendProfiler::GetNodeTaskIdStreamId(const CNodePtr &kernel, uint32_t grap
   if (rt_ret != RT_ERROR_NONE) {
     MS_LOG(EXCEPTION) << "Profiling get task_id and stream_id failed.";
   }
+  if (kernel_mod_task_id != -1) {
+    task_id = static_cast<uint32_t>(kernel_mod_task_id);
+  }
   ProfilingReporter reporter(device_id, graph_id, rt_model_id, cnode_list, stream_ids, task_ids);
   if (task_id <= last_tid_[t_id] && stream_id == last_streamid_[t_id]) {
     MS_LOG(INFO) << "No task id is allocated to the node <" << kernel->fullname_with_scope() << ">.";
   } else {
-    if (task_id >= max_op_taskid_limit_ && (uint32_t)kernel_type == aicpu_kernel_type_) {
+    if (task_id >= max_op_taskid_limit_ && kernel_type == AICPU_KERNEL) {
       aicpu_task_id = task_id % max_op_taskid_limit_;
       reporter.DynamicNodeReport(kernel, stream_id, aicpu_task_id, kernel_type);
     } else {

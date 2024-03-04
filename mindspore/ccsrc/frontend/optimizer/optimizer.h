@@ -29,12 +29,13 @@
 
 #include "include/common/debug/draw.h"
 #include "include/common/debug/anf_ir_dump.h"
-#include "pipeline/jit/debug/anf_ir_utils.h"
-#include "pipeline/jit/debug/trace.h"
+#include "pipeline/jit/ps/debug/anf_ir_utils.h"
+#include "pipeline/jit/ps/debug/trace.h"
 #include "frontend/optimizer/opt.h"
-#include "pipeline/jit/resource.h"
-#include "pipeline/jit/action.h"
+#include "pipeline/jit/ps/resource.h"
+#include "pipeline/jit/ps/action.h"
 #include "utils/ms_context.h"
+#include "include/backend/debug/profiler/profiling.h"
 
 namespace mindspore {
 namespace opt {
@@ -59,6 +60,9 @@ class OptPassConfig {
 
   const bool global_sensitive() const { return global_sensitive_; }
 
+  const bool disabled() const { return disabled_; }
+  void set_disabled(bool disabled) { disabled_ = disabled; }
+
  private:
   OptPassConfig() : is_renormalize_(true) {}
 
@@ -67,6 +71,7 @@ class OptPassConfig {
   bool is_renormalize_{false};
   bool is_once_{false};
   bool global_sensitive_{false};
+  bool disabled_{false};
 };
 
 class OptPass {
@@ -109,10 +114,14 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     is_on_debug_ = IS_OUTPUT_ON(mindspore::kDebug);
 
     for (auto &iter : passes) {
+      const OptPassConfig &config = iter.second;
+      if (config.disabled()) {
+        continue;
+      }
+
       const std::string &name = iter.first;
       pass_names_.push_back(name);
 
-      const OptPassConfig &config = iter.second;
       if (config.is_renormalize()) {
         passes_.push_back(OptPass::Renormalize());
         continue;
@@ -149,6 +158,27 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     return optimizer;
   }
 
+  void DumpStep(FuncGraphPtr func_graph, const int counter, const int index) {
+    static const auto enable_dump_pass_ir = GetDumpConfig().enable_dump_pass_ir;
+    auto context = MsContext::GetInstance();
+    MS_EXCEPTION_IF_NULL(context);
+    if ((enable_dump_pass_ir && context->CanDump(kIntroductory)) || context->CanDump(kFully)) {
+      auto fg_name = "opt_substep_" + name_ + "_r" + std::to_string(counter) + "_" + std::to_string(index) + "_" +
+                     pass_names_[index];
+      MS_LOG(DEBUG) << "The opt " << name_ << " round " << counter << " OptPass " << pass_names_[index] << " end.";
+      static const auto switch_order = (common::GetEnv("MS_DEV_SAVE_GRAPHS_SORT_MODE") == "1");
+      if (switch_order) {
+        ExportIR(fg_name + ".ir", func_graph);
+      } else {
+        DumpIR(fg_name + ".ir", func_graph);
+      }
+      if (context->CanDump(kFully)) {
+        draw::Draw(fg_name + ".dot", func_graph);
+      }
+      MS_LOG(DEBUG) << "Dump " << pass_names_[index] << " func graph.";
+    }
+  }
+
   FuncGraphPtr step(FuncGraphPtr func_graph, bool use_profile = true) {
     if (!is_enable_) {
       return func_graph;
@@ -166,7 +196,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
       auto run_runc = [&counter, &func_graph, &changes, &changes_since_last_renorm, use_profile, this]() {
         for (size_t i = 0; i < passes_.size(); ++i) {
           const OptPass &opt = passes_[i];
-          CurPass_ = {counter, pass_names_[i]};
+          current_pass_ = {counter, pass_names_[i]};
           auto opt_func = [&func_graph, &changes, &opt, &changes_since_last_renorm, this]() {
             if (opt.is_renormalize()) {
               if (!changes_since_last_renorm) {
@@ -200,28 +230,16 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
               changes_since_last_renorm = true;
             }
           };
-          use_profile ? (WITH(MsProfile::GetProfile()->Step(pass_names_[i])) opt_func) : opt_func();
+          auto profiler_pass_name = name_ + ".r" + std::to_string(counter) + "." + pass_names_[i];
+          (void)profiler::CollectHostInfo(pipeline::kCompiler, pipeline::kOptimize, profiler_pass_name, 0, 0, 0);
+          use_profile ? ProfileExecute(MsProfile::GetProfile()->Step(pass_names_[i]), opt_func) : opt_func();
+          (void)profiler::CollectHostInfo(pipeline::kCompiler, pipeline::kOptimize, profiler_pass_name, 0, 0, 1);
 #ifdef ENABLE_DUMP_IR
-          static const auto enable_dump_pass_ir = GetDumpConfig().enable_dump_pass_ir;
-          if (enable_dump_pass_ir && MsContext::GetInstance()->get_param<bool>(MS_CTX_SAVE_GRAPHS_FLAG)) {
-            auto fg_name =
-              "opt_substep_" + name_ + "_r" + std::to_string(counter) + "_" + std::to_string(i) + "_" + pass_names_[i];
-            MS_LOG(DEBUG) << "The opt " << name_ << " round " << counter << " OptPass " << pass_names_[i] << " end.";
-            static const auto switch_order = (common::GetEnv("MS_DEV_SAVE_GRAPHS_SORT_MODE") == "1");
-            if (switch_order) {
-              ExportIR(fg_name + ".ir", func_graph);
-            } else {
-              DumpIR(fg_name + ".ir", func_graph);
-            }
-            if (MsContext::GetInstance()->get_param<bool>(MS_CTX_SAVE_GRAPH_DOT)) {
-              draw::Draw(fg_name + ".dot", func_graph);
-            }
-            MS_LOG(DEBUG) << "Dump " << pass_names_[i] << " func graph.";
-          }
+          DumpStep(func_graph, counter, i);
 #endif
         }
       };
-      use_profile ? (WITH(MsProfile::GetProfile()->Lap(counter)) run_runc) : run_runc();
+      use_profile ? (ProfileExecute(MsProfile::GetProfile()->Lap(counter), run_runc)) : run_runc();
       counter++;
 
       if (run_only_once_) {
@@ -236,7 +254,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     if (resource_ != nullptr) {
       return resource_->manager();
     }
-    MS_LOG(EXCEPTION) << "No ResourceBase exists.";
+    MS_LOG(INTERNAL_EXCEPTION) << "No ResourceBase exists.";
   }
 
   const std::string name() const { return name_; }
@@ -257,7 +275,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
   struct {
     int64_t counter = 0;
     std::string name;
-  } CurPass_;
+  } current_pass_;
 
   bool is_on_debug_{false};
 

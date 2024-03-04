@@ -19,7 +19,6 @@
 #include <functional>
 #include "mindspore/core/ops/meshgrid.h"
 #include "plugin/factory/ms_factory.h"
-#include "plugin/device/cpu/kernel/nnacl/errorcode.h"
 
 namespace mindspore {
 namespace kernel {
@@ -75,6 +74,8 @@ int MeshgridCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std
                   << input_size_list_.size() << " and " << output_size_list_.size();
     return static_cast<int>(KRET_RESIZE_FAILED);
   }
+  input_shape_.clear();
+  output_shape_.clear();
 
   // The input tensor must be 1-D tensor.
   for (auto &input : inputs) {
@@ -96,7 +97,7 @@ int MeshgridCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std
       MS_LOG(ERROR) << "For '" << kernel_name_
                     << "', each output tensor shape should be the combination of all input tensor shape. But get the "
                        "shape of all inputs tensor shape: "
-                    << Vector2Str(output_shape_) << ", and the shape of output: " << Vector2Str(shape);
+                    << output_shape_ << ", and the shape of output: " << shape;
       return static_cast<int>(KRET_RESIZE_FAILED);
     }
   }

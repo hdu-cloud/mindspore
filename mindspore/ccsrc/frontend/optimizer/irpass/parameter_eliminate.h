@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@
 #include <memory>
 
 #include "utils/hash_set.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "frontend/optimizer/irpass.h"
 #include "frontend/optimizer/optimizer.h"
 #include "frontend/optimizer/anf_visitor.h"
@@ -31,21 +33,55 @@
 namespace mindspore {
 namespace opt {
 namespace irpass {
+static inline void CheckSwitchCallValid(const CNodePtr &switch_call) {
+  if (switch_call->inputs().size() > 1) {
+    // Means call switch(arg1, ...) has args.
+    constexpr auto recursive_count = 2;
+    MS_LOG(INTERNAL_EXCEPTION) << "After switch_call_monad_eliminater pass, the call switch node should not has args."
+                               << " The call_switch_cnode is: " << switch_call->DebugString(recursive_count);
+  }
+}
+
 static inline std::vector<CNodePtr> GetCallers(const FuncGraphPtr &fg) {
   MS_EXCEPTION_IF_NULL(fg);
   const auto &fg_caller_and_indexes = fg->func_graph_cnodes_index();
   std::vector<CNodePtr> caller_cnodes = {};
   // Find all caller of fg.
+  auto manager = fg->manager();
+  MS_EXCEPTION_IF_NULL(manager);
+  auto &node_users = manager->node_users();
   for (const auto &it : fg_caller_and_indexes) {
     const auto &fg_caller_and_index = it.first;
     auto caller_cnode = fg_caller_and_index->first;
     auto index = fg_caller_and_index->second;
-    // If index != 0, the caller is a indirect caller, can't erase the parameter of graph.Because
-    // in this situation ValueNode<FuncGraph> is a input of Return or of MakeTuple.
-    if (index != 0) {
+    // If index != 0, the caller is a indirect caller, can't erase the parameter of graph.
+    // Because in this situation ValueNode<FuncGraph> is a input of Return or of MakeTuple.
+    MS_LOG(DEBUG) << "index: " << index;
+    // Process has partial func_graph with Primitive
+    // %1 = Partial(func_graph, arg1, arg2, ...)
+    if (index == 1 && IsPrimitiveCNode(caller_cnode, prim::kPrimPartial)) {
+      auto iter = node_users.find(caller_cnode);
+      for (auto &user : iter->second) {
+        auto &user_node = user.first;
+        auto user_cnode = user_node->cast<CNodePtr>();
+        // Check user of partial (switch), the numbers of args should be 0.
+        if (IsPrimitiveCNode(user_cnode, prim::kPrimSwitch)) {
+          // Call switch()
+          auto call_switchs = node_users[user_cnode];
+          for (auto call_switch_iter : call_switchs) {
+            CheckSwitchCallValid(call_switch_iter.first->cast<CNodePtr>());
+          }
+          if (std::find(caller_cnodes.begin(), caller_cnodes.end(), caller_cnode) == caller_cnodes.end()) {
+            (void)caller_cnodes.emplace_back(caller_cnode->cast<CNodePtr>());
+          }
+        }
+      }
+    } else if (index != 0) {
       return {};
+    } else {
+      // Process call func_graph: %1 = func_graph(arg1, arg2, ...)
+      (void)caller_cnodes.emplace_back(caller_cnode->cast<CNodePtr>());
     }
-    (void)caller_cnodes.emplace_back(caller_cnode->cast<CNodePtr>());
   }
   return caller_cnodes;
 }
@@ -53,7 +89,7 @@ static inline std::vector<CNodePtr> GetCallers(const FuncGraphPtr &fg) {
 static inline std::pair<FuncGraphPtr, std::vector<CNodePtr>> SearchFuncGraphCallers(
   const FuncGraphPtr &func_graph, bool eliminate_only_returned_parameter) {
   for (const auto &fg : func_graph->func_graphs_used_total()) {
-    if (fg->has_flag(FUNC_GRAPH_FLAG_DEFER_INLINE)) {
+    if (fg->has_flag(FUNC_GRAPH_FLAG_DEFER_INLINE) || fg->has_flag(FUNC_GRAPH_RECOMPUTE_K_GRAPH)) {
       continue;
     }
     const auto &parameters = fg->parameters();
@@ -146,13 +182,13 @@ static inline std::pair<mindspore::HashSet<size_t>, mindspore::HashMap<size_t, s
                                           [param_i](const auto &kw_only_arg) { return kw_only_arg == param_i; });
         if (is_kw_only_arg) {
           if (fg->kwonlyargs_count() <= 0) {
-            MS_LOG(EXCEPTION) << "The kw_only_args_count is 0 when a kw_only_arg should be removed";
+            MS_LOG(INTERNAL_EXCEPTION) << "The kw_only_args_count is 0 when a kw_only_arg should be removed";
           }
           fg->set_kwonlyargs_count(fg->kwonlyargs_count() - 1);
           (void)unused_parameter_indexes.erase(i);
         }
       }
-      MS_LOG(DEBUG) << "Erase parameter:" << param_i->DebugString() << ", index:" << i;
+      MS_LOG(DEBUG) << "Erase parameter: " << param_i->DebugString() << ", index: " << i;
     }
   }
   manager->SetParameters(fg, new_parameters);
@@ -162,15 +198,20 @@ static inline std::pair<mindspore::HashSet<size_t>, mindspore::HashMap<size_t, s
 // Adjust the call arguments of func graph whose parameter's eliminated.
 static inline void AdjustCallerArgs(const FuncGraphPtr &called, const CNodePtr &caller,
                                     const mindspore::HashSet<size_t> &unused_parameter_indexes) {
+  size_t arg_start_index = 1;
   MS_EXCEPTION_IF_NULL(caller->func_graph());
   const FuncGraphManagerPtr &manager = caller->func_graph()->manager();
   MS_EXCEPTION_IF_NULL(manager);
   std::vector<AnfNodePtr> new_args = {caller->input(0)};
-  for (size_t i = 0; i < caller->size() - 1; i++) {
+  if (IsPrimitiveCNode(caller, prim::kPrimPartial)) {
+    (void)new_args.emplace_back(caller->input(1));
+    arg_start_index = arg_start_index + 1;
+  }
+  for (size_t i = 0; i < caller->size() - arg_start_index; i++) {
     if (unused_parameter_indexes.find(i) == unused_parameter_indexes.end()) {
-      (void)new_args.emplace_back(caller->input(i + 1));
+      (void)new_args.emplace_back(caller->input(i + arg_start_index));
     } else {
-      MS_LOG(DEBUG) << "Erase arg:" << caller->input(i + 1)->DebugString() << ",index:" << i;
+      MS_LOG(DEBUG) << "Erase arg: " << caller->input(i + arg_start_index)->DebugString();
     }
   }
   // Remove any Args which may be packed into VarArgs if VarArgs is not used in called FuncGraph;
@@ -180,7 +221,7 @@ static inline void AdjustCallerArgs(const FuncGraphPtr &called, const CNodePtr &
   //       default value.
   if (!called->has_vararg() &&
       caller->size() > (1 + IntToSize(called->GetPositionalArgsCount()) + called->fv_param_count())) {
-    size_t start_offset = IntToSize(called->GetPositionalArgsCount()) + 1;
+    size_t start_offset = IntToSize(called->GetPositionalArgsCount()) + arg_start_index;
     size_t end_offset = called->fv_param_count();
     (void)new_args.erase(new_args.cbegin() + SizeToLong(start_offset), new_args.cend() - SizeToLong(end_offset));
   }
@@ -226,7 +267,7 @@ static inline void AdjustGetItemCall(const CNodePtr &caller,
     auto &index_node = getitem_cnode->input(getitem_index_pos);
     auto index_value = GetValueNode<Int64ImmPtr>(index_node);
     if (index_value == nullptr || index_value->value() < 0) {
-      MS_LOG(EXCEPTION) << "The index_value is incorrect, " << index_node->DebugString();
+      MS_LOG(INTERNAL_EXCEPTION) << "The index_value is incorrect, " << index_node->DebugString();
     }
     size_t index_value_imm = LongToSize(index_value->value());
     const auto &index_pos = only_return_parameter_indexes.find(index_value_imm + 1);
@@ -262,6 +303,7 @@ class ParameterEliminator {
       const auto &[unused_parameter_indexes, only_return_parameter_indexes] =
         EraseUnusedParameters(fg, eliminate_only_returned_parameter_);
       for (auto caller : callers) {
+        MS_LOG(DEBUG) << "caller: " << caller->DebugString();
         // Replace the getitem CNodes with the arguments.
         if (eliminate_only_returned_parameter_) {
           AdjustGetItemCall(caller, only_return_parameter_indexes);

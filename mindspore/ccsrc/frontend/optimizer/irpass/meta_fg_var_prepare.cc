@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <memory>
 
+#include "mindspore/core/ops/sequence_ops.h"
 #include "utils/hash_map.h"
 #include "frontend/operator/composite/composite.h"
 #include "frontend/operator/ops.h"
@@ -75,14 +76,9 @@ bool CheckMetaFgOps(const AnfNodePtr &node) {
   if (value == nullptr) {
     return false;
   }
-  auto meta_func_graph = value->cast<MetaFuncGraphPtr>();
-  if (meta_func_graph == nullptr) {
-    return false;
-  }
-
   const auto &meta_fg_ops = GetMetaFgOps();
   for (auto meta_fg_op : meta_fg_ops) {
-    if (meta_fg_op->Match(meta_func_graph)) {
+    if (meta_fg_op->Match(value)) {
       return true;
     }
   }
@@ -129,7 +125,7 @@ AnfNodePtr MetaFgVarPrepare::operator()(const OptimizerPtr &, const AnfNodePtr &
 
   const bool is_unpack = unpack_op_->Match(inputs_y[0]);
 
-  // For general meta_fg_opration, ‘sens_param’ is not involved, and that of GradOperation obtained specifically.
+  // For general meta_fg_opration, 'sens_param' is not involved, and that of GradOperation obtained specifically.
   bool sens_param = false;
   if (grad_op_->Match(inputs_x[0])) {
     auto value = GetValueWithoutDoSignature(inputs_x[0]);

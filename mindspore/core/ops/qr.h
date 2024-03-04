@@ -16,15 +16,15 @@
 #ifndef MINDSPORE_CORE_OPS_QR_H_
 #define MINDSPORE_CORE_OPS_QR_H_
 
-#include <map>
-#include <set>
-#include <vector>
-#include <string>
-#include <memory>
 #include <algorithm>
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -44,8 +44,8 @@ class MIND_API Qr : public BaseOperator {
   /// \return full_matrices.
   bool get_full_matrices() const;
 };
-abstract::AbstractBasePtr QrInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                  const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr QrInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                           const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimQrPtr = std::shared_ptr<Qr>;
 }  // namespace ops
 }  // namespace mindspore

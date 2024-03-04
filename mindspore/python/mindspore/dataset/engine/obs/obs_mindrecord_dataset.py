@@ -24,6 +24,7 @@ from multiprocessing.managers import SyncManager
 import os
 import queue
 import random
+import stat
 import sys
 import time
 
@@ -115,6 +116,9 @@ def _wait_remove_datset(num_shards, shard_id, epoch_num):
     with open(sync_file, 'w') as f:
         f.write('ok')
 
+    if os.path.exists(sync_file):
+        os.chmod(sync_file, stat.S_IRUSR | stat.S_IWUSR)
+
     while True:
         if os.path.exists(sync_dir) and not os.listdir(sync_dir):
             break
@@ -170,7 +174,7 @@ def _download_work(shard_id, current_idx, local_path, cache, q):
         used_disk = get_used_disk_per()
         while used_disk > float(config.DISK_THRESHOLD):
             logger.info("[{} FUNCTION] Used disk space is {}%, and the disk threshold is {}%.".format(
-                sys._getframe().f_code.co_name, used_disk*100,  # pylint: disable=W0212
+                sys._getframe().f_code.co_name, used_disk * 100,  # pylint: disable=W0212
                 float(config.DISK_THRESHOLD)*100))
             retry_cnt = 0
             has_deleted = _delete_candidate_datasets(
@@ -267,7 +271,7 @@ def sync_wait_for_dataset(rank_id, rank_size, current_epoch):
     Wait util the dataset files required by all devices are downloaded.
 
     Note:
-        It should be used together with `mindspore.dataset.OBSMindDataset` and
+        It should be used together with :class:`mindspore.dataset.OBSMindDataset` and
         be called before each epoch.
 
     Args:
@@ -489,7 +493,7 @@ class MindRecordFromOBS:
         return len(self)
 
     def get_col_names(self):
-        """ Get column names of Mindrecord format dataset."""
+        """ Get column names of MindRecord format dataset."""
 
         from ..datasets_standard_format import MindDataset
 

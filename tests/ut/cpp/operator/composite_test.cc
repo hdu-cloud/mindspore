@@ -15,14 +15,17 @@
  */
 #include <memory>
 
+#include "abstract/abstract_function.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "common/common_test.h"
-#include "ir/anf.h"
-#include "ir/value.h"
 #include "frontend/operator/composite/composite.h"
 #include "frontend/operator/ops.h"
-#include "pipeline/jit/static_analysis/prim.h"
-#include "abstract/abstract_function.h"
-#include "pipeline/jit/debug/trace.h"
+#include "ir/anf.h"
+#include "ir/value.h"
+#include "pipeline/jit/ps/debug/trace.h"
+#include "pipeline/jit/ps/static_analysis/prim.h"
 
 namespace mindspore {
 using Shape = abstract::Shape;
@@ -67,7 +70,7 @@ void TestComposite::TearDown() {
 class UTCompositeUtils {
  public:
   static AbstractTensorPtr ArrayInt32Of(std::initializer_list<int64_t> shp) {
-    auto ele = std::make_shared<AbstractScalar>(kAnyValue, kInt64);
+    auto ele = std::make_shared<AbstractScalar>(kValueAny, kInt64);
     return std::make_shared<AbstractTensor>(ele, std::make_shared<Shape>(shp));
   }
   static FuncGraphPtr MakeFuncGraph(const MetaFuncGraphPtr &metaFuncGraphPtr, size_t nparam) {

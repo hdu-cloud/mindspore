@@ -14,6 +14,7 @@
 # ============================================================================
 """RNN Cells module, include RNNCell, GRUCell, LSTMCell."""
 from __future__ import absolute_import
+from functools import wraps
 
 import math
 import numpy as np
@@ -24,9 +25,9 @@ from mindspore import log as logger
 from mindspore.common.tensor import Tensor
 from mindspore.common.parameter import Parameter
 from mindspore.common.initializer import initializer, Uniform
-from mindspore.ops.primitive import constexpr
+from mindspore.ops.primitive import constexpr, _primexpr
 from mindspore.nn.cell import Cell
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 
 __all__ = ['LSTMCell', 'GRUCell', 'RNNCell']
 
@@ -39,8 +40,8 @@ def _check_input_dtype(input_dtype, param_name, allow_dtypes, cls_name):
 @constexpr(check=False)
 def _check_is_tensor(param_name, input_data, cls_name):
     """Internal function, used to check whether the input data is Tensor."""
-    if input_data is not None and not isinstance(P.typeof(input_data), mstype.tensor_type):
-        raise TypeError(f"For '{cls_name}', the '{param_name}' must be '{mstype.tensor_type}', "
+    if input_data is not None and not isinstance(P.typeof(input_data), mstype.TensorType):
+        raise TypeError(f"For '{cls_name}', the '{param_name}' must be '{mstype.TensorType}', "
                         f"but got '{P.typeof(input_data)}'")
 
 
@@ -60,7 +61,7 @@ def _check_tuple_length(param_name, input_data, length, cls_name):
                         f"but got '{len(input_data)}'")
 
 
-@constexpr
+@_primexpr
 def _check_batch_size_equal(batch_size_x, batch_size_hx, cls_name):
     if batch_size_x != batch_size_hx:
         raise ValueError(f"For '{cls_name}' batch size of x and hx must be equal, but got {batch_size_x} of x "
@@ -68,6 +69,8 @@ def _check_batch_size_equal(batch_size_x, batch_size_hx, cls_name):
 
 
 def _check_lstmcell_init(func):
+    """Internal function, used to check init args."""
+    @wraps(func)
     def wrapper(*args, **kwargs):
         logger.warning(f"LSTMCell has been changed from 'single LSTM layer' to 'single LSTM cell', "
                        f"if you still need use single LSTM layer, please use `nn.LSTM` instead.")
@@ -142,7 +145,8 @@ def _gru_cell(inputs, hidden, w_ih, w_hh, b_ih, b_hh):
 
 class RNNCellBase(Cell):
     '''Basic class for RNN Cells'''
-    def __init__(self, input_size: int, hidden_size: int, has_bias: bool, num_chunks: int):
+    def __init__(self, input_size: int, hidden_size: int, has_bias: bool, num_chunks: int,
+                 dtype=mstype.float32):
         super().__init__()
         validator.check_value_type("has_bias", has_bias, [bool], self.cls_name)
         validator.check_positive_int(hidden_size, "hidden_size", self.cls_name)
@@ -150,20 +154,20 @@ class RNNCellBase(Cell):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.has_bias = has_bias
-        self.weight_ih = Parameter(Tensor(np.random.randn(num_chunks * hidden_size, input_size).astype(np.float32)))
-        self.weight_hh = Parameter(Tensor(np.random.randn(num_chunks * hidden_size, hidden_size).astype(np.float32)))
+        self.weight_ih = Parameter(Tensor(np.random.randn(num_chunks * hidden_size, input_size), dtype=dtype))
+        self.weight_hh = Parameter(Tensor(np.random.randn(num_chunks * hidden_size, hidden_size), dtype=dtype))
         if has_bias:
-            self.bias_ih = Parameter(Tensor(np.random.randn(num_chunks * hidden_size).astype(np.float32)))
-            self.bias_hh = Parameter(Tensor(np.random.randn(num_chunks * hidden_size).astype(np.float32)))
+            self.bias_ih = Parameter(Tensor(np.random.randn(num_chunks * hidden_size), dtype=dtype))
+            self.bias_hh = Parameter(Tensor(np.random.randn(num_chunks * hidden_size), dtype=dtype))
         else:
             self.bias_ih = None
             self.bias_hh = None
-        self.reset_parameters()
+        self.reset_parameters(dtype=dtype)
 
-    def reset_parameters(self):
+    def reset_parameters(self, dtype=mstype.float32):
         stdv = 1 / math.sqrt(self.hidden_size)
         for weight in self.get_parameters():
-            weight.set_data(initializer(Uniform(stdv), weight.shape))
+            weight.set_data(initializer(Uniform(stdv), weight.shape, dtype))
 
 
 class RNNCell(RNNCellBase):
@@ -175,19 +179,20 @@ class RNNCell(RNNCellBase):
 
     Here :math:`h_t` is the hidden state at time `t`, :math:`x_t` is
     the input at time `t`, and :math:`h_{(t-1)}` is the hidden state of the
-    previous layer at time `t-1` or the initial hidden state at time `0`.
+    previous layer at time :math:`t-1` or the initial hidden state at time `0`.
     If `nonlinearity` is `relu`, then `relu` is used instead of `tanh`.
 
     Args:
         input_size (int): Number of features of input.
         hidden_size (int):  Number of features of hidden layer.
-        has_bias (bool): Whether the cell has bias `b_ih` and `b_hh`. Default: True.
-        nonlinearity (str): The non-linearity to use. Can be either `tanh` or `relu`. Default: `tanh`.
+        has_bias (bool): Whether the cell has bias `b_ih` and `b_hh`. Default: ``True`` .
+        nonlinearity (str): The non-linearity to use. Can be either ``"tanh"`` or ``"relu"`` .
+            Default: ``"tanh"`` .
+        dtype (:class:`mindspore.dtype`): Dtype of Parameters. Default: ``mstype.float32`` .
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(batch\_size, input\_size)` .
         - **hx** (Tensor) - Tensor of data type mindspore.float32 and shape :math:`(batch\_size, hidden\_size)` .
-          Data type of `hx` must be the same as `x`.
 
     Outputs:
         - **hx'** (Tensor) - Tensor of shape :math:`(batch\_size, hidden\_size)` .
@@ -201,9 +206,11 @@ class RNNCell(RNNCellBase):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> net = nn.RNNCell(10, 16)
-        >>> x = Tensor(np.ones([5, 3, 10]).astype(np.float32))
-        >>> hx = Tensor(np.ones([3, 16]).astype(np.float32))
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> net = ms.nn.RNNCell(10, 16)
+        >>> x = ms.Tensor(np.ones([5, 3, 10]).astype(np.float32))
+        >>> hx = ms.Tensor(np.ones([3, 16]).astype(np.float32))
         >>> output = []
         >>> for i in range(5):
         ...     hx = net(x[i], hx)
@@ -213,8 +220,9 @@ class RNNCell(RNNCellBase):
     """
     _non_linearity = ['tanh', 'relu']
 
-    def __init__(self, input_size: int, hidden_size: int, has_bias: bool = True, nonlinearity: str = "tanh"):
-        super().__init__(input_size, hidden_size, has_bias, num_chunks=1)
+    def __init__(self, input_size: int, hidden_size: int, has_bias: bool = True, nonlinearity: str = "tanh",
+                 dtype=mstype.float32):
+        super().__init__(input_size, hidden_size, has_bias, num_chunks=1, dtype=dtype)
         validator.check_value_type("nonlinearity", nonlinearity, [str], self.cls_name)
         validator.check_string(nonlinearity, self._non_linearity, "nonlinearity", self.cls_name)
         self.nonlinearity = nonlinearity
@@ -263,15 +271,16 @@ class LSTMCell(RNNCellBase):
     Args:
         input_size (int): Number of features of input.
         hidden_size (int):  Number of features of hidden layer.
-        has_bias (bool): Whether the cell has bias `b_ih` and `b_hh`. Default: True.
+        has_bias (bool): Whether the cell has bias `b_ih` and `b_hh`. Default: ``True`` .
+        dtype (:class:`mindspore.dtype`): Dtype of Parameters. Default: ``mstype.float32`` .
 
     Inputs:
-        - **x** (Tensor) - Tensor of shape (batch_size, `input_size`).
+        - **x** (Tensor) - Tensor of shape :math:`(batch\_size, input\_size)` .
         - **hx** (tuple) - A tuple of two Tensors (h_0, c_0) both of data type mindspore.float32
-          and shape (batch_size, `hidden_size`). The data type of `hx` must be the same as `x`.
+          and shape :math:`(batch\_size, hidden\_size)` .
 
     Outputs:
-        - **hx'** (Tensor) - A tuple of two Tensors (h', c') both of data shape (batch_size, `hidden_size`).
+        - **hx'** (Tensor) - A tuple of two Tensors (h', c') both of data shape :math:`(batch\_size, hidden\_size)` .
 
     Raises:
         TypeError: If `input_size`, `hidden_size` is not an int.
@@ -281,10 +290,12 @@ class LSTMCell(RNNCellBase):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> net = nn.LSTMCell(10, 16)
-        >>> x = Tensor(np.ones([5, 3, 10]).astype(np.float32))
-        >>> h = Tensor(np.ones([3, 16]).astype(np.float32))
-        >>> c = Tensor(np.ones([3, 16]).astype(np.float32))
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> net = ms.nn.LSTMCell(10, 16)
+        >>> x = ms.Tensor(np.ones([5, 3, 10]).astype(np.float32))
+        >>> h = ms.Tensor(np.ones([3, 16]).astype(np.float32))
+        >>> c = ms.Tensor(np.ones([3, 16]).astype(np.float32))
         >>> output = []
         >>> for i in range(5):
         ...     hx = net(x[i], (h, c))
@@ -293,8 +304,9 @@ class LSTMCell(RNNCellBase):
         (3, 16)
     """
     @_check_lstmcell_init
-    def __init__(self, input_size: int, hidden_size: int, has_bias: bool = True):
-        super().__init__(input_size, hidden_size, has_bias, num_chunks=4)
+    def __init__(self, input_size: int, hidden_size: int, has_bias: bool = True,
+                 dtype=mstype.float32):
+        super().__init__(input_size, hidden_size, has_bias, num_chunks=4, dtype=dtype)
         self.support_non_tensor_inputs = True
 
     def construct(self, x, hx):
@@ -340,23 +352,18 @@ class GRUCell(RNNCellBase):
     `Learning Phrase Representations using RNN Encoder–Decoder for Statistical Machine Translation
     <https://aclanthology.org/D14-1179.pdf>`_.
 
-    The LSTMCell can be simplified in NN layer, the following formula:
-
-    .. math::
-        h^{'},c^{'} = LSTMCell(x, (h_0, c_0))
-
     Args:
         input_size (int): Number of features of input.
         hidden_size (int):  Number of features of hidden layer.
-        has_bias (bool): Whether the cell has bias `b_in` and `b_hn`. Default: True.
+        has_bias (bool): Whether the cell has bias `b_in` and `b_hn`. Default: ``True`` .
+        dtype (:class:`mindspore.dtype`): Dtype of Parameters. Default: ``mstype.float32`` .
 
     Inputs:
-        - **x** (Tensor) - Tensor of shape (batch_size, `input_size`).
-        - **hx** (Tensor) - Tensor of data type mindspore.float32 and shape (batch_size, `hidden_size`).
-          Data type of `hx` must be the same as `x`.
+        - **x** (Tensor) - Tensor of shape :math:`(batch\_size, input\_size)` .
+        - **hx** (Tensor) - Tensor of data type mindspore.float32 and shape :math:`(batch\_size, hidden\_size)` .
 
     Outputs:
-        - **hx'** (Tensor) - Tensor of shape (batch_size, `hidden_size`).
+        - **hx'** (Tensor) - Tensor of shape :math:`(batch\_size, hidden\_size)` .
 
     Raises:
         TypeError: If `input_size`, `hidden_size` is not an int.
@@ -366,9 +373,11 @@ class GRUCell(RNNCellBase):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> net = nn.GRUCell(10, 16)
-        >>> x = Tensor(np.ones([5, 3, 10]).astype(np.float32))
-        >>> hx = Tensor(np.ones([3, 16]).astype(np.float32))
+        >>> import mindspore as ms
+        >>> import numpy as np
+        >>> net = ms.nn.GRUCell(10, 16)
+        >>> x = ms.Tensor(np.ones([5, 3, 10]).astype(np.float32))
+        >>> hx = ms.Tensor(np.ones([3, 16]).astype(np.float32))
         >>> output = []
         >>> for i in range(5):
         ...     hx = net(x[i], hx)
@@ -376,8 +385,9 @@ class GRUCell(RNNCellBase):
         >>> print(output[0].shape)
         (3, 16)
     """
-    def __init__(self, input_size: int, hidden_size: int, has_bias: bool = True):
-        super().__init__(input_size, hidden_size, has_bias, num_chunks=3)
+    def __init__(self, input_size: int, hidden_size: int, has_bias: bool = True,
+                 dtype=mstype.float32):
+        super().__init__(input_size, hidden_size, has_bias, num_chunks=3, dtype=dtype)
 
     def construct(self, x, hx):
         _check_is_tensor('x', x, self.cls_name)

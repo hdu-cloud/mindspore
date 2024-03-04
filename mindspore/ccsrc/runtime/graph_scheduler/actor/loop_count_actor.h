@@ -35,14 +35,17 @@ namespace runtime {
 // and decide whether to loop execution by loop count.
 class LoopCountActor : public DebugAwareActor {
  public:
-  LoopCountActor(const std::string &name, size_t loop_count, const AID &memory_manager_aid, const AID *debug_aid,
-                 const AID *recorder_aid, GraphExecutionStrategy strategy,
-                 const std::vector<DeviceContext *> &device_contexts)
+  LoopCountActor(const std::string &name, const std::string &graph_name, size_t loop_count,
+                 const AID &memory_manager_aid, const AID *debug_aid, const AID *recorder_aid,
+                 GraphExecutionStrategy strategy, const std::vector<DeviceContext *> &device_contexts,
+                 const bool is_need_sync_stream)
       : DebugAwareActor(name, KernelTransformType::kLoopCountActor, recorder_aid, memory_manager_aid, debug_aid),
+        graph_name_(graph_name),
         loop_count_(loop_count),
         current_count_(0),
         total_running_count_(0),
-        strategy_(strategy) {
+        strategy_(strategy),
+        is_need_sync_stream_(is_need_sync_stream) {
     (void)std::transform(
       device_contexts.begin(), device_contexts.end(), std::back_inserter(device_contexts_),
       [](DeviceContext *device_context) { return static_cast<const DeviceContext *>(device_context); });
@@ -71,6 +74,9 @@ class LoopCountActor : public DebugAwareActor {
 
   void IncreaseLoopCount(OpContext<DeviceTensor> *const context);
 
+  // Graph name of GraphCompilerInfo. For example, kernel_graph_0-3.
+  std::string graph_name_;
+
   // The loop count is constant, the current count is increased after each step running finished.
   size_t loop_count_;
   size_t current_count_;
@@ -84,6 +90,9 @@ class LoopCountActor : public DebugAwareActor {
   // The execution strategy for executing actor.
   // In pipeline mode,  sync stream for every step.
   GraphExecutionStrategy strategy_{GraphExecutionStrategy::kPipeline};
+
+  // Only need sync stream in DR scenarios.
+  bool is_need_sync_stream_{true};
 };
 
 using LoopCountActorPtr = std::shared_ptr<LoopCountActor>;

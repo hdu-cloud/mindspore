@@ -38,7 +38,7 @@ std::string Keyword::ToString() const {
     MS_EXCEPTION_IF_NULL(value_);
     buffer << "Keyword[";
     buffer << "key : " << key_;
-    buffer << "value : " << value_->ToString();
+    buffer << ", value : " << value_->ToString();
     buffer << "]";
   }
   return buffer.str();
@@ -87,7 +87,7 @@ bool Slice::operator==(const Type &other) const {
   if (!IsSameObjectType(*this, other)) {
     return false;
   }
-  auto other_slice = static_cast<const Slice &>(other);
+  auto &other_slice = static_cast<const Slice &>(other);
   return common::IsEqual(start_, other_slice.start_) && common::IsEqual(stop_, other_slice.stop_) &&
          common::IsEqual(step_, other_slice.step_);
 }

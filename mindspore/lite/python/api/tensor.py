@@ -1,4 +1,4 @@
-# Copyright 2022 Huawei Technologies Co., Ltd
+# Copyright 2022-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,13 +15,41 @@
 """
 Tensor API.
 """
+from __future__ import absolute_import
 from enum import Enum
 
 import numpy
 
-from .lib import _c_lite_wrapper
+from mindspore_lite.lib import _c_lite_wrapper
+from mindspore_lite._checkparam import check_tensor_input_param, check_isinstance
 
-__all__ = ['DataType', 'Format', 'Tensor']
+__all__ = ['TensorMeta', 'DataType', 'Format', 'Tensor']
+
+
+class TensorMeta:
+    """
+    The `TensorMeta` class defines a TensorInfo in MindSpore Lite.
+
+    Args:
+        tensor(): The info to be stored in a new TensorMeta.
+    """
+
+    def __init__(self):
+        self.name = ""
+        self.dtype = DataType.UNKNOWN
+        self.shape = []
+        self.format = Format.DEFAULT
+        self.element_num = 0
+        self.data_size = 0
+
+    def __str__(self):
+        res = f"name: {self.name},\n" \
+              f"dtype: {self.dtype},\n" \
+              f"shape: {self.shape},\n" \
+              f"format: {self.format},\n" \
+              f"element_num: {self.element_num},\n" \
+              f"data_size: {self.data_size}."
+        return res
 
 
 class DataType(Enum):
@@ -86,24 +114,24 @@ class Format(Enum):
     Definition                    Description
     ===========================  ===================================================================================
     `Format.DEFAULT`             default format.
-    `Format.NCHW`                Store tensor data in the order of batch N, channel C, height H and width W.
-    `Format.NHWC`                Store tensor data in the order of batch N, height H, width W and channel C.
+    `Format.NCHW`                Store Tensor data in the order of batch N, channel C, height H and width W.
+    `Format.NHWC`                Store Tensor data in the order of batch N, height H, width W and channel C.
     `Format.NHWC4`               C-axis 4-byte aligned `Format.NHWC` .
-    `Format.HWKC`                Store tensor data in the order of height H, width W, kernel num K and channel C.
-    `Format.HWCK`                Store tensor data in the order of height H, width W, channel C and kernel num K.
-    `Format.KCHW`                Store tensor data in the order of kernel num K, channel C, height H and width W.
-    `Format.CKHW`                Store tensor data in the order of channel C, kernel num K, height H and width W.
-    `Format.KHWC`                Store tensor data in the order of kernel num K, height H, width W and channel C.
-    `Format.CHWK`                Store tensor data in the order of channel C, height H, width W and kernel num K.
-    `Format.HW`                  Store tensor data in the order of height H and width W.
+    `Format.HWKC`                Store Tensor data in the order of height H, width W, kernel num K and channel C.
+    `Format.HWCK`                Store Tensor data in the order of height H, width W, channel C and kernel num K.
+    `Format.KCHW`                Store Tensor data in the order of kernel num K, channel C, height H and width W.
+    `Format.CKHW`                Store Tensor data in the order of channel C, kernel num K, height H and width W.
+    `Format.KHWC`                Store Tensor data in the order of kernel num K, height H, width W and channel C.
+    `Format.CHWK`                Store Tensor data in the order of channel C, height H, width W and kernel num K.
+    `Format.HW`                  Store Tensor data in the order of height H and width W.
     `Format.HW4`                 w-axis 4-byte aligned `Format.HW` .
-    `Format.NC`                  Store tensor data in the order of batch N and channel C.
+    `Format.NC`                  Store Tensor data in the order of batch N and channel C.
     `Format.NC4`                 C-axis 4-byte aligned `Format.NC` .
     `Format.NC4HW4`              C-axis 4-byte aligned and W-axis 4-byte aligned `Format.NCHW` .
-    `Format.NCDHW`               Store tensor data in the order of batch N, channel C, depth D, height H and width W.
-    `Format.NWC`                 Store tensor data in the order of batch N, width W and channel C.
-    `Format.NCW`                 Store tensor data in the order of batch N, channel C and width W.
-    `Format.NDHWC`               Store tensor data in the order of batch N, depth D, height H, width W and channel C.
+    `Format.NCDHW`               Store Tensor data in the order of batch N, channel C, depth D, height H and width W.
+    `Format.NWC`                 Store Tensor data in the order of batch N, width W and channel C.
+    `Format.NCW`                 Store Tensor data in the order of batch N, channel C and width W.
+    `Format.NDHWC`               Store Tensor data in the order of batch N, depth D, height H, width W and channel C.
     `Format.NC8HW8`              C-axis 8-byte aligned and W-axis 8-byte aligned `Format.NCHW` .
     ===========================  ===================================================================================
 
@@ -174,6 +202,36 @@ data_type_cxx_py_map = {
     _c_lite_wrapper.DataType.kInvalidType: DataType.INVALID,
 }
 
+numpy_data_type_map = {
+    numpy.bool_: DataType.BOOL,
+    numpy.int8: DataType.INT8,
+    numpy.int16: DataType.INT16,
+    numpy.int32: DataType.INT32,
+    numpy.int64: DataType.INT64,
+    numpy.uint8: DataType.UINT8,
+    numpy.uint16: DataType.UINT16,
+    numpy.uint32: DataType.UINT32,
+    numpy.uint64: DataType.UINT64,
+    numpy.float16: DataType.FLOAT16,
+    numpy.float32: DataType.FLOAT32,
+    numpy.float64: DataType.FLOAT64,
+}
+
+ms_to_numpy_data_type_map = {
+    DataType.BOOL: numpy.bool_,
+    DataType.INT8: numpy.int8,
+    DataType.INT16: numpy.int16,
+    DataType.INT32: numpy.int32,
+    DataType.INT64: numpy.int64,
+    DataType.UINT8: numpy.uint8,
+    DataType.UINT16: numpy.uint16,
+    DataType.UINT32: numpy.uint32,
+    DataType.UINT64: numpy.uint64,
+    DataType.FLOAT16: numpy.float16,
+    DataType.FLOAT32: numpy.float32,
+    DataType.FLOAT64: numpy.float64,
+}
+
 format_py_cxx_map = {
     Format.DEFAULT: _c_lite_wrapper.Format.DEFAULT_FORMAT,
     Format.NCHW: _c_lite_wrapper.Format.NCHW,
@@ -226,106 +284,221 @@ class Tensor:
     The `Tensor` class defines a Tensor in MindSpore Lite.
 
     Args:
-        tensor(Tensor, optional): The data to be stored in a new Tensor. It can be from another Tensor. Default: None.
-
+        tensor(Tensor, optional): The data to be stored in a new Tensor. It can be from another Tensor.
+            Default: ``None``.
+        shape(list, optional): The shape of the Tensor.
+            Default: ``None``.
+        dtype(DataType, optional): The dtype of the Tensor.
+            Default: ``None``.
+        device(str, optional): The device type of the Tensor.
+            Default: ``None``.
     Raises:
-        TypeError: `tensor` is neither a Tensor nor None.
+        TypeError: `tensor` is neither a Tensor nor ``None``.
 
     Examples:
         >>> import mindspore_lite as mslite
         >>> tensor = mslite.Tensor()
-        >>> tensor.set_data_type(mslite.DataType.FLOAT32)
+        >>> tensor.name = "tensor1"
+        >>> print(tensor.name)
+        tensor1
+        >>> tensor.dtype = mslite.DataType.FLOAT32
+        >>> print(tensor.dtype)
+        DataType.FLOAT32
+        >>> tensor.shape = [1, 3, 2, 2]
+        >>> print(tensor.shape)
+        [1, 3, 2, 2]
+        >>> tensor.format = mslite.Format.NCHW
+        >>> print(tensor.format)
+        Format.NCHW
+        >>> print(tensor.element_num)
+        12
+        >>> print(tensor.data_size)
+        48
         >>> print(tensor)
-        tensor_name: ,
-        data_type: DataType.FLOAT32,
-        shape: [],
+        name: tensor1,
+        dtype: DataType.FLOAT32,
+        shape: [1, 3, 2, 2],
         format: Format.NCHW,
-        element_num: 1,
-        data_size: 4.
+        element_num: 12,
+        data_size: 48.
     """
 
-    def __init__(self, tensor=None):
-        self._numpy_obj = None
+    def __init__(self, tensor=None, shape=None, dtype=None, device=None):
+        # check shape, dtype and device
+        check_tensor_input_param(shape, device)
+        device_type = ""
+        device_id = -1
+        if device is not None:
+            device_type = device.split(":")[0]
+            if len(device.split(":")) == 2:
+                device_id = int(device.split(":")[1])
+        check_isinstance("dtype", dtype, DataType, True)
         if tensor is not None:
-            if not isinstance(tensor, _c_lite_wrapper.TensorBind):
-                raise TypeError(f"tensor must be MindSpore Lite's Tensor, but got {type(tensor)}.")
-            self._tensor = tensor
+            # use tensor to init tensor
+            if isinstance(tensor, _c_lite_wrapper.TensorBind):
+                self._tensor = tensor
+            elif isinstance(tensor, Tensor):
+                tensor_shape = tensor.shape
+                if shape is not None and list(shape) != list(tensor_shape):
+                    raise TypeError(
+                        f"user set shape is not equal numpy shape, user's shape: {shape}, "
+                        f"tensor shape is: {tensor_shape}.")
+                tensor_dtype = tensor.dtype
+                if dtype is not None and tensor_dtype != dtype:
+                    raise TypeError(
+                        f"user set dtype is not equal tensor dtype, user's dtype: {dtype}, "
+                        f"tensor dtype is: {tensor_dtype}.")
+                numpy_data = tensor.get_data_to_numpy()
+                self._tensor = _c_lite_wrapper.create_tensor_by_numpy(numpy_data, device_type, device_id)
+            # use numpy to init tensor
+            elif isinstance(tensor, numpy.ndarray):
+                if not tensor.flags['FORC']:
+                    tensor = numpy.ascontiguousarray(tensor)
+                numpy_shape = tensor.shape
+                numpy_dtype = tensor.dtype
+                if numpy_dtype.type not in numpy_data_type_map:
+                    raise TypeError(f"Unsupported numpy dtype value {numpy_dtype}")
+                ms_dtype = numpy_data_type_map.get(numpy_dtype.type)
+                if shape is not None and list(shape) != list(numpy_shape):
+                    raise TypeError(
+                        f"user set shape is not equal numpy shape, user shape: {shape}, "
+                        f"numpy shape is: {numpy_shape}.")
+                if dtype is not None and ms_dtype != dtype:
+                    raise TypeError(
+                        f"user set dtype is not equal numpy dtype, user dtype: {dtype}, "
+                        f"numpy dtype is: {numpy_dtype}.")
+                self._tensor = _c_lite_wrapper.create_tensor_by_numpy(tensor, device_type, device_id)
+            else:
+                raise TypeError(
+                    f"tensor must be MindSpore Lite's Tensor._tensor or numpy ndarray, but got {type(tensor)}.")
         else:
-            self._tensor = _c_lite_wrapper.create_tensor()
+            if dtype is not None and shape is not None:
+                self._tensor = _c_lite_wrapper.create_tensor(data_type_py_cxx_map.get(dtype), shape, device_type,
+                                                             device_id)
+            else:
+                self._tensor = _c_lite_wrapper.create_tensor(data_type_py_cxx_map.get(DataType.FLOAT32), (), "", -1)
 
-    def set_tensor_name(self, tensor_name):
+    def __str__(self):
+        res = f"name: {self.name},\n" \
+              f"dtype: {self.dtype},\n" \
+              f"shape: {self.shape},\n" \
+              f"format: {self.format},\n" \
+              f"element_num: {self.element_num},\n" \
+              f"data_size: {self.data_size}.\n" \
+              f"device: {self.device}."
+        return res
+
+    @property
+    def data_size(self):
         """
-        Set the name of the Tensor.
+        Get the data size of the Tensor.
 
-        Args:
-            tensor_name (str): The name of the Tensor.
-
-        Raises:
-            TypeError: `tensor_name` is not a str.
-
-        Examples:
-            >>> import mindspore_lite as mslite
-            >>> tensor = mslite.Tensor()
-            >>> tensor.set_tensor_name("tensor0")
-        """
-        if not isinstance(tensor_name, str):
-            raise TypeError(f"tensor_name must be str, but got {type(tensor_name)}.")
-        self._tensor.set_tensor_name(tensor_name)
-
-    def get_tensor_name(self):
-        """
-        Get the name of the Tensor.
+        Data size of the Tensor = the element num of the Tensor * size of unit data type of the Tensor.
 
         Returns:
-            str, the name of the Tensor.
-
-        Examples:
-            >>> import mindspore_lite as mslite
-            >>> tensor = mslite.Tensor()
-            >>> tensor.set_tensor_name("tensor0")
-            >>> tensor_name = tensor.get_tensor_name()
-            >>> print(tensor_name)
-            tensor0
+            int, the data size of the Tensor data.
         """
-        return self._tensor.get_tensor_name()
+        return self._tensor.get_data_size()
 
-    def set_data_type(self, data_type):
-        """
-        Set data type for the Tensor.
-
-        Args:
-            data_type (DataType): The data type of the Tensor.
-
-        Raises:
-            TypeError: `data_type` is not a DataType.
-
-        Examples:
-            >>> import mindspore_lite as mslite
-            >>> tensor = mslite.Tensor()
-            >>> tensor.set_data_type(mslite.DataType.FLOAT32)
-        """
-        if not isinstance(data_type, DataType):
-            raise TypeError(f"data_type must be DataType, but got {type(data_type)}.")
-        self._tensor.set_data_type(data_type_py_cxx_map.get(data_type))
-
-    def get_data_type(self):
+    @property
+    def dtype(self):
         """
         Get the data type of the Tensor.
 
         Returns:
             DataType, the data type of the Tensor.
-
-        Examples:
-            >>> import mindspore_lite as mslite
-            >>> tensor = mslite.Tensor()
-            >>> tensor.set_data_type(mslite.DataType.FLOAT32)
-            >>> data_type = tensor.get_data_type()
-            >>> print(data_type)
-            DataType.FLOAT32
         """
         return data_type_cxx_py_map.get(self._tensor.get_data_type())
 
-    def set_shape(self, shape):
+    @dtype.setter
+    def dtype(self, dtype):
+        """
+        Set data type for the Tensor.
+
+        Args:
+            dtype (DataType): The data type of the Tensor. For details, see
+                `DataType <https://mindspore.cn/lite/api/en/master/mindspore_lite/mindspore_lite.DataType.html>`_ .
+
+        Raises:
+            TypeError: `dtype` is not a DataType.
+        """
+        if not isinstance(dtype, DataType):
+            raise TypeError(f"dtype must be DataType, but got {type(dtype)}.")
+        self._tensor.set_data_type(data_type_py_cxx_map.get(dtype))
+
+    @property
+    def element_num(self):
+        """
+        Get the element num of the Tensor.
+
+        Returns:
+            int, the element num of the Tensor data.
+        """
+        return self._tensor.get_element_num()
+
+    @property
+    def format(self):
+        """
+        Get the format of the Tensor.
+
+        Returns:
+            Format, the format of the Tensor.
+        """
+        return format_cxx_py_map.get(self._tensor.get_format())
+
+    @format.setter
+    def format(self, tensor_format):
+        """
+        Set format of the Tensor.
+
+        Args:
+            tensor_format (Format): The format of the Tensor. For details, see
+                `Format <https://mindspore.cn/lite/api/en/master/mindspore_lite/mindspore_lite.Format.html>`_ .
+
+        Raises:
+            TypeError: `tensor_format` is not a Format.
+        """
+        if not isinstance(tensor_format, Format):
+            raise TypeError(f"format must be Format, but got {type(tensor_format)}.")
+        self._tensor.set_format(format_py_cxx_map.get(tensor_format))
+
+    @property
+    def name(self):
+        """
+        Get the name of the Tensor.
+
+        Returns:
+            str, the name of the Tensor.
+        """
+        return self._tensor.get_tensor_name()
+
+    @name.setter
+    def name(self, name):
+        """
+        Set the name of the Tensor.
+
+        Args:
+            name (str): The name of the Tensor.
+
+        Raises:
+            TypeError: `name` is not a str.
+        """
+        if not isinstance(name, str):
+            raise TypeError(f"name must be str, but got {type(name)}.")
+        self._tensor.set_tensor_name(name)
+
+    @property
+    def shape(self):
+        """
+        Get the shape of the Tensor.
+
+        Returns:
+            list[int], the shape of the Tensor.
+        """
+        return self._tensor.get_shape()
+
+    @shape.setter
+    def shape(self, shape):
         """
         Set shape for the Tensor.
 
@@ -335,107 +508,39 @@ class Tensor:
         Raises:
             TypeError: `shape` is not a list.
             TypeError: `shape` is a list, but the elements is not int.
-
-        Examples:
-            >>> import mindspore_lite as mslite
-            >>> tensor = mslite.Tensor()
-            >>> tensor.set_shape([1, 112, 112, 3])
         """
-        if not isinstance(shape, list):
-            raise TypeError(f"shape must be list, but got {type(shape)}.")
+        if not isinstance(shape, (list, tuple)):
+            raise TypeError(f"shape must be list or tuple, but got {type(shape)}.")
         for i, element in enumerate(shape):
             if not isinstance(element, int):
                 raise TypeError(f"shape element must be int, but got {type(element)} at index {i}.")
         self._tensor.set_shape(shape)
 
-    def get_shape(self):
+    def get_data_to_numpy(self):
         """
-        Get the shape of the Tensor.
+        Get the data from the Tensor to the numpy object.
 
         Returns:
-            list[int], the shape of the Tensor.
+            numpy.ndarray, the numpy object from Tensor data.
 
         Examples:
             >>> import mindspore_lite as mslite
+            >>> import numpy as np
             >>> tensor = mslite.Tensor()
-            >>> tensor.set_shape([1, 112, 112, 3])
-            >>> shape = tensor.get_shape()
-            >>> print(shape)
-            [1, 112, 112, 3]
+            >>> tensor.shape = [1, 3, 2, 2]
+            >>> tensor.dtype = mslite.DataType.FLOAT32
+            >>> in_data = np.arange(1 * 3 * 2 * 2, dtype=np.float32)
+            >>> tensor.set_data_from_numpy(in_data)
+            >>> data = tensor.get_data_to_numpy()
+            >>> print(data)
+            [[[[ 0.  1.]
+               [ 2.  3.]]
+              [[ 4.  5.]
+               [ 6.  7.]]
+              [[ 8.  9.]
+               [ 10. 11.]]]]
         """
-        return self._tensor.get_shape()
-
-    def set_format(self, tensor_format):
-        """
-        Set format of the Tensor.
-
-        Args:
-            tensor_format (Format): The format of the Tensor.
-
-        Raises:
-            TypeError: `tensor_format` is not a Format.
-
-        Examples:
-            >>> import mindspore_lite as mslite
-            >>> tensor = mslite.Tensor()
-            >>> tensor.set_format(mslite.Format.NHWC)
-        """
-        if not isinstance(tensor_format, Format):
-            raise TypeError(f"tensor_format must be Format, but got {type(tensor_format)}.")
-        self._tensor.set_format(format_py_cxx_map.get(tensor_format))
-
-    def get_format(self):
-        """
-        Get the format of the Tensor.
-
-        Returns:
-            Format, the format of the Tensor.
-
-        Examples:
-            >>> import mindspore_lite as mslite
-            >>> tensor = mslite.Tensor()
-            >>> tensor.set_format(mslite.Format.NHWC)
-            >>> tensor_format = tensor.get_format()
-            >>> print(tensor_format)
-            Format.NHWC
-        """
-        return format_cxx_py_map.get(self._tensor.get_format())
-
-    def get_element_num(self):
-        """
-        Get the element num of the Tensor.
-
-        Returns:
-            int, the element num of the Tensor data.
-
-        Examples:
-            >>> import mindspore_lite as mslite
-            >>> tensor = mslite.Tensor()
-            >>> num = tensor.get_element_num()
-            >>> print(num)
-            1
-        """
-        return self._tensor.get_element_num()
-
-    def get_data_size(self):
-        """
-        Get the data size of the Tensor.
-
-        data size of the Tensor = the element num of the Tensor * size of unit data type of the Tensor.
-
-        Returns:
-            int, the data size of the Tensor data.
-
-        Examples:
-            >>> # data_size is related to data_type
-            >>> import mindspore_lite as mslite
-            >>> tensor = mslite.Tensor()
-            >>> tensor.set_data_type(mslite.DataType.FLOAT32)
-            >>> size = tensor.get_data_size()
-            >>> print(size)
-            4
-        """
-        return self._tensor.get_data_size()
+        return self._tensor.get_data_to_numpy()
 
     def set_data_from_numpy(self, numpy_obj):
         """
@@ -454,14 +559,14 @@ class Tensor:
             >>> import mindspore_lite as mslite
             >>> import numpy as np
             >>> tensor = mslite.Tensor()
-            >>> tensor.set_shape([1, 224, 224, 3])
-            >>> tensor.set_data_type(mslite.DataType.FLOAT32)
+            >>> tensor.shape = [1, 3, 224, 224]
+            >>> tensor.dtype = mslite.DataType.FLOAT32
             >>> in_data = np.fromfile("input.bin", dtype=np.float32)
             >>> tensor.set_data_from_numpy(in_data)
             >>> print(tensor)
-            tensor_name: ,
-            data_type: DataType.FLOAT32,
-            shape: [1, 224, 224, 3],
+            name: ,
+            dtype: DataType.FLOAT32,
+            shape: [1, 3, 224, 224],
             format: Format.NCHW,
             element_num: 150528,
             data_size: 602112.
@@ -469,72 +574,38 @@ class Tensor:
             >>> import mindspore_lite as mslite
             >>> import numpy as np
             >>> tensor = mslite.Tensor()
-            >>> tensor.set_shape([1, 2, 2, 3])
-            >>> tensor.set_data_type(mslite.DataType.FLOAT32)
-            >>> in_data = np.arange(1 * 2 * 2 * 3, dtype=np.float32)
+            >>> tensor.shape = [1, 3, 2, 2]
+            >>> tensor.dtype = mslite.DataType.FLOAT32
+            >>> in_data = np.arange(1 * 3 * 2 * 2, dtype=np.float32)
             >>> tensor.set_data_from_numpy(in_data)
             >>> print(tensor)
-            tensor_name: ,
-            data_type: DataType.FLOAT32,
-            shape: [1, 2, 2, 3],
+            name: ,
+            dtype: DataType.FLOAT32,
+            shape: [1, 3, 2, 2],
             format: Format.NCHW,
             element_num: 12,
             data_size: 48.
         """
         if not isinstance(numpy_obj, numpy.ndarray):
             raise TypeError(f"numpy_obj must be numpy.ndarray, but got {type(numpy_obj)}.")
-        data_type_map = {
-            numpy.bool_: DataType.BOOL,
-            numpy.int8: DataType.INT8,
-            numpy.int16: DataType.INT16,
-            numpy.int32: DataType.INT32,
-            numpy.int64: DataType.INT64,
-            numpy.uint8: DataType.UINT8,
-            numpy.uint16: DataType.UINT16,
-            numpy.uint32: DataType.UINT32,
-            numpy.uint64: DataType.UINT64,
-            numpy.float16: DataType.FLOAT16,
-            numpy.float32: DataType.FLOAT32,
-            numpy.float64: DataType.FLOAT64,
-        }
-        if data_type_map.get(numpy_obj.dtype.type) != self.get_data_type():
+        if not numpy_obj.flags['FORC']:
+            numpy_obj = numpy.ascontiguousarray(numpy_obj)
+        if numpy_obj.dtype.type not in numpy_data_type_map:
+            raise TypeError(f"Unsupported numpy dtype value {numpy_obj.dtype}")
+        if numpy_data_type_map.get(numpy_obj.dtype.type) != self.dtype:
             raise RuntimeError(
-                f"data type not equal! Numpy type: {numpy_obj.dtype.type}, Tensor type: {self.get_data_type()}")
-        if numpy_obj.nbytes != self.get_data_size():
+                f"data type not equal! Numpy type: {numpy_obj.dtype.type}, Tensor type: {self.dtype}")
+        if numpy_obj.nbytes != self.data_size:
             raise RuntimeError(
-                f"data size not equal! Numpy size: {numpy_obj.nbytes}, Tensor size: {self.get_data_size()}")
-        self._numpy_obj = numpy_obj.flatten()  # keep reference count of numpy objects
-        self._tensor.set_data_from_numpy(self._numpy_obj)
+                f"data size not equal! Numpy size: {numpy_obj.nbytes}, Tensor size: {self.data_size}")
+        self._tensor.set_data_from_numpy(numpy_obj)
 
-    def get_data_to_numpy(self):
+    @property
+    def device(self):
         """
-        Get the data from the Tensor to the numpy object.
+        Get the device type of the Tensor.
 
         Returns:
-            numpy.ndarray, the numpy object from Tensor data.
-
-        Examples:
-            >>> import mindspore_lite as mslite
-            >>> import numpy as np
-            >>> tensor = mslite.Tensor()
-            >>> tensor.set_shape([1, 2, 2, 3])
-            >>> tensor.set_data_type(mslite.DataType.FLOAT32)
-            >>> in_data = np.arange(1 * 2 * 2 * 3, dtype=np.float32)
-            >>> tensor.set_data_from_numpy(in_data)
-            >>> data = tensor.get_data_to_numpy()
-            >>> print(data)
-            [[[[ 0.  1.  2.]
-               [ 3.  4.  5.]]
-              [[ 6.  7.  8.]
-               [ 9. 10. 11.]]]]
+            str, the device type of the Tensor.
         """
-        return self._tensor.get_data_to_numpy()
-
-    def __str__(self):
-        res = f"tensor_name: {self.get_tensor_name()},\n" \
-              f"data_type: {self.get_data_type()},\n" \
-              f"shape: {self.get_shape()},\n" \
-              f"format: {self.get_format()},\n" \
-              f"element_num: {self.get_element_num()},\n" \
-              f"data_size: {self.get_data_size()}."
-        return res
+        return self._tensor.get_tensor_device_type()

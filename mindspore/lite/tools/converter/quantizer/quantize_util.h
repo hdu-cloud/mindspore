@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,50 +42,92 @@
 #include "tools/converter/quantizer/quant_params.h"
 #include "tools/converter/quantizer/mixed_bit_weight_quantization.h"
 #include "tools/common/string_util.h"
-#include "ops/core_ops.h"
 #include "ops/quant_dtype_cast.h"
 
 namespace mindspore::lite::quant {
-static const std::set<PrimitivePtr> has_bias_operator = {prim::kPrimConv2DFusion, prim::kPrimConv2dTransposeFusion,
-                                                         prim::kPrimMatMulFusion, prim::kPrimFullConnection,
-                                                         prim::kPrimLayerNormFusion};
-
-QuantParamHolderPtr GetCNodeQuantHolder(const PrimitivePtr &primitive);
-
-QuantParamHolderPtr GetCNodeQuantHolder(const CNodePtr &cnode);
-
-int UpdateTensorDataAndSize(const AnfNodePtr &node, const tensor::TensorPtr &weight, void *quant_datas, int new_size,
-                            TypeId new_data_type);
-
-void CalQuantAssitInfo(const schema::PrimitiveT &primitive, const std::vector<int> &shapes, int index,
-                       bool *channel_at_first, int *channel_cnt);
-
-bool TensorQuantParamsInited(const schema::TensorT &tensor);
-
-int CalChannels(const std::vector<int> &dims, int channel_cnt, bool *channel_at_first);
+int UpdateTensorDataAndSize(const AnfNodePtr &node, const tensor::TensorPtr &weight, const void *quant_datas,
+                            size_t new_size, TypeId new_data_type);
 
 int GetPreferredDim(const CNodePtr &cnode, int input_index, const std::vector<int> &dims);
+
+int GetFollowedNodePreferredDim(const FuncGraphPtr &func_graph, const CNodePtr &cnode, const std::vector<int> &dims);
 
 std::vector<int> ConvertShapeVectorToInt32(const ShapeVector &dims);
 
 int DeQuantData(const mindspore::MSTensor *tensor, std::vector<double> *dequant_data);
 
-int GetQuantType(const CNodePtr &cnode, schema::QuantType *quant_type);
+int GetQuantType(const CNodePtr &cnode, quant::QuantType *quant_type);
+
+int GetQuantTypeNew(const CNodePtr &cnode, quant::QuantType *quant_type);
 
 void GetFuncGraphs(const FuncGraphPtr &func_graph, std::set<FuncGraphPtr> *all_func_graphs);
 
-int UpdateDataType(const AnfNodePtr &cnode, TypeId new_data_type);
-
-ValueNodePtr NewQuantCastPrimitive(int src_type, int dst_type,
-                                   const std::vector<schema::QuantParamT> &input_quant_params,
-                                   const std::vector<schema::QuantParamT> &output_quant_params, int axis = 0,
-                                   bool set_quant_flag = true);
+int UpdateDataType(const AnfNodePtr &node, TypeId new_data_type);
 
 bool IsGraphInDTypeCast(const CNodePtr &cnode);
 
 bool IsGraphOutDTypeCast(const FuncGraphPtr &func_graph, const CNodePtr &cnode);
 
 int GetCastNodeType(const FuncGraphPtr &func_graph, const CNodePtr &cnode, CastNodeType *cast_node_type);
+
+std::string NodePrimitiveType(const CNodePtr &cnode);
+
+Status BuildModelByFuncGraph(const std::shared_ptr<mindspore::Model> &model, const FuncGraphPtr &func_graph,
+                             const std::shared_ptr<mindspore::ConverterPara> &param, size_t *size);
+
+mindspore::lite::Tensor *MSTensorToLiteTensor(const mindspore::MSTensor &tensor);
+
+std::vector<mindspore::lite::Tensor *> MSTensorToLiteTensors(const std::vector<mindspore::MSTensor> &src_tensors);
+
+void GetParameterAndTensor(const AnfNodePtr &node, ParameterPtr *param_node, tensor::TensorPtr *tensor_info);
+
+bool CheckNodeInSet(const CNodePtr &cnode, const std::set<PrimitivePtr> &support_primitive_types);
+
+int GetElementNumFromShape(const std::vector<int> &dims, int *total_size);
+
+int GetBucketAllIndex(const std::vector<int> &dims, int preferred_dim,
+                      std::vector<std::vector<size_t>> *buckets_data_index);
+
+bool CheckControlFlowType(const AnfNodePtr &node);
+
+bool CheckFollowedNodeInSet(const FuncGraphPtr &func_graph, const CNodePtr &cnode,
+                            const std::set<PrimitivePtr> &support_primitive_types);
+
+int CloneFuncGraph(const FuncGraphPtr &func_graph, const std::shared_ptr<ConverterPara> &param,
+                   FuncGraphPtr *func_graph_bak);
+
+int ConvertFp16ToFp32(const FuncGraphPtr &old_graph);
+
+int ConvertFp32ToFp16(const FuncGraphPtr &old_graph);
+
+int ConvertCNodeFp32ToFp16(const CNodePtr &cnode);
+
+int ConvertCNodeFp16ToFp32(const CNodePtr &cnode);
+
+int MarkOriginDataType(const FuncGraphPtr &func_graph);
+
+int DumpGraph(const FuncGraphPtr &func_graph, const std::shared_ptr<ConverterPara> &param,
+              const std::string &save_path);
+
+bool IsPerchannelWeight(const std::vector<schema::QuantParamT> &quant_params, const tensor::TensorPtr &weight,
+                        int preferred_dim);
+QuantizationParamPtr ConvertQuantParamTToQuantizationParam(const std::vector<schema::QuantParamT> &quant_params);
+
+std::vector<schema::QuantParamT> ConvertQuantizationParamToQuantParamT(const QuantizationParamPtr &quantization_param);
+
+std::vector<schema::QuantParamT> GetInputNodeQuantParam(const CNodePtr &cnode, size_t index,
+                                                        size_t multi_ouput_index = 0);
+STATUS SetInputNodeQuantParam(const CNodePtr &cnode, size_t index, const std::vector<schema::QuantParamT> &quant_param);
+
+tensor::TensorPtr GetNodeTensor(const AnfNodePtr &node);
+
+int RemoveInputNodeQuantParam(const CNodePtr &cnode, size_t index);
+
+std::vector<schema::QuantParamT> CloneQuantParam(const std::vector<schema::QuantParamT> &src);
+
+int CalBiasQuantParams(const std::vector<schema::QuantParamT> &active_params,
+                       const std::vector<schema::QuantParamT> &weight_params,
+                       std::vector<schema::QuantParamT> *bias_params);
 
 template <typename T>
 int DeQuantData(const int8_t *tensor_data, int64_t elements_num, std::vector<mindspore::QuantParam> quant_params,
@@ -103,27 +145,27 @@ int DeQuantData(const int8_t *tensor_data, int64_t elements_num, std::vector<min
   return RET_OK;
 }
 
-std::string NodePrimitiveType(const CNodePtr &cnode);
-
-Status BuildModelByFuncGraph(const std::shared_ptr<mindspore::Model> &model, const FuncGraphPtr &func_graph,
-                             const std::shared_ptr<mindspore::ConverterPara> &param, size_t *size);
-
-mindspore::lite::Tensor *MSTensorToLiteTensor(const mindspore::MSTensor &tensor);
-
-std::vector<mindspore::lite::Tensor *> MSTensorToLiteTensors(const std::vector<mindspore::MSTensor> &src_tensors);
-
-void GetLiteParameter(const AnfNodePtr &node, ParameterPtr *param_node, tensor::TensorPtr *tensor_info);
-
-bool CheckNodeInSet(const CNodePtr &cnode, const std::set<PrimitivePtr> &support_primitive_types);
-
-int GetElementNumFromShape(const std::vector<int> &dims, int *total_size);
-
-int GetBucketAllIndex(const std::vector<int> &dims, int preferred_dim,
-                      std::vector<std::vector<size_t>> *buckets_data_index);
-
-bool CheckControlFlowType(const AnfNodePtr &node);
-
-int CloneFuncGraph(const FuncGraphPtr &func_graph, const std::shared_ptr<ConverterPara> &param,
-                   FuncGraphPtr *func_graph_bak);
+// quant and dequant
+// quant_data = std::round(origin_data / scale + zero_point)
+// new_data = scale * (quant_data - zero_point)
+template <typename T>
+T QuantDeQuantData(float origin_data, const schema::QuantParamT *quant_param, int quant_max, int quant_min) {
+  MS_ASSERT(quant_param != nullptr);
+  MS_ASSERT(quant_param->inited);
+  const auto scale = quant_param->scale;
+  const int zero_point = quant_param->zeroPoint;
+  if (scale <= SCALE_THREASHOLD) {
+    return 0;
+  }
+  return [quant_max, quant_min, zero_point, scale, origin_data] {
+    auto quant_data = std::round(origin_data / scale + zero_point);
+    if (quant_data > quant_max) {
+      quant_data = quant_max;
+    } else if (quant_data < quant_min) {
+      quant_data = quant_min;
+    }
+    return static_cast<T>(scale * (quant_data - zero_point));
+  }();
+}
 }  // namespace mindspore::lite::quant
 #endif  // MINDSPORE_LITE_TOOLS_CONVERTER_QUANTIZER_QUANTIZE_UTIL_H_

@@ -15,15 +15,16 @@ files:
 
   "graphengine":
     approvers:
-    - zhoufeng54
     - jjfeing
     - guoqi1024
     - baochong
     - liujunzhu
+    - kisnwang
+    - yuchaojie
+    - hwcaifubi
 
   "version.txt":
     approvers:
-    - zhoufeng54
     - jjfeing
     - guoqi1024
     - baochong

@@ -13,10 +13,13 @@
 # limitations under the License.
 # ============================================================================
 """ test graph fallback """
+import os
+import math
 import pytest
 import numpy as np
 import mindspore.nn as nn
-from mindspore import context, Tensor
+from mindspore import context, Tensor, jit
+from mindspore.ops import Primitive
 
 context.set_context(mode=context.GRAPH_MODE)
 
@@ -133,6 +136,7 @@ def test_parse_tuple():
     Description: Test Interpret node in tuple in graph mode.
     Expectation: No exception.
     """
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
 
     class Network(nn.Cell):
         def construct(self):
@@ -143,6 +147,7 @@ def test_parse_tuple():
     net = Network()
     out = net()
     assert out[0].asnumpy() == 1 and out[1].asnumpy() == 2 and out[2].asnumpy() == 3
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
 
 
 def test_parse_slice():
@@ -158,9 +163,39 @@ def test_parse_slice():
             y = x[Tensor([0]): Tensor([2])]
             return y
 
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     net = Network()
     out = net()
     assert out[0].asnumpy() == 11 and out[1].asnumpy() == 22
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '2'
+
+
+def test_list_count():
+    """
+    Feature: Fallback feature
+    Description: support attr/method of builtin type.
+    Expectation: No exception.
+    """
+    @jit
+    def list_count():
+        x = list([1, 2, 3])
+        res = x.count(1)
+        return res
+    assert list_count() == 1
+
+
+def test_list_append():
+    """
+    Feature: Fallback feature
+    Description: support attr/method of builtin type.
+    Expectation: No exception.
+    """
+    @jit
+    def list_append():
+        x = list([1, 2, 3])
+        x.append(4)
+        return Tensor(x)
+    assert np.all(list_append().asnumpy() == np.array([1, 2, 3, 4]))
 
 
 @pytest.mark.skip(reason='Not support graph fallback feature yet')
@@ -239,6 +274,65 @@ def test_parse_dict():
     net = Network()
     out = net()
     assert (out.asnumpy() == [4, 5, 6]).all()
+
+
+def test_fallback_tensor_array_astype():
+    """
+    Feature: JIT Fallback
+    Description: Test Tensor(array) with astype() in graph mode.
+    Expectation: No exception.
+    """
+    @jit
+    def foo():
+        me_x = Tensor([1.1, -2.1]).astype("float32")
+        return me_x
+    print(foo())
+
+
+def test_fallback_tuple_with_mindspore_function():
+    """
+    Feature: JIT Fallback
+    Description: Test fallback when local input has tuple with mindspore function type, such as Cell, Primitive.
+    Expectation: No exception.
+    """
+    def test_isinstance(a, base_type):
+        mro = type(a).mro()
+        for i in base_type:
+            if i in mro:
+                return True
+        return False
+
+    @jit
+    def foo():
+        return test_isinstance(np.array(1), (np.ndarray, nn.Cell, Primitive))
+
+    assert foo()
+
+
+def test_fallback_math_floor():
+    """
+    Feature: JIT Fallback
+    Description: Test math.floor()
+    Expectation: No exception
+    """
+    @jit
+    def foo():
+        return math.floor(1.5)
+
+    assert foo() == 1
+
+
+def test_fallback_math_log():
+    """
+    Feature: JIT Fallback
+    Description: Test math.log()
+    Expectation: No exception
+    """
+    @jit
+    def foo():
+        return math.log(1)
+
+    assert foo() == 0
 
 
 def test_parse_ifexpr():

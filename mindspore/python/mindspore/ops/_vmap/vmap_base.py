@@ -21,13 +21,14 @@ from mindspore.common import Tensor
 from mindspore.ops import operations as P
 from mindspore.ops import functional as F
 from mindspore.ops import constexpr
+from mindspore.ops.primitive import _primexpr
 from mindspore.ops.operations import math_ops
 from mindspore.ops.operations import _grad_ops as G
 from mindspore.ops.operations import nn_ops as nps
-from mindspore.ops.composite import _VmapGeneralPreprocess
-from mindspore.ops.primitive import Primitive
+from mindspore.ops.function import _VmapGeneralPreprocess
+from mindspore.ops.primitive import Primitive, _PrimitiveC
 from mindspore.ops.operations.random_ops import UniformCandidateSampler, RandomShuffle
-from mindspore.ops._grad.grad_base import BpropRegistry as VmapRuleRegistry
+from mindspore.ops._grad_experimental.grad_base import BpropRegistry as VmapRuleRegistry
 
 
 vmap_rules_getters = VmapRuleRegistry()
@@ -41,7 +42,7 @@ def get_vmap_rule(prim, axis_size):
     return None
 
 
-@constexpr
+@_primexpr
 def _get_broadcast_shape_with_front_axis(x_shape, y_shape):
     """ Explicitly matched with the broadcast shape, that is, 1 is added to the broadcast position. """
     x_len = len(x_shape)
@@ -86,7 +87,7 @@ def _handle_broadcasting(x, x_shape, y_shape):
     return F.reshape(x, broadcast_shape)
 
 
-@constexpr
+@_primexpr
 def _get_broadcasting_with_front_axis_additional_axis(x_shape, y_shape):
     """ Get the axes that are inserted after broadcasting.
     Args:
@@ -129,15 +130,19 @@ def _raise_value_error(info, param=None):
     raise ValueError(info + f"{param}")
 
 
-@constexpr
+@_primexpr
 def _get_broadcast_shape(x_shape, dst, axis_size):
     """Get the target shape for broadcast array."""
+    def _check(dst, broadcast_ndim):
+        if dst < -broadcast_ndim or dst >= broadcast_ndim:
+            _raise_value_error("Destination axis {} is out of bounds for array of dimension"
+                               " [{}, {}).".format(dst, -broadcast_ndim, broadcast_ndim))
+
     x_ndim = len(x_shape)
     broadcast_ndim = x_ndim + 1
 
-    if dst < -broadcast_ndim or dst >= broadcast_ndim:
-        _raise_value_error("Destination axis {} is out of bounds for array of dimension"
-                           " [{}, {}).".format(dst, -broadcast_ndim, broadcast_ndim))
+    _check(dst, broadcast_ndim)
+
     if dst < 0:
         dst = broadcast_ndim + dst
 
@@ -245,7 +250,7 @@ def vmap_monad_rule(prim, axis_size):
 def _bdim_at_any(x, src, dst, axis_size):
     """
     Moves source axes of an array to the dst axis, and other axes remain in their original order. If the source axes
-    is 'None', broadcasts the array at dst axis with axis_size.
+    is ``None``, broadcasts the array at dst axis with axis_size.
 
     Args:
         x (Tensor or Scalar): The input tensor or scalar. The data type should be one of the following types: float16,
@@ -267,7 +272,7 @@ def _bdim_at_any(x, src, dst, axis_size):
 def _bdim_at_front(x, src, axis_size):
     """
     Moves source axes of an array to the foremost, and other axes remain in their original order. If the source axes
-    is 'None', broadcasts the array at foremost axis with axis_size.
+    is ``None``, broadcasts the array at foremost axis with axis_size.
 
     Args:
         x (Tensor or Scalar): The input tensor or scalar. The data type should be one of the following types: float16,
@@ -284,7 +289,7 @@ def _bdim_at_front(x, src, axis_size):
 def _bdim_at_back(x, src, axis_size):
     """
     Moves source axes of an array to the last, and other axes remain in their original order. If the source axes
-    is 'None', broadcasts the array at foremost axis with axis_size.
+    is ``None``, broadcasts the array at foremost axis with axis_size.
 
     Args:
         x (Tensor or Scalar): The input tensor or scalar. The data type should be one of the following types: float16,
@@ -420,6 +425,8 @@ def _vmap_clone_prim(prim):
     """
     Cloning a new primitive object same as `prim`.
     """
+    if isinstance(prim, _PrimitiveC):
+        return _PrimitiveC(prim.name, prim.attrs)
     new_ops = _ops_vmap_clone_prim_dict.get(prim.name, None)
     if new_ops is None:
         raise ValueError("Failed to get the primitive object of {} from `_ops_vmap_clone_prim_dict`. Please register "
@@ -437,7 +444,7 @@ def _vmap_clone_prim(prim):
     return cloned
 
 
-@constexpr
+@_primexpr
 def _get_reduce_batch_axis(axis, x_dim, x_ndim):
     """get batch_axis for reduce* operation."""
     # For axis, it's value in Union[int, list, tuple]
@@ -492,6 +499,7 @@ _ops_vmap_clone_prim_dict = {
     "ApplyProximalAdagrad": P.ApplyProximalAdagrad,
     "ApplyProximalGradientDescent": P.ApplyProximalGradientDescent,
     "ApplyAdamWithAmsgrad": P.ApplyAdamWithAmsgrad,
+    "ApplyAdamWithAmsgradV2": P.ApplyAdamWithAmsgradV2,
     "ApplyPowerSign": P.ApplyPowerSign,
     "ApplyAdagradDA": P.ApplyAdagradDA,
     "ApplyAdagradV2": P.ApplyAdagradV2,

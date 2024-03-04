@@ -29,15 +29,17 @@ def compute_blockdim(shape):
         size = shape
     else:
         size = 2
-    return 32    
+    return 32
     # return min(32, math.ceil(size / 8192 + 1))
 
 def four2five_execute(shape, dtype, format, dst_type, attrs=None):
     # Generate data
     op_attrs = [format, dst_type]
+    default_attrs = { "polytops_parameter_shifting" : False, "enable_polytops" : "never" }
     if attrs is None:
         attrs = {}
     attrs["pragma_disable_whole_component"] = False
+    attrs.update(default_attrs)
     if 'tuning' in attrs.keys():
         t = attrs.get("tuning", False)
         kernel_name = attrs.get("kernel_name", False)

@@ -18,9 +18,9 @@
 #define MINDSPORE_LITE_TOOLS_GRAPH_KERNEL_CONVERTER_ELIMINATE_MAKETUPLE_GETITEM_H_
 
 #include <vector>
-#include "backend/common/optimizer/pass.h"
+#include "include/backend/optimizer/pass.h"
 #include "ir/func_graph.h"
-#include "common/graph_kernel/core/graph_builder.h"
+#include "backend/common/graph_kernel/core/graph_builder.h"
 
 namespace mindspore::graphkernel {
 /**

@@ -8,8 +8,8 @@ mindspore.export
     .. note::
         - 当导出文件格式为AIR、ONNX时，单个Tensor的大小不能超过2GB。
         - 当 `file_name` 没有后缀时，系统会根据 `file_format` 自动添加后缀。
-        - 现已支持将 `jit` 修饰的函数导出成MINDIR格式文件。
-        - 当导出 `jit` 修饰的函数时，函数内不能包含有类属性参与的计算。
+        - 现已支持将 :func:`mindspore.jit` 修饰的函数导出成MINDIR格式文件。
+        - 当导出 :func:`mindspore.jit` 修饰的函数时，函数内不能包含有类属性参与的计算。
 
     参数：
         - **net** (Union[Cell, function]) - MindSpore网络结构。
@@ -23,21 +23,22 @@ mindspore.export
 
         - **kwargs** (dict) - 配置选项字典。
 
-          - **quant_mode** (str) - 如果网络是量化感知训练网络，那么 `quant_mode` 需要设置为"QUANT"，否则 `quant_mode` 需要设置为"NONQUANT"。
-          - **mean** (float) - 预处理后输入数据的平均值，用于量化网络的第一层。默认值：127.5。
-          - **std_dev** (float) - 预处理后输入数据的方差，用于量化网络的第一层。默认值：127.5。
-          - **enc_key** (str) - 用于加密的字节类型密钥，有效长度为16、24或者32。
+          - **enc_key** (byte) - 用于加密的字节类型密钥，有效长度为16、24或者32。
           - **enc_mode** (Union[str, function]) - 指定加密模式，当设置 `enc_key` 时启用。
 
             - 对于 'AIR'和 'ONNX'格式的模型，当前仅支持自定义加密导出。
             - 对于 'MINDIR'格式的模型，支持的加密选项有： 'AES-GCM'， 'AES-CBC'， 'SM4-CBC'和用户自定义加密算法。默认值："AES-GCM"。
-            - 关于使用自定义加密导出的详情，请查看 `教程 <https://www.mindspore.cn/mindarmour/docs/zh-CN/r1.9/model_encrypt_protection.html>`_。
+            - 关于使用自定义加密导出的详情，请查看 `教程 <https://www.mindspore.cn/mindarmour/docs/zh-CN/master/model_encrypt_protection.html>`_。
           
           - **dataset** (Dataset) - 指定数据集的预处理方法，用于将数据集的预处理导入MindIR。
 
           - **obf_config** (dict) - 模型混淆配置选项字典。
 
             - **type** (str) - 混淆类型，目前支持动态混淆，即 'dynamic' 。
-            - **obf_ratio** (Union[str, float]) - 全模型算子的混淆比例，可取浮点数(0, 1]或者字符串 "small" 、 "medium" 、 "large" 。
-            - **customized_func** (function) - 在自定义函数模式下需要设置的Python函数，用来控制混淆结构中的选择分支走向。它的返回值需要是bool类型，且是恒定的，用户可以参考不透明谓词进行设置。如果设置了 `customized_func` ，那么在使用 `load` 接口导入模型的时候，需要把这个函数也传入。
-            - **obf_password** (int) - 秘密口令，用于password模式，是一个大于0、小于等于int_64_max(9223372036854775807)的整数。如果用户设置了 `obf_password` ，那么在部署混淆模型的时候，需要在调用 :class:`mindspore.nn.GraphCell` 接口中传入 `obf_password` 。需要注意的是，如果用户同时设置了 `customized_func` 和 `obf_password` ，那么password模式将会被采用。
+            - **obf_ratio** (Union[str, float]) - 全模型算子的混淆比例，可取浮点数(0, 1]或者字符串 ``"small"`` 、 ``"medium"`` 、 ``"large"`` 。``"small"`` 、``"medium"`` 、``"large"`` 分别对应于 0.1、0.3、0.6。
+            - **customized_func** (function) - 在自定义函数模式下需要设置的Python函数，用来控制混淆结构中的选择分支走向。它的返回值需要是bool类型，且是恒定的，用户可以参考不透明谓词进行设置（请查看 `动态混淆教程 <https://www.mindspore.cn/mindarmour/docs/zh-CN/master/dynamic_obfuscation_protection.html>`_　中的 `my_func()`）。如果设置了 `customized_func` ，那么在使用 `load` 接口导入模型的时候，需要把这个函数也传入。
+            - **obf_random_seed** (int) - 混淆随机种子，是一个取值范围为(0, 9223372036854775807]的整数，不同的随机种子会使模型混淆后的结构不同。如果用户设置了 `obf_random_seed` ，那么在部署混淆模型的时候，需要在调用 :class:`mindspore.nn.GraphCell` 接口中传入 `obf_random_seed` 。需要注意的是，如果用户同时设置了 `customized_func` 和 `obf_random_seed` ，那么后一种模式将会被采用。
+
+    教程样例：
+        - `保存与加载 - 保存和加载MindIR
+          <https://mindspore.cn/tutorials/zh-CN/master/beginner/save_load.html#保存和加载mindir>`_

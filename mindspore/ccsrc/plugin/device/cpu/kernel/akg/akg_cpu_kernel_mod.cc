@@ -16,6 +16,8 @@
 
 #include "plugin/device/cpu/kernel/akg/akg_cpu_kernel_mod.h"
 
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <dlfcn.h>
 #include <omp.h>
 #include <thread>
@@ -23,7 +25,7 @@
 #include <memory>
 #include <utility>
 #include "nlohmann/json.hpp"
-#include "kernel/common_utils.h"
+#include "kernel/framework_utils.h"
 #include "include/common/thread_pool.h"
 #include "utils/ms_utils.h"
 #include "utils/file_utils.h"
@@ -49,7 +51,6 @@ struct AkgCallBack {
   void *extend_data = nullptr;
 
   AkgCallBack() : parallel_launch_func(&AkgParallelLaunch::AkgLaunchFunc), malloc_func(&malloc), free_func(&free) {}
-  ~AkgCallBack() = default;
 };
 
 AkgCpuKernelManagerPtr AkgCpuKernelMod::kernel_manager_ = std::make_shared<AkgCpuKernelManager>();
@@ -62,18 +63,13 @@ AkgCpuKernelManager::~AkgCpuKernelManager() {
   }
 }
 
-void *AkgCpuKernelManager::SearchFunc(const std::string &kernel_name) const {
-  auto iter = cpu_func_map_.find(kernel_name);
-  if (iter == cpu_func_map_.end()) {
-    return nullptr;
-  } else {
-    return iter->second.first;
-  }
-}
-
-void *AkgCpuKernelManager::SearchFuncWithSharedLock(const std::string &kernel_name) const {
-  std::shared_lock lock(mutex_);
-  return SearchFunc(kernel_name);
+void AkgCpuKernelManager::GetFunctionAndKernelName(const std::string &fn, const std::string &kernel_name,
+                                                   std::string *fn_so, std::string *fn_kernel) const {
+  KernelMeta *bin_map = KernelMeta::GetInstance();
+  auto dso_path = bin_map->kernel_meta_path();
+  (void)dso_path.append(fn + ".so");
+  *fn_so = dso_path;
+  *fn_kernel = kernel_name;
 }
 
 void *AkgCpuKernelManager::GetFunction(const std::string &kernel_name) {
@@ -95,22 +91,27 @@ void *AkgCpuKernelManager::GetFunction(const std::string &kernel_name) {
   } else {
     fn = kernel_name;
   }
-  KernelMeta *bin_map = KernelMeta::GetInstance();
-  auto fn_so = bin_map->kernel_meta_path();
-  (void)fn_so.append(fn + ".so");
+  std::string fn_so;
+  std::string fn_kernel;
+  GetFunctionAndKernelName(fn, kernel_name, &fn_so, &fn_kernel);
   auto realfile = FileUtils::GetRealPath(fn_so.c_str());
   if (!realfile.has_value()) {
-    MS_LOG(ERROR) << "Invalid file path " << fn_so << ". kernel: " << kernel_name;
+    MS_LOG(ERROR) << "Invalid file path " << fn_so << " kernel: " << kernel_name;
     return nullptr;
   }
-  auto handle = dlopen(realfile.value().c_str(), RTLD_LAZY | RTLD_LOCAL);
+  auto file_path = realfile.value();
+  if (file_path.empty()) {
+    MS_LOG(ERROR) << "The AKG kernel file does not exist, kernel name: " << fn_kernel;
+    return nullptr;
+  }
+  auto handle = dlopen(file_path.c_str(), RTLD_LAZY | RTLD_LOCAL);
   if (handle == nullptr) {
     MS_LOG(ERROR) << "Load " << fn_so << " failed. kernel: " << kernel_name;
     return nullptr;
   }
-  auto launch_func = dlsym(handle, kernel_name.c_str());
+  auto launch_func = dlsym(handle, fn_kernel.c_str());
   if (launch_func == nullptr) {
-    MS_LOG(ERROR) << "Undefined symbol " << kernel_name << " in " << fn_so;
+    MS_LOG(ERROR) << "Undefined symbol " << fn_kernel << " in " << fn_so;
     return nullptr;
   }
   cpu_func_map_[kernel_name] = std::make_pair(launch_func, handle);

@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,32 +17,19 @@
 #include "plugin/device/ascend/optimizer/ir_fusion/transpose_reshape_fusion.h"
 #include <memory>
 #include <vector>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "ops/ascend_op_name.h"
+#include "ops/array_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/optimizer/helper.h"
-#include "mindspore/core/ops/core_ops.h"
+#include "include/backend/optimizer/helper.h"
 #include "plugin/device/ascend/optimizer/ir_fusion/reshape_transpose_fusion.h"
 
 namespace mindspore {
 namespace opt {
-namespace {
-bool CheckShapeDimInfo(const ShapeVector &shape) {
-  constexpr size_t kShape2Dim = 2;
-  if (shape.empty()) {
-    return false;
-  }
-  if (shape.size() == 1 && shape[0] % SizeToLong(kCubeSize) != 0) {
-    return false;
-  }
-  return !(shape.size() >= kShape2Dim && (shape[shape.size() - 1] % SizeToLong(kCubeSize) != 0 ||
-                                          shape[shape.size() - kShape2Dim] % SizeToLong(kCubeSize) != 0));
-}
-}  // namespace
-
 const BaseRef TransposeReshapeFusion::DefinePattern() const {
   const auto prim_reshape = std::make_shared<Primitive>(prim::kPrimReshape->name());
-  VectorRef transpose({prim::kPrimTranspose, input_varptr_});
+  VectorRef transpose({prim::kPrimTransposeD, input_varptr_});
 
   return VectorRef({prim_reshape, transpose});
 }

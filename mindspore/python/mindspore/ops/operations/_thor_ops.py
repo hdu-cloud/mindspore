@@ -17,7 +17,7 @@ import math
 
 from mindspore.ops.primitive import prim_attr_register, PrimitiveWithInfer
 from mindspore.common import dtype as mstype
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.ops.operations.nn_ops import _check_positive_int_or_tuple
 
 __all__ = ["CusBatchMatMul",
@@ -261,8 +261,8 @@ class CusMatMulCube(PrimitiveWithInfer):
     The rank of input tensors must be `2`.
 
     Args:
-        transpose_a (bool): If true, `a` is transposed before multiplication. Default: False.
-        transpose_b (bool): If true, `b` is transposed before multiplication. Default: False.
+        transpose_a (bool): If true, `a` is transposed before multiplication. Default: ``False``.
+        transpose_b (bool): If true, `b` is transposed before multiplication. Default: ``False``.
 
     Inputs:
         - **input_x** (Tensor) - The first tensor to be multiplied. The shape of the tensor is :math:`(N, C)`. If

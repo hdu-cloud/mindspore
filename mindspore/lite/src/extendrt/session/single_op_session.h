@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,43 +19,57 @@
 #include <string>
 #include <memory>
 #include <vector>
+#include <tuple>
+#include <unordered_map>
 #include "src/extendrt/infer_session.h"
-#include "extendrt/utils/kernel_graph_utils.h"
+#include "mindspore/ccsrc/kernel/framework_utils.h"
 
 namespace mindspore {
 /// \brief Single Op Session implementation, used in Ascend Device Context.
 class SingleOpInferSession : public InferSession {
  public:
   SingleOpInferSession() = default;
-  ~SingleOpInferSession() override;
-  Status Init(const std::shared_ptr<Context> &context) override;
+  ~SingleOpInferSession() override = default;
+  Status Init(const std::shared_ptr<Context> &context, const ConfigInfos &config_info = {}) override;
   Status AscendInit(const std::shared_ptr<Context> &context);
-  Status CompileGraph(FuncGraphPtr graph, const void *data = nullptr, size_t size = 0) override;
-  Status RunGraph(const std::vector<tensor::Tensor> &inputs, std::vector<tensor::Tensor> *outputs,
+  Status CompileGraph(FuncGraphPtr graph, const void *data = nullptr, size_t size = 0,
+                      uint32_t *graph_id = nullptr) override;
+  Status RunGraph(uint32_t graph_id, const std::vector<tensor::Tensor> &inputs, std::vector<tensor::Tensor> *outputs,
                   const MSKernelCallBack &before, const MSKernelCallBack &after) override;
-  Status RunGraph(const std::vector<tensor::Tensor> &inputs, std::vector<tensor::Tensor> *outputs) override;
-  Status Resize(const std::vector<tensor::Tensor> &inputs, const std::vector<std::vector<int64_t>> &dims) override;
-  std::vector<MutableTensorImplPtr> GetOutputs() override;
-  std::vector<MutableTensorImplPtr> GetInputs() override;
-  std::vector<std::string> GetOutputNames() override;
-  std::vector<std::string> GetInputNames() override;
-  MutableTensorImplPtr GetOutputByTensorName(const std::string &tensorName) override;
-  MutableTensorImplPtr GetInputByTensorName(const std::string &name) override;
+  Status RunGraph(uint32_t graph_id, const std::vector<tensor::Tensor> &inputs,
+                  std::vector<tensor::Tensor> *outputs) override;
+  Status Resize(uint32_t graph_id, const std::vector<tensor::Tensor> &inputs,
+                const std::vector<std::vector<int64_t>> &dims) override;
+  std::vector<MutableTensorImplPtr> GetOutputs(uint32_t graph_id) override;
+  std::vector<MutableTensorImplPtr> GetInputs(uint32_t graph_id) override;
+  std::vector<std::string> GetOutputNames(uint32_t graph_id) override;
+  std::vector<std::string> GetInputNames(uint32_t graph_id) override;
+  MutableTensorImplPtr GetOutputByTensorName(uint32_t graph_id, const std::string &tensorName) override;
+  MutableTensorImplPtr GetInputByTensorName(uint32_t graph_id, const std::string &name) override;
+  void SetConfigInfo(const ConfigInfos &config_infos) { config_infos_ = config_infos; }
+  void SetCustomAscendOpAttrs(const kernel::BaseOperatorPtr &op);
 
- private:
-  Status UpdateKernelGraphInputs(const std::vector<std::vector<int64_t>> &dims, const std::vector<TypeId> &type_ids,
-                                 bool use_type_from_graph);
-  Status UpdateGraphInputsForDVPP(const std::vector<kernel::KernelTensorPtr> &inputs);
-  Status ResizeGraphInputs(const std::vector<tensor::Tensor> &inputs, const std::vector<std::vector<int64_t>> &dims);
+ protected:
+  Status OnNewInputShapes(const std::vector<ShapeVector> &new_shapes);
+  Status BuildCustomAscendKernel(const CNodePtr &node);
+  std::tuple<kernel::KernelModPtr, kernel::KernelArgs> BuildCustomAscendKernelImpl(const CNodePtr &node);
+  Status InitInputOutputInfos(const FuncGraphPtr &graph);
+  void SetBackOutputIfDynamic(std::vector<tensor::Tensor> *outputs);
+  Status InitInputOutputData(const std::vector<tensor::Tensor> &inputs, std::vector<tensor::Tensor> *outputs);
 
-  KernelGraphUtilsPtr kernel_graph_utils_;
-  KernelGraphPtr kernel_graph_;
   std::vector<MutableTensorImplPtr> inputs_;
   std::vector<std::string> input_names_;
   std::vector<MutableTensorImplPtr> outputs_;
   std::vector<std::string> output_names_;
   uint32_t device_id_ = 0;
-  bool is_dvpp_ = false;
+  std::vector<bool> dyn_outshape_;
+
+  kernel::KernelModPtr kernel_mod_ = nullptr;
+  kernel::KernelArgs kernel_args_;
+  ConfigInfos config_infos_;
+  bool is_multi_model_sharing_mem_prepare_ = false;
+
+  std::unordered_map<MutableTensorImplPtr, size_t> malloced_data_size_;
 };
 }  // namespace mindspore
 

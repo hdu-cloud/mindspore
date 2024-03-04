@@ -30,44 +30,56 @@ std::string ParseNumaId(const std::map<std::string, std::map<std::string, std::s
   if (config_info == nullptr) {
     return numa_id;
   }
-  auto it_id = config_info->find(kInnerIDs);
+  auto it_id = config_info->find(kInnerModelParallelRunnerSection);
   if (it_id != config_info->end()) {
-    auto item_numa = it_id->second.find(kInnerNumaID);
+    auto item_numa = it_id->second.find(kInnerNumaIDKey);
     if (item_numa != it_id->second.end()) {
-      numa_id = it_id->second.at(kInnerNumaID);
+      numa_id = it_id->second.at(kInnerNumaIDKey);
     }
   }
   return numa_id;
 }
 
 std::string ParseRunnerId(const std::map<std::string, std::map<std::string, std::string>> *config_info) {
-  std::string runner_id;
+  std::string runner_id = "";
   if (config_info == nullptr) {
     return runner_id;
   }
-  auto it_id = config_info->find(kInnerIDs);
+  auto it_id = config_info->find(kInnerModelParallelRunnerSection);
   if (it_id != config_info->end()) {
-    auto item_runner = it_id->second.find(kInnerRunnerID);
+    auto item_runner = it_id->second.find(kInnerRunnerIDKey);
     if (item_runner != it_id->second.end()) {
-      runner_id = it_id->second.at(kInnerRunnerID);
+      runner_id = it_id->second.at(kInnerRunnerIDKey);
     }
   }
   return runner_id;
 }
+
+bool ParseCopyBuf(const std::map<std::string, std::map<std::string, std::string>> *config_info) {
+  // default copy model buf.
+  bool need_copy = true;
+  if (config_info == nullptr) {
+    return need_copy;
+  }
+  std::string copy_buf = "";
+  auto inner_item = config_info->find(kInnerModelParallelRunnerSection);
+  if (inner_item != config_info->end()) {
+    auto item_copy_buf = inner_item->second.find(kInnerSharingWeightCopyBufKey);
+    if (item_copy_buf != inner_item->second.end()) {
+      copy_buf = inner_item->second.at(kInnerSharingWeightCopyBufKey);
+    }
+  }
+  if (copy_buf == "false") {
+    return false;
+  }
+  return need_copy;
+}
 #endif
 }  // namespace
+
 PackWeightManager *PackWeightManager::GetInstance() {
   static PackWeightManager instance;
   return &instance;
-}
-
-std::string PackWeightManager::GenRunnerID() {
-  std::unique_lock<std::mutex> l(manager_mutex_);
-  std::string runner_id = "runner_" + std::to_string(runner_id_);
-  runner_ids_.push_back(runner_id);
-  runner_id_++;
-  MS_LOG(INFO) << "generate runner id: " << runner_id;
-  return runner_id;
 }
 
 std::string PackWeightManager::GenModelID() {
@@ -89,7 +101,7 @@ bool PackWeightManager::IsCopyTensor(int op_type) {
 }
 
 STATUS PackWeightManager::InitPackWeightManager(
-  const char *model_buf, size_t model_size, std::string *model_id,
+  const char *model_buf, size_t model_size, std::string *model_id, std::string *runner_id,
   const std::map<std::string, std::map<std::string, std::string>> *config_info) {
 #ifdef SHARING_MODEL_WEIGHT
   std::unique_lock<std::mutex> l(manager_mutex_);
@@ -103,11 +115,13 @@ STATUS PackWeightManager::InitPackWeightManager(
   auto numa_id = std::atoi(ParseNumaId(config_info).c_str());
   *model_id = GenModelID();
   std::string id = ParseRunnerId(config_info);
+  *runner_id = id;
   if (id.empty()) {
     MS_LOG(INFO) << "model use share pack weight.";
     id = *model_id;
   }
-  return pack_weight_->InitPackWeight(static_cast<const void *>(model_buf), model_size, id, numa_id);
+  bool need_copy_buf = ParseCopyBuf(config_info);
+  return pack_weight_->InitPackWeight(static_cast<const void *>(model_buf), model_size, id, numa_id, need_copy_buf);
 #endif
   return RET_OK;
 }
@@ -242,20 +256,23 @@ void PackWeightManager::Free(void *tensor_data) {
   FreeData(tensor_data);
 }
 
-void PackWeightManager::FreePackWeight(std::string id) {
+void PackWeightManager::FreePackWeight(std::string runner_id, std::string model_id) {
 #ifdef SHARING_MODEL_WEIGHT
   std::unique_lock<std::mutex> l(manager_mutex_);
   if (pack_weight_ != nullptr) {
-    MS_LOG(INFO) << "free pack weight of " << id;
-    pack_weight_->FreePackWeight(id);
-    auto it = find(model_ids_.begin(), model_ids_.end(), id);
-    if (it != model_ids_.end()) {
-      model_ids_.erase(it);
+    if (!runner_id.empty()) {
+      MS_LOG(INFO) << "free pack weight of runner id: " << runner_id;
+      pack_weight_->FreePackWeight(runner_id);
     }
-    it = find(runner_ids_.begin(), runner_ids_.end(), id);
-    if (it != runner_ids_.end()) {
-      runner_ids_.erase(it);
-    }
+  }
+  if (model_id.empty()) {
+    MS_LOG(INFO) << "model id is empty.";
+    return;
+  }
+  pack_weight_->FreePackWeight(model_id);
+  auto it = find(model_ids_.begin(), model_ids_.end(), model_id);
+  if (it != model_ids_.end()) {
+    model_ids_.erase(it);
   }
 #endif
   return;

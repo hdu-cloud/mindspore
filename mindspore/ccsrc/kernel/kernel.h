@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,23 +15,25 @@
  */
 #ifndef MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_KERNEL_H_
 #define MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_KERNEL_H_
-#include <vector>
-#include <string>
-#include <memory>
 #include <map>
-#include <set>
+#include <memory>
 #include <optional>
-#include "nlohmann/json.hpp"
-#include "ir/anf.h"
-#include "ir/dtype.h"
-#include "include/common/utils/utils.h"
-#include "mindspore/core/ops/base_operator.h"
-#include "ir/tensor.h"
+#include <set>
+#include <string>
+#include <utility>
+#include <variant>
+#include <vector>
 #include "abstract/dshape.h"
-#include "utils/log_adapter.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "include/api/format.h"
 #include "include/backend/visible.h"
+#include "include/common/utils/utils.h"
+#include "ir/anf.h"
+#include "ir/dtype.h"
+#include "ir/tensor.h"
+#include "mindspore/core/ops/base_operator.h"
+#include "nlohmann/json.hpp"
+#include "utils/log_adapter.h"
 
 #ifdef _MSC_VER
 #undef OPAQUE
@@ -54,61 +56,9 @@ enum KernelType : int {
   GPU_KERNEL,
   BISHENG_KERNEL,
   ACL_KERNEL,
+  OPAPI_KERNEL,
 };
 namespace kernel {
-// Supported fusion type
-enum FusionType {
-  CONV = 0,
-  ELEMWISE,
-  COMMREDUCE,
-  SEGMENT,
-  OPAQUE,
-  BN_UPDATE_GRAD,
-  BN_GRAD_REDUCE,
-  LAYER_NORM_GRAD,
-  L2LOSS_MUL_ADDN,
-  PURE_BROADCAST,
-  INPLACE,
-  MATMUL,
-  MATMUL_V2,
-  GEMM,
-  CONV2D_BACKPROP_INPUT,
-  CONV2D_BACKPROP_FILTER,
-  CONV3D_BACKPROP_INPUT,
-  CONV3D_BACKPROP_FILTER,
-  CUBE_LAYER_NORM,
-  BN_REDUCE,
-  BN_UPDATE,
-  SOFTMAX_CROSS_ENTROPY_WITH_LOGITS,
-  L2_NORMALIZE,
-  SOFTMAX,
-  L2_LOSS,
-  ASCEND_QUANT,
-  ASCEND_DEQUANT,
-  ASCEND_ANTI_QUANT,
-  STRIDED_READ,
-  STRIDED_WRITE,
-  ASCEND_DEQUANT_S16,
-  ASCEND_REQUANT,
-  ASCEND_REQUANT_S16,
-  MAX_POOL,
-  DEPTHWISECONV,
-  CONV3D,
-  POOL2D,
-  POOL3D,
-  READ_SELECT,
-  WRITE_SELECT,
-  COSINE_EMBEDDING_LOSS,
-  DILATION_PATTERN,
-  BROAD_CAST,
-  BATCH_MATMUL,
-  CONFUSION_TRANSPOSE,
-  DROPOUT_DOMASKV3D,
-  UNKNOWN_FUSION_TYPE = -1,
-};
-
-enum OpPattern { kCommonPattern = 0, kFormatAgnosticPattern, kBroadcastPattern, kReducePattern, kDynamicFormatPattern };
-
 // Backend processor
 enum Processor {
   UNKNOWN = -1,
@@ -116,81 +66,14 @@ enum Processor {
   AICPU,
   CUDA,
   CPU,
+  BISHENG,
 };
 
-struct FlexArray {
-  size_t len;
-  char contents[];
+struct AtomicInitInfo {
+  std::vector<std::string> dtype_list;
+  std::vector<int64_t> init_value_int64_list;
+  std::vector<float> init_value_float_list;
 };
-
-struct KernelJsonInfo {
-  std::string bin_file_name;
-  std::string bin_file_suffix;
-  uint32_t block_dim;
-  std::string kernel_name;
-  std::string magic;
-  std::vector<size_t> parameters;
-  std::string sha256;
-  std::vector<size_t> workspaces_type;
-  std::vector<size_t> workspaces;
-  bool has_kernel_list = false;
-  uint32_t op_para_size;
-  int32_t KBHit;
-  uint32_t mode_in_args_first_field;
-  uint32_t batch_bind_only;
-  uint32_t task_ration;
-  std::string core_type;
-  std::vector<std::vector<size_t>> args_remap;
-  KernelJsonInfo() : block_dim(0), op_para_size(0) {}
-};
-
-class BACKEND_EXPORT KernelPack {
- public:
-  KernelPack() : json_(nullptr), kernel_(nullptr) {}
-  KernelPack(const KernelPack &) = default;
-  KernelPack &operator=(const KernelPack &) = default;
-  KernelJsonInfo kernel_json_info() const;
-  bool LoadKernelMeta(const std::string &json_f);
-  bool ReadFromJsonFile(const std::string &json_f, const std::string &processor);
-  const FlexArray *GetJson() const { return json_; }
-  const FlexArray *GetKernel() const { return kernel_; }
-  ~KernelPack() {
-    if (json_ != nullptr) {
-      delete[] json_;
-      json_ = nullptr;
-    }
-    if (kernel_ != nullptr) {
-      delete[] kernel_;
-      kernel_ = nullptr;
-    }
-  }
-
- private:
-  bool ReadFromJsonFileHelper(std::ifstream &kernel_bin);
-  void ParseKernelJson(const nlohmann::json &js);
-  static void ParseKernelName(const std::string &key, const nlohmann::json &js, KernelJsonInfo *kernel_json_info);
-  static void ParseBinFileName(const std::string &key, const nlohmann::json &js, KernelJsonInfo *kernel_json_info);
-  static void ParseBinFileSuffix(const std::string &key, const nlohmann::json &js, KernelJsonInfo *kernel_json_info);
-  static void ParseMagic(const std::string &key, const nlohmann::json &js, KernelJsonInfo *kernel_json_info);
-  static void ParseBlockDim(const std::string &key, const nlohmann::json &js, KernelJsonInfo *kernel_json_info);
-  static void ParseTaskRatio(const std::string &key, const nlohmann::json &js, KernelJsonInfo *kernel_json_info);
-  static void ParseCoreType(const std::string &key, const nlohmann::json &js, KernelJsonInfo *kernel_json_info);
-  static void ParseParameters(const std::string &key, const nlohmann::json &js, KernelJsonInfo *kernel_json_info);
-  static void ParseWorkSpace(const std::string &key, const nlohmann::json &js, KernelJsonInfo *kernel_json_info);
-  static void ParseOpParaSize(const std::string &key, const nlohmann::json &js, KernelJsonInfo *kernel_json_info);
-  static void ParseSHA256(const std::string &key, const nlohmann::json &js, KernelJsonInfo *kernel_json_info);
-  static void ParseKBHit(const std::string &key, const nlohmann::json &js, KernelJsonInfo *kernel_json_info);
-  static void ParseBatchBindOnly(const std::string &key, const nlohmann::json &js, KernelJsonInfo *kernel_json_info);
-  static void ParseKernelList(const std::string &key, const nlohmann::json &js, KernelJsonInfo *kernel_json_info);
-  static void ParseModeInArgsFirstField(const std::string &key, const nlohmann::json &js,
-                                        KernelJsonInfo *kernel_json_info);
-  static void ParseArgsRemap(const std::string &key, const nlohmann::json &js, KernelJsonInfo *kernel_json_info);
-
-  KernelJsonInfo kernel_json_info_;
-  FlexArray *json_;
-  FlexArray *kernel_;
-};
-using KernelPackPtr = std::shared_ptr<KernelPack>;
 
 /**
  * @brief base class for autotensor kernel and cce kernel.
@@ -212,24 +95,61 @@ struct KernelLaunchInfo {
 };
 struct TensorInfo {
   mindspore::Format format;
-  abstract::AbstractBasePtr abstract_base;       // Store data type and shape.
-  std::vector<int64_t> device_shape_adaptively;  // deprecated field for dynamic shape
+  abstract::AbstractTensorPtr base_;
+  std::vector<int64_t> device_shape_adaptively;
+};
+struct ScalarInfo {
+  abstract::AbstractScalarPtr base_;
+};
+struct ListInfo {
+  abstract::AbstractListPtr base_;
+};
+struct TupleInfo {
+  abstract::AbstractTuplePtr base_;
 };
 using TensorInfoPtr = std::shared_ptr<TensorInfo>;
 using BaseOperatorPtr = std::shared_ptr<ops::BaseOperator>;
 
 class KernelAttr;
+// we extend KernelTensor to represent tensor/map_tensor/list/tuple/scalar data type.
 class BACKEND_EXPORT KernelTensor {
  public:
   KernelTensor() = default;
   ~KernelTensor() = default;
+  KernelTensor(const KernelTensor &copy_tensor) {
+    meta_type_ = copy_tensor.meta_type_;
+    meta_ = copy_tensor.meta_;
+    data_ = copy_tensor.data_;
+    host_data_ = copy_tensor.host_data_;
+    device_id_ = copy_tensor.device_id_;
+  }
+  KernelTensor &operator=(const KernelTensor &copy_tensor) {
+    if (&copy_tensor == this) {
+      return *this;
+    }
+    meta_type_ = copy_tensor.meta_type_;
+    meta_ = copy_tensor.meta_;
+    data_ = copy_tensor.data_;
+    host_data_ = copy_tensor.host_data_;
+    device_id_ = copy_tensor.device_id_;
+    dyn_output_data_ = nullptr;
+    return *this;
+  }
 
   bool IsDynamicShape() const;
   size_t GetSizeInBytes() const;
   AddressPtr GetData() const { return data_; }
   AddressPtr GetHostData() const { return host_data_; }
   TypeId GetDtype() const;
-  mindspore::Format GetFormat() const { return tensor_info_.format; }
+  mindspore::Format GetFormat() const {
+    if (meta_type_ == kObjectTypeTensorType) {
+      const TensorInfo &info = std::get<TensorInfo>(meta_);
+      return info.format;
+    }
+    return Format::DEFAULT_FORMAT;
+  }
+  TypeId GetMetaType() const { return meta_type_; }
+  std::variant<TensorInfo, ScalarInfo, TupleInfo, ListInfo> GetMeta() const { return meta_; }
   // If real type is not a list or tuple tensor, it will return kTypeUnknown.
   std::vector<TypeId> GetListOrTupleDtype() const;
   // If real type is not a single shape vector, it will return empty.
@@ -239,8 +159,12 @@ class BACKEND_EXPORT KernelTensor {
   void SetData(const AddressPtr &data) { data_ = data; }
   void SetHostData(const AddressPtr &data) { host_data_ = data; }
   void SetDtype(const TypePtr &dtype);
-  void SetFormat(mindspore::Format format) { tensor_info_.format = format; }
-  void SetShapeVector(const ShapeVector &shape);
+  void SetFormat(mindspore::Format format) {
+    TensorInfo &info = std::get<TensorInfo>(meta_);
+    info.format = format;
+  }
+  void SetMetaType(const TypeId meta_type) { meta_type_ = meta_type; }
+  void SetShapeVector(const ShapeVector &shape) const;
 
   // max shape is only used in compute-depended ops
   ShapeVector GetMaxShape() const;
@@ -248,18 +172,39 @@ class BACKEND_EXPORT KernelTensor {
   abstract::BaseShapePtr GetBaseShape() const;
   // If the shape need to be List or Tuple, `SetBaseShape` should be called.
   void SetBaseShape(const abstract::BaseShapePtr &base_shape);
-  void SetAbstract(const abstract::AbstractBasePtr &base_abstract) { tensor_info_.abstract_base = base_abstract; }
-  void SetTensorInfo(const TensorInfo &tensor_info) { tensor_info_ = tensor_info; }
-
+  void SetTensorInfo(const TensorInfo &info) {
+    meta_type_ = kObjectTypeTensorType;
+    meta_ = info;
+  }
+  void SetScalarInfo(const ScalarInfo &info) {
+    meta_type_ = kObjectTypeNumber;
+    meta_ = info;
+  }
+  void SetTupleInfo(const TupleInfo &info) {
+    meta_type_ = kObjectTypeTuple;
+    meta_ = info;
+  }
+  void SetListInfo(const ListInfo &info) {
+    meta_type_ = kObjectTypeList;
+    meta_ = info;
+  }
+  void SetDynOutput(std::unique_ptr<uint8_t[]> &&new_buffer) { dyn_output_data_ = std::move(new_buffer); }
+  uint8_t *GetDynOutput() const { return dyn_output_data_.get(); }
   // deprecated field for dynamic shape
   const ShapeVector &GetDeviceShapeAdaptively() const;
   void SetDeviceShapeAdaptively(const ShapeVector &device_shape_adaptively);
+  int32_t GetDeviceId() const { return device_id_; }
+  void SetDeviceId(int32_t device_id) { device_id_ = device_id; }
 
  private:
-  TensorInfo tensor_info_;
-  AddressPtr data_{nullptr};       // Device data address.
-  AddressPtr host_data_{nullptr};  // Host data address.
+  TypeId meta_type_{kObjectTypeTensorType};
+  // meta is a type-safe union of TensorInfo, ScalarInfo, TupleInfo, ListInfo.
+  std::variant<TensorInfo, ScalarInfo, TupleInfo, ListInfo> meta_{TensorInfo()};
+  AddressPtr data_{nullptr};                             // Device data address.
+  AddressPtr host_data_{nullptr};                        // Host data address.
+  std::unique_ptr<uint8_t[]> dyn_output_data_{nullptr};  // Create new output memory buffer for dynamic output
   string GetAbstractName() const;
+  int32_t device_id_{0};
 };
 using KernelTensorPtr = std::shared_ptr<KernelTensor>;
 
@@ -273,6 +218,7 @@ enum class KernelModType {
   NativeCpuKernelMod,
   DeprecatedNativeCpuKernelMod,
   HostKernelMod,
+  DynamicAkgCpuKernelMod,
 };
 
 enum KernelErrorCode : int { KRET_OK = 0, KRET_RESIZE_FAILED = 1, KRET_UNKNOWN_SHAPE = 2, KRET_UNKNOWN_OUT_SHAPE = 3 };
@@ -280,51 +226,56 @@ enum KernelErrorCode : int { KRET_OK = 0, KRET_RESIZE_FAILED = 1, KRET_UNKNOWN_S
 class BACKEND_EXPORT KernelMod {
  public:
   KernelMod() {}
+  explicit KernelMod(const BaseOperatorPtr &op) : op_(op) {}
   virtual ~KernelMod() = default;
+  // Initialization for the kernel mod.
+  inline bool Init_(const BaseOperatorPtr &op, const std::vector<KernelTensorPtr> &inputs,
+                    const std::vector<KernelTensorPtr> &outputs) {
+    MS_EXCEPTION_IF_NULL(op);
+    this->op_ = op;
+    inputs_ = inputs;
+    outputs_ = outputs;
+    return Init(op, inputs, outputs);
+  }
+  inline std::vector<KernelTensorPtr> &GetInputs() { return inputs_; }
+  inline std::vector<KernelTensorPtr> &GetOutputs() { return outputs_; }
   virtual void SetInputSizeList(const std::vector<size_t> &size_list) { input_size_list_ = size_list; }
   virtual void SetOutputSizeList(const std::vector<size_t> &size_list) { output_size_list_ = size_list; }
   virtual void SetWorkspaceSizeList(const std::vector<size_t> &size_list) { workspace_size_list_ = size_list; }
   virtual const std::vector<size_t> &GetInputSizeList() const { return input_size_list_; }
   virtual const std::vector<size_t> &GetOutputSizeList() const { return output_size_list_; }
   virtual const std::vector<size_t> &GetWorkspaceSizeList() const { return workspace_size_list_; }
-  virtual const std::vector<std::vector<int64_t>> &GetInputShapes() const { return input_shapes_; }
-  virtual const std::vector<std::vector<int64_t>> &GetOutputShapes() const { return output_shapes_; }
   virtual bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
                       const std::vector<AddressPtr> &outputs, void *stream_ptr) = 0;
   virtual std::vector<size_t> GenParameters() { return {}; }
-  virtual void ReleaseResource() {}
-  // Initialization for the kernel mod.
-  virtual bool Init(const BaseOperatorPtr & /* base_operator */, const std::vector<KernelTensorPtr> & /* inputs */,
-                    const std::vector<KernelTensorPtr> & /* outputs */) {
-    return true;
-  }
+  virtual void GenAtomicInitInfo(AtomicInitInfo *info) {}
   virtual std::vector<KernelAttr> GetOpSupport() = 0;
   // Resize() is for validating input/output shape and calculating the workspace size, framework will invoke this
   // routine after infer shape.
   virtual int Resize(
-    const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
-    const std::vector<KernelTensorPtr> &outputs,
     const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost = std::map<uint32_t, tensor::TensorPtr>());
-
+  virtual int Resize(
+    const std::vector<KernelTensorPtr> &inputs, const std::vector<KernelTensorPtr> &outputs,
+    const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost = std::map<uint32_t, tensor::TensorPtr>());
   // Some kernels, e.g., Unique, can only get its output shape after its computing finished.
   virtual bool IsNeedRetrieveOutputShape() { return is_need_retrieve_output_shape_; }
-  virtual std::vector<KernelTensorPtr> RetrieveOutputShape() {
-    SyncData();
-    return GetOutputs();
+  std::vector<KernelTensorPtr> RetrieveOutputShape() {
+    SyncOutputShape();
+    return outputs_;
   }
-
-  // Get input kernel tensor.
-  virtual std::vector<KernelTensorPtr> GetInputKernelTensor() { return {}; }
-
+  // Some kernels, e.g., Shape/Reshape, don't use some input addresses in the kernel launch.
+  virtual std::vector<size_t> GetLaunchIgnoredInputAddressIdx() const { return {}; }
   void set_unique_name(const std::string &unique_name) { unique_name_ = unique_name; }
   void set_fullname(const std::string &fullname) { fullname_ = fullname; }
   void set_is_monad(bool is_monad) { is_monad_ = is_monad; }
   void set_inputs_addr(const std::vector<AddressPtr> &addr) { inputs_addr_ = addr; }
   void set_workspaces_addr(const std::vector<AddressPtr> &addr) { workspaces_addr_ = addr; }
   void set_outputs_addr(const std::vector<AddressPtr> &addr) { outputs_addr_ = addr; }
-  // User data is the extra data required when the kernel is launched, It will be set before launch by runtime.
+  // User data is the extra dat-a required when the kernel is launched, It will be set before launch by runtime.
   virtual void set_input_user_data(UserData *user_data, size_t input_index) {}
   virtual void set_output_user_data(UserData *user_data, size_t output_index) {}
+  // If output of kernel has a user_data, it needs to return true, and the framework will create user_data for it.
+  virtual bool need_user_data() const { return false; }
   const std::vector<AddressPtr> &GetInputsAddr() const { return inputs_addr_; }
   const std::vector<AddressPtr> &GetWorkSpacesAddr() const { return workspaces_addr_; }
   const std::vector<AddressPtr> &GetOutputsAddr() const { return outputs_addr_; }
@@ -334,33 +285,46 @@ class BACKEND_EXPORT KernelMod {
     return Launch(kernel_launch_address.inputs_, kernel_launch_address.workspaces_, kernel_launch_address.outputs_,
                   stream_ptr);
   }
+  int32_t task_id() const { return task_id_; }
+  bool use_kernel_tensor() const { return use_kernel_tensor_; }
+  void set_use_kernel_tensor(bool use_kernel_tensor) { use_kernel_tensor_ = use_kernel_tensor; }
 
  protected:
-  virtual void SyncData() {}
-  virtual std::vector<KernelTensorPtr> GetOutputs() { return {}; }
+  virtual bool Init(const BaseOperatorPtr &op, const std::vector<KernelTensorPtr> &inputs,
+                    const std::vector<KernelTensorPtr> &outputs) {
+    return true;
+  }
+  virtual int Resize(
+    const BaseOperatorPtr &op, const std::vector<KernelTensorPtr> &inputs, const std::vector<KernelTensorPtr> &outputs,
+    const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost = std::map<uint32_t, tensor::TensorPtr>());
   bool IsValidShape(const ShapeVector &shape) const {
     if (std::any_of(shape.begin(), shape.end(), [](int64_t dim) { return dim < 0; })) {
       return false;
     }
     return true;
   }
+  // some kernels' output shape can only get from its computing result, this routine is for getting output shape and
+  // setting into outputs_.
+  virtual void SyncOutputShape() {}
 
+ protected:
   std::string kernel_name_;
   std::string unique_name_;
   std::string fullname_;
   bool is_monad_{false};
   std::vector<size_t> input_size_list_;
-  std::vector<std::vector<int64_t>> input_shapes_;
   std::vector<size_t> output_size_list_;
-  std::vector<std::vector<int64_t>> output_shapes_;
   std::vector<size_t> workspace_size_list_;
   bool is_need_retrieve_output_shape_ = false;
   uint32_t device_id_ = 0;
-
- private:
+  int32_t task_id_ = -1;
   std::vector<AddressPtr> inputs_addr_;
   std::vector<AddressPtr> workspaces_addr_;
   std::vector<AddressPtr> outputs_addr_;
+  BaseOperatorPtr op_;
+  std::vector<KernelTensorPtr> inputs_;
+  std::vector<KernelTensorPtr> outputs_;
+  bool use_kernel_tensor_{false};
 };
 using KernelModPtr = std::shared_ptr<KernelMod>;
 
@@ -383,45 +347,15 @@ inline T *GetDeviceAddress(const std::vector<AddressPtr> &addr_list, size_t inde
     return nullptr;
   }
 
+  // When the input is an empty tuple, the input size will be 0.
   if (addr_list[index]->size == 0) {
-    MS_LOG(WARNING) << "The size of device address is zero, address index: " << index
-                    << ", and the length of 'addr_list' is " << addr_list.size();
-    return nullptr;
+    MS_LOG(INFO) << "The size of device address is zero, address index: " << index
+                 << ", and the length of 'addr_list' is " << addr_list.size();
   }
   return reinterpret_cast<T *>(addr_list[index]->addr);
 }
 
-BACKEND_EXPORT std::optional<std::vector<int64_t>> TryGetIntValueFromInputs(const std::vector<KernelTensorPtr> &inputs,
-                                                                            const size_t input_index,
-                                                                            const std::string &kernel_name,
-                                                                            bool data_from_host);
-
-inline bool TryGetIntValue(const std::vector<KernelTensorPtr> &inputs, const size_t input_index,
-                           const std::string &kernel_name, int64_t *attr_value, bool data_from_host = true) {
-  auto res = TryGetIntValueFromInputs(inputs, input_index, kernel_name, data_from_host);
-  if (!res.has_value()) {
-    return false;
-  }
-  if (res.value().empty()) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name << "', value of the dynamic attr is empty!";
-  }
-  *attr_value = res.value()[0];
-  return true;
-}
-
-inline bool TryGetIntValue(const std::vector<KernelTensorPtr> &inputs, const size_t input_index,
-                           const std::string &kernel_name, std::vector<int64_t> *attr_value,
-                           bool data_from_host = true) {
-  auto res = TryGetIntValueFromInputs(inputs, input_index, kernel_name, data_from_host);
-  if (!res.has_value()) {
-    return false;
-  }
-  *attr_value = res.value();
-  return true;
-}
-
-BACKEND_EXPORT bool TryGetIntValue(const CNodePtr &kernel_node, const size_t input_index,
-                                   std::vector<int64_t> *attr_value, bool data_from_host = true);
+BACKEND_EXPORT std::vector<std::vector<int64_t>> GetShapes(const std::vector<KernelTensorPtr> &tensors);
 template <typename T>
 inline bool CheckNullInput(const std::vector<T> &input_shape) {
   // If input_shape.size() == 0, it means a scalar input; If input_shape.size() != 0 and input_shape contains 0,
@@ -436,27 +370,10 @@ inline bool CheckNullInput(const std::vector<T> &input_shape) {
 #define CHECK_NULL_INPUT(input_shape) mindspore::kernel::CheckNullInput(input_shape)
 
 template <typename T>
-inline std::string ConvertVectorToString(const std::vector<T> &value) {
-  std::stringstream ss;
-  ss << "(";
-  for (auto it = value.begin(); it != value.end(); it++) {
-    if (it == value.begin()) {
-      ss << *it;
-    } else {
-      ss << ", " << *it;
-    }
-  }
-  ss << ")";
-  return ss.str();
-}
-
-#define CONVERT_VECTOR_TO_STRING(value) mindspore::kernel::ConvertVectorToString(value)
-
-template <typename T>
 inline bool CheckShapeNull(const std::vector<T> &shape, std::string kernel_name, std::string param_name) {
   if (CHECK_NULL_INPUT(shape)) {
     MS_LOG(WARNING) << "For '" << kernel_name << "', the shape of " << param_name << " cannot contain zero, but got "
-                    << CONVERT_VECTOR_TO_STRING(shape);
+                    << shape;
     return true;
   }
   return false;

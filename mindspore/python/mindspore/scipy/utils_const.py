@@ -16,6 +16,7 @@
 from __future__ import absolute_import
 from types import FunctionType
 from collections.abc import Iterable
+from mindspore.ops import functional as F
 from .. import context
 from ..ops.primitive import constexpr
 from ..common import Tensor, CSRTensor
@@ -25,17 +26,22 @@ from ..common import dtype as mstype
 @constexpr
 def _callable_const(x):
     """Returns true if x is a function in graph mode."""
-    return isinstance(x, mstype.function_type)
+    return isinstance(x, mstype.FunctionType)
 
 
 @constexpr
+def is_pynative():
+    """Returns true if the current mode is PYNATIVE mode."""
+    return context.get_context("mode") == context.PYNATIVE_MODE
+
+
 def is_within_graph(x):
     """
     Returns true if x is None. It's aim to check whether the call is within MindSpore graph.
     Because in graph mode, x should be None in constexpr when x is a variable of MindSpore.
     Note that always return true if the call is in pynative mode.
     """
-    return context.get_context("mode") == context.PYNATIVE_MODE or x is None
+    return is_pynative() or not F.isconstant(x) or x is None
 
 
 @constexpr
@@ -120,9 +126,9 @@ def mstype_to_pytype(type_):
         Type of Python type.
     """
     return {
-        mstype.tensor_type: Tensor,
-        mstype.csr_tensor_type: CSRTensor,
-        mstype.function_type: FunctionType,
+        mstype.TensorType: Tensor,
+        mstype.CSRTensorType: CSRTensor,
+        mstype.FunctionType: FunctionType,
     }.get(type_)
 
 

@@ -17,6 +17,10 @@
 #include <complex>
 #include <algorithm>
 #include <functional>
+#include <utility>
+#include <map>
+#include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
+#include "mindspore/core/ops/sparse_ops.h"
 #include "plugin/device/gpu/kernel/sparse/sparse_tensor_to_csr_sparse_matrix_gpu_kernel.h"
 namespace mindspore {
 namespace kernel {
@@ -55,6 +59,10 @@ int SparseTensorToCSRSparseMatrixGpuKernelMod::Resize(const BaseOperatorPtr &bas
                                                       const std::vector<KernelTensorPtr> &inputs,
                                                       const std::vector<KernelTensorPtr> &outputs,
                                                       const std::map<uint32_t, tensor::TensorPtr> &) {
+  bapt = 0;
+  elements[kZero] = 0;
+  elements[kOne] = 0;
+  elements[kTwo] = 0;
   input_size_list_.clear();
   output_size_list_.clear();
   workspace_size_list_.clear();
@@ -64,22 +72,19 @@ int SparseTensorToCSRSparseMatrixGpuKernelMod::Resize(const BaseOperatorPtr &bas
                                                             inputs.at(i)->GetDeviceShapeAdaptively().end());
     size_t input_elements_ = std::accumulate(input_shape.begin(), input_shape.end(), 1, std::multiplies<int64_t>());
     elements[i] = input_elements_;
-    size_t unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(i).first);
+    size_t unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(i).dtype);
     input_size_list_.push_back(input_elements_ * unit_size_);
-    if (i == kTwo) {
-      x_dense_shape_ptr_test.resize(input_elements_);
-    }
   }
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(0).dtype);
   workspace_size_list_.push_back(elements[kOne] * unit_size_);
   for (size_t i = 0; i < outputs.size(); i++) {
     std::vector<int64_t> output_shape = std::vector<int64_t>(outputs.at(i)->GetDeviceShapeAdaptively().begin(),
                                                              outputs.at(i)->GetDeviceShapeAdaptively().end());
     size_t output_elements_ = std::accumulate(output_shape.begin(), output_shape.end(), 1, std::multiplies<int64_t>());
-    size_t unit_size_ = abstract::TypeIdSize(kernel_attr.GetOutputAttr(i).first);
+    size_t unit_size_ = abstract::TypeIdSize(kernel_attr.GetOutputAttr(i).dtype);
     output_size_list_.push_back(output_elements_ * unit_size_);
     if (i == 1) {
-      y_batch_pointers_ptr_test.resize(output_elements_);
+      bapt = output_elements_;
     }
   }
   return KRET_OK;
@@ -99,18 +104,36 @@ bool SparseTensorToCSRSparseMatrixGpuKernelMod::LaunchKernel(const std::vector<A
   DataType *y_value_ptr = GetDeviceAddress<DataType>(outputs, kIndex4);
   IndiceType *x_row_indices_ptr = GetDeviceAddress<IndiceType>(workspace, kIndex0);
 
-  cudaMemcpyAsync(x_dense_shape_ptr_test.data(), x_dense_shape_ptr, elements[kTwo] * sizeof(IndiceType),
-                  cudaMemcpyDeviceToHost, stream);
+  std::vector<IndiceType> y_batch_pointers_ptr_test(bapt);
+  std::vector<IndiceType> x_dense_shape_ptr_test(elements[kTwo]);
+
+  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemsetAsync(y_batch_pointers_ptr, 0, outputs[kIndex1]->size, stream_),
+                                     "For 'SparseTensorToCSRSparseMatrix', cudaMemsetAsync y_batch_pointers failed");
+  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+    cudaMemcpyAsync(x_dense_shape_ptr_test.data(), x_dense_shape_ptr, elements[kTwo] * sizeof(IndiceType),
+                    cudaMemcpyDeviceToHost, stream_),
+    "For 'SparseTensorToCSRSparseMatrix', cudaMemcpyAsync x_dense_shape failed");
+  if (cudaStreamQuery(stream_) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(stream_),
+                                       "For 'SparseTensorToCSRSparseMatrix', cuda Stream Sync Failed.");
+  }
+
   SparseTensorToCSRSparseMatrix<IndiceType>(x_indices_ptr, x_row_indices_ptr, y_col_indices_ptr, y_batch_pointers_ptr,
-                                            elements[kOne], elements[kTwo], stream, device_id_);
+                                            elements[kOne], elements[kTwo], stream_, device_id_);
   if (elements[kTwo] == kRankWithoutBatch) {
     row_num = x_dense_shape_ptr_test[kZero];
     cusparseXcoo2csr(handle_, x_row_indices_ptr, elements[kOne], row_num, y_row_pointers_ptr, CUSPARSE_INDEX_BASE_ZERO);
   } else {
     batch_size = x_dense_shape_ptr_test[kZero];
     row_num = x_dense_shape_ptr_test[kOne];
-    cudaMemcpyAsync(y_batch_pointers_ptr_test.data(), y_batch_pointers_ptr, (batch_size + 1) * sizeof(IndiceType),
-                    cudaMemcpyDeviceToHost, stream);
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+      cudaMemcpyAsync(y_batch_pointers_ptr_test.data(), y_batch_pointers_ptr, (batch_size + 1) * sizeof(IndiceType),
+                      cudaMemcpyDeviceToHost, stream_),
+      "For 'SparseTensorToCSRSparseMatrix', cudaMemcpyAsync y_batch_pointers failed");
+    if (cudaStreamQuery(stream_) != cudaSuccess) {
+      CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(stream_),
+                                         "For 'SparseTensorToCSRSparseMatrix', cuda Stream Sync Failed.");
+    }
     for (int i = 0; i < batch_size; ++i) {
       y_batch_pointers_ptr_test[i + 1] = std::max(y_batch_pointers_ptr_test[i + 1], y_batch_pointers_ptr_test[i]);
       int *temp_row_indices_addr = x_row_indices_ptr + y_batch_pointers_ptr_test[i];
@@ -121,12 +144,22 @@ bool SparseTensorToCSRSparseMatrixGpuKernelMod::LaunchKernel(const std::vector<A
                          CUSPARSE_INDEX_BASE_ZERO);
       }
     }
-    cudaMemcpyAsync(y_batch_pointers_ptr, y_batch_pointers_ptr_test.data(), (batch_size + 1) * sizeof(IndiceType),
-                    cudaMemcpyHostToDevice, stream);
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+      cudaMemcpyAsync(y_batch_pointers_ptr, y_batch_pointers_ptr_test.data(), (batch_size + 1) * sizeof(IndiceType),
+                      cudaMemcpyHostToDevice, stream_),
+      "For 'SparseTensorToCSRSparseMatrix', cudaMemcpyAsync y_batch_pointers_ptr failed");
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(stream_),
+                                       "For 'SparseTensorToCSRSparseMatrix', cuda Stream Sync Failed.")
   }
-  cudaMemcpyAsync(y_dense_shape_ptr, x_dense_shape_ptr, elements[kTwo] * sizeof(DataType), cudaMemcpyDeviceToDevice,
-                  stream);
-  cudaMemcpyAsync(y_value_ptr, x_value_ptr, elements[kOne] * sizeof(DataType), cudaMemcpyDeviceToDevice, stream);
+  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+    cudaMemcpyAsync(y_dense_shape_ptr, x_dense_shape_ptr, elements[kTwo] * sizeof(DataType), cudaMemcpyDeviceToDevice,
+                    stream_),
+    "For 'SparseTensorToCSRSparseMatrix', cudaMemcpyAsync failed")
+  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+    cudaMemcpyAsync(y_value_ptr, x_value_ptr, elements[kOne] * sizeof(DataType), cudaMemcpyDeviceToDevice, stream_),
+    "For 'SparseTensorToCSRSparseMatrix', cudaMemcpyAsync failed")
+  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(stream_),
+                                     "For 'SparseTensorToCSRSparseMatrix', cuda Stream Sync Failed.")
   return true;
 }
 

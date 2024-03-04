@@ -16,19 +16,28 @@
 
 #include "utils/check_convert_utils.h"
 
+#include <algorithm>
+#include <functional>
+#include <iterator>
+#include <map>
+#include <set>
+#include <typeinfo>
 #include <utility>
 #include <vector>
-#include <algorithm>
-#include <typeinfo>
-#include <functional>
-#include <set>
-#include <map>
 
 #include "abstract/abstract_value.h"
-#include "ops/op_utils.h"
-#include "ir/dtype/type.h"
-#include "ir/dtype/tensor_type.h"
 #include "ir/dtype.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/format.h"
+#include "mindapi/base/type_id.h"
+#include "mindapi/base/types.h"
+#include "ops/op_name.h"
+#include "utils/convert_utils_base.h"
 #include "utils/ms_context.h"
 
 namespace mindspore {
@@ -151,7 +160,8 @@ static std::map<std::string, std::map<std::string, AttrConverterPair>> PrimAttrC
   {"Deconvolution", DataFormatMap},
   {"AvgPoolV2", DataFormatMap},
   {"MaxPoolV3", DataFormatMap},
-  {"FusedBatchNorm", DataFormatMap}};
+  {"FusedBatchNorm", DataFormatMap},
+  {"DeformableConv2d", DataFormatMap}};
 
 bool CheckAndConvertUtils::GetDataFormatEnumValue(const ValuePtr &value, int64_t *enum_value) {
   MS_EXCEPTION_IF_NULL(value);
@@ -303,34 +313,197 @@ void CheckAndConvertUtils::GetFormatStringVal(const PrimitivePtr &prim, std::str
   }
 }
 
-void CheckAndConvertUtils::CheckAbstractShapeSame(const AbstractBasePtr &abs1, const AbstractBasePtr &abs2,
-                                                  const std::string &prim_name, const std::string &name1,
-                                                  const std::string &name2) {
-  MS_EXCEPTION_IF_NULL(abs1);
-  MS_EXCEPTION_IF_NULL(abs2);
-  auto abs1_shape = abs1->BuildShape();
-  auto abs2_shape = abs2->BuildShape();
-  if (*abs1_shape != *abs2_shape) {
-    MS_EXCEPTION(ValueError) << "For primitive " << prim_name << " the abstrcat of " << name1 << " and the abstract of"
-                             << name2 << " should have the same shape but got the shape of " << name1 << ": "
-                             << abs1_shape->ToString() << " and the shape of " << name2 << ": "
-                             << abs2_shape->ToString();
+size_t CheckAndConvertUtils::CheckAbstractShapeSame(const std::vector<AbstractBasePtr> &abs_list) {
+  if (abs_list.size() <= 1) {
+    return 0;
+  }
+  const auto &first_elem_abs = abs_list[0];
+  MS_EXCEPTION_IF_NULL(first_elem_abs);
+  auto abs1_shape = first_elem_abs->BuildShape();
+  MS_EXCEPTION_IF_NULL(abs1_shape);
+  for (size_t i = 0; i < abs_list.size(); ++i) {
+    MS_EXCEPTION_IF_NULL(abs_list[i]);
+    auto abs2_shape = abs_list[i]->BuildShape();
+    MS_EXCEPTION_IF_NULL(abs2_shape);
+    if (*abs1_shape != *abs2_shape) {
+      MS_LOG(ERROR) << "Abstract shapes are not same, shape1:" << abs1_shape->ToString()
+                    << ", shape2:" << abs2_shape->ToString();
+      return i;
+    }
+  }
+  return 0;
+}
+
+// For example,
+// TensorType(element type is float16) and TensorType(element type is int32) are not same,
+// TupleType(elements num is 3) and TupleType(elements num is 4) are same.
+size_t CheckAndConvertUtils::CheckAbstractTypeSame(const std::vector<AbstractBasePtr> &abs_list) {
+  if (abs_list.size() <= 1) {
+    return 0;
+  }
+  const auto &first_elem_abs = abs_list[0];
+  MS_EXCEPTION_IF_NULL(first_elem_abs);
+  auto abs1_type = first_elem_abs->BuildType();
+  MS_EXCEPTION_IF_NULL(abs1_type);
+  for (size_t i = 1; i < abs_list.size(); ++i) {
+    MS_EXCEPTION_IF_NULL(abs_list[i]);
+    auto abs2_type = abs_list[i]->BuildType();
+    MS_EXCEPTION_IF_NULL(abs2_type);
+    if (!(*abs1_type == *abs2_type)) {
+      MS_LOG(ERROR) << "Abstract types are not same, type1:" << abs1_type->ToString()
+                    << ", type2:" << abs2_type->ToString();
+      return i;
+    }
+  }
+  return 0;
+}
+
+int64_t CheckAndConvertUtils::CheckAttrInt64Positive(const std::string &op, const ValuePtr &attr,
+                                                     const std::string &attr_name) {
+  MS_EXCEPTION_IF_NULL(attr);
+  int64_t attr_val = attr->cast<Int64ImmPtr>()->value();
+  if (attr_val <= 0) {
+    MS_EXCEPTION(ValueError) << "For '" << op << "', the '" << attr_name
+                             << "' should be greater than 0, but got: " << attr_val << ".";
+  }
+  return attr_val;
+}
+
+void CheckAndConvertUtils::CheckAbstractTypeAndShapeSame(const std::vector<AbstractBasePtr> &abs_list,
+                                                         const std::string &precondition_log,
+                                                         const std::string &standard_abs_description,
+                                                         const std::string &differ_abs_description) {
+  if (abs_list.size() <= 1) {
+    return;
+  }
+  auto differ_index = CheckAndConvertUtils::CheckAbstractTypeSame(abs_list);
+  if (differ_index == 0) {
+    differ_index = CheckAndConvertUtils::CheckAbstractShapeSame(abs_list);
+  }
+  if (differ_index != 0) {
+    auto log_info1 = standard_abs_description.empty() ? "sequence[0] item" : standard_abs_description;
+    auto log_info2 =
+      differ_abs_description.empty() ? "sequence[" + std::to_string(differ_index) + "] item" : differ_abs_description;
+    MS_EXCEPTION(TypeError) << precondition_log << ", the " << log_info1 << " abstract '" << abs_list[0]->ToString()
+                            << "' is not same with the " << log_info2 << " abstract '"
+                            << abs_list[differ_index]->ToString() << "'.";
   }
 }
 
-void CheckAndConvertUtils::CheckAbstractTypeIdSame(const AbstractBasePtr &abs1, const AbstractBasePtr &abs2,
-                                                   const std::string &prim_name, const std::string &name1,
-                                                   const std::string &name2) {
-  MS_EXCEPTION_IF_NULL(abs1);
-  MS_EXCEPTION_IF_NULL(abs2);
-  auto abs1_type_id = abs1->BuildType()->generic_type_id();
-  auto abs2_type_id = abs2->BuildType()->generic_type_id();
-  if (abs1_type_id != abs2_type_id) {
-    MS_EXCEPTION(ValueError) << "For primitive " << prim_name << " the abstrcat of " << name1 << " and the abstract of"
-                             << name2 << " should have the same type but got the type of " << name1 << ": "
-                             << TypeIdToString(abs1_type_id) << " and the type of " << name2 << ": "
-                             << TypeIdToString(abs2_type_id);
+bool CheckElementAbstractUnSupport(const AbstractBasePtr abs) {
+  if (abs == nullptr) {
+    return false;
   }
+  if (abs->isa<abstract::AbstractSequence>() && !abs->isa<abstract::AbstractSparseTensor>()) {
+    return true;
+  }
+  if (abs->isa<abstract::AbstractDictionary>()) {
+    return true;
+  }
+  if (abs->isa<abstract::AbstractAny>()) {
+    return true;
+  }
+  auto abs_type = abs->BuildType();
+  if (abs_type != nullptr && abs_type->isa<External>()) {
+    return true;
+  }
+  return false;
+}
+
+bool CheckAndConvertUtils::CheckContainNestedOrIrregularSequence(const std::vector<AbstractBasePtr> &abs_list) {
+  // Check input abs has nested sequence, or irregular sequence,
+  // such as sequence contains elements with different shape or type.
+  for (auto abs : abs_list) {
+    if (abs == nullptr) {
+      continue;
+    }
+    if (abs->isa<abstract::AbstractDictionary>()) {
+      return true;
+    }
+    if (!abs->isa<abstract::AbstractSequence>() || abs->isa<abstract::AbstractSparseTensor>()) {
+      continue;
+    }
+    auto abs_seq = abs->cast<abstract::AbstractSequencePtr>();
+    if (abs_seq->dynamic_len()) {
+      if (CheckElementAbstractUnSupport(abs_seq->dynamic_len_element_abs())) {
+        return true;
+      }
+      continue;
+    }
+    const auto &elements = abs_seq->elements();
+    if (elements.size() == 0) {
+      continue;
+    }
+    auto first_element = elements[0];
+    MS_EXCEPTION_IF_NULL(first_element);
+    if (CheckElementAbstractUnSupport(first_element)) {
+      return true;
+    }
+    auto first_element_shape = first_element->BuildShape();
+    MS_EXCEPTION_IF_NULL(first_element_shape);
+    auto first_element_type = first_element->BuildType();
+    MS_EXCEPTION_IF_NULL(first_element_type);
+    auto first_element_type_id = first_element_type->generic_type_id();
+    for (size_t i = 1; i < elements.size(); ++i) {
+      auto cur_element = elements[i];
+      MS_EXCEPTION_IF_NULL(cur_element);
+      auto cur_element_type = cur_element->BuildType();
+      MS_EXCEPTION_IF_NULL(cur_element_type);
+      auto cur_element_type_id = cur_element_type->generic_type_id();
+      if (first_element_type_id != cur_element_type_id) {
+        return true;
+      }
+      auto cur_element_shape = cur_element->BuildShape();
+      MS_EXCEPTION_IF_NULL(cur_element_shape);
+      if (*first_element_shape != *cur_element_shape) {
+        return true;
+      }
+      try {
+        MS_LOG_TRY_CATCH_SCOPE;
+        (void)first_element->Join(cur_element);
+      } catch (std::exception &) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+abstract::AbstractSequencePtr CheckAndConvertUtils::BroadenAllSequenceElements(
+  const abstract::AbstractSequencePtr &sequence) {
+  MS_EXCEPTION_IF_NULL(sequence);
+  const auto &elements = sequence->elements();
+  AbstractBasePtrList new_elements;
+  for (auto element : elements) {
+    AbstractBasePtr new_element = nullptr;
+    if (element->isa<abstract::AbstractSequence>()) {
+      new_element = BroadenAllSequenceElements(element->cast<abstract::AbstractSequencePtr>());
+    } else {
+      auto tmp_element = element->Clone();
+      if (element->isa<abstract::AbstractScalar>()) {
+        tmp_element->cast<abstract::AbstractScalarPtr>()->set_is_variable(true);
+      }
+      new_element = tmp_element->Broaden();
+    }
+    new_elements.push_back(new_element);
+  }
+  if (sequence->isa<abstract::AbstractList>()) {
+    return std::make_shared<abstract::AbstractList>(new_elements, sequence->sequence_nodes());
+  }
+  return std::make_shared<abstract::AbstractTuple>(new_elements, sequence->sequence_nodes());
+}
+
+bool CheckAndConvertUtils::CheckValueSame(const ValuePtr &value_1, const ValuePtr &value_2) {
+  MS_EXCEPTION_IF_NULL(value_1);
+  MS_EXCEPTION_IF_NULL(value_2);
+  if (!value_1->IsSameTypeId(value_2->tid())) {
+    return false;
+  }
+  if (value_1->isa<tensor::Tensor>()) {
+    auto list_tensor_value = value_2->cast_ptr<tensor::Tensor>();
+    return value_1->cast_ptr<tensor::Tensor>()->ValueEqual(*list_tensor_value);
+  }
+  return *value_1 == *value_2;
 }
 
 void CheckAndConvertUtils::ConvertAttrValueInExport(const std::string &op_type, const std::string &attr_name,
@@ -437,7 +610,6 @@ ShapeMap CheckAndConvertUtils::ConvertShapePtrToShapeMap(const BaseShapePtr &sha
   MS_EXCEPTION_IF_NULL(shape_element);
   ShapeMap shape_map;
   shape_map[kShape] = shape_element->shape();
-  shape_map[kMinShape] = shape_element->min_shape();
   shape_map[kMaxShape] = shape_element->max_shape();
   return shape_map;
 }
@@ -643,8 +815,8 @@ TypePtr CheckAndConvertUtils::CheckTensorTypeValid(const std::string &type_name,
   // note that the return type might be different from input type
   MS_EXCEPTION_IF_NULL(type);
   if (!type->isa<TensorType>()) {
-    MS_EXCEPTION(TypeError) << "For Primitive[" << prim_name << "], the input argument[" << type_name
-                            << "] must be a Tensor but got " << type->ToString() << ".";
+    MS_EXCEPTION(TypeError) << "For Primitive[" << prim_name << "], the type of input argument[" << type_name
+                            << "] must be Tensor but got " << type->ToString() << ".";
   }
   auto tensor_type = type->cast<TensorTypePtr>();
   auto element = tensor_type->element();
@@ -702,9 +874,18 @@ ShapeVector CheckAndConvertUtils::CheckTensorIntValue(const std::string &type_na
     auto tensor_data = reinterpret_cast<int64_t *>(input_tensor->data_c());
     MS_EXCEPTION_IF_NULL(tensor_data);
     tensor_value = {tensor_data, tensor_data + data_size};
+  } else if (tensor_type->type_id() == kNumberTypeUInt32) {
+    auto tensor_data = reinterpret_cast<uint32_t *>(input_tensor->data_c());
+    MS_EXCEPTION_IF_NULL(tensor_data);
+    tensor_value = {tensor_data, tensor_data + data_size};
+  } else if (tensor_type->type_id() == kNumberTypeUInt64) {
+    auto tensor_data = reinterpret_cast<uint64_t *>(input_tensor->data_c());
+    MS_EXCEPTION_IF_NULL(tensor_data);
+    tensor_value = {tensor_data, tensor_data + data_size};
   } else {
     MS_EXCEPTION(TypeError) << "For primitive[" << prim_name << "], the input argument[" << type_name
-                            << "] must be a Tensor[Int64] or Tensor[Int32] type, but got " << value->ToString();
+                            << "] must be a Tensor[Int64] or Tensor[Int32]"
+                            << " or Tensor[UInt64] or Tensor[UInt32] type, but got " << value->ToString();
   }
   return tensor_value;
 }
@@ -757,6 +938,31 @@ TypePtr CheckAndConvertUtils::CheckSubClass(const std::string &type_name, const 
   }
   std::ostringstream buffer;
   buffer << "For primitive[" << prim_name << "], the input argument[" << type_name << "] must be a type of {";
+  std::set<string> order_set;
+  for (const auto &item : template_types) {
+    (void)order_set.emplace(item->ToString());
+  }
+  for (const auto &item : order_set) {
+    buffer << item;
+    if (item != *(--order_set.end())) {
+      buffer << ", ";
+    }
+  }
+  buffer << "}, but got " << type->ToString();
+  buffer << ".";
+  MS_EXCEPTION(TypeError) << buffer.str();
+}
+
+TypePtr CheckAndConvertUtils::CheckSubClassWithMoreInfo(const std::string &type_name, const TypePtr &type,
+                                                        const std::string &more_info,
+                                                        const std::set<TypePtr> &template_types,
+                                                        const std::string &prim_name) {
+  if (CheckType(type, template_types)) {
+    return type;
+  }
+  std::ostringstream buffer;
+  buffer << "For primitive[" << prim_name << "], the input argument[" << type_name << "] " << more_info
+         << " must be a type of {";
   std::set<string> order_set;
   for (const auto &item : template_types) {
     (void)order_set.emplace(item->ToString());
@@ -837,6 +1043,20 @@ TypePtr CheckAndConvertUtils::CheckTypeValid(const std::string &arg_name, const 
   return CheckSubClass(arg_name, arg_type, valid_type, prim_name);
 }
 
+TypePtr CheckAndConvertUtils::CheckTypeValidWithMoreInfo(const std::string &arg_name, const TypePtr &arg_type,
+                                                         const std::string &more_info,
+                                                         const std::set<TypePtr> &valid_type,
+                                                         const std::string &prim_name) {
+  if (valid_type.empty()) {
+    MS_EXCEPTION(ArgumentError) << "Trying to use the function to check a empty valid_type!";
+  }
+  MS_EXCEPTION_IF_NULL(arg_type);
+  if (arg_type->isa<TensorType>()) {
+    return CheckTensorTypeValid(arg_name, arg_type, valid_type, prim_name);
+  }
+  return CheckSubClassWithMoreInfo(arg_name, arg_type, more_info, valid_type, prim_name);
+}
+
 bool CheckAndConvertUtils::CheckIrAttrtoOpAttr(const std::string &op_type, const std::string &attr_name,
                                                ValuePtr *const value) {
   if (*value == nullptr) {
@@ -882,6 +1102,70 @@ void CheckAndConvertUtils::CheckMode(const std::string &class_name) {
   }
 }
 
+std::vector<double> CheckAndConvertUtils::CheckTensorFloatValue(const std::string &type_name, const ValuePtr &value,
+                                                                const std::string &prim_name) {
+  if (value == nullptr) {
+    MS_EXCEPTION(ValueError) << "For primitive[" << prim_name << "], the input argument[" << type_name
+                             << "] value is nullptr.";
+  }
+  std::vector<double> tensor_value;
+  if (!value->isa<tensor::Tensor>()) {
+    MS_EXCEPTION(ValueError) << "For primitive[" << prim_name << "], the input argument[" << type_name
+                             << "] must be a tensor, but got " << value->ToString();
+  }
+  auto input_tensor = value->cast<tensor::TensorPtr>();
+  MS_EXCEPTION_IF_NULL(input_tensor);
+  size_t data_size = input_tensor->DataSize();
+  auto tensor_type = input_tensor->Dtype();
+  if (tensor_type->type_id() == kNumberTypeFloat32) {
+    auto data_c = static_cast<float *>(input_tensor->data_c());
+    MS_EXCEPTION_IF_NULL(data_c);
+    for (size_t i = 0; i < data_size; i++) {
+      tensor_value.push_back(static_cast<double>(*data_c));
+      ++data_c;
+    }
+  } else if (tensor_type->type_id() == kNumberTypeFloat64) {
+    auto tensor_data = static_cast<double *>(input_tensor->data_c());
+    MS_EXCEPTION_IF_NULL(tensor_data);
+    tensor_value = {tensor_data, tensor_data + data_size};
+  } else {
+    MS_EXCEPTION(TypeError) << "For primitive[" << prim_name << "], the input argument[" << type_name
+                            << "] must be a Tensor[Float32] or Tensor[Float64], but got " << value->ToString();
+  }
+  return tensor_value;
+}
+
+std::vector<double> CheckAndConvertUtils::CheckListOrTupleFloat(const std::string &arg_name, const ValuePtr &attr,
+                                                                const std::string &prim_name) {
+  std::vector<double> result;
+  bool is_correct = false;
+  MS_EXCEPTION_IF_NULL(attr);
+  if (attr->isa<ValueTuple>() || attr->isa<ValueList>()) {
+    auto attr_vec =
+      attr->isa<ValueTuple>() ? attr->cast<ValueTuplePtr>()->value() : attr->cast<ValueListPtr>()->value();
+    if (attr_vec.empty()) {
+      return result;
+    }
+    is_correct = std::all_of(attr_vec.begin(), attr_vec.end(), [&result](const ValuePtr &e) -> bool {
+      MS_EXCEPTION_IF_NULL(e);
+      if (e->isa<FP32Imm>()) {
+        (void)result.emplace_back(static_cast<double>(GetValue<float>(e)));
+        return true;
+      } else if (e->isa<FP64Imm>()) {
+        (void)result.emplace_back(GetValue<double>(e));
+        return true;
+      }
+      return false;
+    });
+  }
+  if (!is_correct) {
+    MS_EXCEPTION(TypeError) << "For primitive[" << prim_name << "], the " << arg_name
+                            << " must be one of ['tuple', 'list'] with all Float elements, but got "
+                            << attr->ToString();
+  }
+  return result;
+}
+
 std::vector<int64_t> CheckAndConvertUtils::CheckIntOrTupleInt(const std::string &arg_name, const ValuePtr &attr,
                                                               const std::string &prim_name) {
   std::vector<int64_t> result;
@@ -890,7 +1174,7 @@ std::vector<int64_t> CheckAndConvertUtils::CheckIntOrTupleInt(const std::string 
   if (attr->isa<ValueTuple>() || attr->isa<ValueList>()) {
     auto attr_vec =
       attr->isa<ValueTuple>() ? attr->cast<ValueTuplePtr>()->value() : attr->cast<ValueListPtr>()->value();
-    if (!attr_vec.size()) {
+    if (attr_vec.empty()) {
       return result;
     }
     is_correct = std::all_of(attr_vec.begin(), attr_vec.end(), [&result](const ValuePtr &e) -> bool {
@@ -923,6 +1207,34 @@ std::vector<int64_t> CheckAndConvertUtils::CheckIntOrTupleInt(const std::string 
   return result;
 }
 
+std::vector<int64_t> CheckAndConvertUtils::CheckAttrTuple(const PrimitivePtr &prim, const std::string &attr_name,
+                                                          size_t num_element) {
+  MS_EXCEPTION_IF_NULL(prim);
+  auto attr = prim->GetAttr(attr_name);
+  MS_EXCEPTION_IF_NULL(attr);
+  std::vector<int64_t> result;
+  if (!attr->isa<ValueTuple>()) {
+    MS_EXCEPTION(ValueError) << "For '" << prim->name() << "', the '" << attr_name
+                             << "' should be a tuple[int64], but got: " << attr->ToString() << ".";
+  }
+  std::vector<ValuePtr> attr_vec = attr->cast<ValueTuplePtr>()->value();
+  if (attr_vec.size() != num_element) {
+    MS_EXCEPTION(ValueError) << "For '" << prim->name() << "', the '" << attr_name
+                             << "' should be a tuple[int64] with size " << num_element << ", but its size is "
+                             << attr_vec.size() << ".";
+  }
+  (void)std::transform(attr_vec.begin(), attr_vec.end(), std::back_inserter(result),
+                       [&prim, &attr_name](const ValuePtr &e) -> int64_t {
+                         auto value = GetValue<int64_t>(e);
+                         if (value < 0) {
+                           MS_EXCEPTION(ValueError) << "For '" << prim->name() << "', the element of '" << attr_name
+                                                    << "' should not be negative number, but got " << value << ".";
+                         }
+                         return value;
+                       });
+  return result;
+}
+
 std::vector<int64_t> CheckAndConvertUtils::CheckTupleInt(const std::string &arg_name, const ValuePtr &attr,
                                                          const std::string &prim_name) {
   std::vector<int64_t> result;
@@ -933,13 +1245,13 @@ std::vector<int64_t> CheckAndConvertUtils::CheckTupleInt(const std::string &arg_
       attr_vec.begin(), attr_vec.end(), std::back_inserter(result), [=](const ValuePtr &e) -> int64_t {
         if (!e->isa<Int64Imm>()) {
           MS_EXCEPTION(TypeError) << "For primitive[" << prim_name << "], the " << arg_name
-                                  << " must be a tuple with all Int elements, but got " << attr->ToString();
+                                  << " must be a tuple with all Int elements, but got " << attr->type_name();
         }
         return GetValue<int64_t>(e);
       });
   } else {
     MS_EXCEPTION(TypeError) << "For primitive[" << prim_name << "], the " << arg_name
-                            << " must be a tuple with all Int elements, but got " << attr->ToString() << ".";
+                            << " must be a tuple with all Int elements, but got " << attr->type_name() << ".";
   }
   return result;
 }
@@ -963,11 +1275,6 @@ std::vector<int64_t> CheckAndConvertUtils::CheckListInt(const std::string &arg_n
                             << " must be a list with all Int elements, but got " << attr->ToString() << ".";
   }
   return result;
-}
-
-void CheckAndConvertUtils::CheckMinMaxShape(const ShapeVector &shape, ShapeVector *min_shape, ShapeVector *max_shape) {
-  *min_shape = (*min_shape).empty() ? shape : *min_shape;
-  *max_shape = (*max_shape).empty() ? shape : *max_shape;
 }
 
 int64_t CheckAndConvertUtils::GetAndCheckFormat(const ValuePtr &value) {

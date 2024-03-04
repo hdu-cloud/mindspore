@@ -21,10 +21,10 @@ from mindspore import Tensor
 
 class Net(nn.Cell):
     def construct(self, x, dim):
-        return x.logsumexp(dim, keepdim=True)
+        return x.logsumexp(dim, keepdims=True)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.platform_arm_cpu
 @pytest.mark.platform_x86_gpu_training

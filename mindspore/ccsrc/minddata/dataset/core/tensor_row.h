@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,11 +37,13 @@ class TensorRow {
 
   enum TensorRowFlags : uint32_t {
     kFlagNone = 0,
-    kFlagEOF = 1,         // The row is an eof end-of-data msg
-    kFlagEOE = 1u << 1,   // The row is an eoe end-of-epoch msg
-    kFlagWait = 1u << 2,  // The row is an control signal for workers to suspend operations
-    kFlagQuit = 1u << 3,  // The row is a control signal for workers to quit
-    kFlagSkip = 1u << 4   // The row is a control signal for workers to skip this row
+    kFlagEOE = 1U,        // The row is an eoe end-of-epoch msg
+    kFlagEOF = 1U << 1,   // The row is an eof end-of-data msg
+    kFlagWait = 1U << 2,  // The row is an control signal for workers to suspend operations
+    kFlagQuit = 1U << 3,  // The row is a control signal for workers to quit
+    kFlagSkip = 1U << 4,  // The row is a control signal for workers to skip this row
+    kFlagError = 1U << 5  // The row is an error row (needs to be replaced with another row or skipped, as per
+                          //   ErrorSamplesMode config)
   };
 
   // Type definitions
@@ -81,6 +83,10 @@ class TensorRow {
 
   // Destructor
   ~TensorRow() = default;
+
+  // Deep copy
+  /// \param[in] new_tr the tensor row to clone to
+  Status Clone(TensorRow *new_tr) const;
 
   /// Convert a vector of primitive types to a TensorRow consisting of one 1-D Tensor with the shape n.
   /// \tparam `T`
@@ -184,6 +190,12 @@ class TensorRow {
 
   void clear() noexcept { row_.clear(); }
 
+  // Reset both the tensor row vector and flags
+  void reset() noexcept {
+    row_.clear();
+    tensor_row_flag_ = kFlagNone;
+  }
+
   size_type size() const noexcept { return row_.size(); }
 
   void reserve(size_type size) { row_.reserve(size); }
@@ -235,7 +247,32 @@ class TensorRow {
     return static_cast<bool>(static_cast<uint32_t>(tensor_row_flag_) & static_cast<uint32_t>(kFlagSkip));
   }
 
+  bool error() const {
+    return static_cast<bool>(static_cast<uint32_t>(tensor_row_flag_) & static_cast<uint32_t>(kFlagError));
+  }
+
   const TensorRowFlags Flags() { return tensor_row_flag_; }
+
+  std::string FlagName() const {
+    switch (tensor_row_flag_) {
+      case TensorRowFlags::kFlagNone:
+        return "Data";
+      case TensorRowFlags::kFlagEOE:
+        return "EOE";
+      case TensorRowFlags::kFlagEOF:
+        return "EOF";
+      case TensorRowFlags::kFlagWait:
+        return "Wait";
+      case TensorRowFlags::kFlagQuit:
+        return "Quit";
+      case TensorRowFlags::kFlagSkip:
+        return "Skip";
+      case TensorRowFlags::kFlagError:
+        return "Error";
+      default:
+        return "Unknown";
+    }
+  }
 
   explicit TensorRow(TensorRowFlags flag);
 

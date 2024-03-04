@@ -70,7 +70,7 @@ Status JsonHelper::UpdateArray(const std::string &in_file, const std::string &ke
     nlohmann::json js;
     if (in.Exists()) {
       RETURN_IF_NOT_OK(RealPath(in_file));
-      std::ifstream in_stream(in_file);
+      std::ifstream in_stream(in_file, std::ios::in);
       try {
         MS_LOG(INFO) << "Filename: " << in_file << ".";
         in_stream >> js;
@@ -82,20 +82,27 @@ Status JsonHelper::UpdateArray(const std::string &in_file, const std::string &ke
       in_stream.close();
     }
     js[key] = value;
-    MS_LOG(INFO) << "Write outfile is: " << js << ".";
     if (out_file == "") {
-      std::ofstream o(in_file, std::ofstream::trunc);
+      std::ofstream o(in_file, std::ofstream::out | std::ofstream::trunc);
       o << js;
       o.close();
+      platform::ChangeFileMode(in_file, S_IRUSR | S_IWUSR);
     } else {
-      std::ofstream o(out_file, std::ofstream::trunc);
+      std::ofstream o(out_file, std::ofstream::out | std::ofstream::trunc);
       o << js;
       o.close();
+      platform::ChangeFileMode(out_file, S_IRUSR | S_IWUSR);
     }
   }
   // Catch any exception and convert to Status return code
-  catch (const std::exception &err) {
-    RETURN_STATUS_UNEXPECTED("Update json failed ");
+  catch (nlohmann::json::exception &e) {
+    std::string err_msg = "Parse json failed. Error info: ";
+    err_msg += e.what();
+    RETURN_STATUS_UNEXPECTED(err_msg);
+  } catch (const std::exception &e) {
+    std::string err_msg = "Update json failed. Error info: ";
+    err_msg += e.what();
+    RETURN_STATUS_UNEXPECTED(err_msg);
   }
   return Status::OK();
 }
@@ -106,7 +113,7 @@ Status JsonHelper::RemoveKey(const std::string &in_file, const std::string &key,
     nlohmann::json js;
     if (in.Exists()) {
       RETURN_IF_NOT_OK(RealPath(in_file));
-      std::ifstream in_stream(in_file);
+      std::ifstream in_stream(in_file, std::ios::in);
       try {
         MS_LOG(INFO) << "Filename: " << in_file << ".";
         in_stream >> js;
@@ -120,13 +127,15 @@ Status JsonHelper::RemoveKey(const std::string &in_file, const std::string &key,
     (void)js.erase(key);
     MS_LOG(INFO) << "Write outfile is: " << js << ".";
     if (out_file == "") {
-      std::ofstream o(in_file, std::ofstream::trunc);
+      std::ofstream o(in_file, std::ios::out | std::ofstream::trunc);
       o << js;
       o.close();
+      platform::ChangeFileMode(in_file, S_IRUSR | S_IWUSR);
     } else {
-      std::ofstream o(out_file, std::ofstream::trunc);
+      std::ofstream o(out_file, std::ios::out | std::ofstream::trunc);
       o << js;
       o.close();
+      platform::ChangeFileMode(out_file, S_IRUSR | S_IWUSR);
     }
   }
   // Catch any exception and convert to Status return code

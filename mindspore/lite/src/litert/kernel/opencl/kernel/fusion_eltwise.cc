@@ -17,9 +17,10 @@
 #include <algorithm>
 #include "src/litert/kernel/opencl/utils.h"
 #include "include/errorcode.h"
-#include "nnacl/arithmetic.h"
+#include "nnacl/arithmetic_parameter.h"
 #include "nnacl/fp32/activation_fp32.h"
-#include "nnacl/scale.h"
+#include "nnacl/scale_parameter.h"
+#include "src/litert/infer_manager.h"
 
 using mindspore::lite::RET_ERROR;
 using mindspore::lite::RET_OK;
@@ -47,7 +48,7 @@ static std::set<EltwiseOperator> SupportedOperators = {
 
 bool CheckSupport(KernelExec *node) {
   MS_ASSERT(node);
-  PrimitiveType node_type = node->type();
+  auto node_type = node->type();
   auto operator_ = static_cast<const EltwiseOperator>(node_type);
   auto *op_parameter = reinterpret_cast<OpenCLKernel *>(node->kernel())->GetParameter();
 
@@ -81,7 +82,7 @@ bool CheckSupport(KernelExec *node) {
 FusionEltwiseParameter *CreateParam(KernelExec *node,
                                     const std::map<lite::Tensor *, FusionEltwiseParameter *> &replace_map = {}) {
   MS_ASSERT(node);
-  PrimitiveType node_type = node->type();
+  auto node_type = node->type();
   auto operator_ = static_cast<const EltwiseOperator>(node_type);
   auto *op_parameter = reinterpret_cast<OpenCLKernel *>(node->kernel())->GetParameter();
   FusionEltwiseParameter *param = nullptr;
@@ -125,8 +126,6 @@ FusionEltwiseParameter *CreateParam(KernelExec *node,
   return param;
 }
 
-bool IsOperatorSupported(KernelExec *node) { return CheckSupport(node); }
-
 FusionEltwiseParameter *CreateFusionEltwiseParameter(
   KernelExec *node, const std::map<lite::Tensor *, FusionEltwiseParameter *> &replace_map) {
   return CreateParam(node, replace_map);
@@ -141,7 +140,7 @@ bool CheckDateTypeSupport(lite::Tensor *tensor) {
 
 bool IsEltwiseAndOperatorSupported(KernelExec *node) {
   MS_ASSERT(node);
-  if (!IsOperatorSupported(node)) {
+  if (!CheckSupport(node)) {
     return false;
   }
   if (node->out_tensors().size() != 1) {
@@ -206,6 +205,47 @@ int FusionEltwiseOpenCLKernel::Prepare() {
     MS_LOG(ERROR) << "SeConstArgs failed.";
     return RET_ERROR;
   }
+  return RET_OK;
+}
+
+int FusionEltwiseOpenCLKernel::InferShape() {
+  if (InferShapeDone()) {
+    return RET_OK;
+  }
+
+  if (in_tensors_.empty() || out_tensors_.empty()) {
+    MS_LOG(WARNING) << "Input or output tensor list is empty, infer failed.";
+    return RET_ERROR;
+  }
+
+  // For first input tensor, just invoke ArithmeticSelf InferShape() to get the output shape.
+  op_parameter_->type_ = schema::PrimitiveType_Neg;
+  auto ret = lite::KernelInferShape(in_tensors_, out_tensors_, op_parameter_);
+  op_parameter_->type_ = PrimitiveType_FusionEltwise;
+  if (ret != RET_OK) {
+    MS_LOG(WARNING) << "Infer shape as ArithmeticSelf failed";
+    return ret;
+  }
+  if (in_tensors_.size() == C1NUM) {
+    return RET_OK;
+  }
+
+  // If there is more than one input, choose each input and previous output as new sub input pair,
+  // apply Arithmetic InferShape() on sub inputs, then the final sub_out_shape is the output shape.
+  std::vector<lite::Tensor *> sub_in_tensors_(C2NUM);
+  std::vector<lite::Tensor *> sub_out_tensors_ = out_tensors_;
+  op_parameter_->type_ = schema::PrimitiveType_AddFusion;
+  for (size_t i = C1NUM; i < in_tensors_.size(); i++) {
+    sub_in_tensors_[C0NUM] = in_tensors_[i];
+    sub_in_tensors_[C1NUM] = sub_out_tensors_[C0NUM];
+    auto ret_2 = lite::KernelInferShape(sub_in_tensors_, sub_out_tensors_, op_parameter_);
+    if (ret_2 != RET_OK || sub_out_tensors_.empty()) {
+      MS_LOG(WARNING) << "Infer shape as Arithmetic on input " << (i - 1) << " and " << i << " failed";
+      op_parameter_->type_ = PrimitiveType_FusionEltwise;
+      return ret_2;
+    }
+  }
+  op_parameter_->type_ = PrimitiveType_FusionEltwise;
   return RET_OK;
 }
 

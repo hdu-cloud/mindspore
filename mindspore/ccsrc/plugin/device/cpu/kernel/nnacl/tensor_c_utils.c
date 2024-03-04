@@ -15,6 +15,7 @@
  */
 
 #include "nnacl/tensor_c_utils.h"
+#include "nnacl/nnacl_common.h"
 
 int CheckAugmentNull(const TensorC *const *inputs, size_t inputs_size, TensorC **outputs, size_t outputs_size,
                      const OpParameter *parameter) {
@@ -381,6 +382,12 @@ void SetChannel(TensorC *tensor, int channel) {
   }
 }
 
+int GetSize(const TensorC *tensor) {
+  int element_num = GetElementNum(tensor);
+  int data_type_size = (int)DataTypeCSize(tensor->data_type_);
+  return element_num * data_type_size;
+}
+
 int GetElementNum(const TensorC *tensor) {
   if (tensor == NULL) {
     return -1;
@@ -390,7 +397,7 @@ int GetElementNum(const TensorC *tensor) {
   }
   int res = 1;
   for (size_t i = 0; i < tensor->shape_size_; i++) {
-    MS_CHECK_INT_MUL_NOT_OVERFLOW(res, tensor->shape_[i], NNACL_ERRCODE_MUL_OVERFLOW);
+    NNACL_CHECK_INT_MUL_NOT_OVERFLOW(res, tensor->shape_[i], NNACL_ERRCODE_MUL_OVERFLOW);
     res = res * tensor->shape_[i];
   }
 
@@ -413,4 +420,20 @@ int GetDimensionSize(const TensorC *tensor, const size_t index) {
     dim_size = tensor->shape_[index];
   }
   return dim_size;
+}
+
+bool IsShapeSame(const TensorC *tensor1, const TensorC *tensor2) {
+  if (tensor1->shape_size_ != tensor2->shape_size_) {
+    return false;
+  }
+  for (size_t i = 0; i < tensor1->shape_size_; i++) {
+    if (tensor1->shape_[i] != tensor2->shape_[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool IsConst(const TensorC *tensor) {
+  return (tensor->category_ == ConstTensor || tensor->category_ == ConstScalar) && tensor->data_ != NULL;
 }

@@ -14,11 +14,33 @@
  * limitations under the License.
  */
 #include "ops/fft_with_size.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+
+#include <algorithm>
+#include <set>
+#include <unordered_map>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/overload.h"
 
 namespace mindspore {
 namespace ops {
@@ -51,8 +73,25 @@ std::vector<int64_t> FFTWithSize::get_signal_sizes() const {
 }
 
 namespace {
+const std::unordered_map<TypePtr, TypePtr> kRfftTypes{
+  {kFloat32, kComplex64}, {kFloat64, kComplex128}, {kUInt8, kComplex64}, {kInt8, kComplex64},
+  {kInt16, kComplex64},   {kInt32, kComplex64},    {kInt64, kComplex64}, {kBool, kComplex64}};
+
+const std::unordered_map<TypePtr, TypePtr> kFftTypes{{kComplex64, kComplex64}, {kComplex128, kComplex128}};
+
+const std::unordered_map<TypePtr, TypePtr> kIrfftTypes{{kComplex64, kFloat32}, {kComplex128, kFloat64}};
+
+std::set<TypePtr> get_input_types(std::unordered_map<TypePtr, TypePtr> types) {
+  std::set<TypePtr> keys;
+  for (const auto &t : types) {
+    keys.insert(t.first);
+  }
+  return keys;
+}
+
 abstract::ShapePtr FFTWithSizeInferShape(const PrimitivePtr &primitive,
                                          const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
   const int64_t kDimNum = 2;
   const int64_t kSignalRankMin = 1, kSignalRankMax = 3;
@@ -68,7 +107,8 @@ abstract::ShapePtr FFTWithSizeInferShape(const PrimitivePtr &primitive,
   auto real = GetValue<bool>(real_attr);
   auto inverse = GetValue<bool>(inverse_attr);
   auto norm = GetValue<std::string>(norm_attr);
-  auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex0]->BuildShape())[kShape];
+  auto x = CheckAndConvertUtils::CheckArgs<abstract::AbstractTensor>(prim_name, input_args, kInputIndex0);
+  auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(x->BuildShape())[kShape];
   if (std::any_of(x_shape.begin(), x_shape.end(), [](int64_t dim) { return dim < 0; })) {
     // if dynamic shape, we just return vector of -1 with x_shape.size()
     std::vector<int64_t> y_shape(x_shape.size(), -1);
@@ -133,12 +173,17 @@ abstract::ShapePtr FFTWithSizeInferShape(const PrimitivePtr &primitive,
 }
 
 TypePtr FFTWithSizeInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(prim);
   const std::string prim_name = prim->name();
-  CheckAndConvertUtils::CheckArgs<abstract::AbstractTensor>(prim_name, input_args, kInputIndex0);
-  auto input_type = input_args[kInputIndex0]->BuildType();
+  auto tensor = CheckAndConvertUtils::CheckArgs<abstract::AbstractTensor>(prim_name, input_args, kInputIndex0);
+  auto type = tensor->BuildType();
+  MS_EXCEPTION_IF_NULL(type);
+  auto tensor_type = type->cast<TensorTypePtr>();
+  MS_EXCEPTION_IF_NULL(tensor_type);
+  auto type_ele = tensor_type->element();
+  MS_EXCEPTION_IF_NULL(type_ele);
+  auto input_type = TypeIdToType(type_ele->type_id());
   MS_EXCEPTION_IF_NULL(input_type);
-  const std::set<TypePtr> valid_types = {kFloat32, kFloat64, kComplex64, kComplex128};
-  (void)CheckAndConvertUtils::CheckTensorTypeValid("x", input_type, valid_types, prim_name);
   auto real_attr = prim->GetAttr("real");
   auto inverse_attr = prim->GetAttr("inverse");
   if (inverse_attr == nullptr) {
@@ -151,36 +196,21 @@ TypePtr FFTWithSizeInferType(const PrimitivePtr &prim, const std::vector<Abstrac
   }
   auto real = GetValue<bool>(real_attr);
   auto inverse = GetValue<bool>(inverse_attr);
-  auto out_type = input_type;
+  TypePtr out_type{nullptr};
   if (real) {
     if (!inverse) {
-      if (*(input_type->cast<TensorTypePtr>()->element()) == *(kFloat32)) {
-        out_type->cast<TensorTypePtr>()->set_element(kComplex64);
-      } else if (*(input_type->cast<TensorTypePtr>()->element()) == *(kFloat64)) {
-        out_type->cast<TensorTypePtr>()->set_element(kComplex128);
-      } else {
-        MS_EXCEPTION(TypeError) << "For '" << prim_name << "', "
-                                << "RFFT requires float32 or float64 inputs, but got "
-                                << *(input_type->cast<TensorTypePtr>()->element()) << ".";
-      }
+      auto valid_types = get_input_types(kRfftTypes);
+      (void)CheckAndConvertUtils::CheckTypeValidWithMoreInfo("x", input_type, "in rfft mode", valid_types, prim_name);
+      out_type = kRfftTypes.at(input_type);
     } else {
-      if (*(input_type->cast<TensorTypePtr>()->element()) == *(kComplex64)) {
-        out_type->cast<TensorTypePtr>()->set_element(kFloat32);
-      } else if (*(input_type->cast<TensorTypePtr>()->element()) == *(kComplex128)) {
-        out_type->cast<TensorTypePtr>()->set_element(kFloat64);
-      } else {
-        MS_EXCEPTION(TypeError) << "For '" << prim_name << "', "
-                                << "IRFFT requires complex64 or complex128 inputs, but got "
-                                << *(input_type->cast<TensorTypePtr>()->element()) << ".";
-      }
+      auto valid_types = get_input_types(kIrfftTypes);
+      (void)CheckAndConvertUtils::CheckTypeValidWithMoreInfo("x", input_type, "in irfft mode", valid_types, prim_name);
+      out_type = kIrfftTypes.at(input_type);
     }
   } else {
-    if (*(input_type->cast<TensorTypePtr>()->element()) != *(kComplex64) &&
-        *(input_type->cast<TensorTypePtr>()->element()) != *(kComplex128)) {
-      MS_EXCEPTION(TypeError) << "For '" << prim_name << "', "
-                              << "FFT/IFFT requires complex64 or complex128 inputs, but got "
-                              << *(input_type->cast<TensorTypePtr>()->element()) << ".";
-    }
+    auto valid_types = get_input_types(kFftTypes);
+    (void)CheckAndConvertUtils::CheckTypeValidWithMoreInfo("x", input_type, "in fft/ifft mode", valid_types, prim_name);
+    out_type = kFftTypes.at(input_type);
   }
   return out_type;
 }
@@ -196,6 +226,24 @@ AbstractBasePtr FFTWithSizeInfer(const abstract::AnalysisEnginePtr &, const Prim
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 MIND_API_OPERATOR_IMPL(FFTWithSize, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(FFTWithSize, prim::kPrimFFTWithSize, FFTWithSizeInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGFFTWithSizeInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return FFTWithSizeInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return FFTWithSizeInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return FFTWithSizeInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(FFTWithSize, prim::kPrimFFTWithSize, AGFFTWithSizeInfer, false);
 }  // namespace ops
 }  // namespace mindspore

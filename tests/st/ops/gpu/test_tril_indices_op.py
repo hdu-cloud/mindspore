@@ -31,7 +31,7 @@ class TrilIndicesNet(nn.Cell):
         return self.tril_indices()
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_tril_indices_int32_positive_offset():
@@ -48,7 +48,7 @@ def test_tril_indices_int32_positive_offset():
         assert(output.asnumpy() == expect).all()
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_tril_indices_int64_negative_offset():

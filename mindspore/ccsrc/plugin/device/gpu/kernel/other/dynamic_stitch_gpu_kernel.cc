@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 #include "plugin/device/gpu/kernel/other/dynamic_stitch_gpu_kernel.h"
-#include <functional>
 #include "kernel/common_utils.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/dynamic_stitch_impl.cuh"
 #include "plugin/device/gpu/hal/device/gpu_common.h"
@@ -64,13 +63,14 @@ bool DynamicStitchKernelMod::Init(const CNodePtr &kernel_node) {
   return true;
 }
 
-void DynamicStitchKernelMod::SyncData() {
+void DynamicStitchKernelMod::SyncOutputShape() {
   CHECK_CUDA_RET_WITH_EXCEPT(kernel_node_, cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(stream_ptr_)),
                              "DynamicStitch cudaStreamSynchronized failed");
   auto output_shape = AnfAlgo::GetOutputDeviceShapeAdaptively(kernel_node_.lock(), 0);
   output_shape[0] = max_index_ + 1;
-  auto data_type = AnfAlgo::GetInputDeviceDataType(kernel_node_.lock(), n_);
-  common::AnfAlgo::SetOutputInferTypeAndShape({data_type}, {output_shape}, kernel_node_.lock().get());
+  // auto data_type = AnfAlgo::GetInputDeviceDataType(kernel_node_.lock(), n_);
+  // common::AnfAlgo::SetOutputInferTypeAndShape({data_type}, {output_shape}, kernel_node_.lock().get());
+  outputs_[0]->SetShapeVector(output_shape);
   MS_LOG(DEBUG) << "Run PostExecute for dynamicstitch, real output shape is " << output_shape;
 }
 
@@ -98,12 +98,16 @@ bool DynamicStitchKernelMod::Launch(const std::vector<AddressPtr> &inputs, const
     auto index_addr = GetDeviceAddress<int>(inputs, i);
     auto data_addr = GetDeviceAddress<unsigned char>(inputs, n_ + i);
     size_t index_num = input_size_list_[i] / sizeof(int);
-    CallStitch(index_addr, data_addr, output_addr, index_num, one_data_ele_num_ * data_type_size_, max_index_dev,
-               cuda_stream);
+    auto status = CallStitch(index_addr, data_addr, output_addr, index_num, one_data_ele_num_ * data_type_size_,
+                             max_index_dev, cuda_stream);
+    CHECK_CUDA_STATUS(status, kernel_name_);
   }
   CHECK_CUDA_RET_WITH_EXCEPT(
     kernel_node_, cudaMemcpyAsync(&max_index_, max_index_dev, sizeof(int), cudaMemcpyDeviceToHost, cuda_stream),
-    "Copy max_index failed")
+    "For 'DynamicStitch', copy max_index failed");
+  if (cudaStreamQuery(cuda_stream) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(cuda_stream), "For 'DynamicStitch', cudaStreamSyncFailed");
+  }
   return true;
 }
 }  // namespace kernel

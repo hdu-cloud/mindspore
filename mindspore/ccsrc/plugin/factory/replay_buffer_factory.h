@@ -23,26 +23,16 @@
 #include <tuple>
 #include <map>
 #include <utility>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 
 namespace mindspore {
 namespace kernel {
 constexpr int64_t kInvalidHandle = -1;
-// Class for replay buffer managerment
+// Class for replay buffer management
 // It holds instance which could be accessed across different kernels with
 // factory pattern and singleton design pattern.
 // The class is templated with specific replay buffer for example FIFO, Priority, EposidicFIFO, ...
 // The Create() method support variable parameters.
-// Here is an example:
-// ```C++
-// Define an custom replay buffer
-// class CustomReplayBuffer {
-//  public:
-//   CustomReplayBuffer(params);
-// };
-// auto factory = ReplayBufferFactory<CustomReplayBuffer>::GetInstance();
-// auto handle_instance_pair = factor.Create(params);
-// ```
 template <typename T>
 class ReplayBufferFactory {
  public:

@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,12 +39,14 @@ enum MS_API FmkType : int {
   kFmkTypeMs = 3,
   kFmkTypeTflite = 4,
   kFmkTypePytorch = 5,
+  kFmkTypeMsLite = 6,
+  kFmkTypeOM = 7,
 };
 
 /// \brief ConverterParameters defined read-only converter parameters used by users in ModelParser.
 struct MS_API ConverterParameters {
   FmkType fmk;
-  ModelType export_mindir = kMindIR_Lite;
+  ModelType save_type = kMindIR_Lite;
   std::string model_file;
   std::string weight_file;
   std::map<std::string, std::string> attrs;

@@ -15,14 +15,15 @@
  */
 
 #include "ops/mul.h"
-#include <string>
 #include <algorithm>
 #include <memory>
+#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -58,6 +59,24 @@ AbstractBasePtr MulInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr
                          const std::vector<AbstractBasePtr> &input_args) {
   return abstract::MakeAbstract(MulInferShape(primitive, input_args), MulInferType(primitive, input_args));
 }
-REGISTER_PRIMITIVE_C(kNameMul, Mul);
+
+// AG means auto generated
+class MIND_API AGMulInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MulInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MulInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MulInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Mul, prim::kPrimMul, AGMulInfer, false);
 }  // namespace ops
 }  // namespace mindspore

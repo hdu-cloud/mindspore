@@ -34,20 +34,24 @@ class CsvToMR:
     """
     A class to transform from csv to MindRecord.
 
-    Note:
-        For details about Examples, please refer to `Converting CSV Dataset <https://
-        www.mindspore.cn/tutorials/zh-CN/r2.0.0-alpha/advanced/dataset/record.html#converting-csv-dataset>`_ .
-
     Args:
         source (str): The file path of csv.
-        destination (str): The MindRecord file path to transform into, ensure that no file with the same name
-            exists in the directory.
-        columns_list(list[str], optional): A list of columns to be read. Default: None.
-        partition_number (int, optional): The partition size, Default: 1.
+        destination (str): The MindRecord file path to transform into, ensure that the directory is created in advance
+            and no file with the same name exists in the directory.
+        columns_list(list[str], optional): A list of columns to be read. Default: ``None`` .
+        partition_number (int, optional): The partition size, Default: ``1`` .
 
     Raises:
         ValueError: If `source` , `destination` , `partition_number` is invalid.
         RuntimeError: If `columns_list` is invalid.
+
+    Examples:
+        >>> from mindspore.mindrecord import CsvToMR
+        >>>
+        >>> csv_file = "/path/to/csv/file"
+        >>> mindrecord_file = "/path/to/mindrecord/file"
+        >>> csv_to_mr = CsvToMR(csv_file, mindrecord_file)
+        >>> status = csv_to_mr.transform()
     """
 
     def __init__(self, source, destination, columns_list=None, partition_number=1):
@@ -126,13 +130,8 @@ class CsvToMR:
                     row[col] = r[col]
             yield row
 
+    # pylint: disable=missing-docstring
     def run(self):
-        """
-        Execute transformation from csv to MindRecord.
-
-        Returns:
-            MSRStatus, SUCCESS or FAILED.
-        """
         if not os.path.exists(self.source):
             raise IOError("Csv file {} do not exist.".format(self.source))
 
@@ -153,6 +152,10 @@ class CsvToMR:
         self.writer.add_schema(csv_schema, "csv_schema")
 
         # add the index
+        for column_name in list(self.columns_list):
+            if str(column_name).isdigit():
+                raise ValueError("The first line content: {} of the CSV file is used as a column name and "
+                                 "does not allow starting with a number.".format(str(column_name)))
         self.writer.add_index(list(self.columns_list))
 
         csv_iter = self._get_row_of_csv(df, self.columns_list)
@@ -179,10 +182,22 @@ class CsvToMR:
 
     def transform(self):
         """
-        Encapsulate the :func:`mindspore.mindrecord.CsvToMR.run` function to exit normally.
+        Execute transformation from csv to MindRecord.
+
+        Note:
+            Please refer to the Examples of :class:`mindspore.mindrecord.CsvToMR` .
 
         Returns:
             MSRStatus, SUCCESS or FAILED.
+
+        Raises:
+            ParamTypeError: If index field is invalid.
+            MRMOpenError: If failed to open MindRecord file.
+            MRMValidateDataError: If data does not match blob fields.
+            MRMSetHeaderError: If failed to set header.
+            MRMWriteDatasetError: If failed to write dataset.
+            IOError: Csv file does not exist.
+            ValueError: The first line of the CSV file is used as column name and each field cannot start with a number.
         """
 
         t = ExceptionThread(target=self.run)

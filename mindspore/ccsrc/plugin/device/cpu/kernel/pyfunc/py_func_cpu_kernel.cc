@@ -23,6 +23,7 @@
 #include "plugin/device/cpu/hal/device/cpu_common.h"
 #include "include/common/utils/python_adapter.h"
 #include "plugin/factory/ms_factory.h"
+#include "utils/ms_utils_secure.h"
 
 namespace mindspore {
 namespace kernel {
@@ -139,8 +140,9 @@ void ArrayToRawMemory(const py::array &array, const AddressPtr &address) {
       static_cast<unsigned int>(pybind11::detail::npy_api::NPY_ARRAY_C_CONTIGUOUS_)) {
     const py::buffer_info &buf_info = array.request();
     CHECK_RET_WITH_EXCEPT(
-      memcpy_s(address->addr, address->size, buf_info.ptr, LongToSize(buf_info.size * buf_info.itemsize)), EOK,
-      "memcpy failed.");
+      common::huge_memcpy(reinterpret_cast<uint8_t *>(address->addr), address->size,
+                          reinterpret_cast<uint8_t *>(buf_info.ptr), LongToSize(buf_info.size * buf_info.itemsize)),
+      EOK, "memcpy failed.");
   } else {
     // Transform numpy array to row major buffer.
     Py_buffer pybuf;
@@ -154,8 +156,9 @@ void ArrayToRawMemory(const py::array &array, const AddressPtr &address) {
       MS_LOG(EXCEPTION) << "Can't copy numpy.ndarray to a contiguous buffer.";
     }
     PyBuffer_Release(&pybuf);
-    CHECK_RET_WITH_EXCEPT(memcpy_s(address->addr, address->size, buffer.get(), LongToSize(pybuf.len)), EOK,
-                          "memcpy failed.");
+    CHECK_RET_WITH_EXCEPT(common::huge_memcpy(reinterpret_cast<uint8_t *>(address->addr), address->size,
+                                              reinterpret_cast<uint8_t *>(buffer.get()), LongToSize(pybuf.len)),
+                          EOK, "memcpy failed.");
   }
 }
 
@@ -183,8 +186,9 @@ py::tuple RawMemoryToPyObjects(const std::vector<AddressPtr> &inputs, const PyFu
       case PythonOjectType::kNumpyArray: {
         const tensor::TensorPtr &tensor = input_tensors[i];
         MS_EXCEPTION_IF_NULL(tensor);
-        CHECK_RET_WITH_EXCEPT(memcpy_s(tensor->data_c(), tensor->Size(), inputs[i]->addr, inputs[i]->size), EOK,
-                              "memcpy failed.");
+        CHECK_RET_WITH_EXCEPT(common::huge_memcpy(reinterpret_cast<uint8_t *>(tensor->data_c()), tensor->Size(),
+                                                  reinterpret_cast<uint8_t *>(inputs[i]->addr), inputs[i]->size),
+                              EOK, "memcpy failed.");
         result[i] = python_adapter::PyAdapterCallback::TensorToNumpy(*tensor);
         break;
       }
@@ -210,7 +214,10 @@ void PyObjectToRawMemorys(const py::object &object, const PyFuncArgumentInfo &ou
   if (result_tuple.size() != outputs.size()) {
     MS_LOG(EXCEPTION) << "The output num is: " << result_tuple.size() << ", with " << outputs.size() << " expect.";
   }
-
+  if (output_infos.object_types.size() != outputs.size() || output_infos.dtypes.size() != outputs.size()) {
+    MS_LOG(EXCEPTION) << "The output info size is: " << output_infos.object_types.size() << " and "
+                      << output_infos.dtypes.size() << ", with " << outputs.size() << " expect.";
+  }
   for (size_t i = 0; i < outputs.size(); i++) {
     ObjectToRawMemory(result_tuple[i], output_infos.object_types[i], output_infos.dtypes[i], outputs[i]);
   }
@@ -272,7 +279,7 @@ void PyFuncCpuKernelMod::BuildFuncInfo(const CNodePtr &kernel_node) {
   if (common::AnfAlgo::HasNodeAttr("out_shapes", kernel_node)) {
     out_shapes = common::AnfAlgo::GetNodeAttr<std::vector<std::vector<int64_t>>>(kernel_node, "out_shapes");
   } else {
-    for (size_t i = 0; i < common::AnfAlgo::GetOutputTensorNum(kernel_node); i++) {
+    for (size_t i = 0; i < AnfAlgo::GetOutputTensorNum(kernel_node); i++) {
       auto out_shape = AnfAlgo::GetOutputDeviceShape(kernel_node, i);
       (void)out_shapes.emplace_back(out_shape);
     }

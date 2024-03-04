@@ -20,6 +20,7 @@
 #include <vector>
 #include <memory>
 #include <string>
+#include <utility>
 #include <map>
 #include <set>
 #include "utils/hash_map.h"
@@ -30,6 +31,7 @@
 #include "backend/common/session/session_factory.h"
 #include "ir/tensor.h"
 #include "include/backend/visible.h"
+#include "kernel/framework_utils.h"
 
 namespace mindspore {
 using device::DeviceContext;
@@ -41,6 +43,24 @@ using session::KernelGraph;
 using session::KernelWithIndex;
 using tensor::TensorPtr;
 
+const char kModelNameRuntime[] = "Runtime";
+const char kEventDeviceInit[] = "DeviceInit";
+const char kEventCompileGraph[] = "CompileGraph";
+const char kEventRunGraph[] = "RunGraph";
+const char kStageDeviceInit[] = "DeviceInit";
+const char kStageCompileGraphs[] = "CompileGraphs";
+const char kStageGraphPartition[] = "GraphPartition";
+const char kStageConstructKernelGraph[] = "ConstructKernelGraph";
+const char kStageOptimizeGraph[] = "OptimizeGraph";
+const char kStageCreateKernel[] = "CreateKernel";
+const char kStageGraphTransform[] = "GraphTransform";
+const char kStageBuild[] = "Build";
+const char kStageLink[] = "Link";
+const char kStageOptimize[] = "Optimize";
+const char kStageRunGraph[] = "RunGraph";
+const char kStageGetInputs[] = "GetInputs";
+const char kStageRun[] = "Run";
+const char kStageConstructOutputs[] = "ConstructOutputs";
 namespace runtime {
 // Position of kernel with index, the value pair<branch_id, vector<pos>> means the branch id of the kernel and the pos
 // of the kernel. Generally, there is only one branch, and the branch id is 0 at this time. In control flow, there are
@@ -63,7 +83,7 @@ struct BACKEND_EXPORT GraphCompilerInfo {
                     const std::vector<AnfNodePtr> &control_nodes,
                     const std::vector<AnfNodePtr> &origin_parameters_order, const ControlNodeParserPtr &parser,
                     const KernelMapPosition &origin_outputs_order, const size_t outputs_num, const std::string &name,
-                    bool need_erase, GraphExecutionStrategy strategy)
+                    bool need_erase, GraphExecutionStrategy strategy, CompileFunc compile_func)
       : graphs_(graphs),
         device_contexts_(device_contexts),
         tensors_mask_(tensors_mask),
@@ -75,7 +95,8 @@ struct BACKEND_EXPORT GraphCompilerInfo {
         outputs_num_(outputs_num),
         name_(name),
         need_erase_(need_erase),
-        strategy_(strategy) {}
+        strategy_(strategy),
+        compile_func_(std::move(compile_func)) {}
   ~GraphCompilerInfo();
   std::vector<KernelGraphPtr> graphs_;
   std::vector<DeviceContext *> device_contexts_;
@@ -89,6 +110,7 @@ struct BACKEND_EXPORT GraphCompilerInfo {
   std::string name_;
   bool need_erase_;
   mutable GraphExecutionStrategy strategy_;
+  CompileFunc compile_func_;
 };
 
 class GraphCompiler {
@@ -98,11 +120,16 @@ class GraphCompiler {
 
   // Construct kernel graph from anf nodes list and compile kernel graph in Graph mode,
   // the detailed implementation of compiling graph is in 'CompileGraphImpl'.
-  GraphId CompileGraph(const GraphSegmentPtr &segment, const AnfNodePtrList &outputs,
+  GraphId CompileGraph(const GraphSegmentPtr &segment, const std::pair<AnfNodePtrList, AnfNodePtrList> &io_nodes,
                        const DeviceContext *device_context, device::RunMode run_mode, bool run_in_pynative = false);
 
+  GraphId CompileGraph(const KernelGraphPtr &kernel_graph, const std::pair<AnfNodePtrList, AnfNodePtrList> &io_nodes,
+                       const DeviceContext *device_context, device::RunMode run_mode, bool run_in_pynative);
+
+  // For Pyantive dynamic shape or dynamic structure
   GraphId CompileDynamicGraph(const GraphSegmentPtr &segment, const AnfNodePtrList &outputs,
                               const DeviceContext *device_context);
+  GraphId CompileDynamicGraph(const KernelGraphPtr &kernel_graph, const DeviceContext *device_context);
 
   // Construct kernel graph from function graph and compile kernel graph in Graph mode,
   // the detailed implementation of compiling graph is in 'CompileGraphImpl'.
@@ -134,14 +161,15 @@ class GraphCompiler {
   // Get OpRunInfo and GraphInfo for single op compile and run.
   void GetSingleOpRunInfoAndGraphInfo(const CNodePtr &kernel, const InputTensorInfo &tensor_info,
                                       bool use_dynamic_shape_process, session::BackendOpRunInfoPtr *op_run_info,
-                                      GraphInfo *graph_info, const GraphOutputInfo *const graph_output_info);
+                                      const GraphOutputInfo *const graph_output_info);
 
   // Calculate ref count of PyNative back propagation operators.
   void CalculateRefCount(const KernelGraphPtr &graph, std::map<KernelWithIndex, size_t> *ref_count) const;
 
   // Calculate forward op output ref count of PyNative back graph.
   void CalculateForwardOpOutputCount(const KernelGraphPtr &graph, const std::vector<tensor::TensorPtr> &inputs,
-                                     std::map<std::string, size_t> *forward_op_output_tensor_id) const;
+                                     std::map<std::string, size_t> *forward_op_output_tensor_id,
+                                     const std::map<AnfNodePtr, size_t> &parameter_index) const;
 
   // Update ref count of PyNative back propagation operators.
   void UpdateRefCount(const std::set<KernelWithIndex> &input_kernels_with_index,
@@ -167,6 +195,7 @@ class GraphCompiler {
   // setting operator info, creating kernel and transforming kernel graph to ActorSet.
   GraphId CompileGraphImpl(const KernelGraphPtr &graph, const DeviceContext *device_context,
                            bool run_in_pynative = true) const;
+  const session::SessionPtr &session_ptr() const { return session_; }
 
  private:
   DISABLE_COPY_AND_ASSIGN(GraphCompiler);
@@ -174,12 +203,18 @@ class GraphCompiler {
   // Create device address for all anf nodes of graph.
   void CreateDeviceAddress(const KernelGraphPtr &graph, const DeviceContext *device_context) const;
 
-  // Set Graph's dependencies for pre_graph and post_graph.
+  // Set Graph's dependencies for pre_graph and post_graph
   void SetGraphDependency(const KernelGraphPtr &graph, const GraphSegmentPtr &segment) const;
+  KernelGraphPtr ConstructKernelGraphForGraphRunMode(const FuncGraphPtr &func_graph,
+                                                     const DeviceContext *device_context,
+                                                     std::vector<KernelGraphPtr> *const all_graphs,
+                                                     bool *const need_return_ahead);
 
   // The member variable 'session_' will be removed after removing session module.
   // Now all the GraphCompiler share the same 'session_'.
   session::SessionPtr session_;
+  bool use_cache_to_compile_graph_ = false;
+  bool export_compile_cache_ = false;
 };
 
 }  // namespace runtime

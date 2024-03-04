@@ -20,8 +20,10 @@ import numpy as np
 
 from mindspore.common.tensor import Tensor
 from mindspore import log as logger
-from mindspore.train.serialization import _fill_param_into_net
 from mindspore.train.summary.summary_record import _cache_summary_tensor_data
+from mindspore.common.parameter import Parameter
+from mindspore.train.serialization import load_param_into_net
+from mindspore.common import dtype as mstype
 
 CUR_NET = None
 
@@ -36,6 +38,34 @@ def set_cur_net(net):
     """
     global CUR_NET
     CUR_NET = net
+
+
+def _fill_param_into_net(net, parameter_list):
+    """
+    Fills parameter_list into net.
+
+    Args:
+        net (Cell): train network.
+        parameter_list (list): parameters list from ge callback.
+    """
+    parameter_dict = {}
+    while parameter_list:
+        tmp_param = parameter_list.pop(0)
+        param_name = tmp_param["name"]
+        param_data = tmp_param["data"]
+        if isinstance(param_data, Parameter):
+            param_data.init_data()
+        np_val = param_data.asnumpy()
+
+        if np_val.shape == (1,):
+            parameter_dict[param_name] = Parameter(np_val, name=param_name)
+        elif np_val.shape == ():
+            parameter_dict[param_name] = Parameter(Tensor(np_val.tolist(), mstype.pytype_to_dtype(np_val.dtype)),
+                                                   name=param_name)
+        else:
+            parameter_dict[param_name] = Parameter(Tensor(np_val), name=param_name)
+
+    load_param_into_net(net, parameter_dict, strict_load=True)
 
 
 def checkpoint_cb_for_save_op(parameter_list):
@@ -93,7 +123,8 @@ class Callback:
     recording current attributes. Users can add custimized attributes to the information.
     Training process can also be stopped by calling `request_stop` method. For details
     of custom Callback, please check
-    `Callback <https://www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/debug/custom_debug.html>`_.
+    `Callback tutorial <https://www.mindspore.cn/tutorials/en/master/advanced/model/
+    callback.html#customized-callback-mechanism>`_.
 
     Examples:
         >>> import numpy as np
@@ -113,6 +144,7 @@ class Callback:
         >>> optim = nn.Momentum(net.trainable_params(), 0.01, 0.9)
         >>> model = Model(net, loss_fn=loss, optimizer=optim)
         >>> model.train(1, dataset, callbacks=print_cb)
+        step_num: 1
         step_num: 2
     """
 
@@ -128,6 +160,10 @@ class Callback:
         Called once before the network executing.
         A backwards compatibility alias for `on_train_begin` and `on_eval_begin`.
 
+        Note:
+            `begin` is deprecated and will be deleted in a future version,
+            please use `on_train_begin` and `on_eval_begin` instead.
+
         Args:
             run_context (RunContext): Include some information of the model.
         """
@@ -136,6 +172,10 @@ class Callback:
         """
         Called before each epoch beginning.
         A backwards compatibility alias for `on_train_epoch_begin` and `on_eval_epoch_begin`.
+
+        Note:
+            `epoch_begin` is deprecated and will be deleted in a future version,
+            please use `on_train_epoch_begin` and `on_eval_epoch_begin` instead.
 
         Args:
             run_context (RunContext): Include some information of the model.
@@ -146,6 +186,10 @@ class Callback:
         Called after each epoch finished.
         A backwards compatibility alias for `on_train_epoch_end` and `on_eval_epoch_end`.
 
+        Note:
+            `epoch_end` is deprecated and will be deleted in a future version,
+            please use `on_train_epoch_end` and `on_eval_epoch_end` instead.
+
         Args:
             run_context (RunContext): Include some information of the model.
         """
@@ -154,6 +198,10 @@ class Callback:
         """
         Called before each step beginning.
         A backwards compatibility alias for `on_train_step_begin` and `on_eval_step_begin`.
+
+        Note:
+            `step_begin` is deprecated and will be deleted in a future version,
+            please use `on_train_step_begin` and `on_eval_step_begin` instead.
 
         Args:
             run_context (RunContext): Include some information of the model.
@@ -164,6 +212,10 @@ class Callback:
         Called after each step finished.
         A backwards compatibility alias for `on_train_step_end` and `on_eval_step_end`.
 
+        Note:
+            `step_end` is deprecated and will be deleted in a future version,
+            please use `on_train_step_end` and `on_eval_step_end` instead.
+
         Args:
             run_context (RunContext): Include some information of the model.
         """
@@ -172,6 +224,10 @@ class Callback:
         """
         Called once after network training.
         A backwards compatibility alias for `on_train_end` and `on_eval_end`.
+
+        Note:
+            `end` is deprecated and will be deleted in a future version,
+            please use `on_train_end` and `on_eval_end` instead.
 
         Args:
             run_context (RunContext): Include some information of the model.
@@ -437,7 +493,7 @@ class RunContext:
     `RunContext.original_args()` and add extra attributes to the information, but also can stop the
     training process by calling `request_stop` method. For details of custom Callback,
     please check
-    `Callback <:https//www.mindspore.cn/tutorials/experts/en/r2.0.0-alpha/debug/custom_debug.html>`_.
+    `Callback Mechanism <https://www.mindspore.cn/tutorials/en/master/advanced/model/callback.html>`_.
 
     `RunContext.original_args()` holds the model context information as a dictionary variable, and
     different attributes of the dictionary are stored in training or eval process. Details are as follows:
@@ -490,6 +546,18 @@ class RunContext:
 
     Args:
         original_args (dict): Holding the related information of model.
+
+    Examples:
+        >>> from mindspore import Tensor
+        >>> from mindspore.train import RunContext
+        >>> cb_params = {}
+        >>> cb_params["cur_epoch_num"] = 4
+        >>> cb_params["epoch_num"] = 4
+        >>> cb_params["cur_step_num"] = 2
+        >>> cb_params["batch_num"] = 2
+        >>> cb_params["net_outputs"] = Tensor(2.0)
+        >>> run_context = RunContext(cb_params)
+        >>> whether_stop = run_context.get_stop_requested()
     """
     def __init__(self, original_args):
         if not isinstance(original_args, dict):
@@ -504,6 +572,10 @@ class RunContext:
 
         Returns:
            Dict, an object that holds the original arguments of model.
+
+        Tutorial Examples:
+            - `Callback Mechanism - Customized Callback Mechanism
+              <https://mindspore.cn/tutorials/en/master/advanced/model/callback.html#customized-callback-mechanism>`_
         """
         return self._original_args
 
@@ -513,6 +585,11 @@ class RunContext:
 
         Callbacks can use this function to request stop of iterations.
         model.train() checks whether this is called or not.
+
+        Tutorial Examples:
+            - `Callback Mechanism - Customized Training Termination Time
+              <https://mindspore.cn/tutorials/en/master/advanced/model/callback.html#
+              customized-training-termination-time>`_
         """
         self._stop_requested = True
 

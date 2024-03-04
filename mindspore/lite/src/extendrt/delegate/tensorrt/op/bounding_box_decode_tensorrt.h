@@ -89,13 +89,17 @@ class BoundingBoxDecodePlugin : public TensorRTPlugin {
               const void *const *inputs, void *const *outputs, void *workspace, cudaStream_t stream) noexcept override;
   size_t getSerializationSize() const noexcept override;
   void serialize(void *buffer) const noexcept override;
-  int getNbOutputs() const noexcept override { return INPUT_SIZE3; }
+  int getNbOutputs() const noexcept override { return 1; }
   bool supportsFormatCombination(int pos, const nvinfer1::PluginTensorDesc *tensorsDesc, int nbInputs,
                                  int nbOutputs) noexcept override;
+  nvinfer1::DataType getOutputDataType(int index, const nvinfer1::DataType *inputTypes, int nbInputs) const
+    noexcept override {
+    return nvinfer1::DataType::kFLOAT;
+  }
 
  private:
-  int RunCudaLogical(const nvinfer1::PluginTensorDesc *inputDesc, const void *const *inputs, void *const *outputs,
-                     cudaStream_t stream);
+  int RunCudaBoundingBoxDecode(const nvinfer1::PluginTensorDesc *inputDesc, const void *const *inputs,
+                               void *const *outputs, cudaStream_t stream);
   const std::string layer_name_;
   std::string name_space_;
   std::vector<float> means_;

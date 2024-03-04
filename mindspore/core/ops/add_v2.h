@@ -20,12 +20,9 @@
 #include <memory>
 #include <string>
 #include <vector>
-
 #include "ops/base_operator.h"
 #include "ops/primitive_c.h"
-#include "abstract/abstract_value.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/base/types.h"
 
 namespace mindspore {
 namespace ops {
@@ -41,8 +38,8 @@ class MIND_API AddV2 : public BaseOperator {
   void Init() const {}
 };
 
-abstract::AbstractBasePtr AddV2Infer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                     const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr AddV2Infer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                              const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

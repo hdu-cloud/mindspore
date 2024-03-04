@@ -18,6 +18,7 @@
 #include <vector>
 #include "runtime/mem.h"
 #include "acl/acl_rt.h"
+#include "runtime/rt.h"
 #include "runtime/kernel.h"
 #include "plugin/device/ascend/hal/device/ge_runtime/task/task_factory.h"
 #include "aicpu/common/aicpu_task_struct.h"
@@ -29,7 +30,7 @@ AicpuTask::AicpuTask(const ModelContext &model_context, const std::shared_ptr<Ai
       task_info_(task_info),
       stream_(nullptr),
       args_(nullptr),
-      ext_info_(nullptr),
+      ext_info_addr_(nullptr),
       input_output_addr_(nullptr),
       io_addrs_size_(0),
       args_size_(0) {
@@ -43,21 +44,63 @@ AicpuTask::AicpuTask(const ModelContext &model_context, const std::shared_ptr<Ai
   } else {
     MS_LOG(EXCEPTION) << "Index: " << task_info_->stream_id() << " >= stream_list.size(): " << stream_list.size();
   }
+
+  // get event id in device
+  if (task_info_->is_blocking()) {
+    auto ms_event_id = task_info_->ms_event_id();
+    auto event_list = model_context.event_list();
+    if (ms_event_id >= event_list.size()) {
+      MS_LOG(EXCEPTION) << "The event_id is not in event_list, event_list size: " << event_list.size()
+                        << ", event_id: " << ms_event_id;
+    }
+    auto rt_event = event_list[ms_event_id];
+    auto rt_ret = rtGetEventID(rt_event, &rt_event_id_);
+    if (rt_ret != RT_ERROR_NONE) {
+      MS_LOG(EXCEPTION) << "Call rtGetEventID failed. Op name: " << task_info_->op_name();
+    }
+  } else {
+    rt_event_id_ = 0;
+  }
+
+  session_id_ = model_context.session_id();
 }
 
 AicpuTask::~AicpuTask() {
   ReleaseRtMem(&args_);
-  ReleaseRtMem(&ext_info_);
+  ReleaseRtMem(&ext_info_addr_);
   stream_ = nullptr;
   args_ = nullptr;
-  ext_info_ = nullptr;
+  ext_info_addr_ = nullptr;
   input_output_addr_ = nullptr;
 }
 
+std::string AicpuTask::DebugString() const {
+  std::ostringstream buffer;
+  buffer << "AicpuTask: so_name: " << task_info_->so_name() << ", kernel_name: " << task_info_->kernel_name()
+         << ", mindspore stream_id: " << task_info_->stream_id() << ", dump_flag: " << task_info_->dump_flag();
+  auto input_data = task_info_->input_data_addrs();
+  auto output_data = task_info_->output_data_addrs();
+  buffer << ", input_data_addr: ";
+  for (size_t i = 0; i < input_data.size(); ++i) {
+    buffer << "[" << i << "]: " << input_data[i];
+    if (i != input_data.size() - 1) {
+      buffer << ", ";
+    }
+  }
+  buffer << ", output_data_addr: ";
+  for (size_t i = 0; i < output_data.size(); ++i) {
+    buffer << "[" << i << "]: " << output_data[i];
+    if (i != output_data.size() - 1) {
+      buffer << ", ";
+    }
+  }
+  return buffer.str();
+}
+
 void AicpuTask::Distribute() {
-  MS_LOG(INFO) << "InitAicpuTask start.";
-  std::vector<void *> io_addrs;
   MS_EXCEPTION_IF_NULL(task_info_);
+  MS_LOG(INFO) << "InitAicpuTask start. node: " << task_info_->op_name();
+  std::vector<void *> io_addrs;
   (void)io_addrs.insert(io_addrs.cend(), task_info_->input_data_addrs().cbegin(),
                         task_info_->input_data_addrs().cend());
   (void)io_addrs.insert(io_addrs.cend(), task_info_->output_data_addrs().cbegin(),
@@ -71,7 +114,7 @@ void AicpuTask::Distribute() {
                sizeof(uint32_t);
 
   // Malloc device memory for args
-  rtError_t rt_ret = rtMalloc(&args_, args_size_, RT_MEMORY_HBM);
+  rtError_t rt_ret = rtMalloc(&args_, args_size_, RT_MEMORY_HBM, 0);
   if (rt_ret != RT_ERROR_NONE) {
     MS_LOG(EXCEPTION) << "Call rt api rtMalloc failed, ret: " << rt_ret;
   }
@@ -106,8 +149,8 @@ void AicpuTask::ReleaseRtMem(void **ptr) noexcept {
     return;
   }
 
-  rtError_t rt_ret = rtFree(*ptr);
-  if (rt_ret != RT_ERROR_NONE) {
+  auto rt_ret = aclrtFree(*ptr);
+  if (rt_ret != ACL_ERROR_NONE) {
     return;
   }
   *ptr = nullptr;
@@ -125,27 +168,45 @@ void AicpuTask::SetAicpuParamHead(uint32_t args_size, uint32_t io_addrs_num) {
     aicpu_param_head.extInfoLength = 0;
     aicpu_param_head.extInfoAddr = 0;
   } else {
-    rtError_t flag = rtMalloc(&ext_info_, ext_size, RT_MEMORY_HBM);
+    // Parse ext_info
+    auto ext_info_handler = std::make_shared<device::ascend::AicpuExtInfoHandler>(
+      task_info_->op_name(), static_cast<uint32_t>(task_info_->input_data_addrs().size()),
+      static_cast<uint32_t>(task_info_->output_data_addrs().size()), task_info_->unknown_type());
+    MS_EXCEPTION_IF_NULL(ext_info_handler);
+    if (!ext_info_handler->Parse(ext_info)) {
+      MS_LOG(EXCEPTION) << "Parse AiCpu ext_info_handler failed";
+    }
+    // update session info
+    if (!ext_info_handler->UpdateSessionInfoId(session_id_)) {
+      MS_LOG(EXCEPTION) << "Aicpu ext_info_handler update session info failed.";
+    }
+
+    // update wait event id
+    if (task_info_->is_blocking()) {
+      if (!ext_info_handler->UpdateEventId(rt_event_id_)) {
+        MS_LOG(EXCEPTION) << "Aicpu ext_info_handler update event id failed.";
+      }
+    }
+    // alloc extinfo address
+    rtError_t flag = rtMalloc(&ext_info_addr_, ext_info_handler->GetExtInfoLen(), RT_MEMORY_HBM, 0);
     if (flag != RT_ERROR_NONE) {
       MS_LOG(EXCEPTION) << "Call rt api rtMalloc failed, ret: " << flag;
     }
-
-    flag = aclrtMemcpy(ext_info_, ext_size, const_cast<void *>(static_cast<const void *>(ext_info.data())), ext_size,
-                       ACL_MEMCPY_HOST_TO_DEVICE);
-    if (flag != RT_ERROR_NONE) {
-      MS_LOG(EXCEPTION) << "Call rt api rtMemcpy failed, ret: " << flag;
+    // copy extinfo to device
+    flag = aclrtMemcpy(ext_info_addr_, ext_size, ext_info_handler->GetExtInfo(), ext_size, ACL_MEMCPY_HOST_TO_DEVICE);
+    if (flag != ACL_ERROR_NONE) {
+      MS_LOG(EXCEPTION) << "Call rt api aclrtMemcpy failed, ret: " << flag;
     }
-
     MS_LOG(INFO) << "ext info size: " << ext_size;
     aicpu_param_head.extInfoLength = ext_size;
-    aicpu_param_head.extInfoAddr = reinterpret_cast<uintptr_t>(ext_info_);
+    aicpu_param_head.extInfoAddr = reinterpret_cast<uintptr_t>(ext_info_addr_);
   }
 
   // Memcpy AicpuParamHead
   auto rt_ret = aclrtMemcpy(args_, sizeof(aicpu::AicpuParamHead), static_cast<void *>(&aicpu_param_head),
                             sizeof(aicpu::AicpuParamHead), ACL_MEMCPY_HOST_TO_DEVICE);
-  if (rt_ret != RT_ERROR_NONE) {
-    MS_LOG(EXCEPTION) << "Call rt api rtMemcpy failed, ret: " << rt_ret;
+  if (rt_ret != ACL_ERROR_NONE) {
+    MS_LOG(EXCEPTION) << "Call rt api aclrtMemcpy failed, ret: " << rt_ret;
   }
 }
 
@@ -156,7 +217,7 @@ void AicpuTask::SetInputOutputAddrs(const std::vector<void *> &io_addrs, uint32_
                               static_cast<uint32_t>(io_addrs.size()) * sizeof(void *), io_addrs.data(),
                               static_cast<uint32_t>(io_addrs.size()) * sizeof(void *), ACL_MEMCPY_HOST_TO_DEVICE);
     if (rt_ret != RT_ERROR_NONE) {
-      MS_LOG(EXCEPTION) << "Call rt api rtMemcpy failed, ret: " << rt_ret;
+      MS_LOG(EXCEPTION) << "Call rt api aclrtMemcpy failed, ret: " << rt_ret;
     }
   }
 }
@@ -167,16 +228,16 @@ void AicpuTask::SetNodeDef(uint32_t node_def_len_offset, uint32_t node_def_addr_
   auto size = task_info_->node_def().size();
   auto rt_ret = aclrtMemcpy(static_cast<void *>(static_cast<uint8_t *>(args_) + node_def_len_offset), sizeof(uint32_t),
                             static_cast<const void *>(&size), sizeof(uint32_t), ACL_MEMCPY_HOST_TO_DEVICE);
-  if (rt_ret != RT_ERROR_NONE) {
-    MS_LOG(EXCEPTION) << "Call rt api rtMemcpy failed, ret: " << rt_ret;
+  if (rt_ret != ACL_ERROR_NONE) {
+    MS_LOG(EXCEPTION) << "Call rt api aclrtMemcpy failed, ret: " << rt_ret;
   }
 
   // Memcpy node def
   rt_ret = aclrtMemcpy(static_cast<void *>(static_cast<uint8_t *>(args_) + node_def_addr_offset),
                        task_info_->node_def().size(), static_cast<const void *>(task_info_->node_def().data()),
                        task_info_->node_def().size(), ACL_MEMCPY_HOST_TO_DEVICE);
-  if (rt_ret != RT_ERROR_NONE) {
-    MS_LOG(EXCEPTION) << "Call rt api rtMemcpy failed, ret: " << rt_ret;
+  if (rt_ret != ACL_ERROR_NONE) {
+    MS_LOG(EXCEPTION) << "Call rt api aclrtMemcpy failed, ret: " << rt_ret;
   }
 }
 

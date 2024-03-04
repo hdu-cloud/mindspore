@@ -13,22 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_RAGGED_RANGE_FP16_H_
-#define MINDSPORE_NNACL_RAGGED_RANGE_FP16_H_
+#ifndef NNACL_FP16_RAGGED_RANGE_FP16_H_
+#define NNACL_FP16_RAGGED_RANGE_FP16_H_
 
 #include <math.h>
 #include "nnacl/op_base.h"
-#include "nnacl/ragged_range_parameter.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "nnacl/kernel/ragged_range.h"
 
 void RaggedRangeFp16(const float16_t *starts, const float16_t *limits, const float16_t *deltas, int *splits,
-                     float16_t *value, const RaggedRangeParameter *param);
+                     float16_t *value, const RaggedRangeStruct *param);
 
-#ifdef __cplusplus
-}
-#endif
-
-#endif  // MINDSPORE_NNACL_RAGGED_RANGE_FP16_H_
+#endif  //   NNACL_FP16_RAGGED_RANGE_FP16_H_

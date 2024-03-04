@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_TRANSPOSE_BASE_H_
-#define MINDSPORE_NNACL_TRANSPOSE_BASE_H_
+#ifndef NNACL_BASE_TRANSPOSE_BASE_H_
+#define NNACL_BASE_TRANSPOSE_BASE_H_
 
-#include "nnacl/transpose.h"
+#include "nnacl/transpose_parameter.h"
 #include <string.h>
 
 #ifdef __cplusplus
@@ -66,4 +66,4 @@ void TransposeDimsBool(const bool *in_data, bool *out_data, const int *output_sh
 }
 #endif
 
-#endif  // MINDSPORE_NNACL_TRANSPOSE_BASE_H_
+#endif  // NNACL_BASE_TRANSPOSE_BASE_H_

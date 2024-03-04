@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,8 +19,12 @@
 #include <vector>
 #include <memory>
 #include <map>
-#include "backend/common/session/anf_runtime_algorithm.h"
-#include "include/common/utils/anfalgo.h"
+#include "ops/math_op_name.h"
+#include "ops/sequence_ops.h"
+#include "ops/nn_optimizer_ops.h"
+#include "ops/nn_ops.h"
+#include "ops/framework_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/convert_utils.h"
 using std::vector;
 
@@ -36,6 +40,7 @@ constexpr size_t kBNOutputNum = 3;
 constexpr size_t kTupleSize = 2;
 constexpr size_t kSubInputNum = 2;
 constexpr size_t kMulInputNum = 2;
+constexpr size_t kAssignSubInputNum = 3;
 constexpr char kMomentum[] = "momentum";
 
 void CreateMultiOutputOfAnfNode(const FuncGraphPtr &func_graph, const AnfNodePtr &node, size_t output_num,
@@ -48,12 +53,13 @@ void CreateMultiOutputOfAnfNode(const FuncGraphPtr &func_graph, const AnfNodePtr
   std::map<int64_t, AnfNodePtr> out;
   auto manager = func_graph->manager();
   MS_EXCEPTION_IF_NULL(manager);
-  auto bn = node;
-  if (manager->node_users().find(bn) == manager->node_users().end()) {
+  const auto &bn = node;
+  auto iter = manager->node_users().find(bn);
+  if (iter == manager->node_users().end()) {
     return;
   }
 
-  for (const auto &node_index : manager->node_users()[bn]) {
+  for (const auto &node_index : iter->second) {
     const AnfNodePtr &output = node_index.first;
     MS_EXCEPTION_IF_NULL(output);
     if (!IsPrimitiveCNode(output, prim::kPrimTupleGetItem)) {
@@ -77,8 +83,9 @@ void CreateMultiOutputOfAnfNode(const FuncGraphPtr &func_graph, const AnfNodePtr
 
 AnfNodePtr CreateSubNode(const FuncGraphPtr &fg, const vector<AnfNodePtr> &inputs) {
   MS_EXCEPTION_IF_CHECK_FAIL(inputs.size() == kSubInputNum, "Check Sub input size fail!");
-  auto mean = inputs[0];
-  auto tuple_getitems = inputs[1];
+  const auto &mean = inputs[0];
+  MS_EXCEPTION_IF_NULL(mean);
+  const auto &tuple_getitems = inputs[1];
   auto sub_node = fg->NewCNode({NewValueNode(std::make_shared<Primitive>(kSubOpName)), mean, tuple_getitems});
   MS_EXCEPTION_IF_NULL(sub_node);
   sub_node->set_abstract(mean->abstract());
@@ -98,9 +105,11 @@ AnfNodePtr CreateDataNode(const CNodePtr &node) {
 }
 
 AnfNodePtr CreateMulNode(const FuncGraphPtr &fg, const vector<AnfNodePtr> &inputs) {
-  MS_EXCEPTION_IF_CHECK_FAIL(inputs.size() == kMulInputNum, "Check Sub input size fail!");
-  auto data_node = inputs[0];
-  auto sub_node = inputs[1];
+  MS_EXCEPTION_IF_CHECK_FAIL(inputs.size() == kMulInputNum, "Check Mul input size fail!");
+  const auto &data_node = inputs[0];
+  const auto &sub_node = inputs[1];
+  MS_EXCEPTION_IF_NULL(data_node);
+  MS_EXCEPTION_IF_NULL(sub_node);
   auto mul_node = fg->NewCNode({NewValueNode(std::make_shared<Primitive>(kMulOpName)), data_node, sub_node});
   MS_EXCEPTION_IF_NULL(mul_node);
   mul_node->set_abstract(sub_node->abstract());
@@ -108,6 +117,7 @@ AnfNodePtr CreateMulNode(const FuncGraphPtr &fg, const vector<AnfNodePtr> &input
 }
 
 AnfNodePtr CreateAssignSubNode(const FuncGraphPtr &fg, const vector<AnfNodePtr> &inputs) {
+  MS_EXCEPTION_IF_CHECK_FAIL(inputs.size() == kAssignSubInputNum, "Check AssignSub input size fail!");
   auto ref_var = inputs[0];
   auto mul_node = inputs[1];
   auto update_state_node = inputs[2];
@@ -236,6 +246,7 @@ AnfNodePtr TransformBatchNorm(const AnfNodePtr &anf_node) {
   return anf_node;
 }
 }  // namespace
+
 bool BatchNormTransform::NeedBNTransform(const BaseRef &ref) {
   if (utils::isa<AnfNodePtr>(ref)) {
     AnfNodePtr node = utils::cast<AnfNodePtr>(ref);
@@ -259,7 +270,6 @@ bool BatchNormTransform::NeedBNTransform(const BaseRef &ref) {
 }
 
 const BaseRef BatchNormTransform::DefinePattern() const {
-  MS_LOG(INFO) << "BatchNormTransform::DefinePattern";
   VarPtr x = std::make_shared<SeqVar>();
   return VectorRef({prim::kPrimBatchNorm, x});
 }
@@ -274,7 +284,7 @@ const AnfNodePtr BatchNormTransform::Process(const FuncGraphPtr &fg, const AnfNo
     new_node = TransformBatchNorm(node);
     // This transformation has to be successful
     if (new_node == nullptr) {
-      MS_LOG(EXCEPTION) << "BatchNorm transformation failed!";
+      MS_LOG(INTERNAL_EXCEPTION) << "BatchNorm transformation failed!";
     }
     MS_LOG(INFO) << "BatchNorm transform success.";
     return new_node;

@@ -21,11 +21,12 @@ import math
 from mindspore.common import dtype as mstype
 from mindspore.ops import operations as P
 from mindspore.nn.cell import Cell
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 
 
 class LearningRateSchedule(Cell):
     """Basic class of learning rate schedule."""
+
     def __init__(self):
         super(LearningRateSchedule, self).__init__()
 
@@ -79,7 +80,7 @@ class ExponentialDecayLR(LearningRateSchedule):
         learning_rate (float): The initial value of learning rate.
         decay_rate (float): The decay rate.
         decay_steps (int): Number of steps to decay over.
-        is_stair (bool): If true, learning rate is decayed once every `decay_steps` time. Default: False.
+        is_stair (bool): If true, learning rate is decayed once every `decay_steps` time. Default: ``False`` .
 
     Inputs:
         - **global_step** (Tensor) - The current step number.
@@ -105,10 +106,11 @@ class ExponentialDecayLR(LearningRateSchedule):
         >>> decay_steps = 4
         >>> global_step = Tensor(2, mindspore.int32)
         >>> exponential_decay_lr = nn.ExponentialDecayLR(learning_rate, decay_rate, decay_steps)
-        >>> result = exponential_decay_lr(global_step)
-        >>> print(result)
-        0.09486833
+        >>> lr = exponential_decay_lr(global_step)
+        >>> net = nn.Dense(2, 3)
+        >>> optim = nn.SGD(net.trainable_params(), learning_rate=lr)
     """
+
     def __init__(self, learning_rate, decay_rate, decay_steps, is_stair=False):
         super(ExponentialDecayLR, self).__init__()
         _check_inputs(learning_rate, decay_rate, decay_steps, is_stair, self.cls_name)
@@ -133,7 +135,7 @@ class NaturalExpDecayLR(LearningRateSchedule):
     For current step, the formula of computing decayed learning rate is:
 
     .. math::
-        decayed\_learning\_rate= learning\_rate * e^{-decay\_rate * p}
+        decayed\_learning\_rate = learning\_rate * e^{-decay\_rate * p}
 
     Where :
 
@@ -149,7 +151,7 @@ class NaturalExpDecayLR(LearningRateSchedule):
         learning_rate (float): The initial value of learning rate.
         decay_rate (float): The decay rate.
         decay_steps (int): Number of steps to decay over.
-        is_stair (bool): If true, learning rate is decayed once every `decay_steps` time. Default: False.
+        is_stair (bool): If ``true`` , learning rate is decayed once every `decay_steps` time. Default: ``False`` .
 
     Inputs:
         - **global_step** (Tensor) - The current step number.
@@ -175,10 +177,11 @@ class NaturalExpDecayLR(LearningRateSchedule):
         >>> decay_steps = 4
         >>> global_step = Tensor(2, mindspore.int32)
         >>> natural_exp_decay_lr = nn.NaturalExpDecayLR(learning_rate, decay_rate, decay_steps, True)
-        >>> result = natural_exp_decay_lr(global_step)
-        >>> print(result)
-        0.1
+        >>> lr = natural_exp_decay_lr(global_step)
+        >>> net = nn.Dense(2, 3)
+        >>> optim = nn.SGD(net.trainable_params(), learning_rate=lr)
     """
+
     def __init__(self, learning_rate, decay_rate, decay_steps, is_stair=False):
         super(NaturalExpDecayLR, self).__init__()
         _check_inputs(learning_rate, decay_rate, decay_steps, is_stair, self.cls_name)
@@ -220,7 +223,7 @@ class InverseDecayLR(LearningRateSchedule):
         learning_rate (float): The initial value of learning rate.
         decay_rate (float): The decay rate.
         decay_steps (int): Number of steps to decay over.
-        is_stair (bool): If true, learning rate decay once every `decay_steps` times. Default: False.
+        is_stair (bool): If true, learning rate decay once every `decay_steps` times. Default: ``False`` .
 
     Inputs:
         - **global_step** (Tensor) - The current step number.
@@ -246,10 +249,11 @@ class InverseDecayLR(LearningRateSchedule):
         >>> decay_steps = 4
         >>> global_step = Tensor(2, mindspore.int32)
         >>> inverse_decay_lr = nn.InverseDecayLR(learning_rate, decay_rate, decay_steps, True)
-        >>> result = inverse_decay_lr(global_step)
-        >>> print(result)
-        0.1
+        >>> lr = inverse_decay_lr(global_step)
+        >>> net = nn.Dense(2, 3)
+        >>> optim = nn.SGD(net.trainable_params(), learning_rate=lr)
     """
+
     def __init__(self, learning_rate, decay_rate, decay_steps, is_stair=False):
         super(InverseDecayLR, self).__init__()
         _check_inputs(learning_rate, decay_rate, decay_steps, is_stair, self.cls_name)
@@ -273,9 +277,8 @@ class CosineDecayLR(LearningRateSchedule):
     For current step, the formula of computing decayed learning rate is:
 
     .. math::
-        decayed\_learning\_rate = min\_lr + 0.5 * (max\_lr - min\_lr) *
-        (1 + cos(\frac{current\_step}{decay\_steps}\pi))
-
+        decayed\_learning\_rate = &min\_lr + 0.5 * (max\_lr - min\_lr) *\\
+        &(1 + cos(\frac{current\_step}{decay\_steps}\pi))
 
     Args:
         min_lr (float): The minimum value of learning rate.
@@ -306,10 +309,11 @@ class CosineDecayLR(LearningRateSchedule):
         >>> decay_steps = 4
         >>> global_steps = Tensor(2, mindspore.int32)
         >>> cosine_decay_lr = nn.CosineDecayLR(min_lr, max_lr, decay_steps)
-        >>> result = cosine_decay_lr(global_steps)
-        >>> print(result)
-        0.055
+        >>> lr = cosine_decay_lr(global_steps)
+        >>> net = nn.Dense(2, 3)
+        >>> optim = nn.SGD(net.trainable_params(), learning_rate=lr)
     """
+
     def __init__(self, min_lr, max_lr, decay_steps):
         super(CosineDecayLR, self).__init__()
         if not isinstance(min_lr, float):
@@ -343,15 +347,17 @@ class PolynomialDecayLR(LearningRateSchedule):
     For current step, the formula of computing decayed learning rate is:
 
     .. math::
-        decayed\_learning\_rate = (learning\_rate - end\_learning\_rate) *
-        (1 - tmp\_step / tmp\_decay\_steps)^{power} + end\_learning\_rate
+        decayed\_learning\_rate = &(learning\_rate - end\_learning\_rate) *\\
+        &(1 - tmp\_step / tmp\_decay\_steps)^{power}\\
+        &+ end\_learning\_rate
 
     Where :
 
     .. math::
-        tmp\_step=min(current\_step, decay\_steps)
+        tmp\_step= \min(current\_step, decay\_steps)
 
-    If `update_decay_steps` is true, update the value of `tmp_decay_step` every `decay_steps`. The formula is :
+    If `update_decay_steps` is true, update the value of :math:`tmp\_decay\_steps` every `decay_steps`.
+    The formula is :
 
     .. math::
         tmp\_decay\_steps = decay\_steps * ceil(current\_step / decay\_steps)
@@ -361,7 +367,8 @@ class PolynomialDecayLR(LearningRateSchedule):
         end_learning_rate (float): The end value of learning rate.
         decay_steps (int): Number of steps to decay over.
         power (float): The power of polynomial. It must be greater than 0.
-        update_decay_steps (bool): If true, learning rate is decayed once every `decay_steps` time. Default: False.
+        update_decay_steps (bool): If ``true`` , learning rate is decayed once every `decay_steps` time.
+            Default: ``False`` .
 
     Inputs:
         - **global_step** (Tensor) - The current step number.
@@ -388,10 +395,11 @@ class PolynomialDecayLR(LearningRateSchedule):
         >>> power = 0.5
         >>> global_step = Tensor(2, mindspore.int32)
         >>> polynomial_decay_lr = nn.PolynomialDecayLR(learning_rate, end_learning_rate, decay_steps, power)
-        >>> result = polynomial_decay_lr(global_step)
-        >>> print(result)
-        0.07363961
+        >>> lr = polynomial_decay_lr(global_step)
+        >>> net = nn.Dense(2, 3)
+        >>> optim = nn.SGD(net.trainable_params(), learning_rate=lr)
     """
+
     def __init__(self, learning_rate, end_learning_rate, decay_steps, power, update_decay_steps=False):
         super(PolynomialDecayLR, self).__init__()
         validator.check_positive_float(learning_rate, 'learning_rate')
@@ -442,7 +450,7 @@ class WarmUpLR(LearningRateSchedule):
     Where
 
     .. math::
-        tmp\_step=min(current\_step, warmup\_steps)
+        tmp\_step= \min(current\_step, warmup\_steps)
 
     Args:
         learning_rate (float): The initial value of learning rate.
@@ -461,7 +469,7 @@ class WarmUpLR(LearningRateSchedule):
         ValueError: If `learning_rate` is less than or equal to 0.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
         >>> import mindspore
@@ -471,10 +479,11 @@ class WarmUpLR(LearningRateSchedule):
         >>> warmup_steps = 2
         >>> global_step = Tensor(2, mindspore.int32)
         >>> warmup_lr = nn.WarmUpLR(learning_rate, warmup_steps)
-        >>> result = warmup_lr(global_step)
-        >>> print(result)
-        0.1
+        >>> lr = warmup_lr(global_step)
+        >>> net = nn.Dense(2, 3)
+        >>> optim = nn.SGD(net.trainable_params(), learning_rate=lr)
     """
+
     def __init__(self, learning_rate, warmup_steps):
         super(WarmUpLR, self).__init__()
         if not isinstance(learning_rate, float):

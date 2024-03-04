@@ -32,6 +32,10 @@ int FormatTransposeCPUKernel::Run() {
   auto output = out_tensors_.at(0);
   CHECK_NULL_RETURN(input);
   CHECK_NULL_RETURN(output);
+  if (input->shape().size() != DIMENSION_4D || input->format() == output->format()) {
+    memcpy(output->data(), input->data(), input->Size());
+    return RET_OK;
+  }
   auto input_ptr = in_tensors_[0]->data();
   auto output_ptr = out_tensors_[0]->data();
   CHECK_NULL_RETURN(input_ptr);
@@ -46,6 +50,28 @@ int FormatTransposeCPUKernel::Run() {
   CHECK_NULL_RETURN(param_);
   return TransData(input_ptr, output_ptr, param_->src_format_, param_->dst_format_, (TypeIdC)data_type, batch, channel,
                    height * width);
+}
+
+namespace {
+std::string FormatCStr(const FormatC &format) {
+  static std::vector<std::string> names = {"NCHW",        "NHWC",  "NHWC4", "HWKC", "HWCK",  "KCHW",   "CKHW",
+                                           "KHWC",        "CHWK",  "HW",    "HW4",  "NC",    "NC4",    "NC4HW4",
+                                           "NONE_FORMAT", "NCDHW", "NWC",   "NCW",  "NDHWC", "NC8HW8", "NC16HW16"};
+  if (format == FormatC::DEFAULT_FORMAT) {
+    return "DefaultFormat";
+  }
+  if (format < Format_MIN || format >= Format_MAX) {
+    return "UnknownFormat";
+  }
+  return names[format];
+}
+}  // namespace
+
+std::string FormatTransposeCPUKernel::name() const {
+  if (param_ == nullptr) {
+    return name_;
+  }
+  return name_ + "_" + FormatCStr(param_->src_format_) + "_" + FormatCStr(param_->dst_format_);
 }
 
 REG_KERNEL(kCPU, kNumberTypeFloat32, PrimitiveType_FormatTranspose, LiteKernelCreator<FormatTransposeCPUKernel>)

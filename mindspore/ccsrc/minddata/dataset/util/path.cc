@@ -21,7 +21,8 @@
 #include <sstream>
 
 #ifdef _MSC_VER
-#include <direct.h>  // for _mkdir
+#include <direct.h>   // for _mkdir
+#define stat _stat64  //  for file size exceeds (1<<31)-1 bytes
 #endif
 
 #include "./securec.h"
@@ -57,7 +58,7 @@ Path::Path(const char *p) {
 #endif
 }
 
-Path::Path(const Path &p) : path_(p.path_) {}
+Path::Path(const Path &p) = default;
 
 Path &Path::operator=(const Path &p) {
   if (&p != this) {
@@ -138,7 +139,7 @@ std::string Path::Extension() const {
 }
 
 bool Path::Exists() {
-  struct stat sb;
+  struct stat sb {};
   int rc = stat(common::SafeCStr(path_), &sb);
   if (rc == -1 && errno != ENOENT) {
     MS_LOG(WARNING) << "Unable to query the status of " << path_ << ". Errno = " << errno << ".";
@@ -147,10 +148,20 @@ bool Path::Exists() {
 }
 
 bool Path::IsDirectory() {
-  struct stat sb;
+  struct stat sb {};
   int rc = stat(common::SafeCStr(path_), &sb);
   if (rc == 0) {
     return S_ISDIR(sb.st_mode);
+  } else {
+    return false;
+  }
+}
+
+bool Path::IsFile() {
+  struct stat sb {};
+  int rc = stat(common::SafeCStr(path_), &sb);
+  if (rc == 0) {
+    return S_ISREG(sb.st_mode);
   } else {
     return false;
   }
@@ -166,9 +177,6 @@ Status Path::CreateDirectory(bool is_common_dir) {
 #endif
 #else
     int rc = mkdir(common::SafeCStr(path_), S_IRUSR | S_IWUSR | S_IXUSR);
-    if (rc == 0 && is_common_dir) {
-      rc = chmod(common::SafeCStr(path_), S_IRWXU | S_IRWXG | S_IRWXO);
-    }
 #endif
     if (rc) {
       std::ostringstream oss;
@@ -188,7 +196,7 @@ Status Path::CreateDirectory(bool is_common_dir) {
 }
 
 std::string Path::ParentPath() {
-  std::string r("");
+  std::string r;
   std::size_t found = path_.find_last_of(separator_);
   if (found != std::string::npos) {
     if (found == 0) {
@@ -294,7 +302,7 @@ Status Path::OpenFile(int *file_descriptor, bool create) {
     }
   }
   if (create) {
-    fd = open(canonical_path, O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP);
+    fd = open(canonical_path, O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
   } else {
     fd = open(canonical_path, O_RDWR);
   }

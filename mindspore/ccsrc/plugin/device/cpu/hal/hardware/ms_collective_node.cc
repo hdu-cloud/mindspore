@@ -16,7 +16,7 @@
 
 #include <utility>
 #include "utils/ms_exception.h"
-#include "distributed/cluster/cluster_context.h"
+#include "include/backend/distributed/cluster/cluster_context.h"
 #include "plugin/device/cpu/hal/hardware/ms_collective_node.h"
 
 namespace mindspore {
@@ -34,7 +34,7 @@ bool CollectiveNode::Start(const uint32_t &timeout) {
   }
 
   InitServerHandler();
-  CreateTcpServer();
+  CreateTcpServer(ClusterContext::instance()->port_range());
   InitNodeInfo(NodeRole::WORKER);
   InitCommandHandler();
 

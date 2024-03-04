@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ namespace device {
 namespace tiling {
 class OpTilingCalculateAdapter {
  public:
-  OpTilingCalculateAdapter() = default;
+  OpTilingCalculateAdapter();
   ~OpTilingCalculateAdapter() = default;
 
   ::ge::Operator GeNodeToGeOperatorAdapter(const ::ge::NodePtr &ge_node) const;
@@ -47,28 +47,29 @@ class OpTilingCalculateAdapter {
                                             const std::map<uint32_t, tensor::TensorPtr> &depend_tensor_map,
                                             const std::string &op_compile_info);
 
-  void UpdateWorkspace(const ::ge::NodePtr &ge_node, const std::vector<int64_t> &workspace_size_list);
+  void UpdateWorkspace(const ::ge::NodePtr &ge_node, const std::vector<int64_t> &workspace_size_list) const;
 
  private:
+  void ConstructNodeInputAnchor(const ::ge::NodePtr &node, ::ge::ComputeGraphPtr *ge_graph,
+                                const std::map<std::size_t, ::ge::NodePtr> &constant_ops) const;
   void ConvertInputShapeAndType(const CNodePtr &node, ::ge::OpDescPtr *op_desc);
   void ConvertOutputShapeAndType(const CNodePtr &node, ::ge::OpDescPtr *op_desc);
   void ConvertCompileInfo(const CNodePtr &node, ::ge::OpDescPtr *op_desc);
   void ConvertAttrs(const CNodePtr &node, ::ge::OpDescPtr *op_desc) const;
-  std::vector<std::tuple<std::size_t, ::ge::NodePtr>> ConvertDepends(
-    const CNodePtr &node, const std::map<uint32_t, tensor::TensorPtr> &depend_tensor_map, ::ge::OpDescPtr *op_desc,
-    ::ge::ComputeGraphPtr *ge_graph);
+  std::map<std::size_t, ::ge::NodePtr> ConvertDepends(const CNodePtr &node,
+                                                      const std::map<uint32_t, tensor::TensorPtr> &depend_tensor_map,
+                                                      const ::ge::OpDescPtr &op_desc, ::ge::ComputeGraphPtr *ge_graph);
   void ConvertAtomicCompileInfo(const CNodePtr &node, ::ge::OpDescPtr *op_desc) const;
   ::ge::NodePtr NewConstantOp(const CNodePtr &node, const std::string &name, const tensor::TensorPtr &tensor_data,
                               ::ge::ComputeGraphPtr *ge_graph, size_t index) const;
   void AddEdge(const ::ge::NodePtr &ge_node, const std::vector<std::tuple<std::size_t, ::ge::NodePtr>> &constant_ops);
   std::string GetRealOpType(const std::string &op_type) const;
-  std::map<std::string, std::string> GetConvertAttr(const std::string &op_type) const;
+  ValuePtr GetAttrDefaultValue(const std::string &op_type, const std::string &attr_name) const;
   std::string GetInputName(const CNodePtr &node, size_t index);
   std::string GetOutputName(const CNodePtr &node, size_t index);
   void InitOpIoName(const CNodePtr &node);
   ::ge::NodePtr CreateGeNode(const CNodePtr &node, ::ge::ComputeGraphPtr *ge_graph,
-                             const std::map<uint32_t, tensor::TensorPtr> &depend_tensor_map,
-                             const std::string &op_compile_info);
+                             const std::map<uint32_t, tensor::TensorPtr> &, const std::string &op_compile_info);
   ShapeVector UpdateShape(const ShapeVector &shape, const std::string &format, const CNodePtr &node,
                           const bool is_input);
 

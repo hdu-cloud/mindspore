@@ -45,17 +45,22 @@
 #include "minddata/dataset/audio/ir/kernels/griffin_lim_ir.h"
 #include "minddata/dataset/audio/ir/kernels/highpass_biquad_ir.h"
 #include "minddata/dataset/audio/ir/kernels/inverse_mel_scale_ir.h"
+#include "minddata/dataset/audio/ir/kernels/inverse_spectrogram_ir.h"
+#include "minddata/dataset/audio/ir/kernels/lfcc_ir.h"
 #include "minddata/dataset/audio/ir/kernels/lfilter_ir.h"
 #include "minddata/dataset/audio/ir/kernels/lowpass_biquad_ir.h"
 #include "minddata/dataset/audio/ir/kernels/magphase_ir.h"
 #include "minddata/dataset/audio/ir/kernels/mask_along_axis_iid_ir.h"
 #include "minddata/dataset/audio/ir/kernels/mask_along_axis_ir.h"
 #include "minddata/dataset/audio/ir/kernels/mel_scale_ir.h"
+#include "minddata/dataset/audio/ir/kernels/mel_spectrogram_ir.h"
+#include "minddata/dataset/audio/ir/kernels/mfcc_ir.h"
 #include "minddata/dataset/audio/ir/kernels/mu_law_decoding_ir.h"
 #include "minddata/dataset/audio/ir/kernels/mu_law_encoding_ir.h"
 #include "minddata/dataset/audio/ir/kernels/overdrive_ir.h"
 #include "minddata/dataset/audio/ir/kernels/phase_vocoder_ir.h"
 #include "minddata/dataset/audio/ir/kernels/phaser_ir.h"
+#include "minddata/dataset/audio/ir/kernels/pitch_shift_ir.h"
 #include "minddata/dataset/audio/ir/kernels/resample_ir.h"
 #include "minddata/dataset/audio/ir/kernels/riaa_biquad_ir.h"
 #include "minddata/dataset/audio/ir/kernels/sliding_window_cmn_ir.h"
@@ -388,6 +393,42 @@ PYBIND_REGISTER(InverseMelScaleOperation, 1, ([](const py::module *m) {
                     }));
                 }));
 
+PYBIND_REGISTER(InverseSpectrogramOperation, 1, ([](const py::module *m) {
+                  (void)py::class_<audio::InverseSpectrogramOperation, TensorOperation,
+                                   std::shared_ptr<audio::InverseSpectrogramOperation>>(*m,
+                                                                                        "InverseSpectrogramOperation")
+                    .def(
+                      py::init([](int32_t length, int32_t n_fft, int32_t win_length, int32_t hop_length, int32_t pad,
+                                  WindowType window, bool normalized, bool center, BorderType pad_mode, bool onesided) {
+                        auto inverse_spectrogram = std::make_shared<audio::InverseSpectrogramOperation>(
+                          length, n_fft, win_length, hop_length, pad, window, normalized, center, pad_mode, onesided);
+                        THROW_IF_ERROR(inverse_spectrogram->ValidateParams());
+                        return inverse_spectrogram;
+                      }));
+                }));
+
+PYBIND_REGISTER(LFCCOperation, 1, ([](const py::module *m) {
+                  (void)py::class_<audio::LFCCOperation, TensorOperation, std::shared_ptr<audio::LFCCOperation>>(
+                    *m, "LFCCOperation")
+                    .def(py::init([](int32_t sample_rate, int32_t n_filter, int32_t n_lfcc, float f_min, float f_max,
+                                     int32_t dct_type, NormMode norm, bool log_lf, const py::dict &speckwargs,
+                                     WindowType window, BorderType pad_mode) {
+                      int32_t n_fft = py::cast<int>(speckwargs["n_fft"]);
+                      int32_t win_length = py::cast<int>(speckwargs["win_length"]);
+                      int32_t hop_length = py::cast<int>(speckwargs["hop_length"]);
+                      int32_t pad = py::cast<int>(speckwargs["pad"]);
+                      float power = py::cast<float>(speckwargs["power"]);
+                      bool normalized = py::cast<bool>(speckwargs["normalized"]);
+                      bool center = py::cast<bool>(speckwargs["center"]);
+                      bool onesided = py::cast<bool>(speckwargs["onesided"]);
+                      auto lfcc = std::make_shared<audio::LFCCOperation>(
+                        sample_rate, n_filter, n_lfcc, f_min, f_max, dct_type, norm, log_lf, n_fft, win_length,
+                        hop_length, pad, window, power, normalized, center, pad_mode, onesided);
+                      THROW_IF_ERROR(lfcc->ValidateParams());
+                      return lfcc;
+                    }));
+                }));
+
 PYBIND_REGISTER(LFilterOperation, 1, ([](const py::module *m) {
                   (void)py::class_<audio::LFilterOperation, TensorOperation, std::shared_ptr<audio::LFilterOperation>>(
                     *m, "LFilterOperation")
@@ -457,6 +498,46 @@ PYBIND_REGISTER(MelScaleOperation, 1, ([](const py::module *m) {
                 }));
 
 PYBIND_REGISTER(
+  MelSpectrogramOperation, 1, ([](const py::module *m) {
+    (void)py::class_<audio::MelSpectrogramOperation, TensorOperation, std::shared_ptr<audio::MelSpectrogramOperation>>(
+      *m, "MelSpectrogramOperation")
+      .def(py::init([](int32_t sample_rate, int32_t n_fft, int32_t win_length, int32_t hop_length, float f_min,
+                       float f_max, int32_t pad, int32_t n_mels, WindowType window, float power, bool normalized,
+                       bool center, BorderType pad_mode, bool onesided, NormType norm, MelType mel_scale) {
+        auto mel_spectrogram = std::make_shared<audio::MelSpectrogramOperation>(
+          sample_rate, n_fft, win_length, hop_length, f_min, f_max, pad, n_mels, window, power, normalized, center,
+          pad_mode, onesided, norm, mel_scale);
+        THROW_IF_ERROR(mel_spectrogram->ValidateParams());
+        return mel_spectrogram;
+      }));
+  }));
+
+PYBIND_REGISTER(MFCCOperation, 1, ([](const py::module *m) {
+                  (void)py::class_<audio::MFCCOperation, TensorOperation, std::shared_ptr<audio::MFCCOperation>>(
+                    *m, "MFCCOperation")
+                    .def(py::init([](int32_t sample_rate, int32_t n_mfcc, int32_t dct_type, NormMode norm,
+                                     bool log_mels, const py::dict &melkwargs, WindowType window, BorderType pad_mode,
+                                     NormType norm_mel, MelType mel_scale) {
+                      int32_t n_fft = py::cast<int>(melkwargs["n_fft"]);
+                      int32_t win_length = py::cast<int>(melkwargs["win_length"]);
+                      int32_t hop_length = py::cast<int>(melkwargs["hop_length"]);
+                      float f_min = py::cast<float>(melkwargs["f_min"]);
+                      float f_max = py::cast<float>(melkwargs["f_max"]);
+                      int32_t pad = py::cast<int>(melkwargs["pad"]);
+                      int32_t n_mels = py::cast<int>(melkwargs["n_mels"]);
+                      float power = py::cast<float>(melkwargs["power"]);
+                      bool normalized = py::cast<bool>(melkwargs["normalized"]);
+                      bool center = py::cast<bool>(melkwargs["center"]);
+                      bool onesided = py::cast<bool>(melkwargs["onesided"]);
+                      auto mfcc = std::make_shared<audio::MFCCOperation>(
+                        sample_rate, n_mfcc, dct_type, norm, log_mels, n_fft, win_length, hop_length, f_min, f_max, pad,
+                        n_mels, window, power, normalized, center, pad_mode, onesided, norm_mel, mel_scale);
+                      THROW_IF_ERROR(mfcc->ValidateParams());
+                      return mfcc;
+                    }));
+                }));
+
+PYBIND_REGISTER(
   MuLawDecodingOperation, 1, ([](const py::module *m) {
     (void)py::class_<audio::MuLawDecodingOperation, TensorOperation, std::shared_ptr<audio::MuLawDecodingOperation>>(
       *m, "MuLawDecodingOperation")
@@ -509,6 +590,19 @@ PYBIND_REGISTER(
         auto phase_vocoder = std::make_shared<audio::PhaseVocoderOperation>(rate, phase_advance);
         THROW_IF_ERROR(phase_vocoder->ValidateParams());
         return phase_vocoder;
+      }));
+  }));
+
+PYBIND_REGISTER(
+  PitchShiftOperation, 1, ([](const py::module *m) {
+    (void)py::class_<audio::PitchShiftOperation, TensorOperation, std::shared_ptr<audio::PitchShiftOperation>>(
+      *m, "PitchShiftOperation")
+      .def(py::init([](int32_t sample_rate, int32_t n_steps, int32_t bins_per_octave, int32_t n_fft, int32_t win_length,
+                       int32_t hop_length, WindowType window) {
+        auto pitch_shift = std::make_shared<audio::PitchShiftOperation>(sample_rate, n_steps, bins_per_octave, n_fft,
+                                                                        win_length, hop_length, window);
+        THROW_IF_ERROR(pitch_shift->ValidateParams());
+        return pitch_shift;
       }));
   }));
 

@@ -19,9 +19,9 @@
 #include <vector>
 #include <string>
 #include "coder/opcoders/op_coder.h"
-#include "nnacl/transpose.h"
+#include "nnacl/transpose_parameter.h"
 namespace mindspore::lite::micro::nnacl {
-class TransposeFp32Coder final : public OperatorCoder {
+class TransposeFp32Coder : public OperatorCoder {
  public:
   TransposeFp32Coder(const std::vector<Tensor *> &in_tensors, const std::vector<Tensor *> &out_tensors,
                      const LiteGraph::Node *node, size_t node_index, Target target)
@@ -37,14 +37,16 @@ class TransposeFp32Coder final : public OperatorCoder {
 
   int Init();
 
+ protected:
+  int ComputeOfflineInfo();
+  virtual int ResetStatus();
+  TransposeParameter *param_{nullptr};
+  int dims_{0};
+
  private:
   void GetNHNCTransposeFunc();
-
-  TransposeParameter *param_{nullptr};
-  int *out_shape_{nullptr};
   std::string NHNCTransposeFunc_;
   int nhnc_param_[3];
-  int dims_{0};
 };
 }  // namespace mindspore::lite::micro::nnacl
 #endif  // MINDSPORE_LITE_TOOLS_CONVERTER_MICRO_CODER_OPCODERS_NNACL_FP32_TRANSPOSE_FP32_CODER_H_

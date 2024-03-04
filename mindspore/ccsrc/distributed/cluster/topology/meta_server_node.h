@@ -22,9 +22,10 @@
 #include <map>
 #include <thread>
 #include <shared_mutex>
-#include "distributed/rpc/tcp/tcp_server.h"
+#include <unordered_map>
+#include "include/backend/distributed/rpc/tcp/tcp_server.h"
 #include "distributed/recovery/configuration.h"
-#include "distributed/cluster/topology/node_base.h"
+#include "include/backend/distributed/cluster/topology/node_base.h"
 
 namespace mindspore {
 namespace distributed {
@@ -53,6 +54,9 @@ struct NodeInfo {
   // The local host name of this cluster node.
   std::string host_name;
 
+  // The host ip of this node in the cluster. Nodes use this address to create network communication with each other.
+  std::string host_ip;
+
   // The role name of this cluster node.
   std::string role;
 
@@ -65,6 +69,67 @@ struct NodeInfo {
 
   // Maintain the state of the node.
   NodeState state{NodeState::kNew};
+};
+
+inline std::string Dec2Hex(int i, uint32_t width) {
+  std::string temp;
+  std::stringstream ss;
+  ss << std::hex << i;
+  ss >> temp;
+  if (width > temp.size()) {
+    return std::string((width - temp.size()), '0') + temp;
+  }
+  return temp;
+}
+
+inline std::string GenerateIpInOrder(const std::string &ip) {
+  rpc::SocketAddress addr;
+  std::string ordered_ip = "";
+  uint32_t dec_2_hex_width = 2;
+  int result = inet_pton(AF_INET, ip.c_str(), &addr.saIn.sin_addr);
+  if (result > 0) {
+    for (size_t i = 0; i < sizeof(addr.saIn.sin_addr.s_addr) / sizeof(unsigned char); i++) {
+      ordered_ip += Dec2Hex(*(reinterpret_cast<unsigned char *>(&addr.saIn.sin_addr.s_addr) + i), dec_2_hex_width);
+    }
+    return ordered_ip;
+  }
+
+  result = inet_pton(AF_INET6, ip.c_str(), &addr.saIn6.sin6_addr);
+  if (result > 0) {
+    size_t ipv6_len = 16;
+    for (size_t i = 0; i < ipv6_len; i++) {
+      ordered_ip += Dec2Hex(addr.saIn6.sin6_addr.s6_addr[i], dec_2_hex_width);
+    }
+    return ordered_ip;
+  }
+
+  MS_LOG(EXCEPTION) << "Parse ip failed, result: " << result << ", ip:" << ip;
+}
+
+// The key of nodes consists of node's ip and id.
+// This is used for sorting nodes and assign global rank ids.
+struct NodeKey {
+  std::string host_ip;
+  std::string node_id;
+
+  bool operator<(const NodeKey &node_key) const {
+    auto this_host_ordered_ip = GenerateIpInOrder(host_ip);
+    auto host_ordered_ip = GenerateIpInOrder(node_key.host_ip);
+    if (this_host_ordered_ip < host_ordered_ip) {
+      return true;
+    } else if (this_host_ordered_ip > host_ordered_ip) {
+      return false;
+    } else {
+      if (node_id < node_key.node_id) {
+        return true;
+      } else {
+        return false;
+      }
+    }
+  }
+  bool operator==(const NodeKey &node_key) const {
+    return (node_id == node_key.node_id) && (host_ip == node_key.host_ip);
+  }
 };
 
 // The MetaServerNode is a separate process representing the meta server node which stores all the metadata and status
@@ -125,11 +190,18 @@ class MetaServerNode : public NodeBase {
   // Try to transition the state of cluster to be initialized.
   bool TransitionToInitialized();
 
+  // For each computing graph node, port range should be assigned by meta server node for rpc servers to bind.
+  void AssignPortRange();
+
   // Recover metadata from the configuration if recovery is enabled.
   bool Recovery();
 
   // Allocate a new valid rank id for new registered compute graph node.
   uint32_t AllocateRankId(const std::string &role);
+
+  // Reassign node ranks. This method should be called only after cluster is successfully built. It sorts all nodes with
+  // their node ip and node id, then assign their rank ids.
+  void ReassignNodeRank();
 
   // Persist the required metadata of cluster into storage through configuration.
   bool Persist();
@@ -142,7 +214,7 @@ class MetaServerNode : public NodeBase {
 
   // All the handlers for compute graph node's system messages processing.
   // The `system` means the built-in messages used for cluster topology construction.
-  std::map<MessageName, rpc::MessageHandler> system_msg_handlers_;
+  std::map<MessageName, MessageHandler> system_msg_handlers_;
 
   // All the handlers for compute graph node's user-defined messages processing.
   // The `user-defined` means that this kind of message is user defined and has customized message handler.

@@ -25,6 +25,7 @@
 #include <cmath>
 #include <string>
 #include <utility>
+#include <algorithm>
 #include "src/common/log_adapter.h"
 #include "tools/common/option.h"
 #include "include/errorcode.h"
@@ -36,6 +37,16 @@ enum NodeType {
   NodeType_ValueNode,  // const
   NodeType_Parameter,  // var
   NodeType_CNode       // op
+};
+
+struct ShapeDim {
+  int64_t dim = 0;
+  int64_t min = 0;
+  int64_t max = 0;
+};
+
+struct DynamicShape {
+  std::vector<ShapeDim> dims;
 };
 
 const int USEC = 1000000;
@@ -102,6 +113,23 @@ bool VectorReplace(std::vector<T> *vec, T srcElement, T dstElement) {
     }
   }
   return ret;
+}
+
+template <typename T>
+std::string ShapeVectorToStr(const std::vector<T> &shape) {
+  std::ostringstream oss;
+  bool first_dim = true;
+  oss << "[";
+  for (auto &x : shape) {
+    if (!first_dim) {
+      oss << ", ";
+    } else {
+      first_dim = false;
+    }
+    oss << x;
+  }
+  oss << "]";
+  return oss.str();
 }
 
 template <typename T>
@@ -183,7 +211,11 @@ inline bool StartsWithPrefix(const std::string &source, const std::string &prefi
 std::vector<std::string> StrSplit(const std::string &str, const std::string &pattern);
 
 bool ConvertStrToInt(const std::string &str, int *value);
+bool ConvertStrToInt(const std::string &str, int64_t *value);
 
+bool ParseShapeStr(const std::string &shape_str, std::vector<int64_t> *shape_ptr);
+
+bool ParseShapeStr(const std::string &shape_str, std::vector<ShapeDim> *shape_ptr);
 // tokenize string
 std::vector<std::string> Tokenize(const std::string &src, const std::string &delimiters,
                                   const Option<size_t> &max_token_num = Option<size_t>(None()));
@@ -264,6 +296,31 @@ inline bool FloatCompare(const float &a, const float &b = 0.0f) {
   return std::fabs(a - b) <= std::numeric_limits<float>::epsilon();
 }
 
+inline bool JudgeDynamicShape(const std::vector<int> &shape) {
+  if (shape.size() == 0) {
+    return true;
+  }
+  if (shape.size() == 1 && shape[0] == -1) {
+    return true;
+  }
+  return false;
+}
+
+inline bool JudgeDynamicShape(const std::vector<int64_t> &shape) {
+  if (shape.size() == 0) {
+    return true;
+  }
+  if (shape.size() == 1 && shape[0] == -1) {
+    return true;
+  }
+  return false;
+}
+
+inline std::string StringTolower(const std::string &str) {
+  std::string ret = str;
+  std::transform(ret.begin(), ret.end(), ret.begin(), [](unsigned char c) { return std::tolower(c); });
+  return ret;
+}
 }  // namespace lite
 }  // namespace mindspore
 

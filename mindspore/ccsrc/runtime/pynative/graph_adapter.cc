@@ -23,7 +23,7 @@
 #include "include/common/utils/convert_utils.h"
 #include "include/common/utils/anfalgo.h"
 #include "include/common/utils/parallel_context.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "runtime/graph_scheduler/device_tensor_store.h"
 #include "runtime/device/ms_device_shape_transfer.h"
 #include "runtime/graph_scheduler/actor/actor_common.h"
@@ -259,11 +259,11 @@ void GraphAdapter::UpdateForwardOutputInBpropGraph(const KernelGraphPtr &graph,
       address_ref_count[device_address] += value_node_ref_count;
       device_address->AddHeldByNode(front_node->cast<ValueNodePtr>());
     }
-    runtime::DeviceTensorStore::GetInstance().Remove(front_node.get());
     runtime::DeviceTensorStore::GetInstance().Insert(front_node.get(), device_address);
   }
 
   for (auto &[address, ref_count] : address_ref_count) {
+    MS_EXCEPTION_IF_NULL(address);
     address->set_original_ref_count(ref_count);
     address->ResetRefCount();
     MS_LOG(DEBUG) << "device_address " << address.get() << " ref_count " << address->ref_count();
@@ -323,7 +323,7 @@ void GraphAdapter::ReplaceGraphParameterProperties(const KernelGraphPtr &graph,
       MS_EXCEPTION_IF_NULL(kernel_build_info_builder);
       kernel_build_info_builder->SetOutputsFormat(std::vector<std::string>{address->format()});
       kernel_build_info_builder->SetOutputsDeviceType(std::vector<TypeId>{address->type_id()});
-      kernel_build_info_builder->SetOutputsReshapeType({input_tensor->padding_type()});
+      kernel_build_info_builder->SetOutputsReshapeType({address->padding_type()});
       AnfAlgo::SetOutputAddr(address, 0, parameter.get());
       AnfAlgo::SetSelectKernelBuildInfo(kernel_build_info_builder->Build(), parameter.get());
 
@@ -344,11 +344,43 @@ bool GraphAdapter::IsAutoParallel() {
   return parallel_mode == parallel::kSemiAutoParallel || parallel_mode == parallel::kAutoParallel;
 }
 
+bool GraphAdapter::IsPynativeGeGraphSink(const GraphCompilerInfo &graph_compiler_info) {
+  bool is_sink = std::any_of(graph_compiler_info.graphs_.begin(), graph_compiler_info.graphs_.end(),
+                             [](const KernelGraphPtr &graph) { return GraphAdapter::IsPynativeGeGraphSink(graph); });
+  return is_sink;
+}
+
+bool GraphAdapter::IsPynativeGeGraphSink(const FuncGraphPtr &func_graph) {
+  auto context_ptr = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context_ptr);
+  if (context_ptr->backend_policy() != "ge" || !context_ptr->get_param<bool>(MS_CTX_IS_MULTI_GRAPH_SINK)) {
+    return false;
+  }
+
+  auto enable_ge = common::GetEnv("MS_PYNATIVE_GE");
+  if (enable_ge != "1") {
+    return false;
+  }
+
+  MS_EXCEPTION_IF_NULL(func_graph);
+  if (func_graph->has_flag(kFlagEnableRunGraphBySingleOp)) {
+    return false;
+  }
+
+  return true;
+}
+
 bool GraphAdapter::PyNativeEnableTaskSink(const FuncGraphPtr &func_graph) {
   auto ms_context = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(ms_context);
   bool pynative_mode = ms_context->get_param<int>(MS_CTX_EXECUTION_MODE) == kPynativeMode;
   if (!pynative_mode) {
+    return true;
+  }
+
+  MS_EXCEPTION_IF_NULL(func_graph);
+  if (GraphAdapter::IsPynativeGeGraphSink(func_graph)) {
+    MS_LOG(DEBUG) << "Enable graph sink for PyNative";
     return true;
   }
 
@@ -364,7 +396,7 @@ bool GraphAdapter::PyNativeEnableTaskSink(const FuncGraphPtr &func_graph) {
 
   std::vector<AnfNodePtr> node_list = TopoSort(func_graph->get_return());
   auto is_cut_graph = std::any_of(node_list.begin(), node_list.end(), [](const AnfNodePtr &node) {
-    return common::AnfAlgo::IsControlOpExecInBackend(node);
+    return common::AnfAlgo::IsBpropCutOpExecInBackend(node);
   });
 
   auto has_comm_op = std::any_of(node_list.begin(), node_list.end(),
@@ -373,10 +405,9 @@ bool GraphAdapter::PyNativeEnableTaskSink(const FuncGraphPtr &func_graph) {
   auto is_auto_parallel = IsAutoParallel();
 
   MS_LOG(INFO) << "JitLevel is " << jit_level << " is_auto_parallel " << is_auto_parallel << " has_comm_op "
-               << has_comm_op << " is_cut_graph " << is_cut_graph << " dynamic_structure "
-               << func_graph->has_flag(kFlagIsDynamicStructure);
+               << has_comm_op << " is_cut_graph " << is_cut_graph;
 
-  return !is_auto_parallel && !has_comm_op && !is_cut_graph && !func_graph->has_flag(kFlagIsDynamicStructure);
+  return !is_auto_parallel && !has_comm_op && !is_cut_graph;
 }
 
 void UpdateValueNodeAbstractFromTensor(const ValueNodePtr &value_node, const tensor::TensorPtr &tensor) {
@@ -398,7 +429,7 @@ void GraphAdapter::UpdateDynamicValueNodeAbstract(const KernelGraphPtr &graph) {
     return;
   }
   MS_LOG(INFO) << "Update dynamic shape value node for graph " << graph->graph_id();
-  auto value_nodes = graph->graph_value_nodes();
+  const auto &value_nodes = graph->graph_value_nodes();
   for (auto &value_node : value_nodes) {
     MS_EXCEPTION_IF_NULL(value_node);
     const auto &value = value_node->value();
@@ -418,7 +449,7 @@ void GraphAdapter::SensTensorToDevice(const KernelGraphPtr &graph, const device:
   if (!graph->is_dynamic_shape()) {
     return;
   }
-  auto value_nodes = graph->graph_value_nodes();
+  const auto &value_nodes = graph->graph_value_nodes();
   for (const auto &value_node : value_nodes) {
     MS_EXCEPTION_IF_NULL(value_node);
     auto value = value_node->value();

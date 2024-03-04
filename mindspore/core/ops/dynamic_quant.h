@@ -17,14 +17,14 @@
 #ifndef MINDSPORE_CORE_OPS_DYNAMIC_QUANT_H_
 #define MINDSPORE_CORE_OPS_DYNAMIC_QUANT_H_
 
-#include <map>
-#include <vector>
-#include <string>
-#include <memory>
 #include <algorithm>
+#include <map>
+#include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -54,16 +54,46 @@ class MIND_API DynamicQuant : public BaseOperator {
 
   /// \brief Method to set dst_type attribute.
   ///
-  /// \param[in] dst_t Define the data type of output.
+  /// \param[in] dst_type Define the data type of output.
   void set_dst_type(const int64_t dst_type);
 
   /// \brief Method to get dst_type attribute.
   ///
   /// \return the data type of output.
   int64_t get_dst_type() const;
+
+  /// \brief Method to set prefer_axis attribute.
+  ///
+  /// \param[in] prefer_axis Define the preferred axis.
+  void set_prefer_axis(const int64_t prefer_axis);
+
+  /// \brief Method to get prefer_axis attribute.
+  ///
+  /// \return the preferred axis.
+  int64_t get_prefer_axis() const;
+
+  /// \brief Method to set activation_channel attribute.
+  ///
+  /// \param[in] activation_channel Define whether activation perchannel quantization.
+  void set_activation_channel(const bool activation_channel);
+
+  /// \brief Method to get activation_channel attribute.
+  ///
+  /// \return Whether activation perchannel quantization.
+  bool get_activation_channel() const;
+
+  /// \brief Method to set transpose attribute.
+  ///
+  /// \param[in] symmetric Define whether transpose matrix.
+  void set_transpose(const bool transpose);
+
+  /// \brief Method to get transpose attribute.
+  ///
+  /// \return Whether transpose matrix.
+  bool get_transpose() const;
 };
-abstract::AbstractBasePtr DynamicQuantInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                            const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr DynamicQuantInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                     const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

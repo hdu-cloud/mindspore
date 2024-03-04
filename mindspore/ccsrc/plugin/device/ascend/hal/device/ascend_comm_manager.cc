@@ -20,7 +20,8 @@
 #include "utils/ms_context.h"
 #include "include/common/utils/parallel_context.h"
 #include "include/common/utils/utils.h"
-#include "distributed/init.h"
+#include "include/backend/distributed/init.h"
+#include "ops/ascend_op_name.h"
 
 namespace mindspore {
 namespace {
@@ -30,8 +31,7 @@ class AscendCommManager : public CommManager {
   ~AscendCommManager() override = default;
 
   bool CreateGroupSync(const string &group, const std::vector<unsigned int> &rank_id_list) const override {
-    distributed::collective::CollectiveManager::instance()->CreateCommunicationGroup(group, rank_id_list);
-    return true;
+    return distributed::collective::CollectiveManager::instance()->CreateCommunicationGroup(group, rank_id_list);
   }
 
   bool GetRankID(const string &group, unsigned int *rank_id) const override {
@@ -47,8 +47,7 @@ class AscendCommManager : public CommManager {
   }
 
   bool DestroyGroup(const string &group) const override {
-    distributed::collective::CollectiveManager::instance()->DestroyCommunicationGroup(group);
-    return true;
+    return distributed::collective::CollectiveManager::instance()->DestroyCommunicationGroup(group);
   }
 
   uint32_t GetRank() override {

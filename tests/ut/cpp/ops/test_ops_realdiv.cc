@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,47 +18,39 @@
 #include "common/common_test.h"
 #include "ops/real_div.h"
 #include "ir/dtype/type.h"
-#include "ir/value.h"
 #include "abstract/dshape.h"
 #include "utils/tensor_construct_utils.h"
+#include "ir/primitive.h"
+#include "abstract/abstract_value.h"
+#include "ops/test_ops.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace ops {
-class TestRealDiv : public UT::Common {
- public:
-  TestRealDiv() {}
-  void SetUp() {}
-  void TearDown() {}
-};
+class TestRealDiv : public TestOps, public testing::WithParamInterface<BroadcastOpParams> {};
 
-TEST_F(TestRealDiv, test_ops_realdiv1) {
-  auto realdiv = std::make_shared<RealDiv>();
-  auto tensor_x1 = TensorConstructUtils::CreateOnesTensor(kNumberTypeFloat32, std::vector<int64_t>{2, 3, 4, 5});
-  auto tensor_x2 = TensorConstructUtils::CreateOnesTensor(kNumberTypeFloat32, std::vector<int64_t>{2, 3, 4, 5});
-  MS_EXCEPTION_IF_NULL(tensor_x1);
-  MS_EXCEPTION_IF_NULL(tensor_x2);
-  auto abstract = realdiv->Infer({tensor_x1->ToAbstract(), tensor_x2->ToAbstract()});
-  MS_EXCEPTION_IF_NULL(abstract);
-  EXPECT_EQ(abstract->isa<abstract::AbstractTensor>(), true);
-  auto shape_ptr = abstract->BuildShape();
-  MS_EXCEPTION_IF_NULL(shape_ptr);
-  EXPECT_EQ(shape_ptr->isa<abstract::Shape>(), true);
-  auto shape = shape_ptr->cast<abstract::ShapePtr>();
-  MS_EXCEPTION_IF_NULL(shape);
-  auto shape_vec = shape->shape();
-  auto type = abstract->BuildType();
-  MS_EXCEPTION_IF_NULL(type);
-  EXPECT_EQ(type->isa<TensorType>(), true);
-  auto tensor_type = type->cast<TensorTypePtr>();
-  MS_EXCEPTION_IF_NULL(tensor_type);
-  auto data_type = tensor_type->element();
-  MS_EXCEPTION_IF_NULL(data_type);
-  EXPECT_EQ(data_type->type_id(), kNumberTypeFloat32);
-  EXPECT_EQ(shape_vec.size(), 4);
-  EXPECT_EQ(shape_vec[0], 2);
-  EXPECT_EQ(shape_vec[1], 3);
-  EXPECT_EQ(shape_vec[2], 4);
-  EXPECT_EQ(shape_vec[3], 5);
+TEST_P(TestRealDiv, dyn_shape) {
+  const auto &param = GetParam();
+  auto x = std::make_shared<abstract::AbstractTensor>(param.x_type, param.x_shape);
+  auto y = std::make_shared<abstract::AbstractTensor>(param.y_type, param.y_shape);
+  auto expect = std::make_shared<abstract::AbstractTensor>(param.out_type, param.out_shape);
+  ASSERT_NE(x, nullptr);
+  ASSERT_NE(y, nullptr);
+  auto real_div_op = std::make_shared<RealDiv>();
+  real_div_op->Init();
+  auto prim = std::make_shared<Primitive>(kNameRealDiv);
+  auto out_abstract = opt::CppInferShapeAndType(prim, {x, y});
+  ASSERT_NE(out_abstract, nullptr);
+  ASSERT_TRUE(*out_abstract == *expect);
 }
+
+INSTANTIATE_TEST_CASE_P(TestRealDivGroup, TestRealDiv,
+                        testing::Values(
+                          BroadcastOpParams{{1, 3}, kFloat32, {2, 1}, kFloat32, {2, 3}, kFloat32},
+                          BroadcastOpParams{{-1, 3}, kFloat32, {-1, 1}, kFloat32, {-1, 3}, kFloat32},
+                          BroadcastOpParams{{-1, 3}, kFloat32, {-1, 1}, kFloat32, {-1, 3}, kFloat32},
+                          BroadcastOpParams{{-1, 1, 3}, kFloat32, {1, -1, 3}, kFloat32, {-1, -1, 3}, kFloat32},
+                          BroadcastOpParams{{-1, 2, 3}, kFloat32, {2, -1, 3}, kFloat32, {2, 2, 3}, kFloat32},
+                          BroadcastOpParams{{-2}, kFloat32, {2, 3}, kFloat32, {-2}, kFloat32}));
 }  // namespace ops
 }  // namespace mindspore

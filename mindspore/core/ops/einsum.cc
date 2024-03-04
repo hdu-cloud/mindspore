@@ -14,17 +14,32 @@
  * limitations under the License.
  */
 #include "ops/einsum.h"
+
+#include <algorithm>
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
 #include <unordered_map>
 #include <vector>
-#include <string>
-#include <set>
-#include <map>
-#include <algorithm>
-#include "ops/op_utils.h"
-#include "ir/dtype/tensor_type.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -32,12 +47,12 @@ namespace {
 constexpr int kEinsumEllVal = 52;
 constexpr int kEinsumLableNum = 52;
 constexpr int kEinsumEllLen = 3;
+constexpr int kLowerCaseBegin = 26;
 static int64_t char_to_index(char cur_char) {
   if (cur_char <= 'z' && cur_char >= 'a') {
-    return static_cast<int64_t>(cur_char - 'a');
+    return static_cast<int64_t>(cur_char - 'a' + kLowerCaseBegin);
   }
-  constexpr int kBigCBegin = 26;
-  return static_cast<int64_t>(cur_char - 'A' + kBigCBegin);
+  return static_cast<int64_t>(cur_char - 'A');
 }
 
 static void seg_left_equation(const std::string &left_equation, const std::string &prim_name,
@@ -225,8 +240,11 @@ std::string Einsum::get_equation() const {
 }
 
 abstract::ShapePtr EinsumInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   auto prim_name = primitive->name();
-  auto equation = GetValue<std::string>(primitive->GetAttr(kEquation));
+  auto equation_ptr = primitive->GetAttr(kEquation);
+  MS_EXCEPTION_IF_NULL(equation_ptr);
+  auto equation = GetValue<std::string>(equation_ptr);
   (void)equation.erase(std::remove(equation.begin(), equation.end(), ' '), equation.end());
   if (equation.length() == 0) {
     MS_EXCEPTION(ValueError) << "For '" << prim_name << "', the equation is required, but got none.";
@@ -239,16 +257,14 @@ abstract::ShapePtr EinsumInferShape(const PrimitivePtr &primitive, const std::ve
   }
 
   (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kGreaterEqual, 1, prim_name);
-  for (const auto &item : input_args) {
-    MS_EXCEPTION_IF_NULL(item);
+  AbstractBasePtrList elements = input_args;
+  if (input_args.size() == 1) {
+    if (!input_args[0]->isa<abstract::AbstractSequence>()) {
+      MS_EXCEPTION(TypeError) << "For '" << prim_name << "', the input data type must be list or tuple of tensors.";
+    }
+    elements = input_args[0]->cast<abstract::AbstractSequencePtr>()->elements();
+    MS_EXCEPTION_IF_CHECK_FAIL(!elements.empty(), "Einsum's input tuple must be not empty!");
   }
-
-  if (!input_args[0]->isa<abstract::AbstractTuple>() && !input_args[0]->isa<abstract::AbstractList>()) {
-    MS_EXCEPTION(TypeError) << "For '" << prim_name << "', the input must be a list or tuple of tensors.";
-  }
-  auto elements = input_args[0]->isa<abstract::AbstractTuple>()
-                    ? input_args[0]->cast<abstract::AbstractTuplePtr>()->elements()
-                    : input_args[0]->cast<abstract::AbstractListPtr>()->elements();
   std::vector<std::vector<int64_t>> input_shapes;
   for (size_t idx = 0; idx < elements.size(); ++idx) {
     auto shape = elements[idx]->BuildShape();
@@ -257,7 +273,9 @@ abstract::ShapePtr EinsumInferShape(const PrimitivePtr &primitive, const std::ve
       MS_EXCEPTION(ValueError) << "For '" << prim_name << "', the dim of inputs' shape can not be zero, but got input["
                                << idx << "] shape: " << shape->ToString() << ".";
     }
-    auto &shape_vec = shape->cast<abstract::ShapePtr>()->shape();
+    auto shape_ptr = shape->cast<abstract::ShapePtr>();
+    MS_EXCEPTION_IF_NULL(shape_ptr);
+    auto &shape_vec = shape_ptr->shape();
     for (auto &val : shape_vec) {
       if (val == 0) {
         MS_EXCEPTION(ValueError) << "For '" << prim_name << "', the shape can not contain zero, but got input[" << idx
@@ -284,9 +302,16 @@ abstract::ShapePtr EinsumInferShape(const PrimitivePtr &primitive, const std::ve
   return std::make_shared<abstract::Shape>(out_shape);
 }
 TypePtr EinsumInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
-  auto elements = input_args[0]->isa<abstract::AbstractTuple>()
-                    ? input_args[0]->cast<abstract::AbstractTuplePtr>()->elements()
-                    : input_args[0]->cast<abstract::AbstractListPtr>()->elements();
+  MS_EXCEPTION_IF_NULL(primitive);
+  const auto &prim_name = primitive->name();
+  (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kGreaterEqual, 1, prim_name);
+  AbstractBasePtrList elements = input_args;
+  if (input_args.size() == 1) {
+    if (!input_args[0]->isa<abstract::AbstractSequence>()) {
+      MS_EXCEPTION(TypeError) << "For '" << prim_name << "', the input data type must be list or tuple of tensors.";
+    }
+    elements = input_args[0]->cast<abstract::AbstractSequencePtr>()->elements();
+  }
   const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64};
   std::map<std::string, TypePtr> types;
   (void)types.emplace("out_type", elements[0]->BuildType());
@@ -295,12 +320,29 @@ TypePtr EinsumInferType(const PrimitivePtr &primitive, const std::vector<Abstrac
 AbstractBasePtr EinsumInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                             const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
-  const int64_t input_num = 1;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, 1, primitive->name());
   auto res = std::make_shared<abstract::AbstractTensor>(EinsumInferType(primitive, input_args),
                                                         EinsumInferShape(primitive, input_args));
   return res;
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(Einsum, prim::kPrimEinsum, EinsumInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGEinsumInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return EinsumInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return EinsumInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return EinsumInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Einsum, prim::kPrimEinsum, AGEinsumInfer, false);
 }  // namespace ops
 }  // namespace mindspore

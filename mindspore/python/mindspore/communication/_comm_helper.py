@@ -15,12 +15,18 @@
 """comm_helper"""
 
 import os
+import glob
 import ctypes
+
+import sys
+from sys import excepthook
+
 from mindspore import context
 from mindspore.parallel._ps_context import _is_role_worker, _is_role_pserver, _is_role_sched, _is_ps_mode,\
                                            _get_ps_context
 from mindspore import log as logger
 from mindspore._c_expression import CollectiveManager, set_cluster_exit_with_exception, MSContext
+from mindspore.common._utils import load_lib
 
 HCCL_LIB = 'libhccl_plugin.so'
 
@@ -29,10 +35,10 @@ def hccl_load_lib():
     """load hccl lib"""
     try:
         base_dir = os.path.dirname(os.path.realpath(__file__))
-        lib_path = os.path.join(base_dir, "../lib/plugin", HCCL_LIB)
+        lib_path = os.path.join(base_dir, "../lib/plugin/ascend", HCCL_LIB)
         ctypes.CDLL(lib_path)
-    except Exception:
-        raise RuntimeError('Get hccl lib error.')
+    except Exception as exc:
+        raise RuntimeError('Get hccl lib error.') from exc
 
 _HCCL_TEST_AVAILABLE = False
 
@@ -53,6 +59,11 @@ HCCL_WORLD_COMM_GROUP = "hccl_world_group"
 NCCL_WORLD_COMM_GROUP = "nccl_world_group"
 MCCL_WORLD_COMM_GROUP = "mccl_world_group"
 
+DEVICE_TO_BACKEND = {
+    "Ascend": "hccl",
+    "GPU": "nccl",
+    "CPU": "mccl"
+}
 
 class Backend:
     """
@@ -78,6 +89,7 @@ class Backend:
     NCCL = "nccl"
     MCCL = "mccl"
 
+    @staticmethod
     def __new__(cls, name):
         """Create instance object of Backend."""
         if not isinstance(name, str):
@@ -97,8 +109,12 @@ class GlobalComm:
     """
     World communication information. The GlobalComm is a global class. The members contain:
 
-    - BACKEND: The communication library used, using HCCL/NCCL.
-    - WORLD_COMM_GROUP: Global communication domain.
+    - ``BACKEND`` : The communication library used, using ``"hccl"`` / ``"nccl"`` / ``"mccl"`` .
+      ``"hccl"`` means Huawei Collective Communication Library(HCCL),
+      ``"nccl"`` means NVIDIA Collective Communication Library(NCCL),
+      ``"mccl"`` means MindSpore Collective Communication Library(MCCL).
+    - ``WORLD_COMM_GROUP`` : Global communication domain,
+      using ``"hccl_world_group"`` / ``"nccl_world_group"`` / ``"mccl_world_group"`` .
     """
     BACKEND = DEFAULT_BACKEND
     WORLD_COMM_GROUP = HCCL_WORLD_COMM_GROUP
@@ -145,8 +161,6 @@ def _check_bypass_rank_id_and_size():
 
 def _set_elegant_exit_handle():
     if _is_role_worker() or _is_role_pserver() or _is_role_sched():
-        import sys
-        from sys import excepthook
         sys.excepthook = lambda *args: (set_cluster_exit_with_exception(), excepthook(*args))
 
 
@@ -176,6 +190,60 @@ def check_parameter_available(func):
             group = GlobalComm.WORLD_COMM_GROUP
         return func(*args, **kargs)
     return wrapper
+
+
+def _is_available():
+    """
+    Returns `True` if distributed module is available.
+
+    Note:
+        Always returns `True` because MindSpore always has distributed ability on all platforms.
+    """
+    return True
+
+
+def _is_initialized():
+    """
+    Checks if distributed module is successfully initialized.
+    """
+    return CollectiveManager.get_instance().initialized()
+
+
+def _get_backend():
+    """
+    Returns the backend of communication process groups.
+
+    Note:
+        Only one communication backend is supported by MindSpore for each process.
+        It should be one of `hccl`/`nccl`/`mccl`.
+    """
+    return GlobalComm.BACKEND
+
+
+def _is_hccl_available():
+    """
+    Checks if `hccl` backend is available.
+    """
+    return _HCCL_TEST_AVAILABLE
+
+
+def _is_nccl_available():
+    """
+    Checks if `nccl` backend is available.
+    """
+    base_dir = os.path.dirname(os.path.realpath(__file__))
+    lib_path = os.path.join(base_dir, "../lib/plugin/gpu*/libnvidia_collective.so")
+    file_paths = glob.glob(lib_path)
+    return all(list(load_lib(f) for f in file_paths))
+
+
+def _is_mpi_available():
+    """
+    Checks if OpenMPI's library is available.
+    """
+    base_dir = os.path.dirname(os.path.realpath(__file__))
+    lib_path = os.path.join(base_dir, "../lib/libmpi_collective.so")
+    return load_lib(lib_path)
 
 
 @check_parameter_available
@@ -318,6 +386,20 @@ def _get_group_rank_from_world_rank_helper(world_rank_id, group):
 
 
 @check_parameter_available
+def _get_group_ranks(group):
+    """
+    The Helper to do get_group_ranks.
+
+    Args:
+        group (str): The communication group.
+
+    Returns:
+        List. The ranks of specified group.
+    """
+    return CollectiveManager.get_instance().get_group_ranks(group)
+
+
+@check_parameter_available
 def _create_group_helper(group, rank_ids):
     """
     The Helper to do create_group.
@@ -350,7 +432,12 @@ def _create_group_helper(group, rank_ids):
     if _hccl_test():
         hccl.create_group(group, rank_size, rank_ids)
     else:
-        CollectiveManager.get_instance().create_group(group, rank_ids)
+        result = CollectiveManager.get_instance().create_group(group, rank_ids)
+        if not result:
+            raise RuntimeError("Failed to create communication group for {} with rank ids {}. "
+                               "If NCCL is used, 'export NCCL_DEBUG=INFO' "
+                               "is suggested before launching jobs.".format(group, rank_ids))
+
     _ExistingGroup.ITEMS[group] = rank_ids
 
 

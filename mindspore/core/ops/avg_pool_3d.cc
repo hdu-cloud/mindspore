@@ -15,14 +15,32 @@
  */
 
 #include "ops/avg_pool_3d.h"
+
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/types.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -89,11 +107,18 @@ std::vector<int64_t> GetOutputShape(const PrimitivePtr &primitive, const std::ve
       out_w--;
     }
   } else {
-    out_d = DoubleToLong(std::floor((in_d + pad_list[0] + pad_list[1] - kernel_d) / stride_d + 1));
-    out_h =
-      DoubleToLong(std::floor((in_h + pad_list[kInputIndex2] + pad_list[kInputIndex3] - kernel_h) / stride_h + 1));
-    out_w =
-      DoubleToLong(std::floor((in_w + pad_list[kInputIndex4] + pad_list[kInputIndex5] - kernel_w) / stride_w + 1));
+    auto in_d_with_pad = in_d + pad_list[0] + pad_list[1];
+    auto in_h_with_pad = in_h + pad_list[kInputIndex2] + pad_list[kInputIndex3];
+    auto in_w_with_pad = in_w + pad_list[kInputIndex4] + pad_list[kInputIndex5];
+    if (!IsDynamic(in_shape) && (in_d_with_pad < kernel_d || in_h_with_pad < kernel_h || in_w_with_pad < kernel_w)) {
+      auto kernel_size = {kernel_d, kernel_h, kernel_w};
+      MS_LOG(EXCEPTION) << "For '" << primitive->name() << ", size of input with the padding is (D:" << in_d_with_pad
+                        << ", H:" << in_h_with_pad << ", W:" << in_w_with_pad << ") smaller than kernel size "
+                        << kernel_size;
+    }
+    out_d = DoubleToLong(std::floor((in_d_with_pad - kernel_d) / stride_d + 1));
+    out_h = DoubleToLong(std::floor((in_h_with_pad - kernel_h) / stride_h + 1));
+    out_w = DoubleToLong(std::floor((in_w_with_pad - kernel_w) / stride_w + 1));
   }
   if (IsDynamic(in_shape)) {
     out_d = in_d == abstract::Shape::kShapeDimAny ? abstract::Shape::kShapeDimAny : out_d;
@@ -130,6 +155,17 @@ void GetPadsByPadding(const PrimitivePtr &primitive, int64_t in_d, int64_t in_h,
     pad_list->push_back(static_cast<int64_t>(std::floor(pad_w / twice)));
     pad_list->push_back(pad_w - pad_list->at(kInputIndex4));
   } else if (pad_mode == PadMode::PAD) {
+    const auto padding_d = padding[kInputIndex0] + padding[kInputIndex1];
+    const auto padding_h = padding[kInputIndex2] + padding[kInputIndex3];
+    const auto padding_w = padding[kInputIndex4] + padding[kInputIndex5];
+    if (padding_d > kernel_d || padding_h > kernel_h || padding_w > kernel_w) {
+      MS_EXCEPTION(ValueError) << "For '" << primitive->name()
+                               << " the sum of the pads in the two directions should be less than or equal to"
+                               << " the corresponding kernel size, but got pads: (" << padding[kInputIndex0] << ","
+                               << padding[kInputIndex1] << "," << padding[kInputIndex2] << "," << padding[kInputIndex3]
+                               << "," << padding[kInputIndex4] << "," << padding[kInputIndex5] << ")"
+                               << " and kernel: (" << kernel_d << ", " << kernel_h << ", " << kernel_w << ")";
+    }
     pad_list->assign(padding.begin(), padding.end());
   }
 }
@@ -180,7 +216,8 @@ abstract::ShapePtr AvgPool3DInferShape(const PrimitivePtr &primitive, const std:
   if (!IsDynamic(in_shape) &&
       std::any_of(out_shape.begin(), out_shape.end(), [](int64_t shp_v) { return shp_v <= 0; })) {
     MS_LOG(EXCEPTION) << "For '" << primitive->name()
-                      << "', output shape's all elements must be positive, but got shape: " << out_shape << ".";
+                      << "', output shape's all elements must be positive, but got shape: " << out_shape << "."
+                      << "Please check input parameter!";
   }
   return std::make_shared<abstract::Shape>(out_shape);
 }
@@ -193,7 +230,7 @@ TypePtr AvgPool3DInferType(const PrimitivePtr &primitive, const std::vector<Abst
     MS_EXCEPTION_IF_NULL(item);
   }
   auto x_dtype = input_args[0]->BuildType();
-  const std::set<TypePtr> valid_types = {kFloat16, kFloat32};
+  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64};
   return CheckAndConvertUtils::CheckTensorTypeValid("x", x_dtype, valid_types, op_name);
 }
 }  // namespace
@@ -201,9 +238,28 @@ TypePtr AvgPool3DInferType(const PrimitivePtr &primitive, const std::vector<Abst
 MIND_API_OPERATOR_IMPL(AvgPool3D, BaseOperator);
 AbstractBasePtr AvgPool3DInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                const std::vector<AbstractBasePtr> &input_args) {
-  return abstract::MakeAbstract(AvgPool3DInferShape(primitive, input_args), AvgPool3DInferType(primitive, input_args));
+  auto type = AvgPool3DInferType(primitive, input_args);
+  auto shape = AvgPool3DInferShape(primitive, input_args);
+  return abstract::MakeAbstract(shape, type);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(AvgPool3D, prim::kPrimAvgPool3D, AvgPool3DInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGAvgPool3DInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return AvgPool3DInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return AvgPool3DInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return AvgPool3DInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(AvgPool3D, prim::kPrimAvgPool3D, AGAvgPool3DInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -35,7 +35,7 @@ bool CheckNumericsGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  unit_output_size_ = abstract::TypeIdSize(kernel_attr.GetOutputAttr(kIndex0).first);
+  unit_output_size_ = abstract::TypeIdSize(kernel_attr.GetOutputAttr(kIndex0).dtype);
   return true;
 }
 
@@ -74,10 +74,14 @@ bool CheckNumericsGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inpu
   int32_t flag_host[2];
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaMemsetAsync(flag_device, 0, kNumber2 * sizeof(int32_t), stream),
                                      "flag_check cudaMemsetAsync failed.");
-  CalCheckNumerics(output_elements_, input, flag_device, device_id_, stream);
+  auto status = CalCheckNumerics(output_elements_, input, flag_device, device_id_, stream);
+  CHECK_CUDA_STATUS(status, kernel_name_);
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
     cudaMemcpyAsync(flag_host, flag_device, kNumber2 * sizeof(int32_t), cudaMemcpyDeviceToHost, stream),
-    "flag_host cudaMemcpy failed.");
+    "For 'checkNumerics', flag_host cudaMemcpyAsync failed.");
+  if (cudaStreamQuery(stream) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(stream), "cuda Stream Sync Failed.");
+  }
   if (flag_host[0] == 1 && flag_host[1] == 1) {
     MS_EXCEPTION(ValueError) << ": Tensor had Inf and NaN values [Op" << kernel_name_ << "].";
   } else if (flag_host[0] == 1 && flag_host[1] == 0) {

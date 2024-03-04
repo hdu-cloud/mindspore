@@ -51,7 +51,7 @@ int CSRSparseMatrixToDenseCpuKernelMod::Resize(const BaseOperatorPtr &base_opera
     return ret;
   }
 
-  rank_ = inputs[kInputIndex0]->GetShapeVector()[kZero];
+  rank_ = static_cast<size_t>(inputs[kInputIndex0]->GetShapeVector()[kZero]);
   batch_size_ = static_cast<size_t>(inputs[kInputIndex1]->GetShapeVector()[kZero]) - kOne;
   return KRET_OK;
 }
@@ -115,7 +115,7 @@ bool CSRSparseMatrixToDenseCpuKernelMod::Launch(const std::vector<kernel::Addres
   return true;
 }
 
-void CSRSparseMatrixToDenseCpuKernelMod::SyncData() { outputs_[kIndex0]->SetShapeVector(y_dims_); }
+void CSRSparseMatrixToDenseCpuKernelMod::SyncOutputShape() { outputs_[kIndex0]->SetShapeVector(y_dims_); }
 
 template <typename indiceT, typename valueT>
 void CSRSparseMatrixToDenseCpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,

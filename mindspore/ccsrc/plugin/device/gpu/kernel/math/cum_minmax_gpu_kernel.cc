@@ -96,12 +96,23 @@ bool CumMinMaxGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, 
     return false;
   }
 
-  CumMinMax(cum_op_type_, input_ptr, value_ptr, index_ptr, outer_size_, axis_size_, inner_size_, device_id_,
-            cuda_stream);
-
-  auto err = cudaGetLastError();
-  if (err != cudaSuccess) {
-    MS_LOG(EXCEPTION) << kernel_name_ << " kernel failed : " << cudaGetErrorString(err);
+  switch (cum_op_type_) {
+    case CUMMIN: {
+      auto status =
+        CumMin(input_ptr, value_ptr, index_ptr, outer_size_, axis_size_, inner_size_, device_id_, cuda_stream);
+      CHECK_CUDA_STATUS(status, kernel_name_);
+      break;
+    }
+    case CUMMAX: {
+      auto status =
+        CumMax(input_ptr, value_ptr, index_ptr, outer_size_, axis_size_, inner_size_, device_id_, cuda_stream);
+      CHECK_CUDA_STATUS(status, kernel_name_);
+      break;
+    }
+    default: {
+      MS_LOG(ERROR) << "For CumMin/CumMax in GPU, failed to select cuda kernel function!";
+      return false;
+    }
   }
   return true;
 }

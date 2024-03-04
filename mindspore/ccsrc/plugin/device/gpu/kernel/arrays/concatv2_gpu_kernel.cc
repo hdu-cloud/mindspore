@@ -43,7 +43,7 @@ const std::vector<std::pair<KernelAttr, ConcatV2FwdGpuKernelMod::KernelRunFunc>>
     {KernelAttr().AddAllSameAttr(true).AddInputAttr(kNumberTypeInt16).AddOutputAttr(kNumberTypeInt16),
      &ConcatV2FwdGpuKernelMod::LaunchKernel<int16_t>},
     {KernelAttr().AddAllSameAttr(true).AddInputAttr(kNumberTypeInt8).AddOutputAttr(kNumberTypeInt8),
-     &ConcatV2FwdGpuKernelMod::LaunchKernel<char>},
+     &ConcatV2FwdGpuKernelMod::LaunchKernel<int8_t>},
     {KernelAttr().AddAllSameAttr(true).AddInputAttr(kNumberTypeUInt64).AddOutputAttr(kNumberTypeUInt64),
      &ConcatV2FwdGpuKernelMod::LaunchKernel<uint64_t>},
     {KernelAttr().AddAllSameAttr(true).AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeUInt32),
@@ -51,7 +51,7 @@ const std::vector<std::pair<KernelAttr, ConcatV2FwdGpuKernelMod::KernelRunFunc>>
     {KernelAttr().AddAllSameAttr(true).AddInputAttr(kNumberTypeUInt16).AddOutputAttr(kNumberTypeUInt16),
      &ConcatV2FwdGpuKernelMod::LaunchKernel<uint16_t>},
     {KernelAttr().AddAllSameAttr(true).AddInputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeUInt8),
-     &ConcatV2FwdGpuKernelMod::LaunchKernel<uchar>},
+     &ConcatV2FwdGpuKernelMod::LaunchKernel<uint8_t>},
     {KernelAttr().AddAllSameAttr(true).AddInputAttr(kNumberTypeBool).AddOutputAttr(kNumberTypeBool),
      &ConcatV2FwdGpuKernelMod::LaunchKernel<bool>}};
   return func_list;
@@ -86,8 +86,9 @@ bool ConcatV2FwdGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs
                     reinterpret_cast<cudaStream_t>(stream_ptr_)),
     "ConcatV2 opt cudaMemcpyAsync length on axis failed");
   output_size_ = output_size_list_[0] / sizeof(T);
-  ConcatKernel(output_size_, input_num_, all_size_before_axis_, all_size_axis_, len_axis_device, inputs_device, output,
-               reinterpret_cast<cudaStream_t>(stream_ptr_));
+  auto status = ConcatKernel(output_size_, input_num_, all_size_before_axis_, all_size_axis_, len_axis_device,
+                             inputs_device, output, reinterpret_cast<cudaStream_t>(stream_ptr_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

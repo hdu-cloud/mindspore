@@ -1,4 +1,4 @@
-# Copyright 2020-2021 Huawei Technologies Co., Ltd
+# Copyright 2020-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,27 +15,27 @@
 """debug_ops"""
 from types import FunctionType, MethodType
 
-from mindspore import context
 from mindspore import log as logger
 from mindspore._c_expression import security
 from mindspore._c_expression import Tensor as Tensor_
-from mindspore._checkparam import Validator as validator
-from mindspore._checkparam import Rel
+from mindspore import _checkparam as validator
 from mindspore.common import dtype as mstype
 from mindspore.common.parameter import Parameter
+from mindspore.common.tensor import Tensor
 from mindspore.ops.primitive import prim_attr_register, Primitive, PrimitiveWithInfer
 
 
-def _check_mode(class_name):
-    """Check for PyNative mode."""
-    mode = context.get_context('mode')
-    if mode == context.PYNATIVE_MODE:
-        raise RuntimeError(f"For '{class_name}', the operator does not support PyNative mode.")
+SUMMARY_TENSOR_CACHE = []
+
+
+def _cache_summary_data(op_name, define_name, tensor):
+    """Cache summary tensor data."""
+    global SUMMARY_TENSOR_CACHE
+    SUMMARY_TENSOR_CACHE.append([op_name, define_name, tensor])
 
 
 def _check_summary_param(name, value, class_name):
     """Checks the name and value is valid for summary."""
-    _check_mode(class_name)
     n_type = name['dtype']
     n_value = name['value']
     validator.check_value_type('name', n_type, [type(mstype.string)], class_name)
@@ -43,7 +43,7 @@ def _check_summary_param(name, value, class_name):
         raise ValueError(f"For '{class_name}', the name must be valid string, but got '{n_value}'.")
 
     v_type = value['dtype']
-    validator.check_value_type('value', v_type, [type(mstype.tensor)], class_name)
+    validator.check_value_type('value', v_type, [type(mstype.tensor_type)], class_name)
 
 
 # Note: The return value of the summary operator is not used,
@@ -58,7 +58,7 @@ class ScalarSummary(Primitive):
     This operator will put a scalar to a summary file with protocol buffer format. It must be used with SummaryRecord
     or SummaryCollector, which specify the directory of the summary file. The summary file can
     be loaded and shown by MindInsight, see `MindInsight documents <https://www.mindspore.cn/
-    mindinsight/docs/en/r2.0.0-alpha/index.html>`_ for details.
+    mindinsight/docs/en/master/index.html>`_ for details.
 
     Inputs:
         - **name** (str) - The name of the input variable, it must not be an empty string.
@@ -104,9 +104,10 @@ class ScalarSummary(Primitive):
             raise ValueError('The Summary is not supported, please without `-s on` and recompile source.')
 
         self.add_prim_attr("side_effect_io", True)
+        self.add_prim_attr("channel_name", "ms_scalar_summary")
 
     def __call__(self, *args):
-        raise RuntimeError(f"PyNative not support Operator '{self.__class__.__name__}'")
+        _cache_summary_data(self.name, args[0], args[1])
 
 
 class ImageSummary(PrimitiveWithInfer):
@@ -114,7 +115,7 @@ class ImageSummary(PrimitiveWithInfer):
     This operator will put an image tensor to a summary file with protocol buffer format. It must be used with
     SummaryRecord or SummaryCollector, which specify the directory of the summary file. The summary file can
     be loaded and shown by MindInsight, see `MindInsight documents <https://www.mindspore.cn/
-    mindinsight/docs/en/r2.0.0-alpha/index.html>`_ for details.
+    mindinsight/docs/en/master/index.html>`_ for details.
 
     Inputs:
         - **name** (str) - The name of the input variable, it must not be an empty string.
@@ -153,6 +154,7 @@ class ImageSummary(PrimitiveWithInfer):
             raise ValueError('The Summary is not supported, please without `-s on` and recompile source.')
 
         self.add_prim_attr("side_effect_io", True)
+        self.add_prim_attr("channel_name", "ms_image_summary")
 
     def __infer__(self, name, value):
         _check_summary_param(name, value, self.__class__.__name__)
@@ -167,7 +169,7 @@ class ImageSummary(PrimitiveWithInfer):
         return SUMMARY_RETURN_VALUE
 
     def __call__(self, *args):
-        raise RuntimeError(f"PyNative not support Operator '{self.__class__.__name__}'")
+        _cache_summary_data(self.name, args[0], args[1])
 
 
 class TensorSummary(Primitive):
@@ -175,7 +177,7 @@ class TensorSummary(Primitive):
     This operator will put a tensor to a summary file with protocol buffer format. It must be used with SummaryRecord
     or SummaryCollector, which specify the directory of the summary file. The summary file can
     be loaded and shown by MindInsight, see `MindInsight documents <https://www.mindspore.cn/
-    mindinsight/docs/en/r2.0.0-alpha/index.html>`_ for details.
+    mindinsight/docs/en/master/index.html>`_ for details.
 
     Inputs:
         - **name** (str) - The name of the input variable.
@@ -221,9 +223,10 @@ class TensorSummary(Primitive):
             raise ValueError('The Summary is not supported, please without `-s on` and recompile source.')
 
         self.add_prim_attr("side_effect_io", True)
+        self.add_prim_attr("channel_name", "ms_tensor_summary")
 
     def __call__(self, *args):
-        raise RuntimeError(f"PyNative not support Operator '{self.__class__.__name__}'")
+        _cache_summary_data(self.name, args[0], args[1])
 
 
 class HistogramSummary(PrimitiveWithInfer):
@@ -231,7 +234,7 @@ class HistogramSummary(PrimitiveWithInfer):
     This operator will calculate the histogram of a tensor and put it to a summary file with protocol buffer format.
     It must be used with SummaryRecord or SummaryCollector, which specify the directory of the summary file.
     The summary file can be loaded and shown by MindInsight, see `MindInsight documents <https://www.mindspore.cn/
-    mindinsight/docs/en/r2.0.0-alpha/index.html>`_ for details.
+    mindinsight/docs/en/master/index.html>`_ for details.
 
     Inputs:
         - **name** (str) - The name of the input variable.
@@ -276,6 +279,7 @@ class HistogramSummary(PrimitiveWithInfer):
             raise ValueError('The Summary is not supported, please without `-s on` and recompile source.')
 
         self.add_prim_attr("side_effect_io", True)
+        self.add_prim_attr("channel_name", "ms_histogram_summary")
 
     def __infer__(self, name, value):
         _check_summary_param(name, value, self.__class__.__name__)
@@ -289,7 +293,7 @@ class HistogramSummary(PrimitiveWithInfer):
         return SUMMARY_RETURN_VALUE
 
     def __call__(self, *args):
-        raise RuntimeError(f"PyNative not support Operator '{self.__class__.__name__}'")
+        _cache_summary_data(self.name, args[0], args[1])
 
 
 class InsertGradientOf(PrimitiveWithInfer):
@@ -380,7 +384,7 @@ class HookBackward(PrimitiveWithInfer):
         hook_fn (Function): Python function. hook function.
         cell_id (str, optional): Used to identify whether the function registered by the hook is actually registered on
                        the specified cell object. For example, 'nn.Conv2d' is a cell object.
-                       The default value of `cell_id` is empty string(""), in this case, the system will automatically
+                       Default: ``""``, in this case, the system will automatically
                        register a value of `cell_id`.
                        The value of `cell_id` currently does not support custom values.
 
@@ -444,7 +448,7 @@ class HookBackward(PrimitiveWithInfer):
 
     def infer_dtype(self, *inputs_type):
         for dtype in inputs_type:
-            validator.check_subclass("input", dtype, [mstype.tensor], self.name)
+            validator.check_subclass("input", dtype, [mstype.tensor_type], self.name)
         if len(inputs_type) == 1:
             return inputs_type[0]
         return inputs_type
@@ -456,10 +460,19 @@ class Print(Primitive):
 
     Refer to :func:`mindspore.ops.print_` for more detail.
 
+    Inputs:
+        - **input_x** (Union[Tensor, bool, int, float, str]) - The graph node to attach to.
+          Supports multiple inputs which are separated by ','.
+
+    Outputs:
+        Tensor, has the same data type and shape as original `input_x`.
+
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import numpy as np
+        >>> from mindspore import Tensor, nn
         >>> class PrintDemo(nn.Cell):
         ...     def __init__(self):
         ...         super(PrintDemo, self).__init__()
@@ -475,11 +488,11 @@ class Print(Primitive):
         >>> result = net(x, y)
         Print Tensor x and Tensor y:
         Tensor(shape=[2, 1], dtype=Int32, value=
-        [[1]
+        [[1],
          [1]])
         Tensor(shape=[2, 2], dtype=Int32, value=
-        [[1 1]
-         [1 1]])
+        [[1, 1],
+         [1, 1]])
     """
 
     @prim_attr_register
@@ -494,7 +507,7 @@ class Print(Primitive):
         for arg in args:
             if isinstance(arg, Parameter):
                 print(Tensor_.__repr__(arg))
-            elif isinstance(arg, Tensor_):
+            elif isinstance(arg, (Tensor, Tensor_)):
                 print(arg.__repr__())
             else:
                 print(arg)
@@ -503,16 +516,16 @@ class Print(Primitive):
 class Assert(PrimitiveWithInfer):
     """
     Asserts whether the given condition is True.
-    If input condition is identified to be false, print a list of the tensor in data.
+    If input condition is identified to be ``False``, print a list of the tensor in data.
 
     Args:
         summarize (int, optional): The number of entries to be printed in each tensor while the given condition is
-            identified to be False. Default: 3.
+            identified to be ``False`` . Default: ``3`` .
 
     Inputs:
         - **condition** (Union[Tensor[bool], bool]) - The condition to be identified.
         - **input_data** (Union[tuple[Tensor], list[Tensor]]) - The tensors to be printed out when the condition
-          is false.
+          is ``False``.
 
     Raises:
         TypeError: If `summarize` is not an int.
@@ -552,7 +565,7 @@ class Assert(PrimitiveWithInfer):
 
     def infer_shape(self, condition, inputs):
         condition_len = len(condition)
-        validator.check_int(condition_len, 1, Rel.LE, "condition's rank", self.name)
+        validator.check_int(condition_len, 1, validator.LE, "condition's rank", self.name)
         if condition_len == 1:
             validator.check_equal_int(condition[0], 1, "condition[0]", self.name)
         return [1]
@@ -560,5 +573,5 @@ class Assert(PrimitiveWithInfer):
     def infer_dtype(self, condition, inputs):
         validator.check_scalar_or_tensor_types_same({"condition": condition}, [mstype.bool_], self.name)
         for dtype in inputs:
-            validator.check_subclass("input", dtype, [mstype.tensor], self.name)
+            validator.check_subclass("input", dtype, [mstype.tensor_type], self.name)
         return mstype.int32

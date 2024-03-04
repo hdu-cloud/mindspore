@@ -21,7 +21,7 @@
 #include <vector>
 #include <string>
 #include "utils/ms_utils.h"
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 #include "runtime/hardware/device_context.h"
 #include "include/backend/visible.h"
 
@@ -46,6 +46,9 @@ class BACKEND_EXPORT EmbeddingCacheScheduler {
   // Set data set channel name, used for multi dataset mode, such as predict after train.
   void SetDataSetChannel(const std::string &actor_id, const std::vector<KernelGraphPtr> &graphs);
 
+  // Initialize all embedding storage instances.
+  void InitEmbeddingStorage(const std::vector<AnfNodePtr> &parameters) const;
+
   // 1. Build network connection between local and remote cache for embedding cache prefetch actor.
   // 2. Schedule and Run embedding cache prefetch actor.
   // Since the embedding cache prefetch actor is spinning, and the actor is not in the actor set, start the actor in the
@@ -59,30 +62,36 @@ class BACKEND_EXPORT EmbeddingCacheScheduler {
   void SyncEmbeddingTable() const;
 
   // Finalize embedding cache prefetch actor.
-  void Finalize();
+  void Finalize(bool sync_embedding_table = true);
 
  private:
   EmbeddingCacheScheduler() = default;
   ~EmbeddingCacheScheduler() = default;
   DISABLE_COPY_AND_ASSIGN(EmbeddingCacheScheduler);
 
-  // Allocate device and local host memory for embedding cache table.
-  void AllocMemForEmbeddingCacheTable(const DeviceContext *device_context, const KernelGraphPtr &graph);
+  // Get ids number in a batch, not batch size.
+  void ParseBatchIdsNum(const KernelGraphPtr &graph);
 
-  // Get ids number in a batch.
-  bool ParseBatchIdsNum(const KernelGraphPtr &graph, size_t *batch_ids_num) const;
+  // Allocate device and local host memory for embedding cache table.
+  void AllocMemForEmbeddingCacheTable(const DeviceContext *device_context);
 
   // Embedding cache prefetch actor.
   std::shared_ptr<EmbeddingCachePrefetchActor> embedding_cache_prefetch_actor_;
 
+  // The flag indicates whether already parse batch ids number.
+  bool parsed_batch_ids_num_{false};
+
   // The flag indicates whether already allocate memory for embedding cache tables.
   bool allocated_embed_cache_mem_{false};
+
   // The flag indicates whether the EmbeddingCacheScheduler is initialized.
   bool initialized_{false};
   // The flag indicates whether the EmbeddingCacheScheduler is scheduled.
   bool scheduled_{false};
   // The flag indicates whether the EmbeddingCacheScheduler is finalized.
   bool finalized_{false};
+  // Ensure that the Finalize function is multithreaded safe.
+  std::mutex finalize_mutex_;
 
   // Record data set channel name, used for multi dataset mode, such as predict after train.
   // Key: data prepare actor id for an actor set, Value: data set channel name.

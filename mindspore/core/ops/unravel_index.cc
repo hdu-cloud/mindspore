@@ -15,27 +15,43 @@
  */
 
 #include "ops/unravel_index.h"
-#include <string>
-#include <algorithm>
-#include <memory>
-#include <set>
-#include <vector>
+
 #include <map>
-#include "ops/op_utils.h"
-#include "mindapi/src/helper.h"
-#include "utils/check_convert_utils.h"
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
-abstract::ShapePtr InferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+abstract::ShapePtr UravelIndexInferShape(const PrimitivePtr &primitive,
+                                         const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
+  auto op_name = primitive->name();
+  const int64_t input_num = 2;
+  (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_num, op_name);
   if (!input_args[0]->isa<abstract::AbstractTensor>() || !input_args[1]->isa<abstract::AbstractTensor>()) {
     MS_EXCEPTION(TypeError) << "Input must be a Tensor.";
   }
 
-  auto op_name = primitive->name();
   auto indices_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
   auto dims_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->BuildShape())[kShape];
   // support dynamic shape
@@ -63,10 +79,14 @@ abstract::ShapePtr InferShape(const PrimitivePtr &primitive, const std::vector<A
 }
 
 TypePtr UravelIndexInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(prim);
   for (const auto &item : input_args) {
     MS_EXCEPTION_IF_NULL(item);
   }
   std::map<std::string, TypePtr> types;
+  auto op_name = prim->name();
+  const int64_t input_num = 2;
+  (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_num, op_name);
   (void)types.emplace("indices", input_args[0]->BuildType());
   (void)types.emplace("dims", input_args[1]->BuildType());
   return CheckAndConvertUtils::CheckTensorTypeSame(types, {kInt32, kInt64}, prim->name());
@@ -76,9 +96,30 @@ TypePtr UravelIndexInferType(const PrimitivePtr &prim, const std::vector<Abstrac
 MIND_API_OPERATOR_IMPL(UnravelIndex, BaseOperator);
 AbstractBasePtr UnravelIndexInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                   const std::vector<AbstractBasePtr> &input_args) {
-  return std::make_shared<abstract::AbstractTensor>(UravelIndexInferType(primitive, input_args),
-                                                    InferShape(primitive, input_args));
+  const int64_t input_num = 2;
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
+  auto infer_type = UravelIndexInferType(primitive, input_args);
+  auto infer_shape = UravelIndexInferShape(primitive, input_args);
+  return std::make_shared<abstract::AbstractTensor>(infer_type, infer_shape);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(UnravelIndex, prim::kPrimUnravelIndex, UnravelIndexInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGUnravelIndexInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return UravelIndexInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return UravelIndexInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return UnravelIndexInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(UnravelIndex, prim::kPrimUnravelIndex, AGUnravelIndexInfer, false);
 }  // namespace ops
 }  // namespace mindspore

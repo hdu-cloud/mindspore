@@ -22,7 +22,8 @@
 #include "pybind_api/ir/tensor_py.h"
 #include "include/common/pybind_api/api_register.h"
 #include "include/common/utils/python_adapter.h"
-#include "pipeline/jit/parse/parse_base.h"
+#include "mindspore/ccsrc/include/backend/distributed/embedding_cache/embedding_cache_utils.h"
+#include "pipeline/jit/ps/parse/parse_base.h"
 #include "utils/hash_set.h"
 #include "utils/log_adapter.h"
 
@@ -68,18 +69,42 @@ void MapTensorPy::UpdateFromNumpy(const MapTensorPtr &map_tensor,
   map_tensor->Update(data);
 }
 
-std::tuple<py::array, py::array, py::array> MapTensorPy::ExportAsNumpy(const MapTensorPtr &map_tensor, bool full) {
+std::tuple<py::array, py::array, py::array> MapTensorPy::ExportAsNumpy(const MapTensorPtr &map_tensor,
+                                                                       bool incremental) {
   MS_EXCEPTION_IF_NULL(map_tensor);
-  auto data = map_tensor->Export(full);
+  auto data = map_tensor->Export(incremental);
   return std::make_tuple(TensorPy::AsNumpy(*data.key_tensor), TensorPy::AsNumpy(*data.value_tensor),
                          TensorPy::AsNumpy(*data.status_tensor));
 }
 
-// Python wrapper for MapTensor::Get.
-static tensor::TensorPtr PyMapTensorGet(const MapTensorPtr &map_tensor, const tensor::TensorPtr &key_tensor,
-                                        bool insert_default_value) {
+std::tuple<py::bytes, py::bytes, py::bytes> MapTensorPy::ExportBytes(const MapTensorPtr &map_tensor, bool incremental) {
   MS_EXCEPTION_IF_NULL(map_tensor);
-  return map_tensor->Get(key_tensor, insert_default_value);
+  auto data = map_tensor->Export(incremental);
+  return std::make_tuple(TensorPy::GetBytes(*data.key_tensor), TensorPy::GetBytes(*data.value_tensor),
+                         TensorPy::GetBytes(*data.status_tensor));
+}
+
+std::tuple<py::array, py::array, py::array, bool> MapTensorPy::ExportSliceAsNumpy(const MapTensorPtr &map_tensor,
+                                                                                  bool incremental) {
+  MS_EXCEPTION_IF_NULL(map_tensor);
+  bool last_slice = false;
+  auto data = map_tensor->ExportSlice(incremental, &last_slice);
+  return std::make_tuple(TensorPy::AsNumpy(*data.key_tensor), TensorPy::AsNumpy(*data.value_tensor),
+                         TensorPy::AsNumpy(*data.status_tensor), last_slice);
+}
+
+std::tuple<py::array, py::array, py::array, bool> MapTensorPy::ExportPersistentSliceAsNumpy(
+  const MapTensorPtr &map_tensor, int32_t param_key, bool incremental) {
+  MS_EXCEPTION_IF_NULL(map_tensor);
+  bool last_slice = false;
+  auto storage = embedding_storage_manager.Get(param_key);
+  MS_EXCEPTION_IF_NULL(storage);
+  auto slice_data = storage->ExportSlice(incremental, &last_slice);
+  map_tensor->TransExportDataToTensor(slice_data);
+
+  return std::make_tuple(TensorPy::AsNumpy(*(map_tensor->key_tensor())),
+                         TensorPy::AsNumpy(*(map_tensor->value_tensor())),
+                         TensorPy::AsNumpy(*(map_tensor->status_tensor())), last_slice);
 }
 
 static tensor::TensorPtr PyMapTensorGetKeys(const MapTensorPtr &map_tensor) {
@@ -100,7 +125,7 @@ static std::pair<tensor::TensorPtr, tensor::TensorPtr> PyMapTensorGetData(const 
 }
 
 namespace tensor {
-void RegMapTensor(py::module *m) {
+void RegMapTensor(const py::module *m) {
   // Define python MapTensor class.
   (void)py::class_<MapTensor, MapTensorPtr>(*m, "MapTensor_")
     .def(py::init([](const TypePtr &key_dtype, const TypePtr &value_dtype, const ShapeVector &value_shape,
@@ -120,14 +145,12 @@ void RegMapTensor(py::module *m) {
                      const py::object &permit_filter_obj, const py::object &evict_filter_obj) {
            auto key_tensor_ptr = std::make_shared<tensor::Tensor>(key_tensor);
            auto value_tensor_ptr = std::make_shared<tensor::Tensor>(value_tensor);
-           auto key_dtype_id = key_tensor_ptr->Dtype()->type_id();
-           auto value_dtype = key_tensor_ptr->Dtype();
-           auto value_dtype_id = value_tensor_ptr->Dtype()->type_id();
-           auto value_shape = value_tensor_ptr->shape();
+           auto status_tensor_ptr = std::make_shared<Tensor>(kNumberTypeInt, key_tensor.shape());
+           auto value_dtype = value_tensor_ptr->Dtype();
            ValuePtr default_value = ConvertMapTensorDefaultValue(default_value_obj, value_dtype);
            ValuePtr permit_filter_value = ConvertMapTensorFilterValue(permit_filter_obj);
            ValuePtr evict_filter_value = ConvertMapTensorFilterValue(evict_filter_obj);
-           return std::make_shared<MapTensor>(key_dtype_id, value_dtype_id, value_shape, default_value,
+           return std::make_shared<MapTensor>(key_tensor_ptr, value_tensor_ptr, status_tensor_ptr, default_value,
                                               permit_filter_value, evict_filter_value);
          }),
          py::arg("key_tensor"), py::arg("value_tensor"), py::arg("default_value"), py::arg("permit_filter_value"),
@@ -136,11 +159,11 @@ void RegMapTensor(py::module *m) {
     .def_property_readonly("value_dtype", &MapTensor::ValueDtype)
     .def_property_readonly("value_shape", &MapTensor::value_shape)
     .def_property_readonly("size", &MapTensor::size)
-    .def("get", &PyMapTensorGet)
-    .def("put", &MapTensor::Put)
-    .def("erase", &MapTensor::Erase)
     .def("export_data", &MapTensorPy::ExportAsNumpy)
+    .def("export_bytes", &MapTensorPy::ExportBytes)
     .def("import_data", &MapTensorPy::UpdateFromNumpy)
+    .def("export_slice_data", &MapTensorPy::ExportSliceAsNumpy)
+    .def("export_persistent_slice_data", &MapTensorPy::ExportPersistentSliceAsNumpy)
     .def("__str__", &MapTensor::ToString)
     .def("__repr__", &MapTensor::ToString)
     .def("get_keys", &PyMapTensorGetKeys)

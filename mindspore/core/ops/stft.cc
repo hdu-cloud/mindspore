@@ -15,18 +15,38 @@
  */
 
 #include "ops/stft.h"
-#include <algorithm>
+
 #include <memory>
 #include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/base/type_id.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
 constexpr size_t kSTFTIndex0 = 0;
 constexpr size_t kSTFTIndex1 = 1;
+constexpr auto kSTFTInputNum = 2;
 namespace {
 abstract::ShapePtr STFTInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
@@ -37,6 +57,7 @@ abstract::ShapePtr STFTInferShape(const PrimitivePtr &primitive, const std::vect
     batch_rank = GetValue<int64_t>(value_ptr);
   }
 
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kSTFTInputNum, primitive->name());
   auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kSTFTIndex0]->GetShapeTrack())[kShape];
   auto window_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kSTFTIndex1]->GetShapeTrack())[kShape];
   if (batch_rank == 0) {
@@ -53,14 +74,19 @@ abstract::ShapePtr STFTInferShape(const PrimitivePtr &primitive, const std::vect
   }
 
   int64_t len = x_shape.back();
-
-  int64_t n_fft = GetValue<int64_t>(primitive->GetAttr(kNFft));
+  auto n_fft_ptr = primitive->GetAttr(kNFft);
+  MS_EXCEPTION_IF_NULL(n_fft_ptr);
+  int64_t n_fft = GetValue<int64_t>(n_fft_ptr);
   CheckAndConvertUtils::CheckInRange<int64_t>("n_fft", n_fft, kIncludeRight, {0, len}, op_name);
 
-  int64_t hop_length = GetValue<int64_t>(primitive->GetAttr(kHopLength));
+  auto hop_length_ptr = primitive->GetAttr(kHopLength);
+  MS_EXCEPTION_IF_NULL(hop_length_ptr);
+  int64_t hop_length = GetValue<int64_t>(hop_length_ptr);
   (void)CheckAndConvertUtils::CheckInteger("hop_length", hop_length, kGreaterThan, 0, op_name);
 
-  int64_t win_length = GetValue<int64_t>(primitive->GetAttr(kWinLength));
+  auto win_length_ptr = primitive->GetAttr(kWinLength);
+  MS_EXCEPTION_IF_NULL(win_length_ptr);
+  int64_t win_length = GetValue<int64_t>(win_length_ptr);
   CheckAndConvertUtils::CheckInRange<int64_t>("win_length", win_length, kIncludeRight, {0, n_fft}, op_name);
 
   (void)CheckAndConvertUtils::CheckInteger("window_shape", window_shape.back(), kEqual, win_length, op_name);
@@ -75,7 +101,9 @@ abstract::ShapePtr STFTInferShape(const PrimitivePtr &primitive, const std::vect
   }
   int64_t n_frames = 1 + (len - n_fft) / hop_length;
   int64_t fft_length = n_fft;
-  bool onesided = GetValue<bool>(primitive->GetAttr(kOnesided));
+  auto onesided_ptr = primitive->GetAttr(kOnesided);
+  MS_EXCEPTION_IF_NULL(onesided_ptr);
+  bool onesided = GetValue<bool>(onesided_ptr);
   if (onesided) {
     // Only real part because symmetric.
     constexpr int64_t k2FolderNum = 2;
@@ -83,7 +111,9 @@ abstract::ShapePtr STFTInferShape(const PrimitivePtr &primitive, const std::vect
   }
   (void)out_shape.emplace_back(fft_length);
   (void)out_shape.emplace_back(n_frames);
-  bool ret_complex = GetValue<bool>(primitive->GetAttr(kReturnComplex));
+  auto ret_complex_ptr = primitive->GetAttr(kReturnComplex);
+  MS_EXCEPTION_IF_NULL(ret_complex_ptr);
+  bool ret_complex = GetValue<bool>(ret_complex_ptr);
   if (!ret_complex) {
     // Split complex into real and image.
     constexpr int64_t k2DRealOutput = 2;
@@ -95,6 +125,7 @@ abstract::ShapePtr STFTInferShape(const PrimitivePtr &primitive, const std::vect
 TypePtr STFTInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
   auto op_name = primitive->name();
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kSTFTInputNum, primitive->name());
   auto x_dtype = input_args[0]->BuildType();
   MS_EXCEPTION_IF_NULL(x_dtype);
   const std::set<TypePtr> valid_types = {kFloat32, kFloat64, kComplex64, kComplex128};
@@ -142,8 +173,6 @@ MIND_API_OPERATOR_IMPL(STFT, BaseOperator);
 AbstractBasePtr STFTInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                           const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
-  const int64_t kInputNum = 2;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, kInputNum, primitive->name());
   auto infer_type = STFTInferType(primitive, input_args);
   auto infer_shape = STFTInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
@@ -203,6 +232,23 @@ bool STFT::get_return_complex() const {
   return GetValue<bool>(value_ptr);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(STFT, prim::kPrimSTFT, STFTInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGSTFTInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return STFTInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return STFTInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return STFTInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(STFT, prim::kPrimSTFT, AGSTFTInfer, false);
 }  // namespace ops
 }  // namespace mindspore

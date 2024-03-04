@@ -30,7 +30,7 @@ int ElementAbs(const float *input, float *output, const int element_size) {
   return NNACL_OK;
 }
 
-int ElementAbsInt(const int *input, int *output, const int element_size) {
+int ElementAbsInt(const int32_t *input, int32_t *output, const int element_size) {
   int i = 0;
 
   // only avx512 support abs fp32 instruction
@@ -176,7 +176,7 @@ int ElementNegative(const float *input, float *output, const int element_size) {
   return NNACL_OK;
 }
 
-int ElementNegativeInt(const int *input, int *output, const int element_size) {
+int ElementNegativeInt(const int32_t *input, int32_t *output, const int element_size) {
   int i = 0;
 
   SIMD_RUN_NO_SCALAR(ElementNegativeInt, i, input, output, element_size);
@@ -213,6 +213,18 @@ int ElementIsFinite(const float *input, bool *output, const int element_size) {
     if (isnan(input[i]) || isinf(input[i])) {
       output[i] = false;
     }
+  }
+  return NNACL_OK;
+}
+
+int ElementMish(const float *input, float *output, const int element_size) {
+  int i = 0;
+  SIMD_RUN_NO_SCALAR(ElementMish, i, input, output, element_size);
+
+  for (; i < element_size; ++i) {
+    simd_exp32(input[i], output + i);
+    float exp_pow = (output[i] + 1) * (output[i] + 1);
+    output[i] = input[i] * (exp_pow - 1) / (exp_pow + 1);
   }
   return NNACL_OK;
 }

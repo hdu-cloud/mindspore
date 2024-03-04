@@ -15,12 +15,12 @@
 """Utility functions to help distribution class."""
 import numpy as np
 from mindspore import context
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.common.tensor import Tensor
 from mindspore.common.parameter import Parameter
 from mindspore.common import dtype as mstype
 from mindspore.ops import operations as P
-from mindspore.ops.primitive import constexpr, PrimitiveWithInfer, prim_attr_register
+from mindspore.ops.primitive import constexpr, _primexpr, PrimitiveWithInfer, prim_attr_register
 import mindspore.ops as ops
 import mindspore.nn as nn
 
@@ -230,48 +230,42 @@ def probs_to_logits(probs, is_binary=False):
     return P.Log()(ps_clamped)
 
 
-@constexpr
+@constexpr(check=False)
 def raise_none_error(name):
     raise TypeError(f"the type {name} must be subclass of Tensor."
                     f" It can not be None since it is not specified during initialization.")
 
 
-@constexpr
-def raise_probs_logits_error():
-    raise TypeError(
-        "Either 'probs' or 'logits' must be specified, but not both.")
-
-
-@constexpr
+@_primexpr
 def raise_broadcast_error(shape_a, shape_b):
     raise ValueError(f"Shape {shape_a} and {shape_b} is not broadcastable.")
 
 
-@constexpr
+@constexpr(check=False)
 def raise_not_impl_error(name):
     raise ValueError(
         f"{name} function must be implemented for non-linear transformation")
 
 
-@constexpr
+@constexpr(check=False)
 def raise_not_implemented_util(func_name, obj, *args, **kwargs):
     raise NotImplementedError(
         f"{func_name} is not implemented for {obj} distribution.")
 
 
-@constexpr
+@constexpr(check=False)
 def raise_type_error(name, cur_type, required_type):
     raise TypeError(
         f"For {name} , the type must be or be subclass of {required_type}, but got {cur_type}")
 
 
-@constexpr
+@constexpr(check=False)
 def raise_not_defined(func_name, obj, *args, **kwargs):
     raise ValueError(
         f"{func_name} is undefined for {obj} distribution.")
 
 
-@constexpr
+@constexpr(check=False)
 def check_distribution_name(name, expected_name):
     if name is None:
         raise ValueError(
@@ -321,7 +315,7 @@ class CheckTensor(PrimitiveWithInfer):
     def __infer__(self, x, name):
         src_type = x['dtype']
         validator.check_subclass(
-            "input", src_type, [mstype.tensor], name["value"])
+            "input", src_type, [mstype.tensor_type], name["value"])
 
         out = {'shape': None,
                'dtype': None,

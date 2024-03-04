@@ -25,6 +25,10 @@
 
 namespace mindspore {
 namespace lite {
+constexpr const char *kDivisorOverride = "divisor_override";
+constexpr const char *kExclusive = "exclusive";
+constexpr int kSizeHW = 20;
+constexpr int kSizeHWMul = 255;
 STATUS AvgPoolFusionMapper::Mapper(const CNodePtr &cnode) {
   ValueNodePtr value_node = nullptr;
   PrimitivePtr src_prim = nullptr;
@@ -39,6 +43,17 @@ STATUS AvgPoolFusionMapper::Mapper(const CNodePtr &cnode) {
   CreateTargetPrim(src_prim, &dst_prim, fmk_type);
   CHECK_NULL_RETURN(dst_prim);
   dst_prim->SetAttrs(src_prim->attrs());
+  if (!dst_prim->HasAttr(kDivisorOverride)) {
+    // default value of divisor_override is 0
+    dst_prim->AddAttr(kDivisorOverride, 0);
+  }
+  if (src_prim->HasAttr(ops::kCountIncludePad)) {
+    bool exclusive = !GetValue<bool>(src_prim->GetAttr(ops::kCountIncludePad));
+    dst_prim->AddAttr(kExclusive, MakeValue(exclusive));
+  } else {
+    // default value of exclusive is true
+    dst_prim->AddAttr(kExclusive, MakeValue(true));
+  }
   if (AdjustPoolAttr(fmk_type, kNameAvgPoolFusion, dst_prim) != lite::RET_OK) {
     MS_LOG(ERROR) << "Adjust pool attr failed.";
     return lite::RET_ERROR;
@@ -52,7 +67,8 @@ void AvgPoolFusionMapper::CreateTargetPrim(const PrimitivePtr &src_prim, Primiti
     MS_LOG(ERROR) << "Target prim is nullptr.";
     return;
   }
-
+  ops::AvgPool dst_node;
+  *dst_prim = dst_node.GetPrim();
   if (fmk_type == converter::kFmkTypeCaffe) {
     *dst_prim = std::make_shared<acl::Pooling>();
   } else if (fmk_type == converter::kFmkTypeOnnx) {
@@ -60,11 +76,13 @@ void AvgPoolFusionMapper::CreateTargetPrim(const PrimitivePtr &src_prim, Primiti
     if (val_ptr == nullptr) {
       *dst_prim = std::make_shared<acl::GlobalAveragePool>();
     } else {
-      *dst_prim = std::make_shared<acl::AvgPoolV2>();
+      auto kernel_size = opt::CastToInt(val_ptr);
+      MS_CHECK_TRUE_RET_VOID(kernel_size.size() == kDim2);
+      if (kernel_size.at(0) <= kSizeHW && kernel_size.at(1) <= kSizeHW &&
+          kernel_size.at(0) * kernel_size.at(1) <= kSizeHWMul) {
+        *dst_prim = std::make_shared<acl::AvgPoolV2>();
+      }
     }
-  } else {
-    ops::AvgPool dst_node;
-    *dst_prim = dst_node.GetPrim();
   }
 }
 

@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef MINDSPORE_NNACL_AVX_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
-#define MINDSPORE_NNACL_AVX_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
+#ifndef NNACL_AVX_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
+#define NNACL_AVX_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
 #include <math.h>
 
 #ifdef _MSC_VER
@@ -190,6 +190,15 @@ static inline MS_FLOAT32X8 MS256_LOG_F32(MS_FLOAT32X8 src) {
   MS_FLOAT32X8 tmp1 = MS_MUL256_F32(square, MS_ADD256_F32(MS_MUL256_F32(square, tmp), data4));
   MS_FLOAT32X8 res =
     MS_ADD256_F32(MS_MUL256_F32(ln2, expsPD), MS_MUL256_F32(MS_MUL256_F32(div, MS_ADD256_F32(tmp1, data5)), data6));
+  // if (src == 0) res = -inf;
+  MS_FLOAT32X8 mask = MS_CMP256_F32(src, MS_MOV256_F32(0.0f), _CMP_EQ_OQ);
+  res = MS_BLEND256_F32(res, MS_MOV256_F32(-INFINITY), mask);
+  // if (src == inf) res = inf;
+  mask = MS_CMP256_F32(src, MS_MOV256_F32(INFINITY), _CMP_EQ_OQ);
+  res = MS_BLEND256_F32(res, MS_MOV256_F32(INFINITY), mask);
+  // if (src < 0 || src == nan) res = nan;
+  mask = MS_OR256_F32(MS_CMPLT256_F32(src, MS_MOV256_F32(0.0f)), MS_CMP256_F32(src, MS_MOV256_F32(0.0f), _CMP_UNORD_Q));
+  res = MS_BLEND256_F32(res, MS_MOV256_F32(NAN), mask);
   return res;
 }
 
@@ -316,23 +325,28 @@ static inline MS_FLOAT32X8 MS_SQRTFX8_F32(MS_FLOAT32X8 src) {
   MS_ST256_F32(output_ptr + 15 * num, dst##16);
 
 static inline MS_FLOAT32X8 simd_exp256_f32(MS_FLOAT32X8 input) {
-  static MS_FLOAT32X8 maxv = {88.0f, 88.0f, 88.0f, 88.0f, 88.0f, 88.0f, 88.0f, 88.0f};
-  static MS_FLOAT32X8 minv = {-88.0f, -88.0f, -88.0f, -88.0f, -88.0f, -88.0f, -88.0f, -88.0f};
+  static MS_FLOAT32X8 maxv = {88.72283935546875f, 88.72283935546875f, 88.72283935546875f, 88.72283935546875f,
+                              88.72283935546875f, 88.72283935546875f, 88.72283935546875f, 88.72283935546875f};
+  static MS_FLOAT32X8 minv = {-87.3365478515625f, -87.3365478515625f, -87.3365478515625f, -87.3365478515625f,
+                              -87.3365478515625f, -87.3365478515625f, -87.3365478515625f, -87.3365478515625f};
   static MS_FLOAT32X8 param[] = {
     {0.693147f, 0.693147f, 0.693147f, 0.693147f, 0.693147f, 0.693147f, 0.693147f, 0.693147f},
     {1.0f / 120, 1.0f / 120, 1.0f / 120, 1.0f / 120, 1.0f / 120, 1.0f / 120, 1.0f / 120, 1.0f / 120},
     {1.0f / 24, 1.0f / 24, 1.0f / 24, 1.0f / 24, 1.0f / 24, 1.0f / 24, 1.0f / 24, 1.0f / 24},
     {1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6, 1.0f / 6},
     {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f},
-    {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f}};
+    {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+    {1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f,
+     1.44269504088896341f, 1.44269504088896341f, 1.44269504088896341f},
+    {2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f}};
   input = MS_MAX256_F32(minv, MS_MIN256_F32(input, maxv));
-  MS_INT32X8 integer = MS_CVT256PS_EPI32(MS_DIV256_F32(input, param[0]));
+  MS_INT32X8 integer = MS_CVT256PS_EPI32(MS_FLOOR256_F32(MS_FMADD256_F32(input, param[6], param[4])));
   MS_FLOAT32X8 decimal = MS_SUB256_F32(input, MS_MUL256_F32(MS_CVT256EPI32_PS(integer), param[0]));
-  MS_INT32X8 int_exp = MS_SLLI256_EPI32(MS_ADD256_EPI32(integer, MS_MOV256_EPI32(127)), 23);
+  MS_INT32X8 int_exp = MS_SLLI256_EPI32(MS_ADD256_EPI32(integer, MS_MOV256_EPI32(126)), 23);
   MS_FLOAT32X8 tmp = MS_FMADD256_F32(decimal, MS_FMADD256_F32(decimal, param[1], param[2]), param[3]);
   tmp = MS_FMADD256_F32(decimal, MS_FMADD256_F32(decimal, tmp, param[4]), param[5]);
   MS_FLOAT32X8 decimal_exp = MS_FMADD256_F32(decimal, tmp, param[5]);
-  return MS_MUL256_F32(decimal_exp, MS_CAST256_F32_S32(int_exp));
+  return MS_MUL256_F32(param[7], MS_MUL256_F32(decimal_exp, MS_CAST256_F32_S32(int_exp)));
 }
 
 static inline MS_FLOAT32X8 simd_hexp256_f32(MS_FLOAT32X8 src) {
@@ -419,4 +433,4 @@ static inline MS_FLOAT32X8 MS256_ERF_F32(MS_FLOAT32X8 src) {
   MS_FLOAT32X8 dst##4 = _mm256_setzero_ps();
 
 #define MS_REDUCE_ADD256_F32(src) (src = _mm256_hadd_ps(src, src), src = _mm256_hadd_ps(src, src), src[0] + src[4]);
-#endif  // MINDSPORE_NNACL_AVX_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_
+#endif  // NNACL_AVX_INTRINSICS_MS_SIMD_INSTRUCTIONS_H_

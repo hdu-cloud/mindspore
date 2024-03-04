@@ -14,16 +14,27 @@
  * limitations under the License.
  */
 
-#include <string>
-#include <algorithm>
 #include <memory>
-#include <set>
 #include <vector>
-#include "ops/op_utils.h"
-#include "ops/grad/p_s_r_o_i_pooling_grad.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/conv_pool_ops.h"
+#include "ops/grad/p_s_r_o_i_pooling_grad.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -78,12 +89,29 @@ AbstractBasePtr PSROIPoolingGradInfer(const abstract::AnalysisEnginePtr &, const
   auto prim_name = primitive->name();
   const int64_t input_num = 2;
   CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, prim_name);
-
   auto type = PSROIPoolingGradInferType(primitive, input_args);
   auto shape = PSROIPoolingGradInferShape(primitive, input_args);
 
   return abstract::MakeAbstract(shape, type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(PSROIPoolingGrad, prim::kPrimPSROIPoolingGrad, PSROIPoolingGradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGPSROIPoolingGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return PSROIPoolingGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return PSROIPoolingGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return PSROIPoolingGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(PSROIPoolingGrad, prim::kPrimPSROIPoolingGrad, AGPSROIPoolingGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

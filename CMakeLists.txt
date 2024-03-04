@@ -4,14 +4,23 @@ project(MindSpore)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 7.3.0)
         message(FATAL_ERROR "GCC version must be 7.3.0 and above, but found ${CMAKE_CXX_COMPILER_VERSION}")
-    elseif(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 9.4.0)
-        message(WARNING "GCC version ${CMAKE_CXX_COMPILER_VERSION} is greater than 9.4.0, may cause unknown problems.")
+    elseif(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 11.3.0)
+        message(WARNING "GCC version ${CMAKE_CXX_COMPILER_VERSION} is greater than 11.3.0, may cause unknown problems.")
     endif()
 endif()
 
 include(${CMAKE_SOURCE_DIR}/cmake/options.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/check_requirements.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/ascend_variables.cmake)
+
+#generate code
+if(DEFINED ENV{ENABLE_GEN_CODE})
+    set(ENABLE_GEN_CODE $ENV{ENABLE_GEN_CODE})
+endif()
+if(ENABLE_GEN_CODE)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DENABLE_GEN_CODE")
+    include(${CMAKE_SOURCE_DIR}/cmake/gencode.cmake)
+endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/modules/")
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
@@ -30,17 +39,18 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     set(CMAKE_CXX_FLAGS_RELEASE
         "$ENV{CXXFLAGS} -O2 ${MACOSX_CXX_WARNING_FLAGS} -DHALF_ENABLE_CPP11_USER_LITERALS=0 -D_FORTIFY_SOURCE=2")
 elseif(ENABLE_SYM_FILE)
-    set(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O2 -g -ggdb -Wl,--allow-shlib-undefined \
+    set(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O2 -g -ggdb -Wl,--build-id=uuid -Wl,--allow-shlib-undefined \
         -DHALF_ENABLE_CPP11_USER_LITERALS=0 -D_FORTIFY_SOURCE=2")
 else()
     if(NOT MSVC)
-    set(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O2 -Wl,--allow-shlib-undefined \
+    set(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O2 -Wl,--allow-shlib-undefined -s \
         -DHALF_ENABLE_CPP11_USER_LITERALS=0 -D_FORTIFY_SOURCE=2")
     endif()
 endif()
 
 if(ENABLE_PYTHON)
     add_compile_definitions(ENABLE_PYTHON)
+    add_compile_definitions(ENABLE_MINDDATA_PYTHON)
 endif()
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
@@ -76,6 +86,21 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/securec/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/flatbuffers/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/flatbuffers/include/flatbuffers)
 
+if(MSVC AND NOT ENABLE_GPU)
+    find_program(CCACHE_EXE ccache)
+    if(CCACHE_EXE)
+        message(STATUS "using ccache to speed windows compilation.")
+        file(COPY ${CCACHE_EXE} DESTINATION ${CMAKE_BINARY_DIR}/cl.exe)
+        set(CMAKE_VS_GLOBALS
+            "CLToolExe=cl.exe"
+            "CLToolPath=${CMAKE_BINARY_DIR}"
+            "TrackFileAccess=false"
+            "UseMultiToolTask=true"
+            "DebugInformationFormat=OldStyle"
+        )
+    endif()
+endif()
+
 if(ENABLE_FAST_HASH_TABLE)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DENABLE_FAST_HASH_TABLE=1")
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/robin_hood/include)
@@ -107,24 +132,27 @@ message("PYTHON_INCLUDE_DIRS = ${PYTHON_INCLUDE_DIRS}")
 message("PYTHON_LIBRARIES = ${PYTHON_LIBRARIES}")
 include_directories(${PYTHON_INCLUDE_DIRS})
 
+include(${CMAKE_SOURCE_DIR}/cmake/utils.cmake)
+find_and_use_mold()
+
 set(MS_CCSRC_PATH ${CMAKE_SOURCE_DIR}/mindspore/ccsrc)
 set(MS_CCSRC_BUILD_PATH ${BUILD_PATH}/mindspore/mindspore/ccsrc)
-
-if(ENABLE_D OR ENABLE_ACL OR ENABLE_TESTCASES)
-    include(${CMAKE_SOURCE_DIR}/cmake/dependency_graphengine.cmake)
-endif()
 
 if(NOT MSVC)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility=hidden")
 endif()
 
 include(${CMAKE_SOURCE_DIR}/cmake/init.cmake)
-add_subdirectory(mindspore/ccsrc)
 add_subdirectory(mindspore/core)
-add_subdirectory(framework)
+if(ENABLE_D OR ENABLE_ACL OR ENABLE_TESTCASES)
+    include(${CMAKE_SOURCE_DIR}/cmake/dependency_graphengine.cmake)
+endif()
+
+add_subdirectory_with_faster_option(mindspore/ccsrc)
+add_subdirectory(GeeSibling)
 string(REPLACE " -Wall" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 string(REPLACE " -Werror" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-if(ENABLE_TESTCASES OR ENABLE_CPP_ST)
+if(ENABLE_TESTCASES OR ENABLE_CPP_ST OR ENABLE_C_ST)
     add_subdirectory(tests)
 endif()
 
@@ -135,7 +163,10 @@ if(${VERSION_NUMBER} MATCHES ".*dev.*")
     message("building dev mode")
     set(BUILD_DEV_MODE ON)
 endif()
-if(MODE_ASCEND_ACL)
+
+if(ONLY_BUILD_DEVICE_PLUGINS)
+    include(cmake/package_plugin.cmake)
+elseif(MODE_ASCEND_ACL)
     include(cmake/package_tar.cmake)
 elseif(CMAKE_SYSTEM_NAME MATCHES "Windows")
     include(cmake/package_win.cmake)

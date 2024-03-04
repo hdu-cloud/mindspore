@@ -33,8 +33,8 @@ bool SparseMatrixNNZGpuKernelMod::Init(const BaseOperatorPtr &base_operator, con
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  unit_indices_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  unit_values_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex4).first);
+  unit_indices_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  unit_values_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex4).dtype);
   return true;
 }
 
@@ -89,8 +89,9 @@ bool SparseMatrixNNZGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &in
   T *batch_pointers = GetDeviceAddress<T>(inputs, kIndex1);
   int32_t *output = GetDeviceAddress<int32_t>(outputs, kIndex0);
 
-  CalSparseMatrixNNZ(output_elements_, batch_pointers, output, device_id_,
-                     reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status = CalSparseMatrixNNZ(output_elements_, batch_pointers, output, device_id_,
+                                   reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

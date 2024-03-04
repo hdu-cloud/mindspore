@@ -15,20 +15,20 @@
  */
 
 #include "include/common/utils/convert_utils.h"
-
-#include <vector>
-#include <string>
-#include <memory>
 #include <algorithm>
-#include <utility>
 #include <cfloat>
 #include <cmath>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
-#include "ir/value.h"
+#include "include/common/utils/utils.h"
 #include "ir/tensor.h"
-#include "ir/param_info.h"
-#include "utils/ms_context.h"
+#include "ir/value.h"
+#include "mindspore/core/ops/sparse_ops.h"
 #include "utils/anf_utils.h"
+#include "utils/ms_context.h"
 
 namespace mindspore {
 bool ValueToBool(const ValuePtr &v, bool *value) {
@@ -287,58 +287,125 @@ tensor::TensorPtr ScalarToTensor(const ScalarPtr &scalar) {
   }
 }
 
+template <typename T, typename Scalar>
+ValuePtr GetTensorValue(const tensor::TensorPtr &tensor) {
+  ValuePtr ret;
+  auto tensor_value = TensorValueToVector<T>(tensor);
+  if (tensor_value.size() == 1) {
+    ret = std::make_shared<Scalar>(tensor_value[0]);
+  } else {
+    std::vector<ValuePtr> value_vec;
+    for (const auto &elem : tensor_value) {
+      auto value = std::make_shared<Scalar>(elem);
+      MS_EXCEPTION_IF_NULL(value);
+      value_vec.push_back(value);
+    }
+    ret = std::make_shared<ValueTuple>(value_vec);
+  }
+  return ret;
+}
+
+ValuePtr CreateValueFromTensor(const tensor::TensorPtr &tensor) {
+  ValuePtr ret;
+  if (tensor->has_user_data(kTensorValueIsType)) {
+    ret = tensor->user_data<mindspore::Type>(kTensorValueIsType);
+    return ret;
+  }
+
+  if (tensor->has_user_data(kTensorValueIsEmpty)) {
+    ret = tensor->user_data<mindspore::Value>(kTensorValueIsEmpty);
+    return ret;
+  }
+
+  TypePtr data_type = tensor->Dtype();
+  MS_EXCEPTION_IF_NULL(data_type);
+  TypeId type_id = data_type->type_id();
+  switch (type_id) {
+    case kNumberTypeInt8: {
+      ret = GetTensorValue<int8_t, Int8Imm>(tensor);
+      break;
+    }
+
+    case kNumberTypeUInt8: {
+      ret = GetTensorValue<uint8_t, UInt8Imm>(tensor);
+      break;
+    }
+
+    case kNumberTypeInt16: {
+      ret = GetTensorValue<int16_t, Int16Imm>(tensor);
+      break;
+    }
+
+    case kNumberTypeUInt16: {
+      ret = GetTensorValue<uint16_t, UInt16Imm>(tensor);
+      break;
+    }
+
+    case kNumberTypeInt32: {
+      ret = GetTensorValue<int32_t, Int32Imm>(tensor);
+      break;
+    }
+
+    case kNumberTypeUInt32: {
+      ret = GetTensorValue<uint32_t, UInt32Imm>(tensor);
+      break;
+    }
+
+    case kNumberTypeInt64: {
+      ret = GetTensorValue<int64_t, Int64Imm>(tensor);
+      break;
+    }
+
+    case kNumberTypeUInt64: {
+      ret = GetTensorValue<uint64_t, UInt64Imm>(tensor);
+      break;
+    }
+
+    case kNumberTypeFloat32: {
+      ret = GetTensorValue<float, FP32Imm>(tensor);
+      break;
+    }
+
+    case kNumberTypeFloat64: {
+      ret = GetTensorValue<double, FP64Imm>(tensor);
+      break;
+    }
+
+    default:
+      MS_LOG(EXCEPTION) << "Can't parse attr value :" << tensor->ToString() << ", Type:" << tensor->type_name();
+  }
+  return ret;
+}
+
 void TensorValueToTensor(const ValuePtr &value, std::vector<tensor::TensorPtr> *tensors) {
   MS_EXCEPTION_IF_NULL(value);
   MS_EXCEPTION_IF_NULL(tensors);
-  if (value->isa<ValueTuple>()) {
-    auto value_tuple = value->cast<ValueTuplePtr>();
-    MS_EXCEPTION_IF_NULL(value_tuple);
-    for (size_t i = 0; i < value_tuple->size(); ++i) {
-      ValuePtr element = value_tuple->value()[i];
-      if (element->isa<tensor::Tensor>()) {
-        auto tensor = element->cast<tensor::TensorPtr>();
-        MS_EXCEPTION_IF_NULL(tensor);
-        tensors->emplace_back(tensor);
-      } else if (element->isa<ValueTuple>()) {
-        TensorValueToTensor(element, tensors);
-      }
-    }
-  } else if (value->isa<tensor::Tensor>()) {
+  if (value->isa<tensor::Tensor>()) {
     auto tensor = value->cast<tensor::TensorPtr>();
     MS_EXCEPTION_IF_NULL(tensor);
     tensors->emplace_back(tensor);
+  } else if (value->isa<Scalar>()) {
+    auto tensor = ScalarToTensor(value->cast<ScalarPtr>());
+    MS_EXCEPTION_IF_NULL(tensor);
+    tensors->emplace_back(tensor);
+  } else if (value->isa<ValueSequence>()) {
+    const auto &value_seq = value->cast<ValueSequencePtr>();
+    MS_EXCEPTION_IF_NULL(value_seq);
+    for (const auto &v : value_seq->value()) {
+      TensorValueToTensor(v, tensors);
+    }
   }
 }
 
-ValuePtr ShallowCopyTensorValue(const ValuePtr &value) {
-  MS_EXCEPTION_IF_NULL(value);
-  if (value->isa<tensor::Tensor>()) {
-    auto tensor_value = value->cast<tensor::TensorPtr>();
-    MS_EXCEPTION_IF_NULL(tensor_value);
-    auto shallow_tensor = std::make_shared<tensor::Tensor>(*tensor_value);
-    shallow_tensor->set_base_shape(tensor_value->base_shape_ptr());
-    return shallow_tensor;
-  } else if (value->isa<ValueTuple>()) {
-    std::vector<ValuePtr> values;
-    auto value_tuple = value->cast<ValueTuplePtr>();
-    MS_EXCEPTION_IF_NULL(value_tuple);
-    (void)std::transform(value_tuple->value().begin(), value_tuple->value().end(), std::back_inserter(values),
-                         [](const ValuePtr &elem) { return ShallowCopyTensorValue(elem); });
-    return std::make_shared<ValueTuple>(values);
-  } else {
-    return value;
-  }
-}
-
-size_t CountValueNum(const ValueTuplePtr &value_tuple) {
-  MS_EXCEPTION_IF_NULL(value_tuple);
+size_t CountValueNum(const ValueSequencePtr &value_sequence) {
+  MS_EXCEPTION_IF_NULL(value_sequence);
   size_t cnt = 0;
-  const auto &value_list = value_tuple->value();
+  const auto &value_list = value_sequence->value();
   for (const auto &value : value_list) {
     if (value->isa<None>()) {
       continue;
-    } else if (value->isa<ValueTuple>()) {
-      cnt += CountValueNum(value->cast<ValueTuplePtr>());
+    } else if (value->isa<ValueSequence>()) {
+      cnt += CountValueNum(value->cast<ValueSequencePtr>());
     } else {
       cnt++;
     }
@@ -399,5 +466,60 @@ tensor::MetaSparseTensorPtr TensorListToSparseTensor(const abstract::AbstractBas
     return TensorListToCOOTensor(tensor_list);
   }
   return TensorListToCSRTensor(tensor_list);
+}
+
+std::vector<ShapeVector> BaseShapeToShapeVector(const abstract::BaseShapePtr &base_shape) {
+  MS_EXCEPTION_IF_NULL(base_shape);
+  if (base_shape->isa<abstract::Shape>()) {
+    const auto &shape = base_shape->cast<abstract::ShapePtr>();
+    MS_EXCEPTION_IF_NULL(shape);
+    return {shape->shape()};
+  } else if (base_shape->isa<abstract::SequenceShape>()) {
+    const auto &tuple_shape = base_shape->cast<abstract::SequenceShapePtr>();
+    MS_EXCEPTION_IF_NULL(tuple_shape);
+    if (tuple_shape->size() == 0) {
+      return {};
+    }
+    // If the shape is a tuple shape, all shapes need to be consistent.
+    auto element_base_shape = (*tuple_shape)[0];
+    if (element_base_shape->isa<abstract::Shape>()) {
+      const auto &element_shape = element_base_shape->cast<abstract::ShapePtr>();
+      MS_EXCEPTION_IF_NULL(element_shape);
+      return std::vector<ShapeVector>(tuple_shape->size(), element_shape->shape());
+    } else if (element_base_shape->isa<abstract::NoShape>()) {
+      return std::vector<ShapeVector>(tuple_shape->size(), {1});
+    }
+  } else if (base_shape->isa<abstract::NoShape>() || base_shape->isa<abstract::DynamicSequenceShape>()) {
+    return {};
+  }
+  MS_LOG(WARNING) << "Invalid shape:" << base_shape->ToString();
+  return {};
+}
+
+ShapeVector BaseShapeToShape(const abstract::BaseShapePtr &base_shape) {
+  MS_EXCEPTION_IF_NULL(base_shape);
+  if (base_shape->isa<abstract::Shape>()) {
+    const auto &shape = base_shape->cast<abstract::ShapePtr>();
+    MS_EXCEPTION_IF_NULL(shape);
+    return shape->shape();
+  } else if (base_shape->isa<abstract::NoShape>()) {
+    return {};
+  }
+  MS_LOG(WARNING) << "Invalid shape:" << base_shape->ToString();
+  return {};
+}
+
+ValuePtr UpdateValueByAttrDataType(const ValuePtr &value, const std::string &attr_data_type) {
+  static std::set<std::string> kListDataType = {"listInt", "listStr", "listBool", "listFloat"};
+  auto iter = kListDataType.find(attr_data_type);
+  ValuePtr ret = value;
+  if (iter != kListDataType.end()) {
+    if (!value->isa<ValueSequence>()) {
+      std::vector<ValuePtr> value_vec;
+      value_vec.push_back(value);
+      ret = std::make_shared<ValueTuple>(value_vec);
+    }
+  }
+  return ret;
 }
 }  // namespace mindspore

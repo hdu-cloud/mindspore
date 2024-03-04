@@ -23,14 +23,14 @@
 #include <memory>
 #include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 #include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
 constexpr auto kNameTridiagonalMatMul = "TridiagonalMatMul";
-class MS_CORE_API TridiagonalMatMul : public BaseOperator {
+class MIND_API TridiagonalMatMul : public BaseOperator {
  public:
   MIND_API_BASE_MEMBER(TridiagonalMatMul);
   TridiagonalMatMul() : BaseOperator(kNameTridiagonalMatMul) {
@@ -38,8 +38,9 @@ class MS_CORE_API TridiagonalMatMul : public BaseOperator {
   }
 };
 
-abstract::AbstractBasePtr TridiagonalMatMulInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                 const std::vector<AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr TridiagonalMatMulInfer(const abstract::AnalysisEnginePtr &,
+                                                          const PrimitivePtr &primitive,
+                                                          const std::vector<AbstractBasePtr> &input_args);
 using PrimTridiagonalMatMulPtr = std::shared_ptr<TridiagonalMatMul>;
 }  // namespace ops
 }  // namespace mindspore

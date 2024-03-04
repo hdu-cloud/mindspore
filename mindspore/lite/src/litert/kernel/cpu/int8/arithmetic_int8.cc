@@ -17,7 +17,7 @@
 #include "src/litert/kernel/cpu/int8/arithmetic_int8.h"
 #include "src/litert/kernel/cpu/int8/add_int8.h"
 #include "src/litert/kernel/cpu/int8/mul_int8.h"
-#include "nnacl/arithmetic.h"
+#include "nnacl/arithmetic_parameter.h"
 #include "schema/model_generated.h"
 #include "src/litert/kernel_registry.h"
 #include "include/errorcode.h"
@@ -109,7 +109,7 @@ int ArithmeticInt8CPUKernel::Prepare() {
   auto *out_tensor = out_tensors_.at(kOutputIndex);
   auto out_quant_args = out_tensor->quant_params();
   CHECK_LESS_RETURN(out_quant_args.size(), 1);
-  quant_args_.out_args_.scale_ = out_quant_args.front().scale;
+  quant_args_.out_args_.scale_ = static_cast<float>(out_quant_args.front().scale);
   quant_args_.out_args_.zp_ = out_quant_args.front().zeroPoint;
   if (!InferShapeDone()) {
     return RET_OK;

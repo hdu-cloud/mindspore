@@ -14,21 +14,28 @@
  * limitations under the License.
  */
 
-#include <string>
-#include <algorithm>
 #include <memory>
+#include <string>
 
-#include "ops/make_cootensor.h"
-
+#include "abstract/abstract_value.h"
 #include "abstract/dshape.h"
-#include "abstract/param_validator.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/param_validator.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/sparse_tensor_ops.h"
+#include "ops/make_cootensor.h"
 #include "ops/op_utils.h"
 #include "ops/primitive_c.h"
 #include "utils/anf_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -47,10 +54,12 @@ AbstractBasePtr MakeCOOTensorInfer(const abstract::AnalysisEnginePtr &, const Pr
   CheckSparseIndicesDtype(indices_dtype, "Indices");
 
   auto indices_shp = indices->shape()->shape();
-  CheckSparseShape(indices_shp.size(), kSizeTwo, "Indices");
-
   auto values_shp = values->shape()->shape();
-  CheckSparseShape(values_shp.size(), kSizeOne, "Values");
+  if (IsShapeEmpty(indices_shp) && IsShapeEmpty(values_shp)) {
+    MS_LOG(DEBUG) << "Constructing empty COOTensor! Ignore further shape check.";
+    std::vector<abstract::AbstractBasePtr> element_list{indices, values, dense_shape};
+    return std::make_shared<abstract::AbstractCOOTensor>(element_list);
+  }
 
   for (const auto &elem_type : dense_shape->ElementsType()) {
     if (!elem_type->isa<Int>()) {
@@ -60,21 +69,26 @@ AbstractBasePtr MakeCOOTensorInfer(const abstract::AnalysisEnginePtr &, const Pr
   }
 
   // Convert dense_shape from tuple to shapevector(dense_shape_vec)
+  auto dense_shape_vec = GetShapeValue(primitive, dense_shape);
   auto dense_shape_value = dense_shape->BuildValue()->cast<ValueTuplePtr>();
-  MS_EXCEPTION_IF_NULL(dense_shape_value);
-  auto shp = dense_shape_value->value();
-  ShapeVector dense_shape_vec;
-  (void)std::transform(std::begin(shp), std::end(shp), std::back_inserter(dense_shape_vec),
-                       [](const ValuePtr &e) -> int64_t {
-                         auto elem = GetValue<int64_t>(e);
-                         return elem;
-                       });
+  if (!IsDynamic(dense_shape_vec)) {
+    MS_EXCEPTION_IF_NULL(dense_shape_value);
+    for (auto dense_shape_elem : dense_shape_vec) {
+      if (dense_shape_elem <= 0) {
+        MS_EXCEPTION(TypeError) << "For COOTensor, the element of `shape` must be positive, but got "
+                                << dense_shape_value->ToString();
+      }
+    }
+  }
 
   if (IsDynamic(indices_shp) || IsDynamic(values_shp)) {
     MS_LOG(DEBUG) << "Dynamic shape in MakeCOOTensor's inputs! Ignore shape check.";
     AbstractBasePtrList element_list{indices, values, dense_shape};
     return std::make_shared<abstract::AbstractCOOTensor>(element_list);
   }
+
+  CheckSparseShape(indices_shp.size(), kSizeTwo, "Indices");
+  CheckSparseShape(values_shp.size(), kSizeOne, "Values");
 
   if (indices_shp[kIndexZero] != values_shp[kIndexZero]) {
     MS_EXCEPTION(ValueError) << "For COOTensor, `indices.shape[" << kIndexZero << "]` must be equal to `values.shape["
@@ -88,16 +102,10 @@ AbstractBasePtr MakeCOOTensorInfer(const abstract::AnalysisEnginePtr &, const Pr
                              << indices_shp[kIndexOne];
   }
 
-  if (LongToSize(indices_shp[kIndexOne]) != dense_shape_vec.size()) {
+  if (!IsDynamicRank(dense_shape_vec) && LongToSize(indices_shp[kIndexOne]) != dense_shape_vec.size()) {
     MS_EXCEPTION(TypeError) << "For COOTensor, `indices.shape[" << indices_shp << "]` must be equal to the second "
                             << "dimension of `indices`: " << dense_shape_vec.size() << " but got "
                             << indices_shp[kIndexOne];
-  }
-  for (auto dense_shape_elem : dense_shape_vec) {
-    if (dense_shape_elem <= 0) {
-      MS_EXCEPTION(TypeError) << "For COOTensor, the element of `shape` must be positive, but got "
-                              << dense_shape_value->ToString();
-    }
   }
   AbstractBasePtrList element_list{indices, values, dense_shape};
   return std::make_shared<abstract::AbstractCOOTensor>(element_list);

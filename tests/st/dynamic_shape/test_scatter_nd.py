@@ -35,7 +35,7 @@ class NetDynShape(nn.Cell):
     def __init__(self):
         super(NetDynShape, self).__init__()
         self.scatternd = P.ScatterNd()
-        self.shape_op = P.TensorShape()
+        self.shape_op = P.Shape()
 
     def construct(self, indices, update, prev_out):
         shape = self.shape_op(prev_out)
@@ -79,7 +79,7 @@ def case_dyn_shape():
     check_result(output, expect)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.platform_x86_gpu_training
@@ -96,7 +96,7 @@ def test_dynamic_scatternd_dyn_input():
     case_dyn_input()
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard

@@ -14,19 +14,15 @@
  * limitations under the License.
  */
 #include "backend/common/pass/convert_attr_to_unify_mindir.h"
-
 #include <string>
 #include "utils/check_convert_utils.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
-#include "include/common/utils/anfalgo.h"
-#include "kernel/common_utils.h"
+#include "include/backend/anf_runtime_algorithm.h"
 
 namespace mindspore {
 namespace opt {
-const AnfNodePtr ConvertAttrToUnifyMindIR::Process(const FuncGraphPtr &, const AnfNodePtr &node,
-                                                   const EquivPtr &) const {
+bool ConvertAttrToUnifyMindIR::Process(const AnfNodePtr &node) const {
   if (node == nullptr || !AnfUtils::IsRealCNodeKernel(node)) {
-    return nullptr;
+    return false;
   }
 
   auto cnode = node->cast<CNodePtr>();
@@ -51,7 +47,7 @@ const AnfNodePtr ConvertAttrToUnifyMindIR::Process(const FuncGraphPtr &, const A
     }
   }
 
-  return node;
+  return true;
 }
 }  // namespace opt
 }  // namespace mindspore

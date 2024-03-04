@@ -18,26 +18,26 @@
 #define MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_GPU_EINSUM_HELPER_H_
 
 #include <ctype.h>
-#include <vector>
-#include <string>
-#include <unordered_map>
-#include <map>
-#include <tuple>
-#include <set>
-#include <memory>
 #include <functional>
-#include "plugin/device/gpu/kernel/gpu_kernel.h"
-#include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
-#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/transpose_impl.cuh"
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <tuple>
+#include <unordered_map>
+#include <vector>
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/einsum_impl.cuh"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/tile_impl.cuh"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/transpose_impl.cuh"
+#include "plugin/device/gpu/kernel/gpu_kernel.h"
+#include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
 #include "plugin/device/gpu/kernel/kernel_constants.h"
 
 namespace mindspore {
 namespace kernel {
 constexpr size_t LABEL_NUM = 52;
 constexpr size_t ELL_VAL = 52;
-constexpr int BIG_C_BEGIN = 26;
+constexpr int LOWER_CASE_BEGIN = 26;
 constexpr char ELLIPSIS = '.';
 constexpr int SPLIT_DIM = 4;
 constexpr int SHAPE_WORKSPACE_NUM = 3;
@@ -51,7 +51,9 @@ using OpStruct = std::tuple<std::string, std::vector<int64_t>, std::vector<size_
 template <typename T>
 class EinsumHelper {
  public:
-  EinsumHelper() {
+  EinsumHelper() { ResetResource(); }
+
+  void ResetResource() {
     label_perm_idx_ = std::vector<int64_t>(LABEL_NUM, -1);
     element_count_ = std::vector<size_t>(LABEL_NUM, 0);
     ell_idx_ = 0;
@@ -66,9 +68,9 @@ class EinsumHelper {
 
   int64_t char_to_index(const char cur_char) {
     if (cur_char <= 'z' && cur_char >= 'a') {
-      return static_cast<int64_t>(cur_char - 'a');
+      return static_cast<int64_t>(cur_char - 'a' + LOWER_CASE_BEGIN);
     }
-    return static_cast<int64_t>(cur_char - 'A' + BIG_C_BEGIN);
+    return static_cast<int64_t>(cur_char - 'A');
   }
   size_t GetShapeSize(const std::vector<int64_t> &shape) {
     size_t size = sizeof(T);
@@ -435,31 +437,7 @@ class EinsumHelper {
     for (auto &axis : operate_info) {
       dout_shape[axis] = 1;
     }
-    Tile(dout, d_input, dout_shape, dinp_shape, stream_ptr);
-  }
-
-  void Tile(T *input_ptr, T *output_ptr, const std::vector<size_t> &inp_shape, const std::vector<size_t> &out_shape,
-            void *stream_ptr) {
-    size_t *input_shape_ptr = reinterpret_cast<size_t *>(workspace_ptr_[shape_ptr_idx_start_]);
-    size_t *output_shape_ptr = reinterpret_cast<size_t *>(workspace_ptr_[shape_ptr_idx_start_ + 1]);
-    CHECK_CUDA_RET_WITH_ERROR_NOTRACE(
-      cudaMemcpyAsync(input_shape_ptr, &inp_shape[0], inp_shape.size() * sizeof(size_t), cudaMemcpyHostToDevice,
-                      reinterpret_cast<cudaStream_t>(stream_ptr)),
-      "For " + node_name_ + ", cudaMemcpyAsync input_shape failed.");
-    CHECK_CUDA_RET_WITH_ERROR_NOTRACE(
-      cudaMemcpyAsync(output_shape_ptr, &out_shape[0], out_shape.size() * sizeof(size_t), cudaMemcpyHostToDevice,
-                      reinterpret_cast<cudaStream_t>(stream_ptr)),
-      "For " + node_name_ + ", cudaMemcpyAsync output_shape failed.");
-    size_t inp_size = 1;
-    size_t out_size = 1;
-    for (auto &v : inp_shape) {
-      inp_size *= v;
-    }
-    for (auto &v : out_shape) {
-      out_size *= v;
-    }
-    CalTile(out_size, inp_size, inp_shape.size(), input_shape_ptr, output_shape_ptr, input_ptr, output_ptr,
-            reinterpret_cast<cudaStream_t>(stream_ptr));
+    (void)CalTile(dout_shape, dinp_shape, dout, d_input, reinterpret_cast<cudaStream_t>(stream_ptr));
   }
 
   void MulGrad(T *dout, T *mid_res, T *drht, T *dlft, const std::vector<size_t> &dlft_shape,
@@ -527,22 +505,20 @@ class EinsumHelper {
   void Transpose(T *input_ptr, T *output_ptr, const std::vector<size_t> &inp_shape,
                  const std::vector<size_t> &operate_info, void *stream_ptr) {
     // operate_info: input_axis
-    size_t size = 1;
-    size_t *d_shape_ptr = reinterpret_cast<size_t *>(workspace_ptr_[shape_ptr_idx_start_]);
-    size_t *d_info_ptr = reinterpret_cast<size_t *>(workspace_ptr_[shape_ptr_idx_start_ + 1]);
-    for (size_t idx = 0; idx < inp_shape.size(); ++idx) {
-      size *= inp_shape[idx];
+    const size_t dims = inp_shape.size();
+    const size_t operate_dims = operate_info.size();
+    if (dims > transpose_max_dimension || operate_dims > transpose_max_dimension) {
+      MS_LOG(EXCEPTION) << "For 'Transpose', the dimension of output cannot be greater than " << transpose_max_dimension
+                        << ", but got " << dims;
     }
-    CHECK_CUDA_RET_WITH_ERROR_NOTRACE(
-      cudaMemcpyAsync(d_shape_ptr, &inp_shape[0], inp_shape.size() * sizeof(size_t), cudaMemcpyHostToDevice,
-                      reinterpret_cast<cudaStream_t>(stream_ptr)),
-      "For " + node_name_ + ", Transpose's cudaMemcpyAsync failed.");
-    CHECK_CUDA_RET_WITH_ERROR_NOTRACE(
-      cudaMemcpyAsync(d_info_ptr, &operate_info[0], operate_info.size() * sizeof(size_t), cudaMemcpyHostToDevice,
-                      reinterpret_cast<cudaStream_t>(stream_ptr)),
-      "For " + node_name_ + ", Transpose's cudaMemcpyAsync failed.");
-    CalTranspose<T>(size, input_ptr, d_shape_ptr, d_info_ptr, inp_shape.size(), output_ptr,
-                    reinterpret_cast<cudaStream_t>(stream_ptr));
+    size_t size = 1;
+    TransposeInfo info;
+    for (size_t i = 0; i < dims; ++i) {
+      size *= inp_shape[i];
+      info.input_shape.push_back(static_cast<int64_t>(inp_shape[i]));
+      info.perm.push_back(static_cast<int32_t>(operate_info[i]));
+    }
+    (void)CalTranspose<T, true>(size, input_ptr, info, output_ptr, reinterpret_cast<cudaStream_t>(stream_ptr));
   }
   bool SegLeftEquation(const std::string &left_equation, const std::vector<std::vector<int64_t>> &input_shapes) {
     size_t cur_element = 0;
@@ -843,7 +819,7 @@ class EinsumHelper {
     res_trans_axis.insert(res_trans_axis.end(), lo.begin(), lo.end());
     res_trans_axis.insert(res_trans_axis.end(), sum_dims->begin(), sum_dims->end());
     res_trans_axis.insert(res_trans_axis.end(), ro.begin(), ro.end());
-    // tranpose
+    // transpose
     res_out_shape = (*res_inp_shape);
     for (size_t idx_axis = 0; idx_axis < res_trans_axis.size(); ++idx_axis) {
       res_out_shape[idx_axis] = (*res_inp_shape)[res_trans_axis[idx_axis]];
@@ -855,7 +831,7 @@ class EinsumHelper {
     sig_trans_axis.insert(sig_trans_axis.end(), sum_dims->begin(), sum_dims->end());
     sig_trans_axis.insert(sig_trans_axis.end(), ro.begin(), ro.end());
     sig_trans_axis.insert(sig_trans_axis.end(), lo.begin(), lo.end());
-    // tranpose
+    // transpose
     sig_out_shape = sig_inp_shape;
     for (size_t idx_axis = 0; idx_axis < sig_trans_axis.size(); ++idx_axis) {
       sig_out_shape[idx_axis] = sig_inp_shape[sig_trans_axis[idx_axis]];
@@ -956,7 +932,7 @@ class EinsumHelper {
         }
         op_info.emplace_back(static_cast<size_t>(val));
       }
-      // tranpose
+      // transpose
       sig_out_shape = sig_inp_shape;
       for (size_t idx_axis = 0; idx_axis < trans_axis.size(); ++idx_axis) {
         sig_out_shape[idx_axis] = sig_inp_shape[trans_axis[idx_axis]];

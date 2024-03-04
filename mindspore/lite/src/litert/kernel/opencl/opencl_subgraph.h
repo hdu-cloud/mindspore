@@ -23,14 +23,14 @@
 #include "src/litert/kernel/opencl/opencl_kernel.h"
 #include "src/litert/kernel/gpu/opencl/opencl_allocator.h"
 #include "src/litert/kernel/gpu/opencl/opencl_executor.h"
-#include "src/litert/sub_graph_kernel.h"
+#include "src/executor/sub_graph_kernel.h"
 
 namespace mindspore::kernel {
 class OpenCLSubGraph : public SubGraphKernel {
  public:
   OpenCLSubGraph(const std::vector<kernel::KernelExec *> &inKernels,
                  const std::vector<kernel::KernelExec *> &outKernels, const std::vector<kernel::KernelExec *> &nodes,
-                 Kernel *kernel)
+                 MSKernel *kernel)
       : SubGraphKernel(inKernels, outKernels, nodes, kernel) {
     ocl_runtime_ = ocl_runtime_wrap_.GetInstance();
     if (nodes.front()->desc().data_type == kNumberTypeFloat16) {
@@ -53,7 +53,6 @@ class OpenCLSubGraph : public SubGraphKernel {
   int RunPass();
   int Prepare() override;
   int ReSize() override;
-  int ReSize(bool interrupt);
   int Execute() override;
   int Execute(const KernelCallBack &before, const KernelCallBack &after) override;
 

@@ -84,7 +84,9 @@ std::vector<std::string> SplitStringToVector(const std::string &raw_str, const c
 }
 
 std::vector<std::string> SplitStringToVector(const std::string &raw_str, const std::string &delimiter) {
-  size_t pos_start = 0, pos_end, delim_len = delimiter.length();
+  size_t pos_start = 0;
+  size_t pos_end = 0;
+  size_t delim_len = delimiter.length();
   std::string token;
   std::vector<std::string> res;
 
@@ -197,5 +199,7 @@ size_t Hex2ByteArray(const std::string &hex_str, unsigned char *byte_array, size
   }
   return byte_len;
 }
+
+bool IsNumber(const std::string &item) { return !item.empty() && std::all_of(item.begin(), item.end(), ::isdigit); }
 }  // namespace lite
 }  // namespace mindspore

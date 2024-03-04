@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,21 +30,20 @@ static constexpr size_t OUTPUT_NUM = 1;
 bool GammaCpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                              const std::vector<KernelTensorPtr> &outputs) {
   auto kernel_ptr = std::dynamic_pointer_cast<ops::RandomGamma>(base_operator);
-  if (kernel_ptr == nullptr) {
-    MS_LOG(EXCEPTION) << "cast RandomGamma ops failed!";
-    return false;
-  }
+  MS_EXCEPTION_IF_NULL(kernel_ptr);
   kernel_name_ = kernel_ptr->name();
-  seed_ = kernel_ptr->get_seed();
-  seed2_ = kernel_ptr->get_seed2();
-  generator_.Init(seed_, seed2_);
+  int64_t seed = kernel_ptr->get_seed();
+  int64_t seed2 = kernel_ptr->get_seed2();
 
-  outputs_ = outputs;
+  MS_EXCEPTION_IF_NULL(inputs[0]);
+  MS_EXCEPTION_IF_NULL(inputs[1]);
+  MS_EXCEPTION_IF_NULL(outputs[0]);
   output_shape_ = outputs[0]->GetShapeVector();
   alpha_shape_ = inputs[1]->GetShapeVector();
   alpha_dtype_ = inputs[1]->GetDtype();
   shape_dtype_ = inputs[0]->GetDtype();
   shape_shape_ = inputs[0]->GetShapeVector();
+  rng_.Init(seed, seed2);
 
   is_need_retrieve_output_shape_ = true;
 
@@ -91,10 +90,10 @@ void GammaCpuKernelMod::Generate(const std::vector<AddressPtr> &inputs, const st
   }
 
   using random::MSNormalDistribution;
-  using random::MSPhiloxRandom;
   using random::MSUniformDistribution;
-  typedef MSNormalDistribution<MSPhiloxRandom, double> Normal;
-  typedef MSUniformDistribution<MSPhiloxRandom, double> Uniform;
+  using random::PhiloxRandom;
+  typedef MSNormalDistribution<PhiloxRandom, double> Normal;
+  typedef MSUniformDistribution<PhiloxRandom, double> Uniform;
 #define UNIFORM(X)                                    \
   if (uniform_remaining == 0) {                       \
     uniform_remaining = Uniform::kResultElementCount; \
@@ -113,7 +112,7 @@ void GammaCpuKernelMod::Generate(const std::vector<AddressPtr> &inputs, const st
     sample_shape_per_al = num_samples / num_alphas;
   }
 
-  MSPhiloxRandom rng = generator_.ReserveRandomOutputs(num_samples, kReservedSamplesPerOutput);
+  PhiloxRandom rng = rng_.ReserveRandomOutputs(num_samples, kReservedSamplesPerOutput);
 
   auto DoWork = [sample_shape_per_al, num_alphas, &rng, samples_flat, alpha_flat](int64_t start_output,
                                                                                   int64_t limit_output) {
@@ -137,7 +136,7 @@ void GammaCpuKernelMod::Generate(const std::vector<AddressPtr> &inputs, const st
         // Sample from an exponential distribution.
         for (int64_t sample_idx = output_idx % sample_shape_per_al;
              sample_idx < sample_shape_per_al && output_idx < limit_output; sample_idx++, output_idx++) {
-          MSPhiloxRandom gen = rng;
+          PhiloxRandom gen = rng;
           gen.Skip(static_cast<uint64_t>(kReservedSamplesPerOutput * output_idx));
           int64_t uniform_remaining = 0;
           UNIFORM(u);
@@ -154,7 +153,7 @@ void GammaCpuKernelMod::Generate(const std::vector<AddressPtr> &inputs, const st
         // Compute the rest of the samples for the current alpha value.
         for (int64_t sample_idx = output_idx % sample_shape_per_al;
              sample_idx < sample_shape_per_al && output_idx < limit_output; sample_idx++, output_idx++) {
-          MSPhiloxRandom gen = rng;
+          PhiloxRandom gen = rng;
           gen.Skip(static_cast<uint64_t>(kReservedSamplesPerOutput * output_idx));
           size_t norm_remaining = 0;
           int16_t uniform_remaining = 0;

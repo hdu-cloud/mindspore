@@ -17,12 +17,12 @@
 #ifndef MINDSPORE_CORE_OPS_INDEX_ADD_H_
 #define MINDSPORE_CORE_OPS_INDEX_ADD_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
 #include <set>
-#include "ops/base_operator.h"
+#include <string>
+#include <vector>
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -43,8 +43,8 @@ class MIND_API IndexAdd : public BaseOperator {
   int64_t get_axis() const;
 };
 
-abstract::AbstractBasePtr IndexAddInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                        const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr IndexAddInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

@@ -1,6 +1,6 @@
 # This is the Python adaptation and derivative work of Myia (https://github.com/mila-iqia/myia/).
 #
-# Copyright 2020-2022 Huawei Technologies Co., Ltd
+# Copyright 2020-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@
 from __future__ import absolute_import
 
 import ast
-import math
 
 from mindspore import RowTensor, SparseTensor, COOTensor, CSRTensor
 from mindspore.experimental import MapParameter
@@ -36,48 +35,47 @@ functional_ns = CellNamespace('mindspore.ops.functional')
 composite_ns = CellNamespace('mindspore.ops.composite')
 trope_ns = CellNamespace('mindspore._extends.parse.trope')
 
-NO_IMPLEMENT = None         # not implemented
 SYMBOL_UNDEFINE = 0xFF      # Undefined var and function
 
 # Some space set aside for readability of code
 parse_object_map = {
     # ast grammar
-    ast.Add:        (trope_ns, 'add'),
-    ast.Sub:        (trope_ns, 'sub'),
-    ast.Mult:       (trope_ns, 'mul'),
-    ast.Div:        (trope_ns, 'truediv'),
-    ast.FloorDiv:   (trope_ns, 'floordiv'),
-    ast.Mod:        (trope_ns, 'mod'),
-    ast.Pow:        (trope_ns, 'pow'),
-    ast.MatMult:    (trope_ns, 'matmul'),
-    ast.LShift:     (trope_ns, 'lshift'),
-    ast.RShift:     (trope_ns, 'rshift'),
-    ast.BitAnd:     (trope_ns, 'and_'),
-    ast.BitOr:      (trope_ns, 'or_'),
-    ast.BitXor:     (trope_ns, 'xor'),
-    ast.UAdd:       (trope_ns, 'pos'),
-    ast.USub:       (trope_ns, 'neg'),
-    ast.Invert:     (trope_ns, 'invert'),
-    ast.Not:        (trope_ns, 'not_'),
-    ast.Eq:         (trope_ns, 'eq'),
-    ast.NotEq:      (trope_ns, 'ne'),
-    ast.Lt:         (trope_ns, 'lt'),
-    ast.Gt:         (trope_ns, 'gt'),
-    ast.LtE:        (trope_ns, 'le'),
-    ast.GtE:        (trope_ns, 'ge'),
-    ast.Is:         (trope_ns, 'is_'),
-    ast.IsNot:      (trope_ns, 'is_not'),
-    ast.In:         (trope_ns, 'contains'),
-    ast.NotIn:      (trope_ns, 'not_contains'),
+    ast.Add:        (trope_ns, 'add', '+'),
+    ast.Sub:        (trope_ns, 'sub', '-'),
+    ast.Mult:       (trope_ns, 'mul', '*'),
+    ast.Div:        (trope_ns, 'truediv', '/'),
+    ast.FloorDiv:   (trope_ns, 'floordiv', '//'),
+    ast.Mod:        (trope_ns, 'mod', '%'),
+    ast.Pow:        (trope_ns, 'pow', '**'),
+    ast.MatMult:    (trope_ns, 'matmul', '@'),
+    ast.LShift:     (trope_ns, 'lshift', '<<'),
+    ast.RShift:     (trope_ns, 'rshift', '>>'),
+    ast.BitAnd:     (trope_ns, 'and_', '&'),
+    ast.BitOr:      (trope_ns, 'or_', '|'),
+    ast.BitXor:     (trope_ns, 'xor', '^'),
+    ast.UAdd:       (trope_ns, 'pos', '+'),
+    ast.USub:       (trope_ns, 'neg', '-'),
+    ast.Invert:     (trope_ns, 'invert', '~'),
+    ast.Not:        (trope_ns, 'not_', 'not'),
+    ast.Eq:         (trope_ns, 'eq', '=='),
+    ast.NotEq:      (trope_ns, 'ne', '!='),
+    ast.Lt:         (trope_ns, 'lt', '<'),
+    ast.Gt:         (trope_ns, 'gt', '>'),
+    ast.LtE:        (trope_ns, 'le', '<='),
+    ast.GtE:        (trope_ns, 'ge', '>='),
+    ast.Is:         (trope_ns, 'is_', 'is'),
+    ast.IsNot:      (trope_ns, 'is_not', 'is not'),
+    ast.In:         (trope_ns, 'contains', 'in'),
+    ast.NotIn:      (trope_ns, 'not_contains', 'not in'),
 
     # operation symbol type
-    'getitem':      (composite_ns, 'getitem'),
-    'ms_iter':      (composite_ns, 'ms_iter'),
-    'ms_next':      (composite_ns, 'ms_next'),
-    'hasnext':      (composite_ns, 'hasnext'),
+    'getitem':      (composite_ns, 'getitem', ''),
+    'ms_iter':      (composite_ns, 'ms_iter', ''),
+    'ms_next':      (composite_ns, 'ms_next', ''),
+    'hasnext':      (composite_ns, 'hasnext', ''),
 
     # undefined type
-    SYMBOL_UNDEFINE: (None, 'undefine'),
+    SYMBOL_UNDEFINE: (None, 'undefine', ''),
 }
 
 # Operation symbols corresponding to ast grammar
@@ -134,9 +132,9 @@ convert_object_map = {
     T.not_contains: multitype_ops.not_in_,
 
     # system function
-    T.abs:          M.ms_abs,
-    T.round:        M.ms_round,
-    T.len:          M.ms_len,
+    T.abs:          Primitive('inner_abs'),
+    T.round:        Primitive('inner_round'),
+    T.len:          Primitive('inner_len'),
     T.bool_:        M.bool_,
     T.map:          C.Map(),
     T.filter:       M.filter_,
@@ -159,17 +157,7 @@ convert_object_map = {
     T.make_list:    F.make_list,
     T.make_slice:   F.make_slice,
     T.range:        F.make_range,
-    T.while_cond:   M.while_cond,
     T.mutable:      Primitive('mutable'),
-
-    # lib function
-    math.floor:     NO_IMPLEMENT,
-    math.trunc:     NO_IMPLEMENT,
-    math.exp:       NO_IMPLEMENT,
-    math.log:       F.scalar_log,
-    math.sin:       NO_IMPLEMENT,
-    math.cos:       NO_IMPLEMENT,
-    math.tan:       NO_IMPLEMENT,
 
     # user defined
     RowTensorInner: F.make_row_tensor_inner,

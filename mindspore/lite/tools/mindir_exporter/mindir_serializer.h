@@ -28,11 +28,13 @@
 #include "proto/mind_ir.pb.h"
 #include "mindspore/core/utils/system/env.h"
 #include "tools/converter/cxx_api/converter_para.h"
+#include "mindspore/lite/tools/converter/quantizer/quant_param_holder.h"
 
 namespace mindspore::lite {
 class MindIRSerializer {
  public:
-  explicit MindIRSerializer(bool isRuntimeConvert) : isRuntimeConvert_(isRuntimeConvert) {}
+  MindIRSerializer() {}
+  explicit MindIRSerializer(bool is_export_model) { is_export_model_ = is_export_model; }
   virtual ~MindIRSerializer() {
     if (data_fs_ != nullptr) {
       data_fs_->close();
@@ -42,16 +44,23 @@ class MindIRSerializer {
   }
   int Save(const std::shared_ptr<ConverterPara> &param, const FuncGraphPtr &func_graph);
   int GetBuffAndSize(void **buff, size_t *size);
+  int PreProcSaveTogether(const FuncGraphPtr &func_graph);
+  void SetRemoveVariableDir(bool remove) { remove_variable_dir_ = remove; }
 
  private:
   int ParserPath(const std::string &output_path);
   int IfSaveTogether(bool *save_together);
-  int SaveMindIRTogether();
-  int SplitSave();
-  int SaveProtoToFile(mind_ir::ModelProto *model_proto, const std::string &output_file);
+  int SaveMindIRTogether(const std::shared_ptr<ConverterPara> &param);
+  int SplitSave(const std::shared_ptr<ConverterPara> &param);
+  int SaveProtoToFile(mind_ir::ModelProto *model_proto, const std::string &output_file,
+                      const std::shared_ptr<ConverterPara> &param);
   int ConvertQuantHolderToQuantizationParam(const FuncGraphPtr &func_graph);
+  int ConvertParameterNode(const CNodePtr &cnode, const ParameterPtr &parameter_ptr, size_t index);
+  int ConvertInputQuantHolderToQuantizationParam(const CNodePtr &cnode, const QuantParamHolderPtr &quant_params_holder);
+  int ConvertValueNode(const CNodePtr &cnode, const ValueNodePtr &value_node_ptr, size_t index);
   std::shared_ptr<mindspore::QuantizationParam> ConvertQuantParamTToQuantizationParam(
     std::vector<schema::QuantParamT> quant_param);
+  int UpdateParamCount(const FuncGraphPtr &func_graph);
 
  private:
   int ParamDict(const FuncGraphPtr &func_graph);
@@ -64,8 +73,6 @@ class MindIRSerializer {
   int RemoveQuantParameterHolder(FuncGraphPtr func_graph);
 
  private:
-  bool isRuntimeConvert_ = false;
-  bool is_fusion_ = true;
   std::string model_name_;
   std::string save_path_;
   std::string save_model_path_;
@@ -77,9 +84,11 @@ class MindIRSerializer {
   std::unordered_map<tensor::TensorPtr, mind_ir::TensorProto *> para_proto_dict_{};
   std::fstream *data_fs_ = nullptr;
   std::shared_ptr<system::FileSystem> fs_{};
+  bool is_export_model_ = true;
+  bool remove_variable_dir_ = true;
 };
 // export func_graph
-int MindIRSerialize(const std::shared_ptr<ConverterPara> &param, const FuncGraphPtr &func_graph, bool isRuntimeConvert,
+int MindIRSerialize(const std::shared_ptr<ConverterPara> &param, const FuncGraphPtr &func_graph, bool need_buff,
                     void **buff, size_t *size);
 }  // namespace mindspore::lite
 #endif  // MINDSPORE_LITE_TOOLS_MINDIR_EXPORTER_MINDIR_SERIALIZER_H_

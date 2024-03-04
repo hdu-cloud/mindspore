@@ -26,7 +26,9 @@
 #include <fstream>
 #include <limits>
 #include <unordered_map>
+#include <iomanip>
 #include "src/extendrt/delegate/delegate_utils.h"
+#include "src/extendrt/delegate/tensorrt/tensorrt_utils.h"
 #include "src/common/utils.h"
 
 #include "ops/transpose.h"
@@ -68,6 +70,11 @@ TensorRTSubGraph::~TensorRTSubGraph() {
     config_->destroy();
     config_ = nullptr;
   }
+#ifdef PROFILER_
+  auto profile = dynamic_cast<SimpleProfiler *>(trt_context_->getProfiler());
+  if (profile != nullptr) std::cout << *profile << std::endl;
+  delete profile;
+#endif
   if (trt_context_ != nullptr) {
     trt_context_->destroy();
     trt_context_ = nullptr;
@@ -227,8 +234,8 @@ int TensorRTSubGraph::SetDeviceConfig(cudaStream_t stream, cublasHandle_t cublas
 
   MS_LOG(INFO) << GetRankID() << " tensorrt subgraph stream: " << stream_;
 
-  // config setMaxWorkspaceSize to 2047 MB for max limit
-  constexpr size_t kWorkspaceSize = 2047 * (1 << 20);
+  // config setMaxWorkspaceSize to 2100 MB for max limit
+  constexpr size_t kWorkspaceSize = static_cast<size_t>(2100) * (1 << 20);
   config_->setMaxWorkspaceSize(kWorkspaceSize);
   return RET_OK;
 }
@@ -431,6 +438,14 @@ int TensorRTSubGraph::BuildTensorRTGraph() {
 int TensorRTSubGraph::MarkOutputs() {
   // Mark NetWork Output Tensor.
   for (const auto &out_tensor : outputs_) {
+    std::string output_name = out_tensor.Name();
+    auto input_it = std::find_if(inputs_.begin(), inputs_.end(),
+                                 [=](const TensorInfo &input) { return input.Name() == output_name; });
+    if (input_it != inputs_.end()) {
+      nvinfer1::ITensor *trt_tensor = SetTensorRTNetworkInput(*input_it, GetInputIndexByName(input_it->Name()));
+      ctx_->network()->markOutput(*trt_tensor);
+      continue;
+    }
     if (out_tensor.IsConst()) {
       MS_LOG(INFO) << "markOutput for: " << out_tensor.Name();
       auto output_helper = ctx_->MsName2Tensor(out_tensor.Name());
@@ -494,6 +509,15 @@ int TensorRTSubGraph::Prepare() {
     MS_LOG(ERROR) << "TensorRTSubGraph create context failed.";
     return RET_ERROR;
   }
+
+#ifdef PROFILER_
+  auto profiler = new SimpleProfiler("myprofiler");
+  if (profiler == nullptr) {
+    MS_LOG(WARNING) << "Cannot create profiler";
+  }
+  this->trt_context_->setProfiler(profiler);
+#endif
+
   int binding_num = this->engine_->getNbBindings();
   if (binding_num <= 0) {
     MS_LOG(ERROR) << "TensorRTSubGraph binding num < 0.";
@@ -504,7 +528,6 @@ int TensorRTSubGraph::Prepare() {
     MS_LOG(ERROR) << "malloc tensor binding array failed.";
     return RET_ERROR;
   }
-
   profile_index_ = MaxVolumnProfileIndex();
   if (this->trt_context_->setOptimizationProfile(profile_index_)) {
     MS_LOG(INFO) << "setOptimizationProfile: " << profile_index_;
@@ -527,9 +550,6 @@ int TensorRTSubGraph::Prepare() {
     MS_LOG(INFO) << "device index " << index << " for tensor : " << tensor_name << " attr: " << device_ptr;
     tensor_bindings_[index] = device_ptr;
     nvinfer1::Dims input_dims = ConvertCudaDims(profile.inputs[i].max_dims);
-    for (int od = 0; od < input_dims.nbDims; od++) {
-      MS_LOG(DEBUG) << "in tensor " << tensor.Name() << " dims at " << od << " is " << input_dims.d[od];
-    }
     if (!this->trt_context_->setBindingDimensions(index, input_dims)) {
       MS_LOG(ERROR) << "invalid input dims of " << tensor.Name();
       return RET_ERROR;
@@ -700,8 +720,54 @@ int TensorRTSubGraph::OnNewInputShapes(const std::vector<ShapeVector> &new_shape
   return RET_OK;
 }
 
-int TensorRTSubGraph::PreExecute(const std::vector<tensor::Tensor> &inputs,
-                                 const std::vector<tensor::Tensor> &outputs) {
+int TensorRTSubGraph::VSLPreExectute(const std::vector<tensor::Tensor> &inputs, int i, bool sync,
+                                     const std::string &tensor_name) {
+  const bool is_expert_ids = (inputs.size() == Num6) ? Num1 : 0;
+  const int input_ids_idx = 0;
+  const int expert_ids_idx = (is_expert_ids) ? Num1 : -1;
+  const int attn_mask_idx = Num1 + is_expert_ids;
+  const int pos_ids_idx = Num2 + is_expert_ids;
+  const int current_idx_idx = Num3 + is_expert_ids;
+  if (i == input_ids_idx || i == expert_ids_idx || i == pos_ids_idx) {
+    int *in_ptr = static_cast<int *>(inputs[i].data_ptr()->data());
+    int batch = inputs[trt_in_tensor_name_.size() - Num1].ElementsNum();
+    int seq = inputs[0].ElementsNum() / batch;
+    int export_num = (i != expert_ids_idx) ? Num1 : inputs[i].ElementsNum() / (batch * seq);
+    bool incremental_mode =
+      (static_cast<const int32_t *>(inputs[pos_ids_idx].data().const_data())[0] != 0) ? true : false;
+    size_t h_token = 0;
+    for (int k = 0; k < batch; k++) {
+      int actual_seq_len =
+        (incremental_mode)
+          ? Num1
+          : (static_cast<const int32_t *>(inputs[trt_in_tensor_name_.size() - Num1].data().const_data())[k] + Num1);
+      int batch_valid = static_cast<const int32_t *>(inputs[trt_in_tensor_name_.size() - Num1].data().const_data())[k];
+      h_token += (batch_valid == -1) ? 0 : actual_seq_len;
+    }
+    for (int j = 0; j < export_num; j++) {
+      size_t h_token_idx = 0;
+      for (int k = 0; k < batch; k++) {
+        int actual_seq_len =
+          (incremental_mode)
+            ? Num1
+            : (static_cast<const int32_t *>(inputs[trt_in_tensor_name_.size() - Num1].data().const_data())[k] + Num1);
+        for (int l = 0; l < actual_seq_len; l++) {
+          in_ptr[j * h_token + h_token_idx + l] =
+            static_cast<int *>(inputs[i].data_ptr()->data())[j * batch * seq + k * seq + l];
+        }
+        h_token_idx += actual_seq_len;
+      }
+    }
+    return runtime_->GetAllocator()->SyncMemHostToDevice(inputs[i], tensor_name, sync,
+                                                         h_token * export_num * sizeof(int));
+  } else if (i != attn_mask_idx && i != current_idx_idx) {
+    return runtime_->GetAllocator()->SyncMemHostToDevice(inputs[i], tensor_name, sync);
+  }
+  return RET_OK;
+}
+
+int TensorRTSubGraph::PreExecute(const std::vector<tensor::Tensor> &inputs, const std::vector<tensor::Tensor> &outputs,
+                                 bool sync) {
   if (inputs_.size() != inputs.size()) {
     MS_LOG(ERROR) << "Graph inputs size " << inputs_.size() << " != execute inputs size " << inputs.size();
     return RET_ERROR;
@@ -729,7 +795,11 @@ int TensorRTSubGraph::PreExecute(const std::vector<tensor::Tensor> &inputs,
         MS_LOG(ERROR) << "realloc for input tensor device memory failed.";
         return RET_ERROR;
       }
-      ret = runtime_->GetAllocator()->SyncMemHostToDevice(inputs[i], trt_tensor_name);
+      if (runtime_->IsTransformerOptimizeSigma()) {
+        ret = VSLPreExectute(inputs, i, sync, trt_tensor_name);
+      } else {
+        ret = runtime_->GetAllocator()->SyncMemHostToDevice(inputs[i], trt_tensor_name, sync);
+      }
       if (ret != RET_OK) {
         MS_LOG(ERROR) << "sync mem from host to device failed for " << trt_tensor_name;
         return RET_ERROR;
@@ -767,9 +837,9 @@ int TensorRTSubGraph::PreExecute(const std::vector<tensor::Tensor> &inputs,
     tensor_bindings_[index] = device_ptr;
   }
   return RET_OK;
-}
+}  // namespace mindspore::lite
 
-int TensorRTSubGraph::PostExecute(std::vector<tensor::Tensor> *outputs) {
+int TensorRTSubGraph::PostExecute(std::vector<tensor::Tensor> *outputs, bool sync) {
   if (!outputs->empty() && outputs->size() != outputs_.size()) {
     MS_LOG(ERROR) << "Graph outputs size " << outputs_.size() << " != execute outputs size " << outputs->size();
     return RET_ERROR;
@@ -781,7 +851,6 @@ int TensorRTSubGraph::PostExecute(std::vector<tensor::Tensor> *outputs) {
     // actual output tensor dims
     auto out_dims = this->trt_context_->getBindingDimensions(index);
     std::vector<int64_t> new_shape = lite::ConvertMSShape(out_dims);
-    outputs_[i].SetShape(new_shape);
     for (int od = 0; od < out_dims.nbDims; od++) {
       MS_LOG(DEBUG) << "out tensor " << trt_out_tensor_name << " dims at " << od << " is " << new_shape[od];
     }
@@ -801,8 +870,8 @@ int TensorRTSubGraph::PostExecute(std::vector<tensor::Tensor> *outputs) {
           MS_LOG(ERROR) << "Specified output device or host address cannot be nullptr";
           return RET_ERROR;
         }
-        int sync_ret =
-          runtime_->GetAllocator()->SyncMemDeviceToHost(host_address, outputs_[i].DataSize(), trt_out_tensor_name);
+        int sync_ret = runtime_->GetAllocator()->SyncMemDeviceToHost(host_address, outputs_[i].DataSize(),
+                                                                     trt_out_tensor_name, sync);
         if (sync_ret != RET_OK) {
           MS_LOG(ERROR) << "sync mem from device to host failed for " << trt_out_tensor_name;
           return sync_ret;
@@ -810,7 +879,7 @@ int TensorRTSubGraph::PostExecute(std::vector<tensor::Tensor> *outputs) {
       }
     } else {
       tensor::Tensor output_tensor(static_cast<enum TypeId>(outputs_[i].DataType()), new_shape);
-      int sync_ret = runtime_->GetAllocator()->SyncMemDeviceToHost(&output_tensor, trt_out_tensor_name);
+      int sync_ret = runtime_->GetAllocator()->SyncMemDeviceToHost(&output_tensor, trt_out_tensor_name, sync);
       if (sync_ret != RET_OK) {
         MS_LOG(ERROR) << "sync mem from device to host failed for " << trt_out_tensor_name;
         return sync_ret;
@@ -836,19 +905,38 @@ bool TensorRTSubGraph::ValidInputResizeDims(const nvinfer1::Dims &construct_dims
 }
 
 int TensorRTSubGraph::Execute(const std::vector<tensor::Tensor> &inputs, std::vector<tensor::Tensor> *outputs) {
+#ifdef ASYNC_INFER
+  bool sync = false;
+#else
+  bool sync = true;
+#endif
   int ret = lite::SetCudaDevice(device_info_);
   if (ret != RET_OK) {
     return ret;
   }
-  ret = PreExecute(inputs, *outputs);
+  ret = PreExecute(inputs, *outputs, sync);
   if (ret != RET_OK) {
     return ret;
   }
-  if (!this->trt_context_->executeV2(tensor_bindings_)) {
-    MS_LOG(ERROR) << "TensorRT execute failed.";
-    return RET_ERROR;
+  if (sync) {
+    if (!this->trt_context_->executeV2(tensor_bindings_)) {
+      MS_LOG(ERROR) << "TensorRT execute failed.";
+      return RET_ERROR;
+    }
+  } else {
+    if (!this->trt_context_->enqueueV2(tensor_bindings_, stream_, nullptr)) {
+      MS_LOG(ERROR) << "TensorRT execute failed.";
+      return RET_ERROR;
+    }
   }
-  return PostExecute(outputs);
+  ret = PostExecute(outputs, sync);
+  if (ret != RET_OK) {
+    return ret;
+  }
+  if (!sync) {
+    cudaStreamSynchronize(stream_);
+  }
+  return RET_OK;
 }
 
 int TensorRTSubGraph::Resize(const std::vector<tensor::Tensor> &, const std::vector<ShapeVector> &new_shapes) {

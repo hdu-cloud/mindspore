@@ -25,6 +25,7 @@ mod = base.MultitypeFuncGraph("mod", True)
 `mod` is a metafuncgraph object which will compute the mod of two objects
 using ".register" decorator.
 """
+mod.set_need_raise()
 
 
 @mod.register("Number", "Number")

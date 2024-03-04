@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,18 @@
 
 #include <algorithm>
 #include <functional>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "abstract/utils.h"
 #include "runtime/device/kernel_runtime_manager.h"
 #include "utils/check_convert_utils.h"
 #include "utils/trace_base.h"
 #include "runtime/mem.h"
+#include "acl/acl_rt.h"
+
+#ifdef ASCEND_910
+using mindspore::ge::model_runner::MemcpyAsyncTaskInfo;
+#endif
 
 namespace mindspore {
 namespace kernel {
@@ -164,7 +169,7 @@ void ReshapeKernelMod::Execute(const std::vector<AddressPtr> &inputs, const std:
   MS_EXCEPTION_IF_NULL(cnode);
 
   if (inputs.empty() || outputs.empty()) {
-    MS_LOG(EXCEPTION) << "Inputs or outputs address of Reshape kernel is empty";
+    MS_LOG(INTERNAL_EXCEPTION) << "Inputs or outputs address of Reshape kernel is empty";
   }
   auto address_x = inputs[0]->addr;
   MS_EXCEPTION_IF_NULL(address_x);
@@ -176,9 +181,9 @@ void ReshapeKernelMod::Execute(const std::vector<AddressPtr> &inputs, const std:
   size_t input_size_byte = LongToSize(GetArrProd(cnode)) * abstract::TypeIdSize(type_x);
   // cppcheck-suppress unreadVariable
   auto lock = device::KernelRuntime::LockRuntime(stream_ptr);
-  auto status =
-    rtMemcpyAsync(output_addr, outputs[0]->size, address_x, input_size_byte, RT_MEMCPY_DEVICE_TO_DEVICE, stream_ptr);
-  if (status != RT_ERROR_NONE) {
+  auto status = aclrtMemcpyAsync(output_addr, outputs[0]->size, address_x, input_size_byte, ACL_MEMCPY_DEVICE_TO_DEVICE,
+                                 stream_ptr);
+  if (status != ACL_ERROR_NONE) {
     MS_LOG(ERROR) << "Call rtMemcpyAsync failed, ret = 0x" << status;
   }
 }
@@ -197,6 +202,25 @@ bool ReshapeKernelMod::Launch(const std::vector<AddressPtr> &inputs, const std::
     return false;
   }
   return true;
+}
+
+std::vector<TaskInfoPtr> ReshapeKernelMod::GenTask(const std::vector<AddressPtr> &inputs,
+                                                   const std::vector<AddressPtr> &,
+                                                   const std::vector<AddressPtr> &outputs, uint32_t stream_id) {
+#ifdef ASCEND_910
+  if (inputs.size() != kInputNum) {
+    MS_LOG(EXCEPTION) << "Inputs size should be 2, but got " << inputs.size();
+  }
+  stream_id_ = stream_id;
+  MS_EXCEPTION_IF_NULL(inputs[0]);
+  MS_EXCEPTION_IF_NULL(outputs[0]);
+  std::shared_ptr<MemcpyAsyncTaskInfo> task_info_ptr =
+    std::make_shared<MemcpyAsyncTaskInfo>(unique_name_, stream_id, outputs[0]->addr, outputs[0]->size, inputs[0]->addr,
+                                          inputs[0]->size, ACL_MEMCPY_DEVICE_TO_DEVICE, false);
+  MS_EXCEPTION_IF_NULL(task_info_ptr);
+  return {task_info_ptr};
+#endif
+  return {};
 }
 }  // namespace kernel
 }  // namespace mindspore

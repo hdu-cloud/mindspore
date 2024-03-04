@@ -15,10 +15,30 @@
  */
 
 #include "ops/grad/lstm_grad_data.h"
-#include <algorithm>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include <memory>
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -70,6 +90,13 @@ void LSTMGradData::set_zoneout_hidden(float zoneout_hidden) {
 }
 
 float LSTMGradData::get_zoneout_hidden() const { return GetValue<float>(this->GetAttr(kZoneoutHidden)); }
+
+void LSTMGradData::set_proj_size(const int64_t proj_size) {
+  (void)CheckAndConvertUtils::CheckInteger(kProjection_size, proj_size, kGreaterThan, 0, this->name());
+  (void)AddAttr(kProjection_size, api::MakeValue(proj_size));
+}
+
+int64_t LSTMGradData::get_proj_size() const { return GetValue<int64_t>(GetAttr(kProjection_size)); }
 
 void LSTMGradData::Init(const int64_t input_size, const int64_t hidden_size, const int64_t num_layers,
                         const bool has_bias, const float dropout, const bool bidirectional, const float zoneout_cell,
@@ -172,6 +199,24 @@ AbstractBasePtr LstmGradDataInfer(const abstract::AnalysisEnginePtr &, const Pri
 }
 
 MIND_API_OPERATOR_IMPL(LSTMGradData, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(LSTMGradData, prim::kPrimLstmGradData, LstmGradDataInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGLstmGradDataInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return LstmGradDataInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return LstmGradDataInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return LstmGradDataInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(LSTMGradData, prim::kPrimLstmGradData, AGLstmGradDataInfer, false);
 }  // namespace ops
 }  // namespace mindspore

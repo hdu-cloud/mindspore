@@ -18,14 +18,17 @@
 #define MINDSPORE_CCSRC_FRONTEND_OPTIMIZER_IRPASS_SYMBOL_RESOLVER_H_
 
 #include "frontend/optimizer/optimizer.h"
+#include "mindspore/core/ops/structure_ops.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "frontend/optimizer/optimizer_caller.h"
 #include "frontend/optimizer/irpass.h"
 #include "frontend/optimizer/anf_visitor.h"
 #include "frontend/operator/ops.h"
 #include "ir/pattern_matcher.h"
-#include "pipeline/jit/parse/data_converter.h"
+#include "pipeline/jit/ps/parse/data_converter.h"
 #include "include/common/utils/python_adapter.h"
-#include "pipeline/jit/parse/parse_base.h"
+#include "pipeline/jit/ps/parse/parse_base.h"
 
 namespace mindspore {
 namespace opt {
@@ -38,7 +41,6 @@ namespace irpass {
 // {prim::kPrimGetAttr, {prim::kPrimResolve, namespace, symbol}, attr}
 // {prim::kPrimGetAttr, namespace, attr}
 // {prim::kPrimGetAttr, MsClassObject, attr}
-// {prim::kPrimGetAttr, bool, attr}
 // {prim::kPrimResolve, namespace, symbol}
 class Resolver : public OptimizerCaller {
  public:

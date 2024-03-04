@@ -15,10 +15,28 @@
  */
 
 #include <map>
-#include "ops/grad/dynamic_rnn_grad.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <memory>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/grad/dynamic_rnn_grad.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -162,6 +180,24 @@ AbstractBasePtr DynamicRNNGradInfer(const abstract::AnalysisEnginePtr &, const P
   auto shape = DynamicRNNGradInferShape(primitive, input_args);
   return abstract::MakeAbstract(shape, type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(DynamicRNNGrad, prim::kPrimDynamicRNNGrad, DynamicRNNGradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGDynamicRNNGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicRNNGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicRNNGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DynamicRNNGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(DynamicRNNGrad, prim::kPrimDynamicRNNGrad, AGDynamicRNNGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

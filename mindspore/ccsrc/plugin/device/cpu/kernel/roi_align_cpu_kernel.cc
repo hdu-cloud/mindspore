@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#include <algorithm>
 #include "plugin/device/cpu/kernel/roi_align_cpu_kernel.h"
+#include <algorithm>
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 
 namespace mindspore {
@@ -58,7 +58,10 @@ void bilinear_interpolate(const int height, const int width, T y, T x, int *x_lo
   }
 
   // distance to nearest points
-  T lx, ly, hx, hy;
+  T lx;
+  T ly;
+  T hx;
+  T hy;
   ly = y - static_cast<T>(*y_low), lx = x - static_cast<T>(*x_low);
   hy = kOne - ly, hx = kOne - lx;
 
@@ -174,10 +177,11 @@ int ROIAlignCpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std
   // Calculate the sizes of inputs and output
   auto x_type_size = abstract::TypeIdSize(inputs[kIndex0]->GetDtype());
   auto rois_type_size = abstract::TypeIdSize(inputs[kIndex1]->GetDtype());
-  x_size_ = std::accumulate(x_shape.begin(), x_shape.end(), 1, std::multiplies{}) * x_type_size;
-  rois_size_ = std::accumulate(rois_shape.begin(), rois_shape.end(), 1, std::multiplies{}) * rois_type_size;
-  output_size_ = rois_shape[kIndex0] * x_shape[kIndex1] * pooled_height_ * pooled_width_ * x_type_size;
+  x_size_ = LongToSize(std::accumulate(x_shape.begin(), x_shape.end(), 1, std::multiplies{})) * x_type_size;
+  rois_size_ = LongToSize(std::accumulate(rois_shape.begin(), rois_shape.end(), 1, std::multiplies{})) * rois_type_size;
+  output_size_ = LongToSize(rois_shape[kIndex0] * x_shape[kIndex1] * pooled_height_ * pooled_width_) * x_type_size;
 
+  batch_ = LongToInt(x_shape[kIndex0]);
   channels_ = LongToInt(x_shape[kIndex1]);
   MS_EXCEPTION_IF_ZERO("channels", channels_);
   height_ = LongToInt(x_shape[kIndex2]);
@@ -195,10 +199,20 @@ template <typename T>
 bool ROIAlignCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &inputs,
                                         const std::vector<kernel::AddressPtr> &workspace,
                                         const std::vector<kernel::AddressPtr> &outputs) {
-  const T *input = reinterpret_cast<T *>(inputs[0]->addr);
-  const T *rois = reinterpret_cast<T *>(inputs[1]->addr);
-  auto out_data = reinterpret_cast<T *>(outputs[0]->addr);
+  MS_EXCEPTION_IF_NULL(inputs[0]);
+  MS_EXCEPTION_IF_NULL(inputs[1]);
+  const T *input = static_cast<T *>(inputs[0]->addr);
+  const T *rois = static_cast<T *>(inputs[1]->addr);
+  auto out_data = static_cast<T *>(outputs[0]->addr);
 
+  const T rois_min = static_cast<T>(0);
+  const T rois_max = static_cast<T>(batch_ - 1);
+  for (int i = 0; i < roi_rows_; ++i) {
+    int index = i * roi_cols_;
+    if (rois[index] < rois_min || rois[index] > rois_max) {
+      MS_LOG(EXCEPTION) << "image_index " << rois[index] << " must be a number in [0," << rois_max << "]";
+    }
+  }
   size_t elem_num = IntToSize(roi_rows_ * channels_ * pooled_height_ * pooled_width_);
   auto task = [this, &input, &rois, &out_data](size_t start, size_t end) {
     const T kOffset = T(0.001);
@@ -211,8 +225,15 @@ bool ROIAlignCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &i
         continue;
       }
       int offset = -1;
-      int c, ph, pw, roi_bin_grid_h, roi_bin_grid_w;
-      T bin_size_h, bin_size_w, roi_start_h, roi_start_w;
+      int c;
+      int ph;
+      int pw;
+      int roi_bin_grid_h;
+      int roi_bin_grid_w;
+      T bin_size_h;
+      T bin_size_w;
+      T roi_start_h;
+      T roi_start_w;
 
       bin_box(SizeToInt(thread_idx), rois, roi_cols_, spatial_scale, sample_num_, roi_end_mode_, channels_, height_,
               width_, pooled_height_, pooled_width_, &offset, &n, &c, &ph, &pw, &roi_bin_grid_h, &roi_bin_grid_w,
@@ -231,8 +252,14 @@ bool ROIAlignCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &i
                       static_cast<T>(ix + .5f) * bin_size_w / static_cast<T>(roi_bin_grid_w);
           // bilinear interpolate by shifted y / x
           // calculate bilinear interpolation
-          int x_low = 0, y_low = 0, x_high = 0, y_high = 0;
-          T w1, w2, w3, w4;
+          int x_low = 0;
+          int y_low = 0;
+          int x_high = 0;
+          int y_high = 0;
+          T w1;
+          T w2;
+          T w3;
+          T w4;
           bilinear_interpolate(height_, width_, y, x, &x_low, &y_low, &x_high, &y_high, &w1, &w2, &w3, &w4);
           if (x_low >= 0 && x_high >= 0 && y_low >= 0 && y_high >= 0 && y_low < height_ && y_high < height_ &&
               x_low < width_ && x_high < width_) {

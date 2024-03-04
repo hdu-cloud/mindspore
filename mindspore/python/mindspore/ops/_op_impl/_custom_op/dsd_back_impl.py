@@ -15,7 +15,7 @@
 """dsd back impl"""
 from __future__ import absolute_import
 from te import tik
-from topi.cce import util
+from tbe.tvm.topi.cce import util
 from mindspore.ops.op_info_register import DataType, TBERegOp, op_info_register
 
 dsd_grad_info = TBERegOp('DSDGrad') \
@@ -88,16 +88,12 @@ def dsdbpropimpl(w1_gm, w2_gm, v_gm, a_gm, d_a_gm, d_w1_gm={}, d_w2_gm={}, d_v_g
                             16, seq_len // 16, 16, 16),
                            name='a_gm',
                            scope=tik.scope_gm)
-    local_gm = a_gm
-    global_gm = a_gm
     # zN
     d_a_gm = tik_inst.Tensor('float16',
                              (batch_size, head, v_embedding //
                               16, seq_len // 16, 16, 16),
                              name='d_a_gm',
                              scope=tik.scope_gm)
-    d_local_gm = d_a_gm
-    d_global_gm = d_a_gm
 
     # output
     # w-zN
@@ -303,7 +299,7 @@ def dsdbpropimpl(w1_gm, w2_gm, v_gm, a_gm, d_a_gm, d_w1_gm={}, d_w2_gm={}, d_v_g
                                                            global_size // 16, 16, 16),
                                                name='v_global_l0b', scope=tik.scope_cb)
 
-                # d_w_global，小z大n
+                # d_w_global, 小z大n
                 d_w_global_l0c = tik_inst.Tensor('float32', (global_size // 16, head_size // (16 * ub_time), 16, 16),
                                                  name='d_w_global_l0c', scope=tik.scope_cc)
                 d_w_global_ub = tik_inst.Tensor('float16', (global_size // 16,

@@ -14,12 +14,31 @@
  * limitations under the License.
  */
 
+#include <map>
+#include <memory>
 #include <set>
 
-#include "ops/l2_normalize.h"
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/l2_normalize.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -67,6 +86,9 @@ class L2NormalizeInfer : public abstract::OpInferBase {
     }
     // failed to get vector<int64_t> axis from infer
     auto axis_vec = CheckAndConvertUtils::CheckIntOrTupleInt("attribute[axis]", primitive->GetAttr("axis"), prim_name);
+    if (axis_vec.size() <= 0) {
+      MS_LOG(EXCEPTION) << "For '" << prim_name << "', axis.shape is empty.";
+    }
     int64_t axis = axis_vec[0];
     CheckAndConvertUtils::CheckInRange("axis value", axis, kIncludeLeft, {-input_rank, input_rank}, prim_name);
 
@@ -75,13 +97,13 @@ class L2NormalizeInfer : public abstract::OpInferBase {
   }
 
   TypePtr InferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) const override {
+    MS_EXCEPTION_IF_NULL(prim);
     auto prim_name = prim->name();
     const int64_t kL2NormalizeInputsNum = 1;
     const int64_t input_num = kL2NormalizeInputsNum;
     (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_num,
                                              prim_name);
-
-    const std::set<TypePtr> valid_types = {kFloat32, kFloat16};
+    const std::set<TypePtr> valid_types = {kFloat32, kFloat16, kFloat64};
     MS_EXCEPTION_IF_NULL(input_args[kInputIndex0]);
     auto type = input_args[kInputIndex0]->BuildType();
     MS_EXCEPTION_IF_NULL(type);

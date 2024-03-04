@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,12 +17,12 @@
 #ifndef MINDSPORE_CORE_OPS_RANDOM_CATEGORICAL_H_
 #define MINDSPORE_CORE_OPS_RANDOM_CATEGORICAL_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -65,4 +65,4 @@ class MIND_API RandomCategorical : public BaseOperator {
 }  // namespace ops
 }  // namespace mindspore
 
-#endif  // MINDSPORE_CORE_OPS_RANDOM_STANDARD_NORMAL_H_
+#endif  // MINDSPORE_CORE_OPS_RANDOM_CATEGORICAL_H_

@@ -15,15 +15,25 @@
  */
 #include "ops/zeros_like.h"
 
-#include <vector>
-#include <string>
+#include <map>
 #include <memory>
+#include <vector>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,6 +43,8 @@ class ZerosLikeInfer : public abstract::OpInferBase {
   BaseShapePtr InferShape(const PrimitivePtr &primitive,
                           const std::vector<AbstractBasePtr> &input_args) const override {
     auto op_name = primitive->name();
+    constexpr int64_t empty_tensor_num = 0;
+    CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterThan, empty_tensor_num, op_name);
     auto input_shape_ptr = input_args[kInputIndex0]->BuildShape();
     auto input_shape_map = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_shape_ptr);
     auto input_shape = input_shape_map[kShape];
@@ -46,6 +58,8 @@ class ZerosLikeInfer : public abstract::OpInferBase {
   }
   TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
     auto op_name = primitive->name();
+    constexpr int64_t empty_tensor_num = 0;
+    CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterThan, empty_tensor_num, op_name);
     MS_EXCEPTION_IF_NULL(input_args[0]);
     auto infer_type = input_args[0]->BuildType();
     auto valid_type = common_valid_types_with_complex_and_bool;

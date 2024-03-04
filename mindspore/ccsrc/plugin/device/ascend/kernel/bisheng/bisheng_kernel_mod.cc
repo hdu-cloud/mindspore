@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,191 +13,181 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include "plugin/device/ascend/kernel/bisheng/bisheng_kernel_mod.h"
-
+#include <libgen.h>
 #include <dlfcn.h>
-#include <vector>
-#include <string>
-#include <algorithm>
-#include <functional>
-#include "abstract/utils.h"
+#include <sys/wait.h>
+#include <fstream>
+#include "runtime/kernel.h"
+#include "utils/log_adapter.h"
 #include "utils/file_utils.h"
-#include "runtime/device/kernel_runtime.h"
+#include "include/common/debug/common.h"
+#include "acl/acl_rt.h"
+#include "plugin/device/ascend/hal/device/ge_runtime/task_info.h"
+#include "plugin/device/ascend/hal/device/ascend_memory_manager.h"
 
-namespace mindspore {
-namespace kernel {
+namespace mindspore::kernel {
+namespace {
+constexpr size_t k910ACoreNumber = 32;
+static uint64_t kBiShengStartAddr = 0xbadbeef;
+static uint64_t kBiShengUniqueName = 0;
+
+std::string GetBishengKernelImplPath(const std::string &binary_name) {
+  Dl_info dl_info;
+  if (dladdr(reinterpret_cast<void *>(GetBishengKernelImplPath), &dl_info) == 0) {
+    MS_LOG(EXCEPTION) << "Get dladdr error!";
+  }
+  std::string cur_so_path = dl_info.dli_fname;
+  std::string bisheng_impl_path = std::string(dirname(cur_so_path.data())) + "/ascend/" + binary_name + ".so";
+  auto realpath = FileUtils::GetRealPath(bisheng_impl_path.c_str());
+  if (!realpath.has_value()) {
+    MS_LOG(EXCEPTION) << "Invalid file path, " << bisheng_impl_path << " does not exist.";
+  }
+  return realpath.value();
+}
+
+std::string GetBishengKernelMetaPath(const std::string &binary_name) {
+  auto kernel_meta_path = Common::GetKernelMetaTempDir() + binary_name + ".o";
+  return kernel_meta_path;
+}
+
+std::vector<uint8_t> GeneratorDeviceObject(const std::string &binary_name) {
+  std::string impl_host_so_path = GetBishengKernelImplPath(binary_name);
+  std::string impl_device_so_path = GetBishengKernelMetaPath(binary_name);
+  pid_t pid = fork();
+  if (pid == 0) {
+    (void)execlp("objcopy", "objcopy", "-O", "binary", "--only-section=__CLANG_OFFLOAD_BUNDLE__sycl-ascend_910",
+                 impl_host_so_path.c_str(), impl_device_so_path.c_str(), nullptr);
+    _exit(0);
+  } else if (pid > 0) {
+    int status;
+    (void)waitpid(pid, &status, 0);
+    if (status != 0) {
+      MS_LOG(EXCEPTION) << "Generate device object file failed.";
+    }
+  }
+  auto realpath = FileUtils::GetRealPath(impl_device_so_path.c_str());
+  if (!realpath.has_value()) {
+    MS_LOG(EXCEPTION) << "Invalid file path, " << impl_device_so_path << " does not exist.";
+  }
+
+  // read file to buffer
+  std::ifstream ifs(realpath.value());
+  if (!ifs.good()) {
+    MS_LOG(EXCEPTION) << "File: " << realpath.value() << " does not exist.";
+  }
+
+  if (!ifs.is_open()) {
+    MS_LOG(EXCEPTION) << "File: " << realpath.value() << " open failed.";
+  }
+
+  (void)ifs.seekg(0, std::ios::end);
+  size_t size = static_cast<size_t>(ifs.tellg());
+  std::vector<uint8_t> buffer(size, 0);
+  (void)ifs.seekg(0, std::ios::beg);
+  (void)ifs.read(reinterpret_cast<char *>(buffer.data()), static_cast<std::streamsize>(size));
+  ifs.close();
+  return buffer;
+}
+}  // namespace
+BiShengKernelMod::BiShengKernelMod() : AscendKernelMod() {}
+
 BiShengKernelMod::~BiShengKernelMod() {
-  if (handle_ != nullptr) {
-    dlclose(handle_);
+  if (tiling_addr_ != nullptr) {
+    auto mem_manager = std::make_shared<device::ascend::AscendMemoryManager>();
+    MS_EXCEPTION_IF_NULL(mem_manager);
+    mem_manager->FreeMemFromMemPool(tiling_addr_);
   }
-
-  attrs_.DestructKernelData();
 }
 
-bool BiShengKernelMod::InitKernel(const AnfNodePtr &kernel_node) {
-  kernel_name_ = common::AnfAlgo::GetCNodeName(kernel_node);
-  const auto &exec_info = common::AnfAlgo::GetNodeAttr<std::string>(kernel_node, "func_name");
-  auto pos = exec_info.find(":");
-  if (pos == std::string::npos) {
-    MS_LOG(EXCEPTION)
-      << "For '" << kernel_name_ << "' on Ascend, user defined function path '" << exec_info
-      << "' is illegal. Proper function path should follow the format of 'dir_path/file_name:func_name'";
-  }
-  auto path = exec_info.substr(0, pos);
-  auto real_path = FileUtils::GetRealPath(path.c_str());
-  if (!real_path.has_value()) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "' on Ascend, couldn't find the AOT binary file: " << path;
-  }
-  file_path_ = real_path.value();
-  func_name_ = exec_info.substr(pos + 1);
+size_t BiShengKernelMod::BlockDim() { return k910ACoreNumber; }
 
-  num_input_ = common::AnfAlgo::GetInputTensorNum(kernel_node);
-  auto input_type_list = AnfAlgo::GetAllInputDeviceTypes(kernel_node);
-  if (num_input_ != input_type_list.size()) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "' on Ascend, number of input types '" << input_type_list.size()
-                      << "' doesn't match number of input shapes '" << num_input_ << "'";
+void BiShengKernelMod::DoTiling(std::vector<void *> *workspace_addrs) {
+  MS_EXCEPTION_IF_NULL(workspace_addrs);
+  // Get tiling data
+  auto node = anf_node_.lock();
+  MS_EXCEPTION_IF_NULL(node);
+  auto cnode = node->cast<CNodePtr>();
+  MS_EXCEPTION_IF_NULL(cnode);
+  // Create bisheng_kernel_args
+  BiShengKernelArgs bisheng_args;
+  for (size_t i = 0; i < common::AnfAlgo::GetInputTensorNum(cnode); ++i) {
+    (void)bisheng_args.input_shapes.emplace_back(AnfAlgo::GetInputDeviceShape(cnode, i));
+  }
+  for (size_t i = 0; i < AnfAlgo::GetOutputTensorNum(cnode); ++i) {
+    (void)bisheng_args.output_shapes.emplace_back(AnfAlgo::GetOutputDeviceShape(cnode, i));
   }
 
-  for (size_t i = 0; i < num_input_; i++) {
-    auto in_shape = AnfAlgo::GetInputDeviceShape(kernel_node, i);
-    (void)shape_list_.emplace_back(in_shape);
-    ndims_.push_back(SizeToInt(in_shape.size()));
-    type_list_.emplace_back(TypeIdToString(input_type_list[i], true));
+  std::vector<uint8_t> tiling_data;
+  if (GetTilingFunc() == nullptr) {
+    MS_LOG(EXCEPTION) << "Node's tiling func must register! Op name: " << cnode->fullname_with_scope();
   }
-
-  num_output_ = common::AnfAlgo::GetOutputTensorNum(kernel_node);
-  auto output_type_list = AnfAlgo::GetAllOutputDeviceTypes(kernel_node);
-  if (num_output_ != output_type_list.size()) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "' on Ascend, number of outputs types '" << output_type_list.size()
-                      << "' doesn't match number of output shapes '" << num_output_ << "'";
-  }
-
-  for (size_t i = 0; i < num_output_; i++) {
-    auto out_shape = AnfAlgo::GetOutputDeviceShape(kernel_node, i);
-    (void)shape_list_.emplace_back(out_shape);
-    ndims_.push_back(SizeToInt(out_shape.size()));
-    type_list_.emplace_back(TypeIdToString(output_type_list[i], true));
-  }
-
-  (void)std::transform(std::begin(shape_list_), std::end(shape_list_), std::back_inserter(shapes_),
-                       [](auto &v) { return &v[0]; });
-  (void)std::transform(std::begin(type_list_), std::end(type_list_), std::back_inserter(type_pointer_list_),
-                       [](auto &str) { return str.c_str(); });
-  auto cnode = kernel_node->cast<CNodePtr>();
-  attrs_.SetKernelPrim(common::AnfAlgo::GetCNodePrimitive(cnode));
-
-  if (!handle_) {
-    handle_ = dlopen(file_path_.c_str(), RTLD_LAZY | RTLD_LOCAL);
-    if (!handle_) {
-      MS_LOG(ERROR) << "For '" << kernel_name_ << "' on Ascend, dlopen file '" << file_path_
-                    << "' should be successful, but error occurs! Error message is: " << dlerror();
-      return false;
-    }
-  }
-  init_func_ = reinterpret_cast<std::add_pointer<int(int *, int64_t **, const char **, AotExtra *)>::type>(
-    dlsym(handle_, (func_name_ + "Init").c_str()));
-  if (init_func_ != nullptr) {
-    // Init func exist in the custom aot file
-    // Call this init func to set custom op attrs_
-    int ret = 0;
-    try {
-      ret = init_func_(&ndims_[0], &shapes_[0], &type_pointer_list_[0], (&attrs_));
-    } catch (const std::exception &e) {
-      MS_LOG(ERROR) << "For '" << kernel_name_ << "' on Ascend, operator failed when executing user defined file "
-                    << file_path_ << "! "
-                    << "Error message is " << e.what();
-      return false;
-    }
-
-    if (ret != 0) {
-      MS_LOG(EXCEPTION) << "Return value from Ascend AOT kernel(" << file_path_ << ")'s function(" << func_name_
-                        << ") is " << ret << ". "
-                        << "Any return value not equal to 0 will be treated as user defined error code and we will "
-                           "terminate execution. If termination is not your purpose, please set return value to 0.";
-    }
-  }
-  InitSizeLists();
-  return true;
-}
-
-void BiShengKernelMod::InitSizeLists() {
-  for (size_t i = 0; i < num_input_; i++) {
-    size_t this_size =
-      LongToSize(std::accumulate(shape_list_[i].begin(), shape_list_[i].end(), 1, std::multiplies<int64_t>()));
-    this_size *= GetDtypeNbyte(type_list_[i]);
-    input_size_list_.push_back(this_size);
-  }
-  for (size_t i = num_input_; i < (num_input_ + num_output_); i++) {
-    size_t this_size =
-      LongToSize(std::accumulate(shape_list_[i].begin(), shape_list_[i].end(), 1, std::multiplies<int64_t>()));
-
-    this_size *= GetDtypeNbyte(type_list_[i]);
-    output_size_list_.push_back(this_size);
-  }
-  workspace_size_list_.clear();
-  workspace_size_list_ = attrs_.WorkSpace();
-}
-
-bool BiShengKernelMod::Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
-                              const std::vector<AddressPtr> &outputs, void *stream_ptr) {
-  std::vector<void *> params;
-
-  for (size_t i = 0; i < num_input_; i++) {
-    params.push_back(GetDeviceAddress<void>(inputs, i));
-  }
-  for (size_t i = 0; i < num_output_; i++) {
-    params.push_back(GetDeviceAddress<void>(outputs, i));
-  }
-
-  for (size_t i = 0; i < attrs_.WorkSpace().size(); i++) {
-    params.push_back(GetDeviceAddress<void>(workspace, i));
-  }
-
-  if (!handle_) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "' on Ascend, the handle should be not nullptr since the file '"
-                      << file_path_ << "' should be opened successfully in Init method.";
-  }
-
-  if (!aot_func_) {
-    aot_func_ =
-      reinterpret_cast<std::add_pointer<int(int, void **, int *, int64_t **, const char **, void *, void *)>::type>(
-        dlsym(handle_, func_name_.c_str()));
-    if (auto error_info = dlerror(); error_info != nullptr) {
-      MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "' on Ascend, error occurs when fetching function '" << func_name_
-                        << "'. Error info: " << error_info;
-    }
-  }
-
-  int nparam = SizeToInt(params.size());
-  int ret = 0;
-  try {
-    if (nparam == 0) {
-      ret = aot_func_(0, nullptr, nullptr, nullptr, nullptr, stream_ptr, nullptr);
-    } else {
-      ret = aot_func_(nparam, &params[0], &ndims_[0], &shapes_[0], &type_pointer_list_[0], stream_ptr,
-                      reinterpret_cast<void *>(&attrs_));
-    }
-  } catch (const std::exception &e) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "' on Ascend, operator failed when executing user defined file "
-                      << file_path_ << "! "
-                      << "Error message is " << e.what();
-  }
-
+  auto ret = GetTilingFunc()(bisheng_args, &tiling_data);
   if (ret != 0) {
-    MS_LOG(EXCEPTION) << "Return value from Ascend AOT kernel(" << file_path_ << ")'s function(" << func_name_
-                      << ") is " << ret << ". "
-                      << "Any return value not equal to 0 will be treated as user defined error code and we will "
-                         "terminate execution. If termination is not your purpose, please set return value to 0.";
+    MS_LOG(EXCEPTION) << "Call bisheng tiling failed, ret: " << ret;
   }
 
-  return true;
+  // Malloc tiling_addr
+  auto mem_manager = std::make_shared<device::ascend::AscendMemoryManager>();
+  MS_EXCEPTION_IF_NULL(mem_manager);
+  if (tiling_addr_ != nullptr) {
+    mem_manager->FreeMemFromMemPool(tiling_addr_);
+  }
+  tiling_addr_ = mem_manager->MallocMemFromMemPool(tiling_data.size(), false);
+  if (tiling_addr_ == nullptr) {
+    MS_LOG(EXCEPTION) << "Call MemoryPool to allocate tiling_addr_ failed. Op name: " << cnode->fullname_with_scope();
+  }
+
+  // CopyHostToDevice
+  auto rt_ret =
+    aclrtMemcpy(tiling_addr_, tiling_data.size(), tiling_data.data(), tiling_data.size(), ACL_MEMCPY_HOST_TO_DEVICE);
+  if (rt_ret != ACL_ERROR_NONE) {
+    MS_LOG(EXCEPTION) << "Call rt api aclrtMemcpy failed, ret: " << rt_ret;
+  }
+
+  // Insert to workspace
+  (void)workspace_addrs->emplace_back(tiling_addr_);
 }
 
 std::vector<TaskInfoPtr> BiShengKernelMod::GenTask(const std::vector<AddressPtr> &inputs,
-                                                   const std::vector<AddressPtr> &,
+                                                   const std::vector<AddressPtr> &workspaces,
                                                    const std::vector<AddressPtr> &outputs, uint32_t stream_id) {
-  MS_LOG(ERROR) << "BiSheng OP does not support sink mode for now.";
-  return {};
+  auto device_o = GeneratorDeviceObject(GetBinary());
+  rtDevBinary_t binary = {RT_DEV_BINARY_MAGIC_ELF, 0, static_cast<void *>(device_o.data()), device_o.size()};
+  void *dev_binary_handle = nullptr;
+  auto rt_ret = rtDevBinaryRegister(&binary, &dev_binary_handle);
+  if (rt_ret != RT_ERROR_NONE) {
+    MS_LOG(EXCEPTION) << "rtDevBinaryRegister failed, error code: " << rt_ret;
+  }
+  const auto &binary_func = FunctionName();
+  rt_ret = rtFunctionRegister(dev_binary_handle, reinterpret_cast<void *>(kBiShengStartAddr), binary_func.c_str(),
+                              binary_func.c_str(), 0);
+  if (rt_ret != RT_ERROR_NONE) {
+    MS_LOG(EXCEPTION) << "rtFunctionRegister failed, error code: " << rt_ret;
+  }
+  kBiShengStartAddr += 1;
+
+  std::vector<uint8_t> args;
+  std::vector<uint8_t> sm_desc;
+  std::vector<uint8_t> meta_data;
+  std::vector<void *> input_data_addrs;
+  std::vector<void *> output_data_addrs;
+  std::vector<void *> workspace_addrs;
+
+  // get raw addresses
+  GetRawAddress(inputs, &input_data_addrs);
+  GetRawAddress(outputs, &output_data_addrs);
+  GetRawAddress(workspaces, &workspace_addrs);
+
+  DoTiling(&workspace_addrs);
+
+  stream_id_ = stream_id;
+  block_dim_ = BlockDim();
+  auto task_info_ptr = std::make_shared<mindspore::ge::model_runner::TbeTaskInfo>(
+    GetOpName() + std::to_string(kBiShengUniqueName), stream_id, binary_func, block_dim_, args, 0, sm_desc, nullptr, 0,
+    meta_data, input_data_addrs, output_data_addrs, workspace_addrs, NeedDump());
+  kBiShengUniqueName += 1;
+  return {task_info_ptr};
 }
-}  // namespace kernel
-}  // namespace mindspore
+}  // namespace mindspore::kernel

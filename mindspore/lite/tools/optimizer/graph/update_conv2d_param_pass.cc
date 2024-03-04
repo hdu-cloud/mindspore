@@ -19,6 +19,7 @@
 #include <memory>
 #include <utility>
 #include <vector>
+#include "mindspore/core/ops/lite_ops.h"
 #include "ops/fusion/conv2d_fusion.h"
 #include "mindspore/lite/include/errorcode.h"
 #include "ops/op_utils.h"
@@ -58,7 +59,7 @@ STATUS UpdateConv2DParamPass::UpdateConv2DAttr(const CNodePtr &cnode) {
     MS_LOG(ERROR) << "fetch shape from abstract failed.";
     return lite::RET_ERROR;
   }
-  if (shape.empty()) {
+  if (lite::JudgeDynamicShape(shape)) {
     return lite::RET_OK;
   }
   if (shape.size() != kInputSizeFour) {

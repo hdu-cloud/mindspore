@@ -24,12 +24,15 @@
 #include <complex>
 #include <unordered_map>
 #include <utility>
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 #include "plugin/device/cpu/kernel/nnacl/fp32/arithmetic_fp32.h"
 #include "plugin/device/cpu/kernel/nnacl/fp32/mul_fp32.h"
 #include "plugin/device/cpu/kernel/nnacl/fp32/power_fp32.h"
 #include "plugin/device/cpu/kernel/nnacl/fp32/sub_fp32.h"
 #include "plugin/device/cpu/kernel/nnacl/fp32/add_fp32.h"
+#include "Eigen/Eigen"
 
 namespace mindspore {
 namespace kernel {
@@ -50,7 +53,6 @@ constexpr auto kFloorDiv = "FloorDiv";
 constexpr auto kMod = "Mod";
 constexpr auto kFloorMod = "FloorMod";
 constexpr auto kSquaredDifference = "SquaredDifference";
-constexpr auto kXlogy = "Xlogy";
 constexpr auto kAtan2 = "Atan2";
 
 template <typename T>
@@ -112,8 +114,8 @@ class ArithmeticCpuTypeFunc : public CpuKernelFunc {
       (void)output_shape_.insert(output_shape_.begin(), 1);
     }
     output_size_ = SizeOf(output_shape_);
-    op_para_.in_elements_num0_ = SizeToInt(SizeOf(input_shape1_));
-    op_para_.in_elements_num1_ = SizeToInt(SizeOf(input_shape2_));
+    op_para_.in_elements_num0_ = SizeToLong(SizeOf(input_shape1_));
+    op_para_.in_elements_num1_ = SizeToLong(SizeOf(input_shape2_));
     size_t l = input_shape1_.size();
     if (l < output_shape_.size()) {
       for (size_t i = 0; i < output_shape_.size() - l; ++i) {
@@ -218,8 +220,7 @@ class ArithmeticCpuTypeFunc : public CpuKernelFunc {
                                {kFloorDiv, &ArithmeticCpuTypeFunc<T>::FloorDiv},
                                {kAtan2, &ArithmeticCpuTypeFunc<T>::Atan2},
                                {kRealDiv, &ArithmeticCpuTypeFunc<T>::RealDiv},
-                               {kSquaredDifference, &ArithmeticCpuTypeFunc<T>::SquaredDifference},
-                               {kXlogy, &ArithmeticCpuTypeFunc<T>::Xlogy}};
+                               {kSquaredDifference, &ArithmeticCpuTypeFunc<T>::SquaredDifference}};
     } else {
       dtype_desc = "complex data";
       arithmeticMathFuncMap = {{kSquaredDifference, &ArithmeticCpuTypeFunc<T>::SquaredDifferenceComplex},
@@ -230,13 +231,13 @@ class ArithmeticCpuTypeFunc : public CpuKernelFunc {
                                {kMul, &ArithmeticCpuTypeFunc<T>::Mul},
                                {kDivNoNan, &ArithmeticCpuTypeFunc<T>::DivNoNan},
                                {kAddV2, &ArithmeticCpuTypeFunc<T>::AddV2},
-                               {kPow, &ArithmeticCpuTypeFunc<T>::PowComplex},
-                               {kXlogy, &ArithmeticCpuTypeFunc<T>::Xlogy}};
+                               {kAdd, &ArithmeticCpuTypeFunc<T>::Add},
+                               {kPow, &ArithmeticCpuTypeFunc<T>::PowComplex}};
     }
     if (arithmeticMathFuncMap.find(kernel_name_) == arithmeticMathFuncMap.end()) {
       MS_LOG(EXCEPTION) << "For 'Arithmetic', it only supports operators in "
                         << Map2Str<std::unordered_map, TypeComputeFunc>(arithmeticMathFuncMap) << ", but got "
-                        << kernel_name_ << "for " << dtype_desc << ", but got " << kernel_name_ << ".";
+                        << kernel_name_ << " for " << dtype_desc << ".";
     }
     compute_func_ = arithmeticMathFuncMap.at(kernel_name_);
   }
@@ -273,19 +274,13 @@ void ArithmeticCpuTypeFunc<T>::AssignAdd(T *input1, const T *input2, T *out) {
 
 template <typename T>
 void ArithmeticCpuTypeFunc<T>::AssignSub(T *input1, const T *input2, T *out) {
-  if constexpr (std::is_same_v<T, float>) {
-    auto task = [&input1, &input2](size_t start, size_t end) {
-      (void)AssignSubOpt(input1 + start, input2 + start, end - start);
-    };
-    ParallelLaunchAutoSearch(task, output_size_, this, &parallel_search_info_);
-  } else {
-    auto task = [&input1, &input2](size_t start, size_t end) {
-      for (size_t i = start; i < end; i++) {
-        input1[i] = input1[i] - input2[i];
-      }
-    };
-    ParallelLaunchAutoSearch(task, output_size_, this, &parallel_search_info_);
-  }
+  auto task = [&input1, &input2, &out](size_t start, size_t end) {
+    for (size_t i = start; i < end; i++) {
+      out[i] = input1[i] - input2[i];
+      input1[i] = out[i];
+    }
+  };
+  ParallelLaunchAutoSearch(task, output_size_, this, &parallel_search_info_);
 }
 
 template <typename T>
@@ -301,9 +296,9 @@ void ArithmeticCpuTypeFunc<T>::Add(const T *input1, const T *input2, T *out) {
     if (op_para_.in_elements_num0_ == 1 || op_para_.in_elements_num1_ == 1) {
       auto task = [this, input1, input2, out](size_t start, size_t end) {
         if (op_para_.in_elements_num0_ == 1) {
-          (void)ElementOptAdd(input1, input2 + start, out + start, end - start, &op_para_);
+          (void)ElementOptAdd(input1, input2 + start, out + start, end - start, true);
         } else {
-          (void)ElementOptAdd(input1 + start, input2, out + start, end - start, &op_para_);
+          (void)ElementOptAdd(input1 + start, input2, out + start, end - start, false);
         }
       };
       ParallelLaunchAutoSearch(task, output_size_, this, &parallel_search_info_);
@@ -347,9 +342,9 @@ void ArithmeticCpuTypeFunc<T>::Sub(const T *input1, const T *input2, T *out) {
     if (op_para_.in_elements_num0_ == 1 || op_para_.in_elements_num1_ == 1) {
       auto task = [this, input1, input2, out](size_t start, size_t end) {
         if (op_para_.in_elements_num0_ == 1) {
-          (void)ElementOptSub(input1, input2 + start, out + start, end - start, &op_para_);
+          (void)ElementOptSub(input1, input2 + start, out + start, end - start, true);
         } else {
-          (void)ElementOptSub(input1 + start, input2, out + start, end - start, &op_para_);
+          (void)ElementOptSub(input1 + start, input2, out + start, end - start, false);
         }
       };
       ParallelLaunchAutoSearch(task, output_size_, this, &parallel_search_info_);
@@ -380,9 +375,9 @@ void ArithmeticCpuTypeFunc<T>::Mul(const T *input1, const T *input2, T *out) {
     if (op_para_.in_elements_num0_ == 1 || op_para_.in_elements_num1_ == 1) {
       auto task = [this, input1, input2, out](size_t start, size_t end) {
         if (op_para_.in_elements_num0_ == 1) {
-          (void)ElementOptMul(input1, input2 + start, out + start, end - start, &op_para_);
+          (void)ElementOptMul(input1, input2 + start, out + start, end - start, true);
         } else {
-          (void)ElementOptMul(input1 + start, input2, out + start, end - start, &op_para_);
+          (void)ElementOptMul(input1 + start, input2, out + start, end - start, false);
         }
       };
       ParallelLaunchAutoSearch(task, output_size_, this, &parallel_search_info_);
@@ -677,38 +672,65 @@ void ArithmeticCpuTypeFunc<T>::FloorMod(const T *input1, const T *input2, T *out
 }
 
 template <typename T>
+void PowEigenTask(T *x_addr, T *y_addr, T *output_addr, size_t start, size_t end, bool same_shape) {
+  Eigen::Map<Eigen::Array<T, -1, 1>> x_v(x_addr + start, end - start);
+  Eigen::Map<Eigen::Array<T, -1, 1>> o_v(output_addr + start, end - start);
+  if (same_shape) {
+    Eigen::Map<Eigen::Array<T, -1, 1>> y_v(y_addr + start, end - start);
+    o_v = x_v.pow(y_v);
+  } else {
+    o_v = x_v.pow(*y_addr);
+  }
+}
+
+template <>
+void PowEigenTask(float16 *x_addr, float16 *y_addr, float16 *output_addr, size_t start, size_t end, bool same_shape) {
+  Eigen::half *ex_addr = reinterpret_cast<Eigen::half *>(x_addr);
+  Eigen::half *ey_addr = reinterpret_cast<Eigen::half *>(y_addr);
+  Eigen::half *eo_addr = reinterpret_cast<Eigen::half *>(output_addr);
+  Eigen::Map<Eigen::Array<Eigen::half, -1, 1>> x_v(ex_addr + start, end - start);
+  Eigen::Map<Eigen::Array<Eigen::half, -1, 1>> o_v(eo_addr + start, end - start);
+  if (same_shape) {
+    Eigen::Map<Eigen::Array<Eigen::half, -1, 1>> y_v(ey_addr + start, end - start);
+    o_v = x_v.pow(y_v);
+  } else {
+    o_v = x_v.pow(*ey_addr);
+  }
+}
+
+template <typename T>
 void ArithmeticCpuTypeFunc<T>::Pow(const T *input1, const T *input2, T *out) {
-  if constexpr (std::is_same_v<T, float>) {
-    auto is_power_single = [this]() {
-      bool is_power_single_inner = false;
+  if constexpr (std::is_same_v<T, float16> || std::is_same_v<T, float> || std::is_same_v<T, double>) {
+    auto is_same_shape = [this]() {
+      bool is_same_shape_inner = false;
       if (input_shape1_.size() == input_shape2_.size()) {
-        is_power_single_inner = true;
+        is_same_shape_inner = true;
         for (size_t i = 0; i < input_shape1_.size(); ++i) {
           if (input_shape1_[i] != input_shape2_[i]) {
-            is_power_single_inner = false;
+            is_same_shape_inner = false;
             break;
           }
         }
       }
-      return is_power_single_inner;
+      return is_same_shape_inner;
     };
-
+    auto x_addr = const_cast<T *>(input1);
+    auto y_addr = const_cast<T *>(input2);
     if (op_para_.in_elements_num1_ == 1) {
-      auto task = [&](size_t start, size_t end) {
-        (void)Power(input1 + start, input2, out + start, SizeToInt(end - start), 1.0, 0.0, true);
+      auto task = [&x_addr, &y_addr, &out](size_t start, size_t end) {
+        PowEigenTask(x_addr, y_addr, out, start, end, false);
       };
       ParallelLaunchAutoSearch(task, output_size_, this, &parallel_search_info_);
       return;
     }
-    if (is_power_single()) {
-      auto task = [&](size_t start, size_t end) {
-        (void)Power(input1 + start, input2 + start, out + start, SizeToInt(end - start), 1.0, 0.0, false);
+    if (is_same_shape()) {
+      auto task = [&x_addr, &y_addr, &out](size_t start, size_t end) {
+        PowEigenTask(x_addr, y_addr, out, start, end, true);
       };
       ParallelLaunchAutoSearch(task, output_size_, this, &parallel_search_info_);
       return;
     }
   }
-
   if (!is_init_broadcast_) {
     InitBroadCast();
   }
@@ -723,11 +745,12 @@ void ArithmeticCpuTypeFunc<T>::Pow(const T *input1, const T *input2, T *out) {
     ParallelLaunchAutoSearch(task, output_size_, this, &parallel_search_info_);
   } else {
     for (size_t i = 0; i < output_size_; i++) {
-      auto sx = static_cast<double>(input1[input_index1_[i]]);
-      auto sy = static_cast<double>(input2[input_index2_[i]]);
-      out[i] = static_cast<T>(std::pow(sx, sy));
+      auto x = static_cast<double>(input1[input_index1_[i]]);
+      auto y = static_cast<double>(input2[input_index2_[i]]);
+      out[i] = static_cast<T>(std::pow(x, y));
     }
   }
+  return;
 }
 
 template <typename T>
@@ -852,6 +875,11 @@ static std::map<std::string, std::vector<std::pair<KernelAttr, ArithmeticCpuFunc
     {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeFloat16),
      SpecializeArithFunc<float16>},
     {KernelAttr()
+       .AddInputAttr(kNumberTypeBFloat16)
+       .AddInputAttr(kNumberTypeBFloat16)
+       .AddOutputAttr(kNumberTypeBFloat16),
+     SpecializeArithFunc<bfloat16>},
+    {KernelAttr()
        .AddInputAttr(kNumberTypeComplex64)
        .AddInputAttr(kNumberTypeComplex64)
        .AddOutputAttr(kNumberTypeComplex64),
@@ -891,24 +919,30 @@ static std::map<std::string, std::vector<std::pair<KernelAttr, ArithmeticCpuFunc
        .AddOutputAttr(kNumberTypeComplex128),
      SpecializeArithFunc<complex128>}}},
   {kMul,
-   {{KernelAttr().AddInputAttr(kNumberTypeInt32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt32),
-     SpecializeArithFunc<int32_t>},
-    {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
-     SpecializeArithFunc<float>},
-    {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeFloat16),
-     SpecializeArithFunc<float16>},
-    {KernelAttr().AddInputAttr(kNumberTypeInt64).AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeInt64),
-     SpecializeArithFunc<int64_t>},
-    {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64),
-     SpecializeArithFunc<double>},
-    {KernelAttr().AddInputAttr(kNumberTypeInt16).AddInputAttr(kNumberTypeInt16).AddOutputAttr(kNumberTypeInt16),
-     SpecializeArithFunc<int16_t>},
-    {KernelAttr().AddInputAttr(kNumberTypeUInt16).AddInputAttr(kNumberTypeUInt16).AddOutputAttr(kNumberTypeUInt16),
-     SpecializeArithFunc<uint16_t>},
+   {{KernelAttr().AddInputAttr(kNumberTypeBool).AddInputAttr(kNumberTypeBool).AddOutputAttr(kNumberTypeBool),
+     SpecializeArithFunc<bool>},
     {KernelAttr().AddInputAttr(kNumberTypeInt8).AddInputAttr(kNumberTypeInt8).AddOutputAttr(kNumberTypeInt8),
      SpecializeArithFunc<int8_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeInt16).AddInputAttr(kNumberTypeInt16).AddOutputAttr(kNumberTypeInt16),
+     SpecializeArithFunc<int16_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeInt32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt32),
+     SpecializeArithFunc<int32_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeInt64).AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeInt64),
+     SpecializeArithFunc<int64_t>},
     {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddInputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeUInt8),
      SpecializeArithFunc<uint8_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeUInt16).AddInputAttr(kNumberTypeUInt16).AddOutputAttr(kNumberTypeUInt16),
+     SpecializeArithFunc<uint16_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeUInt32).AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeUInt32),
+     SpecializeArithFunc<uint32_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeUInt64).AddInputAttr(kNumberTypeUInt64).AddOutputAttr(kNumberTypeUInt64),
+     SpecializeArithFunc<uint64_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeFloat16),
+     SpecializeArithFunc<float16>},
+    {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
+     SpecializeArithFunc<float>},
+    {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64),
+     SpecializeArithFunc<double>},
     {KernelAttr()
        .AddInputAttr(kNumberTypeComplex64)
        .AddInputAttr(kNumberTypeComplex64)
@@ -918,9 +952,7 @@ static std::map<std::string, std::vector<std::pair<KernelAttr, ArithmeticCpuFunc
        .AddInputAttr(kNumberTypeComplex128)
        .AddInputAttr(kNumberTypeComplex128)
        .AddOutputAttr(kNumberTypeComplex128),
-     SpecializeArithFunc<complex128>},
-    {KernelAttr().AddInputAttr(kNumberTypeBool).AddInputAttr(kNumberTypeBool).AddOutputAttr(kNumberTypeBool),
-     SpecializeArithFunc<bool>}}},
+     SpecializeArithFunc<complex128>}}},
   {kDiv,
    {{KernelAttr().AddInputAttr(kNumberTypeInt8).AddInputAttr(kNumberTypeInt8).AddOutputAttr(kNumberTypeInt8),
      SpecializeArithFunc<int8_t>},
@@ -972,20 +1004,26 @@ static std::map<std::string, std::vector<std::pair<KernelAttr, ArithmeticCpuFunc
        .AddOutputAttr(kNumberTypeComplex128),
      SpecializeArithFunc<complex128>}}},
   {kPow,
-   {{KernelAttr().AddInputAttr(kNumberTypeInt32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt32),
-     SpecializeArithFunc<int32_t>},
-    {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
+   {{KernelAttr().AddInputAttr(kNumberTypeFloat32).AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
      SpecializeArithFunc<float>},
-    {KernelAttr().AddInputAttr(kNumberTypeInt64).AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeInt64),
-     SpecializeArithFunc<int64_t>},
     {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64),
      SpecializeArithFunc<double>},
-    {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeFloat16),
-     SpecializeArithFunc<float16>},
     {KernelAttr().AddInputAttr(kNumberTypeInt8).AddInputAttr(kNumberTypeInt8).AddOutputAttr(kNumberTypeInt8),
      SpecializeArithFunc<int8_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeInt16).AddInputAttr(kNumberTypeInt16).AddOutputAttr(kNumberTypeInt16),
+     SpecializeArithFunc<int16_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeInt32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt32),
+     SpecializeArithFunc<int32_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeInt64).AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeInt64),
+     SpecializeArithFunc<int64_t>},
     {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddInputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeUInt8),
      SpecializeArithFunc<uint8_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeUInt16).AddInputAttr(kNumberTypeUInt16).AddOutputAttr(kNumberTypeUInt16),
+     SpecializeArithFunc<uint16_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeUInt32).AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeUInt32),
+     SpecializeArithFunc<uint32_t>},
+    {KernelAttr().AddInputAttr(kNumberTypeUInt64).AddInputAttr(kNumberTypeUInt64).AddOutputAttr(kNumberTypeUInt64),
+     SpecializeArithFunc<uint64_t>},
     {KernelAttr()
        .AddInputAttr(kNumberTypeComplex64)
        .AddInputAttr(kNumberTypeComplex64)
@@ -1130,65 +1168,25 @@ static std::map<std::string, std::vector<std::pair<KernelAttr, ArithmeticCpuFunc
        .AddOutputAttr(kNumberTypeComplex128),
      SpecializeArithFunc<complex128>}}},
   {kAssignSub,
-   {{KernelAttr()
-       .AddInputAttr(kNumberTypeInt8)
-       .AddInputAttr(kNumberTypeInt8)
-       .AddOutputAttr(kNumberTypeInt8)
-       .AddOutInRef(0, 0),
+   {{KernelAttr().AddInputAttr(kNumberTypeInt8).AddInputAttr(kNumberTypeInt8).AddOutputAttr(kNumberTypeInt8),
      SpecializeArithFunc<int8_t>},
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeUInt8)
-       .AddInputAttr(kNumberTypeUInt8)
-       .AddOutputAttr(kNumberTypeUInt8)
-       .AddOutInRef(0, 0),
+    {KernelAttr().AddInputAttr(kNumberTypeUInt8).AddInputAttr(kNumberTypeUInt8).AddOutputAttr(kNumberTypeUInt8),
      SpecializeArithFunc<uint8_t>},
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeInt16)
-       .AddInputAttr(kNumberTypeInt16)
-       .AddOutputAttr(kNumberTypeInt16)
-       .AddOutInRef(0, 0),
+    {KernelAttr().AddInputAttr(kNumberTypeInt16).AddInputAttr(kNumberTypeInt16).AddOutputAttr(kNumberTypeInt16),
      SpecializeArithFunc<int16_t>},
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeUInt16)
-       .AddInputAttr(kNumberTypeUInt16)
-       .AddOutputAttr(kNumberTypeUInt16)
-       .AddOutInRef(0, 0),
+    {KernelAttr().AddInputAttr(kNumberTypeUInt16).AddInputAttr(kNumberTypeUInt16).AddOutputAttr(kNumberTypeUInt16),
      SpecializeArithFunc<uint16_t>},
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeInt32)
-       .AddInputAttr(kNumberTypeInt32)
-       .AddOutputAttr(kNumberTypeInt32)
-       .AddOutInRef(0, 0),
+    {KernelAttr().AddInputAttr(kNumberTypeInt32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt32),
      SpecializeArithFunc<int32_t>},
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeUInt32)
-       .AddInputAttr(kNumberTypeUInt32)
-       .AddOutputAttr(kNumberTypeUInt32)
-       .AddOutInRef(0, 0),
+    {KernelAttr().AddInputAttr(kNumberTypeUInt32).AddInputAttr(kNumberTypeUInt32).AddOutputAttr(kNumberTypeUInt32),
      SpecializeArithFunc<uint32_t>},
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeFloat32)
-       .AddInputAttr(kNumberTypeFloat32)
-       .AddOutputAttr(kNumberTypeFloat32)
-       .AddOutInRef(0, 0),
+    {KernelAttr().AddInputAttr(kNumberTypeFloat32).AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
      SpecializeArithFunc<float>},
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeUInt64)
-       .AddInputAttr(kNumberTypeUInt64)
-       .AddOutputAttr(kNumberTypeUInt64)
-       .AddOutInRef(0, 0),
+    {KernelAttr().AddInputAttr(kNumberTypeUInt64).AddInputAttr(kNumberTypeUInt64).AddOutputAttr(kNumberTypeUInt64),
      SpecializeArithFunc<uint64_t>},
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeInt64)
-       .AddInputAttr(kNumberTypeInt64)
-       .AddOutputAttr(kNumberTypeInt64)
-       .AddOutInRef(0, 0),
+    {KernelAttr().AddInputAttr(kNumberTypeInt64).AddInputAttr(kNumberTypeInt64).AddOutputAttr(kNumberTypeInt64),
      SpecializeArithFunc<int64_t>},
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeFloat64)
-       .AddInputAttr(kNumberTypeFloat64)
-       .AddOutputAttr(kNumberTypeFloat64)
-       .AddOutInRef(0, 0),
+    {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64),
      SpecializeArithFunc<double>}}},
   {kSquaredDifference,
    {{KernelAttr().AddInputAttr(kNumberTypeInt32).AddInputAttr(kNumberTypeInt32).AddOutputAttr(kNumberTypeInt32),
@@ -1201,23 +1199,6 @@ static std::map<std::string, std::vector<std::pair<KernelAttr, ArithmeticCpuFunc
      SpecializeArithFunc<float>},
     {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64),
      SpecializeArithFunc<double>},
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeComplex64)
-       .AddInputAttr(kNumberTypeComplex64)
-       .AddOutputAttr(kNumberTypeComplex64),
-     SpecializeArithFunc<complex64>},
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeComplex128)
-       .AddInputAttr(kNumberTypeComplex128)
-       .AddOutputAttr(kNumberTypeComplex128),
-     SpecializeArithFunc<complex128>}}},
-  {kXlogy,
-   {{KernelAttr().AddInputAttr(kNumberTypeFloat32).AddInputAttr(kNumberTypeFloat32).AddOutputAttr(kNumberTypeFloat32),
-     SpecializeArithFunc<float>},
-    {KernelAttr().AddInputAttr(kNumberTypeFloat64).AddInputAttr(kNumberTypeFloat64).AddOutputAttr(kNumberTypeFloat64),
-     SpecializeArithFunc<double>},
-    {KernelAttr().AddInputAttr(kNumberTypeFloat16).AddInputAttr(kNumberTypeFloat16).AddOutputAttr(kNumberTypeFloat16),
-     SpecializeArithFunc<float16>},
     {KernelAttr()
        .AddInputAttr(kNumberTypeComplex64)
        .AddInputAttr(kNumberTypeComplex64)
@@ -1334,8 +1315,6 @@ MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeCpuKernelMod, AssignSub,
 
 MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeCpuKernelMod, SquaredDifference,
                                  []() { return std::make_shared<ArithmeticCpuKernelMod>(kSquaredDifference); });
-MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeCpuKernelMod, Xlogy,
-                                 []() { return std::make_shared<ArithmeticCpuKernelMod>(kXlogy); });
 MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeCpuKernelMod, Atan2,
                                  []() { return std::make_shared<ArithmeticCpuKernelMod>(kAtan2); });
 MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeCpuKernelMod, AddV2,

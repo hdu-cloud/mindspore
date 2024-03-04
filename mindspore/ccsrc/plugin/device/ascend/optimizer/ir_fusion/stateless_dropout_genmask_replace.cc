@@ -14,19 +14,18 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/optimizer/ir_fusion/stateless_dropout_genmask_replace.h"
-
 #include <string>
 #include <vector>
 #include <memory>
 #include <set>
+#include "ops/nn_op_name.h"
 #include "utils/hash_set.h"
-#include "backend/common/optimizer/const_input_to_attr.h"
-#include "kernel/kernel_build_info.h"
+#include "backend/common/pass/const_input_to_attr.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/session/kernel_graph.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/kernel_graph.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/kernel_info.h"
 #include "utils/ms_context.h"
 #include "plugin/device/ascend/optimizer/optimizer_factory.h"
 

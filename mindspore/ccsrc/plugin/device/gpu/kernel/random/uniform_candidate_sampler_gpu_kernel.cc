@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 #include "plugin/device/gpu/kernel/random/uniform_candidate_sampler_gpu_kernel.h"
 #include <algorithm>
 #include "mindspore/core/ops/uniform_candidate_sampler.h"
+#include "kernel/philox_random.h"
 
 namespace mindspore {
 namespace kernel {
@@ -45,13 +46,10 @@ bool UniformCandidateSamplerGpuKernelMod::Init(const BaseOperatorPtr &base_opera
   unique_ = kernel_ptr->get_unique();
   range_max_ = kernel_ptr->get_range_max();
   remove_accidental_hits_ = kernel_ptr->get_remove_accidental_hits();
-  init_seed_ = kernel_ptr->get_seed();
-  if (init_seed_ == 0) {
-    cur_seed_ = time(NULL);
-    generator_.seed(cur_seed_);
-  } else {
-    generator_.seed(init_seed_);
-  }
+  uint64_t seed = static_cast<uint64_t>(GetValue<int64_t>(base_operator->GetAttr("seed")));
+  uint64_t init_seed = random::GetSeed(seed, 0);
+  rng_.seed(init_seed);
+
   return true;
 }
 
@@ -75,11 +73,6 @@ template <typename T, typename S>
 bool UniformCandidateSamplerGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
                                                        const std::vector<AddressPtr> &,
                                                        const std::vector<AddressPtr> &outputs, void *stream_ptr) {
-  if (init_seed_ == 0 && cur_seed_ == 0) {
-    // Update current seed.
-    cur_seed_ = time(NULL);
-    generator_.seed(cur_seed_);
-  }
   T *sampled_candidates = GetDeviceAddress<T>(outputs, kIndex0);
   S *true_expected_count = GetDeviceAddress<S>(outputs, kIndex1);
   S *sampled_expected_count = GetDeviceAddress<S>(outputs, kIndex2);
@@ -91,7 +84,8 @@ bool UniformCandidateSamplerGpuKernelMod::LaunchKernel(const std::vector<Address
       cudaMemcpyAsync(&array_input[0], input, input_size_ * sizeof(T), cudaMemcpyDeviceToHost,
                       reinterpret_cast<cudaStream_t>(stream_ptr)),
       "UniformCandidateSampler cudaMemcpyAsync sampled_candidates failed");
-    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaDeviceSynchronize(), "UniformCandidateSampler cudaDeviceSyncFailed");
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(stream_ptr)),
+                                       "UniformCandidateSampler cudaStreamSyncFailed");
     for (const auto item : array_input) {
       set_input.insert(item);
     }
@@ -105,8 +99,9 @@ bool UniformCandidateSamplerGpuKernelMod::LaunchKernel(const std::vector<Address
     cudaMemcpyAsync(sampled_candidates, &sampled_candidates_device[0], sampled_candidates_size, cudaMemcpyHostToDevice,
                     reinterpret_cast<cudaStream_t>(stream_ptr)),
     "UniformCandidateSampler cudaMemcpyAsync sampled_candidates failed");
-  CalUniformCandidateSampler(static_cast<int64_t>(input_size_), num_sampled_, value, true_expected_count,
-                             sampled_expected_count, reinterpret_cast<cudaStream_t>(stream_ptr));
+  auto status = CalUniformCandidateSampler(static_cast<int64_t>(input_size_), num_sampled_, value, true_expected_count,
+                                           sampled_expected_count, reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

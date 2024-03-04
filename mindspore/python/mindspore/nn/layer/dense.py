@@ -23,14 +23,14 @@ import mindspore.common.dtype as mstype
 from mindspore.common.tensor import Tensor
 from mindspore.common.initializer import initializer, Uniform
 from mindspore.common.parameter import Parameter
-from mindspore.ops.primitive import constexpr
-from mindspore._checkparam import Validator
+from mindspore.ops.primitive import constexpr, _primexpr
+from mindspore import _checkparam as Validator
 from mindspore.nn.cell import Cell
 
 __all__ = ['BiDense']
 
 
-@constexpr
+@_primexpr
 def check_dense_inputs_same_shape(input1, input2, prim_name=None):
     msg_prefix = f"For '{prim_name}', the" if prim_name else "The"
     if input1[:-1] != input2[:-1]:
@@ -41,12 +41,12 @@ def check_dense_inputs_same_shape(input1, input2, prim_name=None):
 @constexpr(check=False)
 def _check_is_tensor(param_name, input_data, cls_name):
     """Internal function, used to check whether the input data is Tensor."""
-    if input_data is not None and not isinstance(P.typeof(input_data), mstype.tensor_type):
-        raise TypeError(f"For '{cls_name}', the '{param_name}' must be '{mstype.tensor_type}', "
+    if input_data is not None and not isinstance(P.typeof(input_data), mstype.TensorType):
+        raise TypeError(f"For '{cls_name}', the '{param_name}' must be '{mstype.TensorType}', "
                         f"but got '{P.typeof(input_data)}'")
 
 
-@constexpr
+@_primexpr
 def check_last_dimension(input_dim, input_channels, input_name, input_channels_name, prim_name=None):
     msg_prefix = f"For '{prim_name}', the" if prim_name else "The"
     if input_dim != input_channels:
@@ -63,20 +63,21 @@ class BiDense(Cell):
     .. math::
         y = x_1^T A x_2 + b,
 
-    where :math:`x_1` is the first input tensor, :math:`x_2` is the second input tensor
+    where :math:`x_{1}` is the first input tensor, :math:`x_{2}` is the second input tensor
     , :math:`A` is a weight matrix with the same data type as the :math:`x_{*}` created by the layer
     , and :math:`b` is a bias vector with the same data type as the :math:`x_{*}` created by the layer
-    (only if has_bias is True).
+    (only if has_bias is ``True`` ).
 
     Args:
         in1_channels (int): The number of channels in the input1 space.
         in2_channels (int): The number of channels in the input2 space.
         out_channels (int): The number of channels in the output space.
         weight_init (Union[Tensor, str, Initializer, numbers.Number]): The trainable weight_init parameter.
-            The values of str refer to the function `initializer`. Default: None.
+            The values of str refer to the function `initializer`. Default: ``None`` .
         bias_init (Union[Tensor, str, Initializer, numbers.Number]): The trainable bias_init parameter.
-            The values of str refer to the function `initializer`. Default: None.
-        has_bias (bool): Specifies whether the layer uses a bias vector. Default: True.
+            The values of str refer to the function `initializer`. Default: ``None`` .
+        has_bias (bool): Specifies whether the layer uses :math:`\text{bias}` vector. Default: ``True`` .
+        dtype (:class:`mindspore.dtype`): Dtype of Parameters. Default: ``mstype.float32`` .
 
     Shape:
         - **input1** - :math:`(*, H_{in1})` where :math:`H_{in1}=\text{in1_channels}` and
@@ -85,21 +86,22 @@ class BiDense(Cell):
         - **input2** - :math:`(*, H_{in2})` where :math:`H_{in2}=\text{in2_channels}` and
           :math:`*` means any number of additional dimensions including none. All but the last dimension
           of the inputs should be the same.
-        - **output** - :math:`(*, H_{out})` where :math:`H_{out}=\text{out_channels}`
-          and all but the last dimension are the same shape as the inputs.
+        - **output** - :math:`(*, H_{out})` where :math:`H_{out}=\text{out_channels}` and
+          :math:`*` means any number of additional dimensions including none. All but the last dimension
+          are the same shape as the inputs.
 
     Dtype:
-        - **input1** (Tensor) - The dtype must be float16 or float32 and be same as **input2**.
-        - **input1** (Tensor) - The dtype must be float16 or float32 and be same as **input1**.
+        - **input1** (Tensor) - The dtype must be float16 or float32 and be same as **input2** .
+        - **input2** (Tensor) - The dtype must be float16 or float32 and be same as **input1** .
         - **output** (Tensor) - With the same dtype as the inputs.
 
     Weights:
         - **weight** (Parameter) - The learnable weights with shape
           :math:`(\text{out_channels}, \text{in1_channels}, \text{in2_channels})`.
-          When `weight_init` is `None`, the values are initialized from
+          When `weight_init` is ``None`` , the values are initialized from
           :math:`\mathcal{U}(-\sqrt{k}, \sqrt{k})`, where :math:`k = \frac{1}{\text{in1_channels}}`.
         - **bias** (Parameter) - The learnable bias of shape :math:`(\text{out_channels})`.
-          If `has_bias` is `True` and `bias_init` is `None`, the values are initialized from
+          If `has_bias` is ``True`` and `bias_init` is ``None`` , the values are initialized from
           :math:`\mathcal{U}(-\sqrt{k}, \sqrt{k})`, where :math:`k = \frac{1}{\text{in1_channels}}`.
 
     Raises:
@@ -115,6 +117,9 @@ class BiDense(Cell):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, nn
+        >>> import numpy as np
         >>> x1 = Tensor(np.random.randn(128, 20), mindspore.float32)
         >>> x2 = Tensor(np.random.randn(128, 30), mindspore.float32)
         >>> net = nn.BiDense(20, 30, 40)
@@ -129,7 +134,8 @@ class BiDense(Cell):
                  out_channels,
                  weight_init=None,
                  bias_init=None,
-                 has_bias=True):
+                 has_bias=True,
+                 dtype=mstype.float32):
         super().__init__()
         self.in_channels = Validator.check_positive_int(in1_channels, "in1_channels", self.cls_name)
         self.in_channels = Validator.check_positive_int(in2_channels, "in2_channels", self.cls_name)
@@ -152,7 +158,8 @@ class BiDense(Cell):
                                  f"equal to 'in2_channels'. But got 'weight_init': {weight_init}, "
                                  f"'out_channels': {out_channels}, 'in_channels': {in1_channels}, "
                                  f"'in2_channels': {in2_channels}")
-        self.weight = Parameter(initializer(weight_init, (out_channels, in1_channels, in2_channels)), 'weight')
+        self.weight = Parameter(initializer(weight_init, (out_channels, in1_channels, in2_channels), dtype=dtype),
+                                'weight')
 
         if self.has_bias:
             if bias_init is None:
@@ -162,7 +169,7 @@ class BiDense(Cell):
                     raise ValueError(f"For '{self.cls_name}', bias init shape error. The ndim of 'bias_init' should "
                                      f"be equal to 1, and the first dim must be equal to 'out_channels'. But got "
                                      f"'bias_init': {bias_init}, 'out_channels': {out_channels}.")
-            self.bias = Parameter(initializer(bias_init, [out_channels]), name="bias")
+            self.bias = Parameter(initializer(bias_init, [out_channels], dtype=dtype), name="bias")
             self.bias_add = P.BiasAdd()
         self.matmul = P.MatMul()
 

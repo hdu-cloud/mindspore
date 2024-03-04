@@ -25,9 +25,13 @@
 #include "mindspore/core/ops/euclidean_norm.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/euclidean_norm_impl.cuh"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/complex.h"
+#include "kernel/kernel_get_value.h"
 
 namespace mindspore {
 namespace kernel {
+constexpr size_t kInputsNum = 2;
+constexpr size_t kOutputsNum = 1;
+
 void EuclideanNormGpuKernelMod::InitWorkSpaceSizeList() {
   const size_t device_input_shape_size = input_shape_.size() * sizeof(size_t);
   const size_t device_axes_shape_size = output_axes_.size() * sizeof(size_t);
@@ -44,6 +48,7 @@ void EuclideanNormGpuKernelMod::InitWorkSpaceSizeList() {
 
 bool EuclideanNormGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                      const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
   kernel_name_ = base_operator->name();
   if (inputs.empty() || outputs.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "', it got empty inputs or outputs, which is invalid.";
@@ -62,28 +67,25 @@ bool EuclideanNormGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const
 int EuclideanNormGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                       const std::vector<KernelTensorPtr> &outputs,
                                       const std::map<uint32_t, tensor::TensorPtr> &) {
-  for (const auto &input : inputs) {
-    auto input_shape = input->GetShapeVector();
-    if (!IsValidShape(input_shape)) {
-      return KRET_UNKNOWN_SHAPE;
-    }
+  int ret = KernelMod::Resize(base_operator, inputs, outputs);
+  if (ret != KRET_OK) {
+    return ret;
   }
 
   auto kernel_ptr = std::make_shared<ops::EuclideanNorm>(base_operator->GetPrim());
-  axes_ = kernel_ptr->get_axes();
+  MS_EXCEPTION_IF_NULL(kernel_ptr);
   keep_dims_ = kernel_ptr->get_keep_dims();
-  if (int ret = KernelMod::Resize(base_operator, inputs, outputs); ret != KRET_OK) {
-    return ret;
+  if (!TryGetIntValue(inputs, kIndex1, kernel_name_, &axes_)) {
+    MS_LOG(EXCEPTION) << "For" << kernel_name_ << ", can't get axis value from input!";
   }
+
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), kInputsNum, kernel_name_);
+  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), kOutputsNum, kernel_name_);
   data_type_ = inputs.at(kIndex0)->GetDtype();
   input_shape_.clear();
   auto input_shape = inputs.at(kIndex0)->GetShapeVector();
   (void)std::transform(input_shape.begin(), input_shape.end(), std::back_inserter(input_shape_), LongToSize);
   input_elements_ = std::accumulate(input_shape_.begin(), input_shape_.end(), size_t(1), std::multiplies<size_t>());
-  is_null_input_ = CHECK_SHAPE_NULL(input_shape_, kernel_name_, "input shape");
-  if (is_null_input_) {
-    return KRET_OK;
-  }
 
   output_shape_.clear();
   if (axes_.size() == input_shape.size()) {
@@ -157,20 +159,22 @@ bool EuclideanNormGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inpu
 
   CHECK_CUDA_RET_WITH_ERROR_NOTRACE(cudaMemsetAsync(output, 0, output_elements_ * sizeof(T)),
                                     "EuclideanNormGpuKernelMod failed to set output cuda memory to zeros.");
+  cudaError_t status = cudaErrorNotReady;
   if constexpr ((std::is_same_v<T, int8_t>) || (std::is_same_v<T, int16_t>) || (std::is_same_v<T, uint8_t>) ||
                 (std::is_same_v<T, uint16_t>) || (std::is_same_v<T, half>)) {
     auto middle_output = GetDeviceAddress<float>(workspace, kIndex3);
     auto middle_output_size = output_elements_ * sizeof(float);
     CHECK_CUDA_RET_WITH_ERROR_NOTRACE(cudaMemset(middle_output, 0, middle_output_size),
                                       "LpNormGpuKernelMod failed  to set middle output cuda memory to zeros.");
-    CalEuclideanNorm(input, device_input_shape, input_shape_.size(), input_elements_, device_axes_output,
-                     device_output_stride, output_axes_.size(), output_elements_, middle_output, output, device_id_,
-                     reinterpret_cast<cudaStream_t>(cuda_stream_));
+    status = CalEuclideanNorm(input, device_input_shape, input_shape_.size(), input_elements_, device_axes_output,
+                              device_output_stride, output_axes_.size(), output_elements_, middle_output, output,
+                              device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
   } else {
-    CalEuclideanNorm(input, device_input_shape, input_shape_.size(), input_elements_, device_axes_output,
-                     device_output_stride, output_axes_.size(), output_elements_, nullptr, output, device_id_,
-                     reinterpret_cast<cudaStream_t>(cuda_stream_));
+    status = CalEuclideanNorm(input, device_input_shape, input_shape_.size(), input_elements_, device_axes_output,
+                              device_output_stride, output_axes_.size(), output_elements_, nullptr, output, device_id_,
+                              reinterpret_cast<cudaStream_t>(cuda_stream_));
   }
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

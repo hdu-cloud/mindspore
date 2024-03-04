@@ -18,14 +18,14 @@
 #include <memory>
 #include <set>
 #include <string>
+#include "mindspore/core/ops/structure_ops.h"
 #include "tools/converter/parser/parser_utils.h"
 #include "nnacl/op_base.h"
-#include "ops/core_ops.h"
 
 namespace mindspore {
 namespace lite {
 namespace {
-constexpr char kDoSignaturePrimitivePrefix[] = "S-Prim-";
+constexpr char kDoSignaturePrimitivePrefix[] = "S_Prim_";
 constexpr char kHyperMapPrefix[] = "hyper_map";
 constexpr auto offset = 2;
 }  // namespace

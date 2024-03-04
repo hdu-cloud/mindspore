@@ -14,13 +14,14 @@
 # ============================================================================
 import pytest
 
-from mindspore.ops import operations as P
-import mindspore.nn as nn
-from mindspore.train import Model
-from mindspore.common import set_seed
 import mindspore.dataset as ds
-from mindspore.train.callback import Callback
+import mindspore.nn as nn
+from mindspore import context
 from mindspore import log as logger
+from mindspore.common import set_seed
+from mindspore.ops import operations as P
+from mindspore.parallel._recovery_context import _get_recovery_context_func_map
+from mindspore.train import Model, Callback
 
 set_seed(1)
 
@@ -69,7 +70,7 @@ class MyCallback(Callback):
         logger.info(f"Epoch #{cb_params.cur_epoch_num - 1} has ended")
         if cb_params.cur_epoch_num == self.reset_point:
             dataset = ds.engine.datasets._get_training_dataset()  # pylint: disable=W0212
-            dataset._reset(self.reset_point * self.dataset_size, self.reset_point)  # pylint: disable=W0212
+            dataset._reset(self.reset_point * self.dataset_size, self.dataset_size)  # pylint: disable=W0212
 
 
 @pytest.mark.level1
@@ -85,6 +86,12 @@ def test_dataset_reset_sink(fast_recovery, num_parallel_workers, python_multipro
     Description: Test Dataset recovery when GPU (and sink mode) is used.
     Expectation: Training completes successfully
     """
+    def enable_recovery():
+        """Get whether enable recovery"""
+        return True
+
+    context.set_context(mode=context.GRAPH_MODE)
+    _get_recovery_context_func_map["enable_recovery"] = enable_recovery
     original_fast_recovery = ds.config.get_fast_recovery()
     ds.config.set_fast_recovery(fast_recovery)
     data = create_np_dataset(20, num_parallel_workers, python_multiprocessing)
@@ -92,7 +99,7 @@ def test_dataset_reset_sink(fast_recovery, num_parallel_workers, python_multipro
     num_epochs = 3
     reset_point = 2  # 2nd epoch
     cb = MyCallback(dataset_size=data.get_dataset_size(), reset_point=reset_point)
-    model.train(num_epochs, data, callbacks=[cb])
+    model.train(num_epochs, data, callbacks=[cb], dataset_sink_mode=True)
     ds.config.set_fast_recovery(original_fast_recovery)
 
 

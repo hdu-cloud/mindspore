@@ -15,12 +15,16 @@
  */
 
 #include "ops/sparse_reorder.h"
+
+#include <memory>
 #include <set>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
-#include "utils/tensor_construct_utils.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/sparse_ops.h"
+#include "ops/op_name.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -37,6 +41,9 @@ abstract::TupleShapePtr SparseReorderInferShape(const PrimitivePtr &primitive,
   auto indices_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(indices_shape_ptr)[kShape];
   auto values_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(values_shape_ptr)[kShape];
   auto shape_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[2]->BuildShape())[kShape];
+  // Args shape and values must be 1D
+  (void)CheckAndConvertUtils::CheckInteger("values dim", SizeToLong(values_shape.size()), kEqual, 1, prim_name);
+  (void)CheckAndConvertUtils::CheckInteger("size dim", SizeToLong(shape_shape.size()), kEqual, 1, prim_name);
   if (IsDynamicRank(indices_shape) || IsDynamicRank(values_shape) || IsDynamicRank(shape_shape)) {
     abstract::ShapePtr output0_shape = std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
     abstract::ShapePtr output1_shape = std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
@@ -53,9 +60,6 @@ abstract::TupleShapePtr SparseReorderInferShape(const PrimitivePtr &primitive,
     (void)CheckAndConvertUtils::CheckInteger("size of values", values_shape[0], kEqual, indices_shape[0], prim_name);
     (void)CheckAndConvertUtils::CheckInteger("size of shape", shape_shape[0], kEqual, indices_shape[1], prim_name);
   }
-  // Args shape and values must be 1D
-  (void)CheckAndConvertUtils::CheckInteger("values dim", SizeToLong(values_shape.size()), kEqual, 1, prim_name);
-  (void)CheckAndConvertUtils::CheckInteger("size dim", SizeToLong(shape_shape.size()), kEqual, 1, prim_name);
   return std::make_shared<abstract::TupleShape>(
     std::vector<abstract::BaseShapePtr>{indices_shape_ptr, values_shape_ptr});
 }
@@ -87,6 +91,24 @@ AbstractBasePtr SparseReorderInfer(const abstract::AnalysisEnginePtr &, const Pr
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
 MIND_API_OPERATOR_IMPL(SparseReorder, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(SparseReorder, prim::kPrimSparseReorder, SparseReorderInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGSparseReorderInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseReorderInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseReorderInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return SparseReorderInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(SparseReorder, prim::kPrimSparseReorder, AGSparseReorderInfer, false);
 }  // namespace ops
 }  // namespace mindspore

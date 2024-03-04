@@ -96,8 +96,11 @@ void LuUnpackCpuKernelMod::LuUnpack(const std::vector<kernel::AddressPtr> &input
                                     int64_t matrix_size, int64_t matrix_width, int64_t matrix_height,
                                     int64_t pivots_stride, int64_t L_stride, int64_t U_stride, T_data *const P_eye) {
   using MatrixMap = Eigen::Map<Eigen::Matrix<T_data, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>;
-  MatrixMap input(reinterpret_cast<T_data *>(inputs[kFirstInputIndex]->addr) + matrix_index * matrix_size, matrix_width,
-                  matrix_height);
+  auto input_ptr = GetDeviceAddress<T_data>(inputs, kFirstInputIndex);
+  MS_EXCEPTION_IF_NULL(input_ptr);
+  MatrixMap input(input_ptr + matrix_index * matrix_size, matrix_width, matrix_height);
+  auto output_y2 = GetDeviceAddress<T_data>(outputs, kThirdOutputIndex);
+  MS_EXCEPTION_IF_NULL(output_y2);
   //  Triu
   if (matrix_width > matrix_height) {
     if (matrix_size <= 0) {
@@ -106,24 +109,26 @@ void LuUnpackCpuKernelMod::LuUnpack(const std::vector<kernel::AddressPtr> &input
     T_data *MiddlePtr = new T_data[matrix_size];
     MatrixMap MiddleData(MiddlePtr, matrix_width, matrix_height);
     MiddleData = input.template triangularView<Eigen::Upper>();
-    MatrixMap(reinterpret_cast<T_data *>(outputs[kThirdOutputIndex]->addr) + matrix_index * U_stride, matrix_height,
-              matrix_height) = MiddleData.block(0, 0, matrix_height, matrix_height);
+    MatrixMap(output_y2 + matrix_index * U_stride, matrix_height, matrix_height) =
+      MiddleData.block(0, 0, matrix_height, matrix_height);
     delete[] MiddlePtr;
   } else {
-    MatrixMap(reinterpret_cast<T_data *>(outputs[kThirdOutputIndex]->addr) + matrix_index * U_stride, matrix_width,
-              matrix_height) = input.template triangularView<Eigen::Upper>();
+    MatrixMap(output_y2 + matrix_index * U_stride, matrix_width, matrix_height) =
+      input.template triangularView<Eigen::Upper>();
   }
   //  Tril
+  auto output_y1 = GetDeviceAddress<T_data>(outputs, kSecondOutputIndex);
+  MS_EXCEPTION_IF_NULL(output_y1);
   if (matrix_height > matrix_width) {
     T_data *MiddlePtr = new T_data[matrix_size];
     MatrixMap MiddleData(MiddlePtr, matrix_width, matrix_height);
     MiddleData = input.template triangularView<Eigen::UnitLower>();
-    MatrixMap(reinterpret_cast<T_data *>(outputs[kSecondOutputIndex]->addr) + matrix_index * L_stride, matrix_width,
-              matrix_width) = MiddleData.block(0, 0, matrix_width, matrix_width);
+    MatrixMap(output_y1 + matrix_index * L_stride, matrix_width, matrix_width) =
+      MiddleData.block(0, 0, matrix_width, matrix_width);
     delete[] MiddlePtr;
   } else {
-    MatrixMap(reinterpret_cast<T_data *>(outputs[kSecondOutputIndex]->addr) + matrix_index * L_stride, matrix_width,
-              matrix_height) = input.template triangularView<Eigen::UnitLower>();
+    MatrixMap(output_y1 + matrix_index * L_stride, matrix_width, matrix_height) =
+      input.template triangularView<Eigen::UnitLower>();
   }
   //  Swap
   std::vector<T_pivots> final_order;
@@ -150,14 +155,20 @@ void LuUnpackCpuKernelMod::LuUnpack(const std::vector<kernel::AddressPtr> &input
     std::swap(final_order[perm_id], final_order[perm_pivots_id]);
   }
   //  Index_select
-  auto output_y0 = reinterpret_cast<T_data *>(outputs[kFirstOutputIndex]->addr);
+  auto output_y0 = GetDeviceAddress<T_data>(outputs, kFirstOutputIndex);
+  MS_EXCEPTION_IF_NULL(output_y0);
+  auto output_size = outputs[kFirstOutputIndex]->size;
   size_t indices_num = final_order.size();
   size_t inner_size = Lu_data_dim1_unsigned;
   size_t slice_size = static_cast<size_t>(inner_size * sizeof(T_data));
   for (size_t j = 0; j < indices_num; ++j) {
     size_t params_idx = static_cast<size_t>(final_order[j] * inner_size);
     size_t out_idx = j * inner_size;
-    (void)std::memcpy(output_y0 + matrix_index * pivots_stride + out_idx, P_eye + params_idx, slice_size);
+    auto offset = matrix_index * pivots_stride + out_idx;
+    auto ret = memcpy_s(output_y0 + offset, output_size - offset * sizeof(T_data), P_eye + params_idx, slice_size);
+    if (ret != EOK) {
+      MS_LOG(EXCEPTION) << "For 'LuUnpack', memcpy_s failed, ret=" << ret;
+    }
   }
 }
 

@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@
 #include <unordered_map>
 #include <set>
 #include <string>
-#include "src/litert/sub_graph_kernel.h"
+#include "src/executor/sub_graph_kernel.h"
 #include "src/litert/inner_context.h"
 #include "include/model.h"
 #include "src/litert/scheduler_cb.h"
@@ -39,8 +39,9 @@ class Scheduler {
  public:
   Scheduler(InnerContext *ctx, const mindspore::Context *ms_ctx, Model *src_model, std::vector<Tensor *> *src_tensors,
             std::vector<Tensor *> *input_tensors, std::vector<Tensor *> *output_tensors, bool is_train_session,
-            int *is_infershape, bool *is_control_flow, std::map<std::string, TypeId> *executions,
-            std::shared_ptr<Delegate> delegate = nullptr, int delegate_device_type = -1)
+            int *is_infershape, bool *is_control_flow, bool *infer_along_running,
+            std::map<std::string, TypeId> *executions, std::shared_ptr<Delegate> delegate = nullptr,
+            int delegate_device_type = -1)
       : context_(ctx),
         ms_context_(ms_ctx),
         src_model_(src_model),
@@ -49,6 +50,7 @@ class Scheduler {
         outputs_(output_tensors),
         is_train_session_(is_train_session),
         is_control_flow_(is_control_flow),
+        infer_along_running_(infer_along_running),
         is_infershape_(is_infershape),
         delegate_(delegate),
         delegate_device_type_(delegate_device_type),
@@ -62,7 +64,6 @@ class Scheduler {
   std::vector<kernel::KernelExec *> NonTailCallNodes();
 
  private:
-  bool CheckRunNCXPass();
   int SchedulePreProcess();
   int CheckInputParam(const std::vector<kernel::KernelExec *> *dst_kernels) const;
   void FindNodeInoutTensors(const LiteGraph::Node &node, std::vector<Tensor *> *inputs, std::vector<Tensor *> *outputs);
@@ -110,6 +111,8 @@ class Scheduler {
 
   int ConstructSubGraphs(std::vector<kernel::KernelExec *> *dst_kernel);
 
+  int ProcessSubGraphTranspose(std::vector<kernel::KernelExec *> *dst_kernels);
+
   // create subgraph_kernel from a vector of kernel
   std::vector<kernel::KernelExec *> ScheduleMainSubGraphToKernels();
   kernel::KernelExec *SchedulePartialToSubGraphKernel(const int &subgraph_index);
@@ -156,6 +159,7 @@ class Scheduler {
   std::map<int, OpParameter *> op_parameters_;
   bool is_train_session_ = false;
   bool *is_control_flow_ = nullptr;
+  bool *infer_along_running_ = nullptr;
   int *is_infershape_ = nullptr;
   std::unique_ptr<SchedulerCb> sched_cb_;
   std::map<kernel::Kernel *, const schema::Primitive *> primitives_;
@@ -167,7 +171,6 @@ class Scheduler {
   std::unordered_map<kernel::KernelExec *, size_t> partial_kernel_subgraph_index_map_{};
   std::set<lite::LiteGraph::Node *> partial_cnode_inferred_{};
   ControlFlowSchedulerPtr control_flow_scheduler_ = nullptr;
-  int schema_version_ = SCHEMA_VERSION::SCHEMA_CUR;
   std::map<std::string, TypeId> *execution_plan_ = nullptr;
   const std::map<std::string, std::map<std::string, std::string>> *config_info_ = nullptr;
   std::shared_ptr<ShapeFusionPass> shape_fusion_pass_ = nullptr;

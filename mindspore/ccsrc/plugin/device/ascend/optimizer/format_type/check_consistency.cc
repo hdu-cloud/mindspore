@@ -14,16 +14,13 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/optimizer/format_type/check_consistency.h"
-
 #include <string>
 #include <memory>
 #include <vector>
-
 #include "include/common/utils/utils.h"
 #include "runtime/device/ms_device_shape_transfer.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "kernel/common_utils.h"
 
 namespace mindspore {
 namespace opt {
@@ -74,7 +71,7 @@ bool CheckDataTypeForConsistency(const CNodePtr &node, const size_t input_index)
   MS_EXCEPTION_IF_NULL(node);
   TypeId input_data_type = AnfAlgo::GetPrevNodeOutputDeviceDataType(node, input_index);
   TypeId selected_data_type = AnfAlgo::GetInputDeviceDataType(node, input_index);
-  if (input_data_type == selected_data_type) {
+  if (input_data_type == kTypeUnknown || input_data_type == selected_data_type) {
     return true;
   }
   MS_LOG(ERROR) << "Found inconsistent dtype! input dtype " << input_index << ": " << TypeIdLabel(input_data_type)

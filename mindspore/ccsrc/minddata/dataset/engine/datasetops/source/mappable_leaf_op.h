@@ -21,6 +21,8 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <utility>
+#include <vector>
 #include "minddata/dataset/core/tensor.h"
 
 #include "minddata/dataset/engine/data_schema.h"
@@ -74,7 +76,17 @@ class MappableLeafOp : public ParallelOp<std::unique_ptr<IOBlock>, TensorRow>, p
                              const py::function &decrypt = py::none());
 #endif
 
+  /// \brief In pull mode, gets the next row
+  /// \param row[out] - Fetched TensorRow
+  /// \return Status The status code returned
+  Status GetNextRowPullMode(TensorRow *const row) override;
+
  protected:
+  TensorPtr sample_ids_;  // sample id pointer for pull mode
+  uint32_t curr_row_;     // current row number count for pull mode
+  bool prepared_data_;    // flag to indicate whether the data is prepared before LoadTensorRow for pull mode
+  bool eof_handled_;      // T/F if this op got an eof
+
   /// Initialize Sampler, calls sampler->Init() within
   /// @return Status The status code returned
   Status InitSampler();
@@ -104,6 +116,24 @@ class MappableLeafOp : public ParallelOp<std::unique_ptr<IOBlock>, TensorRow>, p
   Status Reset() override;
   Status SendWaitFlagToWorker(int32_t worker_id) override;
   Status SendQuitFlagToWorker(int32_t worker_id) override;
+
+  /// Initialize pull mode, calls PrepareData() within
+  /// @return Status The status code returned
+  virtual Status InitPullMode() { return PrepareData(); }
+
+  /// Virtual function to load a tensor row at location row_id for pull mode
+  /// \param row_id_type row_id - id for this tensor row
+  /// \param TensorRow row - loaded row
+  /// \return Status The status code returned
+  virtual Status LoadTensorRowPullMode(row_id_type row_id, TensorRow *row) { return LoadTensorRow(row_id, row); }
+
+  /// reset the op and update repeat and epoch number if the condition is met.
+  /// \return Status The status code returned
+  Status ResetAndUpdateRepeat();
+
+  /// \brief Gets the implementation status for operator in pull mode
+  /// \return implementation status
+  ImplementedPullMode PullModeImplementationStatus() const override { return ImplementedPullMode::Implemented; }
 };
 }  // namespace dataset
 }  // namespace mindspore

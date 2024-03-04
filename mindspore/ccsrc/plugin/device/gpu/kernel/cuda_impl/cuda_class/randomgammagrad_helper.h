@@ -122,21 +122,22 @@ class RandomGammaGradHelperGpuKernel : public GpuKernelHelperBase {
     }
 
     // call cuda kernel
+    cudaError_t status = cudaErrorNotReady;
     if (need_broadcast_) {
-      BroadcastRandomGammaGrad(lhs_shape_, rhs_shape_, output_shape_, alpha_ptr, sample_ptr, output_ptr, device_id_,
-                               reinterpret_cast<cudaStream_t>(cuda_stream));
+      status = BroadcastRandomGammaGrad(lhs_shape_, rhs_shape_, output_shape_, alpha_ptr, sample_ptr, output_ptr,
+                                        device_id_, reinterpret_cast<cudaStream_t>(cuda_stream));
     } else {
-      CalRandomGammaGrad(alpha_ptr, sample_ptr, output_ptr, output_num_, device_id_,
-                         reinterpret_cast<cudaStream_t>(cuda_stream));
+      status = CalRandomGammaGrad(alpha_ptr, sample_ptr, output_ptr, output_num_, device_id_,
+                                  reinterpret_cast<cudaStream_t>(cuda_stream));
     }
-
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return 0;
   }
 
  private:
-  std::vector<size_t> lhs_shape_;
-  std::vector<size_t> rhs_shape_;
-  std::vector<size_t> output_shape_;
+  std::vector<int64_t> lhs_shape_;
+  std::vector<int64_t> rhs_shape_;
+  std::vector<int64_t> output_shape_;
   bool need_broadcast_;
   bool is_null_input_;
   size_t output_num_;

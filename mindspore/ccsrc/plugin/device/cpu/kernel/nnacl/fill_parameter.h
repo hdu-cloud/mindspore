@@ -13,16 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_FILL_PARAMETER_H_
-#define MINDSPORE_NNACL_FILL_PARAMETER_H_
+#ifndef NNACL_FILL_PARAMETER_H_
+#define NNACL_FILL_PARAMETER_H_
 
 #include "nnacl/op_base.h"
 
 typedef struct FillParameter {
-  // Primitive parameter
   OpParameter op_parameter_;
-  int dims_[COMM_SHAPE_SIZE];
-  int num_dims_;
 } FillParameter;
 
-#endif  // MINDSPORE_NNACL_FILL_PARAMETER_H_
+#endif  // NNACL_FILL_PARAMETER_H_

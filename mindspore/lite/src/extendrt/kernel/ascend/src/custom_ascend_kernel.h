@@ -23,7 +23,6 @@
 #include <map>
 #include "extendrt/kernel/ascend/options/acl_model_options.h"
 #include "extendrt/kernel/ascend/model/model_infer.h"
-#include "extendrt/kernel/ascend/model/dyn_shape_process.h"
 #include "include/api/types.h"
 #include "include/api/context.h"
 #include "kernel/kernel.h"
@@ -47,29 +46,20 @@ class CustomAscendKernelMod : public kernel::KernelMod {
 
   bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
               const std::vector<AddressPtr> &outputs, void *stream_ptr) override;
-
-  std::vector<KernelTensorPtr> RetrieveOutputShape() override;
   std::vector<KernelAttr> GetOpSupport() override { return {}; }
-  std::vector<KernelTensorPtr> GetInputKernelTensor() override;
 
  private:
   void RecordInputDataIndex(const std::vector<KernelTensorPtr> &inputs);
-  void SetDeviceId();
-  bool InitParam(const std::vector<KernelTensorPtr> &inputs, const std::vector<KernelTensorPtr> &outputs);
-  int SetInputAndOutputAddr(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &outputs);
-  int LoadModel();
-  bool IsDynamicInput();
-  void UpdateOutputAddr(const std::vector<AddressPtr> &outputs);
+  AclModelOptionsPtr GenAclOptions(const BaseOperatorPtr &base_operator);
   void UpdateInputKernelTensorInfo();
+  void UpdateOutputKernelTensorInfo();
+  bool OnNewInputShapes(const std::vector<KernelTensorPtr> &new_shapes);
 
   bool load_model_;
-  std::vector<KernelTensorPtr> original_data_;
-  std::vector<KernelTensorPtr> inputs_;
-  std::vector<KernelTensorPtr> outputs_;
   AclModelOptionsPtr acl_options_;
-  DynShapeProcPtr dyn_shape_proc_;
   ModelInferPtr model_infer_;
   size_t input_data_idx_;
+  bool is_multi_model_sharing_mem_prepare_ = false;
 };
 }  // namespace acl
 }  // namespace mindspore::kernel

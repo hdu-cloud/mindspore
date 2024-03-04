@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_CUMSUM_H_
 #define MINDSPORE_CORE_OPS_CUMSUM_H_
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,7 +31,7 @@ class MIND_API CumSum : public BaseOperator {
  public:
   MIND_API_BASE_MEMBER(CumSum);
   /// \brief Constructor.
-  CumSum() : BaseOperator(kNameCumSum) {}
+  CumSum() : BaseOperator(kNameCumSum) { InitIOName({"x", "axis"}, {"y"}); }
   /// \brief Init. Refer to the parameters of Python API @ref mindspore.ops.CumSum for the inputs.
   void Init(const bool exclusive, const bool reverse);
   /// \brief Set exclusive.
@@ -48,8 +48,8 @@ class MIND_API CumSum : public BaseOperator {
   bool get_reverse() const;
   ///
 };
-abstract::AbstractBasePtr CumSumInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                      const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr CumSumInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                               const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimCumSum = std::shared_ptr<CumSum>;
 }  // namespace ops
 }  // namespace mindspore

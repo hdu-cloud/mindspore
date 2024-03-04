@@ -149,7 +149,7 @@ int ArithmeticCPUKernel::DoExecute(const void *input0, const void *input1, void 
     if (scalar_opt_) {
       CHECK_NULL_RETURN(arithmetic_opt_run_fp32_);
       ret = arithmetic_opt_run_fp32_(reinterpret_cast<const float *>(input0), reinterpret_cast<const float *>(input1),
-                                     reinterpret_cast<float *>(output), size, param_);
+                                     reinterpret_cast<float *>(output), size, param_->in_elements_num0_ == 1);
     } else {
       CHECK_NULL_RETURN(arithmetic_run_fp32_);
       ret = arithmetic_run_fp32_(reinterpret_cast<const float *>(input0), reinterpret_cast<const float *>(input1),
@@ -159,7 +159,7 @@ int ArithmeticCPUKernel::DoExecute(const void *input0, const void *input1, void 
     if (scalar_opt_) {
       CHECK_NULL_RETURN(arithmetic_opt_run_bool_);
       ret = arithmetic_opt_run_bool_(reinterpret_cast<const bool *>(input0), reinterpret_cast<const bool *>(input1),
-                                     reinterpret_cast<bool *>(output), size, param_);
+                                     reinterpret_cast<bool *>(output), size, param_->in_elements_num0_ == 1);
     } else {
       CHECK_NULL_RETURN(arithmetic_run_bool_);
       ret = arithmetic_run_bool_(reinterpret_cast<const bool *>(input0), reinterpret_cast<const bool *>(input1),
@@ -169,7 +169,7 @@ int ArithmeticCPUKernel::DoExecute(const void *input0, const void *input1, void 
     if (scalar_opt_) {
       CHECK_NULL_RETURN(arithmetic_opt_run_int_);
       ret = arithmetic_opt_run_int_(reinterpret_cast<const int *>(input0), reinterpret_cast<const int *>(input1),
-                                    reinterpret_cast<int *>(output), size, param_);
+                                    reinterpret_cast<int *>(output), size, param_->in_elements_num0_ == 1);
     } else {
       CHECK_NULL_RETURN(arithmetic_run_int_);
       ret = arithmetic_run_int_(reinterpret_cast<const int *>(input0), reinterpret_cast<const int *>(input1),
@@ -179,6 +179,7 @@ int ArithmeticCPUKernel::DoExecute(const void *input0, const void *input1, void 
   return ret;
 }
 
+#ifdef SERVER_INFERENCE
 REG_KERNEL(kCPU, kNumberTypeFloat32, PrimitiveType_MulFusion, LiteKernelCreator<ArithmeticCPUKernel>)
 REG_KERNEL(kCPU, kNumberTypeInt32, PrimitiveType_MulFusion, LiteKernelCreator<ArithmeticCPUKernel>)
 REG_KERNEL(kCPU, kNumberTypeBool, PrimitiveType_AddFusion, LiteKernelCreator<ArithmeticCPUKernel>)
@@ -206,4 +207,5 @@ REG_KERNEL(kCPU, kNumberTypeInt32, PrimitiveType_FloorMod, LiteKernelCreator<Ari
 REG_KERNEL(kCPU, kNumberTypeFloat32, PrimitiveType_SquaredDifference, LiteKernelCreator<ArithmeticCPUKernel>)
 REG_KERNEL(kCPU, kNumberTypeFloat32, PrimitiveType_Eltwise, LiteKernelCreator<ArithmeticCPUKernel>)
 REG_KERNEL(kCPU, kNumberTypeInt32, PrimitiveType_DivFusion, LiteKernelCreator<ArithmeticCPUKernel>)
+#endif
 }  // namespace mindspore::kernel

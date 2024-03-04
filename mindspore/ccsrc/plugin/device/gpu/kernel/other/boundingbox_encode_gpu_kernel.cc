@@ -28,6 +28,7 @@ bool BoundingBoxEncodeGpuKernelMod::Init(const BaseOperatorPtr &base_operator,
 
   const size_t coordinate_size = 4;
   auto means = base_operator->GetAttr("means");
+  MS_EXCEPTION_IF_NULL(means);
   if (means->isa<api::ValueSequence>()) {
     means_ = api::GetValue<std::vector<float>>(means);
   } else if (means->isa<api::FloatImm>()) {
@@ -41,6 +42,7 @@ bool BoundingBoxEncodeGpuKernelMod::Init(const BaseOperatorPtr &base_operator,
   }
 
   auto stds = base_operator->GetAttr("stds");
+  MS_EXCEPTION_IF_NULL(stds);
   if (stds->isa<api::ValueSequence>()) {
     stds_ = api::GetValue<std::vector<float>>(stds);
   } else if (stds->isa<api::FloatImm>()) {
@@ -102,9 +104,10 @@ bool BoundingBoxEncodeGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &
     return false;
   }
 
-  BoundingBoxEncode(block_size / coordinate, anchor_addr, groundtruth_addr, deltas_addr, means_[0], means_[1],
-                    means_[2], means_[3], stds_[0], stds_[1], stds_[2], stds_[3],
-                    reinterpret_cast<cudaStream_t>(stream_ptr));
+  auto status = BoundingBoxEncode(block_size / coordinate, anchor_addr, groundtruth_addr, deltas_addr, means_[0],
+                                  means_[1], means_[2], means_[3], stds_[0], stds_[1], stds_[2], stds_[3],
+                                  reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

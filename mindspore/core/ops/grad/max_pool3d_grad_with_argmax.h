@@ -21,8 +21,8 @@
 #include <set>
 #include <string>
 #include <vector>
-#include "utils/check_convert_utils.h"
 #include "ops/base_operator.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -53,9 +53,9 @@ class MIND_API MaxPool3DGradWithArgmax : public BaseOperator {
   Format get_format() const;
 };
 
-abstract::AbstractBasePtr MaxPool3DGradWithArgmaxInfer(const abstract::AnalysisEnginePtr &,
-                                                       const PrimitivePtr &primitive,
-                                                       const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr MaxPool3DGradWithArgmaxInfer(
+  const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+  const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimMaxPool3DGradWithArgmax = std::shared_ptr<MaxPool3DGradWithArgmax>;
 }  // namespace ops
 }  // namespace mindspore

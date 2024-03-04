@@ -37,6 +37,11 @@ class Net(nn.Cell):
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_net():
+    """
+    Feature: UniformReal cpu kernel
+    Description: test the correctness of shape and result
+    Expectation: success.
+    """
     seed = 10
     seed2 = 10
     shape = (5, 6, 8)
@@ -45,7 +50,7 @@ def test_net():
     assert output.shape == (5, 6, 8)
     outnumpyflatten_1 = output.asnumpy().flatten()
 
-    seed = 0
+    seed = 10
     seed2 = 10
     shape = (5, 6, 8)
     net = Net(shape, seed, seed2)

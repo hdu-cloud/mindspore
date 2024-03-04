@@ -14,18 +14,37 @@
  * limitations under the License.
  */
 #include "ops/ragged_range.h"
-#include <functional>
-#include <algorithm>
+
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
-#include <set>
-#include "ops/primitive_c.h"
-#include "mindapi/src/helper.h"
-#include "utils/check_convert_utils.h"
+
 #include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/named.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/type_id.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -67,7 +86,8 @@ abstract::TupleShapePtr RaggedRangeInferShape(const PrimitivePtr &primitive,
   // support dynamic rank
   if (IsDynamicRank(in_shape_starts) || IsDynamicRank(in_shape_limits) || IsDynamicRank(in_shape_deltas)) {
     auto unknow_rank_ptr = std::make_shared<abstract::Shape>(std::vector<int64_t>{abstract::Shape::kShapeRankAny});
-    return std::make_shared<abstract::TupleShape>(std::vector<abstract::BaseShapePtr>{unknow_rank_ptr});
+    return std::make_shared<abstract::TupleShape>(
+      std::vector<abstract::BaseShapePtr>{unknow_rank_ptr, unknow_rank_ptr});
   }
 
   (void)CheckAndConvertUtils::CheckInteger("dimension of RaggedRange input starts", SizeToLong(in_shape_starts.size()),
@@ -89,7 +109,7 @@ abstract::TupleShapePtr RaggedRangeInferShape(const PrimitivePtr &primitive,
   auto max_length_ptr = primitive->GetAttr("max_length");
   MS_EXCEPTION_IF_NULL(max_length_ptr);
   const int64_t max_length = GetValue<int64_t>(max_length_ptr);
-  if (input_args[0]->isa<abstract::AbstractTensor>() && !input_args[0]->BuildValue()->isa<AnyValue>() &&
+  if (input_args[0]->isa<abstract::AbstractTensor>() && !input_args[0]->BuildValue()->isa<ValueAny>() &&
       !input_args[0]->BuildValue()->isa<None>()) {
     auto starts = input_args[0]->cast<abstract::AbstractTensorPtr>();
     MS_EXCEPTION_IF_NULL(starts);
@@ -145,12 +165,8 @@ abstract::TupleShapePtr RaggedRangeInferShape(const PrimitivePtr &primitive,
   }
   std::vector<int64_t> rt_nested_splits_shape_vec = {abstract::Shape::kShapeDimAny};
   std::vector<int64_t> rt_dense_values_shape_vec = {abstract::Shape::kShapeDimAny};
-  std::vector<int64_t> infer_shape_min = {0};
-  std::vector<int64_t> infer_shape_max = {max_length};
-  abstract::ShapePtr rt_nested_splits_shape =
-    std::make_shared<abstract::Shape>(rt_nested_splits_shape_vec, infer_shape_min, infer_shape_max);
-  abstract::ShapePtr rt_dense_values_shape =
-    std::make_shared<abstract::Shape>(rt_dense_values_shape_vec, infer_shape_min, infer_shape_max);
+  abstract::ShapePtr rt_nested_splits_shape = std::make_shared<abstract::Shape>(rt_nested_splits_shape_vec);
+  abstract::ShapePtr rt_dense_values_shape = std::make_shared<abstract::Shape>(rt_dense_values_shape_vec);
   return (std::make_shared<abstract::TupleShape>(
     std::vector<abstract::BaseShapePtr>{rt_nested_splits_shape, rt_dense_values_shape}));
 }
@@ -204,6 +220,26 @@ AbstractBasePtr RaggedRangeInfer(const abstract::AnalysisEnginePtr &, const Prim
   auto type = RaggedRangeInferType(primitive, input_args);
   return abstract::MakeAbstract(shape, type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(RaggedRange, prim::kPrimRaggedRange, RaggedRangeInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGRaggedRangeInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return RaggedRangeInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return RaggedRangeInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return RaggedRangeInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {0, 1, 2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(RaggedRange, prim::kPrimRaggedRange, AGRaggedRangeInfer, false);
 }  // namespace ops
 }  // namespace mindspore

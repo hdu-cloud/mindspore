@@ -18,11 +18,12 @@
 
 #include "ir/func_graph.h"
 
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "ir/manager.h"
 #include "utils/ordered_set.h"
 #include "abstract/abstract_value.h"
 #include "abstract/abstract_function.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "ir/func_graph_cloner.h"
 
 namespace mindspore {
@@ -33,7 +34,7 @@ using mindspore::abstract::PrimitiveAbstractClosure;
 using mindspore::abstract::VirtualAbstractClosure;
 
 AbstractFunctionPtr FuncGraph::abstract() {
-  AbstractBasePtrList args_spec_list;
+  AbstractBasePtrList args_abs_list;
 
   for (auto &para : parameters_) {
     MS_EXCEPTION_IF_NULL(para);
@@ -41,7 +42,7 @@ AbstractFunctionPtr FuncGraph::abstract() {
       MS_LOG(ERROR) << "Error!!";
       return nullptr;
     }
-    args_spec_list.push_back(para->abstract());
+    args_abs_list.push_back(para->abstract());
   }
 
   if (output() == nullptr) {
@@ -49,7 +50,7 @@ AbstractFunctionPtr FuncGraph::abstract() {
     return nullptr;
   }
   MS_EXCEPTION_IF_NULL(output());
-  return std::make_shared<VirtualAbstractClosure>(args_spec_list, output()->abstract());
+  return std::make_shared<VirtualAbstractClosure>(args_abs_list, output()->abstract());
 }
 
 void FuncGraph::set_output(const AnfNodePtr &value, bool force_new_ret) {
@@ -98,6 +99,7 @@ void FuncGraph::GenerateVarParams(const FuncGraphPtr &specialized_graph, int var
   for (size_t i = 0; i < IntToSize(GetPositionalArgsCount()); ++i) {
     specialized_parameter_list->push_back(specialized_graph->parameters()[i]);
   }
+  MS_EXCEPTION_IF_NULL(specialized_graph->GetVariableArgParameter());
   TraceGuard trace_guard(
     std::make_shared<TraceGenerateVarArg>(specialized_graph->GetVariableArgParameter()->debug_info()));
   std::vector<AnfNodePtr> var_param_tuple_nodes;
@@ -122,25 +124,30 @@ void FuncGraph::GenerateVarParams(const FuncGraphPtr &specialized_graph, int var
 
 void FuncGraph::GenerateKwParams(const FuncGraphPtr &specialized_graph,
                                  const std::vector<abstract::AbstractKeywordArgPtr> &kwarg_list,
-                                 std::vector<AnfNodePtr> *specialized_parameter_list,
+                                 int pos_args_input_count, std::vector<AnfNodePtr> *specialized_parameter_list,
                                  mindspore::HashMap<AnfNodePtr, AnfNodePtr> *repl_nodes) const {
+  MS_EXCEPTION_IF_NULL(specialized_parameter_list);
+  MS_EXCEPTION_IF_NULL(repl_nodes);
+  MS_EXCEPTION_IF_NULL(specialized_graph);
   std::vector<AnfNodePtr> kwarg_keys_tuple_nodes = {NewValueNode(prim::kPrimMakeTuple)};
   std::vector<AnfNodePtr> kwarg_values_tuple_nodes = {NewValueNode(prim::kPrimMakeTuple)};
 
   std::set<AnfNodePtr> kwarg_nodes;
-  for (const auto &kwarg : kwarg_list) {
+  for (size_t i = 0; i < kwarg_list.size(); ++i) {
+    auto kwarg = kwarg_list[i];
     MS_EXCEPTION_IF_NULL(kwarg);
     std::string kw_param_name = kwarg->get_key();
-    MS_EXCEPTION_IF_NULL(specialized_graph);
     AnfNodePtr param_node = specialized_graph->GetParameterByName(kw_param_name);
     // If not find corresponding parameter node.
     if (param_node == nullptr) {
       if (!has_kwarg()) {
-        MS_LOG(EXCEPTION) << "Got unexpected keyword argument: " << kw_param_name;
+        if (IntToSize(pos_args_input_count) + i + 1 > specialized_graph->parameters().size()) {
+          MS_LOG(EXCEPTION) << "Got unexpected keyword argument: " << kw_param_name;
+        }
+        specialized_parameter_list->push_back(specialized_graph->parameters()[IntToSize(pos_args_input_count) + i]);
       } else {
         ParameterPtr para = std::make_shared<Parameter>(specialized_graph);
         std::string param_name = specialized_graph->GetVariableKwargName() + "[" + kw_param_name + "]";
-        MS_EXCEPTION_IF_NULL(specialized_parameter_list);
         auto find_kw_arg_in_list = std::any_of(specialized_parameter_list->begin(), specialized_parameter_list->end(),
                                                [param_name](const AnfNodePtr &node) {
                                                  MS_EXCEPTION_IF_NULL(node);
@@ -169,7 +176,6 @@ void FuncGraph::GenerateKwParams(const FuncGraphPtr &specialized_graph,
         auto extract_node = specialized_graph->NewCNode(
           {NewValueNode(prim::kPrimExtractKeywordArg), NewValueNode(kw_param_name), param_node});
         kwarg_nodes.insert(param_node);
-        MS_EXCEPTION_IF_NULL(repl_nodes);
         (void)repl_nodes->emplace(param_node, extract_node);
       }
     }
@@ -182,7 +188,7 @@ void FuncGraph::GenerateKwargReplNode(const FuncGraphPtr &specialized_graph,
                                       const std::vector<AnfNodePtr> &kwarg_keys_tuple_nodes,
                                       const std::vector<AnfNodePtr> &kwarg_values_tuple_nodes,
                                       mindspore::HashMap<AnfNodePtr, AnfNodePtr> *repl_nodes) const {
-  if (has_kwarg()) {
+  if (has_kwarg() && !kwarg_keys_tuple_nodes.empty()) {
     MS_EXCEPTION_IF_NULL(specialized_graph);
     TraceGuard guard(
       std::make_shared<TraceGenerateKwArg>(specialized_graph->GetVariableKwargParameter()->debug_info()));
@@ -225,34 +231,37 @@ void FuncGraph::GenerateDefaultValue(const FuncGraphPtr &specialized_graph,
     }
     auto default_value = specialized_graph->GetDefaultValueByName(param_name);
     if (default_value == nullptr) {
-      MS_LOG(EXCEPTION) << "Miss argument input for parameter:" << param_name;
+      MS_LOG(INTERNAL_EXCEPTION) << "Miss argument input for parameter:" << param_name;
     }
     MS_EXCEPTION_IF_NULL(repl_nodes);
     (void)repl_nodes->emplace(param_node, default_value);
   }
 }
 
-FuncGraphPtr FuncGraph::GenerateGraph(const AbstractBasePtrList &args_spec_list) {
+FuncGraphPtr FuncGraph::GenerateFuncGraph(const AbstractBasePtrList &args_abs_list) {
   std::vector<abstract::AbstractKeywordArgPtr> kwarg_list;
   std::vector<size_t> pos_arg_indexes;
-  size_t arguments_count = args_spec_list.size();
+  size_t arguments_count = args_abs_list.size();
   if (fv_param_count_ > arguments_count) {
-    MS_LOG(EXCEPTION) << "The number of parameters in funcgraph cannot exceed the number of arguments.";
+    MS_LOG(INTERNAL_EXCEPTION) << "The number of parameters in funcgraph cannot exceed the number of arguments.";
   }
   for (size_t i = 0; i < arguments_count - fv_param_count_; i++) {
-    MS_EXCEPTION_IF_NULL(args_spec_list[i]);
-    if (args_spec_list[i]->isa<abstract::AbstractKeywordArg>()) {
-      kwarg_list.push_back(args_spec_list[i]->cast<abstract::AbstractKeywordArgPtr>());
+    MS_EXCEPTION_IF_NULL(args_abs_list[i]);
+    if (args_abs_list[i]->isa<abstract::AbstractKeywordArg>()) {
+      kwarg_list.push_back(args_abs_list[i]->cast<abstract::AbstractKeywordArgPtr>());
     } else {
       pos_arg_indexes.push_back(i);
     }
   }
 
   if (!NeedGenerate(kwarg_list)) {
+    MS_LOG(DEBUG) << "No need generate, " << ToString();
     return shared_from_base<FuncGraph>();
   }
-  auto iter = func_graph_cache_.find(args_spec_list);
+  auto iter = func_graph_cache_.find(args_abs_list);
   if (iter != func_graph_cache_.end()) {
+    MS_EXCEPTION_IF_NULL(iter->second);
+    MS_LOG(DEBUG) << "Found in cache, " << iter->second->ToString() << ", for " << ToString();
     return iter->second;
   }
   FuncGraphPtr specialized_graph = BasicClone(shared_from_base<FuncGraph>());
@@ -262,9 +271,14 @@ FuncGraphPtr FuncGraph::GenerateGraph(const AbstractBasePtrList &args_spec_list)
   int variable_args_count = pos_args_input_count - GetPositionalArgsCount();
   std::vector<AnfNodePtr> specialized_parameter_list;
   mindspore::HashMap<AnfNodePtr, AnfNodePtr> repl_nodes;
+  MS_LOG(DEBUG) << "specialized_graph: " << specialized_graph->ToString()
+                << ", variable_args_count: " << variable_args_count
+                << ", pos_args_input_count: " << pos_args_input_count
+                << ", GetPositionalArgsCount: " << GetPositionalArgsCount() << ", arguments_count: " << arguments_count
+                << ", kwarg_count: " << kwarg_count << ", fv_param_count_: " << fv_param_count_;
   GenerateVarParams(specialized_graph, variable_args_count, pos_args_input_count, &specialized_parameter_list,
                     &repl_nodes);
-  GenerateKwParams(specialized_graph, kwarg_list, &specialized_parameter_list, &repl_nodes);
+  GenerateKwParams(specialized_graph, kwarg_list, pos_args_input_count, &specialized_parameter_list, &repl_nodes);
 
   GenerateDefaultValue(specialized_graph, specialized_parameter_list, &repl_nodes);
 
@@ -273,8 +287,8 @@ FuncGraphPtr FuncGraph::GenerateGraph(const AbstractBasePtrList &args_spec_list)
   auto params = specialized_graph->parameters();
   (void)specialized_parameter_list.insert(specialized_parameter_list.end(), params.end() - SizeToInt(fv_param_count_),
                                           params.end());
-  std::vector<AnfNodePtr> specialized_parameter_list_update(specialized_parameter_list.begin() + pos_arg_indexes.size(),
-                                                            specialized_parameter_list.end());
+  std::vector<AnfNodePtr> specialized_parameter_list_update(
+    specialized_parameter_list.begin() + SizeToLong(pos_arg_indexes.size()), specialized_parameter_list.end());
   for (size_t i = 0; i < pos_arg_indexes.size(); i++) {
     (void)specialized_parameter_list_update.insert(specialized_parameter_list_update.begin() + pos_arg_indexes[i],
                                                    specialized_parameter_list[i]);
@@ -285,7 +299,7 @@ FuncGraphPtr FuncGraph::GenerateGraph(const AbstractBasePtrList &args_spec_list)
   for (auto &node_pair : repl_nodes) {
     MS_EXCEPTION_IF_NULL(node_pair.first);
     MS_EXCEPTION_IF_NULL(node_pair.second);
-    MS_LOG(DEBUG) << "GenerateGraph replace:" << node_pair.first->DebugString() << "-"
+    MS_LOG(DEBUG) << "GenerateFuncGraph replace:" << node_pair.first->DebugString() << "-"
                   << node_pair.second->DebugString();
     (void)tr.Replace(node_pair.first, node_pair.second);
   }
@@ -296,7 +310,8 @@ FuncGraphPtr FuncGraph::GenerateGraph(const AbstractBasePtrList &args_spec_list)
   specialized_graph->set_kwonlyargs_count(0);
   specialized_graph->ClearDefaultValues();
   specialized_graph->set_is_generate(true);
-  func_graph_cache_[args_spec_list] = specialized_graph;
+  func_graph_cache_[args_abs_list] = specialized_graph;
+  MS_LOG(DEBUG) << "Generated, " << specialized_graph->ToString() << ", for " << ToString();
   return specialized_graph;
 }
 

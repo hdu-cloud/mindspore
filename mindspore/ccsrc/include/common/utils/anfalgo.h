@@ -17,27 +17,29 @@
 #ifndef MINDSPORE_CCSRC_INCLUDE_COMMON_UTILS_ANFALGO_H
 #define MINDSPORE_CCSRC_INCLUDE_COMMON_UTILS_ANFALGO_H
 
+#include <functional>
 #include <iostream>
-#include <string>
-#include <vector>
+#include <map>
+#include <memory>
+#include <optional>
 #include <set>
+#include <string>
 #include <tuple>
 #include <utility>
-#include <memory>
-#include <map>
-#include <functional>
-#include <optional>
-#include "ir/anf.h"
-#include "ir/func_graph.h"
-#include "ir/dtype.h"
+#include <vector>
 #include "base/base.h"
-#include "ir/primitive.h"
-#include "ir/kernel_info_dev.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "include/common/utils/contract.h"
-#include "utils/anf_utils.h"
 #include "include/common/utils/utils.h"
 #include "include/common/visible.h"
+#include "ir/anf.h"
+#include "ir/dtype.h"
+#include "ir/func_graph.h"
+#include "ir/kernel_info_dev.h"
+#include "ir/primitive.h"
+#include "ops/array_op_name.h"
+#include "ops/other_op_name.h"
+#include "ops/sequence_ops.h"
+#include "utils/anf_utils.h"
 
 namespace mindspore {
 namespace common {
@@ -64,6 +66,7 @@ class COMMON_EXPORT AnfAlgo {
                                                                      const std::vector<PrimitivePtr> &return_types = {},
                                                                      bool need_make_tuple = false);
   static std::vector<KernelWithIndex> GetAllOutputWithIndex(const AnfNodePtr &node);
+  static std::vector<KernelWithIndex> GetAllOutputWithOutMonadAndParameter(const AnfNodePtr &node);
   // get cnode primitive
   static AnfNodePtr GetCNodePrimitiveNode(const CNodePtr &node);
   static void SetNodeInput(const CNodePtr &node, const AnfNodePtr &input_node, size_t index);
@@ -113,30 +116,34 @@ class COMMON_EXPORT AnfAlgo {
   static size_t GetInputNum(const CNodePtr &cnode);
   // get the num of inputs exclude monads for real_kernel (which can be build and run in device)
   static size_t GetInputTensorNum(const AnfNodePtr &node);
-  // get the num of output real_kernel(which can be build and run in device)
-  static size_t GetOutputTensorNum(const AnfNodePtr &node);
+  // get prev node output width output index has tuplegetitem
+  static bool IsPrevNodeHasTupleGetItem(const AnfNodePtr &anf_node, size_t input_idx, bool skip_nop_node = false);
   // get prev node output width output index
   static KernelWithIndex GetPrevNodeOutput(const AnfNodePtr &anf_node, size_t input_idx, bool skip_nop_node = false);
+  // get all the untuple real prev_nodes output
+  static std::vector<KernelWithIndex> GetRealPrevNodesOutput(const AnfNodePtr &anf_node, size_t input_idx,
+                                                             bool skip_nop_node = false);
+
   // get output shapes inferred by ME from input nodes.
-  static ShapeVector GetOutputInferShape(const AnfNodePtr &node, size_t output_idx);
+  static ShapeVector GetOutputInferShape(const AnfNodePtr &node, size_t output_idx,
+                                         bool is_real_squence_output = false);
   static ShapeVector GetOutputInferShape(const AnfNodePtr &node, const abstract::BaseShapePtr &base_shape,
-                                         size_t output_idx);
+                                         size_t output_idx, bool is_real_squence_output = false);
   // get input shapes inferred by ME from input nodes.
   static ShapeVector GetPrevNodeOutputInferShape(const AnfNodePtr &node, size_t input_idx);
   // get output data type inferred by ME of anf node
   static TypeId GetOutputInferDataType(const AnfNodePtr &node, size_t output_idx);
   static TypeId GetOutputInferDataType(const TypePtr &type, size_t output_idx);
-
-  // get all output infer data type
-  static std::vector<TypeId> GetAllOutputInferDataTypes(const AnfNodePtr &node);
   // get output original data type from prev node,input_index is the input index of current node related to prev node
   static TypeId GetPrevNodeOutputInferDataType(const AnfNodePtr &node, size_t input_idx);
+  // for tuple condition
+  static std::vector<TypeId> GetRealPrevNodesOutputInferDataType(const AnfNodePtr &node, size_t input_idx);
   // set infer shapes and types of anf node
   static void SetOutputInferTypeAndShape(const std::vector<TypeId> &types, const std::vector<ShapeVector> &shapes,
-                                         AnfNode *node);
-  // get and set output shape ptr
-  static abstract::BaseShapePtr GetOutputDetailShape(const AnfNodePtr &node, size_t output_idx);
-  static abstract::BaseShapePtr GetPrevNodeOutputDetailShape(const AnfNodePtr &node, size_t input_idx);
+                                         AnfNode *node, bool disable_dynamic_len = false);
+  static void SetScalarTupleOutputInferType(const std::vector<TypeId> &types, const std::vector<ShapeVector> &shapes,
+                                            const AnfNodePtr &node);
+  // set output shape ptr
   static void SetOutputTypeAndDetailShape(const std::vector<TypeId> &types,
                                           const std::vector<abstract::BaseShapePtr> &shapes, AnfNode *node);
   static void CopyAbstract(const AnfNodePtr &from_node, AnfNode *to_node);
@@ -171,17 +178,19 @@ class COMMON_EXPORT AnfAlgo {
   // get fix output precision from prev node, input_idx is the input index of current node related to prev node.
   static TypeId GetPrevNodeOutputPrecision(const AnfNodePtr &node, size_t input_idx);
   static bool IsNodeInputDynamicShape(const CNodePtr &anf_node_ptr);
-  static bool IsKernelDynamicImpl(const AnfNodePtr &node);
+  static bool IsNodeOutputDynamicShape(const AnfNodePtr &node);
   static bool IsDynamicShape(const AnfNodePtr &node);
+  static bool IsDynamicRankNode(const AnfNodePtr &node);
+  static bool IsNodeInputDynamicRank(const CNodePtr &anf_node_ptr);
+  static bool IsNodeOutputDynamicRank(const AnfNodePtr &node);
+  static bool IsInputAnchorDynamicRank(const AnfNodePtr &node, size_t idx);
+  static bool IsOutputAnchorDynamicRank(const AnfNodePtr &node, size_t idx);
   static bool HasDynamicShapeFlag(const PrimitivePtr &prim);
   static bool IsCondControlKernel(const CNodePtr &node);
   static bool GetBooleanAttr(const AnfNodePtr &node, const std::string &attr);
   static std::optional<string> GetDumpFlag(const AnfNodePtr &node);
   static void GetRealDynamicShape(const std::vector<size_t> &shape, NotNull<std::vector<int64_t> *> dynamic_shape);
-  static std::vector<int64_t> GetInputMaxShape(const AnfNodePtr &anf_node, size_t index);
-  static std::vector<int64_t> GetInputMinShape(const AnfNodePtr &anf_node, size_t index);
   static std::vector<int64_t> GetOutputMaxShape(const AnfNodePtr &anf_node, size_t index);
-  static std::vector<int64_t> GetOutputMinShape(const AnfNodePtr &anf_node, size_t index);
   static bool IsHostKernel(const CNodePtr &kernel_node);
   static void AddArgList(AbstractBasePtrList *args_spec_list, const AnfNodePtr &real_input, size_t real_input_index);
   // Find real input nodes.
@@ -189,6 +198,7 @@ class COMMON_EXPORT AnfAlgo {
                                    std::set<AnfNodePtr> *visited);
   static void GetAllVisitedCNode(const CNodePtr &node, std::vector<AnfNodePtr> *used_kernels,
                                  std::set<AnfNodePtr> *visited);
+  static std::string GetGraphSplitGroup(const AnfNodePtr &node);
   static AnfNodeIndexSet GetUpdateStateUsers(const FuncGraphManagerPtr &manager, const AnfNodePtr &node);
   // Get node real inputs, skip `MakeTuple`, `TupleGetItem`, `Depend`, `Load`, `UpdateState` etc.
   static void GetRealInputs(const AnfNodePtr &node, std::vector<KernelWithIndex> *inputs);
@@ -223,9 +233,12 @@ class COMMON_EXPORT AnfAlgo {
   // Judge a control operator need be compiled into kernel graph rather than be cut into single op and
   // executed in vm. For example, the operator "bprop_cut" will be compiled into kernel graph and be launch
   // in backend in PyNative mode.
-  static bool IsControlOpExecInBackend(const AnfNodePtr &node);
+  static bool IsBpropCutOpExecInBackend(const AnfNodePtr &node);
 
   static bool IsNodeInputContainMonad(const AnfNodePtr &node);
+  // Check whether a cnode has a monad input.
+  static bool HasMonadInput(const AnfNodePtr &node);
+
   // Check if node is non-task op.
   static bool IsNonTaskOp(const CNodePtr &node);
   // Check if node has none input after IR fusion.
@@ -286,7 +299,46 @@ class COMMON_EXPORT AnfAlgo {
 
   static std::string GetTensorValueString(const tensor::TensorPtr &tensor);
   static abstract::AbstractBasePtr GetNodeAbstractByIndex(const AnfNodePtr &node, size_t index);
+
+  // Get jit level from func_graph
+  static std::string GetJitLevel(const FuncGraphPtr &func_graph);
+
+  static bool IsDynamicSequence(const AnfNodePtr &node);
+  static bool IsAnyTypeOutput(const AnfNodePtr &node);
+  static bool IsAnyTypeInput(const std::vector<AnfNodePtr> &inputs);
+  static bool HasTupleInput(const CNodePtr &node);
+  static bool HasDynamicTupleInput(const CNodePtr &node);
+  static bool IsReduceOp(const std::string &op_name);
+
+  // Get the element shape of dynamic sequence shape.
+  static abstract::BaseShapePtr GetDynamicSequenceShape(const AnfNodePtr &node, size_t output_idx);
+  // Fetch the sub abstract from the top abstract by the index.
+  static abstract::AbstractBasePtr FetchAbstractByIndex(const AbstractBasePtr &abstract, size_t index);
+
+  static std::string GetInputName(const CNodePtr &origin_op, size_t input_index);
 };
+
+inline AnfNodePtr CreateShapeVectorNode(const ShapeVector &value) {
+  auto value_node = NewValueNode(value);
+  ShapeVector value_node_shape = {SizeToLong(value.size())};
+  common::AnfAlgo::SetOutputInferTypeAndShape({kNumberTypeInt64}, {value_node_shape}, value_node.get());
+  return value_node;
+}
+
+inline CNodePtr CreateReshapeNode(const FuncGraphPtr &graph, const AnfNodePtr &input_node, const ShapeVector &shape) {
+  MS_EXCEPTION_IF_NULL(input_node);
+
+  auto shape_node = CreateShapeVectorNode(shape);
+  AnfNodePtrList reshape_inputs = {NewValueNode(std::make_shared<Primitive>(kReshapeOpName)), input_node, shape_node};
+  auto reshape_node = NewCNode(reshape_inputs, graph);
+  MS_EXCEPTION_IF_NULL(reshape_node);
+  common::AnfAlgo::SetNodeAttr(kAttrVisited, MakeValue(true), reshape_node);
+  common::AnfAlgo::SetNodeAttr(kAttrShape, MakeValue(shape), reshape_node);
+  auto data_type = common::AnfAlgo::GetOutputInferDataType(input_node, kIndex0);
+  common::AnfAlgo::SetOutputInferTypeAndShape({data_type}, {shape}, reshape_node.get());
+
+  return reshape_node;
+}
 }  // namespace common
 }  // namespace mindspore
 #endif  // MINDSPORE_CCSRC_INCLUDE_COMMON_UTILS_ANFALGO_H

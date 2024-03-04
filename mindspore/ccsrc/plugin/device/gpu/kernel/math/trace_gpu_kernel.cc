@@ -37,7 +37,7 @@ bool TraceGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::ve
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
+  unit_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
   return true;
 }
 int TraceGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
@@ -79,7 +79,9 @@ bool TraceGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs, cons
   T *input = GetDeviceAddress<T>(inputs, 0);
   T *output = GetDeviceAddress<T>(outputs, 0);
   size_t sum_size = std::min(matrix_col_, matrix_row_);
-  CalTrace(input, sum_size, matrix_col_, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  auto status =
+    CalTrace(input, sum_size, matrix_col_, output, device_id_, reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

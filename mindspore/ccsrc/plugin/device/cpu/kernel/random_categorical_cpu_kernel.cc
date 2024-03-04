@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,39 +22,43 @@
 #include <utility>
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 #include "ops/random_categorical.h"
+#include "kernel/philox_random.h"
 
 namespace mindspore {
 namespace kernel {
 namespace {
 using KernelRunFunc = RandomCategoricalCpuKernel::KernelRunFunc;
-}
+#define ADD_KERNEL(logits_dtype, nun_sample_dtype, seed_dtype, output_dtype, logits_type, output_type) \
+  {                                                                                                    \
+    KernelAttr()                                                                                       \
+      .AddInputAttr(kNumberType##logits_dtype)                                                         \
+      .AddInputAttr(kNumberType##nun_sample_dtype)                                                     \
+      .AddInputAttr(kNumberType##seed_dtype)                                                           \
+      .AddOutputAttr(kNumberType##output_dtype),                                                       \
+      &RandomCategoricalCpuKernel::LaunchKernel<logits_type, output_type>                              \
+  }
+}  // namespace
+
 const std::vector<std::pair<KernelAttr, KernelRunFunc>> &RandomCategoricalCpuKernel::GetFuncList() const {
   static const std::vector<std::pair<KernelAttr, RandomCategoricalCpuKernel::KernelRunFunc>> func_list = {
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeFloat32)
-       .AddInputAttr(kNumberTypeInt64)
-       .AddInputAttr(kNumberTypeInt64)
-       .AddOutputAttr(kNumberTypeInt32),
-     &RandomCategoricalCpuKernel::LaunchKernel<float, int32_t>},
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeFloat32)
-       .AddInputAttr(kNumberTypeInt32)
-       .AddInputAttr(kNumberTypeInt32)
-       .AddOutputAttr(kNumberTypeInt32),
-     &RandomCategoricalCpuKernel::LaunchKernel<float, int32_t>},
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeFloat64)
-       .AddInputAttr(kNumberTypeInt64)
-       .AddInputAttr(kNumberTypeInt64)
-       .AddOutputAttr(kNumberTypeInt32),
-     &RandomCategoricalCpuKernel::LaunchKernel<double, int32_t>},
-    {KernelAttr()
-       .AddInputAttr(kNumberTypeFloat64)
-       .AddInputAttr(kNumberTypeInt32)
-       .AddInputAttr(kNumberTypeInt32)
-       .AddOutputAttr(kNumberTypeInt32),
-     &RandomCategoricalCpuKernel::LaunchKernel<double, int32_t>},
-  };
+    ADD_KERNEL(Float16, Int32, Int32, Int16, float16, int16_t),
+    ADD_KERNEL(Float16, Int32, Int32, Int32, float16, int32_t),
+    ADD_KERNEL(Float16, Int32, Int32, Int64, float16, int64_t),
+    ADD_KERNEL(Float32, Int32, Int32, Int16, float, int16_t),
+    ADD_KERNEL(Float32, Int32, Int32, Int32, float, int32_t),
+    ADD_KERNEL(Float32, Int32, Int32, Int64, float, int64_t),
+    ADD_KERNEL(Float64, Int32, Int32, Int16, double, int16_t),
+    ADD_KERNEL(Float64, Int32, Int32, Int32, double, int32_t),
+    ADD_KERNEL(Float64, Int32, Int32, Int64, double, int64_t),
+    ADD_KERNEL(Float16, Int64, Int64, Int16, float16, int16_t),
+    ADD_KERNEL(Float16, Int64, Int64, Int32, float16, int32_t),
+    ADD_KERNEL(Float16, Int64, Int64, Int64, float16, int64_t),
+    ADD_KERNEL(Float32, Int64, Int64, Int16, float, int16_t),
+    ADD_KERNEL(Float32, Int64, Int64, Int32, float, int32_t),
+    ADD_KERNEL(Float32, Int64, Int64, Int64, float, int64_t),
+    ADD_KERNEL(Float64, Int64, Int64, Int16, double, int16_t),
+    ADD_KERNEL(Float64, Int64, Int64, Int32, double, int32_t),
+    ADD_KERNEL(Float64, Int64, Int64, Int64, double, int64_t)};
   return func_list;
 }
 
@@ -78,7 +82,6 @@ int RandomCategoricalCpuKernel::Resize(const BaseOperatorPtr &base_operator, con
   input_shape_ = inputs.at(0)->GetShapeVector();
   auto kernel_ptr = std::dynamic_pointer_cast<ops::RandomCategorical>(base_operator);
   MS_EXCEPTION_IF_NULL(kernel_ptr);
-  seed_ = kernel_ptr->get_seed();
   return KRET_OK;
 }
 
@@ -94,15 +97,17 @@ void GetCdf(T *logits_addr, T *dev_cdf, const size_t batch_size, const size_t nu
     if (cur_col != 0) {
       return;
     }
-    float max_of_row = logits_addr[pos];
+    T max_of_row = logits_addr[pos];
     for (size_t i = 1; i < num_classes; i++) {
       if (logits_addr[pos + i] > max_of_row) {
         max_of_row = logits_addr[pos + i];
       }
     }
-    dev_cdf[cur_row * num_classes] = std::exp(static_cast<T>(logits_addr[pos] - max_of_row));
+    float exp1 = static_cast<float>(logits_addr[pos] - max_of_row);
+    dev_cdf[cur_row * num_classes] = static_cast<T>(std::exp(exp1));
     for (size_t i = 1; i < num_classes; i++) {
-      T tmp = std::exp(static_cast<T>(logits_addr[pos + i] - max_of_row));
+      float exp2 = static_cast<float>(logits_addr[pos + i] - max_of_row);
+      T tmp = static_cast<T>(std::exp(exp2));
       dev_cdf[cur_row * num_classes + i] = dev_cdf[cur_row * num_classes + i - 1] + tmp;
     }
   }
@@ -115,7 +120,7 @@ void RandomCategoricalFunc(const size_t num_samples, const T1 *dev_rand, const T
   for (size_t pos = 0; pos < size; pos++) {
     size_t cur_row = pos / num_samples;
     size_t cur_col = pos % num_samples;
-    const float to_find = dev_cdf[cur_row * num_classes + num_classes - 1] * dev_rand[cur_row * num_samples + cur_col];
+    const T1 to_find = dev_cdf[cur_row * num_classes + num_classes - 1] * dev_rand[cur_row * num_samples + cur_col];
 
     size_t idx = 0;
     while (dev_cdf[cur_row * num_classes + idx] < to_find) {
@@ -137,30 +142,39 @@ bool RandomCategoricalCpuKernel::LaunchKernel(const std::vector<kernel::AddressP
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the number of outputs must be 1, but got " << outputs.size()
                       << "output(s).";
   }
-  MS_EXCEPTION_IF_NULL(inputs[0]);
-  MS_EXCEPTION_IF_NULL(inputs[1]);
-  MS_EXCEPTION_IF_NULL(outputs[0]);
-
-  T1 *input_tensor = reinterpret_cast<T1 *>(inputs[0]->addr);
-  int num_sample = reinterpret_cast<int *>(inputs[1]->addr)[0];
-  T2 *output = reinterpret_cast<T2 *>(outputs[0]->addr);
+  T1 *input_tensor = GetDeviceAddress<T1>(inputs, kIndex0);
+  int *num_sample_ptr = GetDeviceAddress<int>(inputs, kIndex1);
+  int *input_seed_ptr = GetDeviceAddress<int>(inputs, kIndex2);
+  T2 *output = GetDeviceAddress<T2>(outputs, kIndex0);
 
   MS_EXCEPTION_IF_NULL(input_tensor);
   MS_EXCEPTION_IF_NULL(output);
+  MS_EXCEPTION_IF_NULL(num_sample_ptr);
+  MS_EXCEPTION_IF_NULL(input_seed_ptr);
 
+  int num_sample = num_sample_ptr[0];
+  int input_seed = input_seed_ptr[0];
   int batch_size = input_shape_[0];
   int num_classes = input_shape_[input_shape_.size() - 1];
 
   std::vector<T1> host_cdf(batch_size * num_classes);
   GetCdf(input_tensor, host_cdf.data(), batch_size, num_classes);
   std::uniform_real_distribution<> dist(0, 1);
-  rng_.seed(seed_);
+  // Is the op running for the first time or multiple times but the seed has changed
+  if (init_state_ || input_seed != init_seed_) {
+    if (init_state_) {
+      init_state_ = false;
+    }
+    init_seed_ = input_seed;
+    uint64_t seed = random::GetSeed(0, static_cast<uint64_t>(input_seed));
+    rng_.seed(seed);
+  }
 
   std::vector<T1> host_rand(batch_size * num_sample);
   for (int j = 0; j < num_sample; j++) {
     float random = dist(rng_);
     for (int i = 0; i < batch_size; ++i) {
-      host_rand[i * num_sample + j] = random;
+      host_rand[i * num_sample + j] = static_cast<T1>(random);
     }
   }
   RandomCategoricalFunc(num_sample, host_rand.data(), host_cdf.data(), batch_size, num_classes, output);

@@ -14,29 +14,34 @@
  * limitations under the License.
  */
 
+#include "ops/parallel_concat.h"
 #include <map>
 #include <string>
-#include "ops/parallel_concat.h"
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
-const int64_t kOneNum = 1;
 abstract::ShapePtr ParallelConcatInferShape(const PrimitivePtr &primitive,
                                             const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
-  auto prim_name = primitive->name();
-  auto elements = input_args[0]->isa<abstract::AbstractTuple>()
-                    ? input_args[0]->cast<abstract::AbstractTuplePtr>()->elements()
-                    : input_args[0]->cast<abstract::AbstractListPtr>()->elements();
-  (void)CheckAndConvertUtils::CheckInteger("concat element num", SizeToLong(elements.size()), kGreaterEqual, kOneNum,
+  const auto &prim_name = primitive->name();
+  for (const auto &item : input_args) {
+    MS_EXCEPTION_IF_NULL(item);
+  }
+  AbstractBasePtrList elements = input_args;
+  if (input_args.size() == 1) {
+    if (!input_args[0]->isa<abstract::AbstractSequence>()) {
+      MS_EXCEPTION(TypeError) << "For '" << prim_name << "', the input data type must be list or tuple of tensors.";
+    }
+    elements = input_args[0]->cast<abstract::AbstractSequencePtr>()->elements();
+  }
+  (void)CheckAndConvertUtils::CheckInteger("concat element num", SizeToLong(elements.size()), kGreaterEqual, 1,
                                            prim_name);
-  (void)primitive->AddAttr("N", MakeValue(SizeToLong(elements.size())));
-  (void)primitive->AddAttr("inputNums", MakeValue(SizeToLong(elements.size())));
 
   for (size_t i = 0; i < elements.size(); ++i) {
     auto shape_map_i = CheckAndConvertUtils::ConvertShapePtrToShapeMap(elements[i]->BuildShape());
@@ -49,24 +54,24 @@ abstract::ShapePtr ParallelConcatInferShape(const PrimitivePtr &primitive,
   MS_EXCEPTION_IF_NULL(element0);
   auto element0_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(element0->BuildShape())[kShape];
   auto element0_rank = element0_shape.size();
-  if (element0_rank < kOneNum) {
+  if (element0_rank < 1) {
     MS_EXCEPTION(ValueError) << "For [" << prim_name
                              << "], the rank of input must greater than 1. But got:" << element0_rank << ".";
   }
 
   auto axis = 0;
-  int64_t all_shp = static_cast<int64_t>(element0_shape[axis]);
+  int64_t all_shp = static_cast<int64_t>(element0_shape[IntToSize(axis)]);
   for (size_t i = 0; i < elements.size(); ++i) {
     auto shape_i = elements[i]->BuildShape();
     if (shape_i->IsDynamic()) {
       auto ret_shape = element0_shape;
-      ret_shape[axis] = -1;
+      ret_shape[IntToSize(axis)] = -1;
       return std::make_shared<abstract::Shape>(ret_shape);
     }
   }
   for (size_t i = 1; i < elements.size(); ++i) {
     auto elementi_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(elements[i]->BuildShape())[kShape];
-    (void)CheckAndConvertUtils::CheckInteger("x" + std::to_string(i) + ".shape[0]", elementi_shape[0], kEqual, kOneNum,
+    (void)CheckAndConvertUtils::CheckInteger("x" + std::to_string(i) + ".shape[0]", elementi_shape[0], kEqual, 1,
                                              prim_name);
     if (elementi_shape.size() != element0_shape.size()) {
       MS_EXCEPTION(ValueError) << "For [" << prim_name << "], the rank of all elements should be the same, but got "
@@ -82,25 +87,28 @@ abstract::ShapePtr ParallelConcatInferShape(const PrimitivePtr &primitive,
       }
     }
 
-    all_shp = all_shp + elementi_shape[axis];
+    all_shp = all_shp + elementi_shape[IntToSize(axis)];
   }
   auto ret_shape = element0_shape;
-  ret_shape[axis] = all_shp;
+  ret_shape[IntToSize(axis)] = all_shp;
+  (void)primitive->AddAttr("shape", MakeValue(ret_shape));
   return std::make_shared<abstract::Shape>(ret_shape);
 }
 
 TypePtr ParallelConcatInferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
-  auto prim_name = primitive->name();
-  if (!input_args[0]->isa<abstract::AbstractTuple>() && !input_args[0]->isa<abstract::AbstractList>()) {
-    MS_EXCEPTION(TypeError) << "For '" << prim_name
-                            << "', the input must be a list or tuple of tensors. But got:" << input_args[0]->ToString()
-                            << ".";
+  const auto &prim_name = primitive->name();
+  for (const auto &item : input_args) {
+    MS_EXCEPTION_IF_NULL(item);
   }
-  auto elements = input_args[0]->isa<abstract::AbstractTuple>()
-                    ? input_args[0]->cast<abstract::AbstractTuplePtr>()->elements()
-                    : input_args[0]->cast<abstract::AbstractListPtr>()->elements();
-  (void)CheckAndConvertUtils::CheckInteger("concat element num", SizeToLong(elements.size()), kGreaterEqual, kOneNum,
+  AbstractBasePtrList elements = input_args;
+  if (input_args.size() == 1) {
+    if (!input_args[0]->isa<abstract::AbstractSequence>()) {
+      MS_EXCEPTION(TypeError) << "For '" << prim_name << "', the input data type must be list or tuple of tensors.";
+    }
+    elements = input_args[0]->cast<abstract::AbstractSequencePtr>()->elements();
+  }
+  (void)CheckAndConvertUtils::CheckInteger("concat element num", SizeToLong(elements.size()), kGreaterEqual, 1,
                                            prim_name);
   std::map<std::string, TypePtr> types;
   for (size_t i = 0; i < elements.size(); ++i) {
@@ -115,15 +123,28 @@ TypePtr ParallelConcatInferType(const PrimitivePtr &primitive, const std::vector
 MIND_API_OPERATOR_IMPL(ParallelConcat, BaseOperator);
 AbstractBasePtr ParallelConcatInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                     const std::vector<AbstractBasePtr> &input_args) {
-  const int64_t kInputNum = 1;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterEqual, kInputNum, primitive->name());
-  for (const auto &item : input_args) {
-    MS_EXCEPTION_IF_NULL(item);
-  }
   auto infer_type = ParallelConcatInferType(primitive, input_args);
   auto infer_shape = ParallelConcatInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(ParallelConcat, prim::kPrimParallelConcat, ParallelConcatInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGParallelConcatInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ParallelConcatInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ParallelConcatInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ParallelConcatInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ParallelConcat, prim::kPrimParallelConcat, AGParallelConcatInfer, false);
 }  // namespace ops
 }  // namespace mindspore

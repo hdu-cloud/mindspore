@@ -1,4 +1,4 @@
-if(ENABLE_GITEE)
+if(ENABLE_GITEE OR ENABLE_GITEE_EULER) # Channel GITEE_EULER is NOT supported now, use GITEE instead.
   set(REQ_URL "https://gitee.com/mirrors/openssl/repository/archive/OpenSSL_1_1_1k.tar.gz")
   set(SHA256 "b92f9d3d12043c02860e5e602e50a73ed21a69947bcc74d391f41148e9f6aa95")
 else()
@@ -25,7 +25,7 @@ if(BUILD_LITE)
                 LIBS ssl crypto
                 URL ${REQ_URL}
                 SHA256 ${SHA256}
-                CONFIGURE_COMMAND ./Configure android-arm64 -D__ANDROID_API__=29 no-zlib
+                CONFIGURE_COMMAND ./Configure android-arm64 -D__ANDROID_API__=29 no-zlib no-afalgeng
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2021-3711.patch
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2021-3712.patch
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2021-4160.patch
@@ -33,6 +33,17 @@ if(BUILD_LITE)
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-1292.patch
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-2068.patch
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-2097.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-4304.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-4450.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0215.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0286.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0464.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0465.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0466.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-2650.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-3446.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-3817.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-4807.patch
                 )
     elseif(PLATFORM_ARM32 AND ANDROID_NDK_TOOLCHAIN_INCLUDED)
         set(openssl_USE_STATIC_LIBS OFF)
@@ -46,7 +57,7 @@ if(BUILD_LITE)
                 LIBS ssl crypto
                 URL ${REQ_URL}
                 SHA256 ${SHA256}
-                CONFIGURE_COMMAND ./Configure android-arm -D__ANDROID_API__=19 no-zlib
+                CONFIGURE_COMMAND ./Configure android-arm -D__ANDROID_API__=19 no-zlib no-afalgeng
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2021-3711.patch
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2021-3712.patch
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2021-4160.patch
@@ -54,6 +65,17 @@ if(BUILD_LITE)
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-1292.patch
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-2068.patch
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-2097.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-4304.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-4450.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0215.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0286.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0464.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0465.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0466.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-2650.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-3446.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-3817.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-4807.patch
                 )
     elseif(${CMAKE_SYSTEM_NAME} MATCHES "Linux" OR APPLE)
         set(openssl_CFLAGS -fvisibility=hidden)
@@ -62,7 +84,7 @@ if(BUILD_LITE)
                 LIBS ssl crypto
                 URL ${REQ_URL}
                 SHA256 ${SHA256}
-                CONFIGURE_COMMAND ./config no-zlib no-shared
+                CONFIGURE_COMMAND ./config no-zlib no-shared no-afalgeng
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2021-3711.patch
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2021-3712.patch
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2021-4160.patch
@@ -70,6 +92,17 @@ if(BUILD_LITE)
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-1292.patch
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-2068.patch
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-2097.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-4304.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-4450.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0215.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0286.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0464.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0465.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0466.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-2650.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-3446.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-3817.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-4807.patch
                 )
     else()
         MESSAGE(FATAL_ERROR "openssl does not support compilation for the current environment.")
@@ -85,7 +118,7 @@ else()
                 LIBS ssl crypto
                 URL ${REQ_URL}
                 SHA256 ${SHA256}
-                CONFIGURE_COMMAND ./config no-zlib no-shared
+                CONFIGURE_COMMAND ./config no-zlib no-shared no-afalgeng
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2021-3711.patch
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2021-3712.patch
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2021-4160.patch
@@ -93,6 +126,17 @@ else()
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-1292.patch
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-2068.patch
                 PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-2097.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-4304.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2022-4450.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0215.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0286.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0464.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0465.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-0466.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-2650.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-3446.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-3817.patch
+                PATCHES ${OPENSSL_PATCH_ROOT}/CVE-2023-4807.patch
                 )
         include_directories(${openssl_INC})
         add_library(mindspore::ssl ALIAS openssl::ssl)

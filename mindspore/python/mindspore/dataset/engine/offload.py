@@ -23,7 +23,7 @@ import mindspore.ops as ops
 import mindspore.nn as nn
 import mindspore.ops.composite as C
 from mindspore.ops import operations as P
-from mindspore.ops.primitive import constexpr
+from mindspore.ops.primitive import _primexpr
 from mindspore import log as logger
 
 
@@ -88,7 +88,7 @@ def apply_offload_iterators(data, offload_model):
             data[i] = Tensor(data[i], dtype=mstype.float32)
             non_tensor_idxs.append(i)
 
-    data = offload_model(data)
+    data = offload_model(*data)
     data = list(data)
     for idx in non_tensor_idxs:
         data[idx] = data[idx].asnumpy()
@@ -96,7 +96,7 @@ def apply_offload_iterators(data, offload_model):
     return data
 
 
-@constexpr
+@_primexpr
 def check_input_dims(x_shape, required_dim, offload_op_name):
     """
     Check if input has the required number of dimensions for the operation.
@@ -136,7 +136,7 @@ class ApplyPreTransform(nn.Cell):
         for data_col in x:
             data.append(data_col)
 
-        data = self.transform(data)
+        data = self.transform(*data)
         data = self.model(*data)
 
         return data
@@ -180,12 +180,13 @@ class RandomHorizontalFlip(nn.Cell):
 
         flip_rand_factor = Tensor(np.random.uniform(size=(bs, 1)), dtype=mstype.float32)
         flip_rand_factor = self.cast((self.prob > flip_rand_factor), mstype.float32)
-        flip_rand_factor = self.reshape(C.repeat_elements(flip_rand_factor, rep=(h*w*c)), (bs, h, w, c))
+        flip_rand_factor = self.reshape(C.repeat_elements(flip_rand_factor, rep=(h * w * c)), (bs, h, w, c))
 
         x_flip = self.h_flip(x)
-        x = self.mul(x_flip, flip_rand_factor) + self.mul((1 - flip_rand_factor), x)
-
-        return x
+        operation = self.mul(x_flip, flip_rand_factor) + self.mul((1 - flip_rand_factor), x)
+        # ops.depend is added to find the RandomHorizontalFlip operator in IR files.
+        depend = ops.depend(operation, "RandomHorizontalFlip")
+        return depend
 
 
 class RandomVerticalFlip(nn.Cell):
@@ -213,12 +214,13 @@ class RandomVerticalFlip(nn.Cell):
 
         flip_rand_factor = Tensor(np.random.uniform(size=(bs, 1)), dtype=mstype.float32)
         flip_rand_factor = self.cast((self.prob > flip_rand_factor), mstype.float32)
-        flip_rand_factor = self.reshape(C.repeat_elements(flip_rand_factor, rep=(h*w*c)), (bs, h, w, c))
+        flip_rand_factor = self.reshape(C.repeat_elements(flip_rand_factor, rep=(h * w * c)), (bs, h, w, c))
 
         x_flip = self.h_flip(x)
-        x = self.mul(x_flip, flip_rand_factor) + self.mul((1 - flip_rand_factor), x)
-
-        return x
+        operation = self.mul(x_flip, flip_rand_factor) + self.mul((1 - flip_rand_factor), x)
+        # ops.depend is added to find the RandomVerticalFlip operator in IR files.
+        depend = ops.depend(operation, "RandomVerticalFlip")
+        return depend
 
 
 class GenerateRandBatch(nn.Cell):
@@ -239,7 +241,7 @@ class GenerateRandBatch(nn.Cell):
         rand_factor = degree_min + (degree_max - degree_min)*rand_factor
         degree_factor = degree_min * self.ones((bs, 1), mstype.float32)
         rand_factor = (check_rand * degree_factor) + (~check_rand * rand_factor)
-        rand_factor = self.reshape(C.repeat_elements(rand_factor, rep=(h*w*c)), (bs, h, w, c))
+        rand_factor = self.reshape(C.repeat_elements(rand_factor, rep=(h * w * c)), (bs, h, w, c))
 
         return rand_factor
 
@@ -304,7 +306,7 @@ class RandomColorAdjust(nn.Cell):
 
         x_gray = 0.2989 * r_ + 0.587 * g_ + 0.114 * b_
         x_gray_mean = self.expand_dims(self.mean(x_gray, (1, 2)) + 0.5, -1)
-        x_gray_mean = self.reshape(C.repeat_elements(x_gray_mean, rep=(h*w*c)), (bs, h, w, c))
+        x_gray_mean = self.reshape(C.repeat_elements(x_gray_mean, rep=(h * w * c)), (bs, h, w, c))
         x_gray = C.repeat_elements(self.expand_dims(x_gray, -1), rep=c, axis=-1)
 
         # Apply brightness
@@ -339,7 +341,7 @@ class RandomColorAdjust(nn.Cell):
         hue_rand_factor = self.hue_min + (self.hue_max - self.hue_min)*hue_rand_factor
         degree_factor = self.hue_min * self.ones((bs, 1), mstype.float32)
         hue_rand_factor = (self.check_rand_hue * degree_factor) + (~self.check_rand_hue * hue_rand_factor)
-        hue_rand_factor = self.reshape(C.repeat_elements(hue_rand_factor, rep=(h*w)), (bs, h, w))
+        hue_rand_factor = self.reshape(C.repeat_elements(hue_rand_factor, rep=(h * w)), (bs, h, w))
         hue = hue + (hue_rand_factor * 360.0)
 
         # Convert tensor from hsv to rgb
@@ -362,9 +364,10 @@ class RandomColorAdjust(nn.Cell):
         x_rgb = x_rgb + C.repeat_elements(self.expand_dims((v - c), 1), 3, 1)
 
         x_rgb = self.transpose(x, (0, 2, 3, 1)) * 255.0
-        x_rgb = ops.clip_by_value(x, 0.0, 255.0)
-
-        return x_rgb
+        operation = ops.clip_by_value(x, 0.0, 255.0)
+        # ops.depend is added to find the RandomColorAdjust operator in IR files.
+        depend = ops.depend(operation, "RandomColorAdjust")
+        return depend
 
 
 class RandomSharpness(nn.Cell):
@@ -409,14 +412,16 @@ class RandomSharpness(nn.Cell):
         degree_rand_factor = self.degree_min + (self.degree_max - self.degree_min)*degree_rand_factor
         degree_factor = self.degree_min * self.ones((bs, 1), mstype.float32)
         degree_rand_factor = (self.check_rand * degree_factor) + (~self.check_rand * degree_rand_factor)
-        degree_rand_factor = self.reshape(C.repeat_elements(degree_rand_factor, rep=(h*w*c)), (bs, h, w, c))
+        degree_rand_factor = self.reshape(C.repeat_elements(degree_rand_factor, rep=(h * w * c)), (bs, h, w, c))
 
         x_sharp = self.filter(self.transpose(x, (0, 3, 1, 2)), self.weight)
         x_sharp = self.transpose(x_sharp, (0, 2, 3, 1))
 
         x = self.mul(x, degree_rand_factor) + self.mul((1 - degree_rand_factor), x_sharp)
-        x = ops.clip_by_value(x, 0.0, 255.0)
-        return x
+        operation = ops.clip_by_value(x, 0.0, 255.0)
+        # ops.depend is added to find the RandomSharpness operator in IR files.
+        depend = ops.depend(operation, "RandomSharpness")
+        return depend
 
 
 class Rescale(nn.Cell):
@@ -436,9 +441,10 @@ class Rescale(nn.Cell):
     def construct(self, x):
 
         x = self.cast(x, mstype.float32)
-        x = x * self.rescale + self.shift
-
-        return x
+        operation = x * self.rescale + self.shift
+        # ops.depend is added to find the Rescale operator in IR files.
+        depend = ops.depend(operation, "Rescale")
+        return depend
 
 
 class HwcToChw(nn.Cell):
@@ -454,7 +460,10 @@ class HwcToChw(nn.Cell):
     def construct(self, x):
         x_shape = self.shape(x)
         check_input_dims(x_shape, 4, 'HwcToChw')
-        return self.trans(x, (0, 3, 1, 2))
+        operation = self.trans(x, (0, 3, 1, 2))
+        # ops.depend is added to find the HwcToChw operator in IR files.
+        depend = ops.depend(operation, "HwcToChw")
+        return depend
 
 
 class Normalize(nn.Cell):
@@ -462,8 +471,11 @@ class Normalize(nn.Cell):
     Applies Normalize transform on given input tensors.
     """
 
-    def __init__(self, mean, std):
+    def __init__(self, mean, std, is_hwc=True):
         super(Normalize, self).__init__()
+        if is_hwc is False:
+            mean = np.expand_dims(np.array(mean), (1, 2))
+            std = np.expand_dims(np.array(std), (1, 2))
         self.mean = Tensor(mean, mstype.float32)
         self.std = Tensor(std, mstype.float32)
         self.sub = P.Sub()
@@ -473,8 +485,10 @@ class Normalize(nn.Cell):
     def construct(self, x):
         x = self.cast(x, mstype.float32)
         x = self.sub(x, self.mean)
-        x = self.div(x, self.std)
-        return x
+        operation = self.div(x, self.std)
+        # ops.depend is added to find the Normalize operator in IR files.
+        depend = ops.depend(operation, "Normalize")
+        return depend
 
 
 class TypeCast(nn.Cell):
@@ -489,8 +503,10 @@ class TypeCast(nn.Cell):
         self.data_type = mstype.typing.str_to_type(data_type_str)
 
     def construct(self, x):
-
-        return self.cast(x, self.data_type)
+        operation = self.cast(x, self.data_type)
+        # ops.depend is added to find the TypeCast operator in IR files.
+        depend = ops.depend(operation, "TypeCast")
+        return depend
 
 
 class OffloadModel():
@@ -503,7 +519,7 @@ class OffloadModel():
 op_to_model = {
     "HWC2CHW": OffloadModel(HwcToChw),
     "HwcToChw": OffloadModel(HwcToChw),
-    "Normalize": OffloadModel(Normalize, ["mean", "std"]),
+    "Normalize": OffloadModel(Normalize, ["mean", "std", "is_hwc"]),
     "RandomColorAdjust": OffloadModel(RandomColorAdjust, ["brightness", "contrast", "saturation", "hue"]),
     "RandomHorizontalFlip": OffloadModel(RandomHorizontalFlip, ["prob"]),
     "RandomSharpness": OffloadModel(RandomSharpness, ["degrees"]),
@@ -572,7 +588,11 @@ class GetOffloadModel(nn.Cell):
                     self.transform_list.append(GetModelFromJson2Col(node, ds_col_idxs))
             self.transform_list.reverse()
 
-    def construct(self, x):
+    def construct(self, *x):
+        data = []
+        for d in x:
+            data.append(d)
+
         for transform in self.transform_list:
-            x = transform(x)
-        return x
+            data = transform(data)
+        return data

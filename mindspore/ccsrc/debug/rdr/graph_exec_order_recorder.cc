@@ -18,8 +18,7 @@
 #include <utility>
 #include "mindspore/core/ir/anf.h"
 #include "mindspore/core/utils/log_adapter.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
-#include "include/common/utils/utils.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/debug/rdr/recorder_manager.h"
 #include "mindspore/core/utils/file_utils.h"
 
@@ -62,7 +61,10 @@ void GraphExecOrderRecorder::Export() {
 namespace RDR {
 bool RecordGraphExecOrder(const SubModuleId module, const std::string &name,
                           const std::vector<CNodePtr> &final_exec_order) {
-  if (!mindspore::RecorderManager::Instance().RdrEnable()) {
+  auto ms_context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context);
+  if (!mindspore::RecorderManager::Instance().RdrEnable() ||
+      ms_context->get_param<int>(MS_CTX_EXECUTION_MODE) == kPynativeMode) {
     return false;
   }
   std::string submodule_name = std::string(GetSubModuleName(module));

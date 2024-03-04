@@ -19,8 +19,9 @@ import pytest
 
 from mindspore import ops, nn, context, set_seed
 from mindspore.train import DatasetHelper, connect_network_with_dataset
-import mindspore.dataset as ds
 from mindspore.common.tensor import Tensor
+from mindspore.ops import functional as F
+import mindspore.dataset as ds
 import mindspore.common.dtype as mstype
 
 context.set_context(mode=context.GRAPH_MODE)
@@ -73,22 +74,21 @@ def compare_acc(outputs, expects):
 class GradNetWrtX(nn.Cell):
     def __init__(self, network):
         super(GradNetWrtX, self).__init__()
-        self.grad = ops.GradOperation(get_all=True, sens_param=True)
+        self.grad = ops.GradOperation(get_all=True)
         self.network = network
 
-    def construct(self, input_, output_grad):
-        return self.grad(self.network)(input_, output_grad)
-
+    def construct(self, input_):
+        return self.grad(self.network)(input_)
 
 
 class GradNetWrtX2inputs(nn.Cell):
     def __init__(self, network):
         super(GradNetWrtX2inputs, self).__init__()
-        self.grad = ops.GradOperation(get_all=True, sens_param=True)
+        self.grad = ops.GradOperation(get_all=True)
         self.network = network
 
-    def construct(self, input1, input2, output_grad):
-        return self.grad(self.network)(input1, input2, output_grad)
+    def construct(self, input1, input2):
+        return self.grad(self.network)(input1, input2)
 
 
 def comm_func(dyn_range, input_shp, data_type, op_net, num=None):
@@ -161,7 +161,7 @@ class CustomDense(nn.Dense):
         self.indices_2 = Tensor(np.array([[2]]), mstype.int32)
 
     def construct(self, x):
-        if -1 in x.shape:
+        if F.is_sequence_value_unknown(x.shape):
             x_dyn_shape = self.dyn_shape(x)
             x_dyn_shape = self.cast(x_dyn_shape, mstype.float16)
             if len(x_dyn_shape) != 2:
@@ -173,7 +173,12 @@ class CustomDense(nn.Dense):
                 x = self.reshape(x, new_shape)
             x = self.matmul(x, self.weight)
             if self.has_bias:
-                x = self.bias_add(x, self.bias)
+                if self.bias.dtype != mstype.float16:
+                    ori_dtype = x.dtype
+                    x = self.bias_add(self.cast(x, mstype.float16), self.cast(self.bias, mstype.float16))
+                    x = self.cast(x, ori_dtype)
+                else:
+                    x = self.bias_add(x, self.bias)
             if self.activation_flag:
                 x = self.activation(x)
             if len(x_dyn_shape) != 2:
@@ -248,9 +253,8 @@ class Positional(nn.Cell):
         self.scatterupdate = ops.TensorScatterUpdate()
         self.end = Tensor((self.pe.shape[0], 0, self.pe.shape[2]), mstype.float32)
 
-
     def construct(self, x: Tensor, offset: int = 0):
-        if -1 not in x.shape:
+        if not F.is_sequence_value_unknown(x.shape):
             pos_emb = self.pe[:, offset: offset + x.shape[1]]
         else:
             x_dyn_shape = self.dyn_shape(x)
@@ -316,7 +320,7 @@ class MaxPool(nn.Cell):
         return out
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -329,12 +333,12 @@ def test_dynamic_custom_dense():
     batch_size = 16
     dynamic_range = range(2, 64)
     data_type = np.float32
-    input_shape = [(batch_size, None, 64), (batch_size, None, 64)]
+    input_shape = [(batch_size, None, 64)]
     net = GradNetWrtX(CustomDense(64, 64))
     comm_func(dynamic_range, input_shape, data_type, net)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -351,7 +355,7 @@ def test_dynamic_batchnorm1d():
     comm_func(dynamic_range, input_shape, data_type, net)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -368,7 +372,7 @@ def test_dynamic_batchnorm1d_single_op():
     comm_func(dynamic_range, input_shape, data_type, net)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -428,7 +432,7 @@ def test_dynamic_sort2():
     comm_func(dynamic_range, input_shape, data_type, net)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -445,7 +449,7 @@ def test_dynamic_nms_with_mask():
     comm_func(dynamic_range, input_shape, data_type, net)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -462,7 +466,7 @@ def test_dynamic_concat():
     comm_func(dynamic_range, input_shape, data_type, net)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -479,7 +483,7 @@ def test_dynamic_stack():
     comm_func(dynamic_range, input_shape, data_type, net)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -496,7 +500,7 @@ def test_dynamic_maxpool1():
     comm_func(dynamic_range, input_shape, data_type, net)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -513,7 +517,7 @@ def test_dynamic_maxpool2():
     comm_func(dynamic_range, input_shape, data_type, net)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard
@@ -530,7 +534,7 @@ def test_dynamic_maxpool3():
     comm_func(dynamic_range, input_shape, data_type, net)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_arm_ascend_training
 @pytest.mark.platform_x86_ascend_training
 @pytest.mark.env_onecard

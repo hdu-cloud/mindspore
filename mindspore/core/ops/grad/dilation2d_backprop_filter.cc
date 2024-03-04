@@ -16,17 +16,33 @@
 
 #include "ops/grad/dilation2d_backprop_filter.h"
 
-#include <algorithm>
+#include <cmath>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "mindapi/base/types.h"
-#include "ops/op_utils.h"
-#include "mindapi/src/helper.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -65,6 +81,9 @@ abstract::ShapePtr Dilation2DBackpropFilterInferShape(const PrimitivePtr &primit
   auto filter_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
   auto out_backprop_shape =
     CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex2]->BuildShape())[kShape];
+  if (IsDynamicRank(x_shape) || IsDynamicRank(filter_shape) || IsDynamicRank(out_backprop_shape)) {
+    return std::make_shared<abstract::Shape>(ShapeVector({abstract::Shape::kShapeRankAny}));
+  }
   // Check inputs' dimension
   const int64_t x_shape_size = 4;
   const int64_t filter_shape_size = 3;
@@ -75,6 +94,10 @@ abstract::ShapePtr Dilation2DBackpropFilterInferShape(const PrimitivePtr &primit
                                            filter_shape_size, primitive->name());
   (void)CheckAndConvertUtils::CheckInteger("out_backprop shape size", SizeToLong(out_backprop_shape.size()), kEqual,
                                            out_backprop_shape_size, primitive->name());
+  if (IsDynamicShape(x_shape) || IsDynamicShape(filter_shape) || IsDynamicShape(out_backprop_shape)) {
+    return std::make_shared<abstract::Shape>(
+      ShapeVector({abstract::Shape::kShapeDimAny, abstract::Shape::kShapeDimAny, abstract::Shape::kShapeDimAny}));
+  }
   // Get Attributes
   std::string data_format = GetValue<std::string>(primitive->GetAttr("format"));
   std::string pad_mode = GetValue<std::string>(primitive->GetAttr("pad_mode"));
@@ -194,7 +217,24 @@ std::string Dilation2DBackpropFilter::get_format() const {
   return GetValue<std::string>(value_ptr);
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(Dilation2DBackpropFilter, prim::kPrimDilation2DBackpropFilter,
-                             Dilation2DBackpropFilterInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGDilation2DBackpropFilterInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return Dilation2DBackpropFilterInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return Dilation2DBackpropFilterInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return Dilation2DBackpropFilterInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Dilation2DBackpropFilter, prim::kPrimDilation2DBackpropFilter,
+                                 AGDilation2DBackpropFilterInfer, false);
 }  // namespace ops
 }  // namespace mindspore

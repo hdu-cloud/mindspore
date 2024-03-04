@@ -22,6 +22,7 @@
 #include <algorithm>
 
 #include "utils/hash_map.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "frontend/optimizer/irpass.h"
 #include "include/common/utils/parallel_context.h"
 #include "frontend/optimizer/optimizer.h"
@@ -42,19 +43,8 @@ class ReplaceApplicator : public AnfVisitor {
     if (!IsValueNode<FuncGraph>(node)) {
       return nullptr;
     }
-
     auto fg = GetValueNode<FuncGraphPtr>(node);
-    if (fg->has_flag(FUNC_GRAPH_FLAG_NO_INLINE) || fg->has_flag(FUNC_GRAPH_FLAG_DEFER_INLINE) || fg->stub() ||
-        *(fg->switch_input()) || *(fg->switch_layer_input())) {
-      return nullptr;
-    }
-    // Defer inlining in the case of pipeline.
-    auto stage_num = parallel::ParallelContext::GetInstance()->pipeline_stage_split_num();
-    if (fg->stage() != -1 && stage_num > 1) {
-      return nullptr;
-    }
-    // Defer inlining to get the output nodes of the recomputed cell whose output is non-recomputed.
-    if (fg->has_flag(FUNC_GRAPH_OUTPUT_NO_RECOMPUTE)) {
+    if (NoInline(fg)) {
       return nullptr;
     }
 
@@ -80,6 +70,27 @@ class ReplaceApplicator : public AnfVisitor {
     }
 
     return nullptr;
+  }
+
+  bool NoInline(const FuncGraphPtr &fg) const {
+    if (fg == nullptr || fg->has_flag(FUNC_GRAPH_FLAG_NO_INLINE) || fg->has_flag(FUNC_GRAPH_FLAG_DEFER_INLINE) ||
+        fg->stub() || *(fg->indirect())) {
+      return true;
+    }
+    // Defer inlining in the case of pipeline.
+    auto stage_num = parallel::ParallelContext::GetInstance()->pipeline_stage_split_num();
+    if (fg->stage() != -1 && stage_num > 1) {
+      return true;
+    }
+    // Defer inlining for:
+    // 1. The func_graph which is set recomputed.
+    // 2. The k graph whose primal is set non-recomputed when enable graph reuse.
+    auto context = MsContext::GetInstance();
+    MS_EXCEPTION_IF_NULL(context);
+    const auto cell_reuse = context->CellReuseLevel() != CellReuseLevel::kNoCellReuse;
+    return fg->has_flag(FUNC_GRAPH_OUTPUT_NO_RECOMPUTE) ||
+           (cell_reuse &&
+            (fg->has_flag(FUNC_GRAPH_NOT_RECOMPUTE_K_GRAPH) || fg->has_flag(FUNC_GRAPH_RECOMPUTE_K_GRAPH)));
   }
 };
 
@@ -115,17 +126,7 @@ class InlinerBase : public AnfVisitor {
     auto &inputs = cnode->inputs();
     // G
     auto fg = GetValueNode<FuncGraphPtr>(inputs[0]);
-    if (fg == nullptr || fg->has_flag(FUNC_GRAPH_FLAG_NO_INLINE) || fg->has_flag(FUNC_GRAPH_FLAG_DEFER_INLINE) ||
-        fg->stub()) {
-      return nullptr;
-    }
-    // Defer inlining in the case of pipeline.
-    auto stage_num = parallel::ParallelContext::GetInstance()->pipeline_stage_split_num();
-    if (fg->stage() != -1 && stage_num > 1) {
-      return nullptr;
-    }
-    // Defer inlining to get the output nodes of the recomputed cell whose output is non-recomputed.
-    if (fg->has_flag(FUNC_GRAPH_OUTPUT_NO_RECOMPUTE)) {
+    if (!CheckFlag(fg)) {
       return nullptr;
     }
 
@@ -151,7 +152,7 @@ class InlinerBase : public AnfVisitor {
       if (IsUniqueUse(nullptr, fg, nullptr)) {
         return InlineMove(node, fg, args, inputs);
       }
-      return InlineClone(fg, node->func_graph(), args, inputs[0]->scope());
+      return InlineClone(fg, node->func_graph(), args, inputs[0]->scope(), cnode->debug_info());
     }
 
     if (IsUniqueUse(nullptr, fg, nullptr)) {
@@ -176,7 +177,31 @@ class InlinerBase : public AnfVisitor {
     }
     // Or, just make a clone for not single used fg.
     MS_LOG(DEBUG) << "Run InlineClone in inline pass, subgraph number may increase.";
-    return InlineClone(fg, node->func_graph(), args, inputs[0]->scope());
+    return InlineClone(fg, node->func_graph(), args, inputs[0]->scope(), cnode->debug_info());
+  }
+
+  bool CheckFlag(const FuncGraphPtr &fg) const {
+    if (fg == nullptr || fg->has_flag(FUNC_GRAPH_FLAG_NO_INLINE) || fg->has_flag(FUNC_GRAPH_FLAG_DEFER_INLINE) ||
+        fg->stub()) {
+      return false;
+    }
+    // Defer inlining in the case of pipeline.
+    auto stage_num = parallel::ParallelContext::GetInstance()->pipeline_stage_split_num();
+    if (fg->stage() != -1 && stage_num > 1) {
+      return false;
+    }
+    // Defer inlining for:
+    // 1. The func_graph which is set recomputed.
+    // 2. The k graph whose primal is set non-recomputed when enable graph reuse.
+    auto context = MsContext::GetInstance();
+    MS_EXCEPTION_IF_NULL(context);
+    const auto cell_reuse = context->CellReuseLevel() != CellReuseLevel::kNoCellReuse;
+    if (fg->has_flag(FUNC_GRAPH_OUTPUT_NO_RECOMPUTE) ||
+        (cell_reuse &&
+         (fg->has_flag(FUNC_GRAPH_NOT_RECOMPUTE_K_GRAPH) || fg->has_flag(FUNC_GRAPH_RECOMPUTE_K_GRAPH)))) {
+      return false;
+    }
+    return true;
   }
 
   bool IsRecursive(const FuncGraphPtr &fg) {
@@ -192,7 +217,7 @@ class InlinerBase : public AnfVisitor {
     return is_recursive_;
   }
 
-  bool no_recursive() { return no_recursive_; }
+  bool no_recursive() const { return no_recursive_; }
 
  private:
   AnfNodePtr InlineMove(const AnfNodePtr &node, const FuncGraphPtr &fg, const std::vector<AnfNodePtr> &args,
@@ -201,7 +226,7 @@ class InlinerBase : public AnfVisitor {
     MS_EXCEPTION_IF_NULL(mng);
     ReplaceParams(mng, args, fg);
     auto out_node = fg->output();
-    mng->MoveAllCNodeDropGraph(fg, node->func_graph(), inputs[0]->scope());
+    mng->MoveAllCNodeDropGraph(fg, node->func_graph(), node, inputs[0]->scope());
     return out_node;
   }
 
@@ -243,9 +268,10 @@ class InlinerBase : public AnfVisitor {
                      const FuncGraphPtr &fg) const {
     auto params = fg->parameters();
     auto old_size = params.size();
+    constexpr auto print_deep = 10;
     if (old_size != new_params.size()) {
-      MS_LOG(EXCEPTION) << "Parameter size not match." << old_size << " new " << new_params.size()
-                        << fg->output()->DebugString(10);
+      MS_LOG(INTERNAL_EXCEPTION) << "Parameter size not match." << old_size << " new " << new_params.size()
+                                 << fg->output()->DebugString(print_deep);
     }
     for (size_t i = 0; i < old_size; i++) {
       (void)mng->Replace(params[i], new_params[i]);
@@ -305,10 +331,12 @@ class InlinerBase : public AnfVisitor {
     node_inputs.push_back(NewValueNode(new_fg));
     std::transform(used_param_index.begin(), used_param_index.end(), std::back_inserter(node_inputs),
                    [&args](size_t i) { return args[i]; });
-    return node->func_graph()->NewCNode(node_inputs);
+    auto ret_node = node->func_graph()->NewCNode(node_inputs);
+    ret_node->set_abstract(node->abstract());
+    return ret_node;
   }
 
-  bool CheckSwitchInputs(const std::vector<AnfNodePtr> &sw_inputs) {
+  bool CheckSwitchInputs(const std::vector<AnfNodePtr> &sw_inputs) const {
     // When branch has dead node or poly node, do not perform inline.
     if (IsDeadNode(sw_inputs[kSwitchTrueBranchIndex]) || IsPolyNode(sw_inputs[kSwitchTrueBranchIndex]) ||
         IsDeadNode(sw_inputs[kSwitchFalseBranchIndex]) || IsPolyNode(sw_inputs[kSwitchFalseBranchIndex])) {
@@ -328,8 +356,8 @@ class InlinerBase : public AnfVisitor {
     for (auto &item : nodes) {
       if (IsPrimitiveCNode(item, prim::kPrimSwitch)) {
         auto sw_inputs = item->cast<CNodePtr>()->inputs();
-        if (sw_inputs.size() != 4) {
-          MS_LOG(EXCEPTION) << "switch inputs should be 4";
+        if (sw_inputs.size() != kIndex4) {
+          MS_LOG(EXCEPTION) << "Switch inputs should be 4";
         }
         if (CheckSwitchInputs(sw_inputs)) {
           has_branch = true;
@@ -338,7 +366,7 @@ class InlinerBase : public AnfVisitor {
       } else if (IsCNodeGraph(item)) {
         auto cinputs = item->cast<CNodePtr>()->inputs();
         if (cinputs.size() < 1) {
-          MS_LOG(EXCEPTION) << "graph call inputs should be greater than 1";
+          MS_LOG(EXCEPTION) << "Graph call inputs should be greater than 1";
         }
         FuncGraphPtr call_fg = GetValueNode<FuncGraphPtr>(cinputs[0]);
         bool call_fg_has_branch = GraphHasBranch(call_fg);
@@ -348,8 +376,8 @@ class InlinerBase : public AnfVisitor {
         }
       } else if (IsPrimitiveCNode(item, prim::kPrimPartial)) {
         auto cinputs = item->cast<CNodePtr>()->inputs();
-        if (cinputs.size() < 2) {
-          MS_LOG(EXCEPTION) << "partial call inputs should be greater than 2";
+        if (cinputs.size() < kIndex2) {
+          MS_LOG(EXCEPTION) << "Partial call inputs should be greater than 2";
         }
         FuncGraphPtr call_fg = GetValueNode<FuncGraphPtr>(cinputs[1]);
         if (call_fg == nullptr) {
@@ -366,7 +394,6 @@ class InlinerBase : public AnfVisitor {
     return has_branch;
   }
 
- private:
   bool is_checked_{false};
   bool is_recursive_{false};
   // If the user guarantee that fg has no recursive.
@@ -387,7 +414,8 @@ bool IsUniqueUse(InlinerBase *, const FuncGraphPtr &fg, const AnfNodePtr &) {
 bool IsTrivial(InlinerBase *, const FuncGraphPtr &fg, const AnfNodePtr &) {
   auto n_cnode = fg->nodes().size() - fg->parameters().size();
   // There is at least one CNode(return, other_node).
-  return n_cnode <= 2;
+  constexpr size_t least_size = 2;
+  return n_cnode <= least_size;
 }
 
 bool IsInside(InlinerBase *, const FuncGraphPtr &, const AnfNodePtr &node) {

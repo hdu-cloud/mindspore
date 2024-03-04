@@ -70,6 +70,13 @@ class UserData {
 
   bool has(const std::string &key) const { return (data_ != nullptr) && (data_->find(key) != data_->end()); }
 
+  size_t size() const {
+    if (data_ == nullptr) {
+      return 0;
+    }
+    return data_->size();
+  }
+
  private:
   void InitData() {
     if (data_ == nullptr) {
@@ -82,10 +89,13 @@ class UserData {
 // User data key name.
 constexpr auto kUserDataData = "user_data_data";
 constexpr auto kUserDataType = "user_data_type";
+// User data key for hash table.
 constexpr auto kHashTableKeyType = "hash_table_key_type";
 constexpr auto kHashTableValueType = "hash_table_value_type";
 constexpr auto kHashTableShapeVector = "hash_table_shape_vector";
 constexpr auto kHashTableDefaultValue = "hash_table_default_value";
+constexpr auto kHashTablePermitFilter = "hash_table_permit_filter";
+constexpr auto kHashTableEvictFilter = "hash_table_evict_filter";
 
 enum class UserDataType { kUserDataTypeUnknown = 0, kUserTypeHashTable };
 }  // namespace mindspore

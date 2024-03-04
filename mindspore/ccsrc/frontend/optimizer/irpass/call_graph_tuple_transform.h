@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "utils/hash_map.h"
+#include "mindspore/core/ops/framework_ops.h"
 #include "utils/hash_set.h"
 #include "ir/func_graph.h"
 #include "ir/func_graph_cloner.h"
@@ -49,9 +50,10 @@ bool FlattenArgs(const FuncGraphPtr &fg, const AnfNodePtrList &args, size_t star
     const auto &arg = args[i];
     auto abs = arg->abstract();
     if (abs == nullptr) {
-      MS_LOG(EXCEPTION) << "Null abs of arg:" << arg->DebugString();
+      MS_LOG(INTERNAL_EXCEPTION) << "Null abs of arg:" << arg->DebugString();
     }
-    if (!abs->isa<abstract::AbstractTuple>()) {
+    // Dynamic length tuple input can not be flattened.
+    if (!IsSequenceExpandable(arg->abstract())) {
       new_args->push_back(arg);
       continue;
     }
@@ -75,7 +77,7 @@ class GraphTupleTransform : public AnfVisitor {
       return nullptr;
     }
     auto fg = GetValueNode<FuncGraphPtr>(node);
-    if (!FuncGraphHasTupleInput(fg)) {
+    if (!FuncGraphHasConstantTupleInput(fg)) {
       return nullptr;
     }
     fg = graph_transform_(fg, optimizer->manager());

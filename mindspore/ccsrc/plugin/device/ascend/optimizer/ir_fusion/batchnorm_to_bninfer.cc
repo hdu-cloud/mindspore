@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,16 +14,19 @@
  * limitations under the License.
  */
 #include "plugin/device/ascend/optimizer/ir_fusion/batchnorm_to_bninfer.h"
+
 #include <memory>
 #include <vector>
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include <string>
+#include "ops/sequence_ops.h"
+#include "ops/nn_ops.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
-#include "mindspore/core/ops/core_ops.h"
 #include "abstract/abstract_value.h"
 #include "utils/ms_context.h"
-#include "backend/common/optimizer/helper.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -57,6 +60,14 @@ CNodePtr BatchNorm2BNInfer::CreateBNInfer(const FuncGraphPtr &graph, const CNode
   MS_EXCEPTION_IF_NULL(graph);
   MS_EXCEPTION_IF_NULL(batchnorm);
   auto prim = std::make_shared<Primitive>(kBNInferOpName);
+
+  // Format attr is needed in BatchNormInfer.
+  auto origin_prim = common::AnfAlgo::GetCNodePrimitive(batchnorm);
+  if (origin_prim->HasAttr(kAttrFormat)) {
+    auto format = origin_prim->GetAttr(kAttrFormat);
+    (void)prim->AddAttr(kAttrFormat, MakeValue(format));
+  }
+
   std::vector<AnfNodePtr> inputs = {NewValueNode(prim)};
   for (size_t i = 1; i < batchnorm->size(); ++i) {
     inputs.push_back(batchnorm->input(i));
@@ -69,12 +80,18 @@ CNodePtr BatchNorm2BNInfer::CreateBNInfer(const FuncGraphPtr &graph, const CNode
   auto old_abs_list = old_abs->cast<abstract::AbstractSequencePtr>();
   MS_EXCEPTION_IF_NULL(old_abs_list);
   if (old_abs_list->elements().size() == 0) {
-    MS_LOG(EXCEPTION) << "BatchNorm's output abstract size is 0";
+    MS_LOG(INTERNAL_EXCEPTION) << "BatchNorm's output abstract size is 0";
   }
   new_node->set_abstract(old_abs_list->elements()[0]);
   common::AnfAlgo::CopyNodeAttr(kAttrIsTraining, batchnorm, new_node);
   common::AnfAlgo::CopyNodeAttr(kAttrEpsilon, batchnorm, new_node);
   return new_node;
+}
+
+std::vector<std::string> BatchNorm2BNInfer::MustExistPrimitiveName() const {
+  std::vector<std::string> ret;
+  ret.emplace_back(prim::kPrimBatchNorm->name());
+  return ret;
 }
 
 const BaseRef BatchNorm2BNInfer::DefinePattern() const {
@@ -98,10 +115,12 @@ const AnfNodePtr BatchNorm2BNInfer::Process(const FuncGraphPtr &graph, const Anf
   MS_EXCEPTION_IF_NULL(ms_context);
   auto bn_infer = CreateBNInfer(graph, cnode);
   TransferDependOrUpdateState(cnode, graph, bn_infer);
-  if (ms_context->get_param<int>(MS_CTX_EXECUTION_MODE) == kPynativeMode) {
+  auto kernel_graph = graph->cast<KernelGraphPtr>();
+  MS_EXCEPTION_IF_NULL(kernel_graph);
+  if (kernel_graph->is_from_single_op()) {
     const auto ori_inputs = cnode->inputs();
     if (ori_inputs.size() < kBatchNormInputNum) {
-      MS_LOG(EXCEPTION) << "BatchNorm's inputs size is less than 5.";
+      MS_LOG(INTERNAL_EXCEPTION) << "BatchNorm's inputs size is less than 5.";
     }
     auto mean = CreateTensorMoveOp(graph, ori_inputs[kIdxMean]);
     auto variance = CreateTensorMoveOp(graph, ori_inputs[kIdxVariance]);
@@ -115,9 +134,7 @@ const AnfNodePtr BatchNorm2BNInfer::Process(const FuncGraphPtr &graph, const Anf
     if (IsUsedByOthers(graph, cnode)) {
       return nullptr;
     } else {
-      std::vector<AnfNodePtr> make_tuple_inputs = {NewValueNode(prim::kPrimMakeTuple), bn_infer};
-      auto make_tuple = graph->NewCNode(make_tuple_inputs);
-      return make_tuple;
+      return CreateMakeTupleNode(graph, std::vector<AnfNodePtr>{bn_infer});
     }
   }
 }

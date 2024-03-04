@@ -16,11 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_CUMPROD_H_
 #define MINDSPORE_CORE_OPS_CUMPROD_H_
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -35,8 +35,8 @@ class MIND_API CumProd : public BaseOperator {
   bool GetExclusive() const;
   bool GetReverse() const;
 };
-abstract::AbstractBasePtr CumProdInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                       const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr CumProdInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimCumProd = std::shared_ptr<CumProd>;
 }  // namespace ops
 }  // namespace mindspore

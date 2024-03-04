@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,11 +23,11 @@
 #include <vector>
 #include <unordered_set>
 #include "ir/anf.h"
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 #include "kernel/kernel_build_info.h"
 #include "backend/common/session/session_context.h"
 #include "ir/tensor.h"
-#include "runtime/device/kernel_info.h"
+#include "include/backend/kernel_info.h"
 #include "runtime/device/kernel_runtime_manager.h"
 
 #ifndef ENABLE_SECURITY
@@ -73,20 +73,22 @@ class KernelAdjust {
   CNodePtr CreateStreamActiveOp(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr) const;
   CNodePtr CreateRecvApplyKernel(const std::shared_ptr<session::KernelGraph> &graph_ptr, uint32_t event_id) const;
   CNodePtr CreateSendApplyKernel(const std::shared_ptr<session::KernelGraph> &graph_ptr, uint32_t event_id) const;
+  void SetDeviceLoopCtrlTensor(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr, const string &name,
+                               int64_t value) const;
 
  private:
   KernelAdjust() = default;
   ~KernelAdjust() = default;
 
-  CNodePtr CreateNPUGetFloatStatus(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
-                                   const CNodePtr &npu_alloc_cnode) const;
-  CNodePtr CreateNPUClearStatus(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
-                                const CNodePtr &npu_alloc_cnode) const;
-  CNodePtr CreateNPUAllocStatus(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr) const;
+  AnfNodePtr CreateZerosValueNode(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr) const;
+  CNodePtr CreateNPUGetFloatStatusV2(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
+                                     const AnfNodePtr &status_value_node) const;
+  CNodePtr CreateNPUClearStatusV2(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
+                                  const AnfNodePtr &status_value_node) const;
   CNodePtr CreateAssignAdd(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
                            const CNodePtr &npu_alloc_cnode, const AnfNodePtr &specify_para) const;
-  CNodePtr CreateAssign(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
-                        const AnfNodePtr &specify_para) const;
+  CNodePtr CreateAssign(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr, const AnfNodePtr &specify_para,
+                        const AnfNodePtr &data) const;
   void ReorderGetNext(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr) const;
   CNodePtr CreateStreamSwitchOp(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
                                 const std::map<std::string, mindspore::ParameterPtr> &switch_loop_input,
@@ -162,15 +164,13 @@ class KernelAdjust {
   void InsertFpBpAndEosLoopStreamActive(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
                                         std::vector<CNodePtr> *exec_order,
                                         const std::vector<uint32_t> &fpbp_active_streams) const;
-  void SetDeviceLoopCtrlTensor(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr, const string name,
-                               int32_t value) const;
   void AssignLoopCtrlTensorMem(const session::KernelGraph &kernel_graph, KernelRuntime *runtime_instance,
-                               const string name) const;
+                               const string &name) const;
   void InsertGradientOverflowCheckOperations(const AnfNodePtr &specify_para,
                                              const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr) const;
   void InsertDynamicLossScaleCheckOperations(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
                                              std::vector<AnfNodePtr> *dynamic_loss_scale_param_list) const;
-  std::shared_ptr<Tensor> CreateTensor(int32_t initial_value) const;
+  std::shared_ptr<Tensor> CreateTensor(int64_t initial_value) const;
   std::shared_ptr<Parameter> CreateParameter(const std::shared_ptr<session::KernelGraph> &kernel_graph_ptr,
                                              const string parameter_name) const;
 };

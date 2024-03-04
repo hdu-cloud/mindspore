@@ -46,6 +46,12 @@ class SendActor : public RpcActor {
   // Lookup peer actors' route and create connection to them.
   bool ConnectServer();
 
+  // Flush and wait for sent data to be passed to kernel.
+  void FlushData() override;
+
+  // Finalize rpc client.
+  void Clear() override;
+
  protected:
   // Do real send operation in this method.
   bool LaunchKernel(OpContext<DeviceTensor> *const context) override;
@@ -63,8 +69,15 @@ class SendActor : public RpcActor {
    */
   virtual bool FreeMessage(void *data);
 
-  // The tcp client connection to multiple servers.
-  std::unique_ptr<TCPClient> client_;
+  /**
+   * @description: Flush the message to kernel so that the memory could be released. This method is used for synchronize
+   * sending operations.
+   * @return {void}
+   */
+  virtual void Flush();
+
+  // The rpc client connection to multiple servers.
+  std::unique_ptr<RPCClientBase> client_;
 
  private:
   /**
@@ -74,12 +87,6 @@ class SendActor : public RpcActor {
    * @return {std::vector<DeviceTensor *>}: The memory list needs to be freed.
    */
   std::vector<DeviceTensor *> FindDeviceTensorNeedsFree(const void *data) const;
-
-  // Serialize dynamic shape data. The format is shown below:
-  // |--------22 bytes------|---4 bytes--|PB data size bytes| data size bytes |
-  // |RPC_DYNAMIC_SHAPE_DATA|PB data size|      PB data     | real data       |
-  void SerializeDynamicShapeMessgae(std::string *msg_body, const ShapeVector &shape_vec, const TypeId &data_type,
-                                    const kernel::AddressPtr &addr) const;
 
   /**
    * @description: Serialize one dynamic shape input data to a piece of memory and returns the serialized data
@@ -96,9 +103,13 @@ class SendActor : public RpcActor {
   size_t SerializeSingleDynamicShapeInput(RpcDataPtr rpc_data, const ShapeVector &shape_vec, const TypeId &data_type,
                                           const kernel::AddressPtr &addr) const;
 
+  // Serialize dynamic shape data. The format is shown below:
+  // |--------22 bytes------|---4 bytes--|PB data size bytes| data size bytes |
+  // |RPC_DYNAMIC_SHAPE_DATA|PB data size|      PB data     | real data       |
   /**
    * @description: Serialize message with dynamic shape data. For each input in dynamic shape scenario, extra meta info
    * like data shape, data type will be serialized as protobuffer and copied to message.
+   *
    * @param {MessageBase} *message: MessageBase object.
    * @param {AddressPtrList} &data_list: The inputs data of rpc send kernel.
    * @return {void}
@@ -125,8 +136,11 @@ class SendActor : public RpcActor {
   std::vector<std::string> peer_actor_ids_;
   mindspore::HashMap<std::string, std::string> peer_actor_urls_;
 
-  // The url of the peer recv actor's tcp server.
+  // The url of the peer recv actor's server.
   std::string server_url_;
+
+  // The remote function id this client will call.
+  uint32_t remote_func_id_;
 };
 
 using SendActorPtr = std::shared_ptr<SendActor>;

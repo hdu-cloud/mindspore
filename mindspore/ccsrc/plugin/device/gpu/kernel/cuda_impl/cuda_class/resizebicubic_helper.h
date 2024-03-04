@@ -21,7 +21,7 @@
 #include <vector>
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_class/helper_base.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/resize_bicubic_impl.cuh"
-#include "mindspore/ccsrc/kernel/common_utils.h"
+#include "mindspore/ccsrc/kernel/ops_utils.h"
 
 namespace mindspore {
 namespace cukernel {
@@ -56,9 +56,9 @@ class ResizeBicubicHelperGpuKernel : public GpuKernelHelperBase {
                  const std::vector<std::vector<int64_t>> &output_shapes) override {
     constexpr size_t INPUT_NUM = 1;
     constexpr size_t OUTPUT_NUM = 1;
-    constexpr int INPUT_W_ORDER = 2;
-    constexpr int OUTPUT_W_ORDER = 2;
-    constexpr int INPUT_C_ORDER = 3;
+    constexpr int INPUT_C_ORDER = 1;
+    constexpr int INPUT_H_ORDER = 2;
+    constexpr int INPUT_W_ORDER = 3;
     ResetResource();
     align_corners_ = false;
     is_null_resizebicubic_input_ = false;
@@ -86,11 +86,11 @@ class ResizeBicubicHelperGpuKernel : public GpuKernelHelperBase {
       return inp_flag;
     }
     batch_ = input_shape_[0];
-    inputheight_ = input_shape_[1];
-    inputwidth_ = input_shape_[INPUT_W_ORDER];
     channel_ = input_shape_[INPUT_C_ORDER];
-    outputheight_ = output_shapesize_[1];
-    outputwidth_ = output_shapesize_[OUTPUT_W_ORDER];
+    inputheight_ = input_shape_[INPUT_H_ORDER];
+    inputwidth_ = input_shape_[INPUT_W_ORDER];
+    outputheight_ = output_shapesize_[INPUT_H_ORDER];
+    outputwidth_ = output_shapesize_[INPUT_W_ORDER];
     int out_flag =
       CalShapesSizeInBytes<S>(output_shapes, OUTPUT_NUM, kernel_name_, "output_shapes", &output_size_list_);
     if (out_flag == -1) {
@@ -123,9 +123,10 @@ class ResizeBicubicHelperGpuKernel : public GpuKernelHelperBase {
     h_scale_ = kernel::Scaling(inputheight_, outputheight_, align_corners_);
     w_scale_ = kernel::Scaling(inputwidth_, outputwidth_, align_corners_);
     // call cuda kernel
-    CalResizeBicubic(input_ptr, batch_, channel_, inputheight_, inputwidth_, outputheight_, outputwidth_, h_scale_,
-                     w_scale_, output_ptr, half_pixel_centers_, device_id_,
-                     reinterpret_cast<cudaStream_t>(cuda_stream));
+    auto status = CalResizeBicubic(input_ptr, batch_, channel_, inputheight_, inputwidth_, outputheight_, outputwidth_,
+                                   h_scale_, w_scale_, output_ptr, half_pixel_centers_, device_id_,
+                                   reinterpret_cast<cudaStream_t>(cuda_stream));
+    CHECK_CUDA_STATUS(status, kernel_name_);
     return 0;
   }
 
@@ -176,8 +177,8 @@ class ResizeBicubicHelperGpuKernel : public GpuKernelHelperBase {
   int inputheight_;
   int outputwidth_;
   int outputheight_;
-  S h_scale_;
-  S w_scale_;
+  float h_scale_;
+  float w_scale_;
 };
 }  // namespace cukernel
 }  // namespace mindspore

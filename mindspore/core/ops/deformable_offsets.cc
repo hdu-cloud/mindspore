@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,20 +15,42 @@
  */
 
 #include "ops/deformable_offsets.h"
-#include <map>
-#include <set>
+
 #include <algorithm>
+#include <iterator>
+#include <map>
 #include <memory>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
-#include "abstract/param_validator.h"
+#include <set>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 int64_t CheckAttrInt64Positive(const std::string &op, const ValuePtr &attr, const std::string &attr_name) {
   MS_EXCEPTION_IF_NULL(attr);
+  if (!attr->isa<Int64Imm>()) {
+    MS_EXCEPTION(TypeError) << "For '" << op << "', the attr '" << attr_name << "' should be an int.";
+  }
   int64_t attr_val = attr->cast<Int64ImmPtr>()->value();
   if (attr_val <= 0) {
     MS_EXCEPTION(ValueError) << "For '" << op << "', the '" << attr_name
@@ -37,35 +59,9 @@ int64_t CheckAttrInt64Positive(const std::string &op, const ValuePtr &attr, cons
   return attr_val;
 }
 
-std::vector<int64_t> CheckAttrTuple(const PrimitivePtr &prim, const std::string &attr_name, size_t num_element) {
-  auto attr = prim->GetAttr(attr_name);
-  MS_EXCEPTION_IF_NULL(attr);
-  std::vector<int64_t> result;
-  if (!attr->isa<ValueTuple>()) {
-    MS_EXCEPTION(ValueError) << "For '" << prim->name() << "', the '" << attr_name
-                             << "' should be a tuple[int64], but got: " << attr->ToString() << ".";
-  }
-  std::vector<ValuePtr> attr_vec = attr->cast<ValueTuplePtr>()->value();
-  if (attr_vec.size() != num_element) {
-    MS_EXCEPTION(ValueError) << "For '" << prim->name() << "', the '" << attr_name
-                             << "' should be a tuple[int64] with size " << num_element << ", but its size is "
-                             << attr_vec.size() << ".";
-  }
-  (void)std::transform(attr_vec.begin(), attr_vec.end(), std::back_inserter(result),
-                       [&prim, &attr_name](const ValuePtr &e) -> int64_t {
-                         auto value = GetValue<int64_t>(e);
-                         if (value < 0) {
-                           MS_EXCEPTION(ValueError) << "For '" << prim->name() << "', the element of '" << attr_name
-                                                    << "' should not be negative number, but got " << value << ".";
-                         }
-                         return value;
-                       });
-  return result;
-}
-
 std::vector<int64_t> CheckAttrTupleAndNCDimensions(const PrimitivePtr &primitive, const std::string &attr_name,
                                                    size_t num, uint64_t n_axis, uint64_t c_axis) {
-  std::vector<int64_t> tuple = CheckAttrTuple(primitive, attr_name, num);
+  std::vector<int64_t> tuple = CheckAndConvertUtils::CheckAttrTuple(primitive, attr_name, num);
   if (tuple[n_axis] != 1 || tuple[c_axis] != 1) {
     MS_EXCEPTION(ValueError)
       << "For '" << primitive->name()
@@ -154,7 +150,7 @@ abstract::ShapePtr DeformableOffsetsInferShape(const PrimitivePtr &primitive,
 
   constexpr int64_t offsets_channel_factor = 3;
   constexpr size_t kernel_size_num = 2;
-  std::vector<int64_t> kernel_size = CheckAttrTuple(primitive, kAttrKsize, kernel_size_num);
+  std::vector<int64_t> kernel_size = CheckAndConvertUtils::CheckAttrTuple(primitive, kAttrKsize, kernel_size_num);
   if (offsets_shape[c_axis] != abstract::Shape::kShapeDimAny &&
       offsets_shape[c_axis] != deformable_groups * offsets_channel_factor * kernel_size[0] * kernel_size[1]) {
     MS_EXCEPTION(ValueError) << "For '" << prim_name << "', 'C_in' of input 'offsets' shape must be equal to "
@@ -169,7 +165,7 @@ abstract::ShapePtr DeformableOffsetsInferShape(const PrimitivePtr &primitive,
   }
 
   constexpr size_t pads_num = 4;
-  std::vector<int64_t> pads = CheckAttrTuple(primitive, kPads, pads_num);
+  std::vector<int64_t> pads = CheckAndConvertUtils::CheckAttrTuple(primitive, kPads, pads_num);
   std::vector<int64_t> output_hw;
   DeformableOffsetsPadFunction(&output_hw, kernel_size, strides, dilations, pads, x_shape[h_axis], x_shape[w_axis],
                                h_axis, w_axis);
@@ -272,6 +268,23 @@ AbstractBasePtr DeformableOffsetsInfer(const abstract::AnalysisEnginePtr &, cons
                                 DeformableOffsetsInferType(primitive, input_args));
 }
 
-REGISTER_PRIMITIVE_EVAL_IMPL(DeformableOffsets, prim::kPrimDeformableOffsets, DeformableOffsetsInfer, nullptr, true);
+// AG means auto generated
+class MIND_API AGDeformableOffsetsInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return DeformableOffsetsInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return DeformableOffsetsInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return DeformableOffsetsInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(DeformableOffsets, prim::kPrimDeformableOffsets, AGDeformableOffsetsInfer, false);
 }  // namespace ops
 }  // namespace mindspore

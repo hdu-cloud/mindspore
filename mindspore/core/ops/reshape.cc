@@ -14,18 +14,36 @@
  * limitations under the License.
  */
 #include "ops/reshape.h"
-#include <string>
-#include <memory>
-#include <functional>
-#include <set>
 #include <algorithm>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <functional>
+#include <memory>
+#include <set>
+#include <string>
 #include "abstract/ops/primitive_infer_map.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_utils.h"
+#include "utils/check_convert_utils.h"
 
 namespace mindspore {
 namespace ops {
+namespace {
+constexpr auto kShapeFromTensor = "shape_from_tensor";
+constexpr size_t kSize2 = 2;
+
+ShapeVector UpdateOutputShape(const ShapeVector &x_shape, const ShapeVector &y_shape) {
+  if (IsDynamicShape(y_shape)) {
+    ShapeVector ret = ShapeVector{std::accumulate(x_shape.begin(), x_shape.end(), 1, std::multiplies<int64_t>())};
+    if (y_shape.size() == kSize2) {
+      ret = ShapeVector{std::accumulate(x_shape.begin(), x_shape.end(), 1, std::multiplies<int64_t>()) / y_shape[1],
+                        y_shape[1]};
+    }
+    return ret;
+  }
+  return y_shape;
+}
+}  // namespace
+
 ShapeVector update_shape(const std::vector<int> &padding_axis_value, const ShapeVector &x_shape, ShapeVector shape) {
   // padding_axis_value is for the condition that the number of -1 in shape > 1, , but just paddingshape
   if (std::any_of(x_shape.begin(), x_shape.end(), [](const int &shape_i) { return shape_i < 0; })) {
@@ -64,6 +82,9 @@ ShapeVector update_shape(const std::vector<int> &padding_axis_value, const Shape
   for (int64_t value : shape) {
     shape_num = LongMulWithOverflowCheck(value, shape_num);
   }
+  if (shape_num == abstract::Shape::kShapeRankAny) {
+    return {abstract::Shape::kShapeRankAny};
+  }
   if (shape_num != x_num) {
     MS_EXCEPTION(ValueError) << "The accumulate of x_shape must be equal to out_shape, but got x_shape: " << x_shape
                              << ", and out_shape: " << shape;
@@ -78,41 +99,31 @@ class ReshapeInfer : public abstract::OpInferBase {
                           const std::vector<AbstractBasePtr> &input_args) const override {
     MS_EXCEPTION_IF_NULL(primitive);
     auto prim_name = primitive->name();
+    constexpr int64_t empty_tensor_num = 0;
+    CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterThan, empty_tensor_num, prim_name);
     constexpr size_t max_size = 2;
     (void)CheckAndConvertUtils::CheckValue<size_t>("input size", input_args.size(), kLessEqual, max_size, prim_name);
-
     auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
-
     std::vector<int64_t> output_shape;
-
     if (input_args.size() == max_size) {
       auto input_y = input_args[1];
       MS_EXCEPTION_IF_NULL(input_y);
-      if (input_y->isa<abstract::AbstractTensor>()) {
-        auto y_value = input_y->BuildValue();
-        MS_EXCEPTION_IF_NULL(y_value);
-        if (y_value != kAnyValue) {
-          output_shape = CheckAndConvertUtils::CheckTensorIntValue("shape", y_value, prim_name);
-        } else {
-          abstract::ShapePtr y_shape = CheckAndConvertUtils::GetTensorInputShape(prim_name, input_args, 1);
-          auto shape_value = y_shape->shape();
-          if (shape_value.size() != 1) {
-            MS_EXCEPTION(TypeError) << "For '" << prim_name
-                                    << "', the shape size must be 1, but got: " << shape_value.size() << ".";
-          }
-          if (y_shape->IsDynamic()) {
-            output_shape.push_back(abstract::Shape::kShapeRankAny);
-          } else {
-            output_shape = GetShapeValue(primitive, input_y);
-          }
-          return std::make_shared<abstract::Shape>(output_shape);
+      auto value = input_y->BuildValue();
+      MS_EXCEPTION_IF_NULL(value);
+      output_shape = GetShapeValue(primitive, input_y);
+      if (primitive->HasAttr(kShapeFromTensor) && GetValue<bool>(primitive->GetAttr(kShapeFromTensor))) {
+        if (input_y->isa<abstract::AbstractTensor>() && value->isa<tensor::Tensor>()) {
+          auto y_shape = CheckAndConvertUtils::CheckTensorIntValue("y_shape", value, prim_name);
+          output_shape = UpdateOutputShape(x_shape, y_shape);
         }
-      } else if (input_y->isa<abstract::AbstractTuple>()) {
-        auto y_value = input_y->BuildValue();
-        MS_EXCEPTION_IF_NULL(y_value);
-        output_shape = CheckAndConvertUtils::CheckTupleInt("input[shape]", y_value, primitive->name());
-      } else {
-        MS_EXCEPTION(TypeError) << "input_y must be AbstractTensor or AbstractTuple, but got: " << input_y;
+      }
+
+      const int64_t kSelfComputedDim = -1;
+      const int64_t kMaxSelfComputedDimCount = 1;
+
+      auto self_computed_dim_count = std::count(output_shape.begin(), output_shape.end(), kSelfComputedDim);
+      if (!IsValueKnown(value) && self_computed_dim_count > kMaxSelfComputedDimCount) {
+        return std::make_shared<abstract::Shape>(output_shape);
       }
     } else {
       // When the shape is passed as an attribute, shape should be constant.
@@ -153,11 +164,15 @@ class ReshapeInfer : public abstract::OpInferBase {
     for (const auto &item : input_args) {
       MS_EXCEPTION_IF_NULL(item);
     }
+    constexpr int64_t empty_tensor_num = 0;
+    CheckAndConvertUtils::CheckInputArgs(input_args, kGreaterThan, empty_tensor_num, prim->name());
     auto x_dtype = input_args[0]->BuildType();
     std::set<TypePtr> template_types = {kTensorType};
     (void)CheckAndConvertUtils::CheckSubClass("x_dtype", x_dtype, template_types, prim->name());
     return x_dtype;
   }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
 };
 REGISTER_PRIMITIVE_OP_INFER_IMPL(Reshape, prim::kPrimReshape, ReshapeInfer, false);
 }  // namespace ops

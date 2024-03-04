@@ -17,20 +17,29 @@
 #ifndef MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_IR_FUSION_ADAPTIVE_MAX_POOL2D_FUSION_H_
 #define MINDSPORE_CCSRC_BACKEND_OPTIMIZER_ASCEND_IR_FUSION_ADAPTIVE_MAX_POOL2D_FUSION_H_
 
+#include <string>
 #include "ir/anf.h"
-#include "backend/common/optimizer/pattern_engine.h"
-#include "backend/common/optimizer/helper.h"
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/pattern_engine.h"
+#include "include/backend/optimizer/helper.h"
+#include "include/backend/optimizer/optimizer.h"
 
 namespace mindspore {
 namespace opt {
 class AdaptiveMaxPool2DFusion : public PatternProcessPass {
  public:
-  explicit AdaptiveMaxPool2DFusion(bool multigraph = true)
-      : PatternProcessPass("adaptive_max_pool2d_fusion", multigraph) {}
+  explicit AdaptiveMaxPool2DFusion(const std::string &name = "adaptive_max_pool2d_fusion", bool multigraph = true)
+      : PatternProcessPass(name, multigraph) {}
   ~AdaptiveMaxPool2DFusion() override = default;
   const BaseRef DefinePattern() const override;
   const AnfNodePtr Process(const FuncGraphPtr &, const AnfNodePtr &, const EquivPtr &) const override;
+};
+
+class AdaptiveMaxPool2DGeFusion : public AdaptiveMaxPool2DFusion {
+ public:
+  explicit AdaptiveMaxPool2DGeFusion(bool multigraph = true)
+      : AdaptiveMaxPool2DFusion("adaptive_max_pool2d_ge_fusion", multigraph) {}
+  ~AdaptiveMaxPool2DGeFusion() override = default;
+  const BaseRef DefinePattern() const override;
 };
 }  // namespace opt
 }  // namespace mindspore

@@ -17,15 +17,23 @@
 #include "plugin/device/ascend/hal/hardware/ascend_graph_executor.h"
 #include <unordered_map>
 #include <algorithm>
+#include "mindspore/core/ops/other_ops.h"
 #include "include/common/utils/utils.h"
 #include "plugin/device/ascend/hal/common/ascend_utils.h"
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
+#include "proto/random_status.pb.h"
 #include "plugin/device/ascend/hal/device/kernel_build_ascend.h"
 #include "plugin/device/ascend/hal/device/kernel_adjust.h"
 #include "plugin/device/ascend/hal/device/ascend_stream_assign.h"
 #include "plugin/device/ascend/hal/device/ascend_memory_adapter.h"
+#include "plugin/device/ascend/hal/hardware/ascend_device_context.h"
+#include "plugin/device/ascend/optimizer/ir_fission/add_status_input_for_random_operator.h"
+#include "ir/anf.h"
+#include "kernel/oplib/oplib.h"
 #ifndef ENABLE_SECURITY
+#include "include/backend/debug/profiler/profiling.h"
 #include "plugin/device/ascend/hal/profiler/memory_profiling.h"
+#include "plugin/device/ascend/hal/device/profiling/profiling_utils.h"
 using mindspore::profiler::ascend::MemoryProfiling;
 #endif
 
@@ -205,6 +213,49 @@ void EnableGraphOutputZeroCopy(const KernelGraphPtr &graph) {
     }
   }
 }
+
+template <typename T>
+std::vector<T> GetParameterValue(const AnfNodePtr &node) {
+  MS_EXCEPTION_IF_NULL(node);
+  if (!utils::isa<ValueNodePtr>(node)) {
+    MS_LOG(EXCEPTION) << node->fullname_with_scope() << " is not a ValueNode.";
+  }
+
+  auto addr = AnfAlgo::GetOutputAddr(node, 0);
+  MS_EXCEPTION_IF_NULL(addr);
+  std::vector<T> result(addr->GetSize() / sizeof(T), 0);
+  addr->SyncDeviceToHost(result.size() * sizeof(T), result.data());
+  return result;
+}
+
+void GenSeedAttrsMap(const CNodePtr &node, RandomNode *random_node) {
+  MS_EXCEPTION_IF_NULL(node);
+  MS_EXCEPTION_IF_NULL(random_node);
+  random_node->clear_seed_attr();
+  MS_EXCEPTION_IF_NULL(random_node->mutable_seed_attr());
+  auto &seed_attr = *(random_node->mutable_seed_attr());
+  auto cnode_name = common::AnfAlgo::GetCNodeName(node);
+  auto op_info = kernel::OpLib::FindOp(cnode_name, kernel::OpImplyType::kImplyAICPU);
+  MS_EXCEPTION_IF_NULL(op_info);
+  auto attrs = op_info->attrs_ptr();
+  for (const auto &attr : attrs) {
+    std::string lower_attr_name = attr->name();
+    (void)std::transform(lower_attr_name.begin(), lower_attr_name.end(), lower_attr_name.begin(), ::tolower);
+    if (lower_attr_name.find("seed") == std::string::npos) {
+      continue;
+    }
+    if (!common::AnfAlgo::HasNodeAttr(attr->name(), node)) {
+      MS_LOG(EXCEPTION) << "Node(" << node->fullname_with_scope() << ") doesn't have attr(" << attr->name() << ")."
+                        << trace::DumpSourceLines(node);
+    }
+    auto attr_value = common::AnfAlgo::GetNodeAttr<int64_t>(node, attr->name());
+    if (attr_value == 0) {
+      MS_LOG(WARNING) << "Node " << node->fullname_with_scope() << " have attr " << attr->name() << " value is "
+                      << attr_value << ", in this case the randomness cannot be fixed.";
+    }
+    seed_attr[attr->name()] = attr_value;
+  }
+}
 }  // namespace
 
 void AscendGraphExecutor::Initialize() {
@@ -230,21 +281,34 @@ bool AscendGraphExecutor::RunGraph(const FuncGraphPtr &graph, const std::vector<
   MS_EXCEPTION_IF_NULL(kernel_graph);
   MS_LOG(INFO) << "Status record: start launch graph. graph id: " << kernel_graph->graph_id()
                << ", options:" << compile_options;
+  profiler::CollectHostInfo("Ascend", "RunGraph", "AscendRunGraph_" + kernel_graph->ToString(), 1, 0, 0);
   PROF_START(launch_graph);
   MS_EXCEPTION_IF_NULL(runtime_instance_);
   runtime_instance_->SetContext();
-  SetErrorManagerContext();
   device::KernelAdjust::GetInstance().LoadDeviceLoopCtrlParameters(kernel_graph);
+
+#ifndef ENABLE_SECURITY
+  if (ProfilingManager::GetInstance().IsProfilingStart()) {
+    ProfilingUtils::RecordModelExecute(kernel_graph);
+  }
+#endif
   auto ret = ExecuteGraph(kernel_graph);
   if (!ret) {
     MS_LOG(EXCEPTION) << "Run task for graph:" << kernel_graph->ToString()
-                      << " error! The details refer to 'Ascend Error Message'." << GetErrorMessage(true);
+                      << " error! The details refer to 'Ascend Error Message'.";
   }
-  if (auto warning_message = GetWarningMessage(); !warning_message.empty()) {
-    MS_LOG(WARNING) << "Ascend warning message:\n" << warning_message;
+  if (auto warning_message = ErrorManagerAdapter::GetWarningMessage(true); !warning_message.empty()) {
+    MS_LOG(WARNING) << warning_message;
   }
   PROF_END(launch_graph);
+  profiler::CollectHostInfo("Ascend", "RunGraph", "AscendRunGraph_" + kernel_graph->ToString(), 1, 0, 1);
   MS_LOG(INFO) << "Status record: end launch graph. graph id: " << kernel_graph->graph_id();
+
+#ifndef ENABLE_SECURITY
+  if (ProfilingManager::GetInstance().IsProfilingStart()) {
+    ProfilingUtils::RecordModelExecute(kernel_graph);
+  }
+#endif
   return ret;
 }
 
@@ -252,14 +316,13 @@ void AscendGraphExecutor::PreprocessBeforeRun(const KernelGraphPtr &graph) const
   MS_EXCEPTION_IF_NULL(graph);
   device::ascend::InsertAtomicCleanOps(graph->execution_order(), &node_atomics_);
   UpdateExecOrder(graph);
-  device::KernelAdjust::GetInstance().InsertDeviceLoopCtrl(graph);
   device::KernelAdjust::GetInstance().ProcessLoopSink(graph);
   AscendStreamAssign::GetInstance().AssignStream(NOT_NULL(graph));
 #ifndef ENABLE_SECURITY
   // Insert profiling point, this function must be executed after assign stream.
   device::KernelAdjust::GetInstance().Profiling(NOT_NULL(graph.get()));
 #endif
-  device_context_->kernel_executor_->CreateKernel(graph->execution_order());
+  device_context_->GetKernelExecutor(false)->CreateKernel(graph->execution_order());
   AllocateGraphMemory(NOT_NULL(graph));
   LoadModel(NOT_NULL(graph));
   AssignOutputNopNodeDeviceAddress(graph, device_context_);
@@ -284,6 +347,7 @@ void AscendGraphExecutor::UpdateExecOrder(const KernelGraphPtr &graph) const {
 
 void AscendGraphExecutor::AllocateGraphMemory(const NotNull<KernelGraphPtr> &root_graph) const {
   MS_LOG(INFO) << "Status record: start memory alloc. graph id: " << root_graph->graph_id();
+  profiler::CollectHostInfo("Ascend", "PreprocessBeforeRun", "AscendPreprocess_AllocateGraphMemory", 0, 0, 0);
   PROF_START(graph_memory_alloc);
   MS_EXCEPTION_IF_NULL(runtime_instance_);
   runtime_instance_->ClearGlobalIdleMem();
@@ -299,6 +363,7 @@ void AscendGraphExecutor::AllocateGraphMemory(const NotNull<KernelGraphPtr> &roo
   runtime_instance_->UpdateRefNodeOutputMem(*root_graph.get());
 
   PROF_END(graph_memory_alloc);
+  profiler::CollectHostInfo("Ascend", "PreprocessBeforeRun", "AscendPreprocess_AllocateGraphMemory", 0, 0, 1);
   MS_LOG(INFO) << "Status record: end memory alloc. graph id: " << root_graph->graph_id()
                << ", Memory Statistics: " << device::ascend::AscendMemAdapter::GetInstance().DevMemStatistics();
   MS_LOG(INFO) << "The dynamic memory pool total size is: "
@@ -337,6 +402,7 @@ void AscendGraphExecutor::AssignInputMemory(const NotNull<KernelGraphPtr> &graph
 
 void AscendGraphExecutor::LoadModel(const NotNull<KernelGraphPtr> &root_graph) const {
   MS_LOG(INFO) << "Status record: start load model. graph id: " << root_graph->graph_id();
+  profiler::CollectHostInfo("Ascend", "PreprocessBeforeRun", "AscendPreprocess_LoadModel", 0, 0, 0);
   PROF_START(load_model);
   MS_EXCEPTION_IF_NULL(runtime_instance_);
   bool ret_ok = runtime_instance_->Load(*root_graph.get(), true);
@@ -344,6 +410,7 @@ void AscendGraphExecutor::LoadModel(const NotNull<KernelGraphPtr> &root_graph) c
     MS_LOG(EXCEPTION) << "Load task error!";
   }
   PROF_END(load_model);
+  profiler::CollectHostInfo("Ascend", "PreprocessBeforeRun", "AscendPreprocess_LoadModel", 0, 0, 1);
   MS_LOG(INFO) << "Status record: end load model. graph id: " << root_graph->graph_id();
 }
 
@@ -378,6 +445,59 @@ bool AscendGraphExecutor::ExecuteGraph(const KernelGraphPtr &graph) const {
     MS_LOG(EXCEPTION) << graph->ToString() << " does not sink, should launch kernels";
   }
   return ret;
+}
+
+std::string AscendGraphExecutor::GetRandomStatus(const std::vector<FuncGraphPtr> &graphs) {
+  RandomNodeList list;
+  for (auto &graph : graphs) {
+    MS_EXCEPTION_IF_NULL(graph);
+    auto kernel_graph = graph->cast<KernelGraphPtr>();
+    MS_EXCEPTION_IF_NULL(kernel_graph);
+    auto graph_id = kernel_graph->graph_id();
+    std::vector<AnfNodePtr> node_list = TopoSort(kernel_graph->get_return());
+    for (const auto &node : node_list) {
+      MS_EXCEPTION_IF_NULL(node);
+      auto cnode = node->cast<CNodePtr>();
+      if (cnode == nullptr) {
+        continue;
+      }
+      auto cnode_name = common::AnfAlgo::GetCNodeName(cnode);
+      if (opt::kRandomNodeWhiteList.find(cnode_name) == opt::kRandomNodeWhiteList.end()) {
+        continue;
+      }
+      auto random_node = list.add_nodes();
+      std::string key = {};
+      auto debug_info = trace::GetSourceCodeDebugInfo(node->debug_info());
+      if (debug_info != nullptr) {
+        auto location = debug_info->location();
+        if (location != nullptr) {
+          key = location->file_name() + ":" + std::to_string(location->line());
+        }
+      }
+      const auto &inputs = cnode->inputs();
+      size_t input_size = inputs.size();
+      auto status0_node = inputs[input_size - 2];
+      auto status1_node = inputs[input_size - 1];
+      auto status0_value = GetParameterValue<size_t>(status0_node);
+      auto status1_value = GetParameterValue<size_t>(status1_node);
+      if (status0_value.size() != 1) {
+        MS_LOG(EXCEPTION) << "Parameter " << status0_node->fullname_with_scope() << " has invalid element size "
+                          << status0_value.size() << ", which should be 1.";
+      }
+      if (status1_value.size() != 1) {
+        MS_LOG(EXCEPTION) << "Parameter " << status1_node->fullname_with_scope() << " has invalid element size "
+                          << status1_value.size() << ", which should be 1.";
+      }
+      random_node->set_code(key);
+      random_node->set_name(node->fullname_with_scope());
+      random_node->set_graph_id(graph_id);
+      random_node->set_status0(status0_value[0]);
+      random_node->set_status1(status1_value[0]);
+      GenSeedAttrsMap(cnode, random_node);
+    }
+  }
+  MS_LOG(INFO) << "Random debug info: " << list.DebugString();
+  return list.SerializeAsString();
 }
 }  // namespace ascend
 }  // namespace device

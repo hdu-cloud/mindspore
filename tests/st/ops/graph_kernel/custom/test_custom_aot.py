@@ -15,6 +15,7 @@
 
 import os
 import platform
+import subprocess
 import numpy as np
 import pytest
 from mindspore import context, Tensor
@@ -22,6 +23,7 @@ from mindspore.common import dtype as mstype
 from mindspore.nn import Cell
 import mindspore.ops as ops
 from mindspore.ops import DataType, CustomRegOp
+from mindspore.ops.operations import _inner_ops as inner
 
 
 class AOTSingleOutputNet(Cell):
@@ -42,6 +44,33 @@ class AOTSingleOutputWithAttrNet(Cell):
 
     def construct(self, x, y):
         return self.program(x, y, 0.7)
+
+
+class AOTSingleOutputDynNet(Cell):
+    def __init__(self, func, out_types, reg=None):
+        super(AOTSingleOutputDynNet, self).__init__()
+
+        self.program = ops.Custom(func, None, out_types, "aot", reg_info=reg)
+        self.convert_to_dynamic = inner.ConvertToDynamic(
+            is_dynamic_rank=True).add_prim_attr("primitive_target", "CPU")
+
+    def construct(self, x, y):
+        x = self.convert_to_dynamic(x)
+        return self.program(x, y)
+
+
+def get_cuda_bare_metal_version():
+    raw_output = subprocess.check_output(["nvcc", "-V"],
+                                         universal_newlines=True)
+    output = raw_output.split()
+    release_idx = output.index("release") + 1
+    release = output[release_idx].split(".")
+    version_major = release[0]
+    version_idx = release_idx + 1
+    version = output[version_idx].split(".")
+    version_middle = version[1] if len(version) > 1 else 0
+    version_minor = version[2] if len(version) > 2 else 0
+    return int(version_major), int(version_middle), int(version_minor)
 
 
 def get_file_path_gpu(cuda, so):
@@ -101,6 +130,19 @@ def aot_single_output_auto_compile(source_name, reg):
     assert np.allclose(input_x + input_y, output.asnumpy(), 0.001, 0.001)
 
 
+def aot_single_output_dyn_shape(source_name, reg):
+    shape = (4, 5)
+    input_x = np.random.normal(0, 1, shape).astype(np.float32)
+    input_y = np.random.normal(0, 1, shape).astype(np.float32)
+    dir_path = os.path.dirname(os.path.abspath(__file__))
+    func_path = dir_path + "/aot_test_files/" + source_name
+
+    test = AOTSingleOutputDynNet(func_path + ":CustomAdd", mstype.float32, reg)
+    output = test(Tensor(input_x), Tensor(input_y))
+
+    assert np.allclose(input_x + input_y, output.asnumpy(), 0.001, 0.001)
+
+
 def aot_single_output_with_attr(source_name, reg):
     shape = (4, 5)
     input_x = np.random.normal(0, 1, shape).astype(np.float32)
@@ -150,7 +192,7 @@ add_gpu_info_attr_only = CustomRegOp("add_with_attr_kernel_gpu_2") \
     .get_op_info()
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_aot_single_output_gpu():
@@ -162,8 +204,11 @@ def test_aot_single_output_gpu():
     context.set_context(mode=context.GRAPH_MODE, device_target='GPU')
     aot_single_output(get_file_path_gpu, "add.cu", "add.so", None)
     aot_single_output_auto_compile("add.cu", None)
-    aot_single_output_with_attr("add_with_attr.cu", add_gpu_info)
-    aot_single_output_with_attr_only("add_with_attr.cu", add_gpu_info_attr_only)
+    aot_single_output_dyn_shape("add.cu", None)
+    v_major, v_mid, v_minor = get_cuda_bare_metal_version()
+    if v_major >= 11 or (v_mid >= 1 and v_minor >= 168):
+        aot_single_output_with_attr("add_with_attr.cu", add_gpu_info)
+        aot_single_output_with_attr_only("add_with_attr.cu", add_gpu_info_attr_only)
 
 
 add_cpu_info = CustomRegOp() \
@@ -191,7 +236,10 @@ add_cpu_info_attr_only = CustomRegOp("add_with_attr_kernel_cpu_2") \
     .get_op_info()
 
 
-@pytest.mark.level0
+
+
+
+@pytest.mark.level1
 @pytest.mark.platform_x86_cpu
 @pytest.mark.env_onecard
 def test_aot_single_output_cpu():
@@ -206,12 +254,12 @@ def test_aot_single_output_cpu():
     else:
         context.set_context(mode=context.GRAPH_MODE, device_target='CPU')
         aot_single_output(get_file_path_cpu, "add.cc", "add.so", add_cpu_info)
-        aot_single_output_auto_compile("add.cc", add_cpu_info)
         aot_single_output_with_attr("add_with_attr.cc", add_with_attr_cpu_info)
         aot_single_output_with_attr_only("add_with_attr.cc", add_cpu_info_attr_only)
+        aot_single_output_dyn_shape("add.cc", add_cpu_info)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_reorganize():
@@ -239,7 +287,7 @@ def test_reorganize():
     assert np.allclose(expect, output.asnumpy(), 0.001, 0.001)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_hetero_square_mul():
@@ -277,7 +325,7 @@ class SquareGradNet(Cell):
         return res2
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_square_py_bprop():
@@ -310,7 +358,7 @@ def test_square_py_bprop():
     assert np.allclose(expect, dx_np, 0.0001, 0.0001)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_square_aot_bprop():
@@ -436,7 +484,7 @@ def add_mul_div_bprop(source, execf, source_prop, execf_prop):
     assert np.allclose(expect_dy, dy_np, 0.0001, 0.0001)
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.env_onecard
 @pytest.mark.platform_x86_gpu_training
 def test_add_mul_div_bprop_graph():
@@ -449,7 +497,7 @@ def test_add_mul_div_bprop_graph():
     add_mul_div_bprop("add_mul_div.cu", "add_mul_div.so", "add_mul_div_bprop.cu", "add_mul_div_bprop.so")
 
 
-@pytest.mark.level0
+@pytest.mark.level1
 @pytest.mark.env_onecard
 @pytest.mark.platform_x86_gpu_training
 def test_add_mul_div_bprop_pynative():

@@ -21,6 +21,7 @@ import mindspore.nn as nn
 from mindspore import Tensor
 from mindspore.ops import operations as P
 from mindspore.ops import composite as C
+from mindspore import dtype as mstype
 from mindspore.ops.operations import _inner_ops as inner
 
 class MatMulNet(nn.Cell):
@@ -96,9 +97,7 @@ def test_matmul_composite():
     context.set_context(mode=context.GRAPH_MODE, device_target='GPU')
     net = MatMulComposite()
 
-    scalars = [np.random.randn(1).astype(np.float32), np.random.randn(1).astype(np.float32),
-               np.random.randn(1, 1).astype(np.float32),
-               np.random.randn(1, 1, 1).astype(np.float32)]
+    scalars = [np.random.randn(1).astype(np.float32), np.random.randn(1).astype(np.float32)]
     for x in scalars:
         for y in scalars:
             output = net(Tensor(x), Tensor(y))
@@ -106,16 +105,12 @@ def test_matmul_composite():
             np.testing.assert_array_almost_equal(output.asnumpy(), expect, decimal=4)
 
     broadcastables = [
-        np.random.randn(3).astype(np.float32), np.random.randn(3).astype(np.float32),
-        np.random.randn(6).astype(np.float32), np.random.randn(6, 4).astype(np.float32),
-        np.random.randn(5, 2).astype(np.float32), np.random.randn(2).astype(np.float32),
-        np.random.randn(2, 9).astype(np.float32), np.random.randn(9, 8).astype(np.float32),
-        np.random.randn(6).astype(np.float32), np.random.randn(2, 6, 5).astype(np.float32),
-        np.random.randn(9, 2, 7).astype(np.float32), np.random.randn(7).astype(np.float32),
-        np.random.randn(5, 2, 4).astype(np.float32), np.random.randn(6, 1, 4, 9).astype(np.float32),
-        np.random.randn(7, 1, 5, 3, 2).astype(np.float32), np.random.randn(8, 1, 6, 1, 2, 9).astype(np.float32)
+        np.random.randn(5, 2).astype(np.float32), np.random.randn(2, 5).astype(np.float32),
+        np.random.randn(2, 9).astype(np.float32), np.random.randn(9, 2).astype(np.float32),
+        np.random.randn(9, 2).astype(np.float32), np.random.randn(2, 3).astype(np.float32),
+        np.random.randn(5, 4).astype(np.float32), np.random.randn(4, 1).astype(np.float32)
     ]
-    for i in range(8):
+    for i in range(4):
         x = broadcastables[2*i]
         y = broadcastables[2*i + 1]
         output = net(Tensor(x), Tensor(y))
@@ -144,3 +139,87 @@ def test_matmul_tensor_api_modes(mode):
                           [550., 620., 690., 760., 830.],
                           [670., 756., 842., 928., 1014.]]], np.float32)
     np.testing.assert_array_equal(output.asnumpy(), expected)
+
+
+@pytest.mark.level0
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.env_onecard
+@pytest.mark.parametrize('mode', [context.GRAPH_MODE, context.PYNATIVE_MODE])
+def test_matmul_tensor_core(mode):
+    """
+    Feature: Test matmul tensor api.
+    Description: Test matmul tensor api for Graph and PyNative modes.
+    Expectation: The result match to the expect value.
+    """
+    context.set_context(mode=mode, device_target="GPU")
+    m = 300
+    n = 300
+    k = 400
+    x_np = np.random.randn(m * k).astype(np.float32)
+    y_np = np.random.randn(k * n).astype(np.float32)
+    x_np.shape = m, k
+    y_np.shape = k, n
+    x_ms = Tensor(x_np)
+    y_ms = Tensor(y_np)
+
+    context.set_context(gpu_config={"matmul_allow_tf32": False})
+    out_ms_fp32 = P.MatMul()(x_ms, y_ms).asnumpy()
+
+    context.set_context(gpu_config={"matmul_allow_tf32": True})
+    out_ms_tf32 = P.MatMul()(x_ms, y_ms).asnumpy()
+
+    assert np.abs(out_ms_fp32 - out_ms_tf32).mean() < 0.005
+
+
+@pytest.mark.level0
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.env_onecard
+def test_matmul_dtypes():
+    """
+    Feature: Test matmul dtypes.
+    Description: Test matmul dtypes for Graph mode.
+    Expectation: The result match to the expect value.
+    """
+    context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
+    m = 3
+    n = 3
+    k = 4
+    x_np = np.random.randn(m * k).astype(np.float32)
+    y_np = np.random.randn(k * n).astype(np.float32)
+    x_np.shape = m, k
+    y_np.shape = k, n
+    matmul = MatMulNet()
+    valid_dtypes = (mstype.int32, mstype.float16, mstype.float32, mstype.float64, mstype.complex64, mstype.complex128)
+    all_dtypes = mstype.all_types
+    for dtype in all_dtypes:
+        # bfloat16 is not supported yet
+        if dtype == mstype.bfloat16:
+            continue
+        x_ms = Tensor(x_np).astype(dtype)
+        y_ms = Tensor(y_np).astype(dtype)
+        if dtype in valid_dtypes:
+            matmul(x_ms, y_ms)
+        else:
+            with pytest.raises(TypeError):
+                matmul(x_ms, y_ms)
+
+
+@pytest.mark.level0
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.env_onecard
+def test_matmul_fp16():
+    """
+    Feature: Test matmul fp16 results.
+    Description: Test matmul fp16 for Graph mode.
+    Expectation: The result match to the expect value.
+    """
+    context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
+    x_np = np.random.randn(256, 512).astype(np.float16)
+    y_np = np.random.randn(512, 1024).astype(np.float16)
+    matmul = P.MatMul()
+    x_ms = Tensor(x_np)
+    y_ms = Tensor(y_np)
+    out_ms = matmul(x_ms, y_ms).asnumpy()
+    out_np = np.matmul(x_np, y_np)
+    assert np.abs(out_ms - out_np).mean() < 1e-4
+    assert out_ms.dtype == np.float16

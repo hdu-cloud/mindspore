@@ -1,7 +1,7 @@
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/)
 
 file(GLOB KERNEL_SRC
-    ${CMAKE_CURRENT_SOURCE_DIR}/*.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/nnacl/*.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/base/*.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/fp32/*.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/fp32/online_fusion/*.cc
@@ -34,6 +34,7 @@ if(NOT PLATFORM_ARM64)
     set(KERNEL_SRC_ARM64_FILE   ${CMAKE_CURRENT_SOURCE_DIR}/fp32/convolution_im2col_arm64_fp32.cc
                                 ${CMAKE_CURRENT_SOURCE_DIR}/fp32/matmul_fp32_arm64.cc
                                 ${CMAKE_CURRENT_SOURCE_DIR}/fp32/convolution_winograd_arm64_fp32.cc
+                                ${CMAKE_CURRENT_SOURCE_DIR}/fp32/convolution_slidewindow_arm64_fp32.cc
     )
     list(REMOVE_ITEM KERNEL_SRC ${KERNEL_SRC_ARM64_FILE})
 endif()
@@ -99,7 +100,7 @@ if(MSLITE_ENABLE_CONTROLFLOW)
             )
 endif()
 
-if(SUPPORT_TRAIN)
+if(SUPPORT_TRAIN OR MSLITE_ENABLE_CLOUD_FUSION_INFERENCE OR MSLITE_ENABLE_CLOUD_INFERENCE)
     file(GLOB TRAIN_KERNEL_SRC ${CMAKE_CURRENT_SOURCE_DIR}/fp16_grad/*.cc)
     file(GLOB TRAIN_KERNEL_SRC ${CMAKE_CURRENT_SOURCE_DIR}/fp32_grad/*.cc)
     add_library(train_cpu_kernel_mid OBJECT ${TRAIN_KERNEL_SRC})
@@ -125,4 +126,8 @@ if(PLATFORM_ARM)
     file(GLOB OPT_KERNEL_SRC ${CMAKE_CURRENT_SOURCE_DIR}/int8/opt_op_handler.cc)
     add_library(cpu_opt_kernel_mid OBJECT ${OPT_KERNEL_SRC})
     add_dependencies(cpu_kernel_mid fbs_src)
+endif()
+
+if(MSLITE_ENABLE_MULTI_LAYOUT)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/bolt)
 endif()

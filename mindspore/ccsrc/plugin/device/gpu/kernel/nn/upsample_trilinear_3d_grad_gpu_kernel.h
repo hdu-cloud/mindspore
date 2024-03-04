@@ -17,13 +17,13 @@
 #ifndef MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_GPU_NN_UPSAMPLE_TRILINEAR_3D_GRAD_GPU_KERNEL_H_
 #define MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_GPU_NN_UPSAMPLE_TRILINEAR_3D_GRAD_GPU_KERNEL_H_
 
-#include <iostream>
-#include <vector>
-#include <map>
-#include <utility>
-#include <string>
-#include <functional>
 #include <algorithm>
+#include <functional>
+#include <iostream>
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
 #include "plugin/factory/ms_factory.h"
 
@@ -36,9 +36,6 @@ class UpsampleTrilinear3DGradGpuKernelMod : public NativeGpuKernelMod {
 
   bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
               const std::vector<AddressPtr> &outputs, void *cuda_stream) override {
-    if (is_null_input_) {
-      return true;
-    }
     cuda_stream_ = cuda_stream;
     return kernel_func_(this, inputs, workspace, outputs);
   }
@@ -53,42 +50,34 @@ class UpsampleTrilinear3DGradGpuKernelMod : public NativeGpuKernelMod {
 
   std::vector<KernelAttr> GetOpSupport() override;
 
+  std::vector<size_t> GetLaunchIgnoredInputAddressIdx() const override { return {kIndex2}; }
+
  private:
-  void ResetResource() noexcept;
-
-  float Scaling(const size_t in_size, const size_t out_size, bool align_corners);
-  float Scaling(float scale_value, int idx);
-
-  template <typename T>
+  template <typename T, typename S>
   bool LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
                     const std::vector<AddressPtr> &outputs);
 
   using UpsampleTrilinear3DGradFunc =
     std::function<bool(UpsampleTrilinear3DGradGpuKernelMod *, const std::vector<AddressPtr> &,
                        const std::vector<AddressPtr> &, const std::vector<AddressPtr> &)>;
-
-  bool GetUpsampleTrilinear3DGradAttr(const BaseOperatorPtr &base_operator);
-
-  void *cuda_stream_{nullptr};
-  bool is_null_input_{false};
-  bool align_corners_{};
-  size_t t_size_{0};
-
-  // array dims -> reset these
-  size_t n_{};
-  size_t c_{};
-  size_t grad_d_{};
-  size_t grad_h_{};
-  size_t grad_w_{};
-  size_t dinput_d_{};
-  size_t dinput_h_{};
-  size_t dinput_w_{};
-
-  // only need these
-  std::vector<int64_t> out_spatial_size_me_;
-  std::vector<float> scale_factors_;
   UpsampleTrilinear3DGradFunc kernel_func_;
   static std::vector<std::pair<KernelAttr, UpsampleTrilinear3DGradFunc>> func_list_;
+
+  void *cuda_stream_{nullptr};
+  bool align_corners_{};
+  // array dims -> reset these
+  int64_t n_{};
+  int64_t c_{};
+  int64_t grad_d_{};
+  int64_t grad_h_{};
+  int64_t grad_w_{};
+  int64_t dinput_d_{};
+  int64_t dinput_h_{};
+  int64_t dinput_w_{};
+
+  // only need these
+  std::vector<double> scales_{0., 0., 0.};
+  std::vector<int64_t> none_list_;
 };
 }  // namespace kernel
 }  // namespace mindspore

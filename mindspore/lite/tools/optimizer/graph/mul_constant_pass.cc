@@ -17,6 +17,7 @@
 #define USE_DEPRECATED_API
 #include "tools/optimizer/graph/mul_constant_pass.h"
 #include <functional>
+#include "mindspore/core/ops/lite_ops.h"
 #include "nnacl/op_base.h"
 #include "ops/op_utils.h"
 #include "ops/fusion/mul_fusion.h"
@@ -97,13 +98,13 @@ bool MulConstantPass::Run(const FuncGraphPtr &func_graph) {
       MS_LOG(INFO) << "Mul input2 has more than one data.";
       continue;
     }
-    if (data_info.data_type_ != kNumberTypeFloat32) {
+    if (data_info.data_type_ != static_cast<int>(kNumberTypeFloat32)) {
       MS_LOG(INFO) << "Mul input2 datatype is not fp32.";
       continue;
     }
     auto data = *static_cast<float *>(data_info.data_ptr_);
     if (data == 1.0f) {
-      func_graph->manager()->Replace(node, cnode->input(1));
+      (void)manager->Replace(node, cnode->input(1));
     }
   }
   return true;

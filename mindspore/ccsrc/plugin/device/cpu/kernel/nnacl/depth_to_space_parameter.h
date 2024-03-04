@@ -13,26 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_DEPTH_TO_SPACE_PARAMETER_H_
-#define MINDSPORE_NNACL_DEPTH_TO_SPACE_PARAMETER_H_
+#ifndef NNACL_DEPTH_TO_SPACE_PARAMETER_H_
+#define NNACL_DEPTH_TO_SPACE_PARAMETER_H_
 #include "nnacl/op_base.h"
-
-#define MAX_MODE_STR_LENS 8
 
 typedef struct DepthToSpaceParameter {
   OpParameter op_parameter_;
-  // primitive parameter
   int32_t block_size_;
   int32_t mode_;
-  // shape correlative
-  int32_t in_stride_dim0_;
-  int32_t in_stride_dim1_;
-  int32_t in_stride_dim2_;
-  int32_t out_stride_dim0_;
-  int32_t out_stride_dim1_;
-  int32_t out_stride_dim2_;
-  // other parameter
-  uint8_t data_type_size_;
 } DepthToSpaceParameter;
 
-#endif  // MINDSPORE_NNACL_DEPTH_TO_SPACE_PARAMETER_H_
+#endif  // NNACL_DEPTH_TO_SPACE_PARAMETER_H_

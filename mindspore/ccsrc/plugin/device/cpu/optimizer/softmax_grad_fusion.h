@@ -17,7 +17,8 @@
 #define MINDSPORE_CCSRC_PLUGIN_DEVICE_CPU_OPTIMIZER_SOFTMAX_GRAD_FUSION_H_
 
 #include <memory>
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/optimizer.h"
+#include "mindspore/core/ops/math_ops.h"
 
 namespace mindspore {
 namespace opt {
@@ -27,6 +28,7 @@ class SoftmaxGradFusionCpu : public PatternProcessPass {
     reduce_sum_ = std::make_shared<Var>(std::make_shared<Primitive>(prim::kPrimReduceSum->name()));
     input0_ = std::make_shared<Var>();
     input1_ = std::make_shared<Var>();
+    axis_ = std::make_shared<Var>();
   }
   ~SoftmaxGradFusionCpu() override = default;
   const BaseRef DefinePattern() const override;
@@ -36,6 +38,7 @@ class SoftmaxGradFusionCpu : public PatternProcessPass {
   VarPtr reduce_sum_;
   VarPtr input0_;
   VarPtr input1_;
+  VarPtr axis_;
 };
 }  // namespace opt
 }  // namespace mindspore

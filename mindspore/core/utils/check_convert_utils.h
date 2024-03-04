@@ -38,7 +38,6 @@ namespace mindspore {
 typedef std::pair<std::map<std::string, int64_t>, std::map<int64_t, std::string>> AttrConverterPair;
 typedef std::map<std::string, std::vector<int64_t>> ShapeMap;
 constexpr auto kShape = "shape";
-constexpr auto kMinShape = "min_shape";
 constexpr auto kMaxShape = "max_shape";
 
 enum CompareEnum : int64_t {
@@ -115,6 +114,10 @@ class MS_CORE_API CheckAndConvertUtils {
 
     return arg_value;
   }
+  static int64_t CheckAttrInt64Positive(const std::string &op, const ValuePtr &attr, const std::string &attr_name);
+  static std::vector<int64_t> CheckAttrTuple(const PrimitivePtr &prim, const std::string &attr_name,
+                                             size_t num_element);
+
   static std::string CheckString(const std::string &arg_name, const std::string &arg_value,
                                  const std::set<std::string> &check_list, const std::string &prim_name);
 
@@ -300,11 +303,17 @@ class MS_CORE_API CheckAndConvertUtils {
                                             const std::set<TypePtr> &check_list, const std::string &prim_name);
   static TypePtr CheckSubClass(const std::string &type_name, const TypePtr &type,
                                const std::set<TypePtr> &template_types, const std::string &prim_name);
+  static TypePtr CheckSubClassWithMoreInfo(const std::string &type_name, const TypePtr &type,
+                                           const std::string &more_info, const std::set<TypePtr> &template_types,
+                                           const std::string &prim_name);
   static TypePtr CheckScalarOrTensorTypesSame(const std::map<std::string, TypePtr> &args,
                                               const std::set<TypePtr> &valid_values, const std::string &prim_name,
                                               bool allow_mix = false);
   static TypePtr CheckTypeValid(const std::string &arg_name, const TypePtr &arg_type,
                                 const std::set<TypePtr> &valid_type, const std::string &prim_name);
+  static TypePtr CheckTypeValidWithMoreInfo(const std::string &arg_name, const TypePtr &arg_type,
+                                            const std::string &more_info, const std::set<TypePtr> &valid_type,
+                                            const std::string &prim_name);
   static bool ConvertAttrValueToInt(const std::string &op_type, const std::string &attr_name, ValuePtr *const value);
   static bool ConvertAttrValueToString(const std::string &op_type, const std::string &attr_name, ValuePtr *const value);
   static void ConvertAttrValueInExport(const std::string &op_type, const std::string &attr_name, ValuePtr *const value);
@@ -317,23 +326,31 @@ class MS_CORE_API CheckAndConvertUtils {
   static void CheckSummaryParam(const AbstractBasePtr &name, const AbstractBasePtr &value,
                                 const std::string &class_name);
   static void CheckMode(const std::string &class_name);
+  static std::vector<double> CheckTensorFloatValue(const std::string &type_name, const ValuePtr &value,
+                                                   const std::string &prim_name);
+  static std::vector<double> CheckListOrTupleFloat(const std::string &arg_name, const ValuePtr &attr,
+                                                   const std::string &prim_name);
   static std::vector<int64_t> CheckIntOrTupleInt(const std::string &arg_name, const ValuePtr &attr,
                                                  const std::string &prim_name);
   static std::vector<int64_t> CheckTupleInt(const std::string &arg_name, const ValuePtr &attr,
                                             const std::string &prim_name);
   static std::vector<int64_t> CheckListInt(const std::string &arg_name, const ValuePtr &attr,
                                            const std::string &prim_name);
-  static void CheckMinMaxShape(const ShapeVector &shape, ShapeVector *min_shape, ShapeVector *max_shape);
   static int64_t GetAndCheckFormat(const ValuePtr &value);
   static size_t GetRemoveMonadAbsNum(const AbstractBasePtrList &abs_list);
   static void CheckInputArgs(const std::vector<AbstractBasePtr> &input_args, const CompareEnum compare_operator,
                              const int64_t match_value, const std::string &prim_name);
   static bool HasDynamicShapeInput(const AbstractBasePtrList &abs_list);
   static void GetFormatStringVal(const PrimitivePtr &prim, std::string *format);
-  static void CheckAbstractShapeSame(const AbstractBasePtr &abs1, const AbstractBasePtr &abs2,
-                                     const std::string &prim_name, const std::string &name1, const std::string &name2);
-  static void CheckAbstractTypeIdSame(const AbstractBasePtr &abs1, const AbstractBasePtr &abs2,
-                                      const std::string &prim_name, const std::string &name1, const std::string &name2);
+  static size_t CheckAbstractShapeSame(const std::vector<AbstractBasePtr> &abs_list);
+  static size_t CheckAbstractTypeSame(const std::vector<AbstractBasePtr> &abs_list);
+  static void CheckAbstractTypeAndShapeSame(const std::vector<AbstractBasePtr> &abs_list,
+                                            const std::string &precondition_log,
+                                            const std::string &standard_abs_description = "",
+                                            const std::string &differ_abs_description = "");
+  static bool CheckContainNestedOrIrregularSequence(const std::vector<AbstractBasePtr> &abs_list);
+  static bool CheckValueSame(const ValuePtr &value_1, const ValuePtr &value_2);
+  static abstract::AbstractSequencePtr BroadenAllSequenceElements(const abstract::AbstractSequencePtr &sequence);
 
  private:
   static TypePtr _CheckTypeSame(const std::map<std::string, TypePtr> &args, const std::string &prim_name,

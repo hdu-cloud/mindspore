@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@
 #include "kernel/kernel.h"
 #include "plugin/device/ascend/kernel/ascend_kernel_mod.h"
 #include "include/common/utils/utils.h"
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 #include "plugin/device/ascend/hal/common/ascend_utils.h"
 #include "plugin/device/ascend/hal/profiler/ascend_profiling.h"
 #include "plugin/device/ascend/hal/profiler/parallel_strategy_profiling.h"
@@ -32,53 +32,6 @@ namespace device {
 namespace ascend {
 constexpr uint32_t kProfilingModelStartLogId = 0;
 constexpr uint32_t kProfilingModelEndLogId = 1;
-
-// GE task info task_type
-enum class TaskInfoTaskType {
-  MSPROF_AI_CORE = 0,
-  MSPROF_AI_CPU = 1,
-  MSPROF_AIV = 2,
-  MSPROF_HCCL = 10,
-  MSPROF_RTS = 11,
-  MSPROF_UNKNOWN_TYPE = 1000,
-};
-
-// MS kernel to GE task info task_type
-static std::map<KernelType, TaskInfoTaskType> KernelType2TaskTypeEnum{
-  {KernelType::TBE_KERNEL, TaskInfoTaskType::MSPROF_AI_CORE},
-  {KernelType::AKG_KERNEL, TaskInfoTaskType::MSPROF_AI_CORE},
-  {KernelType::AICPU_KERNEL, TaskInfoTaskType::MSPROF_AI_CPU},
-  {KernelType::RT_KERNEL, TaskInfoTaskType::MSPROF_RTS},
-  {KernelType::HCCL_KERNEL, TaskInfoTaskType::MSPROF_HCCL},
-  {KernelType::HOST_KERNEL, TaskInfoTaskType::MSPROF_UNKNOWN_TYPE},
-  {KernelType::CPU_KERNEL, TaskInfoTaskType::MSPROF_UNKNOWN_TYPE},
-  {KernelType::GPU_KERNEL, TaskInfoTaskType::MSPROF_UNKNOWN_TYPE},
-  {KernelType::BISHENG_KERNEL, TaskInfoTaskType::MSPROF_UNKNOWN_TYPE},
-  {KernelType::ACL_KERNEL, TaskInfoTaskType::MSPROF_UNKNOWN_TYPE},
-  {KernelType::UNKNOWN_KERNEL_TYPE, TaskInfoTaskType::MSPROF_UNKNOWN_TYPE}};
-
-// 0 means unknown format
-static std::map<string, uint32_t> OpFormat2Index{{kOpFormat_DEFAULT, 1},
-                                                 {kOpFormat_NC1KHKWHWC0, 2},
-                                                 {kOpFormat_ND, 3},
-                                                 {kOpFormat_NCHW, 4},
-                                                 {kOpFormat_NHWC, 5},
-                                                 {kOpFormat_HWCN, 6},
-                                                 {kOpFormat_NC1HWC0, 7},
-                                                 {kOpFormat_FRAC_Z, 8},
-                                                 {kOpFormat_C1HWNCoC0, 9},
-                                                 {kOpFormat_FRAC_NZ, 10},
-                                                 {kOpFormat_NC1HWC0_C04, 11},
-                                                 {kOpFormat_FRACTAL_Z_C04, 12},
-                                                 {kOpFormat_NDHWC, 13},
-                                                 {kOpFormat_FRACTAL_ZN_LSTM, 14},
-                                                 {kOpFormat_FRACTAL_ZN_RNN, 15},
-                                                 {kOpFormat_ND_RNN_BIAS, 16},
-                                                 {kOpFormat_NDC1HWC0, 17},
-                                                 {kOpFormat_NCDHW, 18},
-                                                 {kOpFormat_FRACTAL_Z_3D, 19},
-                                                 {kOpFormat_DHWNC, 20},
-                                                 {kOpFormat_DHWCN, 21}};
 
 bool ProfilingReporter::CheckStreamTaskValid() const {
   if (cnode_list_.size() != stream_ids_.size() || cnode_list_.size() != task_ids_.size()) {
@@ -108,7 +61,8 @@ void ProfilingReporter::ReportTasks() const {
 
     ++task_index;
   }
-  MS_LOG(INFO) << "Profiling report task data finish. cnode_size: " << task_index;
+  MS_LOG(INFO) << "Profiling report task data finish.graph_id: " << graph_id_ << ", rt_model_id: " << rt_model_id_
+               << ",  cnode_size: " << task_index;
 }
 
 // This function only report model start and model end.
@@ -169,12 +123,12 @@ const CNodePtr ProfilingReporter::GetCNode(const std::string &name) const {
 
 uint32_t ProfilingReporter::GetStreamId(const string &node_name) {
   auto index = node_name_index_map_[node_name];
-  return stream_ids_[(uint32_t)index];
+  return stream_ids_[static_cast<uint32_t>(index)];
 }
 
 uint32_t ProfilingReporter::GetTaskId(const string &node_name) {
   auto index = node_name_index_map_[node_name];
-  return task_ids_[(uint32_t)index];
+  return task_ids_[static_cast<uint32_t>(index)];
 }
 
 void ProfilingReporter::ReportParallelStrategy() const {
@@ -264,8 +218,7 @@ void ProfilingReporter::ReportData(uint32_t device_id, unsigned char *data, size
 
   auto report_ret = ProfilingManager::GetInstance().CallMsprofReport(NOT_NULL(&report_data));
   if (report_ret != 0) {
-    MS_LOG(EXCEPTION) << "Report data failed, tag is " << tag_name << ", ret: " << report_ret << "."
-                      << GetErrorMessage(true);
+    MS_LOG(EXCEPTION) << "Report data failed, tag is " << tag_name << ", ret: " << report_ret << ".";
   }
 }
 
@@ -291,6 +244,7 @@ uint32_t ProfilingReporter::GetBlockDim(const CNodePtr &node) {
 
 void ProfilingReporter::ReportTask(const CNodePtr &node, const uint32_t stream_id, uint32_t task_id,
                                    KernelType kernel_type) const {
+  MS_EXCEPTION_IF_NULL(node);
   MsprofGeProfTaskData task_info{};
   task_info.taskType = static_cast<uint32_t>(KernelType2TaskTypeEnum[kernel_type]);
   std::string opType = common::AnfAlgo::GetCNodeName(node);
@@ -306,19 +260,21 @@ void ProfilingReporter::ReportTask(const CNodePtr &node, const uint32_t stream_i
   task_info.taskId = task_id;
   task_info.timeStamp = 0;
   task_info.threadId = 0;
+  task_info.contextId = DEFAULT_CONTEXT_ID;
 
   ReportData(device_id_, reinterpret_cast<unsigned char *>(&task_info), sizeof(task_info), "task_desc_info");
 }
 
 void ProfilingReporter::ReportNode(const CNodePtr &node, uint32_t stream_id, uint32_t task_id,
                                    uint32_t tensor_type) const {
+  MS_EXCEPTION_IF_NULL(node);
   const std::string tag_name = "tensor_data_info";
 
   size_t total_size = 0;
   if (tensor_type == MSPROF_GE_TENSOR_TYPE_INPUT) {
     total_size = common::AnfAlgo::GetInputTensorNum(node);
   } else {
-    total_size = common::AnfAlgo::GetOutputTensorNum(node);
+    total_size = AnfAlgo::GetOutputTensorNum(node);
   }
 
   const size_t batch_size = total_size / MSPROF_GE_TENSOR_DATA_NUM;

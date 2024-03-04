@@ -15,14 +15,25 @@
  */
 
 #include "ops/fake_quant_param.h"
+
 #include <vector>
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "mindapi/src/helper.h"
-#include "mindapi/ir/type.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
 #include "mindapi/base/type_id.h"
-#include "ir/scalar.h"
+#include "mindapi/ir/value.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -66,62 +77,34 @@ bool FakeQuantParam::get_is_perchannel() const {
   return GetValue<bool>(value_ptr);
 }
 
-void FakeQuantParam::set_quant_param(const std::string &key, api::ValuePtr param, size_t channel_index) {
-  if (this->get_is_perchannel()) {
-    auto value_ptr = this->GetAttr(key);
-    std::vector<api::ValuePtr> params;
-    if (value_ptr != nullptr) {
-      params = GetValue<std::vector<api::ValuePtr>>(value_ptr);
-    }
-    if (channel_index == params.size()) {
-      params.emplace_back(param);
-    } else if (channel_index < params.size()) {
-      params[channel_index] = param;
-    } else {
-      MS_LOG(EXCEPTION) << "Please set quant parameter in ascending order of channels.";
-    }
-    (void)AddAttr(key, api::MakeValue(params));
-  } else {
-    if (channel_index != 0) {
-      MS_LOG(EXCEPTION) << "'channel_index' should be equal to zero while set a per-layer quant parameter, but got "
-                        << channel_index << ".";
-    }
-    std::vector<api::ValuePtr> params{param};
-    (void)AddAttr(key, api::MakeValue(params));
-  }
-}
+void FakeQuantParam::set_quant_param(const std::string &key, const api::ValuePtr &param) { (void)AddAttr(key, param); }
 
-api::ValuePtr FakeQuantParam::get_quant_param(const std::string &key, size_t channel_index) const {
+api::ValuePtr FakeQuantParam::get_quant_param(const std::string &key) const {
   auto value_ptr = this->GetAttr(key);
   if (value_ptr == nullptr) {
     MS_LOG(EXCEPTION) << "Quant parameter " << key << " not found!";
   }
-  auto params = GetValue<std::vector<api::ValuePtr>>(value_ptr);
-  if (channel_index >= params.size()) {
-    MS_LOG(EXCEPTION) << "Channel index(" << channel_index << ") out of range of quant parameter size(" << params.size()
-                      << ")!";
-  }
-  return params[channel_index];
+  return value_ptr;
 }
 
-void FakeQuantParam::set_scale(double scale, size_t channel_index) {
-  this->set_quant_param(kAttrKeyLinearQuantParamScale, api::MakeValue(scale), channel_index);
+void FakeQuantParam::set_scales(const std::vector<float> &scales) {
+  (void)this->AddAttr(kAttrKeyLinearQuantParamScale, api::MakeValue(scales));
 }
 
-double FakeQuantParam::get_scale(size_t channel_index) const {
-  auto scale = this->get_quant_param(kAttrKeyLinearQuantParamScale, channel_index);
-  MS_EXCEPTION_IF_NULL(scale);
-  return GetValue<double>(scale);
+std::vector<float> FakeQuantParam::get_scales() const {
+  auto value_ptr = GetAttr(kAttrKeyLinearQuantParamScale);
+  MS_EXCEPTION_IF_NULL(value_ptr);
+  return GetValue<std::vector<float>>(value_ptr);
 }
 
-void FakeQuantParam::set_zero_point(int64_t zero_point, size_t channel_index) {
-  this->set_quant_param(kAttrKeyLinearQuantParamZeroPoint, api::MakeValue(zero_point), channel_index);
+void FakeQuantParam::set_zero_points(const std::vector<int64_t> &zero_points) {
+  (void)this->AddAttr(kAttrKeyLinearQuantParamZeroPoint, api::MakeValue(zero_points));
 }
 
-int64_t FakeQuantParam::get_zero_point(size_t channel_index) const {
-  auto zp = this->get_quant_param(kAttrKeyLinearQuantParamZeroPoint, channel_index);
-  MS_EXCEPTION_IF_NULL(zp);
-  return GetValue<int64_t>(zp);
+std::vector<int64_t> FakeQuantParam::get_zero_points() const {
+  auto value_ptr = GetAttr(kAttrKeyLinearQuantParamZeroPoint);
+  MS_EXCEPTION_IF_NULL(value_ptr);
+  return GetValue<std::vector<int64_t>>(value_ptr);
 }
 
 class FakeQuantParamInfer : public abstract::OpInferBase {

@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,107 +18,49 @@
 #include "common/common_test.h"
 #include "ops/range.h"
 #include "ir/dtype/type.h"
-#include "ir/value.h"
 #include "abstract/dshape.h"
 #include "utils/tensor_construct_utils.h"
+#include "ir/primitive.h"
+#include "abstract/abstract_value.h"
+#include "utils/ms_context.h"
+#include "ops/test_ops.h"
+#include "include/backend/optimizer/helper.h"
 
 namespace mindspore {
 namespace ops {
-class TestRange : public UT::Common {
- public:
-  TestRange() {}
-  void SetUp() {}
-  void TearDown() {}
+struct RangeOpParams {
+  ShapeVector start_shape;
+  TypePtr start_type;
+  ShapeVector limit_shape;
+  TypePtr limit_type;
+  ShapeVector delta_shape;
+  TypePtr delta_type;
+  ShapeVector out_shape;
+  TypePtr out_type;
 };
 
-TEST_F(TestRange, test_ops_range1) {
-  auto range = std::make_shared<Range>();
-  range->Init(1, 3, 34, 4);
-  EXPECT_EQ(range->get_d_type(), 1);
-  EXPECT_EQ(range->get_start(), 3);
-  EXPECT_EQ(range->get_limit(), 34);
-  EXPECT_EQ(range->get_delta(), 4);
-  range->set_d_type(1);
-  range->set_start(3);
-  range->set_limit(34);
-  range->set_delta(4);
-  auto abstract = range->Infer({});
-  MS_EXCEPTION_IF_NULL(abstract);
-  EXPECT_EQ(abstract->isa<abstract::AbstractTensor>(), true);
-  auto shape_ptr = abstract->BuildShape();
-  MS_EXCEPTION_IF_NULL(shape_ptr);
-  EXPECT_EQ(shape_ptr->isa<abstract::Shape>(), true);
-  auto shape = shape_ptr->cast<abstract::ShapePtr>();
-  MS_EXCEPTION_IF_NULL(shape);
-  auto shape_vec = shape->shape();
-  auto type = abstract->BuildType();
-  MS_EXCEPTION_IF_NULL(type);
-  EXPECT_EQ(type->isa<TensorType>(), true);
-  auto tensor_type = type->cast<TensorTypePtr>();
-  MS_EXCEPTION_IF_NULL(tensor_type);
-  auto data_type = tensor_type->element();
-  MS_EXCEPTION_IF_NULL(data_type);
-  EXPECT_EQ(data_type->type_id(), kNumberTypeInt32);
-  EXPECT_EQ(shape_vec.size(), 1);
-  EXPECT_EQ(shape_vec[0], 8);
-  EXPECT_EQ(range->get_d_type(), 1);
-  EXPECT_EQ(range->get_start(), 3);
-  EXPECT_EQ(range->get_limit(), 34);
-  EXPECT_EQ(range->get_delta(), 4);
+class TestRange : public TestOps, public testing::WithParamInterface<RangeOpParams> {};
+
+TEST_P(TestRange, dyn_shape) {
+  const auto &param = GetParam();
+  auto start = std::make_shared<abstract::AbstractTensor>(param.start_type, param.start_shape);
+  auto limit = std::make_shared<abstract::AbstractTensor>(param.limit_type, param.limit_shape);
+  auto delta = std::make_shared<abstract::AbstractTensor>(param.delta_type, param.delta_shape);
+  ASSERT_NE(start, nullptr);
+  ASSERT_NE(limit, nullptr);
+  ASSERT_NE(delta, nullptr);
+
+  auto expect = std::make_shared<abstract::AbstractTensor>(param.out_type, param.out_shape);
+
+  auto prim = std::make_shared<Primitive>(kNameRange);
+  auto out_abstract = opt::CppInferShapeAndType(prim, {start, limit, delta});
+  ASSERT_NE(out_abstract, nullptr);
+  ASSERT_TRUE(*out_abstract == *expect);
 }
 
-TEST_F(TestRange, test_ops_range2) {
-  auto range = std::make_shared<Range>();
-  range->Init(1, 1, 1, 1);
-  EXPECT_EQ(range->get_d_type(), 1);
-  EXPECT_EQ(range->get_start(), 1);
-  EXPECT_EQ(range->get_limit(), 1);
-  EXPECT_EQ(range->get_delta(), 1);
-  range->set_d_type(1);
-  range->set_start(1);
-  range->set_limit(1);
-  range->set_delta(1);
-  auto tensor_x1 = std::make_shared<tensor::Tensor>(kNumberTypeFloat32, std::vector<int64_t>{1});
-  auto tensor_x2 = std::make_shared<tensor::Tensor>(kNumberTypeFloat32, std::vector<int64_t>{1});
-  auto tensor_x3 = std::make_shared<tensor::Tensor>(kNumberTypeFloat32, std::vector<int64_t>{1});
-  MS_EXCEPTION_IF_NULL(tensor_x1);
-  MS_EXCEPTION_IF_NULL(tensor_x2);
-  MS_EXCEPTION_IF_NULL(tensor_x3);
-  auto data_x1 = tensor_x1->data_c();
-  MS_EXCEPTION_IF_NULL(data_x1);
-  auto val_x1 = reinterpret_cast<float *>(data_x1);
-  *val_x1 = 1.0;
-  auto data_x2 = tensor_x2->data_c();
-  MS_EXCEPTION_IF_NULL(data_x2);
-  auto val_x2 = reinterpret_cast<float *>(data_x2);
-  *val_x2 = 42.0;
-  auto data_x3 = tensor_x3->data_c();
-  MS_EXCEPTION_IF_NULL(data_x3);
-  auto val_x3 = reinterpret_cast<float *>(data_x3);
-  *val_x3 = 3.0;
-  auto abstract = range->Infer({tensor_x1->ToAbstract(), tensor_x2->ToAbstract(), tensor_x3->ToAbstract()});
-  MS_EXCEPTION_IF_NULL(abstract);
-  EXPECT_EQ(abstract->isa<abstract::AbstractTensor>(), true);
-  auto shape_ptr = abstract->BuildShape();
-  MS_EXCEPTION_IF_NULL(shape_ptr);
-  EXPECT_EQ(shape_ptr->isa<abstract::Shape>(), true);
-  auto shape = shape_ptr->cast<abstract::ShapePtr>();
-  MS_EXCEPTION_IF_NULL(shape);
-  auto shape_vec = shape->shape();
-  auto type = abstract->BuildType();
-  MS_EXCEPTION_IF_NULL(type);
-  EXPECT_EQ(type->isa<TensorType>(), true);
-  auto tensor_type = type->cast<TensorTypePtr>();
-  MS_EXCEPTION_IF_NULL(tensor_type);
-  auto data_type = tensor_type->element();
-  MS_EXCEPTION_IF_NULL(data_type);
-  EXPECT_EQ(data_type->type_id(), kNumberTypeFloat32);
-  EXPECT_EQ(shape_vec.size(), 1);
-  EXPECT_EQ(shape_vec[0], 14);
-  EXPECT_EQ(range->get_d_type(), 1);
-  EXPECT_EQ(range->get_start(), 1);
-  EXPECT_EQ(range->get_limit(), 1);
-  EXPECT_EQ(range->get_delta(), 1);
-}
+INSTANTIATE_TEST_CASE_P(TestRangeGroup, TestRange,
+                        testing::Values(RangeOpParams{{}, kFloat32, {}, kFloat32, {}, kFloat32, {-1}, kFloat32},
+                                        RangeOpParams{{-1}, kFloat32, {-1}, kFloat32, {-1}, kFloat32, {-1}, kFloat32},
+                                        RangeOpParams{{-2}, kFloat32, {-2}, kFloat32, {-2}, kFloat32, {-1}, kFloat32}));
 }  // namespace ops
 }  // namespace mindspore

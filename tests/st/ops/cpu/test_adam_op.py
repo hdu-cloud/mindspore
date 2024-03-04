@@ -36,7 +36,7 @@ class NetAdam(nn.Cell):
         self.batch_size = 1
         self.reshape = P.Reshape()
         weight = Tensor(np.ones([10, 16]).astype(np.float32) * 0.01)
-        self.fc1 = Dense(16, 10, weight_init=weight)
+        self.fc1 = Dense(16, 10, weight_init=weight, bias_init='zeros')
 
     def construct(self, input_x):
         output = self.reshape(input_x, (self.batch_size, -1))
@@ -204,7 +204,7 @@ class AdamNetVmap(nn.Cell):
         self.net = net
         self.var_np = seed.random(shape).astype(np.float32)
         self.m_np = seed.random(shape).astype(np.float32)
-        self.v_np = seed.random(shape).astype(np.float32)
+        self.v_np = abs(seed.random(shape).astype(np.float32))
         self.var = Parameter(Tensor(self.var_np), name="var")
         self.m = Parameter(Tensor(self.m_np), name="m")
         self.v = Parameter(Tensor(self.v_np), name="v")

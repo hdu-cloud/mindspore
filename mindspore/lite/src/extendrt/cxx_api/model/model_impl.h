@@ -30,38 +30,40 @@
 #include "ir/func_graph.h"
 #include "extendrt/infer_session.h"
 #include "src/common/config_infos.h"
+#include "mindapi/ir/common.h"
 
 #ifndef _WIN32
 #include <dlfcn.h>
 #endif
 namespace mindspore {
-typedef mindspore::api::FuncGraphPtr (*ConverterFunc)(const char *, const size_t &, const std::shared_ptr<Context> &,
-                                                      const ConfigInfos &);
-
 class ConverterPlugin {
  public:
-  ConverterPlugin() = default;
-  ~ConverterPlugin();
-  static ConverterPlugin &Instance();
-  ConverterFunc GetConverterFunc();
+  typedef int (*ConverterFunc)(const mindspore::api::FuncGraphPtr &, const std::shared_ptr<Context> &,
+                               const ConfigInfos &);
+  static ConverterFunc GetConverterFunc();
 
  private:
   void *handle_ = nullptr;
   ConverterFunc converter_func_ = nullptr;
+  static std::mutex mutex_;
+
+  ConverterPlugin();
+  ~ConverterPlugin();
+  ConverterFunc GetConverterFuncInner();
 };
 
 class ModelImpl {
  public:
-  ModelImpl() : graph_(nullptr), session_(nullptr), context_(nullptr) {}
+  ModelImpl();
   ~ModelImpl();
 
   /// \brief Build a model from model buffer so that it can run on a device.
   ///
   /// \param[in] model_data Define the buffer read from a model file.
   /// \param[in] data_size Define bytes number of model buffer.
-  /// \param[in] model_type Define The type of model file. Options: ModelType::kMindIR, ModelType::kOM. Only
-  /// ModelType::kMindIR is valid for Lite.
-  /// \param[in] model_context Define the context used to store options during execution.
+  /// \param[in] model_type Define The type of model file. Options: ModelType::kMindIR, ModelType::kMindIR_Lite,
+  /// ModelType::kDataFlow. Only ModelType::kMindIR is valid for Lite. \param[in] model_context Define the context used
+  /// to store options during execution.
   ///
   /// \return Status.
   Status Build(const void *model_data, size_t data_size, ModelType model_type,
@@ -70,12 +72,20 @@ class ModelImpl {
   /// \brief Build a model from model file path so that it can run on a device.
   ///
   /// \param[in] model_path Define the path of a model file.
-  /// \param[in] model_type Define The type of model file. Options: ModelType::kMindIR, ModelType::kOM. Only
-  /// ModelType::kMindIR is valid for Lite.
-  /// \param[in] model_context Define the context used to store options during execution.
+  /// \param[in] model_type Define The type of model file. Options: ModelType::kMindIR, ModelType::kMindIR_Lite,
+  /// ModelType::kDataFlow. Only ModelType::kMindIR is valid for Lite. \param[in] model_context Define the context used
+  /// to store options during execution.
   ///
   /// \return Status.
   Status Build(const std::string &model_path, ModelType model_type, const std::shared_ptr<Context> &model_context);
+
+  /// \brief Build a model from func graph so that it can run on a device.
+  ///
+  /// \param[in] func_graph FuncGraph compiled from frontend.
+  /// \param[in] model_context Define the context used to store options during execution.
+  ///
+  /// \return Status.
+  Status Build(const FuncGraphPtr &func_graph, const std::shared_ptr<Context> &model_context);
 
   /// \brief Resize model inputs shape and memory from specified dims.
   ///
@@ -178,33 +188,44 @@ class ModelImpl {
   /// \return value of config as string type.
   std::string GetConfig(const std::string &section, const std::string &key);
 
+  static bool CheckModelSupport(DeviceType device_type, ModelType model_type);
+
  private:
   /// \brief Model build by buffer implementation, unified model build flow.
   ///
   /// \param[in] model_data Define the buffer read from a model file.
   /// \param[in] data_size Define bytes number of model buffer.
-  /// \param[in] model_type Define The type of model file. Options: ModelType::kMindIR, ModelType::kOM. Only
-  /// ModelType::kMindIR is valid for Lite.
-  /// \param[in] model_context Define the context used to store options during execution.
-  /// \param[in] model_path Define the model_path, this param is used for net and weight divided case.
+  /// \param[in] model_type Define The type of model file. Options: ModelType::kMindIR, ModelType::kMindIR_Lite,
+  /// ModelType::kDataFlow. Only ModelType::kMindIR is valid for Lite. \param[in] model_context Define the context used
+  /// to store options during execution. \param[in] model_path Define the model_path, this param is used for net and
+  /// weight divided case.
   ///
   /// \return value of config as string type.
   Status BuildByBufferImpl(const void *model_data, size_t data_size, ModelType model_type,
                            const std::shared_ptr<Context> &model_context, const std::string &model_path = "");
 
+  FuncGraphPtr LoadGraphByBufferImpl(const void *model_data, size_t data_size, ModelType model_type,
+                                     const std::shared_ptr<Context> &model_context, const std::string &model_path);
+
   /// \brief Compare and optimize model online.
   ///
-  /// \param[in] model_data Define the buffer read from a model file.
-  /// \param[in] data_size Define bytes number of model buffer.
+  /// \param[in] func_graph load from a model file.
   /// \param[in] model_context Define the context used to store options during execution.
   ///
   /// \return value of config as string type.
-  Status CompileGraphOnline(const void *model_data, size_t data_size, const std::shared_ptr<Context> &model_context);
+  Status ConvertGraphOnline(const FuncGraphPtr &func_graph, const std::shared_ptr<Context> &model_context);
 
   /// \brief Set Mindspore Context.
   /// This is used for load mindir file for model, turn off the infer shape flow
   ///
   void SetMsContext();
+
+  bool IsEnableModelSharing(const std::string &model_path);
+
+  bool IsEnableModelSharing(const std::pair<const void *, size_t> &model_buff);
+
+  Status UpdateSharingWorkspaceConfig(const void *model_buff, size_t model_size, const std::string &model_path);
+  void UpdateProvider();
 
   friend class Model;
   friend class Serialization;
@@ -218,6 +239,8 @@ class ModelImpl {
   // config info not in context
   ConfigInfos config_info_;
   std::map<std::string, TypeId> execution_plan_;
+  std::recursive_mutex mutex_;
+  uint32_t graph_id_ = 0;
 };
 }  // namespace mindspore
 #endif  // MINDSPORE_LITE_SRC_EXTENDRT_CXX_API_MODEL_MODEL_IMPL_H_

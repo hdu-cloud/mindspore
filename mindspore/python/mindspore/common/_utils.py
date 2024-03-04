@@ -18,9 +18,13 @@
 
 import os
 import math
+import ctypes
 import functools
 
+import mindspore
+from mindspore import log as logger
 from mindspore.common import dtype as mstype
+from mindspore.parallel._ps_context import _is_ps_mode, _is_role_pserver, _is_role_sched
 
 
 def is_shape_unknown(shape):
@@ -43,18 +47,72 @@ def is_dim_unknown(shape):
     return False
 
 
-def split_to_slice_if_need(dtype, shape):
-    # check if size of data is too huge, and cut it to a smaller one.
+def get_slice_num(dtype, shape):
+    """Check whether size of data is too huge, and cut it to a smaller one, return slice num."""
+    slice_num = 1
+    need_split = _is_ps_mode() and (_is_role_pserver() or _is_role_sched())
+
+    if not need_split:
+        return slice_num
+
+    if "MS_EMBEDDING_REMOTE_CACHE_MEMORY_SIZE" not in os.environ:
+        return slice_num
+
     num_element = functools.reduce(lambda x, y: x * y, shape, 1)
     data_size = num_element * mstype.type_size_in_bytes(dtype)
-    emb_cache_size = int(os.getenv("MS_EMBEDDING_REMOTE_CACHE_MEMORY_SIZE", "100")) << 30
-    slice_num = 1
-    if data_size <= emb_cache_size:
+    remote_cache_size = int(os.getenv("MS_EMBEDDING_REMOTE_CACHE_MEMORY_SIZE")) << 30
+    if remote_cache_size == 0:
+        raise ValueError("The remote cache size set by env variable[MS_EMBEDDING_REMOTE_CACHE_MEMORY_SIZE]"
+                         " should be greater than 0.")
+
+    if data_size <= remote_cache_size:
         return slice_num
-    slice_num = math.ceil(data_size / emb_cache_size)
+
+    slice_num = math.ceil(data_size / remote_cache_size)
     return slice_num
 
 
-def update_and_return_dict(dic, key, val):
-    dic.__setitem__(key, val)
-    return dic
+def get_slice_shape(dtype, shape):
+    """Check whether size of data is too huge, and cut it to a smaller one, return slice shape."""
+    slice_num = get_slice_num(dtype, shape)
+    if slice_num == 1:
+        return shape
+
+    new_shape = list(shape)
+    if slice_num == 0:
+        raise ValueError("The slice num is at least 1, but got 0")
+    slice_first_dim = math.ceil(new_shape[0] / slice_num)
+    new_shape[0] = slice_first_dim
+    return tuple(new_shape)
+
+
+def _jit_fallback_raise_func(type_name, script):
+    """raise function for jit fallback."""
+    raise type_name(script)
+
+
+def _jit_fallback_set_attr(class_obj, attr_name, target_obj):
+    """Set attr for object and return the object for jit fallback."""
+    setattr(class_obj, attr_name, target_obj)
+    return target_obj
+
+
+def ones_like(x):
+    """Implement `oneslike`."""
+    return mindspore.ops.composite.ones_like(x)
+
+
+def zeros_like(x):
+    """Implement `zeroslike`."""
+    return mindspore.ops.composite.zeros_like(x)
+
+
+def load_lib(lib_path):
+    """load specified library."""
+    try:
+        ctypes.CDLL(lib_path)
+    # pylint: disable=broad-except
+    except Exception:
+        logger.warning(f'Loading {lib_path} lib error.')
+        return False
+    return True

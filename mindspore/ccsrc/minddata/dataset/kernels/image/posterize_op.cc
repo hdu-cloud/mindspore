@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,12 +20,12 @@
 
 namespace mindspore {
 namespace dataset {
-
 const uint8_t PosterizeOp::kBit = 8;
 
 PosterizeOp::PosterizeOp(uint8_t bit) : bit_(bit) {}
 
 Status PosterizeOp::Compute(const std::shared_ptr<Tensor> &input, std::shared_ptr<Tensor> *output) {
+  IO_CHECK(input, output);
   uint8_t mask_value = ~((uint8_t)(1 << (8 - bit_)) - 1);
   std::shared_ptr<CVTensor> input_cv = CVTensor::AsCVTensor(input);
   if (!input_cv->mat().data) {

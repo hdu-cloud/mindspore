@@ -17,7 +17,6 @@
 #ifndef MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_CPU_MAXIMUM_GRAD_CPU_KERNEL_H_
 #define MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_CPU_MAXIMUM_GRAD_CPU_KERNEL_H_
 
-#include <memory>
 #include <map>
 #include <vector>
 #include "plugin/device/cpu/kernel/cpu_kernel.h"
@@ -45,11 +44,25 @@ class MaximumGradCpuKernelMod : public NativeCpuKernelMod {
   template <typename T>
   void LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &outputs);
 
+  template <typename T>
+  void MaximumGradRecTask(const T *x, const T *y, const T *dout, T *dx, T *dy, size_t dim, size_t x_index,
+                          size_t y_index, size_t dout_index, const std::vector<size_t> &x_cargo,
+                          const std::vector<size_t> &y_cargo, const std::vector<size_t> &dout_cargo,
+                          const std::vector<size_t> &x_shape, const std::vector<size_t> &y_shape,
+                          const std::vector<size_t> &dout_shape);
+
+  template <typename T>
+  void MaximumGradRecTaskSerialized(const T *x, const T *y, const T *dout, T *dx, T *dy, size_t dim, size_t x_index,
+                                    size_t y_index, size_t dout_index, const std::vector<size_t> &x_cargo,
+                                    const std::vector<size_t> &y_cargo, const std::vector<size_t> &dout_cargo,
+                                    const std::vector<size_t> &x_shape, const std::vector<size_t> &y_shape,
+                                    const std::vector<size_t> &dout_shape, bool paralleled);
+
   ShapeVector x_shape_;
   ShapeVector y_shape_;
-  ShapeVector dout_shape;
-  ShapeVector dx_shape;
-  ShapeVector dy_shape;
+  ShapeVector dout_shape_;
+  ShapeVector dx_shape_;
+  ShapeVector dy_shape_;
   TypeId dtype_{kTypeUnknown};
 };
 }  // namespace kernel

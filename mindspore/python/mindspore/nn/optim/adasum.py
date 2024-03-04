@@ -22,7 +22,7 @@ import math
 import mindspore.nn as nn
 import mindspore.log as logger
 from mindspore import context
-from mindspore._checkparam import Validator as validator
+from mindspore import _checkparam as validator
 from mindspore.nn.cell import Cell
 from mindspore.common.parameter import ParameterTuple, Parameter
 from mindspore.parallel._utils import _get_global_rank, _get_stage_device_num
@@ -114,7 +114,7 @@ def _adasum_opt_forward_process(left_send, allreduce, parameter_divisibility, al
     if parameter_divisibility:
         delta_w = P.Squeeze()(delta_w)
         ori_len = F.shape(delta_w)[0]
-        divide_len = ori_len / 2
+        divide_len = ori_len // 2
         left_part = delta_w[:divide_len]
         right_part = delta_w[divide_len:]
     else:
@@ -412,8 +412,8 @@ class AdaSumByGradWrapCell(Cell):
     .. math::
         \begin{array}{ll}
           w_{t+1}=w_{t} - \alpha \cdot Adasum(g_{1}, g_{2})  \\
-          w_{t+1}=w_{t} - \alpha \cdot [(1 - \frac{g_2^{T}\cdot g_1}{2\cdot \left \| g_1 \right \|^2 })\cdot g_1 +
-           (1 - \frac{g_1^{T}\cdot g_2}{2\cdot \left \| g_2 \right \|^2 })\cdot g_2]  \\
+          w_{t+1}=w_{t} - \alpha \cdot [(1 - \frac{g_2^{T}\cdot g_1}{2\cdot \left \| g_1 \right \|^2 })\cdot g_1 + (1 -
+          \frac{g_1^{T}\cdot g_2}{2\cdot \left \| g_2 \right \|^2 })\cdot g_2]  \\
         \end{array}
 
     In this implementation, :math:`g` represents the gradient of the weights,
@@ -442,12 +442,14 @@ class AdaSumByGradWrapCell(Cell):
         ``Ascend`` ``GPU``
 
     Examples:
+        >>> import mindspore as ms
         >>> from mindspore import nn
-        >>> from mindspore.nn import AdaSumByGradWrapCell
-        >>> net = Net()
-        >>> optim = AdaSumByGradWrapCell(nn.Momentum(params=net.trainable_params(), learning_rate=0.1, momentum=0.9))
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
+        >>> optim = nn.AdaSumByGradWrapCell(nn.Momentum(params=net.trainable_params(), learning_rate=0.1, momentum=0.9))
         >>> loss = nn.SoftmaxCrossEntropyWithLogits()
-        >>> model = Model(net, loss_fn=loss, optimizer=optim, metrics=None)
+        >>> model = ms.train.Model(net, loss_fn=loss, optimizer=optim, metrics=None)
     """
     def __init__(self, optimizer):
         super(AdaSumByGradWrapCell, self).__init__(auto_prefix=False)
@@ -479,8 +481,8 @@ class AdaSumByDeltaWeightWrapCell(Cell):
     .. math::
         \begin{array}{ll}
           w_{t+1}=w_{t} - \alpha \cdot Adasum(g_{1}, g_{2})  \\
-          w_{t+1}=w_{t} - \alpha \cdot [(1 - \frac{g_2^{T}\cdot g_1}{2\cdot \left \| g_1 \right \|^2 })\cdot g_1 +
-           (1 - \frac{g_1^{T}\cdot g_2}{2\cdot \left \| g_2 \right \|^2 })\cdot g_2]  \\
+          w_{t+1}=w_{t} - \alpha \cdot [(1 - \frac{g_2^{T}\cdot g_1}{2\cdot \left \| g_1 \right \|^2 })\cdot g_1 + (1 -
+          \frac{g_1^{T}\cdot g_2}{2\cdot \left \| g_2 \right \|^2 })\cdot g_2]  \\
         \end{array}
 
     In this implementation, :math:`g` represents the weight difference before and after the updating of optimizer,
@@ -509,13 +511,15 @@ class AdaSumByDeltaWeightWrapCell(Cell):
         ``Ascend`` ``GPU``
 
     Examples:
+        >>> import mindspore as ms
         >>> from mindspore import nn
-        >>> from mindspore.nn import AdaSumByDeltaWeightWrapCell
-        >>> net = Net()
-        >>> optim = AdaSumByDeltaWeightWrapCell(nn.Momentum(params=net.trainable_params(),
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
+        >>> optim = nn.AdaSumByDeltaWeightWrapCell(nn.Momentum(params=net.trainable_params(),
         ...                                                 learning_rate=0.1, momentum=0.9))
         >>> loss = nn.SoftmaxCrossEntropyWithLogits()
-        >>> model = Model(net, loss_fn=loss, optimizer=optim, metrics=None)
+        >>> model = ms.train.Model(net, loss_fn=loss, optimizer=optim, metrics=None)
     """
     def __init__(self, optimizer):
         super(AdaSumByDeltaWeightWrapCell, self).__init__(auto_prefix=False)

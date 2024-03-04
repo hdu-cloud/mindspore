@@ -25,6 +25,7 @@
 #include "base/base.h"
 #include "frontend/parallel/device_manager.h"
 #include "frontend/parallel/step_parallel_utils.h"
+#include "pipeline/jit/ps/resource.h"
 #include "pybind11/pybind11.h"
 
 namespace py = pybind11;
@@ -40,11 +41,14 @@ constexpr char CLONED_OBJ[] = "cloned_obj";
 constexpr char SLICE_PARAMETER_FN_PATH[] = "mindspore.parallel._utils";
 constexpr char SLICE_PARAMETER_FN_NAME[] = "_slice_parameter";
 constexpr char INIT_OPTIMIZER_STATE_FN[] = "_init_optimizer_state";
+constexpr char SLICE_TENSOR_FN_NAME[] = "_slice_tensor";
 
 using RefKeyPair = std::pair<AnfNodePtr, std::vector<AnfNodePtr>>;
 using ParameterUsersInfo = std::pair<std::string, std::pair<AnfNodePtr, AnfNodeIndexSet>>;
 
-ParameterUsersInfo FindParameterUsers(const AnfNodePtr &node, bool (*IsCareNode)(const CNodePtr &));
+ParameterUsersInfo FindParameterUsers(const AnfNodePtr &node, bool (*IsCareNode)(const CNodePtr &),
+                                      const std::vector<AnfNodePtr> &all_nodes);
+AnfNodePtr RefParameterToActualParameter(const AnfNodePtr &node);
 void CheckParameterSplit(const std::vector<AnfNodePtr> &all_nodes);
 void HandleSymbolicKeyInstance(const FuncGraphPtr &root, const std::vector<AnfNodePtr> &all_nodes);
 void HandleNoUsedParameter(const FuncGraphPtr &root);
@@ -52,7 +56,10 @@ void HandleFullySplitParameters(const FuncGraphPtr &root);
 void SetClonedTensorShapeForOptimizer(const FuncGraphPtr &root);
 void HandleAdaFactorOpt(const FuncGraphPtr &root);
 void AutoParallelPostProcess(const FuncGraphPtr &root);
-void InitOptimizerState(const FuncGraphPtr &root);
+void SliceTensorObj(const ParameterPtr &parameter, const TensorLayoutPtr &tensor_layout, size_t rank_id = 0);
+// Init the parameters for graph which not specified by shard under PyNative mode.
+void InitPynativeNoShardParams(const FuncGraphPtr &root);
+void InitCompileCacheParams(const pipeline::ResourcePtr &resource);
 std::pair<AnfNodePtr, bool> FindParameter(const AnfNodePtr &node, const FuncGraphPtr &func_graph);
 std::pair<AnfNodePtr, bool> FindParameterWithAllgather(const AnfNodePtr &node, const FuncGraphPtr &func_graph,
                                                        const std::string &name);
@@ -65,6 +72,8 @@ void HandleMirrorInAdaSum(
 bool ParameterIsCloned(const AnfNodePtr &parameter_node);
 py::object GetPyParameterObj(const ParamInfoPtr &param_info, const std::string &obj);
 bool IsFullySplitParameter(const ParameterPtr &param_ptr, size_t allow_repeat_num = 1);
+std::shared_ptr<TensorLayout> CreateParameterLayout(const AnfNodePtr &node);
+void InsertUniformRealForTaggedNodes(const FuncGraphManagerPtr &manager, const std::vector<AnfNodePtr> &all_nodes);
 }  // namespace parallel
 }  // namespace mindspore
 

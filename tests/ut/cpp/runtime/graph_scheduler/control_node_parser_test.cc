@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,11 @@
  * limitations under the License.
  */
 
-#include "graph_scheduler_common_test.h"
+#include "tests/ut/cpp/common/device_common_test.h"
 
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/comparison_ops.h"
+#include "mindspore/core/ops/framework_ops.h"
 namespace mindspore {
 namespace runtime {
 using namespace test;
@@ -94,10 +97,13 @@ void BuildGraphs(std::vector<AnfNodePtr> *control_nodes, FuncGraphPtr *func_grap
   // Call.
   std::vector<AnfNodePtr> call_inputs{switch_node};
   auto root_call_node = root_func_graph->NewCNode(call_inputs);
+  auto root_call_abs = std::make_shared<abstract::AbstractTensor>(kFloat32, shp);
+  root_call_node->set_abstract(root_call_abs);
   control_nodes->emplace_back(root_call_node);
   // Return.
   std::vector<AnfNodePtr> return_inputs{NewValueNode(prim::kPrimReturn), root_call_node};
   auto return_node = root_func_graph->NewCNode(return_inputs);
+  return_node->set_abstract(root_call_abs);
   control_nodes->emplace_back(return_node);
   root_func_graph->set_return(return_node);
 
@@ -117,6 +123,7 @@ void BuildGraphs(std::vector<AnfNodePtr> *control_nodes, FuncGraphPtr *func_grap
   // Return.
   std::vector<AnfNodePtr> true_return_inputs{NewValueNode(prim::kPrimReturn), true_add};
   auto true_return_node = true_func_graph->NewCNode(true_return_inputs);
+  true_return_node->set_abstract(root_call_abs);
   control_nodes->emplace_back(true_return_node);
   true_func_graph->set_return(true_return_node);
 
@@ -130,6 +137,7 @@ void BuildGraphs(std::vector<AnfNodePtr> *control_nodes, FuncGraphPtr *func_grap
   // Return.
   std::vector<AnfNodePtr> false_return_inputs{NewValueNode(prim::kPrimReturn), false_add};
   auto false_return_node = false_func_graph->NewCNode(false_return_inputs);
+  false_return_node->set_abstract(root_call_abs);
   control_nodes->emplace_back(false_return_node);
   false_func_graph->set_return(false_return_node);
 

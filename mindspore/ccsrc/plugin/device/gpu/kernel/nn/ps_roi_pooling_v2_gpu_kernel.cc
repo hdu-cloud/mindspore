@@ -35,6 +35,7 @@ constexpr size_t kWidthIndex = 3;
 
 bool PSROIPoolingV2GpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                       const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
   kernel_name_ = base_operator->name();
   auto tensor_attr = GetKernelAttrFromTensors(inputs, outputs);
   auto is_match = MatchKernelAttr(tensor_attr, GetOpSupport()).first;
@@ -76,14 +77,14 @@ int PSROIPoolingV2GpuKernelMod::ResizeCheckInputs(const std::vector<KernelTensor
 int PSROIPoolingV2GpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                        const std::vector<KernelTensorPtr> &outputs,
                                        const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost) {
+  MS_EXCEPTION_IF_NULL(base_operator);
+  CHECK_KERNEL_INPUTS_NUM(inputs.size(), INPUT_NUM, kernel_name_);
+  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), OUTPUT_NUM, kernel_name_);
   auto ret = ResizeCheckInputs(inputs);
   if (ret != KRET_OK) {
     MS_LOG(ERROR) << "Inputs check failed, see above message for details.";
     return ret;
   }
-
-  CHECK_KERNEL_INPUTS_NUM(inputs.size(), INPUT_NUM, kernel_name_);
-  CHECK_KERNEL_OUTPUTS_NUM(outputs.size(), OUTPUT_NUM, kernel_name_);
 
   output_shape = outputs[0]->GetShapeVector();
   if (output_shape.size() != OUTPUT_SHAPE_SIZE) {
@@ -152,16 +153,17 @@ int PSROIPoolingV2GpuKernelMod::Resize(const BaseOperatorPtr &base_operator, con
 template <typename T>
 bool PSROIPoolingV2GpuKernelMod::PSROIPoolingLauncher(const std::vector<AddressPtr> &inputs,
                                                       const std::vector<AddressPtr> &outputs, void *stream_ptr) {
-  auto input_data = reinterpret_cast<T *>(inputs[0]->addr);
+  T *input_data = GetDeviceAddress<T>(inputs, kIndex0);
   MS_EXCEPTION_IF_NULL(input_data);
-  auto rois = reinterpret_cast<T *>(inputs[1]->addr);
+  T *rois = GetDeviceAddress<T>(inputs, kIndex1);
   MS_EXCEPTION_IF_NULL(rois);
-  auto output_data = reinterpret_cast<T *>(outputs[0]->addr);
+  T *output_data = GetDeviceAddress<T>(outputs, kIndex0);
   MS_EXCEPTION_IF_NULL(output_data);
 
-  PSROIPoolForwardV2Launcher(input_data, static_cast<T>(spatial_scale_), output_n_, height_, width_, feature_channels_,
-                             pooled_height_, pooled_width_, rois, group_size_, output_channels_, output_data,
-                             reinterpret_cast<cudaStream_t>(stream_ptr));
+  auto status = PSROIPoolForwardV2Launcher(input_data, static_cast<T>(spatial_scale_), output_n_, height_, width_,
+                                           feature_channels_, pooled_height_, pooled_width_, rois, group_size_,
+                                           output_channels_, output_data, reinterpret_cast<cudaStream_t>(stream_ptr));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

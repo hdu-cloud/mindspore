@@ -17,12 +17,12 @@
 #ifndef MINDSPORE_CORE_OPS_PAD_V3_H_
 #define MINDSPORE_CORE_OPS_PAD_V3_H_
 #include <map>
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,10 +33,9 @@ class MIND_API PadV3 : public BaseOperator {
   PadV3() : BaseOperator(kNamePadV3) { InitIOName({"x", "paddings", "constant_values"}, {"y"}); }
   std::string get_mode() const;
   bool get_paddings_contiguous() const;
-  std::vector<int64_t> get_paddings() const;
 };
-abstract::AbstractBasePtr PadV3Infer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                     const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr PadV3Infer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                              const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

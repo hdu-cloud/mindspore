@@ -17,11 +17,10 @@
 #ifndef MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_NN_DETECT_OPS_DECLARE_H_
 #define MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_NN_DETECT_OPS_DECLARE_H_
 
-#include "utils/hash_map.h"
+#include "inc/ops/nn_detect_ops.h"
 #include "transform/graph_ir/op_declare/op_declare_macro.h"
-#include "ops/nn_detect_ops.h"
+#include "utils/hash_map.h"
 
-namespace mindspore::transform {
 DECLARE_OP_ADAPTER(Iou)
 DECLARE_OP_USE_OUTPUT(Iou)
 
@@ -41,6 +40,15 @@ DECLARE_OP_ADAPTER(ROIAlign)
 DECLARE_OP_USE_OUTPUT(ROIAlign)
 
 DECLARE_OP_ADAPTER(ROIAlignGrad)
+DECLARE_OP_USE_INPUT_ATTR(ROIAlignGrad)
 DECLARE_OP_USE_OUTPUT(ROIAlignGrad)
-}  // namespace mindspore::transform
+
+DECLARE_OP_ADAPTER(PSROIPooling)
+DECLARE_OP_USE_OUTPUT(PSROIPooling)
+
+DECLARE_OP_ADAPTER(PSROIPoolingV2)
+DECLARE_OP_USE_OUTPUT(PSROIPoolingV2)
+
+DECLARE_OP_ADAPTER(PSROIPoolingGradV2D)
+DECLARE_OP_USE_OUTPUT(PSROIPoolingGradV2D)
 #endif  // MINDSPORE_CCSRC_TRANSFORM_GRAPH_IR_OP_DECLARE_NN_DETECT_OPS_DECLARE_H_

@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-#include "ps/ps_cache/ps_data/ps_data_prefetch.h"
+#include "include/backend/distributed/ps/ps_cache/ps_data_prefetch.h"
 #include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ps {
-const size_t kTimeoutLoopCount = 40;
+const size_t kTimeoutLoopCount = 80;
 const int64_t kLongestTimeToWait = 30;
 
 PsDataPrefetch &PsDataPrefetch::GetInstance() {
@@ -146,8 +146,7 @@ size_t PsDataPrefetch::data_size(const std::string &channel_name) const {
 }
 
 void PsDataPrefetch::NotifyFinalize() {
-  static std::mutex mtx;
-  std::lock_guard<std::mutex> lock(mtx);
+  std::lock_guard<std::mutex> lock(finalize_mutex_);
   if (!need_wait_) {
     return;
   }

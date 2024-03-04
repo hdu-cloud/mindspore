@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@
 
 namespace mindspore {
 namespace dataset {
-
 Status ComposeOp::OutputShape(const std::vector<TensorShape> &inputs, std::vector<TensorShape> &outputs) {
   std::vector<TensorShape> in_shapes = inputs;
   for (auto &op : ops_) {
@@ -31,6 +30,7 @@ Status ComposeOp::OutputShape(const std::vector<TensorShape> &inputs, std::vecto
   outputs = std::move(in_shapes);
   return Status::OK();
 }
+
 Status ComposeOp::OutputType(const std::vector<DataType> &inputs, std::vector<DataType> &outputs) {
   std::vector<DataType> in_types = inputs;
   for (auto &op : ops_) {
@@ -40,8 +40,10 @@ Status ComposeOp::OutputType(const std::vector<DataType> &inputs, std::vector<Da
   outputs = std::move(in_types);
   return Status::OK();
 }
+
 Status ComposeOp::Compute(const TensorRow &inputs, TensorRow *outputs) {
   IO_CHECK_VECTOR(inputs, outputs);
+  CHECK_FAIL_RETURN_UNEXPECTED(!ops_.empty(), "Compose: transform list should not be empty.");
   TensorRow in_rows = inputs;
   for (auto &op : ops_) {
     RETURN_IF_NOT_OK(op->Compute(in_rows, outputs));
@@ -51,13 +53,6 @@ Status ComposeOp::Compute(const TensorRow &inputs, TensorRow *outputs) {
   return Status::OK();
 }
 
-ComposeOp::ComposeOp(const std::vector<std::shared_ptr<TensorOp>> &ops) : ops_(ops) {
-  if (ops_.empty()) {
-    MS_LOG(ERROR) << "Compose: input 'transforms'(op_list) is empty, this might lead to Segmentation Fault.";
-  } else if (ops_.size() == 1) {
-    MS_LOG(WARNING) << "Compose: input 'transforms'(op_list) has only 1 op. Compose is probably not needed.";
-  }
-}
-
+ComposeOp::ComposeOp(const std::vector<std::shared_ptr<TensorOp>> &ops) : ops_(ops) {}
 }  // namespace dataset
 }  // namespace mindspore

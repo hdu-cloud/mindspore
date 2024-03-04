@@ -74,11 +74,19 @@ bool IndexFillGpuKernelMod::GetSizeInfo(const AddressPtr &address_ptr, int64_t &
     CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
       cudaMemcpyAsync(&dim, dim_ptr, address_ptr->size, cudaMemcpyDeviceToHost, cuda_stream),
       "In IndexFill kernel, cudaMemcpyAsync input 'dim' device to host failed.");
+    if (cudaStreamQuery(cuda_stream) != cudaSuccess) {
+      CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(cuda_stream),
+                                         "In IndexFill kernel, cuda Stream Sync Failed.");
+    }
   } else {
     int64_t dim_tmp;
     CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
       cudaMemcpyAsync(&dim_tmp, dim_ptr, address_ptr->size, cudaMemcpyDeviceToHost, cuda_stream),
       "In IndexFill kernel, cudaMemcpyAsync input 'dim' device to host failed.");
+    if (cudaStreamQuery(cuda_stream) != cudaSuccess) {
+      CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(cuda_stream),
+                                         "In IndexFill kernel, cuda Stream Sync Failed.");
+    }
     dim = static_cast<int>(dim_tmp);
   }
   if (dim < -rank || dim >= rank) {
@@ -135,8 +143,9 @@ bool IndexFillGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inputs,
     return false;
   }
 
-  IndexFill(y_ptr, index_ptr, index_num_, outer_size, dim_size, inner_size, value_ptr, out_bound_ptr, device_id_,
-            cuda_stream);
+  auto status = IndexFill(y_ptr, index_ptr, index_num_, outer_size, dim_size, inner_size, value_ptr, out_bound_ptr,
+                          device_id_, cuda_stream);
+  CHECK_CUDA_STATUS(status, kernel_name_);
 
   bool out_bound = false;
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(

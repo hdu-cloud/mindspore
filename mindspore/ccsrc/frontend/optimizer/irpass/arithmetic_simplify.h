@@ -20,6 +20,10 @@
 #include <memory>
 
 #include "frontend/optimizer/irpass.h"
+#include "mindspore/core/ops/sequence_ops.h"
+#include "mindspore/core/ops/other_ops.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "frontend/optimizer/irpass/prim_eliminate.h"
 #include "frontend/optimizer/optimizer_caller.h"
 #include "frontend/optimizer/anf_visitor.h"
@@ -47,16 +51,6 @@ class AdjustAllReduceMulAdd : public OptimizerCaller {
 };
 
 class ArithmeticSimplify : public OptimizerCaller {
- public:
-  AnfNodePtr operator()(const OptimizerPtr &, const AnfNodePtr &node) override;
-};
-
-// Arithmetic Simplifications should be done after step_parallel.
-// eg: Mul(0, weight) where weight is a parameter will be simplified to a constant tensor
-// with shape(weight), but after step_parallel, shape of weight may be changed, so the
-// shape of the constant tensor should also be changed. So this pass is separated from
-// ArithmeticSimplify and deferred until step_parallel.
-class ArithmeticSimplify2 : public OptimizerCaller {
  public:
   AnfNodePtr operator()(const OptimizerPtr &, const AnfNodePtr &node) override;
 };

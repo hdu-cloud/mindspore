@@ -14,12 +14,28 @@
  * limitations under the License.
  */
 #include "ops/log_uniform_candidate_sampler.h"
-#include <string>
+
 #include <memory>
 #include <set>
-#include "utils/check_convert_utils.h"
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
 #include "mindspore/core/abstract/ops/op_infer.h"
+#include "mindspore/core/ops/random_ops.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -36,20 +52,39 @@ class LogUniformCandidateSamplerInfer : public abstract::OpInferBase {
  public:
   BaseShapePtr InferShape(const PrimitivePtr &primitive,
                           const std::vector<AbstractBasePtr> &input_args) const override {
+    MS_EXCEPTION_IF_NULL(primitive);
     int64_t num_sampled = GetValue<int64_t>(primitive->GetAttr(kNumSampled));
-    auto sampled_candidate_shape = std::make_shared<abstract::Shape>(ShapeVector({num_sampled}));
-    auto true_expected_shape = input_args[0]->BuildShape();
+    auto sampled_candidate_shape_ptr = std::make_shared<abstract::Shape>(ShapeVector({num_sampled}));
+    auto true_expected_shape_ptr = input_args[0]->BuildShape();
+    auto true_classes_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(true_expected_shape_ptr)[kShape];
+    const size_t true_classes_shape_rank = 2;
+    if (!IsDynamicRank(true_classes_shape) && true_classes_shape.size() != true_classes_shape_rank) {
+      MS_EXCEPTION(ValueError) << "LogUniformCandidateSampler input true_classes dims should be 2.";
+    }
+    if (!IsDynamic(true_classes_shape)) {
+      auto num_true = GetValue<int64_t>(primitive->GetAttr(kNumTrue));
+      if (true_classes_shape[1] != num_true) {
+        MS_EXCEPTION(ValueError)
+          << "LogUniformCandidateSampler input true_classes dim[1] should equal to num_true, true_classes.dim[1] = "
+          << true_classes_shape[1] << ", num_true = " << num_true;
+      }
+    }
 
     std::vector<abstract::BaseShapePtr> shape_tuple;
-    (void)shape_tuple.emplace_back(sampled_candidate_shape);
-    (void)shape_tuple.emplace_back(true_expected_shape);
-    (void)shape_tuple.emplace_back(sampled_candidate_shape);
+    (void)shape_tuple.emplace_back(sampled_candidate_shape_ptr);
+    (void)shape_tuple.emplace_back(true_expected_shape_ptr);
+    (void)shape_tuple.emplace_back(sampled_candidate_shape_ptr);
     return std::make_shared<abstract::TupleShape>(shape_tuple);
   }
 
   TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    if (input_args.empty()) {
+      MS_EXCEPTION(ValueError) << "LogUniformCandidateSampler input can not be empty";
+    }
     // check input data type
     const std::set<TypePtr> valid_types = {kInt64};
+    MS_EXCEPTION_IF_NULL(primitive);
+    MS_EXCEPTION_IF_NULL(input_args[0]);
     CheckAndConvertUtils::CheckTensorTypeValid("true_classes", input_args[0]->BuildType(), valid_types,
                                                primitive->name());
 
@@ -63,6 +98,6 @@ class LogUniformCandidateSamplerInfer : public abstract::OpInferBase {
 
 MIND_API_OPERATOR_IMPL(LogUniformCandidateSampler, BaseOperator);
 REGISTER_PRIMITIVE_OP_INFER_IMPL(LogUniformCandidateSampler, prim::kPrimLogUniformCandidateSampler,
-                                 LogUniformCandidateSamplerInfer, false);
+                                 LogUniformCandidateSamplerInfer, true);
 }  // namespace ops
 }  // namespace mindspore

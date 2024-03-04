@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2022 Huawei Technologies Co., Ltd
+ * Copyright 2019-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,16 +17,17 @@
 #include "plugin/device/ascend/kernel/tbe/tbe_kernel_mod.h"
 
 #include <algorithm>
+#include "ops/other_op_name.h"
 #include "runtime/rt.h"
 #include "utils/ms_context.h"
 #include "plugin/device/ascend/hal/device/ge_runtime/task_info.h"
+#include "plugin/device/ascend/hal/device/ascend_memory_manager.h"
 #include "runtime/device/kernel_runtime.h"
 
 namespace mindspore {
 namespace kernel {
 using TbeTaskInfoPtr = std::shared_ptr<mindspore::ge::model_runner::TbeTaskInfo>;
 using tbe::KernelManager;
-using AddressPtrList = std::vector<mindspore::kernel::AddressPtr>;
 bool TbeKernelMod::Launch(const std::vector<mindspore::kernel::AddressPtr> &inputs,
                           const std::vector<mindspore::kernel::AddressPtr> &workspace,
                           const std::vector<mindspore::kernel::AddressPtr> &outputs, void *stream_ptr) {
@@ -54,35 +55,39 @@ bool TbeKernelMod::Launch(const std::vector<mindspore::kernel::AddressPtr> &inpu
   }
 
   uint32_t blockdim = 1;  // default blockdim equal to 1.
-  auto func_stub = KernelManager::GenFuncStub(*kernel_pack_, false, &blockdim);
+  auto func_stub = KernelManager::GenFuncStub(*kernel_pack_, false, &blockdim, nullptr);
   if (func_stub == 0) {
     MS_LOG(ERROR) << "GenFuncStub failed.";
     return false;
   }
 
+  auto node = anf_node_.lock();
+  MS_EXCEPTION_IF_NULL(node);
+  auto cnode = node->cast<CNodePtr>();
+  MS_EXCEPTION_IF_NULL(cnode);
+
+  std::vector<mindspore::kernel::AddressPtr> real_inputs;
+  std::vector<mindspore::kernel::AddressPtr> real_outputs;
+  GetRealIOAddress(cnode, inputs, outputs, &real_inputs, &real_outputs);
+
   // pack all addresses into a vector.
   std::vector<void *> runtimeargs;
-  (void)std::transform(std::begin(inputs), std::end(inputs), std::back_inserter(runtimeargs),
-                       [](const AddressPtr &input) -> void * {
-                         MS_EXCEPTION_IF_NULL(input);
-                         return input->addr;
-                       });
-  (void)std::transform(std::begin(outputs), std::end(outputs), std::back_inserter(runtimeargs),
-                       [](const AddressPtr &output) -> void * {
-                         MS_EXCEPTION_IF_NULL(output);
-                         return output->addr;
-                       });
-  if (!workspace.empty()) {
-    (void)std::transform(std::begin(workspace), std::end(workspace), std::back_inserter(runtimeargs),
-                         [](const AddressPtr &addr) -> void * {
-                           MS_EXCEPTION_IF_NULL(addr);
-                           return addr->addr;
-                         });
+  GetRawAddress(real_inputs, &runtimeargs);
+  GetRawAddress(real_outputs, &runtimeargs);
+  GetRawAddress(workspace, &runtimeargs);
+
+  AddressPtr overflow_address_ptr = GetOverflowAddress();
+  if (overflow_address_ptr != nullptr) {
+    (void)runtimeargs.emplace_back(overflow_address_ptr->addr);
+    MS_LOG(DEBUG) << "Assign overflow memory for node " << cnode->fullname_with_scope() << ", addr is "
+                  << overflow_address_ptr->addr;
   }
+
   rtL2Ctrl_t *l2ctrl = nullptr;
   const void *stubFunc = reinterpret_cast<void *>(func_stub);
   auto argsSize = static_cast<uint32_t>(UlongToUint(sizeof(void *)) * runtimeargs.size());
   auto lock = device::KernelRuntime::LockRuntime(stream_ptr);
+  (void)lock;  // just make cpp-check quiet, this statement will be optimized by compiler
   auto ret = rtKernelLaunch(stubFunc, blockdim, runtimeargs.data(), argsSize, l2ctrl, stream_ptr);
   if (ret != RT_ERROR_NONE) {
     MS_LOG(ERROR) << "Call runtime rtKernelLaunch error.";
@@ -96,7 +101,7 @@ std::vector<TaskInfoPtr> TbeKernelMod::GenTask(const std::vector<AddressPtr> &in
                                                const std::vector<AddressPtr> &workspaces,
                                                const std::vector<AddressPtr> &outputs, uint32_t stream_id) {
   if (kernel_pack_ == nullptr) {
-    MS_EXCEPTION(ArgumentError) << "kernel pack should not be nullptr.";
+    MS_INTERNAL_EXCEPTION(ArgumentError) << "kernel pack should not be nullptr.";
   }
 
   std::vector<uint8_t> args;
@@ -106,13 +111,22 @@ std::vector<TaskInfoPtr> TbeKernelMod::GenTask(const std::vector<AddressPtr> &in
   std::vector<void *> output_data_addrs;
   std::vector<void *> workspace_addrs;
 
+  auto node = anf_node_.lock();
+  MS_EXCEPTION_IF_NULL(node);
+  auto cnode = node->cast<CNodePtr>();
+  MS_EXCEPTION_IF_NULL(cnode);
+
+  std::vector<mindspore::kernel::AddressPtr> real_inputs;
+  std::vector<mindspore::kernel::AddressPtr> real_outputs;
+  GetRealIOAddress(cnode, inputs, outputs, &real_inputs, &real_outputs);
+
   // pack all addresses into a vector.
-  (void)std::transform(std::begin(inputs), std::end(inputs), std::back_inserter(input_data_addrs),
+  (void)std::transform(std::begin(real_inputs), std::end(real_inputs), std::back_inserter(input_data_addrs),
                        [](const AddressPtr &input) -> void * {
                          MS_EXCEPTION_IF_NULL(input);
                          return input->addr;
                        });
-  (void)std::transform(std::begin(outputs), std::end(outputs), std::back_inserter(output_data_addrs),
+  (void)std::transform(std::begin(real_outputs), std::end(real_outputs), std::back_inserter(output_data_addrs),
                        [](const AddressPtr &output) -> void * {
                          MS_EXCEPTION_IF_NULL(output);
                          return output->addr;
@@ -125,10 +139,17 @@ std::vector<TaskInfoPtr> TbeKernelMod::GenTask(const std::vector<AddressPtr> &in
                          });
   }
 
+  AddressPtr overflow_address_ptr = GetOverflowAddress();
+  if (overflow_address_ptr != nullptr) {
+    workspace_addrs.emplace_back(overflow_address_ptr->addr);
+    MS_LOG(DEBUG) << "Assign overflow memory for node " << cnode->fullname_with_scope() << ", addr is "
+                  << overflow_address_ptr->addr;
+  }
+
   stream_id_ = stream_id;
-  auto funcstub = KernelManager::GenFuncStub(*kernel_pack_, false, &block_dim_);
+  auto funcstub = KernelManager::GenFuncStub(*kernel_pack_, false, &block_dim_, nullptr);
   if (funcstub == 0) {
-    MS_EXCEPTION(ArgumentError) << "GenFuncStub failed.";
+    MS_INTERNAL_EXCEPTION(ArgumentError) << "GenFuncStub failed.";
   }
 
   std::string stub_func = KernelManager::GetStubFuncName(kernel_pack_);
@@ -145,6 +166,50 @@ vector<size_t> TbeKernelMod::GenParameters() {
   MS_EXCEPTION_IF_NULL(kernel_pack_);
   auto kernel_json_info = kernel_pack_->kernel_json_info();
   return kernel_json_info.parameters;
+}
+
+void TbeKernelMod::GenAtomicInitInfo(AtomicInitInfo *info) {
+  MS_EXCEPTION_IF_NULL(kernel_pack_);
+  MS_EXCEPTION_IF_NULL(info);
+  *info = kernel_pack_->kernel_json_info().atomic_init_info;
+}
+
+AddressPtr TbeKernelMod::GetOverflowAddress() {
+  AddressPtr overflow_address_ptr = nullptr;
+  MS_EXCEPTION_IF_NULL(kernel_pack_);
+  auto is_overflow = kernel_pack_.get()->kernel_json_info().global_workspace.is_overflow;
+  if (is_overflow) {
+    auto overflow_memory_ptr =
+      device::ascend::AscendMemoryManager().MallocOverflowMemFromMemFromMemPool(kOverflowAddrSize, false);
+    MS_EXCEPTION_IF_NULL(overflow_memory_ptr);
+    overflow_address_ptr = std::make_shared<kernel::Address>();
+    MS_EXCEPTION_IF_NULL(overflow_address_ptr);
+    overflow_address_ptr->addr = overflow_memory_ptr;
+    overflow_address_ptr->size = kOverflowAddrSize;
+  }
+  return overflow_address_ptr;
+}
+
+void TbeKernelMod::GetRealIOAddress(const AnfNodePtr &cnode, const vector<AddressPtr> &inputs,
+                                    const vector<AddressPtr> &outputs,
+                                    vector<mindspore::kernel::AddressPtr> *real_inputs,
+                                    vector<mindspore::kernel::AddressPtr> *real_outputs) const {
+  MS_EXCEPTION_IF_NULL(cnode);
+  auto op_name = common::AnfAlgo::GetCNodeName(cnode);
+  MS_EXCEPTION_IF_NULL(real_inputs);
+  MS_EXCEPTION_IF_NULL(real_outputs);
+  *real_inputs = inputs;
+  *real_outputs = outputs;
+  if (op_name == kNPUClearFloatStatusV2OpName) {
+    // NPUClearFloatStatusV2 has no input output.
+    real_inputs->clear();
+    real_outputs->clear();
+    MS_LOG(INFO) << "Clear Node " << cnode->fullname_with_scope() << "'s inputs and outputs";
+  } else if (op_name == kNPUGetFloatStatusV2OpName) {
+    // NPUGetFloatStatusV2 has no input
+    real_inputs->clear();
+    MS_LOG(INFO) << "Clear Node " << cnode->fullname_with_scope() << "'s inputs";
+  }
 }
 }  // namespace kernel
 }  // namespace mindspore

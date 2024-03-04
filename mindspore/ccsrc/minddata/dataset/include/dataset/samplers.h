@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,6 +47,7 @@ class DATASET_API Sampler : std::enable_shared_from_this<Sampler> {
   friend class FakeImageDataset;
   friend class FashionMnistDataset;
   friend class FlickrDataset;
+  friend class Food101Dataset;
   friend class GTZANDataset;
   friend class ImageFolderDataset;
   friend class IMDBDataset;
@@ -64,10 +65,13 @@ class DATASET_API Sampler : std::enable_shared_from_this<Sampler> {
   friend class Places365Dataset;
   friend class QMnistDataset;
   friend class RandomDataDataset;
+  friend class RenderedSST2Dataset;
   friend class SBUDataset;
   friend class SemeionDataset;
   friend class SpeechCommandsDataset;
+  friend class SST2Dataset;
   friend class STL10Dataset;
+  friend class SUN397Dataset;
   friend class TedliumDataset;
   friend class TextFileDataset;
   friend class TFRecordDataset;
@@ -127,7 +131,7 @@ class DATASET_API DistributedSampler final : public Sampler {
   DistributedSampler(int64_t num_shards, int64_t shard_id, bool shuffle = true, int64_t num_samples = 0,
                      uint32_t seed = 1, int64_t offset = -1, bool even_dist = true);
   /// \brief Destructor.
-  ~DistributedSampler() = default;
+  ~DistributedSampler() override = default;
 
  protected:
   /// \brief The function to convert a Sampler into an IR SamplerObj.
@@ -165,7 +169,7 @@ class DATASET_API PKSampler final : public Sampler {
   explicit PKSampler(int64_t num_val, bool shuffle = false, int64_t num_samples = 0);
 
   /// \brief Destructor.
-  ~PKSampler() = default;
+  ~PKSampler() override = default;
 
  protected:
   /// \brief The function to convert a Sampler into an IR SamplerObj.
@@ -197,7 +201,7 @@ class DATASET_API RandomSampler final : public Sampler {
   explicit RandomSampler(bool replacement = false, int64_t num_samples = 0);
 
   /// \brief Destructor.
-  ~RandomSampler() = default;
+  ~RandomSampler() override = default;
 
  protected:
   /// \brief The function to convert a Sampler into an IR SamplerObj.
@@ -228,7 +232,7 @@ class DATASET_API SequentialSampler final : public Sampler {
   explicit SequentialSampler(int64_t start_index = 0, int64_t num_samples = 0);
 
   /// \brief Destructor.
-  ~SequentialSampler() = default;
+  ~SequentialSampler() override = default;
 
  protected:
   /// \brief The function to convert a Sampler into an IR SamplerObj.
@@ -259,7 +263,7 @@ class DATASET_API SubsetSampler : public Sampler {
   explicit SubsetSampler(const std::vector<int64_t> &indices, int64_t num_samples = 0);
 
   /// \brief Destructor.
-  ~SubsetSampler() = default;
+  ~SubsetSampler() override = default;
 
  protected:
   /// \brief The function to convert a Sampler into an IR SamplerObj.
@@ -289,7 +293,7 @@ class DATASET_API SubsetRandomSampler final : public SubsetSampler {
   explicit SubsetRandomSampler(const std::vector<int64_t> &indices, int64_t num_samples = 0);
 
   /// \brief Destructor.
-  ~SubsetRandomSampler() = default;
+  ~SubsetRandomSampler() override = default;
 
  protected:
   /// \brief The function to convert a Sampler into an IR SamplerObj.
@@ -320,7 +324,7 @@ class DATASET_API WeightedRandomSampler final : public Sampler {
   explicit WeightedRandomSampler(const std::vector<double> &weights, int64_t num_samples = 0, bool replacement = true);
 
   /// \brief Destructor.
-  ~WeightedRandomSampler() = default;
+  ~WeightedRandomSampler() override = default;
 
  protected:
   /// \brief The function to convert a Sampler into an IR SamplerObj.

@@ -16,18 +16,19 @@
 
 #include "runtime/graph_scheduler/actor/actor_common.h"
 #include <memory>
+#include "ops/framework_op_name.h"
+#include "ops/framework_ops.h"
+#include "ops/structure_op_name.h"
 #include "runtime/graph_scheduler/device_tensor_store.h"
 #include "utils/ms_context.h"
 #include "include/common/utils/anfalgo.h"
-#include "ps/ps_context.h"
+#include "include/backend/distributed/ps/ps_context.h"
 
 namespace mindspore {
 namespace runtime {
 bool ActorDispatcher::is_multi_thread_execution_ = true;
 bool ActorDispatcher::is_memory_allocation_sync_ = true;
 bool ActorDispatcher::is_memory_free_sync_ = true;
-
-constexpr char kLaunchSkippedEnv[] = "MS_KERNEL_LAUNCH_SKIP";
 
 bool IsRunningFailed(const OpContext<DeviceTensor> *context) {
   MS_EXCEPTION_IF_NULL(context);
@@ -86,6 +87,10 @@ bool IsHostQueueDSActor(const AnfNodePtr &node, const KernelGraphPtr &graph,
   bool is_parameter_data = node->isa<Parameter>() && (!common::AnfAlgo::IsParameterWeight(node->cast<ParameterPtr>()));
   if (!is_parameter_data) {
     return false;
+  }
+  // Need to be updated every step.
+  if (node->has_user_data(kForwardOutput)) {
+    return true;
   }
 
   if (strategy == GraphExecutionStrategy::kStep) {
@@ -190,7 +195,14 @@ bool IsMemoryActor(KernelTransformType actor_type) {
 }
 
 bool IsSkippedLaunch(const CNodePtr &kernel, const KernelGraphPtr &kernel_graph) {
-  auto launch_skipped = common::GetEnv(kLaunchSkippedEnv);
+  static std::string launch_skipped = "";
+  static bool first_get_launch_skipped_env = true;
+  static const char kLaunchSkippedEnv[] = "MS_KERNEL_LAUNCH_SKIP";
+  if (first_get_launch_skipped_env) {
+    launch_skipped = common::GetEnv(kLaunchSkippedEnv);
+    first_get_launch_skipped_env = false;
+  }
+
   if (launch_skipped.empty()) {
     return false;
   }
@@ -302,7 +314,9 @@ KernelTransformType FetchKernelTransformType(const AnfNodePtr &node, const Kerne
   if (kernel_graph == nullptr) {
     return KernelTransformType::kUnknown;
   }
-
+  if (kernel_graph->is_any_type_input() && node != nullptr && node->isa<CNode>()) {
+    return KernelTransformType::kAnyTypeKernelActor;
+  }
   // In sink mode, the data exchange between child graphs is expressed as parameters. These parameters are stored
   // in the graph and should be obtained from the super kernel actor.
   if (kernel_graph->is_graph_run_mode() &&
@@ -357,6 +371,9 @@ std::string FetchActorName(KernelTransformType kernel_type, const std::string &a
     case KernelTransformType::kSuperKernelActor:
       actor_name = kernel_graph->ToString() + kSuperKernelActorNameSuffix;
       break;
+    case KernelTransformType::kAnyTypeKernelActor:
+      actor_name = kernel_graph->ToString() + kAnyTypeKernelActorNameSuffix;
+      break;
     case KernelTransformType::kDeviceDataSourceActor:
       actor_name = actor_set_name + kDeviceDSActorNameSuffix + "_" + std::to_string(kernel_graph->graph_id());
       break;
@@ -405,7 +422,7 @@ std::set<size_t> FetchModifiableRefOutputIndex(const CNodePtr &cnode, const Kern
   MS_EXCEPTION_IF_NULL(graph);
   std::set<size_t> ref_output_indexes;
 
-  auto output_num = common::AnfAlgo::GetOutputTensorNum(cnode);
+  auto output_num = AnfAlgo::GetOutputTensorNum(cnode);
   for (size_t i = 0; i < output_num; ++i) {
     session::AnfWithOutIndex output_pair(cnode, i);
     // Only the ref node will modify the ref input corresponding to the output.

@@ -20,11 +20,11 @@
 #include <vector>
 #include <string>
 #include <memory>
-#include "backend/common/session/kernel_graph.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/kernel_graph.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "kernel/kernel.h"
-#include "common/mem_reuse/mem_dynamic_allocator.h"
+#include "include/backend/mem_reuse/mem_dynamic_allocator.h"
 
 namespace mindspore {
 namespace device {

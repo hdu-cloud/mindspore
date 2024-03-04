@@ -76,8 +76,8 @@ bool MaskedSelectGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const 
 
   is_need_retrieve_output_shape_ = true;  // MaskedSelect is a dynamic shape operator.
   kernel_func_ = func_list_[index].second;
-  input_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  mask_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).first);
+  input_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  mask_type_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex1).dtype);
   return true;
 }
 
@@ -102,8 +102,6 @@ int MaskedSelectGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const
                                      const std::vector<KernelTensorPtr> &outputs,
                                      const std::map<uint32_t, tensor::TensorPtr> &) {
   ResetResource();
-  outputs_ = outputs;
-
   auto x_shape = inputs[kIndex0]->GetShapeVector();
   auto y_shape = inputs[kIndex1]->GetShapeVector();
   auto it_x = std::find_if(x_shape.begin(), x_shape.end(), [](int64_t sh) { return sh <= 0; });
@@ -122,16 +120,16 @@ int MaskedSelectGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, const
   auto broadcast_shape = GetBroadcastShape(x_shape, y_shape);
   size_t offset_x = broadcast_shape.size() - x_shape.size();
   for (size_t i = 0; i < x_shape.size(); ++i) {
-    input_shape_[i + offset_x] = LongToSize(x_shape[i]);
+    input_shape_[i + offset_x] = x_shape[i];
   }
 
   size_t offset_y = broadcast_shape.size() - y_shape.size();
   for (size_t j = 0; j < y_shape.size(); ++j) {
-    mask_shape_[j + offset_y] = LongToSize(y_shape[j]);
+    mask_shape_[j + offset_y] = y_shape[j];
   }
 
   for (size_t k = 0; k < broadcast_shape.size(); ++k) {
-    broadcast_shape_[k] = LongToSize(broadcast_shape[k]);
+    broadcast_shape_[k] = broadcast_shape[k];
   }
 
   // size and broadcast type
@@ -192,8 +190,9 @@ bool MaskedSelectGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &input
   MS_EXCEPTION_IF_NULL(output_ptr);
 
   // kernel
-  MaskedSelect(input_ptr, mask_ptr, index_ptr, input_shape_, mask_shape_, broadcast_shape_, input_broadcast_ptr,
-               mask_broadcast_ptr, output_ptr, cuda_stream_);
+  auto status = MaskedSelect(input_ptr, mask_ptr, index_ptr, input_shape_, mask_shape_, broadcast_shape_,
+                             input_broadcast_ptr, mask_broadcast_ptr, output_ptr, device_id_, cuda_stream_);
+  CHECK_CUDA_STATUS(status, kernel_name_);
 
   // The last element of index_ptr is the final output size of MaskedSelect.
   // e.g., the index(prefix sum) is [0, 0, 1, 2, 2], so the real_output_size_ is 2
@@ -203,7 +202,7 @@ bool MaskedSelectGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &input
   return true;
 }
 
-void MaskedSelectGpuKernelMod::SyncData() {
+void MaskedSelectGpuKernelMod::SyncOutputShape() {
   CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(cuda_stream_), "MaskedSelect cudaStreamSynchronize failed");
   std::vector<int64_t> new_output_shape = {SizeToLong(real_output_size_)};
   outputs_[kIndex0]->SetShapeVector(new_output_shape);

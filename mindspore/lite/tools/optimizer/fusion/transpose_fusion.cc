@@ -19,6 +19,9 @@
 #include <unordered_map>
 #include <memory>
 #include <vector>
+#include "mindspore/core/ops/nn_ops.h"
+#include "mindspore/core/ops/lite_ops.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "tools/converter/quantizer/quant_param_holder.h"
 #include "mindspore/core/ops/transpose.h"
 #include "tools/optimizer/common/format_utils.h"
@@ -239,6 +242,10 @@ int TransposeFusion::AdjustAxis(const mindspore::AnfNodePtr &node) const {
   auto cnode = node->cast<CNodePtr>();
   MS_CHECK_TRUE_RET(cnode != nullptr, lite::RET_ERROR);
   if (IsMarkedTrainOp(cnode)) {
+    return lite::RET_ERROR;
+  }
+  bool has_inferred{false};
+  if (DetermineCertainVarInputHasInferred(cnode, 1, &has_inferred) != RET_OK || !has_inferred) {
     return lite::RET_ERROR;
   }
   auto transpose_node = cnode->input(1);

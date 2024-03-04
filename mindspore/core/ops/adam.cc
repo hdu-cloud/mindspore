@@ -16,11 +16,31 @@
 
 #include "ops/adam.h"
 
+#include <functional>
+#include <map>
+#include <numeric>
 #include <set>
+#include <string>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/container.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -29,6 +49,9 @@ class AdamInfer : public abstract::OpInferBase {
  public:
   BaseShapePtr InferShape(const PrimitivePtr &primitive,
                           const std::vector<AbstractBasePtr> &input_args) const override {
+    const int64_t input_num = 10;
+    (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kGreaterEqual, input_num,
+                                             primitive->name());
     auto prim_name = primitive->name();
     auto var_shape_ptr = input_args[kInputIndex0]->BuildShape();
     auto m_shape_ptr = input_args[kInputIndex1]->BuildShape();
@@ -48,6 +71,10 @@ class AdamInfer : public abstract::OpInferBase {
       return std::make_shared<abstract::TupleShape>(
         std::vector<abstract::BaseShapePtr>{unknow_shape_ptr, unknow_shape_ptr, unknow_shape_ptr});
     }
+    MS_EXCEPTION_IF_NULL(var_shape_ptr);
+    MS_EXCEPTION_IF_NULL(m_shape_ptr);
+    MS_EXCEPTION_IF_NULL(v_shape_ptr);
+    MS_EXCEPTION_IF_NULL(grad_shape_ptr);
     if (var_shape_ptr->IsDynamic() || m_shape_ptr->IsDynamic() || v_shape_ptr->IsDynamic() ||
         grad_shape_ptr->IsDynamic()) {
       return std::make_shared<abstract::TupleShape>(
@@ -63,11 +90,12 @@ class AdamInfer : public abstract::OpInferBase {
       batch_rank = GetValue<int64_t>(value_ptr);
     }
     if (batch_rank != 0) {
-      (void)CheckAndConvertUtils::CheckInteger("beta1_power_shape size", beta1_power_shape.size(), kEqual, batch_rank,
+      (void)CheckAndConvertUtils::CheckInteger("beta1_power_shape size", SizeToLong(beta1_power_shape.size()), kEqual,
+                                               batch_rank, prim_name);
+      (void)CheckAndConvertUtils::CheckInteger("beta2_power_shape size", SizeToLong(beta2_power_shape.size()), kEqual,
+                                               batch_rank, prim_name);
+      (void)CheckAndConvertUtils::CheckInteger("lr_shape size", SizeToLong(lr_shape.size()), kEqual, batch_rank,
                                                prim_name);
-      (void)CheckAndConvertUtils::CheckInteger("beta2_power_shape size", beta2_power_shape.size(), kEqual, batch_rank,
-                                               prim_name);
-      (void)CheckAndConvertUtils::CheckInteger("lr_shape size", lr_shape.size(), kEqual, batch_rank, prim_name);
     } else {
       if (beta1_power_shape.size() == 1 || beta1_power_shape.size() == 0) {
         (void)CheckAndConvertUtils::CheckInteger(
@@ -98,34 +126,19 @@ class AdamInfer : public abstract::OpInferBase {
       std::vector<abstract::BaseShapePtr>{var_shape_ptr, m_shape_ptr, v_shape_ptr});
   }
   TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    const int64_t input_num = 10;
+    (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kGreaterEqual, input_num,
+                                             primitive->name());
     auto prim_name = primitive->name();
     auto var_type = input_args[kInputIndex0]->BuildType();
     auto m_type = input_args[kInputIndex1]->BuildType();
     auto v_type = input_args[kInputIndex2]->BuildType();
-    auto beta1_power_type = input_args[kInputIndex3]->BuildType();
-    auto beta2_power_type = input_args[kInputIndex4]->BuildType();
-    auto lr_type = input_args[kInputIndex5]->BuildType();
-    auto beta1_type = input_args[kInputIndex6]->BuildType();
-    auto beta2_type = input_args[kInputIndex7]->BuildType();
-    auto epsilon_type = input_args[kInputIndex8]->BuildType();
     auto grad_type = input_args[kInputIndex9]->BuildType();
-    std::map<std::string, TypePtr> type_dict;
-    (void)type_dict.emplace("var", var_type);
-    (void)type_dict.emplace("m", m_type);
-    (void)type_dict.emplace("v", v_type);
-    (void)type_dict.emplace("grad", grad_type);
-    std::set<TypePtr> num_type = {kInt8,   kInt16,   kInt32,   kInt64,   kUInt8,     kUInt16,    kUInt32,
-                                  kUInt64, kFloat16, kFloat32, kFloat64, kComplex64, kComplex128};
-    (void)CheckAndConvertUtils::CheckTensorTypeSame(type_dict, num_type, prim_name);
     std::map<std::string, TypePtr> type_dict1;
-    (void)type_dict1.emplace("beta1_power", beta1_power_type);
-    (void)type_dict1.emplace("beta2_power", beta2_power_type);
-    (void)type_dict1.emplace("lr", lr_type);
-    (void)type_dict1.emplace("beta1", beta1_type);
-    (void)type_dict1.emplace("beta2", beta2_type);
-    (void)type_dict1.emplace("epsilon", epsilon_type);
-    std::set<TypePtr> float_set = {kFloat16, kFloat32};
-    (void)CheckAndConvertUtils::CheckScalarOrTensorTypesSame(type_dict1, float_set, prim_name, true);
+    (void)type_dict1.emplace("var", var_type);
+    (void)type_dict1.emplace("grad", grad_type);
+    std::set<TypePtr> num_type = {kFloat16, kFloat32};
+    (void)CheckAndConvertUtils::CheckScalarOrTensorTypesSame(type_dict1, num_type, prim_name, true);
     return std::make_shared<Tuple>(std::vector<TypePtr>{var_type, m_type, v_type});
   }
 };
@@ -149,6 +162,16 @@ bool Adam::get_use_nesterov() const {
   auto value_ptr = GetAttr(kUseNesterov);
   return GetValue<bool>(value_ptr);
 }
+
+abstract::AbstractBasePtr ApplyAdamInferFunc(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                             const std::vector<abstract::AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
+  AdamInfer apply_adamd;
+  auto type = apply_adamd.InferType(primitive, input_args);
+  auto shape = apply_adamd.InferShape(primitive, input_args);
+  return abstract::MakeAbstract(shape, type);
+}
+
 REGISTER_PRIMITIVE_OP_INFER_IMPL(Adam, prim::kPrimAdam, AdamInfer, false);
 }  // namespace ops
 }  // namespace mindspore

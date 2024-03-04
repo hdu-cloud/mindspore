@@ -73,12 +73,15 @@ class MINDRECORD_API ShardReader {
   /// \param[in] selected_columns column list to be populated
   /// \param[in] operators operators applied to data, operator type is shuffle, sample or category
   /// \param[in] num_padded the number of padded samples
-  /// \param[in] lazy_load if the mindrecord dataset is too large, enable lazy load mode to speed up initialization
+  /// \param[in] load_mode
+  ///            LoadMode::kNormal: cache whole meta data for dataset
+  ///            LoadMode::kLazy: cache part meta data for dataset
+  ///            LoadMode::kLowest: don't cache meta data
   /// \return MSRStatus the status of MSRStatus
   Status Open(const std::vector<std::string> &file_paths, bool load_dataset, int n_consumer = 4,
               const std::vector<std::string> &selected_columns = {},
               const std::vector<std::shared_ptr<ShardOperator>> &operators = {}, const int64_t num_padded = 0,
-              bool lazy_load = false);
+              LoadMode load_mode = LoadMode::kFast);
 
   /// \brief close reader
   /// \return null
@@ -132,6 +135,10 @@ class MINDRECORD_API ShardReader {
   /// \return # of rows
   int64_t GetNumRows() const;
 
+  /// \brief get the number of rows after sampling
+  /// \return # of rows
+  int64_t GetNumRowsAfterSampling() const;
+
   /// \brief Read the summary of row groups
   /// \return the tuple of 4 elements
   ///         1. Sharding ID
@@ -174,7 +181,9 @@ class MINDRECORD_API ShardReader {
 
   /// \brief return a row by id
   /// \return a batch of images and image data
-  TASK_CONTENT GetNextById(const int64_t &task_id, const int32_t &consumer_id);
+  Status GetNextById(const int64_t &task_id, const int32_t &consumer_id,
+                     std::shared_ptr<TASK_CONTENT> *task_content_ptr);
+
   /// \brief  get blob filed list
   /// \return blob field list
   std::pair<ShardType, std::vector<std::string>> GetBlobFields();
@@ -200,6 +209,12 @@ class MINDRECORD_API ShardReader {
   Status UnCompressBlob(const std::vector<uint8_t> &raw_blob_data,
                         std::shared_ptr<std::vector<std::vector<uint8_t>>> *blob_data_ptr);
 
+  /// \brief get load mode
+  LoadMode GetLoadMode() const;
+
+  /// \brief get next sample ids in slow load mode
+  std::vector<int64_t> GetNextSampleIds();
+
  protected:
   /// \brief sqlite call back function
   static int SelectCallback(void *p_data, int num_fields, char **p_fields, char **p_col_names);
@@ -220,10 +235,12 @@ class MINDRECORD_API ShardReader {
 
   /// \brief read row meta by shard_id and sample_id
   Status ReadRowGroupByShardIDAndSampleID(const std::vector<std::string> &columns, const uint32_t &shard_id,
-                                          const uint32_t &sample_id, std::shared_ptr<ROW_GROUPS> *row_group_ptr);
+                                          const int32_t &consumer_id, const uint32_t &sample_id,
+                                          std::shared_ptr<ROW_GROUPS> *row_group_ptr);
 
   /// \brief read all rows in one shard
-  Status ReadAllRowsInShard(int shard_id, const std::string &sql, const std::vector<std::string> &columns,
+  Status ReadAllRowsInShard(int shard_id, const int32_t &consumer_id, const std::string &sql,
+                            const std::vector<std::string> &columns,
                             std::shared_ptr<std::vector<std::vector<std::vector<uint64_t>>>> offset_ptr,
                             std::shared_ptr<std::vector<std::vector<json>>> col_val_ptr);
 
@@ -244,8 +261,8 @@ class MINDRECORD_API ShardReader {
   Status GetPagesByCategory(int shard_id, const std::pair<std::string, std::string> &criteria,
                             std::shared_ptr<std::vector<uint64_t>> *pages_ptr);
   /// \brief execute sqlite query with prepare statement
-  Status QueryWithCriteria(sqlite3 *db, const string &sql, const string &criteria,
-                           std::shared_ptr<std::vector<std::vector<std::string>>> labels_ptr);
+  Status QueryWithPageIdBlobAndCriteria(sqlite3 *db, const string &sql, const int &page_id, const string &criteria,
+                                        std::shared_ptr<std::vector<std::vector<std::string>>> labels_ptr);
   /// \brief verify the validity of dataset
   Status VerifyDataset(sqlite3 **db, const string &file);
 
@@ -268,6 +285,9 @@ class MINDRECORD_API ShardReader {
   /// \brief create task list in row-reader mode and lazy mode
   Status CreateLazyTasksByRow(const std::vector<std::tuple<int, int, int, uint64_t>> &row_group_summary,
                               const std::vector<std::shared_ptr<ShardOperator>> &operators);
+
+  /// \brief create task in slow load mode
+  Status CreateSlowTasksByRow();
 
   /// \brief crate task list
   Status CreateTasks(const std::vector<std::tuple<int, int, int, uint64_t>> &row_group_summary,
@@ -339,7 +359,7 @@ class MINDRECORD_API ShardReader {
   // Delivery/Iterator mode end
 
   // all metadata in the index is not loaded during initialization
-  bool lazy_load_;
+  LoadMode load_mode_;
 
   // indicate shard_id : inc_count
   // 0 : 15  -  shard0 has 15 samples

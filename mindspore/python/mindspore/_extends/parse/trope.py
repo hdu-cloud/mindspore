@@ -1,6 +1,6 @@
 # This is the Python adaptation and derivative work of Myia (https://github.com/mila-iqia/myia/).
 #
-# Copyright 2020-2022 Huawei Technologies Co., Ltd
+# Copyright 2020-2023 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -37,11 +37,6 @@ from functools import (  # noqa
     partial
 )
 
-# support numpy symbol
-from numpy import (  # noqa
-    exp, log, sin, cos, tan
-)
-
 from ...common import mutable
 
 __all__ = ['add', 'sub', 'mul', 'truediv', 'floordiv', 'mod', 'eq', 'ne', 'lt', 'gt', 'le', 'ge', 'pos', 'neg',
@@ -49,7 +44,7 @@ __all__ = ['add', 'sub', 'mul', 'truediv', 'floordiv', 'mod', 'eq', 'ne', 'lt', 
            'matmul', 'getitem', 'setitem',
            'bool', 'getattr', 'setattr', 'hasattr', 'len', 'iter', 'next', 'pow', 'range', 'map', 'zip',
            'partial', 'print', 'enumerate', 'isinstance', 'filter', 'abs', 'round', 'mutable',
-           'exp', 'log', 'sin', 'cos', 'tan', 'max', 'min', 'sum', 'list', 'tuple']
+           'max', 'min', 'sum', 'list', 'tuple']
 
 
 def MakeTuple(*elts):  # pragma: no cover
@@ -93,11 +88,6 @@ def to_array(x):
 
 
 def not_contains(x):  # pragma: no cover
-    """Not in function."""
-    raise RuntimeError('This operation is not meant to be called directly.')
-
-
-def while_cond(x):  # pragma: no cover
     """Not in function."""
     raise RuntimeError('This operation is not meant to be called directly.')
 

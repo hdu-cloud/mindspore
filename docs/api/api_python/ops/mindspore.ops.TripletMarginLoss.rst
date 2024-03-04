@@ -1,14 +1,14 @@
 mindspore.ops.TripletMarginLoss
 ===============================
 
-.. py:class:: mindspore.ops.TripletMarginLoss(p=2, eps=1e-6, swap=False, reduction='mean')
+.. py:class:: mindspore.ops.TripletMarginLoss(p=2, eps=1e-6, swap=False, reduction="mean")
 
     三元组损失函数。
 
-    创建一个标准，用于计算输入Tensor :math:`x` 、 :math:`x2` 和 :math:`x3` 与大于 :math:`0` 的 `margin` 之间的三元组损失值。
+    创建一个标准，用于计算输入Tensor :math:`x1` 、 :math:`x2` 和 :math:`x3` 与大于 :math:`0` 的 `margin` 之间的三元组损失值。
     可以用来测量样本之间的相似度。一个三元组包含 `a` 、 `p` 和 `n` （即分别代表示  `anchor` 、 `positive examples` 和 `negative examples` ）。
     所有输入Tensor的shape都应该为 :math:`(N, D)` 。
-    距离交换在V. Balntas、E. Riba等人在论文 `Learning local feature descriptors with triplets and shallow convolutional neural networks <http://158.109.8.37/files/BRP2016.pdf>`_ 中有详细的阐述。
+    距离交换在V. Balntas、E. Riba等人的论文 `Learning local feature descriptors with triplets and shallow convolutional neural networks <http://158.109.8.37/files/BRP2016.pdf>`_ 中有详细的阐述。
 
     对于每个小批量样本，损失值为：
 
@@ -21,10 +21,14 @@ mindspore.ops.TripletMarginLoss
         d(x_i, y_i) = \left\lVert {\bf x}_i - {\bf y}_i \right\rVert_p
 
     参数：        
-        - **p** (int，可选) - 成对距离的范数。默认值：2。
-        - **eps** (float，可选) - 默认值：1e-06。
-        - **swap** (bool，可选) - 距离交换，在V. Balntas、E. Riba等人在论文 `Learning shallow convolutional feature descriptors with triplet losses` 默认值：False。
-        - **reduction** (str，可选) - 指定要应用于输出的缩减。取值为"mean"、"sum"或"none"。默认值："mean"。
+        - **p** (int，可选) - 成对距离的范数。默认值： ``2`` 。
+        - **eps** (float，可选) - 默认值： ``1e-6`` 。
+        - **swap** (bool，可选) - 距离交换。默认值： ``False`` 。
+        - **reduction** (str，可选) - 指定应用于输出结果的规约计算方式，可选 ``'none'`` 、 ``'mean'`` 、 ``'sum'`` ，默认值： ``'mean'`` 。
+
+          - ``"none"``：不应用规约方法。
+          - ``"mean"``：计算输出元素的平均值。
+          - ``"sum"``：计算输出元素的总和。
 
     输入：
         - **x** (Tensor) - 从训练集随机选取的样本。数据类型为BasicType。

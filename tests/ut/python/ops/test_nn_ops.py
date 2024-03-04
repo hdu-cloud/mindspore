@@ -30,8 +30,6 @@ from mindspore._c_expression import security
 from tests.security_utils import security_off_wrap
 from ..ut_filter import non_graph_engine
 from ....mindspore_test_framework.mindspore_test import mindspore_test
-from ....mindspore_test_framework.pipeline.forward.compile_forward \
-    import pipeline_for_compile_forward_ge_graph_for_case_by_case_config
 from ....mindspore_test_framework.pipeline.forward.verify_exception \
     import pipeline_for_verify_exception_for_case_by_case_config
 context.set_context(mode=context.GRAPH_MODE)
@@ -214,6 +212,51 @@ class L2NormalizeNet(nn.Cell):
     def construct(self, x):
         out = self.l2_normalize(x)
         return out
+
+
+class TripletMarginWithDistanceLossNet(nn.Cell):
+    def __init__(self):
+        super(TripletMarginWithDistanceLossNet, self).__init__()
+        self.triplet_margin_with_distance_loss = nn.TripletMarginWithDistanceLoss()
+
+    def construct(self, x, positive, negative):
+        return self.triplet_margin_with_distance_loss(x, positive, negative)
+
+
+class CosineSimilarityNet(nn.Cell):
+    def __init__(self):
+        super(CosineSimilarityNet, self).__init__()
+        self.cosine_similarity = nn.layer.CosineSimilarity()
+
+    def construct(self, x1, x2):
+        return self.cosine_similarity(x1, x2)
+
+
+class UpsampleNet(nn.Cell):
+    def __init__(self):
+        super(UpsampleNet, self).__init__()
+        self.upsample = nn.Upsample(size=(5, 5))
+
+    def construct(self, x):
+        return self.upsample(x)
+
+
+class PoissonNLLLossNet(nn.Cell):
+    def __init__(self):
+        super(PoissonNLLLossNet, self).__init__()
+        self.poisson_nllloss = nn.PoissonNLLLoss()
+
+    def construct(self, x, target):
+        return self.poisson_nllloss(x, target)
+
+
+class MultiLabelSoftMarginLossNet(nn.Cell):
+    def __init__(self):
+        super(MultiLabelSoftMarginLossNet, self).__init__()
+        self.multi_label_soft_margin_loss = nn.MultiLabelSoftMarginLoss(reduction='mean')
+
+    def construct(self, x, target):
+        return self.multi_label_soft_margin_loss(x, target)
 
 
 class HistogramSummaryNet(nn.Cell):
@@ -516,6 +559,17 @@ class LRNGradNet(nn.Cell):
         return self.lrn_grad(dout, x, out)
 
 
+class ChannelShuffleFunc(nn.Cell):
+    """ ChannelShuffleFunc definition """
+
+    def __init__(self):
+        super(ChannelShuffleFunc, self).__init__()
+        self.channel_shuffle = mindspore.ops.function.nn_func.channel_shuffle
+
+    def construct(self, x, group):
+        return self.channel_shuffle(x, group)
+
+
 test_cases = [
     ('SoftMaxGrad', {
         'block': SoftMaxGrad(VirtualNetWithLoss(P.Softmax())),
@@ -523,13 +577,38 @@ test_cases = [
         'desc_bprop': [[128, 32, 32, 64]],
     }),
     ('DropoutGrad', {
-        'block': DropoutGrad(VirtualNetWithLoss(nn.Dropout())),
+        'block': DropoutGrad(VirtualNetWithLoss(nn.Dropout(p=0.5))),
         'desc_inputs': [[128, 32, 32, 64]],
         'desc_bprop': [[128, 32, 32, 64]],
     }),
     ('L2Normalize', {
         'block': L2NormalizeNet(),
         'desc_inputs': [Tensor(np.array([[1.0, 2, 3], [4.0, 5, 6], [7.0, 8, 9]]), mindspore.float32)],
+    }),
+    ('TripletMarginWithDistanceLoss', {
+        'block': TripletMarginWithDistanceLossNet(),
+        'desc_inputs': [Tensor(np.array([[0.3, 0.7], [0.5, 0.5]]), mindspore.float32),
+                        Tensor(np.array([[0.4, 0.6], [0.4, 0.6]]), mindspore.float32),
+                        Tensor(np.array([[0.2, 0.9], [0.3, 0.7]]), mindspore.float32)]
+    }),
+    ('CosineSimilarity', {
+        'block': CosineSimilarityNet(),
+        'desc_inputs': [Tensor(np.array([[1, 3, 4, 7], [2, 4, 2, 5], [3, 1, 5, 8]]), mindspore.float32),
+                        Tensor(np.array([[2, 4, 2, 5], [3, 1, 5, 8], [1, 3, 4, 7]]), mindspore.float32)]
+    }),
+    ('Upsample', {
+        'block': UpsampleNet(),
+        'desc_inputs': [Tensor(np.array([[[[1, 2, 3, 4], [5, 6, 7, 8]]]]), mindspore.float32)]
+    }),
+    ('PoissonNLLLoss', {
+        'block': PoissonNLLLossNet(),
+        'desc_inputs': [Tensor(np.array([[0.3, 0.7], [0.5, 0.5]]), mindspore.float32),
+                        Tensor(np.array([[1, 2], [3, 4]]), mindspore.float32)]
+    }),
+    ('MultiLabelSoftMarginLoss', {
+        'block': MultiLabelSoftMarginLossNet(),
+        'desc_inputs': [Tensor(np.array([[0.3, 0.6, 0.6], [0.9, 0.4, 0.2]]), mindspore.float32),
+                        Tensor(np.array([[0, 0, 1], [0, 0, 1]]), mindspore.float32)]
     }),
     ('FusedBatchNormGrad', {
         'block': FusedBatchNormGrad(nn.BatchNorm2d(num_features=512, eps=1e-5, momentum=0.1)),
@@ -665,6 +744,11 @@ test_cases = [
         'desc_inputs': [Tensor(np.ones([2, 10, 5]))],
         'skip': ['backward']
     }),
+    ('ChannelShuffleFunc', {
+        'block': ChannelShuffleFunc(),
+        'desc_inputs': [Tensor(np.arange(1 * 4 * 2 * 2).reshape(1, 4, 2, 2).astype(np.int16)), 2],
+        'skip': ['backward']
+    })
 ]
 
 test_cases_for_verify_exception = [
@@ -793,13 +877,6 @@ def test_summary_nn_ops_security_on():
         with pytest.raises(ValueError) as exc:
             ScalarSummaryNet()
         assert str(exc.value) == 'The Summary is not supported, please without `-s on` and recompile source.'
-
-
-@non_graph_engine
-@mindspore_test(pipeline_for_compile_forward_ge_graph_for_case_by_case_config)
-def test_compile():
-    context.set_context(mode=context.GRAPH_MODE, device_target="Ascend")
-    return test_cases
 
 
 @mindspore_test(pipeline_for_verify_exception_for_case_by_case_config)

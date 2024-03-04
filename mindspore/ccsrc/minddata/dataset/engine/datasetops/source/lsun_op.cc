@@ -16,8 +16,6 @@
 
 #include "minddata/dataset/engine/datasetops/source/lsun_op.h"
 
-#include <fstream>
-
 #include "minddata/dataset/core/config_manager.h"
 #include "minddata/dataset/core/tensor_shape.h"
 #include "minddata/dataset/engine/datasetops/source/sampler/sequential_sampler.h"
@@ -123,6 +121,8 @@ Status LSUNOp::CountRowsAndClasses(const std::string &path, const std::string &u
     RETURN_IF_NOT_OK(folder_name_queue->PopFront(&name));
     Path subdir(path + name);
     std::shared_ptr<Path::DirIterator> dir_itr = Path::DirIterator::OpenDirectory(&subdir);
+    CHECK_FAIL_RETURN_UNEXPECTED(dir_itr != nullptr, "Invalid path, failed to open dir: " + subdir.ToString() +
+                                                       ", not exists or permission denied.");
     while (dir_itr->HasNext()) {
       ++row_cnt;
       Path subdir_pic = dir_itr->Next();

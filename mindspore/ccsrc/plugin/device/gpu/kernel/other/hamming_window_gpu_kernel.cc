@@ -21,6 +21,7 @@ namespace kernel {
 bool HammingWindowGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                      const std::vector<KernelTensorPtr> &outputs) {
   auto kernel_ptr_ = std::dynamic_pointer_cast<ops::HammingWindow>(base_operator);
+  MS_ERROR_IF_NULL(kernel_ptr_);
   kernel_name_ = kernel_ptr_->name();
   if (inputs.empty() || outputs.empty()) {
     MS_LOG(ERROR) << "For '" << kernel_name_ << "' got empty inputs or outputs, which is invalid.";
@@ -34,25 +35,11 @@ bool HammingWindowGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const
     return false;
   }
   kernel_func_ = func_list_[index].second;
-  std::vector<int64_t> input_shape = std::vector<int64_t>(inputs.at(kIndex0)->GetDeviceShapeAdaptively().begin(),
-                                                          inputs.at(kIndex0)->GetDeviceShapeAdaptively().end());
-  int64_t input_dims = input_shape.size();
-  if (input_dims != 1) {
-    MS_LOG(ERROR) << "For '" << kernel_name_ << "', the dimension of 'x' must be 0-D, but got " << input_dims << "-D.";
-    return false;
-  }
-
-  unit_input_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).first);
-  unit_output_size_ = abstract::TypeIdSize(kernel_attr.GetOutputAttr(kIndex0).first);
+  unit_input_size_ = abstract::TypeIdSize(kernel_attr.GetInputAttr(kIndex0).dtype);
+  unit_output_size_ = abstract::TypeIdSize(kernel_attr.GetOutputAttr(kIndex0).dtype);
   periodic_ = kernel_ptr_->get_periodic();
   alpha_ = kernel_ptr_->get_alpha();
   beta_ = kernel_ptr_->get_beta();
-  if (input_shape[0] < 0) {
-    MS_LOG(ERROR) << "For '" << kernel_name_ << "', the window_length should >0, "
-                  << "but got: " << input_shape[0] << ".";
-    return false;
-  }
-
   return true;
 }
 
@@ -60,14 +47,17 @@ int HammingWindowGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, cons
                                       const std::vector<KernelTensorPtr> &outputs,
                                       const std::map<uint32_t, tensor::TensorPtr> &) {
   for (const auto &input : inputs) {
+    MS_ERROR_IF_NULL_W_RET_VAL(input, KRET_RESIZE_FAILED);
     auto input_shape = input->GetShapeVector();
     if (!IsValidShape(input_shape)) {
       return KRET_UNKNOWN_SHAPE;
     }
   }
   ResetResource();
-  std::vector<int64_t> output_shape = std::vector<int64_t>(outputs.at(kIndex0)->GetDeviceShapeAdaptively().begin(),
-                                                           outputs.at(kIndex0)->GetDeviceShapeAdaptively().end());
+  auto output = outputs.at(kIndex0);
+  MS_ERROR_IF_NULL_W_RET_VAL(output, KRET_RESIZE_FAILED);
+  std::vector<int64_t> output_shape =
+    std::vector<int64_t>(output->GetDeviceShapeAdaptively().begin(), output->GetDeviceShapeAdaptively().end());
   output_elements_ = std::accumulate(output_shape.begin(), output_shape.end(), 1, std::multiplies<int64_t>());
   if (output_elements_ == 0) {
     is_null_input_ = true;
@@ -85,9 +75,16 @@ bool HammingWindowGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inpu
   T *input = GetDeviceAddress<T>(inputs, 0);
   S *output = GetDeviceAddress<S>(outputs, 0);
   T N = 0;
-  cudaMemcpyAsync(&N, &input[0], sizeof(T), cudaMemcpyDeviceToHost);
-  HammingWindow(output_elements_, N, alpha_, beta_, periodic_, output, device_id_,
-                reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(
+    cudaMemcpyAsync(&N, &input[0], sizeof(T), cudaMemcpyDeviceToHost, reinterpret_cast<cudaStream_t>(cuda_stream_)),
+    "For 'HammingWindow', copy max_index failed");
+  if (cudaStreamQuery(reinterpret_cast<cudaStream_t>(cuda_stream_)) != cudaSuccess) {
+    CHECK_CUDA_RET_WITH_EXCEPT_NOTRACE(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(cuda_stream_)),
+                                       "For 'HammingWindow', cudaStreamSyncFailed");
+  }
+  auto status = HammingWindow(output_elements_, N, alpha_, beta_, periodic_, output, device_id_,
+                              reinterpret_cast<cudaStream_t>(cuda_stream_));
+  CHECK_CUDA_STATUS(status, kernel_name_);
   return true;
 }
 

@@ -18,8 +18,8 @@
 
 #include <memory>
 #include <vector>
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -38,9 +38,6 @@ class MIND_API CTCGreedyDecoder : public BaseOperator {
 
   bool get_merge_repeated() const;
 };
-
-abstract::AbstractBasePtr CTCGreedyDecoderInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                                const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 

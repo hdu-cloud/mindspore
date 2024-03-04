@@ -16,6 +16,7 @@
 
 #include "nnacl/infer/gather_infer.h"
 #include "nnacl/infer/infer_register.h"
+#include "nnacl/tensor_c_utils.h"
 
 int GatherInferShape(const TensorC *const *inputs, size_t inputs_size, TensorC **outputs, size_t outputs_size,
                      OpParameter *parameter) {
@@ -32,7 +33,7 @@ int GatherInferShape(const TensorC *const *inputs, size_t inputs_size, TensorC *
   TensorC *output = outputs[0];
   output->data_type_ = input->data_type_;
   if ((input->data_type_ == kNumberTypeInt8 || input->data_type_ == kNumberTypeInt16) &&
-      (parameter->quant_type_ == QuantType_QUANT_WEIGHT || parameter->quant_type_ == QuantType_QUANT_DYNAMIC)) {
+      (parameter->quant_type_ == Quant_QuantWeight || parameter->quant_type_ == Quant_QuantDynamic)) {
     output->data_type_ = kNumberTypeFloat32;
   }
   output->format_ = input->format_;

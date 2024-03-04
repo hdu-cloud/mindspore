@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#ifdef ENABLE_NNACL_KERNEL_LIB
 #include "src/litert/kernel/cpu/fp32/convolution_fp32.h"
 #include "src/litert/pack_weight_manager.h"
 #include "include/errorcode.h"
@@ -275,8 +276,7 @@ int ConvolutionCPUKernel::MallocWeightBiasData() {
   size_t pack_weight_size = oc_block_num * in_channel * kernel_plane;
   if (!op_parameter_->is_train_session_) {
     CHECK_LESS_RETURN(MAX_MALLOC_SIZE, pack_weight_size * sizeof(float));
-    packed_weight_ = lite::PackWeightManager::GetInstance()->GetPackData(
-      in_tensors_[1]->data(), static_cast<size_t>(pack_weight_size) * sizeof(float), &weight_is_packed_);
+    packed_weight_ = GetConvPackWeightData(static_cast<size_t>(pack_weight_size) * sizeof(float));
     if (packed_weight_ == nullptr) {
       MS_LOG(ERROR) << "malloc packed weight failed.";
       return RET_ERROR;
@@ -295,3 +295,4 @@ int ConvolutionCPUKernel::MallocWeightBiasData() {
   return RET_OK;
 }
 }  // namespace mindspore::kernel
+#endif

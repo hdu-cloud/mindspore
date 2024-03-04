@@ -17,6 +17,7 @@
 #include <memory>
 
 #include "common/common_test.h"
+#include "common/backend_common_test.h"
 #include "common/py_func_graph_fetcher.h"
 
 #include "ir/anf.h"
@@ -25,6 +26,7 @@
 #include "frontend/optimizer/optimizer.h"
 #include "frontend/optimizer/irpass.h"
 #include "frontend/optimizer/irpass/gradient_eliminate.h"
+#include "frontend/optimizer/py_interpret_to_execute.h"
 #include "include/common/debug/draw.h"
 
 namespace mindspore {
@@ -36,6 +38,36 @@ class TestOptOptimizer : public UT::Common {
   TestOptOptimizer() : getPyFun("gtest_input.optimizer.opt_test", true), irpass() {}
   UT::PyFuncGraphFetcher getPyFun;
   irpass::OptimizeIRPassLib irpass;
+};
+
+class TestPyInterpretToPyExecute : public BackendCommon {
+ public:
+  TestPyInterpretToPyExecute() : getPyFun("gtest_input.optimizer.pyinterpret_dict_convert_test", true) {}
+  ~TestPyInterpretToPyExecute() override = default;
+  UT::PyFuncGraphFetcher getPyFun;
+
+  void ChangeStringToScript(const pipeline::ResourcePtr &resource) {
+    auto trans = resource->manager();
+    MS_EXCEPTION_IF_NULL(trans);
+    auto nodes = trans->all_nodes();
+    for (const auto &node : nodes) {
+      if (IsPrimitiveCNode(node, prim::kPrimPyInterpret)) {
+        auto constexpr kScriptInputIdx = 1;
+        auto cnode = node->cast<CNodePtr>();
+        auto script_str_node = cnode->input(kScriptInputIdx);
+        auto script_string = GetValueNode<StringImmPtr>(script_str_node);
+        auto script = script_string->value();
+        auto script_node = NewValueNode(std::make_shared<parse::Script>(script));
+        cnode->set_input(kScriptInputIdx, script_node);
+      }
+
+      if (node->isa<ValueNode>()) {
+        auto value_node = node->cast_ptr<ValueNode>();
+        auto value = value_node->value();
+        value_node->set_abstract(value->ToAbstract());
+      }
+    }
+  }
 };
 
 TEST_F(TestOptOptimizer, test_step_opt) {
@@ -61,6 +93,5 @@ TEST_F(TestOptOptimizer, test_step_opt) {
 
   auto after = optimizer->step(before);
 }
-
 }  // namespace opt
 }  // namespace mindspore

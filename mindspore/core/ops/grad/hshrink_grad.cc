@@ -15,14 +15,30 @@
  */
 
 #include "ops/grad/hshrink_grad.h"
-#include <string>
-#include <algorithm>
+
 #include <map>
+#include <memory>
 #include <set>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include <string>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/grad/elewise_grad_infer_shape.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -39,16 +55,7 @@ float HShrinkGrad::get_lambd() const {
 namespace {
 abstract::ShapePtr HShrinkGradInferShape(const PrimitivePtr &primitive,
                                          const std::vector<AbstractBasePtr> &input_args) {
-  MS_EXCEPTION_IF_NULL(primitive);
-  const int64_t input_num = 2;
-  (void)CheckAndConvertUtils::CheckInteger("input number", SizeToLong(input_args.size()), kEqual, input_num,
-                                           primitive->name());
-  auto prim_name = primitive->name();
-  auto gradients_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[0]->BuildShape())[kShape];
-  auto features_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[1]->BuildShape())[kShape];
-
-  CheckAndConvertUtils::Check("gradients_shape", gradients_shape, kEqual, features_shape, prim_name, TypeError);
-  return std::make_shared<abstract::Shape>(gradients_shape);
+  return mindspore::ElewiseGradInferShape(primitive, input_args);
 }
 
 TypePtr HShrinkGradInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
@@ -74,6 +81,24 @@ AbstractBasePtr HShrinkGradInfer(const abstract::AnalysisEnginePtr &, const Prim
   MS_EXCEPTION_IF_NULL(infer_shape);
   return std::make_shared<abstract::AbstractTensor>(infer_type, infer_shape->shape());
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(HShrinkGrad, prim::kPrimHShrinkGrad, HShrinkGradInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGHShrinkGradInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return HShrinkGradInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return HShrinkGradInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return HShrinkGradInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(HShrinkGrad, prim::kPrimHShrinkGrad, AGHShrinkGradInfer, false);
 }  // namespace ops
 }  // namespace mindspore

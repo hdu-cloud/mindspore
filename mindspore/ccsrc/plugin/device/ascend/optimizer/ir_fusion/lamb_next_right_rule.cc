@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,9 @@
  */
 #include "plugin/device/ascend/optimizer/ir_fusion/lamb_next_right_rule.h"
 #include <vector>
-#include "backend/common/optimizer/helper.h"
+#include "ops/ascend_op_name.h"
+#include "ops/math_ops.h"
+#include "include/backend/optimizer/helper.h"
 #include "plugin/device/ascend/optimizer/ascend_helper.h"
 #include "utils/trace_base.h"
 namespace mindspore {
@@ -70,8 +72,8 @@ const AnfNodePtr LambNextRightRule::Process(const FuncGraphPtr &func_graph, cons
   // Set abstract of new node
   auto iter_add1 = (*equiv).find(add1_var_);
   if (iter_add1 == (*equiv).cend()) {
-    MS_LOG(EXCEPTION) << "The equiv map is expected to contains the add1 var after matched."
-                      << trace::DumpSourceLines(node);
+    MS_LOG(INTERNAL_EXCEPTION) << "The equiv map is expected to contains the add1 var after matched."
+                               << trace::DumpSourceLines(node);
   }
   auto add1 = utils::cast<AnfNodePtr>(iter_add1->second);
   MS_EXCEPTION_IF_NULL(add1);

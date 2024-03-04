@@ -47,13 +47,16 @@ class NetConv3d(nn.Cell):
 @pytest.mark.level1
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
-def test_conv3d_dshape_1():
+@pytest.mark.parametrize('algo', ["normal", "performance"])
+@pytest.mark.parametrize('conv_allow_tf32', [True, False])
+def test_conv3d_dshape_1(algo, conv_allow_tf32):
     """
     Feature: Test conv3d dynamic shape.
     Description: Test conv3d dynamic shape.
     Expectation: Success.
     """
-    context.set_context(mode=context.GRAPH_MODE, device_target='GPU')
+    gpu_config = {"conv_fprop_algo": algo, "conv_allow_tf32": conv_allow_tf32}
+    context.set_context(mode=context.GRAPH_MODE, device_target='GPU', gpu_config=gpu_config)
     net = NetConv3d()
     input_x_dyn = Tensor(shape=[1, 3, 3, 3, None], dtype=ms.float32)
     input_w_dyn = Tensor(shape=[4, 3, 2, 2, None], dtype=ms.float32)

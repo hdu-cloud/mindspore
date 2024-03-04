@@ -16,6 +16,7 @@
 # under the License.
 """Hybrid Script Parser"""
 
+# 2023.08.16 - Support parser for python 3.9 and up.
 # 2022.02.15 - Support grid as new loop mode.
 # 2022.01.19 - Support negative extent for range.
 # 2021.12.15 - Support block_realize intrin in with scope.
@@ -304,7 +305,7 @@ class HybridParser(ast.NodeVisitor):
             _dtype = _buf.dtype
             _true = _api.convert(True)
             body = _make.Realize(_buf.op, _buf.value_index, _dtype, _domain, _true, body)
-            body = _make.AttrStmt(_buf.op, 'realize_scope',  _api.convert(_scope), body)
+            body = _make.AttrStmt(_buf.op, 'realize_scope',  _api.convert(_scope), body, None)
 
         for elem in to_pop:
             self.symbols.pop(elem)
@@ -315,7 +316,7 @@ class HybridParser(ast.NodeVisitor):
     def wrap_up_binds(self, body):
         for _, iter_var in self.binds.items():
             ext = iter_var.dom.extent
-            body = _make.AttrStmt(iter_var, 'thread_extent', ext, body)
+            body = _make.AttrStmt(iter_var, 'thread_extent', ext, body, None)
         self.binds = {}
         return body
 
@@ -650,7 +651,7 @@ class HybridParser(ast.NodeVisitor):
                     _apply_indices(self.closure_vars[node.value.id], args))
 
             buf = self.visit(node.value)
-            if isinstance(buf, Array):
+            if isinstance(buf, (Array, list)):
                 for i in args:
                     if isinstance(i, numbers.Integral):
                         buf = buf[i]
@@ -709,17 +710,17 @@ class HybridParser(ast.NodeVisitor):
         if context.func.id == "attr":
             args = [self.visit(i) for i in context.args]
             return _make.AttrStmt(_api._IterVar(None, block.loop_var.name, 0), args[0],
-                                  _api.convert(args[1]), block)
+                                  _api.convert(args[1]), block, None)
         elif context.func.id == "allocate":
             lhs = node.items[0].optional_vars
             rhs = self.visit(context)
             _ = self.generate_one_assign(lhs, rhs)
             return _make.AttrStmt(rhs, "type",
-                                  _api.convert("inline"), block)
+                                  _api.convert("inline"), block, None)
         elif context.func.id == "block_realize":
             args = [self.visit(i) for i in context.args]
             return _make.AttrStmt(args[0].op, "block_realize",
-                                  _api.convert(True), block)
+                                  _api.convert(True), block, None)
         else:
             raise ValueError("unsupported function in With scope")
 

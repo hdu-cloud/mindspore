@@ -15,7 +15,7 @@
  */
 #include "common/backend_common_test.h"
 #include "common/py_func_graph_fetcher.h"
-#include "backend/common/optimizer/optimizer.h"
+#include "include/backend/optimizer/optimizer.h"
 #include "plugin/device/ascend/optimizer/mindir/ascend_vm_op_adapter.h"
 #include "plugin/device/ascend/optimizer/ir_fusion/confusion_softmax_grad_rule.h"
 #include "include/common/debug/anf_ir_dump.h"
@@ -44,7 +44,6 @@ TEST_F(TestHWOptimizeConfusionSoftmaxGradRule, test_confusion_softmax_grad_rule)
 
   auto optimizer = std::make_shared<opt::GraphOptimizer>();
   auto pm = std::make_shared<opt::PassManager>();
-  pm->AddPass(std::make_shared<opt::AscendVmOpAdapter>());
   pm->AddPass(std::make_shared<opt::ConfusionSoftmaxGradRule>());
   optimizer->AddPassManager(pm);
   FuncGraphPtr new_graph = optimizer->Optimize(fg);

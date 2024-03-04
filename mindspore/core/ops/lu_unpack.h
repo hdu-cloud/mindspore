@@ -18,13 +18,13 @@
 #define MINDSPORE_CORE_OPS_LUUNPACK_H_
 
 #include <map>
-#include <vector>
+#include <memory>
 #include <set>
 #include <string>
-#include <memory>
+#include <vector>
 
-#include "ops/base_operator.h"
 #include "mindapi/base/types.h"
+#include "ops/base_operator.h"
 
 namespace mindspore {
 namespace ops {
@@ -34,8 +34,8 @@ class MIND_API LuUnpack : public BaseOperator {
   MIND_API_BASE_MEMBER(LuUnpack);
   LuUnpack() : BaseOperator(kNameLuUnpack) { InitIOName({"LU_data", "LU_pivots"}, {"pivots", "L", "U"}); }
 };
-abstract::AbstractBasePtr LuUnpackInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                        const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr LuUnpackInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                 const std::vector<abstract::AbstractBasePtr> &input_args);
 using PrimLuUnpackPtr = std::shared_ptr<LuUnpack>;
 }  // namespace ops
 }  // namespace mindspore

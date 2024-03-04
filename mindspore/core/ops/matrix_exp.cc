@@ -16,13 +16,28 @@
 #include "ops/matrix_exp.h"
 
 #include <set>
-#include <map>
 #include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/nn_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -33,19 +48,18 @@ abstract::ShapePtr MatrixExpInferShape(const PrimitivePtr &primitive, const std:
   auto x = input_args[0]->BuildShape();
   MS_EXCEPTION_IF_NULL(x);
   auto x_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(x)[kShape];
-  auto x_rank = SizeToLong(x_shape.size());
-  constexpr int64_t number1 = 1;
-  constexpr int64_t number2 = 2;
+  auto x_rank = x_shape.size();
   if (IsDynamicRank(x_shape)) {
     return std::make_shared<abstract::Shape>(ShapeVector{abstract::Shape::kShapeRankAny});
   }
-  (void)CheckAndConvertUtils::CheckInteger("x rank", x_rank, kGreaterEqual, number2, prim_name);
+  constexpr const int64_t kMinRank = 2;
+  (void)CheckAndConvertUtils::CheckInteger("x rank", static_cast<int64_t>(x_rank), kGreaterEqual, kMinRank, prim_name);
   if (!IsDynamicShape(x_shape)) {
-    if (x_shape[x_rank - number1] != x_shape[x_rank - number2]) {
+    if (x_shape[x_rank - kIndex1] != x_shape[x_rank - kIndex2]) {
       MS_EXCEPTION(ValueError) << "For " << prim_name << ", the input expects a tensor of squared matrices"
                                << ", but got shape " << x_shape << ".";
     }
-    if (x_shape[x_rank - number1] < number1) {
+    if (x_shape[x_rank - kIndex1] < 1) {
       MS_EXCEPTION(ValueError) << "For MatrixExp, the input x's last dimension must be at least 1.";
     }
   }
@@ -66,12 +80,29 @@ MIND_API_OPERATOR_IMPL(MatrixExp, BaseOperator);
 AbstractBasePtr MatrixExpInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
                                const std::vector<AbstractBasePtr> &input_args) {
   MS_EXCEPTION_IF_NULL(primitive);
-  const int64_t input_num = 1;
-  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, primitive->name());
+  CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, 1LL, primitive->name());
   auto infer_type = MatrixExpInferType(primitive, input_args);
   auto infer_shape = MatrixExpInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(MatrixExp, prim::kPrimMatrixExp, MatrixExpInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGMatrixExpInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return MatrixExpInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return MatrixExpInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return MatrixExpInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(MatrixExp, prim::kPrimMatrixExp, AGMatrixExpInfer, false);
 }  // namespace ops
 }  // namespace mindspore

@@ -13,10 +13,12 @@
 # limitations under the License.
 # ============================================================================
 """ test_dictionary """
+import os
 import numpy as np
 import pytest
 
 from mindspore import Tensor, context, jit
+import mindspore.nn as nn
 from mindspore.nn import Cell
 
 context.set_context(mode=context.GRAPH_MODE)
@@ -30,7 +32,7 @@ class Net1(Cell):
             output.append(i)
         for j in dic.values():
             output.append(j)
-        return output
+        return tuple(output)
 
 
 class Net2(Cell):
@@ -72,11 +74,13 @@ def test_dict2():
 
 
 def test_dict3():
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '0'
     input_np = np.random.randn(2, 3, 4, 5).astype(np.float32)
     input_me = Tensor(input_np)
     net = Net3()
     out_me = net(input_me)
-    assert out_me == ('x', 'y', 0, (0, 1))
+    assert out_me == ['x', 'y', 0, (0, 1)]
+    os.environ['MS_DEV_JIT_SYNTAX_LEVEL'] = '1'
 
 
 def test_dict4():
@@ -206,3 +210,21 @@ def test_dict_error_3():
     with pytest.raises(RuntimeError) as ex:
         foo(x)
     assert "key only supports string, number, constant tensor and tuple, but got" in str(ex.value)
+
+
+@pytest.mark.skip(reason="No support yet.")
+def test_dict_multiple_duplicate_keys():
+    """
+    Feature: Support dict.
+    Description: Support dict with multiple duplicate keys.
+    Expectation: No exception.
+    """
+    class Net(nn.Cell):
+        def construct(self):
+            name = 'Name'
+            tinydict = {'Name': 'Runoob', 'Age': 7, name: 'Manni'}
+            return tinydict['Name']  # pylint: disable=get-dict-value-exception
+
+    net = Net()
+    ret = net()
+    assert ret == 'Manni'

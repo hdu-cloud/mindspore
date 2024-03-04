@@ -14,11 +14,32 @@
  * limitations under the License.
  */
 
+#include <algorithm>
+#include <memory>
 #include <set>
-#include "ops/broadcast_to.h"
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/value.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/broadcast_to.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -31,6 +52,16 @@ abstract::ShapePtr BroadcastToInferShape(const PrimitivePtr &primitive,
   auto value_ptr = primitive->GetAttr(kShape);
   auto input_x = GetValue<std::vector<int64_t>>(value_ptr);
   CheckAndConvertUtils::Check("x shape", SizeToLong(x_shape.size()), kLessEqual, SizeToLong(input_x.size()), prim_name);
+  bool is_empty_shape_input =
+    std::any_of(input_x.begin(), input_x.end(), [](const auto &element) { return element == 0; });
+  bool is_empty_shape_x = std::any_of(x_shape.begin(), x_shape.end(), [](const auto &element) { return element == 0; });
+  if (is_empty_shape_input && !is_empty_shape_x) {
+    MS_EXCEPTION(ValueError)
+      << "For '" << prim_name
+      << "', each dimension pair, input_x shape and target shape must be equal or input dimension is 1 or target "
+         "dimension is -1. But got input_x shape: "
+      << x_shape << ", target shape: " << input_x << ".";
+  }
   if (!x_shape.empty() && x_shape[0] == -2) {
     auto x_shape_ptr = std::make_shared<abstract::Shape>(input_x);
     return x_shape_ptr;
@@ -58,7 +89,6 @@ abstract::ShapePtr BroadcastToInferShape(const PrimitivePtr &primitive,
     }
   }
   auto x_shape_ptr = std::make_shared<abstract::Shape>(input_x);
-  (void)primitive->AddAttr("shape", MakeValue(input_x));
   for (size_t i = 0; i < x_shape.size(); i++) {
     if (x_shape[i] == -1) {
       continue;
@@ -79,6 +109,7 @@ TypePtr BroadcastToInferType(const PrimitivePtr &prim, const std::vector<Abstrac
     MS_EXCEPTION_IF_NULL(item);
   }
   auto x_dtype = input_args[0]->BuildType()->cast<TensorTypePtr>();
+  MS_EXCEPTION_IF_NULL(x_dtype);
   std::set<TypePtr> template_types = {kTensorType};
   (void)CheckAndConvertUtils::CheckSubClass("x_dtype", x_dtype, template_types, prim->name());
   return x_dtype->element();
@@ -102,6 +133,26 @@ AbstractBasePtr BroadcastToInfer(const abstract::AnalysisEnginePtr &, const Prim
   return abstract::MakeAbstract(BroadcastToInferShape(primitive, input_args),
                                 BroadcastToInferType(primitive, input_args));
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(BroadcastTo, prim::kPrimBroadcastTo, BroadcastToInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGBroadcastToInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return BroadcastToInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return BroadcastToInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return BroadcastToInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {1}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(BroadcastTo, prim::kPrimBroadcastTo, AGBroadcastToInfer, false);
 }  // namespace ops
 }  // namespace mindspore

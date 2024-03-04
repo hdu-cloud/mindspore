@@ -16,14 +16,11 @@
 
 #ifndef MINDSPORE_CORE_OPS_UNRAVELINDEX_H_
 #define MINDSPORE_CORE_OPS_UNRAVELINDEX_H_
-#include <vector>
 #include <memory>
-
-#include "ops/primitive_c.h"
+#include <vector>
 #include "ops/base_operator.h"
 #include "ops/op_utils.h"
-#include "mindapi/base/types.h"
-#include "abstract/abstract_value.h"
+#include "ops/primitive_c.h"
 #include "utils/check_convert_utils.h"
 
 namespace mindspore {
@@ -34,8 +31,8 @@ class MIND_API UnravelIndex : public BaseOperator {
   MIND_API_BASE_MEMBER(UnravelIndex);
   UnravelIndex() : BaseOperator(kNameUnravelIndex) { InitIOName({"indices", "dims"}, {"y"}); }
 };
-abstract::AbstractBasePtr UnravelIndexInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                            const std::vector<abstract::AbstractBasePtr> &input_args);
+MIND_API abstract::AbstractBasePtr UnravelIndexInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                                     const std::vector<abstract::AbstractBasePtr> &input_args);
 }  // namespace ops
 }  // namespace mindspore
 #endif  // MINDSPORE_CORE_OPS_UNRAVELINDEX_H_

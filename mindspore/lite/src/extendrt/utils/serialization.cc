@@ -86,17 +86,8 @@ mindspore::Buffer ReadFile(const std::string &file) {
 mindspore::FuncGraphPtr Serialization::ConvertStreamToFuncGraph(const char *buf, const size_t buf_size, bool is_lite,
                                                                 const std::string &mindir_path) {
   MS_EXCEPTION_IF_NULL(buf);
-  std::string str(buf, buf_size);
-  mind_ir::ModelProto model;
-  if (!model.ParseFromString(str)) {
-    MS_LOG(ERROR) << "Parse model from buffer fail!";
-  }
-  mindspore::MSANFModelParser model_parser;
-  model_parser.SetMindIRPath(mindir_path);
-  if (is_lite) {
-    model_parser.SetLite();
-  }
-  mindspore::FuncGraphPtr dstgraph_ptr = model_parser.Parse(model);
+  MindIRLoader loader;
+  mindspore::FuncGraphPtr dstgraph_ptr = loader.LoadMindIR(buf, buf_size);
   return dstgraph_ptr;
 }
 
@@ -138,11 +129,15 @@ mindspore::Status Serialization::Load(const void *model_data, size_t data_size, 
                                              mindir_path);
       }
     } catch (const std::exception &e) {
-      err_msg << "Load model failed. Please check the valid of dec_key and dec_mode." << e.what();
+      err_msg << "Failed to load model, model type: MindIR, model path: " << mindir_path << ", exception: " << e.what();
       MS_LOG(ERROR) << err_msg.str();
       return mindspore::Status(kMEInvalidInput, err_msg.str());
     }
-
+    if (anf_graph == nullptr) {
+      err_msg << "Failed to load model, model type: MindIR, model path: " << mindir_path;
+      MS_LOG(ERROR) << err_msg.str();
+      return mindspore::Status(kMEInvalidInput, err_msg.str());
+    }
     *graph = mindspore::Graph(std::make_shared<mindspore::Graph::GraphData>(anf_graph, kMindIR));
     return kSuccess;
   } else if (model_type == kOM) {

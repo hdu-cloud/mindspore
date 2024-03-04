@@ -170,7 +170,7 @@ Status SQuADOp::LoadTensorFromVector(const std::vector<T> &vector_item, TensorRo
 }
 
 Status SQuADOp::LoadFile(const std::string &file, int64_t start_offset, int64_t end_offset, int32_t worker_id) {
-  std::ifstream handle(file);
+  std::ifstream handle(file, std::ios::in);
   if (!handle.is_open()) {
     RETURN_STATUS_UNEXPECTED("Invalid file, failed to open file: " + file);
   }
@@ -255,14 +255,14 @@ Status SQuADOp::FillIOBlockQueue(const std::vector<int64_t> &i_keys) {
     std::vector<std::pair<std::string, int64_t>> file_index;
     if (!i_keys.empty()) {
       for (auto it = i_keys.begin(); it != i_keys.end(); ++it) {
-        if (!load_io_block_queue_) {
+        if (!GetLoadIoBlockQueue()) {
           break;
         }
         file_index.emplace_back(std::pair<std::string, int64_t>((*filename_index_)[*it], *it));
       }
     } else {
       for (auto it = filename_index_->begin(); it != filename_index_->end(); ++it) {
-        if (!load_io_block_queue_) {
+        if (!GetLoadIoBlockQueue()) {
           break;
         }
         file_index.emplace_back(std::pair<std::string, int64_t>(it.value(), it.key()));
@@ -270,8 +270,7 @@ Status SQuADOp::FillIOBlockQueue(const std::vector<int64_t> &i_keys) {
     }
     for (auto file_info : file_index) {
       if (NeedPushFileToBlockQueue(file_info.first, &start_offset, &end_offset, pre_count)) {
-        auto ioBlock =
-          std::make_unique<FilenameBlock>(file_info.second, start_offset, end_offset, IOBlock::kDeIoBlockNone);
+        auto ioBlock = std::make_unique<FilenameBlock>(file_info.second, start_offset, end_offset, IOBlock::kFlagNone);
         RETURN_IF_NOT_OK(PushIoBlockQueue(queue_index, std::move(ioBlock)));
         queue_index = (queue_index + 1) % num_workers_;
       }
@@ -292,7 +291,7 @@ Status SQuADOp::FillIOBlockQueue(const std::vector<int64_t> &i_keys) {
 
 Status SQuADOp::CountTensorRowsPreFile(const std::string &file, int64_t *count) {
   RETURN_UNEXPECTED_IF_NULL(count);
-  std::ifstream handle(file);
+  std::ifstream handle(file, std::ios::in);
   if (!handle.is_open()) {
     RETURN_STATUS_UNEXPECTED("Invalid file, failed to open file: " + file);
   }

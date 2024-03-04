@@ -27,15 +27,16 @@
 #include <memory>
 #include "utils/hash_map.h"
 #include "mindrt/include/actor/op_actor.h"
-#include "runtime/device/device_address.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/device_address.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
 #include "utils/log_adapter.h"
 #include "ir/tensor.h"
 #include "runtime/device/ms_device_shape_transfer.h"
 #include "runtime/hardware/device_context_manager.h"
-#include "common/mem_reuse/mem_dynamic_allocator.h"
+#include "include/backend/mem_reuse/mem_dynamic_allocator.h"
+#include "include/common/profiler.h"
 
 namespace mindspore {
 namespace runtime {
@@ -44,6 +45,8 @@ using tensor::TensorPtr;
 using DeviceTensor = mindspore::device::DeviceAddress;
 using mindspore::device::DeviceContext;
 using mindspore::device::KernelInfo;
+using CompileFunc = std::function<KernelGraphPtr(
+  const GraphSegmentPtr &, const std::pair<AnfNodePtrList, AnfNodePtrList> &, const DeviceContext *, device::RunMode)>;
 
 // The execution result of actor.
 constexpr int kSuccess = 0;
@@ -64,6 +67,7 @@ const char kDataPrepareActorNameSuffix[] = "_DataPrepareActor";
 const char kHostDSActorNameSuffix[] = "_HostDSActor";
 const char kDeviceDSActorNameSuffix[] = "_DeviceDSActor";
 const char kSuperKernelActorNameSuffix[] = "_SuperKernelActor";
+const char kAnyTypeKernelActorNameSuffix[] = "_AnyTypeKernelActor";
 const char kLoopCountActorNameSuffix[] = "_LoopCountActor";
 const char kOutputActorNameSuffix[] = "_OutputActor";
 const char kEntranceActorNameSuffix[] = "_EntranceActor";
@@ -75,6 +79,7 @@ const char kMemoryFreeActorNameSuffix[] = "_MemoryFreeActor";
 const char kCopyActorNameSignFromStore[] = "_device_tensor_store:";
 const char kMemSwapInActorNameSuffix[] = "_MemorySwapInActor";
 const char kMemSwapOutActorNameSuffix[] = "_MemorySwapOutActor";
+const char kMemSwapActorNamePrefix[] = "MemorySwapActor_";
 
 enum class KernelTransformType {
   kUnknown,
@@ -85,6 +90,8 @@ enum class KernelTransformType {
   kCustomActor,
   // Super kernel actor represents the sink executing of graph which is the combination of kernels.
   kSuperKernelActor,
+  // Any type kernel actor represents the graph which has an any type input.
+  kAnyTypeKernelActor,
   kCopyActor,
   kLoopCountActor,
   kOutputActor,
@@ -108,43 +115,39 @@ enum class KernelTransformType {
   kMemorySwapActor
 };
 
-#define SET_FLAG(value, flag) ((value) = ((value) | (flag)))
-#define TEST_FLAG(value, flag) (((value) & (flag)) == (flag))
-#define CLEAR_FLAG(value, flag) ((value) = ((value) & (~(flag))))
-
 #define SET_OPCONTEXT_FAIL_RET_WITH_ERROR(op_context, message) \
-  {                                                            \
+  do {                                                         \
     (op_context).error_info_ = message;                        \
     (op_context).SetFailed(kFailure);                          \
     return;                                                    \
-  }
+  } while (0);
 
 #define SET_OPCONTEXT_SUCCESS_RET(op_context) \
-  {                                           \
+  do {                                        \
     (op_context).SetSuccess(kSuccess);        \
     return;                                   \
-  }
+  } while (0);
 
 #define SET_OPCONTEXT_FAIL_RET_WITH_ERROR_BY_STRATEGY(strategy, op_context, message) \
-  {                                                                                  \
+  do {                                                                               \
     if ((strategy) == GraphExecutionStrategy::kStep) {                               \
       MS_LOG(EXCEPTION) << (message);                                                \
     }                                                                                \
     (op_context).error_info_ = message;                                              \
     (op_context).SetFailed(kFailure);                                                \
     return;                                                                          \
-  }
+  } while (0);
 
 #define SET_OPCONTEXT_MEMORY_ALLOC_FAIL_BY_STRATEGY(strategy, op_context, device_context, kernel_name, alloc_size) \
-  {                                                                                                                \
-    std::string message = "";                                                                                      \
+  do {                                                                                                             \
+    std::string message = "#umsg#Memory not enough:#umsg#";                                                        \
     if ((device_context).device_context_key().device_name_ == "CPU") {                                             \
-      message = "Memory isn't enough and alloc failed, kernel name: " + (kernel_name) +                            \
-                ", alloc size: " + std::to_string(alloc_size) + "B.";                                              \
+      message += "Memory isn't enough and alloc failed, kernel name: " + (kernel_name) +                           \
+                 ", alloc size: " + std::to_string(alloc_size) + "B.";                                             \
     } else {                                                                                                       \
-      message = "Device(id:" + std::to_string((device_context).device_context_key().device_id_) +                  \
-                ") memory isn't enough and alloc failed, kernel name: " + (kernel_name) +                          \
-                ", alloc size: " + std::to_string(alloc_size) + "B.";                                              \
+      message += "Device(id:" + std::to_string((device_context).device_context_key().device_id_) +                 \
+                 ") memory isn't enough and alloc failed, kernel name: " + (kernel_name) +                         \
+                 ", alloc size: " + std::to_string(alloc_size) + "B.";                                             \
     }                                                                                                              \
     if ((strategy) == GraphExecutionStrategy::kStep) {                                                             \
       MS_LOG(EXCEPTION) << message;                                                                                \
@@ -152,7 +155,7 @@ enum class KernelTransformType {
     (op_context).error_info_ = message;                                                                            \
     (op_context).SetFailed(kFailure);                                                                              \
     return;                                                                                                        \
-  }
+  } while (0);
 
 // Encapsulate the actor APIs associated with execution.
 class ActorDispatcher {
@@ -217,6 +220,7 @@ class ActorDispatcher {
   static void set_is_multi_thread_execution(bool is_multi_thread_execution) {
     is_multi_thread_execution_ = is_multi_thread_execution;
   }
+  static bool is_multi_thread_execution() { return is_multi_thread_execution_; }
 
   static bool is_memory_allocation_sync() { return is_memory_allocation_sync_; }
   static void set_is_memory_allocation_sync(bool is_memory_allocation_sync) {

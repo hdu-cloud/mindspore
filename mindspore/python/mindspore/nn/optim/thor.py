@@ -25,7 +25,7 @@ import mindspore.ops as ops
 import mindspore.nn as nn
 import mindspore.common.dtype as mstype
 import mindspore.log as logger
-from mindspore._checkparam import Validator
+from mindspore import _checkparam as Validator
 from mindspore.nn.optim.optimizer import Optimizer
 from mindspore.parallel._utils import _get_device_num, _get_gradients_mean
 from mindspore import context
@@ -254,11 +254,6 @@ def thor(net, learning_rate, damping, momentum, weight_decay=0.0, loss_scale=1.0
     r"""
     Updates gradients by second-order algorithm--THOR.
 
-    Trace-based Hardware-driven layer-ORiented Natural Gradient Descent Computation (THOR) algorithm is proposed in:
-
-    `THOR: Trace-based Hardware-driven layer-ORiented Natural Gradient Descent Computation
-    <https://www.aaai.org/AAAI21Papers/AAAI-6611.ChenM.pdf>`_
-
     The updating formulas are as follows,
 
     .. math::
@@ -271,10 +266,10 @@ def thor(net, learning_rate, damping, momentum, weight_decay=0.0, loss_scale=1.0
             \otimes\left(G_{i}^{(k)}+\lambda I\right)^{-1}\right) \nabla_{w_{i}} J^{(k)}
         \end{array}
 
-    :math:`a_{i-1}` represents the input of i-th layer,and which is the activations of previous layer.
-    :math:`D_{s_i}` represents the derivative of the loss function of the output of the i-th layer.
+    :math:`a_{i-1}` represents the input of :math:`i`-th layer,and which is the activations of previous layer.
+    :math:`D_{s_i}` represents the derivative of the loss function of the output of the :math:`i`-th layer.
     :math:`I` represents the identity matrix.
-    :math:`\lambda` represents :math:`damping`, :math:`g_i` represents gradients of the i-th layer.
+    :math:`\lambda` represents :math:`damping`, :math:`g_i` represents gradients of the :math:`i`-th layer.
     :math:`\otimes` represents Kronecker product, :math:`\gamma` represents 'learning rate'.
 
     Note:
@@ -295,14 +290,15 @@ def thor(net, learning_rate, damping, momentum, weight_decay=0.0, loss_scale=1.0
 
         momentum (float): Hyper-parameter of type float, means momentum for the moving average. It must be at least 0.0.
 
-        weight_decay (int, float): Weight decay (L2 penalty). It must be equal to or greater than 0.0. Default: 0.0.
+        weight_decay (int, float): Weight decay (L2 penalty). It must be equal to or greater than 0.0.
+            Default: ``0.0`` .
 
         loss_scale (float): A value for the loss scale. It must be greater than 0.0. In general, use the
-            default value. Default: 1.0.
+            default value. Default: ``1.0`` .
 
-        batch_size (int): The size of a batch. Default: 32
+        batch_size (int): The size of a batch. Default: ``32`` .
 
-        use_nesterov (bool): Enable Nesterov momentum. Default: False.
+        use_nesterov (bool): Enable Nesterov momentum. Default: ``False`` .
 
         decay_filter (function): A function to determine which layers the weight decay applied to. And it
             only works when the weight_decay > 0. Default: lambda x: x.name not in []
@@ -310,13 +306,13 @@ def thor(net, learning_rate, damping, momentum, weight_decay=0.0, loss_scale=1.0
         split_indices (list): Set allreduce fusion strategy by A/G layer indices . Only works when distributed
             computing. ResNet50 as an example, there are 54 layers of A/G respectively, when split_indices is set
             to [26, 53], it means A/G is divided into two groups to allreduce,  one is 0~26 layer, and the other
-            is 27~53. Default: None
+            is 27~53. Default: ``None`` .
 
-        enable_clip_grad (bool): Whether to clip the gradients. Default: False
+        enable_clip_grad (bool): Whether to clip the gradients. Default: ``False`` .
 
-        frequency(int): The update interval of A/G and $A^{-1}/G^{-1}$. When frequency equals N (N is greater than 1),
-            A/G and $A^{-1}/G^{-1}$ will be updated  every N steps, and other steps will use the stale A/G and
-            $A^{-1}/G^{-1}$ to update weights. Default: 100.
+        frequency(int): The update interval of A/G and :math:`A^{-1}/G^{-1}`. When frequency equals N
+            (N is greater than 1), A/G and :math:`A^{-1}/G^{-1}` will be updated every N steps,
+            and other steps will use the stale A/G and :math:`A^{-1}/G^{-1}` to update weights. Default: ``100`` .
 
     Inputs:
         - **gradients** (tuple[Tensor]) - The gradients of `params`, the shape is the same as `params`.
@@ -338,21 +334,18 @@ def thor(net, learning_rate, damping, momentum, weight_decay=0.0, loss_scale=1.0
         ``Ascend`` ``GPU``
 
     Examples:
-        .. note::
-            Before running the following example, you need to customize the network Net and
-            dataset preparation function create_dataset. Refer to
-            `Building a Network <https://www.mindspore.cn/tutorials/en/r2.0.0-alpha/beginner/model.html>`_
-            and `Dataset <https://www.mindspore.cn/tutorials/en/r2.0.0-alpha/beginner/dataset.html>`_ .
-
         >>> import mindspore as ms
-        >>> from mindspore.nn import thor
         >>> from mindspore import nn
         >>> from mindspore import Tensor
         >>>
-        >>> net = Net()
+        >>> # Define the network structure of LeNet5. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+        >>> net = LeNet5()
+        >>> # Create the dataset taking MNIST as an example. Refer to
+        >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/mnist.py
         >>> dataset = create_dataset()
         >>> temp = Tensor([4e-4, 1e-4, 1e-5, 1e-5], mstype.float32)
-        >>> optim = thor(net, learning_rate=temp, damping=temp, momentum=0.9, loss_scale=128, frequency=4)
+        >>> optim = nn.thor(net, learning_rate=temp, damping=temp, momentum=0.9, loss_scale=128, frequency=4)
         >>> loss = nn.SoftmaxCrossEntropyWithLogits(sparse=True, reduction='mean')
         >>> loss_scale = ms.FixedLossScaleManager(128, drop_overflow_update=False)
         >>> model = ms.Model(net, loss_fn=loss, optimizer=optim, loss_scale_manager=loss_scale, metrics={'acc'},
@@ -360,8 +353,6 @@ def thor(net, learning_rate, damping, momentum, weight_decay=0.0, loss_scale=1.0
         >>> model = ms.ConvertModelUtils.convert_to_thor_model(model=model, network=net, loss_fn=loss, optimizer=optim,
         ...                                                 loss_scale_manager=loss_scale, metrics={'acc'},
         ...                                                 amp_level="O2", keep_batchnorm_fp32=False)
-        >>> loss_cb = ms.LossMonitor()
-        >>> model.train(1, dataset, callbacks=loss_cb, sink_size=4, dataset_sink_mode=True)
 
     """
     context.set_context(max_call_depth=10000)
@@ -433,7 +424,7 @@ class ThorGpu(Optimizer):
         self.matmul = P.MatMul()
         self.assign = P.Assign()
         self.mul = P.Mul()
-        self.gather = P.GatherV2()
+        self.gather = P.Gather()
         self.one = Tensor(1, mstype.int32)
         self.feature_map = Tensor(1.0, mstype.float32)
         self.axis = 0
@@ -662,6 +653,7 @@ class ThorGpu(Optimizer):
             gradients = self.hyper_map(F.partial(apply_decay, self.weight_decay), self.decay_flags, params, gradients)
         gradients = clip_gradient(self.enable_clip_grad, gradients)
         lr = self.get_lr()
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
         success = self.hyper_map(F.partial(_momentum_opt, self.opt, self.momentum, lr), gradients, params, moments)
         return success
 
@@ -686,7 +678,7 @@ class ThorAscend(Optimizer):
         self.g_normalizer = ParameterTuple(filter(lambda x: 'g_normalizer' in x.name, net.get_parameters()))
         logger.info("matrix_a_cov len is {}".format(len(self.matrix_a_cov)))
         self._define_ascend_operator()
-        self.C0 = 16
+        self.c0 = 16
         self.device_shape_pad_flag = ()
         self.diag_block_dim = 128
         self.matrix_a = ()
@@ -748,7 +740,7 @@ class ThorAscend(Optimizer):
         self.log = P.Log()
         self.exp = P.Exp()
         self.sqrt = P.Sqrt()
-        self.gather = P.GatherV2()
+        self.gather = P.Gather()
         self.assign = P.Assign()
         self.cast = P.Cast()
         self.eye = P.Eye()
@@ -973,15 +965,15 @@ class ThorAscend(Optimizer):
             matrix_g_combine_shape = self.shape(matrix_g_inv)
             if matrix_a_inv_shape[0] == 2048 and matrix_g_combine_shape[0] == 1001:
                 matrix_a_inv = self.reshape(matrix_a_inv,
-                                            (matrix_a_inv_shape[0] / 16, 16,
-                                             matrix_a_inv_shape[0] / 16, 16))
+                                            (matrix_a_inv_shape[0] // 16, 16,
+                                             matrix_a_inv_shape[0] // 16, 16))
                 matrix_a_inv = self.transpose(matrix_a_inv, (2, 0, 1, 3))
                 matrix_g_inv = P.Pad(((0, 7), (0, 7)))(matrix_g_inv)
 
                 matrix_g_inv_shape = self.shape(matrix_g_inv)
                 matrix_g_inv = self.reshape(matrix_g_inv,
-                                            (matrix_g_inv_shape[0] / 16, 16,
-                                             matrix_g_inv_shape[0] / 16, 16))
+                                            (matrix_g_inv_shape[0] // 16, 16,
+                                             matrix_g_inv_shape[0] // 16, 16))
                 matrix_g_inv = self.transpose(matrix_g_inv, (2, 0, 1, 3))
 
         matrix_a_allreduce = matrix_a_allreduce + (matrix_a_inv,)
@@ -994,8 +986,8 @@ class ThorAscend(Optimizer):
             kernel_hw = weight_shape[2] * weight_shape[3]
             in_channels = weight_shape[1]
             matrix_a_inv = self.reshape(matrix_a_inv, (kernel_hw, in_channels, kernel_hw, in_channels))
-            matrix_a_inv = P.Pad(((0, 0), (0, self.C0 - in_channels), (0, 0),
-                                  (0, self.C0 - in_channels)))(matrix_a_inv)
+            matrix_a_inv = P.Pad(((0, 0), (0, self.c0 - in_channels), (0, 0),
+                                  (0, self.c0 - in_channels)))(matrix_a_inv)
         return matrix_a_inv
 
     def _get_ainv_ginv_amax_gmax_list(self, gradients, damping_step, matrix_a_allreduce, matrix_g_allreduce,
@@ -1313,5 +1305,6 @@ class ThorAscend(Optimizer):
             gradients = self.hyper_map(F.partial(apply_decay, self.weight_decay), self.decay_flags, params, gradients)
         gradients = clip_gradient(self.enable_clip_grad, gradients)
         lr = self.get_lr()
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
         success = self.hyper_map(F.partial(_momentum_opt, self.opt, self.momentum, lr), gradients, params, moments)
         return success

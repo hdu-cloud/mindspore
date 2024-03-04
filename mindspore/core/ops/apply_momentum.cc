@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2021 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,31 @@
 
 #include "ops/apply_momentum.h"
 
+#include <map>
+#include <set>
 #include <utility>
 
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/overload.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -68,11 +88,13 @@ abstract::ShapePtr ApplyMomentumInferShape(const PrimitivePtr &primitive,
     MS_EXCEPTION_IF_NULL(item);
   }
   // Infer shape
-  auto v_shape = input_args[kInputIndex0]->BuildShape();
-  if (IsDynamicRank(CheckAndConvertUtils::ConvertShapePtrToShapeMap(v_shape)[kShape])) {
+  auto v_shape_ptr = input_args[kInputIndex0]->BuildShape();
+  auto v_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(v_shape_ptr)[kShape];
+  if (IsDynamicRank(v_shape)) {
     return std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
   }
-  auto a_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
+  auto a_shape_ptr = input_args[kInputIndex1]->BuildShape();
+  auto a_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(a_shape_ptr)[kShape];
   if (IsDynamicRank(a_shape)) {
     return std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
   }
@@ -80,7 +102,8 @@ abstract::ShapePtr ApplyMomentumInferShape(const PrimitivePtr &primitive,
   if (IsDynamicRank(l_shape)) {
     return std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
   }
-  auto g_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex3]->BuildShape())[kShape];
+  auto g_shape_ptr = input_args[kInputIndex3]->BuildShape();
+  auto g_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(g_shape_ptr)[kShape];
   if (IsDynamicRank(g_shape)) {
     return std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
   }
@@ -88,7 +111,13 @@ abstract::ShapePtr ApplyMomentumInferShape(const PrimitivePtr &primitive,
   if (IsDynamicRank(m_shape)) {
     return std::make_shared<abstract::Shape>(std::vector<int64_t>{-2});
   }
-  auto shape_element = v_shape->cast<abstract::ShapePtr>();
+  if (!a_shape_ptr->IsDynamic() && !v_shape_ptr->IsDynamic()) {
+    (void)CheckAndConvertUtils::CheckValue("accumulate_shape", a_shape, kEqual, "variable_shape", v_shape, prim_name);
+  }
+  if (!g_shape_ptr->IsDynamic() && !v_shape_ptr->IsDynamic()) {
+    (void)CheckAndConvertUtils::CheckValue("gradient_shape", g_shape, kEqual, "variable_shape", v_shape, prim_name);
+  }
+  auto shape_element = v_shape_ptr->cast<abstract::ShapePtr>();
   MS_EXCEPTION_IF_NULL(shape_element);
   return shape_element;
 }
@@ -107,7 +136,9 @@ TypePtr ApplyMomentumInferType(const PrimitivePtr &primitive, const std::vector<
   auto l_type = input_args[kInputIndex2]->BuildType();
   auto g_type = input_args[kInputIndex3]->BuildType();
   auto m_type = input_args[kInputIndex4]->BuildType();
-  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kFloat64};
+  const std::set<TypePtr> valid_types = {kFloat16, kFloat32, kInt8,   kUInt8,   kInt16,     kUInt16,    kInt32,
+                                         kUInt32,  kInt64,   kUInt64, kFloat64, kComplex64, kComplex128};
+
   (void)CheckAndConvertUtils::CheckTensorTypeValid("v_type", v_tensor_type, valid_types, prim_name);
   (void)CheckAndConvertUtils::CheckTensorTypeValid("a_type", a_tensor_type, valid_types, prim_name);
   std::map<std::string, TypePtr> args_l;
@@ -130,6 +161,24 @@ AbstractBasePtr ApplyMomentumInfer(const abstract::AnalysisEnginePtr &, const Pr
   auto infer_shape = ApplyMomentumInferShape(primitive, input_args);
   return abstract::MakeAbstract(infer_shape, infer_type);
 }
-REGISTER_PRIMITIVE_EVAL_IMPL(ApplyMomentum, prim::kPrimApplyMomentum, ApplyMomentumInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGApplyMomentumInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyMomentumInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyMomentumInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ApplyMomentumInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(ApplyMomentum, prim::kPrimApplyMomentum, AGApplyMomentumInfer, false);
 }  // namespace ops
 }  // namespace mindspore

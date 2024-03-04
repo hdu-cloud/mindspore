@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,45 +18,49 @@
 #include "common/common_test.h"
 #include "ops/rank.h"
 #include "ir/dtype/type.h"
-#include "ir/value.h"
 #include "abstract/dshape.h"
 #include "utils/tensor_construct_utils.h"
+#include "ir/primitive.h"
+#include "abstract/abstract_value.h"
+#include "utils/ms_context.h"
+#include "ops/test_ops.h"
+#include "include/backend/optimizer/helper.h"
+#include "ops/op_utils.h"
 
 namespace mindspore {
 namespace ops {
-
-class TestRank : public UT::Common {
- public:
-  TestRank() {}
-  void SetUp() {}
-  void TearDown() {}
+struct RankOpParams {
+  ShapeVector input_shape;
+  TypePtr input_type;
+  TypePtr out_type;
 };
 
-TEST_F(TestRank, test_ops_rank1) {
-  auto rank = std::make_shared<Rank>();
-  rank->Init();
-  auto x = TensorConstructUtils::CreateOnesTensor(kNumberTypeFloat32, std::vector<int64_t>{2, 2});
-  ;
-  MS_EXCEPTION_IF_NULL(x);
-  auto abstract = rank->Infer({x->ToAbstract()});
-  MS_EXCEPTION_IF_NULL(abstract);
-  EXPECT_EQ(abstract->isa<abstract::AbstractTensor>(), true);
-  auto shape_ptr = abstract->BuildShape();
-  MS_EXCEPTION_IF_NULL(shape_ptr);
-  EXPECT_EQ(shape_ptr->isa<abstract::Shape>(), true);
-  auto shape = shape_ptr->cast<abstract::ShapePtr>();
-  MS_EXCEPTION_IF_NULL(shape);
-  auto shape_vec = shape->shape();
-  EXPECT_EQ(shape_vec.size(), 0);
-  auto type = abstract->BuildType();
-  MS_EXCEPTION_IF_NULL(type);
-  EXPECT_EQ(type->isa<TensorType>(), true);
-  auto tensor_type = type->cast<TensorTypePtr>();
-  MS_EXCEPTION_IF_NULL(tensor_type);
-  auto data_type = tensor_type->element();
-  MS_EXCEPTION_IF_NULL(data_type);
-  EXPECT_EQ(data_type->type_id(), kMetaTypeNone);
+class TestRank : public TestOps, public testing::WithParamInterface<RankOpParams> {};
+
+TEST_P(TestRank, dyn_shape) {
+  const auto &param = GetParam();
+  auto input = std::make_shared<abstract::AbstractTensor>(param.input_type, param.input_shape);
+  ASSERT_NE(input, nullptr);
+  auto expect = abstract::MakeAbstract(abstract::kNoShape, param.out_type);
+
+  ValuePtr expect_value;
+  if (IsDynamicRank(param.input_shape)) {
+    expect_value = kValueAny;
+  } else {
+    auto x_shape_rank = SizeToLong(param.input_shape.size());
+    expect_value = MakeValue(x_shape_rank);
+  }
+  expect->set_value(expect_value);
+
+  auto prim = std::make_shared<Primitive>(kNameRank);
+  auto out_abstract = opt::CppInferShapeAndType(prim, {input});
+  ASSERT_NE(out_abstract, nullptr);
+  ASSERT_TRUE(*out_abstract == *expect);
 }
 
+INSTANTIATE_TEST_CASE_P(TestRankGroup, TestRank,
+                        testing::Values(RankOpParams{{2, 3}, kFloat32, kInt64},
+                                        RankOpParams{{-1, -1}, kFloat32, kInt64},
+                                        RankOpParams{{-2}, kFloat32, kInt64}));
 }  // namespace ops
 }  // namespace mindspore

@@ -187,8 +187,7 @@ int FractionalMaxPool3DWithFixedKsizeCPUKernelMod::Resize(const BaseOperatorPtr 
 }
 
 template <typename random_sample_t>
-static std::vector<int> generate_intervals(random_sample_t random_sample, int input_size, int output_size,
-                                           float kernel_size) {
+std::vector<int> generate_intervals(random_sample_t random_sample, int input_size, int output_size, int kernel_size) {
   std::vector<int> sequence(output_size);
   if (output_size > 1) {
     random_sample_t alpha =
@@ -199,7 +198,23 @@ static std::vector<int> generate_intervals(random_sample_t random_sample, int in
                                static_cast<int>(random_sample * alpha);
     }
   }
-  sequence[IntToSize(output_size) - 1] = FloatToInt(input_size - kernel_size);
+  sequence[IntToSize(output_size) - 1] = input_size - kernel_size;
+
+  return sequence;
+}
+
+template <>
+std::vector<int> generate_intervals(float16 random_sample, int input_size, int output_size, int kernel_size) {
+  std::vector<int> sequence(output_size);
+  if (output_size > 1) {
+    float alpha = static_cast<float>(input_size - kernel_size) / static_cast<float>(output_size - 1);
+
+    for (int i = 0; i < output_size - 1; ++i) {
+      sequence[IntToSize(i)] = static_cast<int>((static_cast<float>(i) + static_cast<float>(random_sample)) * alpha) -
+                               static_cast<int>(static_cast<float>(random_sample) * alpha);
+    }
+  }
+  sequence[IntToSize(output_size) - 1] = input_size - kernel_size;
 
   return sequence;
 }
@@ -217,9 +232,9 @@ bool FractionalMaxPool3DWithFixedKsizeCPUKernelMod::ComputeTemplate(const std::v
       for (auto plane = start; plane < end; ++plane) {
         /* each plane contains 3 random random_samples,
            one for T, one for W, and one for H */
-        scalar_t *inputForPlane = input_data + plane * inputD_ * inputH_ * inputW_;
-        scalar_t *outputForPlane = output_data + plane * outputD_ * outputH_ * outputW_;
-        argmax_t *argmaxForPlane = argmax_data + plane * outputD_ * outputH_ * outputW_;
+        scalar_t *inputForPlane = input_data + plane * LongToSize(inputD_ * inputH_ * inputW_);
+        scalar_t *outputForPlane = output_data + plane * LongToSize(outputD_ * outputH_ * outputW_);
+        argmax_t *argmaxForPlane = argmax_data + plane * LongToSize(outputD_ * outputH_ * outputW_);
         random_sample_t *random_samplesForPlane = random_samples_data + plane * 3;
         FractionalMaxPool3DWithFixedKsizeCompute<scalar_t, random_sample_t, argmax_t>(
           inputForPlane, random_samplesForPlane, argmaxForPlane, outputForPlane, outputD_, outputH_, outputW_,
@@ -231,13 +246,13 @@ bool FractionalMaxPool3DWithFixedKsizeCPUKernelMod::ComputeTemplate(const std::v
     auto shard_fractional_max_pool3d_with_fixed_ksize = [&](size_t start, size_t end) {
       for (auto batch = start; batch < end; ++batch) {
         for (int64_t plane = 0; plane < inputC_; ++plane) {
-          auto intput_data_n = input_data + batch * inputC_ * inputW_ * inputH_ * inputD_;
-          auto output_data_n = output_data + batch * inputC_ * outputW_ * outputH_ * outputD_;
-          auto argmax_data_n = argmax_data + batch * inputC_ * outputW_ * outputH_ * outputD_;
+          auto intput_data_n = input_data + batch * LongToSize(inputC_ * inputW_ * inputH_ * inputD_);
+          auto output_data_n = output_data + batch * LongToSize(inputC_ * outputW_ * outputH_ * outputD_);
+          auto argmax_data_n = argmax_data + batch * LongToSize(inputC_ * outputW_ * outputH_ * outputD_);
           scalar_t *inputForPlane = intput_data_n + plane * inputD_ * inputH_ * inputW_;
           scalar_t *outputForPlane = output_data_n + plane * outputD_ * outputH_ * outputW_;
           argmax_t *argmaxForPlane = argmax_data_n + plane * outputD_ * outputH_ * outputW_;
-          auto random_samples_data_n = random_samples_data + batch * inputC_ * 3;
+          auto random_samples_data_n = random_samples_data + batch * LongToSize(inputC_ * 3);
           random_sample_t *random_samplesForPlane = random_samples_data_n + plane * 3;
           FractionalMaxPool3DWithFixedKsizeCompute<scalar_t, random_sample_t, argmax_t>(
             inputForPlane, random_samplesForPlane, argmaxForPlane, outputForPlane, outputD_, outputH_, outputW_,
@@ -252,8 +267,8 @@ bool FractionalMaxPool3DWithFixedKsizeCPUKernelMod::ComputeTemplate(const std::v
 template <typename scalar_t, typename random_sample_t, typename argmax_t>
 bool FractionalMaxPool3DWithFixedKsizeCPUKernelMod::FractionalMaxPool3DWithFixedKsizeCompute(
   scalar_t *inputForPlane, random_sample_t *random_samplesForPlane, argmax_t *argmaxForPlane, scalar_t *outputForPlane,
-  int64_t outputD_, int64_t outputH_, int64_t outputW_, float_t kernelsizeD_, float_t kernelsizeH_,
-  float_t kernelsizeW_, int64_t inputC_, int64_t inputD_, int64_t inputH_, int64_t inputW_) {
+  int64_t outputD_, int64_t outputH_, int64_t outputW_, int64_t kernelsizeD_, int64_t kernelsizeH_,
+  int64_t kernelsizeW_, int64_t inputC_, int64_t inputD_, int64_t inputH_, int64_t inputW_) {
   // Generate interval sequence
   auto sequenceT = generate_intervals<random_sample_t>(random_samplesForPlane[0], inputD_, outputD_, kernelsizeD_);
   auto sequenceH = generate_intervals<random_sample_t>(random_samplesForPlane[1], inputH_, outputH_, kernelsizeH_);
@@ -272,13 +287,13 @@ bool FractionalMaxPool3DWithFixedKsizeCPUKernelMod::FractionalMaxPool3DWithFixed
         for (t2 = inputD_Start; t2 < inputD_Start + kernelsizeD_; ++t2) {
           for (h2 = inputH_Start; h2 < inputH_Start + kernelsizeH_; ++h2) {
             for (w2 = inputW_Start; w2 < inputW_Start + kernelsizeW_; ++w2) {
-              if (t2 < 0 && t2 >= inputD_) {
+              if (t2 < 0 || t2 >= inputD_) {
                 MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', index T value is illegal.";
               }
-              if (h2 < 0 && h2 >= inputH_) {
+              if (h2 < 0 || h2 >= inputH_) {
                 MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', index H value is illegal.";
               }
-              if (w2 < 0 && w2 >= inputW_) {
+              if (w2 < 0 || w2 >= inputW_) {
                 MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', index W value is illegal.";
               }
               argmax_t planeIndex = t2 * inputH_ * inputW_ + h2 * inputW_ + w2;

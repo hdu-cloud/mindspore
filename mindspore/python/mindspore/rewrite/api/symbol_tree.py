@@ -13,12 +13,11 @@
 # limitations under the License.
 # ============================================================================
 """Rewrite module api: SymbolTree."""
-from typing import Optional
-from types import FunctionType
+from typing import Optional, Union, List
 import mindspore as ms
 
 from mindspore.nn import Cell
-from ..._checkparam import Validator
+from mindspore import _checkparam as Validator
 from .node import Node
 from ..symbol_tree_builder import SymbolTreeBuilder
 from ..symbol_tree import Position, SymbolTree as SymbolTreeImpl
@@ -29,10 +28,17 @@ MsDtypes = (ms.float16, ms.float32, ms.float64)
 
 class SymbolTree:
     """
-    A `SymbolTree` usually corresponding to forward method of a network.
+    SymbolTree stores information about a network, including statements of the network's forward
+    computation process and the topological relationship between statement input and output.
+
+    The statements in the network are saved in the SymbolTree in the form of nodes, and by processing
+    the nodes in the SymbolTree, you can delete the network code, insert and replace it, and get the
+    modified network code and network instances.
 
     Args:
-        handler (SymbolTreeImpl): SymbolTree internal implementation instance.
+        handler (SymbolTreeImpl): SymbolTree internal implementation instance. It is recommended to call the `create`
+            method in SymbolTree to create a SymbolTree, rather than calling SymbolTree's constructor directly.
+            Don't care what `SymbolTreeImpl` is, just treat it as a handle.
     """
 
     def __init__(self, handler: SymbolTreeImpl):
@@ -42,16 +48,83 @@ class SymbolTree:
     @classmethod
     def create(cls, network):
         """
-        Create a new `SymbolTree` of the input `network`.
+        Create a SymbolTree object by passing in the network instance `network`.
+
+        This interface parses the `network` instance, expands each source
+        code statement of the forward computation process, and parses it into nodes,
+        which is stored in the SymbolTree. The specific process is as follows:
+
+        1. Obtain the source code of the network instance.
+        2. Perform AST parsing on the network and obtain the AST nodes (abstract syntax trees) of each
+           statement in the network.
+        3. Expand complex statements in the network forward evaluation process into multiple simple statements.
+        4. Create a SymbolTree object. Each SymbolTree corresponds to one network instance.
+        5. Use the rewrite node to store each statement of the network forward computation process. The node records
+           the input, output, and other information of the statement.
+        6. Save the rewrite node to the SymbolTree, and update and maintain the topological connection between
+           the nodes.
+        7. Return the SymbolTree object corresponding to the network instance.
+
+        If a user-defined network of type :class:`mindspore.nn.Cell` is called in the forward computation process
+        of the network, rewrite will generate a node of type `NodeType.Tree` for the corresponding statement. This
+        type of node stores a new SymbolTree, which parses and maintains the node information of the user-defined
+        network.
+
+        If the following types of statements are called in the forward computation process of the network, rewrite
+        will parse the internal statements in the statement and generate corresponding nodes:
+
+        - :class:`mindspore.nn.SequentialCell`
+        - Functions within classes
+        - Control flow statements, such as `if` statements
+
+        Note:
+            Because the specific execution branch of control flows are still unknown during the rewrite operation
+            of the network, no topology information will be established between the nodes inside the control flow
+            and the nodes outside.
+            Users cannot obtain nodes inside the control flow when they acquire nodes outside the control flow using
+            interfaces like :func:`mindspore.rewrite.Node.get_inputs` and :func:`mindspore.rewrite.Node.get_users` .
+            Users also cannot obtain nodes outside the control flow, if they use these interfaces inside the control
+            flow.
+            Therefore, when users modify the network, they need to manually handle the node information inside and
+            outside the control flow.
+
+        The current rewrite module has the following syntax limitations:
+
+        - Only networks of type :class:`mindspore.nn.Cell` are supported as input to the rewrite module.
+        - Parsing assignment statements with multiple output values is not currently supported.
+        - Parsing loop statements is not currently supported.
+        - Parsing decorator syntax is not currently supported.
+        - Parsing class variable syntax is not currently supported. If class variable uses external data,
+            the network after rewrite may be missing data.
+        - Parsing local classes and embedded classes is not currently supported, that is, the definition
+            of classes need to be placed on the outermost layer.
+        - Parsing closure syntax is not currently supported, that is, the definition of out-of-class
+            functions need to be placed at the outermost layer.
+        - Parsing lambda expression syntax is not currently supported.
+
+        For statements that do not support parsing, rewrite will generate nodes of type `NodeType.Python`
+        for corresponding statements to ensure that the network after rewrite can run normally.
+        The `Python` node does not support modifying the input and output of statements, and there may be
+        a problem between variable names and those generated by the rewrite. In this case, users need to
+        adjust the variable names manually.
 
         Args:
-            network (Cell): `network` used to create `SymbolTree`.
+            network (Cell): `network` used to create SymbolTree.
 
         Returns:
-            Symboltree, a `Symboltree` created based on `network`.
+            Symboltree, a SymbolTree created based on `network`.
 
         Raises:
             TypeError: If `network` is not a `Cell` instance.
+
+        Examples:
+            >>> from mindspore.rewrite import SymbolTree
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
+            >>> stree = SymbolTree.create(net)
+            >>> print(type(stree))
+            <class 'mindspore.rewrite.api.symbol_tree.SymbolTree'>
         """
         Validator.check_value_type("network", network, [Cell], "SymbolTree")
         return cls(SymbolTreeBuilder(network).build())
@@ -70,126 +143,75 @@ class SymbolTree:
             if v not in MsDtypes and not isinstance(v, ParamTypes):
                 raise TypeError(f"For call-function Node, got unsupported kwarg value: {v}, type: {type(v)}")
 
-    def create_call_function(self, func, targets, *args, **kwargs):
-        r"""
-        Create a Node object and generate the execution code to insert into the source code.
-        The source code calls the 'func' function with 'args' and' kwargs' as parameters.
-
-        Args:
-            func (FunctionType): The function to be called.
-            targets (list[str]): indicates the output name. As the output of the node in the source code.
-            args (Union[MsDtypes, ParamTypes]): parameter name of the node. Used as a parameter to a code statement in
-                source code. The default value is None, which means there is no parameter input in the cell.
-            kwargs (dict{str,Union[MsDtypes, ParamTypes]}): The key type must be str,
-                and the value must be value or type must be ParamTypes.
-                The input parameter name used to describe the formal parameter with a keyword.
-                Enter the name in the source code as the 'kwargs' in the statement expression.The default value is
-                None, which means there is no 'kwargs' input.
-
-        Returns:
-            An instance of `Node`.
-
-        Raises:
-            TypeError: If `func` is not FunctionType.
-            TypeError: If `targets` is not `list`.
-            TypeError: If the type of `targets` is not str.
-            TypeError: If arg in `args` is not ParamType.
-            TypeError: If key of `kwarg` is not a str or value of kwarg in `kwargs` is not ParamType.
-
-        Examples:
-            >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
-            >>> stree = SymbolTree.create(net)
-            >>> node = stree.get_node("conv1")
-            >>> new_node = stree.create_call_function(F.abs, ["x"], node)
-        """
-        Validator.check_value_type("func", func, [FunctionType], "SymbolTree node")
-        Validator.check_element_type_of_iterable("targets", targets, [str], "SymbolTree node")
-        args_ = list(args)
-        SymbolTree._check_args_type(args_)
-        for i, arg in enumerate(args_):
-            if isinstance(arg, Node):
-                args_[i] = arg.get_handler()
-        SymbolTree._check_kwargs_type(kwargs)
-        for key, value in kwargs.items():
-            if isinstance(value, Node):
-                kwargs[key] = value.get_handler()
-        return Node(self._symbol_tree.create_call_function(func, targets, args_, kwargs))
-
     def get_handler(self) -> SymbolTreeImpl:
-        """
-        Get handler of `SymbolTree` implementation.
-
-        Returns:
-            An instance of `SymbolTree`.
-
-        Examples:
-            >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
-            >>> stree = SymbolTree.create(net)
-            >>> handler = stree.get_handler()
-        """
         return self._symbol_tree
 
-    def nodes(self):
+    def nodes(self, all_nodes: bool = False):
         """
-        Get a generator for node of corresponding network.
+        Get the generator of the node in the current SymbolTree, which is used to iterate
+        through the nodes in SymbolTree.
+
+        Args:
+            all_nodes (bool): Get all nodes including nodes in CallFunction node, CellContainer node
+                and sub symbol tree. Default: ``False`` .
 
         Returns:
-            A generator for node of current `SymbolTree`.
+            A generator for nodes in SymbolTree.
+
+        Raises:
+            TypeError: If `all_nodes` is not bool.
 
         Examples:
             >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> stree = SymbolTree.create(net)
-            >>> for node in stree.nodes():
-            ...     node.set_attribute("channel", 3)
+            >>> print([node.get_name() for node in stree.nodes()])
+            ['input_x', 'Expr', 'conv1', 'relu', 'max_pool2d', 'conv2', 'relu_1', 'max_pool2d_1',
+             'flatten', 'fc1', 'relu_2', 'fc2', 'relu_3', 'fc3', 'return']
         """
-        for node in self._symbol_tree.nodes():
+        Validator.check_value_type("all_nodes", all_nodes, [bool], "nodes")
+        nodes = self._symbol_tree.all_nodes() if all_nodes else self._symbol_tree.nodes()
+        for node in nodes:
             yield Node(node)
 
     def get_node(self, node_name: str) -> Optional[Node]:
         """
-        Get node by `node_name`.
+        Get the node with the name `node_name` in the SymbolTree.
 
         Args:
-            node_name (str): A string represents name of node.
+            node_name (str): The name of node.
 
         Returns:
-            An instance of node if find else None.
-
-        Raises:
-            TypeError: If `node_name` is not `str`.
+            Node with name of `node_name` . Return ``None`` if there is no node named `node_name` in SymbolTree.
 
         Examples:
             >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> stree = SymbolTree.create(net)
-            >>> node = stree.get_node("conv1")
+            >>> node = stree.get_node('conv1')
+            >>> print(node.get_name())
+            conv1
         """
         Validator.check_value_type("node_name", node_name, [str], "SymbolTree")
-        node_impl = self._symbol_tree.get_node(node_name)
+        node_impl = self._symbol_tree.get_node_from_name(node_name)
         if node_impl is None:
             return None
         return Node(node_impl)
 
-    def get_inputs(self) -> [Node]:
+    def get_inputs(self) -> List[Node]:
         return [Node(node_impl) for node_impl in self._symbol_tree.get_inputs()]
 
-    def before(self, node: Node):
+    def before(self, node: Union[Node, str]):
         """
-        Get insert position before input `node`.
-
-        `Position` is used to indicate where to insert node, it indicates position in source code rather than position
-        in topological order. We don't need to care about what `Position` is, just treat it as a handler and use it as
-        an arguments of `insert` api of `SymbolTree`.
+        Returns a location information before `node`. The return value of this interface is
+        used as a parameter for the insert operation.
 
         Args:
-            node (Node): Indicate the position before which node. Can be a node or name of node.
+            node (Union[Node, str]): Indicate the position before which node. Can be a node or name of node.
 
         Returns:
             A `Position` to indicate where to insert node.
@@ -199,26 +221,26 @@ class SymbolTree:
 
         Examples:
             >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> stree = SymbolTree.create(net)
             >>> for node in stree.nodes():
             ...     if node.get_name() == "conv1":
             ...         position = stree.before(node)
         """
-        Validator.check_value_type("node", node, [Node], "SymbolTree")
-        return self._symbol_tree.before(node.get_handler())
+        Validator.check_value_type("node", node, [Node, str], "SymbolTree")
+        if isinstance(node, Node):
+            node = node.get_handler()
+        return self._symbol_tree.before(node)
 
-    def after(self, node: Node):
+    def after(self, node: Union[Node, str]):
         """
-        Get insert position after input `node`.
-
-        `Position` is used to indicate where to insert node, it indicates position in source code rather than position
-        in topological order. We don't need to care about what `Position` is, just treat it as a handler and use it as
-        an arguments of `insert` api of `SymbolTree`.
+        Returns a location information after `node`. The return value of this interface is
+        used as a parameter for the insert operation.
 
         Args:
-            node (Node): Indicate the position after which node. Can be a node or name of node.
+            node (Union[Node, str]): Indicate the position after which node. Can be a node or name of node.
 
         Returns:
             A `Position` to indicate where to insert node.
@@ -228,15 +250,18 @@ class SymbolTree:
 
         Examples:
             >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> stree = SymbolTree.create(net)
             >>> for node in stree.nodes():
             ...     if node.get_name() == "conv1":
             ...         position = stree.after(node)
         """
-        Validator.check_value_type("node", node, [Node], "SymbolTree")
-        return self._symbol_tree.after(node.get_handler())
+        Validator.check_value_type("node", node, [Node, str], "SymbolTree")
+        if isinstance(node, Node):
+            node = node.get_handler()
+        return self._symbol_tree.after(node)
 
     def insert(self, position, node: Node) -> Node:
         """
@@ -249,8 +274,7 @@ class SymbolTree:
             node (Node): An instance of Node to be inserted.
 
         Returns:
-            An instance of Node being inserted. `node` could be changed while calling this method for uniqueness and
-            custom-object in args or kwargs.
+            An instance of Node being inserted.
 
         Raises:
             RuntimeError: If `position` is not belong to current `SymbolTree`.
@@ -258,67 +282,64 @@ class SymbolTree:
             TypeError: If `node` is not a `Node`.
 
         Examples:
-            >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
+            >>> from mindspore.rewrite import SymbolTree, ScopedValue
+            >>> import mindspore.nn as nn
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> stree = SymbolTree.create(net)
             >>> node = stree.get_node("conv1")
             >>> position = stree.after(node)
-            >>> new_node = stree.create_call_function(F.abs, ["x"], node)
+            >>> new_node = node.create_call_cell(cell=nn.ReLU(), targets=['x'],
+            ...                                  args=[ScopedValue.create_naming_value('x')], name='new_relu')
             >>> stree.insert(position, new_node)
         """
         Validator.check_value_type("position", position, [Position], "SymbolTree")
         Validator.check_value_type("node", node, [Node], "SymbolTree")
-        return Node(self._symbol_tree.insert_node(position, node.get_handler()))
+        return Node(self._symbol_tree.insert_node(node.get_handler(), position.node, position.before_node))
 
-    def erase_node(self, node: Node) -> Optional[Node]:
+    def erase(self, node: Union[Node, str]) -> Optional[Node]:
         """
-        Erase a `node` from rewrite. Can only erase a node not being depended on.
+        Erase a `node` from rewrite.
 
         Args:
-            node (Node): A `Node` to be erased. Can be a node or name of node.
+            node (Union[Node, str]): A `Node` to be erased. Can be a node or name of node.
 
         Returns:
             An instance of `Node` being erased if node is in `SymbolTree` else None.
 
         Raises:
-            TypeError: If `node` is not a `Node`.
+            TypeError: The type of `node` is not Node.
 
         Examples:
             >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> stree = SymbolTree.create(net)
             >>> node = stree.get_node("conv1")
-            >>> input_node = node.get_inputs()[0]
-            >>> output_nodes = node.get_users()
-            >>> for n in output_nodes:
-            ...     n.set_arg(0, "x")
-            >>> stree.erase_node(node)
+            >>> stree.erase(node)
         """
-        Validator.check_value_type("node", node, [Node], "SymbolTree")
-        return Node(self._symbol_tree.erase_node(node.get_handler()))
+        Validator.check_value_type("node", node, [Node, str], "SymbolTree")
+        if isinstance(node, Node):
+            node = node.get_handler()
+        return Node(self._symbol_tree.erase_node(node))
 
-    def replace(self, old_node: Node, new_nodes: [Node]) -> Node:
+    def replace(self, old_node: Node, new_nodes: List[Node]) -> Node:
         """
-        Replace `old_node` with a node_tree.
+        Replace the `old_node` with nodes in the `new_nodes` list.
+
+        Nodes in `new_nodes` will be inserted into SymbolTree sequentially, and then `old_node` will be deleted.
 
         Note:
-
-            1. Replace support one-to-one replacement or one-to-multi replacement. If you need multi-to-multi
-               replacement, please refer to `PatternEngine`.
-            2. When applying one-to-multi replacement, Rewrite will insert all `new_nodes` into symbol_tree.
-            3. Caller should maintain arguments and targets of nodes intra sub-tree for specifying topological relation
-               intra sub-tree.
-            4. Caller should maintain arguments of input nodes of sub-tree and for specifying topological relation of
-               inputs of sub-tree.
-            5. Rewrite will maintain arguments of prepend node of sub-tree for specifying topological relation of
-               outputs of sub-tree.
-            6. Rewrite will maintain all inputs of nodes after replace `new_nodes` into `SymbolTree`.
+            - Replace support one-to-one replacement or one-to-multi replacement. If you need multi-to-multi
+              replacement, please refer to `PatternEngine`.
+            - Caller should maintain the topological relationship between each node in the `new_nodes` , as well as
+              the topological relationship between nodes in the `new_nodes` and nodes in the original tree.
 
         Args:
             old_node (Node): Node to be replaced.
-            new_nodes (list[Node]): Nodes of the node_tree to replace in.
+            new_nodes (List[Node]): Nodes of the node_tree to replace in.
 
         Returns:
             An instance of Node represents root of node_tree been replaced in.
@@ -329,12 +350,15 @@ class SymbolTree:
             TypeError: If `new_nodes` is not a `list` or node in `new_nodes` is not a `Node`.
 
         Examples:
-            >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
+            >>> from mindspore.rewrite import SymbolTree, ScopedValue
+            >>> import mindspore.nn as nn
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> stree = SymbolTree.create(net)
             >>> node = stree.get_node("conv1")
-            >>> new_node = stree.create_call_function(F.abs, ["x"], node)
+            >>> new_node = node.create_call_cell(cell=nn.ReLU(), targets=['x'],
+            ...                                  args=[ScopedValue.create_naming_value('x')], name='new_relu')
             >>> stree.replace(node, [new_node])
         """
         Validator.check_value_type("old_node", old_node, [Node], "SymbolTree")
@@ -348,54 +372,83 @@ class SymbolTree:
         return Node(self._symbol_tree.set_output(return_value, index))
 
     def dump(self):
-        """
-        Print the ir map information corresponding to the network in 'SymbolTree' to the screen.
-        """
         self._symbol_tree.dump()
 
-    def print_node_tabulate(self):
-        """
-        Print node information of graph.
+    def print_node_tabulate(self, all_nodes: bool = False):
+        r"""
+        Print the topology information of nodes in SymbolTree, including node type, node name, node code,
+        and node input-output relationship.
+
+        The information is output to the screen using the print interface, including the following information:
+
+        - **node type** (str): The type of node, refer to class:`mindspore.rewrite.NodeType` .
+        - **name** (str): The name of node.
+        - **codes** (str): The source code statement corresponding to the node.
+        - **arg providers** (Dict[int, Tuple[str, int]]): The format is `{[idx, (n, k)]}` , which means the
+          `idx` th parameter of the node is provided by the `k` th output of node `n` .
+        - **target users** (Dict[int, List[Tuple[str, int]]]): The format is '{[idx, [(n, k)]]}' , which means
+          the `idx` th output of the node is used as the `k` th parameter of node `n` .
+
+        Args:
+            all_nodes (bool): Print information of all nodes, including nodes in CallFunction
+                node, CellContainer node and sub symbol tree. Default: ``False`` .
+
+        Raises:
+            TypeError: If `all_nodes` is not bool.
 
         Examples:
             >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> stree = SymbolTree.create(net)
             >>> stree.print_node_tabulate()
         """
-        self._symbol_tree.print_node_tabulate()
+        Validator.check_value_type("all_nodes", all_nodes, [bool], "print_node_tabulate")
+        self._symbol_tree.print_node_tabulate(all_nodes)
 
     def get_code(self) -> str:
         """
-        Get source code of modified network.
+        Get source code corresponding to the network information in SymbolTree.
+        If the network has already been modified, the source code of modified network is returned.
 
         Returns:
             A str represents source code of modified network.
 
         Examples:
             >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> stree = SymbolTree.create(net)
-            >>> stree.get_code()
+            >>> codes = stree.get_code()
+            >>> print(codes)
         """
         return self._symbol_tree.get_code()
 
     def get_network(self) -> Cell:
         """
-        Get modified network.
-        The source code of network is saved to a file, the default file name is `network_define.py`.
+        Get the network object generated based on SymbolTree.
+        The source code is saved to a file in the 'rewritten_network' folder of the current directory.
+
+        Note:
+            - The modification of network by rewrite module is based on the modification of AST tree of
+              original network instance, and the new network instance will obtain attribute information
+              from original network instance, so the new network instance and the original network instance
+              have data association, and the original network should no longer be used.
+            - Due to the data association between the new network and the original network instance, manually creating
+              a network instance using the source code file generated by rewrite is not currently supported.
 
         Returns:
-            A network object.
+            A network object generated from SymbolTree.
 
         Examples:
             >>> from mindspore.rewrite import SymbolTree
-            >>> from lenet import Lenet
-            >>> net = Lenet()
+            >>> # Define the network structure of LeNet5. Refer to
+            >>> # https://gitee.com/mindspore/docs/blob/master/docs/mindspore/code/lenet.py
+            >>> net = LeNet5()
             >>> stree = SymbolTree.create(net)
-            >>> stree.get_network()
+            >>> new_net = stree.get_network()
         """
         return self._symbol_tree.get_network()
 
@@ -408,3 +461,21 @@ class SymbolTree:
 
     def save_network_to_file(self):
         self._symbol_tree.save_network_to_file()
+
+    def unique_name(self, name: str = "output"):
+        """
+        Based on the given `name` , returns a new name that is unique within the symbol tree.
+        This interface can be used when a variable name that does not conflict is required.
+
+        Args:
+            name (str, optional): The prefix of the name. Defaults to ``"output"`` .
+
+        Returns:
+            str, A new, unique name within a symbol tree in the format `name_n`, where `n` is a numeric subscript.
+            If there is no name conflict when entered `name`, there is no numeric subscript.
+
+        Raises:
+            TypeError: The type of `name` is not str.
+        """
+        Validator.check_value_type("name", name, [str], "SymbolTree")
+        return self._symbol_tree.unique_name(name)

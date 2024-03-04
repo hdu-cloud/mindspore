@@ -14,6 +14,7 @@
 # ============================================================================
 """ test nn pad """
 import numpy as np
+import pytest
 
 import mindspore.nn as nn
 from mindspore import Tensor
@@ -63,11 +64,11 @@ class ZeroPad2dNet(nn.Cell):
 class Grad(nn.Cell):
     def __init__(self, network):
         super(Grad, self).__init__()
-        self.grad = GradOperation(get_all=True, sens_param=True)
+        self.grad = GradOperation(get_all=True, sens_param=False)
         self.network = network
 
-    def construct(self, x, grads):
-        return self.grad(self.network)(x, grads)
+    def construct(self, x):
+        return self.grad(self.network)(x)
 
 
 def test_constant_pad_1d_infer():
@@ -112,25 +113,22 @@ def test_constant_pad_1d_train():
     print("=================case 1====================")
     padding = (0, 1)
     value = 0.5
-    grads = np.random.random(size=(1, 2, 3, 5)).astype(np.float32)
     grad = Grad(ConstantPad1dNet(padding, value))
-    output = grad(Tensor(x), Tensor(grads))
+    output = grad(Tensor(x))
     print(output)
 
     print("=================case 2====================")
     padding = 1
     value = 0.5
-    grads = np.random.random(size=(1, 2, 3, 6)).astype(np.float32)
     grad = Grad(ConstantPad1dNet(padding, value))
-    output = grad(Tensor(x), Tensor(grads))
+    output = grad(Tensor(x))
     print(output)
 
     print("=================case 3====================")
     padding = (-1, 0)
     value = 0.5
-    grads = np.random.random(size=(1, 2, 3, 3)).astype(np.float32)
     grad = Grad(ConstantPad1dNet(padding, value))
-    output = grad(Tensor(x), Tensor(grads))
+    output = grad(Tensor(x))
     print(output)
 
 
@@ -176,25 +174,22 @@ def test_constant_pad_2d_train():
     print("=================case 1====================")
     padding = (0, 1)
     value = 0.5
-    grads = np.random.random(size=(1, 2, 3, 5)).astype(np.float32)
     grad = Grad(ConstantPad2dNet(padding, value))
-    output = grad(Tensor(x), Tensor(grads))
+    output = grad(Tensor(x))
     print(output)
 
     print("=================case 2====================")
     padding = 1
     value = 0.5
-    grads = np.random.random(size=(1, 2, 5, 6)).astype(np.float32)
     grad = Grad(ConstantPad2dNet(padding, value))
-    output = grad(Tensor(x), Tensor(grads))
+    output = grad(Tensor(x))
     print(output)
 
     print("=================case 3====================")
     padding = (-1, 1, 0, 1)
     value = 0.5
-    grads = np.random.random(size=(1, 2, 4, 4)).astype(np.float32)
     grad = Grad(ConstantPad2dNet(padding, value))
-    output = grad(Tensor(x), Tensor(grads))
+    output = grad(Tensor(x))
     print(output)
 
 
@@ -240,25 +235,22 @@ def test_constant_pad_3d_train():
     print("=================case 1====================")
     padding = (0, 1)
     value = 0.5
-    grads = np.random.random(size=(1, 2, 3, 5)).astype(np.float32)
     grad = Grad(ConstantPad3dNet(padding, value))
-    output = grad(Tensor(x), Tensor(grads))
+    output = grad(Tensor(x))
     print(output)
 
     print("=================case 2====================")
     padding = 1
     value = 0.5
-    grads = np.random.random(size=(1, 4, 5, 6)).astype(np.float32)
     grad = Grad(ConstantPad3dNet(padding, value))
-    output = grad(Tensor(x), Tensor(grads))
+    output = grad(Tensor(x))
     print(output)
 
     print("=================case 3====================")
     padding = (-1, 1, 0, 1, 1, 0)
     value = 0.5
-    grads = np.random.random(size=(1, 3, 4, 4)).astype(np.float32)
     grad = Grad(ConstantPad3dNet(padding, value))
-    output = grad(Tensor(x), Tensor(grads))
+    output = grad(Tensor(x))
     print(output)
 
 
@@ -301,21 +293,85 @@ def test_zero_pad_2d_train():
     x = np.ones(shape=(1, 2, 3, 4)).astype(np.float32)
     print("=================case 1====================")
     padding = (0, 1)
-    grads = np.random.random(size=(1, 2, 3, 5)).astype(np.float32)
     grad = Grad(ZeroPad2dNet(padding))
-    output = grad(Tensor(x), Tensor(grads))
+    output = grad(Tensor(x))
     print(output)
 
     print("=================case 2====================")
     padding = 1
-    grads = np.random.random(size=(1, 2, 5, 6)).astype(np.float32)
     grad = Grad(ZeroPad2dNet(padding))
-    output = grad(Tensor(x), Tensor(grads))
+    output = grad(Tensor(x))
     print(output)
 
     print("=================case 3====================")
     padding = (-1, 1, 0, 1)
-    grads = np.random.random(size=(1, 2, 4, 4)).astype(np.float32)
     grad = Grad(ZeroPad2dNet(padding))
-    output = grad(Tensor(x), Tensor(grads))
+    output = grad(Tensor(x))
     print(output)
+
+
+def test_invalid_padding_reflection_pad_1d():
+    """
+    Feature: ReflectionPad1d
+    Description: test 5 cases of invalid input.
+    Expectation: success
+    """
+    # case 1: padding is not int or tuple
+    padding = '-1'
+    with pytest.raises(TypeError):
+        nn.ReflectionPad1d(padding)
+
+    # case 2: padding length is not divisible by 2
+    padding = (1, 2, 2)
+    with pytest.raises(ValueError):
+        nn.ReflectionPad1d(padding)
+
+    # case 3: padding element is not int
+    padding = ('2', 2)
+    with pytest.raises(TypeError):
+        nn.ReflectionPad1d(padding)
+
+    # case 4: negative padding
+    padding = (-1, 2)
+    with pytest.raises(ValueError):
+        nn.ReflectionPad1d(padding)
+
+    # case 5: padding dimension does not match tensor dimension
+    padding = (1, 1, 1, 1, 1, 1, 1, 1)
+    x = Tensor([[1, 2, 3], [1, 2, 3]])
+    with pytest.raises(ValueError):
+        nn.ReflectionPad1d(padding)(x)
+
+
+
+def test_invalid_padding_reflection_pad_2d():
+    """
+    Feature: ReflectionPad2d
+    Description: test 5 cases of invalid input.
+    Expectation: success
+    """
+    # case 1: padding is not int or tuple
+    padding = '-1'
+    with pytest.raises(TypeError):
+        nn.ReflectionPad2d(padding)
+
+    # case 2: padding length is not divisible by 2
+    padding = (1, 2, 2)
+    with pytest.raises(ValueError):
+        nn.ReflectionPad2d(padding)
+
+    # case 3: padding element is not int
+    padding = ('2', 2)
+    with pytest.raises(TypeError):
+        nn.ReflectionPad2d(padding)
+
+    # case 4: negative padding
+    padding = (-1, 2)
+    with pytest.raises(ValueError):
+        nn.ReflectionPad2d(padding)
+
+    # case 5: padding dimension does not match tensor dimension
+    padding = (1, 1, 1, 1, 1, 1, 1, 1)
+    x = Tensor([[1, 2, 3], [1, 2, 3]])
+    with pytest.raises(ValueError):
+        nn.ReflectionPad2d(padding)(x)

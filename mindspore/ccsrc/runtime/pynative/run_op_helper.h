@@ -18,7 +18,8 @@
 #define MINDSPORE_MINDSPORE_CCSRC_RUNTIME_RUN_OP_RUN_OP_HELPER_H_
 
 #include <vector>
-#include "backend/common/session/kernel_graph.h"
+#include "include/backend/kernel_graph.h"
+#include "runtime/pynative/op_compiler.h"
 #include "runtime/hardware/device_context.h"
 
 namespace mindspore::runtime {
@@ -28,7 +29,12 @@ void UpdateDeviceAddress(const KernelGraphPtr &graph, const std::vector<tensor::
 
 void RunSingleOpGraph(const KernelGraphPtr &graph, const std::vector<tensor::TensorPtr> &input_tensors,
                       const device::DeviceContext *device_context);
-void RunSingleOpGraphDynamic(const KernelGraphPtr &graph, const std::vector<tensor::TensorPtr> &input_tensors,
-                             const device::DeviceContext *device_context, bool is_gradient_out);
+void RunSingleOpDynamic(const session::BackendOpRunInfoPtr &op_run_info, const OpCompilerInfoPtr &op_compiler_info,
+                        vector<device::DeviceAddressPtr> *device_address_list);
+std::vector<tensor::TensorPtr> GetTensorWithoutValueMask(const session::BackendOpRunInfoPtr &op_run_info);
+void LaunchKernelTask(const pynative::KernelTaskType &task_type, DeviceContext *device_context,
+                      const device::DeviceAddressPtrList &input_addr_list,
+                      const TensorStorageInfoPtrList &input_storage_list,
+                      const device::DeviceAddressPtrList &output_addr_list);
 }  // namespace mindspore::runtime
 #endif  // MINDSPORE_MINDSPORE_CCSRC_RUNTIME_RUN_OP_RUN_OP_HELPER_H_

@@ -15,16 +15,29 @@
  */
 
 #include "ops/histogram.h"
-#include <algorithm>
-#include <map>
+
 #include <memory>
 #include <set>
-#include <string>
 #include <vector>
-#include "ops/op_utils.h"
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -79,6 +92,24 @@ AbstractBasePtr HistogramInfer(const abstract::AnalysisEnginePtr &, const Primit
 }
 
 MIND_API_OPERATOR_IMPL(Histogram, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(Histogram, prim::kPrimHistogram, HistogramInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGHistogramInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return HistogramInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return HistogramInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return HistogramInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Histogram, prim::kPrimHistogram, AGHistogramInfer, false);
 }  // namespace ops
 }  // namespace mindspore

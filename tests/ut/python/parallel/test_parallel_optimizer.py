@@ -32,6 +32,7 @@ def setup_function():
 
 class Net(nn.Cell):
     """Net definition"""
+
     def __init__(self):
         super(Net, self).__init__()
         self.fc1 = nn.Dense(128, 768, activation='relu')
@@ -57,6 +58,7 @@ class Net(nn.Cell):
 
 class Net2(nn.Cell):
     """Net definition"""
+
     def __init__(self, strategy1, strategy2):
         super(Net2, self).__init__()
         self.fc1 = P.MatMul().shard(strategy1)
@@ -72,6 +74,7 @@ class Net2(nn.Cell):
 
 class Net3(nn.Cell):
     """Net definition"""
+
     def __init__(self, strategy1, strategy2):
         super(Net3, self).__init__()
         self.fc1 = P.MatMul().shard(strategy1)
@@ -87,6 +90,7 @@ class Net3(nn.Cell):
 
 class Net4(nn.Cell):
     """Net definition"""
+
     def __init__(self, strategy1, strategy2):
         super(Net4, self).__init__()
         self.fc1 = P.MatMul().shard(strategy1)
@@ -100,9 +104,10 @@ class Net4(nn.Cell):
         return x - y
 
 
-def auto_parallel_compile_net(mode, dev_num, net, strategy1=None, strategy2=None):
+def auto_parallel_compile_net(mode, dev_num, net, strategy1=None, strategy2=None, search_mode="dynamic_programming"):
     context.set_context(mode=context.GRAPH_MODE)
-    context.set_auto_parallel_context(parallel_mode=mode, device_num=dev_num, enable_parallel_optimizer=True)
+    context.set_auto_parallel_context(parallel_mode=mode, device_num=dev_num, enable_parallel_optimizer=True,
+                                      search_mode=search_mode)
     inputs = Tensor(np.ones([32, 48]).astype(np.float32))
     label = Tensor(np.zeros([32, 16]).astype(np.float32))
     net = net(strategy1, strategy2)
@@ -156,13 +161,14 @@ def test_auto_parallel_momentum_6():
     # test not fully use parallel optimizer with optimizer_weight_shard_size
     # weight1 could not be shard and weight2 is repeated
     param_shard_group_size = 2
-    context.set_auto_parallel_context(optimizer_weight_shard_size=param_shard_group_size)
-    context.set_auto_parallel_context(parallel_optimizer_config={"parallel_optimizer_threshold": 1})
+    context.set_auto_parallel_context(parallel_optimizer_config={"parallel_optimizer_threshold": 1,
+                                                                 "optimizer_weight_shard_size": param_shard_group_size})
     train_network = auto_parallel_compile_net("semi_auto_parallel", 32, Net2, ((4, 8), (8, 1)), ((4, 4), (4, 2)))
     param_dict = train_network.parameter_layout_dict
     # validate opt_shard_group
     assert param_dict["weight1"][5].startswith(str(param_shard_group_size))
     assert param_dict["weight2"][5].startswith(str(param_shard_group_size))
+
 
 def test_default_threshold():
     """
@@ -175,6 +181,7 @@ def test_default_threshold():
     param_dict = train_network.parameter_layout_dict
     # validate opt_shard_group
     assert param_dict["weight2"][5]
+
 
 def test_user_define_threshold():
     """
@@ -242,6 +249,32 @@ def test_lamb_split_fusion():
     train_network = TrainOneStepCell(net_with_loss, optimizer)
     _cell_graph_executor.compile(train_network, inputs, label)
     context.reset_auto_parallel_context()
+
+
+def test_auto_parallel_device_num():
+    """
+    Feature: semi-parallel-optimizer with not fully shard
+    Description: If the optimizer_weight_shard_size exceeds the device num, there should be error.
+    Expectation: The optimizer_weight_shard_size exceeds the device num.
+    """
+    dp = 4
+    context.set_auto_parallel_context(parallel_optimizer_config={"optimizer_weight_shard_size": 128})
+    with pytest.raises(RuntimeError):
+        auto_parallel_compile_net("semi_auto_parallel", 32, Net2, ((dp, 8), (8, 1)), ((dp, 4), (4, 2)))
+
+
+def test_auto_parallel_device_num_not_divided_by_weight_shard_size():
+    """
+    Feature: semi-parallel-optimizer not divided by weight shard size
+    Description: If the optimizer_weight_shard_size cannot be divided by the device num, there should be no errors.
+    Expectation: No exception.
+    """
+    dp = 4
+    context.set_auto_parallel_context(parallel_optimizer_config={"parallel_optimizer_threshold": 0,
+                                                                 "optimizer_weight_shard_size": 3})
+    auto_parallel_compile_net("semi_auto_parallel", 32, Net2, ((dp, 8), (8, 1)), ((dp, 4), (4, 2)))
+
+
 
 
 def test_edge_case():

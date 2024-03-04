@@ -15,15 +15,36 @@
  */
 
 #include "ops/crop_and_resize.h"
-#include <algorithm>
+
 #include <memory>
 #include <set>
 #include <string>
 #include <vector>
-#include "utils/check_convert_utils.h"
-#include "ops/op_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
+#include "abstract/ops/primitive_infer_map.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/scalar.h"
+#include "ir/value.h"
+#include "mindapi/base/shape_vector.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
-#include "utils/ms_context.h"
+#include "mindspore/core/ops/image_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -68,7 +89,7 @@ class CropAndResizeInfer : public abstract::OpInferBase {
                                "For primitive[" + prim_name + "], the [crop_size] typeid is a nullptr.");
     auto value_ptr = input_args[kInputIndex3]->BuildValue();
     MS_EXCEPTION_IF_NULL(value_ptr);
-    if (value_ptr->isa<AnyValue>()) {
+    if (!IsValueKnown(value_ptr)) {
       return std::make_shared<abstract::Shape>(
         ShapeVector{num_boxes, abstract::Shape::kShapeDimAny, abstract::Shape::kShapeDimAny, out_channel});
     }

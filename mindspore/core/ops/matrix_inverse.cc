@@ -15,13 +15,28 @@
  */
 
 #include "ops/matrix_inverse.h"
-#include <set>
 
-#include "ops/op_utils.h"
-#include "utils/tensor_construct_utils.h"
+#include <memory>
+#include <set>
+#include <vector>
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "utils/check_convert_utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype/number.h"
+#include "ir/primitive.h"
+#include "mindapi/base/shared_ptr.h"
+#include "mindapi/ir/value.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
+#include "ops/op_name.h"
+#include "ops/primitive_c.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace ops {
@@ -63,12 +78,6 @@ class MatrixInverseInfer : public abstract::OpInferBase {
     CheckAndConvertUtils::CheckInputArgs(input_args, kEqual, input_num, prim->name());
     const std::set<TypePtr> valid_types = {kFloat32, kFloat64, kComplex64, kComplex128};
     auto infer_type = input_args[kInputIndex0]->BuildType();
-    auto adjoint_ptr = prim->GetAttr(kAdjoint);
-    MS_EXCEPTION_IF_NULL(adjoint_ptr);
-    auto adjoint = GetValue<bool>(adjoint_ptr);
-    if (adjoint) {
-      MS_EXCEPTION(ValueError) << "For '" << prim->name() << "', 'adjoint' only accepts False.";
-    }
     (void)CheckAndConvertUtils::CheckTensorTypeValid("x", infer_type, valid_types, prim->name());
     return infer_type;
   }

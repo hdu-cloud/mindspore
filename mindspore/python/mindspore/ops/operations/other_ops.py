@@ -17,10 +17,13 @@
 import functools
 from mindspore import log as logger
 from mindspore.ops import signature as sig
-from mindspore._checkparam import Validator as validator, Rel
+from mindspore import _checkparam as validator
 from mindspore.common import dtype as mstype
 from mindspore.ops.primitive import Primitive, PrimitiveWithCheck, PrimitiveWithInfer, prim_attr_register
 from mindspore.ops.operations._pyfunc_registry import add_pyfunc
+from mindspore._c_expression import typing
+from mindspore.ops.operations.array_ops import Identity
+from mindspore.ops._primitive_cache import _get_cache_prim
 
 
 class Assign(Primitive):
@@ -29,10 +32,20 @@ class Assign(Primitive):
 
     Refer to :func:`mindspore.ops.assign` for more details.
 
+    Inputs:
+        - **variable** (Parameter) - The `Parameter`. :math:`(N,*)` where :math:`*` means,
+          any number of additional dimensions, its rank should be less than 8.
+        - **value** (Tensor) - The value to be assigned, has the same shape with `variable`.
+
+    Outputs:
+        Tensor, has the same data type and shape as original `variable`.
+
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, ops
         >>> value = Tensor([2.0], mindspore.float32)
         >>> variable = mindspore.Parameter(Tensor([1.0], mindspore.float32), name="variable")
         >>> assign = ops.Assign()
@@ -71,6 +84,9 @@ class Load(PrimitiveWithCheck):
     def __init__(self):
         """Initialize Load."""
         self.init_prim_io_names(inputs=['ref', 'u'], outputs=['output'])
+
+    def __call__(self, *args):
+        return _get_cache_prim(Identity)()(args[0])
 
     def check_dtype(self, variable):
         if variable != mstype.type_refkey:
@@ -114,11 +130,11 @@ class BoundingBoxEncode(PrimitiveWithInfer):
     and this offset will be used as a variable for the loss.
 
     Args:
-        means (tuple): Means for encoding bounding boxes calculation. Default: (0.0, 0.0, 0.0, 0.0).
-        stds (tuple): The standard deviations of deltas calculation. Default: (1.0, 1.0, 1.0, 1.0).
+        means (tuple): Means for encoding bounding boxes calculation. Default: ``(0.0, 0.0, 0.0, 0.0)`` .
+        stds (tuple): The standard deviations of deltas calculation. Default: ``(1.0, 1.0, 1.0, 1.0)`` .
 
     Inputs:
-        - **anchor_box** (Tensor) - Anchor boxes. The shape of anchor_box must be (n, 4).
+        - **anchor_box** (Tensor) - Anchor boxes. The shape of anchor_box must be :math:`(n, 4)`.
         - **groundtruth_box** (Tensor) - Ground truth boxes. Which has the same shape with anchor_box.
 
     Outputs:
@@ -132,6 +148,8 @@ class BoundingBoxEncode(PrimitiveWithInfer):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, ops
         >>> anchor_box = Tensor([[2, 2, 2, 3], [2, 2, 2, 3]], mindspore.float32)
         >>> groundtruth_box = Tensor([[1, 2, 1, 4], [1, 2, 1, 4]], mindspore.float32)
         >>> boundingbox_encode = ops.BoundingBoxEncode(means=(0.0, 0.0, 0.0, 0.0), stds=(1.0, 1.0, 1.0, 1.0))
@@ -163,12 +181,12 @@ class BoundingBoxDecode(Primitive):
 
     Args:
         max_shape (tuple): The max size limit for decoding box calculation.
-        means (tuple): The means of deltas calculation. Default: (0.0, 0.0, 0.0, 0.0).
-        stds (tuple): The standard deviations of deltas calculation. Default: (1.0, 1.0, 1.0, 1.0).
-        wh_ratio_clip (float): The limit of width and height ratio for decoding box calculation. Default: 0.016.
+        means (tuple): The means of deltas calculation. Default: ``(0.0, 0.0, 0.0, 0.0)`` .
+        stds (tuple): The standard deviations of deltas calculation. Default: ``(1.0, 1.0, 1.0, 1.0)`` .
+        wh_ratio_clip (float): The limit of width and height ratio for decoding box calculation. Default: ``0.016`` .
 
     Inputs:
-        - **anchor_box** (Tensor) - Anchor boxes. The shape of `anchor_box` must be (n, 4).
+        - **anchor_box** (Tensor) - Anchor boxes. The shape of `anchor_box` must be :math:`(n, 4)`.
         - **deltas** (Tensor) - Delta of boxes. Which has the same shape with `anchor_box`.
 
     Outputs:
@@ -183,6 +201,8 @@ class BoundingBoxDecode(Primitive):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> from mindspore import Tensor, ops
         >>> anchor_box = Tensor([[4, 1, 2, 1], [2, 2, 2, 3]], mindspore.float32)
         >>> deltas = Tensor([[3, 1, 2, 2], [1, 2, 1, 4]], mindspore.float32)
         >>> boundingbox_decode = ops.BoundingBoxDecode(means=(0.0, 0.0, 0.0, 0.0), stds=(1.0, 1.0, 1.0, 1.0),
@@ -213,43 +233,53 @@ class BoundingBoxDecode(Primitive):
 
 class SampleDistortedBoundingBoxV2(Primitive):
     r"""
-    Generate a single randomly distorted bounding box for an image.
+    Creates a single bounding box that is randomly distorted for an image.
 
-    Bounding box annotations are often supplied in addition to ground-truth labels in image recognition or object
-    localization tasks. A common technique for training such a system is to randomly distort an image while preserving
-    its content, i.e. data augmentation. This Op outputs a randomly distorted localization of an object, i.e. bounding
-    box, given an `image_size`, `bounding_boxes` and a series of constraints. The output is returned as 3 tensors:
-    `begin`, `size` and `bboxes`. The first 2 tensors can be fed directly into mindspore.ops.Slice to crop the image.
+    It is often used for object localization and image recognition tasks.
+    In such tasks, bounding box annotations are supplied in addition to ground-truth
+    labels, and data augmentation techniques are often used to randomly distort an image
+    while preserving its content.
+
+    This function takes the `image_size`, `bounding_boxes`, and
+    a series of constraints as input, and outputs a randomly distorted localization of an
+    object (i.e., bounding box) based on these inputs.
+
+    The output is returned as 3 tensors:
+
+    The output is returned as 3 tensors:
+    `begin`, `size` and `bboxes`. The first 2 tensors can be fed directly
+    into :class:`mindspore.ops.Slice` to crop the image.
     The latter is the generated distorted bounding box.
 
     Args:
-        seed (int, optional): If either `seed` or `seed2` is set to non-zero, the random number generator is
-            seeded by the given seed. Otherwise, it is seeded by a random seed. Default: 0.
-        seed2 (int, optional): A second seed to avoid seed collision. Default: 0.
+        seed (int, optional): Random number seed. If either `seed` or `seed2` is set to a non-zero value,
+            the seed is to the given value. Otherwise, a random seed is uesed. Default: ``0`` .
+        seed2 (int, optional): The second seed to avoid seed collision. Default: ``0`` .
         aspect_ratio_range (Union[list(float), tuple(float)], optional): Specifying the valild range of aspect
             ratio of cropped area. Aspect ratio of area = area_width / area_height. The value of this
-            attribute should be positive. Default: (0.75, 1.33).
+            attribute should be positive. Default: ``(0.75, 1.33)`` .
         area_range (Union[list(float), tuple(float)], optional): The cropped area of the image must contain a
             fraction of the supplied image within this range. The value of this attribute should
-            be in range (0.0, 1.0]. Default: (0.05, 1.0).
-        max_attempts (int, optional): Number of attempts at generating a cropped region of the image
-            of the specified constraints. After max_attempts failures, return the entire image. The value of
-            this attribute should be positive. Default: 100.
+            be in range (0.0, 1.0]. Default: ``(0.05, 1.0)`` .
+        max_attempts (int, optional): A poditive integer specifies the number of attempts that will be made to
+            generate a cropped region of the image based on the given constraints. If the maximum number of
+            attempts is exceeded without success, the function will return the entire original image.
+            Default: ``100`` .
         use_image_if_no_bounding_boxes (bool, optional): Controls behavior if no bounding boxes supplied.
-            If no bounding boxes supplied (`bounding_boxes` in shape [0, N, 4] or [batch, 0, 4]), and this
-            attribute is set True, then assume an implicit bounding box covering the
-            whole input, else if this attribute is set False, then raise an error. Default: False.
+            If no bounding boxes supplied (`bounding_boxes` in shape :math:`(0, N, 4)` or :math:`(batch, 0, 4)`), and
+            this attribute is set True, then assume an implicit bounding box covering the
+            whole input, else if this attribute is set False, then raise an error. Default: ``False`` .
 
     Inputs:
-        - **image_size** (Tensor) - 1-D, containing [height, width, channels]. The value of this input
+        - **image_size** (Tensor) - 1-D Tensor, containing [height, width, channels]. The value of this input
           tensor should be positive.
-        - **bounding_boxes** (Tensor) - 3-D with shape [batch, N, 4] describing the N bounding boxes associated with
-          the image. The value of this input tensor should be in range [0.0, 1.0]. The
-          data type is float32.
-        - **min_object_covered** (Tensor) - The cropped area of the image must contain at least this fraction of any
-          bounding box supplied. The value of this parameter should be in range
-          [0.0, 1.0]. In the case of 0, the cropped area does not need to overlap any
-          of the bounding boxes supplied. The data type is float32.
+        - **bounding_boxes** (Tensor) - 3-D Tensor with shape :math:`(batch, N, 4)` describing the N
+          bounding boxes associated with the image. The value of this input tensor should be in range [0.0, 1.0].
+          The data type is float32.
+        - **min_object_covered** (Tensor) - The least fraction of bounding box the croped area need to cover.
+          This parameter's value should be between 0.0 and 1.0, inclusive. If the value is 0,
+          the cropped area does not need to overlap with any of the supplied bounding boxes.
+          The data type is float32.
 
     Outputs:
         - **begin** (Tensor) - A 1-D Tensor, containing [offset_height, offset_width, 0]. The data type is same as
@@ -257,8 +287,8 @@ class SampleDistortedBoundingBoxV2(Primitive):
         - **size** (Tensor) - A 1-D Tensor, containing [target_height, target_width, -1]. The data type is same as
           `image_size`. When the data type of `image_size` is uint8, the last value of `size`,
           which is originally -1, will be forced to 255.
-        - **bboxes** (Tensor) - A 3-D Tensor with shape [1, 1, 4], containing the distorted bounding box. The data type
-          is float32.
+        - **bboxes** (Tensor) - A 3-D Tensor with shape :math:`(1, 1, 4)`, containing
+          the distorted bounding box. The data type is float32.
 
     Raises:
         TypeError: If `image_size` is not a Tensor.
@@ -287,7 +317,7 @@ class SampleDistortedBoundingBoxV2(Primitive):
         RuntimeError: If the value of `min_object_covered` is out of range [0.0, 1.0].
 
     Supported Platforms:
-        ``CPU``
+        ``Ascend`` ``CPU``
 
     Examples:
         >>> image_size = Tensor([640, 480, 3], mindspore.int32)
@@ -333,13 +363,13 @@ class CheckValid(Primitive):
     Returns True if the box is within borders specified by `img_metas`, False if not.
 
     Inputs:
-        - **bboxes** (Tensor) - Bounding boxes tensor with shape (N, 4). "N" indicates the number of
-          bounding boxes, the value "4" indicates "x0", "x1", "y0", and "y1". Data type must be float16 or float32.
-        - **img_metas** (Tensor) - Raw image size information with the format of (height, width, ratio), specifying
-          the valid boundary(height * ratio, width * ratio). Data type must be float16 or float32.
+        - **bboxes** (Tensor) - Bounding boxes tensor with shape :math:`(N, 4)`. :math:`N` indicates the number of
+          bounding boxes, the value "4" indicates "x0", "y0", "x1", and "y1". Data type must be float16 or float32.
+        - **img_metas** (Tensor) - Raw image size information with the format of :math:`(height, width, ratio)`,
+          specifying the valid boundary :math:`(height * ratio, width * ratio)`. Data type must be float16 or float32.
 
     Outputs:
-        Tensor, with shape of (N,) and dtype of bool, specifying whether the bounding boxes is in the image.
+        Tensor, with shape of :math:`(N,)` and dtype of bool, specifying whether the bounding boxes is in the image.
         "True" indicates valid, while "False" indicates invalid.
 
     Raises:
@@ -385,10 +415,28 @@ class IOU(Primitive):
 
     Refer to :func:`mindspore.ops.iou` for more details.
 
+    Args:
+        mode (string): The mode is used to specify the calculation method,
+                       now supporting ``'iou'`` (intersection over union) or ``'iof'``
+                       (intersection over foreground) mode. Default: ``'iou'`` .
+
+    Inputs:
+        - **anchor_boxes** (Tensor) - Anchor boxes, tensor of shape :math:`(N, 4)`.
+          "N" indicates the number of anchor boxes,
+          and the value "4" refers to "x0", "y0", "x1", and "y1". Data type must be float16 or float32.
+        - **gt_boxes** (Tensor) - Ground truth boxes, tensor of shape :math:`(M, 4)`. "M" indicates the number of ground
+          truth boxes, and the value "4" refers to "x0", "y0", "x1", and "y1". Data type must be float16 or float32.
+
+    Outputs:
+        Tensor, the 'iou' values, tensor of shape :math:`(M, N)`, with the same data type as `anchor_boxes`.
+
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
+        >>> import mindspore
+        >>> import numpy as np
+        >>> from mindspore import Tensor, ops
         >>> iou = ops.IOU(mode='iou')
         >>> anchor_boxes = Tensor(np.random.randint(1.0, 5.0, [3, 4]), mindspore.float16)
         >>> gt_boxes = Tensor(np.random.randint(1.0, 5.0, [3, 4]), mindspore.float16)
@@ -531,8 +579,8 @@ class UpdateState(Primitive):
     def __init__(self):
         pass
 
-    def __call__(self, state, expr):
-        return state
+    def __call__(self, *args):
+        return args[0]
 
 
 class StopGradient(Primitive):
@@ -541,6 +589,12 @@ class StopGradient(Primitive):
     such as truncating the gradient propagation from an output of a function.
 
     Refer to :func:`mindspore.ops.stop_gradient` for more details.
+
+    Inputs:
+        - **value** (Any) - The value whose effect on the gradient to be eliminated.
+
+    Outputs:
+        The same as `value`.
 
     Supported Platforms:
         ``Ascend`` ``GPU`` ``CPU``
@@ -575,7 +629,7 @@ class ConfusionMatrix(PrimitiveWithInfer):
 
     Args:
         num_classes (int): The num of classes.
-        dtype (str): Data type of confusion matrix. Default: 'int32'.
+        dtype (str): Data type of confusion matrix. Default: ``'int32'`` .
 
     Inputs:
         - **labels** (Tensor) - real labels, tensor of 1-D. the dtype must be non-negative Integer.
@@ -610,18 +664,18 @@ class ConfusionMatrix(PrimitiveWithInfer):
         validator.check_value_type("dtype", dtype, [str], self.name)
 
     def infer_shape(self, labels, predictions, weights=None):
-        validator.check('labels dimension', len(labels), '', 1, Rel.EQ, self.name)
-        validator.check('labels shape', labels, 'predictions shape', predictions, Rel.EQ, self.name)
+        validator.check('labels dimension', len(labels), '', 1, validator.EQ, self.name)
+        validator.check('labels shape', labels, 'predictions shape', predictions, validator.EQ, self.name)
         if weights is not None:
-            validator.check('labels shape', labels, 'weights shape', weights, Rel.EQ, self.name)
+            validator.check('labels shape', labels, 'weights shape', weights, validator.EQ, self.name)
         ret = (self.num_classes, self.num_classes)
         return ret
 
     def infer_dtype(self, labels, predictions, weights=None):
-        validator.check_subclass('labels', labels, mstype.tensor, self.name)
-        validator.check_subclass('predictions', predictions, mstype.tensor, self.name)
+        validator.check_subclass('labels', labels, mstype.tensor_type, self.name)
+        validator.check_subclass('predictions', predictions, mstype.tensor_type, self.name)
         if weights is not None:
-            validator.check_subclass('weights', weights, mstype.tensor, self.name)
+            validator.check_subclass('weights', weights, mstype.tensor_type, self.name)
         args = {"labels": labels, "predictions": predictions}
         validator.check_tensors_dtypes_same_and_valid(args, (mstype.number_type), self.name)
         return labels
@@ -632,9 +686,9 @@ class Push(PrimitiveWithInfer):
     Pushes the inputs of the corresponding optimizer to parameter server.
 
     Args:
-        optim_type (string): The optimizer type. Default: 'ApplyMomentum'.
+        optim_type (string): The optimizer type. Default: ``'ApplyMomentum'`` .
         only_shape_indices (list): The indices of input of which only shape
-                                   will be pushed to parameter server. Default: None.
+                                   will be pushed to parameter server. Default: ``None`` .
 
     Inputs:
         - **optim_inputs** (tuple) - The inputs for this kind of optimizer.
@@ -683,29 +737,6 @@ class Pull(PrimitiveWithInfer):
         return mstype.float32
 
 
-class identity(Primitive):
-    """
-    Makes a identify primitive, used for pynative mode.
-
-    Inputs:
-        - **x** (Any) - identity input value.
-
-    Outputs:
-        The same as input.
-    """
-
-    # Side effect will propagated from the first argument to return value.
-    side_effect_propagate = 1
-
-    @prim_attr_register
-    def __init__(self):
-        """Initialize identity."""
-        self.add_prim_attr('side_effect_propagate', 1)
-
-    def __call__(self, x):
-        return x
-
-
 class PyInterpret(Primitive):
     r"""
     Interpret Python expression.
@@ -749,7 +780,7 @@ class PyFunc(PrimitiveWithInfer):
     checkpoint and load to the network again, but will lose any Python function state.
 
     .. warning::
-        This is an experimental prototype that is subject to change and/or deletion.
+        This is an experimental API that is subject to change or deletion.
 
     Args:
         fn (function): Python function which inputs and outputs should be Python built-in scalar or numpy ndarray.
@@ -798,10 +829,11 @@ class PyFunc(PrimitiveWithInfer):
         self.add_prim_attr('out_shapes', out_shapes)
         validator.check_value_type("in_types", in_types, [list, tuple], self.name)
         validator.check_value_type("in_shapes", in_shapes, [list, tuple], self.name)
-        validator.check("in_types length", len(in_types), "in_shapes length", len(in_shapes), Rel.EQ, self.name)
+        validator.check("in_types length", len(in_types), "in_shapes length", len(in_shapes), validator.EQ, self.name)
         validator.check_value_type("out_types", out_types, [list, tuple], self.name)
         validator.check_value_type("out_shapes", out_shapes, [list, tuple], self.name)
-        validator.check("out_types length", len(out_types), "out_shapes length", len(out_shapes), Rel.EQ, self.name)
+        validator.check("out_types length", len(out_types), "out_shapes length",
+                        len(out_shapes), validator.EQ, self.name)
         self.add_prim_attr("side_effect_io", stateful)
         self.add_prim_attr("primitive_target", "CPU")
         fake_output = False
@@ -823,8 +855,9 @@ class PyFunc(PrimitiveWithInfer):
 
     def infer_dtype(self, *args):
         if self.out_shapes:
-            return tuple(self.out_types)
+            dtype_list = tuple([typing.TensorType(dtype) for dtype in self.out_types])
+            return dtype_list
 
         logger.warning("The function output are empty tuple. Add a placeholder instead. "
                        "Do not use it as it could be any uninitialized data.")
-        return (mstype.int32,)
+        return (typing.TensorType(mstype.int32),)

@@ -25,7 +25,7 @@
 #include "frontend/parallel/dynamic_creator.h"
 #include "frontend/parallel/strategy.h"
 #include "frontend/parallel/tensor_layout/tensor_redistribution.h"
-#include "pipeline/jit/resource.h"
+#include "pipeline/jit/ps/resource.h"
 
 namespace mindspore {
 namespace parallel {
@@ -141,6 +141,9 @@ Status ConcatInfo::InferTensorMap() {
 void ConcatInfo::ReComputeBatchSplitFlagList() {
   for (size_t i = 0; i < inputs_shape_.size(); i++) {
     split_flag_list_[i] = true;
+    if (axis_ == 0) {
+      split_flag_list_[i] = false;
+    }
   }
 }
 

@@ -15,11 +15,11 @@
  */
 
 #include "ops/conj.h"
-#include <string>
 #include "abstract/ops/primitive_infer_map.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
-#include "mindapi/src/helper.h"
 
 namespace mindspore {
 namespace ops {
@@ -49,6 +49,23 @@ AbstractBasePtr ConjInfer(const abstract::AnalysisEnginePtr &, const PrimitivePt
 }
 
 MIND_API_OPERATOR_IMPL(Conj, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(Conj, prim::kPrimConj, ConjInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGConjInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ConjInferShape(input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return ConjInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return ConjInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Conj, prim::kPrimConj, AGConjInfer, false);
 }  // namespace ops
 }  // namespace mindspore

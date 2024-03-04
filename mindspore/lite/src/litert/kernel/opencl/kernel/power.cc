@@ -51,7 +51,8 @@ int PowerOpenCLKernel::CheckSpecs() {
 
 void PowerGetWorkGroup(const std::vector<size_t> &global, std::vector<size_t> *local, int max_size) {
   const int max_divider = 8;
-  const int max_x = 2, max_y = 8;
+  const int max_x = 2;
+  const int max_y = 8;
   int x = std::min(GetMaxDivisorStrategy1(global[0], max_divider), max_x);
   int yz = max_size / x;
   int y = std::min(std::min(GetMaxDivisorStrategy1(global[1], max_divider), yz), max_y);
@@ -131,7 +132,7 @@ int PowerOpenCLKernel::Prepare() {
     broadcast_ = true;
   }
   use_fp16_enable_ = ocl_runtime_->GetFp16Enable();
-  auto param = reinterpret_cast<PowerParameter *>(this->op_parameter_);
+  auto param = reinterpret_cast<PowParameter *>(this->op_parameter_);
   std::string kernel_name = "power";
   std::string source = power_source;
   const std::string program_name = "power";

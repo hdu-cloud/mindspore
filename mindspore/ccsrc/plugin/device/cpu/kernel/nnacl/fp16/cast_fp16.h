@@ -13,8 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef MINDSPORE_NNACL_CAST_FP16_H_
-#define MINDSPORE_NNACL_CAST_FP16_H_
+#ifndef NNACL_FP16_CAST_FP16_H_
+#define NNACL_FP16_CAST_FP16_H_
 
 #include "nnacl/op_base.h"
 #if defined(ENABLE_ARM) && defined(ENABLE_FP16)
@@ -75,7 +75,7 @@ inline void Float16ToFloat32(const float16_t *__restrict input, float *__restric
     float32x4_t out1 = vcvt_f32_f16(in1);
     vst1q_f32(output + i, out1);
     float32x4_t out2 = vcvt_f32_f16(in2);
-    vst1q_f32(output + i + 4, out2);
+    vst1q_f32(output + i + C4NUM, out2);
   }
   for (; i < number; ++i) {
     output[i] = (float)input[i];
@@ -91,4 +91,4 @@ void Float16ToFloat32(const float16_t *input, float *output, int number);
 }
 #endif
 #endif
-#endif  // MINDSPORE_NNACL_CAST_FP16_H_
+#endif  //  NNACL_FP16_CAST_FP16_H_

@@ -17,7 +17,7 @@
 #ifndef MINDSPORE_LITE_TOOLS_OPTIMIZER_FORMAT_DELETE_REDUNDANT_TRANSPOSE_H_
 #define MINDSPORE_LITE_TOOLS_OPTIMIZER_FORMAT_DELETE_REDUNDANT_TRANSPOSE_H_
 
-#include "backend/common/optimizer/pass.h"
+#include "include/backend/optimizer/pass.h"
 #include "tools/optimizer/common/gllo_utils.h"
 
 namespace mindspore {
@@ -30,8 +30,12 @@ class DeleteRedundantTranspose : public Pass {
 
  private:
   STATUS DeleteNot4DTranspose(const FuncGraphPtr &func_graph);
+  STATUS DeleteControlFlowTranspose(const CNodePtr &cnode);
   STATUS TransTransFusion(const FuncGraphPtr &func_graph);
   STATUS UpdateNodeFormat(const CNodePtr &node);
+  STATUS DoTransTransFusion(const FuncGraphPtr &func_graph, const CNodePtr &node);
+  STATUS CopyQuantParam(const CNodePtr &cnode, const CNodePtr &pre_cnode, const AnfNodeIndexSet &node_users);
+
   FuncGraphManagerPtr manager_{nullptr};
 };
 }  // namespace opt

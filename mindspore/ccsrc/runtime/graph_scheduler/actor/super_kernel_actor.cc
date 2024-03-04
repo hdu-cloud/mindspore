@@ -24,6 +24,15 @@
 
 namespace mindspore {
 namespace runtime {
+namespace {
+bool InputDataNoNeedCopy(DeviceTensor *input_device_tensor, DeviceTensorPtr node_device_tensor) {
+  if (TEST_FLAG(node_device_tensor->flag(), device::kDeviceAddressFlagNotUsed) || (input_device_tensor == nullptr) ||
+      (input_device_tensor->GetPtr() == node_device_tensor->GetPtr())) {
+    return true;
+  }
+  return false;
+}
+}  // namespace
 void SuperKernelActor::Init() {
   MS_EXCEPTION_IF_NULL(graph_);
   // Check device contexts number.
@@ -61,7 +70,7 @@ void SuperKernelActor::Init() {
     if (output_node->isa<CNode>() && (!HasAbstractMonad(output_node))) {
       auto device_address = AnfAlgo::GetMutableOutputAddr(output_node, output_with_index.second, false);
       MS_EXCEPTION_IF_NULL(device_address);
-      if (device_address->is_ptr_persisted()) {
+      if (device_address->is_ptr_persisted() || graph_->is_dynamic_shape()) {
         continue;
       }
       // Free the ptr in device address of output node.
@@ -69,16 +78,21 @@ void SuperKernelActor::Init() {
         MS_LOG(ERROR) << "Output node:" << output_node->DebugString() << " has a default ptr, maybe a mem leak.";
         device_address->set_ptr(nullptr);
       }
+      if (common::IsNeedProfileMemory()) {
+        device_address_to_node_[device_address.get()] = {device_address->GetSize(), output_node->fullname_with_scope()};
+      }
       memory_alloc_list_.emplace_back(device_address.get());
     }
   }
 
   // Check whether the parameter needs to be copied out.
+  node_device_tensors_.resize(graph_->input_nodes().size());
   is_parameters_need_copy_.resize(graph_->input_nodes().size());
   copy_input_device_tensors_.resize(graph_->input_nodes().size());
   for (size_t i = 0; i < graph_->input_nodes().size(); ++i) {
     const auto &input_node = graph_->input_nodes()[i];
     MS_EXCEPTION_IF_NULL(input_node);
+    node_device_tensors_[i] = AnfAlgo::GetMutableOutputAddr(input_node, 0, false);
     if (!common::AnfAlgo::HasAbstractRef(input_node)) {
       is_parameters_need_copy_[i] = false;
       continue;
@@ -101,8 +115,12 @@ size_t SuperKernelActor::FetchInputNodePosition(const AnfNodePtr &intput_node) {
 }
 
 void SuperKernelActor::FetchInputDeviceTensor(OpContext<DeviceTensor> *const context) {
+  ProfilerRecorder profiler(ProfilerModule::kRuntime, ProfilerEvent::kPreLaunch, GetAID().Name());
   MS_EXCEPTION_IF_NULL(context);
-  MS_EXCEPTION_IF_NULL(device_contexts_[0]);
+  if (device_contexts_.empty() || device_contexts_[0] == nullptr) {
+    SET_OPCONTEXT_FAIL_RET_WITH_ERROR_BY_STRATEGY(GraphExecutionStrategy::kPipeline, (*context),
+                                                  "Invalid device context for super kernel actor:" + GetAID().Name());
+  }
   std::vector<DeviceTensor *> memory_free_list;
   const auto &data_iter = input_op_datas_.find(context->sequential_num_);
   if (data_iter != input_op_datas_.end()) {
@@ -117,8 +135,17 @@ void SuperKernelActor::FetchInputDeviceTensor(OpContext<DeviceTensor> *const con
         SET_OPCONTEXT_FAIL_RET_WITH_ERROR((*context), error_info);
       }
       input_device_tensors_[index] = input_data->data_;
+
+      if (common::IsNeedProfileMemory()) {
+        auto output_address = reinterpret_cast<std::uintptr_t>(input_device_tensors_[index]);
+        MS_LOG(WARNING) << "Need Profile Memory, Memory use, actor name: " << GetAID().Name()
+                        << ", kernel graph: " << graph_->ToString() << ", device address class ptr: " << output_address
+                        << ", device address size: " << input_device_tensors_[index]->GetSize()
+                        << ", device address addr: " << input_device_tensors_[index]->GetPtr() << ", index: " << index;
+      }
+
       if (input_data->data_->dynamic_ref_count() != INT32_MAX) {
-        memory_free_list.emplace_back(input_data->data_);
+        (void)memory_free_list.emplace_back(input_data->data_);
       }
     }
     memory_free_lists_.push(memory_free_list);
@@ -155,16 +182,40 @@ void SuperKernelActor::Run(OpContext<DeviceTensor> *const context) {
   }
   MS_LOG(INFO) << "Super kernel actor(" << GetAID().Name()
                << ") launches graph: " << std::to_string(graph_->graph_id());
+  if (common::IsNeedProfileMemory()) {
+    MS_LOG(WARNING) << "Need Profile Memory, launch actor name: " << GetAID().Name()
+                    << ", kernel graph: " << graph_->ToString();
+  }
   FetchInputDeviceTensor(context);
   if (memory_alloc_list_.size() > 0) {
+    if (common::IsNeedProfileMemory()) {
+      for (auto &device_tensor : memory_alloc_list_) {
+        MS_EXCEPTION_IF_NULL(device_tensor);
+        auto &info = device_address_to_node_[device_tensor];
+        auto output_address = reinterpret_cast<std::uintptr_t>(device_tensor);
+        MS_LOG(WARNING) << "Need Profile Memory, Memory need allocated, actor name: " << GetAID().Name()
+                        << ", kernel graph: " << graph_->ToString() << ", node: " << info.node_full_name
+                        << ", device address class ptr: " << output_address << ", device address size: " << info.size;
+      }
+    }
     SendMemoryAllocReq(context);
   } else {
     OnMemoryAllocFinish(context);
+  }
+  if (common::IsNeedProfileMemory()) {
+    MS_LOG(WARNING) << "Need Profile Memory, end launch, actor name: " << GetAID().Name()
+                    << ", kernel graph: " << graph_->ToString();
   }
 }
 
 void SuperKernelActor::SendMemoryAllocReq(OpContext<DeviceTensor> *const context) {
   MS_EXCEPTION_IF_NULL(context);
+  if (device_contexts_.empty() || device_contexts_[0] == nullptr) {
+    SET_OPCONTEXT_FAIL_RET_WITH_ERROR_BY_STRATEGY(GraphExecutionStrategy::kPipeline, (*context),
+                                                  "Invalid device context for super kernel actor:" + GetAID().Name());
+  }
+  sort(memory_alloc_list_.begin(), memory_alloc_list_.end(),
+       [](const DeviceTensor *a, const DeviceTensor *b) { return a->GetSize() > b->GetSize(); });
   if (ActorDispatcher::is_memory_allocation_sync()) {
     ActorDispatcher::SendSync(memory_manager_aid_, &MemoryManagerActor::AllocateMemory, &memory_alloc_list_,
                               device_contexts_[0], context, GetAID());
@@ -177,31 +228,36 @@ void SuperKernelActor::SendMemoryAllocReq(OpContext<DeviceTensor> *const context
 
 void SuperKernelActor::OnMemoryAllocFinish(OpContext<DeviceTensor> *const context) {
   MS_EXCEPTION_IF_NULL(context);
-  if (!CopyInputData(context)) {
-    std::string error_info = "Copy the input data failed, graph id: " + std::to_string(graph_->graph_id());
-    SET_OPCONTEXT_FAIL_RET_WITH_ERROR((*context), error_info);
-  }
-  try {
-    const auto input_nodes = graph_->input_nodes();
-    for (size_t i = 0; i < input_device_tensors_.size(); ++i) {
-      auto node_device_tensor = AnfAlgo::GetMutableOutputAddr(input_nodes[i], 0, false);
-      if (node_device_tensor != nullptr && (!node_device_tensor->is_ptr_persisted()) &&
-          input_device_tensors_[i] != nullptr) {
-        node_device_tensor->set_ptr(input_device_tensors_[i]->GetMutablePtr());
-        node_device_tensor->set_from_mem_pool(false);
-      }
+  {
+    ProfilerRecorder profiler(ProfilerModule::kRuntime, ProfilerEvent::kPreLaunch, GetAID().Name());
+    if (!CopyInputData(context, graph_)) {
+      std::string error_info = "Copy the input data failed, graph id: " + std::to_string(graph_->graph_id());
+      SET_OPCONTEXT_FAIL_RET_WITH_ERROR((*context), error_info);
     }
+  }
 
+  try {
     const std::vector<tensor::Tensor> inputs;
     std::vector<tensor::Tensor> outputs;
     const std::map<string, string> compile_options;
+    if (device_contexts_.empty() || device_contexts_[0] == nullptr) {
+      SET_OPCONTEXT_FAIL_RET_WITH_ERROR_BY_STRATEGY(GraphExecutionStrategy::kPipeline, (*context),
+                                                    "Invalid device context for super kernel actor:" + GetAID().Name());
+    }
     MS_EXCEPTION_IF_NULL(device_contexts_[0]->graph_executor_);
+    MS_EXCEPTION_IF_NULL(graph_);
     if (!IsSkippedLaunch(nullptr, graph_)) {
+      ProfilerRecorder profiler(ProfilerModule::kKernel, ProfilerEvent::kGraphLaunch, GetAID().Name());
       auto ret = device_contexts_[0]->graph_executor_->RunGraph(graph_, inputs, &outputs, compile_options);
       if (!ret) {
         std::string error_info = "Launch graph failed, graph id: " + std::to_string(graph_->graph_id());
         SET_OPCONTEXT_FAIL_RET_WITH_ERROR((*context), error_info);
       }
+    } else if (common::IsNeedProfileMemory()) {
+      auto memory_size = device_contexts_[0]->graph_executor_->GetGraphFeatureMemory(graph_);
+      MS_LOG(WARNING) << "Need Profile Memory, graph: " << graph_->ToString() << ", feature memory: " << memory_size;
+      MS_LOG(WARNING) << "Need Profile Memory, max used static memory: "
+                      << device_contexts_[0]->device_res_manager_->GetMaxUsedMemorySize();
     }
   } catch (const std::exception &e) {
     MsException::Instance().SetException();
@@ -209,19 +265,19 @@ void SuperKernelActor::OnMemoryAllocFinish(OpContext<DeviceTensor> *const contex
     SET_OPCONTEXT_FAIL_RET_WITH_ERROR((*context), error_info);
   }
 
-  for (auto item : ref_node_addr_map_) {
-    MS_EXCEPTION_IF_NULL(item.first);
-    MS_EXCEPTION_IF_NULL(item.second);
-    auto formal_param_addr = AnfAlgo::GetMutableOutputAddr(item.first, 0, false);
-    MS_EXCEPTION_IF_NULL(formal_param_addr);
-    MS_LOG(INFO) << "The input ref_node: " << item.first->DebugString()
-                 << " need copy back, from address: " << formal_param_addr->GetPtr()
-                 << " to address: " << item.second->GetPtr() << ".";
-    if (!Copy(item.second, formal_param_addr.get())) {
-      SET_OPCONTEXT_FAIL_RET_WITH_ERROR((*context), "Copy data failed.");
+  {
+    ProfilerRecorder profiler(ProfilerModule::kRuntime, ProfilerEvent::kPostLaunch, GetAID().Name());
+    for (auto item : ref_node_addr_map_) {
+      MS_EXCEPTION_IF_NULL(item.first);
+      MS_EXCEPTION_IF_NULL(item.second);
+      MS_LOG(INFO) << "The input ref node copy back from address: " << item.first->GetPtr()
+                   << " to address: " << item.second->GetPtr() << ".";
+      if (!Copy(item.second, item.first)) {
+        SET_OPCONTEXT_FAIL_RET_WITH_ERROR((*context), "Copy data failed.");
+      }
     }
+    ref_node_addr_map_.clear();
   }
-  ref_node_addr_map_.clear();
 
   // Debug actor is blocked, must wait debug actor callback message to process continue.
   if (debug_aid_ != nullptr) {
@@ -229,84 +285,120 @@ void SuperKernelActor::OnMemoryAllocFinish(OpContext<DeviceTensor> *const contex
     return;
   }
 
+  if (graph_->is_dynamic_shape()) {
+    AnfAlgo::UpdateInternalParameterShape(internal_parameters_);
+  }
+
   PostRun(context);
 }
 
 void SuperKernelActor::SendDebugReq(OpContext<DeviceTensor> *const context) {
   running_dependent_msg_num_ = 1;
+  if (device_contexts_.empty() || device_contexts_[0] == nullptr) {
+    SET_OPCONTEXT_FAIL_RET_WITH_ERROR_BY_STRATEGY(GraphExecutionStrategy::kPipeline, (*context),
+                                                  "Invalid device context for super kernel actor:" + GetAID().Name());
+  }
   ActorDispatcher::SendSync(*debug_aid_, &DebugActor::DebugForGraph, graph_, device_contexts_[0], context, &GetAID());
   OnDebugFinish(context);
 }
 
-bool SuperKernelActor::CopyInputData(const OpContext<DeviceTensor> *context) {
+bool SuperKernelActor::CopyInputData(const OpContext<DeviceTensor> *context, const KernelGraphPtr &graph) {
   MS_EXCEPTION_IF_NULL(context);
-  MS_EXCEPTION_IF_NULL(graph_);
+  MS_EXCEPTION_IF_NULL(graph);
+  if (device_contexts_.empty() || device_contexts_[0] == nullptr ||
+      device_contexts_[0]->device_res_manager_ == nullptr) {
+    MS_LOG(ERROR) << "Invalid device context for actor:" << GetAID();
+    return false;
+  }
+  auto device_context = device_contexts_[0];
+  auto &input_nodes = graph->input_nodes();
   for (size_t i = 0; i < input_device_tensors_.size(); ++i) {
-    auto src_device_tensor = input_device_tensors_[i];
-    if (src_device_tensor == nullptr) {
-      continue;
-    }
-
-    auto &input_nodes = graph_->input_nodes();
-    if (i >= input_nodes.size()) {
-      MS_LOG(ERROR) << "The input index:" << i << "is out of range:" << input_nodes.size() << ".";
+    if (i >= node_device_tensors_.size()) {
+      MS_LOG(ERROR) << "The input index:" << i << "is out of range:" << node_device_tensors_.size() << ".";
       return false;
     }
-    auto dst_node = input_nodes[i];
-    MS_EXCEPTION_IF_NULL(dst_node);
-
-    auto dst_param = dst_node->cast<ParameterPtr>();
-    MS_EXCEPTION_IF_NULL(dst_param);
-    if (!dst_param->IsUsedByRealKernelInGraph(graph_->graph_id())) {
+    auto &node_device_tensor = node_device_tensors_[i];
+    MS_EXCEPTION_IF_NULL(node_device_tensor);
+    auto &input_device_tensor = input_device_tensors_[i];
+    if (InputDataNoNeedCopy(input_device_tensor, node_device_tensor)) {
       continue;
     }
-    auto dst_device_tensor = AnfAlgo::GetMutableOutputAddr(dst_node, 0, false);
-    MS_EXCEPTION_IF_NULL(dst_device_tensor);
-    if (src_device_tensor->GetPtr() == dst_device_tensor->GetPtr()) {
-      continue;
+    if (type_ != KernelTransformType::kSuperKernelActor || node_device_tensor->GetSize() == 0) {
+      // For dynamic shape in sub graph sink and any type parameter, the input size should be updated.
+      node_device_tensor->SetSize(input_device_tensor->GetSize());
     }
+    node_device_tensor->set_user_data(input_device_tensor->user_data());
+    node_device_tensor->set_sync_user_data_handler(input_device_tensor->sync_user_data_handler());
 
+    // Copy.
+    DeviceTensorPtr copy_device_tensor = nullptr;
     // If the input is not a persist device address, in a heterogeneous scenario, a new device address needs to
-    // be created.
-    if (!dst_device_tensor->is_ptr_persisted()) {
-      if ((src_device_tensor->GetDeviceType() == dst_device_tensor->GetDeviceType()) &&
-          AnfAlgo::IsEquivalentFormat(src_device_tensor->format(), dst_device_tensor->format())) {
-        MS_LOG(DEBUG) << "Disable copy for device tensor:" << dst_device_tensor;
+    // be created. And set ptr to node device address to support the zero copy of graph input nodes.
+    if (!node_device_tensor->is_ptr_persisted()) {
+      if ((input_device_tensor->GetDeviceType() == node_device_tensor->GetDeviceType()) &&
+          AnfAlgo::IsEquivalentFormat(input_device_tensor->format(), node_device_tensor->format())) {
+        MS_LOG(DEBUG) << "Not need copy for device tensor:" << node_device_tensor
+                      << " ptr:" << node_device_tensor->GetPtr() << " index:" << i << " for actor:" << GetAID();
+        // Set the ptr from input_device_tensor and set mem pool false to avoid memory double management for supporting
+        // zero copy.
+        node_device_tensor->set_ptr(input_device_tensor->GetMutablePtr());
+        MS_LOG(DEBUG) << "set need sync flag from:" << input_device_tensor << " to:" << node_device_tensor
+                      << " sync user data handler:" << node_device_tensor->sync_user_data_handler();
+        node_device_tensor->set_from_mem_pool(false);
         continue;
+      }
+      if (device_context->GetDeviceType() != node_device_tensor->GetDeviceType()) {
+        device_context = device::DeviceContextManager::GetInstance().GetOrCreateDeviceContext(
+          {node_device_tensor->device_name(), node_device_tensor->device_id()});
+        MS_EXCEPTION_IF_NULL(device_context);
+        MS_EXCEPTION_IF_NULL(device_context->device_res_manager_);
       }
 
       if (copy_input_device_tensors_[i] == nullptr) {
-        copy_input_device_tensors_[i] = device_contexts_[0]->device_res_manager_->CreateDeviceAddress(
-          nullptr, dst_device_tensor->GetSize(), dst_device_tensor->format(), dst_device_tensor->type_id(),
-          dst_device_tensor->host_shape());
+        copy_input_device_tensors_[i] = device_context->device_res_manager_->CreateDeviceAddress(
+          nullptr, node_device_tensor->GetSize(), node_device_tensor->format(), node_device_tensor->type_id(),
+          node_device_tensor->host_shape());
         MS_LOG(DEBUG) << "Create new device tensor:" << copy_input_device_tensors_[i] << " index:" << i
                       << " for actor:" << GetAID();
       }
-      dst_device_tensor = copy_input_device_tensors_[i];
-      MS_EXCEPTION_IF_NULL(dst_device_tensor);
-      MS_EXCEPTION_IF_NULL(device_contexts_[0]);
-      if ((dst_device_tensor->GetPtr() == nullptr) &&
-          (!device_contexts_[0]->device_res_manager_->AllocateMemory(dst_device_tensor.get()))) {
-        MS_LOG(ERROR) << "Device(id:" << std::to_string((device_contexts_[0])->device_context_key().device_id_)
+      copy_device_tensor = copy_input_device_tensors_[i];
+      MS_EXCEPTION_IF_NULL(copy_device_tensor);
+      copy_device_tensor->set_user_data(node_device_tensor->user_data());
+      copy_device_tensor->set_sync_user_data_handler(node_device_tensor->sync_user_data_handler());
+      if ((copy_device_tensor->GetPtr() == nullptr) &&
+          (!device_context->device_res_manager_->AllocateMemory(copy_device_tensor.get()))) {
+        MS_LOG(ERROR) << "Device(id:" << std::to_string(device_context->device_context_key().device_id_)
                       << ") memory isn't enough and alloc failed, kernel name: " << GetAID()
-                      << ", alloc size: " + std::to_string(dst_device_tensor->GetSize()) << "B.";
+                      << ", alloc size: " + std::to_string(copy_device_tensor->GetSize()) << "B.";
         continue;
       }
-      MS_LOG(DEBUG) << "Alloc memory for device tensor:" << dst_device_tensor << " ptr:" << dst_device_tensor->GetPtr()
+      MS_LOG(DEBUG) << "Alloc memory for device tensor:" << copy_device_tensor
+                    << " ptr:" << copy_device_tensor->GetPtr() << " size:" << copy_device_tensor->GetSize()
                     << " index:" << i << " for actor:" << GetAID();
+      node_device_tensor->set_ptr(copy_device_tensor->GetMutablePtr());
+      node_device_tensor->set_from_mem_pool(false);
+    } else {
+      if (node_device_tensor->GetPtr() == nullptr) {
+        MS_LOG(INFO)
+          << "The node device tensor, which shared with another graph, has no device memory and will skip copy.";
+        continue;
+      }
+      copy_device_tensor = node_device_tensor;
     }
-
-    MS_LOG(INFO) << "The input data of node:" << dst_node->DebugString()
-                 << " need copy from address:" << src_device_tensor->GetPtr()
-                 << ", type:" << src_device_tensor->GetDeviceType() << " to address:" << dst_device_tensor->GetPtr()
-                 << ", type:" << dst_device_tensor->GetDeviceType() << ".";
-    if (!Copy(dst_device_tensor.get(), src_device_tensor)) {
+    MS_EXCEPTION_IF_NULL(copy_device_tensor);
+    MS_LOG(INFO) << "The input data of node:" << input_nodes[i]->DebugString()
+                 << " need copy from device address:" << input_device_tensor << " ptr:" << input_device_tensor->GetPtr()
+                 << " size:" << input_device_tensor->GetSize() << ", type:" << input_device_tensor->GetDeviceType()
+                 << " to device address:" << copy_device_tensor << " ptr:" << copy_device_tensor->GetPtr()
+                 << " size:" << copy_device_tensor->GetSize() << ", type:" << copy_device_tensor->GetDeviceType()
+                 << ", is ref node need copy back:" << is_parameters_need_copy_[i];
+    if (!Copy(copy_device_tensor.get(), input_device_tensor)) {
       MS_LOG(ERROR) << "Copy data failed.";
       continue;
     }
-    input_device_tensors_[i] = dst_device_tensor.get();
-    if (is_parameters_need_copy_[i] && ref_node_addr_map_.count(dst_node) == 0) {
-      ref_node_addr_map_[dst_node] = src_device_tensor;
+
+    if (is_parameters_need_copy_[i]) {
+      ref_node_addr_map_[copy_device_tensor.get()] = input_device_tensor;
     }
   }
   return true;
@@ -314,7 +406,22 @@ bool SuperKernelActor::CopyInputData(const OpContext<DeviceTensor> *context) {
 
 void SuperKernelActor::SendMemoryFreeReq(OpContext<DeviceTensor> *const context) {
   MS_EXCEPTION_IF_NULL(context);
+
+  if (device_contexts_.empty() || device_contexts_[0] == nullptr ||
+      device_contexts_[0]->device_res_manager_ == nullptr) {
+    SET_OPCONTEXT_FAIL_RET_WITH_ERROR_BY_STRATEGY(GraphExecutionStrategy::kPipeline, (*context),
+                                                  "Invalid device context for super kernel actor:" + GetAID().Name());
+  }
   if (memory_free_lists_.size() > 0 && memory_free_lists_.back().size() > 0) {
+    if (common::IsNeedProfileMemory()) {
+      for (auto data : memory_free_lists_.back()) {
+        auto output_address = reinterpret_cast<std::uintptr_t>(data);
+        MS_LOG(WARNING) << "Need Profile Memory, Memory need Decrease DynamicRefCount, actor name: " << GetAID().Name()
+                        << ", kernel graph: " << graph_->ToString() << ", device address class ptr: " << output_address
+                        << ", device address size: " << data->GetSize() << ", device address addr: " << data->GetPtr();
+      }
+    }
+
     if (ActorDispatcher::is_memory_free_sync()) {
       ActorDispatcher::SendSync(memory_manager_aid_, &MemoryManagerActor::FreeMemory, &(memory_free_lists_.back()),
                                 device_contexts_[0], context, GetAID());
@@ -327,7 +434,6 @@ void SuperKernelActor::SendMemoryFreeReq(OpContext<DeviceTensor> *const context)
   // Free the address that is the temp store for kernel input copy.
   for (auto &copy_input_device_tensor : copy_input_device_tensors_) {
     if ((copy_input_device_tensor != nullptr) && (copy_input_device_tensor->GetPtr() != nullptr)) {
-      MS_EXCEPTION_IF_NULL(device_contexts_[0]);
       device_contexts_[0]->device_res_manager_->FreeMemory(copy_input_device_tensor.get());
     }
   }

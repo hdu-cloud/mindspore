@@ -1,5 +1,5 @@
 /**
- * Copyright 2021 Huawei Technologies Co., Ltd
+ * Copyright 2021-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <memory>
 #ifndef _MSC_VER
 #include <sched.h>
 #include <unistd.h>
@@ -23,14 +24,14 @@
 namespace mindspore {
 size_t ActorThreadPool::actor_queue_size_ = kMaxHqueueSize;
 
-void ActorWorker::CreateThread() { thread_ = std::thread(&ActorWorker::RunWithSpin, this); }
+void ActorWorker::CreateThread() { thread_ = std::make_unique<std::thread>(&ActorWorker::RunWithSpin, this); }
 
 void ActorWorker::RunWithSpin() {
   if (!core_list_.empty()) {
     SetAffinity();
   }
 #if !defined(__APPLE__) && !defined(_MSC_VER)
-  static std::atomic_int index = {0};
+  static std::atomic_int index{0};
   (void)pthread_setname_np(pthread_self(), ("ActorThread_" + std::to_string(index++)).c_str());
 #endif
 #ifdef PLATFORM_86
@@ -74,7 +75,7 @@ bool ActorWorker::ActorActive() {
     active_num_++;
     status_ = kThreadBusy;
   }
-  cond_var_.notify_one();
+  cond_var_->notify_one();
   return true;
 }
 

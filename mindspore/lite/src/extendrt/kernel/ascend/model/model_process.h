@@ -22,6 +22,8 @@
 #include <map>
 #include <set>
 #include <utility>
+#include <functional>
+#include <memory>
 #include "acl/acl.h"
 #include "acl/acl_mdl.h"
 #include "acl/acl_rt.h"
@@ -29,81 +31,105 @@
 #include "include/errorcode.h"
 #include "kernel/kernel.h"
 #include "extendrt/kernel/ascend/options/acl_model_options.h"
+#include "extendrt/kernel/ascend/model/dyn_shape_process.h"
 
 namespace mindspore::kernel {
 namespace acl {
-using mindspore::lite::STATUS;
 struct AclTensorInfo {
   void *cur_device_data;
   void *device_data;
   size_t buffer_size;
+  size_t malloc_buffer_size;
   aclDataType data_type;
   std::vector<int64_t> dims;
   std::string name;
+  aclTensorDesc *dynamic_acl_tensor_desc = nullptr;
+  aclDataBuffer *dynamic_acl_data_buffer = nullptr;
 };
 
 class ModelProcess {
  public:
-  explicit ModelProcess(const AclModelOptionsPtr &options)
-      : options_(options),
-        model_id_(0xffffffff),
-        is_run_on_device_(false),
-        model_desc_(nullptr),
-        inputs_(nullptr),
-        outputs_(nullptr),
-        input_infos_(),
-        output_infos_() {}
-  ~ModelProcess() {}
+  explicit ModelProcess(const AclModelOptionsPtr &options) : options_(options), device_id_(options->device_id) {}
+  ~ModelProcess();
 
-  STATUS UnLoad();
-  STATUS PredictFromHost(const std::vector<KernelTensorPtr> &inputs, const std::vector<KernelTensorPtr> &outputs);
-  STATUS PreInitModelResource();
+  bool Load(const void *om_data, size_t om_data_size);
+  bool UnLoad();
+  bool PredictFromHost(const std::vector<KernelTensorPtr> &inputs, const std::vector<KernelTensorPtr> &outputs);
 
   // override this method to avoid request/reply data copy
   void SetIsDevice(bool is_device) { is_run_on_device_ = is_device; }
 
-  void set_model_id(uint32_t model_id) { model_id_ = model_id; }
-  uint32_t model_id() const { return model_id_; }
   std::set<uint64_t> GetDynamicBatch();
   std::set<std::pair<uint64_t, uint64_t>> GetDynamicImage();
+  std::pair<aclmdlIODims *, size_t> GetDynamicDims();
   std::vector<Format> GetInputFormat();
   const std::vector<ShapeVector> GetOutputShape();
   const std::vector<ShapeVector> GetInputShape();
   const std::vector<TypeId> GetInputDataType();
+  const std::vector<TypeId> GetOutputDataType();
+  std::vector<Format> GetOutputFormat();
+
+  bool Resize(const std::vector<ShapeVector> &new_shapes);
 
  private:
-  STATUS CreateDataBuffer(void **data_mem_buffer, size_t buffer_size, aclmdlDataset *dataset);
-  STATUS CheckAndInitInput(const std::vector<KernelTensorPtr> &inputs);
-  STATUS CheckTensorByTensorInfo(const std::vector<KernelTensorPtr> &tensor,
-                                 const std::vector<AclTensorInfo> &tensor_info);
-  STATUS GetOutputs(const std::vector<KernelTensorPtr> &outputs);
-  void UpdateOutputInfo(const std::vector<KernelTensorPtr> &outputs);
-  STATUS ConstructTensor(const std::vector<KernelTensorPtr> &outputs);
-  STATUS SetBatchSize(const std::vector<KernelTensorPtr> &inputs);
-  STATUS SetImageSize(const std::vector<KernelTensorPtr> &inputs);
-  STATUS InitInputsBuffer();
-  STATUS InitOutputsBuffer();
-  STATUS ResetOutputSize();
-  STATUS ProcDynamicShape(const std::vector<KernelTensorPtr> &inputs);
-  std::string VectorToString(const std::vector<int64_t> &);
+  bool PreInitModelResource();
+
+  bool InitInputsBuffer();
+  bool InitOutputsBuffer();
+  void DestroyInputsBuffer();
+  void DestroyOutputsBuffer();
+  bool CreateDataBuffer(void **data_mem_buffer, size_t buffer_size, aclmdlDataset *dataset);
+
+  bool CheckAndInitInput(const std::vector<KernelTensorPtr> &inputs);
+  bool CheckAndInitOutput(const std::vector<KernelTensorPtr> &outputs);
+  void CheckAndInitDynOutputDeviceBuf(const KernelTensorPtr &output, const AclTensorInfo &output_info,
+                                      void **output_device_buffer, size_t *output_buf_size, size_t output_idx);
+  bool CheckInputTensors(const std::vector<KernelTensorPtr> &inputs);
+  bool CheckOutputTensors(const std::vector<KernelTensorPtr> &outputs);
+  bool CheckAndSetDynFlag();
+  bool GetOutputs(const std::vector<KernelTensorPtr> &outputs);
+
+  bool ResetInputSize(const std::vector<ShapeVector> &new_shapes);
+  bool ResetOutputSize();
   bool IsDynamicShape();
   bool IsDynamicBatchSize();
   bool IsDynamicImageSize();
-  void DestroyInputsDataset();
-  void DestroyInputsDataMem();
-  void DestroyInputsBuffer();
-  void DestroyOutputsBuffer();
-  void UpdateBufferSize(const std::vector<KernelTensorPtr> &inputs);
+  bool IsDynamicDims();
+  bool ResetDynamicOutputTensor(const std::vector<KernelTensorPtr> &outputs);
+  bool ResizeDynamicInputShape(const std::vector<ShapeVector> &new_shapes);
+  bool ResizeDynamicInputShapeRange(const std::vector<ShapeVector> &new_shapes);
+  bool ResizeDynamicBatchAndImageSize(const std::vector<ShapeVector> &new_shapes);
+  void FreeResourceInput(std::vector<AclTensorInfo> acl_tensor_info);
+  void FreeResourceOutput(std::vector<AclTensorInfo> *acl_tensor_info, const std::vector<KernelTensorPtr> &outputs);
+  aclError AclrtMemcpy(void *dst, size_t destMax, const void *src, size_t count, aclrtMemcpyKind kind);
 
   AclModelOptionsPtr options_;
-  uint32_t model_id_;
+  uint32_t model_id_ = UINT32_MAX;
   // if run one device(AICPU), there is no need to alloc device memory and copy inputs to(/outputs from) device
-  bool is_run_on_device_;
-  aclmdlDesc *model_desc_;
-  aclmdlDataset *inputs_;
-  aclmdlDataset *outputs_;
+  bool is_run_on_device_ = false;
+  aclmdlDesc *model_desc_ = nullptr;
+  aclmdlDataset *inputs_ = nullptr;
+  aclmdlDataset *outputs_ = nullptr;
+
+  bool loaded_ = false;
+
+  size_t data_input_num_ = 0;
   std::vector<AclTensorInfo> input_infos_;
   std::vector<AclTensorInfo> output_infos_;
+
+  AclDynamicShapeOptions dynamic_shape_options_;
+  DynShapeProcess dyn_shape_proc_;
+  std::vector<ShapeVector> cur_input_shapes_;
+  bool is_dynamic_output_ = false;
+  bool is_dynamic_input_ = false;
+  bool is_dynamic_resize_input_ = false;
+  bool is_dynamic_shape_range_ = false;
+  aclmdlIODims *dynamic_dims_ = nullptr;
+  void *weight_ptr_ = nullptr;
+  std::vector<bool> user_defined_output_buf_;
+  void *dyn_out_sys_buf_addr_ = nullptr;
+  bool is_sharing_workspace_ = false;
+  int32_t device_id_ = 0;
 };
 }  // namespace acl
 }  // namespace mindspore::kernel

@@ -24,7 +24,7 @@
 #include "frontend/optimizer/opt.h"
 #include "frontend/parallel/status.h"
 #include "ir/anf.h"
-#include "pipeline/jit/pipeline.h"
+#include "pipeline/jit/ps/pipeline.h"
 #include "frontend/parallel/auto_parallel/rec_core/rec_parse_graph.h"
 
 namespace mindspore {
@@ -46,7 +46,8 @@ Status IgnoreOperatorsInCostGraph();
 
 Status ParallelStrategySearch(const std::vector<AnfNodePtr> &all_nodes, const FuncGraphPtr &root);
 
-Status ParallelStrategyRecSearch(const std::vector<AnfNodePtr> &all_nodes, const FuncGraphPtr &root);
+Status ParallelStrategyRecSearch(const std::vector<AnfNodePtr> &all_nodes, const FuncGraphPtr &root, size_t rank_id = 0,
+                                 const size_t device_num = 0);
 
 std::vector<std::vector<std::string>> RecInputTensorNames(const std::map<std::string, std::string>::iterator &it,
                                                           std::vector<std::vector<std::string>> input_tensor_names);
@@ -64,6 +65,10 @@ void AddUsersUniqueIdWhenSharingParameter(
 std::vector<std::vector<size_t>> GetIndexOfOpsSharingInputTensor(
   const std::vector<std::vector<std::string>> &param_users_uniqueid_list,
   const std::vector<std::vector<std::string>> &input_tensor_names);
+
+Status LoadStrategyFromFile(const FuncGraphPtr &root, const std::vector<AnfNodePtr> &all_nodes);
+
+void SaveStrategyToFile();
 }  // namespace parallel
 }  // namespace mindspore
 #endif  // MINDSPORE_CCSRC_FRONTEND_PARALLEL_STEP_AUTO_PARALLEL_H_

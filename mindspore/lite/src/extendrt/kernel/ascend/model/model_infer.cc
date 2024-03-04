@@ -20,42 +20,51 @@
 
 namespace mindspore::kernel {
 namespace acl {
-ModelInfer::ModelInfer(const Buffer &om_data, const AclModelOptionsPtr &options)
+namespace {
+std::mutex g_context_mutex;
+}
+ModelInfer::ModelInfer(const AclModelOptionsPtr &options)
     : init_flag_(false),
-      load_flag_(false),
       device_type_("AscendCL"),
       context_(nullptr),
-      om_data_(om_data),
       options_(options),
       model_process_(options),
       acl_env_(nullptr) {}
 
-STATUS ModelInfer::Init() {
+bool ModelInfer::Init() {
   if (init_flag_) {
     MS_LOG(INFO) << "Acl has been initialized, skip.";
-    return lite::RET_OK;
+    return true;
   }
   if (options_ == nullptr) {
     MS_LOG(ERROR) << "Acl options is nullptr.";
-    return lite::RET_ERROR;
+    return false;
   }
-  acl_env_ = AclEnvGuard::GetAclEnv(options_->dump_cfg_path);
+  std::string acl_init_option = !options_->dump_path.empty() ? options_->dump_path : std::string();
+  acl_env_ = AclEnvGuard::GetAclEnv(acl_init_option);
   if (acl_env_ == nullptr) {
     MS_LOG(ERROR) << "Acl init failed.";
-    return lite::RET_ERROR;
+    return false;
   }
+  if (!options_->profiling_path.empty()) {
+    if (!profiling_.Init(options_->profiling_path, options_->device_id)) {
+      MS_LOG(ERROR) << "Profiling init failed";
+      return false;
+    }
+  }
+  std::lock_guard<std::mutex> lock(g_context_mutex);
   int32_t device_id = options_->device_id;
   aclError ret = aclrtSetDevice(device_id);
   if (ret != ACL_ERROR_NONE) {
     MS_LOG(ERROR) << "Acl open device " << device_id << " failed.";
-    return lite::RET_ERROR;
+    return false;
   }
   MS_LOG(INFO) << "Open device " << device_id << " success.";
 
   ret = aclrtCreateContext(&context_, device_id);
   if (ret != ACL_ERROR_NONE) {
     MS_LOG(ERROR) << "Acl create context failed.";
-    return lite::RET_ERROR;
+    return false;
   }
   MS_LOG(INFO) << "Create context success.";
 
@@ -63,34 +72,46 @@ STATUS ModelInfer::Init() {
   ret = aclrtGetRunMode(&run_mode);
   if (ret != ACL_ERROR_NONE) {
     MS_LOG(ERROR) << "Acl get run mode failed.";
-    return lite::RET_ERROR;
+    return false;
   }
   bool is_device = (run_mode == ACL_DEVICE);
   model_process_.SetIsDevice(is_device);
   MS_LOG(INFO) << "Get run mode success is device input/output " << is_device;
-
+  ret = aclrtCreateStream(&stream_);
+  if (ret != ACL_ERROR_NONE) {
+    MS_LOG(ERROR) << "Acl create stream failed";
+    return false;
+  }
   MS_LOG(INFO) << "Init model success, device id " << device_id;
   init_flag_ = true;
-  return lite::RET_OK;
+  return true;
 }
 
-STATUS ModelInfer::Finalize() {
+bool ModelInfer::Finalize() {
   if (!init_flag_) {
-    MS_LOG(WARNING) << "Init is not ok, no need to finalize.";
-    return lite::RET_OK;
+    MS_LOG(INFO) << "Init is not ok, no need to finalize.";
+    return true;
   }
-
   aclError rt_ret = aclrtSetCurrentContext(context_);
   if (rt_ret != ACL_ERROR_NONE) {
     MS_LOG(ERROR) << "Set the ascend device context failed.";
-    return lite::RET_ERROR;
+    return false;
   }
-  if (load_flag_) {
-    auto ret = model_process_.UnLoad();
-    if (ret != lite::RET_OK) {
-      MS_LOG(ERROR) << "Unload model inner failed.";
-      return ret;
+  if (!model_process_.UnLoad()) {
+    MS_LOG(ERROR) << "Unload model inner failed.";
+  }
+  if (profiling_.IsProfilingOpen()) {
+    if (!profiling_.StopProfiling(stream_)) {
+      MS_LOG(ERROR) << "Stop profiling failed";
     }
+  }
+  std::lock_guard<std::mutex> lock(g_context_mutex);
+  if (stream_ != nullptr) {
+    rt_ret = aclrtDestroyStream(stream_);
+    if (rt_ret != ACL_ERROR_NONE) {
+      MS_LOG(ERROR) << "Destroy stream failed";
+    }
+    stream_ = nullptr;
   }
   if (context_ != nullptr) {
     rt_ret = aclrtDestroyContext(context_);
@@ -106,69 +127,59 @@ STATUS ModelInfer::Finalize() {
     MS_LOG(ERROR) << "Reset device " << options_->device_id << " failed.";
   }
   MS_LOG(INFO) << "End to reset device " << options_->device_id;
+  acl_env_ = nullptr;
   init_flag_ = false;
-  load_flag_ = false;
-  return lite::RET_OK;
+  return true;
 }
 
-STATUS ModelInfer::Load() {
-  if (!load_flag_) {
-    int ret = LoadAclModel(om_data_);
-    if (ret != lite::RET_OK) {
-      MS_LOG(ERROR) << "Load model model failed.";
-      return ret;
-    }
-    load_flag_ = true;
-  }
-
+bool ModelInfer::Load(const void *om_data, size_t om_data_size) {
   aclError rt_ret = aclrtSetCurrentContext(context_);
   if (rt_ret != ACL_ERROR_NONE) {
     MS_LOG(ERROR) << "Set the ascend device context failed, ret = " << rt_ret;
-    return lite::RET_ERROR;
+    return false;
   }
-
-  return lite::RET_OK;
+  if (profiling_.IsProfilingOpen()) {
+    MS_LOG(INFO) << "Ascend profiling is open";
+    if (!profiling_.StartProfiling(stream_)) {
+      MS_LOG(ERROR) << "Start profiling failed";
+      return false;
+    }
+  }
+  if (!model_process_.Load(om_data, om_data_size)) {
+    MS_LOG(ERROR) << "Load model model failed.";
+    return false;
+  }
+  return true;
 }
 
-STATUS ModelInfer::LoadAclModel(const Buffer &om_data) {
-  MS_LOG(INFO) << "Start load model model.";
-  // model load model
-  uint32_t acl_model_id;
-  auto acl_ret = aclmdlLoadFromMem(om_data.Data(), om_data.DataSize(), &acl_model_id);
-  if (acl_ret != ACL_ERROR_NONE) {
-    MS_LOG(ERROR) << "Call aclmdlLoadFromMem failed, ret = " << acl_ret;
-    return lite::RET_ERROR;
+bool ModelInfer::Inference(const std::vector<KernelTensorPtr> &inputs, const std::vector<KernelTensorPtr> &outputs) {
+  aclError rt_ret = aclrtSetCurrentContext(context_);
+  if (rt_ret != ACL_ERROR_NONE) {
+    MS_LOG(ERROR) << "Set the ascend device context failed, ret = " << rt_ret;
+    return false;
   }
-
-  // model init model resource
-  model_process_.set_model_id(acl_model_id);
-  int ret = model_process_.PreInitModelResource();
-  if (ret != lite::RET_OK) {
-    (void)aclmdlUnload(acl_model_id);
-    MS_LOG(ERROR) << "Pre init model resource failed.";
+  auto ret = model_process_.PredictFromHost(inputs, outputs);
+  if (!ret) {
+    MS_LOG(ERROR) << "Model predict failed";
     return ret;
   }
-
-  MS_LOG(INFO) << "Load model model success.";
-  return lite::RET_OK;
+  return true;
 }
 
-STATUS ModelInfer::Inference(const std::vector<KernelTensorPtr> &inputs, const std::vector<KernelTensorPtr> &outputs) {
-  if (Load() != lite::RET_OK) {
-    MS_LOG(ERROR) << "Prepare model resource failed.";
-    return lite::RET_ERROR;
-  }
-
-  return model_process_.PredictFromHost(inputs, outputs);
-}
-
-std::set<uint64_t> ModelInfer::GetDynamicBatch() { return model_process_.GetDynamicBatch(); }
-
-// need to be called after model load;
-std::set<std::pair<uint64_t, uint64_t>> ModelInfer::GetDynamicImage() { return model_process_.GetDynamicImage(); }
 std::vector<Format> ModelInfer::GetInputFormat() { return model_process_.GetInputFormat(); }
 const std::vector<ShapeVector> ModelInfer::GetOutputShape() { return model_process_.GetOutputShape(); }
 const std::vector<ShapeVector> ModelInfer::GetInputShape() { return model_process_.GetInputShape(); }
 const std::vector<TypeId> ModelInfer::GetInputDataType() { return model_process_.GetInputDataType(); }
+const std::vector<TypeId> ModelInfer::GetOutputDataType() { return model_process_.GetOutputDataType(); }
+std::vector<Format> ModelInfer::GetOutputFormat() { return model_process_.GetOutputFormat(); }
+
+bool ModelInfer::Resize(const std::vector<ShapeVector> &new_shapes) {
+  aclError rt_ret = aclrtSetCurrentContext(context_);
+  if (rt_ret != ACL_ERROR_NONE) {
+    MS_LOG(ERROR) << "Set the ascend device context failed, ret = " << rt_ret;
+    return false;
+  }
+  return model_process_.Resize(new_shapes);
+}
 }  // namespace acl
 }  // namespace mindspore::kernel

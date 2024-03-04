@@ -18,22 +18,26 @@
 #include <set>
 #include <string>
 
+#include "abstract/ops/primitive_infer_map.h"
+#include "mindapi/src/helper.h"
+#include "mindspore/core/ops/math_ops.h"
 #include "ops/gcd.h"
 #include "ops/op_utils.h"
 #include "utils/check_convert_utils.h"
-#include "abstract/ops/primitive_infer_map.h"
-#include "mindapi/src/helper.h"
 
 namespace mindspore {
 namespace ops {
 namespace {
 abstract::ShapePtr GcdInferShape(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) {
+  MS_EXCEPTION_IF_NULL(primitive);
   return BroadCastInferShape(primitive->name(), input_args);
 }
 
 TypePtr GcdInferType(const PrimitivePtr &prim, const std::vector<AbstractBasePtr> &input_args) {
   const std::set<TypePtr> gcd_valid_types = {kInt32, kInt64};
-  TypePtr x1_type = input_args[0]->BuildType();
+  TypePtr x1_type = input_args[kIndex0]->BuildType();
+  MS_EXCEPTION_IF_NULL(x1_type);
+  MS_EXCEPTION_IF_NULL(prim);
   auto inferred_type = CheckAndConvertUtils::CheckTensorTypeValid("x1", x1_type, gcd_valid_types, prim->name());
   return inferred_type;
 }
@@ -49,6 +53,24 @@ AbstractBasePtr GcdInfer(const abstract::AnalysisEnginePtr &, const PrimitivePtr
   return abstract::MakeAbstract(shape, type);
 }
 MIND_API_OPERATOR_IMPL(Gcd, BaseOperator);
-REGISTER_PRIMITIVE_EVAL_IMPL(Gcd, prim::kPrimGcd, GcdInfer, nullptr, true);
+
+// AG means auto generated
+class MIND_API AGGcdInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return GcdInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return GcdInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return GcdInfer(engine, primitive, input_args);
+  }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(Gcd, prim::kPrimGcd, AGGcdInfer, false);
 }  // namespace ops
 }  // namespace mindspore

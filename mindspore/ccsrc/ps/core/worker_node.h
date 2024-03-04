@@ -28,12 +28,11 @@
 #include "ps/core/communicator/tcp_client.h"
 #include "ps/core/communicator/tcp_server.h"
 #include "ps/core/abstract_node.h"
-#include "include/backend/visible.h"
 
 namespace mindspore {
 namespace ps {
 namespace core {
-class BACKEND_EXPORT WorkerNode : public AbstractNode {
+class WorkerNode : public AbstractNode {
  public:
   WorkerNode() = default;
   ~WorkerNode() override = default;

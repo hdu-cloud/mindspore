@@ -21,8 +21,10 @@ from mindspore.ops import operations as P
 from mindspore import context
 from mindspore.parallel._utils import _infer_rank_list
 
+
 class Net(nn.Cell):
     """Net definition"""
+
     def __init__(self):
         super(Net, self).__init__()
         self.fc1 = nn.Dense(128, 768, activation='relu')
@@ -67,7 +69,7 @@ def test_edge_case():
     with pytest.raises(RuntimeError):
         model.infer_predict_layout(inputs)
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         model.infer_predict_layout(inputs)
 
 

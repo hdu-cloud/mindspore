@@ -1,5 +1,5 @@
 /**
- * Copyright 2020-2022 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@
 #include "src/litert/kernel_registry.h"
 #include "schema/model_generated.h"
 #include "include/errorcode.h"
-#include "src/litert/kernel/cpu/fp32/reduce_fp32.h"
 
 using mindspore::kernel::KERNEL_ARCH;
 using mindspore::lite::KernelRegistrar;
@@ -122,8 +121,7 @@ int ReduceBaseCPUKernel::Prepare() {
       (void)memcpy(axes_, axes_tensor->data(), axes_tensor->Size());
     }
   } else {
-    num_axes_ = reduce_param->num_axes_;
-    (void)memcpy(axes_, reduce_param->axes_, sizeof(reduce_param->axes_));
+    num_axes_ = 0;
   }
 
   mode_ = reduce_param->mode_;
@@ -178,6 +176,18 @@ int ReduceBaseCPUKernel::ReSize() {
   DecideIfOnlyCopy();
   CalculateTmpBufferSize();
   CalculateInnerOuterSize();
+
+  if (num_axes_ == 1) {
+    if (UpdateThreadNumPass(TC_TYPE(schema::PrimitiveType_ReduceFusion, mode_), inner_sizes_.at(0) * axis_sizes_.at(0),
+                            inner_sizes_.at(0) * axis_sizes_.at(0), outer_sizes_.at(0)) != RET_OK) {
+      return RET_ERROR;
+    }
+  } else {
+    if (UpdateThreadNumPass(TC_TYPE(schema::PrimitiveType_ReduceFusion, schema::ReduceMode_MAX + 1), 0, 0,
+                            out_tensors_.at(0)->ElementsNum()) != RET_OK) {
+      return RET_ERROR;
+    }
+  }
   return RET_OK;
 }
 
@@ -194,28 +204,5 @@ void ReduceBaseCPUKernel::DecideIfOnlyCopy() {
   } else {
     only_copy_ = false;
   }
-}
-
-int ReduceBaseCPUKernel::CopyInputToOutput() {
-  auto in_tensor = in_tensors().front();
-  CHECK_NULL_RETURN(in_tensor);
-  auto out_tensor = out_tensors().front();
-  CHECK_NULL_RETURN(out_tensor);
-  if (in_tensor->allocator() == nullptr || in_tensor->allocator() != out_tensor->allocator() ||
-      in_tensor->allocator() != ms_context_->allocator || op_parameter_->is_train_session_) {
-    CHECK_NULL_RETURN(out_tensor->data());
-    CHECK_NULL_RETURN(in_tensor->data());
-    MS_CHECK_FALSE(in_tensor->Size() == 0, RET_ERROR);
-    if (in_tensor->data() != out_tensor->data()) {
-      memcpy(out_tensor->data(), in_tensor->data(), in_tensor->Size());
-    }
-    return RET_OK;
-  }
-
-  out_tensor->FreeData();
-  out_tensor->ResetRefCount();
-  out_tensor->set_data(in_tensor->data());
-  out_tensor->set_own_data(in_tensor->own_data());
-  return RET_OK;
 }
 }  // namespace mindspore::kernel

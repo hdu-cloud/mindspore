@@ -7,18 +7,22 @@ mindspore.ops.ParameterizedTruncatedNormal
     当其shape为 :math:`(batch\_size, *)` 的时候， `mean` 、 `stdevs` 、 `min` 和 `max` 的shape应该为 :math:`()` 或者 :math:`(batch\_size, )` 。
 
     .. note::
-        在广播之后，在任何位置， `min` 的值必须严格小于 `max` 的值。
+        - 随机种子：通过一些复杂的数学算法，可以得到一组有规律的随机数，而随机种子就是这个随机数的初始值。随机种子相同，得到的随机数就不会改变。
+        - 全局的随机种子和算子层的随机种子都没设置或都设置为0：完全随机。
+        - 全局的随机种子设置了，算子层的随机种子未设置：采用全局的随机种子和0拼接。
+        - 全局的随机种子未设置，算子层的随机种子设置了：使用0和算子层的随机种子拼接。
+        - 全局的随机种子和算子层的随机种子都设置了：全局的随机种子和算子层的随机种子拼接。
 
     参数：
-        - **seed** (int，可选) - 随机数种子。如果 `seed` 或者 `seed2` 被设置为非零，则使用这个非零值。否则使用一个随机生成的种子。默认值：0。
-        - **seed2** (int，可选) - 另一个随机种子，避免发生冲突。默认值：0。
+        - **seed** (int，可选) - 算子层的随机种子，用于生成随机数。必须是非负的。默认值： ``0`` 。
+        - **seed2** (int，可选) - 全局的随机种子，和算子层的随机种子共同决定最终生成的随机数。必须是非负的。默认值： ``0`` 。
 
     输入：
-        - **shape** (Tensor) - 生成Tensor的shape。数据类型必须是int32或者int64。
-        - **mean** (Tensor) - 截断正态分布均值。数据类型必须是float16、float32或者float64。
-        - **stdevs** (Tensor) - 截断正态分布的标准差。其值必须大于零，数据类型与 `mean` 一致。
-        - **min** (Tensor) - 最小截断值，数据类型与 `mean` 一致。
-        - **max** (Tensor) - 最大截断值，数据类型与 `mean` 一致。
+        - **shape** (Tensor) - 生成Tensor的shape。shape为 :math:`(batch\_size, *)` ，其中 :math:`*` 为长度不小于1的额外维度。数据类型必须是int32或者int64。
+        - **mean** (Tensor) - 截断正态分布均值。 shape为 :math:`()` 或者 :math:`(batch\_size, )` 。数据类型必须是float16、float32或者float64。
+        - **stdevs** (Tensor) - 截断正态分布的标准差。其值必须大于零，shape和数据类型与 `mean` 一致。
+        - **min** (Tensor) - 最小截断值，shape和数据类型与 `mean` 一致。
+        - **max** (Tensor) - 最大截断值，shape和数据类型与 `mean` 一致。
 
     输出：
         Tensor，其shape由 `shape` 决定，数据类型与 `mean` 一致。

@@ -138,22 +138,22 @@ bool PhotoTourOp::EndsWith(const std::string &s, const std::string &sub) {
 Status PhotoTourOp::GetFileContent(const std::string &info_file, std::string *ans) {
   RETURN_UNEXPECTED_IF_NULL(ans);
   std::ifstream reader;
-  reader.open(info_file);
+  reader.open(info_file, std::ios::in);
   CHECK_FAIL_RETURN_UNEXPECTED(!reader.fail(), "Invalid file, failed to open " + info_file +
                                                  ": PhotoTour info file is damaged or permission denied.");
   (void)reader.seekg(0, std::ios::end);
   std::size_t size = reader.tellg();
   (void)reader.seekg(0, std::ios::beg);
-  char *buffer = new char[size + 1];
-  (void)reader.read(buffer, size);
-  buffer[size] = '\0';
+
+  CHECK_FAIL_RETURN_UNEXPECTED(size > 0, "Invalid file, the file size of " + info_file + " is unexpected, got size 0.");
+  std::string buffer(size, ' ');
+  reader.read(&buffer[0], size);
   reader.close();
 
   // remove \n character in the buffer
-  std::string so(buffer);
   std::regex pattern("([\\s\\n]+)");
   std::string fmt = " ";
-  std::string s = std::regex_replace(so, pattern, fmt);
+  std::string s = std::regex_replace(buffer, pattern, fmt);
 
   // remove the head and tail whiteblanks of the s
   (void)s.erase(0, s.find_first_not_of(" "));

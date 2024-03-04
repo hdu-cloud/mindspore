@@ -17,7 +17,7 @@
 
 from __future__ import absolute_import
 from mindspore.ops.primitive import PrimitiveWithInfer, prim_attr_register
-from mindspore._checkparam import Validator as validator, Rel
+from mindspore import _checkparam as validator
 from mindspore.common import dtype as mstype
 
 
@@ -25,8 +25,8 @@ class GeSwitch(PrimitiveWithInfer):
     """
     Adds control switch to data.
 
-    Switch data flows into false or true branch depending on the condition. If the condition is true,
-    the true branch will be activated, or vise verse.
+    Switch data flows into ``False`` or ``True`` branch depending on the condition. If the condition is ``True`` ,
+    the ``True`` branch will be activated, or vise verse.
 
     Inputs:
         - **data** (Union[Tensor, Number]) - The data to be used for switch control.
@@ -76,12 +76,12 @@ class GeSwitch(PrimitiveWithInfer):
         raise NotImplementedError
 
     def infer_shape(self, data, pred):
-        validator.check_int_range(len(pred), 0, 1, Rel.INC_BOTH, "pred rank", self.name)
+        validator.check_int_range(len(pred), 0, 1, validator.INC_BOTH, "pred rank", self.name)
         return data, data
 
     def infer_dtype(self, data_type, pred_type):
         validator.check_subclass(
-            "data", data_type, (mstype.tensor,) + mstype.number_type, self.name)
+            "data", data_type, (mstype.tensor_type,) + mstype.number_type, self.name)
         validator.check_tensor_dtype_valid("pred", pred_type, [mstype.bool_], self.name)
         return data_type, data_type
 

@@ -15,36 +15,52 @@
  */
 
 #include "plugin/device/gpu/kernel/nn/batch_norm_grad_gpu_kernel.h"
-#include <map>
 #include <algorithm>
-#include <utility>
+#include <map>
 #include <memory>
-#include "mindspore/core/ops/grad/batch_norm_grad.h"
+#include <utility>
+#include "ops/grad/batch_norm_grad.h"
+#include "ops/nn_op_name.h"
+#include "ops/op_name.h"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/elementwise/eltwise_ops_impl.cuh"
 
 namespace mindspore {
 namespace kernel {
 namespace {
-size_t kInputSize2 = 2;
-size_t kInputSize4 = 4;
+constexpr size_t kBatchNormGradInputShapeMaxSize = 4;
+constexpr size_t kBatchNormGradInputShapeMinSize = 2;
 }  // namespace
 bool BatchNormGradGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
                                      const std::vector<KernelTensorPtr> &outputs) {
+  MS_EXCEPTION_IF_NULL(base_operator);
   kernel_name_ = base_operator->name();
   auto kernel_ptr = std::dynamic_pointer_cast<ops::BatchNormGrad>(base_operator);
   if (kernel_ptr == nullptr) {
     MS_LOG(ERROR) << "Cast BatchNormGrad failed!";
     return false;
   }
+  auto prim = base_operator->GetPrim();
+  MS_EXCEPTION_IF_NULL(prim);
+  auto activation_type_attr = prim->GetAttr(mindspore::ops::kActivationType);
+  if (activation_type_attr != nullptr) {
+    activation_type_ = ActivationType(GetValue<int64_t>(activation_type_attr));
+  }
+
   if (kernel_name_ == kBatchNormGradOpName) {
     bn_ops_ = CUDNN_BATCHNORM_OPS_BN;
-  } else if (kernel_name_ == kBatchNormGradWithActivation) {
+  } else if (kernel_name_ == kBatchNormGradWithActivationOpName &&
+             activation_type_ == mindspore::ActivationType::RELU) {
     bn_ops_ = CUDNN_BATCHNORM_OPS_BN_ACTIVATION;
-  } else if (kernel_name_ == kBatchNormGradWithAddAndActivation) {
+  } else if (kernel_name_ == kBatchNormGradWithActivationOpName &&
+             activation_type_ == mindspore::ActivationType::SWISH) {
+    // batch_norm grad + silu grad fusion
+    bn_ops_ = CUDNN_BATCHNORM_OPS_BN;
+  } else if (kernel_name_ == kBatchNormGradWithAddAndActivationOpName) {
     bn_ops_ = CUDNN_BATCHNORM_OPS_BN_ADD_ACTIVATION;
   } else {
     MS_LOG(EXCEPTION) << "Only support these kernel names: " << kBatchNormGradOpName << ", "
-                      << kBatchNormGradWithActivation << ", " << kBatchNormGradWithAddAndActivation << ", but got "
-                      << kernel_name_;
+                      << kBatchNormGradWithActivationOpName << ", " << kBatchNormGradWithAddAndActivationOpName
+                      << ", but got " << kernel_name_;
   }
 
   InitResource();
@@ -56,7 +72,7 @@ bool BatchNormGradGpuKernelMod::Init(const BaseOperatorPtr &base_operator, const
   cudnn_data_type_ = GetCudnnDataType(TypeIdLabel(inputs[kIndex0]->GetDtype()));
   size_t input_num = inputs.size();
   if (bn_ops_ == CUDNN_BATCHNORM_OPS_BN) {
-    if (input_num != CUDNN_BATCHNORM_OPS_BN_INPUT_NUM) {
+    if (input_num != CUDNN_BATCHNORM_OPS_BN_INPUT_NUM && activation_type_ != mindspore::ActivationType::SWISH) {
       MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the number of inputs must be "
                         << CUDNN_BATCHNORM_OPS_BN_INPUT_NUM << ", but got " << input_num;
     }
@@ -86,30 +102,35 @@ int BatchNormGradGpuKernelMod::Resize(const BaseOperatorPtr &base_operator, cons
     return ret;
   }
 
-  auto shape = inputs[kIndex0]->GetDeviceShapeAdaptively();
-  if (shape.size() != kInputSize2 && shape.size() != kInputSize4) {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the dimension of input must be 2 or 4, but got "
-                      << shape.size();
+  beta_data_diff_ = 0;
+
+  auto x_shape = inputs[kIndex0]->GetDeviceShapeAdaptively();
+  const size_t x_shape_size = x_shape.size();
+
+  auto format = inputs[kIndex0]->GetFormat();
+  if (x_shape_size == kBatchNormGradInputShapeMinSize) {
+    format = Format::NCHW;
+  } else if (format_ == Format::NHWC) {
+    format = Format::NHWC;
   }
 
-  is_null_input_ = CHECK_SHAPE_NULL(shape, kernel_name_, "input");
+  (void)x_shape.insert(x_shape.begin() + (format == Format::NHWC ? kIndex1 : x_shape_size),
+                       kBatchNormGradInputShapeMaxSize - x_shape_size, 1);
+
+  is_null_input_ = CHECK_SHAPE_NULL(x_shape, kernel_name_, "input");
   if (is_null_input_) {
     InitSizeLists();
     return true;
   }
-  if (shape.size() == kInputSize2) {
+
+  if (x_shape_size == kBatchNormGradInputShapeMinSize) {
     mode_ = CUDNN_BATCHNORM_PER_ACTIVATION;
   } else {
     mode_ = CUDNN_BATCHNORM_SPATIAL_PERSISTENT;
   }
 
-  beta_data_diff_ = 0;
-  CheckTensorSize({shape});
-  auto format = inputs[kIndex0]->GetFormat();
-  if (format_ == Format::NHWC) {
-    format = Format::NHWC;
-  }
-  SetTensorDescriptor(format, shape);
+  CheckTensorSize({x_shape});
+  SetTensorDescriptor(format, x_shape);
   InitSizeLists();
   return KRET_OK;
 }
@@ -192,7 +213,11 @@ bool BatchNormGradGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inpu
   if (bn_ops_ == CUDNN_BATCHNORM_OPS_BN_ADD_ACTIVATION) {
     dz = GetDeviceAddress<T>(outputs, kIndex3);
   }
-
+  if (activation_type_ == mindspore::ActivationType::SWISH) {
+    y = GetDeviceAddress<T>(inputs, kIndex7);
+    BinaryOpsCudaFunc<ElwiseOpType::kSiLUGrad, T, T, T>(x_size_ / sizeof(T), y, dy, dy,
+                                                        reinterpret_cast<cudaStream_t>(cuda_stream_));
+  }
   if (is_train_) {
     auto reserve_addr = GetPossiblyNullDeviceAddress<float>(inputs, kIndex5);
     reserve_size_ = inputs[kIndex5]->size;
@@ -209,21 +234,16 @@ bool BatchNormGradGpuKernelMod::LaunchKernel(const std::vector<AddressPtr> &inpu
                                         reserve_size_),
       "Kernel launch failed");
   } else {
-    CalBatchNormGrad(x, dy, scale, save_mean, save_variance, dx, dscale, dbias, epsilon_, batch_, channel_, height_,
-                     width_, reinterpret_cast<cudaStream_t>(stream_ptr));
+    auto status = CalBatchNormGrad(x, dy, scale, save_mean, save_variance, dx, dscale, dbias, epsilon_, batch_,
+                                   channel_, height_, width_, reinterpret_cast<cudaStream_t>(stream_ptr));
+    CHECK_CUDA_STATUS(status, kernel_name_);
   }
   return true;
 }
 
 void BatchNormGradGpuKernelMod::SetTensorDescriptor(const Format &format, const ShapeVector &shape) {
   cudnnTensorFormat_t cudnn_format;
-  if (shape.size() == kInputSize2) {
-    batch_ = LongToInt(shape[kIndex0]);
-    channel_ = LongToInt(shape[kIndex1]);
-    height_ = 1;
-    width_ = 1;
-    cudnn_format = CUDNN_TENSOR_NCHW;
-  } else if (format == Format::NHWC) {
+  if (format == Format::NHWC) {
     batch_ = LongToInt(shape[kIndex0]);
     height_ = LongToInt(shape[kIndex1]);
     width_ = LongToInt(shape[kIndex2]);
@@ -296,7 +316,7 @@ std::map<std::string, std::vector<std::pair<KernelAttr, BatchNormGradGpuKernelMo
                                                       .AddOutputAttr(kNumberTypeFloat32)   // dscale
                                                       .AddOutputAttr(kNumberTypeFloat32),  // dbias
                                                     &BatchNormGradGpuKernelMod::LaunchKernel<half>}}},
-                                                 {kBatchNormGradWithActivation,
+                                                 {kBatchNormGradWithActivationOpName,
                                                   {{KernelAttr()
                                                       .AddInputAttr(kNumberTypeFloat32)    // dy
                                                       .AddInputAttr(kNumberTypeFloat32)    // x
@@ -323,7 +343,7 @@ std::map<std::string, std::vector<std::pair<KernelAttr, BatchNormGradGpuKernelMo
                                                       .AddOutputAttr(kNumberTypeFloat32)   // dscale
                                                       .AddOutputAttr(kNumberTypeFloat32),  // dbias
                                                     &BatchNormGradGpuKernelMod::LaunchKernel<half>}}},
-                                                 {kBatchNormGradWithAddAndActivation,
+                                                 {kBatchNormGradWithAddAndActivationOpName,
                                                   {{KernelAttr()
                                                       .AddInputAttr(kNumberTypeFloat32)    // dy
                                                       .AddInputAttr(kNumberTypeFloat32)    // x
@@ -372,10 +392,10 @@ std::vector<KernelAttr> BatchNormGradGpuKernelMod::GetOpSupport() {
 MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeGpuKernelMod, BatchNormGrad,
                                  []() { return std::make_shared<BatchNormGradGpuKernelMod>(kBatchNormGradOpName); });
 MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeGpuKernelMod, BatchNormGradWithActivation, []() {
-  return std::make_shared<BatchNormGradGpuKernelMod>(kBatchNormGradWithActivation);
+  return std::make_shared<BatchNormGradGpuKernelMod>(kBatchNormGradWithActivationOpName);
 });
 MS_KERNEL_FACTORY_REG_BY_CREATOR(NativeGpuKernelMod, BatchNormGradWithAddAndActivation, []() {
-  return std::make_shared<BatchNormGradGpuKernelMod>(kBatchNormGradWithAddAndActivation);
+  return std::make_shared<BatchNormGradGpuKernelMod>(kBatchNormGradWithAddAndActivationOpName);
 });
 }  // namespace kernel
 }  // namespace mindspore

@@ -16,8 +16,8 @@
 #include "backend/common/pass/convert_const_input_to_attr.h"
 
 #include <algorithm>
-#include "backend/common/optimizer/const_input_to_attr.h"
-#include "backend/common/optimizer/op_adaptation_info_factory.h"
+#include "backend/common/pass/const_input_to_attr.h"
+#include "include/backend/optimizer/op_adaptation_info_factory.h"
 #include "include/common/utils/utils.h"
 #include "include/common/utils/anfalgo.h"
 
@@ -30,6 +30,9 @@ const AnfNodePtr ConvertConstInputToAttr::Process(const FuncGraphPtr &, const An
   auto name = common::AnfAlgo::GetCNodeName(node);
   auto cnode = node->cast<CNodePtr>();
   MS_EXCEPTION_IF_NULL(cnode);
+  if (cnode->HasAttr(kAttrConvertAttrNode)) {
+    return node;
+  }
   std::string primitive_target;
   if (common::AnfAlgo::HasNodeAttr(kAttrPrimitiveTarget, cnode)) {
     primitive_target = common::AnfAlgo::GetNodeAttr<std::string>(cnode, kAttrPrimitiveTarget);
@@ -38,8 +41,8 @@ const AnfNodePtr ConvertConstInputToAttr::Process(const FuncGraphPtr &, const An
   MS_EXCEPTION_IF_NULL(ms_context);
   auto backend = ms_context->get_param<std::string>(MS_CTX_DEVICE_TARGET);
   if (backend != primitive_target && !primitive_target.empty()) {
-    MS_LOG(WARNING) << "primitive target does not match backend: " << backend
-                    << ", primitive_target: " << primitive_target;
+    MS_LOG(INFO) << "primitive target does not match backend: " << backend << ", primitive_target: " << primitive_target
+                 << ", node name: " << node->fullname_with_scope();
     backend = primitive_target;
   }
 
@@ -54,8 +57,8 @@ const AnfNodePtr ConvertConstInputToAttr::Process(const FuncGraphPtr &, const An
   if (reg_info == nullptr) {
     return nullptr;
   } else {
-    for (auto &iter : reg_info->GetInputAttrInfoMap()) {
-      (void)input_to_attr.insert(iter.second.GetInputIndex());
+    for (auto &iter : reg_info->input_attr_map()) {
+      (void)input_to_attr.insert(iter.first);
     }
     if (input_to_attr.empty()) {
       return nullptr;

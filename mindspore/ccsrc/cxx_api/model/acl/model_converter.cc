@@ -1,5 +1,5 @@
 /**
- * Copyright 2020 Huawei Technologies Co., Ltd
+ * Copyright 2020-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,14 @@
 
 #include "cxx_api/model/acl/model_converter.h"
 #include <memory>
+#include "acl/acl.h"
 #include "include/transform/graph_ir/utils.h"
 #include "cxx_api/model/model_converter_utils/multi_process.h"
 #include "graph/model.h"
+#include "graph/utils/graph_utils_ex.h"
 #include "acl/acl_rt.h"
+#include "cxx_api/model/aoe/auto_tune_process.h"
+#include "plugin/device/ascend/optimizer/ge_optimization.h"
 
 namespace mindspore {
 namespace {
@@ -81,14 +85,20 @@ bool CreateSessionAndGraphRunner() {
 
 transform::DfGraphPtr ModelConverter::ConvertFuncGraphToAIR(const FuncGraphPtr &anf_graph) const {
   MS_EXCEPTION_IF_NULL(anf_graph);
-  auto converter = transform::NewConverter(anf_graph);
+#ifndef BUILD_LITE
+  opt::ReduceOptimization(anf_graph);
+#endif
+  auto converter = transform::NewConverter(anf_graph, "", transform::RefModeFlag::kRefModeNone);
   std::string net_id = "0";
-  std::string init_graph = "init_subgraph." + net_id;
   std::string checkpoint_name = "save." + net_id;
-
+  std::string compute_graph_name = anf_graph->ToString();
+  auto option = options_.lock();
+  if (option != nullptr && !option->GetDumpModelName().empty()) {
+    compute_graph_name = option->GetDumpModelName();
+  }
   transform::SetTraining(converter, false);
 
-  transform::BuildGraph(converter, GetParams(anf_graph));
+  transform::BuildGraph(compute_graph_name, converter, GetParams(anf_graph));
 
   transform::GenerateCheckpointGraph(converter);
   auto err_code = transform::ErrCode(converter);
@@ -98,7 +108,10 @@ transform::DfGraphPtr ModelConverter::ConvertFuncGraphToAIR(const FuncGraphPtr &
     return nullptr;
   }
   (void)transform::AddGraph(anf_graph->ToString(), transform::GetComputeGraph(converter));
-  (void)transform::AddGraph(init_graph, transform::GetInitGraph(converter));
+  if (!IsEnableRefMode()) {
+    std::string init_graph = "init_subgraph." + net_id;
+    (void)transform::AddGraph(init_graph, transform::GetInitGraph(converter));
+  }
   (void)transform::AddGraph(BROADCAST_GRAPH_NAME, transform::GetBroadcastGraph(converter));
 
   transform::Status ret = transform::AddGraph(checkpoint_name, transform::GetSaveCheckpointGraph(converter));
@@ -133,18 +146,14 @@ Buffer ModelConverter::BuildAirModel(const transform::DfGraphPtr &graph,
   ge::ModelBufferData model;
   auto ret = ge::aclgrphBuildInitialize(init_options);
   if (ret != ge::SUCCESS) {
-    MS_LOG(ERROR) << "Call aclgrphBuildInitialize fail.";
+    MS_LOG(ERROR) << "Call aclgrphBuildInitialize fail: " << aclGetRecentErrMsg();
     return Buffer();
   }
 
   ret = ge::aclgrphBuildModel(*graph, build_options, model);
   if (ret != ge::SUCCESS) {
-    MS_LOG(ERROR) << "Call aclgrphBuildModel fail.";
-    return Buffer();
-  }
-
-  if (SaveModel(model) != kSuccess) {
-    MS_LOG(ERROR) << "Save model failed.";
+    MS_LOG(ERROR) << "Call aclgrphBuildModel fail: " << aclGetRecentErrMsg();
+    ge::aclgrphBuildFinalize();
     return Buffer();
   }
 
@@ -176,16 +185,17 @@ Status ModelConverter::SaveModel(const ge::ModelBufferData &model) const {
 Buffer ModelConverter::LoadMindIR(const FuncGraphPtr &func_graph) {
   MultiProcess multi_process;
   Buffer buffer_ret;
-  auto parent_process = [&func_graph, &buffer_ret, this](MultiProcess *multi_process) -> Status {
+  ClearCurrentRtCtx();
+  auto df_graph = ConvertFuncGraphToAIR(func_graph);
+  if (df_graph == nullptr) {
+    MS_LOG(ERROR) << "Convert FuncGraph to AscendIR failed.";
+    return buffer_ret;
+  }
+  auto parent_process = [&df_graph, &buffer_ret, this](MultiProcess *multi_process) -> Status {
     MS_EXCEPTION_IF_NULL(multi_process);
-    auto df_graph = ConvertFuncGraphToAIR(func_graph);
-    if (df_graph == nullptr) {
-      MS_LOG(ERROR) << "Convert FuncGraph to AscendIR failed.";
-      return kMCFailed;
-    }
     ge::Model model;
     ge::Buffer model_data;
-    model.SetGraph(*df_graph);
+    model.SetGraph(::ge::GraphUtilsEx::GetComputeGraph(*df_graph));
     auto ge_ret = model.Save(model_data);
     if (ge_ret != ge::SUCCESS) {
       MS_LOG(ERROR) << "Save ge model to buffer failed.";
@@ -236,7 +246,6 @@ Buffer ModelConverter::LoadMindIR(const FuncGraphPtr &func_graph) {
     }
     return kSuccess;
   };
-  ClearCurrentRtCtx();
   auto status = multi_process.MainProcess(parent_process, child_process);
   if (status != kSuccess) {
     MS_LOG_ERROR << "Convert MindIR model to OM model failed";
@@ -254,7 +263,8 @@ Buffer ModelConverter::LoadAscendIRInner(const Buffer &model_data) {
     return Buffer();
   }
 
-  transform::DfGraphPtr df_graph = std::make_shared<transform::DfGraph>(load_model.GetGraph());
+  transform::DfGraphPtr df_graph =
+    std::make_shared<transform::DfGraph>(::ge::GraphUtilsEx::CreateGraphFromComputeGraph(load_model.GetGraph()));
   if (df_graph == nullptr) {
     MS_LOG(ERROR) << "Convert FuncGraph to AscendIR failed.";
     return Buffer();
@@ -266,7 +276,12 @@ Buffer ModelConverter::LoadAscendIRInner(const Buffer &model_data) {
   if (option != nullptr) {
     std::tie(init_options, build_options) = option->GenAclOptions();
   }
-
+#ifdef BUILD_LITE
+  if (AutoTuneProcess::AoeOfflineTurningGraph(options_, df_graph) != kSuccess) {
+    MS_LOG(ERROR) << "Aoe tune graph failed.";
+    return Buffer();
+  }
+#endif
   return BuildAirModel(df_graph, init_options, build_options);
 }
 }  // namespace mindspore

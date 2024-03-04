@@ -20,6 +20,7 @@
 #include "ir/dtype/number.h"
 #include "ir/dtype/container.h"
 #include "ir/dtype/empty.h"
+#include "ir/scalar.h"
 
 namespace mindspore {
 class TestDType : public UT::Common {
@@ -84,8 +85,9 @@ TEST_F(TestDType, TestTuple) {
 }
 
 TEST_F(TestDType, TestDictionary) {
-  std::vector<std::pair<TypePtr, TypePtr>> kv = {std::make_pair(std::make_shared<Int>(8), std::make_shared<Int>(8)),
-                                                 std::make_pair(std::make_shared<Int>(8), std::make_shared<Bool>())};
+  std::vector<std::pair<ValuePtr, TypePtr>> kv = {
+    std::make_pair(std::make_shared<Int64Imm>(8), std::make_shared<Int>(8)),
+    std::make_pair(std::make_shared<Int64Imm>(8), std::make_shared<Bool>())};
   Dictionary d1 = Dictionary(kv);
   Dictionary d2 = Dictionary(kv);
   ASSERT_EQ(d1, d2);
@@ -188,6 +190,16 @@ TEST_F(TestDType, TestTypeIdNormalize) {
   ASSERT_EQ(kNumberTypeFloat, NormalizeTypeId(kNumberTypeFloat16));
   ASSERT_EQ(kNumberTypeFloat, NormalizeTypeId(kNumberTypeFloat32));
   ASSERT_EQ(kNumberTypeFloat, NormalizeTypeId(kNumberTypeFloat64));
+
+  ASSERT_EQ(kNumberTypeUInt, NormalizeTypeId(kNumberTypeUInt));
+  ASSERT_EQ(kNumberTypeUInt, NormalizeTypeId(kNumberTypeUInt8));
+  ASSERT_EQ(kNumberTypeUInt, NormalizeTypeId(kNumberTypeUInt16));
+  ASSERT_EQ(kNumberTypeUInt, NormalizeTypeId(kNumberTypeUInt32));
+  ASSERT_EQ(kNumberTypeUInt, NormalizeTypeId(kNumberTypeUInt64));
+
+  ASSERT_EQ(kNumberTypeComplex, NormalizeTypeId(kNumberTypeComplex));
+  ASSERT_EQ(kNumberTypeComplex, NormalizeTypeId(kNumberTypeComplex64));
+  ASSERT_EQ(kNumberTypeComplex, NormalizeTypeId(kNumberTypeComplex128));
 
   ASSERT_EQ(kNumberTypeBool, NormalizeTypeId(kNumberTypeBool));
 }

@@ -61,11 +61,19 @@ class CPUKernelExecutor : public KernelExecutor {
 
   void CreateKernel(const std::vector<CNodePtr> &nodes) const override;
 
+  // Kernel that is not supported by other device can be backed off and rebuilt on the CPU.
+  // The function will set kernel info and create kernel mod.
+  void RebuildKernelSelectBackoffOp(const std::vector<CNodePtr> &nodes) const;
+
   void PreprocessBeforeRun(const FuncGraphPtr &graph) const override;
 
   bool LaunchKernel(const CNodePtr &kernel, const std::vector<AddressPtr> &inputs,
                     const std::vector<AddressPtr> &workspace, const std::vector<AddressPtr> &outputs,
                     size_t /* stream_id */) const override;
+
+  bool ExecuteKernelTask(const pynative::KernelTaskType &task_type, const device::DeviceAddressPtrList &input_addr_list,
+                         const TensorStorageInfoPtrList &input_storage_list,
+                         const device::DeviceAddressPtrList &output_addr_list) const override;
 
  private:
   // Select the matching backend kernels according to the data type and format of input and output for all
@@ -82,7 +90,7 @@ class CPUKernelExecutor : public KernelExecutor {
                                  const std::vector<AddressPtr> &outputs) const;
 #endif
   // Launch a kernel by 'KernelMod' of the kernel.
-  bool DoLaunchKernel(KernelMod *const kernel_mod, const std::vector<AddressPtr> &inputs,
+  bool DoLaunchKernel(const CNodePtr &kernel, const std::vector<AddressPtr> &inputs,
                       const std::vector<AddressPtr> &workspace, const std::vector<AddressPtr> &outputs) const;
 
   void UpdateKernelRefInfo(const KernelGraphPtr &graph) const;

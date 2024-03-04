@@ -22,6 +22,7 @@
 #include <map>
 #include <memory>
 #include "plugin/device/gpu/kernel/gpu_kernel.h"
+#include "mindspore/core/ops/nn_optimizer_ops.h"
 #include "plugin/device/gpu/kernel/gpu_kernel_factory.h"
 #include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/rmsprop_impl.cuh"
 #include "mindspore/core/ops/apply_rms_prop.h"
@@ -51,7 +52,7 @@ class RMSPropGpuKernelMod : public NativeGpuKernelMod {
     if (!IsSameShape(size_a, size_b)) {
       MS_LOG(ERROR) << "For '" << kernel_name_ << "', the shape of '" << name_a
                     << "' must be the same as the shape of '" << name_b << "', but got the shape of '" << name_b
-                    << "': " << Vector2Str(size_b) << " and the shape of '" << name_a << "': " << Vector2Str(size_a);
+                    << "': " << size_b << " and the shape of '" << name_a << "': " << size_a;
       return KRET_RESIZE_FAILED;
     }
     return KRET_OK;
@@ -60,7 +61,7 @@ class RMSPropGpuKernelMod : public NativeGpuKernelMod {
     if (batch_rank_ == 0) {
       if (lr_shape.size() != 0 && lr_shape.size() != 1) {
         MS_LOG(ERROR) << "For '" << kernel_name_
-                      << "', the shape size of 'lr' must be 0 or 1, but got the shape of 'lr': " << Vector2Str(lr_shape)
+                      << "', the shape size of 'lr' must be 0 or 1, but got the shape of 'lr': " << lr_shape
                       << " and 'batch_rank': " << batch_rank_;
       }
     } else {
@@ -68,7 +69,7 @@ class RMSPropGpuKernelMod : public NativeGpuKernelMod {
         MS_LOG(ERROR) << "For '" << kernel_name_
                       << "', the shape size of 'lr' must be equal to 'batch_rank', "
                          "but got the shape of 'lr': "
-                      << Vector2Str(lr_shape) << " and 'batch_rank': " << batch_rank_;
+                      << lr_shape << " and 'batch_rank': " << batch_rank_;
         return KRET_RESIZE_FAILED;
       }
     }
@@ -138,8 +139,9 @@ class RMSPropGpuKernelMod : public NativeGpuKernelMod {
       T *momentum = GetDeviceAddress<T>(inputs, kNumberSix);
       T *epsilon = GetDeviceAddress<T>(inputs, kNumberSeven);
 
-      RmsProp(batch_size_, input_elements_, learning_rate, decay, momentum, epsilon, variable, mean_square, moment,
-              gradients, size_, reinterpret_cast<cudaStream_t>(stream));
+      auto status = RmsProp(batch_size_, input_elements_, learning_rate, decay, momentum, epsilon, variable,
+                            mean_square, moment, gradients, size_, reinterpret_cast<cudaStream_t>(stream));
+      CHECK_CUDA_STATUS(status, kernel_name_);
     } else {
       T *variable = GetDeviceAddress<T>(inputs, 0);
       T *mean_gradients = GetDeviceAddress<T>(inputs, 1);
@@ -151,8 +153,10 @@ class RMSPropGpuKernelMod : public NativeGpuKernelMod {
       T *momentum = GetDeviceAddress<T>(inputs, 7);
       T *epsilon = GetDeviceAddress<T>(inputs, 8);
 
-      RmsPropCenter(batch_size_, input_elements_, learning_rate, decay, momentum, epsilon, variable, mean_gradients,
-                    mean_square, moment, gradients, size_, reinterpret_cast<cudaStream_t>(stream));
+      auto status =
+        RmsPropCenter(batch_size_, input_elements_, learning_rate, decay, momentum, epsilon, variable, mean_gradients,
+                      mean_square, moment, gradients, size_, reinterpret_cast<cudaStream_t>(stream));
+      CHECK_CUDA_STATUS(status, kernel_name_);
     }
     return true;
   }

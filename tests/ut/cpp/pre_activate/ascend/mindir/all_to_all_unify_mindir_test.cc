@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 #include "common/backend_common_test.h"
+#include "mindspore/core/ops/other_ops.h"
+#include "mindspore/core/ops/array_ops.h"
 #include "frontend/operator/ops.h"
 #include "include/common/debug/anf_ir_dump.h"
 #include "common/py_func_graph_fetcher.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
-#include "backend/common/optimizer/optimizer.h"
-#include "backend/common/optimizer/pass_manager.h"
+#include "include/backend/anf_runtime_algorithm.h"
+#include "include/backend/optimizer/optimizer.h"
+#include "include/backend/optimizer/pass_manager.h"
 #include "backend/common/pass/convert_const_input_to_attr.h"
 #include "include/common/utils/utils.h"
 #include "utils/ms_utils.h"
@@ -70,10 +72,10 @@ TEST_F(TestAllToAllUnifyMindIr, test_all_to_all) {
     if (IsPrimitiveCNode(n, prim::kPrimAllToAllv)) {
       has_all_to_all_v_node = true;
     }
-    if (IsPrimitiveCNode(n, prim::kPrimConcat)) {
+    if (IsPrimitiveCNode(n, prim::kPrimConcatD)) {
       has_concat_node = true;
     }
-    if (IsPrimitiveCNode(n, prim::kPrimSplitV)) {
+    if (IsPrimitiveCNode(n, prim::kPrimSplitVD)) {
       has_split_v_node = true;
     }
   }

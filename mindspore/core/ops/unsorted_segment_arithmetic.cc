@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Huawei Technologies Co., Ltd
+ * Copyright 2022-2023 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,16 +15,37 @@
  */
 
 #include "ops/unsorted_segment_arithmetic.h"
+
 #include <memory>
 #include <set>
 #include <string>
-#include "utils/check_convert_utils.h"
+
+#include "abstract/abstract_value.h"
+#include "abstract/dshape.h"
+#include "abstract/ops/op_infer.h"
 #include "abstract/ops/primitive_infer_map.h"
-#include "ops/op_utils.h"
+#include "abstract/utils.h"
+#include "base/base.h"
+#include "ir/anf.h"
+#include "ir/dtype.h"
+#include "ir/dtype/number.h"
+#include "ir/dtype/tensor_type.h"
+#include "ir/dtype/type.h"
+#include "ir/primitive.h"
+#include "ir/tensor.h"
+#include "mindapi/base/type_id.h"
 #include "mindapi/src/helper.h"
+#include "mindspore/core/ops/array_ops.h"
+#include "ops/op_name.h"
+#include "ops/op_utils.h"
+#include "ops/primitive_c.h"
 #include "ops/unsorted_segment_max.h"
 #include "ops/unsorted_segment_min.h"
 #include "ops/unsorted_segment_prod.h"
+#include "utils/check_convert_utils.h"
+#include "utils/convert_utils_base.h"
+#include "utils/log_adapter.h"
+#include "utils/shape_utils.h"
 
 namespace mindspore {
 namespace ops {
@@ -39,19 +60,27 @@ int64_t GetNumSegmentsValue(const PrimitivePtr &primitive, const std::vector<Abs
       auto n_value_ptr = n_value->BuildValue();
       MS_EXCEPTION_IF_NULL(n_value_ptr);
       auto n_value_ptr_tensor = CheckAndConvertUtils::CheckTensorIntValue("num_segments", n_value_ptr, op_name);
+      if (n_value_ptr_tensor.empty()) {
+        MS_EXCEPTION(ValueError) << "For '" << op_name << "' the third input should be an int value, but got empty.";
+      }
       num_segments_v = n_value_ptr_tensor.back();
     } else {
       num_segments_v = abstract::Shape::kShapeDimAny;
     }
     return num_segments_v;
   } else if (input_args[kInputIndex2]->isa<abstract::AbstractScalar>()) {
+    auto value = input_args[kInputIndex2]->BuildValue();
+    if (!IsValueKnown(value)) {
+      num_segments_v = abstract::Shape::kShapeDimAny;
+      return num_segments_v;
+    }
     auto num_segments_input_type = input_args[kInputIndex2]->BuildType();
     auto num_sample_ptr = input_args[kInputIndex2]->cast<abstract::AbstractScalarPtr>();
     MS_EXCEPTION_IF_NULL(num_sample_ptr);
     if (num_segments_input_type->type_id() == kNumberTypeInt64) {
-      num_segments_v = GetValue<int64_t>(input_args[kInputIndex2]->BuildValue());
+      num_segments_v = GetValue<int64_t>(value);
     } else if (num_segments_input_type->type_id() == kNumberTypeInt32) {
-      num_segments_v = GetValue<int32_t>(input_args[kInputIndex2]->BuildValue());
+      num_segments_v = GetValue<int32_t>(value);
     } else {
       MS_EXCEPTION(TypeError) << "For '" << op_name << "' the third input build type is invalid:"
                               << TypeIdToString(num_segments_input_type->type_id()) << ".";
@@ -72,6 +101,10 @@ abstract::ShapePtr InferShape(const PrimitivePtr &primitive, const std::vector<A
   (void)CheckAndConvertUtils::CheckInteger("input_x shape size", SizeToLong(x_shape.size()), kGreaterThan, 0,
                                            prim_name);
   auto ids_shape = CheckAndConvertUtils::ConvertShapePtrToShapeMap(input_args[kInputIndex1]->BuildShape())[kShape];
+  if (ids_shape.empty()) {
+    MS_EXCEPTION(ValueError) << "For '" << prim_name << "', segment_ids value cannot be 0-D.";
+  }
+
   for (auto ids_shape_value : ids_shape) {
     if (ids_shape_value < 0) {
       MS_EXCEPTION(ValueError) << "For '" << prim_name
@@ -202,11 +235,30 @@ MIND_API_OPERATOR_IMPL(UnsortedSegmentMax, BaseOperator);
 MIND_API_OPERATOR_IMPL(UnsortedSegmentMin, BaseOperator);
 MIND_API_OPERATOR_IMPL(UnsortedSegmentProd, BaseOperator);
 
-REGISTER_PRIMITIVE_EVAL_IMPL(UnsortedSegmentMax, prim::kPrimUnsortedSegmentMax, UnsortedSegmentArithmeticInfer, nullptr,
-                             true);
-REGISTER_PRIMITIVE_EVAL_IMPL(UnsortedSegmentMin, prim::kPrimUnsortedSegmentMin, UnsortedSegmentArithmeticInfer, nullptr,
-                             true);
-REGISTER_PRIMITIVE_EVAL_IMPL(UnsortedSegmentProd, prim::kPrimUnsortedSegmentProd, UnsortedSegmentArithmeticInfer,
-                             nullptr, true);
+// AG means auto generated
+class MIND_API AGUnsortedSegmentArithmeticInfer : public abstract::OpInferBase {
+ public:
+  BaseShapePtr InferShape(const PrimitivePtr &primitive,
+                          const std::vector<AbstractBasePtr> &input_args) const override {
+    return UnsortedSegmentArithmeticInferShape(primitive, input_args);
+  }
+
+  TypePtr InferType(const PrimitivePtr &primitive, const std::vector<AbstractBasePtr> &input_args) const override {
+    return UnsortedSegmentArithmeticInferType(primitive, input_args);
+  }
+  AbstractBasePtr InferShapeAndType(const abstract::AnalysisEnginePtr &engine, const PrimitivePtr &primitive,
+                                    const std::vector<AbstractBasePtr> &input_args) const override {
+    return UnsortedSegmentArithmeticInfer(engine, primitive, input_args);
+  }
+
+  std::set<int64_t> GetValueDependArgIndices() const override { return {2}; }
+};
+
+REGISTER_PRIMITIVE_OP_INFER_IMPL(UnsortedSegmentMax, prim::kPrimUnsortedSegmentMax, AGUnsortedSegmentArithmeticInfer,
+                                 false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(UnsortedSegmentMin, prim::kPrimUnsortedSegmentMin, AGUnsortedSegmentArithmeticInfer,
+                                 false);
+REGISTER_PRIMITIVE_OP_INFER_IMPL(UnsortedSegmentProd, prim::kPrimUnsortedSegmentProd, AGUnsortedSegmentArithmeticInfer,
+                                 false);
 }  // namespace ops
 }  // namespace mindspore

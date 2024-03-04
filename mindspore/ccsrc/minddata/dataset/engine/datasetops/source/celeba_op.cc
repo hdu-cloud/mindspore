@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2021 Huawei Technologies Co., Ltd
+ * Copyright 2019-2022 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -64,7 +64,7 @@ CelebAOp::CelebAOp(int32_t num_workers, const std::string &dir, int32_t queue_si
 #endif
 
 Status CelebAOp::RegisterAndLaunchThreads() {
-  ParallelOp::RegisterAndLaunchThreads();
+  RETURN_IF_NOT_OK(ParallelOp::RegisterAndLaunchThreads());
   RETURN_IF_NOT_OK(attr_info_queue_->Register(tree_->AllTasks()));
   RETURN_IF_NOT_OK(
     tree_->AllTasks()->CreateAsyncTask("Walking attr file", std::bind(&CelebAOp::ParseAttrFile, this), nullptr, id()));
@@ -82,7 +82,7 @@ Status CelebAOp::ParseAttrFile() {
                              " does not exist.");
   }
 
-  std::ifstream attr_file(realpath.value());
+  std::ifstream attr_file(realpath.value(), std::ios::in);
   if (!attr_file.is_open()) {
     std::string attr_file_name = (folder_path / "list_attr_celeba.txt").ToString();
     RETURN_STATUS_ERROR(StatusCode::kMDFileNotExist,
@@ -106,9 +106,11 @@ Status CelebAOp::ParseAttrFile() {
   try {
     num_rows_in_attr_file_ = static_cast<int64_t>(std::stoul(rows_num));  // First line is rows number in attr file
   } catch (std::invalid_argument &e) {
+    CLOSE_FILE(attr_file, partition_file_);
     RETURN_STATUS_UNEXPECTED("Invalid rows_num, failed to convert rows_num: " + rows_num + " to unsigned long in " +
                              attr_file_ + ".");
   } catch (std::out_of_range &e) {
+    CLOSE_FILE(attr_file, partition_file_);
     RETURN_STATUS_UNEXPECTED("Invalid rows_num, rows_num in " + attr_file_ + " is out of range, rows_num is " +
                              rows_num + ".");
   }
@@ -248,6 +250,7 @@ std::vector<std::string> CelebAOp::Split(const std::string &line) {
 }
 
 Status CelebAOp::LoadTensorRow(row_id_type row_id, TensorRow *row) {
+  RETURN_UNEXPECTED_IF_NULL(row);
   std::pair<std::string, std::vector<int32_t>> &image_label = image_labels_vec_[row_id];
   std::shared_ptr<Tensor> image;
   std::shared_ptr<Tensor> label;
@@ -313,6 +316,16 @@ Status CelebAOp::ComputeColMap() {
     MS_LOG(WARNING) << "Column name map is already set!";
   }
   return Status::OK();
+}
+
+Status CelebAOp::InitPullMode() {
+  if (!image_labels_vec_.empty()) {
+    return Status::OK();
+  }
+  if (attr_info_queue_->empty()) {
+    RETURN_IF_NOT_OK(ParseAttrFile());
+  }
+  return PrepareData();
 }
 
 }  // namespace dataset

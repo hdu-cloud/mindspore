@@ -17,8 +17,12 @@
 
 #include <memory>
 #include <vector>
+#include "ops/ascend_op_name.h"
+#include "ops/comparison_op_name.h"
+#include "ops/math_ops.h"
+#include "ops/framework_ops.h"
 #include "plugin/device/ascend/optimizer/ascend_helper.h"
-#include "backend/common/session/anf_runtime_algorithm.h"
+#include "include/backend/anf_runtime_algorithm.h"
 #include "include/common/utils/anfalgo.h"
 #include "ir/primitive.h"
 #include "include/common/utils/utils.h"
@@ -70,7 +74,7 @@ const AnfNodePtr LambUpdateWithLRRuleFusion::Process(const FuncGraphPtr &graph, 
   MS_EXCEPTION_IF_NULL(lamb_update_with_lr);
 
   auto types = {common::AnfAlgo::GetOutputInferDataType(node, 0)};
-  auto shapes = {common::AnfAlgo::GetOutputDetailShape(node, 0)};
+  auto shapes = {AnfAlgo::GetOutputDetailShape(node, 0)};
   common::AnfAlgo::SetOutputTypeAndDetailShape(types, shapes, lamb_update_with_lr.get());
   lamb_update_with_lr->set_scope(node->scope());
   return lamb_update_with_lr;

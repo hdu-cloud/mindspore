@@ -61,8 +61,8 @@ enum MS_API AiModelDescription_Frequency {
 
 enum MS_API DumpMode { DUMP_MODE_ALL = 0, DUMP_MODE_INPUT = 1, DUMP_MODE_OUTPUT = 2 };
 
-constexpr float relativeTolerance = 1e-5;
-constexpr float absoluteTolerance = 1e-8;
+constexpr float kRelativeTolerance = 1e-5;
+constexpr float kAbsoluteTolerance = 1e-8;
 constexpr int CosineErrMaxVal = 2;
 constexpr float kFloatMSEC = 1000.0f;
 
@@ -120,9 +120,10 @@ class MS_API BenchmarkFlags : public virtual FlagParser {
     AddFlag(&BenchmarkFlags::model_file_, "modelFile", "Input model file", "");
     AddFlag(&BenchmarkFlags::model_type_, "modelType", "Input model type. MindIR | MindIR_Lite", "MindIR");
     AddFlag(&BenchmarkFlags::in_data_file_, "inDataFile", "Input data file, if not set, use random input", "");
+    AddFlag(&BenchmarkFlags::group_info_file_, "GroupInfoFile", "Communication group info file", "");
     AddFlag(&BenchmarkFlags::config_file_, "configFile", "Config file", "");
-    AddFlag(&BenchmarkFlags::device_, "device", "CPU | GPU | NPU | Ascend310 | Ascend310P", "CPU");
-    AddFlag(&BenchmarkFlags::provider_, "provider", "device provider litert | tensorrt", "litert");
+    AddFlag(&BenchmarkFlags::device_, "device", "CPU | GPU | NPU | Ascend | Auto", "CPU");
+    AddFlag(&BenchmarkFlags::provider_, "provider", "device provider litert | tensorrt | mindrt", "litert");
     AddFlag(&BenchmarkFlags::cpu_bind_mode_, "cpuBindMode", "Input 0 for NO_BIND, 1 for HIGHER_CPU, 2 for MID_CPU.", 1);
     // MarkPerformance
     AddFlag(&BenchmarkFlags::loop_count_, "loopCount", "Run loop count", 10);
@@ -142,6 +143,12 @@ class MS_API BenchmarkFlags : public virtual FlagParser {
     AddFlag(&BenchmarkFlags::cosine_distance_threshold_, "cosineDistanceThreshold", "cosine distance threshold", -1.1);
     AddFlag(&BenchmarkFlags::resize_dims_in_, "inputShapes",
             "Shape of input data, the format should be NHWC. e.g. 1,32,32,32:1,1,32,32,1", "");
+#ifdef ENABLE_CLOUD_FUSION_INFERENCE
+    // Distributed Infer
+    AddFlag(&BenchmarkFlags::device_id_, "deviceId", "Set device id for distributed inference", -1);
+    AddFlag(&BenchmarkFlags::rank_id_, "rankId", "Set rank id for distributed inference", -1);
+#endif
+    // Decrypt and Crypte
     AddFlag(&BenchmarkFlags::decrypt_key_str_, "decryptKey",
             "The key used to decrypt the file, expressed in hexadecimal characters. Only support AES-GCM and the key "
             "length is 16.",
@@ -157,6 +164,12 @@ class MS_API BenchmarkFlags : public virtual FlagParser {
     AddFlag(&BenchmarkFlags::inter_op_parallel_num_, "interOpParallelNum", "parallel number of operators in predict",
             1);
     AddFlag(&BenchmarkFlags::enable_gl_texture_, "enableGLTexture", "Enable GlTexture2D", false);
+    AddFlag(&BenchmarkFlags::delegate_mode_, "delegateMode", "set the delegate mode: CoreML | NNAPI", "");
+    AddFlag(&BenchmarkFlags::enable_shared_thread_pool_, "enableSharedThreadPool", "Enable shared thread pool", false);
+    AddFlag(&BenchmarkFlags::thread_num_limit_per_worker_, "threadNumLimitPerWorker", "thread num limit per worker ",
+            "");
+    AddFlag(&BenchmarkFlags::thread_num_remaining_per_worker_, "threadNumRemainingPerWorker",
+            "thread num limit per worker ", "");
   }
 
   ~BenchmarkFlags() override = default;
@@ -176,6 +189,7 @@ class MS_API BenchmarkFlags : public virtual FlagParser {
   int workers_num_ = 2;
   std::string model_file_;
   std::string in_data_file_;
+  std::string group_info_file_;
   std::string config_file_;
   std::string model_type_;
   std::vector<std::string> input_data_list_;
@@ -199,6 +213,9 @@ class MS_API BenchmarkFlags : public virtual FlagParser {
   // Resize
   std::string resize_dims_in_;
   std::vector<std::vector<int>> resize_dims_;
+  // Distributed Infer
+  int device_id_;
+  int rank_id_;
 
   std::string device_ = "CPU";
   std::string provider_ = "litert";
@@ -210,6 +227,10 @@ class MS_API BenchmarkFlags : public virtual FlagParser {
   std::string decrypt_key_str_;
   std::string dec_mode_ = "AES-GCM";
   std::string crypto_lib_path_;
+  std::string delegate_mode_;
+  bool enable_shared_thread_pool_ = false;
+  std::string thread_num_limit_per_worker_;
+  std::string thread_num_remaining_per_worker_;
 };
 
 class MS_API BenchmarkBase {
@@ -262,7 +283,8 @@ class MS_API BenchmarkBase {
 
   // tensorData need to be converter first
   template <typename T, typename ST>
-  float CompareData(const std::string &nodeName, const std::vector<ST> &msShape, const void *tensor_data) {
+  float CompareData(const std::string &nodeName, const std::vector<ST> &msShape, const void *tensor_data,
+                    float relativeTolerance = kRelativeTolerance, float absoluteTolerance = kAbsoluteTolerance) {
     const T *msTensorData = static_cast<const T *>(tensor_data);
     auto iter = this->benchmark_data_.find(nodeName);
     if (iter != this->benchmark_data_.end()) {
